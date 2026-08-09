@@ -1,0 +1,8 @@
+packages:
+  - 'packages/*'
+allowBuilds:
+  '@nestjs/core': false
+  '@prisma/client': false
+  '@prisma/engines': false
+  msgpackr-extract: false
+  prisma: false
