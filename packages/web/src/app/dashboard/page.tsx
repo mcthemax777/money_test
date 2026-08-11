@@ -1,8 +1,9 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
 import { apiClient } from '@/lib/api-client';
+import { useUserFilter } from '@/store/user-filter';
 import Modal from '@/components/Modal';
 
 interface Person {
@@ -34,6 +35,7 @@ interface Card {
 }
 
 export default function DashboardPage() {
+  const { selectedPersonIds } = useUserFilter();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -85,8 +87,17 @@ export default function DashboardPage() {
     loadData();
   }, []);
 
+  const filteredAccounts = useMemo(() => {
+    return accounts.filter((acc) => selectedPersonIds.includes(acc.owner?.id || ''));
+  }, [accounts, selectedPersonIds]);
+
+  const filteredCards = useMemo(() => {
+    const userAccountIds = filteredAccounts.map((acc) => acc.id);
+    return cards.filter((card) => userAccountIds.includes(card.accountId));
+  }, [cards, filteredAccounts]);
+
   const getAccountCards = (accountId: string) =>
-    cards.filter((c) => c.accountId === accountId);
+    filteredCards.filter((c) => c.accountId === accountId);
 
   const handleDeletePerson = async () => {
     if (!selectedPerson || !window.confirm('정말 삭제하시겠습니까?')) return;
@@ -235,13 +246,15 @@ export default function DashboardPage() {
     }
   };
 
-  const totalBalance = accounts.reduce((sum, acc) => sum + acc.balance, 0);
+  const totalBalance = filteredAccounts.reduce((sum, acc) => sum + acc.balance, 0);
 
-  const groupedAccounts = people.reduce(
+  const displayPeople = people.filter((p) => selectedPersonIds.includes(p.id));
+
+  const groupedAccounts = displayPeople.reduce(
     (acc, person) => {
       acc[person.id] = {
         person,
-        accounts: accounts.filter((a) => a.owner.id === person.id),
+        accounts: filteredAccounts.filter((a) => a.owner.id === person.id),
       };
       return acc;
     },

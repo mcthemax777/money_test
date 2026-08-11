@@ -2,7 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { useUserFilter } from '@/store/user-filter';
+import { apiClient } from '@/lib/api-client';
 
 const menuItems = [
   {
@@ -27,6 +29,26 @@ export default function DashboardSidebar() {
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     '관리': false,
   });
+  const { people, setPeople, selectedPersonIds, togglePersonId, setSelectedPersonIds } = useUserFilter();
+
+  useEffect(() => {
+    if (people.length === 0) {
+      const loadPeople = async () => {
+        try {
+          const data = await apiClient.getPeople();
+          setPeople(data || []);
+          // 기본값: 모든 사용자 선택
+          if (selectedPersonIds.length === 0) {
+            setSelectedPersonIds((data || []).map((p) => p.id));
+          }
+        } catch (err) {
+          console.error('사용자 목록 조회 실패:', err);
+        }
+      };
+
+      loadPeople();
+    }
+  }, [people.length, setPeople, setSelectedPersonIds, selectedPersonIds.length]);
 
   const isActive = (href: string) => {
     if (href === '/dashboard') {
@@ -68,6 +90,25 @@ export default function DashboardSidebar() {
           isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
+        <div className="p-4 border-b border-gray-200">
+          <label className="block text-xs font-semibold text-gray-600 mb-3 uppercase tracking-wider">
+            사용자
+          </label>
+          <div className="space-y-2 max-h-48 overflow-y-auto">
+            {people.map((person) => (
+              <label key={person.id} className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={selectedPersonIds.includes(person.id)}
+                  onChange={() => togglePersonId(person.id)}
+                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                />
+                <span className="text-sm text-gray-700">{person.name}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+
         <nav className="p-4">
           {menuItems.map((menu) => (
             <div key={menu.section || 'top'} className={menu.section ? 'mb-8' : 'mb-4'}>

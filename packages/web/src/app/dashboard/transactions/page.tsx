@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/store/auth';
+import { useUserFilter } from '@/store/user-filter';
 import { apiClient } from '@/lib/api-client';
 import CustomSelect from '@/components/CustomSelect';
 import Modal from '@/components/Modal';
+import TransactionCalendar from '@/components/TransactionCalendar';
 
 interface Transaction {
   id: string;
@@ -50,6 +52,7 @@ interface Card {
 
 export default function TransactionsPage() {
   const { isAuthenticated, loadUser } = useAuth();
+  const { selectedPersonIds, setPeople: setStorePeople } = useUserFilter();
   const router = useRouter();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -62,6 +65,11 @@ export default function TransactionsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
+  const [startDate, setStartDate] = useState<Date | null>(null);
+  const [endDate, setEndDate] = useState<Date | null>(null);
+  const [displayTransactions, setDisplayTransactions] = useState<Transaction[]>([]);
+  const dateTransactionsRef = useRef<HTMLDivElement>(null);
   const [isPersonModalOpen, setIsPersonModalOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [isCardModalOpen, setIsCardModalOpen] = useState(false);
@@ -143,6 +151,23 @@ export default function TransactionsPage() {
     loadData();
   }, [isAuthenticated, router]);
 
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter((tx) => {
+      return selectedPersonIds.includes(tx.personId || '');
+    });
+  }, [transactions, selectedPersonIds]);
+
+  useEffect(() => {
+    if (viewMode === 'calendar' && !startDate && !endDate) {
+      const today = new Date();
+      const currentMonthTransactions = filteredTransactions.filter((tx) => {
+        const txDate = new Date(tx.date);
+        return txDate.getFullYear() === today.getFullYear() &&
+               txDate.getMonth() === today.getMonth();
+      });
+      setDisplayTransactions(currentMonthTransactions);
+    }
+  }, [viewMode, startDate, endDate, filteredTransactions]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -241,6 +266,46 @@ export default function TransactionsPage() {
     setIsDetailModalOpen(true);
   };
 
+  const handleCalendarDateSelect = (clickedDate: Date, dayTransactions: Transaction[]) => {
+    if (!startDate) {
+      setStartDate(clickedDate);
+      setEndDate(null);
+      setDisplayTransactions(dayTransactions);
+    } else if (
+      clickedDate.getFullYear() === startDate.getFullYear() &&
+      clickedDate.getMonth() === startDate.getMonth() &&
+      clickedDate.getDate() === startDate.getDate()
+    ) {
+      setStartDate(null);
+      setEndDate(null);
+      setDisplayTransactions([]);
+      return;
+    } else if (!endDate) {
+      let newStartDate = startDate;
+      let newEndDate = clickedDate;
+      if (clickedDate < startDate) {
+        newStartDate = clickedDate;
+        newEndDate = startDate;
+      }
+      setStartDate(newStartDate);
+      setEndDate(newEndDate);
+
+      const rangeTransactions = filteredTransactions.filter((tx) => {
+        const txDate = new Date(tx.date);
+        return txDate >= newStartDate && txDate <= newEndDate;
+      });
+      setDisplayTransactions(rangeTransactions);
+    } else {
+      setStartDate(clickedDate);
+      setEndDate(null);
+      setDisplayTransactions(dayTransactions);
+    }
+
+    setTimeout(() => {
+      dateTransactionsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 0);
+  };
+
   const handleDetailEditClick = () => {
     if (!selectedTransaction) return;
     setEditingId(selectedTransaction.id);
@@ -308,6 +373,7 @@ export default function TransactionsPage() {
       });
       const data = await apiClient.getPeople();
       setPeople(data || []);
+      setStorePeople(data || []);
       setPersonFormData({ name: '', relationship: '' });
       setIsPersonModalOpen(false);
     } catch (err) {
@@ -433,15 +499,38 @@ export default function TransactionsPage() {
         </button>
       </div>
 
+      <div className="flex gap-2 mb-6 border-b border-gray-200">
+        <button
+          onClick={() => setViewMode('list')}
+          className={`px-4 py-2 font-medium transition ${
+            viewMode === 'list'
+              ? 'text-blue-600 border-b-2 border-blue-600'
+              : 'text-gray-600 hover:text-gray-900'
+          }`}
+        >
+          목록
+        </button>
+        <button
+          onClick={() => setViewMode('calendar')}
+          className={`px-4 py-2 font-medium transition ${
+            viewMode === 'calendar'
+              ? 'text-blue-600 border-b-2 border-blue-600'
+              : 'text-gray-600 hover:text-gray-900'
+          }`}
+        >
+          캘린더
+        </button>
+      </div>
+
       <div>
         {isLoading ? (
           <p className="text-gray-600">로딩 중...</p>
         ) : transactions.length === 0 ? (
           <p className="text-gray-600">거래가 없습니다.</p>
-        ) : (
+        ) : viewMode === 'list' ? (
           <>
             <div className="space-y-2">
-              {transactions.map((tx) => (
+              {filteredTransactions.map((tx) => (
                 <div
                   key={tx.id}
                   className="bg-white rounded-lg shadow p-4 flex justify-between items-center border-l-4 border-blue-500 cursor-pointer hover:shadow-lg transition"
@@ -475,6 +564,65 @@ export default function TransactionsPage() {
               </div>
             )}
           </>
+        ) : (
+          <div>
+            <TransactionCalendar
+              transactions={filteredTransactions}
+              onDateSelect={handleCalendarDateSelect}
+              startDate={startDate}
+              endDate={endDate}
+            />
+
+            {(displayTransactions.length > 0 || (viewMode === 'calendar' && !startDate && !endDate)) && (
+              <div ref={dateTransactionsRef} className="mt-8">
+                <h3 className="text-lg font-bold text-gray-900 mb-4">
+                  {endDate
+                    ? `${startDate?.toISOString().split('T')[0]} ~ ${endDate.toISOString().split('T')[0]}의 거래`
+                    : startDate
+                    ? `${startDate.toISOString().split('T')[0]}의 거래`
+                    : `${new Date().getFullYear()}년 ${new Date().getMonth() + 1}월의 거래`}
+                </h3>
+                <div className="space-y-2">
+                  {(displayTransactions.length > 0
+                    ? displayTransactions
+                    : viewMode === 'calendar' && !startDate && !endDate
+                    ? filteredTransactions.filter((tx) => {
+                        const txDate = new Date(tx.date);
+                        const today = new Date();
+                        return txDate.getFullYear() === today.getFullYear() &&
+                               txDate.getMonth() === today.getMonth();
+                      })
+                    : []
+                  ).map((tx) => (
+                    <div
+                      key={tx.id}
+                      className="bg-white rounded-lg shadow p-4 flex justify-between items-center border-l-4 border-blue-500 cursor-pointer hover:shadow-lg transition"
+                      onClick={() => handleTransactionClick(tx)}
+                    >
+                      <div className="flex-1">
+                        <p className="font-bold text-gray-900">{tx.description}</p>
+                        <p className="text-sm text-gray-600">{tx.mainCategory}</p>
+                        <p className="text-xs text-gray-500">
+                          {new Date(tx.date).toLocaleDateString('ko-KR')}
+                        </p>
+                      </div>
+                      <div className="text-right mr-4">
+                        <p className={`text-lg font-bold ${
+                          tx.type === 'income' ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {tx.type === 'income' ? '+' : '-'}
+                          {new Intl.NumberFormat('ko-KR', {
+                            style: 'currency',
+                            currency: 'KRW',
+                          }).format(tx.amount)}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
         )}
       </div>
 

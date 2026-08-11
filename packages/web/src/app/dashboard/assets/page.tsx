@@ -51,7 +51,7 @@ export default function AssetsPage() {
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [detailType, setDetailType] = useState<'person' | 'account' | 'card' | null>(null);
 
-  const [addType, setAddType] = useState<'person' | 'account' | 'card' | null>(null);
+  const [addType, setAddType] = useState<'select' | 'person' | 'account' | 'card' | null>(null);
 
   // 추가 폼 상태
   const [personForm, setPersonForm] = useState({ name: '', relationship: '' });
