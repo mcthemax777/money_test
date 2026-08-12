@@ -18,6 +18,7 @@ const menuItems = [
       { label: '홈', href: '/dashboard' },
       { label: '자산', href: '/assets' },
       { label: '카테고리', href: '/assets/categories' },
+      { label: '설정', href: '/settings' },
     ],
   },
 ];
