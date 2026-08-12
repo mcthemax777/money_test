@@ -6,9 +6,11 @@ import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
 import { useUserFilter } from '@/store/user-filter';
 import Modal from '@/components/Modal';
+import CustomSelect from '@/components/CustomSelect';
 import PersonModal from '@/components/PersonModal';
 import EditAccountModal from '@/components/EditAccountModal';
 import EditCardModal from '@/components/EditCardModal';
+import AddAccountModal from '@/components/AddAccountModal';
 
 interface Person {
   id: string;
@@ -41,7 +43,7 @@ interface Card {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { selectedPersonIds } = useUserFilter();
+  const { selectedPersonIds, setPeople: setStorePeople } = useUserFilter();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -59,6 +61,20 @@ export default function DashboardPage() {
   const [personModalMode, setPersonModalMode] = useState<'view' | 'edit'>('view');
   const [isEditAccountModalOpen, setIsEditAccountModalOpen] = useState(false);
   const [isEditCardModalOpen, setIsEditCardModalOpen] = useState(false);
+
+  const [addType, setAddType] = useState<'select' | 'card' | null>(null);
+  const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [isPersonAddModalOpen, setIsPersonAddModalOpen] = useState(false);
+  const [cardForm, setCardForm] = useState({
+    accountId: '',
+    name: '',
+    cardNumber: '',
+    cardType: 'debit' as 'debit' | 'credit',
+    issuer: '',
+    expiryDate: '',
+    creditLimit: '',
+  });
+  const [addError, setAddError] = useState('');
 
   const [editPersonForm, setEditPersonForm] = useState({ name: '', relationship: '' });
   const [editAccountForm, setEditAccountForm] = useState({
@@ -153,6 +169,41 @@ export default function DashboardPage() {
       setSelectedCard(null);
     } catch (err: any) {
       alert(err?.response?.data?.error?.message || '삭제에 실패했습니다.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleAddCard = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setIsSubmitting(true);
+      setAddError('');
+      const isoDate = cardForm.expiryDate ? new Date(cardForm.expiryDate).toISOString() : undefined;
+      await apiClient.createCard({
+        accountId: cardForm.accountId,
+        name: cardForm.name,
+        cardNumber: cardForm.cardNumber || undefined,
+        cardType: cardForm.cardType,
+        issuer: cardForm.issuer,
+        ...(isoDate && { expiryDate: isoDate }),
+        creditLimit:
+          cardForm.cardType === 'credit' ? parseInt(cardForm.creditLimit) : undefined,
+      });
+      const cardsData = await apiClient.getCards();
+      setCards(cardsData || []);
+      setCardForm({
+        accountId: '',
+        name: '',
+        cardNumber: '',
+        cardType: 'debit',
+        issuer: '',
+        expiryDate: '',
+        creditLimit: '',
+      });
+      setAddType(null);
+    } catch (err: any) {
+      setAddError(err?.response?.data?.error?.message || '카드 추가에 실패했습니다.');
     } finally {
       setIsSubmitting(false);
     }
@@ -254,6 +305,16 @@ export default function DashboardPage() {
 
   return (
     <>
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-2xl font-bold text-gray-900">자산 관리</h2>
+        <button
+          onClick={() => setAddType('select')}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+        >
+          추가하기
+        </button>
+      </div>
+
       <div className="bg-blue-600 text-white rounded-lg p-8 mb-8">
         <p className="text-sm opacity-90">총 자산</p>
         <p className="text-4xl font-bold mt-2">
@@ -870,6 +931,197 @@ export default function DashboardPage() {
         }}
         onDelete={handleDeleteCard}
       />
+
+      {/* 추가 유형 선택 팝업 */}
+      <Modal
+        isOpen={addType === 'select'}
+        onClose={() => setAddType(null)}
+        title="추가하기"
+      >
+        <div className="space-y-3">
+          <button
+            onClick={() => {
+              setAddType(null);
+              setIsPersonAddModalOpen(true);
+            }}
+            className="w-full px-4 py-3 text-left bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition"
+          >
+            <p className="font-semibold text-gray-900">👤 구성원 추가</p>
+            <p className="text-xs text-gray-600 mt-1">새로운 가족 구성원을 추가합니다</p>
+          </button>
+
+          <button
+            onClick={() => {
+              setAddType(null);
+              setIsAccountModalOpen(true);
+            }}
+            className="w-full px-4 py-3 text-left bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition"
+          >
+            <p className="font-semibold text-gray-900">🏦 계좌 추가</p>
+            <p className="text-xs text-gray-600 mt-1">새로운 계좌를 추가합니다</p>
+          </button>
+
+          <button
+            onClick={() => setAddType('card')}
+            className="w-full px-4 py-3 text-left bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition"
+          >
+            <p className="font-semibold text-gray-900">💳 카드 추가</p>
+            <p className="text-xs text-gray-600 mt-1">새로운 카드를 추가합니다</p>
+          </button>
+        </div>
+      </Modal>
+
+      {/* 구성원 추가 모달 */}
+      <PersonModal
+        isOpen={isPersonAddModalOpen}
+        onClose={() => setIsPersonAddModalOpen(false)}
+        person={null}
+        mode="add"
+        onSuccess={(updatedPeople) => {
+          setPeople(updatedPeople);
+          setStorePeople(updatedPeople);
+          setIsPersonAddModalOpen(false);
+        }}
+        onDelete={async () => {}}
+      />
+
+      {/* 계좌 추가 모달 */}
+      <AddAccountModal
+        isOpen={isAccountModalOpen}
+        onClose={() => setIsAccountModalOpen(false)}
+        onSuccess={(newAccounts) => setAccounts(newAccounts)}
+        people={people}
+      />
+
+      {/* 카드 추가 모달 */}
+      <Modal
+        isOpen={addType === 'card'}
+        onClose={() => {
+          setAddType(null);
+          setCardForm({
+            accountId: '',
+            name: '',
+            cardNumber: '',
+            cardType: 'debit',
+            issuer: '',
+            expiryDate: '',
+            creditLimit: '',
+          });
+          setAddError('');
+        }}
+        title="카드 추가"
+      >
+        <form onSubmit={handleAddCard} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              계좌
+            </label>
+            <CustomSelect
+              options={accounts.map((acc) => ({ id: acc.id, name: acc.name }))}
+              value={cardForm.accountId}
+              onChange={(value) => setCardForm({ ...cardForm, accountId: value })}
+              placeholder="선택하세요"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              카드 이름
+            </label>
+            <input
+              type="text"
+              required
+              value={cardForm.name}
+              onChange={(e) => setCardForm({ ...cardForm, name: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="예: 내 체크카드"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              카드 번호 (선택)
+            </label>
+            <input
+              type="text"
+              value={cardForm.cardNumber}
+              onChange={(e) => setCardForm({ ...cardForm, cardNumber: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="16자리"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              카드 유형
+            </label>
+            <CustomSelect
+              options={[
+                { id: 'debit', name: '체크카드' },
+                { id: 'credit', name: '신용카드' },
+              ]}
+              value={cardForm.cardType}
+              onChange={(value) => setCardForm({ ...cardForm, cardType: value as 'debit' | 'credit' })}
+              placeholder="선택하세요"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              발급사
+            </label>
+            <input
+              type="text"
+              required
+              value={cardForm.issuer}
+              onChange={(e) => setCardForm({ ...cardForm, issuer: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="KB Bank, Samsung Card 등"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              만료일 (선택)
+            </label>
+            <input
+              type="date"
+              value={cardForm.expiryDate}
+              onChange={(e) => setCardForm({ ...cardForm, expiryDate: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {cardForm.cardType === 'credit' && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                신용한도 (원)
+              </label>
+              <input
+                type="number"
+                value={cardForm.creditLimit}
+                onChange={(e) => setCardForm({ ...cardForm, creditLimit: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="5000000"
+              />
+            </div>
+          )}
+
+          {addError && (
+            <div className="p-3 bg-red-50 text-red-800 text-sm rounded">
+              {addError}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >
+            {isSubmitting ? '추가 중...' : '추가하기'}
+          </button>
+        </form>
+      </Modal>
     </>
   );
 }
