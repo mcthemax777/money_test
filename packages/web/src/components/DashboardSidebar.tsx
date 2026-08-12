@@ -15,13 +15,13 @@ const menuItems = [
   {
     section: null,
     items: [
-      { label: '자산', href: '/dashboard' },
       { label: '거래', href: '/dashboard/transactions' },
     ],
   },
   {
     section: '관리',
     items: [
+      { label: '자산', href: '/dashboard' },
       { label: '카테고리', href: '/dashboard/categories' },
     ],
   },
