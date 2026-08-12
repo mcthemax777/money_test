@@ -51,6 +51,9 @@ export default function DashboardSidebar() {
     if (href === '/dashboard') {
       return pathname === '/dashboard';
     }
+    if (href === '/assets') {
+      return pathname === '/assets' || pathname === '/assets/';
+    }
     return pathname.startsWith(href);
   };
 
