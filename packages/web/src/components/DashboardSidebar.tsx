@@ -15,7 +15,7 @@ const menuItems = [
   {
     section: null,
     items: [
-      { label: '거래', href: '/dashboard/transactions' },
+      { label: '홈', href: '/dashboard/transactions' },
     ],
   },
   {
