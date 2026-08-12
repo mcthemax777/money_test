@@ -137,11 +137,24 @@ export default function TransactionsPage() {
           apiClient.getCards(),
           apiClient.getCategories(),
         ]);
-        setTransactions(transactionsData?.data || []);
+        const txs = transactionsData?.data || [];
+        setTransactions(txs);
         setAccounts(accountsData || []);
         setPeople(peopleData || []);
         setCards(cardsData || []);
         setCategories(categoriesData || []);
+
+        // 초기 월의 거래내역 설정
+        const today = new Date();
+        const thisMonth = today.getMonth() + 1;
+        const thisYear = today.getFullYear();
+        const monthTransactions = txs.filter((tx: any) => {
+          const txDate = new Date(tx.date);
+          return txDate.getFullYear() === thisYear && txDate.getMonth() + 1 === thisMonth;
+        });
+        setDisplayTransactions(monthTransactions);
+        setCurrentMonth(thisMonth);
+        setCurrentYear(thisYear);
       } catch (err) {
         setError('데이터 조회에 실패했습니다.');
       } finally {
@@ -157,18 +170,6 @@ export default function TransactionsPage() {
       return selectedPersonIds.includes(tx.personId || '');
     });
   }, [transactions, selectedPersonIds]);
-
-  useEffect(() => {
-    if (viewMode === 'calendar' && !startDate && !endDate) {
-      const today = new Date();
-      const currentMonthTransactions = filteredTransactions.filter((tx) => {
-        const txDate = new Date(tx.date);
-        return txDate.getFullYear() === today.getFullYear() &&
-               txDate.getMonth() === today.getMonth();
-      });
-      setDisplayTransactions(currentMonthTransactions);
-    }
-  }, [viewMode, startDate, endDate, filteredTransactions]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
