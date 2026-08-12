@@ -15,7 +15,7 @@ const menuItems = [
   {
     section: null,
     items: [
-      { label: '대시보드', href: '/dashboard' },
+      { label: '자산', href: '/dashboard' },
       { label: '거래', href: '/dashboard/transactions' },
     ],
   },
