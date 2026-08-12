@@ -12,11 +12,24 @@ export async function exportDataToExcel() {
       apiClient.getTransactionsV2(),
     ]);
 
+    // 배열 정규화
+    const peopleArray = Array.isArray(people) ? people : people?.data || [];
+    const accountsArray = Array.isArray(accounts) ? accounts : accounts?.data || [];
+    const cardsArray = Array.isArray(cards) ? cards : cards?.data || [];
+    const categoriesArray = Array.isArray(categories) ? categories : categories?.data || [];
+    const transactionsArray = Array.isArray(transactions) ? transactions : transactions?.data || [];
+
+    // 조회 맵 생성 (빠른 검색용)
+    const peopleMap = new Map(peopleArray.map((p: any) => [p.id, p.name]));
+    const accountsMap = new Map(accountsArray.map((a: any) => [a.id, a]));
+    const cardsMap = new Map(cardsArray.map((c: any) => [c.id, c]));
+    const categoriesMap = new Map(categoriesArray.map((c: any) => [c.id, c]));
+
     // 워크북 생성
     const workbook = XLSX.utils.book_new();
 
     // 1. 사용자 시트
-    const peopleData = (Array.isArray(people) ? people : people?.data || []).map((p: any) => ({
+    const peopleData = peopleArray.map((p: any) => ({
       ID: p.id,
       이름: p.name,
       생성일: p.createdAt ? new Date(p.createdAt).toLocaleDateString('ko-KR') : '',
@@ -26,9 +39,10 @@ export async function exportDataToExcel() {
     XLSX.utils.book_append_sheet(workbook, peopleSheet, '사용자');
 
     // 2. 계좌 시트
-    const accountsData = (Array.isArray(accounts) ? accounts : accounts?.data || []).map((a: any) => ({
+    const accountsData = accountsArray.map((a: any) => ({
       ID: a.id,
       계좌명: a.name,
+      사용자명: a.ownerId ? peopleMap.get(a.ownerId) || '-' : '-',
       은행: a.bankName || '',
       계좌번호: a.accountNumber || '',
       잔액: a.balance || 0,
@@ -38,10 +52,12 @@ export async function exportDataToExcel() {
     XLSX.utils.book_append_sheet(workbook, accountsSheet, '계좌');
 
     // 3. 카드 시트
-    const cardsData = (Array.isArray(cards) ? cards : cards?.data || []).map((c: any) => ({
+    const cardsData = cardsArray.map((c: any) => ({
       ID: c.id,
       카드명: c.name,
-      카드사: c.cardCompany || '',
+      계좌명: c.accountId ? accountsMap.get(c.accountId)?.name || '-' : '-',
+      계좌사용자명: c.accountId ? peopleMap.get(accountsMap.get(c.accountId)?.ownerId) || '-' : '-',
+      카드사: c.cardCompany || c.issuer || '',
       카드번호: c.cardNumber || '',
       잔액: c.balance || 0,
       생성일: c.createdAt ? new Date(c.createdAt).toLocaleDateString('ko-KR') : '',
@@ -50,10 +66,12 @@ export async function exportDataToExcel() {
     XLSX.utils.book_append_sheet(workbook, cardsSheet, '카드');
 
     // 4. 카테고리 시트
-    const categoriesData = (Array.isArray(categories) ? categories : categories?.data || []).map((c: any) => ({
+    const categoriesData = categoriesArray.map((c: any) => ({
       ID: c.id,
       카테고리명: c.name,
-      유형: c.type || '수입',
+      유형: c.type === 'income' ? '수입' : c.type === 'expense' ? '지출' : c.type,
+      대분류: c.parentId ? categoriesMap.get(c.parentId)?.name || '-' : '-',
+      소분류: c.level === 2 ? c.name : '-',
       색상: c.color || '',
       생성일: c.createdAt ? new Date(c.createdAt).toLocaleDateString('ko-KR') : '',
     }));
@@ -61,18 +79,30 @@ export async function exportDataToExcel() {
     XLSX.utils.book_append_sheet(workbook, categoriesSheet, '카테고리');
 
     // 5. 거래내역 시트
-    const transactionsData = (Array.isArray(transactions) ? transactions : transactions?.data || []).map(
-      (t: any) => ({
+    const transactionsData = transactionsArray.map((t: any) => {
+      const accountName = t.accountId ? accountsMap.get(t.accountId)?.name || '-' : '-';
+      const cardName = t.cardId ? cardsMap.get(t.cardId)?.name || '-' : '-';
+      const mainCat = t.mainCategoryId ? categoriesMap.get(t.mainCategoryId) : null;
+      const subCat = t.subCategoryId ? categoriesMap.get(t.subCategoryId) : null;
+
+      return {
         ID: t.id,
         금액: t.amount || 0,
+        유형: t.type === 'income' ? '수입' : t.type === 'expense' ? '지출' : t.type || '기타',
+        대분류: mainCat?.name || t.mainCategory || '-',
+        소분류: subCat?.name || t.subCategory || '-',
         설명: t.description || '',
-        카테고리: t.categoryId || '',
-        계좌: t.accountId || '',
-        카드: t.cardId || '',
-        거래일자: t.transactionDate ? new Date(t.transactionDate).toLocaleDateString('ko-KR') : '',
+        거래자: t.personId ? peopleMap.get(t.personId) || '-' : '-',
+        계좌: accountName,
+        카드: cardName,
+        거래일자: t.transactionDate
+          ? new Date(t.transactionDate).toLocaleDateString('ko-KR')
+          : t.date
+            ? new Date(t.date).toLocaleDateString('ko-KR')
+            : '',
         생성일: t.createdAt ? new Date(t.createdAt).toLocaleDateString('ko-KR') : '',
-      }),
-    );
+      };
+    });
     const transactionsSheet = XLSX.utils.json_to_sheet(transactionsData);
     XLSX.utils.book_append_sheet(workbook, transactionsSheet, '거래내역');
 
@@ -88,7 +118,7 @@ export async function exportDataToExcel() {
         });
       });
 
-      sheet['!cols'] = colWidths.map((width) => ({ wch: Math.min(width, 30) }));
+      sheet['!cols'] = colWidths.map((width) => ({ wch: Math.min(width, 35) }));
     };
 
     [peopleSheet, accountsSheet, cardsSheet, categoriesSheet, transactionsSheet].forEach(adjustColWidth);
