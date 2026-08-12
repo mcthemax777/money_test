@@ -16,11 +16,6 @@ const menuItems = [
     section: null,
     items: [
       { label: '홈', href: '/dashboard' },
-    ],
-  },
-  {
-    section: '관리',
-    items: [
       { label: '자산', href: '/assets' },
       { label: '카테고리', href: '/assets/categories' },
     ],
@@ -30,9 +25,7 @@ const menuItems = [
 export default function DashboardSidebar() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
-    '관리': false,
-  });
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const { people, setPeople, selectedPersonIds, togglePersonId, setSelectedPersonIds } = useUserFilter();
 
   useEffect(() => {
@@ -118,21 +111,17 @@ export default function DashboardSidebar() {
             <div key={menu.section || 'top'} className={menu.section ? 'mb-8' : 'mb-4'}>
               {menu.section && (
                 <button
-                  onClick={() => menu.section === '관리' && toggleSection(menu.section)}
-                  className={`w-full flex items-center justify-between px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider ${
-                    menu.section === '관리' ? 'cursor-pointer hover:text-gray-700' : ''
-                  }`}
+                  onClick={() => toggleSection(menu.section)}
+                  className="w-full flex items-center justify-between px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-gray-700"
                 >
                   <span>{menu.section}</span>
-                  {menu.section === '관리' && (
-                    <span
-                      className={`transition-transform ${
-                        expandedSections['관리'] ? 'rotate-180' : ''
-                      }`}
-                    >
-                      ▼
-                    </span>
-                  )}
+                  <span
+                    className={`transition-transform ${
+                      expandedSections[menu.section] ? 'rotate-180' : ''
+                    }`}
+                  >
+                    ▼
+                  </span>
                 </button>
               )}
 
