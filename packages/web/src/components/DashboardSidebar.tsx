@@ -22,7 +22,6 @@ const menuItems = [
   {
     section: '관리',
     items: [
-      { label: '자산 관리', href: '/dashboard/assets' },
       { label: '카테고리', href: '/dashboard/categories' },
     ],
   },
