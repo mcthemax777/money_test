@@ -15,14 +15,14 @@ const menuItems = [
   {
     section: null,
     items: [
-      { label: '홈', href: '/dashboard/transactions' },
+      { label: '홈', href: '/dashboard' },
     ],
   },
   {
     section: '관리',
     items: [
-      { label: '자산', href: '/dashboard' },
-      { label: '카테고리', href: '/dashboard/categories' },
+      { label: '자산', href: '/assets' },
+      { label: '카테고리', href: '/assets/categories' },
     ],
   },
 ];

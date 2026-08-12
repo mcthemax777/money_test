@@ -1,32 +1,47 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
-import Link from 'next/link';
+import { useEffect, useState, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
-import { apiClient } from '@/lib/api-client';
+import { useAuth } from '@/store/auth';
 import { useUserFilter } from '@/store/user-filter';
-import Modal from '@/components/Modal';
+import { apiClient } from '@/lib/api-client';
 import CustomSelect from '@/components/CustomSelect';
-import PersonModal from '@/components/PersonModal';
-import EditAccountModal from '@/components/EditAccountModal';
-import EditCardModal from '@/components/EditCardModal';
+import Modal from '@/components/Modal';
+import TransactionCalendar from '@/components/TransactionCalendar';
 import AddAccountModal from '@/components/AddAccountModal';
+import PersonModal from '@/components/PersonModal';
 
-interface Person {
+interface Transaction {
   id: string;
-  name: string;
-  relationship?: string | null;
+  description: string;
+  amount: number;
+  type: 'income' | 'expense' | 'transfer';
+  date: string;
+  mainCategory: string;
+  mainCategoryId?: string;
+  subCategory?: string;
+  subCategoryId?: string;
+  accountId?: string;
+  cardId?: string;
+  personId?: string;
 }
 
 interface Account {
   id: string;
-  ownerId: string;
   name: string;
-  balance: number;
-  bankName: string;
-  currency: string;
-  accountNumber?: string;
-  owner: Person;
+}
+
+interface Person {
+  id: string;
+  name: string;
+}
+
+interface Category {
+  id: string;
+  name: string;
+  type: 'income' | 'expense';
+  level: number;
+  parentId?: string | null;
 }
 
 interface Card {
@@ -35,75 +50,97 @@ interface Card {
   accountId: string;
   cardType: 'debit' | 'credit';
   issuer: string;
-  cardNumberMasked: string;
-  creditLimit?: number;
-  currentBalance?: number;
-  expiryDate?: string;
 }
 
-export default function DashboardPage() {
-  const router = useRouter();
+export default function TransactionsPage() {
+  const { isAuthenticated, loadUser } = useAuth();
   const { selectedPersonIds, setPeople: setStorePeople } = useUserFilter();
+  const router = useRouter();
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
-  const [cards, setCards] = useState<Card[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
+  const [cards, setCards] = useState<Card[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
-
-  const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
-  const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
-  const [selectedCard, setSelectedCard] = useState<Card | null>(null);
-  const [detailType, setDetailType] = useState<'person' | 'account' | 'card' | null>(null);
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
-
-  const [personModalOpen, setPersonModalOpen] = useState(false);
-  const [personModalMode, setPersonModalMode] = useState<'view' | 'edit'>('view');
-  const [isEditAccountModalOpen, setIsEditAccountModalOpen] = useState(false);
-  const [isEditCardModalOpen, setIsEditCardModalOpen] = useState(false);
-
-  const [addType, setAddType] = useState<'select' | 'card' | null>(null);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [viewMode, setViewMode] = useState<'list' | 'calendar'>('list');
+  const [startDate, setStartDate] = useState<Date | null>(null);
+  const [endDate, setEndDate] = useState<Date | null>(null);
+  const [displayTransactions, setDisplayTransactions] = useState<Transaction[]>([]);
+  const dateTransactionsRef = useRef<HTMLDivElement>(null);
+  const [isPersonModalOpen, setIsPersonModalOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
-  const [isPersonAddModalOpen, setIsPersonAddModalOpen] = useState(false);
-  const [cardForm, setCardForm] = useState({
-    accountId: '',
-    name: '',
-    cardNumber: '',
-    cardType: 'debit' as 'debit' | 'credit',
-    issuer: '',
-    expiryDate: '',
-    creditLimit: '',
-  });
-  const [addError, setAddError] = useState('');
-
-  const [editPersonForm, setEditPersonForm] = useState({ name: '', relationship: '' });
-  const [editAccountForm, setEditAccountForm] = useState({
+  const [isCardModalOpen, setIsCardModalOpen] = useState(false);
+  const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [accountFormData, setAccountFormData] = useState({
+    ownerId: '',
     name: '',
     balance: '',
     bankName: '',
     accountNumber: '',
   });
-  const [editCardForm, setEditCardForm] = useState({
+  const [accountSubmitting, setAccountSubmitting] = useState(false);
+  const [cardFormData, setCardFormData] = useState({
     accountId: '',
     name: '',
     cardNumber: '',
+    cardType: 'debit',
     issuer: '',
     expiryDate: '',
     creditLimit: '',
   });
+  const [cardSubmitting, setCardSubmitting] = useState(false);
+  const [categoryFormData, setCategoryFormData] = useState({
+    name: '',
+    type: 'expense',
+    subCategories: [''],
+    color: '',
+  });
+  const [categorySubmitting, setCategorySubmitting] = useState(false);
+  const [formData, setFormData] = useState({
+    method: 'account',
+    accountId: '',
+    cardId: '',
+    personId: '',
+    type: 'expense',
+    mainCategoryId: '',
+    subCategoryId: '',
+    amount: '',
+    description: '',
+    date: new Date().toISOString().split('T')[0],
+    time: '',
+  });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
+    loadUser();
+  }, [loadUser]);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      router.push('/login');
+      return;
+    }
+
     const loadData = async () => {
       try {
         setIsLoading(true);
-        const [accountsData, peopleData, cardsData] = await Promise.all([
+        const [transactionsData, accountsData, peopleData, cardsData, categoriesData] = await Promise.all([
+          apiClient.getTransactionsV2(),
           apiClient.getAccountsV2(),
           apiClient.getPeople(),
           apiClient.getCards(),
+          apiClient.getCategories(),
         ]);
+        setTransactions(transactionsData?.data || []);
         setAccounts(accountsData || []);
         setPeople(peopleData || []);
         setCards(cardsData || []);
+        setCategories(categoriesData || []);
       } catch (err) {
         setError('데이터 조회에 실패했습니다.');
       } finally {
@@ -112,87 +149,244 @@ export default function DashboardPage() {
     };
 
     loadData();
-  }, []);
+  }, [isAuthenticated, router]);
 
-  const filteredAccounts = useMemo(() => {
-    return accounts.filter((acc) => selectedPersonIds.includes(acc.owner?.id || ''));
-  }, [accounts, selectedPersonIds]);
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter((tx) => {
+      return selectedPersonIds.includes(tx.personId || '');
+    });
+  }, [transactions, selectedPersonIds]);
 
-  const filteredCards = useMemo(() => {
-    const userAccountIds = filteredAccounts.map((acc) => acc.id);
-    return cards.filter((card) => userAccountIds.includes(card.accountId));
-  }, [cards, filteredAccounts]);
-
-  const getAccountCards = (accountId: string) =>
-    filteredCards.filter((c) => c.accountId === accountId);
-
-  const handleDeletePerson = async () => {
-    if (!selectedPerson || !window.confirm('정말 삭제하시겠습니까?')) return;
-    try {
-      setIsSubmitting(true);
-      await apiClient.deletePerson(selectedPerson.id);
-      const peopleData = await apiClient.getPeople();
-      setPeople(peopleData || []);
-      setDetailType(null);
-      setSelectedPerson(null);
-    } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '삭제에 실패했습니다.');
-    } finally {
-      setIsSubmitting(false);
+  useEffect(() => {
+    if (viewMode === 'calendar' && !startDate && !endDate) {
+      const today = new Date();
+      const currentMonthTransactions = filteredTransactions.filter((tx) => {
+        const txDate = new Date(tx.date);
+        return txDate.getFullYear() === today.getFullYear() &&
+               txDate.getMonth() === today.getMonth();
+      });
+      setDisplayTransactions(currentMonthTransactions);
     }
-  };
+  }, [viewMode, startDate, endDate, filteredTransactions]);
 
-  const handleDeleteAccount = async () => {
-    if (!selectedAccount || !window.confirm('정말 삭제하시겠습니까?')) return;
-    try {
-      setIsSubmitting(true);
-      await apiClient.deleteAccountV2(selectedAccount.id);
-      const accountsData = await apiClient.getAccountsV2();
-      setAccounts(accountsData || []);
-      setDetailType(null);
-      setSelectedAccount(null);
-    } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '삭제에 실패했습니다.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleDeleteCard = async () => {
-    if (!selectedCard || !window.confirm('정말 삭제하시겠습니까?')) return;
-    try {
-      setIsSubmitting(true);
-      await apiClient.deleteCard(selectedCard.id);
-      const cardsData = await apiClient.getCards();
-      setCards(cardsData || []);
-      setDetailType(null);
-      setSelectedCard(null);
-    } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '삭제에 실패했습니다.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleAddCard = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       setIsSubmitting(true);
-      setAddError('');
-      const isoDate = cardForm.expiryDate ? new Date(cardForm.expiryDate).toISOString() : undefined;
-      await apiClient.createCard({
-        accountId: cardForm.accountId,
-        name: cardForm.name,
-        cardNumber: cardForm.cardNumber || undefined,
-        cardType: cardForm.cardType,
-        issuer: cardForm.issuer,
-        ...(isoDate && { expiryDate: isoDate }),
-        creditLimit:
-          cardForm.cardType === 'credit' ? parseInt(cardForm.creditLimit) : undefined,
+      let dateValue = formData.date;
+      if (formData.time) {
+        const dateObj = new Date(`${formData.date}T${formData.time}`);
+        dateValue = dateObj.toISOString();
+      } else {
+        const dateObj = new Date(formData.date);
+        dateValue = dateObj.toISOString();
+      }
+
+      if (editingId) {
+        let cardId: string | undefined = undefined;
+        if (formData.method === 'card' && formData.cardId) {
+          cardId = formData.cardId;
+        }
+
+        await apiClient.updateTransaction(editingId, {
+          type: formData.type,
+          amount: parseInt(formData.amount),
+          description: formData.description,
+          date: dateValue,
+          personId: formData.personId,
+          cardId,
+          mainCategoryId: formData.mainCategoryId,
+          subCategoryId: formData.subCategoryId || undefined,
+        });
+      } else {
+        let accountId = formData.accountId;
+        if (formData.method === 'card' && formData.cardId) {
+          const selectedCard = cards.find((c) => c.id === formData.cardId);
+          accountId = selectedCard?.accountId || formData.accountId;
+        }
+
+        await apiClient.createTransactionV2({
+          accountId,
+          personId: formData.personId,
+          type: formData.type,
+          amount: parseInt(formData.amount),
+          description: formData.description,
+          date: dateValue,
+          mainCategoryId: formData.mainCategoryId,
+          subCategoryId: formData.subCategoryId || undefined,
+          cardId: formData.method === 'card' ? formData.cardId || undefined : undefined,
+        });
+      }
+      const data = await apiClient.getTransactionsV2();
+      setTransactions(data?.data || []);
+      setFormData({
+        method: 'account',
+        accountId: '',
+        cardId: '',
+        personId: '',
+        type: 'expense',
+        mainCategoryId: '',
+        subCategoryId: '',
+        amount: '',
+        description: '',
+        date: new Date().toISOString().split('T')[0],
+        time: '',
       });
-      const cardsData = await apiClient.getCards();
-      setCards(cardsData || []);
-      setCardForm({
+      setEditingId(null);
+      setError('');
+      setIsModalOpen(false);
+    } catch (err) {
+      setError(editingId ? '거래 수정에 실패했습니다.' : '거래 추가에 실패했습니다.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleModalClose = () => {
+    setIsModalOpen(false);
+    setFormData({
+      method: 'account',
+      accountId: '',
+      cardId: '',
+      personId: '',
+      type: 'expense',
+      mainCategoryId: '',
+      subCategoryId: '',
+      amount: '',
+      description: '',
+      date: new Date().toISOString().split('T')[0],
+      time: '',
+    });
+    setEditingId(null);
+    setError('');
+  };
+
+  const handleTransactionClick = (transaction: Transaction) => {
+    setSelectedTransaction(transaction);
+    setIsDetailModalOpen(true);
+  };
+
+  const handleCalendarDateSelect = (clickedDate: Date, dayTransactions: Transaction[]) => {
+    if (!startDate) {
+      setStartDate(clickedDate);
+      setEndDate(null);
+      setDisplayTransactions(dayTransactions);
+    } else if (
+      clickedDate.getFullYear() === startDate.getFullYear() &&
+      clickedDate.getMonth() === startDate.getMonth() &&
+      clickedDate.getDate() === startDate.getDate()
+    ) {
+      setStartDate(null);
+      setEndDate(null);
+      setDisplayTransactions([]);
+      return;
+    } else if (!endDate) {
+      let newStartDate = startDate;
+      let newEndDate = clickedDate;
+      if (clickedDate < startDate) {
+        newStartDate = clickedDate;
+        newEndDate = startDate;
+      }
+      setStartDate(newStartDate);
+      setEndDate(newEndDate);
+
+      const rangeTransactions = filteredTransactions.filter((tx) => {
+        const txDate = new Date(tx.date);
+        return txDate >= newStartDate && txDate <= newEndDate;
+      });
+      setDisplayTransactions(rangeTransactions);
+    } else {
+      setStartDate(clickedDate);
+      setEndDate(null);
+      setDisplayTransactions(dayTransactions);
+    }
+
+    setTimeout(() => {
+      dateTransactionsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }, 0);
+  };
+
+  const handleDetailEditClick = () => {
+    if (!selectedTransaction) return;
+    setEditingId(selectedTransaction.id);
+    const method = selectedTransaction.cardId ? 'card' : 'account';
+    setFormData({
+      method,
+      accountId: selectedTransaction.accountId || '',
+      cardId: selectedTransaction.cardId || '',
+      personId: selectedTransaction.personId || '',
+      type: selectedTransaction.type as any,
+      mainCategoryId: selectedTransaction.mainCategoryId || '',
+      subCategoryId: selectedTransaction.subCategoryId || '',
+      amount: selectedTransaction.amount.toString(),
+      description: selectedTransaction.description || '',
+      date: selectedTransaction.date.split('T')[0],
+      time: '',
+    });
+    setIsDetailModalOpen(false);
+    setIsModalOpen(true);
+    setError('');
+  };
+
+  const handleEditClick = (transaction: Transaction) => {
+    setEditingId(transaction.id);
+    const method = transaction.cardId ? 'card' : 'account';
+    setFormData({
+      method,
+      accountId: transaction.accountId || '',
+      cardId: transaction.cardId || '',
+      personId: transaction.personId || '',
+      type: transaction.type as any,
+      mainCategoryId: transaction.mainCategoryId || '',
+      subCategoryId: transaction.subCategoryId || '',
+      amount: transaction.amount.toString(),
+      description: transaction.description || '',
+      date: transaction.date.split('T')[0],
+      time: '',
+    });
+    setIsModalOpen(true);
+    setError('');
+  };
+
+  const handleDeleteClick = async (id: string) => {
+    if (!window.confirm('정말 삭제하시겠습니까?')) return;
+    try {
+      setIsSubmitting(true);
+      await apiClient.deleteTransaction(id);
+      const data = await apiClient.getTransactionsV2();
+      setTransactions(data?.data || []);
+    } catch (err: any) {
+      const errorMsg = err?.response?.data?.error?.message || '거래 삭제에 실패했습니다.';
+      setError(errorMsg);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handlePersonModalSuccess = (updatedPeople: Person[]) => {
+    setPeople(updatedPeople);
+    setStorePeople(updatedPeople);
+    setIsPersonModalOpen(false);
+  };
+
+
+  const handleCardSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      setCardSubmitting(true);
+      const isoDate = cardFormData.expiryDate ? new Date(cardFormData.expiryDate).toISOString() : undefined;
+      await apiClient.createCard({
+        accountId: cardFormData.accountId,
+        name: cardFormData.name,
+        ...(cardFormData.cardNumber && { cardNumber: cardFormData.cardNumber }),
+        cardType: cardFormData.cardType,
+        issuer: cardFormData.issuer,
+        ...(isoDate && { expiryDate: isoDate }),
+        creditLimit: cardFormData.cardType === 'credit' ? parseInt(cardFormData.creditLimit) : undefined,
+      });
+      const data = await apiClient.getCards();
+      setCards(data || []);
+      setCardFormData({
         accountId: '',
         name: '',
         cardNumber: '',
@@ -201,791 +395,405 @@ export default function DashboardPage() {
         expiryDate: '',
         creditLimit: '',
       });
-      setAddType(null);
-    } catch (err: any) {
-      setAddError(err?.response?.data?.error?.message || '카드 추가에 실패했습니다.');
+      setIsCardModalOpen(false);
+    } catch (err) {
+      console.error('카드 추가 실패:', err);
     } finally {
-      setIsSubmitting(false);
+      setCardSubmitting(false);
     }
   };
 
-  const handleEditPersonClick = () => {
-    setPersonModalMode('edit');
-    setPersonModalOpen(true);
-  };
-
-  const handleSavePerson = async (e: React.FormEvent) => {
+  const handleCategorySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!selectedPerson) return;
     try {
-      setIsSubmitting(true);
-      await apiClient.updatePerson(selectedPerson.id, {
-        name: editPersonForm.name,
-        relationship: editPersonForm.relationship || undefined,
+      setCategorySubmitting(true);
+      await apiClient.createCategory({
+        name: categoryFormData.name,
+        type: categoryFormData.type,
+        color: categoryFormData.color || undefined,
       });
-      const peopleData = await apiClient.getPeople();
-      setPeople(peopleData || []);
-      const updatedPerson = peopleData?.find((p: Person) => p.id === selectedPerson.id);
-      if (updatedPerson) setSelectedPerson(updatedPerson);
-      setIsEditing(false);
-    } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '수정에 실패했습니다.');
+      const categoryList = await apiClient.getCategories();
+      const mainCategory = categoryList?.find((c: Category) => c.name === categoryFormData.name && c.level === 1);
+
+      if (mainCategory) {
+        const filteredSubs = categoryFormData.subCategories.filter((sub) => sub.trim());
+        for (const subName of filteredSubs) {
+          await apiClient.createCategory({
+            name: subName,
+            type: categoryFormData.type,
+            parentId: mainCategory.id,
+          });
+        }
+      }
+
+      const data = await apiClient.getCategories();
+      setCategories(data || []);
+      setCategoryFormData({
+        name: '',
+        type: 'expense',
+        subCategories: [''],
+        color: '',
+      });
+      setIsCategoryModalOpen(false);
+    } catch (err) {
+      console.error('카테고리 추가 실패:', err);
     } finally {
-      setIsSubmitting(false);
+      setCategorySubmitting(false);
     }
   };
 
-  const handleEditAccountClick = () => {
-    setIsEditAccountModalOpen(true);
-  };
-
-  const handleSaveAccount = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedAccount) return;
-    try {
-      setIsSubmitting(true);
-      await apiClient.updateAccountV2(selectedAccount.id, {
-        name: editAccountForm.name,
-        balance: parseInt(editAccountForm.balance),
-        bankName: editAccountForm.bankName,
-        accountNumber: editAccountForm.accountNumber || undefined,
-      });
-      const accountsData = await apiClient.getAccountsV2();
-      setAccounts(accountsData || []);
-      const updatedAccount = accountsData?.find((a: Account) => a.id === selectedAccount.id);
-      if (updatedAccount) setSelectedAccount(updatedAccount);
-      setIsEditing(false);
-    } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '수정에 실패했습니다.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const handleEditCardClick = () => {
-    setIsEditCardModalOpen(true);
-  };
-
-  const handleSaveCard = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedCard) return;
-    try {
-      setIsSubmitting(true);
-      await apiClient.updateCard(selectedCard.id, {
-        name: editCardForm.name,
-        issuer: editCardForm.issuer,
-        creditLimit: selectedCard.cardType === 'credit' ? parseInt(editCardForm.creditLimit) : undefined,
-      });
-      const cardsData = await apiClient.getCards();
-      setCards(cardsData || []);
-      const updatedCard = cardsData?.find((c: Card) => c.id === selectedCard.id);
-      if (updatedCard) setSelectedCard(updatedCard);
-      setIsEditing(false);
-    } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '수정에 실패했습니다.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  const totalBalance = filteredAccounts.reduce((sum, acc) => sum + acc.balance, 0);
-
-  const displayPeople = people.filter((p) => selectedPersonIds.includes(p.id));
-
-  const groupedAccounts = displayPeople.reduce(
-    (acc, person) => {
-      acc[person.id] = {
-        person,
-        accounts: filteredAccounts.filter((a) => a.owner.id === person.id),
-      };
-      return acc;
-    },
-    {} as Record<string, { person: Person; accounts: Account[] }>
-  );
+  if (!isAuthenticated) {
+    return <div>로딩 중...</div>;
+  }
 
   return (
     <>
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">자산</h2>
+        <h1 className="text-2xl font-bold text-gray-900">거래 기록</h1>
         <button
-          onClick={() => setAddType('select')}
+          onClick={() => setIsModalOpen(true)}
           className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
         >
-          추가하기
+          거래 추가
         </button>
       </div>
 
-      <div className="bg-blue-600 text-white rounded-lg p-8 mb-8">
-        <p className="text-sm opacity-90">총 자산</p>
-        <p className="text-4xl font-bold mt-2">
-          {new Intl.NumberFormat('ko-KR', {
-            style: 'currency',
-            currency: 'KRW',
-          }).format(totalBalance)}
-        </p>
+      <div className="flex gap-2 mb-6 border-b border-gray-200">
+        <button
+          onClick={() => setViewMode('list')}
+          className={`px-4 py-2 font-medium transition ${
+            viewMode === 'list'
+              ? 'text-blue-600 border-b-2 border-blue-600'
+              : 'text-gray-600 hover:text-gray-900'
+          }`}
+        >
+          목록
+        </button>
+        <button
+          onClick={() => setViewMode('calendar')}
+          className={`px-4 py-2 font-medium transition ${
+            viewMode === 'calendar'
+              ? 'text-blue-600 border-b-2 border-blue-600'
+              : 'text-gray-600 hover:text-gray-900'
+          }`}
+        >
+          캘린더
+        </button>
       </div>
 
-      {error && (
-        <div className="p-3 bg-red-50 text-red-800 text-sm rounded mb-4">
-          {error}
-        </div>
-      )}
-
-      {isLoading ? (
-        <p className="text-gray-600">로딩 중...</p>
-      ) : accounts.length === 0 ? (
-        <p className="text-gray-600">등록된 계좌가 없습니다.</p>
-      ) : (
-        <div className="space-y-8">
-          {Object.entries(groupedAccounts).map(([personId, { person, accounts: personAccounts }]) => (
-            <div
-              key={personId}
-              className="bg-white rounded-lg shadow p-6 hover:shadow-md hover:bg-gray-50 transition"
-            >
-              <button
-                onClick={() => {
-                  setSelectedPerson(person);
-                  setDetailType('person');
-                }}
-                className="w-full text-left mb-6"
-              >
-                <div className="flex justify-between items-center">
-                  <div>
-                    <h2 className="text-xl font-bold text-gray-900">{person.name}</h2>
-                    <p className="text-sm text-gray-600">
-                      소계: {new Intl.NumberFormat('ko-KR', {
+      <div>
+        {isLoading ? (
+          <p className="text-gray-600">로딩 중...</p>
+        ) : transactions.length === 0 ? (
+          <p className="text-gray-600">거래가 없습니다.</p>
+        ) : viewMode === 'list' ? (
+          <>
+            <div className="space-y-2">
+              {filteredTransactions.map((tx) => (
+                <div
+                  key={tx.id}
+                  className="bg-white rounded-lg shadow p-4 flex justify-between items-center border-l-4 border-blue-500 cursor-pointer hover:shadow-lg transition"
+                  onClick={() => handleTransactionClick(tx)}
+                >
+                  <div className="flex-1">
+                    <p className="font-bold text-gray-900">{tx.description}</p>
+                    <p className="text-sm text-gray-600">{tx.mainCategory}</p>
+                    <p className="text-xs text-gray-500">
+                      {new Date(tx.date).toLocaleDateString('ko-KR')}
+                    </p>
+                  </div>
+                  <div className="text-right mr-4">
+                    <p className={`text-lg font-bold ${
+                      tx.type === 'income' ? 'text-green-600' : 'text-red-600'
+                    }`}>
+                      {tx.type === 'income' ? '+' : '-'}
+                      {new Intl.NumberFormat('ko-KR', {
                         style: 'currency',
                         currency: 'KRW',
-                      }).format(personAccounts.reduce((sum, acc) => sum + acc.balance, 0))}
+                      }).format(tx.amount)}
                     </p>
                   </div>
                 </div>
-              </button>
-
-              {personAccounts.length === 0 ? (
-                <p className="text-gray-600">등록된 계좌가 없습니다.</p>
-              ) : (
-                <div className="space-y-4">
-                  {personAccounts.map((account) => {
-                    const accountCards = getAccountCards(account.id);
-                    return (
-                      <div
-                        key={account.id}
-                        className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition"
-                      >
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedAccount(account);
-                            setDetailType('account');
-                          }}
-                          className="w-full text-left hover:opacity-70 transition"
-                        >
-                          <p className="text-sm text-gray-600">{account.bankName}</p>
-                          <p className="text-2xl font-bold text-gray-900 mt-2">
-                            {new Intl.NumberFormat('ko-KR', {
-                              style: 'currency',
-                              currency: account.currency,
-                            }).format(account.balance)}
-                          </p>
-                          <p className="text-xs text-gray-500 mt-2">{account.name}</p>
-                          {account.accountNumber && (
-                            <p className="text-xs text-gray-400 mt-1">{account.accountNumber}</p>
-                          )}
-                        </button>
-
-                        {accountCards.length > 0 && (
-                          <div className="mt-4 pt-4 border-t border-gray-200 space-y-2">
-                            {accountCards.map((card) => (
-                              <button
-                                key={card.id}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedCard(card);
-                                  setDetailType('card');
-                                }}
-                                className="w-full text-left px-3 py-2 bg-green-50 rounded border border-green-100 hover:bg-green-100 transition"
-                              >
-                                <p className="text-sm font-medium text-gray-900">
-                                  💳 {card.name}
-                                </p>
-                                <p className="text-xs text-gray-600">{card.issuer}</p>
-                                <p className="text-xs text-gray-600">
-                                  {card.cardType === 'debit' ? '체크카드' : '신용카드'}
-                                </p>
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              ))}
             </div>
-          ))}
-        </div>
-      )}
 
-      {/* 구성원 상세정보 모달 */}
-      {detailType === 'person' && selectedPerson && (
-        <Modal
-          isOpen={true}
-          onClose={() => {
-            setDetailType(null);
-            setSelectedPerson(null);
-            setIsEditing(false);
-          }}
-          title={isEditing ? '구성원 수정' : '구성원 상세정보'}
-        >
-          {isEditing ? (
-            <form onSubmit={handleSavePerson} className="space-y-4">
+            {error && (
+              <div className="mt-4 p-3 bg-red-50 text-red-800 text-sm rounded">
+                {error}
+              </div>
+            )}
+          </>
+        ) : (
+          <div>
+            <TransactionCalendar
+              transactions={filteredTransactions}
+              onDateSelect={handleCalendarDateSelect}
+              startDate={startDate}
+              endDate={endDate}
+            />
+
+            {(displayTransactions.length > 0 || (viewMode === 'calendar' && !startDate && !endDate)) && (
+              <div ref={dateTransactionsRef} className="mt-8">
+                <h3 className="text-lg font-bold text-gray-900 mb-4">
+                  {endDate
+                    ? `${startDate?.toISOString().split('T')[0]} ~ ${endDate.toISOString().split('T')[0]}의 거래`
+                    : startDate
+                    ? `${startDate.toISOString().split('T')[0]}의 거래`
+                    : `${new Date().getFullYear()}년 ${new Date().getMonth() + 1}월의 거래`}
+                </h3>
+                <div className="space-y-2">
+                  {(displayTransactions.length > 0
+                    ? displayTransactions
+                    : viewMode === 'calendar' && !startDate && !endDate
+                    ? filteredTransactions.filter((tx) => {
+                        const txDate = new Date(tx.date);
+                        const today = new Date();
+                        return txDate.getFullYear() === today.getFullYear() &&
+                               txDate.getMonth() === today.getMonth();
+                      })
+                    : []
+                  ).map((tx) => (
+                    <div
+                      key={tx.id}
+                      className="bg-white rounded-lg shadow p-4 flex justify-between items-center border-l-4 border-blue-500 cursor-pointer hover:shadow-lg transition"
+                      onClick={() => handleTransactionClick(tx)}
+                    >
+                      <div className="flex-1">
+                        <p className="font-bold text-gray-900">{tx.description}</p>
+                        <p className="text-sm text-gray-600">{tx.mainCategory}</p>
+                        <p className="text-xs text-gray-500">
+                          {new Date(tx.date).toLocaleDateString('ko-KR')}
+                        </p>
+                      </div>
+                      <div className="text-right mr-4">
+                        <p className={`text-lg font-bold ${
+                          tx.type === 'income' ? 'text-green-600' : 'text-red-600'
+                        }`}>
+                          {tx.type === 'income' ? '+' : '-'}
+                          {new Intl.NumberFormat('ko-KR', {
+                            style: 'currency',
+                            currency: 'KRW',
+                          }).format(tx.amount)}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <Modal
+        isOpen={isModalOpen}
+        onClose={handleModalClose}
+        title={editingId ? '거래 수정' : '거래 추가'}
+      >
+        <form onSubmit={handleSubmit} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  이름
+                  수단 선택
                 </label>
-                <input
-                  type="text"
-                  required
-                  value={editPersonForm.name}
-                  onChange={(e) =>
-                    setEditPersonForm({ ...editPersonForm, name: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  관계 (선택)
-                </label>
-                <input
-                  type="text"
-                  value={editPersonForm.relationship}
-                  onChange={(e) =>
-                    setEditPersonForm({ ...editPersonForm, relationship: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="배우자, 자녀 등"
-                />
-              </div>
-
-              <div className="flex gap-2 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(false)}
-                  className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
-                >
-                  취소
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {isSubmitting ? '저장 중...' : '저장'}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <>
-              <div className="space-y-4 max-h-96 overflow-y-auto">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    이름
+                <div className="flex gap-4 mb-4">
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      value="account"
+                      checked={formData.method === 'account'}
+                      onChange={(e) => setFormData({ ...formData, method: e.target.value as any, accountId: '', cardId: '' })}
+                      className="mr-2"
+                    />
+                    <span className="text-sm">계좌</span>
                   </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {selectedPerson.name}
-                  </p>
+                  <label className="flex items-center">
+                    <input
+                      type="radio"
+                      value="card"
+                      checked={formData.method === 'card'}
+                      onChange={(e) => setFormData({ ...formData, method: e.target.value as any, accountId: '', cardId: '' })}
+                      className="mr-2"
+                    />
+                    <span className="text-sm">카드</span>
+                  </label>
                 </div>
               </div>
 
-              <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
-                <button
-                  onClick={handleEditPersonClick}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  수정하기
-                </button>
-                <button
-                  onClick={handleDeletePerson}
-                  disabled={isSubmitting}
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-                >
-                  삭제하기
-                </button>
-              </div>
-            </>
-          )}
-        </Modal>
-      )}
-
-      {/* 계좌 상세정보 모달 */}
-      {detailType === 'account' && selectedAccount && (
-        <Modal
-          isOpen={true}
-          onClose={() => {
-            setDetailType(null);
-            setSelectedAccount(null);
-            setIsEditing(false);
-          }}
-          title={isEditing ? '계좌 수정' : '계좌 상세정보'}
-        >
-          {isEditing ? (
-            <form onSubmit={handleSaveAccount} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  통장 주인
+                  {formData.method === 'account' ? '계좌' : '카드'}
                 </label>
-                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                  {selectedAccount?.owner?.name || '-'}
-                </p>
+                {formData.method === 'account' ? (
+                  <CustomSelect
+                    options={accounts.map((acc) => ({ id: acc.id, name: acc.name }))}
+                    value={formData.accountId}
+                    onChange={(value) => setFormData({ ...formData, accountId: value })}
+                    placeholder="선택하세요"
+                    onAddClick={() => setIsAccountModalOpen(true)}
+                    addButtonLabel="계좌 추가"
+                  />
+                ) : (
+                  <CustomSelect
+                    options={cards.map((card) => ({
+                      id: card.id,
+                      name: `${card.name} (${card.issuer})`,
+                    }))}
+                    value={formData.cardId}
+                    onChange={(value) => setFormData({ ...formData, cardId: value })}
+                    placeholder="선택하세요"
+                    onAddClick={() => setIsCardModalOpen(true)}
+                    addButtonLabel="카드 추가"
+                  />
+                )}
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  계좌명
+                  사용자
                 </label>
-                <input
-                  type="text"
-                  required
-                  value={editAccountForm.name}
-                  onChange={(e) =>
-                    setEditAccountForm({ ...editAccountForm, name: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                <CustomSelect
+                  options={people.map((p) => ({ id: p.id, name: p.name }))}
+                  value={formData.personId}
+                  onChange={(value) => setFormData({ ...formData, personId: value })}
+                  placeholder="선택하세요"
+                  onAddClick={() => setIsPersonModalOpen(true)}
+                  addButtonLabel="사용자 추가"
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  은행명
+                  유형
                 </label>
-                <input
-                  type="text"
-                  required
-                  value={editAccountForm.bankName}
-                  onChange={(e) =>
-                    setEditAccountForm({ ...editAccountForm, bankName: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                <CustomSelect
+                  options={[
+                    { id: 'expense', name: '지출' },
+                    { id: 'income', name: '수입' },
+                    { id: 'transfer', name: '이체' },
+                  ]}
+                  value={formData.type}
+                  onChange={(value) => setFormData({ ...formData, type: value as any, mainCategoryId: '', subCategoryId: '' })}
+                  placeholder="선택하세요"
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  잔액 (원)
+                  대분류
+                </label>
+                <CustomSelect
+                  options={categories
+                    .filter((c) => c.level === 1 && c.type === formData.type)
+                    .map((cat) => ({ id: cat.id, name: cat.name }))}
+                  value={formData.mainCategoryId}
+                  onChange={(value) => setFormData({ ...formData, mainCategoryId: value, subCategoryId: '' })}
+                  placeholder="선택하세요"
+                  onAddClick={() => setIsCategoryModalOpen(true)}
+                  addButtonLabel="대분류 추가"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  소분류 (선택)
+                </label>
+                <CustomSelect
+                  options={
+                    formData.mainCategoryId
+                      ? categories
+                          .filter(
+                            (c) =>
+                              c.level === 2 &&
+                              c.parentId === formData.mainCategoryId
+                          )
+                          .map((cat) => ({ id: cat.id, name: cat.name }))
+                      : [{ id: '', name: '없음' }]
+                  }
+                  value={formData.subCategoryId}
+                  onChange={(value) => setFormData({ ...formData, subCategoryId: value })}
+                  placeholder="없음"
+                  onAddClick={() => router.push('/dashboard/categories')}
+                  addButtonLabel="소분류 추가"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  금액 (원)
                 </label>
                 <input
                   type="number"
                   required
-                  value={editAccountForm.balance}
-                  onChange={(e) =>
-                    setEditAccountForm({ ...editAccountForm, balance: e.target.value })
-                  }
+                  value={formData.amount}
+                  onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="50000"
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  계좌번호 (선택)
+                  설명 (선택)
                 </label>
                 <input
                   type="text"
-                  value={editAccountForm.accountNumber}
-                  onChange={(e) =>
-                    setEditAccountForm({ ...editAccountForm, accountNumber: e.target.value })
-                  }
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="예: 123-456-7890"
+                  placeholder="거래 설명 (선택사항)"
                 />
               </div>
 
-              <div className="flex gap-2 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(false)}
-                  className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
-                >
-                  취소
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {isSubmitting ? '저장 중...' : '저장'}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <>
-              <div className="space-y-4 max-h-96 overflow-y-auto">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    통장 주인
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {selectedAccount.owner?.name || '-'}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    계좌명
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {selectedAccount.name}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    은행
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {selectedAccount.bankName}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    잔액
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900 font-semibold">
-                    {new Intl.NumberFormat('ko-KR', {
-                      style: 'currency',
-                      currency: selectedAccount.currency,
-                    }).format(selectedAccount.balance)}
-                  </p>
-                </div>
-
-                {selectedAccount.accountNumber && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      계좌번호
-                    </label>
-                    <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                      {selectedAccount.accountNumber}
-                    </p>
-                  </div>
-                )}
-              </div>
-
-              <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
-                <button
-                  onClick={handleEditAccountClick}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  수정하기
-                </button>
-                <button
-                  onClick={handleDeleteAccount}
-                  disabled={isSubmitting}
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-                >
-                  삭제하기
-                </button>
-              </div>
-            </>
-          )}
-        </Modal>
-      )}
-
-      {/* 카드 상세정보 모달 */}
-      {detailType === 'card' && selectedCard && (
-        <Modal
-          isOpen={true}
-          onClose={() => {
-            setDetailType(null);
-            setSelectedCard(null);
-            setIsEditing(false);
-          }}
-          title={isEditing ? '카드 수정' : '카드 상세정보'}
-        >
-          {isEditing ? (
-            <form onSubmit={handleSaveCard} className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  계좌
-                </label>
-                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                  {accounts.find((a) => a.id === editCardForm.accountId)?.name || '-'}
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  카드 이름
+                  날짜
                 </label>
                 <input
-                  type="text"
+                  type="date"
                   required
-                  value={editCardForm.name}
-                  onChange={(e) =>
-                    setEditCardForm({ ...editCardForm, name: e.target.value })
-                  }
+                  value={formData.date}
+                  onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  카드 번호
-                </label>
-                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                  {selectedCard.cardNumberMasked}
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  카드 유형
-                </label>
-                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                  {selectedCard.cardType === 'debit' ? '체크카드' : '신용카드'}
-                </p>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  발급사
+                  시간 (선택)
                 </label>
                 <input
-                  type="text"
-                  required
-                  value={editCardForm.issuer}
-                  onChange={(e) =>
-                    setEditCardForm({ ...editCardForm, issuer: e.target.value })
-                  }
+                  type="time"
+                  value={formData.time}
+                  onChange={(e) => setFormData({ ...formData, time: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
 
-              {selectedCard.cardType === 'credit' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    신용한도 (원)
-                  </label>
-                  <input
-                    type="number"
-                    value={editCardForm.creditLimit}
-                    onChange={(e) =>
-                      setEditCardForm({ ...editCardForm, creditLimit: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
+              {error && (
+                <div className="p-3 bg-red-50 text-red-800 text-sm rounded">
+                  {error}
                 </div>
               )}
 
-              <div className="flex gap-2 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(false)}
-                  className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
-                >
-                  취소
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {isSubmitting ? '저장 중...' : '저장'}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <>
-              <div className="space-y-4 max-h-96 overflow-y-auto">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    카드 이름
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {selectedCard.name}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    계좌
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {accounts.find((a) => a.id === selectedCard.accountId)?.name || '-'}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    카드 번호
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {selectedCard.cardNumberMasked}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    카드 유형
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {selectedCard.cardType === 'debit' ? '체크카드' : '신용카드'}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    발급사
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {selectedCard.issuer}
-                  </p>
-                </div>
-
-                {selectedCard.cardType === 'credit' && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        사용액
-                      </label>
-                      <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                        {new Intl.NumberFormat('ko-KR', {
-                          style: 'currency',
-                          currency: 'KRW',
-                        }).format(selectedCard.currentBalance || 0)}
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        신용한도
-                      </label>
-                      <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                        {new Intl.NumberFormat('ko-KR', {
-                          style: 'currency',
-                          currency: 'KRW',
-                        }).format(selectedCard.creditLimit || 0)}
-                      </p>
-                    </div>
-                  </>
-                )}
-              </div>
-
-              <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
-                <button
-                  onClick={handleEditCardClick}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  수정하기
-                </button>
-                <button
-                  onClick={handleDeleteCard}
-                  disabled={isSubmitting}
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-                >
-                  삭제하기
-                </button>
-              </div>
-            </>
-          )}
-        </Modal>
-      )}
-
-      <PersonModal
-        isOpen={personModalOpen}
-        onClose={() => setPersonModalOpen(false)}
-        person={selectedPerson}
-        mode={personModalMode as 'view' | 'edit'}
-        onSuccess={(updatedPeople) => {
-          setPeople(updatedPeople);
-          setSelectedPerson(null);
-          setPersonModalOpen(false);
-        }}
-        onDelete={handleDeletePerson}
-      />
-
-      <EditAccountModal
-        isOpen={isEditAccountModalOpen}
-        onClose={() => setIsEditAccountModalOpen(false)}
-        account={selectedAccount as any}
-        people={people}
-        onSuccess={(updatedAccounts) => {
-          setAccounts(updatedAccounts as Account[]);
-          setSelectedAccount(null);
-          setIsEditAccountModalOpen(false);
-        }}
-        onDelete={handleDeleteAccount}
-      />
-
-      <EditCardModal
-        isOpen={isEditCardModalOpen}
-        onClose={() => setIsEditCardModalOpen(false)}
-        card={selectedCard}
-        accounts={accounts}
-        onSuccess={(updatedCards) => {
-          setCards(updatedCards || []);
-          setSelectedCard(null);
-          setIsEditCardModalOpen(false);
-        }}
-        onDelete={handleDeleteCard}
-      />
-
-      {/* 추가 유형 선택 팝업 */}
-      <Modal
-        isOpen={addType === 'select'}
-        onClose={() => setAddType(null)}
-        title="추가하기"
-      >
-        <div className="space-y-3">
           <button
-            onClick={() => {
-              setAddType(null);
-              setIsPersonAddModalOpen(true);
-            }}
-            className="w-full px-4 py-3 text-left bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition"
+            type="submit"
+            disabled={isSubmitting}
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
-            <p className="font-semibold text-gray-900">👤 구성원 추가</p>
-            <p className="text-xs text-gray-600 mt-1">새로운 가족 구성원을 추가합니다</p>
+            {isSubmitting ? (editingId ? '수정 중...' : '추가 중...') : (editingId ? '수정하기' : '추가하기')}
           </button>
-
-          <button
-            onClick={() => {
-              setAddType(null);
-              setIsAccountModalOpen(true);
-            }}
-            className="w-full px-4 py-3 text-left bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition"
-          >
-            <p className="font-semibold text-gray-900">🏦 계좌 추가</p>
-            <p className="text-xs text-gray-600 mt-1">새로운 계좌를 추가합니다</p>
-          </button>
-
-          <button
-            onClick={() => setAddType('card')}
-            className="w-full px-4 py-3 text-left bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition"
-          >
-            <p className="font-semibold text-gray-900">💳 카드 추가</p>
-            <p className="text-xs text-gray-600 mt-1">새로운 카드를 추가합니다</p>
-          </button>
-        </div>
+        </form>
       </Modal>
 
-      {/* 구성원 추가 모달 */}
       <PersonModal
-        isOpen={isPersonAddModalOpen}
-        onClose={() => setIsPersonAddModalOpen(false)}
+        isOpen={isPersonModalOpen}
+        onClose={() => setIsPersonModalOpen(false)}
         person={null}
         mode="add"
-        onSuccess={(updatedPeople) => {
-          setPeople(updatedPeople);
-          setStorePeople(updatedPeople);
-          setIsPersonAddModalOpen(false);
-        }}
+        onSuccess={handlePersonModalSuccess}
         onDelete={async () => {}}
       />
 
-      {/* 계좌 추가 모달 */}
       <AddAccountModal
         isOpen={isAccountModalOpen}
         onClose={() => setIsAccountModalOpen(false)}
@@ -993,34 +801,23 @@ export default function DashboardPage() {
         people={people}
       />
 
-      {/* 카드 추가 모달 */}
       <Modal
-        isOpen={addType === 'card'}
-        onClose={() => {
-          setAddType(null);
-          setCardForm({
-            accountId: '',
-            name: '',
-            cardNumber: '',
-            cardType: 'debit',
-            issuer: '',
-            expiryDate: '',
-            creditLimit: '',
-          });
-          setAddError('');
-        }}
+        isOpen={isCardModalOpen}
+        onClose={() => setIsCardModalOpen(false)}
         title="카드 추가"
       >
-        <form onSubmit={handleAddCard} className="space-y-4">
+        <form onSubmit={handleCardSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               계좌
             </label>
             <CustomSelect
               options={accounts.map((acc) => ({ id: acc.id, name: acc.name }))}
-              value={cardForm.accountId}
-              onChange={(value) => setCardForm({ ...cardForm, accountId: value })}
+              value={cardFormData.accountId}
+              onChange={(value) => setCardFormData({ ...cardFormData, accountId: value })}
               placeholder="선택하세요"
+              onAddClick={() => {}}
+              addButtonLabel="계좌 추가"
             />
           </div>
 
@@ -1031,8 +828,8 @@ export default function DashboardPage() {
             <input
               type="text"
               required
-              value={cardForm.name}
-              onChange={(e) => setCardForm({ ...cardForm, name: e.target.value })}
+              value={cardFormData.name}
+              onChange={(e) => setCardFormData({ ...cardFormData, name: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="예: 내 체크카드"
             />
@@ -1044,8 +841,8 @@ export default function DashboardPage() {
             </label>
             <input
               type="text"
-              value={cardForm.cardNumber}
-              onChange={(e) => setCardForm({ ...cardForm, cardNumber: e.target.value })}
+              value={cardFormData.cardNumber}
+              onChange={(e) => setCardFormData({ ...cardFormData, cardNumber: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="16자리"
             />
@@ -1060,9 +857,11 @@ export default function DashboardPage() {
                 { id: 'debit', name: '체크카드' },
                 { id: 'credit', name: '신용카드' },
               ]}
-              value={cardForm.cardType}
-              onChange={(value) => setCardForm({ ...cardForm, cardType: value as 'debit' | 'credit' })}
+              value={cardFormData.cardType}
+              onChange={(value) => setCardFormData({ ...cardFormData, cardType: value })}
               placeholder="선택하세요"
+              onAddClick={() => {}}
+              addButtonLabel=""
             />
           </div>
 
@@ -1073,8 +872,8 @@ export default function DashboardPage() {
             <input
               type="text"
               required
-              value={cardForm.issuer}
-              onChange={(e) => setCardForm({ ...cardForm, issuer: e.target.value })}
+              value={cardFormData.issuer}
+              onChange={(e) => setCardFormData({ ...cardFormData, issuer: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="KB Bank, Samsung Card 등"
             />
@@ -1086,42 +885,278 @@ export default function DashboardPage() {
             </label>
             <input
               type="date"
-              value={cardForm.expiryDate}
-              onChange={(e) => setCardForm({ ...cardForm, expiryDate: e.target.value })}
+              value={cardFormData.expiryDate}
+              onChange={(e) => setCardFormData({ ...cardFormData, expiryDate: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
 
-          {cardForm.cardType === 'credit' && (
+          {cardFormData.cardType === 'credit' && (
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 신용한도 (원)
               </label>
               <input
                 type="number"
-                value={cardForm.creditLimit}
-                onChange={(e) => setCardForm({ ...cardForm, creditLimit: e.target.value })}
+                value={cardFormData.creditLimit}
+                onChange={(e) => setCardFormData({ ...cardFormData, creditLimit: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 placeholder="5000000"
               />
             </div>
           )}
 
-          {addError && (
-            <div className="p-3 bg-red-50 text-red-800 text-sm rounded">
-              {addError}
-            </div>
-          )}
-
           <button
             type="submit"
-            disabled={isSubmitting}
+            disabled={cardSubmitting}
             className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
-            {isSubmitting ? '추가 중...' : '추가하기'}
+            {cardSubmitting ? '추가 중...' : '추가하기'}
           </button>
         </form>
       </Modal>
+
+      <Modal
+        isOpen={isCategoryModalOpen}
+        onClose={() => setIsCategoryModalOpen(false)}
+        title="카테고리 추가"
+      >
+        <form onSubmit={handleCategorySubmit} className="space-y-4">
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              대분류 이름
+            </label>
+            <input
+              type="text"
+              required
+              value={categoryFormData.name}
+              onChange={(e) => setCategoryFormData({ ...categoryFormData, name: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="예: 음식"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              유형
+            </label>
+            <CustomSelect
+              options={[
+                { id: 'expense', name: '지출' },
+                { id: 'income', name: '수입' },
+              ]}
+              value={categoryFormData.type}
+              onChange={(value) => setCategoryFormData({ ...categoryFormData, type: value as any })}
+              placeholder="선택하세요"
+              onAddClick={() => {}}
+              addButtonLabel=""
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              소분류 (선택)
+            </label>
+            <div className="space-y-2 max-h-40 overflow-y-auto">
+              {categoryFormData.subCategories.map((subCat, index) => (
+                <div key={index} className="flex gap-2">
+                  <input
+                    type="text"
+                    value={subCat}
+                    onChange={(e) => {
+                      const newSubs = [...categoryFormData.subCategories];
+                      newSubs[index] = e.target.value;
+                      setCategoryFormData({ ...categoryFormData, subCategories: newSubs });
+                    }}
+                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="소분류 이름"
+                  />
+                  {categoryFormData.subCategories.length > 1 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newSubs = categoryFormData.subCategories.filter((_, i) => i !== index);
+                        setCategoryFormData({ ...categoryFormData, subCategories: newSubs });
+                      }}
+                      className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg"
+                    >
+                      제거
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              onClick={() => setCategoryFormData({ ...categoryFormData, subCategories: [...categoryFormData.subCategories, ''] })}
+              className="mt-2 px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
+            >
+              소분류 추가
+            </button>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              색상 (선택)
+            </label>
+            <div className="flex items-center gap-3">
+              <div
+                className="w-12 h-12 rounded border-2 border-gray-300 flex-shrink-0"
+                style={{ backgroundColor: categoryFormData.color || '#ffffff' }}
+              ></div>
+              <input
+                type="color"
+                value={categoryFormData.color}
+                onChange={(e) => setCategoryFormData({ ...categoryFormData, color: e.target.value })}
+                className="flex-1 h-10 px-1 border border-gray-300 rounded-lg cursor-pointer"
+              />
+              {categoryFormData.color && (
+                <span className="text-sm text-gray-600 flex-shrink-0 w-20">
+                  {categoryFormData.color}
+                </span>
+              )}
+            </div>
+          </div>
+
+          <button
+            type="submit"
+            disabled={categorySubmitting}
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >
+            {categorySubmitting ? '추가 중...' : '추가하기'}
+          </button>
+        </form>
+      </Modal>
+
+      <Modal
+        isOpen={isDetailModalOpen}
+        onClose={() => setIsDetailModalOpen(false)}
+        title="거래 상세내역"
+      >
+        {selectedTransaction && (
+          <div className="space-y-4 max-h-96 overflow-y-auto">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                수단
+              </label>
+              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                {selectedTransaction.cardId ? '카드' : '계좌'}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                {selectedTransaction.cardId ? '카드' : '계좌'}
+              </label>
+              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                {selectedTransaction.cardId
+                  ? cards.find(c => c.id === selectedTransaction.cardId)?.name || '-'
+                  : accounts.find(a => a.id === selectedTransaction.accountId)?.name || '-'
+                }
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                사용자
+              </label>
+              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                {people.find(p => p.id === selectedTransaction.personId)?.name || '-'}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                유형
+              </label>
+              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                {selectedTransaction.type === 'income' ? '수입' : selectedTransaction.type === 'expense' ? '지출' : '이체'}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                대분류
+              </label>
+              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                {selectedTransaction.mainCategoryId
+                  ? categories.find(c => c.id === selectedTransaction.mainCategoryId)?.name || '-'
+                  : '-'}
+              </p>
+            </div>
+
+            {selectedTransaction.subCategoryId && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  소분류
+                </label>
+                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                  {categories.find(c => c.id === selectedTransaction.subCategoryId)?.name || '-'}
+                </p>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                금액
+              </label>
+              <p className={`px-3 py-2 bg-gray-50 rounded-lg text-lg font-bold ${
+                selectedTransaction.type === 'income' ? 'text-green-600' : 'text-red-600'
+              }`}>
+                {selectedTransaction.type === 'income' ? '+' : '-'}
+                {new Intl.NumberFormat('ko-KR', {
+                  style: 'currency',
+                  currency: 'KRW',
+                }).format(selectedTransaction.amount)}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                설명
+              </label>
+              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                {selectedTransaction.description || '-'}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                날짜
+              </label>
+              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                {new Date(selectedTransaction.date).toLocaleDateString('ko-KR', {
+                  year: 'numeric',
+                  month: 'long',
+                  day: 'numeric',
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </p>
+            </div>
+
+            <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
+              <button
+                onClick={handleDetailEditClick}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                수정하기
+              </button>
+              <button
+                onClick={async () => {
+                  setIsDetailModalOpen(false);
+                  await handleDeleteClick(selectedTransaction.id);
+                }}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                disabled={isSubmitting}
+              >
+                삭제하기
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
+
     </>
   );
 }
