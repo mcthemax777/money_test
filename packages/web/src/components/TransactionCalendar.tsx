@@ -28,11 +28,18 @@ interface CalendarDay {
 interface Props {
   transactions: Transaction[];
   onDateSelect: (date: Date, transactions: Transaction[]) => void;
+  onMonthChange?: (year: number, month: number) => void;
   startDate?: Date | null;
   endDate?: Date | null;
 }
 
-export default function TransactionCalendar({ transactions, onDateSelect, startDate, endDate }: Props) {
+export default function TransactionCalendar({
+  transactions,
+  onDateSelect,
+  onMonthChange,
+  startDate,
+  endDate,
+}: Props) {
   const [currentDate, setCurrentDate] = useState(new Date());
 
   const isDateInRange = (date: Date): boolean => {
@@ -99,15 +106,21 @@ export default function TransactionCalendar({ transactions, onDateSelect, startD
   }, [currentDate, transactions]);
 
   const handlePrevMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1));
+    const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1);
+    setCurrentDate(newDate);
+    onMonthChange?.(newDate.getFullYear(), newDate.getMonth() + 1);
   };
 
   const handleNextMonth = () => {
-    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1));
+    const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1);
+    setCurrentDate(newDate);
+    onMonthChange?.(newDate.getFullYear(), newDate.getMonth() + 1);
   };
 
   const handleToday = () => {
-    setCurrentDate(new Date());
+    const today = new Date();
+    setCurrentDate(today);
+    onMonthChange?.(today.getFullYear(), today.getMonth() + 1);
   };
 
   const weekDays = ['일', '월', '화', '수', '목', '금', '토'];
