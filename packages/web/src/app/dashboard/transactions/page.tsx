@@ -8,6 +8,8 @@ import { apiClient } from '@/lib/api-client';
 import CustomSelect from '@/components/CustomSelect';
 import Modal from '@/components/Modal';
 import TransactionCalendar from '@/components/TransactionCalendar';
+import AddAccountModal from '@/components/AddAccountModal';
+import PersonModal from '@/components/PersonModal';
 
 interface Transaction {
   id: string;
@@ -74,8 +76,6 @@ export default function TransactionsPage() {
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [isCardModalOpen, setIsCardModalOpen] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
-  const [personFormData, setPersonFormData] = useState({ name: '', relationship: '' });
-  const [personSubmitting, setPersonSubmitting] = useState(false);
   const [accountFormData, setAccountFormData] = useState({
     ownerId: '',
     name: '',
@@ -363,53 +363,12 @@ export default function TransactionsPage() {
     }
   };
 
-  const handlePersonSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      setPersonSubmitting(true);
-      await apiClient.createPerson({
-        name: personFormData.name,
-        relationship: personFormData.relationship || undefined,
-      });
-      const data = await apiClient.getPeople();
-      setPeople(data || []);
-      setStorePeople(data || []);
-      setPersonFormData({ name: '', relationship: '' });
-      setIsPersonModalOpen(false);
-    } catch (err) {
-      console.error('사용자 추가 실패:', err);
-    } finally {
-      setPersonSubmitting(false);
-    }
+  const handlePersonModalSuccess = (updatedPeople: Person[]) => {
+    setPeople(updatedPeople);
+    setStorePeople(updatedPeople);
+    setIsPersonModalOpen(false);
   };
 
-  const handleAccountSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      setAccountSubmitting(true);
-      await apiClient.createAccountV2({
-        ownerId: accountFormData.ownerId,
-        name: accountFormData.name,
-        balance: parseInt(accountFormData.balance),
-        bankName: accountFormData.bankName,
-        ...(accountFormData.accountNumber && { accountNumber: accountFormData.accountNumber }),
-      });
-      const data = await apiClient.getAccountsV2();
-      setAccounts(data || []);
-      setAccountFormData({
-        ownerId: '',
-        name: '',
-        balance: '',
-        bankName: '',
-        accountNumber: '',
-      });
-      setIsAccountModalOpen(false);
-    } catch (err) {
-      console.error('계좌 추가 실패:', err);
-    } finally {
-      setAccountSubmitting(false);
-    }
-  };
 
   const handleCardSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -826,133 +785,21 @@ export default function TransactionsPage() {
         </form>
       </Modal>
 
-      <Modal
+      <PersonModal
         isOpen={isPersonModalOpen}
         onClose={() => setIsPersonModalOpen(false)}
-        title="사용자 추가"
-      >
-        <form onSubmit={handlePersonSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              이름
-            </label>
-            <input
-              type="text"
-              required
-              value={personFormData.name}
-              onChange={(e) => setPersonFormData({ ...personFormData, name: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="이름 입력"
-            />
-          </div>
+        person={null}
+        mode="add"
+        onSuccess={handlePersonModalSuccess}
+        onDelete={async () => {}}
+      />
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              관계 (선택)
-            </label>
-            <input
-              type="text"
-              value={personFormData.relationship}
-              onChange={(e) => setPersonFormData({ ...personFormData, relationship: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="배우자, 자녀 등"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={personSubmitting}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-          >
-            {personSubmitting ? '추가 중...' : '추가하기'}
-          </button>
-        </form>
-      </Modal>
-
-      <Modal
+      <AddAccountModal
         isOpen={isAccountModalOpen}
         onClose={() => setIsAccountModalOpen(false)}
-        title="계좌 추가"
-      >
-        <form onSubmit={handleAccountSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              통장 주인
-            </label>
-            <CustomSelect
-              options={people.map((p) => ({ id: p.id, name: p.name }))}
-              value={accountFormData.ownerId}
-              onChange={(value) => setAccountFormData({ ...accountFormData, ownerId: value })}
-              placeholder="선택하세요"
-              onAddClick={() => {}}
-              addButtonLabel="사용자 추가"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              계좌명
-            </label>
-            <input
-              type="text"
-              required
-              value={accountFormData.name}
-              onChange={(e) => setAccountFormData({ ...accountFormData, name: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="예: 급여 통장"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              은행명
-            </label>
-            <input
-              type="text"
-              required
-              value={accountFormData.bankName}
-              onChange={(e) => setAccountFormData({ ...accountFormData, bankName: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="KB Bank, Samsung Bank 등"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              초기 잔액 (원)
-            </label>
-            <input
-              type="number"
-              required
-              value={accountFormData.balance}
-              onChange={(e) => setAccountFormData({ ...accountFormData, balance: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="1000000"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              계좌번호 (선택)
-            </label>
-            <input
-              type="text"
-              value={accountFormData.accountNumber}
-              onChange={(e) => setAccountFormData({ ...accountFormData, accountNumber: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="예: 123-456-7890"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={accountSubmitting}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-          >
-            {accountSubmitting ? '추가 중...' : '추가하기'}
-          </button>
-        </form>
-      </Modal>
+        onSuccess={(newAccounts) => setAccounts(newAccounts)}
+        people={people}
+      />
 
       <Modal
         isOpen={isCardModalOpen}

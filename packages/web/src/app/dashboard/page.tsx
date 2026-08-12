@@ -2,9 +2,13 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
 import { useUserFilter } from '@/store/user-filter';
 import Modal from '@/components/Modal';
+import PersonModal from '@/components/PersonModal';
+import EditAccountModal from '@/components/EditAccountModal';
+import EditCardModal from '@/components/EditCardModal';
 
 interface Person {
   id: string;
@@ -14,6 +18,7 @@ interface Person {
 
 interface Account {
   id: string;
+  ownerId: string;
   name: string;
   balance: number;
   bankName: string;
@@ -35,6 +40,7 @@ interface Card {
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
   const { selectedPersonIds } = useUserFilter();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
@@ -48,6 +54,11 @@ export default function DashboardPage() {
   const [detailType, setDetailType] = useState<'person' | 'account' | 'card' | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+
+  const [personModalOpen, setPersonModalOpen] = useState(false);
+  const [personModalMode, setPersonModalMode] = useState<'view' | 'edit'>('view');
+  const [isEditAccountModalOpen, setIsEditAccountModalOpen] = useState(false);
+  const [isEditCardModalOpen, setIsEditCardModalOpen] = useState(false);
 
   const [editPersonForm, setEditPersonForm] = useState({ name: '', relationship: '' });
   const [editAccountForm, setEditAccountForm] = useState({
@@ -148,12 +159,8 @@ export default function DashboardPage() {
   };
 
   const handleEditPersonClick = () => {
-    if (!selectedPerson) return;
-    setEditPersonForm({
-      name: selectedPerson.name,
-      relationship: selectedPerson.relationship || '',
-    });
-    setIsEditing(true);
+    setPersonModalMode('edit');
+    setPersonModalOpen(true);
   };
 
   const handleSavePerson = async (e: React.FormEvent) => {
@@ -178,14 +185,7 @@ export default function DashboardPage() {
   };
 
   const handleEditAccountClick = () => {
-    if (!selectedAccount) return;
-    setEditAccountForm({
-      name: selectedAccount.name,
-      balance: selectedAccount.balance.toString(),
-      bankName: selectedAccount.bankName,
-      accountNumber: selectedAccount.accountNumber || '',
-    });
-    setIsEditing(true);
+    setIsEditAccountModalOpen(true);
   };
 
   const handleSaveAccount = async (e: React.FormEvent) => {
@@ -212,16 +212,7 @@ export default function DashboardPage() {
   };
 
   const handleEditCardClick = () => {
-    if (!selectedCard) return;
-    setEditCardForm({
-      accountId: selectedCard.accountId,
-      name: selectedCard.name,
-      cardNumber: '',
-      issuer: selectedCard.issuer,
-      expiryDate: '',
-      creditLimit: selectedCard.creditLimit?.toString() || '',
-    });
-    setIsEditing(true);
+    setIsEditCardModalOpen(true);
   };
 
   const handleSaveCard = async (e: React.FormEvent) => {
@@ -840,6 +831,45 @@ export default function DashboardPage() {
           )}
         </Modal>
       )}
+
+      <PersonModal
+        isOpen={personModalOpen}
+        onClose={() => setPersonModalOpen(false)}
+        person={selectedPerson}
+        mode={personModalMode as 'view' | 'edit'}
+        onSuccess={(updatedPeople) => {
+          setPeople(updatedPeople);
+          setSelectedPerson(null);
+          setPersonModalOpen(false);
+        }}
+        onDelete={handleDeletePerson}
+      />
+
+      <EditAccountModal
+        isOpen={isEditAccountModalOpen}
+        onClose={() => setIsEditAccountModalOpen(false)}
+        account={selectedAccount as any}
+        people={people}
+        onSuccess={(updatedAccounts) => {
+          setAccounts(updatedAccounts as Account[]);
+          setSelectedAccount(null);
+          setIsEditAccountModalOpen(false);
+        }}
+        onDelete={handleDeleteAccount}
+      />
+
+      <EditCardModal
+        isOpen={isEditCardModalOpen}
+        onClose={() => setIsEditCardModalOpen(false)}
+        card={selectedCard}
+        accounts={accounts}
+        onSuccess={(updatedCards) => {
+          setCards(updatedCards || []);
+          setSelectedCard(null);
+          setIsEditCardModalOpen(false);
+        }}
+        onDelete={handleDeleteCard}
+      />
     </>
   );
 }

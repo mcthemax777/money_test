@@ -6,6 +6,11 @@ import { useState, useEffect } from 'react';
 import { useUserFilter } from '@/store/user-filter';
 import { apiClient } from '@/lib/api-client';
 
+interface Person {
+  id: string;
+  name: string;
+}
+
 const menuItems = [
   {
     section: null,
@@ -39,7 +44,7 @@ export default function DashboardSidebar() {
           setPeople(data || []);
           // 기본값: 모든 사용자 선택
           if (selectedPersonIds.length === 0) {
-            setSelectedPersonIds((data || []).map((p) => p.id));
+            setSelectedPersonIds((data || []).map((p: Person) => p.id));
           }
         } catch (err) {
           console.error('사용자 목록 조회 실패:', err);

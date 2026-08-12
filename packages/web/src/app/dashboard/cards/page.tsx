@@ -6,6 +6,8 @@ import { useAuth } from '@/store/auth';
 import { apiClient } from '@/lib/api-client';
 import CustomSelect from '@/components/CustomSelect';
 import Modal from '@/components/Modal';
+import AddAccountModal from '@/components/AddAccountModal';
+import EditCardModal from '@/components/EditCardModal';
 
 interface Card {
   id: string;
@@ -16,6 +18,7 @@ interface Card {
   issuer: string;
   creditLimit?: number;
   currentBalance?: number;
+  expiryDate?: string;
 }
 
 interface Account {
@@ -34,6 +37,7 @@ export default function CardsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [accountFormData, setAccountFormData] = useState({
     ownerId: '',
@@ -162,20 +166,8 @@ export default function CardsPage() {
   };
 
   const handleDetailEditClick = () => {
-    if (!selectedCard) return;
-    setEditingId(selectedCard.id);
-    setFormData({
-      accountId: selectedCard.accountId,
-      name: selectedCard.name,
-      cardNumber: '',
-      cardType: selectedCard.cardType,
-      issuer: selectedCard.issuer,
-      expiryDate: '',
-      creditLimit: selectedCard.creditLimit?.toString() || '',
-    });
     setIsDetailModalOpen(false);
-    setIsModalOpen(true);
-    setError('');
+    setIsEditModalOpen(true);
   };
 
   const handleEditClick = (card: Card) => {
@@ -208,34 +200,6 @@ export default function CardsPage() {
     }
   };
 
-  const handleAccountSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      setAccountSubmitting(true);
-      await apiClient.createAccountV2({
-        ownerId: accountFormData.ownerId,
-        name: accountFormData.name,
-        balance: parseInt(accountFormData.balance),
-        bankName: accountFormData.bankName,
-        ...(accountFormData.accountNumber && { accountNumber: accountFormData.accountNumber }),
-      });
-      const data = await apiClient.getAccountsV2();
-      setAccounts(data || []);
-      setAccountFormData({
-        ownerId: '',
-        name: '',
-        balance: '',
-        bankName: '',
-        accountNumber: '',
-      });
-      setAccountError('');
-      setIsAccountModalOpen(false);
-    } catch (err) {
-      setAccountError('계좌 추가에 실패했습니다.');
-    } finally {
-      setAccountSubmitting(false);
-    }
-  };
 
   if (!isAuthenticated) {
     return <div className="flex justify-center items-center h-screen">로그인 중...</div>;
@@ -475,6 +439,17 @@ export default function CardsPage() {
               </p>
             </div>
 
+            {selectedCard.expiryDate && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  만료일
+                </label>
+                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                  {new Date(selectedCard.expiryDate).toLocaleDateString('ko-KR')}
+                </p>
+              </div>
+            )}
+
             {selectedCard.cardType === 'credit' && (
               <>
                 <div>
@@ -506,115 +481,38 @@ export default function CardsPage() {
             <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
               <button
                 onClick={handleDetailEditClick}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
               >
                 수정하기
-              </button>
-              <button
-                onClick={async () => {
-                  setIsDetailModalOpen(false);
-                  await handleDeleteClick(selectedCard.id);
-                }}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                disabled={isSubmitting}
-              >
-                삭제하기
               </button>
             </div>
           </div>
         )}
       </Modal>
 
-      <Modal
+      <AddAccountModal
         isOpen={isAccountModalOpen}
         onClose={() => setIsAccountModalOpen(false)}
-        title="계좌 추가"
-      >
-        <form onSubmit={handleAccountSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              통장 주인
-            </label>
-            <CustomSelect
-              options={people.map((p) => ({ id: p.id, name: p.name }))}
-              value={accountFormData.ownerId}
-              onChange={(value) => setAccountFormData({ ...accountFormData, ownerId: value })}
-              placeholder="선택하세요"
-              onAddClick={() => {}}
-              addButtonLabel="사용자 추가"
-            />
-          </div>
+        onSuccess={(newAccounts) => setAccounts(newAccounts)}
+        people={people}
+      />
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              계좌명
-            </label>
-            <input
-              type="text"
-              required
-              value={accountFormData.name}
-              onChange={(e) => setAccountFormData({ ...accountFormData, name: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="예: 급여 통장"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              은행명
-            </label>
-            <input
-              type="text"
-              required
-              value={accountFormData.bankName}
-              onChange={(e) => setAccountFormData({ ...accountFormData, bankName: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="KB Bank, Samsung Bank 등"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              초기 잔액 (원)
-            </label>
-            <input
-              type="number"
-              required
-              value={accountFormData.balance}
-              onChange={(e) => setAccountFormData({ ...accountFormData, balance: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="1000000"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              계좌번호 (선택)
-            </label>
-            <input
-              type="text"
-              value={accountFormData.accountNumber}
-              onChange={(e) => setAccountFormData({ ...accountFormData, accountNumber: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="예: 123-456-7890"
-            />
-          </div>
-
-          {accountError && (
-            <div className="p-3 bg-red-50 text-red-800 text-sm rounded">
-              {accountError}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={accountSubmitting}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-          >
-            {accountSubmitting ? '추가 중...' : '추가하기'}
-          </button>
-        </form>
-      </Modal>
+      <EditCardModal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        card={selectedCard}
+        accounts={accounts}
+        onSuccess={(updatedCards) => {
+          setCards(updatedCards || []);
+          setSelectedCard(null);
+        }}
+        onDelete={async (id) => {
+          await apiClient.deleteCard(id);
+          const data = await apiClient.getCards();
+          setCards(data || []);
+          setSelectedCard(null);
+        }}
+      />
     </>
   );
 }

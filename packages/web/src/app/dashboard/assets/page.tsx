@@ -3,9 +3,12 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/store/auth';
+import { useUserFilter } from '@/store/user-filter';
 import { apiClient } from '@/lib/api-client';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
+import AddAccountModal from '@/components/AddAccountModal';
+import PersonModal from '@/components/PersonModal';
 
 interface Card {
   id: string;
@@ -16,6 +19,7 @@ interface Card {
   cardNumberMasked: string;
   creditLimit?: number;
   currentBalance?: number;
+  expiryDate?: string;
 }
 
 interface Account {
@@ -37,6 +41,7 @@ interface Person {
 export default function AssetsPage() {
   const { isAuthenticated, loadUser } = useAuth();
   const router = useRouter();
+  const { setPeople: setStorePeople } = useUserFilter();
   const [people, setPeople] = useState<Person[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
@@ -51,23 +56,18 @@ export default function AssetsPage() {
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [detailType, setDetailType] = useState<'person' | 'account' | 'card' | null>(null);
 
-  const [addType, setAddType] = useState<'select' | 'person' | 'account' | 'card' | null>(null);
+  const [addType, setAddType] = useState<'select' | 'card' | null>(null);
+  const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
+  const [isPersonModalOpen, setIsPersonModalOpen] = useState(false);
 
   // 추가 폼 상태
-  const [personForm, setPersonForm] = useState({ name: '', relationship: '' });
-  const [accountForm, setAccountForm] = useState({
-    ownerId: '',
-    name: '',
-    balance: '',
-    bankName: '',
-    accountNumber: '',
-  });
   const [cardForm, setCardForm] = useState({
     accountId: '',
     name: '',
     cardNumber: '',
     cardType: 'debit' as 'debit' | 'credit',
     issuer: '',
+    expiryDate: '',
     creditLimit: '',
   });
 
@@ -131,66 +131,26 @@ export default function AssetsPage() {
     setExpandedAccounts(newSet);
   };
 
-  const handleAddPerson = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      setIsSubmitting(true);
-      setAddError('');
-      await apiClient.createPerson({
-        name: personForm.name,
-        relationship: personForm.relationship || undefined,
-      });
-      const data = await apiClient.getPeople();
-      setPeople(data || []);
-      setPersonForm({ name: '', relationship: '' });
-      setAddType(null);
-    } catch (err: any) {
-      setAddError(err?.response?.data?.error?.message || '구성원 추가에 실패했습니다.');
-    } finally {
-      setIsSubmitting(false);
-    }
+  const handlePersonModalSuccess = (updatedPeople: Person[]) => {
+    setPeople(updatedPeople);
+    setStorePeople(updatedPeople);
+    setIsPersonModalOpen(false);
   };
 
-  const handleAddAccount = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      setIsSubmitting(true);
-      setAddError('');
-      await apiClient.createAccountV2({
-        ownerId: accountForm.ownerId,
-        name: accountForm.name,
-        balance: parseInt(accountForm.balance),
-        bankName: accountForm.bankName,
-        accountNumber: accountForm.accountNumber || undefined,
-      });
-      const data = await apiClient.getAccountsV2();
-      setAccounts(data || []);
-      setAccountForm({
-        ownerId: '',
-        name: '',
-        balance: '',
-        bankName: '',
-        accountNumber: '',
-      });
-      setAddType(null);
-    } catch (err: any) {
-      setAddError(err?.response?.data?.error?.message || '계좌 추가에 실패했습니다.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
 
   const handleAddCard = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       setIsSubmitting(true);
       setAddError('');
+      const isoDate = cardForm.expiryDate ? new Date(cardForm.expiryDate).toISOString() : undefined;
       await apiClient.createCard({
         accountId: cardForm.accountId,
         name: cardForm.name,
         cardNumber: cardForm.cardNumber || undefined,
         cardType: cardForm.cardType,
         issuer: cardForm.issuer,
+        ...(isoDate && { expiryDate: isoDate }),
         creditLimit:
           cardForm.cardType === 'credit' ? parseInt(cardForm.creditLimit) : undefined,
       });
@@ -202,6 +162,7 @@ export default function AssetsPage() {
         cardNumber: '',
         cardType: 'debit',
         issuer: '',
+        expiryDate: '',
         creditLimit: '',
       });
       setAddType(null);
@@ -352,7 +313,10 @@ export default function AssetsPage() {
       >
         <div className="space-y-3">
           <button
-            onClick={() => setAddType('person')}
+            onClick={() => {
+              setAddType(null);
+              setIsPersonModalOpen(true);
+            }}
             className="w-full px-4 py-3 text-left bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition"
           >
             <p className="font-semibold text-gray-900">👤 구성원 추가</p>
@@ -360,7 +324,10 @@ export default function AssetsPage() {
           </button>
 
           <button
-            onClick={() => setAddType('account')}
+            onClick={() => {
+              setAddType(null);
+              setIsAccountModalOpen(true);
+            }}
             className="w-full px-4 py-3 text-left bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition"
           >
             <p className="font-semibold text-gray-900">🏦 계좌 추가</p>
@@ -378,158 +345,22 @@ export default function AssetsPage() {
       </Modal>
 
       {/* 구성원 추가 모달 */}
-      <Modal
-        isOpen={addType === 'person'}
-        onClose={() => {
-          setAddType(null);
-          setPersonForm({ name: '', relationship: '' });
-          setAddError('');
-        }}
-        title="구성원 추가"
-      >
-        <form onSubmit={handleAddPerson} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              이름
-            </label>
-            <input
-              type="text"
-              required
-              value={personForm.name}
-              onChange={(e) => setPersonForm({ ...personForm, name: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="이름 입력"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              관계 (선택)
-            </label>
-            <input
-              type="text"
-              value={personForm.relationship}
-              onChange={(e) => setPersonForm({ ...personForm, relationship: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="배우자, 자녀 등"
-            />
-          </div>
-
-          {addError && (
-            <div className="p-3 bg-red-50 text-red-800 text-sm rounded">
-              {addError}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-          >
-            {isSubmitting ? '추가 중...' : '추가하기'}
-          </button>
-        </form>
-      </Modal>
+      <PersonModal
+        isOpen={isPersonModalOpen}
+        onClose={() => setIsPersonModalOpen(false)}
+        person={null}
+        mode="add"
+        onSuccess={handlePersonModalSuccess}
+        onDelete={async () => {}}
+      />
 
       {/* 계좌 추가 모달 */}
-      <Modal
-        isOpen={addType === 'account'}
-        onClose={() => {
-          setAddType(null);
-          setAccountForm({
-            ownerId: '',
-            name: '',
-            balance: '',
-            bankName: '',
-            accountNumber: '',
-          });
-          setAddError('');
-        }}
-        title="계좌 추가"
-      >
-        <form onSubmit={handleAddAccount} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              통장 주인
-            </label>
-            <CustomSelect
-              options={people.map((p) => ({ id: p.id, name: p.name }))}
-              value={accountForm.ownerId}
-              onChange={(value) => setAccountForm({ ...accountForm, ownerId: value })}
-              placeholder="선택하세요"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              계좌명
-            </label>
-            <input
-              type="text"
-              required
-              value={accountForm.name}
-              onChange={(e) => setAccountForm({ ...accountForm, name: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="예: 급여 통장"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              은행명
-            </label>
-            <input
-              type="text"
-              required
-              value={accountForm.bankName}
-              onChange={(e) => setAccountForm({ ...accountForm, bankName: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="KB Bank, Samsung Bank 등"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              초기 잔액 (원)
-            </label>
-            <input
-              type="number"
-              required
-              value={accountForm.balance}
-              onChange={(e) => setAccountForm({ ...accountForm, balance: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="1000000"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              계좌번호 (선택)
-            </label>
-            <input
-              type="text"
-              value={accountForm.accountNumber}
-              onChange={(e) => setAccountForm({ ...accountForm, accountNumber: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="예: 123-456-7890"
-            />
-          </div>
-
-          {addError && (
-            <div className="p-3 bg-red-50 text-red-800 text-sm rounded">
-              {addError}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-          >
-            {isSubmitting ? '추가 중...' : '추가하기'}
-          </button>
-        </form>
-      </Modal>
+      <AddAccountModal
+        isOpen={isAccountModalOpen}
+        onClose={() => setIsAccountModalOpen(false)}
+        onSuccess={(newAccounts) => setAccounts(newAccounts)}
+        people={people}
+      />
 
       {/* 카드 추가 모달 */}
       <Modal
@@ -542,6 +373,7 @@ export default function AssetsPage() {
             cardNumber: '',
             cardType: 'debit',
             issuer: '',
+            expiryDate: '',
             creditLimit: '',
           });
           setAddError('');
@@ -614,6 +446,18 @@ export default function AssetsPage() {
               onChange={(e) => setCardForm({ ...cardForm, issuer: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="KB Bank, Samsung Card 등"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              만료일 (선택)
+            </label>
+            <input
+              type="date"
+              value={cardForm.expiryDate}
+              onChange={(e) => setCardForm({ ...cardForm, expiryDate: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
           </div>
 
@@ -759,6 +603,15 @@ export default function AssetsPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
+                계좌
+              </label>
+              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                {accounts.find((a) => a.id === selectedCard.accountId)?.name || '-'}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
                 카드 번호
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
@@ -783,6 +636,17 @@ export default function AssetsPage() {
                 {selectedCard.cardType === 'debit' ? '체크카드' : '신용카드'}
               </p>
             </div>
+
+            {selectedCard.expiryDate && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  만료일
+                </label>
+                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                  {new Date(selectedCard.expiryDate).toLocaleDateString('ko-KR')}
+                </p>
+              </div>
+            )}
 
             {selectedCard.cardType === 'credit' && (
               <>

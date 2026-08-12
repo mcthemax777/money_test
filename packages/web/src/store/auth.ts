@@ -23,7 +23,7 @@ interface AuthStore {
   loadUser: () => Promise<void>;
 }
 
-export const useAuth = create<AuthStore>(
+export const useAuth = create<AuthStore>()(
   persist(
     (set) => ({
   user: null,

@@ -4,9 +4,13 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useAuth } from '@/store/auth';
+import { useUserFilter } from '@/store/user-filter';
 import { apiClient } from '@/lib/api-client';
 import CustomSelect from '@/components/CustomSelect';
 import Modal from '@/components/Modal';
+import AddAccountModal from '@/components/AddAccountModal';
+import EditAccountModal from '@/components/EditAccountModal';
+import PersonModal from '@/components/PersonModal';
 
 interface Account {
   id: string;
@@ -25,6 +29,7 @@ interface Person {
 
 export default function AccountsPage() {
   const { isAuthenticated, loadUser } = useAuth();
+  const { setPeople: setStorePeople } = useUserFilter();
   const router = useRouter();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -34,9 +39,8 @@ export default function AccountsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isPersonModalOpen, setIsPersonModalOpen] = useState(false);
-  const [personFormData, setPersonFormData] = useState({ name: '', relationship: '' });
-  const [personSubmitting, setPersonSubmitting] = useState(false);
   const [formData, setFormData] = useState({
     ownerId: '',
     name: '',
@@ -132,18 +136,8 @@ export default function AccountsPage() {
   };
 
   const handleDetailEditClick = () => {
-    if (!selectedAccount) return;
-    setEditingId(selectedAccount.id);
-    setFormData({
-      ownerId: selectedAccount.ownerId,
-      name: selectedAccount.name,
-      balance: selectedAccount.balance.toString(),
-      bankName: selectedAccount.bankName,
-      accountNumber: selectedAccount.accountNumber || '',
-    });
     setIsDetailModalOpen(false);
-    setIsModalOpen(true);
-    setError('');
+    setIsEditModalOpen(true);
   };
 
   const handleEditClick = (account: Account) => {
@@ -174,23 +168,10 @@ export default function AccountsPage() {
     }
   };
 
-  const handlePersonSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    try {
-      setPersonSubmitting(true);
-      await apiClient.createPerson({
-        name: personFormData.name,
-        relationship: personFormData.relationship || undefined,
-      });
-      const data = await apiClient.getPeople();
-      setPeople(data || []);
-      setPersonFormData({ name: '', relationship: '' });
-      setIsPersonModalOpen(false);
-    } catch (err) {
-      console.error('사용자 추가 실패:', err);
-    } finally {
-      setPersonSubmitting(false);
-    }
+  const handlePersonModalSuccess = (updatedPeople: Person[]) => {
+    setPeople(updatedPeople);
+    setStorePeople(updatedPeople);
+    setIsPersonModalOpen(false);
   };
 
   if (!isAuthenticated) {
@@ -396,67 +377,40 @@ export default function AccountsPage() {
             <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
               <button
                 onClick={handleDetailEditClick}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
               >
                 수정하기
-              </button>
-              <button
-                onClick={async () => {
-                  setIsDetailModalOpen(false);
-                  await handleDeleteClick(selectedAccount.id);
-                }}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                disabled={isSubmitting}
-              >
-                삭제하기
               </button>
             </div>
           </div>
         )}
       </Modal>
 
-      <Modal
+      <PersonModal
         isOpen={isPersonModalOpen}
         onClose={() => setIsPersonModalOpen(false)}
-        title="사용자 추가"
-      >
-        <form onSubmit={handlePersonSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              이름
-            </label>
-            <input
-              type="text"
-              required
-              value={personFormData.name}
-              onChange={(e) => setPersonFormData({ ...personFormData, name: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="이름 입력"
-            />
-          </div>
+        person={null}
+        mode="add"
+        onSuccess={handlePersonModalSuccess}
+        onDelete={async () => {}}
+      />
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              관계 (선택)
-            </label>
-            <input
-              type="text"
-              value={personFormData.relationship}
-              onChange={(e) => setPersonFormData({ ...personFormData, relationship: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="배우자, 자녀 등"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={personSubmitting}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-          >
-            {personSubmitting ? '추가 중...' : '추가하기'}
-          </button>
-        </form>
-      </Modal>
+      <EditAccountModal
+        isOpen={isEditModalOpen}
+        onClose={() => setIsEditModalOpen(false)}
+        account={selectedAccount}
+        people={people}
+        onSuccess={(updatedAccounts) => {
+          setAccounts(updatedAccounts || []);
+          setSelectedAccount(null);
+        }}
+        onDelete={async (id) => {
+          await apiClient.deleteAccountV2(id);
+          const data = await apiClient.getAccountsV2();
+          setAccounts(data || []);
+          setSelectedAccount(null);
+        }}
+      />
     </>
   );
 }
