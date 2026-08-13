@@ -69,6 +69,7 @@ export interface Transaction {
   tags: string[];
   isRecurring: boolean;
   recurringPattern: string | null;
+  isFixed: boolean;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -82,7 +83,8 @@ export interface Category {
   level: number;
   type: string;
   icon: string | null;
-  color: string | null;
+  defaultIsFixed: boolean;
+  isDefault: boolean;
   isActive: boolean;
   createdAt: Date;
   updatedAt: Date;

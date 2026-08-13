@@ -12,9 +12,10 @@ interface Category {
   name: string;
   type: 'income' | 'expense';
   icon?: string;
-  color?: string;
   parentId?: string | null;
   level: number;
+  defaultIsFixed?: boolean;
+  isDefault?: boolean;
 }
 
 export default function CategoriesPage() {
@@ -30,8 +31,8 @@ export default function CategoriesPage() {
   const [formData, setFormData] = useState({
     name: '',
     type: 'expense',
-    subCategories: [{ id: '', name: '' }],
-    color: '',
+    subCategories: [{ id: '', name: '', defaultIsFixed: false }],
+    defaultIsFixed: false,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -65,8 +66,8 @@ export default function CategoriesPage() {
     setFormData({
       name: '',
       type: 'expense',
-      subCategories: [{ id: '', name: '' }],
-      color: '',
+      subCategories: [{ id: '', name: '', defaultIsFixed: false }],
+      defaultIsFixed: false,
     });
     setEditingId(null);
     setError('');
@@ -80,18 +81,18 @@ export default function CategoriesPage() {
   const handleDetailEditClick = () => {
     if (!selectedCategory) return;
     setEditingId(selectedCategory.id);
-    let subCategories = [{ id: '', name: '' }];
+    let subCategories = [{ id: '', name: '', defaultIsFixed: false }];
     if (selectedCategory.level === 1) {
       const subs = categories
         .filter((c) => c.parentId === selectedCategory.id)
-        .map((c) => ({ id: c.id, name: c.name }));
-      subCategories = subs.length > 0 ? subs : [{ id: '', name: '' }];
+        .map((c) => ({ id: c.id, name: c.name, defaultIsFixed: c.defaultIsFixed || false }));
+      subCategories = subs.length > 0 ? subs : [{ id: '', name: '', defaultIsFixed: false }];
     }
     setFormData({
       name: selectedCategory.name,
       type: selectedCategory.type,
       subCategories,
-      color: selectedCategory.color || '',
+      defaultIsFixed: selectedCategory.defaultIsFixed || false,
     });
     setIsDetailModalOpen(false);
     setIsModalOpen(true);
@@ -100,24 +101,29 @@ export default function CategoriesPage() {
 
   const handleEditClick = (category: Category) => {
     setEditingId(category.id);
-    let subCategories = [{ id: '', name: '' }];
+    let subCategories = [{ id: '', name: '', defaultIsFixed: false }];
     if (category.level === 1) {
       const subs = categories
         .filter((c) => c.parentId === category.id)
-        .map((c) => ({ id: c.id, name: c.name }));
-      subCategories = subs.length > 0 ? subs : [{ id: '', name: '' }];
+        .map((c) => ({ id: c.id, name: c.name, defaultIsFixed: c.defaultIsFixed || false }));
+      subCategories = subs.length > 0 ? subs : [{ id: '', name: '', defaultIsFixed: false }];
     }
     setFormData({
       name: category.name,
       type: category.type,
       subCategories,
-      color: category.color || '',
+      defaultIsFixed: category.defaultIsFixed || false,
     });
     setIsModalOpen(true);
     setError('');
   };
 
   const handleDeleteClick = async (id: string) => {
+    const category = categories.find((c) => c.id === id);
+    if (category?.isDefault) {
+      setError('기본 카테고리는 삭제할 수 없습니다.');
+      return;
+    }
     if (!window.confirm('정말 삭제하시겠습니까?')) return;
     try {
       setIsSubmitting(true);
@@ -139,7 +145,7 @@ export default function CategoriesPage() {
       if (editingId) {
         await apiClient.updateCategory(editingId, {
           name: formData.name,
-          color: formData.color || undefined,
+          defaultIsFixed: formData.defaultIsFixed,
         });
 
         const existingSubs = categories.filter((c) => c.parentId === editingId);
@@ -147,7 +153,7 @@ export default function CategoriesPage() {
 
         // 제거된 소분류 삭제
         for (const existingSub of existingSubs) {
-          if (!newSubs.some((sub) => sub.id === existingSub.id)) {
+          if (!newSubs.some((sub) => sub.id === existingSub.id) && !existingSub.isDefault) {
             try {
               await apiClient.deleteCategory(existingSub.id);
             } catch (err: any) {
@@ -165,8 +171,11 @@ export default function CategoriesPage() {
           if (sub.id) {
             // 기존 소분류 (수정)
             const existing = existingSubs.find((es) => es.id === sub.id);
-            if (existing && existing.name !== sub.name) {
-              await apiClient.updateCategory(sub.id, { name: sub.name });
+            if (existing && (existing.name !== sub.name || existing.defaultIsFixed !== sub.defaultIsFixed)) {
+              await apiClient.updateCategory(sub.id, {
+                name: sub.name,
+                defaultIsFixed: sub.defaultIsFixed,
+              });
             }
           } else {
             // 새로운 소분류
@@ -174,6 +183,7 @@ export default function CategoriesPage() {
               name: sub.name,
               type: formData.type,
               parentId: editingId,
+              defaultIsFixed: sub.defaultIsFixed,
             });
           }
         }
@@ -181,7 +191,7 @@ export default function CategoriesPage() {
         await apiClient.createCategory({
           name: formData.name,
           type: formData.type,
-          color: formData.color || undefined,
+          defaultIsFixed: formData.defaultIsFixed,
         });
         const categoryList = await apiClient.getCategories();
         const mainCategory = categoryList?.find((c: Category) => c.name === formData.name && c.level === 1);
@@ -193,6 +203,7 @@ export default function CategoriesPage() {
               name: sub.name,
               type: formData.type,
               parentId: mainCategory.id,
+              defaultIsFixed: sub.defaultIsFixed,
             });
           }
         }
@@ -203,8 +214,8 @@ export default function CategoriesPage() {
       setFormData({
         name: '',
         type: 'expense',
-        subCategories: [{ id: '', name: '' }],
-        color: '',
+        subCategories: [{ id: '', name: '', defaultIsFixed: false }],
+        defaultIsFixed: false,
       });
       setEditingId(null);
       setError('');
@@ -229,10 +240,7 @@ export default function CategoriesPage() {
       {cats.map((category) => (
         <div
           key={category.id}
-          className={`bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-lg transition ${
-            category.color ? 'border-l-4' : ''
-          }`}
-          style={{ borderLeftColor: category.color || 'transparent' }}
+          className="bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-lg transition"
           onClick={() => handleCategoryClick(category)}
         >
           <div className="flex items-center justify-between mb-2">
@@ -244,7 +252,13 @@ export default function CategoriesPage() {
               {categories
                 .filter((c) => c.parentId === category.id)
                 .map((subCat) => (
-                  <p key={subCat.id} className="text-sm text-gray-600">{subCat.name}</p>
+                  <div key={subCat.id} className="text-sm text-gray-600 flex items-center justify-between">
+                    <span>{subCat.name}</span>
+                    <span className="text-xs text-gray-500">
+                      {subCat.isDefault && '(기본)'}
+                      {subCat.defaultIsFixed && ' 고정'}
+                    </span>
+                  </div>
                 ))}
             </div>
           )}
@@ -318,36 +332,34 @@ export default function CategoriesPage() {
               </p>
             </div>
 
-            {selectedCategory.level === 1 && categories.filter((c) => c.parentId === selectedCategory.id).length > 0 && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  소분류
-                </label>
-                <div className="space-y-2">
-                  {categories
-                    .filter((c) => c.parentId === selectedCategory.id)
-                    .map((subCat) => (
-                      <p key={subCat.id} className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900 text-sm">
-                        {subCat.name}
-                      </p>
-                    ))}
-                </div>
-              </div>
-            )}
-
-            {selectedCategory.color && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  색상
-                </label>
-                <div className="flex items-center gap-2">
-                  <div
-                    className="w-10 h-10 rounded border border-gray-300"
-                    style={{ backgroundColor: selectedCategory.color }}
-                  ></div>
-                  <p className="text-gray-600 text-sm">{selectedCategory.color}</p>
-                </div>
-              </div>
+            {selectedCategory.level === 1 && (
+              <>
+                {selectedCategory.defaultIsFixed && (
+                  <div className="px-3 py-2 bg-blue-50 text-blue-800 text-sm rounded-lg">
+                    ✓ 기본 고정 지출/수입
+                  </div>
+                )}
+                {categories.filter((c) => c.parentId === selectedCategory.id).length > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      소분류
+                    </label>
+                    <div className="space-y-2">
+                      {categories
+                        .filter((c) => c.parentId === selectedCategory.id)
+                        .map((subCat) => (
+                          <div key={subCat.id} className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900 text-sm flex items-center justify-between">
+                            <span>{subCat.name}</span>
+                            <span className="text-xs text-gray-500">
+                              {subCat.isDefault && '(기본)'}
+                              {subCat.defaultIsFixed && ' 고정'}
+                            </span>
+                          </div>
+                        ))}
+                    </div>
+                  </div>
+                )}
+              </>
             )}
 
             <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
@@ -362,8 +374,9 @@ export default function CategoriesPage() {
                   setIsDetailModalOpen(false);
                   await handleDeleteClick(selectedCategory.id);
                 }}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                disabled={isSubmitting}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={isSubmitting || selectedCategory.isDefault}
+                title={selectedCategory.isDefault ? '기본 카테고리는 삭제할 수 없습니다.' : ''}
               >
                 삭제하기
               </button>
@@ -407,69 +420,77 @@ export default function CategoriesPage() {
             />
           </div>
 
+          <div className="flex items-center gap-3">
+            <input
+              type="checkbox"
+              id="defaultIsFixed"
+              checked={formData.defaultIsFixed}
+              onChange={(e) => setFormData({ ...formData, defaultIsFixed: e.target.checked })}
+              className="w-4 h-4 border border-gray-300 rounded-md focus:ring-blue-500"
+            />
+            <label htmlFor="defaultIsFixed" className="text-sm font-medium text-gray-700">
+              기본 고정 지출/수입
+            </label>
+          </div>
+
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               소분류 (선택)
             </label>
-            <div className="space-y-2 max-h-40 overflow-y-auto">
+            <div className="space-y-3 max-h-64 overflow-y-auto">
               {formData.subCategories.map((subCat, index) => (
-                <div key={index} className="flex gap-2">
-                  <input
-                    type="text"
-                    value={subCat.name}
-                    onChange={(e) => {
-                      const newSubs = [...formData.subCategories];
-                      newSubs[index] = { ...newSubs[index], name: e.target.value };
-                      setFormData({ ...formData, subCategories: newSubs });
-                    }}
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="소분류 이름"
-                  />
-                  {formData.subCategories.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const newSubs = formData.subCategories.filter((_, i) => i !== index);
+                <div key={index} className="p-3 border border-gray-200 rounded-lg space-y-2">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={subCat.name}
+                      onChange={(e) => {
+                        const newSubs = [...formData.subCategories];
+                        newSubs[index] = { ...newSubs[index], name: e.target.value };
                         setFormData({ ...formData, subCategories: newSubs });
                       }}
-                      className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg"
-                    >
-                      제거
-                    </button>
-                  )}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="소분류 이름"
+                    />
+                    {formData.subCategories.length > 1 && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          const newSubs = formData.subCategories.filter((_, i) => i !== index);
+                          setFormData({ ...formData, subCategories: newSubs });
+                        }}
+                        className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg"
+                      >
+                        제거
+                      </button>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      id={`subFixed-${index}`}
+                      checked={subCat.defaultIsFixed || false}
+                      onChange={(e) => {
+                        const newSubs = [...formData.subCategories];
+                        newSubs[index] = { ...newSubs[index], defaultIsFixed: e.target.checked };
+                        setFormData({ ...formData, subCategories: newSubs });
+                      }}
+                      className="w-4 h-4 border border-gray-300 rounded-md focus:ring-blue-500"
+                    />
+                    <label htmlFor={`subFixed-${index}`} className="text-xs font-medium text-gray-600">
+                      고정 지출/수입
+                    </label>
+                  </div>
                 </div>
               ))}
             </div>
             <button
               type="button"
-              onClick={() => setFormData({ ...formData, subCategories: [...formData.subCategories, { id: '', name: '' }] })}
+              onClick={() => setFormData({ ...formData, subCategories: [...formData.subCategories, { id: '', name: '', defaultIsFixed: false }] })}
               className="mt-2 px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
             >
               소분류 추가
             </button>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              색상 (선택)
-            </label>
-            <div className="flex items-center gap-3">
-              <div
-                className="w-12 h-12 rounded border-2 border-gray-300 flex-shrink-0"
-                style={{ backgroundColor: formData.color || '#ffffff' }}
-              ></div>
-              <input
-                type="color"
-                value={formData.color}
-                onChange={(e) => setFormData({ ...formData, color: e.target.value })}
-                className="flex-1 h-10 px-1 border border-gray-300 rounded-lg cursor-pointer"
-              />
-              {formData.color && (
-                <span className="text-sm text-gray-600 flex-shrink-0 w-20">
-                  {formData.color}
-                </span>
-              )}
-            </div>
           </div>
 
           {error && (

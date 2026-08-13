@@ -86,6 +86,7 @@ export namespace TransactionDto {
     tags?: string[];
     isRecurring?: boolean;
     recurringPattern?: 'daily' | 'weekly' | 'monthly' | 'yearly';
+    isFixed?: boolean; // 고정 지출/수입 여부
   }
 
   export interface UpdateRequest {
@@ -98,6 +99,7 @@ export namespace TransactionDto {
     mainCategoryId?: string;
     subCategoryId?: string;
     tags?: string[];
+    isFixed?: boolean; // 고정 지출/수입 여부
   }
 
   export interface ListQuery {
@@ -129,13 +131,13 @@ export namespace CategoryDto {
     parentId?: string; // 소분류인 경우 대분류 ID
     type: 'income' | 'expense';
     icon?: string;
-    color?: string;
+    defaultIsFixed?: boolean; // 기본 고정 여부
   }
 
   export interface UpdateRequest {
     name?: string;
     icon?: string;
-    color?: string;
+    defaultIsFixed?: boolean; // 기본 고정 여부
     isActive?: boolean;
   }
 

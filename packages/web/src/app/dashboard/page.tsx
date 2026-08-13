@@ -28,6 +28,7 @@ interface Transaction {
   accountId?: string;
   cardId?: string;
   personId?: string;
+  isFixed?: boolean;
 }
 
 interface Account {
@@ -46,6 +47,8 @@ interface Category {
   type: 'income' | 'expense';
   level: number;
   parentId?: string | null;
+  defaultIsFixed?: boolean;
+  isDefault?: boolean;
 }
 
 interface Card {
@@ -120,12 +123,29 @@ export default function TransactionsPage() {
     description: '',
     date: new Date().toISOString().split('T')[0],
     time: '',
+    isFixed: false,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
-    loadUser();
-  }, [loadUser]);
+    const initializeProject = async () => {
+      await loadUser();
+
+      // 프로젝트 목록 불러오기
+      try {
+        const projects = await apiClient.getMyProjects();
+        if (projects && projects.length > 0 && !selectedProjectId) {
+          // 첫 번째 프로젝트 자동 선택
+          const { setSelectedProjectId } = useProject.getState();
+          setSelectedProjectId(projects[0].id);
+        }
+      } catch (err) {
+        console.error('프로젝트 로드 실패:', err);
+      }
+    };
+
+    initializeProject();
+  }, [loadUser, selectedProjectId]);
 
   useEffect(() => {
     if (!isAuthenticated || !selectedProjectId) {
@@ -229,6 +249,7 @@ export default function TransactionsPage() {
           cardId,
           mainCategoryId: formData.mainCategoryId,
           subCategoryId: formData.subCategoryId || undefined,
+          isFixed: formData.isFixed,
         });
       } else {
         let accountId = formData.accountId;
@@ -247,6 +268,7 @@ export default function TransactionsPage() {
           mainCategoryId: formData.mainCategoryId,
           subCategoryId: formData.subCategoryId || undefined,
           cardId: formData.method === 'card' ? formData.cardId || undefined : undefined,
+          isFixed: formData.isFixed,
         });
       }
       const data = await apiClient.getTransactionsV2();
@@ -263,6 +285,7 @@ export default function TransactionsPage() {
         description: '',
         date: new Date().toISOString().split('T')[0],
         time: '',
+        isFixed: false,
       });
       setEditingId(null);
       setError('');
@@ -288,6 +311,7 @@ export default function TransactionsPage() {
       description: '',
       date: new Date().toISOString().split('T')[0],
       time: '',
+      isFixed: false,
     });
     setEditingId(null);
     setError('');
@@ -339,6 +363,7 @@ export default function TransactionsPage() {
       description: selectedTransaction.description || '',
       date: selectedTransaction.date.split('T')[0],
       time: '',
+      isFixed: selectedTransaction.isFixed || false,
     });
     setIsDetailModalOpen(false);
     setIsModalOpen(true);
@@ -360,6 +385,7 @@ export default function TransactionsPage() {
       description: transaction.description || '',
       date: transaction.date.split('T')[0],
       time: '',
+      isFixed: transaction.isFixed || false,
     });
     setIsModalOpen(true);
     setError('');
@@ -696,7 +722,15 @@ export default function TransactionsPage() {
                     .filter((c) => c.level === 1 && c.type === formData.type)
                     .map((cat) => ({ id: cat.id, name: cat.name }))}
                   value={formData.mainCategoryId}
-                  onChange={(value) => setFormData({ ...formData, mainCategoryId: value, subCategoryId: '' })}
+                  onChange={(value) => {
+                    const selectedCategory = categories.find((c) => c.id === value);
+                    setFormData({
+                      ...formData,
+                      mainCategoryId: value,
+                      subCategoryId: '',
+                      isFixed: selectedCategory?.defaultIsFixed || false,
+                    });
+                  }}
                   placeholder="선택하세요"
                   onAddClick={() => setIsCategoryModalOpen(true)}
                   addButtonLabel="대분류 추가"
@@ -720,7 +754,14 @@ export default function TransactionsPage() {
                       : [{ id: '', name: '없음' }]
                   }
                   value={formData.subCategoryId}
-                  onChange={(value) => setFormData({ ...formData, subCategoryId: value })}
+                  onChange={(value) => {
+                    const selectedCategory = categories.find((c) => c.id === value);
+                    setFormData({
+                      ...formData,
+                      subCategoryId: value,
+                      isFixed: selectedCategory?.defaultIsFixed || false,
+                    });
+                  }}
                   placeholder="없음"
                   onAddClick={() => router.push('/dashboard/categories')}
                   addButtonLabel="소분류 추가"
@@ -752,6 +793,19 @@ export default function TransactionsPage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="거래 설명 (선택사항)"
                 />
+              </div>
+
+              <div className="flex items-center gap-3">
+                <input
+                  type="checkbox"
+                  id="isFixed"
+                  checked={formData.isFixed}
+                  onChange={(e) => setFormData({ ...formData, isFixed: e.target.checked })}
+                  className="w-4 h-4 border border-gray-300 rounded-md focus:ring-blue-500"
+                />
+                <label htmlFor="isFixed" className="text-sm font-medium text-gray-700">
+                  고정 지출/수입
+                </label>
               </div>
 
               <div>

@@ -43,6 +43,20 @@ export class TransactionsService {
 
     const projectId = await this.getUserDefaultProjectId(userId);
 
+    // 소분류가 있으면 소분류의 defaultIsFixed 사용, 없으면 대분류의 defaultIsFixed 사용
+    let defaultIsFixed = false;
+    if (dto.subCategoryId) {
+      const subCategory = await this.prisma.category.findUnique({
+        where: { id: dto.subCategoryId },
+      });
+      defaultIsFixed = subCategory?.defaultIsFixed || false;
+    } else {
+      const mainCategory = await this.prisma.category.findUnique({
+        where: { id: dto.mainCategoryId },
+      });
+      defaultIsFixed = mainCategory?.defaultIsFixed || false;
+    }
+
     // 거래 생성
     const transaction = await this.prisma.transaction.create({
       data: {
@@ -60,6 +74,7 @@ export class TransactionsService {
         tags: dto.tags,
         isRecurring: dto.isRecurring || false,
         recurringPattern: dto.recurringPattern,
+        isFixed: dto.isFixed !== undefined ? dto.isFixed : defaultIsFixed,
       },
       include: {
         account: true,
@@ -181,19 +196,21 @@ export class TransactionsService {
       }
     }
 
+    const data: any = {};
+    if (dto.description !== undefined) data.description = dto.description;
+    if (dto.amount !== undefined) data.amount = dto.amount;
+    if (dto.date !== undefined) data.date = new Date(dto.date);
+    if (dto.type !== undefined) data.type = dto.type;
+    if (dto.personId !== undefined) data.personId = dto.personId;
+    if (dto.cardId !== undefined) data.cardId = dto.cardId;
+    if (dto.mainCategoryId !== undefined) data.mainCategoryId = dto.mainCategoryId;
+    if (dto.subCategoryId !== undefined) data.subCategoryId = dto.subCategoryId;
+    if (dto.tags !== undefined) data.tags = dto.tags;
+    if (dto.isFixed !== undefined) data.isFixed = dto.isFixed;
+
     const updated = await this.prisma.transaction.update({
       where: { id },
-      data: {
-        description: dto.description,
-        amount: dto.amount,
-        date: dto.date ? new Date(dto.date) : undefined,
-        type: dto.type,
-        personId: dto.personId,
-        cardId: dto.cardId,
-        mainCategoryId: dto.mainCategoryId,
-        subCategoryId: dto.subCategoryId,
-        tags: dto.tags,
-      },
+      data,
       include: {
         account: true,
         person: true,

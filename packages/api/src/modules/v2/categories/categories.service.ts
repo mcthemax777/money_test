@@ -57,7 +57,7 @@ export class CategoriesService {
 
     const level = dto.parentId ? 2 : 1;
 
-    return this.prisma.category.create({
+    const category = await this.prisma.category.create({
       data: {
         projectId,
         userId,
@@ -66,9 +66,27 @@ export class CategoriesService {
         level,
         type: dto.type,
         icon: dto.icon,
-        color: dto.color,
+        defaultIsFixed: dto.defaultIsFixed || false,
       },
     });
+
+    // 대분류인 경우 기본 소분류 "선택안함" 자동 생성
+    if (level === 1) {
+      await this.prisma.category.create({
+        data: {
+          projectId,
+          userId,
+          name: '선택안함',
+          parentId: category.id,
+          level: 2,
+          type: dto.type,
+          isDefault: true,
+          defaultIsFixed: false,
+        },
+      });
+    }
+
+    return category;
   }
 
   async getCategories(userId: string, type?: 'income' | 'expense', projectId?: string): Promise<CategoryDto.Response[]> {
@@ -101,16 +119,27 @@ export class CategoriesService {
     userId: string,
     dto: CategoryDto.UpdateRequest,
   ): Promise<CategoryDto.Response> {
-    await this.getCategoryById(id, userId);
+    const category = await this.getCategoryById(id, userId);
+
+    const data: any = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.icon !== undefined) data.icon = dto.icon;
+    if (dto.defaultIsFixed !== undefined) data.defaultIsFixed = dto.defaultIsFixed;
+    if (dto.isActive !== undefined) data.isActive = dto.isActive;
 
     return this.prisma.category.update({
       where: { id },
-      data: dto,
+      data,
     });
   }
 
   async deleteCategory(id: string, userId: string): Promise<CategoryDto.Response> {
     const category = await this.getCategoryById(id, userId);
+
+    // 기본 카테고리는 삭제 불가
+    if (category.isDefault) {
+      throw new BadRequestException('기본 카테고리는 삭제할 수 없습니다.');
+    }
 
     // 대분류인 경우 소분류도 함께 삭제
     if (category.level === 1) {

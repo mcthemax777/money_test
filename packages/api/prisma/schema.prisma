@@ -221,6 +221,7 @@ model Transaction {
   tags              String[] @default([])
   isRecurring       Boolean  @default(false)
   recurringPattern  String?  // daily, weekly, monthly, yearly
+  isFixed           Boolean  @default(false) // 고정 지출/수입 여부
 
   project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -242,19 +243,21 @@ model Transaction {
   @@index([type])
   @@index([mainCategoryId])
   @@index([subCategoryId])
+  @@index([isFixed])
 }
 
 // 카테고리 (대분류/소분류)
 model Category {
-  id        String   @id @default(cuid())
-  projectId String
-  userId    String
-  name      String
-  parentId  String?  // 대분류는 null, 소분류는 대분류 ID
-  level     Int      @default(1) // 1: 대분류, 2: 소분류
-  type      String   // income, expense
-  icon      String?
-  color     String?
+  id              String   @id @default(cuid())
+  projectId       String
+  userId          String
+  name            String
+  parentId        String?  // 대분류는 null, 소분류는 대분류 ID
+  level           Int      @default(1) // 1: 대분류, 2: 소분류
+  type            String   // income, expense
+  icon            String?
+  defaultIsFixed  Boolean  @default(false) // 소분류의 기본 고정 여부 (level=2일 때만 사용)
+  isDefault       Boolean  @default(false) // 기본 카테고리 (예: "선택안함") - 삭제 불가
 
   project               Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user                  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -271,6 +274,7 @@ model Category {
   @@index([userId])
   @@index([type])
   @@index([parentId])
+  @@index([isDefault])
   @@unique([projectId, userId, name, parentId])
 }
 
