@@ -34,8 +34,8 @@ export class CategoriesController {
 
   @Get()
   @ApiOperation({ summary: '카테고리 목록 (계층 구조)' })
-  list(@Request() req: AuthenticatedRequest, @Query('type') type?: 'income' | 'expense') {
-    return this.categoriesService.getCategories(req.user.id, type);
+  list(@Request() req: AuthenticatedRequest, @Query('type') type?: 'income' | 'expense', @Query('projectId') projectId?: string) {
+    return this.categoriesService.getCategories(req.user.id, type, projectId);
   }
 
   @Get(':id')

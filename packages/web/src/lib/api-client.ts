@@ -99,8 +99,10 @@ class ApiClient {
   }
 
   // v2 API Methods
-  async getPeople() {
-    const response = await this.client.get<any>('/v2/people');
+  async getPeople(projectId?: string) {
+    const response = await this.client.get<any>('/v2/people', {
+      params: projectId ? { projectId } : {}
+    });
     return response.data;
   }
 
@@ -118,8 +120,10 @@ class ApiClient {
     await this.client.delete(`/v2/people/${id}`);
   }
 
-  async getAccountsV2() {
-    const response = await this.client.get<any>('/v2/accounts');
+  async getAccountsV2(projectId?: string) {
+    const response = await this.client.get<any>('/v2/accounts', {
+      params: projectId ? { projectId } : {}
+    });
     return response.data;
   }
 
@@ -142,8 +146,10 @@ class ApiClient {
     await this.client.delete(`/v2/accounts/${id}`);
   }
 
-  async getCards() {
-    const response = await this.client.get<any>('/v2/cards');
+  async getCards(projectId?: string) {
+    const response = await this.client.get<any>('/v2/cards', {
+      params: projectId ? { projectId } : {}
+    });
     return response.data;
   }
 
@@ -176,8 +182,10 @@ class ApiClient {
     await this.client.delete(`/v2/cards/${id}`);
   }
 
-  async getTransactionsV2(query?: any) {
-    const response = await this.client.get<any>('/v2/transactions', { params: query });
+  async getTransactionsV2(query?: any, projectId?: string) {
+    const params = { ...query };
+    if (projectId) params.projectId = projectId;
+    const response = await this.client.get<any>('/v2/transactions', { params });
     return response.data;
   }
 
@@ -200,8 +208,10 @@ class ApiClient {
     await this.client.delete(`/v2/transactions/${id}`);
   }
 
-  async getCategories() {
-    const response = await this.client.get<any>('/v2/categories');
+  async getCategories(projectId?: string) {
+    const response = await this.client.get<any>('/v2/categories', {
+      params: projectId ? { projectId } : {}
+    });
     return response.data;
   }
 
@@ -221,6 +231,65 @@ class ApiClient {
 
   async getTransactionStats(query?: any) {
     const response = await this.client.get<any>('/v2/transactions/statistics', { params: query });
+    return response.data;
+  }
+
+  // 프로젝트 API Methods
+  async createProject(name: string, description?: string) {
+    const response = await this.client.post<any>('/projects', {
+      name,
+      description,
+    });
+    return response.data;
+  }
+
+  async getMyProjects() {
+    const response = await this.client.get<any>('/projects');
+    return response.data;
+  }
+
+  async leaveProject(projectId: string) {
+    const response = await this.client.post<any>(`/projects/${projectId}/leave`);
+    return response.data;
+  }
+
+  async deleteProject(projectId: string) {
+    const response = await this.client.delete<any>(`/projects/${projectId}`);
+    return response.data;
+  }
+
+  async getProjectMembers(projectId: string) {
+    const response = await this.client.get<any>(`/projects/${projectId}/members`);
+    return response.data;
+  }
+
+  async sendEmailInvitation(projectId: string, email: string, role: string) {
+    const response = await this.client.post<any>(`/projects/${projectId}/invitations/email`, {
+      email,
+      role,
+    });
+    return response.data;
+  }
+
+  async generateInvitationLink(projectId: string, role: string) {
+    const response = await this.client.post<any>(`/projects/${projectId}/invitations/link`, {
+      role,
+    });
+    return response.data;
+  }
+
+  async acceptInvitation(invitationCode: string) {
+    const response = await this.client.post<any>(`/projects/invitations/${invitationCode}/accept`);
+    return response.data;
+  }
+
+  async declineInvitation(invitationCode: string) {
+    const response = await this.client.post<any>(`/projects/invitations/${invitationCode}/decline`);
+    return response.data;
+  }
+
+  async getProjectPendingInvitations(projectId: string) {
+    const response = await this.client.get<any>(`/projects/${projectId}/invitations/pending`);
     return response.data;
   }
 }

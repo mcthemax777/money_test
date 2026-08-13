@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   UseGuards,
   Request,
   HttpCode,
@@ -33,8 +34,8 @@ export class AccountsController {
 
   @Get()
   @ApiOperation({ summary: '통장 목록' })
-  list(@Request() req: AuthenticatedRequest) {
-    return this.accountsService.getAccounts(req.user.id);
+  list(@Request() req: AuthenticatedRequest, @Query('projectId') projectId?: string) {
+    return this.accountsService.getAccounts(req.user.id, projectId);
   }
 
   @Get(':id')

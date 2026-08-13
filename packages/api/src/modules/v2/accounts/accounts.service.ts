@@ -6,6 +6,19 @@ import { AccountDto } from '@money/types';
 export class AccountsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private async getUserDefaultProjectId(userId: string): Promise<string> {
+    const member = await this.prisma.projectMember.findFirst({
+      where: { userId, role: 'owner' },
+      select: { projectId: true },
+    });
+
+    if (!member) {
+      throw new BadRequestException('기본 프로젝트를 찾을 수 없습니다.');
+    }
+
+    return member.projectId;
+  }
+
   async createAccount(userId: string, dto: AccountDto.CreateRequest): Promise<AccountDto.Response> {
     // 통장 주인이 존재하는지 확인
     const owner = await this.prisma.person.findUnique({
@@ -16,8 +29,11 @@ export class AccountsService {
       throw new NotFoundException('유효한 통장 주인이 아닙니다.');
     }
 
+    const projectId = await this.getUserDefaultProjectId(userId);
+
     return this.prisma.account.create({
       data: {
+        projectId,
         userId,
         ownerId: dto.ownerId,
         name: dto.name,
@@ -30,9 +46,11 @@ export class AccountsService {
     });
   }
 
-  async getAccounts(userId: string): Promise<AccountDto.Response[]> {
+  async getAccounts(userId: string, projectId?: string): Promise<AccountDto.Response[]> {
+    const finalProjectId = projectId || (await this.getUserDefaultProjectId(userId));
+
     return this.prisma.account.findMany({
-      where: { userId, isActive: true },
+      where: { userId, projectId: finalProjectId, isActive: true },
       include: { owner: true },
       orderBy: { createdAt: 'desc' },
     });
@@ -92,13 +110,9 @@ export class AccountsService {
     });
   }
 
-  // 통장 잔액 차감 (거래 시)
+  // 통장 잔액 차감 (거래 시 - 마이너스 허용)
   async deductBalance(accountId: string, userId: string, amount: number): Promise<void> {
-    const account = await this.getAccountById(accountId, userId);
-
-    if (account.balance < amount) {
-      throw new BadRequestException('잔액이 부족합니다.');
-    }
+    await this.getAccountById(accountId, userId);
 
     await this.prisma.account.update({
       where: { id: accountId },

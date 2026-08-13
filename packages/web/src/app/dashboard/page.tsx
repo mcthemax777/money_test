@@ -4,12 +4,16 @@ import { useEffect, useState, useRef, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/store/auth';
 import { useUserFilter } from '@/store/user-filter';
+import { useProject } from '@/store/project';
 import { apiClient } from '@/lib/api-client';
 import CustomSelect from '@/components/CustomSelect';
 import Modal from '@/components/Modal';
 import TransactionCalendar from '@/components/TransactionCalendar';
+import TransactionListView from '@/components/TransactionListView';
+import MonthHeader from '@/components/MonthHeader';
 import AddAccountModal from '@/components/AddAccountModal';
 import PersonModal from '@/components/PersonModal';
+import TransactionItem from '@/components/TransactionItem';
 
 interface Transaction {
   id: string;
@@ -55,6 +59,7 @@ interface Card {
 export default function TransactionsPage() {
   const { isAuthenticated, loadUser } = useAuth();
   const { selectedPersonIds, setPeople: setStorePeople } = useUserFilter();
+  const { selectedProjectId } = useProject();
   const router = useRouter();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -72,6 +77,7 @@ export default function TransactionsPage() {
   const [displayTransactions, setDisplayTransactions] = useState<Transaction[]>([]);
   const [currentMonth, setCurrentMonth] = useState<number>(new Date().getMonth() + 1);
   const [currentYear, setCurrentYear] = useState<number>(new Date().getFullYear());
+  const [viewType, setViewType] = useState<'calendar' | 'list'>('calendar');
   const dateTransactionsRef = useRef<HTMLDivElement>(null);
   const [isPersonModalOpen, setIsPersonModalOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
@@ -122,8 +128,10 @@ export default function TransactionsPage() {
   }, [loadUser]);
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      router.push('/login');
+    if (!isAuthenticated || !selectedProjectId) {
+      if (!isAuthenticated) {
+        router.push('/login');
+      }
       return;
     }
 
@@ -131,28 +139,28 @@ export default function TransactionsPage() {
       try {
         setIsLoading(true);
         const [transactionsData, accountsData, peopleData, cardsData, categoriesData] = await Promise.all([
-          apiClient.getTransactionsV2(),
-          apiClient.getAccountsV2(),
-          apiClient.getPeople(),
-          apiClient.getCards(),
-          apiClient.getCategories(),
+          apiClient.getTransactionsV2({}, selectedProjectId),
+          apiClient.getAccountsV2(selectedProjectId),
+          apiClient.getPeople(selectedProjectId),
+          apiClient.getCards(selectedProjectId),
+          apiClient.getCategories(selectedProjectId),
         ]);
-        const txs = transactionsData?.data || [];
+        const txs = (transactionsData?.data || []).map((tx: any) => ({
+          ...tx,
+          mainCategory: typeof tx.mainCategory === 'object' ? tx.mainCategory?.name : tx.mainCategory,
+          subCategory: typeof tx.subCategory === 'object' ? tx.subCategory?.name : tx.subCategory,
+        }));
         setTransactions(txs);
         setAccounts(accountsData || []);
         setPeople(peopleData || []);
         setCards(cardsData || []);
         setCategories(categoriesData || []);
 
-        // 초기 월의 거래내역 설정
+        // 초기 월 설정 (거래내역은 날짜 선택 후 표시)
         const today = new Date();
         const thisMonth = today.getMonth() + 1;
         const thisYear = today.getFullYear();
-        const monthTransactions = txs.filter((tx: any) => {
-          const txDate = new Date(tx.date);
-          return txDate.getFullYear() === thisYear && txDate.getMonth() + 1 === thisMonth;
-        });
-        setDisplayTransactions(monthTransactions);
+        setDisplayTransactions([]);
         setCurrentMonth(thisMonth);
         setCurrentYear(thisYear);
       } catch (err) {
@@ -163,13 +171,35 @@ export default function TransactionsPage() {
     };
 
     loadData();
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, router, selectedProjectId]);
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter((tx) => {
       return selectedPersonIds.includes(tx.personId || '');
     });
   }, [transactions, selectedPersonIds]);
+
+  const currentMonthTransactions = useMemo(() => {
+    return transactions.filter((tx) => {
+      const txDate = new Date(tx.date);
+      return txDate.getFullYear() === currentYear && txDate.getMonth() + 1 === currentMonth;
+    });
+  }, [transactions, currentMonth, currentYear]);
+
+  const monthlyTotals = useMemo(() => {
+    let incomeTotal = 0;
+    let expenseTotal = 0;
+
+    currentMonthTransactions.forEach((tx) => {
+      if (tx.type === 'income') {
+        incomeTotal += tx.amount;
+      } else if (tx.type === 'expense') {
+        expenseTotal += tx.amount;
+      }
+    });
+
+    return { incomeTotal, expenseTotal };
+  }, [currentMonthTransactions]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -269,37 +299,15 @@ export default function TransactionsPage() {
   };
 
   const handleCalendarDateSelect = (clickedDate: Date, dayTransactions: Transaction[]) => {
-    if (!startDate) {
-      setStartDate(clickedDate);
-      setEndDate(null);
-      setDisplayTransactions(dayTransactions);
-    } else if (
-      clickedDate.getFullYear() === startDate.getFullYear() &&
-      clickedDate.getMonth() === startDate.getMonth() &&
-      clickedDate.getDate() === startDate.getDate()
+    if (startDate &&
+        clickedDate.getFullYear() === startDate.getFullYear() &&
+        clickedDate.getMonth() === startDate.getMonth() &&
+        clickedDate.getDate() === startDate.getDate()
     ) {
       setStartDate(null);
-      setEndDate(null);
       setDisplayTransactions([]);
-      return;
-    } else if (!endDate) {
-      let newStartDate = startDate;
-      let newEndDate = clickedDate;
-      if (clickedDate < startDate) {
-        newStartDate = clickedDate;
-        newEndDate = startDate;
-      }
-      setStartDate(newStartDate);
-      setEndDate(newEndDate);
-
-      const rangeTransactions = filteredTransactions.filter((tx) => {
-        const txDate = new Date(tx.date);
-        return txDate >= newStartDate && txDate <= newEndDate;
-      });
-      setDisplayTransactions(rangeTransactions);
     } else {
       setStartDate(clickedDate);
-      setEndDate(null);
       setDisplayTransactions(dayTransactions);
     }
 
@@ -312,14 +320,7 @@ export default function TransactionsPage() {
     setCurrentYear(year);
     setCurrentMonth(month);
     setStartDate(null);
-    setEndDate(null);
-
-    // 해당 월의 거래내역으로 업데이트
-    const monthTransactions = filteredTransactions.filter((tx) => {
-      const txDate = new Date(tx.date);
-      return txDate.getFullYear() === year && txDate.getMonth() + 1 === month;
-    });
-    setDisplayTransactions(monthTransactions);
+    setDisplayTransactions([]);
   };
 
   const handleDetailEditClick = () => {
@@ -466,12 +467,36 @@ export default function TransactionsPage() {
     <>
       <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">거래 기록</h1>
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-        >
-          거래 추가
-        </button>
+        <div className="flex gap-3">
+          <div className="flex gap-2 bg-gray-200 rounded-lg p-1">
+            <button
+              onClick={() => setViewType('calendar')}
+              className={`px-4 py-2 rounded-md font-medium transition ${
+                viewType === 'calendar'
+                  ? 'bg-white text-blue-600 shadow'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              달력
+            </button>
+            <button
+              onClick={() => setViewType('list')}
+              className={`px-4 py-2 rounded-md font-medium transition ${
+                viewType === 'list'
+                  ? 'bg-white text-blue-600 shadow'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              리스트
+            </button>
+          </div>
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            거래 추가
+          </button>
+        </div>
       </div>
 
       <div>
@@ -479,8 +504,30 @@ export default function TransactionsPage() {
           <p className="text-gray-600">로딩 중...</p>
         ) : transactions.length === 0 ? (
           <p className="text-gray-600">거래가 없습니다.</p>
-        ) : (
+        ) : viewType === 'calendar' ? (
           <div>
+            <MonthHeader
+              year={currentYear}
+              month={currentMonth}
+              incomeTotal={monthlyTotals.incomeTotal}
+              expenseTotal={monthlyTotals.expenseTotal}
+              onPrevMonth={() => {
+                const newMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+                const newYear = currentMonth === 1 ? currentYear - 1 : currentYear;
+                setCurrentYear(newYear);
+                setCurrentMonth(newMonth);
+                setStartDate(null);
+                setDisplayTransactions([]);
+              }}
+              onNextMonth={() => {
+                const newMonth = currentMonth === 12 ? 1 : currentMonth + 1;
+                const newYear = currentMonth === 12 ? currentYear + 1 : currentYear;
+                setCurrentYear(newYear);
+                setCurrentMonth(newMonth);
+                setStartDate(null);
+                setDisplayTransactions([]);
+              }}
+            />
             <TransactionCalendar
               transactions={filteredTransactions}
               onDateSelect={handleCalendarDateSelect}
@@ -500,33 +547,49 @@ export default function TransactionsPage() {
                 </h3>
                 <div className="space-y-2">
                   {displayTransactions.map((tx) => (
-                    <div
+                    <TransactionItem
                       key={tx.id}
-                      className="bg-white rounded-lg shadow p-4 flex justify-between items-center border-l-4 border-blue-500 cursor-pointer hover:shadow-lg transition"
+                      id={tx.id}
+                      description={tx.description}
+                      amount={tx.amount}
+                      type={tx.type}
+                      date={tx.date}
+                      mainCategory={tx.mainCategory}
+                      subCategory={tx.subCategory}
                       onClick={() => handleTransactionClick(tx)}
-                    >
-                      <div className="flex-1">
-                        <p className="font-bold text-gray-900">{tx.description}</p>
-                        <p className="text-sm text-gray-600">{tx.mainCategory}</p>
-                        <p className="text-xs text-gray-500">
-                          {new Date(tx.date).toLocaleDateString('ko-KR')}
-                        </p>
-                      </div>
-                      <div className="text-right mr-4">
-                        <p className={`text-lg font-bold ${
-                          tx.type === 'income' ? 'text-green-600' : 'text-red-600'
-                        }`}>
-                          {tx.type === 'income' ? '+' : '-'}
-                          {new Intl.NumberFormat('ko-KR', {
-                            style: 'currency',
-                            currency: 'KRW',
-                          }).format(tx.amount)}
-                        </p>
-                      </div>
-                    </div>
+                    />
                   ))}
                 </div>
               </div>
+            )}
+          </div>
+        ) : (
+          <div className="mt-4">
+            <MonthHeader
+              year={currentYear}
+              month={currentMonth}
+              incomeTotal={monthlyTotals.incomeTotal}
+              expenseTotal={monthlyTotals.expenseTotal}
+              onPrevMonth={() => {
+                const newMonth = currentMonth === 1 ? 12 : currentMonth - 1;
+                const newYear = currentMonth === 1 ? currentYear - 1 : currentYear;
+                setCurrentYear(newYear);
+                setCurrentMonth(newMonth);
+              }}
+              onNextMonth={() => {
+                const newMonth = currentMonth === 12 ? 1 : currentMonth + 1;
+                const newYear = currentMonth === 12 ? currentYear + 1 : currentYear;
+                setCurrentYear(newYear);
+                setCurrentMonth(newMonth);
+              }}
+            />
+            {currentMonthTransactions.length > 0 ? (
+              <TransactionListView
+                transactions={currentMonthTransactions}
+                onTransactionClick={handleTransactionClick}
+              />
+            ) : (
+              <p className="text-gray-600">이 달에 거래가 없습니다.</p>
             )}
           </div>
         )}

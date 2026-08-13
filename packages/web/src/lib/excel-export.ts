@@ -52,38 +52,44 @@ export async function exportDataToExcel() {
     XLSX.utils.book_append_sheet(workbook, accountsSheet, '계좌');
 
     // 3. 카드 시트
-    const cardsData = cardsArray.map((c: any) => ({
-      ID: c.id,
-      카드명: c.name,
-      계좌명: c.accountId ? accountsMap.get(c.accountId)?.name || '-' : '-',
-      계좌사용자명: c.accountId ? peopleMap.get(accountsMap.get(c.accountId)?.ownerId) || '-' : '-',
-      카드사: c.cardCompany || c.issuer || '',
-      카드번호: c.cardNumber || '',
-      잔액: c.balance || 0,
-      생성일: c.createdAt ? new Date(c.createdAt).toLocaleDateString('ko-KR') : '',
-    }));
+    const cardsData = cardsArray.map((c: any) => {
+      const account = c.accountId ? accountsMap.get(c.accountId) as any : null;
+      return {
+        ID: c.id,
+        카드명: c.name,
+        계좌명: account?.name || '-',
+        계좌사용자명: account?.ownerId ? peopleMap.get(account.ownerId) || '-' : '-',
+        카드사: c.cardCompany || c.issuer || '',
+        카드번호: c.cardNumber || '',
+        잔액: c.balance || 0,
+        생성일: c.createdAt ? new Date(c.createdAt).toLocaleDateString('ko-KR') : '',
+      };
+    });
     const cardsSheet = XLSX.utils.json_to_sheet(cardsData);
     XLSX.utils.book_append_sheet(workbook, cardsSheet, '카드');
 
     // 4. 카테고리 시트
-    const categoriesData = categoriesArray.map((c: any) => ({
-      ID: c.id,
-      카테고리명: c.name,
-      유형: c.type === 'income' ? '수입' : c.type === 'expense' ? '지출' : c.type,
-      대분류: c.parentId ? categoriesMap.get(c.parentId)?.name || '-' : '-',
-      소분류: c.level === 2 ? c.name : '-',
-      색상: c.color || '',
-      생성일: c.createdAt ? new Date(c.createdAt).toLocaleDateString('ko-KR') : '',
-    }));
+    const categoriesData = categoriesArray.map((c: any) => {
+      const parent = c.parentId ? categoriesMap.get(c.parentId) as any : null;
+      return {
+        ID: c.id,
+        카테고리명: c.name,
+        유형: c.type === 'income' ? '수입' : c.type === 'expense' ? '지출' : c.type,
+        대분류: parent?.name || '-',
+        소분류: c.level === 2 ? c.name : '-',
+        색상: c.color || '',
+        생성일: c.createdAt ? new Date(c.createdAt).toLocaleDateString('ko-KR') : '',
+      };
+    });
     const categoriesSheet = XLSX.utils.json_to_sheet(categoriesData);
     XLSX.utils.book_append_sheet(workbook, categoriesSheet, '카테고리');
 
     // 5. 거래내역 시트
     const transactionsData = transactionsArray.map((t: any) => {
-      const accountName = t.accountId ? accountsMap.get(t.accountId)?.name || '-' : '-';
-      const cardName = t.cardId ? cardsMap.get(t.cardId)?.name || '-' : '-';
-      const mainCat = t.mainCategoryId ? categoriesMap.get(t.mainCategoryId) : null;
-      const subCat = t.subCategoryId ? categoriesMap.get(t.subCategoryId) : null;
+      const account = t.accountId ? accountsMap.get(t.accountId) as any : null;
+      const card = t.cardId ? cardsMap.get(t.cardId) as any : null;
+      const mainCat = t.mainCategoryId ? categoriesMap.get(t.mainCategoryId) as any : null;
+      const subCat = t.subCategoryId ? categoriesMap.get(t.subCategoryId) as any : null;
 
       return {
         ID: t.id,
@@ -93,8 +99,8 @@ export async function exportDataToExcel() {
         소분류: subCat?.name || t.subCategory || '-',
         설명: t.description || '',
         거래자: t.personId ? peopleMap.get(t.personId) || '-' : '-',
-        계좌: accountName,
-        카드: cardName,
+        계좌: account?.name || '-',
+        카드: card?.name || '-',
         거래일자: t.transactionDate
           ? new Date(t.transactionDate).toLocaleDateString('ko-KR')
           : t.date

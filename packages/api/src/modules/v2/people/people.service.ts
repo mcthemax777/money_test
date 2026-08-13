@@ -6,9 +6,25 @@ import { PersonDto } from '@money/types';
 export class PeopleService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private async getUserDefaultProjectId(userId: string): Promise<string> {
+    const member = await this.prisma.projectMember.findFirst({
+      where: { userId, role: 'owner' },
+      select: { projectId: true },
+    });
+
+    if (!member) {
+      throw new BadRequestException('기본 프로젝트를 찾을 수 없습니다.');
+    }
+
+    return member.projectId;
+  }
+
   async createPerson(userId: string, dto: PersonDto.CreateRequest): Promise<PersonDto.Response> {
+    const projectId = await this.getUserDefaultProjectId(userId);
+
     return this.prisma.person.create({
       data: {
+        projectId,
         userId,
         name: dto.name,
         relationship: dto.relationship,
@@ -16,9 +32,11 @@ export class PeopleService {
     });
   }
 
-  async getPeople(userId: string): Promise<PersonDto.Response[]> {
+  async getPeople(userId: string, projectId?: string): Promise<PersonDto.Response[]> {
+    const finalProjectId = projectId || (await this.getUserDefaultProjectId(userId));
+
     return this.prisma.person.findMany({
-      where: { userId, isActive: true },
+      where: { userId, projectId: finalProjectId, isActive: true },
       orderBy: { createdAt: 'asc' },
     });
   }

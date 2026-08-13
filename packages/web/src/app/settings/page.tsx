@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import Link from 'next/link';
 import { exportDataToExcel } from '@/lib/excel-export';
 
 export default function SettingsPage() {
@@ -27,6 +28,36 @@ export default function SettingsPage() {
       <div>
         <h1 className="text-3xl font-bold text-gray-900">설정</h1>
         <p className="mt-2 text-gray-600">앱 설정 및 데이터 관리</p>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <Link href="/settings/projects">
+          <div className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition cursor-pointer">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">프로젝트 관리</h2>
+                <p className="mt-1 text-sm text-gray-600">
+                  프로젝트를 생성, 관리, 탈퇴합니다
+                </p>
+              </div>
+              <div className="text-2xl">→</div>
+            </div>
+          </div>
+        </Link>
+
+        <Link href="/settings/invitations">
+          <div className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition cursor-pointer">
+            <div className="flex items-center justify-between">
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900">프로젝트 초대 관리</h2>
+                <p className="mt-1 text-sm text-gray-600">
+                  팀원을 초대하고 초대 상태를 관리합니다
+                </p>
+              </div>
+              <div className="text-2xl">→</div>
+            </div>
+          </div>
+        </Link>
       </div>
 
       <div className="bg-white rounded-lg shadow-md p-6">

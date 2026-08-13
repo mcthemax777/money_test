@@ -6,6 +6,19 @@ import { CardDto } from '@money/types';
 export class CardsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private async getUserDefaultProjectId(userId: string): Promise<string> {
+    const member = await this.prisma.projectMember.findFirst({
+      where: { userId, role: 'owner' },
+      select: { projectId: true },
+    });
+
+    if (!member) {
+      throw new BadRequestException('기본 프로젝트를 찾을 수 없습니다.');
+    }
+
+    return member.projectId;
+  }
+
   async createCard(userId: string, dto: CardDto.CreateRequest): Promise<CardDto.Response> {
     // 통장 확인
     const account = await this.prisma.account.findUnique({
@@ -22,9 +35,11 @@ export class CardsService {
     }
 
     const maskedNumber = dto.cardNumber ? this.maskCardNumber(dto.cardNumber) : null;
+    const projectId = await this.getUserDefaultProjectId(userId);
 
     const card = await this.prisma.card.create({
       data: {
+        projectId,
         userId,
         accountId: dto.accountId,
         name: dto.name,
@@ -39,9 +54,11 @@ export class CardsService {
     return this.formatCardResponse(card);
   }
 
-  async getCards(userId: string): Promise<CardDto.Response[]> {
+  async getCards(userId: string, projectId?: string): Promise<CardDto.Response[]> {
+    const finalProjectId = projectId || (await this.getUserDefaultProjectId(userId));
+
     const cards = await this.prisma.card.findMany({
-      where: { userId, isActive: true },
+      where: { userId, projectId: finalProjectId, isActive: true },
       include: { account: true },
       orderBy: { createdAt: 'desc' },
     });
@@ -124,18 +141,11 @@ export class CardsService {
 
     // 체크카드: 즉시 통장에서 차감
     if (card.cardType === 'debit') {
-      // 잔액 확인
-      const account = await this.prisma.account.findUnique({
-        where: { id: card.accountId },
-      });
-
-      if (!account || account.balance < amount) {
-        throw new BadRequestException('잔액이 부족합니다.');
-      }
-
       // 거래 생성
+      const projectId = await this.getUserDefaultProjectId(userId);
       const transaction = await this.prisma.transaction.create({
         data: {
+          projectId,
           userId,
           accountId: card.accountId,
           personId,
@@ -149,7 +159,7 @@ export class CardsService {
         },
       });
 
-      // 통장 잔액 차감
+      // 통장 잔액 차감 (마이너스 허용)
       await this.prisma.account.update({
         where: { id: card.accountId },
         data: { balance: { decrement: amount } },
@@ -166,8 +176,10 @@ export class CardsService {
       }
 
       // CardUsage 생성
+      const projectId = await this.getUserDefaultProjectId(userId);
       const usage = await this.prisma.cardUsage.create({
         data: {
+          projectId,
           userId,
           cardId,
           amount,
@@ -209,13 +221,12 @@ export class CardsService {
       throw new NotFoundException('유효한 통장이 아닙니다.');
     }
 
-    if (account.balance < totalAmount) {
-      throw new BadRequestException('결제 금액이 부족합니다.');
-    }
+    const projectId = await this.getUserDefaultProjectId(userId);
 
     // 거래 생성
     const transaction = await this.prisma.transaction.create({
       data: {
+        projectId,
         userId,
         accountId,
         personId: account.ownerId,
@@ -243,6 +254,7 @@ export class CardsService {
     // CardPayment 기록
     const payment = await this.prisma.cardPayment.create({
       data: {
+        projectId,
         userId,
         cardId,
         accountId,

@@ -4,6 +4,7 @@ import { DatabaseModule } from './config/database.module';
 import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { HealthModule } from './modules/health/health.module';
+import { ProjectsModule } from './modules/projects/projects.module';
 
 // v2 모듈
 import { PeopleModule } from './modules/v2/people/people.module';
@@ -19,6 +20,7 @@ import { TransactionsModule as TransactionsModuleV2 } from './modules/v2/transac
     HealthModule,
     AuthModule,
     UsersModule,
+    ProjectsModule,
     PeopleModule,
     AccountsModuleV2,
     CardsModule,

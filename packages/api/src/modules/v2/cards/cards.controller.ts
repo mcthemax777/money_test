@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   UseGuards,
   Request,
   HttpCode,
@@ -33,8 +34,8 @@ export class CardsController {
 
   @Get()
   @ApiOperation({ summary: '카드 목록' })
-  list(@Request() req: AuthenticatedRequest) {
-    return this.cardsService.getCards(req.user.id);
+  list(@Request() req: AuthenticatedRequest, @Query('projectId') projectId?: string) {
+    return this.cardsService.getCards(req.user.id, projectId);
   }
 
   @Get(':id')

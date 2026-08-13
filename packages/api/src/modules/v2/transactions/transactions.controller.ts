@@ -34,8 +34,8 @@ export class TransactionsController {
 
   @Get()
   @ApiOperation({ summary: '거래 목록 (필터링 지원)' })
-  list(@Request() req: AuthenticatedRequest, @Query() query: TransactionDto.ListQuery) {
-    return this.transactionsService.getTransactions(req.user.id, query);
+  list(@Request() req: AuthenticatedRequest, @Query() query: TransactionDto.ListQuery, @Query('projectId') projectId?: string) {
+    return this.transactionsService.getTransactions(req.user.id, query, projectId);
   }
 
   @Get(':id')

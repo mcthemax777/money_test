@@ -6,6 +6,7 @@ import {
   Delete,
   Body,
   Param,
+  Query,
   UseGuards,
   Request,
   HttpCode,
@@ -33,8 +34,8 @@ export class PeopleController {
 
   @Get()
   @ApiOperation({ summary: '사람 목록' })
-  list(@Request() req: AuthenticatedRequest) {
-    return this.peopleService.getPeople(req.user.id);
+  list(@Request() req: AuthenticatedRequest, @Query('projectId') projectId?: string) {
+    return this.peopleService.getPeople(req.user.id, projectId);
   }
 
   @Get(':id')

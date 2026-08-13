@@ -127,28 +127,6 @@ export default function TransactionCalendar({
 
   return (
     <div className="w-full">
-      <div className="flex items-center justify-between mb-8">
-        <h2 className="text-2xl font-bold text-gray-900">
-          {currentDate.getFullYear()}년 {currentDate.getMonth() + 1}월
-        </h2>
-        <div className="flex gap-3">
-          <button
-            onClick={handlePrevMonth}
-            className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
-            title="이전 달"
-          >
-            <span className="text-xl">←</span>
-          </button>
-          <button
-            onClick={handleNextMonth}
-            className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
-            title="다음 달"
-          >
-            <span className="text-xl">→</span>
-          </button>
-        </div>
-      </div>
-
       <div className="bg-white rounded-lg shadow-sm border border-gray-100 overflow-hidden">
         <div className="grid grid-cols-7 gap-0 bg-gradient-to-b from-gray-50 to-white border-b border-gray-100">
           {weekDays.map((day) => (

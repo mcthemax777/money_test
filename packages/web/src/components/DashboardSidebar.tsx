@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { useUserFilter } from '@/store/user-filter';
+import { useProject } from '@/store/project';
 import { apiClient } from '@/lib/api-client';
 
 interface Person {
@@ -11,11 +12,19 @@ interface Person {
   name: string;
 }
 
+interface Project {
+  id: string;
+  name: string;
+  description?: string;
+  role: 'owner' | 'editor' | 'viewer';
+}
+
 const menuItems = [
   {
     section: null,
     items: [
       { label: '홈', href: '/dashboard' },
+      { label: '통계', href: '/statistics' },
       { label: '자산', href: '/assets' },
       { label: '카테고리', href: '/assets/categories' },
       { label: '설정', href: '/settings' },
@@ -28,12 +37,34 @@ export default function DashboardSidebar() {
   const [isOpen, setIsOpen] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const { people, setPeople, selectedPersonIds, togglePersonId, setSelectedPersonIds } = useUserFilter();
+  const { projects, setProjects, selectedProjectId, setSelectedProjectId } = useProject();
 
+  // 프로젝트 로드
   useEffect(() => {
-    if (people.length === 0) {
+    const loadProjects = async () => {
+      try {
+        const data = await apiClient.getMyProjects();
+        setProjects(data || []);
+        // 기본값: 첫 번째 프로젝트 선택
+        if (!selectedProjectId && data && data.length > 0) {
+          setSelectedProjectId(data[0].id);
+        }
+      } catch (err) {
+        console.error('프로젝트 목록 조회 실패:', err);
+      }
+    };
+
+    if (projects.length === 0) {
+      loadProjects();
+    }
+  }, [projects.length, selectedProjectId, setProjects, setSelectedProjectId]);
+
+  // 사용자 로드
+  useEffect(() => {
+    if (selectedProjectId) {
       const loadPeople = async () => {
         try {
-          const data = await apiClient.getPeople();
+          const data = await apiClient.getPeople(selectedProjectId);
           setPeople(data || []);
           // 기본값: 모든 사용자 선택
           if (selectedPersonIds.length === 0) {
@@ -46,7 +77,7 @@ export default function DashboardSidebar() {
 
       loadPeople();
     }
-  }, [people.length, setPeople, setSelectedPersonIds, selectedPersonIds.length]);
+  }, [selectedProjectId, setPeople, setSelectedPersonIds, selectedPersonIds.length]);
 
   const isActive = (href: string) => {
     if (href === '/dashboard') {
@@ -58,7 +89,8 @@ export default function DashboardSidebar() {
     return pathname.startsWith(href);
   };
 
-  const toggleSection = (section: string) => {
+  const toggleSection = (section: string | null) => {
+    if (!section) return;
     setExpandedSections((prev) => ({
       ...prev,
       [section]: !prev[section],
@@ -91,6 +123,35 @@ export default function DashboardSidebar() {
           isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
+        <div className="p-4 border-b border-gray-200">
+          <label className="block text-xs font-semibold text-gray-600 mb-3 uppercase tracking-wider">
+            프로젝트
+          </label>
+          <div className="space-y-2">
+            {projects.map((project) => (
+              <button
+                key={project.id}
+                onClick={() => {
+                  setSelectedProjectId(project.id);
+                  setIsOpen(false);
+                  // 프로젝트 변경 시 페이지 새로고침
+                  if (selectedProjectId !== project.id) {
+                    window.location.reload();
+                  }
+                }}
+                className={`w-full text-left px-3 py-2 rounded-lg transition text-sm ${
+                  selectedProjectId === project.id
+                    ? 'bg-blue-50 text-blue-600 font-medium'
+                    : 'text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                <div className="font-medium">{project.name}</div>
+                <div className="text-xs text-gray-500 mt-0.5">{project.role}</div>
+              </button>
+            ))}
+          </div>
+        </div>
+
         <div className="p-4 border-b border-gray-200">
           <label className="block text-xs font-semibold text-gray-600 mb-3 uppercase tracking-wider">
             사용자

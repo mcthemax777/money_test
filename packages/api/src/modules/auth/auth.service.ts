@@ -43,10 +43,69 @@ export class AuthService {
       },
     });
 
+    await this.createDefaultProject(user.id);
+
     return {
       ...this.generateTokens(user.id),
       user: this.toUserResponse(user),
     };
+  }
+
+  private async createDefaultProject(userId: string): Promise<void> {
+    const project = await this.prisma.project.create({
+      data: {
+        name: '나의 프로젝트',
+        description: '첫 번째 프로젝트',
+      },
+    });
+
+    await this.prisma.projectMember.create({
+      data: {
+        projectId: project.id,
+        userId,
+        role: 'owner',
+      },
+    });
+
+    await this.createDefaultCategories(userId, project.id);
+  }
+
+  private async createDefaultCategories(userId: string, projectId: string): Promise<void> {
+    const defaultCategories = [
+      {
+        type: 'income',
+        main: ['급여', '상여금', '이자/배당금', '기타수입'],
+      },
+      {
+        type: 'expense',
+        main: [
+          '식료품',
+          '외식',
+          '교통',
+          '통신',
+          '공과금',
+          '교육',
+          '의료',
+          '쇼핑',
+          '엔터테인먼트',
+          '저축',
+        ],
+      },
+    ];
+
+    for (const category of defaultCategories) {
+      for (const name of category.main) {
+        await this.prisma.category.create({
+          data: {
+            projectId,
+            userId,
+            name,
+            type: category.type,
+            level: 1,
+          },
+        });
+      }
+    }
   }
 
   async signIn(dto: Auth.SignInRequest): Promise<Auth.AuthResponse> {

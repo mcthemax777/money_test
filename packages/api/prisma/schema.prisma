@@ -24,6 +24,19 @@ enum PaymentStatus {
   completed
 }
 
+enum ProjectRole {
+  owner
+  editor
+  viewer
+}
+
+enum InvitationStatus {
+  pending
+  accepted
+  declined
+  expired
+}
+
 // 앱 사용자 (계정)
 model User {
   id        String   @id @default(cuid())
@@ -32,6 +45,30 @@ model User {
   name      String
   avatar    String?
 
+  projectMembers    ProjectMember[]
+  projectInvitations ProjectInvitation[]
+  people            Person[]
+  accounts          Account[]
+  cards             Card[]
+  transactions      Transaction[]
+  categories        Category[]
+  cardUsages        CardUsage[]
+  cardPayments      CardPayment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([email])
+}
+
+// 프로젝트
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+
+  members       ProjectMember[]
+  invitations   ProjectInvitation[]
   people        Person[]
   accounts      Account[]
   cards         Card[]
@@ -42,17 +79,59 @@ model User {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
 
+// 프로젝트 멤버
+model ProjectMember {
+  id        String       @id @default(cuid())
+  projectId String
+  userId    String
+  role      ProjectRole  @default(editor)
+
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  joinedAt  DateTime @default(now())
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+}
+
+// 프로젝트 초대
+model ProjectInvitation {
+  id               String             @id @default(cuid())
+  projectId        String
+  email            String
+  invitationCode   String             @unique
+  role             ProjectRole        @default(editor)
+  status           InvitationStatus   @default(pending)
+
+  project          Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  invitedBy        User               @relation(fields: [invitedByUserId], references: [id])
+  invitedByUserId  String
+
+  expiresAt        DateTime?
+  acceptedAt       DateTime?
+  acceptedByUserId String?
+
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([projectId])
   @@index([email])
+  @@index([status])
 }
 
 // 사람 (가족 구성원)
 model Person {
   id            String   @id @default(cuid())
+  projectId     String
   userId        String
   name          String
   relationship  String?  // 배우자, 자녀 등
 
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   accounts      Account[]
   transactions  Transaction[]
@@ -61,12 +140,14 @@ model Person {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([projectId])
   @@index([userId])
 }
 
 // 은행 통장
 model Account {
   id              String   @id @default(cuid())
+  projectId       String
   userId          String
   ownerId         String   // Person ID (통장 주인)
   name            String
@@ -75,6 +156,7 @@ model Account {
   bankName        String
   currency        String   @default("KRW")
 
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   owner           Person   @relation(fields: [ownerId], references: [id])
   cards           Card[]
@@ -85,6 +167,7 @@ model Account {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([projectId])
   @@index([userId])
   @@index([ownerId])
   @@index([bankName])
@@ -93,6 +176,7 @@ model Account {
 // 카드 (체크카드, 신용카드)
 model Card {
   id              String   @id @default(cuid())
+  projectId       String
   userId          String
   accountId       String   // 연결된 통장
   name            String
@@ -103,6 +187,7 @@ model Card {
   creditLimit     Float?   // 신용카드 한도
   currentBalance  Float?   @default(0) // 신용카드 현재 사용액
 
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   account         Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
   transactions    Transaction[]
@@ -113,6 +198,7 @@ model Card {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([projectId])
   @@index([userId])
   @@index([accountId])
   @@index([cardType])
@@ -121,6 +207,7 @@ model Card {
 // 거래 (입금, 출금, 이체)
 model Transaction {
   id                String   @id @default(cuid())
+  projectId         String
   userId            String
   accountId         String
   personId          String   // 거래한 사람
@@ -135,6 +222,7 @@ model Transaction {
   isRecurring       Boolean  @default(false)
   recurringPattern  String?  // daily, weekly, monthly, yearly
 
+  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   account           Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
   person            Person   @relation(fields: [personId], references: [id])
@@ -145,6 +233,7 @@ model Transaction {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([projectId])
   @@index([userId])
   @@index([accountId])
   @@index([personId])
@@ -158,6 +247,7 @@ model Transaction {
 // 카테고리 (대분류/소분류)
 model Category {
   id        String   @id @default(cuid())
+  projectId String
   userId    String
   name      String
   parentId  String?  // 대분류는 null, 소분류는 대분류 ID
@@ -166,6 +256,7 @@ model Category {
   icon      String?
   color     String?
 
+  project               Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user                  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   parent                Category?     @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
   children              Category[]    @relation("CategoryHierarchy")
@@ -176,15 +267,17 @@ model Category {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([projectId])
   @@index([userId])
   @@index([type])
   @@index([parentId])
-  @@unique([userId, name, parentId])
+  @@unique([projectId, userId, name, parentId])
 }
 
 // 카드 사용 기록
 model CardUsage {
   id          String   @id @default(cuid())
+  projectId   String
   userId      String
   cardId      String
   amount      Float
@@ -193,12 +286,15 @@ model CardUsage {
   status      String   @default("completed") // pending, completed, cancelled
   isPaymentDue Boolean @default(true)
 
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   card        Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  payments    CardPaymentUsage[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([projectId])
   @@index([userId])
   @@index([cardId])
   @@index([date])
@@ -207,6 +303,7 @@ model CardUsage {
 // 신용카드 결제 (신용카드 사용액을 통장에서 결제)
 model CardPayment {
   id              String   @id @default(cuid())
+  projectId       String
   userId          String
   cardId          String
   accountId       String
@@ -216,14 +313,34 @@ model CardPayment {
   paymentDate     DateTime
   transactionId   String?  // 결제 거래 ID
 
+  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   card            Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
   account         Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  usages          CardPaymentUsage[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  @@index([projectId])
   @@index([userId])
   @@index([cardId])
   @@index([status])
+}
+
+// 신용카드 결제와 사용 기록 연결 (N:N 관계)
+model CardPaymentUsage {
+  id            String   @id @default(cuid())
+  cardPaymentId String
+  cardUsageId   String
+  amount        Float    // 결제에 포함된 금액 (분할 결제 시 일부만 포함 가능)
+
+  cardPayment   CardPayment  @relation(fields: [cardPaymentId], references: [id], onDelete: Cascade)
+  cardUsage     CardUsage    @relation(fields: [cardUsageId], references: [id], onDelete: Cascade)
+
+  createdAt     DateTime @default(now())
+
+  @@unique([cardPaymentId, cardUsageId])
+  @@index([cardPaymentId])
+  @@index([cardUsageId])
 }

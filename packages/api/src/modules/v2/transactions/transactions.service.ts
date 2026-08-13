@@ -6,6 +6,19 @@ import { TransactionDto } from '@money/types';
 export class TransactionsService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private async getUserDefaultProjectId(userId: string): Promise<string> {
+    const member = await this.prisma.projectMember.findFirst({
+      where: { userId, role: 'owner' },
+      select: { projectId: true },
+    });
+
+    if (!member) {
+      throw new BadRequestException('기본 프로젝트를 찾을 수 없습니다.');
+    }
+
+    return member.projectId;
+  }
+
   async createTransaction(
     userId: string,
     dto: TransactionDto.CreateRequest,
@@ -28,14 +41,12 @@ export class TransactionsService {
       throw new NotFoundException('유효한 사용자가 아닙니다.');
     }
 
-    // 출금의 경우 잔액 확인
-    if (dto.type === 'expense' && account.balance < dto.amount) {
-      throw new BadRequestException('잔액이 부족합니다.');
-    }
+    const projectId = await this.getUserDefaultProjectId(userId);
 
     // 거래 생성
     const transaction = await this.prisma.transaction.create({
       data: {
+        projectId,
         userId,
         accountId: dto.accountId,
         personId: dto.personId,
@@ -75,12 +86,14 @@ export class TransactionsService {
   async getTransactions(
     userId: string,
     query: TransactionDto.ListQuery,
+    projectId?: string,
   ): Promise<any> {
     const page = query.page || 1;
     const limit = query.limit || 20;
     const skip = (page - 1) * limit;
 
-    const where: any = { userId };
+    const finalProjectId = projectId || (await this.getUserDefaultProjectId(userId));
+    const where: any = { userId, projectId: finalProjectId };
 
     if (query.accountId) where.accountId = query.accountId;
     if (query.personId) where.personId = query.personId;
@@ -103,6 +116,8 @@ export class TransactionsService {
           account: true,
           person: true,
           card: true,
+          mainCategory: true,
+          subCategory: true,
         },
       }),
       this.prisma.transaction.count({ where }),

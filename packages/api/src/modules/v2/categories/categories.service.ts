@@ -6,10 +6,25 @@ import { CategoryDto } from '@money/types';
 export class CategoriesService {
   constructor(private readonly prisma: PrismaService) {}
 
+  private async getUserDefaultProjectId(userId: string): Promise<string> {
+    const member = await this.prisma.projectMember.findFirst({
+      where: { userId, role: 'owner' },
+      select: { projectId: true },
+    });
+
+    if (!member) {
+      throw new BadRequestException('기본 프로젝트를 찾을 수 없습니다.');
+    }
+
+    return member.projectId;
+  }
+
   async createCategory(
     userId: string,
     dto: CategoryDto.CreateRequest,
   ): Promise<CategoryDto.Response> {
+    const projectId = await this.getUserDefaultProjectId(userId);
+
     // 소분류인 경우 부모 카테고리 확인
     if (dto.parentId) {
       const parent = await this.prisma.category.findUnique({
@@ -29,6 +44,7 @@ export class CategoriesService {
     // 같은 레벨에서 이름 중복 확인
     const existingCategory = await this.prisma.category.findFirst({
       where: {
+        projectId,
         userId,
         name: dto.name,
         parentId: dto.parentId || null,
@@ -43,6 +59,7 @@ export class CategoriesService {
 
     return this.prisma.category.create({
       data: {
+        projectId,
         userId,
         name: dto.name,
         parentId: dto.parentId,
@@ -54,8 +71,9 @@ export class CategoriesService {
     });
   }
 
-  async getCategories(userId: string, type?: 'income' | 'expense'): Promise<CategoryDto.Response[]> {
-    const where: any = { userId, isActive: true };
+  async getCategories(userId: string, type?: 'income' | 'expense', projectId?: string): Promise<CategoryDto.Response[]> {
+    const finalProjectId = projectId || (await this.getUserDefaultProjectId(userId));
+    const where: any = { userId, projectId: finalProjectId, isActive: true };
     if (type) where.type = type;
 
     const categories = await this.prisma.category.findMany({
@@ -139,7 +157,7 @@ export class CategoriesService {
   }
 
   // 기본 카테고리 생성 (사용자 가입 시 자동)
-  async createDefaultCategories(userId: string): Promise<void> {
+  async createDefaultCategories(userId: string, projectId: string): Promise<void> {
     const defaultCategories = [
       {
         type: 'income',
@@ -166,6 +184,7 @@ export class CategoriesService {
       for (const name of category.main) {
         await this.prisma.category.create({
           data: {
+            projectId,
             userId,
             name,
             type: category.type,
