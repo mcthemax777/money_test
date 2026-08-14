@@ -34,6 +34,14 @@ export const useAuth = create<AuthStore>()(
   signUp: async (email, password, name) => {
     set({ isLoading: true });
     try {
+      // 이전 사용자의 캐시 상태 초기화 (보안)
+      const { useProject } = await import('./project');
+      const { useUserFilter } = await import('./user-filter');
+      useProject.getState().setSelectedProjectId(null);
+      useProject.getState().setProjects([]);
+      useUserFilter.getState().setSelectedPersonIds([]);
+      useUserFilter.getState().setPeople([]);
+
       const response = await apiClient.signUp(email, password, name);
       console.log('[Auth] Sign up response:', response);
       Cookie.set('accessToken', response.accessToken, { expires: 7 });
@@ -54,6 +62,14 @@ export const useAuth = create<AuthStore>()(
   signIn: async (email, password) => {
     set({ isLoading: true });
     try {
+      // 이전 사용자의 캐시 상태 초기화 (보안)
+      const { useProject } = await import('./project');
+      const { useUserFilter } = await import('./user-filter');
+      useProject.getState().setSelectedProjectId(null);
+      useProject.getState().setProjects([]);
+      useUserFilter.getState().setSelectedPersonIds([]);
+      useUserFilter.getState().setPeople([]);
+
       const response = await apiClient.signIn(email, password);
       console.log('[Auth] Sign in response:', response);
       Cookie.set('accessToken', response.accessToken, { expires: 7 });
@@ -80,6 +96,14 @@ export const useAuth = create<AuthStore>()(
       Cookie.remove('accessToken');
       Cookie.remove('refreshToken');
       set({ user: null, isAuthenticated: false, isLoading: false });
+
+      // 모든 다른 스토어 초기화 (보안: 이전 사용자 데이터 제거)
+      const { useProject } = await import('./project');
+      const { useUserFilter } = await import('./user-filter');
+      useProject.getState().setSelectedProjectId(null);
+      useProject.getState().setProjects([]);
+      useUserFilter.getState().setSelectedPersonIds([]);
+      useUserFilter.getState().setPeople([]);
     }
   },
 

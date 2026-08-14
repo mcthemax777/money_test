@@ -134,10 +134,6 @@ export default function DashboardSidebar() {
                 onClick={() => {
                   setSelectedProjectId(project.id);
                   setIsOpen(false);
-                  // 프로젝트 변경 시 페이지 새로고침
-                  if (selectedProjectId !== project.id) {
-                    window.location.reload();
-                  }
                 }}
                 className={`w-full text-left px-3 py-2 rounded-lg transition text-sm ${
                   selectedProjectId === project.id

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
 import { useUserFilter } from '@/store/user-filter';
+import { useProject } from '@/store/project';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import PersonModal from '@/components/PersonModal';
@@ -44,6 +45,7 @@ interface Card {
 export default function DashboardPage() {
   const router = useRouter();
   const { selectedPersonIds, setPeople: setStorePeople } = useUserFilter();
+  const { selectedProjectId } = useProject();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -93,13 +95,17 @@ export default function DashboardPage() {
   });
 
   useEffect(() => {
+    if (!selectedProjectId) {
+      return;
+    }
+
     const loadData = async () => {
       try {
         setIsLoading(true);
         const [accountsData, peopleData, cardsData] = await Promise.all([
-          apiClient.getAccountsV2(),
-          apiClient.getPeople(),
-          apiClient.getCards(),
+          apiClient.getAccountsV2(selectedProjectId),
+          apiClient.getPeople(selectedProjectId),
+          apiClient.getCards(selectedProjectId),
         ]);
         setAccounts(accountsData || []);
         setPeople(peopleData || []);
@@ -112,7 +118,7 @@ export default function DashboardPage() {
     };
 
     loadData();
-  }, []);
+  }, [selectedProjectId]);
 
   const filteredAccounts = useMemo(() => {
     return accounts.filter((acc) => selectedPersonIds.includes(acc.owner?.id || ''));

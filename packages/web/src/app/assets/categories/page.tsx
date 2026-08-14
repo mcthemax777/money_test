@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/store/auth';
+import { useProject } from '@/store/project';
 import { apiClient } from '@/lib/api-client';
 import CustomSelect from '@/components/CustomSelect';
 import Modal from '@/components/Modal';
@@ -21,6 +22,7 @@ interface Category {
 export default function CategoriesPage() {
   const { isAuthenticated, loadUser } = useAuth();
   const router = useRouter();
+  const { selectedProjectId } = useProject();
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -41,15 +43,17 @@ export default function CategoriesPage() {
   }, [loadUser]);
 
   useEffect(() => {
-    if (!isAuthenticated) {
-      router.push('/login');
+    if (!isAuthenticated || !selectedProjectId) {
+      if (!isAuthenticated) {
+        router.push('/login');
+      }
       return;
     }
 
     const loadCategories = async () => {
       try {
         setIsLoading(true);
-        const data = await apiClient.getCategories();
+        const data = await apiClient.getCategories(selectedProjectId);
         setCategories(data || []);
       } catch (err) {
         setError('카테고리 조회에 실패했습니다.');
@@ -59,7 +63,7 @@ export default function CategoriesPage() {
     };
 
     loadCategories();
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, router, selectedProjectId]);
 
   const handleModalClose = () => {
     setIsModalOpen(false);
