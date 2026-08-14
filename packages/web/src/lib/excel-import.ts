@@ -225,22 +225,30 @@ export async function importDataFromExcel(file: File, projectName: string): Prom
             const dateValue = anyRow['거래일자'];
             let date: Date | null = null;
 
-            // Handle Excel serial date (number) or string date
+            // Handle Excel serial date (number or numeric string) or string date
             if (typeof dateValue === 'number') {
               // Excel date: days since 1900-01-01 (with 1900 leap year bug)
               const excelEpoch = new Date(1900, 0, 1);
               date = new Date(excelEpoch.getTime() + (dateValue - 1) * 86400000);
             } else if (typeof dateValue === 'string') {
-              // Try parsing Korean date format (YYYY. M. D.)
-              const koreanMatch = dateValue.match(/(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\./);
-              if (koreanMatch) {
-                const [, year, month, day] = koreanMatch;
-                // ISO 형식으로 직접 생성 (시간대 문제 방지)
-                const isoDate = `${year}-${String(parseInt(month)).padStart(2, '0')}-${String(parseInt(day)).padStart(2, '0')}`;
-                transactionDate = isoDate;
+              // Check if it's a numeric string (Excel 일련번호)
+              const numValue = parseInt(dateValue);
+              if (!isNaN(numValue) && String(numValue) === String(dateValue).trim()) {
+                // Numeric string - treat as Excel serial date
+                const excelEpoch = new Date(1900, 0, 1);
+                date = new Date(excelEpoch.getTime() + (numValue - 1) * 86400000);
               } else {
-                // Try standard date format
-                date = new Date(dateValue);
+                // Try parsing Korean date format (YYYY. M. D.)
+                const koreanMatch = dateValue.match(/(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\./);
+                if (koreanMatch) {
+                  const [, year, month, day] = koreanMatch;
+                  // ISO 형식으로 직접 생성 (시간대 문제 방지)
+                  const isoDate = `${year}-${String(parseInt(month)).padStart(2, '0')}-${String(parseInt(day)).padStart(2, '0')}`;
+                  transactionDate = isoDate;
+                } else {
+                  // Try standard date format
+                  date = new Date(dateValue);
+                }
               }
             }
 
