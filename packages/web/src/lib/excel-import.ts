@@ -238,8 +238,8 @@ export async function importDataFromExcel(file: File, projectName: string): Prom
                 const excelEpoch = new Date(1900, 0, 1);
                 date = new Date(excelEpoch.getTime() + (numValue - 1) * 86400000);
               } else {
-                // Try parsing Korean date format (YYYY. M. D.)
-                const koreanMatch = dateValue.match(/(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\./);
+                // Try parsing Korean date format (YYYY. M. D. or YYYY. M. D or YYYY.M.D)
+                const koreanMatch = dateValue.match(/(\d{4})\.\s*(\d{1,2})\.\s*(\d{1,2})\s*\.?/);
                 if (koreanMatch) {
                   const [, year, month, day] = koreanMatch;
                   // ISO 형식으로 직접 생성 (시간대 문제 방지)
