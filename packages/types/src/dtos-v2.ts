@@ -4,6 +4,7 @@ export namespace PersonDto {
   export interface CreateRequest {
     name: string;
     relationship?: string;
+    projectId?: string;
   }
 
   export interface UpdateRequest {
@@ -23,6 +24,7 @@ export namespace AccountDto {
     bankName: string;
     accountNumber?: string; // 미입력 시 자동 생성
     currency?: string;
+    projectId?: string;
   }
 
   export interface UpdateRequest {
@@ -49,6 +51,7 @@ export namespace CardDto {
     issuer: string;
     expiryDate?: Date;
     creditLimit?: number; // 신용카드만
+    projectId?: string;
   }
 
   export interface UpdateRequest {
@@ -87,6 +90,7 @@ export namespace TransactionDto {
     isRecurring?: boolean;
     recurringPattern?: 'daily' | 'weekly' | 'monthly' | 'yearly';
     isFixed?: boolean; // 고정 지출/수입 여부
+    projectId?: string;
   }
 
   export interface UpdateRequest {
@@ -132,6 +136,7 @@ export namespace CategoryDto {
     type: 'income' | 'expense';
     icon?: string;
     defaultIsFixed?: boolean; // 기본 고정 여부
+    projectId?: string;
   }
 
   export interface UpdateRequest {

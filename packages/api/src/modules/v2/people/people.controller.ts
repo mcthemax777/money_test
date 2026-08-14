@@ -28,8 +28,12 @@ export class PeopleController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: '사람 등록' })
-  create(@Request() req: AuthenticatedRequest, @Body() dto: PersonDto.CreateRequest) {
-    return this.peopleService.createPerson(req.user.id, dto);
+  create(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: PersonDto.CreateRequest,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.peopleService.createPerson(req.user.id, dto, projectId || (req.body as any)?.projectId);
   }
 
   @Get()

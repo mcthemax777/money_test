@@ -140,6 +140,16 @@ export default function CategoriesPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // 메인 카테고리명 검증
+    if (!formData.name.trim()) {
+      setError('카테고리명을 입력해주세요.');
+      return;
+    }
+
+    // 소분류명 검증 (비어있는 소분류는 제거)
+    const filteredSubCategories = formData.subCategories.filter((sub) => sub.name.trim());
+
     try {
       setIsSubmitting(true);
       if (editingId) {
@@ -149,7 +159,7 @@ export default function CategoriesPage() {
         });
 
         const existingSubs = categories.filter((c) => c.parentId === editingId);
-        const newSubs = formData.subCategories.filter((sub) => sub.name.trim());
+        const newSubs = filteredSubCategories;
 
         // 제거된 소분류 삭제
         for (const existingSub of existingSubs) {
@@ -197,8 +207,7 @@ export default function CategoriesPage() {
         const mainCategory = categoryList?.find((c: Category) => c.name === formData.name && c.level === 1);
 
         if (mainCategory) {
-          const filteredSubs = formData.subCategories.filter((sub) => sub.name.trim());
-          for (const sub of filteredSubs) {
+          for (const sub of filteredSubCategories) {
             await apiClient.createCategory({
               name: sub.name,
               type: formData.type,
@@ -501,8 +510,8 @@ export default function CategoriesPage() {
 
           <button
             type="submit"
-            disabled={isSubmitting}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            disabled={isSubmitting || !formData.name.trim()}
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {isSubmitting ? (editingId ? '수정 중...' : '추가 중...') : (editingId ? '수정하기' : '추가하기')}
           </button>

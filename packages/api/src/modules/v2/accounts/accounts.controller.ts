@@ -28,8 +28,12 @@ export class AccountsController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: '통장 생성' })
-  create(@Request() req: AuthenticatedRequest, @Body() dto: AccountDto.CreateRequest) {
-    return this.accountsService.createAccount(req.user.id, dto);
+  create(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: AccountDto.CreateRequest,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.accountsService.createAccount(req.user.id, dto, projectId || (req.body as any)?.projectId);
   }
 
   @Get()

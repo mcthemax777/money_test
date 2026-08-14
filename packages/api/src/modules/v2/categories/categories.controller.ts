@@ -28,8 +28,12 @@ export class CategoriesController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: '카테고리 생성' })
-  create(@Request() req: AuthenticatedRequest, @Body() dto: CategoryDto.CreateRequest) {
-    return this.categoriesService.createCategory(req.user.id, dto);
+  create(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: CategoryDto.CreateRequest,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.categoriesService.createCategory(req.user.id, dto, projectId || (req.body as any)?.projectId);
   }
 
   @Get()

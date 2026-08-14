@@ -22,8 +22,14 @@ export class CategoriesService {
   async createCategory(
     userId: string,
     dto: CategoryDto.CreateRequest,
+    projectId?: string,
   ): Promise<CategoryDto.Response> {
-    const projectId = await this.getUserDefaultProjectId(userId);
+    // 카테고리명 검증
+    if (!dto.name || !dto.name.trim()) {
+      throw new BadRequestException('카테고리명을 입력해주세요.');
+    }
+
+    const finalProjectId = projectId || (dto as any).projectId || dto.projectId || (await this.getUserDefaultProjectId(userId));
 
     // 소분류인 경우 부모 카테고리 확인
     if (dto.parentId) {
@@ -44,7 +50,7 @@ export class CategoriesService {
     // 같은 레벨에서 이름 중복 확인
     const existingCategory = await this.prisma.category.findFirst({
       where: {
-        projectId,
+        projectId: finalProjectId,
         userId,
         name: dto.name,
         parentId: dto.parentId || null,
@@ -59,7 +65,7 @@ export class CategoriesService {
 
     const category = await this.prisma.category.create({
       data: {
-        projectId,
+        projectId: finalProjectId,
         userId,
         name: dto.name,
         parentId: dto.parentId,
@@ -69,22 +75,6 @@ export class CategoriesService {
         defaultIsFixed: dto.defaultIsFixed || false,
       },
     });
-
-    // 대분류인 경우 기본 소분류 "선택안함" 자동 생성
-    if (level === 1) {
-      await this.prisma.category.create({
-        data: {
-          projectId,
-          userId,
-          name: '선택안함',
-          parentId: category.id,
-          level: 2,
-          type: dto.type,
-          isDefault: true,
-          defaultIsFixed: false,
-        },
-      });
-    }
 
     return category;
   }

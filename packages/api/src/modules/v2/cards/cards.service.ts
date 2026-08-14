@@ -19,7 +19,7 @@ export class CardsService {
     return member.projectId;
   }
 
-  async createCard(userId: string, dto: CardDto.CreateRequest): Promise<CardDto.Response> {
+  async createCard(userId: string, dto: CardDto.CreateRequest, projectIdParam?: string): Promise<CardDto.Response> {
     // 통장 확인
     const account = await this.prisma.account.findUnique({
       where: { id: dto.accountId },
@@ -34,8 +34,7 @@ export class CardsService {
       throw new BadRequestException('신용카드는 한도를 설정해야 합니다.');
     }
 
-    const maskedNumber = dto.cardNumber ? this.maskCardNumber(dto.cardNumber) : null;
-    const projectId = await this.getUserDefaultProjectId(userId);
+    const projectId = projectIdParam || (dto as any).projectId || dto.projectId || (await this.getUserDefaultProjectId(userId));
 
     const card = await this.prisma.card.create({
       data: {
@@ -43,7 +42,7 @@ export class CardsService {
         userId,
         accountId: dto.accountId,
         name: dto.name,
-        cardNumber: maskedNumber,
+        cardNumber: dto.cardNumber || null,
         cardType: dto.cardType,
         issuer: dto.issuer,
         expiryDate: dto.expiryDate || null,

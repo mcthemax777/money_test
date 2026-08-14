@@ -28,8 +28,12 @@ export class CardsController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: '카드 생성' })
-  create(@Request() req: AuthenticatedRequest, @Body() dto: CardDto.CreateRequest) {
-    return this.cardsService.createCard(req.user.id, dto);
+  create(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: CardDto.CreateRequest,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.cardsService.createCard(req.user.id, dto, projectId || (req.body as any)?.projectId);
   }
 
   @Get()

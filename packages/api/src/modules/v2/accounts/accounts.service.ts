@@ -19,7 +19,7 @@ export class AccountsService {
     return member.projectId;
   }
 
-  async createAccount(userId: string, dto: AccountDto.CreateRequest): Promise<AccountDto.Response> {
+  async createAccount(userId: string, dto: AccountDto.CreateRequest, projectIdParam?: string): Promise<AccountDto.Response> {
     // 통장 주인이 존재하는지 확인
     const owner = await this.prisma.person.findUnique({
       where: { id: dto.ownerId },
@@ -29,11 +29,11 @@ export class AccountsService {
       throw new NotFoundException('유효한 통장 주인이 아닙니다.');
     }
 
-    const projectId = await this.getUserDefaultProjectId(userId);
+    const finalProjectId = projectIdParam || (dto as any).projectId || dto.projectId || (await this.getUserDefaultProjectId(userId));
 
     return this.prisma.account.create({
       data: {
-        projectId,
+        projectId: finalProjectId,
         userId,
         ownerId: dto.ownerId,
         name: dto.name,

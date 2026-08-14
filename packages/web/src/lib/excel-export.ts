@@ -30,7 +30,6 @@ export async function exportDataToExcel() {
 
     // 1. 사용자 시트
     const peopleData = peopleArray.map((p: any) => ({
-      ID: p.id,
       이름: p.name,
       생성일: p.createdAt ? new Date(p.createdAt).toLocaleDateString('ko-KR') : '',
       수정일: p.updatedAt ? new Date(p.updatedAt).toLocaleDateString('ko-KR') : '',
@@ -40,9 +39,8 @@ export async function exportDataToExcel() {
 
     // 2. 계좌 시트
     const accountsData = accountsArray.map((a: any) => ({
-      ID: a.id,
       계좌명: a.name,
-      사용자명: a.ownerId ? peopleMap.get(a.ownerId) || '-' : '-',
+      사용자명: a.ownerId ? peopleMap.get(a.ownerId) || '' : '-',
       은행: a.bankName || '',
       계좌번호: a.accountNumber || '',
       잔액: a.balance || 0,
@@ -55,10 +53,8 @@ export async function exportDataToExcel() {
     const cardsData = cardsArray.map((c: any) => {
       const account = c.accountId ? accountsMap.get(c.accountId) as any : null;
       return {
-        ID: c.id,
         카드명: c.name,
-        계좌명: account?.name || '-',
-        계좌사용자명: account?.ownerId ? peopleMap.get(account.ownerId) || '-' : '-',
+        계좌명: account?.name || '',
         카드사: c.cardCompany || c.issuer || '',
         카드번호: c.cardNumber || '',
         잔액: c.balance || 0,
@@ -72,12 +68,9 @@ export async function exportDataToExcel() {
     const categoriesData = categoriesArray.map((c: any) => {
       const parent = c.parentId ? categoriesMap.get(c.parentId) as any : null;
       return {
-        ID: c.id,
         카테고리명: c.name,
         유형: c.type === 'income' ? '수입' : c.type === 'expense' ? '지출' : c.type,
-        대분류: parent?.name || '-',
-        소분류: c.level === 2 ? c.name : '-',
-        색상: c.color || '',
+        상위분류: parent?.name || '',
         생성일: c.createdAt ? new Date(c.createdAt).toLocaleDateString('ko-KR') : '',
       };
     });
@@ -92,15 +85,14 @@ export async function exportDataToExcel() {
       const subCat = t.subCategoryId ? categoriesMap.get(t.subCategoryId) as any : null;
 
       return {
-        ID: t.id,
         금액: t.amount || 0,
         유형: t.type === 'income' ? '수입' : t.type === 'expense' ? '지출' : t.type || '기타',
-        대분류: mainCat?.name || t.mainCategory || '-',
-        소분류: subCat?.name || t.subCategory || '-',
+        거래자: t.personId ? peopleMap.get(t.personId) || '' : '',
+        대분류: mainCat?.name || t.mainCategory || '',
+        소분류: subCat?.name || t.subCategory || '',
         설명: t.description || '',
-        거래자: t.personId ? peopleMap.get(t.personId) || '-' : '-',
-        계좌: account?.name || '-',
-        카드: card?.name || '-',
+        계좌: account?.name || '',
+        카드: card?.name || '',
         거래일자: t.transactionDate
           ? new Date(t.transactionDate).toLocaleDateString('ko-KR')
           : t.date

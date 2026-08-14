@@ -22,6 +22,7 @@ export class TransactionsService {
   async createTransaction(
     userId: string,
     dto: TransactionDto.CreateRequest,
+    projectIdParam?: string,
   ): Promise<any> {
     // 통장 확인
     const account = await this.prisma.account.findUnique({
@@ -41,7 +42,7 @@ export class TransactionsService {
       throw new NotFoundException('유효한 사용자가 아닙니다.');
     }
 
-    const projectId = await this.getUserDefaultProjectId(userId);
+    const projectId = projectIdParam || (dto as any).projectId || dto.projectId || (await this.getUserDefaultProjectId(userId));
 
     // 소분류가 있으면 소분류의 defaultIsFixed 사용, 없으면 대분류의 defaultIsFixed 사용
     let defaultIsFixed = false;
@@ -58,6 +59,16 @@ export class TransactionsService {
     }
 
     // 거래 생성
+    let transactionDate: Date;
+    if (typeof dto.date === 'string') {
+      transactionDate = new Date(dto.date);
+      if (isNaN(transactionDate.getTime())) {
+        throw new BadRequestException('유효한 거래 날짜가 아닙니다.');
+      }
+    } else {
+      transactionDate = new Date(dto.date);
+    }
+
     const transaction = await this.prisma.transaction.create({
       data: {
         projectId,
@@ -68,7 +79,7 @@ export class TransactionsService {
         type: dto.type,
         amount: dto.amount,
         description: dto.description,
-        date: new Date(dto.date),
+        date: transactionDate,
         mainCategoryId: dto.mainCategoryId,
         subCategoryId: dto.subCategoryId,
         tags: dto.tags,

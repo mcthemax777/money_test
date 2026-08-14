@@ -107,7 +107,10 @@ class ApiClient {
   }
 
   async createPerson(data: any) {
-    const response = await this.client.post<any>('/v2/people', data);
+    const { projectId, ...payload } = data;
+    const response = await this.client.post<any>('/v2/people', payload, {
+      params: projectId ? { projectId } : {}
+    });
     return response.data;
   }
 
@@ -133,7 +136,10 @@ class ApiClient {
   }
 
   async createAccountV2(data: any) {
-    const response = await this.client.post<any>('/v2/accounts', data);
+    const { projectId, ...payload } = data;
+    const response = await this.client.post<any>('/v2/accounts', payload, {
+      params: projectId ? { projectId } : {}
+    });
     return response.data;
   }
 
@@ -159,7 +165,10 @@ class ApiClient {
   }
 
   async createCard(data: any) {
-    const response = await this.client.post<any>('/v2/cards', data);
+    const { projectId, ...payload } = data;
+    const response = await this.client.post<any>('/v2/cards', payload, {
+      params: projectId ? { projectId } : {}
+    });
     return response.data;
   }
 
@@ -195,7 +204,10 @@ class ApiClient {
   }
 
   async createTransactionV2(data: any) {
-    const response = await this.client.post<any>('/v2/transactions', data);
+    const { projectId, ...payload } = data;
+    const response = await this.client.post<any>('/v2/transactions', payload, {
+      params: projectId ? { projectId } : {}
+    });
     return response.data;
   }
 
@@ -216,7 +228,10 @@ class ApiClient {
   }
 
   async createCategory(data: any) {
-    const response = await this.client.post<any>('/v2/categories', data);
+    const { projectId, ...payload } = data;
+    const response = await this.client.post<any>('/v2/categories', payload, {
+      params: projectId ? { projectId } : {}
+    });
     return response.data;
   }
 

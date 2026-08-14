@@ -28,8 +28,12 @@ export class TransactionsController {
   @Post()
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: '거래 생성 (입금/출금) - 통장 잔액 자동 업데이트' })
-  create(@Request() req: AuthenticatedRequest, @Body() dto: TransactionDto.CreateRequest) {
-    return this.transactionsService.createTransaction(req.user.id, dto);
+  create(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: TransactionDto.CreateRequest,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.transactionsService.createTransaction(req.user.id, dto, projectId || (req.body as any)?.projectId);
   }
 
   @Get()

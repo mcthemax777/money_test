@@ -19,12 +19,12 @@ export class PeopleService {
     return member.projectId;
   }
 
-  async createPerson(userId: string, dto: PersonDto.CreateRequest): Promise<PersonDto.Response> {
-    const projectId = await this.getUserDefaultProjectId(userId);
+  async createPerson(userId: string, dto: PersonDto.CreateRequest, projectId?: string): Promise<PersonDto.Response> {
+    const finalProjectId = projectId || (dto as any).projectId || dto.projectId || (await this.getUserDefaultProjectId(userId));
 
     return this.prisma.person.create({
       data: {
-        projectId,
+        projectId: finalProjectId,
         userId,
         name: dto.name,
         relationship: dto.relationship,
