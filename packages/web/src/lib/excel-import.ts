@@ -266,7 +266,7 @@ export async function importDataFromExcel(file: File, projectName: string): Prom
             mainCategoryId,
             subCategoryId,
             description: anyRow['설명'] || '',
-            transactionDate,
+            date: transactionDate,
             projectId,
           });
           result.summary.transactions++;
