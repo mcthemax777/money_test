@@ -7,6 +7,7 @@ import { useProject } from '@/store/project';
 import { apiClient } from '@/lib/api-client';
 import CustomSelect from '@/components/CustomSelect';
 import Modal from '@/components/Modal';
+import DashboardSidebar from '@/components/DashboardSidebar';
 
 interface Category {
   id: string;
@@ -281,8 +282,10 @@ export default function CategoriesPage() {
   );
 
   return (
-    <>
-      <div className="flex justify-between items-center mb-6">
+    <div className="min-h-screen bg-gray-50">
+      <DashboardSidebar />
+      <div className="md:ml-64">
+        <div className="flex justify-between items-center mb-6">
         <h1 className="text-2xl font-bold text-gray-900">카테고리 관리</h1>
         <button
           onClick={() => setIsModalOpen(true)}
@@ -521,6 +524,8 @@ export default function CategoriesPage() {
           </button>
         </form>
       </Modal>
-    </>
+        </div>
+      </div>
+    </div>
   );
 }

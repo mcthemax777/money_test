@@ -28,7 +28,7 @@ const menuItems = [
       { label: '통계', href: '/statistics' },
       { label: '자산', href: '/assets' },
       { label: '예산', href: '/budgets' },
-      { label: '카테고리', href: '/assets/categories' },
+      { label: '카테고리', href: '/categories' },
       { label: '설정', href: '/settings' },
     ],
   },
