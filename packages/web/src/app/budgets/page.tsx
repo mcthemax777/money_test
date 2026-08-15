@@ -8,6 +8,7 @@ import { useBudget } from '@/store/budget';
 import { useCategory } from '@/store/category';
 import { BudgetCard } from '@/components/BudgetCard';
 import DashboardSidebar from '@/components/DashboardSidebar';
+import CustomSelect from '@/components/CustomSelect';
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react';
 
 interface CreateBudgetForm {
@@ -279,28 +280,26 @@ export default function BudgetsPage() {
             <form onSubmit={handleSubmit} className="space-y-4">
               {/* 카테고리 선택 */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  카테고리 (선택사항 - 미선택 시 전체 예산)
-                </label>
-                <select
+                <CustomSelect
+                  options={[
+                    { id: '', name: '전체 예산' },
+                    ...categories
+                      .filter((c) => c.level === 1)
+                      .map((category) => ({
+                        id: category.id,
+                        name: category.name,
+                      }))
+                  ]}
                   value={formData.categoryId || ''}
-                  onChange={(e) =>
+                  onChange={(value) =>
                     setFormData({
                       ...formData,
-                      categoryId: e.target.value || undefined,
+                      categoryId: value || undefined,
                     })
                   }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">전체 예산</option>
-                  {categories
-                    .filter((c) => c.level === 1)
-                    .map((category) => (
-                      <option key={category.id} value={category.id}>
-                        {category.name}
-                      </option>
-                    ))}
-                </select>
+                  placeholder="카테고리 선택"
+                  label="카테고리 (선택사항 - 미선택 시 전체 예산)"
+                />
               </div>
 
               {/* 월 예산 금액 */}
