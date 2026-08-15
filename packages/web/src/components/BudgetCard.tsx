@@ -33,7 +33,7 @@ export function BudgetCard({
   };
 
   return (
-    <div className="border-b border-gray-200 py-4">
+    <div className="border-b border-gray-200 px-4 py-4">
       {/* 상단: 카테고리명 및 진행률 */}
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 flex-1">
