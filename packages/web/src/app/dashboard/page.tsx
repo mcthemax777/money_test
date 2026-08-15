@@ -159,13 +159,14 @@ export default function TransactionsPage() {
       try {
         setIsLoading(true);
 
-        // 현재 프로젝트가 기본 프로젝트이고 캐시된 데이터가 있으면 사용
-        const useCache = selectedProjectId === user?.defaultProjectId && defaultProjectData;
+        // 캐시된 데이터가 현재 선택된 프로젝트와 일치하면 사용
+        const useCache = defaultProjectData && defaultProjectData.project?.id === selectedProjectId;
 
         let transactionsData, accountsData, peopleData, cardsData, categoriesData;
 
-        if (useCache && defaultProjectData) {
+        if (useCache) {
           // 캐시된 데이터 활용 (API 호출 제거)
+          console.log('[Dashboard] Using cached project data for:', selectedProjectId);
           transactionsData = { data: defaultProjectData.recentTransactions || [] };
           accountsData = defaultProjectData.accounts || [];
           peopleData = defaultProjectData.people || [];
@@ -173,6 +174,7 @@ export default function TransactionsPage() {
           categoriesData = defaultProjectData.categories || [];
         } else {
           // 다른 프로젝트일 경우 API 호출
+          console.log('[Dashboard] Fetching fresh data for project:', selectedProjectId);
           const results = await Promise.all([
             apiClient.getTransactionsV2({}, selectedProjectId),
             apiClient.getAccountsV2(selectedProjectId),
@@ -213,7 +215,7 @@ export default function TransactionsPage() {
     };
 
     loadData();
-  }, [isAuthenticated, router, selectedProjectId, user?.defaultProjectId, defaultProjectData]);
+  }, [isAuthenticated, router, selectedProjectId, defaultProjectData?.project?.id]);
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter((tx) => {

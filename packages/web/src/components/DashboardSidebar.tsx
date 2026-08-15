@@ -42,7 +42,7 @@ export default function DashboardSidebar() {
   const [isChanging, setIsChanging] = useState(false);
   const { people, setPeople, selectedPersonIds, togglePersonId, setSelectedPersonIds } = useUserFilter();
   const { projects, setProjects, selectedProjectId, setSelectedProjectId } = useProject();
-  const { setDefaultProject } = useAuth();
+  const { setDefaultProject, defaultProjectData } = useAuth();
 
   // 프로젝트 로드
   useEffect(() => {
@@ -67,22 +67,35 @@ export default function DashboardSidebar() {
   // 사용자 로드
   useEffect(() => {
     if (selectedProjectId) {
-      const loadPeople = async () => {
-        try {
-          const data = await apiClient.getPeople(selectedProjectId);
-          setPeople(data || []);
-          // 기본값: 모든 사용자 선택
-          if (selectedPersonIds.length === 0) {
-            setSelectedPersonIds((data || []).map((p: Person) => p.id));
-          }
-        } catch (err) {
-          console.error('사용자 목록 조회 실패:', err);
-        }
-      };
+      // 캐시된 데이터가 현재 프로젝트와 일치하면 사용
+      const isCached = defaultProjectData && defaultProjectData.project?.id === selectedProjectId;
 
-      loadPeople();
+      if (isCached && defaultProjectData.people) {
+        // 캐시된 사람 정보 사용 (API 호출 제거)
+        const peopleList = defaultProjectData.people;
+        setPeople(peopleList);
+        if (selectedPersonIds.length === 0) {
+          setSelectedPersonIds(peopleList.map((p: Person) => p.id));
+        }
+      } else {
+        // 캐시가 없으면 API 호출
+        const loadPeople = async () => {
+          try {
+            const data = await apiClient.getPeople(selectedProjectId);
+            setPeople(data || []);
+            // 기본값: 모든 사용자 선택
+            if (selectedPersonIds.length === 0) {
+              setSelectedPersonIds((data || []).map((p: Person) => p.id));
+            }
+          } catch (err) {
+            console.error('사용자 목록 조회 실패:', err);
+          }
+        };
+
+        loadPeople();
+      }
     }
-  }, [selectedProjectId, setPeople, setSelectedPersonIds, selectedPersonIds.length]);
+  }, [selectedProjectId, defaultProjectData?.project?.id, setPeople, setSelectedPersonIds, selectedPersonIds.length]);
 
   const isActive = (href: string) => {
     if (href === '/dashboard') {
