@@ -221,7 +221,7 @@ export default function BudgetsPage() {
             </button>
           </div>
         ) : (
-          <div className="bg-white rounded-lg border border-gray-200 overflow-hidden">
+          <div className="bg-white rounded-lg border border-gray-200">
             {/* 전체 예산 */}
             {totalBudget && (
               <>
