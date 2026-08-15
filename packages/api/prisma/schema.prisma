@@ -39,26 +39,29 @@ enum InvitationStatus {
 
 // 앱 사용자 (계정)
 model User {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  password  String
-  name      String
-  avatar    String?
+  id                  String   @id @default(cuid())
+  email               String   @unique
+  password            String
+  name                String
+  avatar              String?
+  defaultProjectId    String?  // 기본 프로젝트
 
-  projectMembers    ProjectMember[]
-  projectInvitations ProjectInvitation[]
-  people            Person[]
-  accounts          Account[]
-  cards             Card[]
-  transactions      Transaction[]
-  categories        Category[]
-  cardUsages        CardUsage[]
-  cardPayments      CardPayment[]
+  projectMembers      ProjectMember[]
+  projectInvitations  ProjectInvitation[]
+  people              Person[]
+  accounts            Account[]
+  cards               Card[]
+  transactions        Transaction[]
+  categories          Category[]
+  cardUsages          CardUsage[]
+  cardPayments        CardPayment[]
+  budgets             Budget[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([email])
+  @@index([defaultProjectId])
 }
 
 // 프로젝트
@@ -76,6 +79,7 @@ model Project {
   categories    Category[]
   cardUsages    CardUsage[]
   cardPayments  CardPayment[]
+  budgets       Budget[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -265,6 +269,7 @@ model Category {
   children              Category[]    @relation("CategoryHierarchy")
   mainCategoryTrans     Transaction[] @relation("MainCategory")
   subCategoryTrans      Transaction[] @relation("SubCategory")
+  budgets               Budget[]
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -347,4 +352,48 @@ model CardPaymentUsage {
   @@unique([cardPaymentId, cardUsageId])
   @@index([cardPaymentId])
   @@index([cardUsageId])
+}
+
+// 예산 (기본 규칙)
+model Budget {
+  id            String   @id @default(cuid())
+  projectId     String
+  userId        String
+  categoryId    String?  // null=전체, 값=대분류/소분류
+  monthlyAmount Float
+
+  // 적용 기간: null이면 무기한
+  effectiveFrom String?   // "YYYY-MM" 형식
+  effectiveTo   String?   // "YYYY-MM" 형식
+
+  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  category      Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  overrides     BudgetOverride[]
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([userId])
+  @@index([categoryId])
+  @@unique([projectId, userId, categoryId, effectiveFrom])
+}
+
+// 예산 월별 직접 오버라이드
+model BudgetOverride {
+  id        String   @id @default(cuid())
+  budgetId  String
+  year      Int      // 2024
+  month     Int      // 8
+  amount    Float
+
+  budget    Budget   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([budgetId, year, month])
+  @@index([budgetId])
 }

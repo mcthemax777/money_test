@@ -12,10 +12,25 @@ export namespace Auth {
     password: string;
   }
 
+  export interface ProjectInitialData {
+    project: {
+      id: string;
+      name: string;
+      description?: string | null;
+    };
+    cards: any[];
+    accounts: any[];
+    categories: any[];
+    people: any[];
+    recentTransactions: any[];
+    budgets: any[];
+  }
+
   export interface AuthResponse {
     accessToken: string;
     refreshToken: string;
-    user: User;
+    user: User & { defaultProjectId?: string };
+    defaultProjectData: ProjectInitialData;
   }
 
   export interface RefreshRequest {

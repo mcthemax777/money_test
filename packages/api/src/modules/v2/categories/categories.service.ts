@@ -1,23 +1,14 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
+import { ProjectAccessService } from '@/common/project-access.guard';
 import { CategoryDto } from '@money/types';
 
 @Injectable()
 export class CategoriesService {
-  constructor(private readonly prisma: PrismaService) {}
-
-  private async getUserDefaultProjectId(userId: string): Promise<string> {
-    const member = await this.prisma.projectMember.findFirst({
-      where: { userId, role: 'owner' },
-      select: { projectId: true },
-    });
-
-    if (!member) {
-      throw new BadRequestException('기본 프로젝트를 찾을 수 없습니다.');
-    }
-
-    return member.projectId;
-  }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly projectAccess: ProjectAccessService,
+  ) {}
 
   async createCategory(
     userId: string,
@@ -29,7 +20,10 @@ export class CategoriesService {
       throw new BadRequestException('카테고리명을 입력해주세요.');
     }
 
-    const finalProjectId = projectId || (dto as any).projectId || dto.projectId || (await this.getUserDefaultProjectId(userId));
+    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(
+      userId,
+      projectId || (dto as any)?.projectId || dto.projectId,
+    );
 
     // 소분류인 경우 부모 카테고리 확인
     if (dto.parentId) {
@@ -80,7 +74,7 @@ export class CategoriesService {
   }
 
   async getCategories(userId: string, type?: 'income' | 'expense', projectId?: string): Promise<CategoryDto.Response[]> {
-    const finalProjectId = projectId || (await this.getUserDefaultProjectId(userId));
+    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
     const where: any = { userId, projectId: finalProjectId, isActive: true };
     if (type) where.type = type;
 

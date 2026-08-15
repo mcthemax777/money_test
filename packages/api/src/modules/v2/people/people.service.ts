@@ -1,26 +1,20 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
+import { ProjectAccessService } from '@/common/project-access.guard';
 import { PersonDto } from '@money/types';
 
 @Injectable()
 export class PeopleService {
-  constructor(private readonly prisma: PrismaService) {}
-
-  private async getUserDefaultProjectId(userId: string): Promise<string> {
-    const member = await this.prisma.projectMember.findFirst({
-      where: { userId, role: 'owner' },
-      select: { projectId: true },
-    });
-
-    if (!member) {
-      throw new BadRequestException('기본 프로젝트를 찾을 수 없습니다.');
-    }
-
-    return member.projectId;
-  }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly projectAccess: ProjectAccessService,
+  ) {}
 
   async createPerson(userId: string, dto: PersonDto.CreateRequest, projectId?: string): Promise<PersonDto.Response> {
-    const finalProjectId = projectId || (dto as any).projectId || dto.projectId || (await this.getUserDefaultProjectId(userId));
+    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(
+      userId,
+      projectId || (dto as any)?.projectId || dto.projectId,
+    );
 
     return this.prisma.person.create({
       data: {
@@ -33,7 +27,7 @@ export class PeopleService {
   }
 
   async getPeople(userId: string, projectId?: string): Promise<PersonDto.Response[]> {
-    const finalProjectId = projectId || (await this.getUserDefaultProjectId(userId));
+    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
 
     return this.prisma.person.findMany({
       where: { userId, projectId: finalProjectId, isActive: true },

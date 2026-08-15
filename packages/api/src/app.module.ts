@@ -12,6 +12,7 @@ import { AccountsModule as AccountsModuleV2 } from './modules/v2/accounts/accoun
 import { CardsModule } from './modules/v2/cards/cards.module';
 import { CategoriesModule as CategoriesModuleV2 } from './modules/v2/categories/categories.module';
 import { TransactionsModule as TransactionsModuleV2 } from './modules/v2/transactions/transactions.module';
+import { BudgetsModule } from './modules/v2/budgets/budgets.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { TransactionsModule as TransactionsModuleV2 } from './modules/v2/transac
     CardsModule,
     CategoriesModuleV2,
     TransactionsModuleV2,
+    BudgetsModule,
   ],
 })
 export class AppModule {}

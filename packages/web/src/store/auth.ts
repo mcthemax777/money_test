@@ -8,17 +8,34 @@ interface User {
   email: string;
   name: string;
   avatar: string | null;
+  defaultProjectId?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
 
+interface ProjectInitialData {
+  project: {
+    id: string;
+    name: string;
+    description?: string;
+  };
+  cards: any[];
+  accounts: any[];
+  categories: any[];
+  people: any[];
+  recentTransactions: any[];
+  budgets: any[];
+}
+
 interface AuthStore {
   user: User | null;
+  defaultProjectData: ProjectInitialData | null;
   isLoading: boolean;
   isAuthenticated: boolean;
   isInitializing: boolean;
   signUp: (email: string, password: string, name: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
+  setDefaultProject: (projectId: string) => Promise<void>;
   logout: () => Promise<void>;
   loadUser: () => Promise<void>;
 }
@@ -27,6 +44,7 @@ export const useAuth = create<AuthStore>()(
   persist(
     (set) => ({
   user: null,
+  defaultProjectData: null,
   isLoading: false,
   isAuthenticated: false,
   isInitializing: true,
@@ -50,7 +68,12 @@ export const useAuth = create<AuthStore>()(
         accessToken: Cookie.get('accessToken') ? 'saved' : 'failed',
         refreshToken: Cookie.get('refreshToken') ? 'saved' : 'failed',
       });
-      set({ user: response.user, isAuthenticated: true, isInitializing: false });
+      set({
+        user: response.user,
+        defaultProjectData: response.defaultProjectData,
+        isAuthenticated: true,
+        isInitializing: false,
+      });
     } catch (error) {
       set({ isLoading: false });
       throw error;
@@ -78,7 +101,29 @@ export const useAuth = create<AuthStore>()(
         accessToken: Cookie.get('accessToken') ? 'saved' : 'failed',
         refreshToken: Cookie.get('refreshToken') ? 'saved' : 'failed',
       });
-      set({ user: response.user, isAuthenticated: true, isInitializing: false });
+      set({
+        user: response.user,
+        defaultProjectData: response.defaultProjectData,
+        isAuthenticated: true,
+        isInitializing: false,
+      });
+    } catch (error) {
+      set({ isLoading: false });
+      throw error;
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  setDefaultProject: async (projectId: string) => {
+    set({ isLoading: true });
+    try {
+      const response = await apiClient.setDefaultProject(projectId);
+      console.log('[Auth] Set default project response:', response);
+      set({
+        user: response.user,
+        defaultProjectData: response.defaultProjectData,
+      });
     } catch (error) {
       set({ isLoading: false });
       throw error;
@@ -95,7 +140,12 @@ export const useAuth = create<AuthStore>()(
     } finally {
       Cookie.remove('accessToken');
       Cookie.remove('refreshToken');
-      set({ user: null, isAuthenticated: false, isLoading: false });
+      set({
+        user: null,
+        defaultProjectData: null,
+        isAuthenticated: false,
+        isLoading: false,
+      });
 
       // 모든 다른 스토어 초기화 (보안: 이전 사용자 데이터 제거)
       const { useProject } = await import('./project');
@@ -111,7 +161,12 @@ export const useAuth = create<AuthStore>()(
     try {
       const token = Cookie.get('accessToken');
       if (!token) {
-        set({ user: null, isAuthenticated: false, isInitializing: false });
+        set({
+          user: null,
+          defaultProjectData: null,
+          isAuthenticated: false,
+          isInitializing: false,
+        });
         return;
       }
 
@@ -120,7 +175,12 @@ export const useAuth = create<AuthStore>()(
     } catch {
       Cookie.remove('accessToken');
       Cookie.remove('refreshToken');
-      set({ user: null, isAuthenticated: false, isInitializing: false });
+      set({
+        user: null,
+        defaultProjectData: null,
+        isAuthenticated: false,
+        isInitializing: false,
+      });
     }
   },
     }),
@@ -128,6 +188,7 @@ export const useAuth = create<AuthStore>()(
       name: 'auth-store',
       partialize: (state) => ({
         user: state.user,
+        defaultProjectData: state.defaultProjectData,
         isAuthenticated: state.isAuthenticated,
       }),
     }

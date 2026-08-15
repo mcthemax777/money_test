@@ -1,4 +1,4 @@
-import { Controller, Get, Patch, Body, UseGuards, Request } from '@nestjs/common';
+import { Controller, Get, Patch, Body, UseGuards, Request, HttpCode, HttpStatus } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { AuthenticatedRequest } from '../../common/authenticated-request';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
@@ -21,5 +21,12 @@ export class UsersController {
   @ApiOperation({ summary: '사용자 정보 수정' })
   updateProfile(@Request() req: AuthenticatedRequest, @Body() data: { name?: string; avatar?: string }) {
     return this.usersService.updateProfile(req.user.id, data);
+  }
+
+  @Patch('me/default-project')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '기본 프로젝트 변경' })
+  setDefaultProject(@Request() req: AuthenticatedRequest, @Body() data: { projectId: string }) {
+    return this.usersService.setDefaultProject(req.user.id, data.projectId);
   }
 }

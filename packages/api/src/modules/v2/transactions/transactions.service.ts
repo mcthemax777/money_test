@@ -1,29 +1,26 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
+import { ProjectAccessService } from '@/common/project-access.guard';
 import { TransactionDto } from '@money/types';
 
 @Injectable()
 export class TransactionsService {
-  constructor(private readonly prisma: PrismaService) {}
-
-  private async getUserDefaultProjectId(userId: string): Promise<string> {
-    const member = await this.prisma.projectMember.findFirst({
-      where: { userId, role: 'owner' },
-      select: { projectId: true },
-    });
-
-    if (!member) {
-      throw new BadRequestException('기본 프로젝트를 찾을 수 없습니다.');
-    }
-
-    return member.projectId;
-  }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly projectAccess: ProjectAccessService,
+  ) {}
 
   async createTransaction(
     userId: string,
     dto: TransactionDto.CreateRequest,
     projectIdParam?: string,
   ): Promise<any> {
+    // projectId 결정 + 권한 확인 (한 줄로)
+    const projectId = await this.projectAccess.resolveAndVerifyProjectId(
+      userId,
+      projectIdParam || (dto as any).projectId || dto.projectId,
+    );
+
     // 통장 확인
     const account = await this.prisma.account.findUnique({
       where: { id: dto.accountId },
@@ -41,8 +38,6 @@ export class TransactionsService {
     if (!person || person.userId !== userId) {
       throw new NotFoundException('유효한 사용자가 아닙니다.');
     }
-
-    const projectId = projectIdParam || (dto as any).projectId || dto.projectId || (await this.getUserDefaultProjectId(userId));
 
     // 소분류가 있으면 소분류의 defaultIsFixed 사용, 없으면 대분류의 defaultIsFixed 사용
     let defaultIsFixed = false;
@@ -118,7 +113,7 @@ export class TransactionsService {
     const limit = query.limit || 20;
     const skip = (page - 1) * limit;
 
-    const finalProjectId = projectId || (await this.getUserDefaultProjectId(userId));
+    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
     const where: any = { userId, projectId: finalProjectId };
 
     if (query.accountId) where.accountId = query.accountId;

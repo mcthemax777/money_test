@@ -17,7 +17,7 @@ interface Project {
 export default function ProjectsPage() {
   const router = useRouter();
   const { isAuthenticated, isInitializing } = useAuth();
-  const { projects, setProjects, selectedProjectId, setSelectedProjectId } = useProject();
+  const { projects, setProjects, selectedProjectId } = useProject();
   const [loading, setLoading] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [error, setError] = useState('');
@@ -55,13 +55,13 @@ export default function ProjectsPage() {
     }
 
     try {
-      const newProject = await apiClient.createProject(createForm.name, createForm.description);
+      await apiClient.createProject(createForm.name, createForm.description);
       setCreateForm({ name: '', description: '' });
       setShowCreateForm(false);
       setError('');
-      setSelectedProjectId(newProject.id);
+
       await loadProjects();
-      alert('프로젝트가 생성되었습니다.');
+      alert('프로젝트가 생성되었습니다. 사이드바에서 프로젝트를 선택해주세요.');
     } catch (err) {
       setError('프로젝트 생성에 실패했습니다.');
       console.error(err);
@@ -119,6 +119,7 @@ export default function ProjectsPage() {
       console.error(err);
     }
   };
+
 
   const getRoleLabel = (role: string) => {
     const labels: Record<string, string> = {
@@ -218,12 +219,7 @@ export default function ProjectsPage() {
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1">
-                  <button
-                    onClick={() => setSelectedProjectId(project.id)}
-                    className="text-left hover:text-blue-600 transition"
-                  >
-                    <h3 className="text-lg font-semibold text-gray-900">{project.name}</h3>
-                  </button>
+                  <h3 className="text-lg font-semibold text-gray-900">{project.name}</h3>
                   {project.description && (
                     <p className="text-sm text-gray-600 mt-1">{project.description}</p>
                   )}

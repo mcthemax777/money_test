@@ -3,11 +3,12 @@ import { DatabaseModule } from '@/config/database.module';
 import { PeopleModule } from '../people/people.module';
 import { AccountsService } from './accounts.service';
 import { AccountsController } from './accounts.controller';
+import { ProjectAccessService } from '@/common/project-access.guard';
 
 @Module({
   imports: [DatabaseModule, PeopleModule],
   controllers: [AccountsController],
-  providers: [AccountsService],
+  providers: [AccountsService, ProjectAccessService],
   exports: [AccountsService],
 })
 export class AccountsModule {}

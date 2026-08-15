@@ -98,6 +98,13 @@ class ApiClient {
     return response.data;
   }
 
+  async setDefaultProject(projectId: string) {
+    const response = await this.client.patch<any>('/users/me/default-project', {
+      projectId,
+    });
+    return response.data;
+  }
+
   // v2 API Methods
   async getPeople(projectId?: string) {
     const response = await this.client.get<any>('/v2/people', {
@@ -306,6 +313,52 @@ class ApiClient {
   async getProjectPendingInvitations(projectId: string) {
     const response = await this.client.get<any>(`/projects/${projectId}/invitations/pending`);
     return response.data;
+  }
+
+  // 예산 API Methods
+  async createBudget(data: any) {
+    const { projectId, ...payload } = data;
+    const response = await this.client.post<any>('/v2/budgets', payload, {
+      params: projectId ? { projectId } : {},
+    });
+    return response.data;
+  }
+
+  async getBudgets(projectId?: string) {
+    const response = await this.client.get<any>('/v2/budgets', {
+      params: projectId ? { projectId } : {},
+    });
+    return response.data;
+  }
+
+  async getBudget(id: string) {
+    const response = await this.client.get<any>(`/v2/budgets/${id}`);
+    return response.data;
+  }
+
+  async updateBudget(id: string, data: any) {
+    const response = await this.client.patch<any>(`/v2/budgets/${id}`, data);
+    return response.data;
+  }
+
+  async deleteBudget(id: string) {
+    await this.client.delete(`/v2/budgets/${id}`);
+  }
+
+  async getBudgetForMonth(year: number, month: number, projectId?: string) {
+    const response = await this.client.get<any>(`/v2/budgets/${year}/${month}`, {
+      params: projectId ? { projectId } : {},
+    });
+    return response.data;
+  }
+
+  async createBudgetOverride(data: any) {
+    const response = await this.client.post<any>('/v2/budgets/override', data);
+    return response.data;
+  }
+
+  async deleteBudgetOverride(id: string) {
+    await this.client.delete(`/v2/budgets/override/${id}`);
   }
 }
 

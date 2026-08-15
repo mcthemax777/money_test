@@ -4,6 +4,7 @@ import { createHash } from 'crypto';
 import { PrismaService } from '../../config/prisma.service';
 import { RedisService } from '../../config/redis.service';
 import { ConfigService } from '../../config/config.service';
+import { UsersService } from '../users/users.service';
 import { Auth } from '@money/types';
 import * as bcrypt from 'bcryptjs';
 
@@ -22,6 +23,7 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly redis: RedisService,
     private readonly configService: ConfigService,
+    private readonly usersService: UsersService,
   ) {}
 
   async signUp(dto: Auth.SignUpRequest): Promise<Auth.AuthResponse> {
@@ -43,15 +45,27 @@ export class AuthService {
       },
     });
 
-    await this.createDefaultProject(user.id);
+    const defaultProject = await this.createDefaultProject(user.id);
+
+    // 기본 프로젝트 설정
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { defaultProjectId: defaultProject.id },
+    });
+
+    const defaultProjectData = await this.usersService.getUserProjectInitialData(user.id, defaultProject.id);
 
     return {
       ...this.generateTokens(user.id),
-      user: this.toUserResponse(user),
+      user: {
+        ...this.toUserResponse(user),
+        defaultProjectId: defaultProject.id,
+      },
+      defaultProjectData: defaultProjectData as any,
     };
   }
 
-  private async createDefaultProject(userId: string): Promise<void> {
+  private async createDefaultProject(userId: string) {
     const project = await this.prisma.project.create({
       data: {
         name: '나의 프로젝트',
@@ -68,6 +82,8 @@ export class AuthService {
     });
 
     await this.createDefaultCategories(userId, project.id);
+
+    return project;
   }
 
   private async createDefaultCategories(userId: string, projectId: string): Promise<void> {
@@ -123,9 +139,15 @@ export class AuthService {
       throw new UnauthorizedException('Invalid credentials');
     }
 
+    const defaultProjectData = await this.usersService.getUserProjectInitialData(user.id);
+
     return {
       ...this.generateTokens(user.id),
-      user: this.toUserResponse(user),
+      user: {
+        ...this.toUserResponse(user),
+        defaultProjectId: user.defaultProjectId || undefined,
+      },
+      defaultProjectData: defaultProjectData as any,
     };
   }
 
@@ -150,9 +172,15 @@ export class AuthService {
     // rotation: 사용한 refreshToken은 재사용 불가
     await this.blacklistToken(dto.refreshToken);
 
+    const defaultProjectData = await this.usersService.getUserProjectInitialData(user.id);
+
     return {
       ...this.generateTokens(user.id),
-      user: this.toUserResponse(user),
+      user: {
+        ...this.toUserResponse(user),
+        defaultProjectId: user.defaultProjectId || undefined,
+      },
+      defaultProjectData: defaultProjectData as any,
     };
   }
 

@@ -8,6 +8,7 @@ import { DatabaseModule } from '../../config/database.module';
 import { RedisModule } from '../../config/redis.module';
 import { ConfigModule } from '../../config/config.module';
 import { ConfigService } from '../../config/config.service';
+import { UsersModule } from '../users/users.module';
 
 @Module({
   imports: [
@@ -15,6 +16,7 @@ import { ConfigService } from '../../config/config.service';
     RedisModule,
     ConfigModule,
     PassportModule,
+    UsersModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

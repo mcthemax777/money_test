@@ -1,23 +1,14 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '@/config/prisma.service';
+import { ProjectAccessService } from '@/common/project-access.guard';
 import { CardDto } from '@money/types';
 
 @Injectable()
 export class CardsService {
-  constructor(private readonly prisma: PrismaService) {}
-
-  private async getUserDefaultProjectId(userId: string): Promise<string> {
-    const member = await this.prisma.projectMember.findFirst({
-      where: { userId, role: 'owner' },
-      select: { projectId: true },
-    });
-
-    if (!member) {
-      throw new BadRequestException('기본 프로젝트를 찾을 수 없습니다.');
-    }
-
-    return member.projectId;
-  }
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly projectAccess: ProjectAccessService,
+  ) {}
 
   async createCard(userId: string, dto: CardDto.CreateRequest, projectIdParam?: string): Promise<CardDto.Response> {
     // 통장 확인
@@ -34,7 +25,10 @@ export class CardsService {
       throw new BadRequestException('신용카드는 한도를 설정해야 합니다.');
     }
 
-    const projectId = projectIdParam || (dto as any).projectId || dto.projectId || (await this.getUserDefaultProjectId(userId));
+    const projectId = await this.projectAccess.resolveAndVerifyProjectId(
+      userId,
+      projectIdParam || (dto as any).projectId || dto.projectId,
+    );
 
     const card = await this.prisma.card.create({
       data: {
@@ -54,7 +48,7 @@ export class CardsService {
   }
 
   async getCards(userId: string, projectId?: string): Promise<CardDto.Response[]> {
-    const finalProjectId = projectId || (await this.getUserDefaultProjectId(userId));
+    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
 
     const cards = await this.prisma.card.findMany({
       where: { userId, projectId: finalProjectId, isActive: true },
@@ -141,7 +135,7 @@ export class CardsService {
     // 체크카드: 즉시 통장에서 차감
     if (card.cardType === 'debit') {
       // 거래 생성
-      const projectId = await this.getUserDefaultProjectId(userId);
+      const projectId = await this.projectAccess.getDefaultProjectId(userId);
       const transaction = await this.prisma.transaction.create({
         data: {
           projectId,
@@ -175,7 +169,7 @@ export class CardsService {
       }
 
       // CardUsage 생성
-      const projectId = await this.getUserDefaultProjectId(userId);
+      const projectId = await this.projectAccess.getDefaultProjectId(userId);
       const usage = await this.prisma.cardUsage.create({
         data: {
           projectId,
@@ -220,7 +214,7 @@ export class CardsService {
       throw new NotFoundException('유효한 통장이 아닙니다.');
     }
 
-    const projectId = await this.getUserDefaultProjectId(userId);
+    const projectId = account.projectId;
 
     // 거래 생성
     const transaction = await this.prisma.transaction.create({

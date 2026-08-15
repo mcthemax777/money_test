@@ -168,14 +168,63 @@ export namespace CardPaymentDto {
 }
 
 export namespace CardUsageDto {
+  export interface Response extends CardUsage {}
+}
+
+export namespace BudgetDto {
   export interface CreateRequest {
-    cardId: string;
-    amount: number;
-    merchant: string;
-    date?: Date;
+    categoryId?: string;    // null=전체, 값=대분류/소분류
+    monthlyAmount: number;
+    projectId?: string;
   }
 
-  export interface Response extends CardUsage {}
+  export interface UpdateRequest {
+    monthlyAmount?: number;
+    applyMode?: 'all' | 'from';  // "모든 달" | "이 달부터"
+    applyFromMonth?: string;      // applyMode='from'일 때 "YYYY-MM"
+  }
+
+  export interface ListQuery {
+    projectId?: string;
+    categoryId?: string;
+    type?: 'income' | 'expense';
+  }
+
+  export interface Response {
+    id: string;
+    projectId: string;
+    userId: string;
+    categoryId?: string;
+    monthlyAmount: number;
+    effectiveFrom?: string;
+    effectiveTo?: string;
+    createdAt: Date;
+    updatedAt: Date;
+  }
+
+  export interface MonthlyBudget {
+    budgetId: string;
+    categoryId?: string;
+    categoryName?: string;
+    monthlyAmount: number;
+    isOverridden: boolean;  // 직접 오버라이드했는지
+  }
+
+  export interface OverrideRequest {
+    budgetId: string;
+    year: number;
+    month: number;
+    amount: number;
+  }
+
+  export interface OverrideResponse {
+    id: string;
+    budgetId: string;
+    year: number;
+    month: number;
+    amount: number;
+    createdAt: Date;
+  }
 }
 
 export interface PaginatedResponse<T> {
