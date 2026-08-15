@@ -320,7 +320,7 @@ export default function CategoriesPage() {
                 {error}
               </div>
             )}
-          </>
+            </>
         )}
 
         <Modal
@@ -523,8 +523,7 @@ export default function CategoriesPage() {
             {isSubmitting ? (editingId ? '수정 중...' : '추가 중...') : (editingId ? '수정하기' : '추가하기')}
           </button>
         </form>
-      </Modal>
-        </div>
+        </Modal>
       </div>
     </div>
   );
