@@ -284,50 +284,50 @@ export default function CategoriesPage() {
   return (
     <div className="min-h-screen bg-gray-50">
       <DashboardSidebar />
-      <div className="md:ml-64">
+      <div className="md:ml-64 p-4">
         <div className="flex justify-between items-center mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">카테고리 관리</h1>
-        <button
-          onClick={() => setIsModalOpen(true)}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          <h1 className="text-2xl font-bold text-gray-900">카테고리 관리</h1>
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            카테고리 추가
+          </button>
+        </div>
+
+        {isLoading ? (
+          <p className="text-gray-600">로딩 중...</p>
+        ) : categories.length === 0 ? (
+          <p className="text-gray-600">카테고리가 없습니다.</p>
+        ) : (
+          <>
+            {expenseCategories.length > 0 && (
+              <div className="mb-8">
+                <h2 className="text-lg font-bold text-red-600 mb-4">💸 지출</h2>
+                {renderCategoryList(expenseCategories)}
+              </div>
+            )}
+
+            {incomeCategories.length > 0 && (
+              <div className="mb-8">
+                <h2 className="text-lg font-bold text-green-600 mb-4">💰 수입</h2>
+                {renderCategoryList(incomeCategories)}
+              </div>
+            )}
+
+            {error && (
+              <div className="mt-4 p-3 bg-red-50 text-red-800 text-sm rounded">
+                {error}
+              </div>
+            )}
+          </>
+        )}
+
+        <Modal
+          isOpen={isDetailModalOpen}
+          onClose={() => setIsDetailModalOpen(false)}
+          title="카테고리 상세정보"
         >
-          카테고리 추가
-        </button>
-      </div>
-
-      {isLoading ? (
-        <p className="text-gray-600">로딩 중...</p>
-      ) : categories.length === 0 ? (
-        <p className="text-gray-600">카테고리가 없습니다.</p>
-      ) : (
-        <>
-          {expenseCategories.length > 0 && (
-            <div className="mb-8">
-              <h2 className="text-lg font-bold text-red-600 mb-4">💸 지출</h2>
-              {renderCategoryList(expenseCategories)}
-            </div>
-          )}
-
-          {incomeCategories.length > 0 && (
-            <div className="mb-8">
-              <h2 className="text-lg font-bold text-green-600 mb-4">💰 수입</h2>
-              {renderCategoryList(incomeCategories)}
-            </div>
-          )}
-
-          {error && (
-            <div className="mt-4 p-3 bg-red-50 text-red-800 text-sm rounded">
-              {error}
-            </div>
-          )}
-        </>
-      )}
-
-      <Modal
-        isOpen={isDetailModalOpen}
-        onClose={() => setIsDetailModalOpen(false)}
-        title="카테고리 상세정보"
-      >
         {selectedCategory && (
           <div className="space-y-4 max-h-96 overflow-y-auto">
             <div>
@@ -399,13 +399,13 @@ export default function CategoriesPage() {
             </div>
           </div>
         )}
-      </Modal>
+        </Modal>
 
-      <Modal
-        isOpen={isModalOpen}
-        onClose={handleModalClose}
-        title={editingId ? '카테고리 수정' : '카테고리 추가'}
-      >
+        <Modal
+          isOpen={isModalOpen}
+          onClose={handleModalClose}
+          title={editingId ? '카테고리 수정' : '카테고리 추가'}
+        >
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
