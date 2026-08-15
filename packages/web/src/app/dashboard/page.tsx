@@ -159,22 +159,22 @@ export default function TransactionsPage() {
       try {
         setIsLoading(true);
 
-        // 캐시된 데이터가 현재 선택된 프로젝트와 일치하면 사용
-        const useCache = defaultProjectData && defaultProjectData.project?.id === selectedProjectId;
+        // defaultProjectData가 현재 프로젝트와 일치하면 캐시 사용
+        const isCached = defaultProjectData?.project?.id === selectedProjectId;
 
         let transactionsData, accountsData, peopleData, cardsData, categoriesData;
 
-        if (useCache) {
+        if (isCached) {
           // 캐시된 데이터 활용 (API 호출 제거)
-          console.log('[Dashboard] Using cached project data for:', selectedProjectId);
+          console.log('[Dashboard] ✅ Using cached data for project:', selectedProjectId);
           transactionsData = { data: defaultProjectData.recentTransactions || [] };
           accountsData = defaultProjectData.accounts || [];
           peopleData = defaultProjectData.people || [];
           cardsData = defaultProjectData.cards || [];
           categoriesData = defaultProjectData.categories || [];
         } else {
-          // 다른 프로젝트일 경우 API 호출
-          console.log('[Dashboard] Fetching fresh data for project:', selectedProjectId);
+          // 캐시가 없으면 API 호출
+          console.log('[Dashboard] 📡 Fetching data for project:', selectedProjectId);
           const results = await Promise.all([
             apiClient.getTransactionsV2({}, selectedProjectId),
             apiClient.getAccountsV2(selectedProjectId),
@@ -200,7 +200,7 @@ export default function TransactionsPage() {
         setCards(cardsData || []);
         setCategories(categoriesData || []);
 
-        // 초기 월 설정 (거래내역은 날짜 선택 후 표시)
+        // 초기 월 설정
         const today = new Date();
         const thisMonth = today.getMonth() + 1;
         const thisYear = today.getFullYear();
@@ -215,7 +215,7 @@ export default function TransactionsPage() {
     };
 
     loadData();
-  }, [isAuthenticated, router, selectedProjectId, defaultProjectData?.project?.id]);
+  }, [isAuthenticated, router, selectedProjectId, defaultProjectData]);
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter((tx) => {

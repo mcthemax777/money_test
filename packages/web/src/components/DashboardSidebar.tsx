@@ -131,19 +131,18 @@ export default function DashboardSidebar() {
       // 기본 프로젝트 변경 API 호출
       const projectData = await setDefaultProject(pendingProjectId);
 
-      // 응답 데이터를 각 스토어에 설정 (추가 API 호출 제거)
-      setSelectedProjectId(pendingProjectId);
-
       if (projectData) {
-        // 사람 정보를 바로 설정 (API 호출 스킵)
+        // 응답 데이터를 각 스토어에 동시에 설정
+        // 이렇게 하면 모든 useEffect가 정확한 캐시 조건으로 실행됨
         setPeople(projectData.people || []);
         setSelectedPersonIds((projectData.people || []).map((p) => p.id));
+        setSelectedProjectId(pendingProjectId);
+        console.log(`✅ 프로젝트 변경됨: ${pendingProjectId}`, projectData);
       }
 
       setShowProjectChangeModal(false);
       setPendingProjectId(null);
       setIsOpen(false);
-      console.log(`✅ 프로젝트 변경됨: ${pendingProjectId}`);
     } catch (err) {
       console.error('프로젝트 변경 실패:', err);
       alert('프로젝트 변경에 실패했습니다.');
