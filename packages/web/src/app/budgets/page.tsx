@@ -1,11 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/store/auth';
 import { useProject } from '@/store/project';
 import { useBudget } from '@/store/budget';
 import { useCategory } from '@/store/category';
 import { BudgetCard } from '@/components/BudgetCard';
+import DashboardSidebar from '@/components/DashboardSidebar';
 import { ChevronLeft, ChevronRight, Plus, X } from 'lucide-react';
 
 interface CreateBudgetForm {
@@ -14,6 +16,7 @@ interface CreateBudgetForm {
 }
 
 export default function BudgetsPage() {
+  const router = useRouter();
   const { isAuthenticated } = useAuth();
   const { selectedProjectId } = useProject();
   const { monthlyBudgets, fetchMonthlyBudgets, isLoading, createBudget, updateBudget, deleteBudget } = useBudget();
@@ -25,6 +28,13 @@ export default function BudgetsPage() {
   const [formData, setFormData] = useState<CreateBudgetForm>({ monthlyAmount: 0 });
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // 인증 확인
+  useEffect(() => {
+    if (!isAuthenticated) {
+      router.push('/login');
+    }
+  }, [isAuthenticated, router]);
 
   const year = currentDate.getFullYear();
   const month = currentDate.getMonth() + 1;
@@ -148,11 +158,17 @@ export default function BudgetsPage() {
     return <div className="p-4">프로젝트를 선택해주세요.</div>;
   }
 
+  if (!isAuthenticated) {
+    return <div className="p-4">로그인이 필요합니다.</div>;
+  }
+
   const totalBudget = monthlyBudgets.find((b) => !b.categoryId);
   const categoryBudgets = monthlyBudgets.filter((b) => b.categoryId);
 
   return (
     <div className="min-h-screen bg-gray-50">
+      <DashboardSidebar />
+      <div className="md:ml-64">
       {/* 헤더 */}
       <div className="bg-white border-b border-gray-200">
         <div className="max-w-4xl mx-auto px-4 py-6">
@@ -328,6 +344,7 @@ export default function BudgetsPage() {
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 }
