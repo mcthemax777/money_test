@@ -112,6 +112,7 @@ export namespace TransactionDto {
     cardId?: string;
     type?: 'income' | 'expense' | 'transfer';
     mainCategoryId?: string;
+    subCategoryId?: string;
     startDate?: Date;
     endDate?: Date;
     page?: number;
@@ -174,6 +175,7 @@ export namespace CardUsageDto {
 export namespace BudgetDto {
   export interface CreateRequest {
     categoryId?: string;    // null=전체, 값=대분류/소분류
+    type?: 'income' | 'expense';  // 카테고리 타입 (전체 지출/수입 구분용)
     monthlyAmount: number;
     projectId?: string;
   }
@@ -206,8 +208,13 @@ export namespace BudgetDto {
     budgetId: string;
     categoryId?: string;
     categoryName?: string;
+    categoryType?: 'income' | 'expense';  // 카테고리 타입
+    parentCategoryId?: string;  // 대분류 ID (소분류인 경우)
     monthlyAmount: number;
+    usedAmount?: number;  // 이달 사용금액
     isOverridden: boolean;  // 직접 오버라이드했는지
+    hasChildren: boolean;  // 자식 예산이 있는지
+    isVirtualBudget?: boolean;  // 소분류 합으로 만든 가상 예산인지
   }
 
   export interface OverrideRequest {

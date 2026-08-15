@@ -120,6 +120,7 @@ export class TransactionsService {
     if (query.personId) where.personId = query.personId;
     if (query.type) where.type = query.type;
     if (query.mainCategoryId) where.mainCategoryId = query.mainCategoryId;
+    if (query.subCategoryId) where.subCategoryId = query.subCategoryId;
 
     if (query.startDate || query.endDate) {
       where.date = {};

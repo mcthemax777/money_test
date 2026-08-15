@@ -14,8 +14,11 @@ interface MonthlyBudget {
   budgetId: string;
   categoryId?: string;
   categoryName?: string;
+  parentCategoryId?: string;
   monthlyAmount: number;
   isOverridden: boolean;
+  hasChildren: boolean;
+  isVirtualBudget?: boolean;
 }
 
 interface BudgetStore {

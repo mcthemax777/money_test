@@ -360,6 +360,7 @@ model Budget {
   projectId     String
   userId        String
   categoryId    String?  // null=전체, 값=대분류/소분류
+  type          String?  // 전체 예산인 경우 'income' 또는 'expense' (categoryId가 null일 때만 사용)
   monthlyAmount Float
 
   // 적용 기간: null이면 무기한
@@ -378,7 +379,7 @@ model Budget {
   @@index([projectId])
   @@index([userId])
   @@index([categoryId])
-  @@unique([projectId, userId, categoryId, effectiveFrom])
+  @@unique([projectId, userId, categoryId, type, effectiveFrom])
 }
 
 // 예산 월별 직접 오버라이드
