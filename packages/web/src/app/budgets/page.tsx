@@ -284,11 +284,26 @@ export default function BudgetsPage() {
                   options={[
                     { id: '', name: '전체 예산' },
                     ...categories
-                      .filter((c) => c.level === 1)
-                      .map((category) => ({
-                        id: category.id,
-                        name: category.name,
-                      }))
+                      .sort((a, b) => {
+                        if (a.level !== b.level) return a.level - b.level;
+                        if (a.parentId !== b.parentId) return (a.parentId || '').localeCompare(b.parentId || '');
+                        return a.name.localeCompare(b.name);
+                      })
+                      .map((category) => {
+                        if (category.level === 1) {
+                          return {
+                            id: category.id,
+                            name: category.name,
+                          };
+                        } else {
+                          // level 2: 부모명 > 자식명
+                          const parent = categories.find((c) => c.id === category.parentId);
+                          return {
+                            id: category.id,
+                            name: `${parent?.name || '?'} > ${category.name}`,
+                          };
+                        }
+                      })
                   ]}
                   value={formData.categoryId || ''}
                   onChange={(value) =>
