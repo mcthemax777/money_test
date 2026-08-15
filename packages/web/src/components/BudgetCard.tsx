@@ -69,7 +69,7 @@ export function BudgetCard({
           {isOverBudget ? `초과 ${formatCurrency(Math.abs(remainAmount))}원` : `${formatCurrency(remainAmount)}원`}
         </span>
 
-        <div className="relative">
+        <div className="relative z-20">
           <button
             onClick={() => setShowMenu(!showMenu)}
             className="p-1 hover:bg-gray-100 rounded"
@@ -78,7 +78,7 @@ export function BudgetCard({
           </button>
 
           {showMenu && (
-            <div className="absolute right-0 top-8 bg-white border border-gray-200 rounded shadow-lg z-10">
+            <div className="absolute right-0 top-8 bg-white border border-gray-200 rounded shadow-xl z-50 min-w-max">
               <button
                 onClick={() => {
                   onEdit();
