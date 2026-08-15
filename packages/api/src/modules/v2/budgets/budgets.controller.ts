@@ -45,6 +45,22 @@ export class BudgetsController {
     return this.budgetsService.getBudgets(req.user.id, query);
   }
 
+  @Get(':year/:month')
+  @ApiOperation({ summary: '특정 월의 예산 (오버라이드 포함)' })
+  getForMonth(
+    @Request() req: AuthenticatedRequest,
+    @Param('year') year: string,
+    @Param('month') month: string,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.budgetsService.getBudgetForMonth(
+      req.user.id,
+      projectId!,
+      parseInt(year),
+      parseInt(month),
+    );
+  }
+
   @Get(':id')
   @ApiOperation({ summary: '예산 규칙 상세' })
   getById(
@@ -74,22 +90,6 @@ export class BudgetsController {
     return this.budgetsService.deleteBudget(id, req.user.id);
   }
 
-  @Get(':year/:month')
-  @ApiOperation({ summary: '특정 월의 예산 (오버라이드 포함)' })
-  getForMonth(
-    @Request() req: AuthenticatedRequest,
-    @Param('year') year: string,
-    @Param('month') month: string,
-    @Query('projectId') projectId?: string,
-  ) {
-    return this.budgetsService.getBudgetForMonth(
-      req.user.id,
-      projectId!,
-      parseInt(year),
-      parseInt(month),
-    );
-  }
-
   @Post('override')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: '월별 예산 오버라이드 설정' })
@@ -100,13 +100,13 @@ export class BudgetsController {
     return this.budgetsService.createOverride(req.user.id, dto);
   }
 
-  @Delete('override/:id')
+  @Delete('override/:overrideId')
   @HttpCode(HttpStatus.NO_CONTENT)
   @ApiOperation({ summary: '월별 예산 오버라이드 해제' })
   deleteOverride(
     @Request() req: AuthenticatedRequest,
-    @Param('id') id: string,
+    @Param('overrideId') overrideId: string,
   ) {
-    return this.budgetsService.deleteOverride(id, req.user.id);
+    return this.budgetsService.deleteOverride(overrideId, req.user.id);
   }
 }

@@ -227,9 +227,12 @@ class ApiClient {
     await this.client.delete(`/v2/transactions/${id}`);
   }
 
-  async getCategories(projectId?: string) {
+  async getCategories(projectId?: string, type?: 'income' | 'expense') {
+    const params: any = {};
+    if (projectId) params.projectId = projectId;
+    if (type) params.type = type;
     const response = await this.client.get<any>('/v2/categories', {
-      params: projectId ? { projectId } : {}
+      params
     });
     return response.data;
   }
