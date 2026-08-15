@@ -116,8 +116,17 @@ export default function DashboardSidebar() {
     try {
       setIsChanging(true);
       // 기본 프로젝트 변경 API 호출
-      await setDefaultProject(pendingProjectId);
+      const projectData = await setDefaultProject(pendingProjectId);
+
+      // 응답 데이터를 각 스토어에 설정 (추가 API 호출 제거)
       setSelectedProjectId(pendingProjectId);
+
+      if (projectData) {
+        // 사람 정보를 바로 설정 (API 호출 스킵)
+        setPeople(projectData.people || []);
+        setSelectedPersonIds((projectData.people || []).map((p) => p.id));
+      }
+
       setShowProjectChangeModal(false);
       setPendingProjectId(null);
       setIsOpen(false);

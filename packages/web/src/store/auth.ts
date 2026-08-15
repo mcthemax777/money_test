@@ -35,7 +35,7 @@ interface AuthStore {
   isInitializing: boolean;
   signUp: (email: string, password: string, name: string) => Promise<void>;
   signIn: (email: string, password: string) => Promise<void>;
-  setDefaultProject: (projectId: string) => Promise<void>;
+  setDefaultProject: (projectId: string) => Promise<ProjectInitialData | null>;
   logout: () => Promise<void>;
   loadUser: () => Promise<void>;
 }
@@ -124,6 +124,7 @@ export const useAuth = create<AuthStore>()(
         user: response.user,
         defaultProjectData: response.defaultProjectData,
       });
+      return response.defaultProjectData;
     } catch (error) {
       set({ isLoading: false });
       throw error;

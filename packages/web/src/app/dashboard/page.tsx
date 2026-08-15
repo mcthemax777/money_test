@@ -60,7 +60,7 @@ interface Card {
 }
 
 export default function TransactionsPage() {
-  const { isAuthenticated, loadUser } = useAuth();
+  const { isAuthenticated, loadUser, user, defaultProjectData } = useAuth();
   const { selectedPersonIds, setPeople: setStorePeople } = useUserFilter();
   const { selectedProjectId } = useProject();
   const router = useRouter();
@@ -158,13 +158,35 @@ export default function TransactionsPage() {
     const loadData = async () => {
       try {
         setIsLoading(true);
-        const [transactionsData, accountsData, peopleData, cardsData, categoriesData] = await Promise.all([
-          apiClient.getTransactionsV2({}, selectedProjectId),
-          apiClient.getAccountsV2(selectedProjectId),
-          apiClient.getPeople(selectedProjectId),
-          apiClient.getCards(selectedProjectId),
-          apiClient.getCategories(selectedProjectId),
-        ]);
+
+        // 현재 프로젝트가 기본 프로젝트이고 캐시된 데이터가 있으면 사용
+        const useCache = selectedProjectId === user?.defaultProjectId && defaultProjectData;
+
+        let transactionsData, accountsData, peopleData, cardsData, categoriesData;
+
+        if (useCache && defaultProjectData) {
+          // 캐시된 데이터 활용 (API 호출 제거)
+          transactionsData = { data: defaultProjectData.recentTransactions || [] };
+          accountsData = defaultProjectData.accounts || [];
+          peopleData = defaultProjectData.people || [];
+          cardsData = defaultProjectData.cards || [];
+          categoriesData = defaultProjectData.categories || [];
+        } else {
+          // 다른 프로젝트일 경우 API 호출
+          const results = await Promise.all([
+            apiClient.getTransactionsV2({}, selectedProjectId),
+            apiClient.getAccountsV2(selectedProjectId),
+            apiClient.getPeople(selectedProjectId),
+            apiClient.getCards(selectedProjectId),
+            apiClient.getCategories(selectedProjectId),
+          ]);
+          transactionsData = results[0];
+          accountsData = results[1];
+          peopleData = results[2];
+          cardsData = results[3];
+          categoriesData = results[4];
+        }
+
         const txs = (transactionsData?.data || []).map((tx: any) => ({
           ...tx,
           mainCategory: typeof tx.mainCategory === 'object' ? tx.mainCategory?.name : tx.mainCategory,
@@ -191,7 +213,7 @@ export default function TransactionsPage() {
     };
 
     loadData();
-  }, [isAuthenticated, router, selectedProjectId]);
+  }, [isAuthenticated, router, selectedProjectId, user?.defaultProjectId, defaultProjectData]);
 
   const filteredTransactions = useMemo(() => {
     return transactions.filter((tx) => {
