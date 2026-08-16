@@ -789,32 +789,33 @@ export default function TransactionsPage() {
           monthlyBudgets.length === 0 ? (
             <p className="text-gray-600">설정된 예산이 없습니다.</p>
           ) : (
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
-              {/* 수입/지출 탭 */}
-              <div className="flex gap-2 mb-6 border-b">
-                <button
-                  onClick={() => setBudgetType('expense')}
-                  className={`px-4 py-2 font-medium transition ${
-                    budgetType === 'expense'
-                      ? 'border-b-2 border-blue-600 text-blue-600'
-                      : 'text-gray-600 hover:text-gray-800'
-                  }`}
-                >
-                  지출
-                </button>
-                <button
-                  onClick={() => setBudgetType('income')}
-                  className={`px-4 py-2 font-medium transition ${
-                    budgetType === 'income'
-                      ? 'border-b-2 border-blue-600 text-blue-600'
-                      : 'text-gray-600 hover:text-gray-800'
-                  }`}
-                >
-                  수입
-                </button>
-              </div>
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-1 bg-white rounded-lg border border-gray-200 p-6">
+                {/* 수입/지출 탭 */}
+                <div className="flex gap-2 mb-6 border-b">
+                  <button
+                    onClick={() => setBudgetType('expense')}
+                    className={`px-4 py-2 font-medium transition ${
+                      budgetType === 'expense'
+                        ? 'border-b-2 border-blue-600 text-blue-600'
+                        : 'text-gray-600 hover:text-gray-800'
+                    }`}
+                  >
+                    지출
+                  </button>
+                  <button
+                    onClick={() => setBudgetType('income')}
+                    className={`px-4 py-2 font-medium transition ${
+                      budgetType === 'income'
+                        ? 'border-b-2 border-blue-600 text-blue-600'
+                        : 'text-gray-600 hover:text-gray-800'
+                    }`}
+                  >
+                    수입
+                  </button>
+                </div>
 
-              <div className="space-y-2">
+                <div className="space-y-2">
                 {(() => {
                   console.log('=== Budget Section Debug ===');
                   console.log('monthlyBudgets:', monthlyBudgets);
@@ -1087,6 +1088,31 @@ export default function TransactionsPage() {
                   );
                 })()}
               </div>
+              </div>
+
+              {selectedCategoryId && (
+                <div className="lg:col-span-2 bg-white rounded-lg border border-gray-200 p-6">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="text-lg font-bold text-gray-900">{selectedCategoryName} 상세 분석</h3>
+                    <button
+                      onClick={() => setSelectedCategoryId('')}
+                      className="text-gray-400 hover:text-gray-600"
+                    >
+                      ✕
+                    </button>
+                  </div>
+                  <BudgetDetailModal
+                    isOpen={true}
+                    onClose={() => setSelectedCategoryId('')}
+                    categoryId={selectedCategoryId}
+                    categoryName={selectedCategoryName}
+                    categories={categories}
+                    isInline={true}
+                    currentMonth={currentMonth}
+                    currentYear={currentYear}
+                  />
+                </div>
+              )}
             </div>
           )
         ) : isLoading ? (
@@ -1522,14 +1548,6 @@ export default function TransactionsPage() {
           </div>
         </form>
       </Modal>
-
-      <BudgetDetailModal
-        isOpen={showBudgetDetail}
-        onClose={() => setShowBudgetDetail(false)}
-        categoryId={selectedCategoryId}
-        categoryName={selectedCategoryName}
-        categories={categories}
-      />
 
       <PersonModal
         isOpen={isPersonModalOpen}

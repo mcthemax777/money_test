@@ -4,7 +4,23 @@ import { useEffect, useState } from 'react';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { X } from 'lucide-react';
 import Modal from './Modal';
+import TransactionItem from './TransactionItem';
 import { apiClient } from '@/lib/api-client';
+
+interface Transaction {
+  id: string;
+  description: string;
+  amount: number;
+  type: 'income' | 'expense' | 'transfer' | 'credit_usage' | 'credit_payment';
+  date: string;
+  mainCategory: string;
+  mainCategoryId?: string;
+  subCategory?: string;
+  subCategoryId?: string;
+  accountId?: string;
+  cardId?: string;
+  personId?: string;
+}
 
 interface Category {
   id: string;
@@ -20,6 +36,9 @@ interface BudgetDetailModalProps {
   categoryId: string;
   categoryName: string;
   categories?: Category[];
+  isInline?: boolean;
+  currentMonth?: number;
+  currentYear?: number;
 }
 
 interface MonthlyData {
@@ -33,9 +52,10 @@ interface DailyData {
   cumulative: number;
 }
 
-export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, categories = [] }: BudgetDetailModalProps) {
+export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, categories = [], isInline = false, currentMonth, currentYear }: BudgetDetailModalProps) {
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
   const [dailyData, setDailyData] = useState<DailyData[]>([]);
+  const [currentMonthTransactions, setCurrentMonthTransactions] = useState<Transaction[]>([]);
   const [loading, setLoading] = useState(false);
 
   // categoryId의 타입 판단 (total-income, total-expense, 대분류, 소분류)
@@ -77,13 +97,19 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
         console.log('Loading budget detail data...');
         // 12개월 데이터 로드
         const today = new Date();
+        const displayMonth = currentMonth || (today.getMonth() + 1);
+        const displayYear = currentYear || today.getFullYear();
         const monthlyDataList: MonthlyData[] = [];
         const filterParams = getFilterParams(categoryId);
 
         for (let i = 11; i >= 0; i--) {
-          const date = new Date(today.getFullYear(), today.getMonth() - i, 1);
-          const year = date.getFullYear();
-          const month = date.getMonth() + 1;
+          let month = displayMonth - i;
+          let year = displayYear;
+          if (month <= 0) {
+            year -= 1;
+            month += 12;
+          }
+          const date = new Date(year, month - 1, 1);
 
           try {
             console.log(`[API call] Month ${month}/${year} with params:`, filterParams);
@@ -97,8 +123,13 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
             console.log(`Month ${month}/${year}: ${transactions.length} transactions`);
 
             const transactionType = filterParams.type || 'expense';
+            const isMainOrSubCategory = filterParams.mainCategoryId || filterParams.subCategoryId;
             const amount = transactions
               .filter((t: any) => {
+                // 대분류/소분류 필터는 API에서 이미 적용됨, 모든 거래 타입 포함
+                if (isMainOrSubCategory) {
+                  return true;
+                }
                 if (transactionType === 'expense') {
                   return t.type === 'expense' || t.type === 'credit_usage';
                 }
@@ -123,14 +154,12 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
         setMonthlyData(monthlyDataList);
 
         // 현재 월 일별 데이터 로드
-        const year = today.getFullYear();
-        const month = today.getMonth() + 1;
         try {
           const dailyResponse = await apiClient.getTransactionsV2({
             mainCategoryId: filterParams.mainCategoryId,
             subCategoryId: filterParams.subCategoryId,
-            startDate: new Date(year, month - 1, 1),
-            endDate: new Date(year, month, 0),
+            startDate: new Date(displayYear, displayMonth - 1, 1),
+            endDate: new Date(displayYear, displayMonth, 0),
           });
           const dailyTransactions = dailyResponse?.data || [];
 
@@ -138,8 +167,13 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
 
           const dailyMap = new Map<number, number>();
           const dailyTransactionType = filterParams.type || 'expense';
+          const isMainOrSubCategory = filterParams.mainCategoryId || filterParams.subCategoryId;
           dailyTransactions
             .filter((t: any) => {
+              // 대분류/소분류 필터는 API에서 이미 적용됨, 모든 거래 타입 포함
+              if (isMainOrSubCategory) {
+                return true;
+              }
               if (dailyTransactionType === 'expense') {
                 return t.type === 'expense' || t.type === 'credit_usage';
               }
@@ -152,7 +186,7 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
 
           const dailyDataList: DailyData[] = [];
           let cumulative = 0;
-          const daysInMonth = new Date(year, month, 0).getDate();
+          const daysInMonth = new Date(displayYear, displayMonth, 0).getDate();
           for (let day = 1; day <= daysInMonth; day++) {
             const amount = dailyMap.get(day) || 0;
             cumulative += amount;
@@ -161,6 +195,26 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
 
           console.log('Daily data:', dailyDataList);
           setDailyData(dailyDataList);
+
+          // 현재 월의 거래내역 조회
+
+          try {
+            const currentResponse = await apiClient.getTransactionsV2({
+              ...filterParams,
+              startDate: new Date(displayYear, displayMonth - 1, 1),
+              endDate: new Date(displayYear, displayMonth, 0),
+            });
+            const txs = (currentResponse?.data || [])
+              .map((tx: any) => ({
+                ...tx,
+                mainCategory: typeof tx.mainCategory === 'object' ? tx.mainCategory?.name : tx.mainCategory,
+                subCategory: typeof tx.subCategory === 'object' ? tx.subCategory?.name : tx.subCategory,
+              }));
+            setCurrentMonthTransactions(txs);
+          } catch (err) {
+            console.error('Failed to load current month transactions:', err);
+            setCurrentMonthTransactions([]);
+          }
         } catch (err) {
           console.error('Failed to load daily transactions:', err);
           setDailyData([]);
@@ -173,46 +227,77 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
     };
 
     loadData();
-  }, [isOpen, categoryId, categories]);
+  }, [isOpen, categoryId, categories, currentMonth, currentYear]);
+
+  const content = (
+    <div className="space-y-8 p-4">
+      {loading ? (
+        <div className="text-center text-gray-500">데이터 로드 중...</div>
+      ) : (
+        <>
+          {/* 12개월 바차트 */}
+          <div>
+            <h3 className="text-lg font-semibold mb-4">지난 12개월 사용금액</h3>
+            <ResponsiveContainer width="100%" height={300}>
+              <BarChart data={monthlyData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="month" />
+                <YAxis />
+                <Tooltip formatter={(value: any) => `${(value || 0).toLocaleString()}원`} />
+                <Bar dataKey="amount" fill="#3b82f6" />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* 일별 라인차트 */}
+          <div>
+            <h3 className="text-lg font-semibold mb-4">이번 달 일별 누적 사용금액</h3>
+            <ResponsiveContainer width="100%" height={300}>
+              <LineChart data={dailyData}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="day" />
+                <YAxis />
+                <Tooltip formatter={(value: any) => `${(value || 0).toLocaleString()}원`} />
+                <Legend />
+                <Line type="monotone" dataKey="cumulative" stroke="#3b82f6" name="누적 사용금액" />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+
+          {/* 거래내역 */}
+          <div>
+            <h3 className="text-lg font-semibold mb-4">이번 달 거래내역</h3>
+            {currentMonthTransactions.filter(tx => tx.type !== 'credit_payment').length > 0 ? (
+              <div className="space-y-2">
+                {currentMonthTransactions.filter(tx => tx.type !== 'credit_payment').map((tx) => (
+                  <TransactionItem
+                    key={tx.id}
+                    id={tx.id}
+                    description={tx.description}
+                    amount={tx.amount}
+                    type={tx.type}
+                    date={tx.date}
+                    mainCategory={tx.mainCategory}
+                    subCategory={tx.subCategory}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="text-gray-500 text-sm">거래내역이 없습니다.</p>
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+
+  if (isInline) {
+    return content;
+  }
 
   return (
     <Modal isOpen={isOpen} onClose={onClose} title={`${categoryName} 상세 분석`}>
-      <div className="space-y-8 p-4">
-        {loading ? (
-          <div className="text-center text-gray-500">데이터 로드 중...</div>
-        ) : (
-          <>
-            {/* 12개월 바차트 */}
-            <div>
-              <h3 className="text-lg font-semibold mb-4">지난 12개월 사용금액</h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={monthlyData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" />
-                  <YAxis />
-                  <Tooltip formatter={(value: any) => `${(value || 0).toLocaleString()}원`} />
-                  <Bar dataKey="amount" fill="#3b82f6" />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
-            {/* 일별 라인차트 */}
-            <div>
-              <h3 className="text-lg font-semibold mb-4">이번 달 일별 누적 사용금액</h3>
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={dailyData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="day" />
-                  <YAxis />
-                  <Tooltip formatter={(value: any) => `${(value || 0).toLocaleString()}원`} />
-                  <Legend />
-                  <Line type="monotone" dataKey="cumulative" stroke="#3b82f6" name="누적 사용금액" />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          </>
-        )}
-      </div>
+      {content}
     </Modal>
   );
 }
