@@ -205,25 +205,6 @@ export default function DashboardSidebar() {
           </div>
         </div>
 
-        <div className="p-4 border-b border-gray-200">
-          <label className="block text-xs font-semibold text-gray-600 mb-3 uppercase tracking-wider">
-            사용자
-          </label>
-          <div className="space-y-2 max-h-48 overflow-y-auto">
-            {people.map((person) => (
-              <label key={person.id} className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={selectedPersonIds.includes(person.id)}
-                  onChange={() => togglePersonId(person.id)}
-                  className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                />
-                <span className="text-sm text-gray-700">{person.name}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-
         <nav className="p-4">
           {menuItems.map((menu) => (
             <div key={menu.section || 'top'} className={menu.section ? 'mb-8' : 'mb-4'}>
