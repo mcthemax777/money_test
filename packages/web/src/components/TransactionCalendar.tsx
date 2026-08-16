@@ -6,7 +6,7 @@ interface Transaction {
   id: string;
   description: string;
   amount: number;
-  type: 'income' | 'expense' | 'transfer';
+  type: 'income' | 'expense' | 'transfer' | 'credit_usage' | 'credit_payment';
   date: string;
   mainCategory: string;
   mainCategoryId?: string;

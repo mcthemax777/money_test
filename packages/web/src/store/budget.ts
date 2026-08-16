@@ -14,8 +14,10 @@ interface MonthlyBudget {
   budgetId: string;
   categoryId?: string;
   categoryName?: string;
+  categoryType?: 'income' | 'expense';
   parentCategoryId?: string;
   monthlyAmount: number;
+  usedAmount?: number;
   isOverridden: boolean;
   hasChildren: boolean;
   isVirtualBudget?: boolean;

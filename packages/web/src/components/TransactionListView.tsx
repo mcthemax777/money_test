@@ -6,7 +6,7 @@ interface Transaction {
   id: string;
   description: string;
   amount: number;
-  type: 'income' | 'expense' | 'transfer';
+  type: 'income' | 'expense' | 'transfer' | 'credit_usage' | 'credit_payment';
   date: string;
   mainCategory: string;
   mainCategoryId?: string;
@@ -86,7 +86,7 @@ export default function TransactionListView({
 
         return (
           <div key={date}>
-            <div className="flex items-center justify-between mb-3 sticky top-0 bg-white py-2 border-b border-gray-200">
+            <div className="flex items-center justify-between mb-3 sticky top-0 bg-gray-100 py-2 px-3 rounded-lg border border-gray-200">
               <h3 className="text-lg font-bold text-gray-900">
                 {date} <span className="text-sm text-gray-600">({dayOfWeek})</span>
               </h3>

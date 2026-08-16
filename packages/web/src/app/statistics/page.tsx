@@ -178,8 +178,8 @@ export default function StatisticsPage() {
           <p className="text-gray-600">이 달에 지출 데이터가 없습니다.</p>
         </div>
       ) : (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-          <div className="lg:col-span-2 bg-white rounded-lg shadow p-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+          <div className="md:col-span-2 bg-white rounded-lg shadow p-8">
             <h2 className="text-xl font-bold text-gray-900 mb-6">분류별 지출</h2>
             <ResponsiveContainer width="100%" height={400}>
               <PieChart>

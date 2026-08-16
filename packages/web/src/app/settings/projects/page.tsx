@@ -17,7 +17,7 @@ interface Project {
 export default function ProjectsPage() {
   const router = useRouter();
   const { isAuthenticated, isInitializing } = useAuth();
-  const { projects, setProjects, selectedProjectId } = useProject();
+  const { projects, setProjects, selectedProjectId, setSelectedProjectId } = useProject();
   const [loading, setLoading] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [error, setError] = useState('');

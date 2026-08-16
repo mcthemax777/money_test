@@ -86,7 +86,7 @@ export default function TransactionsPage() {
   const [displayTransactions, setDisplayTransactions] = useState<Transaction[]>([]);
   const [currentMonth, setCurrentMonth] = useState<number>(new Date().getMonth() + 1);
   const [currentYear, setCurrentYear] = useState<number>(new Date().getFullYear());
-  const [viewType, setViewType] = useState<'calendar' | 'list' | 'budget' | 'payment-method'>('calendar');
+  const [viewType, setViewType] = useState<'calendar' | 'budget' | 'payment-method'>('calendar');
   const [budgetType, setBudgetType] = useState<'income' | 'expense'>('expense');
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<string>>(new Set());
   const [showBudgetModal, setShowBudgetModal] = useState(false);
@@ -681,17 +681,7 @@ export default function TransactionsPage() {
                   : 'text-gray-600 hover:text-gray-900'
               }`}
             >
-              달력
-            </button>
-            <button
-              onClick={() => setViewType('list')}
-              className={`px-4 py-2 rounded-md font-medium transition ${
-                viewType === 'list'
-                  ? 'bg-white text-blue-600 shadow'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              리스트
+              날짜별
             </button>
             <button
               onClick={() => setViewType('budget')}
@@ -701,7 +691,7 @@ export default function TransactionsPage() {
                   : 'text-gray-600 hover:text-gray-900'
               }`}
             >
-              예산
+              분류별
             </button>
             <button
               onClick={() => setViewType('payment-method')}
@@ -711,7 +701,7 @@ export default function TransactionsPage() {
                   : 'text-gray-600 hover:text-gray-900'
               }`}
             >
-              결제방법
+              수단별
             </button>
           </div>
         </div>
@@ -770,7 +760,7 @@ export default function TransactionsPage() {
             >
               <span className="text-xl">→</span>
             </button>
-            {viewType === 'calendar' || viewType === 'list' ? (
+            {viewType === 'calendar' ? (
               <button
                 onClick={() => setIsModalOpen(true)}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
@@ -1111,54 +1101,81 @@ export default function TransactionsPage() {
             people={people}
           />
         ) : viewType === 'calendar' ? (
-          <div>
-            <TransactionCalendar
-              transactions={filteredTransactions}
-              onDateSelect={handleCalendarDateSelect}
-              onMonthChange={handleMonthChange}
-              startDate={startDate}
-              endDate={endDate}
-            />
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="lg:col-span-1">
+              <TransactionCalendar
+                transactions={filteredTransactions}
+                onDateSelect={handleCalendarDateSelect}
+                onMonthChange={handleMonthChange}
+                startDate={startDate}
+                endDate={endDate}
+              />
+            </div>
 
-            {displayTransactions.length > 0 && (
-              <div ref={dateTransactionsRef} className="mt-8">
-                <h3 className="text-lg font-bold text-gray-900 mb-4">
-                  {endDate
-                    ? `${startDate?.toISOString().split('T')[0]} ~ ${endDate.toISOString().split('T')[0]}의 거래`
-                    : startDate
-                    ? `${startDate.toISOString().split('T')[0]}의 거래`
-                    : `${currentYear}년 ${currentMonth}월의 거래`}
-                </h3>
-                <div className="space-y-2">
-                  {displayTransactions.map((tx) => (
-                    <TransactionItem
-                      key={tx.id}
-                      id={tx.id}
-                      description={tx.description}
-                      amount={tx.amount}
-                      type={tx.type}
-                      date={tx.date}
-                      mainCategory={tx.mainCategory}
-                      subCategory={tx.subCategory}
-                      onClick={() => handleTransactionClick(tx)}
-                    />
-                  ))}
-                </div>
+            {(displayTransactions.length > 0 || !startDate) && (
+              <div ref={dateTransactionsRef} className="lg:col-span-2">
+                {!startDate ? (
+                  <TransactionListView
+                    transactions={currentMonthTransactions}
+                    onTransactionClick={handleTransactionClick}
+                  />
+                ) : (
+                  <>
+                    {(() => {
+                      const totalIncome = displayTransactions
+                        .filter(tx => tx.type === 'income')
+                        .reduce((sum, tx) => sum + tx.amount, 0);
+                      const totalExpense = displayTransactions
+                        .filter(tx => tx.type === 'expense' || tx.type === 'credit_usage')
+                        .reduce((sum, tx) => sum + tx.amount, 0);
+
+                      return (
+                        <div className="mb-4 flex items-center justify-between text-sm font-semibold bg-gray-100 py-2 px-3 rounded-lg border border-gray-200">
+                          <h3 className="text-lg font-bold text-gray-900">
+                            {endDate
+                              ? `${startDate?.toISOString().split('T')[0]} ~ ${endDate.toISOString().split('T')[0]}`
+                              : startDate
+                              ? `${startDate.toISOString().split('T')[0]}`
+                              : `${currentYear}년 ${currentMonth}월`}
+                          </h3>
+                          <div className="flex gap-6">
+                            <span className="text-green-600">
+                              +{new Intl.NumberFormat('ko-KR', {
+                                style: 'currency',
+                                currency: 'KRW',
+                              }).format(totalIncome)}
+                            </span>
+                            <span className="text-red-600">
+                              -{new Intl.NumberFormat('ko-KR', {
+                                style: 'currency',
+                                currency: 'KRW',
+                              }).format(totalExpense)}
+                            </span>
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    <div className="space-y-2">
+                      {displayTransactions.map((tx) => (
+                        <TransactionItem
+                          key={tx.id}
+                          id={tx.id}
+                          description={tx.description}
+                          amount={tx.amount}
+                          type={tx.type}
+                          date={tx.date}
+                          mainCategory={tx.mainCategory}
+                          subCategory={tx.subCategory}
+                          onClick={() => handleTransactionClick(tx)}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
               </div>
             )}
           </div>
-        ) : (
-          <div>
-            {currentMonthTransactions.length > 0 ? (
-              <TransactionListView
-                transactions={currentMonthTransactions}
-                onTransactionClick={handleTransactionClick}
-              />
-            ) : (
-              <p className="text-gray-600">이 달에 거래가 없습니다.</p>
-            )}
-          </div>
-        )}
+        ) : null}
       </div>
 
       <Modal

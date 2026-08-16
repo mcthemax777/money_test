@@ -98,13 +98,13 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
 
             const transactionType = filterParams.type || 'expense';
             const amount = transactions
-              .filter(t => {
+              .filter((t: any) => {
                 if (transactionType === 'expense') {
                   return t.type === 'expense' || t.type === 'credit_usage';
                 }
                 return t.type === transactionType;
               })
-              .reduce((sum, t) => sum + t.amount, 0);
+              .reduce((sum: number, t: any) => sum + t.amount, 0);
 
             monthlyDataList.push({
               month: `${month}월`,
@@ -139,13 +139,13 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
           const dailyMap = new Map<number, number>();
           const dailyTransactionType = filterParams.type || 'expense';
           dailyTransactions
-            .filter(t => {
+            .filter((t: any) => {
               if (dailyTransactionType === 'expense') {
                 return t.type === 'expense' || t.type === 'credit_usage';
               }
               return t.type === dailyTransactionType;
             })
-            .forEach(t => {
+            .forEach((t: any) => {
               const day = new Date(t.date).getDate();
               dailyMap.set(day, (dailyMap.get(day) || 0) + t.amount);
             });
@@ -190,7 +190,7 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="month" />
                   <YAxis />
-                  <Tooltip formatter={(value) => `${value.toLocaleString()}원`} />
+                  <Tooltip formatter={(value: any) => `${(value || 0).toLocaleString()}원`} />
                   <Bar dataKey="amount" fill="#3b82f6" />
                 </BarChart>
               </ResponsiveContainer>
@@ -204,7 +204,7 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="day" />
                   <YAxis />
-                  <Tooltip formatter={(value) => `${value.toLocaleString()}원`} />
+                  <Tooltip formatter={(value: any) => `${(value || 0).toLocaleString()}원`} />
                   <Legend />
                   <Line type="monotone" dataKey="cumulative" stroke="#3b82f6" name="누적 사용금액" />
                 </LineChart>
