@@ -345,8 +345,8 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
         <div className="text-center text-gray-500">데이터 로드 중...</div>
       ) : (
         <>
-          {/* 대분류별 원형차트 (total-expense일 때만) */}
-          {categoryId === 'total-expense' && categoryStats.length > 0 && (
+          {/* 원형차트: categoryStats가 있을 때 표시 */}
+          {categoryStats.length > 0 && (
             <div>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold">
