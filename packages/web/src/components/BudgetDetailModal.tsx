@@ -478,24 +478,110 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
           {/* 거래내역 */}
           <div>
             <h3 className="text-lg font-semibold mb-4">이번 달 거래내역</h3>
-            {currentMonthTransactions.filter(tx => tx.type !== 'credit_payment').length > 0 ? (
-              <div className="space-y-2">
-                {currentMonthTransactions.filter(tx => tx.type !== 'credit_payment').map((tx) => (
-                  <TransactionItem
-                    key={tx.id}
-                    id={tx.id}
-                    description={tx.description}
-                    amount={tx.amount}
-                    type={tx.type}
-                    date={tx.date}
-                    mainCategory={tx.mainCategory}
-                    subCategory={tx.subCategory}
-                  />
-                ))}
-              </div>
-            ) : (
-              <p className="text-gray-500 text-sm">거래내역이 없습니다.</p>
-            )}
+            {(() => {
+              const filteredTransactions = currentMonthTransactions.filter(tx => tx.type !== 'credit_payment');
+
+              if (filteredTransactions.length === 0) {
+                return <p className="text-gray-500 text-sm">거래내역이 없습니다.</p>;
+              }
+
+              const groupedTransactions: { [date: string]: typeof filteredTransactions } = {};
+              filteredTransactions.forEach(tx => {
+                const date = new Date(tx.date).toLocaleDateString('ko-KR');
+                if (!groupedTransactions[date]) {
+                  groupedTransactions[date] = [];
+                }
+                groupedTransactions[date].push(tx);
+              });
+
+              const sortedDates = Object.keys(groupedTransactions).sort((a, b) => {
+                const dateA = new Date(a.replace(/년|월|일/g, (match) => {
+                  if (match === '년') return '/';
+                  if (match === '월') return '/';
+                  return '';
+                }));
+                const dateB = new Date(b.replace(/년|월|일/g, (match) => {
+                  if (match === '년') return '/';
+                  if (match === '월') return '/';
+                  return '';
+                }));
+                return dateB.getTime() - dateA.getTime();
+              });
+
+              const getDayOfWeek = (dateStr: string) => {
+                const weekDays = ['일', '월', '화', '수', '목', '금', '토'];
+                const date = new Date(dateStr.replace(/년|월|일/g, (match) => {
+                  if (match === '년') return '/';
+                  if (match === '월') return '/';
+                  return '';
+                }));
+                return weekDays[date.getDay()];
+              };
+
+              const calculateTotals = (txs: typeof filteredTransactions) => {
+                let incomeTotal = 0;
+                let expenseTotal = 0;
+                txs.forEach(tx => {
+                  if (tx.type === 'income') {
+                    incomeTotal += tx.amount;
+                  } else if (tx.type === 'expense' || tx.type === 'credit_usage') {
+                    expenseTotal += tx.amount;
+                  }
+                });
+                return { incomeTotal, expenseTotal };
+              };
+
+              return (
+                <div className="space-y-6">
+                  {sortedDates.map(date => {
+                    const dayOfWeek = getDayOfWeek(date);
+                    const { incomeTotal, expenseTotal } = calculateTotals(groupedTransactions[date]);
+
+                    return (
+                      <div key={date}>
+                        <div className="flex items-center justify-between mb-3">
+                          <h3 className="text-lg font-bold text-gray-900">
+                            {date} <span className="text-sm text-gray-600">({dayOfWeek})</span>
+                          </h3>
+                          <div className="flex gap-6 text-sm font-semibold">
+                            {incomeTotal > 0 && (
+                              <span className="text-green-600">
+                                +{new Intl.NumberFormat('ko-KR', {
+                                  style: 'currency',
+                                  currency: 'KRW',
+                                }).format(incomeTotal)}
+                              </span>
+                            )}
+                            {expenseTotal > 0 && (
+                              <span className="text-red-600">
+                                -{new Intl.NumberFormat('ko-KR', {
+                                  style: 'currency',
+                                  currency: 'KRW',
+                                }).format(expenseTotal)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="space-y-2">
+                          {groupedTransactions[date].map((tx) => (
+                            <TransactionItem
+                              key={tx.id}
+                              id={tx.id}
+                              description={tx.description}
+                              amount={tx.amount}
+                              type={tx.type}
+                              date={tx.date}
+                              mainCategory={tx.mainCategory}
+                              subCategory={tx.subCategory}
+                            />
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
           </div>
         </>
       )}

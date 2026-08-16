@@ -1129,10 +1129,12 @@ export default function TransactionsPage() {
           <p className="text-gray-600">거래가 없습니다.</p>
         ) : viewType === 'payment-method' ? (
           <PaymentMethodTab
-            transactions={currentMonthTransactions}
+            transactions={transactions}
             accounts={accounts}
             cards={cards}
             people={people}
+            currentMonth={currentMonth}
+            currentYear={currentYear}
           />
         ) : viewType === 'calendar' ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
