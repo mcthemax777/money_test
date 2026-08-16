@@ -241,6 +241,14 @@ export default function TransactionsPage() {
     }
   }, [monthlyBudgets]);
 
+  // 분류별 탭 진입 시 초기값 설정 및 budgetType 변경 시 categoryId 업데이트
+  useEffect(() => {
+    if (viewType === 'budget') {
+      // budgetType에 따라 categoryId 자동 설정
+      setSelectedCategoryId(budgetType === 'expense' ? 'total-expense' : 'total-income');
+    }
+  }, [viewType, budgetType]);
+
   const filteredTransactions = useMemo(() => {
     return transactions.filter((tx) => {
       return selectedPersonIds.includes(tx.personId || '');

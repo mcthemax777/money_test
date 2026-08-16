@@ -263,11 +263,39 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
                 }))
                 .sort((a, b) => b.value - a.value);
               setCategoryStats(stats);
-            } else if (filterParams.mainCategoryId && !filterParams.subCategoryId) {
-              // 대분류 선택: 소분류별 통계
+            } else if (categoryId === 'total-income') {
+              // 전체수입: 대분류별 통계
               const statsMap = new Map<string, { name: string; id?: string; amount: number }>();
               txs.forEach((tx: any) => {
-                const subCatId = tx.subCategoryId || '';
+                if (tx.type === 'income') {
+                  const mainCatId = tx.mainCategoryId || '';
+                  const mainCatName = tx.mainCategory || '기타';
+                  if (!statsMap.has(mainCatId)) {
+                    statsMap.set(mainCatId, { name: mainCatName, id: mainCatId, amount: 0 });
+                  }
+                  const stat = statsMap.get(mainCatId);
+                  if (stat) {
+                    stat.amount += tx.amount;
+                  }
+                }
+              });
+
+              const stats = Array.from(statsMap.values())
+                .map(stat => ({
+                  name: stat.name,
+                  value: stat.amount,
+                  id: stat.id,
+                }))
+                .sort((a, b) => b.value - a.value);
+              setCategoryStats(stats);
+            } else if (filterParams.mainCategoryId && !filterParams.subCategoryId) {
+              // 대분류 선택: 소분류별 통계 (소분류가 등록된 거래만)
+              const statsMap = new Map<string, { name: string; id?: string; amount: number }>();
+              txs.forEach((tx: any) => {
+                // 소분류가 없으면 건너뜀
+                if (!tx.subCategoryId) return;
+
+                const subCatId = tx.subCategoryId;
                 const subCatName = tx.subCategory || '기타';
                 if (!statsMap.has(subCatId)) {
                   statsMap.set(subCatId, { name: subCatName, id: subCatId, amount: 0 });
@@ -350,7 +378,15 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
             <div>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold">
-                  {selectedPieCategory ? '소분류별 지출' : '대분류별 지출'}
+                  {(() => {
+                    if (categoryId === 'total-expense') {
+                      return selectedPieCategory ? '소분류별 지출' : '대분류별 지출';
+                    } else if (categoryId === 'total-income') {
+                      return selectedPieCategory ? '소분류별 수입' : '대분류별 수입';
+                    } else {
+                      return '소분류별 지출';
+                    }
+                  })()}
                 </h3>
                 {selectedPieCategory && (
                   <button
@@ -364,7 +400,7 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
                   </button>
                 )}
               </div>
-              <ResponsiveContainer width="100%" height={350}>
+              <ResponsiveContainer width="100%" height={400}>
                 <PieChart>
                   <Pie
                     data={selectedPieCategory ? subCategoryStats : categoryStats}
@@ -372,9 +408,9 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
                     cy="50%"
                     labelLine={false}
                     label={({ name, value, percent }) =>
-                      `${name} (${((percent || 0) * 100).toFixed(1)}%)`
+                      `${name} ${value || 0} (${((percent || 0) * 100).toFixed(1)}%)`
                     }
-                    outerRadius={120}
+                    outerRadius={100}
                     fill="#8884d8"
                     dataKey="value"
                     onClick={(entry: any) => {
@@ -405,7 +441,6 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
                     }
                     contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc' }}
                   />
-                  <Legend />
                 </PieChart>
               </ResponsiveContainer>
             </div>
