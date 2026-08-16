@@ -237,8 +237,9 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
               }));
             setCurrentMonthTransactions(txs);
 
-            // categoryStats 계산 (total-expense일 때만)
+            // categoryStats 계산
             if (categoryId === 'total-expense') {
+              // 전체지출: 대분류별 통계
               const statsMap = new Map<string, { name: string; id?: string; amount: number }>();
               txs.forEach((tx: any) => {
                 if (tx.type === 'expense' || tx.type === 'credit_usage') {
@@ -262,7 +263,31 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
                 }))
                 .sort((a, b) => b.value - a.value);
               setCategoryStats(stats);
+            } else if (filterParams.mainCategoryId && !filterParams.subCategoryId) {
+              // 대분류 선택: 소분류별 통계
+              const statsMap = new Map<string, { name: string; id?: string; amount: number }>();
+              txs.forEach((tx: any) => {
+                const subCatId = tx.subCategoryId || '';
+                const subCatName = tx.subCategory || '기타';
+                if (!statsMap.has(subCatId)) {
+                  statsMap.set(subCatId, { name: subCatName, id: subCatId, amount: 0 });
+                }
+                const stat = statsMap.get(subCatId);
+                if (stat) {
+                  stat.amount += tx.amount;
+                }
+              });
+
+              const stats = Array.from(statsMap.values())
+                .map(stat => ({
+                  name: stat.name,
+                  value: stat.amount,
+                  id: stat.id,
+                }))
+                .sort((a, b) => b.value - a.value);
+              setCategoryStats(stats);
             } else {
+              // 소분류 선택: 원형차트 안 보임
               setCategoryStats([]);
             }
           } catch (err) {
