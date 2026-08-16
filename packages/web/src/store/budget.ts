@@ -19,6 +19,7 @@ interface MonthlyBudget {
   isOverridden: boolean;
   hasChildren: boolean;
   isVirtualBudget?: boolean;
+  type?: 'income' | 'expense';
 }
 
 interface BudgetStore {

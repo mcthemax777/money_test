@@ -13,6 +13,7 @@ import { CardsModule } from './modules/v2/cards/cards.module';
 import { CategoriesModule as CategoriesModuleV2 } from './modules/v2/categories/categories.module';
 import { TransactionsModule as TransactionsModuleV2 } from './modules/v2/transactions/transactions.module';
 import { BudgetsModule } from './modules/v2/budgets/budgets.module';
+import { CardPaymentsModule } from './modules/v2/card-payments/card-payments.module';
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { BudgetsModule } from './modules/v2/budgets/budgets.module';
     CategoriesModuleV2,
     TransactionsModuleV2,
     BudgetsModule,
+    CardPaymentsModule,
   ],
 })
 export class AppModule {}

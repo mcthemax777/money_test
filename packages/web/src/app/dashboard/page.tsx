@@ -17,13 +17,14 @@ import PersonModal from '@/components/PersonModal';
 import TransactionItem from '@/components/TransactionItem';
 import { BudgetCard } from '@/components/BudgetCard';
 import { BudgetDetailModal } from '@/components/BudgetDetailModal';
+import PaymentMethodTab from '@/components/PaymentMethodTab';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 
 interface Transaction {
   id: string;
   description: string;
   amount: number;
-  type: 'income' | 'expense' | 'transfer';
+  type: 'income' | 'expense' | 'transfer' | 'credit_usage' | 'credit_payment';
   date: string;
   mainCategory: string;
   mainCategoryId?: string;
@@ -85,7 +86,7 @@ export default function TransactionsPage() {
   const [displayTransactions, setDisplayTransactions] = useState<Transaction[]>([]);
   const [currentMonth, setCurrentMonth] = useState<number>(new Date().getMonth() + 1);
   const [currentYear, setCurrentYear] = useState<number>(new Date().getFullYear());
-  const [viewType, setViewType] = useState<'calendar' | 'list' | 'budget'>('calendar');
+  const [viewType, setViewType] = useState<'calendar' | 'list' | 'budget' | 'payment-method'>('calendar');
   const [budgetType, setBudgetType] = useState<'income' | 'expense'>('expense');
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<string>>(new Set());
   const [showBudgetModal, setShowBudgetModal] = useState(false);
@@ -188,11 +189,13 @@ export default function TransactionsPage() {
         const cardsData = results[3];
         const categoriesData = results[4];
 
-        const txs = (transactionsData?.data || []).map((tx: any) => ({
-          ...tx,
-          mainCategory: typeof tx.mainCategory === 'object' ? tx.mainCategory?.name : tx.mainCategory,
-          subCategory: typeof tx.subCategory === 'object' ? tx.subCategory?.name : tx.subCategory,
-        }));
+        const txs = (transactionsData?.data || [])
+          .filter((tx: any) => tx.type !== 'credit_payment')
+          .map((tx: any) => ({
+            ...tx,
+            mainCategory: typeof tx.mainCategory === 'object' ? tx.mainCategory?.name : tx.mainCategory,
+            subCategory: typeof tx.subCategory === 'object' ? tx.subCategory?.name : tx.subCategory,
+          }));
         setTransactions(txs);
         setAccounts(accountsData || []);
         setPeople(peopleData || []);
@@ -258,7 +261,7 @@ export default function TransactionsPage() {
     currentMonthTransactions.forEach((tx) => {
       if (tx.type === 'income') {
         incomeTotal += tx.amount;
-      } else if (tx.type === 'expense') {
+      } else if (tx.type === 'expense' || tx.type === 'credit_usage') {
         expenseTotal += tx.amount;
       }
     });
@@ -330,14 +333,14 @@ export default function TransactionsPage() {
       // 캐시를 무효화하고 항상 API에서 최신 데이터를 가져옴
       const data = await apiClient.getTransactionsV2({}, selectedProjectId);
       console.log('[handleSubmit] Fetched data:', data?.data?.length, 'transactions');
-      setTransactions(data?.data || []);
+      setTransactions((data?.data || []).filter((tx: any) => tx.type !== 'credit_payment'));
 
       // 예산 데이터도 다시 로드
       if (selectedProjectId) {
         fetchMonthlyBudgets(currentYear, currentMonth, selectedProjectId);
       }
       setFormData({
-        method: 'account',
+        method: 'card',
         accountId: '',
         cardId: '',
         personId: '',
@@ -459,8 +462,8 @@ export default function TransactionsPage() {
     try {
       setIsSubmitting(true);
       await apiClient.deleteTransaction(id);
-      const data = await apiClient.getTransactionsV2();
-      setTransactions(data?.data || []);
+      const data = await apiClient.getTransactionsV2({}, selectedProjectId);
+      setTransactions((data?.data || []).filter((tx: any) => tx.type !== 'credit_payment'));
     } catch (err: any) {
       const errorMsg = err?.response?.data?.error?.message || '거래 삭제에 실패했습니다.';
       setError(errorMsg);
@@ -566,7 +569,7 @@ export default function TransactionsPage() {
     setBudgetFormData({
       categoryId: budget.categoryId || '',
       monthlyAmount: budget.monthlyAmount,
-      type: budget.categoryType || budgetType,
+      type: budget.type || budgetType,
     });
     setBudgetError('');
     setShowBudgetModal(true);
@@ -597,6 +600,8 @@ export default function TransactionsPage() {
 
     try {
       setBudgetIsSubmitting(true);
+      console.log('📌 Creating budget with projectId:', selectedProjectId);
+      console.log('📋 Budget data:', budgetFormData);
       if (!selectedProjectId) return;
 
       // 같은 카테고리의 기존 예산 확인
@@ -609,7 +614,7 @@ export default function TransactionsPage() {
       } else {
         // 전체 지출/수입
         existingBudget = monthlyBudgets.find(
-          (b) => !b.categoryId && b.categoryType === budgetFormData.type
+          (b) => !b.categoryId && b.type === budgetFormData.type
         );
       }
 
@@ -628,11 +633,17 @@ export default function TransactionsPage() {
         });
       }
 
+      // 데이터 새로고침 (모달 닫기 전에)
+      await fetchMonthlyBudgets(currentYear, currentMonth, selectedProjectId);
+
+      // 카테고리도 새로고침
+      if (selectedProjectId) {
+        const updatedCategories = await apiClient.getCategories(selectedProjectId);
+        setCategories(updatedCategories || []);
+      }
+
       setShowBudgetModal(false);
       setBudgetFormData({ categoryId: '', monthlyAmount: 0, type: 'expense' });
-
-      // 데이터 새로고침
-      await fetchMonthlyBudgets(currentYear, currentMonth, selectedProjectId);
     } catch (err: any) {
       setBudgetError(err.message || '저장에 실패했습니다.');
     } finally {
@@ -659,7 +670,7 @@ export default function TransactionsPage() {
         {/* 제목 및 탭 */}
         <div className="flex justify-between items-center mb-4">
           <h1 className="text-2xl font-bold text-gray-900">
-            {viewType === 'budget' ? '예산' : '거래 기록'}
+            {viewType === 'budget' ? '예산' : viewType === 'payment-method' ? '결제방법' : '거래 기록'}
           </h1>
           <div className="flex gap-2 bg-gray-200 rounded-lg p-1">
             <button
@@ -691,6 +702,16 @@ export default function TransactionsPage() {
               }`}
             >
               예산
+            </button>
+            <button
+              onClick={() => setViewType('payment-method')}
+              className={`px-4 py-2 rounded-md font-medium transition ${
+                viewType === 'payment-method'
+                  ? 'bg-white text-blue-600 shadow'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              결제방법
             </button>
           </div>
         </div>
@@ -756,7 +777,7 @@ export default function TransactionsPage() {
               >
                 거래 추가
               </button>
-            ) : (
+            ) : viewType === 'budget' ? (
               <button
                 onClick={() => {
                   setBudgetFormData({ categoryId: '', monthlyAmount: 0, type: budgetType });
@@ -767,7 +788,7 @@ export default function TransactionsPage() {
               >
                 예산 추가
               </button>
-            )}
+            ) : null}
           </div>
         </div>
       </div>
@@ -805,20 +826,52 @@ export default function TransactionsPage() {
 
               <div className="space-y-2">
                 {(() => {
-                  // 현재 탭의 예산만 필터링 (categoryType이 있는 항목들)
-                  const categoryBudgets = monthlyBudgets.filter(
-                    (b) => b.categoryId && b.categoryType === budgetType
-                  );
+                  console.log('=== Budget Section Debug ===');
+                  console.log('monthlyBudgets:', monthlyBudgets);
+                  console.log('categories count:', categories?.length);
+                  console.log('budgetType:', budgetType);
 
-                  // 대분류 찾기 (categoryId가 있고 parentCategoryId가 없는 것들 - 가상예산 포함)
-                  const mainCategories = categoryBudgets.filter(
-                    (b) => !b.parentCategoryId
+                  // 현재 탭의 예산만 필터링 (type이 있는 항목들)
+                  const categoryBudgets = monthlyBudgets.filter(
+                    (b) => b.categoryId && (b.type === budgetType || b.categoryType === budgetType)
                   );
+                  console.log('categoryBudgets:', categoryBudgets);
+
+                  // 모든 대분류 카테고리 가져오기
+                  const allMainCategories = categories.filter(
+                    (c) => c.level === 1 && c.type === budgetType
+                  );
+                  console.log('allMainCategories:', allMainCategories);
+
+                  // 예산 데이터와 카테고리를 매칭 (없으면 0으로 표시)
+                  const mainCategories = allMainCategories.map(cat => {
+                    const budget = categoryBudgets.find(b => b.categoryId === cat.id);
+                    if (budget) {
+                      return {
+                        ...budget,
+                        monthlyAmount: budget.monthlyAmount || 0,
+                        usedAmount: budget.usedAmount || 0,
+                        hasChildren: categories.some(c => c.parentId === cat.id && c.type === budgetType),
+                      };
+                    }
+                    return {
+                      budgetId: `placeholder-${cat.id}`,
+                      categoryId: cat.id,
+                      categoryName: cat.name,
+                      monthlyAmount: 0,
+                      usedAmount: 0,
+                      type: budgetType,
+                      isOverridden: false,
+                      hasChildren: categories.some(c => c.parentId === cat.id && c.type === budgetType),
+                    };
+                  });
+                  console.log('mainCategories:', mainCategories);
 
                   // API에서 받은 전체예산 (실제로 설정된 것)
                   const actualTotalBudget = monthlyBudgets.find(
-                    (b) => !b.categoryId && !b.parentCategoryId && b.categoryType === budgetType
+                    (b) => !b.categoryId && !b.parentCategoryId && (b.type === budgetType || b.categoryType === budgetType)
                   );
+                  console.log('actualTotalBudget:', actualTotalBudget);
 
                   // 전체예산 없으면 placeholder 생성 (monthlyAmount: 0)
                   const totalBudget = actualTotalBudget || {
@@ -826,10 +879,11 @@ export default function TransactionsPage() {
                     categoryName: budgetType === 'expense' ? '전체 지출' : '전체 수입',
                     monthlyAmount: 0,
                     usedAmount: 0,
-                    categoryType: budgetType,
+                    type: budgetType,
                     isOverridden: false,
                     hasChildren: mainCategories.length > 0,
                   };
+                  console.log('totalBudget:', totalBudget);
 
                   const isTotalExpanded = expandedBudgetIds.has('total');
 
@@ -839,18 +893,19 @@ export default function TransactionsPage() {
                       {totalBudget && (
                         <div>
                           {(() => {
-                            const totalCategoryName = totalBudget.categoryName || getCategoryName(totalBudget.categoryId);
+                            const totalCategoryName = (totalBudget as any).categoryName || (budgetType === 'income' ? '전체수입' : '전체지출');
                             const totalCategoryId = budgetType === 'income' ? 'total-income' : 'total-expense';
+                            const usedAmount = (totalBudget as any).usedAmount || 0;
                             return (
                               <BudgetCard
                                 categoryId={totalCategoryId}
                                 categoryName={totalCategoryName}
-                                icon={getCategoryIcon(totalBudget.categoryId)}
-                                monthlyAmount={totalBudget.monthlyAmount}
-                                usedAmount={totalBudget.usedAmount || 0}
-                                percentage={totalBudget.monthlyAmount > 0 ? ((totalBudget.usedAmount || 0) > totalBudget.monthlyAmount ? Math.max(101, Math.floor((totalBudget.usedAmount || 0) / totalBudget.monthlyAmount * 100)) : Math.floor((totalBudget.usedAmount || 0) / totalBudget.monthlyAmount * 100)) : 0}
-                                onEdit={() => handleBudgetEdit(totalBudget)}
-                                onDelete={() => handleBudgetDelete(totalBudget.budgetId)}
+                                icon={budgetType === 'income' ? '💰' : '💸'}
+                                monthlyAmount={(totalBudget as any).monthlyAmount}
+                                usedAmount={usedAmount}
+                                percentage={(totalBudget as any).monthlyAmount > 0 ? (usedAmount > (totalBudget as any).monthlyAmount ? Math.max(101, Math.floor(usedAmount / (totalBudget as any).monthlyAmount * 100)) : Math.floor(usedAmount / (totalBudget as any).monthlyAmount * 100)) : 0}
+                                onEdit={() => handleBudgetEdit(totalBudget as any)}
+                                onDelete={() => handleBudgetDelete((totalBudget as any).budgetId)}
                                 onSelect={(id) => {
                                   setSelectedCategoryId(id);
                                   setSelectedCategoryName(totalCategoryName);
@@ -877,9 +932,33 @@ export default function TransactionsPage() {
                             <div className="bg-gray-50 border-l-2 border-gray-300 pl-2">
                               {mainCategories.map((mainBudget) => {
                                 const isMainExpanded = expandedBudgetIds.has(mainBudget.categoryId || '');
-                                const subBudgets = monthlyBudgets.filter(
-                                  (b) => b.parentCategoryId === mainBudget.categoryId
+
+                                // 모든 소분류 가져오기
+                                const allSubCategories = categories.filter(
+                                  (c) => c.parentId === mainBudget.categoryId && c.level === 2 && c.type === budgetType
                                 );
+
+                                // 예산 데이터와 매칭
+                                const subBudgets = allSubCategories.map(subCat => {
+                                  const budget = monthlyBudgets.find(b => b.categoryId === subCat.id && (b.type === budgetType || b.categoryType === budgetType));
+                                  if (budget) {
+                                    return {
+                                      ...budget,
+                                      monthlyAmount: budget.monthlyAmount || 0,
+                                      usedAmount: budget.usedAmount || 0,
+                                    };
+                                  }
+                                  return {
+                                    budgetId: `placeholder-${subCat.id}`,
+                                    categoryId: subCat.id,
+                                    categoryName: subCat.name,
+                                    monthlyAmount: 0,
+                                    usedAmount: 0,
+                                    type: budgetType,
+                                    isOverridden: false,
+                                    hasChildren: false,
+                                  };
+                                });
 
                                 return (
                                   <div key={mainBudget.budgetId}>
@@ -952,9 +1031,26 @@ export default function TransactionsPage() {
                       {!totalBudget &&
                         mainCategories.map((mainBudget) => {
                           const isMainExpanded = expandedBudgetIds.has(mainBudget.categoryId || '');
-                          const subBudgets = monthlyBudgets.filter(
-                            (b) => b.parentCategoryId === mainBudget.categoryId
+
+                          // 모든 소분류 가져오기
+                          const allSubCategories = categories.filter(
+                            (c) => c.parentId === mainBudget.categoryId && c.level === 2 && c.type === budgetType
                           );
+
+                          // 예산 데이터와 매칭
+                          const subBudgets = allSubCategories.map(subCat => {
+                            const budget = monthlyBudgets.find(b => b.categoryId === subCat.id && b.type === budgetType);
+                            return budget || {
+                              budgetId: `placeholder-${subCat.id}`,
+                              categoryId: subCat.id,
+                              categoryName: subCat.name,
+                              monthlyAmount: 0,
+                              usedAmount: 0,
+                              type: budgetType,
+                              isOverridden: false,
+                              hasChildren: false,
+                            };
+                          });
 
                           return (
                             <div key={mainBudget.budgetId}>
@@ -1007,6 +1103,13 @@ export default function TransactionsPage() {
           <p className="text-gray-600">로딩 중...</p>
         ) : transactions.length === 0 ? (
           <p className="text-gray-600">거래가 없습니다.</p>
+        ) : viewType === 'payment-method' ? (
+          <PaymentMethodTab
+            transactions={currentMonthTransactions}
+            accounts={accounts}
+            cards={cards}
+            people={people}
+          />
         ) : viewType === 'calendar' ? (
           <div>
             <TransactionCalendar

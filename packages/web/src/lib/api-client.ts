@@ -106,7 +106,7 @@ class ApiClient {
   }
 
   // v2 API Methods
-  async getPeople(projectId?: string) {
+  async getPeople(projectId?: string | null) {
     const response = await this.client.get<any>('/v2/people', {
       params: projectId ? { projectId } : {}
     });
@@ -130,7 +130,7 @@ class ApiClient {
     await this.client.delete(`/v2/people/${id}`);
   }
 
-  async getAccountsV2(projectId?: string) {
+  async getAccountsV2(projectId?: string | null) {
     const response = await this.client.get<any>('/v2/accounts', {
       params: projectId ? { projectId } : {}
     });
@@ -159,7 +159,7 @@ class ApiClient {
     await this.client.delete(`/v2/accounts/${id}`);
   }
 
-  async getCards(projectId?: string) {
+  async getCards(projectId?: string | null) {
     const response = await this.client.get<any>('/v2/cards', {
       params: projectId ? { projectId } : {}
     });
@@ -198,7 +198,7 @@ class ApiClient {
     await this.client.delete(`/v2/cards/${id}`);
   }
 
-  async getTransactionsV2(query?: any, projectId?: string) {
+  async getTransactionsV2(query?: any, projectId?: string | null) {
     const params = { ...query };
     if (projectId) params.projectId = projectId;
     const response = await this.client.get<any>('/v2/transactions', { params });
@@ -227,7 +227,7 @@ class ApiClient {
     await this.client.delete(`/v2/transactions/${id}`);
   }
 
-  async getCategories(projectId?: string, type?: 'income' | 'expense') {
+  async getCategories(projectId?: string | null, type?: 'income' | 'expense') {
     const params: any = {};
     if (projectId) params.projectId = projectId;
     if (type) params.type = type;
@@ -327,7 +327,7 @@ class ApiClient {
     return response.data;
   }
 
-  async getBudgets(projectId?: string) {
+  async getBudgets(projectId?: string | null) {
     const response = await this.client.get<any>('/v2/budgets', {
       params: projectId ? { projectId } : {},
     });
@@ -348,7 +348,7 @@ class ApiClient {
     await this.client.delete(`/v2/budgets/${id}`);
   }
 
-  async getBudgetForMonth(year: number, month: number, projectId?: string) {
+  async getBudgetForMonth(year: number, month: number, projectId?: string | null) {
     const response = await this.client.get<any>(`/v2/budgets/${year}/${month}`, {
       params: projectId ? { projectId } : {},
     });
@@ -362,6 +362,30 @@ class ApiClient {
 
   async deleteBudgetOverride(id: string) {
     await this.client.delete(`/v2/budgets/override/${id}`);
+  }
+
+  // 신용카드 결제 API Methods
+  async getPendingCardPayments(projectId: string | null | undefined, cardId?: string) {
+    const params: any = {};
+    if (projectId) params.projectId = projectId;
+    if (cardId) params.cardId = cardId;
+    const response = await this.client.get<any>('/v2/card-payments/pending', { params });
+    return response.data;
+  }
+
+  async getCardPaymentDetail(paymentId: string) {
+    const response = await this.client.get<any>(`/v2/card-payments/${paymentId}`);
+    return response.data;
+  }
+
+  async payCardPayment(paymentId: string, data: { amount: number; transactionDate?: string }) {
+    const response = await this.client.post<any>(`/v2/card-payments/${paymentId}/pay`, data);
+    return response.data;
+  }
+
+  async cancelCardPayment(transactionId: string) {
+    const response = await this.client.post<any>(`/v2/card-payments/cancel/${transactionId}`);
+    return response.data;
   }
 }
 

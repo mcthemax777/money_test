@@ -80,11 +80,11 @@ export default function TransactionCalendar({
     while (currentDay <= endDate) {
       const dateStr = getLocalDateStr(currentDay);
       const dayTransactions = transactions.filter(
-        (tx) => tx.date.split('T')[0] === dateStr
+        (tx) => tx.date.split('T')[0] === dateStr && tx.type !== 'credit_payment'
       );
 
       const expenseTotal = dayTransactions
-        .filter((tx) => tx.type === 'expense')
+        .filter((tx) => tx.type === 'expense' || tx.type === 'credit_usage')
         .reduce((sum, tx) => sum + tx.amount, 0);
 
       const incomeTotal = dayTransactions

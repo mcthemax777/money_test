@@ -231,7 +231,7 @@ export class BudgetsService {
     const endDate = new Date(year, month, 1);
     endDate.setMilliseconds(endDate.getMilliseconds() - 1);
 
-    // 대분류별 사용금액
+    // 대분류별 사용금액 (지출: expense, credit_usage)
     const mainCategoryExpense = await this.prisma.transaction.groupBy({
       by: ['mainCategoryId'],
       _sum: { amount: true },
@@ -241,10 +241,11 @@ export class BudgetsService {
         userId,
         mainCategoryId: { in: categoryIds.filter(id => id) },
         date: { gte: startDate, lte: endDate },
+        type: { in: ['expense', 'credit_usage'] },
       },
     });
 
-    // 소분류별 사용금액
+    // 소분류별 사용금액 (지출: expense, credit_usage)
     const subCategoryExpense = await this.prisma.transaction.groupBy({
       by: ['subCategoryId'],
       _sum: { amount: true },
@@ -254,12 +255,42 @@ export class BudgetsService {
         userId,
         subCategoryId: { in: categoryIds.filter(id => id) },
         date: { gte: startDate, lte: endDate },
+        type: { in: ['expense', 'credit_usage'] },
+      },
+    });
+
+    // 대분류별 수입 (income)
+    const mainCategoryIncome = await this.prisma.transaction.groupBy({
+      by: ['mainCategoryId'],
+      _sum: { amount: true },
+      _count: true,
+      where: {
+        projectId,
+        userId,
+        mainCategoryId: { in: categoryIds.filter(id => id) },
+        date: { gte: startDate, lte: endDate },
+        type: 'income',
+      },
+    });
+
+    // 소분류별 수입 (income)
+    const subCategoryIncome = await this.prisma.transaction.groupBy({
+      by: ['subCategoryId'],
+      _sum: { amount: true },
+      _count: true,
+      where: {
+        projectId,
+        userId,
+        subCategoryId: { in: categoryIds.filter(id => id) },
+        date: { gte: startDate, lte: endDate },
+        type: 'income',
       },
     });
 
     const usageCountMap = new Map<string, number>();
     const usedAmountMap = new Map<string, number>();
 
+    // 지출 데이터 (expense, credit_usage)
     for (const item of mainCategoryExpense) {
       if (item.mainCategoryId) {
         usageCountMap.set(item.mainCategoryId, (item._count as number) || 0);
@@ -267,6 +298,20 @@ export class BudgetsService {
       }
     }
     for (const item of subCategoryExpense) {
+      if (item.subCategoryId) {
+        usageCountMap.set(item.subCategoryId, (item._count as number) || 0);
+        usedAmountMap.set(item.subCategoryId, Math.abs(item._sum?.amount || 0));
+      }
+    }
+
+    // 수입 데이터 (income)
+    for (const item of mainCategoryIncome) {
+      if (item.mainCategoryId) {
+        usageCountMap.set(item.mainCategoryId, (item._count as number) || 0);
+        usedAmountMap.set(item.mainCategoryId, Math.abs(item._sum?.amount || 0));
+      }
+    }
+    for (const item of subCategoryIncome) {
       if (item.subCategoryId) {
         usageCountMap.set(item.subCategoryId, (item._count as number) || 0);
         usedAmountMap.set(item.subCategoryId, Math.abs(item._sum?.amount || 0));
@@ -284,8 +329,10 @@ export class BudgetsService {
 
     result.push({
       budgetId: totalExpenseBudget?.id || 'placeholder-total-expense',
+      categoryId: undefined,
       categoryName: '전체 지출',
       categoryType: 'expense',
+      parentCategoryId: undefined,
       monthlyAmount: expenseMonthlyAmount,
       usedAmount: 0,
       isOverridden: totalExpenseBudget ? overrideMap.has(totalExpenseBudget.id) : false,
@@ -300,8 +347,10 @@ export class BudgetsService {
 
     result.push({
       budgetId: totalIncomeBudget?.id || 'placeholder-total-income',
+      categoryId: undefined,
       categoryName: '전체 수입',
       categoryType: 'income',
+      parentCategoryId: undefined,
       monthlyAmount: incomeMonthlyAmount,
       usedAmount: 0,
       isOverridden: totalIncomeBudget ? overrideMap.has(totalIncomeBudget.id) : false,

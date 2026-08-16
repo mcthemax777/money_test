@@ -15,6 +15,7 @@ interface Card {
   creditLimit?: number;
   currentBalance?: number;
   expiryDate?: string;
+  billingDayOfMonth?: number;
 }
 
 interface Account {
@@ -47,6 +48,7 @@ export default function EditCardModal({
     expiryDate: '',
     cardType: 'debit' as 'debit' | 'credit',
     cardNumber: '',
+    billingDayOfMonth: 1,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -62,6 +64,7 @@ export default function EditCardModal({
         expiryDate: card.expiryDate || '',
         cardType: card.cardType,
         cardNumber: card.cardNumberMasked || '',
+        billingDayOfMonth: card.billingDayOfMonth || 1,
       });
     }
   }, [card]);
@@ -82,6 +85,7 @@ export default function EditCardModal({
         ...(formData.cardNumber && { cardNumber: formData.cardNumber }),
         ...(isoDate && { expiryDate: isoDate }),
         creditLimit: formData.cardType === 'credit' ? parseInt(formData.creditLimit) : undefined,
+        billingDayOfMonth: formData.cardType === 'credit' ? formData.billingDayOfMonth : undefined,
       });
       const data = await apiClient.getCards();
       onSuccess(data || []);
@@ -118,6 +122,7 @@ export default function EditCardModal({
       expiryDate: '',
       cardType: 'debit',
       cardNumber: '',
+      billingDayOfMonth: 1,
     });
     setError('');
     onClose();
@@ -209,18 +214,37 @@ export default function EditCardModal({
         </div>
 
         {formData.cardType === 'credit' && (
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              신용한도 (원)
-            </label>
-            <input
-              type="number"
-              value={formData.creditLimit}
-              onChange={(e) => setFormData({ ...formData, creditLimit: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="5000000"
-            />
-          </div>
+          <>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                신용한도 (원)
+              </label>
+              <input
+                type="number"
+                value={formData.creditLimit}
+                onChange={(e) => setFormData({ ...formData, creditLimit: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="5000000"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                결제일 (매월 몇 일?)
+              </label>
+              <select
+                value={formData.billingDayOfMonth}
+                onChange={(e) => setFormData({ ...formData, billingDayOfMonth: parseInt(e.target.value) })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                  <option key={day} value={day}>
+                    {day}일
+                  </option>
+                ))}
+              </select>
+            </div>
+          </>
         )}
 
         {error && (

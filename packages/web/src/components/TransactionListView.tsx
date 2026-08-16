@@ -70,7 +70,7 @@ export default function TransactionListView({
     transactions.forEach((tx) => {
       if (tx.type === 'income') {
         incomeTotal += tx.amount;
-      } else if (tx.type === 'expense') {
+      } else if (tx.type === 'expense' || tx.type === 'credit_usage') {
         expenseTotal += tx.amount;
       }
     });

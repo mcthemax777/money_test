@@ -45,8 +45,8 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
       return { mainCategoryId: undefined, subCategoryId: undefined, type: 'income' };
     }
     if (catId === 'total-expense') {
-      console.log('[getFilterParams] total expense - filter by type:expense');
-      return { mainCategoryId: undefined, subCategoryId: undefined, type: 'expense' };
+      console.log('[getFilterParams] total expense - filter by type:expense,credit_usage');
+      return { mainCategoryId: undefined, subCategoryId: undefined };
     }
 
     const category = categories?.find(c => c.id === catId);
@@ -58,12 +58,12 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
     if (category?.parentId) {
       // 소분류
       console.log('[getFilterParams] Subcategory - filtering by subCategoryId:', catId);
-      return { mainCategoryId: undefined, subCategoryId: catId, type: categoryType };
+      return { mainCategoryId: undefined, subCategoryId: catId };
     }
 
     // 대분류
     console.log('[getFilterParams] Main category - filtering by mainCategoryId:', catId);
-    return { mainCategoryId: catId, subCategoryId: undefined, type: categoryType };
+    return { mainCategoryId: catId, subCategoryId: undefined };
   };
 
   useEffect(() => {
@@ -98,7 +98,12 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
 
             const transactionType = filterParams.type || 'expense';
             const amount = transactions
-              .filter(t => t.type === transactionType)
+              .filter(t => {
+                if (transactionType === 'expense') {
+                  return t.type === 'expense' || t.type === 'credit_usage';
+                }
+                return t.type === transactionType;
+              })
               .reduce((sum, t) => sum + t.amount, 0);
 
             monthlyDataList.push({
@@ -134,7 +139,12 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
           const dailyMap = new Map<number, number>();
           const dailyTransactionType = filterParams.type || 'expense';
           dailyTransactions
-            .filter(t => t.type === dailyTransactionType)
+            .filter(t => {
+              if (dailyTransactionType === 'expense') {
+                return t.type === 'expense' || t.type === 'credit_usage';
+              }
+              return t.type === dailyTransactionType;
+            })
             .forEach(t => {
               const day = new Date(t.date).getDate();
               dailyMap.set(day, (dailyMap.get(day) || 0) + t.amount);

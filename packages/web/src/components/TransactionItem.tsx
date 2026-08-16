@@ -28,9 +28,12 @@ export default function TransactionItem({
       case 'income':
         return 'border-green-500 bg-green-50';
       case 'expense':
+      case 'credit_usage':
         return 'border-red-500 bg-red-50';
       case 'transfer':
         return 'border-blue-500 bg-blue-50';
+      case 'credit_payment':
+        return 'border-gray-900 bg-gray-900';
       default:
         return 'border-gray-500 bg-gray-50';
     }
@@ -41,9 +44,12 @@ export default function TransactionItem({
       case 'income':
         return 'text-green-600';
       case 'expense':
+      case 'credit_usage':
         return 'text-red-600';
       case 'transfer':
         return 'text-blue-600';
+      case 'credit_payment':
+        return 'text-gray-200';
       default:
         return 'text-gray-600';
     }

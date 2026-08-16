@@ -12,6 +12,8 @@ enum TransactionType {
   income
   expense
   transfer
+  credit_usage   // 신용카드 사용
+  credit_payment // 신용카드 결제
 }
 
 enum CardType {
@@ -179,24 +181,25 @@ model Account {
 
 // 카드 (체크카드, 신용카드)
 model Card {
-  id              String   @id @default(cuid())
-  projectId       String
-  userId          String
-  accountId       String   // 연결된 통장
-  name            String
-  cardNumber      String?  // 서버에서 마스킹 처리
-  cardType        CardType @default(debit)
-  issuer          String   // 카드사
-  expiryDate      DateTime?
-  creditLimit     Float?   // 신용카드 한도
-  currentBalance  Float?   @default(0) // 신용카드 현재 사용액
+  id                  String   @id @default(cuid())
+  projectId           String
+  userId              String
+  accountId           String   // 연결된 통장
+  name                String
+  cardNumber          String?  // 서버에서 마스킹 처리
+  cardType            CardType @default(debit)
+  issuer              String   // 카드사
+  expiryDate          DateTime?
+  creditLimit         Float?   // 신용카드 한도
+  currentBalance      Float?   @default(0) // 신용카드 현재 사용액
+  billingDayOfMonth   Int      @default(1) // 결제일 (1~31일, 기본값: 매월 1일)
 
-  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  account         Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  transactions    Transaction[]
-  usages          CardUsage[]
-  payments        CardPayment[]
+  project             Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  account             Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  transactions        Transaction[]
+  usages              CardUsage[]
+  payments            CardPayment[]
 
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -213,9 +216,10 @@ model Transaction {
   id                String   @id @default(cuid())
   projectId         String
   userId            String
-  accountId         String
+  accountId         String?  // 선택사항 (신용카드 사용 시 null)
   personId          String   // 거래한 사람
   cardId            String?  // 카드로 거래한 경우
+  cardPaymentId     String?  // 신용카드 할부 결제와의 연결
   type              TransactionType
   amount            Float
   description       String
@@ -229,9 +233,10 @@ model Transaction {
 
   project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  account           Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account           Account? @relation(fields: [accountId], references: [id], onDelete: Cascade)
   person            Person   @relation(fields: [personId], references: [id])
   card              Card?    @relation(fields: [cardId], references: [id], onDelete: SetNull)
+  cardPayment       CardPayment? @relation(fields: [cardPaymentId], references: [id], onDelete: SetNull)
   mainCategory      Category? @relation("MainCategory", fields: [mainCategoryId], references: [id], onDelete: SetNull)
   subCategory       Category? @relation("SubCategory", fields: [subCategoryId], references: [id], onDelete: SetNull)
 
@@ -243,6 +248,7 @@ model Transaction {
   @@index([accountId])
   @@index([personId])
   @@index([cardId])
+  @@index([cardPaymentId])
   @@index([date])
   @@index([type])
   @@index([mainCategoryId])
@@ -320,13 +326,13 @@ model CardPayment {
   paidAmount      Float    @default(0) // 실제 결제된 금액
   status          String   @default("pending") // pending, completed
   paymentDate     DateTime
-  transactionId   String?  // 결제 거래 ID
 
   project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   card            Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
   account         Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
   usages          CardPaymentUsage[]
+  transactions    Transaction[]  // 결제 거래들과의 역참조
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt

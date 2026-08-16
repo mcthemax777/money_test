@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
@@ -40,6 +40,15 @@ interface Card {
   creditLimit?: number;
   currentBalance?: number;
   expiryDate?: string;
+  billingDayOfMonth?: number;
+}
+
+interface CardPayment {
+  id: string;
+  totalAmount: number;
+  paidAmount: number;
+  status: 'pending' | 'completed';
+  paymentDate: string;
 }
 
 export default function DashboardPage() {
@@ -75,6 +84,7 @@ export default function DashboardPage() {
     issuer: '',
     expiryDate: '',
     creditLimit: '',
+    billingDayOfMonth: 1,
   });
   const [addError, setAddError] = useState('');
 
@@ -93,6 +103,13 @@ export default function DashboardPage() {
     expiryDate: '',
     creditLimit: '',
   });
+  const [cardPayment, setCardPayment] = useState<CardPayment | null>(null);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
+  const [paymentForm, setPaymentForm] = useState({
+    paymentType: 'full' as 'full' | 'partial',
+    amount: '',
+  });
+  const [isPaymentSubmitting, setIsPaymentSubmitting] = useState(false);
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -119,6 +136,36 @@ export default function DashboardPage() {
 
     loadData();
   }, [selectedProjectId]);
+
+  // 카드 선택 시 미납액 조회
+  const loadCardPayment = useCallback(async (cardId: string) => {
+    try {
+      console.log('[loadCardPayment] Loading payment for card:', cardId);
+      const response = await apiClient.getPendingCardPayments(selectedProjectId, cardId);
+      console.log('[loadCardPayment] Response:', response);
+      const payments = response?.data || [];
+      console.log('[loadCardPayment] Payments:', payments);
+      if (payments.length > 0) {
+        console.log('[loadCardPayment] Setting cardPayment:', payments[0]);
+        setCardPayment(payments[0]); // 가장 가까운 결제일 기준
+      } else {
+        console.log('[loadCardPayment] No payments found');
+        setCardPayment(null);
+      }
+    } catch (err) {
+      console.error('[loadCardPayment] Error:', err);
+      setCardPayment(null);
+    }
+  }, [selectedProjectId]);
+
+  // 카드 선택 시 미납액 로드
+  useEffect(() => {
+    if (selectedCard && detailType === 'card') {
+      loadCardPayment(selectedCard.id);
+    } else {
+      setCardPayment(null);
+    }
+  }, [selectedCard, detailType, loadCardPayment]);
 
   const filteredAccounts = useMemo(() => {
     return accounts.filter((acc) => selectedPersonIds.includes(acc.owner?.id || ''));
@@ -180,6 +227,33 @@ export default function DashboardPage() {
     }
   };
 
+  // 카드 결제 실행
+  const handlePayCard = async () => {
+    if (!cardPayment || !selectedCard) return;
+
+    try {
+      setIsPaymentSubmitting(true);
+      const paymentAmount = paymentForm.paymentType === 'full'
+        ? cardPayment.totalAmount - cardPayment.paidAmount
+        : parseInt(paymentForm.amount);
+
+      await apiClient.payCardPayment(cardPayment.id, {
+        amount: paymentAmount,
+      });
+
+      alert('결제가 완료되었습니다.');
+      setIsPaymentModalOpen(false);
+      setPaymentForm({ paymentType: 'full', amount: '' });
+
+      // 미납액 다시 로드
+      await loadCardPayment(selectedCard.id);
+    } catch (err: any) {
+      alert(err?.response?.data?.error?.message || '결제에 실패했습니다.');
+    } finally {
+      setIsPaymentSubmitting(false);
+    }
+  };
+
   const handleAddCard = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -195,6 +269,8 @@ export default function DashboardPage() {
         ...(isoDate && { expiryDate: isoDate }),
         creditLimit:
           cardForm.cardType === 'credit' ? parseInt(cardForm.creditLimit) : undefined,
+        billingDayOfMonth:
+          cardForm.cardType === 'credit' ? cardForm.billingDayOfMonth : undefined,
       });
       const cardsData = await apiClient.getCards();
       setCards(cardsData || []);
@@ -206,6 +282,7 @@ export default function DashboardPage() {
         issuer: '',
         expiryDate: '',
         creditLimit: '',
+        billingDayOfMonth: 1,
       });
       setAddType(null);
     } catch (err: any) {
@@ -875,6 +952,56 @@ export default function DashboardPage() {
                         }).format(selectedCard.creditLimit || 0)}
                       </p>
                     </div>
+
+                    {/* 신용카드 미납액 섹션 */}
+                    {cardPayment && (
+                      <div className="pt-4 border-t">
+                        <div className="bg-red-50 rounded-lg p-4 space-y-3">
+                          <h3 className="font-semibold text-gray-900">신용카드 미납액</h3>
+                          <div className="space-y-2">
+                            <div className="flex justify-between">
+                              <span className="text-sm text-gray-600">결제일</span>
+                              <span className="text-sm font-medium">
+                                {new Date(cardPayment.paymentDate).toLocaleDateString('ko-KR')}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-sm text-gray-600">총 결제액</span>
+                              <span className="text-sm font-medium">
+                                {new Intl.NumberFormat('ko-KR', {
+                                  style: 'currency',
+                                  currency: 'KRW',
+                                }).format(cardPayment.totalAmount)}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-sm text-gray-600">결제 완료</span>
+                              <span className="text-sm font-medium">
+                                {new Intl.NumberFormat('ko-KR', {
+                                  style: 'currency',
+                                  currency: 'KRW',
+                                }).format(cardPayment.paidAmount)}
+                              </span>
+                            </div>
+                            <div className="flex justify-between pt-2 border-t">
+                              <span className="text-sm font-semibold text-red-600">미납액</span>
+                              <span className="text-lg font-bold text-red-600">
+                                {new Intl.NumberFormat('ko-KR', {
+                                  style: 'currency',
+                                  currency: 'KRW',
+                                }).format(cardPayment.totalAmount - cardPayment.paidAmount)}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => setIsPaymentModalOpen(true)}
+                            className="w-full px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                          >
+                            결제하기
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -896,6 +1023,109 @@ export default function DashboardPage() {
               </div>
             </>
           )}
+        </Modal>
+      )}
+
+      {/* 신용카드 결제 모달 */}
+      {isPaymentModalOpen && cardPayment && selectedCard && (
+        <Modal
+          isOpen={true}
+          onClose={() => {
+            setIsPaymentModalOpen(false);
+            setPaymentForm({ paymentType: 'full', amount: '' });
+          }}
+          title="신용카드 결제"
+        >
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              handlePayCard();
+            }}
+            className="space-y-4"
+          >
+            <div className="bg-gray-50 p-3 rounded-lg">
+              <div className="flex justify-between mb-2">
+                <span className="text-sm text-gray-600">미납액</span>
+                <span className="font-semibold">
+                  {new Intl.NumberFormat('ko-KR', {
+                    style: 'currency',
+                    currency: 'KRW',
+                  }).format(cardPayment.totalAmount - cardPayment.paidAmount)}
+                </span>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                결제 유형
+              </label>
+              <div className="flex gap-2">
+                <label className="flex-1 flex items-center">
+                  <input
+                    type="radio"
+                    value="full"
+                    checked={paymentForm.paymentType === 'full'}
+                    onChange={(e) =>
+                      setPaymentForm({ ...paymentForm, paymentType: 'full' })
+                    }
+                    className="mr-2"
+                  />
+                  <span className="text-sm">전체 결제</span>
+                </label>
+                <label className="flex-1 flex items-center">
+                  <input
+                    type="radio"
+                    value="partial"
+                    checked={paymentForm.paymentType === 'partial'}
+                    onChange={(e) =>
+                      setPaymentForm({ ...paymentForm, paymentType: 'partial' })
+                    }
+                    className="mr-2"
+                  />
+                  <span className="text-sm">부분 결제</span>
+                </label>
+              </div>
+            </div>
+
+            {paymentForm.paymentType === 'partial' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  결제 금액 (원)
+                </label>
+                <input
+                  type="number"
+                  required
+                  value={paymentForm.amount}
+                  onChange={(e) =>
+                    setPaymentForm({ ...paymentForm, amount: e.target.value })
+                  }
+                  placeholder="0"
+                  max={cardPayment.totalAmount - cardPayment.paidAmount}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPaymentModalOpen(false);
+                  setPaymentForm({ paymentType: 'full', amount: '' });
+                }}
+                className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
+              >
+                취소
+              </button>
+              <button
+                type="submit"
+                disabled={isPaymentSubmitting}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {isPaymentSubmitting ? '처리 중...' : '결제하기'}
+              </button>
+            </div>
+          </form>
         </Modal>
       )}
 
@@ -1012,6 +1242,7 @@ export default function DashboardPage() {
             issuer: '',
             expiryDate: '',
             creditLimit: '',
+            billingDayOfMonth: 1,
           });
           setAddError('');
         }}
@@ -1099,18 +1330,37 @@ export default function DashboardPage() {
           </div>
 
           {cardForm.cardType === 'credit' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                신용한도 (원)
-              </label>
-              <input
-                type="number"
-                value={cardForm.creditLimit}
-                onChange={(e) => setCardForm({ ...cardForm, creditLimit: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="5000000"
-              />
-            </div>
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  신용한도 (원)
+                </label>
+                <input
+                  type="number"
+                  value={cardForm.creditLimit}
+                  onChange={(e) => setCardForm({ ...cardForm, creditLimit: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="5000000"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  결제일 (매월 몇 일?)
+                </label>
+                <select
+                  value={cardForm.billingDayOfMonth}
+                  onChange={(e) => setCardForm({ ...cardForm, billingDayOfMonth: parseInt(e.target.value) })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                    <option key={day} value={day}>
+                      {day}일
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </>
           )}
 
           {addError && (

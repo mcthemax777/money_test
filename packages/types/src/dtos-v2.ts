@@ -51,12 +51,14 @@ export namespace CardDto {
     issuer: string;
     expiryDate?: Date;
     creditLimit?: number; // 신용카드만
+    billingDayOfMonth?: number; // 결제일 (1~31, 기본값: 1)
     projectId?: string;
   }
 
   export interface UpdateRequest {
     name?: string;
     creditLimit?: number;
+    billingDayOfMonth?: number;
     isActive?: boolean;
   }
 

@@ -41,6 +41,7 @@ export class CardsService {
         issuer: dto.issuer,
         expiryDate: dto.expiryDate || null,
         creditLimit: dto.creditLimit,
+        billingDayOfMonth: dto.billingDayOfMonth || 1,
       },
     });
 
@@ -255,7 +256,6 @@ export class CardsService {
         paidAmount: totalAmount,
         status: 'completed',
         paymentDate: new Date(),
-        transactionId: transaction.id,
       },
     });
 

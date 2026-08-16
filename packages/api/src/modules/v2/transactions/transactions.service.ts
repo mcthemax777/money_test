@@ -10,6 +10,34 @@ export class TransactionsService {
     private readonly projectAccess: ProjectAccessService,
   ) {}
 
+  // 결제일 계산 (카드의 billingDayOfMonth 기반)
+  private calculatePaymentDate(transactionDate: Date, billingDayOfMonth: number): Date {
+    const year = transactionDate.getFullYear();
+    const month = transactionDate.getMonth();
+    const day = transactionDate.getDate();
+
+    // 결제일이 이미 지났으면 다음달
+    let paymentMonth = month;
+    let paymentYear = year;
+
+    if (day > billingDayOfMonth) {
+      paymentMonth += 1;
+      if (paymentMonth > 11) {
+        paymentMonth = 0;
+        paymentYear += 1;
+      }
+    }
+
+    // 해당 월의 billingDayOfMonth일 생성 (유효성 체크: 31일 카드지만 2월인 경우 등)
+    let paymentDay = billingDayOfMonth;
+    const lastDayOfMonth = new Date(paymentYear, paymentMonth + 1, 0).getDate();
+    if (paymentDay > lastDayOfMonth) {
+      paymentDay = lastDayOfMonth;
+    }
+
+    return new Date(paymentYear, paymentMonth, paymentDay);
+  }
+
   async createTransaction(
     userId: string,
     dto: TransactionDto.CreateRequest,
@@ -64,6 +92,109 @@ export class TransactionsService {
       transactionDate = new Date(dto.date);
     }
 
+    // 카드 정보 조회 (신용카드 여부 판단)
+    let card: any = null;
+    if (dto.cardId) {
+      card = await this.prisma.card.findUnique({
+        where: { id: dto.cardId },
+      });
+    }
+
+    // 신용카드인 경우 CardUsage와 Transaction 모두 생성
+    if (card?.cardType === 'credit' && dto.cardId) {
+      console.log(`[CardTransaction] Creating card transaction for card ${dto.cardId}, amount: ${dto.amount}, description: ${dto.description}`);
+
+      // CardUsage 생성
+      const cardUsage = await this.prisma.cardUsage.create({
+        data: {
+          projectId,
+          userId,
+          cardId: dto.cardId!,
+          amount: dto.amount,
+          merchant: dto.description,
+          date: transactionDate,
+          status: 'completed',
+          isPaymentDue: true,
+        },
+      });
+
+      // Transaction 생성 (거래 기록)
+      const transaction = await this.prisma.transaction.create({
+        data: {
+          projectId,
+          userId,
+          accountId: null,  // 신용카드 사용은 통장과 무관
+          personId: dto.personId,
+          cardId: dto.cardId!,
+          type: 'credit_usage',  // 신용카드 사용 타입
+          amount: dto.amount,
+          description: `신용카드 사용 - ${dto.description}`,
+          date: transactionDate,
+          mainCategoryId: dto.mainCategoryId,
+          subCategoryId: dto.subCategoryId,
+          tags: dto.tags,
+          isRecurring: dto.isRecurring || false,
+          recurringPattern: dto.recurringPattern,
+          isFixed: dto.isFixed !== undefined ? dto.isFixed : defaultIsFixed,
+        },
+        include: {
+          account: true,
+          person: true,
+          card: true,
+          mainCategory: true,
+          subCategory: true,
+        },
+      });
+
+      console.log(`[CardTransaction] Created transaction with type: ${transaction.type}, amount: ${transaction.amount}`);
+
+      // 신용카드 미납 결제 정보 생성/업데이트
+      // 카드의 billingDayOfMonth를 기반으로 결제일 계산
+      const paymentDate = this.calculatePaymentDate(transactionDate, card!.billingDayOfMonth);
+      let cardPayment = await this.prisma.cardPayment.findFirst({
+        where: {
+          cardId: dto.cardId,
+          paymentDate,
+          status: 'pending',
+        },
+      });
+
+      if (!cardPayment) {
+        cardPayment = await this.prisma.cardPayment.create({
+          data: {
+            projectId,
+            userId,
+            cardId: dto.cardId!,
+            accountId: dto.accountId,
+            totalAmount: dto.amount,
+            paidAmount: 0,
+            status: 'pending',
+            paymentDate,
+          },
+        });
+      } else {
+        // 기존 결제에 금액 추가
+        await this.prisma.cardPayment.update({
+          where: { id: cardPayment.id },
+          data: {
+            totalAmount: { increment: dto.amount },
+          },
+        });
+      }
+
+      // CardPaymentUsage로 연결
+      await this.prisma.cardPaymentUsage.create({
+        data: {
+          cardPaymentId: cardPayment.id,
+          cardUsageId: cardUsage.id,
+          amount: dto.amount,
+        },
+      });
+
+      return transaction;
+    }
+
+    // 체크카드 또는 계좌이체인 경우 Transaction 생성
     const transaction = await this.prisma.transaction.create({
       data: {
         projectId,
@@ -85,10 +216,27 @@ export class TransactionsService {
       include: {
         account: true,
         person: true,
+        card: true,
       },
     });
 
-    // 통장 잔액 업데이트
+    // 체크카드인 경우 CardUsage 생성
+    if (card?.cardType === 'debit' && dto.cardId) {
+      await this.prisma.cardUsage.create({
+        data: {
+          projectId,
+          userId,
+          cardId: dto.cardId!,
+          amount: dto.amount,
+          merchant: dto.description,
+          date: transactionDate,
+          status: 'completed',
+          isPaymentDue: false,
+        },
+      });
+    }
+
+    // 통장 잔액 업데이트 (체크카드와 계좌이체만)
     if (dto.type === 'income') {
       await this.prisma.account.update({
         where: { id: dto.accountId },
@@ -109,10 +257,6 @@ export class TransactionsService {
     query: TransactionDto.ListQuery,
     projectId?: string,
   ): Promise<any> {
-    const page = query.page || 1;
-    const limit = query.limit || 20;
-    const skip = (page - 1) * limit;
-
     const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
     const where: any = { userId, projectId: finalProjectId };
 
@@ -128,30 +272,25 @@ export class TransactionsService {
       if (query.endDate) where.date.lte = new Date(query.endDate);
     }
 
-    const [data, total] = await Promise.all([
-      this.prisma.transaction.findMany({
-        where,
-        orderBy: { date: 'desc' },
-        skip,
-        take: limit,
-        include: {
-          account: true,
-          person: true,
-          card: true,
-          mainCategory: true,
-          subCategory: true,
-        },
-      }),
-      this.prisma.transaction.count({ where }),
-    ]);
+    const data = await this.prisma.transaction.findMany({
+      where,
+      orderBy: { date: 'desc' },
+      include: {
+        account: true,
+        person: true,
+        card: true,
+        mainCategory: true,
+        subCategory: true,
+      },
+    });
 
     return {
       data,
       pagination: {
-        page,
-        limit,
-        total,
-        totalPages: Math.ceil(total / limit),
+        total: data.length,
+        page: 1,
+        limit: data.length,
+        totalPages: 1,
       },
     };
   }
@@ -182,7 +321,7 @@ export class TransactionsService {
   ): Promise<any> {
     const transaction = await this.getTransactionById(id, userId);
 
-    // 금액이 변경되면 통장 잔액도 조정
+    // 금액이 변경되면 통장 잔액도 조정 (체크카드와 계좌이체만)
     let balanceAdjustment = 0;
     if (dto.amount && dto.amount !== transaction.amount) {
       const difference = dto.amount - transaction.amount;
@@ -227,7 +366,32 @@ export class TransactionsService {
       },
     });
 
-    // 통장 잔액 조정
+    // 체크카드 CardUsage 업데이트 (금액이나 설명이 변경된 경우)
+    if (transaction.cardId && transaction.card?.cardType === 'debit') {
+      const cardUsage = await this.prisma.cardUsage.findFirst({
+        where: {
+          cardId: transaction.cardId,
+          date: transaction.date,
+          amount: transaction.amount,
+        },
+      });
+
+      if (cardUsage) {
+        const updateData: any = {};
+        if (dto.amount !== undefined) updateData.amount = dto.amount;
+        if (dto.description !== undefined) updateData.merchant = dto.description;
+        if (dto.date !== undefined) updateData.date = new Date(dto.date);
+
+        if (Object.keys(updateData).length > 0) {
+          await this.prisma.cardUsage.update({
+            where: { id: cardUsage.id },
+            data: updateData,
+          });
+        }
+      }
+    }
+
+    // 통장 잔액 조정 (체크카드와 계좌이체만)
     if (balanceAdjustment !== 0) {
       if (balanceAdjustment > 0) {
         await this.prisma.account.update({
@@ -247,6 +411,23 @@ export class TransactionsService {
 
   async deleteTransaction(id: string, userId: string): Promise<any> {
     const transaction = await this.getTransactionById(id, userId);
+
+    // 체크카드 사용 기록 삭제
+    if (transaction.cardId && transaction.card?.cardType === 'debit') {
+      const cardUsage = await this.prisma.cardUsage.findFirst({
+        where: {
+          cardId: transaction.cardId,
+          date: transaction.date,
+          amount: transaction.amount,
+        },
+      });
+
+      if (cardUsage) {
+        await this.prisma.cardUsage.delete({
+          where: { id: cardUsage.id },
+        });
+      }
+    }
 
     // 통장 잔액 역조정
     if (transaction.type === 'income') {
