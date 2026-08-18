@@ -13,7 +13,7 @@ import {
 import { CardPaymentsService } from './card-payments.service';
 import { AuthGuard } from '@nestjs/passport';
 
-@Controller('v2/card-payments')
+@Controller('card-payments')
 @UseGuards(AuthGuard('jwt'))
 export class CardPaymentsController {
   constructor(private readonly cardPaymentsService: CardPaymentsService) {}

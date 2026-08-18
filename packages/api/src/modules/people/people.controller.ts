@@ -18,8 +18,8 @@ import { PeopleService } from './people.service';
 import { AuthenticatedRequest } from '@/common/authenticated-request';
 import { PersonDto } from '@money/types';
 
-@ApiTags('People (v2)')
-@Controller('v2/people')
+@ApiTags('People')
+@Controller('people')
 @UseGuards(AuthGuard('jwt'))
 @ApiBearerAuth()
 export class PeopleController {

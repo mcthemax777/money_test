@@ -18,8 +18,8 @@ import { CategoriesService } from './categories.service';
 import { AuthenticatedRequest } from '@/common/authenticated-request';
 import { CategoryDto } from '@money/types';
 
-@ApiTags('Categories (v2)')
-@Controller('v2/categories')
+@ApiTags('Categories')
+@Controller('categories')
 @UseGuards(AuthGuard('jwt'))
 @ApiBearerAuth()
 export class CategoriesController {

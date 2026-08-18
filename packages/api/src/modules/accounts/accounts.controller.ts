@@ -18,8 +18,8 @@ import { AccountsService } from './accounts.service';
 import { AuthenticatedRequest } from '@/common/authenticated-request';
 import { AccountDto } from '@money/types';
 
-@ApiTags('Accounts (v2)')
-@Controller('v2/accounts')
+@ApiTags('Accounts')
+@Controller('accounts')
 @UseGuards(AuthGuard('jwt'))
 @ApiBearerAuth()
 export class AccountsController {

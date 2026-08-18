@@ -18,8 +18,8 @@ import { TransactionsService } from './transactions.service';
 import { AuthenticatedRequest } from '@/common/authenticated-request';
 import { TransactionDto } from '@money/types';
 
-@ApiTags('Transactions (v2)')
-@Controller('v2/transactions')
+@ApiTags('Transactions')
+@Controller('transactions')
 @UseGuards(AuthGuard('jwt'))
 @ApiBearerAuth()
 export class TransactionsController {

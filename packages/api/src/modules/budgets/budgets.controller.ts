@@ -18,8 +18,8 @@ import { BudgetsService } from './budgets.service';
 import { AuthenticatedRequest } from '@/common/authenticated-request';
 import { BudgetDto } from '@money/types';
 
-@ApiTags('Budgets (v2)')
-@Controller('v2/budgets')
+@ApiTags('Budgets')
+@Controller('budgets')
 @UseGuards(AuthGuard('jwt'))
 @ApiBearerAuth()
 export class BudgetsController {

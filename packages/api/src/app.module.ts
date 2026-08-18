@@ -5,15 +5,13 @@ import { AuthModule } from './modules/auth/auth.module';
 import { UsersModule } from './modules/users/users.module';
 import { HealthModule } from './modules/health/health.module';
 import { ProjectsModule } from './modules/projects/projects.module';
-
-// v2 모듈
-import { PeopleModule } from './modules/v2/people/people.module';
-import { AccountsModule as AccountsModuleV2 } from './modules/v2/accounts/accounts.module';
-import { CardsModule } from './modules/v2/cards/cards.module';
-import { CategoriesModule as CategoriesModuleV2 } from './modules/v2/categories/categories.module';
-import { TransactionsModule as TransactionsModuleV2 } from './modules/v2/transactions/transactions.module';
-import { BudgetsModule } from './modules/v2/budgets/budgets.module';
-import { CardPaymentsModule } from './modules/v2/card-payments/card-payments.module';
+import { PeopleModule } from './modules/people/people.module';
+import { AccountsModule } from './modules/accounts/accounts.module';
+import { CardsModule } from './modules/cards/cards.module';
+import { CategoriesModule } from './modules/categories/categories.module';
+import { TransactionsModule } from './modules/transactions/transactions.module';
+import { BudgetsModule } from './modules/budgets/budgets.module';
+import { CardPaymentsModule } from './modules/card-payments/card-payments.module';
 
 @Module({
   imports: [
@@ -24,10 +22,10 @@ import { CardPaymentsModule } from './modules/v2/card-payments/card-payments.mod
     UsersModule,
     ProjectsModule,
     PeopleModule,
-    AccountsModuleV2,
+    AccountsModule,
     CardsModule,
-    CategoriesModuleV2,
-    TransactionsModuleV2,
+    CategoriesModule,
+    TransactionsModule,
     BudgetsModule,
     CardPaymentsModule,
   ],

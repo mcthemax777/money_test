@@ -105,9 +105,9 @@ class ApiClient {
     return response.data;
   }
 
-  // v2 API Methods
+  // API Methods
   async getPeople(projectId?: string | null) {
-    const response = await this.client.get<any>('/v2/people', {
+    const response = await this.client.get<any>('/people', {
       params: projectId ? { projectId } : {}
     });
     return response.data;
@@ -115,123 +115,123 @@ class ApiClient {
 
   async createPerson(data: any) {
     const { projectId, ...payload } = data;
-    const response = await this.client.post<any>('/v2/people', payload, {
+    const response = await this.client.post<any>('/people', payload, {
       params: projectId ? { projectId } : {}
     });
     return response.data;
   }
 
   async updatePerson(id: string, data: any) {
-    const response = await this.client.patch<any>(`/v2/people/${id}`, data);
+    const response = await this.client.patch<any>(`/people/${id}`, data);
     return response.data;
   }
 
   async deletePerson(id: string) {
-    await this.client.delete(`/v2/people/${id}`);
+    await this.client.delete(`/people/${id}`);
   }
 
   async getAccountsV2(projectId?: string | null) {
-    const response = await this.client.get<any>('/v2/accounts', {
+    const response = await this.client.get<any>('/accounts', {
       params: projectId ? { projectId } : {}
     });
     return response.data;
   }
 
   async getAccountV2(id: string) {
-    const response = await this.client.get<any>(`/v2/accounts/${id}`);
+    const response = await this.client.get<any>(`/accounts/${id}`);
     return response.data;
   }
 
   async createAccountV2(data: any) {
     const { projectId, ...payload } = data;
-    const response = await this.client.post<any>('/v2/accounts', payload, {
+    const response = await this.client.post<any>('/accounts', payload, {
       params: projectId ? { projectId } : {}
     });
     return response.data;
   }
 
   async updateAccountV2(id: string, data: any) {
-    const response = await this.client.patch<any>(`/v2/accounts/${id}`, data);
+    const response = await this.client.patch<any>(`/accounts/${id}`, data);
     return response.data;
   }
 
   async deleteAccountV2(id: string) {
-    await this.client.delete(`/v2/accounts/${id}`);
+    await this.client.delete(`/accounts/${id}`);
   }
 
   async getCards(projectId?: string | null) {
-    const response = await this.client.get<any>('/v2/cards', {
+    const response = await this.client.get<any>('/cards', {
       params: projectId ? { projectId } : {}
     });
     return response.data;
   }
 
   async getCard(id: string) {
-    const response = await this.client.get<any>(`/v2/cards/${id}`);
+    const response = await this.client.get<any>(`/cards/${id}`);
     return response.data;
   }
 
   async createCard(data: any) {
     const { projectId, ...payload } = data;
-    const response = await this.client.post<any>('/v2/cards', payload, {
+    const response = await this.client.post<any>('/cards', payload, {
       params: projectId ? { projectId } : {}
     });
     return response.data;
   }
 
   async useCard(cardId: string, data: any) {
-    const response = await this.client.post<any>(`/v2/cards/${cardId}/use`, data);
+    const response = await this.client.post<any>(`/cards/${cardId}/use`, data);
     return response.data;
   }
 
   async payCard(cardId: string, data: any) {
-    const response = await this.client.post<any>(`/v2/cards/${cardId}/pay`, data);
+    const response = await this.client.post<any>(`/cards/${cardId}/pay`, data);
     return response.data;
   }
 
   async updateCard(id: string, data: any) {
-    const response = await this.client.patch<any>(`/v2/cards/${id}`, data);
+    const response = await this.client.patch<any>(`/cards/${id}`, data);
     return response.data;
   }
 
   async deleteCard(id: string) {
-    await this.client.delete(`/v2/cards/${id}`);
+    await this.client.delete(`/cards/${id}`);
   }
 
   async getTransactionsV2(query?: any, projectId?: string | null) {
     const params = { ...query };
     if (projectId) params.projectId = projectId;
-    const response = await this.client.get<any>('/v2/transactions', { params });
+    const response = await this.client.get<any>('/transactions', { params });
     return response.data;
   }
 
   async getTransaction(id: string) {
-    const response = await this.client.get<any>(`/v2/transactions/${id}`);
+    const response = await this.client.get<any>(`/transactions/${id}`);
     return response.data;
   }
 
   async createTransactionV2(data: any) {
     const { projectId, ...payload } = data;
-    const response = await this.client.post<any>('/v2/transactions', payload, {
+    const response = await this.client.post<any>('/transactions', payload, {
       params: projectId ? { projectId } : {}
     });
     return response.data;
   }
 
   async updateTransaction(id: string, data: any) {
-    const response = await this.client.patch<any>(`/v2/transactions/${id}`, data);
+    const response = await this.client.patch<any>(`/transactions/${id}`, data);
     return response.data;
   }
 
   async deleteTransaction(id: string) {
-    await this.client.delete(`/v2/transactions/${id}`);
+    await this.client.delete(`/transactions/${id}`);
   }
 
   async getCategories(projectId?: string | null, type?: 'income' | 'expense') {
     const params: any = {};
     if (projectId) params.projectId = projectId;
     if (type) params.type = type;
-    const response = await this.client.get<any>('/v2/categories', {
+    const response = await this.client.get<any>('/categories', {
       params
     });
     return response.data;
@@ -239,23 +239,23 @@ class ApiClient {
 
   async createCategory(data: any) {
     const { projectId, ...payload } = data;
-    const response = await this.client.post<any>('/v2/categories', payload, {
+    const response = await this.client.post<any>('/categories', payload, {
       params: projectId ? { projectId } : {}
     });
     return response.data;
   }
 
   async updateCategory(id: string, data: any) {
-    const response = await this.client.patch<any>(`/v2/categories/${id}`, data);
+    const response = await this.client.patch<any>(`/categories/${id}`, data);
     return response.data;
   }
 
   async deleteCategory(id: string) {
-    await this.client.delete(`/v2/categories/${id}`);
+    await this.client.delete(`/categories/${id}`);
   }
 
   async getTransactionStats(query?: any) {
-    const response = await this.client.get<any>('/v2/transactions/statistics', { params: query });
+    const response = await this.client.get<any>('/transactions/statistics', { params: query });
     return response.data;
   }
 
@@ -321,47 +321,47 @@ class ApiClient {
   // 예산 API Methods
   async createBudget(data: any) {
     const { projectId, ...payload } = data;
-    const response = await this.client.post<any>('/v2/budgets', payload, {
+    const response = await this.client.post<any>('/budgets', payload, {
       params: projectId ? { projectId } : {},
     });
     return response.data;
   }
 
   async getBudgets(projectId?: string | null) {
-    const response = await this.client.get<any>('/v2/budgets', {
+    const response = await this.client.get<any>('/budgets', {
       params: projectId ? { projectId } : {},
     });
     return response.data;
   }
 
   async getBudget(id: string) {
-    const response = await this.client.get<any>(`/v2/budgets/${id}`);
+    const response = await this.client.get<any>(`/budgets/${id}`);
     return response.data;
   }
 
   async updateBudget(id: string, data: any) {
-    const response = await this.client.patch<any>(`/v2/budgets/${id}`, data);
+    const response = await this.client.patch<any>(`/budgets/${id}`, data);
     return response.data;
   }
 
   async deleteBudget(id: string) {
-    await this.client.delete(`/v2/budgets/${id}`);
+    await this.client.delete(`/budgets/${id}`);
   }
 
   async getBudgetForMonth(year: number, month: number, projectId?: string | null) {
-    const response = await this.client.get<any>(`/v2/budgets/${year}/${month}`, {
+    const response = await this.client.get<any>(`/budgets/${year}/${month}`, {
       params: projectId ? { projectId } : {},
     });
     return response.data;
   }
 
   async createBudgetOverride(data: any) {
-    const response = await this.client.post<any>('/v2/budgets/override', data);
+    const response = await this.client.post<any>('/budgets/override', data);
     return response.data;
   }
 
   async deleteBudgetOverride(id: string) {
-    await this.client.delete(`/v2/budgets/override/${id}`);
+    await this.client.delete(`/budgets/override/${id}`);
   }
 
   // 신용카드 결제 API Methods
@@ -369,22 +369,22 @@ class ApiClient {
     const params: any = {};
     if (projectId) params.projectId = projectId;
     if (cardId) params.cardId = cardId;
-    const response = await this.client.get<any>('/v2/card-payments/pending', { params });
+    const response = await this.client.get<any>('/card-payments/pending', { params });
     return response.data;
   }
 
   async getCardPaymentDetail(paymentId: string) {
-    const response = await this.client.get<any>(`/v2/card-payments/${paymentId}`);
+    const response = await this.client.get<any>(`/card-payments/${paymentId}`);
     return response.data;
   }
 
   async payCardPayment(paymentId: string, data: { amount: number; transactionDate?: string }) {
-    const response = await this.client.post<any>(`/v2/card-payments/${paymentId}/pay`, data);
+    const response = await this.client.post<any>(`/card-payments/${paymentId}/pay`, data);
     return response.data;
   }
 
   async cancelCardPayment(transactionId: string) {
-    const response = await this.client.post<any>(`/v2/card-payments/cancel/${transactionId}`);
+    const response = await this.client.post<any>(`/card-payments/cancel/${transactionId}`);
     return response.data;
   }
 }
