@@ -10,6 +10,7 @@ import { ConfigModule } from '../../config/config.module';
 import { ConfigService } from '../../config/config.service';
 import { UsersModule } from '../users/users.module';
 import { ProjectsModule } from '../projects/projects.module';
+import { ProjectAccessService } from '../../common/project-access.guard';
 
 @Module({
   imports: [
@@ -29,7 +30,7 @@ import { ProjectsModule } from '../projects/projects.module';
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
+  providers: [AuthService, JwtStrategy, ProjectAccessService],
   exports: [AuthService],
 })
 export class AuthModule {}

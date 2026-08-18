@@ -81,13 +81,13 @@ export default function SettingsPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <Link href="/settings/projects">
+        <Link href="/settings/profile">
           <div className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition cursor-pointer">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900">프로젝트 관리</h2>
+                <h2 className="text-lg font-semibold text-gray-900">내 정보</h2>
                 <p className="mt-1 text-sm text-gray-600">
-                  프로젝트를 생성, 관리, 탈퇴합니다
+                  계정 정보를 확인하고 이름을 변경합니다
                 </p>
               </div>
               <div className="text-2xl">→</div>
@@ -95,13 +95,13 @@ export default function SettingsPage() {
           </div>
         </Link>
 
-        <Link href="/settings/invitations">
+        <Link href="/settings/projects">
           <div className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition cursor-pointer">
             <div className="flex items-center justify-between">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900">프로젝트 초대 관리</h2>
+                <h2 className="text-lg font-semibold text-gray-900">프로젝트 관리</h2>
                 <p className="mt-1 text-sm text-gray-600">
-                  팀원을 초대하고 초대 상태를 관리합니다
+                  프로젝트 생성, 멤버와 초대 링크, 가입 요청을 관리합니다
                 </p>
               </div>
               <div className="text-2xl">→</div>

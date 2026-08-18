@@ -21,6 +21,20 @@ export class ProjectsController {
   // ===== 가입 요청 =====
   // 아래 구체 경로들은 :projectId 패턴보다 먼저 선언해야 선점되지 않는다.
 
+  @Get('invitations/:invitationCode')
+  async getInvitationByCode(
+    @Param('invitationCode') invitationCode: string,
+    @Request() req: any,
+  ) {
+    return this.projectsService.getInvitationByCode(invitationCode, req.user.id);
+  }
+
+  @Delete('invitations/:invitationId')
+  @HttpCode(HttpStatus.OK)
+  async revokeInvitation(@Param('invitationId') invitationId: string, @Request() req: any) {
+    return this.projectsService.revokeInvitation(invitationId, req.user.id);
+  }
+
   @Get('search')
   async findProjectByKey(@Query('key') key: string, @Request() req: any) {
     return this.projectsService.findProjectByKey(key, req.user.id);
@@ -73,19 +87,20 @@ export class ProjectsController {
     return this.projectsService.getProjectMembers(projectId, req.user.id);
   }
 
-  @Post(':projectId/invitations/email')
-  async sendEmailInvitation(
+  @Delete(':projectId/members/:userId')
+  @HttpCode(HttpStatus.OK)
+  async removeMember(
     @Param('projectId') projectId: string,
-    @Body() body: { email: string; role: 'owner' | 'editor' | 'viewer' },
+    @Param('userId') userId: string,
     @Request() req: any,
   ) {
-    return this.projectsService.sendEmailInvitation(projectId, body.email, body.role, req.user.id);
+    return this.projectsService.removeMember(projectId, userId, req.user.id);
   }
 
   @Post(':projectId/invitations/link')
   async generateInvitationLink(
     @Param('projectId') projectId: string,
-    @Body() body: { role: 'owner' | 'editor' | 'viewer' },
+    @Body() body: { role: 'editor' | 'viewer' },
     @Request() req: any,
   ) {
     return this.projectsService.generateInvitationLink(projectId, body.role, req.user.id);

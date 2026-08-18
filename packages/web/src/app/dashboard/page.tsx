@@ -159,9 +159,21 @@ export default function TransactionsPage() {
       // 프로젝트 목록 불러오기
       try {
         const projects = await apiClient.getMyProjects();
-        if (projects && projects.length > 0 && !selectedProjectId) {
-          // 첫 번째 프로젝트 자동 선택
-          const { setSelectedProjectId } = useProject.getState();
+        const { setSelectedProjectId } = useProject.getState();
+
+        if (!projects || projects.length === 0) {
+          // 프로젝트가 하나도 없으면 여기서는 아무것도 불러올 수 없다.
+          // 생성 화면으로 보내지 않으면 로딩 상태에 갇힌다.
+          setSelectedProjectId(null);
+          router.push('/settings/projects');
+          return;
+        }
+
+        // 저장된 선택값이 삭제되거나 탈퇴한 프로젝트를 가리킬 수 있다.
+        const isSelectionValid =
+          selectedProjectId && projects.some((p: { id: string }) => p.id === selectedProjectId);
+
+        if (!isSelectionValid) {
           setSelectedProjectId(projects[0].id);
         }
       } catch (err) {
@@ -170,7 +182,7 @@ export default function TransactionsPage() {
     };
 
     initializeProject();
-  }, [loadUser, selectedProjectId]);
+  }, [loadUser, selectedProjectId, router]);
 
   useEffect(() => {
     if (!isAuthenticated || !selectedProjectId) {
@@ -473,6 +485,12 @@ export default function TransactionsPage() {
     setCurrentMonth(month);
     setStartDate(null);
     setDisplayTransactions([]);
+  };
+
+  // Date 생성자가 연도 넘김을 처리하므로 12월/1월을 따로 분기하지 않는다.
+  const shiftMonth = (delta: number) => {
+    const shifted = new Date(currentYear, currentMonth - 1 + delta, 1);
+    handleMonthChange(shifted.getFullYear(), shifted.getMonth() + 1);
   };
 
   const handleDetailEditClick = () => {
@@ -807,28 +825,14 @@ export default function TransactionsPage() {
           </div>
           <div className="flex gap-3">
             <button
-              onClick={() => {
-                const newMonth = currentMonth === 1 ? 12 : currentMonth - 1;
-                const newYear = currentMonth === 1 ? currentYear - 1 : currentYear;
-                setCurrentYear(newYear);
-                setCurrentMonth(newMonth);
-                setStartDate(null);
-                setDisplayTransactions([]);
-              }}
+              onClick={() => shiftMonth(-1)}
               className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
               title="이전 달"
             >
               <span className="text-xl">←</span>
             </button>
             <button
-              onClick={() => {
-                const newMonth = currentMonth === 12 ? 1 : currentMonth + 1;
-                const newYear = currentMonth === 12 ? currentYear + 1 : currentYear;
-                setCurrentYear(newYear);
-                setCurrentMonth(newMonth);
-                setStartDate(null);
-                setDisplayTransactions([]);
-              }}
+              onClick={() => shiftMonth(1)}
               className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
               title="다음 달"
             >
@@ -1184,6 +1188,7 @@ export default function TransactionsPage() {
                     isInline={true}
                     currentMonth={currentMonth}
                     currentYear={currentYear}
+                    projectId={selectedProjectId}
                   />
                 </div>
               )}
@@ -1207,6 +1212,8 @@ export default function TransactionsPage() {
             <div className="lg:col-span-1">
               <TransactionCalendar
                 transactions={filteredTransactions}
+                year={currentYear}
+                month={currentMonth}
                 onDateSelect={handleCalendarDateSelect}
                 onMonthChange={handleMonthChange}
                 startDate={startDate}

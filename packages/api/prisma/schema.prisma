@@ -113,11 +113,10 @@ model ProjectMember {
   @@index([userId])
 }
 
-// 프로젝트 초대
+// 프로젝트 초대 링크 (코드를 아는 사람이 수락하면 멤버가 된다)
 model ProjectInvitation {
   id               String             @id @default(cuid())
   projectId        String
-  email            String
   invitationCode   String             @unique
   role             ProjectRole        @default(editor)
   status           InvitationStatus   @default(pending)
@@ -134,7 +133,6 @@ model ProjectInvitation {
   updatedAt        DateTime @updatedAt
 
   @@index([projectId])
-  @@index([email])
   @@index([status])
 }
 

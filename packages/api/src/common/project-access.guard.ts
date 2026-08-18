@@ -60,38 +60,65 @@ export class ProjectAccessService {
   }
 
   /**
-   * 사용자의 기본 프로젝트 ID 반환
-   * defaultProjectId가 설정되어 있으면 그것, 아니면 owner 프로젝트 반환
+   * 사용자가 쓸 수 있는 기본 프로젝트 ID를 찾는다. 없으면 null.
+   * 프로젝트가 하나도 없는 상태는 정상 상태이므로 예외를 던지지 않는다.
    */
-  async getDefaultProjectId(userId: string): Promise<string> {
+  async findDefaultProjectId(userId: string): Promise<string | null> {
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { defaultProjectId: true },
     });
 
+    // defaultProjectId는 관계가 아닌 단순 문자열이라 삭제된 프로젝트를 가리킬 수
+    // 있다. 멤버십으로 실제 접근 가능 여부를 확인한다.
     if (user?.defaultProjectId) {
-      // 기본 프로젝트가 설정되어 있고, 사용자가 여전히 접근 권한이 있는지 확인
-      try {
-        await this.verifyUserHasAccessToProject(userId, user.defaultProjectId);
-        return user.defaultProjectId;
-      } catch {
-        // 권한이 없으면 다음 로직으로 진행
+      const membership = await this.prisma.projectMember.findUnique({
+        where: {
+          projectId_userId: { projectId: user.defaultProjectId, userId },
+        },
+        select: { projectId: true },
+      });
+
+      if (membership) {
+        return membership.projectId;
       }
     }
 
-    // 기본 프로젝트가 없거나 권한이 없으면 owner 프로젝트 찾기
-    const member = await this.prisma.projectMember.findFirst({
+    // 본인이 만든 프로젝트를 우선한다.
+    const owned = await this.prisma.projectMember.findFirst({
       where: { userId, role: 'owner' },
+      orderBy: { joinedAt: 'asc' },
       select: { projectId: true },
     });
 
-    if (!member) {
+    if (owned) {
+      return owned.projectId;
+    }
+
+    // 본인 프로젝트가 없어도 가입 요청으로 합류한 프로젝트가 있으면 그것을 쓴다.
+    // role을 owner로 제한하면 합류만 한 사용자가 앱을 쓸 수 없게 된다.
+    const joined = await this.prisma.projectMember.findFirst({
+      where: { userId },
+      orderBy: { joinedAt: 'asc' },
+      select: { projectId: true },
+    });
+
+    return joined?.projectId ?? null;
+  }
+
+  /**
+   * 사용자의 기본 프로젝트 ID 반환. 쓸 수 있는 프로젝트가 없으면 예외.
+   */
+  async getDefaultProjectId(userId: string): Promise<string> {
+    const projectId = await this.findDefaultProjectId(userId);
+
+    if (!projectId) {
       throw new BadRequestException(
         '기본 프로젝트를 찾을 수 없습니다. 먼저 프로젝트를 생성하세요.',
       );
     }
 
-    return member.projectId;
+    return projectId;
   }
 
   /**

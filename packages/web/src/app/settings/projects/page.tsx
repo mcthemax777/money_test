@@ -36,6 +36,22 @@ interface JoinRequest {
   createdAt: string;
 }
 
+interface ProjectMember {
+  id: string;
+  email: string;
+  name: string;
+  role: 'owner' | 'editor' | 'viewer';
+  joinedAt: string;
+}
+
+interface Invitation {
+  id: string;
+  invitationCode: string;
+  role: 'editor' | 'viewer';
+  expiresAt: string | null;
+  createdAt: string;
+}
+
 interface MyJoinRequest {
   id: string;
   projectId: string;
@@ -65,6 +81,10 @@ export default function ProjectsPage() {
   const [searchError, setSearchError] = useState('');
   const [joinRequestsByProject, setJoinRequestsByProject] = useState<Record<string, JoinRequest[]>>({});
   const [myRequests, setMyRequests] = useState<MyJoinRequest[]>([]);
+  const [membersByProject, setMembersByProject] = useState<Record<string, ProjectMember[]>>({});
+  const [invitationsByProject, setInvitationsByProject] = useState<Record<string, Invitation[]>>({});
+  const [inviteRoleByProject, setInviteRoleByProject] = useState<Record<string, 'editor' | 'viewer'>>({});
+  const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
   useEffect(() => {
@@ -85,8 +105,12 @@ export default function ProjectsPage() {
       setError('');
 
       // owner인 프로젝트의 대기 중인 요청과, 내가 보낸 요청을 함께 갱신한다.
+      const ownerProjects = data.filter((p) => p.role === 'owner');
       await Promise.all([
-        loadJoinRequests(data.filter((p) => p.role === 'owner')),
+        // 가입 요청과 초대 링크는 소유자만 다루므로 소유 프로젝트만 조회한다.
+        loadJoinRequests(ownerProjects),
+        loadInvitations(ownerProjects),
+        loadMembers(data),
         loadMyRequests(),
       ]);
     } catch (err) {
@@ -104,13 +128,24 @@ export default function ProjectsPage() {
     }
 
     try {
-      await apiClient.createProject(createForm.name, createForm.description);
+      const created = await apiClient.createProject(createForm.name, createForm.description);
       setCreateForm({ name: '', description: '' });
       setShowCreateForm(false);
       setError('');
 
+      // 선택된 프로젝트가 없던 상태(첫 프로젝트이거나 전부 삭제한 뒤)라면
+      // 방금 만든 프로젝트를 바로 선택한다. 그러지 않으면 사이드탭이 계속
+      // 프로젝트 없는 상태로 남는다.
+      const isFirstProject = !selectedProjectId;
+      if (isFirstProject && created?.id) {
+        setSelectedProjectId(created.id);
+      }
+
       await loadProjects();
-      alert('프로젝트가 생성되었습니다. 사이드바에서 프로젝트를 선택해주세요.');
+
+      if (!isFirstProject) {
+        alert('프로젝트가 생성되었습니다. 사이드바에서 프로젝트를 선택해주세요.');
+      }
     } catch (err) {
       setError('프로젝트 생성에 실패했습니다.');
       console.error(err);
@@ -186,6 +221,94 @@ export default function ProjectsPage() {
     );
 
     setJoinRequestsByProject(Object.fromEntries(entries));
+  };
+
+  // 멤버 목록은 소유자뿐 아니라 참여 중인 모든 멤버가 볼 수 있다.
+  const loadMembers = async (allProjects: Project[]) => {
+    const entries = await Promise.all(
+      allProjects.map(async (project) => {
+        try {
+          const data = await apiClient.getProjectMembers(project.id);
+          return [project.id, data || []] as const;
+        } catch (err) {
+          console.error(`멤버 조회 실패 (${project.id}):`, err);
+          return [project.id, []] as const;
+        }
+      }),
+    );
+
+    setMembersByProject(Object.fromEntries(entries));
+  };
+
+  const loadInvitations = async (ownerProjects: Project[]) => {
+    const entries = await Promise.all(
+      ownerProjects.map(async (project) => {
+        try {
+          const data = await apiClient.getProjectPendingInvitations(project.id);
+          return [project.id, data || []] as const;
+        } catch (err) {
+          console.error(`초대 목록 조회 실패 (${project.id}):`, err);
+          return [project.id, []] as const;
+        }
+      }),
+    );
+
+    setInvitationsByProject(Object.fromEntries(entries));
+  };
+
+  const buildInviteUrl = (invitationCode: string) =>
+    `${window.location.origin}/join?code=${invitationCode}`;
+
+  const handleGenerateInviteLink = async (projectId: string) => {
+    try {
+      const role = inviteRoleByProject[projectId] ?? 'editor';
+      const created = await apiClient.generateInvitationLink(projectId, role);
+      setError('');
+      await loadProjects();
+
+      // 만든 직후 바로 공유할 수 있도록 클립보드에 담는다.
+      if (created?.invitationCode) {
+        await handleCopyInviteLink(created.invitationCode);
+      }
+    } catch (err: any) {
+      setError(err.response?.data?.error?.message || '초대 링크 생성에 실패했습니다.');
+    }
+  };
+
+  const handleCopyInviteLink = async (invitationCode: string) => {
+    try {
+      await navigator.clipboard.writeText(buildInviteUrl(invitationCode));
+      setCopiedCode(invitationCode);
+      setTimeout(() => setCopiedCode(null), 2000);
+    } catch {
+      setError('클립보드 복사에 실패했습니다. 링크를 직접 선택해 복사해주세요.');
+    }
+  };
+
+  const handleRevokeInvitation = async (invitationId: string) => {
+    if (!confirm('이 초대 링크를 무효화하시겠습니까? 링크를 받은 사람은 참여할 수 없게 됩니다.')) {
+      return;
+    }
+
+    try {
+      await apiClient.revokeInvitation(invitationId);
+      setError('');
+      await loadProjects();
+    } catch (err: any) {
+      setError(err.response?.data?.error?.message || '초대 무효화에 실패했습니다.');
+    }
+  };
+
+  const handleRemoveMember = async (projectId: string, member: ProjectMember) => {
+    if (!confirm(`${member.name} 님을 프로젝트에서 내보내시겠습니까?`)) return;
+
+    try {
+      await apiClient.removeProjectMember(projectId, member.id);
+      setError('');
+      await loadProjects();
+    } catch (err: any) {
+      setError(err.response?.data?.error?.message || '강퇴에 실패했습니다.');
+    }
   };
 
   const loadMyRequests = async () => {
@@ -544,12 +667,6 @@ export default function ProjectsPage() {
                   {project.role === 'owner' ? (
                     <>
                       <button
-                        onClick={() => router.push('/settings/invitations')}
-                        className="px-3 py-1 text-sm bg-green-600 text-white rounded hover:bg-green-700 transition"
-                      >
-                        초대 관리
-                      </button>
-                      <button
                         onClick={() => setDeleteConfirm(project.id === deleteConfirm ? null : project.id)}
                         className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700 transition"
                       >
@@ -566,6 +683,109 @@ export default function ProjectsPage() {
                   )}
                 </div>
               </div>
+
+              {project.role === 'owner' && (
+                <div className="mt-4 border-t border-gray-100 pt-4">
+                  <div className="flex flex-wrap items-center justify-between gap-2 mb-3">
+                    <h4 className="text-sm font-semibold text-gray-900">초대 링크</h4>
+                    <div className="flex items-center gap-2">
+                      <select
+                        value={inviteRoleByProject[project.id] ?? 'editor'}
+                        onChange={(e) =>
+                          setInviteRoleByProject((prev) => ({
+                            ...prev,
+                            [project.id]: e.target.value as 'editor' | 'viewer',
+                          }))
+                        }
+                        className="px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      >
+                        <option value="editor">편집자</option>
+                        <option value="viewer">조회자</option>
+                      </select>
+                      <button
+                        onClick={() => handleGenerateInviteLink(project.id)}
+                        className="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+                      >
+                        링크 만들기
+                      </button>
+                    </div>
+                  </div>
+
+                  {(invitationsByProject[project.id]?.length ?? 0) === 0 ? (
+                    <p className="text-xs text-gray-500">
+                      유효한 초대 링크가 없습니다. 링크를 만들면 30일간 사용할 수 있습니다.
+                    </p>
+                  ) : (
+                    <div className="space-y-2">
+                      {invitationsByProject[project.id].map((invitation) => (
+                        <div
+                          key={invitation.id}
+                          className="flex flex-wrap items-center justify-between gap-2 bg-gray-50 rounded-lg px-4 py-3"
+                        >
+                          <div className="min-w-0">
+                            <p className="text-xs text-gray-700 break-all font-mono">
+                              /join?code={invitation.invitationCode}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              {getRoleLabel(invitation.role)} 권한
+                              {invitation.expiresAt &&
+                                ` · ${new Date(invitation.expiresAt).toLocaleDateString('ko-KR')}까지`}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              onClick={() => handleCopyInviteLink(invitation.invitationCode)}
+                              className="px-3 py-1 text-xs bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-100 transition"
+                            >
+                              {copiedCode === invitation.invitationCode ? '복사됨' : '링크 복사'}
+                            </button>
+                            <button
+                              onClick={() => handleRevokeInvitation(invitation.id)}
+                              className="px-3 py-1 text-xs bg-white border border-red-300 text-red-600 rounded hover:bg-red-50 transition"
+                            >
+                              무효화
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {(membersByProject[project.id]?.length ?? 0) > 0 && (
+                <div className="mt-4 border-t border-gray-100 pt-4">
+                  <h4 className="text-sm font-semibold text-gray-900 mb-3">
+                    멤버 {membersByProject[project.id].length}명
+                  </h4>
+                  <div className="space-y-2">
+                    {membersByProject[project.id].map((member) => (
+                      <div
+                        key={member.id}
+                        className="flex items-center justify-between gap-4 border border-gray-100 rounded-lg px-4 py-3"
+                      >
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium text-gray-900">
+                            {member.name}
+                            <span className="ml-2 text-xs text-gray-500">
+                              {getRoleLabel(member.role)}
+                            </span>
+                          </p>
+                          <p className="text-xs text-gray-500">{member.email}</p>
+                        </div>
+                        {project.role === 'owner' && member.role !== 'owner' && (
+                          <button
+                            onClick={() => handleRemoveMember(project.id, member)}
+                            className="px-3 py-1 text-xs bg-white border border-red-300 text-red-600 rounded hover:bg-red-50 transition shrink-0"
+                          >
+                            강퇴
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {project.role === 'owner' && (joinRequestsByProject[project.id]?.length ?? 0) > 0 && (
                 <div className="mt-4 border-t border-gray-100 pt-4">

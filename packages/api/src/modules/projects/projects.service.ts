@@ -28,6 +28,17 @@ export class ProjectsService {
       },
     });
 
+    // 이 프로젝트가 사용자의 유일한 프로젝트라면 기본 프로젝트로 지정한다.
+    // 프로젝트를 모두 삭제했거나 강퇴당한 뒤 다시 만드는 경우가 여기에 해당한다.
+    const membershipCount = await this.prisma.projectMember.count({ where: { userId } });
+
+    if (membershipCount === 1) {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { defaultProjectId: project.id },
+      });
+    }
+
     return {
       ...project,
       role: 'owner',
@@ -67,44 +78,19 @@ export class ProjectsService {
     }));
   }
 
-  async sendEmailInvitation(projectId: string, email: string, role: 'owner' | 'editor' | 'viewer', userId: string) {
+  // 초대 링크 발급. 링크 주소는 환경마다 달라지므로 코드만 돌려주고
+  // 실제 URL 조립은 클라이언트가 자기 origin으로 처리한다.
+  async generateInvitationLink(
+    projectId: string,
+    role: 'editor' | 'viewer',
+    userId: string,
+  ) {
     await this.verifyUserIsOwner(projectId, userId);
-
-    const invitationCode = this.generateInvitationCode();
 
     const invitation = await this.prisma.projectInvitation.create({
       data: {
         projectId,
-        email,
-        invitationCode,
-        role,
-        status: 'pending',
-        invitedByUserId: userId,
-        expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000), // 7일 후 만료
-      },
-    });
-
-    // TODO: 실제 이메일 발송 로직 구현
-    console.log(`Email invitation sent to ${email} with code: ${invitationCode}`);
-
-    return {
-      id: invitation.id,
-      email: invitation.email,
-      status: invitation.status,
-      expiresAt: invitation.expiresAt,
-    };
-  }
-
-  async generateInvitationLink(projectId: string, role: 'owner' | 'editor' | 'viewer', userId: string) {
-    await this.verifyUserIsOwner(projectId, userId);
-
-    const invitationCode = this.generateInvitationCode();
-
-    const invitation = await this.prisma.projectInvitation.create({
-      data: {
-        projectId,
-        email: '', // 링크 초대는 이메일 미정
-        invitationCode,
+        invitationCode: this.generateInvitationCode(),
         role,
         status: 'pending',
         invitedByUserId: userId,
@@ -115,9 +101,65 @@ export class ProjectsService {
     return {
       id: invitation.id,
       invitationCode: invitation.invitationCode,
-      invitationLink: `${process.env.FRONTEND_URL}/join?code=${invitation.invitationCode}`,
+      role: invitation.role,
       expiresAt: invitation.expiresAt,
     };
+  }
+
+  // 초대 코드로 어떤 프로젝트인지 확인한다. 아직 멤버가 아닌 사람이 호출하므로
+  // 가계부 내용은 담지 않는다.
+  async getInvitationByCode(invitationCode: string, userId: string) {
+    const invitation = await this.prisma.projectInvitation.findUnique({
+      where: { invitationCode },
+      include: {
+        project: {
+          include: { members: { include: { user: true } } },
+        },
+      },
+    });
+
+    if (!invitation) {
+      throw new NotFoundException('초대를 찾을 수 없습니다');
+    }
+
+    const isExpired = Boolean(invitation.expiresAt && new Date() > invitation.expiresAt);
+    const owner = invitation.project.members.find((m) => m.role === 'owner');
+
+    return {
+      invitationCode: invitation.invitationCode,
+      role: invitation.role,
+      // 만료된 pending 초대는 status가 아직 pending이므로 여기서 만료로 보여준다.
+      status: isExpired && invitation.status === 'pending' ? 'expired' : invitation.status,
+      expiresAt: invitation.expiresAt,
+      projectId: invitation.projectId,
+      projectName: invitation.project.name,
+      projectDescription: invitation.project.description,
+      ownerName: owner?.user.name ?? null,
+      memberCount: invitation.project.members.length,
+      isMember: invitation.project.members.some((m) => m.userId === userId),
+    };
+  }
+
+  // 유출된 링크를 무효화한다.
+  async revokeInvitation(invitationId: string, userId: string) {
+    const invitation = await this.prisma.projectInvitation.findUnique({
+      where: { id: invitationId },
+      select: { id: true, projectId: true, status: true },
+    });
+
+    if (!invitation) {
+      throw new NotFoundException('초대를 찾을 수 없습니다');
+    }
+
+    await this.verifyUserIsOwner(invitation.projectId, userId);
+
+    if (invitation.status !== 'pending') {
+      throw new BadRequestException('이미 처리된 초대입니다');
+    }
+
+    await this.prisma.projectInvitation.delete({ where: { id: invitationId } });
+
+    return { success: true };
   }
 
   async acceptInvitation(invitationCode: string, userId: string) {
@@ -218,7 +260,6 @@ export class ProjectsService {
 
     return invitations.map((inv) => ({
       id: inv.id,
-      email: inv.email,
       invitationCode: inv.invitationCode,
       role: inv.role,
       expiresAt: inv.expiresAt,
@@ -287,18 +328,98 @@ export class ProjectsService {
       },
     });
 
+    await this.clearStaleDefaultProject(userId, projectId);
+
     return { success: true };
   }
 
   async deleteProject(projectId: string, userId: string) {
     await this.verifyUserIsOwner(projectId, userId);
 
+    // 삭제하면 멤버십도 cascade로 사라지므로 대상 사용자를 미리 확보한다.
+    const members = await this.prisma.projectMember.findMany({
+      where: { projectId },
+      select: { userId: true },
+    });
+
     // 프로젝트와 관련된 모든 데이터 삭제
     await this.prisma.project.delete({
       where: { id: projectId },
     });
 
+    // defaultProjectId는 관계가 아니라 cascade로 정리되지 않는다.
+    // 방치하면 이 프로젝트를 기본으로 쓰던 사용자의 로그인이 깨진다.
+    for (const member of members) {
+      await this.clearStaleDefaultProject(member.userId, projectId);
+    }
+
     return { success: true };
+  }
+
+  /**
+   * owner가 멤버를 프로젝트에서 내보낸다.
+   */
+  async removeMember(projectId: string, targetUserId: string, requesterId: string) {
+    await this.verifyUserIsOwner(projectId, requesterId);
+
+    if (targetUserId === requesterId) {
+      throw new BadRequestException('본인은 강퇴할 수 없습니다. 프로젝트 탈퇴를 이용하세요.');
+    }
+
+    const target = await this.prisma.projectMember.findUnique({
+      where: { projectId_userId: { projectId, userId: targetUserId } },
+      include: { user: { select: { name: true } } },
+    });
+
+    if (!target) {
+      throw new NotFoundException('프로젝트 멤버가 아닙니다.');
+    }
+
+    // 소유권 박탈은 강퇴로 처리하지 않는다.
+    if (target.role === 'owner') {
+      throw new BadRequestException('소유자는 강퇴할 수 없습니다.');
+    }
+
+    await this.prisma.projectMember.delete({
+      where: { projectId_userId: { projectId, userId: targetUserId } },
+    });
+
+    // 승인 기록을 남겨두면 멤버가 아닌데 승인 상태인 행이 남는다.
+    // 지워야 나중에 다시 가입 요청을 보낼 수 있는 상태가 깔끔하다.
+    await this.prisma.projectJoinRequest.deleteMany({
+      where: { projectId, userId: targetUserId },
+    });
+
+    // 강퇴당한 사용자의 기본 프로젝트가 이 프로젝트였다면 정리한다.
+    await this.clearStaleDefaultProject(targetUserId, projectId);
+
+    return { success: true, userId: targetUserId, userName: target.user.name };
+  }
+
+  /**
+   * 사용자의 defaultProjectId가 방금 떠난(또는 삭제된) 프로젝트를 가리키면
+   * 남아 있는 프로젝트로 옮기고, 남은 것이 없으면 비운다.
+   */
+  private async clearStaleDefaultProject(userId: string, removedProjectId: string) {
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+      select: { defaultProjectId: true },
+    });
+
+    if (user?.defaultProjectId !== removedProjectId) {
+      return;
+    }
+
+    const remaining = await this.prisma.projectMember.findFirst({
+      where: { userId },
+      orderBy: { joinedAt: 'asc' },
+      select: { projectId: true },
+    });
+
+    await this.prisma.user.update({
+      where: { id: userId },
+      data: { defaultProjectId: remaining?.projectId ?? null },
+    });
   }
 
   // ===== 프로젝트 키 =====
@@ -435,9 +556,10 @@ export class ProjectsService {
   }
 
   // 요청자가 자신의 요청 상태를 확인한다.
+  // 승인된 요청은 이미 멤버가 되어 프로젝트 목록에 나타나므로 제외한다.
   async getMyJoinRequests(userId: string) {
     const requests = await this.prisma.projectJoinRequest.findMany({
-      where: { userId },
+      where: { userId, status: { not: 'approved' } },
       include: { project: true },
       orderBy: { updatedAt: 'desc' },
     });

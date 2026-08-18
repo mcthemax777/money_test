@@ -86,6 +86,11 @@ class ApiClient {
     return response.data;
   }
 
+  async updateProfile(data: { name?: string; avatar?: string }) {
+    const response = await this.client.patch<any>('/users/me', data);
+    return response.data;
+  }
+
   async setDefaultProject(projectId: string) {
     const response = await this.client.patch<any>('/users/me/default-project', {
       projectId,
@@ -261,18 +266,25 @@ class ApiClient {
     return response.data;
   }
 
-  async sendEmailInvitation(projectId: string, email: string, role: string) {
-    const response = await this.client.post<any>(`/projects/${projectId}/invitations/email`, {
-      email,
+  async removeProjectMember(projectId: string, userId: string) {
+    const response = await this.client.delete<any>(`/projects/${projectId}/members/${userId}`);
+    return response.data;
+  }
+
+  async generateInvitationLink(projectId: string, role: 'editor' | 'viewer') {
+    const response = await this.client.post<any>(`/projects/${projectId}/invitations/link`, {
       role,
     });
     return response.data;
   }
 
-  async generateInvitationLink(projectId: string, role: string) {
-    const response = await this.client.post<any>(`/projects/${projectId}/invitations/link`, {
-      role,
-    });
+  async getInvitationByCode(invitationCode: string) {
+    const response = await this.client.get<any>(`/projects/invitations/${invitationCode}`);
+    return response.data;
+  }
+
+  async revokeInvitation(invitationId: string) {
+    const response = await this.client.delete<any>(`/projects/invitations/${invitationId}`);
     return response.data;
   }
 

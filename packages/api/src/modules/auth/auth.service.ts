@@ -6,6 +6,7 @@ import { RedisService } from '../../config/redis.service';
 import { ConfigService } from '../../config/config.service';
 import { UsersService } from '../users/users.service';
 import { ProjectsService } from '../projects/projects.service';
+import { ProjectAccessService } from '@/common/project-access.guard';
 import { OAuth2Client, type TokenPayload as GoogleTokenPayload } from 'google-auth-library';
 import { Auth } from '@money/types';
 
@@ -26,6 +27,7 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
     private readonly projectsService: ProjectsService,
+    private readonly projectAccess: ProjectAccessService,
   ) {}
 
   // ID 토큰 검증만 수행하므로 client secret은 필요하지 않다.
@@ -43,10 +45,12 @@ export class AuthService {
     const existing = await this.prisma.user.findUnique({ where: { googleId } });
 
     if (existing) {
-      // 이메일, 이름, 사진은 구글 쪽에서 변경될 수 있으므로 로그인마다 최신화한다.
+      // 이메일과 사진은 구글 쪽 변경을 따라간다.
+      // 이름은 사용자가 프로필에서 직접 바꿀 수 있으므로 덮어쓰지 않는다.
+      // 덮어쓰면 로그인할 때마다 구글 이름으로 되돌아간다.
       const user = await this.prisma.user.update({
         where: { id: existing.id },
-        data: { email, name, avatar },
+        data: { email, avatar },
       });
 
       return this.buildAuthResponse(user);
@@ -133,16 +137,21 @@ export class AuthService {
     createdAt: Date;
     updatedAt: Date;
   }): Promise<Auth.AuthResponse> {
-    const defaultProjectData = await this.usersService.getUserProjectInitialData(
-      user.id,
-      user.defaultProjectId ?? undefined,
-    );
+    // user.defaultProjectId를 그대로 쓰지 않는다. 삭제된 프로젝트를 가리킬 수
+    // 있어서다. 접근 가능한 프로젝트를 다시 해석한다.
+    const projectId = await this.projectAccess.findDefaultProjectId(user.id);
+
+    // 프로젝트를 모두 삭제하거나 탈퇴한 사용자도 로그인은 되어야 한다.
+    // 막으면 프로젝트를 새로 만들 방법이 없어 계정이 잠긴다.
+    const defaultProjectData = projectId
+      ? await this.usersService.getUserProjectInitialData(user.id, projectId)
+      : null;
 
     return {
       ...this.generateTokens(user.id),
       user: {
         ...this.toUserResponse(user),
-        defaultProjectId: user.defaultProjectId || undefined,
+        defaultProjectId: projectId ?? undefined,
       },
       defaultProjectData: defaultProjectData as any,
     };
@@ -166,19 +175,7 @@ export class AuthService {
       },
     });
 
-    // 기본 사용자(본인) 생성
-    const user = await this.prisma.user.findUnique({
-      where: { id: userId },
-    });
-
-    await this.prisma.person.create({
-      data: {
-        projectId: project.id,
-        userId,
-        name: user!.name,
-      },
-    });
-
+    // 구성원(Person)은 자동으로 만들지 않는다. 사용자가 직접 등록한다.
     await this.createDefaultCategories(userId, project.id);
 
     return project;

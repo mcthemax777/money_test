@@ -41,7 +41,9 @@ export namespace Auth {
     accessToken: string;
     refreshToken: string;
     user: UserResponse;
-    defaultProjectData: ProjectInitialData;
+    // 프로젝트를 모두 삭제하거나 탈퇴하면 null이 된다. 이 경우에도 로그인은
+    // 성공해야 하며, 클라이언트가 프로젝트 생성 화면으로 유도한다.
+    defaultProjectData: ProjectInitialData | null;
   }
 
   export interface RefreshRequest {

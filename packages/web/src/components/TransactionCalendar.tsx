@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo } from 'react';
+import { useMemo } from 'react';
 
 interface Transaction {
   id: string;
@@ -27,20 +27,27 @@ interface CalendarDay {
 
 interface Props {
   transactions: Transaction[];
+  /** 화면에 표시할 연도 */
+  year: number;
+  /** 화면에 표시할 월 (1~12) */
+  month: number;
   onDateSelect: (date: Date, transactions: Transaction[]) => void;
-  onMonthChange?: (year: number, month: number) => void;
+  onMonthChange: (year: number, month: number) => void;
   startDate?: Date | null;
   endDate?: Date | null;
 }
 
 export default function TransactionCalendar({
   transactions,
+  year,
+  month,
   onDateSelect,
   onMonthChange,
   startDate,
   endDate,
 }: Props) {
-  const [currentDate, setCurrentDate] = useState(new Date());
+  // 표시 월은 부모가 관리한다. 내부 상태를 두면 홈 상단의 월 이동과 어긋난다.
+  const currentDate = useMemo(() => new Date(year, month - 1, 1), [year, month]);
 
   const isDateInRange = (date: Date): boolean => {
     if (!startDate) return false;
@@ -105,22 +112,20 @@ export default function TransactionCalendar({
     return calendarDays;
   }, [currentDate, transactions]);
 
+  // Date 생성자가 월 넘김(1월->전년 12월, 12월->다음해 1월)을 알아서 처리한다.
   const handlePrevMonth = () => {
-    const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth() - 1);
-    setCurrentDate(newDate);
-    onMonthChange?.(newDate.getFullYear(), newDate.getMonth() + 1);
+    const prev = new Date(year, month - 2, 1);
+    onMonthChange(prev.getFullYear(), prev.getMonth() + 1);
   };
 
   const handleNextMonth = () => {
-    const newDate = new Date(currentDate.getFullYear(), currentDate.getMonth() + 1);
-    setCurrentDate(newDate);
-    onMonthChange?.(newDate.getFullYear(), newDate.getMonth() + 1);
+    const next = new Date(year, month, 1);
+    onMonthChange(next.getFullYear(), next.getMonth() + 1);
   };
 
   const handleToday = () => {
     const today = new Date();
-    setCurrentDate(today);
-    onMonthChange?.(today.getFullYear(), today.getMonth() + 1);
+    onMonthChange(today.getFullYear(), today.getMonth() + 1);
   };
 
   const weekDays = ['일', '월', '화', '수', '목', '금', '토'];

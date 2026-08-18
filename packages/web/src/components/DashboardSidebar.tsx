@@ -7,6 +7,7 @@ import { useUserFilter } from '@/store/user-filter';
 import { useProject } from '@/store/project';
 import { useAuth } from '@/store/auth';
 import { apiClient } from '@/lib/api-client';
+import { UserAvatar } from '@/components/UserAvatar';
 
 interface Person {
   id: string;
@@ -20,29 +21,31 @@ interface Project {
   role: 'owner' | 'editor' | 'viewer';
 }
 
-const menuItems = [
-  {
-    section: null,
-    items: [
-      { label: '홈', href: '/dashboard' },
-      { label: '통계', href: '/statistics' },
-      { label: '자산', href: '/assets' },
-      { label: '카테고리', href: '/categories' },
-      { label: '설정', href: '/settings' },
-    ],
-  },
+// 프로젝트가 있어야 의미가 있는 메뉴. 프로젝트가 없으면 감춘다.
+const projectMenuItems = [
+  { label: '홈', href: '/dashboard' },
+  { label: '통계', href: '/statistics' },
+  { label: '자산', href: '/assets' },
+  { label: '카테고리', href: '/categories' },
 ];
+
+// 프로젝트가 없어도 접근할 수 있어야 하는 메뉴 (여기서 프로젝트를 만든다)
+const alwaysVisibleItems = [{ label: '설정', href: '/settings' }];
 
 export default function DashboardSidebar() {
   const pathname = usePathname();
   const [isOpen, setIsOpen] = useState(false);
-  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   const [showProjectChangeModal, setShowProjectChangeModal] = useState(false);
   const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
   const [isChanging, setIsChanging] = useState(false);
   const { people, setPeople, selectedPersonIds, togglePersonId, setSelectedPersonIds } = useUserFilter();
   const { projects, setProjects, selectedProjectId, setSelectedProjectId } = useProject();
-  const { setDefaultProject, defaultProjectData } = useAuth();
+  const { setDefaultProject, defaultProjectData, user } = useAuth();
+
+  const hasProject = projects.length > 0;
+  const visibleMenuItems = hasProject
+    ? [...projectMenuItems, ...alwaysVisibleItems]
+    : alwaysVisibleItems;
 
   // 프로젝트 로드
   useEffect(() => {
@@ -94,15 +97,11 @@ export default function DashboardSidebar() {
     if (href === '/assets') {
       return pathname === '/assets' || pathname === '/assets/';
     }
+    // 내 정보는 사이드탭 상단의 별도 항목이므로 설정 메뉴와 함께 강조되지 않게 한다.
+    if (href === '/settings') {
+      return pathname.startsWith('/settings') && !pathname.startsWith('/settings/profile');
+    }
     return pathname.startsWith(href);
-  };
-
-  const toggleSection = (section: string | null) => {
-    if (!section) return;
-    setExpandedSections((prev) => ({
-      ...prev,
-      [section]: !prev[section],
-    }));
   };
 
   // 프로젝트 변경 요청
@@ -173,6 +172,20 @@ export default function DashboardSidebar() {
           isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
+        <Link
+          href="/settings/profile"
+          onClick={() => setIsOpen(false)}
+          className={`flex items-center gap-3 p-4 border-b border-gray-200 transition ${
+            isActive('/settings/profile') ? 'bg-blue-50' : 'hover:bg-gray-50'
+          }`}
+        >
+          <UserAvatar name={user?.name} avatar={user?.avatar} />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-gray-900 truncate">{user?.name ?? '내 정보'}</p>
+            <p className="text-xs text-gray-500 truncate">{user?.email}</p>
+          </div>
+        </Link>
+
         <div className="p-4 border-b border-gray-200">
           <label className="block text-xs font-semibold text-gray-600 mb-3 uppercase tracking-wider">
             프로젝트
@@ -219,45 +232,31 @@ export default function DashboardSidebar() {
         </div>
 
         <nav className="p-4">
-          {menuItems.map((menu) => (
-            <div key={menu.section || 'top'} className={menu.section ? 'mb-8' : 'mb-4'}>
-              {menu.section && (
-                <button
-                  onClick={() => toggleSection(menu.section)}
-                  className="w-full flex items-center justify-between px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider cursor-pointer hover:text-gray-700"
-                >
-                  <span>{menu.section}</span>
-                  <span
-                    className={`transition-transform ${
-                      expandedSections[menu.section] ? 'rotate-180' : ''
+          <div className="mb-4">
+            <ul className="space-y-2">
+              {visibleMenuItems.map((item) => (
+                <li key={item.href}>
+                  <Link
+                    href={item.href}
+                    onClick={() => setIsOpen(false)}
+                    className={`block px-4 py-2 rounded-lg transition ${
+                      isActive(item.href)
+                        ? 'bg-blue-50 text-blue-600 font-medium'
+                        : 'text-gray-700 hover:bg-gray-50'
                     }`}
                   >
-                    ▼
-                  </span>
-                </button>
-              )}
+                    {item.label}
+                  </Link>
+                </li>
+              ))}
+            </ul>
 
-              {(!menu.section || expandedSections[menu.section]) && (
-                <ul className={`space-y-2 ${menu.section ? 'mt-3' : ''}`}>
-                  {menu.items.map((item) => (
-                    <li key={item.href}>
-                      <Link
-                        href={item.href}
-                        onClick={() => setIsOpen(false)}
-                        className={`block px-4 py-2 rounded-lg transition ${
-                          isActive(item.href)
-                            ? 'bg-blue-50 text-blue-600 font-medium'
-                            : 'text-gray-700 hover:bg-gray-50'
-                        }`}
-                      >
-                        {item.label}
-                      </Link>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          ))}
+            {!hasProject && (
+              <p className="mt-4 px-4 text-xs text-gray-500">
+                참여 중인 프로젝트가 없습니다. 설정에서 프로젝트를 만들거나 참여하세요.
+              </p>
+            )}
+          </div>
         </nav>
       </aside>
 

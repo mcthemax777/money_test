@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma.service';
 import { ProjectAccessService } from '../../common/project-access.guard';
 
@@ -27,9 +27,34 @@ export class UsersService {
   }
 
   async updateProfile(userId: string, data: { name?: string; avatar?: string }) {
+    const payload: { name?: string; avatar?: string } = {};
+
+    // 이름은 다른 멤버에게 보이는 값이므로 공백만 들어가지 않도록 막는다.
+    if (data.name !== undefined) {
+      const name = data.name.trim();
+
+      if (!name) {
+        throw new BadRequestException('이름을 입력해주세요.');
+      }
+
+      if (name.length > 50) {
+        throw new BadRequestException('이름은 50자 이하로 입력해주세요.');
+      }
+
+      payload.name = name;
+    }
+
+    if (data.avatar !== undefined) {
+      payload.avatar = data.avatar;
+    }
+
+    if (Object.keys(payload).length === 0) {
+      throw new BadRequestException('변경할 내용이 없습니다.');
+    }
+
     const user = await this.prisma.user.update({
       where: { id: userId },
-      data,
+      data: payload,
       select: {
         id: true,
         email: true,

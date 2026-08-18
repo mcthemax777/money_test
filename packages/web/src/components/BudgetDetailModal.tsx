@@ -54,6 +54,14 @@ interface BudgetDetailModalProps {
   isInline?: boolean;
   currentMonth?: number;
   currentYear?: number;
+  /** 선택된 프로젝트. 넘기지 않으면 서버가 기본 프로젝트로 조회한다. */
+  projectId?: string | null;
+}
+
+interface FilterParams {
+  mainCategoryId?: string;
+  subCategoryId?: string;
+  type?: string;
 }
 
 interface MonthlyData {
@@ -73,7 +81,17 @@ interface PieChartData {
   id?: string;
 }
 
-export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, categories = [], isInline = false, currentMonth, currentYear }: BudgetDetailModalProps) {
+export function BudgetDetailModal({
+  isOpen,
+  onClose,
+  categoryId,
+  categoryName,
+  categories = [],
+  isInline = false,
+  currentMonth,
+  currentYear,
+  projectId,
+}: BudgetDetailModalProps) {
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
   const [dailyData, setDailyData] = useState<DailyData[]>([]);
   const [currentMonthTransactions, setCurrentMonthTransactions] = useState<Transaction[]>([]);
@@ -82,264 +100,198 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
   const [categoryStats, setCategoryStats] = useState<PieChartData[]>([]);
   const [subCategoryStats, setSubCategoryStats] = useState<PieChartData[]>([]);
 
-  // categoryId의 타입 판단 (total-income, total-expense, 대분류, 소분류)
-  const getFilterParams = (catId: string) => {
+  // categoryId가 무엇을 가리키는지에 따라 서버 조회 조건을 만든다.
+  const getFilterParams = (catId: string): FilterParams => {
     if (catId === 'total-income') {
-      console.log('[getFilterParams] total income - filter by type:income');
-      return { mainCategoryId: undefined, subCategoryId: undefined, type: 'income' };
+      return { type: 'income' };
     }
+
+    // 전체지출은 expense와 credit_usage를 함께 봐야 하므로 서버 type 필터를 쓰지 않고
+    // 클라이언트에서 걸러낸다.
     if (catId === 'total-expense') {
-      console.log('[getFilterParams] total expense - filter by type:expense,credit_usage');
-      return { mainCategoryId: undefined, subCategoryId: undefined };
+      return {};
     }
 
-    const category = categories?.find(c => c.id === catId);
-    console.log('[getFilterParams] Looking for category:', catId);
-    console.log('[getFilterParams] Found category:', category);
+    const category = categories?.find((c) => c.id === catId);
 
-    const categoryType = category?.type || 'expense';
+    // 소분류면 소분류로, 대분류면 대분류로 조회한다.
+    return category?.parentId ? { subCategoryId: catId } : { mainCategoryId: catId };
+  };
 
-    if (category?.parentId) {
-      // 소분류
-      console.log('[getFilterParams] Subcategory - filtering by subCategoryId:', catId);
-      return { mainCategoryId: undefined, subCategoryId: catId };
+  // 합계와 통계에 공통으로 쓰는 거래 필터. 이전에는 같은 조건이 세 곳에 흩어져 있었다.
+  const buildTypeFilter = (filterParams: FilterParams) => {
+    const isCategoryFiltered = Boolean(filterParams.mainCategoryId || filterParams.subCategoryId);
+    const wantedType = filterParams.type ?? 'expense';
+
+    return (tx: Transaction) => {
+      // 이체는 소비가 아니므로 제외한다.
+      if (tx.type === 'transfer') return false;
+      // 카테고리 조건은 서버가 이미 적용했다.
+      if (isCategoryFiltered) return true;
+      if (wantedType === 'expense') return tx.type === 'expense' || tx.type === 'credit_usage';
+      return tx.type === wantedType;
+    };
+  };
+
+  // 거래를 키별로 합산해 원형차트 데이터로 만든다.
+  const summarizeBy = (
+    txs: Transaction[],
+    pick: (tx: Transaction) => { id: string; name: string } | null,
+  ): PieChartData[] => {
+    const totals = new Map<string, { name: string; value: number }>();
+
+    txs.forEach((tx) => {
+      const key = pick(tx);
+      if (!key) return;
+
+      const current = totals.get(key.id) ?? { name: key.name, value: 0 };
+      current.value += tx.amount;
+      totals.set(key.id, current);
+    });
+
+    return Array.from(totals.entries())
+      .map(([id, { name, value }]) => ({ id, name, value }))
+      .sort((a, b) => b.value - a.value);
+  };
+
+  const buildCategoryStats = (
+    catId: string,
+    filterParams: FilterParams,
+    txs: Transaction[],
+  ): PieChartData[] => {
+    if (catId === 'total-expense') {
+      return summarizeBy(txs, (tx) =>
+        tx.type === 'expense' || tx.type === 'credit_usage'
+          ? { id: tx.mainCategoryId || '', name: tx.mainCategory || '기타' }
+          : null,
+      );
     }
 
-    // 대분류
-    console.log('[getFilterParams] Main category - filtering by mainCategoryId:', catId);
-    return { mainCategoryId: catId, subCategoryId: undefined };
+    if (catId === 'total-income') {
+      return summarizeBy(txs, (tx) =>
+        tx.type === 'income'
+          ? { id: tx.mainCategoryId || '', name: tx.mainCategory || '기타' }
+          : null,
+      );
+    }
+
+    // 대분류를 보고 있으면 소분류로 쪼갠다. 소분류가 없는 거래는 넣지 않는다.
+    if (filterParams.mainCategoryId && !filterParams.subCategoryId) {
+      return summarizeBy(txs, (tx) =>
+        tx.subCategoryId ? { id: tx.subCategoryId, name: tx.subCategory || '기타' } : null,
+      );
+    }
+
+    // 소분류를 보고 있으면 더 쪼갤 것이 없다.
+    return [];
   };
 
   useEffect(() => {
     if (!isOpen || !categoryId) return;
 
-    console.log('Opening BudgetDetailModal for category:', categoryId);
+    const today = new Date();
+    const displayMonth = currentMonth || today.getMonth() + 1;
+    const displayYear = currentYear || today.getFullYear();
+
     setSelectedPieCategory(null);
 
     const loadData = async () => {
       setLoading(true);
+
       try {
-        console.log('Loading budget detail data...');
-        // 12개월 데이터 로드
-        const today = new Date();
-        const displayMonth = currentMonth || (today.getMonth() + 1);
-        const displayYear = currentYear || today.getFullYear();
-        const monthlyDataList: MonthlyData[] = [];
         const filterParams = getFilterParams(categoryId);
+        const matchesType = buildTypeFilter(filterParams);
 
-        for (let i = 11; i >= 0; i--) {
-          let month = displayMonth - i;
-          let year = displayYear;
-          if (month <= 0) {
-            year -= 1;
-            month += 12;
-          }
-          const date = new Date(year, month - 1, 1);
+        // 12개월치를 한 번에 받아 클라이언트에서 나눈다.
+        // 이전에는 월별로 12번, 일별로 1번, 목록으로 1번씩 총 14번을 순차 호출했다.
+        const rangeStart = new Date(displayYear, displayMonth - 12, 1);
+        const rangeEnd = new Date(displayYear, displayMonth, 0);
 
-          try {
-            console.log(`[API call] Month ${month}/${year} with params:`, filterParams);
-            const response = await apiClient.getTransactionsV2({
-              ...filterParams,
-              startDate: new Date(year, month - 1, 1),
-              endDate: new Date(year, month, 0),
-            });
-            const transactions = response?.data || [];
+        const response = await apiClient.getTransactionsV2(
+          { ...filterParams, startDate: rangeStart, endDate: rangeEnd },
+          projectId,
+        );
 
-            console.log(`Month ${month}/${year}: ${transactions.length} transactions`);
+        const rows: Transaction[] = (response?.data || [])
+          .map((tx: any) => ({
+            ...tx,
+            mainCategory:
+              typeof tx.mainCategory === 'object' ? tx.mainCategory?.name : tx.mainCategory,
+            subCategory:
+              typeof tx.subCategory === 'object' ? tx.subCategory?.name : tx.subCategory,
+          }))
+          .filter(matchesType);
 
-            const transactionType = filterParams.type || 'expense';
-            const isMainOrSubCategory = filterParams.mainCategoryId || filterParams.subCategoryId;
-            const amount = transactions
-              .filter((t: any) => {
-                // 이체 거래는 제외
-                if (t.type === 'transfer') return false;
-                // 대분류/소분류 필터는 API에서 이미 적용됨
-                if (isMainOrSubCategory) {
-                  return true;
-                }
-                if (transactionType === 'expense') {
-                  return t.type === 'expense' || t.type === 'credit_usage';
-                }
-                return t.type === transactionType;
-              })
-              .reduce((sum: number, t: any) => sum + t.amount, 0);
+        // 월별 합계
+        const monthKey = (date: Date) => `${date.getFullYear()}-${date.getMonth() + 1}`;
+        const monthlyTotals = new Map<string, number>();
 
-            monthlyDataList.push({
-              month: `${month}월`,
-              amount,
-            });
-          } catch (err) {
-            console.error(`Failed to load month ${month}/${year}:`, err);
-            monthlyDataList.push({
-              month: `${month}월`,
-              amount: 0,
-            });
-          }
-        }
+        rows.forEach((tx) => {
+          const key = monthKey(new Date(tx.date));
+          monthlyTotals.set(key, (monthlyTotals.get(key) ?? 0) + tx.amount);
+        });
 
-        console.log('Monthly data:', monthlyDataList);
-        setMonthlyData(monthlyDataList);
-
-        // 현재 월 일별 데이터 로드
-        try {
-          const dailyResponse = await apiClient.getTransactionsV2({
-            mainCategoryId: filterParams.mainCategoryId,
-            subCategoryId: filterParams.subCategoryId,
-            startDate: new Date(displayYear, displayMonth - 1, 1),
-            endDate: new Date(displayYear, displayMonth, 0),
+        const months: MonthlyData[] = [];
+        for (let i = 11; i >= 0; i -= 1) {
+          // Date 생성자가 연도 넘김을 처리한다.
+          const date = new Date(displayYear, displayMonth - 1 - i, 1);
+          months.push({
+            month: `${date.getMonth() + 1}월`,
+            amount: monthlyTotals.get(monthKey(date)) ?? 0,
           });
-          const dailyTransactions = dailyResponse?.data || [];
-
-          console.log('Daily transactions:', dailyTransactions.length);
-
-          const dailyMap = new Map<number, number>();
-          const dailyTransactionType = filterParams.type || 'expense';
-          const isMainOrSubCategory = filterParams.mainCategoryId || filterParams.subCategoryId;
-          dailyTransactions
-            .filter((t: any) => {
-              // 이체 거래는 제외
-              if (t.type === 'transfer') return false;
-              // 대분류/소분류 필터는 API에서 이미 적용됨
-              if (isMainOrSubCategory) {
-                return true;
-              }
-              if (dailyTransactionType === 'expense') {
-                return t.type === 'expense' || t.type === 'credit_usage';
-              }
-              return t.type === dailyTransactionType;
-            })
-            .forEach((t: any) => {
-              const day = new Date(t.date).getDate();
-              dailyMap.set(day, (dailyMap.get(day) || 0) + t.amount);
-            });
-
-          const dailyDataList: DailyData[] = [];
-          let cumulative = 0;
-          const daysInMonth = new Date(displayYear, displayMonth, 0).getDate();
-          for (let day = 1; day <= daysInMonth; day++) {
-            const amount = dailyMap.get(day) || 0;
-            cumulative += amount;
-            dailyDataList.push({ day, amount, cumulative });
-          }
-
-          console.log('Daily data:', dailyDataList);
-          setDailyData(dailyDataList);
-
-          // 현재 월의 거래내역 조회
-
-          try {
-            const currentResponse = await apiClient.getTransactionsV2({
-              ...filterParams,
-              startDate: new Date(displayYear, displayMonth - 1, 1),
-              endDate: new Date(displayYear, displayMonth, 0),
-            });
-            const txs = (currentResponse?.data || [])
-              .filter((tx: any) => tx.type !== 'transfer')
-              .map((tx: any) => ({
-                ...tx,
-                mainCategory: typeof tx.mainCategory === 'object' ? tx.mainCategory?.name : tx.mainCategory,
-                subCategory: typeof tx.subCategory === 'object' ? tx.subCategory?.name : tx.subCategory,
-              }));
-            setCurrentMonthTransactions(txs);
-
-            // categoryStats 계산
-            if (categoryId === 'total-expense') {
-              // 전체지출: 대분류별 통계
-              const statsMap = new Map<string, { name: string; id?: string; amount: number }>();
-              txs.forEach((tx: any) => {
-                if (tx.type === 'expense' || tx.type === 'credit_usage') {
-                  const mainCatId = tx.mainCategoryId || '';
-                  const mainCatName = tx.mainCategory || '기타';
-                  if (!statsMap.has(mainCatId)) {
-                    statsMap.set(mainCatId, { name: mainCatName, id: mainCatId, amount: 0 });
-                  }
-                  const stat = statsMap.get(mainCatId);
-                  if (stat) {
-                    stat.amount += tx.amount;
-                  }
-                }
-              });
-
-              const stats = Array.from(statsMap.values())
-                .map(stat => ({
-                  name: stat.name,
-                  value: stat.amount,
-                  id: stat.id,
-                }))
-                .sort((a, b) => b.value - a.value);
-              setCategoryStats(stats);
-            } else if (categoryId === 'total-income') {
-              // 전체수입: 대분류별 통계
-              const statsMap = new Map<string, { name: string; id?: string; amount: number }>();
-              txs.forEach((tx: any) => {
-                if (tx.type === 'income') {
-                  const mainCatId = tx.mainCategoryId || '';
-                  const mainCatName = tx.mainCategory || '기타';
-                  if (!statsMap.has(mainCatId)) {
-                    statsMap.set(mainCatId, { name: mainCatName, id: mainCatId, amount: 0 });
-                  }
-                  const stat = statsMap.get(mainCatId);
-                  if (stat) {
-                    stat.amount += tx.amount;
-                  }
-                }
-              });
-
-              const stats = Array.from(statsMap.values())
-                .map(stat => ({
-                  name: stat.name,
-                  value: stat.amount,
-                  id: stat.id,
-                }))
-                .sort((a, b) => b.value - a.value);
-              setCategoryStats(stats);
-            } else if (filterParams.mainCategoryId && !filterParams.subCategoryId) {
-              // 대분류 선택: 소분류별 통계 (소분류가 등록된 거래만)
-              const statsMap = new Map<string, { name: string; id?: string; amount: number }>();
-              txs.forEach((tx: any) => {
-                // 소분류가 없으면 건너뜀
-                if (!tx.subCategoryId) return;
-
-                const subCatId = tx.subCategoryId;
-                const subCatName = tx.subCategory || '기타';
-                if (!statsMap.has(subCatId)) {
-                  statsMap.set(subCatId, { name: subCatName, id: subCatId, amount: 0 });
-                }
-                const stat = statsMap.get(subCatId);
-                if (stat) {
-                  stat.amount += tx.amount;
-                }
-              });
-
-              const stats = Array.from(statsMap.values())
-                .map(stat => ({
-                  name: stat.name,
-                  value: stat.amount,
-                  id: stat.id,
-                }))
-                .sort((a, b) => b.value - a.value);
-              setCategoryStats(stats);
-            } else {
-              // 소분류 선택: 원형차트 안 보임
-              setCategoryStats([]);
-            }
-          } catch (err) {
-            console.error('Failed to load current month transactions:', err);
-            setCurrentMonthTransactions([]);
-          }
-        } catch (err) {
-          console.error('Failed to load daily transactions:', err);
-          setDailyData([]);
         }
+        setMonthlyData(months);
+
+        // 표시 중인 달의 거래
+        const monthRows = rows.filter((tx) => {
+          const date = new Date(tx.date);
+          return date.getFullYear() === displayYear && date.getMonth() + 1 === displayMonth;
+        });
+        setCurrentMonthTransactions(monthRows);
+
+        // 일별 누적
+        const dailyTotals = new Map<number, number>();
+        monthRows.forEach((tx) => {
+          const day = new Date(tx.date).getDate();
+          dailyTotals.set(day, (dailyTotals.get(day) ?? 0) + tx.amount);
+        });
+
+        const daysInMonth = new Date(displayYear, displayMonth, 0).getDate();
+        const daily: DailyData[] = [];
+        let cumulative = 0;
+
+        for (let day = 1; day <= daysInMonth; day += 1) {
+          const amount = dailyTotals.get(day) ?? 0;
+          cumulative += amount;
+          daily.push({ day, amount, cumulative });
+        }
+        setDailyData(daily);
+
+        setCategoryStats(buildCategoryStats(categoryId, filterParams, monthRows));
       } catch (error) {
-        console.error('Failed to load budget details:', error);
+        console.error('분류별 상세 데이터를 불러오지 못했습니다:', error);
+        // 실패했을 때 이전 달의 데이터가 남아 있으면 잘못된 값을 보게 되므로 비운다.
+        setMonthlyData([]);
+        setDailyData([]);
+        setCurrentMonthTransactions([]);
+        setCategoryStats([]);
       } finally {
         setLoading(false);
       }
     };
 
     loadData();
-  }, [isOpen, categoryId, categories, currentMonth, currentYear]);
+  }, [isOpen, categoryId, categories, currentMonth, currentYear, projectId]);
+
+  // 값이 모두 0이면 domain이 [0, 0]이 되어 recharts가 축을 그리지 못하고
+  // 막대가 최대 높이로 보인다. 데이터가 없을 때는 기본 상한을 준다.
+  const axisMax = (values: number[]) => {
+    const max = Math.max(0, ...values);
+    return max > 0 ? Math.ceil((max * 1.2) / 100) * 100 : 1000;
+  };
+
+  const hasMonthlyAmount = monthlyData.some((d) => d.amount > 0);
+  const hasDailyAmount = dailyData.some((d) => d.cumulative > 0);
 
   const handlePieClick = (data: PieChartData) => {
     if (!data.id) return;
@@ -454,30 +406,42 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
           {/* 12개월 바차트 */}
           <div>
             <h3 className="text-lg font-semibold mb-4">지난 12개월 사용금액</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <BarChart data={monthlyData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="month" />
-                <YAxis domain={[0, Math.ceil((Math.max(...monthlyData.map((d) => d.amount), 0) * 1.2) / 100) * 100]} />
-                <Tooltip formatter={(value: any) => `${(value || 0).toLocaleString()}원`} />
-                <Bar dataKey="amount" fill="#3b82f6" />
-              </BarChart>
-            </ResponsiveContainer>
+            {hasMonthlyAmount ? (
+              <ResponsiveContainer width="100%" height={300}>
+                <BarChart data={monthlyData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="month" />
+                  <YAxis domain={[0, axisMax(monthlyData.map((d) => d.amount))]} />
+                  <Tooltip formatter={(value: any) => `${(value || 0).toLocaleString()}원`} />
+                  <Bar dataKey="amount" fill="#3b82f6" />
+                </BarChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
+                최근 12개월 사용 내역이 없습니다.
+              </p>
+            )}
           </div>
 
           {/* 일별 라인차트 */}
           <div>
             <h3 className="text-lg font-semibold mb-4">이번 달 일별 누적 사용금액</h3>
-            <ResponsiveContainer width="100%" height={300}>
-              <LineChart data={dailyData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="day" />
-                <YAxis domain={[0, Math.ceil((Math.max(...dailyData.map((d) => d.cumulative), 0) * 1.2) / 100) * 100]} />
-                <Tooltip formatter={(value: any) => `${(value || 0).toLocaleString()}원`} />
-                <Legend />
-                <Line type="monotone" dataKey="cumulative" stroke="#3b82f6" name="누적 사용금액" />
-              </LineChart>
-            </ResponsiveContainer>
+            {hasDailyAmount ? (
+              <ResponsiveContainer width="100%" height={300}>
+                <LineChart data={dailyData}>
+                  <CartesianGrid strokeDasharray="3 3" />
+                  <XAxis dataKey="day" />
+                  <YAxis domain={[0, axisMax(dailyData.map((d) => d.cumulative))]} />
+                  <Tooltip formatter={(value: any) => `${(value || 0).toLocaleString()}원`} />
+                  <Legend />
+                  <Line type="monotone" dataKey="cumulative" stroke="#3b82f6" name="누적 사용금액" />
+                </LineChart>
+              </ResponsiveContainer>
+            ) : (
+              <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
+                이번 달 사용 내역이 없습니다.
+              </p>
+            )}
           </div>
 
           {/* 거래내역 */}
