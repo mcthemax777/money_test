@@ -10,6 +10,8 @@ interface TransactionItemProps {
   subCategory?: string;
   onClick?: () => void;
   isSelected?: boolean;
+  fromAccountName?: string;
+  toAccountName?: string;
 }
 
 export default function TransactionItem({
@@ -22,6 +24,8 @@ export default function TransactionItem({
   subCategory,
   onClick,
   isSelected,
+  fromAccountName,
+  toAccountName,
 }: TransactionItemProps) {
   const getTypeColor = (txType: string) => {
     switch (txType) {
@@ -31,7 +35,7 @@ export default function TransactionItem({
       case 'credit_usage':
         return 'border-red-500 bg-red-50';
       case 'transfer':
-        return 'border-blue-500 bg-blue-50';
+        return 'border-gray-400 bg-gray-50';
       case 'credit_payment':
         return 'border-gray-900 bg-gray-900';
       default:
@@ -47,7 +51,7 @@ export default function TransactionItem({
       case 'credit_usage':
         return 'text-red-600';
       case 'transfer':
-        return 'text-blue-600';
+        return 'text-gray-600';
       case 'credit_payment':
         return 'text-gray-200';
       default:
@@ -64,24 +68,45 @@ export default function TransactionItem({
     >
       <div className="flex justify-between gap-4">
         <div className="flex-1">
-          <p className="font-bold text-gray-900 text-base">{description}</p>
-          <div className="mt-2">
-            <p className="text-sm text-gray-600 font-semibold">
-              {mainCategory}
-              {subCategory && ` > ${subCategory}`}
-            </p>
-          </div>
+          {type === 'transfer' ? (
+            <>
+              <p className="font-bold text-gray-900 text-base">이체</p>
+              <div className="mt-2">
+                <p className="text-sm text-gray-700 font-semibold">
+                  {fromAccountName} → {toAccountName}
+                </p>
+              </div>
+            </>
+          ) : (
+            <>
+              <p className="font-bold text-gray-900 text-base">{description}</p>
+              <div className="mt-2">
+                <p className="text-sm text-gray-600 font-semibold">
+                  {mainCategory}
+                  {subCategory && ` > ${subCategory}`}
+                </p>
+              </div>
+            </>
+          )}
           <p className="text-xs text-gray-500 mt-2">
             {new Date(date).toLocaleDateString('ko-KR')}
           </p>
         </div>
         <div className="text-right flex flex-col justify-between">
           <p className={`text-lg font-bold ${getAmountColor(type)}`}>
-            {type === 'income' ? '+' : '-'}
-            {new Intl.NumberFormat('ko-KR', {
-              style: 'currency',
-              currency: 'KRW',
-            }).format(amount)}
+            {type === 'transfer'
+              ? new Intl.NumberFormat('ko-KR', {
+                  style: 'currency',
+                  currency: 'KRW',
+                }).format(amount)
+              : <>
+                  {type === 'income' ? '+' : '-'}
+                  {new Intl.NumberFormat('ko-KR', {
+                    style: 'currency',
+                    currency: 'KRW',
+                  }).format(amount)}
+                </>
+            }
           </p>
         </div>
       </div>

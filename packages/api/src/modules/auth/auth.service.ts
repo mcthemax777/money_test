@@ -81,6 +81,19 @@ export class AuthService {
       },
     });
 
+    // 기본 사용자(본인) 생성
+    const user = await this.prisma.user.findUnique({
+      where: { id: userId },
+    });
+
+    await this.prisma.person.create({
+      data: {
+        projectId: project.id,
+        userId,
+        name: user!.name,
+      },
+    });
+
     await this.createDefaultCategories(userId, project.id);
 
     return project;

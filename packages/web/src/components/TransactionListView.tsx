@@ -15,6 +15,12 @@ interface Transaction {
   accountId?: string;
   cardId?: string;
   personId?: string;
+  toAccountId?: string;
+}
+
+interface Account {
+  id: string;
+  name: string;
 }
 
 interface GroupedTransactions {
@@ -24,11 +30,13 @@ interface GroupedTransactions {
 interface TransactionListViewProps {
   transactions: Transaction[];
   onTransactionClick: (tx: Transaction) => void;
+  accounts?: Account[];
 }
 
 export default function TransactionListView({
   transactions,
   onTransactionClick,
+  accounts = [],
 }: TransactionListViewProps) {
   const groupedTransactions = transactions.reduce((acc, tx) => {
     const date = new Date(tx.date).toLocaleDateString('ko-KR');
@@ -110,19 +118,25 @@ export default function TransactionListView({
               </div>
             </div>
             <div className="space-y-2">
-              {groupedTransactions[date].map((tx) => (
-                <TransactionItem
-                  key={tx.id}
-                  id={tx.id}
-                  description={tx.description}
-                  amount={tx.amount}
-                  type={tx.type}
-                  date={tx.date}
-                  mainCategory={tx.mainCategory}
-                  subCategory={tx.subCategory}
-                  onClick={() => onTransactionClick(tx)}
-                />
-              ))}
+              {groupedTransactions[date].map((tx) => {
+                const fromAccount = accounts.find(a => a.id === tx.accountId);
+                const toAccount = accounts.find(a => a.id === tx.toAccountId);
+                return (
+                  <TransactionItem
+                    key={tx.id}
+                    id={tx.id}
+                    description={tx.description}
+                    amount={tx.amount}
+                    type={tx.type}
+                    date={tx.date}
+                    mainCategory={tx.mainCategory}
+                    subCategory={tx.subCategory}
+                    onClick={() => onTransactionClick(tx)}
+                    fromAccountName={fromAccount?.name}
+                    toAccountName={toAccount?.name}
+                  />
+                );
+              })}
             </div>
           </div>
         );

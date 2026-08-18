@@ -85,6 +85,12 @@ export namespace TransactionDto {
     type: 'income' | 'expense' | 'transfer';
     amount: number;
     description: string;
+    merchant?: string; // 거래처 (선택사항)
+    detailedNote?: string; // 상세설명 (선택사항)
+    toAccountId?: string; // 이체 대상 계좌 (type=transfer일 때)
+    transferFee?: number; // 이체 수수료 금액 (type=transfer일 때, 선택사항)
+    transferFeeMainCategoryId?: string; // 수수료 대분류 (transferFee가 있으면 필수)
+    transferFeeSubCategoryId?: string; // 수수료 소분류 (선택사항)
     date: Date;
     mainCategoryId: string; // 대분류 ID
     subCategoryId?: string; // 소분류 ID
@@ -97,11 +103,17 @@ export namespace TransactionDto {
 
   export interface UpdateRequest {
     description?: string;
+    merchant?: string; // 거래처
+    detailedNote?: string; // 상세설명
     amount?: number;
     date?: Date;
     type?: 'income' | 'expense' | 'transfer';
     personId?: string;
     cardId?: string;
+    toAccountId?: string; // 이체 대상 계좌
+    transferFee?: number; // 이체 수수료 금액
+    transferFeeMainCategoryId?: string; // 수수료 대분류
+    transferFeeSubCategoryId?: string; // 수수료 소분류
     mainCategoryId?: string;
     subCategoryId?: string;
     tags?: string[];

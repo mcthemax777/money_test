@@ -66,36 +66,26 @@ export default function DashboardSidebar() {
 
   // 사용자 로드
   useEffect(() => {
-    if (selectedProjectId) {
-      // 캐시된 데이터가 현재 프로젝트와 일치하면 사용
-      const isCached = defaultProjectData && defaultProjectData.project?.id === selectedProjectId;
+    if (!selectedProjectId) return;
 
-      if (isCached && defaultProjectData.people) {
-        // 캐시된 사람 정보 사용 (API 호출 제거)
-        const peopleList = defaultProjectData.people;
-        setPeople(peopleList);
+    const loadPeople = async () => {
+      try {
+        console.log('[Sidebar] Loading people from API for project:', selectedProjectId);
+        const data = await apiClient.getPeople(selectedProjectId);
+        console.log('[Sidebar] Loaded people:', data);
+        setPeople(data || []);
+        // 기본값: 모든 사용자 선택
         if (selectedPersonIds.length === 0) {
-          setSelectedPersonIds(peopleList.map((p: Person) => p.id));
+          setSelectedPersonIds((data || []).map((p: Person) => p.id));
         }
-      } else {
-        // 캐시가 없으면 API 호출
-        const loadPeople = async () => {
-          try {
-            const data = await apiClient.getPeople(selectedProjectId);
-            setPeople(data || []);
-            // 기본값: 모든 사용자 선택
-            if (selectedPersonIds.length === 0) {
-              setSelectedPersonIds((data || []).map((p: Person) => p.id));
-            }
-          } catch (err) {
-            console.error('사용자 목록 조회 실패:', err);
-          }
-        };
-
-        loadPeople();
+      } catch (err) {
+        console.error('[Sidebar] 사용자 목록 조회 실패:', err);
+        setPeople([]);
       }
-    }
-  }, [selectedProjectId, defaultProjectData?.project?.id, setPeople, setSelectedPersonIds, selectedPersonIds.length]);
+    };
+
+    loadPeople();
+  }, [selectedProjectId]);
 
   const isActive = (href: string) => {
     if (href === '/dashboard') {
@@ -203,6 +193,29 @@ export default function DashboardSidebar() {
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="p-4 border-b border-gray-200">
+          <label className="block text-xs font-semibold text-gray-600 mb-3 uppercase tracking-wider">
+            사용자
+          </label>
+          {people && people.length > 0 ? (
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {people.map((person) => (
+                <label key={person.id} className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={selectedPersonIds.includes(person.id)}
+                    onChange={() => togglePersonId(person.id)}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-gray-700">{person.name}</span>
+                </label>
+              ))}
+            </div>
+          ) : (
+            <p className="text-sm text-gray-500">사용자 로딩 중...</p>
+          )}
         </div>
 
         <nav className="p-4">

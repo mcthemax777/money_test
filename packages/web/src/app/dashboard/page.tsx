@@ -34,6 +34,10 @@ interface Transaction {
   cardId?: string;
   personId?: string;
   isFixed?: boolean;
+  merchant?: string;
+  detailedNote?: string;
+  toAccountId?: string;
+  transferFee?: number;
 }
 
 interface Account {
@@ -136,6 +140,12 @@ export default function TransactionsPage() {
     subCategoryId: '',
     amount: '',
     description: '',
+    merchant: '',
+    detailedNote: '',
+    toAccountId: '',
+    transferFee: '',
+    transferFeeMainCategoryId: '',
+    transferFeeSubCategoryId: '',
     date: new Date().toISOString().split('T')[0],
     time: '',
     isFixed: false,
@@ -279,6 +289,12 @@ export default function TransactionsPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    if (!formData.personId) {
+      setError('사용자를 선택해주세요.');
+      return;
+    }
+
     try {
       setIsSubmitting(true);
       let dateValue = formData.date;
@@ -296,7 +312,7 @@ export default function TransactionsPage() {
           cardId = formData.cardId;
         }
 
-        await apiClient.updateTransaction(editingId, {
+        const updatePayload: any = {
           type: formData.type,
           amount: parseInt(formData.amount),
           description: formData.description,
@@ -306,7 +322,16 @@ export default function TransactionsPage() {
           mainCategoryId: formData.mainCategoryId,
           subCategoryId: formData.subCategoryId || undefined,
           isFixed: formData.isFixed,
-        });
+        };
+
+        if (formData.merchant) updatePayload.merchant = formData.merchant;
+        if (formData.detailedNote) updatePayload.detailedNote = formData.detailedNote;
+        if (formData.type === 'transfer' && formData.toAccountId) {
+          updatePayload.toAccountId = formData.toAccountId;
+          if (formData.transferFee) updatePayload.transferFee = parseInt(formData.transferFee);
+        }
+
+        await apiClient.updateTransaction(editingId, updatePayload);
       } else {
         let accountId = formData.accountId;
         if (formData.method === 'card' && formData.cardId) {
@@ -323,7 +348,7 @@ export default function TransactionsPage() {
           date: dateValue,
         });
 
-        await apiClient.createTransactionV2({
+        const createPayload: any = {
           accountId,
           personId: formData.personId,
           type: formData.type,
@@ -334,7 +359,24 @@ export default function TransactionsPage() {
           subCategoryId: formData.subCategoryId || undefined,
           cardId: formData.method === 'card' ? formData.cardId || undefined : undefined,
           isFixed: formData.isFixed,
-        });
+        };
+
+        if (formData.merchant) createPayload.merchant = formData.merchant;
+        if (formData.detailedNote) createPayload.detailedNote = formData.detailedNote;
+        if (formData.type === 'transfer' && formData.toAccountId) {
+          createPayload.toAccountId = formData.toAccountId;
+          if (formData.transferFee) {
+            createPayload.transferFee = parseInt(formData.transferFee);
+            if (formData.transferFeeMainCategoryId) {
+              createPayload.transferFeeMainCategoryId = formData.transferFeeMainCategoryId;
+            }
+            if (formData.transferFeeSubCategoryId) {
+              createPayload.transferFeeSubCategoryId = formData.transferFeeSubCategoryId;
+            }
+          }
+        }
+
+        await apiClient.createTransactionV2(createPayload);
       }
 
       console.log('[handleSubmit] Fetching transactions with projectId:', selectedProjectId);
@@ -357,6 +399,12 @@ export default function TransactionsPage() {
         subCategoryId: '',
         amount: '',
         description: '',
+        merchant: '',
+        detailedNote: '',
+        toAccountId: '',
+        transferFee: '',
+        transferFeeMainCategoryId: '',
+        transferFeeSubCategoryId: '',
         date: new Date().toISOString().split('T')[0],
         time: '',
         isFixed: false,
@@ -383,6 +431,10 @@ export default function TransactionsPage() {
       subCategoryId: '',
       amount: '',
       description: '',
+      merchant: '',
+      detailedNote: '',
+      toAccountId: '',
+      transferFee: '',
       date: new Date().toISOString().split('T')[0],
       time: '',
       isFixed: false,
@@ -435,6 +487,10 @@ export default function TransactionsPage() {
       subCategoryId: selectedTransaction.subCategoryId || '',
       amount: selectedTransaction.amount.toString(),
       description: selectedTransaction.description || '',
+      merchant: (selectedTransaction as any).merchant || '',
+      detailedNote: (selectedTransaction as any).detailedNote || '',
+      toAccountId: (selectedTransaction as any).toAccountId || '',
+      transferFee: (selectedTransaction as any).transferFee ? (selectedTransaction as any).transferFee.toString() : '',
       date: selectedTransaction.date.split('T')[0],
       time: '',
       isFixed: selectedTransaction.isFixed || false,
@@ -457,6 +513,10 @@ export default function TransactionsPage() {
       subCategoryId: transaction.subCategoryId || '',
       amount: transaction.amount.toString(),
       description: transaction.description || '',
+      merchant: (transaction as any).merchant || '',
+      detailedNote: (transaction as any).detailedNote || '',
+      toAccountId: (transaction as any).toAccountId || '',
+      transferFee: (transaction as any).transferFee ? (transaction as any).transferFee.toString() : '',
       date: transaction.date.split('T')[0],
       time: '',
       isFixed: transaction.isFixed || false,
@@ -1129,7 +1189,7 @@ export default function TransactionsPage() {
           <p className="text-gray-600">거래가 없습니다.</p>
         ) : viewType === 'payment-method' ? (
           <PaymentMethodTab
-            transactions={transactions}
+            transactions={filteredTransactions}
             accounts={accounts}
             cards={cards}
             people={people}
@@ -1154,6 +1214,7 @@ export default function TransactionsPage() {
                   <TransactionListView
                     transactions={currentMonthTransactions}
                     onTransactionClick={handleTransactionClick}
+                    accounts={accounts}
                   />
                 ) : (
                   <>
@@ -1192,19 +1253,25 @@ export default function TransactionsPage() {
                       );
                     })()}
                     <div className="space-y-2">
-                      {displayTransactions.map((tx) => (
-                        <TransactionItem
-                          key={tx.id}
-                          id={tx.id}
-                          description={tx.description}
-                          amount={tx.amount}
-                          type={tx.type}
-                          date={tx.date}
-                          mainCategory={tx.mainCategory}
-                          subCategory={tx.subCategory}
-                          onClick={() => handleTransactionClick(tx)}
-                        />
-                      ))}
+                      {displayTransactions.map((tx) => {
+                        const fromAccount = accounts.find(a => a.id === tx.accountId);
+                        const toAccount = accounts.find(a => a.id === (tx as any).toAccountId);
+                        return (
+                          <TransactionItem
+                            key={tx.id}
+                            id={tx.id}
+                            description={tx.description}
+                            amount={tx.amount}
+                            type={tx.type}
+                            date={tx.date}
+                            mainCategory={tx.mainCategory}
+                            subCategory={tx.subCategory}
+                            onClick={() => handleTransactionClick(tx)}
+                            fromAccountName={fromAccount?.name}
+                            toAccountName={toAccount?.name}
+                          />
+                        );
+                      })}
                     </div>
                   </>
                 )}
@@ -1240,7 +1307,7 @@ export default function TransactionsPage() {
                       type="radio"
                       value="card"
                       checked={formData.method === 'card'}
-                      onChange={(e) => setFormData({ ...formData, method: e.target.value as any, accountId: '', cardId: '' })}
+                      onChange={(e) => setFormData({ ...formData, method: 'card', type: 'expense', mainCategoryId: '', subCategoryId: '', accountId: '', cardId: '' })}
                       className="mr-2"
                     />
                     <span className="text-sm">카드</span>
@@ -1295,71 +1362,157 @@ export default function TransactionsPage() {
                   유형
                 </label>
                 <CustomSelect
-                  options={[
-                    { id: 'expense', name: '지출' },
-                    { id: 'income', name: '수입' },
-                    { id: 'transfer', name: '이체' },
-                  ]}
-                  value={formData.type}
-                  onChange={(value) => setFormData({ ...formData, type: value as any, mainCategoryId: '', subCategoryId: '' })}
-                  placeholder="선택하세요"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  대분류
-                </label>
-                <CustomSelect
-                  options={categories
-                    .filter((c) => c.level === 1 && c.type === formData.type)
-                    .map((cat) => ({ id: cat.id, name: cat.name }))}
-                  value={formData.mainCategoryId}
-                  onChange={(value) => {
-                    const selectedCategory = categories.find((c) => c.id === value);
-                    setFormData({
-                      ...formData,
-                      mainCategoryId: value,
-                      subCategoryId: '',
-                      isFixed: selectedCategory?.defaultIsFixed || false,
-                    });
-                  }}
-                  placeholder="선택하세요"
-                  onAddClick={() => setIsCategoryModalOpen(true)}
-                  addButtonLabel="대분류 추가"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  소분류 (선택)
-                </label>
-                <CustomSelect
                   options={
-                    formData.mainCategoryId
-                      ? categories
-                          .filter(
-                            (c) =>
-                              c.level === 2 &&
-                              c.parentId === formData.mainCategoryId
-                          )
-                          .map((cat) => ({ id: cat.id, name: cat.name }))
-                      : [{ id: '', name: '없음' }]
+                    formData.method === 'card'
+                      ? [{ id: 'expense', name: '지출' }]
+                      : [
+                          { id: 'expense', name: '지출' },
+                          { id: 'income', name: '수입' },
+                          { id: 'transfer', name: '이체' },
+                        ]
                   }
-                  value={formData.subCategoryId}
-                  onChange={(value) => {
-                    const selectedCategory = categories.find((c) => c.id === value);
-                    setFormData({
-                      ...formData,
-                      subCategoryId: value,
-                      isFixed: selectedCategory?.defaultIsFixed || false,
+                  value={formData.type}
+                  onChange={(value) => setFormData({
+                    ...formData,
+                    type: value as any,
+                    mainCategoryId: '',
+                    subCategoryId: '',
+                  })}
+                  placeholder="선택하세요"
+                />
+              </div>
+
+              {formData.type !== 'transfer' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      대분류
+                    </label>
+                    <CustomSelect
+                      options={categories
+                        .filter((c) => c.level === 1 && c.type === formData.type)
+                        .map((cat) => ({ id: cat.id, name: cat.name }))}
+                      value={formData.mainCategoryId}
+                      onChange={(value) => {
+                        const selectedCategory = categories.find((c) => c.id === value);
+                        setFormData({
+                          ...formData,
+                          mainCategoryId: value,
+                          subCategoryId: '',
+                          isFixed: selectedCategory?.defaultIsFixed || false,
+                        });
+                      }}
+                      placeholder="선택하세요"
+                      onAddClick={() => setIsCategoryModalOpen(true)}
+                      addButtonLabel="대분류 추가"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      소분류 (선택)
+                    </label>
+                    <CustomSelect
+                      options={
+                        formData.mainCategoryId
+                          ? categories
+                              .filter(
+                                (c) =>
+                                  c.level === 2 &&
+                                  c.parentId === formData.mainCategoryId
+                              )
+                              .map((cat) => ({ id: cat.id, name: cat.name }))
+                          : [{ id: '', name: '없음' }]
+                      }
+                      value={formData.subCategoryId}
+                      onChange={(value) => {
+                        const selectedCategory = categories.find((c) => c.id === value);
+                        setFormData({
+                          ...formData,
+                          subCategoryId: value,
+                          isFixed: selectedCategory?.defaultIsFixed || false,
                     });
                   }}
                   placeholder="없음"
                   onAddClick={() => router.push('/dashboard/categories')}
                   addButtonLabel="소분류 추가"
                 />
-              </div>
+                  </div>
+                </>
+              )}
+
+              {formData.type === 'transfer' && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      이체 대상 계좌
+                    </label>
+                    <CustomSelect
+                      options={accounts
+                        .filter((acc) => acc.id !== formData.accountId)
+                        .map((acc) => ({ id: acc.id, name: acc.name }))}
+                      value={formData.toAccountId}
+                      onChange={(value) => setFormData({ ...formData, toAccountId: value })}
+                      placeholder="선택하세요"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      이체 수수료 (선택)
+                    </label>
+                    <input
+                      type="number"
+                      value={formData.transferFee}
+                      onChange={(e) => setFormData({ ...formData, transferFee: e.target.value })}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="0"
+                    />
+                  </div>
+
+                  {formData.transferFee && parseInt(formData.transferFee) > 0 && (
+                    <>
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          수수료 대분류
+                        </label>
+                        <CustomSelect
+                          options={categories
+                            .filter((c) => c.level === 1 && c.type === 'expense')
+                            .map((cat) => ({ id: cat.id, name: cat.name }))}
+                          value={formData.transferFeeMainCategoryId}
+                          onChange={(value) => setFormData({ ...formData, transferFeeMainCategoryId: value, transferFeeSubCategoryId: '' })}
+                          placeholder="선택하세요"
+                          onAddClick={() => setIsCategoryModalOpen(true)}
+                          addButtonLabel="대분류 추가"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          수수료 소분류 (선택)
+                        </label>
+                        <CustomSelect
+                          options={
+                            formData.transferFeeMainCategoryId
+                              ? categories
+                                  .filter(
+                                    (c) =>
+                                      c.level === 2 &&
+                                      c.parentId === formData.transferFeeMainCategoryId
+                                  )
+                                  .map((cat) => ({ id: cat.id, name: cat.name }))
+                              : [{ id: '', name: '없음' }]
+                          }
+                          value={formData.transferFeeSubCategoryId}
+                          onChange={(value) => setFormData({ ...formData, transferFeeSubCategoryId: value })}
+                          placeholder="없음"
+                        />
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1377,14 +1530,40 @@ export default function TransactionsPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  설명 (선택)
+                  설명
                 </label>
                 <input
                   type="text"
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="거래 설명 (선택사항)"
+                  placeholder="거래 설명"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  거래처 (선택)
+                </label>
+                <input
+                  type="text"
+                  value={formData.merchant}
+                  onChange={(e) => setFormData({ ...formData, merchant: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="가맹점, 송금 계좌주 등 (선택사항)"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  상세설명 (선택)
+                </label>
+                <input
+                  type="text"
+                  value={formData.detailedNote}
+                  onChange={(e) => setFormData({ ...formData, detailedNote: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="추가 설명 (선택사항)"
                 />
               </div>
 
@@ -1893,6 +2072,54 @@ export default function TransactionsPage() {
                 {selectedTransaction.description || '-'}
               </p>
             </div>
+
+            {(selectedTransaction as any).merchant && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  거래처
+                </label>
+                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                  {(selectedTransaction as any).merchant}
+                </p>
+              </div>
+            )}
+
+            {(selectedTransaction as any).detailedNote && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  상세설명
+                </label>
+                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                  {(selectedTransaction as any).detailedNote}
+                </p>
+              </div>
+            )}
+
+            {selectedTransaction.type === 'transfer' && (selectedTransaction as any).toAccountId && (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    이체 대상 계좌
+                  </label>
+                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                    {accounts.find(a => a.id === (selectedTransaction as any).toAccountId)?.name || '-'}
+                  </p>
+                </div>
+                {(selectedTransaction as any).transferFee > 0 && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      이체 수수료
+                    </label>
+                    <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                      {new Intl.NumberFormat('ko-KR', {
+                        style: 'currency',
+                        currency: 'KRW',
+                      }).format((selectedTransaction as any).transferFee)}
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">

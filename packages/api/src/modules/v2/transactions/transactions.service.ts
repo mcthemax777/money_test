@@ -123,7 +123,7 @@ export class TransactionsService {
         data: {
           projectId,
           userId,
-          accountId: null,  // 신용카드 사용은 통장과 무관
+          accountId: null,  // 신용카드 사용은 아직 계좌와 무관
           personId: dto.personId,
           cardId: dto.cardId!,
           type: 'credit_usage',  // 신용카드 사용 타입
@@ -194,6 +194,17 @@ export class TransactionsService {
       return transaction;
     }
 
+    // 통장간 이체인 경우 대상 계좌 확인
+    if (dto.type === 'transfer' && dto.toAccountId) {
+      const toAccount = await this.prisma.account.findUnique({
+        where: { id: dto.toAccountId },
+      });
+
+      if (!toAccount || toAccount.userId !== userId) {
+        throw new NotFoundException('유효한 대상 통장이 아닙니다.');
+      }
+    }
+
     // 체크카드 또는 계좌이체인 경우 Transaction 생성
     const transaction = await this.prisma.transaction.create({
       data: {
@@ -205,9 +216,13 @@ export class TransactionsService {
         type: dto.type,
         amount: dto.amount,
         description: dto.description,
+        merchant: dto.merchant,
+        detailedNote: dto.detailedNote,
+        toAccountId: dto.type === 'transfer' ? dto.toAccountId : null,
         date: transactionDate,
-        mainCategoryId: dto.mainCategoryId,
-        subCategoryId: dto.subCategoryId,
+        // 이체는 카테고리 불필요
+        mainCategoryId: dto.type === 'transfer' ? null : dto.mainCategoryId,
+        subCategoryId: dto.type === 'transfer' ? null : dto.subCategoryId,
         tags: dto.tags,
         isRecurring: dto.isRecurring || false,
         recurringPattern: dto.recurringPattern,
@@ -215,6 +230,7 @@ export class TransactionsService {
       },
       include: {
         account: true,
+        toAccount: true,
         person: true,
         card: true,
       },
@@ -228,7 +244,7 @@ export class TransactionsService {
           userId,
           cardId: dto.cardId!,
           amount: dto.amount,
-          merchant: dto.description,
+          merchant: dto.merchant || dto.description,
           date: transactionDate,
           status: 'completed',
           isPaymentDue: false,
@@ -236,7 +252,7 @@ export class TransactionsService {
       });
     }
 
-    // 통장 잔액 업데이트 (체크카드와 계좌이체만)
+    // 통장 잔액 업데이트
     if (dto.type === 'income') {
       await this.prisma.account.update({
         where: { id: dto.accountId },
@@ -247,6 +263,51 @@ export class TransactionsService {
         where: { id: dto.accountId },
         data: { balance: { decrement: dto.amount } },
       });
+    } else if (dto.type === 'transfer' && dto.toAccountId) {
+      // 통장간 이체: 출금 계좌에서 차감, 입금 계좌에 입금
+      const totalDeduction = dto.amount + (dto.transferFee || 0);
+      await this.prisma.account.update({
+        where: { id: dto.accountId },
+        data: { balance: { decrement: totalDeduction } },
+      });
+      await this.prisma.account.update({
+        where: { id: dto.toAccountId },
+        data: { balance: { increment: dto.amount } },
+      });
+
+      // 이체 수수료가 있으면 자동으로 expense 거래 생성
+      if (dto.transferFee && dto.transferFee > 0) {
+        // transferFeeMainCategoryId는 필수
+        if (!dto.transferFeeMainCategoryId) {
+          throw new BadRequestException('이체 수수료가 있으면 수수료 카테고리를 선택해주세요.');
+        }
+
+        // 수수료 거래 생성
+        const feeTransaction = await this.prisma.transaction.create({
+          data: {
+            projectId,
+            userId,
+            accountId: dto.accountId,
+            personId: dto.personId,
+            type: 'expense',
+            amount: dto.transferFee,
+            description: '이체 수수료',
+            date: transactionDate,
+            mainCategoryId: dto.transferFeeMainCategoryId,
+            subCategoryId: dto.transferFeeSubCategoryId || null,
+            relatedTransactionId: transaction.id,
+            tags: [],
+            isRecurring: false,
+            isFixed: false,
+          },
+        });
+
+        // 이체 거래에 relatedTransactionId 업데이트
+        await this.prisma.transaction.update({
+          where: { id: transaction.id },
+          data: { relatedTransactionId: feeTransaction.id },
+        });
+      }
     }
 
     return transaction;
@@ -321,29 +382,70 @@ export class TransactionsService {
   ): Promise<any> {
     const transaction = await this.getTransactionById(id, userId);
 
-    // 금액이 변경되면 통장 잔액도 조정 (체크카드와 계좌이체만)
+    // 기존 카드 정보
+    const oldCard = transaction.cardId ? await this.prisma.card.findUnique({ where: { id: transaction.cardId } }) : null;
+
+    // 새 카드 정보
+    const newCard = dto.cardId ? await this.prisma.card.findUnique({ where: { id: dto.cardId } }) : null;
+
+    // 금액 변경 시 통장 잔액 조정
     let balanceAdjustment = 0;
     if (dto.amount && dto.amount !== transaction.amount) {
       const difference = dto.amount - transaction.amount;
-
-      if (transaction.type === 'income') {
+      if ((transaction.type === 'income' || transaction.type === 'credit_usage') && transaction.accountId) {
         balanceAdjustment = difference;
-      } else if (transaction.type === 'expense') {
+      } else if ((transaction.type === 'expense') && transaction.accountId) {
         balanceAdjustment = -difference;
-      }
-
-      // 잔액 확인
-      const account = await this.prisma.account.findUnique({
-        where: { id: transaction.accountId },
-      });
-
-      if (account && account.balance + balanceAdjustment < 0) {
-        throw new BadRequestException('잔액이 부족합니다.');
       }
     }
 
+    // 카드 변경 처리
+    const oldCardType = oldCard?.cardType;
+    const newCardType = newCard?.cardType;
+    const cardChanged = oldCardType !== newCardType;
+
+    // 기존 카드 데이터 삭제 (카드 변경 시)
+    if (cardChanged && transaction.cardId) {
+      if (oldCardType === 'credit') {
+        // 신용카드 → 다른 것: CardPayment, CardPaymentUsage, CardUsage 삭제
+        const cardUsage = await this.prisma.cardUsage.findFirst({
+          where: { cardId: transaction.cardId, date: transaction.date, amount: transaction.amount },
+        });
+        if (cardUsage) {
+          // CardPaymentUsage 삭제
+          await this.prisma.cardPaymentUsage.deleteMany({
+            where: { cardUsageId: cardUsage.id },
+          });
+          // CardUsage 삭제
+          await this.prisma.cardUsage.delete({ where: { id: cardUsage.id } });
+        }
+
+        // CardPayment에서 금액 차감
+        const cardPayments = await this.prisma.cardPayment.findMany({
+          where: { cardId: transaction.cardId, status: 'pending' },
+        });
+        for (const payment of cardPayments) {
+          await this.prisma.cardPayment.update({
+            where: { id: payment.id },
+            data: { totalAmount: { decrement: transaction.amount } },
+          });
+        }
+      } else if (oldCardType === 'debit') {
+        // 체크카드 → 다른 것: CardUsage 삭제
+        const cardUsage = await this.prisma.cardUsage.findFirst({
+          where: { cardId: transaction.cardId, date: transaction.date, amount: transaction.amount },
+        });
+        if (cardUsage) {
+          await this.prisma.cardUsage.delete({ where: { id: cardUsage.id } });
+        }
+      }
+    }
+
+    // Transaction 업데이트
     const data: any = {};
     if (dto.description !== undefined) data.description = dto.description;
+    if (dto.merchant !== undefined) data.merchant = dto.merchant;
+    if (dto.detailedNote !== undefined) data.detailedNote = dto.detailedNote;
     if (dto.amount !== undefined) data.amount = dto.amount;
     if (dto.date !== undefined) data.date = new Date(dto.date);
     if (dto.type !== undefined) data.type = dto.type;
@@ -366,8 +468,82 @@ export class TransactionsService {
       },
     });
 
-    // 체크카드 CardUsage 업데이트 (금액이나 설명이 변경된 경우)
-    if (transaction.cardId && transaction.card?.cardType === 'debit') {
+    // 새 카드 데이터 생성 (카드 변경 시)
+    if (cardChanged && newCard) {
+      const newDate = dto.date ? new Date(dto.date) : transaction.date;
+      const newAmount = dto.amount ?? transaction.amount;
+      const newDescription = dto.description ?? transaction.description;
+
+      if (newCardType === 'credit') {
+        // 신용카드로 변경: CardUsage, CardPayment, CardPaymentUsage 생성
+        const cardUsage = await this.prisma.cardUsage.create({
+          data: {
+            projectId: transaction.projectId,
+            userId,
+            cardId: newCard.id,
+            amount: newAmount,
+            merchant: newDescription,
+            date: newDate,
+            status: 'completed',
+            isPaymentDue: true,
+          },
+        });
+
+        // CardPayment 찾기 또는 생성
+        const paymentDate = this.calculatePaymentDate(newDate, newCard.billingDayOfMonth);
+        let cardPayment = await this.prisma.cardPayment.findFirst({
+          where: {
+            cardId: newCard.id,
+            paymentDate,
+            status: 'pending',
+          },
+        });
+
+        if (!cardPayment) {
+          cardPayment = await this.prisma.cardPayment.create({
+            data: {
+              projectId: transaction.projectId,
+              userId,
+              cardId: newCard.id,
+              accountId: transaction.accountId,
+              totalAmount: newAmount,
+              paidAmount: 0,
+              status: 'pending',
+              paymentDate,
+            },
+          });
+        } else {
+          await this.prisma.cardPayment.update({
+            where: { id: cardPayment.id },
+            data: { totalAmount: { increment: newAmount } },
+          });
+        }
+
+        // CardPaymentUsage 생성
+        await this.prisma.cardPaymentUsage.create({
+          data: {
+            cardPaymentId: cardPayment.id,
+            cardUsageId: cardUsage.id,
+            amount: newAmount,
+          },
+        });
+      } else if (newCardType === 'debit') {
+        // 체크카드로 변경: CardUsage 생성
+        await this.prisma.cardUsage.create({
+          data: {
+            projectId: transaction.projectId,
+            userId,
+            cardId: newCard.id,
+            amount: newAmount,
+            merchant: newDescription,
+            date: newDate,
+            status: 'completed',
+            isPaymentDue: false,
+          },
+        });
+      }
+    } else if (!cardChanged && transaction.cardId && (oldCardType === 'debit' || oldCardType === 'credit')) {
+      // 카드는 같은데 금액/날짜/설명이 변경된 경우
       const cardUsage = await this.prisma.cardUsage.findFirst({
         where: {
           cardId: transaction.cardId,
@@ -388,19 +564,33 @@ export class TransactionsService {
             data: updateData,
           });
         }
+
+        // 신용카드인 경우 CardPayment도 업데이트
+        if (oldCardType === 'credit' && dto.amount && dto.amount !== transaction.amount) {
+          const difference = dto.amount - transaction.amount;
+          const cardPayments = await this.prisma.cardPayment.findMany({
+            where: { cardId: transaction.cardId, status: 'pending' },
+          });
+          for (const payment of cardPayments) {
+            await this.prisma.cardPayment.update({
+              where: { id: payment.id },
+              data: { totalAmount: { increment: difference } },
+            });
+          }
+        }
       }
     }
 
-    // 통장 잔액 조정 (체크카드와 계좌이체만)
-    if (balanceAdjustment !== 0) {
+    // 통장 잔액 조정
+    if (balanceAdjustment !== 0 && updated.accountId) {
       if (balanceAdjustment > 0) {
         await this.prisma.account.update({
-          where: { id: transaction.accountId },
+          where: { id: updated.accountId },
           data: { balance: { increment: balanceAdjustment } },
         });
       } else {
         await this.prisma.account.update({
-          where: { id: transaction.accountId },
+          where: { id: updated.accountId },
           data: { balance: { decrement: Math.abs(balanceAdjustment) } },
         });
       }
@@ -440,6 +630,23 @@ export class TransactionsService {
         where: { id: transaction.accountId },
         data: { balance: { increment: transaction.amount } },
       });
+    } else if (transaction.type === 'transfer' && transaction.toAccountId) {
+      // 통장간 이체 역조정
+      await this.prisma.account.update({
+        where: { id: transaction.accountId },
+        data: { balance: { increment: transaction.amount } },
+      });
+      await this.prisma.account.update({
+        where: { id: transaction.toAccountId },
+        data: { balance: { decrement: transaction.amount } },
+      });
+
+      // 연결된 수수료 거래도 함께 삭제
+      if (transaction.relatedTransactionId) {
+        await this.prisma.transaction.delete({
+          where: { id: transaction.relatedTransactionId },
+        });
+      }
     }
 
     return this.prisma.transaction.delete({

@@ -167,6 +167,7 @@ model Account {
   owner           Person   @relation(fields: [ownerId], references: [id])
   cards           Card[]
   transactions    Transaction[]
+  transferTransactions Transaction[] @relation("TransferTarget")
   cardPayments    CardPayment[]
 
   isActive  Boolean  @default(true)
@@ -223,6 +224,10 @@ model Transaction {
   type              TransactionType
   amount            Float
   description       String
+  merchant          String?  // 거래처 (선택사항) - 가맹점, 송금 계좌주 등
+  detailedNote      String?  // 상세설명 (선택사항)
+  toAccountId       String?  // 이체 대상 계좌 (type=transfer일 때만 사용)
+  relatedTransactionId String? // 관련 거래 ID (이체의 수수료 거래 연결)
   date              DateTime
   mainCategoryId    String?  // 대분류 ID
   subCategoryId     String?  // 소분류 ID
@@ -234,6 +239,7 @@ model Transaction {
   project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   account           Account? @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  toAccount         Account? @relation("TransferTarget", fields: [toAccountId], references: [id], onDelete: SetNull)
   person            Person   @relation(fields: [personId], references: [id])
   card              Card?    @relation(fields: [cardId], references: [id], onDelete: SetNull)
   cardPayment       CardPayment? @relation(fields: [cardPaymentId], references: [id], onDelete: SetNull)
@@ -246,6 +252,7 @@ model Transaction {
   @@index([projectId])
   @@index([userId])
   @@index([accountId])
+  @@index([toAccountId])
   @@index([personId])
   @@index([cardId])
   @@index([cardPaymentId])
@@ -254,6 +261,7 @@ model Transaction {
   @@index([mainCategoryId])
   @@index([subCategoryId])
   @@index([isFixed])
+  @@index([relatedTransactionId])
 }
 
 // 카테고리 (대분류/소분류)

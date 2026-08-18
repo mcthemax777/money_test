@@ -151,7 +151,9 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
             const isMainOrSubCategory = filterParams.mainCategoryId || filterParams.subCategoryId;
             const amount = transactions
               .filter((t: any) => {
-                // 대분류/소분류 필터는 API에서 이미 적용됨, 모든 거래 타입 포함
+                // 이체 거래는 제외
+                if (t.type === 'transfer') return false;
+                // 대분류/소분류 필터는 API에서 이미 적용됨
                 if (isMainOrSubCategory) {
                   return true;
                 }
@@ -195,7 +197,9 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
           const isMainOrSubCategory = filterParams.mainCategoryId || filterParams.subCategoryId;
           dailyTransactions
             .filter((t: any) => {
-              // 대분류/소분류 필터는 API에서 이미 적용됨, 모든 거래 타입 포함
+              // 이체 거래는 제외
+              if (t.type === 'transfer') return false;
+              // 대분류/소분류 필터는 API에서 이미 적용됨
               if (isMainOrSubCategory) {
                 return true;
               }
@@ -230,6 +234,7 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
               endDate: new Date(displayYear, displayMonth, 0),
             });
             const txs = (currentResponse?.data || [])
+              .filter((tx: any) => tx.type !== 'transfer')
               .map((tx: any) => ({
                 ...tx,
                 mainCategory: typeof tx.mainCategory === 'object' ? tx.mainCategory?.name : tx.mainCategory,
@@ -453,7 +458,7 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
               <BarChart data={monthlyData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="month" />
-                <YAxis />
+                <YAxis domain={[0, Math.ceil((Math.max(...monthlyData.map((d) => d.amount), 0) * 1.2) / 100) * 100]} />
                 <Tooltip formatter={(value: any) => `${(value || 0).toLocaleString()}원`} />
                 <Bar dataKey="amount" fill="#3b82f6" />
               </BarChart>
@@ -467,7 +472,7 @@ export function BudgetDetailModal({ isOpen, onClose, categoryId, categoryName, c
               <LineChart data={dailyData}>
                 <CartesianGrid strokeDasharray="3 3" />
                 <XAxis dataKey="day" />
-                <YAxis />
+                <YAxis domain={[0, Math.ceil((Math.max(...dailyData.map((d) => d.cumulative), 0) * 1.2) / 100) * 100]} />
                 <Tooltip formatter={(value: any) => `${(value || 0).toLocaleString()}원`} />
                 <Legend />
                 <Line type="monotone" dataKey="cumulative" stroke="#3b82f6" name="누적 사용금액" />

@@ -405,7 +405,7 @@ export default function PaymentMethodTab({
                   <BarChart data={selectedData.monthlyData}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="month" />
-                    <YAxis />
+                    <YAxis domain={[0, Math.ceil((Math.max(...selectedData.monthlyData.map((d: any) => d.amount), 0) * 1.2) / 100) * 100]} />
                     <Tooltip formatter={(value: any) => formatCurrency(value)} />
                     <Bar dataKey="amount" fill="#3b82f6" />
                   </BarChart>
@@ -418,7 +418,7 @@ export default function PaymentMethodTab({
                   <LineChart data={selectedData.dailyData}>
                     <CartesianGrid strokeDasharray="3 3" />
                     <XAxis dataKey="day" />
-                    <YAxis />
+                    <YAxis domain={[0, Math.ceil((Math.max(...selectedData.dailyData.map((d: any) => d.cumulative), 0) * 1.2) / 100) * 100]} />
                     <Tooltip formatter={(value: any) => formatCurrency(value)} />
                     <Line type="monotone" dataKey="cumulative" stroke="#10b981" strokeWidth={2} />
                   </LineChart>
