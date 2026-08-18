@@ -225,6 +225,27 @@ export default function DashboardPage() {
   const getAccountCards = (accountId: string) =>
     filteredCards.filter((c) => c.accountId === accountId);
 
+  // 계좌 원장 관점에서 거래의 입출금 방향과 부제목을 계산
+  const getLedgerEntry = (tx: any, accountId: string) => {
+    const isTransferIn = tx.type === 'transfer' && tx.toAccountId === accountId;
+    const isIncoming = tx.type === 'income' || isTransferIn;
+
+    let label = '';
+    if (tx.type === 'transfer') {
+      const counterpartId = isTransferIn ? tx.accountId : tx.toAccountId;
+      const counterpartName = accounts.find((a) => a.id === counterpartId)?.name;
+      if (!counterpartName) {
+        label = '이체';
+      } else {
+        label = isTransferIn ? `${counterpartName}에서 이체` : `${counterpartName}(으)로 이체`;
+      }
+    } else if (tx.mainCategory) {
+      label = tx.subCategory ? `${tx.mainCategory} > ${tx.subCategory}` : tx.mainCategory;
+    }
+
+    return { isIncoming, label };
+  };
+
   const handleDeletePerson = async () => {
     if (!selectedPerson || !window.confirm('정말 삭제하시겠습니까?')) return;
     try {
@@ -557,29 +578,28 @@ export default function DashboardPage() {
             <p className="text-gray-600 text-center py-8">거래 내역이 없습니다.</p>
           ) : (
             <div className="space-y-3">
-              {accountTransactions.map((tx: any) => (
-                <div key={tx.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
-                  <div className="flex justify-between items-start">
-                    <div className="flex-1">
-                      <p className="font-bold text-gray-900">{tx.description}</p>
-                      <p className="text-sm text-gray-600 mt-1">
-                        {tx.mainCategory} {tx.subCategory && `> ${tx.subCategory}`}
-                      </p>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {new Date(tx.date).toLocaleDateString('ko-KR')}
+              {accountTransactions.map((tx: any) => {
+                const { isIncoming, label } = getLedgerEntry(tx, selectedAccount.id);
+                return (
+                  <div key={tx.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
+                    <div className="flex justify-between items-start">
+                      <div className="flex-1">
+                        <p className="font-bold text-gray-900">{tx.description}</p>
+                        {label && (
+                          <p className="text-sm text-gray-600 mt-1">{label}</p>
+                        )}
+                        <p className="text-xs text-gray-500 mt-1">
+                          {new Date(tx.date).toLocaleDateString('ko-KR')}
+                        </p>
+                      </div>
+                      <p className={`font-bold text-lg ${isIncoming ? 'text-green-600' : 'text-red-600'}`}>
+                        {isIncoming ? '+' : '-'}
+                        {new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'KRW' }).format(tx.amount)}
                       </p>
                     </div>
-                    <p className={`font-bold text-lg ${
-                      tx.type === 'income' ? 'text-green-600' : tx.type === 'transfer' ? 'text-gray-600' : 'text-red-600'
-                    }`}>
-                      {tx.type === 'transfer'
-                        ? new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'KRW' }).format(tx.amount)
-                        : `${tx.type === 'income' ? '+' : '-'}${new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'KRW' }).format(tx.amount)}`
-                      }
-                    </p>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

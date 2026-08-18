@@ -321,7 +321,15 @@ export class TransactionsService {
     const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
     const where: any = { userId, projectId: finalProjectId };
 
-    if (query.accountId) where.accountId = query.accountId;
+    // 계좌 지정 시 원장 관점으로 조회: 해당 계좌에서 실제로 돈이 들어오거나 나간 기록만
+    if (query.accountId) {
+      where.OR = [
+        { accountId: query.accountId },                      // 입금, 출금, 체크카드 사용, 카드사 결제
+        { type: 'transfer', toAccountId: query.accountId },   // 이체 입금측
+      ];
+      // 신용카드 사용은 사용 시점에 계좌에서 빠지지 않음 (카드사 결제 시 credit_payment로 반영)
+      where.NOT = { type: 'credit_usage' };
+    }
     if (query.personId) where.personId = query.personId;
     if (query.type) where.type = query.type;
     if (query.mainCategoryId) where.mainCategoryId = query.mainCategoryId;
