@@ -42,3 +42,6 @@ coverage/
 
 # Turbo
 .turbo/
+
+# TypeScript incremental build
+*.tsbuildinfo
