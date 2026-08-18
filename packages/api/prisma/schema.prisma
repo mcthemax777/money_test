@@ -39,17 +39,24 @@ enum InvitationStatus {
   expired
 }
 
+enum JoinRequestStatus {
+  pending
+  approved
+  rejected
+}
+
 // 앱 사용자 (계정)
 model User {
   id                  String   @id @default(cuid())
   email               String   @unique
-  password            String
+  googleId            String   @unique // Google ID 토큰의 sub 클레임 (이메일과 달리 변경되지 않음)
   name                String
   avatar              String?
   defaultProjectId    String?  // 기본 프로젝트
 
   projectMembers      ProjectMember[]
   projectInvitations  ProjectInvitation[]
+  projectJoinRequests ProjectJoinRequest[]
   people              Person[]
   accounts            Account[]
   cards               Card[]
@@ -69,11 +76,13 @@ model User {
 // 프로젝트
 model Project {
   id          String   @id @default(cuid())
+  projectKey  String?  @unique // 다른 사용자가 검색해 가입 요청할 때 쓰는 공유용 키
   name        String
   description String?
 
   members       ProjectMember[]
   invitations   ProjectInvitation[]
+  joinRequests  ProjectJoinRequest[]
   people        Person[]
   accounts      Account[]
   cards         Card[]
@@ -126,6 +135,30 @@ model ProjectInvitation {
 
   @@index([projectId])
   @@index([email])
+  @@index([status])
+}
+
+// 프로젝트 가입 요청 (프로젝트 키로 검색 후 요청 -> owner가 승인)
+model ProjectJoinRequest {
+  id          String            @id @default(cuid())
+  projectId   String
+  userId      String            // 요청한 사용자
+  status      JoinRequestStatus @default(pending)
+  message     String?           // 요청자가 남기는 한 줄 메시지
+
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  decidedAt        DateTime?
+  decidedByUserId  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 사용자-프로젝트 쌍마다 한 행만 유지한다. 거절 후 재요청은 이 행을 pending으로 되돌린다.
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
   @@index([status])
 }
 

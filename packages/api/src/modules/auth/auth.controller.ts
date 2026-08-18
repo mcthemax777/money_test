@@ -3,7 +3,6 @@ import { AuthGuard } from '@nestjs/passport';
 import {
   ApiTags,
   ApiOperation,
-  ApiCreatedResponse,
   ApiOkResponse,
   ApiBadRequestResponse,
   ApiUnauthorizedResponse,
@@ -18,22 +17,14 @@ import { Auth } from '@money/types';
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
 
-  @Post('signup')
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: '회원가입' })
-  @ApiCreatedResponse({ description: '회원가입 성공' })
-  @ApiBadRequestResponse({ description: 'Email already exists' })
-  signUp(@Body() dto: Auth.SignUpRequest) {
-    return this.authService.signUp(dto);
-  }
-
-  @Post('signin')
+  @Post('google')
   @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: '로그인' })
+  @ApiOperation({ summary: '구글 로그인 (미등록 사용자는 이때 생성됨)' })
   @ApiOkResponse({ description: '로그인 성공' })
-  @ApiUnauthorizedResponse({ description: 'Invalid credentials' })
-  signIn(@Body() dto: Auth.SignInRequest) {
-    return this.authService.signIn(dto);
+  @ApiBadRequestResponse({ description: 'idToken 누락 또는 이메일 중복' })
+  @ApiUnauthorizedResponse({ description: '유효하지 않은 구글 토큰' })
+  signInWithGoogle(@Body() dto: Auth.GoogleSignInRequest) {
+    return this.authService.signInWithGoogle(dto);
   }
 
   @Post('refresh')

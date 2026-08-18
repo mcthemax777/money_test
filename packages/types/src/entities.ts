@@ -23,11 +23,11 @@ export type RecurringPattern = 'daily' | 'weekly' | 'monthly' | 'yearly';
 
 // ===== 엔티티 =====
 
-// 앱 사용자 (계정)
+// 앱 사용자 (계정) - 구글 로그인으로만 생성된다
 export interface User {
   id: string;
   email: string;
-  password: string;
+  googleId: string; // Google ID 토큰의 sub 클레임
   name: string;
   avatar: string | null;
   defaultProjectId: string | null;

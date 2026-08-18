@@ -5,6 +5,7 @@ interface Project {
   id: string;
   name: string;
   description?: string;
+  projectKey?: string | null; // 다른 사용자가 검색해 가입 요청할 때 쓰는 공유용 키
   role: 'owner' | 'editor' | 'viewer';
 }
 

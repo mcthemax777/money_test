@@ -33,8 +33,7 @@ interface AuthStore {
   isLoading: boolean;
   isAuthenticated: boolean;
   isInitializing: boolean;
-  signUp: (email: string, password: string, name: string) => Promise<void>;
-  signIn: (email: string, password: string) => Promise<void>;
+  signInWithGoogle: (idToken: string) => Promise<void>;
   setDefaultProject: (projectId: string) => Promise<ProjectInitialData | null>;
   logout: () => Promise<void>;
   loadUser: () => Promise<void>;
@@ -49,7 +48,7 @@ export const useAuth = create<AuthStore>()(
   isAuthenticated: false,
   isInitializing: true,
 
-  signUp: async (email, password, name) => {
+  signInWithGoogle: async (idToken) => {
     set({ isLoading: true });
     try {
       // 이전 사용자의 캐시 상태 초기화 (보안)
@@ -60,47 +59,9 @@ export const useAuth = create<AuthStore>()(
       useUserFilter.getState().setSelectedPersonIds([]);
       useUserFilter.getState().setPeople([]);
 
-      const response = await apiClient.signUp(email, password, name);
-      console.log('[Auth] Sign up response:', response);
+      const response = await apiClient.signInWithGoogle(idToken);
       Cookie.set('accessToken', response.accessToken, { expires: 7 });
       Cookie.set('refreshToken', response.refreshToken, { expires: 30 });
-      console.log('[Auth] Tokens set:', {
-        accessToken: Cookie.get('accessToken') ? 'saved' : 'failed',
-        refreshToken: Cookie.get('refreshToken') ? 'saved' : 'failed',
-      });
-      set({
-        user: response.user,
-        defaultProjectData: response.defaultProjectData,
-        isAuthenticated: true,
-        isInitializing: false,
-      });
-    } catch (error) {
-      set({ isLoading: false });
-      throw error;
-    } finally {
-      set({ isLoading: false });
-    }
-  },
-
-  signIn: async (email, password) => {
-    set({ isLoading: true });
-    try {
-      // 이전 사용자의 캐시 상태 초기화 (보안)
-      const { useProject } = await import('./project');
-      const { useUserFilter } = await import('./user-filter');
-      useProject.getState().setSelectedProjectId(null);
-      useProject.getState().setProjects([]);
-      useUserFilter.getState().setSelectedPersonIds([]);
-      useUserFilter.getState().setPeople([]);
-
-      const response = await apiClient.signIn(email, password);
-      console.log('[Auth] Sign in response:', response);
-      Cookie.set('accessToken', response.accessToken, { expires: 7 });
-      Cookie.set('refreshToken', response.refreshToken, { expires: 30 });
-      console.log('[Auth] Tokens set:', {
-        accessToken: Cookie.get('accessToken') ? 'saved' : 'failed',
-        refreshToken: Cookie.get('refreshToken') ? 'saved' : 'failed',
-      });
       set({
         user: response.user,
         defaultProjectData: response.defaultProjectData,

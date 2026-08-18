@@ -11,21 +11,16 @@ import type {
 
 // ===== Auth =====
 
-// 인증 응답에 담기는 사용자 정보 (password 제외)
-export interface UserResponse extends Omit<User, 'password' | 'defaultProjectId'> {
+// 인증 응답에 담기는 사용자 정보 (googleId 등 내부 식별자 제외)
+export interface UserResponse extends Omit<User, 'googleId' | 'defaultProjectId'> {
   defaultProjectId?: string;
 }
 
 export namespace Auth {
-  export interface SignUpRequest {
-    email: string;
-    password: string;
-    name: string;
-  }
-
-  export interface SignInRequest {
-    email: string;
-    password: string;
+  // 구글 로그인: 클라이언트가 GIS로 발급받은 ID 토큰을 그대로 전달한다.
+  // 신규 사용자는 이 요청에서 함께 생성되므로 별도 가입 절차가 없다.
+  export interface GoogleSignInRequest {
+    idToken: string;
   }
 
   export interface ProjectInitialData {
@@ -96,12 +91,6 @@ export namespace AccountDto {
   }
 
   export interface Response extends Account {}
-
-  export interface WithBalance extends Account {
-    currentBalance: number;
-    totalIncome: number;
-    totalExpense: number;
-  }
 }
 
 // ===== Card =====
@@ -124,16 +113,6 @@ export namespace CardDto {
     creditLimit?: number;
     billingDayOfMonth?: number;
     isActive?: boolean;
-  }
-
-  export interface UseCardRequest {
-    personId: string;
-    amount: number;
-    merchant: string;
-    description: string;
-    date: string | Date;
-    mainCategoryId: string;
-    subCategoryId?: string;
   }
 
   export interface Response extends Omit<Card, 'cardNumber'> {
@@ -200,14 +179,6 @@ export namespace TransactionDto {
   }
 
   export interface Response extends Transaction {}
-
-  export interface Statistics {
-    totalIncome: number;
-    totalExpense: number;
-    net: number;
-    byCategory: Record<string, number>;
-    byPerson: Record<string, number>;
-  }
 }
 
 // ===== Category =====

@@ -5,8 +5,9 @@ import { PrismaService } from '../../config/prisma.service';
 import { RedisService } from '../../config/redis.service';
 import { ConfigService } from '../../config/config.service';
 import { UsersService } from '../users/users.service';
+import { ProjectsService } from '../projects/projects.service';
+import { OAuth2Client, type TokenPayload as GoogleTokenPayload } from 'google-auth-library';
 import { Auth } from '@money/types';
-import * as bcrypt from 'bcryptjs';
 
 interface TokenPayload {
   sub: string;
@@ -24,42 +25,124 @@ export class AuthService {
     private readonly redis: RedisService,
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
+    private readonly projectsService: ProjectsService,
   ) {}
 
-  async signUp(dto: Auth.SignUpRequest): Promise<Auth.AuthResponse> {
-    const existingUser = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
+  // ID 토큰 검증만 수행하므로 client secret은 필요하지 않다.
+  private readonly googleClient = new OAuth2Client();
 
-    if (existingUser) {
-      throw new BadRequestException('Email already exists');
+  async signInWithGoogle(dto: Auth.GoogleSignInRequest): Promise<Auth.AuthResponse> {
+    const payload = await this.verifyGoogleIdToken(dto.idToken);
+
+    const googleId = payload.sub;
+    const email = payload.email!.toLowerCase();
+    // 구글 계정에 이름이 없을 수 있으므로 이메일 앞부분으로 대체한다.
+    const name = payload.name?.trim() || email.split('@')[0];
+    const avatar = payload.picture ?? null;
+
+    const existing = await this.prisma.user.findUnique({ where: { googleId } });
+
+    if (existing) {
+      // 이메일, 이름, 사진은 구글 쪽에서 변경될 수 있으므로 로그인마다 최신화한다.
+      const user = await this.prisma.user.update({
+        where: { id: existing.id },
+        data: { email, name, avatar },
+      });
+
+      return this.buildAuthResponse(user);
     }
 
-    const hashedPassword = await bcrypt.hash(dto.password, 10);
+    const user = await this.createGoogleUser({ googleId, email, name, avatar });
 
-    const user = await this.prisma.user.create({
-      data: {
-        email: dto.email,
-        name: dto.name,
-        password: hashedPassword,
-      },
-    });
+    return this.buildAuthResponse(user);
+  }
+
+  private async verifyGoogleIdToken(idToken: string): Promise<GoogleTokenPayload> {
+    if (!idToken) {
+      throw new BadRequestException('idToken이 필요합니다.');
+    }
+
+    // try 밖에서 읽는다. 안에서 읽으면 설정 누락이 토큰 오류로 뭉개져
+    // 운영 중 원인을 찾기 어려워진다.
+    const audience = this.configService.googleClientIds;
+
+    let payload: GoogleTokenPayload | undefined;
+    try {
+      // audience에 클라이언트 ID 목록을 넘기면 aud, iss, 서명, 만료를 함께 검증한다.
+      const ticket = await this.googleClient.verifyIdToken({ idToken, audience });
+      payload = ticket.getPayload();
+    } catch {
+      throw new UnauthorizedException('유효하지 않은 구글 토큰입니다.');
+    }
+
+    if (!payload?.sub || !payload.email) {
+      throw new UnauthorizedException('구글 토큰에 필요한 정보가 없습니다.');
+    }
+
+    // 미인증 이메일을 신뢰하면 타인의 이메일을 주장하는 토큰으로 계정을 만들 수 있다.
+    if (payload.email_verified !== true) {
+      throw new UnauthorizedException('이메일이 인증되지 않은 구글 계정입니다.');
+    }
+
+    return payload;
+  }
+
+  private async createGoogleUser(data: {
+    googleId: string;
+    email: string;
+    name: string;
+    avatar: string | null;
+  }) {
+    let user: { id: string };
+    try {
+      user = await this.prisma.user.create({ data });
+    } catch (error) {
+      // 동시 최초 로그인으로 googleId 또는 email unique 제약이 충돌한 경우,
+      // 이미 만들어진 계정으로 이어간다.
+      if ((error as { code?: string }).code === 'P2002') {
+        const created = await this.prisma.user.findUnique({
+          where: { googleId: data.googleId },
+        });
+
+        if (!created) {
+          // googleId가 아니라 email이 충돌한 경우. 다른 구글 계정이 같은 이메일을
+          // 선점하고 있어 연결할 수 없다.
+          throw new BadRequestException('이미 사용 중인 이메일입니다.');
+        }
+
+        return created;
+      }
+
+      throw error;
+    }
 
     const defaultProject = await this.createDefaultProject(user.id);
 
-    // 기본 프로젝트 설정
-    await this.prisma.user.update({
+    return this.prisma.user.update({
       where: { id: user.id },
       data: { defaultProjectId: defaultProject.id },
     });
+  }
 
-    const defaultProjectData = await this.usersService.getUserProjectInitialData(user.id, defaultProject.id);
+  private async buildAuthResponse(user: {
+    id: string;
+    email: string;
+    name: string;
+    avatar: string | null;
+    defaultProjectId: string | null;
+    createdAt: Date;
+    updatedAt: Date;
+  }): Promise<Auth.AuthResponse> {
+    const defaultProjectData = await this.usersService.getUserProjectInitialData(
+      user.id,
+      user.defaultProjectId ?? undefined,
+    );
 
     return {
       ...this.generateTokens(user.id),
       user: {
         ...this.toUserResponse(user),
-        defaultProjectId: defaultProject.id,
+        defaultProjectId: user.defaultProjectId || undefined,
       },
       defaultProjectData: defaultProjectData as any,
     };
@@ -70,6 +153,8 @@ export class AuthService {
       data: {
         name: '나의 프로젝트',
         description: '첫 번째 프로젝트',
+        // 다른 사용자가 검색해 가입 요청할 수 있도록 키를 함께 발급한다.
+        projectKey: await this.projectsService.issueProjectKey(),
       },
     });
 
@@ -137,33 +222,6 @@ export class AuthService {
     }
   }
 
-  async signIn(dto: Auth.SignInRequest): Promise<Auth.AuthResponse> {
-    const user = await this.prisma.user.findUnique({
-      where: { email: dto.email },
-    });
-
-    if (!user) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    const isPasswordValid = await bcrypt.compare(dto.password, user.password);
-
-    if (!isPasswordValid) {
-      throw new UnauthorizedException('Invalid credentials');
-    }
-
-    const defaultProjectData = await this.usersService.getUserProjectInitialData(user.id);
-
-    return {
-      ...this.generateTokens(user.id),
-      user: {
-        ...this.toUserResponse(user),
-        defaultProjectId: user.defaultProjectId || undefined,
-      },
-      defaultProjectData: defaultProjectData as any,
-    };
-  }
-
   async refresh(dto: Auth.RefreshRequest): Promise<Auth.AuthResponse> {
     let payload: TokenPayload;
     try {
@@ -185,16 +243,7 @@ export class AuthService {
     // rotation: 사용한 refreshToken은 재사용 불가
     await this.blacklistToken(dto.refreshToken);
 
-    const defaultProjectData = await this.usersService.getUserProjectInitialData(user.id);
-
-    return {
-      ...this.generateTokens(user.id),
-      user: {
-        ...this.toUserResponse(user),
-        defaultProjectId: user.defaultProjectId || undefined,
-      },
-      defaultProjectData: defaultProjectData as any,
-    };
+    return this.buildAuthResponse(user);
   }
 
   async logout(accessToken: string, refreshToken?: string): Promise<{ success: boolean }> {

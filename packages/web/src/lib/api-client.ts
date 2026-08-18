@@ -66,20 +66,8 @@ class ApiClient {
     );
   }
 
-  async signUp(email: string, password: string, name: string) {
-    const response = await this.client.post<any>('/auth/signup', {
-      email,
-      password,
-      name,
-    });
-    return response.data;
-  }
-
-  async signIn(email: string, password: string) {
-    const response = await this.client.post<any>('/auth/signin', {
-      email,
-      password,
-    });
+  async signInWithGoogle(idToken: string) {
+    const response = await this.client.post<any>('/auth/google', { idToken });
     return response.data;
   }
 
@@ -179,16 +167,6 @@ class ApiClient {
     return response.data;
   }
 
-  async useCard(cardId: string, data: any) {
-    const response = await this.client.post<any>(`/cards/${cardId}/use`, data);
-    return response.data;
-  }
-
-  async payCard(cardId: string, data: any) {
-    const response = await this.client.post<any>(`/cards/${cardId}/pay`, data);
-    return response.data;
-  }
-
   async updateCard(id: string, data: any) {
     const response = await this.client.patch<any>(`/cards/${id}`, data);
     return response.data;
@@ -254,11 +232,6 @@ class ApiClient {
     await this.client.delete(`/categories/${id}`);
   }
 
-  async getTransactionStats(query?: any) {
-    const response = await this.client.get<any>('/transactions/statistics', { params: query });
-    return response.data;
-  }
-
   // 프로젝트 API Methods
   async createProject(name: string, description?: string) {
     const response = await this.client.post<any>('/projects', {
@@ -315,6 +288,46 @@ class ApiClient {
 
   async getProjectPendingInvitations(projectId: string) {
     const response = await this.client.get<any>(`/projects/${projectId}/invitations/pending`);
+    return response.data;
+  }
+
+  // 가입 요청 API Methods
+  async findProjectByKey(key: string) {
+    const response = await this.client.get<any>('/projects/search', { params: { key } });
+    return response.data;
+  }
+
+  async requestToJoinProject(projectId: string, message?: string) {
+    const response = await this.client.post<any>(`/projects/${projectId}/join-requests`, {
+      message,
+    });
+    return response.data;
+  }
+
+  async getProjectJoinRequests(projectId: string) {
+    const response = await this.client.get<any>(`/projects/${projectId}/join-requests`);
+    return response.data;
+  }
+
+  async getMyJoinRequests() {
+    const response = await this.client.get<any>('/projects/join-requests/mine');
+    return response.data;
+  }
+
+  async approveJoinRequest(requestId: string, role: 'editor' | 'viewer' = 'editor') {
+    const response = await this.client.post<any>(`/projects/join-requests/${requestId}/approve`, {
+      role,
+    });
+    return response.data;
+  }
+
+  async rejectJoinRequest(requestId: string) {
+    const response = await this.client.post<any>(`/projects/join-requests/${requestId}/reject`);
+    return response.data;
+  }
+
+  async cancelJoinRequest(requestId: string) {
+    const response = await this.client.delete<any>(`/projects/join-requests/${requestId}`);
     return response.data;
   }
 

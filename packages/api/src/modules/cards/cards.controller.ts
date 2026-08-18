@@ -64,36 +64,4 @@ export class CardsController {
   delete(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.cardsService.deleteCard(id, req.user.id);
   }
-
-  @Post(':id/use')
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: '카드 사용 (체크: 즉시차감, 신용: 사용액기록)' })
-  useCard(
-    @Request() req: AuthenticatedRequest,
-    @Param('id') id: string,
-    @Body() dto: CardDto.UseCardRequest,
-  ) {
-    return this.cardsService.useCard(
-      id,
-      req.user.id,
-      dto.personId,
-      dto.amount,
-      dto.merchant,
-      dto.description,
-      new Date(dto.date),
-      dto.mainCategoryId,
-      dto.subCategoryId,
-    );
-  }
-
-  @Post(':id/pay')
-  @HttpCode(HttpStatus.CREATED)
-  @ApiOperation({ summary: '신용카드 결제' })
-  payCard(
-    @Request() req: AuthenticatedRequest,
-    @Param('id') id: string,
-    @Body() dto: { accountId: string },
-  ) {
-    return this.cardsService.payCard(id, req.user.id, dto.accountId);
-  }
 }

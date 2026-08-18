@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Body, Param, UseGuards, Request, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards, Request, HttpCode, HttpStatus } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 
@@ -16,6 +16,56 @@ export class ProjectsController {
   @Get()
   async getMyProjects(@Request() req: any) {
     return this.projectsService.getMyProjects(req.user.id);
+  }
+
+  // ===== 가입 요청 =====
+  // 아래 구체 경로들은 :projectId 패턴보다 먼저 선언해야 선점되지 않는다.
+
+  @Get('search')
+  async findProjectByKey(@Query('key') key: string, @Request() req: any) {
+    return this.projectsService.findProjectByKey(key, req.user.id);
+  }
+
+  @Get('join-requests/mine')
+  async getMyJoinRequests(@Request() req: any) {
+    return this.projectsService.getMyJoinRequests(req.user.id);
+  }
+
+  @Post('join-requests/:requestId/approve')
+  @HttpCode(HttpStatus.OK)
+  async approveJoinRequest(
+    @Param('requestId') requestId: string,
+    @Body() body: { role?: 'editor' | 'viewer' },
+    @Request() req: any,
+  ) {
+    return this.projectsService.approveJoinRequest(requestId, req.user.id, body?.role);
+  }
+
+  @Post('join-requests/:requestId/reject')
+  @HttpCode(HttpStatus.OK)
+  async rejectJoinRequest(@Param('requestId') requestId: string, @Request() req: any) {
+    return this.projectsService.rejectJoinRequest(requestId, req.user.id);
+  }
+
+  @Delete('join-requests/:requestId')
+  @HttpCode(HttpStatus.OK)
+  async cancelJoinRequest(@Param('requestId') requestId: string, @Request() req: any) {
+    return this.projectsService.cancelJoinRequest(requestId, req.user.id);
+  }
+
+  @Post(':projectId/join-requests')
+  @HttpCode(HttpStatus.CREATED)
+  async requestToJoin(
+    @Param('projectId') projectId: string,
+    @Body() body: { message?: string },
+    @Request() req: any,
+  ) {
+    return this.projectsService.requestToJoin(projectId, req.user.id, body?.message);
+  }
+
+  @Get(':projectId/join-requests')
+  async getProjectJoinRequests(@Param('projectId') projectId: string, @Request() req: any) {
+    return this.projectsService.getProjectJoinRequests(projectId, req.user.id);
   }
 
   @Get(':projectId/members')

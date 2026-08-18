@@ -123,26 +123,4 @@ export class AccountsService {
       data: { balance: { increment: amount } },
     });
   }
-
-  // 통계
-  async getAccountStats(accountId: string, userId: string): Promise<AccountDto.WithBalance> {
-    const account = await this.getAccountById(accountId, userId);
-
-    const totalIncome = await this.prisma.transaction.aggregate({
-      where: { accountId, userId, type: 'income' },
-      _sum: { amount: true },
-    });
-
-    const totalExpense = await this.prisma.transaction.aggregate({
-      where: { accountId, userId, type: 'expense' },
-      _sum: { amount: true },
-    });
-
-    return {
-      ...account,
-      currentBalance: account.balance,
-      totalIncome: totalIncome._sum.amount || 0,
-      totalExpense: totalExpense._sum.amount || 0,
-    };
-  }
 }

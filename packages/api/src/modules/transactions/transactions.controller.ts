@@ -64,16 +64,4 @@ export class TransactionsController {
   delete(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.transactionsService.deleteTransaction(id, req.user.id);
   }
-
-  @Get('account/:accountId/stats')
-  @ApiOperation({ summary: '통장별 거래 통계' })
-  getStats(@Request() req: AuthenticatedRequest, @Param('accountId') accountId: string) {
-    return this.transactionsService.getStatistics(req.user.id, accountId);
-  }
-
-  @Get('stats/overall')
-  @ApiOperation({ summary: '전체 거래 통계' })
-  getOverallStats(@Request() req: AuthenticatedRequest) {
-    return this.transactionsService.getStatistics(req.user.id);
-  }
 }

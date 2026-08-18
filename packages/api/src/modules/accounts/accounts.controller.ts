@@ -64,10 +64,4 @@ export class AccountsController {
   delete(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
     return this.accountsService.deleteAccount(id, req.user.id);
   }
-
-  @Get(':id/stats')
-  @ApiOperation({ summary: '통장 통계' })
-  getStats(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
-    return this.accountsService.getAccountStats(id, req.user.id);
-  }
 }
