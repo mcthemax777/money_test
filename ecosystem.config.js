@@ -28,6 +28,14 @@ module.exports = {
         NODE_ENV: 'production',
         PORT: 3000
       },
+      // 포트를 놓기 전에 다음 프로세스가 뜨면 EADDRINUSE 로 죽는다.
+      // 종료할 시간을 주고, 재시작 사이에도 간격을 둔다.
+      kill_timeout: 5000,
+      restart_delay: 3000,
+      // 바인딩 실패처럼 즉시 죽는 상황에서 수십 번씩 재시도하며 로그를 채우는 것을 막는다.
+      // 10초를 못 넘기고 죽으면 실패로 보고, 5번이면 포기한다.
+      min_uptime: 10000,
+      max_restarts: 5,
       error_file: 'logs/web-error.log',
       out_file: 'logs/web-out.log',
       log_file: 'logs/web-combined.log',
