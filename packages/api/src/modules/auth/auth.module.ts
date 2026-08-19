@@ -5,7 +5,6 @@ import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
 import { DatabaseModule } from '../../config/database.module';
-import { RedisModule } from '../../config/redis.module';
 import { ConfigModule } from '../../config/config.module';
 import { ConfigService } from '../../config/config.service';
 import { UsersModule } from '../users/users.module';
@@ -16,7 +15,6 @@ import { ProjectAccessService } from '../../common/project-access.guard';
 @Module({
   imports: [
     DatabaseModule,
-    RedisModule,
     ConfigModule,
     PassportModule,
     UsersModule,

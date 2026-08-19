@@ -1,8 +1,6 @@
 import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
-import { createHash } from 'crypto';
 import { PrismaService } from '../../config/prisma.service';
-import { RedisService } from '../../config/redis.service';
 import { ConfigService } from '../../config/config.service';
 import { UsersService } from '../users/users.service';
 import { ProjectsService } from '../projects/projects.service';
@@ -17,14 +15,12 @@ interface TokenPayload {
   exp?: number;
 }
 
-const BLACKLIST_PREFIX = 'token:blacklist:';
 
 @Injectable()
 export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
-    private readonly redis: RedisService,
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
     private readonly projectsService: ProjectsService,
@@ -195,28 +191,26 @@ export class AuthService {
       throw new UnauthorizedException('Invalid refresh token');
     }
 
-    if (await this.isTokenBlacklisted(dto.refreshToken)) {
-      throw new UnauthorizedException('Invalid refresh token');
-    }
-
     const user = await this.validateUser(payload.sub);
 
-    // rotation: 사용한 refreshToken은 재사용 불가
-    await this.blacklistToken(dto.refreshToken);
-
+    // 새 토큰 쌍을 발급한다. 서버가 토큰을 기억하지 않으므로 옛 refreshToken도
+    // 만료 전까지는 계속 동작한다. 회전 재사용 차단이 필요하면 발급 목록을
+    // DB에 두는 방식으로 바꿔야 한다.
     return this.buildAuthResponse(user);
   }
 
-  async logout(accessToken: string, refreshToken?: string): Promise<{ success: boolean }> {
-    await this.blacklistToken(accessToken);
-    if (refreshToken) {
-      await this.blacklistToken(refreshToken);
-    }
+  /**
+   * 로그아웃.
+   *
+   * 서버는 발급한 토큰을 기억하지 않으므로 여기서 무효화할 대상이 없다.
+   * 클라이언트가 토큰을 지우는 것이 실질적인 로그아웃이고, 남은 액세스 토큰은
+   * 짧은 만료(JWT_EXPIRES_IN)로 곧 죽는다.
+   *
+   * 유출된 refreshToken을 즉시 끊어야 한다면 발급 목록을 DB에 두거나
+   * User에 tokenVersion을 두는 방식이 필요하다.
+   */
+  async logout(): Promise<{ success: boolean }> {
     return { success: true };
-  }
-
-  async isTokenBlacklisted(token: string): Promise<boolean> {
-    return this.redis.exists(BLACKLIST_PREFIX + this.hashToken(token));
   }
 
   async validateUser(userId: string) {
@@ -244,27 +238,7 @@ export class AuthService {
     return { accessToken, refreshToken };
   }
 
-  private async blacklistToken(token: string): Promise<void> {
-    const decoded = this.jwtService.decode(token) as TokenPayload | null;
-    if (!decoded?.exp) {
-      return;
-    }
 
-    const remainingSeconds = decoded.exp - Math.floor(Date.now() / 1000);
-    if (remainingSeconds <= 0) {
-      return;
-    }
-
-    await this.redis.setWithTtl(
-      BLACKLIST_PREFIX + this.hashToken(token),
-      '1',
-      remainingSeconds,
-    );
-  }
-
-  private hashToken(token: string): string {
-    return createHash('sha256').update(token).digest('hex');
-  }
 
   private toUserResponse(user: {
     id: string;

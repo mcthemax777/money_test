@@ -1,7 +1,6 @@
 import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
-import { Request } from 'express';
 import { ConfigService } from '../../../config/config.service';
 import { AuthService } from '../auth.service';
 
@@ -15,20 +14,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       ignoreExpiration: false,
       secretOrKey: configService.jwtSecret,
-      passReqToCallback: true,
     });
   }
 
-  async validate(req: Request, payload: { sub: string; type?: string }) {
+  async validate(payload: { sub: string; type?: string }) {
     if (payload.type !== 'access') {
       throw new UnauthorizedException('Invalid token type');
     }
 
-    const token = ExtractJwt.fromAuthHeaderAsBearerToken()(req);
-    if (token && (await this.authService.isTokenBlacklisted(token))) {
-      throw new UnauthorizedException('Token has been revoked');
-    }
-
+    // 서버가 토큰을 기억하지 않으므로 폐기 목록 조회가 없다.
+    // 유효성은 서명과 만료로만 판단하고, 사용자 존재 확인은 아래에서 한다.
     return this.authService.validateUser(payload.sub);
   }
 }

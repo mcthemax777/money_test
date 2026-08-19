@@ -1,4 +1,4 @@
-import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards, Request } from '@nestjs/common';
+import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import {
   ApiTags,
@@ -9,7 +9,6 @@ import {
   ApiBearerAuth,
 } from '@nestjs/swagger';
 import { AuthService } from './auth.service';
-import { AuthenticatedRequest } from '../../common/authenticated-request';
 import { Auth } from '@money/types';
 
 @ApiTags('Auth')
@@ -40,10 +39,9 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth()
-  @ApiOperation({ summary: '로그아웃 (현재 토큰 무효화)' })
+  @ApiOperation({ summary: '로그아웃 (클라이언트가 토큰을 폐기한다)' })
   @ApiOkResponse({ description: '로그아웃 성공' })
-  logout(@Request() req: AuthenticatedRequest, @Body() dto: Auth.LogoutRequest) {
-    const accessToken = req.headers.authorization?.replace('Bearer ', '') ?? '';
-    return this.authService.logout(accessToken, dto.refreshToken);
+  logout() {
+    return this.authService.logout();
   }
 }

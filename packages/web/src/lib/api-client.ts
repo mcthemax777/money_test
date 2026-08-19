@@ -32,7 +32,14 @@ class ApiClient {
     this.setupInterceptors();
   }
 
-  private isRefreshing = false;
+  /**
+   * 진행 중인 토큰 갱신. 동시에 401을 받은 요청들이 이 약속을 함께 기다린다.
+   *
+   * 예전에는 갱신 중이면 다른 401이 재시도 없이 바로 로그아웃으로 떨어졌다.
+   * 액세스 토큰이 24시간이라 드물었지만, 15분으로 줄이면 화면 하나가 여러 요청을
+   * 동시에 보내는 순간마다 로그인 화면으로 튕긴다.
+   */
+  private refreshPromise: Promise<string> | null = null;
 
   private setupInterceptors() {
     this.client.interceptors.request.use((config) => {
@@ -46,42 +53,62 @@ class ApiClient {
     this.client.interceptors.response.use(
       (response) => response,
       async (error: AxiosError) => {
-        const originalRequest = error.config;
+        const originalRequest = error.config as (typeof error.config & { _retried?: boolean });
         const isRefreshRequest = originalRequest?.url?.includes('/auth/refresh');
 
-        if (error.response?.status === 401 && !isRefreshRequest && !this.isRefreshing) {
-          const refreshToken = Cookie.get('refreshToken');
-          if (refreshToken && originalRequest) {
-            this.isRefreshing = true;
-            try {
-              const response = await this.client.post<any>('/auth/refresh', { refreshToken });
-              const data = response.data.data || response.data;
-              const { accessToken, refreshToken: newRefreshToken } = data;
-
-              Cookie.set('accessToken', accessToken);
-              Cookie.set('refreshToken', newRefreshToken);
-
-              originalRequest.headers.Authorization = `Bearer ${accessToken}`;
-              return this.client(originalRequest);
-            } catch {
-              Cookie.remove('accessToken');
-              Cookie.remove('refreshToken');
-              window.location.href = '/login';
-            } finally {
-              this.isRefreshing = false;
-            }
-          }
+        if (error.response?.status !== 401 || !originalRequest || isRefreshRequest) {
+          if (error.response?.status === 401) this.clearSession();
+          return Promise.reject(error);
         }
 
-        if (error.response?.status === 401) {
-          Cookie.remove('accessToken');
-          Cookie.remove('refreshToken');
-          window.location.href = '/login';
+        // 갱신한 토큰으로도 401이면 더 시도하지 않는다. 무한 재시도를 막는다.
+        if (originalRequest._retried) {
+          this.clearSession();
+          return Promise.reject(error);
         }
 
-        return Promise.reject(error);
+        try {
+          const accessToken = await this.refreshAccessToken();
+          originalRequest._retried = true;
+          originalRequest.headers = originalRequest.headers ?? {};
+          originalRequest.headers.Authorization = `Bearer ${accessToken}`;
+          return await this.client(originalRequest);
+        } catch (refreshError) {
+          this.clearSession();
+          return Promise.reject(refreshError);
+        }
       },
     );
+  }
+
+  /** 갱신은 한 번만 실행하고, 동시에 들어온 요청은 같은 결과를 나눠 쓴다. */
+  private refreshAccessToken(): Promise<string> {
+    if (this.refreshPromise) return this.refreshPromise;
+
+    const refreshToken = Cookie.get('refreshToken');
+    if (!refreshToken) return Promise.reject(new Error('No refresh token'));
+
+    this.refreshPromise = this.client
+      .post<{ accessToken: string; refreshToken: string }>('/auth/refresh', { refreshToken })
+      .then((response) => {
+        const { accessToken, refreshToken: newRefreshToken } = response.data;
+        Cookie.set('accessToken', accessToken);
+        Cookie.set('refreshToken', newRefreshToken);
+        return accessToken;
+      })
+      .finally(() => {
+        this.refreshPromise = null;
+      });
+
+    return this.refreshPromise;
+  }
+
+  private clearSession() {
+    Cookie.remove('accessToken');
+    Cookie.remove('refreshToken');
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+      window.location.href = '/login';
+    }
   }
 
   async signInWithGoogle(idToken: string) {

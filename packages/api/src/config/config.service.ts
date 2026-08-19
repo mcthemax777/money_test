@@ -31,9 +31,6 @@ export class ConfigService {
     return this.env.REFRESH_TOKEN_EXPIRES_IN || '7d';
   }
 
-  get redisUrl(): string {
-    return this.env.REDIS_URL || 'redis://localhost:6379';
-  }
 
   get corsOrigin(): string[] {
     return this.env.CORS_ORIGIN?.split(',') || ['http://localhost:3000'];
