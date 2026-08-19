@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-echo "=== Money App Web Smoke Test ==="
+echo "=== bboyong Web Smoke Test ==="
 echo ""
 
 # 포트 번호 감지 (로그에서 읽기)
@@ -45,12 +45,12 @@ else
   exit 1
 fi
 
-# Test 4: Login page contains Money App text
+# Test 4: Login page contains bboyong text
 echo "✓ Test 4: Page renders..."
-if curl -s "$BASE_URL/login" | grep -q "Money App"; then
+if curl -s "$BASE_URL/login" | grep -q "bboyong"; then
   echo "  Content verified"
 else
-  echo "  FAILED: Money App text not found"
+  echo "  FAILED: bboyong text not found"
   exit 1
 fi
 

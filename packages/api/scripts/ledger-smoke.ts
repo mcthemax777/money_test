@@ -31,10 +31,10 @@ runSmoke('ledger', async (ctx) => {
   // 카드는 서비스로 만든다. 신용카드는 부채 계정이 자동으로 함께 생겨야 한다.
   const creditCard = await cards.createCard('u1', {
     paymentAccountId: bank.id, name: '신한 신용', cardType: 'credit',
-    issuer: '신한', statementClosingDay: 15, paymentDueDay: 25, creditLimit: '5000000',
+    issuerId: 'fi_card_shinhan', statementClosingDay: 15, paymentDueDay: 25, creditLimit: '5000000',
   }, pid);
   const debitCard = await cards.createCard('u1', {
-    paymentAccountId: bank.id, name: '신한 체크', cardType: 'debit', issuer: '신한',
+    paymentAccountId: bank.id, name: '신한 체크', cardType: 'debit', issuerId: 'fi_card_shinhan',
   }, pid);
 
   ctx.check('신용카드 부채 계정 자동 생성', Boolean(creditCard.liabilityAccountId), true);

@@ -60,7 +60,7 @@ export async function exportDataToExcel() {
     const accountsData = accountsArray.map((a: any) => ({
       계좌명: a.name,
       사용자명: a.ownerId ? peopleMap.get(a.ownerId) || '' : '-',
-      은행: a.bankName || '',
+      은행: a.institution?.name || '',
       유형: ACCOUNT_TYPE_LABEL[a.type] || a.type || '',
       계좌번호: a.accountNumber || '',
       잔액: toNumber(a.balance),
@@ -76,7 +76,7 @@ export async function exportDataToExcel() {
         카드명: c.name,
         종류: c.cardType === 'credit' ? '신용' : '체크',
         결제통장: account?.name || '',
-        카드사: c.issuer || '',
+        카드사: c.issuer?.name || '',
         카드번호: c.cardNumberMasked || '',
         // 신용카드 사용액. 체크카드는 빚이 생기지 않으므로 0
         사용액: toNumber(c.currentUsage),
@@ -139,7 +139,7 @@ export async function exportDataToExcel() {
     [peopleSheet, accountsSheet, cardsSheet, categoriesSheet, entriesSheet].forEach(adjustColWidth);
 
     // 파일 다운로드
-    const fileName = `MoneyApp_${new Date().toISOString().split('T')[0]}.xlsx`;
+    const fileName = `bboyong_${new Date().toISOString().split('T')[0]}.xlsx`;
     XLSX.writeFile(workbook, fileName);
 
     return { success: true, fileName };

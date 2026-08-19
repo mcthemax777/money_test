@@ -6,8 +6,20 @@ import type { Account, Card } from '@/lib/types';
 import { toAmountString } from '@/lib/money';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
+import { useInstitutions } from '@/hooks/useInstitutions';
 
-
+const EMPTY_FORM = {
+  paymentAccountId: '',
+  name: '',
+  issuerId: '',
+  creditLimit: '',
+  expiryDate: '',
+  cardType: 'debit' as 'debit' | 'credit',
+  cardNumber: '',
+  // 신용카드는 마감일과 결제일을 따로 관리한다 (구 statementClosingDay 하나를 대체)
+  statementClosingDay: 15,
+  paymentDueDay: 25,
+};
 
 interface EditCardModalProps {
   isOpen: boolean;
@@ -26,28 +38,18 @@ export default function EditCardModal({
   onSuccess,
   onDelete,
 }: EditCardModalProps) {
-  const [formData, setFormData] = useState({
-    paymentAccountId: '',
-    name: '',
-    issuer: '',
-    creditLimit: '',
-    expiryDate: '',
-    cardType: 'debit' as 'debit' | 'credit',
-    cardNumber: '',
-    // 신용카드는 마감일과 결제일을 따로 관리한다 (구 statementClosingDay 하나를 대체)
-    statementClosingDay: 15,
-    paymentDueDay: 25,
-  });
+  const [formData, setFormData] = useState(EMPTY_FORM);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState('');
+  const { options: issuerOptions, error: issuerError } = useInstitutions('card_issuer');
 
   useEffect(() => {
     if (card) {
       setFormData({
         paymentAccountId: card.paymentAccountId,
         name: card.name,
-        issuer: card.issuer,
+        issuerId: card.issuerId,
         creditLimit: card.creditLimit ?? '',
         expiryDate: card.expiryDate || '',
         cardType: card.cardType,
@@ -65,11 +67,21 @@ export default function EditCardModal({
     try {
       setIsSubmitting(true);
       setError('');
+
+      // 카드사는 필수다. CustomSelect는 <input required>와 달리 브라우저 검증이 없어
+      // 비워 두면 서버에서 "기관을 찾을 수 없습니다"가 돌아와 원인을 알기 어렵다.
+      if (!formData.issuerId) {
+        setError('발급사를 선택하세요.');
+        setIsSubmitting(false);
+        return;
+      }
+
       const isoDate = formData.expiryDate ? new Date(formData.expiryDate).toISOString() : undefined;
       // 결제 통장과 카드 종류는 등록 후 바꾸지 않는다.
       // 신용카드는 부채 계정이 딸려 있어서 통장을 갈아끼우면 원장이 어긋난다.
       await apiClient.updateCard(card.id, {
         name: formData.name,
+        issuerId: formData.issuerId,
         creditLimit: formData.cardType === 'credit' ? toAmountString(formData.creditLimit) : undefined,
         statementClosingDay: formData.cardType === 'credit' ? formData.statementClosingDay : undefined,
         paymentDueDay: formData.cardType === 'credit' ? formData.paymentDueDay : undefined,
@@ -101,17 +113,7 @@ export default function EditCardModal({
   };
 
   const handleClose = () => {
-    setFormData({
-      paymentAccountId: '',
-      name: '',
-      issuer: '',
-      creditLimit: '',
-      expiryDate: '',
-      cardType: 'debit',
-      cardNumber: '',
-      statementClosingDay: 15,
-      paymentDueDay: 25,
-    });
+    setFormData(EMPTY_FORM);
     setError('');
     onClose();
   };
@@ -177,14 +179,13 @@ export default function EditCardModal({
           <label className="block text-sm font-medium text-gray-700 mb-1">
             발급사
           </label>
-          <input
-            type="text"
-            required
-            value={formData.issuer}
-            onChange={(e) => setFormData({ ...formData, issuer: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="KB Bank, Samsung Card 등"
+          <CustomSelect
+            options={issuerOptions}
+            value={formData.issuerId}
+            onChange={(value) => setFormData({ ...formData, issuerId: value })}
+            placeholder="카드사를 선택하세요"
           />
+          {issuerError && <p className="mt-1 text-xs text-red-600">{issuerError}</p>}
         </div>
 
         <div>

@@ -20,6 +20,7 @@ import TransactionItem, { EntryListItem } from '@/components/TransactionItem';
 import { BudgetCard } from '@/components/BudgetCard';
 import { BudgetDetailModal } from '@/components/BudgetDetailModal';
 import PaymentMethodTab from '@/components/PaymentMethodTab';
+import { useInstitutions } from '@/hooks/useInstitutions';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 
 const ENTRY_KIND_LABEL: Record<string, string> = {
@@ -62,32 +63,24 @@ export default function TransactionsPage() {
   const [viewType, setViewType] = useState<'calendar' | 'budget' | 'payment-method'>('calendar');
   const [budgetType, setBudgetType] = useState<'income' | 'expense'>('expense');
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<string>>(new Set());
-  const [showBudgetModal, setShowBudgetModal] = useState(false);
-  const [budgetFormData, setBudgetFormData] = useState({ categoryId: '', monthlyAmount: 0, type: 'expense' as 'income' | 'expense' });
-  const [budgetError, setBudgetError] = useState('');
-  const [budgetIsSubmitting, setBudgetIsSubmitting] = useState(false);
-  const [showBudgetDetail, setShowBudgetDetail] = useState(false);
+  // 상세 분석 패널에서 여는 예산 입력. 분류는 보고 있는 것으로 고정되고 금액만 받는다.
+  const [showDetailBudgetModal, setShowDetailBudgetModal] = useState(false);
+  const [detailBudgetAmount, setDetailBudgetAmount] = useState(0);
+  const [detailBudgetError, setDetailBudgetError] = useState('');
+  const [detailBudgetSubmitting, setDetailBudgetSubmitting] = useState(false);
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
-  const [selectedCategoryName, setSelectedCategoryName] = useState('');
   const dateTransactionsRef = useRef<HTMLDivElement>(null);
   const [isPersonModalOpen, setIsPersonModalOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [isCardModalOpen, setIsCardModalOpen] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
-  const [accountFormData, setAccountFormData] = useState({
-    ownerId: '',
-    name: '',
-    balance: '',
-    bankName: '',
-    accountNumber: '',
-  });
-  const [accountSubmitting, setAccountSubmitting] = useState(false);
+  // 계좌 추가 폼 상태는 AddAccountModal이 직접 들고 있다. 여기서는 열림 여부만 관리한다.
   const [cardFormData, setCardFormData] = useState({
     accountId: '',
     name: '',
     cardNumber: '',
     cardType: 'debit' as 'debit' | 'credit',
-    issuer: '',
+    issuerId: '',
     expiryDate: '',
     creditLimit: '',
     // 청구 주기는 마감일과 결제일 두 값으로 계산한다
@@ -95,6 +88,7 @@ export default function TransactionsPage() {
     paymentDueDay: 25,
   });
   const [cardSubmitting, setCardSubmitting] = useState(false);
+  const { options: issuerOptions } = useInstitutions('card_issuer');
   const [categoryFormData, setCategoryFormData] = useState({
     name: '',
     type: 'expense' as 'income' | 'expense',
@@ -435,12 +429,6 @@ export default function TransactionsPage() {
     setDisplayEntries([]);
   };
 
-  // Date 생성자가 연도 넘김을 처리하므로 12월/1월을 따로 분기하지 않는다.
-  const shiftMonth = (delta: number) => {
-    const shifted = new Date(currentYear, currentMonth - 1 + delta, 1);
-    handleMonthChange(shifted.getFullYear(), shifted.getMonth() + 1);
-  };
-
   const handleDetailEditClick = () => {
     if (!selectedTransaction) return;
     setIsDetailModalOpen(false);
@@ -546,6 +534,15 @@ export default function TransactionsPage() {
     e.preventDefault();
     try {
       setCardSubmitting(true);
+
+      // 카드사는 필수다. CustomSelect는 <input required>와 달리 브라우저 검증이 없어
+      // 비워 두면 서버에서 "기관을 찾을 수 없습니다"가 돌아와 원인을 알기 어렵다.
+      if (!cardFormData.issuerId) {
+        alert('발급사를 선택하세요.');
+        setCardSubmitting(false);
+        return;
+      }
+
       const isoDate = cardFormData.expiryDate ? new Date(cardFormData.expiryDate).toISOString() : undefined;
       const isCredit = cardFormData.cardType === 'credit';
       await apiClient.createCard({
@@ -554,7 +551,7 @@ export default function TransactionsPage() {
         name: cardFormData.name,
         ...(cardFormData.cardNumber && { cardNumber: cardFormData.cardNumber }),
         cardType: cardFormData.cardType,
-        issuer: cardFormData.issuer,
+        issuerId: cardFormData.issuerId,
         ...(isoDate && { expiryDate: isoDate }),
         creditLimit: isCredit ? toAmountString(cardFormData.creditLimit) : undefined,
         // 신용카드는 마감일과 결제일이 필수다 (없으면 청구서를 만들 수 없다)
@@ -569,7 +566,7 @@ export default function TransactionsPage() {
         name: '',
         cardNumber: '',
         cardType: 'debit',
-        issuer: '',
+        issuerId: '',
         expiryDate: '',
         creditLimit: '',
         statementClosingDay: 15,
@@ -635,89 +632,102 @@ export default function TransactionsPage() {
     setExpandedBudgetIds(newExpanded);
   };
 
-  const handleBudgetEdit = (budget: any) => {
-    setBudgetFormData({
-      categoryId: budget.categoryId || '',
-      monthlyAmount: budget.monthlyAmount,
-      type: budget.type || budgetType,
-    });
-    setBudgetError('');
-    setShowBudgetModal(true);
+  /**
+   * 상세 분석 패널의 제목.
+   *
+   * 예전에는 카드를 누를 때 이름을 따로 저장했다. 그러면 지출/수입 탭을 옮길 때
+   * selectedCategoryId만 새 탭의 전체예산으로 바뀌고 이름은 그대로 남아 제목이 어긋났다.
+   * 저장하지 않고 id에서 만들면 그런 어긋남이 생기지 않는다.
+   */
+  const selectedCategoryLabel = useMemo(() => {
+    if (selectedCategoryId === 'total-expense') return '전체지출';
+    if (selectedCategoryId === 'total-income') return '전체수입';
+    return categories.find((c) => c.id === selectedCategoryId)?.name ?? '';
+  }, [selectedCategoryId, categories]);
+
+  /**
+   * 상세 분석에서 보고 있는 대상을 예산 API가 쓰는 형태로 바꾼다.
+   *
+   * selectedCategoryId는 실제 카테고리 id이거나, 전체예산 카드가 넘기는
+   * 'total-income'/'total-expense' 합성 id다. 후자는 카테고리 없는 예산이라
+   * 생성할 때 API 센티널 값을 따로 보내야 한다.
+   */
+  const resolveDetailBudgetTarget = () => {
+    const isTotal =
+      selectedCategoryId === 'total-income' || selectedCategoryId === 'total-expense';
+    const type: 'income' | 'expense' = isTotal
+      ? selectedCategoryId === 'total-income'
+        ? 'income'
+        : 'expense'
+      : (categories.find((c) => c.id === selectedCategoryId)?.type ?? budgetType);
+
+    const found = monthlyBudgets.find((b) =>
+      isTotal
+        ? !b.categoryId && (b.type === type || b.categoryType === type)
+        : b.categoryId === selectedCategoryId,
+    );
+
+    return {
+      type,
+      apiCategoryId: isTotal
+        ? type === 'income'
+          ? 'BUDGET_TOTAL_INCOME'
+          : 'BUDGET_TOTAL_EXPENSE'
+        : selectedCategoryId,
+      // placeholder는 목록을 채우기 위한 표시용 행이다. 저장된 예산이 아니다.
+      existing: found && !found.budgetId.startsWith('placeholder-') ? found : undefined,
+    };
   };
 
-  const handleBudgetDelete = async (budgetId: string) => {
-    if (!confirm('정말 삭제하시겠습니까?')) return;
-
-    try {
-      await deleteBudgetApi(budgetId);
-      // 데이터 새로고침
-      if (selectedProjectId) {
-        await fetchMonthlyBudgets(currentYear, currentMonth, selectedProjectId);
-      }
-    } catch (err) {
-      alert('삭제에 실패했습니다.');
-    }
+  const openDetailBudgetModal = () => {
+    // 이미 예산이 있으면 그 값을 채워 수정으로, 없으면 0에서 시작한다.
+    setDetailBudgetAmount(resolveDetailBudgetTarget().existing?.monthlyAmount ?? 0);
+    setDetailBudgetError('');
+    setShowDetailBudgetModal(true);
   };
 
-  const handleBudgetSubmit = async (e: React.FormEvent) => {
+  const handleDetailBudgetSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setBudgetError('');
+    setDetailBudgetError('');
+    if (!selectedProjectId) return;
 
-    if (!budgetFormData.monthlyAmount || budgetFormData.monthlyAmount <= 0) {
-      setBudgetError('예산 금액을 입력해주세요.');
+    if (detailBudgetAmount < 0) {
+      setDetailBudgetError('예산 금액은 0보다 작을 수 없습니다.');
+      return;
+    }
+
+    const { type, apiCategoryId, existing } = resolveDetailBudgetTarget();
+
+    // 0은 "예산 없음"이라는 뜻이다. 있으면 지우고, 애초에 없으면 할 일이 없다.
+    if (detailBudgetAmount === 0 && !existing) {
+      setDetailBudgetError('삭제할 예산이 없습니다.');
       return;
     }
 
     try {
-      setBudgetIsSubmitting(true);
-      console.log('📌 Creating budget with projectId:', selectedProjectId);
-      console.log('📋 Budget data:', budgetFormData);
-      if (!selectedProjectId) return;
+      setDetailBudgetSubmitting(true);
 
-      // 같은 카테고리의 기존 예산 확인
-      let existingBudget;
-      if (budgetFormData.categoryId) {
-        // 일반 카테고리
-        existingBudget = monthlyBudgets.find(
-          (b) => b.categoryId === budgetFormData.categoryId
-        );
-      } else {
-        // 전체 지출/수입
-        existingBudget = monthlyBudgets.find(
-          (b) => !b.categoryId && b.type === budgetFormData.type
-        );
-      }
-
-      if (existingBudget && !existingBudget.budgetId.startsWith('placeholder-')) {
-        // 실제 예산이 있으면 업데이트
-        await updateBudgetApi(existingBudget.budgetId, {
-          monthlyAmount: toAmountString(budgetFormData.monthlyAmount),
+      if (detailBudgetAmount === 0) {
+        await deleteBudgetApi(existing!.budgetId);
+      } else if (existing) {
+        await updateBudgetApi(existing.budgetId, {
+          monthlyAmount: toAmountString(detailBudgetAmount),
         });
       } else {
-        // 실제 예산이 없으면 새로 생성
         await createBudgetApi({
           projectId: selectedProjectId,
-          categoryId: budgetFormData.categoryId || (budgetFormData.type === 'income' ? 'BUDGET_TOTAL_INCOME' : 'BUDGET_TOTAL_EXPENSE'),
-          type: budgetFormData.type,
-          monthlyAmount: toAmountString(budgetFormData.monthlyAmount),
+          categoryId: apiCategoryId,
+          type,
+          monthlyAmount: toAmountString(detailBudgetAmount),
         });
       }
 
-      // 데이터 새로고침 (모달 닫기 전에)
       await fetchMonthlyBudgets(currentYear, currentMonth, selectedProjectId);
-
-      // 카테고리도 새로고침
-      if (selectedProjectId) {
-        const updatedCategories = await apiClient.getCategories(selectedProjectId);
-        setCategories(updatedCategories || []);
-      }
-
-      setShowBudgetModal(false);
-      setBudgetFormData({ categoryId: '', monthlyAmount: 0, type: 'expense' });
+      setShowDetailBudgetModal(false);
     } catch (err: any) {
-      setBudgetError(err.message || '저장에 실패했습니다.');
+      setDetailBudgetError(err.message || '저장에 실패했습니다.');
     } finally {
-      setBudgetIsSubmitting(false);
+      setDetailBudgetSubmitting(false);
     }
   };
 
@@ -735,109 +745,58 @@ export default function TransactionsPage() {
 
   return (
     <>
-      {/* 통합 헤더 */}
-      <div className="mb-6">
-        {/* 제목 및 탭 */}
-        <div className="flex justify-between items-center mb-4">
-          <h1 className="text-2xl font-bold text-gray-900">
-            {viewType === 'budget' ? '예산' : viewType === 'payment-method' ? '결제방법' : '거래 기록'}
-          </h1>
-          <div className="flex gap-2 bg-gray-200 rounded-lg p-1">
-            <button
-              onClick={() => setViewType('calendar')}
-              className={`px-4 py-2 rounded-md font-medium transition ${
-                viewType === 'calendar'
-                  ? 'bg-white text-blue-600 shadow'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              날짜별
-            </button>
-            <button
-              onClick={() => setViewType('budget')}
-              className={`px-4 py-2 rounded-md font-medium transition ${
-                viewType === 'budget'
-                  ? 'bg-white text-blue-600 shadow'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              분류별
-            </button>
-            <button
-              onClick={() => setViewType('payment-method')}
-              className={`px-4 py-2 rounded-md font-medium transition ${
-                viewType === 'payment-method'
-                  ? 'bg-white text-blue-600 shadow'
-                  : 'text-gray-600 hover:text-gray-900'
-              }`}
-            >
-              수단별
-            </button>
-          </div>
-        </div>
-
-        {/* 월 정보 및 버튼 */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <h2 className="text-2xl font-bold text-gray-900">
-              {currentYear}년 {currentMonth}월
-            </h2>
-            <div className="flex gap-6 text-sm font-semibold">
-              {monthlyTotals.incomeTotal > 0 && (
-                <span className="text-green-600">
-                  +{new Intl.NumberFormat('ko-KR', {
-                    style: 'currency',
-                    currency: 'KRW',
-                  }).format(monthlyTotals.incomeTotal)}
-                </span>
-              )}
-              {monthlyTotals.expenseTotal > 0 && (
-                <span className="text-red-600">
-                  -{new Intl.NumberFormat('ko-KR', {
-                    style: 'currency',
-                    currency: 'KRW',
-                  }).format(monthlyTotals.expenseTotal)}
-                </span>
-              )}
+      {/* 통합 헤더. 년월과 탭, 거래 추가가 한 줄에 놓인다. */}
+      <MonthHeader
+        year={currentYear}
+        month={currentMonth}
+        incomeTotal={monthlyTotals.incomeTotal}
+        expenseTotal={monthlyTotals.expenseTotal}
+        onMonthChange={handleMonthChange}
+        right={
+          <>
+            <div className="flex gap-2 bg-gray-200 rounded-lg p-1">
+              <button
+                onClick={() => setViewType('calendar')}
+                className={`px-4 py-2 rounded-md font-medium transition ${
+                  viewType === 'calendar'
+                    ? 'bg-white text-blue-600 shadow'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                날짜별
+              </button>
+              <button
+                onClick={() => setViewType('budget')}
+                className={`px-4 py-2 rounded-md font-medium transition ${
+                  viewType === 'budget'
+                    ? 'bg-white text-blue-600 shadow'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                분류별
+              </button>
+              <button
+                onClick={() => setViewType('payment-method')}
+                className={`px-4 py-2 rounded-md font-medium transition ${
+                  viewType === 'payment-method'
+                    ? 'bg-white text-blue-600 shadow'
+                    : 'text-gray-600 hover:text-gray-900'
+                }`}
+              >
+                수단별
+              </button>
             </div>
-          </div>
-          <div className="flex gap-3">
+
+            {/* 거래 추가는 어느 탭에서든 쓸 수 있어야 한다 */}
             <button
-              onClick={() => shiftMonth(-1)}
-              className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
-              title="이전 달"
+              onClick={() => setIsModalOpen(true)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 whitespace-nowrap"
             >
-              <span className="text-xl">←</span>
+              거래 추가
             </button>
-            <button
-              onClick={() => shiftMonth(1)}
-              className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
-              title="다음 달"
-            >
-              <span className="text-xl">→</span>
-            </button>
-            {viewType === 'calendar' ? (
-              <button
-                onClick={() => setIsModalOpen(true)}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                거래 추가
-              </button>
-            ) : viewType === 'budget' ? (
-              <button
-                onClick={() => {
-                  setBudgetFormData({ categoryId: '', monthlyAmount: 0, type: budgetType });
-                  setBudgetError('');
-                  setShowBudgetModal(true);
-                }}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                예산 추가
-              </button>
-            ) : null}
-          </div>
-        </div>
-      </div>
+          </>
+        }
+      />
 
       <div>
         {viewType === 'budget' ? (
@@ -845,7 +804,7 @@ export default function TransactionsPage() {
           monthlyBudgets.length === 0 ? (
             <p className="text-gray-600">설정된 예산이 없습니다.</p>
           ) : (
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               <div className="lg:col-span-1 bg-white rounded-lg border border-gray-200 p-6">
                 {/* 수입/지출 탭 */}
                 <div className="flex gap-2 mb-6 border-b">
@@ -950,12 +909,8 @@ export default function TransactionsPage() {
                                 icon={budgetType === 'income' ? '💰' : '💸'}
                                 monthlyAmount={(totalBudget as any).monthlyAmount}
                                 usedAmount={usedAmount}
-                                onEdit={() => handleBudgetEdit(totalBudget as any)}
-                                onDelete={() => handleBudgetDelete((totalBudget as any).budgetId)}
                                 onSelect={(id) => {
                                   setSelectedCategoryId(id);
-                                  setSelectedCategoryName(totalCategoryName);
-                                  setShowBudgetDetail(true);
                                 }}
                                 hasChildren={mainCategories.length > 0}
                                 isExpanded={isTotalExpanded}
@@ -1017,12 +972,8 @@ export default function TransactionsPage() {
                                           icon={getCategoryIcon(mainBudget.categoryId)}
                                           monthlyAmount={mainBudget.monthlyAmount}
                                           usedAmount={mainBudget.usedAmount || 0}
-                                          onEdit={() => handleBudgetEdit(mainBudget)}
-                                          onDelete={() => handleBudgetDelete(mainBudget.budgetId)}
                                           onSelect={(id) => {
                                             setSelectedCategoryId(id);
-                                            setSelectedCategoryName(mainCategoryName);
-                                            setShowBudgetDetail(true);
                                           }}
                                           hasChildren={mainBudget.hasChildren}
                                           isExpanded={isMainExpanded}
@@ -1049,12 +1000,8 @@ export default function TransactionsPage() {
                                               icon={getCategoryIcon(subBudget.categoryId)}
                                               monthlyAmount={subBudget.monthlyAmount}
                                               usedAmount={subBudget.usedAmount || 0}
-                                              onEdit={() => handleBudgetEdit(subBudget)}
-                                              onDelete={() => handleBudgetDelete(subBudget.budgetId)}
                                               onSelect={(id) => {
                                                 setSelectedCategoryId(id);
-                                                setSelectedCategoryName(subCategoryName);
-                                                setShowBudgetDetail(true);
                                               }}
                                               hasChildren={false}
                                               isChild={true}
@@ -1103,8 +1050,6 @@ export default function TransactionsPage() {
                                 icon={getCategoryIcon(mainBudget.categoryId)}
                                 monthlyAmount={mainBudget.monthlyAmount}
                                 usedAmount={mainBudget.usedAmount || 0}
-                                onEdit={() => handleBudgetEdit(mainBudget)}
-                                onDelete={() => handleBudgetDelete(mainBudget.budgetId)}
                                 hasChildren={mainBudget.hasChildren}
                                 isExpanded={isMainExpanded}
                                 onToggleExpand={() => {
@@ -1124,8 +1069,6 @@ export default function TransactionsPage() {
                                       icon={getCategoryIcon(subBudget.categoryId)}
                                       monthlyAmount={subBudget.monthlyAmount}
                                       usedAmount={subBudget.usedAmount || 0}
-                                      onEdit={() => handleBudgetEdit(subBudget)}
-                                      onDelete={() => handleBudgetDelete(subBudget.budgetId)}
                                       hasChildren={false}
                                       isChild={true}
                                     />
@@ -1142,21 +1085,22 @@ export default function TransactionsPage() {
               </div>
 
               {selectedCategoryId && (
-                <div className="lg:col-span-2 bg-white rounded-lg border border-gray-200 p-6">
+                <div className="lg:col-span-1 bg-white rounded-lg border border-gray-200 p-6">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="text-lg font-bold text-gray-900">{selectedCategoryName} 상세 분석</h3>
+                    <h3 className="text-lg font-bold text-gray-900">{selectedCategoryLabel} 상세 분석</h3>
+                    {/* 보고 있는 분류의 예산을 그 자리에서 넣거나 고친다 */}
                     <button
-                      onClick={() => setSelectedCategoryId('')}
-                      className="text-gray-400 hover:text-gray-600"
+                      onClick={openDetailBudgetModal}
+                      className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 whitespace-nowrap"
                     >
-                      ✕
+                      예산 추가
                     </button>
                   </div>
                   <BudgetDetailModal
                     isOpen={true}
                     onClose={() => setSelectedCategoryId('')}
                     categoryId={selectedCategoryId}
-                    categoryName={selectedCategoryName}
+                    categoryName={selectedCategoryLabel}
                     categories={categories}
                     isInline={true}
                     currentMonth={currentMonth}
@@ -1178,7 +1122,7 @@ export default function TransactionsPage() {
             projectId={selectedProjectId}
           />
         ) : viewType === 'calendar' ? (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div className="lg:col-span-1">
               <TransactionCalendar
                 entries={visibleEntries}
@@ -1192,7 +1136,7 @@ export default function TransactionsPage() {
             </div>
 
             {(displayEntries.length > 0 || !startDate) && (
-              <div ref={dateTransactionsRef} className="lg:col-span-2">
+              <div ref={dateTransactionsRef} className="lg:col-span-1">
                 {!startDate ? (
                   <TransactionListView
                     entries={visibleEntries}
@@ -1273,7 +1217,7 @@ export default function TransactionsPage() {
                   <CustomSelect
                     options={cards.map((card) => ({
                       id: card.id,
-                      name: `${card.name} (${card.issuer})`,
+                      name: `${card.name} (${card.issuer?.name})`,
                     }))}
                     value={formData.cardId}
                     onChange={(value) => setFormData({ ...formData, cardId: value })}
@@ -1568,82 +1512,13 @@ export default function TransactionsPage() {
         </form>
       </Modal>
 
-      {/* 예산 추가 모달 */}
+      {/* 상세 분석에서 여는 예산 입력. 분류가 정해져 있으므로 금액만 받는다. */}
       <Modal
-        isOpen={showBudgetModal}
-        onClose={() => setShowBudgetModal(false)}
-        title="예산 추가"
+        isOpen={showDetailBudgetModal}
+        onClose={() => setShowDetailBudgetModal(false)}
+        title={`${selectedCategoryLabel} 예산`}
       >
-        <form onSubmit={handleBudgetSubmit} className="space-y-4">
-          {/* 수입/지출 탭 */}
-          <div className="flex gap-2 border-b">
-            <button
-              type="button"
-              onClick={() => setBudgetFormData({ ...budgetFormData, type: 'expense' })}
-              className={`flex-1 px-4 py-2 font-medium transition ${
-                budgetFormData.type === 'expense'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-600 hover:text-gray-800'
-              }`}
-            >
-              지출
-            </button>
-            <button
-              type="button"
-              onClick={() => setBudgetFormData({ ...budgetFormData, type: 'income' })}
-              className={`flex-1 px-4 py-2 font-medium transition ${
-                budgetFormData.type === 'income'
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-600 hover:text-gray-800'
-              }`}
-            >
-              수입
-            </button>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              카테고리 (선택사항 - 미선택 시 {budgetFormData.type === 'income' ? '전체 수입' : '전체 지출'})
-            </label>
-            <CustomSelect
-              options={[
-                { id: '', name: budgetFormData.type === 'income' ? '전체 수입' : '전체 지출' },
-                ...categories
-                  .filter((c) => c.type === budgetFormData.type)
-                  .sort((a, b) => {
-                    // 대분류(parentId 없음)를 먼저, 그다음 부모별로 묶어 이름순
-                    const aIsMain = !a.parentId;
-                    const bIsMain = !b.parentId;
-                    if (aIsMain !== bIsMain) return aIsMain ? -1 : 1;
-                    if (a.parentId !== b.parentId) return (a.parentId || '').localeCompare(b.parentId || '');
-                    return a.name.localeCompare(b.name);
-                  })
-                  .map((category) => {
-                    if (!category.parentId) {
-                      return {
-                        id: category.id,
-                        name: category.name,
-                      };
-                    } else {
-                      const parent = categories.find((c) => c.id === category.parentId);
-                      return {
-                        id: category.id,
-                        name: `${parent?.name || '?'} > ${category.name}`,
-                      };
-                    }
-                  })
-              ]}
-              value={budgetFormData.categoryId}
-              onChange={(value) =>
-                setBudgetFormData({
-                  ...budgetFormData,
-                  categoryId: value || '',
-                })
-              }
-              placeholder="카테고리 선택"
-            />
-          </div>
-
+        <form onSubmit={handleDetailBudgetSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               월 예산 금액
@@ -1651,38 +1526,38 @@ export default function TransactionsPage() {
             <input
               type="number"
               min="0"
-              value={budgetFormData.monthlyAmount}
-              onChange={(e) =>
-                setBudgetFormData({
-                  ...budgetFormData,
-                  monthlyAmount: parseInt(e.target.value) || 0,
-                })
-              }
-              placeholder="예산 금액을 입력하세요"
+              autoFocus
+              value={detailBudgetAmount}
+              onChange={(e) => setDetailBudgetAmount(parseInt(e.target.value) || 0)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+            <p className="mt-2 text-xs text-gray-500">0을 입력하면 예산을 삭제합니다.</p>
           </div>
 
-          {budgetError && (
-            <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-600 rounded text-sm">
-              {budgetError}
+          {detailBudgetError && (
+            <div className="p-3 bg-red-50 border border-red-200 text-red-600 rounded text-sm">
+              {detailBudgetError}
             </div>
           )}
 
           <div className="flex gap-2 pt-4">
             <button
               type="button"
-              onClick={() => setShowBudgetModal(false)}
+              onClick={() => setShowDetailBudgetModal(false)}
               className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
             >
               취소
             </button>
             <button
               type="submit"
-              disabled={budgetIsSubmitting}
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50"
+              disabled={detailBudgetSubmitting}
+              className={`flex-1 px-4 py-2 text-white rounded-lg transition disabled:opacity-50 ${
+                detailBudgetAmount === 0
+                  ? 'bg-red-600 hover:bg-red-700'
+                  : 'bg-blue-600 hover:bg-blue-700'
+              }`}
             >
-              {budgetIsSubmitting ? '저장 중...' : '추가'}
+              {detailBudgetSubmitting ? '저장 중...' : detailBudgetAmount === 0 ? '삭제' : '저장'}
             </button>
           </div>
         </form>
@@ -1773,13 +1648,11 @@ export default function TransactionsPage() {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               발급사
             </label>
-            <input
-              type="text"
-              required
-              value={cardFormData.issuer}
-              onChange={(e) => setCardFormData({ ...cardFormData, issuer: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="KB Bank, Samsung Card 등"
+            <CustomSelect
+              options={issuerOptions}
+              value={cardFormData.issuerId}
+              onChange={(value) => setCardFormData({ ...cardFormData, issuerId: value })}
+              placeholder="카드사를 선택하세요"
             />
           </div>
 

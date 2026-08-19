@@ -1,8 +1,16 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { AccountType, CardType, Prisma } from '@prisma/client';
+import { AccountType, CardType, FinancialInstitutionType, Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
+import { InstitutionsService } from '../institutions/institutions.service';
 import { CardDto } from '@money/types';
+
+/** 카드 응답에 함께 실어 주는 관계. 응답 모양을 한곳에서 정한다. */
+const CARD_INCLUDE = {
+  paymentAccount: true,
+  liabilityAccount: true,
+  issuer: true,
+} satisfies Prisma.CardInclude;
 
 /** 금액은 와이어에서 문자열로 오간다. 경계에서 한 번만 Decimal로 바꾼다. */
 function toDecimal(value: string | undefined): Prisma.Decimal | null {
@@ -15,6 +23,7 @@ export class CardsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly projectAccess: ProjectAccessService,
+    private readonly institutions: InstitutionsService,
   ) {}
 
   /**
@@ -46,6 +55,12 @@ export class CardsService {
       this.assertDayOfMonth(dto.paymentDueDay, '결제일');
     }
 
+    await this.institutions.assertUsable(
+      dto.issuerId,
+      projectId,
+      FinancialInstitutionType.card_issuer,
+    );
+
     // 카드와 부채 계정은 함께 존재해야 하므로 한 트랜잭션에서 만든다.
     return this.prisma.$transaction(async (tx) => {
       let liabilityAccountId: string | undefined;
@@ -71,14 +86,14 @@ export class CardsService {
           liabilityAccountId,
           name: dto.name,
           cardType: dto.cardType,
-          issuer: dto.issuer,
+          issuerId: dto.issuerId,
           cardNumber: dto.cardNumber ?? null,
           expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : null,
           creditLimit: toDecimal(dto.creditLimit),
           statementClosingDay: dto.statementClosingDay ?? null,
           paymentDueDay: dto.paymentDueDay ?? null,
         },
-        include: { paymentAccount: true, liabilityAccount: true },
+        include: CARD_INCLUDE,
       });
     });
   }
@@ -89,7 +104,7 @@ export class CardsService {
 
     const cards = await this.prisma.card.findMany({
       where: { projectId: finalProjectId, isActive: true },
-      include: { paymentAccount: true, liabilityAccount: true },
+      include: CARD_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
 
@@ -99,7 +114,7 @@ export class CardsService {
   async getCardById(id: string, userId: string) {
     const card = await this.prisma.card.findUnique({
       where: { id },
-      include: { paymentAccount: true, liabilityAccount: true },
+      include: CARD_INCLUDE,
     });
     if (!card) throw new NotFoundException('카드를 찾을 수 없습니다.');
 
@@ -119,17 +134,33 @@ export class CardsService {
       this.assertDayOfMonth(dto.paymentDueDay, '결제일');
     }
 
-    const { creditLimit, ...rest } = dto;
-    const data = {
-      ...rest,
-      ...(creditLimit !== undefined ? { creditLimit: toDecimal(creditLimit) } : {}),
-    };
+    // 요청 본문을 스프레드로 Prisma에 넘기면 안 된다.
+    // DTO가 인터페이스라 ValidationPipe(whitelist: false)가 낯선 키를 지우지 않으므로
+    // `{"issuer": {"connect": {"id": "fi_bank_shinhan"}}}` 같은 관계 조작이 그대로 통과해
+    // 아래 issuerId 검증을 우회한다. 그래서 허용 컬럼만 골라 담는다.
+    const data: Prisma.CardUpdateInput = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    if (dto.statementClosingDay !== undefined) data.statementClosingDay = dto.statementClosingDay;
+    if (dto.paymentDueDay !== undefined) data.paymentDueDay = dto.paymentDueDay;
+    if (dto.creditLimit !== undefined) data.creditLimit = toDecimal(dto.creditLimit);
+
+    // 생성과 같은 검증을 거쳐야 한다. 검증 없이 저장하면 다른 프로젝트의 기관이나
+    // 은행을 카드사 자리에 넣을 수 있다.
+    if (dto.issuerId !== undefined) {
+      await this.institutions.assertUsable(
+        dto.issuerId,
+        card.projectId,
+        FinancialInstitutionType.card_issuer,
+      );
+      data.issuer = { connect: { id: dto.issuerId } };
+    }
 
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.card.update({
         where: { id },
         data,
-        include: { paymentAccount: true, liabilityAccount: true },
+        include: CARD_INCLUDE,
       });
 
       // 카드 이름은 부채 계정 이름과 함께 움직인다 (사용자에게는 같은 대상이므로)

@@ -128,7 +128,7 @@ export default function AccountsPage() {
             >
               <div className="flex-1">
                 <p className="font-bold text-gray-900">{account.name}</p>
-                <p className="text-sm text-gray-600">{account.bankName}</p>
+                <p className="text-sm text-gray-600">{account.institution?.name}</p>
                 <p className="text-xs text-gray-500 mt-1">
                   계좌번호: {account.accountNumber || 'N/A'}
                 </p>

@@ -11,8 +11,20 @@ import CustomSelect from '@/components/CustomSelect';
 import Modal from '@/components/Modal';
 import AddAccountModal from '@/components/AddAccountModal';
 import EditCardModal from '@/components/EditCardModal';
+import { useInstitutions } from '@/hooks/useInstitutions';
 
-
+/** 같은 리터럴을 제출 후/닫기/취소 세 곳에서 되풀이하던 것을 한곳으로 모았다. */
+const EMPTY_CARD_FORM = {
+  accountId: '',
+  name: '',
+  cardNumber: '',
+  cardType: 'debit' as 'debit' | 'credit',
+  issuerId: '',
+  expiryDate: '',
+  creditLimit: '',
+  statementClosingDay: 15,
+  paymentDueDay: 25,
+};
 
 export default function CardsPage() {
   const router = useRouter();
@@ -28,28 +40,11 @@ export default function CardsPage() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
-  const [accountFormData, setAccountFormData] = useState({
-    ownerId: '',
-    name: '',
-    balance: '',
-    bankName: '',
-    accountNumber: '',
-  });
-  const [accountSubmitting, setAccountSubmitting] = useState(false);
-  const [accountError, setAccountError] = useState('');
+  // 계좌 추가 폼 상태는 AddAccountModal이 직접 들고 있다. 여기서는 열림 여부만 관리한다.
   const [people, setPeople] = useState<Person[]>([]);
-  const [formData, setFormData] = useState({
-    accountId: '',
-    name: '',
-    cardNumber: '',
-    cardType: 'debit' as 'debit' | 'credit',
-    issuer: '',
-    expiryDate: '',
-    creditLimit: '',
-    statementClosingDay: 15,
-    paymentDueDay: 25,
-  });
+  const [formData, setFormData] = useState(EMPTY_CARD_FORM);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const { options: issuerOptions, error: issuerError } = useInstitutions('card_issuer');
 
   useEffect(() => {
     loadUser();
@@ -94,11 +89,20 @@ export default function CardsPage() {
         return;
       }
 
+      // 카드사는 필수다. CustomSelect는 <input required>와 달리 브라우저 검증이 없어
+      // 비워 두면 서버에서 "기관을 찾을 수 없습니다"가 돌아와 원인을 알기 어렵다.
+      if (!formData.issuerId) {
+        setError('발급사를 선택하세요.');
+        setIsSubmitting(false);
+        return;
+      }
+
       const isoDate = formData.expiryDate ? new Date(formData.expiryDate).toISOString() : undefined;
 
       if (editingId) {
         await apiClient.updateCard(editingId, {
           name: formData.name,
+          issuerId: formData.issuerId,
           creditLimit: formData.cardType === 'credit' ? toAmountString(formData.creditLimit) : undefined,
           statementClosingDay: formData.cardType === 'credit' ? formData.statementClosingDay : undefined,
           paymentDueDay: formData.cardType === 'credit' ? formData.paymentDueDay : undefined,
@@ -111,7 +115,7 @@ export default function CardsPage() {
           name: formData.name,
           ...(formData.cardNumber && { cardNumber: formData.cardNumber }),
           cardType: formData.cardType,
-          issuer: formData.issuer,
+          issuerId: formData.issuerId,
           ...(isoDate && { expiryDate: isoDate }),
           creditLimit: formData.cardType === 'credit' ? toAmountString(formData.creditLimit) : undefined,
           statementClosingDay: formData.cardType === 'credit' ? formData.statementClosingDay : undefined,
@@ -120,17 +124,7 @@ export default function CardsPage() {
       }
       const data = await apiClient.getCards(selectedProjectId);
       setCards(data || []);
-      setFormData({
-        accountId: '',
-        name: '',
-        cardNumber: '',
-        cardType: 'debit',
-        issuer: '',
-        expiryDate: '',
-        creditLimit: '',
-        statementClosingDay: 15,
-        paymentDueDay: 25,
-      });
+      setFormData(EMPTY_CARD_FORM);
       setEditingId(null);
       setError('');
       setIsModalOpen(false);
@@ -145,17 +139,7 @@ export default function CardsPage() {
 
   const handleModalClose = () => {
     setIsModalOpen(false);
-    setFormData({
-      accountId: '',
-      name: '',
-      cardNumber: '',
-      cardType: 'debit',
-      issuer: '',
-      expiryDate: '',
-      creditLimit: '',
-      statementClosingDay: 15,
-    paymentDueDay: 25,
-    });
+    setFormData(EMPTY_CARD_FORM);
     setEditingId(null);
     setError('');
   };
@@ -177,7 +161,7 @@ export default function CardsPage() {
       name: card.name,
       cardNumber: '',
       cardType: card.cardType,
-      issuer: card.issuer,
+      issuerId: card.issuerId,
       expiryDate: '',
       creditLimit: card.creditLimit ?? '',
       statementClosingDay: card.statementClosingDay ?? 15,
@@ -236,7 +220,7 @@ export default function CardsPage() {
                   <p className="font-bold text-gray-900">{card.name}</p>
                   <p className="text-sm text-gray-600">{card.cardNumberMasked}</p>
                   <p className="text-xs text-gray-500 mt-1">
-                    {card.issuer} · {card.cardType === 'debit' ? '체크카드' : '신용카드'}
+                    {card.issuer?.name} · {card.cardType === 'debit' ? '체크카드' : '신용카드'}
                   </p>
                 </div>
                 <div className="text-right">
@@ -330,14 +314,13 @@ export default function CardsPage() {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               발급사
             </label>
-            <input
-              type="text"
-              required
-              value={formData.issuer}
-              onChange={(e) => setFormData({ ...formData, issuer: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="KB Bank, Samsung Card 등"
+            <CustomSelect
+              options={issuerOptions}
+              value={formData.issuerId}
+              onChange={(value) => setFormData({ ...formData, issuerId: value })}
+              placeholder="카드사를 선택하세요"
             />
+            {issuerError && <p className="mt-1 text-xs text-red-600">{issuerError}</p>}
           </div>
 
           <div>
@@ -472,7 +455,7 @@ export default function CardsPage() {
                 발급사
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {selectedCard.issuer}
+                {selectedCard.issuer?.name}
               </p>
             </div>
 

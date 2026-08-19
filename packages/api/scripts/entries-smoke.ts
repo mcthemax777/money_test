@@ -38,15 +38,15 @@ runSmoke('entries', async (ctx) => {
   const fee = await categories.createCategory(uid, { name: '수수료', type: 'expense' }, pid);
 
   const bank = await accounts.createAccount(uid, {
-    type: 'deposit', ownerId: person.id, name: '보통예금', bankName: '신한',
+    type: 'deposit', ownerId: person.id, name: '보통예금', institutionId: 'fi_bank_shinhan',
     openingBalance: '2000000',
   }, pid);
   const savings = await accounts.createAccount(uid, {
-    type: 'savings', ownerId: person.id, name: '저축', bankName: 'KB',
+    type: 'savings', ownerId: person.id, name: '저축', institutionId: 'fi_bank_kb',
   }, pid);
   const credit = await cards.createCard(uid, {
     paymentAccountId: bank.id, name: '신한 신용', cardType: 'credit',
-    issuer: '신한', statementClosingDay: 15, paymentDueDay: 25,
+    issuerId: 'fi_card_shinhan', statementClosingDay: 15, paymentDueDay: 25,
   }, pid);
 
   const base = { personId: person.id, date: '2026-08-03T00:00:00.000Z' };

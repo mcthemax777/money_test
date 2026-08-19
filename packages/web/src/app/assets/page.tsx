@@ -14,6 +14,8 @@ import PersonModal from '@/components/PersonModal';
 import EditAccountModal from '@/components/EditAccountModal';
 import EditCardModal from '@/components/EditCardModal';
 import AddAccountModal from '@/components/AddAccountModal';
+import AssetHistoryChart from '@/components/AssetHistoryChart';
+import { useInstitutions } from '@/hooks/useInstitutions';
 
 
 
@@ -33,7 +35,7 @@ export default function DashboardPage() {
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [detailType, setDetailType] = useState<'person' | 'account' | 'card' | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
+  const { options: issuerOptions } = useInstitutions('card_issuer');
 
   const [personModalOpen, setPersonModalOpen] = useState(false);
   const [personModalMode, setPersonModalMode] = useState<'view' | 'edit'>('view');
@@ -48,7 +50,7 @@ export default function DashboardPage() {
     name: '',
     cardNumber: '',
     cardType: 'debit' as 'debit' | 'credit',
-    issuer: '',
+    issuerId: '',
     expiryDate: '',
     creditLimit: '',
     // 청구 주기는 마감일과 결제일 두 값으로 계산한다
@@ -57,21 +59,6 @@ export default function DashboardPage() {
   });
   const [addError, setAddError] = useState('');
 
-  const [editPersonForm, setEditPersonForm] = useState({ name: '', relationship: '' });
-  const [editAccountForm, setEditAccountForm] = useState({
-    name: '',
-    balance: '',
-    bankName: '',
-    accountNumber: '',
-  });
-  const [editCardForm, setEditCardForm] = useState({
-    accountId: '',
-    name: '',
-    cardNumber: '',
-    issuer: '',
-    expiryDate: '',
-    creditLimit: '',
-  });
   const [statement, setStatement] = useState<Statement | null>(null);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [paymentForm, setPaymentForm] = useState({
@@ -82,22 +69,6 @@ export default function DashboardPage() {
 
   const [accountTransactions, setAccountTransactions] = useState<any[]>([]);
   const [netWorth, setNetWorth] = useState<any | null>(null);
-  const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
-  const [transactionFormData, setTransactionFormData] = useState({
-    method: 'account',
-    personId: '',
-    type: 'expense',
-    mainCategoryId: '',
-    subCategoryId: '',
-    amount: '',
-    description: '',
-    merchant: '',
-    detailedNote: '',
-    date: new Date().toISOString().split('T')[0],
-    isFixed: false,
-  });
-  const [transactionSubmitting, setTransactionSubmitting] = useState(false);
-  const [transactionError, setTransactionError] = useState('');
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -191,27 +162,6 @@ export default function DashboardPage() {
   const getAccountCards = (accountId: string) =>
     filteredCards.filter((c) => c.paymentAccountId === accountId);
 
-  // 계좌 원장 관점에서 거래의 입출금 방향과 부제목을 계산
-  const getLedgerEntry = (tx: any, accountId: string) => {
-    const isTransferIn = tx.type === 'transfer' && tx.toAccountId === accountId;
-    const isIncoming = tx.type === 'income' || isTransferIn;
-
-    let label = '';
-    if (tx.type === 'transfer') {
-      const counterpartId = isTransferIn ? tx.accountId : tx.toAccountId;
-      const counterpartName = accounts.find((a) => a.id === counterpartId)?.name;
-      if (!counterpartName) {
-        label = '이체';
-      } else {
-        label = isTransferIn ? `${counterpartName}에서 이체` : `${counterpartName}(으)로 이체`;
-      }
-    } else if (tx.mainCategory) {
-      label = tx.subCategory ? `${tx.mainCategory} > ${tx.subCategory}` : tx.mainCategory;
-    }
-
-    return { isIncoming, label };
-  };
-
   const handleDeletePerson = async () => {
     if (!selectedPerson || !window.confirm('정말 삭제하시겠습니까?')) return;
     try {
@@ -260,62 +210,6 @@ export default function DashboardPage() {
     }
   };
 
-  const handleAddTransaction = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedAccount) return;
-
-    try {
-      setTransactionSubmitting(true);
-      setTransactionError('');
-
-      let dateValue = transactionFormData.date;
-      const dateObj = new Date(transactionFormData.date);
-      dateValue = dateObj.toISOString();
-
-      const payload: any = {
-        kind: transactionFormData.type === 'income' ? 'income' : 'expense',
-        accountId: selectedAccount.id,
-        personId: transactionFormData.personId,
-        // 금액은 문자열로 보낸다 (정밀도 손실 방지)
-        amount: toAmountString(transactionFormData.amount),
-        description: transactionFormData.description,
-        date: dateValue,
-        // posting은 가장 구체적인 카테고리 하나만 가리킨다
-        categoryId: transactionFormData.subCategoryId || transactionFormData.mainCategoryId,
-        isFixed: transactionFormData.isFixed,
-        projectId: selectedProjectId,
-      };
-
-      if (transactionFormData.merchant) payload.merchant = transactionFormData.merchant;
-      if (transactionFormData.detailedNote) payload.detailedNote = transactionFormData.detailedNote;
-
-      await apiClient.createEntry(payload);
-
-      // 거래 내역 다시 로드
-      await loadAccountTransactions(selectedAccount.id);
-
-      // 폼 초기화
-      setTransactionFormData({
-        method: 'account',
-        personId: '',
-        type: 'expense',
-        mainCategoryId: '',
-        subCategoryId: '',
-        amount: '',
-        description: '',
-        merchant: '',
-        detailedNote: '',
-        date: new Date().toISOString().split('T')[0],
-        isFixed: false,
-      });
-      setIsTransactionModalOpen(false);
-    } catch (err: any) {
-      setTransactionError(err?.response?.data?.error?.message || '거래 추가에 실패했습니다.');
-    } finally {
-      setTransactionSubmitting(false);
-    }
-  };
-
   // 카드 결제 실행
   const handlePayCard = async () => {
     if (!statement || !selectedCard) return;
@@ -356,13 +250,22 @@ export default function DashboardPage() {
     try {
       setIsSubmitting(true);
       setAddError('');
+
+      // 카드사는 필수다. CustomSelect는 <input required>와 달리 브라우저 검증이 없어
+      // 비워 두면 서버에서 "기관을 찾을 수 없습니다"가 돌아와 원인을 알기 어렵다.
+      if (!cardForm.issuerId) {
+        setAddError('발급사를 선택하세요.');
+        setIsSubmitting(false);
+        return;
+      }
+
       const isoDate = cardForm.expiryDate ? new Date(cardForm.expiryDate).toISOString() : undefined;
       await apiClient.createCard({
         paymentAccountId: cardForm.accountId,
         name: cardForm.name,
         cardNumber: cardForm.cardNumber || undefined,
         cardType: cardForm.cardType,
-        issuer: cardForm.issuer,
+        issuerId: cardForm.issuerId,
         ...(isoDate && { expiryDate: isoDate }),
         creditLimit:
           cardForm.cardType === 'credit' ? toAmountString(cardForm.creditLimit) : undefined,
@@ -377,7 +280,7 @@ export default function DashboardPage() {
         name: '',
         cardNumber: '',
         cardType: 'debit',
-        issuer: '',
+        issuerId: '',
         expiryDate: '',
         creditLimit: '',
         statementClosingDay: 15,
@@ -396,80 +299,12 @@ export default function DashboardPage() {
     setPersonModalOpen(true);
   };
 
-  const handleSavePerson = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedPerson) return;
-    try {
-      setIsSubmitting(true);
-      await apiClient.updatePerson(selectedPerson.id, {
-        name: editPersonForm.name,
-        relationship: editPersonForm.relationship || undefined,
-      });
-      const peopleData = await apiClient.getPeople();
-      setPeople(peopleData || []);
-      const updatedPerson = peopleData?.find((p: Person) => p.id === selectedPerson.id);
-      if (updatedPerson) setSelectedPerson(updatedPerson);
-      setIsEditing(false);
-    } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '수정에 실패했습니다.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   const handleEditAccountClick = () => {
     setIsEditAccountModalOpen(true);
   };
 
-  const handleSaveAccount = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedAccount) return;
-    try {
-      setIsSubmitting(true);
-      await apiClient.updateAccountV2(selectedAccount.id, {
-        name: editAccountForm.name,
-        // 잔액 수정은 서버가 차액만큼 조정 전표를 남긴다
-        balance: toAmountString(editAccountForm.balance),
-        bankName: editAccountForm.bankName,
-        accountNumber: editAccountForm.accountNumber || undefined,
-      });
-      const accountsData = await apiClient.getAccountsV2(selectedProjectId);
-      setAccounts(accountsData || []);
-      const updatedAccount = accountsData?.find((a: Account) => a.id === selectedAccount.id);
-      if (updatedAccount) setSelectedAccount(updatedAccount);
-      setIsEditing(false);
-    } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '수정에 실패했습니다.');
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   const handleEditCardClick = () => {
     setIsEditCardModalOpen(true);
-  };
-
-  const handleSaveCard = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedCard) return;
-    try {
-      setIsSubmitting(true);
-      await apiClient.updateCard(selectedCard.id, {
-        name: editCardForm.name,
-        issuer: editCardForm.issuer,
-        creditLimit:
-          selectedCard.cardType === 'credit' ? toAmountString(editCardForm.creditLimit) : undefined,
-      });
-      const cardsData = await apiClient.getCards(selectedProjectId);
-      setCards(cardsData || []);
-      const updatedCard = cardsData?.find((c: Card) => c.id === selectedCard.id);
-      if (updatedCard) setSelectedCard(updatedCard);
-      setIsEditing(false);
-    } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '수정에 실패했습니다.');
-    } finally {
-      setIsSubmitting(false);
-    }
   };
 
   // 총자산과 사람별 소계는 서버가 계산한다 (/reports/net-worth).
@@ -508,18 +343,31 @@ export default function DashboardPage() {
         </button>
       </div>
 
-      <div className="bg-blue-600 text-white rounded-lg p-8 mb-8">
-        <p className="text-sm opacity-90">총 자산</p>
-        <p className="text-4xl font-bold mt-2">
-          {formatCurrency(totalBalance)}
-        </p>
-        {netWorth && toNumber(netWorth.liability) !== 0 && (
-          <p className="text-sm opacity-90 mt-2">
-            현금성 {formatCurrency(netWorth.cash)} · 투자 {formatCurrency(netWorth.investment)} ·
-            부채 {formatCurrency(netWorth.liability)}
+      {/* 계좌를 보고 있으면 그 계좌 잔액을, 아니면 전체 자산을 띄운다 */}
+      {detailType === 'account' && selectedAccount ? (
+        <div className="bg-blue-600 text-white rounded-lg p-8 mb-8">
+          <p className="text-sm opacity-90">{selectedAccount.name}</p>
+          <p className="text-4xl font-bold mt-2">{formatCurrency(selectedAccount.balance)}</p>
+        </div>
+      ) : (
+        <div className="bg-blue-600 text-white rounded-lg p-8 mb-8">
+          <p className="text-sm opacity-90">총 자산</p>
+          <p className="text-4xl font-bold mt-2">
+            {formatCurrency(totalBalance)}
           </p>
-        )}
-      </div>
+          {netWorth && toNumber(netWorth.liability) !== 0 && (
+            <p className="text-sm opacity-90 mt-2">
+              현금성 {formatCurrency(netWorth.cash)} · 투자 {formatCurrency(netWorth.investment)} ·
+              부채 {formatCurrency(netWorth.liability)}
+            </p>
+          )}
+        </div>
+      )}
+
+      {/* 전체 자산 추이. 계좌를 골라 보고 있을 때는 아래에서 그 계좌 것을 따로 보여준다. */}
+      {detailType !== 'account' && (
+        <AssetHistoryChart projectId={selectedProjectId} />
+      )}
 
       {error && (
         <div className="p-3 bg-red-50 text-red-800 text-sm rounded mb-4">
@@ -545,12 +393,6 @@ export default function DashboardPage() {
                 계좌 상세정보
               </button>
               <button
-                onClick={() => setIsTransactionModalOpen(true)}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                거래 추가
-              </button>
-              <button
                 onClick={() => {
                   setDetailType(null);
                   setSelectedAccount(null);
@@ -562,18 +404,25 @@ export default function DashboardPage() {
             </div>
           </div>
 
+          {/* 이 계좌의 잔액 추이 */}
+          <AssetHistoryChart accountId={selectedAccount.id} projectId={selectedProjectId} />
+
           {/* 거래 내역 */}
           {accountTransactions.length === 0 ? (
             <p className="text-gray-600 text-center py-8">거래 내역이 없습니다.</p>
           ) : (
             <div className="space-y-3">
               {accountTransactions.map((tx: any) => {
-                const { isIncoming, label } = getLedgerEntry(tx, selectedAccount.id);
+                // 원장 posting의 amount는 이미 부호를 갖는다 (자산 증가 +, 감소 -).
+                // 부호를 그대로 두고 앞에 '-'를 또 붙이면 '--₩10,000'이 된다. 절댓값으로 찍는다.
+                const amount = toNumber(tx.amount);
+                const isIncoming = amount > 0;
+                const label = tx.merchant || tx.cardName || '';
                 return (
-                  <div key={tx.id} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        <p className="font-bold text-gray-900">{tx.description}</p>
+                  <div key={tx.postingId} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
+                    <div className="flex justify-between items-start gap-4">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold text-gray-900">{tx.description || '(내용 없음)'}</p>
                         {label && (
                           <p className="text-sm text-gray-600 mt-1">{label}</p>
                         )}
@@ -581,10 +430,15 @@ export default function DashboardPage() {
                           {new Date(tx.date).toLocaleDateString('ko-KR')}
                         </p>
                       </div>
-                      <p className={`font-bold text-lg ${isIncoming ? 'text-green-600' : 'text-red-600'}`}>
-                        {isIncoming ? '+' : '-'}
-                        {new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'KRW' }).format(tx.amount)}
-                      </p>
+                      <div className="text-right whitespace-nowrap">
+                        <p className={`font-bold text-lg ${isIncoming ? 'text-green-600' : 'text-red-600'}`}>
+                          {isIncoming ? '+' : '-'}
+                          {formatCurrency(Math.abs(amount))}
+                        </p>
+                        <p className="text-xs text-gray-500 mt-1">
+                          잔액 {formatCurrency(tx.balanceAfter)}
+                        </p>
+                      </div>
                     </div>
                   </div>
                 );
@@ -636,7 +490,7 @@ export default function DashboardPage() {
                           }}
                           className="w-full text-left hover:opacity-70 transition"
                         >
-                          <p className="text-sm text-gray-600">{account.bankName}</p>
+                          <p className="text-sm text-gray-600">{account.institution?.name}</p>
                           <p className="text-2xl font-bold text-gray-900 mt-2">
                             {formatCurrency(account.balance)}
                           </p>
@@ -661,7 +515,7 @@ export default function DashboardPage() {
                                 <p className="text-sm font-medium text-gray-900">
                                   💳 {card.name}
                                 </p>
-                                <p className="text-xs text-gray-600">{card.issuer}</p>
+                                <p className="text-xs text-gray-600">{card.issuer?.name}</p>
                                 <p className="text-xs text-gray-600">
                                   {card.cardType === 'debit' ? '체크카드' : '신용카드'}
                                 </p>
@@ -677,189 +531,6 @@ export default function DashboardPage() {
             </div>
           ))}
         </div>
-      )}
-
-      {/* 거래 추가 팝업 */}
-      {isTransactionModalOpen && selectedAccount && (
-        <Modal
-          isOpen={true}
-          onClose={() => {
-            setIsTransactionModalOpen(false);
-            setTransactionError('');
-          }}
-          title="거래 추가"
-        >
-          <form onSubmit={handleAddTransaction} className="space-y-4 max-h-96 overflow-y-auto">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  사용자
-                </label>
-                <CustomSelect
-                  options={people.map((p) => ({ id: p.id, name: p.name }))}
-                  value={transactionFormData.personId}
-                  onChange={(value) => setTransactionFormData({ ...transactionFormData, personId: value })}
-                  placeholder="선택하세요"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  유형
-                </label>
-                <CustomSelect
-                  options={[
-                    { id: 'expense', name: '지출' },
-                    { id: 'income', name: '수입' },
-                  ]}
-                  value={transactionFormData.type}
-                  onChange={(value) => setTransactionFormData({ ...transactionFormData, type: value as any, mainCategoryId: '', subCategoryId: '' })}
-                  placeholder="선택하세요"
-                />
-              </div>
-
-              {transactionFormData.type !== 'transfer' && (
-                <>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      대분류
-                    </label>
-                    <CustomSelect
-                      options={categories
-                        .filter((c: any) => !c.parentId && c.type === transactionFormData.type)
-                        .map((cat) => ({ id: cat.id, name: cat.name }))}
-                      value={transactionFormData.mainCategoryId}
-                      onChange={(value) => setTransactionFormData({ ...transactionFormData, mainCategoryId: value, subCategoryId: '' })}
-                      placeholder="선택하세요"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      소분류 (선택)
-                    </label>
-                    <CustomSelect
-                      options={
-                        transactionFormData.mainCategoryId
-                          ? categories
-                              .filter(
-                                (c) =>
-                                  Boolean(c.parentId) &&
-                                  c.parentId === transactionFormData.mainCategoryId
-                              )
-                              .map((cat) => ({ id: cat.id, name: cat.name }))
-                          : [{ id: '', name: '없음' }]
-                      }
-                      value={transactionFormData.subCategoryId}
-                      onChange={(value) => setTransactionFormData({ ...transactionFormData, subCategoryId: value })}
-                      placeholder="없음"
-                    />
-                  </div>
-                </>
-              )}
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  금액 (원)
-                </label>
-                <input
-                  type="number"
-                  required
-                  value={transactionFormData.amount}
-                  onChange={(e) => setTransactionFormData({ ...transactionFormData, amount: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="50000"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  설명
-                </label>
-                <input
-                  type="text"
-                  value={transactionFormData.description}
-                  onChange={(e) => setTransactionFormData({ ...transactionFormData, description: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="거래 설명"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  거래처 (선택)
-                </label>
-                <input
-                  type="text"
-                  value={transactionFormData.merchant}
-                  onChange={(e) => setTransactionFormData({ ...transactionFormData, merchant: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="가맹점, 송금 계좌주 등"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  상세설명 (선택)
-                </label>
-                <input
-                  type="text"
-                  value={transactionFormData.detailedNote}
-                  onChange={(e) => setTransactionFormData({ ...transactionFormData, detailedNote: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="추가 설명"
-                />
-              </div>
-
-              <div className="flex items-center gap-3">
-                <input
-                  type="checkbox"
-                  id="isFixed"
-                  checked={transactionFormData.isFixed}
-                  onChange={(e) => setTransactionFormData({ ...transactionFormData, isFixed: e.target.checked })}
-                  className="w-4 h-4 border border-gray-300 rounded-md focus:ring-blue-500"
-                />
-                <label htmlFor="isFixed" className="text-sm font-medium text-gray-700">
-                  고정 지출/수입
-                </label>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  날짜
-                </label>
-                <input
-                  type="date"
-                  required
-                  value={transactionFormData.date}
-                  onChange={(e) => setTransactionFormData({ ...transactionFormData, date: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              {transactionError && (
-                <div className="p-3 bg-red-50 text-red-800 text-sm rounded">
-                  {transactionError}
-                </div>
-              )}
-
-              <div className="flex gap-2 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setIsTransactionModalOpen(false)}
-                  className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
-                >
-                  취소
-                </button>
-                <button
-                  type="submit"
-                  disabled={transactionSubmitting}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {transactionSubmitting ? '추가 중...' : '추가하기'}
-                </button>
-              </div>
-            </form>
-          </Modal>
       )}
 
       {/* 계좌 상세정보 모달 */}
@@ -893,7 +564,7 @@ export default function DashboardPage() {
                 은행
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {selectedAccount.bankName}
+                {selectedAccount.institution?.name || '-'}
               </p>
             </div>
 
@@ -937,101 +608,6 @@ export default function DashboardPage() {
       )}
 
       {/* 계좌 수정 모달 */}
-      {isEditAccountModalOpen && selectedAccount && isEditing && (
-        <Modal
-          isOpen={true}
-          onClose={() => setIsEditing(false)}
-          title="계좌 수정"
-        >
-          <form onSubmit={handleSaveAccount} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                통장 주인
-              </label>
-              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {selectedAccount?.owner?.name || '-'}
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                계좌명
-              </label>
-              <input
-                type="text"
-                required
-                value={editAccountForm.name}
-                onChange={(e) =>
-                  setEditAccountForm({ ...editAccountForm, name: e.target.value })
-                }
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                은행명
-              </label>
-              <input
-                type="text"
-                required
-                value={editAccountForm.bankName}
-                onChange={(e) =>
-                  setEditAccountForm({ ...editAccountForm, bankName: e.target.value })
-                }
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                잔액 (원)
-              </label>
-              <input
-                type="number"
-                required
-                value={editAccountForm.balance}
-                onChange={(e) =>
-                  setEditAccountForm({ ...editAccountForm, balance: e.target.value })
-                }
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                계좌번호 (선택)
-              </label>
-              <input
-                type="text"
-                value={editAccountForm.accountNumber}
-                onChange={(e) =>
-                  setEditAccountForm({ ...editAccountForm, accountNumber: e.target.value })
-                }
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="예: 123-456-7890"
-              />
-            </div>
-
-            <div className="flex gap-2 pt-4">
-              <button
-                type="button"
-                onClick={() => setIsEditing(false)}
-                className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
-              >
-                취소
-              </button>
-              <button
-                type="submit"
-                disabled={isSubmitting}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-              >
-                {isSubmitting ? '저장 중...' : '저장'}
-              </button>
-            </div>
-          </form>
-        </Modal>
-      )}
 
       {/* 구성원 상세정보 모달 */}
       {detailType === 'person' && selectedPerson && (
@@ -1040,89 +616,37 @@ export default function DashboardPage() {
           onClose={() => {
             setDetailType(null);
             setSelectedPerson(null);
-            setIsEditing(false);
           }}
-          title={isEditing ? '구성원 수정' : '구성원 상세정보'}
+          title="구성원 상세정보"
         >
-          {isEditing ? (
-            <form onSubmit={handleSavePerson} className="space-y-4">
+          <>
+            <div className="space-y-4 max-h-96 overflow-y-auto">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   이름
                 </label>
-                <input
-                  type="text"
-                  required
-                  value={editPersonForm.name}
-                  onChange={(e) =>
-                    setEditPersonForm({ ...editPersonForm, name: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                  {selectedPerson.name}
+                </p>
               </div>
+            </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  관계 (선택)
-                </label>
-                <input
-                  type="text"
-                  value={editPersonForm.relationship}
-                  onChange={(e) =>
-                    setEditPersonForm({ ...editPersonForm, relationship: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="배우자, 자녀 등"
-                />
-              </div>
-
-              <div className="flex gap-2 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(false)}
-                  className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
-                >
-                  취소
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {isSubmitting ? '저장 중...' : '저장'}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <>
-              <div className="space-y-4 max-h-96 overflow-y-auto">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    이름
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {selectedPerson.name}
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
-                <button
-                  onClick={handleEditPersonClick}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  수정하기
-                </button>
-                <button
-                  onClick={handleDeletePerson}
-                  disabled={isSubmitting}
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-                >
-                  삭제하기
-                </button>
-              </div>
-            </>
-          )}
+            <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
+              <button
+                onClick={handleEditPersonClick}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                수정하기
+              </button>
+              <button
+                onClick={handleDeletePerson}
+                disabled={isSubmitting}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                삭제하기
+              </button>
+            </div>
+          </>
         </Modal>
       )}
 
@@ -1134,34 +658,27 @@ export default function DashboardPage() {
           onClose={() => {
             setDetailType(null);
             setSelectedCard(null);
-            setIsEditing(false);
           }}
-          title={isEditing ? '카드 수정' : '카드 상세정보'}
+          title="카드 상세정보"
         >
-          {isEditing ? (
-            <form onSubmit={handleSaveCard} className="space-y-4">
+          <>
+            <div className="space-y-4 max-h-96 overflow-y-auto">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  계좌
+                  카드 이름
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                  {accounts.find((a) => a.id === editCardForm.accountId)?.name || '-'}
+                  {selectedCard.name}
                 </p>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  카드 이름
+                  계좌
                 </label>
-                <input
-                  type="text"
-                  required
-                  value={editCardForm.name}
-                  onChange={(e) =>
-                    setEditCardForm({ ...editCardForm, name: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                  {accounts.find((a) => a.id === selectedCard.paymentAccountId)?.name || '-'}
+                </p>
               </div>
 
               <div>
@@ -1186,185 +703,97 @@ export default function DashboardPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   발급사
                 </label>
-                <input
-                  type="text"
-                  required
-                  value={editCardForm.issuer}
-                  onChange={(e) =>
-                    setEditCardForm({ ...editCardForm, issuer: e.target.value })
-                  }
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
+                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                  {selectedCard.issuer?.name}
+                </p>
               </div>
 
               {selectedCard.cardType === 'credit' && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    신용한도 (원)
-                  </label>
-                  <input
-                    type="number"
-                    value={editCardForm.creditLimit}
-                    onChange={(e) =>
-                      setEditCardForm({ ...editCardForm, creditLimit: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              )}
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      사용액
+                    </label>
+                    <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                      {formatCurrency(selectedCard.currentUsage)}
+                    </p>
+                  </div>
 
-              <div className="flex gap-2 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setIsEditing(false)}
-                  className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
-                >
-                  취소
-                </button>
-                <button
-                  type="submit"
-                  disabled={isSubmitting}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {isSubmitting ? '저장 중...' : '저장'}
-                </button>
-              </div>
-            </form>
-          ) : (
-            <>
-              <div className="space-y-4 max-h-96 overflow-y-auto">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    카드 이름
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {selectedCard.name}
-                  </p>
-                </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      신용한도
+                    </label>
+                    <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                      {formatCurrency(selectedCard.creditLimit)}
+                    </p>
+                  </div>
 
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    계좌
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {accounts.find((a) => a.id === selectedCard.paymentAccountId)?.name || '-'}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    카드 번호
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {selectedCard.cardNumberMasked}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    카드 유형
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {selectedCard.cardType === 'debit' ? '체크카드' : '신용카드'}
-                  </p>
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    발급사
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {selectedCard.issuer}
-                  </p>
-                </div>
-
-                {selectedCard.cardType === 'credit' && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        사용액
-                      </label>
-                      <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                        {formatCurrency(selectedCard.currentUsage)}
-                      </p>
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        신용한도
-                      </label>
-                      <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                        {formatCurrency(selectedCard.creditLimit)}
-                      </p>
-                    </div>
-
-                    {/* 청구서 미결제액. SUM(Posting.amount WHERE statementId=X)로 서버가 계산한다 */}
-                    {statement && (
-                      <div className="pt-4 border-t">
-                        <div className="bg-red-50 rounded-lg p-4 space-y-3">
-                          <h3 className="font-semibold text-gray-900">카드 청구서</h3>
-                          <div className="space-y-2">
-                            <div className="flex justify-between">
-                              <span className="text-sm text-gray-600">마감일</span>
-                              <span className="text-sm font-medium">
-                                {new Date(statement.periodEnd).toLocaleDateString('ko-KR')}
-                              </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-sm text-gray-600">결제일</span>
-                              <span className="text-sm font-medium">
-                                {new Date(statement.dueDate).toLocaleDateString('ko-KR')}
-                              </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-sm text-gray-600">청구액</span>
-                              <span className="text-sm font-medium">
-                                {formatCurrency(statement.chargedAmount)}
-                              </span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-sm text-gray-600">결제 완료</span>
-                              <span className="text-sm font-medium">
-                                {formatCurrency(statement.paidAmount)}
-                              </span>
-                            </div>
-                            <div className="flex justify-between pt-2 border-t">
-                              <span className="text-sm font-semibold text-red-600">미결제액</span>
-                              <span className="text-lg font-bold text-red-600">
-                                {formatCurrency(statement.outstanding)}
-                              </span>
-                            </div>
+                  {/* 청구서 미결제액. SUM(Posting.amount WHERE statementId=X)로 서버가 계산한다 */}
+                  {statement && (
+                    <div className="pt-4 border-t">
+                      <div className="bg-red-50 rounded-lg p-4 space-y-3">
+                        <h3 className="font-semibold text-gray-900">카드 청구서</h3>
+                        <div className="space-y-2">
+                          <div className="flex justify-between">
+                            <span className="text-sm text-gray-600">마감일</span>
+                            <span className="text-sm font-medium">
+                              {new Date(statement.periodEnd).toLocaleDateString('ko-KR')}
+                            </span>
                           </div>
-                          <button
-                            onClick={() => setIsPaymentModalOpen(true)}
-                            className="w-full px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                          >
-                            결제하기
-                          </button>
+                          <div className="flex justify-between">
+                            <span className="text-sm text-gray-600">결제일</span>
+                            <span className="text-sm font-medium">
+                              {new Date(statement.dueDate).toLocaleDateString('ko-KR')}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-sm text-gray-600">청구액</span>
+                            <span className="text-sm font-medium">
+                              {formatCurrency(statement.chargedAmount)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-sm text-gray-600">결제 완료</span>
+                            <span className="text-sm font-medium">
+                              {formatCurrency(statement.paidAmount)}
+                            </span>
+                          </div>
+                          <div className="flex justify-between pt-2 border-t">
+                            <span className="text-sm font-semibold text-red-600">미결제액</span>
+                            <span className="text-lg font-bold text-red-600">
+                              {formatCurrency(statement.outstanding)}
+                            </span>
+                          </div>
                         </div>
+                        <button
+                          onClick={() => setIsPaymentModalOpen(true)}
+                          className="w-full px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                        >
+                          결제하기
+                        </button>
                       </div>
-                    )}
-                  </>
-                )}
-              </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
 
-              <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
-                <button
-                  onClick={handleEditCardClick}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  수정하기
-                </button>
-                <button
-                  onClick={handleDeleteCard}
-                  disabled={isSubmitting}
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-                >
-                  삭제하기
-                </button>
-              </div>
-            </>
-          )}
+            <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
+              <button
+                onClick={handleEditCardClick}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                수정하기
+              </button>
+              <button
+                onClick={handleDeleteCard}
+                disabled={isSubmitting}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                삭제하기
+              </button>
+            </div>
+          </>
         </Modal>
       )}
 
@@ -1582,7 +1011,7 @@ export default function DashboardPage() {
             name: '',
             cardNumber: '',
             cardType: 'debit',
-            issuer: '',
+            issuerId: '',
             expiryDate: '',
             creditLimit: '',
             statementClosingDay: 15,
@@ -1651,13 +1080,11 @@ export default function DashboardPage() {
             <label className="block text-sm font-medium text-gray-700 mb-1">
               발급사
             </label>
-            <input
-              type="text"
-              required
-              value={cardForm.issuer}
-              onChange={(e) => setCardForm({ ...cardForm, issuer: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="KB Bank, Samsung Card 등"
+            <CustomSelect
+              options={issuerOptions}
+              value={cardForm.issuerId}
+              onChange={(value) => setCardForm({ ...cardForm, issuerId: value })}
+              placeholder="카드사를 선택하세요"
             />
           </div>
 

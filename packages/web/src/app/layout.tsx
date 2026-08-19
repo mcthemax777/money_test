@@ -3,7 +3,7 @@ import './globals.css';
 import { AuthInitializer } from '@/components/AuthInitializer';
 
 export const metadata: Metadata = {
-  title: 'Money App - 가계부',
+  title: 'bboyong - 가계부',
   description: '개인 재무 관리 앱',
 };
 

@@ -68,7 +68,10 @@ export class ReportsService {
   ): Promise<ReportDto.CategoryBreakdownItem[]> {
     const projectId = await this.projectAccess.resolveAndVerifyProjectId(userId, query.projectId);
     const range = monthRange(query.yearMonth);
-    const rollup = query.rollup !== false;
+    // 쿼리스트링 값은 문자열로 도착한다. 이 DTO는 클래스가 아니라 인터페이스라서
+    // ValidationPipe의 암묵 변환이 걸리지 않고 ?rollup=false 가 'false' 문자열로 들어온다.
+    // 불리언 비교만 하면 항상 롤업이 켜져서 소분류 구성비를 볼 수 없다.
+    const rollup = query.rollup !== false && (query.rollup as unknown) !== 'false';
 
     const rows = await this.prisma.posting.groupBy({
       by: ['categoryId'],
@@ -196,6 +199,124 @@ export class ReportsService {
         liability: bucket.liability.toString(),
       })),
     };
+  }
+
+  /**
+   * 자산 잔액 추이.
+   *
+   * getTrend는 "그 달에 발생한 금액"을 주지만 여기서는 "그 시점까지 쌓인 잔액"이 필요하다.
+   * 그래서 창 시작 이전까지의 잔액을 기준선으로 깔고, 구간별 증감을 누적한다.
+   *
+   * 계좌별 잔액을 따로 들고 다니는 이유는 투자/부동산이다. 이 둘은 장부가가 아니라
+   * 그 시점의 평가액으로 봐야 해서 계좌마다 값을 바꿔치기해야 한다. getNetWorth 와 같은 규칙이다.
+   */
+  async getBalanceHistory(
+    userId: string,
+    query: ReportDto.BalanceHistoryQuery,
+  ): Promise<ReportDto.BalanceHistoryPoint[]> {
+    const projectId = await this.projectAccess.resolveAndVerifyProjectId(userId, query.projectId);
+    const granularity = query.granularity === 'day' ? 'day' : 'month';
+
+    const accounts = await this.prisma.account.findMany({
+      where: {
+        projectId,
+        // 기초잔액 상대편은 자산이 아니다. getNetWorth 와 같은 기준으로 뺀다.
+        type: { notIn: EQUITY_TYPES },
+        // 계좌를 지정하면 비활성 계좌도 보여준다. 전체 합계일 때만 활성으로 좁힌다.
+        ...(query.accountId ? { id: query.accountId } : { isActive: true }),
+      },
+      select: { id: true, type: true },
+    });
+    if (accounts.length === 0) return [];
+    const accountIds = accounts.map((a) => a.id);
+
+    const buckets =
+      granularity === 'day'
+        ? dayBuckets(query.yearMonth ?? currentYearMonth())
+        : monthBuckets(
+            query.endMonth ?? currentYearMonth(),
+            Math.min(Math.max(Number(query.months) || 12, 1), 60),
+          );
+    const windowStart = buckets[0].start;
+    const windowEnd = buckets[buckets.length - 1].end;
+
+    // 창 시작 이전까지 쌓인 계좌별 잔액 (기준선)
+    const baseRows = await this.prisma.$queryRaw<
+      Array<{ accountId: string; delta: Prisma.Decimal }>
+    >`
+      SELECT p."accountId" AS "accountId", SUM(p."amount") AS delta
+      FROM "Posting" p
+      JOIN "JournalEntry" e ON e.id = p."entryId"
+      WHERE e."projectId" = ${projectId}
+        AND p."accountId" IN (${Prisma.join(accountIds)})
+        AND e."date" < ${windowStart}
+      GROUP BY 1
+    `;
+
+    // 창 안의 구간별 계좌별 증감
+    const stepRows = await this.prisma.$queryRaw<
+      Array<{ accountId: string; period: Date; delta: Prisma.Decimal }>
+    >`
+      SELECT p."accountId" AS "accountId",
+             date_trunc(${granularity}, e."date") AS period,
+             SUM(p."amount") AS delta
+      FROM "Posting" p
+      JOIN "JournalEntry" e ON e.id = p."entryId"
+      WHERE e."projectId" = ${projectId}
+        AND p."accountId" IN (${Prisma.join(accountIds)})
+        AND e."date" >= ${windowStart}
+        AND e."date" < ${windowEnd}
+      GROUP BY 1, 2
+    `;
+
+    const book = new Map<string, Prisma.Decimal>(accountIds.map((id) => [id, ZERO]));
+    for (const row of baseRows) book.set(row.accountId, row.delta);
+
+    const stepsByPeriod = new Map<number, Array<{ accountId: string; delta: Prisma.Decimal }>>();
+    for (const row of stepRows) {
+      const key = row.period.getTime();
+      const list = stepsByPeriod.get(key) ?? [];
+      list.push({ accountId: row.accountId, delta: row.delta });
+      stepsByPeriod.set(key, list);
+    }
+
+    const valuedIds = accounts.filter((a) => VALUED_TYPES.includes(a.type)).map((a) => a.id);
+    const valuations =
+      valuedIds.length > 0
+        ? await this.prisma.assetValuation.findMany({
+            where: { accountId: { in: valuedIds } },
+            select: { accountId: true, date: true, marketValue: true },
+            orderBy: { date: 'asc' },
+          })
+        : [];
+
+    const points: ReportDto.BalanceHistoryPoint[] = [];
+    for (const bucket of buckets) {
+      for (const step of stepsByPeriod.get(bucket.start.getTime()) ?? []) {
+        book.set(step.accountId, (book.get(step.accountId) ?? ZERO).add(step.delta));
+      }
+
+      let total = ZERO;
+      for (const account of accounts) {
+        const bookValue = book.get(account.id) ?? ZERO;
+        if (!VALUED_TYPES.includes(account.type)) {
+          total = total.add(bookValue);
+          continue;
+        }
+        // 그 시점까지의 마지막 평가액. 아직 평가 기록이 없으면 장부가를 쓴다.
+        let asOf: Prisma.Decimal | null = null;
+        for (const v of valuations) {
+          if (v.accountId !== account.id) continue;
+          if (v.date >= bucket.end) break;
+          asOf = v.marketValue;
+        }
+        total = total.add(asOf ?? bookValue);
+      }
+
+      points.push({ date: bucket.label, balance: total.toString() });
+    }
+
+    return points;
   }
 
   /**
@@ -421,6 +542,35 @@ export class ReportsService {
     `;
     return new Map(rows.map((r) => [r.accountId, r.marketValue]));
   }
+}
+
+/** 잔액 추이의 한 구간. 값은 end 직전까지 쌓인 잔액이다. */
+type BalanceBucket = { label: string; start: Date; end: Date };
+
+/** 월 단위 구간. endMonth를 포함해 뒤로 months개. */
+function monthBuckets(endMonth: string, months: number): BalanceBucket[] {
+  const { start: lastStart } = monthRange(endMonth);
+  const buckets: BalanceBucket[] = [];
+  for (let i = months - 1; i >= 0; i--) {
+    const start = new Date(Date.UTC(lastStart.getUTCFullYear(), lastStart.getUTCMonth() - i, 1));
+    const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
+    buckets.push({ label: toYearMonth(start), start, end });
+  }
+  return buckets;
+}
+
+/** 일 단위 구간. 그 달 1일부터 말일까지. */
+function dayBuckets(yearMonth: string): BalanceBucket[] {
+  const { start, end } = monthRange(yearMonth);
+  const buckets: BalanceBucket[] = [];
+  for (let day = new Date(start); day < end; ) {
+    const next = new Date(
+      Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate() + 1),
+    );
+    buckets.push({ label: day.toISOString().slice(0, 10), start: new Date(day), end: next });
+    day = next;
+  }
+  return buckets;
 }
 
 function monthRange(yearMonth: string): { start: Date; end: Date } {

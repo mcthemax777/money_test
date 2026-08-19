@@ -54,7 +54,39 @@ interface DailyData {
 interface PieChartData {
   name: string;
   value: number;
+  /** 소분류만 가진다. 이 값이 없으면 더 파고들 수 없는 조각이다. */
   id?: string;
+}
+
+type BreakdownRow = {
+  categoryId: string;
+  categoryName: string;
+  parentCategoryId: string | null;
+  amount: string;
+};
+
+/**
+ * 대분류 하나의 구성비 조각을 만든다.
+ *
+ * 소분류 행과 함께, 소분류 없이 그 대분류에 바로 기록된 금액을 '미분류'로 넣는다.
+ * 이것을 빼면 조각 합계가 예산 카드에 보이는 사용액보다 적어져서 돈이 사라진 것처럼 보인다.
+ * '미분류'에는 id를 주지 않는다. 실제 카테고리가 아니므로 눌러도 내려갈 곳이 없다.
+ *
+ * 소분류가 아예 없는 대분류는 빈 배열을 준다. '미분류' 한 조각만 100%로 그리면
+ * 쪼개 보여주는 것이 없으면서 분류가 빠진 듯한 오해만 준다. 이때는 원형차트를 걸러야 한다.
+ */
+function buildSubcategoryStats(rows: BreakdownRow[], parentId: string): PieChartData[] {
+  const stats: PieChartData[] = rows
+    .filter((item) => item.parentCategoryId === parentId)
+    .map((item) => ({ id: item.categoryId, name: item.categoryName, value: toNumber(item.amount) }));
+
+  if (stats.length === 0) return [];
+
+  const direct = rows.find((item) => item.categoryId === parentId);
+  const directAmount = direct ? toNumber(direct.amount) : 0;
+  if (directAmount > 0) stats.push({ name: '미분류', value: directAmount });
+
+  return stats.sort((a, b) => b.value - a.value);
 }
 
 export function BudgetDetailModal({
@@ -171,23 +203,17 @@ export function BudgetDetailModal({
         // 일별 누적. 이체는 금액이 아니라 수수료만 쌓는다.
         setDailyData(buildDailyCumulative(rows, displayYear, displayMonth));
 
-        const breakdown = (breakdownRes ?? []) as Array<{
-          categoryId: string;
-          categoryName: string;
-          parentCategoryId: string | null;
-          amount: string;
-        }>;
-        // 대분류를 보고 있으면 그 아래 소분류만 남긴다 (rollup=false로 받았으므로 전부 들어 있다)
-        const scoped =
-          target.scope === 'category'
-            ? breakdown.filter((item) => item.parentCategoryId === categoryId)
-            : breakdown;
+        const breakdown = (breakdownRes ?? []) as BreakdownRow[];
+        // 대분류를 보고 있으면 그 아래 소분류 + 미분류만 남긴다
+        // (rollup=false로 받았으므로 소분류와 대분류 직접 금액이 전부 들어 있다)
         setCategoryStats(
-          scoped.map((item) => ({
-            id: item.categoryId,
-            name: item.categoryName,
-            value: toNumber(item.amount),
-          })),
+          target.scope === 'category'
+            ? buildSubcategoryStats(breakdown, categoryId)
+            : breakdown.map((item) => ({
+                id: item.categoryId,
+                name: item.categoryName,
+                value: toNumber(item.amount),
+              })),
         );
       } catch (error) {
         console.error('분류별 상세 데이터를 불러오지 못했습니다:', error);
@@ -221,13 +247,8 @@ export function BudgetDetailModal({
   const handlePieClick = (data: PieChartData) => {
     if (!data.id) return;
 
-    // 서버가 이미 계산한 평면 집계에서 해당 대분류의 소분류만 뽑는다.
-    const stats = flatBreakdown
-      .filter((item) => item.parentCategoryId === data.id)
-      .map((item) => ({ id: item.categoryId, name: item.categoryName, value: toNumber(item.amount) }))
-      .sort((a, b) => b.value - a.value);
-
-    setSubCategoryStats(stats);
+    // 서버가 이미 계산한 평면 집계를 쓴다. 패널에서 대분류를 직접 볼 때와 같은 규칙이어야 한다.
+    setSubCategoryStats(buildSubcategoryStats(flatBreakdown, data.id));
     setSelectedPieCategory(data.id);
   };
 

@@ -1,11 +1,11 @@
 ---
 name: run-web
-description: Launch and test the Money App web server (Next.js)
+description: Launch and test the bboyong web server (Next.js)
 ---
 
 # Run: Web App
 
-Money App is a Next.js 14 personal finance management web application. It runs on a local dev server (default port 3002) and requires authentication to access the main dashboard.
+bboyong is a Next.js 14 personal finance management web application. It runs on a local dev server (default port 3002) and requires authentication to access the main dashboard.
 
 ## Prerequisites
 
@@ -47,7 +47,7 @@ The driver script (`driver.sh`) tests:
 
 **Verify it works:**
 ```bash
-curl -s http://localhost:3002/login | grep -q "Money App" && echo "✓ Web app loaded"
+curl -s http://localhost:3002/login | grep -q "bboyong" && echo "✓ Web app loaded"
 ```
 
 Kill the dev server when done:

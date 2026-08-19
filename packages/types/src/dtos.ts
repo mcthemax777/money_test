@@ -7,6 +7,8 @@ import type {
   Card,
   Category,
   CardStatement,
+  FinancialInstitution,
+  FinancialInstitutionType,
   StatementStatus,
   EntryKind,
   EntryListItem,
@@ -84,7 +86,8 @@ export namespace AccountDto {
     type: AccountType;
     ownerId: string; // Person ID
     name: string;
-    bankName?: string;
+    /** 개설 기관. FinancialInstitution(type = bank)의 id. 현금/부동산은 생략한다. */
+    institutionId?: string;
     accountNumber?: string;
     /** 개설 잔액. 전표로 기록되므로 잔액 컬럼에 직접 쓰지 않는다. 금액은 문자열. */
     openingBalance?: string;
@@ -96,7 +99,8 @@ export namespace AccountDto {
 
   export interface UpdateRequest {
     name?: string;
-    bankName?: string;
+    /** null을 주면 기관 연결을 끊는다 */
+    institutionId?: string | null;
     accountNumber?: string;
     /**
      * 잔액을 이 값으로 맞춘다. 컬럼을 덮어쓰는 것이 아니라 차액만큼 조정 전표를 남긴다.
@@ -109,6 +113,8 @@ export namespace AccountDto {
   export interface Response extends Account {
     /** 서버가 include로 함께 준다 */
     owner?: PersonDto.Response;
+    /** 서버가 include로 함께 준다. 기관을 고르지 않은 계좌는 null */
+    institution?: FinancialInstitution | null;
   }
 
   /** 계좌 원장 한 줄. 거래별 잔액 추이를 함께 준다. */
@@ -139,7 +145,8 @@ export namespace CardDto {
     name: string;
     cardNumber?: string; // 실제 번호 (서버에서 마스킹)
     cardType: 'debit' | 'credit';
-    issuer: string;
+    /** 카드사. FinancialInstitution(type = card_issuer)의 id */
+    issuerId: string;
     expiryDate?: IsoDateString;
     creditLimit?: string; // 신용카드만. 금액은 문자열
     statementClosingDay?: number; // 신용카드 필수. 1~31
@@ -149,7 +156,7 @@ export namespace CardDto {
 
   export interface UpdateRequest {
     name?: string;
-    issuer?: string;
+    issuerId?: string;
     creditLimit?: string;
     statementClosingDay?: number;
     paymentDueDay?: number;
@@ -160,6 +167,24 @@ export namespace CardDto {
     cardNumberMasked: string;
     /** 화면에 보여주는 "사용액". 부채 잔액의 부호를 뒤집은 값. 체크카드는 null. */
     currentUsage: string | null;
+    /** 서버가 include로 함께 준다 */
+    issuer?: FinancialInstitution;
+  }
+}
+
+
+// ===== FinancialInstitution =====
+
+export namespace InstitutionDto {
+  export interface ListQuery {
+    /** 생략하면 은행과 카드사를 모두 준다 */
+    type?: FinancialInstitutionType;
+    projectId?: string;
+  }
+
+  export interface Response extends FinancialInstitution {
+    /** false면 기본 제공 항목이라 이 프로젝트에서 수정/삭제할 수 없다 */
+    isCustom: boolean;
   }
 }
 
@@ -384,6 +409,31 @@ export namespace ReportDto {
   export interface TrendPoint {
     yearMonth: string;
     amount: string;
+  }
+
+  /**
+   * 자산 잔액 추이. TrendQuery와 달리 "그 시점까지의 누적 잔액"을 준다.
+   * (Trend는 구간별 발생액이라 누적이 아니다)
+   */
+  export interface BalanceHistoryQuery {
+    projectId?: string;
+    /** 생략하면 자본 계정을 뺀 전체 합계 */
+    accountId?: string;
+    /** 기본 month */
+    granularity?: 'month' | 'day';
+    /** granularity=month의 마지막 달 "YYYY-MM". 생략하면 이번 달 */
+    endMonth?: string;
+    /** granularity=day의 대상 달 "YYYY-MM". 생략하면 이번 달 */
+    yearMonth?: string;
+    /** granularity=month일 때만 쓴다. 기본 12 */
+    months?: number;
+  }
+
+  export interface BalanceHistoryPoint {
+    /** granularity=month면 "YYYY-MM", day면 "YYYY-MM-DD" */
+    date: string;
+    /** 그 시점까지의 누적 잔액 */
+    balance: string;
   }
 
   /** 결제수단별 지출 (PaymentMethodTab) */

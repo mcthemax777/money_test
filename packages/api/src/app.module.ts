@@ -6,6 +6,7 @@ import { UsersModule } from './modules/users/users.module';
 import { HealthModule } from './modules/health/health.module';
 import { ProjectsModule } from './modules/projects/projects.module';
 import { PeopleModule } from './modules/people/people.module';
+import { InstitutionsModule } from './modules/institutions/institutions.module';
 import { AccountsModule } from './modules/accounts/accounts.module';
 import { CardsModule } from './modules/cards/cards.module';
 import { CategoriesModule } from './modules/categories/categories.module';
@@ -24,6 +25,7 @@ import { ReportsModule } from './modules/reports/reports.module';
     UsersModule,
     ProjectsModule,
     PeopleModule,
+    InstitutionsModule,
     AccountsModule,
     CardsModule,
     CategoriesModule,

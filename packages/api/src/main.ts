@@ -28,7 +28,7 @@ async function bootstrap() {
   app.useGlobalInterceptors(new LoggingInterceptor());
 
   const config = new DocumentBuilder()
-    .setTitle('Money App API')
+    .setTitle('bboyong API')
     .setDescription('가계부 앱 API')
     .setVersion('1.0')
     .addBearerAuth()

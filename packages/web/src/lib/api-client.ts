@@ -6,6 +6,8 @@ import type {
   CardDto,
   CategoryDto,
   EntryDto,
+  FinancialInstitutionType,
+  InstitutionDto,
   PersonDto,
   ReportDto,
   StatementDto,
@@ -166,6 +168,20 @@ class ApiClient {
 
   async deletePerson(id: string) {
     await this.client.delete(`/people/${id}`);
+  }
+
+  /**
+   * 은행/카드사 목록. 기본 제공 항목과 이 프로젝트가 추가한 항목이 함께 온다.
+   * type을 주면 그 용도만 걸러서 온다.
+   */
+  async getInstitutions(
+    type?: FinancialInstitutionType,
+    projectId?: string | null,
+  ): Promise<InstitutionDto.Response[]> {
+    const response = await this.client.get<InstitutionDto.Response[]>('/institutions', {
+      params: { ...(type ? { type } : {}), ...(projectId ? { projectId } : {}) }
+    });
+    return response.data;
   }
 
   async getAccountsV2(projectId?: string | null): Promise<AccountDto.Response[]> {
@@ -542,6 +558,24 @@ class ApiClient {
     const response = await this.client.get<any>('/reports/trend', {
       params: { target, ...options, ...(projectId ? { projectId } : {}) },
     });
+    return response.data;
+  }
+
+  /** 자산 잔액 추이. accountId를 주면 그 계좌만, 생략하면 전체 합계. */
+  async getBalanceHistory(
+    options: {
+      accountId?: string;
+      granularity?: 'month' | 'day';
+      endMonth?: string;
+      yearMonth?: string;
+      months?: number;
+    },
+    projectId?: string | null,
+  ): Promise<ReportDto.BalanceHistoryPoint[]> {
+    const response = await this.client.get<ReportDto.BalanceHistoryPoint[]>(
+      '/reports/balance-history',
+      { params: { ...options, ...(projectId ? { projectId } : {}) } },
+    );
     return response.data;
   }
 

@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { apiClient } from '@/lib/api-client';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
+import { useInstitutions } from '@/hooks/useInstitutions';
 import { toAmountString } from '@/lib/money';
 import type { AccountType } from '@/lib/types';
 import type { Person } from '@/lib/types';
@@ -31,14 +32,14 @@ const ACCOUNT_TYPES = [
   { id: 'loan', name: '대출' },
 ];
 
-/** 은행명을 물어볼 필요가 없는 유형 */
+/** 개설 기관을 물어볼 필요가 없는 유형. 서버의 NO_INSTITUTION_TYPES와 같아야 한다. */
 const NO_BANK_TYPES = ['cash', 'real_estate'];
 
 const EMPTY_FORM = {
   ownerId: '',
   type: 'deposit' as AccountType,
   name: '',
-  bankName: '',
+  institutionId: '',
   openingBalance: '',
   openingBalanceDate: new Date().toISOString().split('T')[0],
   accountNumber: '',
@@ -54,6 +55,7 @@ export default function AddAccountModal({
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const { options: bankOptions, error: bankError } = useInstitutions('bank');
 
   const needsBankName = !NO_BANK_TYPES.includes(formData.type);
 
@@ -70,7 +72,10 @@ export default function AddAccountModal({
         // 기준일보다 앞선 거래를 넣을 계좌라면 날짜를 더 앞으로 잡아야 원장 순서가 맞는다.
         openingBalance: toAmountString(formData.openingBalance),
         openingBalanceDate: formData.openingBalanceDate,
-        ...(needsBankName && formData.bankName ? { bankName: formData.bankName } : {}),
+        // 기관이 없는 유형(현금/부동산)에 institutionId를 보내면 서버가 거부한다.
+        ...(needsBankName && formData.institutionId
+          ? { institutionId: formData.institutionId }
+          : {}),
         ...(formData.accountNumber ? { accountNumber: formData.accountNumber } : {}),
         ...(projectId ? { projectId } : {}),
       });
@@ -127,14 +132,14 @@ export default function AddAccountModal({
 
         {needsBankName && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">은행명</label>
-            <input
-              type="text"
-              value={formData.bankName}
-              onChange={(e) => setFormData({ ...formData, bankName: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="KB Bank, Samsung Bank 등"
+            <label className="block text-sm font-medium text-gray-700 mb-1">개설 기관</label>
+            <CustomSelect
+              options={bankOptions}
+              value={formData.institutionId}
+              onChange={(value) => setFormData({ ...formData, institutionId: value })}
+              placeholder="은행 / 증권사를 선택하세요"
             />
+            {bankError && <p className="mt-1 text-xs text-red-600">{bankError}</p>}
           </div>
         )}
 

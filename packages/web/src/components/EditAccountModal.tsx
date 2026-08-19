@@ -6,6 +6,18 @@ import type { Account, Person } from '@/lib/types';
 import { toAmountString } from '@/lib/money';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
+import { useInstitutions } from '@/hooks/useInstitutions';
+
+/** 개설 기관이 없는 유형. AddAccountModal, 서버의 NO_INSTITUTION_TYPES와 같아야 한다. */
+const NO_BANK_TYPES = ['cash', 'real_estate'];
+
+const EMPTY_FORM = {
+  ownerId: '',
+  name: '',
+  institutionId: '',
+  accountNumber: '',
+  balance: '',
+};
 
 
 interface EditAccountModalProps {
@@ -28,23 +40,20 @@ export default function EditAccountModal({
   onDelete,
   projectId,
 }: EditAccountModalProps) {
-  const [formData, setFormData] = useState({
-    ownerId: '',
-    name: '',
-    bankName: '',
-    accountNumber: '',
-    balance: '',
-  });
+  const [formData, setFormData] = useState(EMPTY_FORM);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [error, setError] = useState('');
+  const { options: bankOptions, error: bankError } = useInstitutions('bank');
+
+  const needsBankName = !!account && !NO_BANK_TYPES.includes(account.type);
 
   useEffect(() => {
     if (account) {
       setFormData({
         ownerId: account.ownerId ?? '',
         name: account.name,
-        bankName: account.bankName ?? '',
+        institutionId: account.institutionId ?? '',
         accountNumber: account.accountNumber || '',
         balance: account.balance,
       });
@@ -63,7 +72,8 @@ export default function EditAccountModal({
       await apiClient.updateAccountV2(account.id, {
         name: formData.name,
         balance: toAmountString(formData.balance),
-        bankName: formData.bankName,
+        // 기관을 비우면 null을 보내 연결을 끊는다. ''를 그대로 보내면 서버가 없는 id로 본다.
+        ...(needsBankName ? { institutionId: formData.institutionId || null } : {}),
         ...(formData.accountNumber && { accountNumber: formData.accountNumber }),
       });
       const data = await apiClient.getAccountsV2(projectId);
@@ -93,7 +103,7 @@ export default function EditAccountModal({
   };
 
   const handleClose = () => {
-    setFormData({ ownerId: '', name: '', bankName: '', accountNumber: '', balance: '' });
+    setFormData(EMPTY_FORM);
     setError('');
     onClose();
   };
@@ -127,19 +137,20 @@ export default function EditAccountModal({
           />
         </div>
 
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            은행명
-          </label>
-          <input
-            type="text"
-            required
-            value={formData.bankName}
-            onChange={(e) => setFormData({ ...formData, bankName: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="KB Bank, Samsung Bank 등"
-          />
-        </div>
+        {needsBankName && (
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              개설 기관
+            </label>
+            <CustomSelect
+              options={bankOptions}
+              value={formData.institutionId}
+              onChange={(value) => setFormData({ ...formData, institutionId: value })}
+              placeholder="은행 / 증권사를 선택하세요"
+            />
+            {bankError && <p className="mt-1 text-xs text-red-600">{bankError}</p>}
+          </div>
+        )}
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">

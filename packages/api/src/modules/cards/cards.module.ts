@@ -1,12 +1,13 @@
 import { Module } from '@nestjs/common';
 import { DatabaseModule } from '@/config/database.module';
 import { AccountsModule } from '../accounts/accounts.module';
+import { InstitutionsModule } from '../institutions/institutions.module';
 import { CardsService } from './cards.service';
 import { CardsController } from './cards.controller';
 import { ProjectAccessService } from '@/common/project-access.guard';
 
 @Module({
-  imports: [DatabaseModule, AccountsModule],
+  imports: [DatabaseModule, AccountsModule, InstitutionsModule],
   controllers: [CardsController],
   providers: [CardsService, ProjectAccessService],
   exports: [CardsService],

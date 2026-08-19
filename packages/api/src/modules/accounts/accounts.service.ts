@@ -1,8 +1,9 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { AccountType, Prisma } from '@prisma/client';
+import { AccountType, FinancialInstitutionType, Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { LedgerService } from '../ledger/ledger.service';
+import { InstitutionsService } from '../institutions/institutions.service';
 import { AccountDto } from '@money/types';
 
 /**
@@ -15,13 +16,47 @@ export const HIDDEN_ACCOUNT_TYPES: AccountType[] = [
   AccountType.opening_balance,
 ];
 
+/** 개설 기관이라는 개념이 없는 계정 유형. 기관이 들어오면 거부한다. */
+const NO_INSTITUTION_TYPES: AccountType[] = [
+  AccountType.cash,
+  AccountType.real_estate,
+  AccountType.opening_balance,
+];
+
+/** owner와 institution을 함께 주는 조회 형태. 응답 모양을 한곳에서 정한다. */
+const ACCOUNT_INCLUDE = { owner: true, institution: true } satisfies Prisma.AccountInclude;
+
 @Injectable()
 export class AccountsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly projectAccess: ProjectAccessService,
     private readonly ledger: LedgerService,
+    private readonly institutions: InstitutionsService,
   ) {}
+
+  /**
+   * 개설 기관을 검증해 저장할 값으로 바꾼다.
+   * 현금/부동산처럼 기관이 없는 유형에 기관이 들어오면 조용히 버리지 않고 거부한다.
+   */
+  private async resolveInstitutionId(
+    institutionId: string | null | undefined,
+    type: AccountType,
+    projectId: string,
+  ): Promise<string | null> {
+    if (!institutionId) return null;
+
+    if (NO_INSTITUTION_TYPES.includes(type)) {
+      throw new BadRequestException('이 유형의 계좌에는 개설 기관을 지정할 수 없습니다.');
+    }
+
+    await this.institutions.assertUsable(
+      institutionId,
+      projectId,
+      FinancialInstitutionType.bank,
+    );
+    return institutionId;
+  }
 
   async createAccount(userId: string, dto: AccountDto.CreateRequest, projectIdParam?: string) {
     const projectId = await this.projectAccess.resolveAndVerifyProjectId(
@@ -38,17 +73,23 @@ export class AccountsService {
       throw new NotFoundException('유효한 통장 주인이 아닙니다.');
     }
 
+    const institutionId = await this.resolveInstitutionId(
+      dto.institutionId,
+      dto.type as AccountType,
+      projectId,
+    );
+
     const account = await this.prisma.account.create({
       data: {
         projectId,
         ownerId: dto.ownerId,
         type: dto.type as AccountType,
         name: dto.name,
-        bankName: dto.bankName ?? null,
+        institutionId,
         accountNumber: dto.accountNumber ?? null,
         currency: dto.currency ?? 'KRW',
       },
-      include: { owner: true },
+      include: ACCOUNT_INCLUDE,
     });
 
     // 개설 잔액은 컬럼에 직접 쓰지 않고 전표로 남긴다.
@@ -80,7 +121,7 @@ export class AccountsService {
         isActive: true,
         type: { notIn: HIDDEN_ACCOUNT_TYPES },
       },
-      include: { owner: true },
+      include: ACCOUNT_INCLUDE,
       orderBy: { createdAt: 'desc' },
     });
   }
@@ -88,7 +129,7 @@ export class AccountsService {
   async getAccountById(id: string, userId: string) {
     const account = await this.prisma.account.findUnique({
       where: { id },
-      include: { owner: true },
+      include: ACCOUNT_INCLUDE,
     });
     if (!account) throw new NotFoundException('통장을 찾을 수 없습니다.');
 
@@ -99,10 +140,30 @@ export class AccountsService {
   async updateAccount(id: string, userId: string, dto: AccountDto.UpdateRequest) {
     const account = await this.getAccountById(id, userId);
 
-    const { balance, ...rest } = dto;
+    const { balance, institutionId } = dto;
 
-    if (Object.keys(rest).length > 0) {
-      await this.prisma.account.update({ where: { id }, data: rest });
+    // 요청 본문을 스프레드로 Prisma에 넘기면 안 된다.
+    // DTO가 인터페이스라 ValidationPipe(whitelist: false)가 낯선 키를 지우지 않으므로
+    // `{"institution": {"connect": {"id": ...}}}` 같은 관계 조작이 그대로 통과해
+    // institutionId 검증을 우회한다. `{"type": "cash"}`로 유형만 바꿔
+    // 기관 없는 유형에 기관을 남길 수도 있다. 그래서 허용 컬럼만 골라 담는다.
+    const data: Prisma.AccountUpdateInput = {};
+    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.accountNumber !== undefined) data.accountNumber = dto.accountNumber;
+    if (dto.isActive !== undefined) data.isActive = dto.isActive;
+
+    // 키가 아예 없을 때(변경 의사 없음)와 null일 때(연결 해제)를 구분한다.
+    if ('institutionId' in dto) {
+      const resolved = await this.resolveInstitutionId(
+        institutionId,
+        account.type,
+        account.projectId,
+      );
+      data.institution = resolved ? { connect: { id: resolved } } : { disconnect: true };
+    }
+
+    if (Object.keys(data).length > 0) {
+      await this.prisma.account.update({ where: { id }, data });
     }
 
     // 잔액 수정은 컬럼 덮어쓰기가 아니라 차액만큼의 조정 전표로 처리한다.

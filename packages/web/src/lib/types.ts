@@ -12,11 +12,14 @@ import type {
   AccountDto,
   CardDto,
   CategoryDto,
+  InstitutionDto,
   PersonDto,
   StatementDto,
 } from '@money/types';
 
 export type Account = AccountDto.Response;
+/** 은행/카드사. isCustom이 false면 기본 제공 항목 */
+export type Institution = InstitutionDto.Response;
 export type Card = CardDto.Response;
 export type Category = CategoryDto.Response;
 export type Person = PersonDto.Response;
@@ -29,6 +32,7 @@ export type {
   AccountType,
   CardType,
   CategoryType,
+  FinancialInstitutionType,
   EntryKind,
   EntryListItem,
   Project,

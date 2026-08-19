@@ -43,7 +43,7 @@ runSmoke('http', async (ctx) => {
     ownerId: person.body.id,
     type: 'deposit',
     name: '신한통장',
-    bankName: '신한',
+    institutionId: 'fi_bank_shinhan',
     openingBalance: '1000000',
     openingBalanceDate: '2026-01-01',
   });
@@ -61,7 +61,7 @@ runSmoke('http', async (ctx) => {
     paymentAccountId: account.body.id,
     name: '신한 신용',
     cardType: 'credit',
-    issuer: '신한',
+    issuerId: 'fi_card_shinhan',
     creditLimit: '5000000',
     statementClosingDay: 15,
     paymentDueDay: 25,

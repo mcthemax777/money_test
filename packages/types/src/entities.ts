@@ -22,6 +22,9 @@ export type AccountType =
 
 export type CardType = 'debit' | 'credit';
 
+/** bank는 은행뿐 아니라 증권사/저축은행/상호금융까지 포함한 "계좌 개설 기관"이다. */
+export type FinancialInstitutionType = 'bank' | 'card_issuer';
+
 export type ProjectRole = 'owner' | 'editor' | 'viewer';
 
 export type InvitationStatus = 'pending' | 'accepted' | 'declined' | 'expired';
@@ -93,6 +96,20 @@ export interface Person {
   updatedAt: IsoDateString;
 }
 
+// 은행/카드사. 기본 제공 항목과 사용자 추가 항목이 같은 타입이다.
+export interface FinancialInstitution {
+  id: string;
+  /** null이면 모든 프로젝트가 공유하는 기본 제공 항목 */
+  projectId: string | null;
+  type: FinancialInstitutionType;
+  name: string;
+  sortOrder: number;
+  iconPath: string | null;
+  isActive: boolean;
+  createdAt: IsoDateString;
+  updatedAt: IsoDateString;
+}
+
 // 계좌. 은행 통장뿐 아니라 현금/투자/부동산/카드부채까지 포함한다.
 export interface Account {
   id: string;
@@ -101,7 +118,8 @@ export interface Account {
   /** Person ID (통장 주인). opening_balance 같은 시스템 계정은 null */
   ownerId: string | null;
   name: string;
-  bankName: string | null;
+  /** 개설 기관 (FinancialInstitution). 현금/부동산 계정은 null */
+  institutionId: string | null;
   accountNumber: string | null;
   /** 금액은 정밀도 손실을 막기 위해 문자열로 오간다 */
   balance: string;
@@ -126,7 +144,8 @@ export interface Card {
   name: string;
   cardNumber: string | null;
   cardType: CardType;
-  issuer: string;
+  /** 카드사 (FinancialInstitution, type = card_issuer) */
+  issuerId: string;
   expiryDate: IsoDateString | null;
   /** 금액은 정밀도 손실을 막기 위해 문자열로 오간다 (Prisma Decimal 기본 직렬화) */
   creditLimit: string | null;

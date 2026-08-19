@@ -5,6 +5,7 @@ import { useState, useRef, useEffect } from 'react';
 interface Option {
   id: string;
   name: string;
+  icon?: string; // 아이콘 경로 (선택)
 }
 
 interface CustomSelectProps {
@@ -55,7 +56,12 @@ export default function CustomSelect({
           disabled ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'
         } ${!value ? 'text-gray-500' : 'text-gray-900'}`}
       >
-        <span>{selectedOption?.name || placeholder}</span>
+        <span className="flex items-center gap-2 flex-1">
+          {selectedOption?.icon && (
+            <img src={selectedOption.icon} alt="" className="w-5 h-5" />
+          )}
+          <span>{selectedOption?.name || placeholder}</span>
+        </span>
         {!disabled && (
           <span className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}>▼</span>
         )}
@@ -72,11 +78,14 @@ export default function CustomSelect({
                   onChange(option.id);
                   setIsOpen(false);
                 }}
-                className={`w-full px-3 py-2 text-left hover:bg-blue-50 cursor-pointer border-b border-gray-100 ${
+                className={`w-full px-3 py-2 text-left hover:bg-blue-50 cursor-pointer border-b border-gray-100 flex items-center gap-2 ${
                   value === option.id ? 'bg-blue-100 font-semibold' : ''
                 }`}
               >
-                {option.name}
+                {option.icon && (
+                  <img src={option.icon} alt="" className="w-5 h-5" />
+                )}
+                <span>{option.name}</span>
               </button>
             ))}
           </div>

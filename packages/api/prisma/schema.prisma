@@ -39,6 +39,13 @@ enum AccountType {
   opening_balance
 }
 
+// 금융기관의 용도. 계좌 개설 기관과 카드 발급사는 이름이 다른 별개 항목이라
+// (예: 신한은행 / 신한카드) 한 테이블 안에서 type으로 나눈다.
+enum FinancialInstitutionType {
+  bank // 계좌를 개설하는 기관. 은행, 증권사, 저축은행, 상호금융을 모두 포함한다.
+  card_issuer // 카드 발급사
+}
+
 enum CardType {
   debit
   credit
@@ -110,6 +117,7 @@ model Project {
   cards        Card[]
   entries      JournalEntry[]
   budgets      Budget[]
+  institutions FinancialInstitution[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -198,32 +206,63 @@ model Person {
 // 계좌
 // ─────────────────────────────────────────────
 
+// 은행/카드사 목록. 기본 제공 항목과 사용자 추가 항목이 한 테이블에 같이 있고
+// projectId로 구분한다. null이면 모든 프로젝트가 공유하는 기본 제공 항목이라
+// 목록을 한 곳에서 갱신할 수 있고 프로젝트마다 수십 행을 복제하지 않는다.
+model FinancialInstitution {
+  id        String                   @id @default(cuid())
+  projectId String? // null = 기본 제공. 값이 있으면 그 프로젝트 전용 사용자 추가 항목
+  type      FinancialInstitutionType
+  name      String
+  // 목록 노출 순서. 작을수록 위. 기본 제공 항목은 주요 기관을 앞에 두고
+  // 사용자 추가 항목은 0으로 들어와 이름순으로 정렬된다.
+  sortOrder Int                      @default(0)
+  iconPath  String? // /icons/banks/shinhan.svg 형태. null이면 아이콘 없음
+  isActive  Boolean                  @default(true)
+
+  project  Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  accounts Account[]
+  cards    Card[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 프로젝트 전용 항목의 중복 방지. projectId가 null인 기본 제공 항목은
+  // Postgres가 NULL을 서로 다른 값으로 취급해 이 제약이 걸리지 않으므로
+  // 마이그레이션에서 부분 유니크 인덱스를 따로 만든다.
+  @@unique([projectId, type, name])
+  @@index([type, isActive, sortOrder])
+}
+
 model Account {
   id            String      @id @default(cuid())
   projectId     String
   ownerId       String? // Person. opening_balance 같은 시스템 계정은 null
   type          AccountType
   name          String
-  bankName      String? // 카드/현금/부동산 계정에는 없을 수 있다
+  // 개설 기관. 현금/부동산 계정에는 없고, 카드 부채 계정도 발급사는 Card쪽에 있으므로 null.
+  institutionId String?
   accountNumber String?
   currency      String      @default("KRW")
   // 캐시된 잔액. 근거는 Posting.amount 합계이며 6절 검증 쿼리로 대조한다.
   balance       Decimal     @default(0) @db.Decimal(19, 4)
   isActive      Boolean     @default(true)
 
-  project          Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  owner            Person?           @relation(fields: [ownerId], references: [id])
+  project          Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  owner            Person?               @relation(fields: [ownerId], references: [id])
+  institution      FinancialInstitution? @relation(fields: [institutionId], references: [id])
   investmentDetail InvestmentDetail?
   valuations       AssetValuation[]
   postings         Posting[]
-  cardsAsPayment   Card[]            @relation("CardPaymentAccount")
-  cardAsLiability  Card?             @relation("CardLiabilityAccount")
+  cardsAsPayment   Card[]                @relation("CardPaymentAccount")
+  cardAsLiability  Card?                 @relation("CardLiabilityAccount")
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([projectId, ownerId, isActive])
   @@index([projectId, type])
+  @@index([institutionId])
 }
 
 // 투자성 계좌(investment, real_estate)에만 존재하는 위성 테이블
@@ -303,7 +342,7 @@ model Card {
   liabilityAccountId  String?   @unique
   name                String
   cardType            CardType
-  issuer              String // 카드사
+  issuerId            String // 카드사. FinancialInstitution(type = card_issuer)
   cardNumber          String? // 서버에서 마스킹
   expiryDate          DateTime?
   creditLimit         Decimal?  @db.Decimal(19, 4) // credit만 사용
@@ -311,9 +350,10 @@ model Card {
   paymentDueDay       Int? // 결제일 1~31. credit만 사용
   isActive            Boolean   @default(true)
 
-  project          Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  paymentAccount   Account         @relation("CardPaymentAccount", fields: [paymentAccountId], references: [id])
-  liabilityAccount Account?        @relation("CardLiabilityAccount", fields: [liabilityAccountId], references: [id])
+  project          Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  issuer           FinancialInstitution @relation(fields: [issuerId], references: [id])
+  paymentAccount   Account              @relation("CardPaymentAccount", fields: [paymentAccountId], references: [id])
+  liabilityAccount Account?             @relation("CardLiabilityAccount", fields: [liabilityAccountId], references: [id])
   statements       CardStatement[]
   postings         Posting[] // 표시/분석용. 잔액에는 영향 없음 (계정측 posting이 이미 처리)
 
@@ -322,6 +362,7 @@ model Card {
 
   @@index([projectId, isActive])
   @@index([paymentAccountId])
+  @@index([issuerId])
 }
 
 

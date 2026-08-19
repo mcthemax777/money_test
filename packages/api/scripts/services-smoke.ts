@@ -54,7 +54,7 @@ runSmoke('services', async (ctx) => {
   // ── 계좌 개설 (개설 잔액이 전표로 남는지) ──
   const bank = await accounts.createAccount(u1.id, {
     type: 'deposit', ownerId: person.id, name: '보통예금',
-    bankName: '신한', openingBalance: '1000000',
+    institutionId: 'fi_bank_shinhan', openingBalance: '1000000',
   }, pid);
   ctx.check('개설 잔액 반영', bank.balance, '1000000');
 
@@ -77,7 +77,7 @@ runSmoke('services', async (ctx) => {
   // ── 숨김 계정 ──
   await cards.createCard(u1.id, {
     paymentAccountId: bank.id, name: '신한 신용', cardType: 'credit',
-    issuer: '신한', statementClosingDay: 15, paymentDueDay: 25,
+    issuerId: 'fi_card_shinhan', statementClosingDay: 15, paymentDueDay: 25,
   }, pid);
 
   const visible = await accounts.getAccounts(u1.id, pid);

@@ -33,6 +33,15 @@ export class ReportsController {
     return this.reportsService.getNetWorth(req.user.id, projectId);
   }
 
+  @Get('balance-history')
+  @ApiOperation({ summary: '자산 잔액 추이 (전체 또는 계좌별, 월/일 단위)' })
+  balanceHistory(
+    @Request() req: AuthenticatedRequest,
+    @Query() query: ReportDto.BalanceHistoryQuery,
+  ) {
+    return this.reportsService.getBalanceHistory(req.user.id, query);
+  }
+
   @Get('trend')
   @ApiOperation({ summary: '월별 시계열 (카테고리/계좌/카드/전체)' })
   trend(@Request() req: AuthenticatedRequest, @Query() query: ReportDto.TrendQuery) {

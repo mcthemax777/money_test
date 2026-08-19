@@ -171,7 +171,17 @@ export class EntriesService {
       postingFilters.push({ cardId: query.paymentCardId, amount: { lt: 0 } });
     }
 
-    if (query.categoryId) postingFilters.push({ categoryId: query.categoryId });
+    // 대분류를 지정하면 소분류 거래까지 포함한다. reports.trendByCategory 와 같은 규칙이다.
+    // 정확히 일치로만 걸면 대분류 상세에서 12개월 그래프와 원형차트는 소분류를 합쳐 보여주는데
+    // 거래 목록과 일별 누적만 대분류에 직접 기록한 건을 보여줘 금액이 어긋난다.
+    if (query.categoryId) {
+      postingFilters.push({
+        OR: [
+          { categoryId: query.categoryId },
+          { category: { parentId: query.categoryId } },
+        ],
+      });
+    }
     // kind='expense'는 이체를 빼지만 categoryType='expense'는 수수료 붙은 이체를 포함한다
     if (query.categoryType) {
       postingFilters.push({ category: { type: query.categoryType as CategoryType } });

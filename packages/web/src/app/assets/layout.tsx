@@ -34,7 +34,7 @@ export default function DashboardLayout({
 
       <header className="bg-white border-b border-gray-200 md:ml-64">
         <div className="px-4 py-4 flex justify-between items-center">
-          <h1 className="text-2xl font-bold text-gray-900">Money App</h1>
+          <h1 className="text-2xl font-bold text-gray-900">bboyong</h1>
           <div className="flex items-center gap-4">
             <span className="text-sm text-gray-600">{user?.name}</span>
             <button

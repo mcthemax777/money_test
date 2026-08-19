@@ -39,7 +39,7 @@ runSmoke('statement-lock', async (ctx) => {
   }, pid);
   const card = await cards.createCard(uid, {
     paymentAccountId: bank.id, name: '신한 신용', cardType: 'credit',
-    issuer: '신한', statementClosingDay: 15, paymentDueDay: 25,
+    issuerId: 'fi_card_shinhan', statementClosingDay: 15, paymentDueDay: 25,
   }, pid);
 
   const base = { personId: person.id, cardId: card.id, kind: 'expense' as const };

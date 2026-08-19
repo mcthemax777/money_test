@@ -1,0 +1,160 @@
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
+import { apiClient } from '@/lib/api-client';
+import { toNumber } from '@/lib/money';
+
+interface AssetHistoryChartProps {
+  /** 생략하면 자본 계정을 뺀 전체 자산 합계 */
+  accountId?: string;
+  projectId?: string | null;
+  /** 처음 보여줄 12개월 구간의 마지막 달. 생략하면 이번 달 */
+  endMonth?: string;
+}
+
+interface Point {
+  label: string;
+  balance: number;
+  /** 월 단위일 때만. 클릭해서 일별로 내려갈 때 쓴다 */
+  yearMonth?: string;
+}
+
+const formatCurrency = (value: number) =>
+  new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'KRW' }).format(value);
+
+/** 축 눈금은 만원/억 단위로 줄여 쓴다. 원 단위로 적으면 자리수가 길어 겹친다. */
+const formatAxis = (value: number) => {
+  const abs = Math.abs(value);
+  if (abs >= 100_000_000) return `${(value / 100_000_000).toFixed(1)}억`;
+  if (abs >= 10_000) return `${Math.round(value / 10_000).toLocaleString('ko-KR')}만`;
+  return value.toLocaleString('ko-KR');
+};
+
+export default function AssetHistoryChart({
+  accountId,
+  projectId,
+  endMonth,
+}: AssetHistoryChartProps) {
+  // null이면 월별 보기, 값이 있으면 그 달의 일별 보기
+  const [drilledMonth, setDrilledMonth] = useState<string | null>(null);
+  const [points, setPoints] = useState<Point[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  // 계좌나 프로젝트가 바뀌면 일별 보기에 머물러 있을 이유가 없다. 월별로 되돌린다.
+  useEffect(() => {
+    setDrilledMonth(null);
+  }, [accountId, projectId]);
+
+  const load = useCallback(async () => {
+    try {
+      setIsLoading(true);
+      setError('');
+
+      const rows = await apiClient.getBalanceHistory(
+        drilledMonth
+          ? { accountId, granularity: 'day', yearMonth: drilledMonth }
+          : { accountId, granularity: 'month', months: 12, ...(endMonth ? { endMonth } : {}) },
+        projectId,
+      );
+
+      setPoints(
+        (rows ?? []).map((row) =>
+          drilledMonth
+            ? { label: `${Number(row.date.slice(8))}일`, balance: toNumber(row.balance) }
+            : {
+                label: `${Number(row.date.slice(5))}월`,
+                balance: toNumber(row.balance),
+                yearMonth: row.date,
+              },
+        ),
+      );
+    } catch {
+      // 그래프를 못 불러와도 나머지 화면은 살아 있어야 한다.
+      setPoints([]);
+      setError('자산 추이를 불러오지 못했습니다.');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [accountId, projectId, endMonth, drilledMonth]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  // 값이 전부 0이면 recharts의 domain이 [0,0]이 되어 선이 축에 붙는다.
+  const hasAnyValue = points.some((p) => p.balance !== 0);
+
+  return (
+    <div className="bg-white rounded-lg border border-gray-200 p-6 mb-8">
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="text-lg font-semibold text-gray-900">
+          {drilledMonth
+            ? `${Number(drilledMonth.slice(0, 4))}년 ${Number(drilledMonth.slice(5))}월 일별 잔액`
+            : '월별 자산 추이 (12개월)'}
+        </h3>
+        {drilledMonth ? (
+          <button
+            type="button"
+            onClick={() => setDrilledMonth(null)}
+            className="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
+          >
+            월별로 돌아가기
+          </button>
+        ) : (
+          <span className="text-xs text-gray-500">그래프의 월을 누르면 일별로 보입니다</span>
+        )}
+      </div>
+
+      {isLoading ? (
+        <p className="text-gray-500 text-sm py-12 text-center">불러오는 중...</p>
+      ) : error ? (
+        <p className="text-red-600 text-sm py-12 text-center">{error}</p>
+      ) : !hasAnyValue ? (
+        <p className="text-gray-500 text-sm py-12 text-center">표시할 잔액 기록이 없습니다.</p>
+      ) : (
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart
+            data={points}
+            margin={{ top: 8, right: 16, bottom: 8, left: 8 }}
+            // 점이 아니라 빈 곳을 눌러도 그 달로 내려가도록 차트 전체에서 받는다.
+            // recharts 3에서 activeTooltipIndex는 number가 아닐 수 있어 숫자로 확인하고 쓴다.
+            onClick={(state: any) => {
+              if (drilledMonth) return;
+              const index = Number(state?.activeTooltipIndex);
+              if (!Number.isInteger(index) || index < 0) return;
+              const clicked = points[index];
+              if (clicked?.yearMonth) setDrilledMonth(clicked.yearMonth);
+            }}
+            style={{ cursor: drilledMonth ? 'default' : 'pointer' }}
+          >
+            <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
+            <XAxis dataKey="label" tick={{ fontSize: 12 }} />
+            <YAxis tickFormatter={formatAxis} tick={{ fontSize: 12 }} width={64} />
+            <Tooltip
+              formatter={(value: any) => [formatCurrency(Number(value)), '잔액']}
+              contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc' }}
+            />
+            <Line
+              type="monotone"
+              dataKey="balance"
+              stroke="#2563eb"
+              strokeWidth={2}
+              dot={{ r: 3 }}
+              activeDot={{ r: 5 }}
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      )}
+    </div>
+  );
+}

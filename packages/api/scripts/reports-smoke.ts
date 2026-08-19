@@ -41,11 +41,11 @@ runSmoke('reports', async (ctx) => {
   const fee = await categories.createCategory(uid, { name: '수수료', type: 'expense' }, pid);
 
   const bank = await accounts.createAccount(uid, {
-    type: 'deposit', ownerId: chulsoo.id, name: '보통예금', bankName: '신한',
+    type: 'deposit', ownerId: chulsoo.id, name: '보통예금', institutionId: 'fi_bank_shinhan',
     openingBalance: '1000000', openingBalanceDate: new Date(Date.UTC(2026, 0, 1)).toISOString(),
   }, pid);
   const wifeBank = await accounts.createAccount(uid, {
-    type: 'deposit', ownerId: younghee.id, name: '이영희 통장', bankName: 'KB',
+    type: 'deposit', ownerId: younghee.id, name: '이영희 통장', institutionId: 'fi_bank_kb',
     openingBalance: '500000', openingBalanceDate: new Date(Date.UTC(2026, 0, 1)).toISOString(),
   }, pid);
   const stock = await accounts.createAccount(uid, {
@@ -53,10 +53,10 @@ runSmoke('reports', async (ctx) => {
   }, pid);
   const credit = await cards.createCard(uid, {
     paymentAccountId: bank.id, name: '신한 신용', cardType: 'credit',
-    issuer: '신한', statementClosingDay: 15, paymentDueDay: 25,
+    issuerId: 'fi_card_shinhan', statementClosingDay: 15, paymentDueDay: 25,
   }, pid);
   const debit = await cards.createCard(uid, {
-    paymentAccountId: bank.id, name: '신한 체크', cardType: 'debit', issuer: '신한',
+    paymentAccountId: bank.id, name: '신한 체크', cardType: 'debit', issuerId: 'fi_card_shinhan',
   }, pid);
 
   // 서버로는 ISO 문자열이 간다 (IsoDateString). 테스트도 같은 형태로 보낸다.

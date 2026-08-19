@@ -116,6 +116,12 @@ export const useAuth = create<AuthStore>()(
       useProject.getState().setProjects([]);
       useUserFilter.getState().setSelectedPersonIds([]);
       useUserFilter.getState().setPeople([]);
+
+      // 기관 목록 캐시도 비운다. 로그아웃은 페이지를 새로 읽지 않아
+      // 모듈 캐시가 그대로 남고, selectedProjectId가 null로 돌아가면
+      // 다음 사용자가 같은 캐시 키를 써서 이전 사용자의 기관 이름을 보게 된다.
+      const { invalidateInstitutions } = await import('@/hooks/useInstitutions');
+      invalidateInstitutions();
     }
   },
 
