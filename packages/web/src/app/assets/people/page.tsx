@@ -6,12 +6,8 @@ import { useAuth } from '@/store/auth';
 import { useUserFilter } from '@/store/user-filter';
 import { apiClient } from '@/lib/api-client';
 import PersonModal from '@/components/PersonModal';
+import type { Person } from '@/lib/types';
 
-interface Person {
-  id: string;
-  name: string;
-  relationship?: string | null;
-}
 
 export default function PeoplePage() {
   const router = useRouter();

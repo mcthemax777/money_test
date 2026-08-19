@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma.service';
 import { ProjectAccessService } from '../../common/project-access.guard';
+import { HIDDEN_ACCOUNT_TYPES } from '../accounts/accounts.service';
 
 @Injectable()
 export class UsersService {
@@ -94,24 +95,30 @@ export class UsersService {
     const finalProjectId = projectId ||
       (await this.projectAccess.getDefaultProjectId(userId));
 
-    const [project, cards, accounts, categories, people, recentTransactions, budgets] =
+    const [project, cards, accounts, categories, people, recentEntries, budgets] =
       await Promise.all([
         this.prisma.project.findUnique({
           where: { id: finalProjectId },
           select: { id: true, name: true, description: true },
         }),
         this.prisma.card.findMany({
-          where: { projectId: finalProjectId, userId, isActive: true },
-          include: { account: true },
+          where: { projectId: finalProjectId, isActive: true },
+          include: { paymentAccount: true, liabilityAccount: true },
           orderBy: { createdAt: 'desc' },
         }),
         this.prisma.account.findMany({
-          where: { projectId: finalProjectId, userId, isActive: true },
+          // 카드 부채와 자본 계정은 사용자가 통장으로 인식하지 않으므로 제외한다
+          where: {
+            projectId: finalProjectId,
+            isActive: true,
+            type: { notIn: HIDDEN_ACCOUNT_TYPES },
+          },
           include: { owner: true },
           orderBy: { createdAt: 'desc' },
         }),
         this.prisma.category.findMany({
-          where: { projectId: finalProjectId, userId, isActive: true, level: 1 },
+          // parentId가 null인 것이 대분류다 (level 컬럼은 없앴다)
+          where: { projectId: finalProjectId, isActive: true, parentId: null },
           include: {
             children: {
               where: { isActive: true },
@@ -121,22 +128,22 @@ export class UsersService {
           orderBy: { name: 'asc' },
         }),
         this.prisma.person.findMany({
-          where: { projectId: finalProjectId, userId, isActive: true },
+          where: { projectId: finalProjectId, isActive: true },
           orderBy: { createdAt: 'desc' },
         }),
-        this.prisma.transaction.findMany({
-          where: { projectId: finalProjectId, userId },
+        this.prisma.journalEntry.findMany({
+          where: { projectId: finalProjectId },
           include: {
-            account: true,
             person: true,
-            mainCategory: true,
-            subCategory: true,
+            postings: {
+              include: { account: true, category: true, card: true },
+            },
           },
-          orderBy: { date: 'desc' },
+          orderBy: [{ date: 'desc' }, { id: 'desc' }],
           take: 30,
         }),
         this.prisma.budget.findMany({
-          where: { projectId: finalProjectId, userId },
+          where: { projectId: finalProjectId },
           orderBy: { createdAt: 'desc' },
         }),
       ]);
@@ -151,7 +158,7 @@ export class UsersService {
       accounts,
       categories,
       people,
-      recentTransactions,
+      recentEntries,
       budgets: budgets || [],
     };
   }

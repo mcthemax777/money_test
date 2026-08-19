@@ -8,11 +8,8 @@ import { useProject } from '@/store/project';
 import { useAuth } from '@/store/auth';
 import { apiClient } from '@/lib/api-client';
 import { UserAvatar } from '@/components/UserAvatar';
+import type { Person } from '@/lib/types';
 
-interface Person {
-  id: string;
-  name: string;
-}
 
 interface Project {
   id: string;
@@ -24,7 +21,6 @@ interface Project {
 // 프로젝트가 있어야 의미가 있는 메뉴. 프로젝트가 없으면 감춘다.
 const projectMenuItems = [
   { label: '홈', href: '/dashboard' },
-  { label: '통계', href: '/statistics' },
   { label: '자산', href: '/assets' },
   { label: '카테고리', href: '/categories' },
 ];

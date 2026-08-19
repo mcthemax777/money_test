@@ -1,5 +1,22 @@
 import { create } from 'zustand';
 import { apiClient } from '@/lib/api-client';
+import { toNumber } from '@/lib/money';
+
+/**
+ * 서버는 금액을 문자열로 준다 (Decimal 직렬화).
+ * 예산 화면은 비교와 나눗셈을 하므로 스토어에 들어올 때 숫자로 바꾼다.
+ *
+ * 문자열 그대로 두면 `"3000" > "10000"` 이 true가 되어(첫 글자 비교)
+ * 진행률이 101%로 나오는 식의 조용한 오류가 난다.
+ * 예산은 계획 금액이라 KRW 범위에서 double 정밀도로 충분하다.
+ */
+function normalizeBudget<T extends { monthlyAmount?: unknown; usedAmount?: unknown }>(row: T) {
+  return {
+    ...row,
+    monthlyAmount: toNumber(row.monthlyAmount as string),
+    ...(row.usedAmount !== undefined ? { usedAmount: toNumber(row.usedAmount as string) } : {}),
+  };
+}
 
 interface Budget {
   id: string;
@@ -53,7 +70,7 @@ export const useBudget = create<BudgetStore>((set) => ({
     set({ isLoading: true });
     try {
       const budgets = await apiClient.getBudgets(projectId);
-      set({ budgets });
+      set({ budgets: (budgets ?? []).map(normalizeBudget) });
     } catch (error) {
       console.error('Failed to fetch budgets:', error);
     } finally {
@@ -65,7 +82,7 @@ export const useBudget = create<BudgetStore>((set) => ({
     set({ isLoading: true });
     try {
       const monthlyBudgets = await apiClient.getBudgetForMonth(year, month, projectId);
-      set({ monthlyBudgets });
+      set({ monthlyBudgets: (monthlyBudgets ?? []).map(normalizeBudget) });
     } catch (error) {
       console.error('Failed to fetch monthly budgets:', error);
     } finally {

@@ -1,28 +1,47 @@
 import * as XLSX from 'xlsx';
 import { apiClient } from './api-client';
+import { toNumber } from './money';
+
+const ENTRY_KIND_LABEL: Record<string, string> = {
+  expense: '지출',
+  income: '수입',
+  transfer: '이체',
+  card_payment: '카드대금',
+  adjustment: '잔액조정',
+};
+
+const ACCOUNT_TYPE_LABEL: Record<string, string> = {
+  deposit: '예금',
+  savings: '저축',
+  investment: '투자',
+  cash: '현금',
+  loan: '대출',
+  real_estate: '부동산',
+};
 
 export async function exportDataToExcel() {
   try {
     // 모든 데이터 병렬로 가져오기
-    const [people, accounts, cards, categories, transactions] = await Promise.all([
+    // 거래는 커서를 따라 전부 받는다 (내보내기는 전량이 필요하다)
+    const [people, accounts, cards, categories, entries] = await Promise.all([
       apiClient.getPeople(),
       apiClient.getAccountsV2(),
       apiClient.getCards(),
       apiClient.getCategories(),
-      apiClient.getTransactionsV2(),
+      apiClient.getAllEntries(),
     ]);
 
     // 배열 정규화
-    const peopleArray = Array.isArray(people) ? people : people?.data || [];
-    const accountsArray = Array.isArray(accounts) ? accounts : accounts?.data || [];
-    const cardsArray = Array.isArray(cards) ? cards : cards?.data || [];
-    const categoriesArray = Array.isArray(categories) ? categories : categories?.data || [];
-    const transactionsArray = Array.isArray(transactions) ? transactions : transactions?.data || [];
+    // API는 배열을 그대로 준다. 감싸는 래퍼가 없다.
+    const peopleArray = people ?? [];
+    const accountsArray = accounts ?? [];
+    const cardsArray = cards ?? [];
+    const categoriesArray = categories ?? [];
+    const entriesArray = entries ?? [];
 
     // 조회 맵 생성 (빠른 검색용)
     const peopleMap = new Map(peopleArray.map((p: any) => [p.id, p.name]));
     const accountsMap = new Map(accountsArray.map((a: any) => [a.id, a]));
-    const cardsMap = new Map(cardsArray.map((c: any) => [c.id, c]));
     const categoriesMap = new Map(categoriesArray.map((c: any) => [c.id, c]));
 
     // 워크북 생성
@@ -42,8 +61,9 @@ export async function exportDataToExcel() {
       계좌명: a.name,
       사용자명: a.ownerId ? peopleMap.get(a.ownerId) || '' : '-',
       은행: a.bankName || '',
+      유형: ACCOUNT_TYPE_LABEL[a.type] || a.type || '',
       계좌번호: a.accountNumber || '',
-      잔액: a.balance || 0,
+      잔액: toNumber(a.balance),
       생성일: a.createdAt ? new Date(a.createdAt).toLocaleDateString('ko-KR') : '',
     }));
     const accountsSheet = XLSX.utils.json_to_sheet(accountsData);
@@ -51,13 +71,15 @@ export async function exportDataToExcel() {
 
     // 3. 카드 시트
     const cardsData = cardsArray.map((c: any) => {
-      const account = c.accountId ? accountsMap.get(c.accountId) as any : null;
+      const account = c.paymentAccountId ? (accountsMap.get(c.paymentAccountId) as any) : null;
       return {
         카드명: c.name,
-        계좌명: account?.name || '',
-        카드사: c.cardCompany || c.issuer || '',
-        카드번호: c.cardNumber || '',
-        잔액: c.balance || 0,
+        종류: c.cardType === 'credit' ? '신용' : '체크',
+        결제통장: account?.name || '',
+        카드사: c.issuer || '',
+        카드번호: c.cardNumberMasked || '',
+        // 신용카드 사용액. 체크카드는 빚이 생기지 않으므로 0
+        사용액: toNumber(c.currentUsage),
         생성일: c.createdAt ? new Date(c.createdAt).toLocaleDateString('ko-KR') : '',
       };
     });
@@ -78,31 +100,26 @@ export async function exportDataToExcel() {
     XLSX.utils.book_append_sheet(workbook, categoriesSheet, '카테고리');
 
     // 5. 거래내역 시트
-    const transactionsData = transactionsArray.map((t: any) => {
-      const account = t.accountId ? accountsMap.get(t.accountId) as any : null;
-      const card = t.cardId ? cardsMap.get(t.cardId) as any : null;
-      const mainCat = t.mainCategoryId ? categoriesMap.get(t.mainCategoryId) as any : null;
-      const subCat = t.subCategoryId ? categoriesMap.get(t.subCategoryId) as any : null;
-
-      return {
-        금액: t.amount || 0,
-        유형: t.type === 'income' ? '수입' : t.type === 'expense' ? '지출' : t.type || '기타',
-        거래자: t.personId ? peopleMap.get(t.personId) || '' : '',
-        대분류: mainCat?.name || t.mainCategory || '',
-        소분류: subCat?.name || t.subCategory || '',
-        설명: t.description || '',
-        계좌: account?.name || '',
-        카드: card?.name || '',
-        거래일자: t.transactionDate
-          ? new Date(t.transactionDate).toLocaleDateString('ko-KR')
-          : t.date
-            ? new Date(t.date).toLocaleDateString('ko-KR')
-            : '',
-        생성일: t.createdAt ? new Date(t.createdAt).toLocaleDateString('ko-KR') : '',
-      };
-    });
-    const transactionsSheet = XLSX.utils.json_to_sheet(transactionsData);
-    XLSX.utils.book_append_sheet(workbook, transactionsSheet, '거래내역');
+    //
+    // 서버가 전표를 한 줄로 펴서 주므로(EntryListItem) 여기서 postings를 다루지 않는다.
+    const entriesData = entriesArray.map((e: any) => ({
+      금액: toNumber(e.amount),
+      유형: ENTRY_KIND_LABEL[e.kind] || e.kind || '기타',
+      거래자: e.personName || '',
+      대분류: e.parentCategoryName || e.categoryName || '',
+      // 소분류가 있을 때만 채운다 (대분류만 지정한 거래는 비워 둔다)
+      소분류: e.parentCategoryName ? e.categoryName || '' : '',
+      고정: e.isFixed ? 'Y' : '',
+      설명: e.description || '',
+      거래처: e.merchant || '',
+      상세설명: e.detailedNote || '',
+      계좌: e.accountName || '',
+      대상계좌: e.toAccountName || '',
+      카드: e.cardName || '',
+      거래일자: e.date ? new Date(e.date).toLocaleDateString('ko-KR') : '',
+    }));
+    const entriesSheet = XLSX.utils.json_to_sheet(entriesData);
+    XLSX.utils.book_append_sheet(workbook, entriesSheet, '거래내역');
 
     // 열 너비 자동 조정
     const adjustColWidth = (sheet: XLSX.WorkSheet) => {
@@ -119,7 +136,7 @@ export async function exportDataToExcel() {
       sheet['!cols'] = colWidths.map((width) => ({ wch: Math.min(width, 35) }));
     };
 
-    [peopleSheet, accountsSheet, cardsSheet, categoriesSheet, transactionsSheet].forEach(adjustColWidth);
+    [peopleSheet, accountsSheet, cardsSheet, categoriesSheet, entriesSheet].forEach(adjustColWidth);
 
     // 파일 다운로드
     const fileName = `MoneyApp_${new Date().toISOString().split('T')[0]}.xlsx`;

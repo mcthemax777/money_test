@@ -2,26 +2,12 @@
 
 import { useState, useEffect } from 'react';
 import { apiClient } from '@/lib/api-client';
+import type { Account, Card } from '@/lib/types';
+import { toAmountString } from '@/lib/money';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 
-interface Card {
-  id: string;
-  name: string;
-  accountId: string;
-  cardNumberMasked: string;
-  cardType: 'debit' | 'credit';
-  issuer: string;
-  creditLimit?: number;
-  currentBalance?: number;
-  expiryDate?: string;
-  billingDayOfMonth?: number;
-}
 
-interface Account {
-  id: string;
-  name: string;
-}
 
 interface EditCardModalProps {
   isOpen: boolean;
@@ -41,14 +27,16 @@ export default function EditCardModal({
   onDelete,
 }: EditCardModalProps) {
   const [formData, setFormData] = useState({
-    accountId: '',
+    paymentAccountId: '',
     name: '',
     issuer: '',
     creditLimit: '',
     expiryDate: '',
     cardType: 'debit' as 'debit' | 'credit',
     cardNumber: '',
-    billingDayOfMonth: 1,
+    // 신용카드는 마감일과 결제일을 따로 관리한다 (구 statementClosingDay 하나를 대체)
+    statementClosingDay: 15,
+    paymentDueDay: 25,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -57,14 +45,15 @@ export default function EditCardModal({
   useEffect(() => {
     if (card) {
       setFormData({
-        accountId: card.accountId,
+        paymentAccountId: card.paymentAccountId,
         name: card.name,
         issuer: card.issuer,
-        creditLimit: card.creditLimit?.toString() || '',
+        creditLimit: card.creditLimit ?? '',
         expiryDate: card.expiryDate || '',
         cardType: card.cardType,
         cardNumber: card.cardNumberMasked || '',
-        billingDayOfMonth: card.billingDayOfMonth || 1,
+        statementClosingDay: card.statementClosingDay ?? 15,
+        paymentDueDay: card.paymentDueDay ?? 25,
       });
     }
   }, [card]);
@@ -77,15 +66,13 @@ export default function EditCardModal({
       setIsSubmitting(true);
       setError('');
       const isoDate = formData.expiryDate ? new Date(formData.expiryDate).toISOString() : undefined;
+      // 결제 통장과 카드 종류는 등록 후 바꾸지 않는다.
+      // 신용카드는 부채 계정이 딸려 있어서 통장을 갈아끼우면 원장이 어긋난다.
       await apiClient.updateCard(card.id, {
         name: formData.name,
-        accountId: formData.accountId,
-        issuer: formData.issuer,
-        cardType: formData.cardType,
-        ...(formData.cardNumber && { cardNumber: formData.cardNumber }),
-        ...(isoDate && { expiryDate: isoDate }),
-        creditLimit: formData.cardType === 'credit' ? parseInt(formData.creditLimit) : undefined,
-        billingDayOfMonth: formData.cardType === 'credit' ? formData.billingDayOfMonth : undefined,
+        creditLimit: formData.cardType === 'credit' ? toAmountString(formData.creditLimit) : undefined,
+        statementClosingDay: formData.cardType === 'credit' ? formData.statementClosingDay : undefined,
+        paymentDueDay: formData.cardType === 'credit' ? formData.paymentDueDay : undefined,
       });
       const data = await apiClient.getCards();
       onSuccess(data || []);
@@ -115,14 +102,15 @@ export default function EditCardModal({
 
   const handleClose = () => {
     setFormData({
-      accountId: '',
+      paymentAccountId: '',
       name: '',
       issuer: '',
       creditLimit: '',
       expiryDate: '',
       cardType: 'debit',
       cardNumber: '',
-      billingDayOfMonth: 1,
+      statementClosingDay: 15,
+      paymentDueDay: 25,
     });
     setError('');
     onClose();
@@ -135,14 +123,12 @@ export default function EditCardModal({
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            계좌
+            결제 통장
           </label>
-          <CustomSelect
-            options={accounts.map((acc) => ({ id: acc.id, name: acc.name }))}
-            value={formData.accountId}
-            onChange={(value) => setFormData({ ...formData, accountId: value })}
-            placeholder="선택하세요"
-          />
+          {/* 신용카드는 부채 계정이 딸려 있어 통장을 바꾸면 원장이 어긋난다. 표시만 한다. */}
+          <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+            {accounts.find((acc) => acc.id === formData.paymentAccountId)?.name || '-'}
+          </p>
         </div>
 
         <div>
@@ -233,8 +219,8 @@ export default function EditCardModal({
                 결제일 (매월 몇 일?)
               </label>
               <select
-                value={formData.billingDayOfMonth}
-                onChange={(e) => setFormData({ ...formData, billingDayOfMonth: parseInt(e.target.value) })}
+                value={formData.statementClosingDay}
+                onChange={(e) => setFormData({ ...formData, statementClosingDay: parseInt(e.target.value) })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
                 {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (

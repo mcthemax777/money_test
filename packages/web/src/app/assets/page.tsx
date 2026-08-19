@@ -4,6 +4,8 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
+import type { Account, Card, Person, Statement } from '@/lib/types';
+import { formatCurrency, toAmountString, toNumber } from '@/lib/money';
 import { useUserFilter } from '@/store/user-filter';
 import { useProject } from '@/store/project';
 import Modal from '@/components/Modal';
@@ -13,43 +15,7 @@ import EditAccountModal from '@/components/EditAccountModal';
 import EditCardModal from '@/components/EditCardModal';
 import AddAccountModal from '@/components/AddAccountModal';
 
-interface Person {
-  id: string;
-  name: string;
-  relationship?: string | null;
-}
 
-interface Account {
-  id: string;
-  ownerId: string;
-  name: string;
-  balance: number;
-  bankName: string;
-  currency: string;
-  accountNumber?: string;
-  owner: Person;
-}
-
-interface Card {
-  id: string;
-  name: string;
-  accountId: string;
-  cardType: 'debit' | 'credit';
-  issuer: string;
-  cardNumberMasked: string;
-  creditLimit?: number;
-  currentBalance?: number;
-  expiryDate?: string;
-  billingDayOfMonth?: number;
-}
-
-interface CardPayment {
-  id: string;
-  totalAmount: number;
-  paidAmount: number;
-  status: 'pending' | 'completed';
-  paymentDate: string;
-}
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -85,7 +51,9 @@ export default function DashboardPage() {
     issuer: '',
     expiryDate: '',
     creditLimit: '',
-    billingDayOfMonth: 1,
+    // 청구 주기는 마감일과 결제일 두 값으로 계산한다
+    statementClosingDay: 15,
+    paymentDueDay: 25,
   });
   const [addError, setAddError] = useState('');
 
@@ -104,7 +72,7 @@ export default function DashboardPage() {
     expiryDate: '',
     creditLimit: '',
   });
-  const [cardPayment, setCardPayment] = useState<CardPayment | null>(null);
+  const [statement, setStatement] = useState<Statement | null>(null);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [paymentForm, setPaymentForm] = useState({
     paymentType: 'full' as 'full' | 'partial',
@@ -113,6 +81,7 @@ export default function DashboardPage() {
   const [isPaymentSubmitting, setIsPaymentSubmitting] = useState(false);
 
   const [accountTransactions, setAccountTransactions] = useState<any[]>([]);
+  const [netWorth, setNetWorth] = useState<any | null>(null);
   const [isTransactionModalOpen, setIsTransactionModalOpen] = useState(false);
   const [transactionFormData, setTransactionFormData] = useState({
     method: 'account',
@@ -138,16 +107,19 @@ export default function DashboardPage() {
     const loadData = async () => {
       try {
         setIsLoading(true);
-        const [accountsData, peopleData, cardsData, categoriesData] = await Promise.all([
-          apiClient.getAccountsV2(selectedProjectId),
-          apiClient.getPeople(selectedProjectId),
-          apiClient.getCards(selectedProjectId),
-          apiClient.getCategories(selectedProjectId),
-        ]);
+        const [accountsData, peopleData, cardsData, categoriesData, netWorthData] =
+          await Promise.all([
+            apiClient.getAccountsV2(selectedProjectId),
+            apiClient.getPeople(selectedProjectId),
+            apiClient.getCards(selectedProjectId),
+            apiClient.getCategories(selectedProjectId),
+            apiClient.getNetWorth(selectedProjectId),
+          ]);
         setAccounts(accountsData || []);
         setPeople(peopleData || []);
         setCards(cardsData || []);
         setCategories(categoriesData || []);
+        setNetWorth(netWorthData ?? null);
       } catch (err) {
         setError('데이터 조회에 실패했습니다.');
       } finally {
@@ -158,40 +130,34 @@ export default function DashboardPage() {
     loadData();
   }, [selectedProjectId]);
 
-  // 계좌의 거래 내역 조회
+  /**
+   * 계좌 원장 조회.
+   *
+   * 예전에는 거래 목록에서 accountId/toAccountId를 조합하고 credit_usage를 빼야 했다.
+   * 원장 구조에서는 이 계좌의 posting만 시간순으로 오고 잔액 추이까지 함께 온다.
+   */
   const loadAccountTransactions = useCallback(async (accountId: string) => {
     try {
-      const response = await apiClient.getTransactionsV2({ accountId }, selectedProjectId);
-      const txs = (response?.data || []).map((tx: any) => ({
-        ...tx,
-        mainCategory: typeof tx.mainCategory === 'object' ? tx.mainCategory?.name : tx.mainCategory,
-        subCategory: typeof tx.subCategory === 'object' ? tx.subCategory?.name : tx.subCategory,
-      }));
-      setAccountTransactions(txs);
+      const response = await apiClient.getAccountPostings(accountId, { limit: 100 });
+      setAccountTransactions(response?.data ?? []);
     } catch (err) {
       console.error('거래 내역 조회 실패:', err);
       setAccountTransactions([]);
     }
-  }, [selectedProjectId]);
+  }, []);
 
-  // 카드 선택 시 미납액 조회
+  /** 카드 선택 시 미결제 청구서 조회. 가장 오래된 것부터 갚는다. */
   const loadCardPayment = useCallback(async (cardId: string) => {
     try {
-      console.log('[loadCardPayment] Loading payment for card:', cardId);
-      const response = await apiClient.getPendingCardPayments(selectedProjectId, cardId);
-      console.log('[loadCardPayment] Response:', response);
-      const payments = response?.data || [];
-      console.log('[loadCardPayment] Payments:', payments);
-      if (payments.length > 0) {
-        console.log('[loadCardPayment] Setting cardPayment:', payments[0]);
-        setCardPayment(payments[0]); // 가장 가까운 결제일 기준
-      } else {
-        console.log('[loadCardPayment] No payments found');
-        setCardPayment(null);
-      }
+      const response = await apiClient.getStatements(selectedProjectId, { cardId });
+      const rows: Statement[] = response ?? [];
+      const unpaid = rows
+        .filter((row) => Number(row.outstanding) > 0)
+        .sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
+      setStatement(unpaid[0] ?? null);
     } catch (err) {
-      console.error('[loadCardPayment] Error:', err);
-      setCardPayment(null);
+      console.error('청구서 조회 실패:', err);
+      setStatement(null);
     }
   }, [selectedProjectId]);
 
@@ -209,7 +175,7 @@ export default function DashboardPage() {
     if (selectedCard && detailType === 'card') {
       loadCardPayment(selectedCard.id);
     } else {
-      setCardPayment(null);
+      setStatement(null);
     }
   }, [selectedCard, detailType, loadCardPayment]);
 
@@ -219,11 +185,11 @@ export default function DashboardPage() {
 
   const filteredCards = useMemo(() => {
     const userAccountIds = filteredAccounts.map((acc) => acc.id);
-    return cards.filter((card) => userAccountIds.includes(card.accountId));
+    return cards.filter((card) => userAccountIds.includes(card.paymentAccountId));
   }, [cards, filteredAccounts]);
 
   const getAccountCards = (accountId: string) =>
-    filteredCards.filter((c) => c.accountId === accountId);
+    filteredCards.filter((c) => c.paymentAccountId === accountId);
 
   // 계좌 원장 관점에서 거래의 입출금 방향과 부제목을 계산
   const getLedgerEntry = (tx: any, accountId: string) => {
@@ -267,7 +233,7 @@ export default function DashboardPage() {
     try {
       setIsSubmitting(true);
       await apiClient.deleteAccountV2(selectedAccount.id);
-      const accountsData = await apiClient.getAccountsV2();
+      const accountsData = await apiClient.getAccountsV2(selectedProjectId);
       setAccounts(accountsData || []);
       setDetailType(null);
       setSelectedAccount(null);
@@ -283,7 +249,7 @@ export default function DashboardPage() {
     try {
       setIsSubmitting(true);
       await apiClient.deleteCard(selectedCard.id);
-      const cardsData = await apiClient.getCards();
+      const cardsData = await apiClient.getCards(selectedProjectId);
       setCards(cardsData || []);
       setDetailType(null);
       setSelectedCard(null);
@@ -307,21 +273,23 @@ export default function DashboardPage() {
       dateValue = dateObj.toISOString();
 
       const payload: any = {
+        kind: transactionFormData.type === 'income' ? 'income' : 'expense',
         accountId: selectedAccount.id,
         personId: transactionFormData.personId,
-        type: transactionFormData.type,
-        amount: parseInt(transactionFormData.amount),
+        // 금액은 문자열로 보낸다 (정밀도 손실 방지)
+        amount: toAmountString(transactionFormData.amount),
         description: transactionFormData.description,
         date: dateValue,
-        mainCategoryId: transactionFormData.mainCategoryId,
-        subCategoryId: transactionFormData.subCategoryId || undefined,
+        // posting은 가장 구체적인 카테고리 하나만 가리킨다
+        categoryId: transactionFormData.subCategoryId || transactionFormData.mainCategoryId,
         isFixed: transactionFormData.isFixed,
+        projectId: selectedProjectId,
       };
 
       if (transactionFormData.merchant) payload.merchant = transactionFormData.merchant;
       if (transactionFormData.detailedNote) payload.detailedNote = transactionFormData.detailedNote;
 
-      await apiClient.createTransactionV2(payload);
+      await apiClient.createEntry(payload);
 
       // 거래 내역 다시 로드
       await loadAccountTransactions(selectedAccount.id);
@@ -350,16 +318,24 @@ export default function DashboardPage() {
 
   // 카드 결제 실행
   const handlePayCard = async () => {
-    if (!cardPayment || !selectedCard) return;
+    if (!statement || !selectedCard) return;
+
+    // 대금은 카드에 연결된 결제 통장에서 빠진다.
+    const paymentAccount = accounts.find((a) => a.id === selectedCard.paymentAccountId);
+    if (!paymentAccount?.ownerId) {
+      alert('결제 통장을 찾을 수 없습니다.');
+      return;
+    }
 
     try {
       setIsPaymentSubmitting(true);
-      const paymentAmount = paymentForm.paymentType === 'full'
-        ? cardPayment.totalAmount - cardPayment.paidAmount
-        : parseInt(paymentForm.amount);
-
-      await apiClient.payCardPayment(cardPayment.id, {
-        amount: paymentAmount,
+      await apiClient.payStatement(statement.id, {
+        accountId: selectedCard.paymentAccountId,
+        personId: paymentAccount.ownerId,
+        // 전액 결제면 금액을 생략한다 (서버가 미결제 전액으로 처리)
+        ...(paymentForm.paymentType === 'full'
+          ? {}
+          : { amount: toAmountString(paymentForm.amount) }),
       });
 
       alert('결제가 완료되었습니다.');
@@ -382,18 +358,19 @@ export default function DashboardPage() {
       setAddError('');
       const isoDate = cardForm.expiryDate ? new Date(cardForm.expiryDate).toISOString() : undefined;
       await apiClient.createCard({
-        accountId: cardForm.accountId,
+        paymentAccountId: cardForm.accountId,
         name: cardForm.name,
         cardNumber: cardForm.cardNumber || undefined,
         cardType: cardForm.cardType,
         issuer: cardForm.issuer,
         ...(isoDate && { expiryDate: isoDate }),
         creditLimit:
-          cardForm.cardType === 'credit' ? parseInt(cardForm.creditLimit) : undefined,
-        billingDayOfMonth:
-          cardForm.cardType === 'credit' ? cardForm.billingDayOfMonth : undefined,
+          cardForm.cardType === 'credit' ? toAmountString(cardForm.creditLimit) : undefined,
+        statementClosingDay:
+          cardForm.cardType === 'credit' ? cardForm.statementClosingDay : undefined,
+        paymentDueDay: cardForm.cardType === 'credit' ? cardForm.paymentDueDay : undefined,
       });
-      const cardsData = await apiClient.getCards();
+      const cardsData = await apiClient.getCards(selectedProjectId);
       setCards(cardsData || []);
       setCardForm({
         accountId: '',
@@ -403,7 +380,8 @@ export default function DashboardPage() {
         issuer: '',
         expiryDate: '',
         creditLimit: '',
-        billingDayOfMonth: 1,
+        statementClosingDay: 15,
+        paymentDueDay: 25,
       });
       setAddType(null);
     } catch (err: any) {
@@ -450,11 +428,12 @@ export default function DashboardPage() {
       setIsSubmitting(true);
       await apiClient.updateAccountV2(selectedAccount.id, {
         name: editAccountForm.name,
-        balance: parseInt(editAccountForm.balance),
+        // 잔액 수정은 서버가 차액만큼 조정 전표를 남긴다
+        balance: toAmountString(editAccountForm.balance),
         bankName: editAccountForm.bankName,
         accountNumber: editAccountForm.accountNumber || undefined,
       });
-      const accountsData = await apiClient.getAccountsV2();
+      const accountsData = await apiClient.getAccountsV2(selectedProjectId);
       setAccounts(accountsData || []);
       const updatedAccount = accountsData?.find((a: Account) => a.id === selectedAccount.id);
       if (updatedAccount) setSelectedAccount(updatedAccount);
@@ -478,9 +457,10 @@ export default function DashboardPage() {
       await apiClient.updateCard(selectedCard.id, {
         name: editCardForm.name,
         issuer: editCardForm.issuer,
-        creditLimit: selectedCard.cardType === 'credit' ? parseInt(editCardForm.creditLimit) : undefined,
+        creditLimit:
+          selectedCard.cardType === 'credit' ? toAmountString(editCardForm.creditLimit) : undefined,
       });
-      const cardsData = await apiClient.getCards();
+      const cardsData = await apiClient.getCards(selectedProjectId);
       setCards(cardsData || []);
       const updatedCard = cardsData?.find((c: Card) => c.id === selectedCard.id);
       if (updatedCard) setSelectedCard(updatedCard);
@@ -492,7 +472,13 @@ export default function DashboardPage() {
     }
   };
 
-  const totalBalance = filteredAccounts.reduce((sum, acc) => sum + acc.balance, 0);
+  // 총자산과 사람별 소계는 서버가 계산한다 (/reports/net-worth).
+  // 투자성 계좌는 최신 시가로 환산되고, 카드 부채가 차감되며, 자본 계정은 제외된다.
+  // 계좌 잔액만 더하던 예전 계산으로는 이 셋 중 아무것도 반영되지 않았다.
+  const totalBalance = toNumber(netWorth?.total);
+  const netWorthByPerson = new Map<string, { total: string }>(
+    (netWorth?.byPerson ?? []).map((row: any) => [row.personId as string, row]),
+  );
 
   // selectedPersonIds가 없으면 모든 사용자 사용
   const effectivePersonIds = selectedPersonIds.length > 0 ? selectedPersonIds : people.map(p => p.id);
@@ -503,7 +489,7 @@ export default function DashboardPage() {
     (acc, person) => {
       acc[person.id] = {
         person,
-        accounts: filteredAccounts.filter((a) => a.owner.id === person.id),
+        accounts: filteredAccounts.filter((a) => a.ownerId === person.id),
       };
       return acc;
     },
@@ -525,11 +511,14 @@ export default function DashboardPage() {
       <div className="bg-blue-600 text-white rounded-lg p-8 mb-8">
         <p className="text-sm opacity-90">총 자산</p>
         <p className="text-4xl font-bold mt-2">
-          {new Intl.NumberFormat('ko-KR', {
-            style: 'currency',
-            currency: 'KRW',
-          }).format(totalBalance)}
+          {formatCurrency(totalBalance)}
         </p>
+        {netWorth && toNumber(netWorth.liability) !== 0 && (
+          <p className="text-sm opacity-90 mt-2">
+            현금성 {formatCurrency(netWorth.cash)} · 투자 {formatCurrency(netWorth.investment)} ·
+            부채 {formatCurrency(netWorth.liability)}
+          </p>
+        )}
       </div>
 
       {error && (
@@ -622,10 +611,7 @@ export default function DashboardPage() {
                   <div>
                     <h2 className="text-xl font-bold text-gray-900">{person.name}</h2>
                     <p className="text-sm text-gray-600">
-                      소계: {new Intl.NumberFormat('ko-KR', {
-                        style: 'currency',
-                        currency: 'KRW',
-                      }).format(personAccounts.reduce((sum, acc) => sum + acc.balance, 0))}
+                      소계: {formatCurrency(netWorthByPerson.get(person.id)?.total ?? 0)}
                     </p>
                   </div>
                 </div>
@@ -652,10 +638,7 @@ export default function DashboardPage() {
                         >
                           <p className="text-sm text-gray-600">{account.bankName}</p>
                           <p className="text-2xl font-bold text-gray-900 mt-2">
-                            {new Intl.NumberFormat('ko-KR', {
-                              style: 'currency',
-                              currency: account.currency,
-                            }).format(account.balance)}
+                            {formatCurrency(account.balance)}
                           </p>
                           <p className="text-xs text-gray-500 mt-2">{account.name}</p>
                           {account.accountNumber && (
@@ -742,7 +725,7 @@ export default function DashboardPage() {
                     </label>
                     <CustomSelect
                       options={categories
-                        .filter((c) => c.level === 1 && c.type === transactionFormData.type)
+                        .filter((c: any) => !c.parentId && c.type === transactionFormData.type)
                         .map((cat) => ({ id: cat.id, name: cat.name }))}
                       value={transactionFormData.mainCategoryId}
                       onChange={(value) => setTransactionFormData({ ...transactionFormData, mainCategoryId: value, subCategoryId: '' })}
@@ -760,7 +743,7 @@ export default function DashboardPage() {
                           ? categories
                               .filter(
                                 (c) =>
-                                  c.level === 2 &&
+                                  Boolean(c.parentId) &&
                                   c.parentId === transactionFormData.mainCategoryId
                               )
                               .map((cat) => ({ id: cat.id, name: cat.name }))
@@ -919,10 +902,7 @@ export default function DashboardPage() {
                 잔액
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900 font-semibold">
-                {new Intl.NumberFormat('ko-KR', {
-                  style: 'currency',
-                  currency: selectedAccount.currency,
-                }).format(selectedAccount.balance)}
+                {formatCurrency(selectedAccount.balance)}
               </p>
             </div>
 
@@ -1267,7 +1247,7 @@ export default function DashboardPage() {
                     계좌
                   </label>
                   <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {accounts.find((a) => a.id === selectedCard.accountId)?.name || '-'}
+                    {accounts.find((a) => a.id === selectedCard.paymentAccountId)?.name || '-'}
                   </p>
                 </div>
 
@@ -1305,10 +1285,7 @@ export default function DashboardPage() {
                         사용액
                       </label>
                       <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                        {new Intl.NumberFormat('ko-KR', {
-                          style: 'currency',
-                          currency: 'KRW',
-                        }).format(selectedCard.currentBalance || 0)}
+                        {formatCurrency(selectedCard.currentUsage)}
                       </p>
                     </div>
 
@@ -1317,50 +1294,44 @@ export default function DashboardPage() {
                         신용한도
                       </label>
                       <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                        {new Intl.NumberFormat('ko-KR', {
-                          style: 'currency',
-                          currency: 'KRW',
-                        }).format(selectedCard.creditLimit || 0)}
+                        {formatCurrency(selectedCard.creditLimit)}
                       </p>
                     </div>
 
-                    {/* 신용카드 미납액 섹션 */}
-                    {cardPayment && (
+                    {/* 청구서 미결제액. SUM(Posting.amount WHERE statementId=X)로 서버가 계산한다 */}
+                    {statement && (
                       <div className="pt-4 border-t">
                         <div className="bg-red-50 rounded-lg p-4 space-y-3">
-                          <h3 className="font-semibold text-gray-900">신용카드 미납액</h3>
+                          <h3 className="font-semibold text-gray-900">카드 청구서</h3>
                           <div className="space-y-2">
                             <div className="flex justify-between">
-                              <span className="text-sm text-gray-600">결제일</span>
+                              <span className="text-sm text-gray-600">마감일</span>
                               <span className="text-sm font-medium">
-                                {new Date(cardPayment.paymentDate).toLocaleDateString('ko-KR')}
+                                {new Date(statement.periodEnd).toLocaleDateString('ko-KR')}
                               </span>
                             </div>
                             <div className="flex justify-between">
-                              <span className="text-sm text-gray-600">총 결제액</span>
+                              <span className="text-sm text-gray-600">결제일</span>
                               <span className="text-sm font-medium">
-                                {new Intl.NumberFormat('ko-KR', {
-                                  style: 'currency',
-                                  currency: 'KRW',
-                                }).format(cardPayment.totalAmount)}
+                                {new Date(statement.dueDate).toLocaleDateString('ko-KR')}
+                              </span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-sm text-gray-600">청구액</span>
+                              <span className="text-sm font-medium">
+                                {formatCurrency(statement.chargedAmount)}
                               </span>
                             </div>
                             <div className="flex justify-between">
                               <span className="text-sm text-gray-600">결제 완료</span>
                               <span className="text-sm font-medium">
-                                {new Intl.NumberFormat('ko-KR', {
-                                  style: 'currency',
-                                  currency: 'KRW',
-                                }).format(cardPayment.paidAmount)}
+                                {formatCurrency(statement.paidAmount)}
                               </span>
                             </div>
                             <div className="flex justify-between pt-2 border-t">
-                              <span className="text-sm font-semibold text-red-600">미납액</span>
+                              <span className="text-sm font-semibold text-red-600">미결제액</span>
                               <span className="text-lg font-bold text-red-600">
-                                {new Intl.NumberFormat('ko-KR', {
-                                  style: 'currency',
-                                  currency: 'KRW',
-                                }).format(cardPayment.totalAmount - cardPayment.paidAmount)}
+                                {formatCurrency(statement.outstanding)}
                               </span>
                             </div>
                           </div>
@@ -1398,7 +1369,7 @@ export default function DashboardPage() {
       )}
 
       {/* 신용카드 결제 모달 */}
-      {isPaymentModalOpen && cardPayment && selectedCard && (
+      {isPaymentModalOpen && statement && selectedCard && (
         <Modal
           isOpen={true}
           onClose={() => {
@@ -1421,7 +1392,7 @@ export default function DashboardPage() {
                   {new Intl.NumberFormat('ko-KR', {
                     style: 'currency',
                     currency: 'KRW',
-                  }).format(cardPayment.totalAmount - cardPayment.paidAmount)}
+                  }).format(Number(statement.outstanding))}
                 </span>
               </div>
             </div>
@@ -1471,7 +1442,7 @@ export default function DashboardPage() {
                     setPaymentForm({ ...paymentForm, amount: e.target.value })
                   }
                   placeholder="0"
-                  max={cardPayment.totalAmount - cardPayment.paidAmount}
+                  max={Number(statement.outstanding)}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -1598,6 +1569,7 @@ export default function DashboardPage() {
         onClose={() => setIsAccountModalOpen(false)}
         onSuccess={(newAccounts) => setAccounts(newAccounts)}
         people={people}
+        projectId={selectedProjectId}
       />
 
       {/* 카드 추가 모달 */}
@@ -1613,7 +1585,8 @@ export default function DashboardPage() {
             issuer: '',
             expiryDate: '',
             creditLimit: '',
-            billingDayOfMonth: 1,
+            statementClosingDay: 15,
+            paymentDueDay: 25,
           });
           setAddError('');
         }}
@@ -1717,11 +1690,32 @@ export default function DashboardPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
+                  마감일 (매월 몇 일?)
+                </label>
+                <select
+                  value={cardForm.statementClosingDay}
+                  onChange={(e) =>
+                    setCardForm({ ...cardForm, statementClosingDay: parseInt(e.target.value) })
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                    <option key={day} value={day}>
+                      {day}일
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
                   결제일 (매월 몇 일?)
                 </label>
                 <select
-                  value={cardForm.billingDayOfMonth}
-                  onChange={(e) => setCardForm({ ...cardForm, billingDayOfMonth: parseInt(e.target.value) })}
+                  value={cardForm.paymentDueDay}
+                  onChange={(e) =>
+                    setCardForm({ ...cardForm, paymentDueDay: parseInt(e.target.value) })
+                  }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (

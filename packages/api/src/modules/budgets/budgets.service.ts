@@ -1,7 +1,16 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { BudgetDto } from '@money/types';
+
+const ZERO = new Prisma.Decimal(0);
+
+/** 내부 계산용. 응답으로 나갈 때 금액을 문자열로 바꾼다. */
+type InternalBudgetRow = Omit<BudgetDto.MonthlyBudget, 'monthlyAmount' | 'usedAmount'> & {
+  monthlyAmount: Prisma.Decimal;
+  usedAmount: Prisma.Decimal;
+};
 
 @Injectable()
 export class BudgetsService {
@@ -38,7 +47,7 @@ export class BudgetsService {
         where: { id: categoryId },
       });
 
-      if (!category || category.projectId !== projectId || category.userId !== userId) {
+      if (!category || category.projectId !== projectId) {
         throw new NotFoundException('유효한 카테고리가 아닙니다.');
       }
     }
@@ -47,7 +56,6 @@ export class BudgetsService {
     const existingBudget = await this.prisma.budget.findFirst({
       where: {
         projectId,
-        userId,
         categoryId: categoryId ?? null,
         type: type || undefined,
       },
@@ -66,7 +74,6 @@ export class BudgetsService {
     const budget = await this.prisma.budget.create({
       data: {
         projectId,
-        userId,
         categoryId: categoryId ?? null,
         type: type || undefined,
         monthlyAmount: dto.monthlyAmount,
@@ -101,9 +108,10 @@ export class BudgetsService {
       where: { id },
     });
 
-    if (!budget || budget.userId !== userId) {
+    if (!budget) {
       throw new NotFoundException('예산을 찾을 수 없습니다.');
     }
+    await this.projectAccess.verifyUserHasAccessToProject(userId, budget.projectId);
 
     return this.toBudgetResponse(budget);
   }
@@ -146,7 +154,6 @@ export class BudgetsService {
       const newBudget = await this.prisma.budget.create({
         data: {
           projectId: budget.projectId,
-          userId: budget.userId,
           categoryId: budget.categoryId,
           monthlyAmount: dto.monthlyAmount,
           effectiveFrom: dto.applyFromMonth,
@@ -177,297 +184,139 @@ export class BudgetsService {
 
     const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
 
-    // 1. 모든 카테고리 가져오기
-    const categories = await this.prisma.category.findMany({
-      where: { projectId, userId },
-    });
+    const [categories, budgets, overrides] = await Promise.all([
+      this.prisma.category.findMany({ where: { projectId, isActive: true } }),
+      this.prisma.budget.findMany({ where: { projectId }, include: { category: true } }),
+      this.prisma.budgetOverride.findMany({
+        where: { budget: { projectId }, year, month },
+        include: { budget: true },
+      }),
+    ]);
 
-    // 2. 예산 정보 가져오기
-    const budgets = await this.prisma.budget.findMany({
-      where: { projectId, userId },
-      include: { category: true },
-    });
-
-    // 3. 오버라이드 정보 가져오기
-    const overrides = await this.prisma.budgetOverride.findMany({
-      where: {
-        budget: { projectId, userId },
-        year,
-        month,
-      },
-      include: { budget: true },
-    });
-
-    // 4. 맵 생성: 예산 정보 (categoryId 또는 type => budget)
-    const budgetMap = new Map<string | null, any>();
+    // 예산 맵. categoryId가 없으면 전체 예산이므로 type을 키로 쓴다.
+    const budgetMap = new Map<string, (typeof budgets)[number]>();
     for (const budget of budgets) {
       if (this.isBudgetApplicable(budget, yearMonth)) {
-        // categoryId가 없으면 type을 키로 사용 (전체 예산 구분)
-        const key = budget.categoryId || `__total__${budget.type}`;
-        budgetMap.set(key, budget);
+        budgetMap.set(budget.categoryId || `__total__${budget.type}`, budget);
       }
     }
 
-    // 오버라이드 맵 (budgetId => amount)
-    const overrideMap = new Map<string, number>();
+    const overrideMap = new Map<string, Prisma.Decimal>();
     for (const override of overrides) {
       overrideMap.set(override.budgetId, override.amount);
     }
 
-    // 5. 부모-자식 관계 맵 생성
-    const childCategoriesByParent = new Map<string, any[]>();
+    const childrenByParent = new Map<string, typeof categories>();
     for (const category of categories) {
-      if (category.parentId) {
-        if (!childCategoriesByParent.has(category.parentId)) {
-          childCategoriesByParent.set(category.parentId, []);
-        }
-        childCategoriesByParent.get(category.parentId)!.push(category);
-      }
+      if (!category.parentId) continue;
+      const list = childrenByParent.get(category.parentId) ?? [];
+      list.push(category);
+      childrenByParent.set(category.parentId, list);
     }
 
-    // 6. 거래 정보 기반 사용금액 및 사용량 계산
-    const categoryIds = categories.map(c => c.id);
-    const startDate = new Date(year, month - 1, 1);
-    const endDate = new Date(year, month, 1);
-    endDate.setMilliseconds(endDate.getMilliseconds() - 1);
+    // 사용금액: groupBy 한 번으로 끝난다.
+    //
+    // 예전에는 (대분류/소분류) x (지출/수입) 4개의 groupBy를 돌리고 credit_usage를
+    // 포함할지 매번 판단해야 했다. 이제 "지출 = 지출 카테고리 posting의 합"이므로
+    // 결제수단과 무관하게 한 번에 집계된다.
+    const startDate = new Date(Date.UTC(year, month - 1, 1));
+    const endDate = new Date(Date.UTC(year, month, 1));
 
-    // 대분류별 사용금액 (지출: expense, credit_usage)
-    const mainCategoryExpense = await this.prisma.transaction.groupBy({
-      by: ['mainCategoryId'],
+    const usage = await this.prisma.posting.groupBy({
+      by: ['categoryId'],
       _sum: { amount: true },
       _count: true,
       where: {
-        projectId,
-        userId,
-        mainCategoryId: { in: categoryIds.filter(id => id) },
-        date: { gte: startDate, lte: endDate },
-        type: { in: ['expense', 'credit_usage'] },
+        categoryId: { in: categories.map((c) => c.id) },
+        entry: { projectId, date: { gte: startDate, lt: endDate } },
       },
     });
 
-    // 소분류별 사용금액 (지출: expense, credit_usage)
-    const subCategoryExpense = await this.prisma.transaction.groupBy({
-      by: ['subCategoryId'],
-      _sum: { amount: true },
-      _count: true,
-      where: {
-        projectId,
-        userId,
-        subCategoryId: { in: categoryIds.filter(id => id) },
-        date: { gte: startDate, lte: endDate },
-        type: { in: ['expense', 'credit_usage'] },
-      },
-    });
-
-    // 대분류별 수입 (income)
-    const mainCategoryIncome = await this.prisma.transaction.groupBy({
-      by: ['mainCategoryId'],
-      _sum: { amount: true },
-      _count: true,
-      where: {
-        projectId,
-        userId,
-        mainCategoryId: { in: categoryIds.filter(id => id) },
-        date: { gte: startDate, lte: endDate },
-        type: 'income',
-      },
-    });
-
-    // 소분류별 수입 (income)
-    const subCategoryIncome = await this.prisma.transaction.groupBy({
-      by: ['subCategoryId'],
-      _sum: { amount: true },
-      _count: true,
-      where: {
-        projectId,
-        userId,
-        subCategoryId: { in: categoryIds.filter(id => id) },
-        date: { gte: startDate, lte: endDate },
-        type: 'income',
-      },
-    });
-
-    const usageCountMap = new Map<string, number>();
-    const usedAmountMap = new Map<string, number>();
-
-    // 지출 데이터 (expense, credit_usage)
-    for (const item of mainCategoryExpense) {
-      if (item.mainCategoryId) {
-        usageCountMap.set(item.mainCategoryId, (item._count as number) || 0);
-        usedAmountMap.set(item.mainCategoryId, Math.abs(item._sum?.amount || 0));
-      }
-    }
-    for (const item of subCategoryExpense) {
-      if (item.subCategoryId) {
-        usageCountMap.set(item.subCategoryId, (item._count as number) || 0);
-        usedAmountMap.set(item.subCategoryId, Math.abs(item._sum?.amount || 0));
-      }
+    // 수입 posting은 음수로 기록되므로 표시용으로 절댓값을 쓴다.
+    const ownAmount = new Map<string, Prisma.Decimal>();
+    const ownCount = new Map<string, number>();
+    for (const row of usage) {
+      if (!row.categoryId) continue;
+      ownAmount.set(row.categoryId, (row._sum.amount ?? ZERO).abs());
+      ownCount.set(row.categoryId, row._count);
     }
 
-    // 수입 데이터 (income)
-    for (const item of mainCategoryIncome) {
-      if (item.mainCategoryId) {
-        usageCountMap.set(item.mainCategoryId, (item._count as number) || 0);
-        usedAmountMap.set(item.mainCategoryId, Math.abs(item._sum?.amount || 0));
+    // 대분류 사용액은 자신 + 소분류 합이다.
+    // (posting은 가장 구체적인 카테고리 하나만 가리키므로 롤업이 필요하다)
+    const usedAmount = new Map<string, Prisma.Decimal>();
+    const usageCount = new Map<string, number>();
+    for (const category of categories) {
+      let amount = ownAmount.get(category.id) ?? ZERO;
+      let count = ownCount.get(category.id) ?? 0;
+      for (const child of childrenByParent.get(category.id) ?? []) {
+        amount = amount.add(ownAmount.get(child.id) ?? ZERO);
+        count += ownCount.get(child.id) ?? 0;
       }
-    }
-    for (const item of subCategoryIncome) {
-      if (item.subCategoryId) {
-        usageCountMap.set(item.subCategoryId, (item._count as number) || 0);
-        usedAmountMap.set(item.subCategoryId, Math.abs(item._sum?.amount || 0));
-      }
+      usedAmount.set(category.id, amount);
+      usageCount.set(category.id, count);
     }
 
-    // 7. 결과 생성
-    const result: BudgetDto.MonthlyBudget[] = [];
+    const amountOf = (key: string): Prisma.Decimal => {
+      const budget = budgetMap.get(key);
+      if (!budget) return ZERO;
+      return overrideMap.get(budget.id) ?? budget.monthlyAmount;
+    };
 
-    // 전체 지출 예산 (없으면 placeholder로 생성)
-    const totalExpenseBudget = budgetMap.get('__total__expense');
-    const expenseMonthlyAmount = totalExpenseBudget
-      ? (overrideMap.get(totalExpenseBudget.id) || totalExpenseBudget.monthlyAmount)
-      : 0;
+    const rows: InternalBudgetRow[] = [];
 
-    result.push({
-      budgetId: totalExpenseBudget?.id || 'placeholder-total-expense',
-      categoryId: undefined,
-      categoryName: '전체 지출',
-      categoryType: 'expense',
-      parentCategoryId: undefined,
-      monthlyAmount: expenseMonthlyAmount,
-      usedAmount: 0,
-      isOverridden: totalExpenseBudget ? overrideMap.has(totalExpenseBudget.id) : false,
-      hasChildren: childCategoriesByParent.size > 0,
-    });
+    for (const type of ['expense', 'income'] as const) {
+      const budget = budgetMap.get(`__total__${type}`);
+      rows.push({
+        budgetId: budget?.id ?? `placeholder-total-${type}`,
+        categoryId: undefined,
+        categoryName: type === 'expense' ? '전체 지출' : '전체 수입',
+        categoryType: type,
+        parentCategoryId: undefined,
+        monthlyAmount: amountOf(`__total__${type}`),
+        // 대분류 사용액의 합. 소분류는 이미 대분류에 롤업되어 있으므로 중복되지 않는다.
+        usedAmount: categories
+          .filter((c) => !c.parentId && c.type === type)
+          .reduce((acc, c) => acc.add(usedAmount.get(c.id) ?? ZERO), ZERO),
+        isOverridden: budget ? overrideMap.has(budget.id) : false,
+        hasChildren: childrenByParent.size > 0,
+      });
+    }
 
-    // 전체 수입 예산 (없으면 placeholder로 생성)
-    const totalIncomeBudget = budgetMap.get('__total__income');
-    const incomeMonthlyAmount = totalIncomeBudget
-      ? (overrideMap.get(totalIncomeBudget.id) || totalIncomeBudget.monthlyAmount)
-      : 0;
-
-    result.push({
-      budgetId: totalIncomeBudget?.id || 'placeholder-total-income',
-      categoryId: undefined,
-      categoryName: '전체 수입',
-      categoryType: 'income',
-      parentCategoryId: undefined,
-      monthlyAmount: incomeMonthlyAmount,
-      usedAmount: 0,
-      isOverridden: totalIncomeBudget ? overrideMap.has(totalIncomeBudget.id) : false,
-      hasChildren: childCategoriesByParent.size > 0,
-    });
-
-    // 각 카테고리별 정보 (모든 카테고리 표시)
     for (const category of categories) {
       const budget = budgetMap.get(category.id);
-      const monthlyAmount = overrideMap.get(budget?.id) || budget?.monthlyAmount || 0;
-      const usedAmount = usedAmountMap.get(category.id) || 0;
-      const categoryType = (category as any).type as 'income' | 'expense' | undefined;
-
-      result.push({
-        budgetId: budget?.id || `placeholder-${category.id}`,
+      rows.push({
+        budgetId: budget?.id ?? `placeholder-${category.id}`,
         categoryId: category.id,
         categoryName: category.name,
-        categoryType,
-        monthlyAmount,
-        usedAmount,
-        parentCategoryId: category.parentId || undefined,
-        hasChildren: childCategoriesByParent.has(category.id),
+        categoryType: category.type,
+        parentCategoryId: category.parentId ?? undefined,
+        monthlyAmount: amountOf(category.id),
+        usedAmount: usedAmount.get(category.id) ?? ZERO,
         isOverridden: budget ? overrideMap.has(budget.id) : false,
+        hasChildren: childrenByParent.has(category.id),
       });
     }
 
-    // 8. 정렬: 대분류를 사용량 순으로, 소분류도 사용량 순으로 정렬
-    const grouped = new Map<string, any[]>();
-    const mainCategoryIds: string[] = [];
-    let totalBudgetItem: any = null;
+    // 대분류는 사용 건수 순, 그 아래 소분류도 사용 건수 순으로 붙인다.
+    const totals = rows.filter((r) => !r.categoryId);
+    const mains = rows
+      .filter((r) => r.categoryId && !r.parentCategoryId)
+      .sort((a, b) => (usageCount.get(b.categoryId!) ?? 0) - (usageCount.get(a.categoryId!) ?? 0));
 
-    // 전체예산 처리
-    if (result[0] && !result[0].categoryId) {
-      totalBudgetItem = result[0];
-      grouped.set('total', [result[0]]);
+    const ordered: InternalBudgetRow[] = [...totals];
+    for (const main of mains) {
+      ordered.push(main);
+      const children = rows
+        .filter((r) => r.parentCategoryId === main.categoryId)
+        .sort((a, b) => (usageCount.get(b.categoryId!) ?? 0) - (usageCount.get(a.categoryId!) ?? 0));
+      ordered.push(...children);
     }
 
-    // 대분류와 소분류 그룹화
-    for (let i = result[0] && !result[0].categoryId ? 1 : 0; i < result.length; i++) {
-      const item = result[i];
-      if (!item.parentCategoryId) {
-        // 대분류
-        grouped.set(item.categoryId || '', [item]);
-        mainCategoryIds.push(item.categoryId || '');
-      } else {
-        // 소분류
-        const parentId = item.parentCategoryId;
-        if (!grouped.has(parentId)) {
-          grouped.set(parentId, []);
-        }
-        grouped.get(parentId)!.push(item);
-      }
-    }
-
-    // 대분류를 사용량 순으로 정렬 (전체예산 제외)
-    mainCategoryIds.sort((a, b) => {
-      const aCount = usageCountMap.get(a) || 0;
-      const bCount = usageCountMap.get(b) || 0;
-      return bCount - aCount;
-    });
-
-    // 최종 결과 구성
-    const finalResult: BudgetDto.MonthlyBudget[] = [];
-
-    // 전체 지출과 전체 수입 처리
-    const totalExpenseItem = result.find((item) => !item.categoryId && item.categoryType === 'expense');
-    const totalIncomeItem = result.find((item) => !item.categoryId && item.categoryType === 'income');
-
-    // 전체 지출 usedAmount 계산 (지출 대분류만)
-    let totalExpenseUsedAmount = 0;
-    for (const mainCategoryId of mainCategoryIds) {
-      const items = grouped.get(mainCategoryId)!;
-      const mainItem = items[0];
-      if (mainItem.usedAmount && mainItem.categoryType === 'expense') {
-        totalExpenseUsedAmount += mainItem.usedAmount;
-      }
-    }
-
-    // 전체 수입 usedAmount 계산 (수입 대분류만)
-    let totalIncomeUsedAmount = 0;
-    for (const mainCategoryId of mainCategoryIds) {
-      const items = grouped.get(mainCategoryId)!;
-      const mainItem = items[0];
-      if (mainItem.usedAmount && mainItem.categoryType === 'income') {
-        totalIncomeUsedAmount += mainItem.usedAmount;
-      }
-    }
-
-    // 전체 지출 추가
-    if (totalExpenseItem) {
-      totalExpenseItem.usedAmount = totalExpenseUsedAmount;
-      finalResult.push(totalExpenseItem);
-    }
-
-    // 전체 수입 추가
-    if (totalIncomeItem) {
-      totalIncomeItem.usedAmount = totalIncomeUsedAmount;
-      finalResult.push(totalIncomeItem);
-    }
-
-    // 대분류와 소분류 추가
-    for (const mainCategoryId of mainCategoryIds) {
-      const items = grouped.get(mainCategoryId)!;
-      const mainItem = items[0];
-      finalResult.push(mainItem);
-
-      // 소분류 정렬해서 추가
-      const children = items.slice(1);
-      children.sort((a, b) => {
-        const aCount = usageCountMap.get(a.categoryId || '') || 0;
-        const bCount = usageCountMap.get(b.categoryId || '') || 0;
-        return bCount - aCount;
-      });
-      finalResult.push(...children);
-    }
-
-    return finalResult;
+    return ordered.map((row) => ({
+      ...row,
+      monthlyAmount: row.monthlyAmount.toString(),
+      usedAmount: row.usedAmount.toString(),
+    }));
   }
 
   async createOverride(
@@ -502,9 +351,10 @@ export class BudgetsService {
       include: { budget: true },
     });
 
-    if (!override || override.budget.userId !== userId) {
+    if (!override) {
       throw new NotFoundException('오버라이드를 찾을 수 없습니다.');
     }
+    await this.projectAccess.verifyUserHasAccessToProject(userId, override.budget.projectId);
 
     await this.prisma.budgetOverride.delete({
       where: { id },
@@ -515,13 +365,14 @@ export class BudgetsService {
     return {
       id: budget.id,
       projectId: budget.projectId,
-      userId: budget.userId,
       categoryId: budget.categoryId || undefined,
-      monthlyAmount: budget.monthlyAmount,
+      type: budget.type || undefined,
+      // 금액은 문자열로 내보낸다 (정밀도 손실 방지)
+      monthlyAmount: budget.monthlyAmount.toString(),
       effectiveFrom: budget.effectiveFrom || undefined,
       effectiveTo: budget.effectiveTo || undefined,
-      createdAt: budget.createdAt,
-      updatedAt: budget.updatedAt,
+      createdAt: budget.createdAt.toISOString(),
+      updatedAt: budget.updatedAt.toISOString(),
     };
   }
 
@@ -531,8 +382,8 @@ export class BudgetsService {
       budgetId: override.budgetId,
       year: override.year,
       month: override.month,
-      amount: override.amount,
-      createdAt: override.createdAt,
+      amount: override.amount.toString(),
+      createdAt: override.createdAt.toISOString(),
     };
   }
 

@@ -3,33 +3,21 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/store/auth';
+import { useProject } from '@/store/project';
 import { apiClient } from '@/lib/api-client';
+import type { Account, Card, Person } from '@/lib/types';
+import { formatCurrency, toAmountString, toNumber } from '@/lib/money';
 import CustomSelect from '@/components/CustomSelect';
 import Modal from '@/components/Modal';
 import AddAccountModal from '@/components/AddAccountModal';
 import EditCardModal from '@/components/EditCardModal';
 
-interface Card {
-  id: string;
-  name: string;
-  accountId: string;
-  cardNumberMasked: string;
-  cardType: 'debit' | 'credit';
-  issuer: string;
-  creditLimit?: number;
-  currentBalance?: number;
-  expiryDate?: string;
-  billingDayOfMonth?: number;
-}
 
-interface Account {
-  id: string;
-  name: string;
-}
 
 export default function CardsPage() {
   const router = useRouter();
   const { isAuthenticated, loadUser } = useAuth();
+  const { selectedProjectId } = useProject();
   const [cards, setCards] = useState<Card[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -49,16 +37,17 @@ export default function CardsPage() {
   });
   const [accountSubmitting, setAccountSubmitting] = useState(false);
   const [accountError, setAccountError] = useState('');
-  const [people, setPeople] = useState<Array<{ id: string; name: string }>>([]);
+  const [people, setPeople] = useState<Person[]>([]);
   const [formData, setFormData] = useState({
     accountId: '',
     name: '',
     cardNumber: '',
-    cardType: 'debit',
+    cardType: 'debit' as 'debit' | 'credit',
     issuer: '',
     expiryDate: '',
     creditLimit: '',
-    billingDayOfMonth: 1,
+    statementClosingDay: 15,
+    paymentDueDay: 25,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -76,9 +65,9 @@ export default function CardsPage() {
       try {
         setIsLoading(true);
         const [cardsData, accountsData, peopleData] = await Promise.all([
-          apiClient.getCards(),
-          apiClient.getAccountsV2(),
-          apiClient.getPeople(),
+          apiClient.getCards(selectedProjectId),
+          apiClient.getAccountsV2(selectedProjectId),
+          apiClient.getPeople(selectedProjectId),
         ]);
         setCards(cardsData || []);
         setAccounts(accountsData || []);
@@ -110,22 +99,26 @@ export default function CardsPage() {
       if (editingId) {
         await apiClient.updateCard(editingId, {
           name: formData.name,
-          issuer: formData.issuer,
-          creditLimit: formData.cardType === 'credit' ? parseInt(formData.creditLimit) : undefined,
+          creditLimit: formData.cardType === 'credit' ? toAmountString(formData.creditLimit) : undefined,
+          statementClosingDay: formData.cardType === 'credit' ? formData.statementClosingDay : undefined,
+          paymentDueDay: formData.cardType === 'credit' ? formData.paymentDueDay : undefined,
         });
       } else {
+        // 결제 통장은 사용자가 만든 계좌여야 한다. 신용카드면 서버가 부채 계정을 함께 만든다.
         await apiClient.createCard({
-          accountId: formData.accountId,
+          paymentAccountId: formData.accountId,
+          projectId: selectedProjectId ?? undefined,
           name: formData.name,
           ...(formData.cardNumber && { cardNumber: formData.cardNumber }),
           cardType: formData.cardType,
           issuer: formData.issuer,
           ...(isoDate && { expiryDate: isoDate }),
-          creditLimit: formData.cardType === 'credit' ? parseInt(formData.creditLimit) : undefined,
-          billingDayOfMonth: formData.billingDayOfMonth,
+          creditLimit: formData.cardType === 'credit' ? toAmountString(formData.creditLimit) : undefined,
+          statementClosingDay: formData.cardType === 'credit' ? formData.statementClosingDay : undefined,
+          paymentDueDay: formData.cardType === 'credit' ? formData.paymentDueDay : undefined,
         });
       }
-      const data = await apiClient.getCards();
+      const data = await apiClient.getCards(selectedProjectId);
       setCards(data || []);
       setFormData({
         accountId: '',
@@ -135,7 +128,8 @@ export default function CardsPage() {
         issuer: '',
         expiryDate: '',
         creditLimit: '',
-        billingDayOfMonth: 1,
+        statementClosingDay: 15,
+        paymentDueDay: 25,
       });
       setEditingId(null);
       setError('');
@@ -159,7 +153,8 @@ export default function CardsPage() {
       issuer: '',
       expiryDate: '',
       creditLimit: '',
-      billingDayOfMonth: 1,
+      statementClosingDay: 15,
+    paymentDueDay: 25,
     });
     setEditingId(null);
     setError('');
@@ -178,14 +173,15 @@ export default function CardsPage() {
   const handleEditClick = (card: Card) => {
     setEditingId(card.id);
     setFormData({
-      accountId: card.accountId,
+      accountId: card.paymentAccountId,
       name: card.name,
       cardNumber: '',
       cardType: card.cardType,
       issuer: card.issuer,
       expiryDate: '',
-      creditLimit: card.creditLimit?.toString() || '',
-      billingDayOfMonth: 1,
+      creditLimit: card.creditLimit ?? '',
+      statementClosingDay: card.statementClosingDay ?? 15,
+      paymentDueDay: card.paymentDueDay ?? 25,
     });
     setIsModalOpen(true);
     setError('');
@@ -196,7 +192,7 @@ export default function CardsPage() {
     try {
       setIsSubmitting(true);
       await apiClient.deleteCard(id);
-      const data = await apiClient.getCards();
+      const data = await apiClient.getCards(selectedProjectId);
       setCards(data || []);
     } catch (err: any) {
       const errorMsg = err?.response?.data?.error?.message || '카드 삭제에 실패했습니다.';
@@ -248,16 +244,10 @@ export default function CardsPage() {
                     <div>
                       <p className="text-xs text-gray-600">사용액</p>
                       <p className="text-lg font-bold text-gray-900">
-                        {new Intl.NumberFormat('ko-KR', {
-                          style: 'currency',
-                          currency: 'KRW',
-                        }).format(card.currentBalance || 0)}
+                        {formatCurrency(card.currentUsage)}
                       </p>
                       <p className="text-xs text-gray-500">
-                        한도: {new Intl.NumberFormat('ko-KR', {
-                          style: 'currency',
-                          currency: 'KRW',
-                        }).format(card.creditLimit || 0)}
+                        한도: {formatCurrency(card.creditLimit)}
                       </p>
                     </div>
                   )}
@@ -331,7 +321,7 @@ export default function CardsPage() {
                 { id: 'credit', name: '신용카드' },
               ]}
               value={formData.cardType}
-              onChange={(value) => setFormData({ ...formData, cardType: value })}
+              onChange={(value) => setFormData({ ...formData, cardType: value as 'debit' | 'credit' })}
               placeholder="선택하세요"
             />
           </div>
@@ -377,13 +367,35 @@ export default function CardsPage() {
                 />
               </div>
 
+              {/* 마감일과 결제일을 나눠 받는다. 청구서 주기를 이 두 값으로 계산한다. */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  마감일 (매월 몇 일?)
+                </label>
+                <select
+                  value={formData.statementClosingDay}
+                  onChange={(e) =>
+                    setFormData({ ...formData, statementClosingDay: parseInt(e.target.value) })
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                    <option key={day} value={day}>
+                      {day}일
+                    </option>
+                  ))}
+                </select>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   결제일 (매월 몇 일?)
                 </label>
                 <select
-                  value={formData.billingDayOfMonth}
-                  onChange={(e) => setFormData({ ...formData, billingDayOfMonth: parseInt(e.target.value) })}
+                  value={formData.paymentDueDay}
+                  onChange={(e) =>
+                    setFormData({ ...formData, paymentDueDay: parseInt(e.target.value) })
+                  }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
                   {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
@@ -433,7 +445,7 @@ export default function CardsPage() {
                 계좌
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {accounts.find(a => a.id === selectedCard.accountId)?.name || '-'}
+                {accounts.find(a => a.id === selectedCard.paymentAccountId)?.name || '-'}
               </p>
             </div>
 
@@ -485,7 +497,7 @@ export default function CardsPage() {
                     {new Intl.NumberFormat('ko-KR', {
                       style: 'currency',
                       currency: 'KRW',
-                    }).format(selectedCard.currentBalance || 0)}
+                    }).format(toNumber(selectedCard.currentUsage))}
                   </p>
                 </div>
 
@@ -494,10 +506,7 @@ export default function CardsPage() {
                     신용한도
                   </label>
                   <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {new Intl.NumberFormat('ko-KR', {
-                      style: 'currency',
-                      currency: 'KRW',
-                    }).format(selectedCard.creditLimit || 0)}
+                    {formatCurrency(selectedCard.creditLimit)}
                   </p>
                 </div>
               </>
@@ -520,6 +529,7 @@ export default function CardsPage() {
         onClose={() => setIsAccountModalOpen(false)}
         onSuccess={(newAccounts) => setAccounts(newAccounts)}
         people={people}
+        projectId={selectedProjectId}
       />
 
       <EditCardModal
@@ -533,7 +543,7 @@ export default function CardsPage() {
         }}
         onDelete={async (id) => {
           await apiClient.deleteCard(id);
-          const data = await apiClient.getCards();
+          const data = await apiClient.getCards(selectedProjectId);
           setCards(data || []);
           setSelectedCard(null);
         }}

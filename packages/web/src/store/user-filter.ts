@@ -1,10 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
+import type { Person } from '@/lib/types';
 
-interface Person {
-  id: string;
-  name: string;
-}
 
 interface UserFilterStore {
   people: Person[];

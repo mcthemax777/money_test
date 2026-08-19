@@ -1,44 +1,31 @@
 'use client';
 
 import { useMemo } from 'react';
-
-interface Transaction {
-  id: string;
-  description: string;
-  amount: number;
-  type: 'income' | 'expense' | 'transfer' | 'credit_usage' | 'credit_payment';
-  date: string;
-  mainCategory: string;
-  mainCategoryId?: string;
-  subCategory?: string;
-  subCategoryId?: string;
-  accountId?: string;
-  cardId?: string;
-  personId?: string;
-}
+import type { EntryListItem } from './TransactionItem';
+import { sumEntries } from '@/lib/entries';
 
 interface CalendarDay {
   date: Date;
   isCurrentMonth: boolean;
-  transactions: Transaction[];
+  entries: EntryListItem[];
   expenseTotal: number;
   incomeTotal: number;
 }
 
 interface Props {
-  transactions: Transaction[];
+  entries: EntryListItem[];
   /** 화면에 표시할 연도 */
   year: number;
   /** 화면에 표시할 월 (1~12) */
   month: number;
-  onDateSelect: (date: Date, transactions: Transaction[]) => void;
+  onDateSelect: (date: Date, entries: EntryListItem[]) => void;
   onMonthChange: (year: number, month: number) => void;
   startDate?: Date | null;
   endDate?: Date | null;
 }
 
 export default function TransactionCalendar({
-  transactions,
+  entries,
   year,
   month,
   onDateSelect,
@@ -86,22 +73,18 @@ export default function TransactionCalendar({
 
     while (currentDay <= endDate) {
       const dateStr = getLocalDateStr(currentDay);
-      const dayTransactions = transactions.filter(
-        (tx) => tx.date.split('T')[0] === dateStr && tx.type !== 'credit_payment'
+      // 카드대금 결제는 소비가 아니라 부채 상환이라 달력 합계에서 뺀다.
+      const dayEntries = entries.filter(
+        (entry) =>
+          String(entry.date).split('T')[0] === dateStr && entry.kind !== 'card_payment',
       );
 
-      const expenseTotal = dayTransactions
-        .filter((tx) => tx.type === 'expense' || tx.type === 'credit_usage')
-        .reduce((sum, tx) => sum + tx.amount, 0);
-
-      const incomeTotal = dayTransactions
-        .filter((tx) => tx.type === 'income')
-        .reduce((sum, tx) => sum + tx.amount, 0);
+      const { incomeTotal, expenseTotal } = sumEntries(dayEntries);
 
       calendarDays.push({
         date: new Date(currentDay),
         isCurrentMonth: currentDay.getMonth() === month,
-        transactions: dayTransactions,
+        entries: dayEntries,
         expenseTotal,
         incomeTotal,
       });
@@ -110,7 +93,7 @@ export default function TransactionCalendar({
     }
 
     return calendarDays;
-  }, [currentDate, transactions]);
+  }, [currentDate, entries]);
 
   // Date 생성자가 월 넘김(1월->전년 12월, 12월->다음해 1월)을 알아서 처리한다.
   const handlePrevMonth = () => {
@@ -150,7 +133,7 @@ export default function TransactionCalendar({
               key={index}
               onClick={() => {
                 if (day.isCurrentMonth) {
-                  onDateSelect(day.date, day.transactions);
+                  onDateSelect(day.date, day.entries);
                 }
               }}
               className={`min-h-28 p-2 border-b border-r border-gray-100 last-of-type:border-r-0 ${
@@ -196,9 +179,9 @@ export default function TransactionCalendar({
                 </div>
               )}
 
-              {day.transactions.length > 0 && day.expenseTotal === 0 && day.incomeTotal === 0 && (
+              {day.entries.length > 0 && day.expenseTotal === 0 && day.incomeTotal === 0 && (
                 <div className="text-xs text-gray-500">
-                  {day.transactions.length}건
+                  {day.entries.length}건
                 </div>
               )}
             </div>

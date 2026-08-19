@@ -6,6 +6,7 @@ import { RedisService } from '../../config/redis.service';
 import { ConfigService } from '../../config/config.service';
 import { UsersService } from '../users/users.service';
 import { ProjectsService } from '../projects/projects.service';
+import { CategoriesService } from '../categories/categories.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { OAuth2Client, type TokenPayload as GoogleTokenPayload } from 'google-auth-library';
 import { Auth } from '@money/types';
@@ -27,6 +28,7 @@ export class AuthService {
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
     private readonly projectsService: ProjectsService,
+    private readonly categoriesService: CategoriesService,
     private readonly projectAccess: ProjectAccessService,
   ) {}
 
@@ -176,47 +178,9 @@ export class AuthService {
     });
 
     // 구성원(Person)은 자동으로 만들지 않는다. 사용자가 직접 등록한다.
-    await this.createDefaultCategories(userId, project.id);
+    await this.categoriesService.createDefaultCategories(project.id);
 
     return project;
-  }
-
-  private async createDefaultCategories(userId: string, projectId: string): Promise<void> {
-    const defaultCategories = [
-      {
-        type: 'income',
-        main: ['급여', '상여금', '이자/배당금', '기타수입'],
-      },
-      {
-        type: 'expense',
-        main: [
-          '식료품',
-          '외식',
-          '교통',
-          '통신',
-          '공과금',
-          '교육',
-          '의료',
-          '쇼핑',
-          '엔터테인먼트',
-          '저축',
-        ],
-      },
-    ];
-
-    for (const category of defaultCategories) {
-      for (const name of category.main) {
-        await this.prisma.category.create({
-          data: {
-            projectId,
-            userId,
-            name,
-            type: category.type,
-            level: 1,
-          },
-        });
-      }
-    }
   }
 
   async refresh(dto: Auth.RefreshRequest): Promise<Auth.AuthResponse> {
@@ -315,8 +279,9 @@ export class AuthService {
       email: user.email,
       name: user.name,
       avatar: user.avatar,
-      createdAt: user.createdAt,
-      updatedAt: user.updatedAt,
+      // 와이어 계약은 ISO 문자열이다 (IsoDateString)
+      createdAt: user.createdAt.toISOString(),
+      updatedAt: user.updatedAt.toISOString(),
     };
   }
 }

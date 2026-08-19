@@ -48,6 +48,20 @@ export class AccountsController {
     return this.accountsService.getAccountById(id, req.user.id);
   }
 
+  @Get(':id/postings')
+  @ApiOperation({ summary: '계좌 원장 (거래별 잔액 추이 포함)' })
+  postings(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    return this.accountsService.getAccountPostings(id, req.user.id, {
+      limit: limit ? Number(limit) : undefined,
+      cursor,
+    });
+  }
+
   @Patch(':id')
   @ApiOperation({ summary: '통장 수정' })
   update(

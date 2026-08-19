@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { ChevronDown, Edit2, Trash2 } from 'lucide-react';
+import { budgetPercentage } from '@/lib/budget';
 
 interface BudgetCardProps {
   categoryId?: string;
@@ -9,7 +10,6 @@ interface BudgetCardProps {
   icon?: React.ReactNode;
   monthlyAmount: number;
   usedAmount: number;
-  percentage: number;
   onEdit: () => void;
   onDelete: () => void;
   onSelect?: (categoryId: string) => void;
@@ -26,7 +26,6 @@ export function BudgetCard({
   icon,
   monthlyAmount,
   usedAmount,
-  percentage,
   onEdit,
   onDelete,
   onSelect,
@@ -38,6 +37,7 @@ export function BudgetCard({
 }: BudgetCardProps) {
   const [showMenu, setShowMenu] = useState(false);
 
+  const percentage = budgetPercentage(monthlyAmount, usedAmount);
   const remainAmount = monthlyAmount - usedAmount;
   const isOverBudget = remainAmount < 0;
   const barColor = percentage > 100 ? 'bg-red-500' : percentage === 0 ? 'bg-gray-300' : 'bg-blue-500';

@@ -9,9 +9,11 @@ import { PeopleModule } from './modules/people/people.module';
 import { AccountsModule } from './modules/accounts/accounts.module';
 import { CardsModule } from './modules/cards/cards.module';
 import { CategoriesModule } from './modules/categories/categories.module';
-import { TransactionsModule } from './modules/transactions/transactions.module';
+import { EntriesModule } from './modules/entries/entries.module';
+import { LedgerModule } from './modules/ledger/ledger.module';
 import { BudgetsModule } from './modules/budgets/budgets.module';
-import { CardPaymentsModule } from './modules/card-payments/card-payments.module';
+import { StatementsModule } from './modules/statements/statements.module';
+import { ReportsModule } from './modules/reports/reports.module';
 
 @Module({
   imports: [
@@ -25,9 +27,11 @@ import { CardPaymentsModule } from './modules/card-payments/card-payments.module
     AccountsModule,
     CardsModule,
     CategoriesModule,
-    TransactionsModule,
+    LedgerModule,
+    EntriesModule,
     BudgetsModule,
-    CardPaymentsModule,
+    StatementsModule,
+    ReportsModule,
   ],
 })
 export class AppModule {}

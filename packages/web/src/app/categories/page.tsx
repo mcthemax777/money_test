@@ -8,17 +8,8 @@ import { apiClient } from '@/lib/api-client';
 import CustomSelect from '@/components/CustomSelect';
 import Modal from '@/components/Modal';
 import DashboardSidebar from '@/components/DashboardSidebar';
+import type { Category } from '@/lib/types';
 
-interface Category {
-  id: string;
-  name: string;
-  type: 'income' | 'expense';
-  icon?: string;
-  parentId?: string | null;
-  level: number;
-  defaultIsFixed?: boolean;
-  isDefault?: boolean;
-}
 
 export default function CategoriesPage() {
   const { isAuthenticated, loadUser } = useAuth();
@@ -33,7 +24,7 @@ export default function CategoriesPage() {
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [formData, setFormData] = useState({
     name: '',
-    type: 'expense',
+    type: 'expense' as 'income' | 'expense',
     subCategories: [{ id: '', name: '', defaultIsFixed: false }],
     defaultIsFixed: false,
   });
@@ -87,7 +78,7 @@ export default function CategoriesPage() {
     if (!selectedCategory) return;
     setEditingId(selectedCategory.id);
     let subCategories = [{ id: '', name: '', defaultIsFixed: false }];
-    if (selectedCategory.level === 1) {
+    if (!selectedCategory.parentId) {
       const subs = categories
         .filter((c) => c.parentId === selectedCategory.id)
         .map((c) => ({ id: c.id, name: c.name, defaultIsFixed: c.defaultIsFixed || false }));
@@ -107,7 +98,7 @@ export default function CategoriesPage() {
   const handleEditClick = (category: Category) => {
     setEditingId(category.id);
     let subCategories = [{ id: '', name: '', defaultIsFixed: false }];
-    if (category.level === 1) {
+    if (!category.parentId) {
       const subs = categories
         .filter((c) => c.parentId === category.id)
         .map((c) => ({ id: c.id, name: c.name, defaultIsFixed: c.defaultIsFixed || false }));
@@ -209,7 +200,7 @@ export default function CategoriesPage() {
           defaultIsFixed: formData.defaultIsFixed,
         });
         const categoryList = await apiClient.getCategories();
-        const mainCategory = categoryList?.find((c: Category) => c.name === formData.name && c.level === 1);
+        const mainCategory = categoryList?.find((c: Category) => c.name === formData.name && !c.parentId);
 
         if (mainCategory) {
           for (const sub of filteredSubCategories) {
@@ -245,7 +236,7 @@ export default function CategoriesPage() {
     return <div>로딩 중...</div>;
   }
 
-  const mainCategories = categories.filter((c) => c.level === 1);
+  const mainCategories = categories.filter((c) => !c.parentId);
   const expenseCategories = mainCategories.filter((c) => c.type === 'expense');
   const incomeCategories = mainCategories.filter((c) => c.type === 'income');
 
@@ -348,7 +339,7 @@ export default function CategoriesPage() {
               </p>
             </div>
 
-            {selectedCategory.level === 1 && (
+            {!selectedCategory.parentId && (
               <>
                 {selectedCategory.defaultIsFixed && (
                   <div className="px-3 py-2 bg-blue-50 text-blue-800 text-sm rounded-lg">

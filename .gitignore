@@ -45,3 +45,8 @@ coverage/
 
 # TypeScript incremental build
 *.tsbuildinfo
+
+# DB 덤프
+# 실제 계정 정보(이메일, 구글 sub ID)가 들어 있어 커밋하지 않는다.
+# 이미 추적 중인 예시 데이터(money_db_example_data_*)는 그대로 남는다.
+backups/*.sql

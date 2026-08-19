@@ -2,23 +2,11 @@
 
 import { useState, useEffect } from 'react';
 import { apiClient } from '@/lib/api-client';
+import type { Account, Person } from '@/lib/types';
+import { toAmountString } from '@/lib/money';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 
-interface Account {
-  id: string;
-  ownerId: string;
-  name: string;
-  balance: number;
-  bankName: string;
-  accountNumber?: string;
-  currency: string;
-}
-
-interface Person {
-  id: string;
-  name: string;
-}
 
 interface EditAccountModalProps {
   isOpen: boolean;
@@ -27,6 +15,8 @@ interface EditAccountModalProps {
   people: Person[];
   onSuccess: (updatedAccounts: Account[]) => void;
   onDelete: (id: string) => Promise<void>;
+  /** 넘기지 않으면 서버가 기본 프로젝트로 조회한다. */
+  projectId?: string | null;
 }
 
 export default function EditAccountModal({
@@ -36,6 +26,7 @@ export default function EditAccountModal({
   people,
   onSuccess,
   onDelete,
+  projectId,
 }: EditAccountModalProps) {
   const [formData, setFormData] = useState({
     ownerId: '',
@@ -51,11 +42,11 @@ export default function EditAccountModal({
   useEffect(() => {
     if (account) {
       setFormData({
-        ownerId: account.ownerId,
+        ownerId: account.ownerId ?? '',
         name: account.name,
-        bankName: account.bankName,
+        bankName: account.bankName ?? '',
         accountNumber: account.accountNumber || '',
-        balance: account.balance.toString(),
+        balance: account.balance,
       });
     }
   }, [account]);
@@ -67,14 +58,15 @@ export default function EditAccountModal({
     try {
       setIsSubmitting(true);
       setError('');
+      // 잔액을 고치면 서버가 차액만큼 조정 전표를 남긴다 (컬럼을 덮어쓰지 않는다).
+      // 계좌 주인은 원장에 이미 반영돼 있어 바꾸지 않는다.
       await apiClient.updateAccountV2(account.id, {
-        ownerId: formData.ownerId,
         name: formData.name,
-        balance: parseInt(formData.balance),
+        balance: toAmountString(formData.balance),
         bankName: formData.bankName,
         ...(formData.accountNumber && { accountNumber: formData.accountNumber }),
       });
-      const data = await apiClient.getAccountsV2();
+      const data = await apiClient.getAccountsV2(projectId);
       onSuccess(data || []);
       handleClose();
     } catch (err: any) {
@@ -115,12 +107,10 @@ export default function EditAccountModal({
           <label className="block text-sm font-medium text-gray-700 mb-1">
             통장 주인
           </label>
-          <CustomSelect
-            options={people.map((p) => ({ id: p.id, name: p.name }))}
-            value={formData.ownerId}
-            onChange={(value) => setFormData({ ...formData, ownerId: value })}
-            placeholder="선택하세요"
-          />
+          {/* 주인은 이미 원장 전표에 반영돼 있어 나중에 바꾸지 않는다. 표시만 한다. */}
+          <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+            {people.find((p) => p.id === formData.ownerId)?.name || '-'}
+          </p>
         </div>
 
         <div>

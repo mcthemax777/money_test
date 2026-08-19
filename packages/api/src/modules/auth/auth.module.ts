@@ -10,6 +10,7 @@ import { ConfigModule } from '../../config/config.module';
 import { ConfigService } from '../../config/config.service';
 import { UsersModule } from '../users/users.module';
 import { ProjectsModule } from '../projects/projects.module';
+import { CategoriesModule } from '../categories/categories.module';
 import { ProjectAccessService } from '../../common/project-access.guard';
 
 @Module({
@@ -20,6 +21,7 @@ import { ProjectAccessService } from '../../common/project-access.guard';
     PassportModule,
     UsersModule,
     ProjectsModule,
+    CategoriesModule,
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],

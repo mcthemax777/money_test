@@ -3,12 +3,8 @@
 import { useState, useEffect } from 'react';
 import { apiClient } from '@/lib/api-client';
 import Modal from '@/components/Modal';
+import type { Person } from '@/lib/types';
 
-interface Person {
-  id: string;
-  name: string;
-  relationship?: string | null;
-}
 
 interface PersonModalProps {
   isOpen: boolean;

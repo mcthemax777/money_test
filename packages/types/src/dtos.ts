@@ -1,12 +1,16 @@
 import type {
+  IsoDateString,
   User,
   Person,
   Account,
+  AccountType,
   Card,
-  Transaction,
   Category,
-  CardPayment,
-  CardUsage,
+  CardStatement,
+  StatementStatus,
+  EntryKind,
+  EntryListItem,
+  Posting,
 } from './entities';
 
 // ===== Auth =====
@@ -77,111 +81,174 @@ export namespace PersonDto {
 
 export namespace AccountDto {
   export interface CreateRequest {
+    type: AccountType;
     ownerId: string; // Person ID
     name: string;
-    balance: number;
-    bankName: string;
-    accountNumber?: string; // 미입력 시 자동 생성
+    bankName?: string;
+    accountNumber?: string;
+    /** 개설 잔액. 전표로 기록되므로 잔액 컬럼에 직접 쓰지 않는다. 금액은 문자열. */
+    openingBalance?: string;
+    /** 개설 잔액 기준일. 생략하면 오늘. 과거 거래를 입력할 계좌라면 그보다 앞선 날짜를 준다. */
+    openingBalanceDate?: IsoDateString;
     currency?: string;
     projectId?: string;
   }
 
   export interface UpdateRequest {
     name?: string;
-    balance?: number;
+    bankName?: string;
+    accountNumber?: string;
+    /**
+     * 잔액을 이 값으로 맞춘다. 컬럼을 덮어쓰는 것이 아니라 차액만큼 조정 전표를 남긴다.
+     * (잔액 = posting 합계 불변식을 지키기 위함)
+     */
+    balance?: string;
     isActive?: boolean;
   }
 
-  export interface Response extends Account {}
+  export interface Response extends Account {
+    /** 서버가 include로 함께 준다 */
+    owner?: PersonDto.Response;
+  }
+
+  /** 계좌 원장 한 줄. 거래별 잔액 추이를 함께 준다. */
+  export interface LedgerRow {
+    postingId: string;
+    entryId: string;
+    date: IsoDateString;
+    description: string;
+    merchant: string | null;
+    /** 이 계좌 기준 증감. 출금이 음수 */
+    amount: string;
+    /** 이 거래 직후의 잔액 */
+    balanceAfter: string;
+    cardId: string | null;
+    cardName: string | null;
+  }
+
+  export type LedgerResponse = CursorPage<LedgerRow>;
 }
+
 
 // ===== Card =====
 
 export namespace CardDto {
   export interface CreateRequest {
-    accountId: string;
+    /** 사용자가 고른 실제 통장. 필수이며 서버가 새로 만들지 않는다. */
+    paymentAccountId: string;
     name: string;
     cardNumber?: string; // 실제 번호 (서버에서 마스킹)
     cardType: 'debit' | 'credit';
     issuer: string;
-    expiryDate?: Date;
-    creditLimit?: number; // 신용카드만
-    billingDayOfMonth?: number; // 결제일 (1~31, 기본값: 1)
+    expiryDate?: IsoDateString;
+    creditLimit?: string; // 신용카드만. 금액은 문자열
+    statementClosingDay?: number; // 신용카드 필수. 1~31
+    paymentDueDay?: number;       // 신용카드 필수. 1~31
     projectId?: string;
   }
 
   export interface UpdateRequest {
     name?: string;
-    creditLimit?: number;
-    billingDayOfMonth?: number;
+    issuer?: string;
+    creditLimit?: string;
+    statementClosingDay?: number;
+    paymentDueDay?: number;
     isActive?: boolean;
   }
 
   export interface Response extends Omit<Card, 'cardNumber'> {
-    cardNumberMasked: string; // 마스킹된 번호
+    cardNumberMasked: string;
+    /** 화면에 보여주는 "사용액". 부채 잔액의 부호를 뒤집은 값. 체크카드는 null. */
+    currentUsage: string | null;
   }
 }
+
 
 // ===== Transaction =====
 
-export namespace TransactionDto {
+export namespace EntryDto {
+  /**
+   * 화면이 다루는 개념 그대로 받는다. 서버가 전표(postings)로 번역한다.
+   * 클라이언트는 Posting을 직접 만들지 않는다.
+   */
   export interface CreateRequest {
-    accountId: string;
+    kind: 'expense' | 'income' | 'transfer' | 'card_payment';
     personId: string;
-    cardId?: string;
-    type: 'income' | 'expense' | 'transfer';
-    amount: number;
+    date: IsoDateString;
     description: string;
-    merchant?: string; // 거래처 (선택사항)
-    detailedNote?: string; // 상세설명 (선택사항)
-    toAccountId?: string; // 이체 대상 계좌 (type=transfer일 때)
-    transferFee?: number; // 이체 수수료 금액 (type=transfer일 때, 선택사항)
-    transferFeeMainCategoryId?: string; // 수수료 대분류 (transferFee가 있으면 필수)
-    transferFeeSubCategoryId?: string; // 수수료 소분류 (선택사항)
-    date: Date;
-    mainCategoryId: string; // 대분류 ID
-    subCategoryId?: string; // 소분류 ID
-    tags?: string[];
-    isRecurring?: boolean;
-    recurringPattern?: 'daily' | 'weekly' | 'monthly' | 'yearly';
-    isFixed?: boolean; // 고정 지출/수입 여부
+    merchant?: string;
+    detailedNote?: string;
+
+    /** 금액은 정밀도 손실을 막기 위해 문자열로 보낸다 */
+    amount: string;
+
+    // ── expense / income ──
+    /** 가장 구체적인 카테고리 하나 (소분류가 있으면 소분류). 대분류는 parentId로 유도된다. */
+    categoryId?: string;
+    /** 생략하면 Category.defaultIsFixed 를 따른다 */
+    isFixed?: boolean;
+    /** 한 결제를 여러 카테고리로 쪼갤 때. 지정하면 categoryId/amount 대신 이 값을 쓴다. */
+    splits?: Array<{ categoryId: string; amount: string; isFixed?: boolean }>;
+
+    // ── 결제수단 (expense는 둘 중 하나, income은 accountId) ──
+    accountId?: string;
+    cardId?: string;
+
+    // ── transfer ──
+    toAccountId?: string;
+    transferFee?: string;
+    transferFeeCategoryId?: string;
+
+    // ── card_payment ──
+    statementId?: string;
+
     projectId?: string;
   }
 
-  export interface UpdateRequest {
-    description?: string;
-    merchant?: string; // 거래처
-    detailedNote?: string; // 상세설명
-    amount?: number;
-    date?: Date;
-    type?: 'income' | 'expense' | 'transfer';
-    personId?: string;
-    cardId?: string;
-    toAccountId?: string; // 이체 대상 계좌
-    transferFee?: number; // 이체 수수료 금액
-    transferFeeMainCategoryId?: string; // 수수료 대분류
-    transferFeeSubCategoryId?: string; // 수수료 소분류
-    mainCategoryId?: string;
-    subCategoryId?: string;
-    tags?: string[];
-    isFixed?: boolean; // 고정 지출/수입 여부
-  }
+  /** 수정은 전체 교체다. 생성과 같은 형태를 보내면 서버가 전표를 갈아끼운다. */
+  export interface UpdateRequest extends Omit<CreateRequest, 'projectId'> {}
 
   export interface ListQuery {
+    /** 원장 관점: 이 계좌가 얽힌 전표 전부 (체크카드 사용, 이체 받은 건 포함) */
     accountId?: string;
-    personId?: string;
+    /** 이 카드가 얽힌 전표 전부 (사용 + 대금 결제) */
     cardId?: string;
-    type?: 'income' | 'expense' | 'transfer';
-    mainCategoryId?: string;
-    subCategoryId?: string;
-    startDate?: Date;
-    endDate?: Date;
-    page?: number;
+
+    /**
+     * 결제수단 관점: 이 통장에서 실제로 돈이 나간 전표.
+     *
+     * 체크카드 결제는 연결 통장에서 바로 빠져 posting에 accountId와 cardId가 함께 있으므로
+     * 카드가 붙은 건을 빼고, 돈이 들어온 쪽(이체 받는 계좌)도 뺀다.
+     * /reports/payment-methods 및 /reports/trend 와 같은 규칙이다.
+     */
+    paymentAccountId?: string;
+    /** 결제수단 관점: 이 카드로 결제한 전표 */
+    paymentCardId?: string;
+
+    personId?: string;
+    categoryId?: string;
+    /**
+     * 이 유형의 카테고리 posting을 가진 전표.
+     *
+     * kind와 다르다. kind='expense'는 이체를 빼지만, categoryType='expense'는
+     * 수수료가 붙은 이체를 포함한다. 지출 집계(/reports/summary)와 같은 기준이다.
+     */
+    categoryType?: 'income' | 'expense';
+    kind?: EntryKind;
+    startDate?: IsoDateString;
+    endDate?: IsoDateString;
+    /** 커서 기반 페이지네이션. 이전 응답의 nextCursor를 그대로 넘긴다. */
+    cursor?: string;
     limit?: number;
   }
 
-  export interface Response extends Transaction {}
+  export type ListResponse = CursorPage<EntryListItem>;
+
+  export interface Detail extends EntryListItem {
+    postings: Posting[];
+  }
 }
+
 
 // ===== Category =====
 
@@ -209,24 +276,126 @@ export namespace CategoryDto {
   }
 }
 
-// ===== CardPayment / CardUsage =====
+// ===== CardStatement =====
 
-export namespace CardPaymentDto {
-  export interface CreateRequest {
-    cardId: string;
+export namespace StatementDto {
+  export interface Response extends CardStatement {
+    cardName: string;
+    /** 이 청구서에 달린 사용액 합계 (양수) */
+    chargedAmount: string;
+    /** 이 청구서에 대해 결제된 금액 (양수) */
+    paidAmount: string;
+    /** 아직 갚지 않은 금액 (양수) */
+    outstanding: string;
+  }
+
+  export interface ListQuery {
+    status?: StatementStatus;
+  }
+
+  /** 청구서 대금 결제 */
+  export interface PayRequest {
+    /** 대금이 빠져나갈 통장 */
     accountId: string;
+    personId: string;
+    /** 금액은 문자열. 생략하면 미결제 전액 */
+    amount?: string;
+    date?: IsoDateString;
+    description?: string;
   }
-
-  export interface CompleteRequest {
-    cardPaymentId: string;
-    paymentAmount: number;
-  }
-
-  export interface Response extends CardPayment {}
 }
 
-export namespace CardUsageDto {
-  export interface Response extends CardUsage {}
+// ===== Reports =====
+
+/**
+ * 집계는 전부 서버에서 한다.
+ * "지출 = 지출 카테고리 posting의 합"이 서버 한 곳에 고정되므로
+ * 화면마다 합계가 어긋나던 문제가 재발할 수 없다.
+ */
+export namespace ReportDto {
+  export interface MonthQuery {
+    projectId?: string;
+    /** "YYYY-MM" */
+    yearMonth: string;
+    personId?: string;
+  }
+
+  /** 대시보드 / 통계 헤더의 월 합계 */
+  export interface Summary {
+    yearMonth: string;
+    income: string;
+    expense: string;
+    fixedExpense: string;
+    variableExpense: string;
+    /** 수입 - 지출 */
+    net: string;
+  }
+
+  export interface CategoryBreakdownQuery extends MonthQuery {
+    type: 'income' | 'expense';
+    /** true면 소분류 금액을 대분류로 합쳐서 준다 (기본값 true) */
+    rollup?: boolean;
+  }
+
+  export interface CategoryBreakdownItem {
+    categoryId: string;
+    categoryName: string;
+    parentCategoryId: string | null;
+    parentCategoryName: string | null;
+    amount: string;
+    count: number;
+    /** 전체 대비 비율 (0~100) */
+    ratio: number;
+  }
+
+  /** 자산 화면의 총자산 / 사람별 소계 */
+  export interface NetWorth {
+    /** 현금성 + 투자성 평가액 - 부채 */
+    total: string;
+    cash: string;
+    investment: string;
+    /** 카드 사용액과 대출 (음수) */
+    liability: string;
+    /** 투자성 계좌 평가액 - 장부가 */
+    unrealizedGain: string;
+    byPerson: Array<{
+      personId: string;
+      personName: string;
+      total: string;
+      cash: string;
+      investment: string;
+      liability: string;
+    }>;
+  }
+
+  export interface TrendQuery {
+    projectId?: string;
+    target: 'category' | 'account' | 'card' | 'total';
+    /** target=total이면 생략 */
+    targetId?: string;
+    /** 마지막 달 "YYYY-MM". 생략하면 이번 달 */
+    endMonth?: string;
+    /** 기본 12 */
+    months?: number;
+    /** target=total일 때 지출/수입 선택 */
+    type?: 'income' | 'expense';
+  }
+
+  export interface TrendPoint {
+    yearMonth: string;
+    amount: string;
+  }
+
+  /** 결제수단별 지출 (PaymentMethodTab) */
+  export interface PaymentMethodItem {
+    kind: 'account' | 'debit_card' | 'credit_card';
+    id: string;
+    name: string;
+    ownerId: string | null;
+    ownerName: string | null;
+    amount: string;
+    count: number;
+  }
 }
 
 // ===== Budget =====
@@ -235,12 +404,12 @@ export namespace BudgetDto {
   export interface CreateRequest {
     categoryId?: string;    // null=전체, 값=대분류/소분류
     type?: 'income' | 'expense';  // 카테고리 타입 (전체 지출/수입 구분용)
-    monthlyAmount: number;
+    monthlyAmount: string;
     projectId?: string;
   }
 
   export interface UpdateRequest {
-    monthlyAmount?: number;
+    monthlyAmount?: string;
     applyMode?: 'all' | 'from';  // "모든 달" | "이 달부터"
     applyFromMonth?: string;      // applyMode='from'일 때 "YYYY-MM"
   }
@@ -254,13 +423,14 @@ export namespace BudgetDto {
   export interface Response {
     id: string;
     projectId: string;
-    userId: string;
     categoryId?: string;
-    monthlyAmount: number;
+    type?: 'income' | 'expense';
+    /** 금액은 문자열 */
+    monthlyAmount: string;
     effectiveFrom?: string;
     effectiveTo?: string;
-    createdAt: Date;
-    updatedAt: Date;
+    createdAt: IsoDateString;
+    updatedAt: IsoDateString;
   }
 
   export interface MonthlyBudget {
@@ -269,8 +439,9 @@ export namespace BudgetDto {
     categoryName?: string;
     categoryType?: 'income' | 'expense';  // 카테고리 타입
     parentCategoryId?: string;  // 대분류 ID (소분류인 경우)
-    monthlyAmount: number;
-    usedAmount?: number;  // 이달 사용금액
+    /** 금액은 문자열 */
+    monthlyAmount: string;
+    usedAmount?: string;  // 이달 사용금액 (대분류는 소분류 합을 포함한다)
     isOverridden: boolean;  // 직접 오버라이드했는지
     hasChildren: boolean;  // 자식 예산이 있는지
     isVirtualBudget?: boolean;  // 소분류 합으로 만든 가상 예산인지
@@ -280,7 +451,7 @@ export namespace BudgetDto {
     budgetId: string;
     year: number;
     month: number;
-    amount: number;
+    amount: string;
   }
 
   export interface OverrideResponse {
@@ -288,21 +459,17 @@ export namespace BudgetDto {
     budgetId: string;
     year: number;
     month: number;
-    amount: number;
-    createdAt: Date;
+    amount: string;
+    createdAt: IsoDateString;
   }
 }
 
 // ===== 공통 응답 =====
 
-export interface PaginatedResponse<T> {
+/** 커서 기반 페이지. nextCursor가 null이면 마지막 페이지다. */
+export interface CursorPage<T> {
   data: T[];
-  pagination: {
-    page: number;
-    limit: number;
-    total: number;
-    totalPages: number;
-  };
+  nextCursor: string | null;
 }
 
 export interface ApiResponse<T> {

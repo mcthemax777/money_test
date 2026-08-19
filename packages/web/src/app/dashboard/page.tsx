@@ -1,12 +1,14 @@
 'use client';
 
-import { useEffect, useState, useRef, useMemo } from 'react';
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/store/auth';
 import { useUserFilter } from '@/store/user-filter';
 import { useProject } from '@/store/project';
 import { useBudget } from '@/store/budget';
 import { apiClient } from '@/lib/api-client';
+import type { Account, Card, Category, Person } from '@/lib/types';
+import { formatCurrency, toAmountString, toNumber } from '@/lib/money';
 import CustomSelect from '@/components/CustomSelect';
 import Modal from '@/components/Modal';
 import TransactionCalendar from '@/components/TransactionCalendar';
@@ -14,59 +16,24 @@ import TransactionListView from '@/components/TransactionListView';
 import MonthHeader from '@/components/MonthHeader';
 import AddAccountModal from '@/components/AddAccountModal';
 import PersonModal from '@/components/PersonModal';
-import TransactionItem from '@/components/TransactionItem';
+import TransactionItem, { EntryListItem } from '@/components/TransactionItem';
 import { BudgetCard } from '@/components/BudgetCard';
 import { BudgetDetailModal } from '@/components/BudgetDetailModal';
 import PaymentMethodTab from '@/components/PaymentMethodTab';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
 
-interface Transaction {
-  id: string;
-  description: string;
-  amount: number;
-  type: 'income' | 'expense' | 'transfer' | 'credit_usage' | 'credit_payment';
-  date: string;
-  mainCategory: string;
-  mainCategoryId?: string;
-  subCategory?: string;
-  subCategoryId?: string;
-  accountId?: string;
-  cardId?: string;
-  personId?: string;
-  isFixed?: boolean;
-  merchant?: string;
-  detailedNote?: string;
-  toAccountId?: string;
-  transferFee?: number;
-}
+const ENTRY_KIND_LABEL: Record<string, string> = {
+  expense: '지출',
+  income: '수입',
+  transfer: '이체',
+  card_payment: '카드대금 결제',
+  adjustment: '잔액 조정',
+};
 
-interface Account {
-  id: string;
-  name: string;
-}
 
-interface Person {
-  id: string;
-  name: string;
-}
 
-interface Category {
-  id: string;
-  name: string;
-  type: 'income' | 'expense';
-  level: number;
-  parentId?: string | null;
-  defaultIsFixed?: boolean;
-  isDefault?: boolean;
-}
 
-interface Card {
-  id: string;
-  name: string;
-  accountId: string;
-  cardType: 'debit' | 'credit';
-  issuer: string;
-}
+
 
 export default function TransactionsPage() {
   const { isAuthenticated, loadUser, user, defaultProjectData } = useAuth();
@@ -74,7 +41,9 @@ export default function TransactionsPage() {
   const { selectedProjectId } = useProject();
   const { monthlyBudgets, fetchMonthlyBudgets, createBudget: createBudgetApi, updateBudget: updateBudgetApi, deleteBudget: deleteBudgetApi } = useBudget();
   const router = useRouter();
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [entries, setEntries] = useState<EntryListItem[]>([]);
+  // 월 합계는 서버가 계산한다 (/reports/summary)
+  const [summary, setSummary] = useState<{ income: string; expense: string }>({ income: '0', expense: '0' });
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
@@ -83,11 +52,11 @@ export default function TransactionsPage() {
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [selectedTransaction, setSelectedTransaction] = useState<Transaction | null>(null);
+  const [selectedTransaction, setSelectedTransaction] = useState<EntryListItem | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [startDate, setStartDate] = useState<Date | null>(null);
   const [endDate, setEndDate] = useState<Date | null>(null);
-  const [displayTransactions, setDisplayTransactions] = useState<Transaction[]>([]);
+  const [displayEntries, setDisplayEntries] = useState<EntryListItem[]>([]);
   const [currentMonth, setCurrentMonth] = useState<number>(new Date().getMonth() + 1);
   const [currentYear, setCurrentYear] = useState<number>(new Date().getFullYear());
   const [viewType, setViewType] = useState<'calendar' | 'budget' | 'payment-method'>('calendar');
@@ -117,15 +86,18 @@ export default function TransactionsPage() {
     accountId: '',
     name: '',
     cardNumber: '',
-    cardType: 'debit',
+    cardType: 'debit' as 'debit' | 'credit',
     issuer: '',
     expiryDate: '',
     creditLimit: '',
+    // 청구 주기는 마감일과 결제일 두 값으로 계산한다
+    statementClosingDay: 15,
+    paymentDueDay: 25,
   });
   const [cardSubmitting, setCardSubmitting] = useState(false);
   const [categoryFormData, setCategoryFormData] = useState({
     name: '',
-    type: 'expense',
+    type: 'expense' as 'income' | 'expense',
     subCategories: [''],
     color: '',
   });
@@ -151,6 +123,13 @@ export default function TransactionsPage() {
     isFixed: false,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  /**
+   * 수정 중인 거래가 이미 결제된 청구서에 포함되어 있으면 그 청구 기간.
+   *
+   * 금액·결제수단은 잠그되, 날짜는 이 기간 안에서 고칠 수 있게 둔다.
+   * 같은 청구서에 머무르면 청구액이 달라지지 않으므로 오타 정정에 문제가 없다.
+   */
+  const [lockedPeriod, setLockedPeriod] = useState<{ start: string; end: string } | null>(null);
 
   useEffect(() => {
     const initializeProject = async () => {
@@ -198,39 +177,23 @@ export default function TransactionsPage() {
 
         // 항상 API에서 최신 데이터 가져오기 (캐시 사용 안 함)
         console.log('[Dashboard] 📡 Fetching data for project:', selectedProjectId);
-        const results = await Promise.all([
-          apiClient.getTransactionsV2({}, selectedProjectId),
+        const [accountsData, peopleData, cardsData, categoriesData] = await Promise.all([
           apiClient.getAccountsV2(selectedProjectId),
           apiClient.getPeople(selectedProjectId),
           apiClient.getCards(selectedProjectId),
           apiClient.getCategories(selectedProjectId),
         ]);
-        const transactionsData = results[0];
-        const accountsData = results[1];
-        const peopleData = results[2];
-        const cardsData = results[3];
-        const categoriesData = results[4];
 
-        const txs = (transactionsData?.data || [])
-          .filter((tx: any) => tx.type !== 'credit_payment')
-          .map((tx: any) => ({
-            ...tx,
-            mainCategory: typeof tx.mainCategory === 'object' ? tx.mainCategory?.name : tx.mainCategory,
-            subCategory: typeof tx.subCategory === 'object' ? tx.subCategory?.name : tx.subCategory,
-          }));
-        setTransactions(txs);
         setAccounts(accountsData || []);
         setPeople(peopleData || []);
         setCards(cardsData || []);
         setCategories(categoriesData || []);
 
-        // 초기 월 설정
+        // 초기 월 설정. 거래는 아래 월별 useEffect가 불러온다.
         const today = new Date();
-        const thisMonth = today.getMonth() + 1;
-        const thisYear = today.getFullYear();
-        setDisplayTransactions([]);
-        setCurrentMonth(thisMonth);
-        setCurrentYear(thisYear);
+        setDisplayEntries([]);
+        setCurrentMonth(today.getMonth() + 1);
+        setCurrentYear(today.getFullYear());
       } catch (err) {
         setError('데이터 조회에 실패했습니다.');
       } finally {
@@ -246,6 +209,38 @@ export default function TransactionsPage() {
       fetchMonthlyBudgets(currentYear, currentMonth, selectedProjectId);
     }
   }, [selectedProjectId, currentYear, currentMonth, fetchMonthlyBudgets]);
+
+  /**
+   * 표시 중인 달의 거래와 합계를 가져온다.
+   *
+   * 예전에는 거래 전량을 받아 브라우저에서 월별로 나누고 합산했다.
+   * 이제 조회 범위도 합계도 서버가 처리한다.
+   */
+  const reloadMonth = useCallback(async () => {
+    if (!selectedProjectId || !currentYear || !currentMonth) return;
+
+    const yearMonth = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+    const monthStart = new Date(Date.UTC(currentYear, currentMonth - 1, 1));
+    const monthEnd = new Date(Date.UTC(currentYear, currentMonth, 0));
+
+    const [entriesRes, summaryRes] = await Promise.all([
+      apiClient.getEntries(
+        { startDate: monthStart.toISOString(), endDate: monthEnd.toISOString(), limit: 200 },
+        selectedProjectId,
+      ),
+      apiClient.getSummary(yearMonth, selectedProjectId),
+    ]);
+
+    setEntries(entriesRes?.data ?? []);
+    setSummary(summaryRes ?? { income: '0', expense: '0' });
+  }, [selectedProjectId, currentYear, currentMonth]);
+
+  useEffect(() => {
+    reloadMonth().catch((err: unknown) => {
+      console.error('거래 조회 실패:', err);
+      setEntries([]);
+    });
+  }, [reloadMonth]);
 
   useEffect(() => {
     if (selectedProjectId) {
@@ -271,33 +266,20 @@ export default function TransactionsPage() {
     }
   }, [viewType, budgetType]);
 
-  const filteredTransactions = useMemo(() => {
-    return transactions.filter((tx) => {
-      return selectedPersonIds.includes(tx.personId || '');
-    });
-  }, [transactions, selectedPersonIds]);
+  // 사람 필터만 클라이언트에서 건다 (이미 이 달 것만 받아 왔다).
+  // 카드대금 결제는 소비가 아니므로 목록에서 뺀다.
+  const visibleEntries = useMemo(
+    () =>
+      entries.filter(
+        (entry) => entry.kind !== 'card_payment' && selectedPersonIds.includes(entry.personId),
+      ),
+    [entries, selectedPersonIds],
+  );
 
-  const currentMonthTransactions = useMemo(() => {
-    return transactions.filter((tx) => {
-      const txDate = new Date(tx.date);
-      return txDate.getFullYear() === currentYear && txDate.getMonth() + 1 === currentMonth;
-    });
-  }, [transactions, currentMonth, currentYear]);
-
-  const monthlyTotals = useMemo(() => {
-    let incomeTotal = 0;
-    let expenseTotal = 0;
-
-    currentMonthTransactions.forEach((tx) => {
-      if (tx.type === 'income') {
-        incomeTotal += tx.amount;
-      } else if (tx.type === 'expense' || tx.type === 'credit_usage') {
-        expenseTotal += tx.amount;
-      }
-    });
-
-    return { incomeTotal, expenseTotal };
-  }, [currentMonthTransactions]);
+  const monthlyTotals = useMemo(
+    () => ({ incomeTotal: toNumber(summary.income), expenseTotal: toNumber(summary.expense) }),
+    [summary],
+  );
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -318,84 +300,48 @@ export default function TransactionsPage() {
         dateValue = dateObj.toISOString();
       }
 
-      if (editingId) {
-        let cardId: string | undefined = undefined;
-        if (formData.method === 'card' && formData.cardId) {
-          cardId = formData.cardId;
+      // 화면의 "지출/수입/이체" 개념을 그대로 보낸다. 서버가 전표(postings)로 번역한다.
+      const kind =
+        formData.type === 'income' ? 'income' : formData.type === 'transfer' ? 'transfer' : 'expense';
+      const useCard = formData.method === 'card' && Boolean(formData.cardId);
+
+      const payload: any = {
+        kind,
+        personId: formData.personId,
+        // 금액은 문자열로 보낸다 (정밀도 손실 방지)
+        amount: toAmountString(formData.amount),
+        description: formData.description,
+        date: dateValue,
+        isFixed: formData.isFixed,
+      };
+
+      if (formData.merchant) payload.merchant = formData.merchant;
+      if (formData.detailedNote) payload.detailedNote = formData.detailedNote;
+
+      if (kind === 'transfer') {
+        payload.accountId = formData.accountId;
+        payload.toAccountId = formData.toAccountId;
+        if (formData.transferFee) {
+          payload.transferFee = toAmountString(formData.transferFee);
+          // 수수료는 소분류가 있으면 소분류를, 없으면 대분류를 쓴다
+          payload.transferFeeCategoryId =
+            formData.transferFeeSubCategoryId || formData.transferFeeMainCategoryId;
         }
-
-        const updatePayload: any = {
-          type: formData.type,
-          amount: parseInt(formData.amount),
-          description: formData.description,
-          date: dateValue,
-          personId: formData.personId,
-          cardId,
-          mainCategoryId: formData.mainCategoryId,
-          subCategoryId: formData.subCategoryId || undefined,
-          isFixed: formData.isFixed,
-        };
-
-        if (formData.merchant) updatePayload.merchant = formData.merchant;
-        if (formData.detailedNote) updatePayload.detailedNote = formData.detailedNote;
-        if (formData.type === 'transfer' && formData.toAccountId) {
-          updatePayload.toAccountId = formData.toAccountId;
-          if (formData.transferFee) updatePayload.transferFee = parseInt(formData.transferFee);
-        }
-
-        await apiClient.updateTransaction(editingId, updatePayload);
       } else {
-        let accountId = formData.accountId;
-        if (formData.method === 'card' && formData.cardId) {
-          const selectedCard = cards.find((c) => c.id === formData.cardId);
-          accountId = selectedCard?.accountId || formData.accountId;
-        }
-
-        console.log('[handleSubmit] Creating transaction with data:', {
-          accountId,
-          personId: formData.personId,
-          type: formData.type,
-          amount: parseInt(formData.amount),
-          description: formData.description,
-          date: dateValue,
-        });
-
-        const createPayload: any = {
-          accountId,
-          personId: formData.personId,
-          type: formData.type,
-          amount: parseInt(formData.amount),
-          description: formData.description,
-          date: dateValue,
-          mainCategoryId: formData.mainCategoryId,
-          subCategoryId: formData.subCategoryId || undefined,
-          cardId: formData.method === 'card' ? formData.cardId || undefined : undefined,
-          isFixed: formData.isFixed,
-        };
-
-        if (formData.merchant) createPayload.merchant = formData.merchant;
-        if (formData.detailedNote) createPayload.detailedNote = formData.detailedNote;
-        if (formData.type === 'transfer' && formData.toAccountId) {
-          createPayload.toAccountId = formData.toAccountId;
-          if (formData.transferFee) {
-            createPayload.transferFee = parseInt(formData.transferFee);
-            if (formData.transferFeeMainCategoryId) {
-              createPayload.transferFeeMainCategoryId = formData.transferFeeMainCategoryId;
-            }
-            if (formData.transferFeeSubCategoryId) {
-              createPayload.transferFeeSubCategoryId = formData.transferFeeSubCategoryId;
-            }
-          }
-        }
-
-        await apiClient.createTransactionV2(createPayload);
+        // 결제수단은 계좌와 카드 중 하나만 보낸다. 둘 다 보내면 서버가 거부한다.
+        if (useCard) payload.cardId = formData.cardId;
+        else payload.accountId = formData.accountId;
+        // posting은 가장 구체적인 카테고리 하나만 가리킨다
+        payload.categoryId = formData.subCategoryId || formData.mainCategoryId;
       }
 
-      console.log('[handleSubmit] Fetching transactions with projectId:', selectedProjectId);
-      // 캐시를 무효화하고 항상 API에서 최신 데이터를 가져옴
-      const data = await apiClient.getTransactionsV2({}, selectedProjectId);
-      console.log('[handleSubmit] Fetched data:', data?.data?.length, 'transactions');
-      setTransactions((data?.data || []).filter((tx: any) => tx.type !== 'credit_payment'));
+      if (editingId) {
+        await apiClient.updateEntry(editingId, payload);
+      } else {
+        await apiClient.createEntry({ ...payload, projectId: selectedProjectId });
+      }
+
+      await reloadMonth();
 
       // 예산 데이터도 다시 로드
       if (selectedProjectId) {
@@ -422,6 +368,7 @@ export default function TransactionsPage() {
         isFixed: false,
       });
       setEditingId(null);
+      setLockedPeriod(null);
       setError('');
       setIsModalOpen(false);
     } catch (err) {
@@ -454,25 +401,26 @@ export default function TransactionsPage() {
       isFixed: false,
     });
     setEditingId(null);
+    setLockedPeriod(null);
     setError('');
   };
 
-  const handleTransactionClick = (transaction: Transaction) => {
+  const handleTransactionClick = (transaction: EntryListItem) => {
     setSelectedTransaction(transaction);
     setIsDetailModalOpen(true);
   };
 
-  const handleCalendarDateSelect = (clickedDate: Date, dayTransactions: Transaction[]) => {
+  const handleCalendarDateSelect = (clickedDate: Date, dayEntries: EntryListItem[]) => {
     if (startDate &&
         clickedDate.getFullYear() === startDate.getFullYear() &&
         clickedDate.getMonth() === startDate.getMonth() &&
         clickedDate.getDate() === startDate.getDate()
     ) {
       setStartDate(null);
-      setDisplayTransactions([]);
+      setDisplayEntries([]);
     } else {
       setStartDate(clickedDate);
-      setDisplayTransactions(dayTransactions);
+      setDisplayEntries(dayEntries);
     }
 
     setTimeout(() => {
@@ -484,7 +432,7 @@ export default function TransactionsPage() {
     setCurrentYear(year);
     setCurrentMonth(month);
     setStartDate(null);
-    setDisplayTransactions([]);
+    setDisplayEntries([]);
   };
 
   // Date 생성자가 연도 넘김을 처리하므로 12월/1월을 따로 분기하지 않는다.
@@ -495,55 +443,79 @@ export default function TransactionsPage() {
 
   const handleDetailEditClick = () => {
     if (!selectedTransaction) return;
-    setEditingId(selectedTransaction.id);
-    const method = selectedTransaction.cardId ? 'card' : 'account';
-    setFormData({
-      method,
-      accountId: selectedTransaction.accountId || '',
-      cardId: selectedTransaction.cardId || '',
-      personId: selectedTransaction.personId || '',
-      type: selectedTransaction.type as any,
-      mainCategoryId: selectedTransaction.mainCategoryId || '',
-      subCategoryId: selectedTransaction.subCategoryId || '',
-      amount: selectedTransaction.amount.toString(),
-      description: selectedTransaction.description || '',
-      merchant: (selectedTransaction as any).merchant || '',
-      detailedNote: (selectedTransaction as any).detailedNote || '',
-      toAccountId: (selectedTransaction as any).toAccountId || '',
-      transferFee: (selectedTransaction as any).transferFee ? (selectedTransaction as any).transferFee.toString() : '',
-      transferFeeMainCategoryId: (selectedTransaction as any).transferFeeMainCategoryId || '',
-      transferFeeSubCategoryId: (selectedTransaction as any).transferFeeSubCategoryId || '',
-      date: selectedTransaction.date.split('T')[0],
-      time: '',
-      isFixed: selectedTransaction.isFixed || false,
-    });
     setIsDetailModalOpen(false);
-    setIsModalOpen(true);
-    setError('');
+    handleEditClick(selectedTransaction);
   };
 
-  const handleEditClick = (transaction: Transaction) => {
-    setEditingId(transaction.id);
-    const method = transaction.cardId ? 'card' : 'account';
+  /** 수정할 수 없는 전표. 화면에서 만들 수 없는 종류라 수정 폼에 담을 수 없다. */
+  const isEditable = (entry: EntryListItem) =>
+    entry.kind === 'expense' || entry.kind === 'income' || entry.kind === 'transfer';
+
+  /**
+   * 대분류/소분류로 나눈다.
+   *
+   * 서버는 가장 구체적인 카테고리 하나만 들고 있다(대분류만 지정했으면 그게 곧 leaf다).
+   * 폼은 두 칸으로 나뉘어 있으므로 parentId를 보고 되돌린다.
+   */
+  const splitCategory = (categoryId: string | null) => {
+    if (!categoryId) return { mainCategoryId: '', subCategoryId: '' };
+    const category = categories.find((c) => c.id === categoryId);
+    return category?.parentId
+      ? { mainCategoryId: category.parentId, subCategoryId: category.id }
+      : { mainCategoryId: categoryId, subCategoryId: '' };
+  };
+
+  /** 자정이면 사용자가 시간을 비워둔 것이므로 빈 값으로 되돌린다. */
+  const extractTime = (isoDate: string) => {
+    const date = new Date(isoDate);
+    if (date.getHours() === 0 && date.getMinutes() === 0) return '';
+    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+  };
+
+  /** 로컬 날짜 기준 YYYY-MM-DD. toISOString은 UTC라 하루 밀릴 수 있다. */
+  const toDateInput = (isoDate: string) => {
+    const date = new Date(isoDate);
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+  };
+
+  const handleEditClick = (entry: EntryListItem) => {
+    if (!isEditable(entry)) {
+      setError('이 거래는 수정할 수 없습니다. 삭제 후 다시 등록해주세요.');
+      return;
+    }
+
+    setEditingId(entry.id);
+    setLockedPeriod(
+      entry.lockedByStatement && entry.statementPeriodStart && entry.statementPeriodEnd
+        ? {
+            start: toDateInput(entry.statementPeriodStart),
+            end: toDateInput(entry.statementPeriodEnd),
+          }
+        : null,
+    );
+    const category = splitCategory(entry.categoryId);
+    const fee = splitCategory(entry.feeCategoryId);
+
     setFormData({
-      method,
-      accountId: transaction.accountId || '',
-      cardId: transaction.cardId || '',
-      personId: transaction.personId || '',
-      type: transaction.type as any,
-      mainCategoryId: transaction.mainCategoryId || '',
-      subCategoryId: transaction.subCategoryId || '',
-      amount: transaction.amount.toString(),
-      description: transaction.description || '',
-      merchant: (transaction as any).merchant || '',
-      detailedNote: (transaction as any).detailedNote || '',
-      toAccountId: (transaction as any).toAccountId || '',
-      transferFee: (transaction as any).transferFee ? (transaction as any).transferFee.toString() : '',
-      transferFeeMainCategoryId: (transaction as any).transferFeeMainCategoryId || '',
-      transferFeeSubCategoryId: (transaction as any).transferFeeSubCategoryId || '',
-      date: transaction.date.split('T')[0],
-      time: '',
-      isFixed: transaction.isFixed || false,
+      method: entry.cardId ? 'card' : 'account',
+      accountId: entry.accountId || '',
+      cardId: entry.cardId || '',
+      personId: entry.personId || '',
+      type: entry.kind,
+      mainCategoryId: category.mainCategoryId,
+      subCategoryId: category.subCategoryId,
+      amount: entry.amount,
+      description: entry.description || '',
+      merchant: entry.merchant || '',
+      detailedNote: entry.detailedNote || '',
+      toAccountId: entry.toAccountId || '',
+      // 수수료는 별도 다리라 예전에는 비워뒀다. 이제 목록 응답에 들어 있어 그대로 채운다.
+      transferFee: toNumber(entry.feeAmount) > 0 ? entry.feeAmount ?? '' : '',
+      transferFeeMainCategoryId: fee.mainCategoryId,
+      transferFeeSubCategoryId: fee.subCategoryId,
+      date: toDateInput(entry.date),
+      time: extractTime(entry.date),
+      isFixed: entry.isFixed,
     });
     setIsModalOpen(true);
     setError('');
@@ -553,9 +525,8 @@ export default function TransactionsPage() {
     if (!window.confirm('정말 삭제하시겠습니까?')) return;
     try {
       setIsSubmitting(true);
-      await apiClient.deleteTransaction(id);
-      const data = await apiClient.getTransactionsV2({}, selectedProjectId);
-      setTransactions((data?.data || []).filter((tx: any) => tx.type !== 'credit_payment'));
+      await apiClient.deleteEntry(id);
+      await reloadMonth();
     } catch (err: any) {
       const errorMsg = err?.response?.data?.error?.message || '거래 삭제에 실패했습니다.';
       setError(errorMsg);
@@ -576,16 +547,22 @@ export default function TransactionsPage() {
     try {
       setCardSubmitting(true);
       const isoDate = cardFormData.expiryDate ? new Date(cardFormData.expiryDate).toISOString() : undefined;
+      const isCredit = cardFormData.cardType === 'credit';
       await apiClient.createCard({
-        accountId: cardFormData.accountId,
+        // 결제 통장은 사용자가 만든 계좌여야 한다. 신용카드면 서버가 부채 계정을 함께 만든다.
+        paymentAccountId: cardFormData.accountId,
         name: cardFormData.name,
         ...(cardFormData.cardNumber && { cardNumber: cardFormData.cardNumber }),
         cardType: cardFormData.cardType,
         issuer: cardFormData.issuer,
         ...(isoDate && { expiryDate: isoDate }),
-        creditLimit: cardFormData.cardType === 'credit' ? parseInt(cardFormData.creditLimit) : undefined,
+        creditLimit: isCredit ? toAmountString(cardFormData.creditLimit) : undefined,
+        // 신용카드는 마감일과 결제일이 필수다 (없으면 청구서를 만들 수 없다)
+        statementClosingDay: isCredit ? cardFormData.statementClosingDay : undefined,
+        paymentDueDay: isCredit ? cardFormData.paymentDueDay : undefined,
+        projectId: selectedProjectId ?? undefined,
       });
-      const data = await apiClient.getCards();
+      const data = await apiClient.getCards(selectedProjectId);
       setCards(data || []);
       setCardFormData({
         accountId: '',
@@ -595,6 +572,8 @@ export default function TransactionsPage() {
         issuer: '',
         expiryDate: '',
         creditLimit: '',
+        statementClosingDay: 15,
+        paymentDueDay: 25,
       });
       setIsCardModalOpen(false);
     } catch (err) {
@@ -611,10 +590,9 @@ export default function TransactionsPage() {
       await apiClient.createCategory({
         name: categoryFormData.name,
         type: categoryFormData.type,
-        color: categoryFormData.color || undefined,
       });
       const categoryList = await apiClient.getCategories();
-      const mainCategory = categoryList?.find((c: Category) => c.name === categoryFormData.name && c.level === 1);
+      const mainCategory = categoryList?.find((c: Category) => c.name === categoryFormData.name && !c.parentId);
 
       if (mainCategory) {
         const filteredSubs = categoryFormData.subCategories.filter((sub) => sub.trim());
@@ -713,7 +691,7 @@ export default function TransactionsPage() {
       if (existingBudget && !existingBudget.budgetId.startsWith('placeholder-')) {
         // 실제 예산이 있으면 업데이트
         await updateBudgetApi(existingBudget.budgetId, {
-          monthlyAmount: budgetFormData.monthlyAmount,
+          monthlyAmount: toAmountString(budgetFormData.monthlyAmount),
         });
       } else {
         // 실제 예산이 없으면 새로 생성
@@ -721,7 +699,7 @@ export default function TransactionsPage() {
           projectId: selectedProjectId,
           categoryId: budgetFormData.categoryId || (budgetFormData.type === 'income' ? 'BUDGET_TOTAL_INCOME' : 'BUDGET_TOTAL_EXPENSE'),
           type: budgetFormData.type,
-          monthlyAmount: budgetFormData.monthlyAmount,
+          monthlyAmount: toAmountString(budgetFormData.monthlyAmount),
         });
       }
 
@@ -908,7 +886,7 @@ export default function TransactionsPage() {
 
                   // 모든 대분류 카테고리 가져오기
                   const allMainCategories = categories.filter(
-                    (c) => c.level === 1 && c.type === budgetType
+                    (c) => !c.parentId && c.type === budgetType
                   );
                   console.log('allMainCategories:', allMainCategories);
 
@@ -972,7 +950,6 @@ export default function TransactionsPage() {
                                 icon={budgetType === 'income' ? '💰' : '💸'}
                                 monthlyAmount={(totalBudget as any).monthlyAmount}
                                 usedAmount={usedAmount}
-                                percentage={(totalBudget as any).monthlyAmount > 0 ? (usedAmount > (totalBudget as any).monthlyAmount ? Math.max(101, Math.floor(usedAmount / (totalBudget as any).monthlyAmount * 100)) : Math.floor(usedAmount / (totalBudget as any).monthlyAmount * 100)) : 0}
                                 onEdit={() => handleBudgetEdit(totalBudget as any)}
                                 onDelete={() => handleBudgetDelete((totalBudget as any).budgetId)}
                                 onSelect={(id) => {
@@ -1004,7 +981,7 @@ export default function TransactionsPage() {
 
                                 // 모든 소분류 가져오기
                                 const allSubCategories = categories.filter(
-                                  (c) => c.parentId === mainBudget.categoryId && c.level === 2 && c.type === budgetType
+                                  (c) => c.parentId === mainBudget.categoryId && c.type === budgetType
                                 );
 
                                 // 예산 데이터와 매칭
@@ -1040,7 +1017,6 @@ export default function TransactionsPage() {
                                           icon={getCategoryIcon(mainBudget.categoryId)}
                                           monthlyAmount={mainBudget.monthlyAmount}
                                           usedAmount={mainBudget.usedAmount || 0}
-                                          percentage={mainBudget.monthlyAmount > 0 ? ((mainBudget.usedAmount || 0) > mainBudget.monthlyAmount ? Math.max(101, Math.floor((mainBudget.usedAmount || 0) / mainBudget.monthlyAmount * 100)) : Math.floor((mainBudget.usedAmount || 0) / mainBudget.monthlyAmount * 100)) : 0}
                                           onEdit={() => handleBudgetEdit(mainBudget)}
                                           onDelete={() => handleBudgetDelete(mainBudget.budgetId)}
                                           onSelect={(id) => {
@@ -1073,7 +1049,6 @@ export default function TransactionsPage() {
                                               icon={getCategoryIcon(subBudget.categoryId)}
                                               monthlyAmount={subBudget.monthlyAmount}
                                               usedAmount={subBudget.usedAmount || 0}
-                                              percentage={subBudget.monthlyAmount > 0 ? ((subBudget.usedAmount || 0) > subBudget.monthlyAmount ? Math.max(101, Math.floor((subBudget.usedAmount || 0) / subBudget.monthlyAmount * 100)) : Math.floor((subBudget.usedAmount || 0) / subBudget.monthlyAmount * 100)) : 0}
                                               onEdit={() => handleBudgetEdit(subBudget)}
                                               onDelete={() => handleBudgetDelete(subBudget.budgetId)}
                                               onSelect={(id) => {
@@ -1103,7 +1078,7 @@ export default function TransactionsPage() {
 
                           // 모든 소분류 가져오기
                           const allSubCategories = categories.filter(
-                            (c) => c.parentId === mainBudget.categoryId && c.level === 2 && c.type === budgetType
+                            (c) => c.parentId === mainBudget.categoryId && c.type === budgetType
                           );
 
                           // 예산 데이터와 매칭
@@ -1128,7 +1103,6 @@ export default function TransactionsPage() {
                                 icon={getCategoryIcon(mainBudget.categoryId)}
                                 monthlyAmount={mainBudget.monthlyAmount}
                                 usedAmount={mainBudget.usedAmount || 0}
-                                percentage={mainBudget.monthlyAmount > 0 ? ((mainBudget.usedAmount || 0) > mainBudget.monthlyAmount ? Math.max(101, Math.floor((mainBudget.usedAmount || 0) / mainBudget.monthlyAmount * 100)) : Math.floor((mainBudget.usedAmount || 0) / mainBudget.monthlyAmount * 100)) : 0}
                                 onEdit={() => handleBudgetEdit(mainBudget)}
                                 onDelete={() => handleBudgetDelete(mainBudget.budgetId)}
                                 hasChildren={mainBudget.hasChildren}
@@ -1150,7 +1124,6 @@ export default function TransactionsPage() {
                                       icon={getCategoryIcon(subBudget.categoryId)}
                                       monthlyAmount={subBudget.monthlyAmount}
                                       usedAmount={subBudget.usedAmount || 0}
-                                      percentage={subBudget.monthlyAmount > 0 ? ((subBudget.usedAmount || 0) > subBudget.monthlyAmount ? Math.max(101, Math.floor((subBudget.usedAmount || 0) / subBudget.monthlyAmount * 100)) : Math.floor((subBudget.usedAmount || 0) / subBudget.monthlyAmount * 100)) : 0}
                                       onEdit={() => handleBudgetEdit(subBudget)}
                                       onDelete={() => handleBudgetDelete(subBudget.budgetId)}
                                       hasChildren={false}
@@ -1196,22 +1169,19 @@ export default function TransactionsPage() {
           )
         ) : isLoading ? (
           <p className="text-gray-600">로딩 중...</p>
-        ) : transactions.length === 0 ? (
+        ) : entries.length === 0 ? (
           <p className="text-gray-600">거래가 없습니다.</p>
         ) : viewType === 'payment-method' ? (
           <PaymentMethodTab
-            transactions={filteredTransactions}
-            accounts={accounts}
-            cards={cards}
-            people={people}
             currentMonth={currentMonth}
             currentYear={currentYear}
+            projectId={selectedProjectId}
           />
         ) : viewType === 'calendar' ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-1">
               <TransactionCalendar
-                transactions={filteredTransactions}
+                entries={visibleEntries}
                 year={currentYear}
                 month={currentMonth}
                 onDateSelect={handleCalendarDateSelect}
@@ -1221,71 +1191,19 @@ export default function TransactionsPage() {
               />
             </div>
 
-            {(displayTransactions.length > 0 || !startDate) && (
+            {(displayEntries.length > 0 || !startDate) && (
               <div ref={dateTransactionsRef} className="lg:col-span-2">
                 {!startDate ? (
                   <TransactionListView
-                    transactions={currentMonthTransactions}
-                    onTransactionClick={handleTransactionClick}
-                    accounts={accounts}
+                    entries={visibleEntries}
+                    onEntryClick={handleTransactionClick}
                   />
                 ) : (
                   <>
-                    {(() => {
-                      const totalIncome = displayTransactions
-                        .filter(tx => tx.type === 'income')
-                        .reduce((sum, tx) => sum + tx.amount, 0);
-                      const totalExpense = displayTransactions
-                        .filter(tx => tx.type === 'expense' || tx.type === 'credit_usage')
-                        .reduce((sum, tx) => sum + tx.amount, 0);
-
-                      return (
-                        <div className="mb-4 flex items-center justify-between text-sm font-semibold bg-gray-100 py-2 px-3 rounded-lg border border-gray-200">
-                          <h3 className="text-lg font-bold text-gray-900">
-                            {endDate
-                              ? `${startDate?.toISOString().split('T')[0]} ~ ${endDate.toISOString().split('T')[0]}`
-                              : startDate
-                              ? `${startDate.toISOString().split('T')[0]}`
-                              : `${currentYear}년 ${currentMonth}월`}
-                          </h3>
-                          <div className="flex gap-6">
-                            <span className="text-green-600">
-                              +{new Intl.NumberFormat('ko-KR', {
-                                style: 'currency',
-                                currency: 'KRW',
-                              }).format(totalIncome)}
-                            </span>
-                            <span className="text-red-600">
-                              -{new Intl.NumberFormat('ko-KR', {
-                                style: 'currency',
-                                currency: 'KRW',
-                              }).format(totalExpense)}
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                    <div className="space-y-2">
-                      {displayTransactions.map((tx) => {
-                        const fromAccount = accounts.find(a => a.id === tx.accountId);
-                        const toAccount = accounts.find(a => a.id === (tx as any).toAccountId);
-                        return (
-                          <TransactionItem
-                            key={tx.id}
-                            id={tx.id}
-                            description={tx.description}
-                            amount={tx.amount}
-                            type={tx.type}
-                            date={tx.date}
-                            mainCategory={tx.mainCategory}
-                            subCategory={tx.subCategory}
-                            onClick={() => handleTransactionClick(tx)}
-                            fromAccountName={fromAccount?.name}
-                            toAccountName={toAccount?.name}
-                          />
-                        );
-                      })}
-                    </div>
+                    <TransactionListView
+                      entries={displayEntries}
+                      onEntryClick={handleTransactionClick}
+                    />
                   </>
                 )}
               </div>
@@ -1300,6 +1218,13 @@ export default function TransactionsPage() {
         title={editingId ? '거래 수정' : '거래 추가'}
       >
         <form onSubmit={handleSubmit} className="space-y-4">
+              {lockedPeriod && (
+                <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg">
+                  이미 결제한 청구서({lockedPeriod.start} ~ {lockedPeriod.end})에 포함된 내역입니다.
+                  금액과 결제수단은 바꿀 수 없고, 날짜는 이 청구 기간 안에서만 고칠 수 있습니다.
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   수단 선택
@@ -1310,6 +1235,7 @@ export default function TransactionsPage() {
                       type="radio"
                       value="account"
                       checked={formData.method === 'account'}
+                      disabled={Boolean(lockedPeriod)}
                       onChange={(e) => setFormData({ ...formData, method: e.target.value as any, accountId: '', cardId: '' })}
                       className="mr-2"
                     />
@@ -1320,6 +1246,7 @@ export default function TransactionsPage() {
                       type="radio"
                       value="card"
                       checked={formData.method === 'card'}
+                      disabled={Boolean(lockedPeriod)}
                       onChange={(e) => setFormData({ ...formData, method: 'card', type: 'expense', mainCategoryId: '', subCategoryId: '', accountId: '', cardId: '' })}
                       className="mr-2"
                     />
@@ -1338,6 +1265,7 @@ export default function TransactionsPage() {
                     value={formData.accountId}
                     onChange={(value) => setFormData({ ...formData, accountId: value })}
                     placeholder="선택하세요"
+                    disabled={Boolean(lockedPeriod)}
                     onAddClick={() => setIsAccountModalOpen(true)}
                     addButtonLabel="계좌 추가"
                   />
@@ -1350,6 +1278,7 @@ export default function TransactionsPage() {
                     value={formData.cardId}
                     onChange={(value) => setFormData({ ...formData, cardId: value })}
                     placeholder="선택하세요"
+                    disabled={Boolean(lockedPeriod)}
                     onAddClick={() => setIsCardModalOpen(true)}
                     addButtonLabel="카드 추가"
                   />
@@ -1384,6 +1313,7 @@ export default function TransactionsPage() {
                           { id: 'transfer', name: '이체' },
                         ]
                   }
+                  disabled={Boolean(lockedPeriod)}
                   value={formData.type}
                   onChange={(value) => setFormData({
                     ...formData,
@@ -1403,7 +1333,7 @@ export default function TransactionsPage() {
                     </label>
                     <CustomSelect
                       options={categories
-                        .filter((c) => c.level === 1 && c.type === formData.type)
+                        .filter((c) => !c.parentId && c.type === formData.type)
                         .map((cat) => ({ id: cat.id, name: cat.name }))}
                       value={formData.mainCategoryId}
                       onChange={(value) => {
@@ -1431,7 +1361,7 @@ export default function TransactionsPage() {
                           ? categories
                               .filter(
                                 (c) =>
-                                  c.level === 2 &&
+                                  Boolean(c.parentId) &&
                                   c.parentId === formData.mainCategoryId
                               )
                               .map((cat) => ({ id: cat.id, name: cat.name }))
@@ -1491,7 +1421,7 @@ export default function TransactionsPage() {
                         </label>
                         <CustomSelect
                           options={categories
-                            .filter((c) => c.level === 1 && c.type === 'expense')
+                            .filter((c) => !c.parentId && c.type === 'expense')
                             .map((cat) => ({ id: cat.id, name: cat.name }))}
                           value={formData.transferFeeMainCategoryId}
                           onChange={(value) => setFormData({ ...formData, transferFeeMainCategoryId: value, transferFeeSubCategoryId: '' })}
@@ -1511,7 +1441,7 @@ export default function TransactionsPage() {
                               ? categories
                                   .filter(
                                     (c) =>
-                                      c.level === 2 &&
+                                      Boolean(c.parentId) &&
                                       c.parentId === formData.transferFeeMainCategoryId
                                   )
                                   .map((cat) => ({ id: cat.id, name: cat.name }))
@@ -1535,8 +1465,9 @@ export default function TransactionsPage() {
                   type="number"
                   required
                   value={formData.amount}
+                  disabled={Boolean(lockedPeriod)}
                   onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${Boolean(lockedPeriod) ? 'bg-gray-100 cursor-not-allowed' : ''}`}
                   placeholder="50000"
                 />
               </div>
@@ -1601,6 +1532,9 @@ export default function TransactionsPage() {
                   type="date"
                   required
                   value={formData.date}
+                  // 결제된 청구서에 속하면 그 청구 기간 밖으로는 못 나간다
+                  min={lockedPeriod?.start}
+                  max={lockedPeriod?.end}
                   onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 />
@@ -1677,12 +1611,15 @@ export default function TransactionsPage() {
                 ...categories
                   .filter((c) => c.type === budgetFormData.type)
                   .sort((a, b) => {
-                    if (a.level !== b.level) return a.level - b.level;
+                    // 대분류(parentId 없음)를 먼저, 그다음 부모별로 묶어 이름순
+                    const aIsMain = !a.parentId;
+                    const bIsMain = !b.parentId;
+                    if (aIsMain !== bIsMain) return aIsMain ? -1 : 1;
                     if (a.parentId !== b.parentId) return (a.parentId || '').localeCompare(b.parentId || '');
                     return a.name.localeCompare(b.name);
                   })
                   .map((category) => {
-                    if (category.level === 1) {
+                    if (!category.parentId) {
                       return {
                         id: category.id,
                         name: category.name,
@@ -1765,6 +1702,7 @@ export default function TransactionsPage() {
         onClose={() => setIsAccountModalOpen(false)}
         onSuccess={(newAccounts) => setAccounts(newAccounts)}
         people={people}
+        projectId={selectedProjectId}
       />
 
       <Modal
@@ -1824,7 +1762,7 @@ export default function TransactionsPage() {
                 { id: 'credit', name: '신용카드' },
               ]}
               value={cardFormData.cardType}
-              onChange={(value) => setCardFormData({ ...cardFormData, cardType: value })}
+              onChange={(value) => setCardFormData({ ...cardFormData, cardType: value as 'debit' | 'credit' })}
               placeholder="선택하세요"
               onAddClick={() => {}}
               addButtonLabel=""
@@ -1858,18 +1796,55 @@ export default function TransactionsPage() {
           </div>
 
           {cardFormData.cardType === 'credit' && (
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                신용한도 (원)
-              </label>
-              <input
-                type="number"
-                value={cardFormData.creditLimit}
-                onChange={(e) => setCardFormData({ ...cardFormData, creditLimit: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="5000000"
-              />
-            </div>
+            <>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  신용한도 (원)
+                </label>
+                <input
+                  type="number"
+                  value={cardFormData.creditLimit}
+                  onChange={(e) => setCardFormData({ ...cardFormData, creditLimit: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="5000000"
+                />
+              </div>
+
+              {/* 마감일과 결제일로 청구 주기를 계산한다 */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  마감일 (매월 몇 일?)
+                </label>
+                <select
+                  value={cardFormData.statementClosingDay}
+                  onChange={(e) =>
+                    setCardFormData({ ...cardFormData, statementClosingDay: parseInt(e.target.value) })
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                    <option key={day} value={day}>{day}일</option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  결제일 (매월 몇 일?)
+                </label>
+                <select
+                  value={cardFormData.paymentDueDay}
+                  onChange={(e) =>
+                    setCardFormData({ ...cardFormData, paymentDueDay: parseInt(e.target.value) })
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
+                    <option key={day} value={day}>{day}일</option>
+                  ))}
+                </select>
+              </div>
+            </>
           )}
 
           <button
@@ -2027,7 +2002,7 @@ export default function TransactionsPage() {
                 사용자
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {people.find(p => p.id === selectedTransaction.personId)?.name || '-'}
+                {selectedTransaction.personName || '-'}
               </p>
             </div>
 
@@ -2036,7 +2011,7 @@ export default function TransactionsPage() {
                 유형
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {selectedTransaction.type === 'income' ? '수입' : selectedTransaction.type === 'expense' ? '지출' : '이체'}
+                {ENTRY_KIND_LABEL[selectedTransaction.kind]}
               </p>
             </div>
 
@@ -2045,19 +2020,17 @@ export default function TransactionsPage() {
                 대분류
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {selectedTransaction.mainCategoryId
-                  ? categories.find(c => c.id === selectedTransaction.mainCategoryId)?.name || '-'
-                  : '-'}
+                {selectedTransaction.parentCategoryName || selectedTransaction.categoryName || '-'}
               </p>
             </div>
 
-            {selectedTransaction.subCategoryId && (
+            {selectedTransaction.parentCategoryName && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   소분류
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                  {categories.find(c => c.id === selectedTransaction.subCategoryId)?.name || '-'}
+                  {selectedTransaction.categoryName || '-'}
                 </p>
               </div>
             )}
@@ -2067,13 +2040,10 @@ export default function TransactionsPage() {
                 금액
               </label>
               <p className={`px-3 py-2 bg-gray-50 rounded-lg text-lg font-bold ${
-                selectedTransaction.type === 'income' ? 'text-green-600' : 'text-red-600'
+                selectedTransaction.kind === 'income' ? 'text-green-600' : 'text-red-600'
               }`}>
-                {selectedTransaction.type === 'income' ? '+' : '-'}
-                {new Intl.NumberFormat('ko-KR', {
-                  style: 'currency',
-                  currency: 'KRW',
-                }).format(selectedTransaction.amount)}
+                {selectedTransaction.kind === 'income' ? '+' : '-'}
+                {formatCurrency(selectedTransaction.amount)}
               </p>
             </div>
 
@@ -2086,86 +2056,121 @@ export default function TransactionsPage() {
               </p>
             </div>
 
-            {(selectedTransaction as any).merchant && (
+            {selectedTransaction.merchant && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   거래처
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                  {(selectedTransaction as any).merchant}
+                  {selectedTransaction.merchant}
                 </p>
               </div>
             )}
 
-            {(selectedTransaction as any).detailedNote && (
+            {selectedTransaction.detailedNote && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   상세설명
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                  {(selectedTransaction as any).detailedNote}
+                  {selectedTransaction.detailedNote}
                 </p>
               </div>
             )}
 
-            {selectedTransaction.type === 'transfer' && (selectedTransaction as any).toAccountId && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    이체 대상 계좌
-                  </label>
-                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                    {accounts.find(a => a.id === (selectedTransaction as any).toAccountId)?.name || '-'}
-                  </p>
-                </div>
-                {(selectedTransaction as any).transferFee > 0 && (
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      이체 수수료
-                    </label>
-                    <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                      {new Intl.NumberFormat('ko-KR', {
-                        style: 'currency',
-                        currency: 'KRW',
-                      }).format((selectedTransaction as any).transferFee)}
-                    </p>
-                  </div>
-                )}
-              </>
+            {selectedTransaction.toAccountName && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  이체 대상 계좌
+                </label>
+                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                  {selectedTransaction.toAccountName}
+                </p>
+              </div>
             )}
+
+            {/* 이체 수수료. 수수료가 없어도 0으로 보여준다 */}
+            {selectedTransaction.kind === 'transfer' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  이체 수수료
+                </label>
+                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                  {formatCurrency(selectedTransaction.feeAmount ?? 0)}
+                  {selectedTransaction.feeCategoryName && (
+                    <span className="ml-2 text-sm text-gray-500">
+                      ({selectedTransaction.feeCategoryName})
+                    </span>
+                  )}
+                </p>
+              </div>
+            )}
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                고정 지출
+              </label>
+              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                {selectedTransaction.isFixed ? '고정' : '변동'}
+              </p>
+            </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 날짜
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {new Date(selectedTransaction.date).toLocaleDateString('ko-KR', {
+                {/* 시간을 입력하지 않은 거래는 날짜만 보여준다 */}
+                {new Date(selectedTransaction.date).toLocaleString('ko-KR', {
                   year: 'numeric',
                   month: 'long',
                   day: 'numeric',
-                  hour: '2-digit',
-                  minute: '2-digit',
+                  ...(extractTime(selectedTransaction.date)
+                    ? { hour: '2-digit', minute: '2-digit' }
+                    : {}),
                 })}
               </p>
             </div>
 
             <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
-              <button
-                onClick={handleDetailEditClick}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                수정하기
-              </button>
-              <button
-                onClick={async () => {
-                  setIsDetailModalOpen(false);
-                  await handleDeleteClick(selectedTransaction.id);
-                }}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                disabled={isSubmitting}
-              >
-                삭제하기
-              </button>
+              {/*
+                카드대금 결제와 잔액 조정은 이 폼으로 만들 수 없는 종류다.
+                수정 폼에 담으면 지출로 바뀌어 버리므로 버튼 자체를 감춘다.
+              */}
+              {isEditable(selectedTransaction) ? (
+                <button
+                  onClick={handleDetailEditClick}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  수정하기
+                </button>
+              ) : (
+                <div className="flex-1 px-4 py-2 text-sm text-gray-500 bg-gray-50 rounded-lg text-center">
+                  {selectedTransaction.kind === 'card_payment'
+                    ? '카드대금 결제는 수정할 수 없습니다'
+                    : '잔액 조정은 수정할 수 없습니다'}
+                </div>
+              )}
+              {/*
+                결제가 끝난 청구서의 사용 내역은 지울 수 없다.
+                지우면 청구액만 사라지고 결제 기록은 남아 카드 부채가 유령 잔액으로 뜬다.
+              */}
+              {selectedTransaction.lockedByStatement ? (
+                <div className="flex-1 px-4 py-2 text-sm text-gray-500 bg-gray-50 rounded-lg text-center">
+                  결제한 청구서에 포함되어 삭제할 수 없습니다
+                </div>
+              ) : (
+                <button
+                  onClick={async () => {
+                    setIsDetailModalOpen(false);
+                    await handleDeleteClick(selectedTransaction.id);
+                  }}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                  disabled={isSubmitting}
+                >
+                  삭제하기
+                </button>
+              )}
             </div>
           </div>
         )}

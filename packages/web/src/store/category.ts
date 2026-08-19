@@ -1,16 +1,8 @@
 import { create } from 'zustand';
 import { apiClient } from '@/lib/api-client';
+import type { Category } from '@/lib/types';
 
-export interface Category {
-  id: string;
-  name: string;
-  type: 'income' | 'expense';
-  level: number;
-  parentId?: string | null;
-  icon?: string;
-  isDefault?: boolean;
-  isActive?: boolean;
-}
+export type { Category };
 
 interface CategoryStore {
   categories: Category[];

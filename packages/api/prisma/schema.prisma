@@ -1,3 +1,18 @@
+// 복식부기 기반 스키마 (new.md 재설계안 반영)
+//
+// 핵심 원칙
+//  1. 신용카드는 결제 수단이 아니라 부채 계정이다.
+//  2. 잔액은 캐시이고, 근거는 Posting 합계다. 드리프트를 쿼리로 검증할 수 있어야 한다.
+//  3. Account(잔액/소유자)와 Category(계층)는 물리적으로 분리하되, 둘 다 Posting의 대상이 된다.
+//  4. 지출/수입의 정의는 결제수단과 무관하다. "지출 = 지출 카테고리 posting의 합".
+//  5. 평가손익(환율, 시가)은 전표화하지 않는다.
+//
+// 부호 규칙 (하나의 JournalEntry 안에서 Posting.amount 합계는 항상 0)
+//  자산(deposit, savings, cash, investment, real_estate) : 증가 +, 감소 -
+//  부채(credit_card, loan)                                : 빚 증가 -, 상환 +
+//  지출 카테고리                                          : 지출 발생 +
+//  수입 카테고리                                          : 수입 발생 -
+
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
@@ -7,13 +22,21 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// Enum 정의
-enum TransactionType {
-  income
-  expense
-  transfer
-  credit_usage   // 신용카드 사용
-  credit_payment // 신용카드 결제
+// ─────────────────────────────────────────────
+// Enum
+// ─────────────────────────────────────────────
+
+enum AccountType {
+  deposit // 예금/입출금
+  savings // 저축
+  investment // 투자 (주식, 펀드 등)
+  cash // 현금
+  credit_card // 신용카드 부채
+  loan // 대출
+  real_estate // 부동산
+  // 자본 계정. 계좌 개설 시점의 잔액을 전표화할 때 상대편으로 쓴다.
+  // 자산이 아니므로 순자산 합계에서 반드시 제외한다.
+  opening_balance
 }
 
 enum CardType {
@@ -21,10 +44,11 @@ enum CardType {
   credit
 }
 
-enum PaymentStatus {
-  pending
-  completed
+enum CategoryType {
+  income
+  expense
 }
+
 
 enum ProjectRole {
   owner
@@ -45,401 +69,435 @@ enum JoinRequestStatus {
   rejected
 }
 
+// ─────────────────────────────────────────────
+// 계정 / 프로젝트 (기존 유지)
+// ─────────────────────────────────────────────
+
 // 앱 사용자 (계정)
 model User {
-  id                  String   @id @default(cuid())
-  email               String   @unique
-  googleId            String   @unique // Google ID 토큰의 sub 클레임 (이메일과 달리 변경되지 않음)
-  name                String
-  avatar              String?
-  defaultProjectId    String?  // 기본 프로젝트
+  id               String  @id @default(cuid())
+  email            String  @unique
+  googleId         String  @unique // Google ID 토큰의 sub 클레임
+  name             String
+  avatar           String?
+  defaultProjectId String?
 
   projectMembers      ProjectMember[]
   projectInvitations  ProjectInvitation[]
   projectJoinRequests ProjectJoinRequest[]
-  people              Person[]
-  accounts            Account[]
-  cards               Card[]
-  transactions        Transaction[]
-  categories          Category[]
-  cardUsages          CardUsage[]
-  cardPayments        CardPayment[]
-  budgets             Budget[]
+  createdEntries      JournalEntry[] // 입력자 추적용 (조회 필터로는 쓰지 않는다)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([email])
   @@index([defaultProjectId])
 }
 
-// 프로젝트
+// 프로젝트 (가계부 단위). 프로젝트 안의 데이터는 모든 멤버가 공유한다.
 model Project {
-  id          String   @id @default(cuid())
-  projectKey  String?  @unique // 다른 사용자가 검색해 가입 요청할 때 쓰는 공유용 키
-  name        String
-  description String?
+  id           String  @id @default(cuid())
+  projectKey   String? @unique // 검색해서 가입 요청할 때 쓰는 공유용 키
+  name         String
+  description  String?
+  baseCurrency String  @default("KRW") // 리포트 기준통화
 
-  members       ProjectMember[]
-  invitations   ProjectInvitation[]
-  joinRequests  ProjectJoinRequest[]
-  people        Person[]
-  accounts      Account[]
-  cards         Card[]
-  transactions  Transaction[]
-  categories    Category[]
-  cardUsages    CardUsage[]
-  cardPayments  CardPayment[]
-  budgets       Budget[]
+  members      ProjectMember[]
+  invitations  ProjectInvitation[]
+  joinRequests ProjectJoinRequest[]
+  people       Person[]
+  accounts     Account[]
+  categories   Category[]
+  cards        Card[]
+  entries      JournalEntry[]
+  budgets      Budget[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
-// 프로젝트 멤버
 model ProjectMember {
-  id        String       @id @default(cuid())
+  id        String      @id @default(cuid())
   projectId String
   userId    String
-  role      ProjectRole  @default(editor)
+  role      ProjectRole @default(editor)
 
-  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  joinedAt  DateTime @default(now())
+  joinedAt DateTime @default(now())
 
   @@unique([projectId, userId])
-  @@index([projectId])
   @@index([userId])
 }
 
 // 프로젝트 초대 링크 (코드를 아는 사람이 수락하면 멤버가 된다)
 model ProjectInvitation {
-  id               String             @id @default(cuid())
-  projectId        String
-  invitationCode   String             @unique
-  role             ProjectRole        @default(editor)
-  status           InvitationStatus   @default(pending)
+  id             String           @id @default(cuid())
+  projectId      String
+  invitationCode String           @unique
+  role           ProjectRole      @default(editor)
+  status         InvitationStatus @default(pending)
 
-  project          Project            @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  invitedBy        User               @relation(fields: [invitedByUserId], references: [id])
-  invitedByUserId  String
+  project         Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  invitedBy       User    @relation(fields: [invitedByUserId], references: [id])
+  invitedByUserId String
 
   expiresAt        DateTime?
   acceptedAt       DateTime?
   acceptedByUserId String?
 
-  createdAt        DateTime @default(now())
-  updatedAt        DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  @@index([projectId])
-  @@index([status])
+  @@index([projectId, status])
+  @@index([invitedByUserId])
 }
 
 // 프로젝트 가입 요청 (프로젝트 키로 검색 후 요청 -> owner가 승인)
 model ProjectJoinRequest {
-  id          String            @id @default(cuid())
-  projectId   String
-  userId      String            // 요청한 사용자
-  status      JoinRequestStatus @default(pending)
-  message     String?           // 요청자가 남기는 한 줄 메시지
+  id        String            @id @default(cuid())
+  projectId String
+  userId    String
+  status    JoinRequestStatus @default(pending)
+  message   String?
 
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  decidedAt        DateTime?
-  decidedByUserId  String?
+  decidedAt       DateTime?
+  decidedByUserId String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // 사용자-프로젝트 쌍마다 한 행만 유지한다. 거절 후 재요청은 이 행을 pending으로 되돌린다.
+  // 사용자-프로젝트 쌍마다 한 행. 거절 후 재요청은 이 행을 pending으로 되돌린다.
   @@unique([projectId, userId])
-  @@index([projectId])
+  @@index([projectId, status])
   @@index([userId])
-  @@index([status])
 }
 
-// 사람 (가족 구성원)
+// 사람 (가족 구성원). 계좌 소유자이자 거래 주체.
 model Person {
-  id            String   @id @default(cuid())
-  projectId     String
-  userId        String
-  name          String
-  relationship  String?  // 배우자, 자녀 등
+  id           String  @id @default(cuid())
+  projectId    String
+  name         String
+  relationship String? // 배우자, 자녀 등
+  isActive     Boolean @default(true)
 
-  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  accounts      Account[]
-  transactions  Transaction[]
+  project  Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  accounts Account[]
+  entries  JournalEntry[]
 
-  isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([projectId])
-  @@index([userId])
+  @@index([projectId, isActive])
 }
 
-// 은행 통장
+// ─────────────────────────────────────────────
+// 계좌
+// ─────────────────────────────────────────────
+
 model Account {
-  id              String   @id @default(cuid())
-  projectId       String
-  userId          String
-  ownerId         String   // Person ID (통장 주인)
-  name            String
-  accountNumber   String?  // 자동 생성되는 내부 번호
-  balance         Float    @default(0)
-  bankName        String
-  currency        String   @default("KRW")
-
-  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  owner           Person   @relation(fields: [ownerId], references: [id])
-  cards           Card[]
-  transactions    Transaction[]
-  transferTransactions Transaction[] @relation("TransferTarget")
-  cardPayments    CardPayment[]
-
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([projectId])
-  @@index([userId])
-  @@index([ownerId])
-  @@index([bankName])
-}
-
-// 카드 (체크카드, 신용카드)
-model Card {
-  id                  String   @id @default(cuid())
-  projectId           String
-  userId              String
-  accountId           String   // 연결된 통장
-  name                String
-  cardNumber          String?  // 서버에서 마스킹 처리
-  cardType            CardType @default(debit)
-  issuer              String   // 카드사
-  expiryDate          DateTime?
-  creditLimit         Float?   // 신용카드 한도
-  currentBalance      Float?   @default(0) // 신용카드 현재 사용액
-  billingDayOfMonth   Int      @default(1) // 결제일 (1~31일, 기본값: 매월 1일)
-
-  project             Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user                User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  account             Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  transactions        Transaction[]
-  usages              CardUsage[]
-  payments            CardPayment[]
-
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([projectId])
-  @@index([userId])
-  @@index([accountId])
-  @@index([cardType])
-}
-
-// 거래 (입금, 출금, 이체)
-model Transaction {
-  id                String   @id @default(cuid())
-  projectId         String
-  userId            String
-  accountId         String?  // 선택사항 (신용카드 사용 시 null)
-  personId          String   // 거래한 사람
-  cardId            String?  // 카드로 거래한 경우
-  cardPaymentId     String?  // 신용카드 할부 결제와의 연결
-  type              TransactionType
-  amount            Float
-  description       String
-  merchant          String?  // 거래처 (선택사항) - 가맹점, 송금 계좌주 등
-  detailedNote      String?  // 상세설명 (선택사항)
-  toAccountId       String?  // 이체 대상 계좌 (type=transfer일 때만 사용)
-  relatedTransactionId String? // 관련 거래 ID (이체의 수수료 거래 연결)
-  date              DateTime
-  mainCategoryId    String?  // 대분류 ID
-  subCategoryId     String?  // 소분류 ID
-  tags              String[] @default([])
-  isRecurring       Boolean  @default(false)
-  recurringPattern  String?  // daily, weekly, monthly, yearly
-  isFixed           Boolean  @default(false) // 고정 지출/수입 여부
-
-  project           Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user              User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  account           Account? @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  toAccount         Account? @relation("TransferTarget", fields: [toAccountId], references: [id], onDelete: SetNull)
-  person            Person   @relation(fields: [personId], references: [id])
-  card              Card?    @relation(fields: [cardId], references: [id], onDelete: SetNull)
-  cardPayment       CardPayment? @relation(fields: [cardPaymentId], references: [id], onDelete: SetNull)
-  mainCategory      Category? @relation("MainCategory", fields: [mainCategoryId], references: [id], onDelete: SetNull)
-  subCategory       Category? @relation("SubCategory", fields: [subCategoryId], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([projectId])
-  @@index([userId])
-  @@index([accountId])
-  @@index([toAccountId])
-  @@index([personId])
-  @@index([cardId])
-  @@index([cardPaymentId])
-  @@index([date])
-  @@index([type])
-  @@index([mainCategoryId])
-  @@index([subCategoryId])
-  @@index([isFixed])
-  @@index([relatedTransactionId])
-}
-
-// 카테고리 (대분류/소분류)
-model Category {
-  id              String   @id @default(cuid())
-  projectId       String
-  userId          String
-  name            String
-  parentId        String?  // 대분류는 null, 소분류는 대분류 ID
-  level           Int      @default(1) // 1: 대분류, 2: 소분류
-  type            String   // income, expense
-  icon            String?
-  defaultIsFixed  Boolean  @default(false) // 소분류의 기본 고정 여부 (level=2일 때만 사용)
-  isDefault       Boolean  @default(false) // 기본 카테고리 (예: "선택안함") - 삭제 불가
-
-  project               Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user                  User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  parent                Category?     @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
-  children              Category[]    @relation("CategoryHierarchy")
-  mainCategoryTrans     Transaction[] @relation("MainCategory")
-  subCategoryTrans      Transaction[] @relation("SubCategory")
-  budgets               Budget[]
-
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([projectId])
-  @@index([userId])
-  @@index([type])
-  @@index([parentId])
-  @@index([isDefault])
-  @@unique([projectId, userId, name, parentId])
-}
-
-// 카드 사용 기록
-model CardUsage {
-  id          String   @id @default(cuid())
-  projectId   String
-  userId      String
-  cardId      String
-  amount      Float
-  merchant    String   // 가맹점
-  date        DateTime
-  status      String   @default("completed") // pending, completed, cancelled
-  isPaymentDue Boolean @default(true)
-
-  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  card        Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
-  payments    CardPaymentUsage[]
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([projectId])
-  @@index([userId])
-  @@index([cardId])
-  @@index([date])
-}
-
-// 신용카드 결제 (신용카드 사용액을 통장에서 결제)
-model CardPayment {
-  id              String   @id @default(cuid())
-  projectId       String
-  userId          String
-  cardId          String
-  accountId       String
-  totalAmount     Float    // 결제할 총액
-  paidAmount      Float    @default(0) // 실제 결제된 금액
-  status          String   @default("pending") // pending, completed
-  paymentDate     DateTime
-
-  project         Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  card            Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
-  account         Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  usages          CardPaymentUsage[]
-  transactions    Transaction[]  // 결제 거래들과의 역참조
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([projectId])
-  @@index([userId])
-  @@index([cardId])
-  @@index([status])
-}
-
-// 신용카드 결제와 사용 기록 연결 (N:N 관계)
-model CardPaymentUsage {
-  id            String   @id @default(cuid())
-  cardPaymentId String
-  cardUsageId   String
-  amount        Float    // 결제에 포함된 금액 (분할 결제 시 일부만 포함 가능)
-
-  cardPayment   CardPayment  @relation(fields: [cardPaymentId], references: [id], onDelete: Cascade)
-  cardUsage     CardUsage    @relation(fields: [cardUsageId], references: [id], onDelete: Cascade)
-
-  createdAt     DateTime @default(now())
-
-  @@unique([cardPaymentId, cardUsageId])
-  @@index([cardPaymentId])
-  @@index([cardUsageId])
-}
-
-// 예산 (기본 규칙)
-model Budget {
-  id            String   @id @default(cuid())
+  id            String      @id @default(cuid())
   projectId     String
-  userId        String
-  categoryId    String?  // null=전체, 값=대분류/소분류
-  type          String?  // 전체 예산인 경우 'income' 또는 'expense' (categoryId가 null일 때만 사용)
-  monthlyAmount Float
+  ownerId       String? // Person. opening_balance 같은 시스템 계정은 null
+  type          AccountType
+  name          String
+  bankName      String? // 카드/현금/부동산 계정에는 없을 수 있다
+  accountNumber String?
+  currency      String      @default("KRW")
+  // 캐시된 잔액. 근거는 Posting.amount 합계이며 6절 검증 쿼리로 대조한다.
+  balance       Decimal     @default(0) @db.Decimal(19, 4)
+  isActive      Boolean     @default(true)
 
-  // 적용 기간: null이면 무기한
-  effectiveFrom String?   // "YYYY-MM" 형식
-  effectiveTo   String?   // "YYYY-MM" 형식
+  project          Project           @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  owner            Person?           @relation(fields: [ownerId], references: [id])
+  investmentDetail InvestmentDetail?
+  valuations       AssetValuation[]
+  postings         Posting[]
+  cardsAsPayment   Card[]            @relation("CardPaymentAccount")
+  cardAsLiability  Card?             @relation("CardLiabilityAccount")
 
-  project       Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  category      Category? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  overrides     BudgetOverride[]
+  @@index([projectId, ownerId, isActive])
+  @@index([projectId, type])
+}
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+// 투자성 계좌(investment, real_estate)에만 존재하는 위성 테이블
+model InvestmentDetail {
+  accountId  String  @id
+  assetClass String // stock, fund, real_estate, gold
+  ticker     String? // 주식 종목코드. 부동산은 null
+  // 캐시된 보유 수량. 근거는 Posting.quantity 합계.
+  quantity   Decimal @default(0) @db.Decimal(19, 8)
 
-  @@index([projectId])
-  @@index([userId])
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+}
+
+// 시가/감정가 스냅샷. 거래가 아니라 외부 평가값이므로 Posting을 만들지 않는다.
+model AssetValuation {
+  id          String   @id @default(cuid())
+  accountId   String
+  date        DateTime @db.Date
+  quantity    Decimal  @db.Decimal(19, 8)
+  price       Decimal  @db.Decimal(19, 4)
+  marketValue Decimal  @db.Decimal(19, 4)
+  source      String   @default("manual")
+
+  account Account @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([accountId, date])
+}
+
+// ─────────────────────────────────────────────
+// 카테고리
+// ─────────────────────────────────────────────
+
+// 대분류는 parentId = null, 소분류는 대분류 ID.
+// level 컬럼은 두지 않는다 (parentId 체인에서 유도 가능).
+model Category {
+  id             String       @id @default(cuid())
+  projectId      String
+  name           String
+  parentId       String?
+  type           CategoryType
+  icon           String?
+  defaultIsFixed Boolean      @default(false) // 이 카테고리로 만든 posting의 isFixed 기본값
+  isDefault      Boolean      @default(false) // "선택안함" 등 삭제 불가 항목
+  isActive       Boolean      @default(true)
+
+  project  Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
+  children Category[] @relation("CategoryHierarchy")
+  postings Posting[]
+  budgets  Budget[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, name, parentId])
+  @@index([projectId, type, isActive])
+  @@index([parentId])
+}
+
+// ─────────────────────────────────────────────
+// 카드
+// ─────────────────────────────────────────────
+
+// credit: accountId가 이 카드의 부채 Account (카드 1장 = Account 1개, 앱 레이어에서 함께 생성)
+// debit : accountId가 즉시 출금되는 예금 Account
+model Card {
+  id        String @id @default(cuid())
+  projectId String
+  // 사용자가 반드시 고르는 실제 통장.
+  // 체크카드는 결제 즉시, 신용카드는 결제일에 여기서 돈이 빠진다.
+  paymentAccountId String
+  // 신용카드 사용액(= 카드사에 갚아야 할 돈)을 담는 부채 계정.
+  // 카드 등록 시 자동으로 함께 만든다. 체크카드는 빚이 생기지 않으므로 null.
+  // 사용자에게는 통장 목록이 아니라 카드 화면의 "사용액"으로만 보인다.
+  liabilityAccountId  String?   @unique
+  name                String
+  cardType            CardType
+  issuer              String // 카드사
+  cardNumber          String? // 서버에서 마스킹
+  expiryDate          DateTime?
+  creditLimit         Decimal?  @db.Decimal(19, 4) // credit만 사용
+  statementClosingDay Int? // 마감일 1~31. credit만 사용
+  paymentDueDay       Int? // 결제일 1~31. credit만 사용
+  isActive            Boolean   @default(true)
+
+  project          Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  paymentAccount   Account         @relation("CardPaymentAccount", fields: [paymentAccountId], references: [id])
+  liabilityAccount Account?        @relation("CardLiabilityAccount", fields: [liabilityAccountId], references: [id])
+  statements       CardStatement[]
+  postings         Posting[] // 표시/분석용. 잔액에는 영향 없음 (계정측 posting이 이미 처리)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, isActive])
+  @@index([paymentAccountId])
+}
+
+
+// 신용카드 청구서 (한 결제 주기)
+model CardStatement {
+  id          String          @id @default(cuid())
+  cardId      String
+  periodStart DateTime        @db.Date
+  periodEnd   DateTime        @db.Date // 마감일
+  dueDate     DateTime @db.Date // 결제일
+  // status 컬럼은 두지 않는다. (마감일, 청구액 합계, 결제액 합계)에서 유도되는 값이라
+  // 저장하면 잔액 캐시와 같은 드리프트가 생긴다. 서비스에서 계산해 응답에 담는다.
+
+  card     Card                @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  postings Posting[]
+  charges  InstallmentCharge[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([cardId, periodEnd])
+  @@index([cardId, dueDate])
+}
+
+// ─────────────────────────────────────────────
+// 할부
+// ─────────────────────────────────────────────
+
+// 원금은 구매 즉시 전액 부채로 잡힌다. 아래 두 테이블은 "언제 청구되는지"의 일정표일 뿐
+// 새로운 Posting을 만들지 않는다.
+model InstallmentPlan {
+  id          String   @id @default(cuid())
+  postingId   String   @unique // 원 구매의 카드측 posting
+  totalMonths Int
+  feeAmount   Decimal? @db.Decimal(19, 4) // 일반할부 수수료 총액. 무이자면 null
+
+  posting Posting             @relation(fields: [postingId], references: [id], onDelete: Cascade)
+  charges InstallmentCharge[]
+
+  createdAt DateTime @default(now())
+}
+
+model InstallmentCharge {
+  id          String  @id @default(cuid())
+  planId      String
+  sequence    Int // 1회차 ~ N회차
+  amount      Decimal @db.Decimal(19, 4)
+  statementId String? // 귀속 청구서. 마감 전이면 null
+
+  plan      InstallmentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  statement CardStatement?  @relation(fields: [statementId], references: [id], onDelete: SetNull)
+
+  @@unique([planId, sequence])
+  @@index([statementId])
+}
+
+// ─────────────────────────────────────────────
+// 원장
+// ─────────────────────────────────────────────
+
+// 하나의 경제적 사건. 소속 Posting.amount 의 합은 항상 0이어야 한다.
+model JournalEntry {
+  id           String   @id @default(cuid())
+  projectId    String
+  personId     String // 거래 주체
+  date         DateTime
+  description  String // 거래 설명
+  merchant     String? // 거래처 (가맹점, 송금 계좌주 등)
+  detailedNote String? // 상세설명
+
+  createdByUserId String? // 입력자 추적용. 조회 필터로 쓰지 않는다 (프로젝트 멤버는 모두 같은 데이터를 본다)
+
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  person    Person    @relation(fields: [personId], references: [id])
+  createdBy User?     @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  postings  Posting[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // 커서 페이지네이션 (date desc, id desc)
+  @@index([projectId, date, id])
+  @@index([projectId, personId, date])
+  @@index([createdByUserId])
+}
+
+// 전표의 개별 다리(leg). accountId 와 categoryId 중 정확히 하나만 채운다.
+// DB CHECK 제약은 Prisma가 표현하지 못하므로 마이그레이션에 raw SQL로 추가한다:
+//   ALTER TABLE "Posting" ADD CONSTRAINT posting_target_exclusive
+//     CHECK (("accountId" IS NULL) != ("categoryId" IS NULL));
+model Posting {
+  id           String   @id @default(cuid())
+  entryId      String
+  accountId    String?
+  categoryId   String?
+  amount       Decimal  @db.Decimal(19, 4)
+  quantity     Decimal? @db.Decimal(19, 8) // 투자 계좌 posting에서만 사용 (매수/매도 수량)
+  currency     String   @default("KRW")
+  baseAmount   Decimal  @db.Decimal(19, 4) // 프로젝트 기준통화 환산액
+  exchangeRate Decimal  @default(1) @db.Decimal(19, 8)
+  // 고정지출 여부. 지출 카테고리 posting에서만 의미가 있다.
+  // 기본값은 Category.defaultIsFixed 에서 가져오고 사용자가 덮어쓸 수 있다.
+  // 분할 거래에서 항목마다 다를 수 있어 JournalEntry가 아니라 여기에 둔다.
+  isFixed      Boolean  @default(false)
+  statementId  String? // 신용카드 posting만 사용
+  cardId       String? // 표시/분석용. 체크카드 사용 시에도 채운다
+
+  entry           JournalEntry     @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  account         Account?         @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  category        Category?        @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  statement       CardStatement?   @relation(fields: [statementId], references: [id], onDelete: SetNull)
+  card            Card?            @relation(fields: [cardId], references: [id], onDelete: SetNull)
+  installmentPlan InstallmentPlan?
+
+  @@index([entryId])
+  @@index([accountId, entryId])
   @@index([categoryId])
-  @@unique([projectId, userId, categoryId, type, effectiveFrom])
+  @@index([statementId])
+  @@index([cardId])
+}
+
+// ─────────────────────────────────────────────
+// 환율
+// ─────────────────────────────────────────────
+
+model ExchangeRate {
+  id            String   @id @default(cuid())
+  baseCurrency  String
+  quoteCurrency String
+  rate          Decimal  @db.Decimal(19, 8)
+  date          DateTime @db.Date
+  source        String   @default("manual")
+
+  createdAt DateTime @default(now())
+
+  @@unique([baseCurrency, quoteCurrency, date])
+}
+
+// ─────────────────────────────────────────────
+// 예산 (회계가 아니라 계획 개념이라 원장과 분리)
+// ─────────────────────────────────────────────
+
+model Budget {
+  id            String        @id @default(cuid())
+  projectId     String
+  categoryId    String? // null = 전체 예산
+  type          CategoryType? // categoryId가 null일 때만 사용
+  monthlyAmount Decimal       @db.Decimal(19, 4)
+
+  // 적용 기간: null이면 무기한. "YYYY-MM" 형식
+  effectiveFrom String?
+  effectiveTo   String?
+
+  project   Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  category  Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  overrides BudgetOverride[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, categoryId, type, effectiveFrom])
+  @@index([projectId, categoryId])
 }
 
 // 예산 월별 직접 오버라이드
 model BudgetOverride {
-  id        String   @id @default(cuid())
-  budgetId  String
-  year      Int      // 2024
-  month     Int      // 8
-  amount    Float
+  id       String  @id @default(cuid())
+  budgetId String
+  year     Int
+  month    Int
+  amount   Decimal @db.Decimal(19, 4)
 
-  budget    Budget   @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+  budget Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@unique([budgetId, year, month])
-  @@index([budgetId])
 }
