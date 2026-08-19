@@ -231,6 +231,38 @@ pnpm test:watch
 
 ## 📦 배포
 
+### EC2 배포 (PM2)
+
+```bash
+cd /opt/money_test
+./scripts/deploy.sh            # 일반 배포. 데이터는 유지된다
+./scripts/deploy.sh --reset    # DB를 비우고 새로 세팅. 되돌릴 수 없다
+```
+
+직접 실행할 때는 순서를 지켜야 한다.
+
+```bash
+git pull origin main
+pm2 stop ecosystem.config.js
+
+cd packages/api
+npx prisma migrate deploy      # --reset 대신 데이터를 지키는 쪽
+npx prisma generate            # 스키마에서 만들어지는 타입. 건너뛰면 빌드 실패
+
+cd ..                          # 반드시 루트에서 빌드한다
+npx turbo run build --concurrency=1
+
+pm2 start ecosystem.config.js && pm2 save
+```
+
+**루트에서 빌드해야 하는 이유**: `packages/types/dist`는 저장소에 없다(gitignore).
+`packages/api`를 먼저 빌드하면 옛 `dist`를 읽어
+`Property 'issuerId' does not exist` 같은 오류가 난다.
+turbo가 `dependsOn`으로 types → api/web 순서를 잡아 준다.
+`--concurrency=1`은 메모리 부족으로 빌드가 죽는 것을 막는다.
+
+PM2 프로세스 이름은 `money-api`, `money-web`이다 (`ecosystem.config.js`).
+
 ### Docker로 배포
 
 ```bash
