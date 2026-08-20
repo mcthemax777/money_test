@@ -4,6 +4,7 @@ import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { InstitutionsService } from '../institutions/institutions.service';
 import { CardDto } from '@money/types';
+import { assertReorderIds } from '@/common/reorder';
 
 /** 카드 응답에 함께 실어 주는 관계. 응답 모양을 한곳에서 정한다. */
 const CARD_INCLUDE = {
@@ -105,10 +106,30 @@ export class CardsService {
     const cards = await this.prisma.card.findMany({
       where: { projectId: finalProjectId, isActive: true },
       include: CARD_INCLUDE,
-      orderBy: { createdAt: 'desc' },
+      // 사용자가 드래그로 정한 순서. 같으면 최근에 만든 것부터.
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
     });
 
     return cards.map((card) => this.toResponse(card));
+  }
+
+  /** 드래그로 바꾼 표시 순서 저장 */
+  async reorderCards(userId: string, ids: string[], projectId?: string) {
+    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
+
+    const rows = await this.prisma.card.findMany({
+      where: { projectId: finalProjectId },
+      select: { id: true },
+    });
+    assertReorderIds(ids, new Set(rows.map((row) => row.id)));
+
+    await this.prisma.$transaction(
+      ids.map((id, index) =>
+        this.prisma.card.update({ where: { id }, data: { sortOrder: index } }),
+      ),
+    );
+
+    return this.getCards(userId, finalProjectId);
   }
 
   async getCardById(id: string, userId: string) {
@@ -141,6 +162,12 @@ export class CardsService {
     const data: Prisma.CardUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    // 카드 번호는 응답에 마스킹만 나가므로 화면이 원래 값을 되돌려 보낼 수 없다.
+    // 키가 없으면 그대로 두고, 빈 문자열이면 지운다.
+    if (dto.cardNumber !== undefined) data.cardNumber = dto.cardNumber || null;
+    if (dto.expiryDate !== undefined) {
+      data.expiryDate = dto.expiryDate ? new Date(dto.expiryDate) : null;
+    }
     if (dto.statementClosingDay !== undefined) data.statementClosingDay = dto.statementClosingDay;
     if (dto.paymentDueDay !== undefined) data.paymentDueDay = dto.paymentDueDay;
     if (dto.creditLimit !== undefined) data.creditLimit = toDecimal(dto.creditLimit);

@@ -117,7 +117,9 @@ export function toListItem(
     personId: entry.personId,
     personName: entry.person?.name ?? '',
     amount: amount.toString(),
-    isFixed: primaryCategory?.isFixed ?? false,
+    // 이체는 대표 카테고리가 없다. 화면의 고정 체크는 수수료 다리에 붙으므로 그것을 읽는다.
+    // (수정 폼이 이 값을 그대로 되돌려 보내기 때문에, 여기서 놓치면 체크가 풀린다)
+    isFixed: (primaryCategory ?? feePosting)?.isFixed ?? false,
     categoryId: primaryCategory?.category?.id ?? null,
     categoryName: primaryCategory?.category?.name ?? null,
     parentCategoryId: primaryCategory?.category?.parent?.id ?? null,

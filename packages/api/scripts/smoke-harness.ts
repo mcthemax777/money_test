@@ -104,3 +104,31 @@ async function cleanup(prisma: PrismaClient, projectIds: string[], userIds: stri
     console.error('정리 실패. 아래 id가 남아 있을 수 있습니다:', { projectIds, userIds }, error);
   }
 }
+
+/**
+ * ProjectAccessService 대역.
+ *
+ * 권한 검증은 스모크 범위 밖이라 통과시키되, 타임존은 실제 프로젝트 값을 읽는다.
+ * 월 경계와 카드 청구주기가 이 값을 쓰기 때문에 하드코딩하면 검증 의미가 없다.
+ */
+export function projectAccessStub(prisma: PrismaClient, defaultProjectId: string) {
+  const timeZoneOf = async (projectId: string) => {
+    const project = await prisma.project.findUnique({
+      where: { id: projectId },
+      select: { timezone: true },
+    });
+    return project?.timezone || 'Asia/Seoul';
+  };
+
+  return {
+    resolveAndVerifyProjectId: async (_userId: string, projectId?: string) =>
+      projectId ?? defaultProjectId,
+    verifyUserHasAccessToProject: async () => undefined,
+    verifyUserRole: async () => undefined,
+    resolveProject: async (_userId: string, projectId?: string) => {
+      const id = projectId ?? defaultProjectId;
+      return { id, timeZone: await timeZoneOf(id) };
+    },
+    getProjectTimeZone: (projectId: string) => timeZoneOf(projectId),
+  } as any;
+}

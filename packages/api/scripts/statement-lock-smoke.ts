@@ -5,7 +5,8 @@ import { CategoriesService } from '@/modules/categories/categories.service';
 import { CardsService } from '@/modules/cards/cards.service';
 import { EntriesService } from '@/modules/entries/entries.service';
 import { StatementsService } from '@/modules/statements/statements.service';
-import { runSmoke } from './smoke-harness';
+import { InstitutionsService } from '@/modules/institutions/institutions.service';
+import { projectAccessStub, runSmoke } from './smoke-harness';
 
 /**
  * 결제된 청구서 보호.
@@ -17,16 +18,14 @@ runSmoke('statement-lock', async (ctx) => {
   const pid = project.id;
   const user = await ctx.createUser();
   const uid = user.id;
-  const access = {
-    resolveAndVerifyProjectId: async (_u: string, p?: string) => p ?? pid,
-    verifyUserHasAccessToProject: async () => undefined,
-  } as any;
+  const access = projectAccessStub(ctx.prisma, pid);
 
   const ledger = new LedgerService(ctx.prisma as any);
-  const accounts = new AccountsService(ctx.prisma as any, access, ledger);
+  const institutions = new InstitutionsService(ctx.prisma as any, access);
+  const accounts = new AccountsService(ctx.prisma as any, access, ledger, institutions);
   const people = new PeopleService(ctx.prisma as any, access);
   const categories = new CategoriesService(ctx.prisma as any, access);
-  const cards = new CardsService(ctx.prisma as any, access);
+  const cards = new CardsService(ctx.prisma as any, access, institutions);
   const entries = new EntriesService(ctx.prisma as any, access, ledger);
   const statements = new StatementsService(ctx.prisma as any, access, ledger);
 

@@ -3,8 +3,10 @@
 import { useState } from 'react';
 import Link from 'next/link';
 import { exportDataToExcel } from '@/lib/excel-export';
+import { useProjectTimeZone } from '@/store/project';
 
 export default function SettingsPage() {
+  const timeZone = useProjectTimeZone();
   const [isExporting, setIsExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState('');
 
@@ -12,7 +14,7 @@ export default function SettingsPage() {
     try {
       setIsExporting(true);
       setExportMessage('');
-      await exportDataToExcel();
+      await exportDataToExcel(timeZone);
       setExportMessage('엑셀 파일이 다운로드되었습니다.');
       setTimeout(() => setExportMessage(''), 3000);
     } catch (error) {

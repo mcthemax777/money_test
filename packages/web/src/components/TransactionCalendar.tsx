@@ -3,6 +3,8 @@
 import { useMemo } from 'react';
 import type { EntryListItem } from './TransactionItem';
 import { sumEntries } from '@/lib/entries';
+import { dateKeyOf } from '@/lib/datetime';
+import { useProjectTimeZone } from '@/store/project';
 
 interface CalendarDay {
   date: Date;
@@ -33,6 +35,8 @@ export default function TransactionCalendar({
   startDate,
   endDate,
 }: Props) {
+  // 거래가 며칠 칸에 들어가는지는 프로젝트 타임존 기준으로 판단한다.
+  const timeZone = useProjectTimeZone();
   // 표시 월은 부모가 관리한다. 내부 상태를 두면 홈 상단의 월 이동과 어긋난다.
   const currentDate = useMemo(() => new Date(year, month - 1, 1), [year, month]);
 
@@ -76,7 +80,7 @@ export default function TransactionCalendar({
       // 카드대금 결제는 소비가 아니라 부채 상환이라 달력 합계에서 뺀다.
       const dayEntries = entries.filter(
         (entry) =>
-          String(entry.date).split('T')[0] === dateStr && entry.kind !== 'card_payment',
+          dateKeyOf(entry.date, timeZone) === dateStr && entry.kind !== 'card_payment',
       );
 
       const { incomeTotal, expenseTotal } = sumEntries(dayEntries);
@@ -93,7 +97,7 @@ export default function TransactionCalendar({
     }
 
     return calendarDays;
-  }, [currentDate, entries]);
+  }, [currentDate, entries, timeZone]);
 
   // Date 생성자가 월 넘김(1월->전년 12월, 12월->다음해 1월)을 알아서 처리한다.
   const handlePrevMonth = () => {

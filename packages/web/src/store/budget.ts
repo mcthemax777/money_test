@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import type { EntryFilterQuery } from '@money/types';
 import { apiClient } from '@/lib/api-client';
 import { toNumber } from '@/lib/money';
 
@@ -50,7 +51,13 @@ interface BudgetStore {
   setMonthlyBudgets: (budgets: MonthlyBudget[]) => void;
 
   fetchBudgets: (projectId: string) => Promise<void>;
-  fetchMonthlyBudgets: (year: number, month: number, projectId: string) => Promise<void>;
+  fetchMonthlyBudgets: (
+    year: number,
+    month: number,
+    projectId: string,
+    /** 가계 화면의 자산주인/고정 필터. 사용금액에 같은 조건을 건다. */
+    filter?: EntryFilterQuery,
+  ) => Promise<void>;
   createBudget: (data: any) => Promise<void>;
   updateBudget: (id: string, data: any) => Promise<void>;
   deleteBudget: (id: string) => Promise<void>;
@@ -78,10 +85,10 @@ export const useBudget = create<BudgetStore>((set) => ({
     }
   },
 
-  fetchMonthlyBudgets: async (year, month, projectId) => {
+  fetchMonthlyBudgets: async (year, month, projectId, filter) => {
     set({ isLoading: true });
     try {
-      const monthlyBudgets = await apiClient.getBudgetForMonth(year, month, projectId);
+      const monthlyBudgets = await apiClient.getBudgetForMonth(year, month, projectId, filter);
       set({ monthlyBudgets: (monthlyBudgets ?? []).map(normalizeBudget) });
     } catch (error) {
       console.error('Failed to fetch monthly budgets:', error);

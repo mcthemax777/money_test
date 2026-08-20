@@ -1,4 +1,5 @@
 import type { EntryListItem } from '@/components/TransactionItem';
+import { dateKeyOf } from './datetime';
 import { toNumber } from './money';
 
 /**
@@ -37,12 +38,14 @@ export function buildDailyCumulative(
   entries: EntryListItem[],
   year: number,
   month: number,
+  timeZone: string,
 ): Array<{ day: number; amount: number; cumulative: number }> {
   const byDay = new Map<number, number>();
   for (const entry of entries) {
     const amount = expenseAmountOf(entry);
     if (amount === 0) continue;
-    const day = new Date(entry.date).getUTCDate();
+    // 며칠에 속하는지는 프로젝트 타임존 기준이다 (UTC로 읽으면 하루 밀린다).
+    const day = Number(dateKeyOf(entry.date, timeZone).slice(8, 10));
     byDay.set(day, (byDay.get(day) ?? 0) + amount);
   }
 

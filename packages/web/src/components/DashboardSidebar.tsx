@@ -3,12 +3,11 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import { useUserFilter } from '@/store/user-filter';
 import { useProject } from '@/store/project';
+import { useUserFilter } from '@/store/user-filter';
 import { useAuth } from '@/store/auth';
 import { apiClient } from '@/lib/api-client';
 import { UserAvatar } from '@/components/UserAvatar';
-import type { Person } from '@/lib/types';
 
 
 interface Project {
@@ -34,7 +33,6 @@ export default function DashboardSidebar() {
   const [showProjectChangeModal, setShowProjectChangeModal] = useState(false);
   const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
   const [isChanging, setIsChanging] = useState(false);
-  const { people, setPeople, selectedPersonIds, togglePersonId, setSelectedPersonIds } = useUserFilter();
   const { projects, setProjects, selectedProjectId, setSelectedProjectId } = useProject();
   const { setDefaultProject, defaultProjectData, user } = useAuth();
 
@@ -62,29 +60,6 @@ export default function DashboardSidebar() {
       loadProjects();
     }
   }, [projects.length, selectedProjectId, setProjects, setSelectedProjectId]);
-
-  // 사용자 로드
-  useEffect(() => {
-    if (!selectedProjectId) return;
-
-    const loadPeople = async () => {
-      try {
-        console.log('[Sidebar] Loading people from API for project:', selectedProjectId);
-        const data = await apiClient.getPeople(selectedProjectId);
-        console.log('[Sidebar] Loaded people:', data);
-        setPeople(data || []);
-        // 기본값: 모든 사용자 선택
-        if (selectedPersonIds.length === 0) {
-          setSelectedPersonIds((data || []).map((p: Person) => p.id));
-        }
-      } catch (err) {
-        console.error('[Sidebar] 사용자 목록 조회 실패:', err);
-        setPeople([]);
-      }
-    };
-
-    loadPeople();
-  }, [selectedProjectId]);
 
   const isActive = (href: string) => {
     if (href === '/dashboard') {
@@ -117,10 +92,10 @@ export default function DashboardSidebar() {
       const projectData = await setDefaultProject(pendingProjectId);
 
       if (projectData) {
-        // 응답 데이터를 각 스토어에 동시에 설정
-        // 이렇게 하면 모든 useEffect가 정확한 캐시 조건으로 실행됨
-        setPeople(projectData.people || []);
-        setSelectedPersonIds((projectData.people || []).map((p) => p.id));
+        // 프로젝트가 바뀌면 사람 필터 선택은 의미가 없어진다.
+        // 사람 목록과 필터는 가계 화면이 들고 있으므로 여기서는 비워만 둔다.
+        useUserFilter.getState().setPeople([]);
+        useUserFilter.getState().setSelectedPersonIds([]);
         setSelectedProjectId(pendingProjectId);
         console.log(`✅ 프로젝트 변경됨: ${pendingProjectId}`, projectData);
       }
@@ -202,29 +177,6 @@ export default function DashboardSidebar() {
               </button>
             ))}
           </div>
-        </div>
-
-        <div className="p-4 border-b border-gray-200">
-          <label className="block text-xs font-semibold text-gray-600 mb-3 uppercase tracking-wider">
-            사용자
-          </label>
-          {people && people.length > 0 ? (
-            <div className="space-y-2 max-h-48 overflow-y-auto">
-              {people.map((person) => (
-                <label key={person.id} className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={selectedPersonIds.includes(person.id)}
-                    onChange={() => togglePersonId(person.id)}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className="text-sm text-gray-700">{person.name}</span>
-                </label>
-              ))}
-            </div>
-          ) : (
-            <p className="text-sm text-gray-500">사용자 로딩 중...</p>
-          )}
         </div>
 
         <nav className="p-4">

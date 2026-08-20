@@ -6,6 +6,7 @@ import type {
   CardDto,
   CategoryDto,
   EntryDto,
+  EntryFilterQuery,
   FinancialInstitutionType,
   InstitutionDto,
   PersonDto,
@@ -343,6 +344,47 @@ class ApiClient {
     return response.data;
   }
 
+  /** 프로젝트 설정 변경. 지금은 집계 기준 타임존만 바꾼다. */
+  async updateProject(projectId: string, body: { timezone?: string }) {
+    const response = await this.client.patch<any>(`/projects/${projectId}`, body);
+    return response.data;
+  }
+
+  /** "구성원 중 나" 지정. null이면 해제. */
+  async setMyPerson(projectId: string, personId: string | null) {
+    const response = await this.client.patch<any>(`/projects/${projectId}/me`, { personId });
+    return response.data;
+  }
+
+  /** 목록 표시 순서 저장. 화면에 보이는 순서대로 id를 보낸다. */
+  async reorderPeople(ids: string[], projectId?: string | null) {
+    const response = await this.client.patch<PersonDto.Response[]>('/people/reorder', { ids }, {
+      params: projectId ? { projectId } : {},
+    });
+    return response.data;
+  }
+
+  async reorderAccounts(ids: string[], projectId?: string | null) {
+    const response = await this.client.patch<AccountDto.Response[]>('/accounts/reorder', { ids }, {
+      params: projectId ? { projectId } : {},
+    });
+    return response.data;
+  }
+
+  async reorderCards(ids: string[], projectId?: string | null) {
+    const response = await this.client.patch<CardDto.Response[]>('/cards/reorder', { ids }, {
+      params: projectId ? { projectId } : {},
+    });
+    return response.data;
+  }
+
+  async reorderCategories(ids: string[], projectId?: string | null) {
+    const response = await this.client.patch<CategoryDto.Response[]>('/categories/reorder', { ids }, {
+      params: projectId ? { projectId } : {},
+    });
+    return response.data;
+  }
+
   async leaveProject(projectId: string) {
     const response = await this.client.post<any>(`/projects/${projectId}/leave`);
     return response.data;
@@ -465,13 +507,15 @@ class ApiClient {
     await this.client.delete(`/budgets/${id}`);
   }
 
+  /** filter는 가계 화면의 자산주인/고정 필터. 사용금액에 같은 조건이 걸린다. */
   async getBudgetForMonth(
     year: number,
     month: number,
     projectId?: string | null,
+    filter?: EntryFilterQuery,
   ): Promise<BudgetDto.MonthlyBudget[]> {
     const response = await this.client.get<BudgetDto.MonthlyBudget[]>(`/budgets/${year}/${month}`, {
-      params: projectId ? { projectId } : {},
+      params: { ...(projectId ? { projectId } : {}), ...filter },
     });
     return response.data;
   }
@@ -513,9 +557,14 @@ class ApiClient {
   // 리포트 API Methods
   //
   // 집계는 전부 서버에서 한다. 화면이 거래 전량을 받아 합산하던 코드를 대체한다.
-  async getSummary(yearMonth: string, projectId?: string | null, personId?: string) {
+  /** filter는 가계 화면의 사람/고정 필터. 목록과 같은 조건을 넘겨야 합계가 맞는다. */
+  async getSummary(
+    yearMonth: string,
+    projectId?: string | null,
+    filter?: EntryFilterQuery & { personId?: string },
+  ) {
     const response = await this.client.get<any>('/reports/summary', {
-      params: { yearMonth, ...(projectId ? { projectId } : {}), ...(personId ? { personId } : {}) },
+      params: { yearMonth, ...(projectId ? { projectId } : {}), ...filter },
     });
     return response.data;
   }
@@ -524,15 +573,16 @@ class ApiClient {
     yearMonth: string,
     type: 'income' | 'expense',
     projectId?: string | null,
-    options?: { rollup?: boolean; personId?: string },
+    options?: { rollup?: boolean; personId?: string } & EntryFilterQuery,
   ) {
+    const { rollup, ...filter } = options ?? {};
     const response = await this.client.get<any>('/reports/category-breakdown', {
       params: {
         yearMonth,
         type,
         ...(projectId ? { projectId } : {}),
-        ...(options?.rollup === false ? { rollup: false } : {}),
-        ...(options?.personId ? { personId: options.personId } : {}),
+        ...(rollup === false ? { rollup: false } : {}),
+        ...filter,
       },
     });
     return response.data;
@@ -552,7 +602,7 @@ class ApiClient {
       endMonth?: string;
       months?: number;
       type?: 'income' | 'expense';
-    },
+    } & EntryFilterQuery,
     projectId?: string | null,
   ) {
     const response = await this.client.get<any>('/reports/trend', {
@@ -579,9 +629,13 @@ class ApiClient {
     return response.data;
   }
 
-  async getPaymentMethods(yearMonth: string, projectId?: string | null, personId?: string) {
+  async getPaymentMethods(
+    yearMonth: string,
+    projectId?: string | null,
+    filter?: EntryFilterQuery & { personId?: string },
+  ) {
     const response = await this.client.get<any>('/reports/payment-methods', {
-      params: { yearMonth, ...(projectId ? { projectId } : {}), ...(personId ? { personId } : {}) },
+      params: { yearMonth, ...(projectId ? { projectId } : {}), ...filter },
     });
     return response.data;
   }

@@ -3,20 +3,19 @@ import { LedgerService } from '@/modules/ledger/ledger.service';
 import { CardsService } from '@/modules/cards/cards.service';
 
 const D = (n: string | number) => new Prisma.Decimal(n);
-import { runSmoke } from './smoke-harness';
+import { InstitutionsService } from '@/modules/institutions/institutions.service';
+import { projectAccessStub, runSmoke } from './smoke-harness';
 
 runSmoke('ledger', async (ctx) => {
   const ledger = new LedgerService(ctx.prisma as any);
-  // 프로젝트 접근 검증은 스모크 범위 밖이라 통과시킨다.
-  const projectAccessStub = {
-    resolveAndVerifyProjectId: async (_u: string, pid: string) => pid,
-    verifyUserHasAccessToProject: async () => undefined,
-  };
-  const cards = new CardsService(ctx.prisma as any, projectAccessStub as any);
 
   // ── 준비 ──
   const project = await ctx.createProject({ baseCurrency: 'KRW' });
   const pid = project.id;
+  // 권한 검증은 스모크 범위 밖이라 통과시킨다. 타임존은 실제 프로젝트 값을 읽는다.
+  const access = projectAccessStub(ctx.prisma, pid);
+  const institutions = new InstitutionsService(ctx.prisma as any, access);
+  const cards = new CardsService(ctx.prisma as any, access, institutions);
   const person = await ctx.prisma.person.create({ data: { projectId: pid, name: '김철수' } });
 
   const bank = await ctx.prisma.account.create({

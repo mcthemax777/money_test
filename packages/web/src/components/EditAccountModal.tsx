@@ -7,9 +7,14 @@ import { toAmountString } from '@/lib/money';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@/hooks/useInstitutions';
+import { todayKey } from '@/lib/datetime';
+import { useProjectTimeZone } from '@/store/project';
 
 /** 개설 기관이 없는 유형. AddAccountModal, 서버의 NO_INSTITUTION_TYPES와 같아야 한다. */
 const NO_BANK_TYPES = ['cash', 'real_estate'];
+/** 하단 고정 버튼과 본문 form을 잇는 id */
+const FORM_ID = 'edit-account-form';
+
 
 const EMPTY_FORM = {
   ownerId: '',
@@ -17,6 +22,8 @@ const EMPTY_FORM = {
   institutionId: '',
   accountNumber: '',
   balance: '',
+  /** 이 날짜의 잔액이 위 값이었다는 뜻. 비어 있으면 서버가 오늘로 본다. */
+  balanceDate: '',
 };
 
 
@@ -40,6 +47,7 @@ export default function EditAccountModal({
   onDelete,
   projectId,
 }: EditAccountModalProps) {
+  const timeZone = useProjectTimeZone();
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -48,17 +56,21 @@ export default function EditAccountModal({
 
   const needsBankName = !!account && !NO_BANK_TYPES.includes(account.type);
 
+  // isOpen을 의존성에 넣는 이유: 닫을 때 폼을 비우므로, 같은 계좌 객체(참조 동일)로
+  // 다시 열면 account만 볼 때는 effect가 재실행되지 않아 빈 폼이 보였다.
   useEffect(() => {
-    if (account) {
+    if (isOpen && account) {
       setFormData({
         ownerId: account.ownerId ?? '',
         name: account.name,
         institutionId: account.institutionId ?? '',
         accountNumber: account.accountNumber || '',
         balance: account.balance,
+        // 기준일 기본값은 오늘. 과거 잔액을 바로잡으려면 사용자가 날짜를 바꾼다.
+        balanceDate: todayKey(timeZone),
       });
     }
-  }, [account]);
+  }, [isOpen, account, timeZone]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -72,6 +84,8 @@ export default function EditAccountModal({
       await apiClient.updateAccountV2(account.id, {
         name: formData.name,
         balance: toAmountString(formData.balance),
+        // 기준일을 주면 그 날 잔액이 목표값이 되도록 서버가 차액을 계산한다.
+        ...(formData.balanceDate ? { balanceDate: formData.balanceDate } : {}),
         // 기관을 비우면 null을 보내 연결을 끊는다. ''를 그대로 보내면 서버가 없는 id로 본다.
         ...(needsBankName ? { institutionId: formData.institutionId || null } : {}),
         ...(formData.accountNumber && { accountNumber: formData.accountNumber }),
@@ -111,8 +125,33 @@ export default function EditAccountModal({
   if (!account) return null;
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="계좌 수정">
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title="계좌 수정"
+      /* 버튼은 form 밖(하단 고정 영역)이라 form 속성으로 묶는다 */
+      footer={
+        <div className="flex gap-2">
+          <button
+            type="submit"
+            form={FORM_ID}
+            disabled={isSubmitting}
+            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >
+            {isSubmitting ? '수정 중...' : '수정하기'}
+          </button>
+          <button
+            type="button"
+            onClick={handleDeleteClick}
+            disabled={isDeleting || isSubmitting}
+            className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+          >
+            {isDeleting ? '삭제 중...' : '삭제하기'}
+          </button>
+        </div>
+      }
+    >
+      <form id={FORM_ID} onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             통장 주인
@@ -154,7 +193,7 @@ export default function EditAccountModal({
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            초기 잔액 (원)
+            잔액 (원)
           </label>
           <input
             type="number"
@@ -164,6 +203,21 @@ export default function EditAccountModal({
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             placeholder="0"
           />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            잔액 기준일
+          </label>
+          <input
+            type="date"
+            value={formData.balanceDate}
+            onChange={(e) => setFormData({ ...formData, balanceDate: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            이 날짜의 잔액으로 맞춥니다. 차액만큼 조정 전표가 남고, 기준일 이후 거래는 그대로 반영됩니다.
+          </p>
         </div>
 
         <div>
@@ -185,23 +239,6 @@ export default function EditAccountModal({
           </div>
         )}
 
-        <div className="flex gap-2 pt-4">
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-          >
-            {isSubmitting ? '수정 중...' : '수정하기'}
-          </button>
-          <button
-            type="button"
-            onClick={handleDeleteClick}
-            disabled={isDeleting || isSubmitting}
-            className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-          >
-            {isDeleting ? '삭제 중...' : '삭제하기'}
-          </button>
-        </div>
       </form>
     </Modal>
   );

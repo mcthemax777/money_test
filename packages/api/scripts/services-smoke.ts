@@ -6,7 +6,8 @@ import { CategoriesService } from '@/modules/categories/categories.service';
 import { CardsService } from '@/modules/cards/cards.service';
 
 const D = (n: string | number) => new Prisma.Decimal(n);
-import { runSmoke } from './smoke-harness';
+import { InstitutionsService } from '@/modules/institutions/institutions.service';
+import { projectAccessStub, runSmoke } from './smoke-harness';
 
 runSmoke('services', async (ctx) => {
   const project = await ctx.createProject();
@@ -14,16 +15,14 @@ runSmoke('services', async (ctx) => {
   // createdByUserId 는 실제 User를 참조하므로 테스트용 계정을 만든다
   const u1 = await ctx.createUser();
 
-  const access = {
-    resolveAndVerifyProjectId: async (_u: string, p?: string) => p ?? pid,
-    verifyUserHasAccessToProject: async () => undefined,
-  } as any;
+  const access = projectAccessStub(ctx.prisma, pid);
 
   const ledger = new LedgerService(ctx.prisma as any);
-  const accounts = new AccountsService(ctx.prisma as any, access, ledger);
+  const institutions = new InstitutionsService(ctx.prisma as any, access);
+  const accounts = new AccountsService(ctx.prisma as any, access, ledger, institutions);
   const people = new PeopleService(ctx.prisma as any, access);
   const categories = new CategoriesService(ctx.prisma as any, access);
-  const cards = new CardsService(ctx.prisma as any, access);
+  const cards = new CardsService(ctx.prisma as any, access, institutions);
 
   // ── 사람 ──
   const person = await people.createPerson(u1.id, { name: '김철수' }, pid);
@@ -102,4 +101,29 @@ runSmoke('services', async (ctx) => {
   });
   await ctx.expectReject('사용 중인 소분류를 가진 대분류 삭제 거부',
     () => categories.deleteCategory(food.id, u1.id));
+
+  // ── 표시 순서 (드래그 정렬) ──
+  await cards.createCard(u1.id, {
+    paymentAccountId: bank.id, name: '신한 체크', cardType: 'debit', issuerId: 'fi_card_shinhan',
+  }, pid);
+
+  /** 목록 API와 같은 정렬로 id만 읽는다 */
+  const cardOrder = async () =>
+    (
+      await ctx.prisma.card.findMany({
+        where: { projectId: pid },
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+        select: { id: true },
+      })
+    ).map((row) => row.id);
+
+  const initial = await cardOrder();
+  ctx.check('카드 2장', initial.length, 2);
+
+  const reversed = [...initial].reverse();
+  await cards.reorderCards(u1.id, reversed, pid);
+  ctx.check('카드 순서 저장', (await cardOrder()).join(','), reversed.join(','));
+
+  await ctx.expectReject('이 프로젝트에 없는 카드 id로 정렬하면 거부',
+    () => cards.reorderCards(u1.id, ['nope'], pid));
 });

@@ -7,6 +7,10 @@ interface CreateProjectDto {
   description?: string;
 }
 
+interface UpdateProjectDto {
+  timezone?: string;
+}
+
 @Injectable()
 export class ProjectsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -45,6 +49,31 @@ export class ProjectsService {
     };
   }
 
+  /**
+   * 프로젝트 설정 변경. 지금은 집계 기준 타임존만 다룬다.
+   *
+   * 타임존을 바꾸면 월 합계와 카드 청구주기 경계가 함께 움직이므로 소유자만 바꿀 수 있다.
+   */
+  async updateProject(projectId: string, userId: string, dto: UpdateProjectDto) {
+    await this.verifyUserIsOwner(projectId, userId);
+
+    const data: { timezone?: string } = {};
+    if (dto.timezone !== undefined) {
+      if (!isValidTimeZone(dto.timezone)) {
+        throw new BadRequestException('알 수 없는 타임존입니다.');
+      }
+      data.timezone = dto.timezone;
+    }
+
+    if (Object.keys(data).length === 0) {
+      throw new BadRequestException('변경할 값이 없습니다.');
+    }
+
+    const project = await this.prisma.project.update({ where: { id: projectId }, data });
+    const member = await this.verifyUserInProject(projectId, userId);
+    return { ...project, role: member.role };
+  }
+
   async getMyProjects(userId: string) {
     const projects = await this.prisma.projectMember.findMany({
       where: { userId },
@@ -56,7 +85,34 @@ export class ProjectsService {
     return projects.map((pm) => ({
       ...pm.project,
       role: pm.role,
+      /** 이 사용자가 이 프로젝트에서 "나"로 지정한 구성원 */
+      myPersonId: pm.personId,
     }));
+  }
+
+  /**
+   * "구성원 중 나" 지정.
+   *
+   * 프로젝트 단위가 아니라 멤버십 단위다. 한 가계부를 여러 사용자가 함께 쓰면
+   * 각자 다른 구성원을 자기로 지정한다. null을 주면 지정을 해제한다.
+   */
+  async setMyPerson(projectId: string, userId: string, personId: string | null) {
+    const member = await this.verifyUserInProject(projectId, userId);
+
+    if (personId) {
+      const person = await this.prisma.person.findUnique({ where: { id: personId } });
+      if (!person || person.projectId !== projectId) {
+        throw new NotFoundException('이 프로젝트의 구성원이 아닙니다.');
+      }
+    }
+
+    const updated = await this.prisma.projectMember.update({
+      where: { id: member.id },
+      data: { personId },
+      include: { project: true },
+    });
+
+    return { ...updated.project, role: updated.role, myPersonId: updated.personId };
   }
 
   async getProjectMembers(projectId: string, userId: string) {
@@ -669,5 +725,15 @@ export class ProjectsService {
 
   private generateInvitationCode(): string {
     return randomBytes(16).toString('hex');
+  }
+}
+
+/** IANA 타임존 이름인지 확인한다. ICU가 모르는 이름이면 예외가 난다. */
+function isValidTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone });
+    return true;
+  } catch {
+    return false;
   }
 }

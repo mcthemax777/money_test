@@ -1,4 +1,5 @@
 import { Injectable, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { DEFAULT_TIME_ZONE } from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
 
 @Injectable()
@@ -132,5 +133,34 @@ export class ProjectAccessService {
     const projectId = projectIdParam || (await this.getDefaultProjectId(userId));
     await this.verifyUserHasAccessToProject(userId, projectId);
     return projectId;
+  }
+
+  /**
+   * projectId와 집계 기준 타임존을 함께 반환 (권한 확인 포함).
+   *
+   * 월·일 경계를 계산하는 서비스는 이 함수를 쓴다. 거래 시각은 UTC 인스턴트로
+   * 저장되지만 "8월"의 경계는 프로젝트 타임존의 벽시계 기준이어야 한다.
+   */
+  async resolveProject(
+    userId: string,
+    projectIdParam?: string,
+  ): Promise<{ id: string; timeZone: string }> {
+    const projectId = await this.resolveAndVerifyProjectId(userId, projectIdParam);
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { timezone: true },
+    });
+
+    return { id: projectId, timeZone: project?.timezone || DEFAULT_TIME_ZONE };
+  }
+
+  /** 프로젝트의 집계 기준 타임존. 권한 확인이 이미 끝난 경로에서 쓴다. */
+  async getProjectTimeZone(projectId: string): Promise<string> {
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { timezone: true },
+    });
+
+    return project?.timezone || DEFAULT_TIME_ZONE;
   }
 }

@@ -6,6 +6,9 @@ import Modal from '@/components/Modal';
 import type { Person } from '@/lib/types';
 
 
+/** 하단 고정 버튼과 본문 form을 잇는 id */
+const FORM_ID = 'person-form';
+
 interface PersonModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -103,10 +106,48 @@ export default function PersonModal({
     return '구성원 상세정보';
   };
 
+  const isFormMode = editMode || mode === 'add';
+
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title={getTitle()}>
-      {editMode || mode === 'add' ? (
-        <form onSubmit={handleSubmit} className="space-y-4">
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title={getTitle()}
+      /* 버튼은 form 밖(하단 고정 영역)이라 form 속성으로 묶는다 */
+      footer={
+        isFormMode ? (
+          <div className="flex gap-2">
+            <button
+              type="submit"
+              form={FORM_ID}
+              disabled={isSubmitting}
+              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            >
+              {isSubmitting ? (mode === 'add' ? '추가 중...' : '수정 중...') : (mode === 'add' ? '추가하기' : '수정하기')}
+            </button>
+            {mode === 'edit' && (
+              <button
+                type="button"
+                onClick={handleDeleteClick}
+                disabled={isDeleting || isSubmitting}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                {isDeleting ? '삭제 중...' : '삭제하기'}
+              </button>
+            )}
+          </div>
+        ) : (
+          <button
+            onClick={() => setEditMode(true)}
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+          >
+            수정하기
+          </button>
+        )
+      }
+    >
+      {isFormMode ? (
+        <form id={FORM_ID} onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               이름
@@ -140,29 +181,10 @@ export default function PersonModal({
             </div>
           )}
 
-          <div className="flex gap-2 pt-4">
-            <button
-              type="submit"
-              disabled={isSubmitting}
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-            >
-              {isSubmitting ? (mode === 'add' ? '추가 중...' : '수정 중...') : (mode === 'add' ? '추가하기' : '수정하기')}
-            </button>
-            {mode === 'edit' && (
-              <button
-                type="button"
-                onClick={handleDeleteClick}
-                disabled={isDeleting || isSubmitting}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-              >
-                {isDeleting ? '삭제 중...' : '삭제하기'}
-              </button>
-            )}
-          </div>
         </form>
       ) : (
         <>
-          <div className="space-y-4 max-h-96 overflow-y-auto">
+          <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 이름
@@ -184,14 +206,6 @@ export default function PersonModal({
             )}
           </div>
 
-          <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
-            <button
-              onClick={() => setEditMode(true)}
-              className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              수정하기
-            </button>
-          </div>
         </>
       )}
     </Modal>

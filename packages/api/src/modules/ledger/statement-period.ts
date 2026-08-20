@@ -1,21 +1,39 @@
+import { clampDayOfMonth, zonedParts } from '@money/types';
+
 /**
  * 신용카드 청구 주기 계산.
  *
  * 마감일(statementClosingDay)과 결제일(paymentDueDay)은 "매월 N일" 형태로 저장되지만
  * 달마다 말일이 다르므로 실제 날짜로 바꿀 때 clamp가 필요하다.
  * 예: 마감일 31일 + 2월 -> 2월 28일(윤년이면 29일)
+ *
+ * 거래일이 어느 주기에 속하는지는 **프로젝트 타임존의 달력 날짜**로 판단한다.
+ * 거래는 UTC 인스턴트로 저장되므로, UTC 기준으로 날짜를 읽으면 한국의
+ * 00:00~09:00 거래가 하루 앞 주기로 밀린다.
+ *
+ * 반환하는 세 값은 인스턴트가 아니라 **달력 날짜 표시자**다. CardStatement의
+ * periodStart/periodEnd/dueDate 컬럼이 `@db.Date`라 날짜만 저장되므로,
+ * 해당 날짜의 UTC 자정을 담은 Date로 돌려준다.
  */
 
-/** 해당 연월에서 dayOfMonth를 그 달의 말일로 잘라낸 Date (UTC 자정) */
-export function clampDayOfMonth(year: number, monthIndex: number, dayOfMonth: number): Date {
-  const lastDay = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
-  return new Date(Date.UTC(year, monthIndex, Math.min(dayOfMonth, lastDay)));
+/** 달력 날짜 표시자. `@db.Date` 컬럼에 그대로 넣는다. */
+function dateMarker(year: number, month: number, day: number): Date {
+  return new Date(Date.UTC(year, month - 1, day));
+}
+
+/** month(1~12)에 delta를 더한 연/월. 12월을 넘으면 해가 바뀐다. */
+function shiftMonth(year: number, month: number, delta: number): { year: number; month: number } {
+  const index = month - 1 + delta;
+  return {
+    year: year + Math.floor(index / 12),
+    month: ((index % 12) + 12) % 12 + 1,
+  };
 }
 
 export interface StatementPeriod {
   periodStart: Date;
   periodEnd: Date; // 마감일
-  dueDate: Date;   // 결제일
+  dueDate: Date; // 결제일
 }
 
 /**
@@ -30,31 +48,33 @@ export function resolveStatementPeriod(
   transactionDate: Date,
   closingDay: number,
   dueDay: number,
+  timeZone: string,
 ): StatementPeriod {
-  const year = transactionDate.getUTCFullYear();
-  const monthIndex = transactionDate.getUTCMonth();
-
-  const closingThisMonth = clampDayOfMonth(year, monthIndex, closingDay);
+  const { year, month, day } = zonedParts(transactionDate, timeZone);
 
   // 거래일이 이번 달 마감일보다 늦으면 다음 달 마감분에 속한다.
-  const periodEnd =
-    transactionDate.getTime() <= closingThisMonth.getTime()
-      ? closingThisMonth
-      : clampDayOfMonth(year, monthIndex + 1, closingDay);
+  const closingThisMonth = clampDayOfMonth(year, month, closingDay);
+  const end =
+    day <= closingThisMonth ? { year, month } : shiftMonth(year, month, 1);
+  const endDay = clampDayOfMonth(end.year, end.month, closingDay);
 
   // 직전 마감일 다음 날이 주기 시작일
-  const previousClosing = clampDayOfMonth(
-    periodEnd.getUTCFullYear(),
-    periodEnd.getUTCMonth() - 1,
-    closingDay,
+  const previous = shiftMonth(end.year, end.month, -1);
+  const previousClosing = dateMarker(
+    previous.year,
+    previous.month,
+    clampDayOfMonth(previous.year, previous.month, closingDay),
   );
   const periodStart = new Date(previousClosing.getTime() + 24 * 60 * 60 * 1000);
 
   // 마감일 이후 처음 돌아오는 결제일
-  let dueDate = clampDayOfMonth(periodEnd.getUTCFullYear(), periodEnd.getUTCMonth(), dueDay);
-  if (dueDate.getTime() <= periodEnd.getTime()) {
-    dueDate = clampDayOfMonth(periodEnd.getUTCFullYear(), periodEnd.getUTCMonth() + 1, dueDay);
-  }
+  const dueThisMonth = clampDayOfMonth(end.year, end.month, dueDay);
+  const due = dueThisMonth > endDay ? end : shiftMonth(end.year, end.month, 1);
+  const dueDate = dateMarker(due.year, due.month, clampDayOfMonth(due.year, due.month, dueDay));
 
-  return { periodStart, periodEnd, dueDate };
+  return {
+    periodStart,
+    periodEnd: dateMarker(end.year, end.month, endDay),
+    dueDate,
+  };
 }

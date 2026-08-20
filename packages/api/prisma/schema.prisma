@@ -107,6 +107,9 @@ model Project {
   name         String
   description  String?
   baseCurrency String  @default("KRW") // 리포트 기준통화
+  // 집계 기준 타임존. 월 합계와 카드 청구주기 경계를 이 타임존의 벽시계로 계산한다.
+  // 구성원마다 다르면 같은 가계부에서 서로 다른 월 합계를 보게 되므로 프로젝트 단위로 둔다.
+  timezone     String  @default("Asia/Seoul")
 
   members      ProjectMember[]
   invitations  ProjectInvitation[]
@@ -128,14 +131,20 @@ model ProjectMember {
   projectId String
   userId    String
   role      ProjectRole @default(editor)
+  // 이 사용자가 이 프로젝트에서 "나"로 쓰는 구성원.
+  // Person에 userId를 두지 않는 이유: 한 프로젝트에 여러 로그인 사용자가 있을 수 있고,
+  // 각자 다른 Person을 자기로 지정할 수 있어야 한다.
+  personId  String?
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
   user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  person  Person? @relation(fields: [personId], references: [id], onDelete: SetNull)
 
   joinedAt DateTime @default(now())
 
   @@unique([projectId, userId])
   @@index([userId])
+  @@index([personId])
 }
 
 // 프로젝트 초대 링크 (코드를 아는 사람이 수락하면 멤버가 된다)
@@ -191,15 +200,19 @@ model Person {
   name         String
   relationship String? // 배우자, 자녀 등
   isActive     Boolean @default(true)
+  // 화면 표시 순서. 사용자가 드래그로 바꾼다. 같으면 createdAt 순.
+  sortOrder    Int     @default(0)
 
-  project  Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project  Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   accounts Account[]
   entries  JournalEntry[]
+  members  ProjectMember[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([projectId, isActive])
+  @@index([projectId, sortOrder])
 }
 
 // ─────────────────────────────────────────────
@@ -247,6 +260,8 @@ model Account {
   // 캐시된 잔액. 근거는 Posting.amount 합계이며 6절 검증 쿼리로 대조한다.
   balance       Decimal     @default(0) @db.Decimal(19, 4)
   isActive      Boolean     @default(true)
+  // 화면 표시 순서. 사용자가 드래그로 바꾼다. 같으면 createdAt 순.
+  sortOrder     Int         @default(0)
 
   project          Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
   owner            Person?               @relation(fields: [ownerId], references: [id])
@@ -263,6 +278,7 @@ model Account {
   @@index([projectId, ownerId, isActive])
   @@index([projectId, type])
   @@index([institutionId])
+  @@index([projectId, sortOrder])
 }
 
 // 투자성 계좌(investment, real_estate)에만 존재하는 위성 테이블
@@ -309,6 +325,8 @@ model Category {
   defaultIsFixed Boolean      @default(false) // 이 카테고리로 만든 posting의 isFixed 기본값
   isDefault      Boolean      @default(false) // "선택안함" 등 삭제 불가 항목
   isActive       Boolean      @default(true)
+  // 화면 표시 순서. 같은 부모 안에서만 의미가 있다. 같으면 createdAt 순.
+  sortOrder      Int          @default(0)
 
   project  Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
@@ -349,6 +367,8 @@ model Card {
   statementClosingDay Int? // 마감일 1~31. credit만 사용
   paymentDueDay       Int? // 결제일 1~31. credit만 사용
   isActive            Boolean   @default(true)
+  // 화면 표시 순서. 사용자가 드래그로 바꾼다. 같으면 createdAt 순.
+  sortOrder           Int       @default(0)
 
   project          Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
   issuer           FinancialInstitution @relation(fields: [issuerId], references: [id])
@@ -363,6 +383,7 @@ model Card {
   @@index([projectId, isActive])
   @@index([paymentAccountId])
   @@index([issuerId])
+  @@index([projectId, sortOrder])
 }
 
 

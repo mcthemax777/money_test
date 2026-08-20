@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { currentYearMonth } from '@/lib/datetime';
+import { useProjectTimeZone } from '@/store/project';
 
 interface MonthHeaderProps {
   year: number;
@@ -26,6 +28,7 @@ export default function MonthHeader({
   onMonthChange,
   right,
 }: MonthHeaderProps) {
+  const timeZone = useProjectTimeZone();
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   // 선택기 안에서 보고 있는 연도. 실제 선택과 분리해야 12월에서 다음 해를 훑어볼 수 있다.
   const [pickerYear, setPickerYear] = useState(year);
@@ -63,9 +66,8 @@ export default function MonthHeader({
     };
   }, [isPickerOpen]);
 
-  const today = new Date();
-  const thisYear = today.getFullYear();
-  const thisMonth = today.getMonth() + 1;
+  // "이번 달" 판단은 프로젝트 타임존 기준이다.
+  const { year: thisYear, month: thisMonth } = currentYearMonth(timeZone);
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-4 mb-6">

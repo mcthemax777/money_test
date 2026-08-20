@@ -1,7 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiClient } from '@/lib/api-client';
+import { todayKey } from '@/lib/datetime';
+import { useProjectTimeZone } from '@/store/project';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@/hooks/useInstitutions';
@@ -35,13 +37,16 @@ const ACCOUNT_TYPES = [
 /** 개설 기관을 물어볼 필요가 없는 유형. 서버의 NO_INSTITUTION_TYPES와 같아야 한다. */
 const NO_BANK_TYPES = ['cash', 'real_estate'];
 
+/** 하단 고정 버튼과 본문 form을 잇는 id */
+const FORM_ID = 'add-account-form';
+
 const EMPTY_FORM = {
   ownerId: '',
   type: 'deposit' as AccountType,
   name: '',
   institutionId: '',
   openingBalance: '',
-  openingBalanceDate: new Date().toISOString().split('T')[0],
+  openingBalanceDate: '',
   accountNumber: '',
 };
 
@@ -52,10 +57,21 @@ export default function AddAccountModal({
   people,
   projectId,
 }: AddAccountModalProps) {
-  const [formData, setFormData] = useState(EMPTY_FORM);
+  // 기준일 기본값은 프로젝트 타임존의 오늘이다 (브라우저 로컬이 아니다).
+  const timeZone = useProjectTimeZone();
+  const [formData, setFormData] = useState(() => ({
+    ...EMPTY_FORM,
+    openingBalanceDate: todayKey(timeZone),
+  }));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const { options: bankOptions, error: bankError } = useInstitutions('bank');
+
+  // 닫았다 다시 열면 기준일을 그 시점의 오늘로 되돌린다.
+  useEffect(() => {
+    if (!isOpen) return;
+    setFormData((prev) => ({ ...prev, openingBalanceDate: prev.openingBalanceDate || todayKey(timeZone) }));
+  }, [isOpen, timeZone]);
 
   const needsBankName = !NO_BANK_TYPES.includes(formData.type);
 
@@ -90,14 +106,29 @@ export default function AddAccountModal({
   };
 
   const handleClose = () => {
-    setFormData(EMPTY_FORM);
+    setFormData({ ...EMPTY_FORM, openingBalanceDate: todayKey(timeZone) });
     setError('');
     onClose();
   };
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="계좌 추가">
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title="계좌 추가"
+      /* 버튼은 form 밖(하단 고정 영역)에 있으므로 form 속성으로 묶는다 */
+      footer={
+        <button
+          type="submit"
+          form={FORM_ID}
+          disabled={isSubmitting}
+          className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+        >
+          {isSubmitting ? '추가 중...' : '추가하기'}
+        </button>
+      }
+    >
+      <form id={FORM_ID} onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">통장 주인</label>
           <CustomSelect
@@ -183,14 +214,6 @@ export default function AddAccountModal({
         {error && (
           <div className="p-3 bg-red-50 text-red-800 text-sm rounded">{error}</div>
         )}
-
-        <button
-          type="submit"
-          disabled={isSubmitting}
-          className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-        >
-          {isSubmitting ? '추가 중...' : '추가하기'}
-        </button>
       </form>
     </Modal>
   );

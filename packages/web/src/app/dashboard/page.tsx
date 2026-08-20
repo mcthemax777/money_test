@@ -4,12 +4,25 @@ import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/store/auth';
 import { useUserFilter } from '@/store/user-filter';
-import { useProject } from '@/store/project';
+import { useMyPersonId, useProject, useProjectTimeZone } from '@/store/project';
 import { useBudget } from '@/store/budget';
 import { apiClient } from '@/lib/api-client';
 import type { Account, Card, Category, Person } from '@/lib/types';
 import { formatCurrency, toAmountString, toNumber } from '@/lib/money';
+import { DAY_OF_MONTH_HINT, DAY_OF_MONTH_OPTIONS } from '@/lib/day-of-month';
+import {
+  dateKeyOf,
+  dateMarkerKey,
+  formatDateTime,
+  currentYearMonth,
+  monthQueryRange,
+  nowTimeKey,
+  timeInputOf,
+  todayKey,
+} from '@/lib/datetime';
+import { zonedFormValueToUtc } from '@money/types';
 import CustomSelect from '@/components/CustomSelect';
+import ChoiceModal from '@/components/ChoiceModal';
 import Modal from '@/components/Modal';
 import TransactionCalendar from '@/components/TransactionCalendar';
 import TransactionListView from '@/components/TransactionListView';
@@ -20,8 +33,17 @@ import TransactionItem, { EntryListItem } from '@/components/TransactionItem';
 import { BudgetCard } from '@/components/BudgetCard';
 import { BudgetDetailModal } from '@/components/BudgetDetailModal';
 import PaymentMethodTab from '@/components/PaymentMethodTab';
+import EntryFilterBar, { FixedType } from '@/components/EntryFilterBar';
 import { useInstitutions } from '@/hooks/useInstitutions';
+import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import type { EntryFilterQuery } from '@money/types';
 import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+
+/** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
+const ENTRY_FORM_ID = 'entry-form';
+const BUDGET_FORM_ID = 'detail-budget-form';
+const CARD_FORM_ID = 'card-form';
+const CATEGORY_FORM_ID = 'category-form';
 
 const ENTRY_KIND_LABEL: Record<string, string> = {
   expense: '지출',
@@ -38,8 +60,13 @@ const ENTRY_KIND_LABEL: Record<string, string> = {
 
 export default function TransactionsPage() {
   const { isAuthenticated, loadUser, user, defaultProjectData } = useAuth();
-  const { selectedPersonIds, setPeople: setStorePeople } = useUserFilter();
+  const { selectedPersonIds, setPeople: setStorePeople, setSelectedPersonIds, togglePersonId } =
+    useUserFilter();
   const { selectedProjectId } = useProject();
+  // 날짜 입력과 표시는 브라우저 로컬이 아니라 프로젝트 기준 타임존으로 해석한다.
+  const timeZone = useProjectTimeZone();
+  /** 설정에서 지정한 "구성원 중 나". 새 거래의 사용자 기본값이 된다. */
+  const myPersonId = useMyPersonId();
   const { monthlyBudgets, fetchMonthlyBudgets, createBudget: createBudgetApi, updateBudget: updateBudgetApi, deleteBudget: deleteBudgetApi } = useBudget();
   const router = useRouter();
   const [entries, setEntries] = useState<EntryListItem[]>([]);
@@ -58,8 +85,8 @@ export default function TransactionsPage() {
   const [startDate, setStartDate] = useState<Date | null>(null);
   const [endDate, setEndDate] = useState<Date | null>(null);
   const [displayEntries, setDisplayEntries] = useState<EntryListItem[]>([]);
-  const [currentMonth, setCurrentMonth] = useState<number>(new Date().getMonth() + 1);
-  const [currentYear, setCurrentYear] = useState<number>(new Date().getFullYear());
+  const [currentMonth, setCurrentMonth] = useState<number>(() => currentYearMonth(timeZone).month);
+  const [currentYear, setCurrentYear] = useState<number>(() => currentYearMonth(timeZone).year);
   const [viewType, setViewType] = useState<'calendar' | 'budget' | 'payment-method'>('calendar');
   const [budgetType, setBudgetType] = useState<'income' | 'expense'>('expense');
   const [expandedBudgetIds, setExpandedBudgetIds] = useState<Set<string>>(new Set());
@@ -96,7 +123,7 @@ export default function TransactionsPage() {
     color: '',
   });
   const [categorySubmitting, setCategorySubmitting] = useState(false);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState(() => ({
     method: 'account',
     accountId: '',
     cardId: '',
@@ -112,10 +139,10 @@ export default function TransactionsPage() {
     transferFee: '',
     transferFeeMainCategoryId: '',
     transferFeeSubCategoryId: '',
-    date: new Date().toISOString().split('T')[0],
+    date: todayKey(timeZone),
     time: '',
     isFixed: false,
-  });
+  }));
   const [isSubmitting, setIsSubmitting] = useState(false);
   /**
    * 수정 중인 거래가 이미 결제된 청구서에 포함되어 있으면 그 청구 기간.
@@ -124,6 +151,10 @@ export default function TransactionsPage() {
    * 같은 청구서에 머무르면 청구액이 달라지지 않으므로 오타 정정에 문제가 없다.
    */
   const [lockedPeriod, setLockedPeriod] = useState<{ start: string; end: string } | null>(null);
+  /** 고정/변동 선택. 둘 다 고른 상태로 시작한다 (= 전체). */
+  const [selectedFixedTypes, setSelectedFixedTypes] = useState<FixedType[]>(['fixed', 'variable']);
+  /** 결제수단 드롭다운이 계좌·카드를 합쳤으므로 "무엇을 추가할지"는 이 팝업에서 고른다. */
+  const [isMethodChooserOpen, setIsMethodChooserOpen] = useState(false);
 
   useEffect(() => {
     const initializeProject = async () => {
@@ -180,14 +211,30 @@ export default function TransactionsPage() {
 
         setAccounts(accountsData || []);
         setPeople(peopleData || []);
+        setStorePeople(peopleData || []);
         setCards(cardsData || []);
         setCategories(categoriesData || []);
 
+        // 저장된 사람 필터를 이 프로젝트의 구성원에 맞춘다.
+        //   - 한 번도 건드리지 않았으면 전체 선택으로 시작한다.
+        //     (아무도 고르지 않은 상태는 "거래 없음"이라 첫 화면이 비어 버린다)
+        //   - 건드린 적이 있으면 이 프로젝트에 없는 id만 걷어낸다.
+        const loadedPeople = peopleData || [];
+        const validIds = new Set(loadedPeople.map((person: Person) => person.id));
+        const stillValid = selectedPersonIds.filter((id) => validIds.has(id));
+
+        if (!useUserFilter.getState().personFilterTouched) {
+          setSelectedPersonIds(loadedPeople.map((person: Person) => person.id));
+        } else if (stillValid.length !== selectedPersonIds.length) {
+          setSelectedPersonIds(stillValid);
+        }
+
         // 초기 월 설정. 거래는 아래 월별 useEffect가 불러온다.
-        const today = new Date();
+        // 이번 달 판단도 프로젝트 타임존 기준이다.
+        const today = currentYearMonth(timeZone);
         setDisplayEntries([]);
-        setCurrentMonth(today.getMonth() + 1);
-        setCurrentYear(today.getFullYear());
+        setCurrentMonth(today.month);
+        setCurrentYear(today.year);
       } catch (err) {
         setError('데이터 조회에 실패했습니다.');
       } finally {
@@ -198,11 +245,35 @@ export default function TransactionsPage() {
     loadData();
   }, [isAuthenticated, router, selectedProjectId, defaultProjectData]);
 
+  /**
+   * 서버로 보내는 필터.
+   *
+   * 체크 상태를 그대로 넘긴다. 전부 고른 경우만 파라미터를 빼서 서버가 필터 없는
+   * 기본 경로를 타게 하고(사람을 새로 추가해도 자동 포함), 하나도 고르지 않았으면
+   * 빈 값을 보내 "결과 없음"을 뜻하게 한다. 빼는 것과 빈 값은 서버에서 다르게 읽는다.
+   * 체크박스를 연달아 누르는 동안은 디바운스로 조회를 미룬다.
+   */
+  const entryFilter = useMemo<EntryFilterQuery>(() => {
+    const allPeopleSelected =
+      people.length > 0 && selectedPersonIds.length === people.length;
+    const allFixedSelected = selectedFixedTypes.length === 2;
+
+    return {
+      ...(allPeopleSelected ? {} : { personIds: selectedPersonIds.join(',') }),
+      ...(allFixedSelected ? {} : { fixedTypes: selectedFixedTypes.join(',') }),
+    };
+  }, [selectedPersonIds, people.length, selectedFixedTypes]);
+  const appliedFilter = useDebouncedValue(entryFilter, 250);
+  /** 필터가 걸려 있는지. 목록이 비었을 때 이유를 알려주는 데 쓴다. */
+  const isFilterNarrowed = Object.keys(appliedFilter).length > 0;
+
+  // 예산 사용금액도 같은 필터를 탄다. 이 선언은 appliedFilter 뒤에 있어야 한다
+  // (의존성 배열은 렌더 중에 평가되므로 앞에 두면 초기화 전 접근이 된다).
   useEffect(() => {
     if (selectedProjectId && currentYear && currentMonth) {
-      fetchMonthlyBudgets(currentYear, currentMonth, selectedProjectId);
+      fetchMonthlyBudgets(currentYear, currentMonth, selectedProjectId, appliedFilter);
     }
-  }, [selectedProjectId, currentYear, currentMonth, fetchMonthlyBudgets]);
+  }, [selectedProjectId, currentYear, currentMonth, fetchMonthlyBudgets, appliedFilter]);
 
   /**
    * 표시 중인 달의 거래와 합계를 가져온다.
@@ -214,20 +285,19 @@ export default function TransactionsPage() {
     if (!selectedProjectId || !currentYear || !currentMonth) return;
 
     const yearMonth = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
-    const monthStart = new Date(Date.UTC(currentYear, currentMonth - 1, 1));
-    const monthEnd = new Date(Date.UTC(currentYear, currentMonth, 0));
+    const { startDate, endDate } = monthQueryRange(currentYear, currentMonth, timeZone);
 
     const [entriesRes, summaryRes] = await Promise.all([
       apiClient.getEntries(
-        { startDate: monthStart.toISOString(), endDate: monthEnd.toISOString(), limit: 200 },
+        { startDate, endDate, limit: 200, ...appliedFilter },
         selectedProjectId,
       ),
-      apiClient.getSummary(yearMonth, selectedProjectId),
+      apiClient.getSummary(yearMonth, selectedProjectId, appliedFilter),
     ]);
 
     setEntries(entriesRes?.data ?? []);
     setSummary(summaryRes ?? { income: '0', expense: '0' });
-  }, [selectedProjectId, currentYear, currentMonth]);
+  }, [selectedProjectId, currentYear, currentMonth, timeZone, appliedFilter]);
 
   useEffect(() => {
     reloadMonth().catch((err: unknown) => {
@@ -260,14 +330,62 @@ export default function TransactionsPage() {
     }
   }, [viewType, budgetType]);
 
-  // 사람 필터만 클라이언트에서 건다 (이미 이 달 것만 받아 왔다).
-  // 카드대금 결제는 소비가 아니므로 목록에서 뺀다.
+  /**
+   * 결제수단 드롭다운 옵션. 계좌와 카드를 한 목록에 합친다.
+   *
+   * 종류를 잃지 않도록 id에 접두사를 붙인다("account:xxx" / "card:xxx").
+   * 라벨의 "(계좌)"/"(카드)"는 사용자가 종류를 구분하기 위한 표시다.
+   */
+  const paymentMethodOptions = useMemo(
+    () => [
+      ...accounts.map((account) => ({
+        id: `account:${account.id}`,
+        name: `(계좌) ${account.name}`,
+      })),
+      ...cards.map((card) => ({
+        id: `card:${card.id}`,
+        name: `(카드) ${card.name}${card.issuer?.name ? ` · ${card.issuer.name}` : ''}`,
+      })),
+    ],
+    [accounts, cards],
+  );
+
+  const selectedPaymentMethodId = formData.cardId
+    ? `card:${formData.cardId}`
+    : formData.accountId
+      ? `account:${formData.accountId}`
+      : '';
+
+  /**
+   * 결제수단 선택 반영.
+   *
+   * 카드를 고르면 지출로 고정한다. 카드로는 수입이나 이체를 만들 수 없고,
+   * 유형이 남아 있으면 카테고리 목록이 어긋난다.
+   */
+  const handlePaymentMethodChange = (value: string) => {
+    const [kind, id] = value.split(':');
+
+    if (kind === 'card') {
+      setFormData((prev) => ({
+        ...prev,
+        method: 'card',
+        cardId: id,
+        accountId: '',
+        type: 'expense',
+        mainCategoryId: prev.type === 'expense' ? prev.mainCategoryId : '',
+        subCategoryId: prev.type === 'expense' ? prev.subCategoryId : '',
+      }));
+      return;
+    }
+
+    setFormData((prev) => ({ ...prev, method: 'account', accountId: id, cardId: '' }));
+  };
+
+  // 사람·고정 필터는 서버가 건다. 여기서는 카드대금 결제만 뺀다
+  // (부채 상환이라 소비가 아니고, 목록에 섞이면 합계와 어긋난다).
   const visibleEntries = useMemo(
-    () =>
-      entries.filter(
-        (entry) => entry.kind !== 'card_payment' && selectedPersonIds.includes(entry.personId),
-      ),
-    [entries, selectedPersonIds],
+    () => entries.filter((entry) => entry.kind !== 'card_payment'),
+    [entries],
   );
 
   const monthlyTotals = useMemo(
@@ -283,16 +401,26 @@ export default function TransactionsPage() {
       return;
     }
 
+    // 수수료를 넣었으면 분류가 있어야 한다. 없이 보내면 서버가 거절하는데,
+    // 그 오류만 보고는 어느 칸이 비었는지 알기 어렵다.
+    if (
+      formData.type === 'transfer' &&
+      toNumber(formData.transferFee) > 0 &&
+      !formData.transferFeeMainCategoryId
+    ) {
+      setError('수수료 대분류를 선택해주세요.');
+      return;
+    }
+
     try {
       setIsSubmitting(true);
-      let dateValue = formData.date;
-      if (formData.time) {
-        const dateObj = new Date(`${formData.date}T${formData.time}`);
-        dateValue = dateObj.toISOString();
-      } else {
-        const dateObj = new Date(formData.date);
-        dateValue = dateObj.toISOString();
-      }
+      // 입력한 날짜/시각은 프로젝트 타임존의 벽시계다. 그 기준으로 UTC 인스턴트를 만든다.
+      // 시간을 비우면 그 지역의 하루 시작이 된다.
+      const dateValue = zonedFormValueToUtc(
+        formData.date,
+        formData.time || undefined,
+        timeZone,
+      ).toISOString();
 
       // 화면의 "지출/수입/이체" 개념을 그대로 보낸다. 서버가 전표(postings)로 번역한다.
       const kind =
@@ -339,7 +467,7 @@ export default function TransactionsPage() {
 
       // 예산 데이터도 다시 로드
       if (selectedProjectId) {
-        fetchMonthlyBudgets(currentYear, currentMonth, selectedProjectId);
+        fetchMonthlyBudgets(currentYear, currentMonth, selectedProjectId, appliedFilter);
       }
       setFormData({
         method: 'card',
@@ -357,7 +485,7 @@ export default function TransactionsPage() {
         transferFee: '',
         transferFeeMainCategoryId: '',
         transferFeeSubCategoryId: '',
-        date: new Date().toISOString().split('T')[0],
+        date: todayKey(timeZone),
         time: '',
         isFixed: false,
       });
@@ -370,6 +498,26 @@ export default function TransactionsPage() {
     } finally {
       setIsSubmitting(false);
     }
+  };
+
+  /**
+   * 새 거래 입력 시작.
+   *
+   * 날짜와 시각을 지금으로 채운다. 시각을 비워 두면 그 날 0시로 기록되므로
+   * 입력 시점을 그대로 남기려면 기본값이 있어야 한다.
+   */
+  const handleAddClick = () => {
+    setEditingId(null);
+    setLockedPeriod(null);
+    setError('');
+    setFormData((prev) => ({
+      ...prev,
+      date: todayKey(timeZone),
+      time: nowTimeKey(timeZone),
+      // "나"를 지정해 두면 사용자를 매번 고르지 않아도 된다.
+      personId: prev.personId || myPersonId || '',
+    }));
+    setIsModalOpen(true);
   };
 
   const handleModalClose = () => {
@@ -390,7 +538,7 @@ export default function TransactionsPage() {
       transferFee: '',
       transferFeeMainCategoryId: '',
       transferFeeSubCategoryId: '',
-      date: new Date().toISOString().split('T')[0],
+      date: todayKey(timeZone),
       time: '',
       isFixed: false,
     });
@@ -453,19 +601,6 @@ export default function TransactionsPage() {
       : { mainCategoryId: categoryId, subCategoryId: '' };
   };
 
-  /** 자정이면 사용자가 시간을 비워둔 것이므로 빈 값으로 되돌린다. */
-  const extractTime = (isoDate: string) => {
-    const date = new Date(isoDate);
-    if (date.getHours() === 0 && date.getMinutes() === 0) return '';
-    return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-  };
-
-  /** 로컬 날짜 기준 YYYY-MM-DD. toISOString은 UTC라 하루 밀릴 수 있다. */
-  const toDateInput = (isoDate: string) => {
-    const date = new Date(isoDate);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-  };
-
   const handleEditClick = (entry: EntryListItem) => {
     if (!isEditable(entry)) {
       setError('이 거래는 수정할 수 없습니다. 삭제 후 다시 등록해주세요.');
@@ -476,8 +611,9 @@ export default function TransactionsPage() {
     setLockedPeriod(
       entry.lockedByStatement && entry.statementPeriodStart && entry.statementPeriodEnd
         ? {
-            start: toDateInput(entry.statementPeriodStart),
-            end: toDateInput(entry.statementPeriodEnd),
+            // 청구 기간은 @db.Date라 날짜만 의미가 있다 (인스턴트가 아니다).
+            start: dateMarkerKey(entry.statementPeriodStart),
+            end: dateMarkerKey(entry.statementPeriodEnd),
           }
         : null,
     );
@@ -501,8 +637,8 @@ export default function TransactionsPage() {
       transferFee: toNumber(entry.feeAmount) > 0 ? entry.feeAmount ?? '' : '',
       transferFeeMainCategoryId: fee.mainCategoryId,
       transferFeeSubCategoryId: fee.subCategoryId,
-      date: toDateInput(entry.date),
-      time: extractTime(entry.date),
+      date: dateKeyOf(entry.date, timeZone),
+      time: timeInputOf(entry.date, timeZone),
       isFixed: entry.isFixed,
     });
     setIsModalOpen(true);
@@ -722,19 +858,13 @@ export default function TransactionsPage() {
         });
       }
 
-      await fetchMonthlyBudgets(currentYear, currentMonth, selectedProjectId);
+      await fetchMonthlyBudgets(currentYear, currentMonth, selectedProjectId, appliedFilter);
       setShowDetailBudgetModal(false);
     } catch (err: any) {
       setDetailBudgetError(err.message || '저장에 실패했습니다.');
     } finally {
       setDetailBudgetSubmitting(false);
     }
-  };
-
-  const getCategoryIcon = (categoryId?: string) => {
-    if (!categoryId) return null;
-    const category = categories.find((c) => c.id === categoryId);
-    return category ? '📁' : null;
   };
 
   const getCategoryName = (categoryId?: string) => {
@@ -789,12 +919,25 @@ export default function TransactionsPage() {
 
             {/* 거래 추가는 어느 탭에서든 쓸 수 있어야 한다 */}
             <button
-              onClick={() => setIsModalOpen(true)}
+              onClick={handleAddClick}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 whitespace-nowrap"
             >
               거래 추가
             </button>
           </>
+        }
+      />
+
+      <EntryFilterBar
+        people={people}
+        myPersonId={myPersonId}
+        selectedPersonIds={selectedPersonIds}
+        onTogglePerson={togglePersonId}
+        selectedFixedTypes={selectedFixedTypes}
+        onToggleFixedType={(value) =>
+          setSelectedFixedTypes((prev) =>
+            prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value],
+          )
         }
       />
 
@@ -805,7 +948,7 @@ export default function TransactionsPage() {
             <p className="text-gray-600">설정된 예산이 없습니다.</p>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="lg:col-span-1 bg-white rounded-lg border border-gray-200 p-6">
+              <div className="lg:col-span-1 bg-white rounded-lg border border-gray-200 p-6 overflow-hidden">
                 {/* 수입/지출 탭 */}
                 <div className="flex gap-2 mb-6 border-b">
                   <button
@@ -830,7 +973,8 @@ export default function TransactionsPage() {
                   </button>
                 </div>
 
-                <div className="space-y-2">
+                {/* 줄을 패널 가장자리까지 붙인다. 선택 표시(왼쪽 막대)가 가장자리에 닿아야 눈에 든다. */}
+                <div className="-mx-6 border-t border-gray-200">
                 {(() => {
                   console.log('=== Budget Section Debug ===');
                   console.log('monthlyBudgets:', monthlyBudgets);
@@ -906,7 +1050,6 @@ export default function TransactionsPage() {
                               <BudgetCard
                                 categoryId={totalCategoryId}
                                 categoryName={totalCategoryName}
-                                icon={budgetType === 'income' ? '💰' : '💸'}
                                 monthlyAmount={(totalBudget as any).monthlyAmount}
                                 usedAmount={usedAmount}
                                 onSelect={(id) => {
@@ -923,7 +1066,8 @@ export default function TransactionsPage() {
                                   }
                                   setExpandedBudgetIds(newExpanded);
                                 }}
-                                isChild={false}
+                                level="total"
+                                isSelected={selectedCategoryId === totalCategoryId}
                               />
                             );
                           })()}
@@ -969,7 +1113,6 @@ export default function TransactionsPage() {
                                         <BudgetCard
                                           categoryId={mainBudget.categoryId}
                                           categoryName={mainCategoryName}
-                                          icon={getCategoryIcon(mainBudget.categoryId)}
                                           monthlyAmount={mainBudget.monthlyAmount}
                                           usedAmount={mainBudget.usedAmount || 0}
                                           onSelect={(id) => {
@@ -982,14 +1125,15 @@ export default function TransactionsPage() {
                                               toggleBudgetExpanded(mainBudget.categoryId);
                                             }
                                           }}
-                                          isChild={false}
+                                          level="main"
+                                          isSelected={selectedCategoryId === mainBudget.categoryId}
                                         />
                                       );
                                     })()}
 
                                     {/* 대분류 펼침 시 소분류 표시 */}
                                     {mainBudget.hasChildren && isMainExpanded && (
-                                      <div className="bg-blue-50 border-l-2 border-blue-200 pl-2">
+                                      <div>
                                         {subBudgets.map((subBudget) => {
                                           const subCategoryName = subBudget.categoryName || getCategoryName(subBudget.categoryId);
                                           return (
@@ -997,14 +1141,14 @@ export default function TransactionsPage() {
                                               key={subBudget.budgetId}
                                               categoryId={subBudget.categoryId}
                                               categoryName={subCategoryName}
-                                              icon={getCategoryIcon(subBudget.categoryId)}
                                               monthlyAmount={subBudget.monthlyAmount}
                                               usedAmount={subBudget.usedAmount || 0}
                                               onSelect={(id) => {
                                                 setSelectedCategoryId(id);
                                               }}
                                               hasChildren={false}
-                                              isChild={true}
+                                              level="sub"
+                                              isSelected={selectedCategoryId === subBudget.categoryId}
                                             />
                                           );
                                         })}
@@ -1047,7 +1191,6 @@ export default function TransactionsPage() {
                             <div key={mainBudget.budgetId}>
                               <BudgetCard
                                 categoryName={mainBudget.categoryName || getCategoryName(mainBudget.categoryId)}
-                                icon={getCategoryIcon(mainBudget.categoryId)}
                                 monthlyAmount={mainBudget.monthlyAmount}
                                 usedAmount={mainBudget.usedAmount || 0}
                                 hasChildren={mainBudget.hasChildren}
@@ -1057,20 +1200,21 @@ export default function TransactionsPage() {
                                     toggleBudgetExpanded(mainBudget.categoryId);
                                   }
                                 }}
-                                isChild={false}
+                                level="main"
+                                isSelected={selectedCategoryId === mainBudget.categoryId}
                               />
 
                               {mainBudget.hasChildren && isMainExpanded && (
-                                <div className="bg-blue-50 border-l-2 border-blue-200 pl-2">
+                                <div>
                                   {subBudgets.map((subBudget) => (
                                     <BudgetCard
                                       key={subBudget.budgetId}
                                       categoryName={subBudget.categoryName || getCategoryName(subBudget.categoryId)}
-                                      icon={getCategoryIcon(subBudget.categoryId)}
                                       monthlyAmount={subBudget.monthlyAmount}
                                       usedAmount={subBudget.usedAmount || 0}
                                       hasChildren={false}
-                                      isChild={true}
+                                      level="sub"
+                                      isSelected={selectedCategoryId === subBudget.categoryId}
                                     />
                                   ))}
                                 </div>
@@ -1106,6 +1250,7 @@ export default function TransactionsPage() {
                     currentMonth={currentMonth}
                     currentYear={currentYear}
                     projectId={selectedProjectId}
+                    filter={appliedFilter}
                   />
                 </div>
               )}
@@ -1113,14 +1258,22 @@ export default function TransactionsPage() {
           )
         ) : isLoading ? (
           <p className="text-gray-600">로딩 중...</p>
-        ) : entries.length === 0 ? (
-          <p className="text-gray-600">거래가 없습니다.</p>
         ) : viewType === 'payment-method' ? (
+          /* 수단별 탭은 거래가 없어도 계좌·카드를 0원으로 보여준다.
+             "거래가 없습니다"로 먼저 끊으면 그 화면에 도달할 수 없다. */
           <PaymentMethodTab
             currentMonth={currentMonth}
             currentYear={currentYear}
             projectId={selectedProjectId}
+            filter={appliedFilter}
           />
+        ) : visibleEntries.length === 0 ? (
+          /* 필터로 비었는지 원래 없는지 구분해 준다. 체크를 다 풀면 결과가 없는 게 정상이다. */
+          <p className="text-gray-600">
+            {isFilterNarrowed
+              ? '필터에 맞는 거래가 없습니다.'
+              : '거래가 없습니다.'}
+          </p>
         ) : viewType === 'calendar' ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div className="lg:col-span-1">
@@ -1160,8 +1313,19 @@ export default function TransactionsPage() {
         isOpen={isModalOpen}
         onClose={handleModalClose}
         title={editingId ? '거래 수정' : '거래 추가'}
+        /* 버튼은 form 밖(하단 고정 영역)이라 form 속성으로 묶는다 */
+        footer={
+          <button
+            type="submit"
+            form={ENTRY_FORM_ID}
+            disabled={isSubmitting}
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >
+            {isSubmitting ? (editingId ? '수정 중...' : '추가 중...') : (editingId ? '수정하기' : '추가하기')}
+          </button>
+        }
       >
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form id={ENTRY_FORM_ID} onSubmit={handleSubmit} className="space-y-4">
               {lockedPeriod && (
                 <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg">
                   이미 결제한 청구서({lockedPeriod.start} ~ {lockedPeriod.end})에 포함된 내역입니다.
@@ -1169,64 +1333,51 @@ export default function TransactionsPage() {
                 </div>
               )}
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  수단 선택
-                </label>
-                <div className="flex gap-4 mb-4">
-                  <label className="flex items-center">
-                    <input
-                      type="radio"
-                      value="account"
-                      checked={formData.method === 'account'}
-                      disabled={Boolean(lockedPeriod)}
-                      onChange={(e) => setFormData({ ...formData, method: e.target.value as any, accountId: '', cardId: '' })}
-                      className="mr-2"
-                    />
-                    <span className="text-sm">계좌</span>
+              {/* 날짜와 시각을 먼저 받는다. 가장 자주 고치는 값이라 맨 위에 둔다. */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    날짜
                   </label>
-                  <label className="flex items-center">
-                    <input
-                      type="radio"
-                      value="card"
-                      checked={formData.method === 'card'}
-                      disabled={Boolean(lockedPeriod)}
-                      onChange={(e) => setFormData({ ...formData, method: 'card', type: 'expense', mainCategoryId: '', subCategoryId: '', accountId: '', cardId: '' })}
-                      className="mr-2"
-                    />
-                    <span className="text-sm">카드</span>
+                  <input
+                    type="date"
+                    required
+                    value={formData.date}
+                    // 결제된 청구서에 속하면 그 청구 기간 밖으로는 못 나간다
+                    min={lockedPeriod?.start}
+                    max={lockedPeriod?.end}
+                    onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    시간
                   </label>
+                  <input
+                    type="time"
+                    value={formData.time}
+                    onChange={(e) => setFormData({ ...formData, time: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
                 </div>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {formData.method === 'account' ? '계좌' : '카드'}
+                  결제수단
                 </label>
-                {formData.method === 'account' ? (
-                  <CustomSelect
-                    options={accounts.map((acc) => ({ id: acc.id, name: acc.name }))}
-                    value={formData.accountId}
-                    onChange={(value) => setFormData({ ...formData, accountId: value })}
-                    placeholder="선택하세요"
-                    disabled={Boolean(lockedPeriod)}
-                    onAddClick={() => setIsAccountModalOpen(true)}
-                    addButtonLabel="계좌 추가"
-                  />
-                ) : (
-                  <CustomSelect
-                    options={cards.map((card) => ({
-                      id: card.id,
-                      name: `${card.name} (${card.issuer?.name})`,
-                    }))}
-                    value={formData.cardId}
-                    onChange={(value) => setFormData({ ...formData, cardId: value })}
-                    placeholder="선택하세요"
-                    disabled={Boolean(lockedPeriod)}
-                    onAddClick={() => setIsCardModalOpen(true)}
-                    addButtonLabel="카드 추가"
-                  />
-                )}
+                {/* 계좌와 카드를 한 목록에서 고른다. 접두사로 종류를 구분한다. */}
+                <CustomSelect
+                  options={paymentMethodOptions}
+                  value={selectedPaymentMethodId}
+                  onChange={handlePaymentMethodChange}
+                  placeholder="선택하세요"
+                  disabled={Boolean(lockedPeriod)}
+                  onAddClick={() => setIsMethodChooserOpen(true)}
+                  addButtonLabel="결제수단 추가"
+                />
               </div>
 
               <div>
@@ -1313,18 +1464,38 @@ export default function TransactionsPage() {
                       }
                       value={formData.subCategoryId}
                       onChange={(value) => {
-                        const selectedCategory = categories.find((c) => c.id === value);
+                        // 소분류를 고르면 그 소분류의 기본값, "없음"으로 되돌리면 대분류의 기본값을 쓴다.
+                        const target =
+                          categories.find((c) => c.id === value) ??
+                          categories.find((c) => c.id === formData.mainCategoryId);
                         setFormData({
                           ...formData,
                           subCategoryId: value,
-                          isFixed: selectedCategory?.defaultIsFixed || false,
+                          isFixed: target?.defaultIsFixed || false,
                     });
                   }}
                   placeholder="없음"
-                  onAddClick={() => router.push('/dashboard/categories')}
+                  // 소분류는 대분류 아래에 붙어야 해서 이 폼에서 만들 수 없다.
+                  // 카테고리 화면으로 보낸다 ('/dashboard/categories'는 없는 경로였다).
+                  onAddClick={() => router.push('/categories')}
                   addButtonLabel="소분류 추가"
                 />
                   </div>
+
+                  {/* 고정 여부는 이 분류에 저장된다. 다음에 같은 분류를 고르면 자동으로 켜진다. */}
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      id="isFixed"
+                      checked={formData.isFixed}
+                      onChange={(e) => setFormData({ ...formData, isFixed: e.target.checked })}
+                      className="w-4 h-4 border border-gray-300 rounded-md focus:ring-blue-500"
+                    />
+                    <label htmlFor="isFixed" className="text-sm font-medium text-gray-700">
+                      {formData.type === 'income' ? '고정수입' : '고정지출'}
+                    </label>
+                  </div>
+
                 </>
               )}
 
@@ -1368,7 +1539,15 @@ export default function TransactionsPage() {
                             .filter((c) => !c.parentId && c.type === 'expense')
                             .map((cat) => ({ id: cat.id, name: cat.name }))}
                           value={formData.transferFeeMainCategoryId}
-                          onChange={(value) => setFormData({ ...formData, transferFeeMainCategoryId: value, transferFeeSubCategoryId: '' })}
+                          onChange={(value) => {
+                            const selected = categories.find((c) => c.id === value);
+                            setFormData({
+                              ...formData,
+                              transferFeeMainCategoryId: value,
+                              transferFeeSubCategoryId: '',
+                              isFixed: selected?.defaultIsFixed || false,
+                            });
+                          }}
                           placeholder="선택하세요"
                           onAddClick={() => setIsCategoryModalOpen(true)}
                           addButtonLabel="대분류 추가"
@@ -1392,9 +1571,33 @@ export default function TransactionsPage() {
                               : [{ id: '', name: '없음' }]
                           }
                           value={formData.transferFeeSubCategoryId}
-                          onChange={(value) => setFormData({ ...formData, transferFeeSubCategoryId: value })}
+                          onChange={(value) => {
+                            // 소분류를 고르면 그 기본값, "없음"이면 수수료 대분류의 기본값을 쓴다.
+                            const target =
+                              categories.find((c) => c.id === value) ??
+                              categories.find((c) => c.id === formData.transferFeeMainCategoryId);
+                            setFormData({
+                              ...formData,
+                              transferFeeSubCategoryId: value,
+                              isFixed: target?.defaultIsFixed || false,
+                            });
+                          }}
                           placeholder="없음"
                         />
+                      </div>
+
+                      {/* 이체에서 고정 여부는 수수료 분류에 저장된다 (이체 자체는 지출이 아니다). */}
+                      <div className="flex items-center gap-3">
+                        <input
+                          type="checkbox"
+                          id="feeIsFixed"
+                          checked={formData.isFixed}
+                          onChange={(e) => setFormData({ ...formData, isFixed: e.target.checked })}
+                          className="w-4 h-4 border border-gray-300 rounded-md focus:ring-blue-500"
+                        />
+                        <label htmlFor="feeIsFixed" className="text-sm font-medium text-gray-700">
+                          고정지출
+                        </label>
                       </div>
                     </>
                   )}
@@ -1455,70 +1658,76 @@ export default function TransactionsPage() {
                 />
               </div>
 
-              <div className="flex items-center gap-3">
-                <input
-                  type="checkbox"
-                  id="isFixed"
-                  checked={formData.isFixed}
-                  onChange={(e) => setFormData({ ...formData, isFixed: e.target.checked })}
-                  className="w-4 h-4 border border-gray-300 rounded-md focus:ring-blue-500"
-                />
-                <label htmlFor="isFixed" className="text-sm font-medium text-gray-700">
-                  고정 지출/수입
-                </label>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  날짜
-                </label>
-                <input
-                  type="date"
-                  required
-                  value={formData.date}
-                  // 결제된 청구서에 속하면 그 청구 기간 밖으로는 못 나간다
-                  min={lockedPeriod?.start}
-                  max={lockedPeriod?.end}
-                  onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  시간 (선택)
-                </label>
-                <input
-                  type="time"
-                  value={formData.time}
-                  onChange={(e) => setFormData({ ...formData, time: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-
               {error && (
                 <div className="p-3 bg-red-50 text-red-800 text-sm rounded">
                   {error}
                 </div>
               )}
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-          >
-            {isSubmitting ? (editingId ? '수정 중...' : '추가 중...') : (editingId ? '수정하기' : '추가하기')}
-          </button>
         </form>
       </Modal>
+
+      {/* 결제수단 드롭다운의 추가 버튼. 계좌와 카드를 한 목록에서 고르므로 종류를 여기서 묻는다. */}
+      <ChoiceModal
+        isOpen={isMethodChooserOpen}
+        onClose={() => setIsMethodChooserOpen(false)}
+        title="결제수단 추가"
+        choices={[
+          {
+            key: 'account',
+            icon: '🏦',
+            label: '계좌 추가',
+            description: '새로운 계좌를 추가합니다',
+            tone: 'green',
+            onSelect: () => {
+              setIsMethodChooserOpen(false);
+              setIsAccountModalOpen(true);
+            },
+          },
+          {
+            key: 'card',
+            icon: '💳',
+            label: '카드 추가',
+            description: '새로운 카드를 추가합니다',
+            tone: 'purple',
+            onSelect: () => {
+              setIsMethodChooserOpen(false);
+              setIsCardModalOpen(true);
+            },
+          },
+        ]}
+      />
 
       {/* 상세 분석에서 여는 예산 입력. 분류가 정해져 있으므로 금액만 받는다. */}
       <Modal
         isOpen={showDetailBudgetModal}
         onClose={() => setShowDetailBudgetModal(false)}
         title={`${selectedCategoryLabel} 예산`}
+        footer={
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={() => setShowDetailBudgetModal(false)}
+              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+            >
+              취소
+            </button>
+            <button
+              type="submit"
+              form={BUDGET_FORM_ID}
+              disabled={detailBudgetSubmitting}
+              className={`flex-1 px-4 py-2 text-white rounded-lg transition disabled:opacity-50 ${
+                detailBudgetAmount === 0
+                  ? 'bg-red-600 hover:bg-red-700'
+                  : 'bg-blue-600 hover:bg-blue-700'
+              }`}
+            >
+              {detailBudgetSubmitting ? '저장 중...' : detailBudgetAmount === 0 ? '삭제' : '저장'}
+            </button>
+          </div>
+        }
       >
-        <form onSubmit={handleDetailBudgetSubmit} className="space-y-4">
+        <form id={BUDGET_FORM_ID} onSubmit={handleDetailBudgetSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
               월 예산 금액
@@ -1540,26 +1749,6 @@ export default function TransactionsPage() {
             </div>
           )}
 
-          <div className="flex gap-2 pt-4">
-            <button
-              type="button"
-              onClick={() => setShowDetailBudgetModal(false)}
-              className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
-            >
-              취소
-            </button>
-            <button
-              type="submit"
-              disabled={detailBudgetSubmitting}
-              className={`flex-1 px-4 py-2 text-white rounded-lg transition disabled:opacity-50 ${
-                detailBudgetAmount === 0
-                  ? 'bg-red-600 hover:bg-red-700'
-                  : 'bg-blue-600 hover:bg-blue-700'
-              }`}
-            >
-              {detailBudgetSubmitting ? '저장 중...' : detailBudgetAmount === 0 ? '삭제' : '저장'}
-            </button>
-          </div>
         </form>
       </Modal>
 
@@ -1584,8 +1773,18 @@ export default function TransactionsPage() {
         isOpen={isCardModalOpen}
         onClose={() => setIsCardModalOpen(false)}
         title="카드 추가"
+        footer={
+          <button
+            type="submit"
+            form={CARD_FORM_ID}
+            disabled={cardSubmitting}
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >
+            {cardSubmitting ? '추가 중...' : '추가하기'}
+          </button>
+        }
       >
-        <form onSubmit={handleCardSubmit} className="space-y-4">
+        <form id={CARD_FORM_ID} onSubmit={handleCardSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               계좌
@@ -1695,10 +1894,11 @@ export default function TransactionsPage() {
                   }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
-                    <option key={day} value={day}>{day}일</option>
+                  {DAY_OF_MONTH_OPTIONS.map((option) => (
+                    <option key={option.day} value={option.day}>{option.label}</option>
                   ))}
                 </select>
+                <p className="mt-1 text-xs text-gray-500">{DAY_OF_MONTH_HINT}</p>
               </div>
 
               <div>
@@ -1712,21 +1912,15 @@ export default function TransactionsPage() {
                   }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
-                    <option key={day} value={day}>{day}일</option>
+                  {DAY_OF_MONTH_OPTIONS.map((option) => (
+                    <option key={option.day} value={option.day}>{option.label}</option>
                   ))}
                 </select>
+                <p className="mt-1 text-xs text-gray-500">{DAY_OF_MONTH_HINT}</p>
               </div>
             </>
           )}
 
-          <button
-            type="submit"
-            disabled={cardSubmitting}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-          >
-            {cardSubmitting ? '추가 중...' : '추가하기'}
-          </button>
         </form>
       </Modal>
 
@@ -1734,8 +1928,18 @@ export default function TransactionsPage() {
         isOpen={isCategoryModalOpen}
         onClose={() => setIsCategoryModalOpen(false)}
         title="카테고리 추가"
+        footer={
+          <button
+            type="submit"
+            form={CATEGORY_FORM_ID}
+            disabled={categorySubmitting}
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >
+            {categorySubmitting ? '추가 중...' : '추가하기'}
+          </button>
+        }
       >
-        <form onSubmit={handleCategorySubmit} className="space-y-4">
+        <form id={CATEGORY_FORM_ID} onSubmit={handleCategorySubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               대분류 이름
@@ -1768,9 +1972,6 @@ export default function TransactionsPage() {
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              소분류 (선택)
-            </label>
             <div className="space-y-2 max-h-40 overflow-y-auto">
               {categoryFormData.subCategories.map((subCat, index) => (
                 <div key={index} className="flex gap-2">
@@ -1832,13 +2033,6 @@ export default function TransactionsPage() {
             </div>
           </div>
 
-          <button
-            type="submit"
-            disabled={categorySubmitting}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-          >
-            {categorySubmitting ? '추가 중...' : '추가하기'}
-          </button>
         </form>
       </Modal>
 
@@ -1846,9 +2040,53 @@ export default function TransactionsPage() {
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
         title="거래 상세내역"
+        footer={
+          selectedTransaction ? (
+            <div className="flex gap-2">
+              {/*
+                카드대금 결제와 잔액 조정은 이 폼으로 만들 수 없는 종류다.
+                수정 폼에 담으면 지출로 바뀌어 버리므로 버튼 자체를 감춘다.
+              */}
+              {isEditable(selectedTransaction) ? (
+                <button
+                  onClick={handleDetailEditClick}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  수정하기
+                </button>
+              ) : (
+                <div className="flex-1 px-4 py-2 text-sm text-gray-500 bg-gray-50 rounded-lg text-center">
+                  {selectedTransaction.kind === 'card_payment'
+                    ? '카드대금 결제는 수정할 수 없습니다'
+                    : '잔액 조정은 수정할 수 없습니다'}
+                </div>
+              )}
+              {/*
+                결제가 끝난 청구서의 사용 내역은 지울 수 없다.
+                지우면 청구액만 사라지고 결제 기록은 남아 카드 부채가 유령 잔액으로 뜬다.
+              */}
+              {selectedTransaction.lockedByStatement ? (
+                <div className="flex-1 px-4 py-2 text-sm text-gray-500 bg-gray-50 rounded-lg text-center">
+                  결제한 청구서에 포함되어 삭제할 수 없습니다
+                </div>
+              ) : (
+                <button
+                  onClick={async () => {
+                    setIsDetailModalOpen(false);
+                    await handleDeleteClick(selectedTransaction.id);
+                  }}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                  disabled={isSubmitting}
+                >
+                  삭제하기
+                </button>
+              )}
+            </div>
+          ) : null
+        }
       >
         {selectedTransaction && (
-          <div className="space-y-4 max-h-96 overflow-y-auto">
+          <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 수단
@@ -1994,57 +2232,10 @@ export default function TransactionsPage() {
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                 {/* 시간을 입력하지 않은 거래는 날짜만 보여준다 */}
-                {new Date(selectedTransaction.date).toLocaleString('ko-KR', {
-                  year: 'numeric',
-                  month: 'long',
-                  day: 'numeric',
-                  ...(extractTime(selectedTransaction.date)
-                    ? { hour: '2-digit', minute: '2-digit' }
-                    : {}),
-                })}
+                {formatDateTime(selectedTransaction.date, timeZone)}
               </p>
             </div>
 
-            <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
-              {/*
-                카드대금 결제와 잔액 조정은 이 폼으로 만들 수 없는 종류다.
-                수정 폼에 담으면 지출로 바뀌어 버리므로 버튼 자체를 감춘다.
-              */}
-              {isEditable(selectedTransaction) ? (
-                <button
-                  onClick={handleDetailEditClick}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  수정하기
-                </button>
-              ) : (
-                <div className="flex-1 px-4 py-2 text-sm text-gray-500 bg-gray-50 rounded-lg text-center">
-                  {selectedTransaction.kind === 'card_payment'
-                    ? '카드대금 결제는 수정할 수 없습니다'
-                    : '잔액 조정은 수정할 수 없습니다'}
-                </div>
-              )}
-              {/*
-                결제가 끝난 청구서의 사용 내역은 지울 수 없다.
-                지우면 청구액만 사라지고 결제 기록은 남아 카드 부채가 유령 잔액으로 뜬다.
-              */}
-              {selectedTransaction.lockedByStatement ? (
-                <div className="flex-1 px-4 py-2 text-sm text-gray-500 bg-gray-50 rounded-lg text-center">
-                  결제한 청구서에 포함되어 삭제할 수 없습니다
-                </div>
-              ) : (
-                <button
-                  onClick={async () => {
-                    setIsDetailModalOpen(false);
-                    await handleDeleteClick(selectedTransaction.id);
-                  }}
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                  disabled={isSubmitting}
-                >
-                  삭제하기
-                </button>
-              )}
-            </div>
           </div>
         )}
       </Modal>

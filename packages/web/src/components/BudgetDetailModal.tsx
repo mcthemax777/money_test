@@ -9,6 +9,9 @@ import TransactionListView from './TransactionListView';
 import { apiClient } from '@/lib/api-client';
 import { toNumber } from '@/lib/money';
 import { buildDailyCumulative } from '@/lib/entries';
+import { monthQueryRange } from '@/lib/datetime';
+import type { EntryFilterQuery } from '@money/types';
+import { useProjectTimeZone } from '@/store/project';
 import type { Category } from '@/lib/types';
 
 const COLORS = [
@@ -38,6 +41,8 @@ interface BudgetDetailModalProps {
   currentYear?: number;
   /** 선택된 프로젝트. 넘기지 않으면 서버가 기본 프로젝트로 조회한다. */
   projectId?: string | null;
+  /** 가계 화면의 사람/고정 필터. 상단 합계와 같은 조건을 써야 한다. */
+  filter?: EntryFilterQuery;
 }
 
 interface MonthlyData {
@@ -99,7 +104,9 @@ export function BudgetDetailModal({
   currentMonth,
   currentYear,
   projectId,
+  filter,
 }: BudgetDetailModalProps) {
+  const timeZone = useProjectTimeZone();
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
   const [dailyData, setDailyData] = useState<DailyData[]>([]);
   const [currentMonthEntries, setCurrentMonthEntries] = useState<EntryListItem[]>([]);
@@ -144,15 +151,15 @@ export function BudgetDetailModal({
       try {
         const target = resolveTarget(categoryId);
         const yearMonth = `${displayYear}-${String(displayMonth).padStart(2, '0')}`;
-        const monthStart = new Date(Date.UTC(displayYear, displayMonth - 1, 1));
-        const monthEnd = new Date(Date.UTC(displayYear, displayMonth, 0));
+        // 월 경계는 프로젝트 타임존 기준이다 (서버의 월 합계와 같은 규칙).
+        const { startDate, endDate } = monthQueryRange(displayYear, displayMonth, timeZone);
 
         // 12개월 시계열은 서버가 계산한다.
         // PaymentMethodTab과 각자 구현하던 것을 /reports/trend 하나로 합쳤다.
         const trendPromise =
           target.scope === 'total'
-            ? apiClient.getTrend('total', { type: target.type, endMonth: yearMonth, months: 12 }, projectId)
-            : apiClient.getTrend('category', { targetId: categoryId, endMonth: yearMonth, months: 12 }, projectId);
+            ? apiClient.getTrend('total', { type: target.type, endMonth: yearMonth, months: 12, ...filter }, projectId)
+            : apiClient.getTrend('category', { targetId: categoryId, endMonth: yearMonth, months: 12, ...filter }, projectId);
 
         // 이 달의 거래 목록. 일별 누적과 목록에 쓴다.
         //
@@ -160,9 +167,10 @@ export function BudgetDetailModal({
         // kind로 걸면 수수료가 붙은 이체가 빠져서, 12개월 그래프(수수료 포함)와 어긋난다.
         const entriesPromise = apiClient.getEntries(
           {
-            startDate: monthStart.toISOString(),
-            endDate: monthEnd.toISOString(),
+            startDate,
+            endDate,
             limit: 200,
+            ...filter,
             ...(target.scope === 'category' ? { categoryId } : { categoryType: target.type }),
           },
           projectId,
@@ -171,15 +179,15 @@ export function BudgetDetailModal({
         // 원형차트: 전체면 대분류별, 대분류를 보고 있으면 소분류별
         const breakdownPromise =
           target.scope === 'total'
-            ? apiClient.getCategoryBreakdown(yearMonth, target.type, projectId)
+            ? apiClient.getCategoryBreakdown(yearMonth, target.type, projectId, { ...filter })
             : target.isLeaf
               ? Promise.resolve([])
-              : apiClient.getCategoryBreakdown(yearMonth, target.type, projectId, { rollup: false });
+              : apiClient.getCategoryBreakdown(yearMonth, target.type, projectId, { rollup: false, ...filter });
 
         // 드릴다운(대분류 -> 소분류)에도 서버 집계를 쓴다
         const flatPromise = target.isLeaf
           ? Promise.resolve([])
-          : apiClient.getCategoryBreakdown(yearMonth, target.type, projectId, { rollup: false });
+          : apiClient.getCategoryBreakdown(yearMonth, target.type, projectId, { rollup: false, ...filter });
 
         const [trendRes, entriesRes, breakdownRes, flatRes] = await Promise.all([
           trendPromise,
@@ -201,7 +209,7 @@ export function BudgetDetailModal({
         setCurrentMonthEntries(rows);
 
         // 일별 누적. 이체는 금액이 아니라 수수료만 쌓는다.
-        setDailyData(buildDailyCumulative(rows, displayYear, displayMonth));
+        setDailyData(buildDailyCumulative(rows, displayYear, displayMonth, timeZone));
 
         const breakdown = (breakdownRes ?? []) as BreakdownRow[];
         // 대분류를 보고 있으면 그 아래 소분류 + 미분류만 남긴다
@@ -229,7 +237,7 @@ export function BudgetDetailModal({
     };
 
     loadData();
-  }, [isOpen, categoryId, categories, currentMonth, currentYear, projectId]);
+  }, [isOpen, categoryId, categories, currentMonth, currentYear, projectId, timeZone, filter]);
 
   // 값이 모두 0이면 domain이 [0, 0]이 되어 recharts가 축을 그리지 못하고
   // 막대가 최대 높이로 보인다. 데이터가 없을 때는 기본 상한을 준다.

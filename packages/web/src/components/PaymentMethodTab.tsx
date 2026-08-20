@@ -9,6 +9,9 @@ import TransactionListView from './TransactionListView';
 import { apiClient } from '@/lib/api-client';
 import { formatCurrency, toNumber } from '@/lib/money';
 import { buildDailyCumulative } from '@/lib/entries';
+import { monthQueryRange } from '@/lib/datetime';
+import type { EntryFilterQuery } from '@money/types';
+import { useProjectTimeZone } from '@/store/project';
 
 /** 서버가 계산해 주는 결제수단별 지출 (/reports/payment-methods) */
 interface PaymentMethodItem {
@@ -24,6 +27,8 @@ interface Props {
   currentMonth?: number;
   currentYear?: number;
   projectId?: string | null;
+  /** 가계 화면의 사람/고정 필터. 합계와 목록이 같은 조건을 써야 한다. */
+  filter?: EntryFilterQuery;
 }
 
 const SECTIONS = [
@@ -60,7 +65,9 @@ export default function PaymentMethodTab({
   currentMonth: propMonth,
   currentYear: propYear,
   projectId,
+  filter,
 }: Props) {
+  const timeZone = useProjectTimeZone();
   const now = new Date();
   const currentMonth = propMonth ?? now.getMonth() + 1;
   const currentYear = propYear ?? now.getFullYear();
@@ -77,7 +84,7 @@ export default function PaymentMethodTab({
     let cancelled = false;
 
     apiClient
-      .getPaymentMethods(yearMonth, projectId)
+      .getPaymentMethods(yearMonth, projectId, filter)
       .then((res) => {
         if (cancelled) return;
         setMethods((res ?? []) as PaymentMethodItem[]);
@@ -90,7 +97,7 @@ export default function PaymentMethodTab({
     // 달이 바뀌면 선택을 비운다. 이전 달 상세가 남아 있으면 잘못된 값을 보게 된다.
     setSelected(null);
     return () => { cancelled = true; };
-  }, [yearMonth, projectId]);
+  }, [yearMonth, projectId, filter]);
 
   // 선택한 결제수단의 12개월 추이와 이 달 거래
   useEffect(() => {
@@ -103,11 +110,16 @@ export default function PaymentMethodTab({
 
     let cancelled = false;
     const target = selected.kind === 'account' ? 'account' : 'card';
-    const monthStart = new Date(Date.UTC(currentYear, currentMonth - 1, 1));
-    const monthEnd = new Date(Date.UTC(currentYear, currentMonth, 0));
+    // 월 경계는 프로젝트 타임존 기준이다. 말일 자정을 endDate로 주면
+    // 시각이 붙은 말일 거래가 빠지므로 monthQueryRange를 쓴다.
+    const { startDate, endDate } = monthQueryRange(currentYear, currentMonth, timeZone);
 
     Promise.all([
-      apiClient.getTrend(target, { targetId: selected.id, endMonth: yearMonth, months: 12 }, projectId),
+      apiClient.getTrend(
+        target,
+        { targetId: selected.id, endMonth: yearMonth, months: 12, ...filter },
+        projectId,
+      ),
       apiClient.getEntries(
         {
           // 왼쪽 집계와 같은 기준으로 뽑는다 (payment* 파라미터가 그 규칙을 담고 있다).
@@ -116,9 +128,10 @@ export default function PaymentMethodTab({
             : { paymentCardId: selected.id }),
           // kind='expense'로 걸면 수수료가 붙은 이체가 빠진다. 집계에는 들어 있으므로 어긋난다.
           categoryType: 'expense',
-          startDate: monthStart.toISOString(),
-          endDate: monthEnd.toISOString(),
+          startDate,
+          endDate,
           limit: 200,
+          ...filter,
         },
         projectId,
       ),
@@ -137,7 +150,7 @@ export default function PaymentMethodTab({
         const rows: EntryListItem[] = entriesRes?.data ?? [];
         setEntries(rows);
         // 이체는 금액이 아니라 수수료만 쌓아야 한다 (buildDailyCumulative가 처리)
-        setDailyData(buildDailyCumulative(rows, currentYear, currentMonth));
+        setDailyData(buildDailyCumulative(rows, currentYear, currentMonth, timeZone));
       })
       .catch((error) => {
         console.error('결제수단 상세를 불러오지 못했습니다:', error);
@@ -148,7 +161,7 @@ export default function PaymentMethodTab({
       });
 
     return () => { cancelled = true; };
-  }, [selected, yearMonth, currentYear, currentMonth, projectId]);
+  }, [selected, yearMonth, currentYear, currentMonth, projectId, timeZone, filter]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

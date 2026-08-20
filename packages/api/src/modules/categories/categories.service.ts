@@ -3,6 +3,7 @@ import { CategoryType, Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { CategoryDto } from '@money/types';
+import { assertReorderIds } from '@/common/reorder';
 
 @Injectable()
 export class CategoriesService {
@@ -65,8 +66,33 @@ export class CategoriesService {
         ...(type ? { type: type as CategoryType } : {}),
       },
       // 대분류(parentId = null)를 먼저, 그다음 이름순
-      orderBy: [{ parentId: { sort: 'asc', nulls: 'first' } }, { name: 'asc' }],
+      // 사용자가 드래그로 정한 순서. 같으면 이름 순.
+      orderBy: [{ parentId: { sort: 'asc', nulls: 'first' } }, { sortOrder: 'asc' }, { name: 'asc' }],
     });
+  }
+
+  /**
+   * 드래그로 바꾼 표시 순서 저장.
+   *
+   * 대분류끼리, 또는 한 대분류 아래 소분류끼리 보내면 된다. 화면에 보이는 묶음만
+   * 다시 매기고 나머지는 그대로 둔다.
+   */
+  async reorderCategories(userId: string, ids: string[], projectId?: string) {
+    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
+
+    const rows = await this.prisma.category.findMany({
+      where: { projectId: finalProjectId },
+      select: { id: true },
+    });
+    assertReorderIds(ids, new Set(rows.map((row) => row.id)));
+
+    await this.prisma.$transaction(
+      ids.map((id, index) =>
+        this.prisma.category.update({ where: { id }, data: { sortOrder: index } }),
+      ),
+    );
+
+    return this.getCategories(userId, undefined, finalProjectId);
   }
 
   async getCategoryById(id: string, userId: string) {

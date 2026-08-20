@@ -7,6 +7,10 @@ import { toAmountString } from '@/lib/money';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@/hooks/useInstitutions';
+import { DAY_OF_MONTH_HINT, DAY_OF_MONTH_OPTIONS } from '@/lib/day-of-month';
+
+/** 하단 고정 버튼과 본문 form을 잇는 id */
+const FORM_ID = 'edit-card-form';
 
 const EMPTY_FORM = {
   paymentAccountId: '',
@@ -15,6 +19,8 @@ const EMPTY_FORM = {
   creditLimit: '',
   expiryDate: '',
   cardType: 'debit' as 'debit' | 'credit',
+  // 서버는 마스킹된 번호만 주므로 입력칸은 항상 빈 값에서 시작한다.
+  // 비워 두면 기존 번호를 그대로 두고, 새로 입력하면 그 값으로 교체한다.
   cardNumber: '',
   // 신용카드는 마감일과 결제일을 따로 관리한다 (구 statementClosingDay 하나를 대체)
   statementClosingDay: 15,
@@ -44,8 +50,10 @@ export default function EditCardModal({
   const [error, setError] = useState('');
   const { options: issuerOptions, error: issuerError } = useInstitutions('card_issuer');
 
+  // isOpen을 의존성에 넣는 이유는 EditAccountModal과 같다. 닫을 때 폼을 비우므로
+  // 같은 카드로 다시 열 때 값을 채워 넣어야 한다.
   useEffect(() => {
-    if (card) {
+    if (isOpen && card) {
       setFormData({
         paymentAccountId: card.paymentAccountId,
         name: card.name,
@@ -53,12 +61,12 @@ export default function EditCardModal({
         creditLimit: card.creditLimit ?? '',
         expiryDate: card.expiryDate || '',
         cardType: card.cardType,
-        cardNumber: card.cardNumberMasked || '',
+        cardNumber: '',
         statementClosingDay: card.statementClosingDay ?? 15,
         paymentDueDay: card.paymentDueDay ?? 25,
       });
     }
-  }, [card]);
+  }, [isOpen, card]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -76,15 +84,23 @@ export default function EditCardModal({
         return;
       }
 
-      const isoDate = formData.expiryDate ? new Date(formData.expiryDate).toISOString() : undefined;
       // 결제 통장과 카드 종류는 등록 후 바꾸지 않는다.
       // 신용카드는 부채 계정이 딸려 있어서 통장을 갈아끼우면 원장이 어긋난다.
+      const isCredit = card.cardType === 'credit';
       await apiClient.updateCard(card.id, {
         name: formData.name,
         issuerId: formData.issuerId,
-        creditLimit: formData.cardType === 'credit' ? toAmountString(formData.creditLimit) : undefined,
-        statementClosingDay: formData.cardType === 'credit' ? formData.statementClosingDay : undefined,
-        paymentDueDay: formData.cardType === 'credit' ? formData.paymentDueDay : undefined,
+        // 만료일을 비우면 null을 보내 지운다. 키를 빼면 기존 값이 남는다.
+        expiryDate: formData.expiryDate ? new Date(formData.expiryDate).toISOString() : null,
+        // 카드 번호는 새로 입력했을 때만 보낸다 (마스킹된 값을 되돌려 보내면 안 된다).
+        ...(formData.cardNumber ? { cardNumber: formData.cardNumber } : {}),
+        ...(isCredit
+          ? {
+              creditLimit: toAmountString(formData.creditLimit),
+              statementClosingDay: formData.statementClosingDay,
+              paymentDueDay: formData.paymentDueDay,
+            }
+          : {}),
       });
       const data = await apiClient.getCards();
       onSuccess(data || []);
@@ -121,8 +137,33 @@ export default function EditCardModal({
   if (!card) return null;
 
   return (
-    <Modal isOpen={isOpen} onClose={handleClose} title="카드 수정">
-      <form onSubmit={handleSubmit} className="space-y-4">
+    <Modal
+      isOpen={isOpen}
+      onClose={handleClose}
+      title="카드 수정"
+      /* 버튼은 form 밖(하단 고정 영역)이라 form 속성으로 묶는다 */
+      footer={
+        <div className="flex gap-2">
+          <button
+            type="submit"
+            form={FORM_ID}
+            disabled={isSubmitting}
+            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >
+            {isSubmitting ? '수정 중...' : '수정하기'}
+          </button>
+          <button
+            type="button"
+            onClick={handleDeleteClick}
+            disabled={isDeleting || isSubmitting}
+            className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+          >
+            {isDeleting ? '삭제 중...' : '삭제하기'}
+          </button>
+        </div>
+      }
+    >
+      <form id={FORM_ID} onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             결제 통장
@@ -156,23 +197,23 @@ export default function EditCardModal({
             value={formData.cardNumber}
             onChange={(e) => setFormData({ ...formData, cardNumber: e.target.value })}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="16자리"
+            placeholder={card.cardNumberMasked || '16자리'}
           />
+          <p className="mt-1 text-xs text-gray-500">
+            {card.cardNumberMasked
+              ? '비워 두면 현재 번호를 그대로 씁니다. 바꾸려면 전체 번호를 입력하세요.'
+              : '전체 번호를 입력하면 마스킹해서 보관합니다.'}
+          </p>
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
             카드 유형
           </label>
-          <CustomSelect
-            options={[
-              { id: 'debit', name: '체크카드' },
-              { id: 'credit', name: '신용카드' },
-            ]}
-            value={formData.cardType}
-            onChange={(value) => setFormData({ ...formData, cardType: value as 'debit' | 'credit' })}
-            placeholder="선택하세요"
-          />
+          {/* 신용카드는 부채 계정과 청구서가 딸려 있어 종류를 바꾸면 원장이 어긋난다. 표시만 한다. */}
+          <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+            {formData.cardType === 'credit' ? '신용카드' : '체크카드'}
+          </p>
         </div>
 
         <div>
@@ -217,19 +258,40 @@ export default function EditCardModal({
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                결제일 (매월 몇 일?)
+                마감일 (매월 몇 일?)
               </label>
               <select
                 value={formData.statementClosingDay}
                 onChange={(e) => setFormData({ ...formData, statementClosingDay: parseInt(e.target.value) })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
-                  <option key={day} value={day}>
-                    {day}일
+                {DAY_OF_MONTH_OPTIONS.map((option) => (
+                  <option key={option.day} value={option.day}>
+                    {option.label}
                   </option>
                 ))}
               </select>
+              <p className="mt-1 text-xs text-gray-500">{DAY_OF_MONTH_HINT}</p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                결제일 (매월 몇 일?)
+              </label>
+              <select
+                value={formData.paymentDueDay}
+                onChange={(e) => setFormData({ ...formData, paymentDueDay: parseInt(e.target.value) })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              >
+                {DAY_OF_MONTH_OPTIONS.map((option) => (
+                  <option key={option.day} value={option.day}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-gray-500">
+                마감 이후 처음 돌아오는 이 날짜에 청구됩니다. {DAY_OF_MONTH_HINT}
+              </p>
             </div>
           </>
         )}
@@ -240,23 +302,6 @@ export default function EditCardModal({
           </div>
         )}
 
-        <div className="flex gap-2 pt-4">
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-          >
-            {isSubmitting ? '수정 중...' : '수정하기'}
-          </button>
-          <button
-            type="button"
-            onClick={handleDeleteClick}
-            disabled={isDeleting || isSubmitting}
-            className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-          >
-            {isDeleting ? '삭제 중...' : '삭제하기'}
-          </button>
-        </div>
       </form>
     </Modal>
   );

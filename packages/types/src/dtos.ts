@@ -107,6 +107,13 @@ export namespace AccountDto {
      * (잔액 = posting 합계 불변식을 지키기 위함)
      */
     balance?: string;
+    /**
+     * 잔액 기준일. 생략하면 오늘.
+     *
+     * "이 날짜의 잔액이 balance였다"는 뜻이다. 차액은 그 날 종료 시점의 잔액을
+     * 기준으로 계산하므로, 기준일 이후 거래는 조정 뒤에도 그대로 반영된다.
+     */
+    balanceDate?: IsoDateString;
     isActive?: boolean;
   }
 
@@ -157,6 +164,14 @@ export namespace CardDto {
   export interface UpdateRequest {
     name?: string;
     issuerId?: string;
+    /**
+     * 실제 카드 번호 (서버에서 마스킹해 저장/응답).
+     *
+     * 응답에는 마스킹된 번호만 나가므로 화면은 원래 값을 모른다. 그래서
+     * "생략 = 그대로 두기", "값 지정 = 교체", "빈 문자열 = 지우기"로 구분한다.
+     */
+    cardNumber?: string;
+    expiryDate?: IsoDateString | null;
     creditLimit?: string;
     statementClosingDay?: number;
     paymentDueDay?: number;
@@ -189,7 +204,46 @@ export namespace InstitutionDto {
 }
 
 
+/**
+ * 목록 순서 저장.
+ *
+ * 화면에 보이는 순서대로 id를 보내면 서버가 0부터 다시 매긴다.
+ * 보내지 않은 항목은 기존 순서를 유지한다.
+ */
+export interface ReorderRequest {
+  ids: string[];
+}
+
 // ===== Transaction =====
+
+/**
+ * 거래 조회와 리포트가 함께 쓰는 필터.
+ *
+ * 목록만 거르고 합계는 그대로 두면 화면의 소계와 상단 요약이 어긋난다.
+ * 그래서 같은 필터를 목록·합계·차트·수단별 탭에 모두 넘긴다.
+ */
+export interface EntryFilterQuery {
+  /**
+   * 사람 선택. 쉼표로 잇는다 ("p1,p2").
+   *
+   * 배열을 쿼리스트링으로 보내면 직렬화 방식이 클라이언트마다 달라
+   * 서버에서 키 이름이 갈린다(personIds[] 등). 그래서 문자열 하나로 받는다.
+   *
+   *   생략      = 전체 (필터 없음)
+   *   "p1,p2"   = 그 사람들만
+   *   ""(빈 값) = 아무도 고르지 않음 → 결과 없음
+   */
+  personIds?: string;
+  /**
+   * 고정/변동 선택. 쉼표로 잇는다 ("fixed,variable").
+   *
+   *   생략               = 전체 (필터 없음)
+   *   "fixed,variable"   = 둘 다 (전체와 같다)
+   *   "fixed"/"variable" = 한쪽만
+   *   ""(빈 값)          = 아무것도 고르지 않음 → 결과 없음
+   */
+  fixedTypes?: string;
+}
 
 export namespace EntryDto {
   /**
@@ -233,7 +287,7 @@ export namespace EntryDto {
   /** 수정은 전체 교체다. 생성과 같은 형태를 보내면 서버가 전표를 갈아끼운다. */
   export interface UpdateRequest extends Omit<CreateRequest, 'projectId'> {}
 
-  export interface ListQuery {
+  export interface ListQuery extends EntryFilterQuery {
     /** 원장 관점: 이 계좌가 얽힌 전표 전부 (체크카드 사용, 이체 받은 건 포함) */
     accountId?: string;
     /** 이 카드가 얽힌 전표 전부 (사용 + 대금 결제) */
@@ -338,10 +392,11 @@ export namespace StatementDto {
  * 화면마다 합계가 어긋나던 문제가 재발할 수 없다.
  */
 export namespace ReportDto {
-  export interface MonthQuery {
+  export interface MonthQuery extends EntryFilterQuery {
     projectId?: string;
     /** "YYYY-MM" */
     yearMonth: string;
+    /** 한 사람만 볼 때. 여러 명은 personIds를 쓴다. */
     personId?: string;
   }
 
@@ -393,7 +448,7 @@ export namespace ReportDto {
     }>;
   }
 
-  export interface TrendQuery {
+  export interface TrendQuery extends EntryFilterQuery {
     projectId?: string;
     target: 'category' | 'account' | 'card' | 'total';
     /** target=total이면 생략 */

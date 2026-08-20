@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { LedgerService } from '../ledger/ledger.service';
-import { StatementDto, StatementStatus } from '@money/types';
+import { StatementDto, StatementStatus, zonedParts } from '@money/types';
 
 const ZERO = new Prisma.Decimal(0);
 
@@ -39,7 +39,7 @@ export class StatementsService {
     if (statements.length === 0) return [];
 
     const totals = await this.sumByStatement(statements.map((s) => s.id));
-    const today = startOfToday();
+    const today = todayMarker(await this.projectAccess.getProjectTimeZone(projectId));
 
     const rows = statements.map((statement) => {
       const { charged, paid } = totals.get(statement.id) ?? { charged: ZERO, paid: ZERO };
@@ -80,7 +80,12 @@ export class StatementsService {
       periodStart: statement.periodStart.toISOString(),
       periodEnd: statement.periodEnd.toISOString(),
       dueDate: statement.dueDate.toISOString(),
-      status: deriveStatus(statement.periodEnd, startOfToday(), charged, paid),
+      status: deriveStatus(
+        statement.periodEnd,
+        todayMarker(await this.projectAccess.getProjectTimeZone(statement.card.projectId)),
+        charged,
+        paid,
+      ),
       chargedAmount: charged.toString(),
       paidAmount: paid.toString(),
       outstanding: charged.sub(paid).toString(),
@@ -166,7 +171,13 @@ function deriveStatus(
   return 'closed';
 }
 
-function startOfToday(): Date {
-  const now = new Date();
-  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+/**
+ * 오늘의 달력 날짜 표시자.
+ *
+ * periodEnd는 `@db.Date`라 "그 지역의 달력 날짜 + UTC 자정"으로 저장된다.
+ * 비교 대상인 오늘도 같은 형태여야 하므로 인스턴트가 아니라 표시자를 만든다.
+ */
+function todayMarker(timeZone: string): Date {
+  const { year, month, day } = zonedParts(new Date(), timeZone);
+  return new Date(Date.UTC(year, month - 1, day));
 }

@@ -566,6 +566,33 @@ CREATE UNIQUE INDEX "FinancialInstitution_global_type_name_key"
     WHERE "projectId" IS NULL;
 
 -- ─────────────────────────────────────────────
+-- 표시 순서 / 기준 타임존 / "구성원 중 나"
+--
+-- 원래는 별도 마이그레이션 세 개였다. 개발 서버를 테이블부터 새로 만들기로 해서
+-- 이 파일 하나로 합쳤다.
+-- ─────────────────────────────────────────────
+
+-- 프로젝트 단위 집계 기준 타임존.
+-- 월 합계와 카드 청구주기 경계를 이 타임존의 벽시계로 계산한다.
+ALTER TABLE "Project" ADD COLUMN "timezone" TEXT NOT NULL DEFAULT 'Asia/Seoul';
+
+-- 표시 순서. 사용자가 드래그로 바꾼다. 같은 값이면 createdAt 순으로 본다.
+ALTER TABLE "Category" ADD COLUMN "sortOrder" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "Person" ADD COLUMN "sortOrder" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "Account" ADD COLUMN "sortOrder" INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE "Card" ADD COLUMN "sortOrder" INTEGER NOT NULL DEFAULT 0;
+
+CREATE INDEX "Person_projectId_sortOrder_idx" ON "Person"("projectId", "sortOrder");
+CREATE INDEX "Account_projectId_sortOrder_idx" ON "Account"("projectId", "sortOrder");
+CREATE INDEX "Card_projectId_sortOrder_idx" ON "Card"("projectId", "sortOrder");
+
+-- "구성원 중 나". 사용자-프로젝트 조합마다 자기 Person을 지정한다.
+ALTER TABLE "ProjectMember" ADD COLUMN "personId" TEXT;
+CREATE INDEX "ProjectMember_personId_idx" ON "ProjectMember"("personId");
+ALTER TABLE "ProjectMember" ADD CONSTRAINT "ProjectMember_personId_fkey"
+  FOREIGN KEY ("personId") REFERENCES "Person"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- ─────────────────────────────────────────────
 -- 기본 제공 금융기관
 -- ─────────────────────────────────────────────
 INSERT INTO "FinancialInstitution" ("id", "projectId", "type", "name", "sortOrder", "updatedAt") VALUES

@@ -13,7 +13,27 @@ interface Project {
   description?: string;
   projectKey?: string | null;
   role: 'owner' | 'editor' | 'viewer';
+  /** 집계 기준 타임존. 월 합계와 카드 청구주기 경계가 이 값을 따른다. */
+  timezone?: string;
+  /** 이 사용자가 이 프로젝트에서 "나"로 지정한 구성원 */
+  myPersonId?: string | null;
 }
+
+/**
+ * 고를 수 있는 기준 타임존.
+ *
+ * 전 세계 목록을 다 늘어놓을 필요는 없다. 필요해지면 여기에 추가한다.
+ */
+const TIME_ZONE_OPTIONS = [
+  { id: 'Asia/Seoul', name: '서울 (UTC+9)' },
+  { id: 'Asia/Tokyo', name: '도쿄 (UTC+9)' },
+  { id: 'Asia/Shanghai', name: '상하이 (UTC+8)' },
+  { id: 'Asia/Singapore', name: '싱가포르 (UTC+8)' },
+  { id: 'Europe/London', name: '런던 (UTC+0/+1)' },
+  { id: 'America/New_York', name: '뉴욕 (UTC-5/-4)' },
+  { id: 'America/Los_Angeles', name: '로스앤젤레스 (UTC-8/-7)' },
+  { id: 'UTC', name: 'UTC' },
+];
 
 interface SearchResult {
   id: string;
@@ -82,6 +102,8 @@ export default function ProjectsPage() {
   const [joinRequestsByProject, setJoinRequestsByProject] = useState<Record<string, JoinRequest[]>>({});
   const [myRequests, setMyRequests] = useState<MyJoinRequest[]>([]);
   const [membersByProject, setMembersByProject] = useState<Record<string, ProjectMember[]>>({});
+  /** 프로젝트별 구성원(Person) 목록. "나" 지정에 쓴다. */
+  const [peopleByProject, setPeopleByProject] = useState<Record<string, Array<{ id: string; name: string }>>>({});
   const [invitationsByProject, setInvitationsByProject] = useState<Record<string, Invitation[]>>({});
   const [inviteRoleByProject, setInviteRoleByProject] = useState<Record<string, 'editor' | 'viewer'>>({});
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
@@ -111,6 +133,7 @@ export default function ProjectsPage() {
         loadJoinRequests(ownerProjects),
         loadInvitations(ownerProjects),
         loadMembers(data),
+        loadPeople(data),
         loadMyRequests(),
       ]);
     } catch (err) {
@@ -118,6 +141,18 @@ export default function ProjectsPage() {
       setError('프로젝트 목록을 불러올 수 없습니다.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleChangeTimeZone = async (projectId: string, timezone: string) => {
+    try {
+      await apiClient.updateProject(projectId, { timezone });
+      // 사이드바와 각 화면이 이 값으로 날짜를 해석하므로 목록을 다시 받아 스토어를 갱신한다.
+      const data: Project[] = (await apiClient.getMyProjects()) || [];
+      setProjects(data);
+      setError('');
+    } catch (err: any) {
+      setError(err.response?.data?.error?.message || '타임존 변경에 실패했습니다.');
     }
   };
 
@@ -238,6 +273,34 @@ export default function ProjectsPage() {
     );
 
     setMembersByProject(Object.fromEntries(entries));
+  };
+
+  /** "나"로 지정할 수 있는 구성원 목록. 멤버(로그인 사용자)와 구성원(Person)은 다른 개념이다. */
+  const loadPeople = async (allProjects: Project[]) => {
+    const entries = await Promise.all(
+      allProjects.map(async (project) => {
+        try {
+          const data = await apiClient.getPeople(project.id);
+          return [project.id, data || []] as const;
+        } catch (err) {
+          console.error(`구성원 조회 실패 (${project.id}):`, err);
+          return [project.id, []] as const;
+        }
+      }),
+    );
+
+    setPeopleByProject(Object.fromEntries(entries));
+  };
+
+  const handleChangeMyPerson = async (projectId: string, personId: string) => {
+    try {
+      await apiClient.setMyPerson(projectId, personId || null);
+      const data: Project[] = (await apiClient.getMyProjects()) || [];
+      setProjects(data);
+      setError('');
+    } catch (err: any) {
+      setError(err.response?.data?.error?.message || '"나" 지정에 실패했습니다.');
+    }
   };
 
   const loadInvitations = async (ownerProjects: Project[]) => {
@@ -681,6 +744,53 @@ export default function ProjectsPage() {
                       탈퇴
                     </button>
                   )}
+                </div>
+              </div>
+
+              {project.role === 'owner' && (
+                <div className="mt-4 border-t border-gray-100 pt-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-900">기준 타임존</h4>
+                      <p className="text-xs text-gray-500 mt-1">
+                        월 합계와 카드 마감/결제일 경계를 이 타임존으로 계산합니다. 구성원 모두에게 같이 적용됩니다.
+                      </p>
+                    </div>
+                    <select
+                      value={project.timezone || 'Asia/Seoul'}
+                      onChange={(e) => handleChangeTimeZone(project.id, e.target.value)}
+                      className="px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {TIME_ZONE_OPTIONS.map((option) => (
+                        <option key={option.id} value={option.id}>
+                          {option.name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+
+              <div className="mt-4 border-t border-gray-100 pt-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <h4 className="text-sm font-semibold text-gray-900">구성원 중 나</h4>
+                    <p className="text-xs text-gray-500 mt-1">
+                      거래를 입력할 때 기본으로 선택됩니다. 사용자마다 따로 지정합니다.
+                    </p>
+                  </div>
+                  <select
+                    value={project.myPersonId ?? ''}
+                    onChange={(e) => handleChangeMyPerson(project.id, e.target.value)}
+                    className="px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">지정 안 함</option>
+                    {(peopleByProject[project.id] ?? []).map((person) => (
+                      <option key={person.id} value={person.id}>
+                        {person.name}
+                      </option>
+                    ))}
+                  </select>
                 </div>
               </div>
 

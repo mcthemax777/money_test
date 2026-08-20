@@ -16,7 +16,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { PeopleService } from './people.service';
 import { AuthenticatedRequest } from '@/common/authenticated-request';
-import { PersonDto } from '@money/types';
+import { PersonDto, ReorderRequest } from '@money/types';
 
 @ApiTags('People')
 @Controller('people')
@@ -40,6 +40,17 @@ export class PeopleController {
   @ApiOperation({ summary: '사람 목록' })
   list(@Request() req: AuthenticatedRequest, @Query('projectId') projectId?: string) {
     return this.peopleService.getPeople(req.user.id, projectId);
+  }
+
+  // ':id' 보다 먼저 선언해야 'reorder'가 id로 잡히지 않는다.
+  @Patch('reorder')
+  @ApiOperation({ summary: '사람 표시 순서 변경' })
+  reorder(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: ReorderRequest,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.peopleService.reorderPeople(req.user.id, dto.ids, projectId);
   }
 
   @Get(':id')

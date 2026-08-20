@@ -9,6 +9,23 @@ import CustomSelect from '@/components/CustomSelect';
 import Modal from '@/components/Modal';
 import DashboardSidebar from '@/components/DashboardSidebar';
 import type { Category } from '@/lib/types';
+import { useDragReorder } from '@/hooks/useDragReorder';
+// 드래그 핸들: 가로 실선 2줄. lucide의 Equal이 그 모양이라 이름만 바꿔 쓴다.
+import { Equal as DragHandleIcon } from 'lucide-react';
+
+/** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
+const FORM_ID = 'category-form';
+
+/** 소분류 입력 한 줄 */
+type SubCategoryRow = { id: string; name: string; defaultIsFixed: boolean };
+
+/**
+ * 소분류는 빈 줄 없이 시작한다.
+ *
+ * 예전에는 빈 줄 하나를 미리 넣어 두어서, 소분류가 필요 없는데도 항상 빈 입력칸이
+ * 보였다. 필요하면 "소분류 추가" 버튼으로 늘린다.
+ */
+const NO_SUB_CATEGORIES: SubCategoryRow[] = [];
 
 
 export default function CategoriesPage() {
@@ -25,7 +42,7 @@ export default function CategoriesPage() {
   const [formData, setFormData] = useState({
     name: '',
     type: 'expense' as 'income' | 'expense',
-    subCategories: [{ id: '', name: '', defaultIsFixed: false }],
+    subCategories: NO_SUB_CATEGORIES as SubCategoryRow[],
     defaultIsFixed: false,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -62,7 +79,7 @@ export default function CategoriesPage() {
     setFormData({
       name: '',
       type: 'expense',
-      subCategories: [{ id: '', name: '', defaultIsFixed: false }],
+      subCategories: NO_SUB_CATEGORIES,
       defaultIsFixed: false,
     });
     setEditingId(null);
@@ -77,12 +94,12 @@ export default function CategoriesPage() {
   const handleDetailEditClick = () => {
     if (!selectedCategory) return;
     setEditingId(selectedCategory.id);
-    let subCategories = [{ id: '', name: '', defaultIsFixed: false }];
+    let subCategories: SubCategoryRow[] = NO_SUB_CATEGORIES;
     if (!selectedCategory.parentId) {
       const subs = categories
         .filter((c) => c.parentId === selectedCategory.id)
         .map((c) => ({ id: c.id, name: c.name, defaultIsFixed: c.defaultIsFixed || false }));
-      subCategories = subs.length > 0 ? subs : [{ id: '', name: '', defaultIsFixed: false }];
+      subCategories = subs;
     }
     setFormData({
       name: selectedCategory.name,
@@ -97,12 +114,12 @@ export default function CategoriesPage() {
 
   const handleEditClick = (category: Category) => {
     setEditingId(category.id);
-    let subCategories = [{ id: '', name: '', defaultIsFixed: false }];
+    let subCategories: SubCategoryRow[] = NO_SUB_CATEGORIES;
     if (!category.parentId) {
       const subs = categories
         .filter((c) => c.parentId === category.id)
         .map((c) => ({ id: c.id, name: c.name, defaultIsFixed: c.defaultIsFixed || false }));
-      subCategories = subs.length > 0 ? subs : [{ id: '', name: '', defaultIsFixed: false }];
+      subCategories = subs;
     }
     setFormData({
       name: category.name,
@@ -219,7 +236,7 @@ export default function CategoriesPage() {
       setFormData({
         name: '',
         type: 'expense',
-        subCategories: [{ id: '', name: '', defaultIsFixed: false }],
+        subCategories: NO_SUB_CATEGORIES,
         defaultIsFixed: false,
       });
       setEditingId(null);
@@ -232,6 +249,19 @@ export default function CategoriesPage() {
     }
   };
 
+  /** 드래그로 바꾼 순서를 저장한다. 실패하면 목록을 다시 받아 원래 순서로 되돌린다. */
+  const handleReorder = async (ids: string[]) => {
+    try {
+      const updated = await apiClient.reorderCategories(ids, selectedProjectId);
+      setCategories(updated as Category[]);
+    } catch (err: any) {
+      setError(err?.response?.data?.error?.message || '순서 저장에 실패했습니다.');
+      // 저장이 실패했으면 화면에 남은 순서가 서버와 다르다. 다시 받아 맞춘다.
+      const data = await apiClient.getCategories(selectedProjectId);
+      setCategories(data || []);
+    }
+  };
+
   if (!isAuthenticated) {
     return <div>로딩 중...</div>;
   }
@@ -239,38 +269,6 @@ export default function CategoriesPage() {
   const mainCategories = categories.filter((c) => !c.parentId);
   const expenseCategories = mainCategories.filter((c) => c.type === 'expense');
   const incomeCategories = mainCategories.filter((c) => c.type === 'income');
-
-  const renderCategoryList = (cats: Category[]) => (
-    <div className="space-y-4">
-      {cats.map((category) => (
-        <div
-          key={category.id}
-          className="bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-lg transition"
-          onClick={() => handleCategoryClick(category)}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <p className="font-bold text-gray-900">{category.name}</p>
-          </div>
-
-          {categories.filter((c) => c.parentId === category.id).length > 0 && (
-            <div className="ml-4 mt-2 space-y-2 border-l border-gray-200 pl-4">
-              {categories
-                .filter((c) => c.parentId === category.id)
-                .map((subCat) => (
-                  <div key={subCat.id} className="text-sm text-gray-600 flex items-center justify-between">
-                    <span>{subCat.name}</span>
-                    <span className="text-xs text-gray-500">
-                      {subCat.isDefault && '(기본)'}
-                      {subCat.defaultIsFixed && ' 고정'}
-                    </span>
-                  </div>
-                ))}
-            </div>
-          )}
-        </div>
-      ))}
-    </div>
-  );
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -292,19 +290,36 @@ export default function CategoriesPage() {
           <p className="text-gray-600">카테고리가 없습니다.</p>
         ) : (
           <>
-            {expenseCategories.length > 0 && (
-              <div className="mb-8">
+            {/* 가계·자산 화면과 같은 2단 배치. 왼쪽 지출, 오른쪽 수입. */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <div>
                 <h2 className="text-lg font-bold text-red-600 mb-4">💸 지출</h2>
-                {renderCategoryList(expenseCategories)}
+                {expenseCategories.length === 0 ? (
+                  <p className="text-gray-600">지출 카테고리가 없습니다.</p>
+                ) : (
+                  <CategoryList
+                    cats={expenseCategories}
+                    allCategories={categories}
+                    onCategoryClick={handleCategoryClick}
+                    onReorder={handleReorder}
+                  />
+                )}
               </div>
-            )}
 
-            {incomeCategories.length > 0 && (
-              <div className="mb-8">
+              <div>
                 <h2 className="text-lg font-bold text-green-600 mb-4">💰 수입</h2>
-                {renderCategoryList(incomeCategories)}
+                {incomeCategories.length === 0 ? (
+                  <p className="text-gray-600">수입 카테고리가 없습니다.</p>
+                ) : (
+                  <CategoryList
+                    cats={incomeCategories}
+                    allCategories={categories}
+                    onCategoryClick={handleCategoryClick}
+                    onReorder={handleReorder}
+                  />
+                )}
               </div>
-            )}
+            </div>
 
             {error && (
               <div className="mt-4 p-3 bg-red-50 text-red-800 text-sm rounded">
@@ -318,9 +333,32 @@ export default function CategoriesPage() {
           isOpen={isDetailModalOpen}
           onClose={() => setIsDetailModalOpen(false)}
           title="카테고리 상세정보"
+          footer={
+            selectedCategory ? (
+              <div className="flex gap-2">
+                <button
+                  onClick={handleDetailEditClick}
+                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  수정하기
+                </button>
+                <button
+                  onClick={async () => {
+                    setIsDetailModalOpen(false);
+                    await handleDeleteClick(selectedCategory.id);
+                  }}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  disabled={isSubmitting || selectedCategory.isDefault}
+                  title={selectedCategory.isDefault ? '기본 카테고리는 삭제할 수 없습니다.' : ''}
+                >
+                  삭제하기
+                </button>
+              </div>
+            ) : null
+          }
         >
         {selectedCategory && (
-          <div className="space-y-4 max-h-96 overflow-y-auto">
+          <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 카테고리명
@@ -369,25 +407,6 @@ export default function CategoriesPage() {
               </>
             )}
 
-            <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
-              <button
-                onClick={handleDetailEditClick}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                수정하기
-              </button>
-              <button
-                onClick={async () => {
-                  setIsDetailModalOpen(false);
-                  await handleDeleteClick(selectedCategory.id);
-                }}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                disabled={isSubmitting || selectedCategory.isDefault}
-                title={selectedCategory.isDefault ? '기본 카테고리는 삭제할 수 없습니다.' : ''}
-              >
-                삭제하기
-              </button>
-            </div>
           </div>
         )}
         </Modal>
@@ -396,8 +415,19 @@ export default function CategoriesPage() {
           isOpen={isModalOpen}
           onClose={handleModalClose}
           title={editingId ? '카테고리 수정' : '카테고리 추가'}
+          /* 버튼은 form 밖(하단 고정 영역)이라 form 속성으로 묶는다 */
+          footer={
+            <button
+              type="submit"
+              form={FORM_ID}
+              disabled={isSubmitting || !formData.name.trim()}
+              className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isSubmitting ? (editingId ? '수정 중...' : '추가 중...') : (editingId ? '수정하기' : '추가하기')}
+            </button>
+          }
         >
-        <form onSubmit={handleSubmit} className="space-y-4">
+        <form id={FORM_ID} onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               대분류 이름
@@ -427,26 +457,10 @@ export default function CategoriesPage() {
             />
           </div>
 
-          <div className="flex items-center gap-3">
-            <input
-              type="checkbox"
-              id="defaultIsFixed"
-              checked={formData.defaultIsFixed}
-              onChange={(e) => setFormData({ ...formData, defaultIsFixed: e.target.checked })}
-              className="w-4 h-4 border border-gray-300 rounded-md focus:ring-blue-500"
-            />
-            <label htmlFor="defaultIsFixed" className="text-sm font-medium text-gray-700">
-              기본 고정 지출/수입
-            </label>
-          </div>
-
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              소분류 (선택)
-            </label>
             <div className="space-y-3 max-h-64 overflow-y-auto">
               {formData.subCategories.map((subCat, index) => (
-                <div key={index} className="p-3 border border-gray-200 rounded-lg space-y-2">
+                <div key={index} className="p-3 border border-gray-200 rounded-lg">
                   <div className="flex gap-2">
                     <input
                       type="text"
@@ -459,34 +473,16 @@ export default function CategoriesPage() {
                       className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="소분류 이름"
                     />
-                    {formData.subCategories.length > 1 && (
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const newSubs = formData.subCategories.filter((_, i) => i !== index);
-                          setFormData({ ...formData, subCategories: newSubs });
-                        }}
-                        className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg"
-                      >
-                        제거
-                      </button>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="checkbox"
-                      id={`subFixed-${index}`}
-                      checked={subCat.defaultIsFixed || false}
-                      onChange={(e) => {
-                        const newSubs = [...formData.subCategories];
-                        newSubs[index] = { ...newSubs[index], defaultIsFixed: e.target.checked };
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const newSubs = formData.subCategories.filter((_, i) => i !== index);
                         setFormData({ ...formData, subCategories: newSubs });
                       }}
-                      className="w-4 h-4 border border-gray-300 rounded-md focus:ring-blue-500"
-                    />
-                    <label htmlFor={`subFixed-${index}`} className="text-xs font-medium text-gray-600">
-                      고정 지출/수입
-                    </label>
+                      className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg"
+                    >
+                      제거
+                    </button>
                   </div>
                 </div>
               ))}
@@ -506,16 +502,91 @@ export default function CategoriesPage() {
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={isSubmitting || !formData.name.trim()}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {isSubmitting ? (editingId ? '수정 중...' : '추가 중...') : (editingId ? '수정하기' : '추가하기')}
-          </button>
         </form>
         </Modal>
       </div>
+    </div>
+  );
+}
+
+/**
+ * 대분류 목록. 드래그로 순서를 바꾼다.
+ *
+ * 소분류도 같은 방식으로 정렬한다. 안쪽 드래그가 바깥 목록을 흔들지 않도록
+ * useDragReorder가 이벤트 전파를 끊는다.
+ */
+function CategoryList({
+  cats,
+  allCategories,
+  onCategoryClick,
+  onReorder,
+}: {
+  cats: Category[];
+  allCategories: Category[];
+  onCategoryClick: (category: Category) => void;
+  onReorder: (ids: string[]) => void;
+}) {
+  const { items, dragProps, draggingId } = useDragReorder(cats, onReorder);
+
+  return (
+    <div className="space-y-4">
+      {items.map((category) => (
+        <div
+          key={category.id}
+          {...dragProps(category.id)}
+          className={`bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-lg transition ${
+            draggingId === category.id ? 'opacity-50' : ''
+          }`}
+          onClick={() => onCategoryClick(category)}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <p className="font-bold text-gray-900">
+              <DragHandleIcon className="inline w-4 h-4 text-gray-400 mr-2 cursor-grab align-[-2px]" aria-label="드래그해서 순서 변경" />
+              {category.name}
+            </p>
+          </div>
+
+          <SubCategoryList
+            subCats={allCategories.filter((c) => c.parentId === category.id)}
+            onReorder={onReorder}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 한 대분류 아래 소분류 목록 */
+function SubCategoryList({
+  subCats,
+  onReorder,
+}: {
+  subCats: Category[];
+  onReorder: (ids: string[]) => void;
+}) {
+  const { items, dragProps, draggingId } = useDragReorder(subCats, onReorder);
+  if (items.length === 0) return null;
+
+  return (
+    <div className="ml-4 mt-2 space-y-2 border-l border-gray-200 pl-4">
+      {items.map((subCat) => (
+        <div
+          key={subCat.id}
+          {...dragProps(subCat.id)}
+          className={`text-sm text-gray-600 flex items-center justify-between ${
+            draggingId === subCat.id ? 'opacity-50' : ''
+          }`}
+        >
+          <span>
+            <DragHandleIcon className="inline w-4 h-4 text-gray-400 mr-2 cursor-grab align-[-2px]" aria-label="드래그해서 순서 변경" />
+            {subCat.name}
+          </span>
+          <span className="text-xs text-gray-500">
+            {subCat.isDefault && '(기본)'}
+            {subCat.defaultIsFixed && ' 고정'}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

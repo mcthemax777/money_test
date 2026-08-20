@@ -1,5 +1,7 @@
 import * as XLSX from 'xlsx';
+import { DEFAULT_TIME_ZONE } from '@money/types';
 import { apiClient } from './api-client';
+import { formatDate } from './datetime';
 import { toNumber } from './money';
 
 const ENTRY_KIND_LABEL: Record<string, string> = {
@@ -19,7 +21,13 @@ const ACCOUNT_TYPE_LABEL: Record<string, string> = {
   real_estate: '부동산',
 };
 
-export async function exportDataToExcel() {
+/**
+ * 전체 데이터를 엑셀로 내보낸다.
+ *
+ * 거래일자는 프로젝트 기준 타임존으로 표기한다. 브라우저 로컬로 읽으면
+ * 화면에 보이던 날짜와 파일 안의 날짜가 어긋난다.
+ */
+export async function exportDataToExcel(timeZone: string = DEFAULT_TIME_ZONE) {
   try {
     // 모든 데이터 병렬로 가져오기
     // 거래는 커서를 따라 전부 받는다 (내보내기는 전량이 필요하다)
@@ -116,7 +124,7 @@ export async function exportDataToExcel() {
       계좌: e.accountName || '',
       대상계좌: e.toAccountName || '',
       카드: e.cardName || '',
-      거래일자: e.date ? new Date(e.date).toLocaleDateString('ko-KR') : '',
+      거래일자: e.date ? formatDate(e.date, timeZone) : '',
     }));
     const entriesSheet = XLSX.utils.json_to_sheet(entriesData);
     XLSX.utils.book_append_sheet(workbook, entriesSheet, '거래내역');

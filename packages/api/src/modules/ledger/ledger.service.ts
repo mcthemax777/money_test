@@ -1,5 +1,6 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Prisma, CardType, AccountType } from '@prisma/client';
+import { DEFAULT_TIME_ZONE, zonedDayStart, zonedParts } from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
 import { resolveStatementPeriod } from './statement-period';
 
@@ -69,6 +70,8 @@ export interface TransferInput extends CommonInput {
   /** 이체 수수료. 보내는 계좌에서 함께 빠진다. */
   feeAmount?: Prisma.Decimal;
   feeCategoryId?: string;
+  /** 수수료의 고정 여부. 생략하면 수수료 카테고리의 defaultIsFixed를 따른다. */
+  feeIsFixed?: boolean;
 }
 
 export interface OpeningBalanceInput {
@@ -298,7 +301,15 @@ export class LedgerService {
       { accountId: input.toAccountId, amount: input.amount },
     ];
     if (fee.gt(ZERO)) {
-      postings.push({ categoryId: input.feeCategoryId, amount: fee });
+      // 수수료도 지출 카테고리 다리다. 지출/수입과 같은 검증을 거쳐야
+      // 다른 프로젝트의 카테고리나 수입 카테고리가 수수료 자리에 들어오지 않는다.
+      // isFixed 기본값도 여기서 카테고리에서 가져온다.
+      const [line] = await this.resolveLines(
+        input.projectId,
+        [{ categoryId: input.feeCategoryId!, amount: fee, isFixed: input.feeIsFixed }],
+        'expense',
+      );
+      postings.push({ categoryId: line.categoryId, amount: line.amount, isFixed: line.isFixed });
     }
 
     return { ...input, postings };
@@ -390,6 +401,10 @@ export class LedgerService {
    *
    * 사용자가 자산 화면에서 잔액을 직접 고치는 기능을 지원하면서도
    * "잔액 = posting 합계" 불변식을 깨지 않기 위한 경로다.
+   *
+   * 차액은 **기준일 종료 시점의 잔액**을 기준으로 계산한다. 현재 총잔액을 쓰면
+   * 기준일 이후에 거래가 있는 계좌에서 "그 날짜의 잔액"이 입력값과 달라진다.
+   * (기준일이 오늘이고 미래 날짜 거래가 없으면 총잔액과 같은 값이다)
    */
   async adjustBalanceTo(input: {
     projectId: string;
@@ -398,8 +413,13 @@ export class LedgerService {
     date: Date;
     createdByUserId?: string | null;
   }) {
-    const account = await this.getAccount(input.projectId, input.accountId);
-    const delta = input.targetBalance.sub(account.balance);
+    await this.getAccount(input.projectId, input.accountId);
+    const asOf = await this.balanceAsOfEndOfDay(
+      input.projectId,
+      input.accountId,
+      input.date,
+    );
+    const delta = input.targetBalance.sub(asOf);
     if (delta.isZero()) return null; // 바뀐 게 없으면 전표를 만들지 않는다
 
     return this.postEquityAdjustment({
@@ -411,6 +431,28 @@ export class LedgerService {
       createdByUserId: input.createdByUserId,
       describe: (name) => `${name} 잔액 조정`,
     });
+  }
+
+  /**
+   * 그 날(프로젝트 타임존 기준)이 끝나는 시점까지 쌓인 계좌 잔액.
+   *
+   * balance 컬럼은 미래 날짜 거래까지 포함한 총합이라 기준일 잔액과 다르다.
+   */
+  private async balanceAsOfEndOfDay(
+    projectId: string,
+    accountId: string,
+    date: Date,
+  ): Promise<Prisma.Decimal> {
+    const timeZone = await this.projectTimeZone(projectId);
+    const { year, month, day } = zonedParts(date, timeZone);
+    const dayEnd = zonedDayStart(year, month, day + 1, timeZone);
+
+    const sum = await this.prisma.posting.aggregate({
+      _sum: { amount: true },
+      where: { accountId, entry: { projectId, date: { lt: dayEnd } } },
+    });
+
+    return sum._sum.amount ?? ZERO;
   }
 
   /** 자본 계정을 상대편으로 하는 2-leg 전표. 기초잔액과 잔액 조정이 공유한다. */
@@ -649,14 +691,26 @@ export class LedgerService {
 
   /** 거래일이 속한 청구서를 찾고, 없으면 연다. */
   private async findOrCreateStatement(
-    card: { id: string; statementClosingDay: number | null; paymentDueDay: number | null },
+    card: {
+      id: string;
+      projectId: string;
+      statementClosingDay: number | null;
+      paymentDueDay: number | null;
+    },
     date: Date,
   ) {
     if (card.statementClosingDay === null || card.paymentDueDay === null) {
       throw new BadRequestException('신용카드에 마감일과 결제일이 설정되어 있지 않습니다.');
     }
 
-    const period = resolveStatementPeriod(date, card.statementClosingDay, card.paymentDueDay);
+    // 마감일 경계는 프로젝트 타임존의 달력 날짜로 판단한다 (UTC로 읽으면 하루 밀린다).
+    const timeZone = await this.projectTimeZone(card.projectId);
+    const period = resolveStatementPeriod(
+      date,
+      card.statementClosingDay,
+      card.paymentDueDay,
+      timeZone,
+    );
 
     return this.prisma.cardStatement.upsert({
       where: { cardId_periodEnd: { cardId: card.id, periodEnd: period.periodEnd } },
@@ -668,6 +722,15 @@ export class LedgerService {
       },
       update: {},
     });
+  }
+
+  /** 프로젝트의 집계 기준 타임존 */
+  private async projectTimeZone(projectId: string): Promise<string> {
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { timezone: true },
+    });
+    return project?.timezone || DEFAULT_TIME_ZONE;
   }
 
   private async getAccount(projectId: string, accountId: string) {

@@ -16,7 +16,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { BudgetsService } from './budgets.service';
 import { AuthenticatedRequest } from '@/common/authenticated-request';
-import { BudgetDto } from '@money/types';
+import { BudgetDto, EntryFilterQuery } from '@money/types';
 
 @ApiTags('Budgets')
 @Controller('budgets')
@@ -51,13 +51,14 @@ export class BudgetsController {
     @Request() req: AuthenticatedRequest,
     @Param('year') year: string,
     @Param('month') month: string,
-    @Query('projectId') projectId?: string,
+    @Query() query: EntryFilterQuery & { projectId?: string },
   ) {
     return this.budgetsService.getBudgetForMonth(
       req.user.id,
-      projectId!,
+      query.projectId!,
       parseInt(year),
       parseInt(month),
+      query,
     );
   }
 

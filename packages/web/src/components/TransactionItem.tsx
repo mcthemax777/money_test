@@ -1,6 +1,8 @@
 'use client';
 
 import { formatCurrency, toNumber } from '@/lib/money';
+import { formatDate } from '@/lib/datetime';
+import { useProjectTimeZone } from '@/store/project';
 
 /**
  * 서버가 전표를 한 줄로 펴서 주는 형태.
@@ -71,6 +73,7 @@ const TITLE_BY_KIND: Partial<Record<EntryListItem['kind'], string>> = {
 };
 
 export default function TransactionItem({ entry, onClick, isSelected }: TransactionItemProps) {
+  const timeZone = useProjectTimeZone();
   const isTwoSided = TWO_SIDED.includes(entry.kind);
 
   // 이체는 "얼마를 어디로 보냈는가"와 "수수료를 얼마 냈는가"가 서로 다른 정보다.
@@ -134,7 +137,7 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
           )}
 
           <p className="text-xs text-gray-500 mt-2">
-            {new Date(entry.date).toLocaleDateString('ko-KR')}
+            {formatDate(entry.date, timeZone)}
           </p>
         </div>
 

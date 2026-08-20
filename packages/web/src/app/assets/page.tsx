@@ -7,7 +7,17 @@ import { apiClient } from '@/lib/api-client';
 import type { Account, Card, Person, Statement } from '@/lib/types';
 import { formatCurrency, toAmountString, toNumber } from '@/lib/money';
 import { useUserFilter } from '@/store/user-filter';
-import { useProject } from '@/store/project';
+import { formatDate, formatDateMarker } from '@/lib/datetime';
+import ChoiceModal from '@/components/ChoiceModal';
+import { useDragReorder } from '@/hooks/useDragReorder';
+// 드래그 핸들: 가로 실선 2줄. lucide의 Equal이 그 모양이라 이름만 바꿔 쓴다.
+import { Equal as DragHandleIcon } from 'lucide-react';
+import { DAY_OF_MONTH_HINT, DAY_OF_MONTH_OPTIONS } from '@/lib/day-of-month';
+
+/** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
+const PAYMENT_FORM_ID = 'card-payment-form';
+const CARD_ADD_FORM_ID = 'card-add-form';
+import { useProject, useProjectTimeZone } from '@/store/project';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import PersonModal from '@/components/PersonModal';
@@ -21,8 +31,9 @@ import { useInstitutions } from '@/hooks/useInstitutions';
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { selectedPersonIds, setPeople: setStorePeople } = useUserFilter();
+  const { setPeople: setStorePeople } = useUserFilter();
   const { selectedProjectId } = useProject();
+  const timeZone = useProjectTimeZone();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -39,6 +50,9 @@ export default function DashboardPage() {
 
   const [personModalOpen, setPersonModalOpen] = useState(false);
   const [personModalMode, setPersonModalMode] = useState<'view' | 'edit'>('view');
+  // 조회(상세정보)와 수정 폼은 서로 다른 모달이다. state를 공유하면 상세정보 버튼
+  // 하나로 두 모달이 동시에 열려 "수정하기를 누르지도 않았는데 수정 화면이 나온다".
+  const [isAccountDetailOpen, setIsAccountDetailOpen] = useState(false);
   const [isEditAccountModalOpen, setIsEditAccountModalOpen] = useState(false);
   const [isEditCardModalOpen, setIsEditCardModalOpen] = useState(false);
 
@@ -150,17 +164,10 @@ export default function DashboardPage() {
     }
   }, [selectedCard, detailType, loadCardPayment]);
 
-  const filteredAccounts = useMemo(() => {
-    return accounts.filter((acc) => selectedPersonIds.includes(acc.owner?.id || ''));
-  }, [accounts, selectedPersonIds]);
-
-  const filteredCards = useMemo(() => {
-    const userAccountIds = filteredAccounts.map((acc) => acc.id);
-    return cards.filter((card) => userAccountIds.includes(card.paymentAccountId));
-  }, [cards, filteredAccounts]);
-
+  // 자산 화면은 사람 필터를 쓰지 않는다. 필터는 가계 화면 전용이고,
+  // 여기서 걸면 총자산(서버 계산, 전체 기준)과 계좌 목록이 어긋난다.
   const getAccountCards = (accountId: string) =>
-    filteredCards.filter((c) => c.paymentAccountId === accountId);
+    cards.filter((c) => c.paymentAccountId === accountId);
 
   const handleDeletePerson = async () => {
     if (!selectedPerson || !window.confirm('정말 삭제하시겠습니까?')) return;
@@ -185,6 +192,7 @@ export default function DashboardPage() {
       await apiClient.deleteAccountV2(selectedAccount.id);
       const accountsData = await apiClient.getAccountsV2(selectedProjectId);
       setAccounts(accountsData || []);
+      setIsAccountDetailOpen(false);
       setDetailType(null);
       setSelectedAccount(null);
     } catch (err: any) {
@@ -299,7 +307,45 @@ export default function DashboardPage() {
     setPersonModalOpen(true);
   };
 
+  /** 드래그로 바꾼 구성원 순서 저장 */
+  const handleReorderPeople = async (ids: string[]) => {
+    try {
+      const updated = await apiClient.reorderPeople(ids, selectedProjectId);
+      setPeople((updated || []) as Person[]);
+      setStorePeople((updated || []) as Person[]);
+    } catch (err: any) {
+      setError(err?.response?.data?.error?.message || '순서 저장에 실패했습니다.');
+    }
+  };
+
+  /**
+   * 드래그로 바꾼 계좌 순서 저장.
+   *
+   * sortOrder는 프로젝트 단위지만 화면은 구성원별로 묶어 보여준다.
+   * 한 묶음 안의 순서만 다시 매기므로 묶음끼리는 서로 영향을 주지 않는다.
+   */
+  const handleReorderAccounts = async (ids: string[]) => {
+    try {
+      const updated = await apiClient.reorderAccounts(ids, selectedProjectId);
+      setAccounts((updated || []) as Account[]);
+    } catch (err: any) {
+      setError(err?.response?.data?.error?.message || '순서 저장에 실패했습니다.');
+    }
+  };
+
+  /** 드래그로 바꾼 카드 순서 저장. 계좌와 같은 규칙(묶음 안에서만 다시 매긴다). */
+  const handleReorderCards = async (ids: string[]) => {
+    try {
+      const updated = await apiClient.reorderCards(ids, selectedProjectId);
+      setCards((updated || []) as Card[]);
+    } catch (err: any) {
+      setError(err?.response?.data?.error?.message || '순서 저장에 실패했습니다.');
+    }
+  };
+
+  /** 조회 모달을 닫고 수정 폼을 연다. 둘이 겹쳐 열리지 않게 순서를 지킨다. */
   const handleEditAccountClick = () => {
+    setIsAccountDetailOpen(false);
     setIsEditAccountModalOpen(true);
   };
 
@@ -315,21 +361,8 @@ export default function DashboardPage() {
     (netWorth?.byPerson ?? []).map((row: any) => [row.personId as string, row]),
   );
 
-  // selectedPersonIds가 없으면 모든 사용자 사용
-  const effectivePersonIds = selectedPersonIds.length > 0 ? selectedPersonIds : people.map(p => p.id);
-  const displayPeople = people.filter((p) => effectivePersonIds.includes(p.id));
-
-  // 계좌가 없어도 모든 선택된 사용자를 표시
-  const allGroupedAccounts = displayPeople.reduce(
-    (acc, person) => {
-      acc[person.id] = {
-        person,
-        accounts: filteredAccounts.filter((a) => a.ownerId === person.id),
-      };
-      return acc;
-    },
-    {} as Record<string, { person: Person; accounts: Account[] }>
-  );
+  // 계좌가 없는 구성원도 표시한다
+  const displayPeople = people;
 
   return (
     <>
@@ -343,31 +376,21 @@ export default function DashboardPage() {
         </button>
       </div>
 
-      {/* 계좌를 보고 있으면 그 계좌 잔액을, 아니면 전체 자산을 띄운다 */}
-      {detailType === 'account' && selectedAccount ? (
-        <div className="bg-blue-600 text-white rounded-lg p-8 mb-8">
-          <p className="text-sm opacity-90">{selectedAccount.name}</p>
-          <p className="text-4xl font-bold mt-2">{formatCurrency(selectedAccount.balance)}</p>
-        </div>
-      ) : (
-        <div className="bg-blue-600 text-white rounded-lg p-8 mb-8">
-          <p className="text-sm opacity-90">총 자산</p>
-          <p className="text-4xl font-bold mt-2">
-            {formatCurrency(totalBalance)}
+      {/* 총자산과 전체 추이는 계좌를 골라도 그대로 둔다. 고른 계좌는 아래 오른쪽에 펼친다. */}
+      <div className="bg-blue-600 text-white rounded-lg p-8 mb-8">
+        <p className="text-sm opacity-90">총 자산</p>
+        <p className="text-4xl font-bold mt-2">
+          {formatCurrency(totalBalance)}
+        </p>
+        {netWorth && toNumber(netWorth.liability) !== 0 && (
+          <p className="text-sm opacity-90 mt-2">
+            현금성 {formatCurrency(netWorth.cash)} · 투자 {formatCurrency(netWorth.investment)} ·
+            부채 {formatCurrency(netWorth.liability)}
           </p>
-          {netWorth && toNumber(netWorth.liability) !== 0 && (
-            <p className="text-sm opacity-90 mt-2">
-              현금성 {formatCurrency(netWorth.cash)} · 투자 {formatCurrency(netWorth.investment)} ·
-              부채 {formatCurrency(netWorth.liability)}
-            </p>
-          )}
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* 전체 자산 추이. 계좌를 골라 보고 있을 때는 아래에서 그 계좌 것을 따로 보여준다. */}
-      {detailType !== 'account' && (
-        <AssetHistoryChart projectId={selectedProjectId} />
-      )}
+      <AssetHistoryChart projectId={selectedProjectId} />
 
       {error && (
         <div className="p-3 bg-red-50 text-red-800 text-sm rounded mb-4">
@@ -379,168 +402,146 @@ export default function DashboardPage() {
         <p className="text-gray-600">로딩 중...</p>
       ) : displayPeople.length === 0 ? (
         <p className="text-gray-600">선택된 사용자가 없습니다.</p>
-      ) : detailType === 'account' && selectedAccount ? (
-        /* 계좌 선택 상태: 거래 내역 표시 */
-        <div className="bg-white rounded-lg border border-gray-200 p-6">
-          {/* 헤더: 계좌명 및 버튼 */}
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-2xl font-bold text-gray-900">{selectedAccount.name}</h2>
-            <div className="flex gap-2">
-              <button
-                onClick={() => setIsEditAccountModalOpen(true)}
-                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-              >
-                계좌 상세정보
-              </button>
-              <button
-                onClick={() => {
-                  setDetailType(null);
-                  setSelectedAccount(null);
-                }}
-                className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
-              >
-                닫기
-              </button>
-            </div>
-          </div>
-
-          {/* 이 계좌의 잔액 추이 */}
-          <AssetHistoryChart accountId={selectedAccount.id} projectId={selectedProjectId} />
-
-          {/* 거래 내역 */}
-          {accountTransactions.length === 0 ? (
-            <p className="text-gray-600 text-center py-8">거래 내역이 없습니다.</p>
-          ) : (
-            <div className="space-y-3">
-              {accountTransactions.map((tx: any) => {
-                // 원장 posting의 amount는 이미 부호를 갖는다 (자산 증가 +, 감소 -).
-                // 부호를 그대로 두고 앞에 '-'를 또 붙이면 '--₩10,000'이 된다. 절댓값으로 찍는다.
-                const amount = toNumber(tx.amount);
-                const isIncoming = amount > 0;
-                const label = tx.merchant || tx.cardName || '';
-                return (
-                  <div key={tx.postingId} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
-                    <div className="flex justify-between items-start gap-4">
-                      <div className="flex-1 min-w-0">
-                        <p className="font-bold text-gray-900">{tx.description || '(내용 없음)'}</p>
-                        {label && (
-                          <p className="text-sm text-gray-600 mt-1">{label}</p>
-                        )}
-                        <p className="text-xs text-gray-500 mt-1">
-                          {new Date(tx.date).toLocaleDateString('ko-KR')}
-                        </p>
-                      </div>
-                      <div className="text-right whitespace-nowrap">
-                        <p className={`font-bold text-lg ${isIncoming ? 'text-green-600' : 'text-red-600'}`}>
-                          {isIncoming ? '+' : '-'}
-                          {formatCurrency(Math.abs(amount))}
-                        </p>
-                        <p className="text-xs text-gray-500 mt-1">
-                          잔액 {formatCurrency(tx.balanceAfter)}
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
-        </div>
       ) : (
-        /* 계좌 미선택: 기존 레이아웃 */
-        <div className="space-y-8">
-          {Object.entries(allGroupedAccounts).map(([personId, { person, accounts: personAccounts }]) => (
-            <div
-              key={personId}
-              className="bg-white rounded-lg shadow p-6 hover:shadow-md hover:bg-gray-50 transition"
-            >
-              <button
-                onClick={() => {
-                  setSelectedPerson(person);
-                  setDetailType('person');
-                }}
-                className="w-full text-left mb-6"
-              >
-                <div className="flex justify-between items-center">
-                  <div>
-                    <h2 className="text-xl font-bold text-gray-900">{person.name}</h2>
-                    <p className="text-sm text-gray-600">
-                      소계: {formatCurrency(netWorthByPerson.get(person.id)?.total ?? 0)}
-                    </p>
-                  </div>
+        /*
+          왼쪽은 항상 구성원·계좌·카드 목록, 오른쪽은 고른 계좌의 내역이다.
+          예전에는 계좌를 누르면 목록이 사라지고 화면이 통째로 바뀌어서, 다른 계좌로
+          옮기려면 매번 닫아야 했다.
+        */
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+          {/* 왼쪽: 구성원별 목록. 드래그로 순서를 바꿀 수 있다. */}
+          <PersonAssetList
+            people={displayPeople}
+            accounts={accounts}
+            cardsOf={getAccountCards}
+            netWorthByPerson={netWorthByPerson}
+            selectedAccountId={detailType === 'account' ? selectedAccount?.id ?? null : null}
+            onPersonClick={(person) => {
+              setSelectedPerson(person);
+              setDetailType('person');
+            }}
+            onAccountClick={(account) => {
+              setSelectedAccount(account);
+              setDetailType('account');
+            }}
+            onCardClick={(card) => {
+              setSelectedCard(card);
+              setDetailType('card');
+            }}
+            onReorderPeople={handleReorderPeople}
+            onReorderAccounts={handleReorderAccounts}
+            onReorderCards={handleReorderCards}
+          />
+
+          {/* 오른쪽: 고른 계좌의 잔액 추이와 거래 내역 */}
+          {detailType === 'account' && selectedAccount ? (
+            <div className="bg-white rounded-lg border border-gray-200 p-6">
+              {/* 헤더: 계좌명 및 버튼 */}
+              <div className="flex justify-between items-start gap-4 mb-6">
+                <div>
+                  {/* 예전에는 상단 총자산 박스가 이 값을 보여줬다. 총자산을 그대로 두는 대신 여기에 적는다. */}
+                  <h2 className="text-2xl font-bold text-gray-900">{selectedAccount.name}</h2>
+                  <p className="text-xl font-bold text-blue-600 mt-1">
+                    {formatCurrency(selectedAccount.balance)}
+                  </p>
+                  {selectedAccount.institution?.name && (
+                    <p className="text-sm text-gray-600 mt-1">{selectedAccount.institution.name}</p>
+                  )}
                 </div>
-              </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setIsAccountDetailOpen(true)}
+                    className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                  >
+                    계좌 상세정보
+                  </button>
+                  <button
+                    onClick={() => {
+                      setDetailType(null);
+                      setSelectedAccount(null);
+                    }}
+                    className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
+                  >
+                    닫기
+                  </button>
+                </div>
+              </div>
 
-              {personAccounts.length === 0 ? (
-                <p className="text-gray-600">등록된 계좌가 없습니다.</p>
+              {/* 이 계좌의 잔액 추이 */}
+              <AssetHistoryChart accountId={selectedAccount.id} projectId={selectedProjectId} />
+
+              {/* 거래 내역 */}
+              {accountTransactions.length === 0 ? (
+                <p className="text-gray-600 text-center py-8">거래 내역이 없습니다.</p>
               ) : (
-                <div className="space-y-4">
-                  {personAccounts.map((account) => {
-                    const accountCards = getAccountCards(account.id);
+                <div className="space-y-3">
+                  {accountTransactions.map((tx: any) => {
+                    // 원장 posting의 amount는 이미 부호를 갖는다 (자산 증가 +, 감소 -).
+                    // 부호를 그대로 두고 앞에 '-'를 또 붙이면 '--₩10,000'이 된다. 절댓값으로 찍는다.
+                    const amount = toNumber(tx.amount);
+                    const isIncoming = amount > 0;
+                    const label = tx.merchant || tx.cardName || '';
                     return (
-                      <div
-                        key={account.id}
-                        className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition"
-                      >
-                        <button
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setSelectedAccount(account);
-                            setDetailType('account');
-                          }}
-                          className="w-full text-left hover:opacity-70 transition"
-                        >
-                          <p className="text-sm text-gray-600">{account.institution?.name}</p>
-                          <p className="text-2xl font-bold text-gray-900 mt-2">
-                            {formatCurrency(account.balance)}
-                          </p>
-                          <p className="text-xs text-gray-500 mt-2">{account.name}</p>
-                          {account.accountNumber && (
-                            <p className="text-xs text-gray-400 mt-1">{account.accountNumber}</p>
-                          )}
-                        </button>
-
-                        {accountCards.length > 0 && (
-                          <div className="mt-4 pt-4 border-t border-gray-200 space-y-2">
-                            {accountCards.map((card) => (
-                              <button
-                                key={card.id}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setSelectedCard(card);
-                                  setDetailType('card');
-                                }}
-                                className="w-full text-left px-3 py-2 bg-green-50 rounded border border-green-100 hover:bg-green-100 transition"
-                              >
-                                <p className="text-sm font-medium text-gray-900">
-                                  💳 {card.name}
-                                </p>
-                                <p className="text-xs text-gray-600">{card.issuer?.name}</p>
-                                <p className="text-xs text-gray-600">
-                                  {card.cardType === 'debit' ? '체크카드' : '신용카드'}
-                                </p>
-                              </button>
-                            ))}
+                      <div key={tx.postingId} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
+                        <div className="flex justify-between items-start gap-4">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-gray-900">{tx.description || '(내용 없음)'}</p>
+                            {label && (
+                              <p className="text-sm text-gray-600 mt-1">{label}</p>
+                            )}
+                            <p className="text-xs text-gray-500 mt-1">
+                              {formatDate(tx.date, timeZone)}
+                            </p>
                           </div>
-                        )}
+                          <div className="text-right whitespace-nowrap">
+                            <p className={`font-bold text-lg ${isIncoming ? 'text-green-600' : 'text-red-600'}`}>
+                              {isIncoming ? '+' : '-'}
+                              {formatCurrency(Math.abs(amount))}
+                            </p>
+                            <p className="text-xs text-gray-500 mt-1">
+                              잔액 {formatCurrency(tx.balanceAfter)}
+                            </p>
+                          </div>
+                        </div>
                       </div>
                     );
                   })}
                 </div>
               )}
             </div>
-          ))}
+          ) : (
+            <div className="bg-white rounded-lg border border-dashed border-gray-300 p-10 text-center">
+              <p className="text-gray-500">계좌를 누르면 잔액 추이와 거래 내역이 여기에 나옵니다.</p>
+            </div>
+          )}
         </div>
       )}
 
       {/* 계좌 상세정보 모달 */}
-      {isEditAccountModalOpen && selectedAccount && (
+      {isAccountDetailOpen && selectedAccount && (
         <Modal
           isOpen={true}
-          onClose={() => setIsEditAccountModalOpen(false)}
+          onClose={() => setIsAccountDetailOpen(false)}
           title="계좌 상세정보"
+          footer={
+            <div className="flex gap-2">
+              <button
+                onClick={handleEditAccountClick}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                수정하기
+              </button>
+              <button
+                onClick={handleDeleteAccount}
+                disabled={isSubmitting}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                삭제하기
+              </button>
+            </div>
+          }
         >
-          <div className="space-y-4 max-h-96 overflow-y-auto">
+          <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 통장 주인
@@ -589,21 +590,6 @@ export default function DashboardPage() {
             )}
           </div>
 
-          <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
-            <button
-              onClick={handleEditAccountClick}
-              className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-            >
-              수정하기
-            </button>
-            <button
-              onClick={handleDeleteAccount}
-              disabled={isSubmitting}
-              className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-            >
-              삭제하기
-            </button>
-          </div>
         </Modal>
       )}
 
@@ -618,20 +604,8 @@ export default function DashboardPage() {
             setSelectedPerson(null);
           }}
           title="구성원 상세정보"
-        >
-          <>
-            <div className="space-y-4 max-h-96 overflow-y-auto">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  이름
-                </label>
-                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                  {selectedPerson.name}
-                </p>
-              </div>
-            </div>
-
-            <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
+          footer={
+            <div className="flex gap-2">
               <button
                 onClick={handleEditPersonClick}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
@@ -646,13 +620,28 @@ export default function DashboardPage() {
                 삭제하기
               </button>
             </div>
+          }
+        >
+          <>
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  이름
+                </label>
+                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                  {selectedPerson.name}
+                </p>
+              </div>
+            </div>
+
           </>
         </Modal>
       )}
 
 
-      {/* 카드 상세정보 모달 */}
-      {detailType === 'card' && selectedCard && (
+      {/* 카드 상세정보 모달. 수정 폼이 열리면 감춘다 (겹쳐 열리면 안 된다).
+          detailType은 청구서 조회 effect가 쓰므로 그대로 둔다. */}
+      {detailType === 'card' && selectedCard && !isEditCardModalOpen && (
         <Modal
           isOpen={true}
           onClose={() => {
@@ -660,9 +649,26 @@ export default function DashboardPage() {
             setSelectedCard(null);
           }}
           title="카드 상세정보"
+          footer={
+            <div className="flex gap-2">
+              <button
+                onClick={handleEditCardClick}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+              >
+                수정하기
+              </button>
+              <button
+                onClick={handleDeleteCard}
+                disabled={isSubmitting}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
+              >
+                삭제하기
+              </button>
+            </div>
+          }
         >
           <>
-            <div className="space-y-4 max-h-96 overflow-y-auto">
+            <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   카드 이름
@@ -737,13 +743,13 @@ export default function DashboardPage() {
                           <div className="flex justify-between">
                             <span className="text-sm text-gray-600">마감일</span>
                             <span className="text-sm font-medium">
-                              {new Date(statement.periodEnd).toLocaleDateString('ko-KR')}
+                              {formatDateMarker(statement.periodEnd)}
                             </span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-sm text-gray-600">결제일</span>
                             <span className="text-sm font-medium">
-                              {new Date(statement.dueDate).toLocaleDateString('ko-KR')}
+                              {formatDateMarker(statement.dueDate)}
                             </span>
                           </div>
                           <div className="flex justify-between">
@@ -778,21 +784,6 @@ export default function DashboardPage() {
               )}
             </div>
 
-            <div className="flex gap-2 pt-4 sticky bottom-0 bg-white">
-              <button
-                onClick={handleEditCardClick}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-              >
-                수정하기
-              </button>
-              <button
-                onClick={handleDeleteCard}
-                disabled={isSubmitting}
-                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
-              >
-                삭제하기
-              </button>
-            </div>
           </>
         </Modal>
       )}
@@ -806,8 +797,31 @@ export default function DashboardPage() {
             setPaymentForm({ paymentType: 'full', amount: '' });
           }}
           title="신용카드 결제"
+          footer={
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsPaymentModalOpen(false);
+                  setPaymentForm({ paymentType: 'full', amount: '' });
+                }}
+                className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
+              >
+                취소
+              </button>
+              <button
+                type="submit"
+                form={PAYMENT_FORM_ID}
+                disabled={isPaymentSubmitting}
+                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {isPaymentSubmitting ? '처리 중...' : '결제하기'}
+              </button>
+            </div>
+          }
         >
           <form
+            id={PAYMENT_FORM_ID}
             onSubmit={(e) => {
               e.preventDefault();
               handlePayCard();
@@ -877,25 +891,6 @@ export default function DashboardPage() {
               </div>
             )}
 
-            <div className="flex gap-2 pt-4">
-              <button
-                type="button"
-                onClick={() => {
-                  setIsPaymentModalOpen(false);
-                  setPaymentForm({ paymentType: 'full', amount: '' });
-                }}
-                className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
-              >
-                취소
-              </button>
-              <button
-                type="submit"
-                disabled={isPaymentSubmitting}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-              >
-                {isPaymentSubmitting ? '처리 중...' : '결제하기'}
-              </button>
-            </div>
           </form>
         </Modal>
       )}
@@ -939,44 +934,44 @@ export default function DashboardPage() {
         onDelete={handleDeleteCard}
       />
 
-      {/* 추가 유형 선택 팝업 */}
-      <Modal
+      {/* 추가 유형 선택 팝업. 거래 입력 폼의 결제수단 추가 버튼과 같은 컴포넌트를 쓴다. */}
+      <ChoiceModal
         isOpen={addType === 'select'}
         onClose={() => setAddType(null)}
         title="추가하기"
-      >
-        <div className="space-y-3">
-          <button
-            onClick={() => {
+        choices={[
+          {
+            key: 'person',
+            icon: '👤',
+            label: '구성원 추가',
+            description: '새로운 가족 구성원을 추가합니다',
+            tone: 'blue',
+            onSelect: () => {
               setAddType(null);
               setIsPersonAddModalOpen(true);
-            }}
-            className="w-full px-4 py-3 text-left bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition"
-          >
-            <p className="font-semibold text-gray-900">👤 구성원 추가</p>
-            <p className="text-xs text-gray-600 mt-1">새로운 가족 구성원을 추가합니다</p>
-          </button>
-
-          <button
-            onClick={() => {
+            },
+          },
+          {
+            key: 'account',
+            icon: '🏦',
+            label: '계좌 추가',
+            description: '새로운 계좌를 추가합니다',
+            tone: 'green',
+            onSelect: () => {
               setAddType(null);
               setIsAccountModalOpen(true);
-            }}
-            className="w-full px-4 py-3 text-left bg-green-50 border border-green-200 rounded-lg hover:bg-green-100 transition"
-          >
-            <p className="font-semibold text-gray-900">🏦 계좌 추가</p>
-            <p className="text-xs text-gray-600 mt-1">새로운 계좌를 추가합니다</p>
-          </button>
-
-          <button
-            onClick={() => setAddType('card')}
-            className="w-full px-4 py-3 text-left bg-purple-50 border border-purple-200 rounded-lg hover:bg-purple-100 transition"
-          >
-            <p className="font-semibold text-gray-900">💳 카드 추가</p>
-            <p className="text-xs text-gray-600 mt-1">새로운 카드를 추가합니다</p>
-          </button>
-        </div>
-      </Modal>
+            },
+          },
+          {
+            key: 'card',
+            icon: '💳',
+            label: '카드 추가',
+            description: '새로운 카드를 추가합니다',
+            tone: 'purple',
+            onSelect: () => setAddType('card'),
+          },
+        ]}
+      />
 
       {/* 구성원 추가 모달 */}
       <PersonModal
@@ -1020,8 +1015,18 @@ export default function DashboardPage() {
           setAddError('');
         }}
         title="카드 추가"
+        footer={
+          <button
+            type="submit"
+            form={CARD_ADD_FORM_ID}
+            disabled={isSubmitting}
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+          >
+            {isSubmitting ? '추가 중...' : '추가하기'}
+          </button>
+        }
       >
-        <form onSubmit={handleAddCard} className="space-y-4">
+        <form id={CARD_ADD_FORM_ID} onSubmit={handleAddCard} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               계좌
@@ -1126,12 +1131,13 @@ export default function DashboardPage() {
                   }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
-                    <option key={day} value={day}>
-                      {day}일
+                  {DAY_OF_MONTH_OPTIONS.map((option) => (
+                    <option key={option.day} value={option.day}>
+                      {option.label}
                     </option>
                   ))}
                 </select>
+                <p className="mt-1 text-xs text-gray-500">{DAY_OF_MONTH_HINT}</p>
               </div>
 
               <div>
@@ -1145,12 +1151,13 @@ export default function DashboardPage() {
                   }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {Array.from({ length: 31 }, (_, i) => i + 1).map((day) => (
-                    <option key={day} value={day}>
-                      {day}일
+                  {DAY_OF_MONTH_OPTIONS.map((option) => (
+                    <option key={option.day} value={option.day}>
+                      {option.label}
                     </option>
                   ))}
                 </select>
+                <p className="mt-1 text-xs text-gray-500">{DAY_OF_MONTH_HINT}</p>
               </div>
             </>
           )}
@@ -1161,15 +1168,194 @@ export default function DashboardPage() {
             </div>
           )}
 
-          <button
-            type="submit"
-            disabled={isSubmitting}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-          >
-            {isSubmitting ? '추가 중...' : '추가하기'}
-          </button>
         </form>
       </Modal>
     </>
+  );
+}
+
+/**
+ * 구성원별 자산 목록. 구성원과 계좌를 각각 드래그로 정렬한다.
+ *
+ * 계좌 목록은 구성원마다 별도 컴포넌트로 두어야 한다. 훅은 목록 하나를 다루므로
+ * 한 컴포넌트에서 여러 묶음을 처리할 수 없다.
+ */
+function PersonAssetList({
+  people,
+  accounts,
+  cardsOf,
+  netWorthByPerson,
+  selectedAccountId,
+  onPersonClick,
+  onAccountClick,
+  onCardClick,
+  onReorderPeople,
+  onReorderAccounts,
+  onReorderCards,
+}: {
+  people: Person[];
+  accounts: Account[];
+  cardsOf: (accountId: string) => Card[];
+  netWorthByPerson: Map<string, { total: string }>;
+  /** 오른쪽 패널이 보고 있는 계좌. 목록에서 강조한다. */
+  selectedAccountId: string | null;
+  onPersonClick: (person: Person) => void;
+  onAccountClick: (account: Account) => void;
+  onCardClick: (card: Card) => void;
+  onReorderPeople: (ids: string[]) => void;
+  onReorderAccounts: (ids: string[]) => void;
+  onReorderCards: (ids: string[]) => void;
+}) {
+  const { items, dragProps, draggingId } = useDragReorder(people, onReorderPeople);
+
+  return (
+    <div className="space-y-8">
+      {items.map((person) => (
+        <div
+          key={person.id}
+          {...dragProps(person.id)}
+          className={`bg-white rounded-lg shadow p-6 hover:shadow-md transition ${
+            draggingId === person.id ? 'opacity-50' : ''
+          }`}
+        >
+          <button onClick={() => onPersonClick(person)} className="w-full text-left mb-6">
+            <div className="flex justify-between items-center">
+              <div>
+                <h2 className="text-xl font-bold text-gray-900">
+                  <DragHandleIcon className="inline w-5 h-5 text-gray-400 mr-2 cursor-grab align-[-3px]" aria-label="드래그해서 순서 변경" />
+                  {person.name}
+                </h2>
+                <p className="text-sm text-gray-600">
+                  소계: {formatCurrency(netWorthByPerson.get(person.id)?.total ?? 0)}
+                </p>
+              </div>
+            </div>
+          </button>
+
+          <AccountList
+            accounts={accounts.filter((account) => account.ownerId === person.id)}
+            cardsOf={cardsOf}
+            selectedAccountId={selectedAccountId}
+            onAccountClick={onAccountClick}
+            onCardClick={onCardClick}
+            onReorder={onReorderAccounts}
+            onReorderCards={onReorderCards}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 한 구성원의 계좌 목록 */
+function AccountList({
+  accounts,
+  cardsOf,
+  selectedAccountId,
+  onAccountClick,
+  onCardClick,
+  onReorder,
+  onReorderCards,
+}: {
+  accounts: Account[];
+  cardsOf: (accountId: string) => Card[];
+  selectedAccountId: string | null;
+  onAccountClick: (account: Account) => void;
+  onCardClick: (card: Card) => void;
+  onReorder: (ids: string[]) => void;
+  onReorderCards: (ids: string[]) => void;
+}) {
+  const { items, dragProps, draggingId } = useDragReorder(accounts, onReorder);
+
+  if (items.length === 0) {
+    return <p className="text-gray-600">등록된 계좌가 없습니다.</p>;
+  }
+
+  return (
+    <div className="space-y-4">
+      {items.map((account) => (
+        <div
+          key={account.id}
+          {...dragProps(account.id)}
+          /* 오른쪽 패널에 펼쳐 둔 계좌를 목록에서도 알 수 있게 표시한다 */
+          className={`rounded-lg p-4 hover:shadow-md transition ${
+            account.id === selectedAccountId
+              ? 'border-2 border-blue-500 bg-blue-50'
+              : 'border border-gray-200'
+          } ${draggingId === account.id ? 'opacity-50' : ''}`}
+        >
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onAccountClick(account);
+            }}
+            className="w-full text-left hover:opacity-70 transition"
+          >
+            <p className="text-sm text-gray-600">
+              <DragHandleIcon className="inline w-4 h-4 text-gray-400 mr-2 cursor-grab align-[-2px]" aria-label="드래그해서 순서 변경" />
+              {account.institution?.name}
+            </p>
+            <p className="text-2xl font-bold text-gray-900 mt-2">
+              {formatCurrency(account.balance)}
+            </p>
+            <p className="text-xs text-gray-500 mt-2">{account.name}</p>
+            {account.accountNumber && (
+              <p className="text-xs text-gray-400 mt-1">{account.accountNumber}</p>
+            )}
+          </button>
+
+          <CardList
+            cards={cardsOf(account.id)}
+            onCardClick={onCardClick}
+            onReorder={onReorderCards}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** 한 계좌에 연결된 카드 목록 */
+function CardList({
+  cards,
+  onCardClick,
+  onReorder,
+}: {
+  cards: Card[];
+  onCardClick: (card: Card) => void;
+  onReorder: (ids: string[]) => void;
+}) {
+  const { items, dragProps, draggingId } = useDragReorder(cards, onReorder);
+  if (items.length === 0) return null;
+
+  return (
+    <div className="mt-4 pt-4 border-t border-gray-200 space-y-2">
+      {items.map((card) => (
+        <div
+          key={card.id}
+          {...dragProps(card.id)}
+          className={`px-3 py-2 bg-green-50 rounded border border-green-100 hover:bg-green-100 transition ${
+            draggingId === card.id ? 'opacity-50' : ''
+          }`}
+        >
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onCardClick(card);
+            }}
+            className="w-full text-left"
+          >
+            <p className="text-sm font-medium text-gray-900">
+              <DragHandleIcon className="inline w-4 h-4 text-gray-400 mr-2 cursor-grab align-[-2px]" aria-label="드래그해서 순서 변경" />
+              💳 {card.name}
+            </p>
+            <p className="text-xs text-gray-600">{card.issuer?.name}</p>
+            <p className="text-xs text-gray-600">
+              {card.cardType === 'debit' ? '체크카드' : '신용카드'}
+            </p>
+          </button>
+        </div>
+      ))}
+    </div>
   );
 }

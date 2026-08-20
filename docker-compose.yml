@@ -6,6 +6,11 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: money_db
+      # 시각은 전부 UTC로 저장한다. 표시 기준 타임존은 프로젝트마다 따로 둔다
+      # (Project.timezone). 이미지 기본값에 의존하면 환경에 따라
+      # createdAt의 CURRENT_TIMESTAMP가 흔들린다.
+      TZ: UTC
+      PGTZ: UTC
     ports:
       - '5432:5432'
     volumes:

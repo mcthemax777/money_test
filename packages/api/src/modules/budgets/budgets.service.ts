@@ -2,7 +2,12 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
-import { BudgetDto } from '@money/types';
+import { BudgetDto, EntryFilterQuery, zonedMonthRange } from '@money/types';
+import {
+  MATCH_NOTHING,
+  assetOwnerCondition,
+  parseEntryFilter,
+} from '@/common/entry-filter';
 
 const ZERO = new Prisma.Decimal(0);
 
@@ -174,13 +179,22 @@ export class BudgetsService {
     });
   }
 
+  /**
+   * 특정 월의 예산과 사용금액.
+   *
+   * filter는 가계 화면의 자산주인/고정 필터다. 사용금액이 필터를 타지 않으면
+   * 왼쪽 예산 카드와 오른쪽 상세 통계가 서로 다른 숫자를 보여준다.
+   * 예산액 자체는 프로젝트 단위 값이라 필터와 무관하게 그대로 둔다.
+   */
   async getBudgetForMonth(
     userId: string,
     projectId: string,
     year: number,
     month: number,
+    filter: EntryFilterQuery = {},
   ): Promise<BudgetDto.MonthlyBudget[]> {
     await this.projectAccess.verifyUserHasAccessToProject(userId, projectId);
+    const timeZone = await this.projectAccess.getProjectTimeZone(projectId);
 
     const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
 
@@ -219,8 +233,19 @@ export class BudgetsService {
     // 예전에는 (대분류/소분류) x (지출/수입) 4개의 groupBy를 돌리고 credit_usage를
     // 포함할지 매번 판단해야 했다. 이제 "지출 = 지출 카테고리 posting의 합"이므로
     // 결제수단과 무관하게 한 번에 집계된다.
-    const startDate = new Date(Date.UTC(year, month - 1, 1));
-    const endDate = new Date(Date.UTC(year, month, 1));
+    // 월 경계는 프로젝트 타임존 기준이다 (reports의 월 합계와 같은 규칙).
+    const { start: startDate, end: endDate } = zonedMonthRange(yearMonth, timeZone);
+
+    // 사용금액에도 화면의 필터를 그대로 건다 (reports.summary 와 같은 규칙).
+    const parsed = parseEntryFilter(filter);
+    const owner = assetOwnerCondition(parsed);
+    const entryScope: Prisma.JournalEntryWhereInput = parsed.matchNothing
+      ? { projectId, ...MATCH_NOTHING }
+      : {
+          projectId,
+          date: { gte: startDate, lt: endDate },
+          ...(owner ? { AND: [owner] } : {}),
+        };
 
     const usage = await this.prisma.posting.groupBy({
       by: ['categoryId'],
@@ -228,7 +253,8 @@ export class BudgetsService {
       _count: true,
       where: {
         categoryId: { in: categories.map((c) => c.id) },
-        entry: { projectId, date: { gte: startDate, lt: endDate } },
+        entry: entryScope,
+        ...(parsed.fixed !== undefined ? { isFixed: parsed.fixed } : {}),
       },
     });
 

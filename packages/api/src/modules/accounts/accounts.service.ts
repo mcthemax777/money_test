@@ -4,7 +4,11 @@ import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { LedgerService } from '../ledger/ledger.service';
 import { InstitutionsService } from '../institutions/institutions.service';
-import { AccountDto } from '@money/types';
+import { AccountDto, zonedDateStringToUtc } from '@money/types';
+import { assertReorderIds } from '@/common/reorder';
+
+/** "YYYY-MM-DD" 형태 (시각이 없는 날짜) */
+const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * 사용자가 "통장"으로 인식하지 않는 내부 계정.
@@ -59,7 +63,7 @@ export class AccountsService {
   }
 
   async createAccount(userId: string, dto: AccountDto.CreateRequest, projectIdParam?: string) {
-    const projectId = await this.projectAccess.resolveAndVerifyProjectId(
+    const { id: projectId, timeZone } = await this.projectAccess.resolveProject(
       userId,
       projectIdParam || dto.projectId,
     );
@@ -102,13 +106,25 @@ export class AccountsService {
         amount: opening,
         // 기준일을 주지 않으면 오늘. 과거 거래보다 뒤에 놓이면 원장 순서가 어색해지므로
         // 과거 데이터를 넣을 계좌는 호출부에서 앞선 날짜를 지정한다.
-        date: dto.openingBalanceDate ? new Date(dto.openingBalanceDate) : new Date(),
+        // "YYYY-MM-DD"로 오면 프로젝트 타임존의 그 날 시작으로 해석한다.
+        date: this.resolveBalanceDate(dto.openingBalanceDate, timeZone),
         createdByUserId: userId,
       });
       return this.getAccountById(account.id, userId);
     }
 
     return account;
+  }
+
+  /**
+   * 잔액 기준일 해석.
+   *
+   * "YYYY-MM-DD"만 오면 프로젝트 타임존의 그 날 시작으로 본다. 시각까지 담긴
+   * ISO 문자열이면 그대로 쓴다. 생략하면 지금.
+   */
+  private resolveBalanceDate(value: string | undefined, timeZone: string): Date {
+    if (!value) return new Date();
+    return DATE_ONLY.test(value) ? zonedDateStringToUtc(value, timeZone) : new Date(value);
   }
 
   /** 통장 목록. 카드 부채와 자본 계정은 제외한다. */
@@ -122,8 +138,28 @@ export class AccountsService {
         type: { notIn: HIDDEN_ACCOUNT_TYPES },
       },
       include: ACCOUNT_INCLUDE,
-      orderBy: { createdAt: 'desc' },
+      // 사용자가 드래그로 정한 순서. 같으면 최근에 만든 것부터.
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
     });
+  }
+
+  /** 드래그로 바꾼 표시 순서 저장 */
+  async reorderAccounts(userId: string, ids: string[], projectId?: string) {
+    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
+
+    const rows = await this.prisma.account.findMany({
+      where: { projectId: finalProjectId },
+      select: { id: true },
+    });
+    assertReorderIds(ids, new Set(rows.map((row) => row.id)));
+
+    await this.prisma.$transaction(
+      ids.map((id, index) =>
+        this.prisma.account.update({ where: { id }, data: { sortOrder: index } }),
+      ),
+    );
+
+    return this.getAccounts(userId, finalProjectId);
   }
 
   async getAccountById(id: string, userId: string) {
@@ -139,6 +175,7 @@ export class AccountsService {
 
   async updateAccount(id: string, userId: string, dto: AccountDto.UpdateRequest) {
     const account = await this.getAccountById(id, userId);
+    const timeZone = await this.projectAccess.getProjectTimeZone(account.projectId);
 
     const { balance, institutionId } = dto;
 
@@ -167,12 +204,13 @@ export class AccountsService {
     }
 
     // 잔액 수정은 컬럼 덮어쓰기가 아니라 차액만큼의 조정 전표로 처리한다.
+    // 기준일을 주면 그 날 잔액이 목표값이 되도록 차액을 계산한다.
     if (balance !== undefined) {
       await this.ledger.adjustBalanceTo({
         projectId: account.projectId,
         accountId: id,
         targetBalance: new Prisma.Decimal(balance),
-        date: new Date(),
+        date: this.resolveBalanceDate(dto.balanceDate, timeZone),
         createdByUserId: userId,
       });
     }

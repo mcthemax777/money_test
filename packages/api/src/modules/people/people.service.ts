@@ -2,6 +2,7 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { PersonDto } from '@money/types';
+import { assertReorderIds } from '@/common/reorder';
 
 @Injectable()
 export class PeopleService {
@@ -31,8 +32,28 @@ export class PeopleService {
 
     return this.prisma.person.findMany({
       where: { projectId: finalProjectId, isActive: true },
-      orderBy: { createdAt: 'asc' },
+      // 사용자가 드래그로 정한 순서. 같으면 만든 순.
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
     });
+  }
+
+  /** 드래그로 바꾼 표시 순서 저장 */
+  async reorderPeople(userId: string, ids: string[], projectId?: string) {
+    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
+
+    const rows = await this.prisma.person.findMany({
+      where: { projectId: finalProjectId },
+      select: { id: true },
+    });
+    assertReorderIds(ids, new Set(rows.map((row) => row.id)));
+
+    await this.prisma.$transaction(
+      ids.map((id, index) =>
+        this.prisma.person.update({ where: { id }, data: { sortOrder: index } }),
+      ),
+    );
+
+    return this.getPeople(userId, finalProjectId);
   }
 
   async getPersonById(id: string, userId: string) {

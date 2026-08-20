@@ -3,7 +3,19 @@ import { AccountType, CategoryType, Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { ENTRY_INCLUDE, toListItem } from '../entries/entry-view';
-import { ReportDto } from '@money/types';
+import {
+  MATCH_NOTHING,
+  assetOwnerCondition,
+  parseEntryFilter,
+} from '@/common/entry-filter';
+import { HIDDEN_ACCOUNT_TYPES } from '../accounts/accounts.service';
+import {
+  ReportDto,
+  zonedCurrentYearMonth,
+  zonedDayStart,
+  zonedMonthRange,
+  zonedMonthStart,
+} from '@money/types';
 
 const ZERO = new Prisma.Decimal(0);
 
@@ -28,20 +40,34 @@ export class ReportsService {
    * dashboard는 credit_usage를 더하고 statistics는 빼던 불일치가 정의상 사라진다.
    */
   async getSummary(userId: string, query: ReportDto.MonthQuery): Promise<ReportDto.Summary> {
-    const projectId = await this.projectAccess.resolveAndVerifyProjectId(userId, query.projectId);
-    const range = monthRange(query.yearMonth);
-    const scope = this.entryScope(projectId, range, query.personId);
+    const { id: projectId, timeZone } = await this.projectAccess.resolveProject(
+      userId,
+      query.projectId,
+    );
+    const range = zonedMonthRange(query.yearMonth, timeZone);
+    const scope = this.entryScope(projectId, range, query);
+    // 고정/변동 필터. 지출은 groupBy로 이미 나뉘므로 해당 쪽만 남기고,
+    // 수입도 같은 조건을 걸어야 목록 합계와 맞는다.
+    const fixedOnly = parseEntryFilter(query).fixed;
 
     const [expenseRows, incomeAgg] = await Promise.all([
       // isFixed로 나눠 고정/변동을 한 번에 얻는다
       this.prisma.posting.groupBy({
         by: ['isFixed'],
         _sum: { amount: true },
-        where: { category: { type: CategoryType.expense }, entry: scope },
+        where: {
+          category: { type: CategoryType.expense },
+          entry: scope,
+          ...(fixedOnly !== undefined ? { isFixed: fixedOnly } : {}),
+        },
       }),
       this.prisma.posting.aggregate({
         _sum: { amount: true },
-        where: { category: { type: CategoryType.income }, entry: scope },
+        where: {
+          category: { type: CategoryType.income },
+          entry: scope,
+          ...(fixedOnly !== undefined ? { isFixed: fixedOnly } : {}),
+        },
       }),
     ]);
 
@@ -66,8 +92,11 @@ export class ReportsService {
     userId: string,
     query: ReportDto.CategoryBreakdownQuery,
   ): Promise<ReportDto.CategoryBreakdownItem[]> {
-    const projectId = await this.projectAccess.resolveAndVerifyProjectId(userId, query.projectId);
-    const range = monthRange(query.yearMonth);
+    const { id: projectId, timeZone } = await this.projectAccess.resolveProject(
+      userId,
+      query.projectId,
+    );
+    const range = zonedMonthRange(query.yearMonth, timeZone);
     // 쿼리스트링 값은 문자열로 도착한다. 이 DTO는 클래스가 아니라 인터페이스라서
     // ValidationPipe의 암묵 변환이 걸리지 않고 ?rollup=false 가 'false' 문자열로 들어온다.
     // 불리언 비교만 하면 항상 롤업이 켜져서 소분류 구성비를 볼 수 없다.
@@ -79,7 +108,10 @@ export class ReportsService {
       _count: true,
       where: {
         category: { type: query.type as CategoryType },
-        entry: this.entryScope(projectId, range, query.personId),
+        entry: this.entryScope(projectId, range, query),
+        ...(parseEntryFilter(query).fixed !== undefined
+          ? { isFixed: parseEntryFilter(query).fixed }
+          : {}),
       },
     });
     if (rows.length === 0) return [];
@@ -214,7 +246,10 @@ export class ReportsService {
     userId: string,
     query: ReportDto.BalanceHistoryQuery,
   ): Promise<ReportDto.BalanceHistoryPoint[]> {
-    const projectId = await this.projectAccess.resolveAndVerifyProjectId(userId, query.projectId);
+    const { id: projectId, timeZone } = await this.projectAccess.resolveProject(
+      userId,
+      query.projectId,
+    );
     const granularity = query.granularity === 'day' ? 'day' : 'month';
 
     const accounts = await this.prisma.account.findMany({
@@ -232,10 +267,11 @@ export class ReportsService {
 
     const buckets =
       granularity === 'day'
-        ? dayBuckets(query.yearMonth ?? currentYearMonth())
+        ? dayBuckets(query.yearMonth ?? zonedCurrentYearMonth(timeZone), timeZone)
         : monthBuckets(
-            query.endMonth ?? currentYearMonth(),
+            query.endMonth ?? zonedCurrentYearMonth(timeZone),
             Math.min(Math.max(Number(query.months) || 12, 1), 60),
+            timeZone,
           );
     const windowStart = buckets[0].start;
     const windowEnd = buckets[buckets.length - 1].end;
@@ -258,7 +294,9 @@ export class ReportsService {
       Array<{ accountId: string; period: Date; delta: Prisma.Decimal }>
     >`
       SELECT p."accountId" AS "accountId",
-             date_trunc(${granularity}, e."date") AS period,
+             -- 구간 경계는 프로젝트 타임존 기준이다. 로컬 벽시계로 바꿔 자른 뒤
+             -- 다시 UTC 인스턴트로 되돌려야 아래 bucket.start와 값이 맞는다.
+             timezone('UTC', timezone(${timeZone}, date_trunc(${granularity}, timezone(${timeZone}, timezone('UTC', e."date"))))) AS period,
              SUM(p."amount") AS delta
       FROM "Posting" p
       JOIN "JournalEntry" e ON e.id = p."entryId"
@@ -324,10 +362,15 @@ export class ReportsService {
    * 월 단위 그룹핑은 Prisma groupBy가 못 하므로 date_trunc를 쓴다.
    */
   async getTrend(userId: string, query: ReportDto.TrendQuery): Promise<ReportDto.TrendPoint[]> {
-    const projectId = await this.projectAccess.resolveAndVerifyProjectId(userId, query.projectId);
+    const { id: projectId, timeZone } = await this.projectAccess.resolveProject(
+      userId,
+      query.projectId,
+    );
     const months = Math.min(Math.max(Number(query.months) || 12, 1), 60);
-    const end = query.endMonth ? monthRange(query.endMonth).end : monthRange(currentYearMonth()).end;
-    const start = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - months, 1));
+    const endMonth = query.endMonth ?? zonedCurrentYearMonth(timeZone);
+    const [endYear, endMonthNumber] = endMonth.split('-').map(Number);
+    const end = zonedMonthStart(endYear, endMonthNumber + 1, timeZone);
+    const start = zonedMonthStart(endYear, endMonthNumber - months + 1, timeZone);
 
     // 대상에 따라 집계 방식이 다르다.
     //
@@ -336,15 +379,14 @@ export class ReportsService {
     // (계좌 posting을 더하면 입금과 출금이 상쇄되고, 체크카드 사용까지 섞인다)
     const rows =
       query.target === 'account' || query.target === 'card'
-        ? await this.trendByPaymentMethod(projectId, query, start, end)
-        : await this.trendByCategory(projectId, query, start, end);
+        ? await this.trendByPaymentMethod(projectId, query, start, end, timeZone)
+        : await this.trendByCategory(projectId, query, start, end, timeZone);
 
     // 거래가 없는 달도 0으로 채워 그래프가 끊기지 않게 한다
-    const byMonth = new Map(rows.map((r) => [toYearMonth(r.month), r.amount.toString()]));
+    const byMonth = new Map(rows.map((r) => [wallClockYearMonth(r.month), r.amount.toString()]));
     const points: ReportDto.TrendPoint[] = [];
     for (let i = months - 1; i >= 0; i--) {
-      const date = new Date(Date.UTC(end.getUTCFullYear(), end.getUTCMonth() - 1 - i, 1));
-      const key = toYearMonth(date);
+      const key = shiftYearMonth(endYear, endMonthNumber, -i);
       points.push({ yearMonth: key, amount: byMonth.get(key) ?? '0' });
     }
     return points;
@@ -356,6 +398,7 @@ export class ReportsService {
     query: ReportDto.TrendQuery,
     start: Date,
     end: Date,
+    timeZone: string,
   ) {
     const condition =
       query.target === 'category'
@@ -364,7 +407,7 @@ export class ReportsService {
         : Prisma.sql`c."type" = ${query.type ?? 'expense'}::"CategoryType"`;
 
     return this.prisma.$queryRaw<Array<{ month: Date; amount: Prisma.Decimal }>>`
-      SELECT date_trunc('month', e."date") AS month,
+      SELECT date_trunc('month', timezone(${timeZone}, timezone('UTC', e."date"))) AS month,
              ABS(SUM(p."amount")) AS amount
       FROM "Posting" p
       JOIN "JournalEntry" e ON e.id = p."entryId"
@@ -372,6 +415,8 @@ export class ReportsService {
       WHERE e."projectId" = ${projectId}
         AND e."date" >= ${start} AND e."date" < ${end}
         AND ${condition}
+        AND ${personFilter(query)}
+        AND ${fixedFilter(query, Prisma.sql`p`)}
       GROUP BY 1
       ORDER BY 1
     `;
@@ -392,6 +437,7 @@ export class ReportsService {
     query: ReportDto.TrendQuery,
     start: Date,
     end: Date,
+    timeZone: string,
   ) {
     const methodCondition =
       query.target === 'card'
@@ -399,13 +445,15 @@ export class ReportsService {
         : Prisma.sql`ap."accountId" = ${query.targetId} AND ap."cardId" IS NULL AND ap."amount" < 0`;
 
     return this.prisma.$queryRaw<Array<{ month: Date; amount: Prisma.Decimal }>>`
-      SELECT date_trunc('month', e."date") AS month,
+      SELECT date_trunc('month', timezone(${timeZone}, timezone('UTC', e."date"))) AS month,
              ABS(SUM(cp."amount")) AS amount
       FROM "JournalEntry" e
       JOIN "Posting" cp ON cp."entryId" = e.id
       JOIN "Category" c ON c.id = cp."categoryId" AND c."type" = 'expense'
       WHERE e."projectId" = ${projectId}
         AND e."date" >= ${start} AND e."date" < ${end}
+        AND ${personFilter(query)}
+        AND ${fixedFilter(query, Prisma.sql`cp`)}
         AND EXISTS (
           SELECT 1 FROM "Posting" ap
           WHERE ap."entryId" = e.id AND ${methodCondition}
@@ -425,14 +473,21 @@ export class ReportsService {
     userId: string,
     query: ReportDto.MonthQuery,
   ): Promise<ReportDto.PaymentMethodItem[]> {
-    const projectId = await this.projectAccess.resolveAndVerifyProjectId(userId, query.projectId);
-    const range = monthRange(query.yearMonth);
+    const { id: projectId, timeZone } = await this.projectAccess.resolveProject(
+      userId,
+      query.projectId,
+    );
+    const range = zonedMonthRange(query.yearMonth, timeZone);
 
     const entries = await this.prisma.journalEntry.findMany({
-      where: this.entryScope(projectId, range, query.personId),
+      where: this.entryScope(projectId, range, query),
       include: ENTRY_INCLUDE,
     });
+    const filter = parseEntryFilter(query);
+    const fixedOnly = filter.fixed;
 
+    // 조회용 맵은 비활성/숨김 계정까지 담는다. 예전 거래가 가리키는 계좌를
+    // 못 찾으면 그 거래가 집계에서 조용히 빠진다.
     const [cards, accounts] = await Promise.all([
       this.prisma.card.findMany({
         where: { projectId },
@@ -445,8 +500,55 @@ export class ReportsService {
 
     const buckets = new Map<string, ReportDto.PaymentMethodItem>();
 
-    for (const entry of entries) {
+    // 이번 달에 쓰지 않은 수단도 0원으로 보여준다. 화면에서 "왜 내 카드가 없나"를
+    // 묻지 않게 하려면 목록이 거래 유무와 무관해야 한다.
+    // 카드 부채 계정과 자본 계정은 결제수단이 아니므로 제외한다.
+    // 사람 필터는 "그 사람의 자산만 보여준다"는 뜻이다. 소유자로 거른다.
+    // 아무도 고르지 않았으면 빈 배열이므로 어떤 수단도 남지 않는다.
+    const visiblePersonIds = filter.personIds ?? null;
+    const isVisibleOwner = (ownerId: string | null | undefined) =>
+      !visiblePersonIds || (ownerId ? visiblePersonIds.includes(ownerId) : false);
+
+    for (const account of accounts) {
+      if (!account.isActive) continue;
+      if (HIDDEN_ACCOUNT_TYPES.includes(account.type)) continue;
+      if (!isVisibleOwner(account.ownerId)) continue;
+      this.addTo(buckets, {
+        kind: 'account',
+        id: account.id,
+        name: account.name,
+        ownerId: account.owner?.id ?? null,
+        ownerName: account.owner?.name ?? null,
+        amount: '0',
+        count: 0,
+      });
+    }
+
+    for (const card of cards) {
+      if (!card.isActive) continue;
+      const owner = card.paymentAccount.owner;
+      if (!isVisibleOwner(owner?.id ?? null)) continue;
+      this.addTo(buckets, {
+        kind: card.cardType === 'credit' ? 'credit_card' : 'debit_card',
+        id: card.id,
+        name: card.name,
+        ownerId: owner?.id ?? null,
+        ownerName: owner?.name ?? null,
+        amount: '0',
+        count: 0,
+      });
+    }
+
+    // 고정/변동을 하나도 고르지 않았으면 금액은 없지만 목록은 그대로 둔다.
+    // 어떤 수단이 있는지는 필터와 무관한 정보다.
+    const entriesToCount = filter.matchNothing ? [] : entries;
+
+    for (const entry of entriesToCount) {
       const item = toListItem(entry);
+
+      // 고정/변동 필터. item.isFixed는 카테고리 다리에서 온 값이다
+      // (이체는 수수료 카테고리가 그 값을 정한다).
+      if (fixedOnly !== undefined && item.isFixed !== fixedOnly) continue;
 
       // 이체 자체는 소비가 아니지만 수수료는 지출이다.
       // 보내는 계좌에 붙여야 summary(지출 카테고리 합계)와 총액이 맞는다.
@@ -454,7 +556,9 @@ export class ReportsService {
         const fee = new Prisma.Decimal(item.feeAmount ?? 0);
         if (fee.gt(ZERO) && item.accountId) {
           const account = accountById.get(item.accountId);
-          if (account) {
+          // 다른 사람이 감춰진 사람의 계좌로 결제했더라도 그 계좌는 목록에 넣지 않는다.
+          // 목록에 있는 수단은 "지금 보고 있는 사람들의 자산"이어야 한다.
+          if (account && isVisibleOwner(account.ownerId)) {
             this.addTo(buckets, {
               kind: 'account',
               id: account.id,
@@ -475,6 +579,7 @@ export class ReportsService {
         const card = cardById.get(item.cardId);
         if (!card) continue;
         const owner = card.paymentAccount.owner;
+        if (!isVisibleOwner(owner?.id ?? null)) continue;
         this.addTo(buckets, {
           kind: card.cardType === 'credit' ? 'credit_card' : 'debit_card',
           id: card.id,
@@ -486,7 +591,7 @@ export class ReportsService {
         });
       } else if (item.accountId) {
         const account = accountById.get(item.accountId);
-        if (!account) continue;
+        if (!account || !isVisibleOwner(account.ownerId)) continue;
         this.addTo(buckets, {
           kind: 'account',
           id: account.id,
@@ -516,15 +621,27 @@ export class ReportsService {
     existing.count += item.count;
   }
 
+  /**
+   * 월 집계의 전표 범위.
+   *
+   * 자산 주인 필터는 목록(/entries)과 같은 규칙을 쓴다. 목록만 걸러 놓으면
+   * 상단 합계와 소계가 어긋난다.
+   */
   private entryScope(
     projectId: string,
     range: { start: Date; end: Date },
-    personId?: string,
+    query: ReportDto.MonthQuery,
   ): Prisma.JournalEntryWhereInput {
+    const filter = parseEntryFilter(query);
+    // 아무것도 고르지 않았으면 어떤 전표도 걸리지 않아야 한다.
+    if (filter.matchNothing) return { projectId, ...MATCH_NOTHING };
+
+    const owner = assetOwnerCondition(filter);
+
     return {
       projectId,
       date: { gte: range.start, lt: range.end },
-      ...(personId ? { personId } : {}),
+      ...(owner ? { AND: [owner] } : {}),
     };
   }
 
@@ -544,50 +661,106 @@ export class ReportsService {
   }
 }
 
+/**
+ * 사람 필터를 SQL 조각으로. 필터가 없으면 항상 참인 조건을 돌려준다.
+ * (Prisma.sql 템플릿에서는 조건을 빼는 것보다 참을 넣는 편이 단순하다)
+ */
+/**
+ * 자산 주인 필터를 SQL 조각으로.
+ *
+ * Prisma 쪽 assetOwnerCondition 과 같은 규칙이다.
+ *   - 돈이 나간 다리(음수)의 계좌 주인을 본다 (이체는 보내는 계좌).
+ *   - 나간 다리가 없으면(수입 등) 들어온 다리를 본다.
+ * 자본 계정은 주인이 없어 "나간 다리" 판단에서 제외한다.
+ */
+function personFilter(query: ReportDto.TrendQuery & { personId?: string }): Prisma.Sql {
+  const filter = parseEntryFilter(query);
+  // 아무것도 고르지 않았으면 한 건도 나오지 않아야 한다.
+  if (filter.matchNothing) return Prisma.sql`FALSE`;
+  if (!filter.personIds) return Prisma.sql`TRUE`;
+
+  const ids = Prisma.join(filter.personIds);
+  return Prisma.sql`(
+    EXISTS (
+      SELECT 1 FROM "Posting" op JOIN "Account" oa ON oa.id = op."accountId"
+      WHERE op."entryId" = e.id AND op."amount" < 0 AND oa."ownerId" IN (${ids})
+    )
+    OR (
+      NOT EXISTS (
+        SELECT 1 FROM "Posting" op JOIN "Account" oa ON oa.id = op."accountId"
+        WHERE op."entryId" = e.id AND op."amount" < 0 AND oa."ownerId" IS NOT NULL
+      )
+      AND EXISTS (
+        SELECT 1 FROM "Posting" op JOIN "Account" oa ON oa.id = op."accountId"
+        WHERE op."entryId" = e.id AND op."amount" > 0 AND oa."ownerId" IN (${ids})
+      )
+    )
+  )`;
+}
+
+/** 고정/변동 필터를 SQL 조각으로. 카테고리 다리(alias)에만 건다. */
+function fixedFilter(query: ReportDto.TrendQuery, alias: Prisma.Sql): Prisma.Sql {
+  const fixed = parseEntryFilter(query).fixed;
+  if (fixed === undefined) return Prisma.sql`TRUE`;
+  return Prisma.sql`${alias}."isFixed" = ${fixed}`;
+}
+
 /** 잔액 추이의 한 구간. 값은 end 직전까지 쌓인 잔액이다. */
 type BalanceBucket = { label: string; start: Date; end: Date };
 
-/** 월 단위 구간. endMonth를 포함해 뒤로 months개. */
-function monthBuckets(endMonth: string, months: number): BalanceBucket[] {
-  const { start: lastStart } = monthRange(endMonth);
+/** 월 단위 구간. endMonth를 포함해 뒤로 months개. 경계는 프로젝트 타임존 기준이다. */
+function monthBuckets(endMonth: string, months: number, timeZone: string): BalanceBucket[] {
+  const [year, month] = endMonth.split('-').map(Number);
   const buckets: BalanceBucket[] = [];
   for (let i = months - 1; i >= 0; i--) {
-    const start = new Date(Date.UTC(lastStart.getUTCFullYear(), lastStart.getUTCMonth() - i, 1));
-    const end = new Date(Date.UTC(start.getUTCFullYear(), start.getUTCMonth() + 1, 1));
-    buckets.push({ label: toYearMonth(start), start, end });
+    buckets.push({
+      label: shiftYearMonth(year, month, -i),
+      start: zonedMonthStart(year, month - i, timeZone),
+      end: zonedMonthStart(year, month - i + 1, timeZone),
+    });
   }
   return buckets;
 }
 
-/** 일 단위 구간. 그 달 1일부터 말일까지. */
-function dayBuckets(yearMonth: string): BalanceBucket[] {
-  const { start, end } = monthRange(yearMonth);
-  const buckets: BalanceBucket[] = [];
-  for (let day = new Date(start); day < end; ) {
-    const next = new Date(
-      Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate() + 1),
-    );
-    buckets.push({ label: day.toISOString().slice(0, 10), start: new Date(day), end: next });
-    day = next;
-  }
-  return buckets;
-}
-
-function monthRange(yearMonth: string): { start: Date; end: Date } {
+/** 일 단위 구간. 그 달 1일부터 말일까지. 경계는 프로젝트 타임존 기준이다. */
+function dayBuckets(yearMonth: string, timeZone: string): BalanceBucket[] {
   const [year, month] = yearMonth.split('-').map(Number);
-  return {
-    start: new Date(Date.UTC(year, month - 1, 1)),
-    end: new Date(Date.UTC(year, month, 1)),
-  };
+  const monthEnd = zonedMonthStart(year, month + 1, timeZone);
+  const buckets: BalanceBucket[] = [];
+
+  for (let day = 1; ; day++) {
+    const start = zonedDayStart(year, month, day, timeZone);
+    if (start.getTime() >= monthEnd.getTime()) break;
+    const next = zonedDayStart(year, month, day + 1, timeZone);
+    buckets.push({
+      label: `${year}-${pad(month)}-${pad(day)}`,
+      start,
+      end: next,
+    });
+  }
+  return buckets;
 }
 
-function currentYearMonth(): string {
-  const now = new Date();
-  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+/** (year, month)에서 delta개월 옮긴 "YYYY-MM". month는 1~12지만 범위를 벗어나도 된다. */
+function shiftYearMonth(year: number, month: number, delta: number): string {
+  const index = month - 1 + delta;
+  const shiftedYear = year + Math.floor(index / 12);
+  const shiftedMonth = (((index % 12) + 12) % 12) + 1;
+  return `${shiftedYear}-${pad(shiftedMonth)}`;
 }
 
-function toYearMonth(date: Date): string {
-  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+/**
+ * date_trunc 결과가 속한 "YYYY-MM".
+ *
+ * SQL에서 프로젝트 타임존의 벽시계로 자른 값이라 인스턴트가 아니다.
+ * Prisma가 `timestamp`를 UTC로 읽어 주므로 UTC 필드가 곧 그 지역의 벽시계 값이다.
+ */
+function wallClockYearMonth(date: Date): string {
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}`;
+}
+
+function pad(value: number): string {
+  return String(value).padStart(2, '0');
 }
 
 function emptyNetWorth(): ReportDto.NetWorth {

@@ -5,6 +5,12 @@ import { ProjectAccessService } from '@/common/project-access.guard';
 import { LedgerService, EntryInput } from '../ledger/ledger.service';
 import { ENTRY_INCLUDE, toListItem } from './entry-view';
 import { EntryDto } from '@money/types';
+import {
+  MATCH_NOTHING,
+  assetOwnerCondition,
+  fixedPostingCondition,
+  parseEntryFilter,
+} from '@/common/entry-filter';
 
 const ZERO = new Prisma.Decimal(0);
 const DEFAULT_LIMIT = 50;
@@ -26,6 +32,7 @@ export class EntriesService {
 
     const input = await this.buildInput(projectId, userId, dto);
     const entry = await this.ledger.createEntry(input);
+    await this.syncCategoryDefaults(projectId, dto);
     return this.getEntryById(entry.id, userId);
   }
 
@@ -47,6 +54,7 @@ export class EntriesService {
     await this.assertSettledStatementsUnchanged(existing.postings, input.postings);
 
     await this.ledger.replaceEntry(id, input);
+    await this.syncCategoryDefaults(existing.projectId, dto);
     return this.getEntryById(id, userId);
   }
 
@@ -141,7 +149,9 @@ export class EntriesService {
 
     const where: Prisma.JournalEntryWhereInput = { projectId: finalProjectId };
 
-    if (query.personId) where.personId = query.personId;
+    // 자산 주인 / 고정·변동 필터. 아무것도 고르지 않았으면 결과가 없어야 한다.
+    const filter = parseEntryFilter(query);
+    if (filter.matchNothing) Object.assign(where, MATCH_NOTHING);
 
     if (query.startDate || query.endDate) {
       where.date = {};
@@ -151,6 +161,12 @@ export class EntriesService {
 
     // posting 조건은 "이 전표에 그런 다리가 하나라도 있는가"로 건다.
     const postingFilters: Prisma.PostingWhereInput[] = [];
+    // 자산 주인 조건은 다리 하나로 표현되지 않아(부호에 따라 보는 다리가 다르다)
+    // 전표 수준 조건으로 따로 모은다.
+    const entryFilters: Prisma.JournalEntryWhereInput[] = [];
+
+    const owner = assetOwnerCondition(filter);
+    if (owner) entryFilters.push(owner);
 
     // 원장 관점: 이 계좌/카드가 얽힌 전표 전부
     if (query.accountId) postingFilters.push({ accountId: query.accountId });
@@ -182,12 +198,19 @@ export class EntriesService {
         ],
       });
     }
+    // 고정/변동 필터. 카테고리 다리에만 걸어야 한다 (계좌 다리는 항상 isFixed=false).
+    const fixed = fixedPostingCondition(filter);
+    if (fixed) postingFilters.push(fixed);
+
     // kind='expense'는 이체를 빼지만 categoryType='expense'는 수수료 붙은 이체를 포함한다
     if (query.categoryType) {
       postingFilters.push({ category: { type: query.categoryType as CategoryType } });
     }
-    if (postingFilters.length > 0) {
-      where.AND = postingFilters.map((filter) => ({ postings: { some: filter } }));
+    if (postingFilters.length > 0 || entryFilters.length > 0) {
+      where.AND = [
+        ...postingFilters.map((posting) => ({ postings: { some: posting } })),
+        ...entryFilters,
+      ];
     }
 
     // 커서: "date|id". 튜플 비교를 Prisma로 표현하기 위해 OR로 편다.
@@ -305,6 +328,8 @@ export class EntriesService {
           amount: new Prisma.Decimal(dto.amount),
           feeAmount: dto.transferFee ? new Prisma.Decimal(dto.transferFee) : undefined,
           feeCategoryId: dto.transferFeeCategoryId,
+          // 이체에서 화면의 고정 체크는 수수료 카테고리에 붙는다 (이체 자체는 지출이 아니다).
+          feeIsFixed: dto.isFixed,
         });
 
       case 'card_payment':
@@ -322,6 +347,50 @@ export class EntriesService {
       default:
         throw new BadRequestException(`알 수 없는 거래 종류입니다: ${dto.kind}`);
     }
+  }
+
+  /**
+   * 거래에 쓴 카테고리의 고정 여부 기본값을 갱신한다.
+   *
+   * 고정/변동은 카테고리 관리 화면이 아니라 거래를 입력하면서 정한다.
+   * 예: 공과금>수도요금을 고정으로 체크해 저장하면 수도요금의 defaultIsFixed가 true가 되고,
+   * 다음에 같은 소분류를 고르면 화면이 그 값을 읽어 자동으로 체크한다.
+   *
+   * 대상은 "요청에 isFixed가 명시적으로 담긴 카테고리 다리"뿐이다.
+   * 값을 보내지 않은 거래(다른 클라이언트 등)가 기존 설정을 덮어쓰면 안 된다.
+   * 이체는 카테고리 다리가 수수료뿐이므로 수수료 카테고리가 대상이 된다.
+   */
+  private async syncCategoryDefaults(
+    projectId: string,
+    dto: EntryDto.CreateRequest | EntryDto.UpdateRequest,
+  ) {
+    const targets: Array<{ categoryId: string; isFixed: boolean }> = [];
+
+    if (dto.kind === 'transfer') {
+      if (dto.transferFeeCategoryId && dto.isFixed !== undefined) {
+        targets.push({ categoryId: dto.transferFeeCategoryId, isFixed: dto.isFixed });
+      }
+    } else if (dto.splits?.length) {
+      for (const split of dto.splits) {
+        if (split.isFixed !== undefined) {
+          targets.push({ categoryId: split.categoryId, isFixed: split.isFixed });
+        }
+      }
+    } else if (dto.categoryId && dto.isFixed !== undefined) {
+      targets.push({ categoryId: dto.categoryId, isFixed: dto.isFixed });
+    }
+
+    if (targets.length === 0) return;
+
+    // projectId 조건을 함께 걸어 다른 프로젝트의 카테고리를 건드리지 못하게 한다.
+    await this.prisma.$transaction(
+      targets.map((target) =>
+        this.prisma.category.updateMany({
+          where: { id: target.categoryId, projectId, defaultIsFixed: { not: target.isFixed } },
+          data: { defaultIsFixed: target.isFixed },
+        }),
+      ),
+    );
   }
 
   /** 분할이 있으면 그것을, 없으면 단일 카테고리를 한 줄짜리 분할로 취급한다. */

@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Delete, Body, Param, Query, UseGuards, Request, HttpCode, HttpStatus } from '@nestjs/common';
+import { Controller, Get, Post, Patch, Delete, Body, Param, Query, UseGuards, Request, HttpCode, HttpStatus } from '@nestjs/common';
 import { ProjectsService } from './projects.service';
 import { JwtAuthGuard } from '../../guards/jwt-auth.guard';
 
@@ -125,6 +125,26 @@ export class ProjectsController {
   @HttpCode(HttpStatus.OK)
   async leaveProject(@Param('projectId') projectId: string, @Request() req: any) {
     return this.projectsService.leaveProject(projectId, req.user.id);
+  }
+
+  @Patch(':projectId/me')
+  @HttpCode(HttpStatus.OK)
+  async setMyPerson(
+    @Param('projectId') projectId: string,
+    @Body() body: { personId: string | null },
+    @Request() req: any,
+  ) {
+    return this.projectsService.setMyPerson(projectId, req.user.id, body.personId ?? null);
+  }
+
+  @Patch(':projectId')
+  @HttpCode(HttpStatus.OK)
+  async updateProject(
+    @Param('projectId') projectId: string,
+    @Body() body: { timezone?: string },
+    @Request() req: any,
+  ) {
+    return this.projectsService.updateProject(projectId, req.user.id, body);
   }
 
   @Delete(':projectId')

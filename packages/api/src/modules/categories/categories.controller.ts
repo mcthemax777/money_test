@@ -16,7 +16,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { CategoriesService } from './categories.service';
 import { AuthenticatedRequest } from '@/common/authenticated-request';
-import { CategoryDto } from '@money/types';
+import { CategoryDto, ReorderRequest } from '@money/types';
 
 @ApiTags('Categories')
 @Controller('categories')
@@ -40,6 +40,17 @@ export class CategoriesController {
   @ApiOperation({ summary: '카테고리 목록 (계층 구조)' })
   list(@Request() req: AuthenticatedRequest, @Query('type') type?: 'income' | 'expense', @Query('projectId') projectId?: string) {
     return this.categoriesService.getCategories(req.user.id, type, projectId);
+  }
+
+  // ':id' 보다 먼저 선언해야 'reorder'가 id로 잡히지 않는다.
+  @Patch('reorder')
+  @ApiOperation({ summary: '카테고리 표시 순서 변경' })
+  reorder(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: ReorderRequest,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.categoriesService.reorderCategories(req.user.id, dto.ids, projectId);
   }
 
   @Get(':id')
