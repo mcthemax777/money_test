@@ -80,11 +80,19 @@ export class CardsService {
         liabilityAccountId = liability.id;
       }
 
+      // 카드는 결제 통장 아래에 묶여 보이고 드래그도 그 안에서 이뤄진다.
+      // 같은 결제 통장의 마지막 번호 다음을 준다.
+      const lastOrder = await tx.card.aggregate({
+        where: { projectId, paymentAccountId: dto.paymentAccountId },
+        _max: { sortOrder: true },
+      });
+
       return tx.card.create({
         data: {
           projectId,
           paymentAccountId: dto.paymentAccountId,
           liabilityAccountId,
+          sortOrder: (lastOrder._max.sortOrder ?? -1) + 1,
           name: dto.name,
           cardType: dto.cardType,
           issuerId: dto.issuerId,

@@ -118,7 +118,7 @@ export class AuthService {
       throw error;
     }
 
-    const defaultProject = await this.createDefaultProject(user.id);
+    const defaultProject = await this.createDefaultProject(user.id, data.name);
 
     return this.prisma.user.update({
       where: { id: user.id },
@@ -155,10 +155,20 @@ export class AuthService {
     };
   }
 
-  private async createDefaultProject(userId: string) {
+  /**
+   * 첫 로그인 때 만드는 기본 프로젝트.
+   *
+   * 이름에 사용자명을 넣는다(예: "홍길동의 프로젝트"). 여러 프로젝트를 함께 쓰거나
+   * 다른 사람의 프로젝트에 참여했을 때 어느 것이 자기 것인지 바로 알아보게 하려는 것이다.
+   * userName은 호출 지점에서 이미 비어 있지 않음이 보장되지만(구글 이름이 없으면
+   * 이메일 앞부분을 쓴다) 여기서도 한 번 더 확인해 "의 프로젝트"만 남는 것을 막는다.
+   */
+  private async createDefaultProject(userId: string, userName: string) {
+    const name = userName.trim() ? `${userName.trim()}의 프로젝트` : '나의 프로젝트';
+
     const project = await this.prisma.project.create({
       data: {
-        name: '나의 프로젝트',
+        name,
         description: '첫 번째 프로젝트',
         // 다른 사용자가 검색해 가입 요청할 수 있도록 키를 함께 발급한다.
         projectKey: await this.projectsService.issueProjectKey(),

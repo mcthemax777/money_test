@@ -1,10 +1,23 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Prisma, CardType, AccountType } from '@prisma/client';
-import { DEFAULT_TIME_ZONE, zonedDayStart, zonedParts } from '@money/types';
+import {
+  DEFAULT_TIME_ZONE,
+  LEDGER_OPENING_DATE_KEY,
+  ledgerOpeningDate,
+} from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
 import { resolveStatementPeriod } from './statement-period';
 
 const ZERO = new Prisma.Decimal(0);
+
+/**
+ * 기초잔액 전표의 날짜이자 원장 날짜의 하한.
+ *
+ * 어떤 거래보다 앞서야 "처음에 이만큼 있었다"는 뜻이 유지된다. 사용자가 기준일을
+ * 고르게 하면 그 뒤에 과거 거래를 넣었을 때 순서가 뒤집힌다. 거래 입력 하한
+ * (`LEDGER_MIN_ENTRY_DATE_KEY`)보다 1년 앞이라 타임존 변환 여유까지 확보된다.
+ */
+const OPENING_BALANCE_DATE = ledgerOpeningDate();
 
 type Tx = Prisma.TransactionClient;
 
@@ -74,14 +87,6 @@ export interface TransferInput extends CommonInput {
   feeIsFixed?: boolean;
 }
 
-export interface OpeningBalanceInput {
-  projectId: string;
-  accountId: string;
-  amount: Prisma.Decimal;
-  date: Date;
-  createdByUserId?: string | null;
-}
-
 export interface CardPaymentInput extends CommonInput {
   cardId: string;
   /** 결제 대금이 빠져나가는 계좌 */
@@ -118,6 +123,7 @@ export class LedgerService {
    */
   async createEntry(input: EntryInput) {
     this.assertBalanced(input.postings);
+    this.assertDateInRange(input.date);
     await this.assertTargetsBelongToProject(input.projectId, input.postings);
 
     return this.prisma.$transaction(async (tx) => {
@@ -149,6 +155,7 @@ export class LedgerService {
    */
   async replaceEntry(entryId: string, input: EntryInput) {
     this.assertBalanced(input.postings);
+    this.assertDateInRange(input.date);
     await this.assertTargetsBelongToProject(input.projectId, input.postings);
 
     const existing = await this.prisma.journalEntry.findUnique({
@@ -380,95 +387,23 @@ export class LedgerService {
   }
 
   /**
-   * 계좌 개설 잔액을 전표로 기록한다.
+   * 계좌 잔액을 목표값으로 맞춘다. 계좌 추가와 잔액 수정이 함께 쓰는 유일한 경로다.
    *
-   * 계좌를 만들면서 balance 컬럼에 값을 바로 넣으면 그 금액을 뒷받침하는 posting이
-   * 없어서 "잔액 = posting 합계" 불변식이 처음부터 깨진다. 그래서 기초잔액도
-   * 자본 계정을 상대편으로 하는 평범한 2-leg 전표로 남긴다.
+   * 조정 전표를 새로 쌓지 않는다. 그 계좌의 기초잔액 전표 하나만 다시 계산해 덮어쓴다.
+   *   기초잔액 = 목표 잔액 - (기초잔액을 뺀 나머지 거래 합계)
+   * 그래서 잔액을 몇 번 고쳐도 거래내역은 기초잔액 1건뿐이고, 그 뒤의 거래는 그대로 남는다.
+   *
+   * balance 컬럼을 직접 쓰지 않는 이유는 그대로다. 자본 계정을 상대편으로 하는
+   * 2-leg 전표로 남겨 "잔액 = posting 합계" 불변식을 지킨다.
    *
    * 주의: opening_balance 계정은 자산이 아니므로 순자산 집계에서 제외해야 한다.
    */
-  async setOpeningBalance(input: OpeningBalanceInput) {
-    return this.postEquityAdjustment({
-      ...input,
-      delta: input.amount,
-      describe: (name) => `${name} 기초잔액`,
-    });
-  }
-
-  /**
-   * 잔액을 목표값으로 맞춘다. 컬럼을 덮어쓰지 않고 차액만큼 조정 전표를 남긴다.
-   *
-   * 사용자가 자산 화면에서 잔액을 직접 고치는 기능을 지원하면서도
-   * "잔액 = posting 합계" 불변식을 깨지 않기 위한 경로다.
-   *
-   * 차액은 **기준일 종료 시점의 잔액**을 기준으로 계산한다. 현재 총잔액을 쓰면
-   * 기준일 이후에 거래가 있는 계좌에서 "그 날짜의 잔액"이 입력값과 달라진다.
-   * (기준일이 오늘이고 미래 날짜 거래가 없으면 총잔액과 같은 값이다)
-   */
-  async adjustBalanceTo(input: {
+  async setBalanceTo(input: {
     projectId: string;
     accountId: string;
     targetBalance: Prisma.Decimal;
-    date: Date;
     createdByUserId?: string | null;
   }) {
-    await this.getAccount(input.projectId, input.accountId);
-    const asOf = await this.balanceAsOfEndOfDay(
-      input.projectId,
-      input.accountId,
-      input.date,
-    );
-    const delta = input.targetBalance.sub(asOf);
-    if (delta.isZero()) return null; // 바뀐 게 없으면 전표를 만들지 않는다
-
-    return this.postEquityAdjustment({
-      projectId: input.projectId,
-      accountId: input.accountId,
-      amount: input.targetBalance,
-      delta,
-      date: input.date,
-      createdByUserId: input.createdByUserId,
-      describe: (name) => `${name} 잔액 조정`,
-    });
-  }
-
-  /**
-   * 그 날(프로젝트 타임존 기준)이 끝나는 시점까지 쌓인 계좌 잔액.
-   *
-   * balance 컬럼은 미래 날짜 거래까지 포함한 총합이라 기준일 잔액과 다르다.
-   */
-  private async balanceAsOfEndOfDay(
-    projectId: string,
-    accountId: string,
-    date: Date,
-  ): Promise<Prisma.Decimal> {
-    const timeZone = await this.projectTimeZone(projectId);
-    const { year, month, day } = zonedParts(date, timeZone);
-    const dayEnd = zonedDayStart(year, month, day + 1, timeZone);
-
-    const sum = await this.prisma.posting.aggregate({
-      _sum: { amount: true },
-      where: { accountId, entry: { projectId, date: { lt: dayEnd } } },
-    });
-
-    return sum._sum.amount ?? ZERO;
-  }
-
-  /** 자본 계정을 상대편으로 하는 2-leg 전표. 기초잔액과 잔액 조정이 공유한다. */
-  private async postEquityAdjustment(input: {
-    projectId: string;
-    accountId: string;
-    amount: Prisma.Decimal;
-    delta: Prisma.Decimal;
-    date: Date;
-    createdByUserId?: string | null;
-    describe: (accountName: string) => string;
-  }) {
-    if (input.delta.isZero()) {
-      throw new BadRequestException('변동액이 0이면 전표를 만들지 않습니다.');
-    }
-
     const account = await this.getAccount(input.projectId, input.accountId);
     if (account.type === AccountType.opening_balance) {
       throw new BadRequestException('자본 계정에는 잔액을 직접 설정할 수 없습니다.');
@@ -477,18 +412,67 @@ export class LedgerService {
       throw new BadRequestException('소유자가 없는 계좌에는 잔액을 설정할 수 없습니다.');
     }
 
-    const equity = await this.getOrCreateOpeningBalanceAccount(input.projectId);
+    const existing = await this.findOpeningEntry(input.projectId, input.accountId);
 
-    return this.createEntry({
+    // 기초잔액을 뺀 나머지 거래의 합. 이 위에 얹어서 목표 잔액을 만든다.
+    const others = await this.prisma.posting.aggregate({
+      _sum: { amount: true },
+      where: {
+        accountId: input.accountId,
+        ...(existing ? { entryId: { not: existing.id } } : {}),
+      },
+    });
+    const openingAmount = input.targetBalance.sub(others._sum.amount ?? ZERO);
+
+    // 기초잔액이 0이면 전표를 남기지 않는다. 0원 내역이 목록에 보일 이유가 없다.
+    if (openingAmount.isZero()) {
+      if (existing) await this.deleteEntry(existing.id, input.projectId);
+      return null;
+    }
+
+    const equity = await this.getOrCreateOpeningBalanceAccount(input.projectId);
+    const entry: EntryInput = {
       projectId: input.projectId,
       personId: account.ownerId,
-      date: input.date,
-      description: input.describe(account.name),
+      date: OPENING_BALANCE_DATE,
+      description: `${account.name} 기초잔액`,
       createdByUserId: input.createdByUserId,
       postings: [
-        { accountId: account.id, amount: input.delta },
-        { accountId: equity.id, amount: input.delta.neg() },
+        { accountId: account.id, amount: openingAmount },
+        { accountId: equity.id, amount: openingAmount.neg() },
       ],
+    };
+
+    // replaceEntry는 옛 posting의 잔액 영향을 되돌린 뒤 새로 적용하므로
+    // 금액만 바뀐 경우에도 balance 컬럼이 정확히 따라온다.
+    return existing
+      ? this.replaceEntry(existing.id, entry)
+      : this.createEntry(entry);
+  }
+
+  /**
+   * 그 계좌의 기초잔액 전표. 계좌 posting과 자본 계정 posting을 함께 가진 전표다.
+   *
+   * 계좌마다 하나만 유지되지만(이 서비스만 만든다) date 오름차순으로 맨 앞을 집어
+   * 여러 건이 있어도 가장 앞선 것을 기준으로 삼는다.
+   */
+  private async findOpeningEntry(projectId: string, accountId: string) {
+    const equity = await this.prisma.account.findFirst({
+      where: { projectId, type: AccountType.opening_balance },
+      select: { id: true },
+    });
+    if (!equity) return null;
+
+    return this.prisma.journalEntry.findFirst({
+      where: {
+        projectId,
+        AND: [
+          { postings: { some: { accountId } } },
+          { postings: { some: { accountId: equity.id } } },
+        ],
+      },
+      orderBy: { date: 'asc' },
+      select: { id: true },
     });
   }
 
@@ -531,6 +515,27 @@ export class LedgerService {
 
   private sum(amounts: Prisma.Decimal[]): Prisma.Decimal {
     return amounts.reduce((acc, a) => acc.add(a), ZERO);
+  }
+
+  /**
+   * 전표 날짜가 원장 하한 안에 있는지 검증.
+   *
+   * 기초잔액 전표보다 앞선 거래가 들어오면 "처음에 이만큼 있었다"는 전제가 깨지고
+   * 계좌 원장의 첫 줄이 기초잔액이 아니게 된다. 화면은 날짜 입력 min으로 막지만
+   * API를 직접 부르는 경로가 있으므로 여기서도 막는다.
+   *
+   * 하한은 기초잔액 전표 날짜 자신이다(= 그 날짜는 허용). 그래서 기초잔액을 만드는
+   * 이 서비스의 호출도 그대로 통과한다.
+   */
+  private assertDateInRange(date: Date) {
+    if (Number.isNaN(date.getTime())) {
+      throw new BadRequestException('거래 날짜가 올바르지 않습니다.');
+    }
+    if (date < OPENING_BALANCE_DATE) {
+      throw new BadRequestException(
+        `${LEDGER_OPENING_DATE_KEY} 이전 날짜의 거래는 기록할 수 없습니다.`,
+      );
+    }
   }
 
   /** 전표 균형과 posting 배타 조건 검증. DB CHECK 제약보다 먼저 걸러 메시지를 명확히 한다. */

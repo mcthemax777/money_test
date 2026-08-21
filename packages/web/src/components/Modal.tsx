@@ -1,6 +1,20 @@
 'use client';
 
-import { ReactNode } from 'react';
+import { ReactNode, useEffect, useRef } from 'react';
+
+/**
+ * 팝업이 열릴 때 포커스를 줄 후보.
+ *
+ * `[data-autofocus]`가 있으면 그것을 먼저 쓴다. 첫 입력란이 실제로 먼저 채우는
+ * 칸이 아닌 화면(예: 거래 추가는 금액부터 입력한다)에서 쓰기 위한 장치다.
+ */
+/* 잠긴 입력란에는 포커스가 가지 않는다. 그때는 아래 첫 입력란 규칙으로 넘어간다. */
+const AUTOFOCUS_SELECTOR = '[data-autofocus]:not([disabled]):not([readonly])';
+const FIRST_FIELD_SELECTOR = [
+  'input:not([type="hidden"]):not([disabled]):not([readonly])',
+  'textarea:not([disabled]):not([readonly])',
+  'select:not([disabled])',
+].join(', ');
 
 interface ModalProps {
   isOpen: boolean;
@@ -20,6 +34,32 @@ interface ModalProps {
 }
 
 export default function Modal({ isOpen, onClose, title, children, footer }: ModalProps) {
+  const bodyRef = useRef<HTMLDivElement>(null);
+
+  /**
+   * 열릴 때 첫 입력란에 포커스를 준다.
+   *
+   * 본문(`bodyRef`)만 훑는다. 헤더의 닫기 버튼이나 하단 버튼이 잡히면
+   * 곧바로 타이핑을 시작할 수 없다. 입력란이 하나도 없는 팝업(선택형 팝업 등)은
+   * 아무것도 포커스하지 않는다.
+   */
+  useEffect(() => {
+    if (!isOpen) return;
+
+    // 렌더 직후에는 자식이 아직 붙지 않은 경우가 있어 다음 프레임에 찾는다.
+    const frame = requestAnimationFrame(() => {
+      const body = bodyRef.current;
+      if (!body) return;
+
+      const target =
+        body.querySelector<HTMLElement>(AUTOFOCUS_SELECTOR) ??
+        body.querySelector<HTMLElement>(FIRST_FIELD_SELECTOR);
+      target?.focus();
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [isOpen]);
+
   if (!isOpen) return null;
 
   return (
@@ -34,7 +74,7 @@ export default function Modal({ isOpen, onClose, title, children, footer }: Moda
             ×
           </button>
         </div>
-        <div className="p-6">
+        <div ref={bodyRef} className="p-6">
           {children}
         </div>
         {footer && (

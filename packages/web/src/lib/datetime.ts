@@ -54,6 +54,38 @@ export function dateMarkerKey(marker: string | Date): string {
   return `${date.getUTCFullYear()}-${month}-${day}`;
 }
 
+/**
+ * 카드 만료일처럼 월까지만 의미가 있는 값을 `<input type="month">`의 "YYYY-MM"으로.
+ *
+ * 저장된 값은 UTC 자정 인스턴트다. 로컬 타임존으로 읽으면 달이 하나 밀 수 있어
+ * UTC 필드를 그대로 쓴다.
+ */
+export function monthInputOf(value: string | Date | null | undefined): string {
+  if (!value) return '';
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+
+  return `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, '0')}`;
+}
+
+/**
+ * "YYYY-MM"을 저장용 ISO 문자열로. 형식이 어긋나면 null.
+ *
+ * 그 달의 말일로 잡는다. 카드는 만료 월의 마지막 날까지 쓸 수 있다.
+ */
+export function monthInputToIso(value: string): string | null {
+  const match = /^(\d{4})-(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) return null;
+
+  // month는 1-based다. 다음 달의 0일 = 이 달의 말일.
+  return new Date(Date.UTC(year, month, 0)).toISOString();
+}
+
 /** `@db.Date` 값의 표시용 날짜. 청구 기간·결제일이 여기에 해당한다. */
 export function formatDateMarker(marker: string | Date): string {
   return new Date(marker).toLocaleDateString('ko-KR', { timeZone: 'UTC' });

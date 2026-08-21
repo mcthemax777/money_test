@@ -8,6 +8,8 @@ interface CreateProjectDto {
 }
 
 interface UpdateProjectDto {
+  name?: string;
+  description?: string | null;
   timezone?: string;
 }
 
@@ -50,14 +52,29 @@ export class ProjectsService {
   }
 
   /**
-   * 프로젝트 설정 변경. 지금은 집계 기준 타임존만 다룬다.
+   * 프로젝트 설정 변경 (이름, 설명, 집계 기준 타임존).
    *
-   * 타임존을 바꾸면 월 합계와 카드 청구주기 경계가 함께 움직이므로 소유자만 바꿀 수 있다.
+   * 이름과 설명은 모든 구성원이 함께 보고, 타임존을 바꾸면 월 합계와 카드 청구주기
+   * 경계가 함께 움직인다. 모두 프로젝트 전체에 영향을 주므로 소유자만 바꿀 수 있다.
    */
   async updateProject(projectId: string, userId: string, dto: UpdateProjectDto) {
     await this.verifyUserIsOwner(projectId, userId);
 
-    const data: { timezone?: string } = {};
+    const data: { name?: string; description?: string | null; timezone?: string } = {};
+    if (dto.name !== undefined) {
+      const name = dto.name.trim();
+      if (!name) {
+        throw new BadRequestException('프로젝트 이름을 입력해주세요.');
+      }
+      data.name = name;
+    }
+
+    // 설명은 없어도 되는 값이다. 빈 문자열로 지우면 null로 저장해
+    // "설명 없음"을 한 가지 형태로만 남긴다.
+    if (dto.description !== undefined) {
+      data.description = dto.description?.trim() || null;
+    }
+
     if (dto.timezone !== undefined) {
       if (!isValidTimeZone(dto.timezone)) {
         throw new BadRequestException('알 수 없는 타임존입니다.');

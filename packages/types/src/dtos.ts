@@ -89,10 +89,11 @@ export namespace AccountDto {
     /** 개설 기관. FinancialInstitution(type = bank)의 id. 현금/부동산은 생략한다. */
     institutionId?: string;
     accountNumber?: string;
-    /** 개설 잔액. 전표로 기록되므로 잔액 컬럼에 직접 쓰지 않는다. 금액은 문자열. */
+    /**
+     * 개설 잔액. 전표로 기록되므로 잔액 컬럼에 직접 쓰지 않는다. 금액은 문자열.
+     * 날짜는 원장 맨 앞(1970-01-01)으로 고정된다. 기준일은 받지 않는다.
+     */
     openingBalance?: string;
-    /** 개설 잔액 기준일. 생략하면 오늘. 과거 거래를 입력할 계좌라면 그보다 앞선 날짜를 준다. */
-    openingBalanceDate?: IsoDateString;
     currency?: string;
     projectId?: string;
   }
@@ -103,17 +104,12 @@ export namespace AccountDto {
     institutionId?: string | null;
     accountNumber?: string;
     /**
-     * 잔액을 이 값으로 맞춘다. 컬럼을 덮어쓰는 것이 아니라 차액만큼 조정 전표를 남긴다.
-     * (잔액 = posting 합계 불변식을 지키기 위함)
+     * 현재 잔액을 이 값으로 맞춘다.
+     *
+     * 컬럼을 덮어쓰거나 조정 전표를 새로 쌓지 않는다. 기초잔액 전표를
+     * "목표 잔액 - 나머지 거래 합계"로 다시 계산해 덮어쓴다.
      */
     balance?: string;
-    /**
-     * 잔액 기준일. 생략하면 오늘.
-     *
-     * "이 날짜의 잔액이 balance였다"는 뜻이다. 차액은 그 날 종료 시점의 잔액을
-     * 기준으로 계산하므로, 기준일 이후 거래는 조정 뒤에도 그대로 반영된다.
-     */
-    balanceDate?: IsoDateString;
     isActive?: boolean;
   }
 

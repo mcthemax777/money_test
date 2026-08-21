@@ -10,8 +10,6 @@ import Modal from '@/components/Modal';
 import DashboardSidebar from '@/components/DashboardSidebar';
 import type { Category } from '@/lib/types';
 import { useDragReorder } from '@/hooks/useDragReorder';
-// 드래그 핸들: 가로 실선 2줄. lucide의 Equal이 그 모양이라 이름만 바꿔 쓴다.
-import { Equal as DragHandleIcon } from 'lucide-react';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const FORM_ID = 'category-form';
@@ -541,7 +539,6 @@ function CategoryList({
         >
           <div className="flex items-center justify-between mb-2">
             <p className="font-bold text-gray-900">
-              <DragHandleIcon className="inline w-4 h-4 text-gray-400 mr-2 cursor-grab align-[-2px]" aria-label="드래그해서 순서 변경" />
               {category.name}
             </p>
           </div>
@@ -578,7 +575,6 @@ function SubCategoryList({
           }`}
         >
           <span>
-            <DragHandleIcon className="inline w-4 h-4 text-gray-400 mr-2 cursor-grab align-[-2px]" aria-label="드래그해서 순서 변경" />
             {subCat.name}
           </span>
           <span className="text-xs text-gray-500">

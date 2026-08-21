@@ -67,8 +67,10 @@ export default function CustomSelect({
         )}
       </button>
 
+      {/* z-20: 팝업의 고정 헤더·하단 버튼(z-10)보다 위에 그린다. 같은 값이면 나중에
+          나오는 하단 버튼이 목록을 덮었다. */}
       {isOpen && !disabled && (
-        <div className="absolute top-full left-0 right-0 mt-1 border border-gray-300 rounded-lg bg-white shadow-lg z-10">
+        <div className="absolute top-full left-0 right-0 mt-1 border border-gray-300 rounded-lg bg-white shadow-lg z-20">
           <div className="max-h-48 overflow-y-auto">
             {options.map((option) => (
               <button

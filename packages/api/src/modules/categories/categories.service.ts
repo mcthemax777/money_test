@@ -33,12 +33,23 @@ export class CategoriesService {
       }
     }
 
+    /*
+     * 새 카테고리는 같은 묶음(대분류끼리, 또는 한 부모 아래 소분류끼리) 맨 뒤에 붙인다.
+     * sortOrder를 기본값 0으로 두면 드래그로 0,1,2...를 매긴 목록의 앞쪽에 끼어들고,
+     * 드래그 전이라도 전부 0이라 이름순 자리에 들어가 목록 중간에 나타난다.
+     */
+    const lastOrder = await this.prisma.category.aggregate({
+      where: { projectId: finalProjectId, parentId: dto.parentId ?? null },
+      _max: { sortOrder: true },
+    });
+
     try {
       return await this.prisma.category.create({
         data: {
           projectId: finalProjectId,
           name: dto.name.trim(),
           parentId: dto.parentId ?? null,
+          sortOrder: (lastOrder._max.sortOrder ?? -1) + 1,
           type: dto.type as CategoryType,
           icon: dto.icon,
           defaultIsFixed: dto.defaultIsFixed ?? false,
@@ -180,10 +191,14 @@ export class CategoriesService {
       },
     ];
 
+    // 선언한 순서를 sortOrder에 담는다. 전부 0으로 두면 목록이 이름순으로 보이고,
+    // 나중에 추가한 카테고리(최댓값 + 1)와 자리가 어긋난다.
+    const rows = defaults.flatMap((group) =>
+      group.names.map((name) => ({ projectId, name, type: group.type })),
+    );
+
     await this.prisma.category.createMany({
-      data: defaults.flatMap((group) =>
-        group.names.map((name) => ({ projectId, name, type: group.type })),
-      ),
+      data: rows.map((row, index) => ({ ...row, sortOrder: index })),
       skipDuplicates: true,
     });
   }

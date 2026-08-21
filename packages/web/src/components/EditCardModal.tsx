@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { apiClient } from '@/lib/api-client';
 import type { Account, Card } from '@/lib/types';
 import { toAmountString } from '@/lib/money';
+import { monthInputOf, monthInputToIso } from '@/lib/datetime';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@/hooks/useInstitutions';
@@ -59,7 +60,8 @@ export default function EditCardModal({
         name: card.name,
         issuerId: card.issuerId,
         creditLimit: card.creditLimit ?? '',
-        expiryDate: card.expiryDate || '',
+        // 저장된 값은 ISO 인스턴트다. 월 입력란이 읽는 "YYYY-MM"으로 바꾼다.
+        expiryDate: monthInputOf(card.expiryDate),
         cardType: card.cardType,
         cardNumber: '',
         statementClosingDay: card.statementClosingDay ?? 15,
@@ -91,7 +93,7 @@ export default function EditCardModal({
         name: formData.name,
         issuerId: formData.issuerId,
         // 만료일을 비우면 null을 보내 지운다. 키를 빼면 기존 값이 남는다.
-        expiryDate: formData.expiryDate ? new Date(formData.expiryDate).toISOString() : null,
+        expiryDate: monthInputToIso(formData.expiryDate),
         // 카드 번호는 새로 입력했을 때만 보낸다 (마스킹된 값을 되돌려 보내면 안 된다).
         ...(formData.cardNumber ? { cardNumber: formData.cardNumber } : {}),
         ...(isCredit
@@ -231,10 +233,10 @@ export default function EditCardModal({
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            만료일 (선택)
+            만료 월 (선택)
           </label>
           <input
-            type="date"
+            type="month"
             value={formData.expiryDate}
             onChange={(e) => setFormData({ ...formData, expiryDate: e.target.value })}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -258,7 +260,7 @@ export default function EditCardModal({
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                마감일 (매월 몇 일?)
+                마감일
               </label>
               <select
                 value={formData.statementClosingDay}
@@ -276,7 +278,7 @@ export default function EditCardModal({
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                결제일 (매월 몇 일?)
+                결제일
               </label>
               <select
                 value={formData.paymentDueDay}

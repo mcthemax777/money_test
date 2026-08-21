@@ -141,7 +141,7 @@ export class ProjectsController {
   @HttpCode(HttpStatus.OK)
   async updateProject(
     @Param('projectId') projectId: string,
-    @Body() body: { timezone?: string },
+    @Body() body: { name?: string; description?: string | null; timezone?: string },
     @Request() req: any,
   ) {
     return this.projectsService.updateProject(projectId, req.user.id, body);

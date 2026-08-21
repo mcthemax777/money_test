@@ -3,12 +3,10 @@
 import { useState, useEffect } from 'react';
 import { apiClient } from '@/lib/api-client';
 import type { Account, Person } from '@/lib/types';
-import { toAmountString } from '@/lib/money';
+import { formatCurrency, toAmountString } from '@/lib/money';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@/hooks/useInstitutions';
-import { todayKey } from '@/lib/datetime';
-import { useProjectTimeZone } from '@/store/project';
 
 /** 개설 기관이 없는 유형. AddAccountModal, 서버의 NO_INSTITUTION_TYPES와 같아야 한다. */
 const NO_BANK_TYPES = ['cash', 'real_estate'];
@@ -22,8 +20,6 @@ const EMPTY_FORM = {
   institutionId: '',
   accountNumber: '',
   balance: '',
-  /** 이 날짜의 잔액이 위 값이었다는 뜻. 비어 있으면 서버가 오늘로 본다. */
-  balanceDate: '',
 };
 
 
@@ -47,7 +43,6 @@ export default function EditAccountModal({
   onDelete,
   projectId,
 }: EditAccountModalProps) {
-  const timeZone = useProjectTimeZone();
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -66,11 +61,9 @@ export default function EditAccountModal({
         institutionId: account.institutionId ?? '',
         accountNumber: account.accountNumber || '',
         balance: account.balance,
-        // 기준일 기본값은 오늘. 과거 잔액을 바로잡으려면 사용자가 날짜를 바꾼다.
-        balanceDate: todayKey(timeZone),
       });
     }
-  }, [isOpen, account, timeZone]);
+  }, [isOpen, account]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -79,13 +72,11 @@ export default function EditAccountModal({
     try {
       setIsSubmitting(true);
       setError('');
-      // 잔액을 고치면 서버가 차액만큼 조정 전표를 남긴다 (컬럼을 덮어쓰지 않는다).
+      // 잔액을 고치면 서버가 기초잔액 전표를 다시 계산한다 (조정 전표가 새로 생기지 않는다).
       // 계좌 주인은 원장에 이미 반영돼 있어 바꾸지 않는다.
       await apiClient.updateAccountV2(account.id, {
         name: formData.name,
         balance: toAmountString(formData.balance),
-        // 기준일을 주면 그 날 잔액이 목표값이 되도록 서버가 차액을 계산한다.
-        ...(formData.balanceDate ? { balanceDate: formData.balanceDate } : {}),
         // 기관을 비우면 null을 보내 연결을 끊는다. ''를 그대로 보내면 서버가 없는 id로 본다.
         ...(needsBankName ? { institutionId: formData.institutionId || null } : {}),
         ...(formData.accountNumber && { accountNumber: formData.accountNumber }),
@@ -123,6 +114,10 @@ export default function EditAccountModal({
   };
 
   if (!account) return null;
+
+  // 문자열 비교는 "10000"과 "10000.00"을 다르게 본다. 숫자로 견준다.
+  const balanceChanged =
+    formData.balance !== '' && Number(formData.balance) !== Number(account.balance);
 
   return (
     <Modal
@@ -193,7 +188,7 @@ export default function EditAccountModal({
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            잔액 (원)
+            현재 잔액 (원)
           </label>
           <input
             type="number"
@@ -203,21 +198,14 @@ export default function EditAccountModal({
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             placeholder="0"
           />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            잔액 기준일
-          </label>
-          <input
-            type="date"
-            value={formData.balanceDate}
-            onChange={(e) => setFormData({ ...formData, balanceDate: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
-          <p className="mt-1 text-xs text-gray-500">
-            이 날짜의 잔액으로 맞춥니다. 차액만큼 조정 전표가 남고, 기준일 이후 거래는 그대로 반영됩니다.
-          </p>
+          {/* 잔액을 실제로 바꿨을 때만 경고한다. 다른 항목만 고치는 경우에는 뜨지 않는다. */}
+          {balanceChanged && (
+            <div className="mt-2 p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg">
+              잔액을 바꾸면 거래내역 맨 앞의 <strong>기초잔액</strong> 금액이 다시 계산됩니다
+              ({formatCurrency(account.balance)} → {formatCurrency(toAmountString(formData.balance))}).
+              새 거래내역은 생기지 않고, 그동안 입력한 거래도 그대로 남습니다.
+            </div>
+          )}
         </div>
 
         <div>

@@ -14,6 +14,28 @@
 /** 프로젝트에 타임존이 지정되지 않았을 때 쓰는 기본값 */
 export const DEFAULT_TIME_ZONE = 'Asia/Seoul';
 
+/**
+ * 사용자가 거래에 넣을 수 있는 가장 앞선 날짜 ("YYYY-MM-DD").
+ *
+ * 화면의 날짜 입력 하한(min)으로 쓴다. 1970년(유닉스 에포크)을 쓰면 그 이전
+ * 날짜를 거래로 넣을 수 있어 기초잔액보다 앞서는 거래가 생긴다.
+ */
+export const LEDGER_MIN_ENTRY_DATE_KEY = '1900-01-01';
+
+/**
+ * 기초잔액 전표를 두는 날짜 (UTC). 원장의 하드 하한이기도 하다.
+ *
+ * 거래 입력 하한보다 1년 앞이다. 화면이 고른 날짜는 프로젝트 타임존으로 해석해
+ * UTC로 저장하므로 최대 하루가량 앞으로 밀린다(KST 1900-01-01 = 1899-12-31T15:00Z).
+ * 여유를 두면 어떤 타임존에서도 기초잔액이 모든 거래보다 앞선다.
+ */
+export const LEDGER_OPENING_DATE_KEY = '1899-01-01';
+
+/** `LEDGER_OPENING_DATE_KEY`의 인스턴트. 호출마다 새 Date를 만든다(공유 객체 변조 방지). */
+export function ledgerOpeningDate(): Date {
+  return new Date(`${LEDGER_OPENING_DATE_KEY}T00:00:00.000Z`);
+}
+
 /** 벽시계 기준 달력 값. month는 1~12 (JS의 0~11이 아니다). */
 export interface ZonedParts {
   year: number;

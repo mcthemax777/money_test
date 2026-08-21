@@ -1,9 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { apiClient } from '@/lib/api-client';
-import { todayKey } from '@/lib/datetime';
-import { useProjectTimeZone } from '@/store/project';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@/hooks/useInstitutions';
@@ -46,7 +44,6 @@ const EMPTY_FORM = {
   name: '',
   institutionId: '',
   openingBalance: '',
-  openingBalanceDate: '',
   accountNumber: '',
 };
 
@@ -57,21 +54,10 @@ export default function AddAccountModal({
   people,
   projectId,
 }: AddAccountModalProps) {
-  // 기준일 기본값은 프로젝트 타임존의 오늘이다 (브라우저 로컬이 아니다).
-  const timeZone = useProjectTimeZone();
-  const [formData, setFormData] = useState(() => ({
-    ...EMPTY_FORM,
-    openingBalanceDate: todayKey(timeZone),
-  }));
+  const [formData, setFormData] = useState(EMPTY_FORM);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const { options: bankOptions, error: bankError } = useInstitutions('bank');
-
-  // 닫았다 다시 열면 기준일을 그 시점의 오늘로 되돌린다.
-  useEffect(() => {
-    if (!isOpen) return;
-    setFormData((prev) => ({ ...prev, openingBalanceDate: prev.openingBalanceDate || todayKey(timeZone) }));
-  }, [isOpen, timeZone]);
 
   const needsBankName = !NO_BANK_TYPES.includes(formData.type);
 
@@ -84,10 +70,8 @@ export default function AddAccountModal({
         ownerId: formData.ownerId,
         type: formData.type,
         name: formData.name,
-        // 개설 잔액은 컬럼에 직접 쓰지 않고 전표로 기록된다.
-        // 기준일보다 앞선 거래를 넣을 계좌라면 날짜를 더 앞으로 잡아야 원장 순서가 맞는다.
+        // 개설 잔액은 컬럼에 직접 쓰지 않고 원장 맨 앞(1970-01-01)의 기초잔액 전표로 기록된다.
         openingBalance: toAmountString(formData.openingBalance),
-        openingBalanceDate: formData.openingBalanceDate,
         // 기관이 없는 유형(현금/부동산)에 institutionId를 보내면 서버가 거부한다.
         ...(needsBankName && formData.institutionId
           ? { institutionId: formData.institutionId }
@@ -106,7 +90,7 @@ export default function AddAccountModal({
   };
 
   const handleClose = () => {
-    setFormData({ ...EMPTY_FORM, openingBalanceDate: todayKey(timeZone) });
+    setFormData(EMPTY_FORM);
     setError('');
     onClose();
   };
@@ -130,6 +114,18 @@ export default function AddAccountModal({
     >
       <form id={FORM_ID} onSubmit={handleSubmit} className="space-y-4">
         <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">계좌명</label>
+          <input
+            type="text"
+            required
+            value={formData.name}
+            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="예: 급여 통장"
+          />
+        </div>
+
+        <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">통장 주인</label>
           <CustomSelect
             options={people.map((p) => ({ id: p.id, name: p.name }))}
@@ -146,18 +142,6 @@ export default function AddAccountModal({
             value={formData.type}
             onChange={(value) => setFormData({ ...formData, type: value as AccountType })}
             placeholder="선택하세요"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">계좌명</label>
-          <input
-            type="text"
-            required
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="예: 급여 통장"
           />
         </div>
 
@@ -183,20 +167,8 @@ export default function AddAccountModal({
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             placeholder="1000000"
           />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            개설 잔액 기준일
-          </label>
-          <input
-            type="date"
-            value={formData.openingBalanceDate}
-            onChange={(e) => setFormData({ ...formData, openingBalanceDate: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-          />
           <p className="mt-1 text-xs text-gray-500">
-            이 날짜의 잔액으로 기록됩니다. 이전 거래를 입력할 계획이면 그보다 앞선 날짜를 고르세요.
+            거래내역 맨 앞의 "기초잔액" 한 건으로 기록됩니다. 이후 거래는 이 금액 위에 쌓입니다.
           </p>
         </div>
 

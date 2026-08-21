@@ -92,6 +92,10 @@ export default function ProjectsPage() {
   const [error, setError] = useState('');
   const [createForm, setCreateForm] = useState({ name: '', description: '' });
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  /** 이름·설명을 고치는 중인 프로젝트와 입력값. 한 번에 하나만 고친다. */
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editForm, setEditForm] = useState({ name: '', description: '' });
+  const [savingEdit, setSavingEdit] = useState(false);
 
   // 가입 요청 관련 상태
   const [showJoinForm, setShowJoinForm] = useState(false);
@@ -141,6 +145,35 @@ export default function ProjectsPage() {
       setError('프로젝트 목록을 불러올 수 없습니다.');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const startEdit = (project: Project) => {
+    setEditingId(project.id);
+    setEditForm({ name: project.name, description: project.description ?? '' });
+    setError('');
+  };
+
+  const handleSaveProject = async (projectId: string) => {
+    const name = editForm.name.trim();
+    if (!name) {
+      setError('프로젝트 이름을 입력해주세요.');
+      return;
+    }
+
+    try {
+      setSavingEdit(true);
+      // 설명은 비워서 지울 수 있다. 서버가 빈 값을 null로 바꿔 저장한다.
+      await apiClient.updateProject(projectId, { name, description: editForm.description });
+      // 사이드바와 헤더가 스토어의 이름을 쓰므로 목록을 다시 받아 갱신한다.
+      const data: Project[] = (await apiClient.getMyProjects()) || [];
+      setProjects(data);
+      setEditingId(null);
+      setError('');
+    } catch (err: any) {
+      setError(err.response?.data?.error?.message || '프로젝트 정보 변경에 실패했습니다.');
+    } finally {
+      setSavingEdit(false);
     }
   };
 
@@ -696,9 +729,66 @@ export default function ProjectsPage() {
             >
               <div className="flex items-start justify-between">
                 <div className="flex-1">
-                  <h3 className="text-lg font-semibold text-gray-900">{project.name}</h3>
-                  {project.description && (
-                    <p className="text-sm text-gray-600 mt-1">{project.description}</p>
+                  {/* 소유자는 이름과 설명을 이 자리에서 바로 고친다. 다른 구성원에게는 읽기 전용이다. */}
+                  {editingId === project.id ? (
+                    <div className="space-y-2">
+                      <input
+                        type="text"
+                        autoFocus
+                        value={editForm.name}
+                        onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSaveProject(project.id);
+                          if (e.key === 'Escape') setEditingId(null);
+                        }}
+                        placeholder="프로젝트 이름"
+                        className="w-full px-2 py-1 text-lg font-semibold text-gray-900 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <input
+                        type="text"
+                        value={editForm.description}
+                        onChange={(e) => setEditForm({ ...editForm, description: e.target.value })}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') handleSaveProject(project.id);
+                          if (e.key === 'Escape') setEditingId(null);
+                        }}
+                        placeholder="설명 (선택, 비우면 지워집니다)"
+                        className="w-full px-2 py-1 text-sm text-gray-700 border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => handleSaveProject(project.id)}
+                          disabled={savingEdit}
+                          className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition disabled:opacity-50"
+                        >
+                          {savingEdit ? '저장 중...' : '저장'}
+                        </button>
+                        <button
+                          onClick={() => setEditingId(null)}
+                          disabled={savingEdit}
+                          className="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition disabled:opacity-50"
+                        >
+                          취소
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-lg font-semibold text-gray-900">{project.name}</h3>
+                        {project.role === 'owner' && (
+                          <button
+                            onClick={() => startEdit(project)}
+                            className="text-xs text-blue-600 hover:underline"
+                          >
+                            이름·설명 변경
+                          </button>
+                        )}
+                      </div>
+                      {project.description && (
+                        <p className="text-sm text-gray-600 mt-1">{project.description}</p>
+                      )}
+                    </>
                   )}
                   <div className="flex items-center gap-4 mt-3 flex-wrap">
                     <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">

@@ -17,11 +17,19 @@ export class PeopleService {
       projectId || dto.projectId,
     );
 
+    // 새 구성원은 목록 맨 뒤에 붙인다. sortOrder를 기본값 0으로 두면
+    // 드래그로 0,1,2...를 매긴 목록의 앞쪽에 끼어든다.
+    const lastOrder = await this.prisma.person.aggregate({
+      where: { projectId: finalProjectId },
+      _max: { sortOrder: true },
+    });
+
     return this.prisma.person.create({
       data: {
         projectId: finalProjectId,
         name: dto.name,
         relationship: dto.relationship,
+        sortOrder: (lastOrder._max.sortOrder ?? -1) + 1,
       },
     });
   }

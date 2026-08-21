@@ -7,11 +7,9 @@ import { apiClient } from '@/lib/api-client';
 import type { Account, Card, Person, Statement } from '@/lib/types';
 import { formatCurrency, toAmountString, toNumber } from '@/lib/money';
 import { useUserFilter } from '@/store/user-filter';
-import { formatDate, formatDateMarker } from '@/lib/datetime';
+import { formatDate, formatDateMarker, monthInputToIso } from '@/lib/datetime';
 import ChoiceModal from '@/components/ChoiceModal';
 import { useDragReorder } from '@/hooks/useDragReorder';
-// 드래그 핸들: 가로 실선 2줄. lucide의 Equal이 그 모양이라 이름만 바꿔 쓴다.
-import { Equal as DragHandleIcon } from 'lucide-react';
 import { DAY_OF_MONTH_HINT, DAY_OF_MONTH_OPTIONS } from '@/lib/day-of-month';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
@@ -267,7 +265,8 @@ export default function DashboardPage() {
         return;
       }
 
-      const isoDate = cardForm.expiryDate ? new Date(cardForm.expiryDate).toISOString() : undefined;
+      // 만료일은 월까지만 받는다. 저장은 그 달 말일로 한다.
+      const isoDate = monthInputToIso(cardForm.expiryDate) ?? undefined;
       await apiClient.createCard({
         paymentAccountId: cardForm.accountId,
         name: cardForm.name,
@@ -1029,18 +1028,6 @@ export default function DashboardPage() {
         <form id={CARD_ADD_FORM_ID} onSubmit={handleAddCard} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              계좌
-            </label>
-            <CustomSelect
-              options={accounts.map((acc) => ({ id: acc.id, name: acc.name }))}
-              value={cardForm.accountId}
-              onChange={(value) => setCardForm({ ...cardForm, accountId: value })}
-              placeholder="선택하세요"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
               카드 이름
             </label>
             <input
@@ -1050,6 +1037,18 @@ export default function DashboardPage() {
               onChange={(e) => setCardForm({ ...cardForm, name: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="예: 내 체크카드"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              계좌
+            </label>
+            <CustomSelect
+              options={accounts.map((acc) => ({ id: acc.id, name: acc.name }))}
+              value={cardForm.accountId}
+              onChange={(value) => setCardForm({ ...cardForm, accountId: value })}
+              placeholder="선택하세요"
             />
           </div>
 
@@ -1095,10 +1094,10 @@ export default function DashboardPage() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              만료일 (선택)
+              만료 월 (선택)
             </label>
             <input
-              type="date"
+              type="month"
               value={cardForm.expiryDate}
               onChange={(e) => setCardForm({ ...cardForm, expiryDate: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -1122,7 +1121,7 @@ export default function DashboardPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  마감일 (매월 몇 일?)
+                  마감일
                 </label>
                 <select
                   value={cardForm.statementClosingDay}
@@ -1142,7 +1141,7 @@ export default function DashboardPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  결제일 (매월 몇 일?)
+                  결제일
                 </label>
                 <select
                   value={cardForm.paymentDueDay}
@@ -1222,7 +1221,6 @@ function PersonAssetList({
             <div className="flex justify-between items-center">
               <div>
                 <h2 className="text-xl font-bold text-gray-900">
-                  <DragHandleIcon className="inline w-5 h-5 text-gray-400 mr-2 cursor-grab align-[-3px]" aria-label="드래그해서 순서 변경" />
                   {person.name}
                 </h2>
                 <p className="text-sm text-gray-600">
@@ -1292,7 +1290,6 @@ function AccountList({
             className="w-full text-left hover:opacity-70 transition"
           >
             <p className="text-sm text-gray-600">
-              <DragHandleIcon className="inline w-4 h-4 text-gray-400 mr-2 cursor-grab align-[-2px]" aria-label="드래그해서 순서 변경" />
               {account.institution?.name}
             </p>
             <p className="text-2xl font-bold text-gray-900 mt-2">
@@ -1346,7 +1343,6 @@ function CardList({
             className="w-full text-left"
           >
             <p className="text-sm font-medium text-gray-900">
-              <DragHandleIcon className="inline w-4 h-4 text-gray-400 mr-2 cursor-grab align-[-2px]" aria-label="드래그해서 순서 변경" />
               💳 {card.name}
             </p>
             <p className="text-xs text-gray-600">{card.issuer?.name}</p>

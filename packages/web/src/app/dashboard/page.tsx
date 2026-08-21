@@ -15,12 +15,13 @@ import {
   dateMarkerKey,
   formatDateTime,
   currentYearMonth,
+  monthInputToIso,
   monthQueryRange,
   nowTimeKey,
   timeInputOf,
   todayKey,
 } from '@/lib/datetime';
-import { zonedFormValueToUtc } from '@money/types';
+import { LEDGER_MIN_ENTRY_DATE_KEY, zonedFormValueToUtc } from '@money/types';
 import CustomSelect from '@/components/CustomSelect';
 import ChoiceModal from '@/components/ChoiceModal';
 import Modal from '@/components/Modal';
@@ -44,6 +45,13 @@ const ENTRY_FORM_ID = 'entry-form';
 const BUDGET_FORM_ID = 'detail-budget-form';
 const CARD_FORM_ID = 'card-form';
 const CATEGORY_FORM_ID = 'category-form';
+
+/** 거래 추가/수정 팝업 맨 위의 유형 탭 */
+const ENTRY_TYPE_TABS = [
+  { id: 'expense', label: '지출' },
+  { id: 'income', label: '수입' },
+  { id: 'transfer', label: '이체' },
+] as const;
 
 const ENTRY_KIND_LABEL: Record<string, string> = {
   expense: '지출',
@@ -679,7 +687,8 @@ export default function TransactionsPage() {
         return;
       }
 
-      const isoDate = cardFormData.expiryDate ? new Date(cardFormData.expiryDate).toISOString() : undefined;
+      // 만료일은 월까지만 받는다. 저장은 그 달 말일로 한다.
+      const isoDate = monthInputToIso(cardFormData.expiryDate) ?? undefined;
       const isCredit = cardFormData.cardType === 'credit';
       await apiClient.createCard({
         // 결제 통장은 사용자가 만든 계좌여야 한다. 신용카드면 서버가 부채 계정을 함께 만든다.
@@ -1333,7 +1342,59 @@ export default function TransactionsPage() {
                 </div>
               )}
 
-              {/* 날짜와 시각을 먼저 받는다. 가장 자주 고치는 값이라 맨 위에 둔다. */}
+              {/* 유형을 맨 위에서 탭으로 고른다. 아래 입력이 유형에 따라 달라지므로 먼저 정한다. */}
+              <div role="tablist" aria-label="거래 유형" className="flex gap-1 p-1 bg-gray-100 rounded-lg">
+                {ENTRY_TYPE_TABS.map((tab) => {
+                  // 카드는 지출만 만들 수 있고, 결제된 청구서에 속한 내역은 유형을 못 바꾼다.
+                  const disabled =
+                    Boolean(lockedPeriod) || (formData.method === 'card' && tab.id !== 'expense');
+                  const selected = formData.type === tab.id;
+
+                  return (
+                    <button
+                      key={tab.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={selected}
+                      disabled={disabled}
+                      onClick={() => setFormData({
+                        ...formData,
+                        type: tab.id,
+                        mainCategoryId: '',
+                        subCategoryId: '',
+                      })}
+                      className={`flex-1 px-3 py-2 text-sm font-medium rounded-md transition ${
+                        selected
+                          ? 'bg-white text-blue-600 shadow-sm'
+                          : 'text-gray-600 hover:text-gray-900'
+                      } ${disabled ? 'opacity-40 cursor-not-allowed hover:text-gray-600' : ''}`}
+                    >
+                      {tab.label}
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* 금액은 유형 바로 아래에 둔다. 팝업이 열릴 때 여기로 포커스가 가므로
+                  아래쪽에 있으면 본문이 스크롤돼 유형 탭이 가려진다. */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  금액 (원)
+                </label>
+                <input
+                  type="number"
+                  required
+                  /* 팝업이 열리면 여기부터 입력한다 (Modal이 이 표시를 찾아 포커스한다) */
+                  data-autofocus
+                  value={formData.amount}
+                  disabled={Boolean(lockedPeriod)}
+                  onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                  className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${Boolean(lockedPeriod) ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                  placeholder="50000"
+                />
+              </div>
+
+              {/* 그다음 날짜와 시각을 받는다. 자주 고치는 값이라 위쪽에 둔다. */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1343,8 +1404,11 @@ export default function TransactionsPage() {
                     type="date"
                     required
                     value={formData.date}
-                    // 결제된 청구서에 속하면 그 청구 기간 밖으로는 못 나간다
-                    min={lockedPeriod?.start}
+                    /*
+                     * 결제된 청구서에 속하면 그 청구 기간 밖으로는 못 나간다.
+                     * 아니면 원장 하한(기초잔액 전표 날짜)까지만 거슬러 올라간다.
+                     */
+                    min={lockedPeriod?.start ?? LEDGER_MIN_ENTRY_DATE_KEY}
                     max={lockedPeriod?.end}
                     onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -1391,32 +1455,6 @@ export default function TransactionsPage() {
                   placeholder="선택하세요"
                   onAddClick={() => setIsPersonModalOpen(true)}
                   addButtonLabel="사용자 추가"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  유형
-                </label>
-                <CustomSelect
-                  options={
-                    formData.method === 'card'
-                      ? [{ id: 'expense', name: '지출' }]
-                      : [
-                          { id: 'expense', name: '지출' },
-                          { id: 'income', name: '수입' },
-                          { id: 'transfer', name: '이체' },
-                        ]
-                  }
-                  disabled={Boolean(lockedPeriod)}
-                  value={formData.type}
-                  onChange={(value) => setFormData({
-                    ...formData,
-                    type: value as any,
-                    mainCategoryId: '',
-                    subCategoryId: '',
-                  })}
-                  placeholder="선택하세요"
                 />
               </div>
 
@@ -1606,21 +1644,6 @@ export default function TransactionsPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  금액 (원)
-                </label>
-                <input
-                  type="number"
-                  required
-                  value={formData.amount}
-                  disabled={Boolean(lockedPeriod)}
-                  onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                  className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${Boolean(lockedPeriod) ? 'bg-gray-100 cursor-not-allowed' : ''}`}
-                  placeholder="50000"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
                   설명
                 </label>
                 <input
@@ -1787,20 +1810,6 @@ export default function TransactionsPage() {
         <form id={CARD_FORM_ID} onSubmit={handleCardSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              계좌
-            </label>
-            <CustomSelect
-              options={accounts.map((acc) => ({ id: acc.id, name: acc.name }))}
-              value={cardFormData.accountId}
-              onChange={(value) => setCardFormData({ ...cardFormData, accountId: value })}
-              placeholder="선택하세요"
-              onAddClick={() => {}}
-              addButtonLabel="계좌 추가"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
               카드 이름
             </label>
             <input
@@ -1810,6 +1819,20 @@ export default function TransactionsPage() {
               onChange={(e) => setCardFormData({ ...cardFormData, name: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               placeholder="예: 내 체크카드"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              계좌
+            </label>
+            <CustomSelect
+              options={accounts.map((acc) => ({ id: acc.id, name: acc.name }))}
+              value={cardFormData.accountId}
+              onChange={(value) => setCardFormData({ ...cardFormData, accountId: value })}
+              placeholder="선택하세요"
+              onAddClick={() => {}}
+              addButtonLabel="계좌 추가"
             />
           </div>
 
@@ -1857,10 +1880,10 @@ export default function TransactionsPage() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              만료일 (선택)
+              만료 월 (선택)
             </label>
             <input
-              type="date"
+              type="month"
               value={cardFormData.expiryDate}
               onChange={(e) => setCardFormData({ ...cardFormData, expiryDate: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -1885,7 +1908,7 @@ export default function TransactionsPage() {
               {/* 마감일과 결제일로 청구 주기를 계산한다 */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  마감일 (매월 몇 일?)
+                  마감일
                 </label>
                 <select
                   value={cardFormData.statementClosingDay}
@@ -1903,7 +1926,7 @@ export default function TransactionsPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  결제일 (매월 몇 일?)
+                  결제일
                 </label>
                 <select
                   value={cardFormData.paymentDueDay}

@@ -344,8 +344,11 @@ class ApiClient {
     return response.data;
   }
 
-  /** 프로젝트 설정 변경. 지금은 집계 기준 타임존만 바꾼다. */
-  async updateProject(projectId: string, body: { timezone?: string }) {
+  /** 프로젝트 설정 변경 (이름, 설명, 집계 기준 타임존). 소유자만 가능하다. */
+  async updateProject(
+    projectId: string,
+    body: { name?: string; description?: string | null; timezone?: string },
+  ) {
     const response = await this.client.patch<any>(`/projects/${projectId}`, body);
     return response.data;
   }
