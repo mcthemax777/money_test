@@ -56,6 +56,10 @@ interface BudgetDetailModalProps {
   projectId?: string | null;
   /** 가계 화면의 사람/고정 필터. 상단 합계와 같은 조건을 써야 한다. */
   filter?: EntryFilterQuery;
+  /** 거래를 누르면 호출한다. 날짜별 보기와 같은 상세 팝업을 열기 위한 통로다. */
+  onEntryClick?: (entry: EntryListItem) => void;
+  /** 값이 바뀌면 데이터를 다시 받는다. 부모 화면에서 거래를 고쳤을 때 쓴다. */
+  reloadToken?: number;
 }
 
 interface MonthlyData {
@@ -118,6 +122,8 @@ export function BudgetDetailModal({
   currentYear,
   projectId,
   filter,
+  onEntryClick,
+  reloadToken,
 }: BudgetDetailModalProps) {
   const timeZone = useProjectTimeZone();
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
@@ -250,7 +256,17 @@ export function BudgetDetailModal({
     };
 
     loadData();
-  }, [isOpen, categoryId, categories, currentMonth, currentYear, projectId, timeZone, filter]);
+  }, [
+    isOpen,
+    categoryId,
+    categories,
+    currentMonth,
+    currentYear,
+    projectId,
+    timeZone,
+    filter,
+    reloadToken,
+  ]);
 
   // 값이 모두 0이면 domain이 [0, 0]이 되어 recharts가 축을 그리지 못하고
   // 막대가 최대 높이로 보인다. 데이터가 없을 때는 기본 상한을 준다.
@@ -418,7 +434,10 @@ export function BudgetDetailModal({
             {visibleEntries.length === 0 ? (
               <p className="text-gray-500 text-sm">거래내역이 없습니다.</p>
             ) : (
-              <TransactionListView entries={visibleEntries} onEntryClick={() => undefined} />
+              <TransactionListView
+                entries={visibleEntries}
+                onEntryClick={onEntryClick ?? (() => undefined)}
+              />
             )}
           </div>
         </>

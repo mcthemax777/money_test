@@ -22,6 +22,7 @@ import PersonModal from '@/components/PersonModal';
 import EditAccountModal from '@/components/EditAccountModal';
 import EditCardModal from '@/components/EditCardModal';
 import AddAccountModal from '@/components/AddAccountModal';
+import PageHeader from '@/components/PageHeader';
 import AssetHistoryChart from '@/components/AssetHistoryChart';
 import { useInstitutions } from '@/hooks/useInstitutions';
 
@@ -364,19 +365,21 @@ export default function DashboardPage() {
   const displayPeople = people;
 
   return (
-    <>
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-2xl font-bold text-gray-900">자산</h2>
-        <button
-          onClick={() => setAddType('select')}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-        >
-          추가하기
-        </button>
-      </div>
+    <div className="space-y-6">
+      <PageHeader
+        title="자산"
+        action={
+          <button
+            onClick={() => setAddType('select')}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+          >
+            추가하기
+          </button>
+        }
+      />
 
       {/* 총자산과 전체 추이는 계좌를 골라도 그대로 둔다. 고른 계좌는 아래 오른쪽에 펼친다. */}
-      <div className="bg-blue-600 text-white rounded-lg p-8 mb-8">
+      <div className="bg-blue-600 text-white rounded-lg p-6">
         <p className="text-sm opacity-90">총 자산</p>
         <p className="text-4xl font-bold mt-2">
           {formatCurrency(totalBalance)}
@@ -392,7 +395,7 @@ export default function DashboardPage() {
       <AssetHistoryChart projectId={selectedProjectId} />
 
       {error && (
-        <div className="p-3 bg-red-50 text-red-800 text-sm rounded mb-4">
+        <div className="p-3 bg-red-50 text-red-800 text-sm rounded">
           {error}
         </div>
       )}
@@ -434,7 +437,7 @@ export default function DashboardPage() {
 
           {/* 오른쪽: 고른 계좌의 잔액 추이와 거래 내역 */}
           {detailType === 'account' && selectedAccount ? (
-            <div className="bg-white rounded-lg border border-gray-200 p-6">
+            <div className="bg-white rounded-lg shadow p-6">
               {/* 헤더: 계좌명 및 버튼 */}
               <div className="flex justify-between items-start gap-4 mb-6">
                 <div>
@@ -1169,7 +1172,7 @@ export default function DashboardPage() {
 
         </form>
       </Modal>
-    </>
+    </div>
   );
 }
 

@@ -28,6 +28,7 @@ import Modal from '@/components/Modal';
 import TransactionCalendar from '@/components/TransactionCalendar';
 import TransactionListView from '@/components/TransactionListView';
 import MonthHeader from '@/components/MonthHeader';
+import PageHeader from '@/components/PageHeader';
 import AddAccountModal from '@/components/AddAccountModal';
 import PersonModal from '@/components/PersonModal';
 import TransactionItem, { EntryListItem } from '@/components/TransactionItem';
@@ -289,6 +290,14 @@ export default function TransactionsPage() {
    * 예전에는 거래 전량을 받아 브라우저에서 월별로 나누고 합산했다.
    * 이제 조회 범위도 합계도 서버가 처리한다.
    */
+  /**
+   * 거래를 고치고 나면 올라가는 번호.
+   *
+   * 분류별·수단별 탭은 각자 서버에서 데이터를 받는다. 이 화면의 목록만 다시 불러오면
+   * 그 탭들은 고치기 전 값을 계속 보여 준다. 번호를 넘겨 함께 다시 받게 한다.
+   */
+  const [dataVersion, setDataVersion] = useState(0);
+
   const reloadMonth = useCallback(async () => {
     if (!selectedProjectId || !currentYear || !currentMonth) return;
 
@@ -472,6 +481,7 @@ export default function TransactionsPage() {
       }
 
       await reloadMonth();
+      setDataVersion((version) => version + 1);
 
       // 예산 데이터도 다시 로드
       if (selectedProjectId) {
@@ -659,6 +669,7 @@ export default function TransactionsPage() {
       setIsSubmitting(true);
       await apiClient.deleteEntry(id);
       await reloadMonth();
+      setDataVersion((version) => version + 1);
     } catch (err: any) {
       const errorMsg = err?.response?.data?.error?.message || '거래 삭제에 실패했습니다.';
       setError(errorMsg);
@@ -883,8 +894,21 @@ export default function TransactionsPage() {
   };
 
   return (
-    <>
-      {/* 통합 헤더. 년월과 탭, 거래 추가가 한 줄에 놓인다. */}
+    <div className="space-y-6">
+      <PageHeader
+        title="가계"
+        action={
+          /* 거래 추가는 어느 탭에서든 쓸 수 있어야 한다 */
+          <button
+            onClick={handleAddClick}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition whitespace-nowrap"
+          >
+            거래 추가
+          </button>
+        }
+      />
+
+      {/* 년월 이동과 보기 방식 탭 */}
       <MonthHeader
         year={currentYear}
         month={currentMonth}
@@ -892,48 +916,38 @@ export default function TransactionsPage() {
         expenseTotal={monthlyTotals.expenseTotal}
         onMonthChange={handleMonthChange}
         right={
-          <>
-            <div className="flex gap-2 bg-gray-200 rounded-lg p-1">
-              <button
-                onClick={() => setViewType('calendar')}
-                className={`px-4 py-2 rounded-md font-medium transition ${
-                  viewType === 'calendar'
-                    ? 'bg-white text-blue-600 shadow'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                날짜별
-              </button>
-              <button
-                onClick={() => setViewType('budget')}
-                className={`px-4 py-2 rounded-md font-medium transition ${
-                  viewType === 'budget'
-                    ? 'bg-white text-blue-600 shadow'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                분류별
-              </button>
-              <button
-                onClick={() => setViewType('payment-method')}
-                className={`px-4 py-2 rounded-md font-medium transition ${
-                  viewType === 'payment-method'
-                    ? 'bg-white text-blue-600 shadow'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                수단별
-              </button>
-            </div>
-
-            {/* 거래 추가는 어느 탭에서든 쓸 수 있어야 한다 */}
+          <div className="flex gap-2 bg-gray-200 rounded-lg p-1">
             <button
-              onClick={handleAddClick}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 whitespace-nowrap"
+              onClick={() => setViewType('calendar')}
+              className={`px-4 py-2 rounded-md font-medium transition ${
+                viewType === 'calendar'
+                  ? 'bg-white text-blue-600 shadow'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
             >
-              거래 추가
+              날짜별
             </button>
-          </>
+            <button
+              onClick={() => setViewType('budget')}
+              className={`px-4 py-2 rounded-md font-medium transition ${
+                viewType === 'budget'
+                  ? 'bg-white text-blue-600 shadow'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+            >
+              분류별
+            </button>
+            <button
+              onClick={() => setViewType('payment-method')}
+              className={`px-4 py-2 rounded-md font-medium transition ${
+                viewType === 'payment-method'
+                  ? 'bg-white text-blue-600 shadow'
+                  : 'text-gray-600 hover:text-gray-900'
+              }`}
+          >
+            수단별
+          </button>
+          </div>
         }
       />
 
@@ -957,7 +971,7 @@ export default function TransactionsPage() {
             <p className="text-gray-600">설정된 예산이 없습니다.</p>
           ) : (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <div className="lg:col-span-1 bg-white rounded-lg border border-gray-200 p-6 overflow-hidden">
+              <div className="lg:col-span-1 bg-white rounded-lg shadow p-6 overflow-hidden">
                 {/* 수입/지출 탭 */}
                 <div className="flex gap-2 mb-6 border-b">
                   <button
@@ -1238,7 +1252,7 @@ export default function TransactionsPage() {
               </div>
 
               {selectedCategoryId && (
-                <div className="lg:col-span-1 bg-white rounded-lg border border-gray-200 p-6">
+                <div className="lg:col-span-1 bg-white rounded-lg shadow p-6">
                   <div className="flex items-center justify-between mb-4">
                     <h3 className="text-lg font-bold text-gray-900">{selectedCategoryLabel} 상세 분석</h3>
                     {/* 보고 있는 분류의 예산을 그 자리에서 넣거나 고친다 */}
@@ -1260,6 +1274,8 @@ export default function TransactionsPage() {
                     currentYear={currentYear}
                     projectId={selectedProjectId}
                     filter={appliedFilter}
+                    onEntryClick={handleTransactionClick}
+                    reloadToken={dataVersion}
                   />
                 </div>
               )}
@@ -1275,6 +1291,8 @@ export default function TransactionsPage() {
             currentYear={currentYear}
             projectId={selectedProjectId}
             filter={appliedFilter}
+            onEntryClick={handleTransactionClick}
+            reloadToken={dataVersion}
           />
         ) : visibleEntries.length === 0 ? (
           /* 필터로 비었는지 원래 없는지 구분해 준다. 체크를 다 풀면 결과가 없는 게 정상이다. */
@@ -2262,7 +2280,6 @@ export default function TransactionsPage() {
           </div>
         )}
       </Modal>
-
-    </>
+    </div>
   );
 }

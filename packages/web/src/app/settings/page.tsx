@@ -2,8 +2,8 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { exportDataToExcel } from '@/lib/excel-export';
 import { useProjectTimeZone } from '@/store/project';
+import PageHeader from '@/components/PageHeader';
 
 export default function SettingsPage() {
   const timeZone = useProjectTimeZone();
@@ -14,6 +14,8 @@ export default function SettingsPage() {
     try {
       setIsExporting(true);
       setExportMessage('');
+      // xlsx는 무겁다. 내보내기를 누를 때만 받아 설정 화면 첫 로딩에서 뺀다.
+      const { exportDataToExcel } = await import('@/lib/excel-export');
       await exportDataToExcel(timeZone);
       setExportMessage('엑셀 파일이 다운로드되었습니다.');
       setTimeout(() => setExportMessage(''), 3000);
@@ -26,15 +28,12 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">설정</h1>
-        <p className="mt-2 text-gray-600">앱 설정 및 데이터 관리</p>
-      </div>
+    <div className="space-y-6">
+      <PageHeader title="설정" />
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Link href="/settings/profile">
-          <div className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition cursor-pointer">
+          <div className="bg-white rounded-lg shadow p-6 hover:shadow-md transition cursor-pointer">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">내 정보</h2>
@@ -48,7 +47,7 @@ export default function SettingsPage() {
         </Link>
 
         <Link href="/settings/projects">
-          <div className="bg-white rounded-lg shadow-md p-6 hover:shadow-lg transition cursor-pointer">
+          <div className="bg-white rounded-lg shadow p-6 hover:shadow-md transition cursor-pointer">
             <div className="flex items-center justify-between">
               <div>
                 <h2 className="text-lg font-semibold text-gray-900">프로젝트 관리</h2>
@@ -63,7 +62,7 @@ export default function SettingsPage() {
       </div>
 
       <div className="space-y-4">
-        <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between">
             <div>
               <h2 className="text-lg font-semibold text-gray-900">데이터 내보내기</h2>
@@ -94,7 +93,7 @@ export default function SettingsPage() {
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="bg-white rounded-lg shadow p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-2">포함되는 데이터</h3>
           <ul className="space-y-2 text-sm text-gray-700">
             <li className="flex items-center gap-2">
@@ -115,7 +114,7 @@ export default function SettingsPage() {
           </ul>
         </div>
 
-        <div className="bg-white rounded-lg shadow-md p-6">
+        <div className="bg-white rounded-lg shadow p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-2">파일 형식</h3>
           <ul className="space-y-2 text-sm text-gray-700">
             <li className="flex items-center gap-2">

@@ -42,6 +42,10 @@ interface Props {
   projectId?: string | null;
   /** 가계 화면의 사람/고정 필터. 합계와 목록이 같은 조건을 써야 한다. */
   filter?: EntryFilterQuery;
+  /** 거래를 누르면 호출한다. 날짜별 보기와 같은 상세 팝업을 열기 위한 통로다. */
+  onEntryClick?: (entry: EntryListItem) => void;
+  /** 값이 바뀌면 데이터를 다시 받는다. 부모 화면에서 거래를 고쳤을 때 쓴다. */
+  reloadToken?: number;
 }
 
 const SECTIONS = [
@@ -79,6 +83,8 @@ export default function PaymentMethodTab({
   currentYear: propYear,
   projectId,
   filter,
+  onEntryClick,
+  reloadToken,
 }: Props) {
   const timeZone = useProjectTimeZone();
   const now = new Date();
@@ -107,9 +113,13 @@ export default function PaymentMethodTab({
         if (!cancelled) setMethods([]);
       });
 
-    // 달이 바뀌면 선택을 비운다. 이전 달 상세가 남아 있으면 잘못된 값을 보게 된다.
-    setSelected(null);
     return () => { cancelled = true; };
+  }, [yearMonth, projectId, filter, reloadToken]);
+
+  // 달이나 필터가 바뀌면 선택을 비운다. 이전 달 상세가 남아 있으면 잘못된 값을 보게 된다.
+  // reloadToken은 여기에 넣지 않는다. 거래를 고칠 때마다 고른 결제수단이 풀리면 불편하다.
+  useEffect(() => {
+    setSelected(null);
   }, [yearMonth, projectId, filter]);
 
   // 선택한 결제수단의 12개월 추이와 이 달 거래
@@ -174,7 +184,7 @@ export default function PaymentMethodTab({
       });
 
     return () => { cancelled = true; };
-  }, [selected, yearMonth, currentYear, currentMonth, projectId, timeZone, filter]);
+  }, [selected, yearMonth, currentYear, currentMonth, projectId, timeZone, filter, reloadToken]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -185,7 +195,7 @@ export default function PaymentMethodTab({
           const accent = ACCENT[section.accent];
 
           return (
-            <div key={section.kind} className="bg-white rounded-lg border border-gray-200 p-6">
+            <div key={section.kind} className="bg-white rounded-lg shadow p-6">
               <h4 className="font-semibold text-gray-900 mb-4 flex items-center gap-2">
                 <span>{section.icon}</span> {section.title}
               </h4>
@@ -217,7 +227,7 @@ export default function PaymentMethodTab({
 
       <div className="lg:col-span-1">
         {selected ? (
-          <div className="bg-white rounded-lg border border-gray-200 p-6 space-y-8">
+          <div className="bg-white rounded-lg shadow p-6 space-y-8">
             <div>
               <h3 className="text-lg font-semibold text-gray-900 mb-2">{selected.name}</h3>
               <p className="text-sm text-gray-500">{selected.ownerName ?? '미정'}</p>
@@ -276,13 +286,16 @@ export default function PaymentMethodTab({
               <div>
                 <h4 className="font-semibold text-gray-900 mb-4">거래 기록</h4>
                 <div className="max-h-96 overflow-y-auto">
-                  <TransactionListView entries={entries} onEntryClick={() => undefined} />
+                  <TransactionListView
+                    entries={entries}
+                    onEntryClick={onEntryClick ?? (() => undefined)}
+                  />
                 </div>
               </div>
             )}
           </div>
         ) : (
-          <div className="bg-white rounded-lg border border-gray-200 p-6 text-center">
+          <div className="bg-white rounded-lg shadow p-6 text-center">
             <p className="text-gray-500">항목을 선택하여 상세 정보를 확인하세요</p>
           </div>
         )}

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@/store/auth';
 import { apiClient } from '@/lib/api-client';
 import { UserAvatar } from '@/components/UserAvatar';
+import PageHeader from '@/components/PageHeader';
 
 export default function ProfilePage() {
   const router = useRouter();
@@ -73,10 +74,7 @@ export default function ProfilePage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-3xl font-bold text-gray-900">내 정보</h1>
-        <p className="text-gray-600 mt-2">계정 정보를 확인하고 이름을 변경할 수 있습니다</p>
-      </div>
+      <PageHeader title="내 정보" />
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg">

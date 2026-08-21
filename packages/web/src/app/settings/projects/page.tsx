@@ -6,6 +6,7 @@ import { useAuth } from '@/store/auth';
 import { useProject } from '@/store/project';
 import { apiClient } from '@/lib/api-client';
 import Link from 'next/link';
+import PageHeader from '@/components/PageHeader';
 
 interface Project {
   id: string;
@@ -511,26 +512,25 @@ export default function ProjectsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">프로젝트 관리</h1>
-          <p className="text-gray-600 mt-2">프로젝트를 생성, 관리, 탈퇴할 수 있습니다</p>
-        </div>
-        <div className="flex gap-2">
-          <button
-            onClick={() => setShowJoinForm((prev) => !prev)}
-            className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
-          >
-            프로젝트 참여
-          </button>
-          <button
-            onClick={() => setShowCreateForm(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-          >
-            + 새 프로젝트 생성
-          </button>
-        </div>
-      </div>
+      <PageHeader
+        title="프로젝트 관리"
+        action={
+          <>
+            <button
+              onClick={() => setShowJoinForm((prev) => !prev)}
+              className="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
+            >
+              프로젝트 참여
+            </button>
+            <button
+              onClick={() => setShowCreateForm(true)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+            >
+              새 프로젝트 생성
+            </button>
+          </>
+        }
+      />
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg">

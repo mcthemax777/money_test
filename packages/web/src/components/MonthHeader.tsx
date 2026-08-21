@@ -70,7 +70,7 @@ export default function MonthHeader({
   const { year: thisYear, month: thisMonth } = currentYearMonth(timeZone);
 
   return (
-    <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+    <div className="flex flex-wrap items-center justify-between gap-4">
       <div className="flex items-center gap-6">
         {/* 화살표는 년월 텍스트 양옆에 붙는다 */}
         <div ref={ref} className="relative flex items-center gap-1">
