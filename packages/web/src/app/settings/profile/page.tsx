@@ -1,12 +1,15 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { useAuth } from '@/store/auth';
 import { apiClient } from '@/lib/api-client';
 import { UserAvatar } from '@/components/UserAvatar';
 
 export default function ProfilePage() {
-  const { user, loadUser } = useAuth();
+  const router = useRouter();
+  const { user, loadUser, logout } = useAuth();
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState('');
@@ -50,6 +53,21 @@ export default function ProfilePage() {
       setError(err.response?.data?.error?.message || '이름 변경에 실패했습니다.');
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  /**
+   * 로그아웃.
+   *
+   * 화면 상단 헤더에 있던 버튼을 이 화면으로 옮겼다. 스토어의 logout은 서버 호출이
+   * 실패해도 finally에서 토큰과 상태를 비우므로, 결과와 무관하게 로그인 화면으로 보낸다.
+   */
+  const handleLogout = async () => {
+    setIsLoggingOut(true);
+    try {
+      await logout();
+    } finally {
+      router.push('/login');
     }
   };
 
@@ -142,6 +160,20 @@ export default function ProfilePage() {
             </dd>
           </div>
         </dl>
+      </div>
+
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-lg font-semibold text-gray-900">로그아웃</h2>
+        <p className="mt-1 text-sm text-gray-600">
+          이 브라우저에서 계정 연결을 끊습니다. 다시 쓰려면 구글로 로그인하세요.
+        </p>
+        <button
+          onClick={handleLogout}
+          disabled={isLoggingOut}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 transition"
+        >
+          {isLoggingOut ? '로그아웃 중...' : '로그아웃'}
+        </button>
       </div>
     </div>
   );

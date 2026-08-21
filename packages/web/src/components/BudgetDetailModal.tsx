@@ -1,13 +1,26 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { X } from 'lucide-react';
 import Modal from './Modal';
 import type { EntryListItem } from './TransactionItem';
 import TransactionListView from './TransactionListView';
 import { apiClient } from '@/lib/api-client';
-import { toNumber } from '@/lib/money';
+import { formatCurrency, toNumber } from '@/lib/money';
+import {
+  CHART_ACTIVE_DOT,
+  CHART_COLOR,
+  CHART_DOT,
+  CHART_GRID,
+  CHART_MARGIN,
+  CHART_TICK,
+  CHART_TOOLTIP_STYLE,
+  CHART_Y_AXIS_WIDTH,
+  formatAxisAmount,
+  formatDayTick,
+  formatTooltipAmount,
+} from '@/lib/chart';
 import { buildDailyCumulative } from '@/lib/entries';
 import { monthQueryRange } from '@/lib/datetime';
 import type { EntryFilterQuery } from '@money/types';
@@ -326,13 +339,8 @@ export function BudgetDetailModal({
                     )}
                   </Pie>
                   <Tooltip
-                    formatter={(value: any) =>
-                      new Intl.NumberFormat('ko-KR', {
-                        style: 'currency',
-                        currency: 'KRW',
-                      }).format(value)
-                    }
-                    contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc' }}
+                    formatter={(value: any) => formatCurrency(value)}
+                    contentStyle={CHART_TOOLTIP_STYLE}
                   />
                 </PieChart>
               </ResponsiveContainer>
@@ -344,12 +352,20 @@ export function BudgetDetailModal({
             <h3 className="text-lg font-semibold mb-4">지난 12개월 사용금액</h3>
             {hasMonthlyAmount ? (
               <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={monthlyData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" />
-                  <YAxis domain={[0, axisMax(monthlyData.map((d) => d.amount))]} />
-                  <Tooltip formatter={(value: any) => `${(value || 0).toLocaleString()}원`} />
-                  <Bar dataKey="amount" fill="#3b82f6" />
+                <BarChart data={monthlyData} margin={CHART_MARGIN}>
+                  <CartesianGrid {...CHART_GRID} />
+                  <XAxis dataKey="month" tick={CHART_TICK} />
+                  <YAxis
+                    domain={[0, axisMax(monthlyData.map((d) => d.amount))]}
+                    tickFormatter={formatAxisAmount}
+                    tick={CHART_TICK}
+                    width={CHART_Y_AXIS_WIDTH}
+                  />
+                  <Tooltip
+                    formatter={(value: any) => formatTooltipAmount(value, '사용금액')}
+                    contentStyle={CHART_TOOLTIP_STYLE}
+                  />
+                  <Bar dataKey="amount" fill={CHART_COLOR} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -364,13 +380,29 @@ export function BudgetDetailModal({
             <h3 className="text-lg font-semibold mb-4">이번 달 일별 누적 사용금액</h3>
             {hasDailyAmount ? (
               <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={dailyData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="day" />
-                  <YAxis domain={[0, axisMax(dailyData.map((d) => d.cumulative))]} />
-                  <Tooltip formatter={(value: any) => `${(value || 0).toLocaleString()}원`} />
-                  <Legend />
-                  <Line type="monotone" dataKey="cumulative" stroke="#3b82f6" name="누적 사용금액" />
+                <LineChart data={dailyData} margin={CHART_MARGIN}>
+                  <CartesianGrid {...CHART_GRID} />
+                  <XAxis dataKey="day" tickFormatter={formatDayTick} tick={CHART_TICK} />
+                  <YAxis
+                    domain={[0, axisMax(dailyData.map((d) => d.cumulative))]}
+                    tickFormatter={formatAxisAmount}
+                    tick={CHART_TICK}
+                    width={CHART_Y_AXIS_WIDTH}
+                  />
+                  <Tooltip
+                    formatter={(value: any) => formatTooltipAmount(value, '누적 사용금액')}
+                    contentStyle={CHART_TOOLTIP_STYLE}
+                  />
+                  {/* 선이 하나뿐이라 범례를 지웠다. 툴팁이 같은 이름을 보여 준다. */}
+                  <Line
+                    type="monotone"
+                    dataKey="cumulative"
+                    name="누적 사용금액"
+                    stroke={CHART_COLOR}
+                    strokeWidth={2}
+                    dot={CHART_DOT}
+                    activeDot={CHART_ACTIVE_DOT}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             ) : (

@@ -12,6 +12,18 @@ import {
 } from 'recharts';
 import { apiClient } from '@/lib/api-client';
 import { toNumber } from '@/lib/money';
+import {
+  CHART_ACTIVE_DOT,
+  CHART_COLOR,
+  CHART_DOT,
+  CHART_GRID,
+  CHART_MARGIN,
+  CHART_TICK,
+  CHART_TOOLTIP_STYLE,
+  CHART_Y_AXIS_WIDTH,
+  formatAxisAmount,
+  formatTooltipAmount,
+} from '@/lib/chart';
 
 interface AssetHistoryChartProps {
   /** 생략하면 자본 계정을 뺀 전체 자산 합계 */
@@ -27,17 +39,6 @@ interface Point {
   /** 월 단위일 때만. 클릭해서 일별로 내려갈 때 쓴다 */
   yearMonth?: string;
 }
-
-const formatCurrency = (value: number) =>
-  new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'KRW' }).format(value);
-
-/** 축 눈금은 만원/억 단위로 줄여 쓴다. 원 단위로 적으면 자리수가 길어 겹친다. */
-const formatAxis = (value: number) => {
-  const abs = Math.abs(value);
-  if (abs >= 100_000_000) return `${(value / 100_000_000).toFixed(1)}억`;
-  if (abs >= 10_000) return `${Math.round(value / 10_000).toLocaleString('ko-KR')}만`;
-  return value.toLocaleString('ko-KR');
-};
 
 export default function AssetHistoryChart({
   accountId,
@@ -125,7 +126,7 @@ export default function AssetHistoryChart({
         <ResponsiveContainer width="100%" height={300}>
           <LineChart
             data={points}
-            margin={{ top: 8, right: 16, bottom: 8, left: 8 }}
+            margin={CHART_MARGIN}
             // 점이 아니라 빈 곳을 눌러도 그 달로 내려가도록 차트 전체에서 받는다.
             // recharts 3에서 activeTooltipIndex는 number가 아닐 수 있어 숫자로 확인하고 쓴다.
             onClick={(state: any) => {
@@ -137,20 +138,20 @@ export default function AssetHistoryChart({
             }}
             style={{ cursor: drilledMonth ? 'default' : 'pointer' }}
           >
-            <CartesianGrid strokeDasharray="3 3" stroke="#eee" />
-            <XAxis dataKey="label" tick={{ fontSize: 12 }} />
-            <YAxis tickFormatter={formatAxis} tick={{ fontSize: 12 }} width={64} />
+            <CartesianGrid {...CHART_GRID} />
+            <XAxis dataKey="label" tick={CHART_TICK} />
+            <YAxis tickFormatter={formatAxisAmount} tick={CHART_TICK} width={CHART_Y_AXIS_WIDTH} />
             <Tooltip
-              formatter={(value: any) => [formatCurrency(Number(value)), '잔액']}
-              contentStyle={{ backgroundColor: '#fff', border: '1px solid #ccc' }}
+              formatter={(value: any) => formatTooltipAmount(value, '잔액')}
+              contentStyle={CHART_TOOLTIP_STYLE}
             />
             <Line
               type="monotone"
               dataKey="balance"
-              stroke="#2563eb"
+              stroke={CHART_COLOR}
               strokeWidth={2}
-              dot={{ r: 3 }}
-              activeDot={{ r: 5 }}
+              dot={CHART_DOT}
+              activeDot={CHART_ACTIVE_DOT}
             />
           </LineChart>
         </ResponsiveContainer>

@@ -10,6 +10,19 @@ import { apiClient } from '@/lib/api-client';
 import { formatCurrency, toNumber } from '@/lib/money';
 import { buildDailyCumulative } from '@/lib/entries';
 import { monthQueryRange } from '@/lib/datetime';
+import {
+  CHART_ACTIVE_DOT,
+  CHART_COLOR,
+  CHART_DOT,
+  CHART_GRID,
+  CHART_MARGIN,
+  CHART_TICK,
+  CHART_TOOLTIP_STYLE,
+  CHART_Y_AXIS_WIDTH,
+  formatAxisAmount,
+  formatDayTick,
+  formatTooltipAmount,
+} from '@/lib/chart';
 import type { EntryFilterQuery } from '@money/types';
 import { useProjectTimeZone } from '@/store/project';
 
@@ -213,12 +226,20 @@ export default function PaymentMethodTab({
             <div>
               <h4 className="font-semibold text-gray-900 mb-4">월별 사용 금액</h4>
               <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={monthlyData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="month" />
-                  <YAxis domain={[0, axisMax(monthlyData.map((d) => d.amount))]} />
-                  <Tooltip formatter={(value: any) => formatCurrency(value)} />
-                  <Bar dataKey="amount" fill="#3b82f6" />
+                <BarChart data={monthlyData} margin={CHART_MARGIN}>
+                  <CartesianGrid {...CHART_GRID} />
+                  <XAxis dataKey="month" tick={CHART_TICK} />
+                  <YAxis
+                    domain={[0, axisMax(monthlyData.map((d) => d.amount))]}
+                    tickFormatter={formatAxisAmount}
+                    tick={CHART_TICK}
+                    width={CHART_Y_AXIS_WIDTH}
+                  />
+                  <Tooltip
+                    formatter={(value: any) => formatTooltipAmount(value, '사용액')}
+                    contentStyle={CHART_TOOLTIP_STYLE}
+                  />
+                  <Bar dataKey="amount" fill={CHART_COLOR} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -226,12 +247,27 @@ export default function PaymentMethodTab({
             <div>
               <h4 className="font-semibold text-gray-900 mb-4">일별 누적 사용금액</h4>
               <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={dailyData}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="day" />
-                  <YAxis domain={[0, axisMax(dailyData.map((d) => d.cumulative))]} />
-                  <Tooltip formatter={(value: any) => formatCurrency(value)} />
-                  <Line type="monotone" dataKey="cumulative" stroke="#10b981" strokeWidth={2} />
+                <LineChart data={dailyData} margin={CHART_MARGIN}>
+                  <CartesianGrid {...CHART_GRID} />
+                  <XAxis dataKey="day" tickFormatter={formatDayTick} tick={CHART_TICK} />
+                  <YAxis
+                    domain={[0, axisMax(dailyData.map((d) => d.cumulative))]}
+                    tickFormatter={formatAxisAmount}
+                    tick={CHART_TICK}
+                    width={CHART_Y_AXIS_WIDTH}
+                  />
+                  <Tooltip
+                    formatter={(value: any) => formatTooltipAmount(value, '누적 사용액')}
+                    contentStyle={CHART_TOOLTIP_STYLE}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="cumulative"
+                    stroke={CHART_COLOR}
+                    strokeWidth={2}
+                    dot={CHART_DOT}
+                    activeDot={CHART_ACTIVE_DOT}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </div>
