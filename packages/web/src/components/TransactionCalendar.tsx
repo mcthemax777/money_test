@@ -140,7 +140,8 @@ export default function TransactionCalendar({
                   onDateSelect(day.date, day.entries);
                 }
               }}
-              className={`min-h-28 p-2 border-b border-r border-gray-100 last-of-type:border-r-0 ${
+              /* min-h-20: 날짜 숫자 + 지출·수입 두 줄이 들어가는 최소 높이 (80px) */
+              className={`min-h-20 p-2 border-b border-r border-gray-100 last-of-type:border-r-0 ${
                 index % 7 === 6 ? 'border-r-0' : ''
               } ${
                 isStartOrEndDate(day.date)

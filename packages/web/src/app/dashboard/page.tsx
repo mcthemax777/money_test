@@ -1315,6 +1315,7 @@ export default function TransactionsPage() {
               />
             </div>
 
+            {/* 달력이 날짜를 고르는 도구라서 좁은 화면에서도 달력을 위에 둔다 */}
             {(displayEntries.length > 0 || !startDate) && (
               <div ref={dateTransactionsRef} className="lg:col-span-1">
                 {!startDate ? (
