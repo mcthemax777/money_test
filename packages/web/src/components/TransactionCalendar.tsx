@@ -77,10 +77,10 @@ export default function TransactionCalendar({
 
     while (currentDay <= endDate) {
       const dateStr = getLocalDateStr(currentDay);
-      // 카드대금 결제는 소비가 아니라 부채 상환이라 달력 합계에서 뺀다.
+      // 이체와 카드사 이체도 그날 칸에 보여 준다. 합계에서 빼는 일은
+      // sumEntries가 하므로(두 종류에 0을 돌려준다) 여기서 걸러 내지 않는다.
       const dayEntries = entries.filter(
-        (entry) =>
-          dateKeyOf(entry.date, timeZone) === dateStr && entry.kind !== 'card_payment',
+        (entry) => dateKeyOf(entry.date, timeZone) === dateStr,
       );
 
       const { incomeTotal, expenseTotal } = sumEntries(dayEntries);

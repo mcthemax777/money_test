@@ -13,7 +13,6 @@ type PostingWithRefs = {
   id: string;
   accountId: string | null;
   categoryId: string | null;
-  statementId: string | null;
   amount: Prisma.Decimal;
   isFixed: boolean;
   cardId: string | null;
@@ -26,7 +25,7 @@ type PostingWithRefs = {
     parent: { id: string; name: string } | null;
   } | null;
   card: { id: string; name: string } | null;
-  statement: { periodStart: Date; periodEnd: Date } | null;
+  installmentPlan: { totalMonths: number } | null;
 };
 
 export type EntryWithPostings = {
@@ -68,11 +67,7 @@ export function classifyEntry(postings: PostingWithRefs[]): EntryKind {
 
 const ZERO = new Prisma.Decimal(0);
 
-export function toListItem(
-  entry: EntryWithPostings,
-  /** 결제가 시작된 청구서 id 집합. 넘기지 않으면 잠기지 않은 것으로 본다. */
-  settledStatementIds: ReadonlySet<string> = new Set(),
-) {
+export function toListItem(entry: EntryWithPostings) {
   const kind = classifyEntry(entry.postings);
   const categoryPostings = entry.postings.filter((p) => p.category);
   const accountPostings = entry.postings.filter((p) => p.account);
@@ -102,7 +97,6 @@ export function toListItem(
   const outgoing = accountPostings.find((p) => p.amount.lt(ZERO)) ?? accountPostings[0] ?? null;
   const incoming = accountPostings.find((p) => p.amount.gt(ZERO)) ?? null;
   const cardPosting = entry.postings.find((p) => p.card) ?? null;
-  const statement = entry.postings.find((p) => p.statement)?.statement ?? null;
 
   const isTwoSided = kind === 'transfer' || kind === 'card_payment' || kind === 'adjustment';
 
@@ -131,15 +125,24 @@ export function toListItem(
     toAccountName: isTwoSided ? incoming?.account?.name ?? null : null,
     cardId: cardPosting?.card?.id ?? null,
     cardName: cardPosting?.card?.name ?? null,
+    installmentMonths: cardPosting?.installmentPlan?.totalMonths ?? null,
     feeAmount,
     feeCategoryId: feePosting?.category?.id ?? null,
     feeCategoryName: feePosting?.category?.name ?? null,
-    lockedByStatement: entry.postings.some(
-      (p) => p.statementId && settledStatementIds.has(p.statementId),
-    ),
-    statementPeriodStart: statement?.periodStart.toISOString() ?? null,
-    statementPeriodEnd: statement?.periodEnd.toISOString() ?? null,
+    // 카드사 이체의 방향. 부채가 늘면 환불 입금, 줄면 대금 결제다.
+    // 수정 폼이 이 값을 그대로 되돌려 보내므로 놓치면 방향이 뒤집힌다.
+    cardTransferDirection:
+      kind === 'card_payment'
+        ? cardLeg(accountPostings)?.amount.lt(ZERO)
+          ? ('refund' as const)
+          : ('payment' as const)
+        : null,
   };
+}
+
+/** 카드사 이체에서 카드 부채 쪽 다리 */
+function cardLeg(accountPostings: PostingWithRefs[]) {
+  return accountPostings.find((p) => p.account?.type === AccountType.credit_card) ?? null;
 }
 
 /** 목록/상세 조회에서 공통으로 쓰는 include. toListItem이 요구하는 관계와 짝이다. */
@@ -158,7 +161,7 @@ export const ENTRY_INCLUDE = {
         },
       },
       card: { select: { id: true, name: true } },
-      statement: { select: { periodStart: true, periodEnd: true } },
+      installmentPlan: { select: { totalMonths: true } },
     },
   },
 } satisfies Prisma.JournalEntryInclude;

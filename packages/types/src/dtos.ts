@@ -6,12 +6,11 @@ import type {
   AccountType,
   Card,
   Category,
-  CardStatement,
   FinancialInstitution,
   FinancialInstitutionType,
-  StatementStatus,
   EntryKind,
   EntryListItem,
+  CardTransferDirection,
   Posting,
 } from './entities';
 
@@ -176,10 +175,52 @@ export namespace CardDto {
 
   export interface Response extends Omit<Card, 'cardNumber'> {
     cardNumberMasked: string;
-    /** 화면에 보여주는 "사용액". 부채 잔액의 부호를 뒤집은 값. 체크카드는 null. */
+    /**
+     * 화면에 보여주는 "사용액". 부채 잔액의 부호를 뒤집은 값. 체크카드는 null.
+     *
+     * 음수일 수 있다. 카드사가 남은 대금보다 많이 가져갔거나 사용을 취소한 뒤라
+     * 카드사가 갚을 돈이 남은 상태다. 화면은 그때 "환불 예정"으로 보여 준다.
+     */
     currentUsage: string | null;
     /** 서버가 include로 함께 준다 */
     issuer?: FinancialInstitution;
+  }
+
+  /** 카드사와 통장 사이 자금 이동 기록 */
+  export interface TransferRequest {
+    /** 대금이 빠져나가거나 환불이 들어오는 통장 */
+    accountId: string;
+    personId: string;
+    /** 금액은 문자열. 항상 양수이며 방향은 direction이 정한다. */
+    amount: string;
+    direction: CardTransferDirection;
+    date: IsoDateString;
+    description?: string;
+  }
+
+  /** 마감일 기준 청구 주기 하나 */
+  export interface UsagePeriod {
+    /** `@db.Date` 성격의 달력 날짜 표시자 */
+    periodStart: IsoDateString;
+    periodEnd: IsoDateString;
+    dueDate: IsoDateString;
+    /** 마감일이 지났으면 true. 진행 중인 주기는 금액이 더 늘 수 있다. */
+    closed: boolean;
+    /** 이 주기에 청구되는 사용액. 할부는 회차분만 들어간다. */
+    usage: string;
+  }
+
+  /**
+   * 카드 사용 현황.
+   *
+   * 청구서를 저장하지 않는다. 카드의 현재 마감일 설정으로 읽을 때 계산하므로
+   * 마감일을 바꾸면 곧바로 다시 그려진다.
+   */
+  export interface UsageResponse {
+    cardId: string;
+    /** 남은 대금. 음수면 카드사가 갚을 돈(환불 예정)이다. */
+    outstanding: string;
+    periods: UsagePeriod[];
   }
 }
 
@@ -268,6 +309,13 @@ export namespace EntryDto {
     // ── 결제수단 (expense는 둘 중 하나, income은 accountId) ──
     accountId?: string;
     cardId?: string;
+    /**
+     * 할부 개월수. 신용카드 지출에만 쓰며 2 이상일 때 할부가 된다.
+     *
+     * 원금과 지출은 구매 시점에 전액 잡힌다. 이 값은 "언제 청구되는지"만 나눈다.
+     * 회차별 금액과 귀속 주기는 저장하지 않고 읽을 때 계산한다.
+     */
+    installmentMonths?: number;
 
     // ── transfer ──
     toAccountId?: string;
@@ -275,7 +323,8 @@ export namespace EntryDto {
     transferFeeCategoryId?: string;
 
     // ── card_payment ──
-    statementId?: string;
+    /** 카드사 이체의 방향. 생략하면 대금 결제(통장 -> 카드)다. */
+    cardTransferDirection?: CardTransferDirection;
 
     projectId?: string;
   }
@@ -348,35 +397,6 @@ export namespace CategoryDto {
 
   export interface Tree extends Response {
     children?: Tree[];
-  }
-}
-
-// ===== CardStatement =====
-
-export namespace StatementDto {
-  export interface Response extends CardStatement {
-    cardName: string;
-    /** 이 청구서에 달린 사용액 합계 (양수) */
-    chargedAmount: string;
-    /** 이 청구서에 대해 결제된 금액 (양수) */
-    paidAmount: string;
-    /** 아직 갚지 않은 금액 (양수) */
-    outstanding: string;
-  }
-
-  export interface ListQuery {
-    status?: StatementStatus;
-  }
-
-  /** 청구서 대금 결제 */
-  export interface PayRequest {
-    /** 대금이 빠져나갈 통장 */
-    accountId: string;
-    personId: string;
-    /** 금액은 문자열. 생략하면 미결제 전액 */
-    amount?: string;
-    date?: IsoDateString;
-    description?: string;
   }
 }
 

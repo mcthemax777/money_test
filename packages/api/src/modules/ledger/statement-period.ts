@@ -37,29 +37,22 @@ export interface StatementPeriod {
 }
 
 /**
- * 거래일이 속하는 청구 주기를 구한다.
+ * 마감 연월으로 주기 하나를 만든다.
  *
- * 마감일이 15일인 카드라면
- *   8/16 ~ 9/15 사용분이 9/15에 마감되고, 그 다음 결제일에 청구된다.
- * 결제일은 "마감일 이후 처음 돌아오는 결제일"로 정의한다.
- * 카드사마다 규칙이 다르지만, 마감보다 앞선 결제일은 존재할 수 없으므로 이 규칙이 안전하다.
+ * 마감일이 15일이고 마감 연월이 2026-09면 8/16 ~ 9/15 주기가 된다.
+ * 결제일은 "마감일 이후 처음 돌아오는 결제일"로 정의한다. 카드사마다 규칙이 다르지만,
+ * 마감보다 앞선 결제일은 존재할 수 없으므로 이 규칙이 안전하다.
  */
-export function resolveStatementPeriod(
-  transactionDate: Date,
+export function periodForClosingMonth(
+  year: number,
+  month: number,
   closingDay: number,
   dueDay: number,
-  timeZone: string,
 ): StatementPeriod {
-  const { year, month, day } = zonedParts(transactionDate, timeZone);
-
-  // 거래일이 이번 달 마감일보다 늦으면 다음 달 마감분에 속한다.
-  const closingThisMonth = clampDayOfMonth(year, month, closingDay);
-  const end =
-    day <= closingThisMonth ? { year, month } : shiftMonth(year, month, 1);
-  const endDay = clampDayOfMonth(end.year, end.month, closingDay);
+  const endDay = clampDayOfMonth(year, month, closingDay);
 
   // 직전 마감일 다음 날이 주기 시작일
-  const previous = shiftMonth(end.year, end.month, -1);
+  const previous = shiftMonth(year, month, -1);
   const previousClosing = dateMarker(
     previous.year,
     previous.month,
@@ -67,14 +60,47 @@ export function resolveStatementPeriod(
   );
   const periodStart = new Date(previousClosing.getTime() + 24 * 60 * 60 * 1000);
 
-  // 마감일 이후 처음 돌아오는 결제일
-  const dueThisMonth = clampDayOfMonth(end.year, end.month, dueDay);
-  const due = dueThisMonth > endDay ? end : shiftMonth(end.year, end.month, 1);
-  const dueDate = dateMarker(due.year, due.month, clampDayOfMonth(due.year, due.month, dueDay));
+  const dueThisMonth = clampDayOfMonth(year, month, dueDay);
+  const due = dueThisMonth > endDay ? { year, month } : shiftMonth(year, month, 1);
 
   return {
     periodStart,
-    periodEnd: dateMarker(end.year, end.month, endDay),
-    dueDate,
+    periodEnd: dateMarker(year, month, endDay),
+    dueDate: dateMarker(due.year, due.month, clampDayOfMonth(due.year, due.month, dueDay)),
   };
+}
+
+/** 거래일(또는 임의의 날짜)이 속하는 주기의 마감 연월 */
+export function closingMonthOf(
+  date: Date,
+  closingDay: number,
+  timeZone: string,
+): { year: number; month: number } {
+  const { year, month, day } = zonedParts(date, timeZone);
+  // 마감일보다 늦게 쓴 건 다음 달 마감분에 속한다.
+  return day <= clampDayOfMonth(year, month, closingDay) ? { year, month } : shiftMonth(year, month, 1);
+}
+
+/** 거래일이 속하는 청구 주기를 구한다. */
+export function resolveStatementPeriod(
+  transactionDate: Date,
+  closingDay: number,
+  dueDay: number,
+  timeZone: string,
+): StatementPeriod {
+  const { year, month } = closingMonthOf(transactionDate, closingDay, timeZone);
+  return periodForClosingMonth(year, month, closingDay, dueDay);
+}
+
+/** 마감 연월에 delta를 더한다. 할부 회차를 다음 주기로 밀 때 쓴다. */
+export function shiftClosingMonth(
+  closing: { year: number; month: number },
+  delta: number,
+): { year: number; month: number } {
+  return shiftMonth(closing.year, closing.month, delta);
+}
+
+/** 마감 연월을 정렬·비교할 수 있는 키로 만든다 */
+export function closingMonthKey(closing: { year: number; month: number }): string {
+  return `${closing.year}-${String(closing.month).padStart(2, '0')}`;
 }

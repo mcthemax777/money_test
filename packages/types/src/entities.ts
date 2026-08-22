@@ -31,12 +31,6 @@ export type InvitationStatus = 'pending' | 'accepted' | 'declined' | 'expired';
 
 export type CategoryType = 'income' | 'expense';
 
-export type StatementStatus =
-  | 'open'    // 마감 전
-  | 'closed'  // 마감됨, 미결제
-  | 'partial' // 일부 결제
-  | 'paid';   // 완납
-
 // ===== 엔티티 =====
 
 // 앱 사용자 (계정) - 구글 로그인으로만 생성된다
@@ -156,16 +150,6 @@ export interface Card {
   updatedAt: IsoDateString;
 }
 
-// 신용카드 청구서 (한 결제 주기)
-export interface CardStatement {
-  id: string;
-  cardId: string;
-  periodStart: IsoDateString;
-  periodEnd: IsoDateString; // 마감일
-  dueDate: IsoDateString;   // 결제일
-  status: StatementStatus;
-}
-
 // 전표 (하나의 경제적 사건). 소속 Posting.amount 합은 항상 0이다.
 export interface JournalEntry {
   id: string;
@@ -193,7 +177,6 @@ export interface Posting {
   baseAmount: string;
   exchangeRate: string;
   isFixed: boolean;   // 지출 카테고리 posting에서만 의미가 있다
-  statementId: string | null;
   cardId: string | null;
 }
 
@@ -207,6 +190,9 @@ export type EntryKind =
   | 'transfer'
   | 'card_payment' // 카드대금 결제 (부채 상환)
   | 'adjustment';  // 기초잔액/잔액 조정
+
+/** 카드사와 통장 사이 자금 이동의 방향 */
+export type CardTransferDirection = 'payment' | 'refund';
 
 export interface EntryListItem {
   id: string;
@@ -230,6 +216,8 @@ export interface EntryListItem {
   toAccountName: string | null;
   cardId: string | null;
   cardName: string | null;
+  /** 할부 개월수. 일시불이거나 카드 거래가 아니면 null. */
+  installmentMonths: number | null;
   /**
    * 이체에 붙은 수수료. 이체가 아니면 null, 수수료가 없는 이체면 "0".
    * 이체 자체는 소비가 아니지만 수수료는 지출이라 따로 보여준다.
@@ -238,21 +226,13 @@ export interface EntryListItem {
   feeCategoryId: string | null;
   feeCategoryName: string | null;
   /**
-   * 이미 결제한 청구서에 포함된 카드 사용 내역인지.
+   * 카드사 이체의 방향. 그 외 거래는 null.
+   *   payment 대금 결제  통장 -> 카드
+   *   refund  환불 입금  카드 -> 통장
    *
-   * true면 금액·날짜·결제수단을 바꾸거나 삭제할 수 없다.
-   * 바꾸면 청구액만 달라지고 결제 기록은 남아 카드 부채가 어긋난다.
-   * 설명·카테고리·거래처처럼 청구서와 무관한 값은 고칠 수 있다.
+   * 전표에는 부호로만 남으므로 화면이 되돌려 보낼 수 있도록 풀어서 실어 준다.
    */
-  lockedByStatement: boolean;
-  /**
-   * 이 거래가 속한 카드 청구 기간. 카드 거래가 아니면 null.
-   *
-   * lockedByStatement가 true여도 이 기간 안에서는 날짜를 고칠 수 있다.
-   * 같은 청구서에 머무르면 청구액이 달라지지 않기 때문이다 (날짜 오타 정정용).
-   */
-  statementPeriodStart: IsoDateString | null;
-  statementPeriodEnd: IsoDateString | null;
+  cardTransferDirection: CardTransferDirection | null;
 }
 
 // 카테고리 (대분류/소분류)

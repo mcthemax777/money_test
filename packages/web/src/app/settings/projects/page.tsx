@@ -514,6 +514,7 @@ export default function ProjectsPage() {
     <div className="space-y-6">
       <PageHeader
         title="프로젝트 관리"
+        backHref="/settings"
         action={
           <>
             <button

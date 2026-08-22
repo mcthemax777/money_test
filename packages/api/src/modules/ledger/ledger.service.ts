@@ -1,12 +1,7 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Prisma, CardType, AccountType } from '@prisma/client';
-import {
-  DEFAULT_TIME_ZONE,
-  LEDGER_OPENING_DATE_KEY,
-  ledgerOpeningDate,
-} from '@money/types';
+import { LEDGER_OPENING_DATE_KEY, ledgerOpeningDate } from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
-import { resolveStatementPeriod } from './statement-period';
 
 const ZERO = new Prisma.Decimal(0);
 
@@ -31,7 +26,6 @@ export interface PostingInput {
   exchangeRate?: Prisma.Decimal;
   isFixed?: boolean;
   cardId?: string;
-  statementId?: string;
 }
 
 export interface EntryInput {
@@ -43,6 +37,14 @@ export interface EntryInput {
   detailedNote?: string | null;
   createdByUserId?: string | null;
   postings: PostingInput[];
+  /**
+   * 할부 개월수. 신용카드 지출에만 의미가 있고 2 이상일 때 일정이 생긴다.
+   *
+   * 원금과 지출은 구매 시점에 전액 잡히므로 posting은 달라지지 않는다.
+   * "언제 청구되는지"만 InstallmentPlan에 남고, 회차 금액과 귀속 주기는
+   * 저장하지 않고 읽을 때 계산한다.
+   */
+  installmentMonths?: number;
 }
 
 /** 지출/수입에서 카테고리별로 금액을 쪼갤 때 쓰는 항목 */
@@ -68,6 +70,8 @@ export interface ExpenseInput extends CommonInput {
   /** accountId와 cardId 중 정확히 하나. 카드면 카드 종류에 따라 자금 출처가 결정된다. */
   accountId?: string;
   cardId?: string;
+  /** 할부 개월수. 신용카드일 때만 쓴다. */
+  installmentMonths?: number;
 }
 
 export interface IncomeInput extends CommonInput {
@@ -87,13 +91,23 @@ export interface TransferInput extends CommonInput {
   feeIsFixed?: boolean;
 }
 
-export interface CardPaymentInput extends CommonInput {
+/**
+ * 카드사와 통장 사이의 자금 이동.
+ *
+ * 두 방향이 있고 전표 모양은 부호만 다르다.
+ *   payment 대금 결제  : 통장 -X, 부채 +X
+ *   refund  환불 입금  : 통장 +X, 부채 -X
+ *
+ * 청구서에 붙이지 않는다. 결제 대상은 카드의 부채 총액 하나뿐이다.
+ */
+export type CardTransferDirection = 'payment' | 'refund';
+
+export interface CardTransferInput extends CommonInput {
   cardId: string;
-  /** 결제 대금이 빠져나가는 계좌 */
+  /** 대금이 빠져나가거나 환불이 들어오는 통장 */
   accountId: string;
   amount: Prisma.Decimal;
-  /** 어느 청구서를 갚는지. 생략하면 오래된 미결제 청구서부터 채운다. */
-  statementId?: string;
+  direction: CardTransferDirection;
 }
 
 /**
@@ -142,6 +156,7 @@ export class LedgerService {
       });
 
       await this.applyBalanceDeltas(tx, input.postings);
+      await this.saveInstallmentPlan(tx, entry.postings, input.installmentMonths);
       return entry;
     });
   }
@@ -195,6 +210,8 @@ export class LedgerService {
 
       // 3) 새 posting의 잔액을 적용한다
       await this.applyBalanceDeltas(tx, input.postings);
+      // posting을 새로 만들었으므로 할부 일정도 다시 붙인다 (옛 것은 cascade로 사라졌다)
+      await this.saveInstallmentPlan(tx, entry.postings, input.installmentMonths);
       return entry;
     });
   }
@@ -239,7 +256,7 @@ export class LedgerService {
   async buildExpense(input: ExpenseInput): Promise<EntryInput> {
     const lines = await this.resolveLines(input.projectId, input.lines, 'expense');
     const total = this.sum(lines.map((l) => l.amount));
-    const source = await this.resolvePaymentSource(input.projectId, input.date, {
+    const source = await this.resolvePaymentSource(input.projectId, {
       accountId: input.accountId,
       cardId: input.cardId,
     });
@@ -250,12 +267,7 @@ export class LedgerService {
         // 지출 발생 = +
         ...lines.map((l) => ({ categoryId: l.categoryId, amount: l.amount, isFixed: l.isFixed })),
         // 자산 감소 또는 부채 증가 = -
-        {
-          accountId: source.accountId,
-          amount: total.neg(),
-          cardId: source.cardId,
-          statementId: source.statementId,
-        },
+        { accountId: source.accountId, amount: total.neg(), cardId: source.cardId },
       ],
     };
   }
@@ -282,6 +294,12 @@ export class LedgerService {
   /**
    * 이체. 수수료가 있으면 3-leg 전표 하나로 만든다.
    * 기존 구조처럼 수수료를 별도 거래로 만들고 서로 참조시키지 않는다.
+   *
+   * 한쪽이 신용카드 부채 계정이면 카드사와의 자금 이동이 된다.
+   *   통장 -> 카드  대금 결제
+   *   카드 -> 통장  환불 입금
+   * 전표 모양은 buildCardTransfer와 같으므로 카드 화면에서 기록하든 이체로
+   * 기록하든 결과가 하나로 모인다.
    */
   async createTransfer(input: TransferInput) {
     return this.createEntry(await this.buildTransfer(input));
@@ -300,12 +318,26 @@ export class LedgerService {
       throw new BadRequestException('수수료를 입력하려면 수수료 카테고리가 필요합니다.');
     }
 
-    await this.getAccount(input.projectId, input.fromAccountId);
-    await this.getAccount(input.projectId, input.toAccountId);
+    const from = await this.getAccount(input.projectId, input.fromAccountId);
+    const to = await this.getAccount(input.projectId, input.toAccountId);
+
+    // 카드가 끼면 그 다리에 cardId를 채운다. 비워 두면 카드별 거래 조회에서 빠진다.
+    const fromCardId = await this.cardIdForLiability(from);
+    const toCardId = await this.cardIdForLiability(to);
+
+    if (fee.gt(ZERO) && (fromCardId || toCardId)) {
+      // 수수료 다리는 지출 카테고리라 전표가 3-leg이 되는데, 카드가 끼면 이 전표는
+      // card_payment로 분류되어 목록이 수수료를 보여주지 않는다. 표시가 어긋나느니 막는다.
+      throw new BadRequestException('카드사와의 이체에는 수수료를 붙일 수 없습니다.');
+    }
 
     const postings: PostingInput[] = [
-      { accountId: input.fromAccountId, amount: input.amount.add(fee).neg() },
-      { accountId: input.toAccountId, amount: input.amount },
+      {
+        accountId: input.fromAccountId,
+        amount: input.amount.add(fee).neg(),
+        cardId: fromCardId,
+      },
+      { accountId: input.toAccountId, amount: input.amount, cardId: toCardId },
     ];
     if (fee.gt(ZERO)) {
       // 수수료도 지출 카테고리 다리다. 지출/수입과 같은 검증을 거쳐야
@@ -323,65 +355,40 @@ export class LedgerService {
   }
 
   /**
-   * 카드대금 결제. 지출이 아니라 부채 상환이므로 카테고리 posting이 없다.
+   * 카드사와 통장 사이의 자금 이동. 지출이 아니라 부채의 증감이므로 카테고리 posting이 없다.
    * 이것이 credit_usage/credit_payment 이중 계상 문제가 사라지는 이유다.
+   *
+   * 금액에 상한을 두지 않는다. 카드사가 남은 대금보다 많이 가져가고 차액을 따로
+   * 입금해 주는 방식(총액형)이 실제로 있기 때문이다. 그때 부채는 일시적으로
+   * 양수가 되고, 뒤이은 환불 입금이 0으로 되돌린다. 부채의 부호는 상태일 뿐 오류가 아니다.
    */
-  async createCardPayment(input: CardPaymentInput) {
-    return this.createEntry(await this.buildCardPayment(input));
+  async createCardTransfer(input: CardTransferInput) {
+    return this.createEntry(await this.buildCardTransfer(input));
   }
 
-  async buildCardPayment(input: CardPaymentInput): Promise<EntryInput> {
+  async buildCardTransfer(input: CardTransferInput): Promise<EntryInput> {
     if (input.amount.lte(ZERO)) {
-      throw new BadRequestException('결제 금액은 0보다 커야 합니다.');
+      throw new BadRequestException('금액은 0보다 커야 합니다.');
     }
 
     const card = await this.getCard(input.projectId, input.cardId);
     if (card.cardType !== CardType.credit) {
-      throw new BadRequestException('신용카드만 대금 결제 대상입니다.');
+      throw new BadRequestException('신용카드만 대금 이동 대상입니다.');
     }
-    await this.getAccount(input.projectId, input.accountId);
-
-    let statementId = input.statementId;
-    if (statementId) {
-      const statement = await this.prisma.cardStatement.findUnique({ where: { id: statementId } });
-      if (!statement || statement.cardId !== input.cardId) {
-        throw new NotFoundException('청구서를 찾을 수 없습니다.');
-      }
-    } else {
-      // 지정하지 않으면 가장 오래된 미결제 청구서에 붙인다.
-      // status 컬럼은 두지 않으므로 posting 합계가 0이 아닌 것을 미결제로 본다.
-      const unpaid = await this.prisma.posting.groupBy({
-        by: ['statementId'],
-        where: { statement: { cardId: input.cardId } },
-        _sum: { amount: true },
-      });
-      const outstandingIds = unpaid
-        .filter((row) => row.statementId && !(row._sum.amount ?? ZERO).isZero())
-        .map((row) => row.statementId as string);
-
-      if (outstandingIds.length > 0) {
-        const oldest = await this.prisma.cardStatement.findFirst({
-          where: { id: { in: outstandingIds } },
-          orderBy: { periodEnd: 'asc' },
-        });
-        statementId = oldest?.id;
-      }
-    }
-
     if (!card.liabilityAccountId) {
       throw new BadRequestException('신용카드에 부채 계정이 없습니다.');
     }
+    await this.getAccount(input.projectId, input.accountId);
+
+    // 결제는 통장에서 나가고 부채가 줄어든다. 환불 입금은 정반대다.
+    const toBank = input.direction === 'refund' ? input.amount : input.amount.neg();
 
     return {
       ...input,
       postings: [
-        { accountId: input.accountId, amount: input.amount.neg() }, // 통장 감소
-        {
-          accountId: card.liabilityAccountId,
-          amount: input.amount, // 부채 상환 = +
-          cardId: card.id,
-          statementId,
-        },
+        { accountId: input.accountId, amount: toBank },
+        // cardId를 채워야 카드별 거래 조회에 이 전표가 걸린다
+        { accountId: card.liabilityAccountId, amount: toBank.neg(), cardId: card.id },
       ],
     };
   }
@@ -509,7 +516,6 @@ export class LedgerService {
       baseAmount: p.amount.mul(rate),
       isFixed: p.isFixed ?? false,
       cardId: p.cardId ?? null,
-      statementId: p.statementId ?? null,
     };
   }
 
@@ -591,6 +597,29 @@ export class LedgerService {
   }
 
   /** 계좌 잔액과 투자 수량 캐시를 posting 합계만큼 움직인다. */
+  /**
+   * 할부 일정을 카드 부채 posting에 붙인다.
+   *
+   * 전표 수정은 posting을 지우고 새로 만들므로(replaceEntry) 일정도 cascade로 사라진다.
+   * 그래서 생성과 수정 양쪽에서 같은 함수를 부른다.
+   */
+  private async saveInstallmentPlan(
+    tx: Tx,
+    postings: Array<{ id: string; cardId: string | null; amount: Prisma.Decimal }>,
+    months?: number,
+  ) {
+    if (!months || months < 2) return;
+
+    // 카드 부채 다리가 할부의 주인이다. 지출이면 음수 다리 하나뿐이다.
+    const cardLeg = postings.find((p) => p.cardId && p.amount.lt(ZERO));
+    if (!cardLeg) {
+      throw new BadRequestException('할부는 신용카드 지출에만 설정할 수 있습니다.');
+    }
+    await tx.installmentPlan.create({
+      data: { postingId: cardLeg.id, totalMonths: months },
+    });
+  }
+
   private async applyBalanceDeltas(
     tx: Tx,
     postings: Array<{ accountId?: string; amount: Prisma.Decimal; quantity?: Prisma.Decimal }>,
@@ -667,9 +696,8 @@ export class LedgerService {
    */
   private async resolvePaymentSource(
     projectId: string,
-    date: Date,
     source: { accountId?: string; cardId?: string },
-  ): Promise<{ accountId: string; cardId?: string; statementId?: string }> {
+  ): Promise<{ accountId: string; cardId?: string }> {
     if (Boolean(source.accountId) === Boolean(source.cardId)) {
       throw new BadRequestException('결제수단으로 계좌와 카드 중 하나만 지정해야 합니다.');
     }
@@ -690,52 +718,17 @@ export class LedgerService {
     if (!card.liabilityAccountId) {
       throw new BadRequestException('신용카드에 부채 계정이 없습니다.');
     }
-    const statement = await this.findOrCreateStatement(card, date);
-    return { accountId: card.liabilityAccountId, cardId: card.id, statementId: statement.id };
+    return { accountId: card.liabilityAccountId, cardId: card.id };
   }
 
-  /** 거래일이 속한 청구서를 찾고, 없으면 연다. */
-  private async findOrCreateStatement(
-    card: {
-      id: string;
-      projectId: string;
-      statementClosingDay: number | null;
-      paymentDueDay: number | null;
-    },
-    date: Date,
-  ) {
-    if (card.statementClosingDay === null || card.paymentDueDay === null) {
-      throw new BadRequestException('신용카드에 마감일과 결제일이 설정되어 있지 않습니다.');
-    }
-
-    // 마감일 경계는 프로젝트 타임존의 달력 날짜로 판단한다 (UTC로 읽으면 하루 밀린다).
-    const timeZone = await this.projectTimeZone(card.projectId);
-    const period = resolveStatementPeriod(
-      date,
-      card.statementClosingDay,
-      card.paymentDueDay,
-      timeZone,
-    );
-
-    return this.prisma.cardStatement.upsert({
-      where: { cardId_periodEnd: { cardId: card.id, periodEnd: period.periodEnd } },
-      create: {
-        cardId: card.id,
-        periodStart: period.periodStart,
-        periodEnd: period.periodEnd,
-        dueDate: period.dueDate,
-      },
-      update: {},
+  /** 이 계좌가 신용카드의 부채 계정이면 그 카드 id. 아니면 undefined. */
+  private async cardIdForLiability(account: { id: string; type: AccountType }) {
+    if (account.type !== AccountType.credit_card) return undefined;
+    const card = await this.prisma.card.findUnique({
+      where: { liabilityAccountId: account.id },
+      select: { id: true },
     });
-  }
-
-  /** 프로젝트의 집계 기준 타임존 */
-  private async projectTimeZone(projectId: string): Promise<string> {
-    const project = await this.prisma.project.findUnique({
-      where: { id: projectId },
-      select: { timezone: true },
-    });
-    return project?.timezone || DEFAULT_TIME_ZONE;
+    return card?.id;
   }
 
   private async getAccount(projectId: string, accountId: string) {

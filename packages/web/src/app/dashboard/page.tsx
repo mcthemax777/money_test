@@ -12,7 +12,6 @@ import { formatCurrency, toAmountString, toNumber } from '@/lib/money';
 import { DAY_OF_MONTH_HINT, DAY_OF_MONTH_OPTIONS } from '@/lib/day-of-month';
 import {
   dateKeyOf,
-  dateMarkerKey,
   formatDateTime,
   currentYearMonth,
   monthInputToIso,
@@ -21,7 +20,11 @@ import {
   timeInputOf,
   todayKey,
 } from '@/lib/datetime';
-import { LEDGER_MIN_ENTRY_DATE_KEY, zonedFormValueToUtc } from '@money/types';
+import {
+  LEDGER_MIN_ENTRY_DATE_KEY,
+  zonedFormValueToUtc,
+  type CardTransferDirection,
+} from '@money/types';
 import CustomSelect from '@/components/CustomSelect';
 import ChoiceModal from '@/components/ChoiceModal';
 import Modal from '@/components/Modal';
@@ -48,6 +51,12 @@ const CARD_FORM_ID = 'card-form';
 const CATEGORY_FORM_ID = 'category-form';
 
 /** 거래 추가/수정 팝업 맨 위의 유형 탭 */
+/** 카드사가 흔히 제공하는 할부 개월수. 빈 값이 일시불이다. */
+const INSTALLMENT_OPTIONS = [
+  { id: '', name: '일시불' },
+  ...[2, 3, 4, 5, 6, 9, 10, 12, 18, 24, 36].map((m) => ({ id: String(m), name: `${m}개월` })),
+];
+
 const ENTRY_TYPE_TABS = [
   { id: 'expense', label: '지출' },
   { id: 'income', label: '수입' },
@@ -151,15 +160,12 @@ export default function TransactionsPage() {
     date: todayKey(timeZone),
     time: '',
     isFixed: false,
+    /** 할부 개월수. 빈 값이거나 1이면 일시불 */
+    installmentMonths: '',
+    /** 카드사 이체의 방향. 수정으로만 들어오며 그대로 되돌려 보낸다 */
+    cardTransferDirection: 'payment' as CardTransferDirection,
   }));
   const [isSubmitting, setIsSubmitting] = useState(false);
-  /**
-   * 수정 중인 거래가 이미 결제된 청구서에 포함되어 있으면 그 청구 기간.
-   *
-   * 금액·결제수단은 잠그되, 날짜는 이 기간 안에서 고칠 수 있게 둔다.
-   * 같은 청구서에 머무르면 청구액이 달라지지 않으므로 오타 정정에 문제가 없다.
-   */
-  const [lockedPeriod, setLockedPeriod] = useState<{ start: string; end: string } | null>(null);
   /** 고정/변동 선택. 둘 다 고른 상태로 시작한다 (= 전체). */
   const [selectedFixedTypes, setSelectedFixedTypes] = useState<FixedType[]>(['fixed', 'variable']);
   /** 결제수단 드롭다운이 계좌·카드를 합쳤으므로 "무엇을 추가할지"는 이 팝업에서 고른다. */
@@ -367,6 +373,36 @@ export default function TransactionsPage() {
     [accounts, cards],
   );
 
+  /**
+   * 이체에서 고를 수 있는 계좌. 신용카드 부채 계정을 함께 넣는다.
+   *
+   * 부채 계정은 통장 목록(GET /accounts)에서 감춰져 있다. 지출 결제수단이나
+   * 자산 화면에 새어 나가면 안 되므로 서버 목록을 열지 않고, 이미 받아 둔 카드에서
+   * liabilityAccountId를 꺼내 이 화면에서만 조립한다.
+   */
+  const transferAccountOptions = useMemo(
+    () => [
+      ...accounts.map((account) => ({ id: account.id, name: account.name })),
+      ...cards
+        .filter((card) => card.cardType === 'credit' && card.liabilityAccountId)
+        .map((card) => ({ id: card.liabilityAccountId!, name: `(카드) ${card.name}` })),
+    ],
+    [accounts, cards],
+  );
+
+  /** 이체 양쪽 중 카드 부채 계정인 쪽. 없으면 일반 이체다. */
+  const transferCardSide = (() => {
+    if (formData.type !== 'transfer') return null;
+    const liabilityIds = new Set(
+      cards.filter((c) => c.liabilityAccountId).map((c) => c.liabilityAccountId!),
+    );
+    const fromIsCard = liabilityIds.has(formData.accountId);
+    const toIsCard = liabilityIds.has(formData.toAccountId);
+    if (fromIsCard && !toIsCard) return 'refund' as const;
+    if (toIsCard && !fromIsCard) return 'payment' as const;
+    return null;
+  })();
+
   const selectedPaymentMethodId = formData.cardId
     ? `card:${formData.cardId}`
     : formData.accountId
@@ -398,12 +434,18 @@ export default function TransactionsPage() {
     setFormData((prev) => ({ ...prev, method: 'account', accountId: id, cardId: '' }));
   };
 
-  // 사람·고정 필터는 서버가 건다. 여기서는 카드대금 결제만 뺀다
-  // (부채 상환이라 소비가 아니고, 목록에 섞이면 합계와 어긋난다).
-  const visibleEntries = useMemo(
-    () => entries.filter((entry) => entry.kind !== 'card_payment'),
-    [entries],
-  );
+  /**
+   * 목록에 보여 줄 거래.
+   *
+   * 이체와 카드사 이체도 그대로 보여 준다. 돈이 움직인 사실은 가계부에 남아야 한다.
+   * 대신 합계에는 들어가지 않는다. 내 계좌 사이의 이동이라 수입도 지출도 아니고,
+   * 카드 사용액은 결제할 때가 아니라 그을 때 이미 지출로 잡혔기 때문이다.
+   * 세면 같은 돈을 두 번 세게 된다.
+   *
+   * 그 규칙은 걸러 내기가 아니라 `expenseAmountOf`/`incomeAmountOf`가 지킨다.
+   * 두 함수가 이체와 카드사 이체에 0을 돌려주므로 목록에 있어도 합계가 흔들리지 않는다.
+   */
+  const visibleEntries = entries;
 
   const monthlyTotals = useMemo(
     () => ({ incomeTotal: toNumber(summary.income), expenseTotal: toNumber(summary.expense) }),
@@ -422,6 +464,7 @@ export default function TransactionsPage() {
     // 그 오류만 보고는 어느 칸이 비었는지 알기 어렵다.
     if (
       formData.type === 'transfer' &&
+      !transferCardSide &&
       toNumber(formData.transferFee) > 0 &&
       !formData.transferFeeMainCategoryId
     ) {
@@ -439,9 +482,16 @@ export default function TransactionsPage() {
         timeZone,
       ).toISOString();
 
-      // 화면의 "지출/수입/이체" 개념을 그대로 보낸다. 서버가 전표(postings)로 번역한다.
+      // 화면의 개념을 그대로 보낸다. 서버가 전표(postings)로 번역한다.
+      // card_payment는 수정으로만 들어온다 (새로 만드는 것은 자산 화면의 결제하기다).
       const kind =
-        formData.type === 'income' ? 'income' : formData.type === 'transfer' ? 'transfer' : 'expense';
+        formData.type === 'card_payment'
+          ? 'card_payment'
+          : formData.type === 'income'
+            ? 'income'
+            : formData.type === 'transfer'
+              ? 'transfer'
+              : 'expense';
       const useCard = formData.method === 'card' && Boolean(formData.cardId);
 
       const payload: any = {
@@ -457,10 +507,18 @@ export default function TransactionsPage() {
       if (formData.merchant) payload.merchant = formData.merchant;
       if (formData.detailedNote) payload.detailedNote = formData.detailedNote;
 
-      if (kind === 'transfer') {
+      if (kind === 'card_payment') {
+        // 부채가 줄어드는 카드와 돈이 오가는 통장을 함께 보낸다. 둘 다 폼에서 고정이다.
+        payload.cardId = formData.cardId;
+        payload.accountId = formData.accountId;
+        payload.cardTransferDirection = formData.cardTransferDirection;
+        // 카드사 이체는 지출이 아니므로 분류도 고정 여부도 없다.
+        delete payload.isFixed;
+      } else if (kind === 'transfer') {
         payload.accountId = formData.accountId;
         payload.toAccountId = formData.toAccountId;
-        if (formData.transferFee) {
+        // 카드사와의 이체에는 수수료가 붙지 않는다. 칸을 감췄어도 남은 값이 따라가지 않게 뺀다.
+        if (formData.transferFee && !transferCardSide) {
           payload.transferFee = toAmountString(formData.transferFee);
           // 수수료는 소분류가 있으면 소분류를, 없으면 대분류를 쓴다
           payload.transferFeeCategoryId =
@@ -472,6 +530,9 @@ export default function TransactionsPage() {
         else payload.accountId = formData.accountId;
         // posting은 가장 구체적인 카테고리 하나만 가리킨다
         payload.categoryId = formData.subCategoryId || formData.mainCategoryId;
+        // 할부는 신용카드 지출에만 붙는다. 2개월 미만이면 일시불이라 보내지 않는다.
+        const months = Number(formData.installmentMonths);
+        if (kind === 'expense' && useCard && months >= 2) payload.installmentMonths = months;
       }
 
       if (editingId) {
@@ -506,9 +567,10 @@ export default function TransactionsPage() {
         date: todayKey(timeZone),
         time: '',
         isFixed: false,
+        installmentMonths: '',
+        cardTransferDirection: 'payment',
       });
       setEditingId(null);
-      setLockedPeriod(null);
       setError('');
       setIsModalOpen(false);
     } catch (err) {
@@ -526,7 +588,6 @@ export default function TransactionsPage() {
    */
   const handleAddClick = () => {
     setEditingId(null);
-    setLockedPeriod(null);
     setError('');
     setFormData((prev) => ({
       ...prev,
@@ -559,9 +620,10 @@ export default function TransactionsPage() {
       date: todayKey(timeZone),
       time: '',
       isFixed: false,
+      installmentMonths: '',
+      cardTransferDirection: 'payment',
     });
     setEditingId(null);
-    setLockedPeriod(null);
     setError('');
   };
 
@@ -601,9 +663,20 @@ export default function TransactionsPage() {
     handleEditClick(selectedTransaction);
   };
 
-  /** 수정할 수 없는 전표. 화면에서 만들 수 없는 종류라 수정 폼에 담을 수 없다. */
-  const isEditable = (entry: EntryListItem) =>
-    entry.kind === 'expense' || entry.kind === 'income' || entry.kind === 'transfer';
+  /**
+   * 수정할 수 있는 전표.
+   *
+   * 잔액 조정만 제외한다. 기초잔액 전표는 계좌 잔액에서 역산되는 값이라
+   * 거래 폼으로 고칠 수 있는 대상이 아니다 (자산 화면의 잔액 수정이 담당한다).
+   *
+   * 카드대금 결제는 폼을 열 수 있다. 결제일이 오기 전에 잘못 눌러 넣은 결제를
+   * 되돌리려면 금액이나 날짜를 고쳐야 하고, 그것이 사용 내역을 건드리지 않고
+   * 바로잡는 가장 짧은 경로다. 카드와 통장은 바꿀 수 없다 (바꿀 일이면 삭제가 낫다).
+   */
+  const isEditable = (entry: EntryListItem) => entry.kind !== 'adjustment';
+
+  /** 카드대금 결제 수정 중인지. 폼이 분류·유형·이체 칸을 감춘다. */
+  const isCardPaymentForm = formData.type === 'card_payment';
 
   /**
    * 대분류/소분류로 나눈다.
@@ -626,20 +699,13 @@ export default function TransactionsPage() {
     }
 
     setEditingId(entry.id);
-    setLockedPeriod(
-      entry.lockedByStatement && entry.statementPeriodStart && entry.statementPeriodEnd
-        ? {
-            // 청구 기간은 @db.Date라 날짜만 의미가 있다 (인스턴트가 아니다).
-            start: dateMarkerKey(entry.statementPeriodStart),
-            end: dateMarkerKey(entry.statementPeriodEnd),
-          }
-        : null,
-    );
     const category = splitCategory(entry.categoryId);
     const fee = splitCategory(entry.feeCategoryId);
 
     setFormData({
-      method: entry.cardId ? 'card' : 'account',
+      // 카드대금 결제는 통장에서 돈이 나가고 카드 부채가 줄어든다. 두 값을 다 들고 있어야
+      // 저장할 때 그대로 돌려보낼 수 있으므로 method로 하나만 고르지 않는다.
+      method: entry.kind === 'card_payment' ? 'account' : entry.cardId ? 'card' : 'account',
       accountId: entry.accountId || '',
       cardId: entry.cardId || '',
       personId: entry.personId || '',
@@ -658,6 +724,9 @@ export default function TransactionsPage() {
       date: dateKeyOf(entry.date, timeZone),
       time: timeInputOf(entry.date, timeZone),
       isFixed: entry.isFixed,
+      installmentMonths: entry.installmentMonths ? String(entry.installmentMonths) : '',
+      // 놓치면 환불 입금을 고칠 때 대금 결제로 뒤집힌다
+      cardTransferDirection: entry.cardTransferDirection ?? 'payment',
     });
     setIsModalOpen(true);
     setError('');
@@ -1340,7 +1409,15 @@ export default function TransactionsPage() {
       <Modal
         isOpen={isModalOpen}
         onClose={handleModalClose}
-        title={editingId ? '거래 수정' : '거래 추가'}
+        title={
+          isCardPaymentForm
+            ? formData.cardTransferDirection === 'refund'
+              ? '환불 입금 수정'
+              : '카드 대금 결제 수정'
+            : editingId
+              ? '거래 수정'
+              : '거래 추가'
+        }
         /* 버튼은 form 밖(하단 고정 영역)이라 form 속성으로 묶는다 */
         footer={
           <button
@@ -1354,19 +1431,23 @@ export default function TransactionsPage() {
         }
       >
         <form id={ENTRY_FORM_ID} onSubmit={handleSubmit} className="space-y-4">
-              {lockedPeriod && (
-                <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-sm rounded-lg">
-                  이미 결제한 청구서({lockedPeriod.start} ~ {lockedPeriod.end})에 포함된 내역입니다.
-                  금액과 결제수단은 바꿀 수 없고, 날짜는 이 청구 기간 안에서만 고칠 수 있습니다.
+              {isCardPaymentForm && (
+                <div className="p-3 bg-blue-50 border border-blue-200 text-blue-800 text-sm rounded-lg">
+                  {formData.cardTransferDirection === 'refund'
+                    ? '카드사에서 통장으로 돈이 들어온 기록입니다.'
+                    : '통장에서 카드사로 대금이 나간 기록입니다.'}{' '}
+                  지출로 집계되지 않습니다. 잘못 넣었다면 금액과 날짜를 고치거나 삭제하세요.
+                  사용 내역은 건드릴 필요가 없습니다.
                 </div>
               )}
 
               {/* 유형을 맨 위에서 탭으로 고른다. 아래 입력이 유형에 따라 달라지므로 먼저 정한다. */}
+              {/* 카드대금 결제는 다른 유형으로 바꿀 수 없다. 부채 상환이라 대응하는 탭이 없다. */}
+              {!isCardPaymentForm && (
               <div role="tablist" aria-label="거래 유형" className="flex gap-1 p-1 bg-gray-100 rounded-lg">
                 {ENTRY_TYPE_TABS.map((tab) => {
                   // 카드는 지출만 만들 수 있고, 결제된 청구서에 속한 내역은 유형을 못 바꾼다.
-                  const disabled =
-                    Boolean(lockedPeriod) || (formData.method === 'card' && tab.id !== 'expense');
+                  const disabled = formData.method === 'card' && tab.id !== 'expense';
                   const selected = formData.type === tab.id;
 
                   return (
@@ -1393,6 +1474,7 @@ export default function TransactionsPage() {
                   );
                 })}
               </div>
+              )}
 
               {/* 금액은 유형 바로 아래에 둔다. 팝업이 열릴 때 여기로 포커스가 가므로
                   아래쪽에 있으면 본문이 스크롤돼 유형 탭이 가려진다. */}
@@ -1406,9 +1488,8 @@ export default function TransactionsPage() {
                   /* 팝업이 열리면 여기부터 입력한다 (Modal이 이 표시를 찾아 포커스한다) */
                   data-autofocus
                   value={formData.amount}
-                  disabled={Boolean(lockedPeriod)}
                   onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                  className={`w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${Boolean(lockedPeriod) ? 'bg-gray-100 cursor-not-allowed' : ''}`}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   placeholder="50000"
                 />
               </div>
@@ -1423,12 +1504,8 @@ export default function TransactionsPage() {
                     type="date"
                     required
                     value={formData.date}
-                    /*
-                     * 결제된 청구서에 속하면 그 청구 기간 밖으로는 못 나간다.
-                     * 아니면 원장 하한(기초잔액 전표 날짜)까지만 거슬러 올라간다.
-                     */
-                    min={lockedPeriod?.start ?? LEDGER_MIN_ENTRY_DATE_KEY}
-                    max={lockedPeriod?.end}
+                    /* 원장 하한(기초잔액 전표 날짜)까지만 거슬러 올라간다 */
+                    min={LEDGER_MIN_ENTRY_DATE_KEY}
                     onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -1447,21 +1524,60 @@ export default function TransactionsPage() {
                 </div>
               </div>
 
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  결제수단
-                </label>
-                {/* 계좌와 카드를 한 목록에서 고른다. 접두사로 종류를 구분한다. */}
-                <CustomSelect
-                  options={paymentMethodOptions}
-                  value={selectedPaymentMethodId}
-                  onChange={handlePaymentMethodChange}
-                  placeholder="선택하세요"
-                  disabled={Boolean(lockedPeriod)}
-                  onAddClick={() => setIsMethodChooserOpen(true)}
-                  addButtonLabel="결제수단 추가"
-                />
-              </div>
+              {isCardPaymentForm ? (
+                /*
+                 * 카드와 통장은 고정이다. 바꾸면 다른 카드의 부채를 갚는 전혀 다른 거래가
+                 * 되므로, 잘못 골랐다면 지우고 자산 화면에서 다시 결제하는 것이 맞다.
+                 */
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">카드</label>
+                    <p className="px-3 py-2 bg-gray-100 rounded-lg text-gray-700">
+                      {cards.find((c) => c.id === formData.cardId)?.name ?? '-'}
+                    </p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {formData.cardTransferDirection === 'refund' ? '입금 통장' : '결제 통장'}
+                    </label>
+                    <p className="px-3 py-2 bg-gray-100 rounded-lg text-gray-700">
+                      {accounts.find((a) => a.id === formData.accountId)?.name ?? '-'}
+                    </p>
+                  </div>
+                </div>
+              ) : formData.type === 'transfer' ? (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    보내는 계좌
+                  </label>
+                  {/* 신용카드를 고르면 카드사에 대금을 갚는 것이 아니라 환불을 받는 쪽이 된다 */}
+                  <CustomSelect
+                    options={transferAccountOptions.filter(
+                      (option) => option.id !== formData.toAccountId,
+                    )}
+                    value={formData.accountId}
+                    onChange={(value) =>
+                      setFormData({ ...formData, method: 'account', accountId: value, cardId: '' })
+                    }
+                    placeholder="선택하세요"
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    결제수단
+                  </label>
+                  {/* 계좌와 카드를 한 목록에서 고른다. 접두사로 종류를 구분한다. */}
+                  <CustomSelect
+                    options={paymentMethodOptions}
+                    value={selectedPaymentMethodId}
+                    onChange={handlePaymentMethodChange}
+                    placeholder="선택하세요"
+                    onAddClick={() => setIsMethodChooserOpen(true)}
+                    addButtonLabel="결제수단 추가"
+                  />
+                </div>
+              )}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1477,7 +1593,7 @@ export default function TransactionsPage() {
                 />
               </div>
 
-              {formData.type !== 'transfer' && (
+              {formData.type !== 'transfer' && !isCardPaymentForm && (
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -1539,6 +1655,29 @@ export default function TransactionsPage() {
                 />
                   </div>
 
+                  {/*
+                    할부. 신용카드 지출에만 뜬다.
+                    원금과 지출은 구매 시점에 전액 잡히고, 카드 화면의 주기별 사용액만 나뉜다.
+                  */}
+                  {formData.type === 'expense' && formData.method === 'card' && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        할부 (선택)
+                      </label>
+                      <CustomSelect
+                        options={INSTALLMENT_OPTIONS}
+                        value={formData.installmentMonths}
+                        onChange={(value) =>
+                          setFormData({ ...formData, installmentMonths: value })
+                        }
+                        placeholder="일시불"
+                      />
+                      <p className="mt-1 text-xs text-gray-500">
+                        지출과 카드 부채는 오늘 전액 잡힙니다. 청구만 나뉩니다.
+                      </p>
+                    </div>
+                  )}
+
                   {/* 고정 여부는 이 분류에 저장된다. 다음에 같은 분류를 고르면 자동으로 켜진다. */}
                   <div className="flex items-center gap-3">
                     <input
@@ -1563,16 +1702,30 @@ export default function TransactionsPage() {
                       이체 대상 계좌
                     </label>
                     <CustomSelect
-                      options={accounts
-                        .filter((acc) => acc.id !== formData.accountId)
-                        .map((acc) => ({ id: acc.id, name: acc.name }))}
+                      options={transferAccountOptions.filter(
+                        (option) => option.id !== formData.accountId,
+                      )}
                       value={formData.toAccountId}
                       onChange={(value) => setFormData({ ...formData, toAccountId: value })}
                       placeholder="선택하세요"
                     />
                   </div>
 
-                  <div>
+                  {/*
+                    한쪽이 신용카드면 카드사와의 자금 이동이다. 방향이 뜻을 바꾸므로
+                    저장하기 전에 무엇으로 기록되는지 알려 준다.
+                  */}
+                  {transferCardSide && (
+                    <div className="p-3 bg-blue-50 border border-blue-200 text-blue-800 text-sm rounded-lg">
+                      {transferCardSide === 'payment'
+                        ? '통장에서 카드사로 나가므로 대금 결제로 기록됩니다.'
+                        : '카드사에서 통장으로 들어오므로 환불 입금으로 기록됩니다.'}{' '}
+                      지출로 집계되지 않고 카드 부채만 움직입니다.
+                    </div>
+                  )}
+
+                  {/* 카드사와의 이체에는 수수료를 붙일 수 없다 (서버도 거부한다) */}
+                  <div className={transferCardSide ? 'hidden' : undefined}>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       이체 수수료 (선택)
                     </label>
@@ -2098,31 +2251,20 @@ export default function TransactionsPage() {
                 </button>
               ) : (
                 <div className="flex-1 px-4 py-2 text-sm text-gray-500 bg-gray-50 rounded-lg text-center">
-                  {selectedTransaction.kind === 'card_payment'
-                    ? '카드대금 결제는 수정할 수 없습니다'
-                    : '잔액 조정은 수정할 수 없습니다'}
+                  잔액 조정은 수정할 수 없습니다
                 </div>
               )}
-              {/*
-                결제가 끝난 청구서의 사용 내역은 지울 수 없다.
-                지우면 청구액만 사라지고 결제 기록은 남아 카드 부채가 유령 잔액으로 뜬다.
-              */}
-              {selectedTransaction.lockedByStatement ? (
-                <div className="flex-1 px-4 py-2 text-sm text-gray-500 bg-gray-50 rounded-lg text-center">
-                  결제한 청구서에 포함되어 삭제할 수 없습니다
-                </div>
-              ) : (
-                <button
-                  onClick={async () => {
-                    setIsDetailModalOpen(false);
-                    await handleDeleteClick(selectedTransaction.id);
-                  }}
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-                  disabled={isSubmitting}
-                >
-                  삭제하기
-                </button>
-              )}
+              {/* 카드 거래도 계좌 거래와 똑같이 지운다. 청구서 잠금은 없다. */}
+              <button
+                onClick={async () => {
+                  setIsDetailModalOpen(false);
+                  await handleDeleteClick(selectedTransaction.id);
+                }}
+                className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                disabled={isSubmitting}
+              >
+                삭제하기
+              </button>
             </div>
           ) : null
         }

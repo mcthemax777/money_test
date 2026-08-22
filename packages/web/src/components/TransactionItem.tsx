@@ -1,45 +1,18 @@
 'use client';
 
+import type { EntryListItem } from '@money/types';
 import { formatCurrency, toNumber } from '@/lib/money';
 import { formatDate } from '@/lib/datetime';
 import { useProjectTimeZone } from '@/store/project';
 
 /**
  * 서버가 전표를 한 줄로 펴서 주는 형태.
- * 화면은 postings를 직접 다루지 않는다 (packages/api entry-view.ts 참고).
+ *
+ * 예전에는 이 파일에 같은 모양을 한 번 더 적어 두었다. 서버가 필드를 추가해도
+ * 화면 타입이 따라오지 않아 어긋났으므로 공용 계약을 그대로 다시 내보낸다.
+ * 실제 정의는 packages/types entities.ts, 조립 규칙은 packages/api entry-view.ts 참고.
  */
-export interface EntryListItem {
-  id: string;
-  kind: 'expense' | 'income' | 'transfer' | 'card_payment' | 'adjustment';
-  date: string;
-  description: string;
-  merchant: string | null;
-  detailedNote: string | null;
-  personId: string;
-  personName: string;
-  /** 항상 양수. 부호는 kind로 판단한다. */
-  amount: string;
-  isFixed: boolean;
-  categoryId: string | null;
-  categoryName: string | null;
-  parentCategoryId: string | null;
-  parentCategoryName: string | null;
-  accountId: string | null;
-  accountName: string | null;
-  toAccountId: string | null;
-  toAccountName: string | null;
-  cardId: string | null;
-  cardName: string | null;
-  /** 이체에 붙은 수수료. 이체가 아니면 null, 수수료 없는 이체면 "0" */
-  feeAmount: string | null;
-  feeCategoryId: string | null;
-  feeCategoryName: string | null;
-  /** 결제된 청구서에 포함된 내역. 금액·결제수단 변경과 삭제가 막힌다 */
-  lockedByStatement: boolean;
-  /** 이 거래가 속한 카드 청구 기간. 잠겨 있어도 이 안에서는 날짜를 고칠 수 있다 */
-  statementPeriodStart: string | null;
-  statementPeriodEnd: string | null;
-}
+export type { EntryListItem };
 
 interface TransactionItemProps {
   entry: EntryListItem;
@@ -47,11 +20,16 @@ interface TransactionItemProps {
   isSelected?: boolean;
 }
 
+/*
+ * 색이 곧 "합계에 들어가는가"다.
+ * 수입은 초록, 지출은 빨강, 잔액 조정은 노랑.
+ * 이체와 카드사 이체는 돈이 내 계좌 사이를 옮겨 다닌 것뿐이라 둘 다 회색이다.
+ */
 const BORDER_BY_KIND: Record<EntryListItem['kind'], string> = {
   income: 'border-green-500 bg-green-50',
   expense: 'border-red-500 bg-red-50',
   transfer: 'border-gray-400 bg-gray-50',
-  card_payment: 'border-blue-500 bg-blue-50',
+  card_payment: 'border-gray-400 bg-gray-50',
   adjustment: 'border-amber-400 bg-amber-50',
 };
 
@@ -59,7 +37,7 @@ const AMOUNT_COLOR_BY_KIND: Record<EntryListItem['kind'], string> = {
   income: 'text-green-600',
   expense: 'text-red-600',
   transfer: 'text-gray-600',
-  card_payment: 'text-blue-600',
+  card_payment: 'text-gray-600',
   adjustment: 'text-amber-700',
 };
 
@@ -68,9 +46,25 @@ const TWO_SIDED: Array<EntryListItem['kind']> = ['transfer', 'card_payment', 'ad
 
 const TITLE_BY_KIND: Partial<Record<EntryListItem['kind'], string>> = {
   transfer: '이체',
-  card_payment: '카드대금 결제',
   adjustment: '잔액 조정',
 };
+
+/**
+ * 이 거래가 합계에 들어가는지.
+ *
+ * 이체와 카드사 이체는 목록에 보이지만 수입에도 지출에도 잡히지 않는다.
+ * 내 계좌 사이의 이동이고, 카드 사용액은 그을 때 이미 지출로 잡혔기 때문이다.
+ * 수수료가 붙은 이체는 그 수수료만 지출이라 예외로 둔다.
+ */
+const NOT_COUNTED: Array<EntryListItem['kind']> = ['transfer', 'card_payment'];
+
+/** 카드사 이체는 방향이 뜻을 바꾼다 */
+function titleOf(entry: EntryListItem): string {
+  if (entry.kind === 'card_payment') {
+    return entry.cardTransferDirection === 'refund' ? '카드 환불 입금' : '카드 대금 결제';
+  }
+  return TITLE_BY_KIND[entry.kind] ?? entry.description;
+}
 
 export default function TransactionItem({ entry, onClick, isSelected }: TransactionItemProps) {
   const timeZone = useProjectTimeZone();
@@ -103,7 +97,7 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
       <div className="flex justify-between gap-4">
         <div className="flex-1">
           <p className="font-bold text-gray-900 text-base">
-            {TITLE_BY_KIND[entry.kind] ?? entry.description}
+            {titleOf(entry)}
           </p>
 
           {entry.kind === 'transfer' ? (
@@ -138,6 +132,11 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
 
           <p className="text-xs text-gray-500 mt-2">
             {formatDate(entry.date, timeZone)}
+            {NOT_COUNTED.includes(entry.kind) && !hasFee && (
+              <span className="ml-2 px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">
+                합계 제외
+              </span>
+            )}
           </p>
         </div>
 

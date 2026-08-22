@@ -5,7 +5,7 @@ import { PeopleService } from '@/modules/people/people.service';
 import { CategoriesService } from '@/modules/categories/categories.service';
 import { CardsService } from '@/modules/cards/cards.service';
 import { EntriesService } from '@/modules/entries/entries.service';
-import { StatementsService } from '@/modules/statements/statements.service';
+import { CardLedgerService } from '@/modules/cards/card-ledger.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
 import { projectAccessStub, runSmoke } from './smoke-harness';
 
@@ -23,7 +23,7 @@ runSmoke('entries', async (ctx) => {
   const categories = new CategoriesService(ctx.prisma as any, access);
   const cards = new CardsService(ctx.prisma as any, access, institutions);
   const entries = new EntriesService(ctx.prisma as any, access, ledger);
-  const statements = new StatementsService(ctx.prisma as any, access, ledger);
+  const cardLedger = new CardLedgerService(ctx.prisma as any, access, ledger);
 
   const person = await people.createPerson(uid, { name: '김철수' }, pid);
   await categories.createDefaultCategories(pid);
@@ -94,19 +94,18 @@ runSmoke('entries', async (ctx) => {
   ctx.check('분할 지출 leg 수', split.postings.length, 3);
   ctx.check('분할 지출 표시 금액', split.amount, '40000');
 
-  // ── 청구서 ──
-  const stmts = await statements.getStatements(uid, { projectId: pid });
-  ctx.check('청구서 자동 생성', stmts.length, 1);
-  ctx.check('청구서 사용액', stmts[0].chargedAmount, '5000');
-  ctx.check('청구서 미결제액', stmts[0].outstanding, '5000');
-  ctx.check('청구서 상태 (마감 지남)', stmts[0].status, 'closed');
+  // ── 카드 사용 현황 ──
+  // 청구서를 저장하지 않는다. 마감일로 읽을 때 계산한다.
+  const before = await cardLedger.getUsage(credit.id, uid);
+  ctx.check('남은 대금', before.outstanding, '5000');
+  ctx.check('사용분이 한 주기에 잡힌다',
+    before.periods.filter((p) => Number(p.usage) !== 0).length, 1);
 
-  await statements.payStatement(stmts[0].id, uid, {
-    accountId: bank.id, personId: person.id, date: '2026-08-25T00:00:00Z',
+  await cardLedger.transfer(credit.id, uid, {
+    accountId: bank.id, personId: person.id, amount: '5000',
+    direction: 'payment', date: '2026-08-25T00:00:00Z',
   });
-  const paid = await statements.getStatementById(stmts[0].id, uid);
-  ctx.check('결제 후 미결제액', paid.outstanding, '0');
-  ctx.check('결제 후 상태', paid.status, 'paid');
+  ctx.check('결제 후 남은 대금', (await cardLedger.getUsage(credit.id, uid)).outstanding, '0');
 
   // ── 목록 + 커서 페이지네이션 ──
   const page1 = await entries.getEntries(uid, { limit: 3 }, pid);

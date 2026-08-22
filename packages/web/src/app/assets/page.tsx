@@ -4,10 +4,15 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
-import type { Account, Card, Person, Statement } from '@/lib/types';
+import type { Account, Card, CardUsage, Person } from '@/lib/types';
 import { formatCurrency, toAmountString, toNumber } from '@/lib/money';
 import { useUserFilter } from '@/store/user-filter';
-import { formatDate, formatDateMarker, monthInputToIso } from '@/lib/datetime';
+import { formatDate, formatDateMarker, monthInputToIso, todayKey } from '@/lib/datetime';
+import {
+  LEDGER_MIN_ENTRY_DATE_KEY,
+  zonedFormValueToUtc,
+  type CardTransferDirection,
+} from '@money/types';
 import ChoiceModal from '@/components/ChoiceModal';
 import { useDragReorder } from '@/hooks/useDragReorder';
 import { DAY_OF_MONTH_HINT, DAY_OF_MONTH_OPTIONS } from '@/lib/day-of-month';
@@ -15,6 +20,12 @@ import { DAY_OF_MONTH_HINT, DAY_OF_MONTH_OPTIONS } from '@/lib/day-of-month';
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const PAYMENT_FORM_ID = 'card-payment-form';
 const CARD_ADD_FORM_ID = 'card-add-form';
+
+/** 카드사와 통장 사이 자금이 오가는 방향 */
+const TRANSFER_DIRECTIONS = [
+  { id: 'payment' as CardTransferDirection, label: '대금 결제' },
+  { id: 'refund' as CardTransferDirection, label: '환불 입금' },
+];
 import { useProject, useProjectTimeZone } from '@/store/project';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
@@ -72,11 +83,18 @@ export default function DashboardPage() {
   });
   const [addError, setAddError] = useState('');
 
-  const [statement, setStatement] = useState<Statement | null>(null);
+  const [usage, setUsage] = useState<CardUsage | null>(null);
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [paymentForm, setPaymentForm] = useState({
-    paymentType: 'full' as 'full' | 'partial',
+    direction: 'payment' as CardTransferDirection,
     amount: '',
+    /**
+     * 대금이 통장에서 빠진 날.
+     *
+     * 예전에는 서버가 저장 시각을 박았다. 결제일에 맞춰 뒤늦게 입력하거나 미리
+     * 기록해 두는 경우 통장 잔액의 날짜가 실제와 어긋났다. 그래서 사용자가 고른다.
+     */
+    date: '',
   });
   const [isPaymentSubmitting, setIsPaymentSubmitting] = useState(false);
 
@@ -131,19 +149,20 @@ export default function DashboardPage() {
   }, []);
 
   /** 카드 선택 시 미결제 청구서 조회. 가장 오래된 것부터 갚는다. */
-  const loadCardPayment = useCallback(async (cardId: string) => {
+  /**
+   * 카드 사용 현황.
+   *
+   * 청구서를 저장하지 않는다. 남은 대금과 마감일 기준 주기별 사용액을 서버가
+   * 그때그때 계산해 준다. 마감일을 바꾸면 과거 주기까지 곧바로 다시 그려진다.
+   */
+  const loadCardUsage = useCallback(async (cardId: string) => {
     try {
-      const response = await apiClient.getStatements(selectedProjectId, { cardId });
-      const rows: Statement[] = response ?? [];
-      const unpaid = rows
-        .filter((row) => Number(row.outstanding) > 0)
-        .sort((a, b) => a.periodEnd.localeCompare(b.periodEnd));
-      setStatement(unpaid[0] ?? null);
+      setUsage(await apiClient.getCardUsage(cardId));
     } catch (err) {
-      console.error('청구서 조회 실패:', err);
-      setStatement(null);
+      console.error('카드 사용 현황 조회 실패:', err);
+      setUsage(null);
     }
-  }, [selectedProjectId]);
+  }, []);
 
   // 계좌 선택 시 거래 내역 로드
   useEffect(() => {
@@ -154,14 +173,14 @@ export default function DashboardPage() {
     }
   }, [selectedAccount, detailType, loadAccountTransactions]);
 
-  // 카드 선택 시 미납액 로드
+  // 카드 선택 시 사용 현황 로드
   useEffect(() => {
-    if (selectedCard && detailType === 'card') {
-      loadCardPayment(selectedCard.id);
+    if (selectedCard && detailType === 'card' && selectedCard.cardType === 'credit') {
+      loadCardUsage(selectedCard.id);
     } else {
-      setStatement(null);
+      setUsage(null);
     }
-  }, [selectedCard, detailType, loadCardPayment]);
+  }, [selectedCard, detailType, loadCardUsage]);
 
   // 자산 화면은 사람 필터를 쓰지 않는다. 필터는 가계 화면 전용이고,
   // 여기서 걸면 총자산(서버 계산, 전체 기준)과 계좌 목록이 어긋난다.
@@ -217,11 +236,16 @@ export default function DashboardPage() {
     }
   };
 
-  // 카드 결제 실행
-  const handlePayCard = async () => {
-    if (!statement || !selectedCard) return;
+  /**
+   * 카드사와 통장 사이 자금 이동 기록.
+   *
+   * 금액에 상한을 두지 않는다. 카드사가 남은 대금보다 많이 가져가고 차액을 따로
+   * 입금해 주는 방식이 있어서, 그 사이 남은 대금은 음수(환불 예정)로 남아야 한다.
+   */
+  const handleCardTransfer = async () => {
+    if (!selectedCard || !usage) return;
 
-    // 대금은 카드에 연결된 결제 통장에서 빠진다.
+    // 대금은 카드에 연결된 결제 통장에서 오간다.
     const paymentAccount = accounts.find((a) => a.id === selectedCard.paymentAccountId);
     if (!paymentAccount?.ownerId) {
       alert('결제 통장을 찾을 수 없습니다.');
@@ -230,26 +254,45 @@ export default function DashboardPage() {
 
     try {
       setIsPaymentSubmitting(true);
-      await apiClient.payStatement(statement.id, {
+      await apiClient.createCardTransfer(selectedCard.id, {
         accountId: selectedCard.paymentAccountId,
         personId: paymentAccount.ownerId,
-        // 전액 결제면 금액을 생략한다 (서버가 미결제 전액으로 처리)
-        ...(paymentForm.paymentType === 'full'
-          ? {}
-          : { amount: toAmountString(paymentForm.amount) }),
+        amount: toAmountString(paymentForm.amount),
+        direction: paymentForm.direction,
+        // 입력한 날짜는 프로젝트 타임존의 벽시계다. 그 기준으로 UTC 인스턴트를 만든다.
+        date: zonedFormValueToUtc(
+          paymentForm.date || todayKey(timeZone),
+          undefined,
+          timeZone,
+        ).toISOString(),
       });
 
-      alert('결제가 완료되었습니다.');
-      setIsPaymentModalOpen(false);
-      setPaymentForm({ paymentType: 'full', amount: '' });
-
-      // 미납액 다시 로드
-      await loadCardPayment(selectedCard.id);
+      closePaymentModal();
+      await loadCardUsage(selectedCard.id);
+      const cardsData = await apiClient.getCards(selectedProjectId);
+      setCards(cardsData || []);
     } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '결제에 실패했습니다.');
+      alert(err?.response?.data?.error?.message || '기록에 실패했습니다.');
     } finally {
       setIsPaymentSubmitting(false);
     }
+  };
+
+  // 남은 대금이 음수면 카드사가 갚을 돈이 남은 상태다.
+  const outstanding = Number(usage?.outstanding ?? 0);
+  const refundPending = outstanding < 0;
+  /** 입력 금액이 남은 쪽 잔액을 넘는 정도. 막지는 않고 알리기만 한다. */
+  const overTransfer = (() => {
+    const amount = toNumber(paymentForm.amount);
+    if (!amount) return 0;
+    const room = paymentForm.direction === 'refund' ? -outstanding : outstanding;
+    return amount > room ? amount - Math.max(room, 0) : 0;
+  })();
+
+  /** 이체 팝업 닫기. 취소·닫기·성공 세 경로가 같은 초기화를 쓴다. */
+  const closePaymentModal = () => {
+    setIsPaymentModalOpen(false);
+    setPaymentForm({ direction: 'payment', amount: '', date: '' });
   };
 
   const handleAddCard = async (e: React.FormEvent) => {
@@ -736,49 +779,72 @@ export default function DashboardPage() {
                     </p>
                   </div>
 
-                  {/* 청구서 미결제액. SUM(Posting.amount WHERE statementId=X)로 서버가 계산한다 */}
-                  {statement && (
-                    <div className="pt-4 border-t">
-                      <div className="bg-red-50 rounded-lg p-4 space-y-3">
-                        <h3 className="font-semibold text-gray-900">카드 청구서</h3>
-                        <div className="space-y-2">
-                          <div className="flex justify-between">
-                            <span className="text-sm text-gray-600">마감일</span>
-                            <span className="text-sm font-medium">
-                              {formatDateMarker(statement.periodEnd)}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-sm text-gray-600">결제일</span>
-                            <span className="text-sm font-medium">
-                              {formatDateMarker(statement.dueDate)}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-sm text-gray-600">청구액</span>
-                            <span className="text-sm font-medium">
-                              {formatCurrency(statement.chargedAmount)}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-sm text-gray-600">결제 완료</span>
-                            <span className="text-sm font-medium">
-                              {formatCurrency(statement.paidAmount)}
-                            </span>
-                          </div>
-                          <div className="flex justify-between pt-2 border-t">
-                            <span className="text-sm font-semibold text-red-600">미결제액</span>
-                            <span className="text-lg font-bold text-red-600">
-                              {formatCurrency(statement.outstanding)}
-                            </span>
-                          </div>
+                  {/*
+                    남은 대금과 주기별 사용액.
+                    청구서를 저장하지 않고 카드의 현재 마감일로 서버가 계산해 준다.
+                  */}
+                  {usage && (
+                    <div className="pt-4 border-t space-y-3">
+                      <div
+                        className={`rounded-lg p-4 space-y-3 ${
+                          refundPending ? 'bg-emerald-50' : 'bg-red-50'
+                        }`}
+                      >
+                        <div className="flex justify-between items-baseline">
+                          <span
+                            className={`text-sm font-semibold ${
+                              refundPending ? 'text-emerald-700' : 'text-red-600'
+                            }`}
+                          >
+                            {refundPending ? '환불 예정' : '남은 대금'}
+                          </span>
+                          <span
+                            className={`text-lg font-bold ${
+                              refundPending ? 'text-emerald-700' : 'text-red-600'
+                            }`}
+                          >
+                            {formatCurrency(Math.abs(Number(usage.outstanding)))}
+                          </span>
                         </div>
+                        {refundPending && (
+                          <p className="text-xs text-emerald-700">
+                            카드사가 갚을 돈입니다. 맞지 않으면 대금 기록을 확인하세요.
+                          </p>
+                        )}
                         <button
                           onClick={() => setIsPaymentModalOpen(true)}
-                          className="w-full px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
+                          className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                         >
-                          결제하기
+                          대금 기록하기
                         </button>
+                      </div>
+
+                      <div>
+                        <h3 className="text-sm font-medium text-gray-700 mb-2">
+                          마감일 기준 사용액
+                        </h3>
+                        <div className="space-y-1">
+                          {usage.periods.map((period) => (
+                            <div
+                              key={period.periodEnd}
+                              className="flex justify-between items-center px-3 py-2 bg-gray-50 rounded-lg"
+                            >
+                              <div className="text-sm text-gray-700">
+                                {formatDateMarker(period.periodStart)} ~{' '}
+                                {formatDateMarker(period.periodEnd)}
+                                <span className="ml-2 text-xs text-gray-500">
+                                  {period.closed ? '마감' : '진행'}
+                                </span>
+                              </div>
+                              <span className="text-sm font-medium text-gray-900">
+                                {formatCurrency(period.usage)}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                        <p className="mt-2 text-xs text-gray-500">
+                          할부는 회차분만 들어갑니다. 남은 대금은 결제까지 반영한 값이라 합계와 다릅니다.
+                        </p>
                       </div>
                     </div>
                   )}
@@ -790,23 +856,17 @@ export default function DashboardPage() {
         </Modal>
       )}
 
-      {/* 신용카드 결제 모달 */}
-      {isPaymentModalOpen && statement && selectedCard && (
+      {/* 카드사 자금 이동 모달 */}
+      {isPaymentModalOpen && usage && selectedCard && (
         <Modal
           isOpen={true}
-          onClose={() => {
-            setIsPaymentModalOpen(false);
-            setPaymentForm({ paymentType: 'full', amount: '' });
-          }}
-          title="신용카드 결제"
+          onClose={closePaymentModal}
+          title="카드 대금 기록"
           footer={
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() => {
-                  setIsPaymentModalOpen(false);
-                  setPaymentForm({ paymentType: 'full', amount: '' });
-                }}
+                onClick={closePaymentModal}
                 className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
               >
                 취소
@@ -817,7 +877,7 @@ export default function DashboardPage() {
                 disabled={isPaymentSubmitting}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
               >
-                {isPaymentSubmitting ? '처리 중...' : '결제하기'}
+                {isPaymentSubmitting ? '처리 중...' : '기록하기'}
               </button>
             </div>
           }
@@ -826,73 +886,79 @@ export default function DashboardPage() {
             id={PAYMENT_FORM_ID}
             onSubmit={(e) => {
               e.preventDefault();
-              handlePayCard();
+              handleCardTransfer();
             }}
             className="space-y-4"
           >
-            <div className="bg-gray-50 p-3 rounded-lg">
-              <div className="flex justify-between mb-2">
-                <span className="text-sm text-gray-600">미납액</span>
-                <span className="font-semibold">
-                  {new Intl.NumberFormat('ko-KR', {
-                    style: 'currency',
-                    currency: 'KRW',
-                  }).format(Number(statement.outstanding))}
-                </span>
-              </div>
+            <div className="bg-gray-50 p-3 rounded-lg flex justify-between">
+              <span className="text-sm text-gray-600">
+                {refundPending ? '환불 예정' : '남은 대금'}
+              </span>
+              <span className="font-semibold">
+                {formatCurrency(Math.abs(Number(usage.outstanding)))}
+              </span>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                결제 유형
-              </label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">방향</label>
               <div className="flex gap-2">
-                <label className="flex-1 flex items-center">
-                  <input
-                    type="radio"
-                    value="full"
-                    checked={paymentForm.paymentType === 'full'}
-                    onChange={(e) =>
-                      setPaymentForm({ ...paymentForm, paymentType: 'full' })
-                    }
-                    className="mr-2"
-                  />
-                  <span className="text-sm">전체 결제</span>
-                </label>
-                <label className="flex-1 flex items-center">
-                  <input
-                    type="radio"
-                    value="partial"
-                    checked={paymentForm.paymentType === 'partial'}
-                    onChange={(e) =>
-                      setPaymentForm({ ...paymentForm, paymentType: 'partial' })
-                    }
-                    className="mr-2"
-                  />
-                  <span className="text-sm">부분 결제</span>
-                </label>
+                {TRANSFER_DIRECTIONS.map((option) => (
+                  <label key={option.id} className="flex-1 flex items-center">
+                    <input
+                      type="radio"
+                      value={option.id}
+                      checked={paymentForm.direction === option.id}
+                      onChange={() => setPaymentForm({ ...paymentForm, direction: option.id })}
+                      className="mr-2"
+                    />
+                    <span className="text-sm">{option.label}</span>
+                  </label>
+                ))}
               </div>
+              <p className="mt-1 text-xs text-gray-500">
+                {paymentForm.direction === 'refund'
+                  ? '카드사가 통장에 넣어 준 돈입니다.'
+                  : '통장에서 카드사로 나간 돈입니다.'}
+              </p>
             </div>
 
-            {paymentForm.paymentType === 'partial' && (
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  결제 금액 (원)
-                </label>
-                <input
-                  type="number"
-                  required
-                  value={paymentForm.amount}
-                  onChange={(e) =>
-                    setPaymentForm({ ...paymentForm, amount: e.target.value })
-                  }
-                  placeholder="0"
-                  max={Number(statement.outstanding)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                />
-              </div>
-            )}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">날짜</label>
+              <input
+                type="date"
+                required
+                value={paymentForm.date || todayKey(timeZone)}
+                min={LEDGER_MIN_ENTRY_DATE_KEY}
+                onChange={(e) => setPaymentForm({ ...paymentForm, date: e.target.value })}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                통장에서 돈이 실제로 오간 날입니다.
+              </p>
+            </div>
 
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">금액 (원)</label>
+              <input
+                type="number"
+                required
+                value={paymentForm.amount}
+                onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })}
+                placeholder="0"
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              {/*
+                상한을 두지 않는다. 카드사가 남은 대금보다 많이 가져가고 차액을 따로
+                입금해 주는 방식이 있어서, 그 사이 남은 대금은 음수로 남아야 한다.
+              */}
+              {overTransfer && (
+                <p className="mt-1 text-xs text-amber-700">
+                  {refundPending ? '환불 예정액' : '남은 대금'}보다{' '}
+                  {formatCurrency(overTransfer)} 많습니다. 차액은{' '}
+                  {paymentForm.direction === 'refund' ? '대금' : '환불 예정'}으로 남습니다.
+                </p>
+              )}
+            </div>
           </form>
         </Modal>
       )}

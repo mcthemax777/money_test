@@ -13,7 +13,6 @@ import { CategoriesModule } from './modules/categories/categories.module';
 import { EntriesModule } from './modules/entries/entries.module';
 import { LedgerModule } from './modules/ledger/ledger.module';
 import { BudgetsModule } from './modules/budgets/budgets.module';
-import { StatementsModule } from './modules/statements/statements.module';
 import { ReportsModule } from './modules/reports/reports.module';
 
 @Module({
@@ -32,7 +31,6 @@ import { ReportsModule } from './modules/reports/reports.module';
     LedgerModule,
     EntriesModule,
     BudgetsModule,
-    StatementsModule,
     ReportsModule,
   ],
 })

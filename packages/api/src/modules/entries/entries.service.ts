@@ -36,12 +36,7 @@ export class EntriesService {
     return this.getEntryById(entry.id, userId);
   }
 
-  /**
-   * 수정은 전체 교체다. id는 유지된다.
-   *
-   * 이미 결제된 청구서의 금액을 바꾸는 수정은 거부한다.
-   * 설명·카테고리·거래처처럼 청구서와 무관한 값은 그대로 고칠 수 있다.
-   */
+  /** 수정은 전체 교체다. id는 유지된다. */
   async updateEntry(id: string, userId: string, dto: EntryDto.UpdateRequest) {
     const existing = await this.prisma.journalEntry.findUnique({
       where: { id },
@@ -51,19 +46,13 @@ export class EntriesService {
     await this.projectAccess.verifyUserHasAccessToProject(userId, existing.projectId);
 
     const input = await this.buildInput(existing.projectId, userId, dto);
-    await this.assertSettledStatementsUnchanged(existing.postings, input.postings);
 
     await this.ledger.replaceEntry(id, input);
     await this.syncCategoryDefaults(existing.projectId, dto);
     return this.getEntryById(id, userId);
   }
 
-  /**
-   * 삭제.
-   *
-   * 결제가 끝난 청구서에 속한 카드 사용 내역은 지울 수 없다.
-   * 지우면 청구액만 사라지고 결제 기록은 남아 카드 부채가 유령 잔액으로 뜬다.
-   */
+  /** 삭제. 카드 거래도 다른 거래와 똑같이 지운다. */
   async deleteEntry(id: string, userId: string) {
     const existing = await this.prisma.journalEntry.findUnique({
       where: { id },
@@ -72,67 +61,8 @@ export class EntriesService {
     if (!existing) throw new NotFoundException('거래를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, existing.projectId);
 
-    // 삭제는 청구액을 전부 없애므로 결제된 청구서가 걸려 있으면 무조건 막는다
-    await this.assertSettledStatementsUnchanged(existing.postings, []);
-
     await this.ledger.deleteEntry(id, existing.projectId);
     return { id };
-  }
-
-  /**
-   * 결제가 시작된 청구서의 금액이 바뀌지 않는지 확인한다.
-   *
-   * 날짜를 바꾸면 다른 청구서로 옮겨가고, 금액이나 카드를 바꾸면 청구액이 달라진다.
-   * 셋 다 "청구서별 기여 금액"이 달라지는 것으로 한 번에 잡힌다.
-   * 청구서와 무관한 값만 고치면 기여 금액이 그대로라 통과한다.
-   *
-   * 나가는 쪽과 들어오는 쪽을 모두 본다.
-   * 미결제 내역이라도 이미 완납한 청구서로 옮기면 그 청구서가 되살아나기 때문이다.
-   */
-  private async assertSettledStatementsUnchanged(
-    oldPostings: Array<{ statementId: string | null; amount: Prisma.Decimal }>,
-    newPostings: Array<{ statementId?: string; amount: Prisma.Decimal }>,
-  ) {
-    const touched = [
-      ...oldPostings.map((p) => p.statementId),
-      ...newPostings.map((p) => p.statementId),
-    ].filter((id): id is string => Boolean(id));
-
-    const settled = await this.findSettledStatementIds(touched);
-    if (settled.size === 0) return;
-
-    const oldByStatement = sumByStatement(
-      oldPostings.map((p) => ({ statementId: p.statementId ?? undefined, amount: p.amount })),
-    );
-    const newByStatement = sumByStatement(newPostings);
-
-    for (const statementId of settled) {
-      const before = oldByStatement.get(statementId) ?? ZERO;
-      const after = newByStatement.get(statementId) ?? ZERO;
-      if (!before.equals(after)) {
-        throw new BadRequestException(
-          '이미 결제한 청구서에 포함된 내역입니다. 금액, 날짜, 카드는 바꿀 수 없습니다.',
-        );
-      }
-    }
-  }
-
-  /** 결제가 한 번이라도 이루어진 청구서. 부분 결제도 포함한다. */
-  private async findSettledStatementIds(statementIds: string[]): Promise<Set<string>> {
-    if (statementIds.length === 0) return new Set();
-
-    // 부채 계정 posting에서 양수는 상환이다
-    const payments = await this.prisma.posting.groupBy({
-      by: ['statementId'],
-      where: { statementId: { in: statementIds }, amount: { gt: 0 } },
-      _sum: { amount: true },
-    });
-
-    return new Set(
-      payments
-        .filter((row) => row.statementId && (row._sum.amount ?? ZERO).gt(ZERO))
-        .map((row) => row.statementId as string),
-    );
   }
 
   /**
@@ -233,14 +163,7 @@ export class EntriesService {
     const hasMore = rows.length > limit;
     const page = hasMore ? rows.slice(0, limit) : rows;
 
-    // 이 페이지에 걸린 청구서 중 결제가 시작된 것을 한 번에 조회한다 (전표마다 묻지 않는다)
-    const settled = await this.findSettledStatementIds(
-      page.flatMap((entry) =>
-        entry.postings.map((p) => p.statementId).filter((id): id is string => Boolean(id)),
-      ),
-    );
-
-    let data = page.map((entry) => toListItem(entry, settled));
+    let data = page.map((entry) => toListItem(entry));
     // kind는 postings에서 유도되는 값이라 DB에서 거를 수 없다. 조립 후 거른다.
     if (query.kind) data = data.filter((item) => item.kind === query.kind);
 
@@ -259,12 +182,8 @@ export class EntriesService {
     if (!entry) throw new NotFoundException('거래를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, entry.projectId);
 
-    const settled = await this.findSettledStatementIds(
-      entry.postings.map((p) => p.statementId).filter((id): id is string => Boolean(id)),
-    );
-
     return {
-      ...toListItem(entry, settled),
+      ...toListItem(entry),
       postings: entry.postings.map((p) => ({
         id: p.id,
         entryId: p.entryId,
@@ -276,7 +195,6 @@ export class EntriesService {
         baseAmount: p.baseAmount.toString(),
         exchangeRate: p.exchangeRate.toString(),
         isFixed: p.isFixed,
-        statementId: p.statementId,
         cardId: p.cardId,
       })),
     };
@@ -305,6 +223,7 @@ export class EntriesService {
           lines: this.resolveLines(dto),
           accountId: dto.accountId,
           cardId: dto.cardId,
+          installmentMonths: dto.installmentMonths,
         });
 
       case 'income':
@@ -334,14 +253,14 @@ export class EntriesService {
 
       case 'card_payment':
         if (!dto.accountId || !dto.cardId) {
-          throw new BadRequestException('카드대금 결제는 결제 통장과 카드가 필요합니다.');
+          throw new BadRequestException('카드사 이체는 통장과 카드가 필요합니다.');
         }
-        return this.ledger.buildCardPayment({
+        return this.ledger.buildCardTransfer({
           ...common,
           cardId: dto.cardId,
           accountId: dto.accountId,
           amount: new Prisma.Decimal(dto.amount),
-          statementId: dto.statementId,
+          direction: dto.cardTransferDirection ?? 'payment',
         });
 
       default:
@@ -429,19 +348,4 @@ export class EntriesService {
     }
     return { date, id };
   }
-}
-
-/** 청구서별 금액 합계 */
-function sumByStatement(
-  postings: Array<{ statementId?: string | null; amount: Prisma.Decimal }>,
-): Map<string, Prisma.Decimal> {
-  const result = new Map<string, Prisma.Decimal>();
-  for (const posting of postings) {
-    if (!posting.statementId) continue;
-    result.set(
-      posting.statementId,
-      (result.get(posting.statementId) ?? ZERO).add(posting.amount),
-    );
-  }
-  return result;
 }

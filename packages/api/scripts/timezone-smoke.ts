@@ -6,7 +6,7 @@ import { InstitutionsService } from '@/modules/institutions/institutions.service
 import { LedgerService } from '@/modules/ledger/ledger.service';
 import { PeopleService } from '@/modules/people/people.service';
 import { ReportsService } from '@/modules/reports/reports.service';
-import { StatementsService } from '@/modules/statements/statements.service';
+import { CardLedgerService } from '@/modules/cards/card-ledger.service';
 import { projectAccessStub, runSmoke } from './smoke-harness';
 
 /**
@@ -37,7 +37,7 @@ runSmoke('timezone', async (ctx) => {
     const cards = new CardsService(ctx.prisma as any, access, institutions);
     const entries = new EntriesService(ctx.prisma as any, access, ledger);
     const reports = new ReportsService(ctx.prisma as any, access);
-    const statements = new StatementsService(ctx.prisma as any, access, ledger);
+    const cardLedger = new CardLedgerService(ctx.prisma as any, access, ledger);
 
     const person = await people.createPerson(uid, { name: '김철수' }, pid);
     await categories.createDefaultCategories(pid);
@@ -46,10 +46,10 @@ runSmoke('timezone', async (ctx) => {
 
     const bank = await accounts.createAccount(uid, {
       type: 'deposit', ownerId: person.id, name: '보통예금', institutionId: 'fi_bank_shinhan',
-      openingBalance: '1000000', openingBalanceDate: '2026-01-01',
+      openingBalance: '1000000',
     }, pid);
 
-    return { pid, person, dining, bank, accounts, cards, entries, reports, statements };
+    return { pid, person, dining, bank, accounts, cards, entries, reports, cardLedger };
   };
 
   // ── 서울: 경계 인스턴트는 8월에 속한다 ──
@@ -105,9 +105,10 @@ runSmoke('timezone', async (ctx) => {
     categoryId: seoul.dining.id, cardId: card.id,
   }, seoul.pid);
 
-  const rows = await seoul.statements.getStatements(uid, { projectId: seoul.pid, cardId: card.id });
-  ctx.check('청구서 1건', rows.length, 1);
-  ctx.check('마감일이 9/15로 넘어간다', rows[0]?.periodEnd.slice(0, 10), '2026-09-15');
-  ctx.check('주기 시작은 8/16', rows[0]?.periodStart.slice(0, 10), '2026-08-16');
-  ctx.check('결제일은 9/25', rows[0]?.dueDate.slice(0, 10), '2026-09-25');
+  const usage = await seoul.cardLedger.getUsage(card.id, uid);
+  const used = usage.periods.filter((p: { usage: string }) => Number(p.usage) !== 0);
+  ctx.check('금액이 잡힌 주기는 1개', used.length, 1);
+  ctx.check('마감일이 9/15로 넘어간다', used[0]?.periodEnd.slice(0, 10), '2026-09-15');
+  ctx.check('주기 시작은 8/16', used[0]?.periodStart.slice(0, 10), '2026-08-16');
+  ctx.check('결제일은 9/25', used[0]?.dueDate.slice(0, 10), '2026-09-25');
 });

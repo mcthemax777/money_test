@@ -11,7 +11,6 @@ import type {
   InstitutionDto,
   PersonDto,
   ReportDto,
-  StatementDto,
 } from '@money/types';
 
 /**
@@ -532,28 +531,19 @@ class ApiClient {
     await this.client.delete(`/budgets/override/${id}`);
   }
 
-  // 청구서 API Methods (구 card-payments 대체)
-  async getStatements(
-    projectId?: string | null,
-    query?: StatementDto.ListQuery & { cardId?: string },
-  ): Promise<StatementDto.Response[]> {
-    const params: any = { ...query };
-    if (projectId) params.projectId = projectId;
-    const response = await this.client.get<StatementDto.Response[]>('/statements', { params });
+  // 카드 원장 API Methods
+  //
+  // 청구서를 저장하지 않는다. 주기별 사용액은 카드의 현재 마감일로 서버가 계산한다.
+  async getCardUsage(cardId: string, months?: number): Promise<CardDto.UsageResponse> {
+    const response = await this.client.get<CardDto.UsageResponse>(`/cards/${cardId}/usage`, {
+      params: months ? { months } : undefined,
+    });
     return response.data;
   }
 
-  async getStatement(id: string): Promise<StatementDto.Response> {
-    const response = await this.client.get<StatementDto.Response>(`/statements/${id}`);
-    return response.data;
-  }
-
-  /** 금액을 생략하면 미결제 전액을 갚는다. */
-  async payStatement(
-    id: string,
-    data: { accountId: string; personId: string; amount?: string; date?: string },
-  ) {
-    const response = await this.client.post<any>(`/statements/${id}/pay`, data);
+  /** 카드사와 통장 사이 자금 이동. direction으로 대금 결제와 환불 입금을 가른다. */
+  async createCardTransfer(cardId: string, data: CardDto.TransferRequest) {
+    const response = await this.client.post<any>(`/cards/${cardId}/transfers`, data);
     return response.data;
   }
 

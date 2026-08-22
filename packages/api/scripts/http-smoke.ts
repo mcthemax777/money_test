@@ -104,17 +104,20 @@ runSmoke('http', async (ctx) => {
   const netWorth = await call('GET', `/reports/net-worth${q}`);
   ctx.check('순자산 (예금 100만 - 카드 5천)', netWorth.body?.total, '995000');
 
-  // 8) 청구서
-  const statements = await call('GET', `/statements${q}`);
-  ctx.check('청구서 자동 생성', statements.body?.length, 1);
-  ctx.check('미결제액', statements.body?.[0]?.outstanding, '5000');
+  // 8) 카드 사용 현황과 대금 이체
+  const usage = await call('GET', `/cards/${credit.body.id}/usage`);
+  ctx.check('남은 대금', usage.body?.outstanding, '5000');
+  ctx.check('사용액이 잡힌 주기',
+    usage.body?.periods?.filter((p: any) => Number(p.usage) !== 0).length, 1);
 
-  const pay = await call('POST', `/statements/${statements.body[0].id}/pay`, {
+  const pay = await call('POST', `/cards/${credit.body.id}/transfers`, {
     accountId: account.body.id,
     personId: person.body.id,
+    amount: '5000',
+    direction: 'payment',
     date: '2026-08-25T00:00:00.000Z',
   });
-  ctx.check('청구서 결제', pay.status, 201);
+  ctx.check('대금 결제 기록', pay.status, 201);
   ctx.check('결제 후 통장 잔액',
     (await call('GET', `/accounts/${account.body.id}`)).body?.balance, '995000');
 

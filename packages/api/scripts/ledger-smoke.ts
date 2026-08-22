@@ -21,8 +21,8 @@ runSmoke('ledger', async (ctx) => {
   const bank = await ctx.prisma.account.create({
     data: { projectId: pid, ownerId: person.id, type: 'deposit', name: '보통예금' },
   });
-  await ledger.setOpeningBalance({
-    projectId: pid, accountId: bank.id, amount: D(1_000_000), date: new Date('2026-08-01T00:00:00Z'),
+  await ledger.setBalanceTo({
+    projectId: pid, accountId: bank.id, targetBalance: D(1_000_000),
   });
   const savings = await ctx.prisma.account.create({
     data: { projectId: pid, ownerId: person.id, type: 'savings', name: '저축통장' },
@@ -70,7 +70,7 @@ runSmoke('ledger', async (ctx) => {
   });
   ctx.check('체크카드 지출 후 예금', (await ctx.prisma.account.findUniqueOrThrow({ where: { id: bank.id } })).balance, '995000');
 
-  // ── 2. 신용카드 지출 (청구서 자동 생성) ──
+  // ── 2. 신용카드 지출 (부채 계정에만 쌓인다) ──
   await ledger.createExpense({
     ...base, description: '이마트', cardId: creditCard.id,
     lines: [{ categoryId: food.id, amount: D(30000) }, { categoryId: goods.id, amount: D(10000) }],
@@ -78,10 +78,9 @@ runSmoke('ledger', async (ctx) => {
   ctx.check('신용카드 지출 후 예금 (변동 없어야 함)', (await ctx.prisma.account.findUniqueOrThrow({ where: { id: bank.id } })).balance, '995000');
   ctx.check('신용카드 부채', (await ctx.prisma.account.findUniqueOrThrow({ where: { id: cardLiability.id } })).balance, '-40000');
 
-  const stmt = await ctx.prisma.cardStatement.findFirstOrThrow({ where: { cardId: creditCard.id } });
-  ctx.check('청구서 마감일', stmt.periodEnd.toISOString().slice(0, 10), '2026-08-15');
-  ctx.check('청구서 결제일', stmt.dueDate.toISOString().slice(0, 10), '2026-08-25');
-  ctx.check('청구서 시작일', stmt.periodStart.toISOString().slice(0, 10), '2026-07-16');
+  // 청구서 행을 만들지 않는다. 주기는 카드의 현재 마감일로 읽을 때 계산한다.
+  ctx.check('청구서 행을 만들지 않는다',
+    await ctx.prisma.cardStatement.count({ where: { cardId: creditCard.id } }), 0);
 
   // ── 3. isFixed 기본값이 카테고리에서 오는지 ──
   await ledger.createExpense({
@@ -111,9 +110,9 @@ runSmoke('ledger', async (ctx) => {
   ctx.check('이체 후 받는 계좌', (await ctx.prisma.account.findUniqueOrThrow({ where: { id: savings.id } })).balance, '100000');
 
   // ── 6. 카드대금 결제 ──
-  await ledger.createCardPayment({
+  await ledger.createCardTransfer({
     ...base, date: new Date('2026-08-25T00:00:00Z'), description: '신한카드 결제',
-    cardId: creditCard.id, accountId: bank.id, amount: D(40000),
+    cardId: creditCard.id, accountId: bank.id, amount: D(40000), direction: 'payment',
   });
   ctx.check('카드 결제 후 부채 (0이어야 함)', (await ctx.prisma.account.findUniqueOrThrow({ where: { id: cardLiability.id } })).balance, '0');
   ctx.check('카드 결제 후 예금', (await ctx.prisma.account.findUniqueOrThrow({ where: { id: bank.id } })).balance, '3154500');
@@ -155,7 +154,7 @@ runSmoke('ledger', async (ctx) => {
   });
   ctx.check(
     '회계 항등식 (계좌 합계 + 카테고리 합계 = 0)',
-    allAccounts._sum.balance.add(allCategoryPostings._sum.amount).toString(),
+    (allAccounts._sum.balance ?? D(0)).add(allCategoryPostings._sum.amount ?? D(0)).toString(),
     '0',
   );
 
@@ -169,7 +168,7 @@ runSmoke('ledger', async (ctx) => {
   // ── 9-d. 카드 화면의 "사용액"은 양수로 나와야 한다 ──
   const cardList = await cards.getCards('u1', pid);
   const credit = cardList.find((c: any) => c.id === creditCard.id);
-  ctx.check('카드 사용액 표시 (결제 후 0)', credit.currentUsage.toString(), '0');
+  ctx.check('카드 사용액 표시 (결제 후 0)', credit?.currentUsage ?? '', '0');
 
   // ── 10. 전표 삭제 시 잔액 롤백 ──
   await ledger.deleteEntry(transfer.id, pid);
@@ -198,9 +197,9 @@ runSmoke('ledger', async (ctx) => {
     lines: [{ categoryId: food.id, amount: D(1000) }],
   });
   await ctx.expectReject('사용액 남은 카드 삭제 거부', () => cards.deleteCard(creditCard.id, 'u1'));
-  await ledger.createCardPayment({
+  await ledger.createCardTransfer({
     ...base, date: new Date('2026-09-25T00:00:00Z'), description: '잔액 정리',
-    cardId: creditCard.id, accountId: bank.id, amount: D(1000),
+    cardId: creditCard.id, accountId: bank.id, amount: D(1000), direction: 'payment',
   });
   await cards.deleteCard(creditCard.id, 'u1');
   const deactivated = await ctx.prisma.account.findUniqueOrThrow({ where: { id: creditCard.liabilityAccountId! } });

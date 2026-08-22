@@ -15,6 +15,7 @@ import {
 import { AuthGuard } from '@nestjs/passport';
 import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { CardsService } from './cards.service';
+import { CardLedgerService } from './card-ledger.service';
 import { AuthenticatedRequest } from '@/common/authenticated-request';
 import { CardDto, ReorderRequest } from '@money/types';
 
@@ -23,7 +24,10 @@ import { CardDto, ReorderRequest } from '@money/types';
 @UseGuards(AuthGuard('jwt'))
 @ApiBearerAuth()
 export class CardsController {
-  constructor(private readonly cardsService: CardsService) {}
+  constructor(
+    private readonly cardsService: CardsService,
+    private readonly cardLedger: CardLedgerService,
+  ) {}
 
   @Post()
   @HttpCode(HttpStatus.CREATED)
@@ -51,6 +55,27 @@ export class CardsController {
     @Query('projectId') projectId?: string,
   ) {
     return this.cardsService.reorderCards(req.user.id, dto.ids, projectId);
+  }
+
+  @Get(':id/usage')
+  @ApiOperation({ summary: '남은 대금과 마감일 기준 주기별 사용액' })
+  usage(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Query('months') months?: string,
+  ) {
+    return this.cardLedger.getUsage(id, req.user.id, months ? Number(months) : undefined);
+  }
+
+  @Post(':id/transfers')
+  @HttpCode(HttpStatus.CREATED)
+  @ApiOperation({ summary: '카드사와 통장 사이 자금 이동 (대금 결제 / 환불 입금)' })
+  transfer(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: CardDto.TransferRequest,
+  ) {
+    return this.cardLedger.transfer(id, req.user.id, dto);
   }
 
   @Get(':id')

@@ -14,7 +14,6 @@ import type {
   CategoryDto,
   InstitutionDto,
   PersonDto,
-  StatementDto,
 } from '@money/types';
 
 export type Account = AccountDto.Response;
@@ -23,8 +22,9 @@ export type Institution = InstitutionDto.Response;
 export type Card = CardDto.Response;
 export type Category = CategoryDto.Response;
 export type Person = PersonDto.Response;
-/** 청구서. 미결제액이 계산되어 온다 */
-export type Statement = StatementDto.Response;
+/** 카드 사용 현황. 남은 대금과 마감일 기준 주기별 사용액 */
+export type CardUsage = CardDto.UsageResponse;
+export type CardUsagePeriod = CardDto.UsagePeriod;
 /** 계좌 원장 한 줄 (거래별 잔액 추이 포함) */
 export type LedgerRow = AccountDto.LedgerRow;
 
@@ -38,6 +38,6 @@ export type {
   Project,
   ProjectMember,
   ProjectRole,
-  StatementStatus,
+  CardTransferDirection,
   User,
 } from '@money/types';

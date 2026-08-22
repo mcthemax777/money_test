@@ -275,8 +275,9 @@ export function BudgetDetailModal({
     return max > 0 ? Math.ceil((max * 1.2) / 100) * 100 : 1000;
   };
 
-  // 카드대금 결제는 소비가 아니므로 목록에서 뺀다
-  const visibleEntries = currentMonthEntries.filter((entry) => entry.kind !== 'card_payment');
+  // 이 목록은 categoryId나 categoryType으로 조회한 결과라 카테고리 다리가 없는
+  // 카드사 이체는 애초에 들어오지 않는다. 따로 걸러 내지 않는다.
+  const visibleEntries = currentMonthEntries;
 
   const hasMonthlyAmount = monthlyData.some((d) => d.amount > 0);
   const hasDailyAmount = dailyData.some((d) => d.cumulative > 0);
