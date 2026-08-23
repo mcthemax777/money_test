@@ -48,6 +48,15 @@ export class ReportsController {
     return this.reportsService.getTrend(req.user.id, query);
   }
 
+  @Get('investment-profit')
+  @ApiOperation({ summary: '투자 계좌의 누적 수익 (이체로 넣은 원금은 제외)' })
+  investmentProfit(
+    @Request() req: AuthenticatedRequest,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.reportsService.getInvestmentProfit(req.user.id, { projectId });
+  }
+
   @Get('payment-methods')
   @ApiOperation({ summary: '결제수단별 지출 (통장/체크카드/신용카드)' })
   paymentMethods(@Request() req: AuthenticatedRequest, @Query() query: ReportDto.PeriodQuery) {

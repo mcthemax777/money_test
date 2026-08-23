@@ -2,7 +2,7 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { AccountType, CategoryType, Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
-import { ENTRY_INCLUDE, toListItem } from '../entries/entry-view';
+import { ENTRY_INCLUDE, classifyEntry, toListItem } from '../entries/entry-view';
 import {
   MATCH_NOTHING,
   assetOwnerCondition,
@@ -733,6 +733,55 @@ export class ReportsService {
     }
 
     return [...buckets.values()].sort((a, b) => Number(b.amount) - Number(a.amount));
+  }
+
+  /**
+   * 투자 계좌의 누적 수익.
+   *
+   * 투자 계좌에 이체로 넣은 돈은 원금이다. 그 계좌에 수입·지출로 기록한 것만 수익과
+   * 손실이다(배당, 매매 차익, 수수료). 이체·카드대금·잔액조정은 원금이 오간 것이라 뺀다.
+   * 기초잔액 전표도 잔액조정으로 분류되므로 저절로 빠진다(classifyEntry 참고).
+   *
+   * 구간을 받지 않는다. 자산 화면의 잔액이 전 기간 누적이라 수익도 같은 기준이어야
+   * "원금 얼마에 수익 얼마"로 나란히 읽힌다.
+   */
+  async getInvestmentProfit(
+    userId: string,
+    query: { projectId?: string },
+  ): Promise<ReportDto.InvestmentProfit[]> {
+    const { id: projectId } = await this.projectAccess.resolveProject(userId, query.projectId);
+
+    const accounts = await this.prisma.account.findMany({
+      where: { projectId, type: AccountType.investment },
+      select: { id: true },
+    });
+    if (accounts.length === 0) return [];
+
+    const accountIds = accounts.map((account) => account.id);
+    const entries = await this.prisma.journalEntry.findMany({
+      where: { projectId, postings: { some: { accountId: { in: accountIds } } } },
+      include: ENTRY_INCLUDE,
+    });
+
+    const profit = new Map<string, Prisma.Decimal>(accountIds.map((id) => [id, ZERO]));
+
+    for (const entry of entries) {
+      const kind = classifyEntry(entry.postings);
+      if (kind !== 'income' && kind !== 'expense') continue;
+
+      // 계좌 다리의 금액을 그대로 더한다. 수입은 +, 지출은 -로 저장되어 있어
+      // 합이 곧 순수익이다. 계좌 통화이므로 환산하지 않는다.
+      for (const posting of entry.postings) {
+        const current = posting.accountId ? profit.get(posting.accountId) : undefined;
+        if (!current) continue;
+        profit.set(posting.accountId!, current.add(posting.amount));
+      }
+    }
+
+    return accountIds.map((accountId) => ({
+      accountId,
+      profit: profit.get(accountId)!.toString(),
+    }));
   }
 
   private addTo(
