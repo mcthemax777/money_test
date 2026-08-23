@@ -27,7 +27,10 @@ const ACCOUNT_TYPE_LABEL: Record<string, string> = {
  * 거래일자는 프로젝트 기준 타임존으로 표기한다. 브라우저 로컬로 읽으면
  * 화면에 보이던 날짜와 파일 안의 날짜가 어긋난다.
  */
-export async function exportDataToExcel(timeZone: string = DEFAULT_TIME_ZONE) {
+export async function exportDataToExcel(
+  timeZone: string = DEFAULT_TIME_ZONE,
+  displayCurrency: string = 'KRW',
+) {
   try {
     // 모든 데이터 병렬로 가져오기
     // 거래는 커서를 따라 전부 받는다 (내보내기는 전량이 필요하다)
@@ -58,8 +61,8 @@ export async function exportDataToExcel(timeZone: string = DEFAULT_TIME_ZONE) {
     // 1. 사용자 시트
     const peopleData = peopleArray.map((p: any) => ({
       이름: p.name,
-      생성일: p.createdAt ? new Date(p.createdAt).toLocaleDateString('ko-KR') : '',
-      수정일: p.updatedAt ? new Date(p.updatedAt).toLocaleDateString('ko-KR') : '',
+      생성일: p.createdAt ? formatDate(p.createdAt, timeZone) : '',
+      수정일: p.updatedAt ? formatDate(p.updatedAt, timeZone) : '',
     }));
     const peopleSheet = XLSX.utils.json_to_sheet(peopleData);
     XLSX.utils.book_append_sheet(workbook, peopleSheet, '사용자');
@@ -71,8 +74,11 @@ export async function exportDataToExcel(timeZone: string = DEFAULT_TIME_ZONE) {
       은행: a.institution?.name || '',
       유형: ACCOUNT_TYPE_LABEL[a.type] || a.type || '',
       계좌번호: a.accountNumber || '',
+      // 잔액은 그 계좌의 통화다. 통화 열이 없으면 달러 통장과 원화 통장의 숫자를
+      // 그대로 더하게 된다.
+      통화: a.currency || displayCurrency,
       잔액: toNumber(a.balance),
-      생성일: a.createdAt ? new Date(a.createdAt).toLocaleDateString('ko-KR') : '',
+      생성일: a.createdAt ? formatDate(a.createdAt, timeZone) : '',
     }));
     const accountsSheet = XLSX.utils.json_to_sheet(accountsData);
     XLSX.utils.book_append_sheet(workbook, accountsSheet, '계좌');
@@ -86,9 +92,11 @@ export async function exportDataToExcel(timeZone: string = DEFAULT_TIME_ZONE) {
         결제통장: account?.name || '',
         카드사: c.issuer?.name || '',
         카드번호: c.cardNumberMasked || '',
+        // 사용액은 결제 통장의 통화다.
+        통화: account?.currency || displayCurrency,
         // 신용카드 사용액. 체크카드는 빚이 생기지 않으므로 0
         사용액: toNumber(c.currentUsage),
-        생성일: c.createdAt ? new Date(c.createdAt).toLocaleDateString('ko-KR') : '',
+        생성일: c.createdAt ? formatDate(c.createdAt, timeZone) : '',
       };
     });
     const cardsSheet = XLSX.utils.json_to_sheet(cardsData);
@@ -101,7 +109,7 @@ export async function exportDataToExcel(timeZone: string = DEFAULT_TIME_ZONE) {
         카테고리명: c.name,
         유형: c.type === 'income' ? '수입' : c.type === 'expense' ? '지출' : c.type,
         상위분류: parent?.name || '',
-        생성일: c.createdAt ? new Date(c.createdAt).toLocaleDateString('ko-KR') : '',
+        생성일: c.createdAt ? formatDate(c.createdAt, timeZone) : '',
       };
     });
     const categoriesSheet = XLSX.utils.json_to_sheet(categoriesData);
@@ -111,7 +119,12 @@ export async function exportDataToExcel(timeZone: string = DEFAULT_TIME_ZONE) {
     //
     // 서버가 전표를 한 줄로 펴서 주므로(EntryListItem) 여기서 postings를 다루지 않는다.
     const entriesData = entriesArray.map((e: any) => ({
+      // 거래 금액은 언제나 기준통화 환산액이다. 원 통화 금액은 옆 열에 따로 둔다.
       금액: toNumber(e.amount),
+      통화: displayCurrency,
+      '원 통화': e.originalCurrency || '',
+      '원 통화 금액': e.originalAmount ? toNumber(e.originalAmount) : '',
+      환율: e.exchangeRate ? toNumber(e.exchangeRate) : '',
       유형: ENTRY_KIND_LABEL[e.kind] || e.kind || '기타',
       거래자: e.personName || '',
       대분류: e.parentCategoryName || e.categoryName || '',

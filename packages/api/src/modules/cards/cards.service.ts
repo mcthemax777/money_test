@@ -1,10 +1,18 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { AccountType, CardType, FinancialInstitutionType, Prisma } from '@prisma/client';
+import {
+  AccountType,
+  CardType,
+  FinancialInstitutionType,
+  Prisma,
+  ProjectRole,
+} from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { InstitutionsService } from '../institutions/institutions.service';
 import { CardDto } from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
+import { toCardResponse } from './card-view';
+import { toOptionalMoney } from '@/common/money';
 
 /** 카드 응답에 함께 실어 주는 관계. 응답 모양을 한곳에서 정한다. */
 const CARD_INCLUDE = {
@@ -12,12 +20,6 @@ const CARD_INCLUDE = {
   liabilityAccount: true,
   issuer: true,
 } satisfies Prisma.CardInclude;
-
-/** 금액은 와이어에서 문자열로 오간다. 경계에서 한 번만 Decimal로 바꾼다. */
-function toDecimal(value: string | undefined): Prisma.Decimal | null {
-  if (value === undefined || value === null || value === '') return null;
-  return new Prisma.Decimal(value);
-}
 
 @Injectable()
 export class CardsService {
@@ -36,7 +38,11 @@ export class CardsService {
    * (조회 시 AccountType.credit_card 를 제외하면 된다).
    */
   async createCard(userId: string, dto: CardDto.CreateRequest, projectIdParam?: string) {
-    const projectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectIdParam);
+    const projectId = await this.projectAccess.resolveAndVerifyProjectId(
+      userId,
+      projectIdParam,
+      'editor',
+    );
 
     const paymentAccount = await this.prisma.account.findUnique({
       where: { id: dto.paymentAccountId },
@@ -98,7 +104,7 @@ export class CardsService {
           issuerId: dto.issuerId,
           cardNumber: dto.cardNumber ?? null,
           expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : null,
-          creditLimit: toDecimal(dto.creditLimit),
+          creditLimit: toOptionalMoney(dto.creditLimit, '카드 한도'),
           statementClosingDay: dto.statementClosingDay ?? null,
           paymentDueDay: dto.paymentDueDay ?? null,
         },
@@ -107,23 +113,33 @@ export class CardsService {
     });
   }
 
-  /** 카드 목록. 신용카드는 부채 계정 잔액을 "사용액"으로 환산해 함께 준다. */
-  async getCards(userId: string, projectId?: string) {
+  /**
+   * 카드 목록. 신용카드는 부채 계정 잔액을 "사용액"으로 환산해 함께 준다.
+   * includeInactive를 주면 숨긴 카드까지 함께 준다 (되돌리기 화면용).
+   */
+  async getCards(userId: string, projectId?: string, includeInactive = false) {
     const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
 
     const cards = await this.prisma.card.findMany({
-      where: { projectId: finalProjectId, isActive: true },
+      where: {
+        projectId: finalProjectId,
+        ...(includeInactive ? {} : { isActive: true }),
+      },
       include: CARD_INCLUDE,
       // 사용자가 드래그로 정한 순서. 같으면 최근에 만든 것부터.
       orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
     });
 
-    return cards.map((card) => this.toResponse(card));
+    return cards.map((card) => toCardResponse(card));
   }
 
   /** 드래그로 바꾼 표시 순서 저장 */
   async reorderCards(userId: string, ids: string[], projectId?: string) {
-    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
+    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(
+      userId,
+      projectId,
+      'editor',
+    );
 
     const rows = await this.prisma.card.findMany({
       where: { projectId: finalProjectId },
@@ -148,13 +164,13 @@ export class CardsService {
     if (!card) throw new NotFoundException('카드를 찾을 수 없습니다.');
 
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId);
-    return this.toResponse(card);
+    return toCardResponse(card);
   }
 
   async updateCard(id: string, userId: string, dto: CardDto.UpdateRequest) {
     const card = await this.prisma.card.findUnique({ where: { id } });
     if (!card) throw new NotFoundException('카드를 찾을 수 없습니다.');
-    await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId);
+    await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId, 'editor');
 
     if (dto.statementClosingDay !== undefined) {
       this.assertDayOfMonth(dto.statementClosingDay, '마감일');
@@ -178,7 +194,7 @@ export class CardsService {
     }
     if (dto.statementClosingDay !== undefined) data.statementClosingDay = dto.statementClosingDay;
     if (dto.paymentDueDay !== undefined) data.paymentDueDay = dto.paymentDueDay;
-    if (dto.creditLimit !== undefined) data.creditLimit = toDecimal(dto.creditLimit);
+    if (dto.creditLimit !== undefined) data.creditLimit = toOptionalMoney(dto.creditLimit, '카드 한도');
 
     // 생성과 같은 검증을 거쳐야 한다. 검증 없이 저장하면 다른 프로젝트의 기관이나
     // 은행을 카드사 자리에 넣을 수 있다.
@@ -206,24 +222,33 @@ export class CardsService {
         });
       }
 
-      return this.toResponse(updated);
+      // 표시 여부도 함께 움직여야 한다. 카드를 숨길 때 부채 계정을 함께 내리므로
+      // (deactivateCard) 다시 표시할 때도 함께 올리지 않으면 사용액이 계산되지 않는다.
+      if (dto.isActive !== undefined && updated.liabilityAccountId) {
+        await tx.account.update({
+          where: { id: updated.liabilityAccountId },
+          data: { isActive: dto.isActive },
+        });
+      }
+
+      return toCardResponse(updated);
     });
   }
 
   /**
-   * 카드 비활성화. 갚지 않은 사용액이 남아 있으면 막는다.
+   * 카드 숨기기. 갚지 않은 사용액이 남아 있으면 막는다.
    * 원장 기록은 남겨야 하므로 하드 삭제하지 않는다 (부채 계정도 그대로 둔다).
    */
-  async deleteCard(id: string, userId: string) {
+  async deactivateCard(id: string, userId: string) {
     const card = await this.prisma.card.findUnique({
       where: { id },
       include: { liabilityAccount: true },
     });
     if (!card) throw new NotFoundException('카드를 찾을 수 없습니다.');
-    await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId);
+    await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId, 'editor');
 
     if (card.liabilityAccount && !card.liabilityAccount.balance.isZero()) {
-      throw new BadRequestException('갚지 않은 카드 사용액이 남아 있어 삭제할 수 없습니다.');
+      throw new BadRequestException('갚지 않은 카드 사용액이 남아 있어 숨길 수 없습니다.');
     }
 
     return this.prisma.$transaction(async (tx) => {
@@ -243,18 +268,4 @@ export class CardsService {
     }
   }
 
-  private toResponse(card: {
-    cardNumber: string | null;
-    liabilityAccount: { balance: Prisma.Decimal } | null;
-    [key: string]: unknown;
-  }) {
-    const { cardNumber, liabilityAccount, ...rest } = card;
-
-    return {
-      ...rest,
-      cardNumberMasked: cardNumber ? `****-****-****-${cardNumber.slice(-4)}` : '',
-      // 부채 잔액은 음수(빚)로 저장되므로 화면에 쓰는 "사용액"은 부호를 뒤집어 준다.
-      currentUsage: liabilityAccount ? liabilityAccount.balance.neg() : null,
-    };
-  }
 }

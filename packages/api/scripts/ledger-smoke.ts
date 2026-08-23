@@ -1,19 +1,17 @@
 import { Prisma } from '@prisma/client';
-import { LedgerService } from '@/modules/ledger/ledger.service';
 import { CardsService } from '@/modules/cards/cards.service';
 
 const D = (n: string | number) => new Prisma.Decimal(n);
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
-import { projectAccessStub, runSmoke } from './smoke-harness';
+import { makeLedger, projectAccessStub, runSmoke } from './smoke-harness';
 
 runSmoke('ledger', async (ctx) => {
-  const ledger = new LedgerService(ctx.prisma as any);
-
   // ── 준비 ──
-  const project = await ctx.createProject({ baseCurrency: 'KRW' });
+  const project = await ctx.createProject({ ledgerCurrency: 'KRW' });
   const pid = project.id;
   // 권한 검증은 스모크 범위 밖이라 통과시킨다. 타임존은 실제 프로젝트 값을 읽는다.
   const access = projectAccessStub(ctx.prisma, pid);
+  const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
   const cards = new CardsService(ctx.prisma as any, access, institutions);
   const person = await ctx.prisma.person.create({ data: { projectId: pid, name: '김철수' } });
@@ -118,8 +116,16 @@ runSmoke('ledger', async (ctx) => {
   ctx.check('카드 결제 후 예금', (await ctx.prisma.account.findUniqueOrThrow({ where: { id: bank.id } })).balance, '3154500');
 
   // ── 7. 정합성: 모든 전표의 합이 0 ──
+  /*
+   * 균형은 환산액(baseAmount)으로 본다. 통화가 섞인 전표는 amount 합계가 0이 될
+   * 수 없다(달러와 원을 더하는 셈이다). 그리고 이 프로젝트로 범위를 좁힌다.
+   * 예전에는 Posting 전체를 훑어서, 다른 프로젝트의 외화 거래 하나에도 실패했다.
+   */
   const unbalanced = await ctx.prisma.$queryRaw<{ entryId: string }[]>`
-    SELECT "entryId" FROM "Posting" GROUP BY "entryId" HAVING SUM(amount) <> 0`;
+    SELECT p."entryId" FROM "Posting" p
+    JOIN "JournalEntry" e ON e.id = p."entryId"
+    WHERE e."projectId" = ${pid}
+    GROUP BY p."entryId" HAVING SUM(p."baseAmount") <> 0`;
   ctx.check('불균형 전표 수', unbalanced.length, 0);
 
   // ── 8. 정합성: 캐시된 잔액 = posting 합계 ──
@@ -186,9 +192,13 @@ runSmoke('ledger', async (ctx) => {
   await ctx.expectReject('같은 계좌 이체 거부', () => ledger.createTransfer({
     ...base, description: 'x', fromAccountId: bank.id, toAccountId: bank.id, amount: D(100),
   }));
+  // 균형은 환산액(baseAmount)으로 판정한다. 원화 프로젝트라 amount와 같은 값이다.
+  const krwLeg = (leg: { accountId?: string; categoryId?: string }, amount: Prisma.Decimal) => ({
+    ...leg, amount, currency: 'KRW', exchangeRate: D(1), baseAmount: amount,
+  });
   await ctx.expectReject('불균형 전표 직접 생성 거부', () => ledger.createEntry({
     ...base, description: 'x',
-    postings: [{ accountId: bank.id, amount: D(-100) }, { categoryId: food.id, amount: D(50) }],
+    postings: [krwLeg({ accountId: bank.id }, D(-100)), krwLeg({ categoryId: food.id }, D(50))],
   }));
 
   // ── 12. 미결제 사용액이 남은 카드는 삭제 불가 ──
@@ -196,12 +206,12 @@ runSmoke('ledger', async (ctx) => {
     ...base, description: '미결제 남기기', cardId: creditCard.id,
     lines: [{ categoryId: food.id, amount: D(1000) }],
   });
-  await ctx.expectReject('사용액 남은 카드 삭제 거부', () => cards.deleteCard(creditCard.id, 'u1'));
+  await ctx.expectReject('사용액 남은 카드 숨기기 거부', () => cards.deactivateCard(creditCard.id, 'u1'));
   await ledger.createCardTransfer({
     ...base, date: new Date('2026-09-25T00:00:00Z'), description: '잔액 정리',
     cardId: creditCard.id, accountId: bank.id, amount: D(1000), direction: 'payment',
   });
-  await cards.deleteCard(creditCard.id, 'u1');
+  await cards.deactivateCard(creditCard.id, 'u1');
   const deactivated = await ctx.prisma.account.findUniqueOrThrow({ where: { id: creditCard.liabilityAccountId! } });
-  ctx.check('카드 삭제 시 부채 계정도 비활성화', deactivated.isActive, false);
+  ctx.check('카드를 숨기면 부채 계정도 함께 내려간다', deactivated.isActive, false);
 });

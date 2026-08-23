@@ -141,7 +141,14 @@ export class ProjectsController {
   @HttpCode(HttpStatus.OK)
   async updateProject(
     @Param('projectId') projectId: string,
-    @Body() body: { name?: string; description?: string | null; timezone?: string },
+    @Body()
+    body: {
+      name?: string;
+      description?: string | null;
+      timezone?: string;
+      /** 표시 통화. 저장 통화는 만든 뒤 바꿀 수 없다. */
+      displayCurrency?: string;
+    },
     @Request() req: any,
   ) {
     return this.projectsService.updateProject(projectId, req.user.id, body);

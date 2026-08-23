@@ -1,5 +1,10 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
-import Cookie from 'js-cookie';
+import {
+  clearAuthTokens,
+  getAccessToken,
+  getRefreshToken,
+  saveAuthTokens,
+} from './auth-tokens';
 import type {
   AccountDto,
   BudgetDto,
@@ -7,6 +12,7 @@ import type {
   CategoryDto,
   EntryDto,
   EntryFilterQuery,
+  ExchangeRateInfo,
   FinancialInstitutionType,
   InstitutionDto,
   PersonDto,
@@ -20,6 +26,19 @@ import type {
  * 컴파일 단계에서 걸리지 않아, 예산 진행률이 문자열 비교로 101%가 되는 식의
  * 오류가 화면에서야 드러났다. 여기서 타입을 붙이면 같은 종류의 어긋남이 빌드에서 잡힌다.
  */
+
+/**
+ * 환율 응답.
+ *
+ * rates 는 각 통화 -> 저장 통화다. 거래를 입력할 때 쓴다.
+ * displayRate 는 저장 통화 -> 표시 통화이며 화면 합계에 이미 반영돼 온다.
+ */
+export interface ExchangeRatesResponse {
+  ledgerCurrency: string;
+  displayCurrency: string;
+  rates: ExchangeRateInfo[];
+  displayRate: ExchangeRateInfo;
+}
 
 class ApiClient {
   private client: AxiosInstance;
@@ -45,7 +64,7 @@ class ApiClient {
 
   private setupInterceptors() {
     this.client.interceptors.request.use((config) => {
-      const token = Cookie.get('accessToken');
+      const token = getAccessToken();
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
@@ -87,15 +106,14 @@ class ApiClient {
   private refreshAccessToken(): Promise<string> {
     if (this.refreshPromise) return this.refreshPromise;
 
-    const refreshToken = Cookie.get('refreshToken');
+    const refreshToken = getRefreshToken();
     if (!refreshToken) return Promise.reject(new Error('No refresh token'));
 
     this.refreshPromise = this.client
       .post<{ accessToken: string; refreshToken: string }>('/auth/refresh', { refreshToken })
       .then((response) => {
         const { accessToken, refreshToken: newRefreshToken } = response.data;
-        Cookie.set('accessToken', accessToken);
-        Cookie.set('refreshToken', newRefreshToken);
+        saveAuthTokens(accessToken, newRefreshToken);
         return accessToken;
       })
       .finally(() => {
@@ -106,8 +124,7 @@ class ApiClient {
   }
 
   private clearSession() {
-    Cookie.remove('accessToken');
-    Cookie.remove('refreshToken');
+    clearAuthTokens();
     if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
       window.location.href = '/login';
     }
@@ -124,8 +141,7 @@ class ApiClient {
     } catch {
       // 네트워크 에러는 무시하고 로컬에서만 삭제
     }
-    Cookie.remove('accessToken');
-    Cookie.remove('refreshToken');
+    clearAuthTokens();
   }
 
   async getProfile() {
@@ -146,9 +162,16 @@ class ApiClient {
   }
 
   // API Methods
-  async getPeople(projectId?: string | null): Promise<PersonDto.Response[]> {
+  /** includeInactive를 주면 숨긴 구성원까지 함께 받는다 (다시 표시 화면용). */
+  async getPeople(
+    projectId?: string | null,
+    options: { includeInactive?: boolean } = {},
+  ): Promise<PersonDto.Response[]> {
     const response = await this.client.get<PersonDto.Response[]>('/people', {
-      params: projectId ? { projectId } : {}
+      params: {
+        ...(projectId ? { projectId } : {}),
+        ...(options.includeInactive ? { includeInactive: 'true' } : {}),
+      },
     });
     return response.data;
   }
@@ -184,9 +207,16 @@ class ApiClient {
     return response.data;
   }
 
-  async getAccountsV2(projectId?: string | null): Promise<AccountDto.Response[]> {
+  /** includeInactive를 주면 숨긴 통장까지 함께 받는다 (다시 표시 화면용). */
+  async getAccountsV2(
+    projectId?: string | null,
+    options: { includeInactive?: boolean } = {},
+  ): Promise<AccountDto.Response[]> {
     const response = await this.client.get<AccountDto.Response[]>('/accounts', {
-      params: projectId ? { projectId } : {}
+      params: {
+        ...(projectId ? { projectId } : {}),
+        ...(options.includeInactive ? { includeInactive: 'true' } : {}),
+      },
     });
     return response.data;
   }
@@ -213,9 +243,16 @@ class ApiClient {
     await this.client.delete(`/accounts/${id}`);
   }
 
-  async getCards(projectId?: string | null): Promise<CardDto.Response[]> {
+  /** includeInactive를 주면 숨긴 카드까지 함께 받는다 (다시 표시 화면용). */
+  async getCards(
+    projectId?: string | null,
+    options: { includeInactive?: boolean } = {},
+  ): Promise<CardDto.Response[]> {
     const response = await this.client.get<CardDto.Response[]>('/cards', {
-      params: projectId ? { projectId } : {}
+      params: {
+        ...(projectId ? { projectId } : {}),
+        ...(options.includeInactive ? { includeInactive: 'true' } : {}),
+      },
     });
     return response.data;
   }
@@ -253,17 +290,31 @@ class ApiClient {
     return response.data;
   }
 
-  /** 커서를 따라가며 조건에 맞는 거래를 전부 가져온다 (엑셀 내보내기 등 일괄 처리용). */
+  /**
+   * 커서를 따라가며 조건에 맞는 거래를 전부 가져온다.
+   *
+   * 엑셀 내보내기뿐 아니라 가계 화면·예산 상세·수단별 탭이 쓴다. 한 페이지만
+   * 받으면 목록이 잘리는 데 그치지 않고, 그 목록으로 계산하는 달력 일별 합계와
+   * 일별 누적 그래프가 서버 집계보다 적게 나온다.
+   */
   async getAllEntries(query?: EntryDto.ListQuery, projectId?: string | null): Promise<EntryDto.ListResponse['data']> {
     const rows: any[] = [];
     let cursor: string | null = null;
+    // 커서가 전진하지 않는 서버 버그가 생겨도 화면이 멈추지는 않게 한다.
+    // 200 * 50 = 10,000건이면 어떤 한 달 조회에도 충분하다.
+    const MAX_PAGES = 50;
 
-    do {
-      const page = await this.getEntries({ ...query, limit: 200, cursor: cursor ?? undefined }, projectId);
-      rows.push(...(page?.data ?? []));
-      cursor = page?.nextCursor ?? null;
-    } while (cursor);
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const res: EntryDto.ListResponse = await this.getEntries(
+        { ...query, limit: 200, cursor: cursor ?? undefined },
+        projectId,
+      );
+      rows.push(...(res?.data ?? []));
+      cursor = res?.nextCursor ?? null;
+      if (!cursor) return rows;
+    }
 
+    console.warn(`거래를 ${MAX_PAGES}페이지까지만 불러왔습니다. 일부가 빠졌을 수 있습니다.`);
     return rows;
   }
 
@@ -346,7 +397,13 @@ class ApiClient {
   /** 프로젝트 설정 변경 (이름, 설명, 집계 기준 타임존). 소유자만 가능하다. */
   async updateProject(
     projectId: string,
-    body: { name?: string; description?: string | null; timezone?: string },
+    body: {
+      name?: string;
+      description?: string | null;
+      timezone?: string;
+      /** 표시 통화. 저장값은 건드리지 않고 읽을 때만 환산된다. */
+      displayCurrency?: string;
+    },
   ) {
     const response = await this.client.patch<any>(`/projects/${projectId}`, body);
     return response.data;
@@ -531,6 +588,43 @@ class ApiClient {
     await this.client.delete(`/budgets/override/${id}`);
   }
 
+  /**
+   * 기준통화 기준 환율.
+   *
+   * 거래 입력 화면이 통화를 고르는 순간 환율 칸을 미리 채우는 데 쓴다.
+   * 사용자는 그 값을 카드 명세서의 실제 환율로 고칠 수 있다.
+   */
+  async getExchangeRates(projectId?: string | null): Promise<ExchangeRatesResponse> {
+    const response = await this.client.get<ExchangeRatesResponse>('/exchange-rates', {
+      params: projectId ? { projectId } : {},
+    });
+    return response.data;
+  }
+
+  /**
+   * 환율을 직접 정한다. 설정 화면 전용이다.
+   *
+   * 거래 입력에서는 환율을 받지 않는다. 사용자가 아는 값은 실제로 빠진 금액이고
+   * 환율은 그 비로 유도된다. 여기서 정한 값은 아직 금액을 모르는 거래(신용카드)를
+   * 추정할 때와 표시 통화 환산에 쓰인다.
+   */
+  async setExchangeRate(
+    data: { from: string; to: string; rate: string },
+    projectId?: string | null,
+  ): Promise<ExchangeRateInfo> {
+    const response = await this.client.put<ExchangeRateInfo>('/exchange-rates', data, {
+      params: projectId ? { projectId } : {},
+    });
+    return response.data;
+  }
+
+  /** 직접 정한 환율을 지우고 기본값으로 되돌린다. */
+  async clearExchangeRate(from: string, to: string, projectId?: string | null): Promise<void> {
+    await this.client.delete('/exchange-rates', {
+      params: { from, to, ...(projectId ? { projectId } : {}) },
+    });
+  }
+
   // 카드 원장 API Methods
   //
   // 청구서를 저장하지 않는다. 주기별 사용액은 카드의 현재 마감일로 서버가 계산한다.
@@ -538,6 +632,37 @@ class ApiClient {
     const response = await this.client.get<CardDto.UsageResponse>(`/cards/${cardId}/usage`, {
       params: months ? { months } : undefined,
     });
+    return response.data;
+  }
+
+  /**
+   * 청구액이 아직 확정되지 않은 외화 결제 목록.
+   *
+   * 원화 카드로 외화를 쓰면 청구액은 결제일에 카드사가 정한다. 그때까지는 추정
+   * 환산액이 들어가 있고, 명세서가 나오면 아래 settleCardRates로 확정한다.
+   */
+  async getCardPendingRates(cardId: string): Promise<CardDto.PendingRatesResponse> {
+    const response = await this.client.get<CardDto.PendingRatesResponse>(
+      `/cards/${cardId}/pending-rates`,
+    );
+    return response.data;
+  }
+
+  /**
+   * 실제 청구액(또는 적용 환율)으로 확정한다.
+   *
+   * 명세서에서 눈으로 읽는 값은 대개 금액이므로 billedAmount가 기본이고, 환율은
+   * 서버가 역산한다. 명세서에 적용환율만 한 줄로 적혀 있으면 rate 하나로 전부
+   * 확정할 수 있다.
+   */
+  async settleCardRates(
+    cardId: string,
+    data: CardDto.SettleRatesRequest,
+  ): Promise<CardDto.SettleRatesResponse> {
+    const response = await this.client.patch<CardDto.SettleRatesResponse>(
+      `/cards/${cardId}/pending-rates`,
+      data,
+    );
     return response.data;
   }
 

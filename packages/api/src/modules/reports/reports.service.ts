@@ -9,8 +9,11 @@ import {
   parseEntryFilter,
 } from '@/common/entry-filter';
 import { HIDDEN_ACCOUNT_TYPES } from '../accounts/accounts.service';
+import { assertYearMonth } from '@/common/year-month';
+import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import {
   ReportDto,
+  currencyDecimals,
   zonedCurrentYearMonth,
   zonedDayStart,
   zonedMonthRange,
@@ -31,7 +34,19 @@ export class ReportsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly projectAccess: ProjectAccessService,
+    private readonly exchangeRates: ExchangeRatesService,
   ) {}
+
+  /**
+   * 표시 환산기. 저장 통화로 집계한 값을 표시 통화로 옮긴다.
+   *
+   * **합계에만** 곱한다. 행마다 곱하면 반올림이 행 수만큼 쌓인다.
+   * 두 통화가 같으면 곱셈을 건너뛰므로 대부분의 프로젝트에서는 비용이 0이다.
+   */
+  private async displayConverter(projectId: string) {
+    const { ledger, display } = await this.projectAccess.getProjectCurrencies(projectId);
+    return this.exchangeRates.getDisplayConverter(projectId, ledger, display);
+  }
 
   /**
    * 월 수입/지출 합계.
@@ -44,7 +59,7 @@ export class ReportsService {
       userId,
       query.projectId,
     );
-    const range = zonedMonthRange(query.yearMonth, timeZone);
+    const range = zonedMonthRange(assertYearMonth(query.yearMonth, '조회 월'), timeZone);
     const scope = this.entryScope(projectId, range, query);
     // 고정/변동 필터. 지출은 groupBy로 이미 나뉘므로 해당 쪽만 남기고,
     // 수입도 같은 조건을 걸어야 목록 합계와 맞는다.
@@ -54,7 +69,9 @@ export class ReportsService {
       // isFixed로 나눠 고정/변동을 한 번에 얻는다
       this.prisma.posting.groupBy({
         by: ['isFixed'],
-        _sum: { amount: true },
+        // 합계는 전부 기준통화 환산액(baseAmount)이다. amount는 그 다리의 통화라
+        // 달러와 원이 섞이면 더할 수 없다.
+        _sum: { baseAmount: true },
         where: {
           category: { type: CategoryType.expense },
           entry: scope,
@@ -62,7 +79,7 @@ export class ReportsService {
         },
       }),
       this.prisma.posting.aggregate({
-        _sum: { amount: true },
+        _sum: { baseAmount: true },
         where: {
           category: { type: CategoryType.income },
           entry: scope,
@@ -71,19 +88,20 @@ export class ReportsService {
       }),
     ]);
 
-    const fixed = expenseRows.find((r) => r.isFixed)?._sum.amount ?? ZERO;
-    const variable = expenseRows.find((r) => !r.isFixed)?._sum.amount ?? ZERO;
+    const fixed = expenseRows.find((r) => r.isFixed)?._sum.baseAmount ?? ZERO;
+    const variable = expenseRows.find((r) => !r.isFixed)?._sum.baseAmount ?? ZERO;
     const expense = fixed.add(variable);
     // 수입 posting은 음수로 기록되므로 표시용으로 뒤집는다
-    const income = (incomeAgg._sum.amount ?? ZERO).neg();
+    const income = (incomeAgg._sum.baseAmount ?? ZERO).neg();
 
+    const show = await this.displayConverter(projectId);
     return {
       yearMonth: query.yearMonth,
-      income: income.toString(),
-      expense: expense.toString(),
-      fixedExpense: fixed.toString(),
-      variableExpense: variable.toString(),
-      net: income.sub(expense).toString(),
+      income: show.toString(income),
+      expense: show.toString(expense),
+      fixedExpense: show.toString(fixed),
+      variableExpense: show.toString(variable),
+      net: show.toString(income.sub(expense)),
     };
   }
 
@@ -96,7 +114,7 @@ export class ReportsService {
       userId,
       query.projectId,
     );
-    const range = zonedMonthRange(query.yearMonth, timeZone);
+    const range = zonedMonthRange(assertYearMonth(query.yearMonth, '조회 월'), timeZone);
     // 쿼리스트링 값은 문자열로 도착한다. 이 DTO는 클래스가 아니라 인터페이스라서
     // ValidationPipe의 암묵 변환이 걸리지 않고 ?rollup=false 가 'false' 문자열로 들어온다.
     // 불리언 비교만 하면 항상 롤업이 켜져서 소분류 구성비를 볼 수 없다.
@@ -104,7 +122,7 @@ export class ReportsService {
 
     const rows = await this.prisma.posting.groupBy({
       by: ['categoryId'],
-      _sum: { amount: true },
+      _sum: { baseAmount: true },
       _count: true,
       where: {
         category: { type: query.type as CategoryType },
@@ -131,7 +149,7 @@ export class ReportsService {
 
       const key = rollup ? category.parent?.id ?? category.id : category.id;
       const bucket = buckets.get(key) ?? { amount: ZERO, count: 0 };
-      bucket.amount = bucket.amount.add((row._sum.amount ?? ZERO).abs());
+      bucket.amount = bucket.amount.add((row._sum.baseAmount ?? ZERO).abs());
       bucket.count += row._count;
       buckets.set(key, bucket);
     }
@@ -147,6 +165,7 @@ export class ReportsService {
     }
 
     const total = [...buckets.values()].reduce((acc, b) => acc.add(b.amount), ZERO);
+    const show = await this.displayConverter(projectId);
 
     return [...buckets.entries()]
       .map(([categoryId, bucket]) => {
@@ -156,8 +175,9 @@ export class ReportsService {
           categoryName: category.name,
           parentCategoryId: category.parent?.id ?? null,
           parentCategoryName: category.parent?.name ?? null,
-          amount: bucket.amount.toString(),
+          amount: show.toString(bucket.amount),
           count: bucket.count,
+          // 구성비는 비율이라 표시 통화와 무관하다.
           ratio: total.isZero() ? 0 : bucket.amount.div(total).mul(100).toNumber(),
         };
       })
@@ -187,21 +207,68 @@ export class ReportsService {
     const valuedIds = accounts.filter((a) => VALUED_TYPES.includes(a.type)).map((a) => a.id);
     const marketValues = await this.latestMarketValues(valuedIds);
 
+    /*
+     * 외화 계좌는 최신 환율로 재평가한다.
+     *
+     * `account.balance`는 그 계좌의 통화다(달러 통장이면 달러). 순자산은 기준통화
+     * 한 가지로 말해야 하므로 지금 환율로 환산한다. 반면 장부가는 거래마다 그때의
+     * 환율로 쌓인 baseAmount 합계다. 둘의 차이가 미실현 환차손익이고, 투자 계좌의
+     * 시가 - 장부가와 같은 자리에 더해진다.
+     */
+    const { ledger, display } = await this.projectAccess.getProjectCurrencies(finalProjectId);
+    const decimals = currencyDecimals(display);
+
+    // 계좌 통화별 -> 표시 통화 환율. 저장 통화를 거치지 않고 바로 간다.
+    const rates = new Map<string, Prisma.Decimal>();
+    for (const currency of new Set(accounts.map((a) => a.currency))) {
+      const info = await this.exchangeRates.getRate(
+        finalProjectId,
+        this.exchangeRates.assertCurrency(currency, '계좌 통화'),
+        display,
+      );
+      rates.set(currency, new Prisma.Decimal(info.rate));
+    }
+    // 장부가는 저장 통화로 쌓여 있다. 표시 통화로 옮겨야 재평가액과 뺄 수 있다.
+    const toDisplay = await this.exchangeRates.getDisplayConverter(finalProjectId, ledger, display);
+    const bookValues = await this.bookValuesOf(accounts.map((a) => a.id));
+
     type Bucket = { cash: Prisma.Decimal; investment: Prisma.Decimal; liability: Prisma.Decimal };
     const totals: Bucket = { cash: ZERO, investment: ZERO, liability: ZERO };
     const byPerson = new Map<string, Bucket & { personName: string }>();
-    let bookValueOfValued = ZERO;
+    // 재평가 대상(투자 + 외화)의 "지금 값"과 "장부가". 둘의 차이가 미실현 손익이다.
+    let revaluedNow = ZERO;
+    let revaluedBook = ZERO;
 
     for (const account of accounts) {
       const isValued = VALUED_TYPES.includes(account.type);
       const isLiability = LIABILITY_TYPES.includes(account.type);
-      // 시가가 없으면 장부가로 대체한다 (평가 기록을 아직 안 넣은 경우)
-      const value = isValued
-        ? marketValues.get(account.id) ?? account.balance
-        : account.balance;
+      const isForeign = account.currency !== ledger;
 
-      if (isValued) bookValueOfValued = bookValueOfValued.add(account.balance);
+      /*
+       * "지금 값"을 표시 통화로.
+       *
+       * 계좌 잔액은 그 계좌의 통화다. 외화든 아니든 표시 통화로 옮겨야 한 줄에
+       * 더할 수 있다. 투자 계좌의 시가(AssetValuation.marketValue)는 통화 컬럼이
+       * 없고 저장 통화로 본다.
+       */
+      const nativeToDisplay = (native: Prisma.Decimal) => {
+        const rate = rates.get(account.currency) ?? new Prisma.Decimal(1);
+        return native.mul(rate).toDecimalPlaces(decimals, Prisma.Decimal.ROUND_HALF_UP);
+      };
 
+      let value: Prisma.Decimal;
+      if (isValued || isForeign) {
+        // 시가가 없으면 장부가로 대체한다 (평가 기록을 아직 안 넣은 경우)
+        const marketValue = isValued ? marketValues.get(account.id) : undefined;
+        value = marketValue ? toDisplay.convert(marketValue) : nativeToDisplay(account.balance);
+        revaluedNow = revaluedNow.add(value);
+        // 장부가는 거래마다 그때의 환율로 쌓인 저장 통화 합계다.
+        revaluedBook = revaluedBook.add(toDisplay.convert(bookValues.get(account.id) ?? ZERO));
+      } else {
+        value = nativeToDisplay(account.balance);
+      }
+
+      // 외화라는 이유로 분류가 바뀌지는 않는다. 달러 통장은 여전히 현금성이다.
       const slot: keyof Bucket = isValued ? 'investment' : isLiability ? 'liability' : 'cash';
       totals[slot] = totals[slot].add(value);
 
@@ -221,7 +288,8 @@ export class ReportsService {
       cash: totals.cash.toString(),
       investment: totals.investment.toString(),
       liability: totals.liability.toString(),
-      unrealizedGain: totals.investment.sub(bookValueOfValued).toString(),
+      // 투자 시가 + 외화 재평가액에서 각각의 장부가를 뺀 값
+      unrealizedGain: revaluedNow.sub(revaluedBook).toString(),
       byPerson: [...byPerson.entries()].map(([personId, bucket]) => ({
         personId,
         personName: bucket.personName,
@@ -267,9 +335,16 @@ export class ReportsService {
 
     const buckets =
       granularity === 'day'
-        ? dayBuckets(query.yearMonth ?? zonedCurrentYearMonth(timeZone), timeZone)
+        ? dayBuckets(
+            query.yearMonth
+              ? assertYearMonth(query.yearMonth, '조회 월')
+              : zonedCurrentYearMonth(timeZone),
+            timeZone,
+          )
         : monthBuckets(
-            query.endMonth ?? zonedCurrentYearMonth(timeZone),
+            query.endMonth
+              ? assertYearMonth(query.endMonth, '기준 월')
+              : zonedCurrentYearMonth(timeZone),
             Math.min(Math.max(Number(query.months) || 12, 1), 60),
             timeZone,
           );
@@ -280,7 +355,7 @@ export class ReportsService {
     const baseRows = await this.prisma.$queryRaw<
       Array<{ accountId: string; delta: Prisma.Decimal }>
     >`
-      SELECT p."accountId" AS "accountId", SUM(p."amount") AS delta
+      SELECT p."accountId" AS "accountId", SUM(p."baseAmount") AS delta
       FROM "Posting" p
       JOIN "JournalEntry" e ON e.id = p."entryId"
       WHERE e."projectId" = ${projectId}
@@ -297,7 +372,7 @@ export class ReportsService {
              -- 구간 경계는 프로젝트 타임존 기준이다. 로컬 벽시계로 바꿔 자른 뒤
              -- 다시 UTC 인스턴트로 되돌려야 아래 bucket.start와 값이 맞는다.
              timezone('UTC', timezone(${timeZone}, date_trunc(${granularity}, timezone(${timeZone}, timezone('UTC', e."date"))))) AS period,
-             SUM(p."amount") AS delta
+             SUM(p."baseAmount") AS delta
       FROM "Posting" p
       JOIN "JournalEntry" e ON e.id = p."entryId"
       WHERE e."projectId" = ${projectId}
@@ -328,6 +403,7 @@ export class ReportsService {
           })
         : [];
 
+    const show = await this.displayConverter(projectId);
     const points: ReportDto.BalanceHistoryPoint[] = [];
     for (const bucket of buckets) {
       for (const step of stepsByPeriod.get(bucket.start.getTime()) ?? []) {
@@ -351,7 +427,7 @@ export class ReportsService {
         total = total.add(asOf ?? bookValue);
       }
 
-      points.push({ date: bucket.label, balance: total.toString() });
+      points.push({ date: bucket.label, balance: show.toString(total) });
     }
 
     return points;
@@ -367,7 +443,9 @@ export class ReportsService {
       query.projectId,
     );
     const months = Math.min(Math.max(Number(query.months) || 12, 1), 60);
-    const endMonth = query.endMonth ?? zonedCurrentYearMonth(timeZone);
+    const endMonth = query.endMonth
+      ? assertYearMonth(query.endMonth, '기준 월')
+      : zonedCurrentYearMonth(timeZone);
     const [endYear, endMonthNumber] = endMonth.split('-').map(Number);
     const end = zonedMonthStart(endYear, endMonthNumber + 1, timeZone);
     const start = zonedMonthStart(endYear, endMonthNumber - months + 1, timeZone);
@@ -383,7 +461,8 @@ export class ReportsService {
         : await this.trendByCategory(projectId, query, start, end, timeZone);
 
     // 거래가 없는 달도 0으로 채워 그래프가 끊기지 않게 한다
-    const byMonth = new Map(rows.map((r) => [wallClockYearMonth(r.month), r.amount.toString()]));
+    const show = await this.displayConverter(projectId);
+    const byMonth = new Map(rows.map((r) => [wallClockYearMonth(r.month), show.toString(r.amount)]));
     const points: ReportDto.TrendPoint[] = [];
     for (let i = months - 1; i >= 0; i--) {
       const key = shiftYearMonth(endYear, endMonthNumber, -i);
@@ -408,7 +487,7 @@ export class ReportsService {
 
     return this.prisma.$queryRaw<Array<{ month: Date; amount: Prisma.Decimal }>>`
       SELECT date_trunc('month', timezone(${timeZone}, timezone('UTC', e."date"))) AS month,
-             ABS(SUM(p."amount")) AS amount
+             ABS(SUM(p."baseAmount")) AS amount
       FROM "Posting" p
       JOIN "JournalEntry" e ON e.id = p."entryId"
       JOIN "Category" c ON c.id = p."categoryId"
@@ -446,7 +525,7 @@ export class ReportsService {
 
     return this.prisma.$queryRaw<Array<{ month: Date; amount: Prisma.Decimal }>>`
       SELECT date_trunc('month', timezone(${timeZone}, timezone('UTC', e."date"))) AS month,
-             ABS(SUM(cp."amount")) AS amount
+             ABS(SUM(cp."baseAmount")) AS amount
       FROM "JournalEntry" e
       JOIN "Posting" cp ON cp."entryId" = e.id
       JOIN "Category" c ON c.id = cp."categoryId" AND c."type" = 'expense'
@@ -477,7 +556,7 @@ export class ReportsService {
       userId,
       query.projectId,
     );
-    const range = zonedMonthRange(query.yearMonth, timeZone);
+    const range = zonedMonthRange(assertYearMonth(query.yearMonth, '조회 월'), timeZone);
 
     const entries = await this.prisma.journalEntry.findMany({
       where: this.entryScope(projectId, range, query),
@@ -541,10 +620,11 @@ export class ReportsService {
 
     // 고정/변동을 하나도 고르지 않았으면 금액은 없지만 목록은 그대로 둔다.
     // 어떤 수단이 있는지는 필터와 무관한 정보다.
+    const show = await this.displayConverter(projectId);
     const entriesToCount = filter.matchNothing ? [] : entries;
 
     for (const entry of entriesToCount) {
-      const item = toListItem(entry);
+      const item = toListItem(entry, show);
 
       // 고정/변동 필터. item.isFixed는 카테고리 다리에서 온 값이다
       // (이체는 수수료 카테고리가 그 값을 정한다).
@@ -643,6 +723,26 @@ export class ReportsService {
       date: { gte: range.start, lt: range.end },
       ...(owner ? { AND: [owner] } : {}),
     };
+  }
+
+  /**
+   * 계좌별 장부가 (기준통화).
+   *
+   * 외화 계좌의 balance는 그 통화라서 순자산에 바로 못 넣는다. 장부가는 거래마다
+   * 그때의 환율로 쌓인 baseAmount 합계이고, 최신 환율로 환산한 값과의 차이가
+   * 미실현 환차손익이 된다.
+   */
+  private async bookValuesOf(accountIds: string[]) {
+    if (accountIds.length === 0) return new Map<string, Prisma.Decimal>();
+
+    const rows = await this.prisma.posting.groupBy({
+      by: ['accountId'],
+      _sum: { baseAmount: true },
+      where: { accountId: { in: accountIds } },
+    });
+    return new Map(
+      rows.map((row) => [row.accountId!, row._sum.baseAmount ?? ZERO] as const),
+    );
   }
 
   /** 계좌별 최신 평가액. 계좌 수만큼 쿼리를 돌리지 않는다. */

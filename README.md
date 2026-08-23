@@ -278,7 +278,7 @@ NODE_ENV=production
 PORT=3001
 DATABASE_URL=postgresql://...
 REDIS_URL=redis://...
-JWT_SECRET=<your-secret-key>
+JWT_SECRET=<32자 이상. openssl rand -base64 48 로 생성>
 CORS_ORIGIN=<your-domain>
 ```
 

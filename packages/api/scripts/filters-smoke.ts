@@ -1,12 +1,8 @@
-import { AccountsService } from '@/modules/accounts/accounts.service';
 import { CardsService } from '@/modules/cards/cards.service';
 import { CategoriesService } from '@/modules/categories/categories.service';
-import { EntriesService } from '@/modules/entries/entries.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
-import { LedgerService } from '@/modules/ledger/ledger.service';
 import { PeopleService } from '@/modules/people/people.service';
-import { ReportsService } from '@/modules/reports/reports.service';
-import { projectAccessStub, runSmoke } from './smoke-harness';
+import { makeAccounts, makeBudgets, makeEntries, makeLedger, makeReports, projectAccessStub, runSmoke } from './smoke-harness';
 
 /**
  * 자산 주인 / 고정·변동 필터가 목록과 리포트에 같이 걸리는지 확인한다.
@@ -23,14 +19,14 @@ runSmoke('filters', async (ctx) => {
   const uid = user.id;
   const access = projectAccessStub(ctx.prisma, pid);
 
-  const ledger = new LedgerService(ctx.prisma as any);
+  const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
-  const accounts = new AccountsService(ctx.prisma as any, access, ledger, institutions);
+  const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
   const people = new PeopleService(ctx.prisma as any, access);
   const categories = new CategoriesService(ctx.prisma as any, access);
   const cards = new CardsService(ctx.prisma as any, access, institutions);
-  const entries = new EntriesService(ctx.prisma as any, access, ledger);
-  const reports = new ReportsService(ctx.prisma as any, access);
+  const entries = makeEntries(ctx.prisma, access, ledger);
+  const reports = makeReports(ctx.prisma, access);
 
   const chulsoo = await people.createPerson(uid, { name: '김철수' }, pid);
   const younghee = await people.createPerson(uid, { name: '이영희' }, pid);
@@ -43,11 +39,11 @@ runSmoke('filters', async (ctx) => {
 
   const bank = await accounts.createAccount(uid, {
     type: 'deposit', ownerId: chulsoo.id, name: '보통예금', institutionId: 'fi_bank_shinhan',
-    openingBalance: '1000000', openingBalanceDate: '2026-08-01',
+    openingBalance: '1000000',
   }, pid);
   const wifeBank = await accounts.createAccount(uid, {
     type: 'deposit', ownerId: younghee.id, name: '이영희 통장', institutionId: 'fi_bank_kb',
-    openingBalance: '500000', openingBalanceDate: '2026-08-01',
+    openingBalance: '500000',
   }, pid);
   // 이번 달에 한 번도 쓰지 않는 카드. 0원으로 목록에 나와야 한다.
   const unusedCard = await cards.createCard(uid, {
@@ -231,9 +227,12 @@ runSmoke('filters', async (ctx) => {
   ctx.check('받는 계좌 주인에게는 잡히지 않는다', (await transferList(younghee.id)).length, 0);
 
   // ── 기초잔액 전표는 그 계좌 주인의 것 (자본 계정 다리에 걸려 사라지면 안 된다) ──
-  // 기준일이 8/1이면 서울 자정 = 7/31 15:00Z이므로 조회 범위를 7월까지 넓힌다.
+  //
+  // 기초잔액은 사용자가 고른 기준일이 아니라 원장 맨 앞(1899-01-01)에 놓인다.
+  // 예전에는 이 검사가 7~8월만 조회해서, 날짜가 1899년으로 바뀐 뒤로는 범위 밖이라
+  // 늘 실패하고 있었다. 자산 주인 판정을 보는 검사이므로 날짜는 열어 둔다.
   const withOpening = await entries.getEntries(uid, {
-    personIds: younghee.id, startDate: '2026-07-01T00:00:00.000Z', endDate: aug(28),
+    personIds: younghee.id, endDate: aug(28),
   }, pid);
   ctx.check('기초잔액도 계좌 주인 기준',
     withOpening.data.some((e) => e.description.includes('기초잔액')), true);
@@ -243,7 +242,7 @@ runSmoke('filters', async (ctx) => {
   // ── 예산 사용금액도 같은 필터를 탄다 ──
   // 왼쪽 예산 카드와 오른쪽 상세 통계가 다른 숫자를 보여주면 안 된다.
   const { BudgetsService } = await import('@/modules/budgets/budgets.service');
-  const budgets = new BudgetsService(ctx.prisma as any, access);
+  const budgets = makeBudgets(ctx.prisma, access);
   const usedOf = async (filter: Record<string, string>) => {
     const rows = await budgets.getBudgetForMonth(uid, pid, 2026, 8, filter);
     const row = rows.find((r) => r.categoryId === dining.id);

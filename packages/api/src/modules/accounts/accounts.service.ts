@@ -1,11 +1,13 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { AccountType, FinancialInstitutionType, Prisma } from '@prisma/client';
+import { AccountType, FinancialInstitutionType, Prisma, ProjectRole } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { LedgerService } from '../ledger/ledger.service';
 import { InstitutionsService } from '../institutions/institutions.service';
 import { AccountDto } from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
+import { toMoney, toOptionalMoney } from '@/common/money';
+import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 
 /**
  * 사용자가 "통장"으로 인식하지 않는 내부 계정.
@@ -34,6 +36,7 @@ export class AccountsService {
     private readonly projectAccess: ProjectAccessService,
     private readonly ledger: LedgerService,
     private readonly institutions: InstitutionsService,
+    private readonly exchangeRates: ExchangeRatesService,
   ) {}
 
   /**
@@ -63,6 +66,7 @@ export class AccountsService {
     const { id: projectId } = await this.projectAccess.resolveProject(
       userId,
       projectIdParam || dto.projectId,
+      'editor',
     );
 
     if (HIDDEN_ACCOUNT_TYPES.includes(dto.type as AccountType)) {
@@ -80,6 +84,12 @@ export class AccountsService {
       projectId,
     );
 
+    // 통화는 만들 때 정하고 그 뒤로 바꾸지 않는다. 거래가 쌓인 뒤에 바꾸면
+    // 지금까지의 금액이 어느 통화였는지 알 수 없게 된다.
+    const currency = dto.currency
+      ? this.exchangeRates.assertCurrency(dto.currency, '계좌 통화')
+      : await this.projectAccess.getProjectLedgerCurrency(projectId);
+
     // 목록은 주인별로 나뉘어 있고 드래그도 그 안에서 이뤄진다. 같은 주인의
     // 마지막 번호 다음을 준다. 기본값 0으로 두면 그 주인 목록의 앞쪽에 끼어든다.
     const lastOrder = await this.prisma.account.aggregate({
@@ -95,7 +105,7 @@ export class AccountsService {
         name: dto.name,
         institutionId,
         accountNumber: dto.accountNumber ?? null,
-        currency: dto.currency ?? 'KRW',
+        currency,
         sortOrder: (lastOrder._max.sortOrder ?? -1) + 1,
       },
       include: ACCOUNT_INCLUDE,
@@ -104,7 +114,7 @@ export class AccountsService {
     // 개설 잔액은 컬럼에 직접 쓰지 않고 전표로 남긴다.
     // 그래야 "잔액 = posting 합계" 불변식이 처음부터 성립한다.
     // 날짜는 원장 맨 앞(1970-01-01)으로 고정된다. 기준일 입력은 없다.
-    const opening = dto.openingBalance ? new Prisma.Decimal(dto.openingBalance) : null;
+    const opening = toOptionalMoney(dto.openingBalance, '기초 잔액');
     if (opening && !opening.isZero()) {
       await this.ledger.setBalanceTo({
         projectId,
@@ -118,14 +128,20 @@ export class AccountsService {
     return account;
   }
 
-  /** 통장 목록. 카드 부채와 자본 계정은 제외한다. */
-  async getAccounts(userId: string, projectId?: string) {
+  /**
+   * 통장 목록. 카드 부채와 자본 계정은 제외한다.
+   *
+   * includeInactive를 주면 사용자가 숨긴 통장까지 함께 준다. 숨기기를 되돌릴
+   * 화면이 필요하기 때문이다. (HIDDEN_ACCOUNT_TYPES는 이것과 다른 개념으로,
+   * 사용자에게 통장으로 보이지 않는 내부 계정이라 어느 경우에도 빠진다.)
+   */
+  async getAccounts(userId: string, projectId?: string, includeInactive = false) {
     const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
 
     return this.prisma.account.findMany({
       where: {
         projectId: finalProjectId,
-        isActive: true,
+        ...(includeInactive ? {} : { isActive: true }),
         type: { notIn: HIDDEN_ACCOUNT_TYPES },
       },
       include: ACCOUNT_INCLUDE,
@@ -136,7 +152,11 @@ export class AccountsService {
 
   /** 드래그로 바꾼 표시 순서 저장 */
   async reorderAccounts(userId: string, ids: string[], projectId?: string) {
-    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
+    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(
+      userId,
+      projectId,
+      'editor',
+    );
 
     const rows = await this.prisma.account.findMany({
       where: { projectId: finalProjectId },
@@ -153,19 +173,23 @@ export class AccountsService {
     return this.getAccounts(userId, finalProjectId);
   }
 
-  async getAccountById(id: string, userId: string) {
+  /**
+   * 통장 조회. 수정·삭제 경로는 requiredRole에 'editor'를 넘겨
+   * 읽기 전용 구성원이 통장을 고치지 못하게 한다.
+   */
+  async getAccountById(id: string, userId: string, requiredRole: ProjectRole = 'viewer') {
     const account = await this.prisma.account.findUnique({
       where: { id },
       include: ACCOUNT_INCLUDE,
     });
     if (!account) throw new NotFoundException('통장을 찾을 수 없습니다.');
 
-    await this.projectAccess.verifyUserHasAccessToProject(userId, account.projectId);
+    await this.projectAccess.verifyUserHasAccessToProject(userId, account.projectId, requiredRole);
     return account;
   }
 
   async updateAccount(id: string, userId: string, dto: AccountDto.UpdateRequest) {
-    const account = await this.getAccountById(id, userId);
+    const account = await this.getAccountById(id, userId, 'editor');
 
     const { balance, institutionId } = dto;
 
@@ -199,7 +223,7 @@ export class AccountsService {
       await this.ledger.setBalanceTo({
         projectId: account.projectId,
         accountId: id,
-        targetBalance: new Prisma.Decimal(balance),
+        targetBalance: toMoney(balance, '잔액'),
         createdByUserId: userId,
       });
     }
@@ -235,48 +259,96 @@ export class AccountsService {
     const hasMore = rows.length > limit;
     const page = hasMore ? rows.slice(0, limit) : rows;
 
-    // 잔액 추이를 함께 준다 (최신부터 거슬러 올라가며 계산)
-    const account = await this.prisma.account.findUniqueOrThrow({ where: { id } });
-    let running = account.balance;
-    const data = page.map((posting) => {
-      const balanceAfter = running;
-      running = running.sub(posting.amount);
-      return {
-        postingId: posting.id,
-        entryId: posting.entry.id,
-        date: posting.entry.date.toISOString(),
-        description: posting.entry.description,
-        merchant: posting.entry.merchant,
-        amount: posting.amount.toString(),
-        balanceAfter: balanceAfter.toString(),
-        cardId: posting.card?.id ?? null,
-        cardName: posting.card?.name ?? null,
-      };
-    });
+    if (page.length === 0) {
+      return { data: [], nextCursor: null };
+    }
+
+    /*
+     * 잔액 추이.
+     *
+     * 이 페이지에서 가장 오래된 행 **직전**까지 쌓인 잔액을 DB에서 구한 뒤,
+     * 오래된 것부터 금액을 더해 올라가며 각 행의 잔액을 만든다.
+     *
+     * 예전에는 계좌의 현재 잔액에서 시작해 빼 내려갔다. 첫 페이지는 맞지만
+     * 두 번째 페이지도 다시 현재 잔액에서 시작해, 이미 지나온 거래 금액만큼
+     * 통째로 어긋났다.
+     */
+    const oldest = page[page.length - 1];
+    let running = (await this.cumulativeBalanceThrough(id, oldest)).sub(oldest.amount);
+
+    const data = page
+      .slice()
+      .reverse()
+      .map((posting) => {
+        running = running.add(posting.amount);
+        return {
+          postingId: posting.id,
+          entryId: posting.entry.id,
+          date: posting.entry.date.toISOString(),
+          description: posting.entry.description,
+          merchant: posting.entry.merchant,
+          amount: posting.amount.toString(),
+          balanceAfter: running.toString(),
+          cardId: posting.card?.id ?? null,
+          cardName: posting.card?.name ?? null,
+        };
+      })
+      .reverse();
 
     return { data, nextCursor: hasMore ? page[page.length - 1].id : null };
   }
 
   /**
-   * 통장 비활성화. 원장 기록은 남겨야 하므로 하드 삭제하지 않는다.
+   * 그 posting까지(포함) 이 계좌에 쌓인 잔액.
+   *
+   * 목록의 정렬 기준이 (entry.date desc, posting.id desc)이므로 "앞선 행"의
+   * 판정도 같은 튜플로 해야 한다. 날짜만 비교하면 같은 날짜의 여러 거래가
+   * 서로의 잔액에 끼어든다.
+   *
+   * 계좌의 balance 컬럼을 쓰지 않고 posting을 더하는 이유는, 이 값이 페이지
+   * 중간 지점의 잔액이어서 캐시 컬럼으로는 만들 수 없기 때문이다.
    */
-  async deleteAccount(id: string, userId: string) {
-    const account = await this.getAccountById(id, userId);
+  private async cumulativeBalanceThrough(
+    accountId: string,
+    row: { id: string; entry: { date: Date } },
+  ): Promise<Prisma.Decimal> {
+    const total = await this.prisma.posting.aggregate({
+      _sum: { amount: true },
+      where: {
+        accountId,
+        OR: [
+          { entry: { date: { lt: row.entry.date } } },
+          { entry: { date: row.entry.date }, id: { lte: row.id } },
+        ],
+      },
+    });
+
+    return total._sum.amount ?? new Prisma.Decimal(0);
+  }
+
+  /**
+   * 통장 숨기기. 원장 기록은 남겨야 하므로 하드 삭제하지 않는다.
+   *
+   * 거래 기록이 있어도 숨길 수 있다. 예전에는 posting이 하나라도 있으면 막았는데,
+   * 이 함수는 애초에 isActive를 내리는 것뿐이라 해지한 통장을 목록에서 치울
+   * 방법이 아예 없었다. 기록은 그대로 남고 목록에서만 빠진다.
+   *
+   * 남겨 둔 조건은 숨겼을 때 숫자가 어긋나는 경우뿐이다.
+   *   - 잔액이 남아 있으면: 순자산 집계가 활성 계좌만 보므로 총자산이 조용히 준다.
+   *   - 연결된 활성 카드가 있으면: 결제 통장이 사라진 카드가 남는다.
+   */
+  async deactivateAccount(id: string, userId: string) {
+    const account = await this.getAccountById(id, userId, 'editor');
 
     const cardCount = await this.prisma.card.count({
       where: { paymentAccountId: id, isActive: true },
     });
     if (cardCount > 0) {
-      throw new BadRequestException('이 통장에 연결된 카드가 있어서 삭제할 수 없습니다.');
-    }
-
-    const postingCount = await this.prisma.posting.count({ where: { accountId: id } });
-    if (postingCount > 0) {
-      throw new BadRequestException('이 통장의 거래 기록이 있어서 삭제할 수 없습니다.');
+      throw new BadRequestException('이 통장에 연결된 카드가 있어서 숨길 수 없습니다.');
     }
 
     if (!account.balance.isZero()) {
-      throw new BadRequestException('잔액이 남아 있어 삭제할 수 없습니다.');
+      throw new BadRequestException('잔액이 남아 있어 숨길 수 없습니다. 먼저 잔액을 0으로 맞추세요.');
     }
 
     return this.prisma.account.update({

@@ -45,7 +45,11 @@ CREATE TABLE "Project" (
     "projectKey" TEXT,
     "name" TEXT NOT NULL,
     "description" TEXT,
-    "baseCurrency" TEXT NOT NULL DEFAULT 'KRW',
+    -- 통화가 둘이다. ledgerCurrency 는 Posting.baseAmount 가 담긴 통화로 만든 뒤
+    -- 바뀌지 않고, displayCurrency 는 리포트를 어느 통화로 볼지라 언제든 바뀐다.
+    -- 표시 환산은 읽을 때 합계에 한 번 곱하므로 저장값은 영향을 받지 않는다.
+    "ledgerCurrency" TEXT NOT NULL DEFAULT 'KRW',
+    "displayCurrency" TEXT NOT NULL DEFAULT 'KRW',
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
@@ -247,6 +251,15 @@ CREATE TABLE "JournalEntry" (
     "description" TEXT NOT NULL,
     "merchant" TEXT,
     "detailedNote" TEXT,
+    -- 원화 카드로 외화 결제를 했을 때의 원 통화 금액. 표시 전용이다.
+    -- 청구되는 돈은 원화이므로 posting 은 전부 원화로 남지만, "$50 결제"라는
+    -- 사실이 사라지면 카드 명세서와 대조할 수 없어 전표에 함께 적어 둔다.
+    -- 계좌 자체가 외화면 posting.currency 가 외화이므로 이 필드를 쓰지 않는다.
+    "originalCurrency" TEXT,
+    "originalAmount" DECIMAL(19,4),
+    -- 환산액이 서버 추정 환율로 만들어졌다는 표시. 명세서로 실제 청구액을
+    -- 확정하면 false가 되어 대조 목록에서 빠진다.
+    "rateProvisional" BOOLEAN NOT NULL DEFAULT false,
     "createdByUserId" TEXT,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
@@ -275,6 +288,9 @@ CREATE TABLE "Posting" (
 -- CreateTable
 CREATE TABLE "ExchangeRate" (
     "id" TEXT NOT NULL,
+    -- 환율은 프로젝트마다 따로 둔다. 한 가계부에서 바꾼 값이 다른 가계부의
+    -- 과거 리포트까지 흔들면 안 된다.
+    "projectId" TEXT NOT NULL,
     "baseCurrency" TEXT NOT NULL,
     "quoteCurrency" TEXT NOT NULL,
     "rate" DECIMAL(19,8) NOT NULL,
@@ -431,7 +447,10 @@ CREATE INDEX "Posting_statementId_idx" ON "Posting"("statementId");
 CREATE INDEX "Posting_cardId_idx" ON "Posting"("cardId");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "ExchangeRate_baseCurrency_quoteCurrency_date_key" ON "ExchangeRate"("baseCurrency", "quoteCurrency", "date");
+CREATE UNIQUE INDEX "ExchangeRate_projectId_baseCurrency_quoteCurrency_date_key" ON "ExchangeRate"("projectId", "baseCurrency", "quoteCurrency", "date");
+
+-- CreateIndex
+CREATE INDEX "ExchangeRate_projectId_idx" ON "ExchangeRate"("projectId");
 
 -- CreateIndex
 CREATE INDEX "Budget_projectId_categoryId_idx" ON "Budget"("projectId", "categoryId");
@@ -536,6 +555,9 @@ ALTER TABLE "Posting" ADD CONSTRAINT "Posting_statementId_fkey" FOREIGN KEY ("st
 ALTER TABLE "Posting" ADD CONSTRAINT "Posting_cardId_fkey" FOREIGN KEY ("cardId") REFERENCES "Card"("id") ON DELETE SET NULL ON UPDATE CASCADE;
 
 -- AddForeignKey
+ALTER TABLE "ExchangeRate" ADD CONSTRAINT "ExchangeRate_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- AddForeignKey
 ALTER TABLE "Budget" ADD CONSTRAINT "Budget_projectId_fkey" FOREIGN KEY ("projectId") REFERENCES "Project"("id") ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
@@ -564,6 +586,18 @@ ALTER TABLE "Posting"
 CREATE UNIQUE INDEX "FinancialInstitution_global_type_name_key"
     ON "FinancialInstitution"("type", "name")
     WHERE "projectId" IS NULL;
+
+-- 원 통화 금액은 통화와 금액이 함께 있거나 함께 없어야 한다.
+ALTER TABLE "JournalEntry"
+  ADD CONSTRAINT "journal_entry_original_currency_pair"
+  CHECK (("originalCurrency" IS NULL) = ("originalAmount" IS NULL));
+
+-- 대분류 이름 중복 방지. 위 FinancialInstitution 과 같은 NULL 함정이다.
+-- @@unique([projectId, name, parentId]) 는 parentId 가 있는 소분류에만 걸린다.
+-- 이름에 type 을 묶어 지출 "기타"와 수입 "기타"는 공존할 수 있게 한다.
+CREATE UNIQUE INDEX "Category_project_root_type_name_key"
+    ON "Category"("projectId", "type", "name")
+    WHERE "parentId" IS NULL;
 
 -- ─────────────────────────────────────────────
 -- 표시 순서 / 기준 타임존 / "구성원 중 나"

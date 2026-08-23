@@ -188,7 +188,7 @@ export default function EditAccountModal({
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            현재 잔액 (원)
+            현재 잔액 ({account.currency})
           </label>
           <input
             type="number"
@@ -202,7 +202,7 @@ export default function EditAccountModal({
           {balanceChanged && (
             <div className="mt-2 p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg">
               잔액을 바꾸면 거래내역 맨 앞의 <strong>기초잔액</strong> 금액이 다시 계산됩니다
-              ({formatCurrency(account.balance)} → {formatCurrency(toAmountString(formData.balance))}).
+              ({formatCurrency(account.balance, account.currency)} → {formatCurrency(toAmountString(formData.balance), account.currency)}).
               새 거래내역은 생기지 않고, 그동안 입력한 거래도 그대로 남습니다.
             </div>
           )}

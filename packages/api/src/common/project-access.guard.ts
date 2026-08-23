@@ -1,44 +1,41 @@
 import { Injectable, ForbiddenException, BadRequestException } from '@nestjs/common';
-import { DEFAULT_TIME_ZONE } from '@money/types';
+import { ProjectRole } from '@prisma/client';
+import { CurrencyCode, DEFAULT_TIME_ZONE, isCurrencyCode } from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
+
+/** 프로젝트 역할. 숫자가 클수록 넓은 권한이다. */
+const ROLE_RANK: Record<ProjectRole, number> = { owner: 3, editor: 2, viewer: 1 };
+
+const ROLE_LABEL: Record<ProjectRole, string> = {
+  owner: '소유자',
+  editor: '편집',
+  viewer: '읽기',
+};
 
 @Injectable()
 export class ProjectAccessService {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * 사용자가 프로젝트에 접근 권한이 있는지 확인
-   * @param userId 사용자 ID
-   * @param projectId 프로젝트 ID
-   * @throws ForbiddenException 권한이 없을 때
+   * 사용자가 프로젝트에 필요한 역할 이상의 권한이 있는지 확인.
+   *
+   * 기본값은 viewer라 조회 경로는 인자를 넘기지 않아도 된다. **데이터를 바꾸는
+   * 경로는 반드시 'editor'를 넘겨야 한다.** 넘기지 않으면 읽기 전용으로 초대한
+   * 구성원이 거래·계좌·예산을 고칠 수 있다.
+   *
+   * @throws ForbiddenException 멤버가 아니거나 역할이 모자랄 때
    */
-  async verifyUserHasAccessToProject(userId: string, projectId: string): Promise<void> {
-    const membership = await this.prisma.projectMember.findUnique({
-      where: {
-        projectId_userId: {
-          projectId,
-          userId,
-        },
-      },
-    });
-
-    if (!membership) {
-      throw new ForbiddenException('이 프로젝트에 접근 권한이 없습니다.');
-    }
-  }
-
-  /**
-   * 사용자가 프로젝트에 특정 역할 이상의 권한이 있는지 확인
-   * @param userId 사용자 ID
-   * @param projectId 프로젝트 ID
-   * @param requiredRole 필요한 역할 (owner, editor, viewer)
-   * @throws ForbiddenException 권한이 없을 때
-   */
-  async verifyUserRole(
+  async verifyUserHasAccessToProject(
     userId: string,
     projectId: string,
-    requiredRole: 'owner' | 'editor' | 'viewer' = 'viewer',
+    requiredRole: ProjectRole = 'viewer',
   ): Promise<void> {
+    // 호출부가 `query.projectId!` 처럼 넘겨 undefined가 들어오면 Prisma가
+    // 500으로 터진다. 권한 경로이므로 여기서 명시적으로 막는다.
+    if (!projectId) {
+      throw new BadRequestException('프로젝트를 지정해야 합니다.');
+    }
+
     const membership = await this.prisma.projectMember.findUnique({
       where: {
         projectId_userId: {
@@ -46,16 +43,16 @@ export class ProjectAccessService {
           userId,
         },
       },
+      select: { role: true },
     });
 
     if (!membership) {
       throw new ForbiddenException('이 프로젝트에 접근 권한이 없습니다.');
     }
 
-    const roleHierarchy = { owner: 3, editor: 2, viewer: 1 };
-    if (roleHierarchy[membership.role] < roleHierarchy[requiredRole]) {
+    if (ROLE_RANK[membership.role] < ROLE_RANK[requiredRole]) {
       throw new ForbiddenException(
-        `이 작업에는 ${requiredRole} 이상의 권한이 필요합니다.`,
+        `이 작업에는 ${ROLE_LABEL[requiredRole]} 이상의 권한이 필요합니다.`,
       );
     }
   }
@@ -123,15 +120,17 @@ export class ProjectAccessService {
   }
 
   /**
-   * projectId를 반환 (없으면 기본값)
-   * 권한 확인 포함
+   * projectId를 반환 (없으면 기본값). 권한 확인 포함.
+   *
+   * 데이터를 바꾸는 경로는 requiredRole에 'editor'를 넘긴다.
    */
   async resolveAndVerifyProjectId(
     userId: string,
     projectIdParam?: string,
+    requiredRole: ProjectRole = 'viewer',
   ): Promise<string> {
     const projectId = projectIdParam || (await this.getDefaultProjectId(userId));
-    await this.verifyUserHasAccessToProject(userId, projectId);
+    await this.verifyUserHasAccessToProject(userId, projectId, requiredRole);
     return projectId;
   }
 
@@ -144,8 +143,13 @@ export class ProjectAccessService {
   async resolveProject(
     userId: string,
     projectIdParam?: string,
+    requiredRole: ProjectRole = 'viewer',
   ): Promise<{ id: string; timeZone: string }> {
-    const projectId = await this.resolveAndVerifyProjectId(userId, projectIdParam);
+    const projectId = await this.resolveAndVerifyProjectId(
+      userId,
+      projectIdParam,
+      requiredRole,
+    );
     const project = await this.prisma.project.findUnique({
       where: { id: projectId },
       select: { timezone: true },
@@ -162,5 +166,34 @@ export class ProjectAccessService {
     });
 
     return project?.timezone || DEFAULT_TIME_ZONE;
+  }
+
+  /**
+   * 프로젝트의 저장 통화와 표시 통화.
+   *
+   *   ledger  : Posting.baseAmount 가 담긴 통화. 만든 뒤 바뀌지 않는다.
+   *             전표 균형 판정과 거래 시점 금액이 이 통화로 남는다.
+   *   display : 리포트를 보여줄 통화. 읽을 때만 환산하므로 바꿔도 저장값은 그대로다.
+   *
+   * 권한 확인이 이미 끝난 경로에서 쓴다.
+   */
+  async getProjectCurrencies(
+    projectId: string,
+  ): Promise<{ ledger: CurrencyCode; display: CurrencyCode }> {
+    const project = await this.prisma.project.findUnique({
+      where: { id: projectId },
+      select: { ledgerCurrency: true, displayCurrency: true },
+    });
+
+    // 알 수 없는 코드가 저장돼 있으면 원으로 본다. 여기서 예외를 던지면
+    // 프로젝트 전체가 열리지 않는다.
+    const ledger = isCurrencyCode(project?.ledgerCurrency) ? project.ledgerCurrency : 'KRW';
+    const display = isCurrencyCode(project?.displayCurrency) ? project.displayCurrency : ledger;
+    return { ledger, display };
+  }
+
+  /** 저장 통화만 필요할 때. 원장이 쓴다. */
+  async getProjectLedgerCurrency(projectId: string): Promise<CurrencyCode> {
+    return (await this.getProjectCurrencies(projectId)).ledger;
   }
 }

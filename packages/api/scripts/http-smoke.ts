@@ -45,7 +45,6 @@ runSmoke('http', async (ctx) => {
     name: '신한통장',
     institutionId: 'fi_bank_shinhan',
     openingBalance: '1000000',
-    openingBalanceDate: '2026-01-01',
   });
   ctx.check('계좌 생성', account.status, 201);
   ctx.check('개설 잔액 반영', account.body?.balance, '1000000');

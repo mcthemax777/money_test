@@ -3,6 +3,9 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
+/** HS256 서명 키의 최소 길이. 이보다 짧으면 오프라인 대입 공격을 견디지 못한다. */
+const MIN_JWT_SECRET_LENGTH = 32;
+
 @Injectable()
 export class ConfigService {
   private readonly env = process.env;
@@ -19,8 +22,30 @@ export class ConfigService {
     return this.env.DATABASE_URL || 'postgresql://user:password@localhost:5432/money';
   }
 
+  /**
+   * 토큰 서명 키. 기본값을 두지 않는다.
+   *
+   * 예전에는 미설정 시 'your-secret-key'로 넘어갔다. 그 값은 공개 저장소에 있는
+   * 문자열이라, 환경 변수 하나를 빠뜨리면 누구나 임의의 사용자로 로그인하는
+   * 토큰을 만들 수 있었다. 조용히 약한 키로 뜨느니 부팅에 실패하는 편이 낫다.
+   * JwtModule.registerAsync가 기동 때 읽으므로 실패는 즉시 드러난다.
+   */
   get jwtSecret(): string {
-    return this.env.JWT_SECRET || 'your-secret-key';
+    const secret = this.env.JWT_SECRET?.trim();
+
+    if (!secret) {
+      throw new Error('JWT_SECRET 환경 변수가 설정되지 않았습니다.');
+    }
+
+    // 짧은 키는 오프라인 대입에 취약하다. `openssl rand -base64 48` 정도를 쓴다.
+    if (secret.length < MIN_JWT_SECRET_LENGTH) {
+      throw new Error(
+        `JWT_SECRET이 너무 짧습니다. ${MIN_JWT_SECRET_LENGTH}자 이상이어야 합니다 ` +
+          '(예: openssl rand -base64 48).',
+      );
+    }
+
+    return secret;
   }
 
   get jwtExpiresIn(): string {

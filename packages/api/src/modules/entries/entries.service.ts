@@ -4,7 +4,9 @@ import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { LedgerService, EntryInput } from '../ledger/ledger.service';
 import { ENTRY_INCLUDE, toListItem } from './entry-view';
-import { EntryDto } from '@money/types';
+import { EntryDto, EntryListItem } from '@money/types';
+import { toMoney } from '@/common/money';
+import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import {
   MATCH_NOTHING,
   assetOwnerCondition,
@@ -15,6 +17,13 @@ import {
 const ZERO = new Prisma.Decimal(0);
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+/**
+ * kind 필터가 걸렸을 때 한 요청에서 커서를 미는 최대 횟수.
+ *
+ * 조건에 맞는 거래가 아주 드물면 무한정 읽게 된다. 상한을 두고, 채우지 못하면
+ * 적게 주되 커서는 유효하게 남겨 클라이언트가 이어서 읽게 한다.
+ */
+const MAX_FILTER_ROUNDS = 10;
 
 @Injectable()
 export class EntriesService {
@@ -22,12 +31,14 @@ export class EntriesService {
     private readonly prisma: PrismaService,
     private readonly projectAccess: ProjectAccessService,
     private readonly ledger: LedgerService,
+    private readonly exchangeRates: ExchangeRatesService,
   ) {}
 
   async createEntry(userId: string, dto: EntryDto.CreateRequest, projectIdParam?: string) {
     const projectId = await this.projectAccess.resolveAndVerifyProjectId(
       userId,
       projectIdParam || dto.projectId,
+      'editor',
     );
 
     const input = await this.buildInput(projectId, userId, dto);
@@ -43,7 +54,7 @@ export class EntriesService {
       include: { postings: true },
     });
     if (!existing) throw new NotFoundException('거래를 찾을 수 없습니다.');
-    await this.projectAccess.verifyUserHasAccessToProject(userId, existing.projectId);
+    await this.projectAccess.verifyUserHasAccessToProject(userId, existing.projectId, 'editor');
 
     const input = await this.buildInput(existing.projectId, userId, dto);
 
@@ -59,7 +70,7 @@ export class EntriesService {
       include: { postings: true },
     });
     if (!existing) throw new NotFoundException('거래를 찾을 수 없습니다.');
-    await this.projectAccess.verifyUserHasAccessToProject(userId, existing.projectId);
+    await this.projectAccess.verifyUserHasAccessToProject(userId, existing.projectId, 'editor');
 
     await this.ledger.deleteEntry(id, existing.projectId);
     return { id };
@@ -143,35 +154,76 @@ export class EntriesService {
       ];
     }
 
-    // 커서: "date|id". 튜플 비교를 Prisma로 표현하기 위해 OR로 편다.
+    // 목록 금액은 저장 통화로 계산된 뒤 표시 통화로 옮겨진다.
+    const show = await this.displayConverter(finalProjectId);
     const cursor = this.decodeCursor(query.cursor);
-    if (cursor) {
-      where.OR = [
-        { date: { lt: cursor.date } },
-        { date: cursor.date, id: { lt: cursor.id } },
-      ];
+
+    /*
+     * kind는 postings에서 유도되는 값이라 DB 조건으로 옮길 수 없다. 조립한 뒤
+     * 걸러야 하는데, 한 번만 읽고 거르면 요청한 개수보다 적은(때로는 빈) 페이지가
+     * 나온다. 빈 페이지를 "끝"으로 읽는 클라이언트는 남은 거래를 못 보게 된다.
+     *
+     * 그래서 kind가 걸리면 limit을 채우거나 데이터가 떨어질 때까지 커서를 밀며
+     * 더 읽는다. kind가 없으면 첫 회에 조건이 성립해 그대로 끝난다.
+     */
+    const collected: Array<{ item: EntryListItem; date: Date; id: string }> = [];
+    let scanned = cursor;
+    let scanHasMore = false;
+
+    for (let round = 0; round < MAX_FILTER_ROUNDS; round += 1) {
+      const rows = await this.prisma.journalEntry.findMany({
+        // 커서: "date|id". 튜플 비교를 Prisma로 표현하기 위해 OR로 편다.
+        where: scanned
+          ? {
+              ...where,
+              OR: [
+                { date: { lt: scanned.date } },
+                { date: scanned.date, id: { lt: scanned.id } },
+              ],
+            }
+          : where,
+        include: ENTRY_INCLUDE,
+        orderBy: [{ date: 'desc' }, { id: 'desc' }],
+        // 다음 페이지 존재 여부를 알기 위해 하나 더 읽는다.
+        take: limit + 1,
+      });
+
+      scanHasMore = rows.length > limit;
+      const page = scanHasMore ? rows.slice(0, limit) : rows;
+      if (page.length === 0) break;
+
+      for (const entry of page) {
+        const item = toListItem(entry, show);
+        if (!query.kind || item.kind === query.kind) {
+          collected.push({ item, date: entry.date, id: entry.id });
+        }
+      }
+
+      scanned = { date: page[page.length - 1].date, id: page[page.length - 1].id };
+      if (collected.length >= limit || !scanHasMore) break;
     }
 
-    // 다음 페이지 존재 여부를 알기 위해 하나 더 읽는다.
-    const rows = await this.prisma.journalEntry.findMany({
-      where,
-      include: ENTRY_INCLUDE,
-      orderBy: [{ date: 'desc' }, { id: 'desc' }],
-      take: limit + 1,
-    });
+    // 여러 회 읽으면 limit을 넘길 수 있다. 약속한 개수까지만 준다.
+    const kept = collected.slice(0, limit);
+    const truncated = collected.length > limit;
 
-    const hasMore = rows.length > limit;
-    const page = hasMore ? rows.slice(0, limit) : rows;
+    /*
+     * 다음 커서는 **실제로 돌려준 마지막 항목**이어야 한다. 마지막으로 읽은
+     * 행을 쓰면 잘라낸 항목들을 건너뛰어 그대로 사라진다.
+     *
+     * 하나도 남지 않았는데 더 읽을 것이 있으면(전부 걸러진 구간) 읽은 지점을
+     * 그대로 커서로 준다. 그러지 않으면 클라이언트가 여기서 끝났다고 본다.
+     */
+    const lastKept = kept[kept.length - 1];
+    const nextCursor = truncated || scanHasMore
+      ? lastKept
+        ? this.encodeCursor(lastKept.date, lastKept.id)
+        : scanned
+          ? this.encodeCursor(scanned.date, scanned.id)
+          : null
+      : null;
 
-    let data = page.map((entry) => toListItem(entry));
-    // kind는 postings에서 유도되는 값이라 DB에서 거를 수 없다. 조립 후 거른다.
-    if (query.kind) data = data.filter((item) => item.kind === query.kind);
-
-    const last = page[page.length - 1];
-    return {
-      data,
-      nextCursor: hasMore && last ? this.encodeCursor(last.date, last.id) : null,
-    };
+    return { data: kept.map((row) => row.item), nextCursor };
   }
 
   async getEntryById(id: string, userId: string): Promise<EntryDto.Detail> {
@@ -182,8 +234,9 @@ export class EntriesService {
     if (!entry) throw new NotFoundException('거래를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, entry.projectId);
 
+    const show = await this.displayConverter(entry.projectId);
     return {
-      ...toListItem(entry),
+      ...toListItem(entry, show),
       postings: entry.postings.map((p) => ({
         id: p.id,
         entryId: p.entryId,
@@ -214,6 +267,11 @@ export class EntriesService {
       merchant: dto.merchant,
       detailedNote: dto.detailedNote,
       createdByUserId: userId,
+      // 통화를 생략하면 원장이 계좌 통화로 본다. 환율을 생략하면 서버 환율을 쓴다.
+      currency: dto.currency,
+      exchangeRate: dto.exchangeRate ? toMoney(dto.exchangeRate, '환율') : undefined,
+      // 환율 대신 통장에서 빠진 금액을 받을 수 있다. 주면 환율보다 우선한다.
+      billedAmount: dto.billedAmount ? toMoney(dto.billedAmount, '청구액') : undefined,
     };
 
     switch (dto.kind) {
@@ -244,8 +302,10 @@ export class EntriesService {
           ...common,
           fromAccountId: dto.accountId,
           toAccountId: dto.toAccountId,
-          amount: new Prisma.Decimal(dto.amount),
-          feeAmount: dto.transferFee ? new Prisma.Decimal(dto.transferFee) : undefined,
+          amount: toMoney(dto.amount, '이체 금액'),
+          // 통화가 다른 환전에서 실제로 받은 금액. 없으면 서버 환율로 계산한다.
+          toAmount: dto.toAmount ? toMoney(dto.toAmount, '받는 금액') : undefined,
+          feeAmount: dto.transferFee ? toMoney(dto.transferFee, '이체 수수료') : undefined,
           feeCategoryId: dto.transferFeeCategoryId,
           // 이체에서 화면의 고정 체크는 수수료 카테고리에 붙는다 (이체 자체는 지출이 아니다).
           feeIsFixed: dto.isFixed,
@@ -259,7 +319,7 @@ export class EntriesService {
           ...common,
           cardId: dto.cardId,
           accountId: dto.accountId,
-          amount: new Prisma.Decimal(dto.amount),
+          amount: toMoney(dto.amount, '카드 대금'),
           direction: dto.cardTransferDirection ?? 'payment',
         });
 
@@ -317,7 +377,7 @@ export class EntriesService {
     if (dto.splits?.length) {
       return dto.splits.map((s) => ({
         categoryId: s.categoryId,
-        amount: new Prisma.Decimal(s.amount),
+        amount: toMoney(s.amount, '분할 금액'),
         isFixed: s.isFixed,
       }));
     }
@@ -329,10 +389,16 @@ export class EntriesService {
     return [
       {
         categoryId: dto.categoryId,
-        amount: new Prisma.Decimal(dto.amount),
+        amount: toMoney(dto.amount),
         isFixed: dto.isFixed,
       },
     ];
+  }
+
+  /** 저장 통화 -> 표시 통화. 목록의 금액은 이 환산을 거쳐 나간다. */
+  private async displayConverter(projectId: string) {
+    const { ledger, display } = await this.projectAccess.getProjectCurrencies(projectId);
+    return this.exchangeRates.getDisplayConverter(projectId, ledger, display);
   }
 
   private encodeCursor(date: Date, id: string): string {

@@ -1,13 +1,11 @@
 import { Prisma } from '@prisma/client';
-import { LedgerService } from '@/modules/ledger/ledger.service';
-import { AccountsService } from '@/modules/accounts/accounts.service';
 import { PeopleService } from '@/modules/people/people.service';
 import { CategoriesService } from '@/modules/categories/categories.service';
 import { CardsService } from '@/modules/cards/cards.service';
 
 const D = (n: string | number) => new Prisma.Decimal(n);
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
-import { projectAccessStub, runSmoke } from './smoke-harness';
+import { makeAccounts, makeLedger, projectAccessStub, runSmoke } from './smoke-harness';
 
 runSmoke('services', async (ctx) => {
   const project = await ctx.createProject();
@@ -17,9 +15,9 @@ runSmoke('services', async (ctx) => {
 
   const access = projectAccessStub(ctx.prisma, pid);
 
-  const ledger = new LedgerService(ctx.prisma as any);
+  const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
-  const accounts = new AccountsService(ctx.prisma as any, access, ledger, institutions);
+  const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
   const people = new PeopleService(ctx.prisma as any, access);
   const categories = new CategoriesService(ctx.prisma as any, access);
   const cards = new CardsService(ctx.prisma as any, access, institutions);
@@ -60,12 +58,14 @@ runSmoke('services', async (ctx) => {
   const openingPostings = await ctx.prisma.posting.count({ where: { accountId: bank.id } });
   ctx.check('개설 잔액이 전표로 남았는지', openingPostings, 1);
 
-  // ── 잔액 직접 수정 -> 조정 전표 ──
+  // ── 잔액 직접 수정 -> 기초잔액 전표를 덮어쓴다 ──
+  // 조정 전표를 새로 쌓지 않는다. 그래서 몇 번을 고쳐도 이 계좌의 posting은 1개다.
+  // (자세한 검증은 opening-balance-smoke.ts)
   await accounts.updateAccount(bank.id, u1.id, { balance: '1200000' });
   const adjusted = await ctx.prisma.account.findUniqueOrThrow({ where: { id: bank.id } });
   ctx.check('잔액 조정 결과', adjusted.balance, '1200000');
   const afterAdjust = await ctx.prisma.posting.count({ where: { accountId: bank.id } });
-  ctx.check('조정도 전표로 남았는지', afterAdjust, 2);
+  ctx.check('조정은 기초잔액을 덮어쓴다 (전표가 늘지 않는다)', afterAdjust, 1);
 
   const drift = await ctx.prisma.$queryRaw<{ id: string }[]>`
     SELECT a.id FROM "Account" a LEFT JOIN "Posting" p ON p."accountId" = a.id
@@ -88,9 +88,18 @@ runSmoke('services', async (ctx) => {
     type: 'credit_card', ownerId: person.id, name: '몰래',
   }, pid));
 
-  // ── 삭제 가드 ──
-  await ctx.expectReject('계좌 주인 삭제 거부', () => people.deletePerson(person.id, u1.id));
-  await ctx.expectReject('거래 있는 통장 삭제 거부', () => accounts.deleteAccount(bank.id, u1.id));
+  // ── 숨기기 가드 ──
+  //
+  // 거래 기록이 있다는 이유로는 막지 않는다(숨기기는 기록을 지우지 않는다).
+  // 숨겼을 때 다른 숫자가 어긋나는 경우만 막는다.
+  await ctx.expectReject(
+    '활성 통장을 가진 구성원 숨기기 거부',
+    () => people.deactivatePerson(person.id, u1.id),
+  );
+  await ctx.expectReject(
+    '잔액 남은 통장 숨기기 거부',
+    () => accounts.deactivateAccount(bank.id, u1.id),
+  );
   await ctx.expectReject('사용 중인 카테고리 삭제 거부 (사용 후)', async () => {
     await ledger.createExpense({
       projectId: pid, personId: person.id, date: new Date('2026-08-01T00:00:00Z'),

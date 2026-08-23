@@ -4,11 +4,18 @@ import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/store/auth';
 import { useUserFilter } from '@/store/user-filter';
-import { useMyPersonId, useProject, useProjectTimeZone } from '@/store/project';
+import {
+  useMyPersonId,
+  useProject,
+  useProjectDisplayCurrency,
+  useProjectLedgerCurrency,
+  useProjectTimeZone,
+} from '@/store/project';
+import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useBudget } from '@/store/budget';
 import { apiClient } from '@/lib/api-client';
 import type { Account, Card, Category, Person } from '@/lib/types';
-import { formatCurrency, toAmountString, toNumber } from '@/lib/money';
+import { formatCurrency, formatNumber, toAmountString, toNumber } from '@/lib/money';
 import { DAY_OF_MONTH_HINT, DAY_OF_MONTH_OPTIONS } from '@/lib/day-of-month';
 import {
   dateKeyOf,
@@ -21,9 +28,14 @@ import {
   todayKey,
 } from '@/lib/datetime';
 import {
+  CURRENCY_LABEL,
   LEDGER_MIN_ENTRY_DATE_KEY,
+  SUPPORTED_CURRENCIES,
+  isCurrencyCode,
+  ledgerMaxEntryDateKey,
   zonedFormValueToUtc,
   type CardTransferDirection,
+  type CurrencyCode,
 } from '@money/types';
 import CustomSelect from '@/components/CustomSelect';
 import ChoiceModal from '@/components/ChoiceModal';
@@ -78,11 +90,23 @@ const ENTRY_KIND_LABEL: Record<string, string> = {
 
 export default function TransactionsPage() {
   const { isAuthenticated, loadUser, user, defaultProjectData } = useAuth();
-  const { selectedPersonIds, setPeople: setStorePeople, setSelectedPersonIds, togglePersonId } =
+  const {
+    selectedPersonIds,
+    setPeople: setStorePeople,
+    setSelectedPersonIds,
+    togglePersonId,
+    resetPersonFilterFor,
+  } =
     useUserFilter();
   const { selectedProjectId } = useProject();
   // 날짜 입력과 표시는 브라우저 로컬이 아니라 프로젝트 기준 타임존으로 해석한다.
   const timeZone = useProjectTimeZone();
+  // 거래 입력의 환율 기준은 **저장 통화**다. 표시 통화가 아니다.
+  // 원장이 저장하는 환산액(baseAmount)이 저장 통화 기준이기 때문이다.
+  const ledgerCurrency = useProjectLedgerCurrency();
+  // 목록 금액은 표시 통화 환산액이다. 저장 통화와 같을 때만 그 값을 폼에 되돌릴 수 있다.
+  const displayCurrency = useProjectDisplayCurrency();
+  const { rateOf } = useExchangeRates();
   /** 설정에서 지정한 "구성원 중 나". 새 거래의 사용자 기본값이 된다. */
   const myPersonId = useMyPersonId();
   const { monthlyBudgets, fetchMonthlyBudgets, createBudget: createBudgetApi, updateBudget: updateBudgetApi, deleteBudget: deleteBudgetApi } = useBudget();
@@ -154,6 +178,8 @@ export default function TransactionsPage() {
     merchant: '',
     detailedNote: '',
     toAccountId: '',
+    /** 통화가 다른 환전에서 실제로 받은 금액 (받는 계좌 통화) */
+    toAmount: '',
     transferFee: '',
     transferFeeMainCategoryId: '',
     transferFeeSubCategoryId: '',
@@ -164,6 +190,22 @@ export default function TransactionsPage() {
     installmentMonths: '',
     /** 카드사 이체의 방향. 수정으로만 들어오며 그대로 되돌려 보낸다 */
     cardTransferDirection: 'payment' as CardTransferDirection,
+    /** 위 금액을 입력한 통화. 결제수단을 고르면 그 계좌 통화로 맞춰진다. */
+    currency: 'KRW' as CurrencyCode,
+    /**
+     * 통장에서 실제로 빠진 기준통화 금액. 환율 대신 이것을 넣을 수 있다.
+     *
+     * 환율은 카드사가 결제일에 정하는 값이라 미리 알 수 없고, 명세서에 찍히는
+     * 것도 대개 금액이다. 둘 중 하나만 채운다.
+     */
+    billedAmount: '',
+    /**
+     * 통화를 사용자가 직접 골랐는지.
+     *
+     * 결제수단을 바꿀 때 통화를 덮어쓸지 가르는 값이다. 자동으로 채워진 통화는
+     * 덮어써도 되지만, 사용자가 고른 통화는 지우면 안 된다.
+     */
+    currencyTouched: false,
   }));
   const [isSubmitting, setIsSubmitting] = useState(false);
   /** 고정/변동 선택. 둘 다 고른 상태로 시작한다 (= 전체). */
@@ -230,18 +272,29 @@ export default function TransactionsPage() {
         setCards(cardsData || []);
         setCategories(categoriesData || []);
 
-        // 저장된 사람 필터를 이 프로젝트의 구성원에 맞춘다.
-        //   - 한 번도 건드리지 않았으면 전체 선택으로 시작한다.
-        //     (아무도 고르지 않은 상태는 "거래 없음"이라 첫 화면이 비어 버린다)
-        //   - 건드린 적이 있으면 이 프로젝트에 없는 id만 걷어낸다.
+        /*
+         * 저장된 사람 필터를 이 프로젝트의 구성원에 맞춘다.
+         *
+         *   - 다른 프로젝트의 선택이 남아 있으면 전체 선택으로 새로 시작한다.
+         *     사람 id는 프로젝트마다 다르므로 그대로 두면 "아무도 안 고름"이 되어
+         *     화면이 통째로 빈다.
+         *   - 이 프로젝트에서 한 번도 건드리지 않았어도 전체 선택으로 시작한다.
+         *   - 건드린 적이 있으면 사라진 구성원의 id만 걷어내고 나머지는 존중한다.
+         *     (전부 해제한 상태는 사용자의 의도이므로 되살리지 않는다)
+         */
         const loadedPeople = peopleData || [];
-        const validIds = new Set(loadedPeople.map((person: Person) => person.id));
-        const stillValid = selectedPersonIds.filter((id) => validIds.has(id));
+        const allIds = loadedPeople.map((person: Person) => person.id);
+        const filterState = useUserFilter.getState();
+        const isOtherProject = filterState.filterProjectId !== selectedProjectId;
 
-        if (!useUserFilter.getState().personFilterTouched) {
-          setSelectedPersonIds(loadedPeople.map((person: Person) => person.id));
-        } else if (stillValid.length !== selectedPersonIds.length) {
-          setSelectedPersonIds(stillValid);
+        if (isOtherProject || !filterState.personFilterTouched) {
+          resetPersonFilterFor(selectedProjectId, allIds);
+        } else {
+          const validIds = new Set(allIds);
+          const stillValid = selectedPersonIds.filter((id) => validIds.has(id));
+          if (stillValid.length !== selectedPersonIds.length) {
+            setSelectedPersonIds(stillValid);
+          }
         }
 
         // 초기 월 설정. 거래는 아래 월별 useEffect가 불러온다.
@@ -310,15 +363,15 @@ export default function TransactionsPage() {
     const yearMonth = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
     const { startDate, endDate } = monthQueryRange(currentYear, currentMonth, timeZone);
 
-    const [entriesRes, summaryRes] = await Promise.all([
-      apiClient.getEntries(
-        { startDate, endDate, limit: 200, ...appliedFilter },
-        selectedProjectId,
-      ),
+    // 커서를 끝까지 따라간다. 한 페이지(200건)만 받으면 목록이 잘리는 것보다,
+    // 달력의 일별 합계와 일별 누적 그래프가 조용히 과소 집계되는 것이 문제다.
+    // 상단 요약은 서버가 전량으로 계산하므로 같은 화면 안에서 숫자가 어긋난다.
+    const [entryRows, summaryRes] = await Promise.all([
+      apiClient.getAllEntries({ startDate, endDate, ...appliedFilter }, selectedProjectId),
       apiClient.getSummary(yearMonth, selectedProjectId, appliedFilter),
     ]);
 
-    setEntries(entriesRes?.data ?? []);
+    setEntries(entryRows ?? []);
     setSummary(summaryRes ?? { income: '0', expense: '0' });
   }, [selectedProjectId, currentYear, currentMonth, timeZone, appliedFilter]);
 
@@ -403,6 +456,88 @@ export default function TransactionsPage() {
     return null;
   })();
 
+  /*
+   * 통화.
+   *
+   * 기본값은 결제수단(또는 이체 보내는 계좌)의 통화다. 달러 통장을 고르면
+   * 달러로 입력하게 되고, 원화 카드를 고른 채 통화만 달러로 바꾸면 "원화 카드로
+   * 한 외화 결제"가 된다. 두 경우의 원장 모양은 서버가 갈라 준다.
+   */
+  const currencyOfAccount = (accountId: string): CurrencyCode => {
+    const account = accounts.find((a) => a.id === accountId);
+    return isCurrencyCode(account?.currency) ? account.currency : ledgerCurrency;
+  };
+
+  /** 결제수단의 통화. 카드는 결제 통장을 따른다. */
+  const currencyOfMethod = (accountId?: string | null, cardId?: string | null): CurrencyCode => {
+    if (cardId) {
+      const card = cards.find((c) => c.id === cardId);
+      return card ? currencyOfAccount(card.paymentAccountId) : ledgerCurrency;
+    }
+    if (accountId) return currencyOfAccount(accountId);
+    return ledgerCurrency;
+  };
+
+  /** 지금 고른 결제수단의 통화 */
+  const paymentCurrency = currencyOfMethod(formData.accountId, formData.cardId);
+
+  const toCurrency: CurrencyCode = formData.toAccountId
+    ? currencyOfAccount(formData.toAccountId)
+    : ledgerCurrency;
+
+  const isCrossCurrencyTransfer =
+    formData.type === 'transfer' && Boolean(formData.toAccountId) && paymentCurrency !== toCurrency;
+
+  /** 환율 칸을 보여 줄지. 기준통화로 입력하면 환산할 것이 없다. */
+  const needsRate = formData.currency !== ledgerCurrency;
+
+  /**
+   * 청구액 칸을 보여 줄지.
+   *
+   * 원화 카드로 달러를 결제한 경우처럼 "결제수단은 기준통화, 입력은 외화"일 때만
+   * 통장에서 빠진 금액이 따로 존재한다. 달러 통장에서 달러를 쓴 거래에는 그런
+   * 금액이 없다. 계좌 통화 금액이 이미 사실이기 때문이다. 서버도 같은 조건으로
+   * 받는다 (LedgerService.resolveBilled).
+   */
+  const needsBilled = needsRate && paymentCurrency === ledgerCurrency;
+
+  /** 사용자가 청구액을 직접 넣었는지. 넣었으면 환율보다 우선한다. */
+  const hasBilled = needsBilled && toNumber(formData.billedAmount) > 0;
+
+  /**
+   * 실제 금액을 지금 받아야 하는지.
+   *
+   * 청구액이 나중에 정해지는 것은 신용카드뿐이다. 통장과 체크카드는 결제하는
+   * 자리에서 돈이 빠지므로 사용자가 금액을 알고, 확정할 화면도 따로 없다
+   * (카드 대조는 신용카드 전용이다). 서버도 같은 규칙으로 막는다
+   * (LedgerService.assertCanEstimate).
+   */
+  const isCreditCardSelected =
+    cards.find((c) => c.id === formData.cardId)?.cardType === 'credit';
+  const mustBill = needsBilled && !isCreditCardSelected;
+
+  /**
+   * 저장하면 얼마로 기록되는지. 저장 전에 눈으로 확인하게 한다.
+   *
+   * 청구액을 넣었으면 그 금액이 그대로 기록된다. 환율을 곱하지 않는다.
+   */
+  const convertedPreview = (() => {
+    if (!needsRate) return '';
+    if (hasBilled) return formatCurrency(formData.billedAmount, ledgerCurrency);
+
+    const rate = Number(rateOf(formData.currency));
+    const amount = Number(formData.amount);
+    if (!Number.isFinite(rate) || !Number.isFinite(amount) || rate <= 0 || amount <= 0) return '';
+    return formatCurrency(amount * rate, ledgerCurrency);
+  })();
+
+  /** 청구액을 넣었을 때 실제로 적용되는 환율. 저장 전에 함께 보여 준다. */
+  const derivedRate = (() => {
+    const amount = toNumber(formData.amount);
+    if (!hasBilled || amount <= 0) return '';
+    return formatNumber(Math.round((toNumber(formData.billedAmount) / amount) * 100) / 100);
+  })();
+
   const selectedPaymentMethodId = formData.cardId
     ? `card:${formData.cardId}`
     : formData.accountId
@@ -418,6 +553,39 @@ export default function TransactionsPage() {
   const handlePaymentMethodChange = (value: string) => {
     const [kind, id] = value.split(':');
 
+    const methodCurrency =
+      kind === 'card' ? currencyOfMethod(null, id) : currencyOfMethod(id, null);
+
+    /*
+     * 결제수단을 고르면 입력 통화도 그 계좌 통화로 맞춘다.
+     *
+     * 달러 통장을 고르면 달러로 입력하는 것이 자연스럽다. 다만 사용자가 통화를
+     * 직접 골라 둔 뒤라면 그 선택을 지우지 않는다. "$1을 국민카드로 결제"를
+     * 입력하다가 카드를 바꿨다고 통화가 원화로 되돌아가면 매번 다시 골라야 한다.
+     *
+     * 새 결제수단이 그 통화를 감당하지 못하면 되돌린다. 원장이 다루는 조합은
+     * "계좌 통화 == 입력 통화"(달러 통장의 달러 결제)와 "계좌 통화 == 기준통화"
+     * (원화 카드의 외화 결제) 둘뿐이라, 엔화 통장에 달러 같은 조합은 서버가 막는다.
+     */
+    const nextCurrency = (prev: { currency: CurrencyCode; currencyTouched: boolean }) =>
+      prev.currencyTouched &&
+      (methodCurrency === prev.currency || methodCurrency === ledgerCurrency)
+        ? prev.currency
+        : methodCurrency;
+
+    /** 통화가 바뀐 만큼 청구액도 다시 받는다. 통화가 그대로면 건드리지 않는다. */
+    const currencyFields = (prev: typeof formData) => {
+      const currency = nextCurrency(prev);
+      if (currency === prev.currency) return { currency };
+
+      return {
+        currency,
+        // 청구액은 결제수단마다 달라지는 값이라 그대로 둘 수 없다.
+        billedAmount: '',
+        currencyTouched: false,
+      };
+    };
+
     if (kind === 'card') {
       setFormData((prev) => ({
         ...prev,
@@ -425,13 +593,20 @@ export default function TransactionsPage() {
         cardId: id,
         accountId: '',
         type: 'expense',
+        ...currencyFields(prev),
         mainCategoryId: prev.type === 'expense' ? prev.mainCategoryId : '',
         subCategoryId: prev.type === 'expense' ? prev.subCategoryId : '',
       }));
       return;
     }
 
-    setFormData((prev) => ({ ...prev, method: 'account', accountId: id, cardId: '' }));
+    setFormData((prev) => ({
+      ...prev,
+      method: 'account',
+      accountId: id,
+      cardId: '',
+      ...currencyFields(prev),
+    }));
   };
 
   /**
@@ -504,6 +679,16 @@ export default function TransactionsPage() {
         isFixed: formData.isFixed,
       };
 
+      // 기준통화면 통화·환율을 보내지 않는다. 서버가 계좌 통화로 알아서 본다.
+      if (formData.currency !== ledgerCurrency) {
+        payload.currency = formData.currency;
+        // 환율은 보내지 않는다. 실제 금액이 있으면 그것을 보내고, 없으면
+        // 서버가 설정된 환율로 추정한다 (신용카드만 가능).
+        if (hasBilled) {
+          payload.billedAmount = toAmountString(formData.billedAmount);
+        }
+      }
+
       if (formData.merchant) payload.merchant = formData.merchant;
       if (formData.detailedNote) payload.detailedNote = formData.detailedNote;
 
@@ -517,6 +702,11 @@ export default function TransactionsPage() {
       } else if (kind === 'transfer') {
         payload.accountId = formData.accountId;
         payload.toAccountId = formData.toAccountId;
+        // 통화가 다른 환전은 받은 금액을 그대로 적는다. 그러면 실제 적용된
+        // 환율이 저절로 기록되고, 별도의 환차손익 처리가 필요 없다.
+        if (isCrossCurrencyTransfer && formData.toAmount) {
+          payload.toAmount = toAmountString(formData.toAmount);
+        }
         // 카드사와의 이체에는 수수료가 붙지 않는다. 칸을 감췄어도 남은 값이 따라가지 않게 뺀다.
         if (formData.transferFee && !transferCardSide) {
           payload.transferFee = toAmountString(formData.transferFee);
@@ -561,9 +751,13 @@ export default function TransactionsPage() {
         merchant: '',
         detailedNote: '',
         toAccountId: '',
+        toAmount: '',
         transferFee: '',
         transferFeeMainCategoryId: '',
         transferFeeSubCategoryId: '',
+        currency: ledgerCurrency,
+        billedAmount: '',
+        currencyTouched: false,
         date: todayKey(timeZone),
         time: '',
         isFixed: false,
@@ -614,9 +808,13 @@ export default function TransactionsPage() {
       merchant: '',
       detailedNote: '',
       toAccountId: '',
+      toAmount: '',
       transferFee: '',
       transferFeeMainCategoryId: '',
       transferFeeSubCategoryId: '',
+      currency: ledgerCurrency,
+      billedAmount: '',
+      currencyTouched: false,
       date: todayKey(timeZone),
       time: '',
       isFixed: false,
@@ -702,6 +900,24 @@ export default function TransactionsPage() {
     const category = splitCategory(entry.categoryId);
     const fee = splitCategory(entry.feeCategoryId);
 
+    /*
+     * 청구액을 되돌려 놓을 수 있는 거래인지.
+     *
+     * 아직 잠정인 거래는 채우지 않는다. 그 금액은 사용자가 넣은 적 없는 서버
+     * 추정값인데, 칸에 적혀 있으면 확정된 금액처럼 보이고 그대로 저장하는 순간
+     * 확정으로 넘어간다. 확정한 사실이 없는데 확정 표시가 붙으면 안 된다.
+     *
+     * 나머지 조건은 폼의 needsBilled 와 같다.
+     */
+    const billedPrefill =
+      !entry.rateProvisional &&
+      isCurrencyCode(entry.originalCurrency) &&
+      entry.originalCurrency !== ledgerCurrency &&
+      currencyOfMethod(entry.accountId, entry.cardId) === ledgerCurrency &&
+      displayCurrency === ledgerCurrency
+        ? entry.amount
+        : '';
+
     setFormData({
       // 카드대금 결제는 통장에서 돈이 나가고 카드 부채가 줄어든다. 두 값을 다 들고 있어야
       // 저장할 때 그대로 돌려보낼 수 있으므로 method로 하나만 고르지 않는다.
@@ -712,11 +928,33 @@ export default function TransactionsPage() {
       type: entry.kind,
       mainCategoryId: category.mainCategoryId,
       subCategoryId: category.subCategoryId,
-      amount: entry.amount,
+      /*
+       * 금액과 통화.
+       *
+       * 서버는 목록 금액을 언제나 기준통화 환산액으로 준다. 외화 거래를 고칠 때
+       * 환산액을 보여 주면 사용자가 입력했던 값과 달라 혼란스러우므로, 원 통화
+       * 금액이 함께 왔으면 그것을 되돌려 놓는다.
+       */
+      amount: entry.originalAmount ?? entry.amount,
+      currency: isCurrencyCode(entry.originalCurrency) ? entry.originalCurrency : ledgerCurrency,
+      /*
+       * 확정된 거래만 금액을 되돌려 놓는다 (billedPrefill 참고).
+       *
+       * 그대로 저장하면 금액이 한 푼도 움직이지 않는다. 잠정인 거래는 비워 두어,
+       * 설명만 고쳐 저장해도 확정으로 넘어가지 않게 한다.
+       */
+      billedAmount: billedPrefill,
+      // 결제수단 통화와 다른 통화로 기록된 거래다. 결제수단을 바꿔도 유지한다.
+      currencyTouched:
+        isCurrencyCode(entry.originalCurrency) &&
+        entry.originalCurrency !== currencyOfMethod(entry.accountId, entry.cardId),
       description: entry.description || '',
       merchant: entry.merchant || '',
       detailedNote: entry.detailedNote || '',
       toAccountId: entry.toAccountId || '',
+      // 받는 계좌 통화 그대로인 값을 쓴다. entry.amount는 기준통화 환산액이라
+      // 통화가 다른 환전에서는 단위가 어긋난다.
+      toAmount: entry.toAmount ?? '',
       // 수수료는 별도 다리라 예전에는 비워뒀다. 이제 목록 응답에 들어 있어 그대로 채운다.
       transferFee: toNumber(entry.feeAmount) > 0 ? entry.feeAmount ?? '' : '',
       transferFeeMainCategoryId: fee.mainCategoryId,
@@ -944,6 +1182,9 @@ export default function TransactionsPage() {
           categoryId: apiCategoryId,
           type,
           monthlyAmount: toAmountString(detailBudgetAmount),
+          // 보고 있는 달을 넘긴다. 예산이 기간별로 나뉘어 있을 때
+          // 서버가 어느 규칙을 고쳐야 할지 이 값으로 정한다.
+          yearMonth: `${currentYear}-${String(currentMonth).padStart(2, '0')}`,
         });
       }
 
@@ -1479,19 +1720,105 @@ export default function TransactionsPage() {
               {/* 금액은 유형 바로 아래에 둔다. 팝업이 열릴 때 여기로 포커스가 가므로
                   아래쪽에 있으면 본문이 스크롤돼 유형 탭이 가려진다. */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  금액 (원)
-                </label>
-                <input
-                  type="number"
-                  required
-                  /* 팝업이 열리면 여기부터 입력한다 (Modal이 이 표시를 찾아 포커스한다) */
-                  data-autofocus
-                  value={formData.amount}
-                  onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="50000"
-                />
+                <label className="block text-sm font-medium text-gray-700 mb-1">금액</label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    required
+                    /* 팝업이 열리면 여기부터 입력한다 (Modal이 이 표시를 찾아 포커스한다) */
+                    data-autofocus
+                    value={formData.amount}
+                    onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                    className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="50000"
+                  />
+                  {/*
+                    통화. 결제수단을 고르면 그 계좌 통화로 맞춰지고, 원화 카드를 둔 채
+                    달러로 바꾸면 "원화 카드로 한 외화 결제"가 된다.
+                  */}
+                  <select
+                    value={formData.currency}
+                    onChange={(e) => {
+                      const currency = e.target.value as CurrencyCode;
+                      setFormData({
+                        ...formData,
+                        currency,
+                        billedAmount: '',
+                        // 직접 고른 통화다. 결제수단을 바꿔도 유지한다.
+                        currencyTouched: true,
+                      });
+                    }}
+                    className="w-28 shrink-0 px-2 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  >
+                    {SUPPORTED_CURRENCIES.map((code) => (
+                      <option key={code} value={code}>
+                        {code}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {needsRate && (
+                  <div className="mt-2 space-y-2">
+                    {/*
+                      환율은 받지 않는다. 실제 금액만 받고 환율은 계산해서 보여 준다.
+
+                      사용자가 아는 값은 "통장에서 얼마가 빠졌는가"이지 환율이 아니다.
+                      기본 환율이 실제와 다르면 설정에서 바꾼다. 여기서 환율을 받으면
+                      거래마다 서로 다른 값이 들어가 어떤 것이 맞는지 알 수 없게 된다.
+                    */}
+                    {needsBilled && (
+                      <div>
+                        <label className="block text-xs font-medium text-gray-600 mb-1">
+                          실제 {isCreditCardSelected ? '청구액' : '결제액'} ({ledgerCurrency})
+                          {mustBill && <span className="ml-1 text-red-500">*</span>}
+                        </label>
+                        <input
+                          type="number"
+                          step="any"
+                          required={mustBill}
+                          value={formData.billedAmount}
+                          onChange={(e) =>
+                            setFormData({ ...formData, billedAmount: e.target.value })
+                          }
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                          placeholder={isCreditCardSelected ? '명세서에 찍힌 금액' : '통장에서 빠진 금액'}
+                        />
+                        <p className="mt-1 text-xs text-gray-500">
+                          {isCreditCardSelected
+                            ? '명세서가 나온 뒤에 넣어도 됩니다. 그때까지는 기본 환율로 추정합니다.'
+                            : '통장에서 이미 빠진 금액입니다.'}
+                        </p>
+                      </div>
+                    )}
+
+                    {/* 적용되는 환율. 입력값이 아니라 결과다. */}
+                    <div className="px-3 py-2 bg-gray-50 rounded-lg">
+                      <div className="flex justify-between text-xs">
+                        <span className="text-gray-600">
+                          환율 (1 {formData.currency} = ? {ledgerCurrency})
+                        </span>
+                        <span className="font-medium text-gray-900">
+                          {derivedRate || formatNumber(rateOf(formData.currency)) || '-'}
+                          {!hasBilled && <span className="ml-1 text-gray-500">기본</span>}
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-gray-500">
+                        {convertedPreview
+                          ? `${convertedPreview} 로 기록됩니다.`
+                          : '금액을 넣으면 기록될 값이 여기 나옵니다.'}
+                        {!hasBilled && ' 기본 환율은 설정에서 바꿉니다.'}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {paymentCurrency !== formData.currency && formData.currency !== ledgerCurrency && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    결제수단은 {paymentCurrency}입니다. 청구되는 {ledgerCurrency} 금액이 기록되고
+                    원래 금액은 참고용으로 함께 남습니다.
+                  </p>
+                )}
               </div>
 
               {/* 그다음 날짜와 시각을 받는다. 자주 고치는 값이라 위쪽에 둔다. */}
@@ -1506,6 +1833,8 @@ export default function TransactionsPage() {
                     value={formData.date}
                     /* 원장 하한(기초잔액 전표 날짜)까지만 거슬러 올라간다 */
                     min={LEDGER_MIN_ENTRY_DATE_KEY}
+                    // 연도 오타(2026 -> 2926)를 서버 400 전에 브라우저가 막는다
+                    max={ledgerMaxEntryDateKey()}
                     onChange={(e) => setFormData({ ...formData, date: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -1710,6 +2039,33 @@ export default function TransactionsPage() {
                       placeholder="선택하세요"
                     />
                   </div>
+
+                  {/*
+                    통화가 다른 환전.
+
+                    보낸 금액과 받은 금액을 그대로 적으면 실제 적용된 환율이
+                    저절로 기록된다. 서버 환율로 추정하지 않으므로 은행 수수료가
+                    섞인 실거래 환율이 그대로 남는다.
+                  */}
+                  {isCrossCurrencyTransfer && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        받은 금액 ({toCurrency})
+                      </label>
+                      <input
+                        type="number"
+                        value={formData.toAmount}
+                        onChange={(e) => setFormData({ ...formData, toAmount: e.target.value })}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        placeholder="135000"
+                      />
+                      <p className="mt-1 text-xs text-gray-500">
+                        {paymentCurrency} 계좌에서 {toCurrency} 계좌로 옮깁니다. 통장에 실제로
+                        찍힌 금액을 적으면 그날의 실효 환율로 기록됩니다. 비우면 서버 환율로
+                        계산합니다.
+                      </p>
+                    </div>
+                  )}
 
                   {/*
                     한쪽이 신용카드면 카드사와의 자금 이동이다. 방향이 뜻을 바꾸므로

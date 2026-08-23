@@ -184,11 +184,12 @@ export function BudgetDetailModal({
         //
         // 전체 지출은 kind='expense'가 아니라 categoryType='expense'로 뽑는다.
         // kind로 걸면 수수료가 붙은 이체가 빠져서, 12개월 그래프(수수료 포함)와 어긋난다.
-        const entriesPromise = apiClient.getEntries(
+        // 커서를 끝까지 따라간다. 한 페이지만 받으면 아래 일별 누적이
+        // 12개월 그래프(서버 집계, 전량)와 어긋난다.
+        const entriesPromise = apiClient.getAllEntries(
           {
             startDate,
             endDate,
-            limit: 200,
             ...filter,
             ...(target.scope === 'category' ? { categoryId } : { categoryType: target.type }),
           },
@@ -224,7 +225,7 @@ export function BudgetDetailModal({
           })),
         );
 
-        const rows: EntryListItem[] = entriesRes?.data ?? [];
+        const rows: EntryListItem[] = (entriesRes ?? []) as EntryListItem[];
         setCurrentMonthEntries(rows);
 
         // 일별 누적. 이체는 금액이 아니라 수수료만 쌓는다.

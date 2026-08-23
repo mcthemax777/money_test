@@ -143,7 +143,9 @@ export default function PaymentMethodTab({
         { targetId: selected.id, endMonth: yearMonth, months: 12, ...filter },
         projectId,
       ),
-      apiClient.getEntries(
+      // 커서를 끝까지 따라간다. 한 페이지만 받으면 아래 일별 누적이
+      // 12개월 그래프(서버 집계, 전량)와 어긋난다.
+      apiClient.getAllEntries(
         {
           // 왼쪽 집계와 같은 기준으로 뽑는다 (payment* 파라미터가 그 규칙을 담고 있다).
           ...(selected.kind === 'account'
@@ -153,7 +155,6 @@ export default function PaymentMethodTab({
           categoryType: 'expense',
           startDate,
           endDate,
-          limit: 200,
           ...filter,
         },
         projectId,
@@ -170,7 +171,7 @@ export default function PaymentMethodTab({
           })),
         );
 
-        const rows: EntryListItem[] = entriesRes?.data ?? [];
+        const rows: EntryListItem[] = (entriesRes ?? []) as EntryListItem[];
         setEntries(rows);
         // 이체는 금액이 아니라 수수료만 쌓아야 한다 (buildDailyCumulative가 처리)
         setDailyData(buildDailyCumulative(rows, currentYear, currentMonth, timeZone));

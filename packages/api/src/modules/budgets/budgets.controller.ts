@@ -17,6 +17,7 @@ import { ApiTags, ApiOperation, ApiBearerAuth } from '@nestjs/swagger';
 import { BudgetsService } from './budgets.service';
 import { AuthenticatedRequest } from '@/common/authenticated-request';
 import { BudgetDto, EntryFilterQuery } from '@money/types';
+import { assertYearMonthParts } from '@/common/year-month';
 
 @ApiTags('Budgets')
 @Controller('budgets')
@@ -53,11 +54,13 @@ export class BudgetsController {
     @Param('month') month: string,
     @Query() query: EntryFilterQuery & { projectId?: string },
   ) {
+    // parseInt만 하면 "99"가 그대로 내려가 zonedMonthRange가 2034년을 만든다.
+    const parsed = assertYearMonthParts(year, month);
     return this.budgetsService.getBudgetForMonth(
       req.user.id,
       query.projectId!,
-      parseInt(year),
-      parseInt(month),
+      parsed.year,
+      parsed.month,
       query,
     );
   }

@@ -37,9 +37,13 @@ export class PeopleController {
   }
 
   @Get()
-  @ApiOperation({ summary: '사람 목록' })
-  list(@Request() req: AuthenticatedRequest, @Query('projectId') projectId?: string) {
-    return this.peopleService.getPeople(req.user.id, projectId);
+  @ApiOperation({ summary: '사람 목록 (includeInactive=true면 숨긴 구성원까지)' })
+  list(
+    @Request() req: AuthenticatedRequest,
+    @Query('projectId') projectId?: string,
+    @Query('includeInactive') includeInactive?: string,
+  ) {
+    return this.peopleService.getPeople(req.user.id, projectId, includeInactive === 'true');
   }
 
   // ':id' 보다 먼저 선언해야 'reorder'가 id로 잡히지 않는다.
@@ -71,8 +75,8 @@ export class PeopleController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: '사람 삭제' })
+  @ApiOperation({ summary: '구성원 숨기기 (되돌리려면 PATCH isActive=true)' })
   delete(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
-    return this.peopleService.deletePerson(id, req.user.id);
+    return this.peopleService.deactivatePerson(id, req.user.id);
   }
 }

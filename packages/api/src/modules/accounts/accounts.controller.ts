@@ -37,9 +37,13 @@ export class AccountsController {
   }
 
   @Get()
-  @ApiOperation({ summary: '통장 목록' })
-  list(@Request() req: AuthenticatedRequest, @Query('projectId') projectId?: string) {
-    return this.accountsService.getAccounts(req.user.id, projectId);
+  @ApiOperation({ summary: '통장 목록 (includeInactive=true면 숨긴 통장까지)' })
+  list(
+    @Request() req: AuthenticatedRequest,
+    @Query('projectId') projectId?: string,
+    @Query('includeInactive') includeInactive?: string,
+  ) {
+    return this.accountsService.getAccounts(req.user.id, projectId, includeInactive === 'true');
   }
 
   // ':id' 보다 먼저 선언해야 'reorder'가 id로 잡히지 않는다.
@@ -85,8 +89,8 @@ export class AccountsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: '통장 삭제' })
+  @ApiOperation({ summary: '통장 숨기기 (되돌리려면 PATCH isActive=true)' })
   delete(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
-    return this.accountsService.deleteAccount(id, req.user.id);
+    return this.accountsService.deactivateAccount(id, req.user.id);
   }
 }

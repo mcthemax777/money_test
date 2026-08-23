@@ -1,10 +1,7 @@
-import { AccountsService } from '@/modules/accounts/accounts.service';
 import { CategoriesService } from '@/modules/categories/categories.service';
-import { EntriesService } from '@/modules/entries/entries.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
-import { LedgerService } from '@/modules/ledger/ledger.service';
 import { PeopleService } from '@/modules/people/people.service';
-import { projectAccessStub, runSmoke } from './smoke-harness';
+import { makeAccounts, makeEntries, makeLedger, projectAccessStub, runSmoke } from './smoke-harness';
 
 /**
  * 고정 여부를 거래 입력으로 정하는 흐름.
@@ -20,12 +17,12 @@ runSmoke('category-fixed', async (ctx) => {
   const uid = user.id;
   const access = projectAccessStub(ctx.prisma, pid);
 
-  const ledger = new LedgerService(ctx.prisma as any);
+  const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
-  const accounts = new AccountsService(ctx.prisma as any, access, ledger, institutions);
+  const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
   const people = new PeopleService(ctx.prisma as any, access);
   const categories = new CategoriesService(ctx.prisma as any, access);
-  const entries = new EntriesService(ctx.prisma as any, access, ledger);
+  const entries = makeEntries(ctx.prisma, access, ledger);
 
   const person = await people.createPerson(uid, { name: '김철수' }, pid);
   await categories.createDefaultCategories(pid);
@@ -38,7 +35,7 @@ runSmoke('category-fixed', async (ctx) => {
 
   const bank = await accounts.createAccount(uid, {
     type: 'deposit', ownerId: person.id, name: '보통예금',
-    institutionId: 'fi_bank_shinhan', openingBalance: '1000000', openingBalanceDate: '2026-08-01',
+    institutionId: 'fi_bank_shinhan', openingBalance: '1000000',
   }, pid);
   const other = await accounts.createAccount(uid, {
     type: 'savings', ownerId: person.id, name: '저축통장', institutionId: 'fi_bank_kb',

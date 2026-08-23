@@ -10,6 +10,7 @@ import { useUserFilter } from '@/store/user-filter';
 import { formatDate, formatDateMarker, monthInputToIso, todayKey } from '@/lib/datetime';
 import {
   LEDGER_MIN_ENTRY_DATE_KEY,
+  ledgerMaxEntryDateKey,
   zonedFormValueToUtc,
   type CardTransferDirection,
 } from '@money/types';
@@ -26,7 +27,7 @@ const TRANSFER_DIRECTIONS = [
   { id: 'payment' as CardTransferDirection, label: '대금 결제' },
   { id: 'refund' as CardTransferDirection, label: '환불 입금' },
 ];
-import { useProject, useProjectTimeZone } from '@/store/project';
+import { useProject, useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import PersonModal from '@/components/PersonModal';
@@ -34,6 +35,8 @@ import EditAccountModal from '@/components/EditAccountModal';
 import EditCardModal from '@/components/EditCardModal';
 import AddAccountModal from '@/components/AddAccountModal';
 import PageHeader from '@/components/PageHeader';
+import HiddenItemsPanel from '@/components/HiddenItemsPanel';
+import PendingRatePanel from '@/components/PendingRatePanel';
 import AssetHistoryChart from '@/components/AssetHistoryChart';
 import { useInstitutions } from '@/hooks/useInstitutions';
 
@@ -44,6 +47,7 @@ export default function DashboardPage() {
   const { setPeople: setStorePeople } = useUserFilter();
   const { selectedProjectId } = useProject();
   const timeZone = useProjectTimeZone();
+  const displayCurrency = useProjectDisplayCurrency();
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
@@ -66,7 +70,21 @@ export default function DashboardPage() {
   const [isEditAccountModalOpen, setIsEditAccountModalOpen] = useState(false);
   const [isEditCardModalOpen, setIsEditCardModalOpen] = useState(false);
 
-  const [addType, setAddType] = useState<'select' | 'card' | null>(null);
+  /**
+   * 무엇을 추가하는 중인지.
+   *
+   * 'select'      : 상단 추가 버튼. 구성원·계좌·카드 셋 중에 고른다.
+   * 'select-person': 구성원 상세에서 들어온 경우. 그 사람은 이미 정해졌으므로
+   *                  계좌와 카드 둘만 고른다.
+   */
+  const [addType, setAddType] = useState<'select' | 'select-person' | 'card' | null>(null);
+  /**
+   * 구성원 상세에서 시작한 추가인지.
+   *
+   * 계좌 추가 폼의 통장 주인을 미리 채우는 데만 쓴다. 상단 추가 버튼으로
+   * 들어오면 주인이 정해져 있지 않으므로 null이다.
+   */
+  const [addedForPersonId, setAddedForPersonId] = useState<string | null>(null);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [isPersonAddModalOpen, setIsPersonAddModalOpen] = useState(false);
   const [cardForm, setCardForm] = useState({
@@ -99,7 +117,12 @@ export default function DashboardPage() {
   const [isPaymentSubmitting, setIsPaymentSubmitting] = useState(false);
 
   const [accountTransactions, setAccountTransactions] = useState<any[]>([]);
+  /** 원장의 다음 페이지 커서. null이면 끝까지 봤다는 뜻이다. */
+  const [ledgerCursor, setLedgerCursor] = useState<string | null>(null);
+  const [isLoadingLedger, setIsLoadingLedger] = useState(false);
   const [netWorth, setNetWorth] = useState<any | null>(null);
+  /** 항목을 숨기거나 되돌리면 올린다. 숨긴 항목 패널이 이 값을 보고 다시 읽는다. */
+  const [hiddenVersion, setHiddenVersion] = useState(0);
 
   useEffect(() => {
     if (!selectedProjectId) {
@@ -138,15 +161,45 @@ export default function DashboardPage() {
    * 예전에는 거래 목록에서 accountId/toAccountId를 조합하고 credit_usage를 빼야 했다.
    * 원장 구조에서는 이 계좌의 posting만 시간순으로 오고 잔액 추이까지 함께 온다.
    */
+  const LEDGER_PAGE_SIZE = 100;
+
   const loadAccountTransactions = useCallback(async (accountId: string) => {
     try {
-      const response = await apiClient.getAccountPostings(accountId, { limit: 100 });
+      setIsLoadingLedger(true);
+      const response = await apiClient.getAccountPostings(accountId, { limit: LEDGER_PAGE_SIZE });
       setAccountTransactions(response?.data ?? []);
+      setLedgerCursor(response?.nextCursor ?? null);
     } catch (err) {
       console.error('거래 내역 조회 실패:', err);
       setAccountTransactions([]);
+      setLedgerCursor(null);
+    } finally {
+      setIsLoadingLedger(false);
     }
   }, []);
+
+  /**
+   * 원장 다음 페이지.
+   *
+   * 예전에는 100건만 받고 커서를 버려서, 그보다 오래된 거래를 볼 방법이 없었다.
+   * 서버는 페이지마다 그 구간의 잔액 추이를 맞춰서 준다.
+   */
+  const loadMoreAccountTransactions = useCallback(async () => {
+    if (!selectedAccount || !ledgerCursor) return;
+    try {
+      setIsLoadingLedger(true);
+      const response = await apiClient.getAccountPostings(selectedAccount.id, {
+        limit: LEDGER_PAGE_SIZE,
+        cursor: ledgerCursor,
+      });
+      setAccountTransactions((prev) => [...prev, ...(response?.data ?? [])]);
+      setLedgerCursor(response?.nextCursor ?? null);
+    } catch (err) {
+      console.error('거래 내역 조회 실패:', err);
+    } finally {
+      setIsLoadingLedger(false);
+    }
+  }, [selectedAccount, ledgerCursor]);
 
   /** 카드 선택 시 미결제 청구서 조회. 가장 오래된 것부터 갚는다. */
   /**
@@ -170,6 +223,7 @@ export default function DashboardPage() {
       loadAccountTransactions(selectedAccount.id);
     } else {
       setAccountTransactions([]);
+      setLedgerCursor(null);
     }
   }, [selectedAccount, detailType, loadAccountTransactions]);
 
@@ -187,24 +241,38 @@ export default function DashboardPage() {
   const getAccountCards = (accountId: string) =>
     cards.filter((c) => c.paymentAccountId === accountId);
 
+  /**
+   * 카드 금액의 통화. 사용액·한도·남은 대금은 전부 결제 통장의 통화다.
+   * 기준통화 환산액이 아니라서 원으로 찍으면 달러 카드가 1/1380로 보인다.
+   */
+  const currencyOfCard = (card: { paymentAccountId?: string } | null): string =>
+    accounts.find((a) => a.id === card?.paymentAccountId)?.currency ?? 'KRW';
+
+  /**
+   * 숨기기는 기록을 지우지 않는다. 과거 거래는 그대로 남고 목록에서만 빠지며,
+   * 아래 "숨긴 항목"에서 되돌릴 수 있다. 문구도 그렇게 맞춘다.
+   */
+  const HIDE_CONFIRM = '목록에서 숨깁니다. 기록은 남고 나중에 다시 표시할 수 있습니다. 계속할까요?';
+
   const handleDeletePerson = async () => {
-    if (!selectedPerson || !window.confirm('정말 삭제하시겠습니까?')) return;
+    if (!selectedPerson || !window.confirm(HIDE_CONFIRM)) return;
     try {
       setIsSubmitting(true);
       await apiClient.deletePerson(selectedPerson.id);
-      const peopleData = await apiClient.getPeople();
+      const peopleData = await apiClient.getPeople(selectedProjectId);
       setPeople(peopleData || []);
       setDetailType(null);
       setSelectedPerson(null);
+      setHiddenVersion((v) => v + 1);
     } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '삭제에 실패했습니다.');
+      alert(err?.response?.data?.error?.message || '숨기지 못했습니다.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleDeleteAccount = async () => {
-    if (!selectedAccount || !window.confirm('정말 삭제하시겠습니까?')) return;
+    if (!selectedAccount || !window.confirm(HIDE_CONFIRM)) return;
     try {
       setIsSubmitting(true);
       await apiClient.deleteAccountV2(selectedAccount.id);
@@ -213,15 +281,16 @@ export default function DashboardPage() {
       setIsAccountDetailOpen(false);
       setDetailType(null);
       setSelectedAccount(null);
+      setHiddenVersion((v) => v + 1);
     } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '삭제에 실패했습니다.');
+      alert(err?.response?.data?.error?.message || '숨기지 못했습니다.');
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleDeleteCard = async () => {
-    if (!selectedCard || !window.confirm('정말 삭제하시겠습니까?')) return;
+    if (!selectedCard || !window.confirm(HIDE_CONFIRM)) return;
     try {
       setIsSubmitting(true);
       await apiClient.deleteCard(selectedCard.id);
@@ -229,12 +298,28 @@ export default function DashboardPage() {
       setCards(cardsData || []);
       setDetailType(null);
       setSelectedCard(null);
+      setHiddenVersion((v) => v + 1);
     } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '삭제에 실패했습니다.');
+      alert(err?.response?.data?.error?.message || '숨기지 못했습니다.');
     } finally {
       setIsSubmitting(false);
     }
   };
+
+  /**
+   * 카드 쪽 숫자가 바뀐 뒤의 새로고침.
+   *
+   * 남은 대금(usage)과 카드 목록의 사용액은 같은 부채 잔액에서 나온다. 한쪽만
+   * 다시 읽으면 같은 화면에 두 숫자가 서로 다르게 남는다.
+   */
+  const refreshAfterCardChange = useCallback(
+    async (cardId: string) => {
+      await loadCardUsage(cardId);
+      if (!selectedProjectId) return;
+      setCards((await apiClient.getCards(selectedProjectId)) || []);
+    },
+    [loadCardUsage, selectedProjectId],
+  );
 
   /**
    * 카드사와 통장 사이 자금 이동 기록.
@@ -268,9 +353,7 @@ export default function DashboardPage() {
       });
 
       closePaymentModal();
-      await loadCardUsage(selectedCard.id);
-      const cardsData = await apiClient.getCards(selectedProjectId);
-      setCards(cardsData || []);
+      await refreshAfterCardChange(selectedCard.id);
     } catch (err: any) {
       alert(err?.response?.data?.error?.message || '기록에 실패했습니다.');
     } finally {
@@ -413,12 +496,30 @@ export default function DashboardPage() {
         title="자산"
         action={
           <button
-            onClick={() => setAddType('select')}
+            onClick={() => {
+              setAddedForPersonId(null);
+              setAddType('select');
+            }}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
           >
             추가하기
           </button>
         }
+      />
+
+      <HiddenItemsPanel
+        projectId={selectedProjectId}
+        reloadToken={hiddenVersion}
+        onRestored={async () => {
+          const [accountsData, peopleData, cardsData] = await Promise.all([
+            apiClient.getAccountsV2(selectedProjectId),
+            apiClient.getPeople(selectedProjectId),
+            apiClient.getCards(selectedProjectId),
+          ]);
+          setAccounts(accountsData || []);
+          setPeople(peopleData || []);
+          setCards(cardsData || []);
+        }}
       />
 
       {/* 총자산과 전체 추이는 계좌를 골라도 그대로 둔다. 고른 계좌는 아래 오른쪽에 펼친다. */}
@@ -487,7 +588,7 @@ export default function DashboardPage() {
                   {/* 예전에는 상단 총자산 박스가 이 값을 보여줬다. 총자산을 그대로 두는 대신 여기에 적는다. */}
                   <h2 className="text-2xl font-bold text-gray-900">{selectedAccount.name}</h2>
                   <p className="text-xl font-bold text-blue-600 mt-1">
-                    {formatCurrency(selectedAccount.balance)}
+                    {formatCurrency(selectedAccount.balance, selectedAccount.currency)}
                   </p>
                   {selectedAccount.institution?.name && (
                     <p className="text-sm text-gray-600 mt-1">{selectedAccount.institution.name}</p>
@@ -514,6 +615,16 @@ export default function DashboardPage() {
 
               {/* 이 계좌의 잔액 추이 */}
               <AssetHistoryChart accountId={selectedAccount.id} projectId={selectedProjectId} />
+              {/*
+                추이는 기준통화 장부가다. 위 잔액(계좌 통화)과 단위가 다르므로 밝혀 둔다.
+                거래마다 그때의 환율로 쌓인 값이라 최신 환율로 다시 환산한 값과도 다르다.
+              */}
+              {selectedAccount.currency !== displayCurrency && (
+                <p className="-mt-2 text-xs text-gray-500">
+                  추이는 {displayCurrency} 환산 장부가입니다. 거래 시점의 환율로 쌓인 값이라 위
+                  잔액({selectedAccount.currency})과 단위가 다릅니다.
+                </p>
+              )}
 
               {/* 거래 내역 */}
               {accountTransactions.length === 0 ? (
@@ -539,18 +650,33 @@ export default function DashboardPage() {
                             </p>
                           </div>
                           <div className="text-right whitespace-nowrap">
+                            {/*
+                              원장의 금액과 잔액은 이 계좌의 통화다 (기준통화 환산액이 아니다).
+                              통화를 넘기지 않으면 달러 통장의 $100이 ₩100으로 보인다.
+                            */}
                             <p className={`font-bold text-lg ${isIncoming ? 'text-green-600' : 'text-red-600'}`}>
                               {isIncoming ? '+' : '-'}
-                              {formatCurrency(Math.abs(amount))}
+                              {formatCurrency(Math.abs(amount), selectedAccount.currency)}
                             </p>
                             <p className="text-xs text-gray-500 mt-1">
-                              잔액 {formatCurrency(tx.balanceAfter)}
+                              잔액 {formatCurrency(tx.balanceAfter, selectedAccount.currency)}
                             </p>
                           </div>
                         </div>
                       </div>
                     );
                   })}
+
+                  {ledgerCursor && (
+                    <button
+                      type="button"
+                      onClick={loadMoreAccountTransactions}
+                      disabled={isLoadingLedger}
+                      className="w-full py-3 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
+                    >
+                      {isLoadingLedger ? '불러오는 중...' : '더 보기'}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
@@ -570,6 +696,20 @@ export default function DashboardPage() {
           title="계좌 상세정보"
           footer={
             <div className="flex gap-2">
+              {/*
+                계좌 밑에 만들 수 있는 것은 카드뿐이라 선택 팝업을 거치지 않는다.
+                결제 통장은 이 계좌로 미리 채워 둔다.
+              */}
+              <button
+                onClick={() => {
+                  setIsAccountDetailOpen(false);
+                  setCardForm((prev) => ({ ...prev, accountId: selectedAccount.id }));
+                  setAddType('card');
+                }}
+                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+              >
+                카드 추가
+              </button>
               <button
                 onClick={handleEditAccountClick}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
@@ -581,7 +721,7 @@ export default function DashboardPage() {
                 disabled={isSubmitting}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
               >
-                삭제하기
+                숨기기
               </button>
             </div>
           }
@@ -619,7 +759,7 @@ export default function DashboardPage() {
                 잔액
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900 font-semibold">
-                {formatCurrency(selectedAccount.balance)}
+                {formatCurrency(selectedAccount.balance, selectedAccount.currency)}
               </p>
             </div>
 
@@ -651,6 +791,20 @@ export default function DashboardPage() {
           title="구성원 상세정보"
           footer={
             <div className="flex gap-2">
+              {/*
+                이 사람 밑에 계좌나 카드를 바로 만든다. 상세를 닫고 여는 이유는
+                이 화면의 다른 팝업과 같다. 모달을 겹쳐 띄우지 않는다.
+              */}
+              <button
+                onClick={() => {
+                  setDetailType(null);
+                  setAddedForPersonId(selectedPerson.id);
+                  setAddType('select-person');
+                }}
+                className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
+              >
+                추가하기
+              </button>
               <button
                 onClick={handleEditPersonClick}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
@@ -662,7 +816,7 @@ export default function DashboardPage() {
                 disabled={isSubmitting}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
               >
-                삭제하기
+                숨기기
               </button>
             </div>
           }
@@ -707,7 +861,7 @@ export default function DashboardPage() {
                 disabled={isSubmitting}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
               >
-                삭제하기
+                숨기기
               </button>
             </div>
           }
@@ -766,7 +920,7 @@ export default function DashboardPage() {
                       사용액
                     </label>
                     <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                      {formatCurrency(selectedCard.currentUsage)}
+                      {formatCurrency(selectedCard.currentUsage, currencyOfCard(selectedCard))}
                     </p>
                   </div>
 
@@ -775,7 +929,7 @@ export default function DashboardPage() {
                       신용한도
                     </label>
                     <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                      {formatCurrency(selectedCard.creditLimit)}
+                      {formatCurrency(selectedCard.creditLimit, currencyOfCard(selectedCard))}
                     </p>
                   </div>
 
@@ -803,7 +957,7 @@ export default function DashboardPage() {
                               refundPending ? 'text-emerald-700' : 'text-red-600'
                             }`}
                           >
-                            {formatCurrency(Math.abs(Number(usage.outstanding)))}
+                            {formatCurrency(Math.abs(Number(usage.outstanding)), usage.currency)}
                           </span>
                         </div>
                         {refundPending && (
@@ -837,7 +991,7 @@ export default function DashboardPage() {
                                 </span>
                               </div>
                               <span className="text-sm font-medium text-gray-900">
-                                {formatCurrency(period.usage)}
+                                {formatCurrency(period.usage, usage.currency)}
                               </span>
                             </div>
                           ))}
@@ -846,6 +1000,16 @@ export default function DashboardPage() {
                           할부는 회차분만 들어갑니다. 남은 대금은 결제까지 반영한 값이라 합계와 다릅니다.
                         </p>
                       </div>
+
+                      {/*
+                        외화 결제의 청구액 확정.
+                        추정 환율로 들어간 건이 남아 있으면 남은 대금이 명세서와
+                        어긋나므로, 그 건들을 여기 모아 한 번에 맞춘다.
+                      */}
+                      <PendingRatePanel
+                        cardId={selectedCard.id}
+                        onSettled={() => refreshAfterCardChange(selectedCard.id)}
+                      />
                     </div>
                   )}
                 </>
@@ -895,7 +1059,7 @@ export default function DashboardPage() {
                 {refundPending ? '환불 예정' : '남은 대금'}
               </span>
               <span className="font-semibold">
-                {formatCurrency(Math.abs(Number(usage.outstanding)))}
+                {formatCurrency(Math.abs(Number(usage.outstanding)), usage.currency)}
               </span>
             </div>
 
@@ -929,6 +1093,8 @@ export default function DashboardPage() {
                 required
                 value={paymentForm.date || todayKey(timeZone)}
                 min={LEDGER_MIN_ENTRY_DATE_KEY}
+                // 연도 오타(2026 -> 2926)를 서버 400 전에 브라우저가 막는다
+                max={ledgerMaxEntryDateKey()}
                 onChange={(e) => setPaymentForm({ ...paymentForm, date: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
@@ -1002,23 +1168,32 @@ export default function DashboardPage() {
         onDelete={handleDeleteCard}
       />
 
-      {/* 추가 유형 선택 팝업. 거래 입력 폼의 결제수단 추가 버튼과 같은 컴포넌트를 쓴다. */}
+      {/*
+        추가 유형 선택 팝업. 거래 입력 폼의 결제수단 추가 버튼과 같은 컴포넌트를 쓴다.
+
+        구성원 상세에서 들어오면(select-person) 구성원 항목을 뺀다. 그 사람 밑에
+        무엇을 만들지를 고르는 자리이지, 다른 사람을 만드는 자리가 아니다.
+      */}
       <ChoiceModal
-        isOpen={addType === 'select'}
+        isOpen={addType === 'select' || addType === 'select-person'}
         onClose={() => setAddType(null)}
-        title="추가하기"
+        title={addType === 'select-person' ? `${selectedPerson?.name ?? ''} 항목 추가` : '추가하기'}
         choices={[
-          {
-            key: 'person',
-            icon: '👤',
-            label: '구성원 추가',
-            description: '새로운 가족 구성원을 추가합니다',
-            tone: 'blue',
-            onSelect: () => {
-              setAddType(null);
-              setIsPersonAddModalOpen(true);
-            },
-          },
+          ...(addType === 'select-person'
+            ? []
+            : [
+                {
+                  key: 'person',
+                  icon: '👤',
+                  label: '구성원 추가',
+                  description: '새로운 가족 구성원을 추가합니다',
+                  tone: 'blue' as const,
+                  onSelect: () => {
+                    setAddType(null);
+                    setIsPersonAddModalOpen(true);
+                  },
+                },
+              ]),
           {
             key: 'account',
             icon: '🏦',
@@ -1062,6 +1237,8 @@ export default function DashboardPage() {
         onSuccess={(newAccounts) => setAccounts(newAccounts)}
         people={people}
         projectId={selectedProjectId}
+        /* 구성원 상세에서 들어왔으면 그 사람이 주인이다. 폼에서 바꿀 수 있다. */
+        defaultOwnerId={addedForPersonId}
       />
 
       {/* 카드 추가 모달 */}
@@ -1362,7 +1539,7 @@ function AccountList({
               {account.institution?.name}
             </p>
             <p className="text-2xl font-bold text-gray-900 mt-2">
-              {formatCurrency(account.balance)}
+              {formatCurrency(account.balance, account.currency)}
             </p>
             <p className="text-xs text-gray-500 mt-2">{account.name}</p>
             {account.accountNumber && (

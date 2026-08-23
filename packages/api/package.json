@@ -10,7 +10,7 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "lint": "eslint src",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit && tsc --noEmit -p tsconfig.scripts.json"
   },
   "dependencies": {
     "@money/types": "workspace:*",

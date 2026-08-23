@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 import { useAuth } from '@/store/auth';
-import Cookie from 'js-cookie';
+import { getAccessToken } from '@/lib/auth-tokens';
 
 export function AuthInitializer() {
   useEffect(() => {
@@ -10,7 +10,7 @@ export function AuthInitializer() {
       console.log('[AuthInitializer] Initializing auth...');
 
       // 쿠키에서 토큰 확인
-      const token = Cookie.get('accessToken');
+      const token = getAccessToken();
       console.log('[AuthInitializer] Token from cookie:', token ? 'exists' : 'not found');
 
       // 토큰이 있으면 사용자 정보 로드

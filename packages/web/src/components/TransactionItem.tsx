@@ -1,7 +1,7 @@
 'use client';
 
 import type { EntryListItem } from '@money/types';
-import { formatCurrency, toNumber } from '@/lib/money';
+import { formatCurrency, formatOriginal, toNumber } from '@/lib/money';
 import { formatDate } from '@/lib/datetime';
 import { useProjectTimeZone } from '@/store/project';
 
@@ -77,6 +77,7 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
 
   const borderClass =
     entry.kind === 'transfer' && hasFee ? BORDER_BY_KIND.expense : BORDER_BY_KIND[entry.kind];
+  const original = formatOriginal(entry);
   const amountClass =
     entry.kind === 'transfer' && hasFee
       ? AMOUNT_COLOR_BY_KIND.expense
@@ -151,11 +152,31 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
               </p>
             </div>
           ) : (
-            <p className={`text-lg font-bold ${amountClass}`}>
-              {entry.kind === 'income' && '+'}
-              {entry.kind === 'expense' && '-'}
-              {formatCurrency(entry.amount)}
-            </p>
+            <div>
+              <p className={`text-lg font-bold ${amountClass}`}>
+                {entry.kind === 'income' && '+'}
+                {entry.kind === 'expense' && '-'}
+                {formatCurrency(entry.amount)}
+              </p>
+              {/*
+                외화가 얽힌 거래는 원래 금액을 함께 보여 준다.
+                위 금액은 언제나 기준통화 환산액이라 그것만으로는 카드 명세서와
+                대조할 수 없다. "$50.00 · 환율 1,380" 형태.
+              */}
+              {original && (
+                <p className="text-xs text-gray-500 mt-0.5">
+                  {original}
+                  {/*
+                    청구액이 아직 카드사 확정 전이라는 표시. 이 값이 붙어 있는 동안
+                    위 금액은 서버 추정 환율로 만든 값이고, 카드 화면에서 명세서의
+                    실제 청구액으로 확정할 수 있다.
+                  */}
+                  {entry.rateProvisional && (
+                    <span className="ml-1 text-amber-600">· 잠정</span>
+                  )}
+                </p>
+              )}
+            </div>
           )}
         </div>
       </div>

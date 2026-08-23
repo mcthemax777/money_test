@@ -2,11 +2,13 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { useProjectTimeZone } from '@/store/project';
+import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
 import PageHeader from '@/components/PageHeader';
+import ExchangeRateSettings from '@/components/ExchangeRateSettings';
 
 export default function SettingsPage() {
   const timeZone = useProjectTimeZone();
+  const displayCurrency = useProjectDisplayCurrency();
   const [isExporting, setIsExporting] = useState(false);
   const [exportMessage, setExportMessage] = useState('');
 
@@ -16,7 +18,7 @@ export default function SettingsPage() {
       setExportMessage('');
       // xlsx는 무겁다. 내보내기를 누를 때만 받아 설정 화면 첫 로딩에서 뺀다.
       const { exportDataToExcel } = await import('@/lib/excel-export');
-      await exportDataToExcel(timeZone);
+      await exportDataToExcel(timeZone, displayCurrency);
       setExportMessage('엑셀 파일이 다운로드되었습니다.');
       setTimeout(() => setExportMessage(''), 3000);
     } catch (error) {
@@ -62,6 +64,12 @@ export default function SettingsPage() {
       </div>
 
       <div className="space-y-4">
+        {/*
+          환율을 손으로 정하는 유일한 자리.
+          거래 입력에서는 실제 금액만 받고 환율은 계산해 보여 준다.
+        */}
+        <ExchangeRateSettings />
+
         <div className="bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between">
             <div>

@@ -3,7 +3,7 @@
 import { useMemo } from 'react';
 import type { EntryListItem } from './TransactionItem';
 import { sumEntries } from '@/lib/entries';
-import { dateKeyOf } from '@/lib/datetime';
+import { currentYearMonth, dateKeyOf } from '@/lib/datetime';
 import { useProjectTimeZone } from '@/store/project';
 
 interface CalendarDay {
@@ -111,8 +111,10 @@ export default function TransactionCalendar({
   };
 
   const handleToday = () => {
-    const today = new Date();
-    onMonthChange(today.getFullYear(), today.getMonth() + 1);
+    // 브라우저 로컬이 아니라 프로젝트 타임존 기준의 "오늘"이다.
+    // 다른 타임존에서 쓰면 자정 무렵에 엉뚱한 달로 넘어간다.
+    const { year: todayYear, month: todayMonth } = currentYearMonth(timeZone);
+    onMonthChange(todayYear, todayMonth);
   };
 
   const weekDays = ['일', '월', '화', '수', '목', '금', '토'];

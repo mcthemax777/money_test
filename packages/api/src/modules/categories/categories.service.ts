@@ -1,5 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
-import { CategoryType, Prisma } from '@prisma/client';
+import { CategoryType, Prisma, ProjectRole } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { CategoryDto } from '@money/types';
@@ -20,6 +20,7 @@ export class CategoriesService {
     const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(
       userId,
       projectId || dto.projectId,
+      'editor',
     );
 
     if (dto.parentId) {
@@ -56,14 +57,7 @@ export class CategoriesService {
         },
       });
     } catch (error) {
-      // @@unique([projectId, name, parentId]) 위반은 중복 등록이다.
-      if (
-        error instanceof Prisma.PrismaClientKnownRequestError &&
-        error.code === 'P2002'
-      ) {
-        throw new BadRequestException('이미 존재하는 카테고리입니다.');
-      }
-      throw error;
+      throw this.translateDuplicate(error);
     }
   }
 
@@ -89,7 +83,11 @@ export class CategoriesService {
    * 다시 매기고 나머지는 그대로 둔다.
    */
   async reorderCategories(userId: string, ids: string[], projectId?: string) {
-    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
+    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(
+      userId,
+      projectId,
+      'editor',
+    );
 
     const rows = await this.prisma.category.findMany({
       where: { projectId: finalProjectId },
@@ -106,28 +104,56 @@ export class CategoriesService {
     return this.getCategories(userId, undefined, finalProjectId);
   }
 
-  async getCategoryById(id: string, userId: string) {
+  /** 수정·삭제 경로는 requiredRole에 'editor'를 넘긴다. */
+  async getCategoryById(id: string, userId: string, requiredRole: ProjectRole = 'viewer') {
     const category = await this.prisma.category.findUnique({ where: { id } });
     if (!category) throw new NotFoundException('카테고리를 찾을 수 없습니다.');
 
-    await this.projectAccess.verifyUserHasAccessToProject(userId, category.projectId);
+    await this.projectAccess.verifyUserHasAccessToProject(userId, category.projectId, requiredRole);
     return category;
   }
 
   async updateCategory(id: string, userId: string, dto: CategoryDto.UpdateRequest) {
-    await this.getCategoryById(id, userId);
+    await this.getCategoryById(id, userId, 'editor');
 
     const data: Prisma.CategoryUpdateInput = {};
-    if (dto.name !== undefined) data.name = dto.name;
+    if (dto.name !== undefined) {
+      const name = dto.name.trim();
+      if (!name) throw new BadRequestException('카테고리명을 입력해주세요.');
+      data.name = name;
+    }
     if (dto.icon !== undefined) data.icon = dto.icon;
     if (dto.defaultIsFixed !== undefined) data.defaultIsFixed = dto.defaultIsFixed;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
 
-    return this.prisma.category.update({ where: { id }, data });
+    // 이름 변경도 생성과 같은 중복 검사를 받아야 한다. 예전에는 여기만 빠져 있어
+    // 이름 충돌이 Prisma 오류 그대로 500이 됐다.
+    try {
+      return await this.prisma.category.update({ where: { id }, data });
+    } catch (error) {
+      throw this.translateDuplicate(error);
+    }
+  }
+
+  /**
+   * 이름 중복(P2002)을 사용자용 메시지로 바꾼다.
+   *
+   * 대분류는 (프로젝트, 유형, 이름), 소분류는 (프로젝트, 이름, 부모)가 유일해야 한다.
+   * 그래서 지출 "기타"와 수입 "기타"는 공존할 수 있고, 서로 다른 대분류 아래의
+   * 같은 이름 소분류도 공존할 수 있다.
+   */
+  private translateDuplicate(error: unknown): unknown {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === 'P2002'
+    ) {
+      return new BadRequestException('같은 이름의 카테고리가 이미 있습니다.');
+    }
+    return error;
   }
 
   async deleteCategory(id: string, userId: string) {
-    const category = await this.getCategoryById(id, userId);
+    const category = await this.getCategoryById(id, userId, 'editor');
 
     if (category.isDefault) {
       throw new BadRequestException('기본 카테고리는 삭제할 수 없습니다.');

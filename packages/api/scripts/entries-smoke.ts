@@ -1,13 +1,10 @@
 import { Prisma } from '@prisma/client';
-import { LedgerService } from '@/modules/ledger/ledger.service';
-import { AccountsService } from '@/modules/accounts/accounts.service';
 import { PeopleService } from '@/modules/people/people.service';
 import { CategoriesService } from '@/modules/categories/categories.service';
 import { CardsService } from '@/modules/cards/cards.service';
-import { EntriesService } from '@/modules/entries/entries.service';
 import { CardLedgerService } from '@/modules/cards/card-ledger.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
-import { projectAccessStub, runSmoke } from './smoke-harness';
+import { makeAccounts, makeBudgets, makeEntries, makeLedger, projectAccessStub, runSmoke } from './smoke-harness';
 
 runSmoke('entries', async (ctx) => {
   const project = await ctx.createProject();
@@ -16,13 +13,13 @@ runSmoke('entries', async (ctx) => {
   const uid = user.id;
   const access = projectAccessStub(ctx.prisma, pid);
 
-  const ledger = new LedgerService(ctx.prisma as any);
+  const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
-  const accounts = new AccountsService(ctx.prisma as any, access, ledger, institutions);
+  const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
   const people = new PeopleService(ctx.prisma as any, access);
   const categories = new CategoriesService(ctx.prisma as any, access);
   const cards = new CardsService(ctx.prisma as any, access, institutions);
-  const entries = new EntriesService(ctx.prisma as any, access, ledger);
+  const entries = makeEntries(ctx.prisma, access, ledger);
   const cardLedger = new CardLedgerService(ctx.prisma as any, access, ledger);
 
   const person = await people.createPerson(uid, { name: '김철수' }, pid);
@@ -138,7 +135,7 @@ runSmoke('entries', async (ctx) => {
 
   // ── 예산 사용액 (대분류 롤업) ──
   const { BudgetsService } = await import('@/modules/budgets/budgets.service');
-  const budgets = new BudgetsService(ctx.prisma as any, access);
+  const budgets = makeBudgets(ctx.prisma, access);
   const monthly = await budgets.getBudgetForMonth(uid, pid, 2026, 8);
   const diningRow = monthly.find((r) => r.categoryId === dining.id)!;
   const lunchRow = monthly.find((r) => r.categoryId === lunch.id)!;
@@ -177,8 +174,16 @@ runSmoke('entries', async (ctx) => {
     percentage('10000', '3000') > 100, false);
 
   // ── 정합성 ──
+  /*
+   * 균형은 환산액(baseAmount)으로 본다. 통화가 섞인 전표는 amount 합계가 0이 될
+   * 수 없다(달러와 원을 더하는 셈이다). 그리고 이 프로젝트로 범위를 좁힌다.
+   * 예전에는 Posting 전체를 훑어서, 다른 프로젝트의 외화 거래 하나에도 실패했다.
+   */
   const unbalanced = await ctx.prisma.$queryRaw<{ entryId: string }[]>`
-    SELECT "entryId" FROM "Posting" GROUP BY "entryId" HAVING SUM(amount) <> 0`;
+    SELECT p."entryId" FROM "Posting" p
+    JOIN "JournalEntry" e ON e.id = p."entryId"
+    WHERE e."projectId" = ${pid}
+    GROUP BY p."entryId" HAVING SUM(p."baseAmount") <> 0`;
   ctx.check('불균형 전표', unbalanced.length, 0);
   const drift = await ctx.prisma.$queryRaw<{ id: string }[]>`
     SELECT a.id FROM "Account" a LEFT JOIN "Posting" p ON p."accountId" = a.id

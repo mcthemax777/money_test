@@ -36,6 +36,29 @@ export function ledgerOpeningDate(): Date {
   return new Date(`${LEDGER_OPENING_DATE_KEY}T00:00:00.000Z`);
 }
 
+/**
+ * 거래 날짜의 상한. 오늘로부터 이만큼 뒤까지만 받는다.
+ *
+ * 상한이 없던 시절에는 연도 오타 하나가 조용히 통과했다. 2026을 2926으로 잘못
+ * 치면 그 금액이 곧바로 순자산에 들어가고, 카드 청구 주기는 지금부터 그 달까지를
+ * 전부 만들어 응답이 1.5MB(주기 10,806개)가 됐다. 9999년이면 9만 개가 넘는다.
+ *
+ * 예약 거래 기능이 없으므로 5년이면 실제 입력을 막지 않으면서 오타는 걸러 낸다.
+ */
+export const LEDGER_MAX_ENTRY_YEARS_AHEAD = 5;
+
+/** 지금 기준 거래 날짜 상한. 그 해 말일까지 허용해 연말 경계에서 잘리지 않게 한다. */
+export function ledgerMaxEntryDate(now: Date = new Date()): Date {
+  return new Date(
+    Date.UTC(now.getUTCFullYear() + LEDGER_MAX_ENTRY_YEARS_AHEAD, 11, 31, 23, 59, 59, 999),
+  );
+}
+
+/** 날짜 입력의 max 속성에 쓰는 "YYYY-MM-DD" */
+export function ledgerMaxEntryDateKey(now: Date = new Date()): string {
+  return `${now.getUTCFullYear() + LEDGER_MAX_ENTRY_YEARS_AHEAD}-12-31`;
+}
+
 /** 벽시계 기준 달력 값. month는 1~12 (JS의 0~11이 아니다). */
 export interface ZonedParts {
   year: number;

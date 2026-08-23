@@ -216,8 +216,66 @@ export namespace CardDto {
    * 청구서를 저장하지 않는다. 카드의 현재 마감일 설정으로 읽을 때 계산하므로
    * 마감일을 바꾸면 곧바로 다시 그려진다.
    */
+  /**
+   * 청구액이 아직 확정되지 않은 외화 결제 한 건.
+   *
+   * 원화 카드로 외화를 쓰면 청구액은 결제일에 카드사 환율로 정해진다. 그때까지
+   * 원장에는 추정 환산액이 들어가 있고, 이 항목이 그 사실을 그대로 담는다.
+   */
+  export interface PendingRateItem {
+    entryId: string;
+    date: IsoDateString;
+    description: string;
+    merchant: string | null;
+    /** 실제로 쓴 통화와 금액. 명세서와 대조할 기준이다. */
+    originalCurrency: string;
+    originalAmount: string;
+    /** 지금 원장에 들어가 있는 추정 청구액. 양수이며 카드 통화다. */
+    estimatedAmount: string;
+    /** 이 거래가 청구되는 주기의 마감 연월 ("YYYY-MM"). 할부 첫 회차 기준이다. */
+    closingMonth: string;
+    /** 그 주기의 결제일 */
+    dueDate: IsoDateString;
+  }
+
+  export interface PendingRatesResponse {
+    cardId: string;
+    /** 아래 estimatedAmount 들의 통화 (= 카드 통화) */
+    currency: string;
+    items: PendingRateItem[];
+  }
+
+  /**
+   * 추정 청구액을 실제 청구액으로 확정한다.
+   *
+   * 두 가지 입력 방식을 받는다. 명세서가 건마다 청구액을 찍어 주면 `billedAmount`를
+   * 채우고, 적용 환율만 한 줄로 적혀 있으면 `rate` 하나로 전부 확정한다.
+   * 둘을 섞을 수는 없다.
+   */
+  export interface SettleRatesRequest {
+    /** 1 원통화 = rate 카드통화. 주면 items 전체에 적용한다. */
+    rate?: string;
+    items: Array<{
+      entryId: string;
+      /** 실제 청구액 (카드 통화, 양수). rate를 줬으면 비운다. */
+      billedAmount?: string;
+    }>;
+  }
+
+  export interface SettleRatesResponse {
+    /** 확정한 건수 */
+    settled: number;
+  }
+
   export interface UsageResponse {
     cardId: string;
+    /**
+     * 이 카드의 통화 (= 결제 통장의 통화).
+     *
+     * 아래 금액들은 전부 이 통화다. 기준통화 환산액이 아니므로 화면이 원으로
+     * 찍으면 달러 카드의 사용액이 1/1380로 보인다.
+     */
+    currency: string;
     /** 남은 대금. 음수면 카드사가 갚을 돈(환불 예정)이다. */
     outstanding: string;
     periods: UsagePeriod[];
@@ -297,6 +355,31 @@ export namespace EntryDto {
 
     /** 금액은 정밀도 손실을 막기 위해 문자열로 보낸다 */
     amount: string;
+    /**
+     * 위 금액을 입력한 통화. 생략하면 결제/입금 계좌의 통화로 본다.
+     *
+     * 달러 통장에서 달러로 썼다면 그 계좌 통화와 같고, 원화 카드로 달러를
+     * 결제했다면 계좌 통화와 다르다. 후자는 청구액(원화)이 원장에 남고
+     * 원 통화 금액은 표시용으로 따로 보관된다.
+     */
+    currency?: string;
+    /**
+     * 1 currency = exchangeRate 기준통화.
+     *
+     * 생략하면 서버 환율을 쓴다. 카드사가 실제로 적용한 환율이 명세서에 찍혀
+     * 나오면 그 값을 넣어 덮어쓴다.
+     */
+    exchangeRate?: string;
+    /**
+     * 기준통화로 실제 청구된(또는 입금된) 총액. 환율 대신 넣는다.
+     *
+     * 사용자가 아는 값은 대개 환율이 아니라 통장에서 빠진 금액이다. 이 값을 주면
+     * 서버가 환율을 무시하고 이 금액을 그대로 기록하며, 적용 환율은 원 통화
+     * 금액과의 비로 유도된다. 분할 거래는 줄 비율대로 나뉘어 합계가 정확히 맞는다.
+     *
+     * 기준통화 계좌(원화 통장·원화 카드)로 외화를 결제한 경우에만 쓸 수 있다.
+     */
+    billedAmount?: string;
 
     // ── expense / income ──
     /** 가장 구체적인 카테고리 하나 (소분류가 있으면 소분류). 대분류는 parentId로 유도된다. */
@@ -319,6 +402,13 @@ export namespace EntryDto {
 
     // ── transfer ──
     toAccountId?: string;
+    /**
+     * 받는 계좌에 실제로 들어온 금액 (받는 계좌 통화).
+     *
+     * 통화가 다른 환전에서 쓴다. 보낸 $50과 받은 ₩67,500을 그대로 적으면
+     * 실제 적용된 환율이 저절로 기록된다. 생략하면 서버 환율로 계산한다.
+     */
+    toAmount?: string;
     transferFee?: string;
     transferFeeCategoryId?: string;
 
@@ -527,6 +617,17 @@ export namespace BudgetDto {
     type?: 'income' | 'expense';  // 카테고리 타입 (전체 지출/수입 구분용)
     monthlyAmount: string;
     projectId?: string;
+    /**
+     * 이 금액을 적용할 달 ("YYYY-MM"). 화면이 보고 있는 달을 넘긴다.
+     *
+     * 예산은 기간별로 나뉠 수 있다(applyMode='from'). 이 값이 없으면 서버가
+     * 어느 기간의 규칙을 고쳐야 할지 몰라 아무거나 집는다. 실제로 8월까지/9월부터로
+     * 나뉜 예산에 금액을 넣으면 9월 규칙이 바뀌고 8월 화면은 그대로여서,
+     * 사용자에게는 저장이 안 된 것처럼 보였다.
+     *
+     * 생략하면 프로젝트 타임존 기준 이번 달로 본다.
+     */
+    yearMonth?: string;
   }
 
   export interface UpdateRequest {
@@ -600,6 +701,13 @@ export interface ApiResponse<T> {
     code: string;
     message: string;
     details?: unknown;
+    /**
+     * 서버 로그와 응답을 잇는 상관관계 ID.
+     *
+     * 예상 못 한 오류는 원인 메시지를 응답에 담지 않는다(내부 쿼리·경로가 샌다).
+     * 사용자가 이 값을 알려 주면 로그에서 해당 요청을 찾는다.
+     */
+    traceId?: string;
   };
   timestamp: string;
 }

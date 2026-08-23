@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, ForbiddenException, NotFoundException 
 import { PrismaService } from '../../config/prisma.service';
 import { ProjectAccessService } from '../../common/project-access.guard';
 import { HIDDEN_ACCOUNT_TYPES } from '../accounts/accounts.service';
+import { toCardResponse } from '../cards/card-view';
 
 @Injectable()
 export class UsersService {
@@ -136,7 +137,13 @@ export class UsersService {
           include: {
             person: true,
             postings: {
-              include: { account: true, category: true, card: true },
+              include: {
+                account: true,
+                category: true,
+                // 카드 행 전체를 실으면 cardNumber 원문이 함께 나간다.
+                // 표시에 필요한 것만 고른다 (entry-view의 ENTRY_INCLUDE와 같은 규칙).
+                card: { select: { id: true, name: true } },
+              },
             },
           },
           orderBy: [{ date: 'desc' }, { id: 'desc' }],
@@ -154,7 +161,9 @@ export class UsersService {
 
     return {
       project,
-      cards,
+      // 카드 행을 그대로 내보내면 cardNumber 원문이 로그인 응답에 실린다.
+      // /cards 목록과 같은 규칙으로 마스킹해서 내보낸다.
+      cards: cards.map((card) => toCardResponse(card)),
       accounts,
       categories,
       people,

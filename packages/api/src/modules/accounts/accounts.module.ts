@@ -3,12 +3,13 @@ import { DatabaseModule } from '@/config/database.module';
 import { PeopleModule } from '../people/people.module';
 import { LedgerModule } from '../ledger/ledger.module';
 import { InstitutionsModule } from '../institutions/institutions.module';
+import { ExchangeRatesModule } from '../exchange-rates/exchange-rates.module';
 import { AccountsService } from './accounts.service';
 import { AccountsController } from './accounts.controller';
 import { ProjectAccessService } from '@/common/project-access.guard';
 
 @Module({
-  imports: [DatabaseModule, PeopleModule, LedgerModule, InstitutionsModule],
+  imports: [DatabaseModule, PeopleModule, LedgerModule, InstitutionsModule, ExchangeRatesModule],
   controllers: [AccountsController],
   providers: [AccountsService, ProjectAccessService],
   exports: [AccountsService],

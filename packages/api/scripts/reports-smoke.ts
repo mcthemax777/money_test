@@ -1,13 +1,9 @@
 
-import { LedgerService } from '@/modules/ledger/ledger.service';
-import { AccountsService } from '@/modules/accounts/accounts.service';
 import { PeopleService } from '@/modules/people/people.service';
 import { CategoriesService } from '@/modules/categories/categories.service';
 import { CardsService } from '@/modules/cards/cards.service';
-import { EntriesService } from '@/modules/entries/entries.service';
-import { ReportsService } from '@/modules/reports/reports.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
-import { projectAccessStub, runSmoke } from './smoke-harness';
+import { makeAccounts, makeEntries, makeLedger, makeReports, projectAccessStub, runSmoke } from './smoke-harness';
 
 runSmoke('reports', async (ctx) => {
   const project = await ctx.createProject();
@@ -16,14 +12,14 @@ runSmoke('reports', async (ctx) => {
   const uid = user.id;
   const access = projectAccessStub(ctx.prisma, pid);
 
-  const ledger = new LedgerService(ctx.prisma as any);
+  const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
-  const accounts = new AccountsService(ctx.prisma as any, access, ledger, institutions);
+  const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
   const people = new PeopleService(ctx.prisma as any, access);
   const categories = new CategoriesService(ctx.prisma as any, access);
   const cards = new CardsService(ctx.prisma as any, access, institutions);
-  const entries = new EntriesService(ctx.prisma as any, access, ledger);
-  const reports = new ReportsService(ctx.prisma as any, access);
+  const entries = makeEntries(ctx.prisma, access, ledger);
+  const reports = makeReports(ctx.prisma, access);
 
   const chulsoo = await people.createPerson(uid, { name: '김철수' }, pid);
   const younghee = await people.createPerson(uid, { name: '이영희' }, pid);
@@ -41,11 +37,11 @@ runSmoke('reports', async (ctx) => {
 
   const bank = await accounts.createAccount(uid, {
     type: 'deposit', ownerId: chulsoo.id, name: '보통예금', institutionId: 'fi_bank_shinhan',
-    openingBalance: '1000000', openingBalanceDate: new Date(Date.UTC(2026, 0, 1)).toISOString(),
+    openingBalance: '1000000',
   }, pid);
   const wifeBank = await accounts.createAccount(uid, {
     type: 'deposit', ownerId: younghee.id, name: '이영희 통장', institutionId: 'fi_bank_kb',
-    openingBalance: '500000', openingBalanceDate: new Date(Date.UTC(2026, 0, 1)).toISOString(),
+    openingBalance: '500000',
   }, pid);
   const stock = await accounts.createAccount(uid, {
     type: 'investment', ownerId: chulsoo.id, name: '삼성전자',

@@ -233,6 +233,41 @@ export interface EntryListItem {
    * 전표에는 부호로만 남으므로 화면이 되돌려 보낼 수 있도록 풀어서 실어 준다.
    */
   cardTransferDirection: CardTransferDirection | null;
+
+  /**
+   * 이 거래의 표시 통화와 금액.
+   *
+   * `amount`는 언제나 프로젝트 기준통화로 환산한 값이다. 통화별로 쪼개지면
+   * 목록 소계와 상단 합계가 어긋나기 때문이다. 외화가 얽힌 거래는 아래 두 값으로
+   * 원래 금액을 함께 보여 준다. `₩68,000 ($50.00)` 처럼.
+   *
+   * 두 경우 모두 여기에 담긴다.
+   *   - 외화 통장에서 쓴 거래 (계좌 다리의 통화)
+   *   - 원화 카드로 한 외화 결제 (전표에 적어 둔 원 통화 금액)
+   */
+  originalCurrency: string | null;
+  originalAmount: string | null;
+  /** 적용된 환율. 1 originalCurrency = exchangeRate 기준통화. 외화가 없으면 null. */
+  exchangeRate: string | null;
+
+  /**
+   * 위 환산액이 아직 추정이라는 표시.
+   *
+   * 원화 카드로 외화를 결제하면 실제 청구액은 결제일에야 정해진다. 화면은
+   * 이 값이 true인 거래에 "잠정"을 붙이고, 카드 화면의 대조 목록에 모아 준다.
+   */
+  rateProvisional: boolean;
+
+  /**
+   * 이체에서 받는 계좌에 실제로 들어온 금액과 그 통화. 이체가 아니면 null.
+   *
+   * `amount`는 기준통화 환산액이라 통화가 다른 환전을 수정할 때 그대로 되돌려
+   * 보내면 안 된다. 예를 들어 원화에서 달러로 100달러를 보낸 이체의 `amount`는
+   * 138,000원인데, 그 값을 "받은 금액(USD)" 칸에 넣으면 138,000달러를 받은
+   * 것으로 저장된다. 수정 폼은 이 값을 쓴다.
+   */
+  toAmount: string | null;
+  toCurrency: string | null;
 }
 
 // 카테고리 (대분류/소분류)

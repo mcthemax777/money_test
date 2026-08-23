@@ -1,7 +1,12 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { apiClient } from '@/lib/api-client';
+import {
+  CURRENCY_LABEL,
+  SUPPORTED_CURRENCIES,
+  type CurrencyCode,
+} from '@money/types';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@/hooks/useInstitutions';
@@ -17,6 +22,11 @@ interface AddAccountModalProps {
   people: Person[];
   /** 넘기지 않으면 서버가 기본 프로젝트로 만든다. */
   projectId?: string | null;
+  /**
+   * 통장 주인을 미리 골라 둔다. 구성원 상세에서 바로 들어온 경우처럼 주인이
+   * 이미 정해진 자리에서 쓴다. 사용자가 폼에서 다른 사람으로 바꿀 수 있다.
+   */
+  defaultOwnerId?: string | null;
 }
 
 /**
@@ -43,6 +53,7 @@ const EMPTY_FORM = {
   type: 'deposit' as AccountType,
   name: '',
   institutionId: '',
+  currency: 'KRW' as CurrencyCode,
   openingBalance: '',
   accountNumber: '',
 };
@@ -53,11 +64,19 @@ export default function AddAccountModal({
   onSuccess,
   people,
   projectId,
+  defaultOwnerId,
 }: AddAccountModalProps) {
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const { options: bankOptions, error: bankError } = useInstitutions('bank');
+
+  // 열릴 때 한 번만 채운다. 열려 있는 동안 사용자가 고른 값을 덮어쓰지 않는다.
+  useEffect(() => {
+    if (isOpen && defaultOwnerId) {
+      setFormData((prev) => ({ ...prev, ownerId: defaultOwnerId }));
+    }
+  }, [isOpen, defaultOwnerId]);
 
   const needsBankName = !NO_BANK_TYPES.includes(formData.type);
 
@@ -72,6 +91,7 @@ export default function AddAccountModal({
         name: formData.name,
         // 개설 잔액은 컬럼에 직접 쓰지 않고 원장 맨 앞(1970-01-01)의 기초잔액 전표로 기록된다.
         openingBalance: toAmountString(formData.openingBalance),
+        currency: formData.currency,
         // 기관이 없는 유형(현금/부동산)에 institutionId를 보내면 서버가 거부한다.
         ...(needsBankName && formData.institutionId
           ? { institutionId: formData.institutionId }
@@ -159,7 +179,29 @@ export default function AddAccountModal({
         )}
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">개설 잔액 (원)</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">통화</label>
+          <select
+            value={formData.currency}
+            onChange={(e) =>
+              setFormData({ ...formData, currency: e.target.value as CurrencyCode })
+            }
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            {SUPPORTED_CURRENCIES.map((code) => (
+              <option key={code} value={code}>
+                {CURRENCY_LABEL[code]}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-xs text-gray-500">
+            만든 뒤에는 바꿀 수 없습니다. 잔액과 거래가 이 통화로 기록됩니다.
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            개설 잔액 ({formData.currency})
+          </label>
           <input
             type="number"
             value={formData.openingBalance}

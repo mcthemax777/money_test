@@ -1,6 +1,8 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma.service';
 import { randomBytes, randomInt } from 'crypto';
+import { ProjectAccessService } from '../../common/project-access.guard';
+import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 
 interface CreateProjectDto {
   name: string;
@@ -11,11 +13,17 @@ interface UpdateProjectDto {
   name?: string;
   description?: string | null;
   timezone?: string;
+  /** 표시 통화. 저장 통화(ledgerCurrency)는 만든 뒤 바꿀 수 없다. */
+  displayCurrency?: string;
 }
 
 @Injectable()
 export class ProjectsService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly projectAccess: ProjectAccessService,
+    private readonly exchangeRates: ExchangeRatesService,
+  ) {}
 
   async createProject(userId: string, dto: CreateProjectDto) {
     const project = await this.prisma.project.create({
@@ -60,7 +68,12 @@ export class ProjectsService {
   async updateProject(projectId: string, userId: string, dto: UpdateProjectDto) {
     await this.verifyUserIsOwner(projectId, userId);
 
-    const data: { name?: string; description?: string | null; timezone?: string } = {};
+    const data: {
+      name?: string;
+      description?: string | null;
+      timezone?: string;
+      displayCurrency?: string;
+    } = {};
     if (dto.name !== undefined) {
       const name = dto.name.trim();
       if (!name) {
@@ -80,6 +93,22 @@ export class ProjectsService {
         throw new BadRequestException('알 수 없는 타임존입니다.');
       }
       data.timezone = dto.timezone;
+    }
+
+    /*
+     * 표시 통화만 바꾼다. 저장된 값은 하나도 건드리지 않는다.
+     *
+     * Posting.baseAmount 는 저장 통화(ledgerCurrency)로 남아 있고, 리포트가 읽을
+     * 때 합계에 환율을 한 번 곱해 이 통화로 보여 준다. 그래서 몇 번을 오가도
+     * 원본이 그대로다. 예전에는 저장값을 다시 계산해 덮어썼고, 그때마다 통화
+     * 자릿수로 반올림해 왕복에 손실이 남았다 (₩13,333 -> $9.66 -> ₩13,331).
+     *
+     * 저장 통화는 만든 뒤 바꿀 수 없다. 그것을 바꾸면 거래 시점에 실제로 청구된
+     * 금액(원화 카드의 달러 결제 등)까지 다시 계산해야 하는데, 그건 기록된 사실을
+     * 고치는 일이다.
+     */
+    if (dto.displayCurrency !== undefined) {
+      data.displayCurrency = this.exchangeRates.assertCurrency(dto.displayCurrency, '표시 통화');
     }
 
     if (Object.keys(data).length === 0) {

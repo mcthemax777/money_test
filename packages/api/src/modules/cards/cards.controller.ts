@@ -41,9 +41,13 @@ export class CardsController {
   }
 
   @Get()
-  @ApiOperation({ summary: '카드 목록' })
-  list(@Request() req: AuthenticatedRequest, @Query('projectId') projectId?: string) {
-    return this.cardsService.getCards(req.user.id, projectId);
+  @ApiOperation({ summary: '카드 목록 (includeInactive=true면 숨긴 카드까지)' })
+  list(
+    @Request() req: AuthenticatedRequest,
+    @Query('projectId') projectId?: string,
+    @Query('includeInactive') includeInactive?: string,
+  ) {
+    return this.cardsService.getCards(req.user.id, projectId, includeInactive === 'true');
   }
 
   // ':id' 보다 먼저 선언해야 'reorder'가 id로 잡히지 않는다.
@@ -65,6 +69,22 @@ export class CardsController {
     @Query('months') months?: string,
   ) {
     return this.cardLedger.getUsage(id, req.user.id, months ? Number(months) : undefined);
+  }
+
+  @Get(':id/pending-rates')
+  @ApiOperation({ summary: '청구액이 확정되지 않은 외화 결제 목록' })
+  pendingRates(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.cardLedger.listPendingRates(id, req.user.id);
+  }
+
+  @Patch(':id/pending-rates')
+  @ApiOperation({ summary: '명세서의 실제 청구액(또는 적용 환율)으로 확정' })
+  settleRates(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: CardDto.SettleRatesRequest,
+  ) {
+    return this.cardLedger.settleRates(id, req.user.id, dto);
   }
 
   @Post(':id/transfers')
@@ -96,8 +116,8 @@ export class CardsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: '카드 삭제' })
+  @ApiOperation({ summary: '카드 숨기기 (되돌리려면 PATCH isActive=true)' })
   delete(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
-    return this.cardsService.deleteCard(id, req.user.id);
+    return this.cardsService.deactivateCard(id, req.user.id);
   }
 }

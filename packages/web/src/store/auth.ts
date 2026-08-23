@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import Cookie from 'js-cookie';
 import { apiClient } from '@/lib/api-client';
+import { clearAuthTokens, getAccessToken, getRefreshToken, saveAuthTokens } from '@/lib/auth-tokens';
 
 interface User {
   id: string;
@@ -60,8 +60,7 @@ export const useAuth = create<AuthStore>()(
       useUserFilter.getState().setPeople([]);
 
       const response = await apiClient.signInWithGoogle(idToken);
-      Cookie.set('accessToken', response.accessToken, { expires: 7 });
-      Cookie.set('refreshToken', response.refreshToken, { expires: 30 });
+      saveAuthTokens(response.accessToken, response.refreshToken);
       set({
         user: response.user,
         defaultProjectData: response.defaultProjectData,
@@ -97,11 +96,10 @@ export const useAuth = create<AuthStore>()(
   logout: async () => {
     set({ isLoading: true });
     try {
-      const refreshToken = Cookie.get('refreshToken');
+      const refreshToken = getRefreshToken();
       await apiClient.logout(refreshToken);
     } finally {
-      Cookie.remove('accessToken');
-      Cookie.remove('refreshToken');
+      clearAuthTokens();
       set({
         user: null,
         defaultProjectData: null,
@@ -127,7 +125,7 @@ export const useAuth = create<AuthStore>()(
 
   loadUser: async () => {
     try {
-      const token = Cookie.get('accessToken');
+      const token = getAccessToken();
       if (!token) {
         set({
           user: null,
@@ -141,8 +139,7 @@ export const useAuth = create<AuthStore>()(
       const user = await apiClient.getProfile();
       set({ user, isAuthenticated: true, isInitializing: false });
     } catch {
-      Cookie.remove('accessToken');
-      Cookie.remove('refreshToken');
+      clearAuthTokens();
       set({
         user: null,
         defaultProjectData: null,

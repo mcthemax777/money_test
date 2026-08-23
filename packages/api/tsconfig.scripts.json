@@ -1,0 +1,16 @@
+{
+  // 스모크 스크립트 타입 체크 전용.
+  //
+  // scripts/는 빌드 대상이 아니라 메인 tsconfig의 include 밖에 있다. 그래서
+  // 서비스 메서드 이름을 바꿔도 스크립트는 아무 경고 없이 통과했고, 실행할 때만
+  // TypeError가 났다. 더 나쁜 경우로 expectReject가 그 TypeError를 "정상 거부"로
+  // 받아들여 검사가 거짓 통과했다(deleteCard -> deactivateCard 개명 때 실제로 그랬다).
+  //
+  // 방출은 하지 않고 타입만 본다.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": "."
+  },
+  "include": ["src/**/*", "scripts/**/*"]
+}

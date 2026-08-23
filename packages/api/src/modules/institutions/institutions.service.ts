@@ -90,6 +90,7 @@ export class InstitutionsService {
     const projectId = await this.projectAccess.resolveAndVerifyProjectId(
       userId,
       projectIdParam || dto.projectId,
+      'editor',
     );
 
     // DTO가 인터페이스라 ValidationPipe가 걸러 주지 않는다.

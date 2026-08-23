@@ -1,4 +1,10 @@
 import { Prisma, PrismaClient } from '@prisma/client';
+import { LedgerService } from '@/modules/ledger/ledger.service';
+import { ExchangeRatesService } from '@/modules/exchange-rates/exchange-rates.service';
+import { ReportsService } from '@/modules/reports/reports.service';
+import { AccountsService } from '@/modules/accounts/accounts.service';
+import { EntriesService } from '@/modules/entries/entries.service';
+import { BudgetsService } from '@/modules/budgets/budgets.service';
 
 /**
  * 스모크 테스트 공용 뼈대.
@@ -130,5 +136,66 @@ export function projectAccessStub(prisma: PrismaClient, defaultProjectId: string
       return { id, timeZone: await timeZoneOf(id) };
     },
     getProjectTimeZone: (projectId: string) => timeZoneOf(projectId),
+    getProjectCurrencies: async (projectId: string) => {
+      const project = await prisma.project.findUnique({
+        where: { id: projectId },
+        select: { ledgerCurrency: true, displayCurrency: true },
+      });
+      const ledger = project?.ledgerCurrency || 'KRW';
+      return { ledger, display: project?.displayCurrency || ledger };
+    },
+    getProjectLedgerCurrency: async (projectId: string) => {
+      const project = await prisma.project.findUnique({
+        where: { id: projectId },
+        select: { ledgerCurrency: true },
+      });
+      return project?.ledgerCurrency || 'KRW';
+    },
   } as any;
+}
+
+/**
+ * 원장 서비스 조립.
+ *
+ * 통화 환산이 들어오면서 의존성이 셋으로 늘었다. 스크립트마다 직접 new 하면
+ * 의존성이 바뀔 때마다 전부 고쳐야 하므로 여기 한 곳에 모은다.
+ */
+export function makeLedger(prisma: PrismaClient, access: unknown) {
+  const exchangeRates = new ExchangeRatesService(prisma as any);
+  return new LedgerService(prisma as any, access as any, exchangeRates);
+}
+
+/** 계좌 서비스 조립. 통화 검증 때문에 환율 서비스를 함께 쓴다. */
+export function makeAccounts(
+  prisma: PrismaClient,
+  access: unknown,
+  ledger: unknown,
+  institutions: unknown,
+) {
+  const exchangeRates = new ExchangeRatesService(prisma as any);
+  return new AccountsService(
+    prisma as any,
+    access as any,
+    ledger as any,
+    institutions as any,
+    exchangeRates,
+  );
+}
+
+/** 리포트 서비스 조립. 순자산이 외화를 환산하느라 환율 서비스를 함께 쓴다. */
+export function makeReports(prisma: PrismaClient, access: unknown) {
+  const exchangeRates = new ExchangeRatesService(prisma as any);
+  return new ReportsService(prisma as any, access as any, exchangeRates);
+}
+
+/** 거래 서비스 조립. 목록 금액을 표시 통화로 옮기느라 환율 서비스를 쓴다. */
+export function makeEntries(prisma: PrismaClient, access: unknown, ledger: unknown) {
+  const exchangeRates = new ExchangeRatesService(prisma as any);
+  return new EntriesService(prisma as any, access as any, ledger as any, exchangeRates);
+}
+
+/** 예산 서비스 조립. 예산액을 저장 통화 <-> 표시 통화로 옮긴다. */
+export function makeBudgets(prisma: PrismaClient, access: unknown) {
+  const exchangeRates = new ExchangeRatesService(prisma as any);
+  return new BudgetsService(prisma as any, access as any, exchangeRates);
 }

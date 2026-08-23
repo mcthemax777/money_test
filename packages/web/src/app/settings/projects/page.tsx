@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/store/auth';
 import { useProject } from '@/store/project';
 import { apiClient } from '@/lib/api-client';
+import { CURRENCY_LABEL, SUPPORTED_CURRENCIES } from '@money/types';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
 
@@ -16,6 +17,8 @@ interface Project {
   role: 'owner' | 'editor' | 'viewer';
   /** 집계 기준 타임존. 월 합계와 카드 청구주기 경계가 이 값을 따른다. */
   timezone?: string;
+  ledgerCurrency?: string;
+  displayCurrency?: string;
   /** 이 사용자가 이 프로젝트에서 "나"로 지정한 구성원 */
   myPersonId?: string | null;
 }
@@ -97,6 +100,8 @@ export default function ProjectsPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ name: '', description: '' });
   const [savingEdit, setSavingEdit] = useState(false);
+  /** 기준통화 환산이 도는 동안 그 프로젝트의 선택을 잠근다. */
+  const [rebasingId, setRebasingId] = useState<string | null>(null);
 
   // 가입 요청 관련 상태
   const [showJoinForm, setShowJoinForm] = useState(false);
@@ -187,6 +192,28 @@ export default function ProjectsPage() {
       setError('');
     } catch (err: any) {
       setError(err.response?.data?.error?.message || '타임존 변경에 실패했습니다.');
+    }
+  };
+
+  /**
+   * 표시 통화 변경.
+   *
+   * 저장된 값은 하나도 바뀌지 않는다. 서버가 읽을 때만 환율을 곱해 보여 주므로
+   * 몇 번을 오가도 원본이 그대로다. 확인 창을 띄우지 않는 이유도 그래서다.
+   */
+  const handleChangeDisplayCurrency = async (project: Project, next: string) => {
+    if (next === (project.displayCurrency || project.ledgerCurrency || 'KRW')) return;
+
+    try {
+      setRebasingId(project.id);
+      await apiClient.updateProject(project.id, { displayCurrency: next });
+      const data: Project[] = (await apiClient.getMyProjects()) || [];
+      setProjects(data);
+      setError('');
+    } catch (err: any) {
+      setError(err.response?.data?.error?.message || '표시 통화 변경에 실패했습니다.');
+    } finally {
+      setRebasingId(null);
     }
   };
 
@@ -859,6 +886,32 @@ export default function ProjectsPage() {
                       ))}
                     </select>
                   </div>
+
+                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <h4 className="text-sm font-semibold text-gray-900">표시 통화</h4>
+                      <p className="text-xs text-gray-500 mt-1">
+                        지출·예산·순자산 합계를 이 통화로 보여줍니다. 저장된 값은 바뀌지 않고
+                        볼 때만 환산하므로 언제든 되돌릴 수 있습니다. 계좌 잔액은 각 계좌의
+                        통화 그대로입니다.
+                      </p>
+                    </div>
+                    <select
+                      value={project.displayCurrency || project.ledgerCurrency || 'KRW'}
+                      disabled={rebasingId === project.id}
+                      onChange={(e) => handleChangeDisplayCurrency(project, e.target.value)}
+                      className="px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                    >
+                      {SUPPORTED_CURRENCIES.map((code) => (
+                        <option key={code} value={code}>
+                          {CURRENCY_LABEL[code]}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <p className="mt-2 text-xs text-gray-400">
+                    거래는 {project.ledgerCurrency || 'KRW'}로 기록됩니다 (저장 통화, 변경 불가).
+                  </p>
                 </div>
               )}
 

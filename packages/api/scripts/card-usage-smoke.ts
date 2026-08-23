@@ -1,13 +1,9 @@
-import { LedgerService } from '@/modules/ledger/ledger.service';
-import { AccountsService } from '@/modules/accounts/accounts.service';
 import { PeopleService } from '@/modules/people/people.service';
 import { CategoriesService } from '@/modules/categories/categories.service';
 import { CardsService } from '@/modules/cards/cards.service';
 import { CardLedgerService } from '@/modules/cards/card-ledger.service';
-import { EntriesService } from '@/modules/entries/entries.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
-import { ReportsService } from '@/modules/reports/reports.service';
-import { projectAccessStub, runSmoke } from './smoke-harness';
+import { makeAccounts, makeEntries, makeLedger, makeReports, projectAccessStub, runSmoke } from './smoke-harness';
 
 /**
  * 카드 부채 총액 모델.
@@ -20,15 +16,15 @@ runSmoke('card-usage', async (ctx) => {
   const uid = (await ctx.createUser()).id;
   const access = projectAccessStub(ctx.prisma, pid);
 
-  const ledger = new LedgerService(ctx.prisma as any);
+  const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
-  const accounts = new AccountsService(ctx.prisma as any, access, ledger, institutions);
+  const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
   const people = new PeopleService(ctx.prisma as any, access);
   const categories = new CategoriesService(ctx.prisma as any, access);
   const cards = new CardsService(ctx.prisma as any, access, institutions);
-  const entries = new EntriesService(ctx.prisma as any, access, ledger);
+  const entries = makeEntries(ctx.prisma, access, ledger);
   const cardLedger = new CardLedgerService(ctx.prisma as any, access, ledger);
-  const reports = new ReportsService(ctx.prisma as any, access);
+  const reports = makeReports(ctx.prisma, access);
 
   const person = await people.createPerson(uid, { name: '김철수' }, pid);
   const food = await categories.createCategory(uid, { name: '식비', type: 'expense' }, pid);
