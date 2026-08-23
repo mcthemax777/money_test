@@ -83,6 +83,61 @@ const INSTALLMENT_OPTIONS = [
   ...[2, 3, 4, 5, 6, 9, 10, 12, 18, 24, 36].map((m) => ({ id: String(m), name: `${m}개월` })),
 ];
 
+/**
+ * 빈 거래 입력 폼.
+ *
+ * 처음 상태, 저장한 뒤, 팝업을 닫을 때 모두 이 값으로 되돌린다.
+ *
+ * 예전에는 같은 객체를 세 곳에 따로 적어 두어 서로 어긋났다. 저장 뒤 되돌리는 쪽만
+ * method가 'card'로 남아 있어서, 거래를 수정하고 나서 거래 추가를 열면 수입·이체 탭이
+ * 잠겨 있었다(카드로는 지출만 만들 수 있어 탭을 잠근다). 팝업을 닫으면 다른 쪽 초기화가
+ * 돌아 그때는 풀렸다.
+ */
+function emptyEntryForm(timeZone: string, ledgerCurrency: CurrencyCode) {
+  return {
+    method: 'account',
+    accountId: '',
+    cardId: '',
+    personId: '',
+    type: 'expense',
+    mainCategoryId: '',
+    subCategoryId: '',
+    amount: '',
+    description: '',
+    merchant: '',
+    detailedNote: '',
+    toAccountId: '',
+    /** 통화가 다른 환전에서 실제로 받은 금액 (받는 계좌 통화) */
+    toAmount: '',
+    transferFee: '',
+    transferFeeMainCategoryId: '',
+    transferFeeSubCategoryId: '',
+    date: todayKey(timeZone),
+    time: '',
+    isFixed: false,
+    /** 할부 개월수. 빈 값이거나 1이면 일시불 */
+    installmentMonths: '',
+    /** 카드사 이체의 방향. 수정으로만 들어오며 그대로 되돌려 보낸다 */
+    cardTransferDirection: 'payment' as CardTransferDirection,
+    /** 위 금액을 입력한 통화. 결제수단을 고르면 그 계좌 통화로 맞춰진다. */
+    currency: ledgerCurrency,
+    /**
+     * 통장에서 실제로 빠진 기준통화 금액. 환율 대신 이것을 넣을 수 있다.
+     *
+     * 환율은 카드사가 결제일에 정하는 값이라 미리 알 수 없고, 명세서에 찍히는
+     * 것도 대개 금액이다. 둘 중 하나만 채운다.
+     */
+    billedAmount: '',
+    /**
+     * 통화를 사용자가 직접 골랐는지.
+     *
+     * 결제수단을 바꿀 때 통화를 덮어쓸지 가르는 값이다. 자동으로 채워진 통화는
+     * 덮어써도 되지만, 사용자가 고른 통화는 지우면 안 된다.
+     */
+    currencyTouched: false,
+  };
+}
+
 const ENTRY_TYPE_TABS = [
   { id: 'expense', label: '지출' },
   { id: 'income', label: '수입' },
@@ -201,48 +256,7 @@ export default function TransactionsPage() {
   const [categoryParentId, setCategoryParentId] = useState('');
   /** 소분류 모드일 때의 대분류. 없으면 대분류를 새로 만드는 모드다. */
   const categoryParent = categories.find((c) => c.id === categoryParentId);
-  const [formData, setFormData] = useState(() => ({
-    method: 'account',
-    accountId: '',
-    cardId: '',
-    personId: '',
-    type: 'expense',
-    mainCategoryId: '',
-    subCategoryId: '',
-    amount: '',
-    description: '',
-    merchant: '',
-    detailedNote: '',
-    toAccountId: '',
-    /** 통화가 다른 환전에서 실제로 받은 금액 (받는 계좌 통화) */
-    toAmount: '',
-    transferFee: '',
-    transferFeeMainCategoryId: '',
-    transferFeeSubCategoryId: '',
-    date: todayKey(timeZone),
-    time: '',
-    isFixed: false,
-    /** 할부 개월수. 빈 값이거나 1이면 일시불 */
-    installmentMonths: '',
-    /** 카드사 이체의 방향. 수정으로만 들어오며 그대로 되돌려 보낸다 */
-    cardTransferDirection: 'payment' as CardTransferDirection,
-    /** 위 금액을 입력한 통화. 결제수단을 고르면 그 계좌 통화로 맞춰진다. */
-    currency: 'KRW' as CurrencyCode,
-    /**
-     * 통장에서 실제로 빠진 기준통화 금액. 환율 대신 이것을 넣을 수 있다.
-     *
-     * 환율은 카드사가 결제일에 정하는 값이라 미리 알 수 없고, 명세서에 찍히는
-     * 것도 대개 금액이다. 둘 중 하나만 채운다.
-     */
-    billedAmount: '',
-    /**
-     * 통화를 사용자가 직접 골랐는지.
-     *
-     * 결제수단을 바꿀 때 통화를 덮어쓸지 가르는 값이다. 자동으로 채워진 통화는
-     * 덮어써도 되지만, 사용자가 고른 통화는 지우면 안 된다.
-     */
-    currencyTouched: false,
-  }));
+  const [formData, setFormData] = useState(() => emptyEntryForm(timeZone, ledgerCurrency));
   const [isSubmitting, setIsSubmitting] = useState(false);
   /** 고정/변동 선택. 둘 다 고른 상태로 시작한다 (= 전체). */
   const [selectedFixedTypes, setSelectedFixedTypes] = useState<FixedType[]>(['fixed', 'variable']);
@@ -830,32 +844,7 @@ export default function TransactionsPage() {
       if (selectedProjectId) {
         fetchMonthlyBudgets(currentYear, currentMonth, selectedProjectId, appliedFilter);
       }
-      setFormData({
-        method: 'card',
-        accountId: '',
-        cardId: '',
-        personId: '',
-        type: 'expense',
-        mainCategoryId: '',
-        subCategoryId: '',
-        amount: '',
-        description: '',
-        merchant: '',
-        detailedNote: '',
-        toAccountId: '',
-        toAmount: '',
-        transferFee: '',
-        transferFeeMainCategoryId: '',
-        transferFeeSubCategoryId: '',
-        currency: ledgerCurrency,
-        billedAmount: '',
-        currencyTouched: false,
-        date: todayKey(timeZone),
-        time: '',
-        isFixed: false,
-        installmentMonths: '',
-        cardTransferDirection: 'payment',
-      });
+      setFormData(emptyEntryForm(timeZone, ledgerCurrency));
       setEditingId(null);
       setError('');
       setIsModalOpen(false);
@@ -869,17 +858,19 @@ export default function TransactionsPage() {
   /**
    * 새 거래 입력 시작.
    *
-   * 날짜와 시각을 지금으로 채운다. 시각을 비워 두면 그 날 0시로 기록되므로
-   * 입력 시점을 그대로 남기려면 기본값이 있어야 한다.
+   * 빈 폼에서 시작한다. 예전에는 남아 있던 값 위에 날짜만 덮어써서, 직전에 무엇을
+   * 했는지가 새 거래에 따라 들어왔다.
+   *
+   * 시각은 지금으로 채운다. 비워 두면 그 날 0시로 기록되므로 입력 시점을 그대로
+   * 남기려면 기본값이 있어야 한다.
    */
   const handleAddClick = () => {
     setEditingId(null);
     setError('');
     setFormData((prev) => ({
-      ...prev,
-      date: todayKey(timeZone),
+      ...emptyEntryForm(timeZone, ledgerCurrency),
       time: nowTimeKey(timeZone),
-      // "나"를 지정해 두면 사용자를 매번 고르지 않아도 된다.
+      // "나"를 지정해 두면 사용자를 매번 고르지 않아도 된다. 이것만 이어받는다.
       personId: prev.personId || myPersonId || '',
     }));
     setIsModalOpen(true);
@@ -887,32 +878,7 @@ export default function TransactionsPage() {
 
   const handleModalClose = () => {
     setIsModalOpen(false);
-    setFormData({
-      method: 'account',
-      accountId: '',
-      cardId: '',
-      personId: '',
-      type: 'expense',
-      mainCategoryId: '',
-      subCategoryId: '',
-      amount: '',
-      description: '',
-      merchant: '',
-      detailedNote: '',
-      toAccountId: '',
-      toAmount: '',
-      transferFee: '',
-      transferFeeMainCategoryId: '',
-      transferFeeSubCategoryId: '',
-      currency: ledgerCurrency,
-      billedAmount: '',
-      currencyTouched: false,
-      date: todayKey(timeZone),
-      time: '',
-      isFixed: false,
-      installmentMonths: '',
-      cardTransferDirection: 'payment',
-    });
+    setFormData(emptyEntryForm(timeZone, ledgerCurrency));
     setEditingId(null);
     setError('');
   };
