@@ -721,10 +721,10 @@ class ApiClient {
     return response.data;
   }
 
-  /** 투자 계좌의 누적 수익. 이체로 넣은 원금은 빠져 있다. */
-  async getInvestmentProfit(projectId?: string | null): Promise<ReportDto.InvestmentProfit[]> {
-    const response = await this.client.get<ReportDto.InvestmentProfit[]>(
-      '/reports/investment-profit',
+  /** 투자·저축 계좌의 누적 수익. 이체로 넣은 원금은 빠져 있다. */
+  async getAccountProfit(projectId?: string | null): Promise<ReportDto.AccountProfit[]> {
+    const response = await this.client.get<ReportDto.AccountProfit[]>(
+      '/reports/account-profit',
       { params: projectId ? { projectId } : {} },
     );
     return response.data;

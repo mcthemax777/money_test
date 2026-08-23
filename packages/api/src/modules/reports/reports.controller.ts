@@ -48,13 +48,13 @@ export class ReportsController {
     return this.reportsService.getTrend(req.user.id, query);
   }
 
-  @Get('investment-profit')
-  @ApiOperation({ summary: '투자 계좌의 누적 수익 (이체로 넣은 원금은 제외)' })
-  investmentProfit(
+  @Get('account-profit')
+  @ApiOperation({ summary: '투자·저축 계좌의 누적 수익 (이체로 넣은 원금은 제외)' })
+  accountProfit(
     @Request() req: AuthenticatedRequest,
     @Query('projectId') projectId?: string,
   ) {
-    return this.reportsService.getInvestmentProfit(req.user.id, { projectId });
+    return this.reportsService.getAccountProfit(req.user.id, { projectId });
   }
 
   @Get('payment-methods')

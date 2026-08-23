@@ -30,6 +30,13 @@ const EQUITY_TYPES: AccountType[] = [AccountType.opening_balance];
 const VALUED_TYPES: AccountType[] = [AccountType.investment, AccountType.real_estate];
 /** 부채 계정. 잔액이 음수로 저장된다. */
 const LIABILITY_TYPES: AccountType[] = [AccountType.credit_card, AccountType.loan];
+/**
+ * 수익을 따로 계산해 보여 주는 계정.
+ *
+ * 원금은 이체로 넣고 불어난 몫은 수입으로 붙는 계좌들이다(투자는 배당·매매 차익,
+ * 저축은 이자). 잔액만 보면 원금인지 수익인지 구별되지 않는다.
+ */
+const PROFIT_TYPES: AccountType[] = [AccountType.investment, AccountType.savings];
 
 @Injectable()
 export class ReportsService {
@@ -736,23 +743,23 @@ export class ReportsService {
   }
 
   /**
-   * 투자 계좌의 누적 수익.
+   * 투자·저축 계좌의 누적 수익.
    *
-   * 투자 계좌에 이체로 넣은 돈은 원금이다. 그 계좌에 수입·지출로 기록한 것만 수익과
-   * 손실이다(배당, 매매 차익, 수수료). 이체·카드대금·잔액조정은 원금이 오간 것이라 뺀다.
+   * 그 계좌에 이체로 넣은 돈은 원금이다. 수입·지출로 기록한 것만 수익과 손실이다
+   * (배당, 매매 차익, 이자, 수수료). 이체·카드대금·잔액조정은 원금이 오간 것이라 뺀다.
    * 기초잔액 전표도 잔액조정으로 분류되므로 저절로 빠진다(classifyEntry 참고).
    *
    * 구간을 받지 않는다. 자산 화면의 잔액이 전 기간 누적이라 수익도 같은 기준이어야
    * "원금 얼마에 수익 얼마"로 나란히 읽힌다.
    */
-  async getInvestmentProfit(
+  async getAccountProfit(
     userId: string,
     query: { projectId?: string },
-  ): Promise<ReportDto.InvestmentProfit[]> {
+  ): Promise<ReportDto.AccountProfit[]> {
     const { id: projectId } = await this.projectAccess.resolveProject(userId, query.projectId);
 
     const accounts = await this.prisma.account.findMany({
-      where: { projectId, type: AccountType.investment },
+      where: { projectId, type: { in: PROFIT_TYPES } },
       select: { id: true },
     });
     if (accounts.length === 0) return [];

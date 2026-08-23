@@ -61,23 +61,26 @@ import { accountTypeLabel } from '@/lib/account-type';
 
 
 /**
- * 투자 계좌의 누적 수익.
+ * 투자·저축 계좌의 누적 수익.
  *
- * 투자 계좌에 이체로 넣은 돈은 원금이라 잔액만 보면 벌었는지 알 수 없다. 그 계좌에
- * 수입·지출로 기록한 것(배당, 매매 차익, 수수료)의 합이 수익이다. 서버가 같은 기준으로
- * 계산한다(reports.service.ts getInvestmentProfit).
+ * 이체로 넣은 돈은 원금이라 잔액만 보면 불었는지 알 수 없다. 그 계좌에 수입·지출로
+ * 기록한 것(배당, 매매 차익, 이자, 수수료)의 합이 수익이다.
  *
- * 투자 계좌가 아니거나 아직 기록이 없으면 아무것도 그리지 않는다. 0원을 적어 두면
- * "계산이 안 됐다"와 "아직 수익이 없다"를 구별할 수 없다.
+ * 어느 유형에 수익이 있는지는 서버가 정한다(reports.service.ts의 PROFIT_TYPES).
+ * 화면이 유형을 한 번 더 적어 두면 한쪽만 고쳤을 때 어긋나므로, 서버가 그 계좌를
+ * 돌려줬는지만 본다.
+ *
+ * 아직 기록이 없으면 아무것도 그리지 않는다. 0원을 적어 두면 "계산이 안 됐다"와
+ * "아직 수익이 없다"를 구별할 수 없다.
  */
-function InvestmentProfitLine({
+function AccountProfitLine({
   account,
   profit,
 }: {
   account: Account;
   profit: string | undefined;
 }) {
-  if (account.type !== 'investment' || profit === undefined) return null;
+  if (profit === undefined) return null;
 
   const value = toNumber(profit);
   if (value === 0) return null;
@@ -220,27 +223,27 @@ export default function DashboardPage() {
   const [ledgerCursor, setLedgerCursor] = useState<string | null>(null);
   const [isLoadingLedger, setIsLoadingLedger] = useState(false);
   const [netWorth, setNetWorth] = useState<ReportDto.NetWorth | null>(null);
-  /** 투자 계좌별 누적 수익. 계좌 id -> 금액 (계좌 통화) */
-  const [investmentProfit, setInvestmentProfit] = useState<Map<string, string>>(new Map());
+  /** 투자·저축 계좌별 누적 수익. 계좌 id -> 금액 (계좌 통화) */
+  const [accountProfit, setAccountProfit] = useState<Map<string, string>>(new Map());
   /** 항목을 숨기거나 되돌리면 올린다. 숨긴 항목 패널이 이 값을 보고 다시 읽는다. */
   const [hiddenVersion, setHiddenVersion] = useState(0);
 
   /**
-   * 총자산과 사람별 소계, 그리고 투자 계좌 수익.
+   * 총자산과 사람별 소계, 그리고 계좌 수익.
    *
    * 계좌 잔액이나 카드 부채가 바뀌면 이 값도 함께 다시 받아야 한다. 목록만
    * 갱신하면 왼쪽의 총자산이 옛 값으로 남아, 새로고침해야 맞는 숫자가 나온다.
-   * 투자 수익도 같은 거래에서 나오는 값이라 한 함수에서 함께 받는다.
+   * 계좌 수익도 같은 거래에서 나오는 값이라 한 함수에서 함께 받는다.
    */
   const loadNetWorth = useCallback(async () => {
     if (!selectedProjectId) return;
     try {
       const [netWorthData, profitData] = await Promise.all([
         apiClient.getNetWorth(selectedProjectId),
-        apiClient.getInvestmentProfit(selectedProjectId),
+        apiClient.getAccountProfit(selectedProjectId),
       ]);
       setNetWorth(netWorthData ?? null);
-      setInvestmentProfit(new Map((profitData ?? []).map((row) => [row.accountId, row.profit])));
+      setAccountProfit(new Map((profitData ?? []).map((row) => [row.accountId, row.profit])));
     } catch (err) {
       console.error('총자산 조회 실패:', err);
     }
@@ -261,14 +264,14 @@ export default function DashboardPage() {
             apiClient.getCards(selectedProjectId),
             apiClient.getCategories(selectedProjectId),
             apiClient.getNetWorth(selectedProjectId),
-            apiClient.getInvestmentProfit(selectedProjectId),
+            apiClient.getAccountProfit(selectedProjectId),
           ]);
         setAccounts(accountsData || []);
         setPeople(peopleData || []);
         setCards(cardsData || []);
         setCategories(categoriesData || []);
         setNetWorth(netWorthData ?? null);
-        setInvestmentProfit(new Map((profitData ?? []).map((row) => [row.accountId, row.profit])));
+        setAccountProfit(new Map((profitData ?? []).map((row) => [row.accountId, row.profit])));
       } catch (err) {
         setError('데이터 조회에 실패했습니다.');
       } finally {
@@ -732,7 +735,7 @@ export default function DashboardPage() {
             accounts={accounts}
             cardsOf={getAccountCards}
             netWorthByPerson={netWorthByPerson}
-            investmentProfit={investmentProfit}
+            accountProfit={accountProfit}
             /*
               지금 펼쳐 둔 항목. detailType과 함께 넘겨야 한다. 고른 계좌·카드·구성원은
               닫아도 state에 남으므로 id만 보면 오른쪽에 없는 항목까지 강조된다.
@@ -1722,7 +1725,7 @@ function PersonAssetList({
   accounts,
   cardsOf,
   netWorthByPerson,
-  investmentProfit,
+  accountProfit,
   selected,
   onPersonClick,
   onAccountClick,
@@ -1735,8 +1738,8 @@ function PersonAssetList({
   accounts: Account[];
   cardsOf: (accountId: string) => Card[];
   netWorthByPerson: Map<string, { total: string }>;
-  /** 투자 계좌별 누적 수익. 계좌 id -> 금액 */
-  investmentProfit: Map<string, string>;
+  /** 투자·저축 계좌별 누적 수익. 계좌 id -> 금액 */
+  accountProfit: Map<string, string>;
   selected: SelectedItem;
   onPersonClick: (person: Person) => void;
   onAccountClick: (account: Account) => void;
@@ -1773,7 +1776,7 @@ function PersonAssetList({
           <AccountList
             accounts={accounts.filter((account) => account.ownerId === person.id)}
             cardsOf={cardsOf}
-            investmentProfit={investmentProfit}
+            accountProfit={accountProfit}
             selected={selected}
             onAccountClick={onAccountClick}
             onCardClick={onCardClick}
@@ -1790,7 +1793,7 @@ function PersonAssetList({
 function AccountList({
   accounts,
   cardsOf,
-  investmentProfit,
+  accountProfit,
   selected,
   onAccountClick,
   onCardClick,
@@ -1799,7 +1802,7 @@ function AccountList({
 }: {
   accounts: Account[];
   cardsOf: (accountId: string) => Card[];
-  investmentProfit: Map<string, string>;
+  accountProfit: Map<string, string>;
   selected: SelectedItem;
   onAccountClick: (account: Account) => void;
   onCardClick: (card: Card) => void;
@@ -1833,23 +1836,27 @@ function AccountList({
             className="w-full text-left hover:opacity-70 transition"
           >
             {/*
+              위에는 계좌명, 아래에는 개설 기관을 둔다. 어느 계좌인지 먼저 알아야 하고,
+              은행은 계좌를 여러 개 가진 사람에게만 필요한 부속 정보다.
+
               유형은 총자산을 현금성·투자·부채로 나누는 기준이라 목록에서 바로 보여야
-              한다. 현금과 부동산은 개설 기관이 없으므로 유형만 남는다.
+              하므로 계좌명 옆에 붙인다.
             */}
             <div className="flex items-center gap-1.5">
-              {account.institution?.name && (
-                <p className="text-sm text-gray-600">{account.institution.name}</p>
-              )}
+              <p className="text-sm text-gray-600">{account.name}</p>
               <AccountTypeBadge type={account.type} />
             </div>
             <p className="text-2xl font-bold text-gray-900 mt-2">
               {formatCurrency(account.balance, account.currency)}
             </p>
-            <InvestmentProfitLine
+            <AccountProfitLine
               account={account}
-              profit={investmentProfit.get(account.id)}
+              profit={accountProfit.get(account.id)}
             />
-            <p className="text-xs text-gray-500 mt-2">{account.name}</p>
+            {/* 현금과 부동산은 개설 기관이 없다 */}
+            {account.institution?.name && (
+              <p className="text-xs text-gray-500 mt-2">{account.institution.name}</p>
+            )}
             {account.accountNumber && (
               <p className="text-xs text-gray-400 mt-1">{account.accountNumber}</p>
             )}

@@ -649,8 +649,8 @@ export namespace ReportDto {
     income: string;
   }
 
-  /** 투자 계좌 하나의 누적 수익 */
-  export interface InvestmentProfit {
+  /** 투자·저축 계좌 하나의 누적 수익 */
+  export interface AccountProfit {
     accountId: string;
     /**
      * 그 계좌에 수입·지출로 기록한 금액의 합. 손실이면 음수다.
