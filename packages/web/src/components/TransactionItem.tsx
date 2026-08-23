@@ -2,7 +2,7 @@
 
 import type { EntryListItem } from '@money/types';
 import { formatCurrency, formatOriginal, toNumber } from '@/lib/money';
-import { formatDate } from '@/lib/datetime';
+import { formatTime } from '@/lib/datetime';
 import { useProjectTimeZone } from '@/store/project';
 
 /**
@@ -83,6 +83,9 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
       ? AMOUNT_COLOR_BY_KIND.expense
       : AMOUNT_COLOR_BY_KIND[entry.kind];
 
+  const time = formatTime(entry.date, timeZone);
+  const showNotCounted = NOT_COUNTED.includes(entry.kind) && !hasFee;
+
   // 카테고리는 "대분류 > 소분류"로 표시한다. 대분류만 지정한 거래는 앞부분만 나온다.
   const categoryLabel = entry.parentCategoryName
     ? `${entry.parentCategoryName} > ${entry.categoryName}`
@@ -131,14 +134,21 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
             </>
           )}
 
-          <p className="text-xs text-gray-500 mt-2">
-            {formatDate(entry.date, timeZone)}
-            {NOT_COUNTED.includes(entry.kind) && !hasFee && (
-              <span className="ml-2 px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded">
-                합계 제외
-              </span>
-            )}
-          </p>
+          {/*
+            목록은 날짜별로 묶여 있어 날짜는 머리글에 이미 있다. 카드에는 그날
+            안에서 언제 있었던 거래인지 알려 주는 시각만 둔다. 시간을 입력하지
+            않은 거래는 시각 자리가 비고 배지만 남는다.
+          */}
+          {(time || showNotCounted) && (
+            <p className="text-xs text-gray-500 mt-2">
+              {time}
+              {showNotCounted && (
+                <span className={`${time ? 'ml-2 ' : ''}px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded`}>
+                  합계 제외
+                </span>
+              )}
+            </p>
+          )}
         </div>
 
         <div className="text-right flex flex-col justify-between">

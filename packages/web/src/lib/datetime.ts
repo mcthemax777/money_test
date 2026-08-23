@@ -40,6 +40,23 @@ export function formatDate(instant: string | Date, timeZone: string): string {
   return new Date(instant).toLocaleDateString('ko-KR', { timeZone });
 }
 
+/**
+ * 목록 카드에 쓰는 시각 표기 "오후 3:20". 시간을 입력하지 않은 거래는 빈 문자열.
+ *
+ * 카드는 날짜별로 묶인 목록 안에 있어 날짜는 머리글에 이미 있다. 카드에는 그날
+ * 안에서의 순서를 알려 주는 시각만 남긴다. 자정으로 저장된 "시간 없음" 거래를
+ * "오전 12:00"으로 보여 주면 입력하지 않은 값을 입력한 것처럼 읽히므로 비운다.
+ */
+export function formatTime(instant: string | Date, timeZone: string): string {
+  if (timeInputOf(instant, timeZone) === '') return '';
+
+  return new Date(instant).toLocaleTimeString('ko-KR', {
+    timeZone,
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 /** 상세에 쓰는 날짜(+시각) 표기. 시간을 입력하지 않은 거래는 날짜만 보여준다. */
 export function formatDateTime(instant: string | Date, timeZone: string): string {
   const hasTime = timeInputOf(instant, timeZone) !== '';
