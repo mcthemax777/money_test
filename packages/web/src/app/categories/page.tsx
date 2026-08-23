@@ -4,25 +4,18 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/store/auth';
 import { useProject } from '@/store/project';
 import { apiClient } from '@/lib/api-client';
-import CustomSelect from '@/components/CustomSelect';
 import Modal from '@/components/Modal';
+import CategoryFormFields, {
+  NO_SUB_CATEGORIES,
+  filledSubCategories,
+  type SubCategoryRow,
+} from '@/components/CategoryFormFields';
 import PageHeader from '@/components/PageHeader';
 import type { Category } from '@/lib/types';
 import { useDragReorder } from '@/hooks/useDragReorder';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const FORM_ID = 'category-form';
-
-/** 소분류 입력 한 줄 */
-type SubCategoryRow = { id: string; name: string; defaultIsFixed: boolean };
-
-/**
- * 소분류는 빈 줄 없이 시작한다.
- *
- * 예전에는 빈 줄 하나를 미리 넣어 두어서, 소분류가 필요 없는데도 항상 빈 입력칸이
- * 보였다. 필요하면 "소분류 추가" 버튼으로 늘린다.
- */
-const NO_SUB_CATEGORIES: SubCategoryRow[] = [];
 
 
 export default function CategoriesPage() {
@@ -153,7 +146,7 @@ export default function CategoriesPage() {
     }
 
     // 소분류명 검증 (비어있는 소분류는 제거)
-    const filteredSubCategories = formData.subCategories.filter((sub) => sub.name.trim());
+    const filteredSubCategories = filledSubCategories(formData.subCategories);
 
     try {
       setIsSubmitting(true);
@@ -416,73 +409,14 @@ export default function CategoriesPage() {
         }
       >
       <form id={FORM_ID} onSubmit={handleSubmit} className="space-y-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            대분류 이름
-          </label>
-          <input
-            type="text"
-            required
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="예: 음식"
-          />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">
-            유형
-          </label>
-          <CustomSelect
-            options={[
-              { id: 'expense', name: '지출' },
-              { id: 'income', name: '수입' },
-            ]}
-            value={formData.type}
-            onChange={(value) => setFormData({ ...formData, type: value as any })}
-            placeholder="선택하세요"
-          />
-        </div>
-
-        <div>
-          <div className="space-y-3 max-h-64 overflow-y-auto">
-            {formData.subCategories.map((subCat, index) => (
-              <div key={index} className="p-3 border border-gray-200 rounded-lg">
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={subCat.name}
-                    onChange={(e) => {
-                      const newSubs = [...formData.subCategories];
-                      newSubs[index] = { ...newSubs[index], name: e.target.value };
-                      setFormData({ ...formData, subCategories: newSubs });
-                    }}
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="소분류 이름"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const newSubs = formData.subCategories.filter((_, i) => i !== index);
-                      setFormData({ ...formData, subCategories: newSubs });
-                    }}
-                    className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg"
-                  >
-                    제거
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={() => setFormData({ ...formData, subCategories: [...formData.subCategories, { id: '', name: '', defaultIsFixed: false }] })}
-            className="mt-2 px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
-          >
-            소분류 추가
-          </button>
-        </div>
+        <CategoryFormFields
+          name={formData.name}
+          onNameChange={(name) => setFormData({ ...formData, name })}
+          type={formData.type}
+          onTypeChange={(type) => setFormData({ ...formData, type })}
+          subCategories={formData.subCategories}
+          onSubCategoriesChange={(subCategories) => setFormData({ ...formData, subCategories })}
+        />
 
         {error && (
           <div className="p-3 bg-red-50 text-red-800 text-sm rounded">

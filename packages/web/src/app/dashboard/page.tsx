@@ -39,6 +39,11 @@ import {
   type CurrencyCode,
 } from '@money/types';
 import CustomSelect from '@/components/CustomSelect';
+import CategoryFormFields, {
+  NO_SUB_CATEGORIES,
+  filledSubCategories,
+  type SubCategoryRow,
+} from '@/components/CategoryFormFields';
 import ChoiceModal from '@/components/ChoiceModal';
 import Modal from '@/components/Modal';
 import TransactionCalendar from '@/components/TransactionCalendar';
@@ -182,10 +187,20 @@ export default function TransactionsPage() {
   const [categoryFormData, setCategoryFormData] = useState({
     name: '',
     type: 'expense' as 'income' | 'expense',
-    subCategories: [''],
-    color: '',
+    subCategories: NO_SUB_CATEGORIES as SubCategoryRow[],
   });
+  /** 카테고리 추가가 실패한 이유. 예전에는 콘솔에만 남아 사용자는 아무 반응을 못 봤다. */
+  const [categoryError, setCategoryError] = useState('');
   const [categorySubmitting, setCategorySubmitting] = useState(false);
+  /**
+   * 소분류를 붙일 대분류 id. 비어 있으면 대분류를 새로 만드는 모드다.
+   *
+   * 카테고리 팝업 하나로 두 가지를 처리한다. 소분류는 반드시 대분류 밑에 붙으므로
+   * "어느 대분류인가"만 다르고 받을 값(이름 목록)은 같다.
+   */
+  const [categoryParentId, setCategoryParentId] = useState('');
+  /** 소분류 모드일 때의 대분류. 없으면 대분류를 새로 만드는 모드다. */
+  const categoryParent = categories.find((c) => c.id === categoryParentId);
   const [formData, setFormData] = useState(() => ({
     method: 'account',
     accountId: '',
@@ -1149,39 +1164,83 @@ export default function TransactionsPage() {
     }
   };
 
+  /** 카테고리 팝업을 닫고 폼을 비운다. 다음에 열 때 지난 입력이 남아 있으면 안 된다. */
+  const closeCategoryModal = () => {
+    setIsCategoryModalOpen(false);
+    setCategoryParentId('');
+    setCategoryFormData({ name: '', type: 'expense', subCategories: NO_SUB_CATEGORIES });
+    setCategoryError('');
+  };
+
+  /** 카테고리 팝업 열기. parentId를 주면 그 대분류에 소분류만 붙이는 모드다. */
+  const openCategoryModal = (parentId = '') => {
+    setCategoryParentId(parentId);
+    setCategoryFormData({
+      name: '',
+      type: 'expense',
+      // 소분류를 붙이러 열었으면 첫 줄을 미리 준다. 그 줄이 이 팝업의 본론이다.
+      subCategories: parentId ? [{ id: '', name: '', defaultIsFixed: false }] : NO_SUB_CATEGORIES,
+    });
+    setCategoryError('');
+    setIsCategoryModalOpen(true);
+  };
+
   const handleCategorySubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    const subs = filledSubCategories(categoryFormData.subCategories);
+    // 소분류 모드에서는 이름이 하나라도 있어야 만들 것이 있다.
+    if (categoryParent && subs.length === 0) {
+      setCategoryError('소분류 이름을 입력해주세요.');
+      return;
+    }
+
     try {
       setCategorySubmitting(true);
-      await apiClient.createCategory({
-        name: categoryFormData.name,
-        type: categoryFormData.type,
-      });
-      const categoryList = await apiClient.getCategories();
-      const mainCategory = categoryList?.find((c: Category) => c.name === categoryFormData.name && !c.parentId);
+      setCategoryError('');
 
-      if (mainCategory) {
-        const filteredSubs = categoryFormData.subCategories.filter((sub) => sub.trim());
-        for (const subName of filteredSubs) {
-          await apiClient.createCategory({
-            name: subName,
+      // 소분류 모드: 고른 대분류 밑에만 붙인다. 유형은 대분류를 따라간다.
+      // 대분류 모드: 대분류를 먼저 만들고 그 id로 소분류를 붙인다.
+      const parent = categoryParent
+        ? categoryParent
+        : await apiClient.createCategory({
+            name: categoryFormData.name,
             type: categoryFormData.type,
-            parentId: mainCategory.id,
           });
-        }
+
+      const created: Category[] = [];
+      for (const sub of subs) {
+        created.push(
+          await apiClient.createCategory({
+            name: sub.name.trim(),
+            type: parent.type,
+            parentId: parent.id,
+            defaultIsFixed: sub.defaultIsFixed,
+          }),
+        );
       }
 
       const data = await apiClient.getCategories();
       setCategories(data || []);
-      setCategoryFormData({
-        name: '',
-        type: 'expense',
-        subCategories: [''],
-        color: '',
-      });
-      setIsCategoryModalOpen(false);
-    } catch (err) {
-      console.error('카테고리 추가 실패:', err);
+
+      /*
+       * 방금 만든 소분류를 거래 폼에 바로 꽂아 준다.
+       *
+       * 소분류를 추가하러 팝업을 연 이유는 그 소분류로 거래를 적으려는 것이다.
+       * 목록만 갱신하고 두면 사용자가 드롭다운을 다시 열어 같은 값을 또 골라야 한다.
+       * 여러 개를 넣었으면 무엇을 고를지 알 수 없으므로 하나일 때만 고른다.
+       */
+      if (categoryParent && created.length === 1) {
+        setFormData((prev) =>
+          prev.mainCategoryId === categoryParent.id
+            ? { ...prev, subCategoryId: created[0].id, isFixed: created[0].defaultIsFixed }
+            : prev,
+        );
+      }
+
+      closeCategoryModal();
+    } catch (err: any) {
+      setCategoryError(err?.response?.data?.error?.message || '카테고리 추가에 실패했습니다.');
     } finally {
       setCategorySubmitting(false);
     }
@@ -1783,7 +1842,7 @@ export default function TransactionsPage() {
                         });
                       }}
                       placeholder="선택하세요"
-                      onAddClick={() => setIsCategoryModalOpen(true)}
+                      onAddClick={() => openCategoryModal()}
                       addButtonLabel="대분류 추가"
                     />
                   </div>
@@ -1817,9 +1876,15 @@ export default function TransactionsPage() {
                     });
                   }}
                   placeholder="없음"
-                  // 소분류는 대분류 아래에 붙어야 해서 이 폼에서 만들 수 없다.
-                  // 카테고리 화면으로 보낸다 ('/dashboard/categories'는 없는 경로였다).
-                  onAddClick={() => router.push('/categories')}
+                  /*
+                    소분류는 대분류 아래에 붙는다. 대분류를 고르기 전에는 붙일 곳이
+                    없으므로 버튼 자체를 내리고, 고른 뒤에는 그 대분류로 팝업을 연다.
+                  */
+                  onAddClick={
+                    formData.mainCategoryId
+                      ? () => openCategoryModal(formData.mainCategoryId)
+                      : undefined
+                  }
                   addButtonLabel="소분류 추가"
                 />
                   </div>
@@ -1932,7 +1997,7 @@ export default function TransactionsPage() {
                             });
                           }}
                           placeholder="선택하세요"
-                          onAddClick={() => setIsCategoryModalOpen(true)}
+                          onAddClick={() => openCategoryModal()}
                           addButtonLabel="대분류 추가"
                         />
                       </div>
@@ -2316,114 +2381,44 @@ export default function TransactionsPage() {
         </form>
       </Modal>
 
+      {/* 대분류 추가와 "이 대분류에 소분류 추가"를 한 팝업으로 처리한다 */}
       <Modal
         isOpen={isCategoryModalOpen}
-        onClose={() => setIsCategoryModalOpen(false)}
-        title="카테고리 추가"
+        onClose={closeCategoryModal}
+        title={categoryParent ? `${categoryParent.name} 소분류 추가` : '카테고리 추가'}
         footer={
           <button
             type="submit"
             form={CATEGORY_FORM_ID}
-            disabled={categorySubmitting}
-            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+            /* 소분류 모드에는 이름 칸이 없다. 그때는 소분류 줄이 채워졌는지 본다. */
+            disabled={
+              categorySubmitting ||
+              (categoryParent
+                ? filledSubCategories(categoryFormData.subCategories).length === 0
+                : !categoryFormData.name.trim())
+            }
+            className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {categorySubmitting ? '추가 중...' : '추가하기'}
           </button>
         }
       >
         <form id={CATEGORY_FORM_ID} onSubmit={handleCategorySubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              대분류 이름
-            </label>
-            <input
-              type="text"
-              required
-              value={categoryFormData.name}
-              onChange={(e) => setCategoryFormData({ ...categoryFormData, name: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="예: 음식"
-            />
-          </div>
+          <CategoryFormFields
+            name={categoryFormData.name}
+            onNameChange={(name) => setCategoryFormData({ ...categoryFormData, name })}
+            type={categoryFormData.type}
+            onTypeChange={(type) => setCategoryFormData({ ...categoryFormData, type })}
+            subCategories={categoryFormData.subCategories}
+            onSubCategoriesChange={(subCategories) =>
+              setCategoryFormData({ ...categoryFormData, subCategories })
+            }
+            parentName={categoryParent?.name}
+          />
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              유형
-            </label>
-            <CustomSelect
-              options={[
-                { id: 'expense', name: '지출' },
-                { id: 'income', name: '수입' },
-              ]}
-              value={categoryFormData.type}
-              onChange={(value) => setCategoryFormData({ ...categoryFormData, type: value as any })}
-              placeholder="선택하세요"
-              onAddClick={() => {}}
-              addButtonLabel=""
-            />
-          </div>
-
-          <div>
-            <div className="space-y-2 max-h-40 overflow-y-auto">
-              {categoryFormData.subCategories.map((subCat, index) => (
-                <div key={index} className="flex gap-2">
-                  <input
-                    type="text"
-                    value={subCat}
-                    onChange={(e) => {
-                      const newSubs = [...categoryFormData.subCategories];
-                      newSubs[index] = e.target.value;
-                      setCategoryFormData({ ...categoryFormData, subCategories: newSubs });
-                    }}
-                    className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="소분류 이름"
-                  />
-                  {categoryFormData.subCategories.length > 1 && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const newSubs = categoryFormData.subCategories.filter((_, i) => i !== index);
-                        setCategoryFormData({ ...categoryFormData, subCategories: newSubs });
-                      }}
-                      className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg"
-                    >
-                      제거
-                    </button>
-                  )}
-                </div>
-              ))}
-            </div>
-            <button
-              type="button"
-              onClick={() => setCategoryFormData({ ...categoryFormData, subCategories: [...categoryFormData.subCategories, ''] })}
-              className="mt-2 px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
-            >
-              소분류 추가
-            </button>
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              색상 (선택)
-            </label>
-            <div className="flex items-center gap-3">
-              <div
-                className="w-12 h-12 rounded border-2 border-gray-300 flex-shrink-0"
-                style={{ backgroundColor: categoryFormData.color || '#ffffff' }}
-              ></div>
-              <input
-                type="color"
-                value={categoryFormData.color}
-                onChange={(e) => setCategoryFormData({ ...categoryFormData, color: e.target.value })}
-                className="flex-1 h-10 px-1 border border-gray-300 rounded-lg cursor-pointer"
-              />
-              {categoryFormData.color && (
-                <span className="text-sm text-gray-600 flex-shrink-0 w-20">
-                  {categoryFormData.color}
-                </span>
-              )}
-            </div>
-          </div>
+          {categoryError && (
+            <div className="p-3 bg-red-50 text-red-800 text-sm rounded">{categoryError}</div>
+          )}
 
         </form>
       </Modal>
