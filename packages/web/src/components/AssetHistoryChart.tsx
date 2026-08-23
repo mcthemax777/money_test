@@ -21,8 +21,8 @@ import {
   CHART_TICK,
   CHART_TOOLTIP_STYLE,
   CHART_Y_AXIS_WIDTH,
-  formatAxisAmount,
   formatTooltipAmount,
+  lineAxis,
 } from '@/lib/chart';
 
 interface AssetHistoryChartProps {
@@ -99,6 +99,14 @@ export default function AssetHistoryChart({
   // 값이 전부 0이면 recharts의 domain이 [0,0]이 되어 선이 축에 붙는다.
   const hasAnyValue = points.some((p) => p.balance !== 0);
 
+  /*
+   * Y축을 잔액이 움직인 구간에 맞춘다.
+   *
+   * 0에서 시작하면 1,000만 원이 1,001만 원이 된 한 달이 직선으로 보인다. 자산 추이는
+   * "얼마인가"보다 "늘었는가 줄었는가"를 보는 그래프라 아래를 잘라도 뜻이 뒤집히지 않는다.
+   */
+  const yAxis = lineAxis(points.map((point) => point.balance));
+
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <div className="flex items-center justify-between mb-4">
@@ -144,7 +152,13 @@ export default function AssetHistoryChart({
           >
             <CartesianGrid {...CHART_GRID} />
             <XAxis dataKey="label" tick={CHART_TICK} />
-            <YAxis tickFormatter={formatAxisAmount} tick={CHART_TICK} width={CHART_Y_AXIS_WIDTH} />
+            <YAxis
+              domain={yAxis.domain}
+              ticks={yAxis.ticks}
+              tickFormatter={yAxis.tickFormatter}
+              tick={CHART_TICK}
+              width={CHART_Y_AXIS_WIDTH}
+            />
             <Tooltip
               formatter={(value: any) => formatTooltipAmount(value, '잔액')}
               contentStyle={CHART_TOOLTIP_STYLE}

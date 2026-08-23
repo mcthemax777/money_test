@@ -17,8 +17,10 @@ import {
   CHART_TICK,
   CHART_TOOLTIP_STYLE,
   CHART_Y_AXIS_WIDTH,
+  barDomain,
   formatAxisAmount,
   formatTooltipAmount,
+  lineAxis,
 } from '@/lib/chart';
 import { buildDailyCumulative, monthDateKeys } from '@/lib/entries';
 import { dayRangeQuery } from '@/lib/datetime';
@@ -297,13 +299,6 @@ export function BudgetDetailModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ]);
 
-  // 값이 모두 0이면 domain이 [0, 0]이 되어 recharts가 축을 그리지 못하고
-  // 막대가 최대 높이로 보인다. 데이터가 없을 때는 기본 상한을 준다.
-  const axisMax = (values: number[]) => {
-    const max = Math.max(0, ...values);
-    return max > 0 ? Math.ceil((max * 1.2) / 100) * 100 : 1000;
-  };
-
   // 이 목록은 categoryId나 categoryType으로 조회한 결과라 카테고리 다리가 없는
   // 카드사 이체는 애초에 들어오지 않는다. 따로 걸러 내지 않는다.
   const visibleEntries = periodEntries;
@@ -402,7 +397,7 @@ export function BudgetDetailModal({
                   <CartesianGrid {...CHART_GRID} />
                   <XAxis dataKey="month" tick={CHART_TICK} />
                   <YAxis
-                    domain={[0, axisMax(monthlyData.map((d) => d.amount))]}
+                    domain={barDomain(monthlyData.map((d) => d.amount))}
                     tickFormatter={formatAxisAmount}
                     tick={CHART_TICK}
                     width={CHART_Y_AXIS_WIDTH}
@@ -429,9 +424,9 @@ export function BudgetDetailModal({
                 <LineChart data={dailyData} margin={CHART_MARGIN}>
                   <CartesianGrid {...CHART_GRID} />
                   <XAxis dataKey="label" tick={CHART_TICK} />
+                  {/* 꺾은선은 값이 움직인 구간만 그린다 (lineAxis 주석 참고) */}
                   <YAxis
-                    domain={[0, axisMax(dailyData.map((d) => d.cumulative))]}
-                    tickFormatter={formatAxisAmount}
+                    {...lineAxis(dailyData.map((d) => d.cumulative))}
                     tick={CHART_TICK}
                     width={CHART_Y_AXIS_WIDTH}
                   />
