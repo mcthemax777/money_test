@@ -10,6 +10,7 @@ import {
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@/hooks/useInstitutions';
+import { ACCOUNT_TYPE_OPTIONS } from '@/lib/account-type';
 import { toAmountString } from '@/lib/money';
 import type { AccountType } from '@/lib/types';
 import type { Person } from '@/lib/types';
@@ -29,18 +30,6 @@ interface AddAccountModalProps {
   defaultOwnerId?: string | null;
 }
 
-/**
- * 사용자가 직접 만드는 계좌 유형.
- * credit_card(카드 부채)와 opening_balance(자본)는 서버가 관리하므로 목록에 없다.
- */
-const ACCOUNT_TYPES = [
-  { id: 'deposit', name: '예금 / 입출금' },
-  { id: 'savings', name: '저축' },
-  { id: 'cash', name: '현금' },
-  { id: 'investment', name: '투자' },
-  { id: 'real_estate', name: '부동산' },
-  { id: 'loan', name: '대출' },
-];
 
 /** 개설 기관을 물어볼 필요가 없는 유형. 서버의 NO_INSTITUTION_TYPES와 같아야 한다. */
 const NO_BANK_TYPES = ['cash', 'real_estate'];
@@ -158,7 +147,7 @@ export default function AddAccountModal({
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">유형</label>
           <CustomSelect
-            options={ACCOUNT_TYPES}
+            options={ACCOUNT_TYPE_OPTIONS}
             value={formData.type}
             onChange={(value) => setFormData({ ...formData, type: value as AccountType })}
             placeholder="선택하세요"

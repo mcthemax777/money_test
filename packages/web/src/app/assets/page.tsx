@@ -56,8 +56,18 @@ import AssetHistoryChart from '@/components/AssetHistoryChart';
 import TransactionListView from '@/components/TransactionListView';
 import type { EntryListItem } from '@/components/TransactionItem';
 import { useInstitutions } from '@/hooks/useInstitutions';
+import { accountTypeLabel } from '@/lib/account-type';
 
 
+
+/** 계좌 유형 배지. 목록과 상세 머리글이 같은 모양을 쓴다. */
+function AccountTypeBadge({ type }: { type: string }) {
+  return (
+    <span className="shrink-0 rounded bg-gray-100 px-1.5 py-px text-[11px] text-gray-600">
+      {accountTypeLabel(type)}
+    </span>
+  );
+}
 
 /** 총자산을 이루는 세 값 */
 type NetWorthParts = { cash: string; investment: string; liability: string };
@@ -714,9 +724,12 @@ export default function DashboardPage() {
                   <p className="text-xl font-bold text-blue-600 mt-1">
                     {formatCurrency(selectedAccount.balance, selectedAccount.currency)}
                   </p>
-                  {selectedAccount.institution?.name && (
-                    <p className="text-sm text-gray-600 mt-1">{selectedAccount.institution.name}</p>
-                  )}
+                  <div className="mt-1 flex items-center gap-1.5">
+                    {selectedAccount.institution?.name && (
+                      <p className="text-sm text-gray-600">{selectedAccount.institution.name}</p>
+                    )}
+                    <AccountTypeBadge type={selectedAccount.type} />
+                  </div>
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -1051,6 +1064,15 @@ export default function DashboardPage() {
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                 {selectedAccount.institution?.name || '-'}
+              </p>
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                유형
+              </label>
+              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                {accountTypeLabel(selectedAccount.type)}
               </p>
             </div>
 
@@ -1760,9 +1782,16 @@ function AccountList({
             }}
             className="w-full text-left hover:opacity-70 transition"
           >
-            <p className="text-sm text-gray-600">
-              {account.institution?.name}
-            </p>
+            {/*
+              유형은 총자산을 현금성·투자·부채로 나누는 기준이라 목록에서 바로 보여야
+              한다. 현금과 부동산은 개설 기관이 없으므로 유형만 남는다.
+            */}
+            <div className="flex items-center gap-1.5">
+              {account.institution?.name && (
+                <p className="text-sm text-gray-600">{account.institution.name}</p>
+              )}
+              <AccountTypeBadge type={account.type} />
+            </div>
             <p className="text-2xl font-bold text-gray-900 mt-2">
               {formatCurrency(account.balance, account.currency)}
             </p>

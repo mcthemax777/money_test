@@ -3,6 +3,7 @@ import { DEFAULT_TIME_ZONE } from '@money/types';
 import { apiClient } from './api-client';
 import { formatDate } from './datetime';
 import { toNumber } from './money';
+import { ACCOUNT_TYPE_LABEL } from './account-type';
 
 const ENTRY_KIND_LABEL: Record<string, string> = {
   expense: '지출',
@@ -10,15 +11,6 @@ const ENTRY_KIND_LABEL: Record<string, string> = {
   transfer: '이체',
   card_payment: '카드대금',
   adjustment: '잔액조정',
-};
-
-const ACCOUNT_TYPE_LABEL: Record<string, string> = {
-  deposit: '예금',
-  savings: '저축',
-  investment: '투자',
-  cash: '현금',
-  loan: '대출',
-  real_estate: '부동산',
 };
 
 /**
