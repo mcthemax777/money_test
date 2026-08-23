@@ -132,12 +132,19 @@ export class EntriesService {
     // 정확히 일치로만 걸면 대분류 상세에서 12개월 그래프와 원형차트는 소분류를 합쳐 보여주는데
     // 거래 목록과 일별 누적만 대분류에 직접 기록한 건을 보여줘 금액이 어긋난다.
     if (query.categoryId) {
-      postingFilters.push({
-        OR: [
-          { categoryId: query.categoryId },
-          { category: { parentId: query.categoryId } },
-        ],
-      });
+      // 쿼리스트링 값은 문자열로 도착한다 (DTO가 인터페이스라 암묵 변환이 없다).
+      const exact = query.categoryExact === true || (query.categoryExact as unknown) === 'true';
+      postingFilters.push(
+        exact
+          ? // "미분류": 소분류 없이 대분류에 바로 기록한 건만 본다.
+            { categoryId: query.categoryId }
+          : {
+              OR: [
+                { categoryId: query.categoryId },
+                { category: { parentId: query.categoryId } },
+              ],
+            },
+      );
     }
     // 고정/변동 필터. 카테고리 다리에만 걸어야 한다 (계좌 다리는 항상 isFixed=false).
     const fixed = fixedPostingCondition(filter);

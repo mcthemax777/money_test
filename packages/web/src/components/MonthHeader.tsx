@@ -13,6 +13,21 @@ interface MonthHeaderProps {
   onMonthChange: (year: number, month: number) => void;
   /** 같은 줄 오른쪽 끝에 붙일 것 (탭, 추가 버튼 등) */
   right?: React.ReactNode;
+
+  /*
+   * 기간 보기.
+   *
+   * 달력의 달과 어긋나는 구간(카드 청구주기, 여행 기간)을 보려면 달 이동만으로는
+   * 안 된다. 아래 값들을 넘기면 "기간" 전환 버튼이 붙고, 켜면 달 이동 대신
+   * 날짜 두 개를 받는다. 넘기지 않으면 예전처럼 달 이동만 있다.
+   */
+  rangeStart?: string;
+  rangeEnd?: string;
+  isRangeMode?: boolean;
+  /** 시작일·종료일이 바뀔 때. 둘 다 채워져야 조회가 바뀐다. */
+  onRangeChange?: (start: string, end: string) => void;
+  /** 달 보기 <-> 기간 보기 전환 */
+  onPeriodModeChange?: (mode: 'month' | 'range') => void;
 }
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
@@ -27,6 +42,11 @@ export default function MonthHeader({
   expenseTotal,
   onMonthChange,
   right,
+  rangeStart = '',
+  rangeEnd = '',
+  isRangeMode = false,
+  onRangeChange,
+  onPeriodModeChange,
 }: MonthHeaderProps) {
   const timeZone = useProjectTimeZone();
   const [isPickerOpen, setIsPickerOpen] = useState(false);
@@ -72,7 +92,34 @@ export default function MonthHeader({
   return (
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div className="flex items-center gap-6">
-        {/* 화살표는 년월 텍스트 양옆에 붙는다 */}
+        {isRangeMode ? (
+          /* 기간 보기. 달을 넘어가는 구간을 직접 정한다. */
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={rangeStart}
+              max={rangeEnd || undefined}
+              onChange={(e) => onRangeChange?.(e.target.value, rangeEnd)}
+              className="px-2 py-1 border border-gray-300 rounded-lg text-sm"
+            />
+            <span className="text-gray-500">~</span>
+            <input
+              type="date"
+              value={rangeEnd}
+              min={rangeStart || undefined}
+              onChange={(e) => onRangeChange?.(rangeStart, e.target.value)}
+              className="px-2 py-1 border border-gray-300 rounded-lg text-sm"
+            />
+            <button
+              type="button"
+              onClick={() => onPeriodModeChange?.('month')}
+              className="px-3 py-1 text-sm border rounded-lg text-gray-700 hover:bg-gray-100"
+            >
+              월별로
+            </button>
+          </div>
+        ) : (
+        /* 화살표는 년월 텍스트 양옆에 붙는다 */
         <div ref={ref} className="relative flex items-center gap-1">
           <button
             type="button"
@@ -155,7 +202,19 @@ export default function MonthHeader({
               </div>
             </div>
           )}
+
+          {/* 달을 넘어가는 구간을 보려면 여기서 전환한다. */}
+          {onPeriodModeChange && (
+            <button
+              type="button"
+              onClick={() => onPeriodModeChange('range')}
+              className="ml-2 px-3 py-1 text-sm border rounded-lg text-gray-700 hover:bg-gray-100"
+            >
+              기간
+            </button>
+          )}
         </div>
+        )}
 
         <div className="flex gap-6 text-sm font-semibold">
           {incomeTotal > 0 && <span className="text-green-600">+{currency(incomeTotal)}</span>}

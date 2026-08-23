@@ -55,7 +55,3 @@ export function formatTooltipAmount(value: unknown, name: string): [string, stri
   return [formatCurrency(toNumber(value as string | number)), name];
 }
 
-/** 일 단위 X축 눈금: 1 → "1일" */
-export function formatDayTick(day: number | string): string {
-  return `${day}일`;
-}

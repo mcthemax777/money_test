@@ -33,6 +33,16 @@ import type {
  * rates 는 각 통화 -> 저장 통화다. 거래를 입력할 때 쓴다.
  * displayRate 는 저장 통화 -> 표시 통화이며 화면 합계에 이미 반영돼 온다.
  */
+/**
+ * 리포트가 볼 구간.
+ *
+ * 한 달이거나 임의 구간이다. 달력의 달과 어긋나는 구간(카드 청구주기, 여행 기간)을
+ * 보는 일이 있어서 둘 다 받는다. 날짜는 프로젝트 타임존의 달력 날짜이고 양끝을 포함한다.
+ */
+export type ReportPeriod =
+  | { yearMonth: string; startDate?: undefined; endDate?: undefined }
+  | { startDate: string; endDate: string; yearMonth?: undefined };
+
 export interface ExchangeRatesResponse {
   ledgerCurrency: string;
   displayCurrency: string;
@@ -675,20 +685,25 @@ class ApiClient {
   // 리포트 API Methods
   //
   // 집계는 전부 서버에서 한다. 화면이 거래 전량을 받아 합산하던 코드를 대체한다.
-  /** filter는 가계 화면의 사람/고정 필터. 목록과 같은 조건을 넘겨야 합계가 맞는다. */
+  /**
+   * filter는 가계 화면의 사람/고정 필터. 목록과 같은 조건을 넘겨야 합계가 맞는다.
+   *
+   * period 는 한 달(`{ yearMonth }`)이거나 임의 구간(`{ startDate, endDate }`)이다.
+   * 서버가 둘을 같은 규칙으로 푼다 (ReportsService.resolvePeriod).
+   */
   async getSummary(
-    yearMonth: string,
+    period: ReportPeriod,
     projectId?: string | null,
     filter?: EntryFilterQuery & { personId?: string },
   ) {
     const response = await this.client.get<any>('/reports/summary', {
-      params: { yearMonth, ...(projectId ? { projectId } : {}), ...filter },
+      params: { ...period, ...(projectId ? { projectId } : {}), ...filter },
     });
     return response.data;
   }
 
   async getCategoryBreakdown(
-    yearMonth: string,
+    period: ReportPeriod,
     type: 'income' | 'expense',
     projectId?: string | null,
     options?: { rollup?: boolean; personId?: string } & EntryFilterQuery,
@@ -696,7 +711,7 @@ class ApiClient {
     const { rollup, ...filter } = options ?? {};
     const response = await this.client.get<any>('/reports/category-breakdown', {
       params: {
-        yearMonth,
+        ...period,
         type,
         ...(projectId ? { projectId } : {}),
         ...(rollup === false ? { rollup: false } : {}),
@@ -720,6 +735,8 @@ class ApiClient {
       endMonth?: string;
       months?: number;
       type?: 'income' | 'expense';
+      /** target=category일 때 소분류를 빼고 그 분류만 본다 ("미분류" 보기) */
+      exact?: boolean;
     } & EntryFilterQuery,
     projectId?: string | null,
   ) {
@@ -733,6 +750,8 @@ class ApiClient {
   async getBalanceHistory(
     options: {
       accountId?: string;
+      /** 한 구성원의 계좌 합계 */
+      ownerId?: string;
       granularity?: 'month' | 'day';
       endMonth?: string;
       yearMonth?: string;
@@ -748,12 +767,12 @@ class ApiClient {
   }
 
   async getPaymentMethods(
-    yearMonth: string,
+    period: ReportPeriod,
     projectId?: string | null,
     filter?: EntryFilterQuery & { personId?: string },
   ) {
     const response = await this.client.get<any>('/reports/payment-methods', {
-      params: { yearMonth, ...(projectId ? { projectId } : {}), ...filter },
+      params: { ...period, ...(projectId ? { projectId } : {}), ...filter },
     });
     return response.data;
   }

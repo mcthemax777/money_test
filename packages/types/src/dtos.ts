@@ -442,6 +442,13 @@ export namespace EntryDto {
     personId?: string;
     categoryId?: string;
     /**
+     * categoryId를 정확히 그 분류로만 본다.
+     *
+     * 기본은 대분류를 지정하면 소분류 거래까지 포함이다. 화면의 "미분류"(소분류
+     * 없이 대분류에 바로 기록한 건)만 따로 보려면 이 값을 켠다.
+     */
+    categoryExact?: boolean;
+    /**
      * 이 유형의 카테고리 posting을 가진 전표.
      *
      * kind와 다르다. kind='expense'는 이체를 빼지만, categoryType='expense'는
@@ -498,17 +505,34 @@ export namespace CategoryDto {
  * 화면마다 합계가 어긋나던 문제가 재발할 수 없다.
  */
 export namespace ReportDto {
-  export interface MonthQuery extends EntryFilterQuery {
+  /**
+   * 집계 구간.
+   *
+   * 달 단위가 기본이지만 임의의 기간도 볼 수 있어야 한다. 카드 청구주기나 여행
+   * 기간처럼 달력의 달과 어긋나는 구간을 보는 일이 실제로 있다.
+   *
+   * 둘 중 하나만 채운다. startDate/endDate 를 주면 그 구간을, 아니면 yearMonth 의
+   * 한 달을 본다. 날짜는 프로젝트 타임존의 달력 날짜이고 양끝을 포함한다.
+   */
+  export interface PeriodQuery extends EntryFilterQuery {
     projectId?: string;
-    /** "YYYY-MM" */
-    yearMonth: string;
+    /** "YYYY-MM". startDate/endDate 를 주면 무시된다. */
+    yearMonth?: string;
+    /** "YYYY-MM-DD" (포함) */
+    startDate?: string;
+    /** "YYYY-MM-DD" (포함) */
+    endDate?: string;
     /** 한 사람만 볼 때. 여러 명은 personIds를 쓴다. */
     personId?: string;
   }
 
-  /** 대시보드 / 통계 헤더의 월 합계 */
+  /** 대시보드 / 통계 헤더의 합계 */
   export interface Summary {
-    yearMonth: string;
+    /** 요청한 구간을 그대로 돌려준다. 화면이 무엇의 합계인지 확인할 수 있게. */
+    startDate: IsoDateString;
+    endDate: IsoDateString;
+    /** 한 달을 본 경우에만 채워진다 ("YYYY-MM") */
+    yearMonth?: string;
     income: string;
     expense: string;
     fixedExpense: string;
@@ -517,7 +541,7 @@ export namespace ReportDto {
     net: string;
   }
 
-  export interface CategoryBreakdownQuery extends MonthQuery {
+  export interface CategoryBreakdownQuery extends PeriodQuery {
     type: 'income' | 'expense';
     /** true면 소분류 금액을 대분류로 합쳐서 준다 (기본값 true) */
     rollup?: boolean;
@@ -565,6 +589,13 @@ export namespace ReportDto {
     months?: number;
     /** target=total일 때 지출/수입 선택 */
     type?: 'income' | 'expense';
+    /**
+     * target=category일 때 소분류를 포함하지 않는다.
+     *
+     * 화면의 "미분류"(대분류에 바로 기록한 건)를 그릴 때 켠다. 기본은 대분류를
+     * 지정하면 소분류까지 합친다.
+     */
+    exact?: boolean;
   }
 
   export interface TrendPoint {
@@ -580,6 +611,8 @@ export namespace ReportDto {
     projectId?: string;
     /** 생략하면 자본 계정을 뺀 전체 합계 */
     accountId?: string;
+    /** 한 구성원이 가진 계좌들의 합계. accountId 와 함께 쓰지 않는다. */
+    ownerId?: string;
     /** 기본 month */
     granularity?: 'month' | 'day';
     /** granularity=month의 마지막 달 "YYYY-MM". 생략하면 이번 달 */

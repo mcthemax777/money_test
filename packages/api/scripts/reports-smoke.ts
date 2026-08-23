@@ -93,6 +93,88 @@ runSmoke('reports', async (ctx) => {
   });
   ctx.check('사람별 필터 (이영희 지출)', bySpouse.expense, '10000');
 
+  // ── 기간 지정 (달력의 달과 어긋나는 구간) ──
+  //
+  // 달 단위로만 보면 카드 청구주기나 여행 기간처럼 달을 가로지르는 구간을 볼 수 없다.
+  ctx.check('한 달을 보면 구간도 함께 온다', summary.startDate, '2026-08-01');
+  ctx.check('종료일은 말일', summary.endDate, '2026-08-31');
+  ctx.check('yearMonth 도 그대로', summary.yearMonth, '2026-08');
+
+  const firstHalf = await reports.getSummary(uid, {
+    projectId: pid, startDate: '2026-08-01', endDate: '2026-08-11',
+  });
+  const secondHalf = await reports.getSummary(uid, {
+    projectId: pid, startDate: '2026-08-12', endDate: '2026-08-31',
+  });
+  ctx.check('구간 합이 한 달과 같다 (지출)',
+    Number(firstHalf.expense) + Number(secondHalf.expense), Number(summary.expense));
+  ctx.check('구간 합이 한 달과 같다 (수입)',
+    Number(firstHalf.income) + Number(secondHalf.income), Number(summary.income));
+  ctx.check('구간을 그대로 돌려준다', firstHalf.endDate, '2026-08-11');
+  ctx.check('구간 조회에는 yearMonth 가 없다', firstHalf.yearMonth, undefined);
+
+  // 하루짜리 구간. 종료일을 상한으로 그냥 쓰면 그날 거래가 통째로 빠진다.
+  // 8/8 은 커피 10,000원 한 건뿐이다.
+  const oneDay = await reports.getSummary(uid, {
+    projectId: pid, startDate: '2026-08-08', endDate: '2026-08-08',
+  });
+  ctx.check('하루만 조회해도 그날 거래가 들어간다', oneDay.expense, '10000');
+
+  // 달을 넘어가는 구간도 같은 규칙으로 푼다.
+  const acrossMonths = await reports.getSummary(uid, {
+    projectId: pid, startDate: '2026-07-15', endDate: '2026-08-31',
+  });
+  ctx.check('달을 넘는 구간', Number(acrossMonths.expense) >= Number(summary.expense), true);
+
+  await ctx.expectReject('시작일만 주면 거부', () =>
+    reports.getSummary(uid, { projectId: pid, startDate: '2026-08-01' }));
+  await ctx.expectReject('시작일이 종료일보다 뒤면 거부', () =>
+    reports.getSummary(uid, { projectId: pid, startDate: '2026-08-31', endDate: '2026-08-01' }));
+  await ctx.expectReject('형식이 틀리면 거부', () =>
+    reports.getSummary(uid, { projectId: pid, startDate: '2026-8-1', endDate: '2026-08-31' }));
+  await ctx.expectReject('구간도 연월도 없으면 거부', () =>
+    reports.getSummary(uid, { projectId: pid }));
+
+  // ── "미분류": 대분류에 바로 기록한 건만 ──
+  //
+  // 목록의 미분류 줄이 이 조회를 쓴다. 기본은 대분류를 지정하면 소분류까지
+  // 포함하므로, 그것만으로는 대분류 직접 기록분을 따로 볼 수 없다.
+  const diningAll = await entries.getEntries(uid, {
+    categoryId: dining.id, startDate: aug(1), endDate: aug(31),
+  }, pid);
+  const diningDirect = await entries.getEntries(uid, {
+    categoryId: dining.id, categoryExact: true, startDate: aug(1), endDate: aug(31),
+  }, pid);
+  ctx.check('대분류는 소분류까지 포함', diningAll.data.length > diningDirect.data.length, true);
+  ctx.check(
+    '미분류는 대분류 직접 기록만',
+    diningDirect.data.every((e) => e.categoryId === dining.id),
+    true,
+  );
+
+  const trendAll = await reports.getTrend(uid, {
+    projectId: pid, target: 'category', targetId: dining.id, endMonth: '2026-08', months: 1,
+  });
+  const trendDirect = await reports.getTrend(uid, {
+    projectId: pid, target: 'category', targetId: dining.id, endMonth: '2026-08', months: 1,
+    exact: true,
+  });
+  ctx.check(
+    '추이도 미분류만 따로 센다',
+    Number(trendAll[0].amount) > Number(trendDirect[0].amount),
+    true,
+  );
+
+  // 분류별·수단별도 같은 리졸버를 쓴다.
+  const rangeBreakdown = await reports.getCategoryBreakdown(uid, {
+    projectId: pid, startDate: '2026-08-01', endDate: '2026-08-31', type: 'expense',
+  });
+  ctx.check(
+    '분류별도 구간으로 조회된다',
+    rangeBreakdown.reduce((acc, r) => acc + Number(r.amount), 0),
+    Number(summary.expense),
+  );
+
   // ── category-breakdown ──
   const rollup = await reports.getCategoryBreakdown(uid, {
     projectId: pid, yearMonth: '2026-08', type: 'expense',

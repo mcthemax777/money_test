@@ -4,15 +4,25 @@ import { apiClient } from '@/lib/api-client';
 import { useProject } from '@/store/project';
 
 /**
- * 기준통화 기준 환율.
+ * 저장 통화 기준 환율.
  *
- * 거래 입력 폼이 통화를 고르는 순간 환율 칸을 채우는 데 쓴다. 사용자가 그 값을
- * 고쳐도 여기 담긴 값은 바뀌지 않는다(폼이 자기 상태로 들고 간다). 서버가 아직
- * 외부 API에서 가져오지 않은 통화는 고정값이 내려오며 `source`가 'fallback'이다.
+ * 거래 입력 폼이 "이 금액이 얼마로 기록되는지"를 미리 보여 주는 데 쓴다.
+ * 설정에서 정한 값이 없는 통화는 서버가 들고 있는 고정값이 내려오며
+ * `source`가 'fallback'이다.
  *
- * 프로젝트마다 기준통화가 다를 수 있어 프로젝트를 키로 캐시한다.
+ * 프로젝트마다 저장 통화가 다를 수 있어 프로젝트를 키로 캐시한다.
  */
 const cache = new Map<string, ExchangeRateInfo[]>();
+
+/**
+ * 캐시를 버린다. 설정에서 환율을 바꾸거나 되돌린 뒤에 부른다.
+ *
+ * 이 캐시는 만료가 없어서, 버리지 않으면 화면을 새로 고칠 때까지 예전 값이
+ * 계속 보인다. 저장은 새 환율로 되는데 폼에 적힌 환율만 옛 값이라 더 헷갈린다.
+ */
+export function clearExchangeRateCache() {
+  cache.clear();
+}
 
 export function useExchangeRates() {
   const { selectedProjectId } = useProject();

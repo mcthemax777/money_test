@@ -6,7 +6,7 @@ import { X } from 'lucide-react';
 import Modal from './Modal';
 import type { EntryListItem } from './TransactionItem';
 import TransactionListView from './TransactionListView';
-import { apiClient } from '@/lib/api-client';
+import { apiClient, type ReportPeriod } from '@/lib/api-client';
 import { formatCurrency, toNumber } from '@/lib/money';
 import {
   CHART_ACTIVE_DOT,
@@ -18,11 +18,10 @@ import {
   CHART_TOOLTIP_STYLE,
   CHART_Y_AXIS_WIDTH,
   formatAxisAmount,
-  formatDayTick,
   formatTooltipAmount,
 } from '@/lib/chart';
-import { buildDailyCumulative } from '@/lib/entries';
-import { monthQueryRange } from '@/lib/datetime';
+import { buildDailyCumulative, monthDateKeys } from '@/lib/entries';
+import { dayRangeQuery } from '@/lib/datetime';
 import type { EntryFilterQuery } from '@money/types';
 import { useProjectTimeZone } from '@/store/project';
 import type { Category } from '@/lib/types';
@@ -50,8 +49,20 @@ interface BudgetDetailModalProps {
   categoryName: string;
   categories?: Category[];
   isInline?: boolean;
-  currentMonth?: number;
-  currentYear?: number;
+  /**
+   * 볼 구간. 한 달(`{ yearMonth }`)이거나 임의 기간(`{ startDate, endDate }`)이다.
+   *
+   * 원형차트·일별 누적·거래 목록이 전부 이 구간을 쓴다. 오른쪽 12개월 추이만
+   * 구간의 마지막 달을 끝으로 하는 시계열이라 구간 밖의 달도 함께 보여 준다.
+   */
+  period: ReportPeriod;
+  /**
+   * categoryId를 그 분류로만 본다 (소분류 제외).
+   *
+   * 목록의 "미분류"를 눌렀을 때 켠다. 소분류 없이 대분류에 바로 기록한 건만
+   * 그리므로 원형차트는 그리지 않는다. 더 쪼갤 것이 없다.
+   */
+  exactCategory?: boolean;
   /** 선택된 프로젝트. 넘기지 않으면 서버가 기본 프로젝트로 조회한다. */
   projectId?: string | null;
   /** 가계 화면의 사람/고정 필터. 상단 합계와 같은 조건을 써야 한다. */
@@ -68,7 +79,8 @@ interface MonthlyData {
 }
 
 interface DailyData {
-  day: number;
+  /** x축 라벨. 한 달 안이면 "5일", 달을 넘으면 "8/5" */
+  label: string;
   amount: number;
   cumulative: number;
 }
@@ -118,17 +130,30 @@ export function BudgetDetailModal({
   categoryName,
   categories = [],
   isInline = false,
-  currentMonth,
-  currentYear,
+  period,
+  exactCategory = false,
   projectId,
   filter,
   onEntryClick,
   reloadToken,
 }: BudgetDetailModalProps) {
   const timeZone = useProjectTimeZone();
+
+  /*
+   * 구간을 세 형태로 쓴다 (PaymentMethodTab과 같은 규칙).
+   *   dayKeys  : 일별 누적 그래프의 x축 (달력 날짜)
+   *   endMonth : 12개월 추이의 마지막 달
+   *   periodKey: 구간이 바뀌었는지 판단할 값 (객체는 렌더마다 새로 만들어진다)
+   */
+  const dayKeys = period.yearMonth
+    ? monthDateKeys(Number(period.yearMonth.slice(0, 4)), Number(period.yearMonth.slice(5, 7)))
+    : { startKey: period.startDate!, endKey: period.endDate! };
+  const endMonth = dayKeys.endKey.slice(0, 7);
+  const periodKey = `${dayKeys.startKey}~${dayKeys.endKey}`;
+
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
   const [dailyData, setDailyData] = useState<DailyData[]>([]);
-  const [currentMonthEntries, setCurrentMonthEntries] = useState<EntryListItem[]>([]);
+  const [periodEntries, setCurrentMonthEntries] = useState<EntryListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedPieCategory, setSelectedPieCategory] = useState<string | null>(null);
   const [categoryStats, setCategoryStats] = useState<PieChartData[]>([]);
@@ -151,16 +176,13 @@ export function BudgetDetailModal({
       scope: 'category' as const,
       type: (category?.type ?? 'expense') as 'income' | 'expense',
       // parentId가 있으면 소분류다. 소분류는 더 쪼갤 것이 없다.
-      isLeaf: Boolean(category?.parentId),
+      // "미분류"(exactCategory)도 마찬가지로 더 내려갈 곳이 없다.
+      isLeaf: Boolean(category?.parentId) || exactCategory,
     };
   };
 
   useEffect(() => {
     if (!isOpen || !categoryId) return;
-
-    const today = new Date();
-    const displayMonth = currentMonth || today.getMonth() + 1;
-    const displayYear = currentYear || today.getFullYear();
 
     setSelectedPieCategory(null);
 
@@ -169,18 +191,21 @@ export function BudgetDetailModal({
 
       try {
         const target = resolveTarget(categoryId);
-        const yearMonth = `${displayYear}-${String(displayMonth).padStart(2, '0')}`;
-        // 월 경계는 프로젝트 타임존 기준이다 (서버의 월 합계와 같은 규칙).
-        const { startDate, endDate } = monthQueryRange(displayYear, displayMonth, timeZone);
+        // 구간 경계는 프로젝트 타임존 기준이다 (서버의 합계와 같은 규칙).
+        const { startDate, endDate } = dayRangeQuery(dayKeys.startKey, dayKeys.endKey, timeZone);
 
         // 12개월 시계열은 서버가 계산한다.
         // PaymentMethodTab과 각자 구현하던 것을 /reports/trend 하나로 합쳤다.
         const trendPromise =
           target.scope === 'total'
-            ? apiClient.getTrend('total', { type: target.type, endMonth: yearMonth, months: 12, ...filter }, projectId)
-            : apiClient.getTrend('category', { targetId: categoryId, endMonth: yearMonth, months: 12, ...filter }, projectId);
+            ? apiClient.getTrend('total', { type: target.type, endMonth, months: 12, ...filter }, projectId)
+            : apiClient.getTrend(
+                'category',
+                { targetId: categoryId, endMonth, months: 12, exact: exactCategory, ...filter },
+                projectId,
+              );
 
-        // 이 달의 거래 목록. 일별 누적과 목록에 쓴다.
+        // 이 구간의 거래 목록. 일별 누적과 목록에 쓴다.
         //
         // 전체 지출은 kind='expense'가 아니라 categoryType='expense'로 뽑는다.
         // kind로 걸면 수수료가 붙은 이체가 빠져서, 12개월 그래프(수수료 포함)와 어긋난다.
@@ -191,7 +216,9 @@ export function BudgetDetailModal({
             startDate,
             endDate,
             ...filter,
-            ...(target.scope === 'category' ? { categoryId } : { categoryType: target.type }),
+            ...(target.scope === 'category'
+              ? { categoryId, ...(exactCategory ? { categoryExact: true } : {}) }
+              : { categoryType: target.type }),
           },
           projectId,
         );
@@ -199,15 +226,15 @@ export function BudgetDetailModal({
         // 원형차트: 전체면 대분류별, 대분류를 보고 있으면 소분류별
         const breakdownPromise =
           target.scope === 'total'
-            ? apiClient.getCategoryBreakdown(yearMonth, target.type, projectId, { ...filter })
+            ? apiClient.getCategoryBreakdown(period, target.type, projectId, { ...filter })
             : target.isLeaf
               ? Promise.resolve([])
-              : apiClient.getCategoryBreakdown(yearMonth, target.type, projectId, { rollup: false, ...filter });
+              : apiClient.getCategoryBreakdown(period, target.type, projectId, { rollup: false, ...filter });
 
         // 드릴다운(대분류 -> 소분류)에도 서버 집계를 쓴다
         const flatPromise = target.isLeaf
           ? Promise.resolve([])
-          : apiClient.getCategoryBreakdown(yearMonth, target.type, projectId, { rollup: false, ...filter });
+          : apiClient.getCategoryBreakdown(period, target.type, projectId, { rollup: false, ...filter });
 
         const [trendRes, entriesRes, breakdownRes, flatRes] = await Promise.all([
           trendPromise,
@@ -229,7 +256,7 @@ export function BudgetDetailModal({
         setCurrentMonthEntries(rows);
 
         // 일별 누적. 이체는 금액이 아니라 수수료만 쌓는다.
-        setDailyData(buildDailyCumulative(rows, displayYear, displayMonth, timeZone));
+        setDailyData(buildDailyCumulative(rows, dayKeys.startKey, dayKeys.endKey, timeZone));
 
         const breakdown = (breakdownRes ?? []) as BreakdownRow[];
         // 대분류를 보고 있으면 그 아래 소분류 + 미분류만 남긴다
@@ -245,7 +272,7 @@ export function BudgetDetailModal({
         );
       } catch (error) {
         console.error('분류별 상세 데이터를 불러오지 못했습니다:', error);
-        // 실패했을 때 이전 달의 데이터가 남아 있으면 잘못된 값을 보게 되므로 비운다.
+        // 실패했을 때 이전 구간의 데이터가 남아 있으면 잘못된 값을 보게 되므로 비운다.
         setMonthlyData([]);
         setDailyData([]);
         setCurrentMonthEntries([]);
@@ -261,12 +288,13 @@ export function BudgetDetailModal({
     isOpen,
     categoryId,
     categories,
-    currentMonth,
-    currentYear,
+    periodKey,
+    exactCategory,
     projectId,
     timeZone,
     filter,
     reloadToken,
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   ]);
 
   // 값이 모두 0이면 domain이 [0, 0]이 되어 recharts가 축을 그리지 못하고
@@ -278,7 +306,7 @@ export function BudgetDetailModal({
 
   // 이 목록은 categoryId나 categoryType으로 조회한 결과라 카테고리 다리가 없는
   // 카드사 이체는 애초에 들어오지 않는다. 따로 걸러 내지 않는다.
-  const visibleEntries = currentMonthEntries;
+  const visibleEntries = periodEntries;
 
   const hasMonthlyAmount = monthlyData.some((d) => d.amount > 0);
   const hasDailyAmount = dailyData.some((d) => d.cumulative > 0);
@@ -367,7 +395,7 @@ export function BudgetDetailModal({
 
           {/* 12개월 바차트 */}
           <div>
-            <h3 className="text-lg font-semibold mb-4">지난 12개월 사용금액</h3>
+            <h3 className="text-lg font-semibold mb-4">월별 사용금액</h3>
             {hasMonthlyAmount ? (
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={monthlyData} margin={CHART_MARGIN}>
@@ -395,12 +423,12 @@ export function BudgetDetailModal({
 
           {/* 일별 라인차트 */}
           <div>
-            <h3 className="text-lg font-semibold mb-4">이번 달 일별 누적 사용금액</h3>
+            <h3 className="text-lg font-semibold mb-4">일별 누적 사용금액</h3>
             {hasDailyAmount ? (
               <ResponsiveContainer width="100%" height={300}>
                 <LineChart data={dailyData} margin={CHART_MARGIN}>
                   <CartesianGrid {...CHART_GRID} />
-                  <XAxis dataKey="day" tickFormatter={formatDayTick} tick={CHART_TICK} />
+                  <XAxis dataKey="label" tick={CHART_TICK} />
                   <YAxis
                     domain={[0, axisMax(dailyData.map((d) => d.cumulative))]}
                     tickFormatter={formatAxisAmount}
@@ -432,7 +460,7 @@ export function BudgetDetailModal({
 
           {/* 거래내역 */}
           <div>
-            <h3 className="text-lg font-semibold mb-4">이번 달 거래내역</h3>
+            <h3 className="text-lg font-semibold mb-4">거래기록</h3>
             {visibleEntries.length === 0 ? (
               <p className="text-gray-500 text-sm">거래내역이 없습니다.</p>
             ) : (

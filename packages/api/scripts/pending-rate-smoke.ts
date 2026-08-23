@@ -403,6 +403,71 @@ runSmoke('pending-rate', async (ctx) => {
     400,
   );
 
+  // ── 9. 확정은 결제가 아니다 ────────────────────────────────
+  //
+  // 실제 청구액을 적는 것은 "얼마가 청구되었는지"를 고치는 일이지 대금을 갚는
+  // 일이 아니다. 남은 대금은 확정 뒤에도 그대로 남아 있어야 하고, 갚는 것은
+  // 대금 결제 한 번으로 한다.
+  const payCard = await call('POST', `/cards${q}`, {
+    paymentAccountId: bank.body.id, name: '결제확인용', cardType: 'credit',
+    issuerId: issuers.body[0].id, statementClosingDay: 15, paymentDueDay: 25,
+  });
+  const payQ = `/cards/${payCard.body.id}`;
+  const outstandingOf = async () => (await call('GET', `${payQ}/usage`)).body.outstanding;
+
+  await expense({
+    description: '국내 15000', amount: '15000',
+    categoryId: dining.body.id, cardId: payCard.body.id,
+  });
+  const dollarOne = await expense({
+    description: '해외 1달러', amount: '1', currency: 'USD',
+    categoryId: dining.body.id, cardId: payCard.body.id,
+  });
+  // 추정 환율 1380 → 15,000 + 1,380
+  ctx.check('확정 전 남은 대금', await outstandingOf(), '16380');
+
+  await call('PATCH', `${payQ}/pending-rates`, {
+    items: [{ entryId: dollarOne.body.id, billedAmount: '1400' }],
+  });
+  // 1,380이 1,400으로 바뀐다. 20원 늘어날 뿐 갚아지지 않는다.
+  ctx.check('확정해도 대금은 남는다', await outstandingOf(), '16400');
+
+  await call('POST', `${payQ}/transfers`, {
+    accountId: bank.body.id, personId: person.body.id,
+    amount: '16400', direction: 'payment', date: today,
+  });
+  ctx.check('대금 결제로 0이 된다', await outstandingOf(), '0');
+
+  // 순서를 바꿔도 결과는 같다. 대금을 먼저 갚고 나중에 확정하는 경우다.
+  //
+  // 이때는 확정 전에 남은 대금이 음수(환불 예정)로 보인다. 추정이 실제보다 적어
+  // 실제로 갚은 돈이 장부상 빚보다 많기 때문이다. 확정하면 0으로 맞는다.
+  const laterCard = await call('POST', `/cards${q}`, {
+    paymentAccountId: bank.body.id, name: '나중확정용', cardType: 'credit',
+    issuerId: issuers.body[0].id, statementClosingDay: 15, paymentDueDay: 25,
+  });
+  const laterQ = `/cards/${laterCard.body.id}`;
+  const laterOutstanding = async () => (await call('GET', `${laterQ}/usage`)).body.outstanding;
+
+  await expense({
+    description: '국내 15000', amount: '15000',
+    categoryId: dining.body.id, cardId: laterCard.body.id,
+  });
+  const laterDollar = await expense({
+    description: '해외 1달러', amount: '1', currency: 'USD',
+    categoryId: dining.body.id, cardId: laterCard.body.id,
+  });
+  await call('POST', `${laterQ}/transfers`, {
+    accountId: bank.body.id, personId: person.body.id,
+    amount: '16400', direction: 'payment', date: today,
+  });
+  ctx.check('결제 먼저 하면 20원이 환불 예정으로 남는다', await laterOutstanding(), '-20');
+
+  await call('PATCH', `${laterQ}/pending-rates`, {
+    items: [{ entryId: laterDollar.body.id, billedAmount: '1400' }],
+  });
+  ctx.check('확정하면 0으로 맞는다', await laterOutstanding(), '0');
+
   ctx.check('마지막 전표 균형', await unbalancedCount(), 0);
   ctx.check('마지막 잔액 드리프트', await driftCount(), 0);
 });

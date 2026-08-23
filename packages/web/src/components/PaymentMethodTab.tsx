@@ -6,10 +6,10 @@ import {
 } from 'recharts';
 import type { EntryListItem } from './TransactionItem';
 import TransactionListView from './TransactionListView';
-import { apiClient } from '@/lib/api-client';
+import { apiClient, type ReportPeriod } from '@/lib/api-client';
 import { formatCurrency, toNumber } from '@/lib/money';
-import { buildDailyCumulative } from '@/lib/entries';
-import { monthQueryRange } from '@/lib/datetime';
+import { buildDailyCumulative, monthDateKeys } from '@/lib/entries';
+import { dayRangeQuery } from '@/lib/datetime';
 import {
   CHART_ACTIVE_DOT,
   CHART_COLOR,
@@ -20,7 +20,6 @@ import {
   CHART_TOOLTIP_STYLE,
   CHART_Y_AXIS_WIDTH,
   formatAxisAmount,
-  formatDayTick,
   formatTooltipAmount,
 } from '@/lib/chart';
 import type { EntryFilterQuery } from '@money/types';
@@ -37,8 +36,13 @@ interface PaymentMethodItem {
 }
 
 interface Props {
-  currentMonth?: number;
-  currentYear?: number;
+  /**
+   * 볼 구간. 한 달(`{ yearMonth }`)이거나 임의 기간(`{ startDate, endDate }`)이다.
+   *
+   * 합계·거래·일별 누적이 전부 이 구간을 쓴다. 오른쪽 "월별 사용 금액"만 구간의
+   * 마지막 달을 끝으로 하는 12개월 추이라, 구간 밖의 달도 함께 보여 준다.
+   */
+  period: ReportPeriod;
   projectId?: string | null;
   /** 가계 화면의 사람/고정 필터. 합계와 목록이 같은 조건을 써야 한다. */
   filter?: EntryFilterQuery;
@@ -79,23 +83,33 @@ function axisMax(values: number[]) {
 }
 
 export default function PaymentMethodTab({
-  currentMonth: propMonth,
-  currentYear: propYear,
+  period,
   projectId,
   filter,
   onEntryClick,
   reloadToken,
 }: Props) {
   const timeZone = useProjectTimeZone();
-  const now = new Date();
-  const currentMonth = propMonth ?? now.getMonth() + 1;
-  const currentYear = propYear ?? now.getFullYear();
-  const yearMonth = `${currentYear}-${String(currentMonth).padStart(2, '0')}`;
+
+  /*
+   * 구간을 세 형태로 쓴다.
+   *   dayKeys  : 일별 누적 그래프의 x축 (달력 날짜)
+   *   range    : 거래 목록 조회 (인스턴트)
+   *   endMonth : 12개월 추이의 마지막 달
+   * 하나만 어긋나도 같은 화면 안에서 숫자가 서로 다른 구간을 가리킨다.
+   */
+  const dayKeys = period.yearMonth
+    ? monthDateKeys(Number(period.yearMonth.slice(0, 4)), Number(period.yearMonth.slice(5, 7)))
+    : { startKey: period.startDate!, endKey: period.endDate! };
+  const range = dayRangeQuery(dayKeys.startKey, dayKeys.endKey, timeZone);
+  const endMonth = dayKeys.endKey.slice(0, 7);
+  /** 구간이 바뀌었는지 판단할 값. 객체는 렌더마다 새로 만들어진다. */
+  const periodKey = `${dayKeys.startKey}~${dayKeys.endKey}`;
 
   const [methods, setMethods] = useState<PaymentMethodItem[]>([]);
   const [selected, setSelected] = useState<PaymentMethodItem | null>(null);
   const [monthlyData, setMonthlyData] = useState<Array<{ month: string; amount: number }>>([]);
-  const [dailyData, setDailyData] = useState<Array<{ day: number; amount: number; cumulative: number }>>([]);
+  const [dailyData, setDailyData] = useState<Array<{ label: string; amount: number; cumulative: number }>>([]);
   const [entries, setEntries] = useState<EntryListItem[]>([]);
 
   // 결제수단별 합계는 서버가 계산한다. 거래 전량을 받아 분류하던 코드를 대체했다.
@@ -103,7 +117,7 @@ export default function PaymentMethodTab({
     let cancelled = false;
 
     apiClient
-      .getPaymentMethods(yearMonth, projectId, filter)
+      .getPaymentMethods(period, projectId, filter)
       .then((res) => {
         if (cancelled) return;
         setMethods((res ?? []) as PaymentMethodItem[]);
@@ -114,13 +128,14 @@ export default function PaymentMethodTab({
       });
 
     return () => { cancelled = true; };
-  }, [yearMonth, projectId, filter, reloadToken]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [periodKey, projectId, filter, reloadToken]);
 
-  // 달이나 필터가 바뀌면 선택을 비운다. 이전 달 상세가 남아 있으면 잘못된 값을 보게 된다.
+  // 구간이나 필터가 바뀌면 선택을 비운다. 이전 구간의 상세가 남아 있으면 잘못된 값을 보게 된다.
   // reloadToken은 여기에 넣지 않는다. 거래를 고칠 때마다 고른 결제수단이 풀리면 불편하다.
   useEffect(() => {
     setSelected(null);
-  }, [yearMonth, projectId, filter]);
+  }, [periodKey, projectId, filter]);
 
   // 선택한 결제수단의 12개월 추이와 이 달 거래
   useEffect(() => {
@@ -133,14 +148,14 @@ export default function PaymentMethodTab({
 
     let cancelled = false;
     const target = selected.kind === 'account' ? 'account' : 'card';
-    // 월 경계는 프로젝트 타임존 기준이다. 말일 자정을 endDate로 주면
-    // 시각이 붙은 말일 거래가 빠지므로 monthQueryRange를 쓴다.
-    const { startDate, endDate } = monthQueryRange(currentYear, currentMonth, timeZone);
+    // 구간 경계는 프로젝트 타임존 기준이다. 끝날 자정을 endDate로 주면
+    // 시각이 붙은 그날 거래가 빠지므로 위에서 만든 range를 쓴다.
+    const { startDate, endDate } = range;
 
     Promise.all([
       apiClient.getTrend(
         target,
-        { targetId: selected.id, endMonth: yearMonth, months: 12, ...filter },
+        { targetId: selected.id, endMonth, months: 12, ...filter },
         projectId,
       ),
       // 커서를 끝까지 따라간다. 한 페이지만 받으면 아래 일별 누적이
@@ -174,7 +189,7 @@ export default function PaymentMethodTab({
         const rows: EntryListItem[] = (entriesRes ?? []) as EntryListItem[];
         setEntries(rows);
         // 이체는 금액이 아니라 수수료만 쌓아야 한다 (buildDailyCumulative가 처리)
-        setDailyData(buildDailyCumulative(rows, currentYear, currentMonth, timeZone));
+        setDailyData(buildDailyCumulative(rows, dayKeys.startKey, dayKeys.endKey, timeZone));
       })
       .catch((error) => {
         console.error('결제수단 상세를 불러오지 못했습니다:', error);
@@ -185,7 +200,8 @@ export default function PaymentMethodTab({
       });
 
     return () => { cancelled = true; };
-  }, [selected, yearMonth, currentYear, currentMonth, projectId, timeZone, filter, reloadToken]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, periodKey, projectId, timeZone, filter, reloadToken]);
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -260,7 +276,7 @@ export default function PaymentMethodTab({
               <ResponsiveContainer width="100%" height={250}>
                 <LineChart data={dailyData} margin={CHART_MARGIN}>
                   <CartesianGrid {...CHART_GRID} />
-                  <XAxis dataKey="day" tickFormatter={formatDayTick} tick={CHART_TICK} />
+                  <XAxis dataKey="label" tick={CHART_TICK} />
                   <YAxis
                     domain={[0, axisMax(dailyData.map((d) => d.cumulative))]}
                     tickFormatter={formatAxisAmount}

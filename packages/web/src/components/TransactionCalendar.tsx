@@ -24,6 +24,14 @@ interface Props {
   onMonthChange: (year: number, month: number) => void;
   startDate?: Date | null;
   endDate?: Date | null;
+  /**
+   * 조회 구간의 양끝 ("YYYY-MM-DD"). 기간 보기에서 달력을 여러 장 그릴 때 쓴다.
+   *
+   * 구간 밖의 날은 흐리게 두고 누를 수 없게 한다. 그 날짜의 거래는 애초에
+   * 받아오지 않았으므로, 누를 수 있게 두면 "거래 없음"이 사실처럼 보인다.
+   */
+  periodStart?: string;
+  periodEnd?: string;
 }
 
 export default function TransactionCalendar({
@@ -34,6 +42,8 @@ export default function TransactionCalendar({
   onMonthChange,
   startDate,
   endDate,
+  periodStart,
+  periodEnd,
 }: Props) {
   // 거래가 며칠 칸에 들어가는지는 프로젝트 타임존 기준으로 판단한다.
   const timeZone = useProjectTimeZone();
@@ -44,6 +54,17 @@ export default function TransactionCalendar({
     if (!startDate) return false;
     if (!endDate) return false;
     return date >= startDate && date <= endDate;
+  };
+
+  /** 조회 구간 안의 날인지. 구간을 안 넘기면 표시 중인 달 전체가 대상이다. */
+  const isInPeriod = (day: CalendarDay): boolean => {
+    if (!day.isCurrentMonth) return false;
+    if (!periodStart || !periodEnd) return true;
+
+    const key = `${day.date.getFullYear()}-${String(day.date.getMonth() + 1).padStart(2, '0')}-${String(
+      day.date.getDate(),
+    ).padStart(2, '0')}`;
+    return key >= periodStart && key <= periodEnd;
   };
 
   const isStartOrEndDate = (date: Date): boolean => {
@@ -134,11 +155,13 @@ export default function TransactionCalendar({
         </div>
 
         <div className="grid grid-cols-7 gap-0">
-          {days.map((day, index) => (
+          {days.map((day, index) => {
+            const selectable = isInPeriod(day);
+            return (
             <div
               key={index}
               onClick={() => {
-                if (day.isCurrentMonth) {
+                if (selectable) {
                   onDateSelect(day.date, day.entries);
                 }
               }}
@@ -150,16 +173,16 @@ export default function TransactionCalendar({
                   ? 'bg-blue-500 text-white'
                   : isDateInRange(day.date)
                   ? 'bg-blue-100'
-                  : !day.isCurrentMonth
+                  : !selectable
                   ? 'bg-gray-50'
                   : 'bg-white hover:bg-blue-50'
-              } ${day.isCurrentMonth ? 'cursor-pointer transition' : ''}`}
+              } ${selectable ? 'cursor-pointer transition' : ''}`}
             >
               <p
                 className={`text-sm font-semibold mb-1 ${
                   isStartOrEndDate(day.date)
                     ? 'text-white'
-                    : day.isCurrentMonth
+                    : selectable
                     ? 'text-gray-900'
                     : 'text-gray-400'
                 }`}
@@ -192,7 +215,8 @@ export default function TransactionCalendar({
                 </div>
               )}
             </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>

@@ -37,3 +37,22 @@ export function assertYearMonthParts(
 
   return { year: y, month: m };
 }
+
+/**
+ * "YYYY-MM-DD" 달력 날짜.
+ *
+ * 기간 조회의 양끝에 쓴다. Date 로 파싱해 검사하지 않는 이유는 "2026-02-31"
+ * 같은 값을 Date 가 3월 3일로 조용히 옮기기 때문이다. 형식과 범위를 직접 본다.
+ */
+export function assertDateKey(value: string, label = '날짜'): string {
+  const text = value?.trim() ?? '';
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
+  const month = match ? Number(match[2]) : 0;
+  const day = match ? Number(match[3]) : 0;
+
+  if (!match || month < 1 || month > 12 || day < 1 || day > 31) {
+    throw new BadRequestException(`${label}: YYYY-MM-DD 형식이어야 합니다.`);
+  }
+
+  return text;
+}

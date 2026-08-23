@@ -5,6 +5,7 @@ import type { ExchangeRateInfo } from '@money/types';
 import { apiClient } from '@/lib/api-client';
 import { toAmountString, toNumber } from '@/lib/money';
 import { useProject } from '@/store/project';
+import { clearExchangeRateCache } from '@/hooks/useExchangeRates';
 
 /** 어디서 온 환율인지. 사용자가 정한 값과 서버 기본값을 구분해 보여 준다. */
 const SOURCE_LABEL: Record<string, string> = {
@@ -62,6 +63,8 @@ export default function ExchangeRateSettings() {
         { from: info.from, to: info.to, rate: toAmountString(value) },
         selectedProjectId,
       );
+      // 거래 입력 폼이 들고 있는 캐시를 버린다. 안 버리면 폼에 옛 환율이 남는다.
+      clearExchangeRateCache();
       await load();
     } catch (err: any) {
       setError(err?.response?.data?.message || '환율 저장에 실패했습니다.');
@@ -75,6 +78,7 @@ export default function ExchangeRateSettings() {
       setSavingPair(info.from);
       setError('');
       await apiClient.clearExchangeRate(info.from, info.to, selectedProjectId);
+      clearExchangeRateCache();
       await load();
     } catch (err: any) {
       setError(err?.response?.data?.message || '되돌리기에 실패했습니다.');

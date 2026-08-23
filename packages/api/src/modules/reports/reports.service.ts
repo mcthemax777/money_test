@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { AccountType, CategoryType, Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
@@ -9,15 +9,17 @@ import {
   parseEntryFilter,
 } from '@/common/entry-filter';
 import { HIDDEN_ACCOUNT_TYPES } from '../accounts/accounts.service';
-import { assertYearMonth } from '@/common/year-month';
+import { assertDateKey, assertYearMonth } from '@/common/year-month';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import {
   ReportDto,
   currencyDecimals,
   zonedCurrentYearMonth,
+  zonedDateStringToUtc,
   zonedDayStart,
   zonedMonthRange,
   zonedMonthStart,
+  zonedParts,
 } from '@money/types';
 
 const ZERO = new Prisma.Decimal(0);
@@ -54,12 +56,12 @@ export class ReportsService {
    * 결제수단과 무관하게 "지출 카테고리 posting의 합"으로 정의된다.
    * dashboard는 credit_usage를 더하고 statistics는 빼던 불일치가 정의상 사라진다.
    */
-  async getSummary(userId: string, query: ReportDto.MonthQuery): Promise<ReportDto.Summary> {
+  async getSummary(userId: string, query: ReportDto.PeriodQuery): Promise<ReportDto.Summary> {
     const { id: projectId, timeZone } = await this.projectAccess.resolveProject(
       userId,
       query.projectId,
     );
-    const range = zonedMonthRange(assertYearMonth(query.yearMonth, '조회 월'), timeZone);
+    const range = this.resolvePeriod(query, timeZone);
     const scope = this.entryScope(projectId, range, query);
     // 고정/변동 필터. 지출은 groupBy로 이미 나뉘므로 해당 쪽만 남기고,
     // 수입도 같은 조건을 걸어야 목록 합계와 맞는다.
@@ -96,7 +98,7 @@ export class ReportsService {
 
     const show = await this.displayConverter(projectId);
     return {
-      yearMonth: query.yearMonth,
+      ...this.periodLabel(query, range, timeZone),
       income: show.toString(income),
       expense: show.toString(expense),
       fixedExpense: show.toString(fixed),
@@ -114,7 +116,7 @@ export class ReportsService {
       userId,
       query.projectId,
     );
-    const range = zonedMonthRange(assertYearMonth(query.yearMonth, '조회 월'), timeZone);
+    const range = this.resolvePeriod(query, timeZone);
     // 쿼리스트링 값은 문자열로 도착한다. 이 DTO는 클래스가 아니라 인터페이스라서
     // ValidationPipe의 암묵 변환이 걸리지 않고 ?rollup=false 가 'false' 문자열로 들어온다.
     // 불리언 비교만 하면 항상 롤업이 켜져서 소분류 구성비를 볼 수 없다.
@@ -325,8 +327,17 @@ export class ReportsService {
         projectId,
         // 기초잔액 상대편은 자산이 아니다. getNetWorth 와 같은 기준으로 뺀다.
         type: { notIn: EQUITY_TYPES },
-        // 계좌를 지정하면 비활성 계좌도 보여준다. 전체 합계일 때만 활성으로 좁힌다.
-        ...(query.accountId ? { id: query.accountId } : { isActive: true }),
+        /*
+         * 계좌를 지정하면 비활성 계좌도 보여준다. 그 계좌를 보려고 고른 것이므로
+         * 숨겼다고 빈 그래프를 주면 안 된다.
+         *
+         * 구성원을 지정하면 그 사람의 계좌만 모은다. 전체 합계일 때만 활성으로 좁힌다.
+         */
+        ...(query.accountId
+          ? { id: query.accountId }
+          : query.ownerId
+            ? { ownerId: query.ownerId, isActive: true }
+            : { isActive: true }),
       },
       select: { id: true, type: true },
     });
@@ -479,10 +490,15 @@ export class ReportsService {
     end: Date,
     timeZone: string,
   ) {
+    // 쿼리스트링 값은 문자열로 도착한다 (DTO가 인터페이스라 암묵 변환이 없다).
+    const exact = query.exact === true || (query.exact as unknown) === 'true';
     const condition =
       query.target === 'category'
-        ? // 대분류를 지정하면 소분류까지 포함한다
-          Prisma.sql`(p."categoryId" = ${query.targetId} OR c."parentId" = ${query.targetId})`
+        ? exact
+          ? // "미분류": 대분류에 바로 기록한 건만 본다.
+            Prisma.sql`p."categoryId" = ${query.targetId}`
+          : // 대분류를 지정하면 소분류까지 포함한다
+            Prisma.sql`(p."categoryId" = ${query.targetId} OR c."parentId" = ${query.targetId})`
         : Prisma.sql`c."type" = ${query.type ?? 'expense'}::"CategoryType"`;
 
     return this.prisma.$queryRaw<Array<{ month: Date; amount: Prisma.Decimal }>>`
@@ -550,13 +566,13 @@ export class ReportsService {
    */
   async getPaymentMethods(
     userId: string,
-    query: ReportDto.MonthQuery,
+    query: ReportDto.PeriodQuery,
   ): Promise<ReportDto.PaymentMethodItem[]> {
     const { id: projectId, timeZone } = await this.projectAccess.resolveProject(
       userId,
       query.projectId,
     );
-    const range = zonedMonthRange(assertYearMonth(query.yearMonth, '조회 월'), timeZone);
+    const range = this.resolvePeriod(query, timeZone);
 
     const entries = await this.prisma.journalEntry.findMany({
       where: this.entryScope(projectId, range, query),
@@ -707,10 +723,64 @@ export class ReportsService {
    * 자산 주인 필터는 목록(/entries)과 같은 규칙을 쓴다. 목록만 걸러 놓으면
    * 상단 합계와 소계가 어긋난다.
    */
+  /**
+   * 집계 구간을 정한다.
+   *
+   * startDate/endDate 를 주면 그 구간을, 아니면 yearMonth 의 한 달을 본다.
+   * 날짜는 프로젝트 타임존의 달력 날짜이고 **양끝을 포함한다**. 끝날을 그대로
+   * 상한으로 쓰면 그날 0시 이후의 거래가 전부 빠지므로 다음 날 0시를 상한으로 삼는다
+   * (entryScope 가 `date < end` 로 거른다).
+   */
+  private resolvePeriod(
+    query: ReportDto.PeriodQuery,
+    timeZone: string,
+  ): { start: Date; end: Date } {
+    const { startDate, endDate } = query;
+
+    if (!startDate && !endDate) {
+      return zonedMonthRange(assertYearMonth(query.yearMonth ?? '', '조회 월'), timeZone);
+    }
+    if (!startDate || !endDate) {
+      throw new BadRequestException('기간은 시작일과 종료일을 함께 지정해야 합니다.');
+    }
+
+    const start = assertDateKey(startDate, '시작일');
+    const end = assertDateKey(endDate, '종료일');
+    if (start > end) {
+      throw new BadRequestException('시작일이 종료일보다 뒤입니다.');
+    }
+
+    const [year, month, day] = end.split('-').map(Number);
+    return {
+      start: zonedDateStringToUtc(start, timeZone),
+      // 하루를 더한다. Date 생성자가 월·연 넘김을 처리하므로 말일을 따로 보지 않는다.
+      end: zonedDayStart(year, month, day + 1, timeZone),
+    };
+  }
+
+  /** 응답에 실을 구간 표시. 한 달을 본 경우에는 yearMonth 도 함께 준다. */
+  private periodLabel(
+    query: ReportDto.PeriodQuery,
+    range: { start: Date; end: Date },
+    timeZone: string,
+  ) {
+    const startParts = zonedParts(range.start, timeZone);
+    // end 는 다음 날 0시라 하루를 빼야 사용자가 고른 종료일이 된다.
+    const endParts = zonedParts(new Date(range.end.getTime() - 1), timeZone);
+    const key = (p: { year: number; month: number; day: number }) =>
+      `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
+
+    return {
+      startDate: key(startParts),
+      endDate: key(endParts),
+      ...(query.startDate && query.endDate ? {} : { yearMonth: query.yearMonth }),
+    };
+  }
+
   private entryScope(
     projectId: string,
     range: { start: Date; end: Date },
-    query: ReportDto.MonthQuery,
+    query: ReportDto.PeriodQuery,
   ): Prisma.JournalEntryWhereInput {
     const filter = parseEntryFilter(query);
     // 아무것도 고르지 않았으면 어떤 전표도 걸리지 않아야 한다.

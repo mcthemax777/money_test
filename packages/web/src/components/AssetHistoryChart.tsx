@@ -28,6 +28,8 @@ import {
 interface AssetHistoryChartProps {
   /** 생략하면 자본 계정을 뺀 전체 자산 합계 */
   accountId?: string;
+  /** 한 구성원이 가진 계좌들의 합계. accountId 와 함께 쓰지 않는다. */
+  ownerId?: string;
   projectId?: string | null;
   /** 처음 보여줄 12개월 구간의 마지막 달. 생략하면 이번 달 */
   endMonth?: string;
@@ -42,6 +44,7 @@ interface Point {
 
 export default function AssetHistoryChart({
   accountId,
+  ownerId,
   projectId,
   endMonth,
 }: AssetHistoryChartProps) {
@@ -54,17 +57,18 @@ export default function AssetHistoryChart({
   // 계좌나 프로젝트가 바뀌면 일별 보기에 머물러 있을 이유가 없다. 월별로 되돌린다.
   useEffect(() => {
     setDrilledMonth(null);
-  }, [accountId, projectId]);
+  }, [accountId, ownerId, projectId]);
 
   const load = useCallback(async () => {
     try {
       setIsLoading(true);
       setError('');
 
+      const target = accountId ? { accountId } : ownerId ? { ownerId } : {};
       const rows = await apiClient.getBalanceHistory(
         drilledMonth
-          ? { accountId, granularity: 'day', yearMonth: drilledMonth }
-          : { accountId, granularity: 'month', months: 12, ...(endMonth ? { endMonth } : {}) },
+          ? { ...target, granularity: 'day', yearMonth: drilledMonth }
+          : { ...target, granularity: 'month', months: 12, ...(endMonth ? { endMonth } : {}) },
         projectId,
       );
 
@@ -86,7 +90,7 @@ export default function AssetHistoryChart({
     } finally {
       setIsLoading(false);
     }
-  }, [accountId, projectId, endMonth, drilledMonth]);
+  }, [accountId, ownerId, projectId, endMonth, drilledMonth]);
 
   useEffect(() => {
     load();

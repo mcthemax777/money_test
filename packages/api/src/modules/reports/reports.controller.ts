@@ -14,7 +14,7 @@ export class ReportsController {
 
   @Get('summary')
   @ApiOperation({ summary: '월 수입/지출 합계 (고정·변동 구분 포함)' })
-  summary(@Request() req: AuthenticatedRequest, @Query() query: ReportDto.MonthQuery) {
+  summary(@Request() req: AuthenticatedRequest, @Query() query: ReportDto.PeriodQuery) {
     return this.reportsService.getSummary(req.user.id, query);
   }
 
@@ -50,7 +50,7 @@ export class ReportsController {
 
   @Get('payment-methods')
   @ApiOperation({ summary: '결제수단별 지출 (통장/체크카드/신용카드)' })
-  paymentMethods(@Request() req: AuthenticatedRequest, @Query() query: ReportDto.MonthQuery) {
+  paymentMethods(@Request() req: AuthenticatedRequest, @Query() query: ReportDto.PeriodQuery) {
     return this.reportsService.getPaymentMethods(req.user.id, query);
   }
 }

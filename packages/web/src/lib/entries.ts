@@ -33,29 +33,62 @@ export function sumEntries(entries: EntryListItem[]) {
   return { incomeTotal, expenseTotal };
 }
 
-/** 일별 누적 그래프 데이터. 지출 기준으로 쌓는다. */
+/**
+ * 일별 누적 그래프 데이터. 지출 기준으로 쌓는다.
+ *
+ * 달 단위가 아니라 구간(startKey ~ endKey, "YYYY-MM-DD", 양끝 포함)을 받는다.
+ * 가계 화면이 달을 넘는 기간도 보여 주기 때문이다. 거래가 없는 날도 점을 만들어
+ * 선이 끊기지 않게 한다.
+ *
+ * x축 라벨은 한 달 안이면 "5일", 달을 넘으면 "8/5"다. 달을 넘는 구간에서 날짜만
+ * 찍으면 8월 5일과 9월 5일이 같은 이름으로 두 번 나온다.
+ */
 export function buildDailyCumulative(
   entries: EntryListItem[],
-  year: number,
-  month: number,
+  startKey: string,
+  endKey: string,
   timeZone: string,
-): Array<{ day: number; amount: number; cumulative: number }> {
-  const byDay = new Map<number, number>();
+): Array<{ label: string; amount: number; cumulative: number }> {
+  const byDay = new Map<string, number>();
   for (const entry of entries) {
     const amount = expenseAmountOf(entry);
     if (amount === 0) continue;
     // 며칠에 속하는지는 프로젝트 타임존 기준이다 (UTC로 읽으면 하루 밀린다).
-    const day = Number(dateKeyOf(entry.date, timeZone).slice(8, 10));
-    byDay.set(day, (byDay.get(day) ?? 0) + amount);
+    const key = dateKeyOf(entry.date, timeZone);
+    byDay.set(key, (byDay.get(key) ?? 0) + amount);
   }
 
-  const daysInMonth = new Date(year, month, 0).getDate();
-  const result: Array<{ day: number; amount: number; cumulative: number }> = [];
+  const sameMonth = startKey.slice(0, 7) === endKey.slice(0, 7);
+  const result: Array<{ label: string; amount: number; cumulative: number }> = [];
   let cumulative = 0;
-  for (let day = 1; day <= daysInMonth; day += 1) {
-    const amount = byDay.get(day) ?? 0;
+
+  // 날짜 계산은 달력 날짜끼리만 한다. 타임존은 위에서 이미 반영했다.
+  const [startYear, startMonth, startDay] = startKey.split('-').map(Number);
+  const cursor = new Date(Date.UTC(startYear, startMonth - 1, startDay));
+  const last = (() => {
+    const [year, month, day] = endKey.split('-').map(Number);
+    return Date.UTC(year, month - 1, day);
+  })();
+
+  while (cursor.getTime() <= last) {
+    const month = cursor.getUTCMonth() + 1;
+    const day = cursor.getUTCDate();
+    const key = `${cursor.getUTCFullYear()}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const amount = byDay.get(key) ?? 0;
     cumulative += amount;
-    result.push({ day, amount, cumulative });
+    result.push({ label: sameMonth ? `${day}일` : `${month}/${day}`, amount, cumulative });
+    cursor.setUTCDate(day + 1);
   }
+
   return result;
+}
+
+/** 그 달의 첫날과 말일 ("YYYY-MM-DD"). 달 단위 화면이 위 함수에 넘길 값이다. */
+export function monthDateKeys(year: number, month: number): { startKey: string; endKey: string } {
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const lastDay = new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return {
+    startKey: `${year}-${pad(month)}-01`,
+    endKey: `${year}-${pad(month)}-${pad(lastDay)}`,
+  };
 }

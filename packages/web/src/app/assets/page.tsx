@@ -19,6 +19,9 @@ import { useDragReorder } from '@/hooks/useDragReorder';
 import { DAY_OF_MONTH_HINT, DAY_OF_MONTH_OPTIONS } from '@/lib/day-of-month';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
+/** 구성원 상세에 보여 줄 최근 거래 수. 더 보려면 가계 화면에서 사람 필터를 쓴다. */
+const PERSON_ENTRY_LIMIT = 30;
+
 const PAYMENT_FORM_ID = 'card-payment-form';
 const CARD_ADD_FORM_ID = 'card-add-form';
 
@@ -38,6 +41,8 @@ import PageHeader from '@/components/PageHeader';
 import HiddenItemsPanel from '@/components/HiddenItemsPanel';
 import PendingRatePanel from '@/components/PendingRatePanel';
 import AssetHistoryChart from '@/components/AssetHistoryChart';
+import TransactionListView from '@/components/TransactionListView';
+import type { EntryListItem } from '@/components/TransactionItem';
 import { useInstitutions } from '@/hooks/useInstitutions';
 
 
@@ -67,6 +72,17 @@ export default function DashboardPage() {
   // 조회(상세정보)와 수정 폼은 서로 다른 모달이다. state를 공유하면 상세정보 버튼
   // 하나로 두 모달이 동시에 열려 "수정하기를 누르지도 않았는데 수정 화면이 나온다".
   const [isAccountDetailOpen, setIsAccountDetailOpen] = useState(false);
+  /*
+   * 상세정보 팝업.
+   *
+   * 구성원과 카드도 계좌와 같은 방식으로 다룬다. 고르면 오른쪽에 그래프와 내역이
+   * 나오고, 기본 정보는 이 버튼으로 연다. 예전에는 고르는 즉시 팝업이 떠서
+   * 그래프를 볼 자리가 없었다.
+   */
+  const [isPersonDetailOpen, setIsPersonDetailOpen] = useState(false);
+  const [isCardDetailOpen, setIsCardDetailOpen] = useState(false);
+  /** 고른 구성원의 최근 거래. 계좌 원장과 달리 전표 단위다. */
+  const [personEntries, setPersonEntries] = useState<EntryListItem[]>([]);
   const [isEditAccountModalOpen, setIsEditAccountModalOpen] = useState(false);
   const [isEditCardModalOpen, setIsEditCardModalOpen] = useState(false);
 
@@ -217,6 +233,34 @@ export default function DashboardPage() {
     }
   }, []);
 
+  /**
+   * 구성원의 최근 거래.
+   *
+   * 계좌 원장(posting)과 달리 전표 단위로 본다. 한 사람이 여러 계좌를 쓰므로
+   * 계좌별 잔액 흐름보다 "이 사람이 무엇을 썼는가"가 알고 싶은 것이다.
+   */
+  useEffect(() => {
+    if (!selectedPerson || detailType !== 'person') {
+      setPersonEntries([]);
+      return;
+    }
+
+    let cancelled = false;
+    apiClient
+      .getEntries({ personId: selectedPerson.id, limit: PERSON_ENTRY_LIMIT }, selectedProjectId)
+      .then((res) => {
+        if (!cancelled) setPersonEntries((res?.data ?? []) as EntryListItem[]);
+      })
+      .catch((err) => {
+        console.error('구성원 거래 조회 실패:', err);
+        if (!cancelled) setPersonEntries([]);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedPerson, detailType, selectedProjectId]);
+
   // 계좌 선택 시 거래 내역 로드
   useEffect(() => {
     if (selectedAccount && detailType === 'account') {
@@ -261,6 +305,7 @@ export default function DashboardPage() {
       await apiClient.deletePerson(selectedPerson.id);
       const peopleData = await apiClient.getPeople(selectedProjectId);
       setPeople(peopleData || []);
+      setIsPersonDetailOpen(false);
       setDetailType(null);
       setSelectedPerson(null);
       setHiddenVersion((v) => v + 1);
@@ -296,6 +341,7 @@ export default function DashboardPage() {
       await apiClient.deleteCard(selectedCard.id);
       const cardsData = await apiClient.getCards(selectedProjectId);
       setCards(cardsData || []);
+      setIsCardDetailOpen(false);
       setDetailType(null);
       setSelectedCard(null);
       setHiddenVersion((v) => v + 1);
@@ -428,7 +474,9 @@ export default function DashboardPage() {
     }
   };
 
+  /** 조회 팝업을 닫고 수정 폼을 연다. 둘이 겹쳐 열리지 않게 순서를 지킨다. */
   const handleEditPersonClick = () => {
+    setIsPersonDetailOpen(false);
     setPersonModalMode('edit');
     setPersonModalOpen(true);
   };
@@ -475,7 +523,9 @@ export default function DashboardPage() {
     setIsEditAccountModalOpen(true);
   };
 
+  /** 조회 팝업을 닫고 수정 폼을 연다. 둘이 겹쳐 열리지 않게 순서를 지킨다. */
   const handleEditCardClick = () => {
+    setIsCardDetailOpen(false);
     setIsEditCardModalOpen(true);
   };
 
@@ -680,9 +730,180 @@ export default function DashboardPage() {
                 </div>
               )}
             </div>
+          ) : detailType === 'person' && selectedPerson ? (
+            /* 구성원: 그 사람 계좌들의 합계 추이와 최근 거래 */
+            <div className="bg-white rounded-lg shadow p-6 space-y-4">
+              <div className="flex justify-between items-start gap-4">
+                <div>
+                  <h2 className="text-2xl font-bold text-gray-900">{selectedPerson.name}</h2>
+                  <p className="text-xl font-bold text-blue-600 mt-1">
+                    {formatCurrency(netWorthByPerson.get(selectedPerson.id)?.total ?? 0)}
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setIsPersonDetailOpen(true)}
+                    className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                  >
+                    상세정보
+                  </button>
+                  <button
+                    onClick={() => {
+                      setDetailType(null);
+                      setSelectedPerson(null);
+                    }}
+                    className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
+                  >
+                    닫기
+                  </button>
+                </div>
+              </div>
+
+              {/* 이 사람이 가진 계좌들의 합계 추이 */}
+              <AssetHistoryChart ownerId={selectedPerson.id} projectId={selectedProjectId} />
+
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 mb-2">최근 거래</h3>
+                {personEntries.length === 0 ? (
+                  <p className="text-gray-600 text-center py-8">거래 내역이 없습니다.</p>
+                ) : (
+                  <>
+                    {/* 자산 화면에는 거래 상세 팝업이 없다. 고치는 일은 가계 화면에서 한다. */}
+                    <TransactionListView entries={personEntries} onEntryClick={() => {}} />
+                    {personEntries.length >= PERSON_ENTRY_LIMIT && (
+                      <p className="mt-2 text-xs text-gray-500">
+                        최근 {PERSON_ENTRY_LIMIT}건까지 보여 줍니다. 더 보려면 가계 화면에서
+                        사람 필터를 쓰세요.
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          ) : detailType === 'card' && selectedCard ? (
+            /*
+              카드: 대금과 청구 주기.
+              카드 번호나 유효기간 같은 기본 정보는 "카드 상세정보" 팝업으로 옮겼다.
+              이 자리에서 자주 보는 것은 남은 대금과 이번 주기 사용액이다.
+            */
+            <div className="bg-white rounded-lg shadow p-6 space-y-4">
+              <div className="flex justify-between items-start gap-4">
+                <div>
+                  <h2 className="text-2xl font-bold text-gray-900">{selectedCard.name}</h2>
+                  <p className="text-xl font-bold text-blue-600 mt-1">
+                    {formatCurrency(selectedCard.currentUsage, currencyOfCard(selectedCard))}
+                  </p>
+                  {selectedCard.issuer?.name && (
+                    <p className="text-sm text-gray-600 mt-1">{selectedCard.issuer.name}</p>
+                  )}
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => setIsCardDetailOpen(true)}
+                    className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                  >
+                    카드 상세정보
+                  </button>
+                  <button
+                    onClick={() => {
+                      setDetailType(null);
+                      setSelectedCard(null);
+                    }}
+                    className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
+                  >
+                    닫기
+                  </button>
+                </div>
+              </div>
+
+              {selectedCard.cardType !== 'credit' ? (
+                <p className="text-gray-600">
+                  체크카드는 결제 즉시 통장에서 빠집니다. 청구 주기와 남은 대금이 없습니다.
+                </p>
+              ) : !usage ? (
+                <p className="text-gray-600">사용 현황을 불러오는 중입니다...</p>
+              ) : (
+
+            <div className="pt-4 border-t space-y-3">
+              <div
+                className={`rounded-lg p-4 space-y-3 ${
+                  refundPending ? 'bg-emerald-50' : 'bg-red-50'
+                }`}
+              >
+                <div className="flex justify-between items-baseline">
+                  <span
+                    className={`text-sm font-semibold ${
+                      refundPending ? 'text-emerald-700' : 'text-red-600'
+                    }`}
+                  >
+                    {refundPending ? '환불 예정' : '남은 대금'}
+                  </span>
+                  <span
+                    className={`text-lg font-bold ${
+                      refundPending ? 'text-emerald-700' : 'text-red-600'
+                    }`}
+                  >
+                    {formatCurrency(Math.abs(Number(usage.outstanding)), usage.currency)}
+                  </span>
+                </div>
+                {refundPending && (
+                  <p className="text-xs text-emerald-700">
+                    카드사가 갚을 돈입니다. 맞지 않으면 대금 기록을 확인하세요.
+                  </p>
+                )}
+                <button
+                  onClick={() => setIsPaymentModalOpen(true)}
+                  className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                >
+                  대금 기록하기
+                </button>
+              </div>
+
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 mb-2">
+                  마감일 기준 사용액
+                </h3>
+                <div className="space-y-1">
+                  {usage.periods.map((period) => (
+                    <div
+                      key={period.periodEnd}
+                      className="flex justify-between items-center px-3 py-2 bg-gray-50 rounded-lg"
+                    >
+                      <div className="text-sm text-gray-700">
+                        {formatDateMarker(period.periodStart)} ~{' '}
+                        {formatDateMarker(period.periodEnd)}
+                        <span className="ml-2 text-xs text-gray-500">
+                          {period.closed ? '마감' : '진행'}
+                        </span>
+                      </div>
+                      <span className="text-sm font-medium text-gray-900">
+                        {formatCurrency(period.usage, usage.currency)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+                <p className="mt-2 text-xs text-gray-500">
+                  할부는 회차분만 들어갑니다. 남은 대금은 결제까지 반영한 값이라 합계와 다릅니다.
+                </p>
+              </div>
+
+              {/*
+                외화 결제의 청구액 확정.
+                추정 환율로 들어간 건이 남아 있으면 남은 대금이 명세서와
+                어긋나므로, 그 건들을 여기 모아 한 번에 맞춘다.
+              */}
+              <PendingRatePanel
+                cardId={selectedCard.id}
+                onSettled={() => refreshAfterCardChange(selectedCard.id)}
+              />
+            </div>
+              )}
+            </div>
           ) : (
             <div className="bg-white rounded-lg border border-dashed border-gray-300 p-10 text-center">
-              <p className="text-gray-500">계좌를 누르면 잔액 추이와 거래 내역이 여기에 나옵니다.</p>
+              <p className="text-gray-500">
+                구성원·계좌·카드를 누르면 추이와 내역이 여기에 나옵니다.
+              </p>
             </div>
           )}
         </div>
@@ -780,14 +1001,11 @@ export default function DashboardPage() {
 
       {/* 계좌 수정 모달 */}
 
-      {/* 구성원 상세정보 모달 */}
-      {detailType === 'person' && selectedPerson && (
+      {/* 구성원 상세정보 모달. 오른쪽 패널의 "상세정보" 버튼으로 연다. */}
+      {isPersonDetailOpen && selectedPerson && (
         <Modal
           isOpen={true}
-          onClose={() => {
-            setDetailType(null);
-            setSelectedPerson(null);
-          }}
+          onClose={() => setIsPersonDetailOpen(false)}
           title="구성원 상세정보"
           footer={
             <div className="flex gap-2">
@@ -797,7 +1015,8 @@ export default function DashboardPage() {
               */}
               <button
                 onClick={() => {
-                  setDetailType(null);
+                  // 상세 팝업을 닫고 선택 팝업을 연다. 이 화면은 팝업을 겹쳐 띄우지 않는다.
+                  setIsPersonDetailOpen(false);
                   setAddedForPersonId(selectedPerson.id);
                   setAddType('select-person');
                 }}
@@ -840,13 +1059,10 @@ export default function DashboardPage() {
 
       {/* 카드 상세정보 모달. 수정 폼이 열리면 감춘다 (겹쳐 열리면 안 된다).
           detailType은 청구서 조회 effect가 쓰므로 그대로 둔다. */}
-      {detailType === 'card' && selectedCard && !isEditCardModalOpen && (
+      {isCardDetailOpen && selectedCard && !isEditCardModalOpen && (
         <Modal
           isOpen={true}
-          onClose={() => {
-            setDetailType(null);
-            setSelectedCard(null);
-          }}
+          onClose={() => setIsCardDetailOpen(false)}
           title="카드 상세정보"
           footer={
             <div className="flex gap-2">
@@ -933,85 +1149,6 @@ export default function DashboardPage() {
                     </p>
                   </div>
 
-                  {/*
-                    남은 대금과 주기별 사용액.
-                    청구서를 저장하지 않고 카드의 현재 마감일로 서버가 계산해 준다.
-                  */}
-                  {usage && (
-                    <div className="pt-4 border-t space-y-3">
-                      <div
-                        className={`rounded-lg p-4 space-y-3 ${
-                          refundPending ? 'bg-emerald-50' : 'bg-red-50'
-                        }`}
-                      >
-                        <div className="flex justify-between items-baseline">
-                          <span
-                            className={`text-sm font-semibold ${
-                              refundPending ? 'text-emerald-700' : 'text-red-600'
-                            }`}
-                          >
-                            {refundPending ? '환불 예정' : '남은 대금'}
-                          </span>
-                          <span
-                            className={`text-lg font-bold ${
-                              refundPending ? 'text-emerald-700' : 'text-red-600'
-                            }`}
-                          >
-                            {formatCurrency(Math.abs(Number(usage.outstanding)), usage.currency)}
-                          </span>
-                        </div>
-                        {refundPending && (
-                          <p className="text-xs text-emerald-700">
-                            카드사가 갚을 돈입니다. 맞지 않으면 대금 기록을 확인하세요.
-                          </p>
-                        )}
-                        <button
-                          onClick={() => setIsPaymentModalOpen(true)}
-                          className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                        >
-                          대금 기록하기
-                        </button>
-                      </div>
-
-                      <div>
-                        <h3 className="text-sm font-medium text-gray-700 mb-2">
-                          마감일 기준 사용액
-                        </h3>
-                        <div className="space-y-1">
-                          {usage.periods.map((period) => (
-                            <div
-                              key={period.periodEnd}
-                              className="flex justify-between items-center px-3 py-2 bg-gray-50 rounded-lg"
-                            >
-                              <div className="text-sm text-gray-700">
-                                {formatDateMarker(period.periodStart)} ~{' '}
-                                {formatDateMarker(period.periodEnd)}
-                                <span className="ml-2 text-xs text-gray-500">
-                                  {period.closed ? '마감' : '진행'}
-                                </span>
-                              </div>
-                              <span className="text-sm font-medium text-gray-900">
-                                {formatCurrency(period.usage, usage.currency)}
-                              </span>
-                            </div>
-                          ))}
-                        </div>
-                        <p className="mt-2 text-xs text-gray-500">
-                          할부는 회차분만 들어갑니다. 남은 대금은 결제까지 반영한 값이라 합계와 다릅니다.
-                        </p>
-                      </div>
-
-                      {/*
-                        외화 결제의 청구액 확정.
-                        추정 환율로 들어간 건이 남아 있으면 남은 대금이 명세서와
-                        어긋나므로, 그 건들을 여기 모아 한 번에 맞춘다.
-                      */}
-                      <PendingRatePanel
-                        cardId={selectedCard.id}
-                        onSettled={() => refreshAfterCardChange(selectedCard.id)}
-                      />
-                    </div>
-                  )}
                 </>
               )}
             </div>
