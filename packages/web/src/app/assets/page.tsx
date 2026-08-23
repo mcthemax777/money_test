@@ -140,6 +140,21 @@ export default function DashboardPage() {
   /** 항목을 숨기거나 되돌리면 올린다. 숨긴 항목 패널이 이 값을 보고 다시 읽는다. */
   const [hiddenVersion, setHiddenVersion] = useState(0);
 
+  /**
+   * 총자산과 사람별 소계.
+   *
+   * 계좌 잔액이나 카드 부채가 바뀌면 이 값도 함께 다시 받아야 한다. 목록만
+   * 갱신하면 왼쪽의 총자산이 옛 값으로 남아, 새로고침해야 맞는 숫자가 나온다.
+   */
+  const loadNetWorth = useCallback(async () => {
+    if (!selectedProjectId) return;
+    try {
+      setNetWorth((await apiClient.getNetWorth(selectedProjectId)) ?? null);
+    } catch (err) {
+      console.error('총자산 조회 실패:', err);
+    }
+  }, [selectedProjectId]);
+
   useEffect(() => {
     if (!selectedProjectId) {
       return;
@@ -309,6 +324,7 @@ export default function DashboardPage() {
       setDetailType(null);
       setSelectedPerson(null);
       setHiddenVersion((v) => v + 1);
+      await loadNetWorth();
     } catch (err: any) {
       alert(err?.response?.data?.error?.message || '숨기지 못했습니다.');
     } finally {
@@ -327,6 +343,7 @@ export default function DashboardPage() {
       setDetailType(null);
       setSelectedAccount(null);
       setHiddenVersion((v) => v + 1);
+      await loadNetWorth();
     } catch (err: any) {
       alert(err?.response?.data?.error?.message || '숨기지 못했습니다.');
     } finally {
@@ -345,6 +362,7 @@ export default function DashboardPage() {
       setDetailType(null);
       setSelectedCard(null);
       setHiddenVersion((v) => v + 1);
+      await loadNetWorth();
     } catch (err: any) {
       alert(err?.response?.data?.error?.message || '숨기지 못했습니다.');
     } finally {
@@ -363,8 +381,10 @@ export default function DashboardPage() {
       await loadCardUsage(cardId);
       if (!selectedProjectId) return;
       setCards((await apiClient.getCards(selectedProjectId)) || []);
+      // 카드 부채는 총자산에서 빠지는 값이라 함께 다시 받는다.
+      await loadNetWorth();
     },
-    [loadCardUsage, selectedProjectId],
+    [loadCardUsage, loadNetWorth, selectedProjectId],
   );
 
   /**
@@ -455,6 +475,7 @@ export default function DashboardPage() {
       });
       const cardsData = await apiClient.getCards(selectedProjectId);
       setCards(cardsData || []);
+      await loadNetWorth();
       setCardForm({
         accountId: '',
         name: '',
@@ -569,6 +590,7 @@ export default function DashboardPage() {
           setAccounts(accountsData || []);
           setPeople(peopleData || []);
           setCards(cardsData || []);
+          await loadNetWorth();
         }}
       />
 
@@ -1288,6 +1310,8 @@ export default function DashboardPage() {
           setAccounts(updatedAccounts as Account[]);
           setSelectedAccount(null);
           setIsEditAccountModalOpen(false);
+          // 잔액을 고치면 총자산도 달라진다.
+          loadNetWorth();
         }}
         onDelete={handleDeleteAccount}
       />
@@ -1301,6 +1325,8 @@ export default function DashboardPage() {
           setCards(updatedCards || []);
           setSelectedCard(null);
           setIsEditCardModalOpen(false);
+          // 한도나 결제 통장을 바꾸면 부채가 걸리는 자리가 달라진다.
+          loadNetWorth();
         }}
         onDelete={handleDeleteCard}
       />
@@ -1371,7 +1397,10 @@ export default function DashboardPage() {
       <AddAccountModal
         isOpen={isAccountModalOpen}
         onClose={() => setIsAccountModalOpen(false)}
-        onSuccess={(newAccounts) => setAccounts(newAccounts)}
+        onSuccess={(newAccounts) => {
+          setAccounts(newAccounts);
+          loadNetWorth();
+        }}
         people={people}
         projectId={selectedProjectId}
         /* 구성원 상세에서 들어왔으면 그 사람이 주인이다. 폼에서 바꿀 수 있다. */
