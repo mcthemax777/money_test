@@ -21,24 +21,25 @@ interface TransactionItemProps {
 }
 
 /*
- * 색이 곧 "합계에 들어가는가"다.
+ * 금액 색이 곧 "합계에 들어가는가"다.
  * 수입은 초록, 지출은 빨강, 잔액 조정은 노랑.
  * 이체와 카드사 이체는 돈이 내 계좌 사이를 옮겨 다닌 것뿐이라 둘 다 회색이다.
+ *
+ * 예전에는 같은 뜻을 왼쪽 색 띠와 카드 배경색으로 한 번 더 칠했다. 한 줄에 색이
+ * 셋이면 어느 것이 뜻을 담은 색인지 알기 어렵고, 목록이 알록달록해진다.
  */
-const BORDER_BY_KIND: Record<EntryListItem['kind'], string> = {
-  income: 'border-green-500 bg-green-50',
-  expense: 'border-red-500 bg-red-50',
-  transfer: 'border-gray-400 bg-gray-50',
-  card_payment: 'border-gray-400 bg-gray-50',
-  adjustment: 'border-amber-400 bg-amber-50',
-};
-
 const AMOUNT_COLOR_BY_KIND: Record<EntryListItem['kind'], string> = {
   income: 'text-green-600',
   expense: 'text-red-600',
-  transfer: 'text-gray-600',
-  card_payment: 'text-gray-600',
-  adjustment: 'text-amber-700',
+  transfer: 'text-gray-500',
+  card_payment: 'text-gray-500',
+  adjustment: 'text-amber-600',
+};
+
+/** 부호는 합계를 움직이는 거래에만 붙는다 */
+const SIGN_BY_KIND: Partial<Record<EntryListItem['kind'], string>> = {
+  income: '+',
+  expense: '-',
 };
 
 /** 계좌 사이를 오가는 거래는 "A → B"로 보여준다. */
@@ -66,24 +67,33 @@ function titleOf(entry: EntryListItem): string {
   return TITLE_BY_KIND[entry.kind] ?? entry.description;
 }
 
+/** 배지 하나. 뜻을 담은 색은 금액이 쓰므로 배지는 회색으로 물러선다. */
+function Badge({ children }: { children: React.ReactNode }) {
+  return (
+    <span className="shrink-0 rounded bg-gray-100 px-1.5 py-px text-[11px] text-gray-500">
+      {children}
+    </span>
+  );
+}
+
+/**
+ * 목록의 거래 한 줄.
+ *
+ * 휴대폰에서 한 화면에 여러 건이 들어와야 하므로 두 줄로 고정한다.
+ *   1줄: 무슨 거래인가 + 얼마
+ *   2줄: 분류·결제수단·시각 같은 부속 정보 + 외화 원금액
+ * 긴 이름은 잘라 낸다. 줄이 늘어나면 카드마다 높이가 달라져 훑어보기 어렵다.
+ */
 export default function TransactionItem({ entry, onClick, isSelected }: TransactionItemProps) {
   const timeZone = useProjectTimeZone();
-  const isTwoSided = TWO_SIDED.includes(entry.kind);
 
   // 이체는 "얼마를 어디로 보냈는가"와 "수수료를 얼마 냈는가"가 서로 다른 정보다.
-  // 수수료가 있으면 실제 지출이 발생한 것이므로 지출 카드와 같은 빨간색으로 보여준다.
+  // 수수료가 있으면 그 수수료만 지출이므로 금액이 아니라 수수료를 빨갛게 쓴다.
   const fee = entry.kind === 'transfer' ? toNumber(entry.feeAmount) : 0;
   const hasFee = fee > 0;
 
-  const borderClass =
-    entry.kind === 'transfer' && hasFee ? BORDER_BY_KIND.expense : BORDER_BY_KIND[entry.kind];
-  const original = formatOriginal(entry);
-  const amountClass =
-    entry.kind === 'transfer' && hasFee
-      ? AMOUNT_COLOR_BY_KIND.expense
-      : AMOUNT_COLOR_BY_KIND[entry.kind];
-
   const time = formatTime(entry.date, timeZone);
+  const original = formatOriginal(entry);
   const showNotCounted = NOT_COUNTED.includes(entry.kind) && !hasFee;
 
   // 카테고리는 "대분류 > 소분류"로 표시한다. 대분류만 지정한 거래는 앞부분만 나온다.
@@ -91,105 +101,76 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
     ? `${entry.parentCategoryName} > ${entry.categoryName}`
     : entry.categoryName;
 
+  // 설명을 비워 둔 거래도 있다. 그때는 분류가 그 거래의 이름 노릇을 한다.
+  const title = titleOf(entry) || categoryLabel || '(내용 없음)';
+
+  /*
+   * 2줄에 들어가는 부속 정보. 있는 것만 " · "로 잇는다.
+   *
+   * 계좌 사이를 오가는 거래는 분류가 없고 "어디서 어디로"가 그 자리를 대신한다.
+   * 이체 수수료의 분류는 그 수수료가 무슨 지출인지 알려 주므로 함께 남긴다.
+   */
+  const meta = (
+    TWO_SIDED.includes(entry.kind)
+      ? [
+          `${entry.accountName} → ${entry.toAccountName ?? entry.cardName}`,
+          hasFee ? entry.feeCategoryName : null,
+          time,
+        ]
+      : [categoryLabel, entry.cardName ?? entry.accountName, time]
+  )
+    .filter(Boolean)
+    .join(' · ');
+
   return (
     <div
       onClick={onClick}
-      className={`bg-white rounded-lg shadow p-4 border-l-4 transition ${borderClass} ${
-        onClick ? 'cursor-pointer hover:shadow-lg' : ''
-      } ${isSelected ? 'ring-2 ring-blue-400' : ''}`}
+      className={`px-3 py-2.5 transition-colors ${
+        onClick ? 'cursor-pointer hover:bg-gray-50 active:bg-gray-100' : ''
+      } ${isSelected ? 'bg-blue-50' : ''}`}
     >
-      <div className="flex justify-between gap-4">
-        <div className="flex-1">
-          <p className="font-bold text-gray-900 text-base">
-            {titleOf(entry)}
-          </p>
-
-          {entry.kind === 'transfer' ? (
-            <div className="mt-2">
-              <p className="text-sm text-gray-700 font-semibold">
-                {entry.accountName} → {entry.toAccountName}
-              </p>
-              <p className="text-sm text-gray-600 mt-1">{formatCurrency(entry.amount)} 보냄</p>
-              {hasFee && entry.feeCategoryName && (
-                <p className="text-xs text-gray-500 mt-1">{entry.feeCategoryName}</p>
-              )}
-            </div>
-          ) : isTwoSided ? (
-            <p className="mt-2 text-sm text-gray-700 font-semibold">
-              {entry.accountName} → {entry.toAccountName ?? entry.cardName}
-            </p>
-          ) : (
-            <>
-              <p className="mt-2 text-sm text-gray-600 font-semibold">
-                {categoryLabel}
-                {entry.isFixed && (
-                  <span className="ml-2 px-1.5 py-0.5 text-xs bg-gray-200 text-gray-700 rounded">
-                    고정
-                  </span>
-                )}
-              </p>
-              {(entry.cardName || entry.accountName) && (
-                <p className="text-xs text-gray-500 mt-1">{entry.cardName ?? entry.accountName}</p>
-              )}
-            </>
-          )}
-
-          {/*
-            목록은 날짜별로 묶여 있어 날짜는 머리글에 이미 있다. 카드에는 그날
-            안에서 언제 있었던 거래인지 알려 주는 시각만 둔다. 시간을 입력하지
-            않은 거래는 시각 자리가 비고 배지만 남는다.
-          */}
-          {(time || showNotCounted) && (
-            <p className="text-xs text-gray-500 mt-2">
-              {time}
-              {showNotCounted && (
-                <span className={`${time ? 'ml-2 ' : ''}px-1.5 py-0.5 bg-gray-100 text-gray-500 rounded`}>
-                  합계 제외
-                </span>
-              )}
-            </p>
-          )}
-        </div>
-
-        <div className="text-right flex flex-col justify-between">
-          {entry.kind === 'transfer' ? (
-            // 이체에서 실제로 나간 돈은 수수료다. 0이어도 표시해 "수수료 없음"을 드러낸다.
-            <div>
-              <p className="text-xs text-gray-500">수수료</p>
-              <p className={`text-lg font-bold ${amountClass}`}>
-                {hasFee && '-'}
-                {formatCurrency(fee)}
-              </p>
-            </div>
-          ) : (
-            <div>
-              <p className={`text-lg font-bold ${amountClass}`}>
-                {entry.kind === 'income' && '+'}
-                {entry.kind === 'expense' && '-'}
-                {formatCurrency(entry.amount)}
-              </p>
-              {/*
-                외화가 얽힌 거래는 원래 금액을 함께 보여 준다.
-                위 금액은 언제나 기준통화 환산액이라 그것만으로는 카드 명세서와
-                대조할 수 없다. "$50.00 · 환율 1,380" 형태.
-              */}
-              {original && (
-                <p className="text-xs text-gray-500 mt-0.5">
-                  {original}
-                  {/*
-                    청구액이 아직 카드사 확정 전이라는 표시. 이 값이 붙어 있는 동안
-                    위 금액은 서버 추정 환율로 만든 값이고, 카드 화면에서 명세서의
-                    실제 청구액으로 확정할 수 있다.
-                  */}
-                  {entry.rateProvisional && (
-                    <span className="ml-1 text-amber-600">· 잠정</span>
-                  )}
-                </p>
-              )}
-            </div>
-          )}
-        </div>
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="truncate text-[15px] font-medium text-gray-900">{title}</p>
+        <p
+          className={`shrink-0 text-[15px] font-semibold tabular-nums ${
+            AMOUNT_COLOR_BY_KIND[entry.kind]
+          }`}
+        >
+          {SIGN_BY_KIND[entry.kind]}
+          {formatCurrency(entry.amount)}
+        </p>
       </div>
+
+      {/* 2줄에 담을 것이 하나도 없는 거래도 있다. 그때는 빈 줄을 만들지 않는다. */}
+      {(meta || entry.isFixed || showNotCounted || hasFee || original) && (
+      <div className="mt-0.5 flex items-center gap-1.5 text-xs text-gray-500">
+        <span className="min-w-0 truncate">{meta}</span>
+
+        {entry.isFixed && <Badge>고정</Badge>}
+        {/* 이체와 카드사 이체는 수입도 지출도 아니다. 회색 금액과 같은 이야기를 글로 한 번 더 한다. */}
+        {showNotCounted && <Badge>합계 제외</Badge>}
+        {hasFee && (
+          <span className="shrink-0 font-medium tabular-nums text-red-600">
+            수수료 {formatCurrency(fee)}
+          </span>
+        )}
+
+        {/*
+          외화가 얽힌 거래는 원래 금액을 함께 보여 준다. 위 금액은 언제나 기준통화
+          환산액이라 그것만으로는 카드 명세서와 대조할 수 없다. "$50.00 · 환율 1,380".
+        */}
+        {original && (
+          <span className="ml-auto shrink-0 tabular-nums text-gray-400">
+            {original}
+            {/*
+              청구액이 아직 카드사 확정 전이라는 표시. 이 값이 붙어 있는 동안 위 금액은
+              서버 추정 환율로 만든 값이고, 카드 화면에서 명세서의 실제 청구액으로 확정한다.
+            */}
+            {entry.rateProvisional && <span className="ml-1 text-amber-600">· 잠정</span>}
+          </span>
+        )}
+      </div>
+      )}
     </div>
   );
 }
