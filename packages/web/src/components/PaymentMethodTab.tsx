@@ -19,20 +19,25 @@ import {
   CHART_TICK,
   CHART_TOOLTIP_STYLE,
   CHART_Y_AXIS_WIDTH,
+  barDomain,
   formatAxisAmount,
   formatTooltipAmount,
+  lineAxis,
 } from '@/lib/chart';
 import type { EntryFilterQuery } from '@money/types';
 import { useProjectTimeZone } from '@/store/project';
 
-/** 서버가 계산해 주는 결제수단별 지출 (/reports/payment-methods) */
+/** 서버가 계산해 주는 결제수단별 지출과 통장 수입 (/reports/payment-methods) */
 interface PaymentMethodItem {
   kind: 'account' | 'debit_card' | 'credit_card';
   id: string;
   name: string;
   ownerName: string | null;
+  /** 이 수단으로 나간 지출 */
   amount: string;
   count: number;
+  /** 이 통장으로 들어온 수입. 카드는 언제나 "0"이다. */
+  income: string;
 }
 
 interface Props {
@@ -75,12 +80,6 @@ const ACCENT: Record<string, { selected: string; idle: string; text: string }> =
     text: 'text-red-600',
   },
 };
-
-/** 값이 전부 0이면 recharts가 축을 못 그린다. 기본 상한을 준다. */
-function axisMax(values: number[]) {
-  const max = Math.max(0, ...values);
-  return max > 0 ? Math.ceil((max * 1.2) / 100) * 100 : 1000;
-}
 
 export default function PaymentMethodTab({
   period,
@@ -152,6 +151,27 @@ export default function PaymentMethodTab({
     // 시각이 붙은 그날 거래가 빠지므로 위에서 만든 range를 쓴다.
     const { startDate, endDate } = range;
 
+    /*
+     * 통장으로 들어온 수입.
+     *
+     * paymentAccountId는 "이 통장에서 돈이 나간 전표"라 음수 다리만 본다. 수입은
+     * 들어오는 쪽이라 그 조건에 걸리지 않으므로 따로 받아 합친다. 원장 관점의
+     * accountId + 수입 카테고리로 거르면 이 통장에 들어온 수입만 남는다.
+     */
+    const incomeQuery =
+      selected.kind === 'account'
+        ? apiClient.getAllEntries(
+            {
+              accountId: selected.id,
+              categoryType: 'income' as const,
+              startDate,
+              endDate,
+              ...filter,
+            },
+            projectId,
+          )
+        : Promise.resolve([] as EntryListItem[]);
+
     Promise.all([
       apiClient.getTrend(
         target,
@@ -174,8 +194,9 @@ export default function PaymentMethodTab({
         },
         projectId,
       ),
+      incomeQuery,
     ])
-      .then(([trendRes, entriesRes]) => {
+      .then(([trendRes, entriesRes, incomeRes]) => {
         if (cancelled) return;
 
         const trend = (trendRes ?? []) as Array<{ yearMonth: string; amount: string }>;
@@ -187,8 +208,18 @@ export default function PaymentMethodTab({
         );
 
         const rows: EntryListItem[] = (entriesRes ?? []) as EntryListItem[];
-        setEntries(rows);
-        // 이체는 금액이 아니라 수수료만 쌓아야 한다 (buildDailyCumulative가 처리)
+        const incomeRows: EntryListItem[] = (incomeRes ?? []) as EntryListItem[];
+        // 두 조회를 합치면 시간순이 깨진다. 목록은 최근 것이 위로 온다.
+        setEntries(
+          [...rows, ...incomeRows].sort(
+            (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime(),
+          ),
+        );
+        /*
+          그래프는 지출만 쌓는다. 제목이 "사용 금액"이고 12개월 추이도 서버가 지출로
+          집계하므로, 수입을 섞으면 두 그래프가 서로 다른 것을 그린다.
+          buildDailyCumulative는 expenseAmountOf를 쓰므로 수입 건은 저절로 0이다.
+        */
         setDailyData(buildDailyCumulative(rows, dayKeys.startKey, dayKeys.endKey, timeZone));
       })
       .catch((error) => {
@@ -231,9 +262,22 @@ export default function PaymentMethodTab({
                       <span className="text-gray-700 font-medium">{item.name}</span>
                       <span className="text-xs text-gray-500">{item.ownerName ?? '미정'}</span>
                     </div>
-                    <span className={`font-semibold text-sm ${accent.text}`}>
-                      {formatCurrency(item.amount)}
-                    </span>
+                    {/*
+                      통장은 돈이 나가는 곳이면서 들어오는 곳이다. 지출만 보여 주면
+                      월급이 들어온 통장이 0원으로 보인다. 수입이 있을 때만 두 값에
+                      이름을 붙인다. 카드에는 수입이 들어오지 않아 늘 지출 하나뿐이다.
+                    */}
+                    <div className="flex items-baseline gap-2">
+                      <span className={`font-semibold text-sm ${accent.text}`}>
+                        {toNumber(item.income) > 0 ? '지출 ' : ''}
+                        {formatCurrency(item.amount)}
+                      </span>
+                      {toNumber(item.income) > 0 && (
+                        <span className="text-sm font-semibold text-green-600">
+                          수입 {formatCurrency(item.income)}
+                        </span>
+                      )}
+                    </div>
                   </button>
                 ))}
               </div>
@@ -257,7 +301,7 @@ export default function PaymentMethodTab({
                   <CartesianGrid {...CHART_GRID} />
                   <XAxis dataKey="month" tick={CHART_TICK} />
                   <YAxis
-                    domain={[0, axisMax(monthlyData.map((d) => d.amount))]}
+                    domain={barDomain(monthlyData.map((d) => d.amount))}
                     tickFormatter={formatAxisAmount}
                     tick={CHART_TICK}
                     width={CHART_Y_AXIS_WIDTH}
@@ -277,9 +321,9 @@ export default function PaymentMethodTab({
                 <LineChart data={dailyData} margin={CHART_MARGIN}>
                   <CartesianGrid {...CHART_GRID} />
                   <XAxis dataKey="label" tick={CHART_TICK} />
+                  {/* 꺾은선은 값이 움직인 구간만 그린다 (lineAxis 주석 참고) */}
                   <YAxis
-                    domain={[0, axisMax(dailyData.map((d) => d.cumulative))]}
-                    tickFormatter={formatAxisAmount}
+                    {...lineAxis(dailyData.map((d) => d.cumulative))}
                     tick={CHART_TICK}
                     width={CHART_Y_AXIS_WIDTH}
                   />

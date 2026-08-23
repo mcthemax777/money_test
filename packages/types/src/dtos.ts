@@ -637,8 +637,27 @@ export namespace ReportDto {
     name: string;
     ownerId: string | null;
     ownerName: string | null;
+    /** 이 수단으로 나간 지출 */
     amount: string;
     count: number;
+    /**
+     * 이 통장으로 들어온 수입.
+     *
+     * 계좌는 돈이 나가는 곳이기도 하고 들어오는 곳이기도 하다. 카드는 언제나 "0"이다
+     * (카드로는 수입이 들어오지 않는다. 환불 입금은 카드대금 결제로 기록된다).
+     */
+    income: string;
+  }
+
+  /** 투자 계좌 하나의 누적 수익 */
+  export interface InvestmentProfit {
+    accountId: string;
+    /**
+     * 그 계좌에 수입·지출로 기록한 금액의 합. 손실이면 음수다.
+     *
+     * 계좌 통화다. 화면이 잔액을 계좌 통화로 보여 주므로 같은 단위여야 나란히 읽힌다.
+     */
+    profit: string;
   }
 }
 

@@ -559,10 +559,13 @@ export class ReportsService {
   }
 
   /**
-   * 결제수단별 지출.
+   * 결제수단별 지출과, 통장으로 들어온 수입.
    *
    * 결제수단 판별은 전표 종류에 달려 있어(이체는 제외해야 한다) SQL로 표현하기 번거롭다.
    * 한 달치 전표만 읽어 entry-view의 판별 규칙을 재사용한다. 목록 화면과 같은 규칙이 보장된다.
+   *
+   * 통장은 결제수단이면서 수입이 들어오는 곳이다. 지출만 세면 월급이 들어온 통장이
+   * 0원으로 보인다. 수입은 amount와 섞지 않고 income에 따로 담는다.
    */
   async getPaymentMethods(
     userId: string,
@@ -616,6 +619,7 @@ export class ReportsService {
         ownerName: account.owner?.name ?? null,
         amount: '0',
         count: 0,
+        income: '0',
       });
     }
 
@@ -631,6 +635,7 @@ export class ReportsService {
         ownerName: owner?.name ?? null,
         amount: '0',
         count: 0,
+        income: '0',
       });
     }
 
@@ -663,9 +668,34 @@ export class ReportsService {
               ownerName: account.owner?.name ?? null,
               amount: fee.toString(),
               count: 1,
+              income: '0',
             });
           }
         }
+        continue;
+      }
+
+      /*
+       * 통장으로 들어온 수입.
+       *
+       * 수입은 받는 계좌 다리에 붙는다(entry-view가 accountId를 그 계좌로 준다).
+       * 카드는 여기에 걸리지 않는다. 카드로는 수입이 들어오지 않고, 환불 입금은
+       * card_payment로 기록된다.
+       */
+      if (item.kind === 'income') {
+        if (!item.accountId) continue;
+        const account = accountById.get(item.accountId);
+        if (!account || !isVisibleOwner(account.ownerId)) continue;
+        this.addTo(buckets, {
+          kind: 'account',
+          id: account.id,
+          name: account.name,
+          ownerId: account.owner?.id ?? null,
+          ownerName: account.owner?.name ?? null,
+          amount: '0',
+          count: 0,
+          income: item.amount,
+        });
         continue;
       }
 
@@ -684,6 +714,7 @@ export class ReportsService {
           ownerName: owner?.name ?? null,
           amount: item.amount,
           count: 1,
+          income: '0',
         });
       } else if (item.accountId) {
         const account = accountById.get(item.accountId);
@@ -696,6 +727,7 @@ export class ReportsService {
           ownerName: account.owner?.name ?? null,
           amount: item.amount,
           count: 1,
+          income: '0',
         });
       }
     }
@@ -715,6 +747,7 @@ export class ReportsService {
     }
     existing.amount = new Prisma.Decimal(existing.amount).add(item.amount).toString();
     existing.count += item.count;
+    existing.income = new Prisma.Decimal(existing.income).add(item.income).toString();
   }
 
   /**
