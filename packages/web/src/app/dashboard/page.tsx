@@ -573,6 +573,15 @@ export default function TransactionsPage() {
   const mustBill = needsBilled && !isCreditCardSelected;
 
   /**
+   * 할부를 받을 수 있는지.
+   *
+   * 신용카드 지출만 된다. 체크카드는 결제 즉시 통장에서 빠져 나눌 청구가 없고,
+   * 통장 결제도 마찬가지다. 서버도 같은 규칙으로 막는다(LedgerService.assertCanInstall).
+   */
+  const canInstall =
+    formData.type === 'expense' && formData.method === 'card' && isCreditCardSelected;
+
+  /**
    * 저장하면 얼마로 기록되는지. 저장 전에 눈으로 확인하게 한다.
    *
    * 청구액을 넣었으면 그 금액이 그대로 기록된다. 환율을 곱하지 않는다.
@@ -642,6 +651,15 @@ export default function TransactionsPage() {
       };
     };
 
+    /*
+     * 할부를 못 받는 결제수단으로 바꾸면 개월수를 지운다.
+     *
+     * 칸이 사라져도 값이 남아 있으면 화면에 보이지 않는 할부가 그대로 저장된다.
+     * 신용카드에서 신용카드로 옮길 때는 유지한다. 같은 조건이라 다시 고를 이유가 없다.
+     */
+    const keepsInstallment =
+      kind === 'card' && cards.find((c) => c.id === id)?.cardType === 'credit';
+
     if (kind === 'card') {
       setFormData((prev) => ({
         ...prev,
@@ -650,6 +668,7 @@ export default function TransactionsPage() {
         accountId: '',
         type: 'expense',
         ...currencyFields(prev),
+        installmentMonths: keepsInstallment ? prev.installmentMonths : '',
         mainCategoryId: prev.type === 'expense' ? prev.mainCategoryId : '',
         subCategoryId: prev.type === 'expense' ? prev.subCategoryId : '',
       }));
@@ -661,6 +680,7 @@ export default function TransactionsPage() {
       method: 'account',
       accountId: id,
       cardId: '',
+      installmentMonths: '',
       ...currencyFields(prev),
     }));
   };
@@ -777,8 +797,9 @@ export default function TransactionsPage() {
         // posting은 가장 구체적인 카테고리 하나만 가리킨다
         payload.categoryId = formData.subCategoryId || formData.mainCategoryId;
         // 할부는 신용카드 지출에만 붙는다. 2개월 미만이면 일시불이라 보내지 않는다.
+        // canInstall이 카드 종류까지 본다. 체크카드로 바꾼 뒤 남은 값이 새지 않게 막는다.
         const months = Number(formData.installmentMonths);
-        if (kind === 'expense' && useCard && months >= 2) payload.installmentMonths = months;
+        if (canInstall && months >= 2) payload.installmentMonths = months;
       }
 
       if (editingId) {
@@ -1803,29 +1824,6 @@ export default function TransactionsPage() {
                 />
                   </div>
 
-                  {/*
-                    할부. 신용카드 지출에만 뜬다.
-                    원금과 지출은 구매 시점에 전액 잡히고, 카드 화면의 주기별 사용액만 나뉜다.
-                  */}
-                  {formData.type === 'expense' && formData.method === 'card' && (
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        할부 (선택)
-                      </label>
-                      <CustomSelect
-                        options={INSTALLMENT_OPTIONS}
-                        value={formData.installmentMonths}
-                        onChange={(value) =>
-                          setFormData({ ...formData, installmentMonths: value })
-                        }
-                        placeholder="일시불"
-                      />
-                      <p className="mt-1 text-xs text-gray-500">
-                        지출과 카드 부채는 오늘 전액 잡힙니다. 청구만 나뉩니다.
-                      </p>
-                    </div>
-                  )}
-
                   {/* 고정 여부는 이 분류에 저장된다. 다음에 같은 분류를 고르면 자동으로 켜진다. */}
                   <div className="flex items-center gap-3">
                     <input
@@ -2027,6 +2025,30 @@ export default function TransactionsPage() {
                   placeholder="추가 설명 (선택사항)"
                 />
               </div>
+
+              {/*
+                할부. 자주 쓰는 값이 아니라 폼 맨 아래에 둔다.
+
+                신용카드 지출에만 뜬다. 체크카드는 결제 즉시 통장에서 빠지고 통장에는
+                갚을 빚이 없어 나눌 청구가 없다 (서버도 같은 규칙으로 막는다).
+                원금과 지출은 구매 시점에 전액 잡히고, 카드 화면의 주기별 사용액만 나뉜다.
+              */}
+              {canInstall && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    할부 (선택)
+                  </label>
+                  <CustomSelect
+                    options={INSTALLMENT_OPTIONS}
+                    value={formData.installmentMonths}
+                    onChange={(value) => setFormData({ ...formData, installmentMonths: value })}
+                    placeholder="일시불"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">
+                    지출과 카드 부채는 오늘 전액 잡힙니다. 청구만 나뉩니다.
+                  </p>
+                </div>
+              )}
 
               {error && (
                 <div className="p-3 bg-red-50 text-red-800 text-sm rounded">

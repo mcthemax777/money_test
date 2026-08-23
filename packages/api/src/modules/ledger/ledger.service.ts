@@ -545,6 +545,21 @@ export class LedgerService {
   }
 
   /**
+   * 할부를 붙일 수 있는 결제수단인지.
+   *
+   * 신용카드만 된다. 나눌 수 있는 것은 카드사에 갚을 빚이고, 체크카드와 통장은
+   * 결제하는 자리에서 돈이 빠져 나눌 청구가 없다.
+   *
+   * saveInstallmentPlan은 "카드 다리가 있는가"만 보는데, 체크카드 지출도 연결 통장
+   * 다리에 cardId가 붙어 그 검사를 통과한다. 카드 종류를 아는 곳은 여기뿐이다.
+   */
+  private assertCanInstall(months: number | undefined, isCreditCard: boolean) {
+    if (!months || months < 2 || isCreditCard) return;
+
+    throw new BadRequestException('할부는 신용카드 지출에만 설정할 수 있습니다.');
+  }
+
+  /**
    * 줄마다의 기준통화 환산액.
    *
    * 청구액을 알면 그것이 사실이므로 환율을 곱하지 않고 줄 비율대로 나눈다.
@@ -635,6 +650,7 @@ export class LedgerService {
     // 청구액을 받았으면 추정이 아니다. 확정된 금액 그대로 들어간다.
     const provisional = foreign.originalCurrency !== undefined && estimatedRate && !billed;
     this.assertCanEstimate(provisional, source.isCreditCard, base);
+    this.assertCanInstall(input.installmentMonths, source.isCreditCard);
 
     return {
       ...input,
