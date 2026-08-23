@@ -13,6 +13,7 @@ import {
   ledgerMaxEntryDateKey,
   zonedFormValueToUtc,
   type CardTransferDirection,
+  type ReportDto,
 } from '@money/types';
 import ChoiceModal from '@/components/ChoiceModal';
 import { useDragReorder } from '@/hooks/useDragReorder';
@@ -24,6 +25,17 @@ const PERSON_ENTRY_LIMIT = 30;
 
 const PAYMENT_FORM_ID = 'card-payment-form';
 const CARD_ADD_FORM_ID = 'card-add-form';
+
+/**
+ * 오른쪽 패널이 지금 보고 있는 항목 표시.
+ *
+ * 구성원·계좌·카드 세 목록이 같은 모양을 쓴다. 예전에는 계좌만 표시가 있어서,
+ * 사용자나 카드를 누르면 오른쪽만 바뀌고 목록에서는 무엇을 눌렀는지 알 수 없었다.
+ *
+ * 테두리 두께를 바꾸는 대신 ring을 쓴다. border를 굵히면 그 줄만 1px 커져서
+ * 누를 때마다 목록이 미세하게 움직인다.
+ */
+const SELECTED_MARK = 'ring-2 ring-blue-500';
 
 /** 카드사와 통장 사이 자금이 오가는 방향 */
 const TRANSFER_DIRECTIONS = [
@@ -46,6 +58,34 @@ import type { EntryListItem } from '@/components/TransactionItem';
 import { useInstitutions } from '@/hooks/useInstitutions';
 
 
+
+/** 총자산을 이루는 세 값 */
+type NetWorthParts = { cash: string; investment: string; liability: string };
+
+/**
+ * "현금성 · 투자 · 부채" 한 줄.
+ *
+ * 전체 총자산 상자와 구성원 패널이 같은 형식을 쓴다.
+ *
+ * 부채도 투자도 없으면 총자산이 곧 현금성이라 쪼갤 것이 없어 아무것도 그리지 않는다.
+ */
+function NetWorthBreakdown({
+  parts,
+  className,
+}: {
+  parts: NetWorthParts | undefined;
+  className: string;
+}) {
+  if (!parts) return null;
+  if (toNumber(parts.liability) === 0 && toNumber(parts.investment) === 0) return null;
+
+  return (
+    <p className={className}>
+      현금성 {formatCurrency(parts.cash)} · 투자 {formatCurrency(parts.investment)} · 부채{' '}
+      {formatCurrency(parts.liability)}
+    </p>
+  );
+}
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -136,7 +176,7 @@ export default function DashboardPage() {
   /** 원장의 다음 페이지 커서. null이면 끝까지 봤다는 뜻이다. */
   const [ledgerCursor, setLedgerCursor] = useState<string | null>(null);
   const [isLoadingLedger, setIsLoadingLedger] = useState(false);
-  const [netWorth, setNetWorth] = useState<any | null>(null);
+  const [netWorth, setNetWorth] = useState<ReportDto.NetWorth | null>(null);
   /** 항목을 숨기거나 되돌리면 올린다. 숨긴 항목 패널이 이 값을 보고 다시 읽는다. */
   const [hiddenVersion, setHiddenVersion] = useState(0);
 
@@ -553,9 +593,20 @@ export default function DashboardPage() {
   // 총자산과 사람별 소계는 서버가 계산한다 (/reports/net-worth).
   // 투자성 계좌는 최신 시가로 환산되고, 카드 부채가 차감되며, 자본 계정은 제외된다.
   // 계좌 잔액만 더하던 예전 계산으로는 이 셋 중 아무것도 반영되지 않았다.
+  /** 오른쪽 패널이 지금 보고 있는 항목의 id */
+  const selectedIdOfDetail =
+    detailType === 'person'
+      ? selectedPerson?.id
+      : detailType === 'account'
+        ? selectedAccount?.id
+        : detailType === 'card'
+          ? selectedCard?.id
+          : undefined;
+
   const totalBalance = toNumber(netWorth?.total);
-  const netWorthByPerson = new Map<string, { total: string }>(
-    (netWorth?.byPerson ?? []).map((row: any) => [row.personId as string, row]),
+  type PersonNetWorth = ReportDto.NetWorth['byPerson'][number];
+  const netWorthByPerson = new Map<string, PersonNetWorth>(
+    (netWorth?.byPerson ?? []).map((row) => [row.personId, row]),
   );
 
   // 계좌가 없는 구성원도 표시한다
@@ -600,12 +651,7 @@ export default function DashboardPage() {
         <p className="text-4xl font-bold mt-2">
           {formatCurrency(totalBalance)}
         </p>
-        {netWorth && toNumber(netWorth.liability) !== 0 && (
-          <p className="text-sm opacity-90 mt-2">
-            현금성 {formatCurrency(netWorth.cash)} · 투자 {formatCurrency(netWorth.investment)} ·
-            부채 {formatCurrency(netWorth.liability)}
-          </p>
-        )}
+        <NetWorthBreakdown parts={netWorth ?? undefined} className="text-sm opacity-90 mt-2" />
       </div>
 
       <AssetHistoryChart projectId={selectedProjectId} />
@@ -633,7 +679,13 @@ export default function DashboardPage() {
             accounts={accounts}
             cardsOf={getAccountCards}
             netWorthByPerson={netWorthByPerson}
-            selectedAccountId={detailType === 'account' ? selectedAccount?.id ?? null : null}
+            /*
+              지금 펼쳐 둔 항목. detailType과 함께 넘겨야 한다. 고른 계좌·카드·구성원은
+              닫아도 state에 남으므로 id만 보면 오른쪽에 없는 항목까지 강조된다.
+            */
+            selected={
+              detailType && selectedIdOfDetail ? { type: detailType, id: selectedIdOfDetail } : null
+            }
             onPersonClick={(person) => {
               setSelectedPerson(person);
               setDetailType('person');
@@ -761,6 +813,11 @@ export default function DashboardPage() {
                   <p className="text-xl font-bold text-blue-600 mt-1">
                     {formatCurrency(netWorthByPerson.get(selectedPerson.id)?.total ?? 0)}
                   </p>
+                  {/* 전체 총자산 상자와 같은 형식으로 무엇이 얼마인지 쪼개 보여 준다 */}
+                  <NetWorthBreakdown
+                    parts={netWorthByPerson.get(selectedPerson.id)}
+                    className="text-sm text-gray-600 mt-1"
+                  />
                 </div>
                 <div className="flex gap-2">
                   <button
@@ -1591,12 +1648,15 @@ export default function DashboardPage() {
  * 계좌 목록은 구성원마다 별도 컴포넌트로 두어야 한다. 훅은 목록 하나를 다루므로
  * 한 컴포넌트에서 여러 묶음을 처리할 수 없다.
  */
+/** 오른쪽 패널이 보고 있는 항목. 세 목록이 이것을 보고 저마다 한 줄을 강조한다. */
+type SelectedItem = { type: 'person' | 'account' | 'card'; id: string } | null;
+
 function PersonAssetList({
   people,
   accounts,
   cardsOf,
   netWorthByPerson,
-  selectedAccountId,
+  selected,
   onPersonClick,
   onAccountClick,
   onCardClick,
@@ -1608,8 +1668,7 @@ function PersonAssetList({
   accounts: Account[];
   cardsOf: (accountId: string) => Card[];
   netWorthByPerson: Map<string, { total: string }>;
-  /** 오른쪽 패널이 보고 있는 계좌. 목록에서 강조한다. */
-  selectedAccountId: string | null;
+  selected: SelectedItem;
   onPersonClick: (person: Person) => void;
   onAccountClick: (account: Account) => void;
   onCardClick: (card: Card) => void;
@@ -1626,8 +1685,8 @@ function PersonAssetList({
           key={person.id}
           {...dragProps(person.id)}
           className={`bg-white rounded-lg shadow p-6 hover:shadow-md transition ${
-            draggingId === person.id ? 'opacity-50' : ''
-          }`}
+            selected?.type === 'person' && selected.id === person.id ? SELECTED_MARK : ''
+          } ${draggingId === person.id ? 'opacity-50' : ''}`}
         >
           <button onClick={() => onPersonClick(person)} className="w-full text-left mb-6">
             <div className="flex justify-between items-center">
@@ -1645,7 +1704,7 @@ function PersonAssetList({
           <AccountList
             accounts={accounts.filter((account) => account.ownerId === person.id)}
             cardsOf={cardsOf}
-            selectedAccountId={selectedAccountId}
+            selected={selected}
             onAccountClick={onAccountClick}
             onCardClick={onCardClick}
             onReorder={onReorderAccounts}
@@ -1661,7 +1720,7 @@ function PersonAssetList({
 function AccountList({
   accounts,
   cardsOf,
-  selectedAccountId,
+  selected,
   onAccountClick,
   onCardClick,
   onReorder,
@@ -1669,7 +1728,7 @@ function AccountList({
 }: {
   accounts: Account[];
   cardsOf: (accountId: string) => Card[];
-  selectedAccountId: string | null;
+  selected: SelectedItem;
   onAccountClick: (account: Account) => void;
   onCardClick: (card: Card) => void;
   onReorder: (ids: string[]) => void;
@@ -1688,10 +1747,10 @@ function AccountList({
           key={account.id}
           {...dragProps(account.id)}
           /* 오른쪽 패널에 펼쳐 둔 계좌를 목록에서도 알 수 있게 표시한다 */
-          className={`rounded-lg p-4 hover:shadow-md transition ${
-            account.id === selectedAccountId
-              ? 'border-2 border-blue-500 bg-blue-50'
-              : 'border border-gray-200'
+          className={`rounded-lg border border-gray-200 p-4 hover:shadow-md transition ${
+            selected?.type === 'account' && selected.id === account.id
+              ? `${SELECTED_MARK} bg-blue-50`
+              : ''
           } ${draggingId === account.id ? 'opacity-50' : ''}`}
         >
           <button
@@ -1715,6 +1774,7 @@ function AccountList({
 
           <CardList
             cards={cardsOf(account.id)}
+            selected={selected}
             onCardClick={onCardClick}
             onReorder={onReorderCards}
           />
@@ -1727,10 +1787,12 @@ function AccountList({
 /** 한 계좌에 연결된 카드 목록 */
 function CardList({
   cards,
+  selected,
   onCardClick,
   onReorder,
 }: {
   cards: Card[];
+  selected: SelectedItem;
   onCardClick: (card: Card) => void;
   onReorder: (ids: string[]) => void;
 }) {
@@ -1743,9 +1805,11 @@ function CardList({
         <div
           key={card.id}
           {...dragProps(card.id)}
-          className={`px-3 py-2 bg-green-50 rounded border border-green-100 hover:bg-green-100 transition ${
-            draggingId === card.id ? 'opacity-50' : ''
-          }`}
+          className={`px-3 py-2 rounded border transition ${
+            selected?.type === 'card' && selected.id === card.id
+              ? `${SELECTED_MARK} border-blue-200 bg-blue-50`
+              : 'border-green-100 bg-green-50 hover:bg-green-100'
+          } ${draggingId === card.id ? 'opacity-50' : ''}`}
         >
           <button
             onClick={(e) => {

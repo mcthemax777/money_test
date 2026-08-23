@@ -721,8 +721,8 @@ class ApiClient {
     return response.data;
   }
 
-  async getNetWorth(projectId?: string | null) {
-    const response = await this.client.get<any>('/reports/net-worth', {
+  async getNetWorth(projectId?: string | null): Promise<ReportDto.NetWorth> {
+    const response = await this.client.get<ReportDto.NetWorth>('/reports/net-worth', {
       params: projectId ? { projectId } : {},
     });
     return response.data;
