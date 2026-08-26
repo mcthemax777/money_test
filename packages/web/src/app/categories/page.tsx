@@ -362,7 +362,7 @@ export default function CategoriesPage() {
             <>
               {selectedCategory.defaultIsFixed && (
                 <div className="px-3 py-2 bg-blue-50 text-blue-800 text-sm rounded-lg">
-                  ✓ 기본 고정 지출/수입
+                  ✓ 기본 필수 지출/수입
                 </div>
               )}
               {categories.filter((c) => c.parentId === selectedCategory.id).length > 0 && (
@@ -378,7 +378,7 @@ export default function CategoriesPage() {
                           <span>{subCat.name}</span>
                           <span className="text-xs text-gray-500">
                             {subCat.isDefault && '(기본)'}
-                            {subCat.defaultIsFixed && ' 고정'}
+                            {subCat.defaultIsFixed && ' 필수'}
                           </span>
                         </div>
                       ))}
@@ -502,7 +502,7 @@ function SubCategoryList({
           </span>
           <span className="text-xs text-gray-500">
             {subCat.isDefault && '(기본)'}
-            {subCat.defaultIsFixed && ' 고정'}
+            {subCat.defaultIsFixed && ' 필수'}
           </span>
         </div>
       ))}

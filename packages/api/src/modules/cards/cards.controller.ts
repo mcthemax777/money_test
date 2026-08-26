@@ -71,6 +71,14 @@ export class CardsController {
     return this.cardLedger.getUsage(id, req.user.id, months ? Number(months) : undefined);
   }
 
+  @Get(':id/performance')
+  @ApiOperation({
+    summary: '실적 진행 상황 (신용카드는 마감일 기준 주기, 체크카드는 달력 월)',
+  })
+  performance(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.cardLedger.getPerformance(id, req.user.id);
+  }
+
   @Get(':id/pending-rates')
   @ApiOperation({ summary: '청구액이 확정되지 않은 외화 결제 목록' })
   pendingRates(@Request() req: AuthenticatedRequest, @Param('id') id: string) {

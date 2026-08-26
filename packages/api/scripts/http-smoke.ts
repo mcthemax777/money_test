@@ -129,6 +129,110 @@ runSmoke('http', async (ctx) => {
   ctx.check('잔액 조정',
     (await call('GET', `/accounts/${account.body.id}`)).body?.balance, '900000');
 
+  // 11) 예산: 규칙 -> 이 달만 조정 -> 전체 초기화
+  //
+  // 라우트 순서가 중요하다. DELETE /budgets(전체)와 DELETE /budgets/:id(하나)가
+  // 같은 컨트롤러에 있어서, 순서가 어긋나면 전체 삭제가 id 없는 개별 삭제로 잡힌다.
+  const budget = await call('POST', `/budgets${q}`, {
+    categoryId: cat.body.id,
+    type: 'expense',
+    monthlyAmount: '300000',
+  });
+  ctx.check('예산 생성', budget.status, 201);
+
+  const monthly = await call('GET', `/budgets/2026/8${q}`);
+  const budgetRow = monthly.body?.find((r: any) => r.categoryId === cat.body.id);
+  ctx.check('월별 예산 금액', budgetRow?.monthlyAmount, '300000');
+  ctx.check('조정 전에는 조정 id가 없다', budgetRow?.overrideId ?? null, null);
+
+  const override = await call('POST', '/budgets/override', {
+    budgetId: budget.body.id,
+    year: 2026,
+    month: 8,
+    amount: '500000',
+  });
+  ctx.check('이 달만 조정', override.status, 201);
+
+  const overridden = await call('GET', `/budgets/2026/8${q}`);
+  const overriddenRow = overridden.body?.find((r: any) => r.categoryId === cat.body.id);
+  ctx.check('조정된 금액이 내려온다', overriddenRow?.monthlyAmount, '500000');
+  ctx.check('조정 id도 함께 내려온다', overriddenRow?.overrideId, override.body.id);
+
+  const nextMonth = await call('GET', `/budgets/2026/9${q}`);
+  ctx.check('9월은 규칙 금액 그대로',
+    nextMonth.body?.find((r: any) => r.categoryId === cat.body.id)?.monthlyAmount, '300000');
+
+  const split = await call('PATCH', `/budgets/${budget.body.id}`, {
+    monthlyAmount: '400000',
+    applyMode: 'from',
+    applyFromMonth: '2026-09',
+  });
+  ctx.check('9월부터 새 규칙', split.status, 200);
+  ctx.check('9월 금액이 바뀐다',
+    (await call('GET', `/budgets/2026/9${q}`)).body
+      ?.find((r: any) => r.categoryId === cat.body.id)?.monthlyAmount, '400000');
+  ctx.check('8월은 조정값 그대로',
+    (await call('GET', `/budgets/2026/8${q}`)).body
+      ?.find((r: any) => r.categoryId === cat.body.id)?.monthlyAmount, '500000');
+
+  // 월별 목록. 'schedule'이 :year/:month 나 :id 로 잡히면 안 된다.
+  const schedule = await call('GET', `/budgets/schedule${q}&categoryId=${cat.body.id}&startMonth=2026-08&months=3`);
+  ctx.check('월별 예산 목록', schedule.status, 200);
+  ctx.check('요청한 개수만큼', schedule.body?.length, 3);
+  ctx.check('첫 달', schedule.body?.[0]?.yearMonth, '2026-08');
+  ctx.check('8월은 조정된 금액', schedule.body?.[0]?.amount, '500000');
+  ctx.check('8월 조정 id', schedule.body?.[0]?.overrideId, override.body.id);
+  ctx.check('8월 규칙 금액은 그대로', schedule.body?.[0]?.ruleAmount, '300000');
+  ctx.check('9월은 새 규칙', schedule.body?.[1]?.amount, '400000');
+  ctx.check('9월은 조정 없음', schedule.body?.[1]?.overrideId ?? null, null);
+  ctx.check('9월 규칙은 9월부터', schedule.body?.[1]?.effectiveFrom, '2026-09');
+
+  const reset = await call('DELETE', `/budgets${q}`);
+  ctx.check('예산 전체 삭제', reset.status, 200);
+  ctx.check('지운 규칙 수 (원래 규칙 + 나눠 만든 규칙)', reset.body?.deleted, 2);
+  ctx.check('삭제 뒤 규칙 목록은 비어 있다', (await call('GET', `/budgets${q}`)).body?.length, 0);
+  ctx.check('삭제 뒤 월별 금액은 0',
+    (await call('GET', `/budgets/2026/8${q}`)).body
+      ?.find((r: any) => r.categoryId === cat.body.id)?.monthlyAmount, '0');
+
+  // 12) 카드 실적. ':id/performance'가 ':id'보다 먼저 잡혀야 한다.
+  const creditPerf = await call('GET', `/cards/${credit.body.id}/performance`);
+  ctx.check('신용카드 실적 조회', creditPerf.status, 200);
+  ctx.check('신용카드는 마감일 기준', creditPerf.body?.basis, 'statement');
+  ctx.check('기준액을 안 넣었으면 null', creditPerf.body?.target ?? null, null);
+
+  await call('PATCH', `/cards/${credit.body.id}`, { performanceAmount: '10000' });
+  const withTarget = await call('GET', `/cards/${credit.body.id}/performance`);
+  ctx.check('기준액이 반영된다', withTarget.body?.target, '10000');
+
+  /*
+   * 사용액 자체는 확인하지 않는다.
+   *
+   * 실적은 "지금 진행 중인 주기"만 본다. 이 스크립트의 거래는 고정 날짜(8/3)라
+   * 언제 돌리느냐에 따라 그 주기 안팎을 오간다. 날짜와 무관하게 성립하는 관계만 본다.
+   * 구간별 금액은 card-performance-smoke가 오늘 기준으로 날짜를 만들어 확인한다.
+   */
+  const perfUsage = Number(withTarget.body?.usage);
+  ctx.check('남은 금액 = 기준액 - 사용액', withTarget.body?.remaining,
+    perfUsage >= 10000 ? '0' : String(10000 - perfUsage));
+  ctx.check('달성 여부도 같은 기준', withTarget.body?.achieved, perfUsage >= 10000);
+
+  // 체크카드는 청구 주기가 없어 다른 경로로 계산한다. 그 경로도 열려 있는지 본다.
+  const debit = await call('POST', `/cards${q}`, {
+    paymentAccountId: account.body.id,
+    name: '신한 체크',
+    cardType: 'debit',
+    issuerId: 'fi_card_shinhan',
+    performanceAmount: '50000',
+  });
+  ctx.check('체크카드 생성', debit.status, 201);
+  const debitPerf = await call('GET', `/cards/${debit.body.id}/performance`);
+  ctx.check('체크카드 실적 조회', debitPerf.status, 200);
+  ctx.check('체크카드는 달력 월 기준', debitPerf.body?.basis, 'month');
+  ctx.check('체크카드 기준액', debitPerf.body?.target, '50000');
+  ctx.check('구간 시작은 그 달 1일',
+    new Date(debitPerf.body?.periodStart).getUTCDate(), 1);
+
   const drift = await ctx.prisma.$queryRaw<{ id: string }[]>`
     SELECT a.id FROM "Account" a LEFT JOIN "Posting" p ON p."accountId" = a.id
     WHERE a."projectId" = ${project.id}

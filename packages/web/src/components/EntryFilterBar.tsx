@@ -6,7 +6,7 @@ import type { Person } from '@/lib/types';
 export type FixedType = 'fixed' | 'variable';
 
 const FIXED_OPTIONS: Array<{ value: FixedType; label: string }> = [
-  { value: 'fixed', label: '고정' },
+  { value: 'fixed', label: '필수' },
   { value: 'variable', label: '변동' },
 ];
 
@@ -68,7 +68,7 @@ export default function EntryFilterBar({
 
       <div className="flex items-center gap-3">
         <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">
-          고정 수입지출
+          필수 수입지출
         </span>
         {FIXED_OPTIONS.map((option) => (
           <label key={option.value} className="flex items-center gap-1.5 cursor-pointer">

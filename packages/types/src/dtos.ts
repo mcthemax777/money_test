@@ -151,6 +151,8 @@ export namespace CardDto {
     issuerId: string;
     expiryDate?: IsoDateString;
     creditLimit?: string; // 신용카드만. 금액은 문자열
+    /** 실적 기준액. 체크카드도 쓴다 (달력 월로 센다). 빈 값이면 조건 없음. */
+    performanceAmount?: string;
     statementClosingDay?: number; // 신용카드 필수. 1~31
     paymentDueDay?: number;       // 신용카드 필수. 1~31
     projectId?: string;
@@ -168,6 +170,8 @@ export namespace CardDto {
     cardNumber?: string;
     expiryDate?: IsoDateString | null;
     creditLimit?: string;
+    /** 실적 기준액. 빈 문자열을 보내면 조건을 지운다. */
+    performanceAmount?: string;
     statementClosingDay?: number;
     paymentDueDay?: number;
     isActive?: boolean;
@@ -265,6 +269,32 @@ export namespace CardDto {
   export interface SettleRatesResponse {
     /** 확정한 건수 */
     settled: number;
+  }
+
+  /**
+   * 실적 진행 상황.
+   *
+   * 실적을 세는 구간이 카드 종류마다 다르다. 신용카드는 마감일 기준 청구 주기이고
+   * (카드사가 그 주기의 사용액으로 다음 달 혜택을 정한다), 체크카드는 청구 주기가
+   * 없으므로 달력 월이다.
+   */
+  export interface PerformanceResponse {
+    cardId: string;
+    /** 사용액·기준액의 통화 (= 결제 통장의 통화). 기준통화 환산액이 아니다. */
+    currency: string;
+    /** 'statement' = 마감일 기준 청구 주기, 'month' = 달력 월 */
+    basis: 'statement' | 'month';
+    /** 지금 세고 있는 구간. 양끝을 포함하는 달력 날짜다. */
+    periodStart: IsoDateString;
+    periodEnd: IsoDateString;
+    /** 이 구간에 쓴 금액 */
+    usage: string;
+    /** 실적 기준액. 카드에 설정하지 않았으면 null이고 아래 두 값도 뜻이 없다. */
+    target: string | null;
+    /** 기준을 채웠는지. target이 없으면 false */
+    achieved: boolean;
+    /** 기준까지 남은 금액. 이미 채웠으면 '0'. target이 없으면 null */
+    remaining: string | null;
   }
 
   export interface UsageResponse {
@@ -614,17 +644,27 @@ export namespace ReportDto {
     /** 한 구성원이 가진 계좌들의 합계. accountId 와 함께 쓰지 않는다. */
     ownerId?: string;
     /** 기본 month */
-    granularity?: 'month' | 'day';
-    /** granularity=month의 마지막 달 "YYYY-MM". 생략하면 이번 달 */
+    granularity?: 'year' | 'month' | 'day';
+    /**
+     * 창의 마지막 달 "YYYY-MM". 생략하면 이번 달.
+     * granularity=year면 이 값의 연도가 마지막 해가 된다.
+     */
     endMonth?: string;
-    /** granularity=day의 대상 달 "YYYY-MM". 생략하면 이번 달 */
+    /**
+     * granularity=day에서 그 달 1일~말일을 그린다 ("YYYY-MM").
+     * 월별 그래프에서 한 달을 눌러 들어올 때 쓴다. 생략하면 오늘까지 최근 days일.
+     */
     yearMonth?: string;
-    /** granularity=month일 때만 쓴다. 기본 12 */
+    /** granularity=month일 때만 쓴다. 기본 12, 최대 60 */
     months?: number;
+    /** granularity=year일 때만 쓴다. 기본 5, 최대 30 */
+    years?: number;
+    /** granularity=day이고 yearMonth가 없을 때. 오늘을 포함해 뒤로 며칠. 기본 30, 최대 366 */
+    days?: number;
   }
 
   export interface BalanceHistoryPoint {
-    /** granularity=month면 "YYYY-MM", day면 "YYYY-MM-DD" */
+    /** granularity=year면 "YYYY", month면 "YYYY-MM", day면 "YYYY-MM-DD" */
     date: string;
     /** 그 시점까지의 누적 잔액 */
     balance: string;
@@ -713,12 +753,58 @@ export namespace BudgetDto {
     categoryName?: string;
     categoryType?: 'income' | 'expense';  // 카테고리 타입
     parentCategoryId?: string;  // 대분류 ID (소분류인 경우)
-    /** 금액은 문자열 */
+    /** 이 달에 실제로 적용되는 금액. 조정이 있으면 조정값이다. 문자열. */
     monthlyAmount: string;
+    /**
+     * 조정을 걷어냈을 때 돌아갈 규칙 금액.
+     *
+     * 조정이 없으면 monthlyAmount와 같다. 예산 팝업의 "여러 달 한꺼번에 바꾸기"는
+     * 이 값을 채워야 한다. 조정값을 채우면 이 달 화면에서 본 금액을 저장했을 뿐인데
+     * 다른 달까지 그 금액이 되어 버린다.
+     */
+    ruleAmount?: string;
     usedAmount?: string;  // 이달 사용금액 (대분류는 소분류 합을 포함한다)
     isOverridden: boolean;  // 직접 오버라이드했는지
+    /** 이 달만 조정한 값의 id. 해제하려면 이 값이 필요하다. 조정이 없으면 없다. */
+    overrideId?: string;
+    /** 이 규칙이 적용되는 첫 달 "YYYY-MM". 없으면 처음부터다. */
+    effectiveFrom?: string;
+    /** 이 규칙이 적용되는 마지막 달 "YYYY-MM". 없으면 끝이 없다. */
+    effectiveTo?: string;
     hasChildren: boolean;  // 자식 예산이 있는지
     isVirtualBudget?: boolean;  // 소분류 합으로 만든 가상 예산인지
+  }
+
+  /** 월별 예산 목록 조회. 한 분류(또는 전체 예산)가 달마다 얼마인지 본다. */
+  export interface ScheduleQuery {
+    projectId?: string;
+    /**
+     * 분류 예산이면 그 분류 id. 전체 예산은 'BUDGET_TOTAL_INCOME' /
+     * 'BUDGET_TOTAL_EXPENSE' 센티널을 쓴다 (CreateRequest와 같은 규칙).
+     */
+    categoryId?: string;
+    type?: 'income' | 'expense';
+    /** 첫 달 "YYYY-MM". 생략하면 이번 달 */
+    startMonth?: string;
+    /** 기본 12, 최대 60 */
+    months?: number;
+  }
+
+  /** 한 달의 예산. 그 달에 적용되는 규칙이 없으면 amount도 budgetId도 없다. */
+  export interface ScheduleMonth {
+    yearMonth: string;
+    /** 실제로 적용되는 금액 (조정이 있으면 조정값) */
+    amount?: string;
+    /** 조정을 걷어냈을 때 돌아갈 규칙 금액 */
+    ruleAmount?: string;
+    /** 이 달에 적용되는 규칙 */
+    budgetId?: string;
+    /** 이 달만 씌운 조정값. 조정이 없으면 없다. */
+    overrideId?: string;
+    isOverridden: boolean;
+    /** 이 달에 적용되는 규칙의 기간. 어디서 규칙이 갈리는지 화면에 표시한다. */
+    effectiveFrom?: string;
+    effectiveTo?: string;
   }
 
   export interface OverrideRequest {

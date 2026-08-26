@@ -1,6 +1,12 @@
 import { Injectable, BadRequestException, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, CardType, ProjectRole } from '@prisma/client';
-import { CardDto, currencyDecimals, zonedParts } from '@money/types';
+import {
+  CardDto,
+  currencyDecimals,
+  zonedCurrentYearMonth,
+  zonedMonthRange,
+  zonedParts,
+} from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { toMoney } from '@/common/money';
@@ -198,6 +204,77 @@ export class CardLedgerService {
   }
 
   /**
+   * 실적 진행 상황.
+   *
+   * 세는 구간이 카드 종류마다 다르다.
+   *   - 신용카드: 마감일 기준 청구 주기. 마감일이 15일이면 8/16~9/15가 한 구간이다.
+   *     카드사가 그 주기의 사용액으로 다음 달 혜택을 정하기 때문이다.
+   *   - 체크카드: 달력 월. 청구 주기라는 것이 없어 자를 기준이 달력뿐이다.
+   *
+   * 신용카드 사용액은 getUsage의 계산을 그대로 쓴다. 카드 화면이 이미 그 값을
+   * "이번 주기 사용액"으로 보여 주고 있어서, 여기서 따로 세면 같은 화면에 두 숫자가
+   * 다르게 나온다. 할부를 회차로 나누는 규칙도 그쪽 정의를 따른다.
+   */
+  async getPerformance(cardId: string, userId: string): Promise<CardDto.PerformanceResponse> {
+    const card = await this.prisma.card.findUnique({ where: { id: cardId } });
+    if (!card) throw new NotFoundException('카드를 찾을 수 없습니다.');
+    await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId);
+
+    const target = card.performanceAmount;
+
+    if (card.cardType === CardType.credit) {
+      // getUsage가 마감일·부채 계정 유무까지 확인해 준다 (loadCreditCard).
+      const { currency, periods } = await this.getUsage(cardId, userId, 1);
+      // span=1이면 첫 칸이 진행 중인 주기다. 뒤 칸들은 할부가 걸린 미래 주기다.
+      const current = periods[0];
+
+      return performanceOf({
+        cardId: card.id,
+        currency,
+        basis: 'statement',
+        periodStart: current.periodStart,
+        periodEnd: current.periodEnd,
+        usage: new Prisma.Decimal(current.usage),
+        target,
+      });
+    }
+
+    const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
+    const paymentAccount = await this.prisma.account.findUniqueOrThrow({
+      where: { id: card.paymentAccountId },
+      select: { currency: true },
+    });
+
+    const yearMonth = zonedCurrentYearMonth(timeZone);
+    const { start, end } = zonedMonthRange(yearMonth, timeZone);
+
+    /*
+     * 체크카드 사용은 연결 통장의 posting에 cardId가 함께 찍힌다. 통장에서 직접 나간
+     * 지출에는 cardId가 없으므로 이 조건만으로 이 카드로 쓴 것만 걸린다.
+     *
+     * 부호로 거르지 않고 그대로 더한다. 지금은 지출만 카드를 가리킬 수 있어 전부
+     * 음수지만, 결제 취소가 양수로 들어오게 되면 그때는 빼는 것이 맞다. 실적은
+     * 순사용액으로 판정하는 값이라 취소한 결제는 빠져야 한다.
+     */
+    const spent = await this.prisma.posting.aggregate({
+      _sum: { amount: true },
+      where: { cardId: card.id, entry: { date: { gte: start, lt: end } } },
+    });
+
+    const [year, month] = yearMonth.split('-').map(Number);
+    return performanceOf({
+      cardId: card.id,
+      currency: paymentAccount.currency,
+      basis: 'month',
+      // 달력 날짜 표시자. 청구 주기 쪽과 같은 형태로 맞춘다 (그 달 1일 ~ 말일).
+      periodStart: new Date(Date.UTC(year, month - 1, 1)).toISOString(),
+      periodEnd: new Date(Date.UTC(year, month, 0)).toISOString(),
+      usage: (spent._sum.amount ?? ZERO).neg(),
+      target,
+    });
+  }
+
+  /**
    * 청구액이 아직 확정되지 않은 외화 결제 목록.
    *
    * 명세서 대조를 이 카드 한 장, 이 주기로 좁히기 위한 목록이다. 원화 거래는
@@ -354,6 +431,38 @@ export class CardLedgerService {
     }
     return card;
   }
+}
+
+/**
+ * 실적 응답 조립. 기준액이 없으면 달성 여부와 남은 금액은 뜻이 없다.
+ *
+ * 사용액이 음수일 수 있다(그 구간에 취소가 더 많은 경우). 남은 금액은 기준액보다
+ * 커지고, 그게 사실이므로 0으로 자르지 않는다. 반대로 이미 채웠으면 음수가 아니라
+ * 0으로 적는다 - "0원 남았다"가 "-3만원 남았다"보다 읽기 쉽다.
+ */
+function performanceOf(input: {
+  cardId: string;
+  currency: string;
+  basis: 'statement' | 'month';
+  periodStart: string;
+  periodEnd: string;
+  usage: Prisma.Decimal;
+  target: Prisma.Decimal | null;
+}): CardDto.PerformanceResponse {
+  const { target, usage } = input;
+  const achieved = target !== null && usage.gte(target);
+
+  return {
+    cardId: input.cardId,
+    currency: input.currency,
+    basis: input.basis,
+    periodStart: input.periodStart,
+    periodEnd: input.periodEnd,
+    usage: usage.toString(),
+    target: target?.toString() ?? null,
+    achieved,
+    remaining: target === null ? null : achieved ? '0' : target.sub(usage).toString(),
+  };
 }
 
 /**

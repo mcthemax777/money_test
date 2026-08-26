@@ -25,7 +25,7 @@ import {
   lineAxis,
 } from '@/lib/chart';
 import type { EntryFilterQuery } from '@money/types';
-import { useProjectTimeZone } from '@/store/project';
+import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
 
 /** 서버가 계산해 주는 결제수단별 지출과 통장 수입 (/reports/payment-methods) */
 interface PaymentMethodItem {
@@ -89,6 +89,7 @@ export default function PaymentMethodTab({
   reloadToken,
 }: Props) {
   const timeZone = useProjectTimeZone();
+  const displayCurrency = useProjectDisplayCurrency();
 
   /*
    * 구간을 세 형태로 쓴다.
@@ -270,11 +271,11 @@ export default function PaymentMethodTab({
                     <div className="flex items-baseline gap-2">
                       <span className={`font-semibold text-sm ${accent.text}`}>
                         {toNumber(item.income) > 0 ? '지출 ' : ''}
-                        {formatCurrency(item.amount)}
+                        {formatCurrency(item.amount, displayCurrency)}
                       </span>
                       {toNumber(item.income) > 0 && (
                         <span className="text-sm font-semibold text-green-600">
-                          수입 {formatCurrency(item.income)}
+                          수입 {formatCurrency(item.income, displayCurrency)}
                         </span>
                       )}
                     </div>
@@ -302,12 +303,12 @@ export default function PaymentMethodTab({
                   <XAxis dataKey="month" tick={CHART_TICK} />
                   <YAxis
                     domain={barDomain(monthlyData.map((d) => d.amount))}
-                    tickFormatter={formatAxisAmount}
+                    tickFormatter={(value: number) => formatAxisAmount(value, displayCurrency)}
                     tick={CHART_TICK}
                     width={CHART_Y_AXIS_WIDTH}
                   />
                   <Tooltip
-                    formatter={(value: any) => formatTooltipAmount(value, '사용액')}
+                    formatter={(value: any) => formatTooltipAmount(value, '사용액', displayCurrency)}
                     contentStyle={CHART_TOOLTIP_STYLE}
                   />
                   <Bar dataKey="amount" fill={CHART_COLOR} />
@@ -323,12 +324,12 @@ export default function PaymentMethodTab({
                   <XAxis dataKey="label" tick={CHART_TICK} />
                   {/* 꺾은선은 값이 움직인 구간만 그린다 (lineAxis 주석 참고) */}
                   <YAxis
-                    {...lineAxis(dailyData.map((d) => d.cumulative))}
+                    {...lineAxis(dailyData.map((d) => d.cumulative), displayCurrency)}
                     tick={CHART_TICK}
                     width={CHART_Y_AXIS_WIDTH}
                   />
                   <Tooltip
-                    formatter={(value: any) => formatTooltipAmount(value, '누적 사용액')}
+                    formatter={(value: any) => formatTooltipAmount(value, '누적 사용액', displayCurrency)}
                     contentStyle={CHART_TOOLTIP_STYLE}
                   />
                   <Line

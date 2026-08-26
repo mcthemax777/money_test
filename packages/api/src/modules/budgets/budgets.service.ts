@@ -7,7 +7,7 @@ import {
   DisplayConverter,
   ExchangeRatesService,
 } from '../exchange-rates/exchange-rates.service';
-import { assertYearMonth } from '@/common/year-month';
+import { assertYearMonth, shiftYearMonth } from '@/common/year-month';
 import {
   BudgetDto,
   EntryFilterQuery,
@@ -22,9 +22,29 @@ import {
 
 const ZERO = new Prisma.Decimal(0);
 
+/**
+ * 전체 예산의 센티널 categoryId를 푼다.
+ *
+ * 전체 예산은 분류가 없는 예산이라 categoryId로 가리킬 수 없다. 화면은 대신
+ * 약속된 문자열을 보내고, 서버는 그것을 "분류 없음 + type"으로 바꾼다.
+ * 예산을 만드는 쪽과 조회하는 쪽이 같은 규칙을 써야 하므로 한 곳에 둔다.
+ */
+function resolveBudgetTarget(
+  categoryId?: string,
+  type?: 'income' | 'expense',
+): { categoryId?: string; type?: 'income' | 'expense' } {
+  if (categoryId === 'BUDGET_TOTAL_INCOME') return { categoryId: undefined, type: 'income' };
+  if (categoryId === 'BUDGET_TOTAL_EXPENSE') return { categoryId: undefined, type: 'expense' };
+  return { categoryId, type };
+}
+
 /** 내부 계산용. 응답으로 나갈 때 금액을 문자열로 바꾼다. */
-type InternalBudgetRow = Omit<BudgetDto.MonthlyBudget, 'monthlyAmount' | 'usedAmount'> & {
+type InternalBudgetRow = Omit<
+  BudgetDto.MonthlyBudget,
+  'monthlyAmount' | 'ruleAmount' | 'usedAmount'
+> & {
   monthlyAmount: Prisma.Decimal;
+  ruleAmount: Prisma.Decimal;
   usedAmount: Prisma.Decimal;
 };
 
@@ -47,17 +67,7 @@ export class BudgetsService {
       'editor',
     );
 
-    // 전체 예산 특수 처리: 특수 categoryId → categoryId: undefined + type 설정
-    let categoryId: string | undefined = dto.categoryId;
-    let type = dto.type;
-
-    if (categoryId === 'BUDGET_TOTAL_INCOME') {
-      categoryId = undefined;
-      type = 'income';
-    } else if (categoryId === 'BUDGET_TOTAL_EXPENSE') {
-      categoryId = undefined;
-      type = 'expense';
-    }
+    const { categoryId, type } = resolveBudgetTarget(dto.categoryId, dto.type);
 
     // 카테고리 확인
     if (categoryId) {
@@ -240,6 +250,26 @@ export class BudgetsService {
     throw new BadRequestException('applyMode가 잘못되었습니다.');
   }
 
+  /**
+   * 프로젝트의 예산을 모두 지운다.
+   *
+   * 규칙 하나씩 지우는 경로(DELETE /budgets/:id)만으로는 분류가 수십 개일 때
+   * 화면에서 지울 수가 없다. 월별 조정값은 Budget에 cascade로 걸려 있어 함께 사라진다.
+   *
+   * 지운 개수를 돌려준다. 화면이 "지울 예산이 없습니다"와 "12개를 지웠습니다"를
+   * 구분해 알려줄 수 있어야 한다.
+   */
+  async resetBudgets(userId: string, projectIdParam?: string): Promise<{ deleted: number }> {
+    const projectId = await this.projectAccess.resolveAndVerifyProjectId(
+      userId,
+      projectIdParam,
+      'editor',
+    );
+
+    const { count } = await this.prisma.budget.deleteMany({ where: { projectId } });
+    return { deleted: count };
+  }
+
   async deleteBudget(id: string, userId: string): Promise<void> {
     await this.getBudgetById(id, userId, 'editor');
 
@@ -284,9 +314,9 @@ export class BudgetsService {
       }
     }
 
-    const overrideMap = new Map<string, Prisma.Decimal>();
+    const overrideMap = new Map<string, { id: string; amount: Prisma.Decimal }>();
     for (const override of overrides) {
-      overrideMap.set(override.budgetId, override.amount);
+      overrideMap.set(override.budgetId, { id: override.id, amount: override.amount });
     }
 
     const childrenByParent = new Map<string, typeof categories>();
@@ -356,8 +386,12 @@ export class BudgetsService {
     const amountOf = (key: string): Prisma.Decimal => {
       const budget = budgetMap.get(key);
       if (!budget) return ZERO;
-      return overrideMap.get(budget.id) ?? budget.monthlyAmount;
+      return overrideMap.get(budget.id)?.amount ?? budget.monthlyAmount;
     };
+
+    /** 조정을 걷어냈을 때의 금액. 조정이 없으면 amountOf와 같다. */
+    const ruleAmountOf = (key: string): Prisma.Decimal =>
+      budgetMap.get(key)?.monthlyAmount ?? ZERO;
 
     const rows: InternalBudgetRow[] = [];
 
@@ -370,11 +404,15 @@ export class BudgetsService {
         categoryType: type,
         parentCategoryId: undefined,
         monthlyAmount: amountOf(`__total__${type}`),
+        ruleAmount: ruleAmountOf(`__total__${type}`),
         // 대분류 사용액의 합. 소분류는 이미 대분류에 롤업되어 있으므로 중복되지 않는다.
         usedAmount: categories
           .filter((c) => !c.parentId && c.type === type)
           .reduce((acc, c) => acc.add(usedAmount.get(c.id) ?? ZERO), ZERO),
         isOverridden: budget ? overrideMap.has(budget.id) : false,
+        overrideId: budget ? overrideMap.get(budget.id)?.id : undefined,
+        effectiveFrom: budget?.effectiveFrom ?? undefined,
+        effectiveTo: budget?.effectiveTo ?? undefined,
         hasChildren: childrenByParent.size > 0,
       });
     }
@@ -388,8 +426,12 @@ export class BudgetsService {
         categoryType: category.type,
         parentCategoryId: category.parentId ?? undefined,
         monthlyAmount: amountOf(category.id),
+        ruleAmount: ruleAmountOf(category.id),
         usedAmount: usedAmount.get(category.id) ?? ZERO,
         isOverridden: budget ? overrideMap.has(budget.id) : false,
+        overrideId: budget ? overrideMap.get(budget.id)?.id : undefined,
+        effectiveFrom: budget?.effectiveFrom ?? undefined,
+        effectiveTo: budget?.effectiveTo ?? undefined,
         hasChildren: childrenByParent.has(category.id),
       });
     }
@@ -414,8 +456,83 @@ export class BudgetsService {
     return ordered.map((row) => ({
       ...row,
       monthlyAmount: show.toString(row.monthlyAmount),
+      ruleAmount: show.toString(row.ruleAmount),
       usedAmount: show.toString(row.usedAmount),
     }));
+  }
+
+  /**
+   * 한 분류(또는 전체 예산)가 달마다 얼마인지.
+   *
+   * 예산은 규칙 하나가 여러 달을 덮고, 거기에 달별 조정이 얹힌다. 그래서 "지금
+   * 얼마로 되어 있나"를 화면에서 조립하려면 적용 기간 판정을 다시 구현해야 하는데,
+   * 그 규칙은 서버에만 있어야 한다. 달마다 답을 미리 풀어서 내려준다.
+   */
+  async getBudgetSchedule(
+    userId: string,
+    query: BudgetDto.ScheduleQuery,
+  ): Promise<BudgetDto.ScheduleMonth[]> {
+    const projectId = await this.projectAccess.resolveAndVerifyProjectId(
+      userId,
+      query.projectId,
+    );
+    const timeZone = await this.projectAccess.getProjectTimeZone(projectId);
+    const { categoryId, type } = resolveBudgetTarget(query.categoryId, query.type);
+
+    const startMonth = query.startMonth
+      ? assertYearMonth(query.startMonth, '시작 월')
+      : zonedCurrentYearMonth(timeZone);
+    const months = Math.min(Math.max(Number(query.months) || 12, 1), 60);
+
+    const rules = await this.prisma.budget.findMany({
+      where: { projectId, categoryId: categoryId ?? null, type: type || undefined },
+    });
+    const overrides =
+      rules.length > 0
+        ? await this.prisma.budgetOverride.findMany({
+            where: { budgetId: { in: rules.map((rule) => rule.id) } },
+          })
+        : [];
+
+    const overrideKey = (budgetId: string, year: number, month: number) =>
+      `${budgetId}:${year}-${String(month).padStart(2, '0')}`;
+    const overrideMap = new Map(
+      overrides.map((override) => [
+        overrideKey(override.budgetId, override.year, override.month),
+        override,
+      ]),
+    );
+
+    const { show } = await this.currencyView(projectId);
+    const schedule: BudgetDto.ScheduleMonth[] = [];
+
+    for (let offset = 0; offset < months; offset++) {
+      const yearMonth = shiftYearMonth(startMonth, offset);
+      const rule = rules.find((candidate) => this.isBudgetApplicable(candidate, yearMonth));
+
+      // 규칙이 안 걸치는 달이 있을 수 있다. applyMode='from'으로 나눈 규칙의
+      // 시작 달보다 앞이면 그렇다. 0원이 아니라 "예산 없음"이므로 금액을 비워 둔다.
+      if (!rule) {
+        schedule.push({ yearMonth, isOverridden: false });
+        continue;
+      }
+
+      const [year, month] = yearMonth.split('-').map(Number);
+      const override = overrideMap.get(overrideKey(rule.id, year, month));
+
+      schedule.push({
+        yearMonth,
+        amount: show.toString(override?.amount ?? rule.monthlyAmount),
+        ruleAmount: show.toString(rule.monthlyAmount),
+        budgetId: rule.id,
+        overrideId: override?.id,
+        isOverridden: Boolean(override),
+        effectiveFrom: rule.effectiveFrom ?? undefined,
+        effectiveTo: rule.effectiveTo ?? undefined,
+      });
+    }
+
+    return schedule;
   }
 
   async createOverride(

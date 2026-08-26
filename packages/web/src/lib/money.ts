@@ -18,13 +18,15 @@ export function toNumber(amount: string | number | null | undefined): number {
 /**
  * "₩1,234,567" / "$1,234.56" / "￥1,234"
  *
- * 통화를 생략하면 원으로 본다. 화면 대부분은 기준통화(환산액)를 그리므로
- * 인자 없이 부르고, 계좌 잔액처럼 그 계좌의 통화로 보여야 하는 곳만 넘긴다.
+ * 통화는 반드시 넘긴다. 기본값을 두면 표시 통화가 달러일 때도 원 기호와 원의
+ * 자릿수(소수 0자리)로 찍혀 값이 반올림돼 버리는데, 호출부만 봐서는 이 누락을
+ * 알아챌 수 없다. 화면 대부분은 프로젝트의 표시 통화(`useProjectDisplayCurrency`)를
+ * 넘기고, 계좌 잔액처럼 그 계좌의 통화로 보여야 하는 곳만 계좌 통화를 넘긴다.
  * 자릿수 규칙은 `@money/types`가 통화별로 들고 있다.
  */
 export function formatCurrency(
   amount: string | number | null | undefined,
-  currency: string = 'KRW',
+  currency: string,
 ): string {
   return formatMoney(toNumber(amount), currency);
 }
@@ -43,10 +45,25 @@ export function formatOriginal(entry: {
   const original = formatMoney(entry.originalAmount, entry.originalCurrency);
   if (!entry.exchangeRate) return original;
 
-  const rate = new Intl.NumberFormat('ko-KR', { maximumFractionDigits: 2 }).format(
-    Number(entry.exchangeRate),
-  );
+  const value = Number(entry.exchangeRate);
+  if (!Number.isFinite(value) || value <= 0) return original;
+
+  const rate = new Intl.NumberFormat('ko-KR', {
+    maximumFractionDigits: rateDecimals(value),
+  }).format(value);
   return `${original} · 환율 ${rate}`;
+}
+
+/**
+ * 환율을 몇 자리까지 적을지.
+ *
+ * 소수 두 자리로 고정하면 원 -> 달러처럼 1보다 훨씬 작은 환율이 전부 "0"으로 찍힌다.
+ * 표시 통화를 달러로 바꾼 순간 모든 거래 옆에 "환율 0"이 붙었다.
+ * 유효숫자가 드러나는 자리까지 늘리되, 너무 길어지지 않게 여덟 자리에서 자른다.
+ */
+function rateDecimals(rate: number): number {
+  if (rate >= 1) return 2;
+  return Math.min(8, Math.ceil(-Math.log10(rate)) + 3);
 }
 
 /** 부호 없는 천 단위 구분. 입력 폼 등에서 사용 */

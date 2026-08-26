@@ -9,6 +9,7 @@ import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@/hooks/useInstitutions';
 import { DAY_OF_MONTH_HINT, DAY_OF_MONTH_OPTIONS } from '@/lib/day-of-month';
+import CardPerformanceField from '@/components/CardPerformanceField';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id */
 const FORM_ID = 'edit-card-form';
@@ -18,6 +19,7 @@ const EMPTY_FORM = {
   name: '',
   issuerId: '',
   creditLimit: '',
+  performanceAmount: '',
   expiryDate: '',
   cardType: 'debit' as 'debit' | 'credit',
   // 서버는 마스킹된 번호만 주므로 입력칸은 항상 빈 값에서 시작한다.
@@ -60,6 +62,7 @@ export default function EditCardModal({
         name: card.name,
         issuerId: card.issuerId,
         creditLimit: card.creditLimit ?? '',
+        performanceAmount: card.performanceAmount ?? '',
         // 저장된 값은 ISO 인스턴트다. 월 입력란이 읽는 "YYYY-MM"으로 바꾼다.
         expiryDate: monthInputOf(card.expiryDate),
         cardType: card.cardType,
@@ -96,6 +99,10 @@ export default function EditCardModal({
         expiryDate: monthInputToIso(formData.expiryDate),
         // 카드 번호는 새로 입력했을 때만 보낸다 (마스킹된 값을 되돌려 보내면 안 된다).
         ...(formData.cardNumber ? { cardNumber: formData.cardNumber } : {}),
+        // 실적은 카드 종류를 가리지 않는다. 비우면 빈 문자열을 보내 조건을 지운다.
+        performanceAmount: formData.performanceAmount
+          ? toAmountString(formData.performanceAmount)
+          : '',
         ...(isCredit
           ? {
               creditLimit: toAmountString(formData.creditLimit),
@@ -242,6 +249,13 @@ export default function EditCardModal({
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
+
+        <CardPerformanceField
+          cardType={formData.cardType}
+          value={formData.performanceAmount}
+          onChange={(performanceAmount) => setFormData({ ...formData, performanceAmount })}
+          statementClosingDay={formData.statementClosingDay}
+        />
 
         {formData.cardType === 'credit' && (
           <>

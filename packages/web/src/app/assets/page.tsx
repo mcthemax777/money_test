@@ -1,10 +1,10 @@
 'use client';
 
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
-import type { Account, Card, CardUsage, Person } from '@/lib/types';
+import type { Account, Card, CardUsage, Category, Person } from '@/lib/types';
 import { formatCurrency, toAmountString, toNumber } from '@/lib/money';
 import { useUserFilter } from '@/store/user-filter';
 import { formatDate, formatDateMarker, monthInputToIso, todayKey } from '@/lib/datetime';
@@ -55,6 +55,12 @@ import PendingRatePanel from '@/components/PendingRatePanel';
 import AssetHistoryChart from '@/components/AssetHistoryChart';
 import TransactionListView from '@/components/TransactionListView';
 import type { EntryListItem } from '@/components/TransactionItem';
+import CardPerformanceField from '@/components/CardPerformanceField';
+import CardPerformancePanel from '@/components/CardPerformancePanel';
+import EntryEditor, {
+  type EntryEditorHandle,
+  type ReferenceDataPatch,
+} from '@/components/EntryEditor';
 import { useInstitutions } from '@/hooks/useInstitutions';
 import { accountTypeLabel } from '@/lib/account-type';
 
@@ -122,13 +128,16 @@ function NetWorthBreakdown({
   parts: NetWorthParts | undefined;
   className: string;
 }) {
+  const displayCurrency = useProjectDisplayCurrency();
+
   if (!parts) return null;
   if (toNumber(parts.liability) === 0 && toNumber(parts.investment) === 0) return null;
 
   return (
     <p className={className}>
-      현금성 {formatCurrency(parts.cash)} · 투자 {formatCurrency(parts.investment)} · 부채{' '}
-      {formatCurrency(parts.liability)}
+      현금성 {formatCurrency(parts.cash, displayCurrency)} · 투자{' '}
+      {formatCurrency(parts.investment, displayCurrency)} · 부채{' '}
+      {formatCurrency(parts.liability, displayCurrency)}
     </p>
   );
 }
@@ -142,7 +151,7 @@ export default function DashboardPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
-  const [categories, setCategories] = useState<any[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -197,6 +206,8 @@ export default function DashboardPage() {
     issuerId: '',
     expiryDate: '',
     creditLimit: '',
+    /** 혜택 조건이 되는 사용액. 체크카드도 쓴다 (달력 월로 센다). */
+    performanceAmount: '',
     // 청구 주기는 마감일과 결제일 두 값으로 계산한다
     statementClosingDay: 15,
     paymentDueDay: 25,
@@ -227,6 +238,10 @@ export default function DashboardPage() {
   const [accountProfit, setAccountProfit] = useState<Map<string, string>>(new Map());
   /** 항목을 숨기거나 되돌리면 올린다. 숨긴 항목 패널이 이 값을 보고 다시 읽는다. */
   const [hiddenVersion, setHiddenVersion] = useState(0);
+  /** 거래를 고치거나 지우면 올린다. 구성원 거래와 계좌 원장이 이 값을 보고 다시 읽는다. */
+  const [entryVersion, setEntryVersion] = useState(0);
+  /** 거래 상세·추가 팝업. 가계 화면과 같은 컴포넌트를 쓴다. */
+  const entryEditorRef = useRef<EntryEditorHandle>(null);
 
   /**
    * 총자산과 사람별 소계, 그리고 계좌 수익.
@@ -281,6 +296,36 @@ export default function DashboardPage() {
 
     loadData();
   }, [selectedProjectId]);
+
+  /**
+   * 거래를 저장하거나 지운 뒤.
+   *
+   * 목록(구성원 거래, 계좌 원장)은 entryVersion을 보고 각자 다시 읽는다. 잔액과
+   * 총자산은 여기서 받는다. 고른 계좌·카드는 목록에서 다시 집어 온다 — 상세 패널이
+   * 들고 있는 것은 렌더 시점의 사본이라 그대로 두면 옛 잔액이 남는다.
+   */
+  const handleEntryChange = useCallback(async () => {
+    setEntryVersion((version) => version + 1);
+    if (!selectedProjectId) return;
+
+    const [accountsData, cardsData] = await Promise.all([
+      apiClient.getAccountsV2(selectedProjectId),
+      apiClient.getCards(selectedProjectId),
+    ]);
+    setAccounts(accountsData || []);
+    setCards(cardsData || []);
+    setSelectedAccount((prev) => (prev ? accountsData?.find((a) => a.id === prev.id) ?? prev : prev));
+    setSelectedCard((prev) => (prev ? cardsData?.find((c) => c.id === prev.id) ?? prev : prev));
+    await loadNetWorth();
+  }, [selectedProjectId, loadNetWorth]);
+
+  /** 거래 팝업 안에서 계좌·카드·분류·사람을 새로 만들었을 때. */
+  const handleReferenceDataChange = useCallback((patch: ReferenceDataPatch) => {
+    if (patch.accounts) setAccounts(patch.accounts);
+    if (patch.cards) setCards(patch.cards);
+    if (patch.categories) setCategories(patch.categories);
+    if (patch.people) setPeople(patch.people);
+  }, []);
 
   /**
    * 계좌 원장 조회.
@@ -370,7 +415,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedPerson, detailType, selectedProjectId]);
+  }, [selectedPerson, detailType, selectedProjectId, entryVersion]);
 
   // 계좌 선택 시 거래 내역 로드
   useEffect(() => {
@@ -380,7 +425,7 @@ export default function DashboardPage() {
       setAccountTransactions([]);
       setLedgerCursor(null);
     }
-  }, [selectedAccount, detailType, loadAccountTransactions]);
+  }, [selectedAccount, detailType, loadAccountTransactions, entryVersion]);
 
   // 카드 선택 시 사용 현황 로드
   useEffect(() => {
@@ -565,6 +610,10 @@ export default function DashboardPage() {
         ...(isoDate && { expiryDate: isoDate }),
         creditLimit:
           cardForm.cardType === 'credit' ? toAmountString(cardForm.creditLimit) : undefined,
+        // 실적은 카드 종류를 가리지 않는다. 비워 두면 조건 없음이라 빈 문자열로 보낸다.
+        performanceAmount: cardForm.performanceAmount
+          ? toAmountString(cardForm.performanceAmount)
+          : '',
         statementClosingDay:
           cardForm.cardType === 'credit' ? cardForm.statementClosingDay : undefined,
         paymentDueDay: cardForm.cardType === 'credit' ? cardForm.paymentDueDay : undefined,
@@ -580,6 +629,7 @@ export default function DashboardPage() {
         issuerId: '',
         expiryDate: '',
         creditLimit: '',
+        performanceAmount: '',
         statementClosingDay: 15,
         paymentDueDay: 25,
       });
@@ -705,7 +755,7 @@ export default function DashboardPage() {
       <div className="bg-blue-600 text-white rounded-lg p-6">
         <p className="text-sm opacity-90">총 자산</p>
         <p className="text-4xl font-bold mt-2">
-          {formatCurrency(totalBalance)}
+          {formatCurrency(totalBalance, displayCurrency)}
         </p>
         <NetWorthBreakdown parts={netWorth ?? undefined} className="text-sm opacity-90 mt-2" />
       </div>
@@ -871,7 +921,7 @@ export default function DashboardPage() {
                 <div>
                   <h2 className="text-2xl font-bold text-gray-900">{selectedPerson.name}</h2>
                   <p className="text-xl font-bold text-blue-600 mt-1">
-                    {formatCurrency(netWorthByPerson.get(selectedPerson.id)?.total ?? 0)}
+                    {formatCurrency(netWorthByPerson.get(selectedPerson.id)?.total ?? 0, displayCurrency)}
                   </p>
                   {/* 전체 총자산 상자와 같은 형식으로 무엇이 얼마인지 쪼개 보여 준다 */}
                   <NetWorthBreakdown
@@ -907,8 +957,10 @@ export default function DashboardPage() {
                   <p className="text-gray-600 text-center py-8">거래 내역이 없습니다.</p>
                 ) : (
                   <>
-                    {/* 자산 화면에는 거래 상세 팝업이 없다. 고치는 일은 가계 화면에서 한다. */}
-                    <TransactionListView entries={personEntries} onEntryClick={() => {}} />
+                    <TransactionListView
+                      entries={personEntries}
+                      onEntryClick={(entry) => entryEditorRef.current?.openDetail(entry)}
+                    />
                     {personEntries.length >= PERSON_ENTRY_LIMIT && (
                       <p className="mt-2 text-xs text-gray-500">
                         최근 {PERSON_ENTRY_LIMIT}건까지 보여 줍니다. 더 보려면 가계 화면에서
@@ -954,6 +1006,9 @@ export default function DashboardPage() {
                   </button>
                 </div>
               </div>
+
+              {/* 실적은 카드 종류를 가리지 않는다. 세는 구간만 다르다. */}
+              <CardPerformancePanel cardId={selectedCard.id} reloadToken={entryVersion} />
 
               {selectedCard.cardType !== 'credit' ? (
                 <p className="text-gray-600">
@@ -1405,7 +1460,7 @@ export default function DashboardPage() {
               {overTransfer && (
                 <p className="mt-1 text-xs text-amber-700">
                   {refundPending ? '환불 예정액' : '남은 대금'}보다{' '}
-                  {formatCurrency(overTransfer)} 많습니다. 차액은{' '}
+                  {formatCurrency(overTransfer, displayCurrency)} 많습니다. 차액은{' '}
                   {paymentForm.direction === 'refund' ? '대금' : '환불 예정'}으로 남습니다.
                 </p>
               )}
@@ -1546,6 +1601,7 @@ export default function DashboardPage() {
             issuerId: '',
             expiryDate: '',
             creditLimit: '',
+            performanceAmount: '',
             statementClosingDay: 15,
             paymentDueDay: 25,
           });
@@ -1642,6 +1698,13 @@ export default function DashboardPage() {
             />
           </div>
 
+          <CardPerformanceField
+            cardType={cardForm.cardType}
+            value={cardForm.performanceAmount}
+            onChange={(performanceAmount) => setCardForm({ ...cardForm, performanceAmount })}
+            statementClosingDay={cardForm.statementClosingDay}
+          />
+
           {cardForm.cardType === 'credit' && (
             <>
               <div>
@@ -1707,6 +1770,17 @@ export default function DashboardPage() {
 
         </form>
       </Modal>
+
+      <EntryEditor
+        ref={entryEditorRef}
+        projectId={selectedProjectId}
+        accounts={accounts}
+        cards={cards}
+        categories={categories}
+        people={people}
+        onReferenceDataChange={handleReferenceDataChange}
+        onEntryChange={handleEntryChange}
+      />
     </div>
   );
 }
@@ -1748,6 +1822,7 @@ function PersonAssetList({
   onReorderAccounts: (ids: string[]) => void;
   onReorderCards: (ids: string[]) => void;
 }) {
+  const displayCurrency = useProjectDisplayCurrency();
   const { items, dragProps, draggingId } = useDragReorder(people, onReorderPeople);
 
   return (
@@ -1767,7 +1842,7 @@ function PersonAssetList({
                   {person.name}
                 </h2>
                 <p className="text-sm text-gray-600">
-                  소계: {formatCurrency(netWorthByPerson.get(person.id)?.total ?? 0)}
+                  소계: {formatCurrency(netWorthByPerson.get(person.id)?.total ?? 0, displayCurrency)}
                 </p>
               </div>
             </div>

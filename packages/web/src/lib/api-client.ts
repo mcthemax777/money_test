@@ -576,6 +576,14 @@ class ApiClient {
     await this.client.delete(`/budgets/${id}`);
   }
 
+  /** 프로젝트의 예산을 모두 지운다. 월별 조정값도 함께 사라진다. */
+  async resetBudgets(projectId?: string | null): Promise<{ deleted: number }> {
+    const response = await this.client.delete<{ deleted: number }>('/budgets', {
+      params: projectId ? { projectId } : {},
+    });
+    return response.data;
+  }
+
   /** filter는 가계 화면의 자산주인/고정 필터. 사용금액에 같은 조건이 걸린다. */
   async getBudgetForMonth(
     year: number,
@@ -585,6 +593,17 @@ class ApiClient {
   ): Promise<BudgetDto.MonthlyBudget[]> {
     const response = await this.client.get<BudgetDto.MonthlyBudget[]>(`/budgets/${year}/${month}`, {
       params: { ...(projectId ? { projectId } : {}), ...filter },
+    });
+    return response.data;
+  }
+
+  /** 한 분류(또는 전체 예산)가 달마다 얼마인지. 예산 팝업의 월별 목록이 쓴다. */
+  async getBudgetSchedule(
+    query: Omit<BudgetDto.ScheduleQuery, 'projectId'>,
+    projectId?: string | null,
+  ): Promise<BudgetDto.ScheduleMonth[]> {
+    const response = await this.client.get<BudgetDto.ScheduleMonth[]>('/budgets/schedule', {
+      params: { ...query, ...(projectId ? { projectId } : {}) },
     });
     return response.data;
   }
@@ -638,6 +657,14 @@ class ApiClient {
   // 카드 원장 API Methods
   //
   // 청구서를 저장하지 않는다. 주기별 사용액은 카드의 현재 마감일로 서버가 계산한다.
+  /** 실적 진행 상황. 신용카드는 마감일 기준 주기, 체크카드는 달력 월로 센다. */
+  async getCardPerformance(cardId: string): Promise<CardDto.PerformanceResponse> {
+    const response = await this.client.get<CardDto.PerformanceResponse>(
+      `/cards/${cardId}/performance`,
+    );
+    return response.data;
+  }
+
   async getCardUsage(cardId: string, months?: number): Promise<CardDto.UsageResponse> {
     const response = await this.client.get<CardDto.UsageResponse>(`/cards/${cardId}/usage`, {
       params: months ? { months } : undefined,
@@ -757,15 +784,7 @@ class ApiClient {
 
   /** 자산 잔액 추이. accountId를 주면 그 계좌만, 생략하면 전체 합계. */
   async getBalanceHistory(
-    options: {
-      accountId?: string;
-      /** 한 구성원의 계좌 합계 */
-      ownerId?: string;
-      granularity?: 'month' | 'day';
-      endMonth?: string;
-      yearMonth?: string;
-      months?: number;
-    },
+    options: Omit<ReportDto.BalanceHistoryQuery, 'projectId'>,
     projectId?: string | null,
   ): Promise<ReportDto.BalanceHistoryPoint[]> {
     const response = await this.client.get<ReportDto.BalanceHistoryPoint[]>(

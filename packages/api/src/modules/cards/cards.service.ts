@@ -105,6 +105,8 @@ export class CardsService {
           cardNumber: dto.cardNumber ?? null,
           expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : null,
           creditLimit: toOptionalMoney(dto.creditLimit, '카드 한도'),
+          // 실적은 체크카드에도 있다. 세는 구간만 달라진다 (달력 월).
+          performanceAmount: toOptionalMoney(dto.performanceAmount, '카드 실적 기준액'),
           statementClosingDay: dto.statementClosingDay ?? null,
           paymentDueDay: dto.paymentDueDay ?? null,
         },
@@ -195,6 +197,9 @@ export class CardsService {
     if (dto.statementClosingDay !== undefined) data.statementClosingDay = dto.statementClosingDay;
     if (dto.paymentDueDay !== undefined) data.paymentDueDay = dto.paymentDueDay;
     if (dto.creditLimit !== undefined) data.creditLimit = toOptionalMoney(dto.creditLimit, '카드 한도');
+    if (dto.performanceAmount !== undefined) {
+      data.performanceAmount = toOptionalMoney(dto.performanceAmount, '카드 실적 기준액');
+    }
 
     // 생성과 같은 검증을 거쳐야 한다. 검증 없이 저장하면 다른 프로젝트의 기관이나
     // 은행을 카드사 자리에 넣을 수 있다.

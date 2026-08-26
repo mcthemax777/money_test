@@ -8,6 +8,7 @@ import { budgetPercentage } from '@/lib/budget';
 import type { EntryListItem } from '@/components/TransactionItem';
 import { BudgetDetailModal } from '@/components/BudgetDetailModal';
 import type { Category } from '@/lib/types';
+import { useProjectDisplayCurrency } from '@/store/project';
 
 /** 예산 화면이 넘겨 주는 한 줄. 월 단위에서만 쓴다. */
 export interface BudgetRow {
@@ -48,6 +49,14 @@ interface Props {
   budgets?: BudgetRow[];
   /** 예산을 넣거나 고칠 때. 넘기면 상세 헤더에 버튼이 붙는다. */
   onEditBudget?: () => void;
+  /**
+   * 프로젝트의 예산을 모두 지울 때. 넘기면 목록 위에 버튼이 붙는다.
+   *
+   * 분류가 수십 개면 하나씩 지우는 것으로는 손을 댈 수 없어서 필요하다.
+   * 기간 보기처럼 예산이 없는 화면에서는 넘기지 않는다.
+   */
+  onResetBudgets?: () => void;
+  isResettingBudgets?: boolean;
 }
 
 interface BreakdownRow {
@@ -83,7 +92,10 @@ export default function CategoryTab({
   onSelect,
   budgets,
   onEditBudget,
+  onResetBudgets,
+  isResettingBudgets = false,
 }: Props) {
+  const displayCurrency = useProjectDisplayCurrency();
   /** 대분류로 합친 집계 (rollup). 목록의 윗줄이다. */
   const [rows, setRows] = useState<BreakdownRow[]>([]);
   /** 쪼개지 않은 집계. 대분류를 펼쳤을 때 소분류 줄을 만든다. */
@@ -230,10 +242,10 @@ export default function CategoryTab({
           />
         </div>
         <span className={`text-xs shrink-0 ${over ? 'text-red-600' : 'text-gray-500'}`}>
-          예산 {formatCurrency(budget)} · {percent}%
+          예산 {formatCurrency(budget, displayCurrency)} · {percent}%
           {over
-            ? ` · ${formatCurrency(usedAmount - budget)} 초과`
-            : ` · ${formatCurrency(budget - usedAmount)} 남음`}
+            ? ` · ${formatCurrency(usedAmount - budget, displayCurrency)} 초과`
+            : ` · ${formatCurrency(budget - usedAmount, displayCurrency)} 남음`}
         </span>
       </div>
     );
@@ -275,20 +287,34 @@ export default function CategoryTab({
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
       <div className="lg:col-span-1 bg-white rounded-lg shadow p-6">
-        <div className="flex gap-2 mb-6 border-b">
-          {(['expense', 'income'] as const).map((value) => (
+        <div className="flex items-center justify-between mb-6 border-b">
+          <div className="flex gap-2">
+            {(['expense', 'income'] as const).map((value) => (
+              <button
+                key={value}
+                onClick={() => onTypeChange(value)}
+                className={`px-4 py-2 font-medium transition ${
+                  type === value
+                    ? 'border-b-2 border-blue-600 text-blue-600'
+                    : 'text-gray-600 hover:text-gray-800'
+                }`}
+              >
+                {value === 'expense' ? '지출' : '수입'}
+              </button>
+            ))}
+          </div>
+
+          {/* 되돌릴 수 없는 동작이라 눈에 띄지 않게 둔다. 확인은 누른 뒤에 받는다. */}
+          {onResetBudgets && (
             <button
-              key={value}
-              onClick={() => onTypeChange(value)}
-              className={`px-4 py-2 font-medium transition ${
-                type === value
-                  ? 'border-b-2 border-blue-600 text-blue-600'
-                  : 'text-gray-600 hover:text-gray-800'
-              }`}
+              type="button"
+              onClick={onResetBudgets}
+              disabled={isResettingBudgets}
+              className="mb-2 text-xs text-gray-500 hover:text-red-600 underline disabled:opacity-50"
             >
-              {value === 'expense' ? '지출' : '수입'}
+              {isResettingBudgets ? '지우는 중...' : '예산 모두 초기화'}
             </button>
-          ))}
+          )}
         </div>
 
         {isLoading ? (
@@ -305,7 +331,7 @@ export default function CategoryTab({
             >
               <div className="flex justify-between items-baseline">
                 <span className="text-sm text-gray-600">합계</span>
-                <span className="text-lg font-bold text-gray-900">{formatCurrency(total)}</span>
+                <span className="text-lg font-bold text-gray-900">{formatCurrency(total, displayCurrency)}</span>
               </div>
               {/* 전체 예산 (분류 없는 예산) */}
               {budgetLine(undefined, total)}
@@ -348,7 +374,7 @@ export default function CategoryTab({
                           row.amount > 0 ? 'text-gray-900' : 'text-gray-400'
                         }`}
                       >
-                        {formatCurrency(row.amount)}
+                        {formatCurrency(row.amount, displayCurrency)}
                       </span>
                       </div>
                       {budgetLine(row.categoryId, row.amount)}
@@ -382,7 +408,7 @@ export default function CategoryTab({
                                 child.amount > 0 ? 'text-gray-800' : 'text-gray-400'
                               }`}
                             >
-                              {formatCurrency(child.amount)}
+                              {formatCurrency(child.amount, displayCurrency)}
                             </span>
                             </div>
                             {budgetLine(child.categoryId, child.amount)}
@@ -410,7 +436,7 @@ export default function CategoryTab({
                               </span>
                             </span>
                             <span className="text-sm text-gray-600">
-                              {formatCurrency(directAmount)}
+                              {formatCurrency(directAmount, displayCurrency)}
                             </span>
                           </button>
                         )}

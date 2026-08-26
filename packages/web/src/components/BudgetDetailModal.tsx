@@ -25,7 +25,7 @@ import {
 import { buildDailyCumulative, monthDateKeys } from '@/lib/entries';
 import { dayRangeQuery } from '@/lib/datetime';
 import type { EntryFilterQuery } from '@money/types';
-import { useProjectTimeZone } from '@/store/project';
+import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
 import type { Category } from '@/lib/types';
 
 const COLORS = [
@@ -140,6 +140,7 @@ export function BudgetDetailModal({
   reloadToken,
 }: BudgetDetailModalProps) {
   const timeZone = useProjectTimeZone();
+  const displayCurrency = useProjectDisplayCurrency();
 
   /*
    * 구간을 세 형태로 쓴다 (PaymentMethodTab과 같은 규칙).
@@ -380,7 +381,7 @@ export function BudgetDetailModal({
                     )}
                   </Pie>
                   <Tooltip
-                    formatter={(value: any) => formatCurrency(value)}
+                    formatter={(value: any) => formatCurrency(value, displayCurrency)}
                     contentStyle={CHART_TOOLTIP_STYLE}
                   />
                 </PieChart>
@@ -398,12 +399,12 @@ export function BudgetDetailModal({
                   <XAxis dataKey="month" tick={CHART_TICK} />
                   <YAxis
                     domain={barDomain(monthlyData.map((d) => d.amount))}
-                    tickFormatter={formatAxisAmount}
+                    tickFormatter={(value: number) => formatAxisAmount(value, displayCurrency)}
                     tick={CHART_TICK}
                     width={CHART_Y_AXIS_WIDTH}
                   />
                   <Tooltip
-                    formatter={(value: any) => formatTooltipAmount(value, '사용금액')}
+                    formatter={(value: any) => formatTooltipAmount(value, '사용금액', displayCurrency)}
                     contentStyle={CHART_TOOLTIP_STYLE}
                   />
                   <Bar dataKey="amount" fill={CHART_COLOR} />
@@ -426,12 +427,12 @@ export function BudgetDetailModal({
                   <XAxis dataKey="label" tick={CHART_TICK} />
                   {/* 꺾은선은 값이 움직인 구간만 그린다 (lineAxis 주석 참고) */}
                   <YAxis
-                    {...lineAxis(dailyData.map((d) => d.cumulative))}
+                    {...lineAxis(dailyData.map((d) => d.cumulative), displayCurrency)}
                     tick={CHART_TICK}
                     width={CHART_Y_AXIS_WIDTH}
                   />
                   <Tooltip
-                    formatter={(value: any) => formatTooltipAmount(value, '누적 사용금액')}
+                    formatter={(value: any) => formatTooltipAmount(value, '누적 사용금액', displayCurrency)}
                     contentStyle={CHART_TOOLTIP_STYLE}
                   />
                   {/* 선이 하나뿐이라 범례를 지웠다. 툴팁이 같은 이름을 보여 준다. */}

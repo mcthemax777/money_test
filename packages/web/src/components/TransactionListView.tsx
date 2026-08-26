@@ -4,7 +4,7 @@ import TransactionItem, { EntryListItem } from './TransactionItem';
 import { formatCurrency } from '@/lib/money';
 import { sumEntries } from '@/lib/entries';
 import { dateKeyOf, formatDateMarker } from '@/lib/datetime';
-import { useProjectTimeZone } from '@/store/project';
+import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
 
 interface TransactionListViewProps {
   entries: EntryListItem[];
@@ -30,6 +30,7 @@ export default function TransactionListView({
   onEntryClick,
 }: TransactionListViewProps) {
   const timeZone = useProjectTimeZone();
+  const displayCurrency = useProjectDisplayCurrency();
 
   // 날짜 문자열을 다시 파싱하지 않도록 달력 날짜(YYYY-MM-DD)로 묶는다.
   // 어느 날에 속하는지는 프로젝트 타임존 기준이다.
@@ -70,10 +71,10 @@ export default function TransactionListView({
               </h3>
               <div className="flex gap-3 text-xs font-semibold tabular-nums">
                 {incomeTotal > 0 && (
-                  <span className="text-green-600">+{formatCurrency(incomeTotal)}</span>
+                  <span className="text-green-600">+{formatCurrency(incomeTotal, displayCurrency)}</span>
                 )}
                 {expenseTotal > 0 && (
-                  <span className="text-red-600">-{formatCurrency(expenseTotal)}</span>
+                  <span className="text-red-600">-{formatCurrency(expenseTotal, displayCurrency)}</span>
                 )}
               </div>
             </div>

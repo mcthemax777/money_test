@@ -34,7 +34,7 @@ export class ReportsController {
   }
 
   @Get('balance-history')
-  @ApiOperation({ summary: '자산 잔액 추이 (전체 또는 계좌별, 월/일 단위)' })
+  @ApiOperation({ summary: '자산 잔액 추이 (전체 또는 계좌별, 년/월/일 단위)' })
   balanceHistory(
     @Request() req: AuthenticatedRequest,
     @Query() query: ReportDto.BalanceHistoryQuery,

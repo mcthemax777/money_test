@@ -122,7 +122,7 @@ export async function exportDataToExcel(
       대분류: e.parentCategoryName || e.categoryName || '',
       // 소분류가 있을 때만 채운다 (대분류만 지정한 거래는 비워 둔다)
       소분류: e.parentCategoryName ? e.categoryName || '' : '',
-      고정: e.isFixed ? 'Y' : '',
+      필수: e.isFixed ? 'Y' : '',
       설명: e.description || '',
       거래처: e.merchant || '',
       상세설명: e.detailedNote || '',

@@ -56,3 +56,17 @@ export function assertDateKey(value: string, label = '날짜'): string {
 
   return text;
 }
+
+/**
+ * "YYYY-MM"에서 delta개월 옮긴 "YYYY-MM".
+ *
+ * 문자열 비교로 적용 기간을 따지는 곳(`isBudgetApplicable`)과 자리수를 맞춰야
+ * 하므로 월은 항상 두 자리로 채운다.
+ */
+export function shiftYearMonth(yearMonth: string, delta: number): string {
+  const [year, month] = yearMonth.split('-').map(Number);
+  const index = month - 1 + delta;
+  const shiftedYear = year + Math.floor(index / 12);
+  const shiftedMonth = (((index % 12) + 12) % 12) + 1;
+  return `${shiftedYear}-${String(shiftedMonth).padStart(2, '0')}`;
+}

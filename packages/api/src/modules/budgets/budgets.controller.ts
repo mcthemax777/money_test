@@ -46,6 +46,16 @@ export class BudgetsController {
     return this.budgetsService.getBudgets(req.user.id, query);
   }
 
+  /* ':year/:month'와 ':id'보다 먼저 둔다. 뒤에 두면 'schedule'이 id로 잡힌다. */
+  @Get('schedule')
+  @ApiOperation({ summary: '한 분류(또는 전체 예산)의 월별 금액 목록' })
+  schedule(
+    @Request() req: AuthenticatedRequest,
+    @Query() query: BudgetDto.ScheduleQuery,
+  ) {
+    return this.budgetsService.getBudgetSchedule(req.user.id, query);
+  }
+
   @Get(':year/:month')
   @ApiOperation({ summary: '특정 월의 예산 (오버라이드 포함)' })
   getForMonth(
@@ -82,6 +92,19 @@ export class BudgetsController {
     @Body() dto: BudgetDto.UpdateRequest,
   ) {
     return this.budgetsService.updateBudget(id, req.user.id, dto);
+  }
+
+  /*
+   * 라우트 순서에 주의한다. Delete(':id')보다 먼저 두어야 한다.
+   * 뒤에 두면 /budgets 요청이 id 없는 :id로 잡힐 여지가 생긴다.
+   */
+  @Delete()
+  @ApiOperation({ summary: '프로젝트의 예산 전체 삭제 (월별 조정값 포함)' })
+  reset(
+    @Request() req: AuthenticatedRequest,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.budgetsService.resetBudgets(req.user.id, projectId);
   }
 
   @Delete(':id')

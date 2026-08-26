@@ -11,10 +11,13 @@ import { toNumber } from '@/lib/money';
  * 진행률이 101%로 나오는 식의 조용한 오류가 난다.
  * 예산은 계획 금액이라 KRW 범위에서 double 정밀도로 충분하다.
  */
-function normalizeBudget<T extends { monthlyAmount?: unknown; usedAmount?: unknown }>(row: T) {
+function normalizeBudget<
+  T extends { monthlyAmount?: unknown; ruleAmount?: unknown; usedAmount?: unknown },
+>(row: T) {
   return {
     ...row,
     monthlyAmount: toNumber(row.monthlyAmount as string),
+    ...(row.ruleAmount !== undefined ? { ruleAmount: toNumber(row.ruleAmount as string) } : {}),
     ...(row.usedAmount !== undefined ? { usedAmount: toNumber(row.usedAmount as string) } : {}),
   };
 }
@@ -35,8 +38,14 @@ interface MonthlyBudget {
   categoryType?: 'income' | 'expense';
   parentCategoryId?: string;
   monthlyAmount: number;
+  /** 조정을 걷어냈을 때 돌아갈 규칙 금액. 조정이 없으면 monthlyAmount와 같다. */
+  ruleAmount?: number;
   usedAmount?: number;
   isOverridden: boolean;
+  /** 이 달만 조정한 값의 id. 조정을 해제할 때 쓴다. */
+  overrideId?: string;
+  effectiveFrom?: string;
+  effectiveTo?: string;
   hasChildren: boolean;
   isVirtualBudget?: boolean;
   type?: 'income' | 'expense';
@@ -63,6 +72,8 @@ interface BudgetStore {
   deleteBudget: (id: string) => Promise<void>;
   createOverride: (data: any) => Promise<void>;
   deleteOverride: (id: string) => Promise<void>;
+  /** 프로젝트의 예산을 모두 지운다. 지운 개수를 돌려준다. */
+  resetBudgets: (projectId: string) => Promise<number>;
 }
 
 export const useBudget = create<BudgetStore>((set) => ({
@@ -141,6 +152,20 @@ export const useBudget = create<BudgetStore>((set) => ({
       await apiClient.createBudgetOverride(data);
     } catch (error) {
       console.error('Failed to create override:', error);
+      throw error;
+    } finally {
+      set({ isLoading: false });
+    }
+  },
+
+  resetBudgets: async (projectId) => {
+    set({ isLoading: true });
+    try {
+      const { deleted } = await apiClient.resetBudgets(projectId);
+      set({ budgets: [], monthlyBudgets: [] });
+      return deleted;
+    } catch (error) {
+      console.error('Failed to reset budgets:', error);
       throw error;
     } finally {
       set({ isLoading: false });

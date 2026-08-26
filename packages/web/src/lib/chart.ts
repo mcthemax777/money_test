@@ -5,6 +5,8 @@
  * 차트가 각자 다른 색과 축 형식을 쓰고 있어 같은 금액을 화면마다 다르게 읽게 됐다.
  * recharts 컴포넌트에 그대로 펼쳐 넣을 수 있는 형태로 한곳에 모은다.
  */
+import { currencyDecimals } from '@money/types';
+
 import { formatCurrency, toNumber } from './money';
 
 /**
@@ -46,10 +48,21 @@ export const CHART_ACTIVE_DOT = { r: 5 } as const;
 /** 눈금 간격으로 쓸 만한 값. 자리수를 곱해 1·2·5·10 배로 쓴다. */
 const NICE_STEPS = [1, 2, 5, 10];
 
-/** 큰 단위부터. 눈금 간격이 그 단위로 적어도 구분되는지 위에서부터 따진다. */
-const TICK_UNITS = [
+/**
+ * 큰 단위부터. 눈금 간격이 그 단위로 적어도 구분되는지 위에서부터 따진다.
+ *
+ * 만·억은 보조 단위를 쓰지 않는 통화(원, 엔)의 자리 세는 법이다. 달러 금액에
+ * 붙이면 "0.7만" 같은 눈금이 나오므로 통화에 따라 표를 바꾼다.
+ */
+const TICK_UNITS_WHOLE = [
   { div: 100_000_000, suffix: '억' },
   { div: 10_000, suffix: '만' },
+  { div: 1, suffix: '' },
+];
+
+const TICK_UNITS_DECIMAL = [
+  { div: 1_000_000, suffix: 'M' },
+  { div: 1_000, suffix: 'K' },
   { div: 1, suffix: '' },
 ];
 
@@ -108,7 +121,7 @@ export interface LineAxis {
  * 원대에서 250원처럼 소수점이 붙는 값이 나오고, 그 눈금들이 모두 "1,000만"으로
  * 반올림되어 같은 글자가 여러 번 찍힌다. 단위와 소수점 자리도 간격에서 정한다.
  */
-export function lineAxis(values: number[]): LineAxis {
+export function lineAxis(values: number[], currency: string): LineAxis {
   const [lo, hi, step] = bounds(values);
 
   const ticks: number[] = [];
@@ -118,9 +131,10 @@ export function lineAxis(values: number[]): LineAxis {
   const maxAbs = Math.max(Math.abs(lo), Math.abs(hi));
   // 간격이 그 단위에서 소수점 두 자리 안에 드러나는 첫 단위를 쓴다. 1,000만 원대의
   // 5,000원 간격을 억으로 적으면 눈금이 전부 "1.0억"이 된다.
+  const units = currencyDecimals(currency) === 0 ? TICK_UNITS_WHOLE : TICK_UNITS_DECIMAL;
   const unit =
-    TICK_UNITS.find((u) => maxAbs >= u.div && decimalsFor(step / u.div) <= 2) ??
-    TICK_UNITS[TICK_UNITS.length - 1];
+    units.find((u) => maxAbs >= u.div && decimalsFor(step / u.div) <= 2) ??
+    units[units.length - 1];
   const decimals = Math.min(decimalsFor(step / unit.div), 2);
 
   return {
@@ -154,12 +168,24 @@ function bounds(values: number[]): [number, number, number] {
   return [Math.floor(min / step) * step, Math.ceil(max / step) * step, step];
 }
 
-/** 축 눈금은 만원/억 단위로 줄여 쓴다. 원 단위로 적으면 자리수가 길어 겹친다. */
-export function formatAxisAmount(value: number): string {
+/**
+ * 축 눈금은 큰 단위로 줄여 쓴다. 낱단위로 적으면 자리수가 길어 겹친다.
+ *
+ * 만/억은 보조 단위를 쓰지 않는 통화(원, 엔)의 자리 세는 법이다. 달러처럼
+ * 소수 단위를 쓰는 통화에 붙이면 "0만"만 늘어서므로 K/M으로 줄인다.
+ */
+export function formatAxisAmount(value: number, currency: string): string {
   const abs = Math.abs(value);
-  if (abs >= 100_000_000) return `${(value / 100_000_000).toFixed(1)}억`;
-  if (abs >= 10_000) return `${Math.round(value / 10_000).toLocaleString('ko-KR')}만`;
-  return value.toLocaleString('ko-KR');
+
+  if (currencyDecimals(currency) === 0) {
+    if (abs >= 100_000_000) return `${(value / 100_000_000).toFixed(1)}억`;
+    if (abs >= 10_000) return `${Math.round(value / 10_000).toLocaleString('ko-KR')}만`;
+    return value.toLocaleString('ko-KR');
+  }
+
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return value.toLocaleString('ko-KR', { maximumFractionDigits: 2 });
 }
 
 /**
@@ -167,7 +193,11 @@ export function formatAxisAmount(value: number): string {
  *
  * 축은 줄여 쓰지만 툴팁은 원 단위 전체 금액을 보여 준다.
  */
-export function formatTooltipAmount(value: unknown, name: string): [string, string] {
-  return [formatCurrency(toNumber(value as string | number)), name];
+export function formatTooltipAmount(
+  value: unknown,
+  name: string,
+  currency: string,
+): [string, string] {
+  return [formatCurrency(toNumber(value as string | number), currency), name];
 }
 

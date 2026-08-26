@@ -3,7 +3,7 @@
 import type { EntryListItem } from '@money/types';
 import { formatCurrency, formatOriginal, toNumber } from '@/lib/money';
 import { formatTime } from '@/lib/datetime';
-import { useProjectTimeZone } from '@/store/project';
+import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
 
 /**
  * 서버가 전표를 한 줄로 펴서 주는 형태.
@@ -86,6 +86,7 @@ function Badge({ children }: { children: React.ReactNode }) {
  */
 export default function TransactionItem({ entry, onClick, isSelected }: TransactionItemProps) {
   const timeZone = useProjectTimeZone();
+  const displayCurrency = useProjectDisplayCurrency();
 
   // 이체는 "얼마를 어디로 보냈는가"와 "수수료를 얼마 냈는가"가 서로 다른 정보다.
   // 수수료가 있으면 그 수수료만 지출이므로 금액이 아니라 수수료를 빨갛게 쓴다.
@@ -137,7 +138,7 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
           }`}
         >
           {SIGN_BY_KIND[entry.kind]}
-          {formatCurrency(entry.amount)}
+          {formatCurrency(entry.amount, displayCurrency)}
         </p>
       </div>
 
@@ -146,12 +147,12 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
       <div className="mt-0.5 flex items-center gap-1.5 text-xs text-gray-500">
         <span className="min-w-0 truncate">{meta}</span>
 
-        {entry.isFixed && <Badge>고정</Badge>}
+        {entry.isFixed && <Badge>필수</Badge>}
         {/* 이체와 카드사 이체는 수입도 지출도 아니다. 회색 금액과 같은 이야기를 글로 한 번 더 한다. */}
         {showNotCounted && <Badge>합계 제외</Badge>}
         {hasFee && (
           <span className="shrink-0 font-medium tabular-nums text-red-600">
-            수수료 {formatCurrency(fee)}
+            수수료 {formatCurrency(fee, displayCurrency)}
           </span>
         )}
 

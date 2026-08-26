@@ -6,6 +6,11 @@ interface Option {
   id: string;
   name: string;
   icon?: string; // 아이콘 경로 (선택)
+  /**
+   * 이 항목이 속한 묶음의 이름 (예: 계좌 주인). 값이 있으면 앞 항목과 달라지는
+   * 자리마다 고를 수 없는 머리글 줄을 넣는다. 생략하면 묶음 없이 평평하게 그린다.
+   */
+  group?: string;
 }
 
 interface CustomSelectProps {
@@ -72,23 +77,30 @@ export default function CustomSelect({
       {isOpen && !disabled && (
         <div className="absolute top-full left-0 right-0 mt-1 border border-gray-300 rounded-lg bg-white shadow-lg z-20">
           <div className="max-h-48 overflow-y-auto">
-            {options.map((option) => (
-              <button
-                key={option.id}
-                type="button"
-                onClick={() => {
-                  onChange(option.id);
-                  setIsOpen(false);
-                }}
-                className={`w-full px-3 py-2 text-left hover:bg-blue-50 cursor-pointer border-b border-gray-100 flex items-center gap-2 ${
-                  value === option.id ? 'bg-blue-100 font-semibold' : ''
-                }`}
-              >
-                {option.icon && (
-                  <img src={option.icon} alt="" className="w-5 h-5" />
+            {options.map((option, index) => (
+              <div key={option.id}>
+                {/* 묶음 머리글. 계좌 주인처럼 고를 수 없는 정보라 button이 아니다. */}
+                {option.group && option.group !== options[index - 1]?.group && (
+                  <div className="px-3 py-1.5 bg-gray-50 text-xs font-semibold text-gray-500 border-b border-gray-200">
+                    {option.group}
+                  </div>
                 )}
-                <span>{option.name}</span>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    onChange(option.id);
+                    setIsOpen(false);
+                  }}
+                  className={`w-full px-3 py-2 text-left hover:bg-blue-50 cursor-pointer border-b border-gray-100 flex items-center gap-2 ${
+                    value === option.id ? 'bg-blue-100 font-semibold' : ''
+                  }`}
+                >
+                  {option.icon && (
+                    <img src={option.icon} alt="" className="w-5 h-5" />
+                  )}
+                  <span>{option.name}</span>
+                </button>
+              </div>
             ))}
           </div>
 

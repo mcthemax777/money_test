@@ -170,3 +170,17 @@ export function monthQueryRange(
     endDate: new Date(end.getTime() - 1).toISOString(),
   };
 }
+
+/**
+ * "YYYY-MM"에서 delta개월 옮긴 "YYYY-MM".
+ *
+ * 월은 항상 두 자리로 채운다. 서버가 예산 적용 기간을 문자열 비교로 따지므로
+ * ("2026-9" > "2026-10"이 되어 버린다) 자리수가 어긋나면 안 된다.
+ */
+export function shiftYearMonth(yearMonth: string, delta: number): string {
+  const [year, month] = yearMonth.split('-').map(Number);
+  const index = month - 1 + delta;
+  const shiftedYear = year + Math.floor(index / 12);
+  const shiftedMonth = (((index % 12) + 12) % 12) + 1;
+  return `${shiftedYear}-${String(shiftedMonth).padStart(2, '0')}`;
+}

@@ -2,7 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { currentYearMonth } from '@/lib/datetime';
-import { useProjectTimeZone } from '@/store/project';
+import { formatCurrency } from '@/lib/money';
+import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
 
 interface MonthHeaderProps {
   year: number;
@@ -32,9 +33,6 @@ interface MonthHeaderProps {
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
 
-const currency = (value: number) =>
-  new Intl.NumberFormat('ko-KR', { style: 'currency', currency: 'KRW' }).format(value);
-
 export default function MonthHeader({
   year,
   month,
@@ -49,6 +47,7 @@ export default function MonthHeader({
   onPeriodModeChange,
 }: MonthHeaderProps) {
   const timeZone = useProjectTimeZone();
+  const displayCurrency = useProjectDisplayCurrency();
   const [isPickerOpen, setIsPickerOpen] = useState(false);
   // 선택기 안에서 보고 있는 연도. 실제 선택과 분리해야 12월에서 다음 해를 훑어볼 수 있다.
   const [pickerYear, setPickerYear] = useState(year);
@@ -217,8 +216,12 @@ export default function MonthHeader({
         )}
 
         <div className="flex gap-6 text-sm font-semibold">
-          {incomeTotal > 0 && <span className="text-green-600">+{currency(incomeTotal)}</span>}
-          {expenseTotal > 0 && <span className="text-red-600">-{currency(expenseTotal)}</span>}
+          {incomeTotal > 0 && (
+            <span className="text-green-600">+{formatCurrency(incomeTotal, displayCurrency)}</span>
+          )}
+          {expenseTotal > 0 && (
+            <span className="text-red-600">-{formatCurrency(expenseTotal, displayCurrency)}</span>
+          )}
         </div>
       </div>
 

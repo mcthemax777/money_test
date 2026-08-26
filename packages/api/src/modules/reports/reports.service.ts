@@ -15,6 +15,7 @@ import {
   ReportDto,
   currencyDecimals,
   zonedCurrentYearMonth,
+  zonedDateKey,
   zonedDateStringToUtc,
   zonedDayStart,
   zonedMonthRange,
@@ -327,7 +328,8 @@ export class ReportsService {
       userId,
       query.projectId,
     );
-    const granularity = query.granularity === 'day' ? 'day' : 'month';
+    const granularity =
+      query.granularity === 'day' || query.granularity === 'year' ? query.granularity : 'month';
 
     const accounts = await this.prisma.account.findMany({
       where: {
@@ -351,21 +353,25 @@ export class ReportsService {
     if (accounts.length === 0) return [];
     const accountIds = accounts.map((a) => a.id);
 
+    const endMonth = query.endMonth
+      ? assertYearMonth(query.endMonth, '기준 월')
+      : zonedCurrentYearMonth(timeZone);
+
+    /*
+     * 일 단위는 두 가지 방식이 있다.
+     *
+     * yearMonth가 있으면 그 달 1일~말일이다. 월별 그래프에서 한 달을 눌러 들어오는
+     * 길이라 창이 그 달에 딱 맞아야 한다. 없으면 오늘까지 최근 days일을 그린다.
+     * 단위를 직접 고르는 쪽은 "요즘 어떤가"를 보는 것이라 달 경계가 의미 없다.
+     */
     const buckets =
       granularity === 'day'
-        ? dayBuckets(
-            query.yearMonth
-              ? assertYearMonth(query.yearMonth, '조회 월')
-              : zonedCurrentYearMonth(timeZone),
-            timeZone,
-          )
-        : monthBuckets(
-            query.endMonth
-              ? assertYearMonth(query.endMonth, '기준 월')
-              : zonedCurrentYearMonth(timeZone),
-            Math.min(Math.max(Number(query.months) || 12, 1), 60),
-            timeZone,
-          );
+        ? query.yearMonth
+          ? dayBuckets(assertYearMonth(query.yearMonth, '조회 월'), timeZone)
+          : recentDayBuckets(clampCount(query.days, 30, 366), timeZone)
+        : granularity === 'year'
+          ? yearBuckets(Number(endMonth.slice(0, 4)), clampCount(query.years, 5, 30), timeZone)
+          : monthBuckets(endMonth, clampCount(query.months, 12, 60), timeZone);
     const windowStart = buckets[0].start;
     const windowEnd = buckets[buckets.length - 1].end;
 
@@ -976,6 +982,45 @@ function monthBuckets(endMonth: string, months: number, timeZone: string): Balan
       label: shiftYearMonth(year, month, -i),
       start: zonedMonthStart(year, month - i, timeZone),
       end: zonedMonthStart(year, month - i + 1, timeZone),
+    });
+  }
+  return buckets;
+}
+
+/** 구간 개수. 쿼리스트링으로 오는 값이라 숫자가 아닐 수 있다. */
+function clampCount(value: unknown, fallback: number, max: number): number {
+  return Math.min(Math.max(Number(value) || fallback, 1), max);
+}
+
+/** 연 단위 구간. endYear를 포함해 뒤로 years개. 경계는 프로젝트 타임존 기준이다. */
+function yearBuckets(endYear: number, years: number, timeZone: string): BalanceBucket[] {
+  const buckets: BalanceBucket[] = [];
+  for (let i = years - 1; i >= 0; i--) {
+    const year = endYear - i;
+    buckets.push({
+      label: String(year),
+      start: zonedMonthStart(year, 1, timeZone),
+      end: zonedMonthStart(year + 1, 1, timeZone),
+    });
+  }
+  return buckets;
+}
+
+/**
+ * 일 단위 구간. 오늘을 포함해 뒤로 days개.
+ *
+ * zonedDayStart는 day가 1보다 작아도 앞 달로 넘어간다(Date.UTC의 규칙).
+ * 달 경계를 따로 다루지 않아도 되는 이유다.
+ */
+function recentDayBuckets(days: number, timeZone: string): BalanceBucket[] {
+  const { year, month, day } = zonedParts(new Date(), timeZone);
+  const buckets: BalanceBucket[] = [];
+  for (let i = days - 1; i >= 0; i--) {
+    const start = zonedDayStart(year, month, day - i, timeZone);
+    buckets.push({
+      label: zonedDateKey(start, timeZone),
+      start,
+      end: zonedDayStart(year, month, day - i + 1, timeZone),
     });
   }
   return buckets;

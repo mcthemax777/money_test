@@ -381,6 +381,10 @@ model Card {
   cardNumber          String? // 서버에서 마스킹
   expiryDate          DateTime?
   creditLimit         Decimal?  @db.Decimal(19, 4) // credit만 사용
+  // 혜택(무이자·할인 등) 조건이 되는 한 주기 사용액 기준. 카드사가 말하는 "실적".
+  // 신용카드는 마감일 기준 청구 주기로, 체크카드는 달력 월로 센다.
+  // null이면 이 카드에는 실적 조건이 없다는 뜻이라 화면에 아무것도 보이지 않는다.
+  performanceAmount   Decimal?  @db.Decimal(19, 4)
   statementClosingDay Int? // 마감일 1~31. credit만 사용
   paymentDueDay       Int? // 결제일 1~31. credit만 사용
   isActive            Boolean   @default(true)

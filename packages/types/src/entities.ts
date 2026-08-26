@@ -143,6 +143,13 @@ export interface Card {
   expiryDate: IsoDateString | null;
   /** 금액은 정밀도 손실을 막기 위해 문자열로 오간다 (Prisma Decimal 기본 직렬화) */
   creditLimit: string | null;
+  /**
+   * 혜택 조건이 되는 한 주기 사용액 기준. 카드사가 말하는 "실적".
+   *
+   * 세는 구간이 카드 종류마다 다르다. 신용카드는 마감일 기준 청구 주기(마감일이
+   * 15일이면 8/16~9/15), 체크카드는 달력 월이다. null이면 조건이 없는 카드다.
+   */
+  performanceAmount: string | null;
   statementClosingDay: number | null; // 마감일 1~31. credit만
   paymentDueDay: number | null;       // 결제일 1~31. credit만
   isActive: boolean;
