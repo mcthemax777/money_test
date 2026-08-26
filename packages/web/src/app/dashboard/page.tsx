@@ -836,6 +836,10 @@ export default function TransactionsPage() {
             filter={appliedFilter}
             onEntryClick={handleTransactionClick}
             reloadToken={dataVersion}
+            /* 정산 팝업이 결제 통장과 그 주인을 찾는 데 쓴다 */
+            cards={cards}
+            accounts={accounts}
+            onCardChange={handleEntryChange}
           />
         ) : visibleEntries.length === 0 ? (
           /* 필터로 비었는지 원래 없는지 구분해 준다. 체크를 다 풀면 결과가 없는 게 정상이다. */

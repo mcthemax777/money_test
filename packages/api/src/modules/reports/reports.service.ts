@@ -10,7 +10,10 @@ import {
 } from '@/common/entry-filter';
 import { HIDDEN_ACCOUNT_TYPES } from '../accounts/accounts.service';
 import { assertDateKey, assertYearMonth } from '@/common/year-month';
-import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
+import {
+  DisplayConverter,
+  ExchangeRatesService,
+} from '../exchange-rates/exchange-rates.service';
 import {
   ReportDto,
   currencyDecimals,
@@ -636,20 +639,61 @@ export class ReportsService {
       });
     }
 
+    /*
+     * 실적 기준액을 표시 통화로 옮긴다.
+     *
+     * 카드에 저장된 값은 결제 통장의 통화다. 통장 통화는 카드마다 다를 수 있어
+     * 통화별로 환산기를 하나씩 만든다. 대부분의 프로젝트는 한 통화뿐이라 한 번에
+     * 끝나고, 그때는 환산기가 곱셈을 건너뛴다.
+     */
+    const { display } = await this.projectAccess.getProjectCurrencies(projectId);
+    const converters = new Map<string, DisplayConverter>();
+    const performanceTargets = new Map<string, string>();
     for (const card of cards) {
-      if (!card.isActive) continue;
+      if (card.performanceAmount === null) continue;
+
+      const currency = card.paymentAccount.currency;
+      let converter = converters.get(currency);
+      if (!converter) {
+        converter = await this.exchangeRates.getDisplayConverter(
+          projectId,
+          this.exchangeRates.assertCurrency(currency, '통장 통화'),
+          display,
+        );
+        converters.set(currency, converter);
+      }
+      performanceTargets.set(card.id, converter.toString(card.performanceAmount));
+    }
+
+    /** 카드 한 장의 빈 칸. 목록을 채울 때와 금액을 더할 때가 같은 모양이어야 한다. */
+    const cardBucket = (
+      card: (typeof cards)[number],
+      amount: string,
+      count: number,
+    ): ReportDto.PaymentMethodItem => {
       const owner = card.paymentAccount.owner;
-      if (!isVisibleOwner(owner?.id ?? null)) continue;
-      this.addTo(buckets, {
+      return {
         kind: card.cardType === 'credit' ? 'credit_card' : 'debit_card',
         id: card.id,
         name: card.name,
         ownerId: owner?.id ?? null,
         ownerName: owner?.name ?? null,
-        amount: '0',
-        count: 0,
+        amount,
+        count,
         income: '0',
-      });
+        ...(performanceTargets.has(card.id)
+          ? { performanceTarget: performanceTargets.get(card.id) }
+          : {}),
+        ...(card.statementClosingDay !== null
+          ? { statementClosingDay: card.statementClosingDay }
+          : {}),
+      };
+    };
+
+    for (const card of cards) {
+      if (!card.isActive) continue;
+      if (!isVisibleOwner(card.paymentAccount.owner?.id ?? null)) continue;
+      this.addTo(buckets, cardBucket(card, '0', 0));
     }
 
     // 고정/변동을 하나도 고르지 않았으면 금액은 없지만 목록은 그대로 둔다.
@@ -717,18 +761,8 @@ export class ReportsService {
       if (item.cardId) {
         const card = cardById.get(item.cardId);
         if (!card) continue;
-        const owner = card.paymentAccount.owner;
-        if (!isVisibleOwner(owner?.id ?? null)) continue;
-        this.addTo(buckets, {
-          kind: card.cardType === 'credit' ? 'credit_card' : 'debit_card',
-          id: card.id,
-          name: card.name,
-          ownerId: owner?.id ?? null,
-          ownerName: owner?.name ?? null,
-          amount: item.amount,
-          count: 1,
-          income: '0',
-        });
+        if (!isVisibleOwner(card.paymentAccount.owner?.id ?? null)) continue;
+        this.addTo(buckets, cardBucket(card, item.amount, 1));
       } else if (item.accountId) {
         const account = accountById.get(item.accountId);
         if (!account || !isVisibleOwner(account.ownerId)) continue;
