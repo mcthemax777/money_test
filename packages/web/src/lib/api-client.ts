@@ -572,8 +572,11 @@ class ApiClient {
     return response.data;
   }
 
-  async deleteBudget(id: string) {
-    await this.client.delete(`/budgets/${id}`);
+  /** fromMonth("YYYY-MM")를 주면 그 달부터만 없앤다. 이전 달의 예산은 남는다. */
+  async deleteBudget(id: string, fromMonth?: string) {
+    await this.client.delete(`/budgets/${id}`, {
+      params: fromMonth ? { fromMonth } : {},
+    });
   }
 
   /** 프로젝트의 예산을 모두 지운다. 월별 조정값도 함께 사라진다. */

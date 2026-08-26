@@ -69,7 +69,8 @@ interface BudgetStore {
   ) => Promise<void>;
   createBudget: (data: any) => Promise<void>;
   updateBudget: (id: string, data: any) => Promise<void>;
-  deleteBudget: (id: string) => Promise<void>;
+  /** fromMonth를 주면 그 달부터만 없앤다 (이전 달은 그대로). */
+  deleteBudget: (id: string, fromMonth?: string) => Promise<void>;
   createOverride: (data: any) => Promise<void>;
   deleteOverride: (id: string) => Promise<void>;
   /** 프로젝트의 예산을 모두 지운다. 지운 개수를 돌려준다. */
@@ -134,10 +135,10 @@ export const useBudget = create<BudgetStore>((set) => ({
     }
   },
 
-  deleteBudget: async (id) => {
+  deleteBudget: async (id, fromMonth) => {
     set({ isLoading: true });
     try {
-      await apiClient.deleteBudget(id);
+      await apiClient.deleteBudget(id, fromMonth);
     } catch (error) {
       console.error('Failed to delete budget:', error);
       throw error;

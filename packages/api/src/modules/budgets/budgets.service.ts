@@ -23,6 +23,16 @@ import {
 const ZERO = new Prisma.Decimal(0);
 
 /**
+ * effectiveFrom/effectiveTo가 비어 있을 때 쓰는 양끝.
+ *
+ * 적용 기간 비교를 "YYYY-MM" 문자열로 하므로 열린 끝도 같은 형식의 값이어야
+ * 한다. 기간을 끊는 쪽과 걸리는 달을 따지는 쪽이 다른 값을 쓰면, 규칙을 끊었는데
+ * 여전히 걸리거나 그 반대가 된다.
+ */
+const BUDGET_MONTH_FLOOR = '2000-01';
+const BUDGET_MONTH_CEILING = '9999-12';
+
+/**
  * 전체 예산의 센티널 categoryId를 푼다.
  *
  * 전체 예산은 분류가 없는 예산이라 categoryId로 가리킬 수 없다. 화면은 대신
@@ -193,61 +203,134 @@ export class BudgetsService {
     const { show, store } = await this.currencyView(budget.projectId);
     const monthlyAmount = store.convert(toMoney(dto.monthlyAmount, '월 예산'));
 
-    // applyMode='all': 기본 규칙만 수정
+    /*
+     * applyMode='all': 이 규칙이 덮는 모든 달을 이 금액으로 만든다.
+     *
+     * 그 달만 따로 잡아 둔 값(BudgetOverride)도 함께 지운다. 남겨 두면 모든 달을
+     * 바꿨는데 어떤 달만 옛 조정값으로 남아, 손댄 적 없는 금액이 튀어 보인다.
+     */
     if (!dto.applyMode || dto.applyMode === 'all') {
-      const updated = await this.prisma.budget.update({
-        where: { id },
-        data: { monthlyAmount },
+      const updated = await this.prisma.$transaction(async (tx) => {
+        await tx.budgetOverride.deleteMany({ where: { budgetId: id } });
+        return tx.budget.update({ where: { id }, data: { monthlyAmount } });
       });
       return this.toBudgetResponse(updated, show);
     }
 
-    // applyMode='from': 기존 규칙을 앞 달까지로 끊고 새 규칙을 만든다
+    /*
+     * applyMode='from': 그 달부터 끝까지를 이 금액으로 만든다.
+     *
+     * "8월부터"는 끝이 없는 말이다. 뒤에 남아 있던 규칙까지 걷어내야 한다.
+     * 예전에는 고치던 규칙만 앞 달까지로 끊고 새 규칙을 만들어서, 9월부터
+     * 20만원으로 나눠 둔 뒤에 8월부터 100만원으로 바꾸면 8월만 100만원이 되고
+     * 9월부터는 20만원이 되살아났다.
+     */
     if (dto.applyMode === 'from') {
       const applyFrom = assertYearMonth(dto.applyFromMonth!, '적용 시작 월');
-      const beforeMonth = this.getPreviousMonth(applyFrom);
 
-      // 두 쓰기를 한 트랜잭션으로 묶는다. 끊기만 하고 새 규칙 생성이 실패하면
+      // 한 트랜잭션으로 묶는다. 걷어내기만 하고 새 규칙 생성이 실패하면
       // 그 달부터 예산이 통째로 사라진 상태로 남는다.
-      const newBudget = await this.prisma
-        .$transaction(async (tx) => {
-          await tx.budget.update({
-            where: { id },
-            data: { effectiveTo: beforeMonth },
-          });
+      const newBudget = await this.prisma.$transaction(async (tx) => {
+        const siblings = await this.findSiblingBudgets(tx, budget);
 
-          return tx.budget.create({
-            data: {
-              projectId: budget.projectId,
-              categoryId: budget.categoryId,
-              // type을 빠뜨리면 안 된다. 전체 예산(categoryId = null)은 type이
-              // 유일한 구분자라, 없이 만들면 조회 맵의 키가 `__total__undefined`가
-              // 되어 그 달부터 전체 예산 칸이 빈 값으로 보인다.
-              type: budget.type,
-              monthlyAmount,
-              effectiveFrom: applyFrom,
-            },
-          });
-        })
-        .catch((error) => {
-          // @@unique([projectId, categoryId, type, effectiveFrom]).
-          // 같은 달부터 두 번 나누려 한 경우다. 트랜잭션이 통째로 되돌아가므로
-          // 기존 규칙의 effectiveTo도 원래대로 남는다.
-          if (
-            error instanceof Prisma.PrismaClientKnownRequestError &&
-            error.code === 'P2002'
-          ) {
-            throw new BadRequestException(
-              `${applyFrom}부터 적용되는 예산이 이미 있습니다. 그 예산을 수정하세요.`,
-            );
-          }
-          throw error;
+        // 규칙을 걷어내기 전에 지운다. 걷어낸 뒤에는 어느 규칙의 것이었는지 알 수 없다.
+        await this.clearOverridesFrom(tx, siblings, applyFrom);
+        await this.clearFromMonth(tx, siblings, applyFrom);
+
+        return tx.budget.create({
+          data: {
+            projectId: budget.projectId,
+            categoryId: budget.categoryId ?? null,
+            // type을 빠뜨리면 안 된다. 전체 예산(categoryId = null)은 type이
+            // 유일한 구분자라, 없이 만들면 조회 맵의 키가 `__total__undefined`가
+            // 되어 그 달부터 전체 예산 칸이 빈 값으로 보인다.
+            type: budget.type,
+            monthlyAmount,
+            effectiveFrom: applyFrom,
+          },
         });
+      });
 
       return this.toBudgetResponse(newBudget, show);
     }
 
     throw new BadRequestException('applyMode가 잘못되었습니다.');
+  }
+
+  /**
+   * 한 대상(분류 하나, 또는 전체 예산 하나)의 규칙 전부.
+   *
+   * 분류 예산은 categoryId로 갈린다. 전체 예산은 categoryId가 없으므로 type이
+   * 유일한 구분자다(스키마 주석과 같은 규칙). 이 둘을 한 곳에서 뽑아야 "그 달부터"가
+   * 어디까지 덮을지 판단하는 쪽과 조회하는 쪽이 같은 묶음을 본다.
+   */
+  private async findSiblingBudgets(
+    tx: Prisma.TransactionClient,
+    budget: { projectId: string; categoryId?: string; type?: 'income' | 'expense' },
+  ) {
+    const rows = await tx.budget.findMany({
+      where: { projectId: budget.projectId, categoryId: budget.categoryId ?? null },
+    });
+
+    return budget.categoryId ? rows : rows.filter((row) => row.type === budget.type);
+  }
+
+  /**
+   * applyFrom부터의 "그 달만 조정한 값"을 지운다.
+   *
+   * 여러 달을 한꺼번에 바꾸는 것은 그 구간을 새로 정하겠다는 말이다. 그 달만 따로
+   * 잡아 둔 값이 남아 있으면, 8월부터 2000원으로 바꿨는데 10월만 옛 조정값으로 남아
+   * 손댄 적 없는 금액이 튀어 보인다.
+   *
+   * 규칙을 지우면 딸린 조정값도 cascade로 사라지지만 그것만으로는 모자란다. 앞
+   * 달까지로 끊기는 규칙은 살아남고, 그 뒤쪽 조정값이 데이터로 남아 있다가 나중에
+   * 그 규칙을 다시 늘리면 되살아난다.
+   *
+   * applyFrom 앞의 달은 손대지 않는다. 그쪽 규칙과 조정은 그대로 남아야 한다.
+   */
+  private async clearOverridesFrom(
+    tx: Prisma.TransactionClient,
+    siblings: Array<{ id: string }>,
+    applyFrom: string,
+  ): Promise<void> {
+    const [year, month] = applyFrom.split('-').map(Number);
+
+    await tx.budgetOverride.deleteMany({
+      where: {
+        budgetId: { in: siblings.map((rule) => rule.id) },
+        // year/month가 숫자 두 칸이라 "YYYY-MM" 비교를 그대로 쓸 수 없다.
+        OR: [{ year: { gt: year } }, { year, month: { gte: month } }],
+      },
+    });
+  }
+
+  /**
+   * applyFrom부터 끝까지를 비운다.
+   *
+   * 그 달 이후에 시작하는 규칙은 통째로 지우고, 그 달에 걸쳐 있는 규칙은 앞 달까지로
+   * 끊는다. 그 달 앞에서 이미 끝난 규칙은 건드리지 않는다 (effectiveTo를 뒤로 밀면
+   * 없애려던 규칙이 오히려 늘어난다).
+   *
+   * 조정값은 여기서 다루지 않는다. 지워지는 규칙의 것은 cascade로 함께 사라지지만
+   * 끊기는 규칙의 것은 남으므로, 호출부가 `clearOverridesFrom`을 따로 불러야 한다.
+   */
+  private async clearFromMonth(
+    tx: Prisma.TransactionClient,
+    siblings: Array<{ id: string; effectiveFrom: string | null; effectiveTo: string | null }>,
+    applyFrom: string,
+  ): Promise<void> {
+    const beforeMonth = this.getPreviousMonth(applyFrom);
+
+    for (const rule of siblings) {
+      if ((rule.effectiveFrom || BUDGET_MONTH_FLOOR) >= applyFrom) {
+        await tx.budget.delete({ where: { id: rule.id } });
+        continue;
+      }
+
+      if ((rule.effectiveTo || BUDGET_MONTH_CEILING) >= applyFrom) {
+        await tx.budget.update({ where: { id: rule.id }, data: { effectiveTo: beforeMonth } });
+      }
+    }
   }
 
   /**
@@ -270,8 +353,28 @@ export class BudgetsService {
     return { deleted: count };
   }
 
-  async deleteBudget(id: string, userId: string): Promise<void> {
-    await this.getBudgetById(id, userId, 'editor');
+  /**
+   * 예산 규칙을 없앤다.
+   *
+   * fromMonth를 주면 그 달부터 끝까지를 없앤다. 이전 달의 예산은 그대로 남는다.
+   * 뒤에 나뉘어 있던 다른 규칙도 함께 걷어낸다. 남겨 두면 없앤 줄 알았던 예산이
+   * 몇 달 뒤부터 되살아난다.
+   *
+   * "그 달부터 예산 없음"은 "0원 예산"과 다르다. 0원 예산은 진행률이 늘 초과로
+   * 보이지만, 예산 없음은 진행률 칸 자체가 사라진다.
+   */
+  async deleteBudget(id: string, userId: string, fromMonth?: string): Promise<void> {
+    const budget = await this.getBudgetById(id, userId, 'editor');
+
+    if (fromMonth) {
+      const applyFrom = assertYearMonth(fromMonth, '적용 시작 월');
+
+      await this.prisma.$transaction(async (tx) => {
+        const siblings = await this.findSiblingBudgets(tx, budget);
+        await this.clearFromMonth(tx, siblings, applyFrom);
+      });
+      return;
+    }
 
     await this.prisma.budget.delete({
       where: { id },
@@ -634,8 +737,8 @@ export class BudgetsService {
   }
 
   private isBudgetApplicable(budget: any, yearMonth: string): boolean {
-    const from = budget.effectiveFrom || '2000-01';
-    const to = budget.effectiveTo || '9999-12';
+    const from = budget.effectiveFrom || BUDGET_MONTH_FLOOR;
+    const to = budget.effectiveTo || BUDGET_MONTH_CEILING;
     return yearMonth >= from && yearMonth <= to;
   }
 

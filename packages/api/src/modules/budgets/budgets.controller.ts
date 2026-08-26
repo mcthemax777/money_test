@@ -109,12 +109,13 @@ export class BudgetsController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: '예산 규칙 삭제' })
+  @ApiOperation({ summary: '예산 규칙 삭제 (fromMonth를 주면 그 달부터만)' })
   delete(
     @Request() req: AuthenticatedRequest,
     @Param('id') id: string,
+    @Query('fromMonth') fromMonth?: string,
   ) {
-    return this.budgetsService.deleteBudget(id, req.user.id);
+    return this.budgetsService.deleteBudget(id, req.user.id, fromMonth);
   }
 
   @Post('override')

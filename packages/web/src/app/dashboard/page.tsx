@@ -59,18 +59,18 @@ const BUDGET_FORM_ID = 'detail-budget-form';
  */
 const BUDGET_SCOPE_OPTIONS: Array<{
   value: 'all' | 'from';
-  label: (year: number, month: number) => string;
-  description: (year: number, month: number) => string;
+  label: string;
+  description: string;
 }> = [
   {
     value: 'all',
-    label: () => '모든 달',
-    description: () => '이 예산이 적용되는 모든 달의 금액을 바꿉니다.',
+    label: '모든 달',
+    description: '이 예산이 적용되는 모든 달의 금액을 바꿉니다.',
   },
   {
     value: 'from',
-    label: (year, month) => `${year}년 ${month}월부터`,
-    description: (year, month) => `${year}년 ${month}월 이전은 지금 금액 그대로 남습니다.`,
+    label: '고른 달부터',
+    description: '고른 달 이전은 지금 금액 그대로 남습니다.',
   },
 ];
 
@@ -142,6 +142,13 @@ export default function TransactionsPage() {
    * 'month' : 보고 있는 달만. 규칙은 그대로 두고 이 달에만 다른 값을 씌운다.
    */
   const [detailBudgetScope, setDetailBudgetScope] = useState<'all' | 'from'>('all');
+  /**
+   * 'from'일 때 적용을 시작할 달 "YYYY-MM".
+   *
+   * 보고 있는 달로 고정하지 않는다. 8월 화면을 보면서 "10월부터 예산을 줄인다"처럼
+   * 앞으로의 계획을 넣는 일이 흔한데, 고정해 두면 그 달로 옮겨 간 뒤에야 넣을 수 있다.
+   */
+  const [detailBudgetFromMonth, setDetailBudgetFromMonth] = useState('');
   /** 위쪽 폼이 규칙을 바꾸면 올린다. 아래 월별 목록이 이 값을 보고 다시 읽는다. */
   const [budgetScheduleToken, setBudgetScheduleToken] = useState(0);
   const [isResettingBudgets, setIsResettingBudgets] = useState(false);
@@ -554,11 +561,16 @@ export default function TransactionsPage() {
   /**
    * 저장 버튼이 지우는 버튼이 되는 경우.
    *
-   * 0원은 범위에 따라 뜻이 다르다. "모든 달 0원"은 예산을 두지 않겠다는 말이라
-   * 규칙을 지우지만, "이 달만 0원"은 그 달 예산이 0이라는 말이라 규칙이 남는다.
+   * 0원은 "예산을 두지 않는다"는 뜻이다. 범위는 어디까지 없앨지만 정한다.
+   * '모든 달'이면 규칙을 지우고, '고른 달부터'면 앞 달까지로 끊는다.
+   *
+   * 0원짜리 규칙을 남기지 않는 이유는, 그것이 "예산 없음"과 화면에서 다르게
+   * 보이기 때문이다. 0원 예산은 한 푼만 써도 초과로 붉게 뜬다.
+   *
+   * 특정 한 달만 0원으로 두는 것은 아래 월별 목록에서 한다. 그쪽은 규칙이 아니라
+   * 그 달의 조정값이라 다음 달에 영향을 주지 않는다.
    */
-  const isDeletingBudget =
-    detailBudgetAmount === 0 && Boolean(editingBudget) && detailBudgetScope === 'all';
+  const isDeletingBudget = detailBudgetAmount === 0 && Boolean(editingBudget);
 
   const openDetailBudgetModal = () => {
     const { existing } = resolveDetailBudgetTarget();
@@ -568,7 +580,12 @@ export default function TransactionsPage() {
      * 다른 달까지 그 금액이 되어 버린다. 조정은 아래 월별 목록에서 고친다.
      */
     setDetailBudgetAmount(existing?.ruleAmount ?? existing?.monthlyAmount ?? 0);
-    setDetailBudgetScope('all');
+    /*
+     * 범위 선택(detailBudgetScope)은 그대로 둔다. 열 때마다 '모든 달'로 되돌리면,
+     * "고른 달부터"로 저장하고 확인하러 다시 연 사용자가 모든 달이 골라진 화면을
+     * 보게 된다. 그 상태로 0을 넣으면 예산이 통째로 사라진다.
+     */
+    setDetailBudgetFromMonth(viewingYearMonth);
     setDetailBudgetError('');
     setShowDetailBudgetModal(true);
   };
@@ -585,6 +602,9 @@ export default function TransactionsPage() {
    *
    * 분류가 수십 개면 하나씩 지우는 것으로는 손을 댈 수 없다. 되돌릴 수 없는
    * 동작이라 몇 개가 지워지는지 세어 확인을 받는다.
+   *
+   * 지금은 화면에 이 동작을 부르는 버튼이 없다. 실수로 누르기 쉬운 자리에 있었고
+   * 되돌릴 수 없어서 뺐다. 서버 엔드포인트(DELETE /budgets)와 함께 남겨 둔다.
    */
   const handleResetBudgets = async () => {
     if (!selectedProjectId) return;
@@ -629,6 +649,19 @@ export default function TransactionsPage() {
       return;
     }
 
+    /*
+     * '고른 달부터'는 그 달부터 끝까지를 이 금액으로 만든다는 뜻이다.
+     * 지나간 달이든 앞으로의 달이든 고를 수 있다. 뒤에 나뉘어 있던 규칙은
+     * 서버가 함께 걷어내므로, 고른 달 이후가 다른 금액으로 남는 일은 없다.
+     */
+    const applyFromMonth = detailBudgetFromMonth;
+    if (existing && detailBudgetScope === 'from') {
+      if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(applyFromMonth)) {
+        setDetailBudgetError('적용을 시작할 연월을 골라 주세요.');
+        return;
+      }
+    }
+
     try {
       setDetailBudgetSubmitting(true);
 
@@ -642,22 +675,28 @@ export default function TransactionsPage() {
           // 서버가 어느 규칙을 고쳐야 할지 이 값으로 정한다.
           yearMonth: viewingYearMonth,
         });
-      } else if (detailBudgetAmount === 0 && detailBudgetScope === 'all') {
-        // 0 + 모든 달 = "이 분류에는 예산을 두지 않는다". 규칙 자체를 지운다.
-        // 다른 범위의 0은 "그 달(들)만 0원"이라는 뜻이라 규칙을 남겨야 한다.
-        await deleteBudgetApi(existing.budgetId);
-      } else if (detailBudgetScope === 'from' && existing.effectiveFrom !== viewingYearMonth) {
+      } else if (detailBudgetAmount === 0) {
         /*
-         * 규칙을 앞 달까지로 끊고 이 달부터 새 규칙을 만든다.
+         * 0원 = "예산을 두지 않는다". 범위만큼 규칙을 없앤다.
+         * '모든 달'이면 규칙을 지우고, '고른 달부터'면 앞 달까지로 끊는다
+         * (서버가 남는 달이 없는 경우를 판단해 규칙째 지운다).
+         */
+        await deleteBudgetApi(
+          existing.budgetId,
+          detailBudgetScope === 'from' ? applyFromMonth : undefined,
+        );
+      } else if (detailBudgetScope === 'from') {
+        /*
+         * 고른 달부터 끝까지를 이 금액으로 만든다.
          *
-         * 이미 이 달부터 시작하는 규칙이면 나눌 것이 없다. 그대로 보내면 서버가
-         * "그 달부터의 예산이 이미 있습니다"로 막는데, 사용자가 원한 결과는
-         * 지금 규칙의 금액을 바꾸는 것이므로 아래 'all' 경로와 같아진다.
+         * 이미 그 달부터 시작하는 규칙이어도 그대로 보낸다. 뒤에 다른 규칙이
+         * 나뉘어 있을 수 있고, 그것까지 걷어내는 것은 서버만 할 수 있다.
+         * 여기서 'all' 경로로 새면 고른 달만 바뀌고 그 뒤는 옛 금액이 남는다.
          */
         await updateBudgetApi(existing.budgetId, {
           monthlyAmount,
           applyMode: 'from',
-          applyFromMonth: viewingYearMonth,
+          applyFromMonth,
         });
       } else {
         await updateBudgetApi(existing.budgetId, { monthlyAmount });
@@ -785,9 +824,6 @@ export default function TransactionsPage() {
             }}
             budgets={isRangeMode ? undefined : monthlyBudgets}
             onEditBudget={isRangeMode ? undefined : openDetailBudgetModal}
-            /* 기간 보기에는 예산이 없으므로 초기화할 것도 없다 */
-            onResetBudgets={isRangeMode ? undefined : handleResetBudgets}
-            isResettingBudgets={isResettingBudgets}
           />
         ) : isLoading ? (
           <p className="text-gray-600">로딩 중...</p>
@@ -946,30 +982,44 @@ export default function TransactionsPage() {
               <label className="block text-sm font-medium text-gray-700 mb-2">적용 범위</label>
               <div className="space-y-2">
                 {BUDGET_SCOPE_OPTIONS.map((option) => (
-                  <label key={option.value} className="flex items-start gap-2 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="budget-scope"
-                      value={option.value}
-                      checked={detailBudgetScope === option.value}
-                      onChange={() => setDetailBudgetScope(option.value)}
-                      className="mt-1 w-4 h-4 text-blue-600 border-gray-300 focus:ring-2 focus:ring-blue-500"
-                    />
-                    <span className="text-sm">
-                      <span className="text-gray-900">
-                        {option.label(currentYear, currentMonth)}
+                  <div key={option.value}>
+                    <label className="flex items-start gap-2 cursor-pointer">
+                      <input
+                        type="radio"
+                        name="budget-scope"
+                        value={option.value}
+                        checked={detailBudgetScope === option.value}
+                        onChange={() => setDetailBudgetScope(option.value)}
+                        className="mt-1 w-4 h-4 text-blue-600 border-gray-300 focus:ring-2 focus:ring-blue-500"
+                      />
+                      <span className="text-sm">
+                        <span className="text-gray-900">{option.label}</span>
+                        <span className="block text-xs text-gray-500">{option.description}</span>
                       </span>
-                      <span className="block text-xs text-gray-500">
-                        {option.description(currentYear, currentMonth)}
-                      </span>
-                    </span>
-                  </label>
+                    </label>
+
+                    {/*
+                      시작 월 선택. label 밖에 둔다. 안에 넣으면 달을 고르려고 누른
+                      클릭이 라디오까지 눌러 버린다.
+
+                      고를 수 있는 달을 가두지 않는다. 지나간 달의 예산을 고치는 일도
+                      있고, 몇 달 뒤부터 줄이겠다고 미리 넣는 일도 있다.
+                    */}
+                    {option.value === 'from' && detailBudgetScope === 'from' && (
+                      <input
+                        type="month"
+                        value={detailBudgetFromMonth}
+                        onChange={(e) => setDetailBudgetFromMonth(e.target.value)}
+                        className="mt-2 ml-6 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                    )}
+                  </div>
                 ))}
               </div>
               <p className="mt-2 text-xs text-gray-500">
                 {detailBudgetScope === 'all'
                   ? '0을 입력하면 이 분류의 예산을 지웁니다.'
-                  : '0을 입력하면 그 달부터 예산이 0원이 됩니다.'}
+                  : '0을 입력하면 고른 달부터 예산이 없어집니다. 이전 달은 그대로 남습니다.'}
               </p>
             </div>
           ) : (

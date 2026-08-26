@@ -49,14 +49,6 @@ interface Props {
   budgets?: BudgetRow[];
   /** 예산을 넣거나 고칠 때. 넘기면 상세 헤더에 버튼이 붙는다. */
   onEditBudget?: () => void;
-  /**
-   * 프로젝트의 예산을 모두 지울 때. 넘기면 목록 위에 버튼이 붙는다.
-   *
-   * 분류가 수십 개면 하나씩 지우는 것으로는 손을 댈 수 없어서 필요하다.
-   * 기간 보기처럼 예산이 없는 화면에서는 넘기지 않는다.
-   */
-  onResetBudgets?: () => void;
-  isResettingBudgets?: boolean;
 }
 
 interface BreakdownRow {
@@ -92,8 +84,6 @@ export default function CategoryTab({
   onSelect,
   budgets,
   onEditBudget,
-  onResetBudgets,
-  isResettingBudgets = false,
 }: Props) {
   const displayCurrency = useProjectDisplayCurrency();
   /** 대분류로 합친 집계 (rollup). 목록의 윗줄이다. */
@@ -303,18 +293,6 @@ export default function CategoryTab({
               </button>
             ))}
           </div>
-
-          {/* 되돌릴 수 없는 동작이라 눈에 띄지 않게 둔다. 확인은 누른 뒤에 받는다. */}
-          {onResetBudgets && (
-            <button
-              type="button"
-              onClick={onResetBudgets}
-              disabled={isResettingBudgets}
-              className="mb-2 text-xs text-gray-500 hover:text-red-600 underline disabled:opacity-50"
-            >
-              {isResettingBudgets ? '지우는 중...' : '예산 모두 초기화'}
-            </button>
-          )}
         </div>
 
         {isLoading ? (
@@ -447,10 +425,16 @@ export default function CategoryTab({
               })}
             </div>
 
-            <p className="mt-4 text-xs text-gray-500">
-              예산 진행률은 월 단위에서만 보입니다. 예산은 달마다 정하는 값이라 기간에
-              맞춰 나눌 수 없습니다.
-            </p>
+            {/*
+              기간 보기에서만 띄운다. 월 단위에서는 진행률이 그대로 보이므로
+              "월 단위에서만 보인다"는 안내가 눈앞의 화면과 어긋난다.
+            */}
+            {!budgets && (
+              <p className="mt-4 text-xs text-gray-500">
+                예산 진행률은 월 단위에서만 보입니다. 예산은 달마다 정하는 값이라 기간에
+                맞춰 나눌 수 없습니다.
+              </p>
+            )}
           </>
         )}
       </div>
