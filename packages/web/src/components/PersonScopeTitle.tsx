@@ -19,11 +19,15 @@ const MAX_NAMES = 3;
 /**
  * 제목에 적을 문구.
  *
+ * 전원을 고른 상태는 이름을 늘어놓지 않고 "전체"라고 적는다. 그 상태가 기본값이라
+ * 이름을 다 적으면 제목이 늘 길고, 정작 좁혀 놓았을 때와 구별되지 않는다.
+ *
  * 아무도 고르지 않은 상태는 "전체"가 아니라 "결과 없음"이다. 화면 이름만 남기면
  * 그 사실이 사라지므로 뒤에 붙여서 알린다.
  */
-function scopeLabel(names: string[], noun: string): string {
+function scopeLabel(names: string[], total: number, noun: string): string {
   if (names.length === 0) return `${noun} · 자산주인 없음`;
+  if (names.length === total) return `전체 ${noun}`;
   if (names.length <= MAX_NAMES) return `${names.join(', ')}님의 ${noun}`;
   return `${names[0]} 외 ${names.length - 1}명의 ${noun}`;
 }
@@ -88,7 +92,7 @@ export default function PersonScopeTitle({
           title="자산주인 선택"
         >
           {/* 구성원을 아직 못 받았으면 이름 자리를 비워 두고 화면 이름만 적는다 */}
-          {people.length === 0 ? noun : scopeLabel(selectedNames, noun)}
+          {people.length === 0 ? noun : scopeLabel(selectedNames, people.length, noun)}
           <span className="text-sm text-gray-400">▾</span>
         </button>
       </h1>
