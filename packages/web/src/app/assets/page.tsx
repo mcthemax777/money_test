@@ -11,6 +11,7 @@ import { formatDate, monthInputToIso } from '@/lib/datetime';
 import { type ReportDto } from '@money/types';
 import ChoiceModal from '@/components/ChoiceModal';
 import { useDragReorder } from '@/hooks/useDragReorder';
+import { usePersonFilterSync } from '@/hooks/usePersonFilterSync';
 import { DAY_OF_MONTH_HINT, DAY_OF_MONTH_OPTIONS } from '@/lib/day-of-month';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
@@ -29,7 +30,12 @@ const CARD_ADD_FORM_ID = 'card-add-form';
  * 누를 때마다 목록이 미세하게 움직인다.
  */
 const SELECTED_MARK = 'ring-2 ring-blue-500';
-import { useProject, useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
+import {
+  useMyPersonId,
+  useProject,
+  useProjectDisplayCurrency,
+  useProjectTimeZone,
+} from '@/store/project';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import PersonModal from '@/components/PersonModal';
@@ -37,6 +43,7 @@ import EditAccountModal from '@/components/EditAccountModal';
 import EditCardModal from '@/components/EditCardModal';
 import AddAccountModal from '@/components/AddAccountModal';
 import PageHeader from '@/components/PageHeader';
+import PersonScopeTitle from '@/components/PersonScopeTitle';
 import HiddenItemsPanel from '@/components/HiddenItemsPanel';
 import AssetHistoryChart from '@/components/AssetHistoryChart';
 import TransactionListView from '@/components/TransactionListView';
@@ -102,6 +109,30 @@ function AccountTypeBadge({ type }: { type: string }) {
 type NetWorthParts = { cash: string; investment: string; liability: string };
 
 /**
+ * 고른 자산주인들의 소계를 하나로 합친다.
+ *
+ * 서버가 준 전체 합계(total)는 주인 없는 계좌까지 담고 있어 일부만 골랐을 때
+ * 쓸 수 없다. 계좌가 없는 구성원은 소계 자체가 없으므로 건너뛴다.
+ */
+function sumNetWorth(rows: Array<NetWorthParts | undefined>): NetWorthParts & { total: string } {
+  const sum = rows.reduce(
+    (acc, row) => ({
+      cash: acc.cash + toNumber(row?.cash),
+      investment: acc.investment + toNumber(row?.investment),
+      liability: acc.liability + toNumber(row?.liability),
+    }),
+    { cash: 0, investment: 0, liability: 0 },
+  );
+
+  return {
+    cash: toAmountString(sum.cash),
+    investment: toAmountString(sum.investment),
+    liability: toAmountString(sum.liability),
+    total: toAmountString(sum.cash + sum.investment + sum.liability),
+  };
+}
+
+/**
  * "현금성 · 투자 · 부채" 한 줄.
  *
  * 전체 총자산 상자와 구성원 패널이 같은 형식을 쓴다.
@@ -131,8 +162,9 @@ function NetWorthBreakdown({
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { setPeople: setStorePeople } = useUserFilter();
+  const { setPeople: setStorePeople, selectedPersonIds, togglePersonId } = useUserFilter();
   const { selectedProjectId } = useProject();
+  const myPersonId = useMyPersonId();
   const timeZone = useProjectTimeZone();
   const displayCurrency = useProjectDisplayCurrency();
   const [accounts, setAccounts] = useState<Account[]>([]);
@@ -269,6 +301,32 @@ export default function DashboardPage() {
     loadData();
   }, [selectedProjectId]);
 
+  usePersonFilterSync(selectedProjectId, people);
+
+  /*
+   * 자산주인에서 빠진 항목은 오른쪽 패널에서도 내린다.
+   *
+   * 왼쪽 목록에 없는 계좌의 내역이 오른쪽에 남아 있으면 어디서 온 것인지 알 수 없고,
+   * 위의 총자산에도 들어가지 않아 화면 안에서 숫자가 어긋난다.
+   *
+   * 주인을 알 수 없는 경우(주인 없는 계좌, 계좌 목록을 아직 못 받은 경우)는 그대로 둔다.
+   * 걸러낼 근거가 없는데 닫으면 열자마자 닫히는 것처럼 보인다.
+   */
+  useEffect(() => {
+    if (!detailType) return;
+
+    const ownerId =
+      detailType === 'person'
+        ? selectedPerson?.id ?? null
+        : detailType === 'account'
+          ? selectedAccount?.ownerId ?? null
+          : accounts.find((account) => account.id === selectedCard?.paymentAccountId)?.ownerId ??
+            null;
+
+    if (!ownerId || selectedPersonIds.includes(ownerId)) return;
+    setDetailType(null);
+  }, [detailType, selectedPersonIds, accounts, selectedPerson, selectedAccount, selectedCard]);
+
   /**
    * 거래를 저장하거나 지운 뒤.
    *
@@ -384,8 +442,6 @@ export default function DashboardPage() {
     }
   }, [selectedAccount, detailType, loadAccountTransactions, entryVersion]);
 
-  // 자산 화면은 사람 필터를 쓰지 않는다. 필터는 가계 화면 전용이고,
-  // 여기서 걸면 총자산(서버 계산, 전체 기준)과 계좌 목록이 어긋난다.
   const getAccountCards = (accountId: string) =>
     cards.filter((c) => c.paymentAccountId === accountId);
 
@@ -598,19 +654,39 @@ export default function DashboardPage() {
           ? selectedCard?.id
           : undefined;
 
-  const totalBalance = toNumber(netWorth?.total);
   type PersonNetWorth = ReportDto.NetWorth['byPerson'][number];
   const netWorthByPerson = new Map<string, PersonNetWorth>(
     (netWorth?.byPerson ?? []).map((row) => [row.personId, row]),
   );
 
-  // 계좌가 없는 구성원도 표시한다
-  const displayPeople = people;
+  // 계좌가 없는 구성원도 표시한다. 제목에서 고른 자산주인만 남는다.
+  const displayPeople = people.filter((person) => selectedPersonIds.includes(person.id));
+
+  /*
+   * 전원을 고른 상태인지.
+   *
+   * 총자산과 추이 그래프는 이때만 서버의 전체 기준 값을 그대로 쓴다. 주인이 없는
+   * 계좌는 사람별 소계에 들어가지 않으므로, 전체를 보고 있는데 소계를 더해 쓰면
+   * 그만큼 금액이 빠진다. 목록 필터(personIds)가 전체일 때 조건을 빼는 것과 같은 규칙이다.
+   */
+  const allPeopleSelected = people.length > 0 && selectedPersonIds.length === people.length;
+  const scopedNetWorth = allPeopleSelected
+    ? netWorth
+    : sumNetWorth(selectedPersonIds.map((id) => netWorthByPerson.get(id)));
+  const totalBalance = toNumber(scopedNetWorth?.total);
 
   return (
     <div className="space-y-6">
       <PageHeader
-        title="자산"
+        title={
+          <PersonScopeTitle
+            noun="자산"
+            people={people}
+            myPersonId={myPersonId}
+            selectedPersonIds={selectedPersonIds}
+            onTogglePerson={togglePersonId}
+          />
+        }
         action={
           <button
             onClick={() => {
@@ -646,10 +722,14 @@ export default function DashboardPage() {
         <p className="text-4xl font-bold mt-2">
           {formatCurrency(totalBalance, displayCurrency)}
         </p>
-        <NetWorthBreakdown parts={netWorth ?? undefined} className="text-sm opacity-90 mt-2" />
+        <NetWorthBreakdown parts={scopedNetWorth ?? undefined} className="text-sm opacity-90 mt-2" />
       </div>
 
-      <AssetHistoryChart projectId={selectedProjectId} />
+      {/* 고른 자산주인만 그린다. 전원이면 ownerIds를 빼서 주인 없는 계좌까지 담는다. */}
+      <AssetHistoryChart
+        projectId={selectedProjectId}
+        ownerIds={allPeopleSelected ? undefined : selectedPersonIds}
+      />
 
       {error && (
         <div className="p-3 bg-red-50 text-red-800 text-sm rounded">

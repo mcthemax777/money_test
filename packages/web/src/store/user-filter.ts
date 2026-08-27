@@ -37,7 +37,25 @@ export const useUserFilter = create<UserFilterStore>()(
   persist(
     (set) => ({
       people: [],
-      setPeople: (people: Person[]) => set({ people }),
+      /*
+       * 구성원 목록을 갈아 끼운다.
+       *
+       * 새로 만든 구성원은 선택에도 넣는다. 일부만 고른 상태에서 구성원을 추가하면
+       * 그 사람은 필터 밖이라 화면에서 곧장 사라지고, 방금 만든 것이 보이지 않으면
+       * 저장에 실패한 것으로 읽힌다.
+       *
+       * 목록이 비어 있던 경우는 건드리지 않는다. 첫 조회나 프로젝트 전환 직후라
+       * "추가"가 아니라 처음 채우는 것이고, 이 경우의 선택 맞추기는
+       * usePersonFilterSync 가 소속(filterProjectId)을 보고 처리한다.
+       */
+      setPeople: (people: Person[]) =>
+        set((state) => {
+          if (state.people.length === 0) return { people };
+          const known = new Set(state.people.map((person) => person.id));
+          const added = people.filter((person) => !known.has(person.id)).map((p) => p.id);
+          if (added.length === 0) return { people };
+          return { people, selectedPersonIds: [...state.selectedPersonIds, ...added] };
+        }),
       selectedPersonIds: [],
       personFilterTouched: false,
       filterProjectId: null,

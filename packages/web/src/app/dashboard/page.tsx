@@ -29,12 +29,14 @@ import { EntryListItem } from '@/components/TransactionItem';
 import PaymentMethodTab from '@/components/PaymentMethodTab';
 import CategoryTab from '@/components/CategoryTab';
 import EntryFilterBar, { FixedType } from '@/components/EntryFilterBar';
+import PersonScopeTitle from '@/components/PersonScopeTitle';
 import EntryEditor, {
   type EntryEditorHandle,
   type ReferenceDataPatch,
 } from '@/components/EntryEditor';
 import BudgetScheduleList from '@/components/BudgetScheduleList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { usePersonFilterSync } from '@/hooks/usePersonFilterSync';
 import type { EntryFilterQuery } from '@money/types';
 
 /**
@@ -76,14 +78,7 @@ const BUDGET_SCOPE_OPTIONS: Array<{
 
 export default function TransactionsPage() {
   const { isAuthenticated, loadUser, user, defaultProjectData } = useAuth();
-  const {
-    selectedPersonIds,
-    setPeople: setStorePeople,
-    setSelectedPersonIds,
-    togglePersonId,
-    resetPersonFilterFor,
-  } =
-    useUserFilter();
+  const { selectedPersonIds, togglePersonId } = useUserFilter();
   const { selectedProjectId } = useProject();
   // 날짜 입력과 표시는 브라우저 로컬이 아니라 프로젝트 기준 타임존으로 해석한다.
   const timeZone = useProjectTimeZone();
@@ -213,35 +208,10 @@ export default function TransactionsPage() {
         ]);
 
         setAccounts(accountsData || []);
+        // 저장된 자산주인 선택은 usePersonFilterSync 가 이 목록에 맞춘다.
         setPeople(peopleData || []);
-        setStorePeople(peopleData || []);
         setCards(cardsData || []);
         setCategories(categoriesData || []);
-
-        /*
-         * 저장된 사람 필터를 이 프로젝트의 구성원에 맞춘다.
-         *
-         *   - 다른 프로젝트의 선택이 남아 있으면 전체 선택으로 새로 시작한다.
-         *     사람 id는 프로젝트마다 다르므로 그대로 두면 "아무도 안 고름"이 되어
-         *     화면이 통째로 빈다.
-         *   - 이 프로젝트에서 한 번도 건드리지 않았어도 전체 선택으로 시작한다.
-         *   - 건드린 적이 있으면 사라진 구성원의 id만 걷어내고 나머지는 존중한다.
-         *     (전부 해제한 상태는 사용자의 의도이므로 되살리지 않는다)
-         */
-        const loadedPeople = peopleData || [];
-        const allIds = loadedPeople.map((person: Person) => person.id);
-        const filterState = useUserFilter.getState();
-        const isOtherProject = filterState.filterProjectId !== selectedProjectId;
-
-        if (isOtherProject || !filterState.personFilterTouched) {
-          resetPersonFilterFor(selectedProjectId, allIds);
-        } else {
-          const validIds = new Set(allIds);
-          const stillValid = selectedPersonIds.filter((id) => validIds.has(id));
-          if (stillValid.length !== selectedPersonIds.length) {
-            setSelectedPersonIds(stillValid);
-          }
-        }
 
         // 초기 월 설정. 거래는 아래 월별 useEffect가 불러온다.
         // 이번 달 판단도 프로젝트 타임존 기준이다.
@@ -258,6 +228,8 @@ export default function TransactionsPage() {
 
     loadData();
   }, [isAuthenticated, router, selectedProjectId, defaultProjectData]);
+
+  usePersonFilterSync(selectedProjectId, people);
 
   /**
    * 서버로 보내는 필터.
@@ -716,7 +688,15 @@ export default function TransactionsPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="가계"
+        title={
+          <PersonScopeTitle
+            noun="가계"
+            people={people}
+            myPersonId={myPersonId}
+            selectedPersonIds={selectedPersonIds}
+            onTogglePerson={togglePersonId}
+          />
+        }
         action={
           /* 거래 추가는 어느 탭에서든 쓸 수 있어야 한다 */
           <button
@@ -785,10 +765,6 @@ export default function TransactionsPage() {
       />
 
       <EntryFilterBar
-        people={people}
-        myPersonId={myPersonId}
-        selectedPersonIds={selectedPersonIds}
-        onTogglePerson={togglePersonId}
         selectedFixedTypes={selectedFixedTypes}
         onToggleFixedType={(value) =>
           setSelectedFixedTypes((prev) =>

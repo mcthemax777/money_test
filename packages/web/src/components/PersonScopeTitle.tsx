@@ -1,0 +1,130 @@
+'use client';
+
+import { useEffect, useRef, useState } from 'react';
+import type { Person } from '@/lib/types';
+
+interface PersonScopeTitleProps {
+  /** 화면 이름. "가계", "자산" 처럼 사람 이름 뒤에 붙는다. */
+  noun: string;
+  people: Person[];
+  /** 설정에서 지정한 "나". 이름 뒤에 표시만 한다. */
+  myPersonId?: string | null;
+  selectedPersonIds: string[];
+  onTogglePerson: (personId: string) => void;
+}
+
+/** 이름을 다 적으면 제목이 길어지는 경계 */
+const MAX_NAMES = 3;
+
+/**
+ * 제목에 적을 문구.
+ *
+ * 아무도 고르지 않은 상태는 "전체"가 아니라 "결과 없음"이다. 화면 이름만 남기면
+ * 그 사실이 사라지므로 뒤에 붙여서 알린다.
+ */
+function scopeLabel(names: string[], noun: string): string {
+  if (names.length === 0) return `${noun} · 자산주인 없음`;
+  if (names.length <= MAX_NAMES) return `${names.join(', ')}님의 ${noun}`;
+  return `${names[0]} 외 ${names.length - 1}명의 ${noun}`;
+}
+
+/**
+ * 자산주인을 겸하는 화면 제목.
+ *
+ * 예전에는 제목 아래 별도 줄에 체크박스가 깔려 있었다. 제목은 "가계"라고만 하고
+ * 누구의 가계인지는 그 아래를 봐야 알 수 있어서, 필터를 걸어 둔 사실 자체를
+ * 잊기 쉬웠다. 지금 보고 있는 범위를 제목이 직접 말하고, 바꾸려면 그 제목을 누른다.
+ *
+ * 기준은 거래를 입력한 사람이 아니라 돈이 오간 계좌의 주인이다. 이체는 보내는 계좌를 본다.
+ *
+ * 체크박스만 두고 "전체" 버튼은 두지 않는다. 전부 체크하면 전체이고 하나도
+ * 체크하지 않으면 결과가 없는 상태다. 버튼을 따로 두면 체크 상태와 버튼이
+ * 서로 다른 이야기를 하게 된다.
+ */
+export default function PersonScopeTitle({
+  noun,
+  people,
+  myPersonId,
+  selectedPersonIds,
+  onTogglePerson,
+}: PersonScopeTitleProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setIsOpen(false);
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isOpen]);
+
+  const selectedNames = people
+    .filter((person) => selectedPersonIds.includes(person.id))
+    .map((person) => person.name);
+
+  return (
+    <div ref={ref} className="relative">
+      {/* 화면 제목을 겸하므로 h1 자리를 지킨다. 누르는 것은 그 안의 버튼이다. */}
+      <h1>
+        <button
+          type="button"
+          onClick={() => setIsOpen((open) => !open)}
+          className="flex items-center gap-1.5 -ml-2 px-2 py-1 rounded-lg text-2xl font-bold text-gray-900 hover:bg-gray-100 transition"
+          aria-haspopup="dialog"
+          aria-expanded={isOpen}
+          title="자산주인 선택"
+        >
+          {/* 구성원을 아직 못 받았으면 이름 자리를 비워 두고 화면 이름만 적는다 */}
+          {people.length === 0 ? noun : scopeLabel(selectedNames, noun)}
+          <span className="text-sm text-gray-400">▾</span>
+        </button>
+      </h1>
+
+      {isOpen && (
+        <div className="absolute top-full left-0 mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-20 p-3">
+          <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">
+            자산주인
+          </p>
+          {people.length === 0 ? (
+            <p className="text-sm text-gray-500">구성원이 없습니다.</p>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {people.map((person) => (
+                <label
+                  key={person.id}
+                  className="flex items-center gap-2 cursor-pointer text-base font-normal"
+                >
+                  <input
+                    type="checkbox"
+                    checked={selectedPersonIds.includes(person.id)}
+                    onChange={() => onTogglePerson(person.id)}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className="text-sm text-gray-700">
+                    {person.name}
+                    {person.id === myPersonId && (
+                      <span className="text-xs text-blue-600"> (나)</span>
+                    )}
+                  </span>
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}

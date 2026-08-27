@@ -643,6 +643,13 @@ export namespace ReportDto {
     accountId?: string;
     /** 한 구성원이 가진 계좌들의 합계. accountId 와 함께 쓰지 않는다. */
     ownerId?: string;
+    /**
+     * 여러 구성원의 계좌 합계. 쉼표로 잇는다. accountId/ownerId 와 함께 쓰지 않는다.
+     *
+     * 키가 없으면 전체, 빈 문자열이면 아무도 고르지 않은 것이라 결과가 비어야 한다.
+     * 목록 필터(personIds)와 같은 세 상태 규칙이다.
+     */
+    ownerIds?: string;
     /** 기본 month */
     granularity?: 'year' | 'month' | 'day';
     /**

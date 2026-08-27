@@ -7,6 +7,7 @@ import {
   MATCH_NOTHING,
   assetOwnerCondition,
   parseEntryFilter,
+  splitList,
 } from '@/common/entry-filter';
 import { HIDDEN_ACCOUNT_TYPES } from '../accounts/accounts.service';
 import { assertDateKey, assertYearMonth } from '@/common/year-month';
@@ -334,6 +335,13 @@ export class ReportsService {
     const granularity =
       query.granularity === 'day' || query.granularity === 'year' ? query.granularity : 'month';
 
+    /*
+     * 여러 구성원을 한 선으로 볼 때 쓴다. 목록 필터와 같은 세 상태 규칙이라
+     * 키가 없으면 전체, 빈 문자열이면 아무도 고르지 않은 것이라 빈 그래프를 준다.
+     */
+    const ownerIds = query.ownerIds === undefined ? undefined : splitList(query.ownerIds);
+    if (ownerIds && ownerIds.length === 0) return [];
+
     const accounts = await this.prisma.account.findMany({
       where: {
         projectId,
@@ -343,13 +351,16 @@ export class ReportsService {
          * 계좌를 지정하면 비활성 계좌도 보여준다. 그 계좌를 보려고 고른 것이므로
          * 숨겼다고 빈 그래프를 주면 안 된다.
          *
-         * 구성원을 지정하면 그 사람의 계좌만 모은다. 전체 합계일 때만 활성으로 좁힌다.
+         * 구성원을 지정하면(ownerId, ownerIds) 그 사람들의 계좌만 모은다.
+         * 전체 합계일 때만 활성으로 좁힌다.
          */
         ...(query.accountId
           ? { id: query.accountId }
           : query.ownerId
             ? { ownerId: query.ownerId, isActive: true }
-            : { isActive: true }),
+            : ownerIds
+              ? { ownerId: { in: ownerIds }, isActive: true }
+              : { isActive: true }),
       },
       select: { id: true, type: true },
     });

@@ -31,6 +31,13 @@ interface AssetHistoryChartProps {
   accountId?: string;
   /** 한 구성원이 가진 계좌들의 합계. accountId 와 함께 쓰지 않는다. */
   ownerId?: string;
+  /**
+   * 여러 구성원이 가진 계좌들의 합계. accountId/ownerId 와 함께 쓰지 않는다.
+   *
+   * 생략하면 전체, 빈 배열이면 아무도 고르지 않은 것이라 빈 그래프가 된다.
+   * 화면의 자산주인 선택과 같은 세 상태 규칙이다.
+   */
+  ownerIds?: string[];
   projectId?: string | null;
   /** 처음 보여줄 12개월 구간의 마지막 달. 생략하면 이번 달 */
   endMonth?: string;
@@ -60,6 +67,7 @@ const YEARS = 5;
 export default function AssetHistoryChart({
   accountId,
   ownerId,
+  ownerIds,
   projectId,
   endMonth,
 }: AssetHistoryChartProps) {
@@ -77,10 +85,18 @@ export default function AssetHistoryChart({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
+  /*
+   * 의존성으로 쓸 자산주인 키.
+   *
+   * 배열은 렌더마다 새 참조라 그대로 의존성에 넣으면 값이 같아도 매번 다시 부른다.
+   * 서버로 넘길 모양과 같은 쉼표 문자열로 굳힌다. null이면 전체다.
+   */
+  const ownerKey = ownerIds === undefined ? null : ownerIds.join(',');
+
   // 계좌나 프로젝트가 바뀌면 일별 보기에 머물러 있을 이유가 없다. 월별로 되돌린다.
   useEffect(() => {
     setDrilledMonth(null);
-  }, [accountId, ownerId, projectId]);
+  }, [accountId, ownerId, ownerKey, projectId]);
 
   /** 단위를 직접 고르면 드릴다운으로 들어온 맥락은 버린다. */
   const selectGranularity = (value: Granularity) => {
@@ -93,7 +109,13 @@ export default function AssetHistoryChart({
       setIsLoading(true);
       setError('');
 
-      const target = accountId ? { accountId } : ownerId ? { ownerId } : {};
+      const target = accountId
+        ? { accountId }
+        : ownerId
+          ? { ownerId }
+          : ownerKey === null
+            ? {}
+            : { ownerIds: ownerKey };
       const window = endMonth ? { endMonth } : {};
       const rows = await apiClient.getBalanceHistory(
         drilledMonth
@@ -130,7 +152,7 @@ export default function AssetHistoryChart({
     } finally {
       setIsLoading(false);
     }
-  }, [accountId, ownerId, projectId, endMonth, drilledMonth, granularity]);
+  }, [accountId, ownerId, ownerKey, projectId, endMonth, drilledMonth, granularity]);
 
   useEffect(() => {
     load();

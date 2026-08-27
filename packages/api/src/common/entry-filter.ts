@@ -24,7 +24,7 @@ export interface ParsedEntryFilter {
 }
 
 /** 쉼표로 이어 온 값을 잘라 빈 항목을 버린다. */
-function splitList(value: string): string[] {
+export function splitList(value: string): string[] {
   return value
     .split(',')
     .map((item) => item.trim())

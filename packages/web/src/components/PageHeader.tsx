@@ -17,7 +17,8 @@ export default function PageHeader({
   action,
   backHref,
 }: {
-  title: string;
+  /** 글자면 그대로 제목이 되고, 노드면 그 자리에 들어간다 (자산주인을 겸하는 제목 등) */
+  title: React.ReactNode;
   action?: React.ReactNode;
   backHref?: string;
 }) {
@@ -33,7 +34,11 @@ export default function PageHeader({
             ←
           </Link>
         )}
-        <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
+        {typeof title === 'string' ? (
+          <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
+        ) : (
+          title
+        )}
       </div>
       {action && <div className="flex flex-wrap gap-2">{action}</div>}
     </div>
