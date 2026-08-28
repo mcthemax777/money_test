@@ -18,10 +18,10 @@ import {
   CHART_COLOR,
   CHART_DOT,
   CHART_GRID,
-  CHART_MARGIN_EVEN,
+  CHART_MARGIN,
   CHART_TICK,
   CHART_TOOLTIP_STYLE,
-  CHART_Y_AXIS_WIDTH_AUTO,
+  CHART_Y_AXIS_WIDTH,
   formatTooltipAmount,
   lineAxis,
 } from '@/lib/chart';
@@ -289,7 +289,7 @@ export default function AssetHistoryChart({
         <ResponsiveContainer width="100%" height={style.height}>
           <LineChart
             data={points}
-            margin={CHART_MARGIN_EVEN}
+            margin={CHART_MARGIN}
             // 점이 아니라 빈 곳을 눌러도 그 달로 내려가도록 차트 전체에서 받는다.
             // recharts 3에서 activeTooltipIndex는 number가 아닐 수 있어 숫자로 확인하고 쓴다.
             onClick={(state: any) => {
@@ -308,7 +308,7 @@ export default function AssetHistoryChart({
               ticks={yAxis.ticks}
               tickFormatter={yAxis.tickFormatter}
               tick={CHART_TICK}
-              width={CHART_Y_AXIS_WIDTH_AUTO}
+              width={CHART_Y_AXIS_WIDTH}
             />
             <Tooltip
               formatter={(value: any) => formatTooltipAmount(value, '잔액', displayCurrency)}

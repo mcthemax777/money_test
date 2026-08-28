@@ -20,15 +20,13 @@ export const CHART_GRID = {
   vertical: false,
 } as const;
 
-export const CHART_MARGIN = { top: 8, right: 16, bottom: 8, left: 8 } as const;
-
 /**
- * 좌우 여백이 같은 여백. Y축 폭을 'auto'로 둔 그래프가 쓴다.
+ * 그래프 바깥 여백. 좌우를 같게 둔다.
  *
- * 폭을 숫자로 고정하면 눈금 글자가 짧은 날 왼쪽에 빈 자리가 남는다. 'auto'는
- * 글자만큼만 차지하므로, 남는 자리는 여기 적은 값 그대로가 된다.
+ * Y축은 아래 CHART_Y_AXIS_WIDTH로 눈금 글자만큼만 차지하므로, 여기 적은 값이
+ * 그대로 왼쪽 여백이 된다.
  */
-export const CHART_MARGIN_EVEN = { top: 8, right: 16, bottom: 8, left: 16 } as const;
+export const CHART_MARGIN = { top: 8, right: 16, bottom: 8, left: 16 } as const;
 
 /** 축 글자 크기. 원 단위 금액이 길어 12px보다 크면 눈금이 겹친다. */
 export const CHART_TICK = { fontSize: 12 } as const;
@@ -62,20 +60,12 @@ export const CHART_CATEGORY_COLORS = [
 ] as const;
 
 /**
- * Y축 폭.
+ * Y축 폭. 눈금 글자만큼만 차지한다 (recharts 3).
  *
- * 만원/억 단위로 줄여 써도 네 자리가 들어갈 만큼은 필요하다. 꺾은선은 좁은 구간을
- * 확대해 그리므로 "1,234,560"이나 "1,000.5만"처럼 더 긴 눈금이 나온다.
+ * 예전에는 가장 긴 눈금("1,000.5만")에 맞춰 76px로 고정했다. 그러면 짧은 눈금만
+ * 나오는 그래프에서 왼쪽에 그만큼이 빈 채 남아, 오른쪽보다 여백이 넓어 보인다.
  */
-export const CHART_Y_AXIS_WIDTH = 76;
-
-/**
- * 눈금 글자만큼만 차지하는 Y축 폭 (recharts 3).
- *
- * 위 고정 폭은 가장 긴 눈금("1,000.5만")에 맞춘 값이라, 짧은 눈금만 나오는
- * 그래프에서는 왼쪽에 그만큼이 빈 채로 남는다.
- */
-export const CHART_Y_AXIS_WIDTH_AUTO = 'auto' as const;
+export const CHART_Y_AXIS_WIDTH = 'auto' as const;
 
 /** 꺾은선 점 크기. 마우스를 올린 점만 크게 보여 준다. */
 export const CHART_DOT = { r: 3 } as const;
