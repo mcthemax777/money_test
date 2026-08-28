@@ -32,7 +32,6 @@ import EntryEditor, {
 import Modal from '@/components/Modal';
 import MonthHeader from '@/components/MonthHeader';
 import MonthlyBudgetSummary from '@/components/MonthlyBudgetSummary';
-import PageHeader from '@/components/PageHeader';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import SpendingMethodCarousel, {
   type SpendingMethod,
@@ -348,18 +347,6 @@ export default function HomePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title={
-          <PersonScopeTitle
-            noun="홈"
-            people={people}
-            myPersonId={myPersonId}
-            selectedPersonIds={selectedPersonIds}
-            onTogglePerson={togglePersonId}
-          />
-        }
-      />
-
       {error && <div className="p-3 bg-red-50 text-red-800 text-sm rounded-lg">{error}</div>}
 
       {peopleLoaded && people.length === 0 && (
@@ -368,7 +355,20 @@ export default function HomePage() {
         </p>
       )}
 
-      <AssetTypeSummary byType={scopedNetWorth?.byType} />
+      {/* 화면의 첫 줄이자 제목이다. 이름을 누르면 자산주인을 고른다. */}
+      <AssetTypeSummary
+        byType={scopedNetWorth?.byType}
+        hasNoScope={people.length > 0 && selectedPersonIds.length === 0}
+        scopeTitle={
+          <PersonScopeTitle
+            noun="자산"
+            people={people}
+            myPersonId={myPersonId}
+            selectedPersonIds={selectedPersonIds}
+            onTogglePerson={togglePersonId}
+          />
+        }
+      />
 
       <section className="space-y-2">
         <h2 className="font-semibold text-gray-900">실적 구간 사용액</h2>
