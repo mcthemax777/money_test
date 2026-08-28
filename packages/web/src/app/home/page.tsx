@@ -18,7 +18,6 @@ import { usePersonFilterSync } from '@/hooks/usePersonFilterSync';
 import { useProjectGuard } from '@/hooks/useProjectGuard';
 import { useMyPersonId, useProjectTimeZone } from '@/store/project';
 import { useUserFilter } from '@/store/user-filter';
-import AssetHistoryChart from '@/components/AssetHistoryChart';
 import AssetTypeSummary from '@/components/AssetTypeSummary';
 import CategoryDonutChart from '@/components/CategoryDonutChart';
 import CumulativeExpenseChart, {
@@ -370,20 +369,6 @@ export default function HomePage() {
       )}
 
       <AssetTypeSummary byType={scopedNetWorth?.byType} />
-
-      {/*
-        자산 화면과 같은 그래프다. 지금 얼마인지(위) 다음에 어떻게 왔는지를 보고,
-        그다음에 이 구간에 얼마를 썼는지(아래)로 넘어간다.
-        홈은 훑어보는 자리라 월을 눌러 일별로 내려가는 것은 끈다.
-      */}
-      <AssetHistoryChart
-        variant="compact"
-        // 홈은 오늘 근처를 본다. 달 단위는 이번 달 안에서 움직인 것이 한 점에 뭉친다.
-        initialGranularity="day"
-        drillable={false}
-        projectId={selectedProjectId}
-        ownerIds={allPeopleSelected ? undefined : selectedPersonIds}
-      />
 
       <section className="space-y-2">
         <h2 className="font-semibold text-gray-900">실적 구간 사용액</h2>

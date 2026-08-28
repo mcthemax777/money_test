@@ -41,17 +41,6 @@ interface AssetHistoryChartProps {
   projectId?: string | null;
   /** 처음 보여줄 12개월 구간의 마지막 달. 생략하면 이번 달 */
   endMonth?: string;
-  /** 어느 화면의 모양으로 그릴지. 기본은 자산 화면의 큰 패널이다. */
-  variant?: Variant;
-  /** 처음 고를 구간 단위. 사용자가 토글로 바꾸면 그 값을 따른다. */
-  initialGranularity?: Granularity;
-  /**
-   * 월별 그래프에서 그 달의 일별로 내려갈 수 있는지. 기본은 내려갈 수 있다.
-   *
-   * 홈처럼 훑어보기만 하는 화면은 끈다. 누를 수 있게 두면 홈에서 내려간 뒤
-   * 돌아올 자리가 없다.
-   */
-  drillable?: boolean;
 }
 
 interface Point {
@@ -63,38 +52,6 @@ interface Point {
 
 /** 직접 고르는 구간 단위. 드릴다운으로 들어간 일별 보기와는 별개다. */
 type Granularity = 'day' | 'month' | 'year';
-
-/**
- * 화면에 따른 겉모양.
- *
- * `panel`은 자산 화면의 큰 그래프다. `compact`는 홈에서 다른 카드들과 나란히 서는
- * 모양이라, 홈의 누적 지출 그래프와 같은 테두리·여백·높이를 쓰고 점을 찍지 않는다.
- */
-type Variant = 'panel' | 'compact';
-
-const VARIANT_STYLE: Record<
-  Variant,
-  {
-    container: string;
-    title: string;
-    height: number;
-    /** 끝점 옆에 금액을 적을지. 홈은 그래프가 작아 숫자가 선을 가린다. */
-    showLastValue: boolean;
-  }
-> = {
-  panel: {
-    container: 'bg-white rounded-lg shadow p-6',
-    title: 'text-lg font-semibold text-gray-900',
-    height: 300,
-    showLastValue: true,
-  },
-  compact: {
-    container: 'rounded-lg border border-gray-200 bg-white p-4',
-    title: 'font-semibold text-gray-900',
-    height: 224,
-    showLastValue: false,
-  },
-};
 
 const GRANULARITY_OPTIONS: Array<{ value: Granularity; label: string }> = [
   { value: 'day', label: '일' },
@@ -113,13 +70,9 @@ export default function AssetHistoryChart({
   ownerIds,
   projectId,
   endMonth,
-  variant = 'panel',
-  initialGranularity = 'month',
-  drillable = true,
 }: AssetHistoryChartProps) {
-  const style = VARIANT_STYLE[variant];
   const displayCurrency = useProjectDisplayCurrency();
-  const [granularity, setGranularity] = useState<Granularity>(initialGranularity);
+  const [granularity, setGranularity] = useState<Granularity>('month');
   /*
    * null이 아니면 그 달의 일별 보기다.
    *
@@ -225,7 +178,7 @@ export default function AssetHistoryChart({
   const lastPoint = points.length > 0 ? points[points.length - 1] : null;
 
   /** 월별 보기에서만 그 달의 일별로 내려간다. 일·연 단위에는 내려갈 곳이 없다. */
-  const canDrill = drillable && !drilledMonth && granularity === 'month';
+  const canDrill = !drilledMonth && granularity === 'month';
 
   const title = drilledMonth
     ? `${Number(drilledMonth.slice(0, 4))}년 ${Number(drilledMonth.slice(5))}월 일별 잔액`
@@ -236,9 +189,9 @@ export default function AssetHistoryChart({
         : `월별 자산 추이 (${MONTHS}개월)`;
 
   return (
-    <div className={style.container}>
+    <div className="bg-white rounded-lg shadow p-6">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-        <h3 className={style.title}>{title}</h3>
+        <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
 
         <div className="flex items-center gap-2">
           {drilledMonth && (
@@ -282,7 +235,7 @@ export default function AssetHistoryChart({
       ) : !hasAnyValue ? (
         <p className="text-gray-500 text-sm py-12 text-center">표시할 잔액 기록이 없습니다.</p>
       ) : (
-        <ResponsiveContainer width="100%" height={style.height}>
+        <ResponsiveContainer width="100%" height={300}>
           <LineChart
             data={points}
             margin={CHART_MARGIN}
@@ -330,18 +283,14 @@ export default function AssetHistoryChart({
                 fill={CHART_COLOR}
                 stroke="#fff"
                 strokeWidth={2}
-                label={
-                  style.showLastValue
-                    ? {
-                        value: formatCurrency(lastPoint.balance, displayCurrency),
-                        position: 'left',
-                        offset: 10,
-                        fontSize: 11,
-                        fontWeight: 600,
-                        fill: '#374151',
-                      }
-                    : undefined
-                }
+                label={{
+                  value: formatCurrency(lastPoint.balance, displayCurrency),
+                  position: 'left',
+                  offset: 10,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  fill: '#374151',
+                }}
               />
             )}
           </LineChart>
