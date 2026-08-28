@@ -43,7 +43,6 @@ export class EntriesService {
 
     const input = await this.buildInput(projectId, userId, dto);
     const entry = await this.ledger.createEntry(input);
-    await this.syncCategoryDefaults(projectId, dto);
     return this.getEntryById(entry.id, userId);
   }
 
@@ -59,7 +58,6 @@ export class EntriesService {
     const input = await this.buildInput(existing.projectId, userId, dto);
 
     await this.ledger.replaceEntry(id, input);
-    await this.syncCategoryDefaults(existing.projectId, dto);
     return this.getEntryById(id, userId);
   }
 
@@ -333,55 +331,6 @@ export class EntriesService {
       default:
         throw new BadRequestException(`알 수 없는 거래 종류입니다: ${dto.kind}`);
     }
-  }
-
-  /**
-   * 거래에 쓴 카테고리의 과소비 기본값을 갱신한다.
-   *
-   * 과소비·추가 수입은 카테고리 관리 화면이 아니라 거래를 입력하면서 정한다.
-   * 예: 취미>게임을 과소비로 적어 저장하면 게임의 defaultIsExtra가 true가 되고,
-   * 다음에 같은 소분류를 고르면 화면이 그 값을 읽어 자동으로 체크한다.
-   *
-   * 대상은 "요청에 extraAmount가 명시적으로 담긴 카테고리 다리"뿐이다.
-   * 값을 보내지 않은 거래(다른 클라이언트 등)가 기존 설정을 덮어쓰면 안 된다.
-   * 이체는 카테고리 다리가 수수료뿐이므로 수수료 카테고리가 대상이 된다.
-   */
-  private async syncCategoryDefaults(
-    projectId: string,
-    dto: EntryDto.CreateRequest | EntryDto.UpdateRequest,
-  ) {
-    const targets: Array<{ categoryId: string; isExtra: boolean }> = [];
-    /** 금액이 조금이라도 있으면 "이 분류는 기본 과소비"로 본다. */
-    const isExtra = (amount: string) => toMoney(amount, '과소비 금액').gt(0);
-
-    if (dto.kind === 'transfer') {
-      if (dto.transferFeeCategoryId && dto.extraAmount !== undefined) {
-        targets.push({
-          categoryId: dto.transferFeeCategoryId,
-          isExtra: isExtra(dto.extraAmount),
-        });
-      }
-    } else if (dto.splits?.length) {
-      for (const split of dto.splits) {
-        if (split.extraAmount !== undefined) {
-          targets.push({ categoryId: split.categoryId, isExtra: isExtra(split.extraAmount) });
-        }
-      }
-    } else if (dto.categoryId && dto.extraAmount !== undefined) {
-      targets.push({ categoryId: dto.categoryId, isExtra: isExtra(dto.extraAmount) });
-    }
-
-    if (targets.length === 0) return;
-
-    // projectId 조건을 함께 걸어 다른 프로젝트의 카테고리를 건드리지 못하게 한다.
-    await this.prisma.$transaction(
-      targets.map((target) =>
-        this.prisma.category.updateMany({
-          where: { id: target.categoryId, projectId, defaultIsExtra: { not: target.isExtra } },
-          data: { defaultIsExtra: target.isExtra },
-        }),
-      ),
-    );
   }
 
   /** 분할이 있으면 그것을, 없으면 단일 카테고리를 한 줄짜리 분할로 취급한다. */

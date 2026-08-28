@@ -1287,15 +1287,15 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                         .filter((c) => !c.parentId && c.type === formData.type)
                         .map((cat) => ({ id: cat.id, name: cat.name }))}
                       value={formData.mainCategoryId}
-                      onChange={(value) => {
-                        const selectedCategory = categories.find((c) => c.id === value);
+                      onChange={(value) =>
                         setFormData({
                           ...formData,
                           mainCategoryId: value,
                           subCategoryId: '',
-                          extraAmount: selectedCategory?.defaultIsExtra ? formData.amount : '',
-                        });
-                      }}
+                          // 분류를 바꾸면 과소비는 꺼진 값에서 시작한다.
+                          extraAmount: '',
+                        })
+                      }
                       placeholder="선택하세요"
                       onAddClick={() => openCategoryModal()}
                       addButtonLabel="대분류 추가"
@@ -1319,17 +1319,9 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                           : [{ id: '', name: '없음' }]
                       }
                       value={formData.subCategoryId}
-                      onChange={(value) => {
-                        // 소분류를 고르면 그 소분류의 기본값, "없음"으로 되돌리면 대분류의 기본값을 쓴다.
-                        const target =
-                          categories.find((c) => c.id === value) ??
-                          categories.find((c) => c.id === formData.mainCategoryId);
-                        setFormData({
-                          ...formData,
-                          subCategoryId: value,
-                          extraAmount: target?.defaultIsExtra ? formData.amount : '',
-                    });
-                  }}
+                      onChange={(value) =>
+                        setFormData({ ...formData, subCategoryId: value, extraAmount: '' })
+                      }
                   placeholder="없음"
                   /*
                     소분류는 대분류 아래에 붙는다. 대분류를 고르기 전에는 붙일 곳이
@@ -1346,7 +1338,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
                   {/*
                     체크하면 금액을 묻는 창이 뜬다. 체크 자체는 "전액"을 뜻하지 않는다.
-                    이 분류를 다음에 고를 때 자동으로 켜지도록 서버가 분류에 기억한다.
+                    분류를 고른다고 저절로 켜지지는 않는다. 언제나 꺼진 채로 시작한다.
                   */}
                   <ExtraCheck
                     kind={formData.type === 'income' ? 'income' : 'expense'}
@@ -1446,15 +1438,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                             .filter((c) => !c.parentId && c.type === 'expense')
                             .map((cat) => ({ id: cat.id, name: cat.name }))}
                           value={formData.transferFeeMainCategoryId}
-                          onChange={(value) => {
-                            const selected = categories.find((c) => c.id === value);
+                          onChange={(value) =>
                             setFormData({
                               ...formData,
                               transferFeeMainCategoryId: value,
                               transferFeeSubCategoryId: '',
-                              extraAmount: selected?.defaultIsExtra ? formData.transferFee : '',
-                            });
-                          }}
+                              extraAmount: '',
+                            })
+                          }
                           placeholder="선택하세요"
                           onAddClick={() => openCategoryModal()}
                           addButtonLabel="대분류 추가"
@@ -1478,17 +1469,13 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                               : [{ id: '', name: '없음' }]
                           }
                           value={formData.transferFeeSubCategoryId}
-                          onChange={(value) => {
-                            // 소분류를 고르면 그 기본값, "없음"이면 수수료 대분류의 기본값을 쓴다.
-                            const target =
-                              categories.find((c) => c.id === value) ??
-                              categories.find((c) => c.id === formData.transferFeeMainCategoryId);
+                          onChange={(value) =>
                             setFormData({
                               ...formData,
                               transferFeeSubCategoryId: value,
-                              extraAmount: target?.defaultIsExtra ? formData.transferFee : '',
-                            });
-                          }}
+                              extraAmount: '',
+                            })
+                          }
                           placeholder="없음"
                         />
                       </div>
