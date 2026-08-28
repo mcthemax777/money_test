@@ -12,8 +12,8 @@ import { buildDailyCumulative, monthDateKeys } from '@/lib/entries';
 import { dayRangeQuery } from '@/lib/datetime';
 import {
   CHART_ACTIVE_DOT,
+  CHART_BAR_RADIUS,
   CHART_COLOR,
-  CHART_DOT,
   CHART_GRID,
   CHART_MARGIN,
   CHART_TICK,
@@ -374,7 +374,7 @@ export default function PaymentMethodTab({
                     formatter={(value: any) => formatTooltipAmount(value, '사용액', displayCurrency)}
                     contentStyle={CHART_TOOLTIP_STYLE}
                   />
-                  <Bar dataKey="amount" fill={CHART_COLOR} />
+                  <Bar dataKey="amount" fill={CHART_COLOR} radius={CHART_BAR_RADIUS} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -400,7 +400,7 @@ export default function PaymentMethodTab({
                     dataKey="cumulative"
                     stroke={CHART_COLOR}
                     strokeWidth={2}
-                    dot={CHART_DOT}
+                    dot={false}
                     activeDot={CHART_ACTIVE_DOT}
                   />
                 </LineChart>

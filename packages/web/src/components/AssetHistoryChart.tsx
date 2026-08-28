@@ -16,7 +16,6 @@ import { formatCurrency, toNumber } from '@/lib/money';
 import {
   CHART_ACTIVE_DOT,
   CHART_COLOR,
-  CHART_DOT,
   CHART_GRID,
   CHART_MARGIN,
   CHART_TICK,
@@ -79,7 +78,6 @@ const VARIANT_STYLE: Record<
     container: string;
     title: string;
     height: number;
-    dot: typeof CHART_DOT | false;
     /** 끝점 옆에 금액을 적을지. 홈은 그래프가 작아 숫자가 선을 가린다. */
     showLastValue: boolean;
   }
@@ -88,14 +86,12 @@ const VARIANT_STYLE: Record<
     container: 'bg-white rounded-lg shadow p-6',
     title: 'text-lg font-semibold text-gray-900',
     height: 300,
-    dot: CHART_DOT,
     showLastValue: true,
   },
   compact: {
     container: 'rounded-lg border border-gray-200 bg-white p-4',
     title: 'font-semibold text-gray-900',
     height: 224,
-    dot: false,
     showLastValue: false,
   },
 };
@@ -319,7 +315,7 @@ export default function AssetHistoryChart({
               dataKey="balance"
               stroke={CHART_COLOR}
               strokeWidth={2}
-              dot={style.dot}
+              dot={false}
               activeDot={CHART_ACTIVE_DOT}
             />
             {/*

@@ -10,8 +10,8 @@ import { apiClient, type ReportPeriod } from '@/lib/api-client';
 import { formatCurrency, toNumber } from '@/lib/money';
 import {
   CHART_ACTIVE_DOT,
+  CHART_BAR_RADIUS,
   CHART_COLOR,
-  CHART_DOT,
   CHART_GRID,
   CHART_MARGIN,
   CHART_TICK,
@@ -407,7 +407,7 @@ export function BudgetDetailModal({
                     formatter={(value: any) => formatTooltipAmount(value, '사용금액', displayCurrency)}
                     contentStyle={CHART_TOOLTIP_STYLE}
                   />
-                  <Bar dataKey="amount" fill={CHART_COLOR} />
+                  <Bar dataKey="amount" fill={CHART_COLOR} radius={CHART_BAR_RADIUS} />
                 </BarChart>
               </ResponsiveContainer>
             ) : (
@@ -442,7 +442,7 @@ export function BudgetDetailModal({
                     name="누적 사용금액"
                     stroke={CHART_COLOR}
                     strokeWidth={2}
-                    dot={CHART_DOT}
+                    dot={false}
                     activeDot={CHART_ACTIVE_DOT}
                   />
                 </LineChart>

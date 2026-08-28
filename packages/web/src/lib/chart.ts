@@ -67,9 +67,21 @@ export const CHART_CATEGORY_COLORS = [
  */
 export const CHART_Y_AXIS_WIDTH = 'auto' as const;
 
-/** 꺾은선 점 크기. 마우스를 올린 점만 크게 보여 준다. */
-export const CHART_DOT = { r: 3 } as const;
+/**
+ * 마우스를 올린 점 크기.
+ *
+ * 평소에는 점을 찍지 않는다. 날짜가 서른 개쯤 되면 점이 선을 덮어 모양이 거칠어진다.
+ * 가리킨 자리만 점으로 드러내면 어느 날의 값인지는 그대로 알 수 있다.
+ */
 export const CHART_ACTIVE_DOT = { r: 5 } as const;
+
+/**
+ * 막대 끝 둥글기. 바닥은 각지게 두고 값이 있는 쪽만 둥글린다.
+ *
+ * 네 귀퉁이를 다 둥글리면 막대가 축에서 떠 보여 0에서 시작한다는 사실이 흐려진다.
+ * [왼위, 오른위, 오른아래, 왼아래] 차례다.
+ */
+export const CHART_BAR_RADIUS: [number, number, number, number] = [4, 4, 0, 0];
 
 /** 눈금 간격으로 쓸 만한 값. 자리수를 곱해 1·2·5·10 배로 쓴다. */
 const NICE_STEPS = [1, 2, 5, 10];
