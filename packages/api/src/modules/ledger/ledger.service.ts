@@ -52,7 +52,8 @@ export interface PostingInput {
   /** 1 currency = exchangeRate 기준통화 */
   exchangeRate: Prisma.Decimal;
   baseAmount: Prisma.Decimal;
-  isFixed?: boolean;
+  /** 카테고리 다리에서 과소비·추가 수입으로 센 금액 (기준통화). 생략하면 0 */
+  extraAmount?: Prisma.Decimal;
   cardId?: string;
 }
 
@@ -90,8 +91,13 @@ export interface EntryInput {
 export interface CategoryLine {
   categoryId: string;
   amount: Prisma.Decimal;
-  /** 생략하면 Category.defaultIsFixed를 따른다 */
-  isFixed?: boolean;
+  /**
+   * 이 줄에서 과소비(지출)·추가 수입(수입)으로 셀 금액. 입력 통화 기준이다.
+   *
+   * 생략하면 Category.defaultIsExtra를 따른다 (true면 전액, false면 0).
+   * 0 이상 amount 이하여야 한다.
+   */
+  extraAmount?: Prisma.Decimal;
 }
 
 interface CommonInput {
@@ -156,8 +162,8 @@ export interface TransferInput extends CommonInput {
   /** 이체 수수료. 보내는 계좌에서 함께 빠진다. */
   feeAmount?: Prisma.Decimal;
   feeCategoryId?: string;
-  /** 수수료의 고정 여부. 생략하면 수수료 카테고리의 defaultIsFixed를 따른다. */
-  feeIsFixed?: boolean;
+  /** 수수료 중 과소비로 셀 금액. 생략하면 수수료 카테고리의 defaultIsExtra를 따른다. */
+  feeExtraAmount?: Prisma.Decimal;
 }
 
 /**
@@ -585,6 +591,22 @@ export class LedgerService {
     return lines.map((line, i) => ({ ...line, baseAmount: shares[i] }));
   }
 
+  /**
+   * 과소비 금액을 기준통화로 옮긴다.
+   *
+   * 환율을 다시 곱하지 않고 그 줄이 이미 얻은 환산액에 비율을 건다. 전액을
+   * 과소비로 적었으면 환산액도 전액이 되어 "일반 지출 0원"이 정확히 맞는다.
+   */
+  private toExtraBase(
+    extra: Prisma.Decimal,
+    amount: Prisma.Decimal,
+    baseAmount: Prisma.Decimal,
+  ): Prisma.Decimal {
+    if (extra.lte(ZERO)) return ZERO;
+    if (extra.gte(amount)) return baseAmount;
+    return baseAmount.mul(extra).div(amount).toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
+  }
+
   /** 기준통화 자릿수로 반올림. 원·엔은 소수를 쓰지 않는다. */
   private toBase(amount: Prisma.Decimal, rate: Prisma.Decimal, base: string): Prisma.Decimal {
     return amount.mul(rate).toDecimalPlaces(currencyDecimals(base), Prisma.Decimal.ROUND_HALF_UP);
@@ -592,7 +614,12 @@ export class LedgerService {
 
   /** 기준통화로 기록되는 다리 (카테고리, 자본 계정) */
   private baseLeg(
-    target: { accountId?: string; categoryId?: string; cardId?: string; isFixed?: boolean },
+    target: {
+      accountId?: string;
+      categoryId?: string;
+      cardId?: string;
+      extraAmount?: Prisma.Decimal;
+    },
     amount: Prisma.Decimal,
     base: string,
   ): PostingInput {
@@ -660,7 +687,10 @@ export class LedgerService {
         // 지출 발생 = + (언제나 기준통화)
         ...baseLines.map((line) =>
           this.baseLeg(
-            { categoryId: line.categoryId, isFixed: line.isFixed },
+            {
+              categoryId: line.categoryId,
+              extraAmount: this.toExtraBase(line.extraAmount, line.amount, line.baseAmount),
+            },
             line.baseAmount,
             base,
           ),
@@ -774,8 +804,16 @@ export class LedgerService {
       ...foreign,
       rateProvisional: false,
       postings: [
+        // 수입 다리는 음수지만 추가 수입 금액은 크기만 적는다 (부호는 다리가 갖는다).
         ...baseLines.map((line) =>
-          this.baseLeg({ categoryId: line.categoryId }, line.baseAmount.neg(), base),
+          this.baseLeg(
+            {
+              categoryId: line.categoryId,
+              extraAmount: this.toExtraBase(line.extraAmount, line.amount, line.baseAmount),
+            },
+            line.baseAmount.neg(),
+            base,
+          ),
         ),
         { ...incoming, amount: incoming.amount.neg(), baseAmount: incoming.baseAmount.neg() },
       ],
@@ -889,14 +927,21 @@ export class LedgerService {
     if (fee.gt(ZERO)) {
       // 수수료도 지출 카테고리 다리다. 지출/수입과 같은 검증을 거쳐야
       // 다른 프로젝트의 카테고리나 수입 카테고리가 수수료 자리에 들어오지 않는다.
-      // isFixed 기본값도 여기서 카테고리에서 가져온다.
+      // 과소비 기본값도 여기서 카테고리에서 가져온다.
       const [line] = await this.resolveLines(
         input.projectId,
-        [{ categoryId: input.feeCategoryId!, amount: fee, isFixed: input.feeIsFixed }],
+        [{ categoryId: input.feeCategoryId!, amount: fee, extraAmount: input.feeExtraAmount }],
         'expense',
       );
       postings.push(
-        this.baseLeg({ categoryId: line.categoryId, isFixed: line.isFixed }, feeBase, base),
+        this.baseLeg(
+          {
+            categoryId: line.categoryId,
+            extraAmount: this.toExtraBase(line.extraAmount, line.amount, feeBase),
+          },
+          feeBase,
+          base,
+        ),
       );
     }
 
@@ -1129,7 +1174,7 @@ export class LedgerService {
       exchangeRate: p.exchangeRate,
       // 빌더가 정한 값을 그대로 쓴다. 여기서 다시 곱하면 반올림이 어긋난다.
       baseAmount: p.baseAmount,
-      isFixed: p.isFixed ?? false,
+      extraAmount: p.extraAmount ?? ZERO,
       cardId: p.cardId ?? null,
     };
   }
@@ -1309,7 +1354,7 @@ export class LedgerService {
     }
   }
 
-  /** 카테고리 유효성 확인 + isFixed 기본값 채우기 */
+  /** 카테고리 유효성 확인 + 과소비 금액 기본값 채우기 */
   private async resolveLines(
     projectId: string,
     lines: CategoryLine[],
@@ -1337,10 +1382,23 @@ export class LedgerService {
       if (line.amount.lte(ZERO)) {
         throw new BadRequestException('금액은 0보다 커야 합니다.');
       }
+      /*
+       * 과소비 금액은 그 줄의 금액을 넘을 수 없고 음수일 수 없다.
+       *
+       * 값을 보내지 않았으면 카테고리의 기본값을 따른다. 기본이 과소비인 분류는
+       * 전액이 과소비다. 화면은 그 값을 미리 채워 두고 사용자가 줄이게 한다.
+       */
+      const extraAmount = line.extraAmount ?? (category.defaultIsExtra ? line.amount : ZERO);
+      if (extraAmount.lt(ZERO)) {
+        throw new BadRequestException('과소비 금액은 0보다 작을 수 없습니다.');
+      }
+      if (extraAmount.gt(line.amount)) {
+        throw new BadRequestException('과소비 금액은 거래 금액보다 클 수 없습니다.');
+      }
       return {
         categoryId: line.categoryId,
         amount: line.amount,
-        isFixed: line.isFixed ?? category.defaultIsFixed,
+        extraAmount,
       };
     });
   }

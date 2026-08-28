@@ -458,7 +458,10 @@ export class BudgetsService {
       where: {
         categoryId: { in: categories.map((c) => c.id) },
         entry: entryScope,
-        ...(parsed.fixed !== undefined ? { isFixed: parsed.fixed } : {}),
+        // 일반/과소비 필터. 목록·리포트와 같은 기준이어야 진행률이 화면과 맞는다.
+        ...(parsed.extra !== undefined
+          ? { extraAmount: parsed.extra ? { gt: 0 } : { equals: 0 } }
+          : {}),
       },
     });
 

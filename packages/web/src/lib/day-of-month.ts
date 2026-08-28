@@ -15,3 +15,13 @@ export const DAY_OF_MONTH_OPTIONS: Array<{ day: number; label: string }> = Array
 
 /** 셀렉트 아래에 붙이는 안내. clamp 규칙을 사용자에게 알린다. */
 export const DAY_OF_MONTH_HINT = '그 달에 없는 날짜는 말일로 처리합니다.';
+
+/**
+ * 카드를 새로 만들 때의 마감일·결제일 기본값.
+ *
+ * 마감일 31은 "말일"이다. 그 달에 없는 날짜는 서버가 말일로 자르므로(clampDayOfMonth)
+ * 31을 고르면 2월에는 28일(윤년 29일)이 마감일이 된다. 카드를 고쳐 만든 값은
+ * 건드리지 않고, 추가 폼의 시작값에만 쓴다.
+ */
+export const DEFAULT_STATEMENT_CLOSING_DAY = 31;
+export const DEFAULT_PAYMENT_DUE_DAY = 14;

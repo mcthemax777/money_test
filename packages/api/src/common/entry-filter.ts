@@ -17,8 +17,8 @@ import { EntryFilterQuery } from '@money/types';
 export interface ParsedEntryFilter {
   /** 고른 사람. undefined면 전체 */
   personIds?: string[];
-  /** true=고정만, false=변동만, undefined면 전체 */
-  fixed?: boolean;
+  /** true=과소비가 섞인 거래만, false=과소비가 없는 거래만, undefined면 전체 */
+  extra?: boolean;
   /** 아무것도 고르지 않았다. 어떤 결과도 나오지 않아야 한다. */
   matchNothing: boolean;
 }
@@ -47,19 +47,19 @@ export function parseEntryFilter(
     if (personIds.length === 0) matchNothing = true;
   }
 
-  let fixed: boolean | undefined;
-  if (query.fixedTypes !== undefined) {
-    const types = splitList(query.fixedTypes);
-    const wantsFixed = types.includes('fixed');
-    const wantsVariable = types.includes('variable');
+  let extra: boolean | undefined;
+  if (query.extraTypes !== undefined) {
+    const types = splitList(query.extraTypes);
+    const wantsNormal = types.includes('normal');
+    const wantsExtra = types.includes('extra');
 
-    if (!wantsFixed && !wantsVariable) matchNothing = true;
+    if (!wantsNormal && !wantsExtra) matchNothing = true;
     // 둘 다 고른 것은 전체와 같다. 조건을 걸지 않는 편이 정확하다
     // (카테고리 다리가 없는 전표까지 그대로 포함된다).
-    else if (wantsFixed !== wantsVariable) fixed = wantsFixed;
+    else if (wantsNormal !== wantsExtra) extra = wantsExtra;
   }
 
-  return { personIds, fixed, matchNothing };
+  return { personIds, extra, matchNothing };
 }
 
 /** 어떤 전표에도 걸리지 않는 조건. 아무것도 고르지 않았을 때 쓴다. */
@@ -98,14 +98,20 @@ export function assetOwnerCondition(
 }
 
 /**
- * 고정/변동 posting 조건.
+ * 일반/과소비 posting 조건.
  *
- * 반드시 카테고리 다리에만 걸어야 한다. 계좌 다리는 isFixed가 항상 false라서
- * 조건 없이 걸면 "변동"이 사실상 전체와 같아진다.
+ * 반드시 카테고리 다리에만 걸어야 한다. 계좌 다리는 extraAmount가 항상 0이라서
+ * 조건 없이 걸면 "일반"이 사실상 전체와 같아진다.
+ *
+ * 한 줄의 일부만 과소비일 수 있다(10만 원 중 3만 원). 그런 줄은 "과소비"에 든다.
+ * 목록 필터는 "과소비가 섞인 거래인가"를 가르는 것이지 금액을 쪼개지 않는다.
  */
-export function fixedPostingCondition(
+export function extraPostingCondition(
   filter: ParsedEntryFilter,
 ): Prisma.PostingWhereInput | undefined {
-  if (filter.fixed === undefined) return undefined;
-  return { isFixed: filter.fixed, categoryId: { not: null } };
+  if (filter.extra === undefined) return undefined;
+  return {
+    extraAmount: filter.extra ? { gt: 0 } : { equals: 0 },
+    categoryId: { not: null },
+  };
 }

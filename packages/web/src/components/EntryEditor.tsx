@@ -13,7 +13,12 @@ import { useInstitutions } from '@/hooks/useInstitutions';
 import { apiClient } from '@/lib/api-client';
 import type { Account, Card, Category, Person } from '@/lib/types';
 import { formatCurrency, formatNumber, toAmountString, toNumber } from '@/lib/money';
-import { DAY_OF_MONTH_HINT, DAY_OF_MONTH_OPTIONS } from '@/lib/day-of-month';
+import {
+  DAY_OF_MONTH_HINT,
+  DAY_OF_MONTH_OPTIONS,
+  DEFAULT_PAYMENT_DUE_DAY,
+  DEFAULT_STATEMENT_CLOSING_DAY,
+} from '@/lib/day-of-month';
 import {
   dateKeyOf,
   formatDateTime,
@@ -43,6 +48,8 @@ import Modal from '@/components/Modal';
 import AddAccountModal from '@/components/AddAccountModal';
 import PersonModal from '@/components/PersonModal';
 import type { EntryListItem } from '@/components/TransactionItem';
+import CardColorPicker from '@/components/CardColorPicker';
+import ExtraAmountModal from '@/components/ExtraAmountModal';
 import CardPerformanceField from '@/components/CardPerformanceField';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
@@ -87,7 +94,13 @@ function emptyEntryForm(timeZone: string, ledgerCurrency: CurrencyCode) {
     transferFeeSubCategoryId: '',
     date: todayKey(timeZone),
     time: '',
-    isFixed: false,
+    /**
+     * 과소비(지출)·추가 수입(수입)으로 셀 금액. 빈 값이거나 "0"이면 일반 거래다.
+     *
+     * 참·거짓이 아니라 금액인 이유는, 한 거래가 통째로 과소비인 경우보다
+     * 그중 일부만 과했던 경우가 흔하기 때문이다.
+     */
+    extraAmount: '',
     /** 할부 개월수. 빈 값이거나 1이면 일시불 */
     installmentMonths: '',
     /** 카드사 이체의 방향. 수정으로만 들어오며 그대로 되돌려 보낸다 */
@@ -218,9 +231,11 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     creditLimit: '',
     /** 혜택 조건이 되는 사용액. 체크카드도 쓴다 (달력 월로 센다). */
     performanceAmount: '',
+    /** 카드 앞면 색. 빈 값이면 카드 종류의 기본색으로 그린다. */
+    color: '',
     // 청구 주기는 마감일과 결제일 두 값으로 계산한다
-    statementClosingDay: 15,
-    paymentDueDay: 25,
+    statementClosingDay: DEFAULT_STATEMENT_CLOSING_DAY,
+    paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
   });
   const [cardSubmitting, setCardSubmitting] = useState(false);
   const [categoryFormData, setCategoryFormData] = useState({
@@ -584,7 +599,13 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         amount: toAmountString(formData.amount),
         description: formData.description,
         date: dateValue,
-        isFixed: formData.isFixed,
+        /*
+         * 비워 두면 "0"을 보낸다. 서버가 분류 기본값으로 되돌리지 않게 뜻을 못박는다.
+         * 금액 칸을 떠나지 않고 바로 저장하는 경우가 있어 여기서 한 번 더 맞춘다.
+         */
+        extraAmount: toAmountString(
+          clampExtra(formData.extraAmount, kind === 'transfer' ? formData.transferFee : formData.amount) || '0',
+        ),
       };
 
       // 기준통화면 통화·환율을 보내지 않는다. 서버가 계좌 통화로 알아서 본다.
@@ -605,8 +626,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         payload.cardId = formData.cardId;
         payload.accountId = formData.accountId;
         payload.cardTransferDirection = formData.cardTransferDirection;
-        // 카드사 이체는 지출이 아니므로 분류도 고정 여부도 없다.
-        delete payload.isFixed;
+        // 카드사 이체는 지출이 아니므로 분류도 과소비 금액도 없다.
+        delete payload.extraAmount;
       } else if (kind === 'transfer') {
         payload.accountId = formData.accountId;
         payload.toAccountId = formData.toAccountId;
@@ -788,7 +809,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       transferFeeSubCategoryId: fee.subCategoryId,
       date: dateKeyOf(entry.date, timeZone),
       time: timeInputOf(entry.date, timeZone),
-      isFixed: entry.isFixed,
+      extraAmount: toNumber(entry.extraAmount) > 0 ? entry.extraAmount : '',
       installmentMonths: entry.installmentMonths ? String(entry.installmentMonths) : '',
       // 놓치면 환불 입금을 고칠 때 대금 결제로 뒤집힌다
       cardTransferDirection: entry.cardTransferDirection ?? 'payment',
@@ -847,6 +868,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         performanceAmount: cardFormData.performanceAmount
           ? toAmountString(cardFormData.performanceAmount)
           : '',
+        // 비워 두면 보내지 않는다. 서버는 null로 두고 화면이 종류별 기본색을 쓴다.
+        color: cardFormData.color || undefined,
         // 신용카드는 마감일과 결제일이 필수다 (없으면 청구서를 만들 수 없다)
         statementClosingDay: isCredit ? cardFormData.statementClosingDay : undefined,
         paymentDueDay: isCredit ? cardFormData.paymentDueDay : undefined,
@@ -863,8 +886,9 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         expiryDate: '',
         creditLimit: '',
         performanceAmount: '',
-        statementClosingDay: 15,
-        paymentDueDay: 25,
+        color: '',
+        statementClosingDay: DEFAULT_STATEMENT_CLOSING_DAY,
+        paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
       });
       setIsCardModalOpen(false);
     } catch (err) {
@@ -889,7 +913,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       name: '',
       type: 'expense',
       // 소분류를 붙이러 열었으면 첫 줄을 미리 준다. 그 줄이 이 팝업의 본론이다.
-      subCategories: parentId ? [{ id: '', name: '', defaultIsFixed: false }] : NO_SUB_CATEGORIES,
+      subCategories: parentId ? [{ id: '', name: '', defaultIsExtra: false }] : NO_SUB_CATEGORIES,
     });
     setCategoryError('');
     setIsCategoryModalOpen(true);
@@ -925,7 +949,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
             name: sub.name.trim(),
             type: parent.type,
             parentId: parent.id,
-            defaultIsFixed: sub.defaultIsFixed,
+            defaultIsExtra: sub.defaultIsExtra,
           }),
         );
       }
@@ -943,7 +967,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       if (categoryParent && created.length === 1) {
         setFormData((prev) =>
           prev.mainCategoryId === categoryParent.id
-            ? { ...prev, subCategoryId: created[0].id, isFixed: created[0].defaultIsFixed }
+            ? { ...prev, subCategoryId: created[0].id, extraAmount: '' }
             : prev,
         );
       }
@@ -1048,6 +1072,17 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                     data-autofocus
                     value={formData.amount}
                     onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                    /*
+                      과소비 금액은 다 치고 칸을 떠날 때 맞춘다.
+                      한 글자마다 맞추면 3000을 2000으로 고치려고 "2"를 친 순간
+                      과소비가 2원으로 깎이고, 남은 "000"을 쳐도 돌아오지 않는다.
+                    */
+                    onBlur={(e) =>
+                      setFormData((prev) => ({
+                        ...prev,
+                        extraAmount: clampExtra(prev.extraAmount, e.target.value),
+                      }))
+                    }
                     className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="50000"
                   />
@@ -1258,7 +1293,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                           ...formData,
                           mainCategoryId: value,
                           subCategoryId: '',
-                          isFixed: selectedCategory?.defaultIsFixed || false,
+                          extraAmount: selectedCategory?.defaultIsExtra ? formData.amount : '',
                         });
                       }}
                       placeholder="선택하세요"
@@ -1292,7 +1327,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                         setFormData({
                           ...formData,
                           subCategoryId: value,
-                          isFixed: target?.defaultIsFixed || false,
+                          extraAmount: target?.defaultIsExtra ? formData.amount : '',
                     });
                   }}
                   placeholder="없음"
@@ -1309,19 +1344,16 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 />
                   </div>
 
-                  {/* 고정 여부는 이 분류에 저장된다. 다음에 같은 분류를 고르면 자동으로 켜진다. */}
-                  <div className="flex items-center gap-3">
-                    <input
-                      type="checkbox"
-                      id="isFixed"
-                      checked={formData.isFixed}
-                      onChange={(e) => setFormData({ ...formData, isFixed: e.target.checked })}
-                      className="w-4 h-4 border border-gray-300 rounded-md focus:ring-blue-500"
-                    />
-                    <label htmlFor="isFixed" className="text-sm font-medium text-gray-700">
-                      {formData.type === 'income' ? '필수수입' : '필수지출'}
-                    </label>
-                  </div>
+                  {/*
+                    체크하면 금액을 묻는 창이 뜬다. 체크 자체는 "전액"을 뜻하지 않는다.
+                    이 분류를 다음에 고를 때 자동으로 켜지도록 서버가 분류에 기억한다.
+                  */}
+                  <ExtraCheck
+                    kind={formData.type === 'income' ? 'income' : 'expense'}
+                    amount={formData.amount}
+                    value={formData.extraAmount}
+                    onChange={(extraAmount) => setFormData({ ...formData, extraAmount })}
+                  />
 
                 </>
               )}
@@ -1391,6 +1423,13 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                       type="number"
                       value={formData.transferFee}
                       onChange={(e) => setFormData({ ...formData, transferFee: e.target.value })}
+                      // 이체의 과소비는 수수료에 붙는다. 금액 칸과 같은 규칙으로 맞춘다.
+                      onBlur={(e) =>
+                        setFormData((prev) => ({
+                          ...prev,
+                          extraAmount: clampExtra(prev.extraAmount, e.target.value),
+                        }))
+                      }
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="0"
                     />
@@ -1413,7 +1452,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                               ...formData,
                               transferFeeMainCategoryId: value,
                               transferFeeSubCategoryId: '',
-                              isFixed: selected?.defaultIsFixed || false,
+                              extraAmount: selected?.defaultIsExtra ? formData.transferFee : '',
                             });
                           }}
                           placeholder="선택하세요"
@@ -1447,26 +1486,20 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                             setFormData({
                               ...formData,
                               transferFeeSubCategoryId: value,
-                              isFixed: target?.defaultIsFixed || false,
+                              extraAmount: target?.defaultIsExtra ? formData.transferFee : '',
                             });
                           }}
                           placeholder="없음"
                         />
                       </div>
 
-                      {/* 이체에서 고정 여부는 수수료 분류에 저장된다 (이체 자체는 지출이 아니다). */}
-                      <div className="flex items-center gap-3">
-                        <input
-                          type="checkbox"
-                          id="feeIsFixed"
-                          checked={formData.isFixed}
-                          onChange={(e) => setFormData({ ...formData, isFixed: e.target.checked })}
-                          className="w-4 h-4 border border-gray-300 rounded-md focus:ring-blue-500"
-                        />
-                        <label htmlFor="feeIsFixed" className="text-sm font-medium text-gray-700">
-                          필수지출
-                        </label>
-                      </div>
+                      {/* 이체의 과소비는 수수료 분류에 붙는다 (이체 자체는 지출이 아니다). */}
+                      <ExtraCheck
+                        kind="expense"
+                        amount={formData.transferFee}
+                        value={formData.extraAmount}
+                        onChange={(extraAmount) => setFormData({ ...formData, extraAmount })}
+                      />
                     </>
                   )}
                 </>
@@ -1687,6 +1720,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               value={cardFormData.expiryDate}
               onChange={(e) => setCardFormData({ ...cardFormData, expiryDate: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">카드 색 (선택)</label>
+            <CardColorPicker
+              value={cardFormData.color}
+              onChange={(color) => setCardFormData({ ...cardFormData, color })}
             />
           </div>
 
@@ -1970,10 +2011,12 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                필수 지출
+                {selectedTransaction.kind === 'income' ? '추가 수입' : '과소비'}
               </label>
-              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {selectedTransaction.isFixed ? '필수' : '변동'}
+              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900 tabular-nums">
+                {toNumber(selectedTransaction.extraAmount) > 0
+                  ? formatCurrency(selectedTransaction.extraAmount, displayCurrency)
+                  : '없음'}
               </p>
             </div>
 
@@ -1995,3 +2038,82 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 });
 
 export default EntryEditor;
+
+/**
+ * 과소비 금액을 거래 금액 안으로 되돌린다.
+ *
+ * 3만 원을 과소비로 적어 둔 뒤 거래 금액을 2만 원으로 고치는 일이 있다. 그대로
+ * 두면 저장할 때 서버가 되돌려 보낸다. 넘치는 만큼만 줄여 새 금액에 맞춘다
+ * (전액이 과소비였다면 바꾼 금액도 전액 과소비로 남는다).
+ *
+ * 입력 중이 아니라 다 친 뒤에만 부른다. 글자마다 부르면 고치는 도중의 짧은
+ * 숫자에 맞춰 깎여 버린다.
+ */
+function clampExtra(extraAmount: string, nextAmount: string): string {
+  const extra = toNumber(extraAmount);
+  if (extra <= 0) return extraAmount;
+  const max = toNumber(nextAmount);
+  if (max <= 0) return '';
+  return extra > max ? String(max) : extraAmount;
+}
+
+interface ExtraCheckProps {
+  kind: 'expense' | 'income';
+  /** 거래 금액. 과소비 금액의 처음 값이자 최대값이다. */
+  amount: string;
+  value: string;
+  onChange: (extraAmount: string) => void;
+}
+
+/**
+ * 과소비·추가 수입 체크와 금액.
+ *
+ * 체크하면 금액 창이 뜨고, 창을 확인해야 값이 담긴다. 취소하면 체크도 도로 풀린다.
+ * 담긴 뒤에는 금액이 체크 옆에 보이고, 그 금액을 눌러 다시 고칠 수 있다.
+ */
+function ExtraCheck({ kind, amount, value, onChange }: ExtraCheckProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const label = kind === 'income' ? '추가 수입' : '과소비';
+  const checked = toNumber(value) > 0;
+
+  return (
+    <div className="flex items-center gap-3">
+      <input
+        type="checkbox"
+        id={`extra-${kind}`}
+        checked={checked}
+        onChange={(event) => {
+          if (event.target.checked) setIsOpen(true);
+          else onChange('');
+        }}
+        className="w-4 h-4 border border-gray-300 rounded-md focus:ring-blue-500"
+      />
+      <label htmlFor={`extra-${kind}`} className="text-sm font-medium text-gray-700">
+        {label}
+      </label>
+
+      {checked && (
+        <button
+          type="button"
+          onClick={() => setIsOpen(true)}
+          className="text-sm font-semibold text-blue-600 tabular-nums hover:underline"
+        >
+          {formatNumber(value)}원
+        </button>
+      )}
+
+      <ExtraAmountModal
+        isOpen={isOpen}
+        kind={kind}
+        maxAmount={amount}
+        value={value}
+        onCancel={() => setIsOpen(false)}
+        onConfirm={(next) => {
+          // 0을 적으면 일반 거래다. 체크도 함께 풀린다.
+          onChange(toNumber(next) > 0 ? next : '');
+          setIsOpen(false);
+        }}
+      />
+    </div>
+  );
+}

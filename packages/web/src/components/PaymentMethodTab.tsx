@@ -41,10 +41,6 @@ interface PaymentMethodItem {
   count: number;
   /** 이 통장으로 들어온 수입. 카드는 언제나 "0"이다. */
   income: string;
-  /** 실적 기준액 (표시 통화). 카드에 조건이 없으면 없다. */
-  performanceTarget?: string;
-  /** 신용카드 마감일. 31이면 청구 주기가 달력 월과 같다. */
-  statementClosingDay?: number;
 }
 
 interface Props {
@@ -76,7 +72,7 @@ interface Props {
  * 분류별 화면의 지출/수입 탭과 같은 모양이다. 예전에는 세 덩어리를 세로로 쌓아서
  * 카드가 많은 프로젝트에서는 계좌 결제를 보려면 한참 내려야 했다.
  *
- * 신용카드를 먼저 둔다. 정산과 실적이 걸려 있어 가장 자주 들여다보는 수단이다.
+ * 신용카드를 먼저 둔다. 갚을 대금을 정산하는 자리라 가장 자주 들여다보는 수단이다.
  */
 const SECTIONS = [
   { kind: 'credit_card' as const, icon: '💳', title: '신용카드', accent: 'red', empty: '신용카드가 없습니다.' },
@@ -101,52 +97,6 @@ const ACCENT: Record<string, { selected: string; idle: string; text: string }> =
     text: 'text-red-600',
   },
 };
-
-/**
- * 실적 달성률을 이 화면의 숫자로 그릴 수 있는지.
- *
- * 실적은 한 주기에 쓴 금액으로 센다. 이 화면이 보여 주는 금액이 그 주기와 같을
- * 때만 나란히 둘 수 있다.
- *   - 기간 보기: 달이 아니라 임의 구간이라 주기와 맞출 수 없다
- *   - 신용카드: 마감일이 말일(31)일 때만 청구 주기가 달력 월과 같다
- *   - 체크카드: 청구 주기가 없어 언제나 달력 월로 센다
- *
- * 맞출 수 없을 때 어림값을 그리지 않는다. 15일 마감 카드에 달력 월 사용액으로
- * 달성률을 그리면 두 주기가 절반씩 어긋난 숫자가 그럴듯하게 보인다.
- */
-function canShowPerformance(item: PaymentMethodItem, isMonthView: boolean): boolean {
-  if (!isMonthView) return false;
-  if (item.kind === 'credit_card') return item.statementClosingDay === 31;
-  return item.kind === 'debit_card';
-}
-
-/**
- * 한 수단의 실적 진행 상황.
- *
- * 기준액이 없는 카드와 통장은 null이다. 셀 수 없는 구간이면 기준액만 담아
- * 돌려준다(`countable: false`). 목록과 상세가 같은 값을 보여 줘야 해서 한 곳에서 만든다.
- */
-function performanceOf(item: PaymentMethodItem, isMonthView: boolean) {
-  const target = toNumber(item.performanceTarget);
-  if (target <= 0) return null;
-
-  if (!canShowPerformance(item, isMonthView)) return { target, countable: false } as const;
-
-  const usage = toNumber(item.amount);
-  const ratio = (usage / target) * 100;
-
-  return {
-    target,
-    countable: true,
-    usage,
-    achieved: usage >= target,
-    remaining: Math.max(target - usage, 0),
-    percent: Math.floor(ratio),
-    // 기준을 넘겨도 막대는 100%에서 멈춘다. 사용액이 음수인 구간(취소가 더 많은
-    // 달)도 있어 아래도 0에서 자른다. 음수 너비는 레이아웃만 흔든다.
-    progress: Math.min(Math.max(ratio, 0), 100),
-  } as const;
-}
 
 export default function PaymentMethodTab({
   period,
@@ -324,56 +274,6 @@ export default function PaymentMethodTab({
       ? cards.find((card) => card.id === selected.id)
       : undefined;
 
-  /*
-   * 실적 달성률.
-   *
-   * 왼쪽 목록의 사용액을 그대로 쓴다. 서버에서 따로 받아 오면 그쪽은 "지금 주기"의
-   * 값이라, 지난 달을 보고 있을 때 화면의 다른 숫자와 어긋난다.
-   */
-  const isMonthView = Boolean(period.yearMonth);
-  const performance = selected ? performanceOf(selected, isMonthView) : null;
-
-  /**
-   * 목록 한 줄에 붙는 실적 줄. 분류별 화면의 예산 진행률과 같은 자리다.
-   *
-   * 눌러야 보이면 카드가 여럿일 때 어느 카드가 실적에 가까운지 하나씩 눌러 봐야
-   * 알 수 있다. 목록에서 한눈에 훑을 수 있어야 한다.
-   */
-  const performanceLine = (item: PaymentMethodItem) => {
-    const progress = performanceOf(item, isMonthView);
-    if (!progress) return null;
-
-    // 셀 수 없는 구간에서도 기준액은 알려 준다. 얼마짜리 조건인지는 구간과 무관하다.
-    if (!progress.countable) {
-      return (
-        <p className="mt-1 text-xs text-gray-500">
-          실적 {formatCurrency(progress.target, displayCurrency)} · 자산 화면에서 확인
-        </p>
-      );
-    }
-
-    return (
-      <div className="mt-1 flex items-center gap-2">
-        <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
-          <div
-            className={`h-full ${progress.achieved ? 'bg-emerald-500' : 'bg-amber-500'}`}
-            style={{ width: `${progress.progress}%` }}
-          />
-        </div>
-        <span
-          className={`text-xs shrink-0 ${
-            progress.achieved ? 'text-emerald-600' : 'text-gray-500'
-          }`}
-        >
-          실적 {formatCurrency(progress.target, displayCurrency)} · {progress.percent}%
-          {progress.achieved
-            ? ' · 달성'
-            : ` · ${formatCurrency(progress.remaining, displayCurrency)} 남음`}
-        </span>
-      </div>
-    );
-  };
-
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <div className="lg:col-span-1 bg-white rounded-lg shadow p-6">
@@ -430,7 +330,6 @@ export default function PaymentMethodTab({
                     </span>
                   )}
                 </div>
-                {performanceLine(item)}
               </button>
             ))}
           </div>
@@ -458,54 +357,6 @@ export default function PaymentMethodTab({
                 </button>
               )}
             </div>
-
-            {/*
-              실적 진행 상황.
-
-              카드사가 혜택을 주는 기준이라 "얼마 남았나"가 알고 싶은 값이다.
-              기준액을 설정하지 않은 카드에는 아무것도 그리지 않는다.
-            */}
-            {performance && !performance.countable && (
-              <p className="text-sm text-gray-600 bg-gray-50 rounded-lg p-3">
-                {isMonthView
-                  ? '이 카드는 마감일 기준 청구 주기로 실적을 셉니다. 달력 월 사용액과 구간이 달라 여기서는 달성률을 보여 주지 않습니다. 자산 화면에서 카드를 눌러 확인하세요.'
-                  : '실적은 달 단위로 셉니다. 기간 보기에서는 달성률을 보여 주지 않습니다. 자산 화면에서 카드를 눌러 확인하세요.'}
-              </p>
-            )}
-            {performance?.countable && (
-              <div
-                className={`rounded-lg p-4 space-y-2 ${
-                  performance.achieved ? 'bg-emerald-50' : 'bg-amber-50'
-                }`}
-              >
-                <div className="flex justify-between items-baseline gap-2">
-                  <span
-                    className={`text-sm font-semibold ${
-                      performance.achieved ? 'text-emerald-700' : 'text-amber-800'
-                    }`}
-                  >
-                    {performance.achieved
-                      ? '실적 달성'
-                      : `실적까지 ${formatCurrency(performance.remaining, displayCurrency)}`}
-                  </span>
-                  <span className="text-sm text-gray-700 tabular-nums">
-                    {formatCurrency(performance.usage, displayCurrency)} /{' '}
-                    {formatCurrency(performance.target, displayCurrency)}
-                  </span>
-                </div>
-                <div className="h-2 bg-white rounded-full overflow-hidden">
-                  <div
-                    className={`h-full rounded-full ${
-                      performance.achieved ? 'bg-emerald-500' : 'bg-amber-500'
-                    }`}
-                    style={{ width: `${performance.progress}%` }}
-                  />
-                </div>
-                <p className="text-xs text-gray-600">
-                  이 달({period.yearMonth}) 사용액 기준입니다.
-                </p>
-              </div>
-            )}
 
             <div>
               <h4 className="font-semibold text-gray-900 mb-4">월별 사용 금액</h4>

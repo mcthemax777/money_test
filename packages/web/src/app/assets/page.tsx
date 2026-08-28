@@ -6,13 +6,19 @@ import { useRouter } from 'next/navigation';
 import { apiClient } from '@/lib/api-client';
 import type { Account, Card, Category, Person } from '@/lib/types';
 import { formatCurrency, toAmountString, toNumber } from '@/lib/money';
+import { sumNetWorth, type NetWorthParts } from '@/lib/net-worth';
 import { useUserFilter } from '@/store/user-filter';
 import { formatDate, monthInputToIso } from '@/lib/datetime';
 import { type ReportDto } from '@money/types';
 import ChoiceModal from '@/components/ChoiceModal';
 import { useDragReorder } from '@/hooks/useDragReorder';
 import { usePersonFilterSync } from '@/hooks/usePersonFilterSync';
-import { DAY_OF_MONTH_HINT, DAY_OF_MONTH_OPTIONS } from '@/lib/day-of-month';
+import {
+  DAY_OF_MONTH_HINT,
+  DAY_OF_MONTH_OPTIONS,
+  DEFAULT_PAYMENT_DUE_DAY,
+  DEFAULT_STATEMENT_CLOSING_DAY,
+} from '@/lib/day-of-month';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 /** 구성원 상세에 보여 줄 최근 거래 수. 더 보려면 가계 화면에서 사람 필터를 쓴다. */
@@ -46,6 +52,7 @@ import PageHeader from '@/components/PageHeader';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import HiddenItemsPanel from '@/components/HiddenItemsPanel';
 import AssetHistoryChart from '@/components/AssetHistoryChart';
+import CardColorPicker from '@/components/CardColorPicker';
 import TransactionListView from '@/components/TransactionListView';
 import type { EntryListItem } from '@/components/TransactionItem';
 import CardPerformanceField from '@/components/CardPerformanceField';
@@ -103,33 +110,6 @@ function AccountTypeBadge({ type }: { type: string }) {
       {accountTypeLabel(type)}
     </span>
   );
-}
-
-/** 총자산을 이루는 세 값 */
-type NetWorthParts = { cash: string; investment: string; liability: string };
-
-/**
- * 고른 자산주인들의 소계를 하나로 합친다.
- *
- * 서버가 준 전체 합계(total)는 주인 없는 계좌까지 담고 있어 일부만 골랐을 때
- * 쓸 수 없다. 계좌가 없는 구성원은 소계 자체가 없으므로 건너뛴다.
- */
-function sumNetWorth(rows: Array<NetWorthParts | undefined>): NetWorthParts & { total: string } {
-  const sum = rows.reduce(
-    (acc, row) => ({
-      cash: acc.cash + toNumber(row?.cash),
-      investment: acc.investment + toNumber(row?.investment),
-      liability: acc.liability + toNumber(row?.liability),
-    }),
-    { cash: 0, investment: 0, liability: 0 },
-  );
-
-  return {
-    cash: toAmountString(sum.cash),
-    investment: toAmountString(sum.investment),
-    liability: toAmountString(sum.liability),
-    total: toAmountString(sum.cash + sum.investment + sum.liability),
-  };
 }
 
 /**
@@ -227,9 +207,11 @@ export default function DashboardPage() {
     creditLimit: '',
     /** 혜택 조건이 되는 사용액. 체크카드도 쓴다 (달력 월로 센다). */
     performanceAmount: '',
+    /** 카드 앞면 색. 빈 값이면 카드 종류의 기본색으로 그린다. */
+    color: '',
     // 청구 주기는 마감일과 결제일 두 값으로 계산한다
-    statementClosingDay: 15,
-    paymentDueDay: 25,
+    statementClosingDay: DEFAULT_STATEMENT_CLOSING_DAY,
+    paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
   });
   const [addError, setAddError] = useState('');
 
@@ -559,6 +541,8 @@ export default function DashboardPage() {
         performanceAmount: cardForm.performanceAmount
           ? toAmountString(cardForm.performanceAmount)
           : '',
+        // 비워 두면 보내지 않는다. 서버는 null로 두고 화면이 종류별 기본색을 쓴다.
+        color: cardForm.color || undefined,
         statementClosingDay:
           cardForm.cardType === 'credit' ? cardForm.statementClosingDay : undefined,
         paymentDueDay: cardForm.cardType === 'credit' ? cardForm.paymentDueDay : undefined,
@@ -575,8 +559,9 @@ export default function DashboardPage() {
         expiryDate: '',
         creditLimit: '',
         performanceAmount: '',
-        statementClosingDay: 15,
-        paymentDueDay: 25,
+        color: '',
+        statementClosingDay: DEFAULT_STATEMENT_CLOSING_DAY,
+        paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
       });
       setAddType(null);
     } catch (err: any) {
@@ -1390,8 +1375,9 @@ export default function DashboardPage() {
             expiryDate: '',
             creditLimit: '',
             performanceAmount: '',
-            statementClosingDay: 15,
-            paymentDueDay: 25,
+            color: '',
+            statementClosingDay: DEFAULT_STATEMENT_CLOSING_DAY,
+            paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
           });
           setAddError('');
         }}
@@ -1484,6 +1470,21 @@ export default function DashboardPage() {
               onChange={(e) => setCardForm({ ...cardForm, expiryDate: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              카드 색 (선택)
+            </label>
+            <CardColorPicker
+              value={cardForm.color}
+              onChange={(color) => setCardForm({ ...cardForm, color })}
+            />
+            <p className="mt-1 text-xs text-gray-500">
+              홈 화면의 카드 앞면 색입니다. 고르지 않으면{' '}
+              {cardForm.cardType === 'credit' ? '신용카드 기본색(파랑)' : '체크카드 기본색(초록)'}
+              으로 보입니다.
+            </p>
           </div>
 
           <CardPerformanceField

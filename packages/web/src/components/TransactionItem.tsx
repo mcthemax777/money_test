@@ -68,9 +68,27 @@ function titleOf(entry: EntryListItem): string {
 }
 
 /** 배지 하나. 뜻을 담은 색은 금액이 쓰므로 배지는 회색으로 물러선다. */
-function Badge({ children }: { children: React.ReactNode }) {
+/**
+ * 한 줄에 붙는 작은 표시.
+ *
+ * `tone`은 그 표시가 돈을 어느 쪽으로 움직였는지다. 과소비는 지출과 같은 빨강,
+ * 추가 수입은 수입과 같은 초록이라 위 금액 색과 같은 이야기를 한다.
+ */
+function Badge({
+  children,
+  tone = 'muted',
+}: {
+  children: React.ReactNode;
+  tone?: 'muted' | 'expense' | 'income';
+}) {
+  const style =
+    tone === 'expense'
+      ? 'bg-red-50 text-red-600'
+      : tone === 'income'
+        ? 'bg-green-50 text-green-600'
+        : 'bg-gray-100 text-gray-500';
   return (
-    <span className="shrink-0 rounded bg-gray-100 px-1.5 py-px text-[11px] text-gray-500">
+    <span className={`shrink-0 rounded px-1.5 py-px text-[11px] font-medium ${style}`}>
       {children}
     </span>
   );
@@ -96,6 +114,7 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
   const time = formatTime(entry.date, timeZone);
   const original = formatOriginal(entry);
   const showNotCounted = NOT_COUNTED.includes(entry.kind) && !hasFee;
+  const hasExtra = toNumber(entry.extraAmount) > 0;
 
   // 카테고리는 "대분류 > 소분류"로 표시한다. 대분류만 지정한 거래는 앞부분만 나온다.
   const categoryLabel = entry.parentCategoryName
@@ -143,11 +162,20 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
       </div>
 
       {/* 2줄에 담을 것이 하나도 없는 거래도 있다. 그때는 빈 줄을 만들지 않는다. */}
-      {(meta || entry.isFixed || showNotCounted || hasFee || original) && (
+      {(meta || hasExtra || showNotCounted || hasFee || original) && (
       <div className="mt-0.5 flex items-center gap-1.5 text-xs text-gray-500">
         <span className="min-w-0 truncate">{meta}</span>
 
-        {entry.isFixed && <Badge>필수</Badge>}
+        {/*
+          과소비·추가 수입은 금액까지 적는다. 표시만 있으면 "얼마가 과했나"를
+          거래를 열어 봐야 알 수 있는데, 그 값이 이 표시의 요점이다.
+        */}
+        {hasExtra && (
+          <Badge tone={entry.kind === 'income' ? 'income' : 'expense'}>
+            {entry.kind === 'income' ? '추가 수입' : '과소비'}{' '}
+            {formatCurrency(entry.extraAmount, displayCurrency)}
+          </Badge>
+        )}
         {/* 이체와 카드사 이체는 수입도 지출도 아니다. 회색 금액과 같은 이야기를 글로 한 번 더 한다. */}
         {showNotCounted && <Badge>합계 제외</Badge>}
         {hasFee && (

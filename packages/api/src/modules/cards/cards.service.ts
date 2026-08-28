@@ -9,7 +9,7 @@ import {
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { InstitutionsService } from '../institutions/institutions.service';
-import { CardDto } from '@money/types';
+import { CardDto, isCardColor } from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
 import { toCardResponse } from './card-view';
 import { toOptionalMoney } from '@/common/money';
@@ -62,6 +62,8 @@ export class CardsService {
       this.assertDayOfMonth(dto.paymentDueDay, '결제일');
     }
 
+    this.assertCardColor(dto.color);
+
     await this.institutions.assertUsable(
       dto.issuerId,
       projectId,
@@ -109,6 +111,8 @@ export class CardsService {
           performanceAmount: toOptionalMoney(dto.performanceAmount, '카드 실적 기준액'),
           statementClosingDay: dto.statementClosingDay ?? null,
           paymentDueDay: dto.paymentDueDay ?? null,
+          // 고르지 않으면 null이다. 종류별 기본색은 화면이 정한다.
+          color: dto.color ?? null,
         },
         include: CARD_INCLUDE,
       });
@@ -180,6 +184,7 @@ export class CardsService {
     if (dto.paymentDueDay !== undefined) {
       this.assertDayOfMonth(dto.paymentDueDay, '결제일');
     }
+    this.assertCardColor(dto.color);
 
     // 요청 본문을 스프레드로 Prisma에 넘기면 안 된다.
     // DTO가 인터페이스라 ValidationPipe(whitelist: false)가 낯선 키를 지우지 않으므로
@@ -196,6 +201,8 @@ export class CardsService {
     }
     if (dto.statementClosingDay !== undefined) data.statementClosingDay = dto.statementClosingDay;
     if (dto.paymentDueDay !== undefined) data.paymentDueDay = dto.paymentDueDay;
+    // 빈 문자열은 "기본색으로 되돌리기"다. 색 선택은 비울 수 있어야 한다.
+    if (dto.color !== undefined) data.color = dto.color || null;
     if (dto.creditLimit !== undefined) data.creditLimit = toOptionalMoney(dto.creditLimit, '카드 한도');
     if (dto.performanceAmount !== undefined) {
       data.performanceAmount = toOptionalMoney(dto.performanceAmount, '카드 실적 기준액');
@@ -270,6 +277,19 @@ export class CardsService {
   private assertDayOfMonth(day: number, label: string) {
     if (!Number.isInteger(day) || day < 1 || day > 31) {
       throw new BadRequestException(`${label}은 1~31 사이여야 합니다.`);
+    }
+  }
+
+  /**
+   * 아는 색 열쇠말인지 본다.
+   *
+   * 화면은 이 값으로 tailwind 클래스를 고르므로, 모르는 값이 저장되면 그 카드는
+   * 색 없이 그려진다. 저장 전에 막는다. 생략과 빈 문자열은 "기본색"이라 통과시킨다.
+   */
+  private assertCardColor(color: string | undefined) {
+    if (color === undefined || color === '') return;
+    if (!isCardColor(color)) {
+      throw new BadRequestException('카드 색을 알 수 없습니다.');
     }
   }
 

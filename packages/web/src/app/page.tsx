@@ -12,7 +12,7 @@ export default function Home() {
     // isInitializing이 false가 될 때까지 기다렸다가 리다이렉트
     if (!isInitializing) {
       if (isAuthenticated) {
-        router.push('/dashboard');
+        router.push('/home');
       } else {
         router.push('/login');
       }

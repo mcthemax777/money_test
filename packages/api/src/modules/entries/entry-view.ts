@@ -17,7 +17,7 @@ type PostingWithRefs = {
   currency: string;
   exchangeRate: Prisma.Decimal;
   baseAmount: Prisma.Decimal;
-  isFixed: boolean;
+  extraAmount: Prisma.Decimal;
   cardId: string | null;
   account: { id: string; name: string; type: AccountType } | null;
   category: {
@@ -140,9 +140,14 @@ export function toListItem(entry: EntryWithPostings, show: AmountConverter = IDE
     personId: entry.personId,
     personName: entry.person?.name ?? '',
     amount: show.convert(amount).toString(),
-    // 이체는 대표 카테고리가 없다. 화면의 고정 체크는 수수료 다리에 붙으므로 그것을 읽는다.
-    // (수정 폼이 이 값을 그대로 되돌려 보내기 때문에, 여기서 놓치면 체크가 풀린다)
-    isFixed: (primaryCategory ?? feePosting)?.isFixed ?? false,
+    /*
+     * 과소비·추가 수입 금액. 표시 통화로 환산해 위 amount와 같은 단위로 내보낸다.
+     *
+     * 이체는 대표 카테고리가 없다. 화면의 과소비 표시는 수수료 다리에 붙으므로
+     * 그것을 읽는다 (수정 폼이 이 값을 그대로 되돌려 보내기 때문에, 여기서
+     * 놓치면 체크가 풀린다).
+     */
+    extraAmount: show.convert((primaryCategory ?? feePosting)?.extraAmount ?? ZERO).toString(),
     categoryId: primaryCategory?.category?.id ?? null,
     categoryName: primaryCategory?.category?.name ?? null,
     parentCategoryId: primaryCategory?.category?.parent?.id ?? null,

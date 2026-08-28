@@ -67,7 +67,7 @@ interface BudgetDetailModalProps {
   exactCategory?: boolean;
   /** 선택된 프로젝트. 넘기지 않으면 서버가 기본 프로젝트로 조회한다. */
   projectId?: string | null;
-  /** 가계 화면의 사람/고정 필터. 상단 합계와 같은 조건을 써야 한다. */
+  /** 가계 화면의 사람·과소비 필터. 상단 합계와 같은 조건을 써야 한다. */
   filter?: EntryFilterQuery;
   /** 거래를 누르면 호출한다. 날짜별 보기와 같은 상세 팝업을 열기 위한 통로다. */
   onEntryClick?: (entry: EntryListItem) => void;

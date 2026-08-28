@@ -32,7 +32,7 @@ export default function CategoriesPage() {
     name: '',
     type: 'expense' as 'income' | 'expense',
     subCategories: NO_SUB_CATEGORIES as SubCategoryRow[],
-    defaultIsFixed: false,
+    defaultIsExtra: false,
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -65,7 +65,7 @@ export default function CategoriesPage() {
       name: '',
       type: 'expense',
       subCategories: NO_SUB_CATEGORIES,
-      defaultIsFixed: false,
+      defaultIsExtra: false,
     });
     setEditingId(null);
     setError('');
@@ -83,14 +83,14 @@ export default function CategoriesPage() {
     if (!selectedCategory.parentId) {
       const subs = categories
         .filter((c) => c.parentId === selectedCategory.id)
-        .map((c) => ({ id: c.id, name: c.name, defaultIsFixed: c.defaultIsFixed || false }));
+        .map((c) => ({ id: c.id, name: c.name, defaultIsExtra: c.defaultIsExtra || false }));
       subCategories = subs;
     }
     setFormData({
       name: selectedCategory.name,
       type: selectedCategory.type,
       subCategories,
-      defaultIsFixed: selectedCategory.defaultIsFixed || false,
+      defaultIsExtra: selectedCategory.defaultIsExtra || false,
     });
     setIsDetailModalOpen(false);
     setIsModalOpen(true);
@@ -103,14 +103,14 @@ export default function CategoriesPage() {
     if (!category.parentId) {
       const subs = categories
         .filter((c) => c.parentId === category.id)
-        .map((c) => ({ id: c.id, name: c.name, defaultIsFixed: c.defaultIsFixed || false }));
+        .map((c) => ({ id: c.id, name: c.name, defaultIsExtra: c.defaultIsExtra || false }));
       subCategories = subs;
     }
     setFormData({
       name: category.name,
       type: category.type,
       subCategories,
-      defaultIsFixed: category.defaultIsFixed || false,
+      defaultIsExtra: category.defaultIsExtra || false,
     });
     setIsModalOpen(true);
     setError('');
@@ -153,7 +153,7 @@ export default function CategoriesPage() {
       if (editingId) {
         await apiClient.updateCategory(editingId, {
           name: formData.name,
-          defaultIsFixed: formData.defaultIsFixed,
+          defaultIsExtra: formData.defaultIsExtra,
         });
 
         const existingSubs = categories.filter((c) => c.parentId === editingId);
@@ -179,10 +179,10 @@ export default function CategoriesPage() {
           if (sub.id) {
             // 기존 소분류 (수정)
             const existing = existingSubs.find((es) => es.id === sub.id);
-            if (existing && (existing.name !== sub.name || existing.defaultIsFixed !== sub.defaultIsFixed)) {
+            if (existing && (existing.name !== sub.name || existing.defaultIsExtra !== sub.defaultIsExtra)) {
               await apiClient.updateCategory(sub.id, {
                 name: sub.name,
-                defaultIsFixed: sub.defaultIsFixed,
+                defaultIsExtra: sub.defaultIsExtra,
               });
             }
           } else {
@@ -191,7 +191,7 @@ export default function CategoriesPage() {
               name: sub.name,
               type: formData.type,
               parentId: editingId,
-              defaultIsFixed: sub.defaultIsFixed,
+              defaultIsExtra: sub.defaultIsExtra,
             });
           }
         }
@@ -199,7 +199,7 @@ export default function CategoriesPage() {
         await apiClient.createCategory({
           name: formData.name,
           type: formData.type,
-          defaultIsFixed: formData.defaultIsFixed,
+          defaultIsExtra: formData.defaultIsExtra,
         });
         const categoryList = await apiClient.getCategories();
         const mainCategory = categoryList?.find((c: Category) => c.name === formData.name && !c.parentId);
@@ -210,7 +210,7 @@ export default function CategoriesPage() {
               name: sub.name,
               type: formData.type,
               parentId: mainCategory.id,
-              defaultIsFixed: sub.defaultIsFixed,
+              defaultIsExtra: sub.defaultIsExtra,
             });
           }
         }
@@ -222,7 +222,7 @@ export default function CategoriesPage() {
         name: '',
         type: 'expense',
         subCategories: NO_SUB_CATEGORIES,
-        defaultIsFixed: false,
+        defaultIsExtra: false,
       });
       setEditingId(null);
       setError('');
@@ -360,9 +360,9 @@ export default function CategoriesPage() {
 
           {!selectedCategory.parentId && (
             <>
-              {selectedCategory.defaultIsFixed && (
+              {selectedCategory.defaultIsExtra && (
                 <div className="px-3 py-2 bg-blue-50 text-blue-800 text-sm rounded-lg">
-                  ✓ 기본 필수 지출/수입
+                  ✓ 기본 과소비·추가 수입
                 </div>
               )}
               {categories.filter((c) => c.parentId === selectedCategory.id).length > 0 && (
@@ -378,7 +378,7 @@ export default function CategoriesPage() {
                           <span>{subCat.name}</span>
                           <span className="text-xs text-gray-500">
                             {subCat.isDefault && '(기본)'}
-                            {subCat.defaultIsFixed && ' 필수'}
+                            {subCat.defaultIsExtra && ' 과소비'}
                           </span>
                         </div>
                       ))}
@@ -502,7 +502,7 @@ function SubCategoryList({
           </span>
           <span className="text-xs text-gray-500">
             {subCat.isDefault && '(기본)'}
-            {subCat.defaultIsFixed && ' 필수'}
+            {subCat.defaultIsExtra && ' 과소비'}
           </span>
         </div>
       ))}

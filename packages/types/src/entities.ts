@@ -152,6 +152,8 @@ export interface Card {
   performanceAmount: string | null;
   statementClosingDay: number | null; // 마감일 1~31. credit만
   paymentDueDay: number | null;       // 결제일 1~31. credit만
+  /** 카드 앞면 색 (CardColor). null이면 카드 종류의 기본색으로 그린다. */
+  color: string | null;
   isActive: boolean;
   createdAt: IsoDateString;
   updatedAt: IsoDateString;
@@ -183,7 +185,11 @@ export interface Posting {
   currency: string;
   baseAmount: string;
   exchangeRate: string;
-  isFixed: boolean;   // 지출 카테고리 posting에서만 의미가 있다
+  /**
+   * 이 다리 금액 중 과소비(지출)·추가 수입(수입)으로 센 금액.
+   * 카테고리 posting에서만 의미가 있다. "0"이면 일반 거래다.
+   */
+  extraAmount: string;
   cardId: string | null;
 }
 
@@ -212,7 +218,8 @@ export interface EntryListItem {
   personName: string;
   /** 표시용 금액. 항상 양수 */
   amount: string;
-  isFixed: boolean;
+  /** 과소비(지출)·추가 수입(수입)으로 센 금액. "0"이면 일반 거래다. */
+  extraAmount: string;
   categoryId: string | null;
   categoryName: string | null;
   parentCategoryId: string | null;
@@ -285,7 +292,7 @@ export interface Category {
   parentId: string | null; // 대분류는 null, 소분류는 대분류 ID (level은 여기서 유도한다)
   type: CategoryType;
   icon: string | null;
-  defaultIsFixed: boolean; // 소분류의 기본 고정 여부
+  defaultIsExtra: boolean; // 소분류의 기본 고정 여부
   isDefault: boolean;      // 기본 카테고리 (삭제 불가)
   isActive: boolean;
   createdAt: IsoDateString;

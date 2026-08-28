@@ -53,7 +53,7 @@ export class CategoriesService {
           sortOrder: (lastOrder._max.sortOrder ?? -1) + 1,
           type: dto.type as CategoryType,
           icon: dto.icon,
-          defaultIsFixed: dto.defaultIsFixed ?? false,
+          defaultIsExtra: dto.defaultIsExtra ?? false,
         },
       });
     } catch (error) {
@@ -123,7 +123,7 @@ export class CategoriesService {
       data.name = name;
     }
     if (dto.icon !== undefined) data.icon = dto.icon;
-    if (dto.defaultIsFixed !== undefined) data.defaultIsFixed = dto.defaultIsFixed;
+    if (dto.defaultIsExtra !== undefined) data.defaultIsExtra = dto.defaultIsExtra;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
 
     // 이름 변경도 생성과 같은 중복 검사를 받아야 한다. 예전에는 여기만 빠져 있어

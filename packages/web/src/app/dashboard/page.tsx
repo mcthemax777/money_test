@@ -28,7 +28,7 @@ import PageHeader from '@/components/PageHeader';
 import { EntryListItem } from '@/components/TransactionItem';
 import PaymentMethodTab from '@/components/PaymentMethodTab';
 import CategoryTab from '@/components/CategoryTab';
-import EntryFilterBar, { FixedType } from '@/components/EntryFilterBar';
+import EntryFilterBar, { ExtraType } from '@/components/EntryFilterBar';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import EntryEditor, {
   type EntryEditorHandle,
@@ -37,6 +37,7 @@ import EntryEditor, {
 import BudgetScheduleList from '@/components/BudgetScheduleList';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { usePersonFilterSync } from '@/hooks/usePersonFilterSync';
+import { useProjectGuard } from '@/hooks/useProjectGuard';
 import type { EntryFilterQuery } from '@money/types';
 
 /**
@@ -77,7 +78,7 @@ const BUDGET_SCOPE_OPTIONS: Array<{
 ];
 
 export default function TransactionsPage() {
-  const { isAuthenticated, loadUser, user, defaultProjectData } = useAuth();
+  const { isAuthenticated, user, defaultProjectData } = useAuth();
   const { selectedPersonIds, togglePersonId } = useUserFilter();
   const { selectedProjectId } = useProject();
   // 날짜 입력과 표시는 브라우저 로컬이 아니라 프로젝트 기준 타임존으로 해석한다.
@@ -149,42 +150,12 @@ export default function TransactionsPage() {
   const [isResettingBudgets, setIsResettingBudgets] = useState(false);
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
   const dateTransactionsRef = useRef<HTMLDivElement>(null);
-  /** 고정/변동 선택. 둘 다 고른 상태로 시작한다 (= 전체). */
-  const [selectedFixedTypes, setSelectedFixedTypes] = useState<FixedType[]>(['fixed', 'variable']);
+  /** 일반/과소비 선택. 둘 다 고른 상태로 시작한다 (= 전체). */
+  const [selectedExtraTypes, setSelectedExtraTypes] = useState<ExtraType[]>(['normal', 'extra']);
   /** 거래 상세·추가 팝업. 이 화면과 자산 화면이 같은 컴포넌트를 쓴다. */
   const entryEditorRef = useRef<EntryEditorHandle>(null);
 
-  useEffect(() => {
-    const initializeProject = async () => {
-      await loadUser();
-
-      // 프로젝트 목록 불러오기
-      try {
-        const projects = await apiClient.getMyProjects();
-        const { setSelectedProjectId } = useProject.getState();
-
-        if (!projects || projects.length === 0) {
-          // 프로젝트가 하나도 없으면 여기서는 아무것도 불러올 수 없다.
-          // 생성 화면으로 보내지 않으면 로딩 상태에 갇힌다.
-          setSelectedProjectId(null);
-          router.push('/settings/projects');
-          return;
-        }
-
-        // 저장된 선택값이 삭제되거나 탈퇴한 프로젝트를 가리킬 수 있다.
-        const isSelectionValid =
-          selectedProjectId && projects.some((p: { id: string }) => p.id === selectedProjectId);
-
-        if (!isSelectionValid) {
-          setSelectedProjectId(projects[0].id);
-        }
-      } catch (err) {
-        console.error('프로젝트 로드 실패:', err);
-      }
-    };
-
-    initializeProject();
-  }, [loadUser, selectedProjectId, router]);
+  useProjectGuard();
 
   useEffect(() => {
     if (!isAuthenticated || !selectedProjectId) {
@@ -242,13 +213,13 @@ export default function TransactionsPage() {
   const entryFilter = useMemo<EntryFilterQuery>(() => {
     const allPeopleSelected =
       people.length > 0 && selectedPersonIds.length === people.length;
-    const allFixedSelected = selectedFixedTypes.length === 2;
+    const allExtraSelected = selectedExtraTypes.length === 2;
 
     return {
       ...(allPeopleSelected ? {} : { personIds: selectedPersonIds.join(',') }),
-      ...(allFixedSelected ? {} : { fixedTypes: selectedFixedTypes.join(',') }),
+      ...(allExtraSelected ? {} : { extraTypes: selectedExtraTypes.join(',') }),
     };
-  }, [selectedPersonIds, people.length, selectedFixedTypes]);
+  }, [selectedPersonIds, people.length, selectedExtraTypes]);
   const appliedFilter = useDebouncedValue(entryFilter, 250);
   /** 필터가 걸려 있는지. 목록이 비었을 때 이유를 알려주는 데 쓴다. */
   const isFilterNarrowed = Object.keys(appliedFilter).length > 0;
@@ -765,9 +736,9 @@ export default function TransactionsPage() {
       />
 
       <EntryFilterBar
-        selectedFixedTypes={selectedFixedTypes}
-        onToggleFixedType={(value) =>
-          setSelectedFixedTypes((prev) =>
+        selectedExtraTypes={selectedExtraTypes}
+        onToggleExtraType={(value) =>
+          setSelectedExtraTypes((prev) =>
             prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value],
           )
         }

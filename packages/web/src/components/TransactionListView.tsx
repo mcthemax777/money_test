@@ -8,7 +8,8 @@ import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
 
 interface TransactionListViewProps {
   entries: EntryListItem[];
-  onEntryClick: (entry: EntryListItem) => void;
+  /** 생략하면 읽기 전용이다. 줄에 손 모양 커서와 hover가 붙지 않는다. */
+  onEntryClick?: (entry: EntryListItem) => void;
 }
 
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
@@ -88,7 +89,7 @@ export default function TransactionListView({
                 <TransactionItem
                   key={entry.id}
                   entry={entry}
-                  onClick={() => onEntryClick(entry)}
+                  onClick={onEntryClick && (() => onEntryClick(entry))}
                 />
               ))}
             </div>

@@ -10,7 +10,7 @@ import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import {
   MATCH_NOTHING,
   assetOwnerCondition,
-  fixedPostingCondition,
+  extraPostingCondition,
   parseEntryFilter,
 } from '@/common/entry-filter';
 
@@ -146,9 +146,9 @@ export class EntriesService {
             },
       );
     }
-    // 고정/변동 필터. 카테고리 다리에만 걸어야 한다 (계좌 다리는 항상 isFixed=false).
-    const fixed = fixedPostingCondition(filter);
-    if (fixed) postingFilters.push(fixed);
+    // 일반/과소비 필터. 카테고리 다리에만 걸어야 한다 (계좌 다리는 항상 0이다).
+    const extra = extraPostingCondition(filter);
+    if (extra) postingFilters.push(extra);
 
     // kind='expense'는 이체를 빼지만 categoryType='expense'는 수수료 붙은 이체를 포함한다
     if (query.categoryType) {
@@ -254,7 +254,7 @@ export class EntriesService {
         currency: p.currency,
         baseAmount: p.baseAmount.toString(),
         exchangeRate: p.exchangeRate.toString(),
-        isFixed: p.isFixed,
+        extraAmount: p.extraAmount.toString(),
         cardId: p.cardId,
       })),
     };
@@ -314,8 +314,8 @@ export class EntriesService {
           toAmount: dto.toAmount ? toMoney(dto.toAmount, '받는 금액') : undefined,
           feeAmount: dto.transferFee ? toMoney(dto.transferFee, '이체 수수료') : undefined,
           feeCategoryId: dto.transferFeeCategoryId,
-          // 이체에서 화면의 고정 체크는 수수료 카테고리에 붙는다 (이체 자체는 지출이 아니다).
-          feeIsFixed: dto.isFixed,
+          // 이체에서 화면의 과소비 표시는 수수료 카테고리에 붙는다 (이체 자체는 지출이 아니다).
+          feeExtraAmount: dto.extraAmount ? toMoney(dto.extraAmount, '과소비 금액') : undefined,
         });
 
       case 'card_payment':
@@ -336,13 +336,13 @@ export class EntriesService {
   }
 
   /**
-   * 거래에 쓴 카테고리의 고정 여부 기본값을 갱신한다.
+   * 거래에 쓴 카테고리의 과소비 기본값을 갱신한다.
    *
-   * 고정/변동은 카테고리 관리 화면이 아니라 거래를 입력하면서 정한다.
-   * 예: 공과금>수도요금을 고정으로 체크해 저장하면 수도요금의 defaultIsFixed가 true가 되고,
+   * 과소비·추가 수입은 카테고리 관리 화면이 아니라 거래를 입력하면서 정한다.
+   * 예: 취미>게임을 과소비로 적어 저장하면 게임의 defaultIsExtra가 true가 되고,
    * 다음에 같은 소분류를 고르면 화면이 그 값을 읽어 자동으로 체크한다.
    *
-   * 대상은 "요청에 isFixed가 명시적으로 담긴 카테고리 다리"뿐이다.
+   * 대상은 "요청에 extraAmount가 명시적으로 담긴 카테고리 다리"뿐이다.
    * 값을 보내지 않은 거래(다른 클라이언트 등)가 기존 설정을 덮어쓰면 안 된다.
    * 이체는 카테고리 다리가 수수료뿐이므로 수수료 카테고리가 대상이 된다.
    */
@@ -350,20 +350,25 @@ export class EntriesService {
     projectId: string,
     dto: EntryDto.CreateRequest | EntryDto.UpdateRequest,
   ) {
-    const targets: Array<{ categoryId: string; isFixed: boolean }> = [];
+    const targets: Array<{ categoryId: string; isExtra: boolean }> = [];
+    /** 금액이 조금이라도 있으면 "이 분류는 기본 과소비"로 본다. */
+    const isExtra = (amount: string) => toMoney(amount, '과소비 금액').gt(0);
 
     if (dto.kind === 'transfer') {
-      if (dto.transferFeeCategoryId && dto.isFixed !== undefined) {
-        targets.push({ categoryId: dto.transferFeeCategoryId, isFixed: dto.isFixed });
+      if (dto.transferFeeCategoryId && dto.extraAmount !== undefined) {
+        targets.push({
+          categoryId: dto.transferFeeCategoryId,
+          isExtra: isExtra(dto.extraAmount),
+        });
       }
     } else if (dto.splits?.length) {
       for (const split of dto.splits) {
-        if (split.isFixed !== undefined) {
-          targets.push({ categoryId: split.categoryId, isFixed: split.isFixed });
+        if (split.extraAmount !== undefined) {
+          targets.push({ categoryId: split.categoryId, isExtra: isExtra(split.extraAmount) });
         }
       }
-    } else if (dto.categoryId && dto.isFixed !== undefined) {
-      targets.push({ categoryId: dto.categoryId, isFixed: dto.isFixed });
+    } else if (dto.categoryId && dto.extraAmount !== undefined) {
+      targets.push({ categoryId: dto.categoryId, isExtra: isExtra(dto.extraAmount) });
     }
 
     if (targets.length === 0) return;
@@ -372,8 +377,8 @@ export class EntriesService {
     await this.prisma.$transaction(
       targets.map((target) =>
         this.prisma.category.updateMany({
-          where: { id: target.categoryId, projectId, defaultIsFixed: { not: target.isFixed } },
-          data: { defaultIsFixed: target.isFixed },
+          where: { id: target.categoryId, projectId, defaultIsExtra: { not: target.isExtra } },
+          data: { defaultIsExtra: target.isExtra },
         }),
       ),
     );
@@ -385,7 +390,7 @@ export class EntriesService {
       return dto.splits.map((s) => ({
         categoryId: s.categoryId,
         amount: toMoney(s.amount, '분할 금액'),
-        isFixed: s.isFixed,
+        extraAmount: s.extraAmount ? toMoney(s.extraAmount, '과소비 금액') : undefined,
       }));
     }
 
@@ -397,7 +402,7 @@ export class EntriesService {
       {
         categoryId: dto.categoryId,
         amount: toMoney(dto.amount),
-        isFixed: dto.isFixed,
+        extraAmount: dto.extraAmount ? toMoney(dto.extraAmount, '과소비 금액') : undefined,
       },
     ];
   }

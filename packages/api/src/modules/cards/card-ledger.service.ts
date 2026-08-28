@@ -224,9 +224,10 @@ export class CardLedgerService {
 
     if (card.cardType === CardType.credit) {
       // getUsage가 마감일·부채 계정 유무까지 확인해 준다 (loadCreditCard).
-      const { currency, periods } = await this.getUsage(cardId, userId, 1);
-      // span=1이면 첫 칸이 진행 중인 주기다. 뒤 칸들은 할부가 걸린 미래 주기다.
-      const current = periods[0];
+      const { currency, periods } = await this.getUsage(cardId, userId, 2);
+      // span=2면 앞의 두 칸이 지난 주기와 진행 중인 주기다.
+      // 그 뒤 칸들은 할부가 걸린 미래 주기다.
+      const [previous, current] = periods;
 
       return performanceOf({
         cardId: card.id,
@@ -235,6 +236,9 @@ export class CardLedgerService {
         periodStart: current.periodStart,
         periodEnd: current.periodEnd,
         usage: new Prisma.Decimal(current.usage),
+        previousPeriodStart: previous.periodStart,
+        previousPeriodEnd: previous.periodEnd,
+        previousUsage: new Prisma.Decimal(previous.usage),
         target,
       });
     }
@@ -246,7 +250,8 @@ export class CardLedgerService {
     });
 
     const yearMonth = zonedCurrentYearMonth(timeZone);
-    const { start, end } = zonedMonthRange(yearMonth, timeZone);
+    const [year, month] = yearMonth.split('-').map(Number);
+    const previousMonth = month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 };
 
     /*
      * 체크카드 사용은 연결 통장의 posting에 cardId가 함께 찍힌다. 통장에서 직접 나간
@@ -256,20 +261,39 @@ export class CardLedgerService {
      * 음수지만, 결제 취소가 양수로 들어오게 되면 그때는 빼는 것이 맞다. 실적은
      * 순사용액으로 판정하는 값이라 취소한 결제는 빠져야 한다.
      */
-    const spent = await this.prisma.posting.aggregate({
-      _sum: { amount: true },
-      where: { cardId: card.id, entry: { date: { gte: start, lt: end } } },
+    const spentIn = async (period: { year: number; month: number }) => {
+      const key = `${period.year}-${String(period.month).padStart(2, '0')}`;
+      const { start, end } = zonedMonthRange(key, timeZone);
+      const spent = await this.prisma.posting.aggregate({
+        _sum: { amount: true },
+        where: { cardId: card.id, entry: { date: { gte: start, lt: end } } },
+      });
+      return (spent._sum.amount ?? ZERO).neg();
+    };
+
+    /** 달력 날짜 표시자. 청구 주기 쪽과 같은 형태로 맞춘다 (그 달 1일 ~ 말일). */
+    const monthMarkers = (period: { year: number; month: number }) => ({
+      start: new Date(Date.UTC(period.year, period.month - 1, 1)).toISOString(),
+      end: new Date(Date.UTC(period.year, period.month, 0)).toISOString(),
     });
 
-    const [year, month] = yearMonth.split('-').map(Number);
+    const [usage, previousUsage] = await Promise.all([
+      spentIn({ year, month }),
+      spentIn(previousMonth),
+    ]);
+    const markers = monthMarkers({ year, month });
+    const previousMarkers = monthMarkers(previousMonth);
+
     return performanceOf({
       cardId: card.id,
       currency: paymentAccount.currency,
       basis: 'month',
-      // 달력 날짜 표시자. 청구 주기 쪽과 같은 형태로 맞춘다 (그 달 1일 ~ 말일).
-      periodStart: new Date(Date.UTC(year, month - 1, 1)).toISOString(),
-      periodEnd: new Date(Date.UTC(year, month, 0)).toISOString(),
-      usage: (spent._sum.amount ?? ZERO).neg(),
+      periodStart: markers.start,
+      periodEnd: markers.end,
+      usage,
+      previousPeriodStart: previousMarkers.start,
+      previousPeriodEnd: previousMarkers.end,
+      previousUsage,
       target,
     });
   }
@@ -447,6 +471,9 @@ function performanceOf(input: {
   periodStart: string;
   periodEnd: string;
   usage: Prisma.Decimal;
+  previousPeriodStart: string;
+  previousPeriodEnd: string;
+  previousUsage: Prisma.Decimal;
   target: Prisma.Decimal | null;
 }): CardDto.PerformanceResponse {
   const { target, usage } = input;
@@ -459,6 +486,9 @@ function performanceOf(input: {
     periodStart: input.periodStart,
     periodEnd: input.periodEnd,
     usage: usage.toString(),
+    previousPeriodStart: input.previousPeriodStart,
+    previousPeriodEnd: input.previousPeriodEnd,
+    previousUsage: input.previousUsage.toString(),
     target: target?.toString() ?? null,
     achieved,
     remaining: target === null ? null : achieved ? '0' : target.sub(usage).toString(),

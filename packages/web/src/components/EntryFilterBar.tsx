@@ -1,16 +1,21 @@
 'use client';
 
-/** 고정/변동 항목. 둘 다 고르면 전체, 하나도 안 고르면 결과가 없다. */
-export type FixedType = 'fixed' | 'variable';
+/**
+ * 일반/과소비 항목. 둘 다 고르면 전체, 하나도 안 고르면 결과가 없다.
+ *
+ * 과소비는 금액이라 한 거래가 일부만 과소비일 수 있다. 그런 거래는 "과소비"에
+ * 든다. 이 필터는 금액을 쪼개지 않고 거래를 고르는 것이다.
+ */
+export type ExtraType = 'normal' | 'extra';
 
-const FIXED_OPTIONS: Array<{ value: FixedType; label: string }> = [
-  { value: 'fixed', label: '필수' },
-  { value: 'variable', label: '변동' },
+const EXTRA_OPTIONS: Array<{ value: ExtraType; label: string }> = [
+  { value: 'normal', label: '일반' },
+  { value: 'extra', label: '과소비·추가수입' },
 ];
 
 interface EntryFilterBarProps {
-  selectedFixedTypes: FixedType[];
-  onToggleFixedType: (value: FixedType) => void;
+  selectedExtraTypes: ExtraType[];
+  onToggleExtraType: (value: ExtraType) => void;
 }
 
 /**
@@ -27,21 +32,21 @@ interface EntryFilterBarProps {
  * 어긋나기 때문이다.
  */
 export default function EntryFilterBar({
-  selectedFixedTypes,
-  onToggleFixedType,
+  selectedExtraTypes,
+  onToggleExtraType,
 }: EntryFilterBarProps) {
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-3 mb-4 p-3 bg-white border border-gray-200 rounded-lg">
       <div className="flex items-center gap-3">
         <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">
-          필수 수입지출
+          과소비 여부
         </span>
-        {FIXED_OPTIONS.map((option) => (
+        {EXTRA_OPTIONS.map((option) => (
           <label key={option.value} className="flex items-center gap-1.5 cursor-pointer">
             <input
               type="checkbox"
-              checked={selectedFixedTypes.includes(option.value)}
-              onChange={() => onToggleFixedType(option.value)}
+              checked={selectedExtraTypes.includes(option.value)}
+              onChange={() => onToggleExtraType(option.value)}
               className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
             />
             <span className="text-sm text-gray-700">{option.label}</span>

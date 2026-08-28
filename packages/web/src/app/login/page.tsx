@@ -12,7 +12,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      router.push('/dashboard');
+      router.push('/home');
     }
   }, [isAuthenticated, router]);
 
@@ -22,7 +22,7 @@ export default function LoginPage() {
 
       try {
         await signInWithGoogle(idToken);
-        router.push('/dashboard');
+        router.push('/home');
       } catch {
         setError('로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.');
       }

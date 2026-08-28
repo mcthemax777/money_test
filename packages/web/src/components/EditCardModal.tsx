@@ -8,7 +8,13 @@ import { monthInputOf, monthInputToIso } from '@/lib/datetime';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@/hooks/useInstitutions';
-import { DAY_OF_MONTH_HINT, DAY_OF_MONTH_OPTIONS } from '@/lib/day-of-month';
+import {
+  DAY_OF_MONTH_HINT,
+  DAY_OF_MONTH_OPTIONS,
+  DEFAULT_PAYMENT_DUE_DAY,
+  DEFAULT_STATEMENT_CLOSING_DAY,
+} from '@/lib/day-of-month';
+import CardColorPicker from '@/components/CardColorPicker';
 import CardPerformanceField from '@/components/CardPerformanceField';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id */
@@ -25,9 +31,11 @@ const EMPTY_FORM = {
   // 서버는 마스킹된 번호만 주므로 입력칸은 항상 빈 값에서 시작한다.
   // 비워 두면 기존 번호를 그대로 두고, 새로 입력하면 그 값으로 교체한다.
   cardNumber: '',
+  /** 카드 앞면 색. 빈 값이면 카드 종류의 기본색으로 그린다. */
+  color: '',
   // 신용카드는 마감일과 결제일을 따로 관리한다 (구 statementClosingDay 하나를 대체)
-  statementClosingDay: 15,
-  paymentDueDay: 25,
+  statementClosingDay: DEFAULT_STATEMENT_CLOSING_DAY,
+  paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
 };
 
 interface EditCardModalProps {
@@ -67,8 +75,9 @@ export default function EditCardModal({
         expiryDate: monthInputOf(card.expiryDate),
         cardType: card.cardType,
         cardNumber: '',
-        statementClosingDay: card.statementClosingDay ?? 15,
-        paymentDueDay: card.paymentDueDay ?? 25,
+        color: card.color ?? '',
+        statementClosingDay: card.statementClosingDay ?? DEFAULT_STATEMENT_CLOSING_DAY,
+        paymentDueDay: card.paymentDueDay ?? DEFAULT_PAYMENT_DUE_DAY,
       });
     }
   }, [isOpen, card]);
@@ -103,6 +112,8 @@ export default function EditCardModal({
         performanceAmount: formData.performanceAmount
           ? toAmountString(formData.performanceAmount)
           : '',
+        // 비우면 빈 문자열을 보내 기본색으로 되돌린다.
+        color: formData.color,
         ...(isCredit
           ? {
               creditLimit: toAmountString(formData.creditLimit),
@@ -247,6 +258,14 @@ export default function EditCardModal({
             value={formData.expiryDate}
             onChange={(e) => setFormData({ ...formData, expiryDate: e.target.value })}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+          />
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">카드 색</label>
+          <CardColorPicker
+            value={formData.color}
+            onChange={(color) => setFormData({ ...formData, color })}
           />
         </div>
 

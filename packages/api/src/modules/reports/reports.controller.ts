@@ -27,6 +27,12 @@ export class ReportsController {
     return this.reportsService.getCategoryBreakdown(req.user.id, query);
   }
 
+  @Get('daily-expense')
+  @ApiOperation({ summary: '날짜별 지출 (필수/비필수). 누적 그래프의 재료' })
+  dailyExpense(@Request() req: AuthenticatedRequest, @Query() query: ReportDto.PeriodQuery) {
+    return this.reportsService.getDailyExpense(req.user.id, query);
+  }
+
   @Get('net-worth')
   @ApiOperation({ summary: '순자산 (현금성 + 투자 시가 - 부채), 사람별 소계 포함' })
   netWorth(@Request() req: AuthenticatedRequest, @Query('projectId') projectId?: string) {

@@ -19,6 +19,7 @@ interface Project {
 
 // 프로젝트가 있어야 의미가 있는 메뉴. 프로젝트가 없으면 감춘다.
 const projectMenuItems = [
+  { label: '홈', href: '/home' },
   { label: '가계', href: '/dashboard' },
   { label: '자산', href: '/assets' },
   { label: '카테고리', href: '/categories' },
@@ -62,6 +63,9 @@ export default function DashboardSidebar() {
   }, [projects.length, selectedProjectId, setProjects, setSelectedProjectId]);
 
   const isActive = (href: string) => {
+    if (href === '/home') {
+      return pathname === '/home';
+    }
     if (href === '/dashboard') {
       return pathname === '/dashboard';
     }

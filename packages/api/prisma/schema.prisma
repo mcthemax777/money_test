@@ -334,7 +334,9 @@ model Category {
   parentId       String?
   type           CategoryType
   icon           String?
-  defaultIsFixed Boolean      @default(false) // 이 카테고리로 만든 posting의 isFixed 기본값
+  // 이 카테고리로 적으면 과소비(지출)·추가 수입(수입)에 기본으로 체크할지.
+  // 체크되면 금액 칸이 거래 금액으로 채워지고, 사용자가 그보다 작게 줄일 수 있다.
+  defaultIsExtra Boolean      @default(false)
   isDefault      Boolean      @default(false) // "선택안함" 등 삭제 불가 항목
   isActive       Boolean      @default(true)
   // 화면 표시 순서. 같은 부모 안에서만 의미가 있다. 같으면 createdAt 순.
@@ -387,6 +389,9 @@ model Card {
   performanceAmount   Decimal?  @db.Decimal(19, 4)
   statementClosingDay Int? // 마감일 1~31. credit만 사용
   paymentDueDay       Int? // 결제일 1~31. credit만 사용
+  // 카드 앞면 색 열쇠말(@money/types의 CardColor). 실제 색은 화면이 정한다.
+  // null이면 카드 종류의 기본색(신용 파랑, 체크 초록)으로 그린다.
+  color               String?
   isActive            Boolean   @default(true)
   // 화면 표시 순서. 사용자가 드래그로 바꾼다. 같으면 createdAt 순.
   sortOrder           Int       @default(0)
@@ -524,10 +529,13 @@ model Posting {
   currency     String   @default("KRW")
   baseAmount   Decimal  @db.Decimal(19, 4) // 프로젝트 기준통화 환산액
   exchangeRate Decimal  @default(1) @db.Decimal(19, 8)
-  // 고정지출 여부. 지출 카테고리 posting에서만 의미가 있다.
-  // 기본값은 Category.defaultIsFixed 에서 가져오고 사용자가 덮어쓸 수 있다.
-  // 분할 거래에서 항목마다 다를 수 있어 JournalEntry가 아니라 여기에 둔다.
-  isFixed      Boolean  @default(false)
+  // 이 다리 금액 중 과소비(지출)·추가 수입(수입)으로 센 금액. 0이면 일반 거래다.
+  //
+  // 카테고리 다리에서만 의미가 있고, 그 다리는 언제나 기준통화라 baseAmount와
+  // 같은 단위다. 수입 다리는 음수지만 이 값은 크기만 담아 언제나 0 이상이다
+  // (0 <= extraAmount <= |baseAmount|).
+  // 분할 거래에서 줄마다 다를 수 있어 JournalEntry가 아니라 여기에 둔다.
+  extraAmount  Decimal  @default(0) @db.Decimal(19, 4)
   statementId  String? // 신용카드 posting만 사용
   cardId       String? // 표시/분석용. 체크카드 사용 시에도 채운다
 

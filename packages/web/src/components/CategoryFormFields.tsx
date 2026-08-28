@@ -3,7 +3,7 @@
 import CustomSelect from './CustomSelect';
 
 /** 소분류 입력 한 줄. id가 빈 문자열이면 아직 저장되지 않은 새 줄이다. */
-export type SubCategoryRow = { id: string; name: string; defaultIsFixed: boolean };
+export type SubCategoryRow = { id: string; name: string; defaultIsExtra: boolean };
 
 /**
  * 소분류는 빈 줄 없이 시작한다.
@@ -118,7 +118,7 @@ export default function CategoryFormFields({
         <button
           type="button"
           onClick={() =>
-            onSubCategoriesChange([...subCategories, { id: '', name: '', defaultIsFixed: false }])
+            onSubCategoriesChange([...subCategories, { id: '', name: '', defaultIsExtra: false }])
           }
           className="mt-2 px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
         >

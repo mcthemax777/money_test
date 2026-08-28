@@ -155,6 +155,8 @@ export namespace CardDto {
     performanceAmount?: string;
     statementClosingDay?: number; // 신용카드 필수. 1~31
     paymentDueDay?: number;       // 신용카드 필수. 1~31
+    /** 카드 앞면 색 (CardColor). 생략하면 카드 종류의 기본색이다. */
+    color?: string;
     projectId?: string;
   }
 
@@ -174,6 +176,8 @@ export namespace CardDto {
     performanceAmount?: string;
     statementClosingDay?: number;
     paymentDueDay?: number;
+    /** 카드 앞면 색 (CardColor) */
+    color?: string;
     isActive?: boolean;
   }
 
@@ -289,6 +293,15 @@ export namespace CardDto {
     periodEnd: IsoDateString;
     /** 이 구간에 쓴 금액 */
     usage: string;
+    /**
+     * 직전 구간과 그 사용액.
+     *
+     * 진행 중인 구간은 첫날 0원에서 시작한다. 그 숫자만 보면 "이번 달은 아직
+     * 안 썼다"는 것 말고 알 수 있는 게 없어서, 직전 구간을 함께 준다.
+     */
+    previousPeriodStart: IsoDateString;
+    previousPeriodEnd: IsoDateString;
+    previousUsage: string;
     /** 실적 기준액. 카드에 설정하지 않았으면 null이고 아래 두 값도 뜻이 없다. */
     target: string | null;
     /** 기준을 채웠는지. target이 없으면 false */
@@ -360,14 +373,15 @@ export interface EntryFilterQuery {
    */
   personIds?: string;
   /**
-   * 고정/변동 선택. 쉼표로 잇는다 ("fixed,variable").
+   * 일반/과소비 선택. 쉼표로 잇는다 ("normal,extra").
    *
    *   생략               = 전체 (필터 없음)
-   *   "fixed,variable"   = 둘 다 (전체와 같다)
-   *   "fixed"/"variable" = 한쪽만
-   *   ""(빈 값)          = 아무것도 고르지 않음 → 결과 없음
+   *   "normal,extra" = 둘 다 (전체와 같다)
+   *   "normal"       = 과소비가 섞이지 않은 거래만
+   *   "extra"        = 과소비가 조금이라도 있는 거래만
+   *   ""(빈 값)      = 아무것도 고르지 않음 → 결과 없음
    */
-  fixedTypes?: string;
+  extraTypes?: string;
 }
 
 export namespace EntryDto {
@@ -414,10 +428,15 @@ export namespace EntryDto {
     // ── expense / income ──
     /** 가장 구체적인 카테고리 하나 (소분류가 있으면 소분류). 대분류는 parentId로 유도된다. */
     categoryId?: string;
-    /** 생략하면 Category.defaultIsFixed 를 따른다 */
-    isFixed?: boolean;
+    /**
+     * 이 금액 중 과소비(지출)·추가 수입(수입)으로 셀 금액. 입력 통화 기준이다.
+     *
+     * 생략하면 Category.defaultIsExtra 를 따른다 (true면 전액, false면 0).
+     * "0"이면 일반 거래다. 음수이거나 거래 금액보다 크면 서버가 되돌려 보낸다.
+     */
+    extraAmount?: string;
     /** 한 결제를 여러 카테고리로 쪼갤 때. 지정하면 categoryId/amount 대신 이 값을 쓴다. */
-    splits?: Array<{ categoryId: string; amount: string; isFixed?: boolean }>;
+    splits?: Array<{ categoryId: string; amount: string; extraAmount?: string }>;
 
     // ── 결제수단 (expense는 둘 중 하나, income은 accountId) ──
     accountId?: string;
@@ -509,14 +528,16 @@ export namespace CategoryDto {
     parentId?: string; // 소분류인 경우 대분류 ID
     type: 'income' | 'expense';
     icon?: string;
-    defaultIsFixed?: boolean; // 기본 고정 여부
+    /** 이 분류로 적으면 과소비·추가 수입에 기본으로 체크할지 */
+    defaultIsExtra?: boolean;
     projectId?: string;
   }
 
   export interface UpdateRequest {
     name?: string;
     icon?: string;
-    defaultIsFixed?: boolean; // 기본 고정 여부
+    /** 이 분류로 적으면 과소비·추가 수입에 기본으로 체크할지 */
+    defaultIsExtra?: boolean;
     isActive?: boolean;
   }
 
@@ -565,8 +586,12 @@ export namespace ReportDto {
     yearMonth?: string;
     income: string;
     expense: string;
-    fixedExpense: string;
-    variableExpense: string;
+    /** 지출 중 과소비로 센 금액과 그 나머지 */
+    extraExpense: string;
+    normalExpense: string;
+    /** 수입 중 추가 수입으로 센 금액과 그 나머지 */
+    extraIncome: string;
+    normalIncome: string;
     /** 수입 - 지출 */
     net: string;
   }
@@ -588,6 +613,15 @@ export namespace ReportDto {
     ratio: number;
   }
 
+  /**
+   * 계좌 유형별 소계. 금액이 0인 유형은 키가 없다.
+   *
+   * cash/investment/liability 세 칸보다 잘게 나눠 봐야 하는 화면(홈의 유형별 카드)이
+   * 있어 함께 준다. 자본 계정(opening_balance)은 순자산에서 빠지므로 여기에도 없고,
+   * 부채 유형(loan, credit_card)은 음수다. 그래서 모든 값을 더하면 total 과 같다.
+   */
+  export type NetWorthByType = Partial<Record<AccountType, string>>;
+
   /** 자산 화면의 총자산 / 사람별 소계 */
   export interface NetWorth {
     /** 현금성 + 투자성 평가액 - 부채 */
@@ -598,6 +632,7 @@ export namespace ReportDto {
     liability: string;
     /** 투자성 계좌 평가액 - 장부가 */
     unrealizedGain: string;
+    byType: NetWorthByType;
     byPerson: Array<{
       personId: string;
       personName: string;
@@ -605,6 +640,7 @@ export namespace ReportDto {
       cash: string;
       investment: string;
       liability: string;
+      byType: NetWorthByType;
     }>;
   }
 
@@ -702,6 +738,8 @@ export namespace ReportDto {
      * 비교된다.
      */
     performanceTarget?: string;
+    /** 카드 앞면 색 (CardColor). 고르지 않은 카드와 통장에는 없다. */
+    color?: string;
     /**
      * 신용카드 마감일 (1~31). 체크카드에는 없다.
      *
@@ -709,6 +747,22 @@ export namespace ReportDto {
      * 실적을 세는 구간과 어긋나므로, 화면은 달성률 대신 안내를 띄운다.
      */
     statementClosingDay?: number;
+  }
+
+  /**
+   * 하루치 지출. 지출이 없는 날은 행이 없다.
+   *
+   * 월 합계(Summary)와 같은 규칙으로 센다("지출 카테고리 posting의 합"). 누적
+   * 그래프는 이 값을 날짜순으로 더해서 그린다. 서버가 누적까지 만들지 않는 이유는
+   * 화면마다 누적을 끊는 지점(오늘까지 / 말일까지)이 다르기 때문이다.
+   */
+  export interface DailyExpensePoint {
+    /** 프로젝트 타임존 기준 "YYYY-MM-DD" */
+    date: string;
+    /** 과소비로 세지 않은 지출 */
+    normal: string;
+    /** 과소비로 센 지출 */
+    extra: string;
   }
 
   /** 투자·저축 계좌 하나의 누적 수익 */

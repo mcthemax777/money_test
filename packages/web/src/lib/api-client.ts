@@ -751,6 +751,23 @@ class ApiClient {
     return response.data;
   }
 
+  /**
+   * 날짜별 지출 (필수/비필수). 지출이 없는 날은 행이 없다.
+   *
+   * 누적 그래프의 재료다. 누적은 화면이 만든다 (이번 달은 오늘까지, 지난달은 말일까지).
+   */
+  async getDailyExpense(
+    period: ReportPeriod,
+    projectId?: string | null,
+    filter?: EntryFilterQuery,
+  ): Promise<ReportDto.DailyExpensePoint[]> {
+    const response = await this.client.get<ReportDto.DailyExpensePoint[]>(
+      '/reports/daily-expense',
+      { params: { ...period, ...(projectId ? { projectId } : {}), ...filter } },
+    );
+    return response.data;
+  }
+
   /** 투자·저축 계좌의 누적 수익. 이체로 넣은 원금은 빠져 있다. */
   async getAccountProfit(projectId?: string | null): Promise<ReportDto.AccountProfit[]> {
     const response = await this.client.get<ReportDto.AccountProfit[]>(
