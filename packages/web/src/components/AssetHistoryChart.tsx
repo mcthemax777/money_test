@@ -18,11 +18,9 @@ import {
   CHART_COLOR,
   CHART_DOT,
   CHART_GRID,
-  CHART_MARGIN,
   CHART_MARGIN_EVEN,
   CHART_TICK,
   CHART_TOOLTIP_STYLE,
-  CHART_Y_AXIS_WIDTH,
   CHART_Y_AXIS_WIDTH_AUTO,
   formatTooltipAmount,
   lineAxis,
@@ -84,14 +82,6 @@ const VARIANT_STYLE: Record<
     dot: typeof CHART_DOT | false;
     /** 끝점 옆에 금액을 적을지. 홈은 그래프가 작아 숫자가 선을 가린다. */
     showLastValue: boolean;
-    /**
-     * Y축 폭과 여백.
-     *
-     * 홈은 좁아서 고정 폭이 남긴 빈 자리가 눈에 띈다. 눈금 글자만큼만 차지하게
-     * 두고 좌우 여백을 같게 맞춘다. 자산 화면은 넓어 지금 모양 그대로 둔다.
-     */
-    axisWidth: typeof CHART_Y_AXIS_WIDTH | typeof CHART_Y_AXIS_WIDTH_AUTO;
-    margin: typeof CHART_MARGIN | typeof CHART_MARGIN_EVEN;
   }
 > = {
   panel: {
@@ -100,8 +90,6 @@ const VARIANT_STYLE: Record<
     height: 300,
     dot: CHART_DOT,
     showLastValue: true,
-    axisWidth: CHART_Y_AXIS_WIDTH,
-    margin: CHART_MARGIN,
   },
   compact: {
     container: 'rounded-lg border border-gray-200 bg-white p-4',
@@ -109,8 +97,6 @@ const VARIANT_STYLE: Record<
     height: 224,
     dot: false,
     showLastValue: false,
-    axisWidth: CHART_Y_AXIS_WIDTH_AUTO,
-    margin: CHART_MARGIN_EVEN,
   },
 };
 
@@ -303,7 +289,7 @@ export default function AssetHistoryChart({
         <ResponsiveContainer width="100%" height={style.height}>
           <LineChart
             data={points}
-            margin={style.margin}
+            margin={CHART_MARGIN_EVEN}
             // 점이 아니라 빈 곳을 눌러도 그 달로 내려가도록 차트 전체에서 받는다.
             // recharts 3에서 activeTooltipIndex는 number가 아닐 수 있어 숫자로 확인하고 쓴다.
             onClick={(state: any) => {
@@ -322,7 +308,7 @@ export default function AssetHistoryChart({
               ticks={yAxis.ticks}
               tickFormatter={yAxis.tickFormatter}
               tick={CHART_TICK}
-              width={style.axisWidth}
+              width={CHART_Y_AXIS_WIDTH_AUTO}
             />
             <Tooltip
               formatter={(value: any) => formatTooltipAmount(value, '잔액', displayCurrency)}
