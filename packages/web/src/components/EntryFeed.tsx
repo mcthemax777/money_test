@@ -16,6 +16,10 @@ interface EntryFeedProps {
   endDate?: string;
   /** 한 번에 받아올 건수 */
   pageSize?: number;
+  /** 거래를 누르면 호출한다. 넘기지 않으면 읽기 전용 목록이다. */
+  onEntryClick?: (entry: EntryListItem) => void;
+  /** 값이 바뀌면 처음부터 다시 받는다. 거래를 고친 뒤 부모가 올린다. */
+  reloadToken?: number;
 }
 
 /** 다음 쪽을 부르기까지 바닥에서 더 당겨야 하는 거리(px) */
@@ -47,6 +51,8 @@ export default function EntryFeed({
   startDate,
   endDate,
   pageSize = 20,
+  onEntryClick,
+  reloadToken = 0,
 }: EntryFeedProps) {
   const [entries, setEntries] = useState<EntryListItem[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
@@ -98,7 +104,7 @@ export default function EntryFeed({
     },
     // filterKey로 의존성을 굳힌다. filter는 렌더마다 새 객체이고 구간도 함께 담는다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projectId, filterKey, pageSize],
+    [projectId, filterKey, pageSize, reloadToken],
   );
 
   // 프로젝트나 필터가 바뀌면 처음부터 다시 받는다.
@@ -202,7 +208,7 @@ export default function EntryFeed({
 
   return (
     <div className="space-y-3">
-      <TransactionListView entries={entries} />
+      <TransactionListView entries={entries} onEntryClick={onEntryClick} />
 
       {error && (
         <div className="flex flex-col items-center gap-2 py-3">

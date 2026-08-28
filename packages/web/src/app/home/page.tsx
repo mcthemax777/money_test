@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BudgetDto, CardDto, EntryFilterQuery, ReportDto } from '@money/types';
-import type { Account, Card, Person } from '@/lib/types';
+import type { Account, Card, Category, Person } from '@/lib/types';
 
 import { apiClient } from '@/lib/api-client';
 import {
@@ -26,6 +26,10 @@ import CumulativeExpenseChart, {
 } from '@/components/CumulativeExpenseChart';
 import EntryFeed from '@/components/EntryFeed';
 import CardSettlementPanel from '@/components/CardSettlementPanel';
+import EntryEditor, {
+  type EntryEditorHandle,
+  type ReferenceDataPatch,
+} from '@/components/EntryEditor';
 import Modal from '@/components/Modal';
 import MonthHeader from '@/components/MonthHeader';
 import MonthlyBudgetSummary from '@/components/MonthlyBudgetSummary';
@@ -107,9 +111,15 @@ export default function HomePage() {
    */
   const [cards, setCards] = useState<Card[]>([]);
   const [accounts, setAccounts] = useState<Account[]>([]);
+  /** 거래 상세 팝업이 쓰는 목록. 분류를 보여 주고 고칠 때 고른다. */
+  const [categories, setCategories] = useState<Category[]>([]);
   const [settlementCardId, setSettlementCardId] = useState<string | null>(null);
   /** 대금을 기록한 뒤 사용 현황을 다시 읽게 하는 표. */
   const [cardVersion, setCardVersion] = useState(0);
+  /** 거래를 고친 뒤 목록을 처음부터 다시 받게 하는 표. */
+  const [entryVersion, setEntryVersion] = useState(0);
+  /** 거래 상세·수정 팝업. 가계·자산 화면과 같은 컴포넌트다. */
+  const entryEditorRef = useRef<EntryEditorHandle>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -149,15 +159,17 @@ export default function HomePage() {
 
     const loadReference = async () => {
       try {
-        const [peopleData, cardsData, accountsData] = await Promise.all([
+        const [peopleData, cardsData, accountsData, categoryData] = await Promise.all([
           apiClient.getPeople(selectedProjectId),
           apiClient.getCards(selectedProjectId),
           apiClient.getAccountsV2(selectedProjectId),
+          apiClient.getCategories(selectedProjectId),
         ]);
         // 저장된 자산주인 선택은 usePersonFilterSync 가 이 목록에 맞춘다.
         setPeople(peopleData || []);
         setCards(cardsData || []);
         setAccounts(accountsData || []);
+        setCategories(categoryData || []);
         setPeopleLoaded(true);
       } catch (err) {
         console.error('구성원·카드 조회 실패:', err);
@@ -302,7 +314,22 @@ export default function HomePage() {
     previousYearMonth,
     earlierYearMonth,
     thisYearMonth,
+    // 거래를 고치면 합계·그래프도 함께 다시 받는다.
+    entryVersion,
   ]);
+
+  /** 상세 팝업에서 거래를 고치거나 지운 뒤. 목록과 합계를 함께 다시 읽는다. */
+  const handleEntryChange = useCallback(() => {
+    setEntryVersion((version) => version + 1);
+  }, []);
+
+  /** 팝업 안에서 계좌·카드·분류·사람을 새로 만들었을 때. 화면의 목록에 반영한다. */
+  const handleReferenceDataChange = useCallback((patch: ReferenceDataPatch) => {
+    if (patch.accounts) setAccounts(patch.accounts);
+    if (patch.cards) setCards(patch.cards);
+    if (patch.categories) setCategories(patch.categories);
+    if (patch.people) setPeople(patch.people);
+  }, []);
 
   /*
    * 고른 자산주인의 총자산.
@@ -446,7 +473,7 @@ export default function HomePage() {
       <section className="space-y-2">
         {/*
           맨 아래 거래 목록. 서버가 날짜 내림차순으로 주므로 앞날에 걸어 둔 거래가
-          먼저 온다. 홈에서는 누르지 않는다. 고치러 가는 자리는 가계 화면이다.
+          먼저 온다. 누르면 가계·자산 화면과 같은 상세 팝업이 열린다.
         */}
         <h2 className="font-semibold text-gray-900">
           {month}월 거래 내역
@@ -456,8 +483,22 @@ export default function HomePage() {
           filter={appliedFilter}
           startDate={monthRange.startDate}
           endDate={monthRange.endDate}
+          onEntryClick={(entry) => entryEditorRef.current?.openDetail(entry)}
+          reloadToken={entryVersion}
         />
       </section>
+
+      {/* 거래 상세·수정 팝업. 가계·자산 화면이 쓰는 것과 같은 컴포넌트다. */}
+      <EntryEditor
+        ref={entryEditorRef}
+        projectId={selectedProjectId}
+        accounts={accounts}
+        cards={cards}
+        categories={categories}
+        people={people}
+        onReferenceDataChange={handleReferenceDataChange}
+        onEntryChange={handleEntryChange}
+      />
     </div>
   );
 }
