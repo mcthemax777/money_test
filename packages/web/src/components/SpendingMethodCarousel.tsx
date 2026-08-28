@@ -38,7 +38,14 @@ const KIND_LABEL: Record<SpendingMethod['kind'], string> = {
  *
  * 통장은 여기 세우지 않는다. 실적이라는 것이 없어 이 줄에서 볼 것이 없다.
  */
-export default function SpendingMethodCarousel({ methods }: { methods: SpendingMethod[] }) {
+export default function SpendingMethodCarousel({
+  methods,
+  onSelect,
+}: {
+  methods: SpendingMethod[];
+  /** 카드를 누르면 호출한다. 넘기지 않으면 누를 수 없는 카드가 된다. */
+  onSelect?: (method: SpendingMethod) => void;
+}) {
   if (methods.length === 0) {
     return <p className="text-sm text-gray-600">보여줄 카드가 없습니다.</p>;
   }
@@ -46,13 +53,23 @@ export default function SpendingMethodCarousel({ methods }: { methods: SpendingM
   return (
     <div className="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory">
       {methods.map((method) => (
-        <MethodCard key={`${method.kind}-${method.id}`} method={method} />
+        <MethodCard
+          key={`${method.kind}-${method.id}`}
+          method={method}
+          onSelect={onSelect && (() => onSelect(method))}
+        />
       ))}
     </div>
   );
 }
 
-function MethodCard({ method }: { method: SpendingMethod }) {
+function MethodCard({
+  method,
+  onSelect,
+}: {
+  method: SpendingMethod;
+  onSelect?: () => void;
+}) {
   /* 앞면 색과 그 위에서 읽히는 글씨 색은 lib/card-color가 짝으로 들고 있다. */
   const palette = cardPaletteOf(
     method.color,
@@ -86,9 +103,19 @@ function MethodCard({ method }: { method: SpendingMethod }) {
    * 얼마를 썼고 기준까지 얼마가 남았는지, 아래는 견줄 직전 구간이다. 금액은 구간
    * 표기 아래에 두어 "이 구간에 이만큼"으로 읽히게 한다.
    */
+  /*
+   * 누를 수 있으면 button으로 그린다. div에 onClick만 달면 키보드로 닿지 않는다.
+   * 눌렀을 때 살짝 커지게 해서 누를 수 있는 카드임을 알린다.
+   */
+  const Tag = onSelect ? 'button' : 'div';
+
   return (
-    <div
-      className={`snap-start shrink-0 w-80 aspect-[85.6/53.98] flex flex-col justify-between overflow-hidden rounded-2xl p-4 shadow-sm ${palette.face} ${palette.ink}`}
+    <Tag
+      type={onSelect ? 'button' : undefined}
+      onClick={onSelect}
+      className={`snap-start shrink-0 w-80 aspect-[85.6/53.98] flex flex-col justify-between overflow-hidden rounded-2xl p-4 text-left shadow-sm ${palette.face} ${palette.ink} ${
+        onSelect ? 'transition hover:brightness-105 active:scale-[0.99]' : ''
+      }`}
     >
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
@@ -143,6 +170,6 @@ function MethodCard({ method }: { method: SpendingMethod }) {
           </span>
         </p>
       </div>
-    </div>
+    </Tag>
   );
 }

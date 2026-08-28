@@ -2,11 +2,17 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import type { BudgetDto, CardDto, EntryFilterQuery, ReportDto } from '@money/types';
+import type { Account, Card, Person } from '@/lib/types';
 
 import { apiClient } from '@/lib/api-client';
-import { currentYearMonth, dateMarkerKey, shiftYearMonth, todayKey } from '@/lib/datetime';
+import {
+  currentYearMonth,
+  dateMarkerKey,
+  monthQueryRange,
+  shiftYearMonth,
+  todayKey,
+} from '@/lib/datetime';
 import { sumNetWorth } from '@/lib/net-worth';
-import type { Person } from '@/lib/types';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { usePersonFilterSync } from '@/hooks/usePersonFilterSync';
 import { useProjectGuard } from '@/hooks/useProjectGuard';
@@ -19,6 +25,9 @@ import CumulativeExpenseChart, {
   type ExpenseField,
 } from '@/components/CumulativeExpenseChart';
 import EntryFeed from '@/components/EntryFeed';
+import CardSettlementPanel from '@/components/CardSettlementPanel';
+import Modal from '@/components/Modal';
+import MonthHeader from '@/components/MonthHeader';
 import MonthlyBudgetSummary from '@/components/MonthlyBudgetSummary';
 import PageHeader from '@/components/PageHeader';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
@@ -86,26 +95,72 @@ export default function HomePage() {
   const [previousDailyExpense, setPreviousDailyExpense] = useState<
     ReportDto.DailyExpensePoint[]
   >([]);
+  /** 전전달. 지난달 하나만으로는 그 달이 유난했던 것인지 알 수 없다. */
+  const [earlierDailyExpense, setEarlierDailyExpense] = useState<
+    ReportDto.DailyExpensePoint[]
+  >([]);
+  /*
+   * 정산 팝업에 필요한 것들.
+   *
+   * 카드에는 결제 통장이 붙어 있고, 대금 전표에는 그 통장 주인을 달아야 한다.
+   * 그래서 카드와 통장 목록을 함께 들고 있는다.
+   */
+  const [cards, setCards] = useState<Card[]>([]);
+  const [accounts, setAccounts] = useState<Account[]>([]);
+  const [settlementCardId, setSettlementCardId] = useState<string | null>(null);
+  /** 대금을 기록한 뒤 사용 현황을 다시 읽게 하는 표. */
+  const [cardVersion, setCardVersion] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
   // 이번 달 판단도 프로젝트 타임존 기준이다. 브라우저 로컬로 읽으면 자정 전후로 달이 밀린다.
   const today = todayKey(timeZone);
-  const { year, month } = currentYearMonth(timeZone);
+  const { year: thisYear, month: thisMonth } = currentYearMonth(timeZone);
+
+  /*
+   * 보고 있는 달. 아래 예산·그래프·거래 목록이 모두 이 달을 따른다.
+   *
+   * 위쪽 자산과 실적 구간 카드는 따라가지 않는다. 자산은 "지금 얼마인가"이고
+   * 실적은 카드사가 지금 세고 있는 구간이라, 지난 달을 펴 보는 것과 뜻이 다르다.
+   */
+  const [view, setView] = useState({ year: thisYear, month: thisMonth });
+  const { year, month } = view;
   const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
+  const thisYearMonth = `${thisYear}-${String(thisMonth).padStart(2, '0')}`;
   const previousYearMonth = shiftYearMonth(yearMonth, -1);
+  const earlierYearMonth = shiftYearMonth(yearMonth, -2);
+  const monthRange = monthQueryRange(year, month, timeZone);
+
+  /*
+   * 이번 달 선을 어디까지 그을지.
+   *
+   * 지난 달은 말일까지 다 그리고, 이번 달은 오늘까지만 그린다. 앞날의 달은
+   * 아직 하루도 지나지 않았으므로 0이다.
+   */
+  const isThisMonth = yearMonth === thisYearMonth;
+  const throughDay = isThisMonth
+    ? Number(today.slice(8, 10))
+    : yearMonth < thisYearMonth
+      ? new Date(Date.UTC(year, month, 0)).getUTCDate()
+      : 0;
 
   useEffect(() => {
     if (!selectedProjectId) return;
 
     const loadReference = async () => {
       try {
-        const peopleData = await apiClient.getPeople(selectedProjectId);
+        const [peopleData, cardsData, accountsData] = await Promise.all([
+          apiClient.getPeople(selectedProjectId),
+          apiClient.getCards(selectedProjectId),
+          apiClient.getAccountsV2(selectedProjectId),
+        ]);
         // 저장된 자산주인 선택은 usePersonFilterSync 가 이 목록에 맞춘다.
         setPeople(peopleData || []);
+        setCards(cardsData || []);
+        setAccounts(accountsData || []);
         setPeopleLoaded(true);
       } catch (err) {
-        console.error('구성원 조회 실패:', err);
+        console.error('구성원·카드 조회 실패:', err);
         setError('데이터 조회에 실패했습니다.');
         setIsLoading(false);
       }
@@ -150,8 +205,14 @@ export default function HomePage() {
         setIsLoading(true);
         setError('');
 
-        const [netWorthData, budgetRows, dailyRows, previousDailyRows, currentMethods] =
-          await Promise.all([
+        const [
+          netWorthData,
+          budgetRows,
+          dailyRows,
+          previousDailyRows,
+          earlierDailyRows,
+          currentMethods,
+        ] = await Promise.all([
           apiClient.getNetWorth(selectedProjectId),
           apiClient.getBudgetForMonth(year, month, selectedProjectId, appliedFilter),
           apiClient.getDailyExpense({ yearMonth }, selectedProjectId, appliedFilter),
@@ -160,13 +221,20 @@ export default function HomePage() {
             selectedProjectId,
             appliedFilter,
           ),
-          apiClient.getPaymentMethods({ yearMonth }, selectedProjectId, appliedFilter),
+          apiClient.getDailyExpense(
+            { yearMonth: earlierYearMonth },
+            selectedProjectId,
+            appliedFilter,
+          ),
+          // 실적 구간 카드는 보고 있는 달과 무관하게 지금 달을 센다.
+          apiClient.getPaymentMethods({ yearMonth: thisYearMonth }, selectedProjectId, appliedFilter),
         ]);
 
         setNetWorth(netWorthData ?? null);
         setBudgets(budgetRows ?? []);
         setDailyExpense(dailyRows ?? []);
         setPreviousDailyExpense(previousDailyRows ?? []);
+        setEarlierDailyExpense(earlierDailyRows ?? []);
 
         const items: ReportDto.PaymentMethodItem[] = currentMethods ?? [];
 
@@ -232,6 +300,8 @@ export default function HomePage() {
     month,
     yearMonth,
     previousYearMonth,
+    earlierYearMonth,
+    thisYearMonth,
   ]);
 
   /*
@@ -243,6 +313,9 @@ export default function HomePage() {
   const netWorthByPerson = new Map(
     (netWorth?.byPerson ?? []).map((row) => [row.personId, row]),
   );
+  /** 정산 팝업을 띄울 카드. 목록에 없으면(숨긴 카드 등) 팝업을 열지 않는다. */
+  const settlementCard = cards.find((card) => card.id === settlementCardId);
+
   const scopedNetWorth = allPeopleSelected
     ? netWorth
     : sumNetWorth(selectedPersonIds.map((id) => netWorthByPerson.get(id)));
@@ -290,15 +363,25 @@ export default function HomePage() {
         {isLoading && methods.length === 0 ? (
           <p className="text-sm text-gray-600">로딩 중...</p>
         ) : (
-          <SpendingMethodCarousel methods={methods} />
+          <SpendingMethodCarousel
+            methods={methods}
+            onSelect={(method) => setSettlementCardId(method.id)}
+          />
         )}
       </section>
 
       <section className="space-y-3">
-        {/* 아래 세 칸은 모두 이 달 기준이다. 어느 달인지 한 번만 적는다. */}
-        <h2 className="text-xl font-bold text-gray-900">
-          {year}년 {month}월
-        </h2>
+        {/*
+          아래 칸들은 모두 이 달 기준이다. 어느 달인지 한 번만 적고, 여기서 달을 옮긴다.
+          수입·지출 합계는 넘기지 않는다. 바로 아래 예산 요약이 같은 숫자를 이미 적는다.
+        */}
+        <MonthHeader
+          year={year}
+          month={month}
+          incomeTotal={0}
+          expenseTotal={0}
+          onMonthChange={(nextYear, nextMonth) => setView({ year: nextYear, month: nextMonth })}
+        />
 
         <MonthlyBudgetSummary budgets={budgets} />
 
@@ -330,20 +413,50 @@ export default function HomePage() {
                 points={dailyExpense}
                 previousYearMonth={previousYearMonth}
                 previousPoints={previousDailyExpense}
-                throughDay={Number(today.slice(8, 10))}
+                earlierYearMonth={earlierYearMonth}
+                earlierPoints={earlierDailyExpense}
+                throughDay={throughDay}
               />
             </div>
           ))}
         </div>
       </section>
 
+      {/*
+        카드를 누르면 정산 팝업. 가계 화면의 수단별 탭과 같은 컴포넌트를 쓴다.
+        체크카드는 갚을 대금이 없어 그 사실만 적힌 팝업이 뜬다.
+      */}
+      {settlementCard && (
+        <Modal
+          isOpen
+          onClose={() => setSettlementCardId(null)}
+          title={`${settlementCard.name} 정산`}
+        >
+          <CardSettlementPanel
+            card={settlementCard}
+            paymentAccountOwnerId={
+              accounts.find((account) => account.id === settlementCard.paymentAccountId)?.ownerId
+            }
+            reloadToken={cardVersion}
+            onChange={() => setCardVersion((v) => v + 1)}
+          />
+        </Modal>
+      )}
+
       <section className="space-y-2">
         {/*
           맨 아래 거래 목록. 서버가 날짜 내림차순으로 주므로 앞날에 걸어 둔 거래가
           먼저 온다. 홈에서는 누르지 않는다. 고치러 가는 자리는 가계 화면이다.
         */}
-        <h2 className="font-semibold text-gray-900">거래 내역</h2>
-        <EntryFeed projectId={selectedProjectId} filter={appliedFilter} />
+        <h2 className="font-semibold text-gray-900">
+          {month}월 거래 내역
+        </h2>
+        <EntryFeed
+          projectId={selectedProjectId}
+          filter={appliedFilter}
+          startDate={monthRange.startDate}
+          endDate={monthRange.endDate}
+        />
       </section>
     </div>
   );

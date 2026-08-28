@@ -11,6 +11,9 @@ interface EntryFeedProps {
   projectId: string | null;
   /** 가계·홈이 함께 쓰는 자산주인 필터 */
   filter: EntryFilterQuery;
+  /** 볼 구간. 넘기지 않으면 전체 기간이다. */
+  startDate?: string;
+  endDate?: string;
   /** 한 번에 받아올 건수 */
   pageSize?: number;
 }
@@ -38,7 +41,13 @@ const PULL_RESET_DELAY = 350;
  * 사용자가 부른 적 없는 요청이 계속 나간다. 당긴 만큼 바닥이 밀렸다가
  * 제자리로 튕겨 돌아오면서 "여기가 끝, 더 볼 수 있음"이 손끝으로 전해진다.
  */
-export default function EntryFeed({ projectId, filter, pageSize = 20 }: EntryFeedProps) {
+export default function EntryFeed({
+  projectId,
+  filter,
+  startDate,
+  endDate,
+  pageSize = 20,
+}: EntryFeedProps) {
   const [entries, setEntries] = useState<EntryListItem[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
@@ -53,7 +62,7 @@ export default function EntryFeed({ projectId, filter, pageSize = 20 }: EntryFee
    */
   const runRef = useRef(0);
 
-  const filterKey = JSON.stringify(filter);
+  const filterKey = JSON.stringify([filter, startDate, endDate]);
 
   const loadPage = useCallback(
     async (after: string | null, run: number) => {
@@ -62,7 +71,13 @@ export default function EntryFeed({ projectId, filter, pageSize = 20 }: EntryFee
         setIsLoading(true);
         setError('');
         const page: EntryDto.ListResponse = await apiClient.getEntries(
-          { ...filter, limit: pageSize, cursor: after ?? undefined },
+          {
+            ...filter,
+            ...(startDate ? { startDate } : {}),
+            ...(endDate ? { endDate } : {}),
+            limit: pageSize,
+            cursor: after ?? undefined,
+          },
           projectId,
         );
         if (runRef.current !== run) return;
@@ -81,7 +96,7 @@ export default function EntryFeed({ projectId, filter, pageSize = 20 }: EntryFee
         if (runRef.current === run) setIsLoading(false);
       }
     },
-    // filterKey로 의존성을 굳힌다. filter는 렌더마다 새 객체다.
+    // filterKey로 의존성을 굳힌다. filter는 렌더마다 새 객체이고 구간도 함께 담는다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [projectId, filterKey, pageSize],
   );

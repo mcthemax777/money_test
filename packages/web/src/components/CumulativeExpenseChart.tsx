@@ -39,6 +39,9 @@ interface CumulativeExpenseChartProps {
   points: ReportDto.DailyExpensePoint[];
   previousYearMonth: string;
   previousPoints: ReportDto.DailyExpensePoint[];
+  /** 전전달. 지난달 하나만 겹치면 그 달이 유난했던 것인지 알 수 없다. */
+  earlierYearMonth: string;
+  earlierPoints: ReportDto.DailyExpensePoint[];
   /**
    * 이번 달 선을 어디까지 그을지 (그 달의 며칠).
    *
@@ -48,8 +51,16 @@ interface CumulativeExpenseChartProps {
   throughDay: number;
 }
 
-/** 지난달 선 색 (tailwind gray-400). 이번 달 선보다 물러나 보여야 한다. */
-const PREVIOUS_COLOR = '#9ca3af';
+/**
+ * 지난달 선 색 (CHART_CATEGORY_COLORS의 주황).
+ *
+ * 회색 두 겹으로 지난달과 전전달을 나눴더니 두 선이 서로 구분되지 않았다.
+ * 색상 자체를 달리해 갈라 놓는다. 이번 달 파랑과도 멀리 떨어진 색이다.
+ */
+const PREVIOUS_COLOR = '#eb6834';
+
+/** 전전달 선 색 (tailwind gray-400). 가장 오래된 달이라 색 없이 물러난다. */
+const EARLIER_COLOR = '#9ca3af';
 
 /** "YYYY-MM"의 날짜 수 */
 function daysInMonth(yearMonth: string): number {
@@ -97,6 +108,8 @@ export default function CumulativeExpenseChart({
   points,
   previousYearMonth,
   previousPoints,
+  earlierYearMonth,
+  earlierPoints,
   throughDay,
 }: CumulativeExpenseChartProps) {
   const displayCurrency = useProjectDisplayCurrency();
@@ -104,22 +117,28 @@ export default function CumulativeExpenseChart({
   const { rows, current, previous } = useMemo(() => {
     const days = daysInMonth(yearMonth);
     const previousDays = daysInMonth(previousYearMonth);
+    const earlierDays = daysInMonth(earlierYearMonth);
     const currentSeries = cumulativeByDay(points, field, days);
     const previousSeries = cumulativeByDay(previousPoints, field, previousDays);
+    const earlierSeries = cumulativeByDay(earlierPoints, field, earlierDays);
 
     /*
      * 0일부터 그린다. 누적은 아무것도 쓰지 않은 0에서 출발하는 값이라, 1일의 지출이
      * 0에서 올라가는 선으로 보여야 한다. 1일부터 그리면 첫 날 지출만큼 이미 올라간
      * 자리에서 선이 시작해 그만큼을 놓친다.
      */
-    const rows = Array.from({ length: Math.max(days, previousDays) + 1 }, (_, day) => {
-      if (day === 0) return { day, current: 0, previous: 0 };
-      return {
-        day,
-        current: day <= Math.min(throughDay, days) ? currentSeries[day - 1] : null,
-        previous: day <= previousDays ? previousSeries[day - 1] : null,
-      };
-    });
+    const rows = Array.from(
+      { length: Math.max(days, previousDays, earlierDays) + 1 },
+      (_, day) => {
+        if (day === 0) return { day, current: 0, previous: 0, earlier: 0 };
+        return {
+          day,
+          current: day <= Math.min(throughDay, days) ? currentSeries[day - 1] : null,
+          previous: day <= previousDays ? previousSeries[day - 1] : null,
+          earlier: day <= earlierDays ? earlierSeries[day - 1] : null,
+        };
+      },
+    );
 
     return {
       rows,
@@ -127,11 +146,25 @@ export default function CumulativeExpenseChart({
       // 같은 날짜까지의 지난달. 달 중간에는 지난달 총액과 견주면 늘 적게 나온다.
       previous: previousSeries[Math.min(throughDay, previousDays) - 1] ?? 0,
     };
-  }, [points, previousPoints, field, yearMonth, previousYearMonth, throughDay]);
+  }, [
+    points,
+    previousPoints,
+    earlierPoints,
+    field,
+    yearMonth,
+    previousYearMonth,
+    earlierYearMonth,
+    throughDay,
+  ]);
 
   const axis = lineAxis(
     // 0을 넣어 축이 바닥에서 시작하게 한다. 누적은 0에서 출발하는 값이다.
-    [0, ...rows.flatMap((row) => [row.current, row.previous]).filter((v): v is number => v !== null)],
+    [
+      0,
+      ...rows
+        .flatMap((row) => [row.current, row.previous, row.earlier])
+        .filter((v): v is number => v !== null),
+    ],
     displayCurrency,
   );
   const difference = current - previous;
@@ -178,12 +211,20 @@ export default function CumulativeExpenseChart({
               }
             />
             <Legend />
+            {/* 셋 다 실선이다. 오래된 달일수록 옅어 눈이 이번 달 선을 먼저 잡는다. */}
+            <Line
+              type="monotone"
+              dataKey="earlier"
+              name={`${Number(earlierYearMonth.slice(5))}월`}
+              stroke={EARLIER_COLOR}
+              dot={false}
+              activeDot={CHART_ACTIVE_DOT}
+            />
             <Line
               type="monotone"
               dataKey="previous"
               name={`${Number(previousYearMonth.slice(5))}월`}
               stroke={PREVIOUS_COLOR}
-              strokeDasharray="4 3"
               dot={false}
               activeDot={CHART_ACTIVE_DOT}
             />

@@ -211,7 +211,8 @@ export namespace CardDto {
     /** `@db.Date` 성격의 달력 날짜 표시자 */
     periodStart: IsoDateString;
     periodEnd: IsoDateString;
-    dueDate: IsoDateString;
+    /** 대금이 빠지는 날. 체크카드는 결제 즉시 빠지므로 없다. */
+    dueDate?: IsoDateString;
     /** 마감일이 지났으면 true. 진행 중인 주기는 금액이 더 늘 수 있다. */
     closed: boolean;
     /** 이 주기에 청구되는 사용액. 할부는 회차분만 들어간다. */

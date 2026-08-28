@@ -81,6 +81,9 @@ export class CardLedgerService {
    * 가진 전표만 사용으로 센다.
    */
   async getUsage(cardId: string, userId: string, months?: number): Promise<CardDto.UsageResponse> {
+    const debit = await this.debitUsage(cardId, userId, months);
+    if (debit) return debit;
+
     const card = await this.loadCreditCard(cardId, userId);
     const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
     const span = Math.min(Math.max(Number(months) || DEFAULT_PERIODS, 1), MAX_PERIODS);
@@ -199,6 +202,69 @@ export class CardLedgerService {
       currency: liability.currency,
       // 부채는 음수로 쌓인다. 남은 대금은 부호를 뒤집은 값이고, 음수면 환불 예정이다.
       outstanding: liability.balance.neg().toString(),
+      periods,
+    };
+  }
+
+  /**
+   * 체크카드의 달별 사용액.
+   *
+   * 청구 주기도 갚을 대금도 없지만 "지난달에 얼마 썼나"는 신용카드와 똑같이
+   * 알고 싶은 값이다. 자를 기준만 달력 월로 바꿔 같은 모양으로 돌려준다.
+   *
+   * 신용카드면 null을 주어 호출부가 원래 계산으로 넘어가게 한다.
+   */
+  private async debitUsage(
+    cardId: string,
+    userId: string,
+    months?: number,
+  ): Promise<CardDto.UsageResponse | null> {
+    const card = await this.prisma.card.findUnique({ where: { id: cardId } });
+    if (!card) throw new NotFoundException('카드를 찾을 수 없습니다.');
+    if (card.cardType === CardType.credit) return null;
+    await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId);
+
+    const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
+    const span = Math.min(Math.max(Number(months) || DEFAULT_PERIODS, 1), MAX_PERIODS);
+    const paymentAccount = await this.prisma.account.findUniqueOrThrow({
+      where: { id: card.paymentAccountId },
+      select: { currency: true },
+    });
+
+    /*
+     * 체크카드 사용은 연결 통장의 posting에 cardId가 함께 찍힌다. 통장에서 직접
+     * 나간 지출에는 cardId가 없으므로 이 조건만으로 이 카드로 쓴 것만 걸린다.
+     * 실적 계산(getPerformance)과 같은 규칙이다.
+     */
+    const [thisYear, thisMonth] = zonedCurrentYearMonth(timeZone).split('-').map(Number);
+    const periods: CardDto.UsagePeriod[] = [];
+
+    for (let offset = span - 1; offset >= 0; offset -= 1) {
+      const cursor = new Date(Date.UTC(thisYear, thisMonth - 1 - offset, 1));
+      const year = cursor.getUTCFullYear();
+      const month = cursor.getUTCMonth() + 1;
+      const key = `${year}-${String(month).padStart(2, '0')}`;
+      const { start, end } = zonedMonthRange(key, timeZone);
+      const spent = await this.prisma.posting.aggregate({
+        _sum: { amount: true },
+        where: { cardId: card.id, entry: { date: { gte: start, lt: end } } },
+      });
+
+      periods.push({
+        // 달력 날짜 표시자. 청구 주기 쪽과 같은 형태로 맞춘다 (그 달 1일 ~ 말일).
+        periodStart: new Date(Date.UTC(year, month - 1, 1)).toISOString(),
+        periodEnd: new Date(Date.UTC(year, month, 0)).toISOString(),
+        // 이번 달만 아직 늘어날 수 있다.
+        closed: offset > 0,
+        usage: (spent._sum.amount ?? ZERO).neg().toString(),
+      });
+    }
+
+    return {
+      cardId: card.id,
+      currency: paymentAccount.currency,
+      // 체크카드는 결제 즉시 통장에서 빠진다. 갚을 대금이 남지 않는다.
+      outstanding: '0',
       periods,
     };
   }

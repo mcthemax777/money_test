@@ -89,13 +89,10 @@ export default function CardSettlementPanel({
     }
   }, [card.id]);
 
+  // 체크카드도 달별 사용액을 읽는다. 서버가 달력 월로 잘라 같은 모양으로 준다.
   useEffect(() => {
-    if (!isCredit) {
-      setUsage(null);
-      return;
-    }
     loadUsage();
-  }, [isCredit, loadUsage, reloadToken]);
+  }, [loadUsage, reloadToken]);
 
   // 남은 대금이 음수면 카드사가 갚을 돈이 남은 상태다.
   const outstanding = Number(usage?.outstanding ?? 0);
@@ -153,14 +150,6 @@ export default function CardSettlementPanel({
     }
   };
 
-  if (!isCredit) {
-    return (
-      <p className="text-gray-600">
-        체크카드는 결제 즉시 통장에서 빠집니다. 청구 주기와 남은 대금이 없습니다.
-      </p>
-    );
-  }
-
   if (!usage) {
     return <p className="text-gray-600">사용 현황을 불러오는 중입니다...</p>;
   }
@@ -168,6 +157,11 @@ export default function CardSettlementPanel({
   return (
     <>
       <div className="space-y-3">
+        {/*
+          남은 대금과 대금 기록은 신용카드만이다. 체크카드는 결제 즉시 통장에서
+          빠져 갚을 것이 남지 않는다. 대신 아래 달별 사용액은 똑같이 보여 준다.
+        */}
+        {isCredit && (
         <div
           className={`rounded-lg p-4 space-y-3 ${refundPending ? 'bg-emerald-50' : 'bg-red-50'}`}
         >
@@ -206,9 +200,12 @@ export default function CardSettlementPanel({
             </p>
           )}
         </div>
+        )}
 
         <div>
-          <h3 className="text-sm font-medium text-gray-700 mb-2">마감일 기준 사용액</h3>
+          <h3 className="text-sm font-medium text-gray-700 mb-2">
+            {isCredit ? '마감일 기준 사용액' : '달별 사용액'}
+          </h3>
           <div className="space-y-1">
             {usage.periods.map((period) => (
               <div
@@ -228,7 +225,9 @@ export default function CardSettlementPanel({
             ))}
           </div>
           <p className="mt-2 text-xs text-gray-500">
-            할부는 회차분만 들어갑니다. 남은 대금은 결제까지 반영한 값이라 합계와 다릅니다.
+            {isCredit
+              ? '할부는 회차분만 들어갑니다. 남은 대금은 결제까지 반영한 값이라 합계와 다릅니다.'
+              : '결제 즉시 통장에서 빠진 금액입니다. 달력 월로 셉니다.'}
           </p>
         </div>
 
@@ -237,7 +236,7 @@ export default function CardSettlementPanel({
           추정 환율로 들어간 건이 남아 있으면 남은 대금이 명세서와 어긋나므로,
           그 건들을 여기 모아 한 번에 맞춘다.
         */}
-        <PendingRatePanel cardId={card.id} onSettled={refresh} />
+        {isCredit && <PendingRatePanel cardId={card.id} onSettled={refresh} />}
       </div>
 
       {/* 카드사 자금 이동 모달 */}
