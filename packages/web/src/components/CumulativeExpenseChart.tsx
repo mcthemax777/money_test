@@ -17,10 +17,10 @@ import {
   CHART_ACTIVE_DOT,
   CHART_COLOR,
   CHART_GRID,
-  CHART_MARGIN,
+  CHART_MARGIN_EVEN,
   CHART_TICK,
   CHART_TOOLTIP_STYLE,
-  CHART_Y_AXIS_WIDTH,
+  CHART_Y_AXIS_WIDTH_AUTO,
   formatTooltipAmount,
   lineAxis,
 } from '@/lib/chart';
@@ -155,7 +155,7 @@ export default function CumulativeExpenseChart({
 
       <div className="mt-3 h-56">
         <ResponsiveContainer width="100%" height="100%">
-          <LineChart data={rows} margin={CHART_MARGIN}>
+          <LineChart data={rows} margin={CHART_MARGIN_EVEN}>
             <CartesianGrid {...CHART_GRID} />
             <XAxis
               dataKey="day"
@@ -164,7 +164,7 @@ export default function CumulativeExpenseChart({
               tickFormatter={(day) => (day === 0 ? '0' : `${day}일`)}
             />
             <YAxis
-              width={CHART_Y_AXIS_WIDTH}
+              width={CHART_Y_AXIS_WIDTH_AUTO}
               tick={CHART_TICK}
               domain={axis.domain}
               ticks={axis.ticks}
