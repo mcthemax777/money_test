@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { currentYearMonth } from '@/lib/datetime';
 import { formatCurrency } from '@/lib/money';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
@@ -127,7 +128,7 @@ export default function MonthHeader({
             aria-label="이전 달"
             title="이전 달"
           >
-            <span className="text-xl">←</span>
+            <ChevronLeft className="w-5 h-5" />
           </button>
 
           <button
@@ -148,7 +149,7 @@ export default function MonthHeader({
             aria-label="다음 달"
             title="다음 달"
           >
-            <span className="text-xl">→</span>
+            <ChevronRight className="w-5 h-5" />
           </button>
 
           {isPickerOpen && (
@@ -161,7 +162,7 @@ export default function MonthHeader({
                   className="p-1 px-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition"
                   aria-label="이전 해"
                 >
-                  ←
+                  <ChevronLeft className="w-4 h-4" />
                 </button>
                 <span className="font-semibold text-gray-900">{pickerYear}년</span>
                 <button
@@ -170,7 +171,7 @@ export default function MonthHeader({
                   className="p-1 px-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition"
                   aria-label="다음 해"
                 >
-                  →
+                  <ChevronRight className="w-4 h-4" />
                 </button>
               </div>
 
