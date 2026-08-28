@@ -55,7 +55,14 @@ export default function AssetTypeSummary({
         {/* 제목과 "은"이 한 문장으로 읽히도록 같은 줄에 둔다. */}
         <div className="flex flex-wrap items-center">
           {scopeTitle}
-          <span className="text-2xl font-bold text-gray-900">은</span>
+          {/*
+            제목 버튼은 누를 자리를 넓히려고 좌우 여백(px-2)을 갖는다. 그대로 두면
+            "자산"과 "은" 사이가 벌어지므로 그 여백만큼 당겨 붙인다.
+
+            relative를 함께 준다. 제목은 자리를 잡은(relative) 상자라 그냥 두면
+            마우스를 올렸을 때의 회색 바탕이 "은" 위에 얹혀 글자를 덮는다.
+          */}
+          <span className="relative -ml-2 text-2xl font-bold text-gray-900">은</span>
         </div>
 
         {hasNoScope ? (

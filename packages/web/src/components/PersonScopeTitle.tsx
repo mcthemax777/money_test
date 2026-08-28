@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { ChevronDown } from 'lucide-react';
 import type { Person } from '@/lib/types';
 
 interface PersonScopeTitleProps {
@@ -91,9 +92,13 @@ export default function PersonScopeTitle({
           aria-expanded={isOpen}
           title="자산주인 선택"
         >
+          {/*
+            누를 수 있다는 표시는 글자 앞에 둔다. 뒤에 두면 홈의 첫 문장
+            ("○○님의 자산은 …")이 이름과 조사 사이에서 끊긴다.
+          */}
+          <ChevronDown className="w-5 h-5 text-gray-400" />
           {/* 구성원을 아직 못 받았으면 이름 자리를 비워 두고 화면 이름만 적는다 */}
           {people.length === 0 ? noun : scopeLabel(selectedNames, people.length, noun)}
-          <span className="text-sm text-gray-400">▾</span>
         </button>
       </h1>
 
