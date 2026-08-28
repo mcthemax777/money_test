@@ -2,7 +2,7 @@
 
 import { useMemo, type ReactNode } from 'react';
 import type { ReportDto } from '@money/types';
-import { formatCurrency } from '@/lib/money';
+import { formatAmountWithUnit, formatCurrency } from '@/lib/money';
 import { ASSET_TYPE_GROUPS, assetGroupAmount } from '@/lib/net-worth';
 import { useAssetTypeFilter } from '@/store/asset-type-filter';
 import { useProjectDisplayCurrency } from '@/store/project';
@@ -69,7 +69,8 @@ export default function AssetTypeSummary({
           <p className="mt-1 text-lg text-gray-600">고른 자산주인이 없습니다.</p>
         ) : (
           <p className="mt-1 text-4xl font-bold text-gray-900 tabular-nums">
-            {formatCurrency(total, displayCurrency)}
+            {/* 문장으로 읽히는 자리라 기호 대신 이름을 뒤에 붙인다. */}
+            {formatAmountWithUnit(total, displayCurrency)}
             <span className="ml-2 text-xl font-medium text-gray-500">입니다</span>
           </p>
         )}

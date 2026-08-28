@@ -5,7 +5,7 @@
  * JSON 숫자는 자바스크립트에서 double이라 정밀도 보장이 없기 때문이다.
  * 합산은 전부 서버(/reports/*)에서 끝나므로, 화면은 표시 직전에만 숫자로 바꾼다.
  */
-import { formatMoney } from '@money/types';
+import { currencyDecimals, currencyUnit, formatMoney, isCurrencyCode } from '@money/types';
 
 
 /** 표시·비교용 숫자 변환. 합산 용도로 쓰지 말 것 (그건 서버 몫이다). */
@@ -29,6 +29,27 @@ export function formatCurrency(
   currency: string,
 ): string {
   return formatMoney(toNumber(amount), currency);
+}
+
+/**
+ * "100,000원" / "50.00달러" — 기호 없이 이름을 뒤에 붙인 금액.
+ *
+ * 문장으로 읽히는 자리에 쓴다. 기호를 앞에 두면 "₩100,000 입니다"처럼 읽는 차례와
+ * 적는 차례가 어긋난다. 모르는 통화는 코드를 띄어 쓴다 ("100.00 CHF").
+ */
+export function formatAmountWithUnit(
+  amount: string | number | null | undefined,
+  currency: string,
+): string {
+  const digits = currencyDecimals(currency);
+  const value = new Intl.NumberFormat('ko-KR', {
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  }).format(toNumber(amount));
+
+  return isCurrencyCode(currency)
+    ? `${value}${currencyUnit(currency)}`
+    : `${value} ${currency}`;
 }
 
 /**

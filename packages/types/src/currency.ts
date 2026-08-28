@@ -22,14 +22,31 @@ const CURRENCY_DECIMALS: Record<CurrencyCode, number> = {
   JPY: 0,
 };
 
+/** 금액 뒤에 붙여 읽는 이름. "100,000원", "50.00달러"처럼 쓴다. */
+export const CURRENCY_UNIT: Record<CurrencyCode, string> = {
+  KRW: '원',
+  USD: '달러',
+  JPY: '엔',
+};
+
 export const CURRENCY_LABEL: Record<CurrencyCode, string> = {
-  KRW: '원 (KRW)',
-  USD: '달러 (USD)',
-  JPY: '엔 (JPY)',
+  KRW: `${CURRENCY_UNIT.KRW} (KRW)`,
+  USD: `${CURRENCY_UNIT.USD} (USD)`,
+  JPY: `${CURRENCY_UNIT.JPY} (JPY)`,
 };
 
 export function isCurrencyCode(value: unknown): value is CurrencyCode {
   return typeof value === 'string' && (SUPPORTED_CURRENCIES as readonly string[]).includes(value);
+}
+
+/**
+ * 금액 뒤에 붙일 이름. 모르는 코드는 코드를 그대로 쓴다.
+ *
+ * 기호(₩, $)를 앞에 두는 대신 이름을 뒤에 두면 "십만 원입니다"처럼 읽는 차례대로
+ * 적힌다. 화면에서 문장으로 읽히는 자리에 쓴다.
+ */
+export function currencyUnit(currency: string): string {
+  return isCurrencyCode(currency) ? CURRENCY_UNIT[currency] : currency;
 }
 
 /** 그 통화가 쓰는 소수 자릿수. 모르는 코드는 2자리로 본다(가장 흔한 값). */
