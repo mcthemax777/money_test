@@ -9,9 +9,10 @@ module.exports = {
       env: {
         NODE_ENV: 'production'
       },
+      // log_file(합본)은 두지 않는다. out·err를 합친 것이라 같은 내용이 두 번 쌓인다.
+      // 회전은 pm2-logrotate 모듈이 맡는다 (pm2 install pm2-logrotate).
       error_file: 'logs/api-error.log',
       out_file: 'logs/api-out.log',
-      log_file: 'logs/api-combined.log',
       time_format: 'YYYY-MM-DD HH:mm:ss Z'
     },
     {
@@ -38,7 +39,6 @@ module.exports = {
       max_restarts: 5,
       error_file: 'logs/web-error.log',
       out_file: 'logs/web-out.log',
-      log_file: 'logs/web-combined.log',
       time_format: 'YYYY-MM-DD HH:mm:ss Z'
     }
   ]
