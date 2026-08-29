@@ -1,5 +1,6 @@
 'use client';
 
+import { useDragScroll } from '@/hooks/useDragScroll';
 import { cardPaletteOf } from '@/lib/card-color';
 import { formatCurrency, toNumber } from '@/lib/money';
 
@@ -46,12 +47,15 @@ export default function SpendingMethodCarousel({
   /** 카드를 누르면 호출한다. 넘기지 않으면 누를 수 없는 카드가 된다. */
   onSelect?: (method: SpendingMethod) => void;
 }) {
+  // 휠만 있는 마우스로도 끌어서 넘길 수 있게 한다 (useDragScroll 주석 참고).
+  const scrollRef = useDragScroll<HTMLDivElement>();
+
   if (methods.length === 0) {
     return <p className="text-sm text-gray-600">보여줄 카드가 없습니다.</p>;
   }
 
   return (
-    <div className="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory">
+    <div ref={scrollRef} className="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory">
       {methods.map((method) => (
         <MethodCard
           key={`${method.kind}-${method.id}`}
