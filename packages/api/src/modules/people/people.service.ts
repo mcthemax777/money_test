@@ -4,6 +4,7 @@ import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { PersonDto } from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
+import { badRequest } from '@/common/app-error';
 
 @Injectable()
 export class PeopleService {
@@ -125,7 +126,7 @@ export class PeopleService {
       where: { ownerId: id, isActive: true },
     });
     if (accountCount > 0) {
-      throw new BadRequestException('이 사람이 주인인 통장이 있어서 숨길 수 없습니다.');
+      throw badRequest('PERSON_HAS_ACCOUNTS', '이 사람이 주인인 통장이 있어서 숨길 수 없습니다.');
     }
 
     return this.prisma.person.update({ where: { id }, data: { isActive: false } });

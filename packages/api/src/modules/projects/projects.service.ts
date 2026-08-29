@@ -3,6 +3,7 @@ import { PrismaService } from '../../config/prisma.service';
 import { randomBytes, randomInt } from 'crypto';
 import { ProjectAccessService } from '../../common/project-access.guard';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
+import { badRequest, forbidden, notFound } from '@/common/app-error';
 
 interface CreateProjectDto {
   name: string;
@@ -148,7 +149,7 @@ export class ProjectsService {
     if (personId) {
       const person = await this.prisma.person.findUnique({ where: { id: personId } });
       if (!person || person.projectId !== projectId) {
-        throw new NotFoundException('이 프로젝트의 구성원이 아닙니다.');
+        throw notFound('NOT_PROJECT_MEMBER', '이 프로젝트의 구성원이 아닙니다.');
       }
     }
 
@@ -221,7 +222,7 @@ export class ProjectsService {
     });
 
     if (!invitation) {
-      throw new NotFoundException('초대를 찾을 수 없습니다');
+      throw notFound('INVITATION_NOT_FOUND', '초대를 찾을 수 없습니다');
     }
 
     const isExpired = Boolean(invitation.expiresAt && new Date() > invitation.expiresAt);
@@ -250,13 +251,13 @@ export class ProjectsService {
     });
 
     if (!invitation) {
-      throw new NotFoundException('초대를 찾을 수 없습니다');
+      throw notFound('INVITATION_NOT_FOUND', '초대를 찾을 수 없습니다');
     }
 
     await this.verifyUserIsOwner(invitation.projectId, userId);
 
     if (invitation.status !== 'pending') {
-      throw new BadRequestException('이미 처리된 초대입니다');
+      throw badRequest('INVITATION_HANDLED', '이미 처리된 초대입니다');
     }
 
     await this.prisma.projectInvitation.delete({ where: { id: invitationId } });
@@ -270,7 +271,7 @@ export class ProjectsService {
     });
 
     if (!invitation) {
-      throw new NotFoundException('초대를 찾을 수 없습니다');
+      throw notFound('INVITATION_NOT_FOUND', '초대를 찾을 수 없습니다');
     }
 
     if (invitation.status !== 'pending') {
@@ -282,7 +283,7 @@ export class ProjectsService {
         where: { id: invitation.id },
         data: { status: 'expired' },
       });
-      throw new BadRequestException('초대가 만료되었습니다');
+      throw badRequest('INVITATION_EXPIRED', '초대가 만료되었습니다');
     }
 
     // 이미 프로젝트 멤버인지 확인
@@ -296,7 +297,7 @@ export class ProjectsService {
     });
 
     if (existingMember) {
-      throw new BadRequestException('이미 이 프로젝트의 멤버입니다');
+      throw badRequest('ALREADY_MEMBER', '이미 이 프로젝트의 멤버입니다');
     }
 
     // ProjectMember 생성
@@ -335,7 +336,7 @@ export class ProjectsService {
     });
 
     if (!invitation) {
-      throw new NotFoundException('초대를 찾을 수 없습니다');
+      throw notFound('INVITATION_NOT_FOUND', '초대를 찾을 수 없습니다');
     }
 
     if (invitation.status !== 'pending') {
@@ -390,7 +391,7 @@ export class ProjectsService {
     const member = await this.verifyUserInProject(projectId, userId);
 
     if (member.role !== 'owner') {
-      throw new ForbiddenException('프로젝트 소유자만 이 작업을 수행할 수 있습니다');
+      throw forbidden('PROJECT_OWNER_ONLY', '프로젝트 소유자만 이 작업을 수행할 수 있습니다');
     }
 
     return member;
@@ -407,7 +408,7 @@ export class ProjectsService {
     });
 
     if (!member) {
-      throw new NotFoundException('프로젝트 멤버가 아닙니다.');
+      throw notFound('NOT_PROJECT_MEMBER', '프로젝트 멤버가 아닙니다.');
     }
 
     // 마지막 owner인 경우 탈퇴 불가
@@ -417,7 +418,7 @@ export class ProjectsService {
       });
 
       if (ownerCount === 1) {
-        throw new BadRequestException('마지막 소유자는 프로젝트를 탈퇴할 수 없습니다.');
+        throw badRequest('LAST_OWNER_CANNOT_LEAVE', '마지막 소유자는 프로젝트를 탈퇴할 수 없습니다.');
       }
     }
 
@@ -465,7 +466,7 @@ export class ProjectsService {
     await this.verifyUserIsOwner(projectId, requesterId);
 
     if (targetUserId === requesterId) {
-      throw new BadRequestException('본인은 강퇴할 수 없습니다. 프로젝트 탈퇴를 이용하세요.');
+      throw badRequest('CANNOT_KICK_SELF', '본인은 강퇴할 수 없습니다. 프로젝트 탈퇴를 이용하세요.');
     }
 
     const target = await this.prisma.projectMember.findUnique({
@@ -474,12 +475,12 @@ export class ProjectsService {
     });
 
     if (!target) {
-      throw new NotFoundException('프로젝트 멤버가 아닙니다.');
+      throw notFound('NOT_PROJECT_MEMBER', '프로젝트 멤버가 아닙니다.');
     }
 
     // 소유권 박탈은 강퇴로 처리하지 않는다.
     if (target.role === 'owner') {
-      throw new BadRequestException('소유자는 강퇴할 수 없습니다.');
+      throw badRequest('CANNOT_KICK_OWNER', '소유자는 강퇴할 수 없습니다.');
     }
 
     await this.prisma.projectMember.delete({
@@ -573,7 +574,7 @@ export class ProjectsService {
     });
 
     if (!project) {
-      throw new NotFoundException('해당 키의 프로젝트를 찾을 수 없습니다.');
+      throw notFound('PROJECT_KEY_NOT_FOUND', '해당 키의 프로젝트를 찾을 수 없습니다.');
     }
 
     const owner = project.members.find((m) => m.role === 'owner');
@@ -594,7 +595,7 @@ export class ProjectsService {
     const project = await this.prisma.project.findUnique({ where: { id: projectId } });
 
     if (!project) {
-      throw new NotFoundException('프로젝트를 찾을 수 없습니다.');
+      throw notFound('PROJECT_NOT_FOUND', '프로젝트를 찾을 수 없습니다.');
     }
 
     const member = await this.prisma.projectMember.findUnique({
@@ -602,7 +603,7 @@ export class ProjectsService {
     });
 
     if (member) {
-      throw new BadRequestException('이미 이 프로젝트의 멤버입니다.');
+      throw badRequest('ALREADY_MEMBER', '이미 이 프로젝트의 멤버입니다.');
     }
 
     const existing = await this.prisma.projectJoinRequest.findUnique({
@@ -610,7 +611,7 @@ export class ProjectsService {
     });
 
     if (existing?.status === 'pending') {
-      throw new BadRequestException('이미 가입 요청을 보냈습니다. 승인을 기다려주세요.');
+      throw badRequest('JOIN_REQUEST_PENDING', '이미 가입 요청을 보냈습니다. 승인을 기다려주세요.');
     }
 
     const trimmedMessage = message?.trim() || null;
@@ -695,7 +696,7 @@ export class ProjectsService {
     await this.verifyUserIsOwner(request.projectId, userId);
 
     if (request.status !== 'pending') {
-      throw new BadRequestException('이미 처리된 요청입니다.');
+      throw badRequest('JOIN_REQUEST_HANDLED', '이미 처리된 요청입니다.');
     }
 
     // 승인 사이에 요청자가 다른 경로로 멤버가 되었을 수 있으므로 중복 생성을 피한다.
@@ -735,7 +736,7 @@ export class ProjectsService {
     await this.verifyUserIsOwner(request.projectId, userId);
 
     if (request.status !== 'pending') {
-      throw new BadRequestException('이미 처리된 요청입니다.');
+      throw badRequest('JOIN_REQUEST_HANDLED', '이미 처리된 요청입니다.');
     }
 
     await this.prisma.projectJoinRequest.update({
@@ -761,7 +762,7 @@ export class ProjectsService {
     }
 
     if (request.status !== 'pending') {
-      throw new BadRequestException('이미 처리된 요청입니다.');
+      throw badRequest('JOIN_REQUEST_HANDLED', '이미 처리된 요청입니다.');
     }
 
     await this.prisma.projectJoinRequest.delete({ where: { id: requestId } });

@@ -13,6 +13,7 @@ import { CardDto, isCardColor } from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
 import { toCardResponse } from './card-view';
 import { toOptionalMoney } from '@/common/money';
+import { badRequest, notFound } from '@/common/app-error';
 
 /** 카드 응답에 함께 실어 주는 관계. 응답 모양을 한곳에서 정한다. */
 const CARD_INCLUDE = {
@@ -167,7 +168,7 @@ export class CardsService {
       where: { id },
       include: CARD_INCLUDE,
     });
-    if (!card) throw new NotFoundException('카드를 찾을 수 없습니다.');
+    if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
 
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId);
     return toCardResponse(card);
@@ -175,7 +176,7 @@ export class CardsService {
 
   async updateCard(id: string, userId: string, dto: CardDto.UpdateRequest) {
     const card = await this.prisma.card.findUnique({ where: { id } });
-    if (!card) throw new NotFoundException('카드를 찾을 수 없습니다.');
+    if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId, 'editor');
 
     if (dto.statementClosingDay !== undefined) {
@@ -256,11 +257,11 @@ export class CardsService {
       where: { id },
       include: { liabilityAccount: true },
     });
-    if (!card) throw new NotFoundException('카드를 찾을 수 없습니다.');
+    if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId, 'editor');
 
     if (card.liabilityAccount && !card.liabilityAccount.balance.isZero()) {
-      throw new BadRequestException('갚지 않은 카드 사용액이 남아 있어 숨길 수 없습니다.');
+      throw badRequest('CARD_HAS_UNPAID', '갚지 않은 카드 사용액이 남아 있어 숨길 수 없습니다.');
     }
 
     return this.prisma.$transaction(async (tx) => {

@@ -13,6 +13,7 @@ import {
   extraPostingCondition,
   parseEntryFilter,
 } from '@/common/entry-filter';
+import { notFound } from '@/common/app-error';
 
 const ZERO = new Prisma.Decimal(0);
 const DEFAULT_LIMIT = 50;
@@ -52,7 +53,7 @@ export class EntriesService {
       where: { id },
       include: { postings: true },
     });
-    if (!existing) throw new NotFoundException('거래를 찾을 수 없습니다.');
+    if (!existing) throw notFound('ENTRY_NOT_FOUND', '거래를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, existing.projectId, 'editor');
 
     const input = await this.buildInput(existing.projectId, userId, dto);
@@ -67,7 +68,7 @@ export class EntriesService {
       where: { id },
       include: { postings: true },
     });
-    if (!existing) throw new NotFoundException('거래를 찾을 수 없습니다.');
+    if (!existing) throw notFound('ENTRY_NOT_FOUND', '거래를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, existing.projectId, 'editor');
 
     await this.ledger.deleteEntry(id, existing.projectId);
@@ -236,7 +237,7 @@ export class EntriesService {
       where: { id },
       include: ENTRY_INCLUDE,
     });
-    if (!entry) throw new NotFoundException('거래를 찾을 수 없습니다.');
+    if (!entry) throw notFound('ENTRY_NOT_FOUND', '거래를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, entry.projectId);
 
     const show = await this.displayConverter(entry.projectId);

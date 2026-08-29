@@ -17,6 +17,7 @@ import {
   periodForClosingMonth,
   shiftClosingMonth,
 } from '../ledger/statement-period';
+import { notFound } from '@/common/app-error';
 
 const ZERO = new Prisma.Decimal(0);
 /** 기본으로 보여 주는 과거 주기 수 (진행 중인 주기 포함) */
@@ -220,7 +221,7 @@ export class CardLedgerService {
     months?: number,
   ): Promise<CardDto.UsageResponse | null> {
     const card = await this.prisma.card.findUnique({ where: { id: cardId } });
-    if (!card) throw new NotFoundException('카드를 찾을 수 없습니다.');
+    if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
     if (card.cardType === CardType.credit) return null;
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId);
 
@@ -283,7 +284,7 @@ export class CardLedgerService {
    */
   async getPerformance(cardId: string, userId: string): Promise<CardDto.PerformanceResponse> {
     const card = await this.prisma.card.findUnique({ where: { id: cardId } });
-    if (!card) throw new NotFoundException('카드를 찾을 수 없습니다.');
+    if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId);
 
     const target = card.performanceAmount;
@@ -510,7 +511,7 @@ export class CardLedgerService {
     requiredRole: ProjectRole = 'viewer',
   ) {
     const card = await this.prisma.card.findUnique({ where: { id: cardId } });
-    if (!card) throw new NotFoundException('카드를 찾을 수 없습니다.');
+    if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId, requiredRole);
 
     if (card.cardType !== CardType.credit || !card.liabilityAccountId) {

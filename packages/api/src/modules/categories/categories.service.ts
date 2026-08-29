@@ -4,6 +4,7 @@ import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { CategoryDto } from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
+import { badRequest } from '@/common/app-error';
 
 @Injectable()
 export class CategoriesService {
@@ -14,7 +15,7 @@ export class CategoriesService {
 
   async createCategory(userId: string, dto: CategoryDto.CreateRequest, projectId?: string) {
     if (!dto.name?.trim()) {
-      throw new BadRequestException('카테고리명을 입력해주세요.');
+      throw badRequest('CATEGORY_NAME_REQUIRED', '카테고리명을 입력해주세요.');
     }
 
     const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(
@@ -119,7 +120,7 @@ export class CategoriesService {
     const data: Prisma.CategoryUpdateInput = {};
     if (dto.name !== undefined) {
       const name = dto.name.trim();
-      if (!name) throw new BadRequestException('카테고리명을 입력해주세요.');
+      if (!name) throw badRequest('CATEGORY_NAME_REQUIRED', '카테고리명을 입력해주세요.');
       data.name = name;
     }
     if (dto.icon !== undefined) data.icon = dto.icon;
@@ -156,7 +157,7 @@ export class CategoriesService {
     const category = await this.getCategoryById(id, userId, 'editor');
 
     if (category.isDefault) {
-      throw new BadRequestException('기본 카테고리는 삭제할 수 없습니다.');
+      throw badRequest('CATEGORY_DEFAULT_LOCKED', '기본 카테고리는 삭제할 수 없습니다.');
     }
 
     const isMain = category.parentId === null;
@@ -178,7 +179,7 @@ export class CategoriesService {
       where: { categoryId: { in: affectedIds } },
     });
     if (usedCount > 0) {
-      throw new BadRequestException('이 카테고리가 거래에 사용되어 삭제할 수 없습니다.');
+      throw badRequest('CATEGORY_IN_USE', '이 카테고리가 거래에 사용되어 삭제할 수 없습니다.');
     }
 
     // 소분류를 개별 update로 돌리던 것을 한 번의 updateMany로 정리

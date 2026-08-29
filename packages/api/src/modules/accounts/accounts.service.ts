@@ -8,6 +8,7 @@ import { AccountDto } from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
 import { toMoney, toOptionalMoney } from '@/common/money';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
+import { badRequest } from '@/common/app-error';
 
 /**
  * 사용자가 "통장"으로 인식하지 않는 내부 계정.
@@ -344,11 +345,14 @@ export class AccountsService {
       where: { paymentAccountId: id, isActive: true },
     });
     if (cardCount > 0) {
-      throw new BadRequestException('이 통장에 연결된 카드가 있어서 숨길 수 없습니다.');
+      throw badRequest('ACCOUNT_HAS_CARDS', '이 통장에 연결된 카드가 있어서 숨길 수 없습니다.');
     }
 
     if (!account.balance.isZero()) {
-      throw new BadRequestException('잔액이 남아 있어 숨길 수 없습니다. 먼저 잔액을 0으로 맞추세요.');
+      throw badRequest(
+        'ACCOUNT_HAS_BALANCE',
+        '잔액이 남아 있어 숨길 수 없습니다. 먼저 잔액을 0으로 맞추세요.',
+      );
     }
 
     return this.prisma.account.update({

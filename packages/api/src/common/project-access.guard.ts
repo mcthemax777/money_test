@@ -2,6 +2,7 @@ import { Injectable, ForbiddenException, BadRequestException } from '@nestjs/com
 import { ProjectRole } from '@prisma/client';
 import { CurrencyCode, DEFAULT_TIME_ZONE, isCurrencyCode } from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
+import { forbidden } from './app-error';
 
 /** 프로젝트 역할. 숫자가 클수록 넓은 권한이다. */
 const ROLE_RANK: Record<ProjectRole, number> = { owner: 3, editor: 2, viewer: 1 };
@@ -47,7 +48,7 @@ export class ProjectAccessService {
     });
 
     if (!membership) {
-      throw new ForbiddenException('이 프로젝트에 접근 권한이 없습니다.');
+      throw forbidden('PROJECT_FORBIDDEN', '이 프로젝트에 접근 권한이 없습니다.');
     }
 
     if (ROLE_RANK[membership.role] < ROLE_RANK[requiredRole]) {
