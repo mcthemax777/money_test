@@ -725,8 +725,8 @@ class ApiClient {
     period: ReportPeriod,
     projectId?: string | null,
     filter?: EntryFilterQuery & { personId?: string },
-  ) {
-    const response = await this.client.get<any>('/reports/summary', {
+  ): Promise<ReportDto.Summary> {
+    const response = await this.client.get<ReportDto.Summary>('/reports/summary', {
       params: { ...period, ...(projectId ? { projectId } : {}), ...filter },
     });
     return response.data;
@@ -752,18 +752,19 @@ class ApiClient {
   }
 
   /**
-   * 날짜별 지출 (필수/비필수). 지출이 없는 날은 행이 없다.
+   * 날짜별 지출·수입 (일반/과소비). 그날 아무것도 없으면 행이 없다.
    *
    * 누적 그래프의 재료다. 누적은 화면이 만든다 (이번 달은 오늘까지, 지난달은 말일까지).
    */
   async getDailyExpense(
     period: ReportPeriod,
+    type: 'income' | 'expense',
     projectId?: string | null,
     filter?: EntryFilterQuery,
   ): Promise<ReportDto.DailyExpensePoint[]> {
     const response = await this.client.get<ReportDto.DailyExpensePoint[]>(
       '/reports/daily-expense',
-      { params: { ...period, ...(projectId ? { projectId } : {}), ...filter } },
+      { params: { ...period, type, ...(projectId ? { projectId } : {}), ...filter } },
     );
     return response.data;
   }

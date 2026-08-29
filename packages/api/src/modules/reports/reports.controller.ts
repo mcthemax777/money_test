@@ -28,8 +28,11 @@ export class ReportsController {
   }
 
   @Get('daily-expense')
-  @ApiOperation({ summary: '날짜별 지출 (필수/비필수). 누적 그래프의 재료' })
-  dailyExpense(@Request() req: AuthenticatedRequest, @Query() query: ReportDto.PeriodQuery) {
+  @ApiOperation({ summary: '날짜별 지출·수입 (일반/과소비). 누적 그래프의 재료' })
+  dailyExpense(
+    @Request() req: AuthenticatedRequest,
+    @Query() query: ReportDto.DailyExpenseQuery,
+  ) {
     return this.reportsService.getDailyExpense(req.user.id, query);
   }
 

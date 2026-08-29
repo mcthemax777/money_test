@@ -123,9 +123,9 @@ export class ReportsService {
   }
 
   /**
-   * 날짜별 지출 (필수/비필수).
+   * 날짜별 지출·수입 (일반/과소비).
    *
-   * 합계는 getSummary 와 같은 규칙이다("지출 카테고리 posting의 합"). 날짜는 프로젝트
+   * 합계는 getSummary 와 같은 규칙이다("그 유형 카테고리 posting의 합"). 날짜는 프로젝트
    * 타임존의 달력 날짜라, 한국의 새벽 거래가 하루 앞으로 밀리지 않는다.
    *
    * 누적은 화면이 만든다. 이번 달은 오늘까지만, 지난달은 말일까지 그어야 두 선을
@@ -133,16 +133,18 @@ export class ReportsService {
    */
   async getDailyExpense(
     userId: string,
-    query: ReportDto.PeriodQuery,
+    query: ReportDto.DailyExpenseQuery,
   ): Promise<ReportDto.DailyExpensePoint[]> {
     const { id: projectId, timeZone } = await this.projectAccess.resolveProject(
       userId,
       query.projectId,
     );
     const range = this.resolvePeriod(query, timeZone);
+    // 쿼리스트링은 문자열로 도착한다. 아는 값이 아니면 지출이다.
+    const isIncome = query.type === 'income';
     const postings = await this.prisma.posting.findMany({
       where: {
-        category: { type: CategoryType.expense },
+        category: { type: isIncome ? CategoryType.income : CategoryType.expense },
         entry: this.entryScope(projectId, range, query),
         ...extraCondition(parseEntryFilter(query).extra),
       },
@@ -158,8 +160,10 @@ export class ReportsService {
     for (const posting of postings) {
       const key = zonedDateKey(posting.entry.date, timeZone);
       const bucket = byDate.get(key) ?? { normal: ZERO, extra: ZERO };
+      // 수입 posting은 음수로 기록되므로 표시용으로 뒤집는다 (extraAmount는 이미 양수다).
+      const amount = isIncome ? posting.baseAmount.neg() : posting.baseAmount;
       bucket.extra = bucket.extra.add(posting.extraAmount);
-      bucket.normal = bucket.normal.add(posting.baseAmount.sub(posting.extraAmount));
+      bucket.normal = bucket.normal.add(amount.sub(posting.extraAmount));
       byDate.set(key, bucket);
     }
 

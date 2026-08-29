@@ -16,8 +16,10 @@ import type { ReportDto } from '@money/types';
 import {
   CHART_ACTIVE_DOT,
   CHART_COLOR,
+  CHART_EARLIER_COLOR,
   CHART_GRID,
   CHART_MARGIN,
+  CHART_PREVIOUS_COLOR,
   CHART_TICK,
   CHART_TOOLTIP_STYLE,
   CHART_Y_AXIS_WIDTH,
@@ -32,7 +34,14 @@ export type ExpenseField = 'normal' | 'extra' | 'total';
 
 interface CumulativeExpenseChartProps {
   title: string;
-  /** 일반 지출, 과소비, 또는 둘을 합한 전체 */
+  /**
+   * 지출인지 수입인지.
+   *
+   * 그리는 방법은 같고, 지난달보다 늘어난 것이 나쁜 일인지(지출) 좋은 일인지
+   * (수입)만 갈린다. 늘어난 수입에 빨간 글씨를 붙이면 뜻이 뒤집힌다.
+   */
+  type: 'income' | 'expense';
+  /** 일반, 과소비(수입이면 추가 수입), 또는 둘을 합한 전체 */
   field: ExpenseField;
   /** 보고 있는 달 "YYYY-MM" */
   yearMonth: string;
@@ -50,17 +59,6 @@ interface CumulativeExpenseChartProps {
    */
   throughDay: number;
 }
-
-/**
- * 지난달 선 색 (CHART_CATEGORY_COLORS의 주황).
- *
- * 회색 두 겹으로 지난달과 전전달을 나눴더니 두 선이 서로 구분되지 않았다.
- * 색상 자체를 달리해 갈라 놓는다. 이번 달 파랑과도 멀리 떨어진 색이다.
- */
-const PREVIOUS_COLOR = '#eb6834';
-
-/** 전전달 선 색 (tailwind gray-400). 가장 오래된 달이라 색 없이 물러난다. */
-const EARLIER_COLOR = '#9ca3af';
 
 /** "YYYY-MM"의 날짜 수 */
 function daysInMonth(yearMonth: string): number {
@@ -96,13 +94,14 @@ function cumulativeByDay(
 }
 
 /**
- * 이 달과 지난달의 누적 지출을 겹쳐 그린다.
+ * 이 달과 지난달의 누적 지출(또는 수입)을 겹쳐 그린다.
  *
  * 한 달 총액만 보면 "많이 썼다"는 것을 말일에야 알게 된다. 같은 날짜끼리 누적을
  * 견주면 달 중간에도 지난달보다 앞서 가는지 알 수 있다.
  */
 export default function CumulativeExpenseChart({
   title,
+  type,
   field,
   yearMonth,
   points,
@@ -168,6 +167,13 @@ export default function CumulativeExpenseChart({
     displayCurrency,
   );
   const difference = current - previous;
+  /*
+   * 지난달보다 나쁜 쪽인지.
+   *
+   * 지출은 늘어난 것이, 수입은 줄어든 것이 나쁜 쪽이다. 한 색으로 고정하면 수입
+   * 그래프에서 "지난달보다 더 벌었다"에 빨간 글씨가 붙는다.
+   */
+  const isWorse = type === 'expense' ? difference > 0 : difference < 0;
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">
@@ -179,7 +185,7 @@ export default function CumulativeExpenseChart({
           </span>{' '}
           · 지난달 같은 기간{' '}
           <span className="tabular-nums">{formatCurrency(previous, displayCurrency)}</span>{' '}
-          <span className={difference > 0 ? 'text-red-600' : 'text-blue-600'}>
+          <span className={isWorse ? 'text-red-600' : 'text-blue-600'}>
             ({difference > 0 ? '+' : ''}
             {formatCurrency(difference, displayCurrency)})
           </span>
@@ -216,7 +222,7 @@ export default function CumulativeExpenseChart({
               type="monotone"
               dataKey="earlier"
               name={`${Number(earlierYearMonth.slice(5))}월`}
-              stroke={EARLIER_COLOR}
+              stroke={CHART_EARLIER_COLOR}
               dot={false}
               activeDot={CHART_ACTIVE_DOT}
             />
@@ -224,7 +230,7 @@ export default function CumulativeExpenseChart({
               type="monotone"
               dataKey="previous"
               name={`${Number(previousYearMonth.slice(5))}월`}
-              stroke={PREVIOUS_COLOR}
+              stroke={CHART_PREVIOUS_COLOR}
               dot={false}
               activeDot={CHART_ACTIVE_DOT}
             />

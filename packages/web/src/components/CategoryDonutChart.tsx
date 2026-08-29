@@ -11,6 +11,8 @@ import { useProjectDisplayCurrency } from '@/store/project';
 
 interface CategoryDonutChartProps {
   title: string;
+  /** 지출을 쪼갤지 수입을 쪼갤지 */
+  type: 'income' | 'expense';
   period: ReportPeriod;
   projectId: string | null;
   filter: EntryFilterQuery;
@@ -57,7 +59,7 @@ function colorOf(categoryId: string, taken: Set<number>): string {
 }
 
 /**
- * 이 달 지출이 어느 분류로 나갔는지.
+ * 이 달 지출(또는 수입)이 어느 분류로 나뉘었는지.
  *
  * 누적 그래프가 "얼마나 빨리 쓰는가"를 본다면 이 그림은 "어디에 쓰는가"를 본다.
  * 가운데에 합계를 적어, 조각을 세지 않아도 총액이 먼저 읽히게 한다.
@@ -67,6 +69,7 @@ function colorOf(categoryId: string, taken: Set<number>): string {
  */
 export default function CategoryDonutChart({
   title,
+  type,
   period,
   projectId,
   filter,
@@ -76,6 +79,8 @@ export default function CategoryDonutChart({
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
+  /** 화면에 적을 말. 지출과 수입에서 문장이 갈리는 자리에만 쓴다. */
+  const noun = type === 'income' ? '수입' : '지출';
   const periodKey = JSON.stringify(period);
   const filterKey = JSON.stringify(filter);
 
@@ -86,16 +91,16 @@ export default function CategoryDonutChart({
     setIsLoading(true);
     setError('');
     apiClient
-      .getCategoryBreakdown(period, 'expense', projectId, filter)
+      .getCategoryBreakdown(period, type, projectId, filter)
       .then((data: BreakdownRow[]) => {
         if (cancelled) return;
         setRows(data ?? []);
       })
       .catch((err: unknown) => {
-        console.error('분류별 지출 조회 실패:', err);
+        console.error(`분류별 ${noun} 조회 실패:`, err);
         if (cancelled) return;
         setRows([]);
-        setError('분류별 지출을 불러오지 못했습니다.');
+        setError(`분류별 ${noun}을 불러오지 못했습니다.`);
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -106,7 +111,7 @@ export default function CategoryDonutChart({
     };
     // period·filter는 렌더마다 새 객체다. 값이 같으면 다시 부르지 않게 굳힌다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, periodKey, filterKey]);
+  }, [projectId, type, periodKey, filterKey]);
 
   const { slices, total } = useMemo(() => {
     const sorted = rows
@@ -143,7 +148,7 @@ export default function CategoryDonutChart({
       ) : error ? (
         <p className="mt-3 h-56 text-sm text-red-600">{error}</p>
       ) : slices.length === 0 ? (
-        <p className="mt-3 h-56 text-sm text-gray-600">이 달 지출이 없습니다.</p>
+        <p className="mt-3 h-56 text-sm text-gray-600">이 달 {noun}이 없습니다.</p>
       ) : (
         <div className="mt-3 flex h-56 items-center gap-3">
           <div className="h-full w-40 shrink-0">

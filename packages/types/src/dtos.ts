@@ -751,18 +751,28 @@ export namespace ReportDto {
   }
 
   /**
-   * 하루치 지출. 지출이 없는 날은 행이 없다.
+   * 날짜별 합계 조회.
    *
-   * 월 합계(Summary)와 같은 규칙으로 센다("지출 카테고리 posting의 합"). 누적
+   * type을 주지 않으면 지출이다. 홈의 지출/수입 탭이 같은 그래프를 두 벌 그리므로
+   * 수입도 같은 규칙으로 받아야 한다.
+   */
+  export interface DailyExpenseQuery extends PeriodQuery {
+    type?: 'income' | 'expense';
+  }
+
+  /**
+   * 하루치 지출(또는 수입). 그날 아무것도 없으면 행이 없다.
+   *
+   * 월 합계(Summary)와 같은 규칙으로 센다("그 유형 카테고리 posting의 합"). 누적
    * 그래프는 이 값을 날짜순으로 더해서 그린다. 서버가 누적까지 만들지 않는 이유는
    * 화면마다 누적을 끊는 지점(오늘까지 / 말일까지)이 다르기 때문이다.
    */
   export interface DailyExpensePoint {
     /** 프로젝트 타임존 기준 "YYYY-MM-DD" */
     date: string;
-    /** 과소비로 세지 않은 지출 */
+    /** 과소비(수입이면 추가 수입)로 세지 않은 금액 */
     normal: string;
-    /** 과소비로 센 지출 */
+    /** 과소비(수입이면 추가 수입)로 센 금액 */
     extra: string;
   }
 
