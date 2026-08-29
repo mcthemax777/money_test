@@ -2,16 +2,20 @@
 
 import { useEffect, useState } from 'react';
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
 } from 'recharts';
 import type { EntryListItem } from './TransactionItem';
 import TransactionListView from './TransactionListView';
 import { apiClient, type ReportPeriod } from '@/lib/api-client';
 import { formatCurrency, toNumber } from '@/lib/money';
 import { buildDailyCumulative, monthDateKeys } from '@/lib/entries';
-import { dayRangeQuery } from '@/lib/datetime';
+import { dayRangeQuery, throughDayOf } from '@/lib/datetime';
+import { loadPreviousMonths } from '@/lib/month-compare';
+import DailyCumulativeChart, {
+  type CumulativeSeries,
+  type DailyCumulativePoint,
+} from './DailyCumulativeChart';
 import {
-  CHART_ACTIVE_DOT,
   CHART_BAR_RADIUS,
   CHART_COLOR,
   CHART_GRID,
@@ -22,7 +26,6 @@ import {
   barDomain,
   formatAxisAmount,
   formatTooltipAmount,
-  lineAxis,
 } from '@/lib/chart';
 import type { EntryFilterQuery } from '@money/types';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
@@ -132,7 +135,9 @@ export default function PaymentMethodTab({
   const [selected, setSelected] = useState<PaymentMethodItem | null>(null);
   const [isSettlementOpen, setIsSettlementOpen] = useState(false);
   const [monthlyData, setMonthlyData] = useState<Array<{ month: string; amount: number }>>([]);
-  const [dailyData, setDailyData] = useState<Array<{ label: string; amount: number; cumulative: number }>>([]);
+  const [dailyData, setDailyData] = useState<DailyCumulativePoint[]>([]);
+  /** 겹쳐 그릴 전전달·지난달. 달 단위로 볼 때만 채운다. */
+  const [comparisons, setComparisons] = useState<CumulativeSeries[]>([]);
   const [entries, setEntries] = useState<EntryListItem[]>([]);
 
   // 결제수단별 합계는 서버가 계산한다. 거래 전량을 받아 분류하던 코드를 대체했다.
@@ -171,6 +176,7 @@ export default function PaymentMethodTab({
     if (!selected) {
       setMonthlyData([]);
       setDailyData([]);
+      setComparisons([]);
       setEntries([]);
       return;
     }
@@ -180,6 +186,22 @@ export default function PaymentMethodTab({
     // 구간 경계는 프로젝트 타임존 기준이다. 끝날 자정을 endDate로 주면
     // 시각이 붙은 그날 거래가 빠지므로 위에서 만든 range를 쓴다.
     const { startDate, endDate } = range;
+
+    /*
+     * 이 수단의 지출을 뽑는 조건. 날짜만 빼 둔다.
+     *
+     * 앞선 달을 겹쳐 그릴 때 날짜만 바꿔 그대로 다시 쓴다. 조건이 하나라도
+     * 달라지면 이번 달 선과 견줄 수 없는 선이 그려진다.
+     */
+    const expenseQuery = {
+      // 왼쪽 집계와 같은 기준으로 뽑는다 (payment* 파라미터가 그 규칙을 담고 있다).
+      ...(selected.kind === 'account'
+        ? { paymentAccountId: selected.id }
+        : { paymentCardId: selected.id }),
+      // kind='expense'로 걸면 수수료가 붙은 이체가 빠진다. 집계에는 들어 있으므로 어긋난다.
+      categoryType: 'expense' as const,
+      ...filter,
+    };
 
     /*
      * 통장으로 들어온 수입.
@@ -210,23 +232,19 @@ export default function PaymentMethodTab({
       ),
       // 커서를 끝까지 따라간다. 한 페이지만 받으면 아래 일별 누적이
       // 12개월 그래프(서버 집계, 전량)와 어긋난다.
-      apiClient.getAllEntries(
-        {
-          // 왼쪽 집계와 같은 기준으로 뽑는다 (payment* 파라미터가 그 규칙을 담고 있다).
-          ...(selected.kind === 'account'
-            ? { paymentAccountId: selected.id }
-            : { paymentCardId: selected.id }),
-          // kind='expense'로 걸면 수수료가 붙은 이체가 빠진다. 집계에는 들어 있으므로 어긋난다.
-          categoryType: 'expense',
-          startDate,
-          endDate,
-          ...filter,
-        },
-        projectId,
-      ),
+      apiClient.getAllEntries({ ...expenseQuery, startDate, endDate }, projectId),
       incomeQuery,
+      /*
+       * 겹쳐 그릴 앞선 두 달.
+       *
+       * 기간을 직접 정했을 때는 받지 않는다. 열흘짜리 구간의 "지난달"이 한 달인지
+       * 같은 열흘인지 정해지지 않아 견줄 대상이 없다.
+       */
+      period.yearMonth
+        ? loadPreviousMonths(period.yearMonth, expenseQuery, projectId, timeZone)
+        : Promise.resolve([] as CumulativeSeries[]),
     ])
-      .then(([trendRes, entriesRes, incomeRes]) => {
+      .then(([trendRes, entriesRes, incomeRes, comparisonRes]) => {
         if (cancelled) return;
 
         const trend = (trendRes ?? []) as Array<{ yearMonth: string; amount: string }>;
@@ -251,18 +269,27 @@ export default function PaymentMethodTab({
           buildDailyCumulative는 expenseAmountOf를 쓰므로 수입 건은 저절로 0이다.
         */
         setDailyData(buildDailyCumulative(rows, dayKeys.startKey, dayKeys.endKey, timeZone));
+        setComparisons(comparisonRes);
       })
       .catch((error) => {
         console.error('결제수단 상세를 불러오지 못했습니다:', error);
         if (cancelled) return;
         setMonthlyData([]);
         setDailyData([]);
+        setComparisons([]);
         setEntries([]);
       });
 
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, periodKey, projectId, timeZone, filter, reloadToken]);
+
+  /*
+   * 달 단위로 볼 때만 쓰는 값. 이번 달 선의 이름과, 그 선을 며칠까지 그을지다.
+   * 기간 보기에서는 견줄 달이 없어 둘 다 필요 없다.
+   */
+  const currentMonthName = period.yearMonth ? `${Number(period.yearMonth.slice(5))}월` : undefined;
+  const throughDay = period.yearMonth ? throughDayOf(period.yearMonth, timeZone) : undefined;
 
   const section = SECTIONS.find((item) => item.kind === kind)!;
   const accent = ACCENT[section.accent];
@@ -381,30 +408,14 @@ export default function PaymentMethodTab({
 
             <div>
               <h4 className="font-semibold text-gray-900 mb-4">일별 누적 사용금액</h4>
-              <ResponsiveContainer width="100%" height={250}>
-                <LineChart data={dailyData} margin={CHART_MARGIN}>
-                  <CartesianGrid {...CHART_GRID} />
-                  <XAxis dataKey="label" tick={CHART_TICK} />
-                  {/* 꺾은선은 값이 움직인 구간만 그린다 (lineAxis 주석 참고) */}
-                  <YAxis
-                    {...lineAxis(dailyData.map((d) => d.cumulative), displayCurrency)}
-                    tick={CHART_TICK}
-                    width={CHART_Y_AXIS_WIDTH}
-                  />
-                  <Tooltip
-                    formatter={(value: any) => formatTooltipAmount(value, '누적 사용액', displayCurrency)}
-                    contentStyle={CHART_TOOLTIP_STYLE}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="cumulative"
-                    stroke={CHART_COLOR}
-                    strokeWidth={2}
-                    dot={false}
-                    activeDot={CHART_ACTIVE_DOT}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+              <DailyCumulativeChart
+                current={dailyData}
+                comparisons={comparisons}
+                currentName={currentMonthName}
+                throughDay={throughDay}
+                tooltipName="누적 사용액"
+                height={250}
+              />
             </div>
 
             {entries.length > 0 && (

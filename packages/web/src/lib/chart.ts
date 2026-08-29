@@ -40,6 +40,17 @@ export const CHART_TOOLTIP_STYLE = {
 export const CHART_COLOR = '#2563eb';
 
 /**
+ * 지난달 선 색 (아래 CHART_CATEGORY_COLORS의 주황).
+ *
+ * 회색 두 겹으로 지난달과 전전달을 나눴더니 두 선이 서로 구분되지 않았다.
+ * 색상 자체를 달리해 갈라 놓는다. 이번 달 파랑과도 멀리 떨어진 색이다.
+ */
+export const CHART_PREVIOUS_COLOR = '#eb6834';
+
+/** 전전달 선 색 (tailwind gray-400). 가장 오래된 달이라 색 없이 물러난다. */
+export const CHART_EARLIER_COLOR = '#9ca3af';
+
+/**
  * 여러 갈래를 한 그림에 그릴 때 쓰는 색. 정해진 차례대로 쓰고 돌려 쓰지 않는다.
  *
  * 색맹 상태에서도 이웃한 두 색이 갈라지는지 검사를 거친 조합이다. 밝은 바탕과의

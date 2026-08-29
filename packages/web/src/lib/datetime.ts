@@ -184,3 +184,25 @@ export function shiftYearMonth(yearMonth: string, delta: number): string {
   const shiftedMonth = (((index % 12) + 12) % 12) + 1;
   return `${shiftedYear}-${String(shiftedMonth).padStart(2, '0')}`;
 }
+
+/**
+ * 그 달의 선을 며칠까지 그을지.
+ *
+ * 지난 달은 말일까지 다 그린다. 이번 달은 오늘까지다. 아직 오지 않은 날을 0으로
+ * 이어 그리면 선이 평평해져 "여기서 멈췄다"로 읽힌다. 앞날의 달은 하루도 지나지
+ * 않았으므로 0이다.
+ *
+ * 이번 달인지도 프로젝트 타임존으로 따진다. 브라우저 로컬로 읽으면 자정 전후로
+ * 달이 밀린다.
+ */
+export function throughDayOf(yearMonth: string, timeZone: string): number {
+  const { year, month } = currentYearMonth(timeZone);
+  const thisYearMonth = `${year}-${String(month).padStart(2, '0')}`;
+
+  if (yearMonth === thisYearMonth) return Number(todayKey(timeZone).slice(8, 10));
+  if (yearMonth > thisYearMonth) return 0;
+
+  const [viewYear, viewMonth] = yearMonth.split('-').map(Number);
+  // month는 1-based다. 다음 달의 0일 = 이 달의 말일.
+  return new Date(Date.UTC(viewYear, viewMonth, 0)).getUTCDate();
+}

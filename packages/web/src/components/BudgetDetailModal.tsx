@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { BarChart, Bar, LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { X } from 'lucide-react';
 import Modal from './Modal';
 import type { EntryListItem } from './TransactionItem';
@@ -9,7 +9,6 @@ import TransactionListView from './TransactionListView';
 import { apiClient, type ReportPeriod } from '@/lib/api-client';
 import { formatCurrency, toNumber } from '@/lib/money';
 import {
-  CHART_ACTIVE_DOT,
   CHART_BAR_RADIUS,
   CHART_COLOR,
   CHART_GRID,
@@ -20,10 +19,14 @@ import {
   barDomain,
   formatAxisAmount,
   formatTooltipAmount,
-  lineAxis,
 } from '@/lib/chart';
 import { buildDailyCumulative, monthDateKeys } from '@/lib/entries';
-import { dayRangeQuery } from '@/lib/datetime';
+import { dayRangeQuery, throughDayOf } from '@/lib/datetime';
+import { loadPreviousMonths } from '@/lib/month-compare';
+import DailyCumulativeChart, {
+  type CumulativeSeries,
+  type DailyCumulativePoint,
+} from './DailyCumulativeChart';
 import type { EntryFilterQuery } from '@money/types';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
 import type { Category } from '@/lib/types';
@@ -78,13 +81,6 @@ interface BudgetDetailModalProps {
 interface MonthlyData {
   month: string;
   amount: number;
-}
-
-interface DailyData {
-  /** x축 라벨. 한 달 안이면 "5일", 달을 넘으면 "8/5" */
-  label: string;
-  amount: number;
-  cumulative: number;
 }
 
 interface PieChartData {
@@ -155,7 +151,9 @@ export function BudgetDetailModal({
   const periodKey = `${dayKeys.startKey}~${dayKeys.endKey}`;
 
   const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
-  const [dailyData, setDailyData] = useState<DailyData[]>([]);
+  const [dailyData, setDailyData] = useState<DailyCumulativePoint[]>([]);
+  /** 겹쳐 그릴 전전달·지난달. 달 단위로 볼 때만 채운다. */
+  const [comparisons, setComparisons] = useState<CumulativeSeries[]>([]);
   const [periodEntries, setCurrentMonthEntries] = useState<EntryListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedPieCategory, setSelectedPieCategory] = useState<string | null>(null);
@@ -208,23 +206,36 @@ export function BudgetDetailModal({
                 projectId,
               );
 
-        // 이 구간의 거래 목록. 일별 누적과 목록에 쓴다.
-        //
-        // 전체 지출은 kind='expense'가 아니라 categoryType='expense'로 뽑는다.
-        // kind로 걸면 수수료가 붙은 이체가 빠져서, 12개월 그래프(수수료 포함)와 어긋난다.
-        // 커서를 끝까지 따라간다. 한 페이지만 받으면 아래 일별 누적이
-        // 12개월 그래프(서버 집계, 전량)와 어긋난다.
+        /*
+         * 이 구간의 거래를 뽑는 조건. 날짜만 빼 둔다.
+         *
+         * 전체 지출은 kind='expense'가 아니라 categoryType='expense'로 뽑는다.
+         * kind로 걸면 수수료가 붙은 이체가 빠져서, 12개월 그래프(수수료 포함)와
+         * 어긋난다. 앞선 달을 겹쳐 그릴 때 날짜만 바꿔 이 조건을 그대로 다시 쓴다.
+         */
+        const entryQuery = {
+          ...filter,
+          ...(target.scope === 'category'
+            ? { categoryId, ...(exactCategory ? { categoryExact: true } : {}) }
+            : { categoryType: target.type }),
+        };
+
+        // 일별 누적과 목록에 쓴다. 커서를 끝까지 따라간다. 한 페이지만 받으면
+        // 아래 일별 누적이 12개월 그래프(서버 집계, 전량)와 어긋난다.
         const entriesPromise = apiClient.getAllEntries(
-          {
-            startDate,
-            endDate,
-            ...filter,
-            ...(target.scope === 'category'
-              ? { categoryId, ...(exactCategory ? { categoryExact: true } : {}) }
-              : { categoryType: target.type }),
-          },
+          { ...entryQuery, startDate, endDate },
           projectId,
         );
+
+        /*
+         * 겹쳐 그릴 앞선 두 달.
+         *
+         * 기간을 직접 정했을 때는 받지 않는다. 열흘짜리 구간의 "지난달"이 한 달인지
+         * 같은 열흘인지 정해지지 않아 견줄 대상이 없다.
+         */
+        const comparisonPromise = period.yearMonth
+          ? loadPreviousMonths(period.yearMonth, entryQuery, projectId, timeZone)
+          : Promise.resolve([] as CumulativeSeries[]);
 
         // 원형차트: 전체면 대분류별, 대분류를 보고 있으면 소분류별
         const breakdownPromise =
@@ -239,11 +250,12 @@ export function BudgetDetailModal({
           ? Promise.resolve([])
           : apiClient.getCategoryBreakdown(period, target.type, projectId, { rollup: false, ...filter });
 
-        const [trendRes, entriesRes, breakdownRes, flatRes] = await Promise.all([
+        const [trendRes, entriesRes, breakdownRes, flatRes, comparisonRes] = await Promise.all([
           trendPromise,
           entriesPromise,
           breakdownPromise,
           flatPromise,
+          comparisonPromise,
         ]);
         setFlatBreakdown((flatRes ?? []) as any);
 
@@ -260,6 +272,7 @@ export function BudgetDetailModal({
 
         // 일별 누적. 이체는 금액이 아니라 수수료만 쌓는다.
         setDailyData(buildDailyCumulative(rows, dayKeys.startKey, dayKeys.endKey, timeZone));
+        setComparisons(comparisonRes);
 
         const breakdown = (breakdownRes ?? []) as BreakdownRow[];
         // 대분류를 보고 있으면 그 아래 소분류 + 미분류만 남긴다
@@ -278,6 +291,7 @@ export function BudgetDetailModal({
         // 실패했을 때 이전 구간의 데이터가 남아 있으면 잘못된 값을 보게 되므로 비운다.
         setMonthlyData([]);
         setDailyData([]);
+        setComparisons([]);
         setCurrentMonthEntries([]);
         setCategoryStats([]);
         setFlatBreakdown([]);
@@ -304,8 +318,21 @@ export function BudgetDetailModal({
   // 카드사 이체는 애초에 들어오지 않는다. 따로 걸러 내지 않는다.
   const visibleEntries = periodEntries;
 
+  /*
+   * 달 단위로 볼 때만 쓰는 값. 이번 달 선의 이름과, 그 선을 며칠까지 그을지다.
+   * 기간 보기에서는 견줄 달이 없어 둘 다 필요 없다.
+   */
+  const currentMonthName = period.yearMonth ? `${Number(period.yearMonth.slice(5))}월` : undefined;
+  const throughDay = period.yearMonth ? throughDayOf(period.yearMonth, timeZone) : undefined;
+
   const hasMonthlyAmount = monthlyData.some((d) => d.amount > 0);
-  const hasDailyAmount = dailyData.some((d) => d.cumulative > 0);
+  /*
+   * 이 달에 쓴 것이 없어도 앞선 달에 있으면 그린다. "지난달에는 여기에 이만큼
+   * 썼는데 이번 달은 0"이 그림으로 보여야 한다.
+   */
+  const hasDailyAmount =
+    dailyData.some((d) => d.cumulative > 0) ||
+    comparisons.some((series) => series.points.some((point) => point.cumulative > 0));
 
   const handlePieClick = (data: PieChartData) => {
     if (!data.id) return;
@@ -421,32 +448,14 @@ export function BudgetDetailModal({
           <div>
             <h3 className="text-lg font-semibold mb-4">일별 누적 사용금액</h3>
             {hasDailyAmount ? (
-              <ResponsiveContainer width="100%" height={300}>
-                <LineChart data={dailyData} margin={CHART_MARGIN}>
-                  <CartesianGrid {...CHART_GRID} />
-                  <XAxis dataKey="label" tick={CHART_TICK} />
-                  {/* 꺾은선은 값이 움직인 구간만 그린다 (lineAxis 주석 참고) */}
-                  <YAxis
-                    {...lineAxis(dailyData.map((d) => d.cumulative), displayCurrency)}
-                    tick={CHART_TICK}
-                    width={CHART_Y_AXIS_WIDTH}
-                  />
-                  <Tooltip
-                    formatter={(value: any) => formatTooltipAmount(value, '누적 사용금액', displayCurrency)}
-                    contentStyle={CHART_TOOLTIP_STYLE}
-                  />
-                  {/* 선이 하나뿐이라 범례를 지웠다. 툴팁이 같은 이름을 보여 준다. */}
-                  <Line
-                    type="monotone"
-                    dataKey="cumulative"
-                    name="누적 사용금액"
-                    stroke={CHART_COLOR}
-                    strokeWidth={2}
-                    dot={false}
-                    activeDot={CHART_ACTIVE_DOT}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
+              <DailyCumulativeChart
+                current={dailyData}
+                comparisons={comparisons}
+                currentName={currentMonthName}
+                throughDay={throughDay}
+                tooltipName="누적 사용금액"
+                height={300}
+              />
             ) : (
               <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
                 이번 달 사용 내역이 없습니다.
