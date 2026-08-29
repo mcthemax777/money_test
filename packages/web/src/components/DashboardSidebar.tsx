@@ -2,159 +2,46 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState, useEffect } from 'react';
-import { useProject } from '@/store/project';
-import { useUserFilter } from '@/store/user-filter';
-import { useAuth } from '@/store/auth';
-import { apiClient } from '@/lib/api-client';
+
+import { AppBrand } from '@/components/AppLogo';
+import ProjectSwitchModal from '@/components/ProjectSwitchModal';
 import { UserAvatar } from '@/components/UserAvatar';
+import { useNavPending } from '@/hooks/useNavPending';
+import { useProjectSwitch } from '@/hooks/useProjectSwitch';
+import { isActiveNav, navItemsOf } from '@/lib/nav';
+import { useAuth } from '@/store/auth';
+import { useProject } from '@/store/project';
 
-
-interface Project {
-  id: string;
-  name: string;
-  description?: string;
-  role: 'owner' | 'editor' | 'viewer';
-}
-
-// 프로젝트가 있어야 의미가 있는 메뉴. 프로젝트가 없으면 감춘다.
-const projectMenuItems = [
-  { label: '홈', href: '/home' },
-  { label: '가계', href: '/dashboard' },
-  { label: '자산', href: '/assets' },
-  { label: '카테고리', href: '/categories' },
-];
-
-// 프로젝트가 없어도 접근할 수 있어야 하는 메뉴 (여기서 프로젝트를 만든다)
-const alwaysVisibleItems = [{ label: '설정', href: '/settings' }];
-
+/**
+ * 넓은 화면의 왼쪽 사이드바.
+ *
+ * 좁은 화면에서는 아예 그리지 않는다. 예전에는 왼쪽 위 버튼으로 이 사이드바를
+ * 서랍처럼 꺼냈는데, 꺼내기 전에는 지금 무슨 프로젝트를 보고 있는지도 알 수 없고
+ * 꺼내면 화면을 통째로 덮었다. 좁은 화면은 위쪽 막대(MobileTopBar)와 아래쪽
+ * 탭(MobileTabBar)이 대신 맡는다.
+ */
 export default function DashboardSidebar() {
   const pathname = usePathname();
-  const [isOpen, setIsOpen] = useState(false);
-  const [showProjectChangeModal, setShowProjectChangeModal] = useState(false);
-  const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
-  const [isChanging, setIsChanging] = useState(false);
-  const { projects, setProjects, selectedProjectId, setSelectedProjectId } = useProject();
-  const { setDefaultProject, defaultProjectData, user } = useAuth();
+  const { projects, selectedProjectId } = useProject();
+  const { user } = useAuth();
+  const switcher = useProjectSwitch();
+  const { pendingHref, start } = useNavPending();
 
   const hasProject = projects.length > 0;
-  const visibleMenuItems = hasProject
-    ? [...projectMenuItems, ...alwaysVisibleItems]
-    : alwaysVisibleItems;
-
-  // 프로젝트 로드
-  useEffect(() => {
-    const loadProjects = async () => {
-      try {
-        const data = await apiClient.getMyProjects();
-        setProjects(data || []);
-        // 기본값: 첫 번째 프로젝트 선택
-        if (!selectedProjectId && data && data.length > 0) {
-          setSelectedProjectId(data[0].id);
-        }
-      } catch (err) {
-        console.error('프로젝트 목록 조회 실패:', err);
-      }
-    };
-
-    if (projects.length === 0) {
-      loadProjects();
-    }
-  }, [projects.length, selectedProjectId, setProjects, setSelectedProjectId]);
-
-  const isActive = (href: string) => {
-    if (href === '/home') {
-      return pathname === '/home';
-    }
-    if (href === '/dashboard') {
-      return pathname === '/dashboard';
-    }
-    if (href === '/assets') {
-      return pathname === '/assets' || pathname === '/assets/';
-    }
-    // 내 정보는 사이드탭 상단의 별도 항목이므로 설정 메뉴와 함께 강조되지 않게 한다.
-    if (href === '/settings') {
-      return pathname.startsWith('/settings') && !pathname.startsWith('/settings/profile');
-    }
-    return pathname.startsWith(href);
-  };
-
-  // 프로젝트 변경 요청
-  const handleProjectChangeRequest = (projectId: string) => {
-    if (selectedProjectId === projectId) return; // 이미 선택된 프로젝트면 무시
-    setPendingProjectId(projectId);
-    setShowProjectChangeModal(true);
-  };
-
-  // 프로젝트 변경 확인
-  const handleConfirmProjectChange = async () => {
-    if (!pendingProjectId) return;
-
-    try {
-      setIsChanging(true);
-      // 기본 프로젝트 변경 API 호출
-      const projectData = await setDefaultProject(pendingProjectId);
-
-      if (projectData) {
-        // 사람 목록은 프로젝트 것이므로 비운다. 가계 화면이 다시 채운다.
-        //
-        // 선택(selectedPersonIds)은 여기서 건드리지 않는다. 스토어가 filterProjectId로
-        // 소속을 들고 있어 가계 화면이 알아서 맞춘다. 예전에는 여기서 빈 배열로
-        // 비웠는데 personFilterTouched는 그대로여서, 그 빈 배열이 "사용자가 전부
-        // 해제함"으로 읽혀 전환 직후 화면이 통째로 비었다.
-        useUserFilter.getState().setPeople([]);
-        setSelectedProjectId(pendingProjectId);
-        console.log(`✅ 프로젝트 변경됨: ${pendingProjectId}`, projectData);
-      }
-
-      setShowProjectChangeModal(false);
-      setPendingProjectId(null);
-      setIsOpen(false);
-    } catch (err) {
-      console.error('프로젝트 변경 실패:', err);
-      alert('프로젝트 변경에 실패했습니다.');
-    } finally {
-      setIsChanging(false);
-    }
-  };
-
-  // 프로젝트 변경 취소
-  const handleCancelProjectChange = () => {
-    setShowProjectChangeModal(false);
-    setPendingProjectId(null);
-  };
+  const menuItems = navItemsOf(hasProject);
 
   return (
     <>
-      <button
-        onClick={() => setIsOpen(!isOpen)}
-        className="fixed top-4 left-4 z-50 md:hidden p-2 bg-white border border-gray-200 rounded-lg hover:bg-gray-50"
-      >
-        <svg
-          className="w-6 h-6"
-          fill="none"
-          stroke="currentColor"
-          viewBox="0 0 24 24"
-        >
-          <path
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            strokeWidth={2}
-            d="M4 6h16M4 12h16M4 18h16"
-          />
-        </svg>
-      </button>
+      <aside className="hidden md:block fixed left-0 top-0 h-screen w-64 bg-white border-r border-gray-200 overflow-y-auto z-40">
+        {/* 맨 위는 앱 표시. 좁은 화면의 위쪽 막대 가운데에 오는 것과 같은 것이다. */}
+        <div className="flex items-center p-4 border-b border-gray-200">
+          <AppBrand size="md" />
+        </div>
 
-      <aside
-        className={`fixed left-0 top-0 h-screen w-64 bg-white border-r border-gray-200 pt-20 md:pt-0 overflow-y-auto transition-transform duration-300 z-40 ${
-          isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
-        }`}
-      >
         <Link
           href="/settings/profile"
-          onClick={() => setIsOpen(false)}
           className={`flex items-center gap-3 p-4 border-b border-gray-200 transition ${
-            isActive('/settings/profile') ? 'bg-blue-50' : 'hover:bg-gray-50'
+            pathname.startsWith('/settings/profile') ? 'bg-blue-50' : 'hover:bg-gray-50'
           }`}
         >
           <UserAvatar name={user?.name} avatar={user?.avatar} />
@@ -172,7 +59,7 @@ export default function DashboardSidebar() {
             {projects.map((project) => (
               <button
                 key={project.id}
-                onClick={() => handleProjectChangeRequest(project.id)}
+                onClick={() => switcher.request(project.id)}
                 className={`w-full text-left px-3 py-2 rounded-lg transition text-sm ${
                   selectedProjectId === project.id
                     ? 'bg-blue-50 text-blue-600 font-medium'
@@ -187,76 +74,49 @@ export default function DashboardSidebar() {
         </div>
 
         <nav className="p-4">
-          <div className="mb-4">
-            <ul className="space-y-2">
-              {visibleMenuItems.map((item) => (
+          <ul className="space-y-2">
+            {menuItems.map((item) => {
+              const pending = pendingHref === item.href;
+              // 누르는 즉시 켠다. 다음 화면이 뜨기 전에는 이 표시가 유일한 대답이다.
+              const active = pending || isActiveNav(pathname, item.href);
+              return (
                 <li key={item.href}>
                   <Link
                     href={item.href}
-                    onClick={() => setIsOpen(false)}
-                    className={`block px-4 py-2 rounded-lg transition ${
-                      isActive(item.href)
+                    onClick={() => start(item.href)}
+                    aria-current={active ? 'page' : undefined}
+                    className={`flex items-center justify-between gap-2 px-4 py-2 rounded-lg transition ${
+                      active
                         ? 'bg-blue-50 text-blue-600 font-medium'
                         : 'text-gray-700 hover:bg-gray-50'
                     }`}
                   >
                     {item.label}
+                    {pending && (
+                      <span
+                        className="h-4 w-4 animate-spin rounded-full border-2 border-blue-200 border-t-blue-600"
+                        aria-hidden
+                      />
+                    )}
                   </Link>
                 </li>
-              ))}
-            </ul>
+              );
+            })}
+          </ul>
 
-            {!hasProject && (
-              <p className="mt-4 px-4 text-xs text-gray-500">
-                참여 중인 프로젝트가 없습니다. 설정에서 프로젝트를 만들거나 참여하세요.
-              </p>
-            )}
-          </div>
+          {!hasProject && (
+            <p className="mt-4 px-4 text-xs text-gray-500">
+              참여 중인 프로젝트가 없습니다. 설정에서 프로젝트를 만들거나 참여하세요.
+            </p>
+          )}
         </nav>
       </aside>
 
-      {/* 프로젝트 변경 확인 모달 */}
-      {showProjectChangeModal && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-          <div className="bg-white rounded-lg shadow-lg p-6 max-w-sm w-full mx-4">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">
-              프로젝트를 변경하시겠습니까?
-            </h2>
-            <p className="text-gray-600 mb-6">
-              현재 프로젝트의 데이터가 초기화됩니다.
-            </p>
-            <div className="flex gap-3">
-              <button
-                onClick={handleCancelProjectChange}
-                disabled={isChanging}
-                className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition disabled:opacity-50"
-              >
-                취소
-              </button>
-              <button
-                onClick={handleConfirmProjectChange}
-                disabled={isChanging}
-                className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition disabled:opacity-50 flex items-center justify-center"
-              >
-                {isChanging ? (
-                  <>
-                    <span className="animate-spin inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full mr-2" />
-                    변경 중...
-                  </>
-                ) : (
-                  '변경'
-                )}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      <div
-        className={`fixed inset-0 bg-black/50 z-30 md:hidden ${
-          isOpen ? 'block' : 'hidden'
-        }`}
-        onClick={() => setIsOpen(false)}
+      <ProjectSwitchModal
+        isOpen={switcher.isAsking}
+        isChanging={switcher.isChanging}
+        onConfirm={switcher.confirm}
+        onCancel={switcher.cancel}
       />
     </>
   );
