@@ -55,7 +55,6 @@ export default function EntryFeed({
   reloadToken = 0,
 }: EntryFeedProps) {
   const [entries, setEntries] = useState<EntryListItem[]>([]);
-  const [cursor, setCursor] = useState<string | null>(null);
   const [hasMore, setHasMore] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
@@ -68,11 +67,22 @@ export default function EntryFeed({
    */
   const runRef = useRef(0);
 
+  /*
+   * 지금 부를 다음 커서와, 조회가 나가 있는지.
+   *
+   * 둘 다 state만으로는 모자란다. state는 다시 그려져야 바뀌는데 휠·손가락 사건은
+   * 그 사이에도 계속 들어온다. 그러면 같은 커서로 두 번 부르거나, 이미 나간 조회를
+   * 못 보고 또 불러 같은 거래가 목록에 두 번 붙는다(키 중복 경고).
+   */
+  const cursorRef = useRef<string | null>(null);
+  const loadingRef = useRef(false);
+
   const filterKey = JSON.stringify([filter, startDate, endDate]);
 
   const loadPage = useCallback(
     async (after: string | null, run: number) => {
-      if (!projectId) return;
+      if (!projectId || loadingRef.current) return;
+      loadingRef.current = true;
       try {
         setIsLoading(true);
         setError('');
@@ -90,7 +100,7 @@ export default function EntryFeed({
 
         const rows = (page?.data ?? []) as EntryListItem[];
         setEntries((prev) => (after === null ? rows : [...prev, ...rows]));
-        setCursor(page?.nextCursor ?? null);
+        cursorRef.current = page?.nextCursor ?? null;
         setHasMore(Boolean(page?.nextCursor));
       } catch (err) {
         if (runRef.current !== run) return;
@@ -99,7 +109,11 @@ export default function EntryFeed({
         // 다음 쪽을 계속 조르지 않는다. 아래 버튼으로 사용자가 다시 시도한다.
         setHasMore(false);
       } finally {
-        if (runRef.current === run) setIsLoading(false);
+        // 지난 조회의 뒤늦은 끝맺음이 지금 나가 있는 조회의 표를 내리면 안 된다.
+        if (runRef.current === run) {
+          loadingRef.current = false;
+          setIsLoading(false);
+        }
       }
     },
     // filterKey로 의존성을 굳힌다. filter는 렌더마다 새 객체이고 구간도 함께 담는다.
@@ -112,9 +126,16 @@ export default function EntryFeed({
     const run = runRef.current + 1;
     runRef.current = run;
     setEntries([]);
-    setCursor(null);
+    cursorRef.current = null;
     setHasMore(true);
+    // 앞선 조회는 이제 버려진다. 그것이 끝나기를 기다리지 않고 처음부터 다시 받는다.
+    loadingRef.current = false;
     loadPage(null, run);
+  }, [loadPage]);
+
+  /** 다음 쪽. 커서는 항상 표에서 읽어 같은 쪽을 두 번 붙이지 않는다. */
+  const loadNext = useCallback(() => {
+    loadPage(cursorRef.current, runRef.current);
   }, [loadPage]);
 
   /** 바닥에서 더 당긴 거리. 표시를 밀어내는 값이자 다음 쪽을 부르는 방아쇠다. */
@@ -129,9 +150,9 @@ export default function EntryFeed({
   useEffect(() => {
     if (!hasMore || isLoading || entries.length === 0) return;
     if (document.documentElement.scrollHeight <= window.innerHeight + 8) {
-      loadPage(cursor, runRef.current);
+      loadNext();
     }
-  }, [entries.length, hasMore, isLoading, cursor, loadPage]);
+  }, [entries.length, hasMore, isLoading, loadNext]);
 
   /*
    * 바닥에서의 당김.
@@ -165,7 +186,7 @@ export default function EntryFeed({
       setPull(Math.min(pullRef.current, PULL_MAX));
       if (pullRef.current >= PULL_THRESHOLD) {
         settle();
-        loadPage(cursor, runRef.current);
+        loadNext();
         return;
       }
       scheduleSettle();
@@ -200,7 +221,7 @@ export default function EntryFeed({
       window.removeEventListener('touchend', onTouchEnd);
       if (resetTimer.current) clearTimeout(resetTimer.current);
     };
-  }, [cursor, hasMore, isLoading, loadPage]);
+  }, [hasMore, isLoading, loadNext]);
 
   if (!isLoading && entries.length === 0 && !error) {
     return <p className="text-sm text-gray-600">거래가 없습니다.</p>;
@@ -217,7 +238,7 @@ export default function EntryFeed({
             type="button"
             onClick={() => {
               setHasMore(true);
-              loadPage(cursor, runRef.current);
+              loadNext();
             }}
             className="rounded border border-gray-300 px-3 py-1 text-sm text-gray-700 hover:bg-gray-100"
           >
