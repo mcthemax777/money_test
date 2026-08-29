@@ -19,7 +19,6 @@ export const CARD_COLORS = [
   'copper',
   'amber',
   'tan',
-  'brown',
   'darkbrown',
   'rose',
   'red',

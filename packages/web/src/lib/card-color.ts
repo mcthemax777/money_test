@@ -135,13 +135,6 @@ export const CARD_PALETTE: Record<CardColor, CardPalette> = {
     positive: { text: 'text-emerald-800', bar: 'bg-emerald-800' },
     negative: { text: 'text-red-800', bar: 'bg-red-800' },
   },
-  brown: {
-    label: '갈색',
-    face: 'bg-gradient-to-br from-[#6f4423] to-[#a26a35]',
-    ...ON_DARK,
-    positive: { text: 'text-lime-200', bar: 'bg-lime-200' },
-    negative: { text: 'text-red-300', bar: 'bg-red-300' },
-  },
   darkbrown: {
     label: '고동색',
     face: 'bg-gradient-to-br from-[#3f2415] to-[#7a4a28]',
