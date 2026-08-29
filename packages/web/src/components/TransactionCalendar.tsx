@@ -2,9 +2,11 @@
 
 import { useMemo } from 'react';
 import type { EntryListItem } from './TransactionItem';
-import { sumEntries } from '@/lib/entries';
-import { currentYearMonth, dateKeyOf } from '@/lib/datetime';
+import { sumEntries, type CountedShare } from '@/lib/entries';
+import { currentYearMonth, dateKeyOf, weekdayNames } from '@/lib/datetime';
+import { formatNumber } from '@/lib/money';
 import { useProjectTimeZone } from '@/store/project';
+import { useTranslation } from '@/lib/i18n';
 
 interface CalendarDay {
   date: Date;
@@ -16,6 +18,8 @@ interface CalendarDay {
 
 interface Props {
   entries: EntryListItem[];
+  /** 일반/과소비 중 어느 몫을 셀지. 넘기지 않으면 거래 금액 전부다. */
+  share?: CountedShare;
   /** 화면에 표시할 연도 */
   year: number;
   /** 화면에 표시할 월 (1~12) */
@@ -36,6 +40,7 @@ interface Props {
 
 export default function TransactionCalendar({
   entries,
+  share,
   year,
   month,
   onDateSelect,
@@ -45,6 +50,7 @@ export default function TransactionCalendar({
   periodStart,
   periodEnd,
 }: Props) {
+  const { t } = useTranslation();
   // 거래가 며칠 칸에 들어가는지는 프로젝트 타임존 기준으로 판단한다.
   const timeZone = useProjectTimeZone();
   // 표시 월은 부모가 관리한다. 내부 상태를 두면 홈 상단의 월 이동과 어긋난다.
@@ -104,7 +110,7 @@ export default function TransactionCalendar({
         (entry) => dateKeyOf(entry.date, timeZone) === dateStr,
       );
 
-      const { incomeTotal, expenseTotal } = sumEntries(dayEntries);
+      const { incomeTotal, expenseTotal } = sumEntries(dayEntries, share);
 
       calendarDays.push({
         date: new Date(currentDay),
@@ -138,7 +144,7 @@ export default function TransactionCalendar({
     onMonthChange(todayYear, todayMonth);
   };
 
-  const weekDays = ['일', '월', '화', '수', '목', '금', '토'];
+  const weekDays = weekdayNames();
 
   return (
     <div className="w-full">
@@ -196,14 +202,14 @@ export default function TransactionCalendar({
                     <div className={`text-xs font-medium truncate ${
                       isStartOrEndDate(day.date) ? 'text-white' : 'text-red-600'
                     }`}>
-                      - {new Intl.NumberFormat('ko-KR').format(day.expenseTotal)}
+                      - {formatNumber(day.expenseTotal)}
                     </div>
                   )}
                   {day.incomeTotal > 0 && (
                     <div className={`text-xs font-medium truncate ${
                       isStartOrEndDate(day.date) ? 'text-white' : 'text-green-600'
                     }`}>
-                      + {new Intl.NumberFormat('ko-KR').format(day.incomeTotal)}
+                      + {formatNumber(day.incomeTotal)}
                     </div>
                   )}
                 </div>
@@ -211,7 +217,7 @@ export default function TransactionCalendar({
 
               {day.entries.length > 0 && day.expenseTotal === 0 && day.incomeTotal === 0 && (
                 <div className="text-xs text-gray-500">
-                  {day.entries.length}건
+                  {t('ledger.entryCount', { count: day.entries.length })}
                 </div>
               )}
             </div>

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
+import { useTranslation } from '@/lib/i18n';
 import type { Person } from '@/lib/types';
 
 interface PersonScopeTitleProps {
@@ -26,11 +27,16 @@ const MAX_NAMES = 3;
  * 아무도 고르지 않은 상태는 "전체"가 아니라 "결과 없음"이다. 화면 이름만 남기면
  * 그 사실이 사라지므로 뒤에 붙여서 알린다.
  */
-function scopeLabel(names: string[], total: number, noun: string): string {
-  if (names.length === 0) return `${noun} · 자산주인 없음`;
-  if (names.length === total) return `전체 ${noun}`;
-  if (names.length <= MAX_NAMES) return `${names.join(', ')}님의 ${noun}`;
-  return `${names[0]} 외 ${names.length - 1}명의 ${noun}`;
+function scopeLabel(
+  t: ReturnType<typeof useTranslation>['t'],
+  names: string[],
+  total: number,
+  noun: string,
+): string {
+  if (names.length === 0) return t('scopeTitle.none', { noun });
+  if (names.length === total) return t('scopeTitle.all', { noun });
+  if (names.length <= MAX_NAMES) return t('scopeTitle.some', { names: names.join(', '), noun });
+  return t('scopeTitle.many', { first: names[0], count: names.length - 1, noun });
 }
 
 /**
@@ -53,6 +59,7 @@ export default function PersonScopeTitle({
   selectedPersonIds,
   onTogglePerson,
 }: PersonScopeTitleProps) {
+  const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -90,7 +97,7 @@ export default function PersonScopeTitle({
           className="flex items-center gap-1.5 -ml-2 px-2 py-1 rounded-lg text-2xl font-bold text-gray-900 hover:bg-gray-100 transition"
           aria-haspopup="dialog"
           aria-expanded={isOpen}
-          title="자산주인 선택"
+          title={t('scopeTitle.pick')}
         >
           {/*
             누를 수 있다는 표시는 글자 앞에 둔다. 뒤에 두면 홈의 첫 문장
@@ -98,17 +105,17 @@ export default function PersonScopeTitle({
           */}
           <ChevronDown className="w-5 h-5 text-gray-400" />
           {/* 구성원을 아직 못 받았으면 이름 자리를 비워 두고 화면 이름만 적는다 */}
-          {people.length === 0 ? noun : scopeLabel(selectedNames, people.length, noun)}
+          {people.length === 0 ? noun : scopeLabel(t, selectedNames, people.length, noun)}
         </button>
       </h1>
 
       {isOpen && (
         <div className="absolute top-full left-0 mt-2 w-56 bg-white border border-gray-200 rounded-lg shadow-lg z-20 p-3">
           <p className="text-xs font-semibold text-gray-600 uppercase tracking-wider mb-2">
-            자산주인
+            {t('scopeTitle.owner')}
           </p>
           {people.length === 0 ? (
-            <p className="text-sm text-gray-500">구성원이 없습니다.</p>
+            <p className="text-sm text-gray-500">{t('scopeTitle.noPeople')}</p>
           ) : (
             <div className="flex flex-col gap-2">
               {people.map((person) => (
@@ -125,7 +132,7 @@ export default function PersonScopeTitle({
                   <span className="text-sm text-gray-700">
                     {person.name}
                     {person.id === myPersonId && (
-                      <span className="text-xs text-blue-600"> (나)</span>
+                      <span className="text-xs text-blue-600"> {t('scopeTitle.me')}</span>
                     )}
                   </span>
                 </label>

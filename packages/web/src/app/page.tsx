@@ -3,8 +3,10 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/store/auth';
+import { useTranslation } from '@/lib/i18n';
 
 export default function Home() {
+  const { t } = useTranslation();
   const router = useRouter();
   const { isAuthenticated, isInitializing } = useAuth();
 
@@ -19,5 +21,7 @@ export default function Home() {
     }
   }, [isInitializing, isAuthenticated, router]);
 
-  return <div className="flex justify-center items-center h-screen">로그인 중...</div>;
+  return (
+    <div className="flex justify-center items-center h-screen">{t('shell.signingIn')}</div>
+  );
 }

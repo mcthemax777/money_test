@@ -20,8 +20,9 @@ import {
   formatAxisAmount,
   formatTooltipAmount,
 } from '@/lib/chart';
-import { buildDailyCumulative, monthDateKeys } from '@/lib/entries';
-import { dayRangeQuery, throughDayOf } from '@/lib/datetime';
+import { buildDailyCumulative, countedShare, monthDateKeys } from '@/lib/entries';
+import { dayRangeQuery, formatMonthShort, throughDayOf } from '@/lib/datetime';
+import { activeLocale, translate, useTranslation } from '@/lib/i18n';
 import { loadPreviousMonths } from '@/lib/month-compare';
 import DailyCumulativeChart, {
   type CumulativeSeries,
@@ -116,7 +117,10 @@ function buildSubcategoryStats(rows: BreakdownRow[], parentId: string): PieChart
 
   const direct = rows.find((item) => item.categoryId === parentId);
   const directAmount = direct ? toNumber(direct.amount) : 0;
-  if (directAmount > 0) stats.push({ name: '미분류', value: directAmount });
+  if (directAmount > 0) {
+    // 훅 밖의 순수 함수라 지금 언어를 직접 읽는다.
+    stats.push({ name: translate(activeLocale(), 'category.uncategorized'), value: directAmount });
+  }
 
   return stats.sort((a, b) => b.value - a.value);
 }
@@ -135,6 +139,7 @@ export function BudgetDetailModal({
   onEntryClick,
   reloadToken,
 }: BudgetDetailModalProps) {
+  const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
   const displayCurrency = useProjectDisplayCurrency();
 
@@ -262,7 +267,7 @@ export function BudgetDetailModal({
         const trend = (trendRes ?? []) as Array<{ yearMonth: string; amount: string }>;
         setMonthlyData(
           trend.map((point) => ({
-            month: `${Number(point.yearMonth.split('-')[1])}월`,
+            month: formatMonthShort(Number(point.yearMonth.split('-')[1])),
             amount: toNumber(point.amount),
           })),
         );
@@ -271,7 +276,15 @@ export function BudgetDetailModal({
         setCurrentMonthEntries(rows);
 
         // 일별 누적. 이체는 금액이 아니라 수수료만 쌓는다.
-        setDailyData(buildDailyCumulative(rows, dayKeys.startKey, dayKeys.endKey, timeZone));
+        setDailyData(
+          buildDailyCumulative(
+            rows,
+            dayKeys.startKey,
+            dayKeys.endKey,
+            timeZone,
+            countedShare(filter),
+          ),
+        );
         setComparisons(comparisonRes);
 
         const breakdown = (breakdownRes ?? []) as BreakdownRow[];
@@ -322,7 +335,9 @@ export function BudgetDetailModal({
    * 달 단위로 볼 때만 쓰는 값. 이번 달 선의 이름과, 그 선을 며칠까지 그을지다.
    * 기간 보기에서는 견줄 달이 없어 둘 다 필요 없다.
    */
-  const currentMonthName = period.yearMonth ? `${Number(period.yearMonth.slice(5))}월` : undefined;
+  const currentMonthName = period.yearMonth
+    ? formatMonthShort(Number(period.yearMonth.slice(5)))
+    : undefined;
   const throughDay = period.yearMonth ? throughDayOf(period.yearMonth, timeZone) : undefined;
 
   const hasMonthlyAmount = monthlyData.some((d) => d.amount > 0);
@@ -345,7 +360,7 @@ export function BudgetDetailModal({
   const content = (
     <div className="space-y-8 p-4">
       {loading ? (
-        <div className="text-center text-gray-500">데이터 로드 중...</div>
+        <div className="text-center text-gray-500">{t('detail.loading')}</div>
       ) : (
         <>
           {/* 원형차트: categoryStats가 있을 때 표시 */}
@@ -355,11 +370,11 @@ export function BudgetDetailModal({
                 <h3 className="text-lg font-semibold">
                   {(() => {
                     if (categoryId === 'total-expense') {
-                      return selectedPieCategory ? '소분류별 지출' : '대분류별 지출';
+                      return t(selectedPieCategory ? 'detail.pieExpenseChild' : 'detail.pieExpenseParent');
                     } else if (categoryId === 'total-income') {
-                      return selectedPieCategory ? '소분류별 수입' : '대분류별 수입';
+                      return t(selectedPieCategory ? 'detail.pieIncomeChild' : 'detail.pieIncomeParent');
                     } else {
-                      return '소분류별 지출';
+                      return t('detail.pieExpenseChild');
                     }
                   })()}
                 </h3>
@@ -371,7 +386,7 @@ export function BudgetDetailModal({
                     }}
                     className="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
                   >
-                    뒤로가기
+                    {t('detail.back')}
                   </button>
                 )}
               </div>
@@ -418,7 +433,7 @@ export function BudgetDetailModal({
 
           {/* 12개월 바차트 */}
           <div>
-            <h3 className="text-lg font-semibold mb-4">월별 사용금액</h3>
+            <h3 className="text-lg font-semibold mb-4">{t('detail.monthlyUsage')}</h3>
             {hasMonthlyAmount ? (
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={monthlyData} margin={CHART_MARGIN}>
@@ -431,7 +446,9 @@ export function BudgetDetailModal({
                     width={CHART_Y_AXIS_WIDTH}
                   />
                   <Tooltip
-                    formatter={(value: any) => formatTooltipAmount(value, '사용금액', displayCurrency)}
+                    formatter={(value: any) =>
+                    formatTooltipAmount(value, t('detail.usage'), displayCurrency)
+                  }
                     contentStyle={CHART_TOOLTIP_STYLE}
                   />
                   <Bar dataKey="amount" fill={CHART_COLOR} radius={CHART_BAR_RADIUS} />
@@ -439,35 +456,35 @@ export function BudgetDetailModal({
               </ResponsiveContainer>
             ) : (
               <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
-                최근 12개월 사용 내역이 없습니다.
+                {t('detail.noYearUsage')}
               </p>
             )}
           </div>
 
           {/* 일별 라인차트 */}
           <div>
-            <h3 className="text-lg font-semibold mb-4">일별 누적 사용금액</h3>
+            <h3 className="text-lg font-semibold mb-4">{t('detail.dailyCumulative')}</h3>
             {hasDailyAmount ? (
               <DailyCumulativeChart
                 current={dailyData}
                 comparisons={comparisons}
                 currentName={currentMonthName}
                 throughDay={throughDay}
-                tooltipName="누적 사용금액"
+                tooltipName={t('detail.cumulativeUsage')}
                 height={300}
               />
             ) : (
               <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
-                이번 달 사용 내역이 없습니다.
+                {t('detail.noMonthUsage')}
               </p>
             )}
           </div>
 
           {/* 거래내역 */}
           <div>
-            <h3 className="text-lg font-semibold mb-4">거래기록</h3>
+            <h3 className="text-lg font-semibold mb-4">{t('detail.entries')}</h3>
             {visibleEntries.length === 0 ? (
-              <p className="text-gray-500 text-sm">거래내역이 없습니다.</p>
+              <p className="text-gray-500 text-sm">{t('detail.noEntries')}</p>
             ) : (
               <TransactionListView
                 entries={visibleEntries}
@@ -485,7 +502,7 @@ export function BudgetDetailModal({
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`${categoryName} 상세 분석`}>
+    <Modal isOpen={isOpen} onClose={onClose} title={t('category.detailTitle', { name: categoryName })}>
       {content}
     </Modal>
   );

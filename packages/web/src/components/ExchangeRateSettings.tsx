@@ -3,15 +3,16 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ExchangeRateInfo } from '@money/types';
 import { apiClient } from '@/lib/api-client';
+import { useTranslation, type MessageKey } from '@/lib/i18n';
 import { toAmountString, toNumber } from '@/lib/money';
 import { useProject } from '@/store/project';
 import { clearExchangeRateCache } from '@/hooks/useExchangeRates';
 
 /** 어디서 온 환율인지. 사용자가 정한 값과 서버 기본값을 구분해 보여 준다. */
-const SOURCE_LABEL: Record<string, string> = {
-  manual: '직접 설정',
-  fallback: '기본값',
-  identity: '같은 통화',
+const SOURCE_KEY: Record<string, MessageKey> = {
+  manual: 'exchangeRate.source.manual',
+  fallback: 'exchangeRate.source.fallback',
+  identity: 'exchangeRate.source.identity',
 };
 
 /**
@@ -28,6 +29,7 @@ const SOURCE_LABEL: Record<string, string> = {
  * 환율을 바꾼다고 달라질 값이 아니다.
  */
 export default function ExchangeRateSettings() {
+  const { t } = useTranslation();
   const { selectedProjectId } = useProject();
   const [ledgerCurrency, setLedgerCurrency] = useState('KRW');
   const [rates, setRates] = useState<ExchangeRateInfo[]>([]);
@@ -44,9 +46,9 @@ export default function ExchangeRateSettings() {
       setDrafts({});
     } catch (err) {
       console.error('환율 조회 실패:', err);
-      setError('환율을 불러오지 못했습니다.');
+      setError(t('exchangeRate.loadFailed'));
     }
-  }, [selectedProjectId]);
+  }, [selectedProjectId, t]);
 
   useEffect(() => {
     load();
@@ -67,7 +69,7 @@ export default function ExchangeRateSettings() {
       clearExchangeRateCache();
       await load();
     } catch (err: any) {
-      setError(err?.response?.data?.message || '환율 저장에 실패했습니다.');
+      setError(err?.response?.data?.message || t('exchangeRate.saveFailed'));
     } finally {
       setSavingPair(null);
     }
@@ -81,7 +83,7 @@ export default function ExchangeRateSettings() {
       clearExchangeRateCache();
       await load();
     } catch (err: any) {
-      setError(err?.response?.data?.message || '되돌리기에 실패했습니다.');
+      setError(err?.response?.data?.message || t('exchangeRate.resetFailed'));
     } finally {
       setSavingPair(null);
     }
@@ -91,11 +93,8 @@ export default function ExchangeRateSettings() {
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <h2 className="text-lg font-semibold text-gray-900">환율</h2>
-      <p className="mt-1 text-sm text-gray-600">
-        아직 청구액을 모르는 카드 결제를 추정할 때와, 리포트를 다른 통화로 볼 때 쓰는
-        환율입니다. 이미 실제 금액이 적힌 거래는 환율을 바꿔도 달라지지 않습니다.
-      </p>
+      <h2 className="text-lg font-semibold text-gray-900">{t('exchangeRate.title')}</h2>
+      <p className="mt-1 text-sm text-gray-600">{t('exchangeRate.description')}</p>
 
       <div className="mt-4 space-y-2">
         {rates.map((info) => {
@@ -125,7 +124,7 @@ export default function ExchangeRateSettings() {
               <span
                 className={`ml-auto text-xs ${isManual ? 'text-blue-600' : 'text-gray-500'}`}
               >
-                {SOURCE_LABEL[info.source] ?? info.source}
+                {SOURCE_KEY[info.source] ? t(SOURCE_KEY[info.source]) : info.source}
                 {info.date && ` · ${info.date}`}
               </span>
 
@@ -135,7 +134,7 @@ export default function ExchangeRateSettings() {
                 disabled={toNumber(draft) <= 0 || isSaving}
                 className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40"
               >
-                저장
+                {t('common.save')}
               </button>
 
               {/* 직접 설정한 값이 있을 때만 되돌릴 것이 있다. */}
@@ -146,7 +145,7 @@ export default function ExchangeRateSettings() {
                   disabled={isSaving}
                   className="px-3 py-1 text-sm border rounded text-gray-700 hover:bg-gray-100 disabled:opacity-40"
                 >
-                  기본값으로
+                  {t('exchangeRate.reset')}
                 </button>
               )}
             </div>
@@ -157,8 +156,7 @@ export default function ExchangeRateSettings() {
       {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
 
       <p className="mt-3 text-xs text-gray-500">
-        저장 통화는 {ledgerCurrency}입니다. 위 환율은 각 통화를 {ledgerCurrency}로 바꾸는
-        비율입니다.
+        {t('exchangeRate.ledgerNote', { currency: ledgerCurrency })}
       </p>
     </div>
   );

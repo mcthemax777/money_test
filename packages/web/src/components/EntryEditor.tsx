@@ -11,11 +11,12 @@ import {
 import { useExchangeRates } from '@/hooks/useExchangeRates';
 import { useInstitutions } from '@/hooks/useInstitutions';
 import { apiClient } from '@/lib/api-client';
+import { useTranslation, type MessageKey } from '@/lib/i18n';
 import type { Account, Card, Category, Person } from '@/lib/types';
 import { formatCurrency, formatNumber, toAmountString, toNumber } from '@/lib/money';
 import {
-  DAY_OF_MONTH_HINT,
-  DAY_OF_MONTH_OPTIONS,
+  dayOfMonthHint,
+  dayOfMonthOptions,
   DEFAULT_PAYMENT_DUE_DAY,
   DEFAULT_STATEMENT_CLOSING_DAY,
 } from '@/lib/day-of-month';
@@ -51,6 +52,7 @@ import type { EntryListItem } from '@/components/TransactionItem';
 import CardColorPicker from '@/components/CardColorPicker';
 import ExtraAmountModal from '@/components/ExtraAmountModal';
 import CardPerformanceField from '@/components/CardPerformanceField';
+import { useApiError } from '@/lib/api-error';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const ENTRY_FORM_ID = 'entry-form';
@@ -58,10 +60,23 @@ const CARD_FORM_ID = 'card-form';
 const CATEGORY_FORM_ID = 'category-form';
 
 /** 카드사가 흔히 제공하는 할부 개월수. 빈 값이 일시불이다. */
-const INSTALLMENT_OPTIONS = [
-  { id: '', name: '일시불' },
-  ...[2, 3, 4, 5, 6, 9, 10, 12, 18, 24, 36].map((m) => ({ id: String(m), name: `${m}개월` })),
-];
+const INSTALLMENT_MONTHS = [2, 3, 4, 5, 6, 9, 10, 12, 18, 24, 36];
+
+/**
+ * 할부 개월 목록.
+ *
+ * 상수가 아니라 함수다. 모듈을 처음 읽을 때의 언어로 굳으면 언어를 바꿔도
+ * "일시불"만 옛 말로 남는다.
+ */
+function installmentOptions(t: ReturnType<typeof useTranslation>['t']) {
+  return [
+    { id: '', name: t('editor.installmentOnce') },
+    ...INSTALLMENT_MONTHS.map((months) => ({
+      id: String(months),
+      name: t('editor.installmentMonths', { months }),
+    })),
+  ];
+}
 
 /**
  * 빈 거래 입력 폼.
@@ -126,17 +141,17 @@ function emptyEntryForm(timeZone: string, ledgerCurrency: CurrencyCode) {
 
 /** 거래 추가/수정 팝업 맨 위의 유형 탭 */
 const ENTRY_TYPE_TABS = [
-  { id: 'expense', label: '지출' },
-  { id: 'income', label: '수입' },
-  { id: 'transfer', label: '이체' },
+  { id: 'expense', labelKey: 'editor.kind.expense' },
+  { id: 'income', labelKey: 'editor.kind.income' },
+  { id: 'transfer', labelKey: 'editor.kind.transfer' },
 ] as const;
 
-const ENTRY_KIND_LABEL: Record<string, string> = {
-  expense: '지출',
-  income: '수입',
-  transfer: '이체',
-  card_payment: '카드대금 결제',
-  adjustment: '잔액 조정',
+const ENTRY_KIND_KEY: Record<string, MessageKey> = {
+  expense: 'editor.kind.expense',
+  income: 'editor.kind.income',
+  transfer: 'editor.kind.transfer',
+  card_payment: 'editor.kind.card_payment',
+  adjustment: 'editor.kind.adjustment',
 };
 
 export interface EntryEditorHandle {
@@ -193,6 +208,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
   },
   ref,
 ) {
+  const { t } = useTranslation();
+  const { messageOf } = useApiError();
   const { setPeople: setStorePeople } = useUserFilter();
   // 날짜 입력과 표시는 브라우저 로컬이 아니라 프로젝트 기준 타임존으로 해석한다.
   const timeZone = useProjectTimeZone();
@@ -258,7 +275,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
 
   /** 주인 없는 계좌·카드를 담는 묶음. 사람 목록에 없는 소유자를 조용히 버리지 않는다. */
-  const OTHER_OWNER_GROUP = '기타';
+  const OTHER_OWNER_GROUP = t('editor.otherOwner');
 
   /**
    * 결제수단 드롭다운 옵션. 계좌와 카드를 한 목록에 합친다.
@@ -280,14 +297,20 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     }
 
     const cardLabel = (card: (typeof cards)[number]) =>
-      `(카드) ${card.name}${card.issuer?.name ? ` · ${card.issuer.name}` : ''}`;
+      t('editor.cardOption', {
+        name: `${card.name}${card.issuer?.name ? ` · ${card.issuer.name}` : ''}`,
+      });
 
     const options: Array<{ id: string; name: string; group: string }> = [];
     const listed = new Set<string>();
 
     const pushOwner = (group: string, owned: typeof accounts) => {
       for (const account of owned) {
-        options.push({ id: `account:${account.id}`, name: `(계좌) ${account.name}`, group });
+        options.push({
+          id: `account:${account.id}`,
+          name: t('editor.accountOption', { name: account.name }),
+          group,
+        });
         for (const card of cardsOfAccount.get(account.id) ?? []) {
           options.push({ id: `card:${card.id}`, name: cardLabel(card), group });
           listed.add(card.id);
@@ -335,7 +358,11 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       for (const account of owned) {
         options.push({ id: account.id, name: account.name, group });
         for (const card of creditCards.filter((c) => c.paymentAccountId === account.id)) {
-          options.push({ id: card.liabilityAccountId!, name: `(카드) ${card.name}`, group });
+          options.push({
+          id: card.liabilityAccountId!,
+          name: t('editor.cardOption', { name: card.name }),
+          group,
+        });
           listed.add(card.id);
         }
       }
@@ -356,7 +383,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       if (listed.has(card.id)) continue;
       options.push({
         id: card.liabilityAccountId!,
-        name: `(카드) ${card.name}`,
+        name: t('editor.cardOption', { name: card.name }),
         group: OTHER_OWNER_GROUP,
       });
     }
@@ -554,7 +581,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     e.preventDefault();
 
     if (!formData.personId) {
-      setError('사용자를 선택해주세요.');
+      setError(t('editor.personRequired'));
       return;
     }
 
@@ -566,7 +593,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       toNumber(formData.transferFee) > 0 &&
       !formData.transferFeeMainCategoryId
     ) {
-      setError('수수료 대분류를 선택해주세요.');
+      setError(t('editor.feeCategoryRequired'));
       return;
     }
 
@@ -667,7 +694,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       setError('');
       setIsModalOpen(false);
     } catch (err) {
-      setError(editingId ? '거래 수정에 실패했습니다.' : '거래 추가에 실패했습니다.');
+      setError(t(editingId ? 'editor.editFailed' : 'editor.addFailed'));
     } finally {
       setIsSubmitting(false);
     }
@@ -740,7 +767,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
   const handleEditClick = (entry: EntryListItem) => {
     if (!isEditable(entry)) {
-      setError('이 거래는 수정할 수 없습니다. 삭제 후 다시 등록해주세요.');
+      setError(t('editor.notEditable'));
       return;
     }
 
@@ -819,13 +846,13 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
   };
 
   const handleDeleteClick = async (id: string) => {
-    if (!window.confirm('정말 삭제하시겠습니까?')) return;
+    if (!window.confirm(t('account.deleteConfirm'))) return;
     try {
       setIsSubmitting(true);
       await apiClient.deleteEntry(id);
       await onEntryChange();
     } catch (err: any) {
-      const errorMsg = err?.response?.data?.error?.message || '거래 삭제에 실패했습니다.';
+      const errorMsg = messageOf(err, 'editor.deleteFailed');
       setError(errorMsg);
     } finally {
       setIsSubmitting(false);
@@ -847,7 +874,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       // 카드사는 필수다. CustomSelect는 <input required>와 달리 브라우저 검증이 없어
       // 비워 두면 서버에서 "기관을 찾을 수 없습니다"가 돌아와 원인을 알기 어렵다.
       if (!cardFormData.issuerId) {
-        alert('발급사를 선택하세요.');
+        alert(t('card.issuerRequired'));
         setCardSubmitting(false);
         return;
       }
@@ -925,7 +952,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     const subs = filledSubCategories(categoryFormData.subCategories);
     // 소분류 모드에서는 이름이 하나라도 있어야 만들 것이 있다.
     if (categoryParent && subs.length === 0) {
-      setCategoryError('소분류 이름을 입력해주세요.');
+      setCategoryError(t('editor.subNameRequired'));
       return;
     }
 
@@ -974,7 +1001,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
       closeCategoryModal();
     } catch (err: any) {
-      setCategoryError(err?.response?.data?.error?.message || '카테고리 추가에 실패했습니다.');
+      setCategoryError(messageOf(err, 'categories.addFailed'));
     } finally {
       setCategorySubmitting(false);
     }
@@ -996,11 +1023,11 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         title={
           isCardPaymentForm
             ? formData.cardTransferDirection === 'refund'
-              ? '환불 입금 수정'
-              : '카드 대금 결제 수정'
+              ? t('editor.titleRefund')
+              : t('editor.titleCardPayment')
             : editingId
-              ? '거래 수정'
-              : '거래 추가'
+              ? t('editor.titleEdit')
+              : t('editor.titleAdd')
         }
         /* 버튼은 form 밖(하단 고정 영역)이라 form 속성으로 묶는다 */
         footer={
@@ -1010,7 +1037,9 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
             disabled={isSubmitting}
             className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
-            {isSubmitting ? (editingId ? '수정 중...' : '추가 중...') : (editingId ? '수정하기' : '추가하기')}
+            {isSubmitting
+              ? t(editingId ? 'account.editing' : 'account.adding')
+              : t(editingId ? 'account.editSubmit' : 'account.addSubmit')}
           </button>
         }
       >
@@ -1018,17 +1047,16 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               {isCardPaymentForm && (
                 <div className="p-3 bg-blue-50 border border-blue-200 text-blue-800 text-sm rounded-lg">
                   {formData.cardTransferDirection === 'refund'
-                    ? '카드사에서 통장으로 돈이 들어온 기록입니다.'
-                    : '통장에서 카드사로 대금이 나간 기록입니다.'}{' '}
-                  지출로 집계되지 않습니다. 잘못 넣었다면 금액과 날짜를 고치거나 삭제하세요.
-                  사용 내역은 건드릴 필요가 없습니다.
+                    ? t('editor.refundNote')
+                    : t('editor.paymentNote')}{' '}
+                  {t('editor.cardTransferHint')}
                 </div>
               )}
 
               {/* 유형을 맨 위에서 탭으로 고른다. 아래 입력이 유형에 따라 달라지므로 먼저 정한다. */}
               {/* 카드대금 결제는 다른 유형으로 바꿀 수 없다. 부채 상환이라 대응하는 탭이 없다. */}
               {!isCardPaymentForm && (
-              <div role="tablist" aria-label="거래 유형" className="flex gap-1 p-1 bg-gray-100 rounded-lg">
+              <div role="tablist" aria-label={t('editor.kindTablist')} className="flex gap-1 p-1 bg-gray-100 rounded-lg">
                 {ENTRY_TYPE_TABS.map((tab) => {
                   // 카드는 지출만 만들 수 있고, 결제된 청구서에 속한 내역은 유형을 못 바꾼다.
                   const disabled = formData.method === 'card' && tab.id !== 'expense';
@@ -1053,7 +1081,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                           : 'text-gray-600 hover:text-gray-900'
                       } ${disabled ? 'opacity-40 cursor-not-allowed hover:text-gray-600' : ''}`}
                     >
-                      {tab.label}
+                      {t(tab.labelKey)}
                     </button>
                   );
                 })}
@@ -1063,7 +1091,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               {/* 금액은 유형 바로 아래에 둔다. 팝업이 열릴 때 여기로 포커스가 가므로
                   아래쪽에 있으면 본문이 스크롤돼 유형 탭이 가려진다. */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">금액</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">{t('editor.amount')}</label>
                 <div className="flex gap-2">
                   <input
                     type="number"
@@ -1124,7 +1152,9 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                     {needsBilled && (
                       <div>
                         <label className="block text-xs font-medium text-gray-600 mb-1">
-                          실제 {isCreditCardSelected ? '청구액' : '결제액'} ({ledgerCurrency})
+                          {t(isCreditCardSelected ? 'editor.billedCredit' : 'editor.billedDebit', {
+                    currency: ledgerCurrency,
+                  })}
                           {mustBill && <span className="ml-1 text-red-500">*</span>}
                         </label>
                         <input
@@ -1136,12 +1166,16 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                             setFormData({ ...formData, billedAmount: e.target.value })
                           }
                           className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                          placeholder={isCreditCardSelected ? '명세서에 찍힌 금액' : '통장에서 빠진 금액'}
+                          placeholder={t(
+                    isCreditCardSelected
+                      ? 'editor.billedCreditPlaceholder'
+                      : 'editor.billedDebitPlaceholder',
+                  )}
                         />
                         <p className="mt-1 text-xs text-gray-500">
                           {isCreditCardSelected
-                            ? '명세서가 나온 뒤에 넣어도 됩니다. 그때까지는 기본 환율로 추정합니다.'
-                            : '통장에서 이미 빠진 금액입니다.'}
+                            ? t('editor.billedCreditHint')
+                            : t('editor.billedDebitHint')}
                         </p>
                       </div>
                     )}
@@ -1150,18 +1184,18 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                     <div className="px-3 py-2 bg-gray-50 rounded-lg">
                       <div className="flex justify-between text-xs">
                         <span className="text-gray-600">
-                          환율 (1 {formData.currency} = ? {ledgerCurrency})
+                          {t('editor.rateLabel', { from: formData.currency, to: ledgerCurrency })}
                         </span>
                         <span className="font-medium text-gray-900">
                           {derivedRate || formatNumber(rateOf(formData.currency)) || '-'}
-                          {!hasBilled && <span className="ml-1 text-gray-500">기본</span>}
+                          {!hasBilled && <span className="ml-1 text-gray-500">{t('editor.rateDefault')}</span>}
                         </span>
                       </div>
                       <p className="mt-1 text-xs text-gray-500">
                         {convertedPreview
-                          ? `${convertedPreview} 로 기록됩니다.`
-                          : '금액을 넣으면 기록될 값이 여기 나옵니다.'}
-                        {!hasBilled && ' 기본 환율은 설정에서 바꿉니다.'}
+                          ? t('editor.recordedAs', { amount: convertedPreview })
+                          : t('editor.recordedHint')}
+                        {!hasBilled && t('editor.rateSettingsHint')}
                       </p>
                     </div>
                   </div>
@@ -1169,8 +1203,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
                 {paymentCurrency !== formData.currency && formData.currency !== ledgerCurrency && (
                   <p className="mt-1 text-xs text-gray-500">
-                    결제수단은 {paymentCurrency}입니다. 청구되는 {ledgerCurrency} 금액이 기록되고
-                    원래 금액은 참고용으로 함께 남습니다.
+                    {t('editor.foreignHint', { payment: paymentCurrency, ledger: ledgerCurrency })}
                   </p>
                 )}
               </div>
@@ -1179,7 +1212,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    날짜
+                    {t('editor.date')}
                   </label>
                   <input
                     type="date"
@@ -1196,7 +1229,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    시간
+                    {t('editor.time')}
                   </label>
                   <input
                     type="time"
@@ -1214,14 +1247,18 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                  */
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">카드</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">{t('editor.card')}</label>
                     <p className="px-3 py-2 bg-gray-100 rounded-lg text-gray-700">
                       {cards.find((c) => c.id === formData.cardId)?.name ?? '-'}
                     </p>
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      {formData.cardTransferDirection === 'refund' ? '입금 통장' : '결제 통장'}
+                      {t(
+                    formData.cardTransferDirection === 'refund'
+                      ? 'editor.refundAccount'
+                      : 'editor.paymentAccountLabel',
+                  )}
                     </label>
                     <p className="px-3 py-2 bg-gray-100 rounded-lg text-gray-700">
                       {accounts.find((a) => a.id === formData.accountId)?.name ?? '-'}
@@ -1231,7 +1268,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               ) : formData.type === 'transfer' ? (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    보내는 계좌
+                    {t('editor.fromAccount')}
                   </label>
                   {/* 신용카드를 고르면 카드사에 대금을 갚는 것이 아니라 환불을 받는 쪽이 된다 */}
                   <CustomSelect
@@ -1242,37 +1279,34 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                     onChange={(value) =>
                       setFormData({ ...formData, method: 'account', accountId: value, cardId: '' })
                     }
-                    placeholder="선택하세요"
                   />
                 </div>
               ) : (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    결제수단
+                    {t('editor.method')}
                   </label>
                   {/* 계좌와 카드를 한 목록에서 고른다. 접두사로 종류를 구분한다. */}
                   <CustomSelect
                     options={paymentMethodOptions}
                     value={selectedPaymentMethodId}
                     onChange={handlePaymentMethodChange}
-                    placeholder="선택하세요"
                     onAddClick={() => setIsMethodChooserOpen(true)}
-                    addButtonLabel="결제수단 추가"
+                    addButtonLabel={t('editor.addMethod')}
                   />
                 </div>
               )}
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  사용자
+                  {t('editor.person')}
                 </label>
                 <CustomSelect
                   options={people.map((p) => ({ id: p.id, name: p.name }))}
                   value={formData.personId}
                   onChange={(value) => setFormData({ ...formData, personId: value })}
-                  placeholder="선택하세요"
                   onAddClick={() => setIsPersonModalOpen(true)}
-                  addButtonLabel="사용자 추가"
+                  addButtonLabel={t('editor.addPerson')}
                 />
               </div>
 
@@ -1280,7 +1314,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      대분류
+                      {t('editor.parentCategory')}
                     </label>
                     <CustomSelect
                       options={categories
@@ -1296,15 +1330,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                           extraAmount: '',
                         })
                       }
-                      placeholder="선택하세요"
                       onAddClick={() => openCategoryModal()}
-                      addButtonLabel="대분류 추가"
+                      addButtonLabel={t('editor.addParentCategory')}
                     />
                   </div>
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      소분류 (선택)
+                      {t('editor.childCategory')}
                     </label>
                     <CustomSelect
                       options={
@@ -1316,13 +1349,13 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                                   c.parentId === formData.mainCategoryId
                               )
                               .map((cat) => ({ id: cat.id, name: cat.name }))
-                          : [{ id: '', name: '없음' }]
+                          : [{ id: '', name: t('editor.none') }]
                       }
                       value={formData.subCategoryId}
                       onChange={(value) =>
                         setFormData({ ...formData, subCategoryId: value, extraAmount: '' })
                       }
-                  placeholder="없음"
+                  placeholder={t('editor.none')}
                   /*
                     소분류는 대분류 아래에 붙는다. 대분류를 고르기 전에는 붙일 곳이
                     없으므로 버튼 자체를 내리고, 고른 뒤에는 그 대분류로 팝업을 연다.
@@ -1332,7 +1365,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                       ? () => openCategoryModal(formData.mainCategoryId)
                       : undefined
                   }
-                  addButtonLabel="소분류 추가"
+                  addButtonLabel={t('editor.addChildCategory')}
                 />
                   </div>
 
@@ -1354,7 +1387,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      이체 대상 계좌
+                      {t('editor.toAccount')}
                     </label>
                     <CustomSelect
                       options={transferAccountOptions.filter(
@@ -1362,7 +1395,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                       )}
                       value={formData.toAccountId}
                       onChange={(value) => setFormData({ ...formData, toAccountId: value })}
-                      placeholder="선택하세요"
                     />
                   </div>
 
@@ -1376,7 +1408,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   {isCrossCurrencyTransfer && (
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">
-                        받은 금액 ({toCurrency})
+                        {t('editor.receivedAmount', { currency: toCurrency })}
                       </label>
                       <input
                         type="number"
@@ -1386,9 +1418,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                         placeholder="135000"
                       />
                       <p className="mt-1 text-xs text-gray-500">
-                        {paymentCurrency} 계좌에서 {toCurrency} 계좌로 옮깁니다. 통장에 실제로
-                        찍힌 금액을 적으면 그날의 실효 환율로 기록됩니다. 비우면 서버 환율로
-                        계산합니다.
+                        {t('editor.exchangeHint', { from: paymentCurrency, to: toCurrency })}
                       </p>
                     </div>
                   )}
@@ -1400,16 +1430,16 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   {transferCardSide && (
                     <div className="p-3 bg-blue-50 border border-blue-200 text-blue-800 text-sm rounded-lg">
                       {transferCardSide === 'payment'
-                        ? '통장에서 카드사로 나가므로 대금 결제로 기록됩니다.'
-                        : '카드사에서 통장으로 들어오므로 환불 입금으로 기록됩니다.'}{' '}
-                      지출로 집계되지 않고 카드 부채만 움직입니다.
+                        ? t('editor.toCardPayment')
+                        : t('editor.toCardRefund')}{' '}
+                      {t('editor.cardTransferNote')}
                     </div>
                   )}
 
                   {/* 카드사와의 이체에는 수수료를 붙일 수 없다 (서버도 거부한다) */}
                   <div className={transferCardSide ? 'hidden' : undefined}>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      이체 수수료 (선택)
+                      {t('editor.transferFee')}
                     </label>
                     <input
                       type="number"
@@ -1431,7 +1461,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                     <>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                          수수료 대분류
+                          {t('editor.feeParentCategory')}
                         </label>
                         <CustomSelect
                           options={categories
@@ -1446,15 +1476,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                               extraAmount: '',
                             })
                           }
-                          placeholder="선택하세요"
                           onAddClick={() => openCategoryModal()}
-                          addButtonLabel="대분류 추가"
+                          addButtonLabel={t('editor.addParentCategory')}
                         />
                       </div>
 
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
-                          수수료 소분류 (선택)
+                          {t('editor.feeChildCategory')}
                         </label>
                         <CustomSelect
                           options={
@@ -1466,7 +1495,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                                       c.parentId === formData.transferFeeMainCategoryId
                                   )
                                   .map((cat) => ({ id: cat.id, name: cat.name }))
-                              : [{ id: '', name: '없음' }]
+                              : [{ id: '', name: t('editor.none') }]
                           }
                           value={formData.transferFeeSubCategoryId}
                           onChange={(value) =>
@@ -1476,7 +1505,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                               extraAmount: '',
                             })
                           }
-                          placeholder="없음"
+                          placeholder={t('editor.none')}
                         />
                       </div>
 
@@ -1494,40 +1523,40 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  설명
+                  {t('editor.description')}
                 </label>
                 <input
                   type="text"
                   value={formData.description}
                   onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="거래 설명"
+                  placeholder={t('editor.descriptionPlaceholder')}
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  거래처 (선택)
+                  {t('editor.merchant')}
                 </label>
                 <input
                   type="text"
                   value={formData.merchant}
                   onChange={(e) => setFormData({ ...formData, merchant: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="가맹점, 송금 계좌주 등 (선택사항)"
+                  placeholder={t('editor.merchantPlaceholder')}
                 />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  상세설명 (선택)
+                  {t('editor.memo')}
                 </label>
                 <input
                   type="text"
                   value={formData.detailedNote}
                   onChange={(e) => setFormData({ ...formData, detailedNote: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="추가 설명 (선택사항)"
+                  placeholder={t('editor.memoPlaceholder')}
                 />
               </div>
 
@@ -1541,16 +1570,16 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               {canInstall && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    할부 (선택)
+                    {t('editor.installment')}
                   </label>
                   <CustomSelect
-                    options={INSTALLMENT_OPTIONS}
+                    options={installmentOptions(t)}
                     value={formData.installmentMonths}
                     onChange={(value) => setFormData({ ...formData, installmentMonths: value })}
-                    placeholder="일시불"
+                    placeholder={t('editor.installmentOnce')}
                   />
                   <p className="mt-1 text-xs text-gray-500">
-                    지출과 카드 부채는 오늘 전액 잡힙니다. 청구만 나뉩니다.
+                    {t('editor.installmentHint')}
                   </p>
                 </div>
               )}
@@ -1568,13 +1597,13 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       <ChoiceModal
         isOpen={isMethodChooserOpen}
         onClose={() => setIsMethodChooserOpen(false)}
-        title="결제수단 추가"
+        title={t('editor.addMethod')}
         choices={[
           {
             key: 'account',
             icon: '🏦',
-            label: '계좌 추가',
-            description: '새로운 계좌를 추가합니다',
+            label: t('account.add'),
+            description: t('account.addDescription'),
             tone: 'green',
             onSelect: () => {
               setIsMethodChooserOpen(false);
@@ -1584,8 +1613,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
           {
             key: 'card',
             icon: '💳',
-            label: '카드 추가',
-            description: '새로운 카드를 추가합니다',
+            label: t('card.add'),
+            description: t('card.addDescription'),
             tone: 'purple',
             onSelect: () => {
               setIsMethodChooserOpen(false);
@@ -1615,7 +1644,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       <Modal
         isOpen={isCardModalOpen}
         onClose={() => setIsCardModalOpen(false)}
-        title="카드 추가"
+        title={t('card.add')}
         footer={
           <button
             type="submit"
@@ -1623,14 +1652,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
             disabled={cardSubmitting}
             className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
-            {cardSubmitting ? '추가 중...' : '추가하기'}
+            {cardSubmitting ? t('account.adding') : t('account.addSubmit')}
           </button>
         }
       >
         <form id={CARD_FORM_ID} onSubmit={handleCardSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              카드 이름
+              {t('card.name')}
             </label>
             <input
               type="text"
@@ -1638,49 +1667,47 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               value={cardFormData.name}
               onChange={(e) => setCardFormData({ ...cardFormData, name: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="예: 내 체크카드"
+              placeholder={t('card.namePlaceholder')}
             />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              계좌
+              {t('card.account')}
             </label>
             <CustomSelect
               options={accounts.map((acc) => ({ id: acc.id, name: acc.name }))}
               value={cardFormData.accountId}
               onChange={(value) => setCardFormData({ ...cardFormData, accountId: value })}
-              placeholder="선택하세요"
               onAddClick={() => {}}
-              addButtonLabel="계좌 추가"
+              addButtonLabel={t('account.add')}
             />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              카드 번호 (선택)
+              {t('card.numberOptional')}
             </label>
             <input
               type="text"
               value={cardFormData.cardNumber}
               onChange={(e) => setCardFormData({ ...cardFormData, cardNumber: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="16자리"
+              placeholder={t('card.numberPlaceholder')}
             />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              카드 유형
+              {t('card.type')}
             </label>
             <CustomSelect
               options={[
-                { id: 'debit', name: '체크카드' },
-                { id: 'credit', name: '신용카드' },
+                { id: 'debit', name: t('method.debit_card') },
+                { id: 'credit', name: t('method.credit_card') },
               ]}
               value={cardFormData.cardType}
               onChange={(value) => setCardFormData({ ...cardFormData, cardType: value as 'debit' | 'credit' })}
-              placeholder="선택하세요"
               onAddClick={() => {}}
               addButtonLabel=""
             />
@@ -1688,19 +1715,19 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              발급사
+              {t('card.issuer')}
             </label>
             <CustomSelect
               options={issuerOptions}
               value={cardFormData.issuerId}
               onChange={(value) => setCardFormData({ ...cardFormData, issuerId: value })}
-              placeholder="카드사를 선택하세요"
+              placeholder={t('card.issuerPlaceholder')}
             />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              만료 월 (선택)
+              {t('card.expiry')}
             </label>
             <input
               type="month"
@@ -1711,7 +1738,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">카드 색 (선택)</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('card.color')}</label>
             <CardColorPicker
               value={cardFormData.color}
               onChange={(color) => setCardFormData({ ...cardFormData, color })}
@@ -1731,7 +1758,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
             <>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  신용한도 (원)
+                  {t('card.limit', { currency: ledgerCurrency })}
                 </label>
                 <input
                   type="number"
@@ -1745,7 +1772,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               {/* 마감일과 결제일로 청구 주기를 계산한다 */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  마감일
+                  {t('card.closingDay')}
                 </label>
                 <select
                   value={cardFormData.statementClosingDay}
@@ -1754,16 +1781,16 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {DAY_OF_MONTH_OPTIONS.map((option) => (
+                  {dayOfMonthOptions().map((option) => (
                     <option key={option.day} value={option.day}>{option.label}</option>
                   ))}
                 </select>
-                <p className="mt-1 text-xs text-gray-500">{DAY_OF_MONTH_HINT}</p>
+                <p className="mt-1 text-xs text-gray-500">{dayOfMonthHint()}</p>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  결제일
+                  {t('card.paymentDay')}
                 </label>
                 <select
                   value={cardFormData.paymentDueDay}
@@ -1772,11 +1799,11 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {DAY_OF_MONTH_OPTIONS.map((option) => (
+                  {dayOfMonthOptions().map((option) => (
                     <option key={option.day} value={option.day}>{option.label}</option>
                   ))}
                 </select>
-                <p className="mt-1 text-xs text-gray-500">{DAY_OF_MONTH_HINT}</p>
+                <p className="mt-1 text-xs text-gray-500">{dayOfMonthHint()}</p>
               </div>
             </>
           )}
@@ -1788,7 +1815,11 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       <Modal
         isOpen={isCategoryModalOpen}
         onClose={closeCategoryModal}
-        title={categoryParent ? `${categoryParent.name} 소분류 추가` : '카테고리 추가'}
+        title={
+          categoryParent
+            ? t('editor.subCategoryAddTitle', { parent: categoryParent.name })
+            : t('editor.categoryAddTitle')
+        }
         footer={
           <button
             type="submit"
@@ -1802,7 +1833,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
             }
             className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {categorySubmitting ? '추가 중...' : '추가하기'}
+            {categorySubmitting ? t('account.adding') : t('account.addSubmit')}
           </button>
         }
       >
@@ -1829,7 +1860,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       <Modal
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
-        title="거래 상세내역"
+        title={t('editor.detailTitle')}
         footer={
           selectedTransaction ? (
             <div className="flex gap-2">
@@ -1842,11 +1873,11 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   onClick={handleDetailEditClick}
                   className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
                 >
-                  수정하기
+                  {t('account.editSubmit')}
                 </button>
               ) : (
                 <div className="flex-1 px-4 py-2 text-sm text-gray-500 bg-gray-50 rounded-lg text-center">
-                  잔액 조정은 수정할 수 없습니다
+                  {t('editor.adjustmentNotEditable')}
                 </div>
               )}
               {/* 카드 거래도 계좌 거래와 똑같이 지운다. 청구서 잠금은 없다. */}
@@ -1858,7 +1889,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
                 disabled={isSubmitting}
               >
-                삭제하기
+                {t('account.deleteSubmit')}
               </button>
             </div>
           ) : null
@@ -1868,16 +1899,16 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                수단
+                {t('editor.methodLabel')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {selectedTransaction.cardId ? '카드' : '계좌'}
+                {t(selectedTransaction.cardId ? 'editor.methodCard' : 'editor.methodAccount')}
               </p>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                {selectedTransaction.cardId ? '카드' : '계좌'}
+                {t(selectedTransaction.cardId ? 'editor.methodCard' : 'editor.methodAccount')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                 {selectedTransaction.cardId
@@ -1889,7 +1920,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                사용자
+                {t('editor.person')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                 {selectedTransaction.personName || '-'}
@@ -1898,16 +1929,18 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                유형
+                {t('editor.kindLabel')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {ENTRY_KIND_LABEL[selectedTransaction.kind]}
+                {ENTRY_KIND_KEY[selectedTransaction.kind]
+                  ? t(ENTRY_KIND_KEY[selectedTransaction.kind])
+                  : selectedTransaction.kind}
               </p>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                대분류
+                {t('editor.parentCategory')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                 {selectedTransaction.parentCategoryName || selectedTransaction.categoryName || '-'}
@@ -1917,7 +1950,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
             {selectedTransaction.parentCategoryName && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  소분류
+                  {t('categories.subcategories')}
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                   {selectedTransaction.categoryName || '-'}
@@ -1927,7 +1960,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                금액
+                {t('editor.amount')}
               </label>
               <p className={`px-3 py-2 bg-gray-50 rounded-lg text-lg font-bold ${
                 selectedTransaction.kind === 'income' ? 'text-green-600' : 'text-red-600'
@@ -1939,7 +1972,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                설명
+                {t('editor.description')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                 {selectedTransaction.description || '-'}
@@ -1949,7 +1982,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
             {selectedTransaction.merchant && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  거래처
+                  {t('editor.merchantPlain')}
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                   {selectedTransaction.merchant}
@@ -1960,7 +1993,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
             {selectedTransaction.detailedNote && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  상세설명
+                  {t('editor.memoPlain')}
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                   {selectedTransaction.detailedNote}
@@ -1971,7 +2004,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
             {selectedTransaction.toAccountName && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  이체 대상 계좌
+                  {t('editor.toAccount')}
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                   {selectedTransaction.toAccountName}
@@ -1983,7 +2016,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
             {selectedTransaction.kind === 'transfer' && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  이체 수수료
+                  {t('editor.transferFeePlain')}
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                   {formatCurrency(selectedTransaction.feeAmount ?? 0, displayCurrency)}
@@ -1998,18 +2031,18 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                {selectedTransaction.kind === 'income' ? '추가 수입' : '과소비'}
+                {t(selectedTransaction.kind === 'income' ? 'entry.extraIncome' : 'entry.overspend')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900 tabular-nums">
                 {toNumber(selectedTransaction.extraAmount) > 0
                   ? formatCurrency(selectedTransaction.extraAmount, displayCurrency)
-                  : '없음'}
+                  : t('editor.none')}
               </p>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                날짜
+                {t('editor.date')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                 {/* 시간을 입력하지 않은 거래는 날짜만 보여준다 */}
@@ -2059,8 +2092,9 @@ interface ExtraCheckProps {
  * 담긴 뒤에는 금액이 체크 옆에 보이고, 그 금액을 눌러 다시 고칠 수 있다.
  */
 function ExtraCheck({ kind, amount, value, onChange }: ExtraCheckProps) {
+  const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
-  const label = kind === 'income' ? '추가 수입' : '과소비';
+  const label = t(kind === 'income' ? 'entry.extraIncome' : 'entry.overspend');
   const checked = toNumber(value) > 0;
 
   return (
@@ -2085,7 +2119,7 @@ function ExtraCheck({ kind, amount, value, onChange }: ExtraCheckProps) {
           onClick={() => setIsOpen(true)}
           className="text-sm font-semibold text-blue-600 tabular-nums hover:underline"
         >
-          {formatNumber(value)}원
+          {t('editor.wonSuffix', { amount: formatNumber(value) })}
         </button>
       )}
 

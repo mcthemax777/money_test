@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { apiClient } from '@/lib/api-client';
+import { useTranslation, type MessageKey } from '@/lib/i18n';
 
 interface HiddenItem {
   id: string;
@@ -10,10 +11,10 @@ interface HiddenItem {
   kind: 'person' | 'account' | 'card';
 }
 
-const KIND_LABEL: Record<HiddenItem['kind'], string> = {
-  person: '구성원',
-  account: '통장',
-  card: '카드',
+const KIND_KEY: Record<HiddenItem['kind'], MessageKey> = {
+  person: 'hidden.person',
+  account: 'hidden.account',
+  card: 'hidden.card',
 };
 
 interface Props {
@@ -32,6 +33,7 @@ interface Props {
  * 숨긴 것이 하나도 없으면 아무것도 그리지 않는다.
  */
 export default function HiddenItemsPanel({ projectId, onRestored, reloadToken }: Props) {
+  const { t } = useTranslation();
   const [items, setItems] = useState<HiddenItem[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -61,11 +63,11 @@ export default function HiddenItemsPanel({ projectId, onRestored, reloadToken }:
           .map((c) => ({ id: c.id, name: c.name, kind: 'card' as const })),
       ]);
     } catch {
-      setError('숨긴 항목을 불러오지 못했습니다.');
+      setError(t('hidden.loadFailed'));
     } finally {
       setIsLoading(false);
     }
-  }, [projectId]);
+  }, [projectId, t]);
 
   // 숨긴 것이 있는지는 접혀 있을 때도 알아야 버튼을 보여 줄지 정할 수 있다.
   useEffect(() => {
@@ -86,7 +88,7 @@ export default function HiddenItemsPanel({ projectId, onRestored, reloadToken }:
       await load();
       onRestored();
     } catch {
-      setError('다시 표시하지 못했습니다.');
+      setError(t('hidden.restoreFailed'));
     } finally {
       setRestoringId(null);
     }
@@ -103,14 +105,16 @@ export default function HiddenItemsPanel({ projectId, onRestored, reloadToken }:
       >
         <span className="flex items-center gap-2 text-sm font-medium text-gray-700">
           <EyeOff className="w-4 h-4 text-gray-400" />
-          숨긴 항목 {items.length}개
+          {t('hidden.title', { count: items.length })}
         </span>
-        <span className="text-xs text-gray-400">{isOpen ? '접기' : '펼치기'}</span>
+        <span className="text-xs text-gray-400">
+          {isOpen ? t('hidden.collapse') : t('hidden.expand')}
+        </span>
       </button>
 
       {isOpen && (
         <div className="mt-4 space-y-2">
-          {isLoading && <p className="text-sm text-gray-500">불러오는 중...</p>}
+          {isLoading && <p className="text-sm text-gray-500">{t('hidden.loading')}</p>}
           {error && <p className="text-sm text-red-600">{error}</p>}
 
           {items.map((item) => (
@@ -120,7 +124,7 @@ export default function HiddenItemsPanel({ projectId, onRestored, reloadToken }:
             >
               <span className="min-w-0 truncate text-sm text-gray-700">
                 <span className="mr-2 rounded bg-gray-100 px-1.5 py-0.5 text-xs text-gray-500">
-                  {KIND_LABEL[item.kind]}
+                  {t(KIND_KEY[item.kind])}
                 </span>
                 {item.name}
               </span>
@@ -131,7 +135,7 @@ export default function HiddenItemsPanel({ projectId, onRestored, reloadToken }:
                 className="flex shrink-0 items-center gap-1 rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-600 transition hover:bg-gray-50 disabled:opacity-50"
               >
                 <Eye className="w-3.5 h-3.5" />
-                {restoringId === item.id ? '처리 중' : '다시 표시'}
+                {restoringId === item.id ? t('hidden.restoring') : t('hidden.restore')}
               </button>
             </div>
           ))}

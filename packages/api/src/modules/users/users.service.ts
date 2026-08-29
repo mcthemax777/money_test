@@ -1,8 +1,10 @@
 import { BadRequestException, Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { isLocale, type Locale } from '@money/types';
 import { PrismaService } from '../../config/prisma.service';
 import { ProjectAccessService } from '../../common/project-access.guard';
 import { HIDDEN_ACCOUNT_TYPES } from '../accounts/accounts.service';
 import { toCardResponse } from '../cards/card-view';
+import { badRequest, notFound } from '@/common/app-error';
 
 @Injectable()
 export class UsersService {
@@ -20,6 +22,7 @@ export class UsersService {
         name: true,
         avatar: true,
         defaultProjectId: true,
+        locale: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -28,19 +31,22 @@ export class UsersService {
     return user;
   }
 
-  async updateProfile(userId: string, data: { name?: string; avatar?: string }) {
-    const payload: { name?: string; avatar?: string } = {};
+  async updateProfile(
+    userId: string,
+    data: { name?: string; avatar?: string; locale?: string },
+  ) {
+    const payload: { name?: string; avatar?: string; locale?: Locale } = {};
 
     // 이름은 다른 멤버에게 보이는 값이므로 공백만 들어가지 않도록 막는다.
     if (data.name !== undefined) {
       const name = data.name.trim();
 
       if (!name) {
-        throw new BadRequestException('이름을 입력해주세요.');
+        throw badRequest('NAME_REQUIRED', '이름을 입력해주세요.');
       }
 
       if (name.length > 50) {
-        throw new BadRequestException('이름은 50자 이하로 입력해주세요.');
+        throw badRequest('NAME_TOO_LONG', '이름은 50자 이하로 입력해주세요.', { max: 50 });
       }
 
       payload.name = name;
@@ -50,8 +56,24 @@ export class UsersService {
       payload.avatar = data.avatar;
     }
 
+    /*
+     * 화면 언어.
+     *
+     * 컬럼이 TEXT라 무엇이든 들어갈 수 있다. 여기서 막지 않으면 화면은 사전이 없는
+     * 언어를 들고 열쇠 문자열을 그대로 그린다. 모르는 값은 조용히 기본값으로
+     * 바꾸지 않고 되돌려 말한다. 고른 언어와 다른 언어로 화면이 바뀌면 사용자는
+     * 무엇이 잘못됐는지 알 수 없다.
+     */
+    if (data.locale !== undefined) {
+      if (!isLocale(data.locale)) {
+        throw badRequest('UNSUPPORTED_LOCALE', '지원하지 않는 언어입니다.');
+      }
+
+      payload.locale = data.locale;
+    }
+
     if (Object.keys(payload).length === 0) {
-      throw new BadRequestException('변경할 내용이 없습니다.');
+      throw badRequest('NOTHING_TO_UPDATE', '변경할 내용이 없습니다.');
     }
 
     const user = await this.prisma.user.update({
@@ -63,6 +85,7 @@ export class UsersService {
         name: true,
         avatar: true,
         defaultProjectId: true,
+        locale: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -156,7 +179,7 @@ export class UsersService {
       ]);
 
     if (!project) {
-      throw new NotFoundException('프로젝트를 찾을 수 없습니다.');
+      throw notFound('PROJECT_NOT_FOUND', '프로젝트를 찾을 수 없습니다.');
     }
 
     return {

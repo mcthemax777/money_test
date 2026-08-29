@@ -8,6 +8,7 @@ import ProjectSwitchModal from '@/components/ProjectSwitchModal';
 import { UserAvatar } from '@/components/UserAvatar';
 import { useNavPending } from '@/hooks/useNavPending';
 import { useProjectSwitch } from '@/hooks/useProjectSwitch';
+import { useTranslation } from '@/lib/i18n';
 import { isActiveNav, navItemsOf } from '@/lib/nav';
 import { useAuth } from '@/store/auth';
 import { useProject } from '@/store/project';
@@ -21,6 +22,7 @@ import { useProject } from '@/store/project';
  * 탭(MobileTabBar)이 대신 맡는다.
  */
 export default function DashboardSidebar() {
+  const { t } = useTranslation();
   const pathname = usePathname();
   const { projects, selectedProjectId } = useProject();
   const { user } = useAuth();
@@ -33,7 +35,7 @@ export default function DashboardSidebar() {
   return (
     <>
       <aside className="hidden md:block fixed left-0 top-0 h-screen w-64 bg-white border-r border-gray-200 overflow-y-auto z-40">
-        {/* 맨 위는 앱 표시. 좁은 화면의 위쪽 막대 가운데에 오는 것과 같은 것이다. */}
+        {/* 맨 위는 앱 표시. 좁은 화면의 위쪽 막대 가운데에 오는 것과 같고, 누르면 홈으로 간다. */}
         <div className="flex items-center p-4 border-b border-gray-200">
           <AppBrand size="md" />
         </div>
@@ -46,14 +48,16 @@ export default function DashboardSidebar() {
         >
           <UserAvatar name={user?.name} avatar={user?.avatar} />
           <div className="min-w-0">
-            <p className="text-sm font-medium text-gray-900 truncate">{user?.name ?? '내 정보'}</p>
+            <p className="text-sm font-medium text-gray-900 truncate">
+              {user?.name ?? t('topbar.myInfo')}
+            </p>
             <p className="text-xs text-gray-500 truncate">{user?.email}</p>
           </div>
         </Link>
 
         <div className="p-4 border-b border-gray-200">
           <label className="block text-xs font-semibold text-gray-600 mb-3 uppercase tracking-wider">
-            프로젝트
+            {t('sidebar.projects')}
           </label>
           <div className="space-y-2">
             {projects.map((project) => (
@@ -91,7 +95,7 @@ export default function DashboardSidebar() {
                         : 'text-gray-700 hover:bg-gray-50'
                     }`}
                   >
-                    {item.label}
+                    {t(item.labelKey)}
                     {pending && (
                       <span
                         className="h-4 w-4 animate-spin rounded-full border-2 border-blue-200 border-t-blue-600"
@@ -105,9 +109,7 @@ export default function DashboardSidebar() {
           </ul>
 
           {!hasProject && (
-            <p className="mt-4 px-4 text-xs text-gray-500">
-              참여 중인 프로젝트가 없습니다. 설정에서 프로젝트를 만들거나 참여하세요.
-            </p>
+            <p className="mt-4 px-4 text-xs text-gray-500">{t('sidebar.noProject')}</p>
           )}
         </nav>
       </aside>

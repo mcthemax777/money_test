@@ -2,6 +2,8 @@
 
 import Link from 'next/link';
 
+import { useTranslation } from '@/lib/i18n';
+
 /**
  * 화면 제목 줄. 사이드탭 이름을 그대로 쓴다.
  *
@@ -22,13 +24,15 @@ export default function PageHeader({
   action?: React.ReactNode;
   backHref?: string;
 }) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex items-center gap-3">
         {backHref && (
           <Link
             href={backHref}
-            aria-label="뒤로 가기"
+            aria-label={t('common.back')}
             className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 transition hover:bg-gray-50"
           >
             ←

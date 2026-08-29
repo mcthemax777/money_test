@@ -11,6 +11,7 @@
  *   - 달력 날짜 표시자: CardStatement.periodEnd 처럼 `@db.Date`로 저장된 값.
  *     날짜만 의미가 있고 UTC 자정으로 내려오므로 UTC 필드를 그대로 읽는다.
  */
+import { activeLocaleTag } from '@/lib/i18n';
 import {
   zonedDateKey,
   zonedDateStringToUtc,
@@ -37,7 +38,7 @@ export function timeInputOf(instant: string | Date, timeZone: string): string {
 
 /** 목록/상세에 쓰는 날짜 표기 */
 export function formatDate(instant: string | Date, timeZone: string): string {
-  return new Date(instant).toLocaleDateString('ko-KR', { timeZone });
+  return new Date(instant).toLocaleDateString(activeLocaleTag(), { timeZone });
 }
 
 /**
@@ -50,7 +51,7 @@ export function formatDate(instant: string | Date, timeZone: string): string {
 export function formatTime(instant: string | Date, timeZone: string): string {
   if (timeInputOf(instant, timeZone) === '') return '';
 
-  return new Date(instant).toLocaleTimeString('ko-KR', {
+  return new Date(instant).toLocaleTimeString(activeLocaleTag(), {
     timeZone,
     hour: 'numeric',
     minute: '2-digit',
@@ -60,7 +61,7 @@ export function formatTime(instant: string | Date, timeZone: string): string {
 /** 상세에 쓰는 날짜(+시각) 표기. 시간을 입력하지 않은 거래는 날짜만 보여준다. */
 export function formatDateTime(instant: string | Date, timeZone: string): string {
   const hasTime = timeInputOf(instant, timeZone) !== '';
-  return new Date(instant).toLocaleString('ko-KR', {
+  return new Date(instant).toLocaleString(activeLocaleTag(), {
     timeZone,
     year: 'numeric',
     month: 'long',
@@ -111,7 +112,64 @@ export function monthInputToIso(value: string): string | null {
 
 /** `@db.Date` 값의 표시용 날짜. 청구 기간·결제일이 여기에 해당한다. */
 export function formatDateMarker(marker: string | Date): string {
-  return new Date(marker).toLocaleDateString('ko-KR', { timeZone: 'UTC' });
+  return new Date(marker).toLocaleDateString(activeLocaleTag(), { timeZone: 'UTC' });
+}
+
+/**
+ * 달 이름 표기. 언어마다 적는 법이 달라 사전이 아니라 Intl이 만든다.
+ *
+ *   ko "2026년 8월" · en "August 2026" · ja "2026年8月"
+ *
+ * 사전에 "{year}년 {month}월" 같은 틀을 두면 영어의 "August"를 숫자로 적게 된다.
+ * 달 이름과 차례는 표준이 이미 아는 값이다.
+ *
+ * UTC 자정으로 만들어 UTC로 읽는다. 여기서 다루는 것은 특정 시각이 아니라 달력의
+ * 달이라, 브라우저 타임존으로 읽으면 달이 하나 밀릴 수 있다.
+ */
+function monthDate(year: number, month: number): Date {
+  return new Date(Date.UTC(year, month - 1, 1));
+}
+
+/** "2026년 8월" / "August 2026" / "2026年8月" */
+export function formatYearMonth(year: number, month: number): string {
+  return new Intl.DateTimeFormat(activeLocaleTag(), {
+    year: 'numeric',
+    month: 'long',
+    timeZone: 'UTC',
+  }).format(monthDate(year, month));
+}
+
+/** 달 하나. 달 고르는 표와 그래프 범례처럼 좁은 자리에 쓴다. "8월" / "Aug" / "8月" */
+export function formatMonthShort(month: number): string {
+  return new Intl.DateTimeFormat(activeLocaleTag(), {
+    month: 'short',
+    timeZone: 'UTC',
+  }).format(monthDate(2000, month));
+}
+
+/** "2026년" / "2026" / "2026年" */
+export function formatYearOnly(year: number): string {
+  return new Intl.DateTimeFormat(activeLocaleTag(), {
+    year: 'numeric',
+    timeZone: 'UTC',
+  }).format(monthDate(year, 1));
+}
+
+/**
+ * 일요일부터 시작하는 요일 이름 일곱.
+ *
+ * 달력 머리글이 쓴다. 사전에 적어 두면 언어마다 일곱 줄이 늘어나는데, 요일 이름은
+ * 표준이 이미 아는 값이다. 2024-01-07이 일요일이라 그날부터 이레를 센다.
+ */
+export function weekdayNames(): string[] {
+  const format = new Intl.DateTimeFormat(activeLocaleTag(), {
+    weekday: 'short',
+    timeZone: 'UTC',
+  });
+
+  return Array.from({ length: 7 }, (_, index) =>
+    format.format(new Date(Date.UTC(2024, 0, 7 + index))),
+  );
 }
 
 /** 오늘 날짜의 "YYYY-MM-DD" (프로젝트 타임존 기준). 날짜 입력의 기본값. */

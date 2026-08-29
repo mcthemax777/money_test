@@ -1,5 +1,7 @@
 'use client';
 
+import { useTranslation, type MessageKey } from '@/lib/i18n';
+
 /**
  * 일반/과소비 항목. 둘 다 고르면 전체, 하나도 안 고르면 결과가 없다.
  *
@@ -8,9 +10,9 @@
  */
 export type ExtraType = 'normal' | 'extra';
 
-const EXTRA_OPTIONS: Array<{ value: ExtraType; label: string }> = [
-  { value: 'normal', label: '일반' },
-  { value: 'extra', label: '과소비·추가수입' },
+const EXTRA_OPTIONS: Array<{ value: ExtraType; labelKey: MessageKey }> = [
+  { value: 'normal', labelKey: 'ledger.filterNormal' },
+  { value: 'extra', labelKey: 'ledger.filterExtra' },
 ];
 
 interface EntryFilterBarProps {
@@ -35,11 +37,13 @@ export default function EntryFilterBar({
   selectedExtraTypes,
   onToggleExtraType,
 }: EntryFilterBarProps) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-3 mb-4 p-3 bg-white border border-gray-200 rounded-lg">
       <div className="flex items-center gap-3">
         <span className="text-xs font-semibold text-gray-600 uppercase tracking-wider">
-          과소비 여부
+          {t('ledger.filterExtraLabel')}
         </span>
         {EXTRA_OPTIONS.map((option) => (
           <label key={option.value} className="flex items-center gap-1.5 cursor-pointer">
@@ -49,7 +53,7 @@ export default function EntryFilterBar({
               onChange={() => onToggleExtraType(option.value)}
               className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
             />
-            <span className="text-sm text-gray-700">{option.label}</span>
+            <span className="text-sm text-gray-700">{t(option.labelKey)}</span>
           </label>
         ))}
       </div>

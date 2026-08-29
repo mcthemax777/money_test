@@ -13,3 +13,21 @@ body {
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
 }
+
+/*
+ * 스크롤 막대만 감춘다. 넘기는 것은 그대로다.
+ *
+ * 가로로 늘어놓은 줄(ScrollRow)이 쓴다. 줄마다 회색 띠가 하나씩 생기면 그래프
+ * 아래가 지저분해지는데, 넘기는 방법은 밀기·끌기·양옆 버튼으로 따로 있다.
+ * 세로 스크롤에는 쓰지 않는다. 본문에서 막대를 없애면 얼마나 남았는지 알 길이 없다.
+ */
+@layer utilities {
+  .no-scrollbar {
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+}

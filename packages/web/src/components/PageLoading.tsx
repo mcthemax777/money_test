@@ -5,6 +5,12 @@
  * 때까지 앞 화면이 그대로 남아, 눌러 놓고 아무 일도 일어나지 않는 것처럼 보인다.
  * 껍데기(사이드바·탭)는 레이아웃에 있어 그대로 남고 본문만 바뀐다.
  */
+'use client';
+
+import { useTranslation } from '@/lib/i18n';
+
 export default function PageLoading() {
-  return <p className="text-sm text-gray-600">로딩 중...</p>;
+  const { t } = useTranslation();
+
+  return <p className="text-sm text-gray-600">{t('common.loading')}</p>;
 }

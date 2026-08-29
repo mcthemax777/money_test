@@ -3,10 +3,12 @@
 import { useState, useEffect } from 'react';
 import { apiClient } from '@/lib/api-client';
 import type { Account, Person } from '@/lib/types';
+import { useTranslation } from '@/lib/i18n';
 import { formatCurrency, toAmountString } from '@/lib/money';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@/hooks/useInstitutions';
+import { useApiError } from '@/lib/api-error';
 
 /** 개설 기관이 없는 유형. AddAccountModal, 서버의 NO_INSTITUTION_TYPES와 같아야 한다. */
 const NO_BANK_TYPES = ['cash', 'real_estate'];
@@ -43,6 +45,8 @@ export default function EditAccountModal({
   onDelete,
   projectId,
 }: EditAccountModalProps) {
+  const { t } = useTranslation();
+  const { messageOf } = useApiError();
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -85,7 +89,7 @@ export default function EditAccountModal({
       onSuccess(data || []);
       handleClose();
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || '수정에 실패했습니다.');
+      setError(messageOf(err, 'account.editFailed'));
     } finally {
       setIsSubmitting(false);
     }
@@ -93,7 +97,7 @@ export default function EditAccountModal({
 
   const handleDeleteClick = async () => {
     if (!account) return;
-    if (!window.confirm('정말 삭제하시겠습니까?')) return;
+    if (!window.confirm(t('account.deleteConfirm'))) return;
 
     try {
       setIsDeleting(true);
@@ -101,7 +105,7 @@ export default function EditAccountModal({
       await onDelete(account.id);
       handleClose();
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || '삭제에 실패했습니다.');
+      setError(messageOf(err, 'account.deleteFailed'));
     } finally {
       setIsDeleting(false);
     }
@@ -123,7 +127,7 @@ export default function EditAccountModal({
     <Modal
       isOpen={isOpen}
       onClose={handleClose}
-      title="계좌 수정"
+      title={t('account.edit')}
       /* 버튼은 form 밖(하단 고정 영역)이라 form 속성으로 묶는다 */
       footer={
         <div className="flex gap-2">
@@ -133,7 +137,7 @@ export default function EditAccountModal({
             disabled={isSubmitting}
             className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
-            {isSubmitting ? '수정 중...' : '수정하기'}
+            {isSubmitting ? t('account.editing') : t('account.editSubmit')}
           </button>
           <button
             type="button"
@@ -141,7 +145,7 @@ export default function EditAccountModal({
             disabled={isDeleting || isSubmitting}
             className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
           >
-            {isDeleting ? '삭제 중...' : '삭제하기'}
+            {isDeleting ? t('account.deleting') : t('account.deleteSubmit')}
           </button>
         </div>
       }
@@ -149,7 +153,7 @@ export default function EditAccountModal({
       <form id={FORM_ID} onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            통장 주인
+            {t('account.owner')}
           </label>
           {/* 주인은 이미 원장 전표에 반영돼 있어 나중에 바꾸지 않는다. 표시만 한다. */}
           <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
@@ -159,7 +163,7 @@ export default function EditAccountModal({
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            계좌명
+            {t('account.name')}
           </label>
           <input
             type="text"
@@ -167,20 +171,20 @@ export default function EditAccountModal({
             value={formData.name}
             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="예: 급여 통장"
+            placeholder={t('account.namePlaceholder')}
           />
         </div>
 
         {needsBankName && (
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              개설 기관
+              {t('account.institution')}
             </label>
             <CustomSelect
               options={bankOptions}
               value={formData.institutionId}
               onChange={(value) => setFormData({ ...formData, institutionId: value })}
-              placeholder="은행 / 증권사를 선택하세요"
+              placeholder={t('account.institutionPlaceholder')}
             />
             {bankError && <p className="mt-1 text-xs text-red-600">{bankError}</p>}
           </div>
@@ -188,7 +192,7 @@ export default function EditAccountModal({
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            현재 잔액 ({account.currency})
+            {t('account.currentBalance', { currency: account.currency })}
           </label>
           <input
             type="number"
@@ -201,23 +205,24 @@ export default function EditAccountModal({
           {/* 잔액을 실제로 바꿨을 때만 경고한다. 다른 항목만 고치는 경우에는 뜨지 않는다. */}
           {balanceChanged && (
             <div className="mt-2 p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg">
-              잔액을 바꾸면 거래내역 맨 앞의 <strong>기초잔액</strong> 금액이 다시 계산됩니다
-              ({formatCurrency(account.balance, account.currency)} → {formatCurrency(toAmountString(formData.balance), account.currency)}).
-              새 거래내역은 생기지 않고, 그동안 입력한 거래도 그대로 남습니다.
+              {t('account.balanceHint', {
+                from: formatCurrency(account.balance, account.currency),
+                to: formatCurrency(toAmountString(formData.balance), account.currency),
+              })}
             </div>
           )}
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            계좌번호 (선택)
+            {t('account.number')}
           </label>
           <input
             type="text"
             value={formData.accountNumber}
             onChange={(e) => setFormData({ ...formData, accountNumber: e.target.value })}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="예: 123-456-7890"
+            placeholder={t('account.numberPlaceholder')}
           />
         </div>
 

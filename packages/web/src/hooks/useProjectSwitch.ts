@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 
+import { useTranslation } from '@/lib/i18n';
 import { useAuth } from '@/store/auth';
 import { useProject } from '@/store/project';
 import { useUserFilter } from '@/store/user-filter';
@@ -13,6 +14,7 @@ import { useUserFilter } from '@/store/user-filter';
  * 값이 전부 다른 프로젝트 것이 되므로, 누르자마자 바꾸지 않고 한 번 묻는다.
  */
 export function useProjectSwitch() {
+  const { t } = useTranslation();
   const [pendingProjectId, setPendingProjectId] = useState<string | null>(null);
   const [isChanging, setIsChanging] = useState(false);
   const { selectedProjectId, setSelectedProjectId } = useProject();
@@ -49,7 +51,7 @@ export function useProjectSwitch() {
       setPendingProjectId(null);
     } catch (err) {
       console.error('프로젝트 변경 실패:', err);
-      alert('프로젝트 변경에 실패했습니다.');
+      alert(t('projectSwitch.failed'));
     } finally {
       setIsChanging(false);
     }

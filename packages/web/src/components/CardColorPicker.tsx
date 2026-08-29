@@ -1,6 +1,7 @@
 'use client';
 
 import { CARD_COLOR_OPTIONS } from '@/lib/card-color';
+import { useTranslation } from '@/lib/i18n';
 
 interface CardColorPickerProps {
   /** 고른 색. 빈 문자열이면 카드 종류의 기본색을 쓴다. */
@@ -15,6 +16,8 @@ interface CardColorPickerProps {
  * 홈에서 이 색으로 카드가 보이므로, 고를 때도 그 모습이어야 한다.
  */
 export default function CardColorPicker({ value, onChange }: CardColorPickerProps) {
+  const { t } = useTranslation();
+
   return (
     <div className="flex flex-wrap gap-2">
       {CARD_COLOR_OPTIONS.map((option) => (
@@ -22,8 +25,8 @@ export default function CardColorPicker({ value, onChange }: CardColorPickerProp
           key={option.color}
           type="button"
           onClick={() => onChange(option.color)}
-          title={option.label}
-          aria-label={option.label}
+          title={t(option.labelKey)}
+          aria-label={t(option.labelKey)}
           aria-pressed={value === option.color}
           /* 하양·회색 조각은 폼 바탕에 녹으므로 조각마다 옅은 테두리를 함께 둔다. */
           className={`h-8 w-12 rounded-md border border-black/10 ${option.face} ${

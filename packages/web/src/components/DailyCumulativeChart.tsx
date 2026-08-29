@@ -25,6 +25,7 @@ import {
   formatTooltipAmount,
   lineAxis,
 } from '@/lib/chart';
+import { useTranslation } from '@/lib/i18n';
 import { useProjectDisplayCurrency } from '@/store/project';
 
 /** buildDailyCumulative 한 점 */
@@ -80,6 +81,7 @@ export default function DailyCumulativeChart({
   tooltipName,
   height,
 }: Props) {
+  const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
   const [earlier, previous] = comparisons;
 
@@ -90,12 +92,12 @@ export default function DailyCumulativeChart({
     return Array.from({ length }, (_, index) => ({
       // 앞선 달이 이 달보다 길면(31일 vs 30일) 이 달에는 없는 날이 생긴다.
       // 견주기는 달 단위에서만 하므로 그 자리의 이름은 날짜 그대로다.
-      label: current[index]?.label ?? `${index + 1}일`,
+      label: current[index]?.label ?? t('chart.dayTick', { day: index + 1 }),
       current: index < drawUntil ? (current[index]?.cumulative ?? null) : null,
       previous: previous?.points[index]?.cumulative ?? null,
       earlier: earlier?.points[index]?.cumulative ?? null,
     }));
-  }, [current, comparisons, previous, earlier, throughDay]);
+  }, [current, comparisons, previous, earlier, throughDay, t]);
 
   const axis = lineAxis(
     rows

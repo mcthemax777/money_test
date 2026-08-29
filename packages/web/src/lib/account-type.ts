@@ -1,3 +1,5 @@
+import { activeLocale, translate, type MessageKey } from '@/lib/i18n';
+
 /**
  * 계좌 유형의 표시 이름.
  *
@@ -5,15 +7,15 @@
  * 유형은 총자산을 현금성·투자·부채로 나누는 기준이라(서버 reports.service.ts의
  * VALUED_TYPES / LIABILITY_TYPES) 화면마다 다르게 불리면 안 된다.
  */
-export const ACCOUNT_TYPE_LABEL: Record<string, string> = {
-  deposit: '예금',
-  savings: '저축',
-  cash: '현금',
-  investment: '투자',
-  real_estate: '부동산',
-  loan: '대출',
-  credit_card: '신용카드',
-  opening_balance: '기초잔액',
+export const ACCOUNT_TYPE_KEY: Record<string, MessageKey> = {
+  deposit: 'accountType.deposit',
+  savings: 'accountType.savings',
+  cash: 'accountType.cash',
+  investment: 'accountType.investment',
+  real_estate: 'accountType.real_estate',
+  loan: 'accountType.loan',
+  credit_card: 'accountType.credit_card',
+  opening_balance: 'accountType.opening_balance',
 };
 
 /**
@@ -22,16 +24,17 @@ export const ACCOUNT_TYPE_LABEL: Record<string, string> = {
  * credit_card(카드 부채)와 opening_balance(자본)는 서버가 관리하므로 목록에 없다.
  * 예금은 입출금 통장까지 포함하므로 고를 때만 그 사실을 덧붙인다.
  */
-export const ACCOUNT_TYPE_OPTIONS = [
-  { id: 'deposit', name: '예금 / 입출금' },
-  { id: 'savings', name: ACCOUNT_TYPE_LABEL.savings },
-  { id: 'cash', name: ACCOUNT_TYPE_LABEL.cash },
-  { id: 'investment', name: ACCOUNT_TYPE_LABEL.investment },
-  { id: 'real_estate', name: ACCOUNT_TYPE_LABEL.real_estate },
-  { id: 'loan', name: ACCOUNT_TYPE_LABEL.loan },
+export const ACCOUNT_TYPE_OPTIONS: Array<{ id: string; nameKey: MessageKey }> = [
+  { id: 'deposit', nameKey: 'accountType.depositOption' },
+  { id: 'savings', nameKey: ACCOUNT_TYPE_KEY.savings },
+  { id: 'cash', nameKey: ACCOUNT_TYPE_KEY.cash },
+  { id: 'investment', nameKey: ACCOUNT_TYPE_KEY.investment },
+  { id: 'real_estate', nameKey: ACCOUNT_TYPE_KEY.real_estate },
+  { id: 'loan', nameKey: ACCOUNT_TYPE_KEY.loan },
 ];
 
 /** 목록에 붙이는 유형 이름. 모르는 값이면 그 값을 그대로 보여 준다. */
 export function accountTypeLabel(type: string): string {
-  return ACCOUNT_TYPE_LABEL[type] ?? type;
+  const key = ACCOUNT_TYPE_KEY[type];
+  return key ? translate(activeLocale(), key) : type;
 }

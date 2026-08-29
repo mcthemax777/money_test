@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiClient } from '@/lib/api-client';
 import { useProject } from '@/store/project';
 import type { FinancialInstitutionType, Institution } from '@/lib/types';
+import { activeLocale, translate } from '@/lib/i18n';
 
 /**
  * 불러온 목록을 (용도, 프로젝트)별로 기억해 둔다.
@@ -101,7 +102,7 @@ export function useInstitutions(type: FinancialInstitutionType) {
         // 목록을 못 불러와도 폼 자체는 열려 있어야 한다. 빈 목록 + 안내로 둔다.
         if (!cancelled) {
           setInstitutions([]);
-          setError('목록을 불러오지 못했습니다.');
+          setError(translate(activeLocale(), 'institutions.loadFailed'));
         }
       } finally {
         if (!cancelled) setIsLoading(false);

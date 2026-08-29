@@ -7,6 +7,7 @@
  */
 import type { AccountType, ReportDto } from '@money/types';
 
+import type { MessageKey } from '@/lib/i18n';
 import { toAmountString, toNumber } from './money';
 
 /** 총자산을 이루는 세 값과 유형별 소계 */
@@ -58,11 +59,16 @@ export function sumNetWorth(
  * 총자산과 달라진다. 카드 사용액(credit_card)은 갚아야 할 돈이라 대출과 같은 칸에 든다.
  * 자본 계정(opening_balance)은 순자산에서 빠지므로 응답에 아예 없다.
  */
-export const ASSET_TYPE_GROUPS: Array<{ key: string; label: string; types: AccountType[] }> = [
-  { key: 'cash', label: '예금/현금', types: ['deposit', 'cash'] },
-  { key: 'savings', label: '적금/연금', types: ['savings'] },
-  { key: 'investment', label: '투자', types: ['investment', 'real_estate'] },
-  { key: 'debt', label: '대출', types: ['loan', 'credit_card'] },
+export const ASSET_TYPE_GROUPS: Array<{
+  key: string;
+  /** 사전의 열쇠. 이름 자체가 아니라 열쇠를 두어야 언어를 따라간다. */
+  labelKey: MessageKey;
+  types: AccountType[];
+}> = [
+  { key: 'cash', labelKey: 'assetGroup.cash', types: ['deposit', 'cash'] },
+  { key: 'savings', labelKey: 'assetGroup.savings', types: ['savings'] },
+  { key: 'investment', labelKey: 'assetGroup.investment', types: ['investment', 'real_estate'] },
+  { key: 'debt', labelKey: 'assetGroup.debt', types: ['loan', 'credit_card'] },
 ];
 
 /** 한 묶음의 소계. 서버가 보내지 않은 유형은 0이다. */

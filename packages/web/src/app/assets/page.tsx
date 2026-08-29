@@ -14,8 +14,8 @@ import ChoiceModal from '@/components/ChoiceModal';
 import { useDragReorder } from '@/hooks/useDragReorder';
 import { usePersonFilterSync } from '@/hooks/usePersonFilterSync';
 import {
-  DAY_OF_MONTH_HINT,
-  DAY_OF_MONTH_OPTIONS,
+  dayOfMonthHint,
+  dayOfMonthOptions,
   DEFAULT_PAYMENT_DUE_DAY,
   DEFAULT_STATEMENT_CLOSING_DAY,
 } from '@/lib/day-of-month';
@@ -64,6 +64,8 @@ import EntryEditor, {
 } from '@/components/EntryEditor';
 import { useInstitutions } from '@/hooks/useInstitutions';
 import { accountTypeLabel } from '@/lib/account-type';
+import { useTranslation } from '@/lib/i18n';
+import { useApiError } from '@/lib/api-error';
 
 
 
@@ -87,6 +89,9 @@ function AccountProfitLine({
   account: Account;
   profit: string | undefined;
 }) {
+  // 훅은 이른 반환보다 앞이어야 한다.
+  const { t } = useTranslation();
+
   if (profit === undefined) return null;
 
   const value = toNumber(profit);
@@ -97,7 +102,7 @@ function AccountProfitLine({
       className={`mt-1 text-sm font-semibold ${value > 0 ? 'text-green-600' : 'text-red-600'}`}
     >
       {/* 손실에 "수익 -"를 붙이면 두 번 읽어야 한다. 부호 대신 이름을 바꾼다. */}
-      {value > 0 ? '수익 +' : '손실 -'}
+      {value > 0 ? t('assets.profit') : t('assets.loss')}
       {formatCurrency(Math.abs(value), account.currency)}
     </p>
   );
@@ -126,6 +131,7 @@ function NetWorthBreakdown({
   parts: NetWorthParts | undefined;
   className: string;
 }) {
+  const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
 
   if (!parts) return null;
@@ -133,14 +139,18 @@ function NetWorthBreakdown({
 
   return (
     <p className={className}>
-      현금성 {formatCurrency(parts.cash, displayCurrency)} · 투자{' '}
-      {formatCurrency(parts.investment, displayCurrency)} · 부채{' '}
-      {formatCurrency(parts.liability, displayCurrency)}
+      {t('assets.parts', {
+        cash: formatCurrency(parts.cash, displayCurrency),
+        investment: formatCurrency(parts.investment, displayCurrency),
+        liability: formatCurrency(parts.liability, displayCurrency),
+      })}
     </p>
   );
 }
 
 export default function DashboardPage() {
+  const { t } = useTranslation();
+  const { messageOf } = useApiError();
   const router = useRouter();
   const { setPeople: setStorePeople, selectedPersonIds, togglePersonId } = useUserFilter();
   const { selectedProjectId } = useProject();
@@ -274,7 +284,7 @@ export default function DashboardPage() {
         setNetWorth(netWorthData ?? null);
         setAccountProfit(new Map((profitData ?? []).map((row) => [row.accountId, row.profit])));
       } catch (err) {
-        setError('데이터 조회에 실패했습니다.');
+        setError(t('home.loadFailed'));
       } finally {
         setIsLoading(false);
       }
@@ -438,7 +448,7 @@ export default function DashboardPage() {
    * 숨기기는 기록을 지우지 않는다. 과거 거래는 그대로 남고 목록에서만 빠지며,
    * 아래 "숨긴 항목"에서 되돌릴 수 있다. 문구도 그렇게 맞춘다.
    */
-  const HIDE_CONFIRM = '목록에서 숨깁니다. 기록은 남고 나중에 다시 표시할 수 있습니다. 계속할까요?';
+  const HIDE_CONFIRM = t('assets.hideConfirm');
 
   const handleDeletePerson = async () => {
     if (!selectedPerson || !window.confirm(HIDE_CONFIRM)) return;
@@ -453,7 +463,7 @@ export default function DashboardPage() {
       setHiddenVersion((v) => v + 1);
       await loadNetWorth();
     } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '숨기지 못했습니다.');
+      alert(messageOf(err, 'assets.hideFailed'));
     } finally {
       setIsSubmitting(false);
     }
@@ -472,7 +482,7 @@ export default function DashboardPage() {
       setHiddenVersion((v) => v + 1);
       await loadNetWorth();
     } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '숨기지 못했습니다.');
+      alert(messageOf(err, 'assets.hideFailed'));
     } finally {
       setIsSubmitting(false);
     }
@@ -491,7 +501,7 @@ export default function DashboardPage() {
       setHiddenVersion((v) => v + 1);
       await loadNetWorth();
     } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '숨기지 못했습니다.');
+      alert(messageOf(err, 'assets.hideFailed'));
     } finally {
       setIsSubmitting(false);
     }
@@ -521,7 +531,7 @@ export default function DashboardPage() {
       // 카드사는 필수다. CustomSelect는 <input required>와 달리 브라우저 검증이 없어
       // 비워 두면 서버에서 "기관을 찾을 수 없습니다"가 돌아와 원인을 알기 어렵다.
       if (!cardForm.issuerId) {
-        setAddError('발급사를 선택하세요.');
+        setAddError(t('card.issuerRequired'));
         setIsSubmitting(false);
         return;
       }
@@ -565,7 +575,7 @@ export default function DashboardPage() {
       });
       setAddType(null);
     } catch (err: any) {
-      setAddError(err?.response?.data?.error?.message || '카드 추가에 실패했습니다.');
+      setAddError(messageOf(err, 'card.addFailed'));
     } finally {
       setIsSubmitting(false);
     }
@@ -585,7 +595,7 @@ export default function DashboardPage() {
       setPeople((updated || []) as Person[]);
       setStorePeople((updated || []) as Person[]);
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || '순서 저장에 실패했습니다.');
+      setError(messageOf(err, 'assets.orderSaveFailed'));
     }
   };
 
@@ -600,7 +610,7 @@ export default function DashboardPage() {
       const updated = await apiClient.reorderAccounts(ids, selectedProjectId);
       setAccounts((updated || []) as Account[]);
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || '순서 저장에 실패했습니다.');
+      setError(messageOf(err, 'assets.orderSaveFailed'));
     }
   };
 
@@ -610,7 +620,7 @@ export default function DashboardPage() {
       const updated = await apiClient.reorderCards(ids, selectedProjectId);
       setCards((updated || []) as Card[]);
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || '순서 저장에 실패했습니다.');
+      setError(messageOf(err, 'assets.orderSaveFailed'));
     }
   };
 
@@ -665,7 +675,7 @@ export default function DashboardPage() {
       <PageHeader
         title={
           <PersonScopeTitle
-            noun="자산"
+            noun={t('home.assetsNoun')}
             people={people}
             myPersonId={myPersonId}
             selectedPersonIds={selectedPersonIds}
@@ -680,7 +690,7 @@ export default function DashboardPage() {
             }}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
           >
-            추가하기
+            {t('assets.addTitle')}
           </button>
         }
       />
@@ -703,7 +713,7 @@ export default function DashboardPage() {
 
       {/* 총자산과 전체 추이는 계좌를 골라도 그대로 둔다. 고른 계좌는 아래 오른쪽에 펼친다. */}
       <div className="bg-blue-600 text-white rounded-lg p-6">
-        <p className="text-sm opacity-90">총 자산</p>
+        <p className="text-sm opacity-90">{t('assets.total')}</p>
         <p className="text-4xl font-bold mt-2">
           {formatCurrency(totalBalance, displayCurrency)}
         </p>
@@ -723,9 +733,9 @@ export default function DashboardPage() {
       )}
 
       {isLoading ? (
-        <p className="text-gray-600">로딩 중...</p>
+        <p className="text-gray-600">{t('common.loading')}</p>
       ) : displayPeople.length === 0 ? (
-        <p className="text-gray-600">선택된 사용자가 없습니다.</p>
+        <p className="text-gray-600">{t('assets.noSelection')}</p>
       ) : (
         /*
           왼쪽은 항상 구성원·계좌·카드 목록, 오른쪽은 고른 계좌의 내역이다.
@@ -787,7 +797,7 @@ export default function DashboardPage() {
                     onClick={() => setIsAccountDetailOpen(true)}
                     className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
                   >
-                    계좌 상세정보
+                    {t('account.detail')}
                   </button>
                   <button
                     onClick={() => {
@@ -796,7 +806,7 @@ export default function DashboardPage() {
                     }}
                     className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
                   >
-                    닫기
+                    {t('common.close')}
                   </button>
                 </div>
               </div>
@@ -809,14 +819,16 @@ export default function DashboardPage() {
               */}
               {selectedAccount.currency !== displayCurrency && (
                 <p className="-mt-2 text-xs text-gray-500">
-                  추이는 {displayCurrency} 환산 장부가입니다. 거래 시점의 환율로 쌓인 값이라 위
-                  잔액({selectedAccount.currency})과 단위가 다릅니다.
+                  {t('assets.trendNote', {
+                    display: displayCurrency,
+                    account: selectedAccount.currency,
+                  })}
                 </p>
               )}
 
               {/* 거래 내역 */}
               {accountTransactions.length === 0 ? (
-                <p className="text-gray-600 text-center py-8">거래 내역이 없습니다.</p>
+                <p className="text-gray-600 text-center py-8">{t('assets.noEntries')}</p>
               ) : (
                 <div className="space-y-3">
                   {accountTransactions.map((tx: any) => {
@@ -829,7 +841,7 @@ export default function DashboardPage() {
                       <div key={tx.postingId} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
                         <div className="flex justify-between items-start gap-4">
                           <div className="flex-1 min-w-0">
-                            <p className="font-bold text-gray-900">{tx.description || '(내용 없음)'}</p>
+                            <p className="font-bold text-gray-900">{tx.description || t('entry.noTitle')}</p>
                             {label && (
                               <p className="text-sm text-gray-600 mt-1">{label}</p>
                             )}
@@ -847,7 +859,9 @@ export default function DashboardPage() {
                               {formatCurrency(Math.abs(amount), selectedAccount.currency)}
                             </p>
                             <p className="text-xs text-gray-500 mt-1">
-                              잔액 {formatCurrency(tx.balanceAfter, selectedAccount.currency)}
+                              {t('assets.balanceAfter', {
+                            amount: formatCurrency(tx.balanceAfter, selectedAccount.currency),
+                          })}
                             </p>
                           </div>
                         </div>
@@ -862,7 +876,7 @@ export default function DashboardPage() {
                       disabled={isLoadingLedger}
                       className="w-full py-3 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
                     >
-                      {isLoadingLedger ? '불러오는 중...' : '더 보기'}
+                      {isLoadingLedger ? t('feed.loadingMore') : t('assets.more')}
                     </button>
                   )}
                 </div>
@@ -888,7 +902,7 @@ export default function DashboardPage() {
                     onClick={() => setIsPersonDetailOpen(true)}
                     className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
                   >
-                    상세정보
+                    {t('assets.detail')}
                   </button>
                   <button
                     onClick={() => {
@@ -897,7 +911,7 @@ export default function DashboardPage() {
                     }}
                     className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
                   >
-                    닫기
+                    {t('common.close')}
                   </button>
                 </div>
               </div>
@@ -906,9 +920,9 @@ export default function DashboardPage() {
               <AssetHistoryChart ownerId={selectedPerson.id} projectId={selectedProjectId} />
 
               <div>
-                <h3 className="text-sm font-medium text-gray-700 mb-2">최근 거래</h3>
+                <h3 className="text-sm font-medium text-gray-700 mb-2">{t('assets.recentEntries')}</h3>
                 {personEntries.length === 0 ? (
-                  <p className="text-gray-600 text-center py-8">거래 내역이 없습니다.</p>
+                  <p className="text-gray-600 text-center py-8">{t('assets.noEntries')}</p>
                 ) : (
                   <>
                     <TransactionListView
@@ -917,8 +931,7 @@ export default function DashboardPage() {
                     />
                     {personEntries.length >= PERSON_ENTRY_LIMIT && (
                       <p className="mt-2 text-xs text-gray-500">
-                        최근 {PERSON_ENTRY_LIMIT}건까지 보여 줍니다. 더 보려면 가계 화면에서
-                        사람 필터를 쓰세요.
+                        {t('assets.personEntriesNote', { count: PERSON_ENTRY_LIMIT })}
                       </p>
                     )}
                   </>
@@ -947,7 +960,7 @@ export default function DashboardPage() {
                     onClick={() => setIsCardDetailOpen(true)}
                     className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
                   >
-                    카드 상세정보
+                    {t('card.detail')}
                   </button>
                   <button
                     onClick={() => {
@@ -956,7 +969,7 @@ export default function DashboardPage() {
                     }}
                     className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
                   >
-                    닫기
+                    {t('common.close')}
                   </button>
                 </div>
               </div>
@@ -978,7 +991,7 @@ export default function DashboardPage() {
           ) : (
             <div className="bg-white rounded-lg border border-dashed border-gray-300 p-10 text-center">
               <p className="text-gray-500">
-                구성원·계좌·카드를 누르면 추이와 내역이 여기에 나옵니다.
+                {t('assets.emptyHint')}
               </p>
             </div>
           )}
@@ -990,7 +1003,7 @@ export default function DashboardPage() {
         <Modal
           isOpen={true}
           onClose={() => setIsAccountDetailOpen(false)}
-          title="계좌 상세정보"
+          title={t('account.detail')}
           footer={
             <div className="flex gap-2">
               {/*
@@ -1005,20 +1018,20 @@ export default function DashboardPage() {
                 }}
                 className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
               >
-                카드 추가
+                {t('card.add')}
               </button>
               <button
                 onClick={handleEditAccountClick}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
               >
-                수정하기
+                {t('account.editSubmit')}
               </button>
               <button
                 onClick={handleDeleteAccount}
                 disabled={isSubmitting}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
               >
-                숨기기
+                {t('assets.hide')}
               </button>
             </div>
           }
@@ -1026,7 +1039,7 @@ export default function DashboardPage() {
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                통장 주인
+                {t('account.owner')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                 {selectedAccount.owner?.name || '-'}
@@ -1035,7 +1048,7 @@ export default function DashboardPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                계좌명
+                {t('account.name')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                 {selectedAccount.name}
@@ -1044,7 +1057,7 @@ export default function DashboardPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                은행
+                {t('account.bank')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                 {selectedAccount.institution?.name || '-'}
@@ -1053,7 +1066,7 @@ export default function DashboardPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                유형
+                {t('account.type')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                 {accountTypeLabel(selectedAccount.type)}
@@ -1062,7 +1075,7 @@ export default function DashboardPage() {
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                잔액
+                {t('account.balance')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900 font-semibold">
                 {formatCurrency(selectedAccount.balance, selectedAccount.currency)}
@@ -1072,7 +1085,7 @@ export default function DashboardPage() {
             {selectedAccount.accountNumber && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  계좌번호
+                  {t('account.numberPlain')}
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                   {selectedAccount.accountNumber}
@@ -1091,7 +1104,7 @@ export default function DashboardPage() {
         <Modal
           isOpen={true}
           onClose={() => setIsPersonDetailOpen(false)}
-          title="구성원 상세정보"
+          title={t('person.detail')}
           footer={
             <div className="flex gap-2">
               {/*
@@ -1107,20 +1120,20 @@ export default function DashboardPage() {
                 }}
                 className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
               >
-                추가하기
+                {t('assets.addTitle')}
               </button>
               <button
                 onClick={handleEditPersonClick}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
               >
-                수정하기
+                {t('account.editSubmit')}
               </button>
               <button
                 onClick={handleDeletePerson}
                 disabled={isSubmitting}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
               >
-                숨기기
+                {t('assets.hide')}
               </button>
             </div>
           }
@@ -1129,7 +1142,7 @@ export default function DashboardPage() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  이름
+                  {t('person.name')}
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                   {selectedPerson.name}
@@ -1148,21 +1161,21 @@ export default function DashboardPage() {
         <Modal
           isOpen={true}
           onClose={() => setIsCardDetailOpen(false)}
-          title="카드 상세정보"
+          title={t('card.detail')}
           footer={
             <div className="flex gap-2">
               <button
                 onClick={handleEditCardClick}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
               >
-                수정하기
+                {t('account.editSubmit')}
               </button>
               <button
                 onClick={handleDeleteCard}
                 disabled={isSubmitting}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
               >
-                숨기기
+                {t('assets.hide')}
               </button>
             </div>
           }
@@ -1171,7 +1184,7 @@ export default function DashboardPage() {
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  카드 이름
+                  {t('card.name')}
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                   {selectedCard.name}
@@ -1180,7 +1193,7 @@ export default function DashboardPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  계좌
+                  {t('card.account')}
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                   {accounts.find((a) => a.id === selectedCard.paymentAccountId)?.name || '-'}
@@ -1189,7 +1202,7 @@ export default function DashboardPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  카드 번호
+                  {t('card.number')}
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                   {selectedCard.cardNumberMasked}
@@ -1198,16 +1211,16 @@ export default function DashboardPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  카드 유형
+                  {t('card.type')}
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                  {selectedCard.cardType === 'debit' ? '체크카드' : '신용카드'}
+                  {t(selectedCard.cardType === 'debit' ? 'method.debit_card' : 'method.credit_card')}
                 </p>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  발급사
+                  {t('card.issuer')}
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                   {selectedCard.issuer?.name}
@@ -1218,7 +1231,7 @@ export default function DashboardPage() {
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      사용액
+                      {t('card.usage')}
                     </label>
                     <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                       {formatCurrency(selectedCard.currentUsage, currencyOfCard(selectedCard))}
@@ -1227,7 +1240,7 @@ export default function DashboardPage() {
 
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
-                      신용한도
+                      {t('card.limitPlain')}
                     </label>
                     <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                       {formatCurrency(selectedCard.creditLimit, currencyOfCard(selectedCard))}
@@ -1294,7 +1307,11 @@ export default function DashboardPage() {
       <ChoiceModal
         isOpen={addType === 'select' || addType === 'select-person'}
         onClose={() => setAddType(null)}
-        title={addType === 'select-person' ? `${selectedPerson?.name ?? ''} 항목 추가` : '추가하기'}
+        title={
+          addType === 'select-person'
+            ? t('assets.addTo', { name: selectedPerson?.name ?? '' })
+            : t('assets.addTitle')
+        }
         choices={[
           ...(addType === 'select-person'
             ? []
@@ -1302,8 +1319,8 @@ export default function DashboardPage() {
                 {
                   key: 'person',
                   icon: '👤',
-                  label: '구성원 추가',
-                  description: '새로운 가족 구성원을 추가합니다',
+                  label: t('person.add'),
+                  description: t('person.addDescription'),
                   tone: 'blue' as const,
                   onSelect: () => {
                     setAddType(null);
@@ -1314,8 +1331,8 @@ export default function DashboardPage() {
           {
             key: 'account',
             icon: '🏦',
-            label: '계좌 추가',
-            description: '새로운 계좌를 추가합니다',
+            label: t('account.add'),
+            description: t('account.addDescription'),
             tone: 'green',
             onSelect: () => {
               setAddType(null);
@@ -1325,8 +1342,8 @@ export default function DashboardPage() {
           {
             key: 'card',
             icon: '💳',
-            label: '카드 추가',
-            description: '새로운 카드를 추가합니다',
+            label: t('card.add'),
+            description: t('card.addDescription'),
             tone: 'purple',
             onSelect: () => setAddType('card'),
           },
@@ -1381,7 +1398,7 @@ export default function DashboardPage() {
           });
           setAddError('');
         }}
-        title="카드 추가"
+        title={t('card.add')}
         footer={
           <button
             type="submit"
@@ -1389,14 +1406,14 @@ export default function DashboardPage() {
             disabled={isSubmitting}
             className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
-            {isSubmitting ? '추가 중...' : '추가하기'}
+            {isSubmitting ? t('account.adding') : t('account.addSubmit')}
           </button>
         }
       >
         <form id={CARD_ADD_FORM_ID} onSubmit={handleAddCard} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              카드 이름
+              {t('card.name')}
             </label>
             <input
               type="text"
@@ -1404,65 +1421,63 @@ export default function DashboardPage() {
               value={cardForm.name}
               onChange={(e) => setCardForm({ ...cardForm, name: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="예: 내 체크카드"
+              placeholder={t('card.namePlaceholder')}
             />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              계좌
+              {t('card.account')}
             </label>
             <CustomSelect
               options={accounts.map((acc) => ({ id: acc.id, name: acc.name }))}
               value={cardForm.accountId}
               onChange={(value) => setCardForm({ ...cardForm, accountId: value })}
-              placeholder="선택하세요"
             />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              카드 번호 (선택)
+              {t('card.numberOptional')}
             </label>
             <input
               type="text"
               value={cardForm.cardNumber}
               onChange={(e) => setCardForm({ ...cardForm, cardNumber: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="16자리"
+              placeholder={t('card.numberPlaceholder')}
             />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              카드 유형
+              {t('card.type')}
             </label>
             <CustomSelect
               options={[
-                { id: 'debit', name: '체크카드' },
-                { id: 'credit', name: '신용카드' },
+                { id: 'debit', name: t('method.debit_card') },
+                { id: 'credit', name: t('method.credit_card') },
               ]}
               value={cardForm.cardType}
               onChange={(value) => setCardForm({ ...cardForm, cardType: value as 'debit' | 'credit' })}
-              placeholder="선택하세요"
             />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              발급사
+              {t('card.issuer')}
             </label>
             <CustomSelect
               options={issuerOptions}
               value={cardForm.issuerId}
               onChange={(value) => setCardForm({ ...cardForm, issuerId: value })}
-              placeholder="카드사를 선택하세요"
+              placeholder={t('card.issuerPlaceholder')}
             />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              만료 월 (선택)
+              {t('card.expiry')}
             </label>
             <input
               type="month"
@@ -1474,16 +1489,20 @@ export default function DashboardPage() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              카드 색 (선택)
+              {t('card.color')}
             </label>
             <CardColorPicker
               value={cardForm.color}
               onChange={(color) => setCardForm({ ...cardForm, color })}
             />
             <p className="mt-1 text-xs text-gray-500">
-              홈 화면의 카드 앞면 색입니다. 고르지 않으면{' '}
-              {cardForm.cardType === 'credit' ? '신용카드 기본색(파랑)' : '체크카드 기본색(초록)'}
-              으로 보입니다.
+              {t('card.colorHint', {
+                default: t(
+                    cardForm.cardType === 'credit'
+                      ? 'card.colorDefaultCredit'
+                      : 'card.colorDefaultDebit',
+                  ),
+              })}
             </p>
           </div>
 
@@ -1498,7 +1517,7 @@ export default function DashboardPage() {
             <>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  신용한도 (원)
+                  {t('card.limit', { currency: displayCurrency })}
                 </label>
                 <input
                   type="number"
@@ -1511,7 +1530,7 @@ export default function DashboardPage() {
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  마감일
+                  {t('card.closingDay')}
                 </label>
                 <select
                   value={cardForm.statementClosingDay}
@@ -1520,18 +1539,18 @@ export default function DashboardPage() {
                   }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {DAY_OF_MONTH_OPTIONS.map((option) => (
+                  {dayOfMonthOptions().map((option) => (
                     <option key={option.day} value={option.day}>
                       {option.label}
                     </option>
                   ))}
                 </select>
-                <p className="mt-1 text-xs text-gray-500">{DAY_OF_MONTH_HINT}</p>
+                <p className="mt-1 text-xs text-gray-500">{dayOfMonthHint()}</p>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  결제일
+                  {t('card.paymentDay')}
                 </label>
                 <select
                   value={cardForm.paymentDueDay}
@@ -1540,13 +1559,13 @@ export default function DashboardPage() {
                   }
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                 >
-                  {DAY_OF_MONTH_OPTIONS.map((option) => (
+                  {dayOfMonthOptions().map((option) => (
                     <option key={option.day} value={option.day}>
                       {option.label}
                     </option>
                   ))}
                 </select>
-                <p className="mt-1 text-xs text-gray-500">{DAY_OF_MONTH_HINT}</p>
+                <p className="mt-1 text-xs text-gray-500">{dayOfMonthHint()}</p>
               </div>
             </>
           )}
@@ -1611,6 +1630,7 @@ function PersonAssetList({
   onReorderAccounts: (ids: string[]) => void;
   onReorderCards: (ids: string[]) => void;
 }) {
+  const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
   const { items, dragProps, draggingId } = useDragReorder(people, onReorderPeople);
 
@@ -1631,7 +1651,12 @@ function PersonAssetList({
                   {person.name}
                 </h2>
                 <p className="text-sm text-gray-600">
-                  소계: {formatCurrency(netWorthByPerson.get(person.id)?.total ?? 0, displayCurrency)}
+                  {t('assets.personSubtotal', {
+                    amount: formatCurrency(
+                      netWorthByPerson.get(person.id)?.total ?? 0,
+                      displayCurrency,
+                    ),
+                  })}
                 </p>
               </div>
             </div>
@@ -1673,10 +1698,11 @@ function AccountList({
   onReorder: (ids: string[]) => void;
   onReorderCards: (ids: string[]) => void;
 }) {
+  const { t } = useTranslation();
   const { items, dragProps, draggingId } = useDragReorder(accounts, onReorder);
 
   if (items.length === 0) {
-    return <p className="text-gray-600">등록된 계좌가 없습니다.</p>;
+    return <p className="text-gray-600">{t('assets.noAccounts')}</p>;
   }
 
   return (
@@ -1750,7 +1776,9 @@ function CardList({
   onCardClick: (card: Card) => void;
   onReorder: (ids: string[]) => void;
 }) {
+  const { t } = useTranslation();
   const { items, dragProps, draggingId } = useDragReorder(cards, onReorder);
+
   if (items.length === 0) return null;
 
   return (
@@ -1777,7 +1805,7 @@ function CardList({
             </p>
             <p className="text-xs text-gray-600">{card.issuer?.name}</p>
             <p className="text-xs text-gray-600">
-              {card.cardType === 'debit' ? '체크카드' : '신용카드'}
+              {t(card.cardType === 'debit' ? 'method.debit_card' : 'method.credit_card')}
             </p>
           </button>
         </div>

@@ -12,6 +12,8 @@ import {
   YAxis,
 } from 'recharts';
 import { apiClient } from '@/lib/api-client';
+import { formatMonthShort, formatYearMonth } from '@/lib/datetime';
+import { useTranslation, type MessageKey } from '@/lib/i18n';
 import { formatCurrency, toNumber } from '@/lib/money';
 import {
   CHART_ACTIVE_DOT,
@@ -53,10 +55,10 @@ interface Point {
 /** 직접 고르는 구간 단위. 드릴다운으로 들어간 일별 보기와는 별개다. */
 type Granularity = 'day' | 'month' | 'year';
 
-const GRANULARITY_OPTIONS: Array<{ value: Granularity; label: string }> = [
-  { value: 'day', label: '일' },
-  { value: 'month', label: '월' },
-  { value: 'year', label: '년' },
+const GRANULARITY_OPTIONS: Array<{ value: Granularity; labelKey: MessageKey }> = [
+  { value: 'day', labelKey: 'history.day' as const },
+  { value: 'month', labelKey: 'history.month' as const },
+  { value: 'year', labelKey: 'history.year' as const },
 ];
 
 /** 단위별 창 크기. 서버 기본값과 같은 값을 쓴다. */
@@ -71,6 +73,7 @@ export default function AssetHistoryChart({
   projectId,
   endMonth,
 }: AssetHistoryChartProps) {
+  const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
   const [granularity, setGranularity] = useState<Granularity>('month');
   /*
@@ -137,18 +140,26 @@ export default function AssetHistoryChart({
       setPoints(
         (rows ?? []).map((row) => {
           const balance = toNumber(row.balance);
-          if (drilledMonth) return { label: `${Number(row.date.slice(8))}일`, balance };
+          if (drilledMonth) {
+            return { label: t('chart.dayTick', { day: Number(row.date.slice(8)) }), balance };
+          }
           if (granularity === 'day') {
             return { label: `${Number(row.date.slice(5, 7))}/${Number(row.date.slice(8))}`, balance };
           }
-          if (granularity === 'year') return { label: `${row.date}년`, balance };
-          return { label: `${Number(row.date.slice(5))}월`, balance, yearMonth: row.date };
+          if (granularity === 'year') {
+            return { label: t('history.yearLabel', { year: row.date }), balance };
+          }
+          return {
+            label: formatMonthShort(Number(row.date.slice(5))),
+            balance,
+            yearMonth: row.date,
+          };
         }),
       );
     } catch {
       // 그래프를 못 불러와도 나머지 화면은 살아 있어야 한다.
       setPoints([]);
-      setError('자산 추이를 불러오지 못했습니다.');
+      setError(t('history.loadFailed'));
     } finally {
       setIsLoading(false);
     }
@@ -181,12 +192,14 @@ export default function AssetHistoryChart({
   const canDrill = !drilledMonth && granularity === 'month';
 
   const title = drilledMonth
-    ? `${Number(drilledMonth.slice(0, 4))}년 ${Number(drilledMonth.slice(5))}월 일별 잔액`
+    ? t('history.dailyTitle', {
+        month: formatYearMonth(Number(drilledMonth.slice(0, 4)), Number(drilledMonth.slice(5))),
+      })
     : granularity === 'day'
-      ? `최근 ${RECENT_DAYS}일 자산 추이`
+      ? t('history.recentTitle', { days: RECENT_DAYS })
       : granularity === 'year'
-        ? `연도별 자산 추이 (${YEARS}년)`
-        : `월별 자산 추이 (${MONTHS}개월)`;
+        ? t('history.yearlyTitle', { years: YEARS })
+        : t('history.monthlyTitle', { months: MONTHS });
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
@@ -200,7 +213,7 @@ export default function AssetHistoryChart({
               onClick={() => setDrilledMonth(null)}
               className="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
             >
-              월별로 돌아가기
+              {t('history.backToMonth')}
             </button>
           )}
 
@@ -217,7 +230,7 @@ export default function AssetHistoryChart({
                     : 'bg-white text-gray-700 hover:bg-gray-100'
                 }`}
               >
-                {option.label}
+                {t(option.labelKey)}
               </button>
             ))}
           </div>
@@ -225,15 +238,15 @@ export default function AssetHistoryChart({
       </div>
 
       {canDrill && (
-        <p className="text-xs text-gray-500 mb-2">그래프의 월을 누르면 일별로 보입니다</p>
+        <p className="text-xs text-gray-500 mb-2">{t('history.drillHint')}</p>
       )}
 
       {isLoading ? (
-        <p className="text-gray-500 text-sm py-12 text-center">불러오는 중...</p>
+        <p className="text-gray-500 text-sm py-12 text-center">{t('feed.loadingMore')}</p>
       ) : error ? (
         <p className="text-red-600 text-sm py-12 text-center">{error}</p>
       ) : !hasAnyValue ? (
-        <p className="text-gray-500 text-sm py-12 text-center">표시할 잔액 기록이 없습니다.</p>
+        <p className="text-gray-500 text-sm py-12 text-center">{t('history.empty')}</p>
       ) : (
         <ResponsiveContainer width="100%" height={300}>
           <LineChart
@@ -260,7 +273,9 @@ export default function AssetHistoryChart({
               width={CHART_Y_AXIS_WIDTH}
             />
             <Tooltip
-              formatter={(value: any) => formatTooltipAmount(value, '잔액', displayCurrency)}
+              formatter={(value: any) =>
+                  formatTooltipAmount(value, t('history.balance'), displayCurrency)
+                }
               contentStyle={CHART_TOOLTIP_STYLE}
             />
             <Line

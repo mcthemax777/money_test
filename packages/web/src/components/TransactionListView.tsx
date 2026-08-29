@@ -2,17 +2,17 @@
 
 import TransactionItem, { EntryListItem } from './TransactionItem';
 import { formatCurrency } from '@/lib/money';
-import { sumEntries } from '@/lib/entries';
-import { dateKeyOf, formatDateMarker } from '@/lib/datetime';
+import { sumEntries, type CountedShare } from '@/lib/entries';
+import { dateKeyOf, formatDateMarker, weekdayNames } from '@/lib/datetime';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
 
 interface TransactionListViewProps {
   entries: EntryListItem[];
+  /** 일반/과소비 중 어느 몫을 셀지. 넘기지 않으면 거래 금액 전부다. */
+  share?: CountedShare;
   /** 생략하면 읽기 전용이다. 줄에 손 모양 커서와 hover가 붙지 않는다. */
   onEntryClick?: (entry: EntryListItem) => void;
 }
-
-const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토'];
 
 /**
  * 주말 요일 색. 토요일은 파랑, 일요일은 빨강.
@@ -28,8 +28,10 @@ const WEEKDAY_COLOR_DEFAULT = 'text-gray-400';
 
 export default function TransactionListView({
   entries,
+  share,
   onEntryClick,
 }: TransactionListViewProps) {
+  const weekdays = weekdayNames();
   const timeZone = useProjectTimeZone();
   const displayCurrency = useProjectDisplayCurrency();
 
@@ -51,7 +53,7 @@ export default function TransactionListView({
         const dayEntries = grouped.get(isoDate)!;
         // 요일만 필요하다. isoDate는 달력 날짜라 UTC로 읽는다.
         const weekdayIndex = new Date(isoDate).getUTCDay();
-        const { incomeTotal, expenseTotal } = sumEntries(dayEntries);
+        const { incomeTotal, expenseTotal } = sumEntries(dayEntries, share);
 
         return (
           <div key={isoDate}>
@@ -67,7 +69,7 @@ export default function TransactionListView({
                     WEEKDAY_COLOR[weekdayIndex] ?? WEEKDAY_COLOR_DEFAULT
                   }`}
                 >
-                  ({WEEKDAYS[weekdayIndex]})
+                  ({weekdays[weekdayIndex]})
                 </span>
               </h3>
               <div className="flex gap-3 text-xs font-semibold tabular-nums">

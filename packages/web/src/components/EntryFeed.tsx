@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { EntryDto, EntryFilterQuery } from '@money/types';
 
 import { apiClient } from '@/lib/api-client';
+import { useTranslation } from '@/lib/i18n';
 import TransactionListView from '@/components/TransactionListView';
 import type { EntryListItem } from '@/components/TransactionItem';
 
@@ -54,6 +55,7 @@ export default function EntryFeed({
   onEntryClick,
   reloadToken = 0,
 }: EntryFeedProps) {
+  const { t } = useTranslation();
   const [entries, setEntries] = useState<EntryListItem[]>([]);
   const [hasMore, setHasMore] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
@@ -105,7 +107,7 @@ export default function EntryFeed({
       } catch (err) {
         if (runRef.current !== run) return;
         console.error('거래 조회 실패:', err);
-        setError('거래를 불러오지 못했습니다.');
+        setError(t('feed.loadFailed'));
         // 다음 쪽을 계속 조르지 않는다. 아래 버튼으로 사용자가 다시 시도한다.
         setHasMore(false);
       } finally {
@@ -224,7 +226,7 @@ export default function EntryFeed({
   }, [hasMore, isLoading, loadNext]);
 
   if (!isLoading && entries.length === 0 && !error) {
-    return <p className="text-sm text-gray-600">거래가 없습니다.</p>;
+    return <p className="text-sm text-gray-600">{t('feed.empty')}</p>;
   }
 
   return (
@@ -242,7 +244,7 @@ export default function EntryFeed({
             }}
             className="rounded border border-gray-300 px-3 py-1 text-sm text-gray-700 hover:bg-gray-100"
           >
-            다시 시도
+            {t('common.retry')}
           </button>
         </div>
       )}
@@ -259,14 +261,14 @@ export default function EntryFeed({
         }}
       >
         {isLoading
-          ? '불러오는 중...'
+          ? t('feed.loadingMore')
           : !hasMore
             ? entries.length > 0
-              ? '마지막 거래입니다'
+              ? t('feed.end')
               : ''
             : pull > 0
-              ? '조금 더 당기면 이어집니다'
-              : '아래로 더 당기면 이어집니다'}
+              ? t('feed.pullMore')
+              : t('feed.pullHint')}
       </div>
     </div>
   );

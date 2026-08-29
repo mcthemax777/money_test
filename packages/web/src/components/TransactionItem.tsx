@@ -1,6 +1,7 @@
 'use client';
 
 import type { EntryListItem } from '@money/types';
+import { useTranslation, type MessageKey } from '@/lib/i18n';
 import { formatCurrency, formatOriginal, toNumber } from '@/lib/money';
 import { formatTime } from '@/lib/datetime';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
@@ -45,9 +46,9 @@ const SIGN_BY_KIND: Partial<Record<EntryListItem['kind'], string>> = {
 /** 계좌 사이를 오가는 거래는 "A → B"로 보여준다. */
 const TWO_SIDED: Array<EntryListItem['kind']> = ['transfer', 'card_payment', 'adjustment'];
 
-const TITLE_BY_KIND: Partial<Record<EntryListItem['kind'], string>> = {
-  transfer: '이체',
-  adjustment: '잔액 조정',
+const TITLE_KEY_BY_KIND: Partial<Record<EntryListItem['kind'], MessageKey>> = {
+  transfer: 'entry.transfer',
+  adjustment: 'entry.adjustment',
 };
 
 /**
@@ -60,11 +61,13 @@ const TITLE_BY_KIND: Partial<Record<EntryListItem['kind'], string>> = {
 const NOT_COUNTED: Array<EntryListItem['kind']> = ['transfer', 'card_payment'];
 
 /** 카드사 이체는 방향이 뜻을 바꾼다 */
-function titleOf(entry: EntryListItem): string {
+function titleOf(t: ReturnType<typeof useTranslation>['t'], entry: EntryListItem): string {
   if (entry.kind === 'card_payment') {
-    return entry.cardTransferDirection === 'refund' ? '카드 환불 입금' : '카드 대금 결제';
+    return t(entry.cardTransferDirection === 'refund' ? 'entry.cardRefund' : 'entry.cardPayment');
   }
-  return TITLE_BY_KIND[entry.kind] ?? entry.description;
+
+  const key = TITLE_KEY_BY_KIND[entry.kind];
+  return key ? t(key) : entry.description;
 }
 
 /** 배지 하나. 뜻을 담은 색은 금액이 쓰므로 배지는 회색으로 물러선다. */
@@ -103,6 +106,7 @@ function Badge({
  * 긴 이름은 잘라 낸다. 줄이 늘어나면 카드마다 높이가 달라져 훑어보기 어렵다.
  */
 export default function TransactionItem({ entry, onClick, isSelected }: TransactionItemProps) {
+  const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
   const displayCurrency = useProjectDisplayCurrency();
 
@@ -122,7 +126,7 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
     : entry.categoryName;
 
   // 설명을 비워 둔 거래도 있다. 그때는 분류가 그 거래의 이름 노릇을 한다.
-  const title = titleOf(entry) || categoryLabel || '(내용 없음)';
+  const title = titleOf(t, entry) || categoryLabel || t('entry.noTitle');
 
   /*
    * 2줄에 들어가는 부속 정보. 있는 것만 " · "로 잇는다.
@@ -172,15 +176,15 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
         */}
         {hasExtra && (
           <Badge tone={entry.kind === 'income' ? 'income' : 'expense'}>
-            {entry.kind === 'income' ? '추가 수입' : '과소비'}{' '}
+            {entry.kind === 'income' ? t('entry.extraIncome') : t('entry.overspend')}{' '}
             {formatCurrency(entry.extraAmount, displayCurrency)}
           </Badge>
         )}
         {/* 이체와 카드사 이체는 수입도 지출도 아니다. 회색 금액과 같은 이야기를 글로 한 번 더 한다. */}
-        {showNotCounted && <Badge>합계 제외</Badge>}
+        {showNotCounted && <Badge>{t('entry.notCounted')}</Badge>}
         {hasFee && (
           <span className="shrink-0 font-medium tabular-nums text-red-600">
-            수수료 {formatCurrency(fee, displayCurrency)}
+            {t('entry.fee', { amount: formatCurrency(fee, displayCurrency) })}
           </span>
         )}
 
@@ -195,7 +199,9 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
               청구액이 아직 카드사 확정 전이라는 표시. 이 값이 붙어 있는 동안 위 금액은
               서버 추정 환율로 만든 값이고, 카드 화면에서 명세서의 실제 청구액으로 확정한다.
             */}
-            {entry.rateProvisional && <span className="ml-1 text-amber-600">· 잠정</span>}
+            {entry.rateProvisional && (
+              <span className="ml-1 text-amber-600">· {t('entry.provisional')}</span>
+            )}
           </span>
         )}
       </div>

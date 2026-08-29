@@ -2,6 +2,8 @@
 
 import { useState, useRef, useEffect } from 'react';
 
+import { useTranslation } from '@/lib/i18n';
+
 interface Option {
   id: string;
   name: string;
@@ -29,13 +31,17 @@ export default function CustomSelect({
   options,
   value,
   onChange,
-  placeholder = '선택하세요',
+  placeholder,
   label,
   onAddClick,
-  addButtonLabel = '추가',
+  addButtonLabel,
   disabled = false,
 }: CustomSelectProps) {
+  const { t } = useTranslation();
   const [isOpen, setIsOpen] = useState(false);
+  /* 넘기지 않았을 때의 기본 문구. 기본값을 매개변수에 적으면 언어를 따라가지 못한다. */
+  const placeholderText = placeholder ?? t('select.placeholder');
+  const addText = addButtonLabel ?? t('common.add');
   const ref = useRef<HTMLDivElement>(null);
 
   const selectedOption = options.find((opt) => opt.id === value);
@@ -65,7 +71,7 @@ export default function CustomSelect({
           {selectedOption?.icon && (
             <img src={selectedOption.icon} alt="" className="w-5 h-5" />
           )}
-          <span>{selectedOption?.name || placeholder}</span>
+          <span>{selectedOption?.name || placeholderText}</span>
         </span>
         {!disabled && (
           <span className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}>▼</span>
@@ -113,7 +119,7 @@ export default function CustomSelect({
               }}
               className="w-full px-3 py-2 text-left text-blue-600 hover:bg-blue-50 font-medium border-t border-gray-200"
             >
-              + {addButtonLabel}
+              + {addText}
             </button>
           )}
         </div>

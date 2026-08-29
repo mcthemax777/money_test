@@ -2,6 +2,7 @@
 
 import { useMemo, type ReactNode } from 'react';
 import type { ReportDto } from '@money/types';
+import { useTranslation } from '@/lib/i18n';
 import { formatAmountWithUnit, formatCurrency } from '@/lib/money';
 import { ASSET_TYPE_GROUPS, assetGroupAmount } from '@/lib/net-worth';
 import { useAssetTypeFilter } from '@/store/asset-type-filter';
@@ -37,6 +38,7 @@ export default function AssetTypeSummary({
   scopeTitle,
   hasNoScope,
 }: AssetTypeSummaryProps) {
+  const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
   const { selectedKeys, toggleKey } = useAssetTypeFilter();
 
@@ -45,9 +47,9 @@ export default function AssetTypeSummary({
     const selected = ASSET_TYPE_GROUPS.filter((group) => selectedKeys.includes(group.key));
     return {
       total: selected.reduce((acc, group) => acc + assetGroupAmount(byType, group.types), 0),
-      label: selected.map((group) => group.label).join(', '),
+      label: selected.map((group) => t(group.labelKey)).join(', '),
     };
-  }, [byType, selectedKeys]);
+  }, [byType, selectedKeys, t]);
 
   return (
     <div className="space-y-4">
@@ -62,21 +64,29 @@ export default function AssetTypeSummary({
             relative를 함께 준다. 제목은 자리를 잡은(relative) 상자라 그냥 두면
             마우스를 올렸을 때의 회색 바탕이 "은" 위에 얹혀 글자를 덮는다.
           */}
-          <span className="relative -ml-2 text-2xl font-bold text-gray-900">은</span>
+          {/*
+            조사는 언어마다 있고 없다. 영어 사전은 이 자리를 비워 두어 제목 다음에
+            바로 금액이 오게 한다.
+          */}
+          <span className="relative -ml-2 text-2xl font-bold text-gray-900">
+            {t('assetSummary.particle')}
+          </span>
         </div>
 
         {hasNoScope ? (
-          <p className="mt-1 text-lg text-gray-600">고른 자산주인이 없습니다.</p>
+          <p className="mt-1 text-lg text-gray-600">{t('assetSummary.noScope')}</p>
         ) : (
           <p className="mt-1 text-4xl font-bold text-gray-900 tabular-nums">
             {/* 문장으로 읽히는 자리라 기호 대신 이름을 뒤에 붙인다. */}
             {formatAmountWithUnit(total, displayCurrency)}
-            <span className="ml-2 text-xl font-medium text-gray-500">입니다</span>
+            <span className="ml-2 text-xl font-medium text-gray-500">
+              {t('assetSummary.suffix')}
+            </span>
           </p>
         )}
 
         {/* 무엇을 더한 금액인지. 카드를 끄면 이 줄도 함께 줄어든다. */}
-        <p className="mt-1 text-sm text-gray-500">{label || '고른 유형 없음'}</p>
+        <p className="mt-1 text-sm text-gray-500">{label || t('assetSummary.noType')}</p>
       </div>
 
       {/*
@@ -109,7 +119,7 @@ export default function AssetTypeSummary({
                   }`}
                   aria-hidden
                 />
-                <span className="truncate">{group.label}</span>
+                <span className="truncate">{t(group.labelKey)}</span>
               </p>
               <p
                 className={`mt-1 text-base font-semibold tabular-nums ${

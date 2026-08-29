@@ -9,19 +9,21 @@ import {
 } from '@money/types';
 import { apiClient } from '@/lib/api-client';
 import type { CardUsage } from '@/lib/types';
+import { useTranslation } from '@/lib/i18n';
 import { formatCurrency, toAmountString, toNumber } from '@/lib/money';
 import { formatDateMarker, todayKey } from '@/lib/datetime';
 import { useProjectTimeZone } from '@/store/project';
 import Modal from './Modal';
 import PendingRatePanel from './PendingRatePanel';
+import { useApiError } from '@/lib/api-error';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const PAYMENT_FORM_ID = 'card-payment-form';
 
 /** 카드사와 통장 사이 자금이 오가는 방향 */
 const TRANSFER_DIRECTIONS = [
-  { id: 'payment' as CardTransferDirection, label: '대금 결제' },
-  { id: 'refund' as CardTransferDirection, label: '환불 입금' },
+  { id: 'payment' as CardTransferDirection, labelKey: 'settlement.payment' as const },
+  { id: 'refund' as CardTransferDirection, labelKey: 'settlement.refund' as const },
 ];
 
 interface CardSettlementPanelProps {
@@ -61,6 +63,8 @@ export default function CardSettlementPanel({
   reloadToken = 0,
   onChange,
 }: CardSettlementPanelProps) {
+  const { t } = useTranslation();
+  const { messageOf } = useApiError();
   const timeZone = useProjectTimeZone();
 
   const [usage, setUsage] = useState<CardUsage | null>(null);
@@ -144,14 +148,14 @@ export default function CardSettlementPanel({
       closePaymentModal();
       await refresh();
     } catch (err: any) {
-      alert(err?.response?.data?.error?.message || '기록에 실패했습니다.');
+      alert(messageOf(err, 'settlement.recordFailed'));
     } finally {
       setIsPaymentSubmitting(false);
     }
   };
 
   if (!usage) {
-    return <p className="text-gray-600">사용 현황을 불러오는 중입니다...</p>;
+    return <p className="text-gray-600">{t('settlement.loading')}</p>;
   }
 
   return (
@@ -171,7 +175,7 @@ export default function CardSettlementPanel({
                 refundPending ? 'text-emerald-700' : 'text-red-600'
               }`}
             >
-              {refundPending ? '환불 예정' : '남은 대금'}
+              {t(refundPending ? 'settlement.refundPending' : 'settlement.remaining')}
             </span>
             <span
               className={`text-lg font-bold ${
@@ -183,7 +187,7 @@ export default function CardSettlementPanel({
           </div>
           {refundPending && (
             <p className="text-xs text-emerald-700">
-              카드사가 갚을 돈입니다. 맞지 않으면 대금 기록을 확인하세요.
+              {t('settlement.remainingHint')}
             </p>
           )}
           {paymentAccountOwnerId ? (
@@ -191,12 +195,11 @@ export default function CardSettlementPanel({
               onClick={() => setIsPaymentModalOpen(true)}
               className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
             >
-              대금 기록하기
+              {t('settlement.record')}
             </button>
           ) : (
             <p className="text-xs text-gray-600">
-              결제 통장의 주인이 없어 대금을 기록할 수 없습니다. 자산 화면에서 통장 주인을
-              지정하세요.
+              {t('settlement.noOwner')}
             </p>
           )}
         </div>
@@ -204,7 +207,7 @@ export default function CardSettlementPanel({
 
         <div>
           <h3 className="text-sm font-medium text-gray-700 mb-2">
-            {isCredit ? '마감일 기준 사용액' : '달별 사용액'}
+            {t(isCredit ? 'settlement.usageByStatement' : 'settlement.usageByMonth')}
           </h3>
           <div className="space-y-1">
             {usage.periods.map((period) => (
@@ -215,7 +218,7 @@ export default function CardSettlementPanel({
                 <div className="text-sm text-gray-700">
                   {formatDateMarker(period.periodStart)} ~ {formatDateMarker(period.periodEnd)}
                   <span className="ml-2 text-xs text-gray-500">
-                    {period.closed ? '마감' : '진행'}
+                    {t(period.closed ? 'settlement.closed' : 'settlement.ongoing')}
                   </span>
                 </div>
                 <span className="text-sm font-medium text-gray-900">
@@ -226,8 +229,8 @@ export default function CardSettlementPanel({
           </div>
           <p className="mt-2 text-xs text-gray-500">
             {isCredit
-              ? '할부는 회차분만 들어갑니다. 남은 대금은 결제까지 반영한 값이라 합계와 다릅니다.'
-              : '결제 즉시 통장에서 빠진 금액입니다. 달력 월로 셉니다.'}
+              ? t('settlement.creditHint')
+              : t('settlement.debitHint')}
           </p>
         </div>
 
@@ -244,7 +247,7 @@ export default function CardSettlementPanel({
         <Modal
           isOpen={true}
           onClose={closePaymentModal}
-          title="카드 대금 기록"
+          title={t('settlement.modalTitle')}
           footer={
             <div className="flex gap-2">
               <button
@@ -252,7 +255,7 @@ export default function CardSettlementPanel({
                 onClick={closePaymentModal}
                 className="flex-1 px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
               >
-                취소
+                {t('common.cancel')}
               </button>
               <button
                 type="submit"
@@ -260,7 +263,7 @@ export default function CardSettlementPanel({
                 disabled={isPaymentSubmitting}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
               >
-                {isPaymentSubmitting ? '처리 중...' : '기록하기'}
+                {isPaymentSubmitting ? t('settlement.submitting') : t('settlement.submit')}
               </button>
             </div>
           }
@@ -275,7 +278,7 @@ export default function CardSettlementPanel({
           >
             <div className="bg-gray-50 p-3 rounded-lg flex justify-between">
               <span className="text-sm text-gray-600">
-                {refundPending ? '환불 예정' : '남은 대금'}
+                {t(refundPending ? 'settlement.refundPending' : 'settlement.remaining')}
               </span>
               <span className="font-semibold">
                 {formatCurrency(Math.abs(outstanding), usage.currency)}
@@ -283,7 +286,7 @@ export default function CardSettlementPanel({
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">방향</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">{t('settlement.direction')}</label>
               <div className="flex gap-2">
                 {TRANSFER_DIRECTIONS.map((option) => (
                   <label key={option.id} className="flex-1 flex items-center">
@@ -294,19 +297,19 @@ export default function CardSettlementPanel({
                       onChange={() => setPaymentForm({ ...paymentForm, direction: option.id })}
                       className="mr-2"
                     />
-                    <span className="text-sm">{option.label}</span>
+                    <span className="text-sm">{t(option.labelKey)}</span>
                   </label>
                 ))}
               </div>
               <p className="mt-1 text-xs text-gray-500">
                 {paymentForm.direction === 'refund'
-                  ? '카드사가 통장에 넣어 준 돈입니다.'
-                  : '통장에서 카드사로 나간 돈입니다.'}
+                  ? t('settlement.refundDirectionHint')
+                  : t('settlement.paymentDirectionHint')}
               </p>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">날짜</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('settlement.date')}</label>
               <input
                 type="date"
                 required
@@ -317,11 +320,11 @@ export default function CardSettlementPanel({
                 onChange={(e) => setPaymentForm({ ...paymentForm, date: e.target.value })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               />
-              <p className="mt-1 text-xs text-gray-500">통장에서 돈이 실제로 오간 날입니다.</p>
+              <p className="mt-1 text-xs text-gray-500">{t('settlement.dateHint')}</p>
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">금액</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1">{t('settlement.amount')}</label>
               <input
                 type="number"
                 required
@@ -336,9 +339,17 @@ export default function CardSettlementPanel({
               */}
               {overTransfer > 0 && (
                 <p className="mt-1 text-xs text-amber-700">
-                  {refundPending ? '환불 예정액' : '남은 대금'}보다{' '}
-                  {formatCurrency(overTransfer, usage.currency)} 많습니다. 차액은{' '}
-                  {paymentForm.direction === 'refund' ? '대금' : '환불 예정'}으로 남습니다.
+                  {t('settlement.overHint', {
+                    basis: t(
+                      refundPending ? 'settlement.refundPendingAmount' : 'settlement.remaining',
+                    ),
+                    over: formatCurrency(overTransfer, usage.currency),
+                    rest: t(
+                      paymentForm.direction === 'refund'
+                        ? 'settlement.restPayment'
+                        : 'settlement.restRefund',
+                    ),
+                  })}
                 </p>
               )}
             </div>

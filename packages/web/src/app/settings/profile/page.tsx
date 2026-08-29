@@ -6,9 +6,13 @@ import { useAuth } from '@/store/auth';
 import { apiClient } from '@/lib/api-client';
 import { UserAvatar } from '@/components/UserAvatar';
 import PageHeader from '@/components/PageHeader';
+import { useTranslation } from '@/lib/i18n';
+import { useApiError } from '@/lib/api-error';
 
 export default function ProfilePage() {
   const router = useRouter();
+  const { t, tag } = useTranslation();
+  const { messageOf } = useApiError();
   const { user, loadUser, logout } = useAuth();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
 
@@ -33,7 +37,7 @@ export default function ProfilePage() {
     const name = nameInput.trim();
 
     if (!name) {
-      setError('이름을 입력해주세요.');
+      setError(t('profile.nameRequired'));
       return;
     }
 
@@ -49,9 +53,9 @@ export default function ProfilePage() {
       await loadUser();
       setIsEditingName(false);
       setError('');
-      setSavedMessage('이름을 변경했습니다.');
+      setSavedMessage(t('profile.nameSaved'));
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || '이름 변경에 실패했습니다.');
+      setError(messageOf(err, 'profile.nameSaveFailed'));
     } finally {
       setIsSaving(false);
     }
@@ -74,7 +78,7 @@ export default function ProfilePage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader title="내 정보" backHref="/settings" />
+      <PageHeader title={t('settings.profile.title')} backHref="/settings" />
 
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-600 px-4 py-3 rounded-lg">
@@ -99,7 +103,7 @@ export default function ProfilePage() {
 
         <dl className="divide-y divide-gray-100">
           <div className="py-4">
-            <dt className="text-sm text-gray-600">이름</dt>
+            <dt className="text-sm text-gray-600">{t('profile.name')}</dt>
             {isEditingName ? (
               <dd className="mt-2 flex flex-wrap gap-2">
                 <input
@@ -119,41 +123,37 @@ export default function ProfilePage() {
                   disabled={isSaving}
                   className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition"
                 >
-                  {isSaving ? '저장 중...' : '저장'}
+                  {isSaving ? t('common.saving') : t('common.save')}
                 </button>
                 <button
                   onClick={() => setIsEditingName(false)}
                   className="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition"
                 >
-                  취소
+                  {t('common.cancel')}
                 </button>
               </dd>
             ) : (
               <dd className="mt-1 flex items-center gap-3">
                 <span className="text-lg font-medium text-gray-900">{user?.name}</span>
                 <button onClick={startEditing} className="text-sm text-blue-600 hover:underline">
-                  변경
+                  {t('common.change')}
                 </button>
               </dd>
             )}
-            <p className="mt-2 text-xs text-gray-500">
-              프로젝트 멤버 목록에 표시되는 이름입니다.
-            </p>
+            <p className="mt-2 text-xs text-gray-500">{t('profile.nameHint')}</p>
           </div>
 
           <div className="py-4">
-            <dt className="text-sm text-gray-600">이메일</dt>
+            <dt className="text-sm text-gray-600">{t('profile.email')}</dt>
             <dd className="mt-1 text-lg font-medium text-gray-900">{user?.email}</dd>
-            <p className="mt-2 text-xs text-gray-500">
-              구글 계정에서 관리되므로 이 화면에서는 변경할 수 없습니다.
-            </p>
+            <p className="mt-2 text-xs text-gray-500">{t('profile.emailHint')}</p>
           </div>
 
           <div className="py-4">
-            <dt className="text-sm text-gray-600">가입일</dt>
+            <dt className="text-sm text-gray-600">{t('profile.joinedAt')}</dt>
             <dd className="mt-1 text-lg font-medium text-gray-900">
               {user?.createdAt
-                ? new Date(user.createdAt).toLocaleDateString('ko-KR')
+                ? new Date(user.createdAt).toLocaleDateString(tag)
                 : '-'}
             </dd>
           </div>
@@ -161,16 +161,14 @@ export default function ProfilePage() {
       </div>
 
       <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-lg font-semibold text-gray-900">로그아웃</h2>
-        <p className="mt-1 text-sm text-gray-600">
-          이 브라우저에서 계정 연결을 끊습니다. 다시 쓰려면 구글로 로그인하세요.
-        </p>
+        <h2 className="text-lg font-semibold text-gray-900">{t('profile.logout')}</h2>
+        <p className="mt-1 text-sm text-gray-600">{t('profile.logoutHint')}</p>
         <button
           onClick={handleLogout}
           disabled={isLoggingOut}
           className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 transition"
         >
-          {isLoggingOut ? '로그아웃 중...' : '로그아웃'}
+          {isLoggingOut ? t('profile.loggingOut') : t('profile.logout')}
         </button>
       </div>
     </div>

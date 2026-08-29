@@ -1,5 +1,7 @@
 'use client';
 
+import { useTranslation } from '@/lib/i18n';
+
 interface CardPerformanceFieldProps {
   /** 세는 구간이 종류마다 달라서 안내 문구가 갈린다. */
   cardType: 'debit' | 'credit';
@@ -10,11 +12,14 @@ interface CardPerformanceFieldProps {
 }
 
 /** 마감일이 N일이면 구간은 (N+1)일부터 다음 달 N일까지다. */
-function statementHint(closingDay?: number): string {
-  if (!closingDay) return '마감일 기준 청구 주기의 사용액으로 셉니다.';
+function statementHint(
+  t: ReturnType<typeof useTranslation>['t'],
+  closingDay?: number,
+): string {
+  if (!closingDay) return t('performance.statementHintNoDay');
 
   const nextDay = closingDay === 31 ? 1 : closingDay + 1;
-  return `마감일(${closingDay}일) 기준 청구 주기로 셉니다. ${nextDay}일부터 다음 달 ${closingDay}일까지가 한 구간입니다.`;
+  return t('performance.statementHint', { closing: closingDay, next: nextDay });
 }
 
 /**
@@ -33,9 +38,13 @@ export default function CardPerformanceField({
   onChange,
   statementClosingDay,
 }: CardPerformanceFieldProps) {
+  const { t } = useTranslation();
+
   return (
     <div>
-      <label className="block text-sm font-medium text-gray-700 mb-1">실적 기준액</label>
+      <label className="block text-sm font-medium text-gray-700 mb-1">
+        {t('performance.target')}
+      </label>
       <input
         type="number"
         min="0"
@@ -45,8 +54,10 @@ export default function CardPerformanceField({
         placeholder="300000"
       />
       <p className="mt-1 text-xs text-gray-500">
-        {cardType === 'credit' ? statementHint(statementClosingDay) : '달력 월(1일~말일)의 사용액으로 셉니다.'}{' '}
-        비워 두면 실적을 보지 않습니다.
+        {cardType === 'credit'
+          ? statementHint(t, statementClosingDay)
+          : t('performance.monthHint')}{' '}
+        {t('performance.emptyHint')}
       </p>
     </div>
   );

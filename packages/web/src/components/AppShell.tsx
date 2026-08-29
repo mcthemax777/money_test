@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
 import { apiClient } from '@/lib/api-client';
+import { useTranslation } from '@/lib/i18n';
 import { useAuth } from '@/store/auth';
 import { useProject } from '@/store/project';
 import DashboardSidebar from '@/components/DashboardSidebar';
@@ -22,6 +23,7 @@ import MobileTopBar from '@/components/MobileTopBar';
  */
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
+  const { t, locale } = useTranslation();
   const { isAuthenticated, isInitializing } = useAuth();
   const { projects, setProjects, selectedProjectId, setSelectedProjectId } = useProject();
 
@@ -57,7 +59,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, [isAuthenticated, projects.length, selectedProjectId, setProjects, setSelectedProjectId]);
 
   if (isInitializing || !isAuthenticated) {
-    return <div className="flex justify-center items-center h-screen">로그인 중...</div>;
+    return (
+      <div className="flex justify-center items-center h-screen">{t('shell.signingIn')}</div>
+    );
   }
 
   return (
@@ -70,7 +74,16 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         아래는 아이폰 홈 표시줄 자리까지 더한다 (MobileTabBar 주석 참고).
       */}
       <main className="md:ml-64 pt-14 pb-[calc(3.5rem+env(safe-area-inset-bottom))] md:pt-0 md:pb-0">
-        <div className="max-w-7xl mx-auto px-4 py-8">{children}</div>
+        {/*
+          언어를 바꾸면 본문을 새로 만든다(key).
+
+          사전에서 문구를 꺼내는 화면은 스토어를 구독하고 있어 저절로 다시 그려지지만,
+          날짜 표기처럼 훅 없이 지금 언어를 읽어 쓰는 자리는 다시 그릴 까닭이 없어
+          옛 표기가 남는다. 언어를 바꾸는 일은 드물어 한 번 새로 받는 값이 싸다.
+        */}
+        <div key={locale} className="max-w-7xl mx-auto px-4 py-8">
+          {children}
+        </div>
       </main>
 
       <MobileTabBar />

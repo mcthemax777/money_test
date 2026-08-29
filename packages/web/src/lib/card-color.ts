@@ -1,5 +1,7 @@
 import { CARD_COLORS, isCardColor, type CardColor } from '@money/types';
 
+import type { MessageKey } from '@/lib/i18n';
+
 /**
  * 카드 한 색이 쓰는 색 묶음.
  *
@@ -13,7 +15,8 @@ export interface CardTone {
 }
 
 export interface CardPalette {
-  label: string;
+  /** 색 이름의 사전 열쇠. 고르는 화면이 t()로 꺼낸다. */
+  labelKey: MessageKey;
   /** 앞면 그라데이션 */
   face: string;
   /** 앞면 위 기본 글씨 색. 밝은 앞면은 검은 글씨여야 읽힌다. */
@@ -51,42 +54,42 @@ const ON_LIGHT = {
  */
 export const CARD_PALETTE: Record<CardColor, CardPalette> = {
   blue: {
-    label: '파랑',
+    labelKey: 'cardColor.blue',
     face: 'bg-gradient-to-br from-blue-700 to-sky-500',
     ...ON_DARK,
     positive: { text: 'text-green-300', bar: 'bg-green-300' },
     negative: { text: 'text-red-300', bar: 'bg-red-300' },
   },
   sky: {
-    label: '하늘',
+    labelKey: 'cardColor.sky',
     face: 'bg-gradient-to-br from-sky-400 to-sky-200',
     ...ON_LIGHT,
     positive: { text: 'text-emerald-700', bar: 'bg-emerald-700' },
     negative: { text: 'text-red-700', bar: 'bg-red-700' },
   },
   indigo: {
-    label: '남색',
+    labelKey: 'cardColor.indigo',
     face: 'bg-gradient-to-br from-indigo-800 to-blue-600',
     ...ON_DARK,
     positive: { text: 'text-green-300', bar: 'bg-green-300' },
     negative: { text: 'text-red-300', bar: 'bg-red-300' },
   },
   violet: {
-    label: '보라',
+    labelKey: 'cardColor.violet',
     face: 'bg-gradient-to-br from-violet-800 to-purple-600',
     ...ON_DARK,
     positive: { text: 'text-lime-200', bar: 'bg-lime-200' },
     negative: { text: 'text-red-300', bar: 'bg-red-300' },
   },
   teal: {
-    label: '청록',
+    labelKey: 'cardColor.teal',
     face: 'bg-gradient-to-br from-teal-700 to-cyan-500',
     ...ON_DARK,
     positive: { text: 'text-lime-200', bar: 'bg-lime-200' },
     negative: { text: 'text-red-300', bar: 'bg-red-300' },
   },
   green: {
-    label: '초록',
+    labelKey: 'cardColor.green',
     face: 'bg-gradient-to-br from-emerald-700 to-teal-500',
     ...ON_DARK,
     positive: { text: 'text-lime-200', bar: 'bg-lime-200' },
@@ -94,7 +97,7 @@ export const CARD_PALETTE: Record<CardColor, CardPalette> = {
   },
   yellow: {
     /* 가장 밝은 앞면이다. 흰 글씨는 아예 보이지 않아 노랑 계열의 가장 짙은 쪽을 쓴다. */
-    label: '노랑',
+    labelKey: 'cardColor.blue',
     face: 'bg-gradient-to-br from-yellow-300 to-yellow-100',
     ...ON_LIGHT,
     ink: 'text-yellow-950',
@@ -103,7 +106,7 @@ export const CARD_PALETTE: Record<CardColor, CardPalette> = {
   },
   copper: {
     /* 구리. 금색보다 붉고 어두워 흰 글씨가 그대로 읽힌다. */
-    label: '구리색',
+    labelKey: 'cardColor.copper',
     face: 'bg-gradient-to-br from-[#7c3f1d] via-[#c1743c] to-[#9a5327]',
     ...ON_DARK,
     positive: { text: 'text-lime-200', bar: 'bg-lime-200' },
@@ -111,7 +114,7 @@ export const CARD_PALETTE: Record<CardColor, CardPalette> = {
   },
   amber: {
     /* 따뜻하고 밝은 앞면이라 연한 색은 묻힌다. 양쪽 다 짙은 색으로 적는다. */
-    label: '주황',
+    labelKey: 'cardColor.amber',
     face: 'bg-gradient-to-br from-amber-600 to-orange-500',
     ...ON_DARK,
     positive: { text: 'text-emerald-900', bar: 'bg-emerald-900' },
@@ -119,7 +122,7 @@ export const CARD_PALETTE: Record<CardColor, CardPalette> = {
   },
   gold: {
     /* 금색은 밝아서 흰 글씨가 날아간다. 글씨를 전부 짙은 쪽으로 내린다. */
-    label: '금색',
+    labelKey: 'cardColor.gold',
     face: 'bg-gradient-to-br from-yellow-600 via-amber-400 to-yellow-500',
     ...ON_LIGHT,
     ink: 'text-amber-950',
@@ -128,7 +131,7 @@ export const CARD_PALETTE: Record<CardColor, CardPalette> = {
   },
   tan: {
     /* 갈색은 tailwind 기본 팔레트에 없다. 값을 그대로 적는다. */
-    label: '밝은 갈색',
+    labelKey: 'cardColor.tan',
     face: 'bg-gradient-to-br from-[#c89f6d] to-[#e6cfa9]',
     ...ON_LIGHT,
     ink: 'text-[#3f2a12]',
@@ -136,14 +139,14 @@ export const CARD_PALETTE: Record<CardColor, CardPalette> = {
     negative: { text: 'text-red-800', bar: 'bg-red-800' },
   },
   darkbrown: {
-    label: '고동색',
+    labelKey: 'cardColor.darkbrown',
     face: 'bg-gradient-to-br from-[#3f2415] to-[#7a4a28]',
     ...ON_DARK,
     positive: { text: 'text-lime-200', bar: 'bg-lime-200' },
     negative: { text: 'text-red-300', bar: 'bg-red-300' },
   },
   rose: {
-    label: '분홍',
+    labelKey: 'cardColor.rose',
     face: 'bg-gradient-to-br from-rose-700 to-pink-500',
     ...ON_DARK,
     positive: { text: 'text-lime-200', bar: 'bg-lime-200' },
@@ -151,7 +154,7 @@ export const CARD_PALETTE: Record<CardColor, CardPalette> = {
   },
   red: {
     /* 붉은 앞면에 붉은 글씨는 묻힌다. 넘긴 표시를 아주 짙은 빨강으로 내린다. */
-    label: '빨강',
+    labelKey: 'cardColor.darkbrown',
     face: 'bg-gradient-to-br from-red-700 to-rose-500',
     ...ON_DARK,
     positive: { text: 'text-lime-200', bar: 'bg-lime-200' },
@@ -159,28 +162,28 @@ export const CARD_PALETTE: Record<CardColor, CardPalette> = {
   },
   burgundy: {
     /* 앞면이 짙은 붉은색이다. 붉은 계열이지만 어두워서 밝은 빨강이 오히려 잘 보인다. */
-    label: '버건디',
+    labelKey: 'cardColor.burgundy',
     face: 'bg-gradient-to-br from-[#4a0d1c] to-[#8a1538]',
     ...ON_DARK,
     positive: { text: 'text-lime-200', bar: 'bg-lime-200' },
     negative: { text: 'text-red-300', bar: 'bg-red-300' },
   },
   slate: {
-    label: '먹색',
+    labelKey: 'cardColor.slate',
     face: 'bg-gradient-to-br from-slate-800 to-slate-600',
     ...ON_DARK,
     positive: { text: 'text-green-300', bar: 'bg-green-300' },
     negative: { text: 'text-red-300', bar: 'bg-red-300' },
   },
   black: {
-    label: '검정',
+    labelKey: 'cardColor.black',
     face: 'bg-gradient-to-br from-neutral-900 to-neutral-700',
     ...ON_DARK,
     positive: { text: 'text-green-300', bar: 'bg-green-300' },
     negative: { text: 'text-red-400', bar: 'bg-red-400' },
   },
   gray: {
-    label: '회색',
+    labelKey: 'cardColor.gray',
     face: 'bg-gradient-to-br from-slate-400 to-slate-300',
     ...ON_LIGHT,
     positive: { text: 'text-emerald-700', bar: 'bg-emerald-700' },
@@ -188,7 +191,7 @@ export const CARD_PALETTE: Record<CardColor, CardPalette> = {
   },
   silver: {
     /* 은. 가운데를 밝게 두어 금속처럼 번지게 한다. 회색보다 밝아 글씨는 짙은 쪽이다. */
-    label: '실버',
+    labelKey: 'cardColor.slate',
     face: 'bg-gradient-to-br from-[#aeb6c0] via-[#f1f3f6] to-[#98a1ad]',
     ...ON_LIGHT,
     positive: { text: 'text-emerald-700', bar: 'bg-emerald-700' },
@@ -196,7 +199,7 @@ export const CARD_PALETTE: Record<CardColor, CardPalette> = {
   },
   white: {
     /* 흰 카드는 테두리가 없으면 화면 바탕에 녹는다. 앞면에 옅은 테두리를 함께 준다. */
-    label: '하양',
+    labelKey: 'cardColor.white',
     face: 'bg-gradient-to-br from-white to-slate-200 ring-1 ring-inset ring-slate-300',
     ...ON_LIGHT,
     positive: { text: 'text-emerald-600', bar: 'bg-emerald-600' },

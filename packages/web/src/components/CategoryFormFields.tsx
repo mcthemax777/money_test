@@ -1,6 +1,7 @@
 'use client';
 
 import CustomSelect from './CustomSelect';
+import { useTranslation } from '@/lib/i18n';
 
 /** 소분류 입력 한 줄. id가 빈 문자열이면 아직 저장되지 않은 새 줄이다. */
 export type SubCategoryRow = { id: string; name: string; defaultIsExtra: boolean };
@@ -52,37 +53,39 @@ export default function CategoryFormFields({
   onSubCategoriesChange,
   parentName,
 }: CategoryFormFieldsProps) {
+  const { t } = useTranslation();
+
   return (
     <>
       {parentName ? (
         <p className="text-sm text-gray-600">
-          <span className="font-semibold text-gray-900">{parentName}</span> 밑에 소분류를
-          만듭니다.
+          {t('categories.subHint', { parent: parentName })}
         </p>
       ) : (
         <>
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">대분류 이름</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {t('categories.parentName')}
+            </label>
             <input
               type="text"
               required
               value={name}
               onChange={(e) => onNameChange(e.target.value)}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="예: 음식"
+              placeholder={t('categories.parentPlaceholder')}
             />
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">유형</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">{t('account.type')}</label>
             <CustomSelect
               options={[
-                { id: 'expense', name: '지출' },
-                { id: 'income', name: '수입' },
+                { id: 'expense', name: t('home.tab.expense') },
+                { id: 'income', name: t('home.tab.income') },
               ]}
               value={type}
               onChange={(value) => onTypeChange(value as 'income' | 'expense')}
-              placeholder="선택하세요"
             />
           </div>
         </>
@@ -102,14 +105,14 @@ export default function CategoryFormFields({
                     onSubCategoriesChange(rows);
                   }}
                   className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder="소분류 이름"
+                  placeholder={t('categories.subPlaceholder')}
                 />
                 <button
                   type="button"
                   onClick={() => onSubCategoriesChange(subCategories.filter((_, i) => i !== index))}
                   className="px-3 py-2 text-red-600 hover:bg-red-50 rounded-lg"
                 >
-                  제거
+                  {t('categories.removeSub')}
                 </button>
               </div>
             </div>
@@ -122,7 +125,7 @@ export default function CategoryFormFields({
           }
           className="mt-2 px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
         >
-          소분류 추가
+          {t('categories.addSub')}
         </button>
       </div>
     </>

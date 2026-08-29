@@ -2,7 +2,13 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
-import { currentYearMonth } from '@/lib/datetime';
+import {
+  currentYearMonth,
+  formatMonthShort,
+  formatYearMonth,
+  formatYearOnly,
+} from '@/lib/datetime';
+import { useTranslation } from '@/lib/i18n';
 import { formatCurrency } from '@/lib/money';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
 
@@ -47,6 +53,7 @@ export default function MonthHeader({
   onRangeChange,
   onPeriodModeChange,
 }: MonthHeaderProps) {
+  const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
   const displayCurrency = useProjectDisplayCurrency();
   const [isPickerOpen, setIsPickerOpen] = useState(false);
@@ -115,7 +122,7 @@ export default function MonthHeader({
               onClick={() => onPeriodModeChange?.('month')}
               className="px-3 py-1 text-sm border rounded-lg text-gray-700 hover:bg-gray-100"
             >
-              월별로
+              {t('month.byMonth')}
             </button>
           </div>
         ) : (
@@ -125,8 +132,8 @@ export default function MonthHeader({
             type="button"
             onClick={() => shift(-1)}
             className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
-            aria-label="이전 달"
-            title="이전 달"
+            aria-label={t('month.prev')}
+            title={t('month.prev')}
           >
             <ChevronLeft className="w-5 h-5" />
           </button>
@@ -137,17 +144,17 @@ export default function MonthHeader({
             className="px-2 py-1 text-2xl font-bold text-gray-900 rounded-lg hover:bg-gray-100 transition"
             aria-haspopup="dialog"
             aria-expanded={isPickerOpen}
-            title="년월 선택"
+            title={t('month.pick')}
           >
-            {year}년 {month}월
+            {formatYearMonth(year, month)}
           </button>
 
           <button
             type="button"
             onClick={() => shift(1)}
             className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
-            aria-label="다음 달"
-            title="다음 달"
+            aria-label={t('month.next')}
+            title={t('month.next')}
           >
             <ChevronRight className="w-5 h-5" />
           </button>
@@ -160,16 +167,16 @@ export default function MonthHeader({
                   type="button"
                   onClick={() => setPickerYear((y) => y - 1)}
                   className="p-1 px-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition"
-                  aria-label="이전 해"
+                  aria-label={t('month.prevYear')}
                 >
                   <ChevronLeft className="w-4 h-4" />
                 </button>
-                <span className="font-semibold text-gray-900">{pickerYear}년</span>
+                <span className="font-semibold text-gray-900">{formatYearOnly(pickerYear)}</span>
                 <button
                   type="button"
                   onClick={() => setPickerYear((y) => y + 1)}
                   className="p-1 px-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded transition"
-                  aria-label="다음 해"
+                  aria-label={t('month.nextYear')}
                 >
                   <ChevronRight className="w-4 h-4" />
                 </button>
@@ -195,7 +202,7 @@ export default function MonthHeader({
                             : 'text-gray-700 hover:bg-gray-100'
                       }`}
                     >
-                      {m}월
+                      {formatMonthShort(m)}
                     </button>
                   );
                 })}
@@ -210,7 +217,7 @@ export default function MonthHeader({
               onClick={() => onPeriodModeChange('range')}
               className="ml-2 px-3 py-1 text-sm border rounded-lg text-gray-700 hover:bg-gray-100"
             >
-              기간
+              {t('month.byRange')}
             </button>
           )}
         </div>

@@ -3,19 +3,22 @@
 import { useState, useEffect } from 'react';
 import { apiClient } from '@/lib/api-client';
 import type { Account, Card } from '@/lib/types';
+import { useTranslation } from '@/lib/i18n';
+import { useProjectDisplayCurrency } from '@/store/project';
 import { toAmountString } from '@/lib/money';
 import { monthInputOf, monthInputToIso } from '@/lib/datetime';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@/hooks/useInstitutions';
 import {
-  DAY_OF_MONTH_HINT,
-  DAY_OF_MONTH_OPTIONS,
+  dayOfMonthHint,
+  dayOfMonthOptions,
   DEFAULT_PAYMENT_DUE_DAY,
   DEFAULT_STATEMENT_CLOSING_DAY,
 } from '@/lib/day-of-month';
 import CardColorPicker from '@/components/CardColorPicker';
 import CardPerformanceField from '@/components/CardPerformanceField';
+import { useApiError } from '@/lib/api-error';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id */
 const FORM_ID = 'edit-card-form';
@@ -55,6 +58,10 @@ export default function EditCardModal({
   onSuccess,
   onDelete,
 }: EditCardModalProps) {
+  const { t } = useTranslation();
+  const { messageOf } = useApiError();
+  /* 한도는 프로젝트 기준통화로 적는다. 카드 행에는 통화가 없다. */
+  const displayCurrency = useProjectDisplayCurrency();
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -93,7 +100,7 @@ export default function EditCardModal({
       // 카드사는 필수다. CustomSelect는 <input required>와 달리 브라우저 검증이 없어
       // 비워 두면 서버에서 "기관을 찾을 수 없습니다"가 돌아와 원인을 알기 어렵다.
       if (!formData.issuerId) {
-        setError('발급사를 선택하세요.');
+        setError(t('card.issuerRequired'));
         setIsSubmitting(false);
         return;
       }
@@ -126,7 +133,7 @@ export default function EditCardModal({
       onSuccess(data || []);
       handleClose();
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || '수정에 실패했습니다.');
+      setError(messageOf(err, 'account.editFailed'));
     } finally {
       setIsSubmitting(false);
     }
@@ -134,7 +141,7 @@ export default function EditCardModal({
 
   const handleDeleteClick = async () => {
     if (!card) return;
-    if (!window.confirm('정말 삭제하시겠습니까?')) return;
+    if (!window.confirm(t('account.deleteConfirm'))) return;
 
     try {
       setIsDeleting(true);
@@ -142,7 +149,7 @@ export default function EditCardModal({
       await onDelete(card.id);
       handleClose();
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || '삭제에 실패했습니다.');
+      setError(messageOf(err, 'account.deleteFailed'));
     } finally {
       setIsDeleting(false);
     }
@@ -160,7 +167,7 @@ export default function EditCardModal({
     <Modal
       isOpen={isOpen}
       onClose={handleClose}
-      title="카드 수정"
+      title={t('card.edit')}
       /* 버튼은 form 밖(하단 고정 영역)이라 form 속성으로 묶는다 */
       footer={
         <div className="flex gap-2">
@@ -170,7 +177,7 @@ export default function EditCardModal({
             disabled={isSubmitting}
             className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
           >
-            {isSubmitting ? '수정 중...' : '수정하기'}
+            {isSubmitting ? t('account.editing') : t('account.editSubmit')}
           </button>
           <button
             type="button"
@@ -178,7 +185,7 @@ export default function EditCardModal({
             disabled={isDeleting || isSubmitting}
             className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
           >
-            {isDeleting ? '삭제 중...' : '삭제하기'}
+            {isDeleting ? t('account.deleting') : t('account.deleteSubmit')}
           </button>
         </div>
       }
@@ -186,7 +193,7 @@ export default function EditCardModal({
       <form id={FORM_ID} onSubmit={handleSubmit} className="space-y-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            결제 통장
+            {t('card.paymentAccount')}
           </label>
           {/* 신용카드는 부채 계정이 딸려 있어 통장을 바꾸면 원장이 어긋난다. 표시만 한다. */}
           <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
@@ -196,7 +203,7 @@ export default function EditCardModal({
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            카드 이름
+            {t('card.name')}
           </label>
           <input
             type="text"
@@ -204,54 +211,54 @@ export default function EditCardModal({
             value={formData.name}
             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="예: 내 체크카드"
+            placeholder={t('card.namePlaceholder')}
           />
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            카드 번호 (선택)
+            {t('card.numberOptional')}
           </label>
           <input
             type="text"
             value={formData.cardNumber}
             onChange={(e) => setFormData({ ...formData, cardNumber: e.target.value })}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder={card.cardNumberMasked || '16자리'}
+            placeholder={card.cardNumberMasked || t('card.numberPlaceholder')}
           />
           <p className="mt-1 text-xs text-gray-500">
             {card.cardNumberMasked
-              ? '비워 두면 현재 번호를 그대로 씁니다. 바꾸려면 전체 번호를 입력하세요.'
-              : '전체 번호를 입력하면 마스킹해서 보관합니다.'}
+              ? t('card.numberKeepHint')
+              : t('card.numberMaskHint')}
           </p>
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            카드 유형
+            {t('card.type')}
           </label>
           {/* 신용카드는 부채 계정과 청구서가 딸려 있어 종류를 바꾸면 원장이 어긋난다. 표시만 한다. */}
           <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-            {formData.cardType === 'credit' ? '신용카드' : '체크카드'}
+            {t(formData.cardType === 'credit' ? 'method.credit_card' : 'method.debit_card')}
           </p>
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            발급사
+            {t('card.issuer')}
           </label>
           <CustomSelect
             options={issuerOptions}
             value={formData.issuerId}
             onChange={(value) => setFormData({ ...formData, issuerId: value })}
-            placeholder="카드사를 선택하세요"
+            placeholder={t('card.issuerPlaceholder')}
           />
           {issuerError && <p className="mt-1 text-xs text-red-600">{issuerError}</p>}
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            만료 월 (선택)
+            {t('card.expiry')}
           </label>
           <input
             type="month"
@@ -262,7 +269,7 @@ export default function EditCardModal({
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">카드 색</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">{t('card.colorPlain')}</label>
           <CardColorPicker
             value={formData.color}
             onChange={(color) => setFormData({ ...formData, color })}
@@ -280,7 +287,7 @@ export default function EditCardModal({
           <>
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                신용한도 (원)
+                {t('card.limit', { currency: displayCurrency })}
               </label>
               <input
                 type="number"
@@ -293,39 +300,39 @@ export default function EditCardModal({
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                마감일
+                {t('card.closingDay')}
               </label>
               <select
                 value={formData.statementClosingDay}
                 onChange={(e) => setFormData({ ...formData, statementClosingDay: parseInt(e.target.value) })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                {DAY_OF_MONTH_OPTIONS.map((option) => (
+                {dayOfMonthOptions().map((option) => (
                   <option key={option.day} value={option.day}>
                     {option.label}
                   </option>
                 ))}
               </select>
-              <p className="mt-1 text-xs text-gray-500">{DAY_OF_MONTH_HINT}</p>
+              <p className="mt-1 text-xs text-gray-500">{dayOfMonthHint()}</p>
             </div>
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                결제일
+                {t('card.paymentDay')}
               </label>
               <select
                 value={formData.paymentDueDay}
                 onChange={(e) => setFormData({ ...formData, paymentDueDay: parseInt(e.target.value) })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
               >
-                {DAY_OF_MONTH_OPTIONS.map((option) => (
+                {dayOfMonthOptions().map((option) => (
                   <option key={option.day} value={option.day}>
                     {option.label}
                   </option>
                 ))}
               </select>
               <p className="mt-1 text-xs text-gray-500">
-                마감 이후 처음 돌아오는 이 날짜에 청구됩니다. {DAY_OF_MONTH_HINT}
+                {t('card.dueHint', { hint: dayOfMonthHint() })}
               </p>
             </div>
           </>

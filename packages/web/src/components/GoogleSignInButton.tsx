@@ -2,6 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 
+import { activeLocale, translate, useTranslation } from '@/lib/i18n';
+
 const GIS_SRC = 'https://accounts.google.com/gsi/client';
 
 /**
@@ -57,7 +59,8 @@ function loadGis(): Promise<void> {
     };
 
     const timer = setTimeout(
-      () => fail('구글 로그인 스크립트 응답이 없습니다. 네트워크 상태를 확인해 주세요.'),
+      // 스크립트를 부르는 곳은 React 밖이라 훅을 쓸 수 없다. 지금 언어를 직접 읽는다.
+      () => fail(translate(activeLocale(), 'google.noResponse')),
       LOAD_TIMEOUT_MS,
     );
 
@@ -66,14 +69,14 @@ function loadGis(): Promise<void> {
     script.onload = () => {
       // 차단 확장이 빈 응답으로 바꿔치기하면 onload는 떠도 전역이 없다.
       if (!window.google?.accounts?.id) {
-        fail('구글 로그인 스크립트가 차단되었습니다.');
+        fail(translate(activeLocale(), 'google.blocked'));
         return;
       }
       settled = true;
       clearTimeout(timer);
       resolve();
     };
-    script.onerror = () => fail('구글 로그인 스크립트를 불러오지 못했습니다.');
+    script.onerror = () => fail(translate(activeLocale(), 'google.loadFailed'));
     document.head.appendChild(script);
   });
 
@@ -94,6 +97,7 @@ interface GoogleSignInButtonProps {
 }
 
 export function GoogleSignInButton({ onCredential, onError }: GoogleSignInButtonProps) {
+  const { t, locale } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
   const [status, setStatus] = useState<Status>('loading');
@@ -114,9 +118,7 @@ export function GoogleSignInButton({ onCredential, onError }: GoogleSignInButton
   useEffect(() => {
     if (!clientId) {
       setStatus('misconfigured');
-      callbacksRef.current.onError(
-        'NEXT_PUBLIC_GOOGLE_CLIENT_ID 환경 변수가 설정되지 않았습니다.',
-      );
+      callbacksRef.current.onError(t('google.missingClientId'));
       return;
     }
 
@@ -133,7 +135,7 @@ export function GoogleSignInButton({ onCredential, onError }: GoogleSignInButton
           client_id: clientId,
           callback: (response) => {
             if (!response.credential) {
-              callbacksRef.current.onError('구글 인증 정보를 받지 못했습니다.');
+              callbacksRef.current.onError(t('google.noCredential'));
               return;
             }
             callbacksRef.current.onCredential(response.credential);
@@ -146,7 +148,8 @@ export function GoogleSignInButton({ onCredential, onError }: GoogleSignInButton
           size: 'large',
           text: 'signin_with',
           shape: 'rectangular',
-          locale: 'ko',
+          // 구글이 그리는 버튼의 글자("Google로 로그인")도 같은 말이어야 한다.
+          locale,
           width: 320,
         });
         setStatus('ready');
@@ -155,21 +158,21 @@ export function GoogleSignInButton({ onCredential, onError }: GoogleSignInButton
         if (cancelled) return;
         setStatus('failed');
         callbacksRef.current.onError(
-          err instanceof Error ? err.message : '구글 로그인을 준비하지 못했습니다.',
+          err instanceof Error ? err.message : t('google.prepareFailed'),
         );
       });
 
     return () => {
       cancelled = true;
     };
-  }, [clientId, attempt]);
+  }, [clientId, attempt, locale, t]);
 
   return (
     <div className="space-y-3">
       <div ref={containerRef} className="flex justify-center" />
 
       {status === 'loading' && (
-        <p className="text-center text-sm text-gray-500">구글 로그인 준비 중...</p>
+        <p className="text-center text-sm text-gray-500">{t('google.preparing')}</p>
       )}
 
       {/*
@@ -183,16 +186,12 @@ export function GoogleSignInButton({ onCredential, onError }: GoogleSignInButton
             onClick={() => setAttempt((count) => count + 1)}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
           >
-            다시 시도
+            {t('common.retry')}
           </button>
-          <p className="text-xs text-gray-500">
-            카카오톡 등 앱 안에서 열린 화면이거나 광고 차단 확장·사내 네트워크가
-            accounts.google.com을 막고 있으면 로그인 창을 띄울 수 없습니다.
-            크롬·사파리 같은 브라우저에서 이 주소를 다시 열어 주세요.
-          </p>
+          <p className="text-xs text-gray-500">{t('google.blockedHint')}</p>
           {pageUrl && (
             <p className="text-xs text-gray-500 break-all">
-              현재 주소: <span className="font-mono">{pageUrl}</span>
+              {t('google.currentUrl')} <span className="font-mono">{pageUrl}</span>
             </p>
           )}
         </div>
@@ -200,7 +199,7 @@ export function GoogleSignInButton({ onCredential, onError }: GoogleSignInButton
 
       {status === 'misconfigured' && (
         <p className="text-center text-xs text-gray-500">
-          로그인 설정이 완료되지 않았습니다. 관리자에게 알려 주세요.
+          {t('google.notConfigured')}
         </p>
       )}
     </div>

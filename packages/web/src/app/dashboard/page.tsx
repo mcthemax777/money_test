@@ -18,8 +18,11 @@ import {
   dateKeyOf,
   dayRangeQuery,
   currentYearMonth,
+  formatYearMonth,
   monthQueryRange,
 } from '@/lib/datetime';
+import { countedShare } from '@/lib/entries';
+import { useTranslation, type MessageKey } from '@/lib/i18n';
 import Modal from '@/components/Modal';
 import TransactionCalendar from '@/components/TransactionCalendar';
 import TransactionListView from '@/components/TransactionListView';
@@ -39,6 +42,7 @@ import { useDebouncedValue } from '@/hooks/useDebouncedValue';
 import { usePersonFilterSync } from '@/hooks/usePersonFilterSync';
 import { useProjectGuard } from '@/hooks/useProjectGuard';
 import type { EntryFilterQuery } from '@money/types';
+import { useApiError } from '@/lib/api-error';
 
 /**
  * 기간 보기에서 그릴 달력 장수 상한.
@@ -62,22 +66,24 @@ const BUDGET_FORM_ID = 'detail-budget-form';
  */
 const BUDGET_SCOPE_OPTIONS: Array<{
   value: 'all' | 'from';
-  label: string;
-  description: string;
+  labelKey: MessageKey;
+  descriptionKey: MessageKey;
 }> = [
   {
     value: 'all',
-    label: '모든 달',
-    description: '이 예산이 적용되는 모든 달의 금액을 바꿉니다.',
+    labelKey: 'budget.scopeAll',
+    descriptionKey: 'budget.scopeAllHint',
   },
   {
     value: 'from',
-    label: '고른 달부터',
-    description: '고른 달 이전은 지금 금액 그대로 남습니다.',
+    labelKey: 'budget.scopeFrom',
+    descriptionKey: 'budget.scopeFromHint',
   },
 ];
 
 export default function TransactionsPage() {
+  const { t } = useTranslation();
+  const { messageOf } = useApiError();
   const { isAuthenticated, user, defaultProjectData } = useAuth();
   const { selectedPersonIds, togglePersonId } = useUserFilter();
   const { selectedProjectId } = useProject();
@@ -191,7 +197,7 @@ export default function TransactionsPage() {
         setCurrentMonth(today.month);
         setCurrentYear(today.year);
       } catch (err) {
-        setError('데이터 조회에 실패했습니다.');
+        setError(t('home.loadFailed'));
       } finally {
         setIsLoading(false);
       }
@@ -221,6 +227,13 @@ export default function TransactionsPage() {
     };
   }, [selectedPersonIds, people.length, selectedExtraTypes]);
   const appliedFilter = useDebouncedValue(entryFilter, 250);
+  /*
+   * 일반/과소비 중 어느 몫을 셀지.
+   *
+   * 한 거래가 둘로 나뉘므로(3,000원 중 2,000원이 과소비) 한쪽만 볼 때는 목록의
+   * 날짜별 소계도 그 몫만 세야 위 합계와 맞는다. 서버가 리포트에서 쓰는 규칙과 같다.
+   */
+  const share = countedShare(appliedFilter);
   /** 필터가 걸려 있는지. 목록이 비었을 때 이유를 알려주는 데 쓴다. */
   const isFilterNarrowed = Object.keys(appliedFilter).length > 0;
 
@@ -443,7 +456,7 @@ export default function TransactionsPage() {
 
 
   if (!isAuthenticated) {
-    return <div>로딩 중...</div>;
+    return <div>{t('common.loading')}</div>;
   }
 
   /**
@@ -454,8 +467,8 @@ export default function TransactionsPage() {
    * 저장하지 않고 id에서 만들면 그런 어긋남이 생기지 않는다.
    */
   const selectedCategoryLabel = useMemo(() => {
-    if (selectedCategoryId === 'total-expense') return '전체지출';
-    if (selectedCategoryId === 'total-income') return '전체수입';
+    if (selectedCategoryId === 'total-expense') return t('ledger.totalExpense');
+    if (selectedCategoryId === 'total-income') return t('ledger.totalIncome');
     return categories.find((c) => c.id === selectedCategoryId)?.name ?? '';
   }, [selectedCategoryId, categories]);
 
@@ -554,10 +567,10 @@ export default function TransactionsPage() {
 
     const saved = monthlyBudgets.filter((b) => !b.budgetId.startsWith('placeholder-')).length;
     if (saved === 0) {
-      alert('지울 예산이 없습니다.');
+      alert(t('budget.nothingToDelete'));
       return;
     }
-    if (!window.confirm(`예산 ${saved}개와 월별 조정값을 모두 지웁니다. 되돌릴 수 없습니다.`)) {
+    if (!window.confirm(t('budget.deleteAllConfirm', { count: saved }))) {
       return;
     }
 
@@ -565,9 +578,9 @@ export default function TransactionsPage() {
       setIsResettingBudgets(true);
       const deleted = await resetBudgetsApi(selectedProjectId);
       await reloadBudgets();
-      alert(`예산 ${deleted}개를 지웠습니다.`);
+      alert(t('budget.deleted', { count: deleted }));
     } catch (err: any) {
-      alert(err?.message || '예산을 지우지 못했습니다.');
+      alert(err?.message || t('budget.deleteFailed'));
     } finally {
       setIsResettingBudgets(false);
     }
@@ -579,7 +592,7 @@ export default function TransactionsPage() {
     if (!selectedProjectId) return;
 
     if (detailBudgetAmount < 0) {
-      setDetailBudgetError('예산 금액은 0보다 작을 수 없습니다.');
+      setDetailBudgetError(t('budget.negative'));
       return;
     }
 
@@ -588,7 +601,7 @@ export default function TransactionsPage() {
 
     // 아직 규칙이 없으면 0은 지울 것이 없다는 뜻이다.
     if (!existing && detailBudgetAmount === 0) {
-      setDetailBudgetError('삭제할 예산이 없습니다.');
+      setDetailBudgetError(t('budget.noneToDelete'));
       return;
     }
 
@@ -600,7 +613,7 @@ export default function TransactionsPage() {
     const applyFromMonth = detailBudgetFromMonth;
     if (existing && detailBudgetScope === 'from') {
       if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(applyFromMonth)) {
-        setDetailBudgetError('적용을 시작할 연월을 골라 주세요.');
+        setDetailBudgetError(t('budget.pickMonth'));
         return;
       }
     }
@@ -649,7 +662,7 @@ export default function TransactionsPage() {
       setShowDetailBudgetModal(false);
     } catch (err: any) {
       const message =
-        err?.response?.data?.error?.message || err?.message || '저장에 실패했습니다.';
+        messageOf(err, 'budget.saveFailed');
       setDetailBudgetError(message);
     } finally {
       setDetailBudgetSubmitting(false);
@@ -661,7 +674,7 @@ export default function TransactionsPage() {
       <PageHeader
         title={
           <PersonScopeTitle
-            noun="가계"
+            noun={t('ledger.noun')}
             people={people}
             myPersonId={myPersonId}
             selectedPersonIds={selectedPersonIds}
@@ -674,7 +687,7 @@ export default function TransactionsPage() {
             onClick={handleAddClick}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition whitespace-nowrap"
           >
-            거래 추가
+            {t('ledger.addEntry')}
           </button>
         }
       />
@@ -709,7 +722,7 @@ export default function TransactionsPage() {
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                날짜별
+                {t('ledger.tab.daily')}
               </button>
               <button
                 onClick={() => setViewType('budget')}
@@ -719,7 +732,7 @@ export default function TransactionsPage() {
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
               >
-                분류별
+                {t('ledger.tab.category')}
               </button>
               <button
                 onClick={() => setViewType('payment-method')}
@@ -729,7 +742,7 @@ export default function TransactionsPage() {
                     : 'text-gray-600 hover:text-gray-900'
                 }`}
             >
-              수단별
+              {t('ledger.tab.method')}
             </button>
           </div>
         }
@@ -773,7 +786,7 @@ export default function TransactionsPage() {
             onEditBudget={isRangeMode ? undefined : openDetailBudgetModal}
           />
         ) : isLoading ? (
-          <p className="text-gray-600">로딩 중...</p>
+          <p className="text-gray-600">{t('common.loading')}</p>
         ) : viewType === 'payment-method' ? (
           /* 수단별 탭은 거래가 없어도 계좌·카드를 0원으로 보여준다.
              "거래가 없습니다"로 먼저 끊으면 그 화면에 도달할 수 없다. */
@@ -792,8 +805,8 @@ export default function TransactionsPage() {
           /* 필터로 비었는지 원래 없는지 구분해 준다. 체크를 다 풀면 결과가 없는 게 정상이다. */
           <p className="text-gray-600">
             {isFilterNarrowed
-              ? '필터에 맞는 거래가 없습니다.'
-              : '거래가 없습니다.'}
+              ? t('ledger.noFiltered')
+              : t('feed.empty')}
           </p>
         ) : viewType === 'calendar' ? (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
@@ -807,10 +820,11 @@ export default function TransactionsPage() {
                   {monthsInRange.map(({ year, month }) => (
                     <div key={`${year}-${month}`}>
                       <p className="mb-1 text-sm font-semibold text-gray-700">
-                        {year}년 {month}월
+                        {formatYearMonth(year, month)}
                       </p>
                       <TransactionCalendar
                         entries={visibleEntries}
+                        share={share}
                         year={year}
                         month={month}
                         onDateSelect={handleCalendarDateSelect}
@@ -824,14 +838,14 @@ export default function TransactionsPage() {
                   ))}
                   {monthsInRange.length >= CALENDAR_MAX_MONTHS && (
                     <p className="text-xs text-gray-500">
-                      달력은 {CALENDAR_MAX_MONTHS}개월까지만 그립니다. 나머지 기간은 목록과
-                      분류별에서 볼 수 있습니다.
+                      {t('ledger.calendarLimit', { months: CALENDAR_MAX_MONTHS })}
                     </p>
                   )}
                 </>
               ) : (
                 <TransactionCalendar
                   entries={visibleEntries}
+                  share={share}
                   year={currentYear}
                   month={currentMonth}
                   onDateSelect={handleCalendarDateSelect}
@@ -848,12 +862,14 @@ export default function TransactionsPage() {
                 {!startDate ? (
                   <TransactionListView
                     entries={visibleEntries}
+                    share={share}
                     onEntryClick={handleTransactionClick}
                   />
                 ) : (
                   <>
                     <TransactionListView
                       entries={displayEntries}
+                      share={share}
                       onEntryClick={handleTransactionClick}
                     />
                   </>
@@ -862,7 +878,11 @@ export default function TransactionsPage() {
             )}
           </div>
         ) : (
-          <TransactionListView entries={visibleEntries} onEntryClick={handleTransactionClick} />
+          <TransactionListView
+            entries={visibleEntries}
+            share={share}
+            onEntryClick={handleTransactionClick}
+          />
         )}
       </div>
 
@@ -882,7 +902,7 @@ export default function TransactionsPage() {
       <Modal
         isOpen={showDetailBudgetModal}
         onClose={() => setShowDetailBudgetModal(false)}
-        title={`${selectedCategoryLabel} 예산`}
+        title={t('budget.modalTitle', { name: selectedCategoryLabel })}
         footer={
           <div className="flex gap-2">
             <button
@@ -890,7 +910,7 @@ export default function TransactionsPage() {
               onClick={() => setShowDetailBudgetModal(false)}
               className="flex-1 px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 transition"
             >
-              취소
+              {t('common.cancel')}
             </button>
             <button
               type="submit"
@@ -902,7 +922,11 @@ export default function TransactionsPage() {
                   : 'bg-blue-600 hover:bg-blue-700'
               }`}
             >
-              {detailBudgetSubmitting ? '저장 중...' : isDeletingBudget ? '삭제' : '저장'}
+              {detailBudgetSubmitting
+                ? t('common.saving')
+                : isDeletingBudget
+                  ? t('budget.deleteAction')
+                  : t('common.save')}
             </button>
           </div>
         }
@@ -910,7 +934,7 @@ export default function TransactionsPage() {
         <form id={BUDGET_FORM_ID} onSubmit={handleDetailBudgetSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">
-              월 예산 금액
+              {t('budget.monthlyAmount')}
             </label>
             <input
               type="number"
@@ -930,7 +954,7 @@ export default function TransactionsPage() {
           */}
           {editingBudget ? (
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">적용 범위</label>
+              <label className="block text-sm font-medium text-gray-700 mb-2">{t('budget.scope')}</label>
               <div className="space-y-2">
                 {BUDGET_SCOPE_OPTIONS.map((option) => (
                   <div key={option.value}>
@@ -944,8 +968,10 @@ export default function TransactionsPage() {
                         className="mt-1 w-4 h-4 text-blue-600 border-gray-300 focus:ring-2 focus:ring-blue-500"
                       />
                       <span className="text-sm">
-                        <span className="text-gray-900">{option.label}</span>
-                        <span className="block text-xs text-gray-500">{option.description}</span>
+                        <span className="text-gray-900">{t(option.labelKey)}</span>
+                        <span className="block text-xs text-gray-500">
+                          {t(option.descriptionKey)}
+                        </span>
                       </span>
                     </label>
 
@@ -969,14 +995,13 @@ export default function TransactionsPage() {
               </div>
               <p className="mt-2 text-xs text-gray-500">
                 {detailBudgetScope === 'all'
-                  ? '0을 입력하면 이 분류의 예산을 지웁니다.'
-                  : '0을 입력하면 고른 달부터 예산이 없어집니다. 이전 달은 그대로 남습니다.'}
+                  ? t('budget.zeroHintAll')
+                  : t('budget.zeroHintFrom')}
               </p>
             </div>
           ) : (
             <p className="text-xs text-gray-500">
-              새로 만드는 예산은 모든 달에 적용됩니다. 저장하면 아래에 월별 목록이 나오고,
-              거기서 특정 달만 따로 고칠 수 있습니다.
+              {t('budget.newHint')}
             </p>
           )}
 

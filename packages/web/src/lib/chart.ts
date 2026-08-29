@@ -5,8 +5,9 @@
  * 차트가 각자 다른 색과 축 형식을 쓰고 있어 같은 금액을 화면마다 다르게 읽게 됐다.
  * recharts 컴포넌트에 그대로 펼쳐 넣을 수 있는 형태로 한곳에 모은다.
  */
-import { currencyDecimals } from '@money/types';
+import { currencyDecimals, type Locale } from '@money/types';
 
+import { activeLocale, activeLocaleTag } from './i18n';
 import { formatCurrency, toNumber } from './money';
 
 /**
@@ -103,17 +104,36 @@ const NICE_STEPS = [1, 2, 5, 10];
  * 만·억은 보조 단위를 쓰지 않는 통화(원, 엔)의 자리 세는 법이다. 달러 금액에
  * 붙이면 "0.7만" 같은 눈금이 나오므로 통화에 따라 표를 바꾼다.
  */
-const TICK_UNITS_WHOLE = [
-  { div: 100_000_000, suffix: '억' },
-  { div: 10_000, suffix: '만' },
-  { div: 1, suffix: '' },
-];
+const MYRIAD_UNITS: Partial<Record<Locale, Array<{ div: number; suffix: string }>>> = {
+  ko: [
+    { div: 100_000_000, suffix: '억' },
+    { div: 10_000, suffix: '만' },
+    { div: 1, suffix: '' },
+  ],
+  ja: [
+    { div: 100_000_000, suffix: '億' },
+    { div: 10_000, suffix: '万' },
+    { div: 1, suffix: '' },
+  ],
+};
 
-const TICK_UNITS_DECIMAL = [
+const SHORT_SCALE_UNITS = [
   { div: 1_000_000, suffix: 'M' },
   { div: 1_000, suffix: 'K' },
   { div: 1, suffix: '' },
 ];
+
+/**
+ * 눈금에 쓸 단위표.
+ *
+ * 만·억은 한국어·일본어가 네 자리씩 끊어 세는 법이고, 영어는 세 자리씩 끊어
+ * K·M으로 센다. 통화도 함께 본다. 소수 단위를 쓰는 통화(달러)에 만을 붙이면
+ * "0.7만" 같은 눈금이 나온다.
+ */
+function tickUnitsOf(currency: string) {
+  const myriad = MYRIAD_UNITS[activeLocale()];
+  return myriad && currencyDecimals(currency) === 0 ? myriad : SHORT_SCALE_UNITS;
+}
 
 /** 소수점 자리를 몇 개 써야 이 간격이 글자로 드러나는지. 1 이상이면 필요 없다. */
 function decimalsFor(stepInUnit: number): number {
@@ -180,7 +200,7 @@ export function lineAxis(values: number[], currency: string): LineAxis {
   const maxAbs = Math.max(Math.abs(lo), Math.abs(hi));
   // 간격이 그 단위에서 소수점 두 자리 안에 드러나는 첫 단위를 쓴다. 1,000만 원대의
   // 5,000원 간격을 억으로 적으면 눈금이 전부 "1.0억"이 된다.
-  const units = currencyDecimals(currency) === 0 ? TICK_UNITS_WHOLE : TICK_UNITS_DECIMAL;
+  const units = tickUnitsOf(currency);
   const unit =
     units.find((u) => maxAbs >= u.div && decimalsFor(step / u.div) <= 2) ??
     units[units.length - 1];
@@ -192,7 +212,7 @@ export function lineAxis(values: number[], currency: string): LineAxis {
     tickFormatter: (value: number) =>
       value === 0
         ? '0'
-        : `${(value / unit.div).toLocaleString('ko-KR', {
+        : `${(value / unit.div).toLocaleString(activeLocaleTag(), {
             minimumFractionDigits: decimals,
             maximumFractionDigits: decimals,
           })}${unit.suffix}`,
@@ -225,16 +245,19 @@ function bounds(values: number[]): [number, number, number] {
  */
 export function formatAxisAmount(value: number, currency: string): string {
   const abs = Math.abs(value);
+  const tag = activeLocaleTag();
+  const myriad = MYRIAD_UNITS[activeLocale()];
 
-  if (currencyDecimals(currency) === 0) {
-    if (abs >= 100_000_000) return `${(value / 100_000_000).toFixed(1)}억`;
-    if (abs >= 10_000) return `${Math.round(value / 10_000).toLocaleString('ko-KR')}만`;
-    return value.toLocaleString('ko-KR');
+  if (myriad && currencyDecimals(currency) === 0) {
+    const [eok, man] = myriad;
+    if (abs >= eok.div) return `${(value / eok.div).toFixed(1)}${eok.suffix}`;
+    if (abs >= man.div) return `${Math.round(value / man.div).toLocaleString(tag)}${man.suffix}`;
+    return value.toLocaleString(tag);
   }
 
   if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
   if (abs >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
-  return value.toLocaleString('ko-KR', { maximumFractionDigits: 2 });
+  return value.toLocaleString(tag, { maximumFractionDigits: 2 });
 }
 
 /**

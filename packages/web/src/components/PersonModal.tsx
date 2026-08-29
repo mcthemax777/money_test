@@ -3,7 +3,9 @@
 import { useState, useEffect } from 'react';
 import { apiClient } from '@/lib/api-client';
 import Modal from '@/components/Modal';
+import { useTranslation } from '@/lib/i18n';
 import type { Person } from '@/lib/types';
+import { useApiError } from '@/lib/api-error';
 
 
 /** 하단 고정 버튼과 본문 form을 잇는 id */
@@ -26,6 +28,8 @@ export default function PersonModal({
   onSuccess,
   onDelete,
 }: PersonModalProps) {
+  const { t } = useTranslation();
+  const { messageOf } = useApiError();
   const [formData, setFormData] = useState({ name: '', relationship: '' });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -69,8 +73,7 @@ export default function PersonModal({
       onSuccess(data || []);
       handleClose();
     } catch (err: any) {
-      const errorMsg = mode === 'add' ? '추가에 실패했습니다.' : '수정에 실패했습니다.';
-      setError(err?.response?.data?.error?.message || errorMsg);
+      setError(messageOf(err, mode === 'add' ? 'person.addFailed' : 'account.editFailed'));
     } finally {
       setIsSubmitting(false);
     }
@@ -78,7 +81,7 @@ export default function PersonModal({
 
   const handleDeleteClick = async () => {
     if (!person || !onDelete) return;
-    if (!window.confirm('정말 삭제하시겠습니까?')) return;
+    if (!window.confirm(t('account.deleteConfirm'))) return;
 
     try {
       setIsDeleting(true);
@@ -86,7 +89,7 @@ export default function PersonModal({
       await onDelete(person.id);
       handleClose();
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || '삭제에 실패했습니다.');
+      setError(messageOf(err, 'account.deleteFailed'));
     } finally {
       setIsDeleting(false);
     }
@@ -101,9 +104,9 @@ export default function PersonModal({
   if (!person && mode !== 'add') return null;
 
   const getTitle = () => {
-    if (mode === 'add') return '구성원 추가';
-    if (editMode) return '구성원 수정';
-    return '구성원 상세정보';
+    if (mode === 'add') return t('person.add');
+    if (editMode) return t('person.edit');
+    return t('person.detail');
   };
 
   const isFormMode = editMode || mode === 'add';
@@ -123,7 +126,13 @@ export default function PersonModal({
               disabled={isSubmitting}
               className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
             >
-              {isSubmitting ? (mode === 'add' ? '추가 중...' : '수정 중...') : (mode === 'add' ? '추가하기' : '수정하기')}
+              {isSubmitting
+                ? mode === 'add'
+                  ? t('account.adding')
+                  : t('account.editing')
+                : mode === 'add'
+                  ? t('account.addSubmit')
+                  : t('account.editSubmit')}
             </button>
             {mode === 'edit' && (
               <button
@@ -132,7 +141,7 @@ export default function PersonModal({
                 disabled={isDeleting || isSubmitting}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
               >
-                {isDeleting ? '삭제 중...' : '삭제하기'}
+                {isDeleting ? t('account.deleting') : t('account.deleteSubmit')}
               </button>
             )}
           </div>
@@ -141,7 +150,7 @@ export default function PersonModal({
             onClick={() => setEditMode(true)}
             className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
           >
-            수정하기
+            {t('account.editSubmit')}
           </button>
         )
       }
@@ -150,7 +159,7 @@ export default function PersonModal({
         <form id={FORM_ID} onSubmit={handleSubmit} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              이름
+              {t('person.name')}
             </label>
             <input
               type="text"
@@ -158,20 +167,20 @@ export default function PersonModal({
               value={formData.name}
               onChange={(e) => setFormData({ ...formData, name: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="이름 입력"
+              placeholder={t('person.namePlaceholder')}
             />
           </div>
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              관계 (선택)
+              {t('person.relationship')}
             </label>
             <input
               type="text"
               value={formData.relationship}
               onChange={(e) => setFormData({ ...formData, relationship: e.target.value })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              placeholder="배우자, 자녀 등"
+              placeholder={t('person.relationshipPlaceholder')}
             />
           </div>
 
@@ -187,7 +196,7 @@ export default function PersonModal({
           <div className="space-y-4">
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                이름
+                {t('person.name')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                 {person?.name}
@@ -197,7 +206,7 @@ export default function PersonModal({
             {person?.relationship && (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  관계
+                  {t('person.relationshipLabel')}
                 </label>
                 <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
                   {person.relationship}

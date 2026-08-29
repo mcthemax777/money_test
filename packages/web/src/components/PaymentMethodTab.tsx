@@ -8,8 +8,9 @@ import type { EntryListItem } from './TransactionItem';
 import TransactionListView from './TransactionListView';
 import { apiClient, type ReportPeriod } from '@/lib/api-client';
 import { formatCurrency, toNumber } from '@/lib/money';
-import { buildDailyCumulative, monthDateKeys } from '@/lib/entries';
-import { dayRangeQuery, throughDayOf } from '@/lib/datetime';
+import { buildDailyCumulative, countedShare, monthDateKeys } from '@/lib/entries';
+import { dayRangeQuery, formatMonthShort, throughDayOf } from '@/lib/datetime';
+import { useTranslation } from '@/lib/i18n';
 import { loadPreviousMonths } from '@/lib/month-compare';
 import DailyCumulativeChart, {
   type CumulativeSeries,
@@ -78,9 +79,27 @@ interface Props {
  * 신용카드를 먼저 둔다. 갚을 대금을 정산하는 자리라 가장 자주 들여다보는 수단이다.
  */
 const SECTIONS = [
-  { kind: 'credit_card' as const, icon: '💳', title: '신용카드', accent: 'red', empty: '신용카드가 없습니다.' },
-  { kind: 'debit_card' as const, icon: '🏧', title: '체크카드', accent: 'green', empty: '체크카드가 없습니다.' },
-  { kind: 'account' as const, icon: '💰', title: '계좌 결제', accent: 'blue', empty: '통장이 없습니다.' },
+  {
+    kind: 'credit_card' as const,
+    icon: '💳',
+    titleKey: 'method.credit_card' as const,
+    accent: 'red',
+    emptyKey: 'method.creditEmpty' as const,
+  },
+  {
+    kind: 'debit_card' as const,
+    icon: '🏧',
+    titleKey: 'method.debit_card' as const,
+    accent: 'green',
+    emptyKey: 'method.debitEmpty' as const,
+  },
+  {
+    kind: 'account' as const,
+    icon: '💰',
+    titleKey: 'method.accountTitle' as const,
+    accent: 'blue',
+    emptyKey: 'method.accountEmpty' as const,
+  },
 ];
 
 const ACCENT: Record<string, { selected: string; idle: string; text: string }> = {
@@ -111,6 +130,7 @@ export default function PaymentMethodTab({
   accounts = [],
   onCardChange,
 }: Props) {
+  const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
   const displayCurrency = useProjectDisplayCurrency();
 
@@ -250,7 +270,7 @@ export default function PaymentMethodTab({
         const trend = (trendRes ?? []) as Array<{ yearMonth: string; amount: string }>;
         setMonthlyData(
           trend.map((point) => ({
-            month: `${Number(point.yearMonth.split('-')[1])}월`,
+            month: formatMonthShort(Number(point.yearMonth.split('-')[1])),
             amount: toNumber(point.amount),
           })),
         );
@@ -268,7 +288,15 @@ export default function PaymentMethodTab({
           집계하므로, 수입을 섞으면 두 그래프가 서로 다른 것을 그린다.
           buildDailyCumulative는 expenseAmountOf를 쓰므로 수입 건은 저절로 0이다.
         */
-        setDailyData(buildDailyCumulative(rows, dayKeys.startKey, dayKeys.endKey, timeZone));
+        setDailyData(
+          buildDailyCumulative(
+            rows,
+            dayKeys.startKey,
+            dayKeys.endKey,
+            timeZone,
+            countedShare(filter),
+          ),
+        );
         setComparisons(comparisonRes);
       })
       .catch((error) => {
@@ -288,7 +316,9 @@ export default function PaymentMethodTab({
    * 달 단위로 볼 때만 쓰는 값. 이번 달 선의 이름과, 그 선을 며칠까지 그을지다.
    * 기간 보기에서는 견줄 달이 없어 둘 다 필요 없다.
    */
-  const currentMonthName = period.yearMonth ? `${Number(period.yearMonth.slice(5))}월` : undefined;
+  const currentMonthName = period.yearMonth
+    ? formatMonthShort(Number(period.yearMonth.slice(5)))
+    : undefined;
   const throughDay = period.yearMonth ? throughDayOf(period.yearMonth, timeZone) : undefined;
 
   const section = SECTIONS.find((item) => item.kind === kind)!;
@@ -316,7 +346,7 @@ export default function PaymentMethodTab({
               }`}
             >
               <span className="mr-1">{section.icon}</span>
-              {section.title}
+              {t(section.titleKey)}
             </button>
           ))}
         </div>
@@ -326,7 +356,7 @@ export default function PaymentMethodTab({
           탭 줄이 움직여서 어디를 누르던 중이었는지 놓친다.
         */}
         {visibleItems.length === 0 ? (
-          <p className="text-gray-600">{section.empty}</p>
+          <p className="text-gray-600">{t(section.emptyKey)}</p>
         ) : (
           <div className="space-y-2">
             {visibleItems.map((item) => (
@@ -339,7 +369,7 @@ export default function PaymentMethodTab({
               >
                 <div className="flex flex-col">
                   <span className="text-gray-700 font-medium">{item.name}</span>
-                  <span className="text-xs text-gray-500">{item.ownerName ?? '미정'}</span>
+                  <span className="text-xs text-gray-500">{item.ownerName ?? t('method.unknownOwner')}</span>
                 </div>
                 {/*
                   통장은 돈이 나가는 곳이면서 들어오는 곳이다. 지출만 보여 주면
@@ -348,12 +378,12 @@ export default function PaymentMethodTab({
                 */}
                 <div className="flex items-baseline gap-2">
                   <span className={`font-semibold text-sm ${accent.text}`}>
-                    {toNumber(item.income) > 0 ? '지출 ' : ''}
+                    {toNumber(item.income) > 0 ? t('method.expensePrefix') : ''}
                     {formatCurrency(item.amount, displayCurrency)}
                   </span>
                   {toNumber(item.income) > 0 && (
                     <span className="text-sm font-semibold text-green-600">
-                      수입 {formatCurrency(item.income, displayCurrency)}
+                      {t('method.incomeLine', { amount: formatCurrency(item.income, displayCurrency) })}
                     </span>
                   )}
                 </div>
@@ -369,7 +399,7 @@ export default function PaymentMethodTab({
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h3 className="text-lg font-semibold text-gray-900 mb-2">{selected.name}</h3>
-                <p className="text-sm text-gray-500">{selected.ownerName ?? '미정'}</p>
+                <p className="text-sm text-gray-500">{selected.ownerName ?? t('method.unknownOwner')}</p>
               </div>
               {/*
                 신용카드만 정산할 것이 있다. 체크카드는 결제 즉시 통장에서 빠지고
@@ -380,13 +410,13 @@ export default function PaymentMethodTab({
                   onClick={() => setIsSettlementOpen(true)}
                   className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 whitespace-nowrap"
                 >
-                  정산하기
+                  {t('method.settle')}
                 </button>
               )}
             </div>
 
             <div>
-              <h4 className="font-semibold text-gray-900 mb-4">월별 사용 금액</h4>
+              <h4 className="font-semibold text-gray-900 mb-4">{t('method.monthlyUsage')}</h4>
               <ResponsiveContainer width="100%" height={300}>
                 <BarChart data={monthlyData} margin={CHART_MARGIN}>
                   <CartesianGrid {...CHART_GRID} />
@@ -398,7 +428,9 @@ export default function PaymentMethodTab({
                     width={CHART_Y_AXIS_WIDTH}
                   />
                   <Tooltip
-                    formatter={(value: any) => formatTooltipAmount(value, '사용액', displayCurrency)}
+                    formatter={(value: any) =>
+                        formatTooltipAmount(value, t('method.usage'), displayCurrency)
+                      }
                     contentStyle={CHART_TOOLTIP_STYLE}
                   />
                   <Bar dataKey="amount" fill={CHART_COLOR} radius={CHART_BAR_RADIUS} />
@@ -407,20 +439,20 @@ export default function PaymentMethodTab({
             </div>
 
             <div>
-              <h4 className="font-semibold text-gray-900 mb-4">일별 누적 사용금액</h4>
+              <h4 className="font-semibold text-gray-900 mb-4">{t('method.dailyCumulative')}</h4>
               <DailyCumulativeChart
                 current={dailyData}
                 comparisons={comparisons}
                 currentName={currentMonthName}
                 throughDay={throughDay}
-                tooltipName="누적 사용액"
+                tooltipName={t('method.cumulativeUsage')}
                 height={250}
               />
             </div>
 
             {entries.length > 0 && (
               <div>
-                <h4 className="font-semibold text-gray-900 mb-4">거래 기록</h4>
+                <h4 className="font-semibold text-gray-900 mb-4">{t('method.entries')}</h4>
                 <div className="max-h-96 overflow-y-auto">
                   <TransactionListView
                     entries={entries}
@@ -432,7 +464,7 @@ export default function PaymentMethodTab({
           </div>
         ) : (
           <div className="bg-white rounded-lg shadow p-6 text-center">
-            <p className="text-gray-500">항목을 선택하여 상세 정보를 확인하세요</p>
+            <p className="text-gray-500">{t('method.pickHint')}</p>
           </div>
         )}
       </div>
@@ -447,7 +479,7 @@ export default function PaymentMethodTab({
         <Modal
           isOpen={true}
           onClose={() => setIsSettlementOpen(false)}
-          title={`${selectedCard.name} 정산`}
+          title={t('home.settlementTitle', { card: selectedCard.name })}
         >
           <CardSettlementPanel
             card={selectedCard}

@@ -15,6 +15,7 @@ import type {
   ExchangeRateInfo,
   FinancialInstitutionType,
   InstitutionDto,
+  Locale,
   PersonDto,
   ReportDto,
 } from '@money/types';
@@ -73,7 +74,21 @@ class ApiClient {
   private refreshPromise: Promise<string> | null = null;
 
   private setupInterceptors() {
-    this.client.interceptors.request.use((config) => {
+    this.client.interceptors.request.use(async (config) => {
+      /*
+       * 만료가 코앞이면 보내기 전에 먼저 갱신한다.
+       *
+       * 예전에는 만료된 토큰으로 그냥 보내고, 401을 받은 뒤에 갱신해 다시 보냈다.
+       * 결과는 같지만 그 사이에 왕복이 한 번 더 들어가 화면이 그만큼 늦게 뜨고,
+       * 브라우저 콘솔에는 실패한 요청이 빨간 줄로 남는다. 화면 하나가 요청을
+       * 여럿 보내는 홈에서는 그 줄이 한 번에 여러 개씩 쌓인다.
+       *
+       * 갱신 자체는 예외다. 그 요청까지 여기서 갱신을 부르면 서로를 부르는 고리가 된다.
+       */
+      if (!config.url?.includes('/auth/refresh')) {
+        await this.refreshIfExpiring();
+      }
+
       const token = getAccessToken();
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
@@ -110,6 +125,55 @@ class ApiClient {
         }
       },
     );
+  }
+
+  /**
+   * 만료까지 이만큼도 안 남았으면 미리 갱신한다(ms).
+   *
+   * 0으로 두면 "아직 살아 있는" 토큰으로 보냈다가 서버에 닿는 사이에 죽는 일이
+   * 생긴다. 브라우저와 서버의 시계가 조금 어긋나 있을 수도 있다.
+   */
+  private static readonly REFRESH_LEEWAY_MS = 60_000;
+
+  /**
+   * 액세스 토큰의 만료 시각(ms). 읽을 수 없으면 null.
+   *
+   * 서명을 검증하지는 않는다. 그것은 서버가 할 일이고, 여기서 알고 싶은 것은
+   * "언제까지 쓸 수 있는 값인가" 하나뿐이다.
+   */
+  private expiresAt(token: string): number | null {
+    const payload = token.split('.')[1];
+    if (!payload) return null;
+
+    try {
+      const json = atob(payload.replace(/-/g, '+').replace(/_/g, '/'));
+      const { exp } = JSON.parse(json) as { exp?: number };
+      return typeof exp === 'number' ? exp * 1000 : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * 만료가 가까우면 갱신하고, 아니면 아무 일도 하지 않는다.
+   *
+   * 갱신에 실패해도 여기서 로그아웃시키지 않는다. 원래 요청은 그대로 나가고,
+   * 서버가 401을 주면 아래 응답 인터셉터가 한 번 더 시도한 뒤 정리한다.
+   * 그물망을 두 겹으로 두는 편이 일시적인 네트워크 오류에 강하다.
+   */
+  private async refreshIfExpiring(): Promise<void> {
+    const token = getAccessToken();
+    if (!token || !getRefreshToken()) return;
+
+    const expiresAt = this.expiresAt(token);
+    if (expiresAt === null) return;
+    if (expiresAt - Date.now() > ApiClient.REFRESH_LEEWAY_MS) return;
+
+    try {
+      await this.refreshAccessToken();
+    } catch {
+      // 아래 401 경로가 받는다.
+    }
   }
 
   /** 갱신은 한 번만 실행하고, 동시에 들어온 요청은 같은 결과를 나눠 쓴다. */
@@ -159,7 +223,8 @@ class ApiClient {
     return response.data;
   }
 
-  async updateProfile(data: { name?: string; avatar?: string }) {
+  /** 이름·사진·화면 언어. 서버는 준 값만 고친다. */
+  async updateProfile(data: { name?: string; avatar?: string; locale?: Locale }) {
     const response = await this.client.patch<any>('/users/me', data);
     return response.data;
   }

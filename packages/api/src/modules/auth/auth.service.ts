@@ -7,7 +7,7 @@ import { ProjectsService } from '../projects/projects.service';
 import { CategoriesService } from '../categories/categories.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { OAuth2Client, type TokenPayload as GoogleTokenPayload } from 'google-auth-library';
-import { Auth } from '@money/types';
+import { Auth, DEFAULT_LOCALE, isLocale } from '@money/types';
 
 interface TokenPayload {
   sub: string;
@@ -132,6 +132,7 @@ export class AuthService {
     name: string;
     avatar: string | null;
     defaultProjectId: string | null;
+    locale: string;
     createdAt: Date;
     updatedAt: Date;
   }): Promise<Auth.AuthResponse> {
@@ -255,6 +256,7 @@ export class AuthService {
     email: string;
     name: string;
     avatar: string | null;
+    locale: string;
     createdAt: Date;
     updatedAt: Date;
   }) {
@@ -263,6 +265,9 @@ export class AuthService {
       email: user.email,
       name: user.name,
       avatar: user.avatar,
+      // locale 컬럼은 TEXT다. 지원하지 않는 값이 남아 있어도(언어를 뺀 뒤 등)
+      // 화면이 빈 사전을 들고 깨지지 않도록 기본값으로 되돌린다.
+      locale: isLocale(user.locale) ? user.locale : DEFAULT_LOCALE,
       // 와이어 계약은 ISO 문자열이다 (IsoDateString)
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),

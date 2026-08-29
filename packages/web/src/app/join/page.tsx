@@ -7,6 +7,8 @@ import { useAuth } from '@/store/auth';
 import { useProject } from '@/store/project';
 import { apiClient } from '@/lib/api-client';
 import { GoogleSignInButton } from '@/components/GoogleSignInButton';
+import { useTranslation, type MessageKey } from '@/lib/i18n';
+import { useApiError } from '@/lib/api-error';
 
 interface InvitationInfo {
   invitationCode: string;
@@ -21,19 +23,21 @@ interface InvitationInfo {
   isMember: boolean;
 }
 
-const ROLE_LABELS: Record<string, string> = {
-  owner: '소유자',
-  editor: '편집자',
-  viewer: '조회자',
+const ROLE_KEYS: Record<string, MessageKey> = {
+  owner: 'role.owner',
+  editor: 'role.editor',
+  viewer: 'role.viewer',
 };
 
 // useSearchParams는 Suspense 경계 안에서만 프리렌더가 가능하다.
 export default function JoinPage() {
+  const { t } = useTranslation();
+
   return (
     <Suspense
       fallback={
         <div className="min-h-screen flex items-center justify-center bg-gray-50">
-          <p className="text-gray-600">확인 중...</p>
+          <p className="text-gray-600">{t('invite.checking')}</p>
         </div>
       }
     >
@@ -43,6 +47,8 @@ export default function JoinPage() {
 }
 
 function JoinContent() {
+  const { t, tag } = useTranslation();
+  const { messageOf } = useApiError();
   const router = useRouter();
   const searchParams = useSearchParams();
   const code = searchParams.get('code');
@@ -69,7 +75,7 @@ function JoinContent() {
         setInvitation(data);
         setError('');
       } catch (err: any) {
-        setError(err.response?.data?.error?.message || '초대 정보를 불러올 수 없습니다.');
+        setError(messageOf(err, 'invite.loadFailed'));
       } finally {
         setIsLoading(false);
       }
@@ -85,7 +91,7 @@ function JoinContent() {
       try {
         await signInWithGoogle(idToken);
       } catch {
-        setError('로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.');
+        setError(t('login.failed'));
       }
     },
     [signInWithGoogle],
@@ -103,7 +109,7 @@ function JoinContent() {
       }
       router.push('/dashboard');
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || '초대 수락에 실패했습니다.');
+      setError(messageOf(err, 'invite.acceptFailed'));
       setIsSubmitting(false);
     }
   };
@@ -117,7 +123,7 @@ function JoinContent() {
       setInvitation((prev) => (prev ? { ...prev, status: 'declined' } : prev));
       setError('');
     } catch (err: any) {
-      setError(err.response?.data?.error?.message || '초대 거절에 실패했습니다.');
+      setError(messageOf(err, 'invite.declineFailed'));
     } finally {
       setIsSubmitting(false);
     }
@@ -127,7 +133,7 @@ function JoinContent() {
     <div className="min-h-screen flex items-center justify-center bg-gray-50">
       <div className="max-w-md w-full space-y-6 px-4">
         <div className="text-center">
-          <h1 className="text-3xl font-bold text-gray-900">프로젝트 초대</h1>
+          <h1 className="text-3xl font-bold text-gray-900">{t('invite.title')}</h1>
         </div>
 
         {error && (
@@ -138,22 +144,22 @@ function JoinContent() {
 
         {!code ? (
           <div className="bg-white rounded-lg shadow p-6 text-center space-y-4">
-            <p className="text-gray-700">초대 코드가 없는 주소입니다.</p>
+            <p className="text-gray-700">{t('invite.noCode')}</p>
             <Link href="/dashboard" className="text-blue-600 hover:underline text-sm">
-              대시보드로 이동
+              {t('invite.toDashboard')}
             </Link>
           </div>
         ) : isInitializing ? (
-          <p className="text-center text-gray-600">확인 중...</p>
+          <p className="text-center text-gray-600">{t('invite.checking')}</p>
         ) : !isAuthenticated ? (
           <div className="bg-white rounded-lg shadow p-6 space-y-4">
             <p className="text-sm text-gray-700 text-center">
-              초대를 수락하려면 먼저 로그인해 주세요.
+              {t('invite.signInFirst')}
             </p>
             <GoogleSignInButton onCredential={handleCredential} onError={setError} />
           </div>
         ) : isLoading ? (
-          <p className="text-center text-gray-600">초대 정보를 불러오는 중...</p>
+          <p className="text-center text-gray-600">{t('invite.loading')}</p>
         ) : invitation ? (
           <div className="bg-white rounded-lg shadow p-6 space-y-4">
             <div>
@@ -162,23 +168,30 @@ function JoinContent() {
                 <p className="text-sm text-gray-600 mt-1">{invitation.projectDescription}</p>
               )}
               <p className="text-xs text-gray-500 mt-2">
-                소유자 {invitation.ownerName ?? '알 수 없음'} · 멤버 {invitation.memberCount}명
+                {t('projects.ownerAndMembers', {
+                  owner: invitation.ownerName ?? t('projects.unknownOwner'),
+                  count: invitation.memberCount,
+                })}
               </p>
               <p className="text-xs text-gray-500 mt-1">
-                권한 {ROLE_LABELS[invitation.role] ?? invitation.role}
+                {t('invite.role', {
+                  role: ROLE_KEYS[invitation.role] ? t(ROLE_KEYS[invitation.role]) : invitation.role,
+                })}
                 {invitation.expiresAt &&
-                  ` · ${new Date(invitation.expiresAt).toLocaleDateString('ko-KR')}까지 유효`}
+                  t('invite.validUntil', {
+                    date: new Date(invitation.expiresAt).toLocaleDateString(tag),
+                  })}
               </p>
             </div>
 
             {invitation.isMember ? (
               <div className="space-y-3">
-                <p className="text-sm text-green-700">이미 이 프로젝트의 멤버입니다.</p>
+                <p className="text-sm text-green-700">{t('projects.alreadyMember')}</p>
                 <Link
                   href="/dashboard"
                   className="block text-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
                 >
-                  대시보드로 이동
+                  {t('invite.toDashboard')}
                 </Link>
               </div>
             ) : invitation.status === 'pending' ? (
@@ -188,27 +201,27 @@ function JoinContent() {
                   disabled={isSubmitting}
                   className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition"
                 >
-                  {isSubmitting ? '처리 중...' : '수락'}
+                  {isSubmitting ? t('invite.processing') : t('invite.accept')}
                 </button>
                 <button
                   onClick={handleDecline}
                   disabled={isSubmitting}
                   className="flex-1 px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 disabled:opacity-50 transition"
                 >
-                  거절
+                  {t('invite.decline')}
                 </button>
               </div>
             ) : (
               <div className="space-y-3">
                 <p className="text-sm text-gray-700">
                   {invitation.status === 'expired'
-                    ? '만료된 초대입니다. 소유자에게 새 링크를 요청해 주세요.'
+                    ? t('invite.expired')
                     : invitation.status === 'accepted'
-                      ? '이미 사용된 초대입니다.'
-                      : '거절한 초대입니다.'}
+                      ? t('invite.used')
+                      : t('invite.declined')}
                 </p>
                 <Link href="/dashboard" className="text-blue-600 hover:underline text-sm">
-                  대시보드로 이동
+                  {t('invite.toDashboard')}
                 </Link>
               </div>
             )}

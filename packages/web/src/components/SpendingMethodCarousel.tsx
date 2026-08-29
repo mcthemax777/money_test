@@ -1,7 +1,8 @@
 'use client';
 
-import { useDragScroll } from '@/hooks/useDragScroll';
+import ScrollRow from '@/components/ScrollRow';
 import { cardPaletteOf } from '@/lib/card-color';
+import { useTranslation, type MessageKey } from '@/lib/i18n';
 import { formatCurrency, toNumber } from '@/lib/money';
 
 /** 카드 한 장이 지금 실적 구간에 얼마를 썼는지 */
@@ -25,9 +26,9 @@ export interface SpendingMethod {
 }
 
 /** 종류 이름. 카드 앞면 왼쪽 위에 적는다. */
-const KIND_LABEL: Record<SpendingMethod['kind'], string> = {
-  credit_card: '신용카드',
-  debit_card: '체크카드',
+const KIND_KEY: Record<SpendingMethod['kind'], MessageKey> = {
+  credit_card: 'method.credit_card',
+  debit_card: 'method.debit_card',
 };
 
 /**
@@ -47,15 +48,15 @@ export default function SpendingMethodCarousel({
   /** 카드를 누르면 호출한다. 넘기지 않으면 누를 수 없는 카드가 된다. */
   onSelect?: (method: SpendingMethod) => void;
 }) {
-  // 휠만 있는 마우스로도 끌어서 넘길 수 있게 한다 (useDragScroll 주석 참고).
-  const scrollRef = useDragScroll<HTMLDivElement>();
+  const { t } = useTranslation();
 
   if (methods.length === 0) {
-    return <p className="text-sm text-gray-600">보여줄 카드가 없습니다.</p>;
+    return <p className="text-sm text-gray-600">{t('method.empty')}</p>;
   }
 
   return (
-    <div ref={scrollRef} className="flex gap-4 overflow-x-auto pb-2 snap-x snap-mandatory">
+    /* 넘기는 방법(밀기·끌기·양옆 버튼)은 ScrollRow가 한자리에서 맡는다. */
+    <ScrollRow className="gap-4 pb-2">
       {methods.map((method) => (
         <MethodCard
           key={`${method.kind}-${method.id}`}
@@ -63,7 +64,7 @@ export default function SpendingMethodCarousel({
           onSelect={onSelect && (() => onSelect(method))}
         />
       ))}
-    </div>
+    </ScrollRow>
   );
 }
 
@@ -74,6 +75,7 @@ function MethodCard({
   method: SpendingMethod;
   onSelect?: () => void;
 }) {
+  const { t } = useTranslation();
   /* 앞면 색과 그 위에서 읽히는 글씨 색은 lib/card-color가 짝으로 들고 있다. */
   const palette = cardPaletteOf(
     method.color,
@@ -124,7 +126,7 @@ function MethodCard({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <p className="text-xs opacity-80 truncate">
-            {KIND_LABEL[method.kind]}
+            {t(KIND_KEY[method.kind])}
             {method.ownerName && ` · ${method.ownerName}`}
           </p>
           <p className="font-semibold truncate">{method.name}</p>
@@ -160,7 +162,9 @@ function MethodCard({
               * 색이라 어느 막대의 남은 금액인지 눈으로 이어진다.
               */}
             <p className={`mt-1 text-right text-xs font-semibold tabular-nums ${tone.text}`}>
-              남은 {formatCurrency(remaining, method.currency)}
+              {t('method.remaining', {
+                amount: formatCurrency(remaining, method.currency),
+              })}
             </p>
           </div>
         )}

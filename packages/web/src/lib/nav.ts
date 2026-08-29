@@ -7,8 +7,14 @@
  */
 import { BookOpen, House, Landmark, Settings, Tags, type LucideIcon } from 'lucide-react';
 
+import type { MessageKey } from '@/lib/i18n';
+
 export interface NavItem {
-  label: string;
+  /**
+   * 사전의 열쇠다. 이름 자체를 여기 적으면 언어를 바꿔도 메뉴만 한국어로 남는다.
+   * 그리는 쪽(사이드바·아래 탭)이 t()로 꺼내 쓴다.
+   */
+  labelKey: MessageKey;
   href: string;
   /**
    * 하단 탭에 글자와 함께 세우는 그림.
@@ -22,15 +28,15 @@ export interface NavItem {
 
 /** 프로젝트가 있어야 뜻이 있는 메뉴. 프로젝트가 없으면 감춘다. */
 const PROJECT_ITEMS: NavItem[] = [
-  { label: '홈', href: '/home', icon: House },
+  { labelKey: 'nav.home', href: '/home', icon: House },
   // 가계는 장부다. 자산(Landmark)과 갈라 보이도록 펼친 책으로 둔다.
-  { label: '가계', href: '/dashboard', icon: BookOpen },
-  { label: '자산', href: '/assets', icon: Landmark },
-  { label: '카테고리', href: '/categories', icon: Tags },
+  { labelKey: 'nav.ledger', href: '/dashboard', icon: BookOpen },
+  { labelKey: 'nav.assets', href: '/assets', icon: Landmark },
+  { labelKey: 'nav.categories', href: '/categories', icon: Tags },
 ];
 
 /** 프로젝트가 없어도 갈 수 있어야 하는 메뉴 (여기서 프로젝트를 만든다) */
-const ALWAYS_ITEMS: NavItem[] = [{ label: '설정', href: '/settings', icon: Settings }];
+const ALWAYS_ITEMS: NavItem[] = [{ labelKey: 'nav.settings', href: '/settings', icon: Settings }];
 
 export function navItemsOf(hasProject: boolean): NavItem[] {
   return hasProject ? [...PROJECT_ITEMS, ...ALWAYS_ITEMS] : ALWAYS_ITEMS;

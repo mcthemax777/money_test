@@ -8,14 +8,15 @@ import { apiClient } from '@/lib/api-client';
 import {
   currentYearMonth,
   dateMarkerKey,
+  formatMonthShort,
   monthQueryRange,
   shiftYearMonth,
   throughDayOf,
 } from '@/lib/datetime';
+import { useTranslation, type MessageKey } from '@/lib/i18n';
 import { formatCurrency, toNumber } from '@/lib/money';
 import { sumNetWorth } from '@/lib/net-worth';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { useDragScroll } from '@/hooks/useDragScroll';
 import { usePersonFilterSync } from '@/hooks/usePersonFilterSync';
 import { useProjectGuard } from '@/hooks/useProjectGuard';
 import {
@@ -38,6 +39,7 @@ import EntryEditor, {
 import Modal from '@/components/Modal';
 import MonthHeader from '@/components/MonthHeader';
 import MonthlyBudgetSummary from '@/components/MonthlyBudgetSummary';
+import ScrollRow from '@/components/ScrollRow';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import SpendingMethodCarousel, {
   type SpendingMethod,
@@ -53,9 +55,14 @@ type EntryType = 'income' | 'expense';
  * 금액 아래에 파란 줄이 그어져 두 색이 무엇을 뜻하는지 흐려진다. 가계 화면
  * 머리글의 수입 초록·지출 빨강과도 같은 색이다.
  */
-const TYPE_TABS: Array<{ type: EntryType; label: string; text: string; border: string }> = [
-  { type: 'expense', label: '지출', text: 'text-red-600', border: 'border-red-600' },
-  { type: 'income', label: '수입', text: 'text-green-600', border: 'border-green-600' },
+const TYPE_TABS: Array<{ type: EntryType; labelKey: MessageKey; text: string; border: string }> = [
+  { type: 'expense', labelKey: 'home.tab.expense', text: 'text-red-600', border: 'border-red-600' },
+  {
+    type: 'income',
+    labelKey: 'home.tab.income',
+    text: 'text-green-600',
+    border: 'border-green-600',
+  },
 ];
 
 /**
@@ -64,16 +71,16 @@ const TYPE_TABS: Array<{ type: EntryType; label: string; text: string; border: s
  * 수입도 같은 세 장이다. 과소비에 해당하는 것이 수입에서는 추가 수입이고, 서버가
  * 두 유형을 같은 모양(normal/extra)으로 주므로 그리는 방법이 다르지 않다.
  */
-const CUMULATIVE_CHARTS: Record<EntryType, Array<{ field: ExpenseField; title: string }>> = {
+const CUMULATIVE_CHARTS: Record<EntryType, Array<{ field: ExpenseField; titleKey: MessageKey }>> = {
   expense: [
-    { field: 'total', title: '전체 지출' },
-    { field: 'normal', title: '일반 지출' },
-    { field: 'extra', title: '과소비' },
+    { field: 'total', titleKey: 'home.chart.expense.total' },
+    { field: 'normal', titleKey: 'home.chart.expense.normal' },
+    { field: 'extra', titleKey: 'home.chart.expense.extra' },
   ],
   income: [
-    { field: 'total', title: '전체 수입' },
-    { field: 'normal', title: '일반 수입' },
-    { field: 'extra', title: '추가 수입' },
+    { field: 'total', titleKey: 'home.chart.income.total' },
+    { field: 'normal', titleKey: 'home.chart.income.normal' },
+    { field: 'extra', titleKey: 'home.chart.income.extra' },
   ],
 };
 
@@ -100,7 +107,7 @@ function periodLabelOf(performance: CardDto.PerformanceResponse, previous: boole
   const end = previous ? performance.previousPeriodEnd : performance.periodEnd;
 
   if (performance.basis === 'month') {
-    return `${Number(dateMarkerKey(end).slice(5, 7))}월`;
+    return formatMonthShort(Number(dateMarkerKey(end).slice(5, 7)));
   }
   return `${shortMarker(start)} ~ ${shortMarker(end)}`;
 }
@@ -115,6 +122,7 @@ function periodLabelOf(performance: CardDto.PerformanceResponse, previous: boole
  * 그 화면들을 열기 전에 훑는 자리다.
  */
 export default function HomePage() {
+  const { t } = useTranslation();
   const selectedProjectId = useProjectGuard();
   const { selectedPersonIds, togglePersonId } = useUserFilter();
   const myPersonId = useMyPersonId();
@@ -194,8 +202,6 @@ export default function HomePage() {
   /** 이번 달 선을 어디까지 그을지 (throughDayOf 주석 참고) */
   const throughDay = throughDayOf(yearMonth, timeZone);
 
-  // 휠만 있는 마우스로도 그래프를 끌어서 넘길 수 있게 한다 (useDragScroll 주석 참고).
-  const chartScrollRef = useDragScroll<HTMLDivElement>();
 
   useEffect(() => {
     if (!selectedProjectId) return;
@@ -216,7 +222,7 @@ export default function HomePage() {
         setPeopleLoaded(true);
       } catch (err) {
         console.error('구성원·카드 조회 실패:', err);
-        setError('데이터 조회에 실패했습니다.');
+        setError(t('home.loadFailed'));
         setIsLoading(false);
       }
     };
@@ -321,7 +327,7 @@ export default function HomePage() {
         );
       } catch (err) {
         console.error('홈 데이터 조회 실패:', err);
-        setError('데이터 조회에 실패했습니다.');
+        setError(t('home.loadFailed'));
       } finally {
         setIsLoading(false);
       }
@@ -339,6 +345,8 @@ export default function HomePage() {
     thisYearMonth,
     // 거래를 고치면 합계도 함께 다시 받는다.
     entryVersion,
+    // 오류 문구를 그 언어로 적기 위해 함께 본다. t는 언어가 바뀔 때만 새로 만들어진다.
+    t,
   ]);
 
   /*
@@ -372,7 +380,7 @@ export default function HomePage() {
         setDailyPoints([]);
         setPreviousDailyPoints([]);
         setEarlierDailyPoints([]);
-        setChartError('그래프를 불러오지 못했습니다.');
+        setChartError(t('home.chartFailed'));
       })
       .finally(() => {
         if (!cancelled) setIsChartLoading(false);
@@ -391,6 +399,7 @@ export default function HomePage() {
     previousYearMonth,
     earlierYearMonth,
     entryVersion,
+    t,
   ]);
 
   /** 상세 팝업에서 거래를 고치거나 지운 뒤. 목록과 합계를 함께 다시 읽는다. */
@@ -427,9 +436,7 @@ export default function HomePage() {
       {error && <div className="p-3 bg-red-50 text-red-800 text-sm rounded-lg">{error}</div>}
 
       {peopleLoaded && people.length === 0 && (
-        <p className="text-gray-600">
-          구성원이 없습니다. 자산 화면에서 자산주인을 먼저 만들어 주세요.
-        </p>
+        <p className="text-gray-600">{t('home.noPeople')}</p>
       )}
 
       {/* 화면의 첫 줄이자 제목이다. 이름을 누르면 자산주인을 고른다. */}
@@ -438,7 +445,7 @@ export default function HomePage() {
         hasNoScope={people.length > 0 && selectedPersonIds.length === 0}
         scopeTitle={
           <PersonScopeTitle
-            noun="자산"
+            noun={t('home.assetsNoun')}
             people={people}
             myPersonId={myPersonId}
             selectedPersonIds={selectedPersonIds}
@@ -448,9 +455,9 @@ export default function HomePage() {
       />
 
       <section className="space-y-2">
-        <h2 className="font-semibold text-gray-900">실적 구간 사용액</h2>
+        <h2 className="font-semibold text-gray-900">{t('home.performanceTitle')}</h2>
         {isLoading && methods.length === 0 ? (
-          <p className="text-sm text-gray-600">로딩 중...</p>
+          <p className="text-sm text-gray-600">{t('common.loading')}</p>
         ) : (
           <SpendingMethodCarousel
             methods={methods}
@@ -500,7 +507,7 @@ export default function HomePage() {
                   : 'font-medium hover:bg-gray-50'
               }`}
             >
-              <span>{tab.label}</span>
+              <span>{t(tab.labelKey)}</span>
               <span className="text-sm font-semibold tabular-nums">
                 {formatCurrency(
                   toNumber(tab.type === 'income' ? summary?.income : summary?.expense),
@@ -516,11 +523,15 @@ export default function HomePage() {
           좁은 화면에서 세로로 쌓으면 비필수 지출이 한참 아래로 밀려, 세 그래프를
           견주려고 스크롤을 오르내리게 된다.
         */}
-        <div ref={chartScrollRef} className="flex gap-3 overflow-x-auto pb-2 snap-x snap-mandatory">
+        <ScrollRow className="gap-3 pb-2">
           {/* 맨 앞은 "어디에 썼나". 그다음 셋이 "얼마나 빨리 쓰고 있나"다. */}
           <div className="snap-start shrink-0 w-[min(100%,30rem)]">
             <CategoryDonutChart
-              title={type === 'income' ? '분류별 수입' : '분류별 지출'}
+              title={
+                type === 'income'
+                  ? t('home.categoryChart.income')
+                  : t('home.categoryChart.expense')
+              }
               type={type}
               period={{ yearMonth }}
               projectId={selectedProjectId}
@@ -537,7 +548,7 @@ export default function HomePage() {
               {chartError ? (
                 <p className="text-sm text-red-600">{chartError}</p>
               ) : (
-                <p className="text-sm text-gray-600">로딩 중...</p>
+                <p className="text-sm text-gray-600">{t('common.loading')}</p>
               )}
             </div>
           ) : (
@@ -547,7 +558,7 @@ export default function HomePage() {
                 className="snap-start shrink-0 w-[min(100%,30rem)]"
               >
                 <CumulativeExpenseChart
-                  title={chart.title}
+                  title={t(chart.titleKey)}
                   type={type}
                   field={chart.field}
                   yearMonth={yearMonth}
@@ -561,7 +572,7 @@ export default function HomePage() {
               </div>
             ))
           )}
-        </div>
+        </ScrollRow>
 
         {/*
           예산은 그래프 뒤에 둔다. 홈을 여는 까닭은 "이 달이 어떻게 흘러가고
@@ -578,7 +589,7 @@ export default function HomePage() {
         <Modal
           isOpen
           onClose={() => setSettlementCardId(null)}
-          title={`${settlementCard.name} 정산`}
+          title={t('home.settlementTitle', { card: settlementCard.name })}
         >
           <CardSettlementPanel
             card={settlementCard}
@@ -597,7 +608,7 @@ export default function HomePage() {
           먼저 온다. 누르면 가계·자산 화면과 같은 상세 팝업이 열린다.
         */}
         <h2 className="font-semibold text-gray-900">
-          {month}월 거래 내역
+          {t('home.entriesTitle', { month: formatMonthShort(month) })}
         </h2>
         <EntryFeed
           projectId={selectedProjectId}

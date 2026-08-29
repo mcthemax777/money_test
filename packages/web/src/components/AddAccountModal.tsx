@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react';
 import { apiClient } from '@/lib/api-client';
 import {
-  CURRENCY_LABEL,
   SUPPORTED_CURRENCIES,
   type CurrencyCode,
 } from '@money/types';
@@ -11,9 +10,11 @@ import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@/hooks/useInstitutions';
 import { ACCOUNT_TYPE_OPTIONS } from '@/lib/account-type';
-import { toAmountString } from '@/lib/money';
+import { useTranslation } from '@/lib/i18n';
+import { currencyLabel, toAmountString } from '@/lib/money';
 import type { AccountType } from '@/lib/types';
 import type { Person } from '@/lib/types';
+import { useApiError } from '@/lib/api-error';
 
 
 interface AddAccountModalProps {
@@ -55,6 +56,8 @@ export default function AddAccountModal({
   projectId,
   defaultOwnerId,
 }: AddAccountModalProps) {
+  const { t } = useTranslation();
+  const { messageOf } = useApiError();
   const [formData, setFormData] = useState(EMPTY_FORM);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -92,7 +95,7 @@ export default function AddAccountModal({
       onSuccess(data || []);
       handleClose();
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || '계좌 추가에 실패했습니다.');
+      setError(messageOf(err, 'account.addFailed'));
     } finally {
       setIsSubmitting(false);
     }
@@ -108,7 +111,7 @@ export default function AddAccountModal({
     <Modal
       isOpen={isOpen}
       onClose={handleClose}
-      title="계좌 추가"
+      title={t('account.add')}
       /* 버튼은 form 밖(하단 고정 영역)에 있으므로 form 속성으로 묶는다 */
       footer={
         <button
@@ -117,58 +120,69 @@ export default function AddAccountModal({
           disabled={isSubmitting}
           className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
         >
-          {isSubmitting ? '추가 중...' : '추가하기'}
+          {isSubmitting ? t('account.adding') : t('account.addSubmit')}
         </button>
       }
     >
       <form id={FORM_ID} onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">계좌명</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {t('account.name')}
+          </label>
           <input
             type="text"
             required
             value={formData.name}
             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="예: 급여 통장"
+            placeholder={t('account.namePlaceholder')}
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">통장 주인</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {t('account.owner')}
+          </label>
           <CustomSelect
             options={people.map((p) => ({ id: p.id, name: p.name }))}
             value={formData.ownerId}
             onChange={(value) => setFormData({ ...formData, ownerId: value })}
-            placeholder="선택하세요"
           />
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">유형</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {t('account.type')}
+          </label>
           <CustomSelect
-            options={ACCOUNT_TYPE_OPTIONS}
+            options={ACCOUNT_TYPE_OPTIONS.map((option) => ({
+              id: option.id,
+              name: t(option.nameKey),
+            }))}
             value={formData.type}
             onChange={(value) => setFormData({ ...formData, type: value as AccountType })}
-            placeholder="선택하세요"
           />
         </div>
 
         {needsBankName && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">개설 기관</label>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              {t('account.institution')}
+            </label>
             <CustomSelect
               options={bankOptions}
               value={formData.institutionId}
               onChange={(value) => setFormData({ ...formData, institutionId: value })}
-              placeholder="은행 / 증권사를 선택하세요"
+              placeholder={t('account.institutionPlaceholder')}
             />
             {bankError && <p className="mt-1 text-xs text-red-600">{bankError}</p>}
           </div>
         )}
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">통화</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {t('account.currency')}
+          </label>
           <select
             value={formData.currency}
             onChange={(e) =>
@@ -178,18 +192,16 @@ export default function AddAccountModal({
           >
             {SUPPORTED_CURRENCIES.map((code) => (
               <option key={code} value={code}>
-                {CURRENCY_LABEL[code]}
+                {currencyLabel(code)}
               </option>
             ))}
           </select>
-          <p className="mt-1 text-xs text-gray-500">
-            만든 뒤에는 바꿀 수 없습니다. 잔액과 거래가 이 통화로 기록됩니다.
-          </p>
+          <p className="mt-1 text-xs text-gray-500">{t('account.currencyHint')}</p>
         </div>
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
-            개설 잔액 ({formData.currency})
+            {t('account.openingBalance', { currency: formData.currency })}
           </label>
           <input
             type="number"
@@ -199,18 +211,20 @@ export default function AddAccountModal({
             placeholder="1000000"
           />
           <p className="mt-1 text-xs text-gray-500">
-            거래내역 맨 앞의 "기초잔액" 한 건으로 기록됩니다. 이후 거래는 이 금액 위에 쌓입니다.
+            {t('account.openingBalanceHint')}
           </p>
         </div>
 
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">계좌번호 (선택)</label>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {t('account.number')}
+          </label>
           <input
             type="text"
             value={formData.accountNumber}
             onChange={(e) => setFormData({ ...formData, accountNumber: e.target.value })}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-            placeholder="예: 123-456-7890"
+            placeholder={t('account.numberPlaceholder')}
           />
         </div>
 

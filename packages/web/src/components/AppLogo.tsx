@@ -1,3 +1,9 @@
+'use client';
+
+import Link from 'next/link';
+
+import { useTranslation } from '@/lib/i18n';
+
 /**
  * 앱 표시. 파란 모서리 둥근 바탕에 흰 지갑이다.
  *
@@ -21,18 +27,28 @@ export default function AppLogo({ className = 'h-6 w-6' }: { className?: string 
 }
 
 /**
- * 로고와 앱 이름을 나란히.
+ * 로고와 앱 이름을 나란히. 누르면 홈으로 간다.
  *
  * 좁은 화면의 위쪽 막대와 넓은 화면의 사이드바가 함께 쓴다. 이름을 두 곳에 적어
  * 두면 앱 이름을 바꿀 때 한쪽만 고쳐진다.
+ *
+ * 앱 표시를 눌러 첫 화면으로 돌아가는 것은 웹에서 굳어진 약속이라, 아래 탭이나
+ * 사이드바에 홈이 따로 있어도 여기서 막지 않는다. 누를 자리는 좌우로 조금 넓히되
+ * 바깥으로 밀어(-mx-1) 로고가 놓이는 자리는 링크가 되기 전과 같게 둔다.
  */
 export function AppBrand({ size = 'sm' }: { size?: 'sm' | 'md' }) {
+  const { t } = useTranslation();
+
   return (
-    <span className="flex shrink-0 items-center gap-1.5">
+    <Link
+      href="/home"
+      aria-label={t('common.goHome')}
+      className="-mx-1 flex shrink-0 items-center gap-1.5 rounded-lg px-1 py-1 hover:bg-gray-100"
+    >
       <AppLogo className={size === 'md' ? 'h-7 w-7' : 'h-6 w-6'} />
       <span className={`font-semibold text-gray-900 ${size === 'md' ? 'text-base' : 'text-sm'}`}>
         bboyong
       </span>
-    </span>
+    </Link>
   );
 }

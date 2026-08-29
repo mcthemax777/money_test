@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { currencyDecimals, type CardDto } from '@money/types';
 import { apiClient } from '@/lib/api-client';
+import { useTranslation } from '@/lib/i18n';
 import { formatCurrency, formatNumber, toAmountString, toNumber } from '@/lib/money';
 import { formatDateMarker } from '@/lib/datetime';
 
@@ -27,6 +28,7 @@ interface Props {
  * 확정할 것이 없으면 아무것도 그리지 않는다.
  */
 export default function PendingRatePanel({ cardId, onSettled }: Props) {
+  const { t } = useTranslation();
   const [data, setData] = useState<CardDto.PendingRatesResponse | null>(null);
   const [billed, setBilled] = useState<Record<string, string>>({});
   const [bulkRate, setBulkRate] = useState('');
@@ -102,7 +104,7 @@ export default function PendingRatePanel({ cardId, onSettled }: Props) {
       await load();
       onSettled();
     } catch (err: any) {
-      setError(err?.response?.data?.message || '확정에 실패했습니다.');
+      setError(err?.response?.data?.message || t('pending.confirmFailed'));
     } finally {
       setIsSaving(false);
     }
@@ -113,10 +115,9 @@ export default function PendingRatePanel({ cardId, onSettled }: Props) {
   return (
     <div className="pt-4 border-t space-y-3">
       <div>
-        <h3 className="text-sm font-medium text-gray-700">청구액 확정</h3>
+        <h3 className="text-sm font-medium text-gray-700">{t('pending.title')}</h3>
         <p className="mt-1 text-xs text-gray-500">
-          외화 결제 {items.length}건의 청구액이 아직 추정입니다. 명세서의 실제 청구액을 넣으면
-          환율은 자동으로 맞춰집니다.
+          {t('pending.description', { count: items.length })}
         </p>
       </div>
 
@@ -126,7 +127,7 @@ export default function PendingRatePanel({ cardId, onSettled }: Props) {
           inputMode="decimal"
           value={bulkRate}
           onChange={(e) => setBulkRate(e.target.value)}
-          placeholder="명세서 적용환율 (선택)"
+          placeholder={t('pending.ratePlaceholder')}
           className="flex-1 px-3 py-2 border rounded-lg text-sm"
         />
         <button
@@ -135,15 +136,15 @@ export default function PendingRatePanel({ cardId, onSettled }: Props) {
           disabled={toNumber(bulkRate) <= 0}
           className="px-3 py-2 text-sm border rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-40"
         >
-          한 번에 채우기
+          {t('pending.fillAll')}
         </button>
       </div>
 
       {groups.map(([closingMonth, group]) => (
         <div key={closingMonth} className="space-y-1">
           <div className="flex justify-between text-xs text-gray-500 px-1">
-            <span>{closingMonth} 마감</span>
-            <span>결제일 {formatDateMarker(group[0].dueDate)}</span>
+            <span>{t('pending.closingMonth', { month: closingMonth })}</span>
+            <span>{t('pending.dueDate', { date: formatDateMarker(group[0].dueDate) })}</span>
           </div>
 
           {group.map((item) => {
@@ -168,7 +169,7 @@ export default function PendingRatePanel({ cardId, onSettled }: Props) {
 
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-gray-500 shrink-0">
-                    {formatDateMarker(item.date)} · 추정{' '}
+                    {formatDateMarker(item.date)} · {t('pending.estimated')}{' '}
                     {formatCurrency(item.estimatedAmount, currency)}
                   </span>
                   <input
@@ -178,14 +179,14 @@ export default function PendingRatePanel({ cardId, onSettled }: Props) {
                     onChange={(e) =>
                       setBilled((prev) => ({ ...prev, [item.entryId]: e.target.value }))
                     }
-                    placeholder="실제 청구액"
+                    placeholder={t('pending.amountPlaceholder')}
                     className="ml-auto w-32 px-2 py-1 border rounded text-sm text-right"
                   />
                 </div>
 
                 {rate > 0 && (
                   <p className="text-xs text-gray-500 text-right">
-                    환율 {formatNumber(Math.round(rate * 100) / 100)}
+                    {t('pending.rate', { rate: formatNumber(Math.round(rate * 100) / 100) })}
                   </p>
                 )}
               </div>
@@ -202,7 +203,7 @@ export default function PendingRatePanel({ cardId, onSettled }: Props) {
         disabled={filled.length === 0 || isSaving}
         className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-40"
       >
-        {isSaving ? '확정하는 중...' : `${filled.length}건 확정하기`}
+        {isSaving ? t('pending.confirming') : t('pending.confirm', { count: filled.length })}
       </button>
     </div>
   );

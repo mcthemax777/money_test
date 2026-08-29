@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { CardDto } from '@money/types';
 import { apiClient } from '@/lib/api-client';
+import { useTranslation } from '@/lib/i18n';
 import { formatCurrency, toNumber } from '@/lib/money';
 import { formatDateMarker } from '@/lib/datetime';
 
@@ -25,6 +26,7 @@ export default function CardPerformancePanel({
   cardId,
   reloadToken = 0,
 }: CardPerformancePanelProps) {
+  const { t } = useTranslation();
   const [performance, setPerformance] = useState<CardDto.PerformanceResponse | null>(null);
   const [error, setError] = useState('');
 
@@ -34,7 +36,7 @@ export default function CardPerformancePanel({
       setPerformance(await apiClient.getCardPerformance(cardId));
     } catch {
       setPerformance(null);
-      setError('실적을 불러오지 못했습니다.');
+      setError(t('performance.loadFailed'));
     }
   }, [cardId]);
 
@@ -71,8 +73,10 @@ export default function CardPerformancePanel({
           }`}
         >
           {performance.achieved
-            ? '실적 달성'
-            : `실적까지 ${formatCurrency(performance.remaining, performance.currency)}`}
+            ? t('performance.reached')
+            : t('performance.remaining', {
+              amount: formatCurrency(performance.remaining, performance.currency),
+            })}
         </span>
         <span className="text-sm text-gray-700 tabular-nums">
           {formatCurrency(performance.usage, performance.currency)} /{' '}
@@ -94,7 +98,11 @@ export default function CardPerformancePanel({
         어긋나서, 구간을 안 적으면 "이번 달 얼마 썼더라"와 숫자가 달라 보인다.
       */}
       <p className="text-xs text-gray-600">
-        {performance.basis === 'statement' ? '마감일 기준' : '달력 월'}{' '}
+        {t(
+              performance.basis === 'statement'
+                ? 'performance.basisStatement'
+                : 'performance.basisMonth',
+            )}{' '}
         {formatDateMarker(performance.periodStart)} ~ {formatDateMarker(performance.periodEnd)}
       </p>
     </div>

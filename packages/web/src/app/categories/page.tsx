@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/store/auth';
 import { useProject } from '@/store/project';
 import { apiClient } from '@/lib/api-client';
+import { useTranslation } from '@/lib/i18n';
 import Modal from '@/components/Modal';
 import CategoryFormFields, {
   NO_SUB_CATEGORIES,
@@ -13,12 +14,15 @@ import CategoryFormFields, {
 import PageHeader from '@/components/PageHeader';
 import type { Category } from '@/lib/types';
 import { useDragReorder } from '@/hooks/useDragReorder';
+import { apiErrorCode, useApiError } from '@/lib/api-error';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const FORM_ID = 'category-form';
 
 
 export default function CategoriesPage() {
+  const { t } = useTranslation();
+  const { messageOf } = useApiError();
   const { isAuthenticated, loadUser } = useAuth();
   const { selectedProjectId } = useProject();
   const [categories, setCategories] = useState<Category[]>([]);
@@ -50,7 +54,7 @@ export default function CategoriesPage() {
         const data = await apiClient.getCategories(selectedProjectId);
         setCategories(data || []);
       } catch (err) {
-        setError('카테고리 조회에 실패했습니다.');
+        setError(t('categories.loadFailed'));
       } finally {
         setIsLoading(false);
       }
@@ -119,17 +123,17 @@ export default function CategoriesPage() {
   const handleDeleteClick = async (id: string) => {
     const category = categories.find((c) => c.id === id);
     if (category?.isDefault) {
-      setError('기본 카테고리는 삭제할 수 없습니다.');
+      setError(t('categories.deleteDefault'));
       return;
     }
-    if (!window.confirm('정말 삭제하시겠습니까?')) return;
+    if (!window.confirm(t('account.deleteConfirm'))) return;
     try {
       setIsSubmitting(true);
       await apiClient.deleteCategory(id);
       const data = await apiClient.getCategories();
       setCategories(data || []);
     } catch (err: any) {
-      const errorMsg = err?.response?.data?.error?.message || '카테고리 삭제에 실패했습니다.';
+      const errorMsg = messageOf(err, 'categories.deleteFailed');
       setError(errorMsg);
     } finally {
       setIsSubmitting(false);
@@ -141,7 +145,7 @@ export default function CategoriesPage() {
 
     // 메인 카테고리명 검증
     if (!formData.name.trim()) {
-      setError('카테고리명을 입력해주세요.');
+      setError(t('categories.nameRequired'));
       return;
     }
 
@@ -165,9 +169,9 @@ export default function CategoriesPage() {
             try {
               await apiClient.deleteCategory(existingSub.id);
             } catch (err: any) {
-              const errorMsg = err?.response?.data?.error?.message;
-              if (errorMsg && errorMsg.includes('거래')) {
-                throw new Error(`'${existingSub.name}' 소분류는 거래 기록에서 사용 중이어서 삭제할 수 없습니다.`);
+              // 서버가 붙인 코드로 가른다. 오류 문장을 뒤지면 언어가 바뀔 때 깨진다.
+              if (apiErrorCode(err) === 'CATEGORY_IN_USE') {
+                throw new Error(t('categories.subInUse', { name: existingSub.name }));
               }
               throw err;
             }
@@ -228,7 +232,9 @@ export default function CategoriesPage() {
       setError('');
       setIsModalOpen(false);
     } catch (err: any) {
-      setError(err?.message || (editingId ? '카테고리 수정에 실패했습니다.' : '카테고리 추가에 실패했습니다.'));
+      setError(
+        err?.message || t(editingId ? 'categories.editFailed' : 'categories.addFailed'),
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -240,7 +246,7 @@ export default function CategoriesPage() {
       const updated = await apiClient.reorderCategories(ids, selectedProjectId);
       setCategories(updated as Category[]);
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || '순서 저장에 실패했습니다.');
+      setError(messageOf(err, 'assets.orderSaveFailed'));
       // 저장이 실패했으면 화면에 남은 순서가 서버와 다르다. 다시 받아 맞춘다.
       const data = await apiClient.getCategories(selectedProjectId);
       setCategories(data || []);
@@ -254,29 +260,29 @@ export default function CategoriesPage() {
   return (
     <div className="space-y-6">
       <PageHeader
-        title="카테고리"
+        title={t('categories.title')}
         action={
           <button
             onClick={() => setIsModalOpen(true)}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
           >
-            카테고리 추가
+            {t('categories.add')}
           </button>
         }
       />
 
       {isLoading ? (
-        <p className="text-gray-600">로딩 중...</p>
+        <p className="text-gray-600">{t('common.loading')}</p>
       ) : categories.length === 0 ? (
-        <p className="text-gray-600">카테고리가 없습니다.</p>
+        <p className="text-gray-600">{t('categories.empty')}</p>
       ) : (
         <>
           {/* 가계·자산 화면과 같은 2단 배치. 왼쪽 지출, 오른쪽 수입. */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div>
-              <h2 className="text-lg font-bold text-red-600 mb-4">💸 지출</h2>
+              <h2 className="text-lg font-bold text-red-600 mb-4">{t('categories.expenseTitle')}</h2>
               {expenseCategories.length === 0 ? (
-                <p className="text-gray-600">지출 카테고리가 없습니다.</p>
+                <p className="text-gray-600">{t('categories.expenseEmpty')}</p>
               ) : (
                 <CategoryList
                   cats={expenseCategories}
@@ -288,9 +294,9 @@ export default function CategoriesPage() {
             </div>
 
             <div>
-              <h2 className="text-lg font-bold text-green-600 mb-4">💰 수입</h2>
+              <h2 className="text-lg font-bold text-green-600 mb-4">{t('categories.incomeTitle')}</h2>
               {incomeCategories.length === 0 ? (
-                <p className="text-gray-600">수입 카테고리가 없습니다.</p>
+                <p className="text-gray-600">{t('categories.incomeEmpty')}</p>
               ) : (
                 <CategoryList
                   cats={incomeCategories}
@@ -313,7 +319,7 @@ export default function CategoriesPage() {
       <Modal
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
-        title="카테고리 상세정보"
+        title={t('categories.detail')}
         footer={
           selectedCategory ? (
             <div className="flex gap-2">
@@ -321,7 +327,7 @@ export default function CategoriesPage() {
                 onClick={handleDetailEditClick}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
               >
-                수정하기
+                {t('account.editSubmit')}
               </button>
               <button
                 onClick={async () => {
@@ -330,9 +336,9 @@ export default function CategoriesPage() {
                 }}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={isSubmitting || selectedCategory.isDefault}
-                title={selectedCategory.isDefault ? '기본 카테고리는 삭제할 수 없습니다.' : ''}
+                title={selectedCategory.isDefault ? t('categories.deleteDefault') : ''}
               >
-                삭제하기
+                {t('account.deleteSubmit')}
               </button>
             </div>
           ) : null
@@ -342,7 +348,7 @@ export default function CategoriesPage() {
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              카테고리명
+              {t('categories.name')}
             </label>
             <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
               {selectedCategory.name}
@@ -351,10 +357,10 @@ export default function CategoriesPage() {
 
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
-              유형
+              {t('account.type')}
             </label>
             <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-              {selectedCategory.type === 'income' ? '수입' : '지출'}
+              {t(selectedCategory.type === 'income' ? 'home.tab.income' : 'home.tab.expense')}
             </p>
           </div>
 
@@ -362,13 +368,13 @@ export default function CategoriesPage() {
             <>
               {selectedCategory.defaultIsExtra && (
                 <div className="px-3 py-2 bg-blue-50 text-blue-800 text-sm rounded-lg">
-                  ✓ 기본 과소비·추가 수입
+                  {t('categories.defaultExtra')}
                 </div>
               )}
               {categories.filter((c) => c.parentId === selectedCategory.id).length > 0 && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    소분류
+                    {t('categories.subcategories')}
                   </label>
                   <div className="space-y-2">
                     {categories
@@ -377,8 +383,8 @@ export default function CategoriesPage() {
                         <div key={subCat.id} className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900 text-sm flex items-center justify-between">
                           <span>{subCat.name}</span>
                           <span className="text-xs text-gray-500">
-                            {subCat.isDefault && '(기본)'}
-                            {subCat.defaultIsExtra && ' 과소비'}
+                            {subCat.isDefault && t('categories.defaultMark')}
+                            {subCat.defaultIsExtra && t('categories.extraMark')}
                           </span>
                         </div>
                       ))}
@@ -395,7 +401,7 @@ export default function CategoriesPage() {
       <Modal
         isOpen={isModalOpen}
         onClose={handleModalClose}
-        title={editingId ? '카테고리 수정' : '카테고리 추가'}
+        title={t(editingId ? 'categories.edit' : 'categories.add')}
         /* 버튼은 form 밖(하단 고정 영역)이라 form 속성으로 묶는다 */
         footer={
           <button
@@ -404,7 +410,9 @@ export default function CategoriesPage() {
             disabled={isSubmitting || !formData.name.trim()}
             className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            {isSubmitting ? (editingId ? '수정 중...' : '추가 중...') : (editingId ? '수정하기' : '추가하기')}
+            {isSubmitting
+              ? t(editingId ? 'account.editing' : 'account.adding')
+              : t(editingId ? 'account.editSubmit' : 'account.addSubmit')}
           </button>
         }
       >
@@ -484,7 +492,9 @@ function SubCategoryList({
   subCats: Category[];
   onReorder: (ids: string[]) => void;
 }) {
+  const { t } = useTranslation();
   const { items, dragProps, draggingId } = useDragReorder(subCats, onReorder);
+
   if (items.length === 0) return null;
 
   return (
@@ -501,8 +511,8 @@ function SubCategoryList({
             {subCat.name}
           </span>
           <span className="text-xs text-gray-500">
-            {subCat.isDefault && '(기본)'}
-            {subCat.defaultIsExtra && ' 과소비'}
+            {subCat.isDefault && t('categories.defaultMark')}
+            {subCat.defaultIsExtra && t('categories.extraMark')}
           </span>
         </div>
       ))}

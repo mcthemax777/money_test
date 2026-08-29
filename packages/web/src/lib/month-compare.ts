@@ -2,8 +2,8 @@ import type { EntryDto } from '@money/types';
 
 import { apiClient } from '@/lib/api-client';
 import type { EntryListItem } from '@/components/TransactionItem';
-import { dayRangeQuery, shiftYearMonth } from '@/lib/datetime';
-import { buildDailyCumulative, monthDateKeys } from '@/lib/entries';
+import { dayRangeQuery, formatMonthShort, shiftYearMonth } from '@/lib/datetime';
+import { buildDailyCumulative, countedShare, monthDateKeys } from '@/lib/entries';
 import type { CumulativeSeries } from '@/components/DailyCumulativeChart';
 
 /**
@@ -47,8 +47,9 @@ export async function loadPreviousMonths(
       )) as EntryListItem[];
 
       return {
-        name: `${Number(month.slice(5))}월`,
-        points: buildDailyCumulative(rows ?? [], startKey, endKey, timeZone),
+        name: formatMonthShort(Number(month.slice(5))),
+        // 앞선 달도 이번 달과 같은 몫을 세야 선끼리 견줄 수 있다.
+        points: buildDailyCumulative(rows ?? [], startKey, endKey, timeZone, countedShare(query)),
       };
     }),
   );

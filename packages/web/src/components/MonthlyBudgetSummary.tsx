@@ -3,6 +3,7 @@
 import type { BudgetDto } from '@money/types';
 
 import { budgetPercentage } from '@/lib/budget';
+import { useTranslation } from '@/lib/i18n';
 import { formatCurrency, toNumber } from '@/lib/money';
 import { useProjectDisplayCurrency } from '@/store/project';
 
@@ -26,6 +27,7 @@ export default function MonthlyBudgetSummary({
   /** 지출 예산을 볼지 수입 목표를 볼지 */
   type: 'income' | 'expense';
 }) {
+  const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
 
   /** 전체 줄. 분류 예산과 달리 categoryId가 없다. */
@@ -73,7 +75,7 @@ export default function MonthlyBudgetSummary({
     <div className="bg-white rounded-lg shadow p-4">
       {/* 옆의 통계 그래프들과 같은 자리에 같은 모양으로 제목을 단다. */}
       <h3 className="mb-3 font-semibold text-gray-900">
-        {type === 'income' ? '목표' : '예산'}
+        {type === 'income' ? t('budget.title.income') : t('budget.title.expense')}
       </h3>
 
       {/*
@@ -86,7 +88,7 @@ export default function MonthlyBudgetSummary({
       {totalBudget > 0 && (
         <div className="mb-3 py-2">
           <div className="flex justify-between items-baseline">
-            <span className="text-sm text-gray-600">합계</span>
+            <span className="text-sm text-gray-600">{t('budget.total')}</span>
             <UsedOfBudget used={totalUsed} budget={totalBudget} currency={displayCurrency} />
           </div>
           <BudgetLine
@@ -100,8 +102,7 @@ export default function MonthlyBudgetSummary({
 
       {rows.length === 0 ? (
         <p className="text-sm text-gray-600">
-          {type === 'income' ? '목표를' : '예산을'} 잡은 분류가 없습니다. 가계 화면의
-          분류별에서 정할 수 있습니다.
+          {type === 'income' ? t('budget.none.income') : t('budget.none.expense')}
         </p>
       ) : (
         <div className="space-y-1">
@@ -178,6 +179,9 @@ function BudgetLine({
   currency: string;
   type: 'income' | 'expense';
 }) {
+  // 훅은 이른 반환보다 앞이어야 한다. 조건에 따라 부르면 순서가 어긋난다.
+  const { t } = useTranslation();
+
   if (budget <= 0) return null;
 
   const percent = budgetPercentage(budget, used);
@@ -195,9 +199,10 @@ function BudgetLine({
       {/* 예산액은 위 "쓴 금액 / 예산액"이 이미 적는다. 여기서는 진행만 말한다. */}
       <span className={`text-xs shrink-0 ${warn ? 'text-red-600' : 'text-gray-500'}`}>
         {percent}%
+        {' · '}
         {over
-          ? ` · ${formatCurrency(used - budget, currency)} 초과`
-          : ` · ${formatCurrency(budget - used, currency)} 남음`}
+          ? t('budget.over', { amount: formatCurrency(used - budget, currency) })
+          : t('budget.left', { amount: formatCurrency(budget - used, currency) })}
       </span>
     </div>
   );

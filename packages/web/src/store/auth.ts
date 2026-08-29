@@ -9,6 +9,8 @@ interface User {
   name: string;
   avatar: string | null;
   defaultProjectId?: string;
+  /** 화면 언어. 서버가 주는 값이고, 실제로 화면에 쓰는 것은 useLocaleStore다. */
+  locale?: string;
   createdAt?: Date;
   updatedAt?: Date;
 }
@@ -39,6 +41,17 @@ interface AuthStore {
   loadUser: () => Promise<void>;
 }
 
+/**
+ * 서버가 준 언어를 화면에 반영한다.
+ *
+ * 스토어를 정적으로 import하지 않는 것은 다른 스토어들과 같은 이유다. 로그인
+ * 스토어가 화면 스토어를 붙들면 서로를 부르는 고리가 생기기 쉽다.
+ */
+async function applyUserLocale(locale: unknown) {
+  const { useLocaleStore } = await import('./locale');
+  useLocaleStore.getState().applyServerLocale(locale);
+}
+
 export const useAuth = create<AuthStore>()(
   persist(
     (set) => ({
@@ -61,6 +74,8 @@ export const useAuth = create<AuthStore>()(
 
       const response = await apiClient.signInWithGoogle(idToken);
       saveAuthTokens(response.accessToken, response.refreshToken);
+      // 이 계정이 고른 말로 화면을 맞춘다. 앞 사용자가 남긴 언어가 이어지면 안 된다.
+      applyUserLocale(response.user?.locale);
       set({
         user: response.user,
         defaultProjectData: response.defaultProjectData,
@@ -137,6 +152,7 @@ export const useAuth = create<AuthStore>()(
       }
 
       const user = await apiClient.getProfile();
+      applyUserLocale(user?.locale);
       set({ user, isAuthenticated: true, isInitializing: false });
     } catch {
       clearAuthTokens();

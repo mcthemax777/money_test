@@ -7,6 +7,7 @@ import { AppBrand } from '@/components/AppLogo';
 import ProjectSwitchModal from '@/components/ProjectSwitchModal';
 import { UserAvatar } from '@/components/UserAvatar';
 import { useProjectSwitch } from '@/hooks/useProjectSwitch';
+import { useTranslation } from '@/lib/i18n';
 import { useAuth } from '@/store/auth';
 import { useProject } from '@/store/project';
 
@@ -21,6 +22,7 @@ import { useProject } from '@/store/project';
  * 왼쪽은 프로젝트, 가운데는 앱 이름, 오른쪽은 나다. 화면 이동은 아래 탭이 맡는다.
  */
 export default function MobileTopBar() {
+  const { t } = useTranslation();
   const { projects, selectedProjectId } = useProject();
   const { user } = useAuth();
   const switcher = useProjectSwitch();
@@ -29,7 +31,7 @@ export default function MobileTopBar() {
 
   const selected = projects.find((project) => project.id === selectedProjectId);
   /** 고른 것이 없으면 첫 프로젝트 이름이라도 적는다. 빈 자리는 눌러 볼 곳으로 보이지 않는다. */
-  const label = selected?.name ?? projects[0]?.name ?? '프로젝트 없음';
+  const label = selected?.name ?? projects[0]?.name ?? t('topbar.noProject');
 
   useEffect(() => {
     if (!isPickerOpen) return;
@@ -111,8 +113,7 @@ export default function MobileTopBar() {
           )}
 
           {/*
-            앱 표시. 양옆과 달리 눌러서 가는 곳이 없다. 여기서 홈으로 보내면 아래
-            탭의 홈과 겹치고, 프로젝트가 하나일 때는 왼쪽 이름과도 겹친다.
+            앱 표시. 누르면 홈으로 간다(AppBrand 안에 링크가 있다).
 
             줄어들지 않게 두어(shrink-0) 양옆 글자가 길어도 가운데 자리를 지킨다.
           */}
@@ -126,7 +127,7 @@ export default function MobileTopBar() {
             <UserAvatar name={user?.name} avatar={user?.avatar} />
             {/* 아주 좁은 화면에서는 이름을 접는다. 얼굴만으로도 누구인지 알아본다. */}
             <span className="hidden min-w-0 truncate text-sm text-gray-700 sm:inline">
-              {user?.name ?? '내 정보'}
+              {user?.name ?? t('topbar.myInfo')}
             </span>
           </Link>
         </div>

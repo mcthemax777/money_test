@@ -1,6 +1,37 @@
+import type { EntryFilterQuery } from '@money/types';
+
 import type { EntryListItem } from '@/components/TransactionItem';
+import { activeLocale, translate } from '@/lib/i18n';
 import { dateKeyOf } from './datetime';
 import { toNumber } from './money';
+
+/**
+ * 일반/과소비 중 어느 몫을 세는지. undefined면 거래 금액 전부다.
+ *
+ * 한 거래가 둘로 나뉜다(3,000원 중 2,000원이 과소비). 일반만 보는 화면에서 그
+ * 거래를 통째로 세면 서버가 주는 합계(1,000원)와 어긋난다.
+ */
+export type CountedShare = 'normal' | 'extra' | undefined;
+
+/** 조회 필터에서 셀 몫을 읽는다. 둘 다 골랐거나 필터가 없으면 전부다. */
+export function countedShare(filter?: EntryFilterQuery): CountedShare {
+  const types = filter?.extraTypes;
+  if (types === undefined) return undefined;
+
+  const wantsNormal = types.includes('normal');
+  const wantsExtra = types.includes('extra');
+  if (wantsNormal === wantsExtra) return undefined;
+
+  return wantsExtra ? 'extra' : 'normal';
+}
+
+/** 거래 금액 중 세어야 할 몫. 서버의 normalAmount/extraAmount와 같은 규칙이다. */
+function shareOf(total: number, entry: EntryListItem, share: CountedShare): number {
+  if (share === undefined) return total;
+
+  const extra = Math.min(toNumber(entry.extraAmount), total);
+  return share === 'extra' ? extra : total - extra;
+}
 
 /**
  * 전표 하나가 "지출"에 얼마를 보태는지.
@@ -11,24 +42,25 @@ import { toNumber } from './money';
  * 서버의 "지출 = 지출 카테고리 posting의 합"과 같은 기준이다.
  * 날짜별 합계, 일별 누적, 목록 소계가 전부 이 함수를 쓰므로 화면끼리 어긋나지 않는다.
  */
-export function expenseAmountOf(entry: EntryListItem): number {
-  if (entry.kind === 'expense') return toNumber(entry.amount);
-  if (entry.kind === 'transfer') return toNumber(entry.feeAmount);
+export function expenseAmountOf(entry: EntryListItem, share?: CountedShare): number {
+  if (entry.kind === 'expense') return shareOf(toNumber(entry.amount), entry, share);
+  // 이체는 수수료만 지출이고, 과소비도 그 수수료에 붙는다.
+  if (entry.kind === 'transfer') return shareOf(toNumber(entry.feeAmount), entry, share);
   return 0;
 }
 
 /** 전표 하나가 "수입"에 보태는 금액 */
-export function incomeAmountOf(entry: EntryListItem): number {
-  return entry.kind === 'income' ? toNumber(entry.amount) : 0;
+export function incomeAmountOf(entry: EntryListItem, share?: CountedShare): number {
+  return entry.kind === 'income' ? shareOf(toNumber(entry.amount), entry, share) : 0;
 }
 
 /** 날짜별 수입/지출 소계 */
-export function sumEntries(entries: EntryListItem[]) {
+export function sumEntries(entries: EntryListItem[], share?: CountedShare) {
   let incomeTotal = 0;
   let expenseTotal = 0;
   for (const entry of entries) {
-    incomeTotal += incomeAmountOf(entry);
-    expenseTotal += expenseAmountOf(entry);
+    incomeTotal += incomeAmountOf(entry, share);
+    expenseTotal += expenseAmountOf(entry, share);
   }
   return { incomeTotal, expenseTotal };
 }
@@ -48,10 +80,11 @@ export function buildDailyCumulative(
   startKey: string,
   endKey: string,
   timeZone: string,
+  share?: CountedShare,
 ): Array<{ label: string; amount: number; cumulative: number }> {
   const byDay = new Map<string, number>();
   for (const entry of entries) {
-    const amount = expenseAmountOf(entry);
+    const amount = expenseAmountOf(entry, share);
     if (amount === 0) continue;
     // 며칠에 속하는지는 프로젝트 타임존 기준이다 (UTC로 읽으면 하루 밀린다).
     const key = dateKeyOf(entry.date, timeZone);
@@ -76,7 +109,11 @@ export function buildDailyCumulative(
     const key = `${cursor.getUTCFullYear()}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
     const amount = byDay.get(key) ?? 0;
     cumulative += amount;
-    result.push({ label: sameMonth ? `${day}일` : `${month}/${day}`, amount, cumulative });
+    result.push({
+      label: sameMonth ? translate(activeLocale(), 'chart.dayTick', { day }) : `${month}/${day}`,
+      amount,
+      cumulative,
+    });
     cursor.setUTCDate(day + 1);
   }
 

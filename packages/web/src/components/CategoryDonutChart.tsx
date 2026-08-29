@@ -6,6 +6,7 @@ import type { EntryFilterQuery } from '@money/types';
 
 import { apiClient, type ReportPeriod } from '@/lib/api-client';
 import { CHART_CATEGORY_COLORS, CHART_TOOLTIP_STYLE, formatTooltipAmount } from '@/lib/chart';
+import { useTranslation } from '@/lib/i18n';
 import { formatCurrency, toNumber } from '@/lib/money';
 import { useProjectDisplayCurrency } from '@/store/project';
 
@@ -74,13 +75,16 @@ export default function CategoryDonutChart({
   projectId,
   filter,
 }: CategoryDonutChartProps) {
+  const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
   const [rows, setRows] = useState<BreakdownRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
 
-  /** 화면에 적을 말. 지출과 수입에서 문장이 갈리는 자리에만 쓴다. */
-  const noun = type === 'income' ? '수입' : '지출';
+  /** 지출과 수입에서 문장이 갈리는 자리. 언어마다 조사가 달라 문장째로 나눠 둔다. */
+  const emptyText = type === 'income' ? t('donut.empty.income') : t('donut.empty.expense');
+  const failedText =
+    type === 'income' ? t('donut.loadFailed.income') : t('donut.loadFailed.expense');
   const periodKey = JSON.stringify(period);
   const filterKey = JSON.stringify(filter);
 
@@ -97,10 +101,10 @@ export default function CategoryDonutChart({
         setRows(data ?? []);
       })
       .catch((err: unknown) => {
-        console.error(`분류별 ${noun} 조회 실패:`, err);
+        console.error('분류별 합계 조회 실패:', err);
         if (cancelled) return;
         setRows([]);
-        setError(`분류별 ${noun}을 불러오지 못했습니다.`);
+        setError(failedText);
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -128,11 +132,11 @@ export default function CategoryDonutChart({
     const restAmount = sorted.slice(MAX_SLICES).reduce((acc, row) => acc + row.amount, 0);
     const all =
       restAmount > 0
-        ? [...head, { id: 'rest', name: '기타', amount: restAmount, color: REST_COLOR }]
+        ? [...head, { id: 'rest', name: t('donut.rest'), amount: restAmount, color: REST_COLOR }]
         : head;
 
     return { slices: all, total: sorted.reduce((acc, row) => acc + row.amount, 0) };
-  }, [rows]);
+  }, [rows, t]);
 
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">
@@ -144,11 +148,11 @@ export default function CategoryDonutChart({
       </div>
 
       {isLoading && rows.length === 0 ? (
-        <p className="mt-3 h-56 text-sm text-gray-600">로딩 중...</p>
+        <p className="mt-3 h-56 text-sm text-gray-600">{t('common.loading')}</p>
       ) : error ? (
         <p className="mt-3 h-56 text-sm text-red-600">{error}</p>
       ) : slices.length === 0 ? (
-        <p className="mt-3 h-56 text-sm text-gray-600">이 달 {noun}이 없습니다.</p>
+        <p className="mt-3 h-56 text-sm text-gray-600">{emptyText}</p>
       ) : (
         <div className="mt-3 flex h-56 items-center gap-3">
           <div className="h-full w-40 shrink-0">

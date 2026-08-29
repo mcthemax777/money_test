@@ -1,5 +1,7 @@
 // 도메인 엔티티 - packages/api/prisma/schema.prisma 와 동기화
 
+import type { Locale } from './locale';
+
 /**
  * JSON으로 오갈 때 날짜는 ISO 8601 문자열이다. Date 객체가 아니다.
  *
@@ -41,6 +43,7 @@ export interface User {
   name: string;
   avatar: string | null;
   defaultProjectId: string | null;
+  locale: Locale; // 화면 언어. 고른 적이 없으면 'ko'
   createdAt: IsoDateString;
   updatedAt: IsoDateString;
 }

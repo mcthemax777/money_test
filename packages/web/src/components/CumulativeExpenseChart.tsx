@@ -26,6 +26,8 @@ import {
   formatTooltipAmount,
   lineAxis,
 } from '@/lib/chart';
+import { formatMonthShort } from '@/lib/datetime';
+import { useTranslation } from '@/lib/i18n';
 import { formatCurrency, toNumber } from '@/lib/money';
 import { useProjectDisplayCurrency } from '@/store/project';
 
@@ -111,6 +113,7 @@ export default function CumulativeExpenseChart({
   earlierPoints,
   throughDay,
 }: CumulativeExpenseChartProps) {
+  const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
 
   const { rows, current, previous } = useMemo(() => {
@@ -183,7 +186,8 @@ export default function CumulativeExpenseChart({
           <span className="font-semibold text-gray-900 tabular-nums">
             {formatCurrency(current, displayCurrency)}
           </span>{' '}
-          · 지난달 같은 기간{' '}
+          {' · '}
+          {t('chart.comparePrevious')}{' '}
           <span className="tabular-nums">{formatCurrency(previous, displayCurrency)}</span>{' '}
           <span className={isWorse ? 'text-red-600' : 'text-blue-600'}>
             ({difference > 0 ? '+' : ''}
@@ -200,7 +204,7 @@ export default function CumulativeExpenseChart({
               dataKey="day"
               tick={CHART_TICK}
               // 0은 달이 시작하기 전 자리다. "0일"이라는 날은 없다.
-              tickFormatter={(day) => (day === 0 ? '0' : `${day}일`)}
+              tickFormatter={(day) => (day === 0 ? '0' : t('chart.dayTick', { day }))}
             />
             <YAxis
               width={CHART_Y_AXIS_WIDTH}
@@ -211,7 +215,10 @@ export default function CumulativeExpenseChart({
             />
             <Tooltip
               contentStyle={CHART_TOOLTIP_STYLE}
-              labelFormatter={(day) => (day === 0 ? '월초' : `${day}일`)}
+              labelFormatter={(day) =>
+                // recharts는 라벨을 ReactNode로 넘긴다. 사전의 자리에는 글자로 넣는다.
+                day === 0 ? t('chart.monthStart') : t('day.nth', { day: String(day) })
+              }
               formatter={(value, name) =>
                 formatTooltipAmount(value, name as string, displayCurrency)
               }
@@ -221,7 +228,7 @@ export default function CumulativeExpenseChart({
             <Line
               type="monotone"
               dataKey="earlier"
-              name={`${Number(earlierYearMonth.slice(5))}월`}
+              name={formatMonthShort(Number(earlierYearMonth.slice(5)))}
               stroke={CHART_EARLIER_COLOR}
               dot={false}
               activeDot={CHART_ACTIVE_DOT}
@@ -229,7 +236,7 @@ export default function CumulativeExpenseChart({
             <Line
               type="monotone"
               dataKey="previous"
-              name={`${Number(previousYearMonth.slice(5))}월`}
+              name={formatMonthShort(Number(previousYearMonth.slice(5)))}
               stroke={CHART_PREVIOUS_COLOR}
               dot={false}
               activeDot={CHART_ACTIVE_DOT}
@@ -237,7 +244,7 @@ export default function CumulativeExpenseChart({
             <Line
               type="monotone"
               dataKey="current"
-              name={`${Number(yearMonth.slice(5))}월`}
+              name={formatMonthShort(Number(yearMonth.slice(5)))}
               stroke={CHART_COLOR}
               strokeWidth={2}
               dot={false}

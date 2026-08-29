@@ -5,7 +5,9 @@ import type { BudgetDto } from '@money/types';
 import { apiClient } from '@/lib/api-client';
 import { formatCurrency, formatNumber, toAmountString, toNumber } from '@/lib/money';
 import { useProjectDisplayCurrency } from '@/store/project';
-import { shiftYearMonth } from '@/lib/datetime';
+import { formatYearMonth, shiftYearMonth } from '@/lib/datetime';
+import { useTranslation } from '@/lib/i18n';
+import { useApiError } from '@/lib/api-error';
 
 /** 한 번에 보여 주는 달 수. 1년이면 "지금 어떻게 세팅돼 있나"를 훑기에 충분하다. */
 const WINDOW_MONTHS = 12;
@@ -50,6 +52,8 @@ export default function BudgetScheduleList({
   reloadToken,
   onChange,
 }: BudgetScheduleListProps) {
+  const { t } = useTranslation();
+  const { messageOf } = useApiError();
   const displayCurrency = useProjectDisplayCurrency();
   const [windowStart, setWindowStart] = useState(startMonth);
   const [months, setMonths] = useState<BudgetDto.ScheduleMonth[]>([]);
@@ -78,7 +82,7 @@ export default function BudgetScheduleList({
       );
     } catch {
       setMonths([]);
-      setError('월별 예산을 불러오지 못했습니다.');
+      setError(t('schedule.loadFailed'));
     } finally {
       setIsLoading(false);
     }
@@ -105,7 +109,7 @@ export default function BudgetScheduleList({
 
     const amount = toNumber(editingValue);
     if (amount < 0) {
-      setError('예산 금액은 0보다 작을 수 없습니다.');
+      setError(t('budget.negative'));
       return;
     }
 
@@ -123,7 +127,7 @@ export default function BudgetScheduleList({
       await load();
       await onChange();
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || '저장에 실패했습니다.');
+      setError(messageOf(err, 'budget.saveFailed'));
     } finally {
       setIsSaving(false);
     }
@@ -139,7 +143,7 @@ export default function BudgetScheduleList({
       await load();
       await onChange();
     } catch (err: any) {
-      setError(err?.response?.data?.error?.message || '조정을 해제하지 못했습니다.');
+      setError(messageOf(err, 'schedule.resetFailed'));
     } finally {
       setIsSaving(false);
     }
@@ -150,14 +154,14 @@ export default function BudgetScheduleList({
   return (
     <div className="border-t border-gray-200 pt-4">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-sm font-medium text-gray-700">월별 예산</span>
+        <span className="text-sm font-medium text-gray-700">{t('schedule.title')}</span>
         <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={() => setWindowStart(shiftYearMonth(windowStart, -WINDOW_MONTHS))}
             className="px-2 py-1 text-xs text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
           >
-            ‹ 이전
+            {t('schedule.prev')}
           </button>
           <span className="px-1 text-xs text-gray-500 tabular-nums">
             {windowStart} ~ {windowEnd}
@@ -167,7 +171,7 @@ export default function BudgetScheduleList({
             onClick={() => setWindowStart(shiftYearMonth(windowStart, WINDOW_MONTHS))}
             className="px-2 py-1 text-xs text-gray-600 border border-gray-300 rounded hover:bg-gray-50"
           >
-            다음 ›
+            {t('schedule.next')}
           </button>
         </div>
       </div>
@@ -179,7 +183,7 @@ export default function BudgetScheduleList({
       )}
 
       {isLoading ? (
-        <p className="py-6 text-center text-sm text-gray-500">불러오는 중...</p>
+        <p className="py-6 text-center text-sm text-gray-500">{t('feed.loadingMore')}</p>
       ) : (
         /* 12줄이면 팝업 안에서 스크롤이 생긴다. 목록만 따로 스크롤한다. */
         <div className="max-h-64 overflow-y-auto divide-y divide-gray-100">
@@ -192,7 +196,7 @@ export default function BudgetScheduleList({
             return (
               <div key={row.yearMonth} className="flex items-center gap-2 py-1.5 text-sm">
                 <span className="w-24 shrink-0 text-gray-600 tabular-nums">
-                  {year}년 {month}월
+                  {formatYearMonth(year, month)}
                 </span>
 
                 {isEditing ? (
@@ -221,31 +225,31 @@ export default function BudgetScheduleList({
                       type="button"
                       onClick={() => saveMonth(row)}
                       disabled={isSaving}
-                      aria-label={`${year}년 ${month}월 예산 저장`}
+                      aria-label={t('schedule.saveLabel', { month: formatYearMonth(year, month) })}
                       className="shrink-0 px-2 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
                     >
-                      저장
+                      {t('common.save')}
                     </button>
                     <button
                       type="button"
                       onClick={cancelEdit}
                       disabled={isSaving}
-                      aria-label={`${year}년 ${month}월 예산 수정 취소`}
+                      aria-label={t('schedule.cancelLabel', { month: formatYearMonth(year, month) })}
                       className="shrink-0 px-2 py-1 text-xs text-gray-600 border border-gray-300 rounded hover:bg-gray-50 disabled:opacity-50"
                     >
-                      취소
+                      {t('common.cancel')}
                     </button>
                   </>
                 ) : (
                   <>
                     <span className="flex-1 text-right tabular-nums text-gray-900">
-                      {hasRule ? formatCurrency(row.amount, displayCurrency) : '예산 없음'}
+                      {hasRule ? formatCurrency(row.amount, displayCurrency) : t('schedule.noBudget')}
                     </span>
 
                     {/* 규칙 금액과 다른 달. 원래 얼마였는지 함께 보여 준다. */}
                     {row.isOverridden && (
                       <span className="shrink-0 text-xs text-amber-700">
-                        조정됨 (규칙 {formatNumber(row.ruleAmount)})
+                        {t('schedule.adjusted', { amount: formatNumber(row.ruleAmount) })}
                       </span>
                     )}
 
@@ -253,11 +257,11 @@ export default function BudgetScheduleList({
                       type="button"
                       onClick={() => startEdit(row)}
                       disabled={!hasRule || isSaving}
-                      aria-label={`${year}년 ${month}월 예산 수정`}
-                      title={hasRule ? undefined : '이 달에 적용되는 예산 규칙이 없습니다.'}
+                      aria-label={t('schedule.editLabel', { month: formatYearMonth(year, month) })}
+                      title={hasRule ? undefined : t('schedule.noRule')}
                       className="shrink-0 px-2 py-1 text-xs text-blue-600 hover:underline disabled:text-gray-300 disabled:no-underline disabled:cursor-not-allowed"
                     >
-                      수정
+                      {t('schedule.edit')}
                     </button>
 
                     {row.isOverridden && (
@@ -265,10 +269,10 @@ export default function BudgetScheduleList({
                         type="button"
                         onClick={() => clearMonth(row)}
                         disabled={isSaving}
-                        aria-label={`${year}년 ${month}월 조정 되돌리기`}
+                        aria-label={t('schedule.revertLabel', { month: formatYearMonth(year, month) })}
                         className="shrink-0 px-2 py-1 text-xs text-gray-500 hover:underline disabled:opacity-50"
                       >
-                        되돌리기
+                        {t('schedule.revert')}
                       </button>
                     )}
                   </>
@@ -280,8 +284,7 @@ export default function BudgetScheduleList({
       )}
 
       <p className="mt-2 text-xs text-gray-500">
-        여기서 고친 금액은 그 달에만 적용됩니다. 여러 달을 한꺼번에 바꾸려면 위의 적용 범위를
-        쓰세요.
+        {t('schedule.hint')}
       </p>
     </div>
   );

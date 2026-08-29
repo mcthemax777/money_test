@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+import { useTranslation } from '@/lib/i18n';
 import { useNavPending } from '@/hooks/useNavPending';
 import { isActiveNav, navItemsOf } from '@/lib/nav';
 import { useProject } from '@/store/project';
@@ -15,6 +16,7 @@ import { useProject } from '@/store/project';
  * 있는지가 늘 보인다.
  */
 export default function MobileTabBar() {
+  const { t } = useTranslation();
   const pathname = usePathname();
   const { projects } = useProject();
   const { pendingHref, start } = useNavPending();
@@ -61,7 +63,7 @@ export default function MobileTabBar() {
                 ) : (
                   <Icon className="h-5 w-5" strokeWidth={active ? 2.25 : 1.75} aria-hidden />
                 )}
-                <span className="text-[11px] leading-none">{item.label}</span>
+                <span className="text-[11px] leading-none">{t(item.labelKey)}</span>
               </Link>
             </li>
           );

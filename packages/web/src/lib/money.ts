@@ -5,7 +5,26 @@
  * JSON 숫자는 자바스크립트에서 double이라 정밀도 보장이 없기 때문이다.
  * 합산은 전부 서버(/reports/*)에서 끝나므로, 화면은 표시 직전에만 숫자로 바꾼다.
  */
-import { currencyDecimals, currencyUnit, formatMoney, isCurrencyCode } from '@money/types';
+import {
+  currencyDecimals,
+  formatMoney,
+  isCurrencyCode,
+  type CurrencyCode,
+} from '@money/types';
+
+import { activeLocale, activeLocaleTag, translate, type MessageKey } from '@/lib/i18n';
+
+/**
+ * 금액 뒤에 붙여 읽는 통화 이름의 열쇠.
+ *
+ * `@money/types`의 CURRENCY_UNIT은 한국어 이름만 갖는다. 그 값은 서버도 쓰므로
+ * 언어를 아는 화면 쪽에서 다시 적는다. 모르는 통화는 코드를 그대로 띄어 쓴다.
+ */
+const UNIT_KEY: Record<CurrencyCode, MessageKey> = {
+  KRW: 'currencyUnit.KRW',
+  USD: 'currencyUnit.USD',
+  JPY: 'currencyUnit.JPY',
+};
 
 
 /** 표시·비교용 숫자 변환. 합산 용도로 쓰지 말 것 (그건 서버 몫이다). */
@@ -41,15 +60,19 @@ export function formatAmountWithUnit(
   amount: string | number | null | undefined,
   currency: string,
 ): string {
+  const locale = activeLocale();
   const digits = currencyDecimals(currency);
-  const value = new Intl.NumberFormat('ko-KR', {
+  const value = new Intl.NumberFormat(activeLocaleTag(), {
     minimumFractionDigits: digits,
     maximumFractionDigits: digits,
   }).format(toNumber(amount));
 
-  return isCurrencyCode(currency)
-    ? `${value}${currencyUnit(currency)}`
-    : `${value} ${currency}`;
+  if (!isCurrencyCode(currency)) return `${value} ${currency}`;
+
+  return translate(locale, 'money.amountWithUnit', {
+    value,
+    unit: translate(locale, UNIT_KEY[currency]),
+  });
 }
 
 /**
@@ -69,10 +92,10 @@ export function formatOriginal(entry: {
   const value = Number(entry.exchangeRate);
   if (!Number.isFinite(value) || value <= 0) return original;
 
-  const rate = new Intl.NumberFormat('ko-KR', {
+  const rate = new Intl.NumberFormat(activeLocaleTag(), {
     maximumFractionDigits: rateDecimals(value),
   }).format(value);
-  return `${original} · 환율 ${rate}`;
+  return `${original} · ${translate(activeLocale(), 'money.rate', { rate })}`;
 }
 
 /**
@@ -87,9 +110,19 @@ function rateDecimals(rate: number): number {
   return Math.min(8, Math.ceil(-Math.log10(rate)) + 3);
 }
 
+/**
+ * 통화 고르는 목록에 적을 이름. "원 (KRW)" / "won (KRW)" / "ウォン (KRW)".
+ *
+ * `@money/types`의 CURRENCY_LABEL은 한국어 이름으로 굳어 있다. 코드를 괄호에 함께
+ * 적는 것은 이름을 모르는 사용자도 KRW·USD로 알아볼 수 있게 하려는 것이다.
+ */
+export function currencyLabel(currency: CurrencyCode): string {
+  return `${translate(activeLocale(), UNIT_KEY[currency])} (${currency})`;
+}
+
 /** 부호 없는 천 단위 구분. 입력 폼 등에서 사용 */
 export function formatNumber(amount: string | number | null | undefined): string {
-  return new Intl.NumberFormat('ko-KR').format(toNumber(amount));
+  return new Intl.NumberFormat(activeLocaleTag()).format(toNumber(amount));
 }
 
 /** 입력값(문자열/숫자)을 서버로 보낼 금액 문자열로 정규화한다. */

@@ -3,7 +3,8 @@
 import { useEffect, useState } from 'react';
 
 import Modal from '@/components/Modal';
-import { toNumber } from '@/lib/money';
+import { useTranslation } from '@/lib/i18n';
+import { formatNumber, toNumber } from '@/lib/money';
 
 interface ExtraAmountModalProps {
   isOpen: boolean;
@@ -34,7 +35,8 @@ export default function ExtraAmountModal({
   onCancel,
   onConfirm,
 }: ExtraAmountModalProps) {
-  const label = kind === 'income' ? '추가 수입' : '과소비';
+  const { t } = useTranslation();
+  const label = t(kind === 'income' ? 'entry.extraIncome' : 'entry.overspend');
   const [text, setText] = useState('');
 
   // 열 때마다 지금 값으로 되돌린다. 닫고 다시 열면 고치다 만 값이 남으면 안 된다.
@@ -47,18 +49,18 @@ export default function ExtraAmountModal({
   const amount = toNumber(text);
   const isBlank = text.trim() === '';
   const error = isBlank
-    ? '금액을 입력하세요.'
+    ? t('extra.required')
     : amount < 0
-      ? '0보다 작을 수 없습니다.'
+      ? t('extra.negative')
       : amount > max
-        ? '거래 금액보다 클 수 없습니다.'
+        ? t('extra.tooLarge')
         : '';
 
   return (
     <Modal
       isOpen={isOpen}
       onClose={onCancel}
-      title={`${label} 금액`}
+      title={t('extra.title', { label })}
       footer={
         <div className="flex justify-end gap-2">
           <button
@@ -66,7 +68,7 @@ export default function ExtraAmountModal({
             onClick={onCancel}
             className="px-4 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-50"
           >
-            취소
+            {t('common.cancel')}
           </button>
           <button
             type="button"
@@ -74,15 +76,14 @@ export default function ExtraAmountModal({
             disabled={Boolean(error)}
             className="px-4 py-2 rounded-lg bg-blue-600 text-white hover:bg-blue-700 disabled:bg-gray-300"
           >
-            확인
+            {t('common.confirm')}
           </button>
         </div>
       }
     >
       <div className="space-y-3">
         <p className="text-sm text-gray-600">
-          거래 금액 {max.toLocaleString('ko-KR')} 중 얼마를 {label}로 셀지 적습니다. 그대로 두면
-          전액이 {label}입니다.
+          {t('extra.hint', { max: formatNumber(max), label })}
         </p>
         <input
           type="number"
@@ -98,7 +99,9 @@ export default function ExtraAmountModal({
           <p className="text-sm text-red-600">{error}</p>
         ) : (
           <p className="text-sm text-gray-500">
-            0을 적으면 일반 {kind === 'income' ? '수입' : '지출'}과 같습니다.
+            {t('extra.zeroHint', {
+              noun: t(kind === 'income' ? 'home.tab.income' : 'home.tab.expense'),
+            })}
           </p>
         )}
       </div>

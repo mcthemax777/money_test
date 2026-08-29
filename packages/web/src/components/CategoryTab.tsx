@@ -5,6 +5,7 @@ import type { EntryFilterQuery } from '@money/types';
 import { apiClient, type ReportPeriod } from '@/lib/api-client';
 import { formatCurrency, toNumber } from '@/lib/money';
 import { budgetPercentage } from '@/lib/budget';
+import { useTranslation } from '@/lib/i18n';
 import type { EntryListItem } from '@/components/TransactionItem';
 import { BudgetDetailModal } from '@/components/BudgetDetailModal';
 import type { Category } from '@/lib/types';
@@ -85,6 +86,7 @@ export default function CategoryTab({
   budgets,
   onEditBudget,
 }: Props) {
+  const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
   /** 대분류로 합친 집계 (rollup). 목록의 윗줄이다. */
   const [rows, setRows] = useState<BreakdownRow[]>([]);
@@ -232,10 +234,10 @@ export default function CategoryTab({
           />
         </div>
         <span className={`text-xs shrink-0 ${over ? 'text-red-600' : 'text-gray-500'}`}>
-          예산 {formatCurrency(budget, displayCurrency)} · {percent}%
+          {t('budget.line', { amount: formatCurrency(budget, displayCurrency), percent })}
           {over
-            ? ` · ${formatCurrency(usedAmount - budget, displayCurrency)} 초과`
-            : ` · ${formatCurrency(budget - usedAmount, displayCurrency)} 남음`}
+            ? ` · ${t('budget.over', { amount: formatCurrency(usedAmount - budget, displayCurrency) })}`
+            : ` · ${t('budget.left', { amount: formatCurrency(budget - usedAmount, displayCurrency) })}`}
         </span>
       </div>
     );
@@ -265,13 +267,15 @@ export default function CategoryTab({
     return selected?.parentId ?? selectedId;
   })();
   const selectedName = (() => {
-    if (selectedId === totalId) return type === 'expense' ? '전체 지출' : '전체 수입';
+    if (selectedId === totalId) {
+      return t(type === 'expense' ? 'category.totalExpense' : 'category.totalIncome');
+    }
 
     const name =
       flatRows.find((row) => row.categoryId === selectedId)?.categoryName ??
       rows.find((row) => row.categoryId === selectedId)?.categoryName ??
       '';
-    return selectedExact ? `${name} · 미분류` : name;
+    return selectedExact ? t('category.exact', { name }) : name;
   })();
 
   return (
@@ -289,16 +293,16 @@ export default function CategoryTab({
                     : 'text-gray-600 hover:text-gray-800'
                 }`}
               >
-                {value === 'expense' ? '지출' : '수입'}
+                {t(value === 'expense' ? 'home.tab.expense' : 'home.tab.income')}
               </button>
             ))}
           </div>
         </div>
 
         {isLoading ? (
-          <p className="text-gray-600">로딩 중...</p>
+          <p className="text-gray-600">{t('common.loading')}</p>
         ) : parentRows.length === 0 ? (
-          <p className="text-gray-600">분류가 없습니다.</p>
+          <p className="text-gray-600">{t('category.none')}</p>
         ) : (
           <>
             <button
@@ -308,7 +312,7 @@ export default function CategoryTab({
               }`}
             >
               <div className="flex justify-between items-baseline">
-                <span className="text-sm text-gray-600">합계</span>
+                <span className="text-sm text-gray-600">{t('budget.total')}</span>
                 <span className="text-lg font-bold text-gray-900">{formatCurrency(total, displayCurrency)}</span>
               </div>
               {/* 전체 예산 (분류 없는 예산) */}
@@ -344,7 +348,9 @@ export default function CategoryTab({
                           ({shareOfTotal(row.amount).toFixed(0)}%)
                         </span>
                         {row.count > 0 && (
-                          <span className="ml-1 text-xs text-gray-400">{row.count}건</span>
+                          <span className="ml-1 text-xs text-gray-400">
+                        {t('ledger.entryCount', { count: row.count })}
+                      </span>
                         )}
                       </span>
                       <span
@@ -378,7 +384,9 @@ export default function CategoryTab({
                                 ({shareOf(child.amount).toFixed(0)}%)
                               </span>
                               {child.count > 0 && (
-                                <span className="ml-1 text-xs text-gray-400">{child.count}건</span>
+                                <span className="ml-1 text-xs text-gray-400">
+                            {t('ledger.entryCount', { count: child.count })}
+                          </span>
                               )}
                             </span>
                             <span
@@ -408,7 +416,7 @@ export default function CategoryTab({
                             }`}
                           >
                             <span className="text-sm text-gray-500">
-                              미분류
+                              {t('category.uncategorized')}
                               <span className="ml-1 text-xs text-gray-500">
                                 ({shareOf(directAmount).toFixed(0)}%)
                               </span>
@@ -431,8 +439,7 @@ export default function CategoryTab({
             */}
             {!budgets && (
               <p className="mt-4 text-xs text-gray-500">
-                예산 진행률은 월 단위에서만 보입니다. 예산은 달마다 정하는 값이라 기간에
-                맞춰 나눌 수 없습니다.
+                {t('budget.progressMonthOnly')}
               </p>
             )}
           </>
@@ -446,14 +453,16 @@ export default function CategoryTab({
       {selectedId && (
         <div className="lg:col-span-1 bg-white rounded-lg shadow p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold text-gray-900">{selectedName} 상세 분석</h3>
+            <h3 className="text-lg font-bold text-gray-900">
+                {t('category.detailTitle', { name: selectedName })}
+              </h3>
             {/* 보고 있는 분류의 예산을 그 자리에서 넣거나 고친다 (월 단위에서만) */}
             {onEditBudget && !selectedExact && (
               <button
                 onClick={onEditBudget}
                 className="px-3 py-1.5 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 whitespace-nowrap"
               >
-                예산 설정
+                {t('budget.settings')}
               </button>
             )}
           </div>
