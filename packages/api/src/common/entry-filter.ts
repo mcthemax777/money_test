@@ -100,18 +100,21 @@ export function assetOwnerCondition(
 /**
  * 일반/과소비 posting 조건.
  *
- * 반드시 카테고리 다리에만 걸어야 한다. 계좌 다리는 extraAmount가 항상 0이라서
- * 조건 없이 걸면 "일반"이 사실상 전체와 같아진다.
+ * 반드시 카테고리 다리에만 걸어야 한다. 계좌 다리는 두 금액이 모두 0이라
+ * 조건 없이 걸면 아무것도 걸리지 않거나 전부 걸린다.
  *
- * 한 줄의 일부만 과소비일 수 있다(10만 원 중 3만 원). 그런 줄은 "과소비"에 든다.
- * 목록 필터는 "과소비가 섞인 거래인가"를 가르는 것이지 금액을 쪼개지 않는다.
+ * 한 줄이 일반과 과소비로 나뉠 수 있다(3,000원 중 2,000원이 과소비). 그런 줄은
+ * **양쪽 모두**에 든다. 일반만 보는 화면에서 그 거래를 통째로 빼 버리면, 합계는
+ * 남은 1,000원을 세는데 목록에는 그 거래가 없어 둘이 어긋난다.
+ *
+ * 금액을 얼마로 셀지는 부르는 쪽이 정한다. 여기서는 "그 몫이 있는 줄"만 고른다.
  */
 export function extraPostingCondition(
   filter: ParsedEntryFilter,
 ): Prisma.PostingWhereInput | undefined {
   if (filter.extra === undefined) return undefined;
   return {
-    extraAmount: filter.extra ? { gt: 0 } : { equals: 0 },
+    ...(filter.extra ? { extraAmount: { gt: 0 } } : { normalAmount: { gt: 0 } }),
     categoryId: { not: null },
   };
 }

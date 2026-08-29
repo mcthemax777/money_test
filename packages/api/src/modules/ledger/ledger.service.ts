@@ -10,6 +10,7 @@ import {
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
+import { badRequest, notFound } from '@/common/app-error';
 
 const ZERO = new Prisma.Decimal(0);
 
@@ -266,7 +267,7 @@ export class LedgerService {
         include: { postings: true },
       });
       if (!existing || existing.projectId !== input.projectId) {
-        throw new NotFoundException('거래를 찾을 수 없습니다.');
+        throw notFound('ENTRY_NOT_FOUND', '거래를 찾을 수 없습니다.');
       }
 
       // 1) 옛 posting의 잔액 영향을 되돌린다
@@ -318,7 +319,7 @@ export class LedgerService {
       });
 
       if (!entry || entry.projectId !== projectId) {
-        throw new NotFoundException('거래를 찾을 수 없습니다.');
+        throw notFound('ENTRY_NOT_FOUND', '거래를 찾을 수 없습니다.');
       }
 
       const reversed = entry.postings.map((p) => ({
@@ -361,7 +362,7 @@ export class LedgerService {
         include: { postings: true },
       });
       if (!entry || entry.projectId !== projectId) {
-        throw new NotFoundException('거래를 찾을 수 없습니다.');
+        throw notFound('ENTRY_NOT_FOUND', '거래를 찾을 수 없습니다.');
       }
       if (!entry.originalCurrency || !entry.originalAmount) {
         throw new BadRequestException('원 통화 금액이 없는 거래는 청구액을 확정할 수 없습니다.');
@@ -562,7 +563,7 @@ export class LedgerService {
   private assertCanInstall(months: number | undefined, isCreditCard: boolean) {
     if (!months || months < 2 || isCreditCard) return;
 
-    throw new BadRequestException('할부는 신용카드 지출에만 설정할 수 있습니다.');
+    throw badRequest('INSTALLMENT_CREDIT_ONLY', '할부는 신용카드 지출에만 설정할 수 있습니다.');
   }
 
   /**
@@ -836,7 +837,7 @@ export class LedgerService {
 
   async buildTransfer(input: TransferInput): Promise<EntryInput> {
     if (input.fromAccountId === input.toAccountId) {
-      throw new BadRequestException('보내는 계좌와 받는 계좌가 같습니다.');
+      throw badRequest('TRANSFER_SAME_ACCOUNT', '보내는 계좌와 받는 계좌가 같습니다.');
     }
     if (input.amount.lte(ZERO)) {
       throw new BadRequestException('이체 금액은 0보다 커야 합니다.');
@@ -1165,6 +1166,8 @@ export class LedgerService {
   // ───────────────────────────────────────────
 
   private toPostingData(p: PostingInput) {
+    const extra = p.extraAmount ?? ZERO;
+
     return {
       accountId: p.accountId ?? null,
       categoryId: p.categoryId ?? null,
@@ -1174,7 +1177,14 @@ export class LedgerService {
       exchangeRate: p.exchangeRate,
       // 빌더가 정한 값을 그대로 쓴다. 여기서 다시 곱하면 반올림이 어긋난다.
       baseAmount: p.baseAmount,
-      extraAmount: p.extraAmount ?? ZERO,
+      extraAmount: extra,
+      /*
+       * 일반 몫은 남은 금액이다. 여기 한 곳에서만 채워 두 값이 어긋나지 않게 한다.
+       *
+       * 카테고리 다리에만 뜻이 있다. 계좌 다리에 금액을 넣으면 카테고리 조건을
+       * 빠뜨린 조회에서 계좌 다리까지 "일반 지출"로 걸린다.
+       */
+      normalAmount: p.categoryId ? p.baseAmount.abs().sub(extra) : ZERO,
       cardId: p.cardId ?? null,
     };
   }
@@ -1276,7 +1286,7 @@ export class LedgerService {
       where: { id: input.personId, projectId },
     });
     if (person === 0) {
-      throw new NotFoundException('이 프로젝트의 구성원이 아닙니다.');
+      throw notFound('NOT_PROJECT_MEMBER', '이 프로젝트의 구성원이 아닙니다.');
     }
 
     if (accountIds.length > 0) {
@@ -1315,7 +1325,7 @@ export class LedgerService {
     // 카드 부채 다리가 할부의 주인이다. 지출이면 음수 다리 하나뿐이다.
     const cardLeg = postings.find((p) => p.cardId && p.amount.lt(ZERO));
     if (!cardLeg) {
-      throw new BadRequestException('할부는 신용카드 지출에만 설정할 수 있습니다.');
+      throw badRequest('INSTALLMENT_CREDIT_ONLY', '할부는 신용카드 지출에만 설정할 수 있습니다.');
     }
     await tx.installmentPlan.create({
       data: { postingId: cardLeg.id, totalMonths: months },
@@ -1393,7 +1403,7 @@ export class LedgerService {
         throw new BadRequestException('과소비 금액은 0보다 작을 수 없습니다.');
       }
       if (extraAmount.gt(line.amount)) {
-        throw new BadRequestException('과소비 금액은 거래 금액보다 클 수 없습니다.');
+        throw badRequest('EXTRA_EXCEEDS_AMOUNT', '과소비 금액은 거래 금액보다 클 수 없습니다.');
       }
       return {
         categoryId: line.categoryId,
@@ -1457,7 +1467,7 @@ export class LedgerService {
   private async getCard(projectId: string, cardId: string) {
     const card = await this.prisma.card.findUnique({ where: { id: cardId } });
     if (!card || card.projectId !== projectId) {
-      throw new NotFoundException('카드를 찾을 수 없습니다.');
+      throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
     }
     return card;
   }

@@ -453,14 +453,19 @@ export class BudgetsService {
       by: ['categoryId'],
       // 예산은 프로젝트 기준통화로 세운다. 사용액도 환산액으로 더해야
       // 외화 결제가 섞였을 때 진행률이 맞는다.
-      _sum: { baseAmount: true },
+      //
+      // 일반/과소비를 고르면 그 몫만 더한다. 한 다리가 둘로 나뉘므로(3,000원 중
+      // 2,000원이 과소비) 다리 금액을 그대로 더하면 리포트의 합계와 어긋난다.
+      _sum: { baseAmount: true, extraAmount: true, normalAmount: true },
       _count: true,
       where: {
         categoryId: { in: categories.map((c) => c.id) },
         entry: entryScope,
         // 일반/과소비 필터. 목록·리포트와 같은 기준이어야 진행률이 화면과 맞는다.
         ...(parsed.extra !== undefined
-          ? { extraAmount: parsed.extra ? { gt: 0 } : { equals: 0 } }
+          ? parsed.extra
+            ? { extraAmount: { gt: 0 } }
+            : { normalAmount: { gt: 0 } }
           : {}),
       },
     });
@@ -470,7 +475,12 @@ export class BudgetsService {
     const ownCount = new Map<string, number>();
     for (const row of usage) {
       if (!row.categoryId) continue;
-      ownAmount.set(row.categoryId, (row._sum.baseAmount ?? ZERO).abs());
+      ownAmount.set(
+        row.categoryId,
+        parsed.extra === undefined
+          ? (row._sum.baseAmount ?? ZERO).abs()
+          : (parsed.extra ? row._sum.extraAmount : row._sum.normalAmount) ?? ZERO,
+      );
       ownCount.set(row.categoryId, row._count);
     }
 

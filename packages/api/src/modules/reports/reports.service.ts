@@ -75,39 +75,45 @@ export class ReportsService {
     );
     const range = this.resolvePeriod(query, timeZone);
     const scope = this.entryScope(projectId, range, query);
-    // 일반/과소비 필터. 목록과 같은 조건을 걸어야 화면의 합계와 맞는다.
+    /*
+     * 일반/과소비 필터.
+     *
+     * 다리를 골라내지 않고 **금액을 쪼갠다**. 3,000원 중 2,000원이 과소비인 거래는
+     * 일반 1,000원이자 과소비 2,000원이다. 다리째로 한쪽에만 넣으면 일반만 볼 때
+     * 그 거래가 통째로 사라져 1,000원이 어디에도 세어지지 않는다.
+     */
     const extraOnly = parseEntryFilter(query).extra;
-    const extraWhere = extraCondition(extraOnly);
 
     /*
-     * 과소비·추가 수입은 다리마다 "그중 얼마"로 적혀 있다(extraAmount).
-     * 그래서 다리를 종류별로 나눌 필요 없이 두 합계를 한 번에 얻는다.
      * 합계는 전부 기준통화 환산액이다. amount는 그 다리의 통화라 섞으면 못 더한다.
+     * normalAmount·extraAmount는 그 환산액을 쪼갠 몫이고 언제나 크기(양수)다.
      */
     const [expenseAgg, incomeAgg] = await Promise.all([
       this.prisma.posting.aggregate({
-        _sum: { baseAmount: true, extraAmount: true },
-        where: {
-          category: { type: CategoryType.expense },
-          entry: scope,
-          ...extraWhere,
-        },
+        _sum: { baseAmount: true, extraAmount: true, normalAmount: true },
+        where: { category: { type: CategoryType.expense }, entry: scope },
       }),
       this.prisma.posting.aggregate({
-        _sum: { baseAmount: true, extraAmount: true },
-        where: {
-          category: { type: CategoryType.income },
-          entry: scope,
-          ...extraWhere,
-        },
+        _sum: { baseAmount: true, extraAmount: true, normalAmount: true },
+        where: { category: { type: CategoryType.income }, entry: scope },
       }),
     ]);
 
-    const expense = expenseAgg._sum.baseAmount ?? ZERO;
-    const extraExpense = expenseAgg._sum.extraAmount ?? ZERO;
-    // 수입 posting은 음수로 기록되므로 표시용으로 뒤집는다 (extraAmount는 이미 양수다)
-    const income = (incomeAgg._sum.baseAmount ?? ZERO).neg();
-    const extraIncome = incomeAgg._sum.extraAmount ?? ZERO;
+    /** 고른 필터에서 "지출·수입"으로 셀 금액. 전체면 다리 금액 그대로다. */
+    const selected = (agg: {
+      _sum: { baseAmount: Prisma.Decimal | null; extraAmount: Prisma.Decimal | null; normalAmount: Prisma.Decimal | null };
+    }) => {
+      if (extraOnly === undefined) return (agg._sum.baseAmount ?? ZERO).abs();
+      return (extraOnly ? agg._sum.extraAmount : agg._sum.normalAmount) ?? ZERO;
+    };
+
+    const expense = selected(expenseAgg);
+    const income = selected(incomeAgg);
+    // 고르지 않은 몫은 0으로 적는다. "일반만" 화면에 과소비 금액이 남아 있으면 안 된다.
+    const extraExpense = extraOnly === false ? ZERO : expenseAgg._sum.extraAmount ?? ZERO;
+    const normalExpense = extraOnly === true ? ZERO : expenseAgg._sum.normalAmount ?? ZERO;
+    const extraIncome = extraOnly === false ? ZERO : incomeAgg._sum.extraAmount ?? ZERO;
+    const normalIncome = extraOnly === true ? ZERO : incomeAgg._sum.normalAmount ?? ZERO;
 
     const show = await this.displayConverter(projectId);
     return {
@@ -115,9 +121,9 @@ export class ReportsService {
       income: show.toString(income),
       expense: show.toString(expense),
       extraExpense: show.toString(extraExpense),
-      normalExpense: show.toString(expense.sub(extraExpense)),
+      normalExpense: show.toString(normalExpense),
       extraIncome: show.toString(extraIncome),
-      normalIncome: show.toString(income.sub(extraIncome)),
+      normalIncome: show.toString(normalIncome),
       net: show.toString(income.sub(expense)),
     };
   }
@@ -142,28 +148,29 @@ export class ReportsService {
     const range = this.resolvePeriod(query, timeZone);
     // 쿼리스트링은 문자열로 도착한다. 아는 값이 아니면 지출이다.
     const isIncome = query.type === 'income';
+    const extraOnly = parseEntryFilter(query).extra;
     const postings = await this.prisma.posting.findMany({
       where: {
         category: { type: isIncome ? CategoryType.income : CategoryType.expense },
         entry: this.entryScope(projectId, range, query),
-        ...extraCondition(parseEntryFilter(query).extra),
       },
-      // 합계는 기준통화 환산액(baseAmount)이다. amount는 그 다리의 통화라 섞으면 못 더한다.
-      select: { baseAmount: true, extraAmount: true, entry: { select: { date: true } } },
+      // 두 몫 모두 기준통화 환산액을 쪼갠 값이라 그대로 더할 수 있다.
+      select: { normalAmount: true, extraAmount: true, entry: { select: { date: true } } },
     });
 
     /*
      * 한 다리가 일반과 과소비로 나뉜다. 10만 원 중 3만 원이 과소비면 그날의
      * 과소비 3만, 일반 7만이다. 다리를 한쪽에만 넣으면 합이 그날 지출과 어긋난다.
+     *
+     * 필터로 한쪽만 보고 있으면 나머지 몫은 0으로 둔다. 다리를 걸러내지 않는 것은
+     * 합계와 같은 이유다 (일부만 과소비인 다리의 나머지가 사라지면 안 된다).
      */
     const byDate = new Map<string, { normal: Prisma.Decimal; extra: Prisma.Decimal }>();
     for (const posting of postings) {
       const key = zonedDateKey(posting.entry.date, timeZone);
       const bucket = byDate.get(key) ?? { normal: ZERO, extra: ZERO };
-      // 수입 posting은 음수로 기록되므로 표시용으로 뒤집는다 (extraAmount는 이미 양수다).
-      const amount = isIncome ? posting.baseAmount.neg() : posting.baseAmount;
-      bucket.extra = bucket.extra.add(posting.extraAmount);
-      bucket.normal = bucket.normal.add(amount.sub(posting.extraAmount));
+      if (extraOnly !== false) bucket.extra = bucket.extra.add(posting.extraAmount);
+      if (extraOnly !== true) bucket.normal = bucket.normal.add(posting.normalAmount);
       byDate.set(key, bucket);
     }
 
@@ -192,14 +199,18 @@ export class ReportsService {
     // 불리언 비교만 하면 항상 롤업이 켜져서 소분류 구성비를 볼 수 없다.
     const rollup = query.rollup !== false && (query.rollup as unknown) !== 'false';
 
+    const breakdownExtra = parseEntryFilter(query).extra;
     const rows = await this.prisma.posting.groupBy({
       by: ['categoryId'],
-      _sum: { baseAmount: true },
+      // 일반/과소비를 고르면 그 몫만 더한다. 다리를 걸러내면 일부만 과소비인
+      // 다리의 나머지가 사라진다 (getSummary와 같은 규칙).
+      _sum: { baseAmount: true, extraAmount: true, normalAmount: true },
       _count: true,
       where: {
         category: { type: query.type as CategoryType },
         entry: this.entryScope(projectId, range, query),
-        ...extraCondition(parseEntryFilter(query).extra),
+        // 셀 몫이 없는 다리는 건수에서도 빼야 "0원인데 3건"이 되지 않는다.
+        ...extraCondition(breakdownExtra),
       },
     });
     if (rows.length === 0) return [];
@@ -219,7 +230,11 @@ export class ReportsService {
 
       const key = rollup ? category.parent?.id ?? category.id : category.id;
       const bucket = buckets.get(key) ?? { amount: ZERO, count: 0 };
-      bucket.amount = bucket.amount.add((row._sum.baseAmount ?? ZERO).abs());
+      bucket.amount = bucket.amount.add(
+        breakdownExtra === undefined
+          ? (row._sum.baseAmount ?? ZERO).abs()
+          : (breakdownExtra ? row._sum.extraAmount : row._sum.normalAmount) ?? ZERO,
+      );
       bucket.count += row._count;
       buckets.set(key, bucket);
     }
@@ -610,7 +625,7 @@ export class ReportsService {
 
     return this.prisma.$queryRaw<Array<{ month: Date; amount: Prisma.Decimal }>>`
       SELECT date_trunc('month', timezone(${timeZone}, timezone('UTC', e."date"))) AS month,
-             ABS(SUM(p."baseAmount")) AS amount
+             ${extraAmountSum(query, Prisma.sql`p`)} AS amount
       FROM "Posting" p
       JOIN "JournalEntry" e ON e.id = p."entryId"
       JOIN "Category" c ON c.id = p."categoryId"
@@ -648,7 +663,7 @@ export class ReportsService {
 
     return this.prisma.$queryRaw<Array<{ month: Date; amount: Prisma.Decimal }>>`
       SELECT date_trunc('month', timezone(${timeZone}, timezone('UTC', e."date"))) AS month,
-             ABS(SUM(cp."baseAmount")) AS amount
+             ${extraAmountSum(query, Prisma.sql`cp`)} AS amount
       FROM "JournalEntry" e
       JOIN "Posting" cp ON cp."entryId" = e.id
       JOIN "Category" c ON c.id = cp."categoryId" AND c."type" = 'expense'
@@ -794,17 +809,33 @@ export class ReportsService {
     const show = await this.displayConverter(projectId);
     const entriesToCount = filter.matchNothing ? [] : entries;
 
+    /*
+     * 고른 필터에서 이 거래를 얼마로 셀지.
+     *
+     * 한 거래가 일반과 과소비로 나뉜다(3,000원 중 2,000원이 과소비). 일반만 볼 때
+     * 그 거래를 통째로 빼면 남은 1,000원이 어느 수단에도 세어지지 않는다.
+     * item.extraAmount는 카테고리 다리에서 온 값이다(이체는 수수료 카테고리가 정한다).
+     */
+    const counted = (amount: string, extraAmount: string | null | undefined): Prisma.Decimal => {
+      const total = new Prisma.Decimal(amount || 0);
+      if (extraOnly === undefined) return total;
+
+      const extra = new Prisma.Decimal(extraAmount || 0);
+      return extraOnly ? extra : total.sub(extra);
+    };
+
     for (const entry of entriesToCount) {
       const item = toListItem(entry, show);
+      const amount = counted(item.amount, item.extraAmount);
 
-      // 일반/과소비 필터. item.extraAmount는 카테고리 다리에서 온 값이다
-      // (이체는 수수료 카테고리가 그 값을 정한다).
-      if (extraOnly !== undefined && Number(item.extraAmount) > 0 !== extraOnly) continue;
+      // 셀 몫이 없으면 건수도 세지 않는다. "0원인데 3건"이 되지 않게 한다.
+      if (amount.lte(ZERO) && item.kind !== 'transfer') continue;
 
       // 이체 자체는 소비가 아니지만 수수료는 지출이다.
       // 보내는 계좌에 붙여야 summary(지출 카테고리 합계)와 총액이 맞는다.
       if (item.kind === 'transfer') {
-        const fee = new Prisma.Decimal(item.feeAmount ?? 0);
+        // 이체 자체는 소비가 아니라 수수료만 지출이다. 쪼개는 규칙도 수수료에 건다.
+        const fee = counted(item.feeAmount ?? '0', item.extraAmount);
         if (fee.gt(ZERO) && item.accountId) {
           const account = accountById.get(item.accountId);
           // 다른 사람이 감춰진 사람의 계좌로 결제했더라도 그 계좌는 목록에 넣지 않는다.
@@ -844,7 +875,7 @@ export class ReportsService {
           ownerName: account.owner?.name ?? null,
           amount: '0',
           count: 0,
-          income: item.amount,
+          income: amount.toString(),
         });
         continue;
       }
@@ -855,7 +886,7 @@ export class ReportsService {
         const card = cardById.get(item.cardId);
         if (!card) continue;
         if (!isVisibleOwner(card.paymentAccount.owner?.id ?? null)) continue;
-        this.addTo(buckets, cardBucket(card, item.amount, 1));
+        this.addTo(buckets, cardBucket(card, amount.toString(), 1));
       } else if (item.accountId) {
         const account = accountById.get(item.accountId);
         if (!account || !isVisibleOwner(account.ownerId)) continue;
@@ -865,7 +896,7 @@ export class ReportsService {
           name: account.name,
           ownerId: account.owner?.id ?? null,
           ownerName: account.owner?.name ?? null,
-          amount: item.amount,
+          amount: amount.toString(),
           count: 1,
           income: '0',
         });
@@ -1090,19 +1121,33 @@ function personFilter(query: ReportDto.TrendQuery & { personId?: string }): Pris
   )`;
 }
 
-/** 일반/과소비 필터를 SQL 조각으로. 카테고리 다리(alias)에만 건다. */
+/** 일반/과소비 필터를 SQL 조각으로. 셀 몫이 없는 다리를 걸러낸다(카테고리 다리에만 건다). */
 function extraFilter(query: ReportDto.TrendQuery, alias: Prisma.Sql): Prisma.Sql {
   const extra = parseEntryFilter(query).extra;
   if (extra === undefined) return Prisma.sql`TRUE`;
   return extra
     ? Prisma.sql`${alias}."extraAmount" > 0`
-    : Prisma.sql`${alias}."extraAmount" = 0`;
+    : Prisma.sql`${alias}."normalAmount" > 0`;
+}
+
+/**
+ * 고른 필터에서 더할 금액.
+ *
+ * 한 다리가 일반과 과소비로 나뉘므로, 한쪽만 볼 때는 다리 금액이 아니라 그 몫을
+ * 더한다. 전체를 볼 때만 다리 금액을 그대로 쓴다(수입 다리는 음수라 크기로 바꾼다).
+ */
+function extraAmountSum(query: ReportDto.TrendQuery, alias: Prisma.Sql): Prisma.Sql {
+  const extra = parseEntryFilter(query).extra;
+  if (extra === undefined) return Prisma.sql`ABS(SUM(${alias}."baseAmount"))`;
+  return extra
+    ? Prisma.sql`SUM(${alias}."extraAmount")`
+    : Prisma.sql`SUM(${alias}."normalAmount")`;
 }
 
 /** Prisma where에 붙이는 같은 조건. 필터가 없으면 아무것도 붙이지 않는다. */
 function extraCondition(extra: boolean | undefined) {
   if (extra === undefined) return {};
-  return { extraAmount: extra ? { gt: 0 } : { equals: 0 } };
+  return extra ? { extraAmount: { gt: 0 } } : { normalAmount: { gt: 0 } };
 }
 
 /** 잔액 추이의 한 구간. 값은 end 직전까지 쌓인 잔액이다. */

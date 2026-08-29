@@ -89,6 +89,10 @@ model User {
   avatar           String?
   defaultProjectId String?
 
+  // 화면 언어 ('ko' | 'en' | 'ja'). 값의 목록은 @money/types의 SUPPORTED_LOCALES가 갖는다.
+  // enum으로 두지 않는 것은 언어를 하나 더할 때마다 마이그레이션이 필요해지기 때문이다.
+  locale           String  @default("ko")
+
   projectMembers      ProjectMember[]
   projectInvitations  ProjectInvitation[]
   projectJoinRequests ProjectJoinRequest[]
@@ -536,6 +540,16 @@ model Posting {
   // (0 <= extraAmount <= |baseAmount|).
   // 분할 거래에서 줄마다 다를 수 있어 JournalEntry가 아니라 여기에 둔다.
   extraAmount  Decimal  @default(0) @db.Decimal(19, 4)
+  // 같은 다리의 나머지, 곧 일반 지출·일반 수입으로 세는 금액이다.
+  //
+  // extraAmount에서 유도되는 값이지만(normalAmount + extraAmount = |baseAmount|) 컬럼으로
+  // 둔다. "일반 몫이 남아 있는 다리"를 고르려면 두 컬럼을 견주어야 하는데, 크기 비교라
+  // 부호가 다른 수입 다리까지 한 조건으로 적을 수 없다. 합계도 이 컬럼 하나를 더하면 된다.
+  //
+  // 채우는 곳은 ledger.service의 toPostingData 한 곳뿐이라 두 값이 어긋날 수 없다.
+  // 카테고리 다리에만 채운다. 계좌 다리에 |baseAmount|를 넣으면 카테고리 조건을
+  // 빠뜨린 조회에서 계좌 다리까지 "일반"으로 걸린다.
+  normalAmount Decimal  @default(0) @db.Decimal(19, 4)
   statementId  String? // 신용카드 posting만 사용
   cardId       String? // 표시/분석용. 체크카드 사용 시에도 채운다
 
