@@ -2,6 +2,8 @@
 
 import { ReactNode, useEffect, useRef } from 'react';
 
+import { useCloseOnBack } from '@/hooks/useCloseOnBack';
+
 /**
  * 팝업이 열릴 때 포커스를 줄 후보.
  *
@@ -35,6 +37,9 @@ interface ModalProps {
 
 export default function Modal({ isOpen, onClose, title, children, footer }: ModalProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
+
+  // 휴대폰의 뒤로가기는 화면을 나가는 것이 아니라 이 팝업을 닫는다.
+  useCloseOnBack(isOpen, onClose);
 
   /**
    * 열릴 때 첫 입력란에 포커스를 준다.

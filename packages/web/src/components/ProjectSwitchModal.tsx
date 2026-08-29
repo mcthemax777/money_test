@@ -1,5 +1,6 @@
 'use client';
 
+import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useTranslation } from '@/lib/i18n';
 
 /** 프로젝트를 바꾸기 전에 한 번 묻는 창. useProjectSwitch가 여는 상태를 들고 있다. */
@@ -15,6 +16,9 @@ export default function ProjectSwitchModal({
   onCancel: () => void;
 }) {
   const { t } = useTranslation();
+
+  // 공용 Modal을 쓰지 않는 창이라 여기서도 뒤로가기를 받는다.
+  useCloseOnBack(isOpen, onCancel);
 
   if (!isOpen) return null;
 
