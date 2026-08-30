@@ -32,6 +32,11 @@ fi
 echo "==> 최신 코드 받기"
 git pull origin main
 
+echo "==> 의존성 설치 (서버가 돌리는 것만)"
+# 앱(packages/app)은 서버에서 돌지 않는다. 필터 없이 설치하면 expo·react-native 까지
+# 받느라 배포가 느려지고 디스크만 먹는다. `...` 는 그 패키지가 기대는 것(types, core)까지다.
+pnpm install --frozen-lockfile --filter @money/api... --filter @money/web...
+
 echo "==> 앱 정지"
 # 아직 등록 전이면 실패해도 계속 진행한다.
 pm2 stop ecosystem.config.js 2>/dev/null || true
