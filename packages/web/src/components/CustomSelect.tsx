@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from 'react';
 
-import { useTranslation } from '@/lib/i18n';
+import { useTranslation } from '@money/core/lib/i18n';
 
 interface Option {
   id: string;

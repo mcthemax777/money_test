@@ -4,8 +4,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 import { useDragScroll } from '@/hooks/useDragScroll';
-import { itemStarts } from '@/lib/carousel';
-import { useTranslation } from '@/lib/i18n';
+import { itemStarts } from '@money/core/lib/carousel';
+import { useTranslation } from '@money/core/lib/i18n';
 
 /** 지금 위치가 칸의 시작과 딱 맞는지 볼 때 눈감아 주는 거리(px). 소수점 좌표를 감안한다. */
 const EPSILON = 1;

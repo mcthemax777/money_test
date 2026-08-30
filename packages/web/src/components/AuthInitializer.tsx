@@ -1,8 +1,8 @@
 'use client';
 
 import { useEffect } from 'react';
-import { useAuth } from '@/store/auth';
-import { getAccessToken } from '@/lib/auth-tokens';
+import { useAuth } from '@money/core/store/auth';
+import { getAccessToken } from '@money/core/lib/auth-tokens';
 
 export function AuthInitializer() {
   useEffect(() => {

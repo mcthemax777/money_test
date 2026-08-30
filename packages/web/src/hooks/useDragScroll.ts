@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from 'react';
 
-import { flickTarget, itemStarts } from '@/lib/carousel';
+import { flickTarget, itemStarts } from '@money/core/lib/carousel';
 
 /** 이만큼 넘게 끌었으면 "넘긴 것"으로 본다. 손이 조금 흔들린 것까지 세면 클릭이 삼켜진다. */
 const DRAG_THRESHOLD = 5;

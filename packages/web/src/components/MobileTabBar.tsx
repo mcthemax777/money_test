@@ -3,10 +3,11 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
-import { useTranslation } from '@/lib/i18n';
+import NavIcon from '@/components/NavIcon';
+import { useTranslation } from '@money/core/lib/i18n';
 import { useNavPending } from '@/hooks/useNavPending';
-import { isActiveNav, navItemsOf } from '@/lib/nav';
-import { useProject } from '@/store/project';
+import { isActiveNav, navItemsOf } from '@money/core/lib/nav';
+import { useProject } from '@money/core/store/project';
 
 /**
  * 좁은 화면의 아래쪽 탭.
@@ -34,7 +35,6 @@ export default function MobileTabBar() {
           const pending = pendingHref === item.href;
           // 누르는 즉시 켠다. 다음 화면이 뜨기 전에는 이 표시가 유일한 대답이다.
           const active = pending || isActiveNav(pathname, item.href);
-          const Icon = item.icon;
           return (
             <li key={item.href} className="flex-1">
               {/*
@@ -61,7 +61,7 @@ export default function MobileTabBar() {
                     aria-hidden
                   />
                 ) : (
-                  <Icon className="h-5 w-5" strokeWidth={active ? 2.25 : 1.75} aria-hidden />
+                  <NavIcon name={item.icon} className="h-5 w-5" strokeWidth={active ? 2.25 : 1.75} />
                 )}
                 <span className="text-[11px] leading-none">{t(item.labelKey)}</span>
               </Link>

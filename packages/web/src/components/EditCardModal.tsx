@@ -1,12 +1,12 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { apiClient } from '@/lib/api-client';
-import type { Account, Card } from '@/lib/types';
-import { useTranslation } from '@/lib/i18n';
-import { useProjectDisplayCurrency } from '@/store/project';
-import { toAmountString } from '@/lib/money';
-import { monthInputOf, monthInputToIso } from '@/lib/datetime';
+import { apiClient } from '@money/core/lib/api-client';
+import type { Account, Card } from '@money/core/lib/types';
+import { useTranslation } from '@money/core/lib/i18n';
+import { useProjectDisplayCurrency } from '@money/core/store/project';
+import { toAmountString } from '@money/core/lib/money';
+import { monthInputOf, monthInputToIso } from '@money/core/lib/datetime';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@/hooks/useInstitutions';
@@ -15,10 +15,10 @@ import {
   dayOfMonthOptions,
   DEFAULT_PAYMENT_DUE_DAY,
   DEFAULT_STATEMENT_CLOSING_DAY,
-} from '@/lib/day-of-month';
+} from '@money/core/lib/day-of-month';
 import CardColorPicker from '@/components/CardColorPicker';
 import CardPerformanceField from '@/components/CardPerformanceField';
-import { useApiError } from '@/lib/api-error';
+import { useApiError } from '@money/core/lib/api-error';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id */
 const FORM_ID = 'edit-card-form';

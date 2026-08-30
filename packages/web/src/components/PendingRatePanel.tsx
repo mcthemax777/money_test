@@ -2,10 +2,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { currencyDecimals, type CardDto } from '@money/types';
-import { apiClient } from '@/lib/api-client';
-import { useTranslation } from '@/lib/i18n';
-import { formatCurrency, formatNumber, toAmountString, toNumber } from '@/lib/money';
-import { formatDateMarker } from '@/lib/datetime';
+import { apiClient } from '@money/core/lib/api-client';
+import { useTranslation } from '@money/core/lib/i18n';
+import { formatCurrency, formatNumber, toAmountString, toNumber } from '@money/core/lib/money';
+import { formatDateMarker } from '@money/core/lib/datetime';
 
 interface Props {
   cardId: string;

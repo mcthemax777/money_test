@@ -1,6 +1,6 @@
 'use client';
 
-import { useTranslation } from '@/lib/i18n';
+import { useTranslation } from '@money/core/lib/i18n';
 
 interface CardPerformanceFieldProps {
   /** 세는 구간이 종류마다 달라서 안내 문구가 갈린다. */

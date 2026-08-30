@@ -2,11 +2,11 @@
 
 import { useMemo, type ReactNode } from 'react';
 import type { ReportDto } from '@money/types';
-import { useTranslation } from '@/lib/i18n';
-import { formatAmountWithUnit, formatCurrency } from '@/lib/money';
-import { ASSET_TYPE_GROUPS, assetGroupAmount } from '@/lib/net-worth';
-import { useAssetTypeFilter } from '@/store/asset-type-filter';
-import { useProjectDisplayCurrency } from '@/store/project';
+import { useTranslation } from '@money/core/lib/i18n';
+import { formatAmountWithUnit, formatCurrency } from '@money/core/lib/money';
+import { ASSET_TYPE_GROUPS, assetGroupAmount } from '@money/core/lib/net-worth';
+import { useAssetTypeFilter } from '@money/core/store/asset-type-filter';
+import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 interface AssetTypeSummaryProps {
   byType: ReportDto.NetWorthByType | undefined;

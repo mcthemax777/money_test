@@ -2,8 +2,8 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/store/auth';
-import { useTranslation } from '@/lib/i18n';
+import { useAuth } from '@money/core/store/auth';
+import { useTranslation } from '@money/core/lib/i18n';
 
 export default function Home() {
   const { t } = useTranslation();

@@ -2,14 +2,14 @@
 
 import { useEffect, useState } from 'react';
 import type { EntryFilterQuery } from '@money/types';
-import { apiClient, type ReportPeriod } from '@/lib/api-client';
-import { formatCurrency, toNumber } from '@/lib/money';
-import { budgetPercentage } from '@/lib/budget';
-import { useTranslation } from '@/lib/i18n';
+import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
+import { formatCurrency, toNumber } from '@money/core/lib/money';
+import { budgetPercentage } from '@money/core/lib/budget';
+import { useTranslation } from '@money/core/lib/i18n';
 import type { EntryListItem } from '@/components/TransactionItem';
 import { BudgetDetailModal } from '@/components/BudgetDetailModal';
-import type { Category } from '@/lib/types';
-import { useProjectDisplayCurrency } from '@/store/project';
+import type { Category } from '@money/core/lib/types';
+import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 /** 예산 화면이 넘겨 주는 한 줄. 월 단위에서만 쓴다. */
 export interface BudgetRow {

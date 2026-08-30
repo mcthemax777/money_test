@@ -7,15 +7,15 @@ import {
   zonedFormValueToUtc,
   type CardTransferDirection,
 } from '@money/types';
-import { apiClient } from '@/lib/api-client';
-import type { CardUsage } from '@/lib/types';
-import { useTranslation } from '@/lib/i18n';
-import { formatCurrency, toAmountString, toNumber } from '@/lib/money';
-import { formatDateMarker, todayKey } from '@/lib/datetime';
-import { useProjectTimeZone } from '@/store/project';
+import { apiClient } from '@money/core/lib/api-client';
+import type { CardUsage } from '@money/core/lib/types';
+import { useTranslation } from '@money/core/lib/i18n';
+import { formatCurrency, toAmountString, toNumber } from '@money/core/lib/money';
+import { formatDateMarker, nowTimeKey, todayKey } from '@money/core/lib/datetime';
+import { useProjectTimeZone } from '@money/core/store/project';
 import Modal from './Modal';
 import PendingRatePanel from './PendingRatePanel';
-import { useApiError } from '@/lib/api-error';
+import { useApiError } from '@money/core/lib/api-error';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const PAYMENT_FORM_ID = 'card-payment-form';
@@ -79,6 +79,13 @@ export default function CardSettlementPanel({
      * 기록해 두는 경우 통장 잔액의 날짜가 실제와 어긋났다. 그래서 사용자가 고른다.
      */
     date: '',
+    /**
+     * 빠져나간 시각. 거래 추가 폼과 같은 규칙이다.
+     *
+     * 팝업을 열 때 지금 시각으로 채운다. 비워 두면 그 날 0시로 기록되어, 목록에서
+     * 그날의 다른 거래보다 늘 앞에 서고 시각 칸도 빈다.
+     */
+    time: '',
   });
   const [isPaymentSubmitting, setIsPaymentSubmitting] = useState(false);
 
@@ -109,10 +116,16 @@ export default function CardSettlementPanel({
     return amount > room ? amount - Math.max(room, 0) : 0;
   })();
 
+  /** 이체 팝업 열기. 시각은 거래 추가 폼처럼 지금으로 채운다. */
+  const openPaymentModal = () => {
+    setPaymentForm({ direction: 'payment', amount: '', date: '', time: nowTimeKey(timeZone) });
+    setIsPaymentModalOpen(true);
+  };
+
   /** 이체 팝업 닫기. 취소·닫기·성공 세 경로가 같은 초기화를 쓴다. */
   const closePaymentModal = () => {
     setIsPaymentModalOpen(false);
-    setPaymentForm({ direction: 'payment', amount: '', date: '' });
+    setPaymentForm({ direction: 'payment', amount: '', date: '', time: '' });
   };
 
   /** 대금이 오가거나 환율이 확정된 뒤. 이 패널과 부모가 함께 다시 읽는다. */
@@ -137,10 +150,11 @@ export default function CardSettlementPanel({
         personId: paymentAccountOwnerId,
         amount: toAmountString(paymentForm.amount),
         direction: paymentForm.direction,
-        // 입력한 날짜는 프로젝트 타임존의 벽시계다. 그 기준으로 UTC 인스턴트를 만든다.
+        // 입력한 날짜/시각은 프로젝트 타임존의 벽시계다. 그 기준으로 UTC 인스턴트를 만든다.
+        // 시각을 비우면 그 날의 0시가 된다 (거래 추가 폼과 같다).
         date: zonedFormValueToUtc(
           paymentForm.date || todayKey(timeZone),
-          undefined,
+          paymentForm.time || undefined,
           timeZone,
         ).toISOString(),
       });
@@ -192,7 +206,7 @@ export default function CardSettlementPanel({
           )}
           {paymentAccountOwnerId ? (
             <button
-              onClick={() => setIsPaymentModalOpen(true)}
+              onClick={openPaymentModal}
               className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
             >
               {t('settlement.record')}
@@ -308,18 +322,33 @@ export default function CardSettlementPanel({
               </p>
             </div>
 
+            {/* 날짜와 시각을 나란히 받는다. 거래 추가 폼과 같은 배치다. */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">{t('settlement.date')}</label>
-              <input
-                type="date"
-                required
-                value={paymentForm.date || todayKey(timeZone)}
-                min={LEDGER_MIN_ENTRY_DATE_KEY}
-                // 연도 오타(2026 -> 2926)를 서버 400 전에 브라우저가 막는다
-                max={ledgerMaxEntryDateKey()}
-                onChange={(e) => setPaymentForm({ ...paymentForm, date: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('settlement.date')}</label>
+                  <input
+                    type="date"
+                    required
+                    value={paymentForm.date || todayKey(timeZone)}
+                    min={LEDGER_MIN_ENTRY_DATE_KEY}
+                    // 연도 오타(2026 -> 2926)를 서버 400 전에 브라우저가 막는다
+                    max={ledgerMaxEntryDateKey()}
+                    onChange={(e) => setPaymentForm({ ...paymentForm, date: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">{t('editor.time')}</label>
+                  <input
+                    type="time"
+                    value={paymentForm.time}
+                    onChange={(e) => setPaymentForm({ ...paymentForm, time: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
               <p className="mt-1 text-xs text-gray-500">{t('settlement.dateHint')}</p>
             </div>
 

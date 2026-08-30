@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 
-import { useTranslation } from '@/lib/i18n';
+import { useTranslation } from '@money/core/lib/i18n';
 
 /**
  * 앱 표시. 파란 모서리 둥근 바탕에 흰 지갑이다.

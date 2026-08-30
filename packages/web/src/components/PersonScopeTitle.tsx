@@ -2,8 +2,8 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
-import { useTranslation } from '@/lib/i18n';
-import type { Person } from '@/lib/types';
+import { useTranslation } from '@money/core/lib/i18n';
+import type { Person } from '@money/core/lib/types';
 
 interface PersonScopeTitleProps {
   /** 화면 이름. "가계", "자산" 처럼 사람 이름 뒤에 붙는다. */

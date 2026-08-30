@@ -4,11 +4,11 @@ import { useEffect, useMemo, useState } from 'react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import type { EntryFilterQuery } from '@money/types';
 
-import { apiClient, type ReportPeriod } from '@/lib/api-client';
-import { CHART_CATEGORY_COLORS, CHART_TOOLTIP_STYLE, formatTooltipAmount } from '@/lib/chart';
-import { useTranslation } from '@/lib/i18n';
-import { formatCurrency, toNumber } from '@/lib/money';
-import { useProjectDisplayCurrency } from '@/store/project';
+import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
+import { CHART_CATEGORY_COLORS, CHART_TOOLTIP_STYLE, formatTooltipAmount } from '@money/core/lib/chart';
+import { useTranslation } from '@money/core/lib/i18n';
+import { formatCurrency, toNumber } from '@money/core/lib/money';
+import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 interface CategoryDonutChartProps {
   title: string;

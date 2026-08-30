@@ -3,9 +3,9 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
-import { apiClient } from '@/lib/api-client';
-import { useAuth } from '@/store/auth';
-import { useProject } from '@/store/project';
+import { apiClient } from '@money/core/lib/api-client';
+import { useAuth } from '@money/core/store/auth';
+import { useProject } from '@money/core/store/project';
 
 /**
  * 화면이 프로젝트 하나를 고른 상태로 시작하게 만든다.

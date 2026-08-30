@@ -1,23 +1,19 @@
 'use client';
 
+import type { SubCategoryRow } from '@money/core/hooks/useCategoryManager';
+
 import CustomSelect from './CustomSelect';
-import { useTranslation } from '@/lib/i18n';
+import { useTranslation } from '@money/core/lib/i18n';
 
-/** 소분류 입력 한 줄. id가 빈 문자열이면 아직 저장되지 않은 새 줄이다. */
-export type SubCategoryRow = { id: string; name: string; defaultIsExtra: boolean };
-
-/**
- * 소분류는 빈 줄 없이 시작한다.
- *
- * 빈 줄 하나를 미리 넣어 두면 소분류가 필요 없는데도 항상 빈 입력칸이 보인다.
- * 필요하면 "소분류 추가" 버튼으로 늘린다.
+/*
+ * 줄의 모양과 손질(빈 줄 버리기)은 저장하는 쪽인 core 에 있다. 이 파일을 거쳐
+ * 가져다 쓰던 곳이 있어 이름은 여기서도 그대로 내보낸다.
  */
-export const NO_SUB_CATEGORIES: SubCategoryRow[] = [];
-
-/** 이름이 남아 있는 줄만. 빈 줄은 사용자가 늘렸다가 채우지 않은 것이므로 버린다. */
-export function filledSubCategories(rows: SubCategoryRow[]): SubCategoryRow[] {
-  return rows.filter((row) => row.name.trim());
-}
+export {
+  NO_SUB_CATEGORIES,
+  filledSubCategories,
+  type SubCategoryRow,
+} from '@money/core/hooks/useCategoryManager';
 
 interface CategoryFormFieldsProps {
   name: string;

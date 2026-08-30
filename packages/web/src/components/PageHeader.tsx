@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 
-import { useTranslation } from '@/lib/i18n';
+import { useTranslation } from '@money/core/lib/i18n';
 
 /**
  * 화면 제목 줄. 사이드탭 이름을 그대로 쓴다.
@@ -39,7 +39,11 @@ export default function PageHeader({
           </Link>
         )}
         {typeof title === 'string' ? (
-          <h1 className="text-2xl font-bold text-gray-900">{title}</h1>
+          /*
+            위아래 여백은 홈의 자산주인 제목(누를 수 있어 py-1 을 갖는다)과 맞춘 것이다.
+            빼면 홈만 첫 줄이 4px 내려가 화면을 옮길 때마다 제목이 흔들린다.
+          */
+          <h1 className="py-1 text-2xl font-bold text-gray-900">{title}</h1>
         ) : (
           title
         )}

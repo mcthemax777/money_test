@@ -1,7 +1,7 @@
 'use client';
 
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
-import { useTranslation } from '@/lib/i18n';
+import { useTranslation } from '@money/core/lib/i18n';
 
 /** 프로젝트를 바꾸기 전에 한 번 묻는 창. useProjectSwitch가 여는 상태를 들고 있다. */
 export default function ProjectSwitchModal({

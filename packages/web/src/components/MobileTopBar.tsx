@@ -7,9 +7,9 @@ import { AppBrand } from '@/components/AppLogo';
 import ProjectSwitchModal from '@/components/ProjectSwitchModal';
 import { UserAvatar } from '@/components/UserAvatar';
 import { useProjectSwitch } from '@/hooks/useProjectSwitch';
-import { useTranslation } from '@/lib/i18n';
-import { useAuth } from '@/store/auth';
-import { useProject } from '@/store/project';
+import { useTranslation } from '@money/core/lib/i18n';
+import { useAuth } from '@money/core/store/auth';
+import { useProject } from '@money/core/store/project';
 
 /**
  * 좁은 화면의 위쪽 막대.

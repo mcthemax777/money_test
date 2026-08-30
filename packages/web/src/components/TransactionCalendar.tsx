@@ -2,11 +2,11 @@
 
 import { useMemo } from 'react';
 import type { EntryListItem } from './TransactionItem';
-import { sumEntries, type CountedShare } from '@/lib/entries';
-import { currentYearMonth, dateKeyOf, weekdayNames } from '@/lib/datetime';
-import { formatNumber } from '@/lib/money';
-import { useProjectTimeZone } from '@/store/project';
-import { useTranslation } from '@/lib/i18n';
+import { groupEntriesByDate, sumEntries, type CountedShare } from '@money/core/lib/entries';
+import { currentYearMonth, weekdayNames } from '@money/core/lib/datetime';
+import { formatNumber } from '@money/core/lib/money';
+import { useProjectTimeZone } from '@money/core/store/project';
+import { useTranslation } from '@money/core/lib/i18n';
 
 interface CalendarDay {
   date: Date;
@@ -95,6 +95,12 @@ export default function TransactionCalendar({
     const calendarDays: CalendarDay[] = [];
     const currentDay = new Date(startDate);
 
+    /*
+     * 날짜별로 한 번만 묶는다. 칸마다 전체 목록을 훑으면 타임존 변환이 거래 수 × 42번
+     * 일어난다. 거래 120건이면 5천 번이 넘어 보기를 옮길 때마다 화면이 늦게 그려진다.
+     */
+    const byDate = groupEntriesByDate(entries, timeZone);
+
     const getLocalDateStr = (date: Date) => {
       const year = date.getFullYear();
       const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -106,9 +112,7 @@ export default function TransactionCalendar({
       const dateStr = getLocalDateStr(currentDay);
       // 이체와 카드사 이체도 그날 칸에 보여 준다. 합계에서 빼는 일은
       // sumEntries가 하므로(두 종류에 0을 돌려준다) 여기서 걸러 내지 않는다.
-      const dayEntries = entries.filter(
-        (entry) => dateKeyOf(entry.date, timeZone) === dateStr,
-      );
+      const dayEntries = byDate.get(dateStr) ?? [];
 
       const { incomeTotal, expenseTotal } = sumEntries(dayEntries, share);
 

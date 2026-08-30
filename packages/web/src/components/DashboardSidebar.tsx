@@ -8,10 +8,10 @@ import ProjectSwitchModal from '@/components/ProjectSwitchModal';
 import { UserAvatar } from '@/components/UserAvatar';
 import { useNavPending } from '@/hooks/useNavPending';
 import { useProjectSwitch } from '@/hooks/useProjectSwitch';
-import { useTranslation } from '@/lib/i18n';
-import { isActiveNav, navItemsOf } from '@/lib/nav';
-import { useAuth } from '@/store/auth';
-import { useProject } from '@/store/project';
+import { useTranslation } from '@money/core/lib/i18n';
+import { isActiveNav, navItemsOf } from '@money/core/lib/nav';
+import { useAuth } from '@money/core/store/auth';
+import { useProject } from '@money/core/store/project';
 
 /**
  * 넓은 화면의 왼쪽 사이드바.

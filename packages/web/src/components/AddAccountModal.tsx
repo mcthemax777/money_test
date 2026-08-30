@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { apiClient } from '@/lib/api-client';
+import { apiClient } from '@money/core/lib/api-client';
 import {
   SUPPORTED_CURRENCIES,
   type CurrencyCode,
@@ -9,12 +9,12 @@ import {
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@/hooks/useInstitutions';
-import { ACCOUNT_TYPE_OPTIONS } from '@/lib/account-type';
-import { useTranslation } from '@/lib/i18n';
-import { currencyLabel, toAmountString } from '@/lib/money';
-import type { AccountType } from '@/lib/types';
-import type { Person } from '@/lib/types';
-import { useApiError } from '@/lib/api-error';
+import { ACCOUNT_TYPE_OPTIONS } from '@money/core/lib/account-type';
+import { useTranslation } from '@money/core/lib/i18n';
+import { currencyLabel, toAmountString } from '@money/core/lib/money';
+import type { AccountType } from '@money/core/lib/types';
+import type { Person } from '@money/core/lib/types';
+import { useApiError } from '@money/core/lib/api-error';
 
 
 interface AddAccountModalProps {

@@ -1,29 +1,14 @@
 'use client';
 
 import ScrollRow from '@/components/ScrollRow';
-import { cardPaletteOf } from '@/lib/card-color';
-import { useTranslation, type MessageKey } from '@/lib/i18n';
-import { formatCurrency, toNumber } from '@/lib/money';
+import { cardPaletteOf } from '@money/core/lib/card-color';
+import type { SpendingMethod } from '@money/core/hooks/useHomeData';
+import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { formatCurrency, toNumber } from '@money/core/lib/money';
 
-/** 카드 한 장이 지금 실적 구간에 얼마를 썼는지 */
-export interface SpendingMethod {
-  id: string;
-  kind: 'credit_card' | 'debit_card';
-  /** 카드에 고른 앞면 색(CardColor). 고르지 않았으면 종류의 기본색으로 그린다. */
-  color?: string | null;
-  name: string;
-  ownerName: string | null;
-  /** 사용액·기준액의 통화. 카드 결제 통장의 통화다. */
-  currency: string;
-  /** 지금 세고 있는 구간 표시 ("8/16 ~ 9/15") */
-  periodLabel: string;
-  usage: string;
-  /** 직전 구간 표시와 사용액. 1일에 지난 구간을 확인하러 가지 않게 함께 적는다. */
-  previousPeriodLabel: string;
-  previousUsage: string;
-  /** 실적 기준액. 조건이 없는 카드는 null */
-  target: string | null;
-}
+/* 카드 한 장이 지금 실적 구간에 얼마를 썼는지. 모양은 값을 만드는 쪽(core 의 useHomeData)에 있다. 이 화면을 거쳐
+ * 가져다 쓰던 곳이 있어 이름은 여기서도 그대로 내보낸다. */
+export type { SpendingMethod };
 
 /** 종류 이름. 카드 앞면 왼쪽 위에 적는다. */
 const KIND_KEY: Record<SpendingMethod['kind'], MessageKey> = {

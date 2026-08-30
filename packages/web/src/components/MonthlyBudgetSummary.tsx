@@ -2,10 +2,10 @@
 
 import type { BudgetDto } from '@money/types';
 
-import { budgetPercentage } from '@/lib/budget';
-import { useTranslation } from '@/lib/i18n';
-import { formatCurrency, toNumber } from '@/lib/money';
-import { useProjectDisplayCurrency } from '@/store/project';
+import { budgetPercentage } from '@money/core/lib/budget';
+import { useTranslation } from '@money/core/lib/i18n';
+import { formatCurrency, toNumber } from '@money/core/lib/money';
+import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 /**
  * 이 달의 총 사용금액과 예산을 잡아 둔 분류들의 진행률.

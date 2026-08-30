@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/store/auth';
+import { useAuth } from '@money/core/store/auth';
 import { GoogleSignInButton } from '@/components/GoogleSignInButton';
-import { useTranslation } from '@/lib/i18n';
+import { useTranslation } from '@money/core/lib/i18n';
 
 export default function LoginPage() {
   const router = useRouter();

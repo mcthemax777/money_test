@@ -2,15 +2,15 @@
 
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { useAuth } from '@/store/auth';
-import { useProject } from '@/store/project';
-import { apiClient } from '@/lib/api-client';
+import { useAuth } from '@money/core/store/auth';
+import { useProject } from '@money/core/store/project';
+import { apiClient } from '@money/core/lib/api-client';
 import { SUPPORTED_CURRENCIES } from '@money/types';
-import { useTranslation, type MessageKey } from '@/lib/i18n';
-import { currencyLabel } from '@/lib/money';
+import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { currencyLabel } from '@money/core/lib/money';
 import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
-import { useApiError } from '@/lib/api-error';
+import { useApiError } from '@money/core/lib/api-error';
 
 interface Project {
   id: string;

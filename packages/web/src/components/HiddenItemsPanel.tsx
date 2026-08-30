@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
-import { apiClient } from '@/lib/api-client';
-import { useTranslation, type MessageKey } from '@/lib/i18n';
+import { apiClient } from '@money/core/lib/api-client';
+import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 
 interface HiddenItem {
   id: string;

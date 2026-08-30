@@ -3,10 +3,9 @@
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
-import { apiClient } from '@/lib/api-client';
-import { useTranslation } from '@/lib/i18n';
-import { useAuth } from '@/store/auth';
-import { useProject } from '@/store/project';
+import { useProjectBootstrap } from '@money/core/hooks/useProjectBootstrap';
+import { useTranslation } from '@money/core/lib/i18n';
+import { useAuth } from '@money/core/store/auth';
 import DashboardSidebar from '@/components/DashboardSidebar';
 import MobileTabBar from '@/components/MobileTabBar';
 import MobileTopBar from '@/components/MobileTopBar';
@@ -25,38 +24,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { t, locale } = useTranslation();
   const { isAuthenticated, isInitializing } = useAuth();
-  const { projects, setProjects, selectedProjectId, setSelectedProjectId } = useProject();
+  // 프로젝트 목록과 첫 선택. 앱의 껍데기도 같은 훅을 쓴다.
+  useProjectBootstrap();
 
   useEffect(() => {
     if (!isInitializing && !isAuthenticated) {
       router.push('/login');
     }
   }, [isInitializing, isAuthenticated, router]);
-
-  /*
-   * 프로젝트 목록.
-   *
-   * 사이드바가 받아 두던 것을 껍데기로 옮겼다. 좁은 화면에서는 사이드바를 아예
-   * 그리지 않는데, 위쪽 막대와 아래쪽 탭이 이 목록을 봐야 한다.
-   */
-  useEffect(() => {
-    if (!isAuthenticated || projects.length > 0) return;
-
-    const loadProjects = async () => {
-      try {
-        const data = await apiClient.getMyProjects();
-        setProjects(data || []);
-        // 고른 것이 없으면 첫 프로젝트를 본다.
-        if (!selectedProjectId && data && data.length > 0) {
-          setSelectedProjectId(data[0].id);
-        }
-      } catch (err) {
-        console.error('프로젝트 목록 조회 실패:', err);
-      }
-    };
-
-    loadProjects();
-  }, [isAuthenticated, projects.length, selectedProjectId, setProjects, setSelectedProjectId]);
 
   if (isInitializing || !isAuthenticated) {
     return (
@@ -81,7 +56,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           날짜 표기처럼 훅 없이 지금 언어를 읽어 쓰는 자리는 다시 그릴 까닭이 없어
           옛 표기가 남는다. 언어를 바꾸는 일은 드물어 한 번 새로 받는 값이 싸다.
         */}
-        <div key={locale} className="max-w-7xl mx-auto px-4 py-8">
+        {/*
+          위 여백은 좁은 화면에서만 줄인다. 위쪽 막대가 붙어 있어 넓은 화면과 같은 32를
+          주면 첫 줄이 한참 내려간 것처럼 보인다. 앱의 껍데기도 같은 값을 쓴다.
+        */}
+        <div key={locale} className="max-w-7xl mx-auto px-4 pb-8 pt-4 md:pt-8">
           {children}
         </div>
       </main>

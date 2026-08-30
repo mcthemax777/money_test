@@ -3,12 +3,12 @@
 import { Suspense, useCallback, useEffect, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
-import { useAuth } from '@/store/auth';
-import { useProject } from '@/store/project';
-import { apiClient } from '@/lib/api-client';
+import { useAuth } from '@money/core/store/auth';
+import { useProject } from '@money/core/store/project';
+import { apiClient } from '@money/core/lib/api-client';
 import { GoogleSignInButton } from '@/components/GoogleSignInButton';
-import { useTranslation, type MessageKey } from '@/lib/i18n';
-import { useApiError } from '@/lib/api-error';
+import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { useApiError } from '@money/core/lib/api-error';
 
 interface InvitationInfo {
   invitationCode: string;

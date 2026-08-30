@@ -4,7 +4,7 @@ import Link from 'next/link';
 import PageHeader from '@/components/PageHeader';
 import ExchangeRateSettings from '@/components/ExchangeRateSettings';
 import LanguageSettings from '@/components/LanguageSettings';
-import { useTranslation } from '@/lib/i18n';
+import { useTranslation } from '@money/core/lib/i18n';
 
 export default function SettingsPage() {
   const { t } = useTranslation();

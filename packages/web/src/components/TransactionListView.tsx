@@ -1,10 +1,10 @@
 'use client';
 
 import TransactionItem, { EntryListItem } from './TransactionItem';
-import { formatCurrency } from '@/lib/money';
-import { sumEntries, type CountedShare } from '@/lib/entries';
-import { dateKeyOf, formatDateMarker, weekdayNames } from '@/lib/datetime';
-import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
+import { formatCurrency } from '@money/core/lib/money';
+import { groupEntriesByDate, sumEntries, type CountedShare } from '@money/core/lib/entries';
+import { formatDateMarker, weekdayNames } from '@money/core/lib/datetime';
+import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 
 interface TransactionListViewProps {
   entries: EntryListItem[];
@@ -37,13 +37,7 @@ export default function TransactionListView({
 
   // 날짜 문자열을 다시 파싱하지 않도록 달력 날짜(YYYY-MM-DD)로 묶는다.
   // 어느 날에 속하는지는 프로젝트 타임존 기준이다.
-  const grouped = new Map<string, EntryListItem[]>();
-  for (const entry of entries) {
-    const key = dateKeyOf(entry.date, timeZone);
-    const list = grouped.get(key) ?? [];
-    list.push(entry);
-    grouped.set(key, list);
-  }
+  const grouped = groupEntriesByDate(entries, timeZone);
 
   const sortedDates = [...grouped.keys()].sort((a, b) => b.localeCompare(a));
 

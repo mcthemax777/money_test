@@ -1,12 +1,17 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { ExchangeRateInfo } from '@money/types';
-import { apiClient } from '@/lib/api-client';
-import { useTranslation, type MessageKey } from '@/lib/i18n';
-import { toAmountString, toNumber } from '@/lib/money';
-import { useProject } from '@/store/project';
-import { clearExchangeRateCache } from '@/hooks/useExchangeRates';
+import { useExchangeRateSettings } from '@money/core/hooks/useExchangeRates';
+import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { toNumber } from '@money/core/lib/money';
+
+/** 무엇을 하다 실패했는지에 따른 문구. */
+const FAILURE_KEY = {
+  load: 'exchangeRate.loadFailed',
+  save: 'exchangeRate.saveFailed',
+  reset: 'exchangeRate.resetFailed',
+} as const;
 
 /** 어디서 온 환율인지. 사용자가 정한 값과 서버 기본값을 구분해 보여 준다. */
 const SOURCE_KEY: Record<string, MessageKey> = {
@@ -30,64 +35,11 @@ const SOURCE_KEY: Record<string, MessageKey> = {
  */
 export default function ExchangeRateSettings() {
   const { t } = useTranslation();
-  const { selectedProjectId } = useProject();
-  const [ledgerCurrency, setLedgerCurrency] = useState('KRW');
-  const [rates, setRates] = useState<ExchangeRateInfo[]>([]);
+  /* 받아 오고 저장하는 일은 core 가 맡는다. 앱의 같은 칸도 이 훅을 쓴다. */
+  const { ledgerCurrency, rates, savingPair, failure, save, reset } = useExchangeRateSettings();
+  /** 입력 중인 값. 저장하기 전까지는 화면에만 있다. */
   const [drafts, setDrafts] = useState<Record<string, string>>({});
-  const [savingPair, setSavingPair] = useState<string | null>(null);
-  const [error, setError] = useState('');
 
-  const load = useCallback(async () => {
-    try {
-      setError('');
-      const data = await apiClient.getExchangeRates(selectedProjectId);
-      setLedgerCurrency(data.ledgerCurrency);
-      setRates(data.rates ?? []);
-      setDrafts({});
-    } catch (err) {
-      console.error('환율 조회 실패:', err);
-      setError(t('exchangeRate.loadFailed'));
-    }
-  }, [selectedProjectId, t]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  const save = async (info: ExchangeRateInfo) => {
-    const value = drafts[info.from];
-    if (toNumber(value) <= 0) return;
-
-    try {
-      setSavingPair(info.from);
-      setError('');
-      await apiClient.setExchangeRate(
-        { from: info.from, to: info.to, rate: toAmountString(value) },
-        selectedProjectId,
-      );
-      // 거래 입력 폼이 들고 있는 캐시를 버린다. 안 버리면 폼에 옛 환율이 남는다.
-      clearExchangeRateCache();
-      await load();
-    } catch (err: any) {
-      setError(err?.response?.data?.message || t('exchangeRate.saveFailed'));
-    } finally {
-      setSavingPair(null);
-    }
-  };
-
-  const reset = async (info: ExchangeRateInfo) => {
-    try {
-      setSavingPair(info.from);
-      setError('');
-      await apiClient.clearExchangeRate(info.from, info.to, selectedProjectId);
-      clearExchangeRateCache();
-      await load();
-    } catch (err: any) {
-      setError(err?.response?.data?.message || t('exchangeRate.resetFailed'));
-    } finally {
-      setSavingPair(null);
-    }
-  };
 
   if (rates.length === 0) return null;
 
@@ -97,7 +49,7 @@ export default function ExchangeRateSettings() {
       <p className="mt-1 text-sm text-gray-600">{t('exchangeRate.description')}</p>
 
       <div className="mt-4 space-y-2">
-        {rates.map((info) => {
+        {rates.map((info: ExchangeRateInfo) => {
           const draft = drafts[info.from] ?? '';
           const isManual = info.source === 'manual';
           const isSaving = savingPair === info.from;
@@ -130,7 +82,7 @@ export default function ExchangeRateSettings() {
 
               <button
                 type="button"
-                onClick={() => save(info)}
+                onClick={() => save(info, draft).then(() => setDrafts({}))}
                 disabled={toNumber(draft) <= 0 || isSaving}
                 className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40"
               >
@@ -153,7 +105,7 @@ export default function ExchangeRateSettings() {
         })}
       </div>
 
-      {error && <p className="mt-2 text-sm text-red-600">{error}</p>}
+      {failure && <p className="mt-2 text-sm text-red-600">{t(FAILURE_KEY[failure])}</p>}
 
       <p className="mt-3 text-xs text-gray-500">
         {t('exchangeRate.ledgerNote', { currency: ledgerCurrency })}

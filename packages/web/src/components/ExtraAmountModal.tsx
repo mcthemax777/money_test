@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 
 import Modal from '@/components/Modal';
-import { useTranslation } from '@/lib/i18n';
-import { formatNumber, toNumber } from '@/lib/money';
+import { useTranslation } from '@money/core/lib/i18n';
+import { formatNumber, toNumber } from '@money/core/lib/money';
 
 interface ExtraAmountModalProps {
   isOpen: boolean;

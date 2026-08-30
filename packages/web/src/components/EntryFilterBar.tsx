@@ -1,6 +1,6 @@
 'use client';
 
-import { useTranslation, type MessageKey } from '@/lib/i18n';
+import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 
 /**
  * 일반/과소비 항목. 둘 다 고르면 전체, 하나도 안 고르면 결과가 없다.

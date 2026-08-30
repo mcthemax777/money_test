@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { BudgetDto, CardDto, EntryFilterQuery, ReportDto } from '@money/types';
-import type { Account, Card, Category, Person } from '@/lib/types';
+import type { Account, Card, Category, Person } from '@money/core/lib/types';
 
-import { apiClient } from '@/lib/api-client';
+import { apiClient } from '@money/core/lib/api-client';
 import {
   currentYearMonth,
   dateMarkerKey,
@@ -12,19 +12,14 @@ import {
   monthQueryRange,
   shiftYearMonth,
   throughDayOf,
-} from '@/lib/datetime';
-import { useTranslation, type MessageKey } from '@/lib/i18n';
-import { formatCurrency, toNumber } from '@/lib/money';
-import { sumNetWorth } from '@/lib/net-worth';
-import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { usePersonFilterSync } from '@/hooks/usePersonFilterSync';
+} from '@money/core/lib/datetime';
+import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { formatCurrency, toNumber } from '@money/core/lib/money';
+import { sumNetWorth } from '@money/core/lib/net-worth';
+import { useHomeData } from '@money/core/hooks/useHomeData';
 import { useProjectGuard } from '@/hooks/useProjectGuard';
-import {
-  useMyPersonId,
-  useProjectDisplayCurrency,
-  useProjectTimeZone,
-} from '@/store/project';
-import { useUserFilter } from '@/store/user-filter';
+import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
+import { useUserFilter } from '@money/core/store/user-filter';
 import AssetTypeSummary from '@/components/AssetTypeSummary';
 import CategoryDonutChart from '@/components/CategoryDonutChart';
 import CumulativeExpenseChart, {
@@ -41,9 +36,7 @@ import MonthHeader from '@/components/MonthHeader';
 import MonthlyBudgetSummary from '@/components/MonthlyBudgetSummary';
 import ScrollRow from '@/components/ScrollRow';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
-import SpendingMethodCarousel, {
-  type SpendingMethod,
-} from '@/components/SpendingMethodCarousel';
+import SpendingMethodCarousel from '@/components/SpendingMethodCarousel';
 
 /** 보고 있는 것. 달 아래 탭이 이 둘을 오간다. */
 type EntryType = 'income' | 'expense';
@@ -84,34 +77,6 @@ const CUMULATIVE_CHARTS: Record<EntryType, Array<{ field: ExpenseField; titleKey
   ],
 };
 
-/** 카드 줄에 세우는 순서. 사용자가 말한 순서 그대로다. */
-const METHOD_ORDER: Record<SpendingMethod['kind'], number> = {
-  credit_card: 0,
-  debit_card: 1,
-};
-
-/** `@db.Date` 값의 "8/16". 카드 앞면은 좁아서 연도까지 적을 자리가 없다. */
-function shortMarker(marker: string): string {
-  const key = dateMarkerKey(marker);
-  return `${Number(key.slice(5, 7))}/${Number(key.slice(8, 10))}`;
-}
-
-/**
- * 카드가 세고 있는 구간 표시. 신용카드만 달력의 달과 어긋난다.
- *
- * 날짜만 적는다. 카드 앞면에서 위는 이번 구간, 아래는 직전 구간 자리로 이미 갈려 있어
- * "마감 기준"·"직전" 같은 말을 붙이면 좁은 자리를 두 번 쓰는 셈이다.
- */
-function periodLabelOf(performance: CardDto.PerformanceResponse, previous: boolean): string {
-  const start = previous ? performance.previousPeriodStart : performance.periodStart;
-  const end = previous ? performance.previousPeriodEnd : performance.periodEnd;
-
-  if (performance.basis === 'month') {
-    return formatMonthShort(Number(dateMarkerKey(end).slice(5, 7)));
-  }
-  return `${shortMarker(start)} ~ ${shortMarker(end)}`;
-}
-
 /**
  * 로그인하면 처음 보는 화면.
  *
@@ -125,18 +90,49 @@ export default function HomePage() {
   const { t } = useTranslation();
   const selectedProjectId = useProjectGuard();
   const { selectedPersonIds, togglePersonId } = useUserFilter();
-  const myPersonId = useMyPersonId();
   const timeZone = useProjectTimeZone();
   const displayCurrency = useProjectDisplayCurrency();
 
-  const [people, setPeople] = useState<Person[]>([]);
-  /** 구성원 목록을 받아 봤는지. 아직이면 필터를 만들 수 없어 조회를 미룬다. */
-  const [peopleLoaded, setPeopleLoaded] = useState(false);
-  const [netWorth, setNetWorth] = useState<ReportDto.NetWorth | null>(null);
-  const [methods, setMethods] = useState<SpendingMethod[]>([]);
-  const [budgets, setBudgets] = useState<BudgetDto.MonthlyBudget[]>([]);
-  /** 이 달 수입·지출 합계. 탭에 적는다. */
-  const [summary, setSummary] = useState<ReportDto.Summary | null>(null);
+  /*
+   * 보고 있는 달. 아래 예산·그래프·거래 목록이 모두 이 달을 따른다.
+   *
+   * 위쪽 자산과 실적 구간 카드는 따라가지 않는다. 자산은 "지금 얼마인가"이고
+   * 실적은 카드사가 지금 세고 있는 구간이라, 지난 달을 펴 보는 것과 뜻이 다르다.
+   */
+  const { year: thisYear, month: thisMonth } = currentYearMonth(timeZone);
+  const [view, setView] = useState({ year: thisYear, month: thisMonth });
+  const { year, month } = view;
+  const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
+  const thisYearMonth = `${thisYear}-${String(thisMonth).padStart(2, '0')}`;
+  const previousYearMonth = shiftYearMonth(yearMonth, -1);
+  const earlierYearMonth = shiftYearMonth(yearMonth, -2);
+  const monthRange = monthQueryRange(year, month, timeZone);
+
+  /*
+   * 화면이 보는 값 전부. 앱의 홈 화면도 같은 훅을 쓴다.
+   *
+   * 그래프만 여기 남는다. 앱에는 아직 그래프가 없고, 탭을 옮길 때마다 자산과 카드
+   * 실적까지 다시 받지 않도록 조회도 따로 두어야 한다.
+   */
+  const home = useHomeData({ projectId: selectedProjectId, year, month, thisYearMonth });
+  const {
+    people,
+    peopleLoaded,
+    cards,
+    accounts,
+    categories,
+    myPersonId,
+    netWorth: scopedNetWorth,
+    budgets,
+    summary,
+    methods,
+    filter: appliedFilter,
+    isLoading,
+    hasError,
+    cardVersion,
+    entryVersion,
+  } = home;
+
   /*
    * 아래 예산과 그래프가 지출을 볼지 수입을 볼지.
    *
@@ -146,208 +142,26 @@ export default function HomePage() {
   const [type, setType] = useState<EntryType>('expense');
   /* 아래 셋은 모두 지금 고른 탭(type)의 값이다. */
   const [dailyPoints, setDailyPoints] = useState<ReportDto.DailyExpensePoint[]>([]);
-  const [previousDailyPoints, setPreviousDailyPoints] = useState<
-    ReportDto.DailyExpensePoint[]
-  >([]);
+  const [previousDailyPoints, setPreviousDailyPoints] = useState<ReportDto.DailyExpensePoint[]>([]);
   /** 전전달. 지난달 하나만으로는 그 달이 유난했던 것인지 알 수 없다. */
-  const [earlierDailyPoints, setEarlierDailyPoints] = useState<
-    ReportDto.DailyExpensePoint[]
-  >([]);
+  const [earlierDailyPoints, setEarlierDailyPoints] = useState<ReportDto.DailyExpensePoint[]>([]);
   /** 그래프를 받는 중. 탭을 옮기면 다시 받는다. */
   const [isChartLoading, setIsChartLoading] = useState(true);
   /*
    * 그래프만 못 받았을 때.
    *
-   * 위쪽 error와 나눠 둔다. 그쪽은 화면 맨 위 띠라, 그래프 하나가 실패했을 때
+   * 위쪽 오류와 나눠 둔다. 그쪽은 화면 맨 위 띠라, 그래프 하나가 실패했을 때
    * 띄우면 자산과 예산까지 못 받은 것처럼 보인다.
    */
   const [chartError, setChartError] = useState('');
-  /*
-   * 정산 팝업에 필요한 것들.
-   *
-   * 카드에는 결제 통장이 붙어 있고, 대금 전표에는 그 통장 주인을 달아야 한다.
-   * 그래서 카드와 통장 목록을 함께 들고 있는다.
-   */
-  const [cards, setCards] = useState<Card[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  /** 거래 상세 팝업이 쓰는 목록. 분류를 보여 주고 고칠 때 고른다. */
-  const [categories, setCategories] = useState<Category[]>([]);
+  /** 정산 팝업을 띄울 카드. */
   const [settlementCardId, setSettlementCardId] = useState<string | null>(null);
-  /** 대금을 기록한 뒤 사용 현황을 다시 읽게 하는 표. */
-  const [cardVersion, setCardVersion] = useState(0);
-  /** 거래를 고친 뒤 목록을 처음부터 다시 받게 하는 표. */
-  const [entryVersion, setEntryVersion] = useState(0);
   /** 거래 상세·수정 팝업. 가계·자산 화면과 같은 컴포넌트다. */
   const entryEditorRef = useRef<EntryEditorHandle>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState('');
-
-  // 이번 달 판단도 프로젝트 타임존 기준이다. 브라우저 로컬로 읽으면 자정 전후로 달이 밀린다.
-  const { year: thisYear, month: thisMonth } = currentYearMonth(timeZone);
-
-  /*
-   * 보고 있는 달. 아래 예산·그래프·거래 목록이 모두 이 달을 따른다.
-   *
-   * 위쪽 자산과 실적 구간 카드는 따라가지 않는다. 자산은 "지금 얼마인가"이고
-   * 실적은 카드사가 지금 세고 있는 구간이라, 지난 달을 펴 보는 것과 뜻이 다르다.
-   */
-  const [view, setView] = useState({ year: thisYear, month: thisMonth });
-  const { year, month } = view;
-  const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
-  const thisYearMonth = `${thisYear}-${String(thisMonth).padStart(2, '0')}`;
-  const previousYearMonth = shiftYearMonth(yearMonth, -1);
-  const earlierYearMonth = shiftYearMonth(yearMonth, -2);
-  const monthRange = monthQueryRange(year, month, timeZone);
 
   /** 이번 달 선을 어디까지 그을지 (throughDayOf 주석 참고) */
   const throughDay = throughDayOf(yearMonth, timeZone);
 
-
-  useEffect(() => {
-    if (!selectedProjectId) return;
-
-    const loadReference = async () => {
-      try {
-        const [peopleData, cardsData, accountsData, categoryData] = await Promise.all([
-          apiClient.getPeople(selectedProjectId),
-          apiClient.getCards(selectedProjectId),
-          apiClient.getAccountsV2(selectedProjectId),
-          apiClient.getCategories(selectedProjectId),
-        ]);
-        // 저장된 자산주인 선택은 usePersonFilterSync 가 이 목록에 맞춘다.
-        setPeople(peopleData || []);
-        setCards(cardsData || []);
-        setAccounts(accountsData || []);
-        setCategories(categoryData || []);
-        setPeopleLoaded(true);
-      } catch (err) {
-        console.error('구성원·카드 조회 실패:', err);
-        setError(t('home.loadFailed'));
-        setIsLoading(false);
-      }
-    };
-
-    loadReference();
-  }, [selectedProjectId]);
-
-  usePersonFilterSync(selectedProjectId, people);
-
-  const allPeopleSelected = people.length > 0 && selectedPersonIds.length === people.length;
-
-  /**
-   * 서버로 보내는 필터.
-   *
-   * 전부 고른 경우만 파라미터를 빼서 서버가 필터 없는 경로를 타게 하고(주인이 없는
-   * 계좌까지 담긴다), 하나도 고르지 않았으면 빈 값을 보내 "결과 없음"을 뜻하게 한다.
-   * 가계·자산 화면과 같은 세 상태 규칙이다.
-   */
-  const entryFilter = useMemo<EntryFilterQuery>(
-    () => (allPeopleSelected ? {} : { personIds: selectedPersonIds.join(',') }),
-    [allPeopleSelected, selectedPersonIds],
-  );
-  const appliedFilter = useDebouncedValue(entryFilter, 250);
-
-  useEffect(() => {
-    if (!selectedProjectId || !peopleLoaded) return;
-    /*
-     * 구성원이 없는 프로젝트.
-     *
-     * 저장된 선택은 아직 다른 프로젝트 것일 수 있고(usePersonFilterSync가 맞출 대상이
-     * 없어 그대로 둔다), 그 선택으로 조회하면 남의 프로젝트 id로 거른 결과가 나온다.
-     * 조회하지 않고 아래에서 구성원을 만들라고 안내한다.
-     */
-    if (people.length === 0) {
-      setIsLoading(false);
-      return;
-    }
-
-    const loadPeriod = async () => {
-      try {
-        setIsLoading(true);
-        setError('');
-
-        const [netWorthData, budgetRows, summaryRow, currentMethods] = await Promise.all([
-          apiClient.getNetWorth(selectedProjectId),
-          apiClient.getBudgetForMonth(year, month, selectedProjectId, appliedFilter),
-          // 탭에 적을 이 달 합계. 가계 화면의 머리글과 같은 값이다.
-          apiClient.getSummary({ yearMonth }, selectedProjectId, appliedFilter),
-          // 실적 구간 카드는 보고 있는 달과 무관하게 지금 달을 센다.
-          apiClient.getPaymentMethods({ yearMonth: thisYearMonth }, selectedProjectId, appliedFilter),
-        ]);
-
-        setNetWorth(netWorthData ?? null);
-        setBudgets(budgetRows ?? []);
-        setSummary(summaryRow ?? null);
-
-        const items: ReportDto.PaymentMethodItem[] = currentMethods ?? [];
-
-        /*
-         * 카드는 실적 구간을 카드마다 따로 계산한다(신용카드는 마감일 기준 주기).
-         * 위의 결제수단 집계는 달력 월이라 그 값을 쓰면 마감일이 15일인 카드의
-         * 실적이 실제 카드사 기준과 달라진다.
-         */
-        const cardItems = items.filter(
-          (item): item is ReportDto.PaymentMethodItem & { kind: SpendingMethod['kind'] } =>
-            item.kind !== 'account',
-        );
-        const performances = await Promise.all(
-          cardItems.map((item) =>
-            apiClient.getCardPerformance(item.id).catch((err: unknown) => {
-              console.error('카드 실적 조회 실패:', err);
-              return null;
-            }),
-          ),
-        );
-
-        const cardMethods: SpendingMethod[] = cardItems.flatMap((item, index) => {
-          const performance = performances[index];
-          if (!performance) return [];
-          return [
-            {
-              id: item.id,
-              kind: item.kind,
-              color: item.color,
-              name: item.name,
-              ownerName: item.ownerName,
-              currency: performance.currency,
-              periodLabel: periodLabelOf(performance, false),
-              usage: performance.usage,
-              previousPeriodLabel: periodLabelOf(performance, true),
-              previousUsage: performance.previousUsage,
-              target: performance.target,
-            },
-          ];
-        });
-
-        setMethods(
-          cardMethods.sort(
-            (a, b) =>
-              METHOD_ORDER[a.kind] - METHOD_ORDER[b.kind] || Number(b.usage) - Number(a.usage),
-          ),
-        );
-      } catch (err) {
-        console.error('홈 데이터 조회 실패:', err);
-        setError(t('home.loadFailed'));
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadPeriod();
-  }, [
-    selectedProjectId,
-    peopleLoaded,
-    people.length,
-    appliedFilter,
-    year,
-    month,
-    yearMonth,
-    thisYearMonth,
-    // 거래를 고치면 합계도 함께 다시 받는다.
-    entryVersion,
-    // 오류 문구를 그 언어로 적기 위해 함께 본다. t는 언어가 바뀔 때만 새로 만들어진다.
-    t,
-  ]);
 
   /*
    * 누적 그래프의 재료. 고른 탭의 세 달치를 받는다.
@@ -402,38 +216,14 @@ export default function HomePage() {
     t,
   ]);
 
-  /** 상세 팝업에서 거래를 고치거나 지운 뒤. 목록과 합계를 함께 다시 읽는다. */
-  const handleEntryChange = useCallback(() => {
-    setEntryVersion((version) => version + 1);
-  }, []);
-
-  /** 팝업 안에서 계좌·카드·분류·사람을 새로 만들었을 때. 화면의 목록에 반영한다. */
-  const handleReferenceDataChange = useCallback((patch: ReferenceDataPatch) => {
-    if (patch.accounts) setAccounts(patch.accounts);
-    if (patch.cards) setCards(patch.cards);
-    if (patch.categories) setCategories(patch.categories);
-    if (patch.people) setPeople(patch.people);
-  }, []);
-
-  /*
-   * 고른 자산주인의 총자산.
-   *
-   * 전원을 고른 때만 서버의 전체 값을 그대로 쓴다. 주인이 없는 계좌는 사람별 소계에
-   * 들어가지 않아, 전체를 보면서 소계를 더하면 그만큼 빠진다. 자산 화면과 같은 규칙이다.
-   */
-  const netWorthByPerson = new Map(
-    (netWorth?.byPerson ?? []).map((row) => [row.personId, row]),
-  );
   /** 정산 팝업을 띄울 카드. 목록에 없으면(숨긴 카드 등) 팝업을 열지 않는다. */
   const settlementCard = cards.find((card) => card.id === settlementCardId);
 
-  const scopedNetWorth = allPeopleSelected
-    ? netWorth
-    : sumNetWorth(selectedPersonIds.map((id) => netWorthByPerson.get(id)));
-
   return (
     <div className="space-y-6">
-      {error && <div className="p-3 bg-red-50 text-red-800 text-sm rounded-lg">{error}</div>}
+      {hasError && (
+        <div className="p-3 bg-red-50 text-red-800 text-sm rounded-lg">{t('home.loadFailed')}</div>
+      )}
 
       {peopleLoaded && people.length === 0 && (
         <p className="text-gray-600">{t('home.noPeople')}</p>
@@ -442,7 +232,7 @@ export default function HomePage() {
       {/* 화면의 첫 줄이자 제목이다. 이름을 누르면 자산주인을 고른다. */}
       <AssetTypeSummary
         byType={scopedNetWorth?.byType}
-        hasNoScope={people.length > 0 && selectedPersonIds.length === 0}
+        hasNoScope={home.hasNoScope}
         scopeTitle={
           <PersonScopeTitle
             noun={t('home.assetsNoun')}
@@ -597,7 +387,7 @@ export default function HomePage() {
               accounts.find((account) => account.id === settlementCard.paymentAccountId)?.ownerId
             }
             reloadToken={cardVersion}
-            onChange={() => setCardVersion((v) => v + 1)}
+            onChange={home.reloadCards}
           />
         </Modal>
       )}
@@ -628,8 +418,8 @@ export default function HomePage() {
         cards={cards}
         categories={categories}
         people={people}
-        onReferenceDataChange={handleReferenceDataChange}
-        onEntryChange={handleEntryChange}
+        onReferenceDataChange={home.applyReferencePatch}
+        onEntryChange={home.reloadEntries}
       />
     </div>
   );

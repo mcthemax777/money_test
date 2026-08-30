@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 
-import { activeLocale, translate, useTranslation } from '@/lib/i18n';
+import { activeLocale, translate, useTranslation } from '@money/core/lib/i18n';
 
 const GIS_SRC = 'https://accounts.google.com/gsi/client';
 

@@ -2,12 +2,12 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { BudgetDto } from '@money/types';
-import { apiClient } from '@/lib/api-client';
-import { formatCurrency, formatNumber, toAmountString, toNumber } from '@/lib/money';
-import { useProjectDisplayCurrency } from '@/store/project';
-import { formatYearMonth, shiftYearMonth } from '@/lib/datetime';
-import { useTranslation } from '@/lib/i18n';
-import { useApiError } from '@/lib/api-error';
+import { apiClient } from '@money/core/lib/api-client';
+import { formatCurrency, formatNumber, toAmountString, toNumber } from '@money/core/lib/money';
+import { useProjectDisplayCurrency } from '@money/core/store/project';
+import { formatYearMonth, shiftYearMonth } from '@money/core/lib/datetime';
+import { useTranslation } from '@money/core/lib/i18n';
+import { useApiError } from '@money/core/lib/api-error';
 
 /** 한 번에 보여 주는 달 수. 1년이면 "지금 어떻게 세팅돼 있나"를 훑기에 충분하다. */
 const WINDOW_MONTHS = 12;

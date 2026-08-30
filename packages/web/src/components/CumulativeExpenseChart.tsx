@@ -25,11 +25,11 @@ import {
   CHART_Y_AXIS_WIDTH,
   formatTooltipAmount,
   lineAxis,
-} from '@/lib/chart';
-import { formatMonthShort } from '@/lib/datetime';
-import { useTranslation } from '@/lib/i18n';
-import { formatCurrency, toNumber } from '@/lib/money';
-import { useProjectDisplayCurrency } from '@/store/project';
+} from '@money/core/lib/chart';
+import { formatMonthShort } from '@money/core/lib/datetime';
+import { useTranslation } from '@money/core/lib/i18n';
+import { formatCurrency, toNumber } from '@money/core/lib/money';
+import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 /** 어느 지출을 세는지. total은 일반과 과소비를 합한 값이다. */
 export type ExpenseField = 'normal' | 'extra' | 'total';

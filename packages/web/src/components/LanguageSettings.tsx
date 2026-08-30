@@ -3,8 +3,8 @@
 import { useState } from 'react';
 import { SUPPORTED_LOCALES, type Locale } from '@money/types';
 
-import { useTranslation, type MessageKey } from '@/lib/i18n';
-import { useLocaleStore } from '@/store/locale';
+import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { useLocaleStore } from '@money/core/store/locale';
 
 /** 언어 이름을 담은 열쇠. 사전이 세 언어 모두에서 같은 값(그 나라 말)을 갖는다. */
 const NAME_KEY: Record<Locale, MessageKey> = {

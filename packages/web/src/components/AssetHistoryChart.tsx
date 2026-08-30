@@ -11,10 +11,10 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { apiClient } from '@/lib/api-client';
-import { formatMonthShort, formatYearMonth } from '@/lib/datetime';
-import { useTranslation, type MessageKey } from '@/lib/i18n';
-import { formatCurrency, toNumber } from '@/lib/money';
+import { apiClient } from '@money/core/lib/api-client';
+import { formatMonthShort, formatYearMonth } from '@money/core/lib/datetime';
+import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { formatCurrency, toNumber } from '@money/core/lib/money';
 import {
   CHART_ACTIVE_DOT,
   CHART_COLOR,
@@ -25,8 +25,8 @@ import {
   CHART_Y_AXIS_WIDTH,
   formatTooltipAmount,
   lineAxis,
-} from '@/lib/chart';
-import { useProjectDisplayCurrency } from '@/store/project';
+} from '@money/core/lib/chart';
+import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 interface AssetHistoryChartProps {
   /** 생략하면 자본 계정을 뺀 전체 자산 합계 */

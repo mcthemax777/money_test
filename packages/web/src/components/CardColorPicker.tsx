@@ -1,7 +1,7 @@
 'use client';
 
-import { CARD_COLOR_OPTIONS } from '@/lib/card-color';
-import { useTranslation } from '@/lib/i18n';
+import { CARD_COLOR_OPTIONS } from '@money/core/lib/card-color';
+import { useTranslation } from '@money/core/lib/i18n';
 
 interface CardColorPickerProps {
   /** 고른 색. 빈 문자열이면 카드 종류의 기본색을 쓴다. */

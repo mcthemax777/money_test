@@ -1,67 +1,78 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useAuth } from '@/store/auth';
-import { useProject } from '@/store/project';
-import { apiClient } from '@/lib/api-client';
-import { useTranslation } from '@/lib/i18n';
-import Modal from '@/components/Modal';
-import CategoryFormFields, {
+import { useAuth } from '@money/core/store/auth';
+import { useProject } from '@money/core/store/project';
+import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import {
   NO_SUB_CATEGORIES,
-  filledSubCategories,
-  type SubCategoryRow,
-} from '@/components/CategoryFormFields';
+  useCategoryManager,
+  type CategoryFormValues,
+} from '@money/core/hooks/useCategoryManager';
+import Modal from '@/components/Modal';
+import CategoryFormFields from '@/components/CategoryFormFields';
 import PageHeader from '@/components/PageHeader';
-import type { Category } from '@/lib/types';
+import type { Category } from '@money/core/lib/types';
 import { useDragReorder } from '@/hooks/useDragReorder';
-import { apiErrorCode, useApiError } from '@/lib/api-error';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const FORM_ID = 'category-form';
 
+/**
+ * 지출·수입 두 단. 머리글 색은 가계 화면과 같다 (지출 빨강, 수입 초록).
+ *
+ * 넓은 화면은 두 단을 나란히 놓고, 좁은 화면은 탭으로 하나씩 보여 준다.
+ */
+const TYPE_PANELS: Array<{
+  type: 'expense' | 'income';
+  titleKey: MessageKey;
+  emptyKey: MessageKey;
+  text: string;
+}> = [
+  {
+    type: 'expense',
+    titleKey: 'categories.expenseTitle',
+    emptyKey: 'categories.expenseEmpty',
+    text: 'text-red-600',
+  },
+  {
+    type: 'income',
+    titleKey: 'categories.incomeTitle',
+    emptyKey: 'categories.incomeEmpty',
+    text: 'text-green-600',
+  },
+];
+
 
 export default function CategoriesPage() {
   const { t } = useTranslation();
-  const { messageOf } = useApiError();
-  const { isAuthenticated, loadUser } = useAuth();
+  const { loadUser } = useAuth();
   const { selectedProjectId } = useProject();
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const manager = useCategoryManager(selectedProjectId);
+  const { categories, isLoading, isSubmitting } = manager;
+
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<CategoryFormValues>({
     name: '',
-    type: 'expense' as 'income' | 'expense',
-    subCategories: NO_SUB_CATEGORIES as SubCategoryRow[],
+    type: 'expense',
+    subCategories: NO_SUB_CATEGORIES,
     defaultIsExtra: false,
   });
-  const [isSubmitting, setIsSubmitting] = useState(false);
+  /**
+   * 좁은 화면에서 보고 있는 단. 넓은 화면에서는 두 단이 함께 보이므로 쓰이지 않는다.
+   *
+   * 화면 폭을 자바스크립트로 재지 않고 CSS로 가른다. 폭을 재면 첫 그림과 서버가
+   * 그린 것이 어긋나 깜빡인다.
+   */
+  const [activeType, setActiveType] = useState<'expense' | 'income'>('expense');
 
   useEffect(() => {
     loadUser();
   }, [loadUser]);
-
-  // 로그인 확인과 리디렉트는 AppShell(레이아웃)이 담당한다.
-  useEffect(() => {
-    if (!isAuthenticated || !selectedProjectId) return;
-
-    const loadCategories = async () => {
-      try {
-        setIsLoading(true);
-        const data = await apiClient.getCategories(selectedProjectId);
-        setCategories(data || []);
-      } catch (err) {
-        setError(t('categories.loadFailed'));
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    loadCategories();
-  }, [isAuthenticated, selectedProjectId]);
 
   const handleModalClose = () => {
     setIsModalOpen(false);
@@ -80,182 +91,45 @@ export default function CategoriesPage() {
     setIsDetailModalOpen(true);
   };
 
-  const handleDetailEditClick = () => {
-    if (!selectedCategory) return;
-    setEditingId(selectedCategory.id);
-    let subCategories: SubCategoryRow[] = NO_SUB_CATEGORIES;
-    if (!selectedCategory.parentId) {
-      const subs = categories
-        .filter((c) => c.parentId === selectedCategory.id)
-        .map((c) => ({ id: c.id, name: c.name, defaultIsExtra: c.defaultIsExtra || false }));
-      subCategories = subs;
-    }
-    setFormData({
-      name: selectedCategory.name,
-      type: selectedCategory.type,
-      subCategories,
-      defaultIsExtra: selectedCategory.defaultIsExtra || false,
-    });
-    setIsDetailModalOpen(false);
+  /** 고칠 대상을 폼에 편다. 상세 팝업과 목록이 같은 경로를 쓴다. */
+  const openEditor = (category: Category) => {
+    setEditingId(category.id);
+    setFormData(manager.formValuesOf(category));
     setIsModalOpen(true);
     setError('');
   };
 
-  const handleEditClick = (category: Category) => {
-    setEditingId(category.id);
-    let subCategories: SubCategoryRow[] = NO_SUB_CATEGORIES;
-    if (!category.parentId) {
-      const subs = categories
-        .filter((c) => c.parentId === category.id)
-        .map((c) => ({ id: c.id, name: c.name, defaultIsExtra: c.defaultIsExtra || false }));
-      subCategories = subs;
-    }
-    setFormData({
-      name: category.name,
-      type: category.type,
-      subCategories,
-      defaultIsExtra: category.defaultIsExtra || false,
-    });
-    setIsModalOpen(true);
-    setError('');
+  const handleDetailEditClick = () => {
+    if (!selectedCategory) return;
+    setIsDetailModalOpen(false);
+    openEditor(selectedCategory);
   };
 
   const handleDeleteClick = async (id: string) => {
-    const category = categories.find((c) => c.id === id);
-    if (category?.isDefault) {
-      setError(t('categories.deleteDefault'));
-      return;
-    }
     if (!window.confirm(t('account.deleteConfirm'))) return;
-    try {
-      setIsSubmitting(true);
-      await apiClient.deleteCategory(id);
-      const data = await apiClient.getCategories();
-      setCategories(data || []);
-    } catch (err: any) {
-      const errorMsg = messageOf(err, 'categories.deleteFailed');
-      setError(errorMsg);
-    } finally {
-      setIsSubmitting(false);
-    }
+
+    const result = await manager.remove(id);
+    setError(result.ok ? '' : result.message);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // 메인 카테고리명 검증
-    if (!formData.name.trim()) {
-      setError(t('categories.nameRequired'));
+    const result = await manager.save(editingId, formData);
+    if (!result.ok) {
+      setError(result.message);
       return;
     }
 
-    // 소분류명 검증 (비어있는 소분류는 제거)
-    const filteredSubCategories = filledSubCategories(formData.subCategories);
-
-    try {
-      setIsSubmitting(true);
-      if (editingId) {
-        await apiClient.updateCategory(editingId, {
-          name: formData.name,
-          defaultIsExtra: formData.defaultIsExtra,
-        });
-
-        const existingSubs = categories.filter((c) => c.parentId === editingId);
-        const newSubs = filteredSubCategories;
-
-        // 제거된 소분류 삭제
-        for (const existingSub of existingSubs) {
-          if (!newSubs.some((sub) => sub.id === existingSub.id) && !existingSub.isDefault) {
-            try {
-              await apiClient.deleteCategory(existingSub.id);
-            } catch (err: any) {
-              // 서버가 붙인 코드로 가른다. 오류 문장을 뒤지면 언어가 바뀔 때 깨진다.
-              if (apiErrorCode(err) === 'CATEGORY_IN_USE') {
-                throw new Error(t('categories.subInUse', { name: existingSub.name }));
-              }
-              throw err;
-            }
-          }
-        }
-
-        // 수정된 소분류 업데이트, 새로운 소분류 생성
-        for (const sub of newSubs) {
-          if (sub.id) {
-            // 기존 소분류 (수정)
-            const existing = existingSubs.find((es) => es.id === sub.id);
-            if (existing && (existing.name !== sub.name || existing.defaultIsExtra !== sub.defaultIsExtra)) {
-              await apiClient.updateCategory(sub.id, {
-                name: sub.name,
-                defaultIsExtra: sub.defaultIsExtra,
-              });
-            }
-          } else {
-            // 새로운 소분류
-            await apiClient.createCategory({
-              name: sub.name,
-              type: formData.type,
-              parentId: editingId,
-              defaultIsExtra: sub.defaultIsExtra,
-            });
-          }
-        }
-      } else {
-        await apiClient.createCategory({
-          name: formData.name,
-          type: formData.type,
-          defaultIsExtra: formData.defaultIsExtra,
-        });
-        const categoryList = await apiClient.getCategories();
-        const mainCategory = categoryList?.find((c: Category) => c.name === formData.name && !c.parentId);
-
-        if (mainCategory) {
-          for (const sub of filteredSubCategories) {
-            await apiClient.createCategory({
-              name: sub.name,
-              type: formData.type,
-              parentId: mainCategory.id,
-              defaultIsExtra: sub.defaultIsExtra,
-            });
-          }
-        }
-      }
-
-      const data = await apiClient.getCategories();
-      setCategories(data || []);
-      setFormData({
-        name: '',
-        type: 'expense',
-        subCategories: NO_SUB_CATEGORIES,
-        defaultIsExtra: false,
-      });
-      setEditingId(null);
-      setError('');
-      setIsModalOpen(false);
-    } catch (err: any) {
-      setError(
-        err?.message || t(editingId ? 'categories.editFailed' : 'categories.addFailed'),
-      );
-    } finally {
-      setIsSubmitting(false);
-    }
+    handleModalClose();
   };
 
-  /** 드래그로 바꾼 순서를 저장한다. 실패하면 목록을 다시 받아 원래 순서로 되돌린다. */
   const handleReorder = async (ids: string[]) => {
-    try {
-      const updated = await apiClient.reorderCategories(ids, selectedProjectId);
-      setCategories(updated as Category[]);
-    } catch (err: any) {
-      setError(messageOf(err, 'assets.orderSaveFailed'));
-      // 저장이 실패했으면 화면에 남은 순서가 서버와 다르다. 다시 받아 맞춘다.
-      const data = await apiClient.getCategories(selectedProjectId);
-      setCategories(data || []);
-    }
+    const result = await manager.reorder(ids);
+    setError(result.ok ? '' : result.message);
   };
 
   const mainCategories = categories.filter((c) => !c.parentId);
-  const expenseCategories = mainCategories.filter((c) => c.type === 'expense');
-  const incomeCategories = mainCategories.filter((c) => c.type === 'income');
 
   return (
     <div className="space-y-6">
@@ -277,35 +151,60 @@ export default function CategoriesPage() {
         <p className="text-gray-600">{t('categories.empty')}</p>
       ) : (
         <>
+          {/*
+            좁은 화면에서는 두 단이 세로로 쌓여 수입이 지출 목록 한참 아래로 밀린다.
+            탭으로 하나씩 보여 준다. 두 단이 나란히 보이는 넓은 화면에서는 탭이
+            고를 것이 없으므로 감춘다.
+
+            고른 탭은 파랑이다. 분류별·결제수단 화면의 탭과 같은 색이라 "고른 것"이
+            무엇을 뜻하는지 화면마다 다시 익힐 것이 없다.
+          */}
+          <div className="flex border-b border-gray-200 lg:hidden">
+            {TYPE_PANELS.map((panel) => (
+              <button
+                key={panel.type}
+                type="button"
+                onClick={() => setActiveType(panel.type)}
+                aria-pressed={activeType === panel.type}
+                className={`flex-1 px-4 py-2 font-medium transition ${
+                  activeType === panel.type
+                    ? 'border-b-2 border-blue-600 text-blue-600'
+                    : 'text-gray-600 hover:text-gray-800'
+                }`}
+              >
+                {t(panel.titleKey)}
+              </button>
+            ))}
+          </div>
+
           {/* 가계·자산 화면과 같은 2단 배치. 왼쪽 지출, 오른쪽 수입. */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div>
-              <h2 className="text-lg font-bold text-red-600 mb-4">{t('categories.expenseTitle')}</h2>
-              {expenseCategories.length === 0 ? (
-                <p className="text-gray-600">{t('categories.expenseEmpty')}</p>
-              ) : (
-                <CategoryList
-                  cats={expenseCategories}
-                  allCategories={categories}
-                  onCategoryClick={handleCategoryClick}
-                  onReorder={handleReorder}
-                />
-              )}
-            </div>
+            {TYPE_PANELS.map((panel) => {
+              const cats = mainCategories.filter((c) => c.type === panel.type);
 
-            <div>
-              <h2 className="text-lg font-bold text-green-600 mb-4">{t('categories.incomeTitle')}</h2>
-              {incomeCategories.length === 0 ? (
-                <p className="text-gray-600">{t('categories.incomeEmpty')}</p>
-              ) : (
-                <CategoryList
-                  cats={incomeCategories}
-                  allCategories={categories}
-                  onCategoryClick={handleCategoryClick}
-                  onReorder={handleReorder}
-                />
-              )}
-            </div>
+              return (
+                <div
+                  key={panel.type}
+                  // 좁은 화면에서는 고른 단만 남긴다.
+                  className={activeType === panel.type ? '' : 'hidden lg:block'}
+                >
+                  {/* 좁은 화면에서는 탭 글자가 같은 말을 하므로 머리글을 접는다. */}
+                  <h2 className={`hidden lg:block text-lg font-bold ${panel.text} mb-4`}>
+                    {t(panel.titleKey)}
+                  </h2>
+                  {cats.length === 0 ? (
+                    <p className="text-gray-600">{t(panel.emptyKey)}</p>
+                  ) : (
+                    <CategoryList
+                      cats={cats}
+                      allCategories={categories}
+                      onCategoryClick={handleCategoryClick}
+                      onReorder={handleReorder}
+                    />
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           {error && (

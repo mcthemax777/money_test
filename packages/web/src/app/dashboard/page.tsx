@@ -2,27 +2,27 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/store/auth';
-import { useUserFilter } from '@/store/user-filter';
+import { useAuth } from '@money/core/store/auth';
+import { useUserFilter } from '@money/core/store/user-filter';
 import {
   useMyPersonId,
   useProject,
   useProjectDisplayCurrency,
   useProjectTimeZone,
-} from '@/store/project';
-import { useBudget } from '@/store/budget';
-import { apiClient, type ReportPeriod } from '@/lib/api-client';
-import type { Account, Card, Category, Person } from '@/lib/types';
-import { toAmountString, toNumber } from '@/lib/money';
+} from '@money/core/store/project';
+import { useBudget } from '@money/core/store/budget';
+import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
+import type { Account, Card, Category, Person } from '@money/core/lib/types';
+import { toAmountString, toNumber } from '@money/core/lib/money';
 import {
   dateKeyOf,
   dayRangeQuery,
   currentYearMonth,
   formatYearMonth,
   monthQueryRange,
-} from '@/lib/datetime';
-import { countedShare } from '@/lib/entries';
-import { useTranslation, type MessageKey } from '@/lib/i18n';
+} from '@money/core/lib/datetime';
+import { countedShare } from '@money/core/lib/entries';
+import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import Modal from '@/components/Modal';
 import TransactionCalendar from '@/components/TransactionCalendar';
 import TransactionListView from '@/components/TransactionListView';
@@ -38,11 +38,11 @@ import EntryEditor, {
   type ReferenceDataPatch,
 } from '@/components/EntryEditor';
 import BudgetScheduleList from '@/components/BudgetScheduleList';
-import { useDebouncedValue } from '@/hooks/useDebouncedValue';
-import { usePersonFilterSync } from '@/hooks/usePersonFilterSync';
+import { useDebouncedValue } from '@money/core/hooks/useDebouncedValue';
+import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import { useProjectGuard } from '@/hooks/useProjectGuard';
 import type { EntryFilterQuery } from '@money/types';
-import { useApiError } from '@/lib/api-error';
+import { useApiError } from '@money/core/lib/api-error';
 
 /**
  * 기간 보기에서 그릴 달력 장수 상한.
@@ -81,6 +81,9 @@ const BUDGET_SCOPE_OPTIONS: Array<{
   },
 ];
 
+/** 가계 화면의 보기 방식. 날짜별·분류별·수단별 셋이다. */
+type ViewType = 'calendar' | 'budget' | 'payment-method';
+
 export default function TransactionsPage() {
   const { t } = useTranslation();
   const { messageOf } = useApiError();
@@ -116,7 +119,22 @@ export default function TransactionsPage() {
   const [displayEntries, setDisplayEntries] = useState<EntryListItem[]>([]);
   const [currentMonth, setCurrentMonth] = useState<number>(() => currentYearMonth(timeZone).month);
   const [currentYear, setCurrentYear] = useState<number>(() => currentYearMonth(timeZone).year);
-  const [viewType, setViewType] = useState<'calendar' | 'budget' | 'payment-method'>('calendar');
+  const [viewType, setViewType] = useState<ViewType>('calendar');
+  /*
+   * 한 번 열어 본 보기는 지우지 않고 감춘다.
+   *
+   * 옮길 때마다 지우고 다시 만들면 그 사이 화면이 빈다. 대신 다시 열 때마다 서버에
+   * 새로 물어본다(visits). 프로젝트를 여럿이 함께 쓰므로 내가 보지 않는 동안 남이
+   * 고쳤을 수 있다. 받아 둔 값을 먼저 보여 주고 새 값이 오면 갈아 끼운다.
+   * 앱의 가계 화면도 같은 방식이다.
+   */
+  const [visited, setVisited] = useState<ViewType[]>(['calendar']);
+  const [visits, setVisits] = useState<Record<ViewType, number>>({
+    calendar: 0,
+    budget: 0,
+    'payment-method': 0,
+  });
+
   /**
    * 어느 구간을 보고 있는지.
    *
@@ -313,6 +331,15 @@ export default function TransactionsPage() {
     setSummary(summaryRes ?? { income: '0', expense: '0' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProjectId, currentYear, currentMonth, rangeKey, appliedFilter]);
+
+  /** 보기를 옮긴다. 다시 연 보기는 그 자리에서 새로 받는다. */
+  const openView = (next: ViewType) => {
+    setViewType(next);
+    setVisited((prev) => (prev.includes(next) ? prev : [...prev, next]));
+    setVisits((prev) => ({ ...prev, [next]: prev[next] + 1 }));
+    // 날짜별은 이 화면이 들고 있는 값이라 여기서 직접 다시 받는다.
+    if (next === 'calendar') reloadPeriod();
+  };
 
   useEffect(() => {
     reloadPeriod().catch((err: unknown) => {
@@ -715,7 +742,7 @@ export default function TransactionsPage() {
         right={
           <div className="flex gap-2 bg-gray-200 rounded-lg p-1">
               <button
-                onClick={() => setViewType('calendar')}
+                onClick={() => openView('calendar')}
                 className={`px-4 py-2 rounded-md font-medium transition ${
                   viewType === 'calendar'
                     ? 'bg-white text-blue-600 shadow'
@@ -725,7 +752,7 @@ export default function TransactionsPage() {
                 {t('ledger.tab.daily')}
               </button>
               <button
-                onClick={() => setViewType('budget')}
+                onClick={() => openView('budget')}
                 className={`px-4 py-2 rounded-md font-medium transition ${
                   viewType === 'budget'
                     ? 'bg-white text-blue-600 shadow'
@@ -735,7 +762,7 @@ export default function TransactionsPage() {
                 {t('ledger.tab.category')}
               </button>
               <button
-                onClick={() => setViewType('payment-method')}
+                onClick={() => openView('payment-method')}
                 className={`px-4 py-2 rounded-md font-medium transition ${
                   viewType === 'payment-method'
                     ? 'bg-white text-blue-600 shadow'
@@ -757,23 +784,24 @@ export default function TransactionsPage() {
         }
       />
 
-      <div>
-        {viewType === 'budget' ? (
-          /*
+      {/* 감춘 보기도 그려 둔 채로 남긴다. 다시 누르면 받아 둔 값이 바로 보인다. */}
+      {visited.includes('budget') && (
+        <div hidden={viewType !== 'budget'}>
+          {/*
             분류별.
 
             달 단위와 기간 보기가 같은 화면을 쓴다. 다른 점은 예산뿐이라, 예산이
             있는 달 단위에서만 budgets 를 넘겨 진행률 줄이 붙게 한다. 기간에는
             예산을 넘기지 않는다. 예산은 달마다 정하는 값이라 두 달 반짜리 구간에
             얼마인지가 정의되지 않는다.
-          */
+          */}
           <CategoryTab
             period={reportPeriod}
             projectId={selectedProjectId}
             filter={appliedFilter}
             categories={categories}
             onEntryClick={handleTransactionClick}
-            reloadToken={dataVersion}
+            reloadToken={dataVersion + visits.budget}
             type={budgetType}
             onTypeChange={setBudgetType}
             selectedId={selectedCategoryId}
@@ -785,30 +813,36 @@ export default function TransactionsPage() {
             budgets={isRangeMode ? undefined : monthlyBudgets}
             onEditBudget={isRangeMode ? undefined : openDetailBudgetModal}
           />
-        ) : isLoading ? (
-          <p className="text-gray-600">{t('common.loading')}</p>
-        ) : viewType === 'payment-method' ? (
-          /* 수단별 탭은 거래가 없어도 계좌·카드를 0원으로 보여준다.
-             "거래가 없습니다"로 먼저 끊으면 그 화면에 도달할 수 없다. */
+        </div>
+      )}
+
+      {visited.includes('payment-method') && (
+        <div hidden={viewType !== 'payment-method'}>
+          {/* 수단별 탭은 거래가 없어도 계좌·카드를 0원으로 보여준다.
+              "거래가 없습니다"로 먼저 끊으면 그 화면에 도달할 수 없다. */}
           <PaymentMethodTab
             period={reportPeriod}
             projectId={selectedProjectId}
             filter={appliedFilter}
             onEntryClick={handleTransactionClick}
-            reloadToken={dataVersion}
+            reloadToken={dataVersion + visits['payment-method']}
             /* 정산 팝업이 결제 통장과 그 주인을 찾는 데 쓴다 */
             cards={cards}
             accounts={accounts}
             onCardChange={handleEntryChange}
           />
+        </div>
+      )}
+
+      <div hidden={viewType !== 'calendar'}>
+        {isLoading ? (
+          <p className="text-gray-600">{t('common.loading')}</p>
         ) : visibleEntries.length === 0 ? (
           /* 필터로 비었는지 원래 없는지 구분해 준다. 체크를 다 풀면 결과가 없는 게 정상이다. */
           <p className="text-gray-600">
-            {isFilterNarrowed
-              ? t('ledger.noFiltered')
-              : t('feed.empty')}
+            {isFilterNarrowed ? t('ledger.noFiltered') : t('feed.empty')}
           </p>
-        ) : viewType === 'calendar' ? (
+        ) : (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             <div className="lg:col-span-1 space-y-4">
               {/*
@@ -859,30 +893,14 @@ export default function TransactionsPage() {
             {/* 달력이 날짜를 고르는 도구라서 좁은 화면에서도 달력을 위에 둔다 */}
             {(displayEntries.length > 0 || !startDate) && (
               <div ref={dateTransactionsRef} className="lg:col-span-1">
-                {!startDate ? (
-                  <TransactionListView
-                    entries={visibleEntries}
-                    share={share}
-                    onEntryClick={handleTransactionClick}
-                  />
-                ) : (
-                  <>
-                    <TransactionListView
-                      entries={displayEntries}
-                      share={share}
-                      onEntryClick={handleTransactionClick}
-                    />
-                  </>
-                )}
+                <TransactionListView
+                  entries={startDate ? displayEntries : visibleEntries}
+                  share={share}
+                  onEntryClick={handleTransactionClick}
+                />
               </div>
             )}
           </div>
-        ) : (
-          <TransactionListView
-            entries={visibleEntries}
-            share={share}
-            onEntryClick={handleTransactionClick}
-          />
         )}
       </div>
 

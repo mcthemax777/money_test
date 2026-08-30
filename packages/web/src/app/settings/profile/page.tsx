@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useAuth } from '@/store/auth';
-import { apiClient } from '@/lib/api-client';
+import { useAuth } from '@money/core/store/auth';
+import { apiClient } from '@money/core/lib/api-client';
 import { UserAvatar } from '@/components/UserAvatar';
 import PageHeader from '@/components/PageHeader';
-import { useTranslation } from '@/lib/i18n';
-import { useApiError } from '@/lib/api-error';
+import { useTranslation } from '@money/core/lib/i18n';
+import { useApiError } from '@money/core/lib/api-error';
 
 export default function ProfilePage() {
   const router = useRouter();

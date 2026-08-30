@@ -1,25 +1,25 @@
 'use client';
 
 import { forwardRef, useImperativeHandle, useMemo, useState } from 'react';
-import { useUserFilter } from '@/store/user-filter';
+import { useUserFilter } from '@money/core/store/user-filter';
 import {
   useMyPersonId,
   useProjectDisplayCurrency,
   useProjectLedgerCurrency,
   useProjectTimeZone,
-} from '@/store/project';
-import { useExchangeRates } from '@/hooks/useExchangeRates';
+} from '@money/core/store/project';
+import { useExchangeRates } from '@money/core/hooks/useExchangeRates';
 import { useInstitutions } from '@/hooks/useInstitutions';
-import { apiClient } from '@/lib/api-client';
-import { useTranslation, type MessageKey } from '@/lib/i18n';
-import type { Account, Card, Category, Person } from '@/lib/types';
-import { formatCurrency, formatNumber, toAmountString, toNumber } from '@/lib/money';
+import { apiClient } from '@money/core/lib/api-client';
+import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import type { Account, Card, Category, Person } from '@money/core/lib/types';
+import { formatCurrency, formatNumber, toAmountString, toNumber } from '@money/core/lib/money';
 import {
   dayOfMonthHint,
   dayOfMonthOptions,
   DEFAULT_PAYMENT_DUE_DAY,
   DEFAULT_STATEMENT_CLOSING_DAY,
-} from '@/lib/day-of-month';
+} from '@money/core/lib/day-of-month';
 import {
   dateKeyOf,
   formatDateTime,
@@ -27,7 +27,7 @@ import {
   nowTimeKey,
   timeInputOf,
   todayKey,
-} from '@/lib/datetime';
+} from '@money/core/lib/datetime';
 import {
   CURRENCY_LABEL,
   LEDGER_MIN_ENTRY_DATE_KEY,
@@ -52,7 +52,7 @@ import type { EntryListItem } from '@/components/TransactionItem';
 import CardColorPicker from '@/components/CardColorPicker';
 import ExtraAmountModal from '@/components/ExtraAmountModal';
 import CardPerformanceField from '@/components/CardPerformanceField';
-import { useApiError } from '@/lib/api-error';
+import { useApiError } from '@money/core/lib/api-error';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const ENTRY_FORM_ID = 'entry-form';

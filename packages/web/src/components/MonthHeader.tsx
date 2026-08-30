@@ -7,10 +7,10 @@ import {
   formatMonthShort,
   formatYearMonth,
   formatYearOnly,
-} from '@/lib/datetime';
-import { useTranslation } from '@/lib/i18n';
-import { formatCurrency } from '@/lib/money';
-import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
+} from '@money/core/lib/datetime';
+import { useTranslation } from '@money/core/lib/i18n';
+import { formatCurrency } from '@money/core/lib/money';
+import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 
 interface MonthHeaderProps {
   year: number;

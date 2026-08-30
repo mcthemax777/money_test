@@ -2,7 +2,7 @@
 
 import { useEffect } from 'react';
 
-import { useTranslation } from '@/lib/i18n';
+import { useTranslation } from '@money/core/lib/i18n';
 
 /**
  * 문서의 언어 표시(`<html lang>`)와 탭 제목을 고른 언어에 맞춘다.

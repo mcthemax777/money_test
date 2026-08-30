@@ -3,22 +3,22 @@
 import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { apiClient } from '@/lib/api-client';
-import type { Account, Card, Category, Person } from '@/lib/types';
-import { formatCurrency, toAmountString, toNumber } from '@/lib/money';
-import { sumNetWorth, type NetWorthParts } from '@/lib/net-worth';
-import { useUserFilter } from '@/store/user-filter';
-import { formatDate, monthInputToIso } from '@/lib/datetime';
+import { apiClient } from '@money/core/lib/api-client';
+import type { Account, Card, Category, Person } from '@money/core/lib/types';
+import { formatCurrency, toAmountString, toNumber } from '@money/core/lib/money';
+import { sumNetWorth, type NetWorthParts } from '@money/core/lib/net-worth';
+import { useUserFilter } from '@money/core/store/user-filter';
+import { formatDate, monthInputToIso } from '@money/core/lib/datetime';
 import { type ReportDto } from '@money/types';
 import ChoiceModal from '@/components/ChoiceModal';
 import { useDragReorder } from '@/hooks/useDragReorder';
-import { usePersonFilterSync } from '@/hooks/usePersonFilterSync';
+import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import {
   dayOfMonthHint,
   dayOfMonthOptions,
   DEFAULT_PAYMENT_DUE_DAY,
   DEFAULT_STATEMENT_CLOSING_DAY,
-} from '@/lib/day-of-month';
+} from '@money/core/lib/day-of-month';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 /** 구성원 상세에 보여 줄 최근 거래 수. 더 보려면 가계 화면에서 사람 필터를 쓴다. */
@@ -41,7 +41,7 @@ import {
   useProject,
   useProjectDisplayCurrency,
   useProjectTimeZone,
-} from '@/store/project';
+} from '@money/core/store/project';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import PersonModal from '@/components/PersonModal';
@@ -63,9 +63,9 @@ import EntryEditor, {
   type ReferenceDataPatch,
 } from '@/components/EntryEditor';
 import { useInstitutions } from '@/hooks/useInstitutions';
-import { accountTypeLabel } from '@/lib/account-type';
-import { useTranslation } from '@/lib/i18n';
-import { useApiError } from '@/lib/api-error';
+import { accountTypeLabel } from '@money/core/lib/account-type';
+import { useTranslation } from '@money/core/lib/i18n';
+import { useApiError } from '@money/core/lib/api-error';
 
 
 

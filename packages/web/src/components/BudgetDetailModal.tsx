@@ -6,8 +6,8 @@ import { X } from 'lucide-react';
 import Modal from './Modal';
 import type { EntryListItem } from './TransactionItem';
 import TransactionListView from './TransactionListView';
-import { apiClient, type ReportPeriod } from '@/lib/api-client';
-import { formatCurrency, toNumber } from '@/lib/money';
+import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
+import { formatCurrency, toNumber } from '@money/core/lib/money';
 import {
   CHART_BAR_RADIUS,
   CHART_COLOR,
@@ -19,18 +19,18 @@ import {
   barDomain,
   formatAxisAmount,
   formatTooltipAmount,
-} from '@/lib/chart';
-import { buildDailyCumulative, countedShare, monthDateKeys } from '@/lib/entries';
-import { dayRangeQuery, formatMonthShort, throughDayOf } from '@/lib/datetime';
-import { activeLocale, translate, useTranslation } from '@/lib/i18n';
-import { loadPreviousMonths } from '@/lib/month-compare';
+} from '@money/core/lib/chart';
+import { buildDailyCumulative, countedShare, monthDateKeys } from '@money/core/lib/entries';
+import { dayRangeQuery, formatMonthShort, throughDayOf } from '@money/core/lib/datetime';
+import { activeLocale, translate, useTranslation } from '@money/core/lib/i18n';
+import { loadPreviousMonths } from '@money/core/lib/month-compare';
 import DailyCumulativeChart, {
   type CumulativeSeries,
   type DailyCumulativePoint,
 } from './DailyCumulativeChart';
 import type { EntryFilterQuery } from '@money/types';
-import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
-import type { Category } from '@/lib/types';
+import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
+import type { Category } from '@money/core/lib/types';
 
 const COLORS = [
   '#FF6B6B',

@@ -6,12 +6,12 @@ import {
 } from 'recharts';
 import type { EntryListItem } from './TransactionItem';
 import TransactionListView from './TransactionListView';
-import { apiClient, type ReportPeriod } from '@/lib/api-client';
-import { formatCurrency, toNumber } from '@/lib/money';
-import { buildDailyCumulative, countedShare, monthDateKeys } from '@/lib/entries';
-import { dayRangeQuery, formatMonthShort, throughDayOf } from '@/lib/datetime';
-import { useTranslation } from '@/lib/i18n';
-import { loadPreviousMonths } from '@/lib/month-compare';
+import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
+import { formatCurrency, toNumber } from '@money/core/lib/money';
+import { buildDailyCumulative, countedShare, monthDateKeys } from '@money/core/lib/entries';
+import { dayRangeQuery, formatMonthShort, throughDayOf } from '@money/core/lib/datetime';
+import { useTranslation } from '@money/core/lib/i18n';
+import { loadPreviousMonths } from '@money/core/lib/month-compare';
 import DailyCumulativeChart, {
   type CumulativeSeries,
   type DailyCumulativePoint,
@@ -27,10 +27,10 @@ import {
   barDomain,
   formatAxisAmount,
   formatTooltipAmount,
-} from '@/lib/chart';
+} from '@money/core/lib/chart';
 import type { EntryFilterQuery } from '@money/types';
-import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
-import type { Account, Card } from '@/lib/types';
+import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
+import type { Account, Card } from '@money/core/lib/types';
 import Modal from './Modal';
 import CardSettlementPanel from './CardSettlementPanel';
 

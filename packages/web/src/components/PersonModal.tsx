@@ -1,11 +1,11 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { apiClient } from '@/lib/api-client';
+import { apiClient } from '@money/core/lib/api-client';
 import Modal from '@/components/Modal';
-import { useTranslation } from '@/lib/i18n';
-import type { Person } from '@/lib/types';
-import { useApiError } from '@/lib/api-error';
+import { useTranslation } from '@money/core/lib/i18n';
+import type { Person } from '@money/core/lib/types';
+import { useApiError } from '@money/core/lib/api-error';
 
 
 /** 하단 고정 버튼과 본문 form을 잇는 id */

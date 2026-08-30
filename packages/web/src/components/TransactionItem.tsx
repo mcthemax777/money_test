@@ -1,10 +1,10 @@
 'use client';
 
 import type { EntryListItem } from '@money/types';
-import { useTranslation, type MessageKey } from '@/lib/i18n';
-import { formatCurrency, formatOriginal, toNumber } from '@/lib/money';
-import { formatTime } from '@/lib/datetime';
-import { useProjectDisplayCurrency, useProjectTimeZone } from '@/store/project';
+import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { formatCurrency, formatOriginal, toNumber } from '@money/core/lib/money';
+import { formatTime } from '@money/core/lib/datetime';
+import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 
 /**
  * 서버가 전표를 한 줄로 펴서 주는 형태.
@@ -47,54 +47,35 @@ const SIGN_BY_KIND: Partial<Record<EntryListItem['kind'], string>> = {
 const TWO_SIDED: Array<EntryListItem['kind']> = ['transfer', 'card_payment', 'adjustment'];
 
 const TITLE_KEY_BY_KIND: Partial<Record<EntryListItem['kind'], MessageKey>> = {
-  transfer: 'entry.transfer',
   adjustment: 'entry.adjustment',
 };
 
 /**
- * 이 거래가 합계에 들어가는지.
+ * 그 줄의 이름.
  *
- * 이체와 카드사 이체는 목록에 보이지만 수입에도 지출에도 잡히지 않는다.
- * 내 계좌 사이의 이동이고, 카드 사용액은 그을 때 이미 지출로 잡혔기 때문이다.
- * 수수료가 붙은 이체는 그 수수료만 지출이라 예외로 둔다.
+ * 카드사 이체는 어느 카드 대금인지가 이름이다 ("신한 대금 결제"). 방향이 뜻을
+ * 바꾸므로 환불 입금은 다른 문구를 쓴다.
+ *
+ * 이체는 "어디서 어디로"를 이름으로 올린다. "이체" 한 마디는 목록의 모든 이체 줄에
+ * 똑같이 적혀 어느 거래인지 가려 주지 못한다. 계좌 이름을 못 받은 경우에만
+ * 그 문구로 물러선다.
  */
-const NOT_COUNTED: Array<EntryListItem['kind']> = ['transfer', 'card_payment'];
-
-/** 카드사 이체는 방향이 뜻을 바꾼다 */
-function titleOf(t: ReturnType<typeof useTranslation>['t'], entry: EntryListItem): string {
+function titleOf(
+  t: ReturnType<typeof useTranslation>['t'],
+  entry: EntryListItem,
+  flow: string,
+): string {
   if (entry.kind === 'card_payment') {
-    return t(entry.cardTransferDirection === 'refund' ? 'entry.cardRefund' : 'entry.cardPayment');
+    const name = entry.cardName ?? t('editor.methodCard');
+    return t(entry.cardTransferDirection === 'refund' ? 'entry.cardRefund' : 'entry.cardPayment', {
+      name,
+    });
   }
+
+  if (entry.kind === 'transfer') return flow || t('entry.transfer');
 
   const key = TITLE_KEY_BY_KIND[entry.kind];
   return key ? t(key) : entry.description;
-}
-
-/** 배지 하나. 뜻을 담은 색은 금액이 쓰므로 배지는 회색으로 물러선다. */
-/**
- * 한 줄에 붙는 작은 표시.
- *
- * `tone`은 그 표시가 돈을 어느 쪽으로 움직였는지다. 과소비는 지출과 같은 빨강,
- * 추가 수입은 수입과 같은 초록이라 위 금액 색과 같은 이야기를 한다.
- */
-function Badge({
-  children,
-  tone = 'muted',
-}: {
-  children: React.ReactNode;
-  tone?: 'muted' | 'expense' | 'income';
-}) {
-  const style =
-    tone === 'expense'
-      ? 'bg-red-50 text-red-600'
-      : tone === 'income'
-        ? 'bg-green-50 text-green-600'
-        : 'bg-gray-100 text-gray-500';
-  return (
-    <span className={`shrink-0 rounded px-1.5 py-px text-[11px] font-medium ${style}`}>
-      {children}
-    </span>
-  );
 }
 
 /**
@@ -102,7 +83,7 @@ function Badge({
  *
  * 휴대폰에서 한 화면에 여러 건이 들어와야 하므로 두 줄로 고정한다.
  *   1줄: 무슨 거래인가 + 얼마
- *   2줄: 분류·결제수단·시각 같은 부속 정보 + 외화 원금액
+ *   2줄: 시각 같은 부속 정보 + 외화 원금액
  * 긴 이름은 잘라 낸다. 줄이 늘어나면 카드마다 높이가 달라져 훑어보기 어렵다.
  */
 export default function TransactionItem({ entry, onClick, isSelected }: TransactionItemProps) {
@@ -117,32 +98,38 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
 
   const time = formatTime(entry.date, timeZone);
   const original = formatOriginal(entry);
-  const showNotCounted = NOT_COUNTED.includes(entry.kind) && !hasFee;
   const hasExtra = toNumber(entry.extraAmount) > 0;
 
+  /*
+   * "보낸 곳 → 받은 곳". 계좌 사이를 오가는 거래에만 만든다.
+   *
+   * 한쪽 이름이라도 비면 만들지 않는다. 잔액 조정은 상대가 없고, 그때 "농협 → "
+   * 같은 반쪽짜리 화살표를 그리면 받는 곳이 지워진 것처럼 읽힌다.
+   */
+  const flowTo = entry.toAccountName ?? entry.cardName;
+  const flow =
+    TWO_SIDED.includes(entry.kind) && entry.accountName && flowTo
+      ? `${entry.accountName} → ${flowTo}`
+      : '';
+
   // 카테고리는 "대분류 > 소분류"로 표시한다. 대분류만 지정한 거래는 앞부분만 나온다.
+  // 부속 정보 줄에서는 뺐지만, 설명이 빈 거래의 이름으로는 여전히 쓴다.
   const categoryLabel = entry.parentCategoryName
     ? `${entry.parentCategoryName} > ${entry.categoryName}`
     : entry.categoryName;
 
   // 설명을 비워 둔 거래도 있다. 그때는 분류가 그 거래의 이름 노릇을 한다.
-  const title = titleOf(t, entry) || categoryLabel || t('entry.noTitle');
+  const title = titleOf(t, entry, flow) || categoryLabel || t('entry.noTitle');
 
   /*
    * 2줄에 들어가는 부속 정보. 있는 것만 " · "로 잇는다.
    *
-   * 계좌 사이를 오가는 거래는 분류가 없고 "어디서 어디로"가 그 자리를 대신한다.
-   * 이체 수수료의 분류는 그 수수료가 무슨 지출인지 알려 주므로 함께 남긴다.
+   * 어느 거래든 시각만 적는다. 분류와 결제수단은 거래를 눌러 상세에서 본다.
+   *
+   * 잔액 조정은 상대 계좌가 있으면 함께 남긴다. 제목이 "잔액 조정"뿐이라 어느
+   * 계좌 이야기인지가 이 줄에만 있다.
    */
-  const meta = (
-    TWO_SIDED.includes(entry.kind)
-      ? [
-          `${entry.accountName} → ${entry.toAccountName ?? entry.cardName}`,
-          hasFee ? entry.feeCategoryName : null,
-          time,
-        ]
-      : [categoryLabel, entry.cardName ?? entry.accountName, time]
-  )
+  const meta = (entry.kind === 'adjustment' ? [flow, time] : [time])
     .filter(Boolean)
     .join(' · ');
 
@@ -166,44 +153,54 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
       </div>
 
       {/* 2줄에 담을 것이 하나도 없는 거래도 있다. 그때는 빈 줄을 만들지 않는다. */}
-      {(meta || hasExtra || showNotCounted || hasFee || original) && (
+      {(meta || hasExtra || hasFee || original) && (
       <div className="mt-0.5 flex items-center gap-1.5 text-xs text-gray-500">
         <span className="min-w-0 truncate">{meta}</span>
 
-        {/*
-          과소비·추가 수입은 금액까지 적는다. 표시만 있으면 "얼마가 과했나"를
-          거래를 열어 봐야 알 수 있는데, 그 값이 이 표시의 요점이다.
-        */}
-        {hasExtra && (
-          <Badge tone={entry.kind === 'income' ? 'income' : 'expense'}>
-            {entry.kind === 'income' ? t('entry.extraIncome') : t('entry.overspend')}{' '}
-            {formatCurrency(entry.extraAmount, displayCurrency)}
-          </Badge>
-        )}
-        {/* 이체와 카드사 이체는 수입도 지출도 아니다. 회색 금액과 같은 이야기를 글로 한 번 더 한다. */}
-        {showNotCounted && <Badge>{t('entry.notCounted')}</Badge>}
-        {hasFee && (
-          <span className="shrink-0 font-medium tabular-nums text-red-600">
-            {t('entry.fee', { amount: formatCurrency(fee, displayCurrency) })}
-          </span>
-        )}
+        {/* 금액이 붙는 표시들은 오른쪽 끝에 모은다. 위 줄의 금액과 같은 세로선에 선다. */}
+        <div className="ml-auto flex shrink-0 items-center gap-1.5">
+          {/*
+            외화가 얽힌 거래는 원래 금액을 함께 보여 준다. 위 금액은 언제나 기준통화
+            환산액이라 그것만으로는 카드 명세서와 대조할 수 없다. "$50.00 · 환율 1,380".
+          */}
+          {original && (
+            <span className="tabular-nums text-gray-400">
+              {original}
+              {/*
+                청구액이 아직 카드사 확정 전이라는 표시. 이 값이 붙어 있는 동안 위 금액은
+                서버 추정 환율로 만든 값이고, 카드 화면에서 명세서의 실제 청구액으로 확정한다.
+              */}
+              {entry.rateProvisional && (
+                <span className="ml-1 text-amber-600">· {t('entry.provisional')}</span>
+              )}
+            </span>
+          )}
 
-        {/*
-          외화가 얽힌 거래는 원래 금액을 함께 보여 준다. 위 금액은 언제나 기준통화
-          환산액이라 그것만으로는 카드 명세서와 대조할 수 없다. "$50.00 · 환율 1,380".
-        */}
-        {original && (
-          <span className="ml-auto shrink-0 tabular-nums text-gray-400">
-            {original}
-            {/*
-              청구액이 아직 카드사 확정 전이라는 표시. 이 값이 붙어 있는 동안 위 금액은
-              서버 추정 환율로 만든 값이고, 카드 화면에서 명세서의 실제 청구액으로 확정한다.
-            */}
-            {entry.rateProvisional && (
-              <span className="ml-1 text-amber-600">· {t('entry.provisional')}</span>
-            )}
-          </span>
-        )}
+          {hasFee && (
+            <span className="font-medium tabular-nums text-red-600">
+              {t('entry.fee', { amount: formatCurrency(fee, displayCurrency) })}
+            </span>
+          )}
+
+          {/*
+            과소비·추가 수입은 금액까지 적는다. 표시만 있으면 "얼마가 과했나"를
+            거래를 열어 봐야 알 수 있는데, 그 값이 이 표시의 요점이다.
+
+            수수료와 같은 모양이다. 둘 다 "이 거래에서 얼마가 어느 쪽으로 갔나"를
+            말하는 금액이라, 한쪽만 알약 배지로 두면 다른 뜻처럼 보인다. 색은 돈이
+            움직인 방향이다 (과소비 빨강, 추가 수입 초록).
+          */}
+          {hasExtra && (
+            <span
+              className={`font-medium tabular-nums ${
+                entry.kind === 'income' ? 'text-green-600' : 'text-red-600'
+              }`}
+            >
+              {entry.kind === 'income' ? t('entry.extraIncome') : t('entry.overspend')}{' '}
+              {formatCurrency(entry.extraAmount, displayCurrency)}
+            </span>
+          )}
+        </div>
       </div>
       )}
     </div>

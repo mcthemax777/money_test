@@ -24,23 +24,16 @@ import {
   CHART_Y_AXIS_WIDTH,
   formatTooltipAmount,
   lineAxis,
-} from '@/lib/chart';
-import { useTranslation } from '@/lib/i18n';
-import { useProjectDisplayCurrency } from '@/store/project';
+} from '@money/core/lib/chart';
+import type { CumulativeSeries, DailyCumulativePoint } from '@money/core/lib/entries';
+import { useTranslation } from '@money/core/lib/i18n';
+import { useProjectDisplayCurrency } from '@money/core/store/project';
 
-/** buildDailyCumulative 한 점 */
-export interface DailyCumulativePoint {
-  label: string;
-  amount: number;
-  cumulative: number;
-}
-
-/** 겹쳐 그릴 앞선 달 하나 */
-export interface CumulativeSeries {
-  /** 범례에 적을 이름. "7월" */
-  name: string;
-  points: DailyCumulativePoint[];
-}
+/*
+ * 그리는 값의 모양은 만드는 쪽(core의 buildDailyCumulative)에 있다. 이 화면을
+ * 거쳐 가져다 쓰던 곳이 많아 이름은 여기서도 그대로 내보낸다.
+ */
+export type { CumulativeSeries, DailyCumulativePoint };
 
 interface Props {
   /** 보고 있는 구간의 일별 누적. x축이 이 값의 label을 따른다. */

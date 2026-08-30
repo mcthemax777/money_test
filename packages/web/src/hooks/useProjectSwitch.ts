@@ -2,10 +2,10 @@
 
 import { useState } from 'react';
 
-import { useTranslation } from '@/lib/i18n';
-import { useAuth } from '@/store/auth';
-import { useProject } from '@/store/project';
-import { useUserFilter } from '@/store/user-filter';
+import { useTranslation } from '@money/core/lib/i18n';
+import { useAuth } from '@money/core/store/auth';
+import { useProject } from '@money/core/store/project';
+import { useUserFilter } from '@money/core/store/user-filter';
 
 /**
  * 보고 있는 프로젝트 바꾸기.
