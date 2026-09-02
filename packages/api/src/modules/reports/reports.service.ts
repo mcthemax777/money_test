@@ -6,18 +6,35 @@ import { ENTRY_INCLUDE, classifyEntry, toListItem } from '../entries/entry-view'
 import {
   MATCH_NOTHING,
   assetOwnerCondition,
+  entryKindCondition,
+  entrySearchConditions,
   parseEntryFilter,
   splitList,
 } from '@/common/entry-filter';
-import { HIDDEN_ACCOUNT_TYPES } from '../accounts/accounts.service';
 import { assertDateKey, assertYearMonth } from '@/common/year-month';
 import {
   DisplayConverter,
   ExchangeRatesService,
 } from '../exchange-rates/exchange-rates.service';
 import {
+  type CategoryPostingRow,
+  Dec,
+  type ExtraSelection,
+  type NamedCategoryPostingRow,
   ReportDto,
+  categoryBreakdown,
   currencyDecimals,
+  dailyTotals,
+  entryMonths,
+  monthlyTotals,
+  parseEntrySearch,
+  netWorth,
+  type NetWorthAccountRow,
+  paymentMethods,
+  EQUITY_ACCOUNT_TYPES,
+  VALUED_ACCOUNT_TYPES,
+  shiftYearMonth,
+  summarize,
   zonedCurrentYearMonth,
   zonedDateKey,
   zonedDateStringToUtc,
@@ -29,12 +46,10 @@ import {
 
 const ZERO = new Prisma.Decimal(0);
 
-/** 순자산에서 제외할 계정. 자본 계정은 자산이 아니다. */
-const EQUITY_TYPES: AccountType[] = [AccountType.opening_balance];
-/** 시가로 평가하는 계정. 장부 잔액 대신 최신 AssetValuation을 쓴다. */
-const VALUED_TYPES: AccountType[] = [AccountType.investment, AccountType.real_estate];
-/** 부채 계정. 잔액이 음수로 저장된다. */
-const LIABILITY_TYPES: AccountType[] = [AccountType.credit_card, AccountType.loan];
+/*
+ * 계좌 유형의 분류(자본·시가평가·부채)는 `@money/types` 의 net-worth-aggregation 이 갖는다.
+ * 기기도 같은 분류로 총자산을 내야 하므로 서버에만 두면 두 벌이 된다.
+ */
 /**
  * 수익을 따로 계산해 보여 주는 계정.
  *
@@ -50,6 +65,52 @@ export class ReportsService {
     private readonly projectAccess: ProjectAccessService,
     private readonly exchangeRates: ExchangeRatesService,
   ) {}
+
+  /**
+   * 집계 함수에 넘길 카테고리 다리.
+   *
+   * 더하는 규칙은 `@money/types` 의 report-aggregation 이 갖는다. 기기도 같은 함수를
+   * 쓰기 때문에 서버가 SQL 로 다시 더하면 두 벌이 된다. 여기서는 행을 그 모양으로
+   * 옮겨 주는 일만 한다.
+   */
+  private static readonly AGGREGATE_SELECT = {
+    categoryId: true,
+    baseAmount: true,
+    normalAmount: true,
+    extraAmount: true,
+    category: { select: { type: true } },
+    entry: { select: { date: true } },
+  } as const;
+
+  private toAggregateRows(
+    rows: Array<{
+      categoryId: string | null;
+      baseAmount: Prisma.Decimal;
+      normalAmount: Prisma.Decimal;
+      extraAmount: Prisma.Decimal;
+      category: { type: CategoryType } | null;
+      entry: { date: Date };
+    }>,
+  ): CategoryPostingRow[] {
+    // 계좌 다리는 오지 않지만(질의가 카테고리 다리만 고른다) 타입이 null 을 허용하므로 걸러 둔다.
+    return rows.flatMap((row) =>
+      row.categoryId && row.category
+        ? [{
+            categoryId: row.categoryId,
+            categoryType: row.category.type,
+            baseAmount: row.baseAmount,
+            normalAmount: row.normalAmount,
+            extraAmount: row.extraAmount,
+            date: row.entry.date,
+          }]
+        : [],
+    );
+  }
+
+  /** 집계 결과를 표시 환산기에 넣을 수 있는 모양으로. */
+  private toDecimal(value: Dec): Prisma.Decimal {
+    return new Prisma.Decimal(value.toString());
+  }
 
   /**
    * 표시 환산기. 저장 통화로 집계한 값을 표시 통화로 옮긴다.
@@ -87,44 +148,28 @@ export class ReportsService {
     /*
      * 합계는 전부 기준통화 환산액이다. amount는 그 다리의 통화라 섞으면 못 더한다.
      * normalAmount·extraAmount는 그 환산액을 쪼갠 몫이고 언제나 크기(양수)다.
+     *
+     * 더하기를 SQL이 아니라 공용 함수가 한다. 기기가 오프라인에서 같은 합계를 내야
+     * 하고, 규칙이 두 벌이면 같은 달의 숫자가 갈린다. 한 프로젝트의 한 달치 다리는
+     * 수백 줄 규모라 읽어 와 더해도 부담이 없다.
      */
-    const [expenseAgg, incomeAgg] = await Promise.all([
-      this.prisma.posting.aggregate({
-        _sum: { baseAmount: true, extraAmount: true, normalAmount: true },
-        where: { category: { type: CategoryType.expense }, entry: scope },
-      }),
-      this.prisma.posting.aggregate({
-        _sum: { baseAmount: true, extraAmount: true, normalAmount: true },
-        where: { category: { type: CategoryType.income }, entry: scope },
-      }),
-    ]);
-
-    /** 고른 필터에서 "지출·수입"으로 셀 금액. 전체면 다리 금액 그대로다. */
-    const selected = (agg: {
-      _sum: { baseAmount: Prisma.Decimal | null; extraAmount: Prisma.Decimal | null; normalAmount: Prisma.Decimal | null };
-    }) => {
-      if (extraOnly === undefined) return (agg._sum.baseAmount ?? ZERO).abs();
-      return (extraOnly ? agg._sum.extraAmount : agg._sum.normalAmount) ?? ZERO;
-    };
-
-    const expense = selected(expenseAgg);
-    const income = selected(incomeAgg);
-    // 고르지 않은 몫은 0으로 적는다. "일반만" 화면에 과소비 금액이 남아 있으면 안 된다.
-    const extraExpense = extraOnly === false ? ZERO : expenseAgg._sum.extraAmount ?? ZERO;
-    const normalExpense = extraOnly === true ? ZERO : expenseAgg._sum.normalAmount ?? ZERO;
-    const extraIncome = extraOnly === false ? ZERO : incomeAgg._sum.extraAmount ?? ZERO;
-    const normalIncome = extraOnly === true ? ZERO : incomeAgg._sum.normalAmount ?? ZERO;
+    const rows = await this.prisma.posting.findMany({
+      where: { categoryId: { not: null }, entry: scope },
+      select: ReportsService.AGGREGATE_SELECT,
+    });
+    const totals = summarize(this.toAggregateRows(rows), extraOnly);
 
     const show = await this.displayConverter(projectId);
+    const asString = (value: Dec) => show.toString(this.toDecimal(value));
     return {
       ...this.periodLabel(query, range, timeZone),
-      income: show.toString(income),
-      expense: show.toString(expense),
-      extraExpense: show.toString(extraExpense),
-      normalExpense: show.toString(normalExpense),
-      extraIncome: show.toString(extraIncome),
-      normalIncome: show.toString(normalIncome),
-      net: show.toString(income.sub(expense)),
+      income: asString(totals.income),
+      expense: asString(totals.expense),
+      extraExpense: asString(totals.extraExpense),
+      normalExpense: asString(totals.normalExpense),
+      extraIncome: asString(totals.extraIncome),
+      normalIncome: asString(totals.normalIncome),
+      net: asString(totals.net),
     };
   }
 
@@ -149,39 +194,25 @@ export class ReportsService {
     // 쿼리스트링은 문자열로 도착한다. 아는 값이 아니면 지출이다.
     const isIncome = query.type === 'income';
     const extraOnly = parseEntryFilter(query).extra;
+    const type = isIncome ? CategoryType.income : CategoryType.expense;
     const postings = await this.prisma.posting.findMany({
-      where: {
-        category: { type: isIncome ? CategoryType.income : CategoryType.expense },
-        entry: this.entryScope(projectId, range, query),
-      },
-      // 두 몫 모두 기준통화 환산액을 쪼갠 값이라 그대로 더할 수 있다.
-      select: { normalAmount: true, extraAmount: true, entry: { select: { date: true } } },
+      where: { category: { type }, entry: this.entryScope(projectId, range, query) },
+      select: ReportsService.AGGREGATE_SELECT,
     });
 
-    /*
-     * 한 다리가 일반과 과소비로 나뉜다. 10만 원 중 3만 원이 과소비면 그날의
-     * 과소비 3만, 일반 7만이다. 다리를 한쪽에만 넣으면 합이 그날 지출과 어긋난다.
-     *
-     * 필터로 한쪽만 보고 있으면 나머지 몫은 0으로 둔다. 다리를 걸러내지 않는 것은
-     * 합계와 같은 이유다 (일부만 과소비인 다리의 나머지가 사라지면 안 된다).
-     */
-    const byDate = new Map<string, { normal: Prisma.Decimal; extra: Prisma.Decimal }>();
-    for (const posting of postings) {
-      const key = zonedDateKey(posting.entry.date, timeZone);
-      const bucket = byDate.get(key) ?? { normal: ZERO, extra: ZERO };
-      if (extraOnly !== false) bucket.extra = bucket.extra.add(posting.extraAmount);
-      if (extraOnly !== true) bucket.normal = bucket.normal.add(posting.normalAmount);
-      byDate.set(key, bucket);
-    }
+    // 날짜별로 묶고 두 몫으로 쪼개는 규칙은 공용 함수가 갖는다.
+    const days = dailyTotals(this.toAggregateRows(postings), {
+      timeZone,
+      type,
+      extra: extraOnly,
+    });
 
     const show = await this.displayConverter(projectId);
-    return [...byDate.entries()]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([date, bucket]) => ({
-        date,
-        normal: show.toString(bucket.normal),
-        extra: show.toString(bucket.extra),
-      }));
+    return days.map((day) => ({
+      date: day.date,
+      normal: show.toString(this.toDecimal(day.normal)),
+      extra: show.toString(this.toDecimal(day.extra)),
+    }));
   }
 
   /** 카테고리별 구성비. 기본은 소분류를 대분류로 롤업한다. */
@@ -200,73 +231,51 @@ export class ReportsService {
     const rollup = query.rollup !== false && (query.rollup as unknown) !== 'false';
 
     const breakdownExtra = parseEntryFilter(query).extra;
-    const rows = await this.prisma.posting.groupBy({
-      by: ['categoryId'],
-      // 일반/과소비를 고르면 그 몫만 더한다. 다리를 걸러내면 일부만 과소비인
-      // 다리의 나머지가 사라진다 (getSummary와 같은 규칙).
-      _sum: { baseAmount: true, extraAmount: true, normalAmount: true },
-      _count: true,
-      where: {
-        category: { type: query.type as CategoryType },
-        entry: this.entryScope(projectId, range, query),
-        // 셀 몫이 없는 다리는 건수에서도 빼야 "0원인데 3건"이 되지 않는다.
-        ...extraCondition(breakdownExtra),
+    const type = query.type as CategoryType;
+
+    /*
+     * 이름을 행에 함께 실어 온다. 예전에는 카테고리를 따로 조회하고, 롤업 대상인
+     * 대분류 이름을 얻으려고 한 번 더 조회했다. 소분류 행이 부모 이름까지 들고 오면
+     * 그 두 번째 조회가 사라지고, 기기도 같은 모양의 행으로 같은 함수를 쓸 수 있다.
+     */
+    const rows = await this.prisma.posting.findMany({
+      where: { category: { type }, entry: this.entryScope(projectId, range, query) },
+      select: {
+        ...ReportsService.AGGREGATE_SELECT,
+        category: {
+          select: { type: true, name: true, parent: { select: { id: true, name: true } } },
+        },
       },
     });
-    if (rows.length === 0) return [];
 
-    const categories = await this.prisma.category.findMany({
-      where: { id: { in: rows.map((r) => r.categoryId!).filter(Boolean) } },
-      include: { parent: { select: { id: true, name: true } } },
-    });
-    const byId = new Map(categories.map((c) => [c.id, c]));
+    const named: NamedCategoryPostingRow[] = rows.flatMap((row) =>
+      row.categoryId && row.category
+        ? [{
+            categoryId: row.categoryId,
+            categoryType: row.category.type,
+            categoryName: row.category.name,
+            parentCategoryId: row.category.parent?.id ?? null,
+            parentCategoryName: row.category.parent?.name ?? null,
+            baseAmount: row.baseAmount,
+            normalAmount: row.normalAmount,
+            extraAmount: row.extraAmount,
+            date: row.entry.date,
+          }]
+        : [],
+    );
 
-    // 롤업하면 소분류 금액을 대분류에 합친다. posting은 가장 구체적인 카테고리만 가리키므로
-    // 대분류 금액은 이렇게 만들어야 한다.
-    const buckets = new Map<string, { amount: Prisma.Decimal; count: number }>();
-    for (const row of rows) {
-      const category = row.categoryId ? byId.get(row.categoryId) : null;
-      if (!category) continue;
-
-      const key = rollup ? category.parent?.id ?? category.id : category.id;
-      const bucket = buckets.get(key) ?? { amount: ZERO, count: 0 };
-      bucket.amount = bucket.amount.add(
-        breakdownExtra === undefined
-          ? (row._sum.baseAmount ?? ZERO).abs()
-          : (breakdownExtra ? row._sum.extraAmount : row._sum.normalAmount) ?? ZERO,
-      );
-      bucket.count += row._count;
-      buckets.set(key, bucket);
-    }
-
-    // 롤업 대상인 대분류 이름을 얻기 위해 부모까지 조회한다
-    const missing = [...buckets.keys()].filter((id) => !byId.has(id));
-    if (missing.length > 0) {
-      const parents = await this.prisma.category.findMany({
-        where: { id: { in: missing } },
-        include: { parent: { select: { id: true, name: true } } },
-      });
-      for (const parent of parents) byId.set(parent.id, parent);
-    }
-
-    const total = [...buckets.values()].reduce((acc, b) => acc.add(b.amount), ZERO);
+    const buckets = categoryBreakdown(named, { type, rollup, extra: breakdownExtra });
     const show = await this.displayConverter(projectId);
 
-    return [...buckets.entries()]
-      .map(([categoryId, bucket]) => {
-        const category = byId.get(categoryId)!;
-        return {
-          categoryId,
-          categoryName: category.name,
-          parentCategoryId: category.parent?.id ?? null,
-          parentCategoryName: category.parent?.name ?? null,
-          amount: show.toString(bucket.amount),
-          count: bucket.count,
-          // 구성비는 비율이라 표시 통화와 무관하다.
-          ratio: total.isZero() ? 0 : bucket.amount.div(total).mul(100).toNumber(),
-        };
-      })
-      .sort((a, b) => Number(b.amount) - Number(a.amount));
+    return buckets.map((bucket) => ({
+      categoryId: bucket.categoryId,
+      categoryName: bucket.categoryName,
+      parentCategoryId: bucket.parentCategoryId,
+      parentCategoryName: bucket.parentCategoryName,
+      amount: show.toString(this.toDecimal(bucket.amount)),
+      count: bucket.count,
+      ratio: bucket.ratio,
+    }));
   }
 
   /**
@@ -282,126 +291,72 @@ export class ReportsService {
       where: {
         projectId: finalProjectId,
         isActive: true,
-        type: { notIn: EQUITY_TYPES },
+        type: { notIn: [...EQUITY_ACCOUNT_TYPES] as AccountType[] },
       },
       include: { owner: { select: { id: true, name: true } } },
     });
     if (accounts.length === 0) return emptyNetWorth();
 
     // 투자성 계좌의 최신 평가액
-    const valuedIds = accounts.filter((a) => VALUED_TYPES.includes(a.type)).map((a) => a.id);
+    const valuedIds = accounts
+      .filter((account) => VALUED_ACCOUNT_TYPES.includes(account.type))
+      .map((account) => account.id);
     const marketValues = await this.latestMarketValues(valuedIds);
+    const bookValues = await this.bookValuesOf(accounts.map((account) => account.id));
 
     /*
-     * 외화 계좌는 최신 환율로 재평가한다.
+     * 환율을 두 층으로 모은다.
      *
-     * `account.balance`는 그 계좌의 통화다(달러 통장이면 달러). 순자산은 기준통화
-     * 한 가지로 말해야 하므로 지금 환율로 환산한다. 반면 장부가는 거래마다 그때의
-     * 환율로 쌓인 baseAmount 합계다. 둘의 차이가 미실현 환차손익이고, 투자 계좌의
-     * 시가 - 장부가와 같은 자리에 더해진다.
+     * 계좌 통화 -> 표시 통화는 계좌 잔액을 옮기는 데 쓴다(달러 통장의 달러 잔액).
+     * 저장 통화 -> 표시 통화는 장부가와 시가를 옮기는 데 쓴다(둘 다 저장 통화로 쌓인다).
+     * 그 차이가 미실현 손익이라, 두 환율을 섞으면 손익이 엉뚱한 값이 된다.
      */
     const { ledger, display } = await this.projectAccess.getProjectCurrencies(finalProjectId);
-    const decimals = currencyDecimals(display);
-
-    // 계좌 통화별 -> 표시 통화 환율. 저장 통화를 거치지 않고 바로 간다.
-    const rates = new Map<string, Prisma.Decimal>();
-    for (const currency of new Set(accounts.map((a) => a.currency))) {
+    const toDisplay: Record<string, string> = {};
+    for (const currency of new Set(accounts.map((account) => account.currency))) {
       const info = await this.exchangeRates.getRate(
         finalProjectId,
         this.exchangeRates.assertCurrency(currency, '계좌 통화'),
         display,
       );
-      rates.set(currency, new Prisma.Decimal(info.rate));
+      toDisplay[currency] = String(info.rate);
     }
-    // 장부가는 저장 통화로 쌓여 있다. 표시 통화로 옮겨야 재평가액과 뺄 수 있다.
-    const toDisplay = await this.exchangeRates.getDisplayConverter(finalProjectId, ledger, display);
-    const bookValues = await this.bookValuesOf(accounts.map((a) => a.id));
+    const ledgerConverter = await this.exchangeRates.getDisplayConverter(
+      finalProjectId,
+      ledger,
+      display,
+    );
 
-    /*
-     * 유형별 소계도 함께 담는다.
-     *
-     * 현금성·투자·부채 세 칸은 화면에 따라 너무 굵다. 홈은 예금/적금/투자/대출을
-     * 따로 보여 주는데, 그 값을 화면에서 계좌를 더해 만들면 시가 평가와 환율 재평가가
-     * 빠져 같은 화면의 총자산과 어긋난다.
-     */
-    type Bucket = {
-      cash: Prisma.Decimal;
-      investment: Prisma.Decimal;
-      liability: Prisma.Decimal;
-      byType: Map<AccountType, Prisma.Decimal>;
-    };
-    const newBucket = (): Bucket => ({
-      cash: ZERO,
-      investment: ZERO,
-      liability: ZERO,
-      byType: new Map(),
+    const rows: NetWorthAccountRow[] = accounts.map((account) => ({
+      id: account.id,
+      type: account.type,
+      currency: account.currency,
+      balance: account.balance,
+      ownerId: account.owner?.id ?? null,
+      ownerName: account.owner?.name ?? null,
+      marketValue: marketValues.get(account.id) ?? null,
+      bookValue: bookValues.get(account.id) ?? null,
+    }));
+
+    // 칸을 나누고 재평가하는 규칙은 공용 함수가 갖는다.
+    const result = netWorth(rows, {
+      ledgerCurrency: ledger,
+      displayCurrency: display,
+      toDisplay,
+      ledgerToDisplay: ledgerConverter.rate,
     });
-    const totals: Bucket = newBucket();
-    const byPerson = new Map<string, Bucket & { personName: string }>();
-    // 재평가 대상(투자 + 외화)의 "지금 값"과 "장부가". 둘의 차이가 미실현 손익이다.
-    let revaluedNow = ZERO;
-    let revaluedBook = ZERO;
-
-    for (const account of accounts) {
-      const isValued = VALUED_TYPES.includes(account.type);
-      const isLiability = LIABILITY_TYPES.includes(account.type);
-      const isForeign = account.currency !== ledger;
-
-      /*
-       * "지금 값"을 표시 통화로.
-       *
-       * 계좌 잔액은 그 계좌의 통화다. 외화든 아니든 표시 통화로 옮겨야 한 줄에
-       * 더할 수 있다. 투자 계좌의 시가(AssetValuation.marketValue)는 통화 컬럼이
-       * 없고 저장 통화로 본다.
-       */
-      const nativeToDisplay = (native: Prisma.Decimal) => {
-        const rate = rates.get(account.currency) ?? new Prisma.Decimal(1);
-        return native.mul(rate).toDecimalPlaces(decimals, Prisma.Decimal.ROUND_HALF_UP);
-      };
-
-      let value: Prisma.Decimal;
-      if (isValued || isForeign) {
-        // 시가가 없으면 장부가로 대체한다 (평가 기록을 아직 안 넣은 경우)
-        const marketValue = isValued ? marketValues.get(account.id) : undefined;
-        value = marketValue ? toDisplay.convert(marketValue) : nativeToDisplay(account.balance);
-        revaluedNow = revaluedNow.add(value);
-        // 장부가는 거래마다 그때의 환율로 쌓인 저장 통화 합계다.
-        revaluedBook = revaluedBook.add(toDisplay.convert(bookValues.get(account.id) ?? ZERO));
-      } else {
-        value = nativeToDisplay(account.balance);
-      }
-
-      // 외화라는 이유로 분류가 바뀌지는 않는다. 달러 통장은 여전히 현금성이다.
-      const slot = isValued ? 'investment' : isLiability ? 'liability' : 'cash';
-      const addTo = (bucket: Bucket) => {
-        bucket[slot] = bucket[slot].add(value);
-        bucket.byType.set(account.type, (bucket.byType.get(account.type) ?? ZERO).add(value));
-      };
-
-      addTo(totals);
-
-      if (account.owner) {
-        const bucket =
-          byPerson.get(account.owner.id) ?? { ...newBucket(), personName: account.owner.name };
-        addTo(bucket);
-        byPerson.set(account.owner.id, bucket);
-      }
-    }
-
-    const total = totals.cash.add(totals.investment).add(totals.liability);
 
     return {
-      total: total.toString(),
-      cash: totals.cash.toString(),
-      investment: totals.investment.toString(),
-      liability: totals.liability.toString(),
-      // 투자 시가 + 외화 재평가액에서 각각의 장부가를 뺀 값
-      unrealizedGain: revaluedNow.sub(revaluedBook).toString(),
-      byType: serializeByType(totals.byType),
-      byPerson: [...byPerson.entries()].map(([personId, bucket]) => ({
-        personId,
+      total: result.total.toString(),
+      cash: result.cash.toString(),
+      investment: result.investment.toString(),
+      liability: result.liability.toString(),
+      unrealizedGain: result.unrealizedGain.toString(),
+      byType: serializeByType(result.byType),
+      byPerson: result.byPerson.map((bucket) => ({
+        personId: bucket.personId,
         personName: bucket.personName,
-        total: bucket.cash.add(bucket.investment).add(bucket.liability).toString(),
+        total: bucket.total.toString(),
         cash: bucket.cash.toString(),
         investment: bucket.investment.toString(),
         liability: bucket.liability.toString(),
@@ -441,7 +396,7 @@ export class ReportsService {
       where: {
         projectId,
         // 기초잔액 상대편은 자산이 아니다. getNetWorth 와 같은 기준으로 뺀다.
-        type: { notIn: EQUITY_TYPES },
+        type: { notIn: [...EQUITY_ACCOUNT_TYPES] as AccountType[] },
         /*
          * 계좌를 지정하면 비활성 계좌도 보여준다. 그 계좌를 보려고 고른 것이므로
          * 숨겼다고 빈 그래프를 주면 안 된다.
@@ -526,7 +481,7 @@ export class ReportsService {
       stepsByPeriod.set(key, list);
     }
 
-    const valuedIds = accounts.filter((a) => VALUED_TYPES.includes(a.type)).map((a) => a.id);
+    const valuedIds = accounts.filter((a) => VALUED_ACCOUNT_TYPES.includes(a.type)).map((a) => a.id);
     const valuations =
       valuedIds.length > 0
         ? await this.prisma.assetValuation.findMany({
@@ -546,7 +501,7 @@ export class ReportsService {
       let total = ZERO;
       for (const account of accounts) {
         const bookValue = book.get(account.id) ?? ZERO;
-        if (!VALUED_TYPES.includes(account.type)) {
+        if (!VALUED_ACCOUNT_TYPES.includes(account.type)) {
           total = total.add(bookValue);
           continue;
         }
@@ -570,6 +525,80 @@ export class ReportsService {
    * 월별 시계열. BudgetDetailModal과 PaymentMethodTab이 각자 구현하던 것을 하나로 합쳤다.
    * 월 단위 그룹핑은 Prisma groupBy가 못 하므로 date_trunc를 쓴다.
    */
+  /**
+   * 거래가 있는 달만, 최신 달부터. 거래 화면의 첫 목록이다.
+   *
+   * getTrend 와 갈라 두는 이유가 둘이다. 그쪽은 그래프용이라 개월 수를 받아 빈 달을
+   * 0으로 채우고 지출·수입 중 하나만 낸다. 여기는 전체 기간을 훑어 **거래가 있는 달만**
+   * 내고, 한 줄에 지출과 수입을 함께 적는다. 목록의 줄은 눌러서 들어가는 자리라,
+   * 빈 달이 섞이면 눌러도 아무것도 없는 줄이 된다.
+   *
+   * 기간을 받지 않으므로 그 프로젝트의 카테고리 다리를 전부 읽는다. 한 가정의 원장은
+   * 십 년을 써도 수만 줄 규모다. 달을 SQL 로 자르지 않는 것은 date_trunc 가 IANA
+   * 타임존을 아는 반면 기기의 SQLite 는 모르기 때문이다 -- 자르는 규칙을 공용 함수
+   * 하나로 두어야 사본이 같은 값을 낸다.
+   */
+  async getEntryMonths(
+    userId: string,
+    query: ReportDto.EntryMonthsQuery,
+  ): Promise<ReportDto.EntryMonth[]> {
+    const { id: projectId, timeZone } = await this.projectAccess.resolveProject(
+      userId,
+      query.projectId,
+    );
+
+    const filter = parseEntryFilter(query);
+    const search = parseEntrySearch(query);
+    if (filter.matchNothing || search.matchNothing) return [];
+
+    const owner = assetOwnerCondition(filter);
+    // 검색은 전표 수준으로 걸린다 (entryScope 와 같은 이유).
+    const kindCondition = entryKindCondition(search.kinds);
+    const conditions = [
+      ...(owner ? [owner] : []),
+      ...(kindCondition ? [kindCondition] : []),
+      ...entrySearchConditions(search).map((posting) => ({ postings: { some: posting } })),
+    ];
+    const scope = { projectId, ...(conditions.length > 0 ? { AND: conditions } : {}) };
+    const [rows, dates] = await Promise.all([
+      this.prisma.posting.findMany({
+        where: { categoryId: { not: null }, entry: scope },
+        select: ReportsService.AGGREGATE_SELECT,
+      }),
+      /*
+       * 달을 만들 전표의 시각.
+       *
+       * 다리만 보면 이체와 카드정산이 빠진다 -- 카테고리 다리가 없기 때문이다. 그
+       * 유형만 골라 본 사람에게는 거래가 있는데도 목록이 비어 버린다. 금액은 0이 맞고,
+       * 줄은 있어야 한다.
+       *
+       * **기초잔액 전표는 뺀다.** 계좌를 만들 때 원장 맨 앞(1970년)에 쌓이는 자본
+       * 전표라, 넣으면 거래 목록의 첫 화면에 "1970년 1월"이 줄로 앉는다. 사용자가 적은
+       * 거래가 아니고 카테고리 다리도 없어 금액도 0이다.
+       */
+      this.prisma.journalEntry.findMany({
+        where: {
+          ...scope,
+          NOT: { postings: { some: { account: { type: AccountType.opening_balance } } } },
+        },
+        select: { date: true },
+      }),
+    ]);
+
+    const show = await this.displayConverter(projectId);
+    return entryMonths(this.toAggregateRows(rows), {
+      timeZone,
+      extra: filter.extra,
+      entryDates: dates.map((row) => row.date),
+    }).map(
+      (month) => ({
+        yearMonth: month.yearMonth,
+        income: show.toString(this.toDecimal(month.income)),
+        expense: show.toString(this.toDecimal(month.expense)),
+      }),
+    );
+  }
+
   async getTrend(userId: string, query: ReportDto.TrendQuery): Promise<ReportDto.TrendPoint[]> {
     const { id: projectId, timeZone } = await this.projectAccess.resolveProject(
       userId,
@@ -583,60 +612,66 @@ export class ReportsService {
     const end = zonedMonthStart(endYear, endMonthNumber + 1, timeZone);
     const start = zonedMonthStart(endYear, endMonthNumber - months + 1, timeZone);
 
-    // 대상에 따라 집계 방식이 다르다.
-    //
-    // 카테고리/전체는 카테고리 posting을 그대로 더하면 된다.
-    // 계좌/카드는 "그 수단으로 결제한 지출"이어야 하므로 계좌 posting을 더할 수 없다.
-    // (계좌 posting을 더하면 입금과 출금이 상쇄되고, 체크카드 사용까지 섞인다)
-    const rows =
-      query.target === 'account' || query.target === 'card'
-        ? await this.trendByPaymentMethod(projectId, query, start, end, timeZone)
-        : await this.trendByCategory(projectId, query, start, end, timeZone);
+    /*
+     * 대상에 따라 무엇을 고르는지가 다르다.
+     *
+     * 카테고리/전체는 카테고리 posting 을 그대로 더하면 된다.
+     * 계좌/카드는 "그 수단으로 결제한 지출"이어야 하므로 계좌 posting 을 더할 수 없다.
+     * (계좌 posting 을 더하면 입금과 출금이 상쇄되고, 체크카드 사용까지 섞인다)
+     *
+     * 고르는 일은 질의가, 더하는 일은 공용 함수가 한다. 예전에는 date_trunc 로 SQL이
+     * 달을 자르고 합까지 냈는데, 그러면 기기가 오프라인에서 같은 값을 낼 방법이 없다.
+     */
+    const extraOnly = parseEntryFilter(query).extra;
+    const rows = await this.prisma.posting.findMany({
+      where: {
+        categoryId: { not: null },
+        ...extraCondition(extraOnly),
+        ...(query.target === 'account' || query.target === 'card'
+          ? this.trendByPaymentMethodWhere(projectId, query, start, end)
+          : this.trendByCategoryWhere(projectId, query, start, end)),
+      },
+      select: ReportsService.AGGREGATE_SELECT,
+    });
 
-    // 거래가 없는 달도 0으로 채워 그래프가 끊기지 않게 한다
+    const points = monthlyTotals(this.toAggregateRows(rows), {
+      timeZone,
+      endYearMonth: endMonth,
+      months,
+      extra: extraOnly,
+    });
+
     const show = await this.displayConverter(projectId);
-    const byMonth = new Map(rows.map((r) => [wallClockYearMonth(r.month), show.toString(r.amount)]));
-    const points: ReportDto.TrendPoint[] = [];
-    for (let i = months - 1; i >= 0; i--) {
-      const key = shiftYearMonth(endYear, endMonthNumber, -i);
-      points.push({ yearMonth: key, amount: byMonth.get(key) ?? '0' });
-    }
-    return points;
+    return points.map((point) => ({
+      yearMonth: point.yearMonth,
+      amount: show.toString(this.toDecimal(point.amount)),
+    }));
   }
 
-  /** 카테고리(또는 전체) 기준 월별 합계 */
-  private trendByCategory(
+  /** 카테고리(또는 전체) 기준. 대분류를 지정하면 소분류까지 포함한다. */
+  private trendByCategoryWhere(
     projectId: string,
     query: ReportDto.TrendQuery,
     start: Date,
     end: Date,
-    timeZone: string,
-  ) {
+  ): Prisma.PostingWhereInput {
     // 쿼리스트링 값은 문자열로 도착한다 (DTO가 인터페이스라 암묵 변환이 없다).
     const exact = query.exact === true || (query.exact as unknown) === 'true';
-    const condition =
+
+    const target: Prisma.PostingWhereInput =
       query.target === 'category'
         ? exact
           ? // "미분류": 대분류에 바로 기록한 건만 본다.
-            Prisma.sql`p."categoryId" = ${query.targetId}`
-          : // 대분류를 지정하면 소분류까지 포함한다
-            Prisma.sql`(p."categoryId" = ${query.targetId} OR c."parentId" = ${query.targetId})`
-        : Prisma.sql`c."type" = ${query.type ?? 'expense'}::"CategoryType"`;
+            { categoryId: query.targetId }
+          : {
+              OR: [
+                { categoryId: query.targetId },
+                { category: { parentId: query.targetId } },
+              ],
+            }
+        : { category: { type: (query.type ?? 'expense') as CategoryType } };
 
-    return this.prisma.$queryRaw<Array<{ month: Date; amount: Prisma.Decimal }>>`
-      SELECT date_trunc('month', timezone(${timeZone}, timezone('UTC', e."date"))) AS month,
-             ${extraAmountSum(query, Prisma.sql`p`)} AS amount
-      FROM "Posting" p
-      JOIN "JournalEntry" e ON e.id = p."entryId"
-      JOIN "Category" c ON c.id = p."categoryId"
-      WHERE e."projectId" = ${projectId}
-        AND e."date" >= ${start} AND e."date" < ${end}
-        AND ${condition}
-        AND ${personFilter(query)}
-        AND ${extraFilter(query, Prisma.sql`p`)}
-      GROUP BY 1
-      ORDER BY 1
-    `;
+    return { ...target, entry: this.trendEntryScope(projectId, query, start, end) };
   }
 
   /**
@@ -649,35 +684,44 @@ export class ReportsService {
    * 이체 수수료는 보내는 계좌의 지출로 잡힌다. 이체 금액 자체는 카테고리 다리가 없어
    * 합계에 들어가지 않으므로, 수수료만 정확히 반영된다.
    */
-  private trendByPaymentMethod(
+  private trendByPaymentMethodWhere(
     projectId: string,
     query: ReportDto.TrendQuery,
     start: Date,
     end: Date,
-    timeZone: string,
-  ) {
-    const methodCondition =
+  ): Prisma.PostingWhereInput {
+    const method: Prisma.PostingWhereInput =
       query.target === 'card'
-        ? Prisma.sql`ap."cardId" = ${query.targetId} AND ap."amount" < 0`
-        : Prisma.sql`ap."accountId" = ${query.targetId} AND ap."cardId" IS NULL AND ap."amount" < 0`;
+        ? { cardId: query.targetId, amount: { lt: 0 } }
+        : { accountId: query.targetId, cardId: null, amount: { lt: 0 } };
 
-    return this.prisma.$queryRaw<Array<{ month: Date; amount: Prisma.Decimal }>>`
-      SELECT date_trunc('month', timezone(${timeZone}, timezone('UTC', e."date"))) AS month,
-             ${extraAmountSum(query, Prisma.sql`cp`)} AS amount
-      FROM "JournalEntry" e
-      JOIN "Posting" cp ON cp."entryId" = e.id
-      JOIN "Category" c ON c.id = cp."categoryId" AND c."type" = 'expense'
-      WHERE e."projectId" = ${projectId}
-        AND e."date" >= ${start} AND e."date" < ${end}
-        AND ${personFilter(query)}
-        AND ${extraFilter(query, Prisma.sql`cp`)}
-        AND EXISTS (
-          SELECT 1 FROM "Posting" ap
-          WHERE ap."entryId" = e.id AND ${methodCondition}
-        )
-      GROUP BY 1
-      ORDER BY 1
-    `;
+    return {
+      category: { type: CategoryType.expense },
+      entry: {
+        ...this.trendEntryScope(projectId, query, start, end),
+        // 그 수단으로 돈이 나간 다리가 있는 전표만.
+        postings: { some: method },
+      },
+    };
+  }
+
+  /** 시계열이 보는 전표 범위. 기간과 사람 필터는 목록·합계와 같은 규칙을 쓴다. */
+  private trendEntryScope(
+    projectId: string,
+    query: ReportDto.TrendQuery,
+    start: Date,
+    end: Date,
+  ): Prisma.JournalEntryWhereInput {
+    const filter = parseEntryFilter(query);
+    // 아무도 고르지 않았으면 한 건도 나오지 않아야 한다.
+    if (filter.matchNothing) return { ...MATCH_NOTHING, projectId };
+
+    const owner = assetOwnerCondition(filter);
+    return {
+      projectId,
+      date: { gte: start, lt: end },
+      ...(owner ?? {}),
+    };
   }
 
   /**
@@ -704,7 +748,6 @@ export class ReportsService {
       include: ENTRY_INCLUDE,
     });
     const filter = parseEntryFilter(query);
-    const extraOnly = filter.extra;
 
     // 조회용 맵은 비활성/숨김 계정까지 담는다. 예전 거래가 가리키는 계좌를
     // 못 찾으면 그 거래가 집계에서 조용히 빠진다.
@@ -715,35 +758,6 @@ export class ReportsService {
       }),
       this.prisma.account.findMany({ where: { projectId }, include: { owner: true } }),
     ]);
-    const cardById = new Map(cards.map((c) => [c.id, c]));
-    const accountById = new Map(accounts.map((a) => [a.id, a]));
-
-    const buckets = new Map<string, ReportDto.PaymentMethodItem>();
-
-    // 이번 달에 쓰지 않은 수단도 0원으로 보여준다. 화면에서 "왜 내 카드가 없나"를
-    // 묻지 않게 하려면 목록이 거래 유무와 무관해야 한다.
-    // 카드 부채 계정과 자본 계정은 결제수단이 아니므로 제외한다.
-    // 사람 필터는 "그 사람의 자산만 보여준다"는 뜻이다. 소유자로 거른다.
-    // 아무도 고르지 않았으면 빈 배열이므로 어떤 수단도 남지 않는다.
-    const visiblePersonIds = filter.personIds ?? null;
-    const isVisibleOwner = (ownerId: string | null | undefined) =>
-      !visiblePersonIds || (ownerId ? visiblePersonIds.includes(ownerId) : false);
-
-    for (const account of accounts) {
-      if (!account.isActive) continue;
-      if (HIDDEN_ACCOUNT_TYPES.includes(account.type)) continue;
-      if (!isVisibleOwner(account.ownerId)) continue;
-      this.addTo(buckets, {
-        kind: 'account',
-        id: account.id,
-        name: account.name,
-        ownerId: account.owner?.id ?? null,
-        ownerName: account.owner?.name ?? null,
-        amount: '0',
-        count: 0,
-        income: '0',
-      });
-    }
 
     /*
      * 실적 기준액을 표시 통화로 옮긴다.
@@ -751,6 +765,8 @@ export class ReportsService {
      * 카드에 저장된 값은 결제 통장의 통화다. 통장 통화는 카드마다 다를 수 있어
      * 통화별로 환산기를 하나씩 만든다. 대부분의 프로젝트는 한 통화뿐이라 한 번에
      * 끝나고, 그때는 환산기가 곱셈을 건너뛴다.
+     *
+     * 환율을 고르는 일이 질의의 몫이라 집계 함수 밖에 남는다.
      */
     const { display } = await this.projectAccess.getProjectCurrencies(projectId);
     const converters = new Map<string, DisplayConverter>();
@@ -771,139 +787,36 @@ export class ReportsService {
       performanceTargets.set(card.id, converter.toString(card.performanceAmount));
     }
 
-    /** 카드 한 장의 빈 칸. 목록을 채울 때와 금액을 더할 때가 같은 모양이어야 한다. */
-    const cardBucket = (
-      card: (typeof cards)[number],
-      amount: string,
-      count: number,
-    ): ReportDto.PaymentMethodItem => {
-      const owner = card.paymentAccount.owner;
-      return {
-        kind: card.cardType === 'credit' ? 'credit_card' : 'debit_card',
+    // 세는 규칙은 공용 함수가 갖는다. 기기도 오프라인에서 같은 함수를 부른다.
+    const show = await this.displayConverter(projectId);
+    return paymentMethods(
+      entries.map((entry) => toListItem(entry, show)),
+      accounts.map((account) => ({
+        id: account.id,
+        name: account.name,
+        type: account.type,
+        isActive: account.isActive,
+        ownerId: account.owner?.id ?? null,
+        ownerName: account.owner?.name ?? null,
+      })),
+      cards.map((card) => ({
         id: card.id,
         name: card.name,
-        ownerId: owner?.id ?? null,
-        ownerName: owner?.name ?? null,
-        amount,
-        count,
-        income: '0',
-        ...(performanceTargets.has(card.id)
-          ? { performanceTarget: performanceTargets.get(card.id) }
-          : {}),
-        // 홈 화면이 카드 앞면을 이 색으로 그린다. 고르지 않은 카드는 키 자체가 없다.
-        ...(card.color !== null ? { color: card.color } : {}),
-        ...(card.statementClosingDay !== null
-          ? { statementClosingDay: card.statementClosingDay }
-          : {}),
-      };
-    };
-
-    for (const card of cards) {
-      if (!card.isActive) continue;
-      if (!isVisibleOwner(card.paymentAccount.owner?.id ?? null)) continue;
-      this.addTo(buckets, cardBucket(card, '0', 0));
-    }
-
-    // 일반/과소비를 하나도 고르지 않았으면 금액은 없지만 목록은 그대로 둔다.
-    // 어떤 수단이 있는지는 필터와 무관한 정보다.
-    const show = await this.displayConverter(projectId);
-    const entriesToCount = filter.matchNothing ? [] : entries;
-
-    /*
-     * 고른 필터에서 이 거래를 얼마로 셀지.
-     *
-     * 한 거래가 일반과 과소비로 나뉜다(3,000원 중 2,000원이 과소비). 일반만 볼 때
-     * 그 거래를 통째로 빼면 남은 1,000원이 어느 수단에도 세어지지 않는다.
-     * item.extraAmount는 카테고리 다리에서 온 값이다(이체는 수수료 카테고리가 정한다).
-     */
-    const counted = (amount: string, extraAmount: string | null | undefined): Prisma.Decimal => {
-      const total = new Prisma.Decimal(amount || 0);
-      if (extraOnly === undefined) return total;
-
-      const extra = new Prisma.Decimal(extraAmount || 0);
-      return extraOnly ? extra : total.sub(extra);
-    };
-
-    for (const entry of entriesToCount) {
-      const item = toListItem(entry, show);
-      const amount = counted(item.amount, item.extraAmount);
-
-      // 셀 몫이 없으면 건수도 세지 않는다. "0원인데 3건"이 되지 않게 한다.
-      if (amount.lte(ZERO) && item.kind !== 'transfer') continue;
-
-      // 이체 자체는 소비가 아니지만 수수료는 지출이다.
-      // 보내는 계좌에 붙여야 summary(지출 카테고리 합계)와 총액이 맞는다.
-      if (item.kind === 'transfer') {
-        // 이체 자체는 소비가 아니라 수수료만 지출이다. 쪼개는 규칙도 수수료에 건다.
-        const fee = counted(item.feeAmount ?? '0', item.extraAmount);
-        if (fee.gt(ZERO) && item.accountId) {
-          const account = accountById.get(item.accountId);
-          // 다른 사람이 감춰진 사람의 계좌로 결제했더라도 그 계좌는 목록에 넣지 않는다.
-          // 목록에 있는 수단은 "지금 보고 있는 사람들의 자산"이어야 한다.
-          if (account && isVisibleOwner(account.ownerId)) {
-            this.addTo(buckets, {
-              kind: 'account',
-              id: account.id,
-              name: account.name,
-              ownerId: account.owner?.id ?? null,
-              ownerName: account.owner?.name ?? null,
-              amount: fee.toString(),
-              count: 1,
-              income: '0',
-            });
-          }
-        }
-        continue;
-      }
-
-      /*
-       * 통장으로 들어온 수입.
-       *
-       * 수입은 받는 계좌 다리에 붙는다(entry-view가 accountId를 그 계좌로 준다).
-       * 카드는 여기에 걸리지 않는다. 카드로는 수입이 들어오지 않고, 환불 입금은
-       * card_payment로 기록된다.
-       */
-      if (item.kind === 'income') {
-        if (!item.accountId) continue;
-        const account = accountById.get(item.accountId);
-        if (!account || !isVisibleOwner(account.ownerId)) continue;
-        this.addTo(buckets, {
-          kind: 'account',
-          id: account.id,
-          name: account.name,
-          ownerId: account.owner?.id ?? null,
-          ownerName: account.owner?.name ?? null,
-          amount: '0',
-          count: 0,
-          income: amount.toString(),
-        });
-        continue;
-      }
-
-      if (item.kind !== 'expense') continue;
-
-      if (item.cardId) {
-        const card = cardById.get(item.cardId);
-        if (!card) continue;
-        if (!isVisibleOwner(card.paymentAccount.owner?.id ?? null)) continue;
-        this.addTo(buckets, cardBucket(card, amount.toString(), 1));
-      } else if (item.accountId) {
-        const account = accountById.get(item.accountId);
-        if (!account || !isVisibleOwner(account.ownerId)) continue;
-        this.addTo(buckets, {
-          kind: 'account',
-          id: account.id,
-          name: account.name,
-          ownerId: account.owner?.id ?? null,
-          ownerName: account.owner?.name ?? null,
-          amount: amount.toString(),
-          count: 1,
-          income: '0',
-        });
-      }
-    }
-
-    return [...buckets.values()].sort((a, b) => Number(b.amount) - Number(a.amount));
+        cardType: card.cardType,
+        isActive: card.isActive,
+        color: card.color,
+        statementClosingDay: card.statementClosingDay,
+        performanceTarget: performanceTargets.get(card.id) ?? null,
+        // 카드의 주인은 결제 통장의 주인이다.
+        ownerId: card.paymentAccount.owner?.id ?? null,
+        ownerName: card.paymentAccount.owner?.name ?? null,
+      })),
+      {
+        personIds: filter.personIds ?? null,
+        extraOnly: filter.extra,
+        matchNothing: filter.matchNothing,
+      },
+    );
   }
 
   /**
@@ -953,21 +866,6 @@ export class ReportsService {
       accountId,
       profit: profit.get(accountId)!.toString(),
     }));
-  }
-
-  private addTo(
-    buckets: Map<string, ReportDto.PaymentMethodItem>,
-    item: ReportDto.PaymentMethodItem,
-  ) {
-    const key = `${item.kind}:${item.id}`;
-    const existing = buckets.get(key);
-    if (!existing) {
-      buckets.set(key, item);
-      return;
-    }
-    existing.amount = new Prisma.Decimal(existing.amount).add(item.amount).toString();
-    existing.count += item.count;
-    existing.income = new Prisma.Decimal(existing.income).add(item.income).toString();
   }
 
   /**
@@ -1036,15 +934,30 @@ export class ReportsService {
     query: ReportDto.PeriodQuery,
   ): Prisma.JournalEntryWhereInput {
     const filter = parseEntryFilter(query);
+    const search = parseEntrySearch(query);
     // 아무것도 고르지 않았으면 어떤 전표도 걸리지 않아야 한다.
-    if (filter.matchNothing) return { projectId, ...MATCH_NOTHING };
+    if (filter.matchNothing || search.matchNothing) return { projectId, ...MATCH_NOTHING };
 
     const owner = assetOwnerCondition(filter);
+    /*
+     * 거래 화면의 검색이 여기로 함께 들어온다.
+     *
+     * 조건을 **전표 수준**으로 건다. 다리 자신이 검색에 맞는지 보는 것이 아니라
+     * "그런 다리를 가진 전표인가"를 본다. 그래서 식비를 찾으면 식비가 섞인 분할 거래가
+     * 통째로 들고, 그 달의 합계는 화면에 보이는 거래들의 합과 같아진다. 다리 쪽으로
+     * 걸면 목록에는 있는 거래의 일부 금액이 합계에서 빠져 둘이 어긋난다.
+     */
+    const kindCondition = entryKindCondition(search.kinds);
+    const conditions = [
+      ...(owner ? [owner] : []),
+      ...(kindCondition ? [kindCondition] : []),
+      ...entrySearchConditions(search).map((posting) => ({ postings: { some: posting } })),
+    ];
 
     return {
       projectId,
       date: { gte: range.start, lt: range.end },
-      ...(owner ? { AND: [owner] } : {}),
+      ...(conditions.length > 0 ? { AND: conditions } : {}),
     };
   }
 
@@ -1084,51 +997,8 @@ export class ReportsService {
   }
 }
 
-/**
- * 사람 필터를 SQL 조각으로. 필터가 없으면 항상 참인 조건을 돌려준다.
- * (Prisma.sql 템플릿에서는 조건을 빼는 것보다 참을 넣는 편이 단순하다)
- */
-/**
- * 자산 주인 필터를 SQL 조각으로.
- *
- * Prisma 쪽 assetOwnerCondition 과 같은 규칙이다.
- *   - 돈이 나간 다리(음수)의 계좌 주인을 본다 (이체는 보내는 계좌).
- *   - 나간 다리가 없으면(수입 등) 들어온 다리를 본다.
- * 자본 계정은 주인이 없어 "나간 다리" 판단에서 제외한다.
- */
-function personFilter(query: ReportDto.TrendQuery & { personId?: string }): Prisma.Sql {
-  const filter = parseEntryFilter(query);
-  // 아무것도 고르지 않았으면 한 건도 나오지 않아야 한다.
-  if (filter.matchNothing) return Prisma.sql`FALSE`;
-  if (!filter.personIds) return Prisma.sql`TRUE`;
-
-  const ids = Prisma.join(filter.personIds);
-  return Prisma.sql`(
-    EXISTS (
-      SELECT 1 FROM "Posting" op JOIN "Account" oa ON oa.id = op."accountId"
-      WHERE op."entryId" = e.id AND op."amount" < 0 AND oa."ownerId" IN (${ids})
-    )
-    OR (
-      NOT EXISTS (
-        SELECT 1 FROM "Posting" op JOIN "Account" oa ON oa.id = op."accountId"
-        WHERE op."entryId" = e.id AND op."amount" < 0 AND oa."ownerId" IS NOT NULL
-      )
-      AND EXISTS (
-        SELECT 1 FROM "Posting" op JOIN "Account" oa ON oa.id = op."accountId"
-        WHERE op."entryId" = e.id AND op."amount" > 0 AND oa."ownerId" IN (${ids})
-      )
-    )
-  )`;
-}
 
 /** 일반/과소비 필터를 SQL 조각으로. 셀 몫이 없는 다리를 걸러낸다(카테고리 다리에만 건다). */
-function extraFilter(query: ReportDto.TrendQuery, alias: Prisma.Sql): Prisma.Sql {
-  const extra = parseEntryFilter(query).extra;
-  if (extra === undefined) return Prisma.sql`TRUE`;
-  return extra
-    ? Prisma.sql`${alias}."extraAmount" > 0`
-    : Prisma.sql`${alias}."normalAmount" > 0`;
-}
 
 /**
  * 고른 필터에서 더할 금액.
@@ -1136,13 +1006,6 @@ function extraFilter(query: ReportDto.TrendQuery, alias: Prisma.Sql): Prisma.Sql
  * 한 다리가 일반과 과소비로 나뉘므로, 한쪽만 볼 때는 다리 금액이 아니라 그 몫을
  * 더한다. 전체를 볼 때만 다리 금액을 그대로 쓴다(수입 다리는 음수라 크기로 바꾼다).
  */
-function extraAmountSum(query: ReportDto.TrendQuery, alias: Prisma.Sql): Prisma.Sql {
-  const extra = parseEntryFilter(query).extra;
-  if (extra === undefined) return Prisma.sql`ABS(SUM(${alias}."baseAmount"))`;
-  return extra
-    ? Prisma.sql`SUM(${alias}."extraAmount")`
-    : Prisma.sql`SUM(${alias}."normalAmount")`;
-}
 
 /** Prisma where에 붙이는 같은 조건. 필터가 없으면 아무것도 붙이지 않는다. */
 function extraCondition(extra: boolean | undefined) {
@@ -1225,23 +1088,12 @@ function dayBuckets(yearMonth: string, timeZone: string): BalanceBucket[] {
   return buckets;
 }
 
-/** (year, month)에서 delta개월 옮긴 "YYYY-MM". month는 1~12지만 범위를 벗어나도 된다. */
-function shiftYearMonth(year: number, month: number, delta: number): string {
-  const index = month - 1 + delta;
-  const shiftedYear = year + Math.floor(index / 12);
-  const shiftedMonth = (((index % 12) + 12) % 12) + 1;
-  return `${shiftedYear}-${pad(shiftedMonth)}`;
-}
-
 /**
  * date_trunc 결과가 속한 "YYYY-MM".
  *
  * SQL에서 프로젝트 타임존의 벽시계로 자른 값이라 인스턴트가 아니다.
  * Prisma가 `timestamp`를 UTC로 읽어 주므로 UTC 필드가 곧 그 지역의 벽시계 값이다.
  */
-function wallClockYearMonth(date: Date): string {
-  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}`;
-}
 
 function pad(value: number): string {
   return String(value).padStart(2, '0');
@@ -1260,7 +1112,7 @@ function emptyNetWorth(): ReportDto.NetWorth {
 }
 
 /** 유형별 소계를 응답 형태로. 0인 유형은 넣지 않는다 (없는 것과 뜻이 같다). */
-function serializeByType(byType: Map<AccountType, Prisma.Decimal>): ReportDto.NetWorthByType {
+function serializeByType(byType: Map<AccountType, Dec>): ReportDto.NetWorthByType {
   const result: ReportDto.NetWorthByType = {};
   for (const [type, amount] of byType) {
     if (amount.isZero()) continue;

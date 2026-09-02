@@ -47,7 +47,7 @@ runSmoke('ledger', async (ctx) => {
     data: { projectId: pid, name: '식비', type: 'expense' },
   });
   const rent = await ctx.prisma.category.create({
-    data: { projectId: pid, name: '주거', type: 'expense', defaultIsFixed: true },
+    data: { projectId: pid, name: '주거', type: 'expense', defaultIsExtra: true },
   });
   const goods = await ctx.prisma.category.create({
     data: { projectId: pid, name: '생활용품', type: 'expense' },
@@ -80,15 +80,17 @@ runSmoke('ledger', async (ctx) => {
   ctx.check('청구서 행을 만들지 않는다',
     await ctx.prisma.cardStatement.count({ where: { cardId: creditCard.id } }), 0);
 
-  // ── 3. isFixed 기본값이 카테고리에서 오는지 ──
+  // ── 3. 과소비 금액의 기본값이 카테고리에서 오는지 ──
   await ledger.createExpense({
     ...base, description: '월세', accountId: bank.id,
     lines: [{ categoryId: rent.id, amount: D(700000) }],
   });
   const rentPosting = await ctx.prisma.posting.findFirstOrThrow({ where: { categoryId: rent.id } });
-  ctx.check('월세 isFixed 기본값 상속', rentPosting.isFixed, true);
+  ctx.check('월세는 전액이 과소비로 센다', rentPosting.extraAmount, '700000');
+  ctx.check('그래서 일반 몫은 0이다', rentPosting.normalAmount, '0');
+  // 식비는 표시하지 않았으므로 어느 다리를 집어도 과소비가 0이다.
   const foodPosting = await ctx.prisma.posting.findFirstOrThrow({ where: { categoryId: food.id } });
-  ctx.check('식비 isFixed 기본값', foodPosting.isFixed, false);
+  ctx.check('식비는 과소비가 0', foodPosting.extraAmount, '0');
 
   // ── 4. 수입 ──
   await ledger.createIncome({

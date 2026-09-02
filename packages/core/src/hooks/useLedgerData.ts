@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { EntryFilterQuery, EntryListItem, ReportDto } from '@money/types';
 
-import { apiClient, type ReportPeriod } from '../lib/api-client';
+import { homeDataPort } from '../data/home-port';
+import { type ReportPeriod } from '../lib/api-client';
 import { dayRangeQuery, monthQueryRange } from '../lib/datetime';
 import { countedShare } from '../lib/entries';
 import type { Account, Card, Category, Person } from '../lib/types';
 import { useProject } from '../store/project';
 import { useUserFilter } from '../store/user-filter';
 import { useDebouncedValue } from './useDebouncedValue';
+import { useMirrorVersion } from './useMirrorVersion';
 import { usePersonFilterSync } from './usePersonFilterSync';
 
 /** 일반/과소비. 둘 다 고르면 필터를 걸지 않는다. */
@@ -20,6 +22,9 @@ export type ExtraType = 'normal' | 'extra';
  * 탭은 각자 서버에서 받으므로 여기서는 조회를 다시 하게 할 표(dataVersion)만 올린다.
  *
  * 웹과 앱이 같은 화면을 그리므로 조회와 판단을 여기 한 곳에 둔다.
+ *
+ * 값을 어디서 얻는지는 창구(`homeDataPort`)가 정한다. 웹은 서버에서 곧바로 받고,
+ * 앱은 기기 사본에서 읽는다. 이 훅과 화면은 어느 쪽인지 모른 채 같은 코드를 쓴다.
  */
 export function useLedgerData({
   projectId,
@@ -56,6 +61,8 @@ export function useLedgerData({
 
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
+  /** 사본이 채워질 때마다 올라간다 (홈 훅과 같은 이유). 웹에서는 0에 머문다. */
+  const mirrorVersion = useMirrorVersion();
   /**
    * 거래를 고치고 나면 올라가는 번호.
    *
@@ -72,11 +79,12 @@ export function useLedgerData({
     const loadReference = async () => {
       try {
         setIsLoading(true);
+        const port = homeDataPort();
         const [accountsData, peopleData, cardsData, categoriesData] = await Promise.all([
-          apiClient.getAccountsV2(projectId),
-          apiClient.getPeople(projectId),
-          apiClient.getCards(projectId),
-          apiClient.getCategories(projectId),
+          port.getAccountsV2(projectId),
+          port.getPeople(projectId),
+          port.getCards(projectId),
+          port.getCategories(projectId),
         ]);
         if (cancelled) return;
 
@@ -98,7 +106,7 @@ export function useLedgerData({
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [projectId, mirrorVersion]);
 
   usePersonFilterSync(projectId, people);
 
@@ -146,9 +154,10 @@ export function useLedgerData({
        * 합계가 조용히 과소 집계되는 것이 문제다. 상단 요약은 서버가 전량으로 계산하므로
        * 같은 화면 안에서 숫자가 어긋난다.
        */
+      const port = homeDataPort();
       const [entryRows, summaryRow] = await Promise.all([
-        apiClient.getAllEntries({ ...entryRange, ...filter }, projectId),
-        apiClient.getSummary(reportPeriod, projectId, filter),
+        port.getAllEntries({ ...entryRange, ...filter }, projectId),
+        port.getSummary(reportPeriod, projectId, filter),
       ]);
 
       setEntries((entryRows ?? []) as EntryListItem[]);
@@ -159,7 +168,7 @@ export function useLedgerData({
       setHasError(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, rangeKey, filter]);
+  }, [projectId, rangeKey, filter, mirrorVersion]);
 
   useEffect(() => {
     reloadPeriod();

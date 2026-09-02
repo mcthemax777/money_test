@@ -3,14 +3,22 @@ import { Prisma, ProjectRole } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { toMoney } from '@/common/money';
+import { clientId, rejectDuplicateId } from '@/common/client-id';
 import {
   DisplayConverter,
   ExchangeRatesService,
 } from '../exchange-rates/exchange-rates.service';
 import { assertYearMonth, shiftYearMonth } from '@/common/year-month';
 import {
+  BUDGET_MONTH_CEILING as BUDGET_MONTH_CEILING_SHARED,
+  BUDGET_MONTH_FLOOR as BUDGET_MONTH_FLOOR_SHARED,
+  type BudgetPeriod,
   BudgetDto,
+  Dec,
   EntryFilterQuery,
+  categoryUsage,
+  isBudgetApplicable,
+  totalUsage,
   zonedCurrentYearMonth,
   zonedMonthRange,
 } from '@money/types';
@@ -29,8 +37,8 @@ const ZERO = new Prisma.Decimal(0);
  * 한다. 기간을 끊는 쪽과 걸리는 달을 따지는 쪽이 다른 값을 쓰면, 규칙을 끊었는데
  * 여전히 걸리거나 그 반대가 된다.
  */
-const BUDGET_MONTH_FLOOR = '2000-01';
-const BUDGET_MONTH_CEILING = '9999-12';
+const BUDGET_MONTH_FLOOR = BUDGET_MONTH_FLOOR_SHARED;
+const BUDGET_MONTH_CEILING = BUDGET_MONTH_CEILING_SHARED;
 
 /**
  * 전체 예산의 센티널 categoryId를 푼다.
@@ -129,14 +137,17 @@ export class BudgetsService {
       );
     }
 
-    const budget = await this.prisma.budget.create({
-      data: {
-        projectId,
-        categoryId: categoryId ?? null,
-        type: type || undefined,
-        monthlyAmount,
-      },
-    });
+    const budget = await rejectDuplicateId('예산', () =>
+      this.prisma.budget.create({
+        data: {
+          id: clientId(dto.id, '예산 식별자'),
+          projectId,
+          categoryId: categoryId ?? null,
+          type: type || undefined,
+          monthlyAmount,
+        },
+      }),
+    );
 
     return this.toBudgetResponse(budget, show);
   }
@@ -449,55 +460,46 @@ export class BudgetsService {
           ...(owner ? { AND: [owner] } : {}),
         };
 
-    const usage = await this.prisma.posting.groupBy({
-      by: ['categoryId'],
-      // 예산은 프로젝트 기준통화로 세운다. 사용액도 환산액으로 더해야
-      // 외화 결제가 섞였을 때 진행률이 맞는다.
-      //
-      // 일반/과소비를 고르면 그 몫만 더한다. 한 다리가 둘로 나뉘므로(3,000원 중
-      // 2,000원이 과소비) 다리 금액을 그대로 더하면 리포트의 합계와 어긋난다.
-      _sum: { baseAmount: true, extraAmount: true, normalAmount: true },
-      _count: true,
-      where: {
-        categoryId: { in: categories.map((c) => c.id) },
-        entry: entryScope,
-        // 일반/과소비 필터. 목록·리포트와 같은 기준이어야 진행률이 화면과 맞는다.
-        ...(parsed.extra !== undefined
-          ? parsed.extra
-            ? { extraAmount: { gt: 0 } }
-            : { normalAmount: { gt: 0 } }
-          : {}),
+    /*
+     * 사용액은 다리를 읽어 와 공용 함수가 더한다.
+     *
+     * 예산은 프로젝트 기준통화로 세우므로 사용액도 환산액으로 더해야 외화 결제가
+     * 섞였을 때 진행률이 맞는다. 그리고 이 합계는 리포트의 합계와 같은 규칙이어야
+     * 한다. 두 값이 갈리면 같은 화면에 "8월 지출 24만"과 "예산 사용 21만"이 나란히
+     * 보인다. 그래서 규칙을 `@money/types` 한 곳에 두고 양쪽이 그것을 쓴다.
+     */
+    const postings = await this.prisma.posting.findMany({
+      where: { categoryId: { in: categories.map((c) => c.id) }, entry: entryScope },
+      select: {
+        categoryId: true,
+        baseAmount: true,
+        normalAmount: true,
+        extraAmount: true,
+        category: { select: { type: true } },
+        entry: { select: { date: true } },
       },
     });
 
-    // 수입 posting은 음수로 기록되므로 표시용으로 절댓값을 쓴다.
-    const ownAmount = new Map<string, Prisma.Decimal>();
-    const ownCount = new Map<string, number>();
-    for (const row of usage) {
-      if (!row.categoryId) continue;
-      ownAmount.set(
-        row.categoryId,
-        parsed.extra === undefined
-          ? (row._sum.baseAmount ?? ZERO).abs()
-          : (parsed.extra ? row._sum.extraAmount : row._sum.normalAmount) ?? ZERO,
-      );
-      ownCount.set(row.categoryId, row._count);
-    }
+    const usage = categoryUsage(
+      postings.flatMap((row) =>
+        row.categoryId && row.category
+          ? [{
+              categoryId: row.categoryId,
+              categoryType: row.category.type,
+              baseAmount: row.baseAmount,
+              normalAmount: row.normalAmount,
+              extraAmount: row.extraAmount,
+              date: row.entry.date,
+            }]
+          : [],
+      ),
+      categories,
+      parsed.extra,
+    );
 
-    // 대분류 사용액은 자신 + 소분류 합이다.
-    // (posting은 가장 구체적인 카테고리 하나만 가리키므로 롤업이 필요하다)
-    const usedAmount = new Map<string, Prisma.Decimal>();
-    const usageCount = new Map<string, number>();
-    for (const category of categories) {
-      let amount = ownAmount.get(category.id) ?? ZERO;
-      let count = ownCount.get(category.id) ?? 0;
-      for (const child of childrenByParent.get(category.id) ?? []) {
-        amount = amount.add(ownAmount.get(child.id) ?? ZERO);
-        count += ownCount.get(child.id) ?? 0;
-      }
-      usedAmount.set(category.id, amount);
-      usageCount.set(category.id, count);
-    }
+    const amountUsed = (categoryId: string): Prisma.Decimal =>
+      new Prisma.Decimal((usage.get(categoryId)?.amount ?? Dec.of(0)).toString());
+    const countUsed = (categoryId: string): number => usage.get(categoryId)?.count ?? 0;
 
     const amountOf = (key: string): Prisma.Decimal => {
       const budget = budgetMap.get(key);
@@ -522,9 +524,7 @@ export class BudgetsService {
         monthlyAmount: amountOf(`__total__${type}`),
         ruleAmount: ruleAmountOf(`__total__${type}`),
         // 대분류 사용액의 합. 소분류는 이미 대분류에 롤업되어 있으므로 중복되지 않는다.
-        usedAmount: categories
-          .filter((c) => !c.parentId && c.type === type)
-          .reduce((acc, c) => acc.add(usedAmount.get(c.id) ?? ZERO), ZERO),
+        usedAmount: new Prisma.Decimal(totalUsage(usage, categories, type).toString()),
         isOverridden: budget ? overrideMap.has(budget.id) : false,
         overrideId: budget ? overrideMap.get(budget.id)?.id : undefined,
         effectiveFrom: budget?.effectiveFrom ?? undefined,
@@ -543,7 +543,7 @@ export class BudgetsService {
         parentCategoryId: category.parentId ?? undefined,
         monthlyAmount: amountOf(category.id),
         ruleAmount: ruleAmountOf(category.id),
-        usedAmount: usedAmount.get(category.id) ?? ZERO,
+        usedAmount: amountUsed(category.id),
         isOverridden: budget ? overrideMap.has(budget.id) : false,
         overrideId: budget ? overrideMap.get(budget.id)?.id : undefined,
         effectiveFrom: budget?.effectiveFrom ?? undefined,
@@ -556,14 +556,14 @@ export class BudgetsService {
     const totals = rows.filter((r) => !r.categoryId);
     const mains = rows
       .filter((r) => r.categoryId && !r.parentCategoryId)
-      .sort((a, b) => (usageCount.get(b.categoryId!) ?? 0) - (usageCount.get(a.categoryId!) ?? 0));
+      .sort((a, b) => countUsed(b.categoryId!) - countUsed(a.categoryId!));
 
     const ordered: InternalBudgetRow[] = [...totals];
     for (const main of mains) {
       ordered.push(main);
       const children = rows
         .filter((r) => r.parentCategoryId === main.categoryId)
-        .sort((a, b) => (usageCount.get(b.categoryId!) ?? 0) - (usageCount.get(a.categoryId!) ?? 0));
+        .sort((a, b) => countUsed(b.categoryId!) - countUsed(a.categoryId!));
       ordered.push(...children);
     }
 
@@ -749,10 +749,14 @@ export class BudgetsService {
     };
   }
 
-  private isBudgetApplicable(budget: any, yearMonth: string): boolean {
-    const from = budget.effectiveFrom || BUDGET_MONTH_FLOOR;
-    const to = budget.effectiveTo || BUDGET_MONTH_CEILING;
-    return yearMonth >= from && yearMonth <= to;
+  /**
+   * 그 달에 이 규칙이 적용되는가.
+   *
+   * 판단은 `@money/types` 의 isBudgetApplicable 이 갖는다. 기기도 오프라인에서 같은
+   * 판단으로 예산 행을 골라야 한다.
+   */
+  private isBudgetApplicable(budget: BudgetPeriod, yearMonth: string): boolean {
+    return isBudgetApplicable(budget, yearMonth);
   }
 
   private getPreviousMonth(yearMonth: string): string {

@@ -1,3 +1,4 @@
+import { EntryFilterQuery } from '@money/types';
 import { CardsService } from '@/modules/cards/cards.service';
 import { CategoriesService } from '@/modules/categories/categories.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
@@ -5,11 +6,12 @@ import { PeopleService } from '@/modules/people/people.service';
 import { makeAccounts, makeBudgets, makeEntries, makeLedger, makeReports, projectAccessStub, runSmoke } from './smoke-harness';
 
 /**
- * 자산 주인 / 고정·변동 필터가 목록과 리포트에 같이 걸리는지 확인한다.
+ * 자산 주인 / 일반·과소비 필터가 목록과 리포트에 같이 걸리는지 확인한다.
  *
  * 필터 기준은 "거래를 입력한 사람"이 아니라 돈이 오간 계좌의 주인이다.
  * 이체는 보내는 계좌가 기준이고, 수입처럼 나간 다리가 없으면 들어온 계좌를 본다.
  * 아래 검사는 목록·합계·구성비·시계열·수단별이 모두 같은 기준을 쓰는지 본다.
+ * 과소비 여부는 거래를 적을 때 정하고, 생략하면 카테고리의 defaultIsExtra 를 따른다.
  * 수단별 탭은 거래가 없는 계좌·카드도 0원으로 내려주는지 함께 본다.
  */
 runSmoke('filters', async (ctx) => {
@@ -34,8 +36,8 @@ runSmoke('filters', async (ctx) => {
   const cats = await categories.getCategories(uid, undefined, pid);
   const dining = cats.find((c) => c.name === '외식')!;
   const utility = cats.find((c) => c.name === '공과금')!;
-  // 공과금은 고정지출로 표시한다
-  await categories.updateCategory(utility.id, uid, { defaultIsFixed: true });
+  // 외식은 과소비로 표시한다. 이 분류로 적은 거래는 전액이 과소비로 센다.
+  await categories.updateCategory(dining.id, uid, { defaultIsExtra: true });
 
   const bank = await accounts.createAccount(uid, {
     type: 'deposit', ownerId: chulsoo.id, name: '보통예금', institutionId: 'fi_bank_shinhan',
@@ -52,12 +54,12 @@ runSmoke('filters', async (ctx) => {
 
   const aug = (day: number) => `2026-08-${String(day).padStart(2, '0')}T03:00:00.000Z`;
 
-  // 김철수: 고정 20만(공과금) + 변동 3만(외식)
+  // 김철수: 일반 20만(공과금) + 과소비 3만(외식)
   await entries.createEntry(uid, { kind: 'expense', personId: chulsoo.id, date: aug(5),
     description: '전기요금', amount: '200000', categoryId: utility.id, accountId: bank.id }, pid);
   await entries.createEntry(uid, { kind: 'expense', personId: chulsoo.id, date: aug(6),
     description: '저녁', amount: '30000', categoryId: dining.id, accountId: bank.id }, pid);
-  // 이영희: 변동 1만(외식)
+  // 이영희: 과소비 1만(외식)
   await entries.createEntry(uid, { kind: 'expense', personId: younghee.id, date: aug(7),
     description: '커피', amount: '10000', categoryId: dining.id, accountId: wifeBank.id }, pid);
 
@@ -101,35 +103,35 @@ runSmoke('filters', async (ctx) => {
     methodsForYounghee.map((m) => m.name).sort().join(','), '이영희 통장');
 
 
-  // ── 고정/변동 필터 ──
-  ctx.check('고정만: 합계',
-    (await reports.getSummary(uid, { ...month, fixedTypes: 'fixed' })).expense, '200000');
-  ctx.check('변동만: 합계',
-    (await reports.getSummary(uid, { ...month, fixedTypes: 'variable' })).expense, '40000');
+  // ── 일반/과소비 필터 ──
+  ctx.check('일반만: 합계',
+    (await reports.getSummary(uid, { ...month, extraTypes: 'normal' })).expense, '200000');
+  ctx.check('과소비만: 합계',
+    (await reports.getSummary(uid, { ...month, extraTypes: 'extra' })).expense, '40000');
   ctx.check('둘 다 고르면 전체와 같다',
-    (await reports.getSummary(uid, { ...month, fixedTypes: 'fixed,variable' })).expense, '240000');
+    (await reports.getSummary(uid, { ...month, extraTypes: 'normal,extra' })).expense, '240000');
 
-  const fixedList = await entries.getEntries(uid, {
-    fixedTypes: 'fixed', startDate: aug(1), endDate: aug(28),
+  const normalList = await entries.getEntries(uid, {
+    extraTypes: 'normal', startDate: aug(1), endDate: aug(28),
   }, pid);
-  ctx.check('고정만: 목록 건수', fixedList.data.length, 1);
-  ctx.check('고정만: 목록 항목', fixedList.data[0]?.description, '전기요금');
+  ctx.check('일반만: 목록 건수', normalList.data.length, 1);
+  ctx.check('일반만: 목록 항목', normalList.data[0]?.description, '전기요금');
 
-  const variableList = await entries.getEntries(uid, {
-    fixedTypes: 'variable', startDate: aug(1), endDate: aug(28),
+  const extraList = await entries.getEntries(uid, {
+    extraTypes: 'extra', startDate: aug(1), endDate: aug(28),
   }, pid);
-  // 계좌 다리는 isFixed가 항상 false다. 카테고리 다리만 봐야 2건이 나온다.
-  ctx.check('변동만: 목록 건수 (기초잔액 전표가 섞이지 않는다)', variableList.data.length, 2);
+  // 계좌 다리는 두 금액이 모두 0이다. 카테고리 다리만 봐야 2건이 나온다.
+  ctx.check('과소비만: 목록 건수 (기초잔액 전표가 섞이지 않는다)', extraList.data.length, 2);
 
-  const fixedTrend = await reports.getTrend(uid, {
+  const normalTrend = await reports.getTrend(uid, {
     projectId: pid, target: 'total', type: 'expense', endMonth: '2026-08', months: 1,
-    fixedTypes: 'fixed',
+    extraTypes: 'normal',
   });
-  ctx.check('고정만: 시계열', fixedTrend[0]?.amount, '200000');
+  ctx.check('일반만: 시계열', normalTrend[0]?.amount, '200000');
 
-  const fixedMethods = await reports.getPaymentMethods(uid, { ...month, fixedTypes: 'fixed' });
-  ctx.check('고정만: 수단별 보통예금 금액',
-    fixedMethods.find((m) => m.name === '보통예금')?.amount, '200000');
+  const normalMethods = await reports.getPaymentMethods(uid, { ...month, extraTypes: 'normal' });
+  ctx.check('일반만: 수단별 보통예금 금액',
+    normalMethods.find((m) => m.name === '보통예금')?.amount, '200000');
 
   // ── 수단별: 거래 없는 수단도 0원으로 ──
   const methods = await reports.getPaymentMethods(uid, month);
@@ -157,17 +159,17 @@ runSmoke('filters', async (ctx) => {
       personIds: '',
     }))[0]?.amount, '0');
 
-  const noFixed = { ...month, fixedTypes: '' };
-  ctx.check('고정/변동 0개: 지출 합계', (await reports.getSummary(uid, noFixed)).expense, '0');
+  const noExtra = { ...month, extraTypes: '' };
+  ctx.check('일반/과소비 0개: 지출 합계', (await reports.getSummary(uid, noExtra)).expense, '0');
   // 수단별 탭은 어떤 수단이 있는지 보여주는 화면이다. 금액만 0이 되고 목록은 남아야 한다.
-  const methodsNoFixed = await reports.getPaymentMethods(uid, noFixed);
-  ctx.check('고정/변동 0개: 수단 목록은 그대로', methodsNoFixed.length, 3);
-  ctx.check('고정/변동 0개: 금액은 모두 0',
-    methodsNoFixed.every((m) => m.amount === '0'), true);
+  const methodsNoExtra = await reports.getPaymentMethods(uid, noExtra);
+  ctx.check('일반/과소비 0개: 수단 목록은 그대로', methodsNoExtra.length, 3);
+  ctx.check('일반/과소비 0개: 금액은 모두 0',
+    methodsNoExtra.every((m) => m.amount === '0'), true);
   ctx.check('사람 0명: 수단별 없음 (자산 소유자가 없다)',
     (await reports.getPaymentMethods(uid, noPeople)).length, 0);
-  ctx.check('고정/변동 0개: 목록 없음',
-    (await entries.getEntries(uid, { fixedTypes: '', startDate: aug(1), endDate: aug(28) }, pid))
+  ctx.check('일반/과소비 0개: 목록 없음',
+    (await entries.getEntries(uid, { extraTypes: '', startDate: aug(1), endDate: aug(28) }, pid))
       .data.length, 0);
 
   // ── 기준은 거래 주체가 아니라 자산 주인이다 ──
@@ -243,7 +245,10 @@ runSmoke('filters', async (ctx) => {
   // 왼쪽 예산 카드와 오른쪽 상세 통계가 다른 숫자를 보여주면 안 된다.
   const { BudgetsService } = await import('@/modules/budgets/budgets.service');
   const budgets = makeBudgets(ctx.prisma, access);
-  const usedOf = async (filter: Record<string, string>) => {
+  // 필터 타입을 그대로 받는다. Record<string, string> 으로 두었더니 서버가 더 이상
+  // 읽지 않는 옛 키(fixedTypes)가 타입 검사를 빠져나가, 필터가 걸리지 않은 결과를
+  // "고정만"으로 읽으며 검사가 거짓 통과했다.
+  const usedOf = async (filter: EntryFilterQuery) => {
     const rows = await budgets.getBudgetForMonth(uid, pid, 2026, 8, filter);
     const row = rows.find((r) => r.categoryId === dining.id);
     return Number(row?.usedAmount ?? 0);
@@ -253,7 +258,7 @@ runSmoke('filters', async (ctx) => {
   ctx.check('예산 사용금액: 필터 없음', await usedOf({}), 45000);
   ctx.check('예산 사용금액: 자산주인 김철수', await usedOf({ personIds: chulsoo.id }), 30000);
   ctx.check('예산 사용금액: 자산주인 이영희', await usedOf({ personIds: younghee.id }), 15000);
-  ctx.check('예산 사용금액: 고정만 (외식은 변동)', await usedOf({ fixedTypes: 'fixed' }), 0);
-  ctx.check('예산 사용금액: 변동만', await usedOf({ fixedTypes: 'variable' }), 45000);
+  ctx.check('예산 사용금액: 일반만 (외식은 과소비)', await usedOf({ extraTypes: 'normal' }), 0);
+  ctx.check('예산 사용금액: 과소비만', await usedOf({ extraTypes: 'extra' }), 45000);
   ctx.check('예산 사용금액: 아무도 안 고르면 0', await usedOf({ personIds: '' }), 0);
 });

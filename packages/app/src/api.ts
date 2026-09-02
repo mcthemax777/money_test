@@ -5,9 +5,11 @@
  * 서버 주소와 토큰 저장소, 세션이 끊겼을 때 할 일을 넣어 준다.
  */
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import * as Crypto from 'expo-crypto';
 
 import { apiClient } from '@money/core/lib/api-client';
 import { setTokenStorage } from '@money/core/lib/auth-tokens';
+import { setRandomBytes } from '@money/types';
 import { hydrateTokens, secureTokenStorage } from './token-storage';
 
 /**
@@ -58,6 +60,15 @@ export const GOOGLE_WEB_CLIENT_ID = SERVER.googleWebClientId;
 export async function setupApi(onUnauthorized: () => void): Promise<void> {
   await hydrateTokens();
   setTokenStorage(secureTokenStorage);
+
+  /*
+   * 기기가 만드는 id 에 쓸 난수원.
+   *
+   * Hermes 에는 `crypto.getRandomValues` 가 없다(Expo 의 winter 런타임에도 없다).
+   * 넣지 않으면 id 를 만들 수 없어 서버가 만든 id 를 받게 되고, 오프라인 입력이
+   * 그만큼 늦어진다.
+   */
+  setRandomBytes((byteCount) => Crypto.getRandomBytes(byteCount));
   apiClient.setBaseUrl(API_URL);
   apiClient.setUnauthorizedHandler(onUnauthorized);
 

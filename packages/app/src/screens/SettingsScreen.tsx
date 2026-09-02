@@ -35,6 +35,15 @@ export default function SettingsScreen() {
           description={t('settings.projects.description')}
           onPress={() => go('/settings/projects')}
         />
+        {/*
+          오프라인에서 적었지만 아직 서버로 가지 못한 거래.
+          대개는 조용히 나가므로 평소에는 빈 화면이고, 충돌과 거절만 여기 남는다.
+        */}
+        <SettingsCard
+          title={t('settings.outbox.title')}
+          description={t('settings.outbox.description')}
+          onPress={() => go('/settings/outbox')}
+        />
       </View>
 
       <View className="gap-4">

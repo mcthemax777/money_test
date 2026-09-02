@@ -4,6 +4,8 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import { persistStorage } from '../lib/persist-storage';
 import { apiClient } from '../lib/api-client';
 import { clearAuthTokens, getAccessToken, getRefreshToken, saveAuthTokens } from '../lib/auth-tokens';
+import { isOfflineError } from '../lib/offline-error';
+import { clearLocalMirror } from '../data/mirror-teardown';
 
 interface User {
   id: string;
@@ -56,7 +58,7 @@ async function applyUserLocale(locale: unknown) {
 
 export const useAuth = create<AuthStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
   user: null,
   defaultProjectData: null,
   isLoading: false,
@@ -74,8 +76,20 @@ export const useAuth = create<AuthStore>()(
       useUserFilter.getState().setSelectedPersonIds([]);
       useUserFilter.getState().setPeople([]);
 
+      const previousUserId = get().user?.id;
       const response = await apiClient.signInWithGoogle(idToken);
       saveAuthTokens(response.accessToken, response.refreshToken);
+
+      /*
+       * 앞 사람의 기기 사본을 지운다.
+       *
+       * 로그아웃을 거쳐 들어오면 아래 logout 이 이미 지웠다. 여기서 다시 보는 것은
+       * 토큰이 만료되어(401) 세션만 끊긴 뒤 다른 계정으로 들어오는 길이 있기 때문이다.
+       * 그 길에서는 사본을 일부러 남겨 두므로(D10), 주인이 바뀌는 이 자리가 마지막 문이다.
+       */
+      if (previousUserId && previousUserId !== response.user?.id) {
+        await clearLocalMirror();
+      }
       // 이 계정이 고른 말로 화면을 맞춘다. 앞 사용자가 남긴 언어가 이어지면 안 된다.
       applyUserLocale(response.user?.locale);
       set({
@@ -137,6 +151,12 @@ export const useAuth = create<AuthStore>()(
       // 다음 사용자가 같은 캐시 키를 써서 이전 사용자의 기관 이름을 보게 된다.
       const { invalidateInstitutions } = await import('../lib/institutions');
       invalidateInstitutions();
+
+      /*
+       * 기기 사본도 버린다. 스토어만 비우면 화면에서 사라질 뿐 파일 안에는 이 사람의
+       * 거래가 그대로 남는다. 다음에 앱을 여는 사람이 그것을 읽는다.
+       */
+      await clearLocalMirror();
     }
   },
 
@@ -156,7 +176,21 @@ export const useAuth = create<AuthStore>()(
       const user = await apiClient.getProfile();
       applyUserLocale(user?.locale);
       set({ user, isAuthenticated: true, isInitializing: false });
-    } catch {
+    } catch (error) {
+      /*
+       * 서버에 닿지 못한 것은 로그아웃이 아니다.
+       *
+       * 저장해 둔 사용자로 그대로 들어간다. 기기 사본이 있으면 화면도 그려진다.
+       * 여기서 토큰까지 지우면 비행기 모드로 앱을 열 때마다 로그인 화면이 뜨고,
+       * 다시 접속해도 리프레시 토큰이 없어 처음부터 로그인해야 한다.
+       *
+       * 서버가 거절한 경우(401)는 그대로 정리한다. 그때는 정말로 세션이 끝났다.
+       */
+      if (isOfflineError(error)) {
+        set({ isInitializing: false });
+        return;
+      }
+
       clearAuthTokens();
       set({
         user: null,

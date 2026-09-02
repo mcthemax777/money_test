@@ -85,8 +85,20 @@ export const useProject = create<ProjectStore>()(
     {
       name: 'project-storage',
       storage: createJSONStorage(() => persistStorage),
+      /*
+       * 고른 프로젝트와 **목록까지** 저장한다.
+       *
+       * 목록은 서버에서만 온다(`getMyProjects`). 그래서 오프라인으로 앱을 새로 켜면
+       * 목록이 빈 배열로 남고, 메뉴가 `navItemsOf(projects.length > 0)` 로 프로젝트
+       * 메뉴를 전부 감춰 하단 탭에 설정 하나만 남는다. 홈도 가계도 거래도 갈 수가 없다.
+       *
+       * 목록은 이름과 통화뿐인 캐시라 저장해 두어도 잃을 것이 없다. 로그아웃은 비우고,
+       * 다음에 서버에 닿으면 받은 것으로 덮어쓴다. 지워진 프로젝트를 가리키고 있으면
+       * `useProjectBootstrap` 이 첫 프로젝트로 옮겨 준다.
+       */
       partialize: (state) => ({
         selectedProjectId: state.selectedProjectId,
+        projects: state.projects,
       }),
     }
   )

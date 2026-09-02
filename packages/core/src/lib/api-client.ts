@@ -5,7 +5,11 @@ import {
   getRefreshToken,
   saveAuthTokens,
 } from './auth-tokens';
+import { hasRandomSource, newId, withNewId } from '@money/types';
 import type {
+  PushRequest,
+  PushResponse,
+  SyncDto,
   AccountDto,
   BudgetDto,
   CardDto,
@@ -18,6 +22,7 @@ import type {
   Locale,
   PersonDto,
   ReportDto,
+  EntryScopeQuery,
 } from '@money/types';
 
 /**
@@ -74,6 +79,17 @@ class ApiClient {
     });
 
     this.setupInterceptors();
+  }
+
+  /**
+   * 만드는 요청에 기기가 만든 id 를 붙인다.
+   *
+   * 규칙은 `@money/types` 의 withNewId 가 갖는다(기기도 아웃박스에서 같은 규칙을
+   * 쓴다). 지금부터 온라인 경로로 이 id 를 흘려보내 두면, 아웃박스가 붙을 때 새로
+   * 검증할 것이 남지 않는다.
+   */
+  private withId<T extends { id?: string }>(payload: T): T {
+    return withNewId(payload);
   }
 
   /**
@@ -291,7 +307,7 @@ class ApiClient {
 
   async createPerson(data: PersonDto.CreateRequest & { projectId?: string | null }): Promise<PersonDto.Response> {
     const { projectId, ...payload } = data;
-    const response = await this.client.post<PersonDto.Response>('/people', payload, {
+    const response = await this.client.post<PersonDto.Response>('/people', this.withId(payload), {
       params: projectId ? { projectId } : {}
     });
     return response.data;
@@ -341,7 +357,7 @@ class ApiClient {
 
   async createAccountV2(data: AccountDto.CreateRequest): Promise<AccountDto.Response> {
     const { projectId, ...payload } = data;
-    const response = await this.client.post<AccountDto.Response>('/accounts', payload, {
+    const response = await this.client.post<AccountDto.Response>('/accounts', this.withId(payload), {
       params: projectId ? { projectId } : {}
     });
     return response.data;
@@ -377,7 +393,15 @@ class ApiClient {
 
   async createCard(data: CardDto.CreateRequest): Promise<CardDto.Response> {
     const { projectId, ...payload } = data;
-    const response = await this.client.post<CardDto.Response>('/cards', payload, {
+    /*
+     * 신용카드는 부채 계정과 함께 만들어진다. 그 계정 id 도 기기가 정해야 한다.
+     * 서버가 정하면 오프라인에서 그 카드로 적은 거래가 어느 계정을 가리킬지 알 수 없다.
+     */
+    const withIds =
+      payload.cardType === 'credit' && !payload.liabilityAccountId && hasRandomSource()
+        ? { ...payload, liabilityAccountId: newId() }
+        : payload;
+    const response = await this.client.post<CardDto.Response>('/cards', this.withId(withIds), {
       params: projectId ? { projectId } : {}
     });
     return response.data;
@@ -438,7 +462,7 @@ class ApiClient {
 
   async createEntry(data: EntryDto.CreateRequest): Promise<EntryDto.Detail> {
     const { projectId, ...payload } = data;
-    const response = await this.client.post<EntryDto.Detail>('/entries', payload, {
+    const response = await this.client.post<EntryDto.Detail>('/entries', this.withId(payload), {
       params: projectId ? { projectId } : {},
     });
     return response.data;
@@ -478,7 +502,7 @@ class ApiClient {
 
   async createCategory(data: CategoryDto.CreateRequest): Promise<CategoryDto.Response> {
     const { projectId, ...payload } = data;
-    const response = await this.client.post<CategoryDto.Response>('/categories', payload, {
+    const response = await this.client.post<CategoryDto.Response>('/categories', this.withId(payload), {
       params: projectId ? { projectId } : {}
     });
     return response.data;
@@ -652,7 +676,7 @@ class ApiClient {
   // 예산 API Methods
   async createBudget(data: BudgetDto.CreateRequest): Promise<BudgetDto.Response> {
     const { projectId, ...payload } = data;
-    const response = await this.client.post<BudgetDto.Response>('/budgets', payload, {
+    const response = await this.client.post<BudgetDto.Response>('/budgets', this.withId(payload), {
       params: projectId ? { projectId } : {},
     });
     return response.data;
@@ -824,13 +848,52 @@ class ApiClient {
    * period 는 한 달(`{ yearMonth }`)이거나 임의 구간(`{ startDate, endDate }`)이다.
    * 서버가 둘을 같은 규칙으로 푼다 (ReportsService.resolvePeriod).
    */
+  // ── 동기화 ──
+
+  /**
+   * 마지막으로 받은 번호 뒤의 변경분.
+   *
+   * 기기의 동기화 엔진이 이 함수를 그대로 받아 쓴다(`PullFn`). 오프라인이면 axios 가
+   * 응답 없는 오류를 던지고, 엔진이 그것을 "오프라인"으로 다룬다.
+   */
+  async pullSync(query: SyncDto.PullQuery): Promise<SyncDto.PullResponse> {
+    const response = await this.client.get<SyncDto.PullResponse>('/sync/pull', { params: query });
+    return response.data;
+  }
+
+  /**
+   * 오프라인에서 쌓아 둔 명령을 밀어 올린다.
+   *
+   * 몇 번을 다시 보내도 한 번만 적힌다. 명령마다 붙은 id 와 (기기, 순번) 을 서버가
+   * 기억하기 때문이다. 그래서 응답을 못 받았을 때 망설이지 않고 다시 보내면 된다.
+   */
+  async pushSync(request: PushRequest): Promise<PushResponse> {
+    const response = await this.client.post<PushResponse>('/sync/push', request);
+    return response.data;
+  }
+
   async getSummary(
     period: ReportPeriod,
     projectId?: string | null,
-    filter?: EntryFilterQuery & { personId?: string },
+    filter?: EntryScopeQuery,
   ): Promise<ReportDto.Summary> {
     const response = await this.client.get<ReportDto.Summary>('/reports/summary', {
       params: { ...period, ...(projectId ? { projectId } : {}), ...filter },
+    });
+    return response.data;
+  }
+
+  /**
+   * 거래가 있는 달. 전체 기간이라 기간을 넘기지 않는다.
+   *
+   * 거래 화면의 첫 목록이 쓴다. 응답 길이가 곧 이 가계부가 몇 달치인지라 커서가 없다.
+   */
+  async getEntryMonths(
+    projectId?: string | null,
+    filter?: EntryScopeQuery,
+  ): Promise<ReportDto.EntryMonth[]> {
+    const response = await this.client.get<ReportDto.EntryMonth[]>('/reports/entry-months', {
+      params: { ...(projectId ? { projectId } : {}), ...filter },
     });
     return response.data;
   }
@@ -839,7 +902,7 @@ class ApiClient {
     period: ReportPeriod,
     type: 'income' | 'expense',
     projectId?: string | null,
-    options?: { rollup?: boolean; personId?: string } & EntryFilterQuery,
+    options?: { rollup?: boolean } & EntryScopeQuery,
   ) {
     const { rollup, ...filter } = options ?? {};
     const response = await this.client.get<any>('/reports/category-breakdown', {
@@ -921,7 +984,7 @@ class ApiClient {
   async getPaymentMethods(
     period: ReportPeriod,
     projectId?: string | null,
-    filter?: EntryFilterQuery & { personId?: string },
+    filter?: EntryScopeQuery,
   ) {
     const response = await this.client.get<any>('/reports/payment-methods', {
       params: { ...period, ...(projectId ? { projectId } : {}), ...filter },

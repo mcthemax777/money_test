@@ -51,6 +51,12 @@ export class ReportsController {
     return this.reportsService.getBalanceHistory(req.user.id, query);
   }
 
+  @Get('entry-months')
+  @ApiOperation({ summary: '거래가 있는 달 (전체 기간, 최신 달 먼저)' })
+  entryMonths(@Request() req: AuthenticatedRequest, @Query() query: ReportDto.EntryMonthsQuery) {
+    return this.reportsService.getEntryMonths(req.user.id, query);
+  }
+
   @Get('trend')
   @ApiOperation({ summary: '월별 시계열 (카테고리/계좌/카드/전체)' })
   trend(@Request() req: AuthenticatedRequest, @Query() query: ReportDto.TrendQuery) {

@@ -1,4 +1,4 @@
-import { BookOpen, House, Landmark, Settings, Tags } from 'lucide-react-native';
+import { ArrowLeftRight, BookOpen, House, Landmark, Settings, Tags } from 'lucide-react-native';
 
 import type { NavIconName } from '@money/core/lib/nav';
 
@@ -10,6 +10,8 @@ import type { NavIconName } from '@money/core/lib/nav';
  */
 const ICONS = {
   home: House,
+  // 거래는 오간 돈을 훑는 자리다. 장부(BookOpen)와 갈라 보이도록 오가는 화살표로 둔다.
+  transactions: ArrowLeftRight,
   // 가계는 장부다. 자산(Landmark)과 갈라 보이도록 펼친 책으로 둔다.
   ledger: BookOpen,
   assets: Landmark,

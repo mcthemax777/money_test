@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { EntryDto, EntryFilterQuery, EntryListItem } from '@money/types';
 
-import { apiClient } from '../lib/api-client';
+import { homeDataPort } from '../data/home-port';
 
 /**
  * 거래를 끊어서 받아 오는 목록.
@@ -65,7 +65,7 @@ export function useEntryFeed({
         setIsLoading(true);
         setHasError(false);
 
-        const page: EntryDto.ListResponse = await apiClient.getEntries(
+        const page: EntryDto.ListResponse = await homeDataPort().getEntries(
           {
             ...filter,
             ...(startDate ? { startDate } : {}),

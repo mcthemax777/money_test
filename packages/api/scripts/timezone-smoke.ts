@@ -106,5 +106,5 @@ runSmoke('timezone', async (ctx) => {
   ctx.check('금액이 잡힌 주기는 1개', used.length, 1);
   ctx.check('마감일이 9/15로 넘어간다', used[0]?.periodEnd.slice(0, 10), '2026-09-15');
   ctx.check('주기 시작은 8/16', used[0]?.periodStart.slice(0, 10), '2026-08-16');
-  ctx.check('결제일은 9/25', used[0]?.dueDate.slice(0, 10), '2026-09-25');
+  ctx.check('결제일은 9/25', used[0]?.dueDate?.slice(0, 10), '2026-09-25');
 });

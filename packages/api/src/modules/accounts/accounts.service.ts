@@ -2,23 +2,22 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { AccountType, FinancialInstitutionType, Prisma, ProjectRole } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
+import { clientId, rejectDuplicateId } from '@/common/client-id';
 import { LedgerService } from '../ledger/ledger.service';
 import { InstitutionsService } from '../institutions/institutions.service';
-import { AccountDto } from '@money/types';
+import { AccountDto, HIDDEN_ACCOUNT_TYPES } from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
 import { toMoney, toOptionalMoney } from '@/common/money';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { badRequest } from '@/common/app-error';
 
-/**
+/*
  * 사용자가 "통장"으로 인식하지 않는 내부 계정.
- * credit_card는 카드 화면의 "사용액", opening_balance는 기초잔액 상대편이라
- * 통장 목록에 노출하면 안 된다.
+ *
+ * 정의는 `@money/types` 의 payment-methods 에 있다. 결제수단 목록을 기기도 만들게 되어
+ * 그쪽으로 옮겼고, 여기서는 이름만 다시 내보낸다 (같은 목록을 두 벌 두지 않는다).
  */
-export const HIDDEN_ACCOUNT_TYPES: AccountType[] = [
-  AccountType.credit_card,
-  AccountType.opening_balance,
-];
+export { HIDDEN_ACCOUNT_TYPES };
 
 /** 개설 기관이라는 개념이 없는 계정 유형. 기관이 들어오면 거부한다. */
 const NO_INSTITUTION_TYPES: AccountType[] = [
@@ -98,8 +97,9 @@ export class AccountsService {
       _max: { sortOrder: true },
     });
 
-    const account = await this.prisma.account.create({
+    const account = await rejectDuplicateId('계좌', () => this.prisma.account.create({
       data: {
+        id: clientId(dto.id, '계좌 식별자'),
         projectId,
         ownerId: dto.ownerId,
         type: dto.type as AccountType,
@@ -110,7 +110,7 @@ export class AccountsService {
         sortOrder: (lastOrder._max.sortOrder ?? -1) + 1,
       },
       include: ACCOUNT_INCLUDE,
-    });
+    }));
 
     // 개설 잔액은 컬럼에 직접 쓰지 않고 전표로 남긴다.
     // 그래야 "잔액 = posting 합계" 불변식이 처음부터 성립한다.
@@ -143,7 +143,7 @@ export class AccountsService {
       where: {
         projectId: finalProjectId,
         ...(includeInactive ? {} : { isActive: true }),
-        type: { notIn: HIDDEN_ACCOUNT_TYPES },
+        type: { notIn: [...HIDDEN_ACCOUNT_TYPES] as AccountType[] },
       },
       include: ACCOUNT_INCLUDE,
       // 사용자가 드래그로 정한 순서. 같으면 최근에 만든 것부터.

@@ -54,7 +54,7 @@ runSmoke('card-usage', async (ctx) => {
   ctx.check('8/15 마감 주기 사용액', (await usageOf('2026-08-15'))?.usage, '50000');
   ctx.check('9/15 마감 주기 사용액', (await usageOf('2026-09-15'))?.usage, '30000');
   ctx.check('결제일은 마감 이후 처음 오는 25일',
-    (await usageOf('2026-08-15'))?.dueDate.slice(0, 10), '2026-08-25');
+    (await usageOf('2026-08-15'))?.dueDate?.slice(0, 10), '2026-08-25');
   ctx.check('남은 대금', await outstanding(), '80000');
 
   // ── 결제해도 사용분은 자유롭게 고쳐진다 (핵심) ──
@@ -135,7 +135,7 @@ runSmoke('card-usage', async (ctx) => {
     (await usageOf('2026-10-25'))?.usage, '10000');
   ctx.check('옛 경계 주기는 사라진다', await usageOf('2026-10-15'), undefined);
   ctx.check('결제일도 다시 계산된다',
-    (await usageOf('2026-10-25'))?.dueDate.slice(0, 10), '2026-11-05');
+    (await usageOf('2026-10-25'))?.dueDate?.slice(0, 10), '2026-11-05');
 
   // ── 이체로도 같은 결과가 나와야 한다 ──
   //

@@ -1,3 +1,4 @@
+import { ForbiddenException } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { LedgerService } from '@/modules/ledger/ledger.service';
 import { ExchangeRatesService } from '@/modules/exchange-rates/exchange-rates.service';
@@ -100,6 +101,12 @@ export async function runSmoke(name: string, body: (ctx: SmokeContext) => Promis
 async function cleanup(prisma: PrismaClient, projectIds: string[], userIds: string[]) {
   try {
     if (projectIds.length > 0) {
+      /*
+       * 명령 기록은 프로젝트와 함께 사라지지 않는다. 외래 키가 없기 때문인데, 그것이
+       * 이 표의 뜻이기도 하다 -- 프로젝트가 지워진 뒤에 도착한 재전송도 막아야 한다.
+       * 그래서 검사가 만든 것만 골라 여기서 치운다.
+       */
+      await prisma.mutationLog.deleteMany({ where: { projectId: { in: projectIds } } });
       await prisma.project.deleteMany({ where: { id: { in: projectIds } } });
     }
     if (userIds.length > 0) {
@@ -117,7 +124,24 @@ async function cleanup(prisma: PrismaClient, projectIds: string[], userIds: stri
  * 권한 검증은 스모크 범위 밖이라 통과시키되, 타임존은 실제 프로젝트 값을 읽는다.
  * 월 경계와 카드 청구주기가 이 값을 쓰기 때문에 하드코딩하면 검증 의미가 없다.
  */
-export function projectAccessStub(prisma: PrismaClient, defaultProjectId: string) {
+export function projectAccessStub(
+  prisma: PrismaClient,
+  defaultProjectId: string,
+  /**
+   * 이 사용자의 역할. 기본은 무엇이든 되는 상태다.
+   *
+   * viewer 를 주면 쓰기를 요구하는 경로가 거절된다. 명령 재생이 "권한을 재생 시점에 다시
+   * 본다"를 지키는지 보려면 그 상태를 만들 수 있어야 한다 (설계 문서의 D10).
+   */
+  role: 'owner' | 'editor' | 'viewer' = 'owner',
+) {
+  const canWrite = role !== 'viewer';
+  const requireWrite = (required?: string) => {
+    if (required && required !== 'viewer' && !canWrite) {
+      throw new ForbiddenException('이 프로젝트에 대한 권한이 없습니다.');
+    }
+  };
+
   const timeZoneOf = async (projectId: string) => {
     const project = await prisma.project.findUnique({
       where: { id: projectId },
@@ -127,10 +151,17 @@ export function projectAccessStub(prisma: PrismaClient, defaultProjectId: string
   };
 
   return {
-    resolveAndVerifyProjectId: async (_userId: string, projectId?: string) =>
-      projectId ?? defaultProjectId,
-    verifyUserHasAccessToProject: async () => undefined,
-    verifyUserRole: async () => undefined,
+    resolveAndVerifyProjectId: async (_userId: string, projectId?: string, required?: string) => {
+      requireWrite(required);
+      return projectId ?? defaultProjectId;
+    },
+    verifyUserHasAccessToProject: async (
+      _userId?: string,
+      _projectId?: string,
+      required?: string,
+    ) => requireWrite(required),
+    verifyUserRole: async (_userId?: string, _projectId?: string, required?: string) =>
+      requireWrite(required),
     resolveProject: async (_userId: string, projectId?: string) => {
       const id = projectId ?? defaultProjectId;
       return { id, timeZone: await timeZoneOf(id) };

@@ -1,13 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { BudgetDto, CardDto, EntryFilterQuery, ReportDto } from '@money/types';
 
-import { apiClient } from '../lib/api-client';
+import { homeDataPort } from '../data/home-port';
 import { dateMarkerKey, formatMonthShort } from '../lib/datetime';
 import { sumNetWorth } from '../lib/net-worth';
 import type { Account, Card, Category, Person } from '../lib/types';
 import { useProject } from '../store/project';
 import { useUserFilter } from '../store/user-filter';
 import { useDebouncedValue } from './useDebouncedValue';
+import { useMirrorVersion } from './useMirrorVersion';
 import { usePersonFilterSync } from './usePersonFilterSync';
 
 /**
@@ -79,6 +80,9 @@ export interface ReferencePatch {
  * 있어 부르는 쪽에 남겨 두었다.
  *
  * 오류는 문구가 아니라 `hasError` 로 알린다. 사전을 읽는 일은 화면의 몫이다.
+ *
+ * 값을 어디서 얻는지는 창구(`homeDataPort`)가 정한다. 웹은 서버에서 곧바로 받고,
+ * 앱은 기기 사본에서 읽는다. 이 훅과 화면은 어느 쪽인지 모른 채 같은 코드를 쓴다.
  */
 export function useHomeData({
   projectId,
@@ -112,6 +116,13 @@ export function useHomeData({
 
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
+  /**
+   * 사본이 채워질 때마다 올라간다.
+   *
+   * 앱은 사본을 읽고 동기화는 뒤에서 그것을 채운다. 이 값을 의존성에 넣지 않으면
+   * 처음 열었을 때 빈 사본을 읽은 화면이 그대로 멈춘다. 웹에서는 0에 머문다.
+   */
+  const mirrorVersion = useMirrorVersion();
   /** 거래를 고친 뒤 목록과 합계를 다시 받게 하는 표. */
   const [entryVersion, setEntryVersion] = useState(0);
   /** 대금을 기록한 뒤 카드 사용 현황을 다시 읽게 하는 표. */
@@ -126,11 +137,12 @@ export function useHomeData({
 
     const loadReference = async () => {
       try {
+        const port = homeDataPort();
         const [peopleData, cardsData, accountsData, categoryData] = await Promise.all([
-          apiClient.getPeople(projectId),
-          apiClient.getCards(projectId),
-          apiClient.getAccountsV2(projectId),
-          apiClient.getCategories(projectId),
+          port.getPeople(projectId),
+          port.getCards(projectId),
+          port.getAccountsV2(projectId),
+          port.getCategories(projectId),
         ]);
         if (cancelled) return;
 
@@ -153,7 +165,7 @@ export function useHomeData({
     return () => {
       cancelled = true;
     };
-  }, [projectId]);
+  }, [projectId, mirrorVersion]);
 
   usePersonFilterSync(projectId, people);
 
@@ -191,11 +203,12 @@ export function useHomeData({
         setIsLoading(true);
         setHasError(false);
 
+        const port = homeDataPort();
         const [netWorthData, budgetRows, summaryRow, currentMethods] = await Promise.all([
-          apiClient.getNetWorth(projectId),
-          apiClient.getBudgetForMonth(year, month, projectId, filter),
-          apiClient.getSummary({ yearMonth }, projectId, filter),
-          apiClient.getPaymentMethods({ yearMonth: thisYearMonth }, projectId, filter),
+          port.getNetWorth(projectId),
+          port.getBudgetForMonth(year, month, projectId, filter),
+          port.getSummary({ yearMonth }, projectId, filter),
+          port.getPaymentMethods({ yearMonth: thisYearMonth }, projectId, filter),
         ]);
         if (cancelled) return;
 
@@ -216,7 +229,7 @@ export function useHomeData({
         );
         const performances = await Promise.all(
           cardItems.map((item) =>
-            apiClient.getCardPerformance(item.id).catch((error: unknown) => {
+            port.getCardPerformance(item.id).catch((error: unknown) => {
               console.error('카드 실적 조회 실패:', error);
               return null;
             }),
@@ -263,7 +276,7 @@ export function useHomeData({
     return () => {
       cancelled = true;
     };
-  }, [projectId, peopleLoaded, people.length, filter, year, month, yearMonth, thisYearMonth, entryVersion]);
+  }, [projectId, peopleLoaded, people.length, filter, year, month, yearMonth, thisYearMonth, entryVersion, mirrorVersion]);
 
   /**
    * 고른 자산주인의 총자산.

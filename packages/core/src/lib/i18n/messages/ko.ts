@@ -25,6 +25,7 @@ export const ko = {
 
   // ===== 화면 이동 =====
   'nav.home': '홈',
+  'nav.transactions': '거래',
   'nav.ledger': '가계',
   'nav.assets': '자산',
   'nav.categories': '카테고리',
@@ -46,6 +47,22 @@ export const ko = {
   'settings.profile.description': '계정 정보를 확인하고 이름을 변경합니다',
   'settings.projects.title': '프로젝트 관리',
   'settings.projects.description': '프로젝트 생성, 멤버와 초대 링크, 가입 요청을 관리합니다',
+
+  // ===== 보내지 못한 거래 (아웃박스) =====
+  'settings.outbox.title': '보내지 못한 거래',
+  'settings.outbox.description': '오프라인에서 적었지만 아직 서버에 반영되지 않은 거래를 봅니다',
+  'outbox.title': '보내지 못한 거래',
+  'outbox.empty': '보내지 못한 거래가 없습니다.',
+  'outbox.waiting': '{count}건이 서버로 갈 차례를 기다리고 있습니다.',
+  'outbox.status.conflict': '다른 기기가 이 거래를 더 늦게 고쳤습니다',
+  'outbox.status.rejected': '서버가 받지 않았습니다',
+  'outbox.status.blocked': '앞선 거래가 처리되지 않아 함께 미뤘습니다',
+  'outbox.kind.create': '거래 추가',
+  'outbox.kind.replace': '거래 수정',
+  'outbox.kind.delete': '거래 삭제',
+  'outbox.retry': '다시 보내기',
+  'outbox.discard': '버리기',
+  'outbox.discardHint': '버리면 이 기기에서 적은 내용이 사라집니다.',
   'settings.language.title': '언어',
   'settings.language.description':
     '화면에 쓰는 말을 고릅니다. 계정에 저장되므로 다른 기기에서도 그대로 이어집니다.',
@@ -799,6 +816,28 @@ export const ko = {
   'editor.categoryAddTitle': '카테고리 추가',
   'editor.subCategoryAddTitle': '{parent} 소분류 추가',
 
+  // ===== 앱의 거래 입력 폼 =====
+  'entryForm.descriptionRequired': '설명을 입력해주세요.',
+  'entryForm.amountRequired': '금액을 0보다 크게 입력해주세요.',
+  'entryForm.dateInvalid': '날짜를 YYYY-MM-DD 로 입력해주세요.',
+  'entryForm.timeInvalid': '시간을 HH:MM 으로 입력해주세요.',
+  'entryForm.categoryRequired': '분류를 선택해주세요.',
+  'entryForm.methodRequired': '결제수단을 선택해주세요.',
+  'entryForm.accountRequired': '통장을 선택해주세요.',
+  'entryForm.toAccountRequired': '받는 계좌를 선택해주세요.',
+  'entryForm.feeInvalid': '수수료를 0 이상으로 입력해주세요.',
+  'entryForm.extraInvalid': '과소비 금액을 0 이상으로 입력해주세요.',
+  'entryForm.category': '분류',
+  'entryForm.extraAmount': '과소비로 셀 금액 (선택)',
+  'entryForm.extraHint': '비워 두면 분류의 기본값을 따릅니다. 0을 적으면 일반 거래입니다.',
+  'entryForm.delete': '삭제',
+  'entryForm.deleting': '삭제 중...',
+  'entryForm.addButton': '거래 추가',
+  'entryForm.noCategories': '먼저 분류를 만들어 주세요.',
+  'entryForm.noMethods': '먼저 통장이나 카드를 만들어 주세요.',
+  'entryForm.today': '오늘',
+  'entryForm.offlineNote': '오프라인이면 기기에 먼저 저장되고 연결되면 서버로 보냅니다.',
+
   /*
    * 서버가 코드로 알려 준 오류.
    *
@@ -837,6 +876,63 @@ export const ko = {
   'error.EXTRA_EXCEEDS_AMOUNT': '과소비 금액은 거래 금액보다 클 수 없습니다.',
   'carousel.prev': '이전으로',
   'carousel.next': '다음으로',
+
+  // ===== 거래 화면 =====
+  'tx.noun': '거래',
+  'tx.tab.date': '날짜별',
+  'tx.tab.category': '분류별',
+  'tx.tab.method': '수단별',
+  'tx.noMonths': '거래가 없습니다.',
+  'tx.noDays': '이 달에 거래가 없습니다.',
+  'tx.noCategories': '이 달에 분류별로 볼 거래가 없습니다.',
+  'tx.noMethods': '이 달에 쓴 결제수단이 없습니다.',
+  'tx.entryCount': '{count}건',
+  'tx.loadFailed': '거래를 불러오지 못했습니다.',
+  'tx.search': '검색',
+  'tx.search.categories': '분류',
+  'tx.search.accounts': '계좌',
+  'tx.search.cards': '카드',
+  'tx.search.apply': '확인',
+  'tx.search.clear': '전체 해제',
+  'tx.search.kindHint': '카드정산은 통장과 카드 사이에 오간 돈입니다 (대금 결제·환불).',
+  'tx.search.active': '검색 {count}개 적용',
+  'tx.search.off': '검색 끄기',
+  'tx.search.empty': '고를 수 있는 분류나 자산이 없습니다.',
+  'tx.detail.title': '거래 상세',
+  'tx.detail.kind': '유형',
+  'tx.detail.date': '날짜',
+  'tx.detail.person': '사용자',
+  'tx.detail.category': '분류',
+  'tx.detail.method': '결제수단',
+  'tx.detail.amount': '금액',
+  'tx.detail.extra': '과소비',
+  'tx.detail.extraIncome': '추가 수입',
+  'tx.detail.merchant': '가맹점',
+  'tx.detail.note': '메모',
+  'tx.detail.installment': '할부',
+  'tx.detail.installmentMonths': '{months}개월',
+  'tx.detail.fee': '수수료',
+  'tx.detail.original': '원래 금액',
+  'tx.detail.split': '분할 {count}건',
+  'tx.detail.close': '닫기',
+
+
+  'tx.search.kinds': '유형',
+  'tx.kind.expense': '지출',
+  'tx.kind.income': '수입',
+  'tx.kind.transfer': '이체',
+  'tx.kind.card_payment': '카드정산',
+
+
+  'tx.more': '더보기',
+  'tx.select': '삭제할 거래 고르기',
+  'tx.selected': '{count}개 선택됨',
+  'tx.deleteSelected': '고른 거래 삭제',
+  'tx.deleteConfirm': '고른 {count}건을 삭제하시겠습니까?',
+  'tx.deleteConfirmBody': '지운 거래는 되돌릴 수 없습니다.',
+  'tx.deleteNone': '지울 거래를 먼저 고르세요.',
+  'tx.deleteFailed': '{count}건을 지우지 못했습니다.',
+
 } as const;
 
 /** 사전이 가진 열쇠. 영어·일본어 사전이 이 목록을 다 채워야 한다. */

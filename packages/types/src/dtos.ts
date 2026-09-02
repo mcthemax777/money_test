@@ -13,6 +13,7 @@ import type {
   CardTransferDirection,
   Posting,
 } from './entities';
+import type { EntrySearchQuery } from './entry-search';
 
 // ===== Auth =====
 
@@ -64,6 +65,14 @@ export namespace Auth {
 
 export namespace PersonDto {
   export interface CreateRequest {
+    /**
+     * 기기가 만든 식별자 (UUID). 생략하면 서버가 만든다.
+     *
+     * 오프라인에서 적은 것을 곧바로 고치고 지우려면 이름이 먼저 있어야 하고,
+     * 같은 명령을 다시 보내도 행이 하나로 남으려면 그 이름이 기기에서 정해져
+     * 있어야 한다. 형식 검사는 `isClientId` 가 한다.
+     */
+    id?: string;
     name: string;
     relationship?: string;
     projectId?: string;
@@ -82,6 +91,14 @@ export namespace PersonDto {
 
 export namespace AccountDto {
   export interface CreateRequest {
+    /**
+     * 기기가 만든 식별자 (UUID). 생략하면 서버가 만든다.
+     *
+     * 오프라인에서 적은 것을 곧바로 고치고 지우려면 이름이 먼저 있어야 하고,
+     * 같은 명령을 다시 보내도 행이 하나로 남으려면 그 이름이 기기에서 정해져
+     * 있어야 한다. 형식 검사는 `isClientId` 가 한다.
+     */
+    id?: string;
     type: AccountType;
     ownerId: string; // Person ID
     name: string;
@@ -142,6 +159,22 @@ export namespace AccountDto {
 
 export namespace CardDto {
   export interface CreateRequest {
+    /**
+     * 신용카드의 부채 계정 식별자 (UUID). 카드와 함께 만들어진다.
+     *
+     * 기기가 id 를 만들 때는 이것도 함께 보낸다. 부채 계정 id 를 서버가 정하면
+     * 오프라인에서 그 카드로 적은 거래가 어느 계정을 가리킬지 알 수 없다.
+     * 체크카드는 빚이 생기지 않으므로 쓰지 않는다.
+     */
+    liabilityAccountId?: string;
+    /**
+     * 기기가 만든 식별자 (UUID). 생략하면 서버가 만든다.
+     *
+     * 오프라인에서 적은 것을 곧바로 고치고 지우려면 이름이 먼저 있어야 하고,
+     * 같은 명령을 다시 보내도 행이 하나로 남으려면 그 이름이 기기에서 정해져
+     * 있어야 한다. 형식 검사는 `isClientId` 가 한다.
+     */
+    id?: string;
     /** 사용자가 고른 실제 통장. 필수이며 서버가 새로 만들지 않는다. */
     paymentAccountId: string;
     name: string;
@@ -385,12 +418,33 @@ export interface EntryFilterQuery {
   extraTypes?: string;
 }
 
+/**
+ * 기간 조회가 함께 받는 조건. 사람·과소비 필터에 거래 화면의 검색이 얹힌 것.
+ *
+ * 한 덩이로 두는 이유는 셋이 언제나 함께 다니기 때문이다. 검색을 켠 채 달을 훑으면
+ * 년월 목록도, 그 안의 분류별·수단별 목록도, 마지막 거래 목록도 같은 조건으로
+ * 걸러져야 화면 안에서 숫자가 어긋나지 않는다.
+ */
+export type EntryScopeQuery = EntryFilterQuery &
+  EntrySearchQuery & {
+    /** 한 사람만 볼 때. 여러 명은 personIds 를 쓴다. */
+    personId?: string;
+  };
+
 export namespace EntryDto {
   /**
    * 화면이 다루는 개념 그대로 받는다. 서버가 전표(postings)로 번역한다.
    * 클라이언트는 Posting을 직접 만들지 않는다.
    */
   export interface CreateRequest {
+    /**
+     * 기기가 만든 식별자 (UUID). 생략하면 서버가 만든다.
+     *
+     * 오프라인에서 적은 것을 곧바로 고치고 지우려면 이름이 먼저 있어야 하고,
+     * 같은 명령을 다시 보내도 행이 하나로 남으려면 그 이름이 기기에서 정해져
+     * 있어야 한다. 형식 검사는 `isClientId` 가 한다.
+     */
+    id?: string;
     kind: 'expense' | 'income' | 'transfer' | 'card_payment';
     personId: string;
     date: IsoDateString;
@@ -472,7 +526,7 @@ export namespace EntryDto {
   /** 수정은 전체 교체다. 생성과 같은 형태를 보내면 서버가 전표를 갈아끼운다. */
   export interface UpdateRequest extends Omit<CreateRequest, 'projectId'> {}
 
-  export interface ListQuery extends EntryFilterQuery {
+  export interface ListQuery extends EntryFilterQuery, EntrySearchQuery {
     /** 원장 관점: 이 계좌가 얽힌 전표 전부 (체크카드 사용, 이체 받은 건 포함) */
     accountId?: string;
     /** 이 카드가 얽힌 전표 전부 (사용 + 대금 결제) */
@@ -489,6 +543,10 @@ export namespace EntryDto {
     /** 결제수단 관점: 이 카드로 결제한 전표 */
     paymentCardId?: string;
 
+    /*
+     * 거래 화면의 검색(분류 여럿·자산 여럿·유형)은 `EntrySearchQuery` 가 갖는다.
+     * 무리 안은 OR, 무리끼리는 AND 이고 그 규칙은 `types/entry-search.ts` 하나다.
+     */
     personId?: string;
     categoryId?: string;
     /**
@@ -506,6 +564,21 @@ export namespace EntryDto {
      */
     categoryType?: 'income' | 'expense';
     kind?: EntryKind;
+    /**
+     * 한 달을 본다 ("YYYY-MM"). `startDate`/`endDate` 보다 앞선다.
+     *
+     * 왜 따로 두는가. 달의 경계는 **프로젝트 타임존의 벽시계**다. 부르는 쪽이 그것을
+     * 인스턴트로 만들어 넘기면 두 가지가 어긋난다.
+     *
+     *   ① 달 길이. `"2026-11-31"` 은 오류가 아니라 **2026-12-01 로 넘어간다**(2월은
+     *      3월 3일까지). 그렇게 만든 구간은 다음 달 초하루를 함께 담는다.
+     *   ② 시차. `"2026-08-01"` 은 UTC 자정이라 한국의 8월 1일 오전 9시부터다.
+     *      그 앞 아홉 시간의 거래가 목록에서 빠지는데, 월 합계는 그것을 세고 있다.
+     *
+     * 달 이름을 그대로 넘기면 양쪽이 각자 아는 방법으로 경계를 만든다. 서버는
+     * `zonedMonthRange` 로, 기기는 동기화할 때 박아 둔 `yearMonth` 컬럼으로.
+     */
+    yearMonth?: string;
     startDate?: IsoDateString;
     endDate?: IsoDateString;
     /** 커서 기반 페이지네이션. 이전 응답의 nextCursor를 그대로 넘긴다. */
@@ -525,6 +598,14 @@ export namespace EntryDto {
 
 export namespace CategoryDto {
   export interface CreateRequest {
+    /**
+     * 기기가 만든 식별자 (UUID). 생략하면 서버가 만든다.
+     *
+     * 오프라인에서 적은 것을 곧바로 고치고 지우려면 이름이 먼저 있어야 하고,
+     * 같은 명령을 다시 보내도 행이 하나로 남으려면 그 이름이 기기에서 정해져
+     * 있어야 한다. 형식 검사는 `isClientId` 가 한다.
+     */
+    id?: string;
     name: string;
     parentId?: string; // 소분류인 경우 대분류 ID
     type: 'income' | 'expense';
@@ -566,7 +647,7 @@ export namespace ReportDto {
    * 둘 중 하나만 채운다. startDate/endDate 를 주면 그 구간을, 아니면 yearMonth 의
    * 한 달을 본다. 날짜는 프로젝트 타임존의 달력 날짜이고 양끝을 포함한다.
    */
-  export interface PeriodQuery extends EntryFilterQuery {
+  export interface PeriodQuery extends EntryFilterQuery, EntrySearchQuery {
     projectId?: string;
     /** "YYYY-MM". startDate/endDate 를 주면 무시된다. */
     yearMonth?: string;
@@ -668,6 +749,24 @@ export namespace ReportDto {
   export interface TrendPoint {
     yearMonth: string;
     amount: string;
+  }
+
+  /**
+   * 거래가 있는 달만 훑는다. 거래 화면의 첫 목록이 쓴다.
+   *
+   * TrendQuery 와 달리 기간을 받지 않는다. 전체 기간이고, 거래가 없는 달은 아예
+   * 빠진다. 그래서 응답 길이가 곧 "이 가계부가 몇 달치인가"다.
+   */
+  export interface EntryMonthsQuery extends EntryFilterQuery, EntrySearchQuery {
+    projectId?: string;
+  }
+
+  /** 최신 달이 먼저 온다. */
+  export interface EntryMonth {
+    /** "YYYY-MM" */
+    yearMonth: string;
+    income: string;
+    expense: string;
   }
 
   /**
@@ -792,6 +891,14 @@ export namespace ReportDto {
 
 export namespace BudgetDto {
   export interface CreateRequest {
+    /**
+     * 기기가 만든 식별자 (UUID). 생략하면 서버가 만든다.
+     *
+     * 오프라인에서 적은 것을 곧바로 고치고 지우려면 이름이 먼저 있어야 하고,
+     * 같은 명령을 다시 보내도 행이 하나로 남으려면 그 이름이 기기에서 정해져
+     * 있어야 한다. 형식 검사는 `isClientId` 가 한다.
+     */
+    id?: string;
     categoryId?: string;    // null=전체, 값=대분류/소분류
     type?: 'income' | 'expense';  // 카테고리 타입 (전체 지출/수입 구분용)
     monthlyAmount: string;
@@ -945,4 +1052,86 @@ export interface ErrorResponse {
     details?: unknown;
   };
   timestamp: string;
+}
+
+// ===== 동기화 =====
+
+/**
+ * 기기가 "내가 마지막으로 본 번호 뒤"를 받아 가는 변경 피드.
+ *
+ * 행 모양은 서버 표를 그대로 둔다. 화면용 DTO(EntryListItem 등)로 바꾸지 않는 것은,
+ * 기기가 그 행으로 자기 원장을 다시 세워 스스로 집계해야 하기 때문이다. 화면용
+ * 모양은 이미 계산이 끝난 값이라 그 일에 쓸 수 없다.
+ */
+export namespace SyncDto {
+  export interface PullQuery {
+    projectId?: string;
+    /** 마지막으로 받은 번호. 처음이면 0 (또는 생략) */
+    since?: number;
+    /** 한 번에 받을 표당 최대 행 수 */
+    limit?: number;
+  }
+
+  /** 지워진 행. entity 는 서버 표 이름 그대로다 ("JournalEntry"). */
+  export interface Tombstone {
+    entity: string;
+    entityId: string;
+    deletedVersion: number;
+  }
+
+  /**
+   * 전표는 다리와 함께 하나의 단위로 움직인다.
+   *
+   * 다리만 따로 병합하면 합계 0이라는 불변식이 깨진다. 그래서 다리에는 번호를
+   * 붙이지 않고, 전표가 바뀔 때마다 다리 전체를 함께 실어 보낸다.
+   */
+  export interface EntryRow {
+    id: string;
+    postings: unknown[];
+    [field: string]: unknown;
+  }
+
+  export interface Changes {
+    /** 프로젝트 자신이 바뀌었을 때만 채워진다 (이름, 통화, 타임존) */
+    project: unknown | null;
+    members: unknown[];
+    people: unknown[];
+    accounts: unknown[];
+    categories: unknown[];
+    cards: unknown[];
+    entries: EntryRow[];
+    budgets: unknown[];
+    budgetOverrides: unknown[];
+    exchangeRates: unknown[];
+    /**
+     * 투자성 계좌의 평가 기록. 없으면 그 계좌를 장부 잔액으로 세게 되어 총자산이 틀린다.
+     *
+     * 계좌마다 최신 한 건만 쓰이지만 표를 통째로 미러링한다. "최신"은 날짜로 정해지고,
+     * 뒤늦게 도착한 과거 기록이 최신을 밀어내지 않아야 해서 골라내는 일은 읽을 때 한다.
+     */
+    assetValuations: unknown[];
+    /**
+     * 할부 개월수. 회차 금액은 담지 않는다(총액과 개월수에서 다시 계산되는 파생값이다).
+     *
+     * 전표보다 뒤에 적용해야 한다. 전표를 갈아 끼울 때 옛 다리에 걸린 계획이 함께
+     * 지워지므로, 순서를 뒤집으면 방금 받은 계획이 사라진다.
+     */
+    installmentPlans: unknown[];
+  }
+
+  export interface PullResponse {
+    projectId: string;
+    /** 요청에 실려 온 번호 */
+    since: number;
+    /**
+     * 이 응답이 포함한 마지막 번호. 다음 요청의 since 로 그대로 쓴다.
+     *
+     * hasMore 가 true 면 서버가 안전한 자리에서 끊은 번호다. 그 번호까지는
+     * 빠진 것이 없다.
+     */
+    version: number;
+    hasMore: boolean;
+    changes: Changes;
+    tombstones: Tombstone[];
+  }
 }

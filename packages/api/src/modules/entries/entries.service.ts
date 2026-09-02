@@ -4,16 +4,20 @@ import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { LedgerService, EntryInput } from '../ledger/ledger.service';
 import { ENTRY_INCLUDE, toListItem } from './entry-view';
-import { EntryDto, EntryListItem } from '@money/types';
+import { EntryDto, EntryListItem, parseEntrySearch, zonedMonthRange } from '@money/types';
 import { toMoney } from '@/common/money';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import {
   MATCH_NOTHING,
   assetOwnerCondition,
+  entryKindCondition,
+  entrySearchConditions,
   extraPostingCondition,
   parseEntryFilter,
 } from '@/common/entry-filter';
 import { notFound } from '@/common/app-error';
+import { assertYearMonth } from '@/common/year-month';
+import { clientId, rejectDuplicateId } from '@/common/client-id';
 
 const ZERO = new Prisma.Decimal(0);
 const DEFAULT_LIMIT = 50;
@@ -43,7 +47,9 @@ export class EntriesService {
     );
 
     const input = await this.buildInput(projectId, userId, dto);
-    const entry = await this.ledger.createEntry(input);
+    const entry = await rejectDuplicateId('거래', () =>
+      this.ledger.createEntry({ ...input, id: clientId(dto.id, '거래 식별자') }),
+    );
     return this.getEntryById(entry.id, userId);
   }
 
@@ -84,7 +90,10 @@ export class EntriesService {
     query: EntryDto.ListQuery,
     projectId?: string,
   ): Promise<EntryDto.ListResponse> {
-    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
+    const { id: finalProjectId, timeZone } = await this.projectAccess.resolveProject(
+      userId,
+      projectId,
+    );
     const limit = Math.min(Number(query.limit) || DEFAULT_LIMIT, MAX_LIMIT);
 
     const where: Prisma.JournalEntryWhereInput = { projectId: finalProjectId };
@@ -93,7 +102,21 @@ export class EntriesService {
     const filter = parseEntryFilter(query);
     if (filter.matchNothing) Object.assign(where, MATCH_NOTHING);
 
-    if (query.startDate || query.endDate) {
+    // 거래 화면의 검색(분류 여럿 · 자산 여럿). 무리 안은 OR, 무리끼리는 AND.
+    const search = parseEntrySearch(query);
+    if (search.matchNothing) Object.assign(where, MATCH_NOTHING);
+
+    /*
+     * 한 달을 볼 때는 달 이름을 그대로 받는다.
+     *
+     * 부르는 쪽이 인스턴트로 만들어 넘기면 두 가지가 어긋난다. 달 길이("2026-11-31" 은
+     * 오류가 아니라 12월 1일로 넘어간다)와 시차(UTC 자정은 한국의 오전 9시다). 여기서
+     * 프로젝트 타임존으로 자르면 월 합계와 같은 경계가 된다.
+     */
+    if (query.yearMonth) {
+      const range = zonedMonthRange(assertYearMonth(query.yearMonth, '연월'), timeZone);
+      where.date = { gte: range.start, lt: range.end };
+    } else if (query.startDate || query.endDate) {
       where.date = {};
       if (query.startDate) where.date.gte = new Date(query.startDate);
       if (query.endDate) where.date.lte = new Date(query.endDate);
@@ -145,6 +168,13 @@ export class EntriesService {
             },
       );
     }
+    // 검색이 고른 무리들. 각각이 다리 조건 하나이고 서로 AND 로 이어진다.
+    postingFilters.push(...entrySearchConditions(search));
+
+    // 유형은 다리 하나로 표현되지 않아(계좌 다리 두 개를 함께 본다) 전표 조건으로 간다.
+    const kindCondition = entryKindCondition(search.kinds);
+    if (kindCondition) entryFilters.push(kindCondition);
+
     // 일반/과소비 필터. 카테고리 다리에만 걸어야 한다 (계좌 다리는 항상 0이다).
     const extra = extraPostingCondition(filter);
     if (extra) postingFilters.push(extra);
@@ -259,102 +289,56 @@ export class EntriesService {
     };
   }
 
-  /** 화면 개념(kind)을 전표 입력값으로 번역한다. */
+  /**
+   * 와이어의 값을 검사해 조립에 넘긴다.
+   *
+   * 갈래를 나누고 다리를 만드는 규칙은 `@money/types` 의 entry-build 가 갖는다. 기기가
+   * 오프라인에서 같은 전표를 만들어야 하기 때문이다. 여기 남는 일은 경계의 일 하나다 --
+   * **금액처럼 생기지 않은 것을 걸러 400으로 떨어뜨리는 것.** DTO 가 클래스가 아니라
+   * 전역 ValidationPipe 가 타입을 걸러 주지 않아서, 그 검사가 없으면 `{"amount": {}}`
+   * 같은 본문 하나로 500이 난다 (common/money.ts 머리말).
+   */
   private async buildInput(
     projectId: string,
     userId: string,
     dto: EntryDto.CreateRequest | EntryDto.UpdateRequest,
   ): Promise<EntryInput> {
-    const common = {
+    const optional = (value: unknown, label: string) =>
+      value === undefined || value === null || value === ''
+        ? undefined
+        : toMoney(value, label).toString();
+
+    return this.ledger.buildFromRequest({
       projectId,
+      createdByUserId: userId,
+      kind: dto.kind,
       personId: dto.personId,
       date: new Date(dto.date),
       description: dto.description,
       merchant: dto.merchant,
       detailedNote: dto.detailedNote,
-      createdByUserId: userId,
       // 통화를 생략하면 원장이 계좌 통화로 본다. 환율을 생략하면 서버 환율을 쓴다.
       currency: dto.currency,
-      exchangeRate: dto.exchangeRate ? toMoney(dto.exchangeRate, '환율') : undefined,
+      exchangeRate: optional(dto.exchangeRate, '환율'),
       // 환율 대신 통장에서 빠진 금액을 받을 수 있다. 주면 환율보다 우선한다.
-      billedAmount: dto.billedAmount ? toMoney(dto.billedAmount, '청구액') : undefined,
-    };
-
-    switch (dto.kind) {
-      case 'expense':
-        return this.ledger.buildExpense({
-          ...common,
-          lines: this.resolveLines(dto),
-          accountId: dto.accountId,
-          cardId: dto.cardId,
-          installmentMonths: dto.installmentMonths,
-        });
-
-      case 'income':
-        if (!dto.accountId) {
-          throw new BadRequestException('수입은 입금 계좌가 필요합니다.');
-        }
-        return this.ledger.buildIncome({
-          ...common,
-          lines: this.resolveLines(dto),
-          accountId: dto.accountId,
-        });
-
-      case 'transfer':
-        if (!dto.accountId || !dto.toAccountId) {
-          throw new BadRequestException('이체는 보내는 계좌와 받는 계좌가 필요합니다.');
-        }
-        return this.ledger.buildTransfer({
-          ...common,
-          fromAccountId: dto.accountId,
-          toAccountId: dto.toAccountId,
-          amount: toMoney(dto.amount, '이체 금액'),
-          // 통화가 다른 환전에서 실제로 받은 금액. 없으면 서버 환율로 계산한다.
-          toAmount: dto.toAmount ? toMoney(dto.toAmount, '받는 금액') : undefined,
-          feeAmount: dto.transferFee ? toMoney(dto.transferFee, '이체 수수료') : undefined,
-          feeCategoryId: dto.transferFeeCategoryId,
-          // 이체에서 화면의 과소비 표시는 수수료 카테고리에 붙는다 (이체 자체는 지출이 아니다).
-          feeExtraAmount: dto.extraAmount ? toMoney(dto.extraAmount, '과소비 금액') : undefined,
-        });
-
-      case 'card_payment':
-        if (!dto.accountId || !dto.cardId) {
-          throw new BadRequestException('카드사 이체는 통장과 카드가 필요합니다.');
-        }
-        return this.ledger.buildCardTransfer({
-          ...common,
-          cardId: dto.cardId,
-          accountId: dto.accountId,
-          amount: toMoney(dto.amount, '카드 대금'),
-          direction: dto.cardTransferDirection ?? 'payment',
-        });
-
-      default:
-        throw new BadRequestException(`알 수 없는 거래 종류입니다: ${dto.kind}`);
-    }
-  }
-
-  /** 분할이 있으면 그것을, 없으면 단일 카테고리를 한 줄짜리 분할로 취급한다. */
-  private resolveLines(dto: EntryDto.CreateRequest | EntryDto.UpdateRequest) {
-    if (dto.splits?.length) {
-      return dto.splits.map((s) => ({
-        categoryId: s.categoryId,
-        amount: toMoney(s.amount, '분할 금액'),
-        extraAmount: s.extraAmount ? toMoney(s.extraAmount, '과소비 금액') : undefined,
-      }));
-    }
-
-    if (!dto.categoryId) {
-      throw new BadRequestException('카테고리를 지정해야 합니다.');
-    }
-
-    return [
-      {
-        categoryId: dto.categoryId,
-        amount: toMoney(dto.amount),
-        extraAmount: dto.extraAmount ? toMoney(dto.extraAmount, '과소비 금액') : undefined,
-      },
-    ];
+      billedAmount: optional(dto.billedAmount, '청구액'),
+      amount: dto.amount === undefined ? undefined : toMoney(dto.amount).toString(),
+      categoryId: dto.categoryId,
+      extraAmount: optional(dto.extraAmount, '과소비 금액'),
+      splits: dto.splits?.map((split) => ({
+        categoryId: split.categoryId,
+        amount: toMoney(split.amount, '분할 금액').toString(),
+        extraAmount: optional(split.extraAmount, '과소비 금액'),
+      })),
+      accountId: dto.accountId,
+      toAccountId: dto.toAccountId,
+      cardId: dto.cardId,
+      installmentMonths: dto.installmentMonths,
+      toAmount: optional(dto.toAmount, '받는 금액'),
+      transferFee: optional(dto.transferFee, '이체 수수료'),
+      transferFeeCategoryId: dto.transferFeeCategoryId,
+      cardTransferDirection: dto.cardTransferDirection,
+    });
   }
 
   /** 저장 통화 -> 표시 통화. 목록의 금액은 이 환산을 거쳐 나간다. */

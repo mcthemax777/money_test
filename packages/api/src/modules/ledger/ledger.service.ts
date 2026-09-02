@@ -1,13 +1,23 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
 import { Prisma, CardType, AccountType } from '@prisma/client';
 import {
-  LEDGER_MAX_ENTRY_YEARS_AHEAD,
-  LEDGER_OPENING_DATE_KEY,
+  type BuiltEntry,
+  Dec,
+  type EntryBuildRequest,
+  buildEntry,
+  LedgerBuildError,
+  buildCardTransfer,
+  buildExpense,
+  buildIncome,
+  buildTransfer,
+  checkEntryDate,
+  checkPostings,
   currencyDecimals,
-  ledgerMaxEntryDate,
+  isErrorCode,
   ledgerOpeningDate,
 } from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
+import { prismaLedgerLookup } from './prisma-lookup';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { badRequest, notFound } from '@/common/app-error';
@@ -59,6 +69,12 @@ export interface PostingInput {
 }
 
 export interface EntryInput {
+  /**
+   * 기기가 만든 전표 식별자. 없으면 서버가 만든다.
+   *
+   * 형식 검사는 부르는 쪽(entries.service)이 이미 했다. 원장은 받은 값을 그대로 쓴다.
+   */
+  id?: string;
   projectId: string;
   personId: string;
   date: Date;
@@ -78,6 +94,14 @@ export interface EntryInput {
    * 빌더가 정하므로 호출자가 넘길 일은 없다.
    */
   rateProvisional?: boolean;
+  /**
+   * 이 편집의 하이브리드 논리 시계.
+   *
+   * 기기가 보낸 명령을 재생할 때만 실린다. 온라인 REST 경로는 비워 두는데, 그러면
+   * 서버가 "지금"으로 채운다 -- 서버를 거친 편집도 순서에 자리를 잡아야 뒤에 도착한
+   * 오프라인 편집과 견줄 수 있다.
+   */
+  updatedHlc?: string;
   /**
    * 할부 개월수. 신용카드 지출에만 의미가 있고 2 이상일 때 일정이 생긴다.
    *
@@ -226,6 +250,7 @@ export class LedgerService {
     return this.runInTransaction(outerTx, async (tx) => {
       const entry = await tx.journalEntry.create({
         data: {
+          id: input.id,
           projectId: input.projectId,
           personId: input.personId,
           date: input.date,
@@ -236,6 +261,7 @@ export class LedgerService {
           originalCurrency: input.originalCurrency ?? null,
           originalAmount: input.originalAmount ?? null,
           rateProvisional: input.rateProvisional ?? false,
+          updatedHlc: input.updatedHlc ?? null,
           postings: { create: input.postings.map((p) => this.toPostingData(p)) },
         },
         include: { postings: true },
@@ -294,6 +320,7 @@ export class LedgerService {
           originalCurrency: input.originalCurrency ?? null,
           originalAmount: input.originalAmount ?? null,
           rateProvisional: input.rateProvisional ?? false,
+          updatedHlc: input.updatedHlc ?? null,
           postings: { create: input.postings.map((p) => this.toPostingData(p)) },
         },
         include: { postings: true },
@@ -505,109 +532,6 @@ export class LedgerService {
     return { base, entered, rate, estimatedRate: explicitRate === undefined };
   }
 
-  /**
-   * 사용자가 넘긴 청구액을 검증한다.
-   *
-   * 쓸 수 있는 자리가 좁다. 원화 카드로 달러를 결제한 경우처럼 "계좌는 기준통화,
-   * 입력은 외화"일 때만 통장에서 빠진 금액이 따로 존재한다. 달러 통장에서 달러를
-   * 쓴 거래에는 그런 금액이 없고(계좌 통화 금액이 이미 사실이다), 기준통화 거래는
-   * 금액 자체가 청구액이다. 두 경우에 값이 오면 조용히 무시하지 않고 막는다.
-   */
-  private resolveBilled(
-    value: Prisma.Decimal | undefined,
-    entered: string,
-    accountCurrency: string,
-    base: string,
-  ): Prisma.Decimal | null {
-    if (value === undefined) return null;
-
-    if (entered === base) {
-      throw new BadRequestException('기준통화 거래에는 청구액을 따로 넣지 않습니다.');
-    }
-    if (accountCurrency !== base) {
-      throw new BadRequestException(
-        `${accountCurrency} 계좌 거래에는 청구액을 따로 넣지 않습니다. 계좌 통화 금액이 그대로 기록됩니다.`,
-      );
-    }
-    if (value.lte(ZERO)) {
-      throw new BadRequestException('청구액은 0보다 커야 합니다.');
-    }
-    return value;
-  }
-
-  /**
-   * 추정으로 남겨도 되는 거래인지 확인한다.
-   *
-   * 청구액이 나중에 정해지는 것은 신용카드뿐이다. 통장이나 체크카드는 결제하는
-   * 그 자리에서 돈이 빠지므로 사용자가 실제 금액을 안다. 그런데도 서버 환율로
-   * 추정해 두면 확정할 자리도 없이 틀린 금액이 남는다. 카드 대조 화면은 신용카드
-   * 전용이고, 통장 거래는 거기에 올라오지 않기 때문이다.
-   */
-  private assertCanEstimate(provisional: boolean, isCreditCard: boolean, base: string) {
-    if (!provisional || isCreditCard) return;
-
-    throw new BadRequestException(
-      `실제로 빠진 ${base} 금액을 입력해 주세요. 청구액을 나중에 확정하는 것은 신용카드 결제만 됩니다.`,
-    );
-  }
-
-  /**
-   * 할부를 붙일 수 있는 결제수단인지.
-   *
-   * 신용카드만 된다. 나눌 수 있는 것은 카드사에 갚을 빚이고, 체크카드와 통장은
-   * 결제하는 자리에서 돈이 빠져 나눌 청구가 없다.
-   *
-   * saveInstallmentPlan은 "카드 다리가 있는가"만 보는데, 체크카드 지출도 연결 통장
-   * 다리에 cardId가 붙어 그 검사를 통과한다. 카드 종류를 아는 곳은 여기뿐이다.
-   */
-  private assertCanInstall(months: number | undefined, isCreditCard: boolean) {
-    if (!months || months < 2 || isCreditCard) return;
-
-    throw badRequest('INSTALLMENT_CREDIT_ONLY', '할부는 신용카드 지출에만 설정할 수 있습니다.');
-  }
-
-  /**
-   * 줄마다의 기준통화 환산액.
-   *
-   * 청구액을 알면 그것이 사실이므로 환율을 곱하지 않고 줄 비율대로 나눈다.
-   * 곱해서 만들면 줄마다 반올림이 붙어 합계가 청구액에서 1원씩 벗어난다.
-   */
-  private toBaseLines<T extends { amount: Prisma.Decimal }>(
-    lines: T[],
-    rate: Prisma.Decimal,
-    base: string,
-    billed: Prisma.Decimal | null,
-  ): Array<T & { baseAmount: Prisma.Decimal }> {
-    if (!billed) {
-      // 반올림은 줄마다 따로 한다. 합쳐서 한 번 반올림하면 각 줄의 표시액과
-      // 카테고리 합계가 1원씩 어긋난다.
-      return lines.map((line) => ({ ...line, baseAmount: this.toBase(line.amount, rate, base) }));
-    }
-
-    const shares = this.allocate(
-      billed,
-      lines.map((line) => line.amount),
-      currencyDecimals(base),
-    );
-    return lines.map((line, i) => ({ ...line, baseAmount: shares[i] }));
-  }
-
-  /**
-   * 과소비 금액을 기준통화로 옮긴다.
-   *
-   * 환율을 다시 곱하지 않고 그 줄이 이미 얻은 환산액에 비율을 건다. 전액을
-   * 과소비로 적었으면 환산액도 전액이 되어 "일반 지출 0원"이 정확히 맞는다.
-   */
-  private toExtraBase(
-    extra: Prisma.Decimal,
-    amount: Prisma.Decimal,
-    baseAmount: Prisma.Decimal,
-  ): Prisma.Decimal {
-    if (extra.lte(ZERO)) return ZERO;
-    if (extra.gte(amount)) return baseAmount;
-    return baseAmount.mul(extra).div(amount).toDecimalPlaces(4, Prisma.Decimal.ROUND_HALF_UP);
-  }
-
   /** 기준통화 자릿수로 반올림. 원·엔은 소수를 쓰지 않는다. */
   private toBase(amount: Prisma.Decimal, rate: Prisma.Decimal, base: string): Prisma.Decimal {
     return amount.mul(rate).toDecimalPlaces(currencyDecimals(base), Prisma.Decimal.ROUND_HALF_UP);
@@ -638,6 +562,107 @@ export class LedgerService {
   // ───────────────────────────────────────────
 
   /**
+   * 전표 조립이 읽을 창구. 규칙은 `@money/types` 의 entry-build 가 갖는다.
+   *
+   * 게으르게 만드는 것은 생성자에서 프로젝트 접근 서비스가 아직 준비되지 않았을 수
+   * 있어서가 아니라, 이 서비스가 트랜잭션마다 새로 만들어지지 않기 때문이다. 한 번
+   * 만들어 두고 계속 쓴다.
+   */
+  private readonly lookup = prismaLedgerLookup(
+    this.prisma,
+    this.projectAccess,
+    this.exchangeRates,
+  );
+
+  /**
+   * 조립이 거절한 이유를 이 계층의 예외로 바꾼다.
+   *
+   * 규칙은 값(오류 객체)으로 오고, HTTP 상태로 바꾸는 일은 여기서 한다. 기기는 같은
+   * 오류를 잡아 입력 화면의 문구로 쓴다 (ledger-rules 의 위반을 다루는 방식과 같다).
+   */
+  private async translate<T>(run: () => Promise<T>): Promise<T> {
+    try {
+      return await run();
+    } catch (error) {
+      if (error instanceof LedgerBuildError) {
+        /*
+         * 조립의 code 는 규칙의 지역 이름이라 응답 계약(ErrorCode)과 범위가 다르다.
+         * 계약에 있는 것만 코드로 싣고, 나머지는 지금까지처럼 문장만 실어 보낸다
+         * (ledger-rules.ts 머리말이 같은 구분을 적어 두었다).
+         */
+        if (isErrorCode(error.code)) {
+          throw error.notFound
+            ? notFound(error.code, error.message)
+            : badRequest(error.code, error.message);
+        }
+        throw error.notFound
+          ? new NotFoundException(error.message)
+          : new BadRequestException(error.message);
+      }
+      throw error;
+    }
+  }
+
+  /** 조립에 넘길 공통 입력. Date 와 Decimal 은 그대로 통과한다(Dec 가 받아들인다). */
+  private buildCommon(input: CommonInput) {
+    return {
+      projectId: input.projectId,
+      personId: input.personId,
+      date: input.date,
+      description: input.description,
+      merchant: input.merchant,
+      detailedNote: input.detailedNote,
+      currency: input.currency,
+      exchangeRate: input.exchangeRate,
+      billedAmount: input.billedAmount,
+    };
+  }
+
+  private toBuildLines(lines: CategoryLine[]) {
+    return lines.map((line) => ({
+      categoryId: line.categoryId,
+      amount: line.amount,
+      extraAmount: line.extraAmount,
+    }));
+  }
+
+  /**
+   * 조립 결과를 이 계층의 모양으로.
+   *
+   * 금액을 Dec 에서 Prisma.Decimal 로 되돌린다. Dec.toString() 은 정확하므로 값이 상하지
+   * 않는다. `createdByUserId` 처럼 조립이 모르는 값은 원래 입력에서 가져온다.
+   */
+  private toEntryInput(input: CommonInput, built: BuiltEntry): EntryInput {
+    const dec = (value: Dec | undefined | null) =>
+      value === undefined || value === null ? undefined : new Prisma.Decimal(value.toString());
+
+    return {
+      projectId: built.projectId,
+      personId: built.personId,
+      date: built.date,
+      description: built.description,
+      merchant: built.merchant,
+      detailedNote: built.detailedNote,
+      createdByUserId: input.createdByUserId,
+      originalCurrency: built.originalCurrency,
+      originalAmount: dec(built.originalAmount),
+      rateProvisional: built.rateProvisional,
+      installmentMonths: built.installmentMonths,
+      postings: built.postings.map((posting) => ({
+        accountId: posting.accountId,
+        categoryId: posting.categoryId,
+        amount: new Prisma.Decimal(posting.amount.toString()),
+        quantity: dec(posting.quantity),
+        currency: posting.currency,
+        exchangeRate: new Prisma.Decimal(posting.exchangeRate.toString()),
+        baseAmount: new Prisma.Decimal(posting.baseAmount.toString()),
+        extraAmount: dec(posting.extraAmount),
+        cardId: posting.cardId,
+      })),
+    };
+  }
+
+  /**
    * 지출. 결제수단이 계좌든 체크카드든 신용카드든 카테고리측 posting은 동일하다.
    * "지출 = 지출 카테고리 posting의 합"이라는 정의가 결제수단과 분리되는 지점.
    */
@@ -656,107 +681,32 @@ export class LedgerService {
    *   - 계좌 통화 == 기준통화  : 원화 카드로 달러 결제. 청구되는 돈은 원화이므로
    *     계좌 다리는 원화이고, "$50를 썼다"는 사실은 전표에 따로 적는다.
    */
+  /**
+   * 화면 개념(kind)을 그대로 받아 전표를 만든다.
+   *
+   * 갈래를 나누는 규칙도 공용 함수가 갖는다. 서버의 REST 경로와 기기의 명령 재생이
+   * 같은 입구를 써야 "오프라인에서 만든 전표"와 "온라인에서 만든 전표"가 같아진다.
+   */
+  async buildFromRequest(
+    request: EntryBuildRequest & { createdByUserId?: string | null },
+  ): Promise<EntryInput> {
+    return this.toEntryInput(request as CommonInput, await this.translate(() => buildEntry(request, this.lookup)));
+  }
+
   async buildExpense(input: ExpenseInput): Promise<EntryInput> {
-    const lines = await this.resolveLines(input.projectId, input.lines, 'expense');
-    const source = await this.resolvePaymentSource(input.projectId, {
-      accountId: input.accountId,
-      cardId: input.cardId,
-    });
-    const account = await this.getAccount(input.projectId, source.accountId);
-    const { base, entered, rate, estimatedRate } = await this.resolveConversion(
-      input.projectId,
-      input.currency,
-      account.currency,
-      input.exchangeRate,
+    return this.toEntryInput(
+      input,
+      await this.translate(() => buildExpense(
+        {
+          ...this.buildCommon(input),
+          lines: this.toBuildLines(input.lines),
+          accountId: input.accountId,
+          cardId: input.cardId,
+          installmentMonths: input.installmentMonths,
+        },
+        this.lookup,
+      )),
     );
-
-    const enteredTotal = this.sum(lines.map((l) => l.amount));
-    const billed = this.resolveBilled(input.billedAmount, entered, account.currency, base);
-    const baseLines = this.toBaseLines(lines, rate, base, billed);
-    const baseTotal = this.sum(baseLines.map((l) => l.baseAmount));
-    const foreign = this.foreignNote(entered, account.currency, base, enteredTotal);
-    // 청구액을 받았으면 추정이 아니다. 확정된 금액 그대로 들어간다.
-    const provisional = foreign.originalCurrency !== undefined && estimatedRate && !billed;
-    this.assertCanEstimate(provisional, source.isCreditCard, base);
-    this.assertCanInstall(input.installmentMonths, source.isCreditCard);
-
-    return {
-      ...input,
-      ...foreign,
-      rateProvisional: provisional,
-      postings: [
-        // 지출 발생 = + (언제나 기준통화)
-        ...baseLines.map((line) =>
-          this.baseLeg(
-            {
-              categoryId: line.categoryId,
-              extraAmount: this.toExtraBase(line.extraAmount, line.amount, line.baseAmount),
-            },
-            line.baseAmount,
-            base,
-          ),
-        ),
-        // 자산 감소 또는 부채 증가 = -
-        this.paymentLeg(source, account.currency, entered, rate, base, enteredTotal, baseTotal),
-      ],
-    };
-  }
-
-  /**
-   * 결제수단 다리 하나.
-   *
-   * 계좌 통화가 입력 통화와 같으면 입력한 금액이 그대로 빠진다. 다르면(원화 카드로
-   * 외화 결제) 실제로 청구되는 환산액이 빠진다. 그 밖의 조합은 다루지 않는다.
-   */
-  private paymentLeg(
-    source: { accountId: string; cardId?: string },
-    accountCurrency: string,
-    entered: string,
-    rate: Prisma.Decimal,
-    base: string,
-    enteredTotal: Prisma.Decimal,
-    baseTotal: Prisma.Decimal,
-  ): PostingInput {
-    if (accountCurrency === entered) {
-      return {
-        accountId: source.accountId,
-        cardId: source.cardId,
-        amount: enteredTotal.neg(),
-        currency: entered,
-        exchangeRate: rate,
-        // 카테고리 쪽 합계를 그대로 뒤집는다. 다시 곱하면 반올림 때문에
-        // 합계가 0에서 벗어난다.
-        baseAmount: baseTotal.neg(),
-      };
-    }
-
-    if (accountCurrency === base) {
-      return this.baseLeg(
-        { accountId: source.accountId, cardId: source.cardId },
-        baseTotal.neg(),
-        base,
-      );
-    }
-
-    throw new BadRequestException(
-      `${accountCurrency} 계좌에 ${entered}로 결제한 내역은 아직 기록할 수 없습니다.`,
-    );
-  }
-
-  /**
-   * 원 통화 표시 정보.
-   *
-   * 계좌 통화와 입력 통화가 다를 때만 남긴다. 계좌가 이미 외화면 posting에
-   * 통화가 들어 있으므로 중복이다.
-   */
-  private foreignNote(
-    entered: string,
-    accountCurrency: string,
-    base: string,
-    enteredTotal: Prisma.Decimal,
-  ): { originalCurrency?: string; originalAmount?: Prisma.Decimal } {
-    if (entered === accountCurrency || entered === base) return {};
-    return { originalCurrency: entered, originalAmount: enteredTotal };
   }
 
   /** 수입. 수입 카테고리는 -, 입금 계좌는 +. */
@@ -765,60 +715,19 @@ export class LedgerService {
   }
 
   async buildIncome(input: IncomeInput): Promise<EntryInput> {
-    const lines = await this.resolveLines(input.projectId, input.lines, 'income');
-    const account = await this.getAccount(input.projectId, input.accountId);
-    const { base, entered, rate, estimatedRate } = await this.resolveConversion(
-      input.projectId,
-      input.currency,
-      account.currency,
-      input.exchangeRate,
-    );
-
-    const enteredTotal = this.sum(lines.map((l) => l.amount));
-    const billed = this.resolveBilled(input.billedAmount, entered, account.currency, base);
-    const baseLines = this.toBaseLines(lines, rate, base, billed);
-    const baseTotal = this.sum(baseLines.map((l) => l.baseAmount));
-
-    // 수입 다리는 부호만 반대다. 지출과 같은 규칙을 쓰도록 paymentLeg를 재사용하고
-    // 마지막에 뒤집는다.
-    const incoming = this.paymentLeg(
-      { accountId: input.accountId },
-      account.currency,
-      entered,
-      rate,
-      base,
-      enteredTotal,
-      baseTotal,
-    );
-
-    const foreign = this.foreignNote(entered, account.currency, base, enteredTotal);
-
-    // 수입은 통장으로 바로 들어온다. 신용카드가 없으므로 추정으로 남길 수 없다.
-    this.assertCanEstimate(
-      foreign.originalCurrency !== undefined && estimatedRate && !billed,
-      false,
-      base,
-    );
-
-    return {
-      ...input,
-      ...foreign,
-      rateProvisional: false,
-      postings: [
-        // 수입 다리는 음수지만 추가 수입 금액은 크기만 적는다 (부호는 다리가 갖는다).
-        ...baseLines.map((line) =>
-          this.baseLeg(
-            {
-              categoryId: line.categoryId,
-              extraAmount: this.toExtraBase(line.extraAmount, line.amount, line.baseAmount),
-            },
-            line.baseAmount.neg(),
-            base,
-          ),
+    return this.toEntryInput(
+      input,
+      await this.translate(() =>
+        buildIncome(
+          {
+            ...this.buildCommon(input),
+            lines: this.toBuildLines(input.lines),
+            accountId: input.accountId,
+          },
+          this.lookup,
         ),
-        { ...incoming, amount: incoming.amount.neg(), baseAmount: incoming.baseAmount.neg() },
-      ],
-    };
+      ),
+    );
   }
 
   /**
@@ -836,117 +745,24 @@ export class LedgerService {
   }
 
   async buildTransfer(input: TransferInput): Promise<EntryInput> {
-    if (input.fromAccountId === input.toAccountId) {
-      throw badRequest('TRANSFER_SAME_ACCOUNT', '보내는 계좌와 받는 계좌가 같습니다.');
-    }
-    if (input.amount.lte(ZERO)) {
-      throw new BadRequestException('이체 금액은 0보다 커야 합니다.');
-    }
-
-    const fee = input.feeAmount ?? ZERO;
-    if (fee.gt(ZERO) && !input.feeCategoryId) {
-      throw new BadRequestException('수수료를 입력하려면 수수료 카테고리가 필요합니다.');
-    }
-
-    const from = await this.getAccount(input.projectId, input.fromAccountId);
-    const to = await this.getAccount(input.projectId, input.toAccountId);
-
-    // 카드가 끼면 그 다리에 cardId를 채운다. 비워 두면 카드별 거래 조회에서 빠진다.
-    const fromCardId = await this.cardIdForLiability(from);
-    const toCardId = await this.cardIdForLiability(to);
-
-    if (fee.gt(ZERO) && (fromCardId || toCardId)) {
-      // 수수료 다리는 지출 카테고리라 전표가 3-leg이 되는데, 카드가 끼면 이 전표는
-      // card_payment로 분류되어 목록이 수수료를 보여주지 않는다. 표시가 어긋나느니 막는다.
-      throw new BadRequestException('카드사와의 이체에는 수수료를 붙일 수 없습니다.');
-    }
-
-    /*
-     * 통화 환산.
-     *
-     * 보내는 쪽 금액을 기준통화로 환산한 값이 이 전표의 크기다. 받는 쪽은 그
-     * 값을 그대로 받는다 (환산액이 같아야 균형이 맞는다).
-     *
-     * 그래서 환전에서 실현되는 환차손익을 따로 잡지 않는다. $50를 보내 ₩67,500을
-     * 받았다면 그 거래의 실효 환율이 1350이었다고 기록될 뿐이다. 보유 중인 외화의
-     * 평가손익은 순자산에서 미실현으로 따로 보인다.
-     */
-    const base = await this.projectAccess.getProjectLedgerCurrency(input.projectId);
-    const fromRate =
-      input.exchangeRate ??
-      new Prisma.Decimal(
-        (await this.exchangeRates.getRate(
-          input.projectId,
-          this.exchangeRates.assertCurrency(from.currency, '보내는 계좌 통화'),
-          base,
-        )).rate,
-      );
-
-    const sentBase = this.toBase(input.amount, fromRate, base);
-    const feeBase = fee.gt(ZERO) ? this.toBase(fee, fromRate, base) : ZERO;
-
-    // 받는 금액. 통화가 같으면 보낸 금액 그대로다. 다르면 사용자가 실제로
-    // 받은 금액을 적고, 없으면 서버 환율로 되돌려 계산한다.
-    let received = input.toAmount;
-    if (received === undefined) {
-      if (to.currency === from.currency) {
-        received = input.amount;
-      } else {
-        const toRate = new Prisma.Decimal(
-          (await this.exchangeRates.getRate(
-            input.projectId,
-            this.exchangeRates.assertCurrency(to.currency, '받는 계좌 통화'),
-            base,
-          )).rate,
-        );
-        received = sentBase.div(toRate).toDecimalPlaces(currencyDecimals(to.currency));
-      }
-    }
-    if (received.lte(ZERO)) {
-      throw new BadRequestException('받는 금액은 0보다 커야 합니다.');
-    }
-
-    const postings: PostingInput[] = [
-      {
-        accountId: input.fromAccountId,
-        amount: input.amount.add(fee).neg(),
-        currency: from.currency,
-        exchangeRate: fromRate,
-        baseAmount: sentBase.add(feeBase).neg(),
-        cardId: fromCardId,
-      },
-      {
-        accountId: input.toAccountId,
-        amount: received,
-        currency: to.currency,
-        // 실효 환율. 받은 금액과 환산액에서 역산되므로 서버 환율과 다를 수 있다.
-        exchangeRate: sentBase.div(received).toDecimalPlaces(8),
-        baseAmount: sentBase,
-        cardId: toCardId,
-      },
-    ];
-    if (fee.gt(ZERO)) {
-      // 수수료도 지출 카테고리 다리다. 지출/수입과 같은 검증을 거쳐야
-      // 다른 프로젝트의 카테고리나 수입 카테고리가 수수료 자리에 들어오지 않는다.
-      // 과소비 기본값도 여기서 카테고리에서 가져온다.
-      const [line] = await this.resolveLines(
-        input.projectId,
-        [{ categoryId: input.feeCategoryId!, amount: fee, extraAmount: input.feeExtraAmount }],
-        'expense',
-      );
-      postings.push(
-        this.baseLeg(
+    return this.toEntryInput(
+      input,
+      await this.translate(() =>
+        buildTransfer(
           {
-            categoryId: line.categoryId,
-            extraAmount: this.toExtraBase(line.extraAmount, line.amount, feeBase),
+            ...this.buildCommon(input),
+            fromAccountId: input.fromAccountId,
+            toAccountId: input.toAccountId,
+            amount: input.amount,
+            toAmount: input.toAmount,
+            feeAmount: input.feeAmount,
+            feeCategoryId: input.feeCategoryId,
+            feeExtraAmount: input.feeExtraAmount,
           },
-          feeBase,
-          base,
+          this.lookup,
         ),
-      );
-    }
-
-    return { ...input, postings };
+      ),
+    );
   }
 
   /**
@@ -962,58 +778,21 @@ export class LedgerService {
   }
 
   async buildCardTransfer(input: CardTransferInput): Promise<EntryInput> {
-    if (input.amount.lte(ZERO)) {
-      throw new BadRequestException('금액은 0보다 커야 합니다.');
-    }
-
-    const card = await this.getCard(input.projectId, input.cardId);
-    if (card.cardType !== CardType.credit) {
-      throw new BadRequestException('신용카드만 대금 이동 대상입니다.');
-    }
-    if (!card.liabilityAccountId) {
-      throw new BadRequestException('신용카드에 부채 계정이 없습니다.');
-    }
-    const account = await this.getAccount(input.projectId, input.accountId);
-    const liability = await this.getAccount(input.projectId, card.liabilityAccountId);
-
-    // 부채 계정은 결제 통장과 같은 통화로 만들어진다(createCard). 어긋나 있으면
-    // 환산 규칙이 애매해지므로 여기서 막는다.
-    if (liability.currency !== account.currency) {
-      throw new BadRequestException('카드 부채 계정과 결제 통장의 통화가 다릅니다.');
-    }
-
-    const { base, rate } = await this.resolveConversion(
-      input.projectId,
-      account.currency,
-      account.currency,
-      input.exchangeRate,
+    return this.toEntryInput(
+      input,
+      await this.translate(() =>
+        buildCardTransfer(
+          {
+            ...this.buildCommon(input),
+            cardId: input.cardId,
+            accountId: input.accountId,
+            amount: input.amount,
+            direction: input.direction,
+          },
+          this.lookup,
+        ),
+      ),
     );
-
-    // 결제는 통장에서 나가고 부채가 줄어든다. 환불 입금은 정반대다.
-    const toBank = input.direction === 'refund' ? input.amount : input.amount.neg();
-    const toBankBase = this.toBase(toBank, rate, base);
-
-    return {
-      ...input,
-      postings: [
-        {
-          accountId: input.accountId,
-          amount: toBank,
-          currency: account.currency,
-          exchangeRate: rate,
-          baseAmount: toBankBase,
-        },
-        // cardId를 채워야 카드별 거래 조회에 이 전표가 걸린다
-        {
-          accountId: card.liabilityAccountId,
-          amount: toBank.neg(),
-          currency: liability.currency,
-          exchangeRate: rate,
-          baseAmount: toBankBase.neg(),
-          cardId: card.id,
-        },
-      ],
-    };
   }
 
   /**
@@ -1204,66 +983,20 @@ export class LedgerService {
    * 이 서비스의 호출도 그대로 통과한다.
    */
   private assertDateInRange(date: Date) {
-    if (Number.isNaN(date.getTime())) {
-      throw new BadRequestException('거래 날짜가 올바르지 않습니다.');
-    }
-    if (date < OPENING_BALANCE_DATE) {
-      throw new BadRequestException(
-        `${LEDGER_OPENING_DATE_KEY} 이전 날짜의 거래는 기록할 수 없습니다.`,
-      );
-    }
-    // 상한이 없으면 연도 오타(2026 -> 2926)가 그대로 저장된다. 그 한 건이
-    // 순자산을 바꾸고 카드 청구 주기를 수만 개로 부풀린다.
-    if (date > ledgerMaxEntryDate()) {
-      throw new BadRequestException(
-        `${LEDGER_MAX_ENTRY_YEARS_AHEAD}년 뒤보다 나중 날짜의 거래는 기록할 수 없습니다. 연도를 확인해 주세요.`,
-      );
-    }
+    const violation = checkEntryDate(date);
+    if (violation) throw new BadRequestException(violation.message);
   }
 
-  /** 전표 균형과 posting 배타 조건 검증. DB CHECK 제약보다 먼저 걸러 메시지를 명확히 한다. */
+  /**
+   * 전표 균형과 posting 배타 조건 검증. DB CHECK 제약보다 먼저 걸러 메시지를 명확히 한다.
+   *
+   * 규칙 자체는 `@money/types`의 checkPostings 가 갖는다. 오프라인에서는 기기가
+   * 로컬에 담기 전에 같은 검사를 해야 하고, 규칙이 두 벌이면 어느 한쪽만 통과하는
+   * 전표가 생긴다. 여기서는 위반을 이 계층의 예외로 바꿔 던지는 일만 한다.
+   */
   private assertBalanced(postings: PostingInput[]) {
-    if (postings.length < 2) {
-      throw new BadRequestException('전표에는 최소 2개의 posting이 필요합니다.');
-    }
-
-    for (const p of postings) {
-      const hasAccount = Boolean(p.accountId);
-      const hasCategory = Boolean(p.categoryId);
-      if (hasAccount === hasCategory) {
-        throw new BadRequestException(
-          'posting은 계좌와 카테고리 중 정확히 하나만 가리켜야 합니다.',
-        );
-      }
-      if (p.quantity && !hasAccount) {
-        throw new BadRequestException('수량은 계좌 posting에만 기록할 수 있습니다.');
-      }
-      if (p.amount.isZero()) {
-        throw new BadRequestException('금액이 0인 posting은 만들 수 없습니다.');
-      }
-      if (p.exchangeRate.lte(ZERO)) {
-        throw new BadRequestException('환율은 0보다 커야 합니다.');
-      }
-      // 부호가 어긋나면 어느 한쪽 계산이 잘못된 것이다. 그대로 저장하면
-      // 잔액과 리포트가 반대 방향으로 움직인다.
-      if (p.amount.isNegative() !== p.baseAmount.isNegative()) {
-        throw new BadRequestException('금액과 환산액의 부호가 다릅니다.');
-      }
-    }
-
-    /*
-     * 균형은 기준통화 환산액으로 판정한다.
-     *
-     * 통화가 섞인 전표(달러 통장에서 쓴 지출, 환전 이체)는 amount 합계가 0이 될
-     * 수 없다. 달러와 원을 더하는 셈이기 때문이다. 환산액으로 보면 두 다리가
-     * 같은 자를 쓰게 되어 합계가 0이 된다.
-     */
-    const total = this.sum(postings.map((p) => p.baseAmount));
-    if (!total.isZero()) {
-      throw new BadRequestException(
-        `전표 차변과 대변이 맞지 않습니다. 환산액 차액: ${total.toString()}`,
-      );
-    }
+    const violation = checkPostings(postings);
+    if (violation) throw new BadRequestException(violation.message);
   }
 
   /**
@@ -1365,97 +1098,6 @@ export class LedgerService {
   }
 
   /** 카테고리 유효성 확인 + 과소비 금액 기본값 채우기 */
-  private async resolveLines(
-    projectId: string,
-    lines: CategoryLine[],
-    expectedType: 'income' | 'expense',
-  ): Promise<Required<CategoryLine>[]> {
-    if (lines.length === 0) {
-      throw new BadRequestException('카테고리를 최소 하나 지정해야 합니다.');
-    }
-
-    const categories = await this.prisma.category.findMany({
-      where: { id: { in: lines.map((l) => l.categoryId) }, projectId },
-    });
-    const byId = new Map(categories.map((c) => [c.id, c]));
-
-    return lines.map((line) => {
-      const category = byId.get(line.categoryId);
-      if (!category) {
-        throw new NotFoundException(`카테고리를 찾을 수 없습니다: ${line.categoryId}`);
-      }
-      if (category.type !== expectedType) {
-        throw new BadRequestException(
-          `${expectedType === 'expense' ? '지출' : '수입'}에 ${category.type} 카테고리를 쓸 수 없습니다: ${category.name}`,
-        );
-      }
-      if (line.amount.lte(ZERO)) {
-        throw new BadRequestException('금액은 0보다 커야 합니다.');
-      }
-      /*
-       * 과소비 금액은 그 줄의 금액을 넘을 수 없고 음수일 수 없다.
-       *
-       * 값을 보내지 않았으면 카테고리의 기본값을 따른다. 기본이 과소비인 분류는
-       * 전액이 과소비다. 화면은 그 값을 미리 채워 두고 사용자가 줄이게 한다.
-       */
-      const extraAmount = line.extraAmount ?? (category.defaultIsExtra ? line.amount : ZERO);
-      if (extraAmount.lt(ZERO)) {
-        throw new BadRequestException('과소비 금액은 0보다 작을 수 없습니다.');
-      }
-      if (extraAmount.gt(line.amount)) {
-        throw badRequest('EXTRA_EXCEEDS_AMOUNT', '과소비 금액은 거래 금액보다 클 수 없습니다.');
-      }
-      return {
-        categoryId: line.categoryId,
-        amount: line.amount,
-        extraAmount,
-      };
-    });
-  }
-
-  /**
-   * 결제수단을 실제 자금 출처 계좌로 번역한다.
-   *   계좌 직접 지정 -> 그 계좌
-   *   체크카드      -> 연결된 예금 계좌 (즉시 출금)
-   *   신용카드      -> 카드의 부채 계좌 + 해당 시점 청구서
-   */
-  private async resolvePaymentSource(
-    projectId: string,
-    source: { accountId?: string; cardId?: string },
-  ): Promise<{ accountId: string; cardId?: string; isCreditCard: boolean }> {
-    if (Boolean(source.accountId) === Boolean(source.cardId)) {
-      throw new BadRequestException('결제수단으로 계좌와 카드 중 하나만 지정해야 합니다.');
-    }
-
-    if (source.accountId) {
-      await this.getAccount(projectId, source.accountId);
-      return { accountId: source.accountId, isCreditCard: false };
-    }
-
-    const card = await this.getCard(projectId, source.cardId!);
-
-    if (card.cardType === CardType.debit) {
-      // 체크카드는 결제 즉시 연결 통장에서 빠진다. 빚도 청구서도 생기지 않는다.
-      return { accountId: card.paymentAccountId, cardId: card.id, isCreditCard: false };
-    }
-
-    // 신용카드는 통장이 아니라 부채 계정에 쌓인다. 통장에서는 결제일에 빠진다.
-    if (!card.liabilityAccountId) {
-      throw new BadRequestException('신용카드에 부채 계정이 없습니다.');
-    }
-    return { accountId: card.liabilityAccountId, cardId: card.id, isCreditCard: true };
-  }
-
-  /** 이 계좌가 신용카드의 부채 계정이면 그 카드 id. 아니면 undefined. */
-  private async cardIdForLiability(account: { id: string; type: AccountType }) {
-    if (account.type !== AccountType.credit_card) return undefined;
-    const card = await this.prisma.card.findUnique({
-      where: { liabilityAccountId: account.id },
-      select: { id: true },
-    });
-    return card?.id;
-  }
-
   private async getAccount(projectId: string, accountId: string) {
     const account = await this.prisma.account.findUnique({ where: { id: accountId } });
     if (!account || account.projectId !== projectId) {

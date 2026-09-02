@@ -1,4 +1,4 @@
-import { clampDayOfMonth, zonedParts } from '@money/types';
+import { clampDayOfMonth, zonedParts } from './tz';
 
 /**
  * 신용카드 청구 주기 계산.
@@ -14,6 +14,10 @@ import { clampDayOfMonth, zonedParts } from '@money/types';
  * 반환하는 세 값은 인스턴트가 아니라 **달력 날짜 표시자**다. CardStatement의
  * periodStart/periodEnd/dueDate 컬럼이 `@db.Date`라 날짜만 저장되므로,
  * 해당 날짜의 UTC 자정을 담은 Date로 돌려준다.
+ *
+ * 이 파일은 원래 서버(api/modules/ledger)에 있었다. 순수 계산이고 기기도 오프라인에서
+ * 청구 주기를 그려야 해서 @money/types 로 옮겼다. 새 의존성은 없다 -- 옮기기 전에도
+ * 이 패키지의 clampDayOfMonth 와 zonedParts 만 쓰고 있었다.
  */
 
 /** 달력 날짜 표시자. `@db.Date` 컬럼에 그대로 넣는다. */

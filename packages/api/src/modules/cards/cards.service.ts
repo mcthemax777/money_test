@@ -8,6 +8,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
+import { clientId, rejectDuplicateId } from '@/common/client-id';
 import { InstitutionsService } from '../institutions/institutions.service';
 import { CardDto, isCardColor } from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
@@ -71,13 +72,19 @@ export class CardsService {
       FinancialInstitutionType.card_issuer,
     );
 
-    // 카드와 부채 계정은 함께 존재해야 하므로 한 트랜잭션에서 만든다.
-    return this.prisma.$transaction(async (tx) => {
+    /*
+     * 카드와 부채 계정은 함께 존재해야 하므로 한 트랜잭션에서 만든다.
+     *
+     * 기기가 id 를 만들 때는 둘 다 만들어 보내야 한다. 부채 계정 id 를 서버가 정하면,
+     * 오프라인에서 그 카드로 적은 거래가 어느 계정을 가리켜야 하는지 알 수 없다.
+     */
+    return rejectDuplicateId('카드', () => this.prisma.$transaction(async (tx) => {
       let liabilityAccountId: string | undefined;
 
       if (dto.cardType === CardType.credit) {
         const liability = await tx.account.create({
           data: {
+            id: clientId(dto.liabilityAccountId, '카드 부채 계정 식별자'),
             projectId,
             // 부채도 결제 통장 주인의 것이다.
             ownerId: paymentAccount.ownerId,
@@ -98,6 +105,7 @@ export class CardsService {
 
       return tx.card.create({
         data: {
+          id: clientId(dto.id, '카드 식별자'),
           projectId,
           paymentAccountId: dto.paymentAccountId,
           liabilityAccountId,
@@ -117,7 +125,7 @@ export class CardsService {
         },
         include: CARD_INCLUDE,
       });
-    });
+    }));
   }
 
   /**

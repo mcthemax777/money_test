@@ -10,6 +10,7 @@ import { useProject, useProjectTimeZone } from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
 
 import CategoryBreakdown from '../components/CategoryBreakdown';
+import EntryEditor from '../components/EntryEditor';
 import MonthHeader from '../components/MonthHeader';
 import PageHeader from '../components/PageHeader';
 import PaymentMethodBreakdown from '../components/PaymentMethodBreakdown';
@@ -36,7 +37,10 @@ const EXTRA_OPTIONS: Array<{ value: ExtraType; labelKey: MessageKey }> = [
  * 가계. 웹의 /dashboard 를 옮긴 것이다.
  *
  * 한 달(또는 고른 날)의 거래를 세 가지로 본다. 날짜별(달력 + 목록), 분류별, 수단별.
- * 기간 보기와 거래 추가·수정은 아직 웹에만 있다.
+ * 기간 보기(임의 구간)는 아직 웹에만 있다.
+ *
+ * 거래를 적고 고치는 것은 여기서 한다. 오프라인이면 기기에 먼저 담기고 연결될 때 나간다
+ * (창구가 그것을 가르므로 이 화면은 어느 쪽인지 모른다).
  */
 export default function LedgerScreen() {
   const { t } = useTranslation();
@@ -70,6 +74,13 @@ export default function LedgerScreen() {
   /** 달력에서 고른 날. 고르면 그 날 거래만 아래에 보여 준다. */
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [dayEntries, setDayEntries] = useState<EntryListItem[]>([]);
+  /** 입력 팝업. editing 이 null 이면 새로 적는 중이다. */
+  const [editor, setEditor] = useState<{ isOpen: boolean; editing: EntryListItem | null }>({
+    isOpen: false,
+    editing: null,
+  });
+  /** 이 화면이 다루지 않는 갈래를 눌렀을 때의 안내 (카드사 대금 이동 등) */
+  const [notice, setNotice] = useState('');
 
   const ledger = useLedgerData({
     projectId: selectedProjectId,
@@ -99,6 +110,26 @@ export default function LedgerScreen() {
           <Text className="text-sm text-red-800">{t('home.loadFailed')}</Text>
         </View>
       ) : null}
+
+      {notice ? (
+        <View className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+          <Text className="text-sm text-amber-800">{notice}</Text>
+        </View>
+      ) : null}
+
+      {/*
+        거래 추가. 목록 위에 둔다.
+        아래에 띄우는 버튼(FAB)은 하단 탭과 겹치고, 목록이 길면 스크롤을 가린다.
+      */}
+      <Pressable
+        onPress={() => {
+          setNotice('');
+          setEditor({ isOpen: true, editing: null });
+        }}
+        className="items-center rounded-lg bg-blue-600 px-4 py-3 active:bg-blue-700"
+      >
+        <Text className="text-base font-semibold text-white">{t('entryForm.addButton')}</Text>
+      </Pressable>
 
       <MonthHeader
         year={view.year}
@@ -213,11 +244,28 @@ export default function LedgerScreen() {
               <TransactionListView
                 entries={selectedDate ? dayEntries : ledger.entries}
                 share={ledger.share}
+                onEntryClick={(entry) => {
+                  setNotice('');
+                  setEditor({ isOpen: true, editing: entry });
+                }}
               />
             )}
           </>
         )}
       </View>
+
+      <EntryEditor
+        isOpen={editor.isOpen}
+        editing={editor.editing}
+        onClose={() => setEditor({ isOpen: false, editing: null })}
+        onSaved={() => {
+          // 목록과 합계를 다시 읽는다. 오프라인이면 사본에서 곧바로 온다.
+          ledger.reloadEntries();
+          setSelectedDate(null);
+          setDayEntries([]);
+        }}
+        onNotEditable={() => setNotice(t('editor.notEditable'))}
+      />
     </View>
   );
 }

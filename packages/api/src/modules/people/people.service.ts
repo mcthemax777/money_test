@@ -4,6 +4,7 @@ import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { PersonDto } from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
+import { clientId, rejectDuplicateId } from '@/common/client-id';
 import { badRequest } from '@/common/app-error';
 
 @Injectable()
@@ -27,14 +28,17 @@ export class PeopleService {
       _max: { sortOrder: true },
     });
 
-    return this.prisma.person.create({
-      data: {
-        projectId: finalProjectId,
-        name: dto.name,
-        relationship: dto.relationship,
-        sortOrder: (lastOrder._max.sortOrder ?? -1) + 1,
-      },
-    });
+    return rejectDuplicateId('구성원', () =>
+      this.prisma.person.create({
+        data: {
+          id: clientId(dto.id, '구성원 식별자'),
+          projectId: finalProjectId,
+          name: dto.name,
+          relationship: dto.relationship,
+          sortOrder: (lastOrder._max.sortOrder ?? -1) + 1,
+        },
+      }),
+    );
   }
 
   /**

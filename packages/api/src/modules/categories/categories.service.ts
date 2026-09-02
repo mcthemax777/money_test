@@ -5,6 +5,7 @@ import { ProjectAccessService } from '@/common/project-access.guard';
 import { CategoryDto } from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
 import { badRequest } from '@/common/app-error';
+import { clientId } from '@/common/client-id';
 
 @Injectable()
 export class CategoriesService {
@@ -48,6 +49,7 @@ export class CategoriesService {
     try {
       return await this.prisma.category.create({
         data: {
+          id: clientId(dto.id, '카테고리 식별자'),
           projectId: finalProjectId,
           name: dto.name.trim(),
           parentId: dto.parentId ?? null,

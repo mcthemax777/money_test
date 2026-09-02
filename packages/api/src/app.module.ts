@@ -17,6 +17,7 @@ import { LedgerModule } from './modules/ledger/ledger.module';
 import { BudgetsModule } from './modules/budgets/budgets.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { ExchangeRatesModule } from './modules/exchange-rates/exchange-rates.module';
+import { SyncModule } from './modules/sync/sync.module';
 
 @Module({
   imports: [
@@ -45,6 +46,7 @@ import { ExchangeRatesModule } from './modules/exchange-rates/exchange-rates.mod
     BudgetsModule,
     ReportsModule,
     ExchangeRatesModule,
+    SyncModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

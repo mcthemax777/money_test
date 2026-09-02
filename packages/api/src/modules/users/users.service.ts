@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
+import { AccountType } from '@prisma/client';
 import { isLocale, type Locale } from '@money/types';
 import { PrismaService } from '../../config/prisma.service';
 import { ProjectAccessService } from '../../common/project-access.guard';
@@ -135,7 +136,7 @@ export class UsersService {
           where: {
             projectId: finalProjectId,
             isActive: true,
-            type: { notIn: HIDDEN_ACCOUNT_TYPES },
+            type: { notIn: [...HIDDEN_ACCOUNT_TYPES] as AccountType[] },
           },
           include: { owner: true },
           orderBy: { createdAt: 'desc' },

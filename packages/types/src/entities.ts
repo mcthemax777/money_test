@@ -223,6 +223,13 @@ export interface EntryListItem {
   amount: string;
   /** 과소비(지출)·추가 수입(수입)으로 센 금액. "0"이면 일반 거래다. */
   extraAmount: string;
+  /**
+   * 이 거래의 카테고리 다리 수. 분할이면 2 이상이다.
+   *
+   * 목록 한 줄은 대표 분류 하나만 담는다. 그 줄을 폼으로 되돌려 저장하면 분할의 나머지
+   * 줄이 사라지므로, 편집 화면은 이 값을 보고 그 거래를 자기가 다룰 수 있는지 정한다.
+   */
+  splitCount: number;
   categoryId: string | null;
   categoryName: string | null;
   parentCategoryId: string | null;

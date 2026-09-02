@@ -1,5 +1,5 @@
-import { Prisma } from '@prisma/client';
-import { EntryFilterQuery } from '@money/types';
+import { AccountType, CategoryType, Prisma } from '@prisma/client';
+import { EntryFilterQuery, type EntryKind, type ParsedEntrySearch } from '@money/types';
 
 /**
  * 화면의 사람/고정 필터를 Prisma 조건으로 옮긴다.
@@ -117,4 +117,125 @@ export function extraPostingCondition(
     ...(filter.extra ? { extraAmount: { gt: 0 } } : { normalAmount: { gt: 0 } }),
     categoryId: { not: null },
   };
+}
+
+/**
+ * 검색을 다리 조건으로. 무리마다 하나씩 돌려주고, 부르는 쪽이 AND 로 잇는다.
+ *
+ * 다리 조건은 "이 전표에 그런 다리가 하나라도 있는가"로 걸린다. 그래서 한 무리를
+ * 조건 하나로 만들어야 한다 -- 둘로 쪼개 각각 걸면 "식비 다리가 있고 교통비 다리도
+ * 있는 전표"가 되어, 분할 거래만 걸리는 엉뚱한 조건이 된다.
+ */
+export function entrySearchConditions(search: ParsedEntrySearch): Prisma.PostingWhereInput[] {
+  const conditions: Prisma.PostingWhereInput[] = [];
+
+  if (search.categoryIds && search.categoryIds.length > 0) {
+    // 대분류를 고르면 소분류까지. entries.getEntries 의 categoryId 한 개짜리와 같은 규칙이다.
+    conditions.push({
+      OR: [
+        { categoryId: { in: search.categoryIds } },
+        { category: { parentId: { in: search.categoryIds } } },
+      ],
+    });
+  }
+
+  const methods: Prisma.PostingWhereInput[] = [];
+  if (search.paymentAccountIds && search.paymentAccountIds.length > 0) {
+    /*
+     * 결제수단 관점이다. 이 통장에서 실제로 돈이 나간 전표만 본다.
+     *
+     * 체크카드 결제는 연결 통장 다리에도 걸리므로 카드가 붙은 다리를 빼고, 이체로
+     * 돈이 들어온 쪽(+)도 뺀다. /reports/payment-methods 와 같은 규칙이라, 수단별
+     * 목록에 적힌 금액과 그것을 눌러 나온 거래의 합이 어긋나지 않는다.
+     */
+    methods.push({
+      accountId: { in: search.paymentAccountIds },
+      cardId: null,
+      amount: { lt: 0 },
+    });
+  }
+  if (search.paymentCardIds && search.paymentCardIds.length > 0) {
+    methods.push({ cardId: { in: search.paymentCardIds }, amount: { lt: 0 } });
+  }
+  if (methods.length > 0) {
+    conditions.push(methods.length === 1 ? methods[0] : { OR: methods });
+  }
+
+  return conditions;
+}
+
+/**
+ * 유형 조건. 고른 유형끼리 OR 로 잇는다. 전체면 undefined.
+ *
+ * **지출·수입은 카테고리 기준, 이체·카드정산은 자금 이동 기준이다.** 둘을 갈라 두는
+ * 것이 이 함수의 요점이다.
+ *
+ *   지출     지출 카테고리 다리가 있는 전표
+ *   수입     수입 카테고리 다리가 있는 전표
+ *   이체     계좌 사이를 옮긴 돈 (신용카드·기초잔액이 끼지 않은)
+ *   카드정산 계좌 사이를 옮긴 돈 중 신용카드 부채 계정이 끼는 것
+ *   조정     기초잔액 계정이 끼는 것
+ *
+ * 왜 지출을 `classifyEntry` 와 다르게 두는가. **수수료가 붙은 이체 때문이다.** 그 전표는
+ * 표시 유형이 이체지만 수수료는 지출 카테고리 다리다. `classifyEntry` 로 지출을 고르면
+ * 그 전표가 빠지는데, 지출 합계(/reports/summary)는 카테고리 기준이라 그 수수료를
+ * 이미 세고 있다. 그러면 **지출만 고른 달의 합계가 전체 지출보다 작아진다** -- 화면
+ * 안에서 숫자가 갈린다. 이 저장소가 `kind` 와 `categoryType` 을 따로 두는 이유도 같다.
+ *
+ * 그래서 지출과 이체는 서로 배타적이지 않다. 수수료가 붙은 이체는 양쪽에 든다. 돈이
+ * 옮겨진 것도 사실이고 수수료를 쓴 것도 사실이다.
+ *
+ * 이동 쪽 셋은 `classifyEntry` 와 정확히 같아야 한다. "계좌 다리가 둘 이상"은 Prisma 로
+ * 셀 수 없어서 **부호가 다른 계좌 다리가 둘 다 있는가**로 바꿨다. 전표는 균형을 이루므로
+ * 계좌 사이를 옮긴 돈은 한쪽이 음수, 다른 쪽이 양수다. 손으로 옮긴 규칙이라 검사가
+ * 지킨다 -- 스모크가 모든 전표를 `classifyEntry` 로 분류해 대조한다.
+ */
+export function entryKindCondition(
+  kinds: readonly EntryKind[] | undefined,
+): Prisma.JournalEntryWhereInput | undefined {
+  if (!kinds || kinds.length === 0) return undefined;
+
+  const accountLeg = (sign: 'lt' | 'gt'): Prisma.JournalEntryWhereInput => ({
+    postings: { some: { accountId: { not: null }, amount: { [sign]: 0 } } },
+  });
+  /** 계좌 사이를 옮긴 돈. 부호가 다른 계좌 다리가 둘 다 있다. */
+  const movesBetweenAccounts: Prisma.JournalEntryWhereInput = {
+    AND: [accountLeg('lt'), accountLeg('gt')],
+  };
+  const hasAccountType = (type: AccountType): Prisma.JournalEntryWhereInput => ({
+    postings: { some: { account: { type } } },
+  });
+  const hasCategoryType = (type: CategoryType): Prisma.JournalEntryWhereInput => ({
+    postings: { some: { category: { type } } },
+  });
+
+  const of = (kind: EntryKind): Prisma.JournalEntryWhereInput => {
+    switch (kind) {
+      case 'card_payment':
+        return { AND: [movesBetweenAccounts, hasAccountType(AccountType.credit_card)] };
+      case 'adjustment':
+        return {
+          AND: [
+            movesBetweenAccounts,
+            { NOT: hasAccountType(AccountType.credit_card) },
+            hasAccountType(AccountType.opening_balance),
+          ],
+        };
+      case 'transfer':
+        return {
+          AND: [
+            movesBetweenAccounts,
+            { NOT: hasAccountType(AccountType.credit_card) },
+            { NOT: hasAccountType(AccountType.opening_balance) },
+          ],
+        };
+      case 'income':
+        return hasCategoryType(CategoryType.income);
+      default:
+        return hasCategoryType(CategoryType.expense);
+    }
+  };
+
+  const branches = kinds.map(of);
+  return branches.length === 1 ? branches[0] : { OR: branches };
 }
