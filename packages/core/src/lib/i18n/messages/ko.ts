@@ -36,7 +36,6 @@ export const ko = {
   'screen.webOnly': '이 화면은 아직 웹에서만 볼 수 있습니다.',
   'sidebar.projects': '프로젝트',
   'sidebar.noProject': '참여 중인 프로젝트가 없습니다. 설정에서 프로젝트를 만들거나 참여하세요.',
-  'topbar.noProject': '프로젝트 없음',
   'topbar.myInfo': '내 정보',
   'projectSwitch.title': '프로젝트를 변경하시겠습니까?',
   'projectSwitch.body': '현재 프로젝트의 데이터가 초기화됩니다.',

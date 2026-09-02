@@ -26,7 +26,6 @@ export const en: Record<MessageKey, string> = {
   'screen.webOnly': 'This screen is available on the web for now.',
   'sidebar.projects': 'Projects',
   'sidebar.noProject': 'You are not in any project yet. Create or join one in Settings.',
-  'topbar.noProject': 'No project',
   'topbar.myInfo': 'My account',
   'projectSwitch.title': 'Switch project?',
   'projectSwitch.body': 'The data loaded for the current project will be cleared.',

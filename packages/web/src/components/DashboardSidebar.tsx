@@ -18,8 +18,8 @@ import { useProject } from '@money/core/store/project';
  *
  * 좁은 화면에서는 아예 그리지 않는다. 예전에는 왼쪽 위 버튼으로 이 사이드바를
  * 서랍처럼 꺼냈는데, 꺼내기 전에는 지금 무슨 프로젝트를 보고 있는지도 알 수 없고
- * 꺼내면 화면을 통째로 덮었다. 좁은 화면은 위쪽 막대(MobileTopBar)와 아래쪽
- * 탭(MobileTabBar)이 대신 맡는다.
+ * 꺼내면 화면을 통째로 덮었다. 좁은 화면은 아래쪽 탭(MobileTabBar)이 화면 이동을 맡고,
+ * 프로젝트를 고르는 일과 내 정보는 설정 화면에 있다.
  */
 export default function DashboardSidebar() {
   const { t } = useTranslation();

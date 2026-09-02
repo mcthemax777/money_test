@@ -27,7 +27,6 @@ export const ja: Record<MessageKey, string> = {
   'sidebar.projects': 'プロジェクト',
   'sidebar.noProject':
     '参加中のプロジェクトがありません。設定でプロジェクトを作成するか参加してください。',
-  'topbar.noProject': 'プロジェクトなし',
   'topbar.myInfo': 'アカウント',
   'projectSwitch.title': 'プロジェクトを変更しますか？',
   'projectSwitch.body': '現在のプロジェクトのデータは読み込み直されます。',

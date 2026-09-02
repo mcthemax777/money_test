@@ -9,13 +9,15 @@ import { useAuth } from '@money/core/store/auth';
 import { NearBottomProvider, useNearBottomScroll } from './scroll';
 import Sidebar from './Sidebar';
 import TabBar from './TabBar';
-import TopBar from './TopBar';
 
 /**
  * 로그인 뒤 화면들의 공통 껍데기. 웹의 AppShell 과 같은 규칙이다.
  *
- * 이동하는 자리는 화면 너비에 따라 갈린다. 넓으면 왼쪽 사이드바 하나, 좁으면 위쪽
- * 막대(프로젝트·나)와 아래쪽 탭(화면 이동)이다.
+ * 이동하는 자리는 화면 너비에 따라 갈린다. 넓으면 왼쪽 사이드바, 좁으면 아래쪽 탭이다.
+ *
+ * 위쪽 막대는 두지 않는다. 프로젝트 이름과 앱 표시, 내 얼굴이 화면마다 한 줄을 차지했는데
+ * 그 셋은 어디서나 볼 것이 아니다. 프로젝트를 고르는 일과 내 정보는 설정에 있다
+ * (설정 > 프로젝트 관리의 "이걸로 고르기", 설정 > 내 정보).
  *
  * 본문은 웹과 같은 여백(px-4 py-8)과 최대 너비(max-w-7xl)를 쓴다. 태블릿을 가로로
  * 놓아도 글자가 화면 끝까지 늘어지지 않는다.
@@ -50,9 +52,14 @@ function Shell({ children }: { children: ReactNode }) {
     <View className="flex-1 flex-row bg-gray-50">
       <Sidebar />
 
-      <View className="flex-1">
-        <TopBar />
+      {/*
+        상태 표시줄 자리를 여기서 비운다.
 
+        여백을 굴러가는 본문 안에 주면 올린 만큼 첫 줄이 시계 밑으로 들어간다. 굴러가지
+        않는 이 바깥 틀에 주면 굴림 자리가 시계 아래에서 시작해 무엇을 올려도 가려지지
+        않는다. 아래쪽은 탭 막대가 제 몫을 맡는다.
+      */}
+      <View className="flex-1" style={{ paddingTop: insets.top }}>
         {/*
           언어를 바꾸면 본문을 새로 만든다(key).
 
@@ -63,10 +70,6 @@ function Shell({ children }: { children: ReactNode }) {
         <ScrollView
           key={locale}
           className="flex-1"
-          /*
-           * 위 여백은 좁은 화면에서만 줄인다. 바로 위에 막대가 붙어 있어 웹과 같은 32 를
-           * 주면 첫 줄이 한참 내려간 것처럼 보인다. 막대가 없는 넓은 화면은 웹과 같다.
-           */
           contentContainerClassName="mx-auto w-full max-w-7xl px-4 pb-8 pt-4 md:pt-8"
           contentContainerStyle={{ paddingBottom: 32 + insets.bottom }}
           onScroll={onScroll}
