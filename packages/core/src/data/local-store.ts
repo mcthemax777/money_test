@@ -34,6 +34,7 @@ import {
   encodeHlc,
   hlcNext,
   hlcReceive,
+  isDeferred,
   isSettled,
   zonedDateKey,
   zonedYearMonth,
@@ -1476,6 +1477,14 @@ export class LocalStore {
           await this.db.run(`DELETE FROM outbox WHERE mutationId = ?`, [result.mutationId]);
           continue;
         }
+        /*
+         * 판정이 나지 않은 것은 손대지 않는다.
+         *
+         * 서버가 같은 명령을 이미 재생하고 있다는 뜻이라 사용자가 할 일이 없다. 보류 칸에
+         * 올리면 스스로 풀릴 일에 사람을 부르게 되고, 큐에서 빼면 그 재생이 실패했을 때
+         * 적은 것이 사라진다. 그대로 두면 다음 동기화가 다시 보내고 그때 결과를 받는다.
+         */
+        if (isDeferred(result.status)) continue;
         await this.db.run(`UPDATE outbox SET status = ?, error = ? WHERE mutationId = ?`, [
           result.status,
           result.error ?? null,

@@ -10,6 +10,9 @@
  *
  *   1. **멱등.** 같은 명령이 두 번 와도 한 번만 적힌다. 응답을 못 받은 기기는 반드시
  *      다시 보내고, 그때 서버가 적용했는지 기기는 알 수 없다.
+ *      멱등은 **행을 먼저 잡는 방식**으로 지킨다. 조회한 뒤 재생하고 마지막에 기록하면,
+ *      같은 명령이 동시에 두 번 도착했을 때 둘 다 "본 적 없다"로 읽는다. 인스턴스가
+ *      하나일 때도 가능한 일이고 여럿이면 흔해진다.
  *   2. **순서.** 한 기기의 명령은 clientSeq 순서로만 적용한다.
  *   3. **의존.** 어떤 명령이 거절되면 **그 대상을 건드리는 뒤 명령만** 함께 보류한다.
  *      전표를 만든 명령이 거절되었는데 그것을 고치는 명령이 뒤따라 적용되면, 없는
@@ -36,6 +39,27 @@ import { EntriesService } from '../entries/entries.service';
 
 /** 한 번에 받는 명령 수. 일주일치를 한 요청에 밀면 끊긴다. */
 const MAX_MUTATIONS = 200;
+
+/**
+ * 잡아 둔 명령을 죽은 것으로 보기까지의 시간.
+ *
+ * 재생 하나는 전표 한 건을 쓰는 트랜잭션이라 길어야 수백 밀리초다. 1분이 지나도록
+ * 결과가 없다면 잡은 프로세스가 죽었다고 본다. 짧게 잡으면 느린 요청을 두 번 재생하고,
+ * 길게 잡으면 죽은 뒤에 그 명령이 그만큼 오래 묶인다. 재생 자체가 멱등하므로
+ * (전표 id 로 한 번 더 걸러진다) 짧은 쪽보다 안전한 쪽으로 1분을 둔다.
+ */
+const CLAIM_TIMEOUT_MS = 60_000;
+
+/** 잡기의 결과. */
+type Claim =
+  /** 내가 잡았다. 재생해도 된다. */
+  | { kind: 'owned' }
+  /** 다른 요청이 잡고 있다. 아직 결과를 모른다. */
+  | { kind: 'running' }
+  /** 이미 판정이 끝났다. 그때 돌려준 결과를 그대로 쓴다. */
+  | { kind: 'settled'; result: MutationResult }
+  /** 같은 (기기, 순번)을 다른 명령이 이미 썼다. */
+  | { kind: 'seqTaken' };
 
 @Injectable()
 export class MutationReplayService {
@@ -71,10 +95,28 @@ export class MutationReplayService {
       .sort((a, b) => a.clientSeq - b.clientSeq);
 
     const results: MutationResult[] = [];
-    /** 앞에서 막힌 대상. 이것을 건드리는 뒤 명령은 서버까지 가지 않는다. */
+    /** 앞에서 거절된 대상. 이것을 건드리는 뒤 명령은 서버까지 가지 않는다. */
     const blocked = new Set<string>();
+    /**
+     * 앞에서 판정이 나지 않은 대상.
+     *
+     * 거절과 갈라 두는 이유는 사용자에게 보일 것이 다르기 때문이다. 거절된 대상을
+     * 건드리는 명령은 보류 칸으로 올려 사람이 고르게 하고, 판정이 나지 않은 대상은
+     * 큐에 그대로 두어 다음 동기화가 다시 보내게 한다.
+     */
+    const deferred = new Set<string>();
 
     for (const mutation of mutations) {
+      if (isBlockedBy(mutation, deferred)) {
+        results.push({
+          mutationId: mutation.mutationId,
+          status: 'deferred',
+          error: '앞선 명령의 결과를 아직 알 수 없어 함께 미뤘습니다.',
+        });
+        mutation.targets.forEach((target) => deferred.add(target));
+        continue;
+      }
+
       if (isBlockedBy(mutation, blocked)) {
         results.push({
           mutationId: mutation.mutationId,
@@ -98,6 +140,11 @@ export class MutationReplayService {
       if (result.status === 'rejected') {
         mutation.targets.forEach((target) => blocked.add(target));
       }
+
+      // 다른 요청이 재생 중이면 이 전표의 지금 상태를 알 수 없다. 뒤 명령도 미룬다.
+      if (result.status === 'deferred') {
+        mutation.targets.forEach((target) => deferred.add(target));
+      }
     }
 
     const project = await this.prisma.project.findUniqueOrThrow({
@@ -120,26 +167,48 @@ export class MutationReplayService {
     clientId: string,
     mutation: Mutation,
   ): Promise<MutationResult> {
-    const seen = await this.prisma.mutationLog.findUnique({
-      where: { mutationId: mutation.mutationId },
-    });
-    if (seen) {
+    const claim = await this.claim(projectId, clientId, mutation);
+
+    if (claim.kind === 'settled') return claim.result;
+
+    if (claim.kind === 'running') {
       /*
-       * 이미 본 명령이다. 그때 돌려준 결과를 그대로 돌려준다.
+       * 다른 요청이 같은 명령을 재생하는 중이다.
        *
-       * 거절이었다면 거절 그대로다. 여기서 duplicate 로 덮으면 기기가 "적용됐다"로
-       * 읽어 보류 칸에서 지운다.
+       * 기기가 응답을 못 받아 다시 보냈고, 두 요청이 서로 다른 인스턴스에 닿은 경우다.
+       * 여기서 답할 수 있는 것이 없다 -- 적용이라고 하면 실패한 명령이 조용히 사라지고,
+       * 거절이라고 하면 성공한 명령이 보류 칸에 뜬다. 판정을 미루고 다음 동기화에
+       * 다시 묻게 한다. 그때는 저 요청이 남긴 결과가 있다.
        */
-      const stored = (seen.resultJson ?? null) as MutationResult | null;
-      if (stored) {
-        return stored.status === 'applied' ? { ...stored, status: 'duplicate' } : stored;
-      }
-      return { mutationId: mutation.mutationId, status: 'duplicate' };
+      return {
+        mutationId: mutation.mutationId,
+        status: 'deferred',
+        error: '같은 명령을 이미 처리하고 있습니다.',
+      };
+    }
+
+    if (claim.kind === 'seqTaken') {
+      /*
+       * (기기, 순번)이 이미 다른 명령의 것이다.
+       *
+       * 기기가 번호를 다시 썼다는 뜻이라 정상 경로에는 없다. 그냥 적용하면 결과를
+       * 기록할 자리가 없어 멱등이 깨진다 -- 다시 보낼 때마다 또 적힌다. 그래서
+       * 적용하지 않고 이유를 달아 돌려준다.
+       */
+      this.logger.warn(
+        `순번 충돌 ${mutation.mutationId} (clientId ${clientId}, clientSeq ${mutation.clientSeq})`,
+      );
+      return {
+        mutationId: mutation.mutationId,
+        status: 'rejected',
+        code: 'CLIENT_SEQ_TAKEN',
+        error: '같은 순번을 다른 명령이 이미 썼습니다.',
+      };
     }
 
     try {
       const result = await this.replay(userId, projectId, mutation);
-      await this.record(projectId, clientId, mutation, result);
+      await this.settle(mutation, result);
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : '알 수 없는 오류';
@@ -151,10 +220,88 @@ export class MutationReplayService {
         error: message,
         ...(typeof code === 'string' ? { code } : {}),
       };
-      await this.record(projectId, clientId, mutation, result);
+      await this.settle(mutation, result);
       this.logger.warn(`명령 거절 ${mutation.kind} ${mutation.mutationId}: ${message}`);
       return result;
     }
+  }
+
+  /**
+   * 재생하기 전에 명령 로그 행을 잡는다.
+   *
+   * **여기가 멱등의 자리다.** 조회한 뒤 재생하고 마지막에 기록하면, 같은 명령이 동시에
+   * 두 번 도착했을 때 둘 다 "본 적 없다"로 읽고 둘 다 재생한다. 행을 먼저 넣으면
+   * 유일 제약이 한쪽만 통과시킨다 -- 판정은 데이터베이스가 하고, 진 쪽은 재생하지 않는다.
+   */
+  private async claim(
+    projectId: string,
+    clientId: string,
+    mutation: Mutation,
+  ): Promise<Claim> {
+    // ON CONFLICT DO NOTHING. 이긴 요청만 1을 받는다.
+    const inserted = await this.prisma.mutationLog.createMany({
+      data: [
+        {
+          mutationId: mutation.mutationId,
+          projectId,
+          clientId,
+          clientSeq: mutation.clientSeq,
+          kind: mutation.kind,
+          status: 'running',
+          claimedAt: new Date(),
+        },
+      ],
+      skipDuplicates: true,
+    });
+    if (inserted.count === 1) return { kind: 'owned' };
+
+    const seen = await this.prisma.mutationLog.findUnique({
+      where: { mutationId: mutation.mutationId },
+    });
+
+    /*
+     * 행이 없는데 넣지도 못했다면 걸린 제약은 (clientId, clientSeq) 쪽이다.
+     * 같은 순번을 다른 명령 id 가 이미 썼다.
+     */
+    if (!seen) return { kind: 'seqTaken' };
+
+    if (seen.status === 'running') {
+      const stale = new Date(Date.now() - CLAIM_TIMEOUT_MS);
+      if (seen.claimedAt > stale) return { kind: 'running' };
+
+      /*
+       * 잡은 요청이 죽었다. 넘겨받는다.
+       *
+       * 조건을 그대로 UPDATE 에 실어 두 요청이 동시에 넘겨받는 일을 막는다. 진 쪽은
+       * count 0 을 받고 판정을 미룬다. 넘겨받아 다시 재생해도 안전하다 -- 죽은 요청의
+       * 트랜잭션은 통째로 되돌아갔거나 통째로 커밋되었고, 커밋되었다면 전표 id 로
+       * duplicate 가 된다.
+       */
+      const taken = await this.prisma.mutationLog.updateMany({
+        where: { mutationId: mutation.mutationId, status: 'running', claimedAt: { lt: stale } },
+        data: { claimedAt: new Date() },
+      });
+      if (taken.count === 1) {
+        this.logger.warn(`멈춘 명령을 넘겨받는다 ${mutation.mutationId}`);
+        return { kind: 'owned' };
+      }
+      return { kind: 'running' };
+    }
+
+    /*
+     * 판정이 끝난 명령이다. 그때 돌려준 결과를 그대로 돌려준다.
+     *
+     * 거절이었다면 거절 그대로다. 여기서 duplicate 로 덮으면 기기가 "적용됐다"로
+     * 읽어 보류 칸에서 지운다.
+     */
+    const stored = (seen.resultJson ?? null) as MutationResult | null;
+    if (stored) {
+      return {
+        kind: 'settled',
+        result: stored.status === 'applied' ? { ...stored, status: 'duplicate' } : stored,
+      };
+    }
+    return { kind: 'settled', result: { mutationId: mutation.mutationId, status: 'duplicate' } };
   }
 
   private async replay(
@@ -343,25 +490,17 @@ export class MutationReplayService {
   }
 
   /**
-   * 결과를 남긴다. 재전송이 이것을 보고 두 번 적히지 않는다.
+   * 잡아 둔 행에 판정을 적는다. 재전송이 이것을 보고 두 번 적히지 않는다.
    *
-   * (clientId, clientSeq) 가 겹치면 기기가 번호를 다시 쓴 것이다. 그때는 기록만 건너뛴다 --
-   * 이미 적용은 끝났고, 여기서 던지면 성공한 명령이 실패로 보고된다.
+   * 실패해도 던지지 않는다. 이 시점에는 재생이 이미 끝나 있어서, 여기서 던지면
+   * 성공한 명령이 실패로 보고된다. 행이 사라진 경우(정리 스크립트)가 그 예다.
+   * 대신 기록이 없으므로 다음 재전송은 다시 재생되고, 그때는 전표 id 가 막는다.
    */
-  private async record(
-    projectId: string,
-    clientId: string,
-    mutation: Mutation,
-    result: MutationResult,
-  ): Promise<void> {
+  private async settle(mutation: Mutation, result: MutationResult): Promise<void> {
     try {
-      await this.prisma.mutationLog.create({
+      await this.prisma.mutationLog.update({
+        where: { mutationId: mutation.mutationId },
         data: {
-          mutationId: mutation.mutationId,
-          projectId,
-          clientId,
-          clientSeq: mutation.clientSeq,
-          kind: mutation.kind,
           status: result.status,
           resultJson: result as unknown as object,
           appliedVersion: result.appliedVersion ?? null,

@@ -14,6 +14,8 @@
  *   4. **병합.** 더 늦은 편집이 있으면 진 쪽은 conflict 이고 서버 값이 남는다.
  *      삭제는 시계를 보지 않고 언제나 이긴다.
  *   5. **권한.** 재생 시점에 다시 본다. viewer 로 바뀐 뒤 도착한 명령은 거절된다.
+ *   6. **선점.** 같은 명령이 동시에 두 번 도착해도 재생은 한 번만 일어난다.
+ *      인스턴스를 여럿 두면 기기의 재전송이 서로 다른 프로세스에 동시에 닿는다.
  */
 import { CategoriesService } from '@/modules/categories/categories.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
@@ -296,4 +298,81 @@ runSmoke('sync-push', async (ctx) => {
     }),
   );
   ctx.check('전표가 늘지 않았다', await entryCount(), before);
+  // ── 9. 선점: 같은 명령이 동시에 두 번 도착해도 재생은 한 번만 ──
+  //
+  // 인스턴스를 여럿 두면 기기의 재전송이 서로 다른 프로세스에 동시에 닿는다. 예전에는
+  // 둘 다 "본 적 없다"로 읽고 둘 다 재생했다. 전표는 기본 키가 막아 주었지만, 막힌 쪽이
+  // rejected 로 기록되어 **실제로는 적용된 거래가 기기에서 거절로 보였다.**
+  const raceId = '019273aa-0000-7000-8000-000000000010';
+  const raceMutation = expenseMutation(raceId, '5000', T0 + 3_000_000);
+  const [first, second] = await Promise.all([push([raceMutation]), push([raceMutation])]);
+  const raceStatuses = [
+    statusOf(first.results, raceMutation.mutationId),
+    statusOf(second.results, raceMutation.mutationId),
+  ];
+  ctx.check(
+    '동시에 도착해도 거절이 없다',
+    raceStatuses.filter((status) => status === 'rejected').length,
+    0,
+  );
+  ctx.check(
+    '한쪽만 적용된다',
+    raceStatuses.filter((status) => status === 'applied').length,
+    1,
+  );
+  ctx.check('전표는 하나만 생긴다',
+    await ctx.prisma.journalEntry.count({ where: { id: raceId } }), 1);
+
+  // 재생 중인 명령은 판정을 미룬다. 큐에 그대로 두었다가 다음에 다시 물어야 한다.
+  const runningId = '019273aa-0000-7000-8000-000000000011';
+  const runningMutation = expenseMutation(runningId, '7000', T0 + 3_100_000);
+  await ctx.prisma.mutationLog.create({
+    data: {
+      mutationId: runningMutation.mutationId,
+      projectId: pid,
+      clientId: CLIENT,
+      clientSeq: runningMutation.clientSeq,
+      kind: runningMutation.kind,
+      status: 'running',
+      claimedAt: new Date(),
+    },
+  });
+  const deferred = await push([runningMutation]);
+  ctx.check('재생 중이면 판정을 미룬다',
+    statusOf(deferred.results, runningMutation.mutationId), 'deferred');
+  ctx.check('미룬 명령은 적용되지 않는다',
+    await ctx.prisma.journalEntry.count({ where: { id: runningId } }), 0);
+
+  // 같은 대상을 건드리는 뒤 명령도 함께 미룬다. 앞의 결과를 모르는 채로 고칠 수 없다.
+  const followUp: Mutation = {
+    ...expenseMutation(runningId, '8000', T0 + 3_200_000),
+    kind: 'entry.replace',
+  };
+  const chained = await push([runningMutation, followUp]);
+  ctx.check('미룬 대상의 뒤 명령도 미룬다',
+    statusOf(chained.results, followUp.mutationId), 'deferred');
+
+  // 잡은 프로세스가 죽으면 넘겨받는다. 죽은 잠금이 명령을 영영 묶어 두면 안 된다.
+  await ctx.prisma.mutationLog.update({
+    where: { mutationId: runningMutation.mutationId },
+    data: { claimedAt: new Date(Date.now() - 5 * 60_000) },
+  });
+  const takenOver = await push([runningMutation]);
+  ctx.check('멈춘 명령은 넘겨받아 재생한다',
+    statusOf(takenOver.results, runningMutation.mutationId), 'applied');
+  ctx.check('그때 전표가 생긴다',
+    await ctx.prisma.journalEntry.count({ where: { id: runningId } }), 1);
+
+  // 같은 (기기, 순번)을 다른 명령 id 가 쓰면 적용하지 않는다. 결과를 적을 자리가 없어
+  // 멱등이 깨지기 때문이다 -- 다시 보낼 때마다 또 적힌다.
+  const seqTakenId = '019273aa-0000-7000-8000-000000000012';
+  const seqTaken: Mutation = {
+    ...expenseMutation(seqTakenId, '3000', T0 + 3_300_000),
+    mutationId: `${RUN}-m-seq-clash`,
+    clientSeq: runningMutation.clientSeq,
+  };
+  const clashed = await push([seqTaken]);
+  ctx.check('순번이 겹치면 거절한다', statusOf(clashed.results, seqTaken.mutationId), 'rejected');
+  ctx.check('그 명령은 적용되지 않는다',
+    await ctx.prisma.journalEntry.count({ where: { id: seqTakenId } }), 0);
 });

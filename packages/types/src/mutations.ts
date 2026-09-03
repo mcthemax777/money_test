@@ -91,8 +91,20 @@ export interface EntryDeletePayload {
  *   conflict  다른 기기의 더 늦은 편집이 이겼다. 기기는 충돌 목록에 남긴다.
  *   rejected  서버가 거절했다(권한, 규칙 위반). 보류 칸으로 간다.
  *   blocked   앞 명령이 막혀 같은 대상의 이 명령도 미뤘다. 서버까지 가지 않는다.
+ *   deferred  서버가 아직 판정하지 못했다. **큐에 그대로 두고 다음에 다시 보낸다.**
+ *
+ * deferred 가 나머지와 다른 점은 사람이 할 일이 없다는 것이다. 같은 명령을 다른 요청이
+ * 이미 재생하고 있을 때(기기가 응답을 못 받아 다시 보냈고 두 요청이 서로 다른 인스턴스에
+ * 닿았을 때) 서버는 결과를 아직 모른다. 여기서 거절로 답하면 성공한 명령이 보류 칸에
+ * 뜨고, 적용으로 답하면 실패한 명령이 조용히 사라진다. 그래서 판정을 미룬다.
  */
-export type MutationStatus = 'applied' | 'duplicate' | 'conflict' | 'rejected' | 'blocked';
+export type MutationStatus =
+  | 'applied'
+  | 'duplicate'
+  | 'conflict'
+  | 'rejected'
+  | 'blocked'
+  | 'deferred';
 
 export interface MutationResult {
   mutationId: string;
@@ -130,4 +142,14 @@ export function isBlockedBy(mutation: Mutation, blockedTargets: ReadonlySet<stri
 /** 이 명령이 끝난 상태인가. 큐에서 빼도 되는지 판단한다. */
 export function isSettled(status: MutationStatus): boolean {
   return status === 'applied' || status === 'duplicate';
+}
+
+/**
+ * 판정이 나지 않아 다시 보내야 하는가.
+ *
+ * 큐에서 빼지도, 보류 칸에 올리지도 않는다. 사용자가 볼 것이 없기 때문이다.
+ * 다음 동기화가 같은 명령을 그대로 다시 보내면 그때는 저장된 결과를 받는다.
+ */
+export function isDeferred(status: MutationStatus): boolean {
+  return status === 'deferred';
 }

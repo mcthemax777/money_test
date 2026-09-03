@@ -738,17 +738,25 @@ model MutationLog {
   /// 그 기기 안에서 1씩 오르는 번호. 순서를 지켜 적용하는 근거다.
   clientSeq  Int
   kind       String
-  /// applied | conflict | rejected
+  /// running | applied | duplicate | conflict | rejected
+  ///
+  /// running 은 어느 요청이 이 명령을 잡고 재생하는 중이라는 뜻이다. 행을 먼저 잡고
+  /// 재생하므로, 같은 명령이 동시에 두 번 도착해도 재생은 한 번만 일어난다.
   status     String
-  /// 그때 돌려준 결과. 재전송에는 이것을 그대로 돌려준다.
+  /// 그때 돌려준 결과. 재전송에는 이것을 그대로 돌려준다. running 인 동안은 비어 있다.
   resultJson Json?
   /// 적용 뒤의 프로젝트 번호
   appliedVersion Int?
+
+  /// 이 명령을 잡은 시각. 잡은 요청이 죽으면 이 시각을 보고 다른 요청이 넘겨받는다.
+  claimedAt DateTime @default(now())
 
   createdAt DateTime @default(now())
 
   @@unique([clientId, clientSeq])
   @@index([projectId, createdAt])
+  /// 죽은 요청이 잡아 둔 행을 골라 넘겨받을 때 쓴다.
+  @@index([status, claimedAt])
 }
 
 model Tombstone {
