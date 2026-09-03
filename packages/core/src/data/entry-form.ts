@@ -15,7 +15,7 @@
 
 import { Dec, type EntryDto, type EntryListItem, zonedFormValueToUtc } from '@money/types';
 
-import { dateKeyOf, nowTimeKey, timeInputOf, todayKey } from '../lib/datetime';
+import { dateKeyOf, isDateKey, nowTimeKey, timeInputOf, todayKey } from '../lib/datetime';
 
 /** 앱 입력 화면이 다루는 갈래. 카드사 대금 이동은 카드 화면의 일이라 여기 없다. */
 export type EntryFormKind = 'expense' | 'income' | 'transfer';
@@ -256,16 +256,6 @@ export function entryFormToRequest(
 }
 
 /** 'YYYY-MM-DD' 이고 실제로 있는 날인가. 2026-02-31 은 모양은 맞지만 없는 날이다. */
-function isDateKey(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-
-  const [year, month, day] = value.split('-').map(Number);
-  if (month < 1 || month > 12 || day < 1) return false;
-
-  // 그 달의 말일. UTC 로 세어도 되는 것은 "며칠까지 있는가"만 보기 때문이다.
-  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
-}
-
 /** 'HH:mm' 인가. */
 function isTimeKey(value: string): boolean {
   if (!/^\d{2}:\d{2}$/.test(value)) return false;

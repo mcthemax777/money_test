@@ -533,10 +533,12 @@ export class ReportsService {
    * 내고, 한 줄에 지출과 수입을 함께 적는다. 목록의 줄은 눌러서 들어가는 자리라,
    * 빈 달이 섞이면 눌러도 아무것도 없는 줄이 된다.
    *
-   * 기간을 받지 않으므로 그 프로젝트의 카테고리 다리를 전부 읽는다. 한 가정의 원장은
-   * 십 년을 써도 수만 줄 규모다. 달을 SQL 로 자르지 않는 것은 date_trunc 가 IANA
-   * 타임존을 아는 반면 기기의 SQLite 는 모르기 때문이다 -- 자르는 규칙을 공용 함수
-   * 하나로 두어야 사본이 같은 값을 낸다.
+   * 기간을 주면 그 구간에 걸친 달만 남고, 걸친 달의 합계도 **구간만큼만** 센다.
+   * 달을 통째로 세면 년월 줄의 금액과 그 안을 펴서 나온 거래의 합이 어긋난다.
+   * 주지 않으면 전체 기간이고, 그때는 그 프로젝트의 카테고리 다리를 전부 읽는다.
+   * 한 가정의 원장은 십 년을 써도 수만 줄 규모다. 달을 SQL 로 자르지 않는 것은
+   * date_trunc 가 IANA 타임존을 아는 반면 기기의 SQLite 는 모르기 때문이다 --
+   * 자르는 규칙을 공용 함수 하나로 두어야 사본이 같은 값을 낸다.
    */
   async getEntryMonths(
     userId: string,
@@ -559,7 +561,12 @@ export class ReportsService {
       ...(kindCondition ? [kindCondition] : []),
       ...entrySearchConditions(search).map((posting) => ({ postings: { some: posting } })),
     ];
-    const scope = { projectId, ...(conditions.length > 0 ? { AND: conditions } : {}) };
+    const window = this.resolveWindow(query, timeZone);
+    const scope = {
+      projectId,
+      ...(window ? { date: window } : {}),
+      ...(conditions.length > 0 ? { AND: conditions } : {}),
+    };
     const [rows, dates] = await Promise.all([
       this.prisma.posting.findMany({
         where: { categoryId: { not: null }, entry: scope },
@@ -906,6 +913,35 @@ export class ReportsService {
       start: zonedDateStringToUtc(start, timeZone),
       // 하루를 더한다. Date 생성자가 월·연 넘김을 처리하므로 말일을 따로 보지 않는다.
       end: zonedDayStart(year, month, day + 1, timeZone),
+    };
+  }
+
+  /**
+   * 기간을 받을 수도 있고 안 받을 수도 있는 조회의 구간.
+   *
+   * `resolvePeriod` 와 규칙이 같다 -- 달력 날짜, 양끝 포함, 끝날은 다음 날 0시를
+   * 상한으로 삼는다. 다른 점은 **없어도 된다**는 것뿐이다(그때는 전체 기간).
+   * 하나만 온 것은 무시한다. 반쪽 구간은 사용자가 고른 것이 아니라 입력이 덜 끝난
+   * 상태이고, 여기서 400 을 내면 날짜를 하나 적는 순간 목록이 오류로 바뀐다.
+   */
+  private resolveWindow(
+    query: { startDate?: string; endDate?: string },
+    timeZone: string,
+  ): { gte: Date; lt: Date } | null {
+    const { startDate, endDate } = query;
+    if (!startDate || !endDate) return null;
+
+    const start = assertDateKey(startDate, '시작일');
+    const end = assertDateKey(endDate, '종료일');
+    if (start > end) {
+      throw new BadRequestException('시작일이 종료일보다 뒤입니다.');
+    }
+
+    const [year, month, day] = end.split('-').map(Number);
+    return {
+      gte: zonedDateStringToUtc(start, timeZone),
+      // 하루를 더한다. Date 생성자가 월·연 넘김을 처리하므로 말일을 따로 보지 않는다.
+      lt: zonedDayStart(year, month, day + 1, timeZone),
     };
   }
 

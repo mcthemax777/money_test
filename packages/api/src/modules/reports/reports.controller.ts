@@ -52,7 +52,7 @@ export class ReportsController {
   }
 
   @Get('entry-months')
-  @ApiOperation({ summary: '거래가 있는 달 (전체 기간, 최신 달 먼저)' })
+  @ApiOperation({ summary: '거래가 있는 달 (기간을 주면 그 구간, 최신 달 먼저)' })
   entryMonths(@Request() req: AuthenticatedRequest, @Query() query: ReportDto.EntryMonthsQuery) {
     return this.reportsService.getEntryMonths(req.user.id, query);
   }

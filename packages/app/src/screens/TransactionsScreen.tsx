@@ -13,15 +13,14 @@
  * 왔는지 이 화면은 모르고, 오프라인에서도 같은 코드로 그려진다.
  */
 import { useState } from 'react';
-import { ActivityIndicator, Alert, Pressable, Text, View } from 'react-native';
-import { ArrowLeft, Check, MoreVertical, Search, Trash2 } from 'lucide-react-native';
+import { ActivityIndicator, Alert, Pressable, ScrollView, Text, View } from 'react-native';
+import { ArrowLeft, Check, MoreVertical, Search, Trash2, X } from 'lucide-react-native';
 import type { EntryListItem } from '@money/types';
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { formatYearMonth } from '@money/core/lib/datetime';
 import {
-  EMPTY_SEARCH,
   useTransactions,
   type TransactionRow,
   type TransactionTab,
@@ -385,16 +384,6 @@ export default function TransactionsScreen() {
         </View>
       ) : null}
 
-      {/* 검색이 켜져 있으면 끄는 길을 목록 위에 둔다. 결과가 비었을 때 이유를 찾게 된다. */}
-      {tx.searchCount > 0 ? (
-        <Pressable
-          onPress={() => tx.setSearch(EMPTY_SEARCH)}
-          className="self-start rounded-lg border border-gray-300 bg-white px-3 py-1.5 active:bg-gray-50"
-        >
-          <Text className="text-xs font-medium text-gray-700">{t('tx.search.off')}</Text>
-        </Pressable>
-      ) : null}
-
       {/* 보기 방식. 년월 목록 위에 두어 어떤 기준으로 파고드는지 먼저 정한다. */}
       <View className="flex-row gap-2 rounded-lg bg-gray-200 p-1">
         {TABS.map((item) => {
@@ -412,6 +401,42 @@ export default function TransactionsScreen() {
           );
         })}
       </View>
+
+      {/*
+        걸려 있는 조건. 탭 바로 아래에 둔다.
+
+        검색 창을 열어야 무엇을 골랐는지 알 수 있으면, 결과가 비었을 때 이유를 찾으려
+        창을 다시 열게 된다. 여기 늘어놓으면 그 걸음이 사라지고, 하나만 빼는 일도
+        창을 열지 않고 끝난다.
+
+        많아지면 가로로 굴린다. 줄바꿈으로 두면 조건이 열 개 넘을 때 목록이 화면 밖으로
+        밀린다.
+      */}
+      {tx.searchChips.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          /*
+           * 늘어나지 않게 못 박는다. ScrollView 는 기본 스타일에 flexGrow:1 이 있어
+           * 세로로 늘어선 칸 안에서 남는 높이를 먹는다. 알약 줄은 알약 높이면 된다.
+           */
+          className="grow-0"
+          contentContainerClassName="flex-row items-center gap-2 pr-4"
+        >
+          {tx.searchChips.map((chip) => (
+            <Pressable
+              key={chip.id}
+              onPress={() => tx.removeSearchChip(chip.id)}
+              // 손가락이 닿는 자리라 알약 자체를 누르게 한다. x 만 누르게 하면 빗나간다.
+              accessibilityLabel={`${chip.label} ${t('tx.search.chipRemove')}`}
+              className="flex-row items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 active:bg-blue-100"
+            >
+              <Text className="text-sm font-medium text-blue-700">{chip.label}</Text>
+              <X size={14} color="#1d4ed8" />
+            </Pressable>
+          ))}
+        </ScrollView>
+      ) : null}
 
       <View className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         {tx.isLoadingMonths && tx.months.length === 0 ? (

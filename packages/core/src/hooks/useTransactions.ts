@@ -28,6 +28,8 @@ import type {
 } from '@money/types';
 import { HIDDEN_ACCOUNT_TYPES, toEntrySearchQuery } from '@money/types';
 
+import { dayRangeQuery, isDateKey, lastDayOfMonth } from '../lib/datetime';
+import { useTranslation, type MessageKey } from '../lib/i18n';
 import { entryWritePort } from '../data/entry-write-port';
 import { homeDataPort } from '../data/home-port';
 import { useMirrorVersion } from './useMirrorVersion';
@@ -58,6 +60,15 @@ export interface TransactionSearch {
   paymentCardIds: string[];
   /** 지출·수입·이체·카드정산. 고른 것끼리 OR 이고 다른 무리와는 AND 다. */
   kinds: EntryKind[];
+  /**
+   * 기간. 프로젝트 타임존의 달력 날짜 'YYYY-MM-DD' 이고 양끝을 포함한다.
+   *
+   * 빈 문자열은 "정하지 않았다"이고, **둘을 함께 채워야 걸린다**. 하나만 채운 것은
+   * 사용자가 고른 구간이 아니라 적다 만 상태다. 그 사이에 목록이 바뀌면 나머지 한
+   * 칸을 적는 동안 엉뚱한 결과를 보게 된다.
+   */
+  startDate: string;
+  endDate: string;
 }
 
 export const EMPTY_SEARCH: TransactionSearch = {
@@ -65,7 +76,123 @@ export const EMPTY_SEARCH: TransactionSearch = {
   paymentAccountIds: [],
   paymentCardIds: [],
   kinds: [],
+  startDate: '',
+  endDate: '',
 };
+
+/**
+ * 검색이 고른 기간. 온전하지 않으면 null 이다.
+ *
+ * 실재하지 않는 날짜(2월 31일)와 뒤집힌 구간을 여기서 걸러 낸다. 화면도 같은 것을
+ * 보고 막지만, 그 검사를 지나온 값만 조회에 실리게 하는 자리가 하나 있어야 한다 --
+ * `new Date('2026-02-31')` 은 오류가 아니라 3월 3일이라, 걸러 내지 않으면 오류 없이
+ * 결과만 조용히 어긋난다.
+ */
+/** 유형의 이름. 열쇠를 이어 붙이지 않고 적어 두어 사전에서 찾을 수 있게 한다. */
+export const ENTRY_KIND_LABEL: Record<EntryKind, MessageKey> = {
+  expense: 'tx.kind.expense',
+  income: 'tx.kind.income',
+  transfer: 'tx.kind.transfer',
+  card_payment: 'tx.kind.card_payment',
+  adjustment: 'entry.adjustment',
+};
+
+/**
+ * 지금 걸려 있는 조건 하나. 화면이 알약으로 그리고, 누르면 그 조건만 빠진다.
+ *
+ * 검색 창을 열어야 무엇을 골랐는지 알 수 있으면, 결과가 비었을 때 이유를 찾기 위해
+ * 창을 다시 열게 된다. 목록 위에 늘어놓으면 그 걸음이 사라진다.
+ */
+export interface SearchChip {
+  /** 무엇을 뺄지 가리키는 값. 무리와 대상을 콜론으로 잇는다. */
+  id: string;
+  label: string;
+}
+
+/**
+ * 걸려 있는 조건을 알약으로 펼친다.
+ *
+ * 이름은 검색 창이 고를 때 쓰던 목록에서 가져온다. 그 목록에 없는 id 는 무리 이름으로
+ * 적는다 -- 프로젝트를 옮기면 지난 프로젝트의 분류 id 가 남아 있을 수 있는데, 이름을
+ * 못 찾는다고 알약을 감추면 **거르고 있는데 보이지 않는** 조건이 된다.
+ */
+export function searchChipsOf(
+  search: TransactionSearch,
+  labels: {
+    t: (key: MessageKey) => string;
+    categories: CategoryDto.Response[];
+    accounts: AccountDto.Response[];
+    cards: CardDto.Response[];
+  },
+): SearchChip[] {
+  const { t, categories, accounts, cards } = labels;
+  const chips: SearchChip[] = [];
+
+  const range = searchRange(search);
+  if (range) {
+    chips.push({ id: 'period', label: `${range.startKey} ~ ${range.endKey}` });
+  }
+
+  for (const kind of search.kinds) {
+    chips.push({ id: `kind:${kind}`, label: t(ENTRY_KIND_LABEL[kind]) });
+  }
+
+  const parentOf = new Map(categories.map((row) => [row.id, row.parentId]));
+  const categoryName = new Map(categories.map((row) => [row.id, row.name]));
+  for (const id of search.categoryIds) {
+    const name = categoryName.get(id);
+    const parentName = categoryName.get(parentOf.get(id) ?? '');
+    chips.push({
+      id: `category:${id}`,
+      // 같은 이름의 소분류가 여럿 있다. 검색 창과 같은 모양으로 적는다.
+      label: name ? (parentName ? `${parentName} > ${name}` : name) : t('tx.search.categories'),
+    });
+  }
+
+  const accountName = new Map(accounts.map((row) => [row.id, row.name]));
+  for (const id of search.paymentAccountIds) {
+    chips.push({ id: `account:${id}`, label: accountName.get(id) ?? t('tx.search.accounts') });
+  }
+
+  const cardName = new Map(cards.map((row) => [row.id, row.name]));
+  for (const id of search.paymentCardIds) {
+    chips.push({ id: `card:${id}`, label: cardName.get(id) ?? t('tx.search.cards') });
+  }
+
+  return chips;
+}
+
+/** 알약 하나가 가리키는 조건을 뺀다. 모르는 열쇠면 그대로 둔다. */
+export function withoutChip(search: TransactionSearch, chipId: string): TransactionSearch {
+  if (chipId === 'period') return { ...search, startDate: '', endDate: '' };
+
+  const divider = chipId.indexOf(':');
+  if (divider < 0) return search;
+
+  const group = chipId.slice(0, divider);
+  const id = chipId.slice(divider + 1);
+  const drop = <T extends string>(ids: T[]) => ids.filter((value) => value !== id);
+
+  switch (group) {
+    case 'kind':
+      return { ...search, kinds: drop(search.kinds) };
+    case 'category':
+      return { ...search, categoryIds: drop(search.categoryIds) };
+    case 'account':
+      return { ...search, paymentAccountIds: drop(search.paymentAccountIds) };
+    case 'card':
+      return { ...search, paymentCardIds: drop(search.paymentCardIds) };
+    default:
+      return search;
+  }
+}
+
+export function searchRange(search: TransactionSearch): { startKey: string; endKey: string } | null {
+  const { startDate, endDate } = search;
+  if (!isDateKey(startDate) || !isDateKey(endDate)) return null;
+  if (startDate > endDate) return null;
+  return { startKey: startDate, endKey: endDate };
+}
 
 /**
  * 분류별 목록의 한 줄.
@@ -118,8 +245,33 @@ interface MonthData {
  *
  * 경계를 만드는 일은 각자 아는 쪽이 한다. 서버는 프로젝트 타임존으로, 기기는 동기화할
  * 때 박아 둔 `yearMonth` 컬럼으로.
+ *
+ * **기간 검색을 켜면 이야기가 달라진다.** 그 달이 구간에 반만 걸치면 달 이름으로는
+ * 그 반을 가리킬 수 없다. 그때만 구간을 만들어 넘긴다 (아래 `clipMonth`).
  */
 const monthRange = (yearMonth: string) => ({ yearMonth });
+
+/**
+ * 그 달과 고른 기간이 겹치는 자리.
+ *
+ * 통째로 덮이면 null 이다. 그때는 달 이름을 그대로 넘기는 편이 낫다 -- 경계를 만드는
+ * 일을 서버와 사본이 각자 아는 방법으로 하게 두는 것이 이 화면의 규칙이다.
+ */
+function clipMonth(
+  yearMonth: string,
+  range: { startKey: string; endKey: string } | null,
+): { startKey: string; endKey: string } | null {
+  if (!range) return null;
+
+  const first = `${yearMonth}-01`;
+  const last = `${yearMonth}-${String(lastDayOfMonth(yearMonth)).padStart(2, '0')}`;
+  // 달력 키는 0을 채운 문자열이라 사전순 비교가 곧 날짜 비교다.
+  const startKey = range.startKey > first ? range.startKey : first;
+  const endKey = range.endKey < last ? range.endKey : last;
+
+  if (startKey === first && endKey === last) return null;
+  return { startKey, endKey };
+}
 
 /**
  * 한 번에 보내는 거래 조회의 수.
@@ -130,6 +282,7 @@ const monthRange = (yearMonth: string) => ({ yearMonth });
 const ROW_BATCH = 6;
 
 export function useTransactions(projectId: string | null) {
+  const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
   const projects = useProject((state) => state.projects);
   const selectedPersonIds = useUserFilter((state) => state.selectedPersonIds);
@@ -233,9 +386,27 @@ export function useTransactions(projectId: string | null) {
     [selectedPersonIds, search],
   );
 
+  /**
+   * 고른 기간. 온전할 때만 선다.
+   *
+   * **scope 에 섞지 않는다.** 구간 조회(분류별·수단별)는 조회 대상 기간을 따로 받는데,
+   * apiClient 가 필터를 그 뒤에 펼쳐 넣는다. 여기서 섞으면 필터의 날짜가 그 달을 덮어써
+   * 어느 달을 펴도 같은 목록이 나온다.
+   */
+  const range = useMemo(() => searchRange(search), [search]);
+  /** 년월 목록에 실어 보내는 기간. 그 구간에 걸친 달만, 걸친 만큼만 세어 온다. */
+  const monthsQuery = useMemo(
+    () => (range ? { startDate: range.startKey, endDate: range.endKey } : {}),
+    [range],
+  );
+
   /** 금액을 셀 때 어느 몫을 세는지. 목록 소계가 서버 합계와 같아야 한다. */
   const share: CountedShare = countedShare(scope);
-  const scopeKey = JSON.stringify(scope);
+  /*
+   * 타임존도 열쇠에 넣는다. 기간을 인스턴트로 바꾸는 일이 그 값에 매여 있어서,
+   * 프로젝트 타임존을 바꾸면 받아 둔 목록이 옛 경계의 것이 된다.
+   */
+  const scopeKey = JSON.stringify([scope, range, timeZone]);
   /*
    * 지금 조건. 도착한 값이 아직 쓸 것인지 판단한다.
    *
@@ -245,11 +416,36 @@ export function useTransactions(projectId: string | null) {
   const scopeKeyRef = useRef(scopeKey);
   scopeKeyRef.current = scopeKey;
 
+  /**
+   * 걸려 있는 조건 알약. 목록 위에 늘어놓고, 하나를 누르면 그 조건만 빠진다.
+   *
+   * 이름을 검색 창이 쓰던 목록에서 가져오므로 그 목록이 도착하기 전에는 무리 이름으로
+   * 적힌다. 알약을 감추지 않는 것이 요점이다 -- 거르고 있는데 보이지 않으면 사용자는
+   * 결과가 왜 비었는지 알 수 없다.
+   */
+  const searchChips = useMemo(
+    () =>
+      searchChipsOf(search, {
+        t,
+        categories: pickerCategories,
+        accounts: pickerAccounts,
+        cards: pickerCards,
+      }),
+    [search, t, pickerCategories, pickerAccounts, pickerCards],
+  );
+
+  /** 알약 하나를 뺀다. 나머지 조건은 그대로 둔다. */
+  const removeSearchChip = useCallback((chipId: string) => {
+    setSearch((prev) => withoutChip(prev, chipId));
+  }, []);
+
   const searchCount =
     search.categoryIds.length +
     search.paymentAccountIds.length +
     search.paymentCardIds.length +
-    search.kinds.length;
+    search.kinds.length +
+    // 기간은 두 칸이지만 조건 하나다. 사용자가 고른 것은 구간 하나다.
+    (range ? 1 : 0);
 
   /**
    * 손대지 않은 달의 펼침 정도.
@@ -263,6 +459,38 @@ export function useTransactions(projectId: string | null) {
   const levelOf = useCallback(
     (yearMonth: string): MonthLevel => levels[levelKey(yearMonth)] ?? defaultLevel,
     [levels, levelKey, defaultLevel],
+  );
+
+  /**
+   * 구간 조회가 볼 기간. 달력 날짜다 (ReportDto.PeriodQuery 의 규칙).
+   *
+   * 기간이 그 달을 통째로 덮으면 달 이름을 그대로 넘긴다.
+   */
+  const periodOf = useCallback(
+    (yearMonth: string) => {
+      const clipped = clipMonth(yearMonth, range);
+      return clipped
+        ? { startDate: clipped.startKey, endDate: clipped.endKey }
+        : { yearMonth };
+    },
+    [range],
+  );
+
+  /**
+   * 목록 조회가 볼 기간. **인스턴트다** (EntryDto.ListQuery 의 규칙).
+   *
+   * 같은 이름의 두 값이 뜻이 다르다. 목록 API 는 인스턴트를 받고 구간 조회는 달력
+   * 날짜를 받는다. 달력 날짜를 그대로 목록에 넘기면 시작일은 그날 오전 9시부터가 되고
+   * 종료일은 오전 9시에 잘린다(한국 기준). `dayRangeQuery` 가 그 변환을 안다.
+   */
+  const listRangeOf = useCallback(
+    (yearMonth: string) => {
+      const clipped = clipMonth(yearMonth, range);
+      return clipped
+        ? dayRangeQuery(clipped.startKey, clipped.endKey, timeZone)
+        : monthRange(yearMonth);
+    },
+    [range, timeZone],
   );
 
   const fail = useCallback((error: unknown) => {
@@ -354,7 +582,7 @@ export function useTransactions(projectId: string | null) {
     setHasError(false);
 
     homeDataPort()
-      .getEntryMonths(projectId, scope)
+      .getEntryMonths(projectId, { ...scope, ...monthsQuery })
       .then((rows) => {
         if (alive) setMonths(rows);
       })
@@ -404,7 +632,7 @@ export function useTransactions(projectId: string | null) {
 
       setLoadingMonths((prev) => ({ ...prev, [yearMonth]: true }));
       try {
-        const period = { yearMonth } as const;
+        const period = periodOf(yearMonth);
         /*
          * 날짜별은 그 달의 거래를 통째로 받아 화면에서 묶는다.
          *
@@ -413,7 +641,7 @@ export function useTransactions(projectId: string | null) {
          */
         if (tab === 'date') {
           const rows = await port.getAllEntries(
-            { ...scope, ...monthRange(yearMonth), limit: 200 },
+            { ...scope, ...listRangeOf(yearMonth), limit: 200 },
             projectId,
           );
           if (scopeKeyRef.current === askedScope) {
@@ -625,7 +853,7 @@ export function useTransactions(projectId: string | null) {
           {
             // 검색 키는 narrowOf 가 통째로 정한다. 사람 필터만 남긴다.
             personIds: scope.personIds,
-            ...monthRange(yearMonth),
+            ...listRangeOf(yearMonth),
             ...narrowOf(row),
             limit: 200,
           },
@@ -758,8 +986,8 @@ export function useTransactions(projectId: string | null) {
       if (!projectId) return [];
 
       const query = row
-        ? { personIds: scope.personIds, ...monthRange(yearMonth), ...narrowOf(row), limit: 200 }
-        : { ...scope, ...monthRange(yearMonth), limit: 200 };
+        ? { personIds: scope.personIds, ...listRangeOf(yearMonth), ...narrowOf(row), limit: 200 }
+        : { ...scope, ...listRangeOf(yearMonth), limit: 200 };
 
       if (!options?.quiet) setRangePending((prev) => ({ ...prev, [cacheKey]: true }));
       try {
@@ -771,7 +999,7 @@ export function useTransactions(projectId: string | null) {
         if (!options?.quiet) setRangePending((prev) => ({ ...prev, [cacheKey]: false }));
       }
     },
-    [rowKeyOf, monthKeyOf, knownRowIds, knownMonthIds, projectId, scope, narrowOf],
+    [rowKeyOf, monthKeyOf, knownRowIds, knownMonthIds, projectId, scope, narrowOf, listRangeOf],
   );
 
   /**
@@ -1063,6 +1291,8 @@ export function useTransactions(projectId: string | null) {
     search,
     setSearch,
     searchCount,
+    searchChips,
+    removeSearchChip,
     // 지울 것 고르기
     isSelecting,
     startSelecting,

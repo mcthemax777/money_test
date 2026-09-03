@@ -398,6 +398,9 @@ const entry = (
         entryMonths: Array<{ yearMonth: string; income: string; expense: string }>;
         categoryBreakdown: Array<Record<string, unknown>>;
         searchedMonths: Array<{ yearMonth: string; income: string; expense: string }>;
+        rangedMonths: Array<{ yearMonth: string; income: string; expense: string }>;
+        rangedBreakdown: Array<Record<string, unknown>>;
+        rangedPaymentMethods: Array<Record<string, unknown>>;
         searchedEntries: Array<Record<string, unknown>>;
         kindEntries: Record<string, string[]>;
         monthEntries: Record<string, string[]>;
@@ -727,6 +730,72 @@ const entry = (
     eq('거래 화면: 검색한 달 수', searchedMonths.length, dump.server.searchedMonths.length);
     eq('거래 화면: 검색한 달 지출',
       searchedMonths[0]?.expense, dump.server.searchedMonths[0]?.expense);
+
+    /*
+     * ── 기간 검색 ──
+     *
+     * 8/10 ~ 11/30. 8월은 반만 걸치고 11월은 통째로 걸린다. **사본이 달을 통째로 세면
+     * 여기서 갈린다** -- 줄에 43만이 적히고 그 안에는 40만어치만 들어 있게 된다.
+     *
+     * 이름이 같은 두 값의 뜻이 다른 것도 여기서 드러난다. 구간 조회(년월·구성비·수단별)는
+     * 달력 날짜를 받고, 목록 조회는 인스턴트를 받는다. 사본이 그 둘을 같은 자로 재면
+     * 한국의 새벽 거래가 구간 밖으로 밀린다.
+     */
+    const rangedMonths = await port.getEntryMonths(real.projectId, {
+      startDate: '2026-08-10',
+      endDate: '2026-11-30',
+    });
+    eq('기간: 걸친 달만 남는다',
+      rangedMonths.map((row) => row.yearMonth).join(','),
+      dump.server.rangedMonths.map((row) => row.yearMonth).join(','));
+    eq('기간: 반만 걸친 달의 지출',
+      rangedMonths.find((row) => row.yearMonth === '2026-08')?.expense,
+      dump.server.rangedMonths.find((row) => row.yearMonth === '2026-08')?.expense);
+    eq('기간: 통째로 걸친 달의 지출',
+      rangedMonths.find((row) => row.yearMonth === '2026-11')?.expense,
+      dump.server.rangedMonths.find((row) => row.yearMonth === '2026-11')?.expense);
+
+    const rangedBreakdown = await port.getCategoryBreakdown(
+      { startDate: '2026-08-10', endDate: '2026-08-31' },
+      'expense',
+      real.projectId,
+    );
+    eq('기간: 구성비 줄 수', rangedBreakdown.length, dump.server.rangedBreakdown.length);
+    eq('기간: 구성비 첫 줄 금액',
+      rangedBreakdown[0]?.amount, dump.server.rangedBreakdown[0]?.amount);
+
+    const rangedMethods = await port.getPaymentMethods(
+      { startDate: '2026-08-10', endDate: '2026-08-31' },
+      real.projectId,
+    );
+    const serverMethodOf = new Map(
+      dump.server.rangedPaymentMethods.map((row) => [`${row.kind}:${row.id}`, row]),
+    );
+    eq('기간: 결제수단 줄 수', rangedMethods.length, dump.server.rangedPaymentMethods.length);
+    for (const row of rangedMethods) {
+      const server = serverMethodOf.get(`${row.kind}:${row.id}`);
+      eq(`기간: 결제수단 ${row.name} 사용액`, row.amount, server?.amount);
+    }
+
+    /*
+     * 기간을 넘긴 목록. 여기는 인스턴트다 (한국 시간 8/10 0시 ~ 8/31 24시).
+     *
+     * 이 합이 위 년월 줄의 금액과 같아야 화면 안에서 숫자가 어긋나지 않는다.
+     */
+    const rangedEntries = await port.getAllEntries(
+      {
+        startDate: '2026-08-09T15:00:00.000Z',
+        endDate: '2026-08-31T14:59:59.999Z',
+        limit: 200,
+      },
+      real.projectId,
+    );
+    const rangedExpense = rangedEntries
+      .filter((row) => row.kind === 'expense')
+      .reduce((sum, row) => sum + Number(row.amount), 0);
+    eq('기간: 줄에 적힌 금액이 그 안 거래의 합과 같다',
+      String(rangedExpense),
+      rangedMonths.find((row) => row.yearMonth === '2026-08')?.expense);
 
     /*
      * 무리끼리 AND. 분류 하나와 카드 하나를 함께 고른 검색이다.

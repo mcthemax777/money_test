@@ -14,10 +14,9 @@
  * 서로 다른 규칙으로 파고들 일이 없다.
  */
 import { useState } from 'react';
-import { ArrowLeft, Check, Loader2, MoreVertical, Search, Trash2 } from 'lucide-react';
+import { ArrowLeft, Check, Loader2, MoreVertical, Search, Trash2, X } from 'lucide-react';
 import {
   SEARCHABLE_ENTRY_KINDS,
-  type EntryKind,
   type EntryListItem as EntryListItemDto,
 } from '@money/types';
 
@@ -26,6 +25,8 @@ import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import {
   EMPTY_SEARCH,
+  ENTRY_KIND_LABEL,
+  searchRange,
   useTransactions,
   type TransactionRow,
   type TransactionSearch,
@@ -188,15 +189,6 @@ function toggleId<T extends string>(ids: T[], id: T): T[] {
   return ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id];
 }
 
-/** 유형 이름. 열쇠를 이어 붙이지 않고 적어 두어 사전에서 찾을 수 있게 한다. */
-const KIND_LABEL: Record<EntryKind, MessageKey> = {
-  expense: 'tx.kind.expense',
-  income: 'tx.kind.income',
-  transfer: 'tx.kind.transfer',
-  card_payment: 'tx.kind.card_payment',
-  adjustment: 'entry.adjustment',
-};
-
 export default function TransactionsPage() {
   const { t } = useTranslation();
   const selectedProjectId = useProjectGuard();
@@ -337,11 +329,22 @@ export default function TransactionsPage() {
     </button>
   );
 
+  /** 고른 기간. 두 칸이 온전할 때만 선다. */
+  const draftRange = searchRange(draft);
+  /**
+   * 적다 만 기간인가. 한 칸만 적었거나, 실재하지 않는 날짜이거나, 앞뒤가 뒤집힌 것.
+   *
+   * 이 상태에서는 적용을 막는다. 그냥 흘려보내면 기간을 적었는데 걸리지 않는 것이
+   * 되어, 사용자는 검색이 고장 났다고 읽는다.
+   */
+  const isRangeBroken = Boolean(draft.startDate || draft.endDate) && draftRange === null;
+
   const draftCount =
     draft.categoryIds.length +
     draft.paymentAccountIds.length +
     draft.paymentCardIds.length +
-    draft.kinds.length;
+    draft.kinds.length +
+    (draftRange ? 1 : 0);
 
   const detailRows: Array<{ label: string; value: string | null }> = detail
     ? [
@@ -478,16 +481,6 @@ export default function TransactionsPage() {
         </div>
       ) : null}
 
-      {tx.searchCount > 0 ? (
-        <button
-          type="button"
-          onClick={() => tx.setSearch(EMPTY_SEARCH)}
-          className="rounded-lg border border-gray-300 bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-        >
-          {t('tx.search.off')}
-        </button>
-      ) : null}
-
       <div className="flex gap-2 rounded-lg bg-gray-200 p-1">
         {TABS.map((item) => (
           <button
@@ -502,6 +495,35 @@ export default function TransactionsPage() {
           </button>
         ))}
       </div>
+
+      {/*
+        걸려 있는 조건. 탭 바로 아래에 둔다.
+
+        검색 창을 열어야 무엇을 골랐는지 알 수 있으면, 결과가 비었을 때 이유를 찾으려
+        창을 다시 열게 된다. 여기 늘어놓으면 그 걸음이 사라지고, 하나만 빼는 일도
+        창을 열지 않고 끝난다.
+
+        많아지면 가로로 굴린다. 줄바꿈으로 두면 조건이 열 개 넘을 때 목록이 화면 밖으로
+        밀린다.
+      */}
+      {tx.searchChips.length > 0 ? (
+        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+          {tx.searchChips.map((chip) => (
+            <button
+              key={chip.id}
+              type="button"
+              onClick={() => tx.removeSearchChip(chip.id)}
+              // 지우는 버튼이라 이름을 함께 읽어 준다. 알약만으로는 무엇이 빠지는지 모른다.
+              aria-label={`${chip.label} ${t('tx.search.chipRemove')}`}
+              title={t('tx.search.chipRemove')}
+              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+            >
+              {chip.label}
+              <X className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          ))}
+        </div>
+      ) : null}
 
       <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
         {tx.isLoadingMonths && tx.months.length === 0 ? (
@@ -572,11 +594,12 @@ export default function TransactionsPage() {
             </button>
             <button
               type="button"
+              disabled={isRangeBroken}
               onClick={() => {
                 tx.setSearch(draft);
                 setIsSearchOpen(false);
               }}
-              className="flex-1 rounded-lg bg-blue-600 px-4 py-3 text-base font-semibold text-white hover:bg-blue-700"
+              className="flex-1 rounded-lg bg-blue-600 px-4 py-3 text-base font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
             >
               {t('tx.search.apply')}
               {draftCount > 0 ? ` (${draftCount})` : ''}
@@ -584,15 +607,64 @@ export default function TransactionsPage() {
           </div>
         }
       >
-        {tx.pickerCategories.length === 0 &&
-        tx.pickerAccounts.length === 0 &&
-        tx.pickerCards.length === 0 ? (
-          <p className="text-sm text-gray-600">{t('tx.search.empty')}</p>
-        ) : (
-          <div className="space-y-5">
+        <div className="space-y-5">
+          {/*
+            기간을 맨 위에 둔다. 무엇으로 좁히든 "언제"를 먼저 정하는 일이 많고,
+            분류 알약이 수십 개라 아래에 두면 굴려서 찾아야 한다.
+
+            고를 수 있는 분류·자산이 없어도 이 칸은 그린다. 기간은 그 목록과 무관하다.
+          */}
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
+              {t('tx.search.period')}
+            </p>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex flex-1 flex-col gap-1 text-xs text-gray-500">
+                {t('tx.search.periodFrom')}
+                <input
+                  type="date"
+                  value={draft.startDate}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, startDate: e.target.value }))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </label>
+              <label className="flex flex-1 flex-col gap-1 text-xs text-gray-500">
+                {t('tx.search.periodTo')}
+                <input
+                  type="date"
+                  value={draft.endDate}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, endDate: e.target.value }))}
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </label>
+            </div>
+            {draft.startDate || draft.endDate ? (
+              <button
+                type="button"
+                onClick={() => setDraft((prev) => ({ ...prev, startDate: '', endDate: '' }))}
+                className="mt-2 text-xs font-medium text-blue-600 hover:underline"
+              >
+                {t('tx.search.periodClear')}
+              </button>
+            ) : null}
+            <p
+              className={`mt-2 text-xs leading-5 ${
+                isRangeBroken ? 'text-red-600' : 'text-gray-500'
+              }`}
+            >
+              {isRangeBroken ? t('tx.search.periodInvalid') : t('tx.search.periodHint')}
+            </p>
+          </div>
+
+          {tx.pickerCategories.length === 0 &&
+          tx.pickerAccounts.length === 0 &&
+          tx.pickerCards.length === 0 ? (
+            <p className="text-sm text-gray-600">{t('tx.search.empty')}</p>
+          ) : (
+            <div className="space-y-5">
             {/*
-              유형을 맨 위에 둔다. 넷뿐이고, 이체나 카드정산만 보려는 사람에게는 이 칸
-              하나로 끝난다. 분류가 수십 개라 아래에 두면 굴려서 찾아야 한다.
+              유형을 기간 다음에 둔다. 넷뿐이고, 이체나 카드정산만 보려는 사람에게는 이
+              칸 하나로 끝난다. 분류가 수십 개라 아래에 두면 굴려서 찾아야 한다.
             */}
             <div>
               <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
@@ -602,7 +674,7 @@ export default function TransactionsPage() {
                 {SEARCHABLE_ENTRY_KINDS.map((kind) => (
                   <Chip
                     key={kind}
-                    label={t(KIND_LABEL[kind])}
+                    label={t(ENTRY_KIND_LABEL[kind])}
                     selected={draft.kinds.includes(kind)}
                     onClick={() =>
                       setDraft((prev) => ({ ...prev, kinds: toggleId(prev.kinds, kind) }))
@@ -683,9 +755,10 @@ export default function TransactionsPage() {
                   ))}
                 </div>
               </div>
-            ) : null}
-          </div>
-        )}
+              ) : null}
+            </div>
+          )}
+        </div>
       </Modal>
 
       <Modal

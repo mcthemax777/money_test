@@ -72,8 +72,16 @@ export interface HomeDataPort {
     options?: { rollup?: boolean } & EntryScopeQuery,
   ): Promise<ReportDto.CategoryBreakdownItem[]>;
 
-  /** 거래가 있는 달. 전체 기간이라 기간을 받지 않는다. */
-  getEntryMonths(projectId?: string | null, filter?: EntryScopeQuery): Promise<ReportDto.EntryMonth[]>;
+  /**
+   * 거래가 있는 달. 기간을 주면 그 구간에 걸친 달만이고, 걸친 달은 구간만큼만 센다.
+   *
+   * 날짜는 프로젝트 타임존의 달력 날짜다(구간 조회와 같은 규칙). 목록 조회의
+   * startDate·endDate 는 이름이 같아도 인스턴트라 뜻이 다르다.
+   */
+  getEntryMonths(
+    projectId?: string | null,
+    filter?: ReportDto.EntryMonthsQuery,
+  ): Promise<ReportDto.EntryMonth[]>;
 
   /**
    * 그 구간의 거래 전부. 커서를 끝까지 따라간 결과다.

@@ -20,6 +20,32 @@ import {
   zonedTimeKey,
 } from '@money/types';
 
+/**
+ * 실재하는 달력 날짜 'YYYY-MM-DD' 인가.
+ *
+ * 모양만 보아서는 모자란다. `'2026-02-31'` 은 정규식을 통과하지만 `new Date` 에 넣으면
+ * 3월 3일로 넘어간다. 그런 값이 조회 구간이나 거래 날짜로 들어가면, 오류는 나지 않고
+ * 결과만 조용히 어긋난다.
+ *
+ * 거래 입력과 거래 화면의 기간 검색이 함께 쓴다. 둘 다 앱에서는 글자로 받는다
+ * (리액트 네이티브에 달력 입력이 없다).
+ */
+export function isDateKey(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+
+  const [year, month, day] = value.split('-').map(Number);
+  if (month < 1 || month > 12 || day < 1) return false;
+
+  // 그 달의 말일. UTC 로 세어도 되는 것은 "며칠까지 있는가"만 보기 때문이다.
+  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
+/** 그 달의 말일. 'YYYY-MM' 을 받아 28~31 을 돌려준다. */
+export function lastDayOfMonth(yearMonth: string): number {
+  const [year, month] = yearMonth.split('-').map(Number);
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
 /** 인스턴트가 속한 "YYYY-MM-DD" (프로젝트 타임존 기준) */
 export function dateKeyOf(instant: string | Date, timeZone: string): string {
   return zonedDateKey(new Date(instant), timeZone);

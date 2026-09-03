@@ -75,20 +75,19 @@ export function createLocalHomePort(
   };
 
   /**
-   * 그 달의 카테고리 다리.
+   * 그 구간의 카테고리 다리.
    *
-   * 달의 양끝은 달력 키 문자열로 자른다. 키가 "YYYY-MM-DD" 로 0을 채운 값이라
+   * 양끝은 달력 키 문자열로 자른다. 키가 "YYYY-MM-DD" 로 0을 채운 값이라
    * `<= '2026-08-31'` 이 그 달의 마지막 날까지를 정확히 담는다(달의 길이를 몰라도 된다).
    * 그 키는 이미 프로젝트 타임존으로 계산해 넣은 값이므로 여기서 타임존을 다시 볼 일이 없다.
    */
   const monthPostings = (
     projectId: string,
-    yearMonth: string,
+    period: ReportPeriod,
     filter?: EntryFilterQuery & EntrySearchQuery & { personId?: string },
   ) =>
     store.categoryPostings(projectId, {
-      fromDateKey: `${yearMonth}-01`,
-      toDateKey: `${yearMonth}-31`,
+      ...periodKeys(period),
       ownerIds: ownerIdsOf(filter),
       // 거래 화면의 검색. 고르지 않았으면 조건이 서지 않는다.
       search: parseEntrySearch(filter ?? {}),
@@ -159,15 +158,16 @@ export function createLocalHomePort(
       const id = requireProject(projectId);
       note('summary');
 
-      const yearMonth = monthOf(period);
-      const rows = await monthPostings(id, yearMonth, filter);
+      const rows = await monthPostings(id, period, filter);
       const totals = summarize(rows, extraOf(filter));
       const show = await converter(id);
 
+      const keys = periodKeys(period);
       return {
-        startDate: `${yearMonth}-01`,
-        endDate: `${yearMonth}-31`,
-        yearMonth,
+        startDate: keys.fromDateKey,
+        endDate: keys.toDateKey,
+        // 한 달을 본 경우에만 채운다. 서버의 periodLabel 과 같은 규칙이다.
+        ...(period.yearMonth ? { yearMonth: period.yearMonth } : {}),
         income: show.toString(totals.income),
         expense: show.toString(totals.expense),
         extraExpense: show.toString(totals.extraExpense),
@@ -184,7 +184,7 @@ export function createLocalHomePort(
 
       const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
       const [rows, categories, budgets, show] = await Promise.all([
-        monthPostings(id, yearMonth, filter),
+        monthPostings(id, { yearMonth }, filter),
         store.categories(id),
         store.budgets(id, year, month),
         converter(id),
@@ -258,7 +258,7 @@ export function createLocalHomePort(
       const id = requireProject(projectId);
       note('categoryBreakdown');
 
-      const rows = await monthPostings(id, monthOf(period), options);
+      const rows = await monthPostings(id, period, options);
       const show = await converter(id);
 
       return categoryBreakdown(rows, {
@@ -278,7 +278,7 @@ export function createLocalHomePort(
     },
 
     /**
-     * 거래가 있는 달. 전체 기간이다.
+     * 거래가 있는 달. 기간을 주면 그 구간에 걸친 달만이다.
      *
      * 달을 자르는 일은 `entryMonths` 가 프로젝트 타임존으로 한다. 사본에 이미
      * `yearMonth` 컬럼이 박혀 있지만 그것을 쓰지 않는 이유가 있다 -- 서버와 같은 함수를
@@ -290,10 +290,17 @@ export function createLocalHomePort(
       note('entryMonths');
 
       const timeZone = await timeZoneOf(store, id);
-      // 전체 기간. 달력 키가 0을 채운 문자열이라 양끝을 이렇게 잡으면 전부 든다.
+      /*
+       * 고른 기간. 없으면 전체다 -- 달력 키가 0을 채운 문자열이라 양끝을 이렇게
+       * 잡으면 전부 든다.
+       *
+       * 날짜는 여기서도 달력 날짜다(EntryMonthsQuery). 걸친 달의 합계가 구간만큼만
+       * 세어지는 것이 요점이다. 달을 통째로 세면 년월 줄의 금액과 그 안을 펴서 나온
+       * 거래의 합이 어긋난다.
+       */
       const scope = {
-        fromDateKey: '0000-01-01',
-        toDateKey: '9999-12-31',
+        fromDateKey: filter?.startDate && filter?.endDate ? filter.startDate : '0000-01-01',
+        toDateKey: filter?.startDate && filter?.endDate ? filter.endDate : '9999-12-31',
         ownerIds: ownerIdsOf(filter),
         search: parseEntrySearch(filter ?? {}),
       };
@@ -315,11 +322,9 @@ export function createLocalHomePort(
       const id = requireProject(projectId);
       note('paymentMethods');
 
-      const yearMonth = monthOf(period);
       const [entries, accounts, cards, show] = await Promise.all([
         store.viewEntries(id, {
-          fromDateKey: `${yearMonth}-01`,
-          toDateKey: `${yearMonth}-31`,
+          ...periodKeys(period),
           ownerIds: ownerIdsOf(filter),
           // 거래 화면의 검색. 이것을 빠뜨리면 고르지 않은 카드가 금액을 갖고 목록에 남는다.
           search: parseEntrySearch(filter ?? {}),
@@ -557,6 +562,24 @@ function requireProject(projectId?: string | null): string {
 function monthOf(period: ReportPeriod): string {
   if (period.yearMonth) return period.yearMonth;
   return String(period.startDate).slice(0, 7);
+}
+
+/**
+ * 구간을 사본이 고를 달력 키로.
+ *
+ * **여기서 타임존을 보지 않는다.** 구간 조회의 startDate·endDate 는 인스턴트가 아니라
+ * 프로젝트 타임존의 달력 날짜이고(ReportDto.PeriodQuery), 사본의 dateKey 컬럼도 같은
+ * 기준으로 박아 둔 값이다. 두 값이 이미 같은 자로 재어져 있어 그대로 견주면 된다.
+ * 목록 조회(EntryDto.ListQuery)는 이름이 같아도 인스턴트라 `dateKeyOf` 를 거친다.
+ *
+ * 달 이름만 온 경우 끝을 `-31` 로 둔다. 키가 0을 채운 문자열이라 그 달의 말일이
+ * 며칠이든 정확히 그 달까지만 담긴다.
+ */
+function periodKeys(period: ReportPeriod): { fromDateKey: string; toDateKey: string } {
+  if (period.yearMonth) {
+    return { fromDateKey: `${period.yearMonth}-01`, toDateKey: `${period.yearMonth}-31` };
+  }
+  return { fromDateKey: String(period.startDate), toDateKey: String(period.endDate) };
 }
 
 /** 일반/과소비 선택. 서버의 parseEntryFilter 와 같은 규칙이다. */

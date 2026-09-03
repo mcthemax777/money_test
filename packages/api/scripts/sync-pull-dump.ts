@@ -198,6 +198,35 @@ runSmoke('sync-pull-dump', async (ctx) => {
       projectId: pid, yearMonth: '2026-08', type: 'expense',
     }),
     searchedMonths: await reports.getEntryMonths(uid, { projectId: pid, categoryIds: dining.id }),
+    /*
+     * 기간 검색. 8/10 부터 11/30 까지다.
+     *
+     * 이 구간은 세 가지를 한꺼번에 시험한다.
+     *   ① 8월을 **반만** 덮는다 (8/6 치킨 30,000 이 빠진다).
+     *   ② 11월은 통째로 덮는다 (그때는 달 이름을 그대로 쓰는 길로 간다).
+     *   ③ 끝을 11/30 로 잡아 한국 시간 12/1 인 거래가 빠지는지 본다. 그 거래의 UTC
+     *      시각은 11/30 이라, 경계를 UTC 로 자르면 11월에 함께 실린다.
+     */
+    rangedMonths: await reports.getEntryMonths(uid, {
+      projectId: pid, startDate: '2026-08-10', endDate: '2026-11-30',
+    }),
+    rangedBreakdown: await reports.getCategoryBreakdown(uid, {
+      projectId: pid, startDate: '2026-08-10', endDate: '2026-08-31', type: 'expense',
+    }),
+    rangedPaymentMethods: await reports.getPaymentMethods(uid, {
+      projectId: pid, startDate: '2026-08-10', endDate: '2026-08-31',
+    }),
+    /*
+     * 같은 구간의 목록. **여기서 이름이 같은 두 값의 뜻이 갈린다** -- 구간 조회는
+     * 달력 날짜를 받고 목록은 인스턴트를 받는다. 한국 시간 8/10 0시와 8/31 24시다.
+     */
+    rangedEntries: (
+      await entries.getEntries(uid, {
+        startDate: '2026-08-09T15:00:00.000Z',
+        endDate: '2026-08-31T14:59:59.999Z',
+        limit: 200,
+      }, pid)
+    ).data,
     searchedEntries: (
       await entries.getEntries(uid, {
         categoryIds: dining.id,
@@ -247,6 +276,28 @@ runSmoke('sync-pull-dump', async (ctx) => {
   ctx.check('평가액이 변경 피드에 담겼다', wire.pull.changes.assetValuations.length, 1);
   ctx.check('할부 계획도 담겼다', wire.pull.changes.installmentPlans.length, 1);
   ctx.check('할부 개월수', wire.pull.changes.installmentPlans[0].totalMonths, 3);
+  /*
+   * 기간 검색이 서버에서 맞는가. 사본과 대조하기 전에 서버 쪽부터 못 박는다.
+   *
+   * **핵심은 마지막 검사다.** 년월 줄에 적힌 금액과 그 안을 펴서 나온 거래의 합이
+   * 같아야 한다. 달을 통째로 세면 줄에는 43만이 적히고 안에는 40만어치만 들어 있다.
+   */
+  ctx.check('기간에 걸친 달만 남는다',
+    wire.server.rangedMonths.map((row: { yearMonth: string }) => row.yearMonth).join(','),
+    '2026-11,2026-08');
+  ctx.check('기간 밖의 거래는 달에서 빠진다 (한국 시간 12/1)',
+    wire.server.rangedMonths.find((row: { yearMonth: string }) => row.yearMonth === '2026-11')?.expense,
+    '1100');
+
+  const rangedAugust = wire.server.rangedMonths.find(
+    (row: { yearMonth: string }) => row.yearMonth === '2026-08',
+  );
+  const augustExpense = wire.server.rangedEntries
+    .filter((row: { kind: string }) => row.kind === 'expense')
+    .reduce((sum: number, row: { amount: string }) => sum + Number(row.amount), 0);
+  ctx.check('걸친 달은 기간만큼만 센다', rangedAugust?.expense, '400000');
+  ctx.check('줄에 적힌 금액이 그 안 거래의 합과 같다', String(augustExpense), rangedAugust?.expense);
+
   ctx.check('투자 계좌를 시가로 센다', wire.server.netWorth.investment, '800000');
   ctx.check('미실현손익 = 시가 - 장부가', wire.server.netWorth.unrealizedGain, '300000');
   console.log(`\n떠 둔 곳: ${target}`);

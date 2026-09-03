@@ -759,6 +759,19 @@ export namespace ReportDto {
    */
   export interface EntryMonthsQuery extends EntryFilterQuery, EntrySearchQuery {
     projectId?: string;
+    /**
+     * 이 기간에 걸친 달만, 그 기간에 든 거래만 센다.
+     *
+     * 날짜는 **프로젝트 타임존의 달력 날짜**이고 양끝을 포함한다(PeriodQuery 와 같은
+     * 규칙이다. 목록 API 의 startDate/endDate 는 인스턴트라 뜻이 다르다).
+     * 둘을 함께 주어야 하고, 하나만 주면 무시한다 -- 반쪽 구간은 사용자가 고른 것이
+     * 아니라 입력이 덜 끝난 상태다.
+     *
+     * 달을 통째로 덮지 않는 기간이면 그 달의 합계도 기간만큼만 센다. 그러지 않으면
+     * 년월 줄의 금액과 그 안을 펴서 나온 거래의 합이 어긋난다.
+     */
+    startDate?: string;
+    endDate?: string;
   }
 
   /** 최신 달이 먼저 온다. */
