@@ -12,6 +12,8 @@ import { useProject } from '@money/core/store/project';
 
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
+import SegmentedTabs from '../components/SegmentedTabs';
+import TagsPanel from '../components/TagsPanel';
 
 /**
  * 지출·수입 두 단. 머리글 색은 가계 화면과 같다 (지출 빨강, 수입 초록).
@@ -60,6 +62,13 @@ export default function CategoriesScreen() {
   const [formData, setFormData] = useState<CategoryFormValues>(EMPTY_FORM);
   /** 좁은 화면에서 보고 있는 단. 넓은 화면에서는 두 단이 함께 보이므로 쓰이지 않는다. */
   const [activeType, setActiveType] = useState<'expense' | 'income'>('expense');
+  /*
+   * 카테고리와 태그. 둘 다 "거래를 무엇으로 묶어 보나"를 정하는 일이라 한 화면에 둔다.
+   *
+   * 태그는 계층이 없어 화면 하나를 따로 둘 만큼 크지 않고, 아래 탭을 하나 더 늘리면
+   * 자주 가지 않는 자리가 늘 화면 아래를 차지한다.
+   */
+  const [section, setSection] = useState<'categories' | 'tags'>('categories');
 
   const closeForm = () => {
     setIsModalOpen(false);
@@ -94,16 +103,30 @@ export default function CategoriesScreen() {
       <PageHeader
         title={t('categories.title')}
         action={
-          <Pressable
-            onPress={() => setIsModalOpen(true)}
-            className="rounded-lg bg-blue-600 px-4 py-2 active:bg-blue-700"
-          >
-            <Text className="text-white">{t('categories.add')}</Text>
-          </Pressable>
+          // 태그 탭은 자기 머리글에 자기 추가 버튼을 둔다.
+          section === 'categories' ? (
+            <Pressable
+              onPress={() => setIsModalOpen(true)}
+              className="rounded-lg bg-blue-600 px-4 py-2 active:bg-blue-700"
+            >
+              <Text className="text-white">{t('categories.add')}</Text>
+            </Pressable>
+          ) : undefined
         }
       />
 
-      {isLoading ? (
+      <SegmentedTabs
+        tabs={[
+          { id: 'categories' as const, label: t('categories.title') },
+          { id: 'tags' as const, label: t('tags.tab') },
+        ]}
+        selected={section}
+        onSelect={setSection}
+      />
+
+      {section === 'tags' ? (
+        <TagsPanel projectId={selectedProjectId} />
+      ) : isLoading ? (
         <Text className="text-gray-600">{t('common.loading')}</Text>
       ) : categories.length === 0 ? (
         <Text className="text-gray-600">{t('categories.empty')}</Text>

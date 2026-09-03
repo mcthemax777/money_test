@@ -14,6 +14,7 @@ import type {
   AccountDto,
   CardDto,
   CategoryDto,
+  TagDto,
   EntryListItem,
   PersonDto,
 } from '@money/types';
@@ -46,9 +47,16 @@ export interface EntryFormLists {
   accounts: AccountDto.Response[];
   cards: CardDto.Response[];
   categories: CategoryDto.Response[];
+  tags: TagDto.Response[];
 }
 
-const EMPTY_LISTS: EntryFormLists = { people: [], accounts: [], cards: [], categories: [] };
+const EMPTY_LISTS: EntryFormLists = {
+  people: [],
+  accounts: [],
+  cards: [],
+  categories: [],
+  tags: [],
+};
 
 /**
  * 결제수단 목록에서 빼는 계정.
@@ -95,13 +103,14 @@ export function useEntryForm({
     void (async () => {
       const port = homeDataPort();
       try {
-        const [people, accounts, cards, categories] = await Promise.all([
+        const [people, accounts, cards, categories, tags] = await Promise.all([
           port.getPeople(projectId),
           port.getAccountsV2(projectId),
           port.getCards(projectId),
           port.getCategories(projectId),
+          port.getTags(projectId),
         ]);
-        if (!cancelled) setLists({ people, accounts, cards, categories });
+        if (!cancelled) setLists({ people, accounts, cards, categories, tags });
       } catch {
         // 목록을 읽지 못해도 폼은 뜬다. 고를 것이 없으면 검증이 막는다.
         if (!cancelled) setLists(EMPTY_LISTS);
@@ -278,6 +287,20 @@ export function useEntryForm({
     toAccountChoices,
     categoryChoices,
     isCreditCard,
+    /**
+     * 태그 하나를 붙이거나 뗀다.
+     *
+     * 여러 개를 고르는 칸이라 `setField` 로 배열을 통째로 넘기게 두면 화면마다 그
+     * 뒤집기를 다시 적게 된다.
+     */
+    toggleTag: useCallback((tagId: string) => {
+      setValues((previous) => ({
+        ...previous,
+        tagIds: previous.tagIds.includes(tagId)
+          ? previous.tagIds.filter((id) => id !== tagId)
+          : [...previous.tagIds, tagId],
+      }));
+    }, []),
     isEditing: editingId !== null,
     violation,
     error,

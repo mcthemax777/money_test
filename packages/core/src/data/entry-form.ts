@@ -65,6 +65,13 @@ export interface EntryFormValues {
   installmentMonths: string;
   transferFee: string;
   transferFeeCategoryId: string;
+  /**
+   * 이 거래에 붙일 태그. 카테고리와 달리 여럿을 고를 수 있다.
+   *
+   * 갈래(지출·수입·이체)를 가리지 않는다. 태그는 "무엇에 쓴 돈인가"가 아니라 "어느 일에
+   * 딸린 거래인가"라, 여행에는 항공권 지출과 환불 수입이 함께 든다.
+   */
+  tagIds: string[];
 }
 
 export interface EntryFormDefaults {
@@ -89,6 +96,7 @@ export function emptyEntryForm({ personId = '', timeZone, now }: EntryFormDefaul
     installmentMonths: '',
     transferFee: '',
     transferFeeCategoryId: '',
+    tagIds: [],
     ...(now ? { dateKey: dateKeyOf(now, timeZone), timeKey: timeInputOf(now, timeZone) } : {}),
   };
 }
@@ -134,6 +142,7 @@ export function entryFormFromItem(
     installmentMonths: item.installmentMonths ? String(item.installmentMonths) : '',
     transferFee: item.feeAmount && item.feeAmount !== '0' ? item.feeAmount : '',
     transferFeeCategoryId: item.feeCategoryId ?? '',
+    tagIds: item.tags.map((tag) => tag.id),
   };
 }
 
@@ -219,6 +228,13 @@ export function entryFormToRequest(
     date: zonedFormValueToUtc(values.dateKey, values.timeKey, timeZone).toISOString(),
     description: values.description.trim(),
     amount: values.amount,
+    /*
+     * 태그는 언제나 싣는다. 비었어도 뺄 수 없다.
+     *
+     * 수정은 전표를 통째로 갈아 끼우고 생략은 "비운다"로 읽히므로(`EntryDto`), 여기서
+     * 빈 배열을 빼면 "태그를 전부 뗀 수정"과 "태그를 건드리지 않은 수정"이 같아진다.
+     */
+    tagIds: values.tagIds,
   };
 
   if (values.kind === 'transfer') {

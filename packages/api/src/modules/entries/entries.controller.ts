@@ -36,6 +36,19 @@ export class EntriesController {
     return this.entriesService.createEntry(req.user.id, dto, projectId);
   }
 
+  /*
+   * ':id' 보다 먼저 선언해야 'tags' 가 id 로 잡히지 않는다 (카테고리의 'reorder' 와 같다).
+   */
+  @Post('tags')
+  @ApiOperation({ summary: '여러 거래의 태그 바꾸기 (더할 것과 뗄 것을 따로 받는다)' })
+  changeTags(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: EntryDto.ChangeTagsRequest,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.entriesService.changeTags(req.user.id, dto, projectId);
+  }
+
   @Get()
   @ApiOperation({ summary: '거래 목록 (커서 페이지네이션)' })
   list(

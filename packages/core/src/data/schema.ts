@@ -18,7 +18,7 @@
  */
 
 /** 스키마가 바뀌면 올린다. 다르면 사본을 버리고 처음부터 다시 받는다. */
-export const SCHEMA_VERSION = 3;
+export const SCHEMA_VERSION = 4;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -99,6 +99,36 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      createdAt      TEXT NOT NULL DEFAULT '',
      updatedAt      TEXT NOT NULL DEFAULT '',
      updatedVersion INTEGER NOT NULL DEFAULT 0
+   )`,
+
+  /*
+   * 태그. 계층이 없어 카테고리보다 짧다.
+   *
+   * 감춘 것(isActive=0)도 담아 둔다. 지난 거래에 붙어 있던 태그의 이름을 보여 주려면
+   * 그 행이 있어야 한다 -- 감추기는 "앞으로 고르지 않는다"이지 "지난 기록에서
+   * 없앤다"가 아니다.
+   */
+  `CREATE TABLE IF NOT EXISTS tag (
+     id             TEXT PRIMARY KEY,
+     projectId      TEXT NOT NULL,
+     name           TEXT NOT NULL,
+     color          TEXT,
+     isActive       INTEGER NOT NULL DEFAULT 1,
+     sortOrder      INTEGER NOT NULL DEFAULT 0,
+     createdAt      TEXT NOT NULL DEFAULT '',
+     updatedAt      TEXT NOT NULL DEFAULT '',
+     updatedVersion INTEGER NOT NULL DEFAULT 0
+   )`,
+
+  /*
+   * 전표에 붙은 태그. 다리와 같이 전표에 실려 움직인다.
+   *
+   * 그래서 번호를 두지 않고, 전표가 바뀌면 그 전표의 행을 통째로 지우고 다시 넣는다.
+   */
+  `CREATE TABLE IF NOT EXISTS entry_tag (
+     entryId TEXT NOT NULL,
+     tagId   TEXT NOT NULL,
+     PRIMARY KEY (entryId, tagId)
    )`,
 
   `CREATE TABLE IF NOT EXISTS card (
@@ -277,6 +307,9 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE INDEX IF NOT EXISTS posting_account_idx ON posting (accountId)`,
   `CREATE INDEX IF NOT EXISTS account_project_idx ON account (projectId, isActive)`,
   `CREATE INDEX IF NOT EXISTS category_project_idx ON category (projectId, isActive)`,
+  `CREATE INDEX IF NOT EXISTS tag_project_idx ON tag (projectId, isActive)`,
+  // 태그별 통계가 쓸 길. 한 태그에 붙은 전표를 고른다.
+  `CREATE INDEX IF NOT EXISTS entry_tag_tag_idx ON entry_tag (tagId)`,
   `CREATE INDEX IF NOT EXISTS override_budget_idx ON budget_override (budgetId, year, month)`,
   // 계좌의 최신 평가액을 고르는 길. 날짜 내림차순 한 건만 읽는다.
   `CREATE INDEX IF NOT EXISTS valuation_account_idx ON asset_valuation (accountId, date)`,
@@ -296,6 +329,7 @@ export const ALL_TABLES: readonly string[] = [
   'installment_plan',
   'asset_valuation',
   'posting',
+  'entry_tag',
   'entry',
   'budget_override',
   'budget',
@@ -303,6 +337,7 @@ export const ALL_TABLES: readonly string[] = [
   'card',
   'account',
   'category',
+  'tag',
   'person',
   'member',
   'project',

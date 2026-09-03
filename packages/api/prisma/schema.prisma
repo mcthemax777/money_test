@@ -149,6 +149,7 @@ model Project {
   people       Person[]
   accounts     Account[]
   categories   Category[]
+  tags         Tag[]
   cards        Card[]
   entries      JournalEntry[]
   budgets      Budget[]
@@ -403,6 +404,63 @@ model Category {
 }
 
 // ─────────────────────────────────────────────
+// 태그
+// ─────────────────────────────────────────────
+
+/// 거래에 자유롭게 붙이는 이름표.
+///
+/// 카테고리와 나란히 서지만 **계층이 없다.** 카테고리는 "이 돈이 무엇에 쓰였나"를
+/// 한 갈래로 정하는 것이라 대분류/소분류로 좁혀 가고 전표당 하나(분할이면 다리마다
+/// 하나)다. 태그는 그와 직교하는 이름표라 "여행이면서 경조사"가 성립하고, 그래서
+/// 전표 하나에 여럿 붙는다.
+///
+/// 수입/지출 구분(type)도 두지 않는다. 같은 여행에 항공권 지출과 환불 수입이 함께
+/// 들므로, 유형으로 갈라 두면 한 여행을 두 태그로 적게 된다.
+model Tag {
+  id        String  @id @default(cuid())
+  projectId String
+  name      String
+  /// 목록에서 알아보는 색. 카드와 같은 규칙(#RRGGBB)이고, 정하지 않으면 null 이다.
+  color     String?
+  isActive  Boolean @default(true)
+  /// 화면 표시 순서. 같으면 이름 순.
+  sortOrder Int     @default(0)
+
+  project Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  entries EntryTag[]
+
+  /// 변경 피드가 보는 번호. Project.syncVersion 에서 발급된다.
+  updatedVersion Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([projectId, name])
+  @@index([projectId, isActive])
+  @@index([projectId, updatedVersion])
+}
+
+/// 전표에 붙은 태그.
+///
+/// **전표에 붙이고 다리에 붙이지 않는다.** 사용자가 고르는 자리가 거래 하나이고,
+/// 분할한 줄마다 따로 고르게 하면 "이 결제는 여행이었다"를 적는 데 줄 수만큼 손이
+/// 간다. 그래서 분할 거래의 태그 통계는 그 전표의 지출 전체를 센다.
+///
+/// 이 표에는 번호(updatedVersion)를 붙이지 않는다. 전표가 다리와 함께 한 단위로
+/// 움직이는 것과 같은 이유다(설계 문서의 D5) -- 전표가 바뀌면 그 전표의 태그 연결을
+/// 통째로 갈아 끼우고, 변경 피드도 전표에 실어 함께 보낸다.
+model EntryTag {
+  entryId String
+  tagId   String
+
+  entry JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  tag   Tag          @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([entryId, tagId])
+  @@index([tagId])
+}
+
+// ─────────────────────────────────────────────
 // 카드
 // ─────────────────────────────────────────────
 
@@ -558,6 +616,7 @@ model JournalEntry {
   person    Person    @relation(fields: [personId], references: [id])
   createdBy User?     @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   postings  Posting[]
+  tags      EntryTag[]
 
   /// 변경 피드가 보는 번호. Project.syncVersion 에서 발급된다.
   updatedVersion Int @default(0)

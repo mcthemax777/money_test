@@ -68,6 +68,12 @@ export interface EntryMutationPayload {
   transferFeeCategoryId?: string;
   cardTransferDirection?: CardTransferDirection;
   /**
+   * 이 거래에 붙일 태그. 서버의 `EntryDto.CreateRequest.tagIds` 와 같은 규칙이다.
+   *
+   * 목록이 그대로 그 전표의 태그가 되고, 생략은 "비운다"다.
+   */
+  tagIds?: string[];
+  /**
    * 오프라인에서 쓴 환율. 명령에 실어 보낸다.
    *
    * 그러지 않으면 며칠 뒤 재생할 때 그날 환율로 값이 다시 매겨져, 기기가 보여 준 금액과

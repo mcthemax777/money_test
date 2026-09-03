@@ -10,7 +10,7 @@
  */
 
 import { Dec, type DecInput } from './decimal';
-import type { AccountType, CategoryType, EntryKind, EntryListItem } from './entities';
+import type { AccountType, CategoryType, EntryKind, EntryListItem, EntryTag } from './entities';
 
 /** 판별에 필요한 만큼만 본 다리. */
 export interface ViewPosting {
@@ -48,6 +48,13 @@ export interface ViewEntry {
   originalAmount: DecInput | null;
   rateProvisional: boolean;
   postings: ViewPosting[];
+  /**
+   * 이 전표에 붙은 태그. 서버는 조인 표를 펴서, 기기는 사본의 `entry_tag` 를 읽어 넣는다.
+   *
+   * 없으면 빈 배열이다. 태그를 아직 읽지 않은 자리(가벼운 조회)는 `undefined` 를 두어도
+   * 되고, 그때 목록 한 줄은 태그가 없는 것으로 그려진다.
+   */
+  tags?: EntryTag[];
 }
 
 /**
@@ -148,6 +155,7 @@ export function toListItem(
     date: entry.date instanceof Date ? entry.date.toISOString() : String(entry.date),
     description: entry.description,
     merchant: entry.merchant,
+    tags: entry.tags ?? [],
     detailedNote: entry.detailedNote,
     personId: entry.personId,
     personName: entry.person?.name ?? '',

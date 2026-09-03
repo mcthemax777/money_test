@@ -60,20 +60,40 @@ export function currencyDecimals(currency: string): number {
  * 통화를 넘기지 않으면 원으로 본다. 화면 어디서든 같은 규칙을 쓰도록
  * 이 함수 하나만 거치게 한다.
  */
+/*
+ * 통화마다 형식기 하나를 두고 다시 쓴다.
+ *
+ * **`new Intl.NumberFormat` 을 부를 때마다 만들면 안 된다.** 만드는 값이 쓰는 값보다
+ * 훨씬 비싸다(Hermes 에서 밀리초 단위다). 거래 목록은 한 번 그릴 때 이 함수를 수백 번
+ * 부르므로, 만들기를 없애는 것만으로 한 달 펼치기가 800ms 에서 눈에 띄게 내려간다.
+ *
+ * 통화 수가 손에 꼽으므로 지도가 자라지 않는다.
+ */
+const moneyFormatters = new Map<string, Intl.NumberFormat>();
+
+function moneyFormatter(currency: string, digits: number): Intl.NumberFormat {
+  const key = `${currency}|${digits}`;
+  const cached = moneyFormatters.get(key);
+  if (cached) return cached;
+
+  const formatter = new Intl.NumberFormat('ko-KR', {
+    style: 'currency',
+    currency,
+    minimumFractionDigits: digits,
+    maximumFractionDigits: digits,
+  });
+  moneyFormatters.set(key, formatter);
+  return formatter;
+}
+
 export function formatMoney(
   amount: string | number | null | undefined,
   currency: string = 'KRW',
 ): string {
   const value = Number(amount ?? 0);
   const safe = Number.isFinite(value) ? value : 0;
-  const digits = currencyDecimals(currency);
 
-  return new Intl.NumberFormat('ko-KR', {
-    style: 'currency',
-    currency,
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(safe);
+  return moneyFormatter(currency, currencyDecimals(currency)).format(safe);
 }
 
 /**

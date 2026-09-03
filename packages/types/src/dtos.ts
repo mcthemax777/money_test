@@ -10,6 +10,7 @@ import type {
   FinancialInstitutionType,
   EntryKind,
   EntryListItem,
+  Tag,
   CardTransferDirection,
   Posting,
 } from './entities';
@@ -493,6 +494,16 @@ export namespace EntryDto {
     /** 한 결제를 여러 카테고리로 쪼갤 때. 지정하면 categoryId/amount 대신 이 값을 쓴다. */
     splits?: Array<{ categoryId: string; amount: string; extraAmount?: string }>;
 
+    /**
+     * 이 거래에 붙일 태그. 갈래(kind)를 가리지 않는다.
+     *
+     * **수정은 전체 교체다.** 준 목록이 그대로 그 전표의 태그가 되고, 생략하면
+     * 태그를 건드리지 않는 것이 아니라 **비운다** -- 수정이 전표를 통째로 갈아
+     * 끼우는 것과 같은 규칙이라, 여기만 "생략은 유지"로 두면 태그를 다 뗀 수정과
+     * 구별할 수 없다.
+     */
+    tagIds?: string[];
+
     // ── 결제수단 (expense는 둘 중 하나, income은 accountId) ──
     accountId?: string;
     cardId?: string;
@@ -525,6 +536,37 @@ export namespace EntryDto {
 
   /** 수정은 전체 교체다. 생성과 같은 형태를 보내면 서버가 전표를 갈아끼운다. */
   export interface UpdateRequest extends Omit<CreateRequest, 'projectId'> {}
+
+  /**
+   * 여러 거래의 태그를 한 번에 바꾼다. 목록에서 여러 건을 골라 정리할 때 쓴다.
+   *
+   * 수정(전체 교체)과 갈라 둔 이유가 둘이다.
+   *
+   * 1. **바꿀 것만 말한다.** 더할 것과 뗄 것을 따로 받고, 어느 쪽에도 없는 태그는
+   *    건드리지 않는다. 여러 건을 한꺼번에 다룰 때 고른 거래마다 붙은 태그가 다를 수
+   *    있어, 목록 하나를 "이것이 전부다"로 받으면 화면에 보이지 않던 태그가 사라진다.
+   * 2. **전표를 건드리지 않는다.** 수정은 다리를 지우고 다시 만드는데, 그러려면 금액·
+   *    분할·외화까지 온전한 값을 보내야 한다. 목록 한 줄(`EntryListItem`)에는 분할의
+   *    나머지 줄이 없어, 그것으로 수정을 만들면 분할 거래가 조용히 뭉개진다.
+   */
+  export interface ChangeTagsRequest {
+    /** 손댈 거래. 한 번에 보낼 수 있는 수는 서버가 제한한다. */
+    entryIds: string[];
+    /** 더할 태그. 이미 붙어 있는 것은 그대로 지나간다. */
+    addTagIds?: string[];
+    /** 뗄 태그. 붙어 있지 않은 것은 그대로 지나간다. */
+    removeTagIds?: string[];
+    projectId?: string;
+  }
+
+  export interface ChangeTagsResponse {
+    /** 새로 붙은 연결의 수. 이미 붙어 있던 것은 세지 않는다. */
+    added: number;
+    /** 떼어 낸 연결의 수. 붙어 있지 않던 것은 세지 않는다. */
+    removed: number;
+    /** 태그가 하나라도 달라진 거래의 수. */
+    entries: number;
+  }
 
   export interface ListQuery extends EntryFilterQuery, EntrySearchQuery {
     /** 원장 관점: 이 계좌가 얽힌 전표 전부 (체크카드 사용, 이체 받은 건 포함) */
@@ -628,6 +670,31 @@ export namespace CategoryDto {
   export interface Tree extends Response {
     children?: Tree[];
   }
+}
+
+/**
+ * 태그. 카테고리와 나란히 서지만 계층도 유형도 없어 훨씬 짧다.
+ *
+ * 목록(`Tree`)에 해당하는 것이 없다. 평평한 배열 하나가 전부다.
+ */
+export namespace TagDto {
+  export interface CreateRequest {
+    /** 기기가 만든 식별자 (UUID). 규칙은 `CategoryDto.CreateRequest.id` 와 같다. */
+    id?: string;
+    name: string;
+    /** "#RRGGBB". 생략하면 색을 정하지 않은 것이다. */
+    color?: string;
+    projectId?: string;
+  }
+
+  export interface UpdateRequest {
+    name?: string;
+    /** null 을 주면 색을 지운다. 생략은 "건드리지 않는다"이고 둘은 다르다. */
+    color?: string | null;
+    isActive?: boolean;
+  }
+
+  export interface Response extends Tag {}
 }
 
 // ===== Reports =====
@@ -1101,7 +1168,13 @@ export namespace SyncDto {
   export interface EntryRow {
     id: string;
     postings: unknown[];
-    [field: string]: unknown;
+    /**
+     * 이 전표에 붙은 태그의 id. 다리와 같은 이유로 전표에 실어 함께 보낸다.
+     *
+     * 태그 자체(이름·색)는 `changes.tags` 로 따로 오고 여기에는 연결만 담는다.
+     * 이름이 바뀌었다고 그 태그가 붙은 전표를 전부 다시 보낼 수는 없기 때문이다.
+     */
+    tagIds: string[];
   }
 
   export interface Changes {
@@ -1111,6 +1184,7 @@ export namespace SyncDto {
     people: unknown[];
     accounts: unknown[];
     categories: unknown[];
+    tags: unknown[];
     cards: unknown[];
     entries: EntryRow[];
     budgets: unknown[];

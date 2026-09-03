@@ -3,7 +3,8 @@ import type { EntryKind } from './entities';
 /**
  * 거래 화면의 검색 조건을 읽는 규칙.
  *
- * 사용자가 고르는 것은 두 무리다. 분류들과 자산들(계좌·카드). 규칙은 한 줄로 적힌다.
+ * 사용자가 고르는 것은 몇 무리다. 분류들, 자산들(계좌·카드), 유형들, 태그들. 규칙은
+ * 한 줄로 적힌다.
  * **같은 무리 안에서는 OR, 무리끼리는 AND.** "식비 또는 교통비를, 신한카드 또는
  * 국민통장으로 쓴 것"이 검색이 묻는 것이다.
  *
@@ -33,6 +34,14 @@ export interface EntrySearchQuery {
    * 이것도 한 무리다. 고른 유형끼리는 OR 이고, 분류·자산 무리와는 AND 다.
    */
   kinds?: string;
+  /**
+   * 태그 (쉼표로 잇는다).
+   *
+   * 이것도 한 무리다. 고른 태그끼리는 OR 이고 다른 무리와는 AND 다 -- "여행 또는
+   * 경조사로 표시한 것 중에서 식비인 것". 무리 안을 AND 로 두면 태그 둘을 고르는 순간
+   * "둘 다 붙은 거래"만 남아, 다른 무리와 규칙이 어긋난다.
+   */
+  tagIds?: string;
 }
 
 export interface ParsedEntrySearch {
@@ -49,6 +58,13 @@ export interface ParsedEntrySearch {
    */
   kinds?: EntryKind[];
   /**
+   * 고른 태그. undefined 면 태그로 거르지 않는다.
+   *
+   * **태그는 전표에 붙는다.** 그래서 조건도 다리가 아니라 전표를 보는 모양이 된다
+   * (유형과 같은 자리다).
+   */
+  tagIds?: string[];
+  /**
    * 무리 하나를 열어 놓고 아무것도 고르지 않았다. 어떤 결과도 나오지 않아야 한다.
    *
    * 체크를 모두 푼 상태를 "전체"로 되돌리면 사용자가 고른 것과 반대로 보인다. 이
@@ -63,7 +79,8 @@ export function hasEntrySearch(search: ParsedEntrySearch): boolean {
     (search.categoryIds?.length ?? 0) > 0 ||
     (search.paymentAccountIds?.length ?? 0) > 0 ||
     (search.paymentCardIds?.length ?? 0) > 0 ||
-    (search.kinds?.length ?? 0) > 0
+    (search.kinds?.length ?? 0) > 0 ||
+    (search.tagIds?.length ?? 0) > 0
   );
 }
 
@@ -84,6 +101,7 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
   const categoryIds = idsOf(query.categoryIds);
   const paymentAccountIds = idsOf(query.paymentAccountIds);
   const paymentCardIds = idsOf(query.paymentCardIds);
+  const tagIds = idsOf(query.tagIds);
   // 아는 유형만 받는다. 오타를 조용히 무시하면 필터가 걸리지 않은 것처럼 보인다.
   const kinds =
     query.kinds === undefined
@@ -108,6 +126,7 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
   if (methodsGiven && methodCount === 0) matchNothing = true;
 
   if (kinds !== undefined && kinds.length === 0) matchNothing = true;
+  if (tagIds !== undefined && tagIds.length === 0) matchNothing = true;
 
   /*
    * 다 고른 것은 고르지 않은 것과 같다.
@@ -123,6 +142,7 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
     paymentAccountIds,
     paymentCardIds,
     kinds: everyKind ? undefined : kinds,
+    tagIds,
     matchNothing,
   };
 }
@@ -138,6 +158,7 @@ export function toEntrySearchQuery(selection: {
   paymentAccountIds?: readonly string[];
   paymentCardIds?: readonly string[];
   kinds?: readonly EntryKind[];
+  tagIds?: readonly string[];
 }): EntrySearchQuery {
   const query: EntrySearchQuery = {};
   if (selection.kinds?.length) query.kinds = selection.kinds.join(',');
@@ -146,5 +167,6 @@ export function toEntrySearchQuery(selection: {
     query.paymentAccountIds = selection.paymentAccountIds.join(',');
   }
   if (selection.paymentCardIds?.length) query.paymentCardIds = selection.paymentCardIds.join(',');
+  if (selection.tagIds?.length) query.tagIds = selection.tagIds.join(',');
   return query;
 }

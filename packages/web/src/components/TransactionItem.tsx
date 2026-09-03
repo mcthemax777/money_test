@@ -152,6 +152,30 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
         </p>
       </div>
 
+      {/*
+        붙은 태그. 금액 줄 아래에 둔다.
+        이름만 작게 늘어놓는다 -- 목록 한 줄에서 태그는 "이 거래가 어느 일에 딸렸나"를
+        알려 주는 곁말이라, 제목만큼 크면 무엇이 거래인지 흐려진다.
+      */}
+      {entry.tags.length > 0 && (
+        <div className="mt-1 flex flex-wrap items-center gap-1">
+          {entry.tags.map((tag) => (
+            <span
+              key={tag.id}
+              className="flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600"
+            >
+              {tag.color && (
+                <span
+                  className="h-1.5 w-1.5 rounded-full"
+                  style={{ backgroundColor: tag.color }}
+                />
+              )}
+              {tag.name}
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* 2줄에 담을 것이 하나도 없는 거래도 있다. 그때는 빈 줄을 만들지 않는다. */}
       {(meta || hasExtra || hasFee || original) && (
       <div className="mt-0.5 flex items-center gap-1.5 text-xs text-gray-500">

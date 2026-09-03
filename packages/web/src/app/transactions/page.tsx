@@ -14,7 +14,7 @@
  * 서로 다른 규칙으로 파고들 일이 없다.
  */
 import { useState } from 'react';
-import { ArrowLeft, Check, Loader2, MoreVertical, Search, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Check, Loader2, Minus, MoreVertical, Search, Tag, Trash2, X } from 'lucide-react';
 import {
   SEARCHABLE_ENTRY_KINDS,
   type EntryListItem as EntryListItemDto,
@@ -204,6 +204,15 @@ export default function TransactionsPage() {
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   /** 더보기 선택창. 지금은 삭제 하나뿐이다. */
   const [isMoreOpen, setIsMoreOpen] = useState(false);
+  /** 고른 거래에 붙일 태그를 정하는 창. */
+  const [isTagPickOpen, setIsTagPickOpen] = useState(false);
+  /**
+   * 태그 창에서 사용자가 켜고 끈 것. 여기 없는 태그는 처음 상태 그대로다.
+   *
+   * 켠 것과 끈 것을 함께 담아야 "처음부터 꺼져 있던 것"과 "켜져 있던 것을 껐다"를
+   * 가를 수 있다. 앞은 손대지 않고 뒤는 뗀다.
+   */
+  const [tagChanged, setTagChanged] = useState<Record<string, boolean>>({});
   /** 지우다 남은 것 같은 알림. 빈 글자면 아무것도 그리지 않는다. */
   const [notice, setNotice] = useState('');
   const [draft, setDraft] = useState<TransactionSearch>(EMPTY_SEARCH);
@@ -231,37 +240,47 @@ export default function TransactionsPage() {
     setNotice(failed > 0 ? t('tx.deleteFailed', { count: failed }) : '');
   };
 
-  const entryList = (yearMonth: string, key: string) => (
-    <div className="border-b border-gray-100 bg-white pl-8">
-      {tx.isLoadingRow(yearMonth, key) ? (
-        <p className="py-3 text-sm text-gray-500">{t('common.loading')}</p>
-      ) : tx.entriesOf(yearMonth, key).length === 0 ? (
-        <p className="py-3 text-sm text-gray-500">{t('feed.empty')}</p>
-      ) : (
-        tx.entriesOf(yearMonth, key).map((entry) =>
-          /*
-           * 고르는 중에는 누름의 뜻이 바뀐다. 상세를 띄우는 대신 체크한다.
-           *
-           * TransactionItem 은 가계 화면도 쓰는 컴포넌트라 손대지 않고, 체크박스를
-           * 옆에 세우고 누름만 갈아 끼운다.
-           */
-          tx.isSelecting ? (
-            <div key={entry.id} className="flex items-center gap-2 pl-1">
-              <CheckBox
-                checked={tx.isEntrySelected(entry.id)}
-                onToggle={() => tx.toggleEntrySelected(entry.id)}
-              />
-              <div className="min-w-0 flex-1">
-                <TransactionItem entry={entry} onClick={() => tx.toggleEntrySelected(entry.id)} />
-              </div>
-            </div>
-          ) : (
-            <TransactionItem key={entry.id} entry={entry} onClick={() => setDetail(entry)} />
-          ),
-        )
-      )}
-    </div>
+  const activeTabIndex = Math.max(
+    0,
+    TABS.findIndex((item) => item.id === tx.tab),
   );
+
+  const entryList = (yearMonth: string, key: string) => {
+    // 한 번만 묻는다. 두 번 물으면 그 달을 날짜로 묶는 일이 줄마다 두 번씩 돈다.
+    const entries = tx.entriesOf(yearMonth, key);
+
+    return (
+      <div className="unfold border-b border-gray-100 bg-white pl-8">
+        {tx.isLoadingRow(yearMonth, key) ? (
+          <p className="py-3 text-sm text-gray-500">{t('common.loading')}</p>
+        ) : entries.length === 0 ? (
+          <p className="py-3 text-sm text-gray-500">{t('feed.empty')}</p>
+        ) : (
+          entries.map((entry) =>
+            /*
+             * 고르는 중에는 누름의 뜻이 바뀐다. 상세를 띄우는 대신 체크한다.
+             *
+             * TransactionItem 은 가계 화면도 쓰는 컴포넌트라 손대지 않고, 체크박스를
+             * 옆에 세우고 누름만 갈아 끼운다.
+             */
+            tx.isSelecting ? (
+              <div key={entry.id} className="flex items-center gap-2 pl-1">
+                <CheckBox
+                  checked={tx.isEntrySelected(entry.id)}
+                  onToggle={() => tx.toggleEntrySelected(entry.id)}
+                />
+                <div className="min-w-0 flex-1">
+                  <TransactionItem entry={entry} onClick={() => tx.toggleEntrySelected(entry.id)} />
+                </div>
+              </div>
+            ) : (
+              <TransactionItem key={entry.id} entry={entry} onClick={() => setDetail(entry)} />
+            ),
+          )
+        )}
+      </div>
+    );
+  };
 
   /** 그 달의 안쪽 줄. 세 탭이 같은 모양으로 내려오므로 한 번만 적는다. */
   const level2 = (yearMonth: string) => {
@@ -311,23 +330,60 @@ export default function TransactionsPage() {
     label,
     selected,
     onClick,
+    color,
+    partial,
   }: {
     label: string;
     selected: boolean;
     onClick: () => void;
+    /** 태그의 색. 그 밖의 알약은 색이 없다. */
+    color?: string | null;
+    /**
+     * 고른 거래 중 일부만 가진 태그.
+     *
+     * 켜진 것과 같은 파랑으로 두면 둘을 구별할 수 없고, 꺼진 것과 같은 회색으로 두면
+     * 아무도 가지지 않은 것과 구별할 수 없다. 색은 켜짐과 나누고 표시는 꺼짐과 나눈다.
+     */
+    partial?: boolean;
   }) => (
     <button
       type="button"
       onClick={onClick}
-      className={`rounded-full border px-3 py-1.5 text-sm ${
+      aria-pressed={selected}
+      className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition active:scale-95 motion-reduce:transition-none motion-reduce:active:scale-100 ${
         selected
           ? 'border-blue-600 bg-blue-50 font-medium text-blue-600'
-          : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+          : partial
+            ? 'border-gray-400 bg-gray-50 text-gray-800'
+            : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
       }`}
     >
+      {color ? (
+        <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
+      ) : null}
       {label}
+      {selected ? <Check className="h-3 w-3" aria-hidden /> : null}
+      {partial ? <Minus className="h-3 w-3" aria-hidden /> : null}
     </button>
   );
+
+  /** 알약 하나가 놓인 자리. 손대지 않았으면 처음 상태 그대로다. */
+  const tagStateOf = (tagId: string): 'on' | 'partial' | 'off' => {
+    const touched = tagChanged[tagId];
+    if (touched !== undefined) return touched ? 'on' : 'off';
+    if (tx.commonTagIds.includes(tagId)) return 'on';
+    if (tx.partialTagIds.includes(tagId)) return 'partial';
+    return 'off';
+  };
+
+  /** 처음 상태에서 달라진 것만 보낸다. 손대지 않은 태그는 그대로 둔다. */
+  const tagAddIds = tx.pickerTags
+    .filter((tag) => tagChanged[tag.id] === true && !tx.commonTagIds.includes(tag.id))
+    .map((tag) => tag.id);
+  const tagRemoveIds = tx.pickerTags
+    .filter((tag) => tagChanged[tag.id] === false && tx.commonTagIds.includes(tag.id))
+    .map((tag) => tag.id);
+  const hasTagChange = tagAddIds.length > 0 || tagRemoveIds.length > 0;
 
   /** 고른 기간. 두 칸이 온전할 때만 선다. */
   const draftRange = searchRange(draft);
@@ -410,19 +466,44 @@ export default function TransactionsPage() {
           >
             <ArrowLeft className="h-4 w-4 text-gray-600" aria-hidden />
           </button>
+
+          {/*
+            태그를 붙이러 왔으면 그 버튼이 왼쪽, 뒤로가기 옆에 선다.
+            지우기는 오른쪽 끝이다 -- 되돌릴 수 없는 일이라 뒤로가기에서 멀어야 한다.
+          */}
+          {tx.selectPurpose === 'tag' ? (
+            <button
+              type="button"
+              onClick={() => {
+                // 열 때마다 비운다. 지난번에 손댄 것이 남으면 엉뚱한 태그가 바뀐다.
+                setTagChanged({});
+                setIsTagPickOpen(true);
+              }}
+              disabled={tx.isTagging}
+              aria-label={t('tx.tagSelected')}
+              title={t('tx.tagSelected')}
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-blue-300 bg-white hover:bg-blue-50 disabled:opacity-50"
+            >
+              <Tag className="h-4 w-4 text-blue-600" aria-hidden />
+            </button>
+          ) : null}
+
           <p className="flex-1 text-base font-semibold text-gray-900">
             {t('tx.selected', { count: tx.selectedCount })}
           </p>
-          <button
-            type="button"
-            onClick={askDelete}
-            disabled={tx.isDeleting}
-            aria-label={t('tx.deleteSelected')}
-            title={t('tx.deleteSelected')}
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-red-300 bg-white hover:bg-red-50 disabled:opacity-50"
-          >
-            <Trash2 className="h-4 w-4 text-red-600" aria-hidden />
-          </button>
+
+          {tx.selectPurpose === 'delete' ? (
+            <button
+              type="button"
+              onClick={askDelete}
+              disabled={tx.isDeleting}
+              aria-label={t('tx.deleteSelected')}
+              title={t('tx.deleteSelected')}
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-red-300 bg-white hover:bg-red-50 disabled:opacity-50"
+            >
+              <Trash2 className="h-4 w-4 text-red-600" aria-hidden />
+            </button>
+          ) : null}
         </div>
       ) : (
         <PageHeader
@@ -445,10 +526,13 @@ export default function TransactionsPage() {
                 }}
                 aria-label={t('tx.search')}
                 title={t('tx.search')}
-                className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium ${
-                  tx.searchCount > 0
-                    ? 'border-blue-600 bg-blue-50 text-blue-600'
-                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                /*
+                  아이콘만 둔다. 테두리·바탕도, 손을 올렸을 때의 바탕도 없다. 앱과
+                  같은 모양이다 -- 머리글에서는 상자보다 아이콘이 먼저 보여야 한다.
+                  검색이 걸려 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
+                */
+                className={`flex items-center gap-1.5 px-2 py-2 text-sm font-medium ${
+                  tx.searchCount > 0 ? 'text-blue-600' : 'text-gray-600'
                 }`}
               >
                 {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
@@ -462,7 +546,7 @@ export default function TransactionsPage() {
                 onClick={() => setIsMoreOpen(true)}
                 aria-label={t('tx.more')}
                 title={t('tx.more')}
-                className="flex items-center justify-center rounded-lg border border-gray-300 bg-white px-2 py-2 text-gray-600 hover:bg-gray-50"
+                className="flex items-center justify-center p-2 text-gray-600"
               >
                 <MoreVertical className="h-4 w-4" aria-hidden />
               </button>
@@ -481,14 +565,35 @@ export default function TransactionsPage() {
         </div>
       ) : null}
 
-      <div className="flex gap-2 rounded-lg bg-gray-200 p-1">
+      {/*
+        보기 방식.
+
+        흰 알약을 눌린 칸에 그리지 않고 **하나를 두고 옮긴다.** 칸마다 바탕을 켜고
+        끄면 탭이 순간이동해, 세 탭이 한 줄에 나란한 것인지 서로 다른 화면인지가
+        흐려진다. 미끄러져 가면 "옆으로 옮겼다"가 그대로 보인다.
+
+        폭과 걸음은 calc 로 센다 -- 글자 길이가 언어마다 달라(날짜/Date/日付) 미리
+        적어 둘 수 없고, 재서 옮기려면 그리고 난 뒤를 기다려야 한다.
+        `p-1`(0.25rem) 과 `gap-2`(0.5rem) 가 아래 숫자의 출처다.
+      */}
+      <div className="relative flex gap-2 rounded-lg bg-gray-200 p-1">
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-1 left-1 rounded-md bg-white transition-transform duration-200 ease-out motion-reduce:transition-none"
+          style={{
+            width: 'calc((100% - 1.5rem) / 3)',
+            // 여기서의 100% 는 알약 자신의 폭, 곧 칸 하나다.
+            transform: `translateX(calc(${activeTabIndex} * (100% + 0.5rem)))`,
+          }}
+        />
         {TABS.map((item) => (
           <button
             key={item.id}
             type="button"
             onClick={() => tx.changeTab(item.id)}
-            className={`flex-1 rounded-md px-4 py-2 font-medium ${
-              tx.tab === item.id ? 'bg-white text-blue-600' : 'text-gray-600'
+            /* 바탕은 위의 알약이 맡는다. 글자가 그 위에 오도록 자리를 잡아 준다. */
+            className={`relative flex-1 rounded-md px-4 py-2 font-medium ${
+              tx.tab === item.id ? 'text-blue-600' : 'text-gray-600'
             }`}
           >
             {t(item.labelKey)}
@@ -553,7 +658,7 @@ export default function TransactionsPage() {
                   }
                   onClick={() => tx.cycleMonth(month.yearMonth)}
                 />
-                {level >= 1 ? <div>{level2(month.yearMonth)}</div> : null}
+                {level >= 1 ? <div className="unfold">{level2(month.yearMonth)}</div> : null}
               </div>
             );
           })
@@ -561,8 +666,10 @@ export default function TransactionsPage() {
       </div>
 
       {/*
-        더보기 선택창. 지금은 삭제 하나뿐이라 목록 하나로 둔다.
-        메뉴가 늘면 이 자리에 줄을 더한다.
+        더보기 선택창.
+
+        태그가 위, 지우기가 아래다. 되돌릴 수 있는 일을 먼저 둔다 -- 잘못 누를 때의
+        값이 다르다.
       */}
       <Modal isOpen={isMoreOpen} onClose={() => setIsMoreOpen(false)} title={t('tx.more')}>
         <button
@@ -570,13 +677,103 @@ export default function TransactionsPage() {
           onClick={() => {
             setIsMoreOpen(false);
             setNotice('');
-            tx.startSelecting();
+            tx.startSelecting('tag');
+          }}
+          className="flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left hover:bg-gray-50"
+        >
+          <Tag className="h-4 w-4 text-blue-600" aria-hidden />
+          <span className="text-base text-gray-900">{t('tx.tagSelect')}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setIsMoreOpen(false);
+            setNotice('');
+            tx.startSelecting('delete');
           }}
           className="flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left hover:bg-gray-50"
         >
           <Trash2 className="h-4 w-4 text-red-600" aria-hidden />
           <span className="text-base text-gray-900">{t('tx.select')}</span>
         </button>
+      </Modal>
+
+      {/*
+        고른 거래에 붙일 태그를 정하는 창.
+
+        **더하기만 한다.**
+
+        고른 거래가 **모두** 가진 태그는 체크된 채로, 풀 수 없게 보인다. 이미 붙어 있다는
+        사실을 알려 주는 것이고, 풀 수 없는 것은 이 창이 더하기만 하기 때문이다 -- 풀리게
+        두면 풀고 확인했을 때 떨어질 것으로 읽히는데 그런 일은 없다.
+
+        일부만 가진 태그는 체크하지 않는다. 체크로 보이면 "이미 다 붙어 있다"로 읽히는데,
+        그 상태에서 확인을 눌러도 나머지에는 붙지 않아 말과 결과가 어긋난다.
+      */}
+      <Modal
+        isOpen={isTagPickOpen}
+        onClose={() => setIsTagPickOpen(false)}
+        title={t('tx.tagSelected')}
+        footer={
+          <button
+            type="button"
+            disabled={!hasTagChange || tx.isTagging}
+            onClick={() => {
+              void tx.tagSelected(tagAddIds, tagRemoveIds).then(({ tagged, failed }) => {
+                setIsTagPickOpen(false);
+                if (failed) setNotice(t('tx.tagFailed'));
+                else if (tagged === 0) setNotice(t('tx.tagNothingNew'));
+                else setNotice(t('tx.tagDone', { count: tagged }));
+              });
+            }}
+            className="w-full rounded-lg bg-blue-600 px-4 py-3 font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
+          >
+            {t(tx.isTagging ? 'common.saving' : 'common.confirm')}
+          </button>
+        }
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-gray-600">
+            {t('tx.tagTargets', { count: tx.selectedCount })}
+          </p>
+
+          {tx.pickerTags.length === 0 ? (
+            <p className="text-sm text-gray-500">{t('tags.empty')}</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {tx.pickerTags.map((tag) => {
+                const state = tagStateOf(tag.id);
+
+                return (
+                  <Chip
+                    key={tag.id}
+                    label={tag.name}
+                    color={tag.color}
+                    selected={state === 'on'}
+                    partial={state === 'partial'}
+                    /*
+                     * 누르면 켜지고 꺼진다. "일부"는 켜지는 쪽으로만 간다 -- 일부만 붙은
+                     * 것을 끄는 것은 "가진 것들에서 떼라"는 뜻인데, 어느 거래가 그것을
+                     * 가졌는지 화면에 보이지 않는다.
+                     */
+                    onClick={() =>
+                      setTagChanged((prev) => ({ ...prev, [tag.id]: state !== 'on' }))
+                    }
+                  />
+                );
+              })}
+            </div>
+          )}
+
+          {/*
+            무엇이 벌어지는지 글자로 못 박는다. 여러 건을 한꺼번에 다루는 자리라, 이미
+            붙어 있던 것이 사라질지 모른다는 걱정이 실제로 생긴다.
+          */}
+          <p className="text-xs leading-5 text-gray-500">{t('tx.tagHowTo')}</p>
+          {tx.partialTagIds.length > 0 ? (
+            <p className="text-xs leading-5 text-gray-500">{t('tx.tagPartialHint')}</p>
+          ) : null}
+        </div>
       </Modal>
 
       <Modal
@@ -685,6 +882,31 @@ export default function TransactionsPage() {
               <p className="mt-2 text-xs leading-5 text-gray-500">{t('tx.search.kindHint')}</p>
             </div>
 
+            {/*
+              태그를 유형 다음에 둔다. 개수가 적고, "이번 여행에 쓴 돈"처럼 태그 하나로
+              끝나는 검색이 잦다. 분류 수십 개 아래에 두면 굴려서 찾아야 한다.
+            */}
+            {tx.pickerTags.length > 0 ? (
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
+                  {t('tags.pick')}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {tx.pickerTags.map((tag) => (
+                    <Chip
+                      key={tag.id}
+                      label={tag.name}
+                      color={tag.color}
+                      selected={draft.tagIds.includes(tag.id)}
+                      onClick={() =>
+                        setDraft((prev) => ({ ...prev, tagIds: toggleId(prev.tagIds, tag.id) }))
+                      }
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
             {tx.pickerCategories.length > 0 ? (
               <div>
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
@@ -785,6 +1007,32 @@ export default function TransactionsPage() {
                   <span className="flex-1 text-right text-[15px] text-gray-900">{row.value}</span>
                 </div>
               ))}
+
+            {/*
+              붙은 태그. 위의 줄들과 달리 글자가 아니라 알약이라 `detailRows` 에 담지 않는다 --
+              여럿을 쉼표로 이으면 어디까지가 태그 하나인지 읽어야 알 수 있다.
+            */}
+            {detail.tags.length > 0 ? (
+              <div className="flex items-start justify-between gap-4 border-b border-gray-100 py-2.5">
+                <span className="text-sm text-gray-500">{t('tags.pick')}</span>
+                <div className="flex flex-1 flex-wrap justify-end gap-1.5">
+                  {detail.tags.map((tag) => (
+                    <span
+                      key={tag.id}
+                      className="flex items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1 text-[13px] text-gray-700"
+                    >
+                      {tag.color ? (
+                        <span
+                          className="h-2 w-2 rounded-full"
+                          style={{ backgroundColor: tag.color }}
+                        />
+                      ) : null}
+                      {tag.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
       </Modal>

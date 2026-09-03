@@ -118,6 +118,32 @@ export default function EntryDetailModal({
             value={entry.splitCount > 1 ? t('tx.detail.split', { count: entry.splitCount }) : null}
           />
           <Row label={t('tx.detail.note')} value={entry.detailedNote} />
+
+          {/*
+            붙은 태그. 다른 줄과 달리 글자가 아니라 알약이다 -- 여럿이라 쉼표로 이으면
+            어디까지가 태그 하나인지 읽어야 알 수 있다.
+          */}
+          {entry.tags.length > 0 ? (
+            <View className="flex-row items-start justify-between gap-4 border-b border-gray-100 py-2.5">
+              <Text className="text-sm text-gray-500">{t('tags.pick')}</Text>
+              <View className="flex-1 flex-row flex-wrap justify-end gap-1.5">
+                {entry.tags.map((tag) => (
+                  <View
+                    key={tag.id}
+                    className="flex-row items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1"
+                  >
+                    {tag.color ? (
+                      <View
+                        className="h-2 w-2 rounded-full"
+                        style={{ backgroundColor: tag.color }}
+                      />
+                    ) : null}
+                    <Text className="text-[13px] text-gray-700">{tag.name}</Text>
+                  </View>
+                ))}
+              </View>
+            </View>
+          ) : null}
         </View>
       ) : null}
     </Modal>

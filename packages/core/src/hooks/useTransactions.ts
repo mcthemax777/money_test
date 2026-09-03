@@ -23,6 +23,7 @@ import type {
   EntryKind,
   EntryListItem,
   PersonDto,
+  TagDto,
   EntryScopeQuery,
   ReportDto,
 } from '@money/types';
@@ -30,6 +31,7 @@ import { HIDDEN_ACCOUNT_TYPES, toEntrySearchQuery } from '@money/types';
 
 import { dayRangeQuery, isDateKey, lastDayOfMonth } from '../lib/datetime';
 import { useTranslation, type MessageKey } from '../lib/i18n';
+import { apiClient } from '../lib/api-client';
 import { entryWritePort } from '../data/entry-write-port';
 import { homeDataPort } from '../data/home-port';
 import { useMirrorVersion } from './useMirrorVersion';
@@ -53,6 +55,16 @@ export type TransactionTab = 'date' | 'category' | 'method';
  */
 export type MonthLevel = 0 | 1 | 2;
 
+/**
+ * 여러 건을 고르는 이유.
+ *
+ *   delete 골라서 지운다
+ *   tag    골라서 태그를 붙인다
+ *
+ * 고르는 절차는 같다. 머리글의 버튼과 끝에 하는 일만 다르다.
+ */
+export type SelectPurpose = 'delete' | 'tag';
+
 /** 검색이 고른 것. 무리 안은 OR, 무리끼리는 AND (types 의 parseEntrySearch). */
 export interface TransactionSearch {
   categoryIds: string[];
@@ -60,6 +72,8 @@ export interface TransactionSearch {
   paymentCardIds: string[];
   /** 지출·수입·이체·카드정산. 고른 것끼리 OR 이고 다른 무리와는 AND 다. */
   kinds: EntryKind[];
+  /** 태그. 고른 것끼리 OR 이고 다른 무리와는 AND 다. */
+  tagIds: string[];
   /**
    * 기간. 프로젝트 타임존의 달력 날짜 'YYYY-MM-DD' 이고 양끝을 포함한다.
    *
@@ -76,6 +90,7 @@ export const EMPTY_SEARCH: TransactionSearch = {
   paymentAccountIds: [],
   paymentCardIds: [],
   kinds: [],
+  tagIds: [],
   startDate: '',
   endDate: '',
 };
@@ -123,9 +138,10 @@ export function searchChipsOf(
     categories: CategoryDto.Response[];
     accounts: AccountDto.Response[];
     cards: CardDto.Response[];
+    tags: TagDto.Response[];
   },
 ): SearchChip[] {
-  const { t, categories, accounts, cards } = labels;
+  const { t, categories, accounts, cards, tags } = labels;
   const chips: SearchChip[] = [];
 
   const range = searchRange(search);
@@ -159,6 +175,11 @@ export function searchChipsOf(
     chips.push({ id: `card:${id}`, label: cardName.get(id) ?? t('tx.search.cards') });
   }
 
+  const tagName = new Map(tags.map((row) => [row.id, row.name]));
+  for (const id of search.tagIds) {
+    chips.push({ id: `tag:${id}`, label: tagName.get(id) ?? t('tags.pick') });
+  }
+
   return chips;
 }
 
@@ -182,6 +203,8 @@ export function withoutChip(search: TransactionSearch, chipId: string): Transact
       return { ...search, paymentAccountIds: drop(search.paymentAccountIds) };
     case 'card':
       return { ...search, paymentCardIds: drop(search.paymentCardIds) };
+    case 'tag':
+      return { ...search, tagIds: drop(search.tagIds) };
     default:
       return search;
   }
@@ -281,6 +304,16 @@ function clipMonth(
  */
 const ROW_BATCH = 6;
 
+/*
+ * 빈 값은 하나를 나눠 쓴다.
+ *
+ * `?? []` 로 두면 부를 때마다 새 배열이라, 그것을 받은 화면은 값이 바뀐 줄 알고 다시
+ * 그린다. 아무것도 없는 자리가 화면을 흔들면 안 된다.
+ */
+const EMPTY_ENTRIES: EntryListItem[] = [];
+const EMPTY_ROWS: TransactionRow[] = [];
+const EMPTY_GROUP = new Map<string, EntryListItem[]>();
+
 export function useTransactions(projectId: string | null) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
@@ -312,6 +345,7 @@ export function useTransactions(projectId: string | null) {
   const [pickerCategories, setPickerCategories] = useState<CategoryDto.Response[]>([]);
   const [pickerAccounts, setPickerAccounts] = useState<AccountDto.Response[]>([]);
   const [pickerCards, setPickerCards] = useState<CardDto.Response[]>([]);
+  const [pickerTags, setPickerTags] = useState<TagDto.Response[]>([]);
 
   const [months, setMonths] = useState<ReportDto.EntryMonth[]>([]);
   const [monthData, setMonthData] = useState<Record<string, MonthData>>({});
@@ -324,7 +358,15 @@ export function useTransactions(projectId: string | null) {
    * 이 화면은 훑어보는 자리라 평소에는 누르면 상세가 뜬다. 고르는 중에는 같은 누름이
    * 체크가 되어야 하므로, 두 뜻을 한 상태로 갈라 둔다.
    */
-  const [isSelecting, setIsSelecting] = useState(false);
+  /**
+   * 고르는 중이라면 무엇을 하려고 고르는가.
+   *
+   * 고르는 절차는 같고 끝에 하는 일만 다르다(지우기 / 태그 붙이기). 두 모드를 따로
+   * 만들면 체크·범위·부분선택 규칙을 두 벌 갖게 되므로, 목적만 값으로 들고 있는다.
+   * null 이면 고르는 중이 아니다.
+   */
+  const [selectPurpose, setSelectPurpose] = useState<SelectPurpose | null>(null);
+  const isSelecting = selectPurpose !== null;
   /** 고른 거래. 열쇠는 거래 id 다. */
   const [selected, setSelected] = useState<Record<string, true>>({});
   /**
@@ -336,6 +378,15 @@ export function useTransactions(projectId: string | null) {
    */
   const [rangeIds, setRangeIds] = useState<Record<string, string[]>>({});
   /**
+   * 범위 조회에서 알게 된 거래별 태그. 열쇠는 거래 id 다.
+   *
+   * 목록에 그려진 거래는 `monthData`·`rowEntries` 에서 태그를 읽을 수 있지만, 접힌 달을
+   * 통째로 체크하면 그 거래들은 화면에 없다. 그때 나가는 조회가 이미 온전한 줄을 받아
+   * 오므로(`getAllEntries`) 태그만 여기 적어 둔다 -- 그러지 않으면 "고른 것 전부가 가진
+   * 태그"를 셀 수 없다.
+   */
+  const [rangeTags, setRangeTags] = useState<Record<string, string[]>>({});
+  /**
    * 범위의 거래를 세는 조회가 나가 있는 자리.
    *
    * 날짜별은 그 달의 목록을 이미 받아 두어 체크가 곧바로 걸린다. **수단별·분류별은
@@ -345,6 +396,7 @@ export function useTransactions(projectId: string | null) {
    */
   const [rangePending, setRangePending] = useState<Record<string, boolean>>({});
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isTagging, setIsTagging] = useState(false);
 
   /**
    * 지금 나가 있는 조회.
@@ -430,8 +482,9 @@ export function useTransactions(projectId: string | null) {
         categories: pickerCategories,
         accounts: pickerAccounts,
         cards: pickerCards,
+        tags: pickerTags,
       }),
-    [search, t, pickerCategories, pickerAccounts, pickerCards],
+    [search, t, pickerCategories, pickerAccounts, pickerCards, pickerTags],
   );
 
   /** 알약 하나를 뺀다. 나머지 조건은 그대로 둔다. */
@@ -444,6 +497,7 @@ export function useTransactions(projectId: string | null) {
     search.paymentAccountIds.length +
     search.paymentCardIds.length +
     search.kinds.length +
+    search.tagIds.length +
     // 기간은 두 칸이지만 조건 하나다. 사용자가 고른 것은 구간 하나다.
     (range ? 1 : 0);
 
@@ -527,6 +581,7 @@ export function useTransactions(projectId: string | null) {
      */
     setSelected({});
     setRangeIds({});
+    setRangeTags({});
   }, [scopeKey, projectId]);
 
   // ── 기준 목록 (검색이 고를 것과 제목의 이름) ──
@@ -536,6 +591,7 @@ export function useTransactions(projectId: string | null) {
       setPickerCategories([]);
       setPickerAccounts([]);
       setPickerCards([]);
+      setPickerTags([]);
       return;
     }
 
@@ -547,8 +603,9 @@ export function useTransactions(projectId: string | null) {
       port.getCategories(projectId),
       port.getAccountsV2(projectId),
       port.getCards(projectId),
+      port.getTags(projectId),
     ])
-      .then(([personRows, categoryRows, accountRows, cardRows]) => {
+      .then(([personRows, categoryRows, accountRows, cardRows, tagRows]) => {
         if (!alive) return;
         setPeople(personRows);
         setPickerCategories(categoryRows.filter((row) => row.isActive));
@@ -562,6 +619,7 @@ export function useTransactions(projectId: string | null) {
           accountRows.filter((row) => row.isActive && !HIDDEN_ACCOUNT_TYPES.includes(row.type)),
         );
         setPickerCards(cardRows.filter((row) => row.isActive));
+        setPickerTags(tagRows);
       })
       .catch(fail);
 
@@ -718,17 +776,39 @@ export function useTransactions(projectId: string | null) {
   }, [search.paymentAccountIds, search.paymentCardIds]);
 
   /**
-   * 그 달의 안쪽 줄. 탭에 따라 무엇을 세는지가 다르다.
+   * 달마다 한 번만 날짜로 묶어 둔다.
+   *
+   * **화면이 부를 때마다 묶으면 안 된다.** 2단(그 달을 전부 펼침)에서는 날짜 줄 서른
+   * 개가 저마다 자기 거래를 물어 오는데, 그때마다 그 달 200건을 처음부터 다시 묶으면
+   * 한 번 그리는 데 묶기가 예순 번 돈다. 묶기는 거래마다 Intl 로 타임존을 따지는
+   * 일이라(`groupEntriesByDate` 머리말), 그 예순 번이 곧 "전체 열기가 버벅인다"였다.
+   *
+   * 여기서 한 번 묶어 두면 줄과 거래가 같은 Map 을 나눠 본다.
+   */
+  const groupedByMonth = useMemo(() => {
+    const grouped = new Map<string, Map<string, EntryListItem[]>>();
+    for (const [yearMonth, data] of Object.entries(monthData)) {
+      if (data?.entries) grouped.set(yearMonth, groupEntriesByDate(data.entries, timeZone));
+    }
+    return grouped;
+  }, [monthData, timeZone]);
+
+  /**
+   * 받아 둔 달의 안쪽 줄. 탭에 따라 무엇을 세는지가 다르다.
    *
    * 세 탭을 한 모양(`TransactionRow`)으로 맞춰 준다. 화면이 탭마다 갈라 그리면 같은
    * 줄을 세 번 적게 된다.
+   *
+   * 미리 다 만들어 두는 것은 값이 바뀌지 않는 한 **같은 배열을 돌려주기 위해서**다.
+   * 부를 때마다 새 배열을 만들면 3단 효과가 줄 목록을 새 것으로 보고 다시 돌고,
+   * 화면도 줄마다 새로 그린다.
    */
-  const rowsOf = useCallback(
-    (yearMonth: string): TransactionRow[] => {
+  const rowsByMonth = useMemo(() => {
+    const build = (yearMonth: string): TransactionRow[] => {
       const data = monthData[yearMonth];
 
       if (tab === 'date') {
-        const grouped = groupEntriesByDate(data?.entries ?? [], timeZone);
+        const grouped = groupedByMonth.get(yearMonth) ?? EMPTY_GROUP;
         return [...grouped.entries()]
           .sort(([a], [b]) => b.localeCompare(a))
           .map(([dateKey, rows]) => {
@@ -771,8 +851,16 @@ export function useTransactions(projectId: string | null) {
           income: Number(row.income),
           methodKind: row.kind,
         }));
-    },
-    [monthData, tab, timeZone, share, keepCategoryIds, keepMethodIds],
+    };
+
+    const rows = new Map<string, TransactionRow[]>();
+    for (const yearMonth of Object.keys(monthData)) rows.set(yearMonth, build(yearMonth));
+    return rows;
+  }, [monthData, groupedByMonth, tab, share, keepCategoryIds, keepMethodIds]);
+
+  const rowsOf = useCallback(
+    (yearMonth: string): TransactionRow[] => rowsByMonth.get(yearMonth) ?? EMPTY_ROWS,
+    [rowsByMonth],
   );
 
   const rowId = useCallback((yearMonth: string, key: string) => `${yearMonth}|${tab}|${key}`, [tab]);
@@ -913,12 +1001,11 @@ export function useTransactions(projectId: string | null) {
   const entriesOf = useCallback(
     (yearMonth: string, key: string): EntryListItem[] => {
       if (tab === 'date') {
-        const grouped = groupEntriesByDate(monthData[yearMonth]?.entries ?? [], timeZone);
-        return grouped.get(key) ?? [];
+        return (groupedByMonth.get(yearMonth) ?? EMPTY_GROUP).get(key) ?? EMPTY_ENTRIES;
       }
-      return rowEntries[rowId(yearMonth, key)] ?? [];
+      return rowEntries[rowId(yearMonth, key)] ?? EMPTY_ENTRIES;
     },
-    [tab, monthData, timeZone, rowEntries, rowId],
+    [tab, groupedByMonth, rowEntries, rowId],
   );
 
   // ── 지울 것 고르기 ──
@@ -952,7 +1039,7 @@ export function useTransactions(projectId: string | null) {
       const cached = rangeIds[rowKeyOf(yearMonth, key)];
       if (cached) return cached;
       if (tab === 'date') {
-        const grouped = groupEntriesByDate(monthData[yearMonth]?.entries ?? [], timeZone);
+        const grouped = groupedByMonth.get(yearMonth) ?? EMPTY_GROUP;
         const rows = grouped.get(key);
         return rows ? rows.map((row) => row.id) : null;
       }
@@ -994,6 +1081,12 @@ export function useTransactions(projectId: string | null) {
         const rows = await homeDataPort().getAllEntries(query, projectId);
         const ids = rows.map((item) => item.id);
         setRangeIds((prev) => ({ ...prev, [cacheKey]: ids }));
+        // 태그도 함께 적어 둔다. 이 줄들은 화면에 없을 수 있다.
+        setRangeTags((prev) => {
+          const next = { ...prev };
+          for (const row of rows) next[row.id] = row.tags.map((tag) => tag.id);
+          return next;
+        });
         return ids;
       } finally {
         if (!options?.quiet) setRangePending((prev) => ({ ...prev, [cacheKey]: false }));
@@ -1159,12 +1252,12 @@ export function useTransactions(projectId: string | null) {
     fail,
   ]);
 
-  const startSelecting = useCallback(() => {
-    setIsSelecting(true);
+  const startSelecting = useCallback((purpose: SelectPurpose = 'delete') => {
+    setSelectPurpose(purpose);
     setSelected({});
   }, []);
   const stopSelecting = useCallback(() => {
-    setIsSelecting(false);
+    setSelectPurpose(null);
     setSelected({});
   }, []);
 
@@ -1194,15 +1287,128 @@ export function useTransactions(projectId: string | null) {
       }
     } finally {
       setIsDeleting(false);
-      setIsSelecting(false);
+      setSelectPurpose(null);
       setSelected({});
       setRangeIds({});
+      setRangeTags({});
       // 지운 뒤에는 받아 둔 것을 전부 버린다. 년월 합계까지 달라진다.
       setReloadToken((token) => token + 1);
     }
 
     return { deleted, failed };
   }, [selected]);
+
+  /**
+   * 아는 거래별 태그. 열쇠는 거래 id 다.
+   *
+   * 세 곳에서 모은다. 그 달의 목록(날짜별 탭), 줄의 거래(분류별·수단별 탭), 그리고 접힌
+   * 범위를 체크할 때 나간 조회(`rangeTags`). 고를 수 있는 길이 그 셋뿐이므로 여기 없는
+   * 거래는 고를 수도 없다 -- 다만 화면이 그 사이에 목록을 버릴 수 있어(검색을 바꾸면)
+   * 아래에서 "하나라도 모르면 모른다"로 다룬다.
+   */
+  const tagsById = useMemo(() => {
+    const map = new Map<string, string[]>();
+    const put = (rows: EntryListItem[]) => {
+      for (const row of rows) map.set(row.id, row.tags.map((tag) => tag.id));
+    };
+
+    for (const data of Object.values(monthData)) {
+      if (data?.entries) put(data.entries);
+    }
+    for (const rows of Object.values(rowEntries)) put(rows);
+    for (const [id, ids] of Object.entries(rangeTags)) map.set(id, ids);
+
+    return map;
+  }, [monthData, rowEntries, rangeTags]);
+
+  /**
+   * 고른 거래의 태그를 세 갈래로 나눈다.
+   *
+   *   common  전부가 가졌다. 창이 체크된 채로 연다. 체크를 풀면 전부에서 뗀다.
+   *   partial 일부만 가졌다. 체크되지 않은 채로 열되 "일부"라고 표시한다.
+   *   (나머지) 아무도 가지지 않았다.
+   *
+   * **일부만 가진 것을 체크로 보이면 안 된다.** "이미 다 붙어 있다"로 읽히는데 그렇지
+   * 않다. 그렇다고 아무 표시 없이 두는 것도 곤란하다 -- 체크를 풀어 두면 떼는 것으로
+   * 읽히는데, 이 창은 처음부터 꺼져 있던 것을 떼지 않는다. 그래서 갈래를 셋으로 둔다.
+   *
+   * **하나라도 태그를 모르면 둘 다 빈 값이다.** 모르는 것을 "없다"로 세면 이미 붙어
+   * 있는 태그가 꺼진 채로 보이는데, 그 상태에서 확인을 누르면 아무 일도 일어나지
+   * 않는다(꺼진 채로 둔 것은 건드리지 않는다). 그 반대(붙어 있지 않은 것을 붙어 있다고
+   * 보여 주는 것)는 체크를 풀었을 때 없는 것을 뗀 것으로 읽혀 훨씬 나쁘다.
+   */
+  const tagSpread = useMemo(() => {
+    const ids = Object.keys(selected);
+    if (ids.length === 0) return { common: [] as string[], partial: [] as string[] };
+
+    const seen = new Map<string, number>();
+    for (const id of ids) {
+      const tagIds = tagsById.get(id);
+      // 하나라도 모르면 아무것도 말하지 않는다.
+      if (!tagIds) return { common: [] as string[], partial: [] as string[] };
+
+      for (const tagId of tagIds) seen.set(tagId, (seen.get(tagId) ?? 0) + 1);
+    }
+
+    const common: string[] = [];
+    const partial: string[] = [];
+    for (const [tagId, count] of seen) {
+      if (count === ids.length) common.push(tagId);
+      else partial.push(tagId);
+    }
+    return { common, partial };
+  }, [selected, tagsById]);
+
+  const commonTagIds = tagSpread.common;
+  const partialTagIds = tagSpread.partial;
+
+  /**
+   * 고른 거래의 태그를 바꾼다. 더할 것과 뗄 것을 따로 받는다.
+   *
+   * 창구(`entryWritePort`)를 거치지 않고 서버를 직접 부른다. 이 일은 전표를 고치는 것이
+   * 아니라 연결만 넣는 것이라 명령의 모양이 다르고(`entry.replace` 로 표현하면 분할
+   * 거래가 뭉개진다), 아웃박스에 실을 새 명령 갈래를 만들지 않았다. **그래서 오프라인
+   * 에서는 되지 않는다** -- 여러 건을 한꺼번에 표시하는 일은 적어 두는 일이 아니라
+   * 정리하는 일이라 급하지 않다.
+   */
+  const tagSelected = useCallback(
+    async (
+      addTagIds: string[],
+      removeTagIds: string[] = [],
+    ): Promise<{ tagged: number; failed: boolean }> => {
+      const entryIds = Object.keys(selected);
+      if (entryIds.length === 0 || (addTagIds.length === 0 && removeTagIds.length === 0)) {
+        return { tagged: 0, failed: false };
+      }
+
+      setIsTagging(true);
+      try {
+        const result = await apiClient.changeEntryTags(
+          { entryIds, addTagIds, removeTagIds },
+          projectId ?? undefined,
+        );
+        return { tagged: result.entries, failed: false };
+      } catch (error) {
+        fail(error);
+        return { tagged: 0, failed: true };
+      } finally {
+        setIsTagging(false);
+        setSelectPurpose(null);
+        setSelected({});
+        setRangeIds({});
+        setRangeTags({});
+        /*
+         * 받아 둔 것을 버린다. 목록 한 줄에 태그가 실려 있어(EntryListItem.tags) 그
+         * 줄을 다시 받아야 새 칩이 보인다.
+         *
+         * 사본은 다음 동기화가 채운다. 서버가 전표의 변경 번호를 올려 두므로(addTags)
+         * 그 전표가 델타에 실려 온다.
+         */
+        setReloadToken((token) => token + 1);
+      }
+    },
+    [selected, projectId, fail],
+  );
 
   /**
    * 년월 줄을 누른다. 접힘 -> 목록 -> 거래까지 -> 접힘 으로 돈다.
@@ -1232,19 +1438,27 @@ export function useTransactions(projectId: string | null) {
     (yearMonth: string, key: string) => {
       const id = rowId(yearMonth, key);
       /*
-       * 2단에서 한 줄을 누르면 그 달을 1단으로 내리고 누른 줄만 열어 둔다.
+       * 2단에서 한 줄을 누르면 그 달을 1단으로 내리고, 누른 줄만 접는다.
        *
-       * 2단은 "전부 펼침"이라 한 줄만 접을 자리가 없다. 누른 사람의 뜻은 "이것만 보자"에
-       * 가깝다.
+       * 2단은 "전부 펼침"이라 줄마다 접힘을 적어 둘 자리가 없다. 그래서 내려오면서
+       * 화면에 보이던 것을 그대로 옮겨 적는다 -- 그 달의 줄을 전부 열림으로 두고,
+       * 누른 줄 하나만 닫는다. 예전에는 누른 줄만 열어 두었는데, 한 줄을 접으려던
+       * 사람에게는 나머지가 다 접히는 것으로 보였다.
        */
       if (levelOf(yearMonth) === 2) {
         setLevels((prev) => ({ ...prev, [levelKey(yearMonth)]: 1 }));
-        setOpenRows((prev) => ({ ...prev, [id]: true }));
+        setOpenRows((prev) => {
+          const next = { ...prev };
+          for (const row of rowsOf(yearMonth)) {
+            next[rowId(yearMonth, row.key)] = row.key !== key;
+          }
+          return next;
+        });
         return;
       }
       setOpenRows((prev) => ({ ...prev, [id]: !prev[id] }));
     },
-    [levelOf, levelKey, rowId],
+    [levelOf, levelKey, rowId, rowsOf],
   );
 
   /**
@@ -1311,11 +1525,21 @@ export function useTransactions(projectId: string | null) {
     ),
     deleteSelected,
     isDeleting,
+    /** 지금 고르는 것이 무엇을 위한 것인가. 머리글의 버튼이 이 값으로 갈린다. */
+    selectPurpose,
+    tagSelected,
+    isTagging,
+    /** 고른 거래가 **모두** 가진 태그. 창이 체크된 채로 연다. */
+    commonTagIds,
+    /** 고른 거래 중 **일부만** 가진 태그. 창이 "일부"로 표시한다. */
+    partialTagIds,
     /** 이 프로젝트의 구성원. 제목(자산주인)과 `usePersonFilterSync` 가 쓴다. */
     people,
     pickerCategories,
     pickerAccounts,
     pickerCards,
+    /** 태그로 고를 수 있는 것. 검색 창과 태그 붙이기 창이 함께 쓴다. */
+    pickerTags,
     // 그 밖
     hasError,
     timeZone,

@@ -27,6 +27,30 @@ const UNIT_KEY: Record<CurrencyCode, MessageKey> = {
 };
 
 
+/*
+ * 언어·자릿수마다 숫자 형식기 하나를 두고 다시 쓴다.
+ *
+ * 형식기를 만드는 값이 쓰는 값보다 훨씬 비싸다(Hermes 에서 밀리초 단위다). 통화
+ * 형식기도 같은 이유로 `@money/types` 의 `formatMoney` 가 붙들고 있다.
+ */
+const numberFormatters = new Map<string, Intl.NumberFormat>();
+
+function numberFormatter(digits: number | undefined): Intl.NumberFormat {
+  const tag = activeLocaleTag();
+  const key = `${tag}|${digits ?? ''}`;
+  const cached = numberFormatters.get(key);
+  if (cached) return cached;
+
+  const formatter = new Intl.NumberFormat(
+    tag,
+    digits === undefined
+      ? {}
+      : { minimumFractionDigits: digits, maximumFractionDigits: digits },
+  );
+  numberFormatters.set(key, formatter);
+  return formatter;
+}
+
 /** 표시·비교용 숫자 변환. 합산 용도로 쓰지 말 것 (그건 서버 몫이다). */
 export function toNumber(amount: string | number | null | undefined): number {
   if (amount === null || amount === undefined || amount === '') return 0;
@@ -62,10 +86,7 @@ export function formatAmountWithUnit(
 ): string {
   const locale = activeLocale();
   const digits = currencyDecimals(currency);
-  const value = new Intl.NumberFormat(activeLocaleTag(), {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  }).format(toNumber(amount));
+  const value = numberFormatter(digits).format(toNumber(amount));
 
   if (!isCurrencyCode(currency)) return `${value} ${currency}`;
 
@@ -92,6 +113,11 @@ export function formatOriginal(entry: {
   const value = Number(entry.exchangeRate);
   if (!Number.isFinite(value) || value <= 0) return original;
 
+  /*
+   * 환율은 자릿수가 값마다 달라 최대 자릿수만 준다. `numberFormatter` 는 최소·최대를
+   * 함께 묶으므로 여기서는 쓰지 않는다 -- 최소까지 맞추면 "1,360.00" 처럼 뒤가 0으로
+   * 늘어난다. 환율 표시는 목록의 뜨거운 자리가 아니라 외화 거래에만 붙는다.
+   */
   const rate = new Intl.NumberFormat(activeLocaleTag(), {
     maximumFractionDigits: rateDecimals(value),
   }).format(value);
@@ -122,7 +148,7 @@ export function currencyLabel(currency: CurrencyCode): string {
 
 /** 부호 없는 천 단위 구분. 입력 폼 등에서 사용 */
 export function formatNumber(amount: string | number | null | undefined): string {
-  return new Intl.NumberFormat(activeLocaleTag()).format(toNumber(amount));
+  return numberFormatter(undefined).format(toNumber(amount));
 }
 
 /** 입력값(문자열/숫자)을 서버로 보낼 금액 문자열로 정규화한다. */

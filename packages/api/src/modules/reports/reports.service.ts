@@ -7,6 +7,7 @@ import {
   MATCH_NOTHING,
   assetOwnerCondition,
   entryKindCondition,
+  entryTagCondition,
   entrySearchConditions,
   parseEntryFilter,
   splitList,
@@ -556,9 +557,12 @@ export class ReportsService {
     const owner = assetOwnerCondition(filter);
     // 검색은 전표 수준으로 걸린다 (entryScope 와 같은 이유).
     const kindCondition = entryKindCondition(search.kinds);
+    // 태그도 전표에 붙으므로 유형과 같은 자리에 온다.
+    const tagCondition = entryTagCondition(search.tagIds);
     const conditions = [
       ...(owner ? [owner] : []),
       ...(kindCondition ? [kindCondition] : []),
+      ...(tagCondition ? [tagCondition] : []),
       ...entrySearchConditions(search).map((posting) => ({ postings: { some: posting } })),
     ];
     const window = this.resolveWindow(query, timeZone);
@@ -984,9 +988,12 @@ export class ReportsService {
      * 걸면 목록에는 있는 거래의 일부 금액이 합계에서 빠져 둘이 어긋난다.
      */
     const kindCondition = entryKindCondition(search.kinds);
+    // 태그도 전표에 붙으므로 유형과 같은 자리에 온다.
+    const tagCondition = entryTagCondition(search.tagIds);
     const conditions = [
       ...(owner ? [owner] : []),
       ...(kindCondition ? [kindCondition] : []),
+      ...(tagCondition ? [tagCondition] : []),
       ...entrySearchConditions(search).map((posting) => ({ postings: { some: posting } })),
     ];
 

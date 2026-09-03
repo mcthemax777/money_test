@@ -165,6 +165,24 @@ export function entrySearchConditions(search: ParsedEntrySearch): Prisma.Posting
 }
 
 /**
+ * 태그 조건. 고른 태그끼리 OR 로 잇는다. 고르지 않았으면 undefined.
+ *
+ * **다리가 아니라 전표를 본다.** 태그는 전표에 붙으므로(EntryTag) 다리 조건으로 만들 수
+ * 없다. `entrySearchConditions` 가 돌려주는 무리들과 달리 부르는 쪽이 전표 조건 목록에
+ * 넣는다 -- 유형 조건과 같은 자리다.
+ *
+ * 무리 안은 OR 이다. `some` 하나에 `in` 을 쓰면 "고른 것 중 하나라도 붙은 전표"가 되어
+ * 그 규칙이 그대로 나온다. AND 로 두려면 태그마다 `some` 을 따로 걸어야 하는데, 그러면
+ * 태그 둘을 고르는 순간 "둘 다 붙은 거래"만 남아 다른 무리와 규칙이 어긋난다.
+ */
+export function entryTagCondition(
+  tagIds: readonly string[] | undefined,
+): Prisma.JournalEntryWhereInput | undefined {
+  if (!tagIds || tagIds.length === 0) return undefined;
+  return { tags: { some: { tagId: { in: [...tagIds] } } } };
+}
+
+/**
  * 유형 조건. 고른 유형끼리 OR 로 잇는다. 전체면 undefined.
  *
  * **지출·수입은 카테고리 기준, 이체·카드정산은 자금 이동 기준이다.** 둘을 갈라 두는

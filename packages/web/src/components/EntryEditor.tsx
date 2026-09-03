@@ -9,6 +9,7 @@ import {
   useProjectTimeZone,
 } from '@money/core/store/project';
 import { useExchangeRates } from '@money/core/hooks/useExchangeRates';
+import { useTagManager } from '@money/core/hooks/useTagManager';
 import { useInstitutions } from '@/hooks/useInstitutions';
 import { apiClient } from '@money/core/lib/api-client';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -136,6 +137,13 @@ function emptyEntryForm(timeZone: string, ledgerCurrency: CurrencyCode) {
      * 덮어써도 되지만, 사용자가 고른 통화는 지우면 안 된다.
      */
     currencyTouched: false,
+    /**
+     * 이 거래에 붙일 태그. 카테고리와 달리 여럿을 고를 수 있다.
+     *
+     * 갈래(지출·수입·이체)를 가리지 않는다. 태그는 "무엇에 쓴 돈인가"가 아니라 "어느
+     * 일에 딸린 거래인가"라, 여행에는 항공권 지출과 환불 수입이 함께 든다.
+     */
+    tagIds: [] as string[],
   };
 }
 
@@ -225,6 +233,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  /*
+   * 태그 목록. 계좌·분류와 달리 prop 으로 받지 않고 여기서 읽는다.
+   *
+   * 이 팝업을 여는 화면이 여럿이라(가계·자산·거래) prop 으로 두면 그 화면마다 목록을
+   * 받아 내려보내는 일이 늘어난다. 태그는 이 팝업에서 만들 수 없으므로 목록이 바깥과
+   * 어긋날 일도 없다.
+   */
+  const { tags } = useTagManager(projectId);
   const [formData, setFormData] = useState(() => emptyEntryForm(timeZone, ledgerCurrency));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -645,6 +661,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         }
       }
 
+      /*
+       * 태그는 언제나 싣는다. 비었어도 뺄 수 없다.
+       *
+       * 수정은 전표를 통째로 갈아 끼우고 생략은 "비운다"로 읽히므로, 여기서 빈 배열을
+       * 빼면 "태그를 전부 뗀 수정"과 "태그를 건드리지 않은 수정"이 같아진다.
+       */
+      payload.tagIds = formData.tagIds;
+
       if (formData.merchant) payload.merchant = formData.merchant;
       if (formData.detailedNote) payload.detailedNote = formData.detailedNote;
 
@@ -838,6 +862,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       time: timeInputOf(entry.date, timeZone),
       extraAmount: toNumber(entry.extraAmount) > 0 ? entry.extraAmount : '',
       installmentMonths: entry.installmentMonths ? String(entry.installmentMonths) : '',
+      tagIds: entry.tags.map((tag) => tag.id),
       // 놓치면 환불 입금을 고칠 때 대금 결제로 뒤집힌다
       cardTransferDirection: entry.cardTransferDirection ?? 'payment',
     });
@@ -1561,6 +1586,64 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               </div>
 
               {/*
+                태그. 갈래를 가리지 않으므로 이체에도 뜬다.
+
+                카테고리와 달리 **여럿을 고른다.** 그래서 select 가 아니라 알약 줄이다 --
+                여러 개 고르는 select 는 무엇이 골라졌는지 열어 봐야 알 수 있다.
+              */}
+              {tags.length > 0 && (
+                <div>
+                  <span className="mb-1 block text-sm font-medium text-gray-700">
+                    {t('tags.pick')}
+                  </span>
+                  <div className="flex flex-wrap gap-2">
+                    {tags.map((tag) => {
+                      const isSelected = formData.tagIds.includes(tag.id);
+
+                      return (
+                        <button
+                          key={tag.id}
+                          type="button"
+                          aria-pressed={isSelected}
+                          /*
+                           * 앞선 값에서 뒤집는다. 이 폼의 다른 칸과 달리 함수형으로 넘긴다.
+                           *
+                           * `{...formData}` 로 두면 그릴 때 잡힌 값을 쓰므로, 한 번 그리기 전에
+                           * 두 개를 잇달아 누르면 뒤엣것이 앞엣것을 덮어써 하나만 남는다
+                           * (실제로 그랬다). 다른 칸은 값을 갈아 끼우기만 해서 드러나지 않지만
+                           * 여기는 앞선 목록에 더하고 빼는 자리다.
+                           */
+                          onClick={() =>
+                            setFormData((previous) => ({
+                              ...previous,
+                              tagIds: previous.tagIds.includes(tag.id)
+                                ? previous.tagIds.filter((id) => id !== tag.id)
+                                : [...previous.tagIds, tag.id],
+                            }))
+                          }
+                          /* 눌린 것이 살짝 커졌다 돌아온다. 색만으로는 방금 무엇이 바뀌었는지 잘 안 보인다. */
+                          className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition active:scale-95 motion-reduce:transition-none motion-reduce:active:scale-100 ${
+                            isSelected
+                              ? 'border-blue-600 bg-blue-50 font-medium text-blue-600'
+                              : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          {tag.color && (
+                            <span
+                              className="h-2 w-2 rounded-full"
+                              style={{ backgroundColor: tag.color }}
+                            />
+                          )}
+                          {tag.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <p className="mt-1 text-xs text-gray-500">{t('tags.pickHint')}</p>
+                </div>
+              )}
+
+              {/*
                 할부. 자주 쓰는 값이 아니라 폼 맨 아래에 둔다.
 
                 신용카드 지출에만 뜬다. 체크카드는 결제 즉시 통장에서 빠지고 통장에는
@@ -1926,6 +2009,34 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 {selectedTransaction.personName || '-'}
               </p>
             </div>
+
+            {/*
+              붙은 태그. 다른 칸과 달리 글자가 아니라 알약이다 -- 여럿이라 쉼표로 이으면
+              어디까지가 태그 하나인지 읽어야 알 수 있다.
+            */}
+            {selectedTransaction.tags.length > 0 && (
+              <div>
+                <span className="mb-1 block text-sm font-medium text-gray-700">
+                  {t('tags.pick')}
+                </span>
+                <div className="flex flex-wrap gap-1.5 rounded-lg bg-gray-50 px-3 py-2">
+                  {selectedTransaction.tags.map((tag) => (
+                    <span
+                      key={tag.id}
+                      className="flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 text-[13px] text-gray-700 shadow-sm"
+                    >
+                      {tag.color && (
+                        <span
+                          className="h-2 w-2 rounded-full"
+                          style={{ backgroundColor: tag.color }}
+                        />
+                      )}
+                      {tag.name}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">

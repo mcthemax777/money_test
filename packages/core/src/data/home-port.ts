@@ -18,6 +18,7 @@ import type {
   BudgetDto,
   CardDto,
   CategoryDto,
+  TagDto,
   EntryScopeQuery,
   PersonDto,
   ReportDto,
@@ -39,6 +40,8 @@ export interface HomeDataPort {
   getCards(projectId?: string | null): Promise<CardDto.Response[]>;
   getAccountsV2(projectId?: string | null): Promise<AccountDto.Response[]>;
   getCategories(projectId?: string | null): Promise<CategoryDto.Response[]>;
+  /** 태그. 거래 입력의 다중 선택과 태그 관리 화면이 쓴다. */
+  getTags(projectId?: string | null): Promise<TagDto.Response[]>;
 
   getNetWorth(projectId?: string | null): Promise<ReportDto.NetWorth>;
   getBudgetForMonth(
@@ -107,6 +110,7 @@ export const httpHomePort: HomeDataPort = {
   getCards: (projectId) => apiClient.getCards(projectId),
   getAccountsV2: (projectId) => apiClient.getAccountsV2(projectId),
   getCategories: (projectId) => apiClient.getCategories(projectId),
+  getTags: (projectId) => apiClient.getTags(projectId),
   getNetWorth: (projectId) => apiClient.getNetWorth(projectId),
   getBudgetForMonth: (year, month, projectId, filter) =>
     apiClient.getBudgetForMonth(year, month, projectId, filter),

@@ -13,6 +13,7 @@ import { InstitutionsModule } from './modules/institutions/institutions.module';
 import { AccountsModule } from './modules/accounts/accounts.module';
 import { CardsModule } from './modules/cards/cards.module';
 import { CategoriesModule } from './modules/categories/categories.module';
+import { TagsModule } from './modules/tags/tags.module';
 import { EntriesModule } from './modules/entries/entries.module';
 import { LedgerModule } from './modules/ledger/ledger.module';
 import { BudgetsModule } from './modules/budgets/budgets.module';
@@ -44,6 +45,7 @@ import { SyncModule } from './modules/sync/sync.module';
     AccountsModule,
     CardsModule,
     CategoriesModule,
+    TagsModule,
     LedgerModule,
     EntriesModule,
     BudgetsModule,

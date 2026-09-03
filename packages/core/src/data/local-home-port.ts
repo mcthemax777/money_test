@@ -114,6 +114,11 @@ export function createLocalHomePort(
       return store.categoryRows(requireProject(projectId));
     },
 
+    async getTags(projectId) {
+      note('tags');
+      return store.tagRows(requireProject(projectId));
+    },
+
     async getNetWorth(projectId) {
       const id = requireProject(projectId);
       note('netWorth');

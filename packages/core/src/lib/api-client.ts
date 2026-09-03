@@ -14,6 +14,7 @@ import type {
   BudgetDto,
   CardDto,
   CategoryDto,
+  TagDto,
   EntryDto,
   EntryFilterQuery,
   ExchangeRateInfo,
@@ -535,6 +536,57 @@ class ApiClient {
 
   async deleteCategory(id: string) {
     await this.client.delete(`/categories/${id}`);
+  }
+
+  // 태그 API Methods
+
+  async getTags(projectId?: string | null): Promise<TagDto.Response[]> {
+    const response = await this.client.get<TagDto.Response[]>('/tags', {
+      params: projectId ? { projectId } : {},
+    });
+    return response.data;
+  }
+
+  async createTag(data: TagDto.CreateRequest): Promise<TagDto.Response> {
+    const { projectId, ...payload } = data;
+    const response = await this.client.post<TagDto.Response>('/tags', this.withId(payload), {
+      params: projectId ? { projectId } : {},
+    });
+    return response.data;
+  }
+
+  async updateTag(id: string, data: TagDto.UpdateRequest): Promise<TagDto.Response> {
+    const response = await this.client.patch<TagDto.Response>(`/tags/${id}`, data);
+    return response.data;
+  }
+
+  async deleteTag(id: string) {
+    await this.client.delete(`/tags/${id}`);
+  }
+
+  /**
+   * 여러 거래의 태그를 바꾼다. 더할 것과 뗄 것을 따로 보낸다.
+   *
+   * 수정(`updateEntry`)과 다른 길이다. 그쪽은 전표를 통째로 갈아 끼우므로 분할·외화까지
+   * 온전한 값이 필요하다.
+   */
+  async changeEntryTags(
+    data: { entryIds: string[]; addTagIds?: string[]; removeTagIds?: string[] },
+    projectId?: string | null,
+  ): Promise<EntryDto.ChangeTagsResponse> {
+    const response = await this.client.post<EntryDto.ChangeTagsResponse>('/entries/tags', data, {
+      params: projectId ? { projectId } : {},
+    });
+    return response.data;
+  }
+
+  async reorderTags(ids: string[], projectId?: string | null) {
+    const response = await this.client.patch<TagDto.Response[]>(
+      '/tags/reorder',
+      { ids },
+      { params: projectId ? { projectId } : {} },
+    );
+    return response.data;
   }
 
   // 프로젝트 API Methods

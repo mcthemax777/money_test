@@ -16,6 +16,8 @@ import {
   type AccountDto,
   type CardDto,
   type CategoryDto,
+  type EntryTag,
+  type TagDto,
   Dec,
   type PersonDto,
   type ViewEntry,
@@ -353,6 +355,20 @@ export class LocalStore {
         });
       }
 
+      for (const row of (changes.tags ?? []) as Row[]) {
+        await this.upsert('tag', {
+          id: String(row.id),
+          projectId,
+          name: asText(row.name) ?? '',
+          color: asText(row.color),
+          isActive: asFlag(row.isActive),
+          sortOrder: asInt(row.sortOrder),
+          createdAt: asIso(row.createdAt),
+          updatedAt: asIso(row.updatedAt),
+          updatedVersion: asInt(row.updatedVersion),
+        });
+      }
+
       for (const row of changes.cards as Row[]) {
         await this.upsert('card', {
           id: String(row.id),
@@ -416,6 +432,21 @@ export class LocalStore {
           [String(row.id)],
         );
         await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [String(row.id)]);
+
+        /*
+         * 태그 연결도 다리와 같이 통째로 갈아 끼운다.
+         *
+         * 이 표에는 번호가 없어 따로 도착하지 않는다. 전표에 실려 온 목록이 곧 그
+         * 전표의 태그 전부다. 없으면 비운다.
+         */
+        await this.db.run(`DELETE FROM entry_tag WHERE entryId = ?`, [String(row.id)]);
+        for (const tagId of (entry.tagIds ?? []) as string[]) {
+          // `upsert` 는 id 하나를 열쇠로 본다. 이 표의 열쇠는 두 컬럼이라 직접 넣는다.
+          await this.db.run(
+            `INSERT OR IGNORE INTO entry_tag (entryId, tagId) VALUES (?, ?)`,
+            [String(row.id), String(tagId)],
+          );
+        }
         for (const posting of (entry.postings ?? []) as Row[]) {
           await this.upsert('posting', {
             id: String(posting.id),
@@ -910,6 +941,29 @@ export class LocalStore {
   }
 
   /**
+   * 태그 행. 감춘 것까지 담아 두지만 고르는 목록에는 살아 있는 것만 준다.
+   *
+   * 지난 거래에 붙은 태그의 이름은 `attachPostings` 가 표에서 직접 읽으므로, 여기서
+   * 감춘 것을 빼도 목록의 칩이 사라지지 않는다.
+   */
+  async tagRows(projectId: string): Promise<TagDto.Response[]> {
+    const rows = await this.db.all<Row>(
+      `SELECT * FROM tag WHERE projectId = ? AND isActive = 1 ORDER BY sortOrder, name`,
+      [projectId],
+    );
+    return rows.map((row) => ({
+      id: String(row.id),
+      projectId,
+      name: String(row.name),
+      color: asText(row.color),
+      isActive: Boolean(row.isActive),
+      sortOrder: asInt(row.sortOrder),
+      createdAt: String(row.createdAt),
+      updatedAt: String(row.updatedAt),
+    }));
+  }
+
+  /**
    * 카드 행. "사용액"은 부채 계정 잔액의 부호를 뒤집은 값이다(서버와 같은 규칙).
    * 체크카드는 빚이 생기지 않으므로 null 이다.
    */
@@ -991,7 +1045,7 @@ export class LocalStore {
     return this.attachPostings(entries);
   }
 
-  /** 전표 목록에 그 다리를 붙인다. */
+  /** 전표 목록에 그 다리와 태그를 붙인다. */
   private async attachPostings(entries: Row[]): Promise<ViewEntry[]> {
     if (entries.length === 0) return [];
 
@@ -1013,6 +1067,29 @@ export class LocalStore {
         WHERE po.entryId IN (${placeholders})`,
       ids,
     );
+
+    /*
+     * 태그도 한 번에 읽어 붙인다.
+     *
+     * 감춘 태그(isActive=0)도 함께 온다. 이미 붙어 있던 것을 목록에서 지우면 그 거래가
+     * 왜 그 통계에 들었는지 설명할 수 없다 -- 서버의 `ENTRY_INCLUDE` 와 같은 규칙이다.
+     * 이름을 아직 받지 못한 연결은 조인이 비어 빠진다.
+     */
+    const tagRows = await this.db.all<Row>(
+      `SELECT et.entryId, t.id, t.name, t.color
+         FROM entry_tag et
+         JOIN tag t ON t.id = et.tagId
+        WHERE et.entryId IN (${placeholders})
+        ORDER BY t.sortOrder, t.name`,
+      ids,
+    );
+
+    const tagsByEntry = new Map<string, EntryTag[]>();
+    for (const row of tagRows) {
+      const list = tagsByEntry.get(String(row.entryId)) ?? [];
+      list.push({ id: String(row.id), name: String(row.name), color: asText(row.color) });
+      tagsByEntry.set(String(row.entryId), list);
+    }
 
     const byEntry = new Map<string, ViewPosting[]>();
     for (const row of postings) {
@@ -1069,6 +1146,7 @@ export class LocalStore {
       originalAmount: asText(entry.originalAmount),
       rateProvisional: Boolean(entry.rateProvisional),
       postings: byEntry.get(String(entry.id)) ?? [],
+      tags: tagsByEntry.get(String(entry.id)) ?? [],
     }));
   }
 
@@ -1174,7 +1252,13 @@ export class LocalStore {
   async writeEntry(
     entryId: string,
     built: BuiltEntry,
-    options: { timeZone: string; hlc: string; makeId: () => string },
+    options: {
+      timeZone: string;
+      hlc: string;
+      makeId: () => string;
+      /** 이 전표의 태그 전부. 다리와 같이 통째로 갈아 끼운다. */
+      tagIds?: string[];
+    },
   ): Promise<void> {
     const instant = built.date instanceof Date ? built.date : new Date(built.date);
 
@@ -1210,6 +1294,15 @@ export class LocalStore {
         [entryId],
       );
       await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [entryId]);
+
+      // 태그 연결도 다리와 같이 통째로 갈아 끼운다. 주지 않으면 비운다.
+      await this.db.run(`DELETE FROM entry_tag WHERE entryId = ?`, [entryId]);
+      for (const tagId of options.tagIds ?? []) {
+        await this.db.run(`INSERT OR IGNORE INTO entry_tag (entryId, tagId) VALUES (?, ?)`, [
+          entryId,
+          tagId,
+        ]);
+      }
 
       for (const posting of built.postings) {
         const postingId = options.makeId();
@@ -1702,6 +1795,7 @@ const TOMBSTONE_TABLES: Record<string, string> = {
   Person: 'person',
   Account: 'account',
   Category: 'category',
+  Tag: 'tag',
   Card: 'card',
   AssetValuation: 'asset_valuation',
   InstallmentPlan: 'installment_plan',
@@ -1715,6 +1809,8 @@ const TOMBSTONE_TABLES: Record<string, string> = {
  * 순서를 뒤집으면 계획이 살아남아 사본에 찌꺼기가 된다.
  */
 const CHILD_TABLES: ReadonlyArray<{ table: string; column: string; parent: string }> = [
+  // 태그 연결은 전표에 딸린다. 이 표에는 projectId 가 없어 부모를 따라 치운다.
+  { table: 'entry_tag', column: 'entryId', parent: 'entry' },
   { table: 'posting', column: 'entryId', parent: 'entry' },
   { table: 'installment_plan', column: 'postingId', parent: 'posting' },
   { table: 'budget_override', column: 'budgetId', parent: 'budget' },
@@ -1893,6 +1989,22 @@ function searchFilter(search?: ParsedEntrySearch): { sql: string; params: string
           SELECT 1 FROM posting mp
            WHERE mp.entryId = e.id AND (${branches.join(' OR ')})
         )`;
+  }
+
+  /*
+   * 태그. 무리 안은 OR 다.
+   *
+   * 다리가 아니라 전표를 본다 -- 태그는 전표에 붙는다. 서버의 `entryTagCondition` 과
+   * 같은 규칙이라, 같은 검색이 온라인과 오프라인에서 같은 목록을 낸다.
+   */
+  const tagIds = search.tagIds ?? [];
+  if (tagIds.length > 0) {
+    sql += `
+        AND EXISTS (
+          SELECT 1 FROM entry_tag et
+           WHERE et.entryId = e.id AND et.tagId IN (${tagIds.map(() => '?').join(', ')})
+        )`;
+    params.push(...tagIds);
   }
 
   // 유형. 값이 상수뿐이라 자리표를 쓰지 않는다 (`parseEntrySearch` 가 아는 값만 남긴다).

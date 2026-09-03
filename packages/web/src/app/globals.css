@@ -31,3 +31,33 @@ body {
     display: none;
   }
 }
+
+/*
+ * 펼칠 때의 움직임. 거래 화면의 년월·안쪽 줄이 열릴 때 쓴다.
+ *
+ * 열린 자리가 툭 나타나면 어디가 늘어난 것인지 눈이 따라가지 못한다. 옅은 데서
+ * 조금 내려오며 서면 "이 줄 아래가 열렸다"가 그대로 읽힌다.
+ *
+ * 높이를 재서 늘이지 않는다. 한 달을 통째로 펼치면 그 높이가 수천 픽셀이라 재는
+ * 일도 늘이는 일도 비싸고, 내용이 이어 그려지는 동안 높이가 계속 바뀐다.
+ */
+@keyframes unfold {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.unfold {
+  animation: unfold 180ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .unfold {
+    animation: none;
+  }
+}

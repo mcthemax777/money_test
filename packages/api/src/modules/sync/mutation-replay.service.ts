@@ -469,7 +469,12 @@ export class MutationReplayService {
       cardTransferDirection: payload.cardTransferDirection,
     });
 
-    return { ...input, updatedHlc: hlc || encodeHlc(hlcNext(null, 'server')) };
+    return {
+      ...input,
+      // 태그는 조립 규칙이 다루지 않는다(다리를 바꾸지 않는다). 짐에서 그대로 옮긴다.
+      tagIds: payload.tagIds ?? [],
+      updatedHlc: hlc || encodeHlc(hlcNext(null, 'server')),
+    };
   }
 
   private async applied(

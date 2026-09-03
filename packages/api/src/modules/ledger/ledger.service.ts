@@ -110,6 +110,14 @@ export interface EntryInput {
    * 저장하지 않고 읽을 때 계산한다.
    */
   installmentMonths?: number;
+  /**
+   * 이 전표에 붙일 태그의 id.
+   *
+   * **주면 그 목록이 그대로 전표의 태그가 된다.** 수정이 전표를 통째로 갈아 끼우는
+   * 것과 같은 규칙이다. 주지 않으면(`undefined`) 손대지 않는데, 그 자리는 잔액 조정처럼
+   * 원장이 스스로 만드는 전표뿐이다 -- 사용자의 수정은 언제나 목록을 실어 보낸다.
+   */
+  tagIds?: string[];
 }
 
 /** 지출/수입에서 카테고리별로 금액을 쪼갤 때 쓰는 항목 */
@@ -267,6 +275,7 @@ export class LedgerService {
         include: { postings: true },
       });
 
+      await this.saveTags(tx, entry.id, input.projectId, input.tagIds);
       await this.applyBalanceDeltas(tx, input.postings);
       await this.saveInstallmentPlan(tx, entry.postings, input.installmentMonths);
       return entry;
@@ -325,6 +334,8 @@ export class LedgerService {
         },
         include: { postings: true },
       });
+
+      await this.saveTags(tx, entryId, input.projectId, input.tagIds);
 
       // 3) 새 posting의 잔액을 적용한다
       await this.applyBalanceDeltas(tx, input.postings);
@@ -1039,6 +1050,39 @@ export class LedgerService {
         throw new NotFoundException('이 프로젝트에 없는 카테고리가 포함되어 있습니다.');
       }
     }
+  }
+
+  /**
+   * 전표의 태그 연결을 갈아 끼운다.
+   *
+   * 다리와 같은 규칙이다. 하나씩 견주어 더하고 빼지 않고 통째로 지운 뒤 다시 넣는다 --
+   * 이 표에는 번호가 없어 부분 병합의 대상이 아니고, 갯수가 손에 꼽는다.
+   *
+   * `undefined` 는 "손대지 않는다"이고 빈 배열은 "전부 뗀다"다. 원장이 스스로 만드는
+   * 전표(잔액 조정)는 앞의 것이고, 사용자의 수정은 언제나 목록을 실어 보낸다.
+   *
+   * 남의 프로젝트 태그를 붙이지 못하게 여기서 막는다. 붙고 나면 그 거래를 보는
+   * 사람에게 자기 프로젝트에 없는 이름이 뜬다.
+   */
+  private async saveTags(tx: Tx, entryId: string, projectId: string, tagIds?: string[]) {
+    if (tagIds === undefined) return;
+
+    await tx.entryTag.deleteMany({ where: { entryId } });
+
+    const unique = [...new Set(tagIds)];
+    if (unique.length === 0) return;
+
+    const found = await tx.tag.findMany({
+      where: { id: { in: unique }, projectId },
+      select: { id: true },
+    });
+    if (found.length !== unique.length) {
+      throw badRequest('TAG_NOT_IN_PROJECT', '이 프로젝트에 없는 태그가 포함되어 있습니다.');
+    }
+
+    await tx.entryTag.createMany({
+      data: unique.map((tagId) => ({ entryId, tagId })),
+    });
   }
 
   /** 계좌 잔액과 투자 수량 캐시를 posting 합계만큼 움직인다. */

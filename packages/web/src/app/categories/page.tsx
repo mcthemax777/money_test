@@ -12,6 +12,7 @@ import {
 import Modal from '@/components/Modal';
 import CategoryFormFields from '@/components/CategoryFormFields';
 import PageHeader from '@/components/PageHeader';
+import TagsPanel from '@/components/TagsPanel';
 import type { Category } from '@money/core/lib/types';
 import { useDragReorder } from '@/hooks/useDragReorder';
 
@@ -52,6 +53,13 @@ export default function CategoriesPage() {
   const { categories, isLoading, isSubmitting } = manager;
 
   const [error, setError] = useState('');
+  /*
+   * 카테고리와 태그. 둘 다 "거래를 무엇으로 묶어 보나"를 정하는 일이라 한 화면에 둔다.
+   *
+   * 태그는 계층이 없어 화면 하나를 따로 둘 만큼 크지 않고, 사이드바에 항목을 하나 더
+   * 늘리면 자주 가지 않는 자리가 늘 목록을 차지한다.
+   */
+  const [section, setSection] = useState<'categories' | 'tags'>('categories');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
@@ -136,16 +144,50 @@ export default function CategoriesPage() {
       <PageHeader
         title={t('categories.title')}
         action={
-          <button
-            onClick={() => setIsModalOpen(true)}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-          >
-            {t('categories.add')}
-          </button>
+          // 태그 탭은 자기 머리글에 자기 추가 버튼을 둔다.
+          section === 'categories' ? (
+            <button
+              onClick={() => setIsModalOpen(true)}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
+            >
+              {t('categories.add')}
+            </button>
+          ) : undefined
         }
       />
 
-      {isLoading ? (
+      {/*
+        보기 방식. 흰 알약을 하나 두고 옮긴다 -- 칸마다 바탕을 켜고 끄면 두 탭이 한 줄에
+        나란한 것인지 서로 다른 화면인지 흐려진다 (거래 화면과 같은 규칙).
+      */}
+      <div className="relative flex gap-2 rounded-lg bg-gray-200 p-1">
+        <span
+          aria-hidden
+          className="pointer-events-none absolute inset-y-1 left-1 rounded-md bg-white transition-transform duration-200 ease-out motion-reduce:transition-none"
+          style={{
+            width: 'calc((100% - 1rem) / 2)',
+            // 여기서의 100% 는 알약 자신의 폭, 곧 칸 하나다.
+            transform: `translateX(calc(${section === 'tags' ? 1 : 0} * (100% + 0.5rem)))`,
+          }}
+        />
+        {(['categories', 'tags'] as const).map((id) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setSection(id)}
+            /* 바탕은 위의 알약이 맡는다. 글자가 그 위에 오도록 자리를 잡아 준다. */
+            className={`relative flex-1 rounded-md px-4 py-2 font-medium ${
+              section === id ? 'text-blue-600' : 'text-gray-600'
+            }`}
+          >
+            {t(id === 'tags' ? 'tags.tab' : 'categories.title')}
+          </button>
+        ))}
+      </div>
+
+      {section === 'tags' ? (
+        <TagsPanel projectId={selectedProjectId} />
+      ) : isLoading ? (
         <p className="text-gray-600">{t('common.loading')}</p>
       ) : categories.length === 0 ? (
         <p className="text-gray-600">{t('categories.empty')}</p>

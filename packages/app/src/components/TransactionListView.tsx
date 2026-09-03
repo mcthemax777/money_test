@@ -70,11 +70,7 @@ export default function TransactionListView({
 
             <View className="overflow-hidden rounded-xl border border-gray-200 bg-white">
               {dayEntries.map((entry) => (
-                <TransactionItem
-                  key={entry.id}
-                  entry={entry}
-                  onPress={onEntryClick && (() => onEntryClick(entry))}
-                />
+                <TransactionItem key={entry.id} entry={entry} onPress={onEntryClick} />
               ))}
             </View>
           </View>

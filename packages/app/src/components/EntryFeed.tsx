@@ -51,7 +51,7 @@ export default function EntryFeed({
     <View className="gap-3">
       <View className="overflow-hidden rounded-lg bg-white shadow-sm">
         {entries.map((entry) => (
-          <TransactionItem key={entry.id} entry={entry} onPress={() => onEntryClick?.(entry)} />
+          <TransactionItem key={entry.id} entry={entry} onPress={onEntryClick} />
         ))}
       </View>
 

@@ -10,8 +10,9 @@
  * 왕복하고, 그중 두 번은 사용자가 보려던 것이 아니다.
  */
 import { useEffect, useState } from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
-import type { AccountDto, CardDto, CategoryDto } from '@money/types';
+import { Pressable, Text, View } from 'react-native';
+import { CalendarDays } from 'lucide-react-native';
+import type { AccountDto, CardDto, CategoryDto, TagDto } from '@money/types';
 
 import { SEARCHABLE_ENTRY_KINDS } from '@money/types';
 
@@ -23,6 +24,7 @@ import {
   type TransactionSearch,
 } from '@money/core/hooks/useTransactions';
 
+import DatePickerPanel from './DatePickerPanel';
 import Modal from './Modal';
 
 /** 고를 수 있는 알약 하나. 고른 것은 파란 알약이다 (앱의 다른 고르는 자리와 같다). */
@@ -30,18 +32,24 @@ function Chip({
   label,
   selected,
   onPress,
+  color,
 }: {
   label: string;
   selected: boolean;
   onPress: () => void;
+  /** 태그의 색. 그 밖의 알약은 색이 없다. */
+  color?: string | null;
 }) {
   return (
     <Pressable
       onPress={onPress}
-      className={`rounded-full border px-3 py-1.5 ${
+      className={`flex-row items-center gap-1.5 rounded-full border px-3 py-1.5 ${
         selected ? 'border-blue-600 bg-blue-50' : 'border-gray-300 bg-white'
       }`}
     >
+      {color ? (
+        <View className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
+      ) : null}
       <Text className={`text-sm ${selected ? 'font-medium text-blue-600' : 'text-gray-700'}`}>
         {label}
       </Text>
@@ -60,6 +68,38 @@ function Group({ title, children }: { title: string; children: React.ReactNode }
   );
 }
 
+/** 기간의 한 칸. 누르면 아래에 달력이 열린다. 열린 칸은 테두리가 파랗다. */
+function DateButton({
+  label,
+  value,
+  placeholder,
+  isOpen,
+  onPress,
+}: {
+  label: string;
+  value: string;
+  placeholder: string;
+  isOpen: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <View className="flex-1">
+      <Text className="mb-1 text-xs text-gray-500">{label}</Text>
+      <Pressable
+        onPress={onPress}
+        className={`flex-row items-center gap-2 rounded-lg border bg-white px-3 py-2 ${
+          isOpen ? 'border-blue-600' : 'border-gray-300'
+        }`}
+      >
+        <CalendarDays size={16} color={isOpen ? '#2563eb' : '#6b7280'} />
+        <Text className={`text-base ${value ? 'text-gray-900' : 'text-gray-400'}`}>
+          {value || placeholder}
+        </Text>
+      </Pressable>
+    </View>
+  );
+}
+
 function toggle<T extends string>(ids: T[], id: T): T[] {
   return ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id];
 }
@@ -72,6 +112,7 @@ export default function TransactionSearchModal({
   categories,
   accounts,
   cards,
+  tags,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -81,24 +122,30 @@ export default function TransactionSearchModal({
   categories: CategoryDto.Response[];
   accounts: AccountDto.Response[];
   cards: CardDto.Response[];
+  tags: TagDto.Response[];
 }) {
   const { t } = useTranslation();
   /** 고르는 중인 것. 확인을 누를 때까지 화면의 목록은 그대로다. */
   const [draft, setDraft] = useState<TransactionSearch>(current);
+  /** 달력이 열린 기간 칸. 한 번에 하나만 연다 -- 판 둘이 겹치면 어느 칸의 것인지 모른다. */
+  const [openField, setOpenField] = useState<'start' | 'end' | null>(null);
 
   // 열 때마다 지금 적용된 것에서 시작한다. 닫고 다시 열면 지난 초안이 남으면 안 된다.
   useEffect(() => {
-    if (isOpen) setDraft(current);
+    if (isOpen) {
+      setDraft(current);
+      setOpenField(null);
+    }
   }, [isOpen, current]);
 
   /** 고른 기간. 두 칸이 온전할 때만 선다. */
   const range = searchRange(draft);
   /**
-   * 적다 만 기간인가. 한 칸만 적었거나, 실재하지 않는 날짜이거나, 앞뒤가 뒤집힌 것.
+   * 정하다 만 기간인가. 한 칸만 골랐거나 앞뒤가 뒤집힌 것.
    *
-   * 이 상태에서는 적용을 막는다. 그냥 흘려보내면 기간을 적었는데 걸리지 않는 것이
-   * 되어, 사용자는 검색이 고장 났다고 읽는다. 앱에는 달력 입력이 없어 글자로 받으므로
-   * (거래 입력 화면과 같다) 이 검사가 웹보다 더 필요하다.
+   * 이 상태에서는 적용을 막는다. 그냥 흘려보내면 기간을 정했는데 걸리지 않는 것이
+   * 되어, 사용자는 검색이 고장 났다고 읽는다. 달력에서 고르므로 실재하지 않는 날짜는
+   * 더 들어오지 않지만, 두 칸을 따로 고르는 한 나머지 둘은 그대로 남는다.
    */
   const isRangeBroken = Boolean(draft.startDate || draft.endDate) && range === null;
 
@@ -107,8 +154,10 @@ export default function TransactionSearchModal({
     draft.paymentAccountIds.length +
     draft.paymentCardIds.length +
     draft.kinds.length +
+    draft.tagIds.length +
     (range ? 1 : 0);
-  const isEmpty = categories.length === 0 && accounts.length === 0 && cards.length === 0;
+  const isEmpty =
+    categories.length === 0 && accounts.length === 0 && cards.length === 0 && tags.length === 0;
 
   /** 대분류는 이름만, 소분류는 "대분류 > 소분류". 같은 이름의 소분류가 여럿 있다. */
   const labelOf = (category: CategoryDto.Response) => {
@@ -152,42 +201,61 @@ export default function TransactionSearchModal({
           기간을 맨 위에 둔다. 무엇으로 좁히든 "언제"를 먼저 정하는 일이 많다.
           고를 수 있는 분류·자산이 없어도 이 칸은 그린다 -- 기간은 그 목록과 무관하다.
 
-          달력 입력이 없어 글자로 받는다(거래 입력 화면과 같다). 그래서 모양이
-          어긋난 값이 그대로 조회에 실리지 않도록 아래에서 막는다.
+          두 칸은 누르면 달력이 열리는 버튼이다(웹의 날짜 입력과 같은 일을 한다).
+          달력은 두 칸 아래에 펼친다. 칸 하나는 화면 절반 너비라 그 안에 일곱 열을
+          그리면 날짜 숫자가 서로 붙는다.
         */}
         <View className="mb-5">
           <Text className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
             {t('tx.search.period')}
           </Text>
           <View className="flex-row gap-2">
-            <View className="flex-1">
-              <Text className="mb-1 text-xs text-gray-500">{t('tx.search.periodFrom')}</Text>
-              <TextInput
-                value={draft.startDate}
-                onChangeText={(text) => setDraft((prev) => ({ ...prev, startDate: text }))}
-                placeholder="YYYY-MM-DD"
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="numbers-and-punctuation"
-                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-base text-gray-900"
-              />
-            </View>
-            <View className="flex-1">
-              <Text className="mb-1 text-xs text-gray-500">{t('tx.search.periodTo')}</Text>
-              <TextInput
-                value={draft.endDate}
-                onChangeText={(text) => setDraft((prev) => ({ ...prev, endDate: text }))}
-                placeholder="YYYY-MM-DD"
-                autoCapitalize="none"
-                autoCorrect={false}
-                keyboardType="numbers-and-punctuation"
-                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-base text-gray-900"
-              />
-            </View>
+            <DateButton
+              label={t('tx.search.periodFrom')}
+              value={draft.startDate}
+              placeholder={t('tx.search.periodPick')}
+              isOpen={openField === 'start'}
+              onPress={() => setOpenField((prev) => (prev === 'start' ? null : 'start'))}
+            />
+            <DateButton
+              label={t('tx.search.periodTo')}
+              value={draft.endDate}
+              placeholder={t('tx.search.periodPick')}
+              isOpen={openField === 'end'}
+              onPress={() => setOpenField((prev) => (prev === 'end' ? null : 'end'))}
+            />
           </View>
+          {openField ? (
+            <View className="mt-2">
+              {/*
+                칸을 옮기면 달력을 새로 그린다(key). 그래야 보고 있던 달이 아니라
+                그 칸의 날짜가 있는 달에서 시작한다.
+              */}
+              <DatePickerPanel
+                key={openField}
+                value={openField === 'start' ? draft.startDate : draft.endDate}
+                fallbackDate={openField === 'start' ? draft.endDate : draft.startDate}
+                onSelect={(dateKey) => {
+                  const isStart = openField === 'start';
+                  setDraft((prev) => ({
+                    ...prev,
+                    [isStart ? 'startDate' : 'endDate']: dateKey,
+                  }));
+                  /*
+                   * 시작일만 고르면 기간은 걸리지 않으므로, 종료일이 비어 있으면
+                   * 그 칸의 달력으로 바로 넘긴다. 그 외에는 닫아 목록을 돌려준다.
+                   */
+                  setOpenField(isStart && !draft.endDate ? 'end' : null);
+                }}
+              />
+            </View>
+          ) : null}
           {draft.startDate || draft.endDate ? (
             <Pressable
-              onPress={() => setDraft((prev) => ({ ...prev, startDate: '', endDate: '' }))}
+              onPress={() => {
+                setDraft((prev) => ({ ...prev, startDate: '', endDate: '' }));
+                setOpenField(null);
+              }}
               className="mt-2 self-start"
             >
               <Text className="text-xs font-medium text-blue-600">
@@ -225,6 +293,26 @@ export default function TransactionSearchModal({
             <Text className="-mt-3 mb-5 text-xs leading-5 text-gray-500">
               {t('tx.search.kindHint')}
             </Text>
+
+            {/*
+              태그를 유형 다음에 둔다. 개수가 적고, "이번 여행에 쓴 돈"처럼 태그 하나로
+              끝나는 검색이 잦다. 분류 알약 수십 개 아래에 두면 굴려서 찾아야 한다.
+            */}
+            {tags.length > 0 ? (
+              <Group title={t('tags.pick')}>
+                {tags.map((tag) => (
+                  <Chip
+                    key={tag.id}
+                    label={tag.name}
+                    color={tag.color}
+                    selected={draft.tagIds.includes(tag.id)}
+                    onPress={() =>
+                      setDraft((prev) => ({ ...prev, tagIds: toggle(prev.tagIds, tag.id) }))
+                    }
+                  />
+                ))}
+              </Group>
+            ) : null}
 
             {categories.length > 0 ? (
               <Group title={t('tx.search.categories')}>

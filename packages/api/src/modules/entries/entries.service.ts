@@ -11,17 +11,26 @@ import {
   MATCH_NOTHING,
   assetOwnerCondition,
   entryKindCondition,
+  entryTagCondition,
   entrySearchConditions,
   extraPostingCondition,
   parseEntryFilter,
 } from '@/common/entry-filter';
-import { notFound } from '@/common/app-error';
+import { badRequest, notFound } from '@/common/app-error';
 import { assertYearMonth } from '@/common/year-month';
 import { clientId, rejectDuplicateId } from '@/common/client-id';
 
 const ZERO = new Prisma.Decimal(0);
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
+
+/**
+ * 한 번에 태그를 붙일 수 있는 거래 수.
+ *
+ * 목록 조회의 상한과 같은 값이다. 화면이 고를 수 있는 것은 그 한 번에 받아 온 목록이라,
+ * 그보다 많이 보낸 요청은 화면이 만든 것이 아니다.
+ */
+const MAX_TAG_TARGETS = 200;
 /**
  * kind 필터가 걸렸을 때 한 요청에서 커서를 미는 최대 횟수.
  *
@@ -66,6 +75,110 @@ export class EntriesService {
 
     await this.ledger.replaceEntry(id, input);
     return this.getEntryById(id, userId);
+  }
+
+  /**
+   * 여러 거래의 태그를 한 번에 바꾼다. 더할 것과 뗄 것을 따로 받는다.
+   *
+   * 어느 쪽에도 없는 태그는 건드리지 않는다. 고른 거래마다 붙은 태그가 다를 수 있어,
+   * 목록 하나를 "이것이 전부다"로 받으면 화면에 보이지 않던 태그가 사라진다.
+   *
+   * 전표는 건드리지 않는다. 연결만 넣고 빼므로 금액·다리·분할이 그대로 남는다. 다만
+   * **전표의 변경 번호는 올려야 한다** -- 그러지 않으면 기기가 이 변화를 영영 받지
+   * 못한다. 태그 연결에는 번호가 없어 전표에 실려 오기 때문이다.
+   */
+  async changeTags(userId: string, dto: EntryDto.ChangeTagsRequest, projectIdParam?: string) {
+    const entryIds = [...new Set(dto.entryIds ?? [])];
+    const addTagIds = [...new Set(dto.addTagIds ?? [])];
+    const removeTagIds = [...new Set(dto.removeTagIds ?? [])];
+
+    if (entryIds.length === 0 || (addTagIds.length === 0 && removeTagIds.length === 0)) {
+      throw badRequest('TAG_TARGETS_REQUIRED', '거래와 태그를 함께 골라주세요.');
+    }
+    if (entryIds.length > MAX_TAG_TARGETS) {
+      throw badRequest('TAG_TARGETS_TOO_MANY', '한 번에 표시할 수 있는 거래 수를 넘었습니다.');
+    }
+    /*
+     * 같은 태그를 더하면서 떼라는 요청은 거절한다.
+     *
+     * 어느 쪽을 먼저 적용하느냐로 결과가 갈리는데, 그 순서는 사용자가 정한 것이 아니다.
+     * 화면이 만들 수 없는 요청이므로 조용히 한쪽을 고르는 대신 되돌려 보낸다.
+     */
+    if (addTagIds.some((id) => removeTagIds.includes(id))) {
+      throw badRequest('TAG_ADD_AND_REMOVE', '같은 태그를 더하면서 뗄 수는 없습니다.');
+    }
+
+    const projectId = await this.projectAccess.resolveAndVerifyProjectId(
+      userId,
+      projectIdParam || dto.projectId,
+      'editor',
+    );
+
+    return this.prisma.$transaction(async (tx) => {
+      /*
+       * 남의 프로젝트 것이 섞였는지 먼저 본다.
+       *
+       * 하나라도 어긋나면 통째로 거절한다. 되는 것만 적용하면 사용자는 몇 건이 왜 빠졌는지
+       * 알 수 없고, 그 상태를 되돌릴 방법도 없다.
+       */
+      const tagIds = [...addTagIds, ...removeTagIds];
+      const [entries, tags] = await Promise.all([
+        tx.journalEntry.findMany({ where: { id: { in: entryIds }, projectId }, select: { id: true } }),
+        tx.tag.findMany({ where: { id: { in: tagIds }, projectId }, select: { id: true } }),
+      ]);
+      if (entries.length !== entryIds.length) {
+        throw notFound('ENTRY_NOT_FOUND', '거래를 찾을 수 없습니다.');
+      }
+      if (tags.length !== tagIds.length) {
+        throw badRequest('TAG_NOT_IN_PROJECT', '이 프로젝트에 없는 태그가 포함되어 있습니다.');
+      }
+
+      // 지금 붙어 있는 것. 무엇이 실제로 달라지는지 세려면 이것부터 알아야 한다.
+      const existing = await tx.entryTag.findMany({
+        where: { entryId: { in: entryIds }, tagId: { in: tagIds } },
+        select: { entryId: true, tagId: true },
+      });
+      const already = new Set(existing.map((row) => `${row.entryId}|${row.tagId}`));
+      const touched = new Set<string>();
+
+      const rows: Array<{ entryId: string; tagId: string }> = [];
+      for (const entryId of entryIds) {
+        for (const tagId of addTagIds) {
+          if (already.has(`${entryId}|${tagId}`)) continue;
+          rows.push({ entryId, tagId });
+          touched.add(entryId);
+        }
+      }
+
+      let removed = 0;
+      if (removeTagIds.length > 0) {
+        const result = await tx.entryTag.deleteMany({
+          where: { entryId: { in: entryIds }, tagId: { in: removeTagIds } },
+        });
+        removed = result.count;
+        for (const row of existing) {
+          if (removeTagIds.includes(row.tagId)) touched.add(row.entryId);
+        }
+      }
+
+      if (rows.length > 0) await tx.entryTag.createMany({ data: rows });
+
+      if (touched.size === 0) return { added: 0, removed: 0, entries: 0 };
+
+      /*
+       * 바뀐 전표의 번호를 올린다.
+       *
+       * `updatedAt` 을 건드리면 그 행의 트리거가 도장을 새로 찍는다(sync_stamp). 값 자체는
+       * 뜻이 없고 트리거를 깨우는 것이 목적이다 -- 번호를 손으로 넣으면 발급기(Project.
+       * syncVersion)를 거치지 않아 다른 쓰기와 순서가 어긋난다.
+       */
+      await tx.journalEntry.updateMany({
+        where: { id: { in: [...touched] } },
+        data: { updatedAt: new Date() },
+      });
+
+      return { added: rows.length, removed, entries: touched.size };
+    });
   }
 
   /** 삭제. 카드 거래도 다른 거래와 똑같이 지운다. */
@@ -174,6 +287,10 @@ export class EntriesService {
     // 유형은 다리 하나로 표현되지 않아(계좌 다리 두 개를 함께 본다) 전표 조건으로 간다.
     const kindCondition = entryKindCondition(search.kinds);
     if (kindCondition) entryFilters.push(kindCondition);
+
+    // 태그도 전표에 붙으므로 유형과 같은 자리에 온다.
+    const tagCondition = entryTagCondition(search.tagIds);
+    if (tagCondition) entryFilters.push(tagCondition);
 
     // 일반/과소비 필터. 카테고리 다리에만 걸어야 한다 (계좌 다리는 항상 0이다).
     const extra = extraPostingCondition(filter);
@@ -308,7 +425,7 @@ export class EntriesService {
         ? undefined
         : toMoney(value, label).toString();
 
-    return this.ledger.buildFromRequest({
+    const input = await this.ledger.buildFromRequest({
       projectId,
       createdByUserId: userId,
       kind: dto.kind,
@@ -339,6 +456,14 @@ export class EntriesService {
       transferFeeCategoryId: dto.transferFeeCategoryId,
       cardTransferDirection: dto.cardTransferDirection,
     });
+
+    /*
+     * 태그는 조립 규칙(entry-build)이 다루지 않는다. 다리를 하나도 바꾸지 않기 때문이다.
+     *
+     * **생략은 "비운다"다.** 수정이 전표를 통째로 갈아 끼우는 것과 같은 규칙이라,
+     * 여기만 "생략은 유지"로 두면 태그를 다 뗀 수정을 표현할 길이 없다.
+     */
+    return { ...input, tagIds: dto.tagIds ?? [] };
   }
 
   /** 저장 통화 -> 표시 통화. 목록의 금액은 이 환산을 거쳐 나간다. */

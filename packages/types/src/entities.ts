@@ -230,6 +230,13 @@ export interface EntryListItem {
    * 줄이 사라지므로, 편집 화면은 이 값을 보고 그 거래를 자기가 다룰 수 있는지 정한다.
    */
   splitCount: number;
+  /**
+   * 이 거래에 붙은 태그. 없으면 빈 배열이다.
+   *
+   * 카테고리와 달리 여럿이라 배열이고, 목록이 칩으로 그릴 만큼만(이름과 색) 담는다.
+   * 전표에 붙으므로 분할 거래도 태그는 하나의 묶음이다.
+   */
+  tags: EntryTag[];
   categoryId: string | null;
   categoryName: string | null;
   parentCategoryId: string | null;
@@ -311,6 +318,34 @@ export interface Category {
 
 
 
+
+/**
+ * 거래에 자유롭게 붙이는 이름표.
+ *
+ * 카테고리와 나란히 서지만 **계층이 없고 전표 하나에 여럿 붙는다.** 카테고리는 "이
+ * 돈이 무엇에 쓰였나"를 한 갈래로 정하는 것이라 대분류/소분류로 좁혀 가고, 태그는
+ * 그와 직교하는 이름표라 "여행이면서 경조사"가 성립한다.
+ *
+ * 수입/지출 구분(type)도 없다. 같은 여행에 항공권 지출과 환불 수입이 함께 든다.
+ */
+export interface Tag {
+  id: string;
+  projectId: string;
+  name: string;
+  /** 목록에서 알아보는 색 "#RRGGBB". 정하지 않았으면 null. */
+  color: string | null;
+  isActive: boolean;
+  sortOrder: number;
+  createdAt: IsoDateString;
+  updatedAt: IsoDateString;
+}
+
+/** 거래 한 줄에 붙어 오는 태그. 목록이 칩으로 그리는 최소한만 담는다. */
+export interface EntryTag {
+  id: string;
+  name: string;
+  color: string | null;
+}
 
 // 예산 (기본 규칙)
 export interface Budget {

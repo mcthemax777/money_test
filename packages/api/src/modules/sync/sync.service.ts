@@ -76,6 +76,7 @@ export class SyncService {
         people,
         accounts,
         categories,
+        tags,
         cards,
         entries,
         budgets,
@@ -90,10 +91,15 @@ export class SyncService {
         tx.person.findMany({ where: { projectId, updatedVersion: window }, ...page }),
         tx.account.findMany({ where: { projectId, updatedVersion: window }, ...page }),
         tx.category.findMany({ where: { projectId, updatedVersion: window }, ...page }),
+        tx.tag.findMany({ where: { projectId, updatedVersion: window }, ...page }),
         tx.card.findMany({ where: { projectId, updatedVersion: window }, ...page }),
         tx.journalEntry.findMany({
           where: { projectId, updatedVersion: window },
-          include: { postings: true },
+          /*
+           * 태그 연결은 전표에 실어 함께 보낸다. 다리와 같은 이유다 -- 이 표에는
+           * 번호가 없어 따로 실을 수 없다. 태그 자신(이름·색)은 위의 `tags` 로 온다.
+           */
+          include: { postings: true, tags: { select: { tagId: true } } },
           ...page,
         }),
         tx.budget.findMany({ where: { projectId, updatedVersion: window }, ...page }),
@@ -128,6 +134,7 @@ export class SyncService {
         people,
         accounts,
         categories,
+        tags,
         cards,
         entries,
         budgets,
@@ -168,8 +175,13 @@ export class SyncService {
           people: within(people),
           accounts: within(accounts),
           categories: within(categories),
+          tags: within(tags),
           cards: within(cards),
-          entries: within(entries) as unknown as SyncDto.EntryRow[],
+          // 조인 행을 id 목록으로 편다. 기기가 다루는 것은 연결이지 조인 행이 아니다.
+          entries: within(entries).map(({ tags: entryTags, ...entry }) => ({
+            ...entry,
+            tagIds: entryTags.map((row) => row.tagId),
+          })) as unknown as SyncDto.EntryRow[],
           budgets: within(budgets),
           budgetOverrides: within(budgetOverrides),
           exchangeRates: within(exchangeRates),
@@ -201,6 +213,7 @@ export class SyncService {
         people: [],
         accounts: [],
         categories: [],
+        tags: [],
         cards: [],
         entries: [],
         budgets: [],

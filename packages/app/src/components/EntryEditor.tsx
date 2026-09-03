@@ -12,9 +12,9 @@
  * **저장은 창구로 나간다.** 온라인이면 서버로, 오프라인이면 기기 사본과 아웃박스로 간다.
  * 이 컴포넌트는 어느 쪽인지 모른다 (core 의 entry-write-port).
  */
-import { useEffect } from 'react';
-import { Alert, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import type { EntryListItem } from '@money/types';
+import { useEffect, useRef } from 'react';
+import { Alert, Animated, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import type { EntryListItem, TagDto } from '@money/types';
 
 import { todayKey } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -355,6 +355,27 @@ export default function EntryEditor({
           </Field>
         ) : null}
 
+        {/*
+          태그. 갈래를 가리지 않으므로 이체에도 뜬다.
+
+          카테고리와 달리 **여럿을 고른다.** 그래서 같은 알약 줄을 쓰되 고름 표시가
+          누적되고, 누르면 붙었다 떨어진다.
+        */}
+        <Field label={t('tags.pick')}>
+          {form.lists.tags.length === 0 ? (
+            <Text className="text-sm text-gray-500">{t('tags.empty')}</Text>
+          ) : (
+            <>
+              <TagChips
+                tags={form.lists.tags}
+                selected={values.tagIds}
+                onToggle={form.toggleTag}
+              />
+              <Text className="mt-1 text-xs text-gray-500">{t('tags.pickHint')}</Text>
+            </>
+          )}
+        </Field>
+
         <Text className="text-xs text-gray-500">{t('entryForm.offlineNote')}</Text>
       </View>
     </Modal>
@@ -377,6 +398,84 @@ function Field({
       </Text>
       {children}
     </View>
+  );
+}
+
+/**
+ * 태그를 고르는 알약 줄. 여럿을 고를 수 있다.
+ *
+ * `Chips` 와 나누어 둔 것은 고름이 하나가 아니라 집합이고, 알약마다 자기 색을 갖기
+ * 때문이다. 하나를 골라도 나머지가 풀리지 않는다.
+ */
+function TagChips({
+  tags,
+  selected,
+  onToggle,
+}: {
+  tags: TagDto.Response[];
+  selected: string[];
+  onToggle: (tagId: string) => void;
+}) {
+  return (
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="gap-2">
+      {tags.map((tag) => (
+        <TagChip
+          key={tag.id}
+          tag={tag}
+          isSelected={selected.includes(tag.id)}
+          onPress={() => onToggle(tag.id)}
+        />
+      ))}
+    </ScrollView>
+  );
+}
+
+/**
+ * 태그 알약 하나.
+ *
+ * 누르면 살짝 눌렸다 돌아온다. 여럿을 고르는 칸이라 **무엇이 방금 바뀌었는지**가 색만으로는
+ * 잘 보이지 않는다 -- 알약이 열 개 늘어선 줄에서 한 칸의 색이 바뀌는 것은 눈에 잘 띄지
+ * 않지만, 움직인 칸은 눈이 따라간다.
+ */
+function TagChip({
+  tag,
+  isSelected,
+  onPress,
+}: {
+  tag: TagDto.Response;
+  isSelected: boolean;
+  onPress: () => void;
+}) {
+  const scale = useRef(new Animated.Value(1)).current;
+
+  const press = () => {
+    // 눌렀다 놓는 한 번의 움직임. 위치만 바꾸므로 UI 스레드에 맡긴다.
+    Animated.sequence([
+      Animated.timing(scale, { toValue: 0.92, duration: 80, useNativeDriver: true }),
+      Animated.spring(scale, { toValue: 1, friction: 4, tension: 220, useNativeDriver: true }),
+    ]).start();
+    onPress();
+  };
+
+  return (
+    <Animated.View style={{ transform: [{ scale }] }}>
+      <Pressable
+        onPress={press}
+        className={`flex-row items-center gap-1.5 rounded-full border px-3 py-2 ${
+          isSelected ? 'border-blue-600 bg-blue-50' : 'border-gray-300'
+        }`}
+      >
+        {/* 색을 정한 태그는 점으로 보인다. 이름만으로는 목록에서 찾기 어렵다. */}
+        {tag.color ? (
+          <View className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: tag.color }} />
+        ) : null}
+        <Text
+          className={`text-sm ${isSelected ? 'font-medium text-blue-600' : 'text-gray-700'}`}
+        >
+          {tag.name}
+        </Text>
+      </Pressable>
+    </Animated.View>
   );
 }
 

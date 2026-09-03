@@ -27,8 +27,8 @@ import {
  * 3월 3일로 넘어간다. 그런 값이 조회 구간이나 거래 날짜로 들어가면, 오류는 나지 않고
  * 결과만 조용히 어긋난다.
  *
- * 거래 입력과 거래 화면의 기간 검색이 함께 쓴다. 둘 다 앱에서는 글자로 받는다
- * (리액트 네이티브에 달력 입력이 없다).
+ * 거래 입력과 거래 화면의 기간 검색이 함께 쓴다. 기간 검색은 앱에서도 달력에서
+ * 고르지만(DatePickerPanel), 거래 입력은 아직 글자로 받는다.
  */
 export function isDateKey(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -62,9 +62,42 @@ export function timeInputOf(instant: string | Date, timeZone: string): string {
   return time === '00:00' ? '' : time;
 }
 
+/*
+ * 언어·타임존·모양마다 형식기 하나를 두고 다시 쓴다.
+ *
+ * **`toLocaleDateString` 류와 `new Intl.DateTimeFormat` 은 부를 때마다 형식기를
+ * 새로 만든다.** 만드는 값이 쓰는 값보다 훨씬 비싸다(Hermes 에서 밀리초 단위다).
+ * 거래 목록은 한 줄마다 시각을 적으므로 한 번 그릴 때 이것을 백 번 넘게 부른다.
+ *
+ * 열쇠에 언어를 넣는 것은 언어를 바꾸면 다른 형식기여야 하기 때문이고, 모양(`shape`)
+ * 을 넣는 것은 같은 언어·타임존에서도 "날짜만"과 "날짜+시각"이 다른 형식기이기
+ * 때문이다. 모양은 부르는 쪽이 짧은 이름으로 적어 준다 -- 옵션을 통째로 문자열로
+ * 만들면 그 일이 아낀 값을 도로 먹는다.
+ */
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function dateFormatter(
+  shape: string,
+  timeZone: string,
+  options: Intl.DateTimeFormatOptions,
+): Intl.DateTimeFormat {
+  const tag = activeLocaleTag();
+  const key = `${tag}|${timeZone}|${shape}`;
+  const cached = dateFormatters.get(key);
+  if (cached) return cached;
+
+  const formatter = new Intl.DateTimeFormat(tag, { timeZone, ...options });
+  dateFormatters.set(key, formatter);
+  return formatter;
+}
+
 /** 목록/상세에 쓰는 날짜 표기 */
 export function formatDate(instant: string | Date, timeZone: string): string {
-  return new Date(instant).toLocaleDateString(activeLocaleTag(), { timeZone });
+  return dateFormatter('date', timeZone, {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+  }).format(new Date(instant));
 }
 
 /**
@@ -77,23 +110,20 @@ export function formatDate(instant: string | Date, timeZone: string): string {
 export function formatTime(instant: string | Date, timeZone: string): string {
   if (timeInputOf(instant, timeZone) === '') return '';
 
-  return new Date(instant).toLocaleTimeString(activeLocaleTag(), {
-    timeZone,
-    hour: 'numeric',
-    minute: '2-digit',
-  });
+  return dateFormatter('time', timeZone, { hour: 'numeric', minute: '2-digit' }).format(
+    new Date(instant),
+  );
 }
 
 /** 상세에 쓰는 날짜(+시각) 표기. 시간을 입력하지 않은 거래는 날짜만 보여준다. */
 export function formatDateTime(instant: string | Date, timeZone: string): string {
   const hasTime = timeInputOf(instant, timeZone) !== '';
-  return new Date(instant).toLocaleString(activeLocaleTag(), {
-    timeZone,
+  return dateFormatter(hasTime ? 'dateTime' : 'dateLong', timeZone, {
     year: 'numeric',
     month: 'long',
     day: 'numeric',
     ...(hasTime ? { hour: '2-digit' as const, minute: '2-digit' as const } : {}),
-  });
+  }).format(new Date(instant));
 }
 
 /** `@db.Date` 값(달력 날짜 표시자)의 "YYYY-MM-DD" */
@@ -138,7 +168,11 @@ export function monthInputToIso(value: string): string | null {
 
 /** `@db.Date` 값의 표시용 날짜. 청구 기간·결제일이 여기에 해당한다. */
 export function formatDateMarker(marker: string | Date): string {
-  return new Date(marker).toLocaleDateString(activeLocaleTag(), { timeZone: 'UTC' });
+  return dateFormatter('date', 'UTC', {
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+  }).format(new Date(marker));
 }
 
 /**
@@ -158,26 +192,23 @@ function monthDate(year: number, month: number): Date {
 
 /** "2026년 8월" / "August 2026" / "2026年8月" */
 export function formatYearMonth(year: number, month: number): string {
-  return new Intl.DateTimeFormat(activeLocaleTag(), {
+  return dateFormatter('yearMonth', 'UTC', {
     year: 'numeric',
     month: 'long',
-    timeZone: 'UTC',
   }).format(monthDate(year, month));
 }
 
 /** 달 하나. 달 고르는 표와 그래프 범례처럼 좁은 자리에 쓴다. "8월" / "Aug" / "8月" */
 export function formatMonthShort(month: number): string {
-  return new Intl.DateTimeFormat(activeLocaleTag(), {
+  return dateFormatter('monthShort', 'UTC', {
     month: 'short',
-    timeZone: 'UTC',
   }).format(monthDate(2000, month));
 }
 
 /** "2026년" / "2026" / "2026年" */
 export function formatYearOnly(year: number): string {
-  return new Intl.DateTimeFormat(activeLocaleTag(), {
+  return dateFormatter('yearOnly', 'UTC', {
     year: 'numeric',
-    timeZone: 'UTC',
   }).format(monthDate(year, 1));
 }
 
@@ -188,10 +219,7 @@ export function formatYearOnly(year: number): string {
  * 표준이 이미 아는 값이다. 2024-01-07이 일요일이라 그날부터 이레를 센다.
  */
 export function weekdayNames(): string[] {
-  const format = new Intl.DateTimeFormat(activeLocaleTag(), {
-    weekday: 'short',
-    timeZone: 'UTC',
-  });
+  const format = dateFormatter('weekday', 'UTC', { weekday: 'short' });
 
   return Array.from({ length: 7 }, (_, index) =>
     format.format(new Date(Date.UTC(2024, 0, 7 + index))),

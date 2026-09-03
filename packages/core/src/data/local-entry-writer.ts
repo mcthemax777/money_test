@@ -72,6 +72,7 @@ export function createLocalEntryWriter({
     transferFee: text(data.transferFee),
     transferFeeCategoryId: data.transferFeeCategoryId,
     cardTransferDirection: data.cardTransferDirection,
+    tagIds: data.tagIds,
     currency: data.currency,
     exchangeRate: text(data.exchangeRate),
     billedAmount: text(data.billedAmount),
@@ -104,7 +105,13 @@ export function createLocalEntryWriter({
       observed,
     });
 
-    await store.writeEntry(entryId, built, { timeZone, hlc: mutation.hlc, makeId: newId });
+    await store.writeEntry(entryId, built, {
+      timeZone,
+      hlc: mutation.hlc,
+      makeId: newId,
+      // 태그는 조립 규칙이 다루지 않는다(다리를 바꾸지 않는다). 짐에서 그대로 가져온다.
+      tagIds: payload.tagIds ?? [],
+    });
 
     notifyMirrorChanged();
     onQueued?.(mutation);

@@ -52,6 +52,13 @@ export type EntryWithPostings = {
   originalAmount: Prisma.Decimal | null;
   rateProvisional: boolean;
   postings: PostingWithRefs[];
+  /**
+   * 이 전표에 붙은 태그. `ENTRY_INCLUDE` 가 조인 행을 펴서 넣는다.
+   *
+   * 선택적으로 둔 것은 태그를 읽지 않는 가벼운 조회가 있기 때문이다(잔액 되돌리기처럼
+   * 다리만 보는 자리). 그때 목록 한 줄은 태그가 없는 것으로 그려진다.
+   */
+  tags?: Array<{ tag: { id: string; name: string; color: string | null } }>;
 };
 
 /**
@@ -76,6 +83,8 @@ function toViewEntry(entry: EntryWithPostings): ViewEntry {
   return {
     ...entry,
     postings: entry.postings as unknown as ViewPosting[],
+    // 조인 행을 벗겨 태그만 남긴다. 공용 규칙은 조인을 모른다.
+    tags: entry.tags?.map((row) => row.tag),
   } as unknown as ViewEntry;
 }
 
@@ -116,5 +125,15 @@ export const ENTRY_INCLUDE = {
       card: { select: { id: true, name: true } },
       installmentPlan: { select: { totalMonths: true } },
     },
+  },
+  /*
+   * 태그는 목록 한 줄이 칩으로 그린다. 이름과 색만 있으면 되므로 그만큼만 가져온다.
+   *
+   * 감춘 태그(isActive=false)도 함께 온다. 이미 붙어 있던 것을 목록에서 지우면 그
+   * 거래가 왜 그 통계에 들었는지 설명할 수 없게 된다 -- 감추기는 "앞으로 고르지
+   * 않는다"이지 "지난 기록에서 없앤다"가 아니다.
+   */
+  tags: {
+    select: { tag: { select: { id: true, name: true, color: true } } },
   },
 } satisfies Prisma.JournalEntryInclude;
