@@ -1,6 +1,7 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { SyncNotifyMiddleware } from './common/sync-notify.middleware';
 import { ConfigModule } from './config/config.module';
 import { DatabaseModule } from './config/database.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -17,6 +18,7 @@ import { LedgerModule } from './modules/ledger/ledger.module';
 import { BudgetsModule } from './modules/budgets/budgets.module';
 import { ReportsModule } from './modules/reports/reports.module';
 import { ExchangeRatesModule } from './modules/exchange-rates/exchange-rates.module';
+import { RealtimeModule } from './modules/realtime/realtime.module';
 import { SyncModule } from './modules/sync/sync.module';
 
 @Module({
@@ -32,6 +34,7 @@ import { SyncModule } from './modules/sync/sync.module';
     ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 300 }]),
     ConfigModule,
     DatabaseModule,
+    RealtimeModule,
     HealthModule,
     AuthModule,
     UsersModule,
@@ -50,4 +53,15 @@ import { SyncModule } from './modules/sync/sync.module';
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  /**
+   * 쓰기 요청을 문맥으로 감싸고, 끝나면 실시간 신호를 흘린다.
+   *
+   * 미들웨어에 두는 이유는 요청 처리 전체를 감싸야 하기 때문이다. 인터셉터는
+   * 핸들러가 실제로 도는 시점과 구독 시점이 어긋나 AsyncLocalStorage 가 새어 나간다.
+   * 읽기 메서드는 미들웨어가 곧바로 흘려보낸다.
+   */
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(SyncNotifyMiddleware).forRoutes('*');
+  }
+}

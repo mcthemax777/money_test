@@ -3,6 +3,7 @@ import { ProjectRole } from '@prisma/client';
 import { CurrencyCode, DEFAULT_TIME_ZONE, isCurrencyCode } from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
 import { forbidden } from './app-error';
+import { recordProjectWrite } from './project-write-context';
 
 /** 프로젝트 역할. 숫자가 클수록 넓은 권한이다. */
 const ROLE_RANK: Record<ProjectRole, number> = { owner: 3, editor: 2, viewer: 1 };
@@ -55,6 +56,15 @@ export class ProjectAccessService {
       throw new ForbiddenException(
         `이 작업에는 ${ROLE_LABEL[requiredRole]} 이상의 권한이 필요합니다.`,
       );
+    }
+
+    /*
+     * 쓰기 권한으로 열었다면 이번 요청이 이 프로젝트를 바꿀 수 있다는 뜻이다.
+     * 요청이 성공으로 끝나면 미들웨어가 그 사실을 실시간 신호로 흘린다
+     * (project-write-context.ts 에 왜 여기인지 적어 두었다).
+     */
+    if (requiredRole !== 'viewer') {
+      recordProjectWrite(projectId);
     }
   }
 

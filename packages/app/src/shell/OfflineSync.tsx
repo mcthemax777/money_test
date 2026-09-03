@@ -10,7 +10,7 @@ import { useEffect } from 'react';
 
 import { useProject, useProjectTimeZone } from '@money/core/store/project';
 
-import { syncNow, useLocalWrites } from '../offline';
+import { listenForChanges, syncNow, useLocalWrites } from '../offline';
 
 export default function OfflineSync() {
   const projectId = useProject((state) => state.selectedProjectId);
@@ -36,8 +36,17 @@ export default function OfflineSync() {
       );
     })();
 
+    /*
+     * 서버가 바뀐 것을 알려 오면 그때마다 다시 맞춘다.
+     *
+     * 다른 사람이 웹에서 고친 것이 이 길로 들어온다. 알림이 오지 않아도 위의 한 번과
+     * 저장 직후의 동기화가 있으므로 화면이 틀리지는 않는다 -- 늦게 따라붙을 뿐이다.
+     */
+    const stopListening = listenForChanges(projectId, timeZone);
+
     return () => {
       cancelled = true;
+      stopListening();
     };
   }, [projectId, timeZone]);
 

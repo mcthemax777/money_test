@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import { AuthInitializer } from '@/components/AuthInitializer';
+import { LiveSync } from '@/components/LiveSync';
 import { LocaleSync } from '@/components/LocaleSync';
 
 /*
@@ -23,6 +24,7 @@ export default function RootLayout({
       <body>
         <AuthInitializer />
         <LocaleSync />
+        <LiveSync />
         {children}
       </body>
     </html>

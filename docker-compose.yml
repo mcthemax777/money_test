@@ -21,6 +21,25 @@ services:
       timeout: 5s
       retries: 5
 
+  # 실시간 알림을 인스턴스 사이로 나르는 통로.
+  #
+  # 인스턴스가 하나면 없어도 된다 -- 서버는 REDIS_URL 이 없으면 신호를 자기 프로세스
+  # 안에서만 흘린다. 여럿을 띄울 때만 필요하다. 여기 두는 이유는 그 경로를 개발 중에도
+  # 켜 볼 수 있어야 하기 때문이다(끄고 켜는 차이가 코드에 있다).
+  #
+  # 데이터를 담지 않으므로 볼륨을 두지 않는다. 신호는 지나가면 끝이고, 놓친 기기는
+  # /sync/pull 이 커서로 따라잡는다.
+  redis:
+    image: redis:7-alpine
+    container_name: money_redis
+    ports:
+      - '6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
 
 volumes:
   postgres_data:

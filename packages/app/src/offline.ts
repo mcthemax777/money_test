@@ -1,16 +1,20 @@
 /*
  * 이 기기의 오프라인 준비.
  *
- * 하는 일은 넷이다.
+ * 하는 일은 다섯이다.
  *   1. 사본을 연다.
  *   2. 읽기 창구(홈·가계)를 사본으로 갈아 끼운다.
  *   3. 프로젝트를 고를 때마다 쓰기 창구를 그 프로젝트의 사본으로 갈아 끼운다.
  *   4. 서버와 맞춘다 -- 쌓인 명령을 밀어 올린 뒤 바뀐 것을 받는다.
+ *   5. 서버가 "바뀌었다"고 알려 오면 곧바로 4번을 다시 돈다.
  *
  * 동기화가 실패해도 화면을 막지 않는다. 사본이 이미 읽을 수 있는 상태이고, 오프라인은
  * 오류가 아니라 상태다.
  */
+import { fetch as streamingFetch } from 'expo/fetch';
+
 import { apiClient } from '@money/core/lib/api-client';
+import { getAccessToken } from '@money/core/lib/auth-tokens';
 import { setEntryWritePort } from '@money/core/data/entry-write-port';
 import { httpHomePort, setHomeDataPort } from '@money/core/data/home-port';
 import { createLocalEntryWriter } from '@money/core/data/local-entry-writer';
@@ -18,6 +22,7 @@ import { createLocalHomePort } from '@money/core/data/local-home-port';
 import type { HeldMutation, LocalStore } from '@money/core/data/local-store';
 import { notifyMirrorChanged } from '@money/core/data/mirror-events';
 import { setMirrorTeardown } from '@money/core/data/mirror-teardown';
+import { openSyncEvents, type StreamingFetch } from '@money/core/data/sync-events';
 import { syncProject, type SyncResult } from '@money/core/data/sync-engine';
 import { newId } from '@money/types';
 
@@ -138,6 +143,38 @@ export async function clearOffline(): Promise<void> {
    * 은 앱이 시작할 때 한 번만 도는데, 로그아웃과 로그인은 앱을 켠 채로 일어나기 때문이다.
    */
   await setupOffline();
+}
+
+/**
+ * 서버의 알림에 귀를 연다. 돌려주는 함수를 부르면 닫는다.
+ *
+ * 알림에는 번호만 실려 온다. 그것을 신호로 평소의 동기화를 한 번 더 돌릴 뿐이라,
+ * 실시간이 되어도 값이 오는 길은 하나 그대로다. 알림이 끊긴 동안에도 화면이 틀리지
+ * 않는 이유가 이것이다 -- 늦게 따라붙을 뿐이다.
+ *
+ * 스트리밍 fetch 를 expo 에서 받아 넣는다. 리액트 네이티브의 기본 fetch 는 응답을
+ * 끝까지 받아야 돌려주고, EventSource 는 아예 없다.
+ */
+export function listenForChanges(projectId: string, timeZone: string): () => void {
+  if (!store) return () => {};
+
+  return openSyncEvents({
+    baseUrl: apiClient.baseUrl,
+    projectId,
+    // 붙을 때마다 부른다. 만료가 코앞이면 여기서 갱신되어 401 로 끊기지 않는다.
+    getToken: async () => {
+      await apiClient.ensureFreshToken();
+      return getAccessToken();
+    },
+    fetchFn: streamingFetch as unknown as StreamingFetch,
+    onVersion: () => {
+      void syncNow(projectId, timeZone);
+    },
+    onError: (error) => {
+      // 다시 붙는 일은 core 가 맡는다. 여기서는 남기기만 한다.
+      console.log('알림 연결 오류:', error instanceof Error ? error.message : error);
+    },
+  });
 }
 
 /** 사본을 쓸 수 있는 상태인가. 화면이 "오프라인에서도 볼 수 있다"를 알릴 때 쓴다. */

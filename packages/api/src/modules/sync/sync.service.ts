@@ -28,6 +28,20 @@ export class SyncService {
     private readonly projectAccess: ProjectAccessService,
   ) {}
 
+  /**
+   * 이 프로젝트가 지금 몇 번인가.
+   *
+   * SSE 로 붙는 순간에 한 번 보낸다. 끊겨 있던 동안의 신호는 이미 지나갔으므로,
+   * 붙자마자 지금 번호를 알려 주어야 기기가 밀린 변경을 받아 간다.
+   */
+  async currentVersion(projectId: string): Promise<number> {
+    const project = await this.prisma.project.findUniqueOrThrow({
+      where: { id: projectId },
+      select: { syncVersion: true },
+    });
+    return project.syncVersion;
+  }
+
   async pull(
     userId: string,
     query: SyncDto.PullQuery,

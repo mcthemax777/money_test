@@ -240,6 +240,26 @@ class ApiClient {
     this.client.defaults.baseURL = url;
   }
 
+  /**
+   * 지금 보고 있는 서버 주소.
+   *
+   * 알림 연결(SSE)은 axios 를 쓰지 않는다. 응답을 끝까지 기다리지 않고 조금씩 읽어야
+   * 해서 스트리밍을 지원하는 fetch 로 직접 연다. 그 자리에서 이 주소가 필요하다.
+   */
+  get baseUrl(): string {
+    return this.client.defaults.baseURL || this.baseURL;
+  }
+
+  /**
+   * 만료가 코앞이면 미리 갱신한다.
+   *
+   * 알림 연결은 붙을 때 한 번만 토큰을 보낸다. 만료된 토큰으로 붙으면 401 로 끊기고,
+   * 다시 붙기를 반복하는 동안 화면이 실시간을 잃는다. 그래서 붙기 전에 부른다.
+   */
+  async ensureFreshToken(): Promise<void> {
+    await this.refreshIfExpiring();
+  }
+
   /** 세션이 끊겼을 때 부를 것을 등록한다 (앱은 로그인 화면으로 되돌린다). */
   setUnauthorizedHandler(handler: () => void) {
     this.onUnauthorized = handler;
@@ -890,7 +910,7 @@ class ApiClient {
    */
   async getEntryMonths(
     projectId?: string | null,
-    filter?: EntryScopeQuery,
+    filter?: ReportDto.EntryMonthsQuery,
   ): Promise<ReportDto.EntryMonth[]> {
     const response = await this.client.get<ReportDto.EntryMonth[]>('/reports/entry-months', {
       params: { ...(projectId ? { projectId } : {}), ...filter },

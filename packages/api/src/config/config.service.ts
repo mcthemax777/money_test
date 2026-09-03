@@ -56,6 +56,17 @@ export class ConfigService {
     return this.env.REFRESH_TOKEN_EXPIRES_IN || '7d';
   }
 
+  /**
+   * 실시간 신호를 인스턴스 사이로 나르는 레디스 주소.
+   *
+   * 없으면 신호가 그 프로세스 안에서만 돈다. 인스턴스가 하나면 그것으로 충분하다.
+   * **인스턴스를 둘 이상 띄우면 반드시 넣어야 한다.** 그러지 않으면 웹에서 고친 것이
+   * 다른 인스턴스에 붙어 있는 화면에 즉시 닿지 않는다(다음 동기화까지 늦어진다).
+   */
+  get redisUrl(): string | null {
+    return this.env.REDIS_URL?.trim() || null;
+  }
+
 
   get corsOrigin(): string[] {
     return this.env.CORS_ORIGIN?.split(',') || ['http://localhost:3000'];
