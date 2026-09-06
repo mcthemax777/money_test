@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Alert, Pressable, Text, TextInput, View } from 'react-native';
 import { DEFAULT_TIME_ZONE, SUPPORTED_CURRENCIES, type CurrencyCode } from '@money/types';
 
+import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { useProjectAdmin } from '@money/core/hooks/useProjectAdmin';
 import {
   useProjectMembership,
@@ -29,6 +30,7 @@ export default function ProjectsScreen() {
   const { t, tag } = useTranslation();
   const admin = useProjectAdmin();
   const membership = useProjectMembership();
+  const mirrorVersion = useMirrorVersion();
 
   /*
    * 프로젝트·멤버·초대는 온라인에서만 한다.
@@ -63,8 +65,9 @@ export default function ProjectsScreen() {
   const projectIds = admin.projects.map((project) => project.id).join(',');
   useEffect(() => {
     if (admin.projects.length > 0) membership.load(admin.projects);
+    // 남이 멤버를 넣고 빼거나 가입 요청을 보낸 것도 이 자리에서 따라온다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectIds]);
+  }, [projectIds, mirrorVersion]);
 
   const roleLabel = (role: 'owner' | 'editor' | 'viewer') => t(`role.${role}` as MessageKey);
 

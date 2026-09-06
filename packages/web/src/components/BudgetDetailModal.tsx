@@ -6,6 +6,7 @@ import { X } from 'lucide-react';
 import Modal from './Modal';
 import type { EntryListItem } from './TransactionItem';
 import TransactionListView from './TransactionListView';
+import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import {
@@ -142,6 +143,7 @@ export function BudgetDetailModal({
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
   const displayCurrency = useProjectDisplayCurrency();
+  const mirrorVersion = useMirrorVersion();
 
   /*
    * 구간을 세 형태로 쓴다 (PaymentMethodTab과 같은 규칙).
@@ -318,6 +320,8 @@ export function BudgetDetailModal({
     timeZone,
     filter,
     reloadToken,
+    // 남이 고친 거래도 이 상세에 들어와야 한다. reloadToken 은 이 화면의 편집만 센다.
+    mirrorVersion,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   ]);
 

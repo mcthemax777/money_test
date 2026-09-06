@@ -66,6 +66,7 @@ import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import { accountTypeLabel } from '@money/core/lib/account-type';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useApiError } from '@money/core/lib/api-error';
+import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 
 
 
@@ -226,6 +227,20 @@ export default function DashboardPage() {
   const [netWorth, setNetWorth] = useState<ReportDto.NetWorth | null>(null);
   /** 투자·저축 계좌별 누적 수익. 계좌 id -> 금액 (계좌 통화) */
   const [accountProfit, setAccountProfit] = useState<Map<string, string>>(new Map());
+  /*
+   * 남이 고친 것도 이 화면에 들어와야 한다.
+   *
+   * 아래 counter 들은 이 화면이 제 손으로 고쳤을 때만 오른다. 그것만 보면 다른 기기에서
+   * 만든 통장·카드·거래가 이 화면에는 영영 나타나지 않는다.
+   */
+  const mirrorVersion = useMirrorVersion();
+  /**
+   * 어느 프로젝트를 이미 그렸는가.
+   *
+   * 신호가 올 때마다 다시 받는데, 그때마다 로딩 화면을 씌우면 보고 있던 목록이 계속
+   * 깜빡인다. 처음 여는 순간에만 씌운다.
+   */
+  const loadedProjectRef = useRef<string | null>(null);
   /** 항목을 숨기거나 되돌리면 올린다. 숨긴 항목 패널이 이 값을 보고 다시 읽는다. */
   const [hiddenVersion, setHiddenVersion] = useState(0);
   /** 거래를 고치거나 지우면 올린다. 구성원 거래와 계좌 원장이 이 값을 보고 다시 읽는다. */
@@ -261,7 +276,7 @@ export default function DashboardPage() {
 
     const loadData = async () => {
       try {
-        setIsLoading(true);
+        if (loadedProjectRef.current !== selectedProjectId) setIsLoading(true);
         const [accountsData, peopleData, cardsData, categoriesData, netWorthData, profitData] =
           await Promise.all([
             apiClient.getAccountsV2(selectedProjectId),
@@ -280,12 +295,14 @@ export default function DashboardPage() {
       } catch (err) {
         setError(t('home.loadFailed'));
       } finally {
+        loadedProjectRef.current = selectedProjectId;
         setIsLoading(false);
       }
     };
 
     loadData();
-  }, [selectedProjectId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProjectId, mirrorVersion]);
 
   usePersonFilterSync(selectedProjectId, people);
 
@@ -416,7 +433,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedPerson, detailType, selectedProjectId, entryVersion]);
+  }, [selectedPerson, detailType, selectedProjectId, entryVersion, mirrorVersion]);
 
   // 계좌 선택 시 거래 내역 로드
   useEffect(() => {
@@ -426,7 +443,7 @@ export default function DashboardPage() {
       setAccountTransactions([]);
       setLedgerCursor(null);
     }
-  }, [selectedAccount, detailType, loadAccountTransactions, entryVersion]);
+  }, [selectedAccount, detailType, loadAccountTransactions, entryVersion, mirrorVersion]);
 
   const getAccountCards = (accountId: string) =>
     cards.filter((c) => c.paymentAccountId === accountId);

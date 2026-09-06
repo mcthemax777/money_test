@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Eye, EyeOff } from 'lucide-react';
 import { apiClient } from '@money/core/lib/api-client';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 
 interface HiddenItem {
   id: string;
@@ -33,6 +34,8 @@ interface Props {
  * 숨긴 것이 하나도 없으면 아무것도 그리지 않는다.
  */
 export default function HiddenItemsPanel({ projectId, onRestored, reloadToken }: Props) {
+  // 남이 고친 것도 들어와야 한다. reloadToken 은 이 화면의 편집만 센다.
+  const mirrorVersion = useMirrorVersion();
   const { t } = useTranslation();
   const [items, setItems] = useState<HiddenItem[]>([]);
   const [isOpen, setIsOpen] = useState(false);
@@ -72,7 +75,7 @@ export default function HiddenItemsPanel({ projectId, onRestored, reloadToken }:
   // 숨긴 것이 있는지는 접혀 있을 때도 알아야 버튼을 보여 줄지 정할 수 있다.
   useEffect(() => {
     load();
-  }, [load, reloadToken]);
+  }, [load, reloadToken, mirrorVersion]);
 
   const restore = async (item: HiddenItem) => {
     try {

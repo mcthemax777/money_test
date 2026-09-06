@@ -4,6 +4,7 @@ import type { EntryFilterQuery } from '@money/types';
 
 import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
 import { useTranslation } from '@money/core/lib/i18n';
+import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import type { Category } from '@money/core/lib/types';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
@@ -43,6 +44,8 @@ export default function CategoryBreakdown({
 }) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
+  // 남이 고친 거래도 이 집계에 들어와야 한다. reloadToken 은 이 화면의 편집만 센다.
+  const mirrorVersion = useMirrorVersion();
 
   const [type, setType] = useState<EntryType>('expense');
   /** 대분류로 합친 집계(rollup). 목록의 윗줄이다. */
@@ -85,7 +88,7 @@ export default function CategoryBreakdown({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, periodKey, type, filter, reloadToken]);
+  }, [projectId, periodKey, type, filter, reloadToken, mirrorVersion]);
 
   /**
    * 대분류 줄. 거래가 없는 분류도 0원으로 남긴다.

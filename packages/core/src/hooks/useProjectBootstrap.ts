@@ -3,6 +3,7 @@ import { useEffect } from 'react';
 import { apiClient } from '../lib/api-client';
 import { useAuth } from '../store/auth';
 import { useProject } from '../store/project';
+import { useMirrorVersion } from './useMirrorVersion';
 
 /**
  * 화면이 프로젝트 하나를 고른 상태로 시작하게 만든다.
@@ -26,6 +27,13 @@ export function useProjectBootstrap(): {
   const selectedProjectId = useProject((state) => state.selectedProjectId);
   const setProjects = useProject((state) => state.setProjects);
   const setSelectedProjectId = useProject((state) => state.setSelectedProjectId);
+  /*
+   * 남이 프로젝트를 고치면(이름·통화·타임존·내 권한) 그것도 들어와야 한다.
+   *
+   * 목록은 서버에서 받으므로 사본이 채워지는 것만으로는 갱신되지 않는다. 신호가 올
+   * 때마다 한 번 더 받는다 -- 목록은 작고, 이 훅은 앱이 도는 동안 한 번만 붙는다.
+   */
+  const mirrorVersion = useMirrorVersion();
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -59,8 +67,8 @@ export function useProjectBootstrap(): {
     return () => {
       cancelled = true;
     };
-    // 목록은 로그인 상태가 바뀔 때만 받는다. 화면을 옮길 때마다 받으면 요청이 겹친다.
-  }, [isAuthenticated, setProjects, setSelectedProjectId]);
+    // 화면을 옮길 때마다 받지는 않는다. 로그인 상태와 사본의 번호만 본다.
+  }, [isAuthenticated, setProjects, setSelectedProjectId, mirrorVersion]);
 
   return {
     selectedProjectId,

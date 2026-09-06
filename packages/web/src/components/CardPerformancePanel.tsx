@@ -6,6 +6,7 @@ import { apiClient } from '@money/core/lib/api-client';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { formatDateMarker } from '@money/core/lib/datetime';
+import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 
 interface CardPerformancePanelProps {
   cardId: string;
@@ -27,6 +28,8 @@ export default function CardPerformancePanel({
   reloadToken = 0,
 }: CardPerformancePanelProps) {
   const { t } = useTranslation();
+  // 남이 그 카드로 결제한 것도 실적에 들어와야 한다. reloadToken 은 이 화면의 편집만 센다.
+  const mirrorVersion = useMirrorVersion();
   const [performance, setPerformance] = useState<CardDto.PerformanceResponse | null>(null);
   const [error, setError] = useState('');
 
@@ -42,7 +45,7 @@ export default function CardPerformancePanel({
 
   useEffect(() => {
     load();
-  }, [load, reloadToken]);
+  }, [load, reloadToken, mirrorVersion]);
 
   if (error) {
     return <p className="text-sm text-red-600">{error}</p>;

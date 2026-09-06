@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { EntryDto, EntryFilterQuery, EntryListItem } from '@money/types';
 
 import { homeDataPort } from '../data/home-port';
+import { useMirrorVersion } from './useMirrorVersion';
 
 /**
  * 거래를 끊어서 받아 오는 목록.
@@ -31,6 +32,15 @@ export function useEntryFeed({
   /** 값이 바뀌면 처음부터 다시 받는다. 거래를 고친 뒤 화면이 올린다. */
   reloadToken?: number;
 }) {
+  /*
+   * 남이 고친 것도 이 목록에 들어와야 한다.
+   *
+   * `reloadToken` 은 이 화면이 제 손으로 고쳤을 때만 오른다. 그것만 보면 합계는
+   * 다시 읽히는데(요약 훅들은 이 값을 본다) 목록만 멈춘 채로 남아, 한 화면 안에서
+   * 숫자와 줄이 어긋난다. 실제로 홈 화면이 그랬다 -- 지출 합계는 늘었는데 그 아래
+   * 목록에는 그 거래가 없었다.
+   */
+  const mirrorVersion = useMirrorVersion();
   const [entries, setEntries] = useState<EntryListItem[]>([]);
   const [hasMore, setHasMore] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
@@ -97,7 +107,7 @@ export function useEntryFeed({
     },
     // filterKey 로 의존성을 굳힌다. filter 는 렌더마다 새 객체이고 구간도 함께 담는다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [projectId, filterKey, pageSize, reloadToken],
+    [projectId, filterKey, pageSize, reloadToken, mirrorVersion],
   );
 
   /** 처음부터 다시. 프로젝트나 필터가 바뀔 때와 다시 시도할 때 쓴다. */

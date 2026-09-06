@@ -3,6 +3,7 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@money/core/store/auth';
+import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { useProjectAdmin } from '@money/core/hooks/useProjectAdmin';
 import {
   useProjectMembership,
@@ -33,6 +34,7 @@ export default function ProjectsPage() {
   const { isAuthenticated, isInitializing } = useAuth();
   const admin = useProjectAdmin();
   const membership = useProjectMembership();
+  const mirrorVersion = useMirrorVersion();
 
   const [error, setError] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -71,8 +73,9 @@ export default function ProjectsPage() {
   const projectIds = admin.projects.map((project) => project.id).join(',');
   useEffect(() => {
     if (admin.projects.length > 0) membership.load(admin.projects);
+    // 남이 멤버를 넣고 빼거나 가입 요청을 보낸 것도 이 자리에서 따라온다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectIds]);
+  }, [projectIds, mirrorVersion]);
 
   const loadProjects = async () => {
     const result = await admin.reload();

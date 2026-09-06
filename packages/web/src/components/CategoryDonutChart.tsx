@@ -7,6 +7,7 @@ import type { EntryFilterQuery } from '@money/types';
 import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
 import { CHART_CATEGORY_COLORS, CHART_TOOLTIP_STYLE, formatTooltipAmount } from '@money/core/lib/chart';
 import { useTranslation } from '@money/core/lib/i18n';
+import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 
@@ -77,6 +78,8 @@ export default function CategoryDonutChart({
 }: CategoryDonutChartProps) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
+  // 남이 고친 거래도 이 집계에 들어와야 한다. reloadToken 은 이 화면의 편집만 센다.
+  const mirrorVersion = useMirrorVersion();
   const [rows, setRows] = useState<BreakdownRow[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
@@ -115,7 +118,7 @@ export default function CategoryDonutChart({
     };
     // period·filter는 렌더마다 새 객체다. 값이 같으면 다시 부르지 않게 굳힌다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, type, periodKey, filterKey]);
+  }, [projectId, type, periodKey, filterKey, mirrorVersion]);
 
   const { slices, total } = useMemo(() => {
     const sorted = rows

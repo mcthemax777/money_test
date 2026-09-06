@@ -41,6 +41,7 @@ import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import { useProjectGuard } from '@/hooks/useProjectGuard';
 import type { EntryFilterQuery } from '@money/types';
 import { useApiError } from '@money/core/lib/api-error';
+import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 
 /**
  * 기간 보기에서 그릴 달력 장수 상한.
@@ -126,6 +127,7 @@ export default function TransactionsPage() {
    * 고쳤을 수 있다. 받아 둔 값을 먼저 보여 주고 새 값이 오면 갈아 끼운다.
    * 앱의 가계 화면도 같은 방식이다.
    */
+  const mirrorVersion = useMirrorVersion();
   const [visited, setVisited] = useState<ViewType[]>(['calendar']);
   const [visits, setVisits] = useState<Record<ViewType, number>>({
     calendar: 0,
@@ -376,6 +378,39 @@ export default function TransactionsPage() {
     appliedFilter,
     fetchMonthlyBudgets,
   ]);
+
+  /*
+   * 남이 고친 것을 이 화면에 들여온다.
+   *
+   * 거래·합계·예산과 자식 탭은 저장 직후에 하는 일과 같아 `handleEntryChange` 를 그대로
+   * 쓰고, 참조 목록(통장·카드·분류·구성원)은 여기서 함께 받는다. 맨 위의 첫 조회 효과를
+   * 다시 돌리지 않는 이유는 그것이 **보고 있는 달을 오늘로 되돌리기** 때문이다 -- 지난달을
+   * 펼쳐 둔 사람의 화면이 남의 저장 때문에 이번 달로 튀면 안 된다.
+   *
+   * 처음 그릴 때는 건너뛴다. 그때는 위의 조회들이 이미 돈다.
+   */
+  const seenMirrorRef = useRef(0);
+  useEffect(() => {
+    if (seenMirrorRef.current === mirrorVersion) return;
+    seenMirrorRef.current = mirrorVersion;
+    if (!selectedProjectId) return;
+
+    const refresh = async () => {
+      const [accountsData, peopleData, cardsData, categoriesData] = await Promise.all([
+        apiClient.getAccountsV2(selectedProjectId),
+        apiClient.getPeople(selectedProjectId),
+        apiClient.getCards(selectedProjectId),
+        apiClient.getCategories(selectedProjectId),
+      ]);
+      setAccounts(accountsData || []);
+      setPeople(peopleData || []);
+      setCards(cardsData || []);
+      setCategories(categoriesData || []);
+      await handleEntryChange();
+    };
+
+    refresh().catch((err: unknown) => console.error('바뀐 내용 조회 실패:', err));
+  }, [mirrorVersion, selectedProjectId, handleEntryChange]);
 
   /** 거래 팝업 안에서 계좌·카드·분류·사람을 새로 만들었을 때. 바뀐 목록만 갈아 끼운다. */
   const handleReferenceDataChange = useCallback((patch: ReferenceDataPatch) => {

@@ -113,6 +113,23 @@ export class InstitutionsService {
       const created = await this.prisma.financialInstitution.create({
         data: { projectId, type: dto.type, name },
       });
+
+      /*
+       * 프로젝트의 번호를 올려 다른 기기에 신호를 보낸다.
+       *
+       * 이 표에는 번호 도장(sync_stamp)이 없다. 기관은 사본으로 내려가지 않고 양쪽이
+       * 서버에서 직접 받아 캐시하기 때문이다. 그래서 여기서 프로젝트 행을 건드려
+       * 트리거를 깨운다 -- 값 자체는 뜻이 없고, 신호를 내는 것이 목적이다(전표에 태그를
+       * 붙일 때 `updatedAt` 을 건드리는 것과 같은 수법이다).
+       *
+       * 이것이 없으면 웹에서 만든 "기타 은행"이 앱의 계좌 추가 화면에 영영 나타나지
+       * 않는다. 앱을 껐다 켜야 보인다.
+       */
+      await this.prisma.project.update({
+        where: { id: projectId },
+        data: { updatedAt: new Date() },
+      });
+
       return { ...created, isCustom: true };
     } catch (error) {
       if (

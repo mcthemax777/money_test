@@ -4,6 +4,7 @@ import type { CurrencyCode, ExchangeRateInfo } from '@money/types';
 import { toAmountString, toNumber } from '../lib/money';
 import { apiClient } from '../lib/api-client';
 import { useProject } from '../store/project';
+import { useMirrorVersion } from './useMirrorVersion';
 
 /**
  * 저장 통화 기준 환율.
@@ -14,7 +15,7 @@ import { useProject } from '../store/project';
  *
  * 프로젝트마다 저장 통화가 다를 수 있어 프로젝트를 키로 캐시한다.
  */
-const cache = new Map<string, ExchangeRateInfo[]>();
+const cache = new Map<string, { version: number; rates: ExchangeRateInfo[] }>();
 
 /**
  * 캐시를 버린다. 설정에서 환율을 바꾸거나 되돌린 뒤에 부른다.
@@ -29,21 +30,27 @@ export function clearExchangeRateCache() {
 export function useExchangeRates() {
   const { selectedProjectId } = useProject();
   const key = selectedProjectId ?? 'default';
-  const [rates, setRates] = useState<ExchangeRateInfo[]>(() => cache.get(key) ?? []);
+  /*
+   * 남이 환율을 바꾸면 이 캐시도 낡는다. 그래서 캐시에 그때의 번호를 함께 적어 두고,
+   * 번호가 오르면 한 번 다시 받는다. 캐시를 아예 없애면 폼이 여럿 올라오는 화면에서
+   * 같은 요청이 여러 번 나가고, 그대로 두면 옛 환율로 계산한 미리보기가 남는다.
+   */
+  const mirrorVersion = useMirrorVersion();
+  const [rates, setRates] = useState<ExchangeRateInfo[]>(() => cache.get(key)?.rates ?? []);
 
   useEffect(() => {
     let cancelled = false;
 
     const cached = cache.get(key);
-    if (cached) {
-      setRates(cached);
+    if (cached && cached.version === mirrorVersion) {
+      setRates(cached.rates);
       return;
     }
 
     apiClient
       .getExchangeRates(selectedProjectId)
       .then((res) => {
-        cache.set(key, res.rates ?? []);
+        cache.set(key, { version: mirrorVersion, rates: res.rates ?? [] });
         if (!cancelled) setRates(res.rates ?? []);
       })
       .catch(() => {
@@ -54,7 +61,7 @@ export function useExchangeRates() {
     return () => {
       cancelled = true;
     };
-  }, [key, selectedProjectId]);
+  }, [key, selectedProjectId, mirrorVersion]);
 
   /** 1 currency = ? 기준통화. 모르는 통화는 빈 문자열(= 사용자가 직접 입력). */
   const rateOf = (currency: CurrencyCode): string =>
@@ -73,6 +80,8 @@ export function useExchangeRates() {
  */
 export function useExchangeRateSettings() {
   const { selectedProjectId } = useProject();
+  // 남이 설정 화면에서 바꾼 환율도 들어와야 한다.
+  const mirrorVersion = useMirrorVersion();
   const [ledgerCurrency, setLedgerCurrency] = useState('KRW');
   const [rates, setRates] = useState<ExchangeRateInfo[]>([]);
   const [savingPair, setSavingPair] = useState<string | null>(null);
@@ -88,7 +97,8 @@ export function useExchangeRateSettings() {
       console.error('환율 조회 실패:', error);
       setFailure('load');
     }
-  }, [selectedProjectId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProjectId, mirrorVersion]);
 
   useEffect(() => {
     load();
