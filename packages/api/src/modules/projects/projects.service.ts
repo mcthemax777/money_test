@@ -4,6 +4,7 @@ import { randomBytes, randomInt } from 'crypto';
 import { ProjectAccessService } from '../../common/project-access.guard';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { badRequest, forbidden, notFound } from '@/common/app-error';
+import { rankAfter } from '@money/types';
 
 interface CreateProjectDto {
   name: string;
@@ -43,6 +44,9 @@ export class ProjectsService {
       },
     });
 
+    // 만든 사람을 첫 구성원으로 세우고 "나"로 지정한다.
+    const myPersonId = await this.ensureMyPerson(project.id, userId);
+
     // 이 프로젝트가 사용자의 유일한 프로젝트라면 기본 프로젝트로 지정한다.
     // 프로젝트를 모두 삭제했거나 강퇴당한 뒤 다시 만드는 경우가 여기에 해당한다.
     const membershipCount = await this.prisma.projectMember.count({ where: { userId } });
@@ -57,6 +61,8 @@ export class ProjectsService {
     return {
       ...project,
       role: 'owner',
+      /* 목록(getMyProjects)과 같은 모양으로 돌려준다. 다시 받지 않아도 "나"를 알 수 있다. */
+      myPersonId,
     };
   }
 
@@ -135,6 +141,71 @@ export class ProjectsService {
       /** 이 사용자가 이 프로젝트에서 "나"로 지정한 구성원 */
       myPersonId: pm.personId,
     }));
+  }
+
+  /**
+   * 들어온 사용자의 "나" 구성원을 마련한다.
+   *
+   * 프로젝트를 만들 때와 다른 사람의 프로젝트에 들어올 때 부른다. 예전에는 구성원을
+   * 사용자가 직접 등록했는데, 그때까지는 자산주인이 하나도 없어 홈도 자산도 빈 화면이고
+   * 거래를 적을 자리도 없었다. 계정 이름을 그대로 쓰면 첫 화면부터 자기 이름이 보인다.
+   *
+   * 이미 자기로 지정한 구성원이 있으면 그대로 둔다. 다시 들어오는 길(탈퇴 후 재가입,
+   * 초대를 두 번 수락)에서 이름만 같은 구성원이 하나 더 생기면 계좌와 거래가 둘로 갈린다.
+   *
+   * 그래서 같은 이름의 구성원이 이미 있고 아무도 자기로 삼지 않았다면 그것을 쓴다.
+   * 탈퇴할 때 구성원은 남기고 멤버십만 지우므로(leaveProject), 다시 들어오면 그 구성원이
+   * 자기 계좌와 거래를 그대로 들고 기다리고 있다. 남이 이미 자기로 지정한 구성원은
+   * 건드리지 않는다 -- 동명이인이면 새로 만드는 편이 맞다.
+   *
+   * 한 트랜잭션 안에서 읽고 쓴다. 두 사람이 같은 순간에 들어와도 같은 구성원을 서로
+   * 자기라고 집어 가지 않는다.
+   *
+   * @returns 지정한 구성원 id. 멤버가 아니면 null (부르는 쪽이 방금 만든 뒤라 정상 경로는 아니다)
+   */
+  async ensureMyPerson(projectId: string, userId: string): Promise<string | null> {
+    return this.prisma.$transaction(async (tx) => {
+      const member = await tx.projectMember.findUnique({
+        where: { projectId_userId: { projectId, userId } },
+        include: { user: { select: { name: true, email: true } } },
+      });
+
+      if (!member) return null;
+      if (member.personId) return member.personId;
+
+      const name = personNameOf(member.user);
+
+      const unclaimed = await tx.person.findFirst({
+        // members 가 비어 있다 = 아무도 이 구성원을 자기로 지정하지 않았다.
+        where: { projectId, isActive: true, name, members: { none: {} } },
+        orderBy: [{ sortRank: 'asc' }, { createdAt: 'asc' }],
+        select: { id: true },
+      });
+
+      let personId = unclaimed?.id;
+
+      if (!personId) {
+        // 목록 맨 뒤에 붙인다. PeopleService.createPerson 과 같은 규칙이다.
+        const lastRank = await tx.person.aggregate({
+          where: { projectId },
+          _max: { sortRank: true },
+        });
+
+        const created = await tx.person.create({
+          data: {
+            projectId,
+            name,
+            sortRank: rankAfter(lastRank._max.sortRank),
+          },
+          select: { id: true },
+        });
+        personId = created.id;
+      }
+
+      await tx.projectMember.update({ where: { id: member.id }, data: { personId } });
+
+      return personId;
+    });
   }
 
   /**
@@ -308,6 +379,9 @@ export class ProjectsService {
         role: invitation.role,
       },
     });
+
+    // 들어온 사람을 구성원으로 세우고 "나"로 지정한다.
+    await this.ensureMyPerson(invitation.projectId, userId);
 
     // ProjectInvitation 상태 업데이트
     await this.prisma.projectInvitation.update({
@@ -710,6 +784,9 @@ export class ProjectsService {
       });
     }
 
+    // 승인된 사람을 구성원으로 세우고 그 사람의 "나"로 지정한다.
+    await this.ensureMyPerson(request.projectId, request.userId);
+
     await this.prisma.projectJoinRequest.update({
       where: { id: requestId },
       data: { status: 'approved', decidedAt: new Date(), decidedByUserId: userId },
@@ -773,6 +850,21 @@ export class ProjectsService {
   private generateInvitationCode(): string {
     return randomBytes(16).toString('hex');
   }
+}
+
+/**
+ * 새 구성원에 적을 이름.
+ *
+ * 계정 이름을 그대로 쓴다. 구글 로그인이 이름을 주지 않으면 로그인 시점에 이메일
+ * 앞부분이 이미 들어가 있지만(auth.service의 createOrUpdateUser), 그 경로가 바뀌어도
+ * 이름 없는 구성원이 생기지 않도록 여기서도 한 번 더 받쳐 둔다.
+ */
+function personNameOf(user: { name: string; email: string }): string {
+  const name = user.name.trim();
+  if (name) return name;
+
+  const local = user.email.split('@')[0]?.trim();
+  return local || '나';
 }
 
 /** IANA 타임존 이름인지 확인한다. ICU가 모르는 이름이면 예외가 난다. */

@@ -18,7 +18,7 @@
  */
 
 /** 스키마가 바뀌면 올린다. 다르면 사본을 버리고 처음부터 다시 받는다. */
-export const SCHEMA_VERSION = 4;
+export const SCHEMA_VERSION = 8;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -56,13 +56,21 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      updatedVersion INTEGER NOT NULL DEFAULT 0
    )`,
 
+  /*
+   * 구성원.
+   *
+   * `fieldHlc` 는 필드별 병합의 시계 지도다(서버의 같은 이름 컬럼). 기기가 이 값을 보고
+   * 다음 편집의 시계를 매겨야 자기가 본 값보다 뒤가 된다. JSON 문자열 그대로 담는다 --
+   * 기기는 읽어 넘기기만 하고 해석은 @money/types 의 field-merge 가 한다.
+   */
   `CREATE TABLE IF NOT EXISTS person (
      id             TEXT PRIMARY KEY,
      projectId      TEXT NOT NULL,
      name           TEXT NOT NULL,
      relationship   TEXT,
      isActive       INTEGER NOT NULL DEFAULT 1,
-     sortOrder      INTEGER NOT NULL DEFAULT 0,
+     sortRank       TEXT NOT NULL DEFAULT 'V',
+     fieldHlc       TEXT,
      createdAt      TEXT NOT NULL DEFAULT '',
      updatedAt      TEXT NOT NULL DEFAULT '',
      updatedVersion INTEGER NOT NULL DEFAULT 0
@@ -79,7 +87,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      currency       TEXT NOT NULL,
      balance        TEXT NOT NULL DEFAULT '0',
      isActive       INTEGER NOT NULL DEFAULT 1,
-     sortOrder      INTEGER NOT NULL DEFAULT 0,
+     sortRank       TEXT NOT NULL DEFAULT 'V',
+     fieldHlc       TEXT,
      createdAt      TEXT NOT NULL DEFAULT '',
      updatedAt      TEXT NOT NULL DEFAULT '',
      updatedVersion INTEGER NOT NULL DEFAULT 0
@@ -95,7 +104,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      defaultIsExtra INTEGER NOT NULL DEFAULT 0,
      isDefault      INTEGER NOT NULL DEFAULT 0,
      isActive       INTEGER NOT NULL DEFAULT 1,
-     sortOrder      INTEGER NOT NULL DEFAULT 0,
+     sortRank       TEXT NOT NULL DEFAULT 'V',
+     fieldHlc       TEXT,
      createdAt      TEXT NOT NULL DEFAULT '',
      updatedAt      TEXT NOT NULL DEFAULT '',
      updatedVersion INTEGER NOT NULL DEFAULT 0
@@ -114,7 +124,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      name           TEXT NOT NULL,
      color          TEXT,
      isActive       INTEGER NOT NULL DEFAULT 1,
-     sortOrder      INTEGER NOT NULL DEFAULT 0,
+     sortRank       TEXT NOT NULL DEFAULT 'V',
+     fieldHlc       TEXT,
      createdAt      TEXT NOT NULL DEFAULT '',
      updatedAt      TEXT NOT NULL DEFAULT '',
      updatedVersion INTEGER NOT NULL DEFAULT 0
@@ -147,7 +158,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      color               TEXT,
      expiryDate          TEXT,
      isActive            INTEGER NOT NULL DEFAULT 1,
-     sortOrder           INTEGER NOT NULL DEFAULT 0,
+     sortRank            TEXT NOT NULL DEFAULT 'V',
+     fieldHlc            TEXT,
      createdAt           TEXT NOT NULL DEFAULT '',
      updatedAt           TEXT NOT NULL DEFAULT '',
      updatedVersion      INTEGER NOT NULL DEFAULT 0
@@ -206,6 +218,7 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      monthlyAmount  TEXT NOT NULL,
      effectiveFrom  TEXT,
      effectiveTo    TEXT,
+     fieldHlc       TEXT,
      updatedVersion INTEGER NOT NULL DEFAULT 0
    )`,
 
@@ -215,6 +228,7 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      year           INTEGER NOT NULL,
      month          INTEGER NOT NULL,
      amount         TEXT NOT NULL,
+     fieldHlc       TEXT,
      updatedVersion INTEGER NOT NULL DEFAULT 0
    )`,
 
@@ -270,6 +284,20 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
    * 행이 아니라 명령을 담는 것이 이 표가 스키마 변경을 견디는 이유이기도 하다. 짐은
    * 화면이 만든 JSON 이라 사본의 표 모양이 바뀌어도 그대로 재생된다.
    */
+  /*
+   * 기기가 만든 id 가 서버의 다른 행으로 이어진 자국.
+   *
+   * 두 사람이 오프라인에서 같은 이름의 분류를 만들면 서버가 **이미 있는 행을 채택하고**
+   * 그 id 를 알려 준다. 사본과 큐의 참조는 그때 옮기지만, 나중에 도착하는 델타나 화면이
+   * 옛 id 를 들고 올 수 있어 이 표를 남긴다.
+   *
+   * 아웃박스처럼 사본이 아니다 -- 다시 받을 수 없는 값이라 ALL_TABLES 에 넣지 않는다.
+   */
+  `CREATE TABLE IF NOT EXISTS alias (
+     localId  TEXT PRIMARY KEY,
+     serverId TEXT NOT NULL
+   )`,
+
   `CREATE TABLE IF NOT EXISTS outbox (
      mutationId TEXT PRIMARY KEY,
      projectId  TEXT NOT NULL,

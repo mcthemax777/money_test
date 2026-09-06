@@ -15,8 +15,9 @@
  *   3. **결과 반영.** 적용된 것은 큐에서 빠지고, 충돌과 거절은 이유를 달고 남는다.
  *      조용히 지우면 사용자가 적은 것이 말없이 사라진다.
  *   4. **의존과 순서.** 번호는 1씩 오르고, 막힌 것은 다시 줄에 세울 수 있다.
+ *   5. **태그도 오프라인에서 붙는다.** 한 명령이 여러 전표를 건드리고, 통째 교체가
+ *      아니라 더한 것과 뗀 것만 담는다.
  */
-import { DatabaseSync } from 'node:sqlite';
 import { existsSync, readFileSync } from 'fs';
 import {
   type EntryDto,
@@ -29,6 +30,7 @@ import {
 } from '@money/types';
 
 import { createLocalEntryWriter } from '../src/data/local-entry-writer';
+import { createLocalSettingsWriter } from '../src/data/local-settings-writer';
 import { httpHomePort } from '../src/data/home-port';
 import { createLocalHomePort } from '../src/data/local-home-port';
 import { LocalStore } from '../src/data/local-store';
@@ -159,7 +161,7 @@ const KST = 'Asia/Seoul';
       continue;
     }
     for (const field of compared) {
-      const local = (row as Record<string, unknown>)[field];
+      const local = (row as unknown as Record<string, unknown>)[field];
       if (String(local) !== String(serverRow[field])) {
         mismatch += 1;
         console.log(
@@ -226,12 +228,37 @@ const KST = 'Asia/Seoul';
     (await store.pendingMutations(projectId)).some((row) => row.mutationId === conflicted.mutationId),
     false);
 
-  // 다시 줄에 세우면 번호는 그대로다. 새로 매기면 서버가 보기에 다른 명령이 된다.
-  await store.retryMutation(conflicted.mutationId);
+  /*
+   * 다시 보내기는 **새 명령**으로 나간다.
+   *
+   * 상태만 'pending' 으로 되돌리면 아무 일도 일어나지 않는다. 서버가 명령 id 로 판정을
+   * 기록해 두어(MutationLog) 같은 id 에는 그때의 판정 -- 충돌은 충돌 -- 을 그대로 돌려주기
+   * 때문이다. 그래서 id·순번·시계를 새로 뽑아야 재생까지 간다.
+   */
+  const beforeRetry = queued[2];
+  const targetHlc = await store.entryHlc(beforeRetry.targets[0]);
+  let retryCount = 0;
+  const again = await store.retryMutation(conflicted.mutationId, () => `retry-${(retryCount += 1)}`);
+
+  eq('새 명령으로 다시 낸다', again?.mutationId, 'retry-1');
+  eq('짐은 그대로 물려받는다', JSON.stringify(again?.payload), JSON.stringify(beforeRetry.payload));
+  eq('번호는 새로 받는다', (again?.clientSeq ?? 0) > beforeRetry.clientSeq, true);
+  eq('시계도 새로 받는다', (again?.hlc ?? '') > beforeRetry.hlc, true);
+  /*
+   * 요점. 사본에 들어 있는 그 거래의 시계보다 뒤여야 이번에는 이긴다. 충돌로 밀린 사이에
+   * 이긴 편집이 pull 로 들어와 있고, 사용자는 "그래도 내 값으로 하겠다"를 고른 것이다.
+   */
+  eq('사본의 그 거래보다 뒤다', (again?.hlc ?? '') > (targetHlc ?? ''), true);
+
   const retried = await store.pendingMutations(projectId);
-  eq('다시 줄에 선다', retried.some((row) => row.mutationId === conflicted.mutationId), true);
-  eq('번호는 그대로', retried.find((row) => row.mutationId === conflicted.mutationId)?.clientSeq,
-    queued[2].clientSeq);
+  eq('다시 줄에 선다', retried.some((row) => row.mutationId === 'retry-1'), true);
+  eq('옛 명령은 큐에서 사라진다',
+    retried.some((row) => row.mutationId === conflicted.mutationId), false);
+  eq('보류 칸에도 남지 않는다',
+    (await store.heldMutations(projectId)).some((row) => row.mutationId === conflicted.mutationId),
+    false);
+  eq('없는 명령을 다시 내면 아무 일도 없다',
+    String(await store.retryMutation('없는-명령', () => 'retry-x')), 'null');
 
   // 다시 줄에 세운 충돌은 이미 보류 칸을 떠났다. 남은 거절 하나를 버리면 칸이 빈다.
   await store.discardMutation(rejected.mutationId);
@@ -266,7 +293,93 @@ const KST = 'Asia/Seoul';
     pushed[0].mutations.every((row, index) =>
       index === 0 || row.clientSeq > pushed[0].mutations[index - 1].clientSeq), true);
 
-  // ── 5. 오프라인이면 큐를 그대로 둔다 ──
+  // ── 5. 오프라인에서 거래에 태그 달기 ──
+  //
+  // 전표 명령 셋과 모양이 다르다. 한 명령이 여러 전표를 건드리고, 통째 교체가 아니라
+  // 더한 것과 뗀 것만 담는다. "이것이 전부다"로 보내면 화면에 보이지 않던 태그가 사라진다.
+  const settings = createLocalSettingsWriter({ store, projectId });
+  const { id: tripTagId } = await settings.addTag({ name: '여행' } as never);
+
+  const taggedIds = localEntries.slice(0, 2).map((row) => String(row.id));
+  const beforeHlc = await store.latestEntryHlc(taggedIds);
+
+  const tagged = await writer.changeEntryTags({
+    entryIds: taggedIds,
+    addTagIds: [tripTagId],
+    removeTagIds: [],
+  });
+  eq('바뀐 건수를 돌려준다', tagged.entries, 2);
+
+  const readBack = async (entryId: string) =>
+    (await port.getAllEntries(
+      { startDate: '2026-07-31T15:00:00.000Z', endDate: '2026-08-31T14:59:59.999Z' },
+      projectId,
+    )).find((row) => String(row.id) === entryId);
+
+  eq('사본에 칩이 붙는다', (await readBack(taggedIds[0]))?.tags?.[0]?.name, '여행');
+  eq('둘째 거래에도 붙는다', (await readBack(taggedIds[1]))?.tags?.length, 1);
+
+  const tagCommand = (await store.pendingMutations(projectId)).find(
+    (row) => row.kind === 'entry.tags',
+  );
+  eq('큐에 태그 명령이 쌓인다', tagCommand?.kind, 'entry.tags');
+  eq('짐에 더할 것과 뗄 것이 나뉘어 담긴다',
+    JSON.stringify(tagCommand?.payload),
+    JSON.stringify({ entryIds: taggedIds, addTagIds: [tripTagId], removeTagIds: [] }));
+  /*
+   * 대상에 전표와 태그를 모두 담는다.
+   *
+   * 그중 하나를 만든 명령이 앞에서 거절되면 이 명령도 함께 보류되어야 한다. 없는 태그로
+   * 표시하라는 명령은 서버까지 가 봐야 거절이다.
+   */
+  eq('대상에 전표와 태그가 함께 담긴다',
+    (tagCommand?.targets ?? []).join(','), [...taggedIds, tripTagId].join(','));
+  /*
+   * 시계는 고른 전표들의 가장 늦은 것 뒤다.
+   *
+   * 그러지 않으면 사본에 찍는 순간 어느 전표의 시계가 뒤로 가고, 그 뒤에 오는 더 옛
+   * 편집이 이겨 버린다.
+   */
+  eq('시계가 그 전표들보다 뒤다', (tagCommand?.hlc ?? '') > (beforeHlc ?? ''), true);
+  eq('사본의 전표도 그 시계를 단다', await store.entryHlc(taggedIds[0]), tagCommand?.hlc);
+
+  // 이미 붙어 있는 것을 다시 붙이면 달라지는 것이 없다.
+  const twice = await writer.changeEntryTags({
+    entryIds: [taggedIds[0]],
+    addTagIds: [tripTagId],
+    removeTagIds: [],
+  });
+  eq('이미 붙어 있으면 0 건', twice.entries, 0);
+  eq('연결이 늘지 않는다', (await readBack(taggedIds[0]))?.tags?.length, 1);
+
+  // 떼기. 어느 쪽에도 없는 태그는 건드리지 않는다.
+  const untagged = await writer.changeEntryTags({
+    entryIds: [taggedIds[0]],
+    addTagIds: [],
+    removeTagIds: [tripTagId],
+  });
+  eq('뗀 건수를 돌려준다', untagged.entries, 1);
+  eq('칩이 사라진다', (await readBack(taggedIds[0]))?.tags?.length, 0);
+  eq('건드리지 않은 거래는 그대로다', (await readBack(taggedIds[1]))?.tags?.length, 1);
+
+  // 사본에 없는 전표는 건너뛴다. 그 사이 다른 기기가 지운 경우다.
+  const skipped = await writer.changeEntryTags({
+    entryIds: ['019273dd-0000-7000-8000-0000000000ff'],
+    addTagIds: [tripTagId],
+    removeTagIds: [],
+  });
+  eq('없는 거래는 건너뛴다', skipped.entries, 0);
+
+  // 쌓인 명령을 모두 적용으로 정리한다. 다음 절이 큐가 빈 데서 시작한다.
+  await store.settleMutations(
+    (await store.pendingMutations(projectId)).map((row) => ({
+      mutationId: row.mutationId,
+      status: 'applied' as const,
+    })),
+  );
+  eq('정리하면 큐가 빈다', (await store.outboxCount(projectId)).pending, 0);
+
+  // ── 6. 오프라인이면 큐를 그대로 둔다 ──
   await writer.createEntry({
     id: '019273cc-0000-7000-8000-000000000001',
     kind: 'expense',
@@ -295,7 +408,7 @@ const KST = 'Asia/Seoul';
       projectId,
     )).some((row) => row.description === '비행기 모드'), true);
 
-  // ── 6. 사본을 버려도 큐는 남는다 ──
+  // ── 7. 사본을 버려도 큐는 남는다 ──
   //
   // 다른 표는 서버에서 다시 받을 수 있는 그림자지만, 큐에 든 것은 아직 아무 데도 없는
   // 값이다. 스키마가 바뀌었다고 함께 버리면 사용자가 적은 거래가 사라진다.
@@ -315,6 +428,7 @@ function emptyChanges(): SyncDto.Changes {
     people: [],
     accounts: [],
     categories: [],
+    tags: [],
     cards: [],
     entries: [],
     budgets: [],
@@ -326,7 +440,6 @@ function emptyChanges(): SyncDto.Changes {
 }
 
 // node:sqlite 는 실험 기능이라 경고를 낸다. 검증 출력이 묻히지 않게 지운다.
-void DatabaseSync;
 process.removeAllListeners('warning');
 process.on('warning', (warning) => {
   if (warning.name !== 'ExperimentalWarning') console.warn(warning);

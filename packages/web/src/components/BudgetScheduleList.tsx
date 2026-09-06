@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { BudgetDto } from '@money/types';
 import { apiClient } from '@money/core/lib/api-client';
+import { settingsWritePort } from '@money/core/data/settings-write-port';
 import { formatCurrency, formatNumber, toAmountString, toNumber } from '@money/core/lib/money';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 import { formatYearMonth, shiftYearMonth } from '@money/core/lib/datetime';
@@ -117,7 +118,11 @@ export default function BudgetScheduleList({
     try {
       setIsSaving(true);
       setError('');
-      await apiClient.createBudgetOverride({
+      /*
+       * 창구를 거친다. 그 달 하나에만 씌우는 조정이라 행 하나를 고치는 조작이고,
+       * 명령으로 실어 보낼 수 있다 (아래 '고른 달부터' 편집과 갈리는 자리다).
+       */
+      await settingsWritePort().setBudgetOverride({
         budgetId: row.budgetId,
         year,
         month,
@@ -136,10 +141,18 @@ export default function BudgetScheduleList({
   /** 그 달에 씌운 조정을 걷어낸다. 규칙 금액으로 돌아간다. */
   const clearMonth = async (row: BudgetDto.ScheduleMonth) => {
     if (!row.overrideId) return;
+    const [year, month] = row.yearMonth.split('-').map(Number);
     try {
       setIsSaving(true);
       setError('');
-      await apiClient.deleteBudgetOverride(row.overrideId);
+      // 금액을 비우는 것이 "그 달의 조정을 걷어낸다"다.
+      await settingsWritePort().setBudgetOverride({
+        id: row.overrideId,
+        budgetId: row.budgetId ?? '',
+        year,
+        month,
+        amount: null,
+      });
       await load();
       await onChange();
     } catch (err: any) {

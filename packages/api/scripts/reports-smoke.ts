@@ -3,7 +3,17 @@ import { PeopleService } from '@/modules/people/people.service';
 import { CategoriesService } from '@/modules/categories/categories.service';
 import { CardsService } from '@/modules/cards/cards.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
-import { makeAccounts, makeEntries, makeLedger, makeReports, projectAccessStub, runSmoke } from './smoke-harness';
+import {
+  makeAccounts,
+  makeCards,
+  makeCategories,
+  makeEntries,
+  makeLedger,
+  makePeople,
+  makeReports,
+  projectAccessStub,
+  runSmoke,
+} from './smoke-harness';
 
 runSmoke('reports', async (ctx) => {
   const project = await ctx.createProject();
@@ -15,9 +25,9 @@ runSmoke('reports', async (ctx) => {
   const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
   const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
-  const people = new PeopleService(ctx.prisma as any, access);
-  const categories = new CategoriesService(ctx.prisma as any, access);
-  const cards = new CardsService(ctx.prisma as any, access, institutions);
+  const people = makePeople(ctx.prisma, access);
+  const categories = makeCategories(ctx.prisma, access);
+  const cards = makeCards(ctx.prisma, access, institutions);
   const entries = makeEntries(ctx.prisma, access, ledger);
   const reports = makeReports(ctx.prisma, access);
 

@@ -27,6 +27,7 @@ export function useProjectAdmin(): {
   update: (
     projectId: string,
     body: { name?: string; description?: string | null; timezone?: string; displayCurrency?: CurrencyCode },
+    fallbackKey?: MessageKey,
   ) => Promise<ProjectResult>;
   removeOrLeave: (projectId: string, action: 'delete' | 'leave') => Promise<ProjectResult>;
 } {
@@ -80,11 +81,17 @@ export function useProjectAdmin(): {
     [messageOf, reload, say, selectedProjectId, setSelectedProjectId],
   );
 
-  /** 이름·설명·타임존·표시 통화. 소유자만 고칠 수 있고 서버도 같은 규칙으로 막는다. */
+  /**
+   * 이름·설명·타임존·표시 통화. 소유자만 고칠 수 있고 서버도 같은 규칙으로 막는다.
+   *
+   * `fallbackKey` 는 서버가 이유를 주지 않았을 때 적을 문장이다. 무엇을 고치다 실패했는지
+   * 화면이 알고 있으므로("타임존 변경에 실패했습니다") 그 문장을 넘겨받는다.
+   */
   const update = useCallback(
     async (
       projectId: string,
       body: { name?: string; description?: string | null; timezone?: string; displayCurrency?: CurrencyCode },
+      fallbackKey: MessageKey = 'projects.updateFailed',
     ): Promise<ProjectResult> => {
       try {
         setIsSubmitting(true);
@@ -92,7 +99,7 @@ export function useProjectAdmin(): {
         await reload();
         return { ok: true };
       } catch (error) {
-        return { ok: false, message: messageOf(error, 'projects.updateFailed') };
+        return { ok: false, message: messageOf(error, fallbackKey) };
       } finally {
         setIsSubmitting(false);
       }

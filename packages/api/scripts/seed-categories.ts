@@ -16,6 +16,7 @@
  */
 
 import { CategoryType, PrismaClient } from '@prisma/client';
+import { initialRanks } from '@money/types';
 
 /** 첫 항목이 대분류, 나머지가 그 아래 소분류다. 적은 순서가 화면 순서가 된다. */
 const EXPENSE_TREE: string[][] = [
@@ -77,18 +78,19 @@ async function main() {
       });
 
       // sortOrder 는 적은 순서 그대로다. 전부 0이면 목록이 이름순으로 보인다.
-      let order = 0;
-      for (const [parentName, ...childNames] of EXPENSE_TREE) {
+      // 순서는 분수 색인이다. 선언한 차례를 그대로 값으로 옮긴다.
+      const parentRanks = initialRanks(EXPENSE_TREE.length);
+      for (const [order, [parentName, ...childNames]] of EXPENSE_TREE.entries()) {
         const parent = await tx.category.create({
           data: {
             projectId,
             name: parentName,
             type: CategoryType.expense,
-            sortOrder: order,
+            sortRank: parentRanks[order],
           },
         });
-        order += 1;
 
+        const childRanks = initialRanks(childNames.length);
         for (const [index, childName] of childNames.entries()) {
           await tx.category.create({
             data: {
@@ -96,7 +98,7 @@ async function main() {
               name: childName,
               type: CategoryType.expense,
               parentId: parent.id,
-              sortOrder: index,
+              sortRank: childRanks[index],
             },
           });
         }

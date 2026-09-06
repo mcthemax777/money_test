@@ -2,10 +2,17 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { AccountType, FinancialInstitutionType, Prisma, ProjectRole } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
+import { stampFieldClocks } from '@/common/field-clock';
+import { ServerClockService } from '@/common/server-clock';
 import { clientId, rejectDuplicateId } from '@/common/client-id';
 import { LedgerService } from '../ledger/ledger.service';
 import { InstitutionsService } from '../institutions/institutions.service';
-import { AccountDto, HIDDEN_ACCOUNT_TYPES } from '@money/types';
+import {
+  AccountDto,
+  HIDDEN_ACCOUNT_TYPES,
+  initialRanks,
+  rankAfter,
+} from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
 import { toMoney, toOptionalMoney } from '@/common/money';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
@@ -37,6 +44,7 @@ export class AccountsService {
     private readonly ledger: LedgerService,
     private readonly institutions: InstitutionsService,
     private readonly exchangeRates: ExchangeRatesService,
+    private readonly clock: ServerClockService,
   ) {}
 
   /**
@@ -62,7 +70,17 @@ export class AccountsService {
     return institutionId;
   }
 
-  async createAccount(userId: string, dto: AccountDto.CreateRequest, projectIdParam?: string) {
+  /**
+   * 통장 만들기.
+   *
+   * `hlc` 는 기기의 오프라인 명령을 재생할 때만 온다 (people.createPerson 과 같은 규칙).
+   */
+  async createAccount(
+    userId: string,
+    dto: AccountDto.CreateRequest,
+    projectIdParam?: string,
+    hlc?: string,
+  ) {
     const { id: projectId } = await this.projectAccess.resolveProject(
       userId,
       projectIdParam || dto.projectId,
@@ -90,11 +108,11 @@ export class AccountsService {
       ? this.exchangeRates.assertCurrency(dto.currency, '계좌 통화')
       : await this.projectAccess.getProjectLedgerCurrency(projectId);
 
-    // 목록은 주인별로 나뉘어 있고 드래그도 그 안에서 이뤄진다. 같은 주인의
-    // 마지막 번호 다음을 준다. 기본값 0으로 두면 그 주인 목록의 앞쪽에 끼어든다.
-    const lastOrder = await this.prisma.account.aggregate({
+    // 목록은 주인별로 나뉘어 있고 드래그도 그 안에서 이뤄진다. 같은 주인의 마지막
+    // 순서 뒤에 값을 하나 만든다.
+    const lastRank = await this.prisma.account.aggregate({
       where: { projectId, ownerId: dto.ownerId },
-      _max: { sortOrder: true },
+      _max: { sortRank: true },
     });
 
     const account = await rejectDuplicateId('계좌', () => this.prisma.account.create({
@@ -107,7 +125,12 @@ export class AccountsService {
         institutionId,
         accountNumber: dto.accountNumber ?? null,
         currency,
-        sortOrder: (lastOrder._max.sortOrder ?? -1) + 1,
+        sortRank: rankAfter(lastRank._max.sortRank),
+        fieldHlc: stampFieldClocks(
+          null,
+          ['name', 'ownerId', 'institutionId', 'accountNumber'],
+          hlc ?? this.clock.now(),
+        ),
       },
       include: ACCOUNT_INCLUDE,
     }));
@@ -147,7 +170,7 @@ export class AccountsService {
       },
       include: ACCOUNT_INCLUDE,
       // 사용자가 드래그로 정한 순서. 같으면 최근에 만든 것부터.
-      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+      orderBy: [{ sortRank: 'asc' }, { createdAt: 'desc' }],
     });
   }
 
@@ -165,9 +188,11 @@ export class AccountsService {
     });
     assertReorderIds(ids, new Set(rows.map((row) => row.id)));
 
+    // 목록 전체를 받았으니 순서 값을 고르게 다시 매긴다 (구성원 쪽과 같은 규칙).
+    const ranks = initialRanks(ids.length);
     await this.prisma.$transaction(
       ids.map((id, index) =>
-        this.prisma.account.update({ where: { id }, data: { sortOrder: index } }),
+        this.prisma.account.update({ where: { id }, data: { sortRank: ranks[index] } }),
       ),
     );
 
@@ -189,7 +214,7 @@ export class AccountsService {
     return account;
   }
 
-  async updateAccount(id: string, userId: string, dto: AccountDto.UpdateRequest) {
+  async updateAccount(id: string, userId: string, dto: AccountDto.UpdateRequest, hlc?: string) {
     const account = await this.getAccountById(id, userId, 'editor');
 
     const { balance, institutionId } = dto;
@@ -203,6 +228,8 @@ export class AccountsService {
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.accountNumber !== undefined) data.accountNumber = dto.accountNumber;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    // 순서 바꾸기는 이 필드 하나다 (분수 색인).
+    if (dto.sortRank !== undefined) data.sortRank = dto.sortRank;
 
     // 키가 아예 없을 때(변경 의사 없음)와 null일 때(연결 해제)를 구분한다.
     if ('institutionId' in dto) {
@@ -215,6 +242,14 @@ export class AccountsService {
     }
 
     if (Object.keys(data).length > 0) {
+      /*
+       * 바꾼 필드에만 시계를 찍는다. `institution` 은 관계 이름이라 필드 이름으로는
+       * `institutionId` 를 쓴다 -- 기기가 보내는 이름과 같아야 견줄 수 있다.
+       */
+      const fields = Object.keys(data).map((key) =>
+        key === 'institution' ? 'institutionId' : key,
+      );
+      data.fieldHlc = stampFieldClocks(account.fieldHlc, fields, hlc ?? this.clock.now());
       await this.prisma.account.update({ where: { id }, data });
     }
 
@@ -338,7 +373,7 @@ export class AccountsService {
    *   - 잔액이 남아 있으면: 순자산 집계가 활성 계좌만 보므로 총자산이 조용히 준다.
    *   - 연결된 활성 카드가 있으면: 결제 통장이 사라진 카드가 남는다.
    */
-  async deactivateAccount(id: string, userId: string) {
+  async deactivateAccount(id: string, userId: string, hlc?: string) {
     const account = await this.getAccountById(id, userId, 'editor');
 
     const cardCount = await this.prisma.card.count({
@@ -357,7 +392,10 @@ export class AccountsService {
 
     return this.prisma.account.update({
       where: { id },
-      data: { isActive: false },
+      data: {
+        isActive: false,
+        fieldHlc: stampFieldClocks(account.fieldHlc, ['isActive'], hlc ?? this.clock.now()),
+      },
     });
   }
 }

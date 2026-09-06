@@ -4,24 +4,24 @@
  * `useCategoryManager` 와 나란히 서지만 훨씬 짧다 -- 계층이 없어 "대분류를 고치면서
  * 소분류를 함께 맞추는" 절차가 없고, 유형도 없어 목록이 하나뿐이다.
  *
- * **읽기와 쓰기 모두 `apiClient` 를 직접 부른다** (`useCategoryManager` 와 같다).
+ * **읽기는 `homeDataPort`, 쓰기는 `settingsWritePort` 를 거친다.**
  *
- * 사본(`homeDataPort`)으로 읽지 않는 이유가 있다. 쓰기는 서버로 나가는데 읽기가 사본이면,
- * 방금 만든 태그가 목록에 나타나지 않는다 -- 사본은 다음 동기화가 와야 채워진다.
- * 실제로 그랬다. 태그는 서버에 생겼는데 화면은 그대로였다.
- *
- * 그래서 이 화면은 온라인 전용이다. 만들고 고치는 일이 어차피 서버를 타므로 잃는 것이
- * 없다. **거래 입력 화면은 다르다** -- 그쪽은 `useEntryForm` 이 창구로 읽어(`port.getTags`)
- * 비행기 안에서도 이미 받아 둔 태그를 고를 수 있다.
+ * 둘이 같은 자리를 보아야 한다는 것이 요점이다. 예전에는 읽기만 사본이고 쓰기는 서버였던
+ * 적이 있는데, 그때는 방금 만든 태그가 목록에 나타나지 않았다 -- 사본은 다음 동기화가
+ * 와야 채워지기 때문이다. 이제 앱에서는 둘 다 사본이라 만들자마자 보이고, 웹에서는 둘 다
+ * 서버라 지금까지와 같다.
  */
 import { useCallback, useEffect, useState } from 'react';
-import type { TagDto } from '@money/types';
+import { rankForStep, type TagDto } from '@money/types';
 
 import { apiClient } from '../lib/api-client';
 import { useApiError } from '../lib/api-error';
 import { translate, type MessageKey } from '../lib/i18n';
 import { isOfflineError } from '../lib/offline-error';
 import { useLocaleStore } from '../store/locale';
+import { useMirrorVersion } from './useMirrorVersion';
+import { homeDataPort } from '../data/home-port';
+import { settingsWritePort } from '../data/settings-write-port';
 
 /** 태그 폼이 담는 값. 이름과 색뿐이다. */
 export interface TagFormValues {
@@ -46,6 +46,13 @@ export function useTagManager(projectId: string | null) {
   const [tags, setTags] = useState<TagDto.Response[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  /**
+   * 사본이 채워질 때마다 올라간다.
+   *
+   * 앱은 사본을 읽고 동기화가 뒤에서 그것을 채운다. 이 값을 의존성에 넣지 않으면 처음
+   * 열었을 때 빈 사본을 읽은 화면이 그대로 멈춘다. 웹에서는 0에 머문다.
+   */
+  const mirrorVersion = useMirrorVersion();
 
   const reload = useCallback(async (): Promise<TagResult> => {
     if (!projectId) {
@@ -56,16 +63,17 @@ export function useTagManager(projectId: string | null) {
 
     try {
       setIsLoading(true);
-      setTags((await apiClient.getTags(projectId)) ?? []);
+      setTags((await homeDataPort().getTags(projectId)) ?? []);
       return { ok: true };
     } catch (error) {
-      // 오프라인이면 조용히 빈 목록으로 둔다. 이 화면은 온라인 전용이다(머리말).
+      // 사본이 아직 비었거나 서버를 못 부른 경우다. 빈 목록으로 두고 다음 동기화를 기다린다.
       if (isOfflineError(error)) return { ok: true };
       return { ok: false, message: say('tags.loadFailed') };
     } finally {
       setIsLoading(false);
     }
-  }, [projectId, say]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, say, mirrorVersion]);
 
   useEffect(() => {
     void reload();
@@ -81,9 +89,9 @@ export function useTagManager(projectId: string | null) {
         setIsSubmitting(true);
         if (editingId) {
           // 색을 비운 것은 "지운다"다. 생략과 다르므로 null 을 실어 보낸다.
-          await apiClient.updateTag(editingId, { name, color: values.color || null });
+          await settingsWritePort().updateTag(editingId, { name, color: values.color || null });
         } else {
-          await apiClient.createTag({
+          await settingsWritePort().addTag({
             name,
             ...(values.color ? { color: values.color } : {}),
             projectId: projectId ?? undefined,
@@ -110,7 +118,7 @@ export function useTagManager(projectId: string | null) {
     async (id: string): Promise<TagResult> => {
       try {
         setIsSubmitting(true);
-        await apiClient.deleteTag(id);
+        await settingsWritePort().updateTag(id, { isActive: false });
         await reload();
         return { ok: true };
       } catch (error) {
@@ -136,6 +144,31 @@ export function useTagManager(projectId: string | null) {
     [messageOf, projectId, reload],
   );
 
+  /**
+   * 목록에서 한 칸 옮긴다. 드래그가 없는 화면(앱)이 쓴다.
+   *
+   * 옮긴 자리의 값 하나만 보낸다 (분수 색인). `reorder` 와 달리 목록 전체를 다시 매기지
+   * 않으므로, 그 사이 남이 옮긴 태그가 지워지지 않는다 (D5). 태그는 계층이 없어 이웃은
+   * 언제나 목록 전체에서 고른다.
+   */
+  const move = useCallback(
+    async (id: string, step: 1 | -1): Promise<TagResult> => {
+      const rank = rankForStep(tags, id, step);
+      // 끝에서 더 밀었다. 값을 새로 찍으면 그 필드의 시계만 올라가 남의 이동을 되돌린다.
+      if (!rank) return { ok: true };
+
+      try {
+        await settingsWritePort().updateTag(id, { sortRank: rank });
+        await reload();
+        return { ok: true };
+      } catch (error) {
+        await reload();
+        return { ok: false, message: messageOf(error, 'assets.orderSaveFailed') };
+      }
+    },
+    [messageOf, reload, tags],
+  );
+
   return {
     tags,
     isLoading,
@@ -144,6 +177,8 @@ export function useTagManager(projectId: string | null) {
     save,
     remove,
     reorder,
+    /** 한 칸 위로(-1) 또는 아래로(+1). */
+    move,
     /** 고칠 대상을 폼 값으로 편다. */
     formValuesOf: useCallback(
       (tag: TagDto.Response): TagFormValues => ({ name: tag.name, color: tag.color ?? '' }),

@@ -13,15 +13,28 @@
  * 값과 상태는 `useTransactions` 가 갖는다. 앱의 거래 화면과 같은 훅이라, 두 화면이
  * 서로 다른 규칙으로 파고들 일이 없다.
  */
-import { useState } from 'react';
+import { Fragment, useMemo, useState } from 'react';
 import { ArrowLeft, Check, Loader2, Minus, MoreVertical, Search, Tag, Trash2, X } from 'lucide-react';
 import {
+  NO_TAG,
   SEARCHABLE_ENTRY_KINDS,
   type EntryListItem as EntryListItemDto,
 } from '@money/types';
 
 import { formatDateTime, formatYearMonth } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { tagPickResult, tagPickState, toggleTagPick } from '@money/core/lib/tag-pick';
+import {
+  assetOwnerNames,
+  groupByOwner,
+  hasSeveralOwners,
+  sortCardsByAccount,
+} from '@money/core/lib/asset-owner';
+import {
+  groupCategoriesByType,
+  isCategoryPicked,
+  toggleCategory,
+} from '@money/core/lib/category-tree';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import {
   EMPTY_SEARCH,
@@ -325,6 +338,62 @@ export default function TransactionsPage() {
     });
   };
 
+  /**
+   * 통장·카드를 주인별로 묶어 그린다.
+   *
+   * 주인이 하나뿐인 가계부에서는 묶음 이름을 적지 않는다. 모든 줄에 같은 이름이
+   * 붙으면 고르는 데 도움이 되지 않고 칸만 길어진다.
+   */
+  const OwnerGroups = <T extends { id: string }>({
+    items,
+    children,
+  }: {
+    items: T[];
+    children: (item: T) => React.ReactNode;
+  }) => {
+    if (!showAssetOwner) {
+      return <div className="flex flex-wrap gap-2">{items.map(children)}</div>;
+    }
+
+    return (
+      <div className="space-y-3">
+        {groupByOwner(items, assetOwners, ownerOrder).map((group) => (
+          <div key={group.ownerName ?? ''}>
+            <p className="mb-1.5 text-xs text-gray-500">
+              {group.ownerName ?? t('scopeTitle.noPeople')}
+            </p>
+            <div className="flex flex-wrap gap-2">{group.items.map(children)}</div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+  /** 지출·수입으로 가르고 대분류별로 묶은 분류. 검색 창의 분류 칸이 이 차례로 그린다. */
+  const categorySections = useMemo(
+    () => groupCategoriesByType(tx.pickerCategories),
+    [tx.pickerCategories],
+  );
+
+  /** 카드는 결제 통장의 차례를 따라 세운다. 자산 화면과 같은 차례가 된다. */
+  const orderedCards = useMemo(
+    () => sortCardsByAccount(tx.pickerCards, tx.pickerAccounts),
+    [tx.pickerCards, tx.pickerAccounts],
+  );
+
+  /**
+   * 분류 칸의 가름표. 대분류 뒤의 `›` 와 묶음 끝의 `/`.
+   *
+   * 누를 수 없는 글자다. 상자 대신 이것으로 묶음의 경계를 말한다. 대분류 뒤는 꺾쇠다 --
+   * 알약에 적히는 "식비 › 식료품" 과 같은 기호라 뒤따르는 것이 그 아래 소분류임이
+   * 한눈에 읽힌다.
+   */
+  const Divider = ({ mark }: { mark: '›' | '/' }) => (
+    <span className="select-none text-sm text-gray-300" aria-hidden>
+      {mark}
+    </span>
+  );
+
   /** 검색 팝업의 알약 하나. */
   const Chip = ({
     label,
@@ -332,6 +401,8 @@ export default function TransactionsPage() {
     onClick,
     color,
     partial,
+    mark,
+    subtle,
   }: {
     label: string;
     selected: boolean;
@@ -345,61 +416,106 @@ export default function TransactionsPage() {
      * 아무도 가지지 않은 것과 구별할 수 없다. 색은 켜짐과 나누고 표시는 꺼짐과 나눈다.
      */
     partial?: boolean;
+    /**
+     * 켜짐·일부를 아이콘으로도 보여 줄지. 태그를 손보는 창이 쓴다.
+     *
+     * 그 창은 세 갈래(켜짐·일부·꺼짐)를 갈라야 해서 색만으로는 모자란다. 자리는 상태와
+     * 상관없이 늘 잡아 둔다 -- 아이콘이 들락거리면 누를 때마다 알약의 너비가 달라져
+     * 뒤따르는 알약이 줄을 넘나든다.
+     */
+    mark?: boolean;
+    /**
+     * 소분류처럼 한 단 아래인 알약.
+     *
+     * 테두리를 감추고 글자를 얇게 한다. 크기는 그대로다 -- 대분류가 먼저 눈에 들어오되
+     * 줄이 밀리지 않아야 한다. 상태가 아니라 **자리**에 따른 차이라 눌러도 달라지지 않는다.
+     * 고른 소분류는 파란 테두리가 다시 보인다. 골랐다는 것은 보여야 한다.
+     */
+    subtle?: boolean;
   }) => (
+    /*
+     * **누른다고 크기가 달라지지 않는다.** 테두리 굵기도 글자 굵기도 상태와 무관하게
+     * 같고, 고른 것은 색으로만 말한다. 굵어지거나 아이콘이 붙으면 그만큼 넓어져,
+     * 한 알약을 켰을 뿐인데 옆의 알약이 다음 줄로 밀린다.
+     */
     <button
       type="button"
       onClick={onClick}
       aria-pressed={selected}
       className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition active:scale-95 motion-reduce:transition-none motion-reduce:active:scale-100 ${
+        subtle ? 'font-light' : ''
+      } ${
         selected
-          ? 'border-blue-600 bg-blue-50 font-medium text-blue-600'
+          ? 'border-blue-600 bg-blue-50 text-blue-600'
           : partial
             ? 'border-gray-400 bg-gray-50 text-gray-800'
-            : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+            : subtle
+              ? // 테두리를 없애지 않고 **투명하게** 둔다. 굵기가 그대로라 줄바꿈 자리가 움직이지 않는다.
+                'border-transparent bg-white text-gray-500 hover:bg-gray-50'
+              : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
       }`}
     >
       {color ? (
         <span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
       ) : null}
       {label}
-      {selected ? <Check className="h-3 w-3" aria-hidden /> : null}
-      {partial ? <Minus className="h-3 w-3" aria-hidden /> : null}
+      {mark ? (
+        <span className="flex h-3 w-3 items-center justify-center" aria-hidden>
+          {selected ? <Check className="h-3 w-3" /> : partial ? <Minus className="h-3 w-3" /> : null}
+        </span>
+      ) : null}
     </button>
   );
 
-  /** 알약 하나가 놓인 자리. 손대지 않았으면 처음 상태 그대로다. */
-  const tagStateOf = (tagId: string): 'on' | 'partial' | 'off' => {
-    const touched = tagChanged[tagId];
-    if (touched !== undefined) return touched ? 'on' : 'off';
-    if (tx.commonTagIds.includes(tagId)) return 'on';
-    if (tx.partialTagIds.includes(tagId)) return 'partial';
-    return 'off';
-  };
+  /** 알약 하나가 놓인 자리. 손대지 않았으면 처음 상태 그대로다 (규칙은 core 의 tag-pick). */
+  const tagStateOf = (tagId: string) =>
+    tagPickState(tagId, tagChanged, tx.commonTagIds, tx.partialTagIds);
 
   /** 처음 상태에서 달라진 것만 보낸다. 손대지 않은 태그는 그대로 둔다. */
-  const tagAddIds = tx.pickerTags
-    .filter((tag) => tagChanged[tag.id] === true && !tx.commonTagIds.includes(tag.id))
-    .map((tag) => tag.id);
-  const tagRemoveIds = tx.pickerTags
-    .filter((tag) => tagChanged[tag.id] === false && tx.commonTagIds.includes(tag.id))
-    .map((tag) => tag.id);
+  const { addTagIds: tagAddIds, removeTagIds: tagRemoveIds } = tagPickResult(
+    tx.pickerTags.map((tag) => tag.id),
+    tagChanged,
+    tx.commonTagIds,
+  );
   const hasTagChange = tagAddIds.length > 0 || tagRemoveIds.length > 0;
 
-  /** 고른 기간. 두 칸이 온전할 때만 선다. */
+  /*
+   * 통장·카드의 주인. 이름이 같은 통장이 여럿이면 이름만으로는 고를 수 없다.
+   * 주인이 하나뿐인 가계부에서는 묶지 않는다 -- 모든 줄에 같은 이름이 붙을 뿐이다.
+   */
+  const assetOwners = useMemo(
+    () => assetOwnerNames(tx.pickerAccounts, tx.pickerCards, tx.people),
+    [tx.pickerAccounts, tx.pickerCards, tx.people],
+  );
+  const showAssetOwner = hasSeveralOwners(assetOwners);
+  /** 묶음의 차례. 자산 화면이 세우는 구성원 순서를 따른다. */
+  const ownerOrder = useMemo(() => tx.people.map((person) => person.name), [tx.people]);
+
+  /** 검색 창에서 고른 것을 반영한다. */
+  const applySearch = () => {
+    tx.setSearch(draft);
+    setIsSearchOpen(false);
+  };
+
+  /** 고른 기간. 한쪽만 적으면 그쪽이 열린 구간이다. */
   const draftRange = searchRange(draft);
   /**
-   * 적다 만 기간인가. 한 칸만 적었거나, 실재하지 않는 날짜이거나, 앞뒤가 뒤집힌 것.
+   * 잘못 적은 기간인가. 실재하지 않는 날짜이거나, 두 칸이 앞뒤로 뒤집힌 것.
    *
+   * 한 칸만 적은 것은 여기 들지 않는다 -- 시작일만 적으면 그날부터 끝까지다.
    * 이 상태에서는 적용을 막는다. 그냥 흘려보내면 기간을 적었는데 걸리지 않는 것이
    * 되어, 사용자는 검색이 고장 났다고 읽는다.
    */
   const isRangeBroken = Boolean(draft.startDate || draft.endDate) && draftRange === null;
 
   const draftCount =
+    (draft.text.trim() ? 1 : 0) +
     draft.categoryIds.length +
     draft.paymentAccountIds.length +
     draft.paymentCardIds.length +
     draft.kinds.length +
+    draft.tagIds.length +
+    draft.entryPersonIds.length +
     (draftRange ? 1 : 0);
 
   const detailRows: Array<{ label: string; value: string | null }> = detail
@@ -751,13 +867,12 @@ export default function TransactionsPage() {
                     color={tag.color}
                     selected={state === 'on'}
                     partial={state === 'partial'}
-                    /*
-                     * 누르면 켜지고 꺼진다. "일부"는 켜지는 쪽으로만 간다 -- 일부만 붙은
-                     * 것을 끄는 것은 "가진 것들에서 떼라"는 뜻인데, 어느 거래가 그것을
-                     * 가졌는지 화면에 보이지 않는다.
-                     */
+                    mark
+                    /* 누르면 켜지고 꺼진다. "일부"는 켜짐과 일부 사이만 오간다 (tag-pick). */
                     onClick={() =>
-                      setTagChanged((prev) => ({ ...prev, [tag.id]: state !== 'on' }))
+                      setTagChanged((prev) =>
+                        toggleTagPick(tag.id, prev, tx.commonTagIds, tx.partialTagIds),
+                      )
                     }
                   />
                 );
@@ -792,10 +907,7 @@ export default function TransactionsPage() {
             <button
               type="button"
               disabled={isRangeBroken}
-              onClick={() => {
-                tx.setSearch(draft);
-                setIsSearchOpen(false);
-              }}
+              onClick={applySearch}
               className="flex-1 rounded-lg bg-blue-600 px-4 py-3 text-base font-semibold text-white hover:bg-blue-700 disabled:cursor-not-allowed disabled:bg-gray-300"
             >
               {t('tx.search.apply')}
@@ -806,7 +918,32 @@ export default function TransactionsPage() {
       >
         <div className="space-y-5">
           {/*
-            기간을 맨 위에 둔다. 무엇으로 좁히든 "언제"를 먼저 정하는 일이 많고,
+            글자를 맨 위에 둔다.
+
+            찾는 것이 이미 머리에 있는 사람에게는 이 한 칸이 검색의 전부다 -- "스타벅스"를
+            적는 편이 분류와 카드를 골라 좁히는 것보다 빠르다. 알약을 고르는 칸들은
+            무엇이 있는지 보고 고르는 자리라 그 아래에 온다.
+          */}
+          <div>
+            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
+              {t('tx.search.text')}
+            </p>
+            <input
+              type="search"
+              value={draft.text}
+              onChange={(e) => setDraft((prev) => ({ ...prev, text: e.target.value }))}
+              /* 엔터로 바로 적용한다. 글자를 적은 사람은 이미 무엇을 찾는지 알고 있다. */
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' || isRangeBroken) return;
+                applySearch();
+              }}
+              placeholder={t('tx.search.textPlaceholder')}
+              className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          {/*
+            기간을 그다음에 둔다. 무엇으로 좁히든 "언제"를 정하는 일이 많고,
             분류 알약이 수십 개라 아래에 두면 굴려서 찾아야 한다.
 
             고를 수 있는 분류·자산이 없어도 이 칸은 그린다. 기간은 그 목록과 무관하다.
@@ -844,13 +981,12 @@ export default function TransactionsPage() {
                 {t('tx.search.periodClear')}
               </button>
             ) : null}
-            <p
-              className={`mt-2 text-xs leading-5 ${
-                isRangeBroken ? 'text-red-600' : 'text-gray-500'
-              }`}
-            >
-              {isRangeBroken ? t('tx.search.periodInvalid') : t('tx.search.periodHint')}
-            </p>
+            {/* 잘못 적었을 때만 한 줄 뜬다. 규칙 설명은 두지 않는다. */}
+            {isRangeBroken ? (
+              <p className="mt-2 text-xs leading-5 text-red-600">
+                {t('tx.search.periodInvalid')}
+              </p>
+            ) : null}
           </div>
 
           {tx.pickerCategories.length === 0 &&
@@ -879,11 +1015,39 @@ export default function TransactionsPage() {
                   />
                 ))}
               </div>
-              <p className="mt-2 text-xs leading-5 text-gray-500">{t('tx.search.kindHint')}</p>
             </div>
 
             {/*
-              태그를 유형 다음에 둔다. 개수가 적고, "이번 여행에 쓴 돈"처럼 태그 하나로
+              거래를 낸 사람. **화면 제목의 자산주인과 다른 것이다.**
+
+              제목은 돈이 오간 계좌의 주인으로 거르고, 이 칸은 거래를 적을 때 고른
+              사람으로 거른다. 남의 카드로 내 몫을 쓴 거래에서 둘이 갈린다.
+            */}
+            {tx.people.length > 1 ? (
+              <div>
+                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
+                  {t('tx.search.people')}
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {tx.people.map((person) => (
+                    <Chip
+                      key={person.id}
+                      label={person.name}
+                      selected={draft.entryPersonIds.includes(person.id)}
+                      onClick={() =>
+                        setDraft((prev) => ({
+                          ...prev,
+                          entryPersonIds: toggleId(prev.entryPersonIds, person.id),
+                        }))
+                      }
+                    />
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {/*
+              태그를 사용자 다음에 둔다. 개수가 적고, "이번 여행에 쓴 돈"처럼 태그 하나로
               끝나는 검색이 잦다. 분류 수십 개 아래에 두면 굴려서 찾아야 한다.
             */}
             {tx.pickerTags.length > 0 ? (
@@ -903,6 +1067,17 @@ export default function TransactionsPage() {
                       }
                     />
                   ))}
+                  {/*
+                    태그를 하나도 붙이지 않은 거래. 태그 무리의 한 갈래라 고른 태그들과
+                    OR 로 이어진다 -- "여행 또는 태그 없음"이 그대로 걸린다.
+                  */}
+                  <Chip
+                    label={t('tx.search.noTag')}
+                    selected={draft.tagIds.includes(NO_TAG)}
+                    onClick={() =>
+                      setDraft((prev) => ({ ...prev, tagIds: toggleId(prev.tagIds, NO_TAG) }))
+                    }
+                  />
                 </div>
               </div>
             ) : null}
@@ -912,23 +1087,65 @@ export default function TransactionsPage() {
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
                   {t('tx.search.categories')}
                 </p>
-                <div className="flex flex-wrap gap-2">
-                  {tx.pickerCategories.map((category) => {
-                    const parent = tx.pickerCategories.find((row) => row.id === category.parentId);
-                    return (
-                      <Chip
-                        key={category.id}
-                        label={parent ? `${parent.name} > ${category.name}` : category.name}
-                        selected={draft.categoryIds.includes(category.id)}
-                        onClick={() =>
-                          setDraft((prev) => ({
-                            ...prev,
-                            categoryIds: toggleId(prev.categoryIds, category.id),
-                          }))
-                        }
-                      />
-                    );
-                  })}
+                {/*
+                  다른 칸처럼 한 줄로 쭉 이어 붙인다. 상자를 두르지 않는다 -- 칸마다 모양이
+                  다르면 검색 창 안에서 리듬이 깨지고, 상자의 여백만큼 자리도 넓게 쓴다.
+
+                  묶음은 글자로 가른다. **대분류 뒤에는 `|`, 묶음 끝에는 `/`**. 사이에 놓인
+                  것이 그 대분류의 소분류다.
+
+                  **대분류를 고르면 그 소분류는 함께 걸린다** (서버 규칙). 그래서 대분류가
+                  켜지면 소분류도 켜진 것으로 보이고, 그 상태에서 소분류 하나를 끄면
+                  대분류가 내려가며 나머지 소분류가 켜진다 (core 의 toggleCategory).
+                */}
+                <div className="space-y-2">
+                  {categorySections.map((section) => (
+                    <div key={section.type}>
+                      {/* 지출·수입을 갈라 적는다. 등록한 차례는 유형마다 따로 매겨져 있다. */}
+                      <p className="mb-1.5 text-xs text-gray-500">
+                        {t(section.type === 'expense' ? 'tx.kind.expense' : 'tx.kind.income')}
+                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        {section.groups.map((group, index) => {
+                          const pick = (category: { id: string }) =>
+                            setDraft((prev) => ({
+                              ...prev,
+                              categoryIds: toggleCategory(prev.categoryIds, category, group),
+                            }));
+
+                          return (
+                            <Fragment key={group.parent?.id ?? 'orphans'}>
+                              {group.parent ? (
+                                <Chip
+                                  label={group.parent.name}
+                                  selected={isCategoryPicked(draft.categoryIds, group.parent, group)}
+                                  onClick={() => pick(group.parent!)}
+                                />
+                              ) : null}
+
+                              {group.parent && group.children.length > 0 ? (
+                                <Divider mark="›" />
+                              ) : null}
+
+                              {group.children.map((child) => (
+                                <Chip
+                                  key={child.id}
+                                  label={child.name}
+                                  selected={isCategoryPicked(draft.categoryIds, child, group)}
+                                  onClick={() => pick(child)}
+                                  // 한 단 아래다. 옅게 그려 대분류가 먼저 읽히게 한다.
+                                  subtle
+                                />
+                              ))}
+
+                              {/* 묶음의 끝. 마지막 묶음 뒤에는 가를 것이 없다. */}
+                              {index < section.groups.length - 1 ? <Divider mark="/" /> : null}
+                            </Fragment>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             ) : null}
@@ -938,8 +1155,12 @@ export default function TransactionsPage() {
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
                   {t('tx.search.accounts')}
                 </p>
-                <div className="flex flex-wrap gap-2">
-                  {tx.pickerAccounts.map((account) => (
+                {/*
+                  주인별로 묶는다. "국민은행 통장"이 집에 셋 있으면 이름만으로는 어느
+                  것을 고르는지 알 수 없다. 주인이 하나뿐이면 묶지 않는다.
+                */}
+                <OwnerGroups items={tx.pickerAccounts}>
+                  {(account) => (
                     <Chip
                       key={account.id}
                       label={account.name}
@@ -951,8 +1172,8 @@ export default function TransactionsPage() {
                         }))
                       }
                     />
-                  ))}
-                </div>
+                  )}
+                </OwnerGroups>
               </div>
             ) : null}
 
@@ -961,8 +1182,9 @@ export default function TransactionsPage() {
                 <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
                   {t('tx.search.cards')}
                 </p>
-                <div className="flex flex-wrap gap-2">
-                  {tx.pickerCards.map((card) => (
+                {/* 카드는 결제 통장의 주인을 따른다 (core 의 asset-owner). */}
+                <OwnerGroups items={orderedCards}>
+                  {(card) => (
                     <Chip
                       key={card.id}
                       label={card.name}
@@ -974,8 +1196,8 @@ export default function TransactionsPage() {
                         }))
                       }
                     />
-                  ))}
-                </div>
+                  )}
+                </OwnerGroups>
               </div>
               ) : null}
             </div>

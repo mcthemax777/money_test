@@ -21,8 +21,13 @@ import { MutationReplayService } from '@/modules/sync/mutation-replay.service';
 import { encodeHlc, type Mutation } from '@money/types';
 import {
   makeAccounts,
+  makeBudgets,
+  makeCards,
+  makeCategories,
   makeEntries,
   makeLedger,
+  makePeople,
+  makeTags,
   projectAccessStub,
   runSmoke,
 } from './smoke-harness';
@@ -51,9 +56,11 @@ runSmoke('sync-push-dump', async (ctx) => {
   const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
   const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
-  const people = new PeopleService(ctx.prisma as any, access);
-  const categories = new CategoriesService(ctx.prisma as any, access);
-  const cards = new CardsService(ctx.prisma as any, access, institutions);
+  const people = makePeople(ctx.prisma, access);
+  const categories = makeCategories(ctx.prisma, access);
+  const cards = makeCards(ctx.prisma, access, institutions);
+  const tags = makeTags(ctx.prisma, access);
+  const budgets = makeBudgets(ctx.prisma, access);
   const entries = makeEntries(ctx.prisma, access, ledger);
   const sync = new SyncService(ctx.prisma as any, access as any);
   const replay = new MutationReplayService(
@@ -61,6 +68,12 @@ runSmoke('sync-push-dump', async (ctx) => {
     access as any,
     ledger as any,
     entries as any,
+    people as any,
+    accounts as any,
+    cards as any,
+    categories as any,
+    tags as any,
+    budgets as any,
   );
 
   const person = await people.createPerson(uid, { name: '김철수' }, pid);

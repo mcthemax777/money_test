@@ -165,6 +165,22 @@ export function entrySearchConditions(search: ParsedEntrySearch): Prisma.Posting
 }
 
 /**
+ * 설명에 든 글자 조건. 적지 않았으면 undefined.
+ *
+ * **다리가 아니라 전표를 본다.** 설명은 전표에 있다(JournalEntry.description). 태그·유형과
+ * 같은 자리에 오고, 다른 무리와는 AND 로 이어진다.
+ *
+ * 대소문자를 가리지 않는다. 사본(SQLite)의 LIKE 도 같은 자리에서 같은 일을 한다 --
+ * 같은 검색이 온라인과 오프라인에서 같은 목록을 내야 한다.
+ */
+export function entryTextCondition(
+  text: string | undefined,
+): Prisma.JournalEntryWhereInput | undefined {
+  if (!text) return undefined;
+  return { description: { contains: text, mode: 'insensitive' } };
+}
+
+/**
  * 태그 조건. 고른 태그끼리 OR 로 잇는다. 고르지 않았으면 undefined.
  *
  * **다리가 아니라 전표를 본다.** 태그는 전표에 붙으므로(EntryTag) 다리 조건으로 만들 수
@@ -177,9 +193,32 @@ export function entrySearchConditions(search: ParsedEntrySearch): Prisma.Posting
  */
 export function entryTagCondition(
   tagIds: readonly string[] | undefined,
+  /** "태그 없음"을 함께 골랐는가. 고른 태그들과 OR 로 잇는다. */
+  noTag = false,
 ): Prisma.JournalEntryWhereInput | undefined {
-  if (!tagIds || tagIds.length === 0) return undefined;
-  return { tags: { some: { tagId: { in: [...tagIds] } } } };
+  const chosen = tagIds && tagIds.length > 0 ? [...tagIds] : [];
+  if (chosen.length === 0 && !noTag) return undefined;
+
+  const branches: Prisma.JournalEntryWhereInput[] = [];
+  if (chosen.length > 0) branches.push({ tags: { some: { tagId: { in: chosen } } } });
+  // 태그가 하나도 붙지 않은 전표. "여행 또는 태그 없음"이 무리 안의 OR 로 이어진다.
+  if (noTag) branches.push({ tags: { none: {} } });
+
+  return branches.length === 1 ? branches[0] : { OR: branches };
+}
+
+/**
+ * 거래를 낸 사람 조건. 고르지 않았으면 undefined.
+ *
+ * **자산주인 필터와 다른 것이다.** 이쪽은 거래를 적을 때 고른 사람(JournalEntry.personId)
+ * 이고, 저쪽(assetOwnerCondition)은 돈이 오간 계좌의 주인이다. 남의 카드로 내 몫을 쓴
+ * 거래에서 둘이 갈린다 -- 낸 사람은 나이고 계좌 주인은 카드 임자다.
+ */
+export function entryPersonCondition(
+  personIds: readonly string[] | undefined,
+): Prisma.JournalEntryWhereInput | undefined {
+  if (!personIds || personIds.length === 0) return undefined;
+  return { personId: { in: [...personIds] } };
 }
 
 /**

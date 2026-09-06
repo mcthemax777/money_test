@@ -1,21 +1,29 @@
-import { Text, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, Text, View } from 'react-native';
 
 import { useAssetsData } from '@money/core/hooks/useAssetsData';
 import { accountTypeLabel } from '@money/core/lib/account-type';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
-import type { Account } from '@money/core/lib/types';
+import type { Account, Card, Person } from '@money/core/lib/types';
 import { useProject, useProjectDisplayCurrency } from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
 
-import PageHeader from '../components/PageHeader';
+import AddButton from '../components/AddButton';
+import AssetTypeSummary from '../components/AssetTypeSummary';
 import PersonScopeTitle from '../components/PersonScopeTitle';
+import { AddAccountModal, AddCardModal, AddPersonModal } from '../components/AssetAddModals';
+import {
+  EditAccountModal,
+  EditCardModal,
+  EditPersonModal,
+} from '../components/AssetEditModals';
 
 /**
  * 자산. 웹의 /assets 를 옮긴 것이다.
  *
- * 총자산과 구성원별 계좌·카드 목록을 보여 준다. 추가·수정과 계좌 상세(잔액 추이,
- * 거래 목록)는 아직 웹에만 있다.
+ * 총자산과 구성원별 계좌·카드 목록을 보여 주고, 목록 안에서 구성원·계좌·카드를 만든다.
+ * 수정과 계좌 상세(잔액 추이, 거래 목록)는 아직 웹에만 있다.
  */
 export default function AssetsScreen() {
   const { t } = useTranslation();
@@ -25,13 +33,33 @@ export default function AssetsScreen() {
 
   const assets = useAssetsData(selectedProjectId);
 
-  /* 고른 자산주인의 총자산. 전원이면 주인 없는 계좌까지 담긴 서버 값을 그대로 쓴다. */
-  const total = toNumber(assets.netWorth?.total);
+  /*
+   * 열려 있는 만들기 창.
+   *
+   * 계좌는 어느 사람 밑에, 카드는 어느 계좌 밑에 만드는지가 함께 있어야 한다. 눌러서
+   * 들어온 자리가 그것을 정하므로 그 대상을 그대로 담는다 -- 폼에서 다시 고를 것이 없다.
+   */
+  const [isPersonAddOpen, setIsPersonAddOpen] = useState(false);
+  /** 고치는 중인 대상. 한 번에 하나만 연다 (만들기 창과 같은 규칙). */
+  const [personEdit, setPersonEdit] = useState<Person | null>(null);
+  const [accountEdit, setAccountEdit] = useState<Account | null>(null);
+  const [cardEdit, setCardEdit] = useState<Card | null>(null);
+  const [accountAddFor, setAccountAddFor] = useState<Person | null>(null);
+  const [cardAddFor, setCardAddFor] = useState<Account | null>(null);
 
   return (
     <View className="gap-6">
-      <PageHeader
-        title={
+      {/*
+        화면의 첫 줄이자 제목이다. 이름을 누르면 자산주인을, 유형 카드를 누르면
+        무엇을 더한 금액인지 고른다. 홈에 있던 칸을 그대로 옮겨 왔다.
+
+        총자산 한 덩어리를 적던 파란 상자를 대신한다. 계좌를 골라도 이 값은
+        그대로고, 유형 넷을 다 켜면 예전의 총자산과 같은 금액이 나온다.
+      */}
+      <AssetTypeSummary
+        byType={assets.netWorth?.byType}
+        hasNoScope={assets.people.length > 0 && assets.selectedPersonIds.length === 0}
+        scopeTitle={
           <PersonScopeTitle
             noun={t('home.assetsNoun')}
             people={assets.people}
@@ -42,30 +70,20 @@ export default function AssetsScreen() {
         }
       />
 
-      {/* 총자산. 계좌를 골라도 이 값은 그대로다. */}
-      <View className="rounded-lg bg-blue-600 p-6">
-        <Text className="text-sm text-white opacity-90">{t('assets.total')}</Text>
-        <Text className="mt-2 text-4xl font-bold text-white">
-          {formatCurrency(total, displayCurrency)}
-        </Text>
-        {assets.netWorth &&
-        (toNumber(assets.netWorth.liability) !== 0 ||
-          toNumber(assets.netWorth.investment) !== 0) ? (
-          <Text className="mt-2 text-sm text-white opacity-90">
-            {t('assets.parts', {
-              cash: formatCurrency(assets.netWorth.cash, displayCurrency),
-              investment: formatCurrency(assets.netWorth.investment, displayCurrency),
-              liability: formatCurrency(assets.netWorth.liability, displayCurrency),
-            })}
-          </Text>
-        ) : null}
-      </View>
-
       {assets.hasError ? (
         <View className="rounded bg-red-50 p-3">
           <Text className="text-sm text-red-800">{t('home.loadFailed')}</Text>
         </View>
       ) : null}
+
+      {/*
+        구성원은 목록 맨 위에서 더한다. 만들 자리가 목록보다 먼저 보인다.
+
+        사람 카드끼리는 넓게(gap-8) 벌리지만 이 버튼은 바로 아래 카드에 붙여 둔다.
+        같은 간격으로 띄우면 어느 목록에 더하는 버튼인지 멀어져 읽히지 않는다.
+      */}
+      <View>
+      <AddButton label={t('person.add')} onPress={() => setIsPersonAddOpen(true)} />
 
       {assets.isLoading && assets.people.length === 0 ? (
         <Text className="text-gray-600">{t('common.loading')}</Text>
@@ -78,7 +96,8 @@ export default function AssetsScreen() {
 
             return (
               <View key={person.id} className="rounded-lg bg-white p-6 shadow-sm">
-                <View className="mb-6">
+                {/* 이름을 누르면 고친다. 자산 화면에서 가장 잦은 손질이 이름과 자리다. */}
+                <Pressable className="mb-6" onPress={() => setPersonEdit(person)}>
                   <Text className="text-xl font-bold text-gray-900">{person.name}</Text>
                   <Text className="text-sm text-gray-600">
                     {t('assets.personSubtotal', {
@@ -88,7 +107,9 @@ export default function AssetsScreen() {
                       ),
                     })}
                   </Text>
-                </View>
+                </Pressable>
+
+                <AddButton label={t('account.add')} onPress={() => setAccountAddFor(person)} />
 
                 {owned.length === 0 ? (
                   <Text className="text-gray-600">{t('assets.noAccounts')}</Text>
@@ -100,6 +121,9 @@ export default function AssetsScreen() {
                         account={account}
                         profit={assets.accountProfit.get(account.id)}
                         cards={assets.cardsOf(account.id)}
+                        onAddCard={() => setCardAddFor(account)}
+                        onEdit={() => setAccountEdit(account)}
+                        onEditCard={setCardEdit}
                       />
                     ))}
                   </View>
@@ -107,15 +131,87 @@ export default function AssetsScreen() {
               </View>
             );
           })}
+
         </View>
       )}
+      </View>
 
       {/* 아직 웹에만 있는 것들. 없는 채로 두면 앱에서 할 수 있는 일로 오해한다. */}
       <Text className="text-xs text-gray-500">{t('assets.webOnlyRest')}</Text>
+
+      {/*
+        열 때만 만든다. 세 창이 같은 규칙이다 -- 숨긴 채로 붙여 두면 열리지 않는 일이
+        있었고(안드로이드), 폼 상태도 창을 닫을 때 함께 사라지는 편이 단순하다.
+      */}
+      {personEdit ? (
+        <EditPersonModal
+          target={personEdit}
+          onClose={() => setPersonEdit(null)}
+          isSubmitting={assets.isSubmitting}
+          onSave={(patch) => assets.updatePerson(personEdit.id, patch)}
+          onMove={(step) => assets.movePerson(personEdit.id, step)}
+        />
+      ) : null}
+
+      {accountEdit ? (
+        <EditAccountModal
+          target={accountEdit}
+          onClose={() => setAccountEdit(null)}
+          isSubmitting={assets.isSubmitting}
+          onSave={(patch) => assets.updateAccount(accountEdit.id, patch)}
+          onMove={(step) => assets.moveAccount(accountEdit.id, accountEdit.ownerId, step)}
+        />
+      ) : null}
+
+      {cardEdit ? (
+        <EditCardModal
+          target={cardEdit}
+          onClose={() => setCardEdit(null)}
+          isSubmitting={assets.isSubmitting}
+          onSave={(patch) => assets.updateCard(cardEdit.id, patch)}
+          onMove={(step) => assets.moveCard(cardEdit.id, cardEdit.paymentAccountId, step)}
+        />
+      ) : null}
+
+      {isPersonAddOpen ? (
+        <AddPersonModal
+          isOpen
+          onClose={() => setIsPersonAddOpen(false)}
+          onSubmit={assets.addPerson}
+          isSubmitting={assets.isSubmitting}
+        />
+      ) : null}
+
+      {accountAddFor ? (
+        <AddAccountModal
+          isOpen
+          onClose={() => setAccountAddFor(null)}
+          onSubmit={assets.addAccount}
+          isSubmitting={assets.isSubmitting}
+          ownerId={accountAddFor.id}
+          ownerName={accountAddFor.name}
+        />
+      ) : null}
+
+      {cardAddFor ? (
+        <AddCardModal
+          isOpen
+          onClose={() => setCardAddFor(null)}
+          onSubmit={assets.addCard}
+          isSubmitting={assets.isSubmitting}
+          account={cardAddFor}
+        />
+      ) : null}
     </View>
   );
 }
 
+/**
+ * 목록 안에서 하나 더 만드는 버튼. 웹의 것과 같은 모양이다.
+ *
+ * 점선으로 둘러 "여기에 하나 더"로 읽히게 한다. 채워진 버튼으로 두면 목록의 항목과
+ * 같은 무게가 되어, 있는 것과 만들 자리가 눈에 섞인다.
+ */
 /**
  * 계좌 한 줄과 그 아래 카드들.
  *
@@ -127,22 +223,30 @@ function AccountRow({
   account,
   profit,
   cards,
+  onAddCard,
+  onEdit,
+  onEditCard,
 }: {
   account: Account;
   profit?: string;
-  cards: Array<{ id: string; name: string; cardType: string; issuer?: { name?: string } | null }>;
+  cards: Card[];
+  /** 카드는 결제 통장 밑에 붙는다. 그 통장이 곧 이 계좌다. */
+  onAddCard: () => void;
+  onEdit: () => void;
+  onEditCard: (card: Card) => void;
 }) {
   const { t } = useTranslation();
   const profitAmount = toNumber(profit);
 
   return (
     <View className="rounded-lg border border-gray-200 p-4">
-      <View className="flex-row items-center gap-1.5">
+      {/* 이름 줄을 누르면 고친다. 잔액을 누르는 것과 헷갈리지 않게 이름 줄만 받는다. */}
+      <Pressable className="flex-row items-center gap-1.5" onPress={onEdit}>
         <Text className="text-sm text-gray-600">{account.name}</Text>
         <Text className="rounded bg-gray-100 px-1.5 py-px text-[11px] text-gray-600">
           {accountTypeLabel(account.type)}
         </Text>
-      </View>
+      </Pressable>
 
       <Text className="mt-2 text-2xl font-bold text-gray-900">
         {formatCurrency(account.balance, account.currency)}
@@ -166,10 +270,18 @@ function AccountRow({
         <Text className="mt-1 text-xs text-gray-400">{account.accountNumber}</Text>
       ) : null}
 
+      <View className="mt-4 border-t border-gray-200 pt-4">
+        <AddButton label={t('card.add')} onPress={onAddCard} />
+      </View>
+
       {cards.length > 0 ? (
-        <View className="mt-4 gap-2 border-t border-gray-200 pt-4">
+        <View className="gap-2">
           {cards.map((card) => (
-            <View key={card.id} className="rounded border border-green-100 bg-green-50 px-3 py-2">
+            <Pressable
+              key={card.id}
+              onPress={() => onEditCard(card)}
+              className="rounded border border-green-100 bg-green-50 px-3 py-2 active:bg-green-100"
+            >
               <Text className="text-sm font-medium text-gray-900">{card.name}</Text>
               {card.issuer?.name ? (
                 <Text className="text-xs text-gray-600">{card.issuer.name}</Text>
@@ -177,7 +289,7 @@ function AccountRow({
               <Text className="text-xs text-gray-600">
                 {t(card.cardType === 'debit' ? 'method.debit_card' : 'method.credit_card')}
               </Text>
-            </View>
+            </Pressable>
           ))}
         </View>
       ) : null}

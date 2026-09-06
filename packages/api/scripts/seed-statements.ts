@@ -18,7 +18,14 @@ import { CategoryType, PrismaClient } from '@prisma/client';
 import { CardsService } from '@/modules/cards/cards.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
 import { PeopleService } from '@/modules/people/people.service';
-import { makeAccounts, makeEntries, makeLedger, projectAccessStub } from './smoke-harness';
+import {
+  makeAccounts,
+  makeCards,
+  makeEntries,
+  makeLedger,
+  makePeople,
+  projectAccessStub,
+} from './smoke-harness';
 
 /** 카드 세 장. 결제 통장은 카드사에 맞춰 나눈다. */
 type CardKey = 'kbDebit' | 'kbCredit' | 'hana';
@@ -177,8 +184,8 @@ async function main() {
     const institutions = new InstitutionsService(prisma as any, access);
     const accounts = makeAccounts(prisma, access, ledger, institutions);
     const entries = makeEntries(prisma, access, ledger);
-    const people = new PeopleService(prisma as any, access);
-    const cards = new CardsService(prisma as any, access, institutions);
+    const people = makePeople(prisma, access);
+    const cards = makeCards(prisma, access, institutions);
 
     const existing = await prisma.journalEntry.count({ where: { projectId } });
     if (existing > 0 && process.env.FORCE !== '1') {

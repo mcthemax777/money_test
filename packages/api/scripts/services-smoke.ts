@@ -5,7 +5,15 @@ import { CardsService } from '@/modules/cards/cards.service';
 
 const D = (n: string | number) => new Prisma.Decimal(n);
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
-import { makeAccounts, makeLedger, projectAccessStub, runSmoke } from './smoke-harness';
+import {
+  makeAccounts,
+  makeCards,
+  makeCategories,
+  makeLedger,
+  makePeople,
+  projectAccessStub,
+  runSmoke,
+} from './smoke-harness';
 
 runSmoke('services', async (ctx) => {
   const project = await ctx.createProject();
@@ -18,9 +26,9 @@ runSmoke('services', async (ctx) => {
   const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
   const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
-  const people = new PeopleService(ctx.prisma as any, access);
-  const categories = new CategoriesService(ctx.prisma as any, access);
-  const cards = new CardsService(ctx.prisma as any, access, institutions);
+  const people = makePeople(ctx.prisma, access);
+  const categories = makeCategories(ctx.prisma, access);
+  const cards = makeCards(ctx.prisma, access, institutions);
 
   // ── 사람 ──
   const person = await people.createPerson(u1.id, { name: '김철수' }, pid);
@@ -121,7 +129,7 @@ runSmoke('services', async (ctx) => {
     (
       await ctx.prisma.card.findMany({
         where: { projectId: pid },
-        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+        orderBy: [{ sortRank: 'asc' }, { createdAt: 'desc' }],
         select: { id: true },
       })
     ).map((row) => row.id);

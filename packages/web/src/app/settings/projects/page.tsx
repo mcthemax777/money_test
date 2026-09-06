@@ -3,124 +3,52 @@
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@money/core/store/auth';
-import { useProject } from '@money/core/store/project';
-import { apiClient } from '@money/core/lib/api-client';
-import { SUPPORTED_CURRENCIES } from '@money/types';
+import { useProjectAdmin } from '@money/core/hooks/useProjectAdmin';
+import {
+  useProjectMembership,
+  type MemberRow,
+  type ProjectSearchResult,
+} from '@money/core/hooks/useProjectMembership';
+import type { Project } from '@money/core/store/project';
+import { DEFAULT_TIME_ZONE, SUPPORTED_CURRENCIES, type CurrencyCode } from '@money/types';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { currencyLabel } from '@money/core/lib/money';
-import Link from 'next/link';
+import { TIME_ZONE_OPTIONS } from '@money/core/lib/time-zones';
 import PageHeader from '@/components/PageHeader';
-import { useApiError } from '@money/core/lib/api-error';
-
-interface Project {
-  id: string;
-  name: string;
-  description?: string;
-  projectKey?: string | null;
-  role: 'owner' | 'editor' | 'viewer';
-  /** 집계 기준 타임존. 월 합계와 카드 청구주기 경계가 이 값을 따른다. */
-  timezone?: string;
-  ledgerCurrency?: string;
-  displayCurrency?: string;
-  /** 이 사용자가 이 프로젝트에서 "나"로 지정한 구성원 */
-  myPersonId?: string | null;
-}
 
 /**
- * 고를 수 있는 기준 타임존.
+ * 프로젝트 관리 화면.
  *
- * 전 세계 목록을 다 늘어놓을 필요는 없다. 필요해지면 여기에 추가한다.
+ * 서버를 부르는 규칙은 훅 둘에 있다. 프로젝트 자체(만들기·이름·타임존·표시 통화·삭제)는
+ * `useProjectAdmin`, 그 프로젝트에 누가 들어오고 나가는가(초대·가입 요청·멤버·"나")는
+ * `useProjectMembership` 이다. 앱의 프로젝트 관리 화면도 같은 훅을 쓴다 -- 승인·강퇴처럼
+ * 되돌리기 어려운 일이 화면마다 다르게 움직이지 않도록.
+ *
+ * 여기 남은 것은 웹에만 있는 것뿐이다. 클립보드 복사, 알림창, 그리고 떠난 프로젝트를
+ * 보고 있었을 때 남은 것 하나를 대신 고르는 일이다.
  */
-const TIME_ZONE_OPTIONS: Array<{ id: string; nameKey?: MessageKey }> = [
-  { id: 'Asia/Seoul', nameKey: 'tz.seoul' },
-  { id: 'Asia/Tokyo', nameKey: 'tz.tokyo' },
-  { id: 'Asia/Shanghai', nameKey: 'tz.shanghai' },
-  { id: 'Asia/Singapore', nameKey: 'tz.singapore' },
-  { id: 'Europe/London', nameKey: 'tz.london' },
-  { id: 'America/New_York', nameKey: 'tz.newYork' },
-  { id: 'America/Los_Angeles', nameKey: 'tz.losAngeles' },
-  // UTC는 어느 말로도 UTC다. 옮길 이름이 없다.
-  { id: 'UTC' },
-];
-
-interface SearchResult {
-  id: string;
-  projectKey: string;
-  name: string;
-  description?: string | null;
-  ownerName: string | null;
-  memberCount: number;
-  isMember: boolean;
-  myRequestStatus: 'pending' | 'approved' | 'rejected' | null;
-}
-
-interface JoinRequest {
-  id: string;
-  userId: string;
-  name: string;
-  email: string;
-  avatar: string | null;
-  message: string | null;
-  createdAt: string;
-}
-
-interface ProjectMember {
-  id: string;
-  email: string;
-  name: string;
-  role: 'owner' | 'editor' | 'viewer';
-  joinedAt: string;
-}
-
-interface Invitation {
-  id: string;
-  invitationCode: string;
-  role: 'editor' | 'viewer';
-  expiresAt: string | null;
-  createdAt: string;
-}
-
-interface MyJoinRequest {
-  id: string;
-  projectId: string;
-  projectName: string;
-  projectKey: string | null;
-  status: 'pending' | 'approved' | 'rejected';
-  message: string | null;
-  createdAt: string;
-  decidedAt: string | null;
-}
-
 export default function ProjectsPage() {
   const { t, tag } = useTranslation();
-  const { messageOf } = useApiError();
   const router = useRouter();
   const { isAuthenticated, isInitializing } = useAuth();
-  const { projects, setProjects, selectedProjectId, setSelectedProjectId } = useProject();
-  const [loading, setLoading] = useState(false);
-  const [showCreateForm, setShowCreateForm] = useState(false);
+  const admin = useProjectAdmin();
+  const membership = useProjectMembership();
+
   const [error, setError] = useState('');
+  const [showCreateForm, setShowCreateForm] = useState(false);
   const [createForm, setCreateForm] = useState({ name: '', description: '' });
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
   /** 이름·설명을 고치는 중인 프로젝트와 입력값. 한 번에 하나만 고친다. */
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ name: '', description: '' });
-  const [savingEdit, setSavingEdit] = useState(false);
   /** 기준통화 환산이 도는 동안 그 프로젝트의 선택을 잠근다. */
   const [rebasingId, setRebasingId] = useState<string | null>(null);
 
   // 가입 요청 관련 상태
   const [showJoinForm, setShowJoinForm] = useState(false);
   const [joinForm, setJoinForm] = useState({ key: '', message: '' });
-  const [searching, setSearching] = useState(false);
-  const [searchResult, setSearchResult] = useState<SearchResult | null>(null);
+  const [searchResult, setSearchResult] = useState<ProjectSearchResult | null>(null);
   const [searchError, setSearchError] = useState('');
-  const [joinRequestsByProject, setJoinRequestsByProject] = useState<Record<string, JoinRequest[]>>({});
-  const [myRequests, setMyRequests] = useState<MyJoinRequest[]>([]);
-  const [membersByProject, setMembersByProject] = useState<Record<string, ProjectMember[]>>({});
-  /** 프로젝트별 구성원(Person) 목록. "나" 지정에 쓴다. */
-  const [peopleByProject, setPeopleByProject] = useState<Record<string, Array<{ id: string; name: string }>>>({});
-  const [invitationsByProject, setInvitationsByProject] = useState<Record<string, Invitation[]>>({});
   const [inviteRoleByProject, setInviteRoleByProject] = useState<Record<string, 'editor' | 'viewer'>>({});
   const [copiedCode, setCopiedCode] = useState<string | null>(null);
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
@@ -133,31 +61,32 @@ export default function ProjectsPage() {
 
   useEffect(() => {
     loadProjects();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const loadProjects = async () => {
-    try {
-      setLoading(true);
-      const data: Project[] = (await apiClient.getMyProjects()) || [];
-      setProjects(data);
-      setError('');
+  /*
+   * 멤버·초대·요청은 프로젝트 목록이 정해진 뒤에 받는다. id 를 이어 붙인 것을 보는 이유는,
+   * 목록을 다시 받을 때마다 배열이 새로 만들어져도 내용이 같으면 다시 묻지 않기 위해서다.
+   */
+  const projectIds = admin.projects.map((project) => project.id).join(',');
+  useEffect(() => {
+    if (admin.projects.length > 0) membership.load(admin.projects);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectIds]);
 
-      // owner인 프로젝트의 대기 중인 요청과, 내가 보낸 요청을 함께 갱신한다.
-      const ownerProjects = data.filter((p) => p.role === 'owner');
-      await Promise.all([
-        // 가입 요청과 초대 링크는 소유자만 다루므로 소유 프로젝트만 조회한다.
-        loadJoinRequests(ownerProjects),
-        loadInvitations(ownerProjects),
-        loadMembers(data),
-        loadPeople(data),
-        loadMyRequests(),
-      ]);
-    } catch (err) {
-      console.error('프로젝트 목록 조회 실패:', err);
-      setError(t('projects.loadFailed'));
-    } finally {
-      setLoading(false);
-    }
+  const loadProjects = async () => {
+    const result = await admin.reload();
+    setError(result.ok ? '' : result.message);
+  };
+
+  /** 멤버·초대·요청만 다시 받는다. 프로젝트 목록 자체는 그대로다. */
+  const reloadMembership = () => membership.load(admin.projects);
+
+  /** 손질 하나. 실패하면 이유를 적고, 성공하면 지운다. */
+  const run = async (task: Promise<{ ok: boolean; message?: string }>) => {
+    const result = await task;
+    setError(result.ok ? '' : result.message ?? '');
+    return result.ok;
   };
 
   const startEdit = (project: Project) => {
@@ -173,33 +102,14 @@ export default function ProjectsPage() {
       return;
     }
 
-    try {
-      setSavingEdit(true);
-      // 설명은 비워서 지울 수 있다. 서버가 빈 값을 null로 바꿔 저장한다.
-      await apiClient.updateProject(projectId, { name, description: editForm.description });
-      // 사이드바와 헤더가 스토어의 이름을 쓰므로 목록을 다시 받아 갱신한다.
-      const data: Project[] = (await apiClient.getMyProjects()) || [];
-      setProjects(data);
+    // 설명은 비워서 지울 수 있다. 서버가 빈 값을 null로 바꿔 저장한다.
+    if (await run(admin.update(projectId, { name, description: editForm.description }))) {
       setEditingId(null);
-      setError('');
-    } catch (err: any) {
-      setError(messageOf(err, 'projects.updateFailed'));
-    } finally {
-      setSavingEdit(false);
     }
   };
 
-  const handleChangeTimeZone = async (projectId: string, timezone: string) => {
-    try {
-      await apiClient.updateProject(projectId, { timezone });
-      // 사이드바와 각 화면이 이 값으로 날짜를 해석하므로 목록을 다시 받아 스토어를 갱신한다.
-      const data: Project[] = (await apiClient.getMyProjects()) || [];
-      setProjects(data);
-      setError('');
-    } catch (err: any) {
-      setError(messageOf(err, 'projects.timezoneFailed'));
-    }
-  };
+  const handleChangeTimeZone = (projectId: string, timezone: string) =>
+    run(admin.update(projectId, { timezone }, 'projects.timezoneFailed'));
 
   /**
    * 표시 통화 변경.
@@ -210,48 +120,41 @@ export default function ProjectsPage() {
   const handleChangeDisplayCurrency = async (project: Project, next: string) => {
     if (next === (project.displayCurrency || project.ledgerCurrency || 'KRW')) return;
 
-    try {
-      setRebasingId(project.id);
-      await apiClient.updateProject(project.id, { displayCurrency: next });
-      const data: Project[] = (await apiClient.getMyProjects()) || [];
-      setProjects(data);
-      setError('');
-    } catch (err: any) {
-      setError(messageOf(err, 'projects.currencyFailed'));
-    } finally {
-      setRebasingId(null);
-    }
+    setRebasingId(project.id);
+    await run(
+      admin.update(project.id, { displayCurrency: next as CurrencyCode }, 'projects.currencyFailed'),
+    );
+    setRebasingId(null);
   };
 
   const handleCreateProject = async () => {
-    if (!createForm.name.trim()) {
-      setError(t('projects.nameRequired'));
-      return;
-    }
+    /*
+     * 첫 프로젝트라면 훅이 방금 만든 것을 바로 고른다. 그때는 화면이 곧 그 프로젝트를
+     * 보여 주므로 알림창을 띄우지 않는다.
+     */
+    const isFirstProject = !admin.selectedProjectId;
+    if (!(await run(admin.create(createForm.name, createForm.description)))) return;
 
-    try {
-      const created = await apiClient.createProject(createForm.name, createForm.description);
-      setCreateForm({ name: '', description: '' });
-      setShowCreateForm(false);
-      setError('');
+    setCreateForm({ name: '', description: '' });
+    setShowCreateForm(false);
+    if (!isFirstProject) alert(t('projects.created'));
+  };
 
-      // 선택된 프로젝트가 없던 상태(첫 프로젝트이거나 전부 삭제한 뒤)라면
-      // 방금 만든 프로젝트를 바로 선택한다. 그러지 않으면 사이드탭이 계속
-      // 프로젝트 없는 상태로 남는다.
-      const isFirstProject = !selectedProjectId;
-      if (isFirstProject && created?.id) {
-        setSelectedProjectId(created.id);
-      }
+  /**
+   * 떠난 프로젝트를 보고 있었으면 남은 것 하나를 대신 고른다.
+   *
+   * 훅은 고른 것을 비우기만 한다 (없는 프로젝트를 계속 조회하지 않으려고). 웹은 왼쪽 메뉴가
+   * 늘 한 프로젝트를 가리키므로, 비워 두면 다음 화면이 통째로 빈 채 남는다.
+   *
+   * 지우기 **전에** 불러 다음 것을 정해 둔다. 지운 뒤에는 이 목록이 낡는다.
+   */
+  const pickNextProject = (goneProjectId: string) => {
+    const wasSelected = admin.selectedProjectId === goneProjectId;
+    const next = admin.projects.find((project) => project.id !== goneProjectId);
 
-      await loadProjects();
-
-      if (!isFirstProject) {
-        alert(t('projects.created'));
-      }
-    } catch (err) {
-      setError(t('projects.createFailed'));
-      console.error(err);
-    }
+    return () => {
+      if (wasSelected && next) admin.select(next.id);
+    };
   };
 
   const handleLeaveProject = async (projectId: string) => {
@@ -259,25 +162,12 @@ export default function ProjectsPage() {
       return;
     }
 
-    try {
-      await apiClient.leaveProject(projectId);
-      setDeleteConfirm(null);
-      setError('');
+    const selectNext = pickNextProject(projectId);
+    if (!(await run(admin.removeOrLeave(projectId, 'leave')))) return;
 
-      // 탈퇴한 프로젝트가 선택되어 있었다면 다른 프로젝트 선택
-      if (selectedProjectId === projectId) {
-        const remaining = projects.filter(p => p.id !== projectId);
-        if (remaining.length > 0) {
-          setSelectedProjectId(remaining[0].id);
-        }
-      }
-
-      await loadProjects();
-      alert(t('projects.left'));
-    } catch (err: any) {
-      setError(err.response?.data?.message || t('projects.leaveFailed'));
-      console.error(err);
-    }
+    setDeleteConfirm(null);
+    selectNext();
+    alert(t('projects.left'));
   };
 
   const handleDeleteProject = async (projectId: string) => {
@@ -285,123 +175,33 @@ export default function ProjectsPage() {
       return;
     }
 
-    try {
-      await apiClient.deleteProject(projectId);
-      setDeleteConfirm(null);
-      setError('');
+    const selectNext = pickNextProject(projectId);
+    if (!(await run(admin.removeOrLeave(projectId, 'delete')))) return;
 
-      // 삭제한 프로젝트가 선택되어 있었다면 다른 프로젝트 선택
-      if (selectedProjectId === projectId) {
-        const remaining = projects.filter(p => p.id !== projectId);
-        if (remaining.length > 0) {
-          setSelectedProjectId(remaining[0].id);
-        }
-      }
-
-      await loadProjects();
-      alert(t('projects.deleted'));
-    } catch (err: any) {
-      setError(err.response?.data?.message || t('projects.deleteFailed'));
-      console.error(err);
-    }
+    setDeleteConfirm(null);
+    selectNext();
+    alert(t('projects.deleted'));
   };
 
-
-  // ===== 가입 요청 =====
-
-  const loadJoinRequests = async (ownerProjects: Project[]) => {
-    const entries = await Promise.all(
-      ownerProjects.map(async (project) => {
-        try {
-          const data = await apiClient.getProjectJoinRequests(project.id);
-          return [project.id, data || []] as const;
-        } catch (err) {
-          console.error(`가입 요청 조회 실패 (${project.id}):`, err);
-          return [project.id, []] as const;
-        }
-      }),
-    );
-
-    setJoinRequestsByProject(Object.fromEntries(entries));
-  };
-
-  // 멤버 목록은 소유자뿐 아니라 참여 중인 모든 멤버가 볼 수 있다.
-  const loadMembers = async (allProjects: Project[]) => {
-    const entries = await Promise.all(
-      allProjects.map(async (project) => {
-        try {
-          const data = await apiClient.getProjectMembers(project.id);
-          return [project.id, data || []] as const;
-        } catch (err) {
-          console.error(`멤버 조회 실패 (${project.id}):`, err);
-          return [project.id, []] as const;
-        }
-      }),
-    );
-
-    setMembersByProject(Object.fromEntries(entries));
-  };
-
-  /** "나"로 지정할 수 있는 구성원 목록. 멤버(로그인 사용자)와 구성원(Person)은 다른 개념이다. */
-  const loadPeople = async (allProjects: Project[]) => {
-    const entries = await Promise.all(
-      allProjects.map(async (project) => {
-        try {
-          const data = await apiClient.getPeople(project.id);
-          return [project.id, data || []] as const;
-        } catch (err) {
-          console.error(`구성원 조회 실패 (${project.id}):`, err);
-          return [project.id, []] as const;
-        }
-      }),
-    );
-
-    setPeopleByProject(Object.fromEntries(entries));
-  };
-
+  /** "나"는 프로젝트 목록에 붙어 오는 값이라, 바꾼 뒤 목록을 다시 받아야 화면이 따라온다. */
   const handleChangeMyPerson = async (projectId: string, personId: string) => {
-    try {
-      await apiClient.setMyPerson(projectId, personId || null);
-      const data: Project[] = (await apiClient.getMyProjects()) || [];
-      setProjects(data);
-      setError('');
-    } catch (err: any) {
-      setError(messageOf(err, 'projects.meFailed'));
-    }
-  };
-
-  const loadInvitations = async (ownerProjects: Project[]) => {
-    const entries = await Promise.all(
-      ownerProjects.map(async (project) => {
-        try {
-          const data = await apiClient.getProjectPendingInvitations(project.id);
-          return [project.id, data || []] as const;
-        } catch (err) {
-          console.error(`초대 목록 조회 실패 (${project.id}):`, err);
-          return [project.id, []] as const;
-        }
-      }),
-    );
-
-    setInvitationsByProject(Object.fromEntries(entries));
+    if (await run(membership.setMyPerson(projectId, personId || null))) await loadProjects();
   };
 
   const buildInviteUrl = (invitationCode: string) =>
     `${window.location.origin}/join?code=${invitationCode}`;
 
   const handleGenerateInviteLink = async (projectId: string) => {
-    try {
-      const role = inviteRoleByProject[projectId] ?? 'editor';
-      const created = await apiClient.generateInvitationLink(projectId, role);
-      setError('');
-      await loadProjects();
+    const role = inviteRoleByProject[projectId] ?? 'editor';
+    const result = await membership.createInvitation(projectId, role);
+    setError(result.ok ? '' : result.message);
+    if (!result.ok) return;
 
-      // 만든 직후 바로 공유할 수 있도록 클립보드에 담는다.
-      if (created?.invitationCode) {
-        await handleCopyInviteLink(created.invitationCode);
-      }
-    } catch (err: any) {
-      setError(messageOf(err, 'projects.inviteFailed'));
+    await reloadMembership();
+
+    // 만든 직후 바로 공유할 수 있도록 클립보드에 담는다.
+    if (result.value?.invitationCode) {
+      await handleCopyInviteLink(result.value.invitationCode);
     }
   };
 
@@ -420,104 +220,62 @@ export default function ProjectsPage() {
       return;
     }
 
-    try {
-      await apiClient.revokeInvitation(invitationId);
-      setError('');
-      await loadProjects();
-    } catch (err: any) {
-      setError(messageOf(err, 'projects.revokeFailed'));
-    }
+    if (await run(membership.revokeInvitation(invitationId))) await reloadMembership();
   };
 
-  const handleRemoveMember = async (projectId: string, member: ProjectMember) => {
+  const handleRemoveMember = async (projectId: string, member: MemberRow) => {
     if (!confirm(t('projects.kickConfirm', { name: member.name }))) return;
 
-    try {
-      await apiClient.removeProjectMember(projectId, member.id);
-      setError('');
-      await loadProjects();
-    } catch (err: any) {
-      setError(messageOf(err, 'projects.kickFailed'));
-    }
-  };
-
-  const loadMyRequests = async () => {
-    try {
-      const data = await apiClient.getMyJoinRequests();
-      setMyRequests(data || []);
-    } catch (err) {
-      console.error('내 가입 요청 조회 실패:', err);
-    }
+    if (await run(membership.removeMember(projectId, member.id))) await reloadMembership();
   };
 
   const handleSearchProject = async () => {
-    const key = joinForm.key.trim();
-
-    if (!key) {
-      setSearchError(t('projects.keyRequired'));
+    const result = await membership.searchByKey(joinForm.key);
+    if (!result.ok) {
+      setSearchResult(null);
+      setSearchError(result.message);
       return;
     }
 
-    try {
-      setSearching(true);
-      setSearchError('');
-      const data = await apiClient.findProjectByKey(key);
-      setSearchResult(data);
-    } catch (err: any) {
-      setSearchResult(null);
-      setSearchError(messageOf(err, 'projects.notFound'));
-    } finally {
-      setSearching(false);
-    }
+    setSearchError('');
+    setSearchResult(result.value ?? null);
   };
 
   const handleRequestJoin = async () => {
     if (!searchResult) return;
 
-    try {
-      await apiClient.requestToJoinProject(searchResult.id, joinForm.message);
-      setSearchResult({ ...searchResult, myRequestStatus: 'pending' });
-      setJoinForm({ key: '', message: '' });
-      setSearchError('');
-      await loadMyRequests();
-      alert(t('projects.requestSent'));
-    } catch (err: any) {
-      setSearchError(messageOf(err, 'projects.requestFailed'));
+    const result = await membership.requestToJoin(searchResult.id, joinForm.message);
+    if (!result.ok) {
+      setSearchError(result.message);
+      return;
     }
+
+    setSearchResult({ ...searchResult, myRequestStatus: 'pending' });
+    setJoinForm({ key: '', message: '' });
+    setSearchError('');
+    await reloadMembership();
+    alert(t('projects.requestSent'));
   };
 
   const handleApproveRequest = async (requestId: string, role: 'editor' | 'viewer') => {
-    try {
-      const result = await apiClient.approveJoinRequest(requestId, role);
-      setError('');
-      await loadProjects();
-      alert(t('projects.approved', { name: result.userName }));
-    } catch (err: any) {
-      setError(messageOf(err, 'projects.approveFailed'));
-    }
+    const result = await membership.approveRequest(requestId, role);
+    setError(result.ok ? '' : result.message);
+    if (!result.ok) return;
+
+    await reloadMembership();
+    alert(t('projects.approved', { name: result.value?.userName ?? '' }));
   };
 
   const handleRejectRequest = async (requestId: string) => {
     if (!confirm(t('projects.rejectConfirm'))) return;
 
-    try {
-      await apiClient.rejectJoinRequest(requestId);
-      setError('');
-      await loadProjects();
-    } catch (err: any) {
-      setError(messageOf(err, 'projects.rejectFailed'));
-    }
+    if (await run(membership.rejectRequest(requestId))) await reloadMembership();
   };
 
   const handleCancelMyRequest = async (requestId: string) => {
     if (!confirm(t('projects.cancelRequestConfirm'))) return;
 
-    try {
-      await apiClient.cancelJoinRequest(requestId);
-      await loadMyRequests();
-    } catch (err: any) {
-      setError(messageOf(err, 'projects.cancelRequestFailed'));
-    }
+    if (await run(membership.cancelMyRequest(requestId))) await reloadMembership();
   };
 
   const handleCopyKey = async (key: string) => {
@@ -639,10 +397,10 @@ export default function ProjectsPage() {
             />
             <button
               onClick={handleSearchProject}
-              disabled={searching}
+              disabled={membership.isSubmitting}
               className="px-4 py-2 bg-gray-800 text-white rounded-lg hover:bg-gray-900 disabled:opacity-50 transition"
             >
-              {searching ? t('projects.searching') : t('projects.search')}
+              {membership.isSubmitting ? t('projects.searching') : t('projects.search')}
             </button>
           </div>
 
@@ -699,11 +457,11 @@ export default function ProjectsPage() {
       )}
 
       {/* 내가 보낸 가입 요청 */}
-      {myRequests.length > 0 && (
+      {membership.myRequests.length > 0 && (
         <div className="bg-white border border-gray-200 rounded-lg p-6">
           <h2 className="text-lg font-semibold text-gray-900 mb-4">{t('projects.myRequests')}</h2>
           <div className="space-y-2">
-            {myRequests.map((request) => (
+            {membership.myRequests.map((request) => (
               <div
                 key={request.id}
                 className="flex items-center justify-between border border-gray-100 rounded-lg px-4 py-3"
@@ -749,9 +507,9 @@ export default function ProjectsPage() {
 
       {/* 프로젝트 목록 */}
       <div className="grid gap-4">
-        {loading ? (
+        {admin.isLoading ? (
           <div className="text-center text-gray-500 py-8">{t('common.loading')}</div>
-        ) : projects.length === 0 ? (
+        ) : admin.projects.length === 0 ? (
           <div className="bg-gray-50 rounded-lg p-8 text-center">
             <p className="text-gray-600 mb-4">{t('projects.empty')}</p>
             <button
@@ -762,11 +520,11 @@ export default function ProjectsPage() {
             </button>
           </div>
         ) : (
-          projects.map((project) => (
+          admin.projects.map((project) => (
             <div
               key={project.id}
               className={`bg-white rounded-lg shadow p-6 ${
-                selectedProjectId === project.id ? 'ring-2 ring-blue-500' : ''
+                admin.selectedProjectId === project.id ? 'ring-2 ring-blue-500' : ''
               }`}
             >
               <div className="flex items-start justify-between">
@@ -800,14 +558,14 @@ export default function ProjectsPage() {
                       <div className="flex gap-2">
                         <button
                           onClick={() => handleSaveProject(project.id)}
-                          disabled={savingEdit}
+                          disabled={admin.isSubmitting}
                           className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition disabled:opacity-50"
                         >
-                          {savingEdit ? t('common.saving') : t('common.save')}
+                          {admin.isSubmitting ? t('common.saving') : t('common.save')}
                         </button>
                         <button
                           onClick={() => setEditingId(null)}
-                          disabled={savingEdit}
+                          disabled={admin.isSubmitting}
                           className="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300 transition disabled:opacity-50"
                         >
                           {t('common.cancel')}
@@ -836,7 +594,7 @@ export default function ProjectsPage() {
                     <span className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded">
                       {getRoleLabel(project.role)}
                     </span>
-                    {selectedProjectId === project.id && (
+                    {admin.selectedProjectId === project.id && (
                       <span className="text-xs bg-green-100 text-green-700 px-2 py-1 rounded">
                         {t('projects.selected')}
                       </span>
@@ -889,7 +647,7 @@ export default function ProjectsPage() {
                       </p>
                     </div>
                     <select
-                      value={project.timezone || 'Asia/Seoul'}
+                      value={project.timezone || DEFAULT_TIME_ZONE}
                       onChange={(e) => handleChangeTimeZone(project.id, e.target.value)}
                       className="px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
@@ -942,7 +700,7 @@ export default function ProjectsPage() {
                     className="px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="">{t('projects.myPersonNone')}</option>
-                    {(peopleByProject[project.id] ?? []).map((person) => (
+                    {(membership.people[project.id] ?? []).map((person) => (
                       <option key={person.id} value={person.id}>
                         {person.name}
                       </option>
@@ -978,13 +736,13 @@ export default function ProjectsPage() {
                     </div>
                   </div>
 
-                  {(invitationsByProject[project.id]?.length ?? 0) === 0 ? (
+                  {(membership.invitations[project.id]?.length ?? 0) === 0 ? (
                     <p className="text-xs text-gray-500">
                       {t('projects.noInvite')}
                     </p>
                   ) : (
                     <div className="space-y-2">
-                      {invitationsByProject[project.id].map((invitation) => (
+                      {membership.invitations[project.id].map((invitation) => (
                         <div
                           key={invitation.id}
                           className="flex flex-wrap items-center justify-between gap-2 bg-gray-50 rounded-lg px-4 py-3"
@@ -1024,13 +782,13 @@ export default function ProjectsPage() {
                 </div>
               )}
 
-              {(membersByProject[project.id]?.length ?? 0) > 0 && (
+              {(membership.members[project.id]?.length ?? 0) > 0 && (
                 <div className="mt-4 border-t border-gray-100 pt-4">
                   <h4 className="text-sm font-semibold text-gray-900 mb-3">
-                    {t('projects.memberCount', { count: membersByProject[project.id].length })}
+                    {t('projects.memberCount', { count: membership.members[project.id].length })}
                   </h4>
                   <div className="space-y-2">
-                    {membersByProject[project.id].map((member) => (
+                    {membership.members[project.id].map((member) => (
                       <div
                         key={member.id}
                         className="flex items-center justify-between gap-4 border border-gray-100 rounded-lg px-4 py-3"
@@ -1058,15 +816,15 @@ export default function ProjectsPage() {
                 </div>
               )}
 
-              {project.role === 'owner' && (joinRequestsByProject[project.id]?.length ?? 0) > 0 && (
+              {project.role === 'owner' && (membership.joinRequests[project.id]?.length ?? 0) > 0 && (
                 <div className="mt-4 border-t border-gray-100 pt-4">
                   <h4 className="text-sm font-semibold text-gray-900 mb-3">
                     {t('projects.pendingRequests', {
-                            count: joinRequestsByProject[project.id].length,
+                            count: membership.joinRequests[project.id].length,
                           })}
                   </h4>
                   <div className="space-y-2">
-                    {joinRequestsByProject[project.id].map((request) => (
+                    {membership.joinRequests[project.id].map((request) => (
                       <div
                         key={request.id}
                         className="flex items-start justify-between gap-4 bg-gray-50 rounded-lg px-4 py-3"

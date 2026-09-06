@@ -12,19 +12,27 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, ProjectRole } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
-import { TagDto } from '@money/types';
+import {
+  TagDto,
+  initialRanks,
+  rankAfter,
+} from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
 import { badRequest } from '@/common/app-error';
 import { clientId } from '@/common/client-id';
+import { stampFieldClocks } from '@/common/field-clock';
+import { ServerClockService } from '@/common/server-clock';
 
 @Injectable()
 export class TagsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly projectAccess: ProjectAccessService,
+    private readonly clock: ServerClockService,
   ) {}
 
-  async createTag(userId: string, dto: TagDto.CreateRequest, projectId?: string) {
+  /** `hlc` 는 기기의 오프라인 명령을 재생할 때만 온다. */
+  async createTag(userId: string, dto: TagDto.CreateRequest, projectId?: string, hlc?: string) {
     const name = dto.name?.trim();
     if (!name) throw badRequest('TAG_NAME_REQUIRED', '태그명을 입력해주세요.');
 
@@ -35,12 +43,12 @@ export class TagsService {
     );
 
     /*
-     * 새 태그는 목록 맨 뒤에 붙인다. sortOrder 를 0으로 두면 드래그로 0,1,2...를 매긴
+     * 새 태그는 목록 맨 뒤에 붙인다. 비워 두면 드래그로 매긴
      * 목록의 앞쪽에 끼어든다 (카테고리와 같은 이유).
      */
     const last = await this.prisma.tag.aggregate({
       where: { projectId: finalProjectId },
-      _max: { sortOrder: true },
+      _max: { sortRank: true },
     });
 
     try {
@@ -50,7 +58,8 @@ export class TagsService {
           projectId: finalProjectId,
           name,
           color: dto.color ?? null,
-          sortOrder: (last._max.sortOrder ?? -1) + 1,
+          sortRank: rankAfter(last._max.sortRank),
+          fieldHlc: stampFieldClocks(null, ['name', 'color'], hlc ?? this.clock.now()),
         },
       });
     } catch (error) {
@@ -64,7 +73,7 @@ export class TagsService {
     return this.prisma.tag.findMany({
       where: { projectId: finalProjectId, isActive: true },
       // 사용자가 드래그로 정한 순서. 같으면 이름 순.
-      orderBy: [{ sortOrder: 'asc' }, { name: 'asc' }],
+      orderBy: [{ sortRank: 'asc' }, { name: 'asc' }],
     });
   }
 
@@ -77,8 +86,8 @@ export class TagsService {
     return tag;
   }
 
-  async updateTag(id: string, userId: string, dto: TagDto.UpdateRequest) {
-    await this.getTagById(id, userId, 'editor');
+  async updateTag(id: string, userId: string, dto: TagDto.UpdateRequest, hlc?: string) {
+    const tag = await this.getTagById(id, userId, 'editor');
 
     const data: Prisma.TagUpdateInput = {};
     if (dto.name !== undefined) {
@@ -89,6 +98,10 @@ export class TagsService {
     // null 은 "색을 지운다"이고 undefined 는 "건드리지 않는다"다. 둘을 가른다.
     if (dto.color !== undefined) data.color = dto.color;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    // 순서 바꾸기는 이 필드 하나다 (분수 색인).
+    if (dto.sortRank !== undefined) data.sortRank = dto.sortRank;
+
+    data.fieldHlc = stampFieldClocks(tag.fieldHlc, Object.keys(data), hlc ?? this.clock.now());
 
     try {
       return await this.prisma.tag.update({ where: { id }, data });
@@ -111,8 +124,12 @@ export class TagsService {
     });
     assertReorderIds(ids, new Set(rows.map((row) => row.id)));
 
+    // 목록 전체를 받았으니 순서 값을 고르게 다시 매긴다 (자산·분류와 같은 규칙).
+    const ranks = initialRanks(ids.length);
     await this.prisma.$transaction(
-      ids.map((id, index) => this.prisma.tag.update({ where: { id }, data: { sortOrder: index } })),
+      ids.map((id, index) =>
+        this.prisma.tag.update({ where: { id }, data: { sortRank: ranks[index] } }),
+      ),
     );
 
     return this.getTags(userId, finalProjectId);
@@ -128,9 +145,15 @@ export class TagsService {
    * 카테고리처럼 `isActive` 를 내려 감춘다. 연결(EntryTag)은 그대로 두어, 잘못 지웠을 때
    * 다시 켜면 붙어 있던 거래가 함께 돌아온다.
    */
-  async deleteTag(id: string, userId: string) {
-    await this.getTagById(id, userId, 'editor');
-    return this.prisma.tag.update({ where: { id }, data: { isActive: false } });
+  async deleteTag(id: string, userId: string, hlc?: string) {
+    const tag = await this.getTagById(id, userId, 'editor');
+    return this.prisma.tag.update({
+      where: { id },
+      data: {
+        isActive: false,
+        fieldHlc: stampFieldClocks(tag.fieldHlc, ['isActive'], hlc ?? this.clock.now()),
+      },
+    });
   }
 
   /** 이름 중복(P2002)을 사용자용 메시지로 바꾼다. */

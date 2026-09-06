@@ -24,7 +24,32 @@ export function splitIdList(value: string): string[] {
     .filter(Boolean);
 }
 
+/**
+ * "태그 없음"을 가리키는 값. 태그 무리 안에서 태그 id 자리에 함께 온다.
+ *
+ * 무리 안은 OR 이므로 "여행 또는 태그 없음"이 그대로 표현된다. 별도 파라미터로 두면
+ * 그 무리와 AND 로 이어져 "여행이면서 태그가 없는 것"이라는 빈 조건이 된다.
+ *
+ * 태그 id 는 cuid 라 이 값과 겹치지 않는다.
+ */
+export const NO_TAG = 'none';
+
 export interface EntrySearchQuery {
+  /**
+   * 거래를 낸 사람 (쉼표로 잇는다).
+   *
+   * **자산주인(EntryFilterQuery.personIds)과 다른 것이다.** 이쪽은 거래를 적을 때 고른
+   * 사람(JournalEntry.personId)이고, 저쪽은 돈이 오간 계좌의 주인이다. 남의 카드로
+   * 내 몫을 쓴 거래에서 둘이 갈린다.
+   */
+  entryPersonIds?: string;
+  /**
+   * 설명에 든 글자 (부분 일치, 대소문자 가림 없음).
+   *
+   * 다른 무리와 달리 고르는 것이 아니라 적는 것이다. 그래서 AND 한 겹으로만 얹힌다 --
+   * "이 글자가 든 것 중에서" 나머지 조건을 본다.
+   */
+  text?: string;
   categoryIds?: string;
   paymentAccountIds?: string;
   paymentCardIds?: string;
@@ -45,6 +70,14 @@ export interface EntrySearchQuery {
 }
 
 export interface ParsedEntrySearch {
+  /**
+   * 설명에서 찾을 글자. undefined 면 글자로 거르지 않는다.
+   *
+   * 앞뒤 공백을 털고 남은 것이 없으면 undefined 다. **빈 값을 "결과 없음"으로 보지
+   * 않는 유일한 무리다.** 다른 무리는 고르는 것이라 "무리를 열고 하나도 고르지 않음"이
+   * 있지만, 글자는 적는 칸이라 비운 것이 곧 "적지 않았다"이기 때문이다.
+   */
+  text?: string;
   /** undefined 면 분류로 거르지 않는다 */
   categoryIds?: string[];
   paymentAccountIds?: string[];
@@ -58,12 +91,20 @@ export interface ParsedEntrySearch {
    */
   kinds?: EntryKind[];
   /**
-   * 고른 태그. undefined 면 태그로 거르지 않는다.
+   * 고른 태그. undefined 면 태그로 거르지 않는다. `NO_TAG` 는 여기 담기지 않는다.
    *
    * **태그는 전표에 붙는다.** 그래서 조건도 다리가 아니라 전표를 보는 모양이 된다
    * (유형과 같은 자리다).
    */
   tagIds?: string[];
+  /** "태그 없음"을 함께 골랐는가. 고른 태그들과 OR 로 이어진다. */
+  noTag: boolean;
+  /**
+   * 거래를 낸 사람. undefined 면 사람으로 거르지 않는다.
+   *
+   * 자산주인 필터와 다른 자리다. 이쪽은 전표의 personId 를 그대로 본다.
+   */
+  entryPersonIds?: string[];
   /**
    * 무리 하나를 열어 놓고 아무것도 고르지 않았다. 어떤 결과도 나오지 않아야 한다.
    *
@@ -76,6 +117,9 @@ export interface ParsedEntrySearch {
 /** 고른 것이 하나라도 있는가. 조건을 걸 필요가 있는지 판단한다. */
 export function hasEntrySearch(search: ParsedEntrySearch): boolean {
   return (
+    search.text !== undefined ||
+    search.noTag ||
+    (search.entryPersonIds?.length ?? 0) > 0 ||
     (search.categoryIds?.length ?? 0) > 0 ||
     (search.paymentAccountIds?.length ?? 0) > 0 ||
     (search.paymentCardIds?.length ?? 0) > 0 ||
@@ -98,10 +142,23 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
   const idsOf = (value: string | undefined): string[] | undefined =>
     value === undefined ? undefined : splitIdList(value);
 
+  // 적지 않은 것과 지운 것을 같게 본다. 빈 칸으로 결과를 비우면 지우는 순간 목록이 사라진다.
+  const text = query.text?.trim() ? query.text.trim() : undefined;
+
   const categoryIds = idsOf(query.categoryIds);
   const paymentAccountIds = idsOf(query.paymentAccountIds);
   const paymentCardIds = idsOf(query.paymentCardIds);
-  const tagIds = idsOf(query.tagIds);
+  const entryPersonIds = idsOf(query.entryPersonIds);
+
+  /*
+   * 태그 무리. "태그 없음"이 태그 id 자리에 함께 온다.
+   *
+   * 목록에서 빼내어 따로 들고, 남은 것만 태그 id 로 본다. 무리 안은 OR 이라 조건을
+   * 만드는 쪽에서 둘을 OR 로 잇는다.
+   */
+  const rawTagIds = idsOf(query.tagIds);
+  const noTag = rawTagIds?.includes(NO_TAG) ?? false;
+  const tagIds = rawTagIds?.filter((id) => id !== NO_TAG);
   // 아는 유형만 받는다. 오타를 조용히 무시하면 필터가 걸리지 않은 것처럼 보인다.
   const kinds =
     query.kinds === undefined
@@ -126,7 +183,9 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
   if (methodsGiven && methodCount === 0) matchNothing = true;
 
   if (kinds !== undefined && kinds.length === 0) matchNothing = true;
-  if (tagIds !== undefined && tagIds.length === 0) matchNothing = true;
+  // "태그 없음"만 고른 것은 빈 무리가 아니다. 그때는 태그가 없는 전표를 찾는다.
+  if (tagIds !== undefined && tagIds.length === 0 && !noTag) matchNothing = true;
+  if (entryPersonIds !== undefined && entryPersonIds.length === 0) matchNothing = true;
 
   /*
    * 다 고른 것은 고르지 않은 것과 같다.
@@ -138,11 +197,14 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
   const everyKind = kinds !== undefined && ALL_KINDS.every((kind) => kinds.includes(kind));
 
   return {
+    text,
     categoryIds,
     paymentAccountIds,
     paymentCardIds,
     kinds: everyKind ? undefined : kinds,
     tagIds,
+    noTag,
+    entryPersonIds,
     matchNothing,
   };
 }
@@ -154,6 +216,8 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
  * 되어 결과가 비기 때문이다.
  */
 export function toEntrySearchQuery(selection: {
+  text?: string;
+  entryPersonIds?: readonly string[];
   categoryIds?: readonly string[];
   paymentAccountIds?: readonly string[];
   paymentCardIds?: readonly string[];
@@ -161,6 +225,7 @@ export function toEntrySearchQuery(selection: {
   tagIds?: readonly string[];
 }): EntrySearchQuery {
   const query: EntrySearchQuery = {};
+  if (selection.text?.trim()) query.text = selection.text.trim();
   if (selection.kinds?.length) query.kinds = selection.kinds.join(',');
   if (selection.categoryIds?.length) query.categoryIds = selection.categoryIds.join(',');
   if (selection.paymentAccountIds?.length) {
@@ -168,5 +233,8 @@ export function toEntrySearchQuery(selection: {
   }
   if (selection.paymentCardIds?.length) query.paymentCardIds = selection.paymentCardIds.join(',');
   if (selection.tagIds?.length) query.tagIds = selection.tagIds.join(',');
+  if (selection.entryPersonIds?.length) {
+    query.entryPersonIds = selection.entryPersonIds.join(',');
+  }
   return query;
 }

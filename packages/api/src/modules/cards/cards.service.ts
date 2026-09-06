@@ -8,9 +8,16 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
+import { stampFieldClocks } from '@/common/field-clock';
+import { ServerClockService } from '@/common/server-clock';
 import { clientId, rejectDuplicateId } from '@/common/client-id';
 import { InstitutionsService } from '../institutions/institutions.service';
-import { CardDto, isCardColor } from '@money/types';
+import {
+  CardDto,
+  isCardColor,
+  initialRanks,
+  rankAfter,
+} from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
 import { toCardResponse } from './card-view';
 import { toOptionalMoney } from '@/common/money';
@@ -29,6 +36,7 @@ export class CardsService {
     private readonly prisma: PrismaService,
     private readonly projectAccess: ProjectAccessService,
     private readonly institutions: InstitutionsService,
+    private readonly clock: ServerClockService,
   ) {}
 
   /**
@@ -39,7 +47,13 @@ export class CardsService {
    * 카드사에 갚아야 할 금액을 기록하는 칸이고, 통장 목록에는 노출하지 않는다
    * (조회 시 AccountType.credit_card 를 제외하면 된다).
    */
-  async createCard(userId: string, dto: CardDto.CreateRequest, projectIdParam?: string) {
+  /** `hlc` 는 기기의 오프라인 명령을 재생할 때만 온다 (people.createPerson 과 같은 규칙). */
+  async createCard(
+    userId: string,
+    dto: CardDto.CreateRequest,
+    projectIdParam?: string,
+    hlc?: string,
+  ) {
     const projectId = await this.projectAccess.resolveAndVerifyProjectId(
       userId,
       projectIdParam,
@@ -98,9 +112,9 @@ export class CardsService {
 
       // 카드는 결제 통장 아래에 묶여 보이고 드래그도 그 안에서 이뤄진다.
       // 같은 결제 통장의 마지막 번호 다음을 준다.
-      const lastOrder = await tx.card.aggregate({
+      const lastRank = await tx.card.aggregate({
         where: { projectId, paymentAccountId: dto.paymentAccountId },
-        _max: { sortOrder: true },
+        _max: { sortRank: true },
       });
 
       return tx.card.create({
@@ -109,7 +123,7 @@ export class CardsService {
           projectId,
           paymentAccountId: dto.paymentAccountId,
           liabilityAccountId,
-          sortOrder: (lastOrder._max.sortOrder ?? -1) + 1,
+          sortRank: rankAfter(lastRank._max.sortRank),
           name: dto.name,
           cardType: dto.cardType,
           issuerId: dto.issuerId,
@@ -122,6 +136,25 @@ export class CardsService {
           paymentDueDay: dto.paymentDueDay ?? null,
           // 고르지 않으면 null이다. 종류별 기본색은 화면이 정한다.
           color: dto.color ?? null,
+          /*
+           * 부채 계정 이름은 카드 이름에서 파생된다. 그래서 그쪽 행에는 이름 시계를 찍지
+           * 않는다 -- 필드별 병합의 대상이 아니라 따라 움직이는 값이다 (07절의 표).
+           */
+          fieldHlc: stampFieldClocks(
+            null,
+            [
+              'name',
+              'issuerId',
+              'paymentAccountId',
+              'cardNumber',
+              'creditLimit',
+              'performanceAmount',
+              'statementClosingDay',
+              'paymentDueDay',
+              'color',
+            ],
+            hlc ?? this.clock.now(),
+          ),
         },
         include: CARD_INCLUDE,
       });
@@ -142,7 +175,7 @@ export class CardsService {
       },
       include: CARD_INCLUDE,
       // 사용자가 드래그로 정한 순서. 같으면 최근에 만든 것부터.
-      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+      orderBy: [{ sortRank: 'asc' }, { createdAt: 'desc' }],
     });
 
     return cards.map((card) => toCardResponse(card));
@@ -162,9 +195,11 @@ export class CardsService {
     });
     assertReorderIds(ids, new Set(rows.map((row) => row.id)));
 
+    // 목록 전체를 받았으니 순서 값을 고르게 다시 매긴다 (구성원 쪽과 같은 규칙).
+    const ranks = initialRanks(ids.length);
     await this.prisma.$transaction(
       ids.map((id, index) =>
-        this.prisma.card.update({ where: { id }, data: { sortOrder: index } }),
+        this.prisma.card.update({ where: { id }, data: { sortRank: ranks[index] } }),
       ),
     );
 
@@ -182,7 +217,7 @@ export class CardsService {
     return toCardResponse(card);
   }
 
-  async updateCard(id: string, userId: string, dto: CardDto.UpdateRequest) {
+  async updateCard(id: string, userId: string, dto: CardDto.UpdateRequest, hlc?: string) {
     const card = await this.prisma.card.findUnique({ where: { id } });
     if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId, 'editor');
@@ -202,6 +237,8 @@ export class CardsService {
     const data: Prisma.CardUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    // 순서 바꾸기는 이 필드 하나다 (분수 색인).
+    if (dto.sortRank !== undefined) data.sortRank = dto.sortRank;
     // 카드 번호는 응답에 마스킹만 나가므로 화면이 원래 값을 되돌려 보낼 수 없다.
     // 키가 없으면 그대로 두고, 빈 문자열이면 지운다.
     if (dto.cardNumber !== undefined) data.cardNumber = dto.cardNumber || null;
@@ -227,6 +264,10 @@ export class CardsService {
       );
       data.issuer = { connect: { id: dto.issuerId } };
     }
+
+    // 바꾼 필드에만 시계를 찍는다. `issuer` 는 관계 이름이라 기기가 쓰는 이름으로 맞춘다.
+    const fields = Object.keys(data).map((key) => (key === 'issuer' ? 'issuerId' : key));
+    data.fieldHlc = stampFieldClocks(card.fieldHlc, fields, hlc ?? this.clock.now());
 
     return this.prisma.$transaction(async (tx) => {
       const updated = await tx.card.update({
@@ -260,7 +301,7 @@ export class CardsService {
    * 카드 숨기기. 갚지 않은 사용액이 남아 있으면 막는다.
    * 원장 기록은 남겨야 하므로 하드 삭제하지 않는다 (부채 계정도 그대로 둔다).
    */
-  async deactivateCard(id: string, userId: string) {
+  async deactivateCard(id: string, userId: string, hlc?: string) {
     const card = await this.prisma.card.findUnique({
       where: { id },
       include: { liabilityAccount: true },
@@ -279,7 +320,13 @@ export class CardsService {
           data: { isActive: false },
         });
       }
-      return tx.card.update({ where: { id }, data: { isActive: false } });
+      return tx.card.update({
+        where: { id },
+        data: {
+          isActive: false,
+          fieldHlc: stampFieldClocks(card.fieldHlc, ['isActive'], hlc ?? this.clock.now()),
+        },
+      });
     });
   }
 

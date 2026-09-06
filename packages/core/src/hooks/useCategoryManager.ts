@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { CategoryDto } from '@money/types';
+import { rankForStep, type CategoryDto } from '@money/types';
 
 import { apiClient } from '../lib/api-client';
 import { apiErrorCode, useApiError } from '../lib/api-error';
 import { translate, type MessageKey } from '../lib/i18n';
 import type { Category } from '../lib/types';
 import { useLocaleStore } from '../store/locale';
+import { useMirrorVersion } from './useMirrorVersion';
+import { homeDataPort } from '../data/home-port';
+import { settingsWritePort } from '../data/settings-write-port';
 
 /** 소분류 입력 한 줄. id 가 없으면 아직 저장되지 않은 새 줄이다. */
 export interface SubCategoryRow {
@@ -55,13 +58,20 @@ export function useCategoryManager(projectId: string | null) {
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  /**
+   * 사본이 채워질 때마다 올라간다.
+   *
+   * 앱은 사본을 읽고 동기화가 뒤에서 그것을 채운다. 이 값을 의존성에 넣지 않으면 처음
+   * 열었을 때 빈 사본을 읽은 화면이 그대로 멈춘다. 웹에서는 0에 머문다.
+   */
+  const mirrorVersion = useMirrorVersion();
 
   const reload = useCallback(async (): Promise<CategoryResult> => {
     if (!projectId) return { ok: true };
 
     try {
       setIsLoading(true);
-      setCategories(((await apiClient.getCategories(projectId)) ?? []) as Category[]);
+      setCategories(((await homeDataPort().getCategories(projectId)) ?? []) as Category[]);
       return { ok: true };
     } catch (error) {
       console.error('카테고리 조회 실패:', error);
@@ -69,7 +79,8 @@ export function useCategoryManager(projectId: string | null) {
     } finally {
       setIsLoading(false);
     }
-  }, [projectId, say]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, say, mirrorVersion]);
 
   useEffect(() => {
     reload();
@@ -94,7 +105,7 @@ export function useCategoryManager(projectId: string | null) {
         setIsSubmitting(true);
 
         if (editingId) {
-          await apiClient.updateCategory(editingId, {
+          await settingsWritePort().updateCategory(editingId, {
             name: values.name,
             defaultIsExtra: values.defaultIsExtra,
           });
@@ -105,7 +116,7 @@ export function useCategoryManager(projectId: string | null) {
             if (subs.some((row) => row.id === sub.id) || sub.isDefault) continue;
 
             try {
-              await apiClient.deleteCategory(sub.id);
+              await settingsWritePort().updateCategory(sub.id, { isActive: false });
             } catch (error) {
               // 서버가 붙인 코드로 가른다. 오류 문장을 뒤지면 언어가 바뀔 때 깨진다.
               if (apiErrorCode(error) === 'CATEGORY_IN_USE') {
@@ -120,7 +131,7 @@ export function useCategoryManager(projectId: string | null) {
 
           for (const sub of subs) {
             if (!sub.id) {
-              await apiClient.createCategory({
+              await settingsWritePort().addCategory({
                 name: sub.name,
                 type: values.type,
                 parentId: editingId,
@@ -132,14 +143,14 @@ export function useCategoryManager(projectId: string | null) {
 
             const before = existing.find((row) => row.id === sub.id);
             if (before && (before.name !== sub.name || before.defaultIsExtra !== sub.defaultIsExtra)) {
-              await apiClient.updateCategory(sub.id, {
+              await settingsWritePort().updateCategory(sub.id, {
                 name: sub.name,
                 defaultIsExtra: sub.defaultIsExtra,
               });
             }
           }
         } else {
-          const created = await apiClient.createCategory({
+          const created = await settingsWritePort().addCategory({
             name: values.name,
             type: values.type,
             defaultIsExtra: values.defaultIsExtra,
@@ -147,7 +158,7 @@ export function useCategoryManager(projectId: string | null) {
           });
 
           for (const sub of subs) {
-            await apiClient.createCategory({
+            await settingsWritePort().addCategory({
               name: sub.name,
               type: values.type,
               parentId: created.id,
@@ -181,7 +192,7 @@ export function useCategoryManager(projectId: string | null) {
 
       try {
         setIsSubmitting(true);
-        await apiClient.deleteCategory(id);
+        await settingsWritePort().updateCategory(id, { isActive: false });
         await reload();
         return { ok: true };
       } catch (error) {
@@ -205,6 +216,41 @@ export function useCategoryManager(projectId: string | null) {
       }
     },
     [messageOf, projectId, reload],
+  );
+
+  /**
+   * 목록에서 한 칸 옮긴다. 드래그가 없는 화면(앱)이 쓴다.
+   *
+   * 옮긴 자리의 값 하나만 보낸다 (분수 색인). `reorder` 와 갈라 두는 이유가 여기 있다 --
+   * 그쪽은 목록 전체를 다시 매기므로, 그 사이 남이 옮긴 것이 통째로 지워진다 (D5).
+   *
+   * 이웃은 **화면에 보이는 묶음 안에서** 고른다. 소분류는 같은 부모 아래에서, 대분류는
+   * 같은 유형(지출·수입)의 단 안에서다. 대분류의 순서 값은 지출과 수입이 한 공간을
+   * 쓰지만, 두 단이 따로 그려지므로 한쪽 안의 앞뒤만 맞으면 된다.
+   */
+  const move = useCallback(
+    async (id: string, step: 1 | -1): Promise<CategoryResult> => {
+      const category = categories.find((row) => row.id === id);
+      if (!category) return { ok: true };
+
+      const siblings = category.parentId
+        ? categories.filter((row) => row.parentId === category.parentId)
+        : categories.filter((row) => !row.parentId && row.type === category.type);
+
+      const rank = rankForStep(siblings, id, step);
+      // 끝에서 더 밀었다. 값을 새로 찍으면 그 필드의 시계만 올라가 남의 이동을 되돌린다.
+      if (!rank) return { ok: true };
+
+      try {
+        await settingsWritePort().updateCategory(id, { sortRank: rank });
+        await reload();
+        return { ok: true };
+      } catch (error) {
+        await reload();
+        return { ok: false, message: messageOf(error, 'assets.orderSaveFailed') };
+      }
+    },
+    [categories, messageOf, reload],
   );
 
   /** 고칠 대상을 폼 값으로 편다. 소분류는 그 아래 줄들을 그대로 가져온다. */
@@ -234,6 +280,8 @@ export function useCategoryManager(projectId: string | null) {
     save,
     remove,
     reorder,
+    /** 한 칸 위로(-1) 또는 아래로(+1). 같은 묶음 안에서만 움직인다. */
+    move,
     formValuesOf,
     /** 대분류만. 목록의 윗줄이다. */
     parentsOf: useCallback(

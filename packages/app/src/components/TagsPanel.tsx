@@ -9,13 +9,15 @@
  */
 import { useState } from 'react';
 import { Alert, LayoutAnimation, Pressable, Text, TextInput, View } from 'react-native';
-import { Plus, X } from 'lucide-react-native';
+import { X } from 'lucide-react-native';
 import type { TagDto } from '@money/types';
 
 import { EMPTY_TAG_FORM, useTagManager, type TagFormValues } from '@money/core/hooks/useTagManager';
 import { useTranslation } from '@money/core/lib/i18n';
 
 import Modal from './Modal';
+import AddButton from './AddButton';
+import MoveRow from './MoveRow';
 
 /**
  * 고를 수 있는 색.
@@ -92,22 +94,14 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
 
   return (
     <View className="gap-4">
-      <View className="flex-row items-center justify-between">
-        <Text className="text-lg font-bold text-gray-900">{t('tags.title')}</Text>
-        <Pressable
-          onPress={openNew}
-          className="flex-row items-center gap-1.5 rounded-lg bg-blue-600 px-4 py-2 active:bg-blue-700"
-        >
-          <Plus size={16} color="#ffffff" />
-          <Text className="text-white">{t('tags.add')}</Text>
-        </Pressable>
-      </View>
-
       {error ? (
         <View className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
           <Text className="text-sm text-red-600">{error}</Text>
         </View>
       ) : null}
+
+      {/* 추가 버튼은 목록 바로 위다 (자산·분류 화면과 같은 규칙). */}
+      <AddButton label={t('tags.add')} onPress={openNew} />
 
       {manager.isLoading ? (
         <Text className="text-gray-600">{t('common.loading')}</Text>
@@ -159,6 +153,13 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
         }
       >
         <View className="gap-5">
+          {/* 창이 열려 있으면 아래 목록의 알림줄은 가려진다. 여기에도 적는다. */}
+          {error ? (
+            <View className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+              <Text className="text-sm text-red-600">{error}</Text>
+            </View>
+          ) : null}
+
           <View>
             <Text className="mb-2 text-sm font-medium text-gray-700">{t('tags.name')}</Text>
             <TextInput
@@ -187,6 +188,24 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
               ))}
             </View>
           </View>
+
+          {/*
+            순서는 **만든 뒤에** 옮긴다. 아직 없는 줄에는 이웃이 없다.
+
+            이름·색과 달리 누르는 즉시 저장된다. 그래야 목록이 곧바로 그 자리로 움직이는
+            것이 보이고, 저장 버튼이 이름과 순서 둘을 함께 지고 있지 않게 된다.
+          */}
+          {editingId ? (
+            <MoveRow
+              disabled={manager.isSubmitting}
+              onMove={(step) => {
+                LayoutAnimation.configureNext(SHIFT);
+                void manager.move(editingId, step).then((result) => {
+                  setError(result.ok ? '' : result.message);
+                });
+              }}
+            />
+          ) : null}
         </View>
       </Modal>
     </View>

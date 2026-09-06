@@ -33,6 +33,14 @@ export const ACCOUNT_TYPE_OPTIONS: Array<{ id: string; nameKey: MessageKey }> = 
   { id: 'loan', nameKey: ACCOUNT_TYPE_KEY.loan },
 ];
 
+/**
+ * 개설 기관이 없는 유형.
+ *
+ * 현금과 부동산은 은행에 든 것이 아니다. 이 유형에 institutionId 를 보내면 서버가
+ * 거부하므로, 폼은 그 칸을 아예 보여 주지 않는다.
+ */
+export const NO_BANK_TYPES: readonly string[] = ['cash', 'real_estate'];
+
 /** 목록에 붙이는 유형 이름. 모르는 값이면 그 값을 그대로 보여 준다. */
 export function accountTypeLabel(type: string): string {
   const key = ACCOUNT_TYPE_KEY[type];

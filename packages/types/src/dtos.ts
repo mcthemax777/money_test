@@ -83,6 +83,13 @@ export namespace PersonDto {
     name?: string;
     relationship?: string;
     isActive?: boolean;
+    /**
+     * 목록에서의 자리 (분수 색인, `@money/types` 의 rank).
+     *
+     * 순서 바꾸기를 **이 항목 한 줄의 값**으로 다룬다. 목록 전체를 다시 쓰지 않으므로,
+     * 두 사람이 각자 다른 항목을 옮겨도 둘 다 남는다.
+     */
+    sortRank?: string;
   }
 
   export interface Response extends Person {}
@@ -128,6 +135,8 @@ export namespace AccountDto {
      */
     balance?: string;
     isActive?: boolean;
+    /** 목록에서의 자리 (분수 색인). 순서 바꾸기는 이 값 하나로 한다. */
+    sortRank?: string;
   }
 
   export interface Response extends Account {
@@ -213,6 +222,8 @@ export namespace CardDto {
     /** 카드 앞면 색 (CardColor) */
     color?: string;
     isActive?: boolean;
+    /** 목록에서의 자리 (분수 색인). 순서 바꾸기는 이 값 하나로 한다. */
+    sortRank?: string;
   }
 
   export interface Response extends Omit<Card, 'cardNumber'> {
@@ -663,6 +674,8 @@ export namespace CategoryDto {
     /** 이 분류로 적으면 과소비·추가 수입에 기본으로 체크할지 */
     defaultIsExtra?: boolean;
     isActive?: boolean;
+    /** 목록에서의 자리 (분수 색인). 순서 바꾸기는 이 값 하나로 한다. */
+    sortRank?: string;
   }
 
   export interface Response extends Category {}
@@ -692,6 +705,8 @@ export namespace TagDto {
     /** null 을 주면 색을 지운다. 생략은 "건드리지 않는다"이고 둘은 다르다. */
     color?: string | null;
     isActive?: boolean;
+    /** 목록에서의 자리 (분수 색인). 순서 바꾸기는 이 값 하나로 한다. */
+    sortRank?: string;
   }
 
   export interface Response extends Tag {}
@@ -1082,6 +1097,8 @@ export namespace BudgetDto {
   }
 
   export interface OverrideRequest {
+    /** 기기가 만든 식별자 (UUID). 생략하면 서버가 만든다. */
+    id?: string;
     budgetId: string;
     year: number;
     month: number;

@@ -14,8 +14,10 @@ import { InstitutionsService } from '@/modules/institutions/institutions.service
 import {
   makeAccounts,
   makeBudgets,
+  makeCategories,
   makeEntries,
   makeLedger,
+  makePeople,
   projectAccessStub,
   runSmoke,
 } from './smoke-harness';
@@ -30,8 +32,8 @@ runSmoke('budget-scope', async (ctx) => {
   const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
   const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
-  const people = new PeopleService(ctx.prisma as any, access);
-  const categories = new CategoriesService(ctx.prisma as any, access);
+  const people = makePeople(ctx.prisma, access);
+  const categories = makeCategories(ctx.prisma, access);
   const entries = makeEntries(ctx.prisma, access, ledger);
   const budgets = makeBudgets(ctx.prisma, access);
 

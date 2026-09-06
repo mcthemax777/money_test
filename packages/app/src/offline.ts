@@ -15,8 +15,10 @@ import { fetch as streamingFetch } from 'expo/fetch';
 
 import { apiClient } from '@money/core/lib/api-client';
 import { getAccessToken } from '@money/core/lib/auth-tokens';
+import { setSettingsWritePort } from '@money/core/data/settings-write-port';
 import { setEntryWritePort } from '@money/core/data/entry-write-port';
 import { httpHomePort, setHomeDataPort } from '@money/core/data/home-port';
+import { createLocalSettingsWriter } from '@money/core/data/local-settings-writer';
 import { createLocalEntryWriter } from '@money/core/data/local-entry-writer';
 import { createLocalHomePort } from '@money/core/data/local-home-port';
 import type { HeldMutation, LocalStore } from '@money/core/data/local-store';
@@ -24,11 +26,20 @@ import { notifyMirrorChanged } from '@money/core/data/mirror-events';
 import { setMirrorTeardown } from '@money/core/data/mirror-teardown';
 import { openSyncEvents, type StreamingFetch } from '@money/core/data/sync-events';
 import { syncProject, type SyncResult } from '@money/core/data/sync-engine';
-import { newId } from '@money/types';
+import { newId, type Mutation } from '@money/types';
 
 import { deleteLocalStore, openLocalStore } from './sqlite';
 
 let store: LocalStore | null = null;
+
+/**
+ * 지금 돌고 있는 동기화. 겹치지 않게 이어 붙이는 데 쓴다.
+ *
+ * 동기화는 세 갈래에서 시작한다 -- 프로젝트를 고를 때, 서버가 알림을 보낼 때, 거래를
+ * 적자마자. 겹치면 같은 명령을 두 번 밀어 올리고(서버가 멱등으로 걸러 주지만 헛일이다)
+ * 무엇보다 사본에 두 트랜잭션이 겹쳐 열린다. 한 줄로 세우면 둘 다 사라진다.
+ */
+let running: Promise<unknown> = Promise.resolve();
 
 /**
  * 사본을 열고 홈 창구를 그것으로 바꾼다. 앱이 시작할 때 한 번 부른다.
@@ -67,15 +78,12 @@ export async function setupOffline(): Promise<boolean> {
 export function useLocalWrites(projectId: string, timeZone: string): void {
   if (!store) return;
 
-  setEntryWritePort(
-    createLocalEntryWriter({
-      store,
-      projectId,
-      timeZone,
-      // 쌓자마자 한 번 보내 본다. 온라인이면 여기서 나가고, 아니면 큐에 남는다.
-      onQueued: () => void syncNow(projectId, timeZone),
-    }),
-  );
+  // 쌓자마자 한 번 보내 본다. 온라인이면 여기서 나가고, 아니면 큐에 남는다.
+  const onQueued = () => void syncNow(projectId, timeZone);
+
+  setEntryWritePort(createLocalEntryWriter({ store, projectId, timeZone, onQueued }));
+  // 설정 엔티티(구성원·통장·카드·분류·태그)도 같은 길로 간다. 병합 규칙만 다르다 (필드별).
+  setSettingsWritePort(createLocalSettingsWriter({ store, projectId, onQueued }));
 }
 
 /** 보류 칸. 충돌과 거절이 여기 모인다. 화면이 사용자에게 보여 준다. */
@@ -84,14 +92,30 @@ export async function heldMutations(projectId: string): Promise<HeldMutation[]> 
   return store.heldMutations(projectId);
 }
 
+/**
+ * 아직 서버에 닿지 못하고 줄을 선 명령.
+ *
+ * 오프라인에서 적은 거래가 여기 있다. 보류 칸과 달리 사람이 할 일은 없지만, 보이지
+ * 않으면 "보내지 못한 거래"를 열어 놓고도 아무것도 없다고 읽게 된다.
+ */
+export async function queuedMutations(projectId: string): Promise<Mutation[]> {
+  if (!store) return [];
+  return store.pendingMutations(projectId);
+}
+
 /** 보류 칸에서 하나를 버린다. 사용자가 "그만두겠다"를 고른 자리다. */
 export async function discardMutation(mutationId: string): Promise<void> {
   await store?.discardMutation(mutationId);
 }
 
-/** 막혔던 명령을 다시 줄에 세운다. */
+/**
+ * 막혔던 명령을 다시 낸다.
+ *
+ * 저장소가 짐만 물려받아 **새 명령**으로 만든다. 같은 id 로 다시 보내면 서버가 그때의
+ * 판정(충돌·거절)을 그대로 돌려주어 영영 나가지 못한다.
+ */
 export async function retryMutation(mutationId: string): Promise<void> {
-  await store?.retryMutation(mutationId);
+  await store?.retryMutation(mutationId, newId);
 }
 
 /**
@@ -100,25 +124,38 @@ export async function retryMutation(mutationId: string): Promise<void> {
  * 프로젝트를 고른 뒤와 화면을 다시 열 때 부른다. 쌓인 명령을 먼저 밀어 올리고, 그다음
  * 사본이 비어 있으면 처음부터, 이미 있으면 그 뒤의 변경만 받는다.
  */
-export async function syncNow(projectId: string, timeZone: string): Promise<SyncResult | null> {
-  if (!store) return null;
+export function syncNow(projectId: string, timeZone: string): Promise<SyncResult | null> {
+  const task = async (): Promise<SyncResult | null> => {
+    /*
+     * 사본은 시작할 때가 아니라 **차례가 되었을 때** 본다.
+     *
+     * 앞의 동기화를 기다리는 동안 로그아웃이 사본을 버렸을 수 있다. 그때는 이미 닫힌
+     * 연결을 쓰지 않고 그대로 그만둔다.
+     */
+    const mine = store;
+    if (!mine) return null;
 
-  try {
-    const result = await syncProject(
-      store,
-      (query) => apiClient.pullSync(query),
-      projectId,
-      timeZone,
-      (request) => apiClient.pushSync(request),
-    );
-    // 사본이 채워졌으면 화면이 다시 읽게 알린다.
-    if (result.changed) notifyMirrorChanged();
-    return result;
-  } catch (error) {
-    // 인증이 끊긴 경우다. 세션 처리는 apiClient 의 인터셉터가 이미 한다.
-    console.error('동기화 실패:', error);
-    return null;
-  }
+    try {
+      const result = await syncProject(
+        mine,
+        (query) => apiClient.pullSync(query),
+        projectId,
+        timeZone,
+        (request) => apiClient.pushSync(request),
+      );
+      // 사본이 채워졌으면 화면이 다시 읽게 알린다.
+      if (result.changed) notifyMirrorChanged();
+      return result;
+    } catch (error) {
+      // 인증이 끊긴 경우이거나, 도는 동안 사본이 닫힌 경우다. 어느 쪽도 화면을 막지 않는다.
+      console.error('동기화 실패:', error);
+      return null;
+    }
+  };
+
+  const started = running.then(task, task);
+  running = started.catch(() => undefined);
+  return started;
 }
 
 /**
@@ -129,6 +166,17 @@ export async function syncNow(projectId: string, timeZone: string): Promise<Sync
 export async function clearOffline(): Promise<void> {
   store = null;
   setHomeDataPort(null);
+  setEntryWritePort(null);
+  setSettingsWritePort(null);
+
+  /*
+   * 돌고 있는 동기화가 끝나기를 기다린다.
+   *
+   * 기다리지 않고 파일을 지우면 그 동기화가 닫힌 연결을 쓴다. 위에서 `store` 를 이미
+   * 비웠으므로 여기서 기다리는 것은 마지막 한 번뿐이고, 그다음 것은 시작하지 않는다.
+   */
+  await running.catch(() => undefined);
+
   try {
     await deleteLocalStore();
   } catch (error) {
@@ -146,7 +194,7 @@ export async function clearOffline(): Promise<void> {
 }
 
 /**
- * 서버의 알림에 귀를 연다. 돌려주는 함수를 부르면 닫는다.
+ * 서버의 알림에 귀를 연다. 돌려주는 것으로 닫는다.
  *
  * 알림에는 번호만 실려 온다. 그것을 신호로 평소의 동기화를 한 번 더 돌릴 뿐이라,
  * 실시간이 되어도 값이 오는 길은 하나 그대로다. 알림이 끊긴 동안에도 화면이 틀리지

@@ -9,10 +9,10 @@ import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store
 import { useUserFilter } from '@money/core/store/user-filter';
 import { useProject } from '@money/core/store/project';
 
-import AssetTypeSummary from '../components/AssetTypeSummary';
 import EntryFeed from '../components/EntryFeed';
 import MonthHeader from '../components/MonthHeader';
 import MonthlyBudgetSummary from '../components/MonthlyBudgetSummary';
+import PageHeader from '../components/PageHeader';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import SpendingMethodCarousel from '../components/SpendingMethodCarousel';
 import TypeTabs, { type EntryType } from '../components/TypeTabs';
@@ -20,7 +20,7 @@ import TypeTabs, { type EntryType } from '../components/TypeTabs';
 /**
  * 로그인하면 처음 보는 화면. 웹의 홈과 같은 차례로 늘어놓는다.
  *
- * 자산 → 실적 구간 카드 → 달 → 지출·수입 탭 → 예산 → 그 달의 거래.
+ * 제목 → 실적 구간 카드 → 달 → 지출·수입 탭 → 예산 → 그 달의 거래.
  * 그래프 자리는 아직 비어 있다 (웹은 recharts 로 그린다).
  */
 export default function HomeScreen() {
@@ -33,8 +33,8 @@ export default function HomeScreen() {
   /*
    * 보고 있는 달. 아래 예산과 거래 목록이 이 달을 따른다.
    *
-   * 위쪽 자산과 실적 구간 카드는 따라가지 않는다. 자산은 "지금 얼마인가"이고
-   * 실적은 카드사가 지금 세고 있는 구간이라, 지난 달을 펴 보는 것과 뜻이 다르다.
+   * 위쪽 실적 구간 카드는 따라가지 않는다. 카드사가 지금 세고 있는 구간이라
+   * 지난 달을 펴 보는 것과 뜻이 다르다.
    */
   const { year: thisYear, month: thisMonth } = currentYearMonth(timeZone);
   const [view, setView] = useState({ year: thisYear, month: thisMonth });
@@ -59,13 +59,17 @@ export default function HomeScreen() {
         <Text className="text-gray-600">{t('home.noPeople')}</Text>
       ) : null}
 
-      {/* 화면의 첫 줄이자 제목이다. 이름을 누르면 자산주인을 고른다. */}
-      <AssetTypeSummary
-        byType={home.netWorth?.byType}
-        hasNoScope={home.hasNoScope}
-        scopeTitle={
+      {/*
+        화면의 첫 줄이자 제목이다. 이름을 누르면 자산주인을 고른다.
+
+        자산 금액은 자산 화면으로 옮겼다. 제목은 남긴다. 아래 예산과 거래가 모두
+        여기서 고른 자산주인을 따르므로, 이 줄을 빼면 홈에서 보는 범위를 홈에서
+        바꿀 수 없다. 이름은 자산이 아니라 화면 이름인 "홈"이다.
+      */}
+      <PageHeader
+        title={
           <PersonScopeTitle
-            noun={t('home.assetsNoun')}
+            noun={t('nav.home')}
             people={home.people}
             myPersonId={home.myPersonId}
             selectedPersonIds={home.selectedPersonIds}

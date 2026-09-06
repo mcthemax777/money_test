@@ -15,12 +15,10 @@ import {
 } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
-import { sumNetWorth } from '@money/core/lib/net-worth';
 import { useHomeData } from '@money/core/hooks/useHomeData';
 import { useProjectGuard } from '@/hooks/useProjectGuard';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
-import AssetTypeSummary from '@/components/AssetTypeSummary';
 import CategoryDonutChart from '@/components/CategoryDonutChart';
 import CumulativeExpenseChart, {
   type ExpenseField,
@@ -34,6 +32,7 @@ import EntryEditor, {
 import Modal from '@/components/Modal';
 import MonthHeader from '@/components/MonthHeader';
 import MonthlyBudgetSummary from '@/components/MonthlyBudgetSummary';
+import PageHeader from '@/components/PageHeader';
 import ScrollRow from '@/components/ScrollRow';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import SpendingMethodCarousel from '@/components/SpendingMethodCarousel';
@@ -80,8 +79,11 @@ const CUMULATIVE_CHARTS: Record<EntryType, Array<{ field: ExpenseField; titleKey
 /**
  * 로그인하면 처음 보는 화면.
  *
- * 다른 화면에 들어가 봐야 알 수 있던 것들을 한 자리에 모은다. 자산이 얼마인지,
- * 실적 구간에 카드를 얼마나 썼는지, 이 달 예산을 얼마나 썼는지.
+ * 다른 화면에 들어가 봐야 알 수 있던 것들을 한 자리에 모은다. 실적 구간에 카드를
+ * 얼마나 썼는지, 이 달 예산을 얼마나 썼는지, 이 달에 무엇을 샀는지.
+ *
+ * 자산이 얼마인지는 자산 화면이 답한다. 두 화면이 같은 금액을 그리면 어느 쪽이
+ * 제자리인지 흐려지고, 홈은 달을 옮기며 보는 자리라 "지금 얼마인가"와 섞인다.
  *
  * 여기서 고치는 것은 없다. 숫자를 누르러 가는 화면은 가계와 자산이고, 홈은
  * 그 화면들을 열기 전에 훑는 자리다.
@@ -96,8 +98,8 @@ export default function HomePage() {
   /*
    * 보고 있는 달. 아래 예산·그래프·거래 목록이 모두 이 달을 따른다.
    *
-   * 위쪽 자산과 실적 구간 카드는 따라가지 않는다. 자산은 "지금 얼마인가"이고
-   * 실적은 카드사가 지금 세고 있는 구간이라, 지난 달을 펴 보는 것과 뜻이 다르다.
+   * 위쪽 실적 구간 카드는 따라가지 않는다. 카드사가 지금 세고 있는 구간이라
+   * 지난 달을 펴 보는 것과 뜻이 다르다.
    */
   const { year: thisYear, month: thisMonth } = currentYearMonth(timeZone);
   const [view, setView] = useState({ year: thisYear, month: thisMonth });
@@ -111,8 +113,8 @@ export default function HomePage() {
   /*
    * 화면이 보는 값 전부. 앱의 홈 화면도 같은 훅을 쓴다.
    *
-   * 그래프만 여기 남는다. 앱에는 아직 그래프가 없고, 탭을 옮길 때마다 자산과 카드
-   * 실적까지 다시 받지 않도록 조회도 따로 두어야 한다.
+   * 그래프만 여기 남는다. 앱에는 아직 그래프가 없고, 탭을 옮길 때마다 카드 실적까지
+   * 다시 받지 않도록 조회도 따로 두어야 한다.
    */
   const home = useHomeData({ projectId: selectedProjectId, year, month, thisYearMonth });
   const {
@@ -122,7 +124,6 @@ export default function HomePage() {
     accounts,
     categories,
     myPersonId,
-    netWorth: scopedNetWorth,
     budgets,
     summary,
     methods,
@@ -151,7 +152,7 @@ export default function HomePage() {
    * 그래프만 못 받았을 때.
    *
    * 위쪽 오류와 나눠 둔다. 그쪽은 화면 맨 위 띠라, 그래프 하나가 실패했을 때
-   * 띄우면 자산과 예산까지 못 받은 것처럼 보인다.
+   * 띄우면 예산과 실적 구간까지 못 받은 것처럼 보인다.
    */
   const [chartError, setChartError] = useState('');
   /** 정산 팝업을 띄울 카드. */
@@ -166,8 +167,8 @@ export default function HomePage() {
   /*
    * 누적 그래프의 재료. 고른 탭의 세 달치를 받는다.
    *
-   * 위 조회와 나누어 둔다. 탭을 옮길 때마다 자산과 카드 실적까지 다시 받으면
-   * 카드 수만큼 요청이 더 나간다. 그 둘은 탭과 상관없는 값이다.
+   * 위 조회와 나누어 둔다. 탭을 옮길 때마다 카드 실적까지 다시 받으면 카드 수만큼
+   * 요청이 더 나간다. 그것은 탭과 상관없는 값이다.
    */
   useEffect(() => {
     if (!selectedProjectId || !peopleLoaded || people.length === 0) return;
@@ -229,13 +230,17 @@ export default function HomePage() {
         <p className="text-gray-600">{t('home.noPeople')}</p>
       )}
 
-      {/* 화면의 첫 줄이자 제목이다. 이름을 누르면 자산주인을 고른다. */}
-      <AssetTypeSummary
-        byType={scopedNetWorth?.byType}
-        hasNoScope={home.hasNoScope}
-        scopeTitle={
+      {/*
+        화면의 첫 줄이자 제목이다. 이름을 누르면 자산주인을 고른다.
+
+        자산 금액은 자산 화면으로 옮겼다. 제목은 남긴다. 아래 예산·그래프·거래가
+        모두 여기서 고른 자산주인을 따르므로, 이 줄을 빼면 홈에서 보는 범위를
+        홈에서 바꿀 수 없다. 이름은 자산이 아니라 화면 이름인 "홈"이다.
+      */}
+      <PageHeader
+        title={
           <PersonScopeTitle
-            noun={t('home.assetsNoun')}
+            noun={t('nav.home')}
             people={people}
             myPersonId={myPersonId}
             selectedPersonIds={selectedPersonIds}

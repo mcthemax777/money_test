@@ -9,7 +9,7 @@ import { toAmountString } from '@money/core/lib/money';
 import { monthInputOf, monthInputToIso } from '@money/core/lib/datetime';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
-import { useInstitutions } from '@/hooks/useInstitutions';
+import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import {
   dayOfMonthHint,
   dayOfMonthOptions,

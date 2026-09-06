@@ -89,6 +89,8 @@ export interface Person {
   name: string;
   relationship: string | null;
   isActive: boolean;
+  /** 목록에서의 자리 (분수 색인). 사전순 비교가 곧 목록 순서다. */
+  sortRank: string;
   createdAt: IsoDateString;
   updatedAt: IsoDateString;
 }
@@ -122,6 +124,8 @@ export interface Account {
   balance: string;
   currency: string;
   isActive: boolean;
+  /** 목록에서의 자리 (분수 색인). 사전순 비교가 곧 목록 순서다. */
+  sortRank: string;
   createdAt: IsoDateString;
   updatedAt: IsoDateString;
 }
@@ -158,6 +162,8 @@ export interface Card {
   /** 카드 앞면 색 (CardColor). null이면 카드 종류의 기본색으로 그린다. */
   color: string | null;
   isActive: boolean;
+  /** 목록에서의 자리 (분수 색인). 사전순 비교가 곧 목록 순서다. */
+  sortRank: string;
   createdAt: IsoDateString;
   updatedAt: IsoDateString;
 }
@@ -230,6 +236,16 @@ export interface EntryListItem {
    * 줄이 사라지므로, 편집 화면은 이 값을 보고 그 거래를 자기가 다룰 수 있는지 정한다.
    */
   splitCount: number;
+  /**
+   * 분할의 줄들. 카테고리 다리가 둘 이상일 때만 실린다.
+   *
+   * 대표 분류(`categoryId`)는 그중 첫 줄이라, 그것만 보고 폼을 되돌리면 나머지가 조용히
+   * 사라진다. 편집 화면이 분할을 그대로 되살리려면 줄 전부가 필요하다.
+   *
+   * 한 줄짜리 거래에는 싣지 않는다. 목록 한 쪽이 200줄이라 늘 실으면 쓰이지 않는 배열이
+   * 200개 오간다.
+   */
+  splits?: Array<{ categoryId: string; amount: string; extraAmount: string }>;
   /**
    * 이 거래에 붙은 태그. 없으면 빈 배열이다.
    *
@@ -312,6 +328,12 @@ export interface Category {
   defaultIsExtra: boolean; // 소분류의 기본 고정 여부
   isDefault: boolean;      // 기본 카테고리 (삭제 불가)
   isActive: boolean;
+  /**
+   * 목록에서의 자리 (분수 색인). 사전순 비교가 곧 목록 순서다.
+   *
+   * 같은 묶음 안에서만 뜻을 가진다 -- 대분류끼리, 또는 한 부모 아래 소분류끼리다.
+   */
+  sortRank: string;
   createdAt: IsoDateString;
   updatedAt: IsoDateString;
 }
@@ -335,7 +357,8 @@ export interface Tag {
   /** 목록에서 알아보는 색 "#RRGGBB". 정하지 않았으면 null. */
   color: string | null;
   isActive: boolean;
-  sortOrder: number;
+  /** 목록에서의 자리 (분수 색인). 사전순 비교가 곧 목록 순서다. */
+  sortRank: string;
   createdAt: IsoDateString;
   updatedAt: IsoDateString;
 }

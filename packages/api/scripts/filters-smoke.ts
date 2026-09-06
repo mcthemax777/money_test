@@ -3,7 +3,18 @@ import { CardsService } from '@/modules/cards/cards.service';
 import { CategoriesService } from '@/modules/categories/categories.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
 import { PeopleService } from '@/modules/people/people.service';
-import { makeAccounts, makeBudgets, makeEntries, makeLedger, makeReports, projectAccessStub, runSmoke } from './smoke-harness';
+import {
+  makeAccounts,
+  makeBudgets,
+  makeCards,
+  makeCategories,
+  makeEntries,
+  makeLedger,
+  makePeople,
+  makeReports,
+  projectAccessStub,
+  runSmoke,
+} from './smoke-harness';
 
 /**
  * 자산 주인 / 일반·과소비 필터가 목록과 리포트에 같이 걸리는지 확인한다.
@@ -24,9 +35,9 @@ runSmoke('filters', async (ctx) => {
   const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
   const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
-  const people = new PeopleService(ctx.prisma as any, access);
-  const categories = new CategoriesService(ctx.prisma as any, access);
-  const cards = new CardsService(ctx.prisma as any, access, institutions);
+  const people = makePeople(ctx.prisma, access);
+  const categories = makeCategories(ctx.prisma, access);
+  const cards = makeCards(ctx.prisma, access, institutions);
   const entries = makeEntries(ctx.prisma, access, ledger);
   const reports = makeReports(ctx.prisma, access);
 

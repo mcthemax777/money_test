@@ -18,7 +18,20 @@ import { CardLedgerService } from '@/modules/cards/card-ledger.service';
 import { CategoriesService } from '@/modules/categories/categories.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
 import { PeopleService } from '@/modules/people/people.service';
-import { makeAccounts, makeBudgets, makeEntries, makeLedger, makeReports, projectAccessStub, runSmoke } from './smoke-harness';
+import { TagsService } from '@/modules/tags/tags.service';
+import {
+  makeAccounts,
+  makeBudgets,
+  makeCards,
+  makeCategories,
+  makeEntries,
+  makeLedger,
+  makePeople,
+  makeReports,
+  makeTags,
+  projectAccessStub,
+  runSmoke,
+} from './smoke-harness';
 
 const target = process.argv[2] ?? '/tmp/sync-pull-dump.json';
 
@@ -32,15 +45,24 @@ runSmoke('sync-pull-dump', async (ctx) => {
   const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
   const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
-  const people = new PeopleService(ctx.prisma as any, access);
-  const categories = new CategoriesService(ctx.prisma as any, access);
+  const people = makePeople(ctx.prisma, access);
+  const categories = makeCategories(ctx.prisma, access);
   const entries = makeEntries(ctx.prisma, access, ledger);
   const budgets = makeBudgets(ctx.prisma, access);
-  const cards = new CardsService(ctx.prisma as any, access, institutions);
+  const cards = makeCards(ctx.prisma, access, institutions);
+  const tags = makeTags(ctx.prisma, access);
   const cardLedger = new CardLedgerService(ctx.prisma as any, access as any, ledger as any);
   const sync = new SyncService(ctx.prisma as any, access as any);
 
   const person = await people.createPerson(uid, { name: '김철수' }, pid);
+  /*
+   * 두 번째 사람과 태그 하나.
+   *
+   * "낸 사람"과 "태그 없음"을 견주려면 걸러지는 쪽과 남는 쪽이 함께 있어야 한다.
+   * 사람이 하나뿐이고 태그가 하나도 없으면 조건이 아무 일도 하지 않아도 검사가 통과한다.
+   */
+  const other = await people.createPerson(uid, { name: '이영희' }, pid);
+  const trip = await tags.createTag(uid, { name: '여행' }, pid);
   const dining = await categories.createCategory(uid, { name: '외식', type: 'expense' }, pid);
   const lunch = await categories.createCategory(uid, {
     name: '점심', parentId: dining.id, type: 'expense',
@@ -59,6 +81,21 @@ runSmoke('sync-pull-dump', async (ctx) => {
     kind: 'expense', personId: person.id, date: '2026-08-10T03:00:00.000Z',
     description: '장보기', amount: '50000', categoryId: dining.id, accountId: bank.id,
     extraAmount: '20000',
+  }, pid);
+  /*
+   * 태그가 붙은 거래 하나와, 다른 사람이 낸 거래 하나.
+   *
+   * 날짜는 8/10 앞(한국 시간 8/6·8/7)에 둔다. 아래 기간 검사가 8/10 ~ 11/30 을
+   * 보므로, 그 안에 넣으면 손으로 적어 둔 합계가 함께 움직인다.
+   */
+  await entries.createEntry(uid, {
+    kind: 'expense', personId: person.id, date: '2026-08-05T18:00:00.000Z',
+    description: '여행 숙소', amount: '70000', categoryId: dining.id, accountId: bank.id,
+    tagIds: [trip.id],
+  }, pid);
+  await entries.createEntry(uid, {
+    kind: 'expense', personId: other.id, date: '2026-08-06T18:00:00.000Z',
+    description: '영희 점심', amount: '9000', categoryId: lunch.id, accountId: bank.id,
   }, pid);
   await budgets.createBudget(uid, { categoryId: dining.id, monthlyAmount: '300000' }, pid);
 
@@ -210,6 +247,46 @@ runSmoke('sync-pull-dump', async (ctx) => {
     rangedMonths: await reports.getEntryMonths(uid, {
       projectId: pid, startDate: '2026-08-10', endDate: '2026-11-30',
     }),
+    /*
+     * 한쪽만 적은 기간. 시작일만 적으면 그날부터 끝까지다.
+     *
+     * 사본이 없는 쪽을 달력 키의 양끝으로 채우는지 여기서 드러난다. 예전에는 두 칸이
+     * 함께 와야만 걸려, 한 칸만 적은 검색이 전체 기간으로 새 나갔다.
+     */
+    openStartMonths: await reports.getEntryMonths(uid, {
+      projectId: pid, startDate: '2026-11-01',
+    }),
+    openEndMonths: await reports.getEntryMonths(uid, {
+      projectId: pid, endDate: '2026-08-31',
+    }),
+    /*
+     * 설명에서 찾는 글자. 부분 일치이고 대소문자를 가리지 않는다.
+     *
+     * 서버는 Postgres 의 insensitive contains 로, 사본은 SQLite 의 LIKE 로 한다.
+     * 같은 검색이 온라인과 오프라인에서 같은 목록을 내는지가 요점이다.
+     */
+    textMonths: await reports.getEntryMonths(uid, { projectId: pid, text: '치킨' }),
+    /*
+     * "태그 없음"과 "낸 사람".
+     *
+     * 앞은 태그 무리의 한 갈래라 고른 태그와 OR 로 이어진다. 뒤는 자산주인 필터와
+     * 다른 자리다 -- 전표의 personId 를 그대로 본다.
+     */
+    noTagEntries: (
+      await entries.getEntries(uid, { tagIds: 'none', limit: 200 }, pid)
+    ).data.map((row) => row.id),
+    tagOrNoTagEntries: (
+      await entries.getEntries(uid, { tagIds: `${trip.id},none`, limit: 200 }, pid)
+    ).data.map((row) => row.id),
+    taggedEntries: (
+      await entries.getEntries(uid, { tagIds: trip.id, limit: 200 }, pid)
+    ).data.map((row) => row.id),
+    personEntries: (
+      await entries.getEntries(uid, { entryPersonIds: person.id, limit: 200 }, pid)
+    ).data.map((row) => row.id),
+    textEntries: (
+      await entries.getEntries(uid, { text: '치킨', limit: 200 }, pid)
+    ).data.map((row) => row.id),
     rangedBreakdown: await reports.getCategoryBreakdown(uid, {
       projectId: pid, startDate: '2026-08-10', endDate: '2026-08-31', type: 'expense',
     }),
@@ -263,6 +340,13 @@ runSmoke('sync-pull-dump', async (ctx) => {
       ),
     ),
     searchCategoryId: dining.id,
+    /** 사본 쪽 검사가 "낸 사람"으로 물어볼 사람들과 태그. */
+    personId: person.id,
+    otherPersonId: other.id,
+    otherPersonEntryId: (
+      await entries.getEntries(uid, { entryPersonIds: other.id, limit: 10 }, pid)
+    ).data.map((row) => row.id).join(','),
+    tripTagId: trip.id,
     cardId: credit.id,
     stockAccountId: stock.id,
   };

@@ -11,6 +11,7 @@ import {
 } from '@money/core/hooks/useCategoryManager';
 import Modal from '@/components/Modal';
 import CategoryFormFields from '@/components/CategoryFormFields';
+import AddButton from '@/components/AddButton';
 import PageHeader from '@/components/PageHeader';
 import TagsPanel from '@/components/TagsPanel';
 import type { Category } from '@money/core/lib/types';
@@ -94,6 +95,14 @@ export default function CategoriesPage() {
     setError('');
   };
 
+  /** 그 단에서 새로 만들기. 유형을 미리 골라 두면 폼에서 다시 고를 일이 없다. */
+  const openNewIn = (type: 'expense' | 'income') => {
+    setEditingId(null);
+    setFormData({ name: '', type, subCategories: NO_SUB_CATEGORIES, defaultIsExtra: false });
+    setIsModalOpen(true);
+    setError('');
+  };
+
   const handleCategoryClick = (category: Category) => {
     setSelectedCategory(category);
     setIsDetailModalOpen(true);
@@ -141,20 +150,11 @@ export default function CategoriesPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title={t('categories.title')}
-        action={
-          // 태그 탭은 자기 머리글에 자기 추가 버튼을 둔다.
-          section === 'categories' ? (
-            <button
-              onClick={() => setIsModalOpen(true)}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-            >
-              {t('categories.add')}
-            </button>
-          ) : undefined
-        }
-      />
+      {/*
+        추가 버튼은 머리글이 아니라 **목록 바로 위**에 있다 (자산 화면과 같은 규칙).
+        무엇에 더하는 것인지가 버튼 아래에 곧바로 이어져 보인다.
+      */}
+      <PageHeader title={t('nav.categories')} />
 
       {/*
         보기 방식. 흰 알약을 하나 두고 옮긴다 -- 칸마다 바탕을 켜고 끄면 두 탭이 한 줄에
@@ -234,6 +234,8 @@ export default function CategoriesPage() {
                   <h2 className={`hidden lg:block text-lg font-bold ${panel.text} mb-4`}>
                     {t(panel.titleKey)}
                   </h2>
+                  {/* 그 단의 유형(지출·수입)을 미리 골라 연다. 어느 목록 위의 버튼인지가 곧 답이다. */}
+                  <AddButton label={t('categories.add')} onClick={() => openNewIn(panel.type)} />
                   {cats.length === 0 ? (
                     <p className="text-gray-600">{t(panel.emptyKey)}</p>
                   ) : (

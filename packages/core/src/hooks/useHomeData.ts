@@ -3,7 +3,6 @@ import type { BudgetDto, CardDto, EntryFilterQuery, ReportDto } from '@money/typ
 
 import { homeDataPort } from '../data/home-port';
 import { dateMarkerKey, formatMonthShort } from '../lib/datetime';
-import { sumNetWorth } from '../lib/net-worth';
 import type { Account, Card, Category, Person } from '../lib/types';
 import { useProject } from '../store/project';
 import { useUserFilter } from '../store/user-filter';
@@ -76,6 +75,9 @@ export interface ReferencePatch {
 /**
  * 홈 화면이 보는 값 전부 (그래프 제외).
  *
+ * 총자산은 여기 없다. 자산 금액은 자산 화면에서만 보여 주므로 그 화면의
+ * `useAssetsData` 가 받는다. 달을 옮길 때마다 쓰지 않을 값을 다시 받지 않는다.
+ *
  * 웹과 앱이 같은 화면을 그리므로 조회와 판단을 여기 한 곳에 둔다. 그래프는 웹에만
  * 있어 부르는 쪽에 남겨 두었다.
  *
@@ -109,7 +111,6 @@ export function useHomeData({
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
 
-  const [netWorth, setNetWorth] = useState<ReportDto.NetWorth | null>(null);
   const [budgets, setBudgets] = useState<BudgetDto.MonthlyBudget[]>([]);
   const [summary, setSummary] = useState<ReportDto.Summary | null>(null);
   const [methods, setMethods] = useState<SpendingMethod[]>([]);
@@ -204,15 +205,13 @@ export function useHomeData({
         setHasError(false);
 
         const port = homeDataPort();
-        const [netWorthData, budgetRows, summaryRow, currentMethods] = await Promise.all([
-          port.getNetWorth(projectId),
+        const [budgetRows, summaryRow, currentMethods] = await Promise.all([
           port.getBudgetForMonth(year, month, projectId, filter),
           port.getSummary({ yearMonth }, projectId, filter),
           port.getPaymentMethods({ yearMonth: thisYearMonth }, projectId, filter),
         ]);
         if (cancelled) return;
 
-        setNetWorth(netWorthData ?? null);
         setBudgets(budgetRows ?? []);
         setSummary(summaryRow ?? null);
 
@@ -278,19 +277,6 @@ export function useHomeData({
     };
   }, [projectId, peopleLoaded, people.length, filter, year, month, yearMonth, thisYearMonth, entryVersion, mirrorVersion]);
 
-  /**
-   * 고른 자산주인의 총자산.
-   *
-   * 전원을 고른 때만 서버의 전체 값을 그대로 쓴다. 주인이 없는 계좌는 사람별 소계에
-   * 들어가지 않아, 전체를 보면서 소계를 더하면 그만큼 빠진다.
-   */
-  const scopedNetWorth = useMemo(() => {
-    if (allPeopleSelected) return netWorth;
-
-    const byPerson = new Map((netWorth?.byPerson ?? []).map((row) => [row.personId, row]));
-    return sumNetWorth(selectedPersonIds.map((id) => byPerson.get(id)));
-  }, [allPeopleSelected, netWorth, selectedPersonIds]);
-
   const applyReferencePatch = useCallback((patch: ReferencePatch) => {
     if (patch.accounts) setAccounts(patch.accounts);
     if (patch.cards) setCards(patch.cards);
@@ -307,7 +293,6 @@ export function useHomeData({
     myPersonId,
     selectedPersonIds,
 
-    netWorth: scopedNetWorth,
     budgets,
     summary,
     methods,
@@ -315,8 +300,6 @@ export function useHomeData({
     /** 서버로 보낼 필터. 조회가 겹치지 않게 잠잠해진 뒤의 값이다. */
     filter,
     allPeopleSelected,
-    /** 구성원은 있는데 아무도 고르지 않았다. 빈 화면과 뜻이 다르다. */
-    hasNoScope: people.length > 0 && selectedPersonIds.length === 0,
 
     isLoading,
     hasError,

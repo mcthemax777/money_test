@@ -2,8 +2,13 @@ import { ForbiddenException } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { LedgerService } from '@/modules/ledger/ledger.service';
 import { ExchangeRatesService } from '@/modules/exchange-rates/exchange-rates.service';
+import { ServerClockService } from '@/common/server-clock';
 import { ReportsService } from '@/modules/reports/reports.service';
 import { AccountsService } from '@/modules/accounts/accounts.service';
+import { PeopleService } from '@/modules/people/people.service';
+import { CardsService } from '@/modules/cards/cards.service';
+import { CategoriesService } from '@/modules/categories/categories.service';
+import { TagsService } from '@/modules/tags/tags.service';
 import { EntriesService } from '@/modules/entries/entries.service';
 import { BudgetsService } from '@/modules/budgets/budgets.service';
 
@@ -193,7 +198,32 @@ export function projectAccessStub(
  */
 export function makeLedger(prisma: PrismaClient, access: unknown) {
   const exchangeRates = new ExchangeRatesService(prisma as any);
-  return new LedgerService(prisma as any, access as any, exchangeRates);
+  return new LedgerService(prisma as any, access as any, exchangeRates, new ServerClockService());
+}
+
+/** 분류 서비스 조립. 필드별 병합의 시계를 찍으므로 서버 시계가 필요하다. */
+export function makeCategories(prisma: PrismaClient, access: unknown) {
+  return new CategoriesService(prisma as any, access as any, new ServerClockService());
+}
+
+/** 태그 서비스 조립. */
+export function makeTags(prisma: PrismaClient, access: unknown) {
+  return new TagsService(prisma as any, access as any, new ServerClockService());
+}
+
+/** 구성원 서비스 조립. 필드별 병합의 시계를 찍으므로 서버 시계가 필요하다. */
+export function makePeople(prisma: PrismaClient, access: unknown) {
+  return new PeopleService(prisma as any, access as any, new ServerClockService());
+}
+
+/** 카드 서비스 조립. 카드사 검증과 시계를 함께 쓴다. */
+export function makeCards(prisma: PrismaClient, access: unknown, institutions: unknown) {
+  return new CardsService(
+    prisma as any,
+    access as any,
+    institutions as any,
+    new ServerClockService(),
+  );
 }
 
 /** 계좌 서비스 조립. 통화 검증 때문에 환율 서비스를 함께 쓴다. */
@@ -210,6 +240,7 @@ export function makeAccounts(
     ledger as any,
     institutions as any,
     exchangeRates,
+    new ServerClockService(),
   );
 }
 
@@ -222,11 +253,17 @@ export function makeReports(prisma: PrismaClient, access: unknown) {
 /** 거래 서비스 조립. 목록 금액을 표시 통화로 옮기느라 환율 서비스를 쓴다. */
 export function makeEntries(prisma: PrismaClient, access: unknown, ledger: unknown) {
   const exchangeRates = new ExchangeRatesService(prisma as any);
-  return new EntriesService(prisma as any, access as any, ledger as any, exchangeRates);
+  return new EntriesService(
+    prisma as any,
+    access as any,
+    ledger as any,
+    exchangeRates,
+    new ServerClockService(),
+  );
 }
 
 /** 예산 서비스 조립. 예산액을 저장 통화 <-> 표시 통화로 옮긴다. */
 export function makeBudgets(prisma: PrismaClient, access: unknown) {
   const exchangeRates = new ExchangeRatesService(prisma as any);
-  return new BudgetsService(prisma as any, access as any, exchangeRates);
+  return new BudgetsService(prisma as any, access as any, exchangeRates, new ServerClockService());
 }

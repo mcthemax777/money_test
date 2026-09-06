@@ -5,6 +5,7 @@ import type { ExchangeRateInfo } from '@money/types';
 import { useExchangeRateSettings } from '@money/core/hooks/useExchangeRates';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { toNumber } from '@money/core/lib/money';
+import { useConnectivity } from '@money/core/store/connectivity';
 
 /** 무엇을 하다 실패했는지에 따른 문구. */
 const FAILURE_KEY = {
@@ -28,6 +29,15 @@ const SOURCE_KEY: Record<string, MessageKey> = {
  * 추정과 표시 통화 환산에만 쓰이고, 이미 확정된 거래의 금액은 건드리지 않는다.
  */
 export default function ExchangeRateSettings() {
+  /*
+   * 환율 설정은 온라인에서만 한다.
+   *
+   * 이 값은 아직 청구액을 모르는 카드 결제를 추정하고 표시 통화를 환산하는 데 쓰인다.
+   * 오프라인에서 바꿔 두었다가 며칠 뒤에 보내면, 그 사이에 적힌 거래들이 어떤 환율로
+   * 계산된 것인지가 갈린다. 큐에 담아 두는 대신 지금 막고 이유를 말한다 (D12).
+   */
+  const isOffline = useConnectivity((state) => state.isOffline);
+
   const { t } = useTranslation();
   /* 받아 오고 저장하는 일은 core 가 맡는다. 웹의 같은 칸도 이 훅을 쓴다. */
   const { ledgerCurrency, rates, savingPair, failure, save, reset } = useExchangeRateSettings();
@@ -41,12 +51,17 @@ export default function ExchangeRateSettings() {
       <Text className="text-lg font-semibold text-gray-900">{t('exchangeRate.title')}</Text>
       <Text className="mt-1 text-sm text-gray-600">{t('exchangeRate.description')}</Text>
 
+      {/* 왜 눌리지 않는지 말한다. 흐릿한 버튼만 두면 고장으로 읽힌다. */}
+      {isOffline ? (
+        <Text className="mt-2 text-sm text-gray-500">{t('online.onlyOnline')}</Text>
+      ) : null}
+
       <View className="mt-4 gap-2">
         {rates.map((info: ExchangeRateInfo) => {
           const draft = drafts[info.from] ?? '';
           const isManual = info.source === 'manual';
           const isSaving = savingPair === info.from;
-          const canSave = toNumber(draft) > 0 && !isSaving;
+          const canSave = toNumber(draft) > 0 && !isSaving && !isOffline;
 
           return (
             <View key={`${info.from}-${info.to}`} className="gap-2 rounded-lg bg-gray-50 px-3 py-2">
@@ -81,9 +96,9 @@ export default function ExchangeRateSettings() {
                   {isManual ? (
                     <Pressable
                       onPress={() => reset(info)}
-                      disabled={isSaving}
+                      disabled={isSaving || isOffline}
                       className={`rounded border border-gray-300 px-3 py-1 ${
-                        isSaving ? 'opacity-40' : ''
+                        isSaving || isOffline ? 'opacity-40' : ''
                       }`}
                     >
                       <Text className="text-sm text-gray-700">{t('exchangeRate.reset')}</Text>

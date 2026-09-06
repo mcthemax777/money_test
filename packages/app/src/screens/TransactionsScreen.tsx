@@ -677,6 +677,7 @@ export default function TransactionsScreen() {
         accounts={tx.pickerAccounts}
         cards={tx.pickerCards}
         tags={tx.pickerTags}
+        people={tx.people}
       />
 
       {/*

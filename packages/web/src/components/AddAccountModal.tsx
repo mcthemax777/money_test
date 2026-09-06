@@ -8,8 +8,8 @@ import {
 } from '@money/types';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
-import { useInstitutions } from '@/hooks/useInstitutions';
-import { ACCOUNT_TYPE_OPTIONS } from '@money/core/lib/account-type';
+import { useInstitutions } from '@money/core/hooks/useInstitutions';
+import { ACCOUNT_TYPE_OPTIONS, NO_BANK_TYPES } from '@money/core/lib/account-type';
 import { useTranslation } from '@money/core/lib/i18n';
 import { currencyLabel, toAmountString } from '@money/core/lib/money';
 import type { AccountType } from '@money/core/lib/types';
@@ -33,7 +33,6 @@ interface AddAccountModalProps {
 
 
 /** 개설 기관을 물어볼 필요가 없는 유형. 서버의 NO_INSTITUTION_TYPES와 같아야 한다. */
-const NO_BANK_TYPES = ['cash', 'real_estate'];
 
 /** 하단 고정 버튼과 본문 form을 잇는 id */
 const FORM_ID = 'add-account-form';

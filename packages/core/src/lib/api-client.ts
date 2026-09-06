@@ -6,6 +6,8 @@ import {
   saveAuthTokens,
 } from './auth-tokens';
 import { hasRandomSource, newId, withNewId } from '@money/types';
+import { markOffline } from '../store/connectivity';
+import { isOfflineError } from './offline-error';
 import type {
   PushRequest,
   PushResponse,
@@ -126,8 +128,19 @@ class ApiClient {
     });
 
     this.client.interceptors.response.use(
-      (response) => response,
+      (response) => {
+        // 응답이 왔으면 서버에 닿은 것이다. 화면이 막아 둔 자리를 다시 연다.
+        markOffline(false);
+        return response;
+      },
       async (error: AxiosError) => {
+        /*
+         * 서버에 닿지 못한 것과 서버가 거절한 것을 가른다.
+         *
+         * 앞의 것만 "오프라인"이다. 400·403 은 닿은 뒤의 대답이라 연결과 상관이 없다.
+         */
+        markOffline(isOfflineError(error));
+
         const originalRequest = error.config as (typeof error.config & { _retried?: boolean });
 
         /*

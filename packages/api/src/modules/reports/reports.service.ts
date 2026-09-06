@@ -7,7 +7,9 @@ import {
   MATCH_NOTHING,
   assetOwnerCondition,
   entryKindCondition,
+  entryPersonCondition,
   entryTagCondition,
+  entryTextCondition,
   entrySearchConditions,
   parseEntryFilter,
   splitList,
@@ -557,12 +559,17 @@ export class ReportsService {
     const owner = assetOwnerCondition(filter);
     // 검색은 전표 수준으로 걸린다 (entryScope 와 같은 이유).
     const kindCondition = entryKindCondition(search.kinds);
-    // 태그도 전표에 붙으므로 유형과 같은 자리에 온다.
-    const tagCondition = entryTagCondition(search.tagIds);
+    // 태그도 전표에 붙으므로 유형과 같은 자리에 온다. "태그 없음"도 이 무리다.
+    const tagCondition = entryTagCondition(search.tagIds, search.noTag);
+    // 설명의 글자와 낸 사람도 전표에 있다.
+    const textCondition = entryTextCondition(search.text);
+    const personCondition = entryPersonCondition(search.entryPersonIds);
     const conditions = [
       ...(owner ? [owner] : []),
       ...(kindCondition ? [kindCondition] : []),
       ...(tagCondition ? [tagCondition] : []),
+      ...(textCondition ? [textCondition] : []),
+      ...(personCondition ? [personCondition] : []),
       ...entrySearchConditions(search).map((posting) => ({ postings: { some: posting } })),
     ];
     const window = this.resolveWindow(query, timeZone);
@@ -924,29 +931,33 @@ export class ReportsService {
    * 기간을 받을 수도 있고 안 받을 수도 있는 조회의 구간.
    *
    * `resolvePeriod` 와 규칙이 같다 -- 달력 날짜, 양끝 포함, 끝날은 다음 날 0시를
-   * 상한으로 삼는다. 다른 점은 **없어도 된다**는 것뿐이다(그때는 전체 기간).
-   * 하나만 온 것은 무시한다. 반쪽 구간은 사용자가 고른 것이 아니라 입력이 덜 끝난
-   * 상태이고, 여기서 400 을 내면 날짜를 하나 적는 순간 목록이 오류로 바뀐다.
+   * 상한으로 삼는다. 다른 점은 **없어도 된다**는 것과 **한쪽만 와도 된다**는 것이다.
+   *
+   * 한쪽만 온 것은 열린 구간이다. 시작일만 적으면 그날부터 끝까지, 종료일만 적으면
+   * 처음부터 그날까지다. "이 날 이후에 쓴 것"은 반쪽짜리 입력이 아니라 그 자체로
+   * 사용자가 묻는 것이라, 나머지 칸을 채우게 하는 대신 그대로 건다.
    */
   private resolveWindow(
     query: { startDate?: string; endDate?: string },
     timeZone: string,
-  ): { gte: Date; lt: Date } | null {
+  ): { gte?: Date; lt?: Date } | null {
     const { startDate, endDate } = query;
-    if (!startDate || !endDate) return null;
+    if (!startDate && !endDate) return null;
 
-    const start = assertDateKey(startDate, '시작일');
-    const end = assertDateKey(endDate, '종료일');
-    if (start > end) {
+    const start = startDate ? assertDateKey(startDate, '시작일') : undefined;
+    const end = endDate ? assertDateKey(endDate, '종료일') : undefined;
+    if (start && end && start > end) {
       throw new BadRequestException('시작일이 종료일보다 뒤입니다.');
     }
 
-    const [year, month, day] = end.split('-').map(Number);
-    return {
-      gte: zonedDateStringToUtc(start, timeZone),
+    const window: { gte?: Date; lt?: Date } = {};
+    if (start) window.gte = zonedDateStringToUtc(start, timeZone);
+    if (end) {
+      const [year, month, day] = end.split('-').map(Number);
       // 하루를 더한다. Date 생성자가 월·연 넘김을 처리하므로 말일을 따로 보지 않는다.
-      lt: zonedDayStart(year, month, day + 1, timeZone),
-    };
+      window.lt = zonedDayStart(year, month, day + 1, timeZone);
+    }
+    return window;
   }
 
   /** 응답에 실을 구간 표시. 한 달을 본 경우에는 yearMonth 도 함께 준다. */
@@ -988,12 +999,17 @@ export class ReportsService {
      * 걸면 목록에는 있는 거래의 일부 금액이 합계에서 빠져 둘이 어긋난다.
      */
     const kindCondition = entryKindCondition(search.kinds);
-    // 태그도 전표에 붙으므로 유형과 같은 자리에 온다.
-    const tagCondition = entryTagCondition(search.tagIds);
+    // 태그도 전표에 붙으므로 유형과 같은 자리에 온다. "태그 없음"도 이 무리다.
+    const tagCondition = entryTagCondition(search.tagIds, search.noTag);
+    // 설명의 글자와 낸 사람도 전표에 있다.
+    const textCondition = entryTextCondition(search.text);
+    const personCondition = entryPersonCondition(search.entryPersonIds);
     const conditions = [
       ...(owner ? [owner] : []),
       ...(kindCondition ? [kindCondition] : []),
       ...(tagCondition ? [tagCondition] : []),
+      ...(textCondition ? [textCondition] : []),
+      ...(personCondition ? [personCondition] : []),
       ...entrySearchConditions(search).map((posting) => ({ postings: { some: posting } })),
     ];
 

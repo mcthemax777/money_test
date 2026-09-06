@@ -9,6 +9,8 @@ import {
   ExchangeRatesService,
 } from '../exchange-rates/exchange-rates.service';
 import { assertYearMonth, shiftYearMonth } from '@/common/year-month';
+import { stampFieldClocks } from '@/common/field-clock';
+import { ServerClockService } from '@/common/server-clock';
 import {
   BUDGET_MONTH_CEILING as BUDGET_MONTH_CEILING_SHARED,
   BUDGET_MONTH_FLOOR as BUDGET_MONTH_FLOOR_SHARED,
@@ -72,12 +74,15 @@ export class BudgetsService {
     private readonly prisma: PrismaService,
     private readonly projectAccess: ProjectAccessService,
     private readonly exchangeRates: ExchangeRatesService,
+    private readonly clock: ServerClockService,
   ) {}
 
+  /** `hlc` 는 기기의 오프라인 명령을 재생할 때만 온다 (people.createPerson 과 같은 규칙). */
   async createBudget(
     userId: string,
     dto: BudgetDto.CreateRequest,
     projectIdParam?: string,
+    hlc?: string,
   ): Promise<BudgetDto.Response> {
     const projectId = await this.projectAccess.resolveAndVerifyProjectId(
       userId,
@@ -199,6 +204,7 @@ export class BudgetsService {
     id: string,
     userId: string,
     dto: BudgetDto.UpdateRequest,
+    hlc?: string,
   ): Promise<BudgetDto.Response> {
     const budget = await this.getBudgetById(id, userId, 'editor');
 
@@ -223,7 +229,18 @@ export class BudgetsService {
     if (!dto.applyMode || dto.applyMode === 'all') {
       const updated = await this.prisma.$transaction(async (tx) => {
         await tx.budgetOverride.deleteMany({ where: { budgetId: id } });
-        return tx.budget.update({ where: { id }, data: { monthlyAmount } });
+        return tx.budget.update({
+          where: { id },
+          data: {
+            monthlyAmount,
+            fieldHlc: stampFieldClocks(
+              (await tx.budget.findUniqueOrThrow({ where: { id }, select: { fieldHlc: true } }))
+                .fieldHlc,
+              ['monthlyAmount'],
+              hlc ?? this.clock.now(),
+            ),
+          },
+        });
       });
       return this.toBudgetResponse(updated, show);
     }
@@ -654,6 +671,7 @@ export class BudgetsService {
   async createOverride(
     userId: string,
     dto: BudgetDto.OverrideRequest,
+    hlc?: string,
   ): Promise<BudgetDto.OverrideResponse> {
     await this.getBudgetById(dto.budgetId, userId, 'editor');
 
@@ -672,12 +690,14 @@ export class BudgetsService {
           month: dto.month,
         },
       },
-      update: { amount },
+      update: { amount, fieldHlc: stampFieldClocks(null, ['amount'], hlc ?? this.clock.now()) },
       create: {
+        ...(dto.id ? { id: clientId(dto.id, '예산 조정 식별자') } : {}),
         budgetId: dto.budgetId,
         year: dto.year,
         month: dto.month,
         amount,
+        fieldHlc: stampFieldClocks(null, ['amount'], hlc ?? this.clock.now()),
       },
     });
 

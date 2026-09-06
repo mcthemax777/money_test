@@ -16,6 +16,7 @@ import { EMPTY_TAG_FORM, useTagManager, type TagFormValues } from '@money/core/h
 import { useTranslation } from '@money/core/lib/i18n';
 
 import Modal from '@/components/Modal';
+import AddButton from '@/components/AddButton';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const FORM_ID = 'tag-form';
@@ -80,22 +81,14 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <h2 className="text-lg font-bold text-gray-900">{t('tags.title')}</h2>
-        <button
-          type="button"
-          onClick={openNew}
-          className="rounded-lg bg-blue-600 px-4 py-2 text-white transition hover:bg-blue-700"
-        >
-          {t('tags.add')}
-        </button>
-      </div>
-
       {error ? (
         <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-600">
           {error}
         </div>
       ) : null}
+
+      {/* 추가 버튼은 목록 바로 위다 (자산·분류 화면과 같은 규칙). */}
+      <AddButton label={t('tags.add')} onClick={openNew} />
 
       {manager.isLoading ? (
         <p className="text-gray-600">{t('common.loading')}</p>

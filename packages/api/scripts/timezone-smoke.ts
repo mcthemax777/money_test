@@ -3,7 +3,17 @@ import { CategoriesService } from '@/modules/categories/categories.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
 import { PeopleService } from '@/modules/people/people.service';
 import { CardLedgerService } from '@/modules/cards/card-ledger.service';
-import { makeAccounts, makeEntries, makeLedger, makeReports, projectAccessStub, runSmoke } from './smoke-harness';
+import {
+  makeAccounts,
+  makeCards,
+  makeCategories,
+  makeEntries,
+  makeLedger,
+  makePeople,
+  makeReports,
+  projectAccessStub,
+  runSmoke,
+} from './smoke-harness';
 
 /**
  * 집계 경계가 프로젝트 타임존을 따르는지 확인한다.
@@ -28,9 +38,9 @@ runSmoke('timezone', async (ctx) => {
     const ledger = makeLedger(ctx.prisma, access);
     const institutions = new InstitutionsService(ctx.prisma as any, access);
     const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
-    const people = new PeopleService(ctx.prisma as any, access);
-    const categories = new CategoriesService(ctx.prisma as any, access);
-    const cards = new CardsService(ctx.prisma as any, access, institutions);
+    const people = makePeople(ctx.prisma, access);
+    const categories = makeCategories(ctx.prisma, access);
+    const cards = makeCards(ctx.prisma, access, institutions);
     const entries = makeEntries(ctx.prisma, access, ledger);
     const reports = makeReports(ctx.prisma, access);
     const cardLedger = new CardLedgerService(ctx.prisma as any, access, ledger);

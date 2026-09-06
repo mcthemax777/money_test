@@ -20,11 +20,14 @@ import { Check, Minus } from 'lucide-react-native';
 import type { TagDto } from '@money/types';
 
 import { useTranslation } from '@money/core/lib/i18n';
+import {
+  tagPickResult,
+  tagPickState,
+  toggleTagPick,
+  type TagPickState,
+} from '@money/core/lib/tag-pick';
 
 import Modal from './Modal';
-
-/** 알약 하나가 놓인 자리. */
-type TagState = 'on' | 'partial' | 'off';
 
 export default function TagPickModal({
   isOpen,
@@ -58,31 +61,18 @@ export default function TagPickModal({
     if (isOpen) setChanged({});
   }, [isOpen]);
 
-  const stateOf = (tagId: string): TagState => {
-    const touched = changed[tagId];
-    if (touched !== undefined) return touched ? 'on' : 'off';
-    if (commonTagIds.includes(tagId)) return 'on';
-    if (partialTagIds.includes(tagId)) return 'partial';
-    return 'off';
-  };
+  /* 세 갈래를 가르는 규칙과 누름의 뜻은 core 의 tag-pick 이 갖는다. 웹과 같은 것이다. */
+  const stateOf = (tagId: string) => tagPickState(tagId, changed, commonTagIds, partialTagIds);
 
-  /*
-   * 누르면 켜지고 꺼진다. "일부"는 켜지는 쪽으로만 간다.
-   *
-   * 일부만 붙은 태그를 끄는 것은 "가진 것들에서 떼라"는 뜻이 되는데, 화면에는 어느
-   * 거래가 그것을 가졌는지 보이지 않는다. 보이지 않는 것을 떼게 두지 않는다.
-   */
   const toggle = (tagId: string) => {
-    const state = stateOf(tagId);
-    setChanged((previous) => ({ ...previous, [tagId]: state !== 'on' }));
+    setChanged((previous) => toggleTagPick(tagId, previous, commonTagIds, partialTagIds));
   };
 
-  const addTagIds = tags
-    .filter((tag) => changed[tag.id] === true && !commonTagIds.includes(tag.id))
-    .map((tag) => tag.id);
-  const removeTagIds = tags
-    .filter((tag) => changed[tag.id] === false && commonTagIds.includes(tag.id))
-    .map((tag) => tag.id);
+  const { addTagIds, removeTagIds } = tagPickResult(
+    tags.map((tag) => tag.id),
+    changed,
+    commonTagIds,
+  );
   const hasChange = addTagIds.length > 0 || removeTagIds.length > 0;
 
   return (
@@ -144,7 +134,7 @@ function TagChip({
   onPress,
 }: {
   tag: TagDto.Response;
-  state: TagState;
+  state: TagPickState;
   onPress: () => void;
 }) {
   const scale = useRef(new Animated.Value(1)).current;
@@ -185,8 +175,14 @@ function TagChip({
         >
           {tag.name}
         </Text>
-        {isOn ? <Check size={13} color="#2563eb" strokeWidth={3} /> : null}
-        {isPartial ? <Minus size={13} color="#6b7280" strokeWidth={3} /> : null}
+        {/*
+          표시 자리는 상태와 상관없이 늘 잡아 둔다. 아이콘이 들락거리면 누를 때마다
+          알약의 너비가 달라져 뒤따르는 알약이 줄을 넘나든다.
+        */}
+        <View className="h-3.5 w-3.5 items-center justify-center">
+          {isOn ? <Check size={13} color="#2563eb" strokeWidth={3} /> : null}
+          {isPartial ? <Minus size={13} color="#6b7280" strokeWidth={3} /> : null}
+        </View>
       </Pressable>
     </Animated.View>
   );

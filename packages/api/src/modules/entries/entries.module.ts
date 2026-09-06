@@ -5,12 +5,13 @@ import { ExchangeRatesModule } from '../exchange-rates/exchange-rates.module';
 import { EntriesService } from './entries.service';
 import { EntriesController } from './entries.controller';
 import { ProjectAccessService } from '@/common/project-access.guard';
+import { ServerClockService } from '@/common/server-clock';
 
 @Module({
   // 목록 금액을 표시 통화로 옮긴다.
   imports: [DatabaseModule, LedgerModule, ExchangeRatesModule],
   controllers: [EntriesController],
-  providers: [EntriesService, ProjectAccessService],
+  providers: [EntriesService, ProjectAccessService, ServerClockService],
   exports: [EntriesService],
 })
 export class EntriesModule {}

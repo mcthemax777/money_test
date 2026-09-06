@@ -23,6 +23,22 @@ export interface EntryWritePort {
   /** 수정은 전체 교체다. id 는 유지된다. */
   updateEntry(id: string, data: EntryDto.UpdateRequest): Promise<{ id: string }>;
   deleteEntry(id: string): Promise<void>;
+
+  /**
+   * 여러 거래의 태그를 한 번에 바꾼다. 더할 것과 뗄 것을 따로 받는다.
+   *
+   * 수정(`updateEntry`)과 갈라 둔다. 그쪽은 전표를 통째로 갈아 끼우므로 분할·외화까지
+   * 온전한 값이 필요한데, 목록에서 여러 건을 고를 때 화면은 그것을 다 들고 있지 않다.
+   *
+   * 돌려주는 것은 실제로 달라진 거래의 수다. 이미 붙어 있던 태그를 다시 붙이면 0 이다.
+   */
+  changeEntryTags(input: {
+    entryIds: string[];
+    addTagIds: string[];
+    removeTagIds: string[];
+    /** 서버 창구가 쓴다. 사본 창구는 만들어질 때 정해진 프로젝트를 그대로 쓴다. */
+    projectId?: string | null;
+  }): Promise<{ entries: number }>;
 }
 
 /** 서버에 곧바로 쓰는 창구. 웹은 이것을 쓴다. */
@@ -36,6 +52,13 @@ export const httpEntryWritePort: EntryWritePort = {
     return { id: entry.id };
   },
   deleteEntry: (id) => apiClient.deleteEntry(id),
+  async changeEntryTags({ entryIds, addTagIds, removeTagIds, projectId }) {
+    const result = await apiClient.changeEntryTags(
+      { entryIds, addTagIds, removeTagIds },
+      projectId ?? undefined,
+    );
+    return { entries: result.entries };
+  },
 };
 
 let current: EntryWritePort = httpEntryWritePort;

@@ -2,7 +2,15 @@ import { CategoriesService } from '@/modules/categories/categories.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
 import { PeopleService } from '@/modules/people/people.service';
 import { ledgerOpeningDate } from '@money/types';
-import { makeAccounts, makeEntries, makeLedger, projectAccessStub, runSmoke } from './smoke-harness';
+import {
+  makeAccounts,
+  makeCategories,
+  makeEntries,
+  makeLedger,
+  makePeople,
+  projectAccessStub,
+  runSmoke,
+} from './smoke-harness';
 
 /**
  * 기초잔액 검증.
@@ -29,8 +37,8 @@ runSmoke('opening-balance', async (ctx) => {
   const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
   const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
-  const people = new PeopleService(ctx.prisma as any, access);
-  const categories = new CategoriesService(ctx.prisma as any, access);
+  const people = makePeople(ctx.prisma, access);
+  const categories = makeCategories(ctx.prisma, access);
   const entries = makeEntries(ctx.prisma, access, ledger);
 
   const person = await people.createPerson(uid, { name: '김철수' }, pid);

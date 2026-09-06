@@ -15,8 +15,10 @@ import { InstitutionsService } from '@/modules/institutions/institutions.service
 import { zonedDateKey, zonedDayStart, zonedParts } from '@money/types';
 import {
   makeAccounts,
+  makeCategories,
   makeEntries,
   makeLedger,
+  makePeople,
   makeReports,
   projectAccessStub,
   runSmoke,
@@ -34,8 +36,8 @@ runSmoke('balance-history', async (ctx) => {
   const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
   const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
-  const people = new PeopleService(ctx.prisma as any, access);
-  const categories = new CategoriesService(ctx.prisma as any, access);
+  const people = makePeople(ctx.prisma, access);
+  const categories = makeCategories(ctx.prisma, access);
   const entries = makeEntries(ctx.prisma, access, ledger);
   const reports = makeReports(ctx.prisma, access);
 

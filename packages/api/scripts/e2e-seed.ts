@@ -15,7 +15,16 @@ import { CategoriesService } from '@/modules/categories/categories.service';
 import { CardsService } from '@/modules/cards/cards.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
 import { zonedDayStart, zonedParts } from '@money/types';
-import { makeAccounts, makeBudgets, makeEntries, makeLedger, projectAccessStub } from './smoke-harness';
+import {
+  makeAccounts,
+  makeBudgets,
+  makeCards,
+  makeCategories,
+  makeEntries,
+  makeLedger,
+  makePeople,
+  projectAccessStub,
+} from './smoke-harness';
 
 const TZ = 'Asia/Seoul';
 /** 이 접두사가 붙은 프로젝트/사용자만 정리 대상이다. */
@@ -44,9 +53,9 @@ async function main() {
   const ledger = makeLedger(prisma, access);
   const institutions = new InstitutionsService(prisma as any, access);
   const accounts = makeAccounts(prisma, access, ledger, institutions);
-  const people = new PeopleService(prisma as any, access);
-  const categories = new CategoriesService(prisma as any, access);
-  const cards = new CardsService(prisma as any, access, institutions);
+  const people = makePeople(prisma, access);
+  const categories = makeCategories(prisma, access);
+  const cards = makeCards(prisma, access, institutions);
   const entries = makeEntries(prisma, access, ledger);
   const budgets = makeBudgets(prisma, access);
 

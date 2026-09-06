@@ -2,19 +2,32 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { CategoryType, Prisma, ProjectRole } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
-import { CategoryDto } from '@money/types';
+import {
+  CategoryDto,
+  initialRanks,
+  rankAfter,
+} from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
 import { badRequest } from '@/common/app-error';
 import { clientId } from '@/common/client-id';
+import { stampFieldClocks } from '@/common/field-clock';
+import { ServerClockService } from '@/common/server-clock';
 
 @Injectable()
 export class CategoriesService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly projectAccess: ProjectAccessService,
+    private readonly clock: ServerClockService,
   ) {}
 
-  async createCategory(userId: string, dto: CategoryDto.CreateRequest, projectId?: string) {
+  /** `hlc` 는 기기의 오프라인 명령을 재생할 때만 온다 (people.createPerson 과 같은 규칙). */
+  async createCategory(
+    userId: string,
+    dto: CategoryDto.CreateRequest,
+    projectId?: string,
+    hlc?: string,
+  ) {
     if (!dto.name?.trim()) {
       throw badRequest('CATEGORY_NAME_REQUIRED', '카테고리명을 입력해주세요.');
     }
@@ -37,13 +50,12 @@ export class CategoriesService {
     }
 
     /*
-     * 새 카테고리는 같은 묶음(대분류끼리, 또는 한 부모 아래 소분류끼리) 맨 뒤에 붙인다.
-     * sortOrder를 기본값 0으로 두면 드래그로 0,1,2...를 매긴 목록의 앞쪽에 끼어들고,
-     * 드래그 전이라도 전부 0이라 이름순 자리에 들어가 목록 중간에 나타난다.
+     * 새 분류는 같은 묶음(대분류끼리, 또는 한 부모 아래 소분류끼리) 맨 뒤에 붙인다.
+     * 지금 마지막 순서 뒤에 값을 하나 만든다 (분수 색인).
      */
-    const lastOrder = await this.prisma.category.aggregate({
+    const lastRank = await this.prisma.category.aggregate({
       where: { projectId: finalProjectId, parentId: dto.parentId ?? null },
-      _max: { sortOrder: true },
+      _max: { sortRank: true },
     });
 
     try {
@@ -53,10 +65,15 @@ export class CategoriesService {
           projectId: finalProjectId,
           name: dto.name.trim(),
           parentId: dto.parentId ?? null,
-          sortOrder: (lastOrder._max.sortOrder ?? -1) + 1,
+          sortRank: rankAfter(lastRank._max.sortRank),
           type: dto.type as CategoryType,
           icon: dto.icon,
           defaultIsExtra: dto.defaultIsExtra ?? false,
+          fieldHlc: stampFieldClocks(
+            null,
+            ['name', 'icon', 'defaultIsExtra'],
+            hlc ?? this.clock.now(),
+          ),
         },
       });
     } catch (error) {
@@ -75,7 +92,7 @@ export class CategoriesService {
       },
       // 대분류(parentId = null)를 먼저, 그다음 이름순
       // 사용자가 드래그로 정한 순서. 같으면 이름 순.
-      orderBy: [{ parentId: { sort: 'asc', nulls: 'first' } }, { sortOrder: 'asc' }, { name: 'asc' }],
+      orderBy: [{ parentId: { sort: 'asc', nulls: 'first' } }, { sortRank: 'asc' }, { name: 'asc' }],
     });
   }
 
@@ -98,9 +115,11 @@ export class CategoriesService {
     });
     assertReorderIds(ids, new Set(rows.map((row) => row.id)));
 
+    // 목록 전체를 받았으니 순서 값을 고르게 다시 매긴다 (자산 쪽과 같은 규칙).
+    const ranks = initialRanks(ids.length);
     await this.prisma.$transaction(
       ids.map((id, index) =>
-        this.prisma.category.update({ where: { id }, data: { sortOrder: index } }),
+        this.prisma.category.update({ where: { id }, data: { sortRank: ranks[index] } }),
       ),
     );
 
@@ -116,8 +135,13 @@ export class CategoriesService {
     return category;
   }
 
-  async updateCategory(id: string, userId: string, dto: CategoryDto.UpdateRequest) {
-    await this.getCategoryById(id, userId, 'editor');
+  async updateCategory(
+    id: string,
+    userId: string,
+    dto: CategoryDto.UpdateRequest,
+    hlc?: string,
+  ) {
+    const category = await this.getCategoryById(id, userId, 'editor');
 
     const data: Prisma.CategoryUpdateInput = {};
     if (dto.name !== undefined) {
@@ -128,6 +152,14 @@ export class CategoriesService {
     if (dto.icon !== undefined) data.icon = dto.icon;
     if (dto.defaultIsExtra !== undefined) data.defaultIsExtra = dto.defaultIsExtra;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    // 순서 바꾸기는 이 필드 하나다 (분수 색인).
+    if (dto.sortRank !== undefined) data.sortRank = dto.sortRank;
+
+    data.fieldHlc = stampFieldClocks(
+      category.fieldHlc,
+      Object.keys(data),
+      hlc ?? this.clock.now(),
+    );
 
     // 이름 변경도 생성과 같은 중복 검사를 받아야 한다. 예전에는 여기만 빠져 있어
     // 이름 충돌이 Prisma 오류 그대로 500이 됐다.
@@ -220,14 +252,15 @@ export class CategoriesService {
       },
     ];
 
-    // 선언한 순서를 sortOrder에 담는다. 전부 0으로 두면 목록이 이름순으로 보이고,
-    // 나중에 추가한 카테고리(최댓값 + 1)와 자리가 어긋난다.
+    // 선언한 순서를 그대로 순서 값에 담는다. 비워 두면 목록이 이름순으로 보이고,
+    // 나중에 추가한 분류(맨 뒤)와 자리가 어긋난다.
     const rows = defaults.flatMap((group) =>
       group.names.map((name) => ({ projectId, name, type: group.type })),
     );
+    const ranks = initialRanks(rows.length);
 
     await this.prisma.category.createMany({
-      data: rows.map((row, index) => ({ ...row, sortOrder: index })),
+      data: rows.map((row, index) => ({ ...row, sortRank: ranks[index] })),
       skipDuplicates: true,
     });
   }

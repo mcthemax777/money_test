@@ -7,11 +7,12 @@ import { CardsService } from './cards.service';
 import { CardLedgerService } from './card-ledger.service';
 import { CardsController } from './cards.controller';
 import { ProjectAccessService } from '@/common/project-access.guard';
+import { ServerClockService } from '@/common/server-clock';
 
 @Module({
   imports: [DatabaseModule, AccountsModule, InstitutionsModule, LedgerModule],
   controllers: [CardsController],
-  providers: [CardsService, CardLedgerService, ProjectAccessService],
+  providers: [CardsService, CardLedgerService, ProjectAccessService, ServerClockService],
   exports: [CardsService],
 })
 export class CardsModule {}

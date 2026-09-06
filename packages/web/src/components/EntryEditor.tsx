@@ -10,7 +10,7 @@ import {
 } from '@money/core/store/project';
 import { useExchangeRates } from '@money/core/hooks/useExchangeRates';
 import { useTagManager } from '@money/core/hooks/useTagManager';
-import { useInstitutions } from '@/hooks/useInstitutions';
+import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import { apiClient } from '@money/core/lib/api-client';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';

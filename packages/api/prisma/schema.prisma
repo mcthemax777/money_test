@@ -238,13 +238,19 @@ model Person {
   name         String
   relationship String? // 배우자, 자녀 등
   isActive     Boolean @default(true)
-  // 화면 표시 순서. 사용자가 드래그로 바꾼다. 같으면 createdAt 순.
-  sortOrder    Int     @default(0)
+  /// 화면 표시 순서 (분수 색인). 이웃 사이에 값을 끼워 넣어 한 줄만 고친다.
+  /// 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
+  sortRank     String  @default("V")
 
   project  Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
   accounts Account[]
   entries  JournalEntry[]
   members  ProjectMember[]
+
+  /// 필드별 병합의 시계. 필드 이름 -> HLC 지도다 (@money/types 의 field-merge).
+  /// 이름과 관계처럼 서로 얽히지 않은 값은 각자 늦은 편집이 이긴다 (D5).
+  /// 3단계 이전에 만들어진 행은 null 이고, 그때는 어떤 명령이든 이긴다.
+  fieldHlc Json?
 
   /// 변경 피드가 보는 번호. Project.syncVersion 에서 발급된다.
   updatedVersion Int @default(0)
@@ -253,7 +259,7 @@ model Person {
   updatedAt DateTime @updatedAt
 
   @@index([projectId, isActive])
-  @@index([projectId, sortOrder])
+  @@index([projectId, sortRank])
   @@index([projectId, updatedVersion])
 }
 
@@ -302,8 +308,9 @@ model Account {
   // 캐시된 잔액. 근거는 Posting.amount 합계이며 6절 검증 쿼리로 대조한다.
   balance       Decimal     @default(0) @db.Decimal(19, 4)
   isActive      Boolean     @default(true)
-  // 화면 표시 순서. 사용자가 드래그로 바꾼다. 같으면 createdAt 순.
-  sortOrder     Int         @default(0)
+  /// 화면 표시 순서 (분수 색인). 이웃 사이에 값을 끼워 넣어 한 줄만 고친다.
+  /// 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
+  sortRank      String      @default("V")
 
   project          Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
   owner            Person?               @relation(fields: [ownerId], references: [id])
@@ -313,6 +320,11 @@ model Account {
   postings         Posting[]
   cardsAsPayment   Card[]                @relation("CardPaymentAccount")
   cardAsLiability  Card?                 @relation("CardLiabilityAccount")
+
+  /// 필드별 병합의 시계. 필드 이름 -> HLC 지도다 (@money/types 의 field-merge).
+  /// 이름과 관계처럼 서로 얽히지 않은 값은 각자 늦은 편집이 이긴다 (D5).
+  /// 3단계 이전에 만들어진 행은 null 이고, 그때는 어떤 명령이든 이긴다.
+  fieldHlc Json?
 
   /// 변경 피드가 보는 번호. Project.syncVersion 에서 발급된다.
   updatedVersion Int @default(0)
@@ -324,7 +336,7 @@ model Account {
   @@index([projectId, updatedVersion])
   @@index([projectId, type])
   @@index([institutionId])
-  @@index([projectId, sortOrder])
+  @@index([projectId, sortRank])
 }
 
 // 투자성 계좌(investment, real_estate)에만 존재하는 위성 테이블
@@ -377,14 +389,18 @@ model Category {
   defaultIsExtra Boolean      @default(false)
   isDefault      Boolean      @default(false) // "선택안함" 등 삭제 불가 항목
   isActive       Boolean      @default(true)
-  // 화면 표시 순서. 같은 부모 안에서만 의미가 있다. 같으면 createdAt 순.
-  sortOrder      Int          @default(0)
+  /// 화면 표시 순서 (분수 색인). 같은 부모 안에서만 의미가 있다.
+  /// 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
+  sortRank       String       @default("V")
 
   project  Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: Cascade)
   children Category[] @relation("CategoryHierarchy")
   postings Posting[]
   budgets  Budget[]
+
+  /// 필드별 병합의 시계. 필드 이름 -> HLC 지도다 (@money/types 의 field-merge).
+  fieldHlc Json?
 
   /// 변경 피드가 보는 번호. Project.syncVersion 에서 발급된다.
   updatedVersion Int @default(0)
@@ -423,11 +439,14 @@ model Tag {
   /// 목록에서 알아보는 색. 카드와 같은 규칙(#RRGGBB)이고, 정하지 않으면 null 이다.
   color     String?
   isActive  Boolean @default(true)
-  /// 화면 표시 순서. 같으면 이름 순.
-  sortOrder Int     @default(0)
+  /// 화면 표시 순서 (분수 색인). 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
+  sortRank  String  @default("V")
 
   project Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
   entries EntryTag[]
+
+  /// 필드별 병합의 시계. 필드 이름 -> HLC 지도다 (@money/types 의 field-merge).
+  fieldHlc Json?
 
   /// 변경 피드가 보는 번호. Project.syncVersion 에서 발급된다.
   updatedVersion Int @default(0)
@@ -492,8 +511,9 @@ model Card {
   // null이면 카드 종류의 기본색(신용 파랑, 체크 초록)으로 그린다.
   color               String?
   isActive            Boolean   @default(true)
-  // 화면 표시 순서. 사용자가 드래그로 바꾼다. 같으면 createdAt 순.
-  sortOrder           Int       @default(0)
+  /// 화면 표시 순서 (분수 색인). 이웃 사이에 값을 끼워 넣어 한 줄만 고친다.
+  /// 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
+  sortRank            String    @default("V")
 
   project          Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
   issuer           FinancialInstitution @relation(fields: [issuerId], references: [id])
@@ -501,6 +521,11 @@ model Card {
   liabilityAccount Account?             @relation("CardLiabilityAccount", fields: [liabilityAccountId], references: [id])
   statements       CardStatement[]
   postings         Posting[] // 표시/분석용. 잔액에는 영향 없음 (계정측 posting이 이미 처리)
+
+  /// 필드별 병합의 시계. 필드 이름 -> HLC 지도다 (@money/types 의 field-merge).
+  /// 이름과 관계처럼 서로 얽히지 않은 값은 각자 늦은 편집이 이긴다 (D5).
+  /// 3단계 이전에 만들어진 행은 null 이고, 그때는 어떤 명령이든 이긴다.
+  fieldHlc Json?
 
   /// 변경 피드가 보는 번호. Project.syncVersion 에서 발급된다.
   updatedVersion Int @default(0)
@@ -512,7 +537,7 @@ model Card {
   @@index([projectId, updatedVersion])
   @@index([paymentAccountId])
   @@index([issuerId])
-  @@index([projectId, sortOrder])
+  @@index([projectId, sortRank])
 }
 
 
@@ -738,6 +763,9 @@ model Budget {
   category  Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   overrides BudgetOverride[]
 
+  /// 필드별 병합의 시계. 필드 이름 -> HLC 지도다 (@money/types 의 field-merge).
+  fieldHlc Json?
+
   /// 변경 피드가 보는 번호. Project.syncVersion 에서 발급된다.
   updatedVersion Int @default(0)
 
@@ -758,6 +786,9 @@ model BudgetOverride {
   amount   Decimal @db.Decimal(19, 4)
 
   budget Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+
+  /// 필드별 병합의 시계. 필드 이름 -> HLC 지도다 (@money/types 의 field-merge).
+  fieldHlc Json?
 
   /// 변경 피드가 보는 번호. 이 표에는 projectId 가 없어 부모(Budget)를 거쳐 거른다.
   updatedVersion Int @default(0)
@@ -828,3 +859,4 @@ model Tombstone {
   @@id([entity, entityId])
   @@index([projectId, deletedVersion])
 }
+

@@ -2,6 +2,12 @@ import { Module } from '@nestjs/common';
 import { DatabaseModule } from '@/config/database.module';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { EntriesModule } from '../entries/entries.module';
+import { PeopleModule } from '../people/people.module';
+import { AccountsModule } from '../accounts/accounts.module';
+import { CardsModule } from '../cards/cards.module';
+import { CategoriesModule } from '../categories/categories.module';
+import { TagsModule } from '../tags/tags.module';
+import { BudgetsModule } from '../budgets/budgets.module';
 import { LedgerModule } from '../ledger/ledger.module';
 import { SyncController } from './sync.controller';
 import { SyncService } from './sync.service';
@@ -16,7 +22,17 @@ import { MutationReplayService } from './mutation-replay.service';
    * 실시간 신호(SyncEventsService)는 RealtimeModule 이 전역으로 내보낸다. 보내는 쪽
    * (쓰기 미들웨어)과 받는 쪽(이 컨트롤러)이 같은 인스턴스를 보아야 하기 때문이다.
    */
-  imports: [DatabaseModule, LedgerModule, EntriesModule],
+  imports: [
+    DatabaseModule,
+    LedgerModule,
+    EntriesModule,
+    PeopleModule,
+    AccountsModule,
+    CardsModule,
+    CategoriesModule,
+    TagsModule,
+    BudgetsModule,
+  ],
   controllers: [SyncController],
   providers: [SyncService, MutationReplayService, ProjectAccessService],
   exports: [SyncService, MutationReplayService],

@@ -7,11 +7,12 @@ import { ExchangeRatesModule } from '../exchange-rates/exchange-rates.module';
 import { AccountsService } from './accounts.service';
 import { AccountsController } from './accounts.controller';
 import { ProjectAccessService } from '@/common/project-access.guard';
+import { ServerClockService } from '@/common/server-clock';
 
 @Module({
   imports: [DatabaseModule, PeopleModule, LedgerModule, InstitutionsModule, ExchangeRatesModule],
   controllers: [AccountsController],
-  providers: [AccountsService, ProjectAccessService],
+  providers: [AccountsService, ProjectAccessService, ServerClockService],
   exports: [AccountsService],
 })
 export class AccountsModule {}

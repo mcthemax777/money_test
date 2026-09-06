@@ -2,16 +2,25 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { CategoryType, Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
+import { ServerClockService } from '@/common/server-clock';
 import { LedgerService, EntryInput } from '../ledger/ledger.service';
 import { ENTRY_INCLUDE, toListItem } from './entry-view';
-import { EntryDto, EntryListItem, parseEntrySearch, zonedMonthRange } from '@money/types';
+import {
+  EntryDto,
+  EntryListItem,
+  applyTagChange,
+  parseEntrySearch,
+  zonedMonthRange,
+} from '@money/types';
 import { toMoney } from '@/common/money';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import {
   MATCH_NOTHING,
   assetOwnerCondition,
   entryKindCondition,
+  entryPersonCondition,
   entryTagCondition,
+  entryTextCondition,
   entrySearchConditions,
   extraPostingCondition,
   parseEntryFilter,
@@ -31,6 +40,18 @@ const MAX_LIMIT = 200;
  * 그보다 많이 보낸 요청은 화면이 만든 것이 아니다.
  */
 const MAX_TAG_TARGETS = 200;
+
+/**
+ * 아웃박스의 명령을 재생하는 중이라는 표시.
+ *
+ * 지금 눌러서 보내는 요청과 며칠 전에 쌓인 명령은 같은 규칙으로 다룰 수 없다. 그 사이
+ * 세상이 달라졌기 때문이다 -- 다른 기기가 거래를 지웠을 수 있다. 그리고 시계는 재생하는
+ * 오늘이 아니라 **적을 때의 것**을 써야, 뒤늦게 도착한 명령이 그 뒤의 편집을 이기지 않는다.
+ */
+export interface ReplayOptions {
+  /** 그 기기가 적을 때의 시계 (hlc). 없으면 서버가 지금 찍는다. */
+  hlc?: string;
+}
 /**
  * kind 필터가 걸렸을 때 한 요청에서 커서를 미는 최대 횟수.
  *
@@ -46,6 +67,7 @@ export class EntriesService {
     private readonly projectAccess: ProjectAccessService,
     private readonly ledger: LedgerService,
     private readonly exchangeRates: ExchangeRatesService,
+    private readonly clock: ServerClockService,
   ) {}
 
   async createEntry(userId: string, dto: EntryDto.CreateRequest, projectIdParam?: string) {
@@ -87,7 +109,12 @@ export class EntriesService {
    * **전표의 변경 번호는 올려야 한다** -- 그러지 않으면 기기가 이 변화를 영영 받지
    * 못한다. 태그 연결에는 번호가 없어 전표에 실려 오기 때문이다.
    */
-  async changeTags(userId: string, dto: EntryDto.ChangeTagsRequest, projectIdParam?: string) {
+  async changeTags(
+    userId: string,
+    dto: EntryDto.ChangeTagsRequest,
+    projectIdParam?: string,
+    replay?: ReplayOptions,
+  ) {
     const entryIds = [...new Set(dto.entryIds ?? [])];
     const addTagIds = [...new Set(dto.addTagIds ?? [])];
     const removeTagIds = [...new Set(dto.removeTagIds ?? [])];
@@ -126,39 +153,60 @@ export class EntriesService {
         tx.journalEntry.findMany({ where: { id: { in: entryIds }, projectId }, select: { id: true } }),
         tx.tag.findMany({ where: { id: { in: tagIds }, projectId }, select: { id: true } }),
       ]);
-      if (entries.length !== entryIds.length) {
+      /*
+       * 재생일 때는 사라진 거래를 건너뛴다.
+       *
+       * 온라인 요청과 다르게 다루는 이유가 있다. 지금 눌러서 보내는 요청이라면 하나라도
+       * 어긋날 때 통째로 거절하는 편이 낫다 -- 사용자가 무엇이 빠졌는지 알 수 없기
+       * 때문이다. 반대로 며칠 전 오프라인에서 쌓인 명령은 그 사이 다른 기기가 거래
+       * 하나를 지웠다는 것만으로 나머지 스무 건의 표시까지 영영 막는다.
+       */
+      const present = new Set(entries.map((entry) => entry.id));
+      const targets = replay ? entryIds.filter((id) => present.has(id)) : entryIds;
+      if (!replay && entries.length !== entryIds.length) {
         throw notFound('ENTRY_NOT_FOUND', '거래를 찾을 수 없습니다.');
       }
+      if (targets.length === 0) return { added: 0, removed: 0, entries: 0 };
       if (tags.length !== tagIds.length) {
         throw badRequest('TAG_NOT_IN_PROJECT', '이 프로젝트에 없는 태그가 포함되어 있습니다.');
       }
 
       // 지금 붙어 있는 것. 무엇이 실제로 달라지는지 세려면 이것부터 알아야 한다.
       const existing = await tx.entryTag.findMany({
-        where: { entryId: { in: entryIds }, tagId: { in: tagIds } },
+        where: { entryId: { in: targets }, tagId: { in: tagIds } },
         select: { entryId: true, tagId: true },
       });
-      const already = new Set(existing.map((row) => `${row.entryId}|${row.tagId}`));
-      const touched = new Set<string>();
-
-      const rows: Array<{ entryId: string; tagId: string }> = [];
-      for (const entryId of entryIds) {
-        for (const tagId of addTagIds) {
-          if (already.has(`${entryId}|${tagId}`)) continue;
-          rows.push({ entryId, tagId });
-          touched.add(entryId);
-        }
+      const currentOf = new Map<string, Set<string>>();
+      for (const row of existing) {
+        const set = currentOf.get(row.entryId) ?? new Set<string>();
+        set.add(row.tagId);
+        currentOf.set(row.entryId, set);
       }
 
+      /*
+       * 무엇이 달라지는지는 기기와 **같은 함수**가 정한다 (`applyTagChange`).
+       *
+       * 각자 판단하면 오프라인에서 본 결과와 여기서 재생한 결과가 갈리고, 그 어긋남은
+       * 다음 동기화가 사본을 덮을 때에야 드러난다.
+       */
+      const touched = new Set<string>();
+      const rows: Array<{ entryId: string; tagId: string }> = [];
       let removed = 0;
+      for (const entryId of targets) {
+        const change = applyTagChange(currentOf.get(entryId) ?? [], addTagIds, removeTagIds);
+        for (const tagId of change.added) rows.push({ entryId, tagId });
+        removed += change.removed.length;
+        if (change.changed) touched.add(entryId);
+      }
+
+      /*
+       * 떼는 것은 한 문장으로 지운다. 뗄 태그 목록이 전표마다 같으므로 줄마다 도는 것과
+       * 결과가 같고, 왕복이 하나로 줄어든다.
+       */
       if (removeTagIds.length > 0) {
-        const result = await tx.entryTag.deleteMany({
-          where: { entryId: { in: entryIds }, tagId: { in: removeTagIds } },
+        await tx.entryTag.deleteMany({
+          where: { entryId: { in: targets }, tagId: { in: removeTagIds } },
         });
-        removed = result.count;
-        for (const row of existing) {
-          if (removeTagIds.includes(row.tagId)) touched.add(row.entryId);
-        }
       }
 
       if (rows.length > 0) await tx.entryTag.createMany({ data: rows });
@@ -166,14 +214,34 @@ export class EntriesService {
       if (touched.size === 0) return { added: 0, removed: 0, entries: 0 };
 
       /*
-       * 바뀐 전표의 번호를 올린다.
+       * 바뀐 전표에 번호와 시계를 찍는다.
        *
        * `updatedAt` 을 건드리면 그 행의 트리거가 도장을 새로 찍는다(sync_stamp). 값 자체는
        * 뜻이 없고 트리거를 깨우는 것이 목적이다 -- 번호를 손으로 넣으면 발급기(Project.
        * syncVersion)를 거치지 않아 다른 쓰기와 순서가 어긋난다.
+       *
+       * 시계도 함께 찍는다. 태그도 전표라는 한 덩어리의 일부다 (설계 문서의 D5). 찍지
+       * 않으면 오프라인 기기의 옛 편집이 나중에 도착해 이기고, 방금 붙인 태그가 아무 말
+       * 없이 사라진다. 한 요청이 여러 전표를 건드려도 시계는 하나면 된다 -- 같은 편집이기
+       * 때문이다.
+       *
+       * **다만 시계는 뒤로 가지 않는다.** 재생에서만 생기는 일이다. 며칠 전 오프라인에서
+       * 붙인 태그가 오늘 도착했는데 그 사이 다른 기기가 같은 전표를 고쳤다면, 여기서 옛
+       * 시계를 덮어쓰는 순간 그 편집이 없던 일이 된다 -- 뒤이어 도착하는 더 옛 명령이
+       * 이겨 버린다. 그런 전표는 번호만 올린다. 태그가 실제로 달라졌으니 기기는 그 전표를
+       * 어느 쪽이든 다시 받아야 한다.
        */
+      const changed = [...touched];
+      const stamp = replay?.hlc || this.clock.now();
       await tx.journalEntry.updateMany({
-        where: { id: { in: [...touched] } },
+        where: {
+          id: { in: changed },
+          OR: [{ updatedHlc: null }, { updatedHlc: { lt: stamp } }],
+        },
+        data: { updatedAt: new Date(), updatedHlc: stamp },
+      });
+      await tx.journalEntry.updateMany({
+        where: { id: { in: changed }, updatedHlc: { gte: stamp } },
         data: { updatedAt: new Date() },
       });
 
@@ -288,9 +356,17 @@ export class EntriesService {
     const kindCondition = entryKindCondition(search.kinds);
     if (kindCondition) entryFilters.push(kindCondition);
 
-    // 태그도 전표에 붙으므로 유형과 같은 자리에 온다.
-    const tagCondition = entryTagCondition(search.tagIds);
+    // 태그도 전표에 붙으므로 유형과 같은 자리에 온다. "태그 없음"도 이 무리다.
+    const tagCondition = entryTagCondition(search.tagIds, search.noTag);
     if (tagCondition) entryFilters.push(tagCondition);
+
+    // 거래를 낸 사람. 자산주인 필터와 다른 자리다.
+    const personCondition = entryPersonCondition(search.entryPersonIds);
+    if (personCondition) entryFilters.push(personCondition);
+
+    // 설명의 글자도 전표에 있다.
+    const textCondition = entryTextCondition(search.text);
+    if (textCondition) entryFilters.push(textCondition);
 
     // 일반/과소비 필터. 카테고리 다리에만 걸어야 한다 (계좌 다리는 항상 0이다).
     const extra = extraPostingCondition(filter);

@@ -19,6 +19,7 @@ import {
 import { PrismaService } from '@/config/prisma.service';
 import { prismaLedgerLookup } from './prisma-lookup';
 import { ProjectAccessService } from '@/common/project-access.guard';
+import { ServerClockService } from '@/common/server-clock';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { badRequest, notFound } from '@/common/app-error';
 
@@ -237,6 +238,7 @@ export class LedgerService {
     private readonly prisma: PrismaService,
     private readonly projectAccess: ProjectAccessService,
     private readonly exchangeRates: ExchangeRatesService,
+    private readonly clock: ServerClockService,
   ) {}
 
   // ───────────────────────────────────────────
@@ -269,7 +271,7 @@ export class LedgerService {
           originalCurrency: input.originalCurrency ?? null,
           originalAmount: input.originalAmount ?? null,
           rateProvisional: input.rateProvisional ?? false,
-          updatedHlc: input.updatedHlc ?? null,
+          updatedHlc: input.updatedHlc ?? this.clock.now(),
           postings: { create: input.postings.map((p) => this.toPostingData(p)) },
         },
         include: { postings: true },
@@ -329,7 +331,7 @@ export class LedgerService {
           originalCurrency: input.originalCurrency ?? null,
           originalAmount: input.originalAmount ?? null,
           rateProvisional: input.rateProvisional ?? false,
-          updatedHlc: input.updatedHlc ?? null,
+          updatedHlc: input.updatedHlc ?? this.clock.now(),
           postings: { create: input.postings.map((p) => this.toPostingData(p)) },
         },
         include: { postings: true },
@@ -466,7 +468,14 @@ export class LedgerService {
 
       return tx.journalEntry.update({
         where: { id: entryId },
-        data: { rateProvisional: false },
+        /*
+         * 확정도 편집이다. 시계를 새로 찍는다.
+         *
+         * 찍지 않으면, 확정 전에 오프라인에서 이 거래를 고쳐 둔 기기의 명령이 나중에
+         * 도착해 조용히 이긴다. 명세서로 확정한 실제 청구액이 추정액으로 되돌아가는
+         * 자리다. 시계가 있으면 충돌로 갈려 사람이 고른다.
+         */
+        data: { rateProvisional: false, updatedHlc: this.clock.now() },
         include: { postings: true },
       });
     });

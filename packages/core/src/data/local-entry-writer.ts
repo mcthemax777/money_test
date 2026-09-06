@@ -17,6 +17,7 @@
 import {
   type EntryDto,
   type EntryMutationPayload,
+  type EntryTagsPayload,
   type Mutation,
   buildEntry,
   newId,
@@ -127,6 +128,45 @@ export function createLocalEntryWriter({
 
     updateEntry(id, data) {
       return commit(id, toPayload(id, data), 'entry.replace');
+    },
+
+    /**
+     * 여러 거래의 태그를 바꾼다. 사본에 먼저 적고 그 사실을 명령으로 쌓는다.
+     *
+     * 전표 명령과 달리 **여러 대상을 한 명령이 건드린다.** 그래서 `targets` 에 고른
+     * 전표와 태그를 전부 담는다 -- 그중 하나를 만든 명령이 앞에서 거절되면 이 명령도
+     * 함께 보류되어야 한다. 없는 전표에, 또는 없는 태그로 표시할 수는 없다.
+     * 전표를 앞에 둔다. 되돌려 보낼 때 `targets[0]` 을 전표로 보는 자리가 있다.
+     *
+     * 시계는 고른 전표들의 가장 늦은 것 뒤로 발급받는다. 그래야 사본에 찍을 때 어느
+     * 전표의 시계도 뒤로 가지 않는다. 서버가 재생할 때도 같은 시계를 쓰므로 두 자리의
+     * 전표가 같은 값을 갖는다.
+     */
+    async changeEntryTags({ entryIds, addTagIds, removeTagIds }) {
+      if (entryIds.length === 0 || (addTagIds.length === 0 && removeTagIds.length === 0)) {
+        return { entries: 0 };
+      }
+
+      const payload: EntryTagsPayload = { entryIds, addTagIds, removeTagIds };
+      const mutation = await store.enqueue({
+        projectId,
+        mutationId: newId(),
+        kind: 'entry.tags',
+        targets: [...entryIds, ...addTagIds, ...removeTagIds],
+        payload,
+        observed: await store.latestEntryHlc(entryIds),
+      });
+
+      const entries = await store.changeEntryTags(
+        entryIds,
+        addTagIds,
+        removeTagIds,
+        mutation.hlc,
+      );
+
+      notifyMirrorChanged();
+      onQueued?.(mutation);
+      return { entries };
     },
 
     async deleteEntry(id) {

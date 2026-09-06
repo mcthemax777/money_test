@@ -20,22 +20,43 @@
  */
 import { Injectable, Logger } from '@nestjs/common';
 import {
+  type AccountCreatePayload,
+  type BudgetOverridePayload,
+  type BudgetSetPayload,
+  type CategoryCreatePayload,
+  type CategoryUpdatePayload,
+  type TagCreatePayload,
+  type TagUpdatePayload,
+  type AccountUpdatePayload,
+  type CardCreatePayload,
+  type CardUpdatePayload,
   type EntryDeletePayload,
   type EntryMutationPayload,
+  type EntryTagsPayload,
   type Mutation,
   type MutationResult,
+  type PersonCreatePayload,
+  type PersonUpdatePayload,
   type PushRequest,
   type PushResponse,
   encodeHlc,
   hlcNext,
   isAfterHlc,
   isBlockedBy,
+  mergeFields,
 } from '@money/types';
 
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
+import { readFieldClocks } from '@/common/field-clock';
 import { LedgerService } from '../ledger/ledger.service';
 import { EntriesService } from '../entries/entries.service';
+import { PeopleService } from '../people/people.service';
+import { AccountsService } from '../accounts/accounts.service';
+import { CardsService } from '../cards/cards.service';
+import { CategoriesService } from '../categories/categories.service';
+import { TagsService } from '../tags/tags.service';
+import { BudgetsService } from '../budgets/budgets.service';
 
 /** 한 번에 받는 명령 수. 일주일치를 한 요청에 밀면 끊긴다. */
 const MAX_MUTATIONS = 200;
@@ -70,6 +91,12 @@ export class MutationReplayService {
     private readonly projectAccess: ProjectAccessService,
     private readonly ledger: LedgerService,
     private readonly entries: EntriesService,
+    private readonly people: PeopleService,
+    private readonly accounts: AccountsService,
+    private readonly cards: CardsService,
+    private readonly categories: CategoriesService,
+    private readonly tags: TagsService,
+    private readonly budgets: BudgetsService,
   ) {}
 
   async push(
@@ -316,6 +343,32 @@ export class MutationReplayService {
         return this.replaceEntry(userId, projectId, mutation);
       case 'entry.delete':
         return this.deleteEntry(userId, projectId, mutation);
+      case 'entry.tags':
+        return this.changeEntryTags(userId, projectId, mutation);
+      case 'person.create':
+        return this.createPerson(userId, projectId, mutation);
+      case 'person.update':
+        return this.updatePerson(userId, projectId, mutation);
+      case 'account.create':
+        return this.createAccount(userId, projectId, mutation);
+      case 'account.update':
+        return this.updateAccount(userId, projectId, mutation);
+      case 'card.create':
+        return this.createCard(userId, projectId, mutation);
+      case 'card.update':
+        return this.updateCard(userId, projectId, mutation);
+      case 'category.create':
+        return this.createCategory(userId, projectId, mutation);
+      case 'category.update':
+        return this.updateCategory(userId, projectId, mutation);
+      case 'tag.create':
+        return this.createTag(userId, projectId, mutation);
+      case 'tag.update':
+        return this.updateTag(userId, projectId, mutation);
+      case 'budget.set':
+        return this.setBudget(userId, projectId, mutation);
+      case 'budget.override':
+        return this.setOverride(userId, projectId, mutation);
       default:
         return {
           mutationId: mutation.mutationId,
@@ -428,6 +481,532 @@ export class MutationReplayService {
      */
     await this.entries.deleteEntry(payload.id, userId);
     return this.applied(mutation, projectId, payload.id);
+  }
+
+  /**
+   * 여러 전표의 태그를 바꾼다.
+   *
+   * 전표 명령 셋과 나란히 서지만 병합 규칙이 다르다. 통째로 이기고 지는 것이 아니라
+   * **더한 것과 뗀 것만** 적용한다 -- 두 사람이 서로 다른 태그를 붙였을 때 둘 다 남아야
+   * 하기 때문이다. 어느 쪽에도 없는 태그는 건드리지 않는다.
+   *
+   * 시계는 명령의 것을 쓴다. 재생하는 오늘 것을 찍으면 그 사이 다른 기기가 그 전표를
+   * 고친 편집보다 뒤로 가서, 이 표시가 그 편집을 이긴 것처럼 남는다.
+   *
+   * 재생 모드로 부른다. 그 사이 지워진 전표는 건너뛴다 -- 한 건이 사라졌다고 나머지
+   * 스무 건의 표시까지 영영 막을 수는 없다.
+   */
+  private async changeEntryTags(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as EntryTagsPayload;
+
+    try {
+      await this.entries.changeTags(
+        userId,
+        {
+          entryIds: payload.entryIds ?? [],
+          addTagIds: payload.addTagIds ?? [],
+          removeTagIds: payload.removeTagIds ?? [],
+        },
+        projectId,
+        { hlc: mutation.hlc },
+      );
+    } catch (error) {
+      /*
+       * 태그가 없어졌거나 남의 프로젝트 것이면 거절이다.
+       *
+       * 여기서 조용히 넘기면 사용자는 표시가 된 줄 알고, 다음 동기화가 그 전표를 다시
+       * 받아 태그 없는 모습으로 덮는다. 그때는 무엇이 사라졌는지 알 길이 없다 (D6).
+       */
+      return {
+        mutationId: mutation.mutationId,
+        status: 'rejected',
+        code: 'TAG_CHANGE_FAILED',
+        error: error instanceof Error ? error.message : '태그를 바꾸지 못했습니다.',
+      };
+    }
+
+    return this.applied(mutation, projectId, payload.entryIds?.[0] ?? '');
+  }
+
+  // ───────────────────────────────────────────
+  // 자산 (구성원·통장·카드)
+  //
+  // 전표와 규칙이 둘 다르다.
+  //   1. **필드별 병합.** 이름과 색 사이에는 얽힌 불변식이 없어서, 서로 다른 필드를 고친
+  //      두 편집은 다툴 이유가 없다 (D5). 이긴 필드만 골라 서비스에 넘긴다.
+  //   2. **지움 명령이 없다.** 서버가 하는 일이 숨기기(isActive)라 update 로 온다.
+  //      숨기기에는 선행조건이 있어(주인의 통장, 카드의 미결제액) 서버가 다시 본다 (D11).
+  // ───────────────────────────────────────────
+
+  private async createPerson(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as PersonCreatePayload;
+
+    const existing = await this.prisma.person.findUnique({
+      where: { id: payload.id },
+      select: { id: true, projectId: true },
+    });
+    if (existing) return this.sameOrForeign(mutation, existing.projectId, projectId, '구성원');
+
+    await this.people.createPerson(
+      userId,
+      { id: payload.id, name: payload.name, relationship: payload.relationship ?? undefined },
+      projectId,
+      mutation.hlc,
+    );
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  private async updatePerson(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as PersonUpdatePayload;
+
+    const person = await this.prisma.person.findUnique({ where: { id: payload.id } });
+    if (!person || person.projectId !== projectId) return this.notFound(mutation, '구성원');
+
+    const { id: _id, ...patch } = payload;
+    const merged = mergeFields(patch, mutation.hlc, readFieldClocks(person.fieldHlc));
+    if (Object.keys(merged.apply).length === 0) return this.allFieldsLost(mutation, merged.lost);
+
+    /*
+     * 숨기기는 따로 부른다. 선행조건(활성 통장 0개)이 그 함수 안에 있고, 그것을 건너뛰면
+     * 주인이 목록에서 사라진 통장이 남는다.
+     */
+    const { isActive, ...rest } = merged.apply as PersonUpdatePayload;
+    if (Object.keys(rest).length > 0) {
+      /*
+       * `relationship: null` 은 "비운다"다. DTO 는 undefined 만 받지만 서비스는 빈 값을
+       * null 로 저장하므로, 여기서 빈 문자열로 옮겨 같은 뜻이 되게 한다.
+       */
+      await this.people.updatePerson(
+        payload.id,
+        userId,
+        { ...rest, ...(rest.relationship === null ? { relationship: '' } : {}) } as never,
+        mutation.hlc,
+      );
+    }
+    if (isActive === false) await this.people.deactivatePerson(payload.id, userId, mutation.hlc);
+    if (isActive === true) {
+      await this.people.updatePerson(payload.id, userId, { isActive: true }, mutation.hlc);
+    }
+
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  private async createAccount(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as AccountCreatePayload;
+
+    const existing = await this.prisma.account.findUnique({
+      where: { id: payload.id },
+      select: { id: true, projectId: true },
+    });
+    if (existing) return this.sameOrForeign(mutation, existing.projectId, projectId, '통장');
+
+    await this.accounts.createAccount(
+      userId,
+      {
+        id: payload.id,
+        name: payload.name,
+        type: payload.type,
+        ownerId: payload.ownerId ?? undefined,
+        institutionId: payload.institutionId ?? undefined,
+        accountNumber: payload.accountNumber ?? undefined,
+        currency: payload.currency,
+        openingBalance: payload.initialBalance,
+      } as never,
+      projectId,
+      mutation.hlc,
+    );
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  private async updateAccount(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as AccountUpdatePayload;
+
+    const account = await this.prisma.account.findUnique({ where: { id: payload.id } });
+    if (!account || account.projectId !== projectId) return this.notFound(mutation, '통장');
+
+    const { id: _id, ...patch } = payload;
+    const merged = mergeFields(patch, mutation.hlc, readFieldClocks(account.fieldHlc));
+    if (Object.keys(merged.apply).length === 0) return this.allFieldsLost(mutation, merged.lost);
+
+    const { isActive, ...rest } = merged.apply as AccountUpdatePayload;
+    if (Object.keys(rest).length > 0) {
+      await this.accounts.updateAccount(payload.id, userId, rest as never, mutation.hlc);
+    }
+    // 숨기기의 선행조건은 연결된 카드와 잔액이다. 통장 자체를 고치는 것과 다른 함수다.
+    if (isActive === false) await this.accounts.deactivateAccount(payload.id, userId, mutation.hlc);
+    if (isActive === true) {
+      await this.accounts.updateAccount(payload.id, userId, { isActive: true }, mutation.hlc);
+    }
+
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  private async createCard(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as CardCreatePayload;
+
+    const existing = await this.prisma.card.findUnique({
+      where: { id: payload.id },
+      select: { id: true, projectId: true },
+    });
+    if (existing) return this.sameOrForeign(mutation, existing.projectId, projectId, '카드');
+
+    await this.cards.createCard(
+      userId,
+      {
+        id: payload.id,
+        liabilityAccountId: payload.liabilityAccountId,
+        name: payload.name,
+        cardType: payload.cardType,
+        issuerId: payload.issuerId,
+        paymentAccountId: payload.paymentAccountId,
+        cardNumber: payload.cardNumber ?? undefined,
+        creditLimit: payload.creditLimit ?? undefined,
+        performanceAmount: payload.performanceAmount ?? undefined,
+        statementClosingDay: payload.statementClosingDay ?? undefined,
+        paymentDueDay: payload.paymentDueDay ?? undefined,
+        color: payload.color ?? undefined,
+      } as never,
+      projectId,
+      mutation.hlc,
+    );
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  private async updateCard(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as CardUpdatePayload;
+
+    const card = await this.prisma.card.findUnique({ where: { id: payload.id } });
+    if (!card || card.projectId !== projectId) return this.notFound(mutation, '카드');
+
+    const { id: _id, ...patch } = payload;
+    const merged = mergeFields(patch, mutation.hlc, readFieldClocks(card.fieldHlc));
+    if (Object.keys(merged.apply).length === 0) return this.allFieldsLost(mutation, merged.lost);
+
+    const { isActive, ...rest } = merged.apply as CardUpdatePayload;
+    if (Object.keys(rest).length > 0) {
+      await this.cards.updateCard(payload.id, userId, rest as never, mutation.hlc);
+    }
+    // 숨기기는 갚지 않은 사용액이 남아 있으면 막힌다. 부채 계정도 함께 내려간다.
+    if (isActive === false) await this.cards.deactivateCard(payload.id, userId, mutation.hlc);
+    if (isActive === true) {
+      await this.cards.updateCard(payload.id, userId, { isActive: true }, mutation.hlc);
+    }
+
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  /**
+   * 분류 만들기.
+   *
+   * **같은 이름이 이미 있으면 그 행을 채택한다.** 두 사람이 오프라인에서 같은 분류를
+   * 만드는 일은 흔하고, 그것을 오류로 두면 그 명령이 영원히 막힌다. 대신 서버가 채택한
+   * id 를 별칭으로 돌려주고, 기기가 자기 사본과 큐의 참조를 그 id 로 옮긴다 (D 별칭).
+   */
+  private async createCategory(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as CategoryCreatePayload;
+
+    const existing = await this.prisma.category.findUnique({
+      where: { id: payload.id },
+      select: { id: true, projectId: true },
+    });
+    if (existing) return this.sameOrForeign(mutation, existing.projectId, projectId, '분류');
+
+    const sameName = await this.prisma.category.findFirst({
+      where: {
+        projectId,
+        name: payload.name.trim(),
+        parentId: payload.parentId ?? null,
+        type: payload.type as never,
+      },
+      select: { id: true },
+    });
+    if (sameName) {
+      return {
+        ...(await this.applied(mutation, projectId, sameName.id)),
+        alias: { from: payload.id, to: sameName.id },
+      };
+    }
+
+    await this.categories.createCategory(
+      userId,
+      {
+        id: payload.id,
+        name: payload.name,
+        type: payload.type,
+        parentId: payload.parentId ?? undefined,
+        icon: payload.icon ?? undefined,
+        defaultIsExtra: payload.defaultIsExtra,
+      } as never,
+      projectId,
+      mutation.hlc,
+    );
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  private async updateCategory(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as CategoryUpdatePayload;
+
+    const category = await this.prisma.category.findUnique({ where: { id: payload.id } });
+    if (!category || category.projectId !== projectId) return this.notFound(mutation, '분류');
+
+    const { id: _id, ...patch } = payload;
+    const merged = mergeFields(patch, mutation.hlc, readFieldClocks(category.fieldHlc));
+    if (Object.keys(merged.apply).length === 0) return this.allFieldsLost(mutation, merged.lost);
+
+    await this.categories.updateCategory(payload.id, userId, merged.apply as never, mutation.hlc);
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  /** 태그 만들기. 이름이 겹치면 분류와 같은 규칙으로 기존 행을 채택한다. */
+  private async createTag(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as TagCreatePayload;
+
+    const existing = await this.prisma.tag.findUnique({
+      where: { id: payload.id },
+      select: { id: true, projectId: true },
+    });
+    if (existing) return this.sameOrForeign(mutation, existing.projectId, projectId, '태그');
+
+    const sameName = await this.prisma.tag.findFirst({
+      where: { projectId, name: payload.name.trim() },
+      select: { id: true },
+    });
+    if (sameName) {
+      return {
+        ...(await this.applied(mutation, projectId, sameName.id)),
+        alias: { from: payload.id, to: sameName.id },
+      };
+    }
+
+    await this.tags.createTag(
+      userId,
+      { id: payload.id, name: payload.name, color: payload.color ?? undefined } as never,
+      projectId,
+      mutation.hlc,
+    );
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  private async updateTag(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as TagUpdatePayload;
+
+    const tag = await this.prisma.tag.findUnique({ where: { id: payload.id } });
+    if (!tag || tag.projectId !== projectId) return this.notFound(mutation, '태그');
+
+    const { id: _id, ...patch } = payload;
+    const merged = mergeFields(patch, mutation.hlc, readFieldClocks(tag.fieldHlc));
+    if (Object.keys(merged.apply).length === 0) return this.allFieldsLost(mutation, merged.lost);
+
+    const { isActive, ...rest } = merged.apply as TagUpdatePayload;
+    if (Object.keys(rest).length > 0) {
+      await this.tags.updateTag(payload.id, userId, rest as never, mutation.hlc);
+    }
+    // 태그의 숨기기는 선행조건이 없다. 떼어 내도 거래는 온전하다.
+    if (isActive === false) await this.tags.deleteTag(payload.id, userId, mutation.hlc);
+    if (isActive === true) {
+      await this.tags.updateTag(payload.id, userId, { isActive: true }, mutation.hlc);
+    }
+
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  /**
+   * 예산 한 줄을 정한다. 없으면 만들고, 있으면 금액만 바꾼다.
+   *
+   * 구간 편집(applyMode='from')은 여기로 오지 않는다. 그 사이 달라진 규칙들 위에서 다시
+   * 계산되는 조작이라 재생하면 결과가 달라진다 -- 온라인에서만 한다 (D12).
+   */
+  private async setBudget(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as BudgetSetPayload;
+
+    const existing = await this.prisma.budget.findUnique({ where: { id: payload.id } });
+    if (existing && existing.projectId !== projectId) {
+      return this.sameOrForeign(mutation, existing.projectId, projectId, '예산');
+    }
+
+    if (!existing) {
+      await this.budgets.createBudget(
+        userId,
+        {
+          id: payload.id,
+          categoryId: payload.categoryId ?? undefined,
+          type: payload.type ?? undefined,
+          monthlyAmount: payload.monthlyAmount,
+          /*
+           * 어느 달의 규칙을 고칠지. 없으면 서버가 재생하는 오늘이 속한 달이다.
+           *
+           * 예산은 구간으로 나뉠 수 있어 한 분류에 규칙이 여럿일 수 있다. 이 값이 없으면
+           * 8월 화면에서 고친 금액이 9월 규칙에 적힌다.
+           */
+          yearMonth: payload.yearMonth,
+        } as never,
+        projectId,
+        mutation.hlc,
+      );
+      return this.applied(mutation, projectId, payload.id);
+    }
+
+    const merged = mergeFields(
+      { monthlyAmount: payload.monthlyAmount },
+      mutation.hlc,
+      readFieldClocks(existing.fieldHlc),
+    );
+    if (Object.keys(merged.apply).length === 0) return this.allFieldsLost(mutation, merged.lost);
+
+    await this.budgets.updateBudget(
+      payload.id,
+      userId,
+      { monthlyAmount: payload.monthlyAmount, applyMode: 'all' } as never,
+      mutation.hlc,
+    );
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  /**
+   * 그 달만 다른 금액으로. 없으면 만들고, 값이 없으면 지운다.
+   *
+   * 키가 (예산, 년, 월)이라 다른 달을 고친 두 편집은 서로 다른 행이다 -- 애초에 다툴 일이
+   * 없다. 같은 달을 고친 것끼리만 시계로 가른다.
+   */
+  private async setOverride(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as BudgetOverridePayload;
+
+    const budget = await this.prisma.budget.findUnique({ where: { id: payload.budgetId } });
+    if (!budget || budget.projectId !== projectId) return this.notFound(mutation, '예산');
+
+    const existing = await this.prisma.budgetOverride.findUnique({
+      where: {
+        budgetId_year_month: {
+          budgetId: payload.budgetId,
+          year: payload.year,
+          month: payload.month,
+        },
+      },
+    });
+
+    if (existing) {
+      const merged = mergeFields(
+        { amount: payload.amount ?? null },
+        mutation.hlc,
+        readFieldClocks(existing.fieldHlc),
+      );
+      if (Object.keys(merged.apply).length === 0) return this.allFieldsLost(mutation, merged.lost);
+    }
+
+    if (payload.amount == null) {
+      if (existing) await this.budgets.deleteOverride(existing.id, userId);
+      return this.applied(mutation, projectId, payload.id);
+    }
+
+    await this.budgets.createOverride(
+      userId,
+      {
+        id: payload.id,
+        budgetId: payload.budgetId,
+        year: payload.year,
+        month: payload.month,
+        amount: payload.amount,
+      } as never,
+      mutation.hlc,
+    );
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  /**
+   * 이미 그 id 의 행이 있을 때의 답.
+   *
+   * 같은 프로젝트면 재전송이라 duplicate 다. 다른 프로젝트면 기기가 만든 id 가 남의 것과
+   * 겹친 것이라 적용하지 않는다 -- 남의 가계부를 고칠 뻔한 자리다.
+   */
+  private sameOrForeign(
+    mutation: Mutation,
+    existingProjectId: string,
+    projectId: string,
+    label: string,
+  ): MutationResult {
+    if (existingProjectId !== projectId) {
+      return {
+        mutationId: mutation.mutationId,
+        status: 'rejected',
+        error: `다른 프로젝트에 같은 식별자의 ${label}이(가) 있습니다.`,
+      };
+    }
+    return { mutationId: mutation.mutationId, status: 'duplicate' };
+  }
+
+  private notFound(mutation: Mutation, label: string): MutationResult {
+    return {
+      mutationId: mutation.mutationId,
+      status: 'rejected',
+      code: 'TARGET_NOT_FOUND',
+      error: `${label}을(를) 찾을 수 없습니다.`,
+    };
+  }
+
+  /**
+   * 보낸 필드가 전부 더 늦은 편집에 밀렸을 때.
+   *
+   * 충돌로 돌려준다. 조용히 "적용했다"고 답하면 사용자가 고친 이름이 아무 말 없이
+   * 사라지고, 보류 칸에서 되살릴 길도 없어진다 (D6).
+   */
+  private allFieldsLost(mutation: Mutation, lost: readonly string[]): MutationResult {
+    return {
+      mutationId: mutation.mutationId,
+      status: 'conflict',
+      error: `다른 기기에서 더 늦게 고쳤습니다 (${lost.join(', ')}).`,
+    };
   }
 
   /** 명령의 짐을 조립 입구가 받는 모양으로. 검증은 조립이 한다. */

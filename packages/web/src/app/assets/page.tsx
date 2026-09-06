@@ -10,8 +10,8 @@ import { sumNetWorth, type NetWorthParts } from '@money/core/lib/net-worth';
 import { useUserFilter } from '@money/core/store/user-filter';
 import { formatDate, monthInputToIso } from '@money/core/lib/datetime';
 import { type ReportDto } from '@money/types';
-import ChoiceModal from '@/components/ChoiceModal';
 import { useDragReorder } from '@/hooks/useDragReorder';
+import AddButton from '@/components/AddButton';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import {
   dayOfMonthHint,
@@ -48,8 +48,8 @@ import PersonModal from '@/components/PersonModal';
 import EditAccountModal from '@/components/EditAccountModal';
 import EditCardModal from '@/components/EditCardModal';
 import AddAccountModal from '@/components/AddAccountModal';
-import PageHeader from '@/components/PageHeader';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
+import AssetTypeSummary from '@/components/AssetTypeSummary';
 import HiddenItemsPanel from '@/components/HiddenItemsPanel';
 import AssetHistoryChart from '@/components/AssetHistoryChart';
 import CardColorPicker from '@/components/CardColorPicker';
@@ -62,7 +62,7 @@ import EntryEditor, {
   type EntryEditorHandle,
   type ReferenceDataPatch,
 } from '@/components/EntryEditor';
-import { useInstitutions } from '@/hooks/useInstitutions';
+import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import { accountTypeLabel } from '@money/core/lib/account-type';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useApiError } from '@money/core/lib/api-error';
@@ -190,19 +190,13 @@ export default function DashboardPage() {
   const [isEditAccountModalOpen, setIsEditAccountModalOpen] = useState(false);
   const [isEditCardModalOpen, setIsEditCardModalOpen] = useState(false);
 
+  /** 카드 추가 팝업을 띄울지. 다른 추가는 저마다 팝업 상태를 따로 갖는다. */
+  const [addType, setAddType] = useState<'card' | null>(null);
   /**
-   * 무엇을 추가하는 중인지.
+   * 계좌 추가 폼의 통장 주인을 미리 채울 사람.
    *
-   * 'select'      : 상단 추가 버튼. 구성원·계좌·카드 셋 중에 고른다.
-   * 'select-person': 구성원 상세에서 들어온 경우. 그 사람은 이미 정해졌으므로
-   *                  계좌와 카드 둘만 고른다.
-   */
-  const [addType, setAddType] = useState<'select' | 'select-person' | 'card' | null>(null);
-  /**
-   * 구성원 상세에서 시작한 추가인지.
-   *
-   * 계좌 추가 폼의 통장 주인을 미리 채우는 데만 쓴다. 상단 추가 버튼으로
-   * 들어오면 주인이 정해져 있지 않으므로 null이다.
+   * 목록에서 그 사람의 "계좌 추가"를 눌러 들어오면 그 사람이고, 구성원 상세에서
+   * 들어와도 마찬가지다. 폼에서 바꿀 수 있다.
    */
   const [addedForPersonId, setAddedForPersonId] = useState<string | null>(null);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
@@ -522,6 +516,25 @@ export default function DashboardPage() {
     await loadNetWorth();
   }, [loadNetWorth, selectedProjectId]);
 
+  /*
+   * 추가는 목록 안에서 시작한다.
+   *
+   * 예전에는 머리글의 "추가하기" 하나로 들어가 무엇을 만들지 고르고, 그다음에 주인이나
+   * 결제 통장을 다시 골랐다. 만들 자리를 화면에서 이미 누르고 들어왔는데 그것을 폼에서
+   * 또 고르는 셈이었다. 지금은 그 자리의 버튼이 주인·통장을 채운 채로 연다.
+   */
+  const openPersonAdd = () => setIsPersonAddModalOpen(true);
+
+  const openAccountAdd = (personId: string) => {
+    setAddedForPersonId(personId);
+    setIsAccountModalOpen(true);
+  };
+
+  const openCardAdd = (accountId: string) => {
+    setCardForm((prev) => ({ ...prev, accountId }));
+    setAddType('card');
+  };
+
   const handleAddCard = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
@@ -668,12 +681,18 @@ export default function DashboardPage() {
   const scopedNetWorth = allPeopleSelected
     ? netWorth
     : sumNetWorth(selectedPersonIds.map((id) => netWorthByPerson.get(id)));
-  const totalBalance = toNumber(scopedNetWorth?.total);
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title={
+      {/*
+        화면의 첫 줄이자 제목이다. 이름을 누르면 자산주인을, 유형 카드를 누르면
+        무엇을 더한 금액인지 고른다. 홈에 있던 칸을 그대로 옮겨 왔다. 자산 금액은
+        자산 화면에서 보는 것이 제자리고, 홈에서는 이 달의 흐름만 본다.
+      */}
+      <AssetTypeSummary
+        byType={scopedNetWorth?.byType}
+        hasNoScope={people.length > 0 && selectedPersonIds.length === 0}
+        scopeTitle={
           <PersonScopeTitle
             noun={t('home.assetsNoun')}
             people={people}
@@ -681,17 +700,6 @@ export default function DashboardPage() {
             selectedPersonIds={selectedPersonIds}
             onTogglePerson={togglePersonId}
           />
-        }
-        action={
-          <button
-            onClick={() => {
-              setAddedForPersonId(null);
-              setAddType('select');
-            }}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-          >
-            {t('assets.addTitle')}
-          </button>
         }
       />
 
@@ -711,16 +719,10 @@ export default function DashboardPage() {
         }}
       />
 
-      {/* 총자산과 전체 추이는 계좌를 골라도 그대로 둔다. 고른 계좌는 아래 오른쪽에 펼친다. */}
-      <div className="bg-blue-600 text-white rounded-lg p-6">
-        <p className="text-sm opacity-90">{t('assets.total')}</p>
-        <p className="text-4xl font-bold mt-2">
-          {formatCurrency(totalBalance, displayCurrency)}
-        </p>
-        <NetWorthBreakdown parts={scopedNetWorth ?? undefined} className="text-sm opacity-90 mt-2" />
-      </div>
-
-      {/* 고른 자산주인만 그린다. 전원이면 ownerIds를 빼서 주인 없는 계좌까지 담는다. */}
+      {/*
+        전체 추이는 계좌를 골라도 그대로 둔다. 고른 계좌는 아래 오른쪽에 펼친다.
+        고른 자산주인만 그린다. 전원이면 ownerIds를 빼서 주인 없는 계좌까지 담는다.
+      */}
       <AssetHistoryChart
         projectId={selectedProjectId}
         ownerIds={allPeopleSelected ? undefined : selectedPersonIds}
@@ -772,6 +774,9 @@ export default function DashboardPage() {
             onReorderPeople={handleReorderPeople}
             onReorderAccounts={handleReorderAccounts}
             onReorderCards={handleReorderCards}
+            onAddPerson={openPersonAdd}
+            onAddAccount={openAccountAdd}
+            onAddCard={openCardAdd}
           />
 
           {/* 오른쪽: 고른 계좌의 잔액 추이와 거래 내역 */}
@@ -1013,8 +1018,7 @@ export default function DashboardPage() {
               <button
                 onClick={() => {
                   setIsAccountDetailOpen(false);
-                  setCardForm((prev) => ({ ...prev, accountId: selectedAccount.id }));
-                  setAddType('card');
+                  openCardAdd(selectedAccount.id);
                 }}
                 className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
               >
@@ -1108,19 +1112,20 @@ export default function DashboardPage() {
           footer={
             <div className="flex gap-2">
               {/*
-                이 사람 밑에 계좌나 카드를 바로 만든다. 상세를 닫고 여는 이유는
-                이 화면의 다른 팝업과 같다. 모달을 겹쳐 띄우지 않는다.
+                이 사람 밑에 계좌를 바로 만든다. 카드는 계좌 밑에 붙으므로 여기서 고를 것이
+                없다 -- 목록의 계좌 안에 그 버튼이 있다.
+
+                상세를 닫고 여는 것은 이 화면의 다른 팝업과 같은 규칙이다. 모달을 겹쳐
+                띄우지 않는다.
               */}
               <button
                 onClick={() => {
-                  // 상세 팝업을 닫고 선택 팝업을 연다. 이 화면은 팝업을 겹쳐 띄우지 않는다.
                   setIsPersonDetailOpen(false);
-                  setAddedForPersonId(selectedPerson.id);
-                  setAddType('select-person');
+                  openAccountAdd(selectedPerson.id);
                 }}
                 className="flex-1 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700"
               >
-                {t('assets.addTitle')}
+                {t('account.add')}
               </button>
               <button
                 onClick={handleEditPersonClick}
@@ -1296,58 +1301,6 @@ export default function DashboardPage() {
           loadNetWorth();
         }}
         onDelete={handleDeleteCard}
-      />
-
-      {/*
-        추가 유형 선택 팝업. 거래 입력 폼의 결제수단 추가 버튼과 같은 컴포넌트를 쓴다.
-
-        구성원 상세에서 들어오면(select-person) 구성원 항목을 뺀다. 그 사람 밑에
-        무엇을 만들지를 고르는 자리이지, 다른 사람을 만드는 자리가 아니다.
-      */}
-      <ChoiceModal
-        isOpen={addType === 'select' || addType === 'select-person'}
-        onClose={() => setAddType(null)}
-        title={
-          addType === 'select-person'
-            ? t('assets.addTo', { name: selectedPerson?.name ?? '' })
-            : t('assets.addTitle')
-        }
-        choices={[
-          ...(addType === 'select-person'
-            ? []
-            : [
-                {
-                  key: 'person',
-                  icon: '👤',
-                  label: t('person.add'),
-                  description: t('person.addDescription'),
-                  tone: 'blue' as const,
-                  onSelect: () => {
-                    setAddType(null);
-                    setIsPersonAddModalOpen(true);
-                  },
-                },
-              ]),
-          {
-            key: 'account',
-            icon: '🏦',
-            label: t('account.add'),
-            description: t('account.addDescription'),
-            tone: 'green',
-            onSelect: () => {
-              setAddType(null);
-              setIsAccountModalOpen(true);
-            },
-          },
-          {
-            key: 'card',
-            icon: '💳',
-            label: t('card.add'),
-            description: t('card.addDescription'),
-            tone: 'purple',
-            onSelect: () => setAddType('card'),
-          },
-        ]}
       />
 
       {/* 구성원 추가 모달 */}
@@ -1615,6 +1568,9 @@ function PersonAssetList({
   onReorderPeople,
   onReorderAccounts,
   onReorderCards,
+  onAddPerson,
+  onAddAccount,
+  onAddCard,
 }: {
   people: Person[];
   accounts: Account[];
@@ -1629,13 +1585,30 @@ function PersonAssetList({
   onReorderPeople: (ids: string[]) => void;
   onReorderAccounts: (ids: string[]) => void;
   onReorderCards: (ids: string[]) => void;
+  /*
+   * 추가는 만들 자리에서 시작한다. 구성원은 목록 끝에서, 계좌는 그 사람 안에서,
+   * 카드는 그 계좌 안에서. 눌러서 들어온 자리가 곧 주인·결제 통장이라 폼에서 다시
+   * 고를 것이 없다.
+   */
+  onAddPerson: () => void;
+  onAddAccount: (personId: string) => void;
+  onAddCard: (accountId: string) => void;
 }) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
   const { items, dragProps, draggingId } = useDragReorder(people, onReorderPeople);
 
   return (
-    <div className="space-y-8">
+    <div>
+      {/*
+        구성원은 목록 맨 위에서 더한다. 만들 자리가 목록보다 먼저 보인다.
+
+        사람 카드끼리는 넓게(space-y-8) 벌리지만 이 버튼은 바로 아래 카드에 붙여 둔다.
+        같은 간격으로 띄우면 어느 목록에 더하는 버튼인지 멀어져 읽히지 않는다.
+      */}
+      <AddButton label={t('person.add')} onClick={onAddPerson} />
+
+      <div className="space-y-8">
       {items.map((person) => (
         <div
           key={person.id}
@@ -1662,6 +1635,8 @@ function PersonAssetList({
             </div>
           </button>
 
+          <AddButton label={t('account.add')} onClick={() => onAddAccount(person.id)} />
+
           <AccountList
             accounts={accounts.filter((account) => account.ownerId === person.id)}
             cardsOf={cardsOf}
@@ -1671,13 +1646,22 @@ function PersonAssetList({
             onCardClick={onCardClick}
             onReorder={onReorderAccounts}
             onReorderCards={onReorderCards}
+            onAddCard={onAddCard}
           />
+
         </div>
       ))}
+      </div>
     </div>
   );
 }
 
+/**
+ * 목록 안에서 하나 더 만드는 버튼.
+ *
+ * 점선으로 둘러 "여기에 하나 더"로 읽히게 한다. 채워진 버튼으로 두면 목록의 항목과
+ * 같은 무게가 되어, 있는 것과 만들 자리가 눈에 섞인다.
+ */
 /** 한 구성원의 계좌 목록 */
 function AccountList({
   accounts,
@@ -1688,6 +1672,7 @@ function AccountList({
   onCardClick,
   onReorder,
   onReorderCards,
+  onAddCard,
 }: {
   accounts: Account[];
   cardsOf: (accountId: string) => Card[];
@@ -1697,6 +1682,7 @@ function AccountList({
   onCardClick: (card: Card) => void;
   onReorder: (ids: string[]) => void;
   onReorderCards: (ids: string[]) => void;
+  onAddCard: (accountId: string) => void;
 }) {
   const { t } = useTranslation();
   const { items, dragProps, draggingId } = useDragReorder(accounts, onReorder);
@@ -1752,12 +1738,23 @@ function AccountList({
             )}
           </button>
 
-          <CardList
-            cards={cardsOf(account.id)}
-            selected={selected}
-            onCardClick={onCardClick}
-            onReorder={onReorderCards}
-          />
+          {/*
+            카드는 결제 통장 밑에 붙는다. 그 통장이 곧 이 계좌다.
+
+            가름줄은 이 묶음 위에 둔다. 버튼과 카드 목록이 한 덩이로 보이고, 계좌
+            자신의 정보와 갈린다. 줄이 버튼 아래에 있으면 버튼이 계좌 쪽에 붙어
+            "이 계좌를 고치는 버튼"처럼 읽힌다.
+          */}
+          <div className="mt-4 border-t border-gray-200 pt-4">
+            <AddButton label={t('card.add')} onClick={() => onAddCard(account.id)} />
+
+            <CardList
+              cards={cardsOf(account.id)}
+              selected={selected}
+              onCardClick={onCardClick}
+              onReorder={onReorderCards}
+            />
+          </div>
         </div>
       ))}
     </div>
@@ -1781,8 +1778,9 @@ function CardList({
 
   if (items.length === 0) return null;
 
+  /* 가름줄과 위 여백은 부르는 쪽(AccountList)이 갖는다. 카드 추가 버튼과 한 덩이라서다. */
   return (
-    <div className="mt-4 pt-4 border-t border-gray-200 space-y-2">
+    <div className="space-y-2">
       {items.map((card) => (
         <div
           key={card.id}

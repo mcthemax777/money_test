@@ -16,16 +16,26 @@
  *   5. **권한.** 재생 시점에 다시 본다. viewer 로 바뀐 뒤 도착한 명령은 거절된다.
  *   6. **선점.** 같은 명령이 동시에 두 번 도착해도 재생은 한 번만 일어난다.
  *      인스턴스를 여럿 두면 기기의 재전송이 서로 다른 프로세스에 동시에 닿는다.
+ *   7. **서버도 시계를 남긴다.** 웹에서 고친 것에 시계가 없으면 그 편집이 가장 이른 것이
+ *      되어, 뒤늦게 도착한 오프라인 명령이 조용히 이긴다. 태그만 바꾼 때도 마찬가지다.
+ *   8. **태그는 더한 것과 뗀 것만 적용한다.** 통째 교체가 아니라, 두 기기가 서로 다른
+ *      태그를 붙이면 둘 다 남는다. 그 사이 지워진 거래는 건너뛰고 나머지는 적용된다.
  */
 import { CategoriesService } from '@/modules/categories/categories.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
 import { PeopleService } from '@/modules/people/people.service';
+import { TagsService } from '@/modules/tags/tags.service';
 import { MutationReplayService } from '@/modules/sync/mutation-replay.service';
 import { encodeHlc, type Mutation, type MutationResult } from '@money/types';
 import {
   makeAccounts,
+  makeBudgets,
+  makeCards,
+  makeCategories,
   makeEntries,
   makeLedger,
+  makePeople,
+  makeTags,
   projectAccessStub,
   runSmoke,
 } from './smoke-harness';
@@ -55,14 +65,23 @@ runSmoke('sync-push', async (ctx) => {
   const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
   const accounts = makeAccounts(ctx.prisma, access, ledger, institutions);
-  const people = new PeopleService(ctx.prisma as any, access);
-  const categories = new CategoriesService(ctx.prisma as any, access);
+  const people = makePeople(ctx.prisma, access);
+  const categories = makeCategories(ctx.prisma, access);
+  const tags = makeTags(ctx.prisma, access);
+  const cards = makeCards(ctx.prisma, access, institutions);
+  const budgets = makeBudgets(ctx.prisma, access);
   const entries = makeEntries(ctx.prisma, access, ledger);
   const replay = new MutationReplayService(
     ctx.prisma as any,
     access as any,
     ledger as any,
     entries as any,
+    people as any,
+    accounts as any,
+    cards as any,
+    categories as any,
+    tags as any,
+    budgets as any,
   );
 
   const person = await people.createPerson(uid, { name: '김철수' }, pid);
@@ -289,6 +308,12 @@ runSmoke('sync-push', async (ctx) => {
     viewerAccess as any,
     ledger as any,
     entries as any,
+    people as any,
+    accounts as any,
+    cards as any,
+    categories as any,
+    tags as any,
+    budgets as any,
   );
   await ctx.expectReject('viewer 로 바뀐 뒤 도착한 명령은 거절된다', () =>
     viewerReplay.push(uid, {
@@ -375,4 +400,159 @@ runSmoke('sync-push', async (ctx) => {
   ctx.check('순번이 겹치면 거절한다', statusOf(clashed.results, seqTaken.mutationId), 'rejected');
   ctx.check('그 명령은 적용되지 않는다',
     await ctx.prisma.journalEntry.count({ where: { id: seqTakenId } }), 0);
+
+  // ── 7. 온라인 편집도 시계를 남긴다 ──
+  //
+  // 웹에서 만든 전표에 시계가 없으면, 훨씬 전에 오프라인에서 적어 둔 명령이 뒤늦게
+  // 도착해 그 편집을 조용히 덮는다. 아래 셋이 그 자리를 막는지 본다.
+  const online = await entries.createEntry(
+    uid,
+    {
+      kind: 'expense',
+      personId: person.id,
+      date: new Date(T0 + 4_000_000).toISOString(),
+      description: '웹에서 적은 지출',
+      amount: '20000',
+      categoryId: food.id,
+      accountId: bank.id,
+    } as any,
+    pid,
+  );
+  const onlineRow = await ctx.prisma.journalEntry.findUniqueOrThrow({ where: { id: online.id } });
+  ctx.check('온라인으로 만든 전표에도 시계가 있다', typeof onlineRow.updatedHlc, 'string');
+
+  const staleEdit: Mutation = {
+    mutationId: `${RUN}-m-stale-online`,
+    clientId: CLIENT,
+    clientSeq: (seq += 1),
+    // 서버가 방금 찍은 시계(지금)보다 훨씬 이른 값이다.
+    hlc: hlcAt(T0),
+    kind: 'entry.replace',
+    projectId: pid,
+    targets: [online.id],
+    payload: {
+      id: online.id,
+      kind: 'expense',
+      personId: person.id,
+      date: new Date(T0 + 4_000_000).toISOString(),
+      description: '오프라인에서 고친 값',
+      amount: '1',
+      categoryId: food.id,
+      accountId: bank.id,
+    },
+  };
+  const stale = await push([staleEdit]);
+  ctx.check('뒤늦게 도착한 옛 명령은 충돌이다',
+    statusOf(stale.results, staleEdit.mutationId), 'conflict');
+  ctx.check('웹에서 적은 금액이 그대로다',
+    (await ctx.prisma.journalEntry.findUniqueOrThrow({
+      where: { id: online.id },
+      select: { description: true },
+    })).description,
+    '웹에서 적은 지출');
+
+  // 태그만 바꾼 것도 편집이다. 시계가 올라가지 않으면 옛 명령이 태그를 지운다.
+  const beforeTagChange = onlineRow.updatedHlc;
+  const tag = await tags.createTag(uid, { name: `동기화검사-${RUN}` }, pid);
+  await entries.changeTags(uid, { entryIds: [online.id], addTagIds: [tag.id] } as any, pid);
+  const afterTagChange = (await ctx.prisma.journalEntry.findUniqueOrThrow({
+    where: { id: online.id },
+    select: { updatedHlc: true },
+  })).updatedHlc;
+  ctx.check('태그를 바꾸면 시계가 올라간다',
+    (afterTagChange ?? '') > (beforeTagChange ?? ''), true);
+
+  // ── 8. 오프라인에서 붙인 태그 (entry.tags) ──
+  //
+  // 전표 명령 셋과 규칙이 다르다. 통째로 이기고 지는 것이 아니라 더한 것과 뗀 것만
+  // 적용한다 -- 두 사람이 서로 다른 태그를 붙였을 때 둘 다 남아야 하기 때문이다.
+  const tagA = await tags.createTag(uid, { name: `여행-${RUN}` }, pid);
+  const tagB = await tags.createTag(uid, { name: `업무-${RUN}` }, pid);
+
+  const taggedIds = [
+    '019273aa-0000-7000-8000-000000000010',
+    '019273aa-0000-7000-8000-000000000011',
+  ];
+  await push(taggedIds.map((id) => expenseMutation(id, '4000', T0 + 5_000_000)));
+
+  const tagsMutation = (
+    entryIds: string[],
+    addTagIds: string[],
+    removeTagIds: string[],
+    at: number,
+    overrides: Partial<Mutation> = {},
+  ): Mutation => ({
+    mutationId: `${RUN}-m-tags-${(seq += 1)}`,
+    clientId: CLIENT,
+    clientSeq: seq,
+    hlc: hlcAt(at),
+    kind: 'entry.tags',
+    projectId: pid,
+    targets: [...entryIds, ...addTagIds, ...removeTagIds],
+    payload: { entryIds, addTagIds, removeTagIds },
+    ...overrides,
+  });
+
+  const linkCount = (entryId: string, tagId: string) =>
+    ctx.prisma.entryTag.count({ where: { entryId, tagId } });
+
+  const attach = tagsMutation(taggedIds, [tagA.id], [], T0 + 5_100_000);
+  const attached = await push([attach]);
+  ctx.check('태그 명령이 적용된다', statusOf(attached.results, attach.mutationId), 'applied');
+  ctx.check('첫 거래에 붙었다', await linkCount(taggedIds[0], tagA.id), 1);
+  ctx.check('둘째 거래에도 붙었다', await linkCount(taggedIds[1], tagA.id), 1);
+  ctx.check('명령의 시계가 전표에 남는다',
+    (await ctx.prisma.journalEntry.findUniqueOrThrow({ where: { id: taggedIds[0] } })).updatedHlc,
+    hlcAt(T0 + 5_100_000));
+
+  // 재전송. 같은 명령이 두 번 적히면 연결이 둘이 되거나 오류가 난다.
+  const attachedAgain = await push([tagsMutation(taggedIds, [tagA.id], [], T0 + 5_100_000, {
+    mutationId: attach.mutationId, clientSeq: attach.clientSeq,
+  })]);
+  ctx.check('재전송은 duplicate', attachedAgain.results[0]?.status, 'duplicate');
+  ctx.check('연결이 하나뿐이다', await linkCount(taggedIds[0], tagA.id), 1);
+
+  // 다른 기기가 붙인 태그는 그대로 남는다. 어느 쪽에도 없는 태그는 건드리지 않는다.
+  await entries.changeTags(uid, { entryIds: [taggedIds[0]], addTagIds: [tagB.id] } as any, pid);
+  const detach = tagsMutation([taggedIds[0]], [], [tagA.id], T0 + 5_200_000);
+  const detached = await push([detach]);
+  ctx.check('떼는 명령도 적용된다', statusOf(detached.results, detach.mutationId), 'applied');
+  ctx.check('뗀 태그는 사라졌다', await linkCount(taggedIds[0], tagA.id), 0);
+  ctx.check('건드리지 않은 태그는 남는다', await linkCount(taggedIds[0], tagB.id), 1);
+
+  /*
+   * 시계는 뒤로 가지 않는다.
+   *
+   * 그 사이 다른 기기가 같은 전표를 고쳐 훨씬 늦은 시계를 찍어 두었다. 뒤늦게 도착한
+   * 태그 명령이 그 값을 덮으면, 그 뒤에 오는 더 옛 편집이 이겨 버린다.
+   */
+  const far = hlcAt(T0 + 9_000_000, 'device-b');
+  await ctx.prisma.journalEntry.update({ where: { id: taggedIds[1] }, data: { updatedHlc: far } });
+  const stamped2 = await push([tagsMutation([taggedIds[1]], [tagB.id], [], T0 + 5_300_000)]);
+  ctx.check('그래도 태그는 붙는다', stamped2.results[0]?.status, 'applied');
+  ctx.check('붙었다', await linkCount(taggedIds[1], tagB.id), 1);
+  ctx.check('더 늦은 시계는 그대로다',
+    (await ctx.prisma.journalEntry.findUniqueOrThrow({ where: { id: taggedIds[1] } })).updatedHlc,
+    far);
+
+  /*
+   * 그 사이 지워진 거래는 건너뛴다.
+   *
+   * 온라인 요청이라면 통째로 거절하는 편이 낫다 -- 무엇이 빠졌는지 알 수 없기 때문이다.
+   * 반대로 며칠 전에 쌓인 명령은 한 건이 사라졌다고 나머지의 표시까지 막을 수 없다.
+   */
+  const goneId = '019273aa-0000-7000-8000-000000000012';
+  await push([expenseMutation(goneId, '2000', T0 + 5_400_000)]);
+  await entries.deleteEntry(goneId, uid);
+  const partial = tagsMutation([goneId, taggedIds[0]], [tagA.id], [], T0 + 5_500_000);
+  const partialResult = await push([partial]);
+  ctx.check('사라진 거래가 섞여도 적용된다',
+    statusOf(partialResult.results, partial.mutationId), 'applied');
+  ctx.check('남은 거래에는 붙었다', await linkCount(taggedIds[0], tagA.id), 1);
+
+  // 없는 태그로 표시하라는 명령은 거절이다. 조용히 넘기면 사용자는 표시된 줄 안다.
+  const ghostTag = tagsMutation([taggedIds[0]], ['019273aa-0000-7000-8000-0000000000ff'], [],
+    T0 + 5_600_000);
+  const ghostTagged = await push([ghostTag]);
+  ctx.check('없는 태그는 거절된다', statusOf(ghostTagged.results, ghostTag.mutationId), 'rejected');
 });

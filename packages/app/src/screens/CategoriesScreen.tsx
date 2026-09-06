@@ -11,6 +11,8 @@ import type { Category } from '@money/core/lib/types';
 import { useProject } from '@money/core/store/project';
 
 import Modal from '../components/Modal';
+import AddButton from '../components/AddButton';
+import MoveRow from '../components/MoveRow';
 import PageHeader from '../components/PageHeader';
 import SegmentedTabs from '../components/SegmentedTabs';
 import TagsPanel from '../components/TagsPanel';
@@ -77,6 +79,14 @@ export default function CategoriesScreen() {
     setError('');
   };
 
+  /** 그 단에서 새로 만들기. 유형을 미리 골라 두면 폼에서 다시 고를 일이 없다. */
+  const openNewIn = (type: 'expense' | 'income') => {
+    setEditingId(null);
+    setFormData({ ...EMPTY_FORM, type });
+    setIsModalOpen(true);
+    setError('');
+  };
+
   const openEditor = (category: Category) => {
     setEditingId(category.id);
     setFormData(manager.formValuesOf(category));
@@ -98,22 +108,25 @@ export default function CategoriesScreen() {
     setError(result.ok ? '' : result.message);
   };
 
+  /**
+   * 한 칸 옮긴다. 누르는 즉시 저장된다.
+   *
+   * 이름 고치기와 달리 폼을 거치지 않는다. 옮긴 결과가 곧바로 목록에 보여야 다음에
+   * 어느 쪽을 눌러야 하는지 알 수 있다. 이웃은 훅이 고른다 -- 소분류는 같은 부모
+   * 아래에서, 대분류는 같은 유형의 단 안에서다.
+   */
+  const move = async (id: string, step: 1 | -1) => {
+    const result = await manager.move(id, step);
+    setError(result.ok ? '' : result.message);
+  };
+
   return (
     <View className="gap-6">
-      <PageHeader
-        title={t('categories.title')}
-        action={
-          // 태그 탭은 자기 머리글에 자기 추가 버튼을 둔다.
-          section === 'categories' ? (
-            <Pressable
-              onPress={() => setIsModalOpen(true)}
-              className="rounded-lg bg-blue-600 px-4 py-2 active:bg-blue-700"
-            >
-              <Text className="text-white">{t('categories.add')}</Text>
-            </Pressable>
-          ) : undefined
-        }
-      />
+      {/*
+        추가 버튼은 머리글이 아니라 **목록 바로 위**에 있다 (자산 화면과 같은 규칙).
+        무엇에 더하는 것인지가 버튼 아래에 곧바로 이어져 보인다.
+      */}
+      <PageHeader title={t('nav.categories')} />
 
       <SegmentedTabs
         tabs={[
@@ -173,6 +186,9 @@ export default function CategoriesScreen() {
                   <Text className={`mb-4 hidden text-lg font-bold lg:flex ${panel.text}`}>
                     {t(panel.titleKey)}
                   </Text>
+
+                  {/* 그 단의 유형(지출·수입)을 미리 골라 연다. */}
+                  <AddButton label={t('categories.add')} onPress={() => openNewIn(panel.type)} />
 
                   {parents.length === 0 ? (
                     <Text className="text-gray-600">{t(panel.emptyKey)}</Text>
@@ -277,6 +293,17 @@ export default function CategoriesScreen() {
               </Text>
             </View>
 
+            <MoveRow
+              disabled={isSubmitting}
+              onMove={(step) => void move(selectedCategory.id, step)}
+            />
+
+            {error ? (
+              <View className="rounded bg-red-50 p-3">
+                <Text className="text-sm text-red-800">{error}</Text>
+              </View>
+            ) : null}
+
             {!selectedCategory.parentId ? (
               <>
                 {selectedCategory.defaultIsExtra ? (
@@ -294,13 +321,19 @@ export default function CategoriesScreen() {
                       {manager.childrenOf(selectedCategory.id).map((child) => (
                         <View
                           key={child.id}
-                          className="flex-row items-center justify-between rounded-lg bg-gray-50 px-3 py-2"
+                          className="flex-row items-center gap-2 rounded-lg bg-gray-50 px-3 py-2"
                         >
-                          <Text className="text-sm text-gray-900">{child.name}</Text>
+                          <Text className="flex-1 text-sm text-gray-900">{child.name}</Text>
                           <Text className="text-xs text-gray-500">
                             {child.isDefault ? t('categories.defaultMark') : ''}
                             {child.defaultIsExtra ? t('categories.extraMark') : ''}
                           </Text>
+                          {/* 소분류는 이 줄에서 곧바로 옮긴다. 따로 여는 창이 없다. */}
+                          <MoveRow
+                            compact
+                            disabled={isSubmitting}
+                            onMove={(step) => void move(child.id, step)}
+                          />
                         </View>
                       ))}
                     </View>

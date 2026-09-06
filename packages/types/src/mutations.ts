@@ -9,13 +9,45 @@
  * 잔액 반영을 우회한다. 명령으로 보내면 서버가 온라인 요청과 **똑같은 도메인 서비스**로
  * 재생하므로 검증이 한 자리에 남는다.
  *
- * 2단계가 다루는 것은 전표 명령뿐이다. 설정 엔티티(이름·색·순서)는 3단계다.
+ * 2단계는 전표 명령을, 3단계는 설정 엔티티(구성원·통장·카드)를 다룬다. 둘의 병합 규칙이
+ * 다르다 -- 전표는 통째로, 설정은 **필드별로** 늦은 값이 이긴다 (설계 문서의 D5).
  */
 
 import type { CardTransferDirection, EntryKind } from './entities';
 
-/** 2단계가 다루는 명령. 화면의 개념 그대로다. */
-export type MutationKind = 'entry.create' | 'entry.replace' | 'entry.delete';
+/**
+ * 다룰 수 있는 명령. 화면의 개념 그대로다.
+ *
+ * 자산 셋(구성원·통장·카드)에는 지움 명령이 없다. 서버가 하는 일이 숨기기(isActive)라
+ * `*.update` 로 같은 값을 보내면 된다. 툼스톤이 필요한 하드 삭제는 전표·예산·환율 쪽이다.
+ */
+export type MutationKind =
+  | 'entry.create'
+  | 'entry.replace'
+  | 'entry.delete'
+  | 'entry.tags'
+  | 'person.create'
+  | 'person.update'
+  | 'account.create'
+  | 'account.update'
+  | 'card.create'
+  | 'card.update'
+  | 'category.create'
+  | 'category.update'
+  | 'tag.create'
+  | 'tag.update'
+  | 'budget.set'
+  | 'budget.override';
+
+/**
+ * 설정 엔티티 명령인가. 재생과 병합 규칙이 전표와 다르다.
+ *
+ * 자산(구성원·통장·카드)과 분류·태그가 여기 든다. 전표는 통째로, 이쪽은 필드별로 늦은
+ * 값이 이긴다 (설계 문서의 D5).
+ */
+export function isSettingMutation(kind: MutationKind): boolean {
+  return !kind.startsWith('entry.');
+}
 
 /**
  * 명령 하나.
@@ -90,6 +122,25 @@ export interface EntryDeletePayload {
 }
 
 /**
+ * 여러 전표의 태그를 한 번에 바꾸는 명령의 짐.
+ *
+ * `entry.replace` 로 표현하지 않는다. 그쪽은 전표를 통째로 갈아 끼우므로 분할·외화까지
+ * 온전한 값이 필요한데, 목록에서 여러 건을 고를 때 기기가 그것을 다 알고 있지 않다.
+ * 게다가 두 사람이 서로 다른 태그를 붙이면 통째 교체는 한쪽을 통째로 지운다.
+ *
+ * **더할 것과 뗄 것을 따로 담는 이유가 여기 있다.** "이것이 전부다"로 보내면 화면에
+ * 보이지 않던 태그가 사라진다. 어느 쪽에도 없는 태그는 건드리지 않는다.
+ *
+ * 범위 질의가 아니라는 점이 D12 와 갈린다 -- 대상 전표를 이름으로 다 적어 보내므로,
+ * 며칠 뒤에 재생해도 같은 전표에 같은 태그가 붙는다.
+ */
+export interface EntryTagsPayload {
+  entryIds: string[];
+  addTagIds: string[];
+  removeTagIds: string[];
+}
+
+/**
  * 명령 하나의 결과.
  *
  *   applied   적용했다.
@@ -112,9 +163,25 @@ export type MutationStatus =
   | 'blocked'
   | 'deferred';
 
+/**
+ * 기기가 만든 id 가 서버의 다른 id 로 바뀌었다는 알림.
+ *
+ * 두 사람이 오프라인에서 같은 이름의 분류를 만들면 유일 제약에 걸린다. 그때 서버는
+ * **이미 있는 행을 채택하고** 그 id 를 알려 준다. 기기는 자기 사본과 큐에 든 참조를
+ * 그 id 로 옮긴다. 오류로 두면 그 명령이 영원히 막히고, 사용자는 왜 안 되는지 알 수 없다.
+ */
+export interface MutationAlias {
+  /** 기기가 만들었던 id */
+  from: string;
+  /** 서버가 채택한 id */
+  to: string;
+}
+
 export interface MutationResult {
   mutationId: string;
   status: MutationStatus;
+  /** 기기 id 가 서버의 다른 행으로 이어졌을 때 (같은 이름이 이미 있었다). */
+  alias?: MutationAlias;
   /** 사람이 읽을 이유. rejected·conflict 일 때 채운다. */
   error?: string;
   /** 분기에 쓰는 코드 (entry-build 의 LedgerBuildError.code 등) */
@@ -134,6 +201,182 @@ export interface PushResponse {
   /** 이 응답 시점의 프로젝트 번호 */
   version: number;
 }
+
+/**
+ * 구성원을 만드는 명령의 짐. 서버의 `PersonDto.CreateRequest` 와 같은 모양이다.
+ *
+ * 만들 때와 고칠 때의 짐을 나누는 이유. 만들기는 값이 전부 있어야 행이 서고, 고치기는
+ * **보낸 필드만** 바꾼다. 하나로 두면 "이름만 고쳤다"와 "관계를 비웠다"를 가를 수 없다.
+ */
+export interface PersonCreatePayload {
+  id: string;
+  name: string;
+  relationship?: string | null;
+}
+
+/** 구성원을 고치는 명령의 짐. 담긴 필드만 바뀐다(필드별 병합). */
+export interface PersonUpdatePayload {
+  id: string;
+  name?: string;
+  relationship?: string | null;
+  /** false 면 숨기기다. 서버가 선행조건(활성 통장 0개)을 다시 본다 (D11). */
+  isActive?: boolean;
+  /**
+   * 목록에서의 자리 (분수 색인).
+   *
+   * 순서 바꾸기가 **필드 하나의 변경**이라는 것이 요점이다. 목록 전체를 보내면 두 사람의
+   * 이동 중 하나가 통째로 지워진다 (설계 문서의 D5).
+   */
+  sortRank?: string;
+}
+
+export interface AccountCreatePayload {
+  id: string;
+  name: string;
+  type: string;
+  ownerId?: string | null;
+  institutionId?: string | null;
+  accountNumber?: string | null;
+  currency?: string;
+  /** 기초 잔액. 서버가 기초잔액 전표로 만든다. */
+  initialBalance?: string;
+}
+
+export interface AccountUpdatePayload {
+  id: string;
+  name?: string;
+  ownerId?: string | null;
+  institutionId?: string | null;
+  accountNumber?: string | null;
+  isActive?: boolean;
+  /** 목록에서의 자리 (분수 색인). */
+  sortRank?: string;
+}
+
+export interface CardCreatePayload {
+  id: string;
+  /** 신용카드의 부채 계정 id. 기기가 함께 만든다(카드 생성은 행 둘을 만든다). */
+  liabilityAccountId?: string;
+  name: string;
+  cardType: string;
+  issuerId: string;
+  paymentAccountId: string;
+  cardNumber?: string | null;
+  creditLimit?: string | null;
+  performanceAmount?: string | null;
+  statementClosingDay?: number | null;
+  paymentDueDay?: number | null;
+  color?: string | null;
+}
+
+export interface CardUpdatePayload {
+  id: string;
+  name?: string;
+  issuerId?: string;
+  paymentAccountId?: string;
+  cardNumber?: string | null;
+  creditLimit?: string | null;
+  performanceAmount?: string | null;
+  statementClosingDay?: number | null;
+  paymentDueDay?: number | null;
+  color?: string | null;
+  isActive?: boolean;
+  /** 목록에서의 자리 (분수 색인). */
+  sortRank?: string;
+}
+
+export interface CategoryCreatePayload {
+  id: string;
+  name: string;
+  type: string;
+  /** 대분류면 없다. 소분류는 그 부모의 id. */
+  parentId?: string | null;
+  icon?: string | null;
+  defaultIsExtra?: boolean;
+}
+
+export interface CategoryUpdatePayload {
+  id: string;
+  name?: string;
+  icon?: string | null;
+  defaultIsExtra?: boolean;
+  isActive?: boolean;
+  /** 목록에서의 자리 (분수 색인). */
+  sortRank?: string;
+}
+
+export interface TagCreatePayload {
+  id: string;
+  name: string;
+  color?: string | null;
+}
+
+export interface TagUpdatePayload {
+  id: string;
+  name?: string;
+  color?: string | null;
+  isActive?: boolean;
+  /** 목록에서의 자리 (분수 색인). */
+  sortRank?: string;
+}
+
+/**
+ * 예산 한 줄을 정한다. 없으면 만들고 있으면 금액을 바꾼다.
+ *
+ * **구간 편집은 여기 없다.** "8월부터 20만원" 같은 조작은 그 사이 달라진 규칙들 위에서
+ * 다시 계산되므로, 며칠 뒤에 재생하면 다른 결과가 나온다. 그런 것은 온라인에서만 한다
+ * (설계 문서의 D12).
+ */
+export interface BudgetSetPayload {
+  id: string;
+  /** 분류별 예산이면 그 분류. 전체 예산이면 없다. */
+  categoryId?: string | null;
+  /** 전체 예산일 때의 갈래(지출·수입). 분류별이면 없다. */
+  type?: string | null;
+  monthlyAmount: string;
+  /**
+   * 어느 달의 예산인가 ("2026-08"). 없으면 재생하는 날이 속한 달이다.
+   *
+   * 한 분류의 예산은 구간으로 나뉠 수 있어("8월부터 20만원") 규칙이 여럿일 수 있다.
+   * 이 값이 그중 **어느 규칙을 고칠지**를 정한다. 없으면 8월 화면에서 고친 금액이
+   * 9월 규칙에 적히는 일이 생긴다.
+   *
+   * 구간 편집(D12)과 다른 점은 고치는 행이 하나라는 것이다. 며칠 뒤에 재생해도 "그 달을
+   * 덮는 규칙"은 하나로 정해지므로, 사용자가 시킨 일("이 달 예산을 이 금액으로")이 그대로
+   * 남는다. 여러 행을 다시 쓰는 조작만 온라인 전용이다.
+   */
+  yearMonth?: string;
+}
+
+/**
+ * 그 달만 다른 금액으로.
+ *
+ * (예산, 년, 월)이 키다. 다른 달을 고친 두 편집은 서로 다른 행이라 다툴 일이 없다.
+ * `amount` 가 없으면 그 달의 조정을 지운다.
+ */
+export interface BudgetOverridePayload {
+  /** 조정 행의 id. 기기가 만든다. */
+  id: string;
+  budgetId: string;
+  year: number;
+  month: number;
+  amount?: string | null;
+}
+
+/** 설정 엔티티 명령의 짐. 모두 대상 id 를 갖는다. */
+export type SettingMutationPayload =
+  | PersonCreatePayload
+  | PersonUpdatePayload
+  | AccountCreatePayload
+  | AccountUpdatePayload
+  | CardCreatePayload
+  | CardUpdatePayload
+  | CategoryCreatePayload
+  | CategoryUpdatePayload
+  | TagCreatePayload
+  | TagUpdatePayload
+  | BudgetSetPayload
+  | BudgetOverridePayload;
 
 /**
  * 이 명령이 서버까지 갈 필요가 없는가.

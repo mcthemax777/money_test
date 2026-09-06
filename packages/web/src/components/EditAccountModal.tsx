@@ -3,15 +3,15 @@
 import { useState, useEffect } from 'react';
 import { apiClient } from '@money/core/lib/api-client';
 import type { Account, Person } from '@money/core/lib/types';
+import { NO_BANK_TYPES } from '@money/core/lib/account-type';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toAmountString } from '@money/core/lib/money';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
-import { useInstitutions } from '@/hooks/useInstitutions';
+import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import { useApiError } from '@money/core/lib/api-error';
 
 /** 개설 기관이 없는 유형. AddAccountModal, 서버의 NO_INSTITUTION_TYPES와 같아야 한다. */
-const NO_BANK_TYPES = ['cash', 'real_estate'];
 /** 하단 고정 버튼과 본문 form을 잇는 id */
 const FORM_ID = 'edit-account-form';
 

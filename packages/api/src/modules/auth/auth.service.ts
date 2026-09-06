@@ -184,7 +184,9 @@ export class AuthService {
       },
     });
 
-    // 구성원(Person)은 자동으로 만들지 않는다. 사용자가 직접 등록한다.
+    // 만든 사람을 첫 구성원으로 세우고 "나"로 지정한다 (ProjectsService.ensureMyPerson).
+    // 구성원이 하나도 없으면 홈도 자산도 빈 화면이고 거래를 적을 자리가 없다.
+    await this.projectsService.ensureMyPerson(project.id, userId);
     await this.categoriesService.createDefaultCategories(project.id);
 
     return project;

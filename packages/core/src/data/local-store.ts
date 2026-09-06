@@ -29,6 +29,9 @@ import {
   type Mutation,
   type MutationKind,
   type MutationResult,
+  type FieldClocks,
+  HIDDEN_ACCOUNT_TYPES,
+  applyTagChange,
   type NetWorthAccountRow,
   type ParsedEntrySearch,
   SyncDto,
@@ -36,8 +39,11 @@ import {
   encodeHlc,
   hlcNext,
   hlcReceive,
+  FIRST_RANK,
   isDeferred,
   isSettled,
+  latestFieldClock,
+  rankAfter,
   zonedDateKey,
   zonedYearMonth,
 } from '@money/types';
@@ -64,7 +70,7 @@ export interface StoredAccount {
   currency: string;
   balance: string;
   isActive: boolean;
-  sortOrder: number;
+  sortRank: string;
 }
 
 /** 사본에 담긴 예산 규칙 한 줄. 그 달의 조정값을 함께 실어 준다. */
@@ -124,12 +130,54 @@ export interface StoredCardPosting {
 
 type Row = Record<string, SqlValue>;
 
+/** 사본에 담긴 시계 지도를 되돌린다. 모양이 아니면 빈 지도다. */
+function parseClocks(value: string | null): FieldClocks {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+    const clocks: FieldClocks = {};
+    for (const [field, clock] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof clock === 'string') clocks[field] = clock;
+    }
+    return clocks;
+  } catch {
+    return {};
+  }
+}
+
+/** 방금 쓴 필드에만 시계를 찍어 다시 글자로. 나머지 필드의 시계는 그대로 둔다. */
+function mergeClocks(stored: string | null, fields: readonly string[], hlc: string): string {
+  const clocks = parseClocks(stored);
+  for (const field of fields) {
+    // 줄을 가리키는 값에는 시계를 찍지 않는다. 병합의 대상이 아니다.
+    if (field === 'id' || field === 'projectId') continue;
+    clocks[field] = hlc;
+  }
+  return JSON.stringify(clocks);
+}
+
+/**
+ * 서버가 준 지도(fieldHlc)를 사본에 담을 글자로.
+ *
+ * 기기는 이 값을 해석하지 않는다. 다음 편집의 시계를 매길 때 @money/types 의
+ * field-merge 에 그대로 넘길 뿐이라, 문자열로 두는 편이 왕복에서 잃는 것이 없다.
+ */
+const asJson = (value: unknown): string | null => {
+  if (value == null) return null;
+  return typeof value === 'string' ? value : JSON.stringify(value);
+};
+
 const asText = (value: unknown): string | null =>
   value === undefined || value === null ? null : String(value);
 
 const asMoney = (value: unknown): string => asText(value) ?? '0';
 
 const asFlag = (value: unknown): number => (value ? 1 : 0);
+
+/** `IN (?, ?, ?)` 의 물음표들. 개수가 0 이면 아무것도 맞지 않는 절이 된다. */
+const placeholders = (count: number): string =>
+  count === 0 ? 'NULL' : new Array(count).fill('?').join(', ');
 
 /**
  * 큐의 한 줄을 명령으로.
@@ -163,6 +211,21 @@ const asInt = (value: unknown): number => {
 const asIso = (value: unknown): string =>
   value instanceof Date ? value.toISOString() : String(value ?? '');
 
+/**
+ * 설정 엔티티가 사는 표. 필드별 병합과 순서 값을 갖는다.
+ *
+ * 예산 조정(budget_override)은 순서가 없지만 같은 길로 쓴다 -- 키가 (예산, 년, 월)이라
+ * 순서 값이 필요 없을 뿐, 시계와 커밋 절차는 같다.
+ */
+export type SettingTable =
+  | 'person'
+  | 'account'
+  | 'card'
+  | 'category'
+  | 'tag'
+  | 'budget'
+  | 'budget_override';
+
 export class LocalStore {
   constructor(private readonly db: SqlDriver) {}
 
@@ -178,9 +241,41 @@ export class LocalStore {
    * 문장은 전부 `IF NOT EXISTS` 라 여러 번 불러도 같다.
    */
   async ensureSchema(): Promise<void> {
+    await this.createTables();
+
+    /*
+     * 표의 **모양**도 본다. 번호만 믿지 않는다.
+     *
+     * `CREATE TABLE IF NOT EXISTS` 는 이미 있는 표를 손대지 않는다. 그래서 컬럼이 늘어난
+     * 판으로 올라간 기기는 표가 옛 모양 그대로 남고, 동기화가 "no column named ..." 로
+     * 매번 실패한다. 판 번호는 이미 새것으로 적혀 있어 그것만 보면 알아채지 못한다
+     * (에뮬레이터가 실제로 그 상태에 빠졌다).
+     *
+     * 어긋나면 부수고 다시 세운다. 사본은 서버에서 다시 받을 수 있는 캐시라, 잃는 것은
+     * 다시 받는 시간뿐이다. 아웃박스는 그대로 둔다.
+     */
+    if (await this.hasStaleShape()) {
+      await this.rebuild();
+    }
+  }
+
+  /** 표를 만든다. 이미 있으면 그대로 둔다. */
+  private async createTables(): Promise<void> {
     for (const statement of SCHEMA_STATEMENTS) {
       await this.db.run(statement);
     }
+  }
+
+  /** 스키마가 적어 둔 컬럼 중 실제 표에 없는 것이 있는가. */
+  private async hasStaleShape(): Promise<boolean> {
+    for (const [table, expected] of expectedColumns()) {
+      const rows = await this.db.all<Row>(`PRAGMA table_info(${table})`);
+      if (rows.length === 0) continue;
+
+      const actual = new Set(rows.map((row) => String(row.name)));
+      if (expected.some((column) => !actual.has(column))) return true;
+    }
+    return false;
   }
 
   /**
@@ -208,7 +303,7 @@ export class LocalStore {
       [projectId],
     );
     if (asInt(rows[0]?.schemaVersion) !== SCHEMA_VERSION) {
-      await this.reset(projectId);
+      await this.rebuild();
       return this.init(projectId, timeZone);
     }
 
@@ -235,6 +330,27 @@ export class LocalStore {
       timeZone: String(row.timeZone),
       syncedAt: asText(row.syncedAt),
     };
+  }
+
+  /**
+   * 사본의 표를 **부수고 다시 세운다.** 스키마 번호가 달라졌을 때 부른다.
+   *
+   * 행을 지우는 것(`reset`)으로는 모자란다. 컬럼이 늘어난 판이면 옛 표에는 그 컬럼이
+   * 없고, `CREATE TABLE IF NOT EXISTS` 는 이미 있는 표를 손대지 않는다. 그대로 두면
+   * 동기화가 "table person has no column named ..." 로 매번 실패한다 -- 실제로 그랬다.
+   *
+   * **아웃박스와 기기 이름은 부수지 않는다.** 그 둘은 사본이 아니라 아직 아무 데도 없는
+   * 값이다 (ALL_TABLES 에 넣지 않은 이유이기도 하다). 여기서 지우면 오프라인에서 적어 둔
+   * 거래가 사라진다.
+   */
+  async rebuild(): Promise<void> {
+    await this.db.transaction(async () => {
+      for (const table of MIRROR_TABLES) {
+        await this.db.run(`DROP TABLE IF EXISTS ${table}`);
+      }
+    });
+    // 모양 검사를 다시 돌리지 않는다. 방금 세운 표라 어긋날 수 없고, 부르면 서로 부른다.
+    await this.createTables();
   }
 
   /**
@@ -311,7 +427,8 @@ export class LocalStore {
           name: asText(row.name) ?? '',
           relationship: asText(row.relationship),
           isActive: asFlag(row.isActive),
-          sortOrder: asInt(row.sortOrder),
+          sortRank: asText(row.sortRank) ?? FIRST_RANK,
+          fieldHlc: asJson(row.fieldHlc),
           createdAt: asIso(row.createdAt),
           updatedAt: asIso(row.updatedAt),
           updatedVersion: asInt(row.updatedVersion),
@@ -330,7 +447,8 @@ export class LocalStore {
           currency: asText(row.currency) ?? 'KRW',
           balance: asMoney(row.balance),
           isActive: asFlag(row.isActive),
-          sortOrder: asInt(row.sortOrder),
+          sortRank: asText(row.sortRank) ?? FIRST_RANK,
+          fieldHlc: asJson(row.fieldHlc),
           createdAt: asIso(row.createdAt),
           updatedAt: asIso(row.updatedAt),
           updatedVersion: asInt(row.updatedVersion),
@@ -348,7 +466,8 @@ export class LocalStore {
           defaultIsExtra: asFlag(row.defaultIsExtra),
           isDefault: asFlag(row.isDefault),
           isActive: asFlag(row.isActive),
-          sortOrder: asInt(row.sortOrder),
+          sortRank: asText(row.sortRank) ?? FIRST_RANK,
+          fieldHlc: asJson(row.fieldHlc),
           createdAt: asIso(row.createdAt),
           updatedAt: asIso(row.updatedAt),
           updatedVersion: asInt(row.updatedVersion),
@@ -362,7 +481,8 @@ export class LocalStore {
           name: asText(row.name) ?? '',
           color: asText(row.color),
           isActive: asFlag(row.isActive),
-          sortOrder: asInt(row.sortOrder),
+          sortRank: asText(row.sortRank) ?? FIRST_RANK,
+          fieldHlc: asJson(row.fieldHlc),
           createdAt: asIso(row.createdAt),
           updatedAt: asIso(row.updatedAt),
           updatedVersion: asInt(row.updatedVersion),
@@ -386,7 +506,8 @@ export class LocalStore {
           color: asText(row.color),
           expiryDate: asText(row.expiryDate),
           isActive: asFlag(row.isActive),
-          sortOrder: asInt(row.sortOrder),
+          sortRank: asText(row.sortRank) ?? FIRST_RANK,
+          fieldHlc: asJson(row.fieldHlc),
           createdAt: asIso(row.createdAt),
           updatedAt: asIso(row.updatedAt),
           updatedVersion: asInt(row.updatedVersion),
@@ -474,6 +595,7 @@ export class LocalStore {
           monthlyAmount: asMoney(row.monthlyAmount),
           effectiveFrom: asText(row.effectiveFrom),
           effectiveTo: asText(row.effectiveTo),
+          fieldHlc: asJson(row.fieldHlc),
           updatedVersion: asInt(row.updatedVersion),
         });
       }
@@ -485,6 +607,7 @@ export class LocalStore {
           year: asInt(row.year),
           month: asInt(row.month),
           amount: asMoney(row.amount),
+          fieldHlc: asJson(row.fieldHlc),
           updatedVersion: asInt(row.updatedVersion),
         });
       }
@@ -597,15 +720,19 @@ export class LocalStore {
   // 읽기
   // ───────────────────────────────────────────
 
-  async people(projectId: string): Promise<Array<{ id: string; name: string; isActive: boolean }>> {
+  async people(
+    projectId: string,
+  ): Promise<Array<{ id: string; name: string; isActive: boolean; sortRank: string }>> {
     const rows = await this.db.all<Row>(
-      `SELECT id, name, isActive FROM person WHERE projectId = ? ORDER BY sortOrder, name`,
+      `SELECT id, name, isActive, sortRank FROM person WHERE projectId = ? ORDER BY sortRank, name`,
       [projectId],
     );
     return rows.map((row) => ({
       id: String(row.id),
       name: String(row.name),
       isActive: Boolean(row.isActive),
+      // 화면이 드래그로 옮길 때 이웃의 값을 봐야 한다 (`lib/reorder-rank`).
+      sortRank: String(row.sortRank),
     }));
   }
 
@@ -624,11 +751,11 @@ export class LocalStore {
   async accounts(projectId: string): Promise<StoredAccount[]> {
     const rows = await this.db.all<Row>(
       `SELECT a.id, a.ownerId, p.name AS ownerName, a.type, a.name, a.currency,
-              a.balance, a.isActive, a.sortOrder
+              a.balance, a.isActive, a.sortRank
          FROM account a
          LEFT JOIN person p ON p.id = a.ownerId
         WHERE a.projectId = ?
-        ORDER BY a.sortOrder, a.name`,
+        ORDER BY a.sortRank, a.name`,
       [projectId],
     );
     return rows.map((row) => ({
@@ -640,7 +767,7 @@ export class LocalStore {
       currency: String(row.currency),
       balance: asMoney(row.balance),
       isActive: Boolean(row.isActive),
-      sortOrder: asInt(row.sortOrder),
+      sortRank: String(row.sortRank),
     }));
   }
 
@@ -860,7 +987,7 @@ export class LocalStore {
    */
   async personRows(projectId: string): Promise<PersonDto.Response[]> {
     const rows = await this.db.all<Row>(
-      `SELECT * FROM person WHERE projectId = ? ORDER BY sortOrder, createdAt`,
+      `SELECT * FROM person WHERE projectId = ? ORDER BY sortRank, createdAt`,
       [projectId],
     );
     return rows.map((row) => ({
@@ -872,19 +999,28 @@ export class LocalStore {
       createdAt: String(row.createdAt),
       updatedAt: String(row.updatedAt),
       // 화면이 드래그 순서를 그대로 쓴다. DTO 타입에는 없지만 서버도 함께 보낸다.
-      sortOrder: asInt(row.sortOrder),
+      sortRank: String(row.sortRank),
     }) as PersonDto.Response);
   }
 
+  /**
+   * 통장 목록. 서버의 `/accounts` 와 같은 것을 준다.
+   *
+   * **사용자에게 통장으로 보이지 않는 계정은 뺀다** -- 카드 사용액을 담는 부채 계정과
+   * 기초잔액 자본 계정이다. 서버가 빼는 것을 사본이 그대로 두면, 오프라인에서만 자산
+   * 화면에 "com2us 신용카드"가 통장처럼 한 줄 더 서고 순서를 옮길 때 이웃도 달라진다
+   * (기기에서 실제로 그랬다).
+   */
   async accountRows(projectId: string): Promise<AccountDto.Response[]> {
+    const hidden = HIDDEN_ACCOUNT_TYPES.map(() => '?').join(', ');
     const rows = await this.db.all<Row>(
       `SELECT a.*, p.id AS ownerRowId, p.name AS ownerName, p.relationship AS ownerRelationship,
               p.isActive AS ownerIsActive, p.createdAt AS ownerCreatedAt, p.updatedAt AS ownerUpdatedAt
          FROM account a
          LEFT JOIN person p ON p.id = a.ownerId
-        WHERE a.projectId = ?
-        ORDER BY a.sortOrder, a.createdAt`,
-      [projectId],
+        WHERE a.projectId = ? AND a.type NOT IN (${hidden})
+        ORDER BY a.sortRank, a.createdAt`,
+      [projectId, ...HIDDEN_ACCOUNT_TYPES],
     );
 
     return rows.map((row) => ({
@@ -900,7 +1036,7 @@ export class LocalStore {
       isActive: Boolean(row.isActive),
       createdAt: String(row.createdAt),
       updatedAt: String(row.updatedAt),
-      sortOrder: asInt(row.sortOrder),
+      sortRank: String(row.sortRank),
       // 주인은 서버가 include 로 함께 준다. 사본에서는 조인으로 만든다.
       owner: row.ownerRowId
         ? {
@@ -921,7 +1057,7 @@ export class LocalStore {
 
   async categoryRows(projectId: string): Promise<CategoryDto.Response[]> {
     const rows = await this.db.all<Row>(
-      `SELECT * FROM category WHERE projectId = ? ORDER BY sortOrder, createdAt`,
+      `SELECT * FROM category WHERE projectId = ? ORDER BY sortRank, createdAt`,
       [projectId],
     );
     return rows.map((row) => ({
@@ -936,7 +1072,7 @@ export class LocalStore {
       isActive: Boolean(row.isActive),
       createdAt: String(row.createdAt),
       updatedAt: String(row.updatedAt),
-      sortOrder: asInt(row.sortOrder),
+      sortRank: String(row.sortRank),
     }) as unknown as CategoryDto.Response);
   }
 
@@ -948,7 +1084,7 @@ export class LocalStore {
    */
   async tagRows(projectId: string): Promise<TagDto.Response[]> {
     const rows = await this.db.all<Row>(
-      `SELECT * FROM tag WHERE projectId = ? AND isActive = 1 ORDER BY sortOrder, name`,
+      `SELECT * FROM tag WHERE projectId = ? AND isActive = 1 ORDER BY sortRank, name`,
       [projectId],
     );
     return rows.map((row) => ({
@@ -957,7 +1093,7 @@ export class LocalStore {
       name: String(row.name),
       color: asText(row.color),
       isActive: Boolean(row.isActive),
-      sortOrder: asInt(row.sortOrder),
+      sortRank: String(row.sortRank),
       createdAt: String(row.createdAt),
       updatedAt: String(row.updatedAt),
     }));
@@ -973,7 +1109,7 @@ export class LocalStore {
          FROM card c
          LEFT JOIN account liability ON liability.id = c.liabilityAccountId
         WHERE c.projectId = ?
-        ORDER BY c.sortOrder, c.createdAt`,
+        ORDER BY c.sortRank, c.createdAt`,
       [projectId],
     );
 
@@ -995,7 +1131,7 @@ export class LocalStore {
       isActive: Boolean(row.isActive),
       createdAt: String(row.createdAt),
       updatedAt: String(row.updatedAt),
-      sortOrder: asInt(row.sortOrder),
+      sortRank: String(row.sortRank),
       currentUsage:
         row.liabilityBalance == null
           ? null
@@ -1080,7 +1216,7 @@ export class LocalStore {
          FROM entry_tag et
          JOIN tag t ON t.id = et.tagId
         WHERE et.entryId IN (${placeholders})
-        ORDER BY t.sortOrder, t.name`,
+        ORDER BY t.sortRank, t.name`,
       ids,
     );
 
@@ -1347,10 +1483,210 @@ export class LocalStore {
     });
   }
 
+  /**
+   * 여러 전표 중 가장 늦은 시계.
+   *
+   * 태그 명령처럼 한 번에 여러 전표를 건드리는 명령이 쓴다. 그중 가장 늦은 값 뒤로
+   * 시계를 발급해야, 사본에 그 시계를 찍을 때 어느 전표의 시계도 뒤로 가지 않는다.
+   */
+  async latestEntryHlc(entryIds: readonly string[]): Promise<string | null> {
+    if (entryIds.length === 0) return null;
+
+    const rows = await this.db.all<Row>(
+      `SELECT MAX(updatedHlc) AS hlc FROM entry WHERE id IN (${placeholders(entryIds.length)})`,
+      [...entryIds],
+    );
+    return asText(rows[0]?.hlc);
+  }
+
   /** 사본이 아는 그 전표의 시계. 수정 명령의 시계를 이 뒤로 놓는 데 쓴다. */
   async entryHlc(entryId: string): Promise<string | null> {
     const rows = await this.db.all<Row>(`SELECT updatedHlc FROM entry WHERE id = ?`, [entryId]);
     return asText(rows[0]?.updatedHlc);
+  }
+
+  /**
+   * 자산 한 줄을 사본에 쓴다 (구성원·통장·카드).
+   *
+   * 전표와 달리 **필드별 병합**이라, 바꾼 필드의 시계만 지도에 찍는다. 그 지도를 그대로
+   * 서버가 쓰는 모양(JSON 문자열)으로 담아 두어야, 다음 편집의 시계를 지금 값보다 뒤로
+   * 매길 수 있다.
+   *
+   * 새로 만드는 경우와 고치는 경우를 한 함수로 둔다 -- 사본에 적는 일이 같고, 다른 것은
+   * 아웃박스에 쌓는 명령의 종류뿐이다(그쪽은 부르는 사람이 정한다).
+   */
+  async writeAsset(
+    table: SettingTable,
+    id: string,
+    values: Record<string, SqlValue>,
+    hlc: string,
+  ): Promise<void> {
+    /*
+     * 순서 값이 없는 표가 있다 (예산과 예산 조정). 그쪽은 목록을 드래그하지 않으므로
+     * 자리를 계산할 것이 없다.
+     */
+    const hasRank = table !== 'budget' && table !== 'budget_override';
+
+    await this.db.transaction(async () => {
+      const rows = await this.db.all<Row>(
+        `SELECT fieldHlc${hasRank ? ', sortRank' : ''} FROM ${table} WHERE id = ?`,
+        [id],
+      );
+      const existing = rows[0];
+
+      /*
+       * 새 줄은 목록 맨 뒤에 붙인다. 지금 마지막 순서 뒤에 값을 하나 만든다 -- 서버가
+       * 매기는 자리와 같은 규칙이라(rankAfter), 동기화 뒤에도 자리가 움직이지 않는다.
+       */
+      const lastRank = hasRank
+        ? asText(
+            (
+              await this.db.all<Row>(
+                `SELECT MAX(sortRank) AS last FROM ${table} WHERE projectId = ?`,
+                [String(values.projectId ?? '')],
+              )
+            )[0]?.last,
+          )
+        : null;
+
+      /*
+       * 순서 값을 셋 중 하나로 정한다.
+       *
+       *   1. 명령이 자리를 옮기는 것이면 그 값 (드래그).
+       *   2. 이미 있는 줄이면 지금 값 그대로 (이름만 고치는 경우).
+       *   3. 새 줄이면 목록 맨 뒤 (서버의 createPerson 과 같은 규칙).
+       */
+      const sortRank = hasRank
+        ? asText(values.sortRank) ??
+          (existing ? asText(existing.sortRank) : null) ??
+          rankAfter(lastRank)
+        : null;
+
+      const clocks = mergeClocks(asText(existing?.fieldHlc), Object.keys(values), hlc);
+      const now = new Date().toISOString();
+
+      const row: Record<string, SqlValue> = {
+        ...values,
+        id,
+        ...(hasRank ? { sortRank } : {}),
+        fieldHlc: clocks,
+        updatedAt: now,
+        // 아직 서버를 거치지 않은 줄이다. 다음 pull 이 진짜 번호로 덮는다.
+        updatedVersion: 0,
+      };
+
+      /*
+       * 이미 있는 줄은 **덮어쓰지 않고 고친다.**
+       *
+       * 고치기 명령은 바꾼 필드만 들고 온다(필드별 병합). 그것을 통째로 넣으려 들면
+       * 담기지 않은 NOT NULL 컬럼이 비어 실패한다 -- upsert 의 INSERT 시도가 먼저
+       * 검사에 걸린다.
+       */
+      if (existing) {
+        const columns = Object.keys(row).filter((column) => column !== 'id');
+        await this.db.run(
+          `UPDATE ${table} SET ${columns.map((column) => `${column} = ?`).join(', ')} WHERE id = ?`,
+          [...columns.map((column) => row[column]), id],
+        );
+        return;
+      }
+
+      await this.upsert(table, { ...row, createdAt: asText(values.createdAt) ?? now });
+    });
+  }
+
+  /**
+   * 이 자산 줄의 마지막 편집 시각.
+   *
+   * 기기가 "내가 본 값"의 시계로 쓴다. 필드마다 다르므로 그중 가장 늦은 것을 준다 --
+   * 그 값을 보고 매긴 시계는 지금 사본에 있는 어떤 필드보다도 뒤가 된다.
+   */
+  async assetClock(table: SettingTable, id: string): Promise<string | null> {
+    const rows = await this.db.all<Row>(`SELECT fieldHlc FROM ${table} WHERE id = ?`, [id]);
+    return latestFieldClock(parseClocks(asText(rows[0]?.fieldHlc)));
+  }
+
+  /**
+   * 여러 전표의 태그를 사본에서 바꾼다. 더할 것과 뗄 것을 따로 받는다.
+   *
+   * 전표 자체는 건드리지 않는다 -- 연결만 넣고 빼므로 금액·다리·분할이 그대로 남는다.
+   * 무엇이 달라지는지는 서버와 **같은 함수**가 정한다 (`applyTagChange`). 어느 쪽에도
+   * 없는 태그는 그대로 둔다.
+   *
+   * **바뀐 전표의 시계는 올린다.** 태그도 전표라는 한 덩어리의 일부다 (D5). 올리지
+   * 않으면 이 기기의 다음 편집이 방금 붙인 태그보다 앞선 시계를 달고 나가, 서버가 그
+   * 편집을 뒤에 온 것으로 보지 않는다. 뒤로 가지 않는지 여기서 견주지 않는 것은, 부르는
+   * 쪽이 고른 전표들의 가장 늦은 시계 뒤로 발급받아 오기 때문이다(`latestEntryHlc`).
+   *
+   * 사본에 없는 전표는 건너뛴다. 고른 줄은 모두 사본에서 온 것이라 보통은 없는 일이고,
+   * 그 사이 다른 기기가 지웠다면 여기서 되살릴 것이 아니다.
+   *
+   * 돌려주는 것은 실제로 달라진 전표의 수다. 화면이 "몇 건에 표시했다"로 쓴다.
+   */
+  async changeEntryTags(
+    entryIds: readonly string[],
+    addTagIds: readonly string[],
+    removeTagIds: readonly string[],
+    hlc: string,
+  ): Promise<number> {
+    if (entryIds.length === 0) return 0;
+    if (addTagIds.length === 0 && removeTagIds.length === 0) return 0;
+
+    const touched = new Set<string>();
+
+    await this.db.transaction(async () => {
+      const known = await this.db.all<Row>(
+        `SELECT id FROM entry WHERE id IN (${placeholders(entryIds.length)})`,
+        [...entryIds],
+      );
+      const ids = known.map((row) => String(row.id));
+      if (ids.length === 0) return;
+
+      // 지금 붙어 있는 것. 무엇이 실제로 달라지는지 세려면 이것부터 알아야 한다.
+      const tagIds = [...addTagIds, ...removeTagIds];
+      const existing = await this.db.all<Row>(
+        `SELECT entryId, tagId FROM entry_tag
+          WHERE entryId IN (${placeholders(ids.length)})
+            AND tagId IN (${placeholders(tagIds.length)})`,
+        [...ids, ...tagIds],
+      );
+      const currentOf = new Map<string, Set<string>>();
+      for (const row of existing) {
+        const set = currentOf.get(String(row.entryId)) ?? new Set<string>();
+        set.add(String(row.tagId));
+        currentOf.set(String(row.entryId), set);
+      }
+
+      for (const entryId of ids) {
+        const change = applyTagChange(currentOf.get(entryId) ?? [], addTagIds, removeTagIds);
+        for (const tagId of change.added) {
+          await this.db.run(`INSERT OR IGNORE INTO entry_tag (entryId, tagId) VALUES (?, ?)`, [
+            entryId,
+            tagId,
+          ]);
+        }
+        if (change.changed) touched.add(entryId);
+      }
+
+      if (removeTagIds.length > 0) {
+        await this.db.run(
+          `DELETE FROM entry_tag
+            WHERE entryId IN (${placeholders(ids.length)})
+              AND tagId IN (${placeholders(removeTagIds.length)})`,
+          [...ids, ...removeTagIds],
+        );
+      }
+
+      if (touched.size === 0) return;
+
+      const changed = [...touched];
+      await this.db.run(
+        `UPDATE entry SET updatedHlc = ? WHERE id IN (${placeholders(changed.length)})`,
+        [hlc, ...changed],
+      );
+    });
+
+    return touched.size;
   }
 
   /** 전표를 사본에서 지운다. 딸린 다리와 할부 계획도 함께 간다. */
@@ -1374,13 +1710,20 @@ export class LocalStore {
   async accountById(
     projectId: string,
     accountId: string,
-  ): Promise<{ id: string; type: string; currency: string } | null> {
+  ): Promise<{ id: string; type: string; currency: string; ownerId: string | null } | null> {
     const rows = await this.db.all<Row>(
-      `SELECT id, type, currency FROM account WHERE id = ? AND projectId = ?`,
+      `SELECT id, type, currency, ownerId FROM account WHERE id = ? AND projectId = ?`,
       [accountId, projectId],
     );
     const row = rows[0];
-    return row ? { id: String(row.id), type: String(row.type), currency: String(row.currency) } : null;
+    return row
+      ? {
+          id: String(row.id),
+          type: String(row.type),
+          currency: String(row.currency),
+          ownerId: asText(row.ownerId),
+        }
+      : null;
   }
 
   async cardById(
@@ -1484,55 +1827,73 @@ export class LocalStore {
     },
     now = Date.now(),
   ): Promise<Mutation> {
-    return this.db.transaction(async () => {
-      const rows = await this.db.all<Row>(
-        `SELECT clientId, nextSeq, lastHlc FROM client_state WHERE id = 1`,
-      );
-      const state = rows[0];
-      if (!state) throw new Error('기기 이름이 아직 없습니다. ensureClient 를 먼저 부르세요.');
+    return this.db.transaction(() => this.insertMutation(input, now));
+  }
 
-      const clientId = String(state.clientId);
-      const clientSeq = asInt(state.nextSeq);
-      const last = decodeHlc(asText(state.lastHlc));
-      const seen = decodeHlc(input.observed);
-      const hlc = encodeHlc(
-        seen ? hlcReceive(last, seen, clientId, now) : hlcNext(last, clientId, now),
-      );
+  /**
+   * 큐에 한 줄을 넣는다. 트랜잭션은 부르는 쪽이 연다.
+   *
+   * `enqueue` 와 `retryMutation` 이 함께 쓴다. 다시 보내기는 버리기와 넣기가 한 단위여야
+   * 해서(둘 사이에서 멈추면 명령이 사라진다) 트랜잭션을 밖에 두었다.
+   */
+  private async insertMutation(
+    input: {
+      projectId: string;
+      mutationId: string;
+      kind: MutationKind;
+      targets: string[];
+      payload: unknown;
+      observed?: string | null;
+    },
+    now: number,
+  ): Promise<Mutation> {
+    const rows = await this.db.all<Row>(
+      `SELECT clientId, nextSeq, lastHlc FROM client_state WHERE id = 1`,
+    );
+    const state = rows[0];
+    if (!state) throw new Error('기기 이름이 아직 없습니다. ensureClient 를 먼저 부르세요.');
 
-      await this.db.run(
-        `UPDATE client_state SET nextSeq = ?, lastHlc = ? WHERE id = 1`,
-        [clientSeq + 1, hlc],
-      );
+    const clientId = String(state.clientId);
+    const clientSeq = asInt(state.nextSeq);
+    const last = decodeHlc(asText(state.lastHlc));
+    const seen = decodeHlc(input.observed);
+    const hlc = encodeHlc(
+      seen ? hlcReceive(last, seen, clientId, now) : hlcNext(last, clientId, now),
+    );
 
-      const mutation: Mutation = {
-        mutationId: input.mutationId,
-        clientId,
-        clientSeq,
-        hlc,
-        kind: input.kind,
-        projectId: input.projectId,
-        targets: input.targets,
-        payload: input.payload,
-      };
+    await this.db.run(
+      `UPDATE client_state SET nextSeq = ?, lastHlc = ? WHERE id = 1`,
+      [clientSeq + 1, hlc],
+    );
 
-      await this.db.run(
-        `INSERT INTO outbox
-           (mutationId, projectId, clientSeq, hlc, kind, targets, payload, status, error, createdAt)
-         VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?)`,
-        [
-          mutation.mutationId,
-          mutation.projectId,
-          mutation.clientSeq,
-          mutation.hlc,
-          mutation.kind,
-          JSON.stringify(mutation.targets),
-          JSON.stringify(mutation.payload),
-          new Date(now).toISOString(),
-        ],
-      );
+    const mutation: Mutation = {
+      mutationId: input.mutationId,
+      clientId,
+      clientSeq,
+      hlc,
+      kind: input.kind,
+      projectId: input.projectId,
+      targets: input.targets,
+      payload: input.payload,
+    };
 
-      return mutation;
-    });
+    await this.db.run(
+      `INSERT INTO outbox
+         (mutationId, projectId, clientSeq, hlc, kind, targets, payload, status, error, createdAt)
+       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?)`,
+      [
+        mutation.mutationId,
+        mutation.projectId,
+        mutation.clientSeq,
+        mutation.hlc,
+        mutation.kind,
+        JSON.stringify(mutation.targets),
+        JSON.stringify(mutation.payload),
+        new Date(now).toISOString(),
+      ],
+    );
+
+    return mutation;
   }
 
   /** 보낼 차례의 명령. 언제나 clientSeq 순서다. */
@@ -1566,6 +1927,14 @@ export class LocalStore {
   async settleMutations(results: readonly MutationResult[]): Promise<void> {
     await this.db.transaction(async () => {
       for (const result of results) {
+        /*
+         * 서버가 다른 행을 채택했다. 사본과 큐의 참조를 그 id 로 옮긴다.
+         *
+         * 판정보다 먼저 한다. 이 명령이 큐에서 빠지기 전에 뒤 명령의 짐을 고쳐 두어야
+         * 없는 id 를 가리킨 채로 나가지 않는다.
+         */
+        if (result.alias) await this.applyAlias(result.alias.from, result.alias.to);
+
         if (isSettled(result.status)) {
           await this.db.run(`DELETE FROM outbox WHERE mutationId = ?`, [result.mutationId]);
           continue;
@@ -1585,6 +1954,59 @@ export class LocalStore {
         ]);
       }
     });
+  }
+
+  /**
+   * 기기가 만든 id 를 서버가 채택한 id 로 갈아 끼운다.
+   *
+   * 두 사람이 오프라인에서 같은 이름의 분류를 만들었을 때다. 옮길 곳이 셋이다.
+   *
+   *   1. **사본의 참조** -- 다리와 예산이 그 분류를 가리키고, 소분류는 부모를 가리킨다.
+   *   2. **큐에 남은 명령** -- 아직 보내지 않은 짐이 옛 id 를 들고 있다.
+   *   3. **그 줄 자신** -- 서버의 행은 다음 pull 로 들어오므로 여기서 지운다.
+   *
+   * 트랜잭션은 부르는 쪽(`settleMutations`)이 연다.
+   */
+  async applyAlias(localId: string, serverId: string): Promise<void> {
+    if (localId === serverId) return;
+
+    await this.db.run(
+      `INSERT OR REPLACE INTO alias (localId, serverId) VALUES (?, ?)`,
+      [localId, serverId],
+    );
+
+    for (const [table, column] of [
+      ['posting', 'categoryId'],
+      ['budget', 'categoryId'],
+      ['category', 'parentId'],
+      ['entry_tag', 'tagId'],
+    ] as const) {
+      await this.db.run(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`, [
+        serverId,
+        localId,
+      ]);
+    }
+
+    /*
+     * 큐의 짐은 글자로 바꾼다. JSON 을 다시 풀어 쓰는 것보다 안전하다 -- id 는
+     * UUID 라 다른 값의 일부로 들어갈 일이 없고, 어느 자리에 있든 함께 옮겨야 한다.
+     */
+    await this.db.run(
+      `UPDATE outbox
+          SET payload = replace(payload, ?, ?),
+              targets = replace(targets, ?, ?)`,
+      [localId, serverId, localId, serverId],
+    );
+
+    for (const table of ['category', 'tag'] as const) {
+      await this.db.run(`DELETE FROM ${table} WHERE id = ?`, [localId]);
+    }
+  }
+
+  /** 이 id 가 서버의 다른 id 로 옮겨졌는가. 화면이 옛 id 를 들고 왔을 때 쓴다. */
+  async aliasOf(localId: string): Promise<string | null> {
+    const rows = await this.db.all<Row>(`SELECT serverId FROM alias WHERE localId = ?`, [localId]);
+    return asText(rows[0]?.serverId);
   }
 
   /** 사용자에게 보여 줄 보류 칸. 충돌과 거절이 여기 모인다. */
@@ -1610,16 +2032,52 @@ export class LocalStore {
   }
 
   /**
-   * 막혔던 명령을 다시 줄에 세운다.
+   * 막힌 명령을 **새 명령으로** 다시 낸다. 돌려주는 것은 새로 만든 명령이다.
    *
-   * 앞 명령을 버리고 나면 뒤 명령은 다시 보내 볼 만하다. 상태만 되돌리고 번호는 그대로
-   * 두는데, 번호를 새로 매기면 서버가 보기에 다른 명령이 되어 멱등이 깨진다.
+   * 상태만 'pending' 으로 되돌리면 아무 일도 일어나지 않는다. 서버는 명령 id 로 판정을
+   * 기록해 두어(MutationLog), 같은 id 가 다시 오면 재생하지 않고 **그때의 판정을 그대로**
+   * 돌려준다. 충돌은 영원히 충돌로, 거절은 영원히 거절로 되돌아온다.
+   *
+   * 그래서 짐만 물려받고 id·순번·시계를 새로 뽑는다. 시계는 사본에 지금 들어 있는 값을
+   * 보고(`observed`) 그보다 뒤가 되므로, 충돌로 밀렸던 편집이 이번에는 이긴다 -- 사용자가
+   * "그래도 내 값으로 하겠다"를 고른 자리이기 때문이다 (설계 문서의 D6).
+   *
+   * 앞 명령이 막아 함께 미뤄졌던 것(blocked)도 같은 길로 나간다. 그쪽은 서버가 본 적이
+   * 없어 id 를 바꾸지 않아도 되지만, 한 길로 두는 편이 규칙이 하나다.
    */
-  async retryMutation(mutationId: string): Promise<void> {
-    await this.db.run(
-      `UPDATE outbox SET status = 'pending', error = NULL WHERE mutationId = ?`,
-      [mutationId],
-    );
+  async retryMutation(mutationId: string, makeId: () => string): Promise<Mutation | null> {
+    return this.db.transaction(async () => {
+      const rows = await this.db.all<Row>(`SELECT * FROM outbox WHERE mutationId = ?`, [
+        mutationId,
+      ]);
+      const row = rows[0];
+      if (!row) return null;
+
+      const targets = JSON.parse(String(row.targets)) as string[];
+      const payload = JSON.parse(String(row.payload)) as unknown;
+
+      /*
+       * 사본에 남아 있는 그 거래의 시계를 본다.
+       *
+       * 충돌이었다면 그 사이에 이긴 편집이 pull 로 들어와 있다. 그것을 보고 뒤 번호를
+       * 받아야 이번 명령이 이긴다. 거래가 이미 사라졌으면(삭제가 이겼다) 없는 대로 둔다.
+       */
+      const observed = targets.length > 0 ? await this.entryHlc(targets[0]) : null;
+
+      await this.db.run(`DELETE FROM outbox WHERE mutationId = ?`, [mutationId]);
+
+      return this.insertMutation(
+        {
+          projectId: String(row.projectId),
+          mutationId: makeId(),
+          kind: String(row.kind) as MutationKind,
+          targets,
+          payload,
+          observed,
+        },
+        Date.now(),
+      );
+    });
   }
 
   /** 아직 보내지 못한 명령 수. 화면이 "N건 대기" 를 보여 줄 때 쓴다. */
@@ -1652,7 +2110,7 @@ export class LocalStore {
          LEFT JOIN account pay ON pay.id = c.paymentAccountId
          LEFT JOIN person owner ON owner.id = pay.ownerId
         WHERE c.projectId = ?
-        ORDER BY c.sortOrder, c.createdAt`,
+        ORDER BY c.sortRank, c.createdAt`,
       [projectId],
     );
 
@@ -1800,6 +2258,61 @@ const TOMBSTONE_TABLES: Record<string, string> = {
   AssetValuation: 'asset_valuation',
   InstallmentPlan: 'installment_plan',
 };
+
+/**
+ * 스키마 문장이 적어 둔 표와 컬럼.
+ *
+ * 기대 목록을 손으로 또 적지 않는다. 두 벌이 되면 한쪽만 고쳐 놓고 "모양이 맞다"고
+ * 믿는 일이 생긴다. 문장에서 그대로 읽는다.
+ */
+function expectedColumns(): Array<[string, string[]]> {
+  const tables: Array<[string, string[]]> = [];
+
+  for (const raw of SCHEMA_STATEMENTS) {
+    /*
+     * 주석을 먼저 걷어낸다. 문장 안의 `/* ... *\/` 를 그대로 두면 그것이 컬럼 이름으로
+     * 읽히고, 그 뒤의 진짜 컬럼은 사라진다 -- 그러면 모양이 늘 어긋난 것으로 보인다.
+     */
+    const statement = raw.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
+    const head = /CREATE TABLE IF NOT EXISTS (\w+)\s*\(/i.exec(statement);
+    if (!head) continue;
+
+    const body = statement.slice(head.index + head[0].length, statement.lastIndexOf(')'));
+    const columns: string[] = [];
+    let depth = 0;
+    let current = '';
+
+    const take = (segment: string) => {
+      const name = segment.trim().split(/\s+/)[0];
+      // 표 전체에 걸리는 제약(PRIMARY KEY (a, b) 등)은 컬럼이 아니다.
+      if (name && !/^(PRIMARY|UNIQUE|FOREIGN|CHECK|CONSTRAINT)$/i.test(name)) columns.push(name);
+    };
+
+    for (const char of body) {
+      if (char === '(') depth += 1;
+      if (char === ')') depth -= 1;
+      if (char === ',' && depth === 0) {
+        take(current);
+        current = '';
+        continue;
+      }
+      current += char;
+    }
+    take(current);
+
+    tables.push([head[1], columns]);
+  }
+
+  return tables;
+}
+
+/**
+ * 사본이 담는 표 전부. 스키마 판이 바뀌면 이것을 부수고 다시 세운다.
+ *
+ * 아웃박스(`outbox`)와 기기 이름(`client_state`)은 여기 없다. 그 둘은 서버에서 다시 받을
+ * 수 있는 값이 아니라 아직 보내지 못한 사용자의 입력이다.
+ */
+const MIRROR_TABLES: readonly string[] = ALL_TABLES;
 
 /**
  * 프로젝트를 직접 가리키지 않는 표. 부모를 따라 지운다.
@@ -1998,13 +2511,48 @@ function searchFilter(search?: ParsedEntrySearch): { sql: string; params: string
    * 같은 규칙이라, 같은 검색이 온라인과 오프라인에서 같은 목록을 낸다.
    */
   const tagIds = search.tagIds ?? [];
-  if (tagIds.length > 0) {
+  if (tagIds.length > 0 || search.noTag) {
+    const branches: string[] = [];
+
+    if (tagIds.length > 0) {
+      branches.push(`EXISTS (
+            SELECT 1 FROM entry_tag et
+             WHERE et.entryId = e.id AND et.tagId IN (${tagIds.map(() => '?').join(', ')})
+          )`);
+      params.push(...tagIds);
+    }
+    // 태그가 하나도 붙지 않은 전표. 고른 태그들과 OR 로 이어진다 (무리 안은 OR).
+    if (search.noTag) {
+      branches.push(`NOT EXISTS (SELECT 1 FROM entry_tag et WHERE et.entryId = e.id)`);
+    }
+
     sql += `
-        AND EXISTS (
-          SELECT 1 FROM entry_tag et
-           WHERE et.entryId = e.id AND et.tagId IN (${tagIds.map(() => '?').join(', ')})
-        )`;
-    params.push(...tagIds);
+        AND (${branches.join(' OR ')})`;
+  }
+
+  /*
+   * 거래를 낸 사람. 전표의 personId 를 그대로 본다.
+   *
+   * 자산주인 필터(ownerFilter)와 다른 자리다. 그쪽은 돈이 오간 계좌의 주인을 보고,
+   * 이쪽은 거래를 적을 때 고른 사람을 본다.
+   */
+  const entryPersonIds = search.entryPersonIds ?? [];
+  if (entryPersonIds.length > 0) {
+    sql += ` AND e.personId IN (${entryPersonIds.map(() => '?').join(', ')})`;
+    params.push(...entryPersonIds);
+  }
+
+  /*
+   * 설명에 든 글자. 다리가 아니라 전표를 본다 -- 설명은 전표에 있다.
+   *
+   * LIKE 는 아스키 대소문자를 가리지 않는다(서버의 insensitive 와 같은 자리에서 같은
+   * 일을 한다). 사용자가 적은 글자 안의 `%` `_` 는 그대로 찾도록 이스케이프한다 --
+   * 털어 내지 않으면 "50%"를 적은 사람이 아무 글자나 걸리는 결과를 보게 된다.
+   */
+  if (search.text) {
+    const escaped = search.text.replace(/[\\%_]/g, (mark) => `\\${mark}`);
+    sql += ` AND e.description LIKE ? ESCAPE '\\'`;
+    params.push(`%${escaped}%`);
   }
 
   // 유형. 값이 상수뿐이라 자리표를 쓰지 않는다 (`parseEntrySearch` 가 아는 값만 남긴다).

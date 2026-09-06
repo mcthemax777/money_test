@@ -3,7 +3,12 @@ import { CardsService } from '@/modules/cards/cards.service';
 
 const D = (n: string | number) => new Prisma.Decimal(n);
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
-import { makeLedger, projectAccessStub, runSmoke } from './smoke-harness';
+import {
+  makeCards,
+  makeLedger,
+  projectAccessStub,
+  runSmoke,
+} from './smoke-harness';
 
 runSmoke('ledger', async (ctx) => {
   // ── 준비 ──
@@ -13,7 +18,7 @@ runSmoke('ledger', async (ctx) => {
   const access = projectAccessStub(ctx.prisma, pid);
   const ledger = makeLedger(ctx.prisma, access);
   const institutions = new InstitutionsService(ctx.prisma as any, access);
-  const cards = new CardsService(ctx.prisma as any, access, institutions);
+  const cards = makeCards(ctx.prisma, access, institutions);
   const person = await ctx.prisma.person.create({ data: { projectId: pid, name: '김철수' } });
 
   const bank = await ctx.prisma.account.create({

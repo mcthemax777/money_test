@@ -18,7 +18,6 @@
  *   5. 그 사본을 0단계의 집계 함수에 넣으면 서버와 같은 값이 나온다.
  *   6. 네트워크가 없으면 오류가 아니라 "오프라인"으로 끝난다.
  */
-import { DatabaseSync } from 'node:sqlite';
 import { existsSync, readFileSync } from 'fs';
 import {
   categoryBreakdown,
@@ -56,6 +55,7 @@ function emptyChanges(): SyncDto.Changes {
     people: [],
     accounts: [],
     categories: [],
+    tags: [],
     cards: [],
     entries: [],
     budgets: [],
@@ -104,6 +104,8 @@ const entry = (
   rateProvisional: false,
   createdByUserId: null,
   updatedVersion: version,
+  // 서버는 전표에 붙은 태그를 id 목록으로 실어 준다. 이 표본에는 태그가 없다.
+  tagIds: [] as string[],
   postings: [
     {
       id: `${id}-cat`,
@@ -154,6 +156,67 @@ const entry = (
   eq('프로젝트 없이도 기기 이름을 만든다', coldClientId, 'client-cold');
   eq('두 번 불러도 같은 이름이다', await coldStore.ensureClient(() => 'client-other'), 'client-cold');
   coldDriver.close();
+
+  /*
+   * ── 0-2. 판이 올라가면 표를 다시 세운다 ──
+   *
+   * 컬럼이 늘어난 판에서 행만 지우면(옛 `reset`) 옛 표에는 그 컬럼이 없다.
+   * `CREATE TABLE IF NOT EXISTS` 는 이미 있는 표를 손대지 않으므로, 동기화가
+   * "table person has no column named fieldHlc" 로 매번 실패한다 -- 에뮬레이터에서
+   * 실제로 그렇게 죽었다. 여기서 그 상황을 만들어 못 박는다.
+   *
+   * 아웃박스는 살아남아야 한다. 사본은 서버에서 다시 받지만 큐에 든 것은 아직 아무
+   * 데도 없는 사용자의 입력이다.
+   */
+  const oldDriver = nodeSqliteDriver();
+  await oldDriver.run(
+    `CREATE TABLE person (id TEXT PRIMARY KEY, projectId TEXT NOT NULL, name TEXT NOT NULL,
+       relationship TEXT, isActive INTEGER NOT NULL DEFAULT 1, sortOrder INTEGER NOT NULL DEFAULT 0,
+       createdAt TEXT NOT NULL DEFAULT '', updatedAt TEXT NOT NULL DEFAULT '',
+       updatedVersion INTEGER NOT NULL DEFAULT 0)`,
+  );
+  const oldStore = new LocalStore(oldDriver);
+  await oldStore.ensureSchema();
+  await oldStore.ensureClient(() => 'client-old');
+  await oldDriver.run(
+    `INSERT INTO sync_state (projectId, version, schemaVersion, timeZone, syncedAt)
+     VALUES ('p-old', 7, 1, 'Asia/Seoul', NULL)`,
+  );
+  await oldStore.enqueue({
+    projectId: 'p-old',
+    mutationId: 'm-old',
+    kind: 'entry.create',
+    targets: ['e-old'],
+    payload: { id: 'e-old' },
+  });
+
+  const rebuilt = await oldStore.init('p-old', 'Asia/Seoul');
+  eq('옛 판이면 커서가 처음으로 돌아간다', rebuilt.version, 0);
+  await oldStore.writeAsset('person', 'p1', { projectId: 'p-old', name: '새 판' }, 'hlc-1');
+  eq('새 컬럼이 생겼다', await oldStore.assetClock('person', 'p1'), 'hlc-1');
+  eq('아웃박스는 살아남는다', (await oldStore.pendingMutations('p-old')).length, 1);
+  oldDriver.close();
+
+  /*
+   * ── 0-3. 판 번호는 새것인데 표가 옛 모양이면 ──
+   *
+   * 옛 `reset` 이 판 번호까지 지우고 새로 적어, 번호는 5인데 표는 4판 모양인 기기가
+   * 실제로 생겼다. 번호만 보면 알아챌 수 없으므로 **모양**을 본다.
+   */
+  const shapeDriver = nodeSqliteDriver();
+  await shapeDriver.run(
+    `CREATE TABLE person (id TEXT PRIMARY KEY, projectId TEXT NOT NULL, name TEXT NOT NULL,
+       relationship TEXT, isActive INTEGER NOT NULL DEFAULT 1, sortOrder INTEGER NOT NULL DEFAULT 0,
+       createdAt TEXT NOT NULL DEFAULT '', updatedAt TEXT NOT NULL DEFAULT '',
+       updatedVersion INTEGER NOT NULL DEFAULT 0)`,
+  );
+  const shapeStore = new LocalStore(shapeDriver);
+  await shapeStore.ensureSchema();
+  const shapeColumns = (
+    await shapeDriver.all<{ name: string }>(`PRAGMA table_info(person)`)
+  ).map((row) => row.name);
+  eq('모양이 어긋나면 표를 다시 세운다', shapeColumns.includes('fieldHlc'), true);
+  shapeDriver.close();
 
   const driver = nodeSqliteDriver();
   const store = new LocalStore(driver);
@@ -385,26 +448,58 @@ const entry = (
   // 파일이 없으면 건너뛴다 (데이터베이스 없이도 이 검사가 돌아야 한다).
   const dumpPath = process.argv[2] ?? '/tmp/sync-pull-dump.json';
   if (existsSync(dumpPath)) {
+    /*
+     * 이 모양의 원본은 api 의 `scripts/sync-pull-dump.ts` 가 만드는 `server` 객체다.
+     * 두 패키지에 걸쳐 있어(core 는 api 를 의존할 수 없다) 손으로 따라 적는다.
+     * 저쪽에 칸이 늘면 여기도 늘려야 한다 -- 안 그러면 그 칸을 읽는 순간 타입 검사가
+     * 막는다. 그것이 이 검사를 tsconfig.scripts.json 에 붙여 둔 이유이기도 하다.
+     */
+    type MonthTotals = Array<{ yearMonth: string; income: string; expense: string }>;
+    type Rows = Array<Record<string, unknown>>;
+
     const dump = JSON.parse(readFileSync(dumpPath, 'utf8')) as {
       pull: SyncDto.PullResponse;
       server: {
         summary: Record<string, string>;
         netWorth: Record<string, unknown>;
-        budgets: Array<Record<string, unknown>>;
-        entries: Array<Record<string, unknown>>;
-        firstPage: { data: Array<Record<string, unknown>>; nextCursor: string | null };
-        paymentMethods: Array<Record<string, unknown>>;
+        budgets: Rows;
+        entries: Rows;
+        firstPage: { data: Rows; nextCursor: string | null };
+        paymentMethods: Rows;
         cardPerformance: Record<string, unknown>;
-        entryMonths: Array<{ yearMonth: string; income: string; expense: string }>;
-        categoryBreakdown: Array<Record<string, unknown>>;
-        searchedMonths: Array<{ yearMonth: string; income: string; expense: string }>;
-        rangedMonths: Array<{ yearMonth: string; income: string; expense: string }>;
-        rangedBreakdown: Array<Record<string, unknown>>;
-        rangedPaymentMethods: Array<Record<string, unknown>>;
-        searchedEntries: Array<Record<string, unknown>>;
+
+        /* 달별 합계. 검색 무리마다 한 벌씩 떠 둔다. */
+        entryMonths: MonthTotals;
+        searchedMonths: MonthTotals;
+        rangedMonths: MonthTotals;
+        /** 한쪽만 적은 기간. 사본이 없는 쪽을 달력 키의 양끝으로 채우는지 본다. */
+        openStartMonths: MonthTotals;
+        openEndMonths: MonthTotals;
+        /** 설명에서 찾는 글자 (Postgres 의 insensitive contains ↔ SQLite 의 LIKE). */
+        textMonths: MonthTotals;
+
+        categoryBreakdown: Rows;
+        rangedBreakdown: Rows;
+        rangedPaymentMethods: Rows;
+        rangedEntries: Rows;
+        searchedEntries: Rows;
+
+        /* 검색 갈래마다 서버가 고른 전표 id. 사본이 같은 목록을 내야 한다. */
+        noTagEntries: string[];
+        tagOrNoTagEntries: string[];
+        taggedEntries: string[];
+        personEntries: string[];
+        textEntries: string[];
         kindEntries: Record<string, string[]>;
         monthEntries: Record<string, string[]>;
+
+        /* 사본 쪽 검사가 물어볼 때 쓰는 id 들. */
         searchCategoryId: string;
+        personId: string;
+        otherPersonId: string;
+        /** 그 사람의 전표 id 를 쉼표로 이어 둔 것. 그대로 견준다. */
+        otherPersonEntryId: string;
+        tripTagId: string;
         cardId: string;
         stockAccountId: string;
       };
@@ -484,8 +579,16 @@ const entry = (
     eq('창구: 구성원', people.length, real.changes.people.length);
     eq('창구: 구성원 이름', people[0]?.name, '김철수');
 
+    /*
+     * 통장 목록은 서버의 `/accounts` 와 같은 것을 주어야 한다. 카드 부채와 기초잔액
+     * 자본 계정은 사용자에게 통장으로 보이지 않으므로 양쪽 다 뺀다 -- 사본만 그대로
+     * 두면 오프라인에서만 목록이 길어진다.
+     */
     const accounts = await port.getAccountsV2(real.projectId);
-    eq('창구: 계좌 (자본 계정까지)', accounts.length, real.changes.accounts.length);
+    const visibleAccounts = (real.changes.accounts as Array<{ type: string }>).filter(
+      (row) => row.type !== 'credit_card' && row.type !== 'opening_balance',
+    );
+    eq('창구: 계좌 (통장으로 보이는 것만)', accounts.length, visibleAccounts.length);
     const bank = accounts.find((row) => row.name === '보통예금');
     eq('창구: 계좌 주인이 실려 온다', bank?.owner?.name, '김철수');
 
@@ -560,10 +663,10 @@ const entry = (
         continue;
       }
       for (const field of methodFields) {
-        if (String((row as Record<string, unknown>)[field]) !== String(serverRow[field])) {
+        if (String((row as unknown as Record<string, unknown>)[field]) !== String(serverRow[field])) {
           methodMismatch += 1;
           console.log(
-            `FAIL  결제수단: ${row.name}.${field} (서버 ${serverRow[field]}, 사본 ${(row as Record<string, unknown>)[field]})`,
+            `FAIL  결제수단: ${row.name}.${field} (서버 ${serverRow[field]}, 사본 ${(row as unknown as Record<string, unknown>)[field]})`,
           );
         }
       }
@@ -625,10 +728,10 @@ const entry = (
         continue;
       }
       for (const field of compared) {
-        if (String((row as Record<string, unknown>)[field]) !== String(serverRow[field])) {
+        if (String((row as unknown as Record<string, unknown>)[field]) !== String(serverRow[field])) {
           mismatch += 1;
           console.log(
-            `FAIL  목록: ${row.description}.${field} (서버 ${serverRow[field]}, 사본 ${(row as Record<string, unknown>)[field]})`,
+            `FAIL  목록: ${row.description}.${field} (서버 ${serverRow[field]}, 사본 ${(row as unknown as Record<string, unknown>)[field]})`,
           );
         }
       }
@@ -755,6 +858,88 @@ const entry = (
       rangedMonths.find((row) => row.yearMonth === '2026-11')?.expense,
       dump.server.rangedMonths.find((row) => row.yearMonth === '2026-11')?.expense);
 
+    /*
+     * 한쪽만 적은 기간. 시작일만 적으면 그날부터 끝까지, 종료일만 적으면 처음부터
+     * 그날까지다. 사본이 없는 쪽을 달력 키의 양끝으로 채우는지 본다.
+     */
+    const openStartMonths = await port.getEntryMonths(real.projectId, {
+      startDate: '2026-11-01',
+    });
+    eq('열린 기간: 시작일만 적은 달 목록',
+      openStartMonths.map((row) => row.yearMonth).join(','),
+      dump.server.openStartMonths.map((row: { yearMonth: string }) => row.yearMonth).join(','));
+
+    const openEndMonths = await port.getEntryMonths(real.projectId, { endDate: '2026-08-31' });
+    eq('열린 기간: 종료일만 적은 달 목록',
+      openEndMonths.map((row) => row.yearMonth).join(','),
+      dump.server.openEndMonths.map((row: { yearMonth: string }) => row.yearMonth).join(','));
+
+    /*
+     * 설명에서 찾는 글자. 서버는 Postgres 의 contains 로, 사본은 SQLite 의 LIKE 로 한다.
+     * 두 문장이 같은 답을 내야 같은 검색이 온라인과 오프라인에서 같은 목록을 낸다.
+     */
+    const textMonths = await port.getEntryMonths(real.projectId, { text: '치킨' });
+    eq('글자 검색: 달 목록',
+      textMonths.map((row) => row.yearMonth).join(','),
+      dump.server.textMonths.map((row: { yearMonth: string }) => row.yearMonth).join(','));
+    eq('글자 검색: 그 달 지출',
+      textMonths[0]?.expense, dump.server.textMonths[0]?.expense);
+
+    const textEntries = await port.getAllEntries({ text: '치킨', limit: 200 }, real.projectId);
+    eq('글자 검색: 목록도 같은 전표',
+      textEntries.map((row) => row.id).join(','),
+      dump.server.textEntries.join(','));
+
+    const partialText = await port.getAllEntries({ text: '킨', limit: 200 }, real.projectId);
+    eq('글자 검색: 가운데 글자도 걸린다',
+      partialText.map((row) => row.id).join(','),
+      dump.server.textEntries.join(','));
+
+    const noText = await port.getAllEntries({ text: '없는글자', limit: 200 }, real.projectId);
+    eq('글자 검색: 없는 글자는 빈 목록', noText.length, 0);
+
+    /*
+     * "태그 없음". 태그가 하나도 붙지 않은 전표를 찾는다.
+     *
+     * 서버는 `tags: { none: {} }` 로, 사본은 `NOT EXISTS` 로 같은 것을 묻는다.
+     */
+    const noTagEntries = await port.getAllEntries({ tagIds: 'none', limit: 200 }, real.projectId);
+    eq('태그 없음: 서버와 같은 전표',
+      noTagEntries.map((row) => row.id).join(','),
+      dump.server.noTagEntries.join(','));
+
+    eq('태그 없음: 태그 붙은 거래는 빠진다',
+      noTagEntries.some((row) => dump.server.taggedEntries.includes(row.id)), false);
+
+    /* "여행 또는 태그 없음". 무리 안은 OR 이라 둘을 합친 목록이 나온다. */
+    const tagOrNone = await port.getAllEntries(
+      { tagIds: `${dump.server.tripTagId},none`, limit: 200 },
+      real.projectId,
+    );
+    eq('태그 무리 안은 OR (여행 또는 태그 없음)',
+      tagOrNone.map((row) => row.id).sort().join(','),
+      [...dump.server.tagOrNoTagEntries].sort().join(','));
+    eq('그때는 태그 붙은 것도 든다',
+      tagOrNone.length, noTagEntries.length + dump.server.taggedEntries.length);
+
+    /* 낸 사람. 자산주인 필터가 아니라 전표의 personId 다. */
+    const personEntries = await port.getAllEntries(
+      { entryPersonIds: dump.server.personId, limit: 200 },
+      real.projectId,
+    );
+    eq('낸 사람: 서버와 같은 전표',
+      personEntries.map((row) => row.id).join(','),
+      dump.server.personEntries.join(','));
+    eq('낸 사람: 다른 사람이 낸 거래는 빠진다',
+      personEntries.some((row) => row.id === dump.server.otherPersonEntryId), false);
+
+    const otherPersonEntries = await port.getAllEntries(
+      { entryPersonIds: dump.server.otherPersonId, limit: 200 },
+      real.projectId,
+    );
+    eq('낸 사람: 그 사람의 거래만',
+      otherPersonEntries.map((row) => row.id).join(','), dump.server.otherPersonEntryId);
+
     const rangedBreakdown = await port.getCategoryBreakdown(
       { startDate: '2026-08-10', endDate: '2026-08-31' },
       'expense',
@@ -862,7 +1047,6 @@ const entry = (
 })();
 
 // node:sqlite 는 실험 기능이라 경고를 낸다. 검증 출력이 묻히지 않게 지운다.
-void DatabaseSync;
 process.removeAllListeners('warning');
 process.on('warning', (warning) => {
   if (warning.name !== 'ExperimentalWarning') console.warn(warning);

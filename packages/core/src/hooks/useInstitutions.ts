@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { cachedInstitutions, fetchInstitutions } from '@money/core/lib/institutions';
-import { useProject } from '@money/core/store/project';
-import type { FinancialInstitutionType, Institution } from '@money/core/lib/types';
-import { activeLocale, translate } from '@money/core/lib/i18n';
+import { cachedInstitutions, fetchInstitutions } from '../lib/institutions';
+import { useProject } from '../store/project';
+import type { FinancialInstitutionType, Institution } from '../lib/types';
+import { activeLocale, translate } from '../lib/i18n';
 
 /**
- * 은행/카드사 목록을 불러온다.
+ * 은행/카드사 목록을 불러온다. 웹과 앱이 함께 쓴다.
  * `options`는 CustomSelect가 그대로 받을 수 있는 모양이다.
  */
 export function useInstitutions(type: FinancialInstitutionType) {
