@@ -10,10 +10,11 @@
 import { DatabaseSync } from 'node:sqlite';
 
 import type { SqlDriver, SqlValue } from '../src/data/sql-driver';
+import { createTxLock } from '../src/data/tx-lock';
 
 export function nodeSqliteDriver(path = ':memory:'): SqlDriver & { close(): void } {
   const db = new DatabaseSync(path);
-  let depth = 0;
+  const lock = createTxLock();
 
   return {
     async run(sql: string, params: readonly SqlValue[] = []) {
@@ -25,24 +26,23 @@ export function nodeSqliteDriver(path = ':memory:'): SqlDriver & { close(): void
     },
 
     /**
-     * 겹쳐 부를 수 있게 해 둔다. 사본을 버리는 경로가 트랜잭션 안에서 또 다른
-     * 트랜잭션을 열 수 있고, SQLite 는 트랜잭션을 겹쳐 열지 못한다.
+     * 한 줄로 세운다. 앱의 드라이버와 같은 규칙이다 (`data/tx-lock`).
+     *
+     * 겹쳐 열지 않고 앞엣것이 끝나기를 기다린다. 안에서 그냥 돌게 두면 앞 트랜잭션이
+     * 되돌아갈 때 뒤가 적은 것까지 사라진다.
      */
     async transaction<T>(fn: () => Promise<T>): Promise<T> {
-      if (depth > 0) return fn();
-
-      depth += 1;
-      db.exec('BEGIN');
-      try {
-        const result = await fn();
-        db.exec('COMMIT');
-        return result;
-      } catch (error) {
-        db.exec('ROLLBACK');
-        throw error;
-      } finally {
-        depth -= 1;
-      }
+      return lock(async () => {
+        db.exec('BEGIN');
+        try {
+          const result = await fn();
+          db.exec('COMMIT');
+          return result;
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
+      });
     },
 
     close() {

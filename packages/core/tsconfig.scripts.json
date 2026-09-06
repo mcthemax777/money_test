@@ -1,0 +1,16 @@
+// 스모크 스크립트 타입 체크 전용.
+//
+// scripts/ 는 빌드 대상이 아니라 메인 tsconfig 의 include 밖에 있다. 그래서 src 의
+// 메서드 이름을 바꿔도 스크립트는 아무 경고 없이 통과했고, 실행할 때만 TypeError 가
+// 났다. api 가 같은 이유로 이 설정을 먼저 두었다(그쪽 주석에 실제로 겪은 예가 있다).
+//
+// 방출은 하지 않고 타입만 본다. `node:sqlite` 를 쓰므로 lib 에 노드 타입이 필요하다.
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": ["src/**/*", "scripts/**/*"]
+}
