@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  rankForStep,
+  rankForMove, rankForStep,
   type AccountDto,
   type CardDto,
   type PersonDto,
@@ -218,10 +218,12 @@ export function useAssetsData(projectId: string | null) {
     <T extends { id: string; sortRank?: string | null }>(
       rows: readonly T[],
       id: string,
-      step: 1 | -1,
+      /** 한 칸 옮기기(step)이거나, 끌어다 놓은 자리(index)다. */
+      to: { step: 1 | -1 } | { index: number },
       apply: (id: string, patch: { sortRank: string }) => Promise<AssetSaveResult>,
     ): Promise<AssetSaveResult> => {
-      const rank = rankForStep(rows, id, step);
+      const rank =
+        'step' in to ? rankForStep(rows, id, to.step) : rankForMove(rows, id, to.index);
       if (!rank) return Promise.resolve({ ok: true });
 
       return apply(id, { sortRank: rank });
@@ -277,19 +279,40 @@ export function useAssetsData(projectId: string | null) {
     updateCard,
 
     /** 한 칸 위로(-1) 또는 아래로(+1). 같은 묶음 안에서만 움직인다. */
-    movePerson: (id: string, step: 1 | -1) => moveWithin(people, id, step, updatePerson),
+    movePerson: (id: string, step: 1 | -1) => moveWithin(people, id, { step }, updatePerson),
     moveAccount: (id: string, ownerId: string | null, step: 1 | -1) =>
       moveWithin(
         accounts.filter((account) => account.ownerId === ownerId),
         id,
-        step,
+        { step },
         updateAccount,
+      ),
+    /*
+     * 끌어다 놓은 자리로. `index` 는 그 묶음 안에서 놓은 뒤의 자리다.
+     *
+     * 옮긴 줄의 값 하나만 보내는 것은 한 칸 옮기기와 같다 -- 목록 전체를 다시 쓰면 그
+     * 사이 남이 옮긴 것이 통째로 지워진다 (D5).
+     */
+    movePersonTo: (id: string, index: number) => moveWithin(people, id, { index }, updatePerson),
+    moveAccountTo: (id: string, ownerId: string | null, index: number) =>
+      moveWithin(
+        accounts.filter((account) => account.ownerId === ownerId),
+        id,
+        { index },
+        updateAccount,
+      ),
+    moveCardTo: (id: string, paymentAccountId: string, index: number) =>
+      moveWithin(
+        cards.filter((card) => card.paymentAccountId === paymentAccountId),
+        id,
+        { index },
+        updateCard,
       ),
     moveCard: (id: string, paymentAccountId: string, step: 1 | -1) =>
       moveWithin(
         cards.filter((card) => card.paymentAccountId === paymentAccountId),
         id,
-        step,
+        { step },
         updateCard,
       ),
   };

@@ -16,6 +16,7 @@ import MoveRow from '../components/MoveRow';
 import PageHeader from '../components/PageHeader';
 import SegmentedTabs from '../components/SegmentedTabs';
 import TagsPanel from '../components/TagsPanel';
+import DragList from '../components/DragList';
 
 /**
  * 지출·수입 두 단. 머리글 색은 가계 화면과 같다 (지출 빨강, 수입 초록).
@@ -119,6 +120,12 @@ export default function CategoriesScreen() {
     setError(result.ok ? '' : result.message);
   };
 
+  /** 끌어다 놓은 자리로 옮긴다. 위 `move` 와 같은 길로 가되 자리를 그대로 받는다. */
+  const moveTo = async (id: string, toIndex: number) => {
+    const result = await manager.moveTo(id, toIndex);
+    setError(result.ok ? '' : result.message);
+  };
+
   return (
     <View className="gap-6">
       {/*
@@ -138,7 +145,7 @@ export default function CategoriesScreen() {
 
       {section === 'tags' ? (
         <TagsPanel projectId={selectedProjectId} />
-      ) : isLoading ? (
+      ) : isLoading && categories.length === 0 ? (
         <Text className="text-gray-600">{t('common.loading')}</Text>
       ) : categories.length === 0 ? (
         <Text className="text-gray-600">{t('categories.empty')}</Text>
@@ -192,19 +199,21 @@ export default function CategoriesScreen() {
                   {parents.length === 0 ? (
                     <Text className="text-gray-600">{t(panel.emptyKey)}</Text>
                   ) : (
-                    <View className="gap-4">
-                      {parents.map((parent) => {
+                    /* 길게 누르면 끌어서 자리를 바꾼다. 짧게 누르면 상세가 열린다. */
+                    <DragList
+                      items={parents}
+                      gap={16}
+                      itemClassName="rounded-lg bg-white p-4 shadow-sm active:bg-gray-50"
+                      onPressItem={(parent) => {
+                        setSelectedCategory(parent);
+                        setIsDetailModalOpen(true);
+                      }}
+                      onReorder={(id, toIndex) => void moveTo(id, toIndex)}
+                      renderItem={(parent) => {
                         const children = manager.childrenOf(parent.id);
 
                         return (
-                          <Pressable
-                            key={parent.id}
-                            onPress={() => {
-                              setSelectedCategory(parent);
-                              setIsDetailModalOpen(true);
-                            }}
-                            className="rounded-lg bg-white p-4 shadow-sm active:bg-gray-50"
-                          >
+                          <>
                             <Text className="mb-2 font-bold text-gray-900">{parent.name}</Text>
 
                             {children.length > 0 ? (
@@ -222,10 +231,10 @@ export default function CategoriesScreen() {
                                 ))}
                               </View>
                             ) : null}
-                          </Pressable>
+                          </>
                         );
-                      })}
-                    </View>
+                      }}
+                    />
                   )}
                 </View>
               );

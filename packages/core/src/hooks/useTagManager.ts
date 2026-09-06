@@ -12,7 +12,7 @@
  * 서버라 지금까지와 같다.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { rankForStep, type TagDto } from '@money/types';
+import { rankForMove, rankForStep, type TagDto } from '@money/types';
 
 import { apiClient } from '../lib/api-client';
 import { useApiError } from '../lib/api-error';
@@ -151,10 +151,9 @@ export function useTagManager(projectId: string | null) {
    * 않으므로, 그 사이 남이 옮긴 태그가 지워지지 않는다 (D5). 태그는 계층이 없어 이웃은
    * 언제나 목록 전체에서 고른다.
    */
-  const move = useCallback(
-    async (id: string, step: 1 | -1): Promise<TagResult> => {
-      const rank = rankForStep(tags, id, step);
-      // 끝에서 더 밀었다. 값을 새로 찍으면 그 필드의 시계만 올라가 남의 이동을 되돌린다.
+  const applyRank = useCallback(
+    async (id: string, rank: string | null): Promise<TagResult> => {
+      // 자리가 그대로다. 값을 새로 찍으면 그 필드의 시계만 올라가 남의 이동을 되돌린다.
       if (!rank) return { ok: true };
 
       try {
@@ -166,7 +165,24 @@ export function useTagManager(projectId: string | null) {
         return { ok: false, message: messageOf(error, 'assets.orderSaveFailed') };
       }
     },
-    [messageOf, reload, tags],
+    [messageOf, reload],
+  );
+
+  const move = useCallback(
+    (id: string, step: 1 | -1): Promise<TagResult> => applyRank(id, rankForStep(tags, id, step)),
+    [applyRank, tags],
+  );
+
+  /**
+   * 끌어다 놓은 자리로 옮긴다. `toIndex` 는 놓은 뒤의 자리다.
+   *
+   * `reorder` 와 달리 목록 전체를 다시 쓰지 않고 옮긴 줄의 값 하나만 보낸다. 그래서
+   * 오프라인에서도 되고(사본 창구를 그대로 탄다), 그 사이 남이 옮긴 다른 태그를 지우지
+   * 않는다 (설계 문서의 D5).
+   */
+  const moveTo = useCallback(
+    (id: string, toIndex: number): Promise<TagResult> => applyRank(id, rankForMove(tags, id, toIndex)),
+    [applyRank, tags],
   );
 
   return {
@@ -177,6 +193,7 @@ export function useTagManager(projectId: string | null) {
     save,
     remove,
     reorder,
+    moveTo,
     /** 한 칸 위로(-1) 또는 아래로(+1). */
     move,
     /** 고칠 대상을 폼 값으로 편다. */

@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useRef, type ReactNode } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -6,7 +6,12 @@ import { useProjectBootstrap } from '@money/core/hooks/useProjectBootstrap';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useAuth } from '@money/core/store/auth';
 
-import { NearBottomProvider, useNearBottomScroll } from './scroll';
+import {
+  NearBottomProvider,
+  useNearBottomScroll,
+  useScrollLocked,
+  useScrollRegistration,
+} from './scroll';
 import Sidebar from './Sidebar';
 import TabBar from './TabBar';
 
@@ -36,6 +41,10 @@ function Shell({ children }: { children: ReactNode }) {
   const insets = useSafeAreaInsets();
   /* 바닥에 닿으면 목록이 다음 쪽을 잇는다 (shell/scroll 참고). */
   const onScroll = useNearBottomScroll();
+  const isScrollLocked = useScrollLocked();
+  /* 목록이 끌기 중에 이 스크롤을 빌려 쓴다 (shell/scroll 참고). */
+  const { attach, noteOffset } = useScrollRegistration();
+  const scrollRef = useRef<ScrollView>(null);
 
   // 프로젝트 목록과 첫 선택. 웹의 껍데기도 같은 훅을 쓴다.
   useProjectBootstrap();
@@ -70,10 +79,28 @@ function Shell({ children }: { children: ReactNode }) {
         <ScrollView
           key={locale}
           className="flex-1"
+          /* 목록을 끌어 옮기는 동안은 스크롤을 멈춘다. 함께 움직이면 줄이 손끝에서 달아난다. */
+          scrollEnabled={!isScrollLocked}
           contentContainerClassName="mx-auto w-full max-w-7xl px-4 pb-8 pt-4 md:pt-8"
           contentContainerStyle={{ paddingBottom: 32 + insets.bottom }}
-          onScroll={onScroll}
-          scrollEventThrottle={64}
+          ref={scrollRef}
+          /*
+           * 스크롤 영역이 화면 어디에 있는지 함께 넘긴다. 목록이 가장자리를 잴 때 쓴다 --
+           * 위로는 안전 영역만큼, 아래로는 탭 막대만큼 화면과 어긋나 있다.
+           */
+          onLayout={(event) => {
+            const { y, height } = event.nativeEvent.layout;
+            attach?.(scrollRef.current, { top: insets.top + y, height });
+          }}
+          onScroll={(event) => {
+            noteOffset(event.nativeEvent.contentOffset.y);
+            onScroll?.(event);
+          }}
+          /*
+           * 끌기 중에는 자주 받아야 한다. 굴러간 만큼을 알아야 줄이 손끝에 붙어 있는다.
+           * 평소에는 바닥 감지에만 쓰이므로 이 값이 촘촘해도 부담이 없다(값만 읽는다).
+           */
+          scrollEventThrottle={16}
         >
           {children}
         </ScrollView>

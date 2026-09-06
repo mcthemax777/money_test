@@ -5,8 +5,10 @@ import {
   useEffect,
   useMemo,
   useRef,
+  useState,
   type ReactNode,
 } from 'react';
+import type { MutableRefObject } from 'react';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
 
 /**
@@ -55,7 +57,103 @@ export function NearBottomProvider({ children }: { children: ReactNode }) {
 
   const value = useMemo(() => ({ register, onScroll }), [register, onScroll]);
 
-  return <NearBottomContext.Provider value={value}>{children}</NearBottomContext.Provider>;
+  return (
+    <NearBottomContext.Provider value={value}>
+      <ScrollLockProvider>{children}</ScrollLockProvider>
+    </NearBottomContext.Provider>
+  );
+}
+
+/**
+ * 껍데기의 스크롤을 목록이 빌려 쓰는 자리.
+ *
+ * 화면 전체가 하나의 스크롤이라(`AppShell`) 목록이 제 스크롤을 갖지 않는다. 그래서
+ * 끌어 옮기는 동안 필요한 두 가지를 목록이 스스로 할 수 없다.
+ *
+ *   - **손가락 스크롤을 멈춘다.** 함께 움직이면 줄이 손끝에서 달아난다.
+ *   - **가장자리에 닿으면 대신 굴린다.** 맨 위의 줄을 맨 아래로 옮기려면 화면이 따라와야
+ *     한다. 멈추기만 하고 굴려 주지 않으면 보이는 만큼밖에 못 옮긴다.
+ */
+interface ScrollControl {
+  isLocked: boolean;
+  setLocked: (locked: boolean) => void;
+  /** 껍데기가 제 스크롤과 자리를 등록한다. */
+  attach: (view: ScrollHandle | null, area: { top: number; height: number }) => void;
+  /** 지금 얼마나 내려와 있는가. 끄는 줄의 자리를 계산하는 데 쓴다. */
+  offset: MutableRefObject<number>;
+  /** 화면에서 스크롤 영역이 차지하는 자리. 가장자리를 재는 기준이다. */
+  area: MutableRefObject<{ top: number; height: number }>;
+  /** 이만큼 더 굴린다. 끝에 닿으면 그 이상은 움직이지 않는다. */
+  scrollBy: (dy: number) => void;
+}
+
+/** `ScrollView` 에서 쓰는 것만 추린 모양. 시험에서 갈아 끼우기 쉽다. */
+interface ScrollHandle {
+  scrollTo: (options: { y: number; animated: boolean }) => void;
+}
+
+const ScrollControlContext = createContext<ScrollControl | null>(null);
+
+function ScrollLockProvider({ children }: { children: ReactNode }) {
+  const [isLocked, setLocked] = useState(false);
+  const view = useRef<ScrollHandle | null>(null);
+  const offset = useRef(0);
+  const area = useRef({ top: 0, height: 0 });
+
+  const attach = useCallback((next: ScrollHandle | null, nextArea: { top: number; height: number }) => {
+    view.current = next;
+    area.current = nextArea;
+  }, []);
+
+  const scrollBy = useCallback((dy: number) => {
+    if (!view.current) return;
+    const next = Math.max(0, offset.current + dy);
+    view.current.scrollTo({ y: next, animated: false });
+  }, []);
+
+  const value = useMemo(
+    () => ({ isLocked, setLocked, attach, offset, area, scrollBy }),
+    [attach, isLocked, scrollBy],
+  );
+
+  return <ScrollControlContext.Provider value={value}>{children}</ScrollControlContext.Provider>;
+}
+
+/** 껍데기가 읽는다. 잠겨 있으면 손가락 스크롤을 끈다. */
+export function useScrollLocked(): boolean {
+  return useContext(ScrollControlContext)?.isLocked ?? false;
+}
+
+/** 껍데기가 제 스크롤을 등록하고, 내려온 만큼을 알려 주는 손잡이. */
+export function useScrollRegistration() {
+  const context = useContext(ScrollControlContext);
+
+  return {
+    attach: context?.attach,
+    noteOffset: useCallback(
+      (y: number) => {
+        if (context) context.offset.current = y;
+      },
+      [context],
+    ),
+  };
+}
+
+/** 목록이 쥐는 손잡이. 껍데기 밖(모달 등)에서는 아무 일도 하지 않는다. */
+export function useScrollControl() {
+  const context = useContext(ScrollControlContext);
+
+  return useMemo(
+    () => ({
+      lock: (locked: boolean) => context?.setLocked(locked),
+      scrollBy: (dy: number) => context?.scrollBy(dy),
+      offsetOf: () => context?.offset.current ?? 0,
+      areaOf: () => context?.area.current ?? { top: 0, height: 0 },
+      /** 껍데기가 없으면 굴릴 것도 없다. */
+      canScroll: Boolean(context),
+    }),
+    [context],
+  );
 }
 
 /** 껍데기가 스크롤에 붙일 값. */

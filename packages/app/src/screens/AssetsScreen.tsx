@@ -13,6 +13,7 @@ import AddButton from '../components/AddButton';
 import AssetTypeSummary from '../components/AssetTypeSummary';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import { AddAccountModal, AddCardModal, AddPersonModal } from '../components/AssetAddModals';
+import DragList from '../components/DragList';
 import {
   EditAccountModal,
   EditCardModal,
@@ -90,12 +91,17 @@ export default function AssetsScreen() {
       ) : assets.visiblePeople.length === 0 ? (
         <Text className="text-gray-600">{t('assets.noSelection')}</Text>
       ) : (
-        <View className="gap-8">
-          {assets.visiblePeople.map((person) => {
+        /* 길게 누르면 끌어서 자리를 바꾼다. 구성원·계좌·카드가 모두 같은 규칙이다. */
+        <DragList
+          items={assets.visiblePeople}
+          gap={32}
+          itemClassName="rounded-lg bg-white p-6 shadow-sm"
+          onReorder={(id, toIndex) => void assets.movePersonTo(id, toIndex)}
+          renderItem={(person) => {
             const owned = assets.accounts.filter((account) => account.ownerId === person.id);
 
             return (
-              <View key={person.id} className="rounded-lg bg-white p-6 shadow-sm">
+              <>
                 {/* 이름을 누르면 고친다. 자산 화면에서 가장 잦은 손질이 이름과 자리다. */}
                 <Pressable className="mb-6" onPress={() => setPersonEdit(person)}>
                   <Text className="text-xl font-bold text-gray-900">{person.name}</Text>
@@ -114,25 +120,32 @@ export default function AssetsScreen() {
                 {owned.length === 0 ? (
                   <Text className="text-gray-600">{t('assets.noAccounts')}</Text>
                 ) : (
-                  <View className="gap-4">
-                    {owned.map((account) => (
+                  <DragList
+                    items={owned}
+                    gap={16}
+                    itemClassName="rounded-lg border border-gray-200 p-4"
+                    onReorder={(id, toIndex) =>
+                      void assets.moveAccountTo(id, person.id, toIndex)
+                    }
+                    renderItem={(account) => (
                       <AccountRow
-                        key={account.id}
                         account={account}
                         profit={assets.accountProfit.get(account.id)}
                         cards={assets.cardsOf(account.id)}
                         onAddCard={() => setCardAddFor(account)}
                         onEdit={() => setAccountEdit(account)}
                         onEditCard={setCardEdit}
+                        onReorderCards={(id, toIndex) =>
+                          void assets.moveCardTo(id, account.id, toIndex)
+                        }
                       />
-                    ))}
-                  </View>
+                    )}
+                  />
                 )}
-              </View>
+              </>
             );
-          })}
-
-        </View>
+          }}
+        />
       )}
       </View>
 
@@ -226,6 +239,7 @@ function AccountRow({
   onAddCard,
   onEdit,
   onEditCard,
+  onReorderCards,
 }: {
   account: Account;
   profit?: string;
@@ -234,12 +248,14 @@ function AccountRow({
   onAddCard: () => void;
   onEdit: () => void;
   onEditCard: (card: Card) => void;
+  onReorderCards: (id: string, toIndex: number) => void;
 }) {
   const { t } = useTranslation();
   const profitAmount = toNumber(profit);
 
+  /* 겉 상자는 목록(DragList)이 씌운다. 여기서 또 씌우면 테두리가 두 겹이 된다. */
   return (
-    <View className="rounded-lg border border-gray-200 p-4">
+    <>
       {/* 이름 줄을 누르면 고친다. 잔액을 누르는 것과 헷갈리지 않게 이름 줄만 받는다. */}
       <Pressable className="flex-row items-center gap-1.5" onPress={onEdit}>
         <Text className="text-sm text-gray-600">{account.name}</Text>
@@ -275,13 +291,13 @@ function AccountRow({
       </View>
 
       {cards.length > 0 ? (
-        <View className="gap-2">
-          {cards.map((card) => (
-            <Pressable
-              key={card.id}
-              onPress={() => onEditCard(card)}
-              className="rounded border border-green-100 bg-green-50 px-3 py-2 active:bg-green-100"
-            >
+        <DragList
+          items={cards}
+          itemClassName="rounded border border-green-100 bg-green-50 px-3 py-2 active:bg-green-100"
+          onPressItem={onEditCard}
+          onReorder={onReorderCards}
+          renderItem={(card) => (
+            <>
               <Text className="text-sm font-medium text-gray-900">{card.name}</Text>
               {card.issuer?.name ? (
                 <Text className="text-xs text-gray-600">{card.issuer.name}</Text>
@@ -289,10 +305,10 @@ function AccountRow({
               <Text className="text-xs text-gray-600">
                 {t(card.cardType === 'debit' ? 'method.debit_card' : 'method.credit_card')}
               </Text>
-            </Pressable>
-          ))}
-        </View>
+            </>
+          )}
+        />
       ) : null}
-    </View>
+    </>
   );
 }

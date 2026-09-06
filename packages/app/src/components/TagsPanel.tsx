@@ -18,6 +18,7 @@ import { useTranslation } from '@money/core/lib/i18n';
 import Modal from './Modal';
 import AddButton from './AddButton';
 import MoveRow from './MoveRow';
+import DragList from './DragList';
 
 /**
  * 고를 수 있는 색.
@@ -103,18 +104,29 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
       {/* 추가 버튼은 목록 바로 위다 (자산·분류 화면과 같은 규칙). */}
       <AddButton label={t('tags.add')} onPress={openNew} />
 
-      {manager.isLoading ? (
+      {/*
+        다시 읽는 동안에는 목록을 치우지 않는다.
+
+        치우면 그 순간 화면이 짧아져 스크롤이 맨 위로 튄다. 끌어다 놓은 직후가 바로 그
+        자리다 -- 방금 옮긴 줄을 보고 있어야 하는데 목록의 처음으로 되돌아간다.
+      */}
+      {manager.isLoading && manager.tags.length === 0 ? (
         <Text className="text-gray-600">{t('common.loading')}</Text>
       ) : manager.tags.length === 0 ? (
         <Text className="text-gray-600">{t('tags.empty')}</Text>
       ) : (
-        <View className="gap-2">
-          {manager.tags.map((tag) => (
-            <Pressable
-              key={tag.id}
-              onPress={() => openEdit(tag)}
-              className="flex-row items-center gap-3 rounded-lg bg-white p-4 shadow-sm active:bg-gray-50"
-            >
+        /* 길게 누르면 끌어서 자리를 바꾼다. 짧게 누르면 여느 때처럼 고치기가 열린다. */
+        <DragList
+          items={manager.tags}
+          itemClassName="flex-row items-center gap-3 rounded-lg bg-white p-4 shadow-sm active:bg-gray-50"
+          onPressItem={openEdit}
+          onReorder={(id, toIndex) => {
+            void manager.moveTo(id, toIndex).then((result) => {
+              setError(result.ok ? '' : result.message);
+            });
+          }}
+          renderItem={(tag) => (
+            <>
               {/* 색을 정한 태그는 점으로 보인다. 이름만으로는 목록에서 찾기 어렵다. */}
               <View
                 className={`h-3 w-3 rounded-full ${tag.color ? '' : 'border border-gray-300'}`}
@@ -129,9 +141,9 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
               >
                 <X size={18} color="#9ca3af" />
               </Pressable>
-            </Pressable>
-          ))}
-        </View>
+            </>
+          )}
+        />
       )}
 
       <Modal

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { rankForStep, type CategoryDto } from '@money/types';
+import { rankForMove, rankForStep, type CategoryDto } from '@money/types';
 
 import { apiClient } from '../lib/api-client';
 import { apiErrorCode, useApiError } from '../lib/api-error';
@@ -217,17 +217,9 @@ export function useCategoryManager(projectId: string | null) {
    * 같은 유형(지출·수입)의 단 안에서다. 대분류의 순서 값은 지출과 수입이 한 공간을
    * 쓰지만, 두 단이 따로 그려지므로 한쪽 안의 앞뒤만 맞으면 된다.
    */
-  const move = useCallback(
-    async (id: string, step: 1 | -1): Promise<CategoryResult> => {
-      const category = categories.find((row) => row.id === id);
-      if (!category) return { ok: true };
-
-      const siblings = category.parentId
-        ? categories.filter((row) => row.parentId === category.parentId)
-        : categories.filter((row) => !row.parentId && row.type === category.type);
-
-      const rank = rankForStep(siblings, id, step);
-      // 끝에서 더 밀었다. 값을 새로 찍으면 그 필드의 시계만 올라가 남의 이동을 되돌린다.
+  const applyRank = useCallback(
+    async (id: string, rank: string | null): Promise<CategoryResult> => {
+      // 자리가 그대로다. 값을 새로 찍으면 그 필드의 시계만 올라가 남의 이동을 되돌린다.
       if (!rank) return { ok: true };
 
       try {
@@ -239,7 +231,39 @@ export function useCategoryManager(projectId: string | null) {
         return { ok: false, message: messageOf(error, 'assets.orderSaveFailed') };
       }
     },
-    [categories, messageOf, reload],
+    [messageOf, reload],
+  );
+
+  /** 이 줄과 같은 묶음에 서는 줄들. 이웃은 여기서만 고른다. */
+  const siblingsOf = useCallback(
+    (id: string) => {
+      const category = categories.find((row) => row.id === id);
+      if (!category) return null;
+
+      return category.parentId
+        ? categories.filter((row) => row.parentId === category.parentId)
+        : categories.filter((row) => !row.parentId && row.type === category.type);
+    },
+    [categories],
+  );
+
+  const move = useCallback(
+    (id: string, step: 1 | -1): Promise<CategoryResult> => {
+      const siblings = siblingsOf(id);
+      if (!siblings) return Promise.resolve({ ok: true });
+      return applyRank(id, rankForStep(siblings, id, step));
+    },
+    [applyRank, siblingsOf],
+  );
+
+  /** 끌어다 놓은 자리로 옮긴다. `toIndex` 는 그 묶음 안에서 놓은 뒤의 자리다. */
+  const moveTo = useCallback(
+    (id: string, toIndex: number): Promise<CategoryResult> => {
+      const siblings = siblingsOf(id);
+      if (!siblings) return Promise.resolve({ ok: true });
+      return applyRank(id, rankForMove(siblings, id, toIndex));
+    },
+    [applyRank, siblingsOf],
   );
 
   /** 고칠 대상을 폼 값으로 편다. 소분류는 그 아래 줄들을 그대로 가져온다. */
@@ -266,6 +290,7 @@ export function useCategoryManager(projectId: string | null) {
     reorder,
     /** 한 칸 위로(-1) 또는 아래로(+1). 같은 묶음 안에서만 움직인다. */
     move,
+    moveTo,
     formValuesOf,
     /** 대분류만. 목록의 윗줄이다. */
     parentsOf: useCallback(
