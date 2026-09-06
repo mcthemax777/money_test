@@ -29,6 +29,14 @@ import { createTxLock } from '@money/core/data/tx-lock';
  */
 const DATABASE_NAME = 'money-local.db';
 
+/**
+ * 사본을 닫기 전에 돌고 있는 질의를 기다리는 시간.
+ *
+ * 여기 오는 질의는 화면 하나를 채우는 크기라 보통 밀리초 단위로 끝난다. 이 시간을
+ * 넘긴다는 것은 네이티브가 멈췄다는 뜻이므로, 더 기다리는 대신 물러난다.
+ */
+const DRAIN_TIMEOUT_MS = 5000;
+
 let opened: SQLite.SQLiteDatabase | null = null;
 
 /**
@@ -95,21 +103,71 @@ export class MirrorClosedError extends Error {
   }
 }
 
+/*
+ * 사본을 닫기 전에 지나야 하는 문.
+ *
+ * `check()` 는 질의를 **시작할 때**만 본다. 시작한 뒤 네이티브에서 도는 동안 사본이
+ * 닫히면 그 자리에서 이미 놓인 statement 를 만지게 되어 SIGSEGV 로 죽는다
+ * (`exsqlite3_reset`). 실제로 로그아웃에서 그랬다 -- 로그인 화면이 뜨자마자 세는
+ * "보내지 못한 거래"(`outbox` 집계)가 돌고 있는 동안 `deleteLocalStore` 가 닫았다.
+ * 운이 좋으면 죽는 대신 삭제가 거절되는데(`ERR_DELETE_DATABASE`), 그때는 앞 사용자의
+ * 사본이 기기에 남는다. 둘 다 같은 경합의 두 얼굴이다.
+ *
+ * 그래서 도는 질의를 세고, 닫기는 그 수가 0 이 될 때까지 기다린다. `closing` 이 서면
+ * 새 질의는 시작하지 않는다 -- 기다리는 동안 새로 들어온 것 때문에 영영 0 이 되지 않는
+ * 일을 막는다.
+ */
+let inFlight = 0;
+let closing = false;
+const drainWaiters: Array<() => void> = [];
+
+async function guard<T>(fn: () => Promise<T>): Promise<T> {
+  inFlight += 1;
+  try {
+    return await fn();
+  } finally {
+    inFlight -= 1;
+    if (inFlight === 0) {
+      while (drainWaiters.length) drainWaiters.pop()!();
+    }
+  }
+}
+
+/**
+ * 돌고 있는 질의가 모두 끝나기를 기다린다. 시간 안에 비면 true.
+ *
+ * 무작정 기다리지 않는 것은, 네이티브가 멈춰 버린 경우에 로그아웃까지 함께 멈추기
+ * 때문이다. 그 경우 닫지도 지우지도 않고 물러난다 -- 사본은 남지만 아무도 읽지 않고
+ * (`store` 는 이미 비었다), 다른 계정이 로그인하면 그 자리에서 다시 지운다
+ * (`signInWithGoogle` 이 사본의 주인을 보고 가른다).
+ */
+function waitUntilDrained(timeoutMs: number): Promise<boolean> {
+  if (inFlight === 0) return Promise.resolve(true);
+
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), timeoutMs);
+    drainWaiters.push(() => {
+      clearTimeout(timer);
+      resolve(true);
+    });
+  });
+}
+
 export function createSqlDriver(db: SQLite.SQLiteDatabase, isOpen: () => boolean): SqlDriver {
   const lock = createTxLock();
   const check = () => {
-    if (!isOpen()) throw new MirrorClosedError();
+    if (closing || !isOpen()) throw new MirrorClosedError();
   };
 
   return {
     async run(sql: string, params: readonly SqlValue[] = []) {
       check();
-      await db.runAsync(sql, params as SqlValue[]);
+      await guard(() => db.runAsync(sql, params as SqlValue[]));
     },
 
     async all<T>(sql: string, params: readonly SqlValue[] = []) {
       check();
-      return db.getAllAsync<T>(sql, params as SqlValue[]);
+      return guard(() => db.getAllAsync<T>(sql, params as SqlValue[]));
     },
 
     /**
@@ -122,11 +180,17 @@ export function createSqlDriver(db: SQLite.SQLiteDatabase, isOpen: () => boolean
     async transaction<T>(fn: () => Promise<T>): Promise<T> {
       return lock(async () => {
         check();
-        let result: T;
-        await db.withTransactionAsync(async () => {
-          result = await fn();
+        /*
+         * 안쪽 문장이 아니라 트랜잭션 전체를 센다. 문장과 문장 사이에서 닫히면 절반만
+         * 적힌 채로 끝나고, 그 뒤의 COMMIT 이 닫힌 연결로 간다.
+         */
+        return guard(async () => {
+          let result: T;
+          await db.withTransactionAsync(async () => {
+            result = await fn();
+          });
+          return result!;
         });
-        return result!;
       });
     },
   };
@@ -158,11 +222,24 @@ export async function openLocalStore(): Promise<LocalStore> {
  * 파일이 남으면 그 안에 지난 사용자의 거래 내역이 그대로 있다.
  */
 export async function deleteLocalStore(): Promise<void> {
-  if (opened) {
-    await opened.closeAsync();
-    opened = null;
+  closing = true;
+  try {
+    /*
+     * 돌고 있는 질의가 끝나기를 기다린다. 여기서 기다리지 않으면 네이티브가 statement 를
+     * 만지는 도중에 연결이 사라져 앱이 통째로 죽는다.
+     */
+    if (!(await waitUntilDrained(DRAIN_TIMEOUT_MS))) {
+      throw new Error('기기 사본에서 돌고 있는 질의가 끝나지 않아 지우지 못했습니다.');
+    }
+
+    if (opened) {
+      await opened.closeAsync();
+      opened = null;
+    }
+    await SQLite.deleteDatabaseAsync(DATABASE_NAME);
+    // 열쇠도 함께 버린다. 다음 사용자의 사본은 새 열쇠로 잠근다.
+    await clearMirrorKey();
+  } finally {
+    closing = false;
   }
-  await SQLite.deleteDatabaseAsync(DATABASE_NAME);
-  // 열쇠도 함께 버린다. 다음 사용자의 사본은 새 열쇠로 잠근다.
-  await clearMirrorKey();
 }
