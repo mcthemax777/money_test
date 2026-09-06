@@ -1,10 +1,24 @@
+/**
+ * 몇 개를 띄울 것인가.
+ *
+ * `API_INSTANCES=4 ./scripts/deploy.sh` 처럼 넘긴다. 'max' 를 주면 코어 수만큼이다.
+ * 기본은 1 -- 늘리는 것은 아래 셋을 함께 정한 뒤에 할 일이다.
+ *
+ *   1. **REDIS_URL.** 없으면 실시간 신호가 그 프로세스 안에서만 돌고, 요청 상한도
+ *      인스턴스마다 따로 세어져 한도가 N배가 된다.
+ *   2. **DATABASE_CONNECTION_LIMIT.** 없으면 Prisma 가 프로세스마다 코어×2+1 을 잡아
+ *      그 수만큼 곱해진다. 어림값은 (max_connections - 여유) / 인스턴스 수.
+ *   3. **마이그레이션의 하위 호환.** 배포가 reload 라 잠깐 옛 코드와 새 코드가 함께 돈다.
+ */
+const apiInstances = process.env.API_INSTANCES || 1;
+
 module.exports = {
   apps: [
     {
       name: 'money-api',
       cwd: './packages/api',
       script: 'dist/main.js',
-      instances: 1,
+      instances: apiInstances === 'max' ? 'max' : Number(apiInstances),
       exec_mode: 'cluster',
       env: {
         NODE_ENV: 'production'

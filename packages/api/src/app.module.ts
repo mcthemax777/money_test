@@ -2,6 +2,7 @@ import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { SyncNotifyMiddleware } from './common/sync-notify.middleware';
+import { RedisThrottlerStorage, ThrottlerStorageModule } from './common/throttler-storage';
 import { ConfigModule } from './config/config.module';
 import { DatabaseModule } from './config/database.module';
 import { AuthModule } from './modules/auth/auth.module';
@@ -32,7 +33,18 @@ import { SyncModule } from './modules/sync/sync.module';
      * 호출을 끊는 것이다. 로그인처럼 값싸게 반복 시도할 수 있는 경로는
      * 컨트롤러에서 @Throttle 로 훨씬 좁게 다시 건다.
      */
-    ThrottlerModule.forRoot([{ name: 'default', ttl: 60_000, limit: 300 }]),
+    /*
+     * 세는 자리는 레디스다 (`ThrottlerStorageModule`). 기본 저장소는 프로세스 메모리라
+     * 인스턴스를 넷 띄우면 한도가 네 배가 된다. 레디스가 없으면 그 메모리로 되돌아간다.
+     */
+    ThrottlerStorageModule,
+    ThrottlerModule.forRootAsync({
+      inject: [RedisThrottlerStorage],
+      useFactory: (storage: RedisThrottlerStorage) => ({
+        throttlers: [{ name: 'default', ttl: 60_000, limit: 300 }],
+        storage,
+      }),
+    }),
     ConfigModule,
     DatabaseModule,
     RealtimeModule,

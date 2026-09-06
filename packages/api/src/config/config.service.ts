@@ -23,6 +23,29 @@ export class ConfigService {
   }
 
   /**
+   * 이 프로세스가 데이터베이스에 열어 둘 연결 수.
+   *
+   * 비워 두면 Prisma 가 스스로 정한다 -- **CPU 코어 × 2 + 1**. 인스턴스가 하나면 그것으로
+   * 충분하지만, 여럿을 띄우면 그 수만큼 곱해진다. 코어 8개짜리에서 4 인스턴스면 68 개이고,
+   * 포스트그레스의 기본 상한(max_connections 100)에 금세 닿는다. 그때 나는 오류는
+   * "sorry, too many clients already" 이고, **먼저 죽는 것은 새로 뜨는 인스턴스가 아니라
+   * 마침 그 순간 질의하던 요청**이라 원인을 찾기 어렵다.
+   *
+   * 그래서 기계 크기가 아니라 **배포 모양**에서 정하도록 밖으로 뺀다. 어림값은
+   * `(max_connections - 여유) / 인스턴스 수` 다.
+   */
+  get databaseConnectionLimit(): number | null {
+    const raw = this.env.DATABASE_CONNECTION_LIMIT?.trim();
+    if (!raw) return null;
+
+    const limit = Number(raw);
+    if (!Number.isInteger(limit) || limit < 1) {
+      throw new Error(`DATABASE_CONNECTION_LIMIT 은 1 이상의 정수여야 합니다: ${raw}`);
+    }
+    return limit;
+  }
+
+  /**
    * 토큰 서명 키. 기본값을 두지 않는다.
    *
    * 예전에는 미설정 시 'your-secret-key'로 넘어갔다. 그 값은 공개 저장소에 있는
