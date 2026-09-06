@@ -25,6 +25,12 @@
     },
     "plugins": [
       "expo-secure-store",
+      [
+        "expo-sqlite",
+        {
+          "useSQLCipher": true
+        }
+      ],
       "@react-native-google-signin/google-signin",
       "./plugins/with-signing"
     ],
