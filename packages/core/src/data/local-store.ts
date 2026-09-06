@@ -58,6 +58,14 @@ export interface SyncCursor {
   /** 달력 키를 계산할 때 쓴 타임존. 프로젝트 타임존이 바뀌면 키를 다시 계산해야 한다. */
   timeZone: string;
   syncedAt: string | null;
+  /**
+   * 이 사본을 처음부터 받기 시작할 때의 서버 자리표 바닥.
+   *
+   * 서버가 알려 주는 바닥이 이 값보다 더 올랐을 때만 사본을 버린다. 처음부터 받는
+   * 중인 기기는 커서가 바닥보다 낮은 것이 정상이라, 그것까지 버리면 큰 사본을 영영
+   * 다 받지 못한다.
+   */
+  mirrorFloor: number;
 }
 
 /** 사본에 담긴 계좌 한 줄. 화면과 순자산 계산이 함께 쓴다. */
@@ -291,11 +299,11 @@ export class LocalStore {
     const existing = await this.cursor(projectId);
     if (!existing) {
       await this.db.run(
-        `INSERT INTO sync_state (projectId, version, schemaVersion, timeZone, syncedAt)
-         VALUES (?, 0, ?, ?, NULL)`,
+        `INSERT INTO sync_state (projectId, version, schemaVersion, timeZone, syncedAt, mirrorFloor)
+         VALUES (?, 0, ?, ?, NULL, 0)`,
         [projectId, SCHEMA_VERSION, timeZone],
       );
-      return { projectId, version: 0, timeZone, syncedAt: null };
+      return { projectId, version: 0, timeZone, syncedAt: null, mirrorFloor: 0 };
     }
 
     const rows = await this.db.all<Row>(
@@ -318,7 +326,8 @@ export class LocalStore {
 
   async cursor(projectId: string): Promise<SyncCursor | null> {
     const rows = await this.db.all<Row>(
-      `SELECT projectId, version, timeZone, syncedAt FROM sync_state WHERE projectId = ?`,
+      `SELECT projectId, version, timeZone, syncedAt, mirrorFloor
+         FROM sync_state WHERE projectId = ?`,
       [projectId],
     );
     const row = rows[0];
@@ -329,6 +338,7 @@ export class LocalStore {
       version: asInt(row.version),
       timeZone: String(row.timeZone),
       syncedAt: asText(row.syncedAt),
+      mirrorFloor: asInt(row.mirrorFloor),
     };
   }
 
@@ -361,26 +371,62 @@ export class LocalStore {
    * 부모를 따라 지운다.
    */
   async reset(projectId: string): Promise<void> {
+    await this.db.transaction(() => this.clearMirrorRows(projectId));
+  }
+
+  /**
+   * 사본을 버리고 **처음부터 받을 채비**를 한 트랜잭션에서 끝낸다.
+   *
+   * 서버가 보관 기간이 지난 자리표를 지운 뒤에 부른다. 커서를 0 으로 되돌리는 동시에
+   * 그때의 바닥을 적어 두는 것이 요점이다. 둘을 나누면 사이에서 끊겼을 때 바닥이 0 으로
+   * 남아, 다음 동기화가 또 처음부터 받기를 되풀이한다.
+   *
+   * 아웃박스는 건드리지 않는다. 그 안에 든 것은 아직 아무 데도 없는 값이다.
+   */
+  async resetForRebuild(projectId: string, timeZone: string, tombstoneFloor: number): Promise<void> {
     await this.db.transaction(async () => {
-      for (const table of ALL_TABLES) {
-        if (CHILD_TABLES.some((child) => child.table === table)) continue;
-
-        const column = table === 'project' ? 'id' : 'projectId';
-        await this.db.run(`DELETE FROM ${table} WHERE ${column} = ?`, [projectId]);
-      }
-
-      /*
-       * 부모가 사라졌으므로 남은 자식을 걷어낸다.
-       *
-       * 순서가 있다. 할부 계획은 다리를, 다리는 전표를 가리키므로 다리를 먼저 치우면
-       * 계획이 가리킬 곳이 사라진다. CHILD_TABLES 가 그 순서대로 적혀 있다.
-       */
-      for (const { table, column, parent } of CHILD_TABLES) {
-        await this.db.run(
-          `DELETE FROM ${table} WHERE ${column} NOT IN (SELECT id FROM ${parent})`,
-        );
-      }
+      await this.clearMirrorRows(projectId);
+      await this.db.run(
+        `INSERT INTO sync_state (projectId, version, schemaVersion, timeZone, syncedAt, mirrorFloor)
+         VALUES (?, 0, ?, ?, NULL, ?)`,
+        [projectId, SCHEMA_VERSION, timeZone, tombstoneFloor],
+      );
     });
+  }
+
+  /**
+   * 사본을 버리지 않고 바닥만 적어 둔다.
+   *
+   * 서버가 자리표를 지웠지만 이 사본은 버릴 이유가 없을 때다. 두 경우가 있다.
+   * 커서가 이미 바닥을 넘어섰거나(따라붙어 있는 기기), 아직 아무것도 담기지 않았거나
+   * (처음 쓰는 기기). 둘 다 "이 사본에는 그 바닥보다 전에 지워진 행이 없다"는 뜻이라
+   * 다음 판단의 기준으로 그대로 쓸 수 있다.
+   */
+  async setMirrorFloor(projectId: string, tombstoneFloor: number): Promise<void> {
+    await this.db.run(`UPDATE sync_state SET mirrorFloor = ? WHERE projectId = ?`, [
+      tombstoneFloor,
+      projectId,
+    ]);
+  }
+
+  /** 사본의 행을 지운다. 트랜잭션은 부르는 쪽이 연다. */
+  private async clearMirrorRows(projectId: string): Promise<void> {
+    for (const table of ALL_TABLES) {
+      if (CHILD_TABLES.some((child) => child.table === table)) continue;
+
+      const column = table === 'project' ? 'id' : 'projectId';
+      await this.db.run(`DELETE FROM ${table} WHERE ${column} = ?`, [projectId]);
+    }
+
+    /*
+     * 부모가 사라졌으므로 남은 자식을 걷어낸다.
+     *
+     * 순서가 있다. 할부 계획은 다리를, 다리는 전표를 가리키므로 다리를 먼저 치우면
+     * 계획이 가리킬 곳이 사라진다. CHILD_TABLES 가 그 순서대로 적혀 있다.
+     */
+    for (const { table, column, parent } of CHILD_TABLES) {
+      await this.db.run(`DELETE FROM ${table} WHERE ${column} NOT IN (SELECT id FROM ${parent})`);
+    }
   }
 
   /**

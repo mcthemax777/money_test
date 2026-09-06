@@ -56,14 +56,28 @@ export class SyncService {
     const limit = Math.min(Math.max(1, Number(query.limit) || DEFAULT_LIMIT), MAX_LIMIT);
 
     return this.prisma.$transaction(async (tx) => {
-      const project = await tx.project.findUniqueOrThrow({
-        where: { id: projectId },
-        select: { syncVersion: true },
-      });
+      const [project, floorRow] = await Promise.all([
+        tx.project.findUniqueOrThrow({
+          where: { id: projectId },
+          select: { syncVersion: true },
+        }),
+        tx.tombstoneFloor.findUnique({
+          where: { projectId },
+          select: { version: true },
+        }),
+      ]);
       const ceiling = project.syncVersion;
+      /*
+       * 자리표를 어디까지 지웠는가. 같은 트랜잭션 안에서 읽는다.
+       *
+       * 밖에서 읽으면 정리 작업이 그 사이에 자리표를 지우고 바닥을 올릴 수 있다.
+       * 그러면 기기는 "따라잡을 수 있다"는 옛 바닥을 믿고 이미 사라진 삭제를
+       * 기다리게 된다. 판단은 기기가 하지만 판단의 근거는 여기서 맞춰 준다.
+       */
+      const tombstoneFloor = floorRow?.version ?? 0;
 
       if (ceiling <= since) {
-        return this.emptyResponse(projectId, since, ceiling);
+        return this.emptyResponse(projectId, since, ceiling, tombstoneFloor);
       }
 
       const window = { gt: since, lte: ceiling };
@@ -196,12 +210,102 @@ export class SyncService {
           entityId: row.entityId,
           deletedVersion: row.deletedVersion,
         })),
+        tombstoneFloor,
       };
     });
   }
 
+  /**
+   * 보관 기간이 지난 자리표를 지운다. 정리 작업(`scripts/prune-tombstones.ts`)이 부른다.
+   *
+   * **지우는 것과 바닥을 올리는 것은 한 트랜잭션이어야 한다.** 나눠 두면 그 사이에
+   * 들어온 pull 이 "바닥은 아직 낮다"는 답과 함께 이미 사라진 삭제를 기다리게 된다.
+   *
+   * 바닥은 내려가지 않는다. 한 번 지운 자리표는 돌아오지 않으므로, 어떤 이유로든
+   * 더 낮은 번호가 계산되면 그것은 틀린 값이다.
+   *
+   * @param retentionDays 이만큼 지난 자리표를 지운다. 이 값이 곧 **기기가 사본을
+   *   버리지 않고 떨어져 있을 수 있는 최대 기간**이다.
+   * @param projectId 주면 그 프로젝트만 본다. 한 프로젝트를 손보거나, 검사가 자기가
+   *   만든 것만 건드리게 할 때 쓴다.
+   */
+  async pruneTombstones(
+    retentionDays: number,
+    projectId?: string,
+  ): Promise<{ projects: number; removed: number }> {
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+    const scope = projectId ? { projectId } : {};
+
+    /*
+     * 프로젝트별로 "지울 것이 있는가"와 "그중 가장 큰 번호"를 한 번에 묻는다.
+     *
+     * 이 뒤에 새 자리표가 들어와도 값은 흔들리지 않는다. 새로 지워진 행의 시각은
+     * `now()` 라 잘라 낼 기준보다 늘 뒤에 있어 아래 조건에 걸리지 않는다.
+     */
+    const groups = await this.prisma.tombstone.groupBy({
+      by: ['projectId'],
+      where: { ...scope, deletedAt: { lt: cutoff } },
+      _max: { deletedVersion: true },
+    });
+
+    let projects = 0;
+    let removed = 0;
+
+    for (const group of groups) {
+      const highest = group._max.deletedVersion ?? 0;
+      if (highest <= 0) continue;
+
+      /*
+       * 사라진 프로젝트가 남긴 찌꺼기.
+       *
+       * 자리표에는 프로젝트로 가는 외래 키가 없다(지우는 트리거가 부모를 읽어야 하는데
+       * 부모가 먼저 사라지는 순서가 있다). 그래서 프로젝트를 지우면 자리표가 남는다.
+       * 볼 기기가 없으므로 바닥도 필요 없다 -- 그냥 걷어낸다.
+       */
+      const project = await this.prisma.project.findUnique({
+        where: { id: group.projectId },
+        select: { id: true },
+      });
+      if (!project) {
+        const { count } = await this.prisma.tombstone.deleteMany({
+          where: { projectId: group.projectId, deletedAt: { lt: cutoff } },
+        });
+        removed += count;
+        continue;
+      }
+
+      projects += 1;
+      removed += await this.prisma.$transaction(async (tx) => {
+        const { count } = await tx.tombstone.deleteMany({
+          where: { projectId: group.projectId, deletedAt: { lt: cutoff } },
+        });
+
+        const current = await tx.tombstoneFloor.findUnique({
+          where: { projectId: group.projectId },
+          select: { version: true },
+        });
+        const version = Math.max(current?.version ?? 0, highest);
+
+        await tx.tombstoneFloor.upsert({
+          where: { projectId: group.projectId },
+          create: { projectId: group.projectId, version },
+          update: { version, prunedAt: new Date() },
+        });
+
+        return count;
+      });
+    }
+
+    return { projects, removed };
+  }
+
   /** 바뀐 것이 없을 때. 기기는 번호만 갈아 끼우고 끝낸다. */
-  private emptyResponse(projectId: string, since: number, version: number): SyncDto.PullResponse {
+  private emptyResponse(
+    projectId: string,
+    since: number,
+    version: number,
+    tombstoneFloor: number,
+  ): SyncDto.PullResponse {
     return {
       projectId,
       since,
@@ -223,6 +327,7 @@ export class SyncService {
         installmentPlans: [],
       },
       tombstones: [],
+      tombstoneFloor,
     };
   }
 }

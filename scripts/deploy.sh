@@ -92,3 +92,8 @@ echo
 echo "완료. 상태 확인:"
 echo "  pm2 list"
 echo "  pm2 logs money-api --lines 30"
+echo
+# 자리표(Tombstone) 정리. 배포가 대신 해 주지 않는다 -- 하루 한 번이면 충분하고,
+# 배포 때마다 돌리면 기기가 사본을 통째로 다시 받는 일이 배포에 묶인다.
+echo "자리표 정리 cron 이 없다면 한 번 걸어 두세요 (하루 한 번):"
+echo "  0 4 * * * cd $ROOT/packages/api && RETENTION_DAYS=90 npx ts-node --transpile-only scripts/prune-tombstones.ts >> /tmp/prune-tombstones.log 2>&1"

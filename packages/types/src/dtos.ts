@@ -1237,5 +1237,15 @@ export namespace SyncDto {
     hasMore: boolean;
     changes: Changes;
     tombstones: Tombstone[];
+    /**
+     * 자리표를 어디까지 지웠는가. 이 번호 아래의 삭제는 서버에 더 남아 있지 않다.
+     *
+     * 커서가 이 번호보다 오래된 기기는 놓친 삭제를 델타로 따라잡을 수 없다. 지운
+     * 거래가 그 기기에 영영 남는다. 그래서 그런 기기는 사본을 버리고 처음부터 받는다
+     * (`sync-engine` 이 그 판단을 한다 -- 서버는 값만 알려 준다).
+     *
+     * 아직 한 번도 지우지 않았으면 0 이고, 그때는 어떤 커서든 따라잡을 수 있다.
+     */
+    tombstoneFloor: number;
   }
 }

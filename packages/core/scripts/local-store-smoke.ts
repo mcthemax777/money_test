@@ -72,6 +72,7 @@ function pullResponse(
   tombstones: SyncDto.Tombstone[] = [],
   hasMore = false,
   since = 0,
+  tombstoneFloor = 0,
 ): SyncDto.PullResponse {
   return {
     projectId: PID,
@@ -80,6 +81,7 @@ function pullResponse(
     hasMore,
     changes: { ...emptyChanges(), ...changes },
     tombstones,
+    tombstoneFloor,
   };
 }
 

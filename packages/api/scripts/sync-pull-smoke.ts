@@ -179,7 +179,45 @@ runSmoke('sync-pull', async (ctx) => {
   ctx.check('끊겼어도 결국 전부 모인다', made.every((id) => collected.has(id)), true);
   ctx.check('쪽수가 상식적이다 (7명 / 표당 2줄)', rounds <= 10, true);
 
-  // ── 6. 남의 프로젝트는 받을 수 없다 ──
+  /*
+   * ── 6. 보관 기간이 지난 자리표를 지우면 바닥이 오른다 ──
+   *
+   * 자리표를 영구 보관하는 동안에는 어떤 커서든 따라잡을 수 있다. 보관 기간을 두는
+   * 순간 "따라잡을 수 없는 커서"가 생기고, 그 사실을 기기가 알 길은 응답에 실린
+   * 바닥(`tombstoneFloor`)뿐이다. 여기서 보는 것은 셋이다 -- 지우기 전에는 바닥이 0,
+   * 지운 뒤에는 자리표가 사라지고, 바닥이 그 자리표의 번호로 오른다.
+   */
+  const beforePrune = await pull(0);
+  ctx.check('지우기 전 바닥은 0', beforePrune.tombstoneFloor, 0);
+  const doomed = beforePrune.tombstones.map((row) => row.deletedVersion);
+  ctx.check('지울 자리표가 있다', doomed.length > 0, true);
+
+  /*
+   * 보관 기간 0 은 "지금까지의 자리표를 모두 지운다"는 뜻이다. 날짜를 뒤로 돌려
+   * 검사할 수는 없다 -- `deletedAt` 은 트리거가 찍고, UPDATE 도 그 트리거를 지난다.
+   *
+   * 프로젝트를 함께 준다. 개발용 데이터베이스에는 지난 검사가 남긴 자리표가 있어서,
+   * 전체를 지우면 이 검사가 만든 것과 섞인다 (스모크는 자기가 만든 것만 건드린다).
+   */
+  const pruned = await sync.pruneTombstones(0, pid);
+  ctx.check('지운 자리표 수가 맞는다', pruned.removed, doomed.length);
+
+  const afterPrune = await pull(0);
+  ctx.check('자리표가 사라졌다', afterPrune.tombstones.length, 0);
+  ctx.check('바닥이 가장 큰 번호로 올랐다', afterPrune.tombstoneFloor, Math.max(...doomed));
+  ctx.check('바닥은 상한을 넘지 않는다', afterPrune.tombstoneFloor <= afterPrune.version, true);
+
+  // 두 번 돌려도 바닥은 내려가지 않는다. 지울 것이 없으면 아무 일도 하지 않는다.
+  const secondPrune = await sync.pruneTombstones(0, pid);
+  ctx.check('두 번째는 지울 것이 없다', secondPrune.removed, 0);
+  ctx.check('바닥은 그대로다', (await pull(0)).tombstoneFloor, Math.max(...doomed));
+
+  // 바뀐 것이 없는 응답에도 바닥이 실린다. 그 길로만 오는 기기가 판단하지 못하면 안 된다.
+  const current = await pull(0);
+  const idle = await pull(current.version);
+  ctx.check('빈 응답에도 바닥이 실린다', idle.tombstoneFloor, Math.max(...doomed));
+
+  // ── 7. 남의 프로젝트는 받을 수 없다 ──
   // (권한 판정은 projectAccess 가 하고, 스모크의 스텁은 통과시키므로 여기서는
   //  서비스가 그 판정을 반드시 거치는지만 확인한다.)
   let asked: string | undefined;

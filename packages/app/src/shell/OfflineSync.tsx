@@ -37,8 +37,10 @@ export default function OfflineSync() {
         console.log(`오프라인(${why}). 기기 사본으로 그린다.`);
         return;
       }
+      // 사본을 처음부터 다시 받은 것은 드문 일이라 눈에 띄게 남긴다.
+      const rebuilt = result.rebuilt ? ' [사본을 처음부터 다시 받음]' : '';
       console.log(
-        `동기화 완료(${why}). 번호 ${result.version} (요청 ${result.rounds}회, 올림 ${result.pushed}건, 보류 ${result.held}건)`,
+        `동기화 완료(${why}). 번호 ${result.version} (요청 ${result.rounds}회, 올림 ${result.pushed}건, 보류 ${result.held}건)${rebuilt}`,
       );
     };
 

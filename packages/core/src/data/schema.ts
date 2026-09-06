@@ -18,7 +18,7 @@
  */
 
 /** 스키마가 바뀌면 올린다. 다르면 사본을 버리고 처음부터 다시 받는다. */
-export const SCHEMA_VERSION = 8;
+export const SCHEMA_VERSION = 9;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -28,12 +28,25 @@ export const SCHEMA_VERSION = 8;
  * 2단계에서 명령이 가정한 값을 실어 보낼 때다.
  */
 export const SCHEMA_STATEMENTS: readonly string[] = [
+  /*
+   * `mirrorFloor` 는 이 사본을 마지막으로 처음부터 받을 때의 **서버 자리표 바닥**이다.
+   *
+   * 서버는 보관 기간이 지난 자리표를 지우고 "이 번호 아래의 삭제는 더 없다"는 바닥을
+   * 알려 준다. 커서가 그 바닥보다 오래된 기기는 놓친 삭제를 따라잡을 수 없으므로 사본을
+   * 버리고 처음부터 받는데, **처음부터 받는 중인 기기도 커서가 바닥보다 낮다.** 그것까지
+   * 버리면 큰 사본은 영영 다 받지 못한다(받다가 되돌리기를 되풀이한다).
+   *
+   * 그래서 "그때의 바닥"을 적어 둔다. 바닥이 그보다 더 오른 경우에만 다시 버린다.
+   * 처음부터 받는 중에는 그 값이 같으므로 되풀이가 생기지 않고, 오래 끊겼던 기기는
+   * 바닥이 실제로 올랐으므로 한 번 버린다.
+   */
   `CREATE TABLE IF NOT EXISTS sync_state (
      projectId      TEXT PRIMARY KEY,
      version        INTEGER NOT NULL DEFAULT 0,
      schemaVersion  INTEGER NOT NULL,
      timeZone       TEXT NOT NULL,
-     syncedAt       TEXT
+     syncedAt       TEXT,
+     mirrorFloor    INTEGER NOT NULL DEFAULT 0
    )`,
 
   `CREATE TABLE IF NOT EXISTS project (

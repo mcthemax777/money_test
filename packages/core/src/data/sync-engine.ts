@@ -37,6 +37,13 @@ export interface SyncResult {
   pushed: number;
   /** 그중 보류 칸으로 간 것 (충돌·거절·보류) */
   held: number;
+  /**
+   * 사본을 버리고 처음부터 다시 받았는가.
+   *
+   * 서버가 보관 기간이 지난 자리표를 지운 뒤라 델타로는 따라잡을 수 없었다는 뜻이다.
+   * 드문 일이고, 드물기 때문에 일어났을 때 로그에 남아야 한다.
+   */
+  rebuilt: boolean;
 }
 
 /** 한 번의 동기화에서 서버를 부를 최대 횟수. 서버가 커서를 밀지 못할 때 무한히 돌지 않게 한다. */
@@ -59,8 +66,10 @@ export async function syncProject(
   const cursor = await store.init(projectId, timeZone);
 
   let version = cursor.version;
+  let mirrorFloor = cursor.mirrorFloor;
   let rounds = 0;
   let changed = false;
+  let rebuilt = false;
 
   const outbox = push
     ? await pushOutbox(store, push, projectId)
@@ -68,7 +77,7 @@ export async function syncProject(
 
   // 밀어 올리다 네트워크가 끊겼으면 받기도 되지 않는다. 큐는 그대로 남는다.
   if (outbox.offline) {
-    return { version, rounds, changed, offline: true, pushed: 0, held: outbox.held };
+    return { version, rounds, changed, offline: true, pushed: 0, held: outbox.held, rebuilt };
   }
   if (outbox.pushed > 0) changed = true;
 
@@ -79,12 +88,57 @@ export async function syncProject(
     } catch (error) {
       // 네트워크가 없으면 여기서 끝낸다. 사본은 그대로 쓸 수 있다.
       if (isOfflineError(error)) {
-        return { version, rounds, changed, pushed: outbox.pushed, held: outbox.held, offline: true };
+        return {
+          version,
+          rounds,
+          changed,
+          pushed: outbox.pushed,
+          held: outbox.held,
+          offline: true,
+          rebuilt,
+        };
       }
       throw error;
     }
 
     rounds += 1;
+
+    /*
+     * 델타로 따라잡을 수 없는 자리인가.
+     *
+     * 서버는 보관 기간이 지난 자리표를 지우고 그 바닥(`tombstoneFloor`)을 알려 준다.
+     * 커서가 그 아래면 그 사이의 삭제를 받을 길이 없다 -- 지운 거래가 이 기기에 영영
+     * 남는다. 그때는 사본을 버리고 처음부터 받는다. **아웃박스는 그대로 둔다.**
+     *
+     * 바닥을 커서하고만 견주면 안 된다. 처음부터 받는 중인 기기도 커서가 바닥보다
+     * 낮아서, 큰 사본은 받다가 되돌리기를 되풀이하며 영영 끝나지 않는다. 그래서 사본에
+     * 적어 둔 "그때의 바닥"과도 견주고, 바닥이 실제로 더 오른 경우에만 버린다.
+     *
+     * 한 번의 동기화에서 한 번만 한다. 서버가 어떤 값을 주든 여기서 맴돌지 않는다.
+     */
+    const floor = response.tombstoneFloor ?? 0;
+    if (floor > mirrorFloor) {
+      if (!rebuilt && version > 0 && floor > version) {
+        await store.resetForRebuild(projectId, timeZone, floor);
+        rebuilt = true;
+        changed = true;
+        version = 0;
+        mirrorFloor = floor;
+        // 이 응답은 버린다. 커서 뒤의 델타라 처음부터가 아니다.
+        continue;
+      }
+
+      /*
+       * 버릴 이유가 없는 두 경우. 커서가 이미 바닥을 넘어섰거나(따라붙어 있는 기기),
+       * 아직 아무것도 담기지 않았거나(처음 쓰는 기기)다. 둘 다 이 사본에는 그 바닥보다
+       * 전에 지워진 행이 없다는 뜻이라, 바닥만 적어 두고 그대로 간다.
+       *
+       * 빈 사본까지 버리면 첫 동기화가 첫 쪽을 두 번 받는다. 버릴 것이 없는데도.
+       */
+      await store.setMirrorFloor(projectId, floor);
+      mirrorFloor = floor;
+    }
+
     await store.applyPull(response, timeZone);
 
     if (countChanges(response) > 0) changed = true;
@@ -97,7 +151,15 @@ export async function syncProject(
     if (rounds >= MAX_ROUNDS) break;
   }
 
-  return { version, rounds, changed, pushed: outbox.pushed, held: outbox.held, offline: false };
+  return {
+    version,
+    rounds,
+    changed,
+    pushed: outbox.pushed,
+    held: outbox.held,
+    offline: false,
+    rebuilt,
+  };
 }
 
 /**
