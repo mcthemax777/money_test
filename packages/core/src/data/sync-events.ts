@@ -39,18 +39,34 @@ export interface SyncEventsOptions {
 const BACKOFF_START_MS = 1_000;
 const BACKOFF_MAX_MS = 60_000;
 
+/** 열어 둔 알림 연결. */
+export interface SyncEventsHandle {
+  /** 연결을 닫는다. 다시 붙지 않는다. */
+  close(): void;
+  /**
+   * 기다리는 중이면 그만 기다리고 지금 다시 붙는다.
+   *
+   * 기기가 잠들었다 깨어나는 자리에서 부른다. 잠든 사이 연결이 끊기면 간격이 곱절로
+   * 늘어 최대 1분까지 가는데, 사용자가 화면을 보고 있는 그 1분이 하필 가장 긴 기다림이
+   * 된다. 이미 붙어 있으면 아무 일도 하지 않는다 -- 멀쩡한 연결을 끊을 이유가 없다.
+   */
+  wake(): void;
+}
+
 /**
- * 알림 연결을 연다. 돌려주는 함수를 부르면 닫는다.
+ * 알림 연결을 연다.
  *
  * 끊기는 것은 정상이다. 프록시가 조용한 연결을 끊고, 기기는 잠들고, 네트워크는 바뀐다.
  * 그래서 실패를 오류로 다루지 않고 기다렸다 다시 붙는다. 간격에 흔들림(jitter)을 주는
  * 이유는 서버가 재시작할 때 모든 기기가 같은 순간에 몰려드는 것을 막기 위해서다.
  */
-export function openSyncEvents(options: SyncEventsOptions): () => void {
+export function openSyncEvents(options: SyncEventsOptions): SyncEventsHandle {
   let closed = false;
   let controller: AbortController | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
   let backoff = BACKOFF_START_MS;
+  /** 지금 간격을 기다리는 중이면 그 기다림을 끝내는 함수. 붙어 있는 동안은 null 이다. */
+  let resumeWait: (() => void) | null = null;
 
   const url = `${options.baseUrl.replace(/\/$/, '')}/sync/events?projectId=${encodeURIComponent(
     options.projectId,
@@ -58,7 +74,13 @@ export function openSyncEvents(options: SyncEventsOptions): () => void {
 
   const wait = (ms: number) =>
     new Promise<void>((resolve) => {
-      timer = setTimeout(resolve, ms);
+      const done = () => {
+        timer = null;
+        resumeWait = null;
+        resolve();
+      };
+      timer = setTimeout(done, ms);
+      resumeWait = done;
     });
 
   const loop = async () => {
@@ -111,10 +133,22 @@ export function openSyncEvents(options: SyncEventsOptions): () => void {
 
   void loop();
 
-  return () => {
-    closed = true;
-    if (timer) clearTimeout(timer);
-    controller?.abort();
+  return {
+    close() {
+      closed = true;
+      if (timer) clearTimeout(timer);
+      controller?.abort();
+    },
+
+    wake() {
+      // 붙어 있으면 기다리는 것이 없다. 그때는 할 일도 없다.
+      if (closed || !resumeWait) return;
+
+      if (timer) clearTimeout(timer);
+      // 깨어난 뒤에는 처음처럼 다룬다. 네트워크가 그 사이 돌아왔을 가능성이 크다.
+      backoff = BACKOFF_START_MS;
+      resumeWait();
+    },
   };
 }
 

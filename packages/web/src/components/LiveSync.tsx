@@ -18,6 +18,8 @@ import { useProject } from '@money/core/store/project';
  *
  * 지금 따라 도는 화면은 홈·가계·거래다(useMirrorVersion 을 의존성에 둔 훅들). 계좌·예산
  * 같은 설정 화면은 아직 각자 읽으므로 신호를 받아도 그대로다. 다시 열면 최신이다.
+ *
+ * 탭으로 돌아올 때도 한 번 읽는다. 숨어 있는 동안 놓친 신호가 있을 수 있어서다.
  */
 export function LiveSync() {
   const isAuthenticated = useAuth((state) => state.isAuthenticated);
@@ -26,7 +28,7 @@ export function LiveSync() {
   useEffect(() => {
     if (!isAuthenticated || !projectId) return;
 
-    return openSyncEvents({
+    const listener = openSyncEvents({
       baseUrl: apiClient.baseUrl,
       projectId,
       // 붙을 때마다 부른다. 만료된 토큰으로 붙으면 401 로 끊기고 다시 붙기를 되풀이한다.
@@ -41,6 +43,25 @@ export function LiveSync() {
       fetchFn: fetch as unknown as StreamingFetch,
       onVersion: () => notifyMirrorChanged(),
     });
+
+    /*
+     * 탭으로 돌아올 때 한 번 다시 읽는다. 앱이 앞으로 돌아올 때와 같은 자리다.
+     *
+     * 브라우저는 숨은 탭의 타이머를 늦추고 연결을 끊기도 한다. 그 사이 알림을 놓쳤다면
+     * 다시 붙기까지 최대 1분을 기다리는데, 하필 사용자가 화면을 보고 있는 그 1분이다.
+     * `wake` 는 기다리는 중일 때만 일한다 -- 멀쩡한 연결을 끊지 않는다.
+     */
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      listener.wake();
+      notifyMirrorChanged();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      listener.close();
+    };
   }, [isAuthenticated, projectId]);
 
   return null;

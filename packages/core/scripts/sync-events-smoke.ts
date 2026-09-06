@@ -13,6 +13,8 @@
  *      돌리면 25초마다 서버를 두드린다.
  *   3. **다시 붙기.** 연결이 끊기는 것은 정상이다(프록시, 잠든 기기, 서버 재시작).
  *      끊기면 스스로 다시 붙어야 하고, 닫으면 멈춰야 한다.
+ *   4. **깨우기.** 기다리는 중에 `wake` 를 부르면 간격을 다 채우지 않고 지금 붙는다.
+ *      앱이 앞으로 돌아오는 자리에서 부른다.
  */
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { AddressInfo } from 'node:net';
@@ -35,8 +37,31 @@ interface Connection {
   end(): void;
 }
 
+/**
+ * 켜 두면 서버가 연결을 거절한다. 클라이언트가 간격을 두고 기다리게 만드는 손잡이다.
+ *
+ * 잠든 기기가 깨어났을 때의 상태를 흉내 낸다 -- 그 사이 연결이 끊겼고, 다시 붙기까지
+ * 기다리는 중이다.
+ */
+let refuse = false;
+
+/**
+ * 서버가 받은 요청 수. 거절한 것까지 센다.
+ *
+ * 이 값이 있어야 **다시 붙기를 시도한 횟수**를 밖에서 알 수 있다. 연결 수만 세면 거절
+ * 당한 시도가 보이지 않아, 지금 간격이 얼마나 벌어져 있는지 가늠할 길이 없다.
+ */
+let requests = 0;
+
 function startServer(onConnect: (connection: Connection) => void): Promise<Server> {
   const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    requests += 1;
+
+    if (refuse) {
+      res.writeHead(503).end();
+      return;
+    }
+
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
@@ -58,7 +83,7 @@ async function main() {
   const port = (server.address() as AddressInfo).port;
 
   const versions: number[] = [];
-  const close = openSyncEvents({
+  const listener = openSyncEvents({
     baseUrl: `http://127.0.0.1:${port}`,
     projectId: 'p-1',
     getToken: () => 'token-1',
@@ -112,11 +137,40 @@ async function main() {
     await waitFor(5);
     eq('새 연결로도 번호가 온다', versions[4], 20);
 
-    // ── 6. 닫으면 멈춘다 ──
-    close();
+    /*
+     * ── 6. 깨울 때 곧바로 다시 붙는다 ──
+     *
+     * 서버를 막아 연결이 거듭 실패하게 두면 간격이 곱절로 벌어진다(1초 → 2 → 4 → 8).
+     * 그 상태가 잠든 기기가 깨어났을 때의 모습이고, `wake` 가 그 기다림을 앞당기는지 본다.
+     *
+     * **간격이 충분히 벌어질 때까지 기다리는 것이 이 검사의 요점이다.** 막자마자 깨우면
+     * 간격이 아직 1초 언저리라, wake 가 아무 일도 하지 않아도 그 사이에 저절로 붙는다.
+     * 실제로 처음엔 그렇게 짜서 `wake` 를 무력화해도 통과했다.
+     */
+    refuse = true;
+    connections[1].end();
+
+    // 네 번 더 시도할 때까지 기다린다. 그때 다음 간격은 최소 2초다.
+    const deadline = Date.now() + 20_000;
+    const startedAt = requests;
+    while (Date.now() < deadline && requests < startedAt + 4) await sleep(50);
+    eq('막아 두면 간격을 두고 다시 시도한다', requests >= startedAt + 4, true);
+
+    refuse = false;
+    const attempts = requests;
+    listener.wake();
+
+    // 800ms 는 지금 간격(최소 2초)보다 한참 짧다. 그 안에 오면 wake 가 한 일이다.
+    const woke = Date.now() + 800;
+    while (Date.now() < woke && requests === attempts) await sleep(20);
+    eq('깨우면 기다리지 않고 다시 붙는다', requests > attempts, true);
+    eq('그 시도로 연결이 선다', (await waitForConnection(connections.length + 1, 2_000)) > 0, true);
+
+    // ── 7. 닫으면 멈춘다 ──
+    listener.close();
     await sleep(300);
     const afterClose = connections.length;
-    connections[1].end();
+    connections[connections.length - 1].end();
     await sleep(1_500);
     eq('닫으면 다시 붙지 않는다', connections.length, afterClose);
   } finally {

@@ -24,7 +24,11 @@ import { createLocalHomePort } from '@money/core/data/local-home-port';
 import type { HeldMutation, LocalStore } from '@money/core/data/local-store';
 import { notifyMirrorChanged } from '@money/core/data/mirror-events';
 import { setMirrorTeardown } from '@money/core/data/mirror-teardown';
-import { openSyncEvents, type StreamingFetch } from '@money/core/data/sync-events';
+import {
+  openSyncEvents,
+  type StreamingFetch,
+  type SyncEventsHandle,
+} from '@money/core/data/sync-events';
 import { syncProject, type SyncResult } from '@money/core/data/sync-engine';
 import { newId, type Mutation } from '@money/types';
 
@@ -194,7 +198,7 @@ export async function clearOffline(): Promise<void> {
 }
 
 /**
- * 서버의 알림에 귀를 연다. 돌려주는 것으로 닫는다.
+ * 서버의 알림에 귀를 연다. 돌려주는 것으로 닫거나(`close`) 다시 붙일 수 있다(`wake`).
  *
  * 알림에는 번호만 실려 온다. 그것을 신호로 평소의 동기화를 한 번 더 돌릴 뿐이라,
  * 실시간이 되어도 값이 오는 길은 하나 그대로다. 알림이 끊긴 동안에도 화면이 틀리지
@@ -203,8 +207,8 @@ export async function clearOffline(): Promise<void> {
  * 스트리밍 fetch 를 expo 에서 받아 넣는다. 리액트 네이티브의 기본 fetch 는 응답을
  * 끝까지 받아야 돌려주고, EventSource 는 아예 없다.
  */
-export function listenForChanges(projectId: string, timeZone: string): () => void {
-  if (!store) return () => {};
+export function listenForChanges(projectId: string, timeZone: string): SyncEventsHandle {
+  if (!store) return { close: () => {}, wake: () => {} };
 
   return openSyncEvents({
     baseUrl: apiClient.baseUrl,
