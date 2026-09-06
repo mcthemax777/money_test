@@ -17,6 +17,7 @@ import { useTranslation } from '@money/core/lib/i18n';
 
 import Modal from '@/components/Modal';
 import AddButton from '@/components/AddButton';
+import { useDragReorder } from '@/hooks/useDragReorder';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const FORM_ID = 'tag-form';
@@ -46,6 +47,22 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [values, setValues] = useState<TagFormValues>(EMPTY_TAG_FORM);
   const [error, setError] = useState('');
+
+  /*
+   * 끌어서 자리를 바꾼다. 분류·자산 목록과 같은 훅이다.
+   *
+   * 앱은 옮긴 줄의 값 하나만 보내지만(사본 창구를 타야 해서), 웹은 다른 목록들과 같이
+   * 목록 전체를 보내는 엔드포인트를 쓴다. 한 화면 안에서 방식이 갈리면 같은 드래그가
+   * 목록마다 다르게 저장된다.
+   */
+  const handleReorder = async (ids: string[]) => {
+    const result = await manager.reorder(ids);
+    setError(result.ok ? '' : result.message);
+  };
+
+  const { items, dragProps, draggingId } = useDragReorder(manager.tags, (ids) => {
+    void handleReorder(ids);
+  });
 
   const openNew = () => {
     setEditingId(null);
@@ -90,17 +107,20 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
       {/* 추가 버튼은 목록 바로 위다 (자산·분류 화면과 같은 규칙). */}
       <AddButton label={t('tags.add')} onClick={openNew} />
 
-      {manager.isLoading ? (
+      {manager.isLoading && manager.tags.length === 0 ? (
         <p className="text-gray-600">{t('common.loading')}</p>
       ) : manager.tags.length === 0 ? (
         <p className="text-gray-600">{t('tags.empty')}</p>
       ) : (
         <ul className="space-y-2">
-          {manager.tags.map((tag) => (
+          {items.map((tag) => (
             <li
               key={tag.id}
+              {...dragProps(tag.id)}
               /* 새 줄이 옅은 데서 떠오른다. 목록이 늘어난 자리가 눈에 남는다. */
-              className="unfold flex items-center gap-3 rounded-lg bg-white p-4 shadow-sm"
+              className={`unfold flex items-center gap-3 rounded-lg bg-white p-4 shadow-sm ${
+                draggingId === tag.id ? 'opacity-50' : ''
+              }`}
             >
               {/* 색을 정한 태그는 점으로 보인다. 이름만으로는 목록에서 찾기 어렵다. */}
               <span

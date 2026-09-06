@@ -185,7 +185,7 @@ export default function CategoriesPage() {
 
       {section === 'tags' ? (
         <TagsPanel projectId={selectedProjectId} />
-      ) : isLoading ? (
+      ) : isLoading && categories.length === 0 ? (
         <p className="text-gray-600">{t('common.loading')}</p>
       ) : categories.length === 0 ? (
         <p className="text-gray-600">{t('categories.empty')}</p>
