@@ -215,6 +215,8 @@ export const en: Record<MessageKey, string> = {
   'login.failed': 'Could not sign you in. Please try again in a moment.',
   'login.autoSignup': 'Signing in with Google creates your account automatically.',
   'login.google': 'Sign in with Google',
+  'login.unsent': 'This device still holds {count} change(s) that have not reached the server.',
+  'login.unsentHelp': 'Sign in with the same account and they upload on their own. Signing in with a different account erases them.',
   'google.noPlayServices': 'This device does not have Google Play services.',
   'google.appNotRegistered': 'Google does not recognize this app. Register an Android client (package name + signing fingerprint) in the console.',
   'google.preparing': 'Preparing Google sign-in...',

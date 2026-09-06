@@ -172,7 +172,17 @@ class ApiClient {
           originalRequest.headers.Authorization = `Bearer ${accessToken}`;
           return await this.client(originalRequest);
         } catch (refreshError) {
-          this.clearSession();
+          /*
+           * 갱신이 실패한 까닭을 가른다.
+           *
+           * 서버가 갱신 토큰을 거절했다면 세션이 끝난 것이 맞다. 그러나 **갱신 요청이
+           * 서버에 닿지도 못했다면** 토큰이 죽었는지 아직 모른다 -- 그 사이에 연결이
+           * 끊겼을 뿐이다. 그때까지 세션을 끊으면, 하필 오프라인으로 들어가는 순간에
+           * 로그인 화면으로 밀려나 그다음부터는 아무것도 적지 못한다.
+           *
+           * 놓아 두어도 잃는 것은 없다. 다음 요청이 다시 401 을 받으면 그때 정리된다.
+           */
+          if (!isOfflineError(refreshError)) this.clearSession();
           return Promise.reject(refreshError);
         }
       },

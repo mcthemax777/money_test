@@ -2,10 +2,16 @@
  * 로그인. 웹의 /login 과 같은 배치다.
  *
  * 가운데에 앱 이름과 한 줄 소개, 구글 버튼, 그리고 계정이 없으면 자동으로 만든다는
- * 안내가 온다. 그 아래 접어 둔 것은 개발용이다. 직접 서명한 액세스 토큰을 붙여 넣는다.
+ * 안내가 온다.
+ *
+ * 하나 더 있다. **아직 서버에 닿지 못한 기록이 있으면 그 수를 여기서 말해 준다.**
+ * 리프레시 토큰이 7일이라 오프라인이 길어지면 세션이 먼저 끊기는데, 그때 사람이 보는
+ * 것은 이 로그인 화면뿐이다. 사본과 큐는 그대로 두지만(설계 문서 D10) 화면이 아무 말도
+ * 하지 않으면 적어 둔 것이 사라졌다고 읽는다. 그러면 같은 지출을 다시 적거나, 앱을
+ * 지운다 -- 지우면 그제서야 정말로 사라진다. 그 아래 접어 둔 것은 개발용이다. 직접 서명한 액세스 토큰을 붙여 넣는다.
  * 출시본에는 그 자리가 없다(__DEV__).
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   GoogleSignin,
@@ -20,6 +26,7 @@ import { useTranslation } from '@money/core/lib/i18n';
 import { useAuth } from '@money/core/store/auth';
 
 import { API_URL } from '../api';
+import { unsentCount } from '../offline';
 
 /** 안드로이드가 "이 앱을 모르겠다"고 할 때의 코드. 등록이 빠졌다는 뜻이다. */
 const DEVELOPER_ERROR = '10';
@@ -29,6 +36,23 @@ export default function LoginScreen({ startupError }: { startupError?: string })
   const { loadUser, signInWithGoogle, isLoading } = useAuth();
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+
+  /*
+   * 보내지 못한 기록의 수. 화면을 열 때 한 번 센다.
+   *
+   * 로그인하는 동안 바뀌지 않는 값이라 다시 세지 않는다 -- 세션이 없으면 동기화도 돌지
+   * 않는다. 사본이 없거나(웹으로 치면 없는 상태) 세지 못하면 0 이 와서 아무것도 뜨지 않는다.
+   */
+  const [unsent, setUnsent] = useState(0);
+  useEffect(() => {
+    let alive = true;
+    void unsentCount().then(({ pending, held }) => {
+      if (alive) setUnsent(pending + held);
+    });
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const [isDevOpen, setIsDevOpen] = useState(false);
   const [accessToken, setAccessToken] = useState('');
@@ -98,6 +122,13 @@ export default function LoginScreen({ startupError }: { startupError?: string })
 
         {startupError ? (
           <Text className="text-xs text-amber-700">시작 중 오류: {startupError}</Text>
+        ) : null}
+
+        {unsent > 0 ? (
+          <View className="rounded bg-amber-50 p-3">
+            <Text className="text-sm text-amber-900">{t('login.unsent', { count: unsent })}</Text>
+            <Text className="mt-1 text-xs text-amber-800">{t('login.unsentHelp')}</Text>
+          </View>
         ) : null}
 
         {error ? (

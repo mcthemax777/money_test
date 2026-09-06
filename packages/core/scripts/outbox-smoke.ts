@@ -416,6 +416,23 @@ const KST = 'Asia/Seoul';
   eq('사본은 비워진다', (await store.counts(projectId)).entry, 0);
   eq('큐는 살아남는다', (await store.outboxCount(projectId)).pending, 1);
 
+  /*
+   * ── 8. 프로젝트를 묻지 않으면 기기 전체를 센다 ──
+   *
+   * 로그인 화면이 이 모양으로 묻는다. 세션이 끊긴 자리에는 고른 프로젝트가 없어서,
+   * 프로젝트로 거르면 "보내지 못한 것 0건"이라고 말하게 된다 -- 있는데도.
+   */
+  const otherProjectId = '019273cc-0000-7000-8000-000000000fff';
+  await store.enqueue({
+    projectId: otherProjectId,
+    mutationId: '019273cc-0000-7000-8000-0000000000ff',
+    kind: 'entry.delete',
+    targets: ['019273cc-0000-7000-8000-000000000eee'],
+    payload: { id: '019273cc-0000-7000-8000-000000000eee' },
+  });
+  eq('다른 프로젝트는 세지 않는다', (await store.outboxCount(projectId)).pending, 1);
+  eq('프로젝트를 묻지 않으면 다 센다', (await store.outboxCount()).pending, 2);
+
   driver.close();
   console.log(fail === 0 ? '\n전부 통과' : `\n실패 ${fail}건`);
   process.exit(fail === 0 ? 0 : 1);

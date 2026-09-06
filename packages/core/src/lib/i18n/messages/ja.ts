@@ -216,6 +216,8 @@ export const ja: Record<MessageKey, string> = {
   'login.failed': 'ログインできませんでした。しばらくしてからもう一度お試しください。',
   'login.autoSignup': 'Googleアカウントでログインすると、アカウントが自動で作成されます。',
   'login.google': 'Google でログイン',
+  'login.unsent': 'この端末にはまだ送信できていない記録が{count}件あります。',
+  'login.unsentHelp': '同じアカウントでログインすれば自動で送信されます。別のアカウントでログインするとこの記録は消えます。',
   'google.noPlayServices': 'この端末には Google Play 開発者サービスがありません。',
   'google.appNotRegistered': 'Google がこのアプリを認識していません。コンソールで Android クライアント(パッケージ名 + 署名フィンガープリント)を登録してください。',
   'google.preparing': 'Googleログインの準備中...',

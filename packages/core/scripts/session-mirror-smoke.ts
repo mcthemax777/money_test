@@ -13,8 +13,12 @@
  *     (설계 문서 D10. 리프레시 토큰이 7일이라 401 은 드문 일이 아니다.)
  *
  * 그래서 세 갈래를 하나씩 본다. 로그아웃은 버리고, 401 은 두고, 주인이 바뀌면 버린다.
+ *
+ * 마지막 갈래는 실제 앱의 401 을 그대로 흉내 내야 한다. 앱의 `setupApi` 는 401 을 받으면
+ * `user` 까지 null 로 만든다. 세션만 끊는 시늉(`isAuthenticated: false`)으로 검사하면
+ * 스토어에 남은 앞 사람 id 를 보고 통과해 버려, 정작 앱에서는 사본이 남는다.
  */
-import { setMirrorTeardown } from '../src/data/mirror-teardown';
+import { setMirrorOwnership, setMirrorTeardown } from '../src/data/mirror-teardown';
 import { apiClient } from '../src/lib/api-client';
 import { saveAuthTokens, setTokenStorage, type TokenStorage } from '../src/lib/auth-tokens';
 import { useAuth } from '../src/store/auth';
@@ -47,6 +51,17 @@ function installTeardown(behavior: 'ok' | 'throw' = 'ok') {
 }
 
 /**
+ * 사본에 적힌 주인. 앱에서는 SecureStore 고, 여기서는 변수 하나다.
+ *
+ * 스토어와 따로 두는 것이 요점이라, 이 자리표도 스토어를 보지 않는다.
+ */
+let owner: string | null = null;
+setMirrorOwnership({
+  get: async () => owner,
+  claim: async (userId) => void (owner = userId),
+});
+
+/**
  * 로그인한 상태로 만든다. 서버에 닿지 않고 스토어와 토큰만 그 모양으로 둔다.
  *
  * 토큰까지 넣어야 하는 이유가 있다. loadUser 는 토큰이 없으면 서버를 부르기도 전에
@@ -55,6 +70,7 @@ function installTeardown(behavior: 'ok' | 'throw' = 'ok') {
  */
 function signedInAs(userId: string) {
   saveAuthTokens('access-token', 'refresh-token');
+  owner = userId;
   useAuth.setState({
     user: { id: userId, email: `${userId}@example.com`, name: userId, avatar: null },
     isAuthenticated: true,
@@ -80,6 +96,16 @@ function loginResponse(userId: string) {
 /** 서버가 거절한 경우. 인터셉터를 거친 뒤 스토어가 보는 모양과 같다. */
 function unauthorizedError() {
   return Object.assign(new Error('Unauthorized'), { response: { status: 401 } });
+}
+
+/**
+ * 앱이 401 을 받았을 때의 상태. `packages/app/App.tsx` 의 setupApi 와 같은 모양이다.
+ *
+ * 사본은 그대로 두고(D10) 세션만 끊는다 -- **사용자까지 비운다**. 이 한 줄이 주인을
+ * 스토어 밖에 적어 두어야 하는 이유다.
+ */
+function sessionExpired() {
+  useAuth.setState({ user: null, isAuthenticated: false });
 }
 
 /** 서버에 닿지 못한 경우. isOfflineError 가 이것을 오프라인으로 읽어야 한다. */
@@ -125,27 +151,45 @@ function networkError() {
   installTeardown();
   stubApi({ signInWithGoogle: async () => loginResponse('user-b') });
   signedInAs('user-a');
-  useAuth.setState({ isAuthenticated: false });
+  sessionExpired();
   await useAuth.getState().signInWithGoogle('id-token');
   eq('주인이 바뀌면 사본을 버린다', cleared, 1);
   eq('새 사용자로 들어간다', useAuth.getState().user?.id, 'user-b');
+  eq('사본의 주인도 새 사람이 된다', owner, 'user-b');
 
   // 6. 같은 사용자가 다시 들어오면 버리지 않는다. 적어 둔 것이 남아야 한다.
   installTeardown();
   stubApi({ signInWithGoogle: async () => loginResponse('user-a') });
   signedInAs('user-a');
-  useAuth.setState({ isAuthenticated: false });
+  sessionExpired();
   await useAuth.getState().signInWithGoogle('id-token');
   eq('같은 사람이면 사본을 둔다', cleared, 0);
 
   // 7. 처음 로그인(앞 사용자가 없다)에도 버릴 것이 없다.
   installTeardown();
   stubApi({ signInWithGoogle: async () => loginResponse('user-a') });
+  owner = null;
   useAuth.setState({ user: null, isAuthenticated: false });
   await useAuth.getState().signInWithGoogle('id-token');
   eq('첫 로그인은 버릴 것이 없다', cleared, 0);
+  eq('그래도 주인은 적어 둔다', owner, 'user-a');
 
-  // 8. 웹처럼 등록이 없으면 조용히 지나간다.
+  /*
+   * 8. 세션을 이어 여는 길에서도 주인을 적는다.
+   *
+   * 앱을 껐다 켜면 signInWithGoogle 을 거치지 않고 loadUser 로 들어온다. 그때 주인을
+   * 적지 않으면, 이 기기를 처음 쓰기 시작한 사람이 SecureStore 에 남지 않아 다음에
+   * 다른 계정이 들어와도 사본이 남는다.
+   */
+  installTeardown();
+  owner = null;
+  stubApi({ getProfile: async () => ({ id: 'user-a', email: 'a@example.com', name: 'a', avatar: null }) });
+  signedInAs('user-a');
+  owner = null;
+  await useAuth.getState().loadUser();
+  eq('세션을 이어 열어도 주인을 적는다', owner, 'user-a');
+
+  // 9. 웹처럼 등록이 없으면 조용히 지나간다.
   setMirrorTeardown(null);
   stubApi({ logout: async () => undefined });
   signedInAs('user-a');

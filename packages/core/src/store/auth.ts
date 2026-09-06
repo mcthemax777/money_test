@@ -5,7 +5,11 @@ import { persistStorage } from '../lib/persist-storage';
 import { apiClient } from '../lib/api-client';
 import { clearAuthTokens, getAccessToken, getRefreshToken, saveAuthTokens } from '../lib/auth-tokens';
 import { isOfflineError } from '../lib/offline-error';
-import { clearLocalMirror } from '../data/mirror-teardown';
+import {
+  claimMirrorFor,
+  clearLocalMirror,
+  mirrorOwnerId,
+} from '../data/mirror-teardown';
 
 interface User {
   id: string;
@@ -76,7 +80,14 @@ export const useAuth = create<AuthStore>()(
       useUserFilter.getState().setSelectedPersonIds([]);
       useUserFilter.getState().setPeople([]);
 
-      const previousUserId = get().user?.id;
+      /*
+       * 앞 사람이 누구였는지.
+       *
+       * **사본에 적힌 주인을 먼저 본다.** 스토어의 사용자는 401 을 받는 순간 비워지므로
+       * (앱의 `setupApi` 가 그렇게 한다), 그것만 보면 "토큰이 만료된 뒤 다른 계정이
+       * 들어오는" 바로 그 길에서 주인이 바뀐 것을 알 수 없다. 실제로 그랬다.
+       */
+      const previousUserId = (await mirrorOwnerId()) ?? get().user?.id ?? null;
       const response = await apiClient.signInWithGoogle(idToken);
       saveAuthTokens(response.accessToken, response.refreshToken);
 
@@ -90,6 +101,8 @@ export const useAuth = create<AuthStore>()(
       if (previousUserId && previousUserId !== response.user?.id) {
         await clearLocalMirror();
       }
+      // 이 사본은 이제 이 사람의 것이다. 다음 로그인이 이 값을 보고 가른다.
+      if (response.user?.id) await claimMirrorFor(response.user.id);
       // 이 계정이 고른 말로 화면을 맞춘다. 앞 사용자가 남긴 언어가 이어지면 안 된다.
       applyUserLocale(response.user?.locale);
       set({
@@ -175,6 +188,14 @@ export const useAuth = create<AuthStore>()(
 
       const user = await apiClient.getProfile();
       applyUserLocale(user?.locale);
+      /*
+       * 여기서도 주인을 적어 둔다.
+       *
+       * 이 기능이 생기기 전에 로그인한 기기는 사본에 주인이 없다. 그 기기가 다시 로그인
+       * 화면을 거치기 전에 다른 계정이 들어오면 앞 사람의 사본이 남는다. 앱을 열 때마다
+       * 지나가는 이 자리에서 채워 두면 그 틈이 한 번의 실행으로 메워진다.
+       */
+      if (user?.id) await claimMirrorFor(user.id);
       set({ user, isAuthenticated: true, isInitializing: false });
     } catch (error) {
       /*

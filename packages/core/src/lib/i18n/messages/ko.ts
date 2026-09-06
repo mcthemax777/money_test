@@ -244,6 +244,8 @@ export const ko = {
   'login.failed': '로그인에 실패했습니다. 잠시 후 다시 시도해 주세요.',
   'login.autoSignup': '구글 계정으로 로그인하면 계정이 자동으로 만들어집니다.',
   'login.google': '구글로 로그인',
+  'login.unsent': '이 기기에 아직 보내지 못한 기록이 {count}건 있습니다.',
+  'login.unsentHelp': '같은 계정으로 다시 로그인하면 자동으로 올라갑니다. 다른 계정으로 들어가면 이 기록은 지워집니다.',
   'google.noPlayServices': '이 기기에 구글 플레이 서비스가 없습니다.',
   'google.appNotRegistered': '구글이 이 앱을 모릅니다. 콘솔에 안드로이드 클라이언트(패키지 이름 + 서명 지문)를 등록해 주세요.',
   'google.preparing': '구글 로그인 준비 중...',

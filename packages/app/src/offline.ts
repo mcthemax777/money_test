@@ -23,7 +23,7 @@ import { createLocalEntryWriter } from '@money/core/data/local-entry-writer';
 import { createLocalHomePort } from '@money/core/data/local-home-port';
 import type { HeldMutation, LocalStore } from '@money/core/data/local-store';
 import { notifyMirrorChanged } from '@money/core/data/mirror-events';
-import { setMirrorTeardown } from '@money/core/data/mirror-teardown';
+import { setMirrorOwnership, setMirrorTeardown } from '@money/core/data/mirror-teardown';
 import {
   openSyncEvents,
   type StreamingFetch,
@@ -32,6 +32,7 @@ import {
 import { syncProject, type SyncResult } from '@money/core/data/sync-engine';
 import { newId, type Mutation } from '@money/types';
 
+import { claimMirrorOwner, mirrorOwner } from './mirror-key';
 import { deleteLocalStore, openLocalStore } from './sqlite';
 
 let store: LocalStore | null = null;
@@ -64,6 +65,13 @@ export async function setupOffline(): Promise<boolean> {
     await store.ensureClient(newId);
     // 세션이 끝날 때 core 가 사본을 버릴 수 있게 방법을 등록한다.
     setMirrorTeardown(clearOffline);
+    /*
+     * 사본의 주인을 읽고 적는 방법도 함께 등록한다.
+     *
+     * 로그인 스토어의 사용자는 401 을 받는 순간 비워지므로, 주인이 바뀌었는지는 사본
+     * 쪽에 적어 둔 값으로만 알 수 있다 (D10).
+     */
+    setMirrorOwnership({ get: mirrorOwner, claim: claimMirrorOwner });
     return true;
   } catch (error) {
     console.error('기기 사본을 열지 못했습니다. 서버에서 바로 읽습니다:', error);
@@ -227,6 +235,29 @@ export function listenForChanges(projectId: string, timeZone: string): SyncEvent
       console.log('알림 연결 오류:', error instanceof Error ? error.message : error);
     },
   });
+}
+
+/**
+ * 이 기기에 아직 서버로 못 보낸 것이 몇 건인가. 프로젝트를 가리지 않는다.
+ *
+ * 로그인 화면이 쓴다. 토큰이 만료되면(리프레시 수명 7일) 세션만 끊기고 사본과 큐는
+ * 그대로 남는데(D10), 화면에는 그냥 로그인 창이 뜰 뿐이라 오프라인에서 적어 둔 것이
+ * 사라진 것처럼 보인다. **사라지지 않았다는 사실을 그 자리에서 말해 주는 것**이
+ * 이 함수가 있는 이유다.
+ *
+ * 프로젝트를 묻지 않는 까닭은 그 자리에 고른 프로젝트가 없기 때문이다. 세션이 끊기면
+ * 프로젝트 스토어도 비워질 수 있어, 있는 것을 다 세는 편이 맞다.
+ */
+export async function unsentCount(): Promise<{ pending: number; held: number }> {
+  if (!store) return { pending: 0, held: 0 };
+
+  try {
+    return await store.outboxCount();
+  } catch (error) {
+    // 세지 못한 것을 오류로 올리지 않는다. 로그인 화면이 이것 때문에 막히면 안 된다.
+    console.error('보내지 못한 기록을 세지 못했습니다:', error);
+    return { pending: 0, held: 0 };
+  }
 }
 
 /** 사본을 쓸 수 있는 상태인가. 화면이 "오프라인에서도 볼 수 있다"를 알릴 때 쓴다. */

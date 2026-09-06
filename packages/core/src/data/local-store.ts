@@ -2080,11 +2080,18 @@ export class LocalStore {
     });
   }
 
-  /** 아직 보내지 못한 명령 수. 화면이 "N건 대기" 를 보여 줄 때 쓴다. */
-  async outboxCount(projectId: string): Promise<{ pending: number; held: number }> {
+  /**
+   * 아직 보내지 못한 명령 수. 화면이 "N건 대기" 를 보여 줄 때 쓴다.
+   *
+   * 프로젝트를 주지 않으면 이 기기 전체를 센다. 세션이 끊긴 뒤(로그인 화면)에는 어느
+   * 프로젝트를 보고 있었는지가 남아 있다고 믿을 수 없어서, 그 자리에서는 전체를 묻는다.
+   */
+  async outboxCount(projectId?: string): Promise<{ pending: number; held: number }> {
     const rows = await this.db.all<Row>(
-      `SELECT status, COUNT(*) AS n FROM outbox WHERE projectId = ? GROUP BY status`,
-      [projectId],
+      projectId
+        ? `SELECT status, COUNT(*) AS n FROM outbox WHERE projectId = ? GROUP BY status`
+        : `SELECT status, COUNT(*) AS n FROM outbox GROUP BY status`,
+      projectId ? [projectId] : [],
     );
     let pending = 0;
     let held = 0;
