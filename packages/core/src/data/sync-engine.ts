@@ -205,17 +205,28 @@ async function pushOutbox(
 /** 응답에 실제로 담긴 변경 수. "바뀐 것이 있었는가"를 화면에 알릴 때 쓴다. */
 export function countChanges(response: SyncDto.PullResponse): number {
   const { changes, tombstones } = response;
+  /*
+   * **Changes 의 칸을 하나라도 빠뜨리면 그 표는 화면에 늦게 닿는다.**
+   *
+   * 이 수가 0 이면 부르는 쪽이 "받은 것이 없다"로 보고 사본이 바뀌었다는 알림을 내지
+   * 않는다(app 의 syncNow). 사본에는 이미 적혀 있으므로 화면을 다시 열면 나오지만, 열어
+   * 둔 화면은 그대로 멈춘다. 태그가 실제로 그랬다 -- 웹에서 만든 태그가 앱의 태그 화면에
+   * 아무리 기다려도 나오지 않고, 다른 탭에 다녀오면 그제서야 보였다.
+   */
   return (
     (changes.project ? 1 : 0) +
     changes.members.length +
     changes.people.length +
     changes.accounts.length +
     changes.categories.length +
+    (changes.tags?.length ?? 0) +
     changes.cards.length +
     changes.entries.length +
     changes.budgets.length +
     changes.budgetOverrides.length +
     changes.exchangeRates.length +
+    (changes.assetValuations?.length ?? 0) +
+    (changes.installmentPlans?.length ?? 0) +
     tombstones.length
   );
 }
