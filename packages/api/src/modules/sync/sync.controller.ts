@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   MessageEvent,
   Post,
   Query,
@@ -73,6 +74,18 @@ export class SyncController {
    *   - 25초마다의 ping. 중간의 프록시가 조용한 연결을 끊지 않게 한다.
    */
   @Sse('events')
+  /*
+   * nginx 에게 이 응답은 모아 두지 말라고 일러 둔다.
+   *
+   * nginx 는 `proxy_buffering` 이 기본으로 켜져 있고, 내용 유형이 text/event-stream 이어도
+   * 스스로 끄지 않는다. 그러면 신호가 nginx 의 버퍼에 앉아 있다가 버퍼가 차거나 연결이
+   * 끊길 때에야 한꺼번에 나가, 기기는 "바뀌었다"를 제때 듣지 못한다 -- 웹에서 만든 태그가
+   * 앱에 나타나지 않고 그 반대도 같은 자리다.
+   *
+   * 이 헤더는 nginx 만 보고 다른 것들은 그냥 지나친다. 서버 앞의 설정에 기대지 않고
+   * 코드에서 끝내려고 여기 둔다 (배포마다 nginx 를 고칠 수는 없다).
+   */
+  @Header('X-Accel-Buffering', 'no')
   @ApiOperation({ summary: '변경 알림 (SSE). 번호만 보내고 데이터는 pull 로 받는다' })
   events(
     @Request() req: AuthenticatedRequest,
