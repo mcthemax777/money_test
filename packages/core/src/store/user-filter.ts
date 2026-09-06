@@ -33,6 +33,15 @@ interface UserFilterStore {
   filterProjectId: string | null;
   /** 이 프로젝트의 구성원 전체를 고른 상태로 초기화한다. */
   resetPersonFilterFor: (projectId: string, personIds: string[]) => void;
+  /**
+   * 선택을 통째로 지운다. 로그아웃처럼 보는 사람이 바뀌는 자리에서 부른다.
+   *
+   * selectedPersonIds 만 비우면 personFilterTouched 와 filterProjectId 가 남는다.
+   * 같은 사람이 같은 프로젝트로 다시 들어왔을 때 usePersonFilterSync 가 그 빈 배열을
+   * "사용자가 직접 전부 해제한 상태"로 읽어, 아무도 고르지 않은 채로 화면이 빈다.
+   * 소속과 건드림 표시까지 함께 지워야 다음 로그인이 전체 선택으로 시작한다.
+   */
+  clearPersonFilter: () => void;
 }
 
 export const useUserFilter = create<UserFilterStore>()(
@@ -68,6 +77,13 @@ export const useUserFilter = create<UserFilterStore>()(
           filterProjectId: projectId,
           selectedPersonIds: personIds,
           personFilterTouched: false,
+        }),
+      clearPersonFilter: () =>
+        set({
+          people: [],
+          selectedPersonIds: [],
+          personFilterTouched: false,
+          filterProjectId: null,
         }),
       togglePersonId: (personId: string) =>
         set((state) => ({

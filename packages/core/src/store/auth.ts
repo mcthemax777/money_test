@@ -77,8 +77,7 @@ export const useAuth = create<AuthStore>()(
       const { useUserFilter } = await import('./user-filter');
       useProject.getState().setSelectedProjectId(null);
       useProject.getState().setProjects([]);
-      useUserFilter.getState().setSelectedPersonIds([]);
-      useUserFilter.getState().setPeople([]);
+      useUserFilter.getState().clearPersonFilter();
 
       /*
        * 앞 사람이 누구였는지.
@@ -156,8 +155,7 @@ export const useAuth = create<AuthStore>()(
       const { useUserFilter } = await import('./user-filter');
       useProject.getState().setSelectedProjectId(null);
       useProject.getState().setProjects([]);
-      useUserFilter.getState().setSelectedPersonIds([]);
-      useUserFilter.getState().setPeople([]);
+      useUserFilter.getState().clearPersonFilter();
 
       // 기관 목록 캐시도 비운다. 로그아웃은 페이지를 새로 읽지 않아
       // 모듈 캐시가 그대로 남고, selectedProjectId가 null로 돌아가면
