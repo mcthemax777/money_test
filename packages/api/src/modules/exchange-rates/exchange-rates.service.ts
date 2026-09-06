@@ -6,6 +6,7 @@ import {
   SUPPORTED_CURRENCIES,
   currencyDecimals,
   isCurrencyCode,
+  fallbackRate,
 } from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
 
@@ -36,11 +37,6 @@ export interface DisplayConverter {
  *
  * 값의 뜻은 "1 <from> = rate <to>"다.
  */
-const FALLBACK_RATES: Record<string, string> = {
-  'USD:KRW': '1380',
-  'JPY:KRW': '9.2',
-  'USD:JPY': '150',
-};
 
 @Injectable()
 export class ExchangeRatesService {
@@ -226,15 +222,11 @@ export class ExchangeRatesService {
     });
   }
 
-  /** 고정값 표에서 찾는다. 뒤집힌 쌍이면 역수를 만든다. */
+  /**
+   * 고정값 표에서 찾는다. 표는 `@money/types` 에 한 벌만 둔다 -- 기기도 오프라인에서
+   * 같은 값을 써야 외화 계좌의 합계가 서버와 갈리지 않는다.
+   */
   private fallbackRate(from: CurrencyCode, to: CurrencyCode): string | null {
-    const direct = FALLBACK_RATES[`${from}:${to}`];
-    if (direct) return direct;
-
-    const inverse = FALLBACK_RATES[`${to}:${from}`];
-    if (inverse) {
-      return new Prisma.Decimal(1).div(inverse).toDecimalPlaces(8).toString();
-    }
-    return null;
+    return fallbackRate(from, to);
   }
 }

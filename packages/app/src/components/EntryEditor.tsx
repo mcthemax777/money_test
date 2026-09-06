@@ -24,12 +24,21 @@ import { useMyPersonId, useProject, useProjectTimeZone } from '@money/core/store
 
 import Modal from './Modal';
 
-/** 갈래 셋. 카드사 대금 이동은 카드 화면의 일이라 여기 없다. */
+/** 갈래 넷. 조정(잔액 맞추기)은 이 폼이 만드는 것이 아니라 여기 없다. */
 const KINDS: Array<{ id: EntryFormKind; labelKey: MessageKey }> = [
   { id: 'expense', labelKey: 'editor.kind.expense' },
   { id: 'income', labelKey: 'editor.kind.income' },
   { id: 'transfer', labelKey: 'editor.kind.transfer' },
+  { id: 'card_payment', labelKey: 'editor.kind.card_payment' },
 ];
+
+/**
+ * 고를 수 있는 통화. 빈 값이 장부 통화다.
+ *
+ * 자유 입력을 두지 않는다. 통화 코드를 손으로 적게 하면 오타 하나가 저장을 막고, 앱에는
+ * 목록에서 고르는 편이 빠르다.
+ */
+const CURRENCIES = ['USD', 'JPY', 'EUR', 'CNY'];
 
 /** 카드사가 흔히 주는 할부 개월수. 빈 값이 일시불이다. */
 const INSTALLMENT_MONTHS = ['', '2', '3', '6', '12'];
@@ -51,6 +60,13 @@ const VIOLATION_KEY: Record<string, MessageKey> = {
   FEE_CATEGORY_REQUIRED: 'editor.feeCategoryRequired',
   EXTRA_INVALID: 'entryForm.extraInvalid',
   EXTRA_EXCEEDS_AMOUNT: 'error.EXTRA_EXCEEDS_AMOUNT',
+  SPLIT_SUM_MISMATCH: 'editor.splitSumMismatch',
+  SPLIT_CATEGORY_REQUIRED: 'editor.splitCategoryRequired',
+  SPLIT_AMOUNT_INVALID: 'editor.splitAmountInvalid',
+  SPLIT_EXTRA_INVALID: 'editor.splitExtraInvalid',
+  SPLIT_EXTRA_EXCEEDS: 'editor.splitExtraExceeds',
+  RATE_INVALID: 'editor.rateInvalid',
+  CARD_REQUIRED: 'editor.cardRequired',
 };
 
 export interface EntryEditorProps {
@@ -199,6 +215,43 @@ export default function EntryEditor({
           />
         </Field>
 
+        {/*
+          통화와 환율.
+
+          기준통화로 적으면 환산할 것이 없으므로 환율 칸을 아예 만들지 않는다. 통화를
+          고르면 어림값이 채워지고, 사용자가 실제 환율로 고친다. **그 값을 명령에 실어
+          보내는 것이 요점이다** -- 비워 두면 며칠 뒤 재생할 때 그날 환율로 값이 다시
+          매겨져, 기기가 보여 준 금액과 서버에 남는 금액이 갈린다 (설계 문서의 D7).
+        */}
+        <Field label={t('editor.currency')}>
+          <Chips
+            options={[
+              { value: '', label: form.ledgerCurrency },
+              ...CURRENCIES.filter((code) => code !== form.ledgerCurrency).map((code) => ({
+                value: code,
+                label: code,
+              })),
+            ]}
+            selected={values.currency}
+            onSelect={(value) => setField('currency', value)}
+          />
+        </Field>
+
+        {values.currency ? (
+          <Field label={t('editor.rate')} invalid={violation?.field === 'exchangeRate'}>
+            <TextInput
+              value={values.exchangeRate}
+              onChangeText={(text) => setField('exchangeRate', text)}
+              keyboardType="numeric"
+              placeholder="0"
+              className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
+            />
+            <Text className="mt-1 text-xs text-gray-500">
+              {t('editor.rateHint', { currency: values.currency, ledger: form.ledgerCurrency })}
+            </Text>
+          </Field>
+        ) : null}
+
         <Field label={t('editor.description')} invalid={violation?.field === 'description'}>
           <TextInput
             value={values.description}
@@ -250,7 +303,11 @@ export default function EntryEditor({
         </Field>
 
         <Field
-          label={values.kind === 'transfer' ? t('editor.fromAccount') : t('editor.method')}
+          label={
+            values.kind === 'transfer' || values.kind === 'card_payment'
+              ? t('editor.fromAccount')
+              : t('editor.method')
+          }
           invalid={violation?.field === 'method'}
         >
           {form.methodChoices.length === 0 ? (
@@ -267,7 +324,37 @@ export default function EntryEditor({
           )}
         </Field>
 
-        {values.kind === 'transfer' ? (
+        {values.kind === 'card_payment' ? (
+          <>
+            {/*
+              갚을 카드. 신용카드만 고를 수 있다 -- 체크카드는 결제하는 자리에서 통장에서
+              빠지므로 나중에 갚을 대금이 없다.
+            */}
+            <Field label={t('editor.card')} invalid={violation?.field === 'cardId'}>
+              {form.cardChoices.length === 0 ? (
+                <Text className="text-sm text-gray-500">{t('editor.noCreditCards')}</Text>
+              ) : (
+                <Chips
+                  options={form.cardChoices.map((card) => ({ value: card.id, label: card.name }))}
+                  selected={values.cardId}
+                  onSelect={(value) => setField('cardId', value)}
+                />
+              )}
+            </Field>
+
+            {/* 부채가 줄면 대금 결제, 늘면 환불 입금이다. */}
+            <Field label={t('editor.cardDirection')}>
+              <Chips
+                options={[
+                  { value: 'payment', label: t('editor.directionPayment') },
+                  { value: 'refund', label: t('editor.directionRefund') },
+                ]}
+                selected={values.cardDirection}
+                onSelect={(value) => setField('cardDirection', value as 'payment' | 'refund')}
+              />
+            </Field>
+          </>
+        ) : values.kind === 'transfer' ? (
           <>
             <Field label={t('editor.toAccount')} invalid={violation?.field === 'toAccountId'}>
               <Chips
@@ -307,6 +394,72 @@ export default function EntryEditor({
               </Field>
             ) : null}
           </>
+        ) : values.splits.length > 0 ? (
+          /*
+            분할. 줄마다 분류와 금액을 따로 적는다.
+
+            줄이 있는 동안에는 위의 분류·과소비 칸을 감춘다. 둘이 함께 보이면 어느 쪽이
+            저장되는지 알 수 없고, 실제로 저장되는 것은 줄들뿐이다.
+          */
+          <Field label={t('editor.split')} invalid={violation?.field === 'splits'}>
+            <View className="gap-3">
+              {values.splits.map((split, index) => (
+                <View key={index} className="gap-2 rounded-lg border border-gray-200 p-3">
+                  <View className="flex-row items-center justify-between">
+                    <Text className="text-xs font-medium text-gray-500">
+                      {t('editor.splitRow', { index: index + 1 })}
+                    </Text>
+                    <Pressable
+                      onPress={() => form.removeSplit(index)}
+                      hitSlop={8}
+                      accessibilityLabel={t('editor.splitRemove')}
+                    >
+                      <Text className="text-sm text-gray-400">×</Text>
+                    </Pressable>
+                  </View>
+
+                  <TextInput
+                    value={split.amount}
+                    onChangeText={(text) => form.setSplit(index, 'amount', text)}
+                    keyboardType="numeric"
+                    placeholder="0"
+                    className="rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-900"
+                  />
+
+                  {form.categoryChoices.length === 0 ? (
+                    <Text className="text-sm text-gray-500">{t('entryForm.noCategories')}</Text>
+                  ) : (
+                    <Chips
+                      options={form.categoryChoices.map((category) => ({
+                        value: category.id,
+                        label: labelOf(category, form.categoryChoices),
+                      }))}
+                      selected={split.categoryId}
+                      onSelect={(value) => form.setSplit(index, 'categoryId', value)}
+                    />
+                  )}
+                </View>
+              ))}
+
+              <Pressable
+                onPress={form.addSplit}
+                className="items-center rounded-lg border border-gray-300 px-3 py-2"
+              >
+                <Text className="text-sm text-gray-700">{t('editor.splitAdd')}</Text>
+              </Pressable>
+
+              {/*
+                남은 금액을 보여 준다. 합이 맞아야 저장되므로, 저장을 눌러 보고서야
+                알게 하지 않는다.
+              */}
+              <Text className="text-xs text-gray-500">
+                {t('editor.splitLeft', {
+                  amount: String((Number(values.amount) || 0) - form.splitTotal),
+                })}
+              </Text>
+              <Text className="text-xs text-gray-500">{t('editor.splitHint')}</Text>
+            </View>
+          </Field>
         ) : (
           <>
             <Field label={t('entryForm.category')} invalid={violation?.field === 'categoryId'}>
@@ -335,6 +488,14 @@ export default function EntryEditor({
               />
               <Text className="mt-1 text-xs text-gray-500">{t('entryForm.extraHint')}</Text>
             </Field>
+
+            {/* 분류를 나누는 자리. 누르면 지금 적은 금액과 분류가 첫 줄로 옮겨 간다. */}
+            <Pressable
+              onPress={form.addSplit}
+              className="items-center rounded-lg border border-gray-300 px-3 py-2"
+            >
+              <Text className="text-sm text-gray-700">{t('editor.splitAdd')}</Text>
+            </Pressable>
           </>
         )}
 

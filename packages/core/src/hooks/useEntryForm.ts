@@ -10,6 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { fallbackRate } from '@money/types';
 import type {
   AccountDto,
   CardDto,
@@ -27,11 +28,13 @@ import {
   entryFormFromItem,
   entryFormToRequest,
   parseMethod,
+  type EntryFormSplit,
   type EntryFormValues,
   type EntryFormViolation,
 } from '../data/entry-form';
 import { entryWritePort } from '../data/entry-write-port';
 import { homeDataPort } from '../data/home-port';
+import { useProjectLedgerCurrency } from '../store/project';
 import { useMirrorVersion } from './useMirrorVersion';
 
 /** 결제수단 한 칸. 화면은 계좌와 카드를 한 목록에서 고른다. */
@@ -66,6 +69,22 @@ const EMPTY_LISTS: EntryFormLists = {
  */
 const HIDDEN_TYPES = ['credit_card', 'opening_balance'];
 
+/** 빈 분할 줄. */
+const blankSplit = (): EntryFormSplit => ({ categoryId: '', amount: '', extraAmount: '' });
+
+/**
+ * 적힌 금액들의 합. 숫자가 아닌 칸은 0으로 본다.
+ *
+ * 화면이 "남은 금액"을 보여 주는 데만 쓴다. 저장을 막는 판단은 `checkEntryForm` 이 하고,
+ * 그쪽은 숫자가 아닌 값을 오류로 다룬다.
+ */
+function sumAmounts(values: readonly string[]): number {
+  return values.reduce((total, value) => {
+    const parsed = Number(value);
+    return total + (Number.isFinite(parsed) ? parsed : 0);
+  }, 0);
+}
+
 export interface UseEntryFormOptions {
   projectId?: string | null;
   timeZone: string;
@@ -91,6 +110,8 @@ export function useEntryForm({
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const mirrorVersion = useMirrorVersion();
+  /** 장부 통화. 이 통화로 적으면 환산할 것이 없다. */
+  const ledgerCurrency = useProjectLedgerCurrency();
 
   // 고를 목록. 사본이 채워지면(오프라인 동기화) 다시 읽는다.
   useEffect(() => {
@@ -133,8 +154,9 @@ export function useEntryForm({
   /**
    * 있는 거래를 고치기.
    *
-   * 이 화면이 다루지 않는 갈래(카드사 대금 이동)면 false 를 돌려준다. 부르는 쪽이
-   * 팝업을 열지 않고 안내한다.
+   * 이 폼이 다루지 못하는 거래면 false 를 돌려주고, 부르는 쪽이 팝업을 열지 않고
+   * 안내한다. 둘이다 -- 잔액 맞추기가 만든 조정, 그리고 줄이 여럿인데 그 줄들이 실려
+   * 오지 않은 분할(옛 서버). 뒤엣것을 대표 분류 하나로 열면 나머지가 조용히 사라진다.
    */
   const startEdit = useCallback(
     (item: EntryListItem): boolean => {
@@ -163,15 +185,31 @@ export function useEntryForm({
          */
         if (field === 'kind') {
           const isCard = Boolean(parseMethod(next.method).cardId);
+          const hasCategory = next.kind === 'expense' || next.kind === 'income';
           return {
             ...next,
-            categoryId: next.kind === 'transfer' ? '' : next.categoryId,
+            categoryId: hasCategory ? next.categoryId : '',
+            // 카드는 지출에서만 결제수단이다. 카드사 대금 이동의 카드는 따로 든다.
             method: next.kind !== 'expense' && isCard ? '' : next.method,
             toAccountId: next.kind === 'transfer' ? next.toAccountId : '',
             installmentMonths: next.kind === 'expense' ? next.installmentMonths : '',
             transferFee: next.kind === 'transfer' ? next.transferFee : '',
             transferFeeCategoryId: next.kind === 'transfer' ? next.transferFeeCategoryId : '',
+            // 분할은 분류를 갖는 갈래에만 뜻이 있다.
+            splits: hasCategory ? next.splits : [],
+            cardId: next.kind === 'card_payment' ? next.cardId : '',
           };
+        }
+
+        /*
+         * 통화를 바꾸면 환율을 그 통화의 값으로 채운다.
+         *
+         * 기준통화로 되돌리면 비운다 -- 환산할 것이 없는데 값이 남아 있으면 다음에 다른
+         * 통화를 골랐을 때 엉뚱한 환율이 그대로 실린다.
+         */
+        if (field === 'currency') {
+          if (!next.currency) return { ...next, exchangeRate: '' };
+          return { ...next, exchangeRate: fallbackRate(next.currency, ledgerCurrency) ?? '' };
         }
 
         // 결제수단을 통장으로 바꾸면 할부는 뜻이 없다.
@@ -182,7 +220,7 @@ export function useEntryForm({
       });
       setViolation(null);
     },
-    [],
+    [ledgerCurrency],
   );
 
   /** 화면이 고르는 결제수단. 지출은 통장과 카드, 그 밖은 통장만. */
@@ -207,6 +245,16 @@ export function useEntryForm({
 
     return [...accounts, ...cards];
   }, [lists.accounts, lists.cards, values.kind]);
+
+  /**
+   * 카드사 대금 이동에서 고를 카드. 신용카드만이다.
+   *
+   * 체크카드는 결제하는 자리에서 통장에서 빠지므로 나중에 갚을 대금이 없다.
+   */
+  const cardChoices = useMemo(
+    () => lists.cards.filter((card) => card.isActive && card.cardType === 'credit'),
+    [lists.cards],
+  );
 
   /** 이체에서 받는 계좌. 보내는 계좌는 뺀다. */
   const toAccountChoices = useMemo(
@@ -279,6 +327,69 @@ export function useEntryForm({
     }
   }, [editingId, onSaved]);
 
+  /**
+   * 분할 줄을 더한다.
+   *
+   * 첫 줄에는 **지금까지 적은 금액과 대표 분류**를 옮겨 담는다. 빈 줄 둘로 시작하면
+   * 사용자가 이미 적어 둔 것을 다시 적어야 한다.
+   */
+  const addSplit = useCallback(() => {
+    setValues((previous) => {
+      if (previous.splits.length > 0) {
+        return { ...previous, splits: [...previous.splits, blankSplit()] };
+      }
+      return {
+        ...previous,
+        splits: [
+          {
+            categoryId: previous.categoryId,
+            amount: previous.amount,
+            extraAmount: previous.extraAmount,
+          },
+          blankSplit(),
+        ],
+      };
+    });
+    setViolation(null);
+  }, []);
+
+  /**
+   * 분할 줄을 뺀다. 하나만 남으면 분할을 그만둔다.
+   *
+   * 줄 하나짜리 분할은 분류 하나짜리 거래와 같은 전표가 되므로, 그때는 원래 칸으로
+   * 되돌려 화면을 단순하게 둔다.
+   */
+  const removeSplit = useCallback((index: number) => {
+    setValues((previous) => {
+      const rest = previous.splits.filter((_, at) => at !== index);
+      if (rest.length > 1) return { ...previous, splits: rest };
+
+      const only = rest[0];
+      return {
+        ...previous,
+        splits: [],
+        ...(only
+          ? { categoryId: only.categoryId, amount: only.amount, extraAmount: only.extraAmount }
+          : {}),
+      };
+    });
+    setViolation(null);
+  }, []);
+
+  /** 분할 줄 하나의 칸을 고친다. */
+  const setSplit = useCallback(
+    <K extends keyof EntryFormSplit>(index: number, field: K, value: EntryFormSplit[K]) => {
+      setValues((previous) => ({
+        ...previous,
+        splits: previous.splits.map((split, at) =>
+          at === index ? { ...split, [field]: value } : split,
+        ),
+      }));
+      setViolation(null);
+    },
+    [],
+  );
+
   return {
     values,
     setField,
@@ -286,7 +397,17 @@ export function useEntryForm({
     methodChoices,
     toAccountChoices,
     categoryChoices,
+    cardChoices,
     isCreditCard,
+    ledgerCurrency,
+    /** 분할 줄의 합. 화면이 "얼마 남았다"를 보여 줄 때 쓴다. */
+    splitTotal: useMemo(
+      () => sumAmounts(values.splits.map((split) => split.amount)),
+      [values.splits],
+    ),
+    addSplit,
+    removeSplit,
+    setSplit,
     /**
      * 태그 하나를 붙이거나 뗀다.
      *

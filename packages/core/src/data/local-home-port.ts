@@ -35,6 +35,7 @@ import {
   toListItem,
   totalUsage,
   zonedDateKey,
+  fallbackRate,
 } from '@money/types';
 
 import type { ReportPeriod } from '../lib/api-client';
@@ -111,7 +112,15 @@ export function createLocalHomePort(
 
     async getCategories(projectId) {
       note('categories');
-      return store.categoryRows(requireProject(projectId));
+      /*
+       * 숨긴 분류는 뺀다. 서버의 `/categories` 와 같은 규칙이다.
+       *
+       * 사본에는 숨긴 것도 남아 있어야 한다 -- 지난 거래에 붙은 이름을 그 표에서 읽기
+       * 때문이다(`getBudgetForMonth` 가 그렇게 쓴다). 그래서 표가 아니라 이 자리에서
+       * 거른다. 거르지 않으면 오프라인에서만 지운 분류가 목록에 되살아난다.
+       */
+      const rows = await store.categoryRows(requireProject(projectId));
+      return rows.filter((row) => row.isActive);
     },
 
     async getTags(projectId) {
@@ -304,8 +313,9 @@ export function createLocalHomePort(
        * 거래의 합이 어긋난다.
        */
       const scope = {
-        fromDateKey: filter?.startDate && filter?.endDate ? filter.startDate : '0000-01-01',
-        toDateKey: filter?.startDate && filter?.endDate ? filter.endDate : '9999-12-31',
+        // 한쪽만 적은 기간은 열린 구간이다. 없는 쪽을 달력 키의 양끝으로 채운다.
+        fromDateKey: filter?.startDate || '0000-01-01',
+        toDateKey: filter?.endDate || '9999-12-31',
         ownerIds: ownerIdsOf(filter),
         search: parseEntrySearch(filter ?? {}),
       };
@@ -609,7 +619,17 @@ async function ratesFor(
 
   for (const currency of new Set(accounts.map((account) => account.currency))) {
     if (result[currency]) continue;
-    result[currency] = (await store.latestRate(projectId, currency, display)) ?? '1';
+
+    /*
+     * 사본의 환율 행이 먼저다. 없으면 고정값 표를 쓴다 (서버와 같은 표, @money/types).
+     *
+     * 1 로 눙치면 외화 계좌가 원화와 1:1 로 세어진다. 100달러가 100원이 되어 총자산이
+     * 조용히 어긋나는 자리다 -- 기기에서 실제로 그랬다.
+     */
+    result[currency] =
+      (await store.latestRate(projectId, currency, display)) ??
+      fallbackRate(currency, display) ??
+      '1';
   }
   return result;
 }

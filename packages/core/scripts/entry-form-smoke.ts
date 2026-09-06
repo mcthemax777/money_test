@@ -14,7 +14,6 @@
  *      금액은 그대로인데 분류나 수단이 바뀌고, 사용자는 알아챌 방법이 없다.
  *      api 의 `sync-push-dump` 가 떠 둔 실제 거래로 그 왕복을 돌려 본다.
  */
-import { DatabaseSync } from 'node:sqlite';
 import { existsSync, readFileSync } from 'fs';
 import {
   type EntryDto,
@@ -70,6 +69,12 @@ const validExpense: EntryFormValues = {
   installmentMonths: '',
   transferFee: '',
   transferFeeCategoryId: '',
+  splits: [],
+  currency: '',
+  exchangeRate: '',
+  cardId: '',
+  cardDirection: 'payment',
+  tagIds: [],
 };
 
 const codeOf = (values: Partial<EntryFormValues>) =>
@@ -148,6 +153,75 @@ const codeOf = (values: Partial<EntryFormValues>) =>
     'transferFee' in entryFormToRequest({ ...validExpense, ...transfer } as EntryFormValues, KST),
     false);
 
+  // ── 3-2. 분할·외화·카드사 대금 이동 ──
+  //
+  // 셋 다 예전에는 이 폼이 다루지 못해 "웹에서 고쳐 주세요"로 돌려보내던 갈래다.
+
+  const splitForm = {
+    ...validExpense,
+    amount: '10000',
+    splits: [
+      { categoryId: 'c-food', amount: '7000', extraAmount: '' },
+      { categoryId: 'c-fun', amount: '3000', extraAmount: '3000' },
+    ],
+  } as EntryFormValues;
+
+  eq('합이 맞으면 통과', codeOf(splitForm), null);
+  eq('합이 어긋나면 막는다',
+    codeOf({ ...splitForm, amount: '9000' }), 'SPLIT_SUM_MISMATCH');
+  eq('줄에 분류가 없다',
+    codeOf({ ...splitForm, splits: [{ categoryId: '', amount: '10000', extraAmount: '' }] }),
+    'SPLIT_CATEGORY_REQUIRED');
+  eq('줄 금액이 0이다',
+    codeOf({ ...splitForm, splits: [{ categoryId: 'c1', amount: '0', extraAmount: '' }] }),
+    'SPLIT_AMOUNT_INVALID');
+  eq('줄의 과소비가 그 줄보다 크다',
+    codeOf({ ...splitForm, splits: [{ categoryId: 'c1', amount: '10000', extraAmount: '20000' }] }),
+    'SPLIT_EXTRA_EXCEEDS');
+
+  const splitRequest = entryFormToRequest(splitForm, KST);
+  eq('분할이 실린다', splitRequest.splits?.length, 2);
+  eq('줄 금액이 그대로다',
+    splitRequest.splits?.map((row) => row.amount).join(','), '7000,3000');
+  eq('정하지 않은 과소비는 키가 없다',
+    'extraAmount' in (splitRequest.splits?.[0] ?? {}), false);
+  eq('적은 과소비는 실린다', splitRequest.splits?.[1]?.extraAmount, '3000');
+  eq('분할이면 대표 분류를 싣지 않는다', 'categoryId' in splitRequest, false);
+
+  // 외화
+  const foreign = { ...validExpense, currency: 'USD', exchangeRate: '1385.2' } as EntryFormValues;
+  eq('통화를 골랐는데 환율이 없다',
+    codeOf({ ...foreign, exchangeRate: '' }), 'RATE_INVALID');
+  eq('환율이 0이면 막는다', codeOf({ ...foreign, exchangeRate: '0' }), 'RATE_INVALID');
+  eq('통화와 환율이 있으면 통과', codeOf(foreign), null);
+
+  const foreignRequest = entryFormToRequest(foreign, KST);
+  eq('통화가 실린다', foreignRequest.currency, 'USD');
+  eq('환율이 함께 간다', foreignRequest.exchangeRate, '1385.2');
+  eq('기준통화면 통화 키가 없다', 'currency' in entryFormToRequest(validExpense, KST), false);
+
+  // 카드사 대금 이동
+  const cardPayment = {
+    ...validExpense,
+    kind: 'card_payment',
+    method: accountValue('a1'),
+    cardId: 'k1',
+    categoryId: '',
+  } as EntryFormValues;
+  eq('통장과 카드가 있으면 통과', codeOf(cardPayment), null);
+  eq('카드가 없다', codeOf({ ...cardPayment, cardId: '' }), 'CARD_REQUIRED');
+  eq('통장이 없다', codeOf({ ...cardPayment, method: '' }), 'ACCOUNT_REQUIRED');
+  eq('분류를 묻지 않는다', codeOf({ ...cardPayment, categoryId: '' }), null);
+
+  const cardRequest = entryFormToRequest(cardPayment, KST);
+  eq('통장과 카드를 함께 싣는다',
+    `${cardRequest.accountId}/${cardRequest.cardId}`, 'a1/k1');
+  eq('방향이 실린다', cardRequest.cardTransferDirection, 'payment');
+  eq('환불 방향도 실린다',
+    entryFormToRequest({ ...cardPayment, cardDirection: 'refund' } as EntryFormValues, KST)
+      .cardTransferDirection,
+    'refund');
+
   // ── 4. 왕복이 거래를 바꾸지 않는가 ──
   const dumpPath = process.argv[2] ?? '/tmp/sync-push-dump.json';
   if (!existsSync(dumpPath)) {
@@ -193,6 +267,17 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   const compared = [
     'kind', 'description', 'amount', 'extraAmount', 'categoryId', 'accountId', 'toAccountId',
     'cardId', 'installmentMonths', 'feeAmount', 'feeCategoryId', 'personId', 'date',
+    /*
+     * 분류 다리 수. **이 한 줄이 분할 손실을 잡는다.**
+     *
+     * 나머지 필드는 대표 분류 하나만 보므로, 분할의 둘째 줄이 사라져도 전부 같게 나온다.
+     * 금액은 그대로이고 분류별 합계만 어긋나는, 알아채기 어려운 손실이다.
+     */
+    'splitCount',
+    // 외화. 원 통화 금액과 통화가 그대로 남는지 본다.
+    'originalCurrency', 'originalAmount',
+    // 카드사 대금 이동의 방향. 놓치면 결제와 환불이 뒤집힌다.
+    'cardTransferDirection',
   ] as const;
 
   for (const original of dump.server.entries) {
@@ -219,7 +304,7 @@ const codeOf = (values: Partial<EntryFormValues>) =>
 
     checked += 1;
     for (const field of compared) {
-      const before = (original as Record<string, unknown>)[field];
+      const before = (original as unknown as Record<string, unknown>)[field];
       const after = (rebuilt as unknown as Record<string, unknown>)[field];
       if (String(before) !== String(after)) {
         mismatch += 1;
@@ -232,15 +317,31 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq(`왕복: 필드 ${compared.length}개를 거래마다 대조`, mismatch, 0);
 
   /*
-   * 분할 거래는 폼이 다루지 않는다.
+   * 분할 거래가 줄까지 그대로 되살아나는가.
    *
-   * 폼은 분류 하나만 담으므로 되돌려 저장하면 나머지 줄이 사라진다. 그 손실을 막는 것이
-   * splitCount 를 목록에 실은 이유다.
+   * 위의 왕복 대조는 목록 한 줄의 필드만 본다. 분할은 그 줄에 대표 분류 하나만 실려서,
+   * **나머지 줄이 사라져도 그 대조는 통과한다.** 그래서 줄 수와 줄마다의 금액을 따로 본다.
    */
   const split = dump.server.entries.find((row) => row.splitCount > 1);
   eq('덤프에 분할 거래가 있다', Boolean(split), true);
-  eq('분할은 폼으로 열리지 않는다', split ? entryFormFromItem(split, KST) : 'no-sample', null);
-  eq('건너뛴 거래가 있다 (분할)', skipped > 0, true);
+
+  const splitBack = split ? entryFormFromItem(split, KST) : null;
+  eq('분할도 폼으로 열린다', Boolean(splitBack), true);
+  eq('줄 수가 그대로다', splitBack?.splits.length, split?.splitCount);
+  eq('줄 금액이 그대로다',
+    splitBack?.splits.map((row) => row.amount).join(','),
+    (split?.splits ?? []).map((row) => row.amount).join(','));
+  eq('줄 합이 전체 금액과 같다', splitBack ? checkEntryForm(splitBack)?.code ?? null : 'no-sample', null);
+
+  /*
+   * 줄이 여럿인데 `splits` 가 실려 오지 않으면 열지 않는다.
+   *
+   * 옛 서버가 그렇다. 그때 대표 분류 하나로 열어 저장하면 나머지가 조용히 사라진다.
+   */
+  eq('줄이 여럿인데 splits 가 없으면 열지 않는다',
+    split ? entryFormFromItem({ ...split, splits: undefined }, KST) : 'no-sample', null);
+
+  eq('건너뛴 거래는 없다 (넷 다 다룬다)', skipped, 0);
 
   driver.close();
   console.log(fail === 0 ? '\n전부 통과' : `\n실패 ${fail}건`);
@@ -248,7 +349,6 @@ const codeOf = (values: Partial<EntryFormValues>) =>
 })();
 
 // node:sqlite 는 실험 기능이라 경고를 낸다. 검증 출력이 묻히지 않게 지운다.
-void DatabaseSync;
 process.removeAllListeners('warning');
 process.on('warning', (warning) => {
   if (warning.name !== 'ExperimentalWarning') console.warn(warning);

@@ -180,6 +180,23 @@ export function toListItem(
      * 이체는 수수료 다리 하나가 세어진다(1). 카드사 대금 이동은 카테고리가 없어 0이다.
      */
     splitCount: categoryPostings.length,
+    /*
+     * 분할의 줄들. 둘 이상일 때만 싣는다.
+     *
+     * 금액은 위의 `amount` 와 같은 단위(표시 통화)로 맞춘다. 폼이 이 값을 그대로
+     * 되돌려 보내므로 단위가 어긋나면 저장할 때 금액이 달라진다.
+     *
+     * 지출·수입에만 뜻이 있다. 이체의 카테고리 다리는 수수료 하나라 분할이 아니다.
+     */
+    ...((kind === 'expense' || kind === 'income') && categoryPostings.length > 1
+      ? {
+          splits: categoryPostings.map((posting) => ({
+            categoryId: posting.category?.id ?? '',
+            amount: show.convert(base(posting).abs()).toString(),
+            extraAmount: show.convert(Dec.of(posting.extraAmount ?? 0)).toString(),
+          })),
+        }
+      : {}),
     categoryId: primaryCategory?.category?.id ?? null,
     categoryName: primaryCategory?.category?.name ?? null,
     parentCategoryId: primaryCategory?.category?.parent?.id ?? null,

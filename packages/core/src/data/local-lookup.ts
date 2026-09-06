@@ -15,22 +15,11 @@ import {
   type LookupAccount,
   type LookupCard,
   type LookupCategory,
+  fallbackRate,
 } from '@money/types';
 
 import type { LocalStore } from './local-store';
 
-/**
- * 환율이 사본에 없을 때 쓰는 값.
- *
- * 서버의 `exchange-rates.service` 가 가진 것과 같은 표다. 두 벌인 것이 마음에 걸리지만
- * 이 값은 서버가 변경 피드로 내보내지 않는 상수라(코드에 박혀 있다) 옮길 자리가 없다.
- * 환율 행이 하나라도 있으면 그것이 이긴다.
- */
-const FALLBACK_RATES: Record<string, string> = {
-  'USD:KRW': '1380',
-  'JPY:KRW': '9.2',
-  'USD:JPY': '150',
-};
 
 export function localLedgerLookup(store: LocalStore): LedgerLookup {
   return {
@@ -49,11 +38,9 @@ export function localLedgerLookup(store: LocalStore): LedgerLookup {
       const inverse = await store.latestRate(projectId, to, from);
       if (inverse && !Dec.of(inverse).isZero()) return Dec.of(1).dividedBy(inverse, 8);
 
-      const fallback = FALLBACK_RATES[`${from}:${to}`];
+      // 사본에 행이 없으면 고정값 표를 쓴다. 서버와 같은 표다 (@money/types).
+      const fallback = fallbackRate(from, to);
       if (fallback) return Dec.of(fallback);
-
-      const inverseFallback = FALLBACK_RATES[`${to}:${from}`];
-      if (inverseFallback) return Dec.of(1).dividedBy(inverseFallback, 8);
 
       // 모르는 통화쌍이다. 1로 눙치지 않고 조립이 막게 둔다.
       throw new Error(`환율을 알 수 없습니다: ${from} -> ${to}`);
