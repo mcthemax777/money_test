@@ -34,8 +34,6 @@ export type EntryFormKind = 'expense' | 'income' | 'transfer' | 'card_payment';
 export interface EntryFormSplit {
   categoryId: string;
   amount: string;
-  /** 빈 문자열은 "정하지 않았다"이고, 그때는 그 분류의 기본값을 따른다. */
-  extraAmount: string;
 }
 
 /**
@@ -68,13 +66,6 @@ export interface EntryFormValues {
   description: string;
   amount: string;
   categoryId: string;
-  /**
-   * 과소비(지출)·추가 수입(수입)으로 셀 금액.
-   *
-   * 빈 문자열은 "정하지 않았다"이고, 그때는 카테고리의 기본값을 따른다. "0"과 다르다 --
-   * 0 은 "일반 거래로 세겠다"는 사용자의 선택이다.
-   */
-  extraAmount: string;
   /** 지출의 결제수단. 수입은 계좌만 고를 수 있다. */
   method: PaymentMethodValue;
   /** 이체에서 받는 계좌 */
@@ -133,7 +124,6 @@ export function emptyEntryForm({ personId = '', timeZone, now }: EntryFormDefaul
     description: '',
     amount: '',
     categoryId: '',
-    extraAmount: '',
     method: '',
     toAccountId: '',
     installmentMonths: '',
@@ -191,7 +181,6 @@ export function entryFormFromItem(
     amount: item.originalAmount ?? item.amount,
     // 소분류가 있으면 그것이 고른 값이다. 목록은 가장 구체적인 분류를 준다.
     categoryId: item.categoryId ?? '',
-    extraAmount: item.extraAmount ?? '',
     /*
      * 결제수단. 카드사 대금 이동만 다르다.
      *
@@ -216,8 +205,6 @@ export function entryFormFromItem(
       ? (item.splits ?? []).map((split) => ({
           categoryId: split.categoryId,
           amount: split.amount,
-          // "0"도 사용자가 고른 값이라 그대로 되돌린다. 빈 문자열만 "정하지 않았다"다.
-          extraAmount: split.extraAmount ?? '',
         }))
       : [],
     /*
@@ -316,16 +303,11 @@ export function checkEntryForm(values: EntryFormValues): EntryFormViolation | nu
       const line = toDec(split.amount);
       if (!line || !line.isPositive()) return { field: 'splits', code: 'SPLIT_AMOUNT_INVALID' };
 
-      if (split.extraAmount !== '') {
-        const extra = toDec(split.extraAmount);
-        if (!extra || extra.isNegative()) return { field: 'splits', code: 'SPLIT_EXTRA_INVALID' };
-        if (extra.gt(line)) return { field: 'splits', code: 'SPLIT_EXTRA_EXCEEDS' };
-      }
       total = total.plus(line);
     }
     if (!total.eq(amount)) return { field: 'splits', code: 'SPLIT_SUM_MISMATCH' };
 
-    // 분할이 있으면 대표 분류와 전체 과소비는 쓰이지 않는다. 줄마다 따로 있기 때문이다.
+    // 분할이 있으면 대표 분류는 쓰이지 않는다. 줄마다 따로 있기 때문이다.
     const method = parseMethod(values.method);
     if (values.kind === 'income' && !method.accountId) {
       return { field: 'method', code: 'ACCOUNT_REQUIRED' };
@@ -344,12 +326,6 @@ export function checkEntryForm(values: EntryFormValues): EntryFormViolation | nu
   }
   if (values.kind === 'expense' && !method.accountId && !method.cardId) {
     return { field: 'method', code: 'METHOD_REQUIRED' };
-  }
-
-  if (values.extraAmount !== '') {
-    const extra = toDec(values.extraAmount);
-    if (!extra || extra.isNegative()) return { field: 'extraAmount', code: 'EXTRA_INVALID' };
-    if (extra.gt(amount)) return { field: 'extraAmount', code: 'EXTRA_EXCEEDS_AMOUNT' };
   }
 
   return null;
@@ -428,7 +404,6 @@ export function entryFormToRequest(
       splits: values.splits.map((split) => ({
         categoryId: split.categoryId,
         amount: split.amount,
-        ...(split.extraAmount === '' ? {} : { extraAmount: split.extraAmount }),
       })),
       ...(method.accountId ? { accountId: method.accountId } : {}),
       ...(method.cardId ? { cardId: method.cardId } : {}),
@@ -441,11 +416,6 @@ export function entryFormToRequest(
   return {
     ...base,
     categoryId: values.categoryId,
-    /*
-     * 빈 문자열은 보내지 않는다. 값을 보내지 않아야 카테고리의 기본값이 적용된다.
-     * "0" 은 보낸다 -- 기본이 과소비인 분류를 이 거래에서만 일반으로 세겠다는 뜻이다.
-     */
-    ...(values.extraAmount === '' ? {} : { extraAmount: values.extraAmount }),
     ...(method.accountId ? { accountId: method.accountId } : {}),
     ...(method.cardId ? { cardId: method.cardId } : {}),
     // 할부는 신용카드 지출에만 붙는다. 그 판단은 조립이 다시 한다.

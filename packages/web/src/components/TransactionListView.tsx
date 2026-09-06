@@ -2,14 +2,12 @@
 
 import TransactionItem, { EntryListItem } from './TransactionItem';
 import { formatCurrency } from '@money/core/lib/money';
-import { groupEntriesByDate, sumEntries, type CountedShare } from '@money/core/lib/entries';
+import { groupEntriesByDate, sumEntries } from '@money/core/lib/entries';
 import { formatDateMarker, weekdayNames } from '@money/core/lib/datetime';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 
 interface TransactionListViewProps {
   entries: EntryListItem[];
-  /** 일반/과소비 중 어느 몫을 셀지. 넘기지 않으면 거래 금액 전부다. */
-  share?: CountedShare;
   /** 생략하면 읽기 전용이다. 줄에 손 모양 커서와 hover가 붙지 않는다. */
   onEntryClick?: (entry: EntryListItem) => void;
 }
@@ -28,7 +26,6 @@ const WEEKDAY_COLOR_DEFAULT = 'text-gray-400';
 
 export default function TransactionListView({
   entries,
-  share,
   onEntryClick,
 }: TransactionListViewProps) {
   const weekdays = weekdayNames();
@@ -47,7 +44,7 @@ export default function TransactionListView({
         const dayEntries = grouped.get(isoDate)!;
         // 요일만 필요하다. isoDate는 달력 날짜라 UTC로 읽는다.
         const weekdayIndex = new Date(isoDate).getUTCDay();
-        const { incomeTotal, expenseTotal } = sumEntries(dayEntries, share);
+        const { incomeTotal, expenseTotal } = sumEntries(dayEntries);
 
         return (
           <div key={isoDate}>

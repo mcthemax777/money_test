@@ -8,7 +8,7 @@ import type { EntryListItem } from './TransactionItem';
 import TransactionListView from './TransactionListView';
 import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
-import { buildDailyCumulative, countedShare, monthDateKeys } from '@money/core/lib/entries';
+import { buildDailyCumulative, monthDateKeys } from '@money/core/lib/entries';
 import { dayRangeQuery, formatMonthShort, throughDayOf } from '@money/core/lib/datetime';
 import { useTranslation } from '@money/core/lib/i18n';
 import { loadPreviousMonths } from '@money/core/lib/month-compare';
@@ -289,13 +289,7 @@ export default function PaymentMethodTab({
           buildDailyCumulative는 expenseAmountOf를 쓰므로 수입 건은 저절로 0이다.
         */
         setDailyData(
-          buildDailyCumulative(
-            rows,
-            dayKeys.startKey,
-            dayKeys.endKey,
-            timeZone,
-            countedShare(filter),
-          ),
+          buildDailyCumulative(rows, dayKeys.startKey, dayKeys.endKey, timeZone),
         );
         setComparisons(comparisonRes);
       })

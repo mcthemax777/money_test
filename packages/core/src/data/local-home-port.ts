@@ -173,7 +173,7 @@ export function createLocalHomePort(
       note('summary');
 
       const rows = await monthPostings(id, period, filter);
-      const totals = summarize(rows, extraOf(filter));
+      const totals = summarize(rows);
       const show = await converter(id);
 
       const keys = periodKeys(period);
@@ -184,10 +184,6 @@ export function createLocalHomePort(
         ...(period.yearMonth ? { yearMonth: period.yearMonth } : {}),
         income: show.toString(totals.income),
         expense: show.toString(totals.expense),
-        extraExpense: show.toString(totals.extraExpense),
-        normalExpense: show.toString(totals.normalExpense),
-        extraIncome: show.toString(totals.extraIncome),
-        normalIncome: show.toString(totals.normalIncome),
         net: show.toString(totals.net),
       };
     },
@@ -204,7 +200,7 @@ export function createLocalHomePort(
         converter(id),
       ]);
 
-      const usage = categoryUsage(rows, categories, extraOf(filter));
+      const usage = categoryUsage(rows, categories);
       const applicable = budgets.filter((budget) => isBudgetApplicable(budget, yearMonth));
       const byCategory = new Map(applicable.filter((b) => b.categoryId).map((b) => [b.categoryId!, b]));
       const byType = new Map(applicable.filter((b) => !b.categoryId && b.type).map((b) => [b.type!, b]));
@@ -279,7 +275,6 @@ export function createLocalHomePort(
         type,
         // 쿼리스트링을 거치지 않는 자리라 값이 그대로 온다. 기본은 롤업이다.
         rollup: options?.rollup !== false,
-        extra: extraOf(options),
       }).map((bucket) => ({
         categoryId: bucket.categoryId,
         categoryName: bucket.categoryName,
@@ -326,7 +321,7 @@ export function createLocalHomePort(
         converter(id),
       ]);
 
-      return entryMonths(rows, { timeZone, extra: extraOf(filter), entryDates: dates }).map((month) => ({
+      return entryMonths(rows, { timeZone, entryDates: dates }).map((month) => ({
         yearMonth: month.yearMonth,
         income: show.toString(month.income),
         expense: show.toString(month.expense),
@@ -400,7 +395,6 @@ export function createLocalHomePort(
         }),
         {
           personIds: ownerIdsOf(filter) ?? null,
-          extraOnly: extraOf(filter),
           matchNothing: ownerIdsOf(filter)?.length === 0,
         },
       );
@@ -499,19 +493,9 @@ export function createLocalHomePort(
         search: parseEntrySearch(query),
       });
 
-      const extra = extraOf(query);
-      const rows = entries.map((entry) =>
+      return entries.map((entry) =>
         toListItem(entry, { convert: (value) => value.times(show.rate), rate: show.rate }),
       );
-
-      /*
-       * 일반/과소비 필터.
-       *
-       * 서버는 "그 몫이 있는 다리를 가진 전표"를 고른다. 한 줄이 둘로 나뉜 거래는
-       * 양쪽 목록에 모두 들어야 목록과 합계가 어긋나지 않는다.
-       */
-      if (extra === undefined) return rows;
-      return rows.filter((row) => hasSelectedShare(row, extra));
     },
 
     /**
@@ -528,7 +512,6 @@ export function createLocalHomePort(
       const timeZone = project?.timeZone ?? 'Asia/Seoul';
       const show = await converter(id);
       const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 200);
-      const extra = extraOf(query);
 
       const page = await store.viewEntriesPage(id, {
         fromDateKey: dateKeyOf(query.startDate, timeZone, '0000-01-01'),
@@ -540,11 +523,9 @@ export function createLocalHomePort(
         cursor: decodeCursor(query.cursor),
       });
 
-      const rows = page.entries
-        .map((entry) =>
-          toListItem(entry, { convert: (value) => value.times(show.rate), rate: show.rate }),
-        )
-        .filter((row) => extra === undefined || hasSelectedShare(row, extra));
+      const rows = page.entries.map((entry) =>
+        toListItem(entry, { convert: (value) => value.times(show.rate), rate: show.rate }),
+      );
 
       const last = page.entries[page.entries.length - 1];
       return {
@@ -595,17 +576,6 @@ function periodKeys(period: ReportPeriod): { fromDateKey: string; toDateKey: str
     return { fromDateKey: `${period.yearMonth}-01`, toDateKey: `${period.yearMonth}-31` };
   }
   return { fromDateKey: String(period.startDate), toDateKey: String(period.endDate) };
-}
-
-/** 일반/과소비 선택. 서버의 parseEntryFilter 와 같은 규칙이다. */
-function extraOf(filter?: EntryFilterQuery): boolean | undefined {
-  if (filter?.extraTypes === undefined) return undefined;
-
-  const types = filter.extraTypes.split(',').map((value) => value.trim()).filter(Boolean);
-  const wantsNormal = types.includes('normal');
-  const wantsExtra = types.includes('extra');
-  if (wantsNormal === wantsExtra) return undefined;
-  return wantsExtra;
 }
 
 /** 계좌 통화 -> 표시 통화 환율. 사본에 있는 것만 모은다. */
@@ -662,18 +632,6 @@ function ownerIdsOf(filter?: EntryFilterQuery & { personId?: string }): string[]
 function dateKeyOf(value: string | undefined, timeZone: string, fallbackKey: string): string {
   if (!value) return fallbackKey;
   return zonedDateKey(new Date(value), timeZone);
-}
-
-/**
- * 고른 몫이 남아 있는 줄인가.
- *
- * 한 줄이 일반과 과소비로 나뉘므로(3,000원 중 2,000원이 과소비) 양쪽 목록에 모두
- * 들어야 목록과 합계가 어긋나지 않는다. 서버의 extraPostingCondition 과 같은 규칙이다.
- */
-function hasSelectedShare(row: { amount?: string; extraAmount?: string }, extra: boolean): boolean {
-  const extraAmount = Dec.of(row.extraAmount ?? '0');
-  const total = Dec.of(row.amount ?? '0');
-  return extra ? extraAmount.isPositive() : total.minus(extraAmount).isPositive();
 }
 
 /**

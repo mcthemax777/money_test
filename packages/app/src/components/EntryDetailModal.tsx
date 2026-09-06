@@ -67,7 +67,6 @@ export default function EntryDetailModal({
     return entry.cardName ?? entry.accountName ?? null;
   })();
 
-  const extra = entry ? toNumber(entry.extraAmount) : 0;
   const fee = entry?.feeAmount ? toNumber(entry.feeAmount) : 0;
 
   return (
@@ -88,10 +87,6 @@ export default function EntryDetailModal({
           <Row label={t('tx.detail.category')} value={categoryLabel} />
           <Row label={t('tx.detail.method')} value={methodLabel} />
           <Row label={t('tx.detail.merchant')} value={entry.merchant} />
-          <Row
-            label={entry.kind === 'income' ? t('tx.detail.extraIncome') : t('tx.detail.extra')}
-            value={extra > 0 ? money(entry.extraAmount) : null}
-          />
           <Row
             label={t('tx.detail.installment')}
             value={

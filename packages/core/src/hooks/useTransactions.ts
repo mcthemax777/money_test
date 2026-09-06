@@ -37,7 +37,7 @@ import { apiClient } from '../lib/api-client';
 import { entryWritePort } from '../data/entry-write-port';
 import { homeDataPort } from '../data/home-port';
 import { useMirrorVersion } from './useMirrorVersion';
-import { countedShare, groupEntriesByDate, sumEntries, type CountedShare } from '../lib/entries';
+import { groupEntriesByDate, sumEntries } from '../lib/entries';
 import { isOfflineError } from '../lib/offline-error';
 import { useProject, useProjectTimeZone } from '../store/project';
 import { useUserFilter } from '../store/user-filter';
@@ -521,12 +521,6 @@ export function useTransactions(projectId: string | null) {
   const scope: EntryScopeQuery = useMemo(
     () => ({
       personIds: selectedPersonIds.join(','),
-      /*
-       * 일반/과소비는 여기서 거르지 않는다.
-       *
-       * 거래 화면은 훑어보는 자리라 기본이 전부다. 가계 화면이 그 필터를 들고 있고,
-       * 여기 다시 두면 두 화면이 각자 상태를 가져 오가는 동안 조건이 어긋난다.
-       */
       ...toEntrySearchQuery(search),
     }),
     [selectedPersonIds, search],
@@ -552,8 +546,6 @@ export function useTransactions(projectId: string | null) {
     [range],
   );
 
-  /** 금액을 셀 때 어느 몫을 세는지. 목록 소계가 서버 합계와 같아야 한다. */
-  const share: CountedShare = countedShare(scope);
   /*
    * 타임존도 열쇠에 넣는다. 기간을 인스턴트로 바꾸는 일이 그 값에 매여 있어서,
    * 프로젝트 타임존을 바꾸면 받아 둔 목록이 옛 경계의 것이 된다.
@@ -924,7 +916,7 @@ export function useTransactions(projectId: string | null) {
         return [...grouped.entries()]
           .sort(([a], [b]) => b.localeCompare(a))
           .map(([dateKey, rows]) => {
-            const totals = sumEntries(rows, share);
+            const totals = sumEntries(rows);
             return {
               key: dateKey,
               label: String(Number(dateKey.slice(8, 10))),
@@ -968,7 +960,7 @@ export function useTransactions(projectId: string | null) {
     const rows = new Map<string, TransactionRow[]>();
     for (const yearMonth of Object.keys(monthData)) rows.set(yearMonth, build(yearMonth));
     return rows;
-  }, [monthData, groupedByMonth, tab, share, keepCategoryIds, keepMethodIds]);
+  }, [monthData, groupedByMonth, tab, keepCategoryIds, keepMethodIds]);
 
   const rowsOf = useCallback(
     (yearMonth: string): TransactionRow[] => rowsByMonth.get(yearMonth) ?? EMPTY_ROWS,
@@ -1661,7 +1653,6 @@ export function useTransactions(projectId: string | null) {
     // 그 밖
     hasError,
     timeZone,
-    share,
     hasProject: projects.length > 0,
     reload: useCallback(() => setReloadToken((token) => token + 1), []),
   };

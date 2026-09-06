@@ -22,7 +22,6 @@ import {
 import {
   type CategoryPostingRow,
   Dec,
-  type ExtraSelection,
   type NamedCategoryPostingRow,
   ReportDto,
   categoryBreakdown,
@@ -79,8 +78,6 @@ export class ReportsService {
   private static readonly AGGREGATE_SELECT = {
     categoryId: true,
     baseAmount: true,
-    normalAmount: true,
-    extraAmount: true,
     category: { select: { type: true } },
     entry: { select: { date: true } },
   } as const;
@@ -89,8 +86,6 @@ export class ReportsService {
     rows: Array<{
       categoryId: string | null;
       baseAmount: Prisma.Decimal;
-      normalAmount: Prisma.Decimal;
-      extraAmount: Prisma.Decimal;
       category: { type: CategoryType } | null;
       entry: { date: Date };
     }>,
@@ -102,8 +97,6 @@ export class ReportsService {
             categoryId: row.categoryId,
             categoryType: row.category.type,
             baseAmount: row.baseAmount,
-            normalAmount: row.normalAmount,
-            extraAmount: row.extraAmount,
             date: row.entry.date,
           }]
         : [],
@@ -140,17 +133,7 @@ export class ReportsService {
     const range = this.resolvePeriod(query, timeZone);
     const scope = this.entryScope(projectId, range, query);
     /*
-     * 일반/과소비 필터.
-     *
-     * 다리를 골라내지 않고 **금액을 쪼갠다**. 3,000원 중 2,000원이 과소비인 거래는
-     * 일반 1,000원이자 과소비 2,000원이다. 다리째로 한쪽에만 넣으면 일반만 볼 때
-     * 그 거래가 통째로 사라져 1,000원이 어디에도 세어지지 않는다.
-     */
-    const extraOnly = parseEntryFilter(query).extra;
-
-    /*
      * 합계는 전부 기준통화 환산액이다. amount는 그 다리의 통화라 섞으면 못 더한다.
-     * normalAmount·extraAmount는 그 환산액을 쪼갠 몫이고 언제나 크기(양수)다.
      *
      * 더하기를 SQL이 아니라 공용 함수가 한다. 기기가 오프라인에서 같은 합계를 내야
      * 하고, 규칙이 두 벌이면 같은 달의 숫자가 갈린다. 한 프로젝트의 한 달치 다리는
@@ -160,7 +143,7 @@ export class ReportsService {
       where: { categoryId: { not: null }, entry: scope },
       select: ReportsService.AGGREGATE_SELECT,
     });
-    const totals = summarize(this.toAggregateRows(rows), extraOnly);
+    const totals = summarize(this.toAggregateRows(rows));
 
     const show = await this.displayConverter(projectId);
     const asString = (value: Dec) => show.toString(this.toDecimal(value));
@@ -168,16 +151,12 @@ export class ReportsService {
       ...this.periodLabel(query, range, timeZone),
       income: asString(totals.income),
       expense: asString(totals.expense),
-      extraExpense: asString(totals.extraExpense),
-      normalExpense: asString(totals.normalExpense),
-      extraIncome: asString(totals.extraIncome),
-      normalIncome: asString(totals.normalIncome),
       net: asString(totals.net),
     };
   }
 
   /**
-   * 날짜별 지출·수입 (일반/과소비).
+   * 날짜별 지출·수입.
    *
    * 합계는 getSummary 와 같은 규칙이다("그 유형 카테고리 posting의 합"). 날짜는 프로젝트
    * 타임존의 달력 날짜라, 한국의 새벽 거래가 하루 앞으로 밀리지 않는다.
@@ -196,25 +175,19 @@ export class ReportsService {
     const range = this.resolvePeriod(query, timeZone);
     // 쿼리스트링은 문자열로 도착한다. 아는 값이 아니면 지출이다.
     const isIncome = query.type === 'income';
-    const extraOnly = parseEntryFilter(query).extra;
     const type = isIncome ? CategoryType.income : CategoryType.expense;
     const postings = await this.prisma.posting.findMany({
       where: { category: { type }, entry: this.entryScope(projectId, range, query) },
       select: ReportsService.AGGREGATE_SELECT,
     });
 
-    // 날짜별로 묶고 두 몫으로 쪼개는 규칙은 공용 함수가 갖는다.
-    const days = dailyTotals(this.toAggregateRows(postings), {
-      timeZone,
-      type,
-      extra: extraOnly,
-    });
+    // 날짜별로 묶는 규칙은 공용 함수가 갖는다.
+    const days = dailyTotals(this.toAggregateRows(postings), { timeZone, type });
 
     const show = await this.displayConverter(projectId);
     return days.map((day) => ({
       date: day.date,
-      normal: show.toString(this.toDecimal(day.normal)),
-      extra: show.toString(this.toDecimal(day.extra)),
+      amount: show.toString(this.toDecimal(day.amount)),
     }));
   }
 
@@ -233,7 +206,6 @@ export class ReportsService {
     // 불리언 비교만 하면 항상 롤업이 켜져서 소분류 구성비를 볼 수 없다.
     const rollup = query.rollup !== false && (query.rollup as unknown) !== 'false';
 
-    const breakdownExtra = parseEntryFilter(query).extra;
     const type = query.type as CategoryType;
 
     /*
@@ -260,14 +232,12 @@ export class ReportsService {
             parentCategoryId: row.category.parent?.id ?? null,
             parentCategoryName: row.category.parent?.name ?? null,
             baseAmount: row.baseAmount,
-            normalAmount: row.normalAmount,
-            extraAmount: row.extraAmount,
             date: row.entry.date,
           }]
         : [],
     );
 
-    const buckets = categoryBreakdown(named, { type, rollup, extra: breakdownExtra });
+    const buckets = categoryBreakdown(named, { type, rollup });
     const show = await this.displayConverter(projectId);
 
     return buckets.map((bucket) => ({
@@ -606,7 +576,6 @@ export class ReportsService {
     const show = await this.displayConverter(projectId);
     return entryMonths(this.toAggregateRows(rows), {
       timeZone,
-      extra: filter.extra,
       entryDates: dates.map((row) => row.date),
     }).map(
       (month) => ({
@@ -640,11 +609,9 @@ export class ReportsService {
      * 고르는 일은 질의가, 더하는 일은 공용 함수가 한다. 예전에는 date_trunc 로 SQL이
      * 달을 자르고 합까지 냈는데, 그러면 기기가 오프라인에서 같은 값을 낼 방법이 없다.
      */
-    const extraOnly = parseEntryFilter(query).extra;
     const rows = await this.prisma.posting.findMany({
       where: {
         categoryId: { not: null },
-        ...extraCondition(extraOnly),
         ...(query.target === 'account' || query.target === 'card'
           ? this.trendByPaymentMethodWhere(projectId, query, start, end)
           : this.trendByCategoryWhere(projectId, query, start, end)),
@@ -656,7 +623,6 @@ export class ReportsService {
       timeZone,
       endYearMonth: endMonth,
       months,
-      extra: extraOnly,
     });
 
     const show = await this.displayConverter(projectId);
@@ -831,7 +797,6 @@ export class ReportsService {
       })),
       {
         personIds: filter.personIds ?? null,
-        extraOnly: filter.extra,
         matchNothing: filter.matchNothing,
       },
     );
@@ -1056,21 +1021,6 @@ export class ReportsService {
   }
 }
 
-
-/** 일반/과소비 필터를 SQL 조각으로. 셀 몫이 없는 다리를 걸러낸다(카테고리 다리에만 건다). */
-
-/**
- * 고른 필터에서 더할 금액.
- *
- * 한 다리가 일반과 과소비로 나뉘므로, 한쪽만 볼 때는 다리 금액이 아니라 그 몫을
- * 더한다. 전체를 볼 때만 다리 금액을 그대로 쓴다(수입 다리는 음수라 크기로 바꾼다).
- */
-
-/** Prisma where에 붙이는 같은 조건. 필터가 없으면 아무것도 붙이지 않는다. */
-function extraCondition(extra: boolean | undefined) {
-  if (extra === undefined) return {};
-  return extra ? { extraAmount: { gt: 0 } } : { normalAmount: { gt: 0 } };
-}
 
 /** 잔액 추이의 한 구간. 값은 end 직전까지 쌓인 잔액이다. */
 type BalanceBucket = { label: string; start: Date; end: Date };

@@ -418,20 +418,10 @@ export interface EntryFilterQuery {
    *   ""(빈 값) = 아무도 고르지 않음 → 결과 없음
    */
   personIds?: string;
-  /**
-   * 일반/과소비 선택. 쉼표로 잇는다 ("normal,extra").
-   *
-   *   생략               = 전체 (필터 없음)
-   *   "normal,extra" = 둘 다 (전체와 같다)
-   *   "normal"       = 과소비가 섞이지 않은 거래만
-   *   "extra"        = 과소비가 조금이라도 있는 거래만
-   *   ""(빈 값)      = 아무것도 고르지 않음 → 결과 없음
-   */
-  extraTypes?: string;
 }
 
 /**
- * 기간 조회가 함께 받는 조건. 사람·과소비 필터에 거래 화면의 검색이 얹힌 것.
+ * 기간 조회가 함께 받는 조건. 사람 필터에 거래 화면의 검색이 얹힌 것.
  *
  * 한 덩이로 두는 이유는 셋이 언제나 함께 다니기 때문이다. 검색을 켠 채 달을 훑으면
  * 년월 목록도, 그 안의 분류별·수단별 목록도, 마지막 거래 목록도 같은 조건으로
@@ -495,15 +485,8 @@ export namespace EntryDto {
     // ── expense / income ──
     /** 가장 구체적인 카테고리 하나 (소분류가 있으면 소분류). 대분류는 parentId로 유도된다. */
     categoryId?: string;
-    /**
-     * 이 금액 중 과소비(지출)·추가 수입(수입)으로 셀 금액. 입력 통화 기준이다.
-     *
-     * 생략하면 Category.defaultIsExtra 를 따른다 (true면 전액, false면 0).
-     * "0"이면 일반 거래다. 음수이거나 거래 금액보다 크면 서버가 되돌려 보낸다.
-     */
-    extraAmount?: string;
     /** 한 결제를 여러 카테고리로 쪼갤 때. 지정하면 categoryId/amount 대신 이 값을 쓴다. */
-    splits?: Array<{ categoryId: string; amount: string; extraAmount?: string }>;
+    splits?: Array<{ categoryId: string; amount: string }>;
 
     /**
      * 이 거래에 붙일 태그. 갈래(kind)를 가리지 않는다.
@@ -663,16 +646,12 @@ export namespace CategoryDto {
     parentId?: string; // 소분류인 경우 대분류 ID
     type: 'income' | 'expense';
     icon?: string;
-    /** 이 분류로 적으면 과소비·추가 수입에 기본으로 체크할지 */
-    defaultIsExtra?: boolean;
     projectId?: string;
   }
 
   export interface UpdateRequest {
     name?: string;
     icon?: string;
-    /** 이 분류로 적으면 과소비·추가 수입에 기본으로 체크할지 */
-    defaultIsExtra?: boolean;
     isActive?: boolean;
     /** 목록에서의 자리 (분수 색인). 순서 바꾸기는 이 값 하나로 한다. */
     sortRank?: string;
@@ -750,12 +729,6 @@ export namespace ReportDto {
     yearMonth?: string;
     income: string;
     expense: string;
-    /** 지출 중 과소비로 센 금액과 그 나머지 */
-    extraExpense: string;
-    normalExpense: string;
-    /** 수입 중 추가 수입으로 센 금액과 그 나머지 */
-    extraIncome: string;
-    normalIncome: string;
     /** 수입 - 지출 */
     net: string;
   }
@@ -964,10 +937,8 @@ export namespace ReportDto {
   export interface DailyExpensePoint {
     /** 프로젝트 타임존 기준 "YYYY-MM-DD" */
     date: string;
-    /** 과소비(수입이면 추가 수입)로 세지 않은 금액 */
-    normal: string;
-    /** 과소비(수입이면 추가 수입)로 센 금액 */
-    extra: string;
+    /** 그날의 합계 */
+    amount: string;
   }
 
   /** 투자·저축 계좌 하나의 누적 수익 */

@@ -4,16 +4,12 @@ import type { EntryFilterQuery, EntryListItem, ReportDto } from '@money/types';
 import { homeDataPort } from '../data/home-port';
 import { type ReportPeriod } from '../lib/api-client';
 import { dayRangeQuery, monthQueryRange } from '../lib/datetime';
-import { countedShare } from '../lib/entries';
 import type { Account, Card, Category, Person } from '../lib/types';
 import { useProject } from '../store/project';
 import { useUserFilter } from '../store/user-filter';
 import { useDebouncedValue } from './useDebouncedValue';
 import { useMirrorVersion } from './useMirrorVersion';
 import { usePersonFilterSync } from './usePersonFilterSync';
-
-/** 일반/과소비. 둘 다 고르면 필터를 걸지 않는다. */
-export type ExtraType = 'normal' | 'extra';
 
 /**
  * 가계 화면이 보는 값 전부.
@@ -57,7 +53,6 @@ export function useLedgerData({
 
   const [entries, setEntries] = useState<EntryListItem[]>([]);
   const [summary, setSummary] = useState<ReportDto.Summary | null>(null);
-  const [selectedExtraTypes, setSelectedExtraTypes] = useState<ExtraType[]>(['normal', 'extra']);
 
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
@@ -119,13 +114,11 @@ export function useLedgerData({
    */
   const entryFilter = useMemo<EntryFilterQuery>(() => {
     const allPeopleSelected = people.length > 0 && selectedPersonIds.length === people.length;
-    const allExtraSelected = selectedExtraTypes.length === 2;
 
     return {
       ...(allPeopleSelected ? {} : { personIds: selectedPersonIds.join(',') }),
-      ...(allExtraSelected ? {} : { extraTypes: selectedExtraTypes.join(',') }),
     };
-  }, [people.length, selectedExtraTypes, selectedPersonIds]);
+  }, [people.length, selectedPersonIds]);
   const filter = useDebouncedValue(entryFilter, 250);
 
   const isRangeMode = Boolean(rangeStart && rangeEnd);
@@ -180,12 +173,6 @@ export function useLedgerData({
     setDataVersion((version) => version + 1);
   }, [reloadPeriod]);
 
-  const toggleExtraType = useCallback((value: ExtraType) => {
-    setSelectedExtraTypes((prev) =>
-      prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value],
-    );
-  }, []);
-
   return {
     accounts,
     people,
@@ -196,16 +183,7 @@ export function useLedgerData({
 
     entries,
     summary,
-    /**
-     * 일반/과소비 중 어느 몫을 셀지.
-     *
-     * 한 거래가 둘로 나뉘므로(3,000원 중 2,000원이 과소비) 한쪽만 볼 때는 날짜별
-     * 소계도 그 몫만 세야 위 합계와 맞는다. 서버가 리포트에서 쓰는 규칙과 같다.
-     */
-    share: countedShare(filter),
     filter,
-    selectedExtraTypes,
-    toggleExtraType,
     /** 필터가 걸려 있는지. 목록이 비었을 때 까닭을 알려 주는 데 쓴다. */
     isFilterNarrowed: Object.keys(filter).length > 0,
 

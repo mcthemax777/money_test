@@ -64,8 +64,6 @@ export interface PostingInput {
   /** 1 currency = exchangeRate 기준통화 */
   exchangeRate: Prisma.Decimal;
   baseAmount: Prisma.Decimal;
-  /** 카테고리 다리에서 과소비·추가 수입으로 센 금액 (기준통화). 생략하면 0 */
-  extraAmount?: Prisma.Decimal;
   cardId?: string;
 }
 
@@ -125,13 +123,6 @@ export interface EntryInput {
 export interface CategoryLine {
   categoryId: string;
   amount: Prisma.Decimal;
-  /**
-   * 이 줄에서 과소비(지출)·추가 수입(수입)으로 셀 금액. 입력 통화 기준이다.
-   *
-   * 생략하면 Category.defaultIsExtra를 따른다 (true면 전액, false면 0).
-   * 0 이상 amount 이하여야 한다.
-   */
-  extraAmount?: Prisma.Decimal;
 }
 
 interface CommonInput {
@@ -196,8 +187,6 @@ export interface TransferInput extends CommonInput {
   /** 이체 수수료. 보내는 계좌에서 함께 빠진다. */
   feeAmount?: Prisma.Decimal;
   feeCategoryId?: string;
-  /** 수수료 중 과소비로 셀 금액. 생략하면 수수료 카테고리의 defaultIsExtra를 따른다. */
-  feeExtraAmount?: Prisma.Decimal;
 }
 
 /**
@@ -563,7 +552,6 @@ export class LedgerService {
       accountId?: string;
       categoryId?: string;
       cardId?: string;
-      extraAmount?: Prisma.Decimal;
     },
     amount: Prisma.Decimal,
     base: string,
@@ -642,7 +630,6 @@ export class LedgerService {
     return lines.map((line) => ({
       categoryId: line.categoryId,
       amount: line.amount,
-      extraAmount: line.extraAmount,
     }));
   }
 
@@ -676,7 +663,6 @@ export class LedgerService {
         currency: posting.currency,
         exchangeRate: new Prisma.Decimal(posting.exchangeRate.toString()),
         baseAmount: new Prisma.Decimal(posting.baseAmount.toString()),
-        extraAmount: dec(posting.extraAmount),
         cardId: posting.cardId,
       })),
     };
@@ -777,7 +763,6 @@ export class LedgerService {
             toAmount: input.toAmount,
             feeAmount: input.feeAmount,
             feeCategoryId: input.feeCategoryId,
-            feeExtraAmount: input.feeExtraAmount,
           },
           this.lookup,
         ),
@@ -965,8 +950,6 @@ export class LedgerService {
   // ───────────────────────────────────────────
 
   private toPostingData(p: PostingInput) {
-    const extra = p.extraAmount ?? ZERO;
-
     return {
       accountId: p.accountId ?? null,
       categoryId: p.categoryId ?? null,
@@ -976,14 +959,6 @@ export class LedgerService {
       exchangeRate: p.exchangeRate,
       // 빌더가 정한 값을 그대로 쓴다. 여기서 다시 곱하면 반올림이 어긋난다.
       baseAmount: p.baseAmount,
-      extraAmount: extra,
-      /*
-       * 일반 몫은 남은 금액이다. 여기 한 곳에서만 채워 두 값이 어긋나지 않게 한다.
-       *
-       * 카테고리 다리에만 뜻이 있다. 계좌 다리에 금액을 넣으면 카테고리 조건을
-       * 빠뜨린 조회에서 계좌 다리까지 "일반 지출"로 걸린다.
-       */
-      normalAmount: p.categoryId ? p.baseAmount.abs().sub(extra) : ZERO,
       cardId: p.cardId ?? null,
     };
   }
@@ -1150,7 +1125,7 @@ export class LedgerService {
     }
   }
 
-  /** 카테고리 유효성 확인 + 과소비 금액 기본값 채우기 */
+  /** 카테고리 유효성 확인 */
   private async getAccount(projectId: string, accountId: string) {
     const account = await this.prisma.account.findUnique({ where: { id: accountId } });
     if (!account || account.projectId !== projectId) {

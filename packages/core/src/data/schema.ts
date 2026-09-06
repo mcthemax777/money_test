@@ -18,7 +18,7 @@
  */
 
 /** 스키마가 바뀌면 올린다. 다르면 사본을 버리고 처음부터 다시 받는다. */
-export const SCHEMA_VERSION = 9;
+export const SCHEMA_VERSION = 10;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -114,7 +114,6 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      parentId       TEXT,
      type           TEXT NOT NULL,
      icon           TEXT,
-     defaultIsExtra INTEGER NOT NULL DEFAULT 0,
      isDefault      INTEGER NOT NULL DEFAULT 0,
      isActive       INTEGER NOT NULL DEFAULT 1,
      sortRank       TEXT NOT NULL DEFAULT 'V',
@@ -218,8 +217,6 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      currency     TEXT NOT NULL,
      baseAmount   TEXT NOT NULL,
      exchangeRate TEXT NOT NULL,
-     extraAmount  TEXT NOT NULL DEFAULT '0',
-     normalAmount TEXT NOT NULL DEFAULT '0',
      cardId       TEXT
    )`,
 

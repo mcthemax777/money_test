@@ -46,7 +46,6 @@ const EMPTY_FORM: CategoryFormValues = {
   name: '',
   type: 'expense',
   subCategories: NO_SUB_CATEGORIES,
-  defaultIsExtra: false,
 };
 
 /** 카테고리 화면. 웹의 /categories 와 같은 배치다. */
@@ -218,7 +217,6 @@ export default function CategoriesScreen() {
                                     <Text className="text-sm text-gray-600">{child.name}</Text>
                                     <Text className="text-xs text-gray-500">
                                       {child.isDefault ? t('categories.defaultMark') : ''}
-                                      {child.defaultIsExtra ? t('categories.extraMark') : ''}
                                     </Text>
                                   </View>
                                 ))}
@@ -306,12 +304,6 @@ export default function CategoriesScreen() {
 
             {!selectedCategory.parentId ? (
               <>
-                {selectedCategory.defaultIsExtra ? (
-                  <Text className="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-800">
-                    {t('categories.defaultExtra')}
-                  </Text>
-                ) : null}
-
                 {manager.childrenOf(selectedCategory.id).length > 0 ? (
                   <View>
                     <Text className="mb-1 text-sm font-medium text-gray-700">
@@ -326,7 +318,6 @@ export default function CategoriesScreen() {
                           <Text className="flex-1 text-sm text-gray-900">{child.name}</Text>
                           <Text className="text-xs text-gray-500">
                             {child.isDefault ? t('categories.defaultMark') : ''}
-                            {child.defaultIsExtra ? t('categories.extraMark') : ''}
                           </Text>
                           {/* 소분류는 이 줄에서 곧바로 옮긴다. 따로 여는 창이 없다. */}
                           <MoveRow
@@ -440,7 +431,7 @@ export default function CategoriesScreen() {
                     ...formData,
                     subCategories: [
                       ...formData.subCategories,
-                      { id: '', name: '', defaultIsExtra: false },
+                      { id: '', name: '' },
                     ],
                   })
                 }

@@ -77,7 +77,6 @@ export interface LookupCategory {
   projectId: string;
   name: string;
   type: CategoryType;
-  defaultIsExtra: boolean;
 }
 
 /**
@@ -111,8 +110,6 @@ export interface BuiltPosting {
   /** 1 currency = exchangeRate 기준통화 */
   exchangeRate: Dec;
   baseAmount: Dec;
-  /** 카테고리 다리에서 과소비·추가 수입으로 센 금액 (기준통화). 생략하면 0 */
-  extraAmount?: Dec;
   cardId?: string;
 }
 
@@ -135,7 +132,6 @@ export interface BuiltEntry {
 export interface CategoryLine {
   categoryId: string;
   amount: DecInput;
-  extraAmount?: DecInput;
 }
 
 interface CommonBuildInput {
@@ -174,7 +170,6 @@ export interface TransferBuildInput extends CommonBuildInput {
   toAmount?: DecInput;
   feeAmount?: DecInput;
   feeCategoryId?: string;
-  feeExtraAmount?: DecInput;
 }
 
 export interface CardTransferBuildInput extends CommonBuildInput {
@@ -231,16 +226,7 @@ export async function buildExpense(
     installmentMonths: input.installmentMonths,
     postings: [
       // 지출 발생 = + (언제나 기준통화)
-      ...baseLines.map((line) =>
-        baseLeg(
-          {
-            categoryId: line.categoryId,
-            extraAmount: toExtraBase(line.extraAmount, line.amount, line.baseAmount),
-          },
-          line.baseAmount,
-          base,
-        ),
-      ),
+      ...baseLines.map((line) => baseLeg({ categoryId: line.categoryId }, line.baseAmount, base)),
       // 자산 감소 또는 부채 증가 = -
       paymentLeg(source, account.currency, entered, rate, base, enteredTotal, baseTotal),
     ],
@@ -302,14 +288,7 @@ export async function buildIncome(
     rateProvisional: false,
     postings: [
       ...baseLines.map((line) =>
-        baseLeg(
-          {
-            categoryId: line.categoryId,
-            extraAmount: toExtraBase(line.extraAmount, line.amount, line.baseAmount),
-          },
-          line.baseAmount.negated(),
-          base,
-        ),
+        baseLeg({ categoryId: line.categoryId }, line.baseAmount.negated(), base),
       ),
       { ...outgoing, amount: outgoing.amount.negated(), baseAmount: outgoing.baseAmount.negated() },
     ],
@@ -403,25 +382,15 @@ export async function buildTransfer(
   if (fee.gt(ZERO)) {
     /*
      * 수수료도 지출 카테고리 다리다. 지출·수입과 같은 검증을 거쳐야 다른 프로젝트의
-     * 카테고리나 수입 카테고리가 수수료 자리에 들어오지 않는다. 과소비 기본값도
-     * 여기서 카테고리에서 가져온다.
+     * 카테고리나 수입 카테고리가 수수료 자리에 들어오지 않는다.
      */
     const [line] = await resolveLines(
       input.projectId,
-      [{ categoryId: input.feeCategoryId!, amount: fee, extraAmount: input.feeExtraAmount }],
+      [{ categoryId: input.feeCategoryId!, amount: fee }],
       'expense',
       lookup,
     );
-    postings.push(
-      baseLeg(
-        {
-          categoryId: line.categoryId,
-          extraAmount: toExtraBase(line.extraAmount, line.amount, feeBase),
-        },
-        feeBase,
-        base,
-      ),
-    );
+    postings.push(baseLeg({ categoryId: line.categoryId }, feeBase, base));
   }
 
   return { ...common(input), postings };
@@ -504,8 +473,7 @@ export interface EntryBuildRequest extends CommonBuildInput {
   kind: EntryKind | string;
   amount?: DecInput;
   categoryId?: string;
-  extraAmount?: DecInput;
-  splits?: Array<{ categoryId: string; amount: DecInput; extraAmount?: DecInput }>;
+  splits?: Array<{ categoryId: string; amount: DecInput }>;
   accountId?: string;
   toAccountId?: string;
   cardId?: string;
@@ -553,8 +521,6 @@ export async function buildEntry(
           toAmount: request.toAmount,
           feeAmount: request.transferFee,
           feeCategoryId: request.transferFeeCategoryId,
-          // 이체에서 화면의 과소비 표시는 수수료 카테고리에 붙는다 (이체 자체는 지출이 아니다).
-          feeExtraAmount: request.extraAmount,
         },
         lookup,
       );
@@ -585,18 +551,13 @@ function resolveRequestLines(request: EntryBuildRequest): CategoryLine[] {
     return request.splits.map((split) => ({
       categoryId: split.categoryId,
       amount: split.amount,
-      extraAmount: split.extraAmount,
     }));
   }
 
   if (!request.categoryId) fail('CATEGORY_REQUIRED', '카테고리를 지정해야 합니다.');
 
   return [
-    {
-      categoryId: request.categoryId!,
-      amount: requireAmount(request.amount, '금액'),
-      extraAmount: request.extraAmount,
-    },
+    { categoryId: request.categoryId!, amount: requireAmount(request.amount, '금액') },
   ];
 }
 
@@ -681,7 +642,7 @@ function foreignNote(
 
 /** 기준통화로 기록되는 다리 (카테고리, 자본 계정) */
 function baseLeg(
-  target: { accountId?: string; categoryId?: string; cardId?: string; extraAmount?: Dec },
+  target: { accountId?: string; categoryId?: string; cardId?: string },
   amount: Dec,
   base: string,
 ): BuiltPosting {
@@ -800,18 +761,6 @@ function toBaseLines<T extends { amount: Dec }>(
   return lines.map((line, index) => ({ ...line, baseAmount: shares[index] }));
 }
 
-/**
- * 과소비 금액을 기준통화로 옮긴다.
- *
- * 환율을 다시 곱하지 않고 그 줄이 이미 얻은 환산액에 비율을 건다. 전액을 과소비로
- * 적었으면 환산액도 전액이 되어 "일반 지출 0원"이 정확히 맞는다.
- */
-function toExtraBase(extra: Dec, amount: Dec, baseAmount: Dec): Dec {
-  if (extra.lte(ZERO)) return ZERO;
-  if (extra.gte(amount)) return baseAmount;
-  return baseAmount.times(extra).dividedBy(amount, 4);
-}
-
 /** 기준통화 자릿수로 반올림. 원·엔은 소수를 쓰지 않는다. */
 function toBase(amount: Dec, rate: Dec, base: string): Dec {
   return amount.times(rate).round(currencyDecimals(base));
@@ -843,7 +792,7 @@ async function resolveLines(
   lines: readonly CategoryLine[],
   expectedType: 'income' | 'expense',
   lookup: LedgerLookup,
-): Promise<Array<{ categoryId: string; amount: Dec; extraAmount: Dec }>> {
+): Promise<Array<{ categoryId: string; amount: Dec }>> {
   if (lines.length === 0) fail('CATEGORY_REQUIRED', '카테고리를 최소 하나 지정해야 합니다.');
 
   const found = await lookup.categories(projectId, lines.map((line) => line.categoryId));
@@ -864,25 +813,7 @@ async function resolveLines(
     const amount = Dec.of(line.amount);
     if (amount.lte(ZERO)) fail('AMOUNT_INVALID', '금액은 0보다 커야 합니다.');
 
-    /*
-     * 과소비 금액은 그 줄의 금액을 넘을 수 없고 음수일 수 없다.
-     *
-     * 값을 보내지 않았으면 카테고리의 기본값을 따른다. 기본이 과소비인 분류는 전액이
-     * 과소비다. 화면은 그 값을 미리 채워 두고 사용자가 줄이게 한다.
-     */
-    const extraAmount =
-      line.extraAmount === undefined || line.extraAmount === null
-        ? category!.defaultIsExtra
-          ? amount
-          : ZERO
-        : Dec.of(line.extraAmount);
-
-    if (extraAmount.lt(ZERO)) fail('EXTRA_NEGATIVE', '과소비 금액은 0보다 작을 수 없습니다.');
-    if (extraAmount.gt(amount)) {
-      fail('EXTRA_EXCEEDS_AMOUNT', '과소비 금액은 거래 금액보다 클 수 없습니다.');
-    }
-
-    return { categoryId: line.categoryId, amount, extraAmount };
+    return { categoryId: line.categoryId, amount };
   });
 }
 

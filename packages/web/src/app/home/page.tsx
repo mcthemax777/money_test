@@ -20,9 +20,7 @@ import { useProjectGuard } from '@/hooks/useProjectGuard';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
 import CategoryDonutChart from '@/components/CategoryDonutChart';
-import CumulativeExpenseChart, {
-  type ExpenseField,
-} from '@/components/CumulativeExpenseChart';
+import CumulativeExpenseChart from '@/components/CumulativeExpenseChart';
 import EntryFeed from '@/components/EntryFeed';
 import CardSettlementPanel from '@/components/CardSettlementPanel';
 import EntryEditor, {
@@ -57,23 +55,10 @@ const TYPE_TABS: Array<{ type: EntryType; labelKey: MessageKey; text: string; bo
   },
 ];
 
-/**
- * 누적 그래프 세 장. 넓은 쪽에서 좁은 쪽으로 늘어놓는다.
- *
- * 수입도 같은 세 장이다. 과소비에 해당하는 것이 수입에서는 추가 수입이고, 서버가
- * 두 유형을 같은 모양(normal/extra)으로 주므로 그리는 방법이 다르지 않다.
- */
-const CUMULATIVE_CHARTS: Record<EntryType, Array<{ field: ExpenseField; titleKey: MessageKey }>> = {
-  expense: [
-    { field: 'total', titleKey: 'home.chart.expense.total' },
-    { field: 'normal', titleKey: 'home.chart.expense.normal' },
-    { field: 'extra', titleKey: 'home.chart.expense.extra' },
-  ],
-  income: [
-    { field: 'total', titleKey: 'home.chart.income.total' },
-    { field: 'normal', titleKey: 'home.chart.income.normal' },
-    { field: 'extra', titleKey: 'home.chart.income.extra' },
-  ],
+/** 누적 그래프의 제목. 지출과 수입이 한 장씩이다. */
+const CUMULATIVE_CHART_TITLE: Record<EntryType, MessageKey> = {
+  expense: 'home.chart.expense.total',
+  income: 'home.chart.income.total',
 };
 
 /**
@@ -347,15 +332,11 @@ export default function HomePage() {
               )}
             </div>
           ) : (
-            CUMULATIVE_CHARTS[type].map((chart) => (
-              <div
-                key={chart.field}
-                className="snap-start shrink-0 w-[min(100%,30rem)]"
-              >
+            [CUMULATIVE_CHART_TITLE[type]].map((titleKey) => (
+              <div key={titleKey} className="snap-start shrink-0 w-[min(100%,30rem)]">
                 <CumulativeExpenseChart
-                  title={t(chart.titleKey)}
+                  title={t(titleKey)}
                   type={type}
-                  field={chart.field}
                   yearMonth={yearMonth}
                   points={dailyPoints}
                   previousYearMonth={previousYearMonth}

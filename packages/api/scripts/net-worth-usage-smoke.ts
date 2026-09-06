@@ -121,21 +121,23 @@ const categories: CategoryNode[] = [
   { id: 'c-salary', type: 'income', parentId: null },
 ];
 
-const row = (categoryId: string, amount: string, extra = '0', type: 'expense' | 'income' = 'expense'): CategoryPostingRow => ({
+const row = (
+  categoryId: string,
+  amount: string,
+  type: 'expense' | 'income' = 'expense',
+): CategoryPostingRow => ({
   categoryId,
   categoryType: type,
   baseAmount: type === 'income' ? `-${amount}` : amount,
-  extraAmount: extra,
-  normalAmount: String(Number(amount) - Number(extra)),
   date: '2026-08-05T03:00:00.000Z',
 });
 
 const postings = [
   row('c-lunch', '50000'),
-  row('c-cafe', '10000', '10000'),
+  row('c-cafe', '10000'),
   row('c-dining', '30000'),
   row('c-utility', '200000'),
-  row('c-salary', '3000000', '0', 'income'),
+  row('c-salary', '3000000', 'income'),
 ];
 
 const usage = categoryUsage(postings, categories);
@@ -148,16 +150,6 @@ eq('거래가 없는 카테고리는 0', usage.get('c-utility')?.amount.toString
 eq('전체 지출 = 대분류만 더한다 (소분류를 두 번 세지 않는다)',
   totalUsage(usage, categories, 'expense').toString(), '290000');
 eq('전체 수입', totalUsage(usage, categories, 'income').toString(), '3000000');
-
-const extraUsage = categoryUsage(postings, categories, true);
-eq('과소비만: 대분류 사용액', extraUsage.get('c-dining')?.amount.toString(), '10000');
-eq('과소비만: 셀 몫이 없는 다리는 건수에서도 빠진다', extraUsage.get('c-dining')?.count, 1);
-eq('과소비만: 전체 지출', totalUsage(extraUsage, categories, 'expense').toString(), '10000');
-
-const normalUsage = categoryUsage(postings, categories, false);
-eq('일반만 + 과소비만 = 전체',
-  normalUsage.get('c-dining')!.amount.plus(extraUsage.get('c-dining')!.amount).toString(),
-  usage.get('c-dining')!.amount.toString());
 
 // 목록에 없는 카테고리의 다리는 세지 않는다 (다른 프로젝트나 지워진 분류)
 eq('모르는 카테고리는 무시', categoryUsage([row('c-unknown', '9999')], categories).get('c-unknown'), undefined);

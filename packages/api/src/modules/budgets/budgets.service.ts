@@ -490,8 +490,6 @@ export class BudgetsService {
       select: {
         categoryId: true,
         baseAmount: true,
-        normalAmount: true,
-        extraAmount: true,
         category: { select: { type: true } },
         entry: { select: { date: true } },
       },
@@ -504,14 +502,11 @@ export class BudgetsService {
               categoryId: row.categoryId,
               categoryType: row.category.type,
               baseAmount: row.baseAmount,
-              normalAmount: row.normalAmount,
-              extraAmount: row.extraAmount,
               date: row.entry.date,
             }]
           : [],
       ),
       categories,
-      parsed.extra,
     );
 
     const amountUsed = (categoryId: string): Prisma.Decimal =>

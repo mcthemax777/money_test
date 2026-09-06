@@ -5,13 +5,11 @@
  * 기기는 오프라인에서 이 칸을 비워 둘 수밖에 없다. 그래서 규칙만 여기로 옮기고 서버도
  * 이것을 쓴다 (`report-aggregation.ts` 머리말의 경계와 이유가 그대로 적용된다).
  *
- * 이 집계에서 까다로운 자리는 셋이다.
+ * 이 집계에서 까다로운 자리는 둘이다.
  *
  *   1. **목록이 거래 유무와 무관하다.** 이번 달에 쓰지 않은 통장과 카드도 0원으로
  *      남는다. 그러지 않으면 화면에서 "왜 내 카드가 없나"를 묻게 된다.
- *   2. **한 거래가 일반과 과소비로 나뉜다.** 3,000원 중 2,000원이 과소비인 거래를
- *      일반만 볼 때 통째로 빼면 남은 1,000원이 어느 수단에도 세어지지 않는다.
- *   3. **이체는 소비가 아니지만 수수료는 지출이다.** 수수료를 보내는 계좌에 붙여야
+ *   2. **이체는 소비가 아니지만 수수료는 지출이다.** 수수료를 보내는 계좌에 붙여야
  *      지출 카테고리 합계와 총액이 맞는다.
  *
  * 금액은 이미 표시 통화로 환산된 값을 받는다. 환산은 `toListItem` 이 하고, 카드 실적
@@ -68,12 +66,6 @@ export interface PaymentMethodOptions {
    *   빈 배열        = 아무도 고르지 않았다 (어떤 수단도 남지 않는다)
    */
   personIds?: readonly string[] | null;
-  /**
-   * 일반/과소비 선택.
-   *
-   *   undefined = 전체, false = 일반 몫만, true = 과소비 몫만
-   */
-  extraOnly?: boolean;
   /** 필터가 아무것도 고르지 않았다. 목록은 그대로 두고 금액만 세지 않는다. */
   matchNothing?: boolean;
 }
@@ -86,7 +78,7 @@ export function paymentMethods(
   cards: readonly PaymentMethodCard[],
   options: PaymentMethodOptions = {},
 ): ReportDto.PaymentMethodItem[] {
-  const { personIds = null, extraOnly, matchNothing = false } = options;
+  const { personIds = null, matchNothing = false } = options;
 
   const accountById = new Map(accounts.map((account) => [account.id, account]));
   const cardById = new Map(cards.map((card) => [card.id, card]));
@@ -159,28 +151,15 @@ export function paymentMethods(
     addTo(cardBucket(card, '0', 0));
   }
 
-  /**
-   * 고른 필터에서 이 거래를 얼마로 셀지.
-   *
-   * extraAmount 는 카테고리 다리에서 온 값이다 (이체는 수수료 카테고리가 정한다).
-   */
-  const counted = (amount: string, extraAmount: string | null | undefined): Dec => {
-    const total = Dec.of(amount || 0);
-    if (extraOnly === undefined) return total;
-
-    const extra = Dec.of(extraAmount || 0);
-    return extraOnly ? extra : total.minus(extra);
-  };
-
-  // 일반/과소비를 하나도 고르지 않았으면 금액은 없지만 목록은 그대로 둔다.
+  // 필터가 아무것도 고르지 않았으면 금액은 없지만 목록은 그대로 둔다.
   for (const item of matchNothing ? [] : items) {
-    const amount = counted(item.amount, item.extraAmount);
+    const amount = Dec.of(item.amount || 0);
 
     // 셀 몫이 없으면 건수도 세지 않는다. "0원인데 3건"이 되지 않게 한다.
     if (amount.lte(ZERO) && item.kind !== 'transfer') continue;
 
     if (item.kind === 'transfer') {
-      const fee = counted(item.feeAmount ?? '0', item.extraAmount);
+      const fee = Dec.of(item.feeAmount ?? '0');
       if (fee.lte(ZERO) || !item.accountId) continue;
 
       /*

@@ -534,10 +534,6 @@ export default function TransactionsPage() {
         },
         { label: t('tx.detail.merchant'), value: detail.merchant },
         {
-          label: detail.kind === 'income' ? t('tx.detail.extraIncome') : t('tx.detail.extra'),
-          value: toNumber(detail.extraAmount) > 0 ? formatCurrency(detail.extraAmount, currency) : null,
-        },
-        {
           label: t('tx.detail.installment'),
           value: detail.installmentMonths
             ? t('tx.detail.installmentMonths', { months: detail.installmentMonths })

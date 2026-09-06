@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Pressable, Switch, Text, View } from 'react-native';
 import type { EntryListItem } from '@money/types';
 
-import { useLedgerData, type ExtraType } from '@money/core/hooks/useLedgerData';
+import { useLedgerData } from '@money/core/hooks/useLedgerData';
 import { currentYearMonth } from '@money/core/lib/datetime';
 import { sumEntries } from '@money/core/lib/entries';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -27,11 +27,6 @@ const VIEWS: Array<{ id: ViewType; labelKey: MessageKey }> = [
   { id: 'method', labelKey: 'ledger.tab.method' },
 ];
 
-/** 일반/과소비 필터. 둘 다 켜면 전체다. */
-const EXTRA_OPTIONS: Array<{ value: ExtraType; labelKey: MessageKey }> = [
-  { value: 'normal', labelKey: 'ledger.filterNormal' },
-  { value: 'extra', labelKey: 'ledger.filterExtra' },
-];
 
 /**
  * 가계. 웹의 /dashboard 를 옮긴 것이다.
@@ -89,7 +84,7 @@ export default function LedgerScreen() {
   });
 
   /* 위 머리글에 적는 이 구간의 합계. 목록의 날짜별 소계와 같은 규칙으로 센다. */
-  const totals = sumEntries(ledger.entries, ledger.share);
+  const totals = sumEntries(ledger.entries);
 
   return (
     <View className="gap-6">
@@ -169,29 +164,6 @@ export default function LedgerScreen() {
         })}
       </View>
 
-      {/*
-        조회 필터. 둘 다 켜면 전체이고 하나도 켜지 않으면 거래가 없는 상태다.
-        서버 조회 조건으로 넘어간다. 목록만 걸러 놓으면 위 합계와 어긋나기 때문이다.
-      */}
-      <View className="flex-row flex-wrap items-center gap-4 rounded-lg border border-gray-200 bg-white p-3">
-        <Text className="text-xs font-semibold uppercase tracking-wider text-gray-600">
-          {t('ledger.filterExtraLabel')}
-        </Text>
-        {EXTRA_OPTIONS.map((option) => (
-          <Pressable
-            key={option.value}
-            onPress={() => ledger.toggleExtraType(option.value)}
-            className="flex-row items-center gap-1.5"
-          >
-            <Switch
-              value={ledger.selectedExtraTypes.includes(option.value)}
-              onValueChange={() => ledger.toggleExtraType(option.value)}
-            />
-            <Text className="text-sm text-gray-700">{t(option.labelKey)}</Text>
-          </Pressable>
-        ))}
-      </View>
-
       {/* 감춘 보기도 그대로 남겨 둔다. 다시 누르면 받아 둔 값이 바로 보인다. */}
       {visited.includes('category') ? (
         <View style={{ display: viewType === 'category' ? 'flex' : 'none' }}>
@@ -223,7 +195,6 @@ export default function LedgerScreen() {
           <>
             <TransactionCalendar
               entries={ledger.entries}
-              share={ledger.share}
               year={view.year}
               month={view.month}
               selectedDate={selectedDate}
@@ -243,7 +214,6 @@ export default function LedgerScreen() {
             ) : (
               <TransactionListView
                 entries={selectedDate ? dayEntries : ledger.entries}
-                share={ledger.share}
                 onEntryClick={(entry) => {
                   setNotice('');
                   setEditor({ isOpen: true, editing: entry });

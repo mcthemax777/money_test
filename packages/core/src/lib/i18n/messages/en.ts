@@ -118,11 +118,7 @@ export const en: Record<MessageKey, string> = {
   'home.tab.expense': 'Expense',
   'home.tab.income': 'Income',
   'home.chart.expense.total': 'All spending',
-  'home.chart.expense.normal': 'Regular spending',
-  'home.chart.expense.extra': 'Overspending',
   'home.chart.income.total': 'All income',
-  'home.chart.income.normal': 'Regular income',
-  'home.chart.income.extra': 'Extra income',
   'home.categoryChart.expense': 'Spending by category',
   'home.categoryChart.income': 'Income by category',
   'home.settlementTitle': '{card} settlement',
@@ -201,8 +197,6 @@ export const en: Record<MessageKey, string> = {
   'entry.cardRefund': '{name} refund',
   'entry.cardPayment': '{name} bill payment',
   'entry.noTitle': '(no description)',
-  'entry.extraIncome': 'Extra income',
-  'entry.overspend': 'Overspending',
   'entry.fee': 'Fee {amount}',
   'entry.provisional': 'provisional',
 
@@ -483,9 +477,6 @@ export const en: Record<MessageKey, string> = {
   'ledger.entryCount': '{count}',
   'ledger.totalExpense': 'All spending',
   'ledger.totalIncome': 'All income',
-  'ledger.filterNormal': 'Regular',
-  'ledger.filterExtra': 'Overspending / extra income',
-  'ledger.filterExtraLabel': 'Overspending',
 
   // ===== Budget editing =====
   'budget.scopeAll': 'Every month',
@@ -573,14 +564,6 @@ export const en: Record<MessageKey, string> = {
   'schedule.hint':
     'An amount changed here applies to that month only. To change several months at once, use the scope above.',
 
-  // ===== Overspending / extra income amount =====
-  'extra.title': '{label} amount',
-  'extra.required': 'Enter an amount.',
-  'extra.negative': 'It cannot be less than zero.',
-  'extra.tooLarge': 'It cannot be more than the entry amount.',
-  'extra.hint':
-    'Of the entry amount {max}, this is how much counts as {label}. Left as it is, the whole amount counts.',
-  'extra.zeroHint': 'Entering 0 makes it a regular {noun}.',
   'common.confirm': 'OK',
 
   // ===== Categories screen =====
@@ -601,10 +584,8 @@ export const en: Record<MessageKey, string> = {
   'categories.expenseEmpty': 'No spending categories.',
   'categories.incomeEmpty': 'No income categories.',
   'categories.name': 'Category name',
-  'categories.defaultExtra': '✓ Counts as overspending by default',
   'categories.subcategories': 'Subcategories',
   'categories.defaultMark': '(default)',
-  'categories.extraMark': ' overspending',
   'categories.parentName': 'Category name',
   'categories.parentPlaceholder': 'e.g. Food',
   'categories.subPlaceholder': 'Subcategory name',
@@ -761,8 +742,6 @@ export const en: Record<MessageKey, string> = {
   'editor.splitSumMismatch': 'Line amounts do not add up to the total.',
   'editor.splitCategoryRequired': 'Pick a category for each line.',
   'editor.splitAmountInvalid': 'Enter an amount for each line.',
-  'editor.splitExtraInvalid': 'That line has an invalid overspend amount.',
-  'editor.splitExtraExceeds': 'Overspend is larger than the line amount.',
   'editor.currency': 'Currency',
   'editor.rate': 'Exchange rate',
   'editor.rateHint': '1 {currency} = ? {ledger}. A rough value is filled in — correct it.',
@@ -870,10 +849,7 @@ export const en: Record<MessageKey, string> = {
   'entryForm.accountRequired': 'Choose an account.',
   'entryForm.toAccountRequired': 'Choose the destination account.',
   'entryForm.feeInvalid': 'Enter a fee of zero or more.',
-  'entryForm.extraInvalid': 'Enter an overspend amount of zero or more.',
   'entryForm.category': 'Category',
-  'entryForm.extraAmount': 'Count as overspending (optional)',
-  'entryForm.extraHint': 'Leave empty to follow the category default. Enter 0 for a normal entry.',
   'entryForm.delete': 'Delete',
   'entryForm.deleting': 'Deleting...',
   'entryForm.addButton': 'Add entry',
@@ -918,7 +894,6 @@ export const en: Record<MessageKey, string> = {
   'error.CARD_NOT_FOUND': 'The card no longer exists.',
   'error.INSTALLMENT_CREDIT_ONLY': 'Installments apply only to credit card spending.',
   'error.TRANSFER_SAME_ACCOUNT': 'The source and destination accounts are the same.',
-  'error.EXTRA_EXCEEDS_AMOUNT': 'The overspending amount cannot exceed the entry amount.',
   'carousel.prev': 'Previous',
   'carousel.next': 'Next',
 
@@ -961,8 +936,6 @@ export const en: Record<MessageKey, string> = {
   'tx.detail.category': 'Category',
   'tx.detail.method': 'Payment method',
   'tx.detail.amount': 'Amount',
-  'tx.detail.extra': 'Overspending',
-  'tx.detail.extraIncome': 'Extra income',
   'tx.detail.merchant': 'Merchant',
   'tx.detail.note': 'Note',
   'tx.detail.installment': 'Installment',

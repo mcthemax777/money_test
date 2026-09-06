@@ -28,7 +28,7 @@ export class ReportsController {
   }
 
   @Get('daily-expense')
-  @ApiOperation({ summary: '날짜별 지출·수입 (일반/과소비). 누적 그래프의 재료' })
+  @ApiOperation({ summary: '날짜별 지출·수입. 누적 그래프의 재료' })
   dailyExpense(
     @Request() req: AuthenticatedRequest,
     @Query() query: ReportDto.DailyExpenseQuery,

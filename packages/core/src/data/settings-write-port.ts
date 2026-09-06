@@ -50,7 +50,6 @@ export interface CardPatch {
 export interface CategoryPatch {
   name?: string;
   icon?: string | null;
-  defaultIsExtra?: boolean;
   isActive?: boolean;
   /** 목록에서의 자리 (분수 색인). */
   sortRank?: string;

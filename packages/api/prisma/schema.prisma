@@ -386,9 +386,6 @@ model Category {
   parentId       String?
   type           CategoryType
   icon           String?
-  // 이 카테고리로 적으면 과소비(지출)·추가 수입(수입)에 기본으로 체크할지.
-  // 체크되면 금액 칸이 거래 금액으로 채워지고, 사용자가 그보다 작게 줄일 수 있다.
-  defaultIsExtra Boolean      @default(false)
   isDefault      Boolean      @default(false) // "선택안함" 등 삭제 불가 항목
   isActive       Boolean      @default(true)
   /// 화면 표시 순서 (분수 색인). 같은 부모 안에서만 의미가 있다.
@@ -679,23 +676,6 @@ model Posting {
   currency     String   @default("KRW")
   baseAmount   Decimal  @db.Decimal(19, 4) // 프로젝트 기준통화 환산액
   exchangeRate Decimal  @default(1) @db.Decimal(19, 8)
-  // 이 다리 금액 중 과소비(지출)·추가 수입(수입)으로 센 금액. 0이면 일반 거래다.
-  //
-  // 카테고리 다리에서만 의미가 있고, 그 다리는 언제나 기준통화라 baseAmount와
-  // 같은 단위다. 수입 다리는 음수지만 이 값은 크기만 담아 언제나 0 이상이다
-  // (0 <= extraAmount <= |baseAmount|).
-  // 분할 거래에서 줄마다 다를 수 있어 JournalEntry가 아니라 여기에 둔다.
-  extraAmount  Decimal  @default(0) @db.Decimal(19, 4)
-  // 같은 다리의 나머지, 곧 일반 지출·일반 수입으로 세는 금액이다.
-  //
-  // extraAmount에서 유도되는 값이지만(normalAmount + extraAmount = |baseAmount|) 컬럼으로
-  // 둔다. "일반 몫이 남아 있는 다리"를 고르려면 두 컬럼을 견주어야 하는데, 크기 비교라
-  // 부호가 다른 수입 다리까지 한 조건으로 적을 수 없다. 합계도 이 컬럼 하나를 더하면 된다.
-  //
-  // 채우는 곳은 ledger.service의 toPostingData 한 곳뿐이라 두 값이 어긋날 수 없다.
-  // 카테고리 다리에만 채운다. 계좌 다리에 |baseAmount|를 넣으면 카테고리 조건을
-  // 빠뜨린 조회에서 계좌 다리까지 "일반"으로 걸린다.
-  normalAmount Decimal  @default(0) @db.Decimal(19, 4)
   statementId  String? // 신용카드 posting만 사용
   cardId       String? // 표시/분석용. 체크카드 사용 시에도 채운다
 

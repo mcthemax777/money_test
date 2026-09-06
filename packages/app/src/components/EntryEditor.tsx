@@ -58,13 +58,9 @@ const VIOLATION_KEY: Record<string, MessageKey> = {
   TRANSFER_SAME_ACCOUNT: 'error.TRANSFER_SAME_ACCOUNT',
   FEE_INVALID: 'entryForm.feeInvalid',
   FEE_CATEGORY_REQUIRED: 'editor.feeCategoryRequired',
-  EXTRA_INVALID: 'entryForm.extraInvalid',
-  EXTRA_EXCEEDS_AMOUNT: 'error.EXTRA_EXCEEDS_AMOUNT',
   SPLIT_SUM_MISMATCH: 'editor.splitSumMismatch',
   SPLIT_CATEGORY_REQUIRED: 'editor.splitCategoryRequired',
   SPLIT_AMOUNT_INVALID: 'editor.splitAmountInvalid',
-  SPLIT_EXTRA_INVALID: 'editor.splitExtraInvalid',
-  SPLIT_EXTRA_EXCEEDS: 'editor.splitExtraExceeds',
   RATE_INVALID: 'editor.rateInvalid',
   CARD_REQUIRED: 'editor.cardRequired',
 };
@@ -398,7 +394,7 @@ export default function EntryEditor({
           /*
             분할. 줄마다 분류와 금액을 따로 적는다.
 
-            줄이 있는 동안에는 위의 분류·과소비 칸을 감춘다. 둘이 함께 보이면 어느 쪽이
+            줄이 있는 동안에는 위의 분류 칸을 감춘다. 둘이 함께 보이면 어느 쪽이
             저장되는지 알 수 없고, 실제로 저장되는 것은 줄들뿐이다.
           */
           <Field label={t('editor.split')} invalid={violation?.field === 'splits'}>
@@ -475,18 +471,6 @@ export default function EntryEditor({
                   onSelect={(value) => setField('categoryId', value)}
                 />
               )}
-            </Field>
-
-            {/* 이 앱의 지출은 건수가 아니라 금액으로 과소비를 센다. 그래서 금액 칸이다. */}
-            <Field label={t('entryForm.extraAmount')} invalid={violation?.field === 'extraAmount'}>
-              <TextInput
-                value={values.extraAmount}
-                onChangeText={(text) => setField('extraAmount', text)}
-                keyboardType="numeric"
-                placeholder=""
-                className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
-              />
-              <Text className="mt-1 text-xs text-gray-500">{t('entryForm.extraHint')}</Text>
             </Field>
 
             {/* 분류를 나누는 자리. 누르면 지금 적은 금액과 분류가 첫 줄로 옮겨 간다. */}

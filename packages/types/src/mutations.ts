@@ -89,8 +89,7 @@ export interface EntryMutationPayload {
   detailedNote?: string | null;
   amount?: string;
   categoryId?: string;
-  extraAmount?: string;
-  splits?: Array<{ categoryId: string; amount: string; extraAmount?: string }>;
+  splits?: Array<{ categoryId: string; amount: string }>;
   accountId?: string;
   toAccountId?: string;
   cardId?: string;
@@ -292,14 +291,12 @@ export interface CategoryCreatePayload {
   /** 대분류면 없다. 소분류는 그 부모의 id. */
   parentId?: string | null;
   icon?: string | null;
-  defaultIsExtra?: boolean;
 }
 
 export interface CategoryUpdatePayload {
   id: string;
   name?: string;
   icon?: string | null;
-  defaultIsExtra?: boolean;
   isActive?: boolean;
   /** 목록에서의 자리 (분수 색인). */
   sortRank?: string;

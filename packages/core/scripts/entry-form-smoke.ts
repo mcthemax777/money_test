@@ -63,7 +63,6 @@ const validExpense: EntryFormValues = {
   description: '점심',
   amount: '9000',
   categoryId: 'c1',
-  extraAmount: '',
   method: accountValue('a1'),
   toAccountId: '',
   installmentMonths: '',
@@ -87,7 +86,6 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('기본 사람이 채워진다', empty.personId, 'p1');
   eq('프로젝트 타임존의 오늘', empty.dateKey, '2026-08-20');
   eq('그 타임존의 시각 (UTC 03시 = KST 12시)', empty.timeKey, '12:00');
-  eq('과소비는 비어 있다 (분류 기본값을 따른다)', empty.extraAmount, '');
 
   // ── 2. 검증 ──
   eq('맞는 값은 통과', checkEntryForm(validExpense), null);
@@ -107,11 +105,6 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('평년 2월 29일은 없다', codeOf({ dateKey: '2026-02-29' }), 'DATE_INVALID');
   eq('시간 모양', codeOf({ timeKey: '25:00' }), 'TIME_INVALID');
 
-  eq('과소비가 음수', codeOf({ extraAmount: '-1' }), 'EXTRA_INVALID');
-  eq('과소비가 금액보다 크다', codeOf({ extraAmount: '9001' }), 'EXTRA_EXCEEDS_AMOUNT');
-  eq('과소비 = 금액은 된다 (전액 과소비)', codeOf({ extraAmount: '9000' }), null);
-  eq('과소비 0도 된다 (일반으로 세겠다는 뜻)', codeOf({ extraAmount: '0' }), null);
-
   const transfer: Partial<EntryFormValues> = {
     kind: 'transfer', categoryId: '', method: accountValue('a1'), toAccountId: 'a2',
   };
@@ -127,11 +120,6 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('KST 정오는 UTC 03시', request.date, '2026-08-20T03:00:00.000Z');
   eq('계좌가 실린다', request.accountId, 'a1');
   eq('카드는 실리지 않는다', request.cardId ?? null, null);
-  eq('과소비를 정하지 않으면 키가 없다 (분류 기본값을 따른다)',
-    'extraAmount' in request, false);
-  eq('0을 적으면 실린다 (일반으로 세겠다는 선택)',
-    entryFormToRequest({ ...validExpense, extraAmount: '0' }, KST).extraAmount, '0');
-
   const installment = entryFormToRequest(
     { ...validExpense, method: cardValue('card1'), installmentMonths: '3' },
     KST,
@@ -161,8 +149,8 @@ const codeOf = (values: Partial<EntryFormValues>) =>
     ...validExpense,
     amount: '10000',
     splits: [
-      { categoryId: 'c-food', amount: '7000', extraAmount: '' },
-      { categoryId: 'c-fun', amount: '3000', extraAmount: '3000' },
+      { categoryId: 'c-food', amount: '7000' },
+      { categoryId: 'c-fun', amount: '3000' },
     ],
   } as EntryFormValues;
 
@@ -170,22 +158,16 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('합이 어긋나면 막는다',
     codeOf({ ...splitForm, amount: '9000' }), 'SPLIT_SUM_MISMATCH');
   eq('줄에 분류가 없다',
-    codeOf({ ...splitForm, splits: [{ categoryId: '', amount: '10000', extraAmount: '' }] }),
+    codeOf({ ...splitForm, splits: [{ categoryId: '', amount: '10000' }] }),
     'SPLIT_CATEGORY_REQUIRED');
   eq('줄 금액이 0이다',
-    codeOf({ ...splitForm, splits: [{ categoryId: 'c1', amount: '0', extraAmount: '' }] }),
+    codeOf({ ...splitForm, splits: [{ categoryId: 'c1', amount: '0' }] }),
     'SPLIT_AMOUNT_INVALID');
-  eq('줄의 과소비가 그 줄보다 크다',
-    codeOf({ ...splitForm, splits: [{ categoryId: 'c1', amount: '10000', extraAmount: '20000' }] }),
-    'SPLIT_EXTRA_EXCEEDS');
 
   const splitRequest = entryFormToRequest(splitForm, KST);
   eq('분할이 실린다', splitRequest.splits?.length, 2);
   eq('줄 금액이 그대로다',
     splitRequest.splits?.map((row) => row.amount).join(','), '7000,3000');
-  eq('정하지 않은 과소비는 키가 없다',
-    'extraAmount' in (splitRequest.splits?.[0] ?? {}), false);
-  eq('적은 과소비는 실린다', splitRequest.splits?.[1]?.extraAmount, '3000');
   eq('분할이면 대표 분류를 싣지 않는다', 'categoryId' in splitRequest, false);
 
   // 외화
@@ -265,7 +247,7 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   let skipped = 0;
   let mismatch = 0;
   const compared = [
-    'kind', 'description', 'amount', 'extraAmount', 'categoryId', 'accountId', 'toAccountId',
+    'kind', 'description', 'amount', 'categoryId', 'accountId', 'toAccountId',
     'cardId', 'installmentMonths', 'feeAmount', 'feeCategoryId', 'personId', 'date',
     /*
      * 분류 다리 수. **이 한 줄이 분할 손실을 잡는다.**

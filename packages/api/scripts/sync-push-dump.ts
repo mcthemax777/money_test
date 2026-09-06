@@ -80,12 +80,7 @@ runSmoke('sync-push-dump', async (ctx) => {
   const dining = await categories.createCategory(uid, { name: '외식', type: 'expense' }, pid);
   const salary = await categories.createCategory(uid, { name: '급여', type: 'income' }, pid);
   const fee = await categories.createCategory(uid, { name: '수수료', type: 'expense' }, pid);
-  // 기본이 과소비인 분류. 기기가 그 기본값을 서버와 같이 읽는지 본다.
-  const luxury = await categories.createCategory(
-    uid,
-    { name: '사치', type: 'expense', defaultIsExtra: true },
-    pid,
-  );
+  const luxury = await categories.createCategory(uid, { name: '사치', type: 'expense' }, pid);
 
   const bank = await accounts.createAccount(uid, {
     type: 'deposit', ownerId: person.id, name: '보통예금',
@@ -140,18 +135,18 @@ runSmoke('sync-push-dump', async (ctx) => {
       ...common, id: id(1), kind: 'expense', description: '점심 (수정)',
       amount: '12000', categoryId: dining.id, accountId: bank.id,
     }),
-    // 3. 과소비 기본값이 있는 분류. 값을 보내지 않으면 전액이 과소비여야 한다.
+    // 3. 다른 분류로 적은 지출.
     mutation(3, 'entry.create', id(2), {
       ...common, id: id(2), kind: 'expense', description: '충동구매',
       amount: '50000', categoryId: luxury.id, accountId: bank.id,
     }),
-    // 4. 분할. 한 거래가 두 분류로 나뉘고 한쪽에만 과소비가 붙는다.
+    // 4. 분할. 한 거래가 두 분류로 나뉜다.
     mutation(4, 'entry.create', id(3), {
       ...common, id: id(3), kind: 'expense', description: '장보기',
       accountId: bank.id,
       splits: [
         { categoryId: dining.id, amount: '30000' },
-        { categoryId: luxury.id, amount: '20000', extraAmount: '15000' },
+        { categoryId: luxury.id, amount: '20000' },
       ],
     }),
     // 5. 수입

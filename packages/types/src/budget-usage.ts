@@ -11,7 +11,7 @@
 
 import { Dec, type DecInput } from './decimal';
 import type { CategoryType } from './entities';
-import { type CategoryPostingRow, type ExtraSelection, selectedAmount } from './report-aggregation';
+import { type CategoryPostingRow, selectedAmount } from './report-aggregation';
 
 /** 예산 규칙이 적용되는 달의 하한과 상한. 비어 있으면 무기한이라는 뜻이다. */
 export const BUDGET_MONTH_FLOOR = '2000-01';
@@ -52,13 +52,10 @@ export interface CategoryUsage {
  * 대분류 사용액은 자신 + 소분류의 합이다. posting 은 가장 구체적인 카테고리 하나만
  * 가리키므로 대분류 금액은 이렇게 만들어야 한다.
  *
- * 일반/과소비를 고르면 그 몫만 더한다. 셀 몫이 없는 다리는 건수에서도 뺀다.
- * 그러지 않으면 "0원인데 3건"이 된다.
  */
 export function categoryUsage(
   rows: readonly CategoryPostingRow[],
   categories: readonly CategoryNode[],
-  extra: ExtraSelection = undefined,
 ): Map<string, CategoryUsage> {
   const known = new Set(categories.map((category) => category.id));
 
@@ -66,8 +63,7 @@ export function categoryUsage(
   for (const row of rows) {
     if (!known.has(row.categoryId)) continue;
 
-    const amount = selectedAmount(row, extra);
-    if (extra !== undefined && !amount.isPositive()) continue;
+    const amount = selectedAmount(row);
 
     const bucket = own.get(row.categoryId) ?? { amount: Dec.of(0), count: 0 };
     bucket.amount = bucket.amount.plus(amount);

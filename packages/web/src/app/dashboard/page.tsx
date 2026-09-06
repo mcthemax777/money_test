@@ -21,7 +21,6 @@ import {
   formatYearMonth,
   monthQueryRange,
 } from '@money/core/lib/datetime';
-import { countedShare } from '@money/core/lib/entries';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import Modal from '@/components/Modal';
 import TransactionCalendar from '@/components/TransactionCalendar';
@@ -31,7 +30,6 @@ import PageHeader from '@/components/PageHeader';
 import { EntryListItem } from '@/components/TransactionItem';
 import PaymentMethodTab from '@/components/PaymentMethodTab';
 import CategoryTab from '@/components/CategoryTab';
-import EntryFilterBar, { ExtraType } from '@/components/EntryFilterBar';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import EntryEditor, {
   type EntryEditorHandle,
@@ -174,8 +172,6 @@ export default function TransactionsPage() {
   const [isResettingBudgets, setIsResettingBudgets] = useState(false);
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
   const dateTransactionsRef = useRef<HTMLDivElement>(null);
-  /** 일반/과소비 선택. 둘 다 고른 상태로 시작한다 (= 전체). */
-  const [selectedExtraTypes, setSelectedExtraTypes] = useState<ExtraType[]>(['normal', 'extra']);
   /** 거래 상세·추가 팝업. 이 화면과 자산 화면이 같은 컴포넌트를 쓴다. */
   const entryEditorRef = useRef<EntryEditorHandle>(null);
 
@@ -237,21 +233,11 @@ export default function TransactionsPage() {
   const entryFilter = useMemo<EntryFilterQuery>(() => {
     const allPeopleSelected =
       people.length > 0 && selectedPersonIds.length === people.length;
-    const allExtraSelected = selectedExtraTypes.length === 2;
-
     return {
       ...(allPeopleSelected ? {} : { personIds: selectedPersonIds.join(',') }),
-      ...(allExtraSelected ? {} : { extraTypes: selectedExtraTypes.join(',') }),
     };
-  }, [selectedPersonIds, people.length, selectedExtraTypes]);
+  }, [selectedPersonIds, people.length]);
   const appliedFilter = useDebouncedValue(entryFilter, 250);
-  /*
-   * 일반/과소비 중 어느 몫을 셀지.
-   *
-   * 한 거래가 둘로 나뉘므로(3,000원 중 2,000원이 과소비) 한쪽만 볼 때는 목록의
-   * 날짜별 소계도 그 몫만 세야 위 합계와 맞는다. 서버가 리포트에서 쓰는 규칙과 같다.
-   */
-  const share = countedShare(appliedFilter);
   /** 필터가 걸려 있는지. 목록이 비었을 때 이유를 알려주는 데 쓴다. */
   const isFilterNarrowed = Object.keys(appliedFilter).length > 0;
 
@@ -775,15 +761,6 @@ export default function TransactionsPage() {
         }
       />
 
-      <EntryFilterBar
-        selectedExtraTypes={selectedExtraTypes}
-        onToggleExtraType={(value) =>
-          setSelectedExtraTypes((prev) =>
-            prev.includes(value) ? prev.filter((item) => item !== value) : [...prev, value],
-          )
-        }
-      />
-
       {/* 감춘 보기도 그려 둔 채로 남긴다. 다시 누르면 받아 둔 값이 바로 보인다. */}
       {visited.includes('budget') && (
         <div hidden={viewType !== 'budget'}>
@@ -858,7 +835,6 @@ export default function TransactionsPage() {
                       </p>
                       <TransactionCalendar
                         entries={visibleEntries}
-                        share={share}
                         year={year}
                         month={month}
                         onDateSelect={handleCalendarDateSelect}
@@ -879,7 +855,6 @@ export default function TransactionsPage() {
               ) : (
                 <TransactionCalendar
                   entries={visibleEntries}
-                  share={share}
                   year={currentYear}
                   month={currentMonth}
                   onDateSelect={handleCalendarDateSelect}
@@ -895,7 +870,6 @@ export default function TransactionsPage() {
               <div ref={dateTransactionsRef} className="lg:col-span-1">
                 <TransactionListView
                   entries={startDate ? displayEntries : visibleEntries}
-                  share={share}
                   onEntryClick={handleTransactionClick}
                 />
               </div>

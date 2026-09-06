@@ -133,11 +133,7 @@ export const ko = {
   'home.tab.expense': '지출',
   'home.tab.income': '수입',
   'home.chart.expense.total': '전체 지출',
-  'home.chart.expense.normal': '일반 지출',
-  'home.chart.expense.extra': '과소비',
   'home.chart.income.total': '전체 수입',
-  'home.chart.income.normal': '일반 수입',
-  'home.chart.income.extra': '추가 수입',
   'home.categoryChart.expense': '분류별 지출',
   'home.categoryChart.income': '분류별 수입',
   'home.settlementTitle': '{card} 정산',
@@ -230,8 +226,6 @@ export const ko = {
   'entry.cardRefund': '{name} 환불 입금',
   'entry.cardPayment': '{name} 대금 결제',
   'entry.noTitle': '(내용 없음)',
-  'entry.extraIncome': '추가 수입',
-  'entry.overspend': '과소비',
   'entry.fee': '수수료 {amount}',
   'entry.provisional': '잠정',
 
@@ -506,9 +500,6 @@ export const ko = {
   'ledger.entryCount': '{count}건',
   'ledger.totalExpense': '전체지출',
   'ledger.totalIncome': '전체수입',
-  'ledger.filterNormal': '일반',
-  'ledger.filterExtra': '과소비·추가수입',
-  'ledger.filterExtraLabel': '과소비 여부',
 
   // ===== 예산 편집 =====
   'budget.scopeAll': '모든 달',
@@ -594,13 +585,6 @@ export const ko = {
   'schedule.hint':
     '여기서 고친 금액은 그 달에만 적용됩니다. 여러 달을 한꺼번에 바꾸려면 위의 적용 범위를 쓰세요.',
 
-  // ===== 과소비·추가 수입 금액 =====
-  'extra.title': '{label} 금액',
-  'extra.required': '금액을 입력하세요.',
-  'extra.negative': '0보다 작을 수 없습니다.',
-  'extra.tooLarge': '거래 금액보다 클 수 없습니다.',
-  'extra.hint': '거래 금액 {max} 중 얼마를 {label}로 셀지 적습니다. 그대로 두면 전액이 {label}입니다.',
-  'extra.zeroHint': '0을 적으면 일반 {noun}과 같습니다.',
   'common.confirm': '확인',
 
   // ===== 분류 화면 =====
@@ -621,10 +605,8 @@ export const ko = {
   'categories.expenseEmpty': '지출 분류가 없습니다.',
   'categories.incomeEmpty': '수입 분류가 없습니다.',
   'categories.name': '분류명',
-  'categories.defaultExtra': '✓ 기본 과소비·추가 수입',
   'categories.subcategories': '소분류',
   'categories.defaultMark': '(기본)',
-  'categories.extraMark': ' 과소비',
   'categories.parentName': '대분류 이름',
   'categories.parentPlaceholder': '예: 음식',
   'categories.subPlaceholder': '소분류 이름',
@@ -781,8 +763,6 @@ export const ko = {
   'editor.splitSumMismatch': '줄 금액의 합이 전체 금액과 다릅니다.',
   'editor.splitCategoryRequired': '나눈 줄의 분류를 골라 주세요.',
   'editor.splitAmountInvalid': '나눈 줄의 금액을 적어 주세요.',
-  'editor.splitExtraInvalid': '나눈 줄의 과소비 금액이 올바르지 않습니다.',
-  'editor.splitExtraExceeds': '과소비 금액이 그 줄의 금액보다 큽니다.',
   'editor.currency': '통화',
   'editor.rate': '환율',
   'editor.rateHint': '1 {currency} = ? {ledger}. 어림값이 채워집니다. 실제 환율로 고쳐 주세요.',
@@ -888,10 +868,7 @@ export const ko = {
   'entryForm.accountRequired': '통장을 선택해주세요.',
   'entryForm.toAccountRequired': '받는 계좌를 선택해주세요.',
   'entryForm.feeInvalid': '수수료를 0 이상으로 입력해주세요.',
-  'entryForm.extraInvalid': '과소비 금액을 0 이상으로 입력해주세요.',
   'entryForm.category': '분류',
-  'entryForm.extraAmount': '과소비로 셀 금액 (선택)',
-  'entryForm.extraHint': '비워 두면 분류의 기본값을 따릅니다. 0을 적으면 일반 거래입니다.',
   'entryForm.delete': '삭제',
   'entryForm.deleting': '삭제 중...',
   'entryForm.addButton': '거래 추가',
@@ -941,7 +918,6 @@ export const ko = {
   'error.CARD_NOT_FOUND': '카드를 찾을 수 없습니다.',
   'error.INSTALLMENT_CREDIT_ONLY': '할부는 신용카드 지출에만 설정할 수 있습니다.',
   'error.TRANSFER_SAME_ACCOUNT': '보내는 계좌와 받는 계좌가 같습니다.',
-  'error.EXTRA_EXCEEDS_AMOUNT': '과소비 금액은 거래 금액보다 클 수 없습니다.',
   'carousel.prev': '이전으로',
   'carousel.next': '다음으로',
 
@@ -985,8 +961,6 @@ export const ko = {
   'tx.detail.category': '분류',
   'tx.detail.method': '결제수단',
   'tx.detail.amount': '금액',
-  'tx.detail.extra': '과소비',
-  'tx.detail.extraIncome': '추가 수입',
   'tx.detail.merchant': '가맹점',
   'tx.detail.note': '메모',
   'tx.detail.installment': '할부',

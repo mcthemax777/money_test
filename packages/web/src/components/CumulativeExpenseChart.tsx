@@ -31,9 +31,6 @@ import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 
-/** 어느 지출을 세는지. total은 일반과 과소비를 합한 값이다. */
-export type ExpenseField = 'normal' | 'extra' | 'total';
-
 interface CumulativeExpenseChartProps {
   title: string;
   /**
@@ -43,8 +40,6 @@ interface CumulativeExpenseChartProps {
    * (수입)만 갈린다. 늘어난 수입에 빨간 글씨를 붙이면 뜻이 뒤집힌다.
    */
   type: 'income' | 'expense';
-  /** 일반, 과소비(수입이면 추가 수입), 또는 둘을 합한 전체 */
-  field: ExpenseField;
   /** 보고 있는 달 "YYYY-MM" */
   yearMonth: string;
   points: ReportDto.DailyExpensePoint[];
@@ -70,20 +65,11 @@ function daysInMonth(yearMonth: string): number {
 }
 
 /** 날짜별 금액을 1일부터의 누적으로. 거래가 없는 날은 앞 날의 값을 잇는다. */
-function cumulativeByDay(
-  points: ReportDto.DailyExpensePoint[],
-  field: ExpenseField,
-  days: number,
-): number[] {
+function cumulativeByDay(points: ReportDto.DailyExpensePoint[], days: number): number[] {
   const amountOfDay = new Map<number, number>();
   for (const point of points) {
     const day = Number(point.date.slice(8, 10));
-    // 전체는 서버가 따로 주지 않는다. 두 값을 합친 것이 그날의 지출이다.
-    const amount =
-      field === 'total'
-        ? toNumber(point.normal) + toNumber(point.extra)
-        : toNumber(point[field]);
-    amountOfDay.set(day, (amountOfDay.get(day) ?? 0) + amount);
+    amountOfDay.set(day, (amountOfDay.get(day) ?? 0) + toNumber(point.amount));
   }
 
   const result: number[] = [];
@@ -104,7 +90,6 @@ function cumulativeByDay(
 export default function CumulativeExpenseChart({
   title,
   type,
-  field,
   yearMonth,
   points,
   previousYearMonth,
@@ -120,9 +105,9 @@ export default function CumulativeExpenseChart({
     const days = daysInMonth(yearMonth);
     const previousDays = daysInMonth(previousYearMonth);
     const earlierDays = daysInMonth(earlierYearMonth);
-    const currentSeries = cumulativeByDay(points, field, days);
-    const previousSeries = cumulativeByDay(previousPoints, field, previousDays);
-    const earlierSeries = cumulativeByDay(earlierPoints, field, earlierDays);
+    const currentSeries = cumulativeByDay(points, days);
+    const previousSeries = cumulativeByDay(previousPoints, previousDays);
+    const earlierSeries = cumulativeByDay(earlierPoints, earlierDays);
 
     /*
      * 0일부터 그린다. 누적은 아무것도 쓰지 않은 0에서 출발하는 값이라, 1일의 지출이
@@ -152,7 +137,6 @@ export default function CumulativeExpenseChart({
     points,
     previousPoints,
     earlierPoints,
-    field,
     yearMonth,
     previousYearMonth,
     earlierYearMonth,

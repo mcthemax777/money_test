@@ -66,7 +66,6 @@ export const ERROR_CODES = [
   'CARD_NOT_FOUND',
   'INSTALLMENT_CREDIT_ONLY',
   'TRANSFER_SAME_ACCOUNT',
-  'EXTRA_EXCEEDS_AMOUNT',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

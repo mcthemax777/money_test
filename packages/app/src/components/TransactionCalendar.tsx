@@ -3,7 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import type { EntryListItem } from '@money/types';
 
 import { weekdayNames } from '@money/core/lib/datetime';
-import { groupEntriesByDate, sumEntries, type CountedShare } from '@money/core/lib/entries';
+import { groupEntriesByDate, sumEntries } from '@money/core/lib/entries';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatNumber } from '@money/core/lib/money';
 import { useProjectTimeZone } from '@money/core/store/project';
@@ -19,20 +19,16 @@ interface CalendarDay {
 /**
  * 달력. 웹의 TransactionCalendar 와 같은 값을 같은 자리에 그린다.
  *
- * 한 칸은 날짜 숫자와 그날의 지출·수입 소계다. 소계는 일반/과소비 중 보고 있는 몫만
- * 센다(share). 그러지 않으면 위 합계와 달력의 숫자가 어긋난다.
+ * 한 칸은 날짜 숫자와 그날의 지출·수입 소계다. 소계다.
  */
 export default function TransactionCalendar({
   entries,
-  share,
   year,
   month,
   selectedDate,
   onDateSelect,
 }: {
   entries: EntryListItem[];
-  /** 일반/과소비 중 어느 몫을 셀지. 넘기지 않으면 거래 금액 전부다. */
-  share?: CountedShare;
   year: number;
   month: number;
   /** 고른 날. 그 칸을 파랗게 칠한다. */
@@ -71,7 +67,7 @@ export default function TransactionCalendar({
        * 하므로(두 종류에 0을 돌려준다) 여기서 걸러 내지 않는다.
        */
       const dayEntries = byDate.get(key) ?? [];
-      const { incomeTotal, expenseTotal } = sumEntries(dayEntries, share);
+      const { incomeTotal, expenseTotal } = sumEntries(dayEntries);
 
       rows.push({
         date: new Date(cursor),
@@ -83,7 +79,7 @@ export default function TransactionCalendar({
     }
 
     return rows;
-  }, [entries, month, share, timeZone, year]);
+  }, [entries, month, timeZone, year]);
 
   const isSelected = (date: Date) =>
     Boolean(selectedDate) && date.getTime() === selectedDate?.getTime();

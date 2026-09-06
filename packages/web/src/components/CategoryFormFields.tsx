@@ -117,7 +117,7 @@ export default function CategoryFormFields({
         <button
           type="button"
           onClick={() =>
-            onSubCategoriesChange([...subCategories, { id: '', name: '', defaultIsExtra: false }])
+            onSubCategoriesChange([...subCategories, { id: '', name: '' }])
           }
           className="mt-2 px-3 py-1 text-sm bg-gray-100 text-gray-700 rounded-lg hover:bg-gray-200"
         >

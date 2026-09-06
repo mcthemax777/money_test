@@ -51,7 +51,6 @@ import AddAccountModal from '@/components/AddAccountModal';
 import PersonModal from '@/components/PersonModal';
 import type { EntryListItem } from '@/components/TransactionItem';
 import CardColorPicker from '@/components/CardColorPicker';
-import ExtraAmountModal from '@/components/ExtraAmountModal';
 import CardPerformanceField from '@/components/CardPerformanceField';
 import { useApiError } from '@money/core/lib/api-error';
 
@@ -110,13 +109,6 @@ function emptyEntryForm(timeZone: string, ledgerCurrency: CurrencyCode) {
     transferFeeSubCategoryId: '',
     date: todayKey(timeZone),
     time: '',
-    /**
-     * 과소비(지출)·추가 수입(수입)으로 셀 금액. 빈 값이거나 "0"이면 일반 거래다.
-     *
-     * 참·거짓이 아니라 금액인 이유는, 한 거래가 통째로 과소비인 경우보다
-     * 그중 일부만 과했던 경우가 흔하기 때문이다.
-     */
-    extraAmount: '',
     /** 할부 개월수. 빈 값이거나 1이면 일시불 */
     installmentMonths: '',
     /** 카드사 이체의 방향. 수정으로만 들어오며 그대로 되돌려 보낸다 */
@@ -642,13 +634,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         amount: toAmountString(formData.amount),
         description: formData.description,
         date: dateValue,
-        /*
-         * 비워 두면 "0"을 보낸다. 서버가 분류 기본값으로 되돌리지 않게 뜻을 못박는다.
-         * 금액 칸을 떠나지 않고 바로 저장하는 경우가 있어 여기서 한 번 더 맞춘다.
-         */
-        extraAmount: toAmountString(
-          clampExtra(formData.extraAmount, kind === 'transfer' ? formData.transferFee : formData.amount) || '0',
-        ),
       };
 
       // 기준통화면 통화·환율을 보내지 않는다. 서버가 계좌 통화로 알아서 본다.
@@ -677,8 +662,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         payload.cardId = formData.cardId;
         payload.accountId = formData.accountId;
         payload.cardTransferDirection = formData.cardTransferDirection;
-        // 카드사 이체는 지출이 아니므로 분류도 과소비 금액도 없다.
-        delete payload.extraAmount;
       } else if (kind === 'transfer') {
         payload.accountId = formData.accountId;
         payload.toAccountId = formData.toAccountId;
@@ -860,7 +843,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       transferFeeSubCategoryId: fee.subCategoryId,
       date: dateKeyOf(entry.date, timeZone),
       time: timeInputOf(entry.date, timeZone),
-      extraAmount: toNumber(entry.extraAmount) > 0 ? entry.extraAmount : '',
       installmentMonths: entry.installmentMonths ? String(entry.installmentMonths) : '',
       tagIds: entry.tags.map((tag) => tag.id),
       // 놓치면 환불 입금을 고칠 때 대금 결제로 뒤집힌다
@@ -965,7 +947,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       name: '',
       type: 'expense',
       // 소분류를 붙이러 열었으면 첫 줄을 미리 준다. 그 줄이 이 팝업의 본론이다.
-      subCategories: parentId ? [{ id: '', name: '', defaultIsExtra: false }] : NO_SUB_CATEGORIES,
+      subCategories: parentId ? [{ id: '', name: '' }] : NO_SUB_CATEGORIES,
     });
     setCategoryError('');
     setIsCategoryModalOpen(true);
@@ -1001,7 +983,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
             name: sub.name.trim(),
             type: parent.type,
             parentId: parent.id,
-            defaultIsExtra: sub.defaultIsExtra,
           }),
         );
       }
@@ -1019,7 +1000,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       if (categoryParent && created.length === 1) {
         setFormData((prev) =>
           prev.mainCategoryId === categoryParent.id
-            ? { ...prev, subCategoryId: created[0].id, extraAmount: '' }
+            ? { ...prev, subCategoryId: created[0].id }
             : prev,
         );
       }
@@ -1125,17 +1106,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                     data-autofocus
                     value={formData.amount}
                     onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                    /*
-                      과소비 금액은 다 치고 칸을 떠날 때 맞춘다.
-                      한 글자마다 맞추면 3000을 2000으로 고치려고 "2"를 친 순간
-                      과소비가 2원으로 깎이고, 남은 "000"을 쳐도 돌아오지 않는다.
-                    */
-                    onBlur={(e) =>
-                      setFormData((prev) => ({
-                        ...prev,
-                        extraAmount: clampExtra(prev.extraAmount, e.target.value),
-                      }))
-                    }
                     className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                     placeholder="50000"
                   />
@@ -1351,8 +1321,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                           ...formData,
                           mainCategoryId: value,
                           subCategoryId: '',
-                          // 분류를 바꾸면 과소비는 꺼진 값에서 시작한다.
-                          extraAmount: '',
                         })
                       }
                       onAddClick={() => openCategoryModal()}
@@ -1378,7 +1346,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                       }
                       value={formData.subCategoryId}
                       onChange={(value) =>
-                        setFormData({ ...formData, subCategoryId: value, extraAmount: '' })
+                        setFormData({ ...formData, subCategoryId: value })
                       }
                   placeholder={t('editor.none')}
                   /*
@@ -1393,17 +1361,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   addButtonLabel={t('editor.addChildCategory')}
                 />
                   </div>
-
-                  {/*
-                    체크하면 금액을 묻는 창이 뜬다. 체크 자체는 "전액"을 뜻하지 않는다.
-                    분류를 고른다고 저절로 켜지지는 않는다. 언제나 꺼진 채로 시작한다.
-                  */}
-                  <ExtraCheck
-                    kind={formData.type === 'income' ? 'income' : 'expense'}
-                    amount={formData.amount}
-                    value={formData.extraAmount}
-                    onChange={(extraAmount) => setFormData({ ...formData, extraAmount })}
-                  />
 
                 </>
               )}
@@ -1470,13 +1427,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                       type="number"
                       value={formData.transferFee}
                       onChange={(e) => setFormData({ ...formData, transferFee: e.target.value })}
-                      // 이체의 과소비는 수수료에 붙는다. 금액 칸과 같은 규칙으로 맞춘다.
-                      onBlur={(e) =>
-                        setFormData((prev) => ({
-                          ...prev,
-                          extraAmount: clampExtra(prev.extraAmount, e.target.value),
-                        }))
-                      }
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                       placeholder="0"
                     />
@@ -1498,7 +1448,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                               ...formData,
                               transferFeeMainCategoryId: value,
                               transferFeeSubCategoryId: '',
-                              extraAmount: '',
                             })
                           }
                           onAddClick={() => openCategoryModal()}
@@ -1527,20 +1476,12 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                             setFormData({
                               ...formData,
                               transferFeeSubCategoryId: value,
-                              extraAmount: '',
                             })
                           }
                           placeholder={t('editor.none')}
                         />
                       </div>
 
-                      {/* 이체의 과소비는 수수료 분류에 붙는다 (이체 자체는 지출이 아니다). */}
-                      <ExtraCheck
-                        kind="expense"
-                        amount={formData.transferFee}
-                        value={formData.extraAmount}
-                        onChange={(extraAmount) => setFormData({ ...formData, extraAmount })}
-                      />
                     </>
                   )}
                 </>
@@ -2142,17 +2083,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t(selectedTransaction.kind === 'income' ? 'entry.extraIncome' : 'entry.overspend')}
-              </label>
-              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900 tabular-nums">
-                {toNumber(selectedTransaction.extraAmount) > 0
-                  ? formatCurrency(selectedTransaction.extraAmount, displayCurrency)
-                  : t('editor.none')}
-              </p>
-            </div>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
                 {t('editor.date')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
@@ -2169,83 +2099,3 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 });
 
 export default EntryEditor;
-
-/**
- * 과소비 금액을 거래 금액 안으로 되돌린다.
- *
- * 3만 원을 과소비로 적어 둔 뒤 거래 금액을 2만 원으로 고치는 일이 있다. 그대로
- * 두면 저장할 때 서버가 되돌려 보낸다. 넘치는 만큼만 줄여 새 금액에 맞춘다
- * (전액이 과소비였다면 바꾼 금액도 전액 과소비로 남는다).
- *
- * 입력 중이 아니라 다 친 뒤에만 부른다. 글자마다 부르면 고치는 도중의 짧은
- * 숫자에 맞춰 깎여 버린다.
- */
-function clampExtra(extraAmount: string, nextAmount: string): string {
-  const extra = toNumber(extraAmount);
-  if (extra <= 0) return extraAmount;
-  const max = toNumber(nextAmount);
-  if (max <= 0) return '';
-  return extra > max ? String(max) : extraAmount;
-}
-
-interface ExtraCheckProps {
-  kind: 'expense' | 'income';
-  /** 거래 금액. 과소비 금액의 처음 값이자 최대값이다. */
-  amount: string;
-  value: string;
-  onChange: (extraAmount: string) => void;
-}
-
-/**
- * 과소비·추가 수입 체크와 금액.
- *
- * 체크하면 금액 창이 뜨고, 창을 확인해야 값이 담긴다. 취소하면 체크도 도로 풀린다.
- * 담긴 뒤에는 금액이 체크 옆에 보이고, 그 금액을 눌러 다시 고칠 수 있다.
- */
-function ExtraCheck({ kind, amount, value, onChange }: ExtraCheckProps) {
-  const { t } = useTranslation();
-  const [isOpen, setIsOpen] = useState(false);
-  const label = t(kind === 'income' ? 'entry.extraIncome' : 'entry.overspend');
-  const checked = toNumber(value) > 0;
-
-  return (
-    <div className="flex items-center gap-3">
-      <input
-        type="checkbox"
-        id={`extra-${kind}`}
-        checked={checked}
-        onChange={(event) => {
-          if (event.target.checked) setIsOpen(true);
-          else onChange('');
-        }}
-        className="w-4 h-4 border border-gray-300 rounded-md focus:ring-blue-500"
-      />
-      <label htmlFor={`extra-${kind}`} className="text-sm font-medium text-gray-700">
-        {label}
-      </label>
-
-      {checked && (
-        <button
-          type="button"
-          onClick={() => setIsOpen(true)}
-          className="text-sm font-semibold text-blue-600 tabular-nums hover:underline"
-        >
-          {t('editor.wonSuffix', { amount: formatNumber(value) })}
-        </button>
-      )}
-
-      <ExtraAmountModal
-        isOpen={isOpen}
-        kind={kind}
-        maxAmount={amount}
-        value={value}
-        onCancel={() => setIsOpen(false)}
-        onConfirm={(next) => {
-          // 0을 적으면 일반 거래다. 체크도 함께 풀린다.
-          onChange(toNumber(next) > 0 ? next : '');
-          setIsOpen(false);
-        }}
-      />
-    </div>
-  );
-}

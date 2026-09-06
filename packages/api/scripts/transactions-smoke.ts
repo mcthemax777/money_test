@@ -510,7 +510,7 @@ runSmoke('transactions', async (ctx) => {
    * ── 8. 빈 값은 "아무것도 고르지 않음"이다 ──
    *
    * 체크를 모두 푼 상태를 "전체"로 되돌리면 사용자가 고른 것과 반대로 보인다.
-   * 사람·과소비 필터가 이미 쓰는 규칙이다.
+   * 사람 필터가 이미 쓰는 규칙이다.
    */
   const emptySelection = await entries.getEntries(uid, { categoryIds: '' }, pid);
   ctx.check('분류를 하나도 고르지 않으면 결과가 없다', emptySelection.data.length, 0);

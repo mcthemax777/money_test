@@ -80,7 +80,6 @@ runSmoke('sync-pull-dump', async (ctx) => {
   await entries.createEntry(uid, {
     kind: 'expense', personId: person.id, date: '2026-08-10T03:00:00.000Z',
     description: '장보기', amount: '50000', categoryId: dining.id, accountId: bank.id,
-    extraAmount: '20000',
   }, pid);
   /*
    * 태그가 붙은 거래 하나와, 다른 사람이 낸 거래 하나.

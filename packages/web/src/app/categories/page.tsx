@@ -69,7 +69,6 @@ export default function CategoriesPage() {
     name: '',
     type: 'expense',
     subCategories: NO_SUB_CATEGORIES,
-    defaultIsExtra: false,
   });
   /**
    * 좁은 화면에서 보고 있는 단. 넓은 화면에서는 두 단이 함께 보이므로 쓰이지 않는다.
@@ -89,7 +88,6 @@ export default function CategoriesPage() {
       name: '',
       type: 'expense',
       subCategories: NO_SUB_CATEGORIES,
-      defaultIsExtra: false,
     });
     setEditingId(null);
     setError('');
@@ -98,7 +96,7 @@ export default function CategoriesPage() {
   /** 그 단에서 새로 만들기. 유형을 미리 골라 두면 폼에서 다시 고를 일이 없다. */
   const openNewIn = (type: 'expense' | 'income') => {
     setEditingId(null);
-    setFormData({ name: '', type, subCategories: NO_SUB_CATEGORIES, defaultIsExtra: false });
+    setFormData({ name: '', type, subCategories: NO_SUB_CATEGORIES });
     setIsModalOpen(true);
     setError('');
   };
@@ -309,11 +307,6 @@ export default function CategoriesPage() {
 
           {!selectedCategory.parentId && (
             <>
-              {selectedCategory.defaultIsExtra && (
-                <div className="px-3 py-2 bg-blue-50 text-blue-800 text-sm rounded-lg">
-                  {t('categories.defaultExtra')}
-                </div>
-              )}
               {categories.filter((c) => c.parentId === selectedCategory.id).length > 0 && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -327,7 +320,6 @@ export default function CategoriesPage() {
                           <span>{subCat.name}</span>
                           <span className="text-xs text-gray-500">
                             {subCat.isDefault && t('categories.defaultMark')}
-                            {subCat.defaultIsExtra && t('categories.extraMark')}
                           </span>
                         </div>
                       ))}
@@ -455,7 +447,6 @@ function SubCategoryList({
           </span>
           <span className="text-xs text-gray-500">
             {subCat.isDefault && t('categories.defaultMark')}
-            {subCat.defaultIsExtra && t('categories.extraMark')}
           </span>
         </div>
       ))}

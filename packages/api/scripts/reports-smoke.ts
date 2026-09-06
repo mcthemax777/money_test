@@ -41,9 +41,6 @@ runSmoke('reports', async (ctx) => {
   const lunch = await categories.createCategory(uid, {
     name: '점심', parentId: dining.id, type: 'expense',
   }, pid);
-  // 외식은 과소비로 표시. 이 분류로 적은 거래는 전액이 과소비로 센다.
-  // 소분류(점심)는 따로 만든 행이라 이 값을 물려받지 않는다.
-  await categories.updateCategory(dining.id, uid, { defaultIsExtra: true });
   const fee = await categories.createCategory(uid, { name: '수수료', type: 'expense' }, pid);
 
   const bank = await accounts.createAccount(uid, {
@@ -70,7 +67,6 @@ runSmoke('reports', async (ctx) => {
   const jul = (d: number) => new Date(Date.UTC(2026, 6, d)).toISOString();
 
   // 8월: 급여 300만, 공과금 20만, 점심 5만(신용), 외식 3만(체크), 커피 1만(계좌)
-  // 이 가운데 과소비는 외식으로 적은 두 건(3만 + 1만)이다.
   await entries.createEntry(uid, { kind: 'income', personId: chulsoo.id, date: aug(25),
     description: '급여', amount: '3000000', categoryId: salary.id, accountId: bank.id }, pid);
   await entries.createEntry(uid, { kind: 'expense', personId: chulsoo.id, date: aug(5),
@@ -96,8 +92,6 @@ runSmoke('reports', async (ctx) => {
   const summary = await reports.getSummary(uid, { projectId: pid, yearMonth: '2026-08' });
   ctx.check('8월 수입', summary.income, '3000000');
   ctx.check('8월 지출 (이체 수수료 1000 포함)', summary.expense, '291000');
-  ctx.check('과소비 지출 (외식 30000 + 커피 10000)', summary.extraExpense, '40000');
-  ctx.check('일반 지출 (나머지 전부)', summary.normalExpense, '251000');
   ctx.check('순액', summary.net, '2709000');
 
   const bySpouse = await reports.getSummary(uid, {

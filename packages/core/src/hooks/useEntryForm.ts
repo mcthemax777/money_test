@@ -70,7 +70,7 @@ const EMPTY_LISTS: EntryFormLists = {
 const HIDDEN_TYPES = ['credit_card', 'opening_balance'];
 
 /** 빈 분할 줄. */
-const blankSplit = (): EntryFormSplit => ({ categoryId: '', amount: '', extraAmount: '' });
+const blankSplit = (): EntryFormSplit => ({ categoryId: '', amount: '' });
 
 /**
  * 적힌 금액들의 합. 숫자가 아닌 칸은 0으로 본다.
@@ -341,11 +341,7 @@ export function useEntryForm({
       return {
         ...previous,
         splits: [
-          {
-            categoryId: previous.categoryId,
-            amount: previous.amount,
-            extraAmount: previous.extraAmount,
-          },
+          { categoryId: previous.categoryId, amount: previous.amount },
           blankSplit(),
         ],
       };
@@ -368,9 +364,7 @@ export function useEntryForm({
       return {
         ...previous,
         splits: [],
-        ...(only
-          ? { categoryId: only.categoryId, amount: only.amount, extraAmount: only.extraAmount }
-          : {}),
+        ...(only ? { categoryId: only.categoryId, amount: only.amount } : {}),
       };
     });
     setViolation(null);

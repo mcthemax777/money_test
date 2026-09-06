@@ -59,11 +59,9 @@ export function createLocalEntryWriter({
     detailedNote: data.detailedNote,
     amount: text(data.amount),
     categoryId: data.categoryId,
-    extraAmount: text(data.extraAmount),
     splits: data.splits?.map((split) => ({
       categoryId: split.categoryId,
       amount: String(split.amount),
-      extraAmount: text(split.extraAmount),
     })),
     accountId: data.accountId,
     toAccountId: data.toAccountId,

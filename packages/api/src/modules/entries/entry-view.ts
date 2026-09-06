@@ -26,7 +26,6 @@ type PostingWithRefs = {
   currency: string;
   exchangeRate: Prisma.Decimal;
   baseAmount: Prisma.Decimal;
-  extraAmount: Prisma.Decimal;
   cardId: string | null;
   account: { id: string; name: string; type: AccountType } | null;
   category: {

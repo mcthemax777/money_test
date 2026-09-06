@@ -71,9 +71,6 @@ async function main() {
   const dining = cats.find((c) => c.name === '외식')!;
   const housing = cats.find((c) => c.name === '공과금')!;
   const salary = cats.find((c) => c.type === 'income')!;
-  // 외식은 과소비로 표시해 둔다. 이 분류로 적은 거래는 전액이 과소비로 센다.
-  await categories.updateCategory(dining.id, uid, { defaultIsExtra: true });
-
   const appaBank = await accounts.createAccount(
     uid,
     {

@@ -5,11 +5,10 @@
  *
  * `reports-smoke` 는 이 규칙이 서버 응답에서 맞는지 본다. 여기서 보는 것은 규칙
  * 자체다. 기기가 오프라인에서 이 함수를 직접 부르므로, 서버를 거치지 않는 경로도
- * 지켜져야 한다. 특히 세 가지를 콕 집어 본다.
+ * 지켜져야 한다. 특히 두 가지를 콕 집어 본다.
  *
- *   1. 한 다리가 일반과 과소비로 나뉘는 셈 (다리를 걸러내면 돈이 사라진다)
- *   2. 달력 경계를 프로젝트 타임존으로 자르는 것 (UTC로 자르면 새벽 거래가 밀린다)
- *   3. 롤업한 칸의 이름과 부모 정보
+ *   1. 달력 경계를 프로젝트 타임존으로 자르는 것 (UTC로 자르면 새벽 거래가 밀린다)
+ *   2. 롤업한 칸의 이름과 부모 정보
  */
 import {
   type NamedCategoryPostingRow,
@@ -29,11 +28,10 @@ function eq(label: string, actual: unknown, expected: unknown) {
 
 const KST = 'Asia/Seoul';
 
-/** 지출 다리 하나. 과소비 몫을 주면 나머지가 일반 몫이 된다. */
+/** 지출 다리 하나. */
 const expense = (
   amount: string,
   date: string,
-  extra = '0',
   categoryId = 'c-food',
 ): NamedCategoryPostingRow => ({
   categoryId,
@@ -42,49 +40,31 @@ const expense = (
   parentCategoryId: null,
   parentCategoryName: null,
   baseAmount: amount,
-  extraAmount: extra,
-  normalAmount: String(Number(amount) - Number(extra)),
   date,
 });
 
 /** 수입 다리. 환산액이 음수라는 점이 지출과 다르다. */
-const income = (amount: string, date: string, extra = '0'): NamedCategoryPostingRow => ({
+const income = (amount: string, date: string): NamedCategoryPostingRow => ({
   categoryId: 'c-salary',
   categoryType: 'income',
   categoryName: '급여',
   parentCategoryId: null,
   parentCategoryName: null,
   baseAmount: `-${amount}`,
-  extraAmount: extra,
-  normalAmount: String(Number(amount) - Number(extra)),
   date,
 });
 
 // ── 합계 ──
 const rows = [
   expense('30000', '2026-08-05T03:00:00.000Z'),
-  expense('50000', '2026-08-06T03:00:00.000Z', '20000'),
+  expense('50000', '2026-08-06T03:00:00.000Z'),
   income('3000000', '2026-08-25T03:00:00.000Z'),
 ];
 
 const all = summarize(rows);
 eq('지출 합계 (수입 다리가 섞이지 않는다)', all.expense.toString(), '80000');
 eq('수입 합계 (음수 환산액을 크기로 센다)', all.income.toString(), '3000000');
-eq('과소비 지출', all.extraExpense.toString(), '20000');
-eq('일반 지출', all.normalExpense.toString(), '60000');
-eq('두 몫의 합 = 지출 합계',
-  all.extraExpense.plus(all.normalExpense).toString(), all.expense.toString());
 eq('순액', all.net.toString(), '2920000');
-
-const onlyExtra = summarize(rows, true);
-eq('과소비만 볼 때 지출은 과소비 몫', onlyExtra.expense.toString(), '20000');
-eq('과소비만 볼 때 일반 몫은 0으로 적는다', onlyExtra.normalExpense.toString(), '0');
-
-const onlyNormal = summarize(rows, false);
-eq('일반만 볼 때 지출은 일반 몫', onlyNormal.expense.toString(), '60000');
-eq('일반만 볼 때 과소비 몫은 0으로 적는다', onlyNormal.extraExpense.toString(), '0');
-eq('부분 과소비 거래의 나머지가 사라지지 않는다',
-  onlyExtra.expense.plus(onlyNormal.expense).toString(), all.expense.toString());
 
 eq('빈 목록의 합계는 0', summarize([]).expense.toString(), '0');
 
@@ -95,9 +75,7 @@ const days = dailyTotals([...rows, dawn], { timeZone: KST, type: 'expense' });
 eq('날짜 수', days.length, 2);
 eq('첫 날', days[0]?.date, '2026-08-05');
 eq('새벽 거래가 다음 날로 넘어가지 않는다', days[1]?.date, '2026-08-06');
-eq('8/6 합계 (50000 + 10000)',
-  days[1]?.normal.plus(days[1].extra).toString(), '60000');
-eq('8/6 과소비 몫', days[1]?.extra.toString(), '20000');
+eq('8/6 합계 (50000 + 10000)', days[1]?.amount.toString(), '60000');
 eq('수입만 보면 그 날짜만 남는다',
   dailyTotals(rows, { timeZone: KST, type: 'income' }).length, 1);
 
@@ -106,7 +84,7 @@ eq('타임존을 바꾸면 날짜가 달라진다 (UTC 기준)', utcDays[0]?.dat
 
 // ── 구성비 ──
 const dining: NamedCategoryPostingRow = {
-  ...expense('40000', '2026-08-07T03:00:00.000Z', '0', 'c-lunch'),
+  ...expense('40000', '2026-08-07T03:00:00.000Z', 'c-lunch'),
   categoryName: '점심',
   parentCategoryId: 'c-dining',
   parentCategoryName: '외식',
@@ -127,10 +105,6 @@ const flat = categoryBreakdown(breakdownRows, { type: 'expense', rollup: false }
 eq('롤업하지 않으면 소분류가 따로 선다', flat.length, 2);
 eq('소분류 칸은 부모를 들고 있다', flat.find((r) => r.categoryId === 'c-lunch')?.parentCategoryName, '외식');
 
-const extraBreakdown = categoryBreakdown(breakdownRows, { type: 'expense', extra: true });
-eq('과소비만: 셀 몫이 없는 칸은 빠진다', extraBreakdown.length, 1);
-eq('과소비만: 금액', extraBreakdown[0]?.amount.toString(), '20000');
-eq('과소비만: 건수도 그 다리만 센다 ("0원인데 3건"이 되지 않는다)', extraBreakdown[0]?.count, 1);
 eq('빈 목록의 구성비', categoryBreakdown([], { type: 'expense' }).length, 0);
 
 // ── 월별 ──

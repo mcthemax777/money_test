@@ -194,11 +194,6 @@ export interface Posting {
   currency: string;
   baseAmount: string;
   exchangeRate: string;
-  /**
-   * 이 다리 금액 중 과소비(지출)·추가 수입(수입)으로 센 금액.
-   * 카테고리 posting에서만 의미가 있다. "0"이면 일반 거래다.
-   */
-  extraAmount: string;
   cardId: string | null;
 }
 
@@ -227,8 +222,6 @@ export interface EntryListItem {
   personName: string;
   /** 표시용 금액. 항상 양수 */
   amount: string;
-  /** 과소비(지출)·추가 수입(수입)으로 센 금액. "0"이면 일반 거래다. */
-  extraAmount: string;
   /**
    * 이 거래의 카테고리 다리 수. 분할이면 2 이상이다.
    *
@@ -245,7 +238,7 @@ export interface EntryListItem {
    * 한 줄짜리 거래에는 싣지 않는다. 목록 한 쪽이 200줄이라 늘 실으면 쓰이지 않는 배열이
    * 200개 오간다.
    */
-  splits?: Array<{ categoryId: string; amount: string; extraAmount: string }>;
+  splits?: Array<{ categoryId: string; amount: string }>;
   /**
    * 이 거래에 붙은 태그. 없으면 빈 배열이다.
    *
@@ -325,7 +318,6 @@ export interface Category {
   parentId: string | null; // 대분류는 null, 소분류는 대분류 ID (level은 여기서 유도한다)
   type: CategoryType;
   icon: string | null;
-  defaultIsExtra: boolean; // 소분류의 기본 고정 여부
   isDefault: boolean;      // 기본 카테고리 (삭제 불가)
   isActive: boolean;
   /**

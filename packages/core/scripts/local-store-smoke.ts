@@ -91,7 +91,6 @@ const entry = (
   amount: string,
   categoryId: string,
   accountId: string,
-  extra = '0',
   version = 1,
 ) => ({
   id,
@@ -119,8 +118,6 @@ const entry = (
       currency: 'KRW',
       baseAmount: amount,
       exchangeRate: '1',
-      extraAmount: extra,
-      normalAmount: String(Number(amount) - Number(extra)),
       cardId: null,
     },
     {
@@ -133,8 +130,6 @@ const entry = (
       currency: 'KRW',
       baseAmount: `-${amount}`,
       exchangeRate: '1',
-      extraAmount: '0',
-      normalAmount: '0',
       cardId: null,
     },
   ],
@@ -245,11 +240,11 @@ const entry = (
     ],
     categories: [
       { id: 'c-dining', projectId: PID, name: '외식', parentId: null, type: 'expense', icon: null,
-        defaultIsExtra: false, isDefault: false, isActive: true, sortOrder: 0, updatedVersion: 5 },
+        isDefault: false, isActive: true, sortOrder: 0, updatedVersion: 5 },
       { id: 'c-lunch', projectId: PID, name: '점심', parentId: 'c-dining', type: 'expense', icon: null,
-        defaultIsExtra: false, isDefault: false, isActive: true, sortOrder: 1, updatedVersion: 6 },
+        isDefault: false, isActive: true, sortOrder: 1, updatedVersion: 6 },
       { id: 'c-salary', projectId: PID, name: '급여', parentId: null, type: 'income', icon: null,
-        defaultIsExtra: false, isDefault: false, isActive: true, sortOrder: 2, updatedVersion: 7 },
+        isDefault: false, isActive: true, sortOrder: 2, updatedVersion: 7 },
     ],
     budgets: [
       { id: 'b1', projectId: PID, categoryId: 'c-dining', type: null, monthlyAmount: '300000',
@@ -266,8 +261,8 @@ const entry = (
     ],
     entries: [
       // 한국 시간 8/6 00:30 (UTC 로는 8/5 15:30). 달력 키가 타임존을 따라야 한다.
-      entry('e1', '2026-08-05T15:30:00.000Z', '30000', 'c-lunch', 'a1', '0', 12),
-      entry('e2', '2026-08-10T03:00:00.000Z', '50000', 'c-dining', 'a1', '20000', 12),
+      entry('e1', '2026-08-05T15:30:00.000Z', '30000', 'c-lunch', 'a1', 12),
+      entry('e2', '2026-08-10T03:00:00.000Z', '50000', 'c-dining', 'a1', 12),
     ],
   });
 
@@ -309,7 +304,6 @@ const entry = (
 
   const totals = summarize(august);
   eq('8월 지출', totals.expense.toString(), '80000');
-  eq('8월 과소비', totals.extraExpense.toString(), '20000');
 
   const days = dailyTotals(august, { timeZone: KST, type: 'expense' });
   eq('거래가 있는 날 수', days.length, 2);
@@ -358,7 +352,7 @@ const entry = (
   eq('최신 환율을 고른다 (날짜 내림차순 첫 줄)', await store.latestRate(PID, 'USD', 'KRW'), '1400');
 
   // ── 4. 델타: 전표 수정, 다리 수가 줄어든다 ──
-  const edited = entry('e2', '2026-08-10T03:00:00.000Z', '40000', 'c-dining', 'a1', '0', 20);
+  const edited = entry('e2', '2026-08-10T03:00:00.000Z', '40000', 'c-dining', 'a1', 20);
   pulls.push(pullResponse(20, { entries: [edited] }, [], false, 12));
   const second = await syncProject(store, pull, PID, KST);
   eq('커서 전진', second.version, 20);
@@ -527,7 +521,6 @@ const entry = (
     });
     const realTotals = summarize(realAugust);
     eq('실제 응답: 8월 지출', realTotals.expense.toString(), dump.server.summary.expense);
-    eq('실제 응답: 8월 과소비', realTotals.extraExpense.toString(), dump.server.summary.extraExpense);
 
     // KST 새벽 거래가 8/6 로 들어갔는가
     const chicken = await realDriver.all<{ dateKey: string }>(
@@ -601,7 +594,6 @@ const entry = (
 
     const summary = await port.getSummary({ yearMonth: '2026-08' }, real.projectId);
     eq('창구: 8월 지출', summary.expense, dump.server.summary.expense);
-    eq('창구: 8월 과소비', summary.extraExpense, dump.server.summary.extraExpense);
     eq('창구: 그 달을 그대로 돌려준다', summary.yearMonth, '2026-08');
 
     const worth = await port.getNetWorth(real.projectId);
@@ -634,7 +626,7 @@ const entry = (
     // 기대값을 손으로 적으면 코드와 기대가 같은 이유로 함께 틀릴 수 있다. 서버가 낸
     // 값을 그대로 두고 견주는 것이 그 위험을 없앤다.
     const server = dump.server;
-    for (const field of ['income', 'expense', 'extraExpense', 'normalExpense', 'net'] as const) {
+    for (const field of ['income', 'expense', 'net'] as const) {
       eq(`서버와 대조: summary.${field}`, summary[field], server.summary[field]);
     }
     for (const field of ['total', 'cash', 'investment', 'liability'] as const) {
@@ -716,7 +708,7 @@ const entry = (
     const byId = new Map(serverEntries.map((row) => [String(row.id), row]));
     let mismatch = 0;
     const compared = [
-      'kind', 'description', 'amount', 'extraAmount', 'categoryName', 'parentCategoryName',
+      'kind', 'description', 'amount', 'categoryName', 'parentCategoryName',
       'accountName', 'personName', 'toAccountName', 'cardName', 'feeAmount',
       'originalCurrency', 'originalAmount', 'exchangeRate', 'rateProvisional',
       // 할부 개월수. 사본이 계획을 받지 못하면 여기서 null 이 되어 드러난다.
@@ -745,13 +737,6 @@ const entry = (
       localEntries.find((row) => row.description === '카드 커피')?.installmentMonths ?? null, null);
         eq('목록: 날짜 내림차순', localEntries.map((row) => row.date).join(',') ===
       [...localEntries].map((row) => row.date).sort().reverse().join(','), true);
-
-    // 필터도 같은 규칙인가
-    const onlyExtra = await port.getAllEntries(
-      { startDate: '2026-07-31T15:00:00.000Z', endDate: '2026-08-31T14:59:59.999Z', extraTypes: 'extra' },
-      real.projectId,
-    );
-    eq('목록: 과소비만 (장보기 한 건)', onlyExtra.map((row) => row.description).join(','), '장보기');
 
     // ── 커서 페이지: 서버와 같은 자리에서 끊는가 ──
     const localFirst = await port.getEntries(

@@ -73,7 +73,6 @@ export function localLedgerLookup(store: LocalStore): LedgerLookup {
         projectId,
         name: row.name,
         type: row.type as LookupCategory['type'],
-        defaultIsExtra: row.defaultIsExtra,
       }));
     },
   };

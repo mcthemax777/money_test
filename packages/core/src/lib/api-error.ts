@@ -57,7 +57,6 @@ const MESSAGE_KEY: Record<ErrorCode, MessageKey> = {
   CARD_NOT_FOUND: 'error.CARD_NOT_FOUND',
   INSTALLMENT_CREDIT_ONLY: 'error.INSTALLMENT_CREDIT_ONLY',
   TRANSFER_SAME_ACCOUNT: 'error.TRANSFER_SAME_ACCOUNT',
-  EXTRA_EXCEEDS_AMOUNT: 'error.EXTRA_EXCEEDS_AMOUNT',
 };
 
 /** 서버 오류 응답에서 꺼낸 값. 코드가 없으면 코드가 붙지 않은 오류다. */

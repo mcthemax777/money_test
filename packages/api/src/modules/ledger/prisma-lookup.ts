@@ -72,7 +72,6 @@ export function prismaLedgerLookup(
         projectId: row.projectId,
         name: row.name,
         type: row.type,
-        defaultIsExtra: row.defaultIsExtra,
       }));
     },
   };

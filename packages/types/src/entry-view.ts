@@ -21,7 +21,6 @@ export interface ViewPosting {
   currency: string;
   exchangeRate: DecInput;
   baseAmount: DecInput;
-  extraAmount: DecInput;
   cardId: string | null;
   account: { id: string; name: string; type: AccountType } | null;
   category: {
@@ -161,16 +160,6 @@ export function toListItem(
     personName: entry.person?.name ?? '',
     amount: show.convert(amount).toString(),
     /*
-     * 과소비·추가 수입 금액. 표시 통화로 환산해 위 amount 와 같은 단위로 내보낸다.
-     *
-     * 이체는 대표 카테고리가 없다. 화면의 과소비 표시는 수수료 다리에 붙으므로
-     * 그것을 읽는다 (수정 폼이 이 값을 그대로 되돌려 보내기 때문에, 여기서
-     * 놓치면 체크가 풀린다).
-     */
-    extraAmount: show
-      .convert(Dec.of((primaryCategory ?? feePosting)?.extraAmount ?? 0))
-      .toString(),
-    /*
      * 카테고리 다리 수.
      *
      * 목록 한 줄은 대표 분류 하나만 보여 준다. 그래서 분할 거래를 그 한 줄에서 되돌려
@@ -193,7 +182,6 @@ export function toListItem(
           splits: categoryPostings.map((posting) => ({
             categoryId: posting.category?.id ?? '',
             amount: show.convert(base(posting).abs()).toString(),
-            extraAmount: show.convert(Dec.of(posting.extraAmount ?? 0)).toString(),
           })),
         }
       : {}),

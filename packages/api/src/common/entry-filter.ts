@@ -2,7 +2,7 @@ import { AccountType, CategoryType, Prisma } from '@prisma/client';
 import { EntryFilterQuery, type EntryKind, type ParsedEntrySearch } from '@money/types';
 
 /**
- * 화면의 사람/고정 필터를 Prisma 조건으로 옮긴다.
+ * 화면의 사람 필터를 Prisma 조건으로 옮긴다.
  *
  * 목록과 합계·차트가 같은 조건을 써야 화면 안에서 숫자가 어긋나지 않으므로,
  * 조건을 만드는 곳을 여기 하나로 둔다.
@@ -17,8 +17,6 @@ import { EntryFilterQuery, type EntryKind, type ParsedEntrySearch } from '@money
 export interface ParsedEntryFilter {
   /** 고른 사람. undefined면 전체 */
   personIds?: string[];
-  /** true=과소비가 섞인 거래만, false=과소비가 없는 거래만, undefined면 전체 */
-  extra?: boolean;
   /** 아무것도 고르지 않았다. 어떤 결과도 나오지 않아야 한다. */
   matchNothing: boolean;
 }
@@ -47,19 +45,7 @@ export function parseEntryFilter(
     if (personIds.length === 0) matchNothing = true;
   }
 
-  let extra: boolean | undefined;
-  if (query.extraTypes !== undefined) {
-    const types = splitList(query.extraTypes);
-    const wantsNormal = types.includes('normal');
-    const wantsExtra = types.includes('extra');
-
-    if (!wantsNormal && !wantsExtra) matchNothing = true;
-    // 둘 다 고른 것은 전체와 같다. 조건을 걸지 않는 편이 정확하다
-    // (카테고리 다리가 없는 전표까지 그대로 포함된다).
-    else if (wantsNormal !== wantsExtra) extra = wantsExtra;
-  }
-
-  return { personIds, extra, matchNothing };
+  return { personIds, matchNothing };
 }
 
 /** 어떤 전표에도 걸리지 않는 조건. 아무것도 고르지 않았을 때 쓴다. */
@@ -94,28 +80,6 @@ export function assetOwnerCondition(
         ],
       },
     ],
-  };
-}
-
-/**
- * 일반/과소비 posting 조건.
- *
- * 반드시 카테고리 다리에만 걸어야 한다. 계좌 다리는 두 금액이 모두 0이라
- * 조건 없이 걸면 아무것도 걸리지 않거나 전부 걸린다.
- *
- * 한 줄이 일반과 과소비로 나뉠 수 있다(3,000원 중 2,000원이 과소비). 그런 줄은
- * **양쪽 모두**에 든다. 일반만 보는 화면에서 그 거래를 통째로 빼 버리면, 합계는
- * 남은 1,000원을 세는데 목록에는 그 거래가 없어 둘이 어긋난다.
- *
- * 금액을 얼마로 셀지는 부르는 쪽이 정한다. 여기서는 "그 몫이 있는 줄"만 고른다.
- */
-export function extraPostingCondition(
-  filter: ParsedEntryFilter,
-): Prisma.PostingWhereInput | undefined {
-  if (filter.extra === undefined) return undefined;
-  return {
-    ...(filter.extra ? { extraAmount: { gt: 0 } } : { normalAmount: { gt: 0 } }),
-    categoryId: { not: null },
   };
 }
 

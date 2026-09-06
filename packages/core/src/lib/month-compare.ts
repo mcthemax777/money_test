@@ -4,7 +4,6 @@ import { apiClient } from '../lib/api-client';
 import { dayRangeQuery, formatMonthShort, shiftYearMonth } from '../lib/datetime';
 import {
   buildDailyCumulative,
-  countedShare,
   monthDateKeys,
   type CumulativeSeries,
 } from './entries';
@@ -52,7 +51,7 @@ export async function loadPreviousMonths(
       return {
         name: formatMonthShort(Number(month.slice(5))),
         // 앞선 달도 이번 달과 같은 몫을 세야 선끼리 견줄 수 있다.
-        points: buildDailyCumulative(rows ?? [], startKey, endKey, timeZone, countedShare(query)),
+        points: buildDailyCumulative(rows ?? [], startKey, endKey, timeZone),
       };
     }),
   );

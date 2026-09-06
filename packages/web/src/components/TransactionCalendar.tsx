@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 import type { EntryListItem } from './TransactionItem';
-import { groupEntriesByDate, sumEntries, type CountedShare } from '@money/core/lib/entries';
+import { groupEntriesByDate, sumEntries } from '@money/core/lib/entries';
 import { currentYearMonth, weekdayNames } from '@money/core/lib/datetime';
 import { formatNumber } from '@money/core/lib/money';
 import { useProjectTimeZone } from '@money/core/store/project';
@@ -18,8 +18,6 @@ interface CalendarDay {
 
 interface Props {
   entries: EntryListItem[];
-  /** 일반/과소비 중 어느 몫을 셀지. 넘기지 않으면 거래 금액 전부다. */
-  share?: CountedShare;
   /** 화면에 표시할 연도 */
   year: number;
   /** 화면에 표시할 월 (1~12) */
@@ -40,7 +38,6 @@ interface Props {
 
 export default function TransactionCalendar({
   entries,
-  share,
   year,
   month,
   onDateSelect,
@@ -114,7 +111,7 @@ export default function TransactionCalendar({
       // sumEntries가 하므로(두 종류에 0을 돌려준다) 여기서 걸러 내지 않는다.
       const dayEntries = byDate.get(dateStr) ?? [];
 
-      const { incomeTotal, expenseTotal } = sumEntries(dayEntries, share);
+      const { incomeTotal, expenseTotal } = sumEntries(dayEntries);
 
       calendarDays.push({
         date: new Date(currentDay),

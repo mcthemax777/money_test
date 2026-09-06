@@ -14,7 +14,6 @@ import { settingsWritePort } from '../data/settings-write-port';
 export interface SubCategoryRow {
   id: string;
   name: string;
-  defaultIsExtra: boolean;
 }
 
 /** 카테고리 폼이 담는 값. 대분류 하나와 그 아래 소분류 줄들이다. */
@@ -22,7 +21,6 @@ export interface CategoryFormValues {
   name: string;
   type: 'income' | 'expense';
   subCategories: SubCategoryRow[];
-  defaultIsExtra: boolean;
 }
 
 /**
@@ -90,7 +88,7 @@ export function useCategoryManager(projectId: string | null) {
    * 대분류 하나와 그 소분류를 저장한다. `editingId` 가 있으면 고치기다.
    *
    * 고칠 때는 세 가지를 함께 맞춘다. 목록에서 빠진 소분류는 지우고(기본 제공은
-   * 그대로 둔다), 이름이나 과소비 기본값이 바뀐 줄은 고치고, id 가 없는 줄은
+   * 그대로 둔다), 이름이 바뀐 줄은 고치고, id 가 없는 줄은
    * 새로 만든다.
    */
   const save = useCallback(
@@ -105,10 +103,7 @@ export function useCategoryManager(projectId: string | null) {
         setIsSubmitting(true);
 
         if (editingId) {
-          await settingsWritePort().updateCategory(editingId, {
-            name: values.name,
-            defaultIsExtra: values.defaultIsExtra,
-          });
+          await settingsWritePort().updateCategory(editingId, { name: values.name });
 
           const existing = categories.filter((category) => category.parentId === editingId);
 
@@ -135,25 +130,20 @@ export function useCategoryManager(projectId: string | null) {
                 name: sub.name,
                 type: values.type,
                 parentId: editingId,
-                defaultIsExtra: sub.defaultIsExtra,
                 projectId: projectId ?? undefined,
               });
               continue;
             }
 
             const before = existing.find((row) => row.id === sub.id);
-            if (before && (before.name !== sub.name || before.defaultIsExtra !== sub.defaultIsExtra)) {
-              await settingsWritePort().updateCategory(sub.id, {
-                name: sub.name,
-                defaultIsExtra: sub.defaultIsExtra,
-              });
+            if (before && before.name !== sub.name) {
+              await settingsWritePort().updateCategory(sub.id, { name: sub.name });
             }
           }
         } else {
           const created = await settingsWritePort().addCategory({
             name: values.name,
             type: values.type,
-            defaultIsExtra: values.defaultIsExtra,
             projectId: projectId ?? undefined,
           });
 
@@ -162,7 +152,6 @@ export function useCategoryManager(projectId: string | null) {
               name: sub.name,
               type: values.type,
               parentId: created.id,
-              defaultIsExtra: sub.defaultIsExtra,
               projectId: projectId ?? undefined,
             });
           }
@@ -262,12 +251,7 @@ export function useCategoryManager(projectId: string | null) {
         ? NO_SUB_CATEGORIES
         : categories
             .filter((row) => row.parentId === category.id)
-            .map((row) => ({
-              id: row.id,
-              name: row.name,
-              defaultIsExtra: row.defaultIsExtra || false,
-            })),
-      defaultIsExtra: category.defaultIsExtra || false,
+            .map((row) => ({ id: row.id, name: row.name })),
     }),
     [categories],
   );

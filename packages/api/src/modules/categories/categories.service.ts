@@ -68,10 +68,9 @@ export class CategoriesService {
           sortRank: rankAfter(lastRank._max.sortRank),
           type: dto.type as CategoryType,
           icon: dto.icon,
-          defaultIsExtra: dto.defaultIsExtra ?? false,
           fieldHlc: stampFieldClocks(
             null,
-            ['name', 'icon', 'defaultIsExtra'],
+            ['name', 'icon'],
             hlc ?? this.clock.now(),
           ),
         },
@@ -150,7 +149,6 @@ export class CategoriesService {
       data.name = name;
     }
     if (dto.icon !== undefined) data.icon = dto.icon;
-    if (dto.defaultIsExtra !== undefined) data.defaultIsExtra = dto.defaultIsExtra;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     // 순서 바꾸기는 이 필드 하나다 (분수 색인).
     if (dto.sortRank !== undefined) data.sortRank = dto.sortRank;

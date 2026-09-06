@@ -98,7 +98,6 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
 
   const time = formatTime(entry.date, timeZone);
   const original = formatOriginal(entry);
-  const hasExtra = toNumber(entry.extraAmount) > 0;
 
   /*
    * "보낸 곳 → 받은 곳". 계좌 사이를 오가는 거래에만 만든다.
@@ -177,7 +176,7 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
       )}
 
       {/* 2줄에 담을 것이 하나도 없는 거래도 있다. 그때는 빈 줄을 만들지 않는다. */}
-      {(meta || hasExtra || hasFee || original) && (
+      {(meta || hasFee || original) && (
       <div className="mt-0.5 flex items-center gap-1.5 text-xs text-gray-500">
         <span className="min-w-0 truncate">{meta}</span>
 
@@ -206,24 +205,6 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
             </span>
           )}
 
-          {/*
-            과소비·추가 수입은 금액까지 적는다. 표시만 있으면 "얼마가 과했나"를
-            거래를 열어 봐야 알 수 있는데, 그 값이 이 표시의 요점이다.
-
-            수수료와 같은 모양이다. 둘 다 "이 거래에서 얼마가 어느 쪽으로 갔나"를
-            말하는 금액이라, 한쪽만 알약 배지로 두면 다른 뜻처럼 보인다. 색은 돈이
-            움직인 방향이다 (과소비 빨강, 추가 수입 초록).
-          */}
-          {hasExtra && (
-            <span
-              className={`font-medium tabular-nums ${
-                entry.kind === 'income' ? 'text-green-600' : 'text-red-600'
-              }`}
-            >
-              {entry.kind === 'income' ? t('entry.extraIncome') : t('entry.overspend')}{' '}
-              {formatCurrency(entry.extraAmount, displayCurrency)}
-            </span>
-          )}
         </div>
       </div>
       )}

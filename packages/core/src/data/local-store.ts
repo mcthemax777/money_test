@@ -509,7 +509,6 @@ export class LocalStore {
           parentId: asText(row.parentId),
           type: String(row.type),
           icon: asText(row.icon),
-          defaultIsExtra: asFlag(row.defaultIsExtra),
           isDefault: asFlag(row.isDefault),
           isActive: asFlag(row.isActive),
           sortRank: asText(row.sortRank) ?? FIRST_RANK,
@@ -625,8 +624,6 @@ export class LocalStore {
             currency: asText(posting.currency) ?? 'KRW',
             baseAmount: asMoney(posting.baseAmount),
             exchangeRate: asMoney(posting.exchangeRate),
-            extraAmount: asMoney(posting.extraAmount),
-            normalAmount: asMoney(posting.normalAmount),
             cardId: asText(posting.cardId),
           });
         }
@@ -921,7 +918,7 @@ export class LocalStore {
     const rows = await this.db.all<Row>(
       `SELECT p.categoryId, c.type AS categoryType, c.name AS categoryName,
               c.parentId AS parentCategoryId, parent.name AS parentCategoryName,
-              p.baseAmount, p.normalAmount, p.extraAmount, e.date
+              p.baseAmount, e.date
          FROM posting p
          JOIN entry e ON e.id = p.entryId
          JOIN category c ON c.id = p.categoryId
@@ -937,8 +934,6 @@ export class LocalStore {
       parentCategoryId: asText(row.parentCategoryId),
       parentCategoryName: asText(row.parentCategoryName),
       baseAmount: asMoney(row.baseAmount),
-      normalAmount: asMoney(row.normalAmount),
-      extraAmount: asMoney(row.extraAmount),
       date: String(row.date),
     }));
   }
@@ -983,7 +978,7 @@ export class LocalStore {
   ): Promise<CategoryPostingRow[]> {
     const rows = await this.db.all<Row>(
       `SELECT p.categoryId, c.type AS categoryType,
-              p.baseAmount, p.normalAmount, p.extraAmount, e.date
+              p.baseAmount, e.date
          FROM posting p
          JOIN entry e ON e.id = p.entryId
          JOIN category c ON c.id = p.categoryId
@@ -995,8 +990,6 @@ export class LocalStore {
       categoryId: String(row.categoryId),
       categoryType: String(row.categoryType) as CategoryPostingRow['categoryType'],
       baseAmount: asMoney(row.baseAmount),
-      normalAmount: asMoney(row.normalAmount),
-      extraAmount: asMoney(row.extraAmount),
       date: String(row.date),
     }));
   }
@@ -1113,7 +1106,6 @@ export class LocalStore {
       parentId: asText(row.parentId),
       type: String(row.type),
       icon: asText(row.icon),
-      defaultIsExtra: Boolean(row.defaultIsExtra),
       isDefault: Boolean(row.isDefault),
       isActive: Boolean(row.isActive),
       createdAt: String(row.createdAt),
@@ -1284,7 +1276,6 @@ export class LocalStore {
         currency: String(row.currency),
         exchangeRate: asMoney(row.exchangeRate),
         baseAmount: asMoney(row.baseAmount),
-        extraAmount: asMoney(row.extraAmount),
         cardId: asText(row.cardId),
         account: row.accountRowId
           ? {
@@ -1498,11 +1489,6 @@ export class LocalStore {
           currency: posting.currency,
           baseAmount: posting.baseAmount.toString(),
           exchangeRate: posting.exchangeRate.toString(),
-          extraAmount: (posting.extraAmount ?? Dec.of(0)).toString(),
-          normalAmount: posting.baseAmount
-            .abs()
-            .minus(posting.extraAmount ?? Dec.of(0))
-            .toString(),
           cardId: posting.cardId ?? null,
         });
 
@@ -1809,12 +1795,12 @@ export class LocalStore {
   async categoriesByIds(
     projectId: string,
     ids: readonly string[],
-  ): Promise<Array<{ id: string; name: string; type: string; defaultIsExtra: boolean }>> {
+  ): Promise<Array<{ id: string; name: string; type: string }>> {
     if (ids.length === 0) return [];
 
     const placeholders = ids.map(() => '?').join(', ');
     const rows = await this.db.all<Row>(
-      `SELECT id, name, type, defaultIsExtra
+      `SELECT id, name, type
          FROM category WHERE projectId = ? AND id IN (${placeholders})`,
       [projectId, ...ids],
     );
@@ -1822,7 +1808,6 @@ export class LocalStore {
       id: String(row.id),
       name: String(row.name),
       type: String(row.type),
-      defaultIsExtra: Boolean(row.defaultIsExtra),
     }));
   }
 

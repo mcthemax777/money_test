@@ -24,28 +24,16 @@ import type { CategoryType } from './entities';
 import { zonedDateKey, zonedYearMonth } from './tz';
 
 /**
- * 일반/과소비 선택.
- *
- *   undefined = 전체 (다리 금액을 그대로 센다)
- *   false     = 일반 몫만
- *   true      = 과소비 몫만
- */
-export type ExtraSelection = boolean | undefined;
-
-/**
  * 집계가 보는 카테고리 다리 하나.
  *
  * 계좌 다리는 오지 않는다. "지출 = 지출 카테고리 posting의 합"이 정의이고,
- * 계좌 다리는 두 몫(normal·extra)이 모두 0이라 섞이면 결과만 흐려진다.
+ * 계좌 다리가 섞이면 결과만 흐려진다.
  */
 export interface CategoryPostingRow {
   categoryId: string;
   categoryType: CategoryType;
   /** 기준통화 환산액. 지출은 +, 수입은 -. */
   baseAmount: DecInput;
-  /** 그 환산액을 쪼갠 두 몫. 언제나 0 이상이고 합은 |baseAmount| 다. */
-  normalAmount: DecInput;
-  extraAmount: DecInput;
   /** 전표 시각. 달력 경계는 프로젝트 타임존으로 계산한다. */
   date: Date | string;
 }
@@ -57,103 +45,61 @@ export interface NamedCategoryPostingRow extends CategoryPostingRow {
   parentCategoryName: string | null;
 }
 
-/**
- * 고른 필터에서 이 다리가 내놓는 금액.
- *
- * 한 다리가 일반과 과소비로 나뉜다(3,000원 중 2,000원이 과소비). 한쪽만 볼 때
- * 다리째로 넣거나 빼면, 일반만 보는 화면에서 남은 1,000원이 어디에도 세어지지 않는다.
- * 그래서 다리를 고르는 것이 아니라 **금액을 쪼갠다**.
- */
-export function selectedAmount(row: CategoryPostingRow, extra: ExtraSelection): Dec {
-  if (extra === undefined) return Dec.of(row.baseAmount).abs();
-  return Dec.of(extra ? row.extraAmount : row.normalAmount);
+/** 이 다리가 내놓는 금액. 수입 다리는 음수로 실려 오므로 크기만 본다. */
+export function selectedAmount(row: CategoryPostingRow): Dec {
+  return Dec.of(row.baseAmount).abs();
 }
 
 export interface SummaryTotals {
   income: Dec;
   expense: Dec;
-  extraExpense: Dec;
-  normalExpense: Dec;
-  extraIncome: Dec;
-  normalIncome: Dec;
   /** 수입 - 지출 */
   net: Dec;
 }
 
-/**
- * 수입/지출 합계와 그 안의 일반·과소비 몫.
- *
- * 고르지 않은 몫은 0으로 적는다. "일반만" 보는 화면에 과소비 금액이 남아 있으면
- * 사용자가 고른 것과 다른 숫자를 보게 된다.
- */
-export function summarize(
-  rows: readonly CategoryPostingRow[],
-  extra: ExtraSelection = undefined,
-): SummaryTotals {
+/** 수입/지출 합계. */
+export function summarize(rows: readonly CategoryPostingRow[]): SummaryTotals {
   let income = Dec.of(0);
   let expense = Dec.of(0);
-  let extraExpense = Dec.of(0);
-  let normalExpense = Dec.of(0);
-  let extraIncome = Dec.of(0);
-  let normalIncome = Dec.of(0);
 
   for (const row of rows) {
-    const selected = selectedAmount(row, extra);
-    if (row.categoryType === 'expense') {
-      expense = expense.plus(selected);
-      if (extra !== false) extraExpense = extraExpense.plus(row.extraAmount);
-      if (extra !== true) normalExpense = normalExpense.plus(row.normalAmount);
-    } else {
-      income = income.plus(selected);
-      if (extra !== false) extraIncome = extraIncome.plus(row.extraAmount);
-      if (extra !== true) normalIncome = normalIncome.plus(row.normalAmount);
-    }
+    const selected = selectedAmount(row);
+    if (row.categoryType === 'expense') expense = expense.plus(selected);
+    else income = income.plus(selected);
   }
 
-  return {
-    income,
-    expense,
-    extraExpense,
-    normalExpense,
-    extraIncome,
-    normalIncome,
-    net: income.minus(expense),
-  };
+  return { income, expense, net: income.minus(expense) };
 }
 
 export interface DailyTotal {
   /** 프로젝트 타임존의 달력 날짜 "YYYY-MM-DD" */
   date: string;
-  normal: Dec;
-  extra: Dec;
+  amount: Dec;
 }
 
 /**
- * 날짜별 일반·과소비 합계. 거래가 있는 날만 돌려준다.
+ * 날짜별 합계. 거래가 있는 날만 돌려준다.
  *
  * 누적은 부르는 쪽이 만든다. 이번 달은 오늘까지만, 지난달은 말일까지 그어야 두 선을
  * 나란히 읽을 수 있는데 그 지점이 화면마다 다르다.
  */
 export function dailyTotals(
   rows: readonly CategoryPostingRow[],
-  options: { timeZone: string; type: CategoryType; extra?: ExtraSelection },
+  options: { timeZone: string; type: CategoryType },
 ): DailyTotal[] {
-  const { timeZone, type, extra } = options;
-  const byDate = new Map<string, { normal: Dec; extra: Dec }>();
+  const { timeZone, type } = options;
+  const byDate = new Map<string, Dec>();
 
   for (const row of rows) {
     if (row.categoryType !== type) continue;
 
     const key = zonedDateKey(new Date(row.date), timeZone);
-    const bucket = byDate.get(key) ?? { normal: Dec.of(0), extra: Dec.of(0) };
-    if (extra !== false) bucket.extra = bucket.extra.plus(row.extraAmount);
-    if (extra !== true) bucket.normal = bucket.normal.plus(row.normalAmount);
-    byDate.set(key, bucket);
+    byDate.set(key, (byDate.get(key) ?? Dec.of(0)).plus(selectedAmount(row)));
   }
 
   return [...byDate.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, bucket]) => ({ date, normal: bucket.normal, extra: bucket.extra }));
+    .map(([date, amount]) => ({ date, amount }));
 }
 
 export interface CategoryBreakdownBucket {
@@ -178,9 +124,9 @@ export interface CategoryBreakdownBucket {
  */
 export function categoryBreakdown(
   rows: readonly NamedCategoryPostingRow[],
-  options: { type: CategoryType; rollup?: boolean; extra?: ExtraSelection },
+  options: { type: CategoryType; rollup?: boolean },
 ): CategoryBreakdownBucket[] {
-  const { type, rollup = true, extra } = options;
+  const { type, rollup = true } = options;
 
   interface Bucket {
     categoryId: string;
@@ -195,9 +141,7 @@ export function categoryBreakdown(
   for (const row of rows) {
     if (row.categoryType !== type) continue;
 
-    const amount = selectedAmount(row, extra);
-    // 셀 몫이 없는 다리는 건수에서도 뺀다. 그러지 않으면 "0원인데 3건"이 된다.
-    if (extra !== undefined && !amount.isPositive()) continue;
+    const amount = selectedAmount(row);
 
     const rolled = rollup && row.parentCategoryId !== null;
     const key = rolled ? row.parentCategoryId! : row.categoryId;
@@ -245,15 +189,14 @@ export function monthlyTotals(
     /** 마지막 달 "YYYY-MM". 이 달을 포함해 뒤로 months 개를 만든다. */
     endYearMonth: string;
     months: number;
-    extra?: ExtraSelection;
   },
 ): MonthlyTotal[] {
-  const { timeZone, endYearMonth, months, extra } = options;
+  const { timeZone, endYearMonth, months } = options;
 
   const byMonth = new Map<string, Dec>();
   for (const row of rows) {
     const key = zonedYearMonth(new Date(row.date), timeZone);
-    byMonth.set(key, (byMonth.get(key) ?? Dec.of(0)).plus(selectedAmount(row, extra)));
+    byMonth.set(key, (byMonth.get(key) ?? Dec.of(0)).plus(selectedAmount(row)));
   }
 
   const [endYear, endMonth] = endYearMonth.split('-').map(Number);
@@ -294,7 +237,6 @@ export function entryMonths(
   rows: readonly CategoryPostingRow[],
   options: {
     timeZone: string;
-    extra?: ExtraSelection;
     /**
      * 달을 만들어야 하는 전표의 시각.
      *
@@ -308,7 +250,7 @@ export function entryMonths(
     entryDates?: readonly (Date | string)[];
   },
 ): EntryMonthTotal[] {
-  const { timeZone, extra, entryDates } = options;
+  const { timeZone, entryDates } = options;
 
   const byMonth = new Map<string, { income: Dec; expense: Dec }>();
 
@@ -317,14 +259,7 @@ export function entryMonths(
     if (!byMonth.has(key)) byMonth.set(key, { income: Dec.of(0), expense: Dec.of(0) });
   }
   for (const row of rows) {
-    const selected = selectedAmount(row, extra);
-    /*
-     * 셀 몫이 없는 다리는 그 달을 만들지 않는다.
-     *
-     * "과소비만" 보는 중이라면 과소비가 0원인 달은 목록에 없어야 한다. 몫을 보지 않고
-     * 달부터 만들면 눌러도 아무것도 없는 줄이 생긴다.
-     */
-    if (extra !== undefined && !selected.isPositive()) continue;
+    const selected = selectedAmount(row);
 
     const key = zonedYearMonth(new Date(row.date), timeZone);
     const bucket = byMonth.get(key) ?? { income: Dec.of(0), expense: Dec.of(0) };

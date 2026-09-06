@@ -2,7 +2,7 @@ import { Text, View } from 'react-native';
 import type { EntryListItem } from '@money/types';
 
 import { formatDateMarker, weekdayNames } from '@money/core/lib/datetime';
-import { groupEntriesByDate, sumEntries, type CountedShare } from '@money/core/lib/entries';
+import { groupEntriesByDate, sumEntries } from '@money/core/lib/entries';
 import { formatCurrency } from '@money/core/lib/money';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 
@@ -22,11 +22,9 @@ const WEEKDAY_COLOR: Record<number, string> = {
  */
 export default function TransactionListView({
   entries,
-  share,
   onEntryClick,
 }: {
   entries: EntryListItem[];
-  share?: CountedShare;
   onEntryClick?: (entry: EntryListItem) => void;
 }) {
   const timeZone = useProjectTimeZone();
@@ -43,7 +41,7 @@ export default function TransactionListView({
         const dayEntries = grouped.get(isoDate) ?? [];
         // 요일만 필요하다. isoDate 는 달력 날짜라 UTC 로 읽는다.
         const weekdayIndex = new Date(isoDate).getUTCDay();
-        const { incomeTotal, expenseTotal } = sumEntries(dayEntries, share);
+        const { incomeTotal, expenseTotal } = sumEntries(dayEntries);
 
         return (
           <View key={isoDate}>

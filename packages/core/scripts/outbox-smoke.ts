@@ -147,7 +147,7 @@ const KST = 'Asia/Seoul';
 
   const byId = new Map(serverEntries.map((row) => [String(row.id), row]));
   const compared = [
-    'kind', 'description', 'amount', 'extraAmount', 'categoryName', 'parentCategoryName',
+    'kind', 'description', 'amount', 'categoryName', 'parentCategoryName',
     'accountName', 'toAccountName', 'personName', 'cardName', 'feeAmount', 'feeCategoryName',
     'installmentMonths', 'originalCurrency', 'originalAmount', 'rateProvisional',
   ] as const;
@@ -173,26 +173,9 @@ const KST = 'Asia/Seoul';
   eq(`조립: 필드 ${compared.length}개를 줄마다 대조`, mismatch, 0);
 
   // 규칙이 옮겨 왔는지 콕 집어 본다. 위의 대조가 통째로 지나가도 이 셋은 눈에 띄어야 한다.
-  const impulse = localEntries.find((row) => row.description === '충동구매');
-  eq('과소비 기본값을 사본도 읽는다 (전액이 과소비)', impulse?.extraAmount, '50000');
   const groceries = localEntries.find((row) => row.description === '장보기');
   eq('분할 합계', groceries?.amount, '50000');
 
-  /*
-   * 분할의 과소비는 목록 한 줄로는 보이지 않는다.
-   *
-   * `toListItem` 의 extraAmount 는 대표 카테고리 다리의 값이라, 분할에서 다른 줄에 붙은
-   * 과소비는 거기 실리지 않는다(서버도 같은 값을 낸다 -- 위의 줄별 대조가 그것을 확인했다).
-   * 그래서 다리 쪽에서 본다. 사치 분류의 과소비는 충동구매 5만 + 장보기 1만5천이다.
-   */
-  const augustPostings = await store.categoryPostings(projectId, {
-    fromDateKey: '2026-08-01',
-    toDateKey: '2026-08-31',
-  });
-  const luxuryExtra = augustPostings
-    .filter((row) => row.categoryId === dump.server.categories.luxury)
-    .reduce((sum, row) => sum + Number(row.extraAmount), 0);
-  eq('분할에 붙은 과소비가 다리에 남는다', luxuryExtra, 65000);
   const laptop = localEntries.find((row) => row.description === '노트북');
   eq('할부 개월수가 사본에도 붙는다', laptop?.installmentMonths, 3);
   const transfer = localEntries.find((row) => row.description === '적금 이체');

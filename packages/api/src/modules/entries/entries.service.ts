@@ -22,7 +22,6 @@ import {
   entryTagCondition,
   entryTextCondition,
   entrySearchConditions,
-  extraPostingCondition,
   parseEntryFilter,
 } from '@/common/entry-filter';
 import { badRequest, notFound } from '@/common/app-error';
@@ -368,10 +367,6 @@ export class EntriesService {
     const textCondition = entryTextCondition(search.text);
     if (textCondition) entryFilters.push(textCondition);
 
-    // 일반/과소비 필터. 카테고리 다리에만 걸어야 한다 (계좌 다리는 항상 0이다).
-    const extra = extraPostingCondition(filter);
-    if (extra) postingFilters.push(extra);
-
     // kind='expense'는 이체를 빼지만 categoryType='expense'는 수수료 붙은 이체를 포함한다
     if (query.categoryType) {
       postingFilters.push({ category: { type: query.categoryType as CategoryType } });
@@ -476,7 +471,6 @@ export class EntriesService {
         currency: p.currency,
         baseAmount: p.baseAmount.toString(),
         exchangeRate: p.exchangeRate.toString(),
-        extraAmount: p.extraAmount.toString(),
         cardId: p.cardId,
       })),
     };
@@ -517,11 +511,9 @@ export class EntriesService {
       billedAmount: optional(dto.billedAmount, '청구액'),
       amount: dto.amount === undefined ? undefined : toMoney(dto.amount).toString(),
       categoryId: dto.categoryId,
-      extraAmount: optional(dto.extraAmount, '과소비 금액'),
       splits: dto.splits?.map((split) => ({
         categoryId: split.categoryId,
         amount: toMoney(split.amount, '분할 금액').toString(),
-        extraAmount: optional(split.extraAmount, '과소비 금액'),
       })),
       accountId: dto.accountId,
       toAccountId: dto.toAccountId,

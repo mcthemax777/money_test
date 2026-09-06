@@ -1,7 +1,7 @@
 /*
  * 거래 한 줄. 웹 목록의 TransactionItem 과 같은 규칙이다.
  *   1줄: 무슨 거래인가 + 얼마
- *   2줄: 시각 + 과소비·수수료 같은 금액 표시
+ *   2줄: 시각
  */
 import { memo } from 'react';
 import { Pressable, Text, View } from 'react-native';
@@ -62,7 +62,6 @@ function TransactionItemView({
   })();
 
   const time = formatTime(entry.date, timeZone);
-  const extra = toNumber(entry.extraAmount);
 
   return (
     <Pressable
@@ -101,19 +100,9 @@ function TransactionItemView({
         </View>
       ) : null}
 
-      {time || extra > 0 ? (
+      {time ? (
         <View className="mt-0.5 flex-row items-center justify-between">
           <Text className="text-xs text-gray-500">{time}</Text>
-          {extra > 0 ? (
-            <Text
-              className={`text-xs font-medium ${
-                entry.kind === 'income' ? 'text-green-600' : 'text-red-600'
-              }`}
-            >
-              {entry.kind === 'income' ? t('entry.extraIncome') : t('entry.overspend')}{' '}
-              {formatCurrency(entry.extraAmount, displayCurrency)}
-            </Text>
-          ) : null}
         </View>
       ) : null}
     </Pressable>
