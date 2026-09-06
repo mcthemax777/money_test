@@ -788,7 +788,22 @@ export class MutationReplayService {
     const merged = mergeFields(patch, mutation.hlc, readFieldClocks(category.fieldHlc));
     if (Object.keys(merged.apply).length === 0) return this.allFieldsLost(mutation, merged.lost);
 
-    await this.categories.updateCategory(payload.id, userId, merged.apply as never, mutation.hlc);
+    /*
+     * 숨기기는 따로 부른다. 자산 셋과 같은 규칙이다 (D11).
+     *
+     * 선행조건(이 분류를 쓰는 거래가 없을 것)이 그 함수 안에 있고, 그것을 건너뛰면
+     * 목록에 없는 분류를 쓰는 거래가 남아 분류별 합계에서만 보인다. 대분류를 숨길 때
+     * 소분류가 함께 내려가는 것도 그쪽 규칙이다.
+     */
+    const { isActive, ...rest } = merged.apply as CategoryUpdatePayload;
+    if (Object.keys(rest).length > 0) {
+      await this.categories.updateCategory(payload.id, userId, rest as never, mutation.hlc);
+    }
+    if (isActive === false) await this.categories.deleteCategory(payload.id, userId, mutation.hlc);
+    if (isActive === true) {
+      await this.categories.updateCategory(payload.id, userId, { isActive: true }, mutation.hlc);
+    }
+
     return this.applied(mutation, projectId, payload.id);
   }
 

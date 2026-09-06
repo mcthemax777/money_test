@@ -14,6 +14,7 @@ import type { TagDto } from '@money/types';
 
 import { EMPTY_TAG_FORM, useTagManager, type TagFormValues } from '@money/core/hooks/useTagManager';
 import { useTranslation } from '@money/core/lib/i18n';
+import { useCanEdit } from '@money/core/store/project';
 
 import Modal from '@/components/Modal';
 import AddButton from '@/components/AddButton';
@@ -41,6 +42,8 @@ const COLORS = [
 
 export default function TagsPanel({ projectId }: { projectId: string | null }) {
   const { t } = useTranslation();
+  /** 읽기 전용 구성원에게는 쓰기 단추를 그리지 않는다. */
+  const canEdit = useCanEdit();
   const manager = useTagManager(projectId);
 
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -127,15 +130,26 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
                 className={`h-3 w-3 shrink-0 rounded-full ${tag.color ? '' : 'border border-gray-300'}`}
                 style={tag.color ? { backgroundColor: tag.color } : undefined}
               />
+              {/*
+                읽기 전용 구성원에게는 고치기와 지우기가 없다. 이름은 그대로 읽히도록
+                단추 대신 글자로 그린다.
+              */}
+              {canEdit ? (
+                <button
+                  type="button"
+                  onClick={() => openEdit(tag)}
+                  className="min-w-0 flex-1 truncate text-left font-medium text-gray-900 hover:text-blue-600"
+                >
+                  {tag.name}
+                </button>
+              ) : (
+                <span className="min-w-0 flex-1 truncate font-medium text-gray-900">
+                  {tag.name}
+                </span>
+              )}
               <button
                 type="button"
-                onClick={() => openEdit(tag)}
-                className="min-w-0 flex-1 truncate text-left font-medium text-gray-900 hover:text-blue-600"
-              >
-                {tag.name}
-              </button>
-              <button
-                type="button"
+                hidden={!canEdit}
                 onClick={() => remove(tag)}
                 aria-label={t('entryForm.delete')}
                 className="shrink-0 rounded p-1 text-gray-400 transition hover:bg-gray-100 hover:text-red-600"

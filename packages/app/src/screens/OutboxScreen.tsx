@@ -28,6 +28,7 @@ import {
   discardMutation,
   heldMutations,
   queuedMutations,
+  reissueAsNewEntry,
   retryMutation,
   syncNow,
 } from '../offline';
@@ -107,6 +108,24 @@ export default function OutboxScreen() {
     }
   };
 
+  /**
+   * 사라진 거래를 고치려던 명령을 새 거래로 낸다.
+   *
+   * 다시 보내기와 갈라 둔다. 그쪽은 "그래도 내 값으로 하겠다"이고 이쪽은 "그 거래는
+   * 없어졌으니 새로 적겠다"라, 결과가 다르다 -- 여기서는 새 id 의 거래가 하나 생긴다.
+   */
+  const reissue = async (mutation: HeldMutation) => {
+    if (!projectId || isBusy) return;
+    setIsBusy(true);
+    try {
+      await reissueAsNewEntry(mutation);
+      await syncNow(projectId, timeZone);
+      await reload();
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
   /** 지금 보내 본다. 온라인이면 큐가 비고, 아니면 그대로 남는다. */
   const sendNow = async () => {
     if (!projectId || isBusy) return;
@@ -174,6 +193,7 @@ export default function OutboxScreen() {
               mutation={mutation}
               isBusy={isBusy}
               onRetry={() => retry(mutation.mutationId)}
+              onReissue={() => reissue(mutation)}
               onDiscard={() => discard(mutation.mutationId)}
             />
           ))}
@@ -213,11 +233,13 @@ function HeldCard({
   mutation,
   isBusy,
   onRetry,
+  onReissue,
   onDiscard,
 }: {
   mutation: HeldMutation;
   isBusy: boolean;
   onRetry: () => void;
+  onReissue: () => void;
   onDiscard: () => void;
 }) {
   const { t } = useTranslation();
@@ -252,14 +274,32 @@ function HeldCard({
         ) : null}
       </View>
 
+      {/*
+        고치려던 거래가 사라졌으면 다시 보내기 대신 새로 적기를 준다.
+        다시 보내 봐야 없는 거래를 고치려는 것이라 영영 거절된다 -- 삭제는 언제나 이긴다.
+      */}
+      {mutation.targetMissing ? (
+        <Text className="mt-2 text-xs text-gray-500">{t('outbox.reissueHint')}</Text>
+      ) : null}
+
       <View className="mt-3 flex-row gap-2">
-        <Pressable
-          disabled={isBusy}
-          onPress={onRetry}
-          className={`rounded-lg border border-blue-600 px-3 py-2 ${isBusy ? 'opacity-50' : ''}`}
-        >
-          <Text className="text-sm font-medium text-blue-600">{t('outbox.retry')}</Text>
-        </Pressable>
+        {mutation.targetMissing ? (
+          <Pressable
+            disabled={isBusy}
+            onPress={onReissue}
+            className={`rounded-lg border border-blue-600 px-3 py-2 ${isBusy ? 'opacity-50' : ''}`}
+          >
+            <Text className="text-sm font-medium text-blue-600">{t('outbox.reissue')}</Text>
+          </Pressable>
+        ) : (
+          <Pressable
+            disabled={isBusy}
+            onPress={onRetry}
+            className={`rounded-lg border border-blue-600 px-3 py-2 ${isBusy ? 'opacity-50' : ''}`}
+          >
+            <Text className="text-sm font-medium text-blue-600">{t('outbox.retry')}</Text>
+          </Pressable>
+        )}
         <Pressable
           disabled={isBusy}
           onPress={onDiscard}

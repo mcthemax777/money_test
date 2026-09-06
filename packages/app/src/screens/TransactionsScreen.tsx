@@ -33,7 +33,12 @@ import {
   type TransactionRow,
   type TransactionTab,
 } from '@money/core/hooks/useTransactions';
-import { useMyPersonId, useProject, useProjectDisplayCurrency } from '@money/core/store/project';
+import {
+  useCanEdit,
+  useMyPersonId,
+  useProject,
+  useProjectDisplayCurrency,
+} from '@money/core/store/project';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import { useUserFilter } from '@money/core/store/user-filter';
 
@@ -239,6 +244,7 @@ const Line = memo(LineView);
 export default function TransactionsScreen() {
   const { t } = useTranslation();
   const selectedProjectId = useProject((state) => state.selectedProjectId);
+  const canEdit = useCanEdit();
   const togglePersonId = useUserFilter((state) => state.togglePersonId);
   const selectedPersonIds = useUserFilter((state) => state.selectedPersonIds);
   const myPersonId = useMyPersonId();
@@ -546,13 +552,19 @@ export default function TransactionsScreen() {
                   <Text className="text-sm font-semibold text-blue-600">{tx.searchCount}</Text>
                 ) : null}
               </Pressable>
-              <Pressable
-                onPress={() => setIsMoreOpen(true)}
-                accessibilityLabel={t('tx.more')}
-                className="items-center justify-center p-2"
-              >
-                <MoreVertical size={18} color="#4b5563" />
-              </Pressable>
+              {/*
+                더보기에는 쓰는 일만 들어 있다(태그 붙이기·지우기). 읽기 전용
+                구성원에게는 열 것이 없으므로 버튼째 감춘다.
+              */}
+              {canEdit ? (
+                <Pressable
+                  onPress={() => setIsMoreOpen(true)}
+                  accessibilityLabel={t('tx.more')}
+                  className="items-center justify-center p-2"
+                >
+                  <MoreVertical size={18} color="#4b5563" />
+                </Pressable>
+              ) : null}
             </View>
           }
         />

@@ -71,7 +71,12 @@ export const ja: Record<MessageKey, string> = {
   'outbox.sending': '送信中...',
   'outbox.retry': '再送信',
   'outbox.discard': '破棄',
+  'outbox.reissue': '新しい取引として記録する',
+  'outbox.reissueHint': 'この取引は他の端末で削除されました。書いた内容を新しい取引として残せます。',
   'outbox.discardHint': '破棄するとこの端末で書いた内容が消えます。',
+  'project.accessLost.title': 'この家計簿にアクセスできなくなりました',
+  'project.accessLost.body':
+    '除外されたか、家計簿が削除されました。この端末の控えは消去しました。',
   'settings.language.title': '言語',
   'settings.language.description':
     'アプリに表示する言語を選びます。アカウントに保存されるので、別の端末でも同じ言語になります。',
@@ -887,6 +892,7 @@ export const ja: Record<MessageKey, string> = {
   'error.CANNOT_KICK_OWNER': 'オーナーは外せません。',
   'error.CANNOT_KICK_SELF': '自分は外せません。プロジェクトの脱退をお使いください。',
   'error.ENTRY_NOT_FOUND': '取引が見つかりません。',
+  'error.ENTRY_MODIFIED': '他の人がこの取引を先に変更しました。一覧を読み直してから修正してください。',
   'error.CARD_NOT_FOUND': 'カードが見つかりません。',
   'error.INSTALLMENT_CREDIT_ONLY': '分割払いはクレジットカードの支出にのみ設定できます。',
   'error.TRANSFER_SAME_ACCOUNT': '送る口座と受け取る口座が同じです。',

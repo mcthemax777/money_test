@@ -3,6 +3,7 @@ import { AccountType, FinancialInstitutionType, Prisma, ProjectRole } from '@pri
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { stampFieldClocks } from '@/common/field-clock';
+import { lockLedgerWrites } from '@/common/ledger-lock';
 import { ServerClockService } from '@/common/server-clock';
 import { clientId, rejectDuplicateId } from '@/common/client-id';
 import { LedgerService } from '../ledger/ledger.service';
@@ -376,26 +377,39 @@ export class AccountsService {
   async deactivateAccount(id: string, userId: string, hlc?: string) {
     const account = await this.getAccountById(id, userId, 'editor');
 
-    const cardCount = await this.prisma.card.count({
-      where: { paymentAccountId: id, isActive: true },
-    });
-    if (cardCount > 0) {
-      throw badRequest('ACCOUNT_HAS_CARDS', '이 통장에 연결된 카드가 있어서 숨길 수 없습니다.');
-    }
+    /*
+     * 확인과 숨기기를 한 트랜잭션에 넣고, 먼저 원장 쓰기를 줄 세운다.
+     *
+     * 밖에서 확인하면 확인한 값과 숨기는 값이 다를 수 있다. 잔액 0을 읽은 뒤 숨기기
+     * 전에 다른 사람이 이 통장으로 지출을 적으면, **잔액이 남은 통장이 목록에서
+     * 사라진다.** 돈은 남아 있는데 화면에 없으니 총자산과 목록이 어긋난다.
+     */
+    return this.prisma.$transaction(async (tx) => {
+      await lockLedgerWrites(tx, account.projectId);
 
-    if (!account.balance.isZero()) {
-      throw badRequest(
-        'ACCOUNT_HAS_BALANCE',
-        '잔액이 남아 있어 숨길 수 없습니다. 먼저 잔액을 0으로 맞추세요.',
-      );
-    }
+      const fresh = await tx.account.findUniqueOrThrow({ where: { id } });
 
-    return this.prisma.account.update({
-      where: { id },
-      data: {
-        isActive: false,
-        fieldHlc: stampFieldClocks(account.fieldHlc, ['isActive'], hlc ?? this.clock.now()),
-      },
+      const cardCount = await tx.card.count({
+        where: { paymentAccountId: id, isActive: true },
+      });
+      if (cardCount > 0) {
+        throw badRequest('ACCOUNT_HAS_CARDS', '이 통장에 연결된 카드가 있어서 숨길 수 없습니다.');
+      }
+
+      if (!fresh.balance.isZero()) {
+        throw badRequest(
+          'ACCOUNT_HAS_BALANCE',
+          '잔액이 남아 있어 숨길 수 없습니다. 먼저 잔액을 0으로 맞추세요.',
+        );
+      }
+
+      return tx.account.update({
+        where: { id },
+        data: {
+          isActive: false,
+          fieldHlc: stampFieldClocks(fresh.fieldHlc, ['isActive'], hlc ?? this.clock.now()),
+        },
+      });
     });
   }
 }

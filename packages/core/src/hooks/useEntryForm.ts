@@ -34,6 +34,7 @@ import {
 } from '../data/entry-form';
 import { entryWritePort } from '../data/entry-write-port';
 import { homeDataPort } from '../data/home-port';
+import { apiErrorCode, useApiError } from '../lib/api-error';
 import { useProjectLedgerCurrency } from '../store/project';
 import { useMirrorVersion } from './useMirrorVersion';
 
@@ -112,6 +113,8 @@ export function useEntryForm({
   const mirrorVersion = useMirrorVersion();
   /** 장부 통화. 이 통화로 적으면 환산할 것이 없다. */
   const ledgerCurrency = useProjectLedgerCurrency();
+  /** 서버가 코드로 말한 오류를 고른 언어의 문장으로. */
+  const { messageOf } = useApiError();
 
   // 고를 목록. 사본이 채워지면(오프라인 동기화) 다시 읽는다.
   useEffect(() => {
@@ -290,7 +293,13 @@ export function useEntryForm({
       const request = entryFormToRequest(values, timeZone);
       const port = entryWritePort();
       if (editingId) {
-        await port.updateEntry(editingId, request);
+        /*
+         * 폼을 열 때 본 판을 함께 보낸다. 서버가 그 사이의 편집을 알아채는 근거다.
+         *
+         * 사본 창구는 이 값을 쓰지 않는다. 그쪽은 사본이 아는 시계를 스스로 읽어
+         * 명령의 시계를 그 뒤로 발급받는다 -- 판정을 서버에 맡기지 않고 병합한다.
+         */
+        await port.updateEntry(editingId, { ...request, baseHlc: values.baseHlc });
       } else {
         await port.createEntry({ ...request, projectId: projectId ?? undefined });
       }
@@ -302,13 +311,22 @@ export function useEntryForm({
        *
        * 오프라인에서는 서버가 없으므로 이 문장이 사용자가 받는 유일한 설명이다.
        * 삼키면 저장 버튼이 아무 일도 하지 않는 것처럼 보인다.
+       *
+       * 서버가 코드를 붙여 보낸 오류만 화면 말로 바꾼다. 코드가 없는 것은 조립이 던진
+       * 것이라 그 문장이 이미 사람이 읽을 말이고, 여기서 덮으면 무엇이 잘못됐는지 잃는다.
        */
-      setError(caught instanceof Error ? caught.message : String(caught));
+      setError(
+        apiErrorCode(caught)
+          ? messageOf(caught, 'editor.editFailed')
+          : caught instanceof Error
+            ? caught.message
+            : String(caught),
+      );
       return false;
     } finally {
       setIsSubmitting(false);
     }
-  }, [editingId, onSaved, projectId, timeZone, values]);
+  }, [editingId, messageOf, onSaved, projectId, timeZone, values]);
 
   const remove = useCallback(async (): Promise<boolean> => {
     if (!editingId) return false;

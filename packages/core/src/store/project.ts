@@ -66,6 +66,24 @@ export function useProjectLedgerCurrency(): CurrencyCode {
   });
 }
 
+/**
+ * 이 프로젝트에 쓸 수 있는가. 읽기 전용(viewer)으로 초대된 구성원만 false 다.
+ *
+ * **화면이 쓰기 버튼을 감추는 자리다.** 서버는 어차피 거절하므로 데이터는 안전하지만,
+ * 감추지 않으면 사용자는 적고 저장하고 나서야 거절을 본다. 앱에서는 그것이 더 나쁘다 --
+ * 사본에 먼저 커밋되어 화면에는 저장된 것처럼 보이고, 다음 동기화에서 전부 보류 칸으로
+ * 밀려난 뒤에야 헛일이었다는 것을 안다.
+ *
+ * 아직 목록을 받지 못했으면 true 다. 모르는 상태에서 버튼을 감추면 멀쩡한 사용자가
+ * 아무것도 못 하는 화면을 본다 -- 서버가 막아 주므로 반대쪽이 안전하다.
+ */
+export function useCanEdit(): boolean {
+  return useProject((state) => {
+    const selected = state.projects.find((p) => p.id === state.selectedProjectId);
+    return selected ? selected.role !== 'viewer' : true;
+  });
+}
+
 /** 선택한 프로젝트에서 "나"로 지정한 구성원 id. 지정하지 않았으면 null. */
 export function useMyPersonId(): string | null {
   return useProject((state) => {

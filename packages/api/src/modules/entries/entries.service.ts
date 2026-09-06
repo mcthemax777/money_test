@@ -94,7 +94,13 @@ export class EntriesService {
 
     const input = await this.buildInput(existing.projectId, userId, dto);
 
-    await this.ledger.replaceEntry(id, input);
+    /*
+     * 화면이 본 판을 그대로 넘긴다. 견주는 일은 원장이 잠근 뒤에 한다.
+     *
+     * 위에서 읽은 `existing` 으로 여기서 견주면 안 된다. 그 읽기는 트랜잭션 밖이라
+     * 견준 값이 저장하는 사이에 또 바뀔 수 있다.
+     */
+    await this.ledger.replaceEntry(id, { ...input, baseHlc: dto.baseHlc ?? null });
     return this.getEntryById(id, userId);
   }
 
@@ -208,7 +214,15 @@ export class EntriesService {
         });
       }
 
-      if (rows.length > 0) await tx.entryTag.createMany({ data: rows });
+      /*
+       * 이미 있는 연결은 건너뛴다.
+       *
+       * 두 사람이 같은 거래에 같은 태그를 동시에 붙이면, 위에서 "지금 붙어 있는 것"을
+       * 읽는 질의는 잠그지 않으므로 둘 다 "아직 없다"로 읽고 둘 다 넣는다. 늦은 쪽이
+       * 유일 제약(entryId, tagId)에 걸려 500 이 되는데, 둘이 바란 결과는 같다 --
+       * 그 태그가 붙어 있는 것이다. 오류로 만들 이유가 없다.
+       */
+      if (rows.length > 0) await tx.entryTag.createMany({ data: rows, skipDuplicates: true });
 
       if (touched.size === 0) return { added: 0, removed: 0, entries: 0 };
 

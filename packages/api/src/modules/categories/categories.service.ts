@@ -11,6 +11,7 @@ import { assertReorderIds } from '@/common/reorder';
 import { badRequest } from '@/common/app-error';
 import { clientId } from '@/common/client-id';
 import { stampFieldClocks } from '@/common/field-clock';
+import { lockLedgerWrites } from '@/common/ledger-lock';
 import { ServerClockService } from '@/common/server-clock';
 
 @Injectable()
@@ -185,7 +186,14 @@ export class CategoriesService {
     return error;
   }
 
-  async deleteCategory(id: string, userId: string) {
+  /**
+   * 분류 숨기기. 거래에 쓰이고 있으면 막는다.
+   *
+   * `hlc` 는 기기의 오프라인 명령을 재생할 때만 온다. 나머지 넷(구성원·통장·카드·태그)과
+   * 같은 규칙이다 -- 숨기기도 하나의 편집이므로 시계를 남겨야, 그보다 앞선 편집이
+   * 나중에 도착해 되살리는 일이 없다.
+   */
+  async deleteCategory(id: string, userId: string, hlc?: string) {
     const category = await this.getCategoryById(id, userId, 'editor');
 
     if (category.isDefault) {
@@ -193,36 +201,52 @@ export class CategoriesService {
     }
 
     const isMain = category.parentId === null;
+    const stamp = hlc ?? this.clock.now();
 
-    // 대분류를 지우면 소분류도 함께 지워지므로, 사용 여부는 자신과 자식을 함께 본다.
-    const affectedIds = isMain
-      ? [
-          id,
-          ...(
-            await this.prisma.category.findMany({
-              where: { parentId: id },
-              select: { id: true },
-            })
-          ).map((c) => c.id),
-        ]
-      : [id];
-
-    const usedCount = await this.prisma.posting.count({
-      where: { categoryId: { in: affectedIds } },
-    });
-    if (usedCount > 0) {
-      throw badRequest('CATEGORY_IN_USE', '이 카테고리가 거래에 사용되어 삭제할 수 없습니다.');
-    }
-
-    // 소분류를 개별 update로 돌리던 것을 한 번의 updateMany로 정리
+    /*
+     * 확인과 숨기기를 한 트랜잭션에 넣고, 먼저 원장 쓰기를 줄 세운다 (`lockLedgerWrites`).
+     *
+     * 밖에서 세면 "쓰이지 않는다"를 읽은 뒤 숨기기 전에 그 분류로 거래가 하나 들어올 수
+     * 있다. 그러면 목록에 없는 분류를 쓰는 거래가 남아, 분류별 합계에서만 보인다.
+     */
     return this.prisma.$transaction(async (tx) => {
-      if (isMain) {
-        await tx.category.updateMany({
-          where: { parentId: id },
-          data: { isActive: false },
+      await lockLedgerWrites(tx, category.projectId);
+
+      // 대분류를 지우면 소분류도 함께 지워지므로, 사용 여부는 자신과 자식을 함께 본다.
+      const children = isMain
+        ? await tx.category.findMany({ where: { parentId: id } })
+        : [];
+      const affectedIds = [id, ...children.map((child) => child.id)];
+
+      const usedCount = await tx.posting.count({
+        where: { categoryId: { in: affectedIds } },
+      });
+      if (usedCount > 0) {
+        throw badRequest('CATEGORY_IN_USE', '이 카테고리가 거래에 사용되어 삭제할 수 없습니다.');
+      }
+
+      /*
+       * 소분류도 한 줄씩 고친다. `updateMany` 가 더 짧지만 시계를 찍을 수 없다 --
+       * 필드별 시계는 그 행이 지금 들고 있는 값 위에 얹는 것이라 행마다 다르다.
+       * 찍지 않으면 그보다 앞선 오프라인 편집이 나중에 도착해 소분류만 되살린다.
+       */
+      for (const child of children) {
+        await tx.category.update({
+          where: { id: child.id },
+          data: {
+            isActive: false,
+            fieldHlc: stampFieldClocks(child.fieldHlc, ['isActive'], stamp),
+          },
         });
       }
-      return tx.category.update({ where: { id }, data: { isActive: false } });
+
+      return tx.category.update({
+        where: { id },
+        data: {
+          isActive: false,
+          fieldHlc: stampFieldClocks(category.fieldHlc, ['isActive'], stamp),
+        },
+      });
     });
   }
 

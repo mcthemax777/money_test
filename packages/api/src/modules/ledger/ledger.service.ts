@@ -21,7 +21,8 @@ import { prismaLedgerLookup } from './prisma-lookup';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { ServerClockService } from '@/common/server-clock';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
-import { badRequest, notFound } from '@/common/app-error';
+import { badRequest, conflict, notFound } from '@/common/app-error';
+import { lockLedgerWrites } from '@/common/ledger-lock';
 
 const ZERO = new Prisma.Decimal(0);
 
@@ -101,6 +102,19 @@ export interface EntryInput {
    * 오프라인 편집과 견줄 수 있다.
    */
   updatedHlc?: string;
+  /**
+   * 이 수정이 딛고 선 판. 화면이 폼을 열 때 본 시계다.
+   *
+   * 주면 잠근 뒤 지금 값과 견주고, 다르면 저장하지 않고 `ENTRY_MODIFIED` 로 거절한다.
+   * 그 사이 다른 사람이 같은 거래를 고쳤다는 뜻이다. 생략하면 검사하지 않는다 --
+   * 옛 화면과, 원장이 스스로 만드는 전표(잔액 조정)가 그 자리다.
+   *
+   * 재생 경로는 이것을 쓰지 않는다. 그쪽은 명령의 시계와 전표의 시계를 견주어
+   * **늦은 쪽이 이기는** 규칙이고(D5), 여기는 "내가 본 판이 그대로인가"를 묻는다.
+   * 오프라인 명령에는 사람이 답할 자리가 없어 자동 병합이 필요하고, 지금 누른
+   * 사람에게는 최신 값을 보여 주고 다시 고르게 하는 편이 낫다.
+   */
+  baseHlc?: string | null;
   /**
    * 할부 개월수. 신용카드 지출에만 의미가 있고 2 이상일 때 일정이 생긴다.
    *
@@ -247,6 +261,13 @@ export class LedgerService {
     await this.assertTargetsBelongToProject(outerTx ?? this.prisma, input);
 
     return this.runInTransaction(outerTx, async (tx) => {
+      /*
+       * 만들기도 잠근다. 스스로 읽고 고칠 것은 없지만, 이 쓰기가 **남의 선행조건을
+       * 깨기** 때문이다 -- 잔액 0을 확인하고 통장을 숨기려는 요청과 겹치면, 잔액이
+       * 남은 통장이 목록에서 사라진다.
+       */
+      await this.lockLedger(tx, input.projectId);
+
       const entry = await tx.journalEntry.create({
         data: {
           id: input.id,
@@ -286,14 +307,35 @@ export class LedgerService {
     await this.assertTargetsBelongToProject(outerTx ?? this.prisma, input);
 
     return this.runInTransaction(outerTx, async (tx) => {
-      // 옛 전표는 트랜잭션 안에서 읽는다. 밖에서 읽으면 그 사이 다른 요청이
-      // 지운 전표를 되돌리려다 잔액만 어긋난다.
+      /*
+       * 읽기 전에 잠근다. 트랜잭션 안이라는 것만으로는 모자라다 (`lockLedger`).
+       *
+       * 아래 되돌리기가 딛고 서는 것은 "지금 이 전표의 다리"인데, 잠그지 않고 읽으면
+       * 그것이 방금 다른 요청이 갈아 치운 옛 값일 수 있다. 그러면 같은 금액을 두 번
+       * 되돌려 통장 잔액만 조용히 어긋난다.
+       */
+      await this.lockLedger(tx, input.projectId);
+
       const existing = await tx.journalEntry.findUnique({
         where: { id: entryId },
         include: { postings: true },
       });
       if (!existing || existing.projectId !== input.projectId) {
         throw notFound('ENTRY_NOT_FOUND', '거래를 찾을 수 없습니다.');
+      }
+
+      /*
+       * 내가 본 판이 그대로인가. 화면이 시계를 실어 보냈을 때만 본다.
+       *
+       * 잠근 뒤에 본다는 것이 요점이다. 잠그기 전에 견주면 견준 값이 그 사이에 또
+       * 바뀔 수 있어 검사가 검사 노릇을 못한다.
+       *
+       * 여기서 막지 않으면 늦게 누른 쪽이 이기고 진 편집은 아무 흔적도 남기지 않는다.
+       * 오프라인 명령은 보류 칸에 남아 사람이 고르지만(D6), 지금 눌러서 보낸 요청에는
+       * 그런 자리가 없다 -- 그 자리를 만드는 것이 이 거절이다.
+       */
+      if (input.baseHlc != null && (existing.updatedHlc ?? null) !== input.baseHlc) {
+        throw conflict('ENTRY_MODIFIED', '다른 사람이 이 거래를 먼저 고쳤습니다.');
       }
 
       // 1) 옛 posting의 잔액 영향을 되돌린다
@@ -342,6 +384,9 @@ export class LedgerService {
    */
   async deleteEntry(entryId: string, projectId: string, outerTx?: Tx) {
     return this.runInTransaction(outerTx, async (tx) => {
+      // 되돌릴 다리를 읽기 전에 잠근다. 수정과 같은 이유다 (`lockLedger`).
+      await this.lockLedger(tx, projectId);
+
       const entry = await tx.journalEntry.findUnique({
         where: { id: entryId },
         include: { postings: true },
@@ -386,6 +431,9 @@ export class LedgerService {
     }
 
     return this.runInTransaction(outerTx, async (tx) => {
+      // 옛 금액에서 새 금액을 빼 잔액을 움직이므로, 여기도 읽기 전에 잠근다.
+      await this.lockLedger(tx, projectId);
+
       const entry = await tx.journalEntry.findUnique({
         where: { id: entryId },
         include: { postings: true },
@@ -501,6 +549,33 @@ export class LedgerService {
    */
   private runInTransaction<T>(outerTx: Tx | undefined, fn: (tx: Tx) => Promise<T>): Promise<T> {
     return outerTx ? fn(outerTx) : this.prisma.$transaction(fn);
+  }
+
+  /**
+   * 이 프로젝트의 원장을 고치는 다른 트랜잭션을 기다린다. **읽기 전에, 맨 먼저 부른다.**
+   *
+   * 왜 필요한가. 전표를 고치고 지우는 일은 읽고-고쳐-쓰기다 -- 옛 다리를 읽어 잔액에서
+   * 되돌린 다음 새 다리를 적용한다. 트랜잭션 안에서 읽어도 그것만으로는 모자라다.
+   * PostgreSQL 의 기본 격리 수준(READ COMMITTED)에서는 **문장마다 새 스냅숏**을 잡고,
+   * 읽기는 아무 잠금도 걸지 않기 때문이다.
+   *
+   * 그래서 두 사람이 같은 거래를 거의 동시에 저장하면 이런 일이 벌어졌다.
+   *
+   *   1. 둘 다 옛 다리(10,000원)를 읽는다. 앞선 쪽이 아직 커밋 전이라 값이 같다.
+   *   2. 앞선 쪽이 -10,000 되돌리고 +20,000 적용하고 커밋한다.
+   *   3. 뒤선 쪽이 **이미 사라진 10,000 을 한 번 더 되돌리고** +30,000 을 적용한다.
+   *
+   * 전표와 다리는 뒤선 쪽 값으로 맞게 남는데 통장 잔액만 10,000 어긋난다. 오류가 나지
+   * 않아 알아챌 수도 없다. 잔액은 다리 합계의 캐시라 한 번 어긋나면 스스로 맞지 않는다.
+   *
+   * 잠금 자체와 그 규칙은 `common/ledger-lock.ts` 가 갖는다. 숨기기의 선행조건을 보는
+   * 통장·카드·구성원·분류도 같은 이름을 잡아야 하기 때문이다 -- **만드는 쪽이 잡지
+   * 않으면 확인하는 쪽만 잡아 봐야 소용이 없다.** 그래서 전표를 만드는 길
+   * (`createEntry`)도 잡는다. 스스로 읽고 고칠 것은 없지만, 그 쓰기가 남의 선행조건을
+   * 깨기 때문이다.
+   */
+  private async lockLedger(tx: Tx, projectId: string): Promise<void> {
+    await lockLedgerWrites(tx, projectId);
   }
 
   // ───────────────────────────────────────────
@@ -839,11 +914,12 @@ export class LedgerService {
      * 자문 잠금은 프로젝트 단위로 잡는다. 계좌 단위로 잡으면 그 프로젝트의
      * 자본 계정을 처음 만드는 순간이 서로 겹쳐 자본 계정이 두 벌 생긴다.
      * 트랜잭션이 끝나면 커밋이든 롤백이든 자동으로 풀린다.
+     *
+     * **전표 수정·삭제와 같은 이름을 쓴다** (`lockLedger`). 아래에서 읽는 "나머지 거래의
+     * 합"은 그 사이 누가 같은 계좌의 거래를 고치면 어긋나므로, 그쪽과도 줄을 서야 한다.
      */
     return this.prisma.$transaction(async (tx) => {
-      // $queryRaw는 void 반환값을 역직렬화하지 못한다. 결과가 필요 없으므로
-      // $executeRaw로 부른다.
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`opening-balance:${input.projectId}`}))`;
+      await this.lockLedger(tx, input.projectId);
 
       const existing = await this.findOpeningEntry(tx, input.projectId, input.accountId);
 

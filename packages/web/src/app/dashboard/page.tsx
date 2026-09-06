@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@money/core/store/auth';
 import { useUserFilter } from '@money/core/store/user-filter';
 import {
+  useCanEdit,
   useMyPersonId,
   useProject,
   useProjectDisplayCurrency,
@@ -85,6 +86,8 @@ type ViewType = 'calendar' | 'budget' | 'payment-method';
 
 export default function TransactionsPage() {
   const { t } = useTranslation();
+  /** 읽기 전용 구성원에게는 쓰기 단추를 그리지 않는다. */
+  const canEdit = useCanEdit();
   const { messageOf } = useApiError();
   const { isAuthenticated, user, defaultProjectData } = useAuth();
   const { selectedPersonIds, togglePersonId } = useUserFilter();
@@ -730,13 +733,18 @@ export default function TransactionsPage() {
           />
         }
         action={
-          /* 거래 추가는 어느 탭에서든 쓸 수 있어야 한다 */
-          <button
-            onClick={handleAddClick}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition whitespace-nowrap"
-          >
-            {t('ledger.addEntry')}
-          </button>
+          /*
+            거래 추가는 어느 탭에서든 쓸 수 있어야 한다.
+            읽기 전용 구성원에게는 그리지 않는다 -- 서버가 어차피 거절한다.
+          */
+          canEdit ? (
+            <button
+              onClick={handleAddClick}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition whitespace-nowrap"
+            >
+              {t('ledger.addEntry')}
+            </button>
+          ) : null
         }
       />
 

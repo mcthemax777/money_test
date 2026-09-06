@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   NotFoundException,
   UnauthorizedException,
@@ -26,6 +27,16 @@ export function badRequest(code: ErrorCode, message: string, details?: ErrorDeta
 
 export function notFound(code: ErrorCode, message: string, details?: ErrorDetails) {
   return new NotFoundException(payload(code, message, details));
+}
+
+/**
+ * 요청 자체는 옳지만 지금 상태와 어긋난다. 다시 읽고 다시 하면 될 수 있다.
+ *
+ * 400 과 가르는 기준은 "다시 해 볼 여지가 있는가"다. 잘못 적은 금액은 다시 보내도
+ * 같은 답이지만, 그 사이 남이 고친 거래는 최신 값을 받아 고치면 저장된다.
+ */
+export function conflict(code: ErrorCode, message: string, details?: ErrorDetails) {
+  return new ConflictException(payload(code, message, details));
 }
 
 export function forbidden(code: ErrorCode, message: string, details?: ErrorDetails) {

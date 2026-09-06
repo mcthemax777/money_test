@@ -6,7 +6,7 @@ import { useLedgerData } from '@money/core/hooks/useLedgerData';
 import { currentYearMonth } from '@money/core/lib/datetime';
 import { sumEntries } from '@money/core/lib/entries';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
-import { useProject, useProjectTimeZone } from '@money/core/store/project';
+import { useCanEdit, useProject, useProjectTimeZone } from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
 
 import CategoryBreakdown from '../components/CategoryBreakdown';
@@ -41,6 +41,7 @@ export default function LedgerScreen() {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
   const selectedProjectId = useProject((state) => state.selectedProjectId);
+  const canEdit = useCanEdit();
   const togglePersonId = useUserFilter((state) => state.togglePersonId);
 
   const { year: thisYear, month: thisMonth } = currentYearMonth(timeZone);
@@ -115,16 +116,21 @@ export default function LedgerScreen() {
       {/*
         거래 추가. 목록 위에 둔다.
         아래에 띄우는 버튼(FAB)은 하단 탭과 겹치고, 목록이 길면 스크롤을 가린다.
+
+        읽기 전용 구성원에게는 그리지 않는다. 서버가 어차피 거절하지만, 이 앱은 사본에
+        먼저 커밋하므로 그때까지는 저장된 것처럼 보인다 -- 헛일을 시키지 않는다.
       */}
-      <Pressable
-        onPress={() => {
-          setNotice('');
-          setEditor({ isOpen: true, editing: null });
-        }}
-        className="items-center rounded-lg bg-blue-600 px-4 py-3 active:bg-blue-700"
-      >
-        <Text className="text-base font-semibold text-white">{t('entryForm.addButton')}</Text>
-      </Pressable>
+      {canEdit ? (
+        <Pressable
+          onPress={() => {
+            setNotice('');
+            setEditor({ isOpen: true, editing: null });
+          }}
+          className="items-center rounded-lg bg-blue-600 px-4 py-3 active:bg-blue-700"
+        >
+          <Text className="text-base font-semibold text-white">{t('entryForm.addButton')}</Text>
+        </Pressable>
+      ) : null}
 
       <MonthHeader
         year={view.year}
@@ -214,10 +220,18 @@ export default function LedgerScreen() {
             ) : (
               <TransactionListView
                 entries={selectedDate ? dayEntries : ledger.entries}
-                onEntryClick={(entry) => {
-                  setNotice('');
-                  setEditor({ isOpen: true, editing: entry });
-                }}
+                /*
+                 * 읽기 전용 구성원에게는 고치기 팝업을 열지 않는다. 누름 자체를 막는
+                 * 것이라 목록은 그대로 읽을 수 있다.
+                 */
+                onEntryClick={
+                  canEdit
+                    ? (entry) => {
+                        setNotice('');
+                        setEditor({ isOpen: true, editing: entry });
+                      }
+                    : undefined
+                }
               />
             )}
           </>

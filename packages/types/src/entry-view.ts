@@ -46,6 +46,14 @@ export interface ViewEntry {
   originalCurrency: string | null;
   originalAmount: DecInput | null;
   rateProvisional: boolean;
+  /**
+   * 이 전표를 마지막으로 고친 편집의 시계.
+   *
+   * 목록 한 줄에 실어 보내면 수정 폼이 그것을 들고 있다가 저장할 때 되돌려 준다.
+   * 서버는 그 사이 다른 사람이 고쳤는지를 그 값으로 안다 (`EntryListItem.updatedHlc`).
+   * 아직 시계가 없는 옛 전표와, 시계를 읽지 않는 가벼운 조회는 비워 둔다.
+   */
+  updatedHlc?: string | null;
   postings: ViewPosting[];
   /**
    * 이 전표에 붙은 태그. 서버는 조인 표를 펴서, 기기는 사본의 `entry_tag` 를 읽어 넣는다.
@@ -221,6 +229,8 @@ export function toListItem(
      */
     toAmount: kind === 'transfer' && incoming ? Dec.of(incoming.amount).toString() : null,
     toCurrency: kind === 'transfer' && incoming ? incoming.currency : null,
+    // 수정 폼이 들고 있다가 저장할 때 되돌려 주는 값. 그 사이의 편집을 서버가 알아챈다.
+    updatedHlc: entry.updatedHlc ?? null,
   };
 }
 

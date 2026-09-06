@@ -106,6 +106,14 @@ export interface EntryFormValues {
    * 딸린 거래인가"라, 여행에는 항공권 지출과 환불 수입이 함께 든다.
    */
   tagIds: string[];
+  /**
+   * 이 폼이 딛고 선 판. 고칠 거래를 열 때 받은 시계이고, 새로 적는 중이면 null 이다.
+   *
+   * 저장할 때 그대로 되돌려 준다(`EntryDto.UpdateRequest.baseHlc`). 폼을 열어 둔 사이에
+   * 다른 사람이 같은 거래를 고쳤으면 서버가 그 값으로 알아채고 저장을 거절한다 --
+   * 그러지 않으면 그 사람의 편집이 아무 말 없이 사라진다 (설계 문서의 D6).
+   */
+  baseHlc: string | null;
 }
 
 export interface EntryFormDefaults {
@@ -135,6 +143,8 @@ export function emptyEntryForm({ personId = '', timeZone, now }: EntryFormDefaul
     cardId: '',
     cardDirection: 'payment',
     tagIds: [],
+    // 새로 적는 중이라 딛고 설 판이 없다. 만들기는 겹칠 대상 자체가 없다.
+    baseHlc: null,
     ...(now ? { dateKey: dateKeyOf(now, timeZone), timeKey: timeInputOf(now, timeZone) } : {}),
   };
 }
@@ -169,6 +179,8 @@ export function entryFormFromItem(
   return {
     kind: item.kind,
     personId: item.personId,
+    // 이 줄을 본 시점의 판. 저장할 때 그대로 되돌려 주어 그 사이의 편집을 알아채게 한다.
+    baseHlc: item.updatedHlc,
     dateKey: dateKeyOf(item.date, timeZone),
     timeKey: timeInputOf(item.date, timeZone),
     description: item.description,

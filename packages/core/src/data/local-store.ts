@@ -17,6 +17,7 @@ import {
   type CardDto,
   type CategoryDto,
   type EntryTag,
+  type EntryTagsPayload,
   type TagDto,
   Dec,
   type PersonDto,
@@ -41,6 +42,7 @@ import {
   hlcReceive,
   FIRST_RANK,
   isDeferred,
+  isSettingMutation,
   isSettled,
   latestFieldClock,
   rankAfter,
@@ -127,6 +129,16 @@ export interface HeldMutation extends Mutation {
   status: 'conflict' | 'rejected' | 'blocked';
   error: string | null;
   createdAt: string;
+  /**
+   * 이 명령이 고치려던 거래가 사본에서 사라졌는가.
+   *
+   * 그 사이 다른 사람이 지웠다는 뜻이다. 다시 보내 봐야 영영 거절되므로(삭제가 언제나
+   * 이긴다) 화면은 그때 **새 거래로 다시 적기**를 내놓는다. 그러지 않으면 오프라인에서
+   * 적은 내용을 버리는 길밖에 없다.
+   *
+   * 전표를 고치는 명령에만 뜻이 있다. 나머지는 언제나 false 다.
+   */
+  targetMissing: boolean;
 }
 
 /** 주기별 사용액이 보는 다리 하나. */
@@ -233,6 +245,22 @@ export type SettingTable =
   | 'tag'
   | 'budget'
   | 'budget_override';
+
+/**
+ * 이 명령이 건드리는 사본의 표. 전표 명령이면 null 이다.
+ *
+ * 한 자리에 둔 이유가 있다. 명령을 쌓는 쪽과 막힌 명령을 다시 내는 쪽이 **같은 표의
+ * 시계**를 봐야 하는데, 두 곳이 따로 알고 있으면 한쪽만 고쳐 놓고 맞다고 믿게 된다.
+ * 실제로 그랬다 -- 다시 내는 쪽이 전표 표만 보아서, 통장 이름의 충돌은 몇 번을 눌러도
+ * 다시 밀렸다.
+ */
+export function settingTableOf(kind: MutationKind): SettingTable | null {
+  if (!isSettingMutation(kind)) return null;
+
+  // 명령 이름이 곧 표 이름이다. 예산 조정만 (예산, 년, 월) 키라 표가 따로 있다.
+  if (kind === 'budget.override') return 'budget_override';
+  return kind.split('.')[0] as SettingTable;
+}
 
 export class LocalStore {
   constructor(private readonly db: SqlDriver) {}
@@ -722,6 +750,16 @@ export class LocalStore {
           await this.db.run(`DELETE FROM asset_valuation WHERE accountId = ?`, [
             tombstone.entityId,
           ]);
+        }
+        if (table === 'tag') {
+          /*
+           * 태그가 사라지면 그 태그를 가리키던 연결도 사라진다 (서버도 cascade 로 지운다).
+           *
+           * 남겨 두면 없는 태그를 가리키는 줄이 사본에 쌓인다. 화면에는 드러나지 않지만
+           * (태그를 읽는 질의가 내부 조인이라 걸러진다), 나중에 그 id 로 별칭이 옮겨 오면
+           * 엉뚱한 태그가 붙은 것처럼 보인다.
+           */
+          await this.db.run(`DELETE FROM entry_tag WHERE tagId = ?`, [tombstone.entityId]);
         }
       }
 
@@ -1318,6 +1356,8 @@ export class LocalStore {
       originalCurrency: asText(entry.originalCurrency),
       originalAmount: asText(entry.originalAmount),
       rateProvisional: Boolean(entry.rateProvisional),
+      // 목록 한 줄에 실린다. 서버 창구를 쓰는 화면이 수정할 때 이 값을 되돌려 준다.
+      updatedHlc: asText(entry.updatedHlc),
       postings: byEntry.get(String(entry.id)) ?? [],
       tags: tagsByEntry.get(String(entry.id)) ?? [],
     }));
@@ -2049,12 +2089,34 @@ export class LocalStore {
       [projectId],
     );
     const clientId = await this.clientId();
-    return rows.map((row) => ({
-      ...toMutation(row, clientId),
-      status: String(row.status) as HeldMutation['status'],
-      error: asText(row.error),
-      createdAt: String(row.createdAt),
-    }));
+
+    return Promise.all(
+      rows.map(async (row) => {
+        const mutation = toMutation(row, clientId);
+        return {
+          ...mutation,
+          status: String(row.status) as HeldMutation['status'],
+          error: asText(row.error),
+          createdAt: String(row.createdAt),
+          /*
+           * 고치려던 거래가 아직 있는가. 없으면 다시 보내도 영영 거절된다.
+           *
+           * 사본을 보고 판단한다. 삭제는 자리표로 오고 그때 사본에서 그 줄이 사라지므로,
+           * 여기서 없다는 것은 곧 "그 사이 누가 지웠다"는 뜻이다.
+           */
+          targetMissing:
+            mutation.kind === 'entry.replace' && mutation.targets.length > 0
+              ? (await this.entryExists(mutation.targets[0])) === false
+              : false,
+        };
+      }),
+    );
+  }
+
+  /** 이 전표가 사본에 있는가. 보류 칸이 "대상이 사라졌다"를 판단할 때 쓴다. */
+  async entryExists(entryId: string): Promise<boolean> {
+    const rows = await this.db.all<Row>(`SELECT 1 AS present FROM entry WHERE id = ?`, [entryId]);
+    return rows.length > 0;
   }
 
   /** 큐에서 뺀다. 사용자가 "그만두겠다"를 고른 자리다. */
@@ -2087,13 +2149,8 @@ export class LocalStore {
       const targets = JSON.parse(String(row.targets)) as string[];
       const payload = JSON.parse(String(row.payload)) as unknown;
 
-      /*
-       * 사본에 남아 있는 그 거래의 시계를 본다.
-       *
-       * 충돌이었다면 그 사이에 이긴 편집이 pull 로 들어와 있다. 그것을 보고 뒤 번호를
-       * 받아야 이번 명령이 이긴다. 거래가 이미 사라졌으면(삭제가 이겼다) 없는 대로 둔다.
-       */
-      const observed = targets.length > 0 ? await this.entryHlc(targets[0]) : null;
+      const kind = String(row.kind) as MutationKind;
+      const observed = await this.observedClock(kind, targets, payload);
 
       await this.db.run(`DELETE FROM outbox WHERE mutationId = ?`, [mutationId]);
 
@@ -2101,7 +2158,7 @@ export class LocalStore {
         {
           projectId: String(row.projectId),
           mutationId: makeId(),
-          kind: String(row.kind) as MutationKind,
+          kind,
           targets,
           payload,
           observed,
@@ -2109,6 +2166,40 @@ export class LocalStore {
         Date.now(),
       );
     });
+  }
+
+  /**
+   * 이 명령이 딛고 서야 할 시계. 사본에 지금 들어 있는 값을 본다.
+   *
+   * 충돌이었다면 그 사이에 이긴 편집이 pull 로 들어와 있다. 그것을 보고 뒤 번호를
+   * 받아야 이번 명령이 이긴다 -- 사용자가 "그래도 내 값으로 하겠다"를 고른 자리다 (D6).
+   *
+   * **대상마다 시계가 사는 곳이 다르다.** 전표는 자기 칸(`updatedHlc`)에, 자산·분류·
+   * 태그·예산은 필드별 지도(`fieldHlc`)에 있다. 전표 칸만 보면 자산 쪽은 언제나
+   * 빈손이라 기기의 물리 시계로만 번호가 매겨지고, 서버의 지도가 앞서 있으면 다시
+   * 밀린다 -- 몇 번을 눌러도 자기 값이 들어가지 않는다.
+   *
+   * 사본에 대상이 없으면(삭제가 이겼다) 없는 대로 둔다.
+   */
+  private async observedClock(
+    kind: MutationKind,
+    targets: readonly string[],
+    payload: unknown,
+  ): Promise<string | null> {
+    const table = settingTableOf(kind);
+    if (table) return targets.length > 0 ? this.assetClock(table, targets[0]) : null;
+
+    /*
+     * 태그 표시는 여러 전표를 한 번에 건드린다. 그중 가장 늦은 시계 뒤로 가야 어느
+     * 전표에서도 밀리지 않는다. 대상 목록에는 태그 id 도 섞여 있어 짐에서 읽는다
+     * (쌓을 때와 같은 값이다).
+     */
+    if (kind === 'entry.tags') {
+      const entryIds = (payload as EntryTagsPayload | null)?.entryIds ?? [];
+      return this.latestEntryHlc(entryIds);
+    }
+
+    return targets.length > 0 ? this.entryHlc(targets[0]) : null;
   }
 
   /**

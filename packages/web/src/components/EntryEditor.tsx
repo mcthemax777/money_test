@@ -3,6 +3,7 @@
 import { forwardRef, useImperativeHandle, useMemo, useState } from 'react';
 import { useUserFilter } from '@money/core/store/user-filter';
 import {
+  useCanEdit,
   useMyPersonId,
   useProjectDisplayCurrency,
   useProjectLedgerCurrency,
@@ -210,6 +211,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 ) {
   const { t } = useTranslation();
   const { messageOf } = useApiError();
+  /** 읽기 전용 구성원에게는 쓰기 단추를 그리지 않는다. */
+  const canEdit = useCanEdit();
   const { setPeople: setStorePeople } = useUserFilter();
   // 날짜 입력과 표시는 브라우저 로컬이 아니라 프로젝트 기준 타임존으로 해석한다.
   const timeZone = useProjectTimeZone();
@@ -225,6 +228,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  /**
+   * 고칠 거래를 열 때 본 시계. 새로 적는 중이면 null 이다.
+   *
+   * 저장할 때 그대로 되돌려 준다. 팝업을 열어 둔 사이에 다른 사람이 같은 거래를 고쳤으면
+   * 서버가 이 값으로 알아채고 거절한다 -- 그러지 않으면 늦게 누른 쪽이 조용히 이기고,
+   * 진 편집은 아무 흔적도 남기지 않는다 (설계 문서의 D6).
+   */
+  const [baseHlc, setBaseHlc] = useState<string | null>(null);
   /*
    * 태그 목록. 계좌·분류와 달리 prop 으로 받지 않고 여기서 읽는다.
    *
@@ -690,7 +701,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       }
 
       if (editingId) {
-        await apiClient.updateEntry(editingId, payload);
+        // 팝업을 열 때 본 판을 함께 보낸다. 그 사이의 편집을 서버가 알아채는 근거다.
+        await apiClient.updateEntry(editingId, { ...payload, baseHlc });
       } else {
         await apiClient.createEntry({ ...payload, projectId: projectId });
       }
@@ -698,10 +710,18 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       await onEntryChange();
       setFormData(emptyEntryForm(timeZone, ledgerCurrency));
       setEditingId(null);
+      setBaseHlc(null);
       setError('');
       setIsModalOpen(false);
     } catch (err) {
-      setError(t(editingId ? 'editor.editFailed' : 'editor.addFailed'));
+      /*
+       * 서버가 코드로 말한 이유를 그대로 보여 준다.
+       *
+       * "수정에 실패했습니다" 하나로 덮으면 무엇을 해야 할지 알 수 없다. 특히 다른
+       * 사람이 먼저 고친 경우(`ENTRY_MODIFIED`)에는 다시 눌러도 소용이 없고, 목록을
+       * 다시 읽어 그 위에서 고쳐야 한다.
+       */
+      setError(messageOf(err, editingId ? 'editor.editFailed' : 'editor.addFailed'));
     } finally {
       setIsSubmitting(false);
     }
@@ -718,6 +738,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
    */
   const handleAddClick = () => {
     setEditingId(null);
+    setBaseHlc(null);
     setError('');
     setFormData((prev) => ({
       ...emptyEntryForm(timeZone, ledgerCurrency),
@@ -732,6 +753,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     setIsModalOpen(false);
     setFormData(emptyEntryForm(timeZone, ledgerCurrency));
     setEditingId(null);
+    setBaseHlc(null);
     setError('');
   };
 
@@ -779,6 +801,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     }
 
     setEditingId(entry.id);
+    // 이 줄을 본 시점의 판. 저장할 때 되돌려 주어 그 사이의 편집을 알아채게 한다.
+    setBaseHlc(entry.updatedHlc);
     const category = splitCategory(entry.categoryId);
     const fee = splitCategory(entry.feeCategoryId);
 
@@ -1886,7 +1910,11 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         onClose={() => setIsDetailModalOpen(false)}
         title={t('editor.detailTitle')}
         footer={
-          selectedTransaction ? (
+          /*
+            읽기 전용 구성원에게는 아래 단추가 없다. 상세는 그대로 읽을 수 있고,
+            고치기와 지우기만 사라진다.
+          */
+          selectedTransaction && canEdit ? (
             <div className="flex gap-2">
               {/*
                 카드대금 결제와 잔액 조정은 이 폼으로 만들 수 없는 종류다.

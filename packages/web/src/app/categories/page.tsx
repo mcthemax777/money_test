@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useAuth } from '@money/core/store/auth';
-import { useProject } from '@money/core/store/project';
+import { useCanEdit, useProject } from '@money/core/store/project';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import {
   NO_SUB_CATEGORIES,
@@ -48,6 +48,8 @@ const TYPE_PANELS: Array<{
 
 export default function CategoriesPage() {
   const { t } = useTranslation();
+  /** 읽기 전용 구성원에게는 쓰기 단추를 그리지 않는다. */
+  const canEdit = useCanEdit();
   const { loadUser } = useAuth();
   const { selectedProjectId } = useProject();
   const manager = useCategoryManager(selectedProjectId);
@@ -262,7 +264,8 @@ export default function CategoriesPage() {
         onClose={() => setIsDetailModalOpen(false)}
         title={t('categories.detail')}
         footer={
-          selectedCategory ? (
+          /* 읽기 전용 구성원에게는 손댈 단추가 없다. 상세는 그대로 읽힌다. */
+          selectedCategory && canEdit ? (
             <div className="flex gap-2">
               <button
                 onClick={handleDetailEditClick}

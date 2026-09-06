@@ -70,7 +70,12 @@ export const en: Record<MessageKey, string> = {
   'outbox.sending': 'Sending...',
   'outbox.retry': 'Try again',
   'outbox.discard': 'Discard',
+  'outbox.reissue': 'Save as a new entry',
+  'outbox.reissueHint': 'Another device deleted this entry. You can keep what you wrote as a new entry.',
   'outbox.discardHint': 'Discarding removes what you wrote on this device.',
+  'project.accessLost.title': 'You no longer have access to this ledger',
+  'project.accessLost.body':
+    'You were removed, or the ledger was deleted. The copy on this device has been erased.',
   'settings.language.title': 'Language',
   'settings.language.description':
     'Choose the language of this app. The choice is saved to your account, so it follows you to other devices.',
@@ -891,6 +896,7 @@ export const en: Record<MessageKey, string> = {
   'error.CANNOT_KICK_OWNER': 'The owner cannot be removed.',
   'error.CANNOT_KICK_SELF': 'You cannot remove yourself. Leave the project instead.',
   'error.ENTRY_NOT_FOUND': 'The entry no longer exists.',
+  'error.ENTRY_MODIFIED': 'Someone else changed this entry first. Reload the list and edit again.',
   'error.CARD_NOT_FOUND': 'The card no longer exists.',
   'error.INSTALLMENT_CREDIT_ONLY': 'Installments apply only to credit card spending.',
   'error.TRANSFER_SAME_ACCOUNT': 'The source and destination accounts are the same.',

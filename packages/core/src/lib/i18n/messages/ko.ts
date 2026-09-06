@@ -80,7 +80,12 @@ export const ko = {
   'outbox.sending': '보내는 중...',
   'outbox.retry': '다시 보내기',
   'outbox.discard': '버리기',
+  'outbox.reissue': '새 거래로 다시 적기',
+  'outbox.reissueHint': '이 거래는 다른 기기에서 지워졌습니다. 적어 둔 내용을 새 거래로 남길 수 있습니다.',
   'outbox.discardHint': '버리면 이 기기에서 적은 내용이 사라집니다.',
+  'project.accessLost.title': '이 가계부에 더 들어갈 수 없습니다',
+  'project.accessLost.body':
+    '내보내졌거나 가계부가 지워졌습니다. 이 기기에 두었던 사본은 지웠습니다.',
   'settings.language.title': '언어',
   'settings.language.description':
     '화면에 쓰는 말을 고릅니다. 계정에 저장되므로 다른 기기에서도 그대로 이어집니다.',
@@ -915,6 +920,7 @@ export const ko = {
   'error.CANNOT_KICK_OWNER': '소유자는 내보낼 수 없습니다.',
   'error.CANNOT_KICK_SELF': '본인은 내보낼 수 없습니다. 프로젝트 탈퇴를 쓰세요.',
   'error.ENTRY_NOT_FOUND': '거래를 찾을 수 없습니다.',
+  'error.ENTRY_MODIFIED': '다른 사람이 이 거래를 먼저 고쳤습니다. 목록을 다시 읽고 고쳐 주세요.',
   'error.CARD_NOT_FOUND': '카드를 찾을 수 없습니다.',
   'error.INSTALLMENT_CREDIT_ONLY': '할부는 신용카드 지출에만 설정할 수 있습니다.',
   'error.TRANSFER_SAME_ACCOUNT': '보내는 계좌와 받는 계좌가 같습니다.',

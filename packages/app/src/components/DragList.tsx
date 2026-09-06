@@ -15,6 +15,7 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { PanResponder, Pressable, View } from 'react-native';
+import { useCanEdit } from '@money/core/store/project';
 import { useScrollControl } from '../shell/scroll';
 import Animated, {
   LinearTransition,
@@ -67,6 +68,15 @@ export default function DragList<T extends { id: string }>({
   itemClassName,
   disabled = false,
 }: DragListProps<T>) {
+  /*
+   * 읽기 전용 구성원은 끌지도, 줄을 눌러 고치지도 못한다.
+   *
+   * 여기서 한 번 막으면 자산·분류·태그의 목록이 모두 함께 잠긴다 -- 목록은 그대로
+   * 읽히고 손댈 수 있는 것만 사라진다. 화면마다 같은 검사를 두지 않는 자리다.
+   */
+  const canEdit = useCanEdit();
+  const locked = disabled || !canEdit;
+  const pressItem = canEdit ? onPressItem : undefined;
   /*
    * 화면에 그리는 차례.
    *
@@ -272,7 +282,7 @@ export default function DragList<T extends { id: string }>({
           key={item.id}
           id={item.id}
           isDragging={draggingId === item.id}
-          disabled={disabled || items.length < 2}
+          disabled={locked || items.length < 2}
           activeId={activeId}
           dragY={dragY}
           lift={lift}
@@ -281,7 +291,7 @@ export default function DragList<T extends { id: string }>({
           onStart={start}
           onMove={move}
           onEnd={end}
-          onPress={onPressItem ? () => onPressItem(item) : undefined}
+          onPress={pressItem ? () => pressItem(item) : undefined}
         >
           {renderItem(item, { isDragging: draggingId === item.id })}
         </DragRow>

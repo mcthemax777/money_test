@@ -9,6 +9,7 @@ import {
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { stampFieldClocks } from '@/common/field-clock';
+import { lockLedgerWrites } from '@/common/ledger-lock';
 import { ServerClockService } from '@/common/server-clock';
 import { clientId, rejectDuplicateId } from '@/common/client-id';
 import { InstitutionsService } from '../institutions/institutions.service';
@@ -309,12 +310,27 @@ export class CardsService {
     if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId, 'editor');
 
-    if (card.liabilityAccount && !card.liabilityAccount.balance.isZero()) {
-      throw badRequest('CARD_HAS_UNPAID', '갚지 않은 카드 사용액이 남아 있어 숨길 수 없습니다.');
-    }
-
     return this.prisma.$transaction(async (tx) => {
+      /*
+       * 미결제액 확인과 숨기기를 한 트랜잭션에 넣고, 먼저 원장 쓰기를 줄 세운다.
+       *
+       * 밖에서 읽으면 0원을 본 뒤 숨기기 전에 그 카드로 결제가 하나 들어올 수 있다.
+       * 그러면 갚지 않은 사용액이 남은 카드가 목록에서 사라진다.
+       */
+      await lockLedgerWrites(tx, card.projectId);
+
       if (card.liabilityAccountId) {
+        const liability = await tx.account.findUniqueOrThrow({
+          where: { id: card.liabilityAccountId },
+          select: { balance: true },
+        });
+        if (!liability.balance.isZero()) {
+          throw badRequest(
+            'CARD_HAS_UNPAID',
+            '갚지 않은 카드 사용액이 남아 있어 숨길 수 없습니다.',
+          );
+        }
+
         await tx.account.update({
           where: { id: card.liabilityAccountId },
           data: { isActive: false },

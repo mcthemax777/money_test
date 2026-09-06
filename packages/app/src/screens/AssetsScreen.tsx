@@ -6,7 +6,7 @@ import { accountTypeLabel } from '@money/core/lib/account-type';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import type { Account, Card, Person } from '@money/core/lib/types';
-import { useProject, useProjectDisplayCurrency } from '@money/core/store/project';
+import { useCanEdit, useProject, useProjectDisplayCurrency } from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
 
 import AddButton from '../components/AddButton';
@@ -30,6 +30,7 @@ export default function AssetsScreen() {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
   const selectedProjectId = useProject((state) => state.selectedProjectId);
+  const canEdit = useCanEdit();
   const togglePersonId = useUserFilter((state) => state.togglePersonId);
 
   const assets = useAssetsData(selectedProjectId);
@@ -102,8 +103,14 @@ export default function AssetsScreen() {
 
             return (
               <>
-                {/* 이름을 누르면 고친다. 자산 화면에서 가장 잦은 손질이 이름과 자리다. */}
-                <Pressable className="mb-6" onPress={() => setPersonEdit(person)}>
+                {/*
+                  이름을 누르면 고친다. 자산 화면에서 가장 잦은 손질이 이름과 자리다.
+                  읽기 전용 구성원에게는 누름을 주지 않는다 (목록은 그대로 읽힌다).
+                */}
+                <Pressable
+                  className="mb-6"
+                  onPress={canEdit ? () => setPersonEdit(person) : undefined}
+                >
                   <Text className="text-xl font-bold text-gray-900">{person.name}</Text>
                   <Text className="text-sm text-gray-600">
                     {t('assets.personSubtotal', {
@@ -251,13 +258,14 @@ function AccountRow({
   onReorderCards: (id: string, toIndex: number) => void;
 }) {
   const { t } = useTranslation();
+  const canEdit = useCanEdit();
   const profitAmount = toNumber(profit);
 
   /* 겉 상자는 목록(DragList)이 씌운다. 여기서 또 씌우면 테두리가 두 겹이 된다. */
   return (
     <>
       {/* 이름 줄을 누르면 고친다. 잔액을 누르는 것과 헷갈리지 않게 이름 줄만 받는다. */}
-      <Pressable className="flex-row items-center gap-1.5" onPress={onEdit}>
+      <Pressable className="flex-row items-center gap-1.5" onPress={canEdit ? onEdit : undefined}>
         <Text className="text-sm text-gray-600">{account.name}</Text>
         <Text className="rounded bg-gray-100 px-1.5 py-px text-[11px] text-gray-600">
           {accountTypeLabel(account.type)}

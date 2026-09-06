@@ -2,6 +2,8 @@
 
 import { Plus } from 'lucide-react';
 
+import { useCanEdit } from '@money/core/store/project';
+
 /**
  * 목록 위에 놓는 "추가하기" 버튼.
  *
@@ -10,8 +12,14 @@ import { Plus } from 'lucide-react';
  * 곧바로 이어져 보이고, 목록이 길어져도 버튼을 찾아 내려갈 일이 없다.
  *
  * 자산·분류·태그 화면이 함께 쓴다. 세 곳에 따로 두면 모양이 조금씩 갈린다.
+ *
+ * 읽기 전용 구성원에게는 그리지 않는다. 여기서 한 번 막으면 구성원·통장·카드·분류·태그의
+ * 추가 버튼이 모두 함께 사라진다 -- 화면마다 같은 검사를 두지 않는 자리다.
  */
 export default function AddButton({ label, onClick }: { label: string; onClick: () => void }) {
+  const canEdit = useCanEdit();
+  if (!canEdit) return null;
+
   return (
     <button
       type="button"

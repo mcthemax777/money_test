@@ -15,8 +15,9 @@ import { fetch as streamingFetch } from 'expo/fetch';
 
 import { apiClient } from '@money/core/lib/api-client';
 import { getAccessToken } from '@money/core/lib/auth-tokens';
+import { apiErrorCode } from '@money/core/lib/api-error';
 import { setSettingsWritePort } from '@money/core/data/settings-write-port';
-import { setEntryWritePort } from '@money/core/data/entry-write-port';
+import { entryWritePort, setEntryWritePort } from '@money/core/data/entry-write-port';
 import { httpHomePort, setHomeDataPort } from '@money/core/data/home-port';
 import { createLocalSettingsWriter } from '@money/core/data/local-settings-writer';
 import { createLocalEntryWriter } from '@money/core/data/local-entry-writer';
@@ -30,7 +31,7 @@ import {
   type SyncEventsHandle,
 } from '@money/core/data/sync-events';
 import { syncProject, type SyncResult } from '@money/core/data/sync-engine';
-import { newId, type Mutation } from '@money/types';
+import { newId, type EntryDto, type EntryMutationPayload, type Mutation } from '@money/types';
 
 import { claimMirrorOwner, mirrorOwner } from './mirror-key';
 import { deleteLocalStore, openLocalStore } from './sqlite';
@@ -131,6 +132,60 @@ export async function retryMutation(mutationId: string): Promise<void> {
 }
 
 /**
+ * 고치려던 거래가 사라진 명령을 **새 거래로** 다시 낸다.
+ *
+ * 그 사이 다른 사람이 지웠다는 뜻이고, 삭제는 언제나 이기므로(D5) 다시 보내도 영영
+ * 거절된다. 지금까지는 버리는 길밖에 없어 오프라인에서 적은 내용이 사라졌다.
+ *
+ * 되살리지 않고 **새로 적는다.** 지운 사람의 뜻을 뒤집지 않으면서, 적은 내용을 잃지도
+ * 않는 자리다. 고르는 것은 사람이다 -- 이 함수는 사용자가 그 버튼을 눌렀을 때만 돈다.
+ *
+ * 만들기를 먼저 하고 큐에서 뺀다. 그 사이에 앱이 죽으면 보류 칸에 한 줄이 남을 뿐이고,
+ * 순서를 뒤집으면 적은 내용이 사라진다.
+ */
+export async function reissueAsNewEntry(mutation: HeldMutation): Promise<void> {
+  if (!store) return;
+  if (mutation.kind !== 'entry.replace') return;
+
+  // 짐에서 옛 전표 id 만 뺀다. 나머지는 만들기 요청과 같은 모양이다.
+  const { id: _replaced, ...rest } = mutation.payload as EntryMutationPayload;
+  await entryWritePort().createEntry({
+    ...rest,
+    projectId: mutation.projectId,
+  } as unknown as EntryDto.CreateRequest);
+
+  await store.discardMutation(mutation.mutationId);
+}
+
+/**
+ * 이 프로젝트에 더 갈 수 없게 되었는가.
+ *
+ * 서버가 붙인 코드로만 판단한다. 맨 403 을 그렇게 보면 안 된다 -- **editor 에서 viewer
+ * 로 내려간 기기**도 명령을 올릴 때 403 을 받는데, 그쪽은 아직 구성원이라 사본을 지우면
+ * 볼 수 있는 것까지 잃고 아직 못 보낸 명령도 함께 사라진다.
+ */
+function isAccessLost(error: unknown): boolean {
+  const code = apiErrorCode(error);
+  return code === 'PROJECT_FORBIDDEN' || code === 'NOT_PROJECT_MEMBER';
+}
+
+/** 접근이 끊겼다는 것을 화면에 알리는 방법. 앱 껍데기가 등록한다. */
+type AccessLostHandler = (projectId: string) => void;
+
+let onAccessLost: AccessLostHandler | null = null;
+
+/**
+ * 접근이 끊겼을 때 부를 곳을 등록한다.
+ *
+ * 사본을 지우는 일은 여기서 하고, 사람에게 알리고 다른 프로젝트로 옮기는 일은 화면이
+ * 한다. 이 파일은 화면을 모른다 (사본을 버리는 방법을 core 가 아니라 앱이 등록하는
+ * 것과 같은 이유다).
+ */
+export function setAccessLostHandler(handler: AccessLostHandler | null): void {
+  onAccessLost = handler;
+}
+
+/**
  * 고른 프로젝트를 서버와 맞춘다.
  *
  * 프로젝트를 고른 뒤와 화면을 다시 열 때 부른다. 쌓인 명령을 먼저 밀어 올리고, 그다음
@@ -159,6 +214,30 @@ export function syncNow(projectId: string, timeZone: string): Promise<SyncResult
       if (result.changed) notifyMirrorChanged();
       return result;
     } catch (error) {
+      /*
+       * 이 프로젝트에 더 갈 수 없게 되었는가.
+       *
+       * 내보내졌거나, 탈퇴했거나, 프로젝트 자체가 지워진 경우다. 지금까지는 이것도
+       * 그냥 삼켜서, 기기에는 남의 가계부가 **최신인 것처럼** 남아 있었다. 오류가 나지
+       * 않으니 사용자는 며칠 지난 사본을 그대로 믿는다.
+       *
+       * 그래서 사본을 버리고 그 사실을 알린다. 아직 보내지 못한 명령도 함께 사라지는데,
+       * 어차피 그 프로젝트에는 쓸 수 없으므로 보낼 곳이 없다.
+       */
+      if (isAccessLost(error)) {
+        console.warn('이 프로젝트에 더 접근할 수 없습니다. 기기 사본을 버립니다.');
+        /*
+         * 버리는 일은 이 동기화가 끝난 뒤에 한다. **여기서 기다리면 안 된다** --
+         * `clearOffline` 은 돌고 있는 동기화가 끝나기를 기다리는데, 지금 돌고 있는 것이
+         * 바로 이 동기화라 서로를 기다리며 멈춘다.
+         */
+        void Promise.resolve().then(async () => {
+          await clearOffline();
+          onAccessLost?.(projectId);
+        });
+        return null;
+      }
+
       // 인증이 끊긴 경우이거나, 도는 동안 사본이 닫힌 경우다. 어느 쪽도 화면을 막지 않는다.
       console.error('동기화 실패:', error);
       return null;

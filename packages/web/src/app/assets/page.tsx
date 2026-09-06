@@ -37,6 +37,7 @@ const CARD_ADD_FORM_ID = 'card-add-form';
  */
 const SELECTED_MARK = 'ring-2 ring-blue-500';
 import {
+  useCanEdit,
   useMyPersonId,
   useProject,
   useProjectDisplayCurrency,
@@ -151,6 +152,8 @@ function NetWorthBreakdown({
 
 export default function DashboardPage() {
   const { t } = useTranslation();
+  /** 읽기 전용 구성원에게는 쓰기 단추를 그리지 않는다. */
+  const canEdit = useCanEdit();
   const { messageOf } = useApiError();
   const router = useRouter();
   const { setPeople: setStorePeople, selectedPersonIds, togglePersonId } = useUserFilter();
@@ -1027,6 +1030,8 @@ export default function DashboardPage() {
           onClose={() => setIsAccountDetailOpen(false)}
           title={t('account.detail')}
           footer={
+            /* 읽기 전용 구성원에게는 손댈 단추가 없다. 상세는 그대로 읽힌다. */
+            !canEdit ? null : (
             <div className="flex gap-2">
               {/*
                 계좌 밑에 만들 수 있는 것은 카드뿐이라 선택 팝업을 거치지 않는다.
@@ -1055,6 +1060,7 @@ export default function DashboardPage() {
                 {t('assets.hide')}
               </button>
             </div>
+            )
           }
         >
           <div className="space-y-4">
@@ -1127,6 +1133,8 @@ export default function DashboardPage() {
           onClose={() => setIsPersonDetailOpen(false)}
           title={t('person.detail')}
           footer={
+            /* 읽기 전용 구성원에게는 손댈 단추가 없다. 상세는 그대로 읽힌다. */
+            !canEdit ? null : (
             <div className="flex gap-2">
               {/*
                 이 사람 밑에 계좌를 바로 만든다. 카드는 계좌 밑에 붙으므로 여기서 고를 것이
@@ -1158,6 +1166,7 @@ export default function DashboardPage() {
                 {t('assets.hide')}
               </button>
             </div>
+            )
           }
         >
           <>
@@ -1185,6 +1194,8 @@ export default function DashboardPage() {
           onClose={() => setIsCardDetailOpen(false)}
           title={t('card.detail')}
           footer={
+            /* 읽기 전용 구성원에게는 손댈 단추가 없다. 상세는 그대로 읽힌다. */
+            !canEdit ? null : (
             <div className="flex gap-2">
               <button
                 onClick={handleEditCardClick}
@@ -1200,6 +1211,7 @@ export default function DashboardPage() {
                 {t('assets.hide')}
               </button>
             </div>
+            )
           }
         >
           <>

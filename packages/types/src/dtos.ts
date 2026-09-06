@@ -529,7 +529,19 @@ export namespace EntryDto {
   }
 
   /** 수정은 전체 교체다. 생성과 같은 형태를 보내면 서버가 전표를 갈아끼운다. */
-  export interface UpdateRequest extends Omit<CreateRequest, 'projectId'> {}
+  export interface UpdateRequest extends Omit<CreateRequest, 'projectId'> {
+    /**
+     * 이 수정이 딛고 선 판. 폼을 열 때 받은 `EntryListItem.updatedHlc` 를 그대로 되돌려 준다.
+     *
+     * 서버는 지금 값과 견주어 다르면 저장하지 않고 `ENTRY_MODIFIED` 로 거절한다. 폼을
+     * 열어 둔 사이에 다른 사람이 같은 거래를 고쳤다는 뜻이고, 그대로 저장하면 그 편집이
+     * 아무 흔적 없이 사라진다 (설계 문서의 D6).
+     *
+     * **생략하면 검사하지 않는다.** 옛 화면과, 시계가 없던 시절의 전표를 위해 남긴
+     * 자리다. 새 화면은 언제나 보낸다.
+     */
+    baseHlc?: string | null;
+  }
 
   /**
    * 여러 거래의 태그를 한 번에 바꾼다. 목록에서 여러 건을 골라 정리할 때 쓴다.

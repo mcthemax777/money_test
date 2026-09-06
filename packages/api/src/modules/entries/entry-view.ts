@@ -50,6 +50,13 @@ export type EntryWithPostings = {
   originalCurrency: string | null;
   originalAmount: Prisma.Decimal | null;
   rateProvisional: boolean;
+  /**
+   * 이 전표를 마지막으로 고친 편집의 시계.
+   *
+   * 목록 한 줄에 실려 나가고, 수정 요청이 그것을 `baseHlc` 로 되돌려 준다. 선택적으로
+   * 둔 것은 다리만 보는 가벼운 조회가 이 칸을 고르지 않기 때문이다.
+   */
+  updatedHlc?: string | null;
   postings: PostingWithRefs[];
   /**
    * 이 전표에 붙은 태그. `ENTRY_INCLUDE` 가 조인 행을 펴서 넣는다.

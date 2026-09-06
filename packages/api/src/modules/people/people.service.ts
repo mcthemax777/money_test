@@ -7,6 +7,7 @@ import { assertReorderIds } from '@/common/reorder';
 import { clientId, rejectDuplicateId } from '@/common/client-id';
 import { badRequest } from '@/common/app-error';
 import { stampFieldClocks } from '@/common/field-clock';
+import { lockLedgerWrites } from '@/common/ledger-lock';
 import { ServerClockService } from '@/common/server-clock';
 
 @Injectable()
@@ -152,19 +153,30 @@ export class PeopleService {
   async deactivatePerson(id: string, userId: string, hlc?: string) {
     const person = await this.getPersonById(id, userId, 'editor');
 
-    const accountCount = await this.prisma.account.count({
-      where: { ownerId: id, isActive: true },
-    });
-    if (accountCount > 0) {
-      throw badRequest('PERSON_HAS_ACCOUNTS', '이 사람이 주인인 통장이 있어서 숨길 수 없습니다.');
-    }
+    /*
+     * 확인과 숨기기를 한 트랜잭션에 넣고, 먼저 원장 쓰기를 줄 세운다 (`lockLedgerWrites`).
+     *
+     * 밖에서 세면 그 사이에 이 사람 앞으로 통장이 하나 생길 수 있고, 그러면 주인이
+     * 목록에서 사라진 통장이 남는다.
+     */
+    return this.prisma.$transaction(async (tx) => {
+      await lockLedgerWrites(tx, person.projectId);
 
-    return this.prisma.person.update({
-      where: { id },
-      data: {
-        isActive: false,
-        fieldHlc: stampFieldClocks(person.fieldHlc, ['isActive'], hlc ?? this.clock.now()),
-      },
+      const accountCount = await tx.account.count({
+        where: { ownerId: id, isActive: true },
+      });
+      if (accountCount > 0) {
+        throw badRequest('PERSON_HAS_ACCOUNTS', '이 사람이 주인인 통장이 있어서 숨길 수 없습니다.');
+      }
+
+      const fresh = await tx.person.findUniqueOrThrow({ where: { id } });
+      return tx.person.update({
+        where: { id },
+        data: {
+          isActive: false,
+          fieldHlc: stampFieldClocks(fresh.fieldHlc, ['isActive'], hlc ?? this.clock.now()),
+        },
+      });
     });
   }
 }

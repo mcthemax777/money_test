@@ -30,7 +30,7 @@ import type {
   SettingsWritePort,
   TagPatch,
 } from './settings-write-port';
-import type { LocalStore, SettingTable } from './local-store';
+import { settingTableOf, type LocalStore } from './local-store';
 import { notifyMirrorChanged } from './mirror-events';
 
 export interface LocalSettingsWriterOptions {
@@ -64,15 +64,21 @@ export function createLocalSettingsWriter({
    *
    * 명령을 먼저 넣는 이유. 시계를 그때 발급받아 사본의 그 줄에 같은 값을 찍어야, 다음
    * 편집이 이 값보다 뒤가 되고 서버가 판정한 결과와도 어긋나지 않는다.
+   *
+   * 어느 표에 쓰는지는 명령 이름에서 얻는다(`settingTableOf`). 부르는 쪽마다 적어 두면
+   * 막힌 명령을 다시 내는 쪽과 갈라질 수 있고, 갈라져도 아무 오류가 나지 않는다.
    */
   const commit = async (
     kind: MutationKind,
-    table: SettingTable,
     id: string,
     payload: Readonly<Record<string, unknown>>,
     row: Readonly<Record<string, unknown>>,
     extra?: { table: 'account'; id: string; row: Record<string, unknown> },
   ): Promise<void> => {
+    // 설정 명령만 이 함수로 온다. 표가 없다면 부르는 쪽이 전표 명령을 잘못 보낸 것이다.
+    const table = settingTableOf(kind);
+    if (!table) throw new Error(`설정 명령이 아닙니다: ${kind}`);
+
     const observed = await store.assetClock(table, id);
     const mutation = await store.enqueue({
       projectId,
@@ -97,7 +103,6 @@ export function createLocalSettingsWriter({
       const id = input.id ?? newId();
       await commit(
         'person.create',
-        'person',
         id,
         { name: input.name, relationship: input.relationship ?? null },
         { name: input.name, relationship: input.relationship ?? null, isActive: true },
@@ -106,14 +111,13 @@ export function createLocalSettingsWriter({
     },
 
     async updatePerson(id: string, patch: PersonPatch) {
-      await commit('person.update', 'person', id, { ...patch }, { ...patch });
+      await commit('person.update', id, { ...patch }, { ...patch });
     },
 
     async addAccount(input: AccountDto.CreateRequest) {
       const id = input.id ?? newId();
       await commit(
         'account.create',
-        'account',
         id,
         {
           name: input.name,
@@ -143,7 +147,7 @@ export function createLocalSettingsWriter({
     },
 
     async updateAccount(id: string, patch: AccountPatch) {
-      await commit('account.update', 'account', id, { ...patch }, { ...patch });
+      await commit('account.update', id, { ...patch }, { ...patch });
     },
 
     async addCard(input: CardDto.CreateRequest) {
@@ -155,7 +159,6 @@ export function createLocalSettingsWriter({
 
       await commit(
         'card.create',
-        'card',
         id,
         {
           liabilityAccountId,
@@ -207,14 +210,13 @@ export function createLocalSettingsWriter({
     },
 
     async updateCard(id: string, patch: CardPatch) {
-      await commit('card.update', 'card', id, { ...patch }, { ...patch });
+      await commit('card.update', id, { ...patch }, { ...patch });
     },
 
     async addCategory(input: CategoryDto.CreateRequest) {
       const id = input.id ?? newId();
       await commit(
         'category.create',
-        'category',
         id,
         {
           name: input.name,
@@ -235,14 +237,13 @@ export function createLocalSettingsWriter({
     },
 
     async updateCategory(id: string, patch: CategoryPatch) {
-      await commit('category.update', 'category', id, { ...patch }, { ...patch });
+      await commit('category.update', id, { ...patch }, { ...patch });
     },
 
     async addTag(input: TagDto.CreateRequest) {
       const id = input.id ?? newId();
       await commit(
         'tag.create',
-        'tag',
         id,
         { name: input.name, color: input.color ?? null },
         { name: input.name, color: input.color ?? null, isActive: true },
@@ -251,14 +252,13 @@ export function createLocalSettingsWriter({
     },
 
     async updateTag(id: string, patch: TagPatch) {
-      await commit('tag.update', 'tag', id, { ...patch }, { ...patch });
+      await commit('tag.update', id, { ...patch }, { ...patch });
     },
 
     async setBudget(input) {
       const id = input.id ?? newId();
       await commit(
         'budget.set',
-        'budget',
         id,
         {
           categoryId: input.categoryId ?? null,
@@ -280,7 +280,6 @@ export function createLocalSettingsWriter({
       const id = input.id ?? newId();
       await commit(
         'budget.override',
-        'budget_override',
         id,
         {
           budgetId: input.budgetId,

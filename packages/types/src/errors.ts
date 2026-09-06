@@ -63,6 +63,13 @@ export const ERROR_CODES = [
 
   // 거래
   'ENTRY_NOT_FOUND',
+  /**
+   * 폼을 열어 둔 사이에 다른 사람이 같은 거래를 고쳤다.
+   *
+   * 화면은 이 코드를 받으면 저장을 접고 최신 내용을 다시 읽어야 한다. 덮어쓰려면
+   * 그 최신 내용 위에서 다시 고치는 것이 사용자가 무엇을 지우는지 아는 유일한 길이다.
+   */
+  'ENTRY_MODIFIED',
   'CARD_NOT_FOUND',
   'INSTALLMENT_CREDIT_ONLY',
   'TRANSFER_SAME_ACCOUNT',
