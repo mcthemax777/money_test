@@ -242,6 +242,7 @@ model Person {
   isActive     Boolean @default(true)
   /// 화면 표시 순서 (분수 색인). 이웃 사이에 값을 끼워 넣어 한 줄만 고친다.
   /// 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
+  /// 비교는 바이트 순서다. 컬럼에 `COLLATE "C"` 를 박아 두었다 (20260907100000).
   sortRank     String  @default("V")
 
   project  Project         @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -312,6 +313,7 @@ model Account {
   isActive      Boolean     @default(true)
   /// 화면 표시 순서 (분수 색인). 이웃 사이에 값을 끼워 넣어 한 줄만 고친다.
   /// 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
+  /// 비교는 바이트 순서다. 컬럼에 `COLLATE "C"` 를 박아 두었다 (20260907100000).
   sortRank      String      @default("V")
 
   project          Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -390,6 +392,7 @@ model Category {
   isActive       Boolean      @default(true)
   /// 화면 표시 순서 (분수 색인). 같은 부모 안에서만 의미가 있다.
   /// 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
+  /// 비교는 바이트 순서다. 컬럼에 `COLLATE "C"` 를 박아 두었다 (20260907100000).
   sortRank       String       @default("V")
 
   project  Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -416,6 +419,7 @@ model Category {
   @@index([projectId, type, isActive])
   @@index([projectId, updatedVersion])
   @@index([parentId])
+  @@index([projectId, sortRank])
 }
 
 // ─────────────────────────────────────────────
@@ -439,6 +443,7 @@ model Tag {
   color     String?
   isActive  Boolean @default(true)
   /// 화면 표시 순서 (분수 색인). 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
+  /// 비교는 바이트 순서다. 컬럼에 `COLLATE "C"` 를 박아 두었다 (20260907100000).
   sortRank  String  @default("V")
 
   project Project    @relation(fields: [projectId], references: [id], onDelete: Cascade)
@@ -456,6 +461,7 @@ model Tag {
   @@unique([projectId, name])
   @@index([projectId, isActive])
   @@index([projectId, updatedVersion])
+  @@index([projectId, sortRank])
 }
 
 /// 전표에 붙은 태그.
@@ -512,6 +518,7 @@ model Card {
   isActive            Boolean   @default(true)
   /// 화면 표시 순서 (분수 색인). 이웃 사이에 값을 끼워 넣어 한 줄만 고친다.
   /// 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
+  /// 비교는 바이트 순서다. 컬럼에 `COLLATE "C"` 를 박아 두었다 (20260907100000).
   sortRank            String    @default("V")
 
   project          Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
