@@ -131,11 +131,11 @@ export const en: Record<MessageKey, string> = {
 
   // ===== Owner scope (doubles as the page title) =====
   'scopeTitle.none': '{noun} · no owner',
-  'scopeTitle.all': 'All {noun}',
+  'scopeTitle.all': "All users' {noun}",
   'scopeTitle.some': "{names}'s {noun}",
   'scopeTitle.many': '{noun} of {first} and {count} others',
   'scopeTitle.bare.none': 'No owner',
-  'scopeTitle.bare.all': 'Everyone',
+  'scopeTitle.bare.all': "All users'",
   'scopeTitle.bare.some': "{names}'s",
   'scopeTitle.bare.many': '{first} and {count} others',
   'scopeTitle.pick': 'Choose owners',

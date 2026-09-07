@@ -132,11 +132,11 @@ export const ja: Record<MessageKey, string> = {
 
   // ===== 資産の持ち主 =====
   'scopeTitle.none': '{noun}・持ち主なし',
-  'scopeTitle.all': 'すべての{noun}',
+  'scopeTitle.all': '全ユーザーの{noun}',
   'scopeTitle.some': '{names}さんの{noun}',
   'scopeTitle.many': '{first}さん他{count}名の{noun}',
   'scopeTitle.bare.none': '持ち主なし',
-  'scopeTitle.bare.all': 'すべての',
+  'scopeTitle.bare.all': '全ユーザーの',
   'scopeTitle.bare.some': '{names}さんの',
   'scopeTitle.bare.many': '{first}さん他{count}名の',
   'scopeTitle.pick': '持ち主を選ぶ',

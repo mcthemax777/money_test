@@ -146,11 +146,11 @@ export const ko = {
 
   // ===== 자산주인 고르기 (화면 제목을 겸한다) =====
   'scopeTitle.none': '{noun} · 자산주인 없음',
-  'scopeTitle.all': '전체 {noun}',
+  'scopeTitle.all': '전체 사용자의 {noun}',
   'scopeTitle.some': '{names}님의 {noun}',
   'scopeTitle.many': '{first} 외 {count}명의 {noun}',
   'scopeTitle.bare.none': '자산주인 없음',
-  'scopeTitle.bare.all': '전체의',
+  'scopeTitle.bare.all': '전체 사용자의',
   'scopeTitle.bare.some': '{names}님의',
   'scopeTitle.bare.many': '{first} 외 {count}명의',
   'scopeTitle.pick': '자산주인 선택',
