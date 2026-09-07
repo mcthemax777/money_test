@@ -477,7 +477,8 @@ export default function TransactionSearchModal({
 
                 **대분류를 고르면 그 소분류는 함께 걸린다** (서버 규칙). 그래서 대분류가
                 켜지면 소분류도 켜진 것으로 보이고, 그 상태에서 소분류 하나를 끄면 대분류가
-                내려가며 나머지 소분류가 켜진다 (core 의 toggleCategory).
+                내려가며 나머지 소분류가 켜진다. 거꾸로 소분류를 마지막 하나까지 켜면 그
+                무리가 대분류 하나로 접힌다 (core 의 toggleCategory).
               */
               <View className="mb-5">
                 <Text className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">

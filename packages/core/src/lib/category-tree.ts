@@ -89,9 +89,20 @@ export function groupCategoriesByType(
  *   대분류를 끄면   그 무리에서 아무것도 고르지 않은 상태가 된다.
  *   소분류를 켜고 끄면  평소처럼 그것 하나만 오간다.
  *   **대분류가 켜진 채로 소분류를 끄면** 대분류를 내리고 나머지 소분류를 모두 켠다.
+ *   **소분류를 마지막 하나까지 다 켜면** 그 무리를 대분류 하나로 접는다.
  *
- * 마지막 줄이 요점이다. "식비를 고른 뒤 배달만 빼고 싶다"가 그 뜻이라, 대분류를 그대로
+ * 넷째 줄이 요점이다. "식비를 고른 뒤 배달만 빼고 싶다"가 그 뜻이라, 대분류를 그대로
  * 두면 배달이 계속 걸리고 아무 일도 하지 않은 것처럼 보인다.
+ *
+ * 마지막 줄은 그 되돌림이다. 소분류를 하나씩 켜다 마지막을 켜면 대분류를 누른 것과 같은
+ * 상태가 되는데, 대분류 알약만 꺼져 있으면 "다 골랐는데 왜 대분류는 안 켜졌나"로 보인다.
+ * 접어 두면 그 무리에서 무엇을 골랐는지가 알약 하나로 읽히고, 다시 하나를 끄면 넷째
+ * 줄의 규칙이 나머지를 도로 켠다.
+ *
+ * **접는 순간 걸리는 범위가 조금 넓어진다.** 대분류는 그 아래 소분류뿐 아니라 **소분류
+ * 없이 대분류에 바로 적은 거래**까지 담는다(서버의 entrySearchConditions). 소분류를 다
+ * 고른 것과 대분류를 고른 것이 사실 같은 뜻이라고 보는 쪽을 택했다 -- 화면의 알약이
+ * 그렇게 보이기 때문이다.
  *
  * 한 가지는 알고 써야 한다. 그렇게 바꾼 뒤에는 **소분류 없이 대분류에 바로 적은 거래**가
  * 빠진다. 고른 것이 소분류들뿐이기 때문이다. 그것까지 담으려면 "대분류에 바로 적은 것"을
@@ -122,9 +133,16 @@ export function toggleCategory(
     return [...without(selected, [parent.id]), ...rest];
   }
 
-  return selected.includes(target.id)
-    ? without(selected, [target.id])
-    : [...selected, target.id];
+  if (selected.includes(target.id)) return without(selected, [target.id]);
+
+  const next = [...selected, target.id];
+
+  // 소분류를 마지막 하나까지 켰다: 같은 뜻인 대분류 하나로 접는다.
+  if (parent && childIds.length > 0 && childIds.every((id) => next.includes(id))) {
+    return [...without(next, childIds), parent.id];
+  }
+
+  return next;
 }
 
 /**
