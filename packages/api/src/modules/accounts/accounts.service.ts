@@ -364,26 +364,51 @@ export class AccountsService {
   }
 
   /**
-   * 통장 숨기기. 원장 기록은 남겨야 하므로 하드 삭제하지 않는다.
+   * 통장 숨기기. 목록에서만 빼고 기록은 그대로 남긴다.
    *
    * 거래 기록이 있어도 숨길 수 있다. 예전에는 posting이 하나라도 있으면 막았는데,
    * 이 함수는 애초에 isActive를 내리는 것뿐이라 해지한 통장을 목록에서 치울
-   * 방법이 아예 없었다. 기록은 그대로 남고 목록에서만 빠진다.
+   * 방법이 아예 없었다. 지난 거래는 이 통장의 이름을 계속 읽는다.
    *
-   * 남겨 둔 조건은 숨겼을 때 숫자가 어긋나는 경우뿐이다.
-   *   - 잔액이 남아 있으면: 순자산 집계가 활성 계좌만 보므로 총자산이 조용히 준다.
-   *   - 연결된 활성 카드가 있으면: 결제 통장이 사라진 카드가 남는다.
+   * 오프라인에서 적은 "숨기기" 명령도 이 길로 온다 (mutation-replay). 그래서 이쪽은
+   * 무엇이 붙어 있든 실패하지 않아야 한다 -- 재생이 거절되면 사용자는 이미 숨긴 줄이
+   * 되살아나는 것을 본다.
    */
   async deactivateAccount(id: string, userId: string, hlc?: string) {
+    return this.retireAccount(id, userId, 'hide', hlc);
+  }
+
+  /**
+   * 통장 삭제. **붙은 것이 하나라도 있으면 지우지 않고 거절한다.**
+   *
+   * 지난 거래가 이 통장의 이름으로 읽히므로, 거래내역이 있는 통장을 지우면 그 자리가
+   * 빈다. 그때는 조용히 숨기지 않고 거절해 이유를 알린다 -- 화면이 그 코드를 보고
+   * "거래내역이 남아 있어 삭제할 수 없습니다. 숨기시겠습니까?"로 이어 간다.
+   *
+   * 반대로 **아무것도 붙지 않은 통장은 지운다.** 잘못 만들어 한 번도 쓰지 않은 것까지
+   * 숨기기로만 치우면 "숨긴 항목"이 쓰레기통이 되고, 되살릴 일도 없는 줄이 쌓인다.
+   */
+  async deleteAccount(id: string, userId: string, hlc?: string) {
+    return this.retireAccount(id, userId, 'delete', hlc);
+  }
+
+  /**
+   * 숨기기와 삭제의 공통 몸통. 앞의 두 검사가 같아 한자리에 둔다.
+   *
+   * 확인과 쓰기를 한 트랜잭션에 넣고, 먼저 원장 쓰기를 줄 세운다.
+   *
+   * 밖에서 확인하면 확인한 값과 쓰는 값이 다를 수 있다. 잔액 0을 읽은 뒤 숨기기
+   * 전에 다른 사람이 이 통장으로 지출을 적으면, **잔액이 남은 통장이 목록에서
+   * 사라진다.** 돈은 남아 있는데 화면에 없으니 총자산과 목록이 어긋난다.
+   */
+  private async retireAccount(
+    id: string,
+    userId: string,
+    mode: 'hide' | 'delete',
+    hlc?: string,
+  ) {
     const account = await this.getAccountById(id, userId, 'editor');
 
-    /*
-     * 확인과 숨기기를 한 트랜잭션에 넣고, 먼저 원장 쓰기를 줄 세운다.
-     *
-     * 밖에서 확인하면 확인한 값과 숨기는 값이 다를 수 있다. 잔액 0을 읽은 뒤 숨기기
-     * 전에 다른 사람이 이 통장으로 지출을 적으면, **잔액이 남은 통장이 목록에서
-     * 사라진다.** 돈은 남아 있는데 화면에 없으니 총자산과 목록이 어긋난다.
-     */
     return this.prisma.$transaction(async (tx) => {
       await lockLedgerWrites(tx, account.projectId);
 
@@ -403,13 +428,53 @@ export class AccountsService {
         );
       }
 
-      return tx.account.update({
-        where: { id },
-        data: {
-          isActive: false,
-          fieldHlc: stampFieldClocks(fresh.fieldHlc, ['isActive'], hlc ?? this.clock.now()),
-        },
-      });
+      if (mode === 'hide') {
+        return tx.account.update({
+          where: { id },
+          data: {
+            isActive: false,
+            fieldHlc: stampFieldClocks(fresh.fieldHlc, ['isActive'], hlc ?? this.clock.now()),
+          },
+        });
+      }
+
+      /*
+       * 삭제는 붙은 것이 하나도 없을 때만이다.
+       *
+       * 카드는 **숨긴 것까지** 센다. 위의 검사는 활성 카드만 보는데(숨긴 카드는 숨기기를
+       * 막을 이유가 없다), 지우는 것은 다르다 -- 숨긴 카드를 되살리면 결제 통장이 사라진
+       * 카드가 된다.
+       *
+       * 거래내역과 나머지를 갈라 세는 이유는 문구다. 사용자가 아는 말은 "거래내역"이고,
+       * 평가액이나 투자 상세는 그 말로 부를 수 없다.
+       */
+      const [postings, valuations, investments, linkedCards] = await Promise.all([
+        tx.posting.count({ where: { accountId: id } }),
+        tx.assetValuation.count({ where: { accountId: id } }),
+        tx.investmentDetail.count({ where: { accountId: id } }),
+        tx.card.count({
+          where: { OR: [{ paymentAccountId: id }, { liabilityAccountId: id }] },
+        }),
+      ]);
+
+      if (postings > 0) {
+        throw badRequest(
+          'ACCOUNT_HAS_ENTRIES',
+          '거래내역이 남아 있어 삭제할 수 없습니다. 숨기기만 할 수 있습니다.',
+        );
+      }
+      if (valuations + investments + linkedCards > 0) {
+        throw badRequest(
+          'ACCOUNT_HAS_RECORDS',
+          '연결된 기록이 남아 있어 삭제할 수 없습니다. 숨기기만 할 수 있습니다.',
+        );
+      }
+
+      /*
+       * 지우면 tombstone 트리거(AFTER DELETE)가 찍혀 기기 사본에서도 함께 사라진다.
+       * 숨긴 것과 달리 되돌릴 수 없지만, 되돌릴 내용이 애초에 없다.
+       */
+      return tx.account.delete({ where: { id } });
     });
   }
 }

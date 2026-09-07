@@ -2,7 +2,7 @@
  * 자산 화면의 고치기 창 셋 (구성원·계좌·카드).
  *
  * 만들기 창(`AssetAddModals`)과 나란히 선다. 묻는 것은 더 적다 -- 이름과, 목록에서의
- * 자리와, 숨기기뿐이다. 주인이나 통화처럼 나중에 바꾸면 지난 기록의 뜻이 달라지는 값은
+ * 자리와, 없애기뿐이다. 주인이나 통화처럼 나중에 바꾸면 지난 기록의 뜻이 달라지는 값은
  * 여기서 다루지 않는다 (웹에서 한다).
  *
  * **순서는 한 칸씩 옮긴다.** 앱에는 드래그가 없어서 위/아래 버튼을 둔다. 한 번 누를
@@ -10,9 +10,9 @@
  * 것을 덮지 않는다.
  */
 import { useEffect, useState } from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { Alert, Pressable, Text, TextInput, View } from 'react-native';
 
-import { useTranslation } from '@money/core/lib/i18n';
+import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import type { AssetSaveResult } from '@money/core/hooks/useAssetsData';
 
 import Modal from './Modal';
@@ -38,28 +38,95 @@ function ErrorLine({ message }: { message: string }) {
   );
 }
 
-/** 저장과 숨기기. 숨기기는 되돌리기 어려우므로 눌러야 하는 자리를 따로 둔다. */
+/** 예/아니오 한 번. 웹의 `window.confirm` 과 같은 자리다. */
+function ask(question: string, yes: string, no: string, onYes: () => void) {
+  Alert.alert('', question, [
+    { text: no, style: 'cancel' },
+    { text: yes, style: 'destructive', onPress: onYes },
+  ]);
+}
+
+/** 삭제를 막고 숨기기만 남기는 사정들. 문구를 뒤지지 않고 서버 코드로 가른다. */
+const HIDE_INSTEAD_CODES = [
+  'PERSON_HAS_ENTRIES',
+  'PERSON_HAS_RECORDS',
+  'ACCOUNT_HAS_ENTRIES',
+  'ACCOUNT_HAS_RECORDS',
+  'CARD_HAS_ENTRIES',
+  'CARD_HAS_RECORDS',
+];
+
+/**
+ * 없애기. **삭제를 먼저 묻고, 거절당하면 숨기기를 묻는다.**
+ *
+ * 웹의 `deleteOrAskToHide` 와 같은 규칙이다. 조용히 숨기면 지운 줄 알고, 말없이 실패하면
+ * 눌러도 안 되는 것으로 보인다. 그래서 거래내역이 남아 있다는 이유를 그대로 보여 주고,
+ * 그 자리에서 숨기기로 이어 갈지 묻는다.
+ */
+function askThenRemove({
+  t,
+  remove,
+  hide,
+  onDone,
+  onFail,
+}: {
+  t: (key: MessageKey) => string;
+  remove: () => Promise<AssetSaveResult>;
+  hide: () => Promise<AssetSaveResult>;
+  onDone: () => void;
+  onFail: (message: string) => void;
+}) {
+  ask(t('assets.deleteConfirm'), t('common.confirm'), t('common.cancel'), async () => {
+    const result = await remove();
+    if (result.ok) {
+      onDone();
+      return;
+    }
+    if (!HIDE_INSTEAD_CODES.includes(result.code ?? '')) {
+      onFail(result.message ?? '');
+      return;
+    }
+
+    ask(
+      `${result.message}\n\n${t('assets.hideInstead')}`,
+      t('common.confirm'),
+      t('common.cancel'),
+      async () => {
+        const hidden = await hide();
+        if (hidden.ok) onDone();
+        else onFail(hidden.message ?? '');
+      },
+    );
+  });
+}
+
+/**
+ * 저장과 없애기. 없애기는 되돌리기 어려우므로 눌러야 하는 자리를 따로 둔다.
+ *
+ * 무엇을 물을지는 창마다 다르다 -- 통장·카드는 삭제부터 묻고(`askThenRemove`), 구성원은
+ * 숨기기·삭제를 서버가 가르므로 한 번만 묻는다. 그래서 여기는 버튼만 그린다.
+ */
 function Footer({
   isSubmitting,
   canSave,
   onSave,
-  onHide,
+  onRemovePress,
 }: {
   isSubmitting: boolean;
   canSave: boolean;
   onSave: () => void;
-  onHide: () => void;
+  onRemovePress: () => void;
 }) {
   const { t } = useTranslation();
 
   return (
     <View className="flex-row gap-2">
       <Pressable
-        onPress={onHide}
+        onPress={onRemovePress}
         disabled={isSubmitting}
         className={`rounded-lg border border-red-300 px-4 py-3 ${isSubmitting ? 'opacity-40' : ''}`}
       >
-        <Text className="text-base text-red-600">{t('assets.hide')}</Text>
+        <Text className="text-base text-red-600">{t('assets.remove')}</Text>
       </Pressable>
       <Pressable
         onPress={onSave}
@@ -84,13 +151,24 @@ interface EditProps<T> {
   onMove: (step: 1 | -1) => Promise<AssetSaveResult>;
 }
 
+/**
+ * 없앨 수 있는 창이 받는 것. 삭제가 하나 더 있다.
+ *
+ * 삭제와 숨기기가 다른 문이라 둘 다 필요하다 -- 거래내역이 남았을 때 이유를 알리고
+ * 숨기기를 다시 물어야 한다 (`askThenRemove`).
+ */
+type RemovableEditProps<T> = EditProps<T> & {
+  onRemove: () => Promise<AssetSaveResult>;
+};
+
 export function EditPersonModal({
   target,
   onClose,
   isSubmitting,
   onSave,
   onMove,
-}: EditProps<{ id: string; name: string; relationship?: string | null }>) {
+  onRemove,
+}: RemovableEditProps<{ id: string; name: string; relationship?: string | null }>) {
   const { t } = useTranslation();
   const [name, setName] = useState(target.name);
   const [relationship, setRelationship] = useState(target.relationship ?? '');
@@ -124,7 +202,15 @@ export function EditPersonModal({
           onSave={() =>
             run(onSave({ name: name.trim(), relationship: relationship.trim() || null }), true)
           }
-          onHide={() => run(onSave({ isActive: false }), true)}
+          onRemovePress={() =>
+            askThenRemove({
+              t,
+              remove: onRemove,
+              hide: () => onSave({ isActive: false }),
+              onDone: onClose,
+              onFail: setError,
+            })
+          }
         />
       }
     >
@@ -156,7 +242,8 @@ export function EditAccountModal({
   isSubmitting,
   onSave,
   onMove,
-}: EditProps<{ id: string; name: string; accountNumber?: string | null }>) {
+  onRemove,
+}: RemovableEditProps<{ id: string; name: string; accountNumber?: string | null }>) {
   const { t } = useTranslation();
   const [name, setName] = useState(target.name);
   const [accountNumber, setAccountNumber] = useState(target.accountNumber ?? '');
@@ -189,7 +276,15 @@ export function EditAccountModal({
           onSave={() =>
             run(onSave({ name: name.trim(), accountNumber: accountNumber.trim() || null }), true)
           }
-          onHide={() => run(onSave({ isActive: false }), true)}
+          onRemovePress={() =>
+            askThenRemove({
+              t,
+              remove: onRemove,
+              hide: () => onSave({ isActive: false }),
+              onDone: onClose,
+              onFail: setError,
+            })
+          }
         />
       }
     >
@@ -221,7 +316,8 @@ export function EditCardModal({
   isSubmitting,
   onSave,
   onMove,
-}: EditProps<{ id: string; name: string }>) {
+  onRemove,
+}: RemovableEditProps<{ id: string; name: string }>) {
   const { t } = useTranslation();
   const [name, setName] = useState(target.name);
   const [error, setError] = useState('');
@@ -250,7 +346,15 @@ export function EditCardModal({
           isSubmitting={isSubmitting}
           canSave={!isSubmitting && !!name.trim()}
           onSave={() => run(onSave({ name: name.trim() }), true)}
-          onHide={() => run(onSave({ isActive: false }), true)}
+          onRemovePress={() =>
+            askThenRemove({
+              t,
+              remove: onRemove,
+              hide: () => onSave({ isActive: false }),
+              onDone: onClose,
+              onFail: setError,
+            })
+          }
         />
       }
     >

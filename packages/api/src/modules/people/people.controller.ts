@@ -73,10 +73,25 @@ export class PeopleController {
     return this.peopleService.updatePerson(id, req.user.id, dto);
   }
 
+  /**
+   * 없애기. 기본은 **삭제**이고, `?hide=true` 면 숨기기다.
+   *
+   * 삭제는 붙은 것이 하나도 없을 때만 된다. 거래내역이 있으면 400 과 코드를 돌려주고,
+   * 화면이 그것을 보고 "거래내역이 남아 있습니다 -- 숨기시겠습니까?"로 이어 간다
+   * (통장·카드와 같다).
+   */
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
-  @ApiOperation({ summary: '구성원 숨기기 (되돌리려면 PATCH isActive=true)' })
-  delete(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
-    return this.peopleService.deactivatePerson(id, req.user.id);
+  @ApiOperation({
+    summary: '구성원 삭제 (거래내역이 있으면 거절). hide=true 면 숨기기 (되돌리려면 PATCH isActive=true)',
+  })
+  delete(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Query('hide') hide?: string,
+  ) {
+    return hide === 'true'
+      ? this.peopleService.deactivatePerson(id, req.user.id)
+      : this.peopleService.deletePerson(id, req.user.id);
   }
 }

@@ -73,6 +73,17 @@ export interface SettingsWritePort {
   addCard(input: CardDto.CreateRequest): Promise<{ id: string }>;
   updateCard(id: string, patch: CardPatch): Promise<void>;
 
+  /**
+   * 구성원·통장·카드 **삭제**. 거래내역이 있으면 서버가 거절한다 (그때는 숨기기만 된다).
+   *
+   * `update...(id, { isActive: false })` 와 갈라 둔다. 그쪽은 숨기기이고 오프라인에서도
+   * 되지만, 삭제는 붙은 것을 서버가 세어 판단하므로 연결이 있어야 한다. 화면은 삭제를
+   * 먼저 시도하고, 거절 코드를 받으면 사용자에게 물어 숨기기로 넘어간다.
+   */
+  removePerson(id: string): Promise<void>;
+  removeAccount(id: string): Promise<void>;
+  removeCard(id: string): Promise<void>;
+
   addCategory(input: CategoryDto.CreateRequest): Promise<{ id: string }>;
   updateCategory(id: string, patch: CategoryPatch): Promise<void>;
 
@@ -126,10 +137,13 @@ export const httpSettingsWritePort: SettingsWritePort = {
   async updatePerson(id, patch) {
     // 숨기기는 선행조건이 있는 별개의 엔드포인트다. 서버가 그 조건을 본다.
     if (patch.isActive === false) {
-      await apiClient.deletePerson(id);
+      await apiClient.deletePerson(id, { hide: true });
       return;
     }
     await apiClient.updatePerson(id, patch as PersonDto.UpdateRequest);
+  },
+  async removePerson(id) {
+    await apiClient.deletePerson(id);
   },
 
   async addAccount(input) {
@@ -137,11 +151,15 @@ export const httpSettingsWritePort: SettingsWritePort = {
     return { id: account.id };
   },
   async updateAccount(id, patch) {
+    // 숨기기는 선행조건이 있는 별개의 엔드포인트다. 서버가 그 조건을 본다.
     if (patch.isActive === false) {
-      await apiClient.deleteAccountV2(id);
+      await apiClient.deleteAccountV2(id, { hide: true });
       return;
     }
     await apiClient.updateAccountV2(id, patch as AccountDto.UpdateRequest);
+  },
+  async removeAccount(id) {
+    await apiClient.deleteAccountV2(id);
   },
 
   async addCard(input) {
@@ -150,10 +168,13 @@ export const httpSettingsWritePort: SettingsWritePort = {
   },
   async updateCard(id, patch) {
     if (patch.isActive === false) {
-      await apiClient.deleteCard(id);
+      await apiClient.deleteCard(id, { hide: true });
       return;
     }
     await apiClient.updateCard(id, patch as CardDto.UpdateRequest);
+  },
+  async removeCard(id) {
+    await apiClient.deleteCard(id);
   },
 
   async addCategory(input) {

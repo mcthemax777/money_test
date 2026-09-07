@@ -331,10 +331,11 @@ export const en: Record<MessageKey, string> = {
   'assets.loss': 'Loss -',
   'assets.parts': 'Cash {cash} · Investments {investment} · Debt {liability}',
   'assets.noSelection': 'No owner is selected.',
-  'assets.hideConfirm':
-    'This hides the item from the list. The records stay, and you can show it again later. Continue?',
-  'assets.hideFailed': 'Could not hide it.',
-  'assets.hide': 'Hide',
+  'assets.removeFailed': 'Could not remove it.',
+  'assets.remove': 'Remove',
+  'assets.deleteConfirm': 'This deletes it for good. Continue?',
+  'assets.hideInstead':
+    'Hide it from the list instead? The records stay and you can show it again later.',
   'assets.order': 'Position in the list',
   'assets.moveUp': 'Move up',
   'assets.moveDown': 'Move down',
@@ -874,6 +875,16 @@ export const en: Record<MessageKey, string> = {
   'error.NOT_PROJECT_MEMBER': 'You are not a member of this project.',
   'error.ACCOUNT_HAS_BALANCE': 'It still has a balance. Bring it to zero before hiding it.',
   'error.ACCOUNT_HAS_CARDS': 'Cards are linked to this account, so it cannot be hidden.',
+  'error.ACCOUNT_HAS_ENTRIES':
+    'Transactions remain, so it cannot be deleted. You can only hide it.',
+  'error.ACCOUNT_HAS_RECORDS':
+    'Linked records remain, so it cannot be deleted. You can only hide it.',
+  'error.CARD_HAS_ENTRIES': 'Transactions remain, so it cannot be deleted. You can only hide it.',
+  'error.CARD_HAS_RECORDS': 'Linked records remain, so it cannot be deleted. You can only hide it.',
+  'error.PERSON_HAS_ENTRIES':
+    'Transactions remain, so it cannot be deleted. You can only hide it.',
+  'error.PERSON_HAS_RECORDS':
+    'Linked records remain, so it cannot be deleted. You can only hide it.',
   'error.CARD_HAS_UNPAID': 'The card still has an unpaid balance, so it cannot be hidden.',
   'error.PERSON_HAS_ACCOUNTS': 'This person still owns accounts, so they cannot be hidden.',
   'error.CATEGORY_NAME_REQUIRED': 'Enter a category name.',

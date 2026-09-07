@@ -32,6 +32,7 @@ import type {
 } from './settings-write-port';
 import { settingTableOf, type LocalStore } from './local-store';
 import { notifyMirrorChanged } from './mirror-events';
+import { apiClient } from '../lib/api-client';
 
 export interface LocalSettingsWriterOptions {
   store: LocalStore;
@@ -211,6 +212,36 @@ export function createLocalSettingsWriter({
 
     async updateCard(id: string, patch: CardPatch) {
       await commit('card.update', id, { ...patch }, { ...patch });
+    },
+
+    /*
+     * 구성원·통장·카드 삭제. **아웃박스를 거치지 않고 곧바로 서버에 묻는다.**
+     *
+     * 붙은 것이 있는지는 서버만 셀 수 있고(거래내역·청구서·평가액), 있으면 거절이다.
+     * 사본에 먼저 적어 두면 거절당했을 때 지운 줄이 되살아나는 것을 사용자가 본다.
+     * 그래서 이 하나만 온라인에서만 되고, 오프라인이면 실패한다 -- 화면이 그 자리에
+     * 이유를 적는다. 숨기기는 그와 달리 오프라인에서도 되어야 하므로 위의
+     * `updateAccount`·`updateCard` 로 아웃박스를 거친다.
+     *
+     * 성공하면 사본에서도 지운다. 다음 pull 의 자리표가 같은 일을 하지만, 그때까지
+     * 목록에 남아 있으면 "지웠는데 그대로"로 보인다.
+     */
+    async removePerson(id: string) {
+      await apiClient.deletePerson(id);
+      await store.forgetRow('person', id);
+      notifyMirrorChanged();
+    },
+
+    async removeAccount(id: string) {
+      await apiClient.deleteAccountV2(id);
+      await store.forgetRow('account', id);
+      notifyMirrorChanged();
+    },
+
+    async removeCard(id: string) {
+      await apiClient.deleteCard(id);
+      await store.forgetRow('card', id);
+      notifyMirrorChanged();
     },
 
     async addCategory(input: CategoryDto.CreateRequest) {

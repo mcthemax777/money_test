@@ -729,38 +729,7 @@ export class LocalStore {
       for (const tombstone of tombstones) {
         const table = TOMBSTONE_TABLES[tombstone.entity];
         if (!table) continue;
-
-        await this.db.run(`DELETE FROM ${table} WHERE id = ?`, [tombstone.entityId]);
-        if (table === 'entry') {
-          await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [tombstone.entityId]);
-        }
-        if (table === 'entry') {
-          await this.db.run(
-            `DELETE FROM installment_plan
-              WHERE postingId IN (SELECT id FROM posting WHERE entryId = ?)`,
-            [tombstone.entityId],
-          );
-        }
-        if (table === 'budget') {
-          // 부모가 사라지면 그 달 조정도 함께 사라진다 (서버도 cascade 로 지운다).
-          await this.db.run(`DELETE FROM budget_override WHERE budgetId = ?`, [tombstone.entityId]);
-        }
-        if (table === 'account') {
-          // 계좌가 사라지면 그 계좌의 평가 기록도 사라진다.
-          await this.db.run(`DELETE FROM asset_valuation WHERE accountId = ?`, [
-            tombstone.entityId,
-          ]);
-        }
-        if (table === 'tag') {
-          /*
-           * 태그가 사라지면 그 태그를 가리키던 연결도 사라진다 (서버도 cascade 로 지운다).
-           *
-           * 남겨 두면 없는 태그를 가리키는 줄이 사본에 쌓인다. 화면에는 드러나지 않지만
-           * (태그를 읽는 질의가 내부 조인이라 걸러진다), 나중에 그 id 로 별칭이 옮겨 오면
-           * 엉뚱한 태그가 붙은 것처럼 보인다.
-           */
-          await this.db.run(`DELETE FROM entry_tag WHERE tagId = ?`, [tombstone.entityId]);
-        }
+        await this.forgetRow(table, tombstone.entityId);
       }
 
       await this.db.run(
@@ -1759,6 +1728,43 @@ export class LocalStore {
     });
 
     return touched.size;
+  }
+
+  /**
+   * 사본에서 한 줄을 지운다. 딸린 줄까지 함께 간다 (서버의 cascade 와 같은 자리).
+   *
+   * 자리표를 받았을 때와, 화면이 삭제를 서버에 성공시킨 직후에 부른다. 두 자리가 같은
+   * 규칙을 각자 적으면 한쪽만 고쳐 놓고 맞다고 믿는 일이 생긴다.
+   */
+  async forgetRow(table: string, id: string): Promise<void> {
+    await this.db.run(`DELETE FROM ${table} WHERE id = ?`, [id]);
+
+    if (table === 'entry') {
+      await this.db.run(
+        `DELETE FROM installment_plan
+          WHERE postingId IN (SELECT id FROM posting WHERE entryId = ?)`,
+        [id],
+      );
+      await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [id]);
+    }
+    if (table === 'budget') {
+      // 부모가 사라지면 그 달 조정도 함께 사라진다 (서버도 cascade 로 지운다).
+      await this.db.run(`DELETE FROM budget_override WHERE budgetId = ?`, [id]);
+    }
+    if (table === 'account') {
+      // 계좌가 사라지면 그 계좌의 평가 기록도 사라진다.
+      await this.db.run(`DELETE FROM asset_valuation WHERE accountId = ?`, [id]);
+    }
+    if (table === 'tag') {
+      /*
+       * 태그가 사라지면 그 태그를 가리키던 연결도 사라진다 (서버도 cascade 로 지운다).
+       *
+       * 남겨 두면 없는 태그를 가리키는 줄이 사본에 쌓인다. 화면에는 드러나지 않지만
+       * (태그를 읽는 질의가 내부 조인이라 걸러진다), 나중에 그 id 로 별칭이 옮겨 오면
+       * 엉뚱한 태그가 붙은 것처럼 보인다.
+       */
+      await this.db.run(`DELETE FROM entry_tag WHERE tagId = ?`, [id]);
+    }
   }
 
   /** 전표를 사본에서 지운다. 딸린 다리와 할부 계획도 함께 간다. */

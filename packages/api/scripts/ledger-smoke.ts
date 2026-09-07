@@ -212,6 +212,11 @@ runSmoke('ledger', async (ctx) => {
     ...base, date: new Date('2026-09-25T00:00:00Z'), description: '잔액 정리',
     cardId: creditCard.id, accountId: bank.id, amount: D(1000), direction: 'payment',
   });
+  /*
+   * 갚고 나면 숨길 수 있다. 그래도 **삭제는 안 된다** -- 결제 줄이 남아 있어 지우면
+   * 거래 목록이 읽을 카드 이름이 없어진다. 화면은 이 거절을 받아 숨기기를 다시 묻는다.
+   */
+  await ctx.expectReject('쓴 카드 삭제 거부', () => cards.deleteCard(creditCard.id, 'u1'));
   await cards.deactivateCard(creditCard.id, 'u1');
   const deactivated = await ctx.prisma.account.findUniqueOrThrow({ where: { id: creditCard.liabilityAccountId! } });
   ctx.check('카드를 숨기면 부채 계정도 함께 내려간다', deactivated.isActive, false);

@@ -169,6 +169,7 @@ export default function AssetsScreen() {
           onClose={() => setPersonEdit(null)}
           isSubmitting={assets.isSubmitting}
           onSave={(patch) => assets.updatePerson(personEdit.id, patch)}
+          onRemove={() => assets.removePerson(personEdit.id)}
           onMove={(step) => assets.movePerson(personEdit.id, step)}
         />
       ) : null}
@@ -179,6 +180,7 @@ export default function AssetsScreen() {
           onClose={() => setAccountEdit(null)}
           isSubmitting={assets.isSubmitting}
           onSave={(patch) => assets.updateAccount(accountEdit.id, patch)}
+          onRemove={() => assets.removeAccount(accountEdit.id)}
           onMove={(step) => assets.moveAccount(accountEdit.id, accountEdit.ownerId, step)}
         />
       ) : null}
@@ -189,6 +191,7 @@ export default function AssetsScreen() {
           onClose={() => setCardEdit(null)}
           isSubmitting={assets.isSubmitting}
           onSave={(patch) => assets.updateCard(cardEdit.id, patch)}
+          onRemove={() => assets.removeCard(cardEdit.id)}
           onMove={(step) => assets.moveCard(cardEdit.id, cardEdit.paymentAccountId, step)}
         />
       ) : null}

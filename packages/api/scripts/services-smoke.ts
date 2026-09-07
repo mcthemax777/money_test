@@ -108,6 +108,72 @@ runSmoke('services', async (ctx) => {
     '잔액 남은 통장 숨기기 거부',
     () => accounts.deactivateAccount(bank.id, u1.id),
   );
+
+  /*
+   * 없애기의 두 갈래. **삭제와 숨기기는 다른 문이다.**
+   *
+   * 거래내역이나 딸린 기록이 있으면 삭제는 거절이다 -- 지난 기록이 그 통장의 이름을
+   * 읽으므로 조용히 숨기지 않고 이유를 알린다(화면이 그 코드를 보고 숨기기를 다시 묻는다).
+   * 붙은 것이 하나도 없으면 그대로 지운다.
+   */
+  const kept = await accounts.createAccount(u1.id, {
+    type: 'cash', ownerId: person.id, name: '없애기-기록있음',
+  }, pid);
+  await ctx.prisma.assetValuation.create({
+    data: {
+      accountId: kept.id,
+      date: new Date('2026-08-01T00:00:00Z'),
+      quantity: D(1),
+      price: D(1000),
+      marketValue: D(1000),
+    },
+  });
+  await ctx.expectReject(
+    '기록이 붙은 통장 삭제 거부',
+    () => accounts.deleteAccount(kept.id, u1.id),
+  );
+  await accounts.deactivateAccount(kept.id, u1.id);
+  ctx.check('그래도 숨기기는 된다',
+    (await ctx.prisma.account.findUniqueOrThrow({ where: { id: kept.id } })).isActive, false);
+
+  const gone = await accounts.createAccount(u1.id, {
+    type: 'cash', ownerId: person.id, name: '없애기-빈것',
+  }, pid);
+  await accounts.deleteAccount(gone.id, u1.id);
+  ctx.check('붙은 것이 없는 통장은 지워진다',
+    await ctx.prisma.account.count({ where: { id: gone.id } }), 0);
+
+  // 구성원도 같은 규칙이다. 거래가 있으면 삭제는 거절, 숨기기는 된다.
+  const gonePerson = await people.createPerson(u1.id, { name: '없애기-빈사람' }, pid);
+  await people.deletePerson(gonePerson.id, u1.id);
+  ctx.check('붙은 것이 없는 구성원은 지워진다',
+    await ctx.prisma.person.count({ where: { id: gonePerson.id } }), 0);
+
+  const keptPerson = await people.createPerson(u1.id, { name: '없애기-거래있음' }, pid);
+  await ledger.createExpense({
+    projectId: pid, personId: keptPerson.id, date: new Date('2026-08-02T00:00:00Z'),
+    description: '검증 지출', accountId: bank.id,
+    lines: [{ categoryId: sub.id, amount: D(1000) }],
+  });
+  await ctx.expectReject(
+    '거래가 있는 구성원 삭제 거부',
+    () => people.deletePerson(keptPerson.id, u1.id),
+  );
+  await people.deactivatePerson(keptPerson.id, u1.id);
+  ctx.check('그 구성원도 숨기기는 된다',
+    (await ctx.prisma.person.findUniqueOrThrow({ where: { id: keptPerson.id } })).isActive, false);
+
+  // 카드도 같은 규칙이다. 지우면 그 카드를 위해 세운 부채 계정도 함께 사라진다.
+  const goneCard = await cards.createCard(u1.id, {
+    paymentAccountId: bank.id, name: '없애기-빈카드', cardType: 'credit',
+    issuerId: 'fi_card_shinhan', statementClosingDay: 15, paymentDueDay: 25,
+  }, pid);
+  await cards.deleteCard(goneCard.id, u1.id);
+  ctx.check('쓴 적 없는 카드는 지워진다',
+    await ctx.prisma.card.count({ where: { id: goneCard.id } }), 0);
+  ctx.check('그 부채 계정도 함께 지워진다',
+    await ctx.prisma.account.count({ where: { id: goneCard.liabilityAccountId! } }), 0);
+
   await ctx.expectReject('사용 중인 카테고리 삭제 거부 (사용 후)', async () => {
     await ledger.createExpense({
       projectId: pid, personId: person.id, date: new Date('2026-08-01T00:00:00Z'),

@@ -17,7 +17,7 @@ import {
 import { homeDataPort } from '../data/home-port';
 import { isOfflineError } from '../lib/offline-error';
 import { useMirrorVersion } from './useMirrorVersion';
-import { useApiError } from '../lib/api-error';
+import { apiErrorCode, useApiError } from '../lib/api-error';
 import type { MessageKey } from '../lib/i18n';
 import { sumNetWorth } from '../lib/net-worth';
 import type { Account, Card, Person } from '../lib/types';
@@ -125,7 +125,8 @@ export function useAssetsData(projectId: string | null) {
         await reload();
         return { ok: true };
       } catch (error) {
-        return { ok: false, message: messageOf(error, fallbackKey) };
+        // 코드도 함께 준다. 화면이 "삭제는 안 되지만 숨기기는 된다"를 가려야 한다.
+        return { ok: false, message: messageOf(error, fallbackKey), code: apiErrorCode(error) };
       } finally {
         setIsSubmitting(false);
       }
@@ -196,6 +197,28 @@ export function useAssetsData(projectId: string | null) {
   const updateAccount = useCallback(
     (id: string, patch: AccountPatch) =>
       submit(() => settingsWritePort().updateAccount(id, patch), 'account.addFailed'),
+    [submit],
+  );
+
+  /**
+   * 구성원·통장·카드 삭제. 거래내역이 있으면 서버가 거절하고, 그때는 화면이 숨기기를 묻는다.
+   *
+   * 숨기기는 `updateAccount(id, { isActive: false })` 쪽이다. 갈라 두는 이유는
+   * settings-write-port 에 적어 두었다 -- 삭제만 연결이 필요하다.
+   */
+  const removePerson = useCallback(
+    (id: string): Promise<AssetSaveResult> =>
+      submit(() => settingsWritePort().removePerson(id), 'assets.removeFailed'),
+    [submit],
+  );
+  const removeAccount = useCallback(
+    (id: string): Promise<AssetSaveResult> =>
+      submit(() => settingsWritePort().removeAccount(id), 'assets.removeFailed'),
+    [submit],
+  );
+  const removeCard = useCallback(
+    (id: string): Promise<AssetSaveResult> =>
+      submit(() => settingsWritePort().removeCard(id), 'assets.removeFailed'),
     [submit],
   );
 
@@ -277,6 +300,9 @@ export function useAssetsData(projectId: string | null) {
     updatePerson,
     updateAccount,
     updateCard,
+    removePerson,
+    removeAccount,
+    removeCard,
 
     /** 한 칸 위로(-1) 또는 아래로(+1). 같은 묶음 안에서만 움직인다. */
     movePerson: (id: string, step: 1 | -1) => moveWithin(people, id, { step }, updatePerson),
@@ -322,4 +348,6 @@ export function useAssetsData(projectId: string | null) {
 export interface AssetSaveResult {
   ok: boolean;
   message?: string;
+  /** 서버가 붙인 오류 코드. 문구를 뒤지지 않고 이것으로 가른다. */
+  code?: string;
 }

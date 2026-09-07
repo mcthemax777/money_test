@@ -362,8 +362,11 @@ class ApiClient {
     return response.data;
   }
 
-  async deletePerson(id: string) {
-    await this.client.delete(`/people/${id}`);
+  /** 구성원 없애기. 통장·카드와 같은 규칙이다 (`hide` 를 주면 숨기기). */
+  async deletePerson(id: string, options?: { hide?: boolean }) {
+    await this.client.delete(`/people/${id}`, {
+      params: options?.hide ? { hide: 'true' } : undefined,
+    });
   }
 
   /**
@@ -412,8 +415,16 @@ class ApiClient {
     return response.data;
   }
 
-  async deleteAccountV2(id: string) {
-    await this.client.delete(`/accounts/${id}`);
+  /**
+   * 통장 없애기. 기본은 **삭제**이고, 거래내역이 있으면 서버가 거절한다.
+   *
+   * `hide` 를 주면 숨기기다. 화면은 삭제를 먼저 시도하고, 거절 코드를 받으면 사용자에게
+   * 물어 이 쪽으로 다시 온다 (`ACCOUNT_HAS_ENTRIES`).
+   */
+  async deleteAccountV2(id: string, options?: { hide?: boolean }) {
+    await this.client.delete(`/accounts/${id}`, {
+      params: options?.hide ? { hide: 'true' } : undefined,
+    });
   }
 
   /** includeInactive를 주면 숨긴 카드까지 함께 받는다 (다시 표시 화면용). */
@@ -456,8 +467,11 @@ class ApiClient {
     return response.data;
   }
 
-  async deleteCard(id: string) {
-    await this.client.delete(`/cards/${id}`);
+  /** 카드 없애기. 통장과 같은 규칙이다 (`hide` 를 주면 숨기기). */
+  async deleteCard(id: string, options?: { hide?: boolean }) {
+    await this.client.delete(`/cards/${id}`, {
+      params: options?.hide ? { hide: 'true' } : undefined,
+    });
   }
 
   /**

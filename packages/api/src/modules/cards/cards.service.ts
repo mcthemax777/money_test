@@ -299,10 +299,43 @@ export class CardsService {
   }
 
   /**
-   * 카드 숨기기. 갚지 않은 사용액이 남아 있으면 막는다.
-   * 원장 기록은 남겨야 하므로 하드 삭제하지 않는다 (부채 계정도 그대로 둔다).
+   * 카드 숨기기. 목록에서만 빼고 기록은 그대로 남긴다. 부채 계정도 함께 내려간다.
+   *
+   * 갚지 않은 사용액이 남아 있으면 막는다 -- 부채가 남은 카드가 목록에서 사라지면
+   * 갚을 것을 볼 자리가 없어진다.
+   *
+   * 오프라인에서 적은 "숨기기" 명령도 이 길로 온다 (mutation-replay).
    */
   async deactivateCard(id: string, userId: string, hlc?: string) {
+    return this.retireCard(id, userId, 'hide', hlc);
+  }
+
+  /**
+   * 카드 삭제. **붙은 것이 하나라도 있으면 지우지 않고 거절한다.**
+   *
+   * 결제 줄이나 청구서가 있으면 지난 거래가 이 카드의 이름을 읽으므로, 조용히 숨기지
+   * 않고 이유를 알린다 (통장 쪽과 같은 규칙이다 -- accounts 의 deleteAccount).
+   *
+   * 지울 때는 그 카드를 위해 세운 부채 계정도 함께 치운다.
+   */
+  async deleteCard(id: string, userId: string, hlc?: string) {
+    return this.retireCard(id, userId, 'delete', hlc);
+  }
+
+  /**
+   * 숨기기와 삭제의 공통 몸통.
+   *
+   * 미결제액 확인과 쓰기를 한 트랜잭션에 넣고, 먼저 원장 쓰기를 줄 세운다.
+   *
+   * 밖에서 읽으면 0원을 본 뒤 숨기기 전에 그 카드로 결제가 하나 들어올 수 있다.
+   * 그러면 갚지 않은 사용액이 남은 카드가 목록에서 사라진다.
+   */
+  private async retireCard(
+    id: string,
+    userId: string,
+    mode: 'hide' | 'delete',
+    hlc?: string,
+  ) {
     const card = await this.prisma.card.findUnique({
       where: { id },
       include: { liabilityAccount: true },
@@ -311,12 +344,6 @@ export class CardsService {
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId, 'editor');
 
     return this.prisma.$transaction(async (tx) => {
-      /*
-       * 미결제액 확인과 숨기기를 한 트랜잭션에 넣고, 먼저 원장 쓰기를 줄 세운다.
-       *
-       * 밖에서 읽으면 0원을 본 뒤 숨기기 전에 그 카드로 결제가 하나 들어올 수 있다.
-       * 그러면 갚지 않은 사용액이 남은 카드가 목록에서 사라진다.
-       */
       await lockLedgerWrites(tx, card.projectId);
 
       if (card.liabilityAccountId) {
@@ -330,7 +357,44 @@ export class CardsService {
             '갚지 않은 카드 사용액이 남아 있어 숨길 수 없습니다.',
           );
         }
+      }
 
+      if (mode === 'delete') {
+        /*
+         * 삭제는 붙은 것이 하나도 없을 때만이다.
+         *
+         * posting 의 `cardId` 는 표시·분석용이라 잔액에는 영향이 없지만, 그 줄이 있으면
+         * 거래 목록이 이 카드의 이름을 읽는다. 지우면 그 자리가 빈다. 청구서는 거래내역이
+         * 아니라 그것으로 묶은 기록이라 문구를 따로 둔다.
+         */
+        const [postings, statements] = await Promise.all([
+          tx.posting.count({ where: { cardId: id } }),
+          tx.cardStatement.count({ where: { cardId: id } }),
+        ]);
+
+        if (postings > 0) {
+          throw badRequest(
+            'CARD_HAS_ENTRIES',
+            '거래내역이 남아 있어 삭제할 수 없습니다. 숨기기만 할 수 있습니다.',
+          );
+        }
+        if (statements > 0) {
+          throw badRequest(
+            'CARD_HAS_RECORDS',
+            '연결된 기록이 남아 있어 삭제할 수 없습니다. 숨기기만 할 수 있습니다.',
+          );
+        }
+
+        /*
+         * **카드를 먼저 지운다.** 부채 계정을 가리키는 외래키가 이 줄에 있어서, 순서를
+         * 뒤집으면 계정이 지워지지 않는다.
+         */
+        const deleted = await tx.card.delete({ where: { id } });
+        if (card.liabilityAccountId) await this.removeLiability(tx, card.liabilityAccountId);
+        return deleted;
+      }
+
+      if (card.liabilityAccountId) {
         await tx.account.update({
           where: { id: card.liabilityAccountId },
           data: { isActive: false },
@@ -344,6 +408,31 @@ export class CardsService {
         },
       });
     });
+  }
+
+  /**
+   * 지운 카드의 부채 계정을 치운다. 붙은 것이 없으면 지우고, 있으면 숨긴다.
+   *
+   * 이 계정은 카드를 만들 때 그 카드를 위해 함께 만든 것이라, 카드가 사라지면 남을 이유가
+   * 없다. 그래도 사람이 이 계정에 직접 적은 줄이 있을 수 있어 한 번 더 센다 -- 그때는
+   * 지우지 않고 숨기는 데서 멈춘다 (통장 쪽과 같은 판단이다).
+   */
+  private async removeLiability(tx: Prisma.TransactionClient, accountId: string) {
+    const [postings, valuations, investments, linkedCards] = await Promise.all([
+      tx.posting.count({ where: { accountId } }),
+      tx.assetValuation.count({ where: { accountId } }),
+      tx.investmentDetail.count({ where: { accountId } }),
+      tx.card.count({
+        where: { OR: [{ paymentAccountId: accountId }, { liabilityAccountId: accountId }] },
+      }),
+    ]);
+
+    if (postings + valuations + investments + linkedCards === 0) {
+      await tx.account.delete({ where: { id: accountId } });
+      return;
+    }
+
+    await tx.account.update({ where: { id: accountId }, data: { isActive: false } });
   }
 
   private assertDayOfMonth(day: number, label: string) {

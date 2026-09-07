@@ -66,7 +66,7 @@ import EntryEditor, {
 import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import { accountTypeLabel } from '@money/core/lib/account-type';
 import { useTranslation } from '@money/core/lib/i18n';
-import { useApiError } from '@money/core/lib/api-error';
+import { apiErrorCode, useApiError } from '@money/core/lib/api-error';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 
 
@@ -459,16 +459,46 @@ export default function DashboardPage() {
     accounts.find((a) => a.id === card?.paymentAccountId)?.currency ?? 'KRW';
 
   /**
-   * 숨기기는 기록을 지우지 않는다. 과거 거래는 그대로 남고 목록에서만 빠지며,
-   * 아래 "숨긴 항목"에서 되돌릴 수 있다. 문구도 그렇게 맞춘다.
+   * 없애기. **삭제를 먼저 시도하고, 거절당하면 숨기기를 묻는다.**
+   *
+   * 조용히 숨기면 지운 줄 알고, 아무 말 없이 실패하면 눌러도 안 되는 것으로 보인다.
+   * 그래서 거래내역이 남아 있다는 이유를 그대로 보여 주고, 그 자리에서 숨기기로 이어
+   * 갈지 묻는다. 사용자가 그만두면 false 를 돌려준다 (목록을 건드리지 않는다).
    */
-  const HIDE_CONFIRM = t('assets.hideConfirm');
+  const HIDE_INSTEAD_CODES = [
+    'PERSON_HAS_ENTRIES',
+    'PERSON_HAS_RECORDS',
+    'ACCOUNT_HAS_ENTRIES',
+    'ACCOUNT_HAS_RECORDS',
+    'CARD_HAS_ENTRIES',
+    'CARD_HAS_RECORDS',
+  ];
+
+  const deleteOrAskToHide = async (
+    remove: () => Promise<void>,
+    hide: () => Promise<void>,
+  ): Promise<boolean> => {
+    try {
+      await remove();
+      return true;
+    } catch (err) {
+      if (!HIDE_INSTEAD_CODES.includes(apiErrorCode(err) ?? '')) throw err;
+      const reason = messageOf(err, 'assets.removeFailed');
+      if (!window.confirm(`${reason}\n\n${t('assets.hideInstead')}`)) return false;
+      await hide();
+      return true;
+    }
+  };
 
   const handleDeletePerson = async () => {
-    if (!selectedPerson || !window.confirm(HIDE_CONFIRM)) return;
+    if (!selectedPerson || !window.confirm(t('assets.deleteConfirm'))) return;
     try {
       setIsSubmitting(true);
-      await apiClient.deletePerson(selectedPerson.id);
+      const done = await deleteOrAskToHide(
+        () => apiClient.deletePerson(selectedPerson.id),
+        () => apiClient.deletePerson(selectedPerson.id, { hide: true }),
+      );
+      if (!done) return;
       const peopleData = await apiClient.getPeople(selectedProjectId);
       setPeople(peopleData || []);
       setIsPersonDetailOpen(false);
@@ -477,17 +507,21 @@ export default function DashboardPage() {
       setHiddenVersion((v) => v + 1);
       await loadNetWorth();
     } catch (err: any) {
-      alert(messageOf(err, 'assets.hideFailed'));
+      alert(messageOf(err, 'assets.removeFailed'));
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleDeleteAccount = async () => {
-    if (!selectedAccount || !window.confirm(HIDE_CONFIRM)) return;
+    if (!selectedAccount || !window.confirm(t('assets.deleteConfirm'))) return;
     try {
       setIsSubmitting(true);
-      await apiClient.deleteAccountV2(selectedAccount.id);
+      const done = await deleteOrAskToHide(
+        () => apiClient.deleteAccountV2(selectedAccount.id),
+        () => apiClient.deleteAccountV2(selectedAccount.id, { hide: true }),
+      );
+      if (!done) return;
       const accountsData = await apiClient.getAccountsV2(selectedProjectId);
       setAccounts(accountsData || []);
       setIsAccountDetailOpen(false);
@@ -496,17 +530,21 @@ export default function DashboardPage() {
       setHiddenVersion((v) => v + 1);
       await loadNetWorth();
     } catch (err: any) {
-      alert(messageOf(err, 'assets.hideFailed'));
+      alert(messageOf(err, 'assets.removeFailed'));
     } finally {
       setIsSubmitting(false);
     }
   };
 
   const handleDeleteCard = async () => {
-    if (!selectedCard || !window.confirm(HIDE_CONFIRM)) return;
+    if (!selectedCard || !window.confirm(t('assets.deleteConfirm'))) return;
     try {
       setIsSubmitting(true);
-      await apiClient.deleteCard(selectedCard.id);
+      const done = await deleteOrAskToHide(
+        () => apiClient.deleteCard(selectedCard.id),
+        () => apiClient.deleteCard(selectedCard.id, { hide: true }),
+      );
+      if (!done) return;
       const cardsData = await apiClient.getCards(selectedProjectId);
       setCards(cardsData || []);
       setIsCardDetailOpen(false);
@@ -515,7 +553,7 @@ export default function DashboardPage() {
       setHiddenVersion((v) => v + 1);
       await loadNetWorth();
     } catch (err: any) {
-      alert(messageOf(err, 'assets.hideFailed'));
+      alert(messageOf(err, 'assets.removeFailed'));
     } finally {
       setIsSubmitting(false);
     }
@@ -721,22 +759,6 @@ export default function DashboardPage() {
             onTogglePerson={togglePersonId}
           />
         }
-      />
-
-      <HiddenItemsPanel
-        projectId={selectedProjectId}
-        reloadToken={hiddenVersion}
-        onRestored={async () => {
-          const [accountsData, peopleData, cardsData] = await Promise.all([
-            apiClient.getAccountsV2(selectedProjectId),
-            apiClient.getPeople(selectedProjectId),
-            apiClient.getCards(selectedProjectId),
-          ]);
-          setAccounts(accountsData || []);
-          setPeople(peopleData || []);
-          setCards(cardsData || []);
-          await loadNetWorth();
-        }}
       />
 
       {/*
@@ -1023,6 +1045,29 @@ export default function DashboardPage() {
         </div>
       )}
 
+      {/*
+        숨긴 항목은 **목록 맨 아래**다.
+
+        되돌리는 일은 드물다. 위에 두면 오늘의 자산을 보러 온 사람이 치워 둔 것을 먼저
+        읽고, 목록은 그만큼 아래로 밀린다. 다 보고 나서 "숨긴 게 있었나" 할 때 그 자리에
+        있으면 된다.
+      */}
+      <HiddenItemsPanel
+        projectId={selectedProjectId}
+        reloadToken={hiddenVersion}
+        onRestored={async () => {
+          const [accountsData, peopleData, cardsData] = await Promise.all([
+            apiClient.getAccountsV2(selectedProjectId),
+            apiClient.getPeople(selectedProjectId),
+            apiClient.getCards(selectedProjectId),
+          ]);
+          setAccounts(accountsData || []);
+          setPeople(peopleData || []);
+          setCards(cardsData || []);
+          await loadNetWorth();
+        }}
+      />
+
       {/* 계좌 상세정보 모달 */}
       {isAccountDetailOpen && selectedAccount && (
         <Modal
@@ -1057,7 +1102,7 @@ export default function DashboardPage() {
                 disabled={isSubmitting}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
               >
-                {t('assets.hide')}
+                {t('assets.remove')}
               </button>
             </div>
             )
@@ -1163,7 +1208,7 @@ export default function DashboardPage() {
                 disabled={isSubmitting}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
               >
-                {t('assets.hide')}
+                {t('assets.remove')}
               </button>
             </div>
             )
@@ -1208,7 +1253,7 @@ export default function DashboardPage() {
                 disabled={isSubmitting}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50"
               >
-                {t('assets.hide')}
+                {t('assets.remove')}
               </button>
             </div>
             )

@@ -141,7 +141,7 @@ export class PeopleService {
   }
 
   /**
-   * 구성원 숨기기. 하드 삭제하지 않는다.
+   * 구성원 숨기기. 목록에서만 빼고 기록은 그대로 남긴다.
    *
    * 거래 기록이 있어도 숨길 수 있다. 예전에는 거래가 하나라도 있으면 막았는데,
    * 이 함수는 isActive를 내리는 것뿐이라 더 이상 쓰지 않는 구성원을 목록에서
@@ -149,16 +149,41 @@ export class PeopleService {
    * 거래 목록의 표시는 그대로다.
    *
    * 활성 계좌 조건만 남긴다. 주인이 목록에서 사라진 통장이 생기면 안 된다.
+   *
+   * 오프라인에서 적은 "숨기기" 명령도 이 길로 온다 (mutation-replay).
    */
   async deactivatePerson(id: string, userId: string, hlc?: string) {
+    return this.retirePerson(id, userId, 'hide', hlc);
+  }
+
+  /**
+   * 구성원 삭제. **붙은 것이 하나라도 있으면 지우지 않고 거절한다.**
+   *
+   * 거래가 있으면 그 거래의 주체가 이 사람이라, 지우면 누가 쓴 돈인지 읽을 자리가
+   * 없어진다(외래키도 막는다). 그때는 조용히 숨기지 않고 이유를 알린다 -- 화면이 그
+   * 코드를 보고 "거래내역이 남아 있습니다 -- 숨기시겠습니까?"로 이어 간다.
+   * 통장·카드와 같은 규칙이다 (accounts 의 deleteAccount).
+   */
+  async deletePerson(id: string, userId: string, hlc?: string) {
+    return this.retirePerson(id, userId, 'delete', hlc);
+  }
+
+  /**
+   * 숨기기와 삭제의 공통 몸통.
+   *
+   * 확인과 쓰기를 한 트랜잭션에 넣고, 먼저 원장 쓰기를 줄 세운다 (`lockLedgerWrites`).
+   *
+   * 밖에서 세면 그 사이에 이 사람 앞으로 통장이 하나 생길 수 있고, 그러면 주인이
+   * 목록에서 사라진 통장이 남는다.
+   */
+  private async retirePerson(
+    id: string,
+    userId: string,
+    mode: 'hide' | 'delete',
+    hlc?: string,
+  ) {
     const person = await this.getPersonById(id, userId, 'editor');
 
-    /*
-     * 확인과 숨기기를 한 트랜잭션에 넣고, 먼저 원장 쓰기를 줄 세운다 (`lockLedgerWrites`).
-     *
-     * 밖에서 세면 그 사이에 이 사람 앞으로 통장이 하나 생길 수 있고, 그러면 주인이
-     * 목록에서 사라진 통장이 남는다.
-     */
     return this.prisma.$transaction(async (tx) => {
       await lockLedgerWrites(tx, person.projectId);
 
@@ -169,14 +194,49 @@ export class PeopleService {
         throw badRequest('PERSON_HAS_ACCOUNTS', '이 사람이 주인인 통장이 있어서 숨길 수 없습니다.');
       }
 
-      const fresh = await tx.person.findUniqueOrThrow({ where: { id } });
-      return tx.person.update({
-        where: { id },
-        data: {
-          isActive: false,
-          fieldHlc: stampFieldClocks(fresh.fieldHlc, ['isActive'], hlc ?? this.clock.now()),
-        },
-      });
+      if (mode === 'hide') {
+        const fresh = await tx.person.findUniqueOrThrow({ where: { id } });
+        return tx.person.update({
+          where: { id },
+          data: {
+            isActive: false,
+            fieldHlc: stampFieldClocks(fresh.fieldHlc, ['isActive'], hlc ?? this.clock.now()),
+          },
+        });
+      }
+
+      /*
+       * 삭제는 붙은 것이 하나도 없을 때만이다.
+       *
+       * 통장은 **숨긴 것까지** 센다. 위의 검사는 활성 통장만 보는데(숨긴 통장은 숨기기를
+       * 막을 이유가 없다), 지우는 것은 다르다 -- 숨긴 통장을 되살리면 주인이 사라진
+       * 통장이 된다. 사용자 연결(ProjectMember.personId)은 SetNull 이라 지우면 조용히
+       * 끊어지므로 이것도 "붙은 것"으로 본다.
+       *
+       * 거래와 나머지를 갈라 세는 이유는 문구다. 사용자가 아는 말은 "거래내역"이고,
+       * 통장이나 사용자 연결은 그 말로 부를 수 없다.
+       */
+      const [entries, ownedAccounts, members] = await Promise.all([
+        tx.journalEntry.count({ where: { personId: id } }),
+        tx.account.count({ where: { ownerId: id } }),
+        tx.projectMember.count({ where: { personId: id } }),
+      ]);
+
+      if (entries > 0) {
+        throw badRequest(
+          'PERSON_HAS_ENTRIES',
+          '거래내역이 남아 있어 삭제할 수 없습니다. 숨기기만 할 수 있습니다.',
+        );
+      }
+      if (ownedAccounts + members > 0) {
+        throw badRequest(
+          'PERSON_HAS_RECORDS',
+          '연결된 기록이 남아 있어 삭제할 수 없습니다. 숨기기만 할 수 있습니다.',
+        );
+      }
+
+      // 지우면 tombstone 트리거(AFTER DELETE)가 찍혀 기기 사본에서도 함께 사라진다.
+      return tx.person.delete({ where: { id } });
     });
   }
 }
