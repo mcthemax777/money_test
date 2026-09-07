@@ -88,6 +88,11 @@ export default function DragList<T extends { id: string }>({
 
   const orderRef = useRef(order);
   orderRef.current = order;
+  /*
+   * 부르는 쪽이 넘긴 지금의 목록. 제스처가 클로저 대신 이것을 본다 (`end` 참고).
+   */
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   const draggingRef = useRef<string | null>(null);
   /** 지금까지 지나온 줄들의 높이 합. 손끝과 줄을 붙여 두는 데 쓴다. */
   const shiftRef = useRef(0);
@@ -267,10 +272,18 @@ export default function DragList<T extends { id: string }>({
     shiftRef.current = 0;
     if (!id) return;
 
-    const from = items.findIndex((item) => item.id === id);
+    /*
+     * 떠난 자리는 **지금의 목록**에서 센다 (`itemsRef`).
+     *
+     * 이 함수를 붙잡고 있는 것은 제스처라, 렌더마다 새로 만든 값이 아니라 그때 잡은 값을
+     * 그대로 쓴다. 목록을 클로저로 읽으면 화면이 다시 그려진 뒤에도 **처음의 차례**를
+     * 보고, 그러면 자리가 안 바뀐 것으로 읽혀(`to === from`) 조용히 저장되지 않는다.
+     * 화면만 옮겨진 채로 남아 다른 기기에는 옛 순서가 그대로 보인다.
+     */
+    const from = itemsRef.current.findIndex((item) => item.id === id);
     const to = orderRef.current.indexOf(id);
     if (to >= 0 && to !== from) onReorder(id, to);
-  }, [activeId, dragY, items, lift, scroll, stopAutoScroll, onReorder]);
+  }, [activeId, dragY, lift, scroll, stopAutoScroll, onReorder]);
 
   /* 화면을 떠나는 순간에도 시계가 남지 않게 한다. */
   useEffect(() => stopAutoScroll, [stopAutoScroll]);
@@ -380,21 +393,34 @@ function DragRow({
     timerRef.current = null;
   };
 
+  /*
+   * 제스처가 부를 함수들. **렌더마다 여기 갈아 끼운다.**
+   *
+   * `PanResponder` 는 아래에서 한 번만 만든다(ref). 그러면 그때 잡은 함수가 계속 남아,
+   * 렌더가 다시 돌아도 **처음의 값들을 보고 일한다.** 실제로 그 때문에 두 번째 드래그부터
+   * 자리가 저장되지 않았다 -- 놓은 자리는 새 목록에서 세고 떠난 자리는 첫 목록에서 세니
+   * 둘이 같게 나와(`to === from`) 아무것도 보내지 않았다. 화면만 옮겨진 채로 남는다.
+   *
+   * 손잡이를 하나 두고 그 안을 갈아 끼우면 제스처는 늘 지금 함수를 부른다.
+   */
+  const handlers = useRef({ onMove, onEnd });
+  handlers.current = { onMove, onEnd };
+
   const responder = useRef(
     PanResponder.create({
       onMoveShouldSetPanResponderCapture: () => armedRef.current,
       onPanResponderMove: (_event, gesture) => {
         draggedRef.current = true;
         // moveY 는 화면에서의 자리다. 가장자리에 닿았는지 보는 데 쓴다.
-        onMove(gesture.dy, gesture.moveY);
+        handlers.current.onMove(gesture.dy, gesture.moveY);
       },
       onPanResponderRelease: () => {
         armedRef.current = false;
-        onEnd();
+        handlers.current.onEnd();
       },
       onPanResponderTerminate: () => {
         armedRef.current = false;
-        onEnd();
+        handlers.current.onEnd();
       },
       // 안쪽 버튼이 도중에 제스처를 도로 가져가지 못하게 한다.
       onPanResponderTerminationRequest: () => false,
