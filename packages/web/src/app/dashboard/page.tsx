@@ -27,7 +27,7 @@ import Modal from '@/components/Modal';
 import TransactionCalendar from '@/components/TransactionCalendar';
 import TransactionListView from '@/components/TransactionListView';
 import MonthHeader from '@/components/MonthHeader';
-import PageHeader from '@/components/PageHeader';
+import LedgerKindSummary from '@/components/LedgerKindSummary';
 import { EntryListItem } from '@/components/TransactionItem';
 import PaymentMethodTab from '@/components/PaymentMethodTab';
 import CategoryTab from '@/components/CategoryTab';
@@ -722,30 +722,56 @@ export default function TransactionsPage() {
 
   return (
     <div className="space-y-6">
-      <PageHeader
-        title={
+      {/*
+        화면의 첫 문장이자 제목이다. 자산 화면과 같은 짜임새다 -- 이름을 누르면
+        자산주인을, 갈래 상자를 누르면 무엇을 더한 금액인지 고른다.
+
+        날짜를 고르는 자리도 이 문장 안에 있다. "언제의 순수입인가"를 답하지 않으면
+        금액만으로는 무엇을 본 것인지 알 수 없다.
+      */}
+      <LedgerKindSummary
+        scopeTitle={
+          /* 낱말(순수입·수입·지출)은 다음 줄로 내려갔으므로 noun 을 넘기지 않는다. */
           <PersonScopeTitle
-            noun={t('ledger.noun')}
             people={people}
             myPersonId={myPersonId}
             selectedPersonIds={selectedPersonIds}
             onTogglePerson={togglePersonId}
           />
         }
+        dateControl={
+          <MonthHeader
+            year={currentYear}
+            month={currentMonth}
+            incomeTotal={monthlyTotals.incomeTotal}
+            expenseTotal={monthlyTotals.expenseTotal}
+            onMonthChange={handleMonthChange}
+            rangeStart={rangeStart}
+            rangeEnd={rangeEnd}
+            isRangeMode={periodMode === 'range'}
+            onRangeChange={handleRangeChange}
+            onPeriodModeChange={handlePeriodModeChange}
+            /* 합계는 위 문장과 아래 상자가 말한다. 여기서 또 적으면 같은 숫자가 세 번이다. */
+            showTotals={false}
+            /* 보기 방식 전환은 아래 action 으로 빼서 우측 상단에 둔다. */
+            showModeSwitch={false}
+          />
+        }
         action={
           /*
-            거래 추가는 어느 탭에서든 쓸 수 있어야 한다.
-            읽기 전용 구성원에게는 그리지 않는다 -- 서버가 어차피 거절한다.
+            달 보기 <-> 기간 보기. 지금이 어느 쪽인지에 따라 반대쪽 이름을 적는다 --
+            누르면 무엇이 되는지가 버튼 이름이다.
           */
-          canEdit ? (
-            <button
-              onClick={handleAddClick}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition whitespace-nowrap"
-            >
-              {t('ledger.addEntry')}
-            </button>
-          ) : null
+          <button
+            type="button"
+            onClick={() => handlePeriodModeChange(periodMode === 'range' ? 'month' : 'range')}
+            className="px-3 py-1.5 text-sm border rounded-lg text-gray-700 hover:bg-gray-100 whitespace-nowrap"
+          >
+            {t(periodMode === 'range' ? 'month.byMonth' : 'month.byRange')}
+          </button>
         }
+        incomeTotal={monthlyTotals.incomeTotal}
+        expenseTotal={monthlyTotals.expenseTotal}
       />
 
       {/*
@@ -756,53 +782,57 @@ export default function TransactionsPage() {
         <div className="p-3 bg-red-50 text-red-800 text-sm rounded-lg">{error}</div>
       )}
 
-      {/* 년월(또는 기간) 이동과 보기 방식 탭 */}
-      <MonthHeader
-        year={currentYear}
-        month={currentMonth}
-        incomeTotal={monthlyTotals.incomeTotal}
-        expenseTotal={monthlyTotals.expenseTotal}
-        onMonthChange={handleMonthChange}
-        rangeStart={rangeStart}
-        rangeEnd={rangeEnd}
-        isRangeMode={periodMode === 'range'}
-        onRangeChange={handleRangeChange}
-        onPeriodModeChange={handlePeriodModeChange}
-        right={
-          <div className="flex gap-2 bg-gray-200 rounded-lg p-1">
-              <button
-                onClick={() => openView('calendar')}
-                className={`px-4 py-2 rounded-md font-medium transition ${
-                  viewType === 'calendar'
-                    ? 'bg-white text-blue-600 shadow'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                {t('ledger.tab.daily')}
-              </button>
-              <button
-                onClick={() => openView('budget')}
-                className={`px-4 py-2 rounded-md font-medium transition ${
-                  viewType === 'budget'
-                    ? 'bg-white text-blue-600 shadow'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-              >
-                {t('ledger.tab.category')}
-              </button>
-              <button
-                onClick={() => openView('payment-method')}
-                className={`px-4 py-2 rounded-md font-medium transition ${
-                  viewType === 'payment-method'
-                    ? 'bg-white text-blue-600 shadow'
-                    : 'text-gray-600 hover:text-gray-900'
-                }`}
-            >
-              {t('ledger.tab.method')}
-            </button>
-          </div>
-        }
-      />
+      {/*
+        보기 방식과 거래 추가.
+
+        예전에는 탭이 달 머리글 오른쪽에, 추가 버튼이 제목 오른쪽에 있었다. 첫 문장이
+        머리글 자리를 가져가면서 둘을 한 줄로 모았다 -- 목록에 무엇을 할지 고르는 것들이
+        목록 바로 위에 함께 있다.
+      */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-2 bg-gray-200 rounded-lg p-1">
+          <button
+            onClick={() => openView('calendar')}
+            className={`px-4 py-2 rounded-md font-medium transition ${
+              viewType === 'calendar'
+                ? 'bg-white text-blue-600 shadow'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            {t('ledger.tab.daily')}
+          </button>
+          <button
+            onClick={() => openView('budget')}
+            className={`px-4 py-2 rounded-md font-medium transition ${
+              viewType === 'budget'
+                ? 'bg-white text-blue-600 shadow'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            {t('ledger.tab.category')}
+          </button>
+          <button
+            onClick={() => openView('payment-method')}
+            className={`px-4 py-2 rounded-md font-medium transition ${
+              viewType === 'payment-method'
+                ? 'bg-white text-blue-600 shadow'
+                : 'text-gray-600 hover:text-gray-900'
+            }`}
+          >
+            {t('ledger.tab.method')}
+          </button>
+        </div>
+
+        {/* 읽기 전용 구성원에게는 그리지 않는다 -- 서버가 어차피 거절한다. */}
+        {canEdit ? (
+          <button
+            onClick={handleAddClick}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition whitespace-nowrap"
+          >
+            {t('ledger.addEntry')}
+          </button>
+        ) : null}
+      </div>
 
       {/* 감춘 보기도 그려 둔 채로 남긴다. 다시 누르면 받아 둔 값이 바로 보인다. */}
       {visited.includes('budget') && (

@@ -12,8 +12,19 @@ function scopeLabel(
   t: ReturnType<typeof useTranslation>['t'],
   names: string[],
   total: number,
-  noun: string,
+  noun: string | undefined,
 ): string {
+  /*
+   * 낱말을 붙이지 않는 판. 조사와 어순이 언어마다 달라 사전에서 각자 적는다 --
+   * "김철수님의"의 "의"를 여기서 이어 붙이면 다른 언어에서 말이 되지 않는다.
+   */
+  if (noun === undefined) {
+    if (names.length === 0) return t('scopeTitle.bare.none');
+    if (names.length === total) return t('scopeTitle.bare.all');
+    if (names.length <= MAX_NAMES) return t('scopeTitle.bare.some', { names: names.join(', ') });
+    return t('scopeTitle.bare.many', { first: names[0], count: names.length - 1 });
+  }
+
   if (names.length === 0) return t('scopeTitle.none', { noun });
   if (names.length === total) return t('scopeTitle.all', { noun });
   if (names.length <= MAX_NAMES) return t('scopeTitle.some', { names: names.join(', '), noun });
@@ -33,7 +44,13 @@ export default function PersonScopeTitle({
   selectedPersonIds,
   onTogglePerson,
 }: {
-  noun: string;
+  /**
+   * 화면 이름. "가계", "자산" 처럼 사람 이름 뒤에 붙는다.
+   *
+   * **비워 두면 이름만 적는다** ("김철수님의"). 가계 화면이 그렇다 -- 낱말이 켜 둔
+   * 갈래에 따라 바뀌어(순수입·수입·지출) 첫 문장의 다음 줄로 내려갔다.
+   */
+  noun?: string;
   people: Person[];
   myPersonId: string | null;
   selectedPersonIds: string[];
@@ -55,7 +72,9 @@ export default function PersonScopeTitle({
         {/* 누를 수 있다는 표시는 글자 앞에 둔다. 뒤에 두면 첫 문장이 이름과 조사 사이에서 끊긴다. */}
         <ChevronDown size={20} color="#9ca3af" />
         <Text className="text-2xl font-bold text-gray-900">
-          {people.length === 0 ? noun : scopeLabel(t, selectedNames, people.length, noun)}
+          {people.length === 0
+            ? noun ?? t('scopeTitle.bare.all')
+            : scopeLabel(t, selectedNames, people.length, noun)}
         </Text>
       </Pressable>
 

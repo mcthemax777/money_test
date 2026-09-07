@@ -27,6 +27,7 @@ export default function MonthHeader({
   expenseTotal,
   onMonthChange,
   right,
+  showTotals = true,
 }: {
   year: number;
   month: number;
@@ -35,6 +36,13 @@ export default function MonthHeader({
   onMonthChange: (year: number, month: number) => void;
   /** 같은 줄 오른쪽 끝에 붙일 것 */
   right?: ReactNode;
+  /**
+   * 합계를 이 줄에 함께 적을지.
+   *
+   * 가계 화면은 끄고 쓴다 -- 첫 문장이 그 금액을 문장으로 말하므로(LedgerKindSummary)
+   * 여기서 또 적으면 같은 숫자가 한 화면에 두 번 나온다.
+   */
+  showTotals?: boolean;
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
@@ -77,18 +85,20 @@ export default function MonthHeader({
             </Pressable>
           </View>
 
-          <View className="flex-row gap-6">
-            {incomeTotal > 0 ? (
-              <Text className="text-sm font-semibold text-green-600">
-                +{formatCurrency(incomeTotal, displayCurrency)}
-              </Text>
-            ) : null}
-            {expenseTotal > 0 ? (
-              <Text className="text-sm font-semibold text-red-600">
-                -{formatCurrency(expenseTotal, displayCurrency)}
-              </Text>
-            ) : null}
-          </View>
+          {showTotals ? (
+            <View className="flex-row gap-6">
+              {incomeTotal > 0 ? (
+                <Text className="text-sm font-semibold text-green-600">
+                  +{formatCurrency(incomeTotal, displayCurrency)}
+                </Text>
+              ) : null}
+              {expenseTotal > 0 ? (
+                <Text className="text-sm font-semibold text-red-600">
+                  -{formatCurrency(expenseTotal, displayCurrency)}
+                </Text>
+              ) : null}
+            </View>
+          ) : null}
         </View>
 
         {right ? <View className="flex-row items-center gap-3">{right}</View> : null}

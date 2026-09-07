@@ -21,6 +21,21 @@ interface MonthHeaderProps {
   onMonthChange: (year: number, month: number) => void;
   /** 같은 줄 오른쪽 끝에 붙일 것 (탭, 추가 버튼 등) */
   right?: React.ReactNode;
+  /**
+   * 합계를 이 줄에 함께 적을지.
+   *
+   * 가계 화면은 끄고 쓴다 -- 첫 문장이 그 금액을 문장으로 말하므로(LedgerKindSummary)
+   * 여기서 또 적으면 같은 숫자가 한 화면에 두 번 나온다.
+   */
+  showTotals?: boolean;
+  /**
+   * 달 보기 <-> 기간 보기 전환 버튼을 이 안에 그릴지.
+   *
+   * 가계 화면은 끄고 쓴다 -- 그 버튼을 화면 **우측 상단**으로 옮겼기 때문이다. 날짜
+   * 고르는 자리는 첫 문장 안에 있고, 보기 방식을 바꾸는 것은 문장의 일부가 아니다.
+   * 전환은 부르는 쪽이 그린다 (`onPeriodModeChange` 는 그대로 쓴다).
+   */
+  showModeSwitch?: boolean;
 
   /*
    * 기간 보기.
@@ -52,6 +67,8 @@ export default function MonthHeader({
   isRangeMode = false,
   onRangeChange,
   onPeriodModeChange,
+  showTotals = true,
+  showModeSwitch = true,
 }: MonthHeaderProps) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
@@ -117,13 +134,15 @@ export default function MonthHeader({
               onChange={(e) => onRangeChange?.(rangeStart, e.target.value)}
               className="px-2 py-1 border border-gray-300 rounded-lg text-sm"
             />
-            <button
-              type="button"
-              onClick={() => onPeriodModeChange?.('month')}
-              className="px-3 py-1 text-sm border rounded-lg text-gray-700 hover:bg-gray-100"
-            >
-              {t('month.byMonth')}
-            </button>
+            {showModeSwitch && (
+              <button
+                type="button"
+                onClick={() => onPeriodModeChange?.('month')}
+                className="px-3 py-1 text-sm border rounded-lg text-gray-700 hover:bg-gray-100"
+              >
+                {t('month.byMonth')}
+              </button>
+            )}
           </div>
         ) : (
         /* 화살표는 년월 텍스트 양옆에 붙는다 */
@@ -211,7 +230,7 @@ export default function MonthHeader({
           )}
 
           {/* 달을 넘어가는 구간을 보려면 여기서 전환한다. */}
-          {onPeriodModeChange && (
+          {showModeSwitch && onPeriodModeChange && (
             <button
               type="button"
               onClick={() => onPeriodModeChange('range')}
@@ -223,14 +242,20 @@ export default function MonthHeader({
         </div>
         )}
 
-        <div className="flex gap-6 text-sm font-semibold">
-          {incomeTotal > 0 && (
-            <span className="text-green-600">+{formatCurrency(incomeTotal, displayCurrency)}</span>
-          )}
-          {expenseTotal > 0 && (
-            <span className="text-red-600">-{formatCurrency(expenseTotal, displayCurrency)}</span>
-          )}
-        </div>
+        {showTotals && (
+          <div className="flex gap-6 text-sm font-semibold">
+            {incomeTotal > 0 && (
+              <span className="text-green-600">
+                +{formatCurrency(incomeTotal, displayCurrency)}
+              </span>
+            )}
+            {expenseTotal > 0 && (
+              <span className="text-red-600">
+                -{formatCurrency(expenseTotal, displayCurrency)}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {right && <div className="flex items-center gap-3">{right}</div>}

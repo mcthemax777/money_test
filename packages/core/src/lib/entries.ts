@@ -1,6 +1,6 @@
 import type { EntryListItem } from '@money/types';
 
-import { activeLocale, translate } from '../lib/i18n';
+import { activeLocale, translate, type MessageKey } from '../lib/i18n';
 import { dateKeyOf } from './datetime';
 import { toNumber } from './money';
 
@@ -135,4 +135,52 @@ export function monthDateKeys(year: number, month: number): { startKey: string; 
     startKey: `${year}-${pad(month)}-01`,
     endKey: `${year}-${pad(month)}-${pad(lastDay)}`,
   };
+}
+
+/** 가계 첫 문장이 다루는 갈래. 지출과 수입 둘뿐이다. */
+export type LedgerKindKey = 'expense' | 'income';
+
+/**
+ * 가계 첫 문장 아래에 놓는 갈래 상자.
+ *
+ * 자산 화면의 `ASSET_TYPE_GROUPS` 와 같은 자리다 (lib/net-worth). 그쪽이 계좌 유형을
+ * 빠짐없이 나눈 넷이라면 이쪽은 돈의 방향 둘이고, 둘을 다 켜면 문장의 금액이 순수입이 된다.
+ */
+export const LEDGER_KIND_GROUPS: Array<{ key: LedgerKindKey; labelKey: MessageKey }> = [
+  { key: 'expense', labelKey: 'tx.kind.expense' },
+  { key: 'income', labelKey: 'tx.kind.income' },
+];
+
+/**
+ * 켜 둔 갈래로 첫 문장의 낱말과 금액을 정한다.
+ *
+ *   둘 다 켜면   순수입 (수입 - 지출). 더 썼으면 음수다.
+ *   수입만 켜면  수입
+ *   지출만 켜면  지출. 부호를 뒤집지 않는다 -- "지출은 30만 원입니다"로 읽혀야 한다.
+ *   둘 다 끄면   더할 것이 없어 순수입 0.
+ *
+ * 낱말을 열쇠로 돌려주는 이유는 언어다. 문장을 여기서 만들면 조사와 어순이 한국어로
+ * 굳는다 (영어 사전은 조사 자리를 비워 둔다).
+ */
+export function ledgerHeadline(
+  selectedKeys: readonly string[],
+  totals: { incomeTotal: number; expenseTotal: number },
+): { nounKey: MessageKey; amount: number } {
+  const income = selectedKeys.includes('income');
+  const expense = selectedKeys.includes('expense');
+
+  if (income && expense) {
+    return { nounKey: 'ledgerSummary.net', amount: totals.incomeTotal - totals.expenseTotal };
+  }
+  if (income) return { nounKey: 'tx.kind.income', amount: totals.incomeTotal };
+  if (expense) return { nounKey: 'tx.kind.expense', amount: totals.expenseTotal };
+  return { nounKey: 'ledgerSummary.net', amount: 0 };
+}
+
+/** 그 갈래의 상자에 적을 금액. 지출도 양수 그대로 적는다. */
+export function ledgerKindAmount(
+  key: LedgerKindKey,
+  totals: { incomeTotal: number; expenseTotal: number },
+): number {
+  return key === 'income' ? totals.incomeTotal : totals.expenseTotal;
 }

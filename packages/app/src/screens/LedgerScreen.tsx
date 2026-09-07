@@ -11,8 +11,8 @@ import { useUserFilter } from '@money/core/store/user-filter';
 
 import CategoryBreakdown from '../components/CategoryBreakdown';
 import EntryEditor from '../components/EntryEditor';
+import LedgerKindSummary from '../components/LedgerKindSummary';
 import MonthHeader from '../components/MonthHeader';
-import PageHeader from '../components/PageHeader';
 import PaymentMethodBreakdown from '../components/PaymentMethodBreakdown';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import TransactionCalendar from '../components/TransactionCalendar';
@@ -89,16 +89,41 @@ export default function LedgerScreen() {
 
   return (
     <View className="gap-6">
-      <PageHeader
-        title={
+      {/*
+        화면의 첫 문장이자 제목이다. 자산 화면과 같은 짜임새다 -- 이름을 누르면
+        자산주인을, 갈래 상자를 누르면 무엇을 더한 금액인지 고른다.
+
+        날짜를 고르는 자리도 이 문장 안에 있다. "언제의 순수입인가"를 답하지 않으면
+        금액만으로는 무엇을 본 것인지 알 수 없다.
+      */}
+      <LedgerKindSummary
+        scopeTitle={
+          /* 낱말(순수입·수입·지출)은 다음 줄로 내려갔으므로 noun 을 넘기지 않는다. */
           <PersonScopeTitle
-            noun={t('ledger.noun')}
             people={ledger.people}
             myPersonId={ledger.myPersonId}
             selectedPersonIds={ledger.selectedPersonIds}
             onTogglePerson={togglePersonId}
           />
         }
+        dateControl={
+          <MonthHeader
+            year={view.year}
+            month={view.month}
+            incomeTotal={totals.incomeTotal}
+            expenseTotal={totals.expenseTotal}
+            onMonthChange={(year, month) => {
+              setView({ year, month });
+              // 달을 옮기면 고른 날은 그 달에 없다. 목록을 이 달 전체로 되돌린다.
+              setSelectedDate(null);
+              setDayEntries([]);
+            }}
+            /* 합계는 위 문장과 아래 상자가 말한다. 여기서 또 적으면 같은 숫자가 세 번이다. */
+            showTotals={false}
+          />
+        }
+        incomeTotal={totals.incomeTotal}
+        expenseTotal={totals.expenseTotal}
       />
 
       {ledger.hasError ? (
@@ -131,19 +156,6 @@ export default function LedgerScreen() {
           <Text className="text-base font-semibold text-white">{t('entryForm.addButton')}</Text>
         </Pressable>
       ) : null}
-
-      <MonthHeader
-        year={view.year}
-        month={view.month}
-        incomeTotal={totals.incomeTotal}
-        expenseTotal={totals.expenseTotal}
-        onMonthChange={(year, month) => {
-          setView({ year, month });
-          // 달을 옮기면 고른 날은 그 달에 없다. 목록을 이 달 전체로 되돌린다.
-          setSelectedDate(null);
-          setDayEntries([]);
-        }}
-      />
 
       {/* 보기 방식. 웹은 달 머리글 오른쪽에 붙지만 좁은 화면에서는 아래 줄로 내린다. */}
       <View className="flex-row gap-2 rounded-lg bg-gray-200 p-1">

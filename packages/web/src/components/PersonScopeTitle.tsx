@@ -6,8 +6,13 @@ import { useTranslation } from '@money/core/lib/i18n';
 import type { Person } from '@money/core/lib/types';
 
 interface PersonScopeTitleProps {
-  /** 화면 이름. "가계", "자산" 처럼 사람 이름 뒤에 붙는다. */
-  noun: string;
+  /**
+   * 화면 이름. "가계", "자산" 처럼 사람 이름 뒤에 붙는다.
+   *
+   * **비워 두면 이름만 적는다** ("김철수님의"). 가계 화면이 그렇다 -- 낱말이 켜 둔
+   * 갈래에 따라 바뀌어(순수입·수입·지출) 첫 문장의 다음 줄로 내려갔다.
+   */
+  noun?: string;
   people: Person[];
   /** 설정에서 지정한 "나". 이름 뒤에 표시만 한다. */
   myPersonId?: string | null;
@@ -31,8 +36,19 @@ function scopeLabel(
   t: ReturnType<typeof useTranslation>['t'],
   names: string[],
   total: number,
-  noun: string,
+  noun: string | undefined,
 ): string {
+  /*
+   * 낱말을 붙이지 않는 판. 조사와 어순이 언어마다 달라 사전에서 각자 적는다 --
+   * "김철수님의"의 "의"를 여기서 이어 붙이면 다른 언어에서 말이 되지 않는다.
+   */
+  if (noun === undefined) {
+    if (names.length === 0) return t('scopeTitle.bare.none');
+    if (names.length === total) return t('scopeTitle.bare.all');
+    if (names.length <= MAX_NAMES) return t('scopeTitle.bare.some', { names: names.join(', ') });
+    return t('scopeTitle.bare.many', { first: names[0], count: names.length - 1 });
+  }
+
   if (names.length === 0) return t('scopeTitle.none', { noun });
   if (names.length === total) return t('scopeTitle.all', { noun });
   if (names.length <= MAX_NAMES) return t('scopeTitle.some', { names: names.join(', '), noun });
@@ -105,7 +121,9 @@ export default function PersonScopeTitle({
           */}
           <ChevronDown className="w-5 h-5 text-gray-400" />
           {/* 구성원을 아직 못 받았으면 이름 자리를 비워 두고 화면 이름만 적는다 */}
-          {people.length === 0 ? noun : scopeLabel(t, selectedNames, people.length, noun)}
+          {people.length === 0
+            ? noun ?? t('scopeTitle.bare.all')
+            : scopeLabel(t, selectedNames, people.length, noun)}
         </button>
       </h1>
 
