@@ -30,6 +30,24 @@ function eq(label: string, actual: unknown, expected: unknown) {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/**
+ * 브라우저의 fetch 를 흉내 낸다.
+ *
+ * window 의 함수라 this 가 window(또는 없는 것)여야 하고, 아니면 TypeError 를 던진다.
+ * 노드의 fetch 는 이것을 따지지 않아서, 옵션 객체를 통해 부르는 잘못이 노드에서는
+ * 아무 일도 아닌 것처럼 지나간다. 그 차이를 여기서 대신 만든다.
+ */
+const strictFetch = function (
+  this: unknown,
+  url: string,
+  init: Parameters<StreamingFetch>[1],
+) {
+  if (this !== undefined && this !== globalThis) {
+    throw new TypeError("Failed to execute 'fetch' on 'Window': Illegal invocation");
+  }
+  return fetch(url, init as RequestInit);
+} as unknown as StreamingFetch;
+
 /** 붙은 연결이 받은 헤더와, 그 연결로 글자를 흘려보내는 방법. */
 interface Connection {
   authorization?: string;
@@ -173,6 +191,39 @@ async function main() {
     connections[connections.length - 1].end();
     await sleep(1_500);
     eq('닫으면 다시 붙지 않는다', connections.length, afterClose);
+
+    /*
+     * ── 8. 브라우저의 fetch 처럼 this 를 따지는 것도 받는다 ──
+     *
+     * 웹은 window.fetch 를 옵션에 그대로 넣는다. core 가 그것을 `options.fetchFn(...)`
+     * 으로 부르면 this 가 옵션 객체가 되어 브라우저가 거부한다("Illegal invocation").
+     * 그때 웹은 알림을 한 줄도 받지 못하는데, 노드의 fetch 는 this 를 따지지 않으므로
+     * **이 검사가 없으면 스모크는 그동안에도 초록이었다.** 실제로 그랬다.
+     */
+    const strictVersions: number[] = [];
+    const strictErrors: unknown[] = [];
+    const before = connections.length;
+
+    const strict = openSyncEvents({
+      baseUrl: `http://127.0.0.1:${port}`,
+      projectId: 'p-1',
+      getToken: () => 'token-2',
+      fetchFn: strictFetch,
+      onVersion: (version) => strictVersions.push(version),
+      onError: (error) => strictErrors.push(error),
+    });
+
+    try {
+      eq('this 를 따지는 fetch 로도 연결이 열린다', await waitForConnection(before + 1), before + 1);
+      connections[before]?.write('event: sync\ndata: {"version":30}\n\n');
+
+      const gotVersion = Date.now() + 3_000;
+      while (Date.now() < gotVersion && strictVersions.length === 0) await sleep(20);
+      eq('그 연결로 번호가 온다', strictVersions[0], 30);
+      eq('오류 없이 붙는다', strictErrors.length, 0);
+    } finally {
+      strict.close();
+    }
   } finally {
     connections.forEach((connection) => connection.end());
     server.close();

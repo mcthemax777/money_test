@@ -42,6 +42,17 @@ export function LiveSync() {
        */
       fetchFn: fetch as unknown as StreamingFetch,
       onVersion: () => notifyMirrorChanged(),
+      /*
+       * 실패를 남긴다. 다시 붙는 일은 core 가 맡으므로 여기서 할 일은 알리는 것뿐이다.
+       *
+       * 없어서는 안 되는 줄이다. 예전에는 이 자리가 비어 있어서, 연결이 아예 열리지
+       * 못하는 동안에도 화면에는 아무 흔적이 남지 않았다. 실시간이 죽은 것을 "다른
+       * 탭에 갔다 오면 값이 바뀐다"는 증상으로만 알 수 있었고(그 갱신은 아래
+       * visibilitychange 가 한 것이다), 원인을 찾는 데 한참을 썼다.
+       */
+      onError: (error) => {
+        console.error('실시간 알림 연결 오류:', error instanceof Error ? error.message : error);
+      },
     });
 
     /*

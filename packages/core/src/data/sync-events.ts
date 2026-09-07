@@ -111,7 +111,19 @@ export function openSyncEvents(options: SyncEventsOptions): SyncEventsHandle {
     const token = await options.getToken();
     controller = new AbortController();
 
-    const response = await options.fetchFn(url, {
+    /*
+     * fetch 를 옵션에서 **꺼내서** 부른다. `options.fetchFn(...)` 로 부르면 안 된다.
+     *
+     * 그렇게 부르면 this 가 옵션 객체가 되고, 브라우저의 fetch 는 그것을 거부한다
+     * ("Failed to execute 'fetch' on 'Window': Illegal invocation"). window 의 함수라
+     * this 가 window(또는 없는 것)여야 한다.
+     *
+     * 이 한 줄 때문에 웹은 알림을 한 줄도 받지 못했다. 오류는 오프라인이 아니라
+     * onError 로 흘렀고, 그것을 받지 않는 화면에서는 아무 데도 남지 않아, 웹만
+     * 실시간이 안 되는 것처럼 보였다 -- 앱의 expo/fetch 는 평범한 함수라 잘 돌았다.
+     */
+    const streamingFetch = options.fetchFn;
+    const response = await streamingFetch(url, {
       headers: {
         Accept: 'text/event-stream',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
