@@ -28,6 +28,7 @@ export default function MonthHeader({
   onMonthChange,
   right,
   showTotals = true,
+  tightArrows = false,
 }: {
   year: number;
   month: number;
@@ -43,6 +44,19 @@ export default function MonthHeader({
    * 여기서 또 적으면 같은 숫자가 한 화면에 두 번 나온다.
    */
   showTotals?: boolean;
+  /**
+   * 화살표의 좌우 여백을 레이아웃에서 뺄지 (누를 자리는 그대로 둔다).
+   *
+   * 가계의 첫 문장이 켜고 쓴다. 이 화살표는 문장 안에 섞여 있어 두 가지가 걸린다.
+   *
+   *   1. 왼쪽 선. 윗줄 제목은 `아이콘 20 + gap-1.5` 라 글자가 26 에서 시작하는데,
+   *      화살표에 여백(p-2)이 붙어 있으면 년월 글자가 34 로 밀려 "전"과 "2"가 어긋난다.
+   *   2. 오른쪽 여백. 여백이 그대로면 꺽쇠 양옆이 넓게 벌어져, 뒤에 오는 낱말이
+   *      한 문장으로 이어 읽히지 않는다.
+   *
+   * 음수 여백으로 상쇄하면 차지하는 자리는 아이콘 크기(20)뿐이고 누를 자리는 36 이다.
+   */
+  tightArrows?: boolean;
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
@@ -64,9 +78,19 @@ export default function MonthHeader({
     <View className="gap-2">
       <View className="flex-row flex-wrap items-center justify-between gap-4">
         <View className="flex-row items-center gap-6">
-          <View className="flex-row items-center gap-1">
-            <Pressable onPress={() => shift(-1)} className="rounded-lg p-2 active:bg-gray-100">
-              <ChevronLeft size={20} color="#4b5563" />
+          {/*
+            화살표와 년월 글자의 자리를 **윗줄 제목과 맞춘다** (PersonScopeTitle).
+            제목은 `아이콘 20 + gap-1.5` 라 글자가 26px 에서 시작한다. 그래서 여기도
+            같은 아이콘 크기와 같은 간격을 쓰고, 년월 버튼의 좌우 여백은 두지 않는다 --
+            px 를 두면 그만큼 글자가 밀려, 세로로 봤을 때 "전"과 "2"가 어긋난다.
+          */}
+          <View className="flex-row items-center gap-1.5">
+            <Pressable
+              onPress={() => shift(-1)}
+              className={`rounded-lg p-2 active:bg-gray-100 ${tightArrows ? '-mx-2' : ''}`}
+            >
+              {/* 색은 윗줄 제목의 아이콘과 같다 (PersonScopeTitle 의 ChevronDown). */}
+              <ChevronLeft size={20} color="#9ca3af" />
             </Pressable>
 
             <Pressable
@@ -75,13 +99,16 @@ export default function MonthHeader({
                 setPickerYear(year);
                 setIsPickerOpen((open) => !open);
               }}
-              className="rounded-lg px-2 py-1 active:bg-gray-100"
+              className="rounded-lg py-1 active:bg-gray-100"
             >
               <Text className="text-2xl font-bold text-gray-900">{formatYearMonth(year, month)}</Text>
             </Pressable>
 
-            <Pressable onPress={() => shift(1)} className="rounded-lg p-2 active:bg-gray-100">
-              <ChevronRight size={20} color="#4b5563" />
+            <Pressable
+              onPress={() => shift(1)}
+              className={`rounded-lg p-2 active:bg-gray-100 ${tightArrows ? '-mx-2' : ''}`}
+            >
+              <ChevronRight size={20} color="#9ca3af" />
             </Pressable>
           </View>
 

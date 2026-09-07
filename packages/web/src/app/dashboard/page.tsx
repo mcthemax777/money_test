@@ -755,6 +755,8 @@ export default function TransactionsPage() {
             showTotals={false}
             /* 보기 방식 전환은 아래 action 으로 빼서 우측 상단에 둔다. */
             showModeSwitch={false}
+            /* 년월 글자를 윗줄 제목과 같은 왼쪽 선에 세우고, 꺽쇠 양옆을 붙인다. */
+            tightArrows
           />
         }
         action={

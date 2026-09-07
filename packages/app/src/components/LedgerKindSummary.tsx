@@ -54,12 +54,16 @@ export default function LedgerKindSummary({
         {/*
           둘째 줄. 날짜와 낱말이 한 문장으로 이어 읽힌다.
 
-          제목 버튼은 누를 자리를 넓히려고 좌우 여백을 갖는다. 날짜 쪽도 그래서, 둘을
-          같은 왼쪽 선에 맞추려면 그 여백만큼 당겨야 한다.
+          왼쪽 선은 윗줄 제목과 맞고, 낱말은 오른쪽 꺽쇠에 바로 붙는다. 날짜 쪽이
+          `tightArrows` 로 화살표 여백을 자리에서 빼므로(MonthHeader) 여기서 당기거나
+          띄울 것이 없다.
         */}
-        <View className="-ml-2 flex-row flex-wrap items-center gap-x-3">
+        <View className="flex-row flex-wrap items-center">
           {dateControl}
           <Text className="text-2xl font-bold text-gray-900">
+            {/* 꺽쇠와 낱말 사이는 한 칸이다. 문장 안의 낱말 사이와 같은 간격이라 여백
+                대신 공백을 쓴다 -- 줄이 바뀌면 함께 접힌다. */}
+            {' '}
             {t(nounKey)}
             {/* 조사는 언어마다 있고 없다. 영어 사전은 이 자리를 비워 둔다. */}
             {t('ledgerSummary.particle')}

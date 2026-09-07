@@ -29,6 +29,19 @@ interface MonthHeaderProps {
    */
   showTotals?: boolean;
   /**
+   * 화살표의 좌우 여백을 자리에서 뺄지 (누를 자리는 그대로 둔다).
+   *
+   * 가계의 첫 문장이 켜고 쓴다. 이 화살표는 문장 안에 섞여 있어 두 가지가 걸린다.
+   *
+   *   1. 왼쪽 선. 윗줄 제목은 `아이콘 w-5 + gap-1.5` 라 글자가 26px 에서 시작하는데,
+   *      화살표에 여백(p-2)이 붙어 있으면 년월 글자가 34px 로 밀려 "전"과 "2"가 어긋난다.
+   *   2. 오른쪽 여백. 여백이 그대로면 꺽쇠 양옆이 넓게 벌어져, 뒤에 오는 낱말이 한 문장으로
+   *      이어 읽히지 않는다.
+   *
+   * 음수 여백으로 상쇄하면 차지하는 자리는 아이콘 크기(20px)뿐이다.
+   */
+  tightArrows?: boolean;
+  /**
    * 달 보기 <-> 기간 보기 전환 버튼을 이 안에 그릴지.
    *
    * 가계 화면은 끄고 쓴다 -- 그 버튼을 화면 **우측 상단**으로 옮겼기 때문이다. 날짜
@@ -69,6 +82,7 @@ export default function MonthHeader({
   onPeriodModeChange,
   showTotals = true,
   showModeSwitch = true,
+  tightArrows = false,
 }: MonthHeaderProps) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
@@ -145,12 +159,27 @@ export default function MonthHeader({
             )}
           </div>
         ) : (
-        /* 화살표는 년월 텍스트 양옆에 붙는다 */
-        <div ref={ref} className="relative flex items-center gap-1">
+        /*
+          화살표와 년월 글자의 자리를 **윗줄 제목과 맞춘다** (PersonScopeTitle).
+          제목은 `아이콘 w-5 + gap-1.5` 라 글자가 26px 에서 시작한다. 그래서 여기도 같은
+          아이콘 크기와 같은 간격을 쓰고, 년월 버튼에 좌우 여백을 두지 않는다 -- px 를
+          두면 그만큼 글자가 밀려, 세로로 봤을 때 "전"과 "2"가 어긋난다.
+        */
+        <div ref={ref} className="relative flex items-center gap-1.5">
           <button
             type="button"
             onClick={() => shift(-1)}
-            className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
+            /*
+              색은 윗줄 제목의 아이콘과 같다 (PersonScopeTitle 의 ChevronDown).
+
+              `tightArrows` 일 때는 마우스를 올렸을 때의 **바탕을 칠하지 않는다.** 음수
+              여백으로 자리를 줄여 두었으므로 버튼의 바탕 상자가 아이콘보다 좌우로 8px씩
+              넓고, 그 바탕이 뒤에 오는 낱말의 첫 글자를 덮는다. 색이 진해지는 것만으로도
+              누를 수 있다는 것은 드러난다.
+            */
+            className={`p-2 text-gray-400 hover:text-gray-900 rounded-lg transition ${
+              tightArrows ? '-mx-2' : 'hover:bg-gray-100'
+            }`}
             aria-label={t('month.prev')}
             title={t('month.prev')}
           >
@@ -160,7 +189,7 @@ export default function MonthHeader({
           <button
             type="button"
             onClick={() => (isPickerOpen ? setIsPickerOpen(false) : openPicker())}
-            className="px-2 py-1 text-2xl font-bold text-gray-900 rounded-lg hover:bg-gray-100 transition"
+            className="py-1 text-2xl font-bold text-gray-900 rounded-lg hover:bg-gray-100 transition"
             aria-haspopup="dialog"
             aria-expanded={isPickerOpen}
             title={t('month.pick')}
@@ -171,7 +200,9 @@ export default function MonthHeader({
           <button
             type="button"
             onClick={() => shift(1)}
-            className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
+            className={`p-2 text-gray-400 hover:text-gray-900 rounded-lg transition ${
+              tightArrows ? '-mx-2' : 'hover:bg-gray-100'
+            }`}
             aria-label={t('month.next')}
             title={t('month.next')}
           >

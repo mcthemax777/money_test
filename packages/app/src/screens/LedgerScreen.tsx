@@ -120,6 +120,8 @@ export default function LedgerScreen() {
             }}
             /* 합계는 위 문장과 아래 상자가 말한다. 여기서 또 적으면 같은 숫자가 세 번이다. */
             showTotals={false}
+            /* 년월 글자를 윗줄 제목과 같은 왼쪽 선에 세우고, 꺽쇠 양옆을 붙인다. */
+            tightArrows
           />
         }
         incomeTotal={totals.incomeTotal}
