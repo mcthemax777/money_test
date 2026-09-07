@@ -282,6 +282,7 @@ export default function DragList<T extends { id: string }>({
           key={item.id}
           id={item.id}
           isDragging={draggingId === item.id}
+          isReordering={draggingId !== null}
           disabled={locked || items.length < 2}
           activeId={activeId}
           dragY={dragY}
@@ -317,6 +318,7 @@ function swap(ids: readonly string[], from: number, to: number): string[] {
 function DragRow({
   id,
   isDragging,
+  isReordering,
   disabled,
   activeId,
   dragY,
@@ -331,6 +333,7 @@ function DragRow({
 }: {
   id: string;
   isDragging: boolean;
+  isReordering: boolean;
   disabled: boolean;
   activeId: SharedValue<string | null>;
   dragY: SharedValue<number>;
@@ -403,10 +406,18 @@ function DragRow({
   return (
     <Animated.View
       /*
-       * 끄는 줄에는 자리 애니메이션을 걸지 않는다. 손끝을 따라 매 프레임 옮기는 줄까지
-       * 부드럽게 만들면 손보다 뒤처져 보인다. 자리를 내주는 이웃들만 미끄러진다.
+       * 자리 애니메이션은 **끄는 동안에만** 붙인다.
+       *
+       * 이 전이가 있는 이유는 하나다 -- 끄는 줄이 지나갈 때 이웃이 미끄러지며 자리를
+       * 내주는 것. 끄는 줄 자신은 빼 둔다. 손끝을 따라 매 프레임 옮기는 줄까지 부드럽게
+       * 만들면 손보다 뒤처져 보인다.
+       *
+       * 늘 붙여 두면 **끌지 않을 때의 자리 변화까지 애니메이션이 된다.** 분류 화면의
+       * 지출·수입 탭이 그 예다. 안 보이는 단은 `display: none` 으로 접혀 있어 자리가
+       * 없는데, 탭을 눌러 펴는 순간 전이가 그 없던 자리(0, 0)에서 제자리까지를 그린다.
+       * 목록이 좌상단에서 날아와 펼쳐지는 것처럼 보인 까닭이다.
        */
-      layout={isDragging ? undefined : LinearTransition.duration(SHIFT_MS)}
+      layout={isReordering && !isDragging ? LinearTransition.duration(SHIFT_MS) : undefined}
       style={style}
       onLayout={(event) => onMeasure(event.nativeEvent.layout.height)}
       onTouchStart={(event) => {
