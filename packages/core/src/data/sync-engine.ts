@@ -13,7 +13,7 @@
  * 사본은 이미 화면이 쓸 수 있는 상태이므로 실패가 화면을 막지 않아야 한다.
  */
 
-import type { PushRequest, PushResponse, SyncDto } from '@money/types';
+import { newId, type PushRequest, type PushResponse, type SyncDto } from '@money/types';
 
 import { isOfflineError } from '../lib/offline-error';
 import type { LocalStore } from './local-store';
@@ -163,6 +163,15 @@ export async function syncProject(
 }
 
 /**
+ * 순번이 어긋났을 때 다시 보내 볼 횟수.
+ *
+ * 한 번이면 충분하다 -- 서버가 알려 준 마지막 번호 다음으로 앞당겨 다시 내므로 그 자리에서
+ * 통과한다. 그래도 한 번을 더 두는 것은 그 사이 같은 기기의 다른 요청이 번호를 더 쓴
+ * 경우다(같은 앱의 두 화면이 동시에 저장하는 자리). 끝없이 돌지는 않는다.
+ */
+const SEQ_RETRY_ROUNDS = 2;
+
+/**
  * 아웃박스를 비운다.
  *
  * 한 번에 한 묶음만 보낸다. 일주일치를 한 요청에 밀면 끊기고(요청 시간 제한), 부분 성공을
@@ -170,36 +179,46 @@ export async function syncProject(
  *
  * 결과를 반영하는 일은 저장소가 한다 -- 끝난 것은 큐에서 빠지고, 충돌과 거절은 이유를 달고
  * 보류 칸에 남는다. 조용히 지우지 않는 것이 요점이다. 돈은 말없이 사라지면 안 된다 (D6).
+ *
+ * **순번 충돌만 여기서 한 번 더 돈다.** 저장소가 번호를 앞당겨 다시 내 두었으므로(그쪽에
+ * 왜인지 적어 두었다) 곧바로 보내면 그 자리에서 통과한다. 다음 동기화를 기다리게 하면
+ * 사용자가 방금 옮긴 것이 다른 기기에 늦게 나타난다.
  */
 async function pushOutbox(
   store: LocalStore,
   push: PushFn,
   projectId: string,
 ): Promise<{ pushed: number; held: number; offline: boolean }> {
-  const mutations = await store.pendingMutations(projectId);
-  if (mutations.length === 0) {
-    const counts = await store.outboxCount(projectId);
-    return { pushed: 0, held: counts.held, offline: false };
-  }
+  let sent = 0;
 
-  try {
-    const response = await push({
-      projectId,
-      clientId: mutations[0].clientId,
-      mutations,
-    });
-    await store.settleMutations(response.results);
-  } catch (error) {
-    // 오프라인은 오류가 아니다. 큐를 그대로 두고 다음 기회에 다시 보낸다.
-    if (isOfflineError(error)) {
-      const counts = await store.outboxCount(projectId);
-      return { pushed: 0, held: counts.held, offline: true };
+  for (let round = 0; round < SEQ_RETRY_ROUNDS; round += 1) {
+    const mutations = await store.pendingMutations(projectId);
+    if (mutations.length === 0) break;
+
+    let requeued = 0;
+    try {
+      const response = await push({
+        projectId,
+        clientId: mutations[0].clientId,
+        mutations,
+      });
+      ({ requeued } = await store.settleMutations(response.results, newId));
+    } catch (error) {
+      // 오프라인은 오류가 아니다. 큐를 그대로 두고 다음 기회에 다시 보낸다.
+      if (isOfflineError(error)) {
+        const counts = await store.outboxCount(projectId);
+        return { pushed: sent, held: counts.held, offline: true };
+      }
+      throw error;
     }
-    throw error;
+
+    const counts = await store.outboxCount(projectId);
+    sent += mutations.length - counts.pending;
+    if (requeued === 0) break;
   }
 
   const counts = await store.outboxCount(projectId);
-  return { pushed: mutations.length - counts.pending, held: counts.held, offline: false };
+  return { pushed: sent, held: counts.held, offline: false };
 }
 
 /** 응답에 실제로 담긴 변경 수. "바뀐 것이 있었는가"를 화면에 알릴 때 쓴다. */

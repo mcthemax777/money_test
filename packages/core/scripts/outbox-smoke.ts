@@ -27,6 +27,7 @@ import {
   type PushResponse,
   type SyncDto,
   setRandomBytes,
+  newId,
 } from '@money/types';
 
 import { createLocalEntryWriter } from '../src/data/local-entry-writer';
@@ -196,7 +197,7 @@ const KST = 'Asia/Seoul';
     status: 'rejected',
     error: '카테고리를 찾을 수 없습니다.',
   };
-  await store.settleMutations([...applied, conflicted, rejected]);
+  await store.settleMutations([...applied, conflicted, rejected], newId);
 
   const afterSettle = await store.outboxCount(projectId);
   eq('적용된 것은 큐에서 빠진다', afterSettle.pending, dump.mutations.length - 4);
@@ -242,6 +243,48 @@ const KST = 'Asia/Seoul';
     false);
   eq('없는 명령을 다시 내면 아무 일도 없다',
     String(await store.retryMutation('없는-명령', () => 'retry-x')), 'null');
+
+  /*
+   * 순번 충돌은 **사람을 부르지 않는다.**
+   *
+   * 기기의 번호가 뒤로 물러나면(사본이 마지막 커밋 몇 개를 잃는 경우가 있다) 서버는 그
+   * 번호를 이미 쓴 것으로 보고 거절한다. 사용자가 고를 것이 없는 사정이라, 서버가 알려 준
+   * 마지막 번호 다음으로 앞당겨 그 자리에서 다시 낸다. 보류 칸에 올리면 어긋난 폭만큼
+   * "다시 보내기"를 눌러야 하고 그동안 이 기기의 모든 변경이 조용히 서버에 닿지 않는다.
+   */
+  const beforeSeq = (await store.pendingMutations(projectId))[0];
+  const settled = await store.settleMutations(
+    [
+      {
+        mutationId: beforeSeq.mutationId,
+        status: 'rejected',
+        code: 'CLIENT_SEQ_TAKEN',
+        error: '같은 순번을 다른 명령이 이미 썼습니다.',
+        lastClientSeq: 500,
+      },
+    ],
+    () => 'seq-retry-1',
+  );
+
+  eq('다시 낸 수를 돌려준다', settled.requeued, 1);
+  const afterSeq = await store.pendingMutations(projectId);
+  const requeued = afterSeq.find((row) => row.mutationId === 'seq-retry-1');
+  eq('보류 칸에 올리지 않는다',
+    (await store.heldMutations(projectId)).some((row) => row.mutationId === beforeSeq.mutationId),
+    false);
+  eq('새 명령으로 다시 줄에 선다', Boolean(requeued), true);
+  eq('번호를 서버가 아는 다음으로 앞당긴다', requeued?.clientSeq, 501);
+  eq('짐은 그대로다',
+    JSON.stringify(requeued?.payload), JSON.stringify(beforeSeq.payload));
+  eq('그다음 명령은 그 뒤 번호를 받는다',
+    (await store.enqueue({
+      projectId,
+      mutationId: 'after-seq-retry',
+      kind: 'entry.delete',
+      targets: [beforeSeq.targets[0]],
+      payload: { id: beforeSeq.targets[0] },
+    })).clientSeq,
+    502);
 
   // 다시 줄에 세운 충돌은 이미 보류 칸을 떠났다. 남은 거절 하나를 버리면 칸이 빈다.
   await store.discardMutation(rejected.mutationId);
@@ -359,6 +402,7 @@ const KST = 'Asia/Seoul';
       mutationId: row.mutationId,
       status: 'applied' as const,
     })),
+    newId,
   );
   eq('정리하면 큐가 빈다', (await store.outboxCount(projectId)).pending, 0);
 

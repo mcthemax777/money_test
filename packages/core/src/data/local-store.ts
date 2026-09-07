@@ -1995,14 +1995,40 @@ export class LocalStore {
   }
 
   /**
-   * 서버가 돌려준 결과를 반영한다.
+   * 서버가 돌려준 결과를 반영한다. 다시 낸 명령의 수를 돌려준다.
    *
    * 끝난 것(적용·중복)은 큐에서 뺀다. 그 밖은 남겨 두고 상태만 적는다 -- 충돌은 사용자가
    * 보고 고를 것이고, 거절과 보류는 왜 못 갔는지 알려야 한다. 조용히 지우면 사용자가
    * 적은 것이 아무 말 없이 사라진다.
+   *
+   * **순번 충돌만 예외다.** 그것은 사람이 고를 것이 없는 사정이라(내 번호가 뒤로 물러났다)
+   * 서버가 알려 준 마지막 번호 다음으로 앞당기고 그 자리에서 다시 낸다. 보류 칸에 올리면
+   * 사용자가 어긋난 폭만큼 "다시 보내기"를 눌러야 하고, 그동안 이 기기의 모든 변경이
+   * 조용히 서버에 닿지 않는다.
    */
-  async settleMutations(results: readonly MutationResult[]): Promise<void> {
+  async settleMutations(
+    results: readonly MutationResult[],
+    makeId: () => string,
+  ): Promise<{ requeued: number }> {
+    let requeued = 0;
+
     await this.db.transaction(async () => {
+      /*
+       * 번호를 먼저 앞당긴다. 다시 내는 것보다 앞이어야 새 번호가 서버의 마지막을 지난다.
+       *
+       * 한 묶음 안의 여러 명령이 같은 값을 실어 오므로 가장 큰 것을 한 번만 본다.
+       */
+      const collided = results.filter(
+        (result) => result.code === 'CLIENT_SEQ_TAKEN' && typeof result.lastClientSeq === 'number',
+      );
+      if (collided.length > 0) {
+        const last = Math.max(...collided.map((result) => result.lastClientSeq as number));
+        await this.db.run(
+          `UPDATE client_state SET nextSeq = ? WHERE id = 1 AND nextSeq <= ?`,
+          [last + 1, last],
+        );
+      }
+
       for (const result of results) {
         /*
          * 서버가 다른 행을 채택했다. 사본과 큐의 참조를 그 id 로 옮긴다.
@@ -2024,6 +2050,21 @@ export class LocalStore {
          * 적은 것이 사라진다. 그대로 두면 다음 동기화가 다시 보내고 그때 결과를 받는다.
          */
         if (isDeferred(result.status)) continue;
+
+        /*
+         * 순번 충돌은 다시 낸다. 짐과 대상은 그대로이고 번호와 명령 id 만 새것이다.
+         *
+         * 한 묶음에 여럿이 겹쳤으면 서버가 돌려준 차례대로 다시 내므로 서로의 앞뒤도
+         * 그대로다. (앞의 것만 겹치고 뒤의 것은 통과한 경우에는 앞뒤가 뒤집힐 수 있다.
+         * 번호가 물러난 폭이 묶음보다 작을 때인데, 그때는 뒤의 것이 앞의 것을 못 찾아
+         * 보류 칸으로 가고 사용자가 그 자리에서 알게 된다.)
+         */
+        if (result.code === 'CLIENT_SEQ_TAKEN' && typeof result.lastClientSeq === 'number') {
+          const again = await this.insertRetry(result.mutationId, makeId);
+          if (again) requeued += 1;
+          continue;
+        }
+
         await this.db.run(`UPDATE outbox SET status = ?, error = ? WHERE mutationId = ?`, [
           result.status,
           result.error ?? null,
@@ -2031,6 +2072,8 @@ export class LocalStore {
         ]);
       }
     });
+
+    return { requeued };
   }
 
   /**
@@ -2145,33 +2188,39 @@ export class LocalStore {
    * 없어 id 를 바꾸지 않아도 되지만, 한 길로 두는 편이 규칙이 하나다.
    */
   async retryMutation(mutationId: string, makeId: () => string): Promise<Mutation | null> {
-    return this.db.transaction(async () => {
-      const rows = await this.db.all<Row>(`SELECT * FROM outbox WHERE mutationId = ?`, [
-        mutationId,
-      ]);
-      const row = rows[0];
-      if (!row) return null;
+    return this.db.transaction(() => this.insertRetry(mutationId, makeId));
+  }
 
-      const targets = JSON.parse(String(row.targets)) as string[];
-      const payload = JSON.parse(String(row.payload)) as unknown;
+  /**
+   * 다시 내기의 몸통. 트랜잭션은 부르는 쪽이 연다.
+   *
+   * `settleMutations` 도 이것을 쓴다 -- 순번 충돌을 그 자리에서 다시 내는데, 그쪽은 이미
+   * 트랜잭션 안이라 `retryMutation` 을 부를 수 없다 (사본은 트랜잭션을 겹쳐 열지 못한다).
+   */
+  private async insertRetry(mutationId: string, makeId: () => string): Promise<Mutation | null> {
+    const rows = await this.db.all<Row>(`SELECT * FROM outbox WHERE mutationId = ?`, [mutationId]);
+    const row = rows[0];
+    if (!row) return null;
 
-      const kind = String(row.kind) as MutationKind;
-      const observed = await this.observedClock(kind, targets, payload);
+    const targets = JSON.parse(String(row.targets)) as string[];
+    const payload = JSON.parse(String(row.payload)) as unknown;
 
-      await this.db.run(`DELETE FROM outbox WHERE mutationId = ?`, [mutationId]);
+    const kind = String(row.kind) as MutationKind;
+    const observed = await this.observedClock(kind, targets, payload);
 
-      return this.insertMutation(
-        {
-          projectId: String(row.projectId),
-          mutationId: makeId(),
-          kind,
-          targets,
-          payload,
-          observed,
-        },
-        Date.now(),
-      );
-    });
+    await this.db.run(`DELETE FROM outbox WHERE mutationId = ?`, [mutationId]);
+
+    return this.insertMutation(
+      {
+        projectId: String(row.projectId),
+        mutationId: makeId(),
+        kind,
+        targets,
+        payload,
+        observed,
+      },
+      Date.now(),
+    );
   }
 
   /**

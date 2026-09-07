@@ -14,7 +14,7 @@
  *      것을 곧바로 고쳐도 순서가 뒤집히지 않는다.
  *   4. **신용카드는 행 둘.** 카드와 부채 계정 id 를 모두 기기가 만들어 함께 보낸다.
  */
-import { rankForMove, setRandomBytes, type Mutation } from '@money/types';
+import { newId, rankForMove, setRandomBytes, type Mutation } from '@money/types';
 
 import { createLocalSettingsWriter } from '../src/data/local-settings-writer';
 import { LocalStore } from '../src/data/local-store';
@@ -177,7 +177,7 @@ const PROJECT = 'p-assets';
       status: 'applied',
       alias: { from: parentId, to: 'server-category-1' },
     },
-  ]);
+  ], newId);
 
   eq('옛 줄은 사본에서 사라진다',
     (await store.categoryRows(PROJECT)).some((row) => row.id === parentId), false);

@@ -187,6 +187,14 @@ export interface MutationResult {
   code?: string;
   /** 적용 뒤의 프로젝트 번호. 기기가 pull 커서를 앞당기는 데 쓴다. */
   appliedVersion?: number;
+  /**
+   * 서버가 아는 이 기기의 마지막 순번. `CLIENT_SEQ_TAKEN` 일 때만 담는다.
+   *
+   * 순번이 겹치는 것은 **기기의 번호가 뒤로 물러났다**는 뜻이다(사본이 마지막 커밋
+   * 몇 개를 잃는 경우가 있다). 사람이 고를 것이 없는 사정이라 보류 칸에 올리면 안 되고,
+   * 기기가 스스로 이 값 다음으로 번호를 앞당겨 다시 내야 한다.
+   */
+  lastClientSeq?: number;
 }
 
 export interface PushRequest {

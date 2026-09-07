@@ -207,6 +207,33 @@ runSmoke('sync-push-assets', async (ctx) => {
   ctx.check('숨긴 것이 반영된다',
     (await ctx.prisma.person.findUniqueOrThrow({ where: { id: personId } })).isActive, false);
 
+  /*
+   * ── 4-2. 순번이 겹치면 어긋난 정도를 알려 준다 ──
+   *
+   * 기기의 번호가 뒤로 물러나면(사본이 마지막 커밋 몇 개를 잃는 경우가 있다) 이미 쓴
+   * 번호로 다시 온다. 그냥 거절만 하면 기기는 1씩 올려 보며 부딪히는 수밖에 없고, 그동안
+   * 그 기기의 모든 변경이 조용히 서버에 닿지 않는다. 마지막 번호를 함께 돌려주어 기기가
+   * 한 번에 앞당길 수 있게 한다 (사본 쪽 처리는 core 의 outbox-smoke 가 본다).
+   */
+  const usedSeq = seq;
+  const reused = await push([
+    {
+      mutationId: `${RUN}-seq-collision`,
+      clientId: CLIENT,
+      clientSeq: 1,
+      hlc: hlcAt(T0 + 600_000),
+      kind: 'person.update',
+      projectId: pid,
+      targets: [personId],
+      payload: { id: personId, name: '순번 겹침' },
+    },
+  ]);
+  ctx.check('이미 쓴 순번은 거절', reused.results[0]?.status, 'rejected');
+  ctx.check('이유에 코드가 붙는다', reused.results[0]?.code, 'CLIENT_SEQ_TAKEN');
+  ctx.check('서버가 아는 마지막 순번을 함께 준다', reused.results[0]?.lastClientSeq, usedSeq);
+  ctx.check('이름은 바뀌지 않는다',
+    (await ctx.prisma.person.findUniqueOrThrow({ where: { id: personId } })).name, '김철수(웹)');
+
   // ── 5. 없는 대상을 고치면 거절 ──
   const ghost = await push([
     command('card.update', 'no-such-card', { id: 'no-such-card', name: 'x' }, T0 + 500_000),

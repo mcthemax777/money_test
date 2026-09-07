@@ -225,11 +225,25 @@ export class MutationReplayService {
       this.logger.warn(
         `순번 충돌 ${mutation.mutationId} (clientId ${clientId}, clientSeq ${mutation.clientSeq})`,
       );
+
+      /*
+       * 어긋난 정도를 함께 알려 준다.
+       *
+       * 이 기기가 뒤로 물러난 번호를 쓰고 있다는 뜻이므로, 다음 번호가 무엇인지 아는 것은
+       * 서버뿐이다. 알려 주지 않으면 기기는 1씩 올려 보며 부딪히는 수밖에 없고, 그동안
+       * 그 기기의 모든 변경이 조용히 서버에 닿지 않는다.
+       */
+      const last = await this.prisma.mutationLog.aggregate({
+        where: { clientId },
+        _max: { clientSeq: true },
+      });
+
       return {
         mutationId: mutation.mutationId,
         status: 'rejected',
         code: 'CLIENT_SEQ_TAKEN',
         error: '같은 순번을 다른 명령이 이미 썼습니다.',
+        lastClientSeq: last._max.clientSeq ?? mutation.clientSeq,
       };
     }
 
