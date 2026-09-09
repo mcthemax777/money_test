@@ -145,29 +145,30 @@ function CheckBox({
 }
 
 /**
- * 한 줄. 오른쪽에 지출과 수입을 함께 적는다.
+ * 한 줄. 오른쪽에 수입과 지출을 나란히 적는다.
  *
  * 한쪽만 적으면 이체가 섞인 달에서 줄의 금액과 아래를 펴서 나온 거래의 합이 어긋나
- * 보인다.
+ * 보인다. 들어온 돈이 왼쪽, 나간 돈이 오른쪽이다 -- 나간 돈이 줄의 끝에 붙어 있어야
+ * 여러 줄을 훑을 때 금액의 오른쪽 끝이 한 줄로 선다.
+ *
+ * 세로로 쌓지 않는다. 금액과 건수를 제목 옆에 같이 두어 **한 줄 높이**로 끝낸다.
  */
 function Line({
   label,
-  sub,
+  meta,
   expense,
   income,
   open,
-  deep,
   depth,
   check,
   onClick,
 }: {
   label: string;
-  sub?: string;
+  /** 제목 오른쪽에 붙는 잔글씨. 건수나 통장 주인 이름이다. */
+  meta?: string;
   expense: number;
   income: number;
   open?: boolean;
-  /** 년월 줄에서만. 안쪽까지 펼친 상태다. */
-  deep?: boolean;
   /** 고르는 중이면 왼쪽에 체크박스를 둔다. */
   check?: { checked: boolean; pending?: boolean; onToggle: () => void };
   /** 0 이면 년월 줄, 1 이면 그 안의 줄. 왼쪽 여백으로 계층을 보인다. */
@@ -181,42 +182,36 @@ function Line({
       type="button"
       onClick={onClick}
       aria-expanded={Boolean(open)}
-      className={`flex w-full items-center gap-2 border-b border-gray-100 py-3 pr-3 text-left hover:bg-gray-50 ${
-        depth === 0 ? 'pl-3' : 'bg-gray-50/50 pl-8'
+      className={`flex w-full items-center gap-2 border-b border-gray-100 py-2 pr-3 text-left hover:bg-gray-50 ${
+        depth === 0 ? 'pl-3' : 'bg-gray-50/50 pl-6'
       }`}
     >
       {check ? (
         <CheckBox checked={check.checked} pending={check.pending} onToggle={check.onToggle} />
       ) : null}
       {/*
-        세 상태를 글자 하나로 보인다. ▸ 접힘 / ▾ 안쪽 목록까지 / ▾▾ 거래까지.
-        두 단계를 같은 모양으로 두면 한 번 더 누를 자리가 있는지 알 수 없다.
+        펼침 표시(▸▾)는 두지 않는다. 누르면 바로 아래가 열리고 닫히는 것이 보이므로
+        화살표는 한 줄에서 자리만 차지한다. 열린 상태는 aria-expanded 로만 알린다.
       */}
-      <span className={`w-4 text-gray-400 ${deep ? 'text-[10px]' : ''}`}>
-        {open ? (deep ? '▾▾' : '▾') : '▸'}
-      </span>
-      <span className="min-w-0 flex-1">
+      <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
         <span
-          className={`block truncate text-gray-900 ${
-            depth === 0 ? 'text-base font-semibold' : 'text-[15px] font-medium'
+          className={`truncate text-gray-900 ${
+            depth === 0 ? 'text-[15px] font-semibold' : 'text-sm font-medium'
           }`}
         >
           {label}
         </span>
-        {sub ? <span className="mt-0.5 block text-xs text-gray-500">{sub}</span> : null}
+        {meta ? <span className="shrink-0 text-xs text-gray-500">{meta}</span> : null}
       </span>
-      <span className="text-right">
-        {expense > 0 ? (
-          <span className="block text-[15px] font-semibold text-red-600">
-            -{formatCurrency(expense, currency)}
-          </span>
-        ) : null}
+      {/* 수입이 왼쪽, 지출이 오른쪽. 없는 쪽은 적지 않는다. */}
+      <span className="flex shrink-0 items-baseline gap-2 text-sm font-semibold tabular-nums">
         {income > 0 ? (
-          <span className="block text-[13px] font-medium text-green-600">
-            +{formatCurrency(income, currency)}
-          </span>
+          <span className="text-green-600">+{formatCurrency(income, currency)}</span>
         ) : null}
-        {expense === 0 && income === 0 ? <span className="text-sm text-gray-400">-</span> : null}
+        {expense > 0 ? (
+          <span className="text-red-600">-{formatCurrency(expense, currency)}</span>
+        ) : null}
+        {expense === 0 && income === 0 ? <span className="text-gray-400">-</span> : null}
       </span>
     </button>
   );
@@ -359,7 +354,7 @@ export default function TransactionsPage() {
           <Line
             depth={1}
             label={row.label}
-            sub={
+            meta={
               row.sub ?? (row.count === undefined ? undefined : t('tx.entryCount', { count: row.count }))
             }
             expense={row.expense}
@@ -828,7 +823,6 @@ export default function TransactionsPage() {
                   expense={toNumber(month.expense)}
                   income={toNumber(month.income)}
                   open={level >= 1}
-                  deep={level === 2}
                   check={
                     tx.isSelecting
                       ? {

@@ -124,29 +124,14 @@ function CheckBox({
   );
 }
 
-/** 펼침 표시. 왼쪽에 두어 줄이 늘어서도 계층이 눈에 남는다. */
-function Caret({ open, deep }: { open: boolean; deep?: boolean }) {
-  /*
-   * 세 상태를 글자 하나로 보인다.
-   *
-   *   ▸  접힘
-   *   ▾  안쪽 목록까지
-   *   ▾▾ 그 목록의 거래까지
-   *
-   * 두 단계를 같은 모양으로 두면 한 번 더 누를 자리가 있는지 알 수 없다.
-   */
-  return (
-    <Text className={`text-gray-400 ${deep ? 'w-4 text-[10px]' : 'w-4'}`}>
-      {open ? (deep ? '▾▾' : '▾') : '▸'}
-    </Text>
-  );
-}
-
 /**
  * 2단·3단의 한 줄.
  *
- * 오른쪽에 지출과 수입을 함께 적는다. 한쪽만 적으면 이체가 섞인 달에서 줄의 금액과
- * 아래를 펴서 나온 거래의 합이 어긋나 보인다.
+ * 오른쪽에 수입과 지출을 나란히 적는다. 한쪽만 적으면 이체가 섞인 달에서 줄의 금액과
+ * 아래를 펴서 나온 거래의 합이 어긋나 보인다. 들어온 돈이 왼쪽, 나간 돈이 오른쪽이다
+ * -- 나간 돈이 줄의 끝에 붙어 있어야 여러 줄을 훑을 때 금액의 오른쪽 끝이 한 줄로 선다.
+ *
+ * 세로로 쌓지 않는다. 금액과 건수를 제목 옆에 같이 두어 **한 줄 높이**로 끝낸다.
  */
 /*
  * 누름과 체크는 **줄이 자기 자리를 되돌려 준다.**
@@ -160,11 +145,10 @@ function Caret({ open, deep }: { open: boolean; deep?: boolean }) {
  */
 function LineView({
   label,
-  sub,
+  meta,
   expense,
   income,
   open,
-  deep,
   depth,
   yearMonth,
   rowKey,
@@ -175,12 +159,12 @@ function LineView({
   onPress,
 }: {
   label: string;
-  sub?: string;
+  /** 제목 오른쪽에 붙는 잔글씨. 건수나 통장 주인 이름이다. */
+  meta?: string;
   expense: number;
   income: number;
+  /** 펼쳐진 상태. 화살표를 그리지는 않고 읽는 도구에만 알린다. */
   open?: boolean;
-  /** 년월 줄에서만. 안쪽까지 펼친 상태다. */
-  deep?: boolean;
   /** 0 이면 년월 줄, 1 이면 그 안의 줄. 왼쪽 여백으로 계층을 보인다. */
   depth: 0 | 1;
   yearMonth: string;
@@ -198,7 +182,9 @@ function LineView({
   return (
     <Pressable
       onPress={() => onPress(yearMonth, rowKey)}
-      className={`flex-row items-center gap-2 border-b border-gray-100 py-3 pr-3 active:bg-gray-50 ${
+      accessibilityRole="button"
+      accessibilityState={{ expanded: Boolean(open) }}
+      className={`flex-row items-center gap-2 border-b border-gray-100 py-2 pr-3 active:bg-gray-50 ${
         depth === 0 ? 'pl-3' : 'pl-6 bg-gray-50/50'
       }`}
     >
@@ -209,25 +195,31 @@ function LineView({
           onPress={() => onToggle(yearMonth, rowKey)}
         />
       ) : null}
-      <Caret open={Boolean(open)} deep={deep} />
-      <View className="flex-1">
+      {/*
+        펼침 표시(▸▾)는 두지 않는다. 누르면 바로 아래가 열리고 닫히는 것이 보이므로
+        화살표는 한 줄에서 자리만 차지한다.
+      */}
+      <View className="min-w-0 flex-1 flex-row items-baseline gap-1.5">
         <Text
           numberOfLines={1}
-          className={`text-gray-900 ${depth === 0 ? 'text-base font-semibold' : 'text-[15px] font-medium'}`}
+          className={`shrink text-gray-900 ${
+            depth === 0 ? 'text-[15px] font-semibold' : 'text-sm font-medium'
+          }`}
         >
           {label}
         </Text>
-        {sub ? <Text className="mt-0.5 text-xs text-gray-500">{sub}</Text> : null}
+        {meta ? <Text className="text-xs text-gray-500">{meta}</Text> : null}
       </View>
-      <View className="items-end">
-        {expense > 0 ? (
-          <Text className="text-[15px] font-semibold text-red-600">
-            -{formatCurrency(expense, currency)}
+      {/* 수입이 왼쪽, 지출이 오른쪽. 없는 쪽은 적지 않는다. */}
+      <View className="flex-row items-baseline gap-2">
+        {income > 0 ? (
+          <Text className="text-sm font-semibold text-green-600">
+            +{formatCurrency(income, currency)}
           </Text>
         ) : null}
-        {income > 0 ? (
-          <Text className="text-[13px] font-medium text-green-600">
-            +{formatCurrency(income, currency)}
+        {expense > 0 ? (
+          <Text className="text-sm font-semibold text-red-600">
+            -{formatCurrency(expense, currency)}
           </Text>
         ) : null}
         {expense === 0 && income === 0 ? <Text className="text-sm text-gray-400">-</Text> : null}
@@ -475,7 +467,7 @@ export default function TransactionsScreen() {
           <Line
             depth={1}
             label={row.label}
-            sub={row.sub ?? (row.count === undefined ? undefined : t('tx.entryCount', { count: row.count }))}
+            meta={row.sub ?? (row.count === undefined ? undefined : t('tx.entryCount', { count: row.count }))}
             expense={row.expense}
             income={row.income}
             open={open}
@@ -678,8 +670,6 @@ export default function TransactionsScreen() {
                   expense={toNumber(month.expense)}
                   income={toNumber(month.income)}
                   open={level >= 1}
-                  /* 2단은 안쪽까지 펼친 상태다. 표시를 달리 해 어디까지 열렸는지 보인다. */
-                  deep={level === 2}
                   yearMonth={month.yearMonth}
                   rowKey=""
                   checkable={tx.isSelecting}
