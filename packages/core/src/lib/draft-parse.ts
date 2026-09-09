@@ -243,10 +243,37 @@ export function normalizeCaptureText(text: string): string {
     .split(/\r?\n/)
     .map((line) =>
       line
+        /*
+         * 따옴표와 슬래시가 붙은 자리는 **숫자 7** 이다.
+         *
+         * 7 의 획을 따옴표와 슬래시 둘로 읽는다. 실제 캡처에서 이렇게 왔다
+         * (2026-09-09) -- "08월2'/일"(27일), "09월0'/일"(07일), "1'/:4'/"(17:47),
+         * "1'/,000원"(17,000원). 고치지 않으면 그 자리가 통째로 버려진다: 날짜 머리는
+         * 읽다 만 것으로 걸러져 앞 날짜를 이어 쓰고(8월 27일이 8월 28일로 담겼다),
+         * 금액은 자릿점 앞자리를 잃어 후보조차 되지 못한다.
+         */
+        .replace(/['｜|‘’`]\s*\//g, '7')
         // 숫자 사이에 낀 기호. 자릿점 자리다.
         .replace(/(\d)\s*['｜|‘’`]\s*(\d)/g, '$1$2')
-        // 자릿점을 점으로 읽은 것. 소수점(예: USD 1.20)은 세 자리가 아니라 남는다.
-        .replace(/(\d)\.(\d{3})(?!\d)/g, '$1,$2')
+        /*
+         * 금액 앞에 홀로 선 `l`·`I`·`|` 는 숫자 1 이다.
+         *
+         * "1,650원" 이 "l.65021" 로 왔다(2026-09-09). 첫 자리가 글자라 금액으로 읽히지
+         * 않고 그 거래가 통째로 빠졌다 -- 같은 사진에서 웹이 21건, 앱이 19건을 담은
+         * 까닭이 이것이다.
+         *
+         * **자릿점과 세 자리가 뒤따를 때만** 고친다. 금액 뒤에 남는 글자("45,300l")는
+         * 건드리지 않는다 -- 그쪽은 이미 금액을 읽은 뒤라 손댈 것이 없다.
+         */
+        .replace(/(^|\s)[lI|](?=[.,]\d{3})/g, (_match, before: string) => `${before}1`)
+        /*
+         * 자릿점을 점으로 읽은 것. 소수점(예: USD 1.20)은 세 자리가 아니라 남는다.
+         *
+         * 세 자리 뒤에 숫자가 한두 개 더 붙어도 자릿점으로 본다. OCR 이 "원"을 숫자로
+         * 읽어서다 -- "2,800원" 이 "2.8001" 로 왔다(2026-09-09). 세 자리가 더 붙는
+         * 경우(진짜 소수)는 그대로 둔다.
+         */
+        .replace(/(\d)\.(\d{3})(?!\d{3})/g, '$1,$2')
         .replace(/\s+/g, ' ')
         .trim(),
     )
@@ -292,15 +319,12 @@ export function parseCaptureText(
     /*
      * 날짜 머리 줄. 그 아래 거래들이 이 날짜를 쓴다.
      *
-     * 머리를 읽는 규칙은 `headerDateOf` 한 곳이다 -- 그대로 읽히는 머리, 월·일 글자를
-     * 숫자로 읽은 머리("09803"), 그리고 아무것도 못 읽는 머리를 함께 다룬다. 못 읽으면
-     * 앞서 본 날짜를 그대로 이어 쓴다("08월2'/일" 을 8월 2일로 읽으면 25일 어긋나므로,
-     * 이웃한 날짜를 쓰는 편이 낫다).
-     *
-     * 형을 적어 둔다 -- `carriedDate` 에 이 값을 넣고 이 값이 그 `carriedDate` 를 보아,
-     * 적지 않으면 타입이 자기를 물어 any 로 떨어진다(TS7022).
+     * 머리를 읽는 규칙은 `headerDateOf` 한 곳이다 -- 그대로 읽히는 머리와, 월·일 글자를
+     * 숫자로 읽은 머리("09803")를 함께 다룬다. 그것으로도 못 읽으면 앞서 본 날짜를
+     * 이어 쓴다 -- 읽다 만 숫자를 그대로 믿으면(8월 27일을 8월 2일로) 25일 어긋난
+     * 자리에 담기는데, 목록은 날짜순이라 이웃한 날짜가 그보다 가깝다.
      */
-    const dateOnly: string | null = money === null ? headerDateOf(line, now, carriedDate) : null;
+    const dateOnly = money === null ? headerDateOf(line, now) : null;
     if (dateOnly) {
       carriedDate = dateOnly;
       continue;
@@ -695,25 +719,23 @@ function isCleanDateLine(line: string): boolean {
  * 읽으면 아래 거래들이 **앞 머리의 날짜를 이어 쓴다.** 그 자리에서 날짜가 조용히
  * 어긋나므로(실제로 9월 3일이 9월 5일로 담겼다) 되살릴 수 있는 모양은 되살린다.
  */
-function headerDateOf(line: string, now: number, carried: string | null): string | null {
+function headerDateOf(line: string, now: number): string | null {
   if (!isCleanDateLine(line)) return null;
 
   const read = dateOf(line, now);
   if (read) return read;
 
-  const repaired = repairedDateHeader(line);
-  const guessed = repaired ? dateOf(repaired, now) : null;
-  if (!guessed) return null;
-
   /*
-   * 되살린 머리가 **앞서 본 날짜보다 새것이면 버린다.**
+   * 되살린 머리에 **내림차순 검사를 걸지 않는다.**
    *
-   * 이용내역은 날짜가 내려가는 순서라 새 날짜가 나올 자리가 아니다. 그렇다면 그
-   * 숫자는 날짜가 아니었다는 뜻이고(끝자리·건수 같은 것), 그것을 날짜로 쓰면 그
-   * 아래 거래 전체가 엉뚱한 날로 간다. 비워 두는 편이 낫다.
+   * 목록은 날짜가 내려가는 순서이니 "앞서 본 날짜보다 새것이면 버린다"가 그럴듯해
+   * 보이지만, 스크롤 캡처는 같은 구간을 두 번 담는 일이 있어 사진 안에서 순서가
+   * 되돌아간다. 실제 캡처에서 그 검사가 제대로 되살린 "09월04일"("09204")을 버려 그
+   * 아래 4건이 하루 어긋났다(2026-09-09). 달·날의 범위는 `dateOf` 가 보고, 그것으로
+   * 걸러지지 않는 숫자 줄은 실제 캡처에서 아직 만나지 않았다.
    */
-  if (carried && new Date(guessed).getTime() > new Date(carried).getTime()) return null;
-  return guessed;
+  const repaired = repairedDateHeader(line);
+  return repaired ? dateOf(repaired, now) : null;
 }
 
 /**

@@ -8,10 +8,13 @@
 
       exported 는 true 여야 한다. 이 서비스를 붙드는 쪽이 시스템(NotificationManager)
       이라, 닫아 두면 설정 화면에 이 앱이 아예 나타나지 않는다.
+
+      label 은 두지 않는다. 여기는 라이브러리 모듈이라 @string/app_name 이 없고, 릴리스
+      빌드의 verifyReleaseResources 가 그 자리에서 멈춘다(디버그는 라이브러리 자원을
+      검사하지 않아 넘어간다). 이름을 적지 않으면 설정 화면이 앱 이름을 그대로 쓴다.
     -->
     <service
       android:name="expo.modules.inboxnative.InboxNotificationService"
-      android:label="@string/app_name"
       android:exported="true"
       android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
       <intent-filter>
