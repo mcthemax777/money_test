@@ -76,7 +76,14 @@ export default function AssetTypeSummary({
         {hasNoScope ? (
           <p className="mt-1 text-lg text-gray-600">{t('assetSummary.noScope')}</p>
         ) : (
-          <p className="mt-1 text-4xl font-bold text-gray-900 tabular-nums">
+          /*
+            자산 금액은 **늘 파랑**이다.
+
+            수입·지출처럼 방향이 있는 값이 아니라 "지금 얼마 있는가"라서, 초록·빨강으로
+            가르면 이 달 잘했다는 뜻으로 읽힌다. 대출만 켜서 음수가 되어도 색은 같다 --
+            그 음수는 갚아야 할 돈의 크기이고, 무엇을 더한 값인지는 아래 줄이 말해 준다.
+          */
+          <p className="mt-1 text-4xl font-bold text-blue-600 tabular-nums">
             {/* 문장으로 읽히는 자리라 기호 대신 이름을 뒤에 붙인다. */}
             {formatAmountWithUnit(total, displayCurrency)}
             <span className="ml-2 text-xl font-medium text-gray-500">

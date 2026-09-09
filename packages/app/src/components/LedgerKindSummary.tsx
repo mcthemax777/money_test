@@ -1,11 +1,28 @@
 import { useMemo, type ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
-import { LEDGER_KIND_GROUPS, ledgerHeadline, ledgerKindAmount } from '@money/core/lib/entries';
+import {
+  LEDGER_KIND_GROUPS,
+  ledgerHeadline,
+  ledgerKindAmount,
+  type LedgerTone,
+} from '@money/core/lib/entries';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatAmountWithUnit, formatCurrency } from '@money/core/lib/money';
 import { useLedgerKindFilter } from '@money/core/store/ledger-kind-filter';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
+
+/**
+ * 첫 문장 금액의 색. 들어온 돈은 초록, 나간 돈은 빨강이다 (달력·목록·갈래 상자와 같은 규칙).
+ *
+ * 0 원은 어느 쪽도 아니라 기본 글자색으로 둔다. 방향은 `ledgerHeadline` 이 정한다 --
+ * 지출만 켜면 금액이 양수인데도 나간 돈이라 빨강이어야 한다.
+ */
+const TONE_CLASS: Record<LedgerTone, string> = {
+  positive: 'text-green-600',
+  negative: 'text-red-600',
+  neutral: 'text-gray-900',
+};
 
 /**
  * 가계의 첫 문장과 갈래별 소계. 웹의 `LedgerKindSummary` 를 옮긴 것이다.
@@ -40,7 +57,7 @@ export default function LedgerKindSummary({
   const displayCurrency = useProjectDisplayCurrency();
   const { selectedKeys, toggleKey } = useLedgerKindFilter();
 
-  const { nounKey, amount } = useMemo(
+  const { nounKey, amount, tone } = useMemo(
     () => ledgerHeadline(selectedKeys, { incomeTotal, expenseTotal }),
     [selectedKeys, incomeTotal, expenseTotal],
   );
@@ -70,9 +87,7 @@ export default function LedgerKindSummary({
           </Text>
         </View>
 
-        <Text
-          className={`mt-1 text-4xl font-bold ${amount < 0 ? 'text-red-600' : 'text-gray-900'}`}
-        >
+        <Text className={`mt-1 text-4xl font-bold ${TONE_CLASS[tone]}`}>
           {/* 문장으로 읽히는 자리라 기호 대신 이름을 뒤에 붙인다. */}
           {formatAmountWithUnit(amount, displayCurrency)}
           <Text className="text-xl font-medium text-gray-500"> {t('ledgerSummary.suffix')}</Text>

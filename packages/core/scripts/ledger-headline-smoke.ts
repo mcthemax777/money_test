@@ -45,6 +45,27 @@ eq('더 쓴 달의 순수입은 음수',
 eq('모르는 키는 무시한다',
   ledgerHeadline(['income', 'transfer'], totals).nounKey, 'tx.kind.income');
 
+/*
+ * 금액의 방향(tone). 화면이 색을 고르는 값이다.
+ *
+ * 부호만 보면 안 되는 자리가 지출이다 -- 금액이 양수인데 나간 돈이라, 초록으로 적으면
+ * "지출은 30만 원입니다"가 돈이 들어온 것처럼 읽힌다.
+ */
+eq('남은 달은 초록', both.tone, 'positive');
+eq('수입만 켜도 초록', incomeOnly.tone, 'positive');
+eq('지출은 양수여도 빨강', expenseOnly.tone, 'negative');
+eq(
+  '더 쓴 달은 빨강',
+  ledgerHeadline(['expense', 'income'], { incomeTotal: 1_000, expenseTotal: 5_000 }).tone,
+  'negative',
+);
+eq('딱 맞으면 어느 쪽도 아니다',
+  ledgerHeadline(['expense', 'income'], { incomeTotal: 5_000, expenseTotal: 5_000 }).tone,
+  'neutral');
+eq('0 원짜리 지출도 어느 쪽도 아니다',
+  ledgerHeadline(['expense'], { incomeTotal: 0, expenseTotal: 0 }).tone, 'neutral');
+eq('둘 다 끄면 어느 쪽도 아니다', none.tone, 'neutral');
+
 // 상자에 적는 금액.
 eq('상자는 둘', LEDGER_KIND_GROUPS.length, 2);
 eq('지출 상자가 앞', LEDGER_KIND_GROUPS[0].key, 'expense');

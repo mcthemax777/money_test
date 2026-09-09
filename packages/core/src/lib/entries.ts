@@ -152,7 +152,16 @@ export const LEDGER_KIND_GROUPS: Array<{ key: LedgerKindKey; labelKey: MessageKe
 ];
 
 /**
- * 켜 둔 갈래로 첫 문장의 낱말과 금액을 정한다.
+ * 첫 문장 금액이 어느 쪽 돈인가. 화면이 색을 고르는 데 쓴다.
+ *
+ * **부호만으로는 정할 수 없다.** 지출만 켜면 금액이 양수인데(부호를 뒤집지 않는다)
+ * 그것은 나간 돈이라, 양수를 초록으로 적으면 "지출은 30만 원입니다"가 돈이 들어온
+ * 것처럼 읽힌다. 그래서 낱말을 정하는 이 자리에서 방향까지 함께 정한다.
+ */
+export type LedgerTone = 'positive' | 'negative' | 'neutral';
+
+/**
+ * 켜 둔 갈래로 첫 문장의 낱말과 금액, 그 금액의 방향을 정한다.
  *
  *   둘 다 켜면   순수입 (수입 - 지출). 더 썼으면 음수다.
  *   수입만 켜면  수입
@@ -165,16 +174,37 @@ export const LEDGER_KIND_GROUPS: Array<{ key: LedgerKindKey; labelKey: MessageKe
 export function ledgerHeadline(
   selectedKeys: readonly string[],
   totals: { incomeTotal: number; expenseTotal: number },
-): { nounKey: MessageKey; amount: number } {
+): { nounKey: MessageKey; amount: number; tone: LedgerTone } {
   const income = selectedKeys.includes('income');
   const expense = selectedKeys.includes('expense');
 
   if (income && expense) {
-    return { nounKey: 'ledgerSummary.net', amount: totals.incomeTotal - totals.expenseTotal };
+    const amount = totals.incomeTotal - totals.expenseTotal;
+    return { nounKey: 'ledgerSummary.net', amount, tone: toneOfSign(amount) };
   }
-  if (income) return { nounKey: 'tx.kind.income', amount: totals.incomeTotal };
-  if (expense) return { nounKey: 'tx.kind.expense', amount: totals.expenseTotal };
-  return { nounKey: 'ledgerSummary.net', amount: 0 };
+  if (income) {
+    return {
+      nounKey: 'tx.kind.income',
+      amount: totals.incomeTotal,
+      tone: toneOfSign(totals.incomeTotal),
+    };
+  }
+  if (expense) {
+    return {
+      nounKey: 'tx.kind.expense',
+      amount: totals.expenseTotal,
+      // 양수여도 나간 돈이다. 0 원만 어느 쪽도 아니다.
+      tone: totals.expenseTotal === 0 ? 'neutral' : 'negative',
+    };
+  }
+  return { nounKey: 'ledgerSummary.net', amount: 0, tone: 'neutral' };
+}
+
+/** 순수입처럼 부호가 곧 방향인 금액. 0 은 어느 쪽도 아니다. */
+function toneOfSign(amount: number): LedgerTone {
+  if (amount > 0) return 'positive';
+  if (amount < 0) return 'negative';
+  return 'neutral';
 }
 
 /** 그 갈래의 상자에 적을 금액. 지출도 양수 그대로 적는다. */
