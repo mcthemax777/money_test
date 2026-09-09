@@ -94,7 +94,7 @@ export async function recognizeCapture(
    *
    * 글자로 이어 붙이면 겹친 자리를 걷어낼 수 없다 -- 같은 줄을 두 조각이 조금 다르게
    * 읽어서("59.800워" / "59,800원") 글자 비교로는 같은 줄인지 알 수 없다. 좌표로 모으면
-   * 같은 자리에 겹쳐 있는 것이 보이고, 그때는 먼저 읽은 것만 남긴다.
+   * 같은 자리에 겹쳐 있는 것이 보이고, 그때는 잘 읽은 쪽만 남긴다(`layoutLines`).
    */
   const lines: OcrLine[] = [];
   for (const [index, tile] of tiles.entries()) {
@@ -107,7 +107,19 @@ export async function recognizeCapture(
     );
 
     for (const line of read) {
-      lines.push({ ...line, top: line.top + tile.top, bottom: line.bottom + tile.top });
+      lines.push({
+        ...line,
+        top: line.top + tile.top,
+        bottom: line.bottom + tile.top,
+        /*
+         * 이 줄이 조각의 가장자리에서 얼마나 떨어져 있었는가.
+         *
+         * 경계에 걸린 줄은 반쪽만 보고 읽어서 글자가 무너진다("09월04일" 이
+         * "No<un4o!" 로 왔다). 같은 자리를 두 조각이 읽었을 때 어느 쪽을 믿을지
+         * 이 값으로 고른다(`layoutLines`).
+         */
+        edge: tile.height === undefined ? Infinity : Math.min(line.top, tile.height - line.bottom),
+      });
     }
   }
 
@@ -135,7 +147,15 @@ async function recognizeOne(
   if (lines.length === 0) {
     return (data.text ?? '')
       .split(/\r?\n/)
-      .map((text, index) => ({ text: text.trim(), top: index, bottom: index, left: 0, right: 0 }))
+      .map((text, index) => ({
+        text: text.trim(),
+        top: index,
+        bottom: index,
+        left: 0,
+        right: 0,
+        // 자리를 모르는 줄이다. 가로로 겹치지 않으니 이 값은 쓰이지 않는다.
+        edge: 0,
+      }))
       .filter((line) => line.text);
   }
 
@@ -145,6 +165,8 @@ async function recognizeOne(
     bottom: line.bbox.y1,
     left: line.bbox.x0,
     right: line.bbox.x1,
+    // 부르는 쪽이 조각 높이를 알고 채운다.
+    edge: 0,
   }));
 }
 
@@ -191,17 +213,18 @@ async function sliceTall(file: Blob): Promise<Tile[]> {
     const blob = await new Promise<Blob | null>((resolve) =>
       canvas.toBlob((value) => resolve(value), 'image/png'),
     );
-    if (blob) tiles.push({ image: blob, top });
+    if (blob) tiles.push({ image: blob, top, height });
   }
 
   bitmap.close();
   return tiles.length > 0 ? tiles : whole;
 }
 
-/** 잘라 낸 조각 하나와 그것이 사진의 어디였는지. */
+/** 잘라 낸 조각 하나와 그것이 사진의 어디였는지. 높이는 자른 경우에만 안다. */
 interface Tile {
   image: Blob;
   top: number;
+  height?: number;
 }
 
 /** 다 읽고 나면 일꾼을 놓아 준다. 화면을 떠날 때 부른다. */
@@ -224,6 +247,8 @@ interface OcrLine {
   bottom: number;
   left: number;
   right: number;
+  /** 이 줄이 제 조각의 위·아래 가장자리에서 떨어진 거리. 자르지 않았으면 Infinity 다. */
+  edge: number;
 }
 
 /**
@@ -232,9 +257,13 @@ interface OcrLine {
  * 가운데 높이의 차이가 그 줄 높이의 절반 안이면 같은 줄로 본다. 글자 크기가 줄마다
  * 달라서 "절반"의 기준은 그 줄에 먼저 들어온 조각의 높이로 잡는다.
  *
- * **같은 자리를 두 번 읽은 것은 버린다.** 조각을 겹쳐 잘랐으므로 경계의 줄은 두 조각에
- * 나오고, 그 둘은 글자가 조금 다르게 읽힌다("59.800워" / "59,800원"). 자리가 겹치면
- * 먼저 읽은 것만 남긴다 -- 그러지 않으면 같은 거래가 후보 둘로 늘어난다.
+ * **같은 자리를 두 번 읽은 것은 하나만 남긴다.** 조각을 겹쳐 잘랐으므로 경계의 줄은 두
+ * 조각에 나오고, 그 둘은 글자가 조금 다르게 읽힌다("59.800워" / "59,800원"). 남기지 않고
+ * 둘 다 두면 같은 거래가 후보 둘로 늘어난다.
+ *
+ * 남길 쪽은 **조각 가장자리에서 먼 것**이다. 경계에 걸린 줄은 반쪽만 보고 읽어 글자가
+ * 무너진다 -- 실제 캡처에서 날짜 머리 "09월04일" 이 걸린 조각에서는 "No<un4o!" 로,
+ * 온전히 담긴 조각에서는 제대로 읽혔다(2026-09-09).
  */
 function layoutLines(lines: OcrLine[]): string {
   interface Row {
@@ -260,8 +289,19 @@ function layoutLines(lines: OcrLine[]): string {
       continue;
     }
 
-    // 이 줄에 이미 같은 자리(가로 범위가 절반 넘게 겹치는)가 있으면 두 번 읽은 것이다.
-    if (row.parts.some((part) => overlapsHorizontally(part, line))) continue;
+    /*
+     * 이 줄에 이미 같은 자리(가로 범위가 절반 넘게 겹치는)가 있으면 두 번 읽은 것이다.
+     *
+     * **먼저 읽은 것이 아니라 조각 가장자리에서 먼 것을 남긴다.** 경계에 걸린 줄은
+     * 반쪽만 보고 읽어 글자가 무너지는데(실제로 "09월04일" 이 "No<un4o!" 로 왔다),
+     * 먼저 읽은 쪽이 늘 그 걸린 조각이다 -- 위에서 아래로 읽으니 경계는 앞 조각의
+     * 끝이다. 그대로 두면 날짜 머리를 잃고 그 아래 거래들이 앞 날짜를 이어 쓴다.
+     */
+    const at = row.parts.findIndex((part) => overlapsHorizontally(part, line));
+    if (at >= 0) {
+      if (line.edge > row.parts[at]!.edge) row.parts[at] = line;
+      continue;
+    }
     row.parts.push(line);
   }
 

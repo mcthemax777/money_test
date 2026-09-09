@@ -292,13 +292,16 @@ export function parseCaptureText(
     /*
      * 날짜 머리 줄. 그 아래 거래들이 이 날짜를 쓴다.
      *
-     * **읽다 만 머리는 쓰지 않는다.** OCR 은 "08월27일" 을 "08월2'/일" 로 읽는 일이
-     * 있는데, 그대로 읽으면 8월 2일이 되어 거래가 25일 어긋난 자리에 적힌다. 그럴
-     * 때는 앞서 본 날짜를 그대로 이어 쓰는 편이 낫다 -- 목록은 날짜순이라 이웃한
-     * 날짜이고, 사람이 폼에서 보는 값도 하루 이틀 차이다.
+     * 머리를 읽는 규칙은 `headerDateOf` 한 곳이다 -- 그대로 읽히는 머리, 월·일 글자를
+     * 숫자로 읽은 머리("09803"), 그리고 아무것도 못 읽는 머리를 함께 다룬다. 못 읽으면
+     * 앞서 본 날짜를 그대로 이어 쓴다("08월2'/일" 을 8월 2일로 읽으면 25일 어긋나므로,
+     * 이웃한 날짜를 쓰는 편이 낫다).
+     *
+     * 형을 적어 둔다 -- `carriedDate` 에 이 값을 넣고 이 값이 그 `carriedDate` 를 보아,
+     * 적지 않으면 타입이 자기를 물어 any 로 떨어진다(TS7022).
      */
-    const dateOnly = isCleanDateLine(line) ? dateOf(line, now) : null;
-    if (dateOnly && money === null) {
+    const dateOnly: string | null = money === null ? headerDateOf(line, now, carriedDate) : null;
+    if (dateOnly) {
       carriedDate = dateOnly;
       continue;
     }
@@ -382,7 +385,28 @@ export function parseCaptureText(
      * 거래의 날짜가 된다. 읽다 만 머리 바로 아래 줄이 그 머리의 잘못 읽은 날짜를
      * 물려받는 자리가 그것이다.
      */
-    parsed.occurredAt = (isCleanDateLine(line) ? dateOf(line, now) : null) ?? carriedDate;
+    const dateBase = (isCleanDateLine(line) ? dateOf(line, now) : null) ?? carriedDate;
+    /*
+     * **시각은 이 줄, 없으면 뒤 줄에서 읽는다.**
+     *
+     * 카드사 앱의 이용내역은 한 거래를 세 줄로 적는다 -- 가맹점·금액 / 시각·일시불 /
+     * 카드 이름. 그래서 거래 줄에 시각이 없는 것이 정상이고, 읽지 않으면 모든 후보가
+     * 그날 정오로 담겨(`atLocal`) 사람이 폼에서 시각을 다시 적어야 한다.
+     *
+     * 뒤 줄은 **금액이 없을 때만** 본다. 금액이 있으면 그것은 다음 거래의 줄이고, 그
+     * 시각을 가져오면 한 칸 밀린 시각이 붙는다(카드 줄을 뒤 줄에서 받지 않는 것과 같은
+     * 이유다).
+     */
+    const next = lines[index + 1] ?? '';
+    const time = timeOf(line) ?? (amountOf(next, { bare: true }) === null ? timeOf(next) : null);
+    /*
+     * 날짜를 못 읽었으면 **비워 둔다.** 시각만 읽었어도 오늘을 채우지 않는다.
+     *
+     * 채워 넣으면 그 후보는 "날짜를 아는 후보"로 보이고, 사람은 채워진 칸을 검사하지
+     * 않고 저장한다. 비워 두면 폼이 오늘로 열리는 것은 같지만, 보관함 줄에 날짜가
+     * 없어 손볼 자리라는 것이 보인다.
+     */
+    parsed.occurredAt = dateBase ? withTime(dateBase, time) : null;
     /*
      * 카드 단서도 **이 줄**에서만 읽는다.
      *
@@ -596,9 +620,9 @@ function kindOf(text: string): EntryKind | null {
  */
 function dateOf(text: string, now: number): string | null {
   const reference = new Date(now);
-  const time = text.match(/(\d{1,2}):(\d{2})/);
-  const hour = time ? Number(time[1]) : null;
-  const minute = time ? Number(time[2]) : null;
+  const time = timeOf(text);
+  const hour = time?.hour ?? null;
+  const minute = time?.minute ?? null;
 
   const full = text.match(/(20\d{2})[.\-/년]\s*(\d{1,2})[.\-/월]\s*(\d{1,2})/);
   if (full) {
@@ -662,6 +686,79 @@ function isCleanDateLine(line: string): boolean {
    * 날짜로 읽히지 않는다.
    */
   return !/\d\s*['｜|‘’`]|['｜|‘’`]\s*\d/.test(line);
+}
+
+/**
+ * 이 줄이 날짜 머리인가. 머리라면 그 날짜다.
+ *
+ * 캡처의 목록은 "09월05일" 같은 머리 아래로 거래가 이어지는 모양이고, 그 머리를 못
+ * 읽으면 아래 거래들이 **앞 머리의 날짜를 이어 쓴다.** 그 자리에서 날짜가 조용히
+ * 어긋나므로(실제로 9월 3일이 9월 5일로 담겼다) 되살릴 수 있는 모양은 되살린다.
+ */
+function headerDateOf(line: string, now: number, carried: string | null): string | null {
+  if (!isCleanDateLine(line)) return null;
+
+  const read = dateOf(line, now);
+  if (read) return read;
+
+  const repaired = repairedDateHeader(line);
+  const guessed = repaired ? dateOf(repaired, now) : null;
+  if (!guessed) return null;
+
+  /*
+   * 되살린 머리가 **앞서 본 날짜보다 새것이면 버린다.**
+   *
+   * 이용내역은 날짜가 내려가는 순서라 새 날짜가 나올 자리가 아니다. 그렇다면 그
+   * 숫자는 날짜가 아니었다는 뜻이고(끝자리·건수 같은 것), 그것을 날짜로 쓰면 그
+   * 아래 거래 전체가 엉뚱한 날로 간다. 비워 두는 편이 낫다.
+   */
+  if (carried && new Date(guessed).getTime() > new Date(carried).getTime()) return null;
+  return guessed;
+}
+
+/**
+ * 월·일 글자를 잃은 날짜 머리를 되살린다. **캡처에만 쓴다.**
+ *
+ * OCR 은 "09월03일" 의 `월` 을 숫자로 읽고 `일` 을 잃는 일이 있다 -- 실제 캡처에서
+ * "09803"(09월03일)과 "098012"(09월01일)가 왔다(2026-09-09). 구분자가 없어 `dateOf`
+ * 가 날짜로 읽지 못하는 줄이다.
+ *
+ * 앞 두 자리를 달, 한 자리를 건너뛰고(`월` 이 있던 자리) 두 자리를 날로 본다. 마지막
+ * 한 자리는 `일` 이 있던 자리이고 없을 수도 있다. 달·날의 범위는 `dateOf` 가 본다.
+ */
+function repairedDateHeader(line: string): string | null {
+  const match = line.replace(/\s/g, '').match(/^(\d{2})\d(\d{2})\d?$/);
+  return match ? `${match[1]}월${match[2]}일` : null;
+}
+
+/**
+ * 시·분. 문구에 시각이 없으면 null 이다.
+ *
+ * **범위를 본다.** OCR 이 만든 자리("59:800", "1:99")를 그대로 쓰면 `Date` 가 그것을
+ * 다음 시간·다음 날로 넘겨, 시각뿐 아니라 날짜까지 밀린다.
+ */
+function timeOf(text: string): { hour: number; minute: number } | null {
+  const match = text.match(/(\d{1,2}):(\d{2})/);
+  if (!match) return null;
+
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  if (hour > 23 || minute > 59) return null;
+  return { hour, minute };
+}
+
+/**
+ * 날짜에 시각을 얹는다. 시각이 없으면 그대로다(그날 정오).
+ *
+ * 로컬 벽시계로 얹는다 -- 받는 값은 `atLocal` 이 로컬 자리로 만든 것이라, 같은
+ * 시간대에서 시·분만 갈아 끼우면 날짜는 그대로 남는다.
+ */
+function withTime(iso: string, time: { hour: number; minute: number } | null): string {
+  if (!time) return iso;
+
+  const date = new Date(iso);
+  date.setHours(time.hour, time.minute, 0, 0);
+  return date.toISOString();
 }
 
 /** 로컬 벽시계로 만든 인스턴트. 시각을 못 읽으면 그날 정오로 둔다. */

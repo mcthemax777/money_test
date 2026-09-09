@@ -298,6 +298,97 @@ console.log('\n── 실제 카드 앱 캡처 (브라우저 OCR 이 읽어 온 
   eq('읽다 만 머리는 앞 날짜를 이어 쓴다', localKey(drafts[1]?.occurredAt ?? null), '2026-08-28 12:00');
 }
 
+console.log('── 캡처의 시각 ──');
+{
+  /*
+   * 카드사 앱은 한 거래를 세 줄로 적는다 -- 가맹점·금액 / 시각·일시불 / 카드 이름.
+   * 그 시각을 읽지 않으면 모든 후보가 그날 정오로 담긴다.
+   */
+  const text = [
+    '08월28일',
+    '스마트로 대표비인증 25,000원',
+    '14:23 일시불',
+    'nori 체크카드(2395)',
+    '지에스25 구로행운점 4,500원',
+    '09:05 일시불',
+    'nori 체크카드(2395)',
+  ].join('\n');
+
+  const drafts = parseCaptureText(text, { now: NOW });
+  eq('뒤 줄의 시각을 날짜에 얹는다', localKey(drafts[0]?.occurredAt ?? null), '2026-08-28 14:23');
+  eq('거래마다 자기 시각을 쓴다', localKey(drafts[1]?.occurredAt ?? null), '2026-08-28 09:05');
+  eq('시각 줄은 후보가 아니다', drafts.length, 2);
+}
+
+{
+  // 뒤 줄에 금액이 있으면 다음 거래의 줄이다. 그 시각을 가져오면 한 칸 밀린다.
+  const text = ['09월 08일', '스타벅스 12,000원', '이마트 45,000원', '11:20 일시불'].join('\n');
+  const drafts = parseCaptureText(text, { now: NOW });
+  eq('다음 거래의 시각은 가져오지 않는다', localKey(drafts[0]?.occurredAt ?? null), '2026-09-08 12:00');
+  eq('자기 뒤 줄의 시각은 쓴다', localKey(drafts[1]?.occurredAt ?? null), '2026-09-08 11:20');
+}
+
+{
+  // 한 줄에 시각이 함께 적힌 목록(은행 앱)은 그 줄에서 읽는다.
+  const drafts = parseCaptureText(['09/08', '14:23 스타벅스 12,000원'].join('\n'), { now: NOW });
+  eq('같은 줄의 시각을 읽는다', localKey(drafts[0]?.occurredAt ?? null), '2026-09-08 14:23');
+}
+
+{
+  // 날짜를 못 읽었으면 시각만 읽었어도 비워 둔다. 채워 넣으면 사람이 그 칸을 검사하지 않는다.
+  const drafts = parseCaptureText(['스타벅스 12,000원', '14:23'].join('\n'), { now: NOW });
+  eq('날짜가 없으면 비워 둔다', localKey(drafts[0]?.occurredAt ?? null), '(없음)');
+}
+
+console.log('── 월·일 글자를 잃은 날짜 머리 ──');
+{
+  /*
+   * 실제 캡처에서 온 머리다 (2026-09-09). "09월03일" 이 "09803" 으로, "09월01일" 이
+   * "098012" 로 왔다. 되살리지 않으면 그 아래 거래가 앞 머리의 날짜를 이어 써서,
+   * 9월 3일 "어향" 이 9월 5일로 담긴다.
+   */
+  const text = [
+    '09월05일',
+    '카페 타샤 2,800원',
+    '09803',
+    '어향 27,000',
+    '098012',
+    '인터넷상거래 6,400원',
+  ].join('\n');
+
+  const drafts = parseCaptureText(text, { now: NOW });
+  eq('깨끗한 머리', localKey(drafts[0]?.occurredAt ?? null), '2026-09-05 12:00');
+  eq('월·일을 잃은 머리를 되살린다', localKey(drafts[1]?.occurredAt ?? null), '2026-09-03 12:00');
+  eq('일 자리까지 숫자로 온 머리도', localKey(drafts[2]?.occurredAt ?? null), '2026-09-01 12:00');
+}
+
+{
+  /*
+   * 되살린 머리가 앞 날짜보다 **새것이면 버린다.**
+   *
+   * 이용내역은 날짜가 내려가는 순서라 새 날짜가 나올 자리가 아니다. 그렇다면 그 숫자는
+   * 날짜가 아니었다는 뜻이고, 날짜로 쓰면 그 아래 거래 전체가 엉뚱한 날로 간다.
+   */
+  const text = ['08월31일', '카페 타샤 2,800원', '09803', '어향 27,000'].join('\n');
+  const drafts = parseCaptureText(text, { now: NOW });
+  eq('새 날짜로 되살아나면 쓰지 않는다', localKey(drafts[1]?.occurredAt ?? null), '2026-08-31 12:00');
+}
+
+{
+  // 날짜가 아닌 다섯 자리 숫자는 되살아나지 않는다(달·날의 범위에서 걸린다).
+  const text = ['09월05일', '카페 타샤 2,800원', '27000', '어향 27,000'].join('\n');
+  const drafts = parseCaptureText(text, { now: NOW });
+  eq('숫자 줄을 날짜로 만들지 않는다', localKey(drafts[1]?.occurredAt ?? null), '2026-09-05 12:00');
+}
+
+{
+  // OCR 이 만든 시각 자리는 버린다. 그대로 쓰면 시각뿐 아니라 날짜까지 밀린다.
+  const drafts = parseCaptureText(['09/08', '스타벅스 12,000원', '59:800'].join('\n'), {
+    now: NOW,
+  });
+  eq('범위를 벗어난 시각은 쓰지 않는다', localKey(drafts[0]?.occurredAt ?? null), '2026-09-08 12:00');
+}
+
 {
   /*
    * 캡처에서는 통화 기호를 믿지 않는다.
