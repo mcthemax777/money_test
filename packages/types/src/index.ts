@@ -22,5 +22,6 @@ export * from './field-merge';
 export * from './hlc';
 export * from './mutations';
 export * from './rank';
+export * from './recurring';
 export * from './reorder-rank';
 export * from './tag-change';

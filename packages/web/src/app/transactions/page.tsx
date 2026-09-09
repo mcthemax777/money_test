@@ -13,8 +13,21 @@
  * 값과 상태는 `useTransactions` 가 갖는다. 앱의 거래 화면과 같은 훅이라, 두 화면이
  * 서로 다른 규칙으로 파고들 일이 없다.
  */
-import { Fragment, useMemo, useState } from 'react';
-import { ArrowLeft, Check, Loader2, Minus, MoreVertical, Search, Tag, Trash2, X } from 'lucide-react';
+import { Fragment, useMemo, useRef, useState } from 'react';
+import Link from 'next/link';
+import {
+  Archive,
+  ArrowLeft,
+  Check,
+  Copy,
+  Loader2,
+  Minus,
+  MoreVertical,
+  Search,
+  Tag,
+  Trash2,
+  X,
+} from 'lucide-react';
 import {
   NO_TAG,
   SEARCHABLE_ENTRY_KINDS,
@@ -46,9 +59,20 @@ import {
   type TransactionTab,
 } from '@money/core/hooks/useTransactions';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
-import { useMyPersonId, useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
+import { useEntryDrafts } from '@money/core/hooks/useEntryDrafts';
+import {
+  useCanEdit,
+  useMyPersonId,
+  useProjectDisplayCurrency,
+  useProjectTimeZone,
+} from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
 
+import EntryEditor, {
+  isCopyableEntry,
+  type EntryEditorHandle,
+  type ReferenceDataPatch,
+} from '@/components/EntryEditor';
 import Modal from '@/components/Modal';
 import PageHeader from '@/components/PageHeader';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
@@ -208,10 +232,21 @@ export default function TransactionsPage() {
   const timeZone = useProjectTimeZone();
   const currency = useProjectDisplayCurrency();
   const myPersonId = useMyPersonId();
+  /** 읽기 전용 구성원에게는 베끼기 단추를 그리지 않는다. */
+  const canEdit = useCanEdit();
   const selectedPersonIds = useUserFilter((state) => state.selectedPersonIds);
   const togglePersonId = useUserFilter((state) => state.togglePersonId);
 
   const tx = useTransactions(selectedProjectId);
+  /*
+   * 보관함에 몇 건이 기다리는가.
+   *
+   * 목록을 여기서 그리지는 않지만 숫자는 이 화면에 있어야 한다 -- 아이콘만 있으면
+   * 눌러 보지 않고는 볼 것이 있는지 알 수 없다. 훅이 두 출처를 함께 세므로 탭 하나를
+   * 골라 두어도 합계를 낼 수 있다.
+   */
+  const inbox = useEntryDrafts(selectedProjectId, 'notification');
+  const inboxCount = inbox.counts.notification + inbox.counts.capture;
   // 사람 목록과 선택을 프로젝트에 맞춘다. 다른 화면과 같은 훅을 쓴다.
   usePersonFilterSync(selectedProjectId, tx.people);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
@@ -230,6 +265,15 @@ export default function TransactionsPage() {
   const [notice, setNotice] = useState('');
   const [draft, setDraft] = useState<TransactionSearch>(EMPTY_SEARCH);
   const [detail, setDetail] = useState<EntryListItemDto | null>(null);
+  /** 거래 추가 팝업. 상세의 베끼기가 값을 담아 연다. */
+  const entryEditorRef = useRef<EntryEditorHandle>(null);
+  /**
+   * 추가 팝업 안에서 새로 만든 계좌·카드·분류·구성원.
+   *
+   * 훅이 준 목록(`pickerAccounts` 등)은 프로젝트가 바뀔 때만 다시 읽으므로, 팝업에서
+   * 계좌를 하나 만들면 그 목록은 옛것으로 남는다. 새로 받은 목록을 여기 덮어 둔다.
+   */
+  const [refPatch, setRefPatch] = useState<ReferenceDataPatch>({});
 
   /**
    * 펼친 자리의 거래 목록.
@@ -518,6 +562,14 @@ export default function TransactionsPage() {
     draft.entryPersonIds.length +
     (draftRange ? 1 : 0);
 
+  /**
+   * 상세에 베끼기 단추를 그릴지.
+   *
+   * 규칙은 편집기가 갖는다(`isCopyableEntry`). 못 다루는 거래에 단추를 남기면 눌러도
+   * 값이 빠진 폼이 뜬다.
+   */
+  const canCopy = detail !== null && canEdit && isCopyableEntry(detail);
+
   const detailRows: Array<{ label: string; value: string | null }> = detail
     ? [
         { label: t('tx.detail.date'), value: formatDateTime(detail.date, timeZone) },
@@ -630,6 +682,24 @@ export default function TransactionsPage() {
           }
           action={
             <div className="flex gap-2">
+              {/*
+                보관함. 검색 왼쪽에 둔다.
+
+                아직 거래가 아닌 후보가 쌓이는 자리라 거래 화면에서 들어가는 것이
+                맞다 -- 그 후보가 되려는 것이 이 화면의 줄이다. 대기 건수를 옆에
+                숫자로 붙인다(검색이 걸린 개수를 적는 것과 같은 모양이다).
+              */}
+              <Link
+                href="/transactions/inbox"
+                aria-label={t('inbox.open')}
+                title={t('inbox.title')}
+                className={`flex items-center gap-1.5 px-2 py-2 text-sm font-medium ${
+                  inboxCount > 0 ? 'text-blue-600' : 'text-gray-600'
+                }`}
+              >
+                <Archive className="h-4 w-4" aria-hidden />
+                {inboxCount > 0 ? <span className="font-semibold">{inboxCount}</span> : null}
+              </Link>
               <button
                 type="button"
                 onClick={() => {
@@ -1206,6 +1276,28 @@ export default function TransactionsPage() {
         isOpen={detail !== null}
         onClose={() => setDetail(null)}
         title={t('tx.detail.title')}
+        /*
+          내용 복사. 이 화면은 거래를 고치지 않지만, 베끼기는 이 거래를 건드리지 않고
+          같은 내용의 새 거래를 적는 일이라 여기 둔다. 상세를 닫고 추가 팝업을 세운다
+          -- 팝업 둘이 겹치면 뒤로가기가 어느 것을 닫는지 알 수 없다.
+        */
+        headerAction={
+          canCopy ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (!detail) return;
+                entryEditorRef.current?.openCopy(detail);
+                setDetail(null);
+              }}
+              aria-label={t('tx.detail.copy')}
+              title={t('tx.detail.copy')}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-blue-600 transition-colors hover:bg-blue-50"
+            >
+              <Copy className="h-4 w-4" aria-hidden />
+            </button>
+          ) : null
+        }
       >
         {detail ? (
           <div>
@@ -1255,6 +1347,23 @@ export default function TransactionsPage() {
           </div>
         ) : null}
       </Modal>
+
+      {/*
+        거래 추가 팝업. 상세의 베끼기만 이것을 연다 (이 화면에는 추가 버튼이 없다).
+
+        고를 목록은 훅이 이미 읽어 둔 것을 그대로 준다 -- 검색 창이 고르는 계좌·카드·
+        분류가 거래를 적을 때 고르는 것과 같은 목록이다.
+      */}
+      <EntryEditor
+        ref={entryEditorRef}
+        projectId={selectedProjectId}
+        accounts={refPatch.accounts ?? tx.pickerAccounts}
+        cards={refPatch.cards ?? tx.pickerCards}
+        categories={refPatch.categories ?? tx.pickerCategories}
+        people={refPatch.people ?? tx.people}
+        onReferenceDataChange={(patch) => setRefPatch((prev) => ({ ...prev, ...patch }))}
+        onEntryChange={tx.reload}
+      />
     </div>
   );
 }

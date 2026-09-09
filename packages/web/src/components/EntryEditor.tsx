@@ -1,6 +1,7 @@
 'use client';
 
 import { forwardRef, useImperativeHandle, useMemo, useState } from 'react';
+import { Copy } from 'lucide-react';
 import { useUserFilter } from '@money/core/store/user-filter';
 import {
   useCanEdit,
@@ -51,6 +52,7 @@ import Modal from '@/components/Modal';
 import AddAccountModal from '@/components/AddAccountModal';
 import PersonModal from '@/components/PersonModal';
 import type { EntryListItem } from '@/components/TransactionItem';
+import type { EntryDraftDto } from '@money/types';
 import CardColorPicker from '@/components/CardColorPicker';
 import CardPerformanceField from '@/components/CardPerformanceField';
 import { useApiError } from '@money/core/lib/api-error';
@@ -155,11 +157,40 @@ const ENTRY_KIND_KEY: Record<string, MessageKey> = {
   adjustment: 'editor.kind.adjustment',
 };
 
+/**
+ * 내용을 베껴 새로 적을 수 있는 거래.
+ *
+ * 두 가지를 뺀다. 잔액 맞추기가 만든 조정은 이 폼이 만드는 것이 아니고(계좌 잔액에서
+ * 역산된다), 분할은 이 폼이 분류 하나만 다뤄 줄들이 합쳐진 한 건이 **새로** 남는다 --
+ * 고치기는 원본이 그 자리에 있어 알아챌 수 있지만 새 거래는 그렇지 않다.
+ *
+ * 상세를 이 컴포넌트 밖에서 그리는 화면(거래)도 이것으로 단추를 그린다. 규칙을 그쪽에
+ * 또 적으면 여기가 막는 거래에 단추가 남는다.
+ */
+export function isCopyableEntry(entry: EntryListItem): boolean {
+  return entry.kind !== 'adjustment' && entry.splitCount <= 1;
+}
+
 export interface EntryEditorHandle {
   /** 거래 상세 팝업을 연다. 목록에서 한 건을 눌렀을 때 부른다. */
   openDetail: (entry: EntryListItem) => void;
   /** 빈 폼으로 거래 추가 팝업을 연다. */
   openAdd: () => void;
+  /**
+   * 있는 거래의 내용을 담은 거래 추가 팝업을 연다.
+   *
+   * 상세를 이 컴포넌트 밖에서 그리는 화면(거래)이 쓴다. 저장하면 새 거래가 되며,
+   * 베낀 원본은 그대로 남는다.
+   */
+  openCopy: (entry: EntryListItem) => void;
+  /**
+   * 보관함의 후보로 거래 추가 팝업을 연다.
+   *
+   * 후보는 거래가 아니라 읽어 낸 값의 묶음이라 빈 칸이 있는 것이 정상이다. 그래서
+   * 빈 폼에서 시작해 읽은 것만 덮어쓴다 -- 없는 칸을 비우면 오늘 날짜와 "나" 같은
+   * 기본값까지 지워진다.
+   */
+  openDraft: (draft: EntryDraftDto.Response) => void;
 }
 
 /** 이 팝업 안에서 새로 만든 참조 데이터. 바뀐 것만 담긴다. */
@@ -184,7 +215,14 @@ interface EntryEditorProps {
    */
   onReferenceDataChange: (patch: ReferenceDataPatch) => void;
   /** 거래를 저장하거나 지운 뒤. 화면이 목록·합계를 다시 불러온다. */
-  onEntryChange: () => void | Promise<void>;
+  /**
+   * 거래를 저장하거나 지운 뒤. 화면이 목록·합계를 다시 불러온다.
+   *
+   * 만든 거래의 id 를 함께 준다. 보관함이 그 값으로 후보에 등록 표시를 남긴다.
+   * 수정·삭제에서는 각각 그 거래의 id 와 null 이고, 목록만 다시 읽는 화면은 인자를
+   * 받지 않으면 된다.
+   */
+  onEntryChange: (result?: { entryId: string | null }) => void | Promise<void>;
 }
 
 /**
@@ -700,14 +738,16 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         if (canInstall && months >= 2) payload.installmentMonths = months;
       }
 
+      let savedId: string | null = editingId;
       if (editingId) {
         // 팝업을 열 때 본 판을 함께 보낸다. 그 사이의 편집을 서버가 알아채는 근거다.
         await apiClient.updateEntry(editingId, { ...payload, baseHlc });
       } else {
-        await apiClient.createEntry({ ...payload, projectId: projectId });
+        const created = await apiClient.createEntry({ ...payload, projectId: projectId });
+        savedId = created.id;
       }
 
-      await onEntryChange();
+      await onEntryChange({ entryId: savedId });
       setFormData(emptyEntryForm(timeZone, ledgerCurrency));
       setEditingId(null);
       setBaseHlc(null);
@@ -765,6 +805,13 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     handleEditClick(selectedTransaction);
   };
 
+  /** 상세의 베끼기. 상세를 닫고 값이 든 추가 팝업을 세운다. */
+  const handleDetailCopyClick = () => {
+    if (!selectedTransaction) return;
+    setIsDetailModalOpen(false);
+    handleCopyClick(selectedTransaction);
+  };
+
   /**
    * 수정할 수 있는 전표.
    *
@@ -794,15 +841,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       : { mainCategoryId: categoryId, subCategoryId: '' };
   };
 
-  const handleEditClick = (entry: EntryListItem) => {
-    if (!isEditable(entry)) {
-      setError(t('editor.notEditable'));
-      return;
-    }
-
-    setEditingId(entry.id);
-    // 이 줄을 본 시점의 판. 저장할 때 되돌려 주어 그 사이의 편집을 알아채게 한다.
-    setBaseHlc(entry.updatedHlc);
+  /**
+   * 있는 거래를 폼 값으로 되돌린다.
+   *
+   * 고치기와 베끼기가 함께 쓴다. 두 길의 값이 갈리면 "고쳐 저장한 것"과 "베껴 저장한
+   * 것"이 서로 다른 거래가 되므로 채우는 자리를 하나로 둔다. 어느 거래를 고치는가
+   * (`editingId`)와 그 거래를 본 시점의 판(`baseHlc`)만 부르는 쪽이 정한다.
+   */
+  const formValuesOf = (entry: EntryListItem) => {
     const category = splitCategory(entry.categoryId);
     const fee = splitCategory(entry.feeCategoryId);
 
@@ -824,7 +870,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         ? entry.amount
         : '';
 
-    setFormData({
+    return {
       // 카드대금 결제는 통장에서 돈이 나가고 카드 부채가 줄어든다. 두 값을 다 들고 있어야
       // 저장할 때 그대로 돌려보낼 수 있으므로 method로 하나만 고르지 않는다.
       method: entry.kind === 'card_payment' ? 'account' : entry.cardId ? 'card' : 'account',
@@ -871,6 +917,91 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       tagIds: entry.tags.map((tag) => tag.id),
       // 놓치면 환불 입금을 고칠 때 대금 결제로 뒤집힌다
       cardTransferDirection: entry.cardTransferDirection ?? 'payment',
+    };
+  };
+
+  const handleEditClick = (entry: EntryListItem) => {
+    if (!isEditable(entry)) {
+      setError(t('editor.notEditable'));
+      return;
+    }
+
+    setEditingId(entry.id);
+    // 이 줄을 본 시점의 판. 저장할 때 되돌려 주어 그 사이의 편집을 알아채게 한다.
+    setBaseHlc(entry.updatedHlc);
+    setFormData(formValuesOf(entry));
+    setIsModalOpen(true);
+    setError('');
+  };
+
+  /**
+   * 내용만 베껴 새로 적기.
+   *
+   * 값은 고치기와 같은 자리에서 채우고, 어느 거래를 고치는가(`editingId`)와 그 거래를
+   * 본 시점의 판(`baseHlc`)만 들지 않는다. 하나라도 남으면 저장이 새 거래를 만드는
+   * 대신 베낀 원본을 덮어쓴다. 날짜와 시각도 그대로 둔다 -- 베끼는 까닭이 대개 "같은
+   * 자리에서 또"라, 오늘로 바꿔 두면 되레 고칠 칸이 늘어난다.
+   */
+  const handleCopyClick = (entry: EntryListItem) => {
+    if (!isCopyableEntry(entry)) {
+      setError(t('editor.notEditable'));
+      return;
+    }
+
+    setEditingId(null);
+    setBaseHlc(null);
+    setFormData(formValuesOf(entry));
+    setIsModalOpen(true);
+    setError('');
+  };
+
+  /**
+   * 보관함의 후보로 폼을 채운다.
+   *
+   * 앱은 core 의 `entryFormFromDraft` 가 같은 일을 한다. 두 폼의 값 모양이 다르므로
+   * (이쪽은 대분류·소분류를 나눠 들고, 결제수단도 method + id 로 나뉜다) 함수를
+   * 공유하지 않고 규칙만 같게 둔다 -- 읽은 것만 덮어쓰고 나머지는 기본값이다.
+   */
+  const handleDraftClick = (draft: EntryDraftDto.Response) => {
+    const category = splitCategory(draft.categoryId);
+    const when = draft.occurredAt ? new Date(draft.occurredAt) : null;
+    const hasWhen = when !== null && !Number.isNaN(when.getTime());
+    const type =
+      draft.kind === 'income' || draft.kind === 'transfer' ? draft.kind : 'expense';
+
+    setEditingId(null);
+    setBaseHlc(null);
+    setFormData({
+      ...emptyEntryForm(timeZone, ledgerCurrency),
+      time: nowTimeKey(timeZone),
+      type,
+      // 카드가 있으면 카드로 낸 것이다. 없으면 통장이고, 둘 다 없으면 사람이 고른다.
+      method: draft.cardId ? 'card' : 'account',
+      cardId: draft.cardId ?? '',
+      accountId: draft.accountId ?? '',
+      personId: draft.personId || myPersonId || '',
+      amount: draft.amount ?? '',
+      /*
+       * 통화. 장부 통화와 같으면 그대로 둔다.
+       *
+       * 후보에는 "12,000원"에서 읽은 'KRW' 가 담기는데, 장부 통화가 원화인 가계부에서
+       * 그 값을 넣으면 환율·청구액 칸이 열린다. 같은 통화면 환산할 것이 없다.
+       */
+      currency:
+        draft.currency && isCurrencyCode(draft.currency) ? draft.currency : ledgerCurrency,
+      currencyTouched: Boolean(draft.currency && draft.currency !== ledgerCurrency),
+      description: draft.description ?? draft.merchant ?? '',
+      merchant: draft.merchant ?? '',
+      mainCategoryId: type === 'transfer' ? '' : category.mainCategoryId,
+      subCategoryId: type === 'transfer' ? '' : category.subCategoryId,
+      installmentMonths:
+        type === 'expense' && draft.installmentMonths ? String(draft.installmentMonths) : '',
+      ...(hasWhen
+        ? {
+            date: dateKeyOf(when as Date, timeZone),
+            time: timeInputOf(when as Date, timeZone),
+          }
+        : {}),
     });
     setIsModalOpen(true);
     setError('');
@@ -1043,6 +1174,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       setIsDetailModalOpen(true);
     },
     openAdd: handleAddClick,
+    openCopy: handleCopyClick,
+    openDraft: handleDraftClick,
   }));
 
   return (
@@ -1909,6 +2042,23 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
         title={t('editor.detailTitle')}
+        /*
+          내용 복사. 머리글 오른쪽에 둔다 -- 아래 단추 자리는 이 거래를 고치고 지우는
+          자리이고, 베끼기는 이 거래를 건드리지 않는 다른 일이다.
+        */
+        headerAction={
+          selectedTransaction && canEdit && isCopyableEntry(selectedTransaction) ? (
+            <button
+              type="button"
+              onClick={handleDetailCopyClick}
+              aria-label={t('tx.detail.copy')}
+              title={t('tx.detail.copy')}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-blue-600 transition-colors hover:bg-blue-50"
+            >
+              <Copy className="h-4 w-4" aria-hidden />
+            </button>
+          ) : null
+        }
         footer={
           /*
             읽기 전용 구성원에게는 아래 단추가 없다. 상세는 그대로 읽을 수 있고,

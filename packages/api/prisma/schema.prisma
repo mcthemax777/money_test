@@ -155,6 +155,10 @@ model Project {
   budgets      Budget[]
   institutions FinancialInstitution[]
   exchangeRates ExchangeRate[]
+  /// 보관함의 거래 후보. 거래가 아니라 "적을 수 있는 것"의 목록이다.
+  entryDrafts  EntryDraft[]
+  /// 반복 등록. 정해 둔 날마다 보관함에 후보를 만든다.
+  recurringRules RecurringRule[]
   /// 자리표를 어디까지 지웠는가. 없으면 아직 한 번도 지우지 않은 것이다(0과 같다).
   tombstoneFloor TombstoneFloor?
 
@@ -648,6 +652,8 @@ model JournalEntry {
   createdBy User?     @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   postings  Posting[]
   tags      EntryTag[]
+  /// 이 전표를 만들어 낸 보관함 후보. 대개 없다 (손으로 적은 거래).
+  drafts    EntryDraft[]
 
   /// 변경 피드가 보는 번호. Project.syncVersion 에서 발급된다.
   updatedVersion Int @default(0)
@@ -872,4 +878,134 @@ model TombstoneFloor {
   prunedAt  DateTime @default(now())
 
   project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+
+/// 보관함에 담긴 거래 후보. **전표가 아니다.**
+///
+/// 기기가 알림(카드 승인 문구)과 화면 캡처에서 읽어 낸 "적을 수 있는 것"을 담아 둔다.
+/// 합계·잔액·예산은 이 표를 보지 않는다. 사용자가 보관함에서 눌러 저장할 때 비로소
+/// JournalEntry 가 만들어지고, 그때 이 행에는 registered 표시와 그 전표의 id 만 남는다.
+///
+/// **필드별 병합(fieldHlc)을 두지 않는다.** 후보는 여러 사람이 같은 칸을 동시에 고칠
+/// 물건이 아니고(대개 담은 기기에서 한 번 손보고 끝난다), 어긋나면 다시 읽어 담으면
+/// 되는 값이다. 늦게 쓴 것이 이긴다.
+///
+/// 파싱한 값에 제약을 걸지 않는다. 금액만 읽히고 분류를 모르는 후보가 정상이라,
+/// NOT NULL 로 묶으면 반쯤 읽힌 것을 버려야 한다 -- 사람이 한 칸 채우면 되는 것을
+/// 버리는 편이 늘 더 나쁘다.
+model EntryDraft {
+  id        String @id @default(cuid())
+  projectId String
+  /// notification | capture
+  source    String
+  /// pending | registered | dismissed
+  status    String @default("pending")
+
+  /// 읽은 원문. 규칙이 틀렸을 때 근거가 되는 유일한 값이다.
+  rawText    String
+  appPackage String?
+  appTitle   String?
+
+  /// 읽어 낸 값. 확실하지 않으면 null 이다.
+  kind              String?
+  amount            Decimal? @db.Decimal(18, 4)
+  currency          String?
+  occurredAt        DateTime?
+  merchant          String?
+  description       String?
+  installmentMonths Int?
+
+  /// 짐작한 연결. 화면이 바꿀 수 있다.
+  personId   String?
+  categoryId String?
+  accountId  String?
+  cardId     String?
+
+  confidence Int     @default(0)
+  parser     String?
+
+  /// 같은 것을 두 번 담지 않기 위한 열쇠. (프로젝트, 열쇠) 가 유일하다.
+  dedupeKey String
+
+  /// 등록해서 만들어진 전표. 그 전표를 지우면 null 로 돌아온다(SetNull).
+  registeredEntryId String?
+
+  /// 이 후보를 만들어 낸 반복 등록. 알림·캡처에서 온 것은 null 이다.
+  recurringRuleId String?
+
+  /// 누가 담았는가. 알림은 그 기기의 사용자다.
+  createdByUserId String?
+
+  /// 필드별 병합의 시계 지도를 두지 않는 대신, 변경 피드의 번호는 다른 표와 같다.
+  updatedVersion Int @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  project          Project        @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  registeredEntry  JournalEntry?  @relation(fields: [registeredEntryId], references: [id], onDelete: SetNull)
+  /// 반복을 지워도 이미 만들어진 후보는 남는다. 사용자가 아직 처리하지 않았을 수 있다.
+  recurringRule    RecurringRule? @relation(fields: [recurringRuleId], references: [id], onDelete: SetNull)
+
+  @@unique([projectId, dedupeKey])
+  @@index([projectId, status, source])
+  @@index([projectId, updatedVersion])
+  @@index([registeredEntryId])
+}
+
+
+/// 반복 등록. 정해 둔 날마다 보관함에 후보를 만든다.
+///
+/// **거래를 만들지 않는다.** 만드는 것은 후보(EntryDraft)이고, 사용자가 보관함에서
+/// 눌러야 전표가 된다. 자동으로 장부에 적히면 그 달의 합계가 사람 모르게 움직인다 --
+/// 반복은 "적는 것을 잊지 않게" 하는 장치이지 "대신 적는" 장치가 아니다.
+///
+/// 날짜를 **문자열**로 담는다("YYYY-MM-DD"). 이 값들은 인스턴트가 아니라 프로젝트
+/// 타임존의 달력 날짜다. DateTime 으로 두면 UTC 로 저장되면서 시간대에 따라 하루씩
+/// 밀리고, "매월 25일"이 24일이나 26일이 되는 자리가 생긴다.
+///
+/// 변경 피드(updatedVersion)에 싣지 않는다. 반복은 드물게 손대는 설정이라 서버에서
+/// 곧바로 읽고 쓰며(REST), 기기 사본에 두지 않는다. 만들어진 후보는 여느 후보와 같이
+/// 피드를 타고 내려간다.
+model RecurringRule {
+  id        String  @id @default(cuid())
+  projectId String
+  isActive  Boolean @default(true)
+
+  /// daily | monthly | yearly
+  frequency  String
+  /// daily: 며칠마다 (1 이면 매일)
+  everyDays  Int?
+  /// monthly·yearly: 며칟날. 그 달에 없는 날은 마지막 날로 당긴다.
+  dayOfMonth Int?
+  /// yearly: 몇 월
+  month      Int?
+
+  /// "YYYY-MM-DD". 프로젝트 타임존의 달력 날짜다.
+  startDate String
+  endDate   String?
+  /// "HH:mm". 만들어질 후보의 거래 시각. 없으면 그 날 정오다.
+  timeOfDay String?
+
+  // ── 후보에 그대로 담길 값 ──
+  kind              String
+  amount            Decimal? @db.Decimal(18, 4)
+  currency          String?
+  description       String
+  merchant          String?
+  personId          String?
+  categoryId        String?
+  accountId         String?
+  cardId            String?
+  installmentMonths Int?
+
+  createdByUserId String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  project Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  drafts  EntryDraft[]
+
+  @@index([projectId, isActive])
 }

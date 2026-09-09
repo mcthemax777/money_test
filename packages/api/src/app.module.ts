@@ -16,6 +16,7 @@ import { CardsModule } from './modules/cards/cards.module';
 import { CategoriesModule } from './modules/categories/categories.module';
 import { TagsModule } from './modules/tags/tags.module';
 import { EntriesModule } from './modules/entries/entries.module';
+import { EntryDraftsModule } from './modules/entry-drafts/entry-drafts.module';
 import { LedgerModule } from './modules/ledger/ledger.module';
 import { BudgetsModule } from './modules/budgets/budgets.module';
 import { ReportsModule } from './modules/reports/reports.module';
@@ -60,6 +61,7 @@ import { SyncModule } from './modules/sync/sync.module';
     TagsModule,
     LedgerModule,
     EntriesModule,
+    EntryDraftsModule,
     BudgetsModule,
     ReportsModule,
     ExchangeRatesModule,

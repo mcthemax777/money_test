@@ -74,6 +74,8 @@ const validExpense: EntryFormValues = {
   cardId: '',
   cardDirection: 'payment',
   tagIds: [],
+  // 새로 적는 폼과 같다. 딛고 선 판이 없다는 뜻이라, 저장은 수정이 아니라 생성으로 간다.
+  baseHlc: null,
 };
 
 const codeOf = (values: Partial<EntryFormValues>) =>

@@ -22,7 +22,7 @@ import {
   Text,
   View,
 } from 'react-native';
-import { ArrowLeft, Check, MoreVertical, Search, Tag, Trash2, X } from 'lucide-react-native';
+import { Archive, ArrowLeft, Check, MoreVertical, Search, Tag, Trash2, X } from 'lucide-react-native';
 import type { EntryListItem } from '@money/types';
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -40,9 +40,12 @@ import {
   useProjectDisplayCurrency,
 } from '@money/core/store/project';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
+import { useEntryDrafts } from '@money/core/hooks/useEntryDrafts';
 import { useUserFilter } from '@money/core/store/user-filter';
 
+import { useNavigation } from '../shell/navigation';
 import EntryDetailModal from '../components/EntryDetailModal';
+import EntryEditor from '../components/EntryEditor';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import SegmentedTabs from '../components/SegmentedTabs';
@@ -250,6 +253,15 @@ export default function TransactionsScreen() {
   const myPersonId = useMyPersonId();
 
   const tx = useTransactions(selectedProjectId);
+  const { go } = useNavigation();
+  /*
+   * 보관함에 몇 건이 기다리는가.
+   *
+   * 목록은 보관함 화면이 그리지만 숫자는 여기 있어야 한다 -- 아이콘만 있으면 눌러
+   * 보지 않고는 볼 것이 있는지 알 수 없다.
+   */
+  const inbox = useEntryDrafts(selectedProjectId, 'notification');
+  const inboxCount = inbox.counts.notification + inbox.counts.capture;
   /*
    * 사람 목록과 선택을 이 프로젝트에 맞춘다.
    *
@@ -264,6 +276,14 @@ export default function TransactionsScreen() {
   const [isTagPickOpen, setIsTagPickOpen] = useState(false);
   /** 상세를 띄운 거래. null 이면 닫힌 상태다. */
   const [detail, setDetail] = useState<EntryListItem | null>(null);
+  /**
+   * 내용을 베껴 새로 적는 중인 거래. null 이면 입력 팝업이 닫힌 상태다.
+   *
+   * 이 화면은 거래를 만드는 자리가 아니라, 베끼기를 누른 동안만 입력 팝업을 세운다
+   * (그래서 `null` 이면 편집기를 아예 그리지 않는다 -- 편집기는 고를 목록 다섯 벌을
+   * 따로 읽으므로, 늘 붙여 두면 이 화면이 이미 읽은 것을 한 번 더 읽는다).
+   */
+  const [copying, setCopying] = useState<EntryListItem | null>(null);
   /** 지우다 남은 것 같은 알림. 빈 글자면 아무것도 그리지 않는다. */
   const [notice, setNotice] = useState('');
 
@@ -536,6 +556,23 @@ export default function TransactionsScreen() {
           }
           action={
             <View className="flex-row gap-2">
+              {/*
+                보관함. 검색 왼쪽에 둔다.
+
+                아직 거래가 아닌 후보가 쌓이는 자리라 거래 화면에서 들어가는 것이
+                맞다 -- 그 후보가 되려는 것이 이 화면의 줄이다. 대기 건수는 옆에
+                숫자로 붙인다(검색 개수와 같은 모양이다).
+              */}
+              <Pressable
+                onPress={() => go('/transactions/inbox')}
+                accessibilityLabel={t('inbox.open')}
+                className="flex-row items-center gap-1.5 px-2 py-2"
+              >
+                <Archive size={18} color={inboxCount > 0 ? '#2563eb' : '#4b5563'} />
+                {inboxCount > 0 ? (
+                  <Text className="text-sm font-semibold text-blue-600">{inboxCount}</Text>
+                ) : null}
+              </Pressable>
               <Pressable
                 onPress={() => setIsSearchOpen(true)}
                 accessibilityLabel={t('tx.search')}
@@ -725,7 +762,35 @@ export default function TransactionsScreen() {
         </Pressable>
       </Modal>
 
-      <EntryDetailModal entry={detail} onClose={() => setDetail(null)} />
+      <EntryDetailModal
+        entry={detail}
+        onClose={() => setDetail(null)}
+        /*
+          읽기 전용 구성원에게는 베끼기 단추가 없다. 상세는 그대로 읽을 수 있다.
+          상세를 닫고 입력 팝업을 세운다 -- 팝업 둘이 겹쳐 뜨면 뒤로가기가 어느 것을
+          닫는지 알 수 없다.
+        */
+        onCopy={
+          canEdit
+            ? (entry) => {
+                setDetail(null);
+                setNotice('');
+                setCopying(entry);
+              }
+            : undefined
+        }
+      />
+
+      {copying ? (
+        <EntryEditor
+          isOpen
+          copying={copying}
+          onClose={() => setCopying(null)}
+          /* 새 거래가 생겼으므로 달·줄·목록을 다시 읽는다. 오프라인이면 사본에서 온다. */
+          onSaved={tx.reload}
+          onNotEditable={() => setNotice(t('editor.notEditable'))}
+        />
+      ) : null}
     </View>
   );
 }

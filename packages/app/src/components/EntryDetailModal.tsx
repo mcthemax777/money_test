@@ -9,7 +9,8 @@
  * 않는다 -- 오프라인에서도 목록을 눌러 열려야 하고, 사본이 그 줄을 낼 수 있으면
  * 상세도 낼 수 있다.
  */
-import { Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
+import { Copy } from 'lucide-react-native';
 import type { EntryListItem } from '@money/types';
 
 import { formatDateTime } from '@money/core/lib/datetime';
@@ -43,10 +44,18 @@ function Row({ label, value }: { label: string; value: string | null }) {
 export default function EntryDetailModal({
   entry,
   onClose,
+  onCopy,
 }: {
   /** null 이면 닫힌 상태다. 여는 쪽이 고른 거래를 그대로 넘긴다. */
   entry: EntryListItem | null;
   onClose: () => void;
+  /**
+   * 이 거래의 내용을 담아 거래 추가 팝업을 열 때. 없으면 단추를 그리지 않는다.
+   *
+   * 상세는 읽기만 하는 자리라 여기서 거래를 만들지 않는다. 값을 넘겨 받는 쪽(화면)이
+   * 입력 팝업을 연다 -- 이 컴포넌트가 편집기를 알면 오프라인 창구까지 딸려 온다.
+   */
+  onCopy?: (entry: EntryListItem) => void;
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
@@ -69,8 +78,33 @@ export default function EntryDetailModal({
 
   const fee = entry?.feeAmount ? toNumber(entry.feeAmount) : 0;
 
+  /*
+   * 베낄 수 있는 거래인지.
+   *
+   * 잔액 맞추기가 만든 조정은 입력 폼이 만드는 것이 아니다(계좌 잔액에서 역산된다).
+   * 눌러도 "웹에서 고쳐 주세요"만 뜨는 단추라면 그리지 않는 편이 낫다.
+   */
+  const copyTarget = onCopy && entry && entry.kind !== 'adjustment' ? entry : null;
+
   return (
-    <Modal isOpen={entry !== null} onClose={onClose} title={t('tx.detail.title')}>
+    <Modal
+      isOpen={entry !== null}
+      onClose={onClose}
+      title={t('tx.detail.title')}
+      headerAction={
+        copyTarget ? (
+          <Pressable
+            onPress={() => onCopy?.(copyTarget)}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={t('tx.detail.copy')}
+            className="rounded-lg p-1 active:bg-gray-100"
+          >
+            <Copy size={18} color="#2563eb" />
+          </Pressable>
+        ) : null
+      }
+    >
       {entry ? (
         <View>
           {/* 금액을 맨 위에 크게 둔다. 상세를 여는 까닭이 대개 "얼마였지"다. */}

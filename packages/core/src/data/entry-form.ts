@@ -120,6 +120,13 @@ export interface EntryFormDefaults {
   personId?: string;
   timeZone: string;
   now?: Date;
+  /**
+   * 이 가계부의 장부 통화. 보관함의 후보를 폼으로 옮길 때만 쓴다.
+   *
+   * 후보에는 "12,000원"에서 읽은 'KRW' 가 그대로 담기는데, 장부 통화가 원화인
+   * 가계부에서 그 값을 폼에 넣으면 환율 칸이 열린다. 같은 통화면 비워 두어야 한다.
+   */
+  ledgerCurrency?: string;
 }
 
 /** 빈 폼. 새로 열 때와 저장한 뒤 되돌릴 때 모두 이 값을 쓴다. */
@@ -233,6 +240,83 @@ export function entryFormFromItem(
     cardId: item.kind === 'card_payment' ? item.cardId ?? '' : '',
     cardDirection: item.cardTransferDirection ?? 'payment',
     tagIds: item.tags.map((tag) => tag.id),
+  };
+}
+
+/**
+ * 보관함의 후보를 폼 값으로.
+ *
+ * 후보는 전표가 아니라 읽어 낸 값의 묶음이라 빈 칸이 있는 것이 정상이다. 그래서
+ * **빈 폼에서 시작해 읽은 것만 덮어쓴다** -- 없는 칸을 null 로 채우면 폼의 기본값
+ * (오늘 날짜, 내 이름)까지 지워진다.
+ *
+ * 갈래가 이 폼이 다루지 못하는 것이면 지출로 둔다. 후보의 갈래는 문구에서 짐작한
+ * 값이고, 사람이 폼에서 보고 바꿀 수 있다 -- 열지 않고 물러나면 담아 둔 후보를
+ * 쓸 방법이 아예 없어진다.
+ */
+export function entryFormFromDraft(
+  draft: {
+    kind: string | null;
+    amount: string | null;
+    currency: string | null;
+    occurredAt: string | null;
+    merchant: string | null;
+    description: string | null;
+    installmentMonths: number | null;
+    personId: string | null;
+    categoryId: string | null;
+    accountId: string | null;
+    cardId: string | null;
+  },
+  options: EntryFormDefaults,
+): EntryFormValues {
+  const base = emptyEntryForm(options);
+
+  const kind: EntryFormKind =
+    draft.kind === 'income' || draft.kind === 'transfer' || draft.kind === 'card_payment'
+      ? draft.kind
+      : 'expense';
+
+  /*
+   * 결제수단. 카드가 있으면 카드, 없으면 통장이다.
+   *
+   * 이체는 이 값이 **보내는 쪽**이 된다. 받는 쪽은 문구에서 알 수 없어 비워 두고,
+   * 사람이 고른다 (검증이 그 칸을 요구한다).
+   */
+  const method = draft.cardId
+    ? cardValue(draft.cardId)
+    : draft.accountId
+      ? accountValue(draft.accountId)
+      : '';
+
+  const when = draft.occurredAt ? new Date(draft.occurredAt) : null;
+  const hasWhen = when !== null && !Number.isNaN(when.getTime());
+
+  return {
+    ...base,
+    kind,
+    // 카드사 대금 이동만 카드를 따로 든다. 그 갈래를 후보로 만드는 규칙은 아직 없다.
+    method: kind === 'card_payment' ? '' : method,
+    cardId: kind === 'card_payment' ? draft.cardId ?? '' : '',
+    amount: draft.amount ?? '',
+    /*
+     * 통화. 장부 통화면 비워 둔다.
+     *
+     * 폼에서 빈 값이 곧 장부 통화이고(그때는 환산할 것이 없다), 원화 후보에 'KRW'를
+     * 적어 넣으면 장부 통화가 원화인 가계부에서도 환율 칸이 열린다.
+     */
+    currency: draft.currency && draft.currency !== options.ledgerCurrency ? draft.currency : '',
+    description: draft.description ?? draft.merchant ?? '',
+    categoryId: kind === 'expense' || kind === 'income' ? draft.categoryId ?? '' : '',
+    personId: draft.personId ?? base.personId,
+    installmentMonths:
+      kind === 'expense' && draft.installmentMonths ? String(draft.installmentMonths) : '',
+    ...(hasWhen
+      ? {
+          dateKey: dateKeyOf(when as Date, options.timeZone),
+          timeKey: timeInputOf(when as Date, options.timeZone),
+        }
+      : {}),
   };
 }
 

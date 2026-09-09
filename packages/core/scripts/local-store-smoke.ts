@@ -63,6 +63,7 @@ function emptyChanges(): SyncDto.Changes {
     exchangeRates: [],
     assetValuations: [],
     installmentPlans: [],
+    entryDrafts: [],
   };
 }
 

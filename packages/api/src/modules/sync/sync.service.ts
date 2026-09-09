@@ -98,6 +98,7 @@ export class SyncService {
         exchangeRates,
         assetValuations,
         installmentPlans,
+        entryDrafts,
         tombstones,
       ] = await Promise.all([
         tx.project.findFirst({ where: { id: projectId, updatedVersion: window } }),
@@ -136,6 +137,14 @@ export class SyncService {
           where: { posting: { entry: { projectId } }, updatedVersion: window },
           ...page,
         }),
+        /*
+         * 보관함의 후보. 거래가 아니라 제안이지만 같은 피드로 나른다.
+         *
+         * 한 기기가 알림으로 담은 것을 웹에서 정리하고 그 결과를 다시 기기가 보아야
+         * 한다. 따로 조회하게 두면 화면마다 "언제 다시 물을지"를 정하게 되어 같은
+         * 보관함이 자리마다 다르게 보인다.
+         */
+        tx.entryDraft.findMany({ where: { projectId, updatedVersion: window }, ...page }),
         tx.tombstone.findMany({
           where: { projectId, deletedVersion: window },
           orderBy: { deletedVersion: 'asc' },
@@ -156,6 +165,7 @@ export class SyncService {
         exchangeRates,
         assetValuations,
         installmentPlans,
+        entryDrafts,
       ];
 
       /*
@@ -201,6 +211,11 @@ export class SyncService {
           exchangeRates: within(exchangeRates),
           assetValuations: within(assetValuations),
           installmentPlans: within(installmentPlans),
+          // 금액은 문자열로 편다. 기기 사본의 금액 컬럼이 TEXT 다 (schema.ts 의 이유).
+          entryDrafts: within(entryDrafts).map((row) => ({
+            ...row,
+            amount: row.amount ? row.amount.toString() : null,
+          })),
         },
         tombstones: (hasMore
           ? tombstones.filter((row) => row.deletedVersion <= cutoff)
@@ -325,6 +340,7 @@ export class SyncService {
         exchangeRates: [],
         assetValuations: [],
         installmentPlans: [],
+        entryDrafts: [],
       },
       tombstones: [],
       tombstoneFloor,

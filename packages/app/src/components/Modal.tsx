@@ -14,22 +14,33 @@ export default function Modal({
   title,
   children,
   footer,
+  headerAction,
 }: {
   isOpen: boolean;
   onClose: () => void;
   title: string;
   children: ReactNode;
   footer?: ReactNode;
+  /**
+   * 머리글 오른쪽, 닫기 앞에 서는 단추.
+   *
+   * 팝업 전체에 걸리는 일(예: 상세의 내용 복사)을 두는 자리다. 본문에 두면 스크롤에
+   * 밀려 보이지 않고, 하단 버튼 자리는 그 팝업의 본론(저장·삭제)이 쓴다.
+   */
+  headerAction?: ReactNode;
 }) {
   return (
     <RNModal visible={isOpen} transparent animationType="fade" onRequestClose={onClose}>
       <View className="flex-1 items-center justify-center bg-black/50 px-4">
         <View className="max-h-[90%] w-full max-w-md overflow-hidden rounded-lg bg-white shadow-lg">
           <View className="flex-row items-center justify-between border-b border-gray-200 px-6 py-4">
-            <Text className="text-lg font-bold text-gray-900">{title}</Text>
-            <Pressable onPress={onClose} hitSlop={8}>
-              <Text className="text-2xl leading-none text-gray-500">×</Text>
-            </Pressable>
+            <Text className="flex-1 text-lg font-bold text-gray-900">{title}</Text>
+            <View className="flex-row items-center gap-4">
+              {headerAction}
+              <Pressable onPress={onClose} hitSlop={8}>
+                <Text className="text-2xl leading-none text-gray-500">×</Text>
+              </Pressable>
+            </View>
           </View>
 
           <ScrollView contentContainerClassName="p-6">{children}</ScrollView>

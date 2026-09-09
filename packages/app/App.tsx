@@ -21,6 +21,7 @@ import OfflineSync from './src/shell/OfflineSync';
 import AssetsScreen from './src/screens/AssetsScreen';
 import CategoriesScreen from './src/screens/CategoriesScreen';
 import HomeScreen from './src/screens/HomeScreen';
+import InboxScreen from './src/screens/InboxScreen';
 import LedgerScreen from './src/screens/LedgerScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import OutboxScreen from './src/screens/OutboxScreen';
@@ -92,6 +93,9 @@ function Screen() {
       return <HomeScreen />;
     case '/transactions':
       return <TransactionsScreen />;
+    // 거래 화면의 머리글에서 들어간다. 하위 화면이라 뒤로가기로 돌아온다.
+    case '/transactions/inbox':
+      return <InboxScreen />;
     case '/dashboard':
       return <LedgerScreen />;
     case '/assets':

@@ -24,6 +24,15 @@ export type PullFn = (query: SyncDto.PullQuery) => Promise<SyncDto.PullResponse>
 /** 명령을 밀어 올리는 함수. */
 export type PushFn = (request: PushRequest) => Promise<PushResponse>;
 
+/**
+ * 보관함 후보의 처리를 서버에 알리는 함수.
+ *
+ * 아웃박스와 따로 두는 이유. 후보는 전표가 아니라 명령 재생(mutation-replay)을 지나지
+ * 않고, 순서를 지킬 것도 없다(후보마다 마지막 처리 하나만 유효하다). 그래서 큐도
+ * 절차도 훨씬 가볍게 두고, 여기서는 "밀어 올리기 전에 한 번 부른다"만 약속한다.
+ */
+export type FlushDraftsFn = (projectId: string) => Promise<void>;
+
 export interface SyncResult {
   /** 사본이 따라간 마지막 번호 */
   version: number;
@@ -62,8 +71,27 @@ export async function syncProject(
   projectId: string,
   timeZone: string,
   push?: PushFn,
+  flushDrafts?: FlushDraftsFn,
 ): Promise<SyncResult> {
   const cursor = await store.init(projectId, timeZone);
+
+  /*
+   * 보관함 처리를 먼저 올린다. **받기보다 앞이어야 한다.**
+   *
+   * 오프라인에서 등록 표시를 남긴 후보는 사본에만 registered 로 적혀 있다. 받기가
+   * 먼저 돌면 서버의 pending 이 그 자리를 덮어써서(사본은 못 보낸 처리를 지키지만
+   * 커서는 이미 지나가 버린다) 같은 거래를 두 번 적을 자리가 생긴다.
+   *
+   * 실패는 삼킨다. 큐에 그대로 남아 다음 기회에 다시 나가고, 그 사이에도 사본은
+   * 사용자가 본 대로 남아 있다. 후보 하나 때문에 동기화 전체가 멈춰서는 안 된다.
+   */
+  if (flushDrafts) {
+    try {
+      await flushDrafts(projectId);
+    } catch {
+      // 다음 동기화가 다시 시도한다.
+    }
+  }
 
   let version = cursor.version;
   let mirrorFloor = cursor.mirrorFloor;

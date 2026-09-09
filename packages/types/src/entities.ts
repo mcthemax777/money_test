@@ -1,6 +1,7 @@
 // 도메인 엔티티 - packages/api/prisma/schema.prisma 와 동기화
 
 import type { Locale } from './locale';
+import type { RecurringFrequency } from './recurring';
 
 /**
  * JSON으로 오갈 때 날짜는 ISO 8601 문자열이다. Date 객체가 아니다.
@@ -395,6 +396,136 @@ export interface BudgetOverride {
   year: number;
   month: number;
   amount: string;
+  createdAt: IsoDateString;
+  updatedAt: IsoDateString;
+}
+
+/**
+ * 보관함에 담긴 거래 후보. **아직 거래가 아니다.**
+ *
+ * 두 곳에서 들어온다. 하나는 기기로 오는 알림(카드 승인 문구)이고, 다른 하나는
+ * 사용자가 올린 화면 캡처에서 글자를 읽어 낸 것이다. 둘 다 "이런 거래를 적을
+ * 수 있다"는 제안일 뿐이라 합계·잔액·예산에 들지 않는다. 사용자가 보관함에서
+ * 눌러 저장하는 순간에야 전표가 만들어진다.
+ *
+ * 값이 비어 있을 수 있다. 알림 문구에 분류가 적혀 있을 리 없고, 캡처에서 금액만
+ * 읽히는 경우도 있다. 그래서 후보는 전표의 불변식(합계 0, 결제수단 필수)을 지지
+ * 않는다 -- 지게 하면 반쯤 읽힌 것을 버려야 하는데, 사람이 한 칸만 채우면 되는
+ * 것을 버리는 편이 늘 더 나쁘다.
+ */
+export interface EntryDraft {
+  id: string;
+  projectId: string;
+  /** 어디서 왔는가. 보관함의 두 탭이 이 값으로 갈린다. */
+  source: EntryDraftSource;
+  status: EntryDraftStatus;
+
+  /**
+   * 읽은 원문. 알림 한 줄이거나 캡처에서 뽑은 글자 덩어리다.
+   *
+   * 파싱이 틀렸을 때 사람이 무엇을 보고 그렇게 됐는지 알 수 있는 유일한 근거이고,
+   * 규칙을 고친 뒤 다시 읽어 볼 재료이기도 하다.
+   */
+  rawText: string;
+  /** 알림을 보낸 앱. 캡처에서 온 후보는 null 이다. */
+  appPackage: string | null;
+  /** 알림 제목. 카드사 앱은 여기에 카드 이름을 적는 일이 많다. */
+  appTitle: string | null;
+
+  // ── 읽어 낸 값. 확실하지 않으면 비운다 ──
+  kind: EntryKind | null;
+  amount: string | null;
+  currency: string | null;
+  /** 거래 시각. 문구에서 못 읽으면 알림이 온 시각이다. */
+  occurredAt: IsoDateString | null;
+  merchant: string | null;
+  description: string | null;
+  installmentMonths: number | null;
+
+  // ── 짐작한 연결. 사람이 바꿀 수 있다 ──
+  personId: string | null;
+  categoryId: string | null;
+  accountId: string | null;
+  cardId: string | null;
+
+  /**
+   * 얼마나 믿을 수 있는가 (0~100).
+   *
+   * 목록에서 순서를 정하는 값이 아니다. 낮은 것을 감추지도 않는다 -- 사람이
+   * "이건 손봐야 한다"를 한눈에 알아보게 하는 표시일 뿐이다.
+   */
+  confidence: number;
+  /** 어느 규칙이 읽었는가. 규칙을 고칠 때 어느 문구가 어디로 갔는지 짚는 자리다. */
+  parser: string | null;
+
+  /**
+   * 같은 것을 두 번 담지 않기 위한 열쇠. 프로젝트 안에서 유일하다.
+   *
+   * 알림은 (앱, 온 시각, 문구)로, 캡처는 (사진, 그 안의 몇 번째 줄)로 만든다.
+   * 알림 하나가 두 번 도착하거나 같은 캡처를 두 번 올려도 후보는 하나로 남는다.
+   */
+  dedupeKey: string;
+
+  /** 등록해서 만들어진 거래. 등록 전에는 null 이다. */
+  registeredEntryId: string | null;
+  /** 이 후보를 만든 반복 등록. 알림·캡처에서 온 것은 null 이다. */
+  recurringRuleId: string | null;
+  createdAt: IsoDateString;
+  updatedAt: IsoDateString;
+}
+
+/**
+ * 후보가 어디서 왔는가.
+ *
+ * `recurring` 은 사람이 미리 만들어 둔 반복 등록이 정해진 날에 만든 것이다. 앞의 둘과
+ * 달리 읽어 낸 값이 아니라 **사용자가 적어 둔 값** 이라, 확신이 언제나 100 이다.
+ */
+export type EntryDraftSource = 'notification' | 'capture' | 'recurring';
+
+/**
+ * 후보의 처지.
+ *
+ * `dismissed` 를 따로 두는 이유가 있다. 무시한 후보를 지워 버리면 같은 알림이
+ * 다시 도착했을 때(재전송, 다른 기기) 유일 열쇠가 비어 있어 되살아난다. 무시한
+ * 표시를 남겨 두면 그 자리에서 조용히 걸린다.
+ */
+export type EntryDraftStatus = 'pending' | 'registered' | 'dismissed';
+
+/**
+ * 반복 등록. 정해 둔 날마다 보관함에 후보를 만든다.
+ *
+ * **거래를 만들지 않는다.** 만드는 것은 후보이고, 사용자가 보관함에서 눌러야 전표가
+ * 된다. 자동으로 장부에 적히면 그 달의 합계가 사람 모르게 움직인다 -- 반복은 "적는
+ * 것을 잊지 않게" 하는 장치이지 "대신 적는" 장치가 아니다.
+ *
+ * 날짜는 프로젝트 타임존의 달력 날짜("YYYY-MM-DD")다. 일정 셈은 `recurring.ts` 가 한다.
+ */
+export interface RecurringRule {
+  id: string;
+  projectId: string;
+  isActive: boolean;
+
+  frequency: RecurringFrequency;
+  everyDays: number | null;
+  dayOfMonth: number | null;
+  month: number | null;
+  startDate: string;
+  endDate: string | null;
+  /** "HH:mm". 만들어질 후보의 거래 시각. 없으면 그 날 정오다. */
+  timeOfDay: string | null;
+
+  // 후보에 그대로 담길 값
+  kind: EntryKind;
+  amount: string | null;
+  currency: string | null;
+  description: string;
+  merchant: string | null;
+  personId: string | null;
+  categoryId: string | null;
+  accountId: string | null;
+  cardId: string | null;
+  installmentMonths: number | null;
+
   createdAt: IsoDateString;
   updatedAt: IsoDateString;
 }

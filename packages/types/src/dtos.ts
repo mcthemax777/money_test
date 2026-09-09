@@ -10,11 +10,16 @@ import type {
   FinancialInstitutionType,
   EntryKind,
   EntryListItem,
+  EntryDraft,
+  EntryDraftSource,
+  EntryDraftStatus,
+  RecurringRule,
   Tag,
   CardTransferDirection,
   Posting,
 } from './entities';
 import type { EntrySearchQuery } from './entry-search';
+import type { RecurringFrequency } from './recurring';
 
 // ===== Auth =====
 
@@ -677,6 +682,167 @@ export namespace CategoryDto {
 }
 
 /**
+ * 보관함. 아직 거래가 아닌 후보를 담는다.
+ *
+ * 만드는 쪽은 **기기**다. 알림을 읽고 캡처에서 글자를 뽑아 문구를 해석하는 일은
+ * 전부 기기에서 끝나고, 서버는 그 결과를 받아 두었다가 다른 기기와 웹에 나른다.
+ * 그래서 이 창구에는 "문구를 해석해 달라"는 요청이 없다 -- 해석은 core 의
+ * `draft-parse` 가 한 자리에서 한다.
+ *
+ * 등록(후보 -> 거래)도 여기 없다. 거래를 만드는 길은 하나여야 하므로
+ * (`EntryDto.CreateRequest` 와 오프라인 명령), 화면은 그 길로 거래를 만든 뒤
+ * `markRegistered` 로 후보에 표시만 남긴다.
+ */
+export namespace EntryDraftDto {
+  export interface ListQuery {
+    projectId?: string;
+    source?: EntryDraftSource;
+    /** 생략하면 대기 중인 것만 온다. 등록·무시된 것은 목록의 본론이 아니다. */
+    status?: EntryDraftStatus | 'all';
+    limit?: number;
+  }
+
+  /**
+   * 기기가 만든 후보 하나.
+   *
+   * `id` 를 기기가 정한다. 오프라인에서 사본에 먼저 담고 나중에 올리므로, 서버가
+   * 이름을 붙이면 그때까지 화면이 가리킬 것이 없다 (전표와 같은 규칙이다).
+   */
+  export interface CreateItem {
+    id?: string;
+    source: EntryDraftSource;
+    dedupeKey: string;
+    rawText: string;
+    appPackage?: string | null;
+    appTitle?: string | null;
+    kind?: EntryKind | null;
+    amount?: string | null;
+    currency?: string | null;
+    occurredAt?: IsoDateString | null;
+    merchant?: string | null;
+    description?: string | null;
+    installmentMonths?: number | null;
+    personId?: string | null;
+    categoryId?: string | null;
+    accountId?: string | null;
+    cardId?: string | null;
+    confidence?: number;
+    parser?: string | null;
+    /**
+     * 이 후보를 만든 반복 등록.
+     *
+     * 반복에서 온 후보만 채운다. 서버는 이것으로 그 규칙이 이 가계부의 것인지, 열쇠와
+     * 날짜가 규칙에 맞는지 본다.
+     */
+    recurringRuleId?: string | null;
+  }
+
+  /**
+   * 여러 건을 한 번에 담는다.
+   *
+   * 캡처 하나에서 대여섯 건이 나오고, 알림도 오프라인 동안 쌓였다가 한꺼번에
+   * 올라간다. 건마다 요청을 보내면 그만큼 실패할 자리가 늘어난다.
+   */
+  export interface CreateRequest {
+    projectId?: string;
+    drafts: CreateItem[];
+  }
+
+  /** 담은 결과. 이미 있던 것은 `skipped` 로 센다 (같은 dedupeKey). */
+  export interface CreateResponse {
+    created: number;
+    skipped: number;
+    drafts: Response[];
+  }
+
+  /** 사람이 후보를 손볼 때. 준 칸만 바꾼다. */
+  export interface UpdateRequest {
+    kind?: EntryKind | null;
+    amount?: string | null;
+    currency?: string | null;
+    occurredAt?: IsoDateString | null;
+    merchant?: string | null;
+    description?: string | null;
+    installmentMonths?: number | null;
+    personId?: string | null;
+    categoryId?: string | null;
+    accountId?: string | null;
+    cardId?: string | null;
+    status?: EntryDraftStatus;
+    /** 등록으로 만들어진 거래. status 를 registered 로 바꿀 때 함께 준다. */
+    registeredEntryId?: string | null;
+  }
+
+  export interface Response extends EntryDraft {}
+}
+
+/**
+ * 반복 등록. 정해 둔 날마다 보관함에 후보를 만든다.
+ *
+ * 일정 셈(`@money/types` 의 recurring)은 서버와 화면이 함께 쓴다. 이 창구는 규칙을
+ * 담고 꺼내는 일만 하고, "언제 만들어지는가"는 그 셈이 정한다.
+ */
+export namespace RecurringRuleDto {
+  /** 일정과 담을 값. 만들 때와 고칠 때가 같은 모양이다. */
+  export interface Body {
+    isActive?: boolean;
+    frequency: RecurringFrequency;
+    /** daily: 며칠마다. 생략하면 1 (매일) */
+    everyDays?: number | null;
+    /** monthly·yearly: 며칟날 */
+    dayOfMonth?: number | null;
+    /** yearly: 몇 월 */
+    month?: number | null;
+    /** "YYYY-MM-DD" (프로젝트 타임존의 달력 날짜) */
+    startDate: string;
+    endDate?: string | null;
+    /** "HH:mm". 없으면 그 날 정오로 만든다. */
+    timeOfDay?: string | null;
+
+    kind: EntryKind;
+    amount?: string | null;
+    currency?: string | null;
+    description: string;
+    merchant?: string | null;
+    personId?: string | null;
+    categoryId?: string | null;
+    accountId?: string | null;
+    cardId?: string | null;
+    installmentMonths?: number | null;
+  }
+
+  export interface CreateRequest extends Body {
+    /** 기기가 만든 식별자 (UUID). 규칙은 `CategoryDto.CreateRequest.id` 와 같다. */
+    id?: string;
+    projectId?: string;
+  }
+
+  /** 고치기. 준 칸만 바꾼다. */
+  export interface UpdateRequest extends Partial<Body> {}
+
+  export interface Response extends RecurringRule {
+    /**
+     * 다음에 후보가 만들어질 날. 끝났으면 null 이다.
+     *
+     * 서버가 셈해 실어 보낸다 -- 화면이 저마다 세면 "오늘"의 기준(타임존)이 달라져
+     * 하루 어긋난 날이 보인다.
+     */
+    nextRunOn: string | null;
+    /**
+     * 이 반복으로 후보를 만든 마지막 날. 만든 것이 없으면 null 이다.
+     *
+     * **저장된 값이 아니라 후보에서 셈한 값이다** (`r:<규칙>:<날짜>` 열쇠의 최댓값).
+     * 회차를 만드는 쪽이 기기라, 서버가 따로 표를 들고 있으면 그 표와 실제 후보가
+     * 어긋날 수 있다 -- 올리다 끊긴 회차가 "만들었다"로 남으면 아무도 그 날을 다시
+     * 만들지 않는다. 후보 자신을 세면 그런 자리가 없다.
+     *
+     * 기기는 이 날 다음부터 셈해 올린다.
+     */
+    lastMadeOn: string | null;
+  }
+}
+
+/**
  * 태그. 카테고리와 나란히 서지만 계층도 유형도 없어 훨씬 짧다.
  *
  * 목록(`Tree`)에 해당하는 것이 없다. 평평한 배열 하나가 전부다.
@@ -1204,6 +1370,14 @@ export namespace SyncDto {
      * 지워지므로, 순서를 뒤집으면 방금 받은 계획이 사라진다.
      */
     installmentPlans: unknown[];
+    /**
+     * 보관함의 후보. 거래가 아니라 제안이지만 기기 사본에 함께 둔다.
+     *
+     * 한 기기가 알림으로 담은 것을 웹에서 정리하고, 그 결과를 다시 기기가 보아야
+     * 한다. 따로 조회하게 두면 화면마다 "언제 다시 물을지"를 정하게 되어 같은
+     * 보관함이 자리마다 다르게 보인다.
+     */
+    entryDrafts: unknown[];
   }
 
   export interface PullResponse {

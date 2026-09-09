@@ -25,6 +25,7 @@ import {
   cardValue,
   checkEntryForm,
   emptyEntryForm,
+  entryFormFromDraft,
   entryFormFromItem,
   entryFormToRequest,
   parseMethod,
@@ -91,8 +92,14 @@ export interface UseEntryFormOptions {
   timeZone: string;
   /** 기본으로 고를 사람. 보통 내 person 이다. */
   defaultPersonId?: string;
-  /** 저장·삭제가 끝난 뒤. 목록을 다시 읽는 자리다. */
-  onSaved?: () => void;
+  /**
+   * 저장·삭제가 끝난 뒤. 목록을 다시 읽는 자리다.
+   *
+   * 만든 거래의 id 를 함께 준다. 보관함이 그 값으로 후보에 등록 표시를 남긴다 --
+   * 그러지 않으면 "이 후보가 어느 거래가 되었는지"를 아무도 모른다. 지우기에서는
+   * null 이고, 목록만 다시 읽는 쪽은 인자를 받지 않으면 된다.
+   */
+  onSaved?: (result: { entryId: string | null }) => void;
 }
 
 export function useEntryForm({
@@ -173,6 +180,54 @@ export function useEntryForm({
       return true;
     },
     [timeZone],
+  );
+
+  /**
+   * 있는 거래의 내용만 베껴 새로 적기.
+   *
+   * 값을 되돌리는 길은 고치기와 같다(`entryFormFromItem`). 다른 것은 둘뿐이다 --
+   * 고칠 거래(`editingId`)와 그 거래를 본 시점의 판(`baseHlc`)을 들지 않는다.
+   * 하나라도 남으면 저장이 새 거래를 만드는 대신 베낀 원본을 덮어쓴다.
+   *
+   * 날짜와 시각도 그대로 둔다. 베끼는 까닭이 대개 "같은 자리에서 또"라, 오늘로
+   * 바꿔 두면 되레 고칠 칸이 늘어난다.
+   *
+   * 못 다루는 거래에서 false 를 돌려주는 규칙도 고치기와 같다.
+   */
+  const startCopy = useCallback(
+    (item: EntryListItem): boolean => {
+      const form = entryFormFromItem(item, timeZone);
+      if (!form) return false;
+
+      setValues({ ...form, baseHlc: null });
+      setEditingId(null);
+      setViolation(null);
+      setError('');
+      return true;
+    },
+    [timeZone],
+  );
+
+  /**
+   * 보관함의 후보로 폼을 채운다. 저장하면 새 거래가 된다.
+   *
+   * 베끼기(`startCopy`)와 하는 일이 같고 값의 출처만 다르다. 후보에는 빈 칸이 있는
+   * 것이 정상이라 빈 폼에서 시작해 읽은 것만 덮어쓴다(`entryFormFromDraft`).
+   */
+  const startDraft = useCallback(
+    (draft: Parameters<typeof entryFormFromDraft>[0]) => {
+      setValues(
+        entryFormFromDraft(draft, {
+          personId: defaultPersonId,
+          timeZone,
+          ledgerCurrency,
+        }),
+      );
+      setEditingId(null);
+      setViolation(null);
+      setError('');
+    },
+    [defaultPersonId, timeZone, ledgerCurrency],
   );
 
   const setField = useCallback(
@@ -292,6 +347,7 @@ export function useEntryForm({
     try {
       const request = entryFormToRequest(values, timeZone);
       const port = entryWritePort();
+      let savedId: string | null = editingId;
       if (editingId) {
         /*
          * 폼을 열 때 본 판을 함께 보낸다. 서버가 그 사이의 편집을 알아채는 근거다.
@@ -301,9 +357,10 @@ export function useEntryForm({
          */
         await port.updateEntry(editingId, { ...request, baseHlc: values.baseHlc });
       } else {
-        await port.createEntry({ ...request, projectId: projectId ?? undefined });
+        const created = await port.createEntry({ ...request, projectId: projectId ?? undefined });
+        savedId = created.id;
       }
-      onSaved?.();
+      onSaved?.({ entryId: savedId });
       return true;
     } catch (caught) {
       /*
@@ -335,7 +392,8 @@ export function useEntryForm({
     setError('');
     try {
       await entryWritePort().deleteEntry(editingId);
-      onSaved?.();
+      // 지운 자리에는 만들어진 거래가 없다.
+      onSaved?.({ entryId: null });
       return true;
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught));
@@ -440,6 +498,8 @@ export function useEntryForm({
     isSubmitting,
     startNew,
     startEdit,
+    startCopy,
+    startDraft,
     save,
     remove,
   };

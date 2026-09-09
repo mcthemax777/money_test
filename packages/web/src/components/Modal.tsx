@@ -33,9 +33,23 @@ interface ModalProps {
    * `<form id="x">` 와 `<button type="submit" form="x">` 로 묶어야 한다.
    */
   footer?: ReactNode;
+  /**
+   * 머리글 오른쪽, 닫기 앞에 서는 단추.
+   *
+   * 팝업 전체에 걸리는 일(예: 상세의 내용 복사)을 두는 자리다. 본문에 두면 스크롤에
+   * 밀려 보이지 않고, 하단 버튼 자리는 그 팝업의 본론(수정·삭제)이 쓴다.
+   */
+  headerAction?: ReactNode;
 }
 
-export default function Modal({ isOpen, onClose, title, children, footer }: ModalProps) {
+export default function Modal({
+  isOpen,
+  onClose,
+  title,
+  children,
+  footer,
+  headerAction,
+}: ModalProps) {
   const bodyRef = useRef<HTMLDivElement>(null);
 
   // 휴대폰의 뒤로가기는 화면을 나가는 것이 아니라 이 팝업을 닫는다.
@@ -72,12 +86,15 @@ export default function Modal({ isOpen, onClose, title, children, footer }: Moda
       <div className="bg-white rounded-lg shadow-lg max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
         <div className="sticky top-0 z-10 bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center">
           <h2 className="text-lg font-bold text-gray-900">{title}</h2>
-          <button
-            onClick={onClose}
-            className="text-gray-500 hover:text-gray-700 text-2xl leading-none"
-          >
-            ×
-          </button>
+          <div className="flex items-center gap-3">
+            {headerAction}
+            <button
+              onClick={onClose}
+              className="text-gray-500 hover:text-gray-700 text-2xl leading-none"
+            >
+              ×
+            </button>
+          </div>
         </div>
         <div ref={bodyRef} className="p-6">
           {children}

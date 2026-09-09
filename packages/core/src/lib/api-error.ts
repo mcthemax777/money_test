@@ -9,6 +9,7 @@
  * 손댈 수 없다) 아직 코드를 붙이지 않은 것이다. 그런 오류는 부르는 쪽이 넘긴
  * 기본 문구로 덮는다. 코드 문자열이나 한국어 원문이 화면에 그대로 나오면 안 된다.
  */
+import { useCallback, useMemo } from 'react';
 import { isErrorCode, type ErrorCode } from '@money/types';
 
 import { translate, type MessageKey } from '../lib/i18n';
@@ -65,6 +66,23 @@ const MESSAGE_KEY: Record<ErrorCode, MessageKey> = {
   CARD_NOT_FOUND: 'error.CARD_NOT_FOUND',
   INSTALLMENT_CREDIT_ONLY: 'error.INSTALLMENT_CREDIT_ONLY',
   TRANSFER_SAME_ACCOUNT: 'error.TRANSFER_SAME_ACCOUNT',
+
+  // 보관함 (아직 거래가 아닌 후보)
+  DRAFTS_REQUIRED: 'error.DRAFTS_REQUIRED',
+  DRAFTS_TOO_MANY: 'error.DRAFTS_TOO_MANY',
+  DRAFT_DEDUPE_KEY_REQUIRED: 'error.DRAFT_INVALID',
+  DRAFT_RAW_TEXT_REQUIRED: 'error.DRAFT_INVALID',
+  DRAFT_SOURCE_INVALID: 'error.DRAFT_INVALID',
+  DRAFT_STATUS_INVALID: 'error.DRAFT_INVALID',
+  DRAFT_KIND_INVALID: 'error.DRAFT_INVALID',
+  DRAFT_DATE_INVALID: 'error.DRAFT_INVALID',
+  DRAFT_NOT_FOUND: 'error.DRAFT_NOT_FOUND',
+  DRAFT_RECURRING_INVALID: 'error.DRAFT_RECURRING_INVALID',
+
+  // 반복 등록
+  RECURRING_INVALID: 'error.RECURRING_INVALID',
+  RECURRING_NOT_FOUND: 'error.RECURRING_NOT_FOUND',
+  RECURRING_DESCRIPTION_REQUIRED: 'error.RECURRING_DESCRIPTION_REQUIRED',
 };
 
 /** 서버 오류 응답에서 꺼낸 값. 코드가 없으면 코드가 붙지 않은 오류다. */
@@ -116,12 +134,21 @@ export function apiErrorMessage(
   return translate(locale, MESSAGE_KEY[code], details);
 }
 
-/** 화면에서 쓰는 통로. 언어가 바뀌면 이 훅을 쓰는 화면도 다시 그려진다. */
+/**
+ * 화면에서 쓰는 통로. 언어가 바뀌면 이 훅을 쓰는 화면도 다시 그려진다.
+ *
+ * **같은 언어에서는 같은 함수를 돌려준다.** 이 값을 의존성에 넣는 훅이 있어서
+ * (`useEntryDrafts` 의 목록 읽기) 매번 새로 만들면 그 훅의 효과가 렌더마다 다시
+ * 돌고, setState 를 부르는 효과라면 그 자리에서 무한히 돈다 -- 2026-09-08 에
+ * 보관함이 실제로 그렇게 멈췄다.
+ */
 export function useApiError() {
   const locale = useLocaleStore((state) => state.locale);
 
-  return {
-    messageOf: (error: unknown, fallbackKey: MessageKey) =>
-      apiErrorMessage(locale, error, fallbackKey),
-  };
+  const messageOf = useCallback(
+    (error: unknown, fallbackKey: MessageKey) => apiErrorMessage(locale, error, fallbackKey),
+    [locale],
+  );
+
+  return useMemo(() => ({ messageOf }), [messageOf]);
 }

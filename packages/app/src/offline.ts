@@ -22,6 +22,8 @@ import { httpHomePort, setHomeDataPort } from '@money/core/data/home-port';
 import { createLocalSettingsWriter } from '@money/core/data/local-settings-writer';
 import { createLocalEntryWriter } from '@money/core/data/local-entry-writer';
 import { createLocalHomePort } from '@money/core/data/local-home-port';
+import { setDraftPort } from '@money/core/data/draft-port';
+import { createLocalDraftPort, flushDraftOps } from '@money/core/data/local-draft-port';
 import type { HeldMutation, LocalStore } from '@money/core/data/local-store';
 import { notifyMirrorChanged } from '@money/core/data/mirror-events';
 import { setMirrorOwnership, setMirrorTeardown } from '@money/core/data/mirror-teardown';
@@ -31,7 +33,12 @@ import {
   type SyncEventsHandle,
 } from '@money/core/data/sync-events';
 import { syncProject, type SyncResult } from '@money/core/data/sync-engine';
-import { newId, type EntryDto, type EntryMutationPayload, type Mutation } from '@money/types';
+import {
+  newId,
+  type EntryDto,
+  type EntryMutationPayload,
+  type Mutation,
+} from '@money/types';
 
 import { claimMirrorOwner, mirrorOwner } from './mirror-key';
 import { deleteLocalStore, openLocalStore } from './sqlite';
@@ -58,6 +65,13 @@ export async function setupOffline(): Promise<boolean> {
     store = await openLocalStore();
     setHomeDataPort(createLocalHomePort(store, { fallback: httpHomePort }));
     /*
+     * 보관함도 사본에서 읽는다.
+     *
+     * 알림으로 담은 후보는 이 기기에서 만든 것이라 오프라인에서도 보여야 하고, 무시·
+     * 등록도 그때 눌려야 한다. 서버에 알리는 일은 대기 큐를 지나 동기화가 맡는다.
+     */
+    setDraftPort(createLocalDraftPort(store));
+    /*
      * 기기 이름. 한 번 만들고 계속 쓴다.
      *
      * 새로 만들면 서버가 보기에 다른 기기가 되어 (기기, 순번) 멱등이 끊긴다. 그러면
@@ -78,6 +92,7 @@ export async function setupOffline(): Promise<boolean> {
     console.error('기기 사본을 열지 못했습니다. 서버에서 바로 읽습니다:', error);
     store = null;
     setHomeDataPort(null);
+    setDraftPort(null);
     return false;
   }
 }
@@ -97,6 +112,19 @@ export function useLocalWrites(projectId: string, timeZone: string): void {
   setEntryWritePort(createLocalEntryWriter({ store, projectId, timeZone, onQueued }));
   // 설정 엔티티(구성원·통장·카드·분류·태그)도 같은 길로 간다. 병합 규칙만 다르다 (필드별).
   setSettingsWritePort(createLocalSettingsWriter({ store, projectId, onQueued }));
+}
+
+/**
+ * 이 가맹점을 지난번에 무슨 분류로 적었는가. 보관함이 후보의 분류를 짐작할 때 쓴다.
+ *
+ * 사본에서 읽는다. 서버에 묻지 않는 이유는 알림 한 뭉치를 담을 때 그만큼 요청이
+ * 늘고, 오프라인에서도 짐작은 되어야 하기 때문이다. 사본이 없으면 빈 목록이다.
+ */
+export async function merchantHistory(
+  projectId: string,
+): Promise<Array<{ merchant: string | null; description: string; categoryId: string | null }>> {
+  if (!store) return [];
+  return store.merchantHistory(projectId);
 }
 
 /** 보류 칸. 충돌과 거절이 여기 모인다. 화면이 사용자에게 보여 준다. */
@@ -209,6 +237,11 @@ export function syncNow(projectId: string, timeZone: string): Promise<SyncResult
         projectId,
         timeZone,
         (request) => apiClient.pushSync(request),
+        /*
+         * 보관함 처리를 받기 전에 올린다. 순서가 뒤집히면 오프라인에서 등록한 후보가
+         * 서버의 대기 상태에 덮여 되살아난다 (sync-engine 의 주석에 이유를 적었다).
+         */
+        (id) => flushDraftOps(mine, id),
       );
       // 사본이 채워졌으면 화면이 다시 읽게 알린다.
       if (result.changed) notifyMirrorChanged();
@@ -259,6 +292,8 @@ export async function clearOffline(): Promise<void> {
   setHomeDataPort(null);
   setEntryWritePort(null);
   setSettingsWritePort(null);
+  // 보관함도 서버 창구로 되돌린다. 사본이 없으면 읽을 자리가 없다.
+  setDraftPort(null);
 
   /*
    * 돌고 있는 동기화가 끝나기를 기다린다.

@@ -18,7 +18,7 @@
  */
 
 /** 스키마가 바뀌면 올린다. 다르면 사본을 버리고 처음부터 다시 받는다. */
-export const SCHEMA_VERSION = 10;
+export const SCHEMA_VERSION = 13;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -308,6 +308,68 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      serverId TEXT NOT NULL
    )`,
 
+  /*
+   * 보관함의 거래 후보. 아직 거래가 아닌 제안이다.
+   *
+   * 변경 피드로 함께 내려온다(`SyncDto.Changes.entryDrafts`). 사본에 두는 까닭은
+   * 화면이 서버를 기다리지 않고 목록을 그리기 위해서이고, 알림으로 담은 것이
+   * 오프라인에서도 보여야 하기 때문이다.
+   *
+   * 금액은 다른 표와 같은 이유로 TEXT 다.
+   */
+  `CREATE TABLE IF NOT EXISTS entry_draft (
+     id                TEXT PRIMARY KEY,
+     projectId         TEXT NOT NULL,
+     source            TEXT NOT NULL,
+     status            TEXT NOT NULL DEFAULT 'pending',
+     rawText           TEXT NOT NULL DEFAULT '',
+     appPackage        TEXT,
+     appTitle          TEXT,
+     kind              TEXT,
+     amount            TEXT,
+     currency          TEXT,
+     occurredAt        TEXT,
+     merchant          TEXT,
+     description       TEXT,
+     installmentMonths INTEGER,
+     personId          TEXT,
+     categoryId        TEXT,
+     accountId         TEXT,
+     cardId            TEXT,
+     confidence        INTEGER NOT NULL DEFAULT 0,
+     parser            TEXT,
+     dedupeKey         TEXT NOT NULL DEFAULT '',
+     registeredEntryId TEXT,
+     /* 이 후보를 만든 반복 등록. 알림·캡처에서 온 것은 비어 있다. */
+     recurringRuleId   TEXT,
+     createdAt         TEXT NOT NULL DEFAULT '',
+     updatedAt         TEXT NOT NULL DEFAULT '',
+     updatedVersion    INTEGER NOT NULL DEFAULT 0
+   )`,
+
+  /*
+   * 후보에 대해 아직 서버에 알리지 못한 일.
+   *
+   * 후보는 전표가 아니라 아웃박스(명령 재생)를 쓰지 않는다. 대신 이 표에 "무엇을
+   * 했는지"만 적어 두고 연결되면 그대로 보낸다. 담기는 것은 세 가지다 --
+   * 등록 표시, 무시, 지우기.
+   *
+   * **이 표가 없으면 오프라인에서 등록한 후보가 되살아난다.** 거래는 아웃박스로
+   * 나가지만 후보의 등록 표시는 서버에 닿지 못하고, 다음 동기화가 서버의 pending
+   * 을 그대로 사본에 덮어써서 같은 거래를 두 번 적게 된다.
+   *
+   * 사본이 아니라 사용자가 한 일이므로 ALL_TABLES 에 넣지 않는다 (아웃박스와 같다).
+   */
+  `CREATE TABLE IF NOT EXISTS draft_op (
+     draftId   TEXT PRIMARY KEY,
+     projectId TEXT NOT NULL,
+     /* registered | dismissed | deleted */
+     op        TEXT NOT NULL,
+     /* 등록으로 만들어진 거래 id. 등록일 때만 있다. */
+     entryId   TEXT,
+     createdAt TEXT NOT NULL
+   )`,
+
   `CREATE TABLE IF NOT EXISTS outbox (
      mutationId TEXT PRIMARY KEY,
      projectId  TEXT NOT NULL,
@@ -354,6 +416,19 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE UNIQUE INDEX IF NOT EXISTS plan_posting_idx ON installment_plan (postingId)`,
   // 보낼 차례를 정하는 길. 한 기기의 명령은 언제나 clientSeq 순서로 나간다.
   `CREATE INDEX IF NOT EXISTS outbox_queue_idx ON outbox (projectId, status, clientSeq)`,
+  // 보관함이 고르는 길. 탭(source)마다 대기 중인 것을 본다.
+  `CREATE INDEX IF NOT EXISTS draft_list_idx ON entry_draft (projectId, status, source)`,
+  /*
+   * 같은 것을 두 번 담지 않기 위한 길. 기기가 담기 전에 이 열쇠로 먼저 본다.
+   *
+   * **유일 색인이 아니다.** 유일함은 서버가 지킨다(그쪽 표의 제약). 사본이 그것을 또
+   * 강제하면 서버가 받아들인 것을 사본이 거절하는 자리가 생긴다 -- 지운 후보와 같은
+   * 열쇠로 새 후보가 만들어지면, 델타에는 새 행이 먼저 오고 자리표(옛 행 삭제)가 나중에
+   * 오기 때문이다. 그 순간 두 행이 같은 열쇠를 갖는 것은 정상이고, 사본은 서버가 보낸
+   * 것을 그대로 담을 수 있어야 한다 (2026-09-09 에 실제로 동기화가 멈췄다).
+   */
+  `CREATE INDEX IF NOT EXISTS draft_dedupe_idx ON entry_draft (projectId, dedupeKey)`,
+  `CREATE INDEX IF NOT EXISTS draft_op_queue_idx ON draft_op (projectId, createdAt)`,
 ];
 
 /**
@@ -364,6 +439,7 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
  * 로그아웃 하나뿐이고, 그때는 파일째로 지운다 (app/src/sqlite.ts).
  */
 export const ALL_TABLES: readonly string[] = [
+  'entry_draft',
   'installment_plan',
   'asset_valuation',
   'posting',

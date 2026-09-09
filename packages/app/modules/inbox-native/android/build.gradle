@@ -1,0 +1,32 @@
+plugins {
+  id 'com.android.library'
+  id 'expo-module-gradle-plugin'
+}
+
+group = 'online.bboyong'
+version = '1.0.0'
+
+android {
+  namespace "expo.modules.inboxnative"
+  defaultConfig {
+    /*
+     * 이 두 값을 적어 두어야 한다.
+     *
+     * expo-module-gradle-plugin 이 라이브러리 정보를 여기서 읽는데, 비워 두면
+     * autolinking 이 "versionName is not defined" 로 설정 단계에서 멈춘다.
+     */
+    versionCode 1
+    versionName "1.0.0"
+  }
+}
+
+dependencies {
+  /*
+   * 글자 읽기(OCR)를 기기에서 한다. 한국어 모델을 함께 넣는다.
+   *
+   * `text-recognition-korean` 은 한글과 라틴 문자를 함께 읽는다. 라틴 전용 모델보다
+   * apk 가 커지지만, 카드사 앱 캡처에는 한글이 늘 섞여 있어 그 모델로는 가맹점 이름을
+   * 잃는다. 사진은 이 기기 안에서만 읽히고 밖으로 나가지 않는다.
+   */
+  implementation 'com.google.mlkit:text-recognition-korean:16.0.1'
+}

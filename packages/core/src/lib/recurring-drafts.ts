@@ -1,0 +1,107 @@
+/**
+ * 반복 규칙 → 보관함에 담을 후보.
+ *
+ * **회차를 만드는 자리다.** 정해 둔 날이 지났는데 아직 후보가 없는 날을 찾아
+ * (`dueOccurrences`) 서버가 받는 모양으로 옮긴다. 웹과 앱이 같은 함수를 쓴다.
+ *
+ * 서버가 아니라 기기가 만드는 까닭은 알림·캡처 후보와 같다 -- 후보를 만드는 길이
+ * 하나여야 한다(`POST /entry-drafts`, 겹침은 `dedupeKey` 가 막는다). 서버가 따로
+ * 만들면 같은 일을 두 곳에서 하게 되고, 그 두 곳이 어긋나면 어느 쪽이 맞는지 판정할
+ * 근거가 없다.
+ *
+ * 몇 번을 불러도 같은 결과다. 열쇠가 `r:<규칙>:<날짜>` 라 같은 회차는 서버에서 한 번만
+ * 담긴다. 그래서 여러 기기가 같은 반복을 동시에 올려도 후보가 늘지 않는다.
+ */
+
+import {
+  dueOccurrences,
+  zonedFormValueToUtc,
+  type EntryDraftDto,
+  type RecurringRuleDto,
+  type RecurringSchedule,
+} from '@money/types';
+
+/**
+ * 이 반복의 후보에 붙는 중복 열쇠.
+ *
+ * 서버도 같은 모양을 기대한다(구간 검사). 여기서 만들고 저기서 가르는 그 한 줄이라
+ * 함수로 둔다.
+ */
+export function recurringDedupeKey(ruleId: string, dateKey: string): string {
+  return `r:${ruleId}:${dateKey}`;
+}
+
+/**
+ * 아직 만들지 않은 회차를 후보 모양으로.
+ *
+ * @param rules 서버에서 읽은 반복 목록. **꺼 둔 것은 건너뛴다.**
+ * @param todayKey 프로젝트 타임존의 오늘 ("YYYY-MM-DD")
+ * @param timeZone 프로젝트 타임존. 후보의 거래 시각을 만드는 데 쓴다
+ */
+export function recurringDraftItems(
+  rules: RecurringRuleDto.Response[],
+  todayKey: string,
+  timeZone: string,
+): EntryDraftDto.CreateItem[] {
+  const items: EntryDraftDto.CreateItem[] = [];
+
+  for (const rule of rules) {
+    if (!rule.isActive) continue;
+
+    /*
+     * 어디부터 셀지는 `lastMadeOn` 이 정한다.
+     *
+     * 서버가 후보를 세어 실어 보낸 값이다("이 반복은 이 날까지 만들어졌다"). 이것이
+     * 없으면 열 때마다 최근 31일치를 올리고 서버가 서른 건을 건너뛴다 -- 결과는 같지만
+     * 헛일이다.
+     */
+    const schedule: RecurringSchedule = {
+      frequency: rule.frequency,
+      everyDays: rule.everyDays,
+      dayOfMonth: rule.dayOfMonth,
+      month: rule.month,
+      startDate: rule.startDate,
+      endDate: rule.endDate,
+      lastMadeOn: rule.lastMadeOn,
+    };
+
+    for (const dateKey of dueOccurrences(schedule, todayKey)) {
+      /*
+       * 그 날의 몇 시로 적을지.
+       *
+       * 시각을 정해 두지 않았으면 정오로 둔다 -- 어느 시간대에서 보아도 같은 날에
+       * 남는다. 하루의 시작(00:00)으로 두면 시간대가 다른 곳에서 전날이 된다.
+       */
+      const occurredAt = zonedFormValueToUtc(dateKey, rule.timeOfDay ?? '12:00', timeZone);
+
+      items.push({
+        source: 'recurring',
+        dedupeKey: recurringDedupeKey(rule.id, dateKey),
+        /*
+         * 원문 자리에는 무엇을 적었는지 사람 말로 남긴다.
+         *
+         * 알림·캡처의 원문은 읽어 온 글이지만 반복에는 그런 것이 없다. 비워 두면
+         * 화면의 "읽은 원문"이 빈 상자가 되고, 서버도 원문 없는 후보를 받지 않는다.
+         */
+        rawText: `${rule.description} · ${dateKey}`,
+        kind: rule.kind,
+        amount: rule.amount,
+        currency: rule.currency,
+        occurredAt: occurredAt.toISOString(),
+        merchant: rule.merchant,
+        description: rule.description,
+        installmentMonths: rule.installmentMonths,
+        personId: rule.personId,
+        categoryId: rule.categoryId,
+        accountId: rule.accountId,
+        cardId: rule.cardId,
+        // 사람이 적어 둔 값이라 읽어 낸 것과 달리 의심할 자리가 없다.
+        confidence: 100,
+        parser: 'recurring',
+        recurringRuleId: rule.id,
+      });
+    }
+  }
+
+  return items;
+}

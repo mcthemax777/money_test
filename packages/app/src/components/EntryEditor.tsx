@@ -14,7 +14,7 @@
  */
 import { useEffect, useRef } from 'react';
 import { Alert, Animated, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
-import type { EntryListItem, TagDto } from '@money/types';
+import type { EntryDraftDto, EntryListItem, TagDto } from '@money/types';
 
 import { todayKey } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -22,6 +22,7 @@ import { useEntryForm } from '@money/core/hooks/useEntryForm';
 import type { EntryFormKind, EntryFormValues } from '@money/core/data/entry-form';
 import { useMyPersonId, useProject, useProjectTimeZone } from '@money/core/store/project';
 
+import { Chips, Field } from './FormFields';
 import Modal from './Modal';
 
 /** 갈래 넷. 조정(잔액 맞추기)은 이 폼이 만드는 것이 아니라 여기 없다. */
@@ -70,8 +71,28 @@ export interface EntryEditorProps {
   onClose: () => void;
   /** 고칠 거래. 없으면 새로 적는다. */
   editing?: EntryListItem | null;
-  /** 저장·삭제가 끝난 뒤. 목록을 다시 읽는 자리다. */
-  onSaved?: () => void;
+  /**
+   * 내용만 베낄 거래. 값은 다 들어오지만 저장하면 **새 거래**가 된다.
+   *
+   * `editing` 과 함께 주지 않는다. 둘이 다 오면 고치기가 이긴다 -- 어느 쪽이든 하나는
+   * 부르는 쪽의 실수이고, 그때 거래를 하나 더 만드는 것보다 원본을 여는 편이 안전하다.
+   */
+  copying?: EntryListItem | null;
+  /**
+   * 보관함의 후보. 값이 채워진 채로 열리고, 저장하면 **새 거래**가 된다.
+   *
+   * `editing`·`copying` 과 함께 주지 않는다. 후보는 거래가 아니라 읽어 낸 값의
+   * 묶음이라 빈 칸이 있는 것이 정상이고, 그래서 되돌리는 길도 다르다
+   * (core 의 `entryFormFromDraft`).
+   */
+  draft?: EntryDraftDto.Response | null;
+  /**
+   * 저장·삭제가 끝난 뒤. 목록을 다시 읽는 자리다.
+   *
+   * 만든 거래의 id 를 함께 준다(core 의 `useEntryForm`). 보관함이 그 값으로 후보에
+   * 등록 표시를 남긴다. 목록만 다시 읽는 화면은 인자를 받지 않으면 된다.
+   */
+  onSaved?: (result: { entryId: string | null }) => void;
   /** 이 화면이 다루지 않는 갈래를 열려 했을 때 */
   onNotEditable?: () => void;
 }
@@ -80,6 +101,8 @@ export default function EntryEditor({
   isOpen,
   onClose,
   editing,
+  copying,
+  draft,
   onSaved,
   onNotEditable,
 }: EntryEditorProps) {
@@ -111,10 +134,33 @@ export default function EntryEditor({
       }
       return;
     }
+    /*
+     * 베끼기. 값을 채우는 것 말고는 새로 적는 것과 같다.
+     *
+     * 못 다루는 거래는 고치기와 마찬가지로 열지 않는다 -- 열어 두면 폼이 담지 못한
+     * 것(분할 줄, 잔액 조정)이 빠진 채로 새 거래가 되어, 베낀 것과 다른 거래가 남는다.
+     */
+    if (copying) {
+      if (!form.startCopy(copying)) {
+        onNotEditable?.();
+        onClose();
+      }
+      return;
+    }
+    /*
+     * 보관함의 후보. 읽은 것만 덮고 나머지는 빈 폼의 기본값이다.
+     *
+     * 못 다루는 갈래를 걸러 내지 않는다. 후보의 갈래는 문구에서 짐작한 값이고 사람이
+     * 폼에서 바꿀 수 있어서, 열지 않으면 담아 둔 것을 쓸 방법이 아예 없어진다.
+     */
+    if (draft) {
+      form.startDraft(draft);
+      return;
+    }
     form.startNew();
     // form 의 함수들은 매번 새로 만들어지므로 의존성에 두지 않는다. 여는 순간만 본다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, editing]);
+  }, [isOpen, editing, copying, draft]);
 
   const save = async () => {
     if (await form.save()) onClose();
@@ -527,25 +573,6 @@ export default function EntryEditor({
   );
 }
 
-function Field({
-  label,
-  invalid,
-  children,
-}: {
-  label: string;
-  invalid?: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <View>
-      <Text className={`mb-2 text-sm font-medium ${invalid ? 'text-red-600' : 'text-gray-700'}`}>
-        {label}
-      </Text>
-      {children}
-    </View>
-  );
-}
-
 /**
  * 태그를 고르는 알약 줄. 여럿을 고를 수 있다.
  *
@@ -621,47 +648,6 @@ function TagChip({
         </Text>
       </Pressable>
     </Animated.View>
-  );
-}
-
-/**
- * 고르는 알약 줄.
- *
- * 목록이 길면 옆으로 넘긴다. 접어 두면 무엇을 고를 수 있는지 열어 봐야 알고, 세로로
- * 쌓으면 폼이 화면 몇 개 길이가 된다.
- */
-function Chips({
-  options,
-  selected,
-  onSelect,
-}: {
-  options: Array<{ value: string; label: string }>;
-  selected: string;
-  onSelect: (value: string) => void;
-}) {
-  return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="gap-2">
-      {options.map((option) => {
-        const isSelected = option.value === selected;
-
-        return (
-          <Pressable
-            key={option.value || 'none'}
-            onPress={() => onSelect(option.value)}
-            /* 고른 칸 표시는 언어 설정·분류 목록과 같은 값을 쓴다. */
-            className={`rounded-lg border px-3 py-2 ${
-              isSelected ? 'border-blue-600 bg-blue-50' : 'border-gray-300'
-            }`}
-          >
-            <Text
-              className={`text-sm ${isSelected ? 'font-medium text-blue-600' : 'text-gray-700'}`}
-            >
-              {option.label}
-            </Text>
-          </Pressable>
-        );
-      })}
-    </ScrollView>
   );
 }
 

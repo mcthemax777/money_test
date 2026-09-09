@@ -16,6 +16,7 @@ import {
   type AccountDto,
   type CardDto,
   type CategoryDto,
+  type EntryDraftDto,
   type EntryTag,
   type EntryTagsPayload,
   type TagDto,
@@ -715,6 +716,48 @@ export class LocalStore {
       }
 
       // 전표보다 반드시 뒤다. 위의 전표 교체가 옛 다리의 계획을 지우기 때문이다.
+      /*
+       * 보관함의 후보.
+       *
+       * 사본에 이미 있는 행을 덮어쓴다. 후보에는 필드별 병합이 없고(서버 주석 참고)
+       * 서버 값이 곧 최신이다. 다만 아직 서버에 알리지 못한 일(draft_op)이 있으면
+       * 그 후보는 건드리지 않는다 -- 덮어쓰면 오프라인에서 등록한 것이 대기로
+       * 되살아나 같은 거래를 두 번 적게 된다.
+       */
+      for (const row of (changes.entryDrafts ?? []) as Row[]) {
+        const id = String(row.id);
+        if (await this.hasDraftOp(id)) continue;
+
+        await this.upsert('entry_draft', {
+          id,
+          projectId,
+          source: String(row.source),
+          status: String(row.status ?? 'pending'),
+          rawText: asText(row.rawText) ?? '',
+          appPackage: asText(row.appPackage),
+          appTitle: asText(row.appTitle),
+          kind: asText(row.kind),
+          amount: asText(row.amount),
+          currency: asText(row.currency),
+          occurredAt: row.occurredAt == null ? null : asIso(row.occurredAt),
+          merchant: asText(row.merchant),
+          description: asText(row.description),
+          installmentMonths: row.installmentMonths == null ? null : asInt(row.installmentMonths),
+          personId: asText(row.personId),
+          categoryId: asText(row.categoryId),
+          accountId: asText(row.accountId),
+          cardId: asText(row.cardId),
+          confidence: asInt(row.confidence),
+          parser: asText(row.parser),
+          dedupeKey: asText(row.dedupeKey) ?? '',
+          registeredEntryId: asText(row.registeredEntryId),
+          recurringRuleId: asText(row.recurringRuleId),
+          createdAt: asIso(row.createdAt),
+          updatedAt: asIso(row.updatedAt),
+          updatedVersion: asInt(row.updatedVersion),
+        });
+      }
+
       for (const row of (changes.installmentPlans ?? []) as Row[]) {
         await this.upsert('installment_plan', {
           id: String(row.id),
@@ -1141,6 +1184,165 @@ export class LocalStore {
       sortRank: String(row.sortRank),
       createdAt: String(row.createdAt),
       updatedAt: String(row.updatedAt),
+    }));
+  }
+
+  /**
+   * 보관함의 후보. 탭(source)과 처지(status)로 고른다.
+   *
+   * 새로 온 것이 위다. 거래 시각이 없는 후보(문구에서 못 읽은 것)는 담은 시각으로
+   * 줄을 세운다 -- 목록 맨 아래로 밀어 두면 방금 담은 것이 보이지 않는다.
+   */
+  async draftRows(
+    projectId: string,
+    filter: { source?: string; status?: string } = {},
+  ): Promise<EntryDraftDto.Response[]> {
+    const where: string[] = ['projectId = ?'];
+    const params: SqlValue[] = [projectId];
+    if (filter.source) {
+      where.push('source = ?');
+      params.push(filter.source);
+    }
+    if (filter.status) {
+      where.push('status = ?');
+      params.push(filter.status);
+    }
+
+    const rows = await this.db.all<Row>(
+      `SELECT * FROM entry_draft WHERE ${where.join(' AND ')}
+         ORDER BY COALESCE(occurredAt, createdAt) DESC, createdAt DESC`,
+      params,
+    );
+    return rows.map(toDraftResponse);
+  }
+
+  /** 그 열쇠로 담은 후보가 이미 있는가. 기기가 담기 전에 스스로 본다. */
+  async draftExists(projectId: string, dedupeKey: string): Promise<boolean> {
+    const rows = await this.db.all<Row>(
+      `SELECT id FROM entry_draft WHERE projectId = ? AND dedupeKey = ? LIMIT 1`,
+      [projectId, dedupeKey],
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * 후보를 사본에서 먼저 처리하고, 서버에 알릴 일을 적어 둔다.
+   *
+   * 화면은 이 함수만 부르면 온라인·오프라인을 가리지 않는다. 연결되어 있으면 곧바로
+   * 이어서 `flushDraftOps` 가 돌고, 아니면 다음 동기화가 같은 일을 한다.
+   *
+   * 지우기는 사본에서 행을 없앤다. 나머지는 처지만 바꾼다.
+   */
+  async markDraft(
+    projectId: string,
+    draftId: string,
+    op: 'registered' | 'dismissed' | 'deleted',
+    entryId?: string | null,
+  ): Promise<void> {
+    await this.db.transaction(async () => {
+      if (op === 'deleted') {
+        await this.db.run(`DELETE FROM entry_draft WHERE id = ?`, [draftId]);
+      } else {
+        await this.db.run(
+          `UPDATE entry_draft SET status = ?, registeredEntryId = ?, updatedAt = ? WHERE id = ?`,
+          [op, entryId ?? null, new Date().toISOString(), draftId],
+        );
+      }
+
+      await this.db.run(
+        `INSERT INTO draft_op (draftId, projectId, op, entryId, createdAt)
+           VALUES (?, ?, ?, ?, ?)
+           ON CONFLICT(draftId) DO UPDATE SET op = excluded.op, entryId = excluded.entryId`,
+        [draftId, projectId, op, entryId ?? null, new Date().toISOString()],
+      );
+    });
+  }
+
+  /** 후보를 사본에 담는다. 서버에 올리는 일은 부르는 쪽이 한다. */
+  async putDraft(draft: EntryDraftDto.Response): Promise<void> {
+    await this.upsert('entry_draft', {
+      id: draft.id,
+      projectId: draft.projectId,
+      source: draft.source,
+      status: draft.status,
+      rawText: draft.rawText,
+      appPackage: draft.appPackage,
+      appTitle: draft.appTitle,
+      kind: draft.kind,
+      amount: draft.amount,
+      currency: draft.currency,
+      occurredAt: draft.occurredAt,
+      merchant: draft.merchant,
+      description: draft.description,
+      installmentMonths: draft.installmentMonths,
+      personId: draft.personId,
+      categoryId: draft.categoryId,
+      accountId: draft.accountId,
+      cardId: draft.cardId,
+      confidence: draft.confidence,
+      parser: draft.parser,
+      dedupeKey: draft.dedupeKey,
+      registeredEntryId: draft.registeredEntryId,
+      recurringRuleId: draft.recurringRuleId,
+      createdAt: draft.createdAt,
+      updatedAt: draft.updatedAt,
+      updatedVersion: 0,
+    });
+  }
+
+  /** 아직 서버에 알리지 못한 후보 처리. 동기화가 이것을 비운다. */
+  async pendingDraftOps(
+    projectId: string,
+  ): Promise<Array<{ draftId: string; op: string; entryId: string | null }>> {
+    const rows = await this.db.all<Row>(
+      `SELECT draftId, op, entryId FROM draft_op WHERE projectId = ? ORDER BY createdAt`,
+      [projectId],
+    );
+    return rows.map((row) => ({
+      draftId: String(row.draftId),
+      op: String(row.op),
+      entryId: asText(row.entryId),
+    }));
+  }
+
+  /** 서버가 받아들인 처리를 큐에서 뺀다. */
+  async forgetDraftOp(draftId: string): Promise<void> {
+    await this.db.run(`DELETE FROM draft_op WHERE draftId = ?`, [draftId]);
+  }
+
+  /** 이 후보에 아직 못 보낸 처리가 있는가. 델타를 덮어쓸지 가리는 값이다. */
+  private async hasDraftOp(draftId: string): Promise<boolean> {
+    const rows = await this.db.all<Row>(
+      `SELECT draftId FROM draft_op WHERE draftId = ? LIMIT 1`,
+      [draftId],
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * 이 가맹점으로 적어 둔 지난 거래. 분류를 짐작하는 재료다(`draft-match`).
+   *
+   * 가장 최근 것이 먼저 온다. 다리에서 분류를 꺼내므로 분할 거래는 첫 줄의 분류가
+   * 온다 -- 짐작에는 그것으로 충분하고, 사람이 저장 전에 본다.
+   */
+  async merchantHistory(
+    projectId: string,
+    limit = 200,
+  ): Promise<Array<{ merchant: string | null; description: string; categoryId: string | null }>> {
+    const rows = await this.db.all<Row>(
+      `SELECT e.merchant AS merchant, e.description AS description,
+              (SELECT p.categoryId FROM posting p
+                 WHERE p.entryId = e.id AND p.categoryId IS NOT NULL LIMIT 1) AS categoryId
+         FROM entry e
+        WHERE e.projectId = ?
+        ORDER BY e.date DESC
+        LIMIT ?`,
+      [projectId, limit],
+    );
+    return rows.map((row) => ({
+      merchant: asText(row.merchant),
+      description: String(row.description ?? ''),
+      categoryId: asText(row.categoryId),
     }));
   }
 
@@ -2427,6 +2629,37 @@ export class LocalStore {
   }
 }
 
+/** 사본의 한 줄을 창구가 내보내는 모양으로. 서버 응답과 같은 모양이어야 한다. */
+function toDraftResponse(row: Row): EntryDraftDto.Response {
+  return {
+    id: String(row.id),
+    projectId: String(row.projectId),
+    source: String(row.source) as EntryDraftDto.Response['source'],
+    status: String(row.status) as EntryDraftDto.Response['status'],
+    rawText: String(row.rawText ?? ''),
+    appPackage: asText(row.appPackage),
+    appTitle: asText(row.appTitle),
+    kind: asText(row.kind) as EntryDraftDto.Response['kind'],
+    amount: asText(row.amount),
+    currency: asText(row.currency),
+    occurredAt: asText(row.occurredAt),
+    merchant: asText(row.merchant),
+    description: asText(row.description),
+    installmentMonths: row.installmentMonths == null ? null : asInt(row.installmentMonths),
+    personId: asText(row.personId),
+    categoryId: asText(row.categoryId),
+    accountId: asText(row.accountId),
+    cardId: asText(row.cardId),
+    confidence: asInt(row.confidence),
+    parser: asText(row.parser),
+    dedupeKey: String(row.dedupeKey ?? ''),
+    registeredEntryId: asText(row.registeredEntryId),
+    recurringRuleId: asText(row.recurringRuleId),
+    createdAt: String(row.createdAt ?? ''),
+    updatedAt: String(row.updatedAt ?? ''),
+  };
+}
+
 /** 서버 표 이름 -> 사본의 표 이름. 여기 없는 표는 사본이 담지 않는 것이다. */
 const TOMBSTONE_TABLES: Record<string, string> = {
   JournalEntry: 'entry',
@@ -2441,6 +2674,7 @@ const TOMBSTONE_TABLES: Record<string, string> = {
   Card: 'card',
   AssetValuation: 'asset_valuation',
   InstallmentPlan: 'installment_plan',
+  EntryDraft: 'entry_draft',
 };
 
 /**

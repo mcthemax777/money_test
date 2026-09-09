@@ -17,6 +17,8 @@ import type {
   CardDto,
   CategoryDto,
   TagDto,
+  EntryDraftDto,
+  RecurringRuleDto,
   EntryDto,
   EntryFilterQuery,
   ExchangeRateInfo,
@@ -573,6 +575,100 @@ class ApiClient {
 
   async deleteCategory(id: string) {
     await this.client.delete(`/categories/${id}`);
+  }
+
+  // 보관함 API Methods (아직 거래가 아닌 후보)
+
+  async getEntryDrafts(
+    query: EntryDraftDto.ListQuery = {},
+    projectId?: string | null,
+  ): Promise<EntryDraftDto.Response[]> {
+    const params: Record<string, unknown> = { ...query };
+    if (projectId) params.projectId = projectId;
+    const response = await this.client.get<EntryDraftDto.Response[]>('/entry-drafts', { params });
+    return response.data;
+  }
+
+  /**
+   * 기기가 읽어 낸 후보를 담는다. 여러 건을 한 번에 보낸다.
+   *
+   * 이미 있는 것(같은 dedupeKey)은 서버가 건너뛰고 `skipped` 로 센다. 그래서 같은
+   * 요청을 다시 보내도 후보가 늘지 않는다 -- 알림 버퍼를 비우다 끊긴 뒤 다시 보낼 때
+   * 그 성질에 기댄다.
+   */
+  async addEntryDrafts(
+    drafts: EntryDraftDto.CreateItem[],
+    projectId?: string | null,
+  ): Promise<EntryDraftDto.CreateResponse> {
+    /*
+     * 서버가 한 번에 받는 수(100)를 넘으면 나눠 보낸다.
+     *
+     * 긴 캡처 한 장에서 그만큼 나온다 -- 카드 앱의 한 달 이용내역이 54건이었다. 나누지
+     * 않으면 요청 하나가 통째로 거절되어 사진을 다시 잘라 올려야 한다.
+     */
+    const CHUNK = 100;
+    const merged: EntryDraftDto.CreateResponse = { created: 0, skipped: 0, drafts: [] };
+
+    for (let start = 0; start < drafts.length; start += CHUNK) {
+      const response = await this.client.post<EntryDraftDto.CreateResponse>(
+        '/entry-drafts',
+        { drafts: drafts.slice(start, start + CHUNK) },
+        { params: projectId ? { projectId } : {} },
+      );
+      merged.created += response.data.created;
+      merged.skipped += response.data.skipped;
+      merged.drafts.push(...response.data.drafts);
+    }
+
+    return merged;
+  }
+
+  async updateEntryDraft(
+    id: string,
+    data: EntryDraftDto.UpdateRequest,
+  ): Promise<EntryDraftDto.Response> {
+    const response = await this.client.patch<EntryDraftDto.Response>(`/entry-drafts/${id}`, data);
+    return response.data;
+  }
+
+  async deleteEntryDraft(id: string): Promise<void> {
+    await this.client.delete(`/entry-drafts/${id}`);
+  }
+
+  // 반복 등록 API Methods
+
+  async getRecurringRules(projectId?: string | null): Promise<RecurringRuleDto.Response[]> {
+    const response = await this.client.get<RecurringRuleDto.Response[]>('/recurring-rules', {
+      params: projectId ? { projectId } : {},
+    });
+    return response.data;
+  }
+
+  async createRecurringRule(
+    data: RecurringRuleDto.CreateRequest,
+    projectId?: string | null,
+  ): Promise<RecurringRuleDto.Response> {
+    const response = await this.client.post<RecurringRuleDto.Response>(
+      '/recurring-rules',
+      this.withId(data),
+      { params: projectId ? { projectId } : {} },
+    );
+    return response.data;
+  }
+
+  async updateRecurringRule(
+    id: string,
+    data: RecurringRuleDto.UpdateRequest,
+  ): Promise<RecurringRuleDto.Response> {
+    const response = await this.client.patch<RecurringRuleDto.Response>(
+      `/recurring-rules/${id}`,
+      data,
+    );
+    return response.data;
+  }
+
+  async deleteRecurringRule(id: string): Promise<void> {
+    await this.client.delete(`/recurring-rules/${id}`);
   }
 
   // 태그 API Methods
