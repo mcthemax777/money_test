@@ -292,7 +292,6 @@ export default function RecurringRuleModal({
                   }))}
                   selected={values.month}
                   onSelect={(value) => set('month', value)}
-                  revealSelected
                 />
               </Field>
             ) : null}
@@ -304,7 +303,6 @@ export default function RecurringRuleModal({
                 }))}
                 selected={values.dayOfMonth}
                 onSelect={(value) => set('dayOfMonth', value)}
-                revealSelected
               />
             </Field>
             {Number(values.dayOfMonth) > 28 ? (
@@ -377,7 +375,6 @@ export default function RecurringRuleModal({
             options={methodOptions}
             selected={values.method}
             onSelect={(value) => set('method', value)}
-            revealSelected
           />
         </Field>
 

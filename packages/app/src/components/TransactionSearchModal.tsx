@@ -36,71 +36,8 @@ import {
 } from '@money/core/hooks/useTransactions';
 
 import DatePickerPanel from './DatePickerPanel';
+import { Chip, Divider } from './FormFields';
 import Modal from './Modal';
-
-/** 고를 수 있는 알약 하나. 고른 것은 파란 알약이다 (앱의 다른 고르는 자리와 같다). */
-function Chip({
-  label,
-  selected,
-  onPress,
-  color,
-  subtle,
-}: {
-  label: string;
-  selected: boolean;
-  onPress: () => void;
-  /** 태그의 색. 그 밖의 알약은 색이 없다. */
-  color?: string | null;
-  /**
-   * 소분류처럼 한 단 아래인 알약.
-   *
-   * 테두리를 감추고 글자를 얇게 한다. 크기는 그대로다 -- 대분류가 먼저 눈에 들어오되
-   * 줄이 밀리지 않아야 한다. 상태가 아니라 **자리**에 따른 차이라 눌러도 달라지지 않는다.
-   * 고른 소분류는 파란 테두리가 다시 보인다. 골랐다는 것은 보여야 한다.
-   */
-  subtle?: boolean;
-}) {
-  /*
-   * **누른다고 크기가 달라지지 않는다.** 테두리 굵기도 글자 굵기도 상태와 무관하게 같고,
-   * 고른 것은 색으로만 말한다. 굵어지면 그만큼 넓어져, 한 알약을 켰을 뿐인데 옆의
-   * 알약이 다음 줄로 밀린다.
-   */
-  return (
-    <Pressable
-      onPress={onPress}
-      className={`flex-row items-center gap-1.5 rounded-full border px-3 py-1.5 ${
-        selected
-          ? 'border-blue-600 bg-blue-50'
-          : subtle
-            ? // 테두리를 없애지 않고 **투명하게** 둔다. 굵기가 그대로라 줄바꿈 자리가 움직이지 않는다.
-              'border-transparent bg-white'
-            : 'border-gray-300 bg-white'
-      }`}
-    >
-      {color ? (
-        <View className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} />
-      ) : null}
-      <Text
-        className={`text-sm ${subtle ? 'font-light' : ''} ${
-          selected ? 'text-blue-600' : subtle ? 'text-gray-500' : 'text-gray-700'
-        }`}
-      >
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
-/**
- * 분류 칸의 가름표. 대분류 뒤의 `›` 와 묶음 끝의 `/`.
- *
- * 누를 수 없는 글자다. 상자 대신 이것으로 묶음의 경계를 말한다. 대분류 뒤는 꺾쇠다 --
- * 알약에 적히는 "식비 › 식료품" 과 같은 기호라 뒤따르는 것이 그 아래 소분류임이
- * 한눈에 읽힌다.
- */
-function Divider({ mark }: { mark: '›' | '/' }) {
-  return <Text className="text-sm text-gray-300">{mark}</Text>;
-}
 
 function Group({ title, children }: { title: string; children: React.ReactNode }) {
   return (

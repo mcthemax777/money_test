@@ -12,17 +12,19 @@
  * **저장은 창구로 나간다.** 온라인이면 서버로, 오프라인이면 기기 사본과 아웃박스로 간다.
  * 이 컴포넌트는 어느 쪽인지 모른다 (core 의 entry-write-port).
  */
-import { useEffect, useRef } from 'react';
-import { Alert, Animated, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Alert, Animated, Pressable, Text, TextInput, View } from 'react-native';
+import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
+import { CalendarDays, Clock } from 'lucide-react-native';
 import type { EntryDraftDto, EntryListItem, TagDto } from '@money/types';
 
-import { todayKey } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useEntryForm } from '@money/core/hooks/useEntryForm';
 import type { EntryFormKind, EntryFormValues } from '@money/core/data/entry-form';
 import { useMyPersonId, useProject, useProjectTimeZone } from '@money/core/store/project';
 
-import { Chips, Field } from './FormFields';
+import DatePickerPanel from './DatePickerPanel';
+import { CategoryChips, Chip, Chips, Field } from './FormFields';
 import Modal from './Modal';
 
 /** 갈래 넷. 조정(잔액 맞추기)은 이 폼이 만드는 것이 아니라 여기 없다. */
@@ -118,6 +120,42 @@ export default function EntryEditor({
     onSaved,
   });
   const { values, setField, violation } = form;
+
+/**
+   * 달력이 펼쳐져 있는가.
+   *
+   * 팝업을 닫을 때 접는다 -- 다시 열었을 때 지난번에 펼쳐 둔 판이 그대로 있으면 폼의
+   * 첫 화면이 사람마다 달라진다. 시각은 안드로이드 대화상자라 이 값과 무관하다.
+   */
+  const [isCalendarOpen, setIsCalendarOpen] = useState(false);
+
+  useEffect(() => {
+    if (!isOpen) setIsCalendarOpen(false);
+  }, [isOpen]);
+
+  /**
+   * 시각을 고른다. **안드로이드가 그리는 시계 대화상자다.**
+   *
+   * 알약으로 시와 분을 늘어놓아 보았지만, 사람들이 시각을 고르는 자리는 어느 앱에서나
+   * 이 대화상자라 그것을 쓰는 편이 익다(`@react-native-community/datetimepicker`).
+   * 이 앱은 안드로이드로만 나가므로 그쪽 명령형 API 를 그대로 쓴다.
+   */
+  const openTimePicker = () => {
+    const [hour, minute] = values.timeKey.split(':');
+    const base = new Date();
+    base.setHours(Number(hour) || 0, Number(minute) || 0, 0, 0);
+
+    DateTimePickerAndroid.open({
+      value: base,
+      mode: 'time',
+      // 24시간제로 둔다. 폼이 다루는 값이 "HH:MM" 이고 목록·달력도 그 표기다.
+      is24Hour: true,
+      onValueChange: (_event, date) => {
+        const pad = (value: number) => String(value).padStart(2, '0');
+        setField('timeKey', `${pad(date.getHours())}:${pad(date.getMinutes())}`);
+      },
+    });
+  };
 
   /*
    * 팝업이 열릴 때 폼을 채운다.
@@ -303,36 +341,47 @@ export default function EntryEditor({
           />
         </Field>
 
+        {/*
+          날짜와 시각. **손으로 적지 않고 골라 넣는다.**
+
+          글자로 받으면 "2026-02-31" 이나 "25:99" 처럼 저장할 수 없는 값이 나오고, 사람은
+          저장을 눌러 보고서야 그것을 안다. 날짜는 아래에 달력이 펼쳐지고, 시각은 안드로이드
+          시계 대화상자가 뜬다.
+        */}
         <View className="flex-row gap-3">
           <View className="flex-1">
             <Field label={t('editor.date')} invalid={violation?.field === 'dateKey'}>
-              <TextInput
+              <PickerButton
+                icon="date"
                 value={values.dateKey}
-                onChangeText={(text) => setField('dateKey', text)}
                 placeholder="YYYY-MM-DD"
-                className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
+                isOpen={isCalendarOpen}
+                onPress={() => setIsCalendarOpen(!isCalendarOpen)}
               />
             </Field>
           </View>
-          <View className="w-28">
+          <View className="w-32">
             <Field label={t('editor.time')} invalid={violation?.field === 'timeKey'}>
-              <TextInput
+              <PickerButton
+                icon="time"
                 value={values.timeKey}
-                onChangeText={(text) => setField('timeKey', text)}
                 placeholder="HH:MM"
-                className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
+                isOpen={false}
+                onPress={openTimePicker}
               />
             </Field>
           </View>
         </View>
 
-        {/* 날짜를 손으로 적게 두되 가장 잦은 값은 한 번에 넣는다. */}
-        <Pressable
-          onPress={() => setField('dateKey', todayKey(timeZone))}
-          className="self-start rounded-lg border border-gray-300 px-3 py-2"
-        >
-          <Text className="text-sm text-gray-700">{t('entryForm.today')}</Text>
-        </Pressable>
+        {isCalendarOpen ? (
+          <DatePickerPanel
+            value={values.dateKey}
+            onSelect={(dateKey) => {
+              setField('dateKey', dateKey);
+              setIsCalendarOpen(false);
+            }}
+          />
+        ) : null}
 
         <Field label={t('editor.person')} invalid={violation?.field === 'personId'}>
           <Chips
@@ -341,6 +390,7 @@ export default function EntryEditor({
               .map((person) => ({ value: person.id, label: person.name }))}
             selected={values.personId}
             onSelect={(value) => setField('personId', value)}
+            collapse
           />
         </Field>
 
@@ -362,6 +412,7 @@ export default function EntryEditor({
               }))}
               selected={values.method}
               onSelect={(value) => setField('method', value)}
+              collapse
             />
           )}
         </Field>
@@ -380,6 +431,7 @@ export default function EntryEditor({
                   options={form.cardChoices.map((card) => ({ value: card.id, label: card.name }))}
                   selected={values.cardId}
                   onSelect={(value) => setField('cardId', value)}
+                  collapse
                 />
               )}
             </Field>
@@ -406,6 +458,7 @@ export default function EntryEditor({
                 }))}
                 selected={values.toAccountId}
                 onSelect={(value) => setField('toAccountId', value)}
+                collapse
               />
             </Field>
 
@@ -425,11 +478,8 @@ export default function EntryEditor({
                 label={t('editor.feeParentCategory')}
                 invalid={violation?.field === 'transferFeeCategoryId'}
               >
-                <Chips
-                  options={form.categoryChoices.map((category) => ({
-                    value: category.id,
-                    label: labelOf(category, form.categoryChoices),
-                  }))}
+                <CategoryChips
+                  categories={form.categoryChoices}
                   selected={values.transferFeeCategoryId}
                   onSelect={(value) => setField('transferFeeCategoryId', value)}
                 />
@@ -471,11 +521,8 @@ export default function EntryEditor({
                   {form.categoryChoices.length === 0 ? (
                     <Text className="text-sm text-gray-500">{t('entryForm.noCategories')}</Text>
                   ) : (
-                    <Chips
-                      options={form.categoryChoices.map((category) => ({
-                        value: category.id,
-                        label: labelOf(category, form.categoryChoices),
-                      }))}
+                    <CategoryChips
+                      categories={form.categoryChoices}
                       selected={split.categoryId}
                       onSelect={(value) => form.setSplit(index, 'categoryId', value)}
                     />
@@ -508,11 +555,8 @@ export default function EntryEditor({
               {form.categoryChoices.length === 0 ? (
                 <Text className="text-sm text-gray-500">{t('entryForm.noCategories')}</Text>
               ) : (
-                <Chips
-                  options={form.categoryChoices.map((category) => ({
-                    value: category.id,
-                    label: labelOf(category, form.categoryChoices),
-                  }))}
+                <CategoryChips
+                  categories={form.categoryChoices}
                   selected={values.categoryId}
                   onSelect={(value) => setField('categoryId', value)}
                 />
@@ -574,6 +618,42 @@ export default function EntryEditor({
 }
 
 /**
+ * 날짜·시각을 여는 칸. 값이 없으면 모양(YYYY-MM-DD)을 옅게 적는다.
+ *
+ * 검색 창의 기간 칸과 같은 모양이다 (`TransactionSearchModal` 의 DateButton). 열려 있는
+ * 동안 테두리가 파래서, 아래 판이 어느 칸의 것인지 보인다.
+ */
+function PickerButton({
+  icon,
+  value,
+  placeholder,
+  isOpen,
+  onPress,
+}: {
+  icon: 'date' | 'time';
+  value: string;
+  placeholder: string;
+  isOpen: boolean;
+  onPress: () => void;
+}) {
+  const Icon = icon === 'date' ? CalendarDays : Clock;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      className={`flex-row items-center gap-2 rounded-lg border bg-white px-3 py-3 ${
+        isOpen ? 'border-blue-600' : 'border-gray-300'
+      }`}
+    >
+      <Icon size={16} color={isOpen ? '#2563eb' : '#6b7280'} />
+      <Text className={`text-base ${value ? 'text-gray-900' : 'text-gray-400'}`}>
+        {value || placeholder}
+      </Text>
+    </Pressable>
+  );
+}
+
+/**
  * 태그를 고르는 알약 줄. 여럿을 고를 수 있다.
  *
  * `Chips` 와 나누어 둔 것은 고름이 하나가 아니라 집합이고, 알약마다 자기 색을 갖기
@@ -589,7 +669,8 @@ function TagChips({
   onToggle: (tagId: string) => void;
 }) {
   return (
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerClassName="gap-2">
+    /* 옆으로 넘기지 않는다. 태그는 스물이 넘어가도 이름이 짧아 몇 줄로 다 담긴다. */
+    <View className="flex-row flex-wrap items-center gap-2">
       {tags.map((tag) => (
         <TagChip
           key={tag.id}
@@ -598,7 +679,7 @@ function TagChips({
           onPress={() => onToggle(tag.id)}
         />
       ))}
-    </ScrollView>
+    </View>
   );
 }
 
@@ -631,40 +712,10 @@ function TagChip({
 
   return (
     <Animated.View style={{ transform: [{ scale }] }}>
-      <Pressable
-        onPress={press}
-        className={`flex-row items-center gap-1.5 rounded-full border px-3 py-2 ${
-          isSelected ? 'border-blue-600 bg-blue-50' : 'border-gray-300'
-        }`}
-      >
-        {/* 색을 정한 태그는 점으로 보인다. 이름만으로는 목록에서 찾기 어렵다. */}
-        {tag.color ? (
-          <View className="h-2.5 w-2.5 rounded-full" style={{ backgroundColor: tag.color }} />
-        ) : null}
-        <Text
-          className={`text-sm ${isSelected ? 'font-medium text-blue-600' : 'text-gray-700'}`}
-        >
-          {tag.name}
-        </Text>
-      </Pressable>
+      {/* 알약은 다른 고르는 자리와 같은 것을 쓴다. 색을 정한 태그는 점으로 보인다. */}
+      <Chip label={tag.name} selected={isSelected} onPress={press} color={tag.color} />
     </Animated.View>
   );
-}
-
-/**
- * 분류 이름. 소분류는 대분류를 앞에 붙인다.
- *
- * 목록이 평평해서 "점심"만 보면 어느 대분류의 것인지 알 수 없다. 웹은 대분류와 소분류를
- * 두 칸으로 나누지만, 알약 한 줄에서는 이름을 잇는 편이 누르는 횟수가 적다.
- */
-function labelOf(
-  category: { id: string; name: string; parentId?: string | null },
-  all: Array<{ id: string; name: string }>,
-): string {
-  if (!category.parentId) return category.name;
-
-  const parent = all.find((row) => row.id === category.parentId);
-  return parent ? `${parent.name} › ${category.name}` : category.name;
 }
 
 /** 폼 값의 이름을 밖에서도 쓴다 (검증이 짚은 자리를 화면이 맞춰 보는 데 쓴다). */

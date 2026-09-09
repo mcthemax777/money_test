@@ -32,7 +32,8 @@
         }
       ],
       "@react-native-google-signin/google-signin",
-      "./plugins/with-signing"
+      "./plugins/with-signing",
+      "@react-native-community/datetimepicker"
     ],
     "scheme": "money"
   }
