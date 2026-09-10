@@ -76,7 +76,18 @@ export function Select({
 
       {isOpen ? (
         <View className="mt-1 max-h-60 overflow-hidden rounded-lg border border-gray-300">
-          <ScrollView>
+          {/*
+            **`nestedScrollEnabled` 가 있어야 이 목록이 스스로 굴러간다.**
+
+            팝업 본문이 이미 ScrollView 다(Modal). 안드로이드는 기본으로 안쪽
+            ScrollView 에 손짓을 주지 않아서, 이것 없이 목록을 밀면 목록은 그대로
+            있고 팝업 전체가 내려간다 -- 며칟날을 고르려다 결제수단 자리까지 밀려
+            내려간다.
+
+            켜 두면 안쪽이 먼저 먹고 남은 만큼만 바깥으로 넘어간다. 목록의 끝에
+            닿으면 그 뒤로는 팝업이 이어 움직인다.
+          */}
+          <ScrollView nestedScrollEnabled>
             {options.map((option) => (
               <Pressable
                 key={option.value || 'none'}

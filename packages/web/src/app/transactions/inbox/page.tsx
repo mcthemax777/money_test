@@ -51,7 +51,7 @@ import {
   NO_HINTS,
   type CollectHints,
 } from '@money/core/lib/draft-collect';
-import type { Account, Card, Category, Person } from '@money/core/lib/types';
+import type { Account, Card, Category, Person, Tag } from '@money/core/lib/types';
 
 import CaptureDropzone from '@/components/CaptureDropzone';
 import RecurringRuleModal from '@/components/RecurringRuleModal';
@@ -75,6 +75,7 @@ function useReferenceLists(projectId: string | null) {
   const [cards, setCards] = useState<Card[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
+  const [tags, setTags] = useState<Tag[]>([]);
 
   useEffect(() => {
     if (!projectId) return;
@@ -83,17 +84,19 @@ function useReferenceLists(projectId: string | null) {
     void (async () => {
       const port = homeDataPort();
       try {
-        const [accountRows, cardRows, categoryRows, personRows] = await Promise.all([
+        const [accountRows, cardRows, categoryRows, personRows, tagRows] = await Promise.all([
           port.getAccountsV2(projectId),
           port.getCards(projectId),
           port.getCategories(projectId),
           port.getPeople(projectId),
+          port.getTags(projectId),
         ]);
         if (!alive) return;
         setAccounts(accountRows ?? []);
         setCards(cardRows ?? []);
         setCategories(categoryRows ?? []);
         setPeople(personRows ?? []);
+        setTags(tagRows ?? []);
       } catch {
         // 목록을 읽지 못해도 보관함은 보여야 한다. 팝업에서 고를 것이 없을 뿐이다.
       }
@@ -112,7 +115,7 @@ function useReferenceLists(projectId: string | null) {
     if (patch.people) setPeople(patch.people);
   }, []);
 
-  return { accounts, cards, categories, people, apply };
+  return { accounts, cards, categories, people, tags, apply };
 }
 
 /**

@@ -22,7 +22,7 @@ import {
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { todayKey } from '@money/core/lib/datetime';
 import { useProjectTimeZone } from '@money/core/store/project';
-import type { Account, Card, Category, Person } from '@money/core/lib/types';
+import type { Account, Card, Category, Person, Tag } from '@money/core/lib/types';
 
 import Modal from '@/components/Modal';
 
@@ -63,6 +63,8 @@ interface FormValues {
   timeOfDay: string;
   personId: string;
   categoryId: string;
+  /** 붙일 태그. 여러 개를 고른다 (다른 칸과 달리 하나가 아니다). */
+  tagIds: string[];
   /** "account:id" 또는 "card:id". 거래 폼과 같은 규칙이다. */
   method: string;
 }
@@ -83,6 +85,7 @@ function emptyForm(timeZone: string): FormValues {
     timeOfDay: '',
     personId: '',
     categoryId: '',
+    tagIds: [],
     method: '',
   };
 }
@@ -102,6 +105,14 @@ function formOf(rule: RecurringRuleDto.Response, timeZone: string): FormValues {
     timeOfDay: rule.timeOfDay ?? '',
     personId: rule.personId ?? '',
     categoryId: rule.categoryId ?? '',
+    /*
+     * 옛 서버는 이 칸을 실어 보내지 않는다.
+     *
+     * 앱은 기기에 깔린 채로 몇 주를 지내고 서버는 그 사이에 배포된다. 순서가 뒤집힌
+     * 동안(새 앱 · 옛 서버) 이 값이 없는데, 그대로 두면 아래 알약이 undefined 에
+     * includes 를 불러 팝업이 터진다.
+     */
+    tagIds: rule.tagIds ?? [],
     method: rule.cardId ? `card:${rule.cardId}` : rule.accountId ? `account:${rule.accountId}` : '',
   };
 }
@@ -117,7 +128,7 @@ export default function RecurringRuleModal({
   isOpen: boolean;
   /** 고칠 반복. null 이면 새로 만든다. */
   rule: RecurringRuleDto.Response | null;
-  lists: { accounts: Account[]; cards: Card[]; categories: Category[]; people: Person[] };
+  lists: { accounts: Account[]; cards: Card[]; categories: Category[]; people: Person[]; tags: Tag[] };
   onClose: () => void;
   onSave: (body: RecurringRuleDto.Body) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
@@ -412,6 +423,54 @@ export default function RecurringRuleModal({
           </Field>
         </div>
 
+        {/*
+          태그. 여러 개를 고르는 유일한 칸이라 알약으로 받는다.
+
+          이 반복이 만드는 후보가 이 태그를 그대로 받고, 그 후보를 거래로 적을 때 폼의
+          태그 칸이 그것으로 채워진다. 회차마다 다시 고르게 하면 그 태그는 곧 비어 있게
+          된다 -- 반복에 적어 두는 뜻이 없어진다.
+
+          태그가 없는 가계부에는 칸째 두지 않는다. 빈 자리만 남는다.
+        */}
+        {lists.tags.length > 0 ? (
+          <Field label={t('tags.pick')}>
+            <div className="flex flex-wrap gap-2">
+              {lists.tags
+                .filter((tag) => tag.isActive)
+                .map((tag) => {
+                  const on = values.tagIds.includes(tag.id);
+                  return (
+                    <button
+                      key={tag.id}
+                      type="button"
+                      onClick={() =>
+                        set(
+                          'tagIds',
+                          on
+                            ? values.tagIds.filter((id) => id !== tag.id)
+                            : [...values.tagIds, tag.id],
+                        )
+                      }
+                      className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm ${
+                        on
+                          ? 'border-blue-600 bg-blue-50 text-blue-700'
+                          : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      {tag.color ? (
+                        <span
+                          className="h-2 w-2 rounded-full"
+                          style={{ backgroundColor: tag.color }}
+                        />
+                      ) : null}
+                      {tag.name}
+                    </button>
+                  );
+                })}
+            </div>
+          </Field>
+        ) : null}
+
         {error ? <p className="rounded bg-red-50 p-3 text-sm text-red-800">{error}</p> : null}
 
         {/*
@@ -463,6 +522,7 @@ function toBody(values: FormValues): RecurringRuleDto.Body {
     merchant: values.description.trim() || null,
     personId: values.personId || null,
     categoryId: values.categoryId || null,
+    tagIds: values.tagIds,
     accountId: methodKind === 'account' ? methodId : null,
     cardId: methodKind === 'card' ? methodId : null,
   };

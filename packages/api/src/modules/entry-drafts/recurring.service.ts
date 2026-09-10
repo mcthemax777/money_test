@@ -31,7 +31,10 @@ import { badRequest } from '@/common/app-error';
 import { clientId } from '@/common/client-id';
 import { toOptionalMoney } from '@/common/money';
 
-type RuleRow = Prisma.RecurringRuleGetPayload<{}>;
+/** 태그까지 함께 읽은 규칙 한 줄. 화면에 나갈 때 그 id 만 배열로 펴 준다. */
+type RuleRow = Prisma.RecurringRuleGetPayload<{
+  include: { tags: { select: { tagId: true } } };
+}>;
 
 /** 후보가 담을 수 있는 갈래. 잔액 조정은 사람이 적는 것이 아니라 여기 없다. */
 const KINDS = ['expense', 'income', 'transfer', 'card_payment'] as const;
@@ -49,6 +52,8 @@ export class RecurringService {
 
     const rows = await this.prisma.recurringRule.findMany({
       where: { projectId },
+      // 태그는 다리 표에 있다. 줄마다 따로 물으면 규칙 수만큼 조회가 늘어난다.
+      include: { tags: { select: { tagId: true } } },
       // 켜져 있는 것이 위다. 꺼 둔 것은 지금 아무 일도 하지 않는다.
       orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }],
     });
@@ -108,7 +113,10 @@ export class RecurringService {
     }
     this.checkSchedule(dto);
 
+    const tagIds = await this.checkTags(projectId, dto.tagIds);
+
     const rule = await this.prisma.recurringRule.create({
+      include: { tags: { select: { tagId: true } } },
       data: {
         id: clientId(dto.id, '반복 식별자'),
         projectId,
@@ -124,6 +132,7 @@ export class RecurringService {
         accountId: dto.accountId ?? null,
         cardId: dto.cardId ?? null,
         installmentMonths: toOptionalMonths(dto.installmentMonths),
+        ...(tagIds ? { tags: { create: tagIds.map((tagId) => ({ tagId })) } } : {}),
         createdByUserId: userId,
       },
     });
@@ -179,7 +188,24 @@ export class RecurringService {
       data.installmentMonths = toOptionalMonths(dto.installmentMonths);
     }
 
-    const updated = await this.prisma.recurringRule.update({ where: { id }, data });
+    /*
+     * 태그는 준 배열로 통째로 갈아 끼운다.
+     *
+     * 생략과 빈 배열을 가른다 -- 생략은 "그대로 둔다", 빈 배열은 "전부 뗀다" 다.
+     * 전표의 태그 저장과 같은 규칙이다(`ledger.service` 의 saveTags).
+     */
+    const tagIds = 'tagIds' in dto ? await this.checkTags(rule.projectId, dto.tagIds) : null;
+
+    const updated = await this.prisma.recurringRule.update({
+      where: { id },
+      include: { tags: { select: { tagId: true } } },
+      data: {
+        ...data,
+        ...(tagIds
+          ? { tags: { deleteMany: {}, create: tagIds.map((tagId) => ({ tagId })) } }
+          : {}),
+      },
+    });
 
     // 껐다 켜거나 일정을 앞당겨 밀린 회차가 생겼으면, 화면이 목록을 다시 읽을 때 올린다.
     const today = zonedDateKey(new Date(), project.timezone);
@@ -200,7 +226,10 @@ export class RecurringService {
   }
 
   private async find(id: string, userId: string, role?: 'editor'): Promise<RuleRow> {
-    const rule = await this.prisma.recurringRule.findUnique({ where: { id } });
+    const rule = await this.prisma.recurringRule.findUnique({
+      where: { id },
+      include: { tags: { select: { tagId: true } } },
+    });
     if (!rule) throw new NotFoundException('반복 등록을 찾을 수 없습니다.');
 
     await this.projectAccess.resolveAndVerifyProjectId(userId, rule.projectId, role);
@@ -242,6 +271,31 @@ export class RecurringService {
       timeOfDay:
         frequency === 'none' ? null : ((schedule as RecurringRuleDto.Body).timeOfDay ?? null),
     };
+  }
+
+  /**
+   * 이 프로젝트의 태그인가. 아니면 거절한다.
+   *
+   * 남의 프로젝트 태그를 그대로 심으면 다리 표의 외래 키는 통과한다 -- 그 태그가
+   * 실재하기 때문이다. 그러면 이 가계부의 반복이 남의 태그를 들고 있게 되고, 그 규칙이
+   * 만든 후보를 거래로 적을 때 전표 쪽 검사(TAG_NOT_IN_PROJECT)가 그때야 막는다.
+   *
+   * 준 것이 없으면 null 을 돌려준다. 부르는 쪽이 "건드리지 않는다" 로 읽는다.
+   */
+  private async checkTags(projectId: string, tagIds?: string[]): Promise<string[] | null> {
+    if (tagIds === undefined) return null;
+
+    const unique = [...new Set(tagIds)];
+    if (unique.length === 0) return [];
+
+    const found = await this.prisma.tag.findMany({
+      where: { id: { in: unique }, projectId },
+      select: { id: true },
+    });
+    if (found.length !== unique.length) {
+      throw badRequest('TAG_NOT_IN_PROJECT', '이 프로젝트에 없는 태그가 포함되어 있습니다.');
+    }
+    return unique;
   }
 
   private checkKind(value: string): (typeof KINDS)[number] {
@@ -308,6 +362,7 @@ function toResponse(
     accountId: rule.accountId,
     cardId: rule.cardId,
     installmentMonths: rule.installmentMonths,
+    tagIds: rule.tags.map((row) => row.tagId),
     createdAt: rule.createdAt.toISOString(),
     updatedAt: rule.updatedAt.toISOString(),
     // 꺼 둔 반복은 아무 날도 오지 않는다.

@@ -38,7 +38,13 @@ const STATUSES = ['pending', 'registered', 'dismissed'] as const;
 /** 후보가 담을 수 있는 갈래. 잔액 조정은 사람이 적는 것이 아니라 여기 없다. */
 const KINDS = ['expense', 'income', 'transfer', 'card_payment'] as const;
 
-type DraftRow = Prisma.EntryDraftGetPayload<{}>;
+/** 태그까지 함께 읽은 후보 한 줄. 화면에 나갈 때 그 id 만 배열로 펴 준다. */
+type DraftRow = Prisma.EntryDraftGetPayload<{
+  include: { tags: { select: { tagId: true } } };
+}>;
+
+/** 후보를 읽을 때마다 같이 읽는 것. 목록·상세·만들기가 같은 모양이어야 한다. */
+const WITH_TAGS = { tags: { select: { tagId: true } } } as const;
 
 @Injectable()
 export class EntryDraftsService {
@@ -69,6 +75,7 @@ export class EntryDraftsService {
 
     const rows = await this.prisma.entryDraft.findMany({
       where: { projectId, ...(source ? { source } : {}), ...(status ? { status } : {}) },
+      include: WITH_TAGS,
       // 새로 온 것이 위다. 알림은 방금 결제한 것이 대개 가장 먼저 찾는 것이다.
       orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
       take: Math.min(Math.max(1, Number(query.limit) || DEFAULT_LIMIT), 1000),
@@ -129,6 +136,14 @@ export class EntryDraftsService {
         throw badRequest('DRAFT_RAW_TEXT_REQUIRED', '읽은 원문이 없습니다.');
       }
 
+      /*
+       * 태그. 반복에서 온 후보만 들고 온다(그 규칙의 태그다).
+       *
+       * 남의 프로젝트 태그를 막는다 -- 다리 표의 외래 키는 그 태그가 실재하므로
+       * 통과하고, 그 후보를 거래로 적을 때 전표 쪽 검사가 그때야 거절한다.
+       */
+      const tagIds = await this.checkTags(projectId, item.tagIds);
+
       const data: Prisma.EntryDraftUncheckedCreateInput = {
         id: clientId(item.id, '후보 식별자'),
         projectId,
@@ -153,6 +168,7 @@ export class EntryDraftsService {
         // 위 검사를 지난 값이다. 반복이 아닌 후보에는 오지 않는다.
         recurringRuleId: item.source === 'recurring' ? (item.recurringRuleId ?? null) : null,
         createdByUserId: userId,
+        ...(tagIds ? { tags: { create: tagIds.map((tagId) => ({ tagId })) } } : {}),
       };
 
       /*
@@ -162,7 +178,7 @@ export class EntryDraftsService {
        * 끼어들어 둘 다 "없다"로 읽는다. 유일 제약이 잡아 주는 것을 그대로 쓴다.
        */
       try {
-        created.push(await this.prisma.entryDraft.create({ data }));
+        created.push(await this.prisma.entryDraft.create({ data, include: WITH_TAGS }));
       } catch (error) {
         if (isDedupeConflict(error)) {
           skipped += 1;
@@ -301,7 +317,21 @@ export class EntryDraftsService {
       data.registeredEntryId = entryId;
     }
 
-    const updated = await this.prisma.entryDraft.update({ where: { id }, data });
+    /*
+     * 태그는 준 배열로 통째로 갈아 끼운다. 생략은 "그대로 둔다", 빈 배열은 "전부 뗀다".
+     */
+    const tagIds = 'tagIds' in dto ? await this.checkTags(draft.projectId, dto.tagIds) : null;
+
+    const updated = await this.prisma.entryDraft.update({
+      where: { id },
+      include: WITH_TAGS,
+      data: {
+        ...data,
+        ...(tagIds
+          ? { tags: { deleteMany: {}, create: tagIds.map((tagId) => ({ tagId })) } }
+          : {}),
+      },
+    });
     return toResponse(updated);
   }
 
@@ -347,7 +377,7 @@ export class EntryDraftsService {
 
   /** 그 후보를 볼 수 있는가. 프로젝트 권한을 함께 확인한다. */
   private async find(id: string, userId: string, role?: 'editor'): Promise<DraftRow> {
-    const draft = await this.prisma.entryDraft.findUnique({ where: { id } });
+    const draft = await this.prisma.entryDraft.findUnique({ where: { id }, include: WITH_TAGS });
     if (!draft) throw new NotFoundException('후보를 찾을 수 없습니다.');
 
     await this.projectAccess.resolveAndVerifyProjectId(userId, draft.projectId, role);
@@ -374,6 +404,28 @@ export class EntryDraftsService {
     }
     return value as (typeof KINDS)[number];
   }
+
+  /**
+   * 이 프로젝트의 태그인가. 아니면 거절한다. 준 것이 없으면 null (건드리지 않는다).
+   *
+   * 반복 쪽과 같은 검사다(`recurring.service`). 두 곳에서 각자 보는 것은 두 길이
+   * 따로이기 때문이다 -- 규칙에 심을 때와 후보에 심을 때다.
+   */
+  private async checkTags(projectId: string, tagIds?: string[]): Promise<string[] | null> {
+    if (tagIds === undefined) return null;
+
+    const unique = [...new Set(tagIds)];
+    if (unique.length === 0) return [];
+
+    const found = await this.prisma.tag.findMany({
+      where: { id: { in: unique }, projectId },
+      select: { id: true },
+    });
+    if (found.length !== unique.length) {
+      throw badRequest('TAG_NOT_IN_PROJECT', '이 프로젝트에 없는 태그가 포함되어 있습니다.');
+    }
+    return unique;
+  }
 }
 
 /** 와이어로 나가는 모양. 금액과 날짜를 문자열로 편다. */
@@ -397,6 +449,7 @@ function toResponse(row: DraftRow): EntryDraftDto.Response {
     categoryId: row.categoryId,
     accountId: row.accountId,
     cardId: row.cardId,
+    tagIds: row.tags.map((tag) => tag.tagId),
     confidence: row.confidence,
     parser: row.parser,
     dedupeKey: row.dedupeKey,

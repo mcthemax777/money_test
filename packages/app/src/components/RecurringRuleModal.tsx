@@ -20,10 +20,10 @@ import {
 import { todayKey } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useProjectTimeZone } from '@money/core/store/project';
-import type { Account, Card, Category, Person } from '@money/core/lib/types';
+import type { Account, Card, Category, Person, Tag } from '@money/core/lib/types';
 
 import DatePickerPanel from './DatePickerPanel';
-import { Chips, Field, Select } from './FormFields';
+import { Chip, Chips, Field, Select } from './FormFields';
 import Modal from './Modal';
 
 const FREQUENCIES: Array<{ id: RecurringFrequency; labelKey: MessageKey }> = [
@@ -63,6 +63,8 @@ interface FormValues {
   timeOfDay: string;
   personId: string;
   categoryId: string;
+  /** 붙일 태그. 여러 개를 고른다 (다른 칸과 달리 하나가 아니다). */
+  tagIds: string[];
   /** "account:id" 또는 "card:id". 거래 폼과 같은 규칙이다. */
   method: string;
 }
@@ -83,6 +85,7 @@ function emptyForm(timeZone: string): FormValues {
     timeOfDay: '',
     personId: '',
     categoryId: '',
+    tagIds: [],
     method: '',
   };
 }
@@ -102,6 +105,14 @@ function formOf(rule: RecurringRuleDto.Response, timeZone: string): FormValues {
     timeOfDay: rule.timeOfDay ?? '',
     personId: rule.personId ?? '',
     categoryId: rule.categoryId ?? '',
+    /*
+     * 옛 서버는 이 칸을 실어 보내지 않는다.
+     *
+     * 앱은 기기에 깔린 채로 몇 주를 지내고 서버는 그 사이에 배포된다. 순서가 뒤집힌
+     * 동안(새 앱 · 옛 서버) 이 값이 없는데, 그대로 두면 아래 알약이 undefined 에
+     * includes 를 불러 팝업이 터진다.
+     */
+    tagIds: rule.tagIds ?? [],
     method: rule.cardId ? `card:${rule.cardId}` : rule.accountId ? `account:${rule.accountId}` : '',
   };
 }
@@ -117,7 +128,7 @@ export default function RecurringRuleModal({
   isOpen: boolean;
   /** 고칠 반복. null 이면 새로 만든다. */
   rule: RecurringRuleDto.Response | null;
-  lists: { accounts: Account[]; cards: Card[]; categories: Category[]; people: Person[] };
+  lists: { accounts: Account[]; cards: Card[]; categories: Category[]; people: Person[]; tags: Tag[] };
   onClose: () => void;
   onSave: (body: RecurringRuleDto.Body) => Promise<boolean>;
   onDelete: (id: string) => Promise<boolean>;
@@ -411,11 +422,19 @@ export default function RecurringRuleModal({
           </Field>
         )}
 
+        {/*
+          목록이 긴 세 칸은 **고르면 나머지를 접는다**(`collapse`). 다시 누르면 풀린다.
+
+          거래 추가 팝업이 같은 칸을 그렇게 받는다. 다 펼쳐 두면 결제수단 열 몇 개와
+          분류 스무 개가 화면을 채워, 답한 칸이 아직 답하지 않은 칸을 밀어낸다.
+          같은 것을 고르는 자리가 팝업마다 다르게 움직이면 그 둘이 다른 것으로 읽힌다.
+        */}
         <Field label={t('editor.method')}>
           <Chips
             options={methodOptions}
             selected={values.method}
             onSelect={(value) => set('method', value)}
+            collapse
           />
         </Field>
 
@@ -427,6 +446,7 @@ export default function RecurringRuleModal({
             ]}
             selected={values.categoryId}
             onSelect={(value) => set('categoryId', value)}
+            collapse
           />
         </Field>
 
@@ -440,8 +460,44 @@ export default function RecurringRuleModal({
             ]}
             selected={values.personId}
             onSelect={(value) => set('personId', value)}
+            collapse
           />
         </Field>
+
+        {/*
+          태그. 여러 개를 고르는 유일한 칸이라 `Chips` 를 쓰지 않는다 -- 그것은 하나만
+          고른다. 접지도 않는다. 무엇이 켜져 있는지 한눈에 보여야 하는 값이다.
+
+          이 반복이 만드는 후보가 이 태그를 그대로 받고, 그 후보를 거래로 적을 때 폼의
+          태그 칸이 그것으로 채워진다. 회차마다 다시 고르게 하면 그 태그는 곧 비어 있게
+          된다 -- 반복에 적어 두는 뜻이 없어진다.
+
+          태그가 없는 가계부에는 칸째 두지 않는다. 빈 자리만 남는다.
+        */}
+        {lists.tags.length > 0 ? (
+          <Field label={t('tags.pick')}>
+            <View className="flex-row flex-wrap items-center gap-2">
+              {lists.tags
+                .filter((tag) => tag.isActive)
+                .map((tag) => (
+                  <Chip
+                    key={tag.id}
+                    label={tag.name}
+                    color={tag.color}
+                    selected={values.tagIds.includes(tag.id)}
+                    onPress={() =>
+                      set(
+                        'tagIds',
+                        values.tagIds.includes(tag.id)
+                          ? values.tagIds.filter((id) => id !== tag.id)
+                          : [...values.tagIds, tag.id],
+                      )
+                    }
+                  />
+                ))}
+            </View>
+          </Field>
+        ) : null}
 
         {error ? (
           <View className="rounded-lg bg-red-50 p-3">
@@ -520,6 +576,7 @@ function toBody(values: FormValues): RecurringRuleDto.Body {
     merchant: values.description.trim() || null,
     personId: values.personId || null,
     categoryId: values.categoryId || null,
+    tagIds: values.tagIds,
     accountId: methodKind === 'account' ? methodId : null,
     cardId: methodKind === 'card' ? methodId : null,
   };

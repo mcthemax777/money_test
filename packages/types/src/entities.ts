@@ -466,6 +466,14 @@ export interface EntryDraft {
    */
   dedupeKey: string;
 
+  /**
+   * 붙일 태그. 반복에서 온 후보는 그 규칙의 태그를 그대로 받는다.
+   *
+   * 알림·캡처에서는 비어 있다 -- 문구에서 태그를 읽어 낼 방법이 없다. 등록할 때
+   * 폼의 태그 칸이 이 값으로 채워지고, 사람이 거기서 더하거나 뺀다.
+   */
+  tagIds: string[];
+
   /** 등록해서 만들어진 거래. 등록 전에는 null 이다. */
   registeredEntryId: string | null;
   /** 이 후보를 만든 반복 등록. 알림·캡처에서 온 것은 null 이다. */
@@ -525,6 +533,8 @@ export interface RecurringRule {
   accountId: string | null;
   cardId: string | null;
   installmentMonths: number | null;
+  /** 이 반복이 만드는 후보에 붙일 태그. */
+  tagIds: string[];
 
   createdAt: IsoDateString;
   updatedAt: IsoDateString;

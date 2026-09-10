@@ -22,6 +22,7 @@ import {
 } from '@money/types';
 
 import { manualDraftItem, recurringDraftItems } from '../src/lib/recurring-drafts';
+import { entryFormFromDraft } from '../src/data/entry-form';
 
 let fail = 0;
 function eq(label: string, actual: unknown, expected: unknown) {
@@ -298,6 +299,78 @@ console.log('\n── 주기 없음 ──');
 
   const other = manualDraftItem(manual(), timeZone);
   eq('두 번 누르면 열쇠가 다르다', one.dedupeKey !== other.dedupeKey, true);
+}
+
+/*
+ * 태그가 규칙에서 후보로 그대로 넘어간다.
+ *
+ * 여기서 끊기면 사람이 규칙에 한 번 적어 둔 태그를 회차마다 다시 골라야 한다 --
+ * 반복에 적어 두는 뜻이 없어진다. 그 뒤(후보 -> 폼)는 `entryFormFromDraft` 가 잇는다.
+ */
+console.log('\n── 태그 물려주기 ──');
+{
+  const tagged = (extra: Partial<RecurringRuleDto.Response> = {}): RecurringRuleDto.Response =>
+    ({
+      id: 'rule5',
+      isActive: true,
+      frequency: 'monthly',
+      everyDays: null,
+      dayOfMonth: 3,
+      month: null,
+      startDate: '2026-09-01',
+      endDate: null,
+      timeOfDay: null,
+      kind: 'expense',
+      amount: '4500',
+      currency: 'KRW',
+      description: '점심 도시락',
+      merchant: '점심 도시락',
+      personId: null,
+      categoryId: 'cat1',
+      accountId: null,
+      cardId: 'card1',
+      installmentMonths: null,
+      tagIds: ['t1', 't2'],
+      lastMadeOn: null,
+      nextRunOn: null,
+      ...extra,
+    }) as RecurringRuleDto.Response;
+
+  const scheduled = recurringDraftItems([tagged()], '2026-09-03', 'Asia/Seoul');
+  eq('밀린 회차에 태그가 붙는다', scheduled[0]?.tagIds?.join(','), 't1,t2');
+
+  const pressed = manualDraftItem(tagged({ frequency: 'none' }), 'Asia/Seoul');
+  eq('손으로 누른 회차에도 붙는다', pressed.tagIds?.join(','), 't1,t2');
+
+  eq(
+    '태그가 없으면 빈 배열',
+    manualDraftItem(tagged({ frequency: 'none', tagIds: [] }), 'Asia/Seoul').tagIds?.length,
+    0,
+  );
+
+  /*
+   * 후보 -> 폼. 여기까지 이어져야 등록할 때 태그 칸이 채워진다.
+   *
+   * 실제 폼은 갈래·통화 따라 더 많은 것을 채우는데, 여기서 보는 것은 태그 한 자리다.
+   */
+  const form = entryFormFromDraft(
+    {
+      kind: 'expense',
+      amount: '4500',
+      currency: 'KRW',
+      occurredAt: '2026-09-03T03:00:00.000Z',
+      merchant: null,
+      description: '점심 도시락',
+      installmentMonths: null,
+      personId: null,
+      categoryId: 'cat1',
+      accountId: null,
+      cardId: 'card1',
+      tagIds: ['t1', 't2'],
+    },
+    { timeZone: 'Asia/Seoul', ledgerCurrency: 'KRW', personId: '' },
+  );
+  eq('폼의 태그 칸이 채워진다', form.tagIds.join(','), 't1,t2');
 }
 
 console.log(fail === 0 ? '\n전부 통과' : `\n${fail}건 실패`);

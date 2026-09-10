@@ -726,6 +726,8 @@ export namespace EntryDraftDto {
     categoryId?: string | null;
     accountId?: string | null;
     cardId?: string | null;
+    /** 붙일 태그. 반복에서 온 후보만 채운다 (그 규칙의 태그다). */
+    tagIds?: string[];
     confidence?: number;
     parser?: string | null;
     /**
@@ -768,6 +770,8 @@ export namespace EntryDraftDto {
     categoryId?: string | null;
     accountId?: string | null;
     cardId?: string | null;
+    /** 준 배열로 통째로 갈아 끼운다. 생략하면 건드리지 않는다. */
+    tagIds?: string[];
     status?: EntryDraftStatus;
     /** 등록으로 만들어진 거래. status 를 registered 로 바꿀 때 함께 준다. */
     registeredEntryId?: string | null;
@@ -809,6 +813,13 @@ export namespace RecurringRuleDto {
     accountId?: string | null;
     cardId?: string | null;
     installmentMonths?: number | null;
+    /**
+     * 이 반복이 만드는 후보에 붙일 태그.
+     *
+     * 준 배열로 통째로 갈아 끼운다. 고치기에서 생략하면 건드리지 않는다 -- 빈 배열은
+     * "전부 뗀다" 이고 생략은 "그대로 둔다" 다.
+     */
+    tagIds?: string[];
   }
 
   export interface CreateRequest extends Body {

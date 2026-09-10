@@ -144,7 +144,15 @@ export class SyncService {
          * 한다. 따로 조회하게 두면 화면마다 "언제 다시 물을지"를 정하게 되어 같은
          * 보관함이 자리마다 다르게 보인다.
          */
-        tx.entryDraft.findMany({ where: { projectId, updatedVersion: window }, ...page }),
+        tx.entryDraft.findMany({
+          where: { projectId, updatedVersion: window },
+          /*
+           * 태그 연결은 후보에 실어 함께 보낸다. 전표와 같은 이유다 -- 이 다리 표에는
+           * 번호가 없어 따로 실을 수 없다. 태그 자신(이름·색)은 위의 `tags` 로 온다.
+           */
+          include: { tags: { select: { tagId: true } } },
+          ...page,
+        }),
         tx.tombstone.findMany({
           where: { projectId, deletedVersion: window },
           orderBy: { deletedVersion: 'asc' },
@@ -212,9 +220,10 @@ export class SyncService {
           assetValuations: within(assetValuations),
           installmentPlans: within(installmentPlans),
           // 금액은 문자열로 편다. 기기 사본의 금액 컬럼이 TEXT 다 (schema.ts 의 이유).
-          entryDrafts: within(entryDrafts).map((row) => ({
+          entryDrafts: within(entryDrafts).map(({ tags, ...row }) => ({
             ...row,
             amount: row.amount ? row.amount.toString() : null,
+            tagIds: tags.map((tag) => tag.tagId),
           })),
         },
         tombstones: (hasMore

@@ -18,7 +18,7 @@
  */
 
 /** 스키마가 바뀌면 올린다. 다르면 사본을 버리고 처음부터 다시 받는다. */
-export const SCHEMA_VERSION = 13;
+export const SCHEMA_VERSION = 14;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -317,6 +317,18 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
    *
    * 금액은 다른 표와 같은 이유로 TEXT 다.
    */
+  /*
+   * 후보에 붙은 태그. 전표의 entry_tag 와 같은 짜임이다.
+   *
+   * 이 표에도 번호가 없어 델타로 따로 도착하지 않는다. 후보에 실려 온 목록이 곧 그
+   * 후보의 태그 전부이고, 후보가 바뀌면 그 후보의 행을 통째로 지우고 다시 넣는다.
+   */
+  `CREATE TABLE IF NOT EXISTS entry_draft_tag (
+     draftId TEXT NOT NULL,
+     tagId   TEXT NOT NULL,
+     PRIMARY KEY (draftId, tagId)
+   )`,
+
   `CREATE TABLE IF NOT EXISTS entry_draft (
      id                TEXT PRIMARY KEY,
      projectId         TEXT NOT NULL,
@@ -428,6 +440,7 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
    * 것을 그대로 담을 수 있어야 한다 (2026-09-09 에 실제로 동기화가 멈췄다).
    */
   `CREATE INDEX IF NOT EXISTS draft_dedupe_idx ON entry_draft (projectId, dedupeKey)`,
+  `CREATE INDEX IF NOT EXISTS draft_tag_idx ON entry_draft_tag (tagId)`,
   `CREATE INDEX IF NOT EXISTS draft_op_queue_idx ON draft_op (projectId, createdAt)`,
 ];
 
@@ -440,6 +453,7 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
  */
 export const ALL_TABLES: readonly string[] = [
   'entry_draft',
+  'entry_draft_tag',
   'installment_plan',
   'asset_valuation',
   'posting',

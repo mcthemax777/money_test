@@ -267,6 +267,8 @@ export function entryFormFromDraft(
     categoryId: string | null;
     accountId: string | null;
     cardId: string | null;
+    /** 붙일 태그. 반복에서 온 후보만 채워 온다. */
+    tagIds?: string[];
   },
   options: EntryFormDefaults,
 ): EntryFormValues {
@@ -309,6 +311,14 @@ export function entryFormFromDraft(
     description: draft.description ?? draft.merchant ?? '',
     categoryId: kind === 'expense' || kind === 'income' ? draft.categoryId ?? '' : '',
     personId: draft.personId ?? base.personId,
+    /*
+     * 태그. 반복에 붙여 둔 것이 여기까지 온다.
+     *
+     * 지운 태그의 id 가 섞일 자리는 없다 -- 서버에서 다리 표로 들고 있어 태그를 지우면
+     * 그 연결이 함께 사라진다. 그러지 않으면 저장할 때 TAG_NOT_IN_PROJECT 로 거절당하고,
+     * 사람은 폼에서 그 태그를 볼 수 없어 무엇을 빼야 할지 알 수 없다.
+     */
+    tagIds: draft.tagIds ?? base.tagIds,
     installmentMonths:
       kind === 'expense' && draft.installmentMonths ? String(draft.installmentMonths) : '',
     ...(hasWhen

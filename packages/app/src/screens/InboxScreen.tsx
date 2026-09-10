@@ -31,7 +31,7 @@ import { useRecurringRules } from '@money/core/hooks/useRecurringRules';
 import { useCanEdit, useProject, useProjectTimeZone } from '@money/core/store/project';
 import { homeDataPort } from '@money/core/data/home-port';
 import { draftNeedsFix } from '@money/core/lib/draft-collect';
-import type { Account, Card, Category, Person } from '@money/core/lib/types';
+import type { Account, Card, Category, Person, Tag } from '@money/core/lib/types';
 
 import EntryEditor from '../components/EntryEditor';
 import PageHeader from '../components/PageHeader';
@@ -122,7 +122,8 @@ export default function InboxScreen() {
     cards: Card[];
     categories: Category[];
     people: Person[];
-  }>({ accounts: [], cards: [], categories: [], people: [] });
+    tags: Tag[];
+  }>({ accounts: [], cards: [], categories: [], people: [], tags: [] });
   useEffect(() => {
     if (!projectId) return;
 
@@ -130,11 +131,12 @@ export default function InboxScreen() {
     void (async () => {
       const port = homeDataPort();
       try {
-        const [accounts, cards, categories, people] = await Promise.all([
+        const [accounts, cards, categories, people, tags] = await Promise.all([
           port.getAccountsV2(projectId),
           port.getCards(projectId),
           port.getCategories(projectId),
           port.getPeople(projectId),
+          port.getTags(projectId),
         ]);
         if (!alive) return;
         setLists({
@@ -142,6 +144,7 @@ export default function InboxScreen() {
           cards: cards ?? [],
           categories: categories ?? [],
           people: people ?? [],
+          tags: tags ?? [],
         });
       } catch {
         // 목록을 읽지 못해도 후보는 보여야 한다. 이름 자리만 빈다.

@@ -160,6 +160,13 @@ function draftItem(
     categoryId: rule.categoryId,
     accountId: rule.accountId,
     cardId: rule.cardId,
+    /*
+     * 태그를 그대로 물려준다.
+     *
+     * 반복에 붙여 둔 태그가 후보를 지나 전표까지 이어져야 한다 -- 사람이 규칙에 한 번
+     * 적어 둔 것을 회차마다 다시 고르게 하면 그 태그는 곧 비어 있게 된다.
+     */
+    tagIds: rule.tagIds,
     // 사람이 적어 둔 값이라 읽어 낸 것과 달리 의심할 자리가 없다.
     confidence: 100,
     parser: 'recurring',

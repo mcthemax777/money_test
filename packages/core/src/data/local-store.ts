@@ -756,6 +756,20 @@ export class LocalStore {
           updatedAt: asIso(row.updatedAt),
           updatedVersion: asInt(row.updatedVersion),
         });
+
+        /*
+         * 태그 연결도 전표와 같이 통째로 갈아 끼운다.
+         *
+         * 이 표에는 번호가 없어 따로 도착하지 않는다. 후보에 실려 온 목록이 곧 그
+         * 후보의 태그 전부다. 없으면 비운다.
+         */
+        await this.db.run(`DELETE FROM entry_draft_tag WHERE draftId = ?`, [String(row.id)]);
+        for (const tagId of (row.tagIds ?? []) as string[]) {
+          await this.db.run(`INSERT OR IGNORE INTO entry_draft_tag (draftId, tagId) VALUES (?, ?)`, [
+            String(row.id),
+            String(tagId),
+          ]);
+        }
       }
 
       for (const row of (changes.installmentPlans ?? []) as Row[]) {
@@ -1213,7 +1227,32 @@ export class LocalStore {
          ORDER BY COALESCE(occurredAt, createdAt) DESC, createdAt DESC`,
       params,
     );
-    return rows.map(toDraftResponse);
+
+    /*
+     * 태그를 한 번에 읽어 나눠 붙인다.
+     *
+     * 후보마다 물으면 목록 길이만큼 질의가 늘어난다 -- 보관함은 수십 건이 예사고,
+     * 그 조회는 네이티브를 그만큼 오간다.
+     */
+    const tags = await this.db.all<Row>(
+      `SELECT dt.draftId AS draftId, dt.tagId AS tagId
+         FROM entry_draft_tag dt
+         JOIN entry_draft d ON d.id = dt.draftId
+        WHERE d.projectId = ?`,
+      [projectId],
+    );
+    const byDraft = new Map<string, string[]>();
+    for (const row of tags) {
+      const draftId = String(row.draftId);
+      const list = byDraft.get(draftId);
+      if (list) list.push(String(row.tagId));
+      else byDraft.set(draftId, [String(row.tagId)]);
+    }
+
+    return rows.map((row) => ({
+      ...toDraftResponse(row),
+      tagIds: byDraft.get(String(row.id)) ?? [],
+    }));
   }
 
   /** 그 열쇠로 담은 후보가 이미 있는가. 기기가 담기 전에 스스로 본다. */
@@ -1241,6 +1280,8 @@ export class LocalStore {
   ): Promise<void> {
     await this.db.transaction(async () => {
       if (op === 'deleted') {
+        // 사본에는 외래 키가 없다. 다리 행을 함께 지우지 않으면 임자 없는 줄이 남는다.
+        await this.db.run(`DELETE FROM entry_draft_tag WHERE draftId = ?`, [draftId]);
         await this.db.run(`DELETE FROM entry_draft WHERE id = ?`, [draftId]);
       } else {
         await this.db.run(
@@ -1260,6 +1301,7 @@ export class LocalStore {
 
   /** 후보를 사본에 담는다. 서버에 올리는 일은 부르는 쪽이 한다. */
   async putDraft(draft: EntryDraftDto.Response): Promise<void> {
+    await this.putDraftTags(draft.id, draft.tagIds);
     await this.upsert('entry_draft', {
       id: draft.id,
       projectId: draft.projectId,
@@ -1288,6 +1330,17 @@ export class LocalStore {
       updatedAt: draft.updatedAt,
       updatedVersion: 0,
     });
+  }
+
+  /** 그 후보의 태그를 준 목록으로 갈아 끼운다. 델타와 담기가 함께 쓴다. */
+  private async putDraftTags(draftId: string, tagIds: string[] | undefined): Promise<void> {
+    await this.db.run(`DELETE FROM entry_draft_tag WHERE draftId = ?`, [draftId]);
+    for (const tagId of tagIds ?? []) {
+      await this.db.run(`INSERT OR IGNORE INTO entry_draft_tag (draftId, tagId) VALUES (?, ?)`, [
+        draftId,
+        tagId,
+      ]);
+    }
   }
 
   /** 아직 서버에 알리지 못한 후보 처리. 동기화가 이것을 비운다. */
@@ -2655,6 +2708,11 @@ function toDraftResponse(row: Row): EntryDraftDto.Response {
     dedupeKey: String(row.dedupeKey ?? ''),
     registeredEntryId: asText(row.registeredEntryId),
     recurringRuleId: asText(row.recurringRuleId),
+    /*
+     * 태그는 다리 표에 있다. 이 함수는 한 줄만 보므로 비워 두고, 부르는 쪽이 한 번에
+     * 읽어 붙인다(`draftRows`). 여기서 그때그때 물으면 줄마다 질의가 하나씩 늘어난다.
+     */
+    tagIds: [],
     createdAt: String(row.createdAt ?? ''),
     updatedAt: String(row.updatedAt ?? ''),
   };

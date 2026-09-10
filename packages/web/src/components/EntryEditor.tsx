@@ -994,6 +994,13 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       merchant: draft.merchant ?? '',
       mainCategoryId: type === 'transfer' ? '' : category.mainCategoryId,
       subCategoryId: type === 'transfer' ? '' : category.subCategoryId,
+      /*
+       * 태그. 반복에 붙여 둔 것이 후보를 지나 여기까지 온다.
+       *
+       * 알림·캡처 후보에는 비어 있다 -- 문구에서 태그를 읽어 낼 방법이 없다. 지운
+       * 태그의 id 가 섞일 자리는 없다(서버가 다리 표로 들고 있어 함께 사라진다).
+       */
+      tagIds: draft.tagIds ?? [],
       installmentMonths:
         type === 'expense' && draft.installmentMonths ? String(draft.installmentMonths) : '',
       ...(hasWhen

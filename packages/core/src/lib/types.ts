@@ -14,6 +14,7 @@ import type {
   CategoryDto,
   InstitutionDto,
   PersonDto,
+  TagDto,
 } from '@money/types';
 
 export type Account = AccountDto.Response;
@@ -22,6 +23,7 @@ export type Institution = InstitutionDto.Response;
 export type Card = CardDto.Response;
 export type Category = CategoryDto.Response;
 export type Person = PersonDto.Response;
+export type Tag = TagDto.Response;
 /** 카드 사용 현황. 남은 대금과 마감일 기준 주기별 사용액 */
 export type CardUsage = CardDto.UsageResponse;
 export type CardUsagePeriod = CardDto.UsagePeriod;
