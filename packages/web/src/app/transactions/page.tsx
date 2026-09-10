@@ -154,6 +154,15 @@ function CheckBox({
  * 세로로 쌓지 않는다. 금액과 건수를 제목 옆에 같이 두어 **한 줄 높이**로 끝낸다.
  */
 /**
+ * 금액 글자 크기. 년월 줄은 제목과 같은 15px, 안쪽 줄은 그보다 한 단 작다.
+ *
+ * 제목보다 작은 금액은 줄에서 뒤로 물러나 보인다. 년월 줄에서 먼저 읽는 것은 달 이름이
+ * 아니라 그 달에 얼마가 오갔는가라, 둘을 같은 크기로 둔다. 안쪽 줄은 제목도 14px 이라
+ * 금액도 그에 맞춘다.
+ */
+const AMOUNT_SIZE: Record<0 | 1, string> = { 0: 'text-[15px]', 1: 'text-sm' };
+
+/**
  * 요일 색. 토요일은 파랑, 일요일은 빨강, 나머지는 제목과 같은 먹색이다.
  *
  * 달력이 주말을 그렇게 적어 왔으니 같은 규칙을 쓴다. 표로 두는 것은 줄마다 도는
@@ -235,12 +244,16 @@ function Line({
         같은 자리에서 같은 뜻을 읽을 수 없다. 칸을 고정하면 없는 쪽은 빈 자리로
         남고 있는 쪽은 늘 제 자리에 선다.
       */}
-      <span className="flex w-[30%] shrink-0 justify-center overflow-hidden text-sm font-semibold tabular-nums">
+      <span
+        className={`flex w-[30%] shrink-0 justify-center overflow-hidden font-semibold tabular-nums ${AMOUNT_SIZE[depth]}`}
+      >
         {income > 0 ? (
           <span className="truncate text-green-600">+{formatCurrency(income, currency)}</span>
         ) : null}
       </span>
-      <span className="flex w-[30%] shrink-0 justify-end overflow-hidden text-sm font-semibold tabular-nums">
+      <span
+        className={`flex w-[30%] shrink-0 justify-end overflow-hidden font-semibold tabular-nums ${AMOUNT_SIZE[depth]}`}
+      >
         {expense > 0 ? (
           <span className="truncate text-red-600">-{formatCurrency(expense, currency)}</span>
         ) : income === 0 ? (
@@ -389,10 +402,27 @@ export default function TransactionsPage() {
       return <p className="px-3 py-3 text-sm text-gray-500">{t(emptyKey)}</p>;
     }
 
-    return rows.map((row: TransactionRow) => {
+    return rows.map((row: TransactionRow, index: number) => {
       const open = tx.isRowOpen(yearMonth, row.key);
+
+      /*
+       * 펴 둔 줄과 다음 줄 사이에 파란 선을 긋는다.
+       *
+       * 거래내역이 끝나는 자리와 다음 줄이 시작하는 자리가 맞붙어 있어, 선이 없으면
+       * 마지막 거래가 다음 줄에 딸린 것처럼 읽힌다. 테두리와 같은 파랑으로 두어 그
+       * 상자 안의 칸막이임을 보인다.
+       *
+       * 접힌 줄 사이에는 긋지 않는다. 그 줄들은 한 줄 높이로 나란히 서 있어 선을
+       * 넣으면 목록이 표가 된다 -- 나눌 것이 생기는 것은 사이에 거래내역이 끼어들
+       * 때뿐이다. 마지막 줄 뒤에도 긋지 않는다. 그 자리는 상자의 아래 변이다.
+       */
+      const divided = open && index < rows.length - 1;
+
       return (
-        <div key={`${tx.tab}-${row.key}`}>
+        <div
+          key={`${tx.tab}-${row.key}`}
+          className={divided ? 'border-b border-blue-300' : undefined}
+        >
           <Line
             depth={1}
             label={row.label}
@@ -877,7 +907,31 @@ export default function TransactionsPage() {
                   }
                   onClick={() => tx.cycleMonth(month.yearMonth)}
                 />
-                {level >= 1 ? <div className="unfold">{level2(month.yearMonth)}</div> : null}
+                {/*
+                    펼친 것을 파란 테두리로 두른다. "여기서 여기까지가 그 달의 것" 을
+                    네 변이 말한다.
+
+                    파랑으로 두는 것은 회색 테두리가 이 화면에서 걷어낸 상자와 같은
+                    색이어서다. 그 색으로 두르면 지운 상자가 되돌아온 것처럼 보이고,
+                    안에 든 거래내역의 흰 상자와도 겹으로 읽힌다. 파랑은 이 저장소에서
+                    "지금 고른 것" 을 가리키는 색이라(알약·단추), 펴 둔 달을 가리키는
+                    자리에 맞다.
+
+                    안에 든 것을 테두리 모양대로 잘라 낸다(overflow-hidden). 맨 아래
+                    거래내역은 흰 바탕에 모서리가 각져 있어, 그대로 두면 그 흰 사각이
+                    둥근 테두리의 아래 모서리를 덮는다. 마지막 줄에만 둥근 모서리를
+                    주는 방법도 있지만, 맨 아래에 오는 것이 그때그때 다르다 -- 거래내역
+                    일 때도 있고 안쪽 줄이나 "기다리는 중" 한 줄일 때도 있다. 자르는
+                    쪽이 무엇이 오든 맞는다.
+
+                    안쪽 여백은 두지 않는다. 줄이 스스로 px-3 을 가지고 있고, 세 겹의
+                    글자가 같은 자리에서 시작해야 한다 -- 테두리는 그 여백 안에 선다.
+                  */}
+                {level >= 1 ? (
+                  <div className="unfold mb-2 overflow-hidden rounded-lg border border-blue-300">
+                    {level2(month.yearMonth)}
+                  </div>
+                ) : null}
               </div>
             );
           })

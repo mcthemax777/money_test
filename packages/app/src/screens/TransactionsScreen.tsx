@@ -125,6 +125,15 @@ function CheckBox({
 }
 
 /**
+ * 금액 글자 크기. 년월 줄은 제목과 같은 15px, 안쪽 줄은 그보다 한 단 작다.
+ *
+ * 제목보다 작은 금액은 줄에서 뒤로 물러나 보인다. 년월 줄에서 먼저 읽는 것은 달 이름이
+ * 아니라 그 달에 얼마가 오갔는가라, 둘을 같은 크기로 둔다. 안쪽 줄은 제목도 14px 이라
+ * 금액도 그에 맞춘다.
+ */
+const AMOUNT_SIZE: Record<0 | 1, string> = { 0: 'text-[15px]', 1: 'text-sm' };
+
+/**
  * 2단·3단의 한 줄.
  *
  * 오른쪽에 수입과 지출을 나란히 적는다. 한쪽만 적으면 이체가 섞인 달에서 줄의 금액과
@@ -236,18 +245,21 @@ function LineView({
       */}
       <View className="w-[30%] shrink-0 flex-row justify-center">
         {income > 0 ? (
-          <Text numberOfLines={1} className="text-sm font-semibold text-green-600">
+          <Text
+            numberOfLines={1}
+            className={`font-semibold text-green-600 ${AMOUNT_SIZE[depth]}`}
+          >
             +{formatCurrency(income, currency)}
           </Text>
         ) : null}
       </View>
       <View className="w-[30%] shrink-0 flex-row justify-end">
         {expense > 0 ? (
-          <Text numberOfLines={1} className="text-sm font-semibold text-red-600">
+          <Text numberOfLines={1} className={`font-semibold text-red-600 ${AMOUNT_SIZE[depth]}`}>
             -{formatCurrency(expense, currency)}
           </Text>
         ) : income === 0 ? (
-          <Text className="text-sm text-gray-400">-</Text>
+          <Text className={`text-gray-400 ${AMOUNT_SIZE[depth]}`}>-</Text>
         ) : null}
       </View>
     </Pressable>
@@ -476,7 +488,7 @@ export default function TransactionsScreen() {
       return <Text className="px-3 py-3 text-sm text-gray-500">{t(emptyKey)}</Text>;
     }
 
-    return rows.map((row: TransactionRow) => {
+    return rows.map((row: TransactionRow, index: number) => {
       const open = tx.isRowOpen(yearMonth, row.key);
 
       /*
@@ -496,8 +508,24 @@ export default function TransactionsScreen() {
         return null;
       }
 
+      /*
+       * 펴 둔 줄과 다음 줄 사이에 파란 선을 긋는다.
+       *
+       * 거래내역이 끝나는 자리와 다음 줄이 시작하는 자리가 맞붙어 있어, 선이 없으면
+       * 마지막 거래가 다음 줄에 딸린 것처럼 읽힌다. 테두리와 같은 파랑으로 두어 그
+       * 상자 안의 칸막이임을 보인다.
+       *
+       * 접힌 줄 사이에는 긋지 않는다. 그 줄들은 한 줄 높이로 나란히 서 있어 선을
+       * 넣으면 목록이 표가 된다 -- 나눌 것이 생기는 것은 사이에 거래내역이 끼어들
+       * 때뿐이다. 마지막 줄 뒤에도 긋지 않는다. 그 자리는 상자의 아래 변이다.
+       */
+      const divided = open && index < rows.length - 1;
+
       return (
-        <View key={`${tx.tab}-${row.key}`}>
+        <View
+          key={`${tx.tab}-${row.key}`}
+          className={divided ? 'border-b border-blue-300' : undefined}
+        >
           <Line
             depth={1}
             label={row.label}
@@ -713,7 +741,31 @@ export default function TransactionsScreen() {
                   onToggle={toggleMonthRange}
                   onPress={unfoldMonth}
                 />
-                {level >= 1 ? <View>{level2(month.yearMonth)}</View> : null}
+                {/*
+                    펼친 것을 파란 테두리로 두른다. "여기서 여기까지가 그 달의 것" 을
+                    네 변이 말한다.
+
+                    파랑으로 두는 것은 회색 테두리가 이 화면에서 걷어낸 상자와 같은
+                    색이어서다. 그 색으로 두르면 지운 상자가 되돌아온 것처럼 보이고,
+                    안에 든 거래내역의 흰 상자와도 겹으로 읽힌다. 파랑은 이 저장소에서
+                    "지금 고른 것" 을 가리키는 색이라(알약·단추), 펴 둔 달을 가리키는
+                    자리에 맞다.
+
+                    안에 든 것을 테두리 모양대로 잘라 낸다(overflow-hidden). 맨 아래
+                    거래내역은 흰 바탕에 모서리가 각져 있어, 그대로 두면 그 흰 사각이
+                    둥근 테두리의 아래 모서리를 덮는다. 마지막 줄에만 둥근 모서리를
+                    주는 방법도 있지만, 맨 아래에 오는 것이 그때그때 다르다 -- 거래내역
+                    일 때도 있고 안쪽 줄이나 "기다리는 중" 한 줄일 때도 있다. 자르는
+                    쪽이 무엇이 오든 맞는다.
+
+                    안쪽 여백은 두지 않는다. 줄이 스스로 px-3 을 가지고 있고, 세 겹의
+                    글자가 같은 자리에서 시작해야 한다 -- 테두리는 그 여백 안에 선다.
+                  */}
+                {level >= 1 ? (
+                  <View className="mb-2 overflow-hidden rounded-lg border border-blue-300">
+                    {level2(month.yearMonth)}
+                  </View>
+                ) : null}
               </View>
             );
           })
