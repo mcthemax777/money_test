@@ -23,7 +23,7 @@ import { useProjectTimeZone } from '@money/core/store/project';
 import type { Account, Card, Category, Person, Tag } from '@money/core/lib/types';
 
 import DatePickerPanel from './DatePickerPanel';
-import { Chip, Chips, Field, Select } from './FormFields';
+import { CategoryChips, Chip, Chips, Field, Select } from './FormFields';
 import Modal from './Modal';
 
 const FREQUENCIES: Array<{ id: RecurringFrequency; labelKey: MessageKey }> = [
@@ -161,8 +161,17 @@ export default function RecurringRuleModal({
       category.isActive && category.type === (values.kind === 'income' ? 'income' : 'expense'),
   );
 
+  /*
+   * "고르지 않음" 알약을 두지 않는다.
+   *
+   * 아무것도 켜져 있지 않은 것이 곧 고르지 않은 상태다. 그것을 알약으로 한 번 더
+   * 말하면 "고르지 않음을 골랐다" 는 자리가 생기고, 목록의 첫 알약이 늘 그것이라
+   * 실제로 고를 것이 한 칸 밀린다.
+   *
+   * 고름을 푸는 길은 남아 있다 -- 접힌 알약(`collapse`)을 다시 누르면 풀리고 목록이
+   * 돌아온다. 웹은 <select> 라 빈 항목이 있어야 그 자리가 있다(그쪽은 그대로 둔다).
+   */
   const methodOptions = [
-    { value: '', label: t('inbox.ruleNotChosen') },
     ...lists.accounts
       .filter((account) => account.isActive)
       .map((account) => ({ value: `account:${account.id}`, label: account.name })),
@@ -438,26 +447,27 @@ export default function RecurringRuleModal({
           />
         </Field>
 
+        {/*
+          분류는 **대분류와 소분류를 갈라** 그린다. 거래 추가 팝업과 같은 것을 쓴다
+          (`CategoryChips`).
+
+          평평하게 늘어놓으면 "외식" 과 "생일" 이 나란히 서서 어느 대분류의 것인지
+          알 수 없고, 같은 대분류의 소분류가 여기저기 흩어져 보인다. 고르면 그것만
+          남기고 접는 일과 다시 눌러 푸는 일도 그 컴포넌트가 함께 한다.
+        */}
         <Field label={t('entryForm.category')}>
-          <Chips
-            options={[
-              { value: '', label: t('inbox.ruleNotChosen') },
-              ...categories.map((category) => ({ value: category.id, label: category.name })),
-            ]}
+          <CategoryChips
+            categories={categories}
             selected={values.categoryId}
             onSelect={(value) => set('categoryId', value)}
-            collapse
           />
         </Field>
 
         <Field label={t('editor.person')}>
           <Chips
-            options={[
-              { value: '', label: t('inbox.ruleNotChosen') },
-              ...lists.people
-                .filter((person) => person.isActive)
-                .map((person) => ({ value: person.id, label: person.name })),
-            ]}
+            options={lists.people
+              .filter((person) => person.isActive)
+              .map((person) => ({ value: person.id, label: person.name }))}
             selected={values.personId}
             onSelect={(value) => set('personId', value)}
             collapse
