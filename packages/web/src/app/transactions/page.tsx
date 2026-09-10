@@ -153,8 +153,17 @@ function CheckBox({
  *
  * 세로로 쌓지 않는다. 금액과 건수를 제목 옆에 같이 두어 **한 줄 높이**로 끝낸다.
  */
+/**
+ * 요일 색. 토요일은 파랑, 일요일은 빨강, 나머지는 제목과 같은 먹색이다.
+ *
+ * 달력이 주말을 그렇게 적어 왔으니 같은 규칙을 쓴다. 표로 두는 것은 줄마다 도는
+ * 자리라 조건을 두 번 견주지 않기 위해서다.
+ */
+const WEEKDAY_COLOR: Record<number, string> = { 0: 'text-red-600', 6: 'text-blue-600' };
+
 function Line({
   label,
+  weekday,
   meta,
   expense,
   income,
@@ -164,6 +173,8 @@ function Line({
   onClick,
 }: {
   label: string;
+  /** 날짜별 줄에서 일자 옆에 붙는 요일. 다른 탭에는 없다. */
+  weekday?: { label: string; day: number };
   /** 제목 오른쪽에 붙는 잔글씨. 건수나 통장 주인 이름이다. */
   meta?: string;
   expense: number;
@@ -171,7 +182,13 @@ function Line({
   open?: boolean;
   /** 고르는 중이면 왼쪽에 체크박스를 둔다. */
   check?: { checked: boolean; pending?: boolean; onToggle: () => void };
-  /** 0 이면 년월 줄, 1 이면 그 안의 줄. 왼쪽 여백으로 계층을 보인다. */
+  /**
+   * 0 이면 년월 줄, 1 이면 그 안의 줄.
+   *
+   * 여백은 가르지 않는다. 세 겹(년월·안쪽 줄·거래)이 모두 같은 자리에서 글자를
+   * 시작해야 목록을 위에서 아래로 훑을 때 눈이 좌우로 흔들리지 않는다. 계층은
+   * 글자 크기와 굵기가 알린다.
+   */
   depth: 0 | 1;
   onClick: () => void;
 }) {
@@ -182,9 +199,7 @@ function Line({
       type="button"
       onClick={onClick}
       aria-expanded={Boolean(open)}
-      className={`flex w-full items-center gap-2 border-b border-gray-100 py-2 pr-3 text-left hover:bg-gray-50 ${
-        depth === 0 ? 'pl-3' : 'bg-gray-50/50 pl-6'
-      }`}
+      className="flex w-full items-center gap-2 px-3 py-2 text-left"
     >
       {check ? (
         <CheckBox checked={check.checked} pending={check.pending} onToggle={check.onToggle} />
@@ -201,17 +216,36 @@ function Line({
         >
           {label}
         </span>
+        {/*
+          요일. 일자 바로 옆에 붙여 "9 (토)" 로 읽히게 한다. 잔글씨(건수)보다 앞에
+          두는 것은 요일이 날짜의 일부이기 때문이다.
+        */}
+        {weekday ? (
+          <span className={`shrink-0 text-sm ${WEEKDAY_COLOR[weekday.day] ?? 'text-gray-900'}`}>
+            ({weekday.label})
+          </span>
+        ) : null}
         {meta ? <span className="shrink-0 text-xs text-gray-500">{meta}</span> : null}
       </span>
-      {/* 수입이 왼쪽, 지출이 오른쪽. 없는 쪽은 적지 않는다. */}
-      <span className="flex shrink-0 items-baseline gap-2 text-sm font-semibold tabular-nums">
+      {/*
+        들어온 돈은 줄 가운데, 나간 돈은 오른쪽 끝. 둘에게 제 칸을 주고 못 박는다.
+
+        한 덩어리로 두면 두 숫자가 서로 옆에 붙어 어느 쪽이 들어온 돈인지 색으로만
+        갈린다. 한쪽이 없는 달에는 남은 숫자가 오른쪽으로 미끄러져, 줄을 훑을 때
+        같은 자리에서 같은 뜻을 읽을 수 없다. 칸을 고정하면 없는 쪽은 빈 자리로
+        남고 있는 쪽은 늘 제 자리에 선다.
+      */}
+      <span className="flex w-[30%] shrink-0 justify-center overflow-hidden text-sm font-semibold tabular-nums">
         {income > 0 ? (
-          <span className="text-green-600">+{formatCurrency(income, currency)}</span>
+          <span className="truncate text-green-600">+{formatCurrency(income, currency)}</span>
         ) : null}
+      </span>
+      <span className="flex w-[30%] shrink-0 justify-end overflow-hidden text-sm font-semibold tabular-nums">
         {expense > 0 ? (
-          <span className="text-red-600">-{formatCurrency(expense, currency)}</span>
+          <span className="truncate text-red-600">-{formatCurrency(expense, currency)}</span>
+        ) : income === 0 ? (
+          <span className="font-normal text-gray-400">-</span>
         ) : null}
-        {expense === 0 && income === 0 ? <span className="text-gray-400">-</span> : null}
       </span>
     </button>
   );
@@ -301,12 +335,20 @@ export default function TransactionsPage() {
     // 한 번만 묻는다. 두 번 물으면 그 달을 날짜로 묶는 일이 줄마다 두 번씩 돈다.
     const entries = tx.entriesOf(yearMonth, key);
 
+    /*
+     * 거래 사이는 선으로만 나눈다. 줄마다 카드를 띄우면 그림자와 여백이 줄 수만큼
+     * 쌓여, 한 날짜를 펼쳤을 때 한 화면에 두세 건밖에 들어가지 않는다. 가계 화면의
+     * 하루 상자(TransactionListView)와 같은 규칙이다.
+     *
+     * divide-y 는 자식 사이에만 선을 긋는다. 고르는 중에 체크박스와 함께 감싸는 칸도
+     * 자식 하나라 그대로 듣는다.
+     */
     return (
-      <div className="unfold border-b border-gray-100 bg-white pl-8">
+      <div className="unfold divide-y divide-gray-100 bg-white">
         {tx.isLoadingRow(yearMonth, key) ? (
-          <p className="py-3 text-sm text-gray-500">{t('common.loading')}</p>
+          <p className="px-3 py-3 text-sm text-gray-500">{t('common.loading')}</p>
         ) : entries.length === 0 ? (
-          <p className="py-3 text-sm text-gray-500">{t('feed.empty')}</p>
+          <p className="px-3 py-3 text-sm text-gray-500">{t('feed.empty')}</p>
         ) : (
           entries.map((entry) =>
             /*
@@ -337,14 +379,14 @@ export default function TransactionsPage() {
   /** 그 달의 안쪽 줄. 세 탭이 같은 모양으로 내려오므로 한 번만 적는다. */
   const level2 = (yearMonth: string) => {
     if (tx.isLoadingMonth(yearMonth)) {
-      return <p className="py-3 pl-8 text-sm text-gray-500">{t('common.loading')}</p>;
+      return <p className="px-3 py-3 text-sm text-gray-500">{t('common.loading')}</p>;
     }
 
     const rows = tx.rowsOf(yearMonth);
     if (rows.length === 0) {
       const emptyKey: MessageKey =
         tx.tab === 'date' ? 'tx.noDays' : tx.tab === 'category' ? 'tx.noCategories' : 'tx.noMethods';
-      return <p className="py-3 pl-8 text-sm text-gray-500">{t(emptyKey)}</p>;
+      return <p className="px-3 py-3 text-sm text-gray-500">{t(emptyKey)}</p>;
     }
 
     return rows.map((row: TransactionRow) => {
@@ -354,6 +396,7 @@ export default function TransactionsPage() {
           <Line
             depth={1}
             label={row.label}
+            weekday={row.weekday}
             meta={
               row.sub ?? (row.count === undefined ? undefined : t('tx.entryCount', { count: row.count }))
             }
@@ -807,7 +850,7 @@ export default function TransactionsPage() {
         </div>
       ) : null}
 
-      <div className="overflow-hidden rounded-lg border border-gray-200 bg-white">
+      <div className="overflow-hidden rounded-lg">
         {tx.isLoadingMonths && tx.months.length === 0 ? (
           <p className="p-3 text-sm text-gray-500">{t('common.loading')}</p>
         ) : tx.months.length === 0 ? (

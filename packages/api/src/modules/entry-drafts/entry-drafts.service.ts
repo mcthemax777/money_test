@@ -220,8 +220,18 @@ export class EntryDraftsService {
         throw badRequest('DRAFT_RECURRING_INVALID', '반복 후보에 날짜가 없습니다.');
       }
 
+      /*
+       * 열쇠는 `r:<규칙>:<날짜>` 이고, 뒤에 표가 하나 더 붙을 수 있다.
+       *
+       * 표가 붙는 것은 사람이 "만들기"를 눌러 만든 회차다(주기 없는 반복). 정해진 날이
+       * 없어 같은 날짜로 여러 건이 생길 수 있고, 날짜까지만 열쇠로 두면 하루에 한 번밖에
+       * 못 만든다. 표의 내용은 보지 않는다 -- 겹침은 유일 제약이 막고, 서버가 여기서
+       * 볼 것은 "그 규칙의 그 날짜인가" 뿐이다.
+       */
       const dateKey = zonedDateKey(occurredAt, project.timezone);
-      if (String(item.dedupeKey ?? '') !== `r:${ruleId}:${dateKey}`) {
+      const key = String(item.dedupeKey ?? '');
+      const prefix = `r:${ruleId}:${dateKey}`;
+      if (key !== prefix && !key.startsWith(`${prefix}:`)) {
         throw badRequest(
           'DRAFT_RECURRING_INVALID',
           '반복 후보의 중복 열쇠가 그 날짜와 맞지 않습니다.',

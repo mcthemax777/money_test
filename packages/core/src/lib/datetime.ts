@@ -126,6 +126,25 @@ export function formatDateTime(instant: string | Date, timeZone: string): string
   }).format(new Date(instant));
 }
 
+/**
+ * 달력 날짜 'YYYY-MM-DD' 의 요일. 표기("토")와 번호(0=일 … 6=토)를 함께 돌려준다.
+ *
+ * 번호를 함께 주는 것은 화면이 토요일·일요일을 다른 색으로 적기 때문이다. 글자만
+ * 주면 읽는 쪽이 언어마다 "토"·"Sat"·"土" 를 견주어야 한다.
+ *
+ * UTC 자정으로 만들어 UTC 로 읽는다. 여기서 다루는 것은 특정 시각이 아니라 달력의
+ * 날짜라, 브라우저 타임존으로 읽으면 요일이 하루 밀릴 수 있다.
+ */
+export function weekdayOf(dateKey: string): { label: string; day: number } {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return {
+    label: dateFormatter('weekday', 'UTC', { weekday: 'short' }).format(date),
+    day: date.getUTCDay(),
+  };
+}
+
 /** `@db.Date` 값(달력 날짜 표시자)의 "YYYY-MM-DD" */
 export function dateMarkerKey(marker: string | Date): string {
   const date = new Date(marker);

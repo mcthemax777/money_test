@@ -4,6 +4,7 @@ import { ChevronDown } from 'lucide-react-native';
 
 import { useTranslation } from '@money/core/lib/i18n';
 import type { Person } from '@money/core/lib/types';
+import { useProjectName } from '@money/core/store/project';
 
 /** 제목에 이름을 몇 개까지 늘어놓을지. 그보다 많으면 "외 N명"으로 접는다. */
 const MAX_NAMES = 2;
@@ -13,6 +14,7 @@ function scopeLabel(
   names: string[],
   total: number,
   noun: string | undefined,
+  project: string,
 ): string {
   /*
    * 낱말을 붙이지 않는 판. 조사와 어순이 언어마다 달라 사전에서 각자 적는다 --
@@ -20,13 +22,17 @@ function scopeLabel(
    */
   if (noun === undefined) {
     if (names.length === 0) return t('scopeTitle.bare.none');
-    if (names.length === total) return t('scopeTitle.bare.all');
+    if (names.length === total) {
+      return project ? t('scopeTitle.bare.project', { project }) : t('scopeTitle.bare.all');
+    }
     if (names.length <= MAX_NAMES) return t('scopeTitle.bare.some', { names: names.join(', ') });
     return t('scopeTitle.bare.many', { first: names[0], count: names.length - 1 });
   }
 
   if (names.length === 0) return t('scopeTitle.none', { noun });
-  if (names.length === total) return t('scopeTitle.all', { noun });
+  if (names.length === total) {
+    return project ? t('scopeTitle.project', { project, noun }) : t('scopeTitle.all', { noun });
+  }
   if (names.length <= MAX_NAMES) return t('scopeTitle.some', { names: names.join(', '), noun });
   return t('scopeTitle.many', { first: names[0], count: names.length - 1, noun });
 }
@@ -57,6 +63,7 @@ export default function PersonScopeTitle({
   onTogglePerson: (personId: string) => void;
 }) {
   const { t } = useTranslation();
+  const projectName = useProjectName();
   const [isOpen, setIsOpen] = useState(false);
 
   const selectedNames = people
@@ -73,8 +80,11 @@ export default function PersonScopeTitle({
         <ChevronDown size={20} color="#9ca3af" />
         <Text className="text-2xl font-bold text-gray-900">
           {people.length === 0
-            ? noun ?? t('scopeTitle.bare.all')
-            : scopeLabel(t, selectedNames, people.length, noun)}
+            ? noun ??
+              (projectName
+                ? t('scopeTitle.bare.project', { project: projectName })
+                : t('scopeTitle.bare.all'))
+            : scopeLabel(t, selectedNames, people.length, noun, projectName)}
         </Text>
       </Pressable>
 

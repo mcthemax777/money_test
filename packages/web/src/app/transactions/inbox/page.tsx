@@ -3,9 +3,9 @@
 /*
  * 보관함. 아직 거래가 아닌 후보를 정리하는 자리다.
  *
- * 탭이 셋이다. **알림 등록용**은 기기로 온 결제·입금 알림에서 읽어 둔 것이고,
- * **캡처 인식용**은 사용자가 올린 화면 캡처에서 읽어 낸 것이고, **반복 등록**은 사람이
- * 미리 적어 둔 일정에서 스스로 만들어진 것이다. 셋 다 가계부에는 아무 영향이 없다 --
+ * 탭이 셋이다. **알림**은 기기로 온 결제·입금 알림에서 읽어 둔 것이고, **이미지**는
+ * 사용자가 올린 화면 캡처에서 읽어 낸 것이고, **반복**은 사람이 미리 적어 둔 일정에서
+ * 스스로 만들어진 것이다. 셋 다 가계부에는 아무 영향이 없다 --
  * 합계·잔액·예산은 이 목록을 보지 않는다.
  *
  * 반복은 **이 화면을 여는 순간 밀린 회차를 따라잡는다**(`useRecurringRules`). 회차를
@@ -24,16 +24,14 @@
  * 알림 등록은 안드로이드만 할 수 있어 앱이 맡는다. 그쪽 탭은 담긴 것을 정리하는
  * 자리이고, 화면에 그 사실을 적어 둔다.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Archive,
   Camera,
   Bell,
   ChevronDown,
-  Pencil,
   Plus,
   Repeat,
-  Trash2,
   X,
 } from 'lucide-react';
 import type { EntryDraftDto, EntryDraftSource, RecurringRuleDto } from '@money/types';
@@ -48,6 +46,7 @@ import { homeDataPort } from '@money/core/data/home-port';
 import { draftPort } from '@money/core/data/draft-port';
 import {
   captureItems,
+  draftNeedsFix,
   historyFromEntries,
   NO_HINTS,
   type CollectHints,
@@ -179,6 +178,7 @@ const EMPTY_KEY: Record<EntryDraftSource, MessageKey> = {
  * 읽는 사람이 다시 옮겨야 한다.
  */
 function scheduleText(rule: RecurringRuleDto.Response, t: (key: MessageKey) => string): string {
+  if (rule.frequency === 'none') return t('inbox.freq.none');
   if (rule.frequency === 'daily') {
     const days = rule.everyDays ?? 1;
     return days <= 1 ? t('inbox.freq.daily') : `${days}${t('inbox.everyDaysUnit')}`;
@@ -330,6 +330,21 @@ export default function InboxPage() {
     return ok;
   };
 
+  /**
+   * 주기 없는 반복의 "만들기". 오늘 날짜로 후보 하나를 담고 목록을 다시 읽는다.
+   *
+   * 알림 문구를 **여기서** 적는다. 밀린 회차를 세는 효과(아래 `handledMade`)에 맡기면
+   * 두 번째 누름에서 말이 뜨지 않는다 -- 그 효과는 담긴 수가 **바뀔 때만** 도는데,
+   * 한 건씩 만들면 그 수가 1 에 머무른다. 첫 누름에서는 둘이 같은 말을 적으므로
+   * 겹쳐 보이지 않는다.
+   */
+  const makeNow = async (rule: RecurringRuleDto.Response) => {
+    if (!(await recurring.makeNow(rule))) return;
+
+    setNotice(t('inbox.ruleMade', { count: 1 }));
+    await inbox.reload();
+  };
+
   /** 후보를 거래로. 팝업이 뜨고, 저장이 끝나면 `onEntryChange` 가 표시를 남긴다. */
   const openDraft = (draft: EntryDraftDto.Response) => {
     setNotice('');
@@ -438,6 +453,7 @@ export default function InboxPage() {
                       setIsRuleOpen(true);
                     }}
                     onToggle={() => void recurring.toggle(rule.id, !rule.isActive)}
+                    onMakeNow={() => void makeNow(rule)}
                   />
                 </li>
               ))}
@@ -502,7 +518,6 @@ export default function InboxPage() {
                 canEdit={canEdit}
                 onAdd={() => openDraft(draft)}
                 onDismiss={() => void inbox.dismiss(draft.id)}
-                onRemove={() => void inbox.remove(draft.id)}
               />
             </li>
           ))}
@@ -543,16 +558,55 @@ function RuleRow({
   canEdit,
   onEdit,
   onToggle,
+  onMakeNow,
 }: {
   rule: RecurringRuleDto.Response;
   canEdit: boolean;
   onEdit: () => void;
   onToggle: () => void;
+  /** 주기 없는 반복의 "만들기". 오늘 날짜로 후보 하나를 담는다. */
+  onMakeNow: () => void;
 }) {
   const { t } = useTranslation();
 
+  /*
+    주기가 없으면 켜고 끄는 단추 자리에 "만들기" 가 선다.
+
+    끄고 켜는 것은 "정해진 날에 저절로 만들어질지"를 정하는 값이다. 저절로 만들어지는
+    일이 없는 반복에서 그 단추는 아무것도 바꾸지 않으면서 자리를 차지한다. 대신 그
+    자리에서 지금 하나를 만든다.
+  */
+  const isManual = rule.frequency === 'none';
+
+  /*
+    상자 전체가 "고치기" 다.
+
+    연필 아이콘을 따로 두면 줄에서 누를 수 있는 자리가 아이콘 한 칸뿐이라, 예약을
+    고치려고 매번 9px 짜리 표적을 맞혀야 했다. 줄을 눌러 고치는 것은 아래 후보 목록도
+    같은 규칙이다.
+
+    켜고 끄는 단추는 그대로 둔다. 그것은 "고치기"와 다른 일이라 상자에 맡길 수 없다 --
+    그래서 누름이 상자까지 올라가지 않게 막는다(stopPropagation).
+  */
   return (
-    <div className="flex items-center gap-3 p-4">
+    <div
+      role={canEdit ? 'button' : undefined}
+      tabIndex={canEdit ? 0 : undefined}
+      onClick={canEdit ? onEdit : undefined}
+      onKeyDown={
+        canEdit
+          ? (event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              onEdit();
+            }
+          : undefined
+      }
+      aria-label={canEdit ? t('inbox.ruleEdit') : undefined}
+      className={`flex items-center gap-3 p-4 text-left ${
+        canEdit ? 'cursor-pointer hover:bg-gray-50' : ''
+      }`}
+    >
       <div className="min-w-0 flex-1">
         <p className={`truncate font-medium ${rule.isActive ? 'text-gray-900' : 'text-gray-400'}`}>
           {rule.description}
@@ -560,34 +614,36 @@ function RuleRow({
         <p className="mt-0.5 flex flex-wrap items-center gap-2 text-xs text-gray-500">
           <span>{scheduleText(rule, t)}</span>
           {rule.amount ? <span>{formatCurrency(rule.amount, rule.currency ?? 'KRW')}</span> : null}
-          <span>
-            {rule.nextRunOn ? t('inbox.ruleNext', { date: rule.nextRunOn }) : t('inbox.ruleNextNone')}
-          </span>
+          {/* 주기가 없으면 예정일 자리를 비운다. 주기 칸이 이미 "수동생성"을 말한다. */}
+          {isManual ? null : (
+            <span>
+              {rule.nextRunOn
+                ? t('inbox.ruleNext', { date: rule.nextRunOn })
+                : t('inbox.ruleNextNone')}
+            </span>
+          )}
         </p>
       </div>
 
       {canEdit ? (
         <button
           type="button"
-          onClick={onToggle}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (isManual) onMakeNow();
+            else onToggle();
+          }}
           className={`shrink-0 rounded-lg border px-3 py-1.5 text-xs font-medium ${
-            rule.isActive
-              ? 'border-blue-300 bg-blue-50 text-blue-700'
-              : 'border-gray-300 text-gray-500'
+            isManual
+              ? 'border-blue-600 bg-blue-600 text-white hover:bg-blue-700'
+              : rule.isActive
+                ? 'border-blue-300 bg-blue-50 text-blue-700'
+                : 'border-gray-300 text-gray-500'
           }`}
         >
-          {t(rule.isActive ? 'inbox.ruleActive' : 'inbox.rulePaused')}
-        </button>
-      ) : null}
-      {canEdit ? (
-        <button
-          type="button"
-          onClick={onEdit}
-          aria-label={t('inbox.ruleEdit')}
-          title={t('inbox.ruleEdit')}
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50"
-        >
-          <Pencil className="h-4 w-4" aria-hidden />
+          {isManual
+            ? t('inbox.ruleMakeNow')
+            : t(rule.isActive ? 'inbox.ruleActive' : 'inbox.rulePaused')}
         </button>
       ) : null}
     </div>
@@ -599,6 +655,14 @@ function RuleRow({
  *
  * 금액을 맨 앞에 크게 둔다. 후보를 보는 까닭이 "얼마짜리를 적을 것인가"이고, 못 읽은
  * 금액은 그 자리에 그렇다고 적어 둔다 -- 빈 칸으로 두면 0원처럼 읽힌다.
+ *
+ * **상자 전체가 "거래로 적기" 다.** 파란 단추를 따로 두었더니 줄에 누를 자리가 셋
+ * (단추·무시·원문)이 되어, 제일 흔한 일이 제일 좁은 자리에 있었다. 안에 있는 무시와
+ * 원문 펼치기는 누름이 상자까지 올라가지 않게 막는다.
+ *
+ * 지우기(휴지통)는 두지 않는다. 무시와 겉보기가 같아서 -- 둘 다 줄이 사라진다 --
+ * 어느 쪽이 무엇인지 알 수 없었다. 남긴 것은 **무시** 다. 표시가 남아 같은 알림이
+ * 다시 담기지 않는다. 지우기는 표시까지 없애 같은 알림이 다시 오면 후보가 다시 생긴다.
  */
 function DraftRow({
   draft,
@@ -607,7 +671,6 @@ function DraftRow({
   canEdit,
   onAdd,
   onDismiss,
-  onRemove,
 }: {
   draft: EntryDraftDto.Response;
   timeZone: string;
@@ -616,19 +679,30 @@ function DraftRow({
   canEdit: boolean;
   onAdd: () => void;
   onDismiss: () => void;
-  onRemove: () => void;
 }) {
   const { t } = useTranslation();
   const [isRawOpen, setIsRawOpen] = useState(false);
 
-  /** 사람이 채워야 하는 칸이 남았는가. 금액과 결제수단이 그 둘이다. */
-  const needsFix = useMemo(
-    () => !draft.amount || (!draft.cardId && !draft.accountId),
-    [draft.amount, draft.cardId, draft.accountId],
-  );
+  /** 사람이 채워야 하는 칸이 남았는가. 금액·결제수단·대분류 셋을 본다. */
+  const needsFix = draftNeedsFix(draft);
 
   return (
-    <div className="p-4">
+    <div
+      role={canEdit ? 'button' : undefined}
+      tabIndex={canEdit ? 0 : undefined}
+      onClick={canEdit ? onAdd : undefined}
+      onKeyDown={
+        canEdit
+          ? (event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              onAdd();
+            }
+          : undefined
+      }
+      aria-label={canEdit ? t('inbox.add') : undefined}
+      className={`p-4 text-left ${canEdit ? 'cursor-pointer hover:bg-gray-50' : ''}`}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <p className="text-lg font-bold text-gray-900">
@@ -655,39 +729,22 @@ function DraftRow({
           </p>
         </div>
 
-        <div className="flex shrink-0 items-center gap-2">
-          {canEdit ? (
+        {canEdit ? (
+          <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
-              onClick={onAdd}
-              className="rounded-lg bg-blue-600 px-3 py-2 text-sm font-medium text-white hover:bg-blue-700"
-            >
-              {t('inbox.add')}
-            </button>
-          ) : null}
-          {canEdit ? (
-            <button
-              type="button"
-              onClick={onDismiss}
+              onClick={(event) => {
+                event.stopPropagation();
+                onDismiss();
+              }}
               aria-label={t('inbox.dismiss')}
               title={t('inbox.dismiss')}
               className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 text-gray-600 hover:bg-gray-50"
             >
               <X className="h-4 w-4" aria-hidden />
             </button>
-          ) : null}
-          {canEdit ? (
-            <button
-              type="button"
-              onClick={onRemove}
-              aria-label={t('inbox.remove')}
-              title={t('inbox.remove')}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-red-300 text-red-600 hover:bg-red-50"
-            >
-              <Trash2 className="h-4 w-4" aria-hidden />
-            </button>
-          ) : null}
-        </div>
+          </div>
+        ) : null}
       </div>
 
       {needsFix ? (
@@ -704,7 +761,10 @@ function DraftRow({
       */}
       <button
         type="button"
-        onClick={() => setIsRawOpen((open) => !open)}
+        onClick={(event) => {
+          event.stopPropagation();
+          setIsRawOpen((open) => !open);
+        }}
         className="mt-2 flex items-center gap-1 text-xs text-gray-500 hover:text-gray-700"
       >
         <ChevronDown
@@ -714,7 +774,10 @@ function DraftRow({
         {t('inbox.raw')}
       </button>
       {isRawOpen ? (
-        <pre className="mt-1 overflow-x-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs text-gray-600">
+        <pre
+          onClick={(event) => event.stopPropagation()}
+          className="mt-1 overflow-x-auto whitespace-pre-wrap rounded bg-gray-50 p-2 text-xs text-gray-600"
+        >
           {draft.rawText}
         </pre>
       ) : null}

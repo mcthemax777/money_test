@@ -31,7 +31,7 @@ import { HIDDEN_ACCOUNT_TYPES, NO_TAG, toEntrySearchQuery } from '@money/types';
 
 import { assetOwnerNames, hasSeveralOwners } from '../lib/asset-owner';
 
-import { dayRangeQuery, isDateKey, lastDayOfMonth } from '../lib/datetime';
+import { dayRangeQuery, isDateKey, lastDayOfMonth, weekdayOf } from '../lib/datetime';
 import { useTranslation, type MessageKey } from '../lib/i18n';
 import { apiClient } from '../lib/api-client';
 import { entryWritePort } from '../data/entry-write-port';
@@ -322,6 +322,13 @@ export interface TransactionRow {
   sub?: string;
   /** 그 줄에 든 거래 수. 수단별은 세지 않아 없다. */
   count?: number;
+  /**
+   * 날짜별에서만. 일자 옆에 적는 요일이다.
+   *
+   * 여기서 만들어 두는 것은 값이 바뀌지 않는 한 **같은 객체를 돌려주기 위해서**다.
+   * 화면이 그릴 때마다 만들면 줄을 memo 로 감싼 뜻이 없어진다.
+   */
+  weekday?: { label: string; day: number };
   expense: number;
   income: number;
   /** 수단별에서만. 계좌인지 카드인지에 따라 조회 조건이 다르다. */
@@ -920,6 +927,7 @@ export function useTransactions(projectId: string | null) {
             return {
               key: dateKey,
               label: String(Number(dateKey.slice(8, 10))),
+              weekday: weekdayOf(dateKey),
               count: rows.length,
               expense: totals.expenseTotal,
               income: totals.incomeTotal,

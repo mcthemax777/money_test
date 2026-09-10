@@ -12,8 +12,18 @@
  * 하루 밀리지 않는다.
  */
 
-/** 얼마나 자주. */
-export type RecurringFrequency = 'daily' | 'monthly' | 'yearly';
+/**
+ * 얼마나 자주.
+ *
+ * `none` 은 **주기가 없는 반복**이다. 스스로 만들어지는 날이 없고, 사람이 보관함에서
+ * "만들기"를 누를 때만 그 날짜로 후보가 생긴다. 달마다 같은 날 나가는 돈이 아니라
+ * "적을 때마다 값이 같은 것"을 위한 자리다 -- 늘 같은 카페의 같은 커피, 늘 같은
+ * 금액의 주차비처럼 언제 쓸지는 모르지만 적을 내용은 정해져 있는 것들이다.
+ *
+ * 셈하는 함수들(`dueOccurrences`·`nextOccurrence`)은 이 주기에 아무 날도 돌려주지
+ * 않는다. 그 자리에 하루라도 돌려주면 보관함을 열 때마다 후보가 저절로 생긴다.
+ */
+export type RecurringFrequency = 'none' | 'daily' | 'monthly' | 'yearly';
 
 /**
  * 반복의 일정 부분. 무엇을 적을지(금액·분류)는 여기 없다.
@@ -76,6 +86,9 @@ export function dueOccurrences(
   todayKey: string,
   options: { catchUpDays?: number; limit?: number } = {},
 ): string[] {
+  // 주기가 없으면 저절로 오는 날이 없다. 사람이 누를 때만 그 날짜로 만든다.
+  if (schedule.frequency === 'none') return [];
+
   const catchUpDays = options.catchUpDays ?? RECURRING_CATCH_UP_DAYS;
   const limit = options.limit ?? RECURRING_MAX_PER_RUN;
 
@@ -123,6 +136,9 @@ export function dueOccurrences(
  * 라고 적을 수 있다.
  */
 export function nextOccurrence(schedule: RecurringSchedule, todayKey: string): string | null {
+  // 주기가 없으면 다음 예정일도 없다. 화면은 그 자리에 "주기 없음"을 적는다.
+  if (schedule.frequency === 'none') return null;
+
   const floor = latest([
     schedule.startDate,
     schedule.lastMadeOn ? addDays(schedule.lastMadeOn, 1) : null,
@@ -155,7 +171,7 @@ export interface RecurringViolation {
  * 서버만 검사하면 사용자가 무엇이 틀렸는지 폼에서 알 수 없다.
  */
 export function checkRecurring(schedule: RecurringSchedule): RecurringViolation | null {
-  if (!['daily', 'monthly', 'yearly'].includes(schedule.frequency)) {
+  if (!['none', 'daily', 'monthly', 'yearly'].includes(schedule.frequency)) {
     return { code: 'FREQUENCY_INVALID' };
   }
   if (!parseKey(schedule.startDate)) return { code: 'START_DATE_INVALID' };
@@ -163,6 +179,15 @@ export function checkRecurring(schedule: RecurringSchedule): RecurringViolation 
   if (schedule.endDate && schedule.endDate < schedule.startDate) {
     return { code: 'END_BEFORE_START' };
   }
+
+  /*
+   * 주기가 없으면 볼 것이 없다.
+   *
+   * 며칠마다·며칟날·몇 월은 저절로 오는 날을 정하는 값이고, 그 날이 없는 반복에는
+   * 뜻이 없다. 시작일과 끝나는 날만 모양을 본다 -- 표에 반드시 있어야 하는 칸이라
+   * 폼이 오늘 날짜로 채워 보낸다.
+   */
+  if (schedule.frequency === 'none') return null;
 
   if (schedule.frequency === 'daily') {
     const days = Number(schedule.everyDays ?? 1);

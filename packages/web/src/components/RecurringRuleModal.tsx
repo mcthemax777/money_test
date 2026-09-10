@@ -30,6 +30,7 @@ import Modal from '@/components/Modal';
 const FORM_ID = 'recurring-form';
 
 const FREQUENCIES: Array<{ id: RecurringFrequency; labelKey: MessageKey }> = [
+  { id: 'none', labelKey: 'inbox.freq.none' },
   { id: 'daily', labelKey: 'inbox.freq.daily' },
   { id: 'monthly', labelKey: 'inbox.freq.monthly' },
   { id: 'yearly', labelKey: 'inbox.freq.yearly' },
@@ -243,8 +244,18 @@ export default function RecurringRuleModal({
           </div>
         </Field>
 
-        {/* 주기마다 물어볼 것이 다르다. 뜻이 없는 칸은 아예 그리지 않는다. */}
-        {values.frequency === 'daily' ? (
+        {/*
+          주기마다 물어볼 것이 다르다. 뜻이 없는 칸은 아예 그리지 않는다.
+
+          주기 없음에는 물어볼 것이 하나도 없다 -- 며칠마다·며칟날·몇 월도, 시작일도
+          끝나는 날도 저절로 오는 날을 정하는 값이라 그 날이 없으면 뜻이 없다. 대신
+          "만들기를 누를 때만 생긴다"는 사실을 한 줄로 적는다.
+        */}
+        {values.frequency === 'none' ? (
+          <p className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-xs text-gray-600">
+            {t('inbox.ruleNoneNote')}
+          </p>
+        ) : values.frequency === 'daily' ? (
           <Field label={t('inbox.everyDays')}>
             <div className="flex items-center gap-2">
               <input
@@ -291,11 +302,13 @@ export default function RecurringRuleModal({
           </div>
         )}
 
-        {values.frequency !== 'daily' && Number(values.dayOfMonth) > 28 ? (
+        {values.frequency !== 'none' &&
+        values.frequency !== 'daily' &&
+        Number(values.dayOfMonth) > 28 ? (
           <p className="text-xs text-gray-500">{t('inbox.ruleEndOfMonth')}</p>
         ) : null}
 
-        <div className="grid grid-cols-2 gap-3">
+        <div className={`grid grid-cols-2 gap-3 ${values.frequency === 'none' ? 'hidden' : ''}`}>
           <Field label={t('inbox.ruleStart')}>
             <input
               type="date"
@@ -405,13 +418,17 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 function toBody(values: FormValues): RecurringRuleDto.Body {
   const [methodKind, methodId] = values.method.split(':');
 
+  const scheduled = values.frequency !== 'none';
+
   return {
     frequency: values.frequency,
     everyDays: values.frequency === 'daily' ? Number(values.everyDays) || 1 : null,
-    dayOfMonth: values.frequency === 'daily' ? null : Number(values.dayOfMonth) || 1,
+    // 주기가 없으면 셋 다 비운다. 저절로 오는 날이 없어 정할 것이 없다.
+    dayOfMonth: scheduled && values.frequency !== 'daily' ? Number(values.dayOfMonth) || 1 : null,
     month: values.frequency === 'yearly' ? Number(values.month) || 1 : null,
     startDate: values.startDate,
-    endDate: values.endDate || null,
+    // 끝나는 날도 저절로 오는 날에 걸리는 값이다. 주기가 없으면 가지고 있지 않는다.
+    endDate: scheduled ? values.endDate || null : null,
     timeOfDay: values.timeOfDay || null,
     kind: values.kind,
     amount: values.amount.trim() || null,

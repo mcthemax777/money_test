@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useTranslation } from '@money/core/lib/i18n';
 import type { Person } from '@money/core/lib/types';
+import { useProjectName } from '@money/core/store/project';
 
 interface PersonScopeTitleProps {
   /**
@@ -26,8 +27,12 @@ const MAX_NAMES = 3;
 /**
  * 제목에 적을 문구.
  *
- * 전원을 고른 상태는 이름을 늘어놓지 않고 "전체"라고 적는다. 그 상태가 기본값이라
- * 이름을 다 적으면 제목이 늘 길고, 정작 좁혀 놓았을 때와 구별되지 않는다.
+ * 전원을 고른 상태는 이름을 늘어놓지 않고 **프로젝트 이름**을 적는다("우리집의 거래").
+ * 그 상태가 기본값이라 이름을 다 적으면 제목이 늘 길고, 정작 좁혀 놓았을 때와
+ * 구별되지 않는다. "전체 사용자"라고 적던 자리인데, 그 말은 어느 가계부를 보고 있는지는
+ * 알려 주지 않으면서 자리만 차지했다.
+ *
+ * 이름을 아직 못 받았으면(빈 글자) 예전 문구로 돌아간다. 제목이 잠깐 비는 것보다 낫다.
  *
  * 아무도 고르지 않은 상태는 "전체"가 아니라 "결과 없음"이다. 화면 이름만 남기면
  * 그 사실이 사라지므로 뒤에 붙여서 알린다.
@@ -37,6 +42,7 @@ function scopeLabel(
   names: string[],
   total: number,
   noun: string | undefined,
+  project: string,
 ): string {
   /*
    * 낱말을 붙이지 않는 판. 조사와 어순이 언어마다 달라 사전에서 각자 적는다 --
@@ -44,13 +50,17 @@ function scopeLabel(
    */
   if (noun === undefined) {
     if (names.length === 0) return t('scopeTitle.bare.none');
-    if (names.length === total) return t('scopeTitle.bare.all');
+    if (names.length === total) {
+      return project ? t('scopeTitle.bare.project', { project }) : t('scopeTitle.bare.all');
+    }
     if (names.length <= MAX_NAMES) return t('scopeTitle.bare.some', { names: names.join(', ') });
     return t('scopeTitle.bare.many', { first: names[0], count: names.length - 1 });
   }
 
   if (names.length === 0) return t('scopeTitle.none', { noun });
-  if (names.length === total) return t('scopeTitle.all', { noun });
+  if (names.length === total) {
+    return project ? t('scopeTitle.project', { project, noun }) : t('scopeTitle.all', { noun });
+  }
   if (names.length <= MAX_NAMES) return t('scopeTitle.some', { names: names.join(', '), noun });
   return t('scopeTitle.many', { first: names[0], count: names.length - 1, noun });
 }
@@ -76,6 +86,7 @@ export default function PersonScopeTitle({
   onTogglePerson,
 }: PersonScopeTitleProps) {
   const { t } = useTranslation();
+  const projectName = useProjectName();
   const [isOpen, setIsOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -122,8 +133,11 @@ export default function PersonScopeTitle({
           <ChevronDown className="w-5 h-5 text-gray-400" />
           {/* 구성원을 아직 못 받았으면 이름 자리를 비워 두고 화면 이름만 적는다 */}
           {people.length === 0
-            ? noun ?? t('scopeTitle.bare.all')
-            : scopeLabel(t, selectedNames, people.length, noun)}
+            ? noun ??
+              (projectName
+                ? t('scopeTitle.bare.project', { project: projectName })
+                : t('scopeTitle.bare.all'))
+            : scopeLabel(t, selectedNames, people.length, noun, projectName)}
         </button>
       </h1>
 

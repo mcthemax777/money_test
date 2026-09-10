@@ -18,7 +18,7 @@ import type { RecurringRuleDto } from '@money/types';
 import { apiClient } from '../lib/api-client';
 import { useApiError } from '../lib/api-error';
 import { draftPort } from '../data/draft-port';
-import { recurringDraftItems } from '../lib/recurring-drafts';
+import { manualDraftItem, recurringDraftItems } from '../lib/recurring-drafts';
 import { todayKey } from '../lib/datetime';
 import { useProjectTimeZone } from '../store/project';
 
@@ -34,6 +34,13 @@ export interface UseRecurringRulesResult {
     rule: RecurringRuleDto.CreateRequest | (RecurringRuleDto.UpdateRequest & { id: string }),
   ) => Promise<boolean>;
   toggle: (id: string, isActive: boolean) => Promise<boolean>;
+  /**
+   * 지금 바로 후보 하나를 만든다. **주기 없는 반복**의 "만들기" 가 부른다.
+   *
+   * 날짜는 오늘이다(프로젝트 타임존). 여러 번 눌러도 그때마다 하나가 생긴다 --
+   * 열쇠 뒤에 그 누름을 가리키는 표가 붙어 날짜가 같아도 겹치지 않는다.
+   */
+  makeNow: (rule: RecurringRuleDto.Response) => Promise<boolean>;
   remove: (id: string) => Promise<boolean>;
 }
 
@@ -143,6 +150,31 @@ export function useRecurringRules(projectId: string | null): UseRecurringRulesRe
     [reload, messageOf],
   );
 
+  const makeNow = useCallback(
+    async (rule: RecurringRuleDto.Response): Promise<boolean> => {
+      if (!projectId) return false;
+
+      try {
+        const item = manualDraftItem(rule, todayKey(timeZone), timeZone);
+        const result = await draftPort().add(projectId, [item]);
+        /*
+         * 담긴 수를 그대로 알린다.
+         *
+         * 화면이 이 값을 보고 "1건을 만들었습니다"를 적는다. 0 이면 무언가 겹친
+         * 것이라 그 말을 하지 않아야 한다 -- 열쇠에 표가 붙으므로 여기서 0 이 나오는
+         * 일은 사실상 없지만, 없다고 단정하고 적으면 틀린 말이 남는다.
+         */
+        setCreated(result.created);
+        setError('');
+        return result.created > 0;
+      } catch (caught) {
+        setError(messageOf(caught, 'inbox.actionFailed'));
+        return false;
+      }
+    },
+    [projectId, timeZone, messageOf],
+  );
+
   const remove = useCallback(
     async (id: string): Promise<boolean> => {
       try {
@@ -158,5 +190,5 @@ export function useRecurringRules(projectId: string | null): UseRecurringRulesRe
     [messageOf],
   );
 
-  return { rules, isLoading, error, created, reload, save, toggle, remove };
+  return { rules, isLoading, error, created, reload, save, toggle, makeNow, remove };
 }

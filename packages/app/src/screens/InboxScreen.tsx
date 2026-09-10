@@ -1,9 +1,9 @@
 /*
  * 보관함. 아직 거래가 아닌 후보를 정리하는 자리다.
  *
- * 탭이 셋이다. **알림 등록용**은 이 기기로 온 결제·입금 알림에서 읽어 둔 것이고,
- * **캡처 인식용**은 사용자가 고른 화면 캡처에서 읽어 낸 것이고, **반복 등록**은 사람이
- * 미리 적어 둔 일정에서 스스로 만들어진 것이다. 셋 다 가계부에는 아무 영향이 없다 --
+ * 탭이 셋이다. **알림**은 이 기기로 온 결제·입금 알림에서 읽어 둔 것이고, **이미지**는
+ * 사용자가 고른 화면 캡처에서 읽어 낸 것이고, **반복**은 사람이 미리 적어 둔 일정에서
+ * 스스로 만들어진 것이다. 셋 다 가계부에는 아무 영향이 없다 --
  * 합계·잔액·예산은 이 목록을 보지 않는다.
  *
  * 반복은 **이 화면을 여는 순간 밀린 회차를 따라잡는다**(`useRecurringRules`). 회차를
@@ -20,7 +20,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
-import { Archive, Camera, ChevronDown, Pencil, Plus, Trash2, X } from 'lucide-react-native';
+import { Archive, Camera, ChevronDown, Plus, X } from 'lucide-react-native';
 import type { EntryDraftDto, EntryDraftSource, RecurringRuleDto } from '@money/types';
 
 import { formatDateTime } from '@money/core/lib/datetime';
@@ -30,6 +30,7 @@ import { useEntryDrafts } from '@money/core/hooks/useEntryDrafts';
 import { useRecurringRules } from '@money/core/hooks/useRecurringRules';
 import { useCanEdit, useProject, useProjectTimeZone } from '@money/core/store/project';
 import { homeDataPort } from '@money/core/data/home-port';
+import { draftNeedsFix } from '@money/core/lib/draft-collect';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
 
 import EntryEditor from '../components/EntryEditor';
@@ -72,6 +73,7 @@ const EMPTY_KEY: Record<EntryDraftSource, MessageKey> = {
  * 읽는 사람이 다시 옮겨야 한다.
  */
 function scheduleText(rule: RecurringRuleDto.Response, t: (key: MessageKey) => string): string {
+  if (rule.frequency === 'none') return t('inbox.freq.none');
   if (rule.frequency === 'daily') {
     const days = rule.everyDays ?? 1;
     return days <= 1 ? t('inbox.freq.daily') : `${days}${t('inbox.everyDaysUnit')}`;
@@ -227,6 +229,21 @@ export default function InboxScreen() {
   };
 
   /**
+   * 주기 없는 반복의 "만들기". 오늘 날짜로 후보 하나를 담고 목록을 다시 읽는다.
+   *
+   * 알림 문구를 **여기서** 적는다. 밀린 회차를 세는 효과(아래 `handledMade`)에 맡기면
+   * 두 번째 누름에서 말이 뜨지 않는다 -- 그 효과는 담긴 수가 **바뀔 때만** 도는데,
+   * 한 건씩 만들면 그 수가 1 에 머무른다. 첫 누름에서는 둘이 같은 말을 적으므로
+   * 겹쳐 보이지 않는다.
+   */
+  const makeNow = async (rule: RecurringRuleDto.Response) => {
+    if (!(await recurring.makeNow(rule))) return;
+
+    setNotice(t('inbox.ruleMade', { count: 1 }));
+    await inbox.reload();
+  };
+
+  /**
    * 후보를 거래로.
    *
    * 후보는 전표가 아니라 폼이 받는 값의 묶음이다. 편집기에 `draft` 로 넘기면 core 의
@@ -370,6 +387,7 @@ export default function InboxScreen() {
                       setIsRuleOpen(true);
                     }}
                     onToggle={() => void recurring.toggle(rule.id, !rule.isActive)}
+                    onMakeNow={() => void makeNow(rule)}
                   />
                 </View>
               ))}
@@ -471,7 +489,6 @@ export default function InboxScreen() {
                 canEdit={canEdit}
                 onAdd={() => openDraft(draft)}
                 onDismiss={() => void inbox.dismiss(draft.id)}
-                onRemove={() => void inbox.remove(draft.id)}
               />
             </View>
           ))}
@@ -517,16 +534,43 @@ function RuleRow({
   canEdit,
   onEdit,
   onToggle,
+  onMakeNow,
 }: {
   rule: RecurringRuleDto.Response;
   canEdit: boolean;
   onEdit: () => void;
   onToggle: () => void;
+  /** 주기 없는 반복의 "만들기". 오늘 날짜로 후보 하나를 담는다. */
+  onMakeNow: () => void;
 }) {
   const { t } = useTranslation();
 
+  /*
+    주기가 없으면 켜고 끄는 단추 자리에 "만들기" 가 선다.
+
+    끄고 켜는 것은 "정해진 날에 저절로 만들어질지"를 정하는 값이다. 저절로 만들어지는
+    일이 없는 반복에서 그 단추는 아무것도 바꾸지 않으면서 자리를 차지한다. 대신 그
+    자리에서 지금 하나를 만든다.
+  */
+  const isManual = rule.frequency === 'none';
+
+  /*
+    상자 전체가 "고치기" 다.
+
+    연필 아이콘을 따로 두면 줄에서 누를 자리가 아이콘 한 칸뿐이라, 예약을 고치려고
+    매번 좁은 표적을 맞혀야 했다. 아래 후보 목록도 같은 규칙이다.
+
+    켜고 끄는 단추는 그대로 둔다. "고치기" 와 다른 일이라 상자에 맡길 수 없다. RN 은
+    자식 Pressable 이 누름을 가져가므로 부모까지 올라가지 않는다.
+  */
   return (
-    <View className="flex-row items-center gap-3 p-4">
+    <Pressable
+      onPress={canEdit ? onEdit : undefined}
+      disabled={!canEdit}
+      accessibilityRole="button"
+      accessibilityLabel={canEdit ? t('inbox.ruleEdit') : undefined}
+      className={`flex-row items-center gap-3 p-4 ${canEdit ? 'active:bg-gray-50' : ''}`}
+    >
       <View className="flex-1">
         <Text
           className={`font-medium ${rule.isActive ? 'text-gray-900' : 'text-gray-400'}`}
@@ -538,7 +582,12 @@ function RuleRow({
           {[
             scheduleText(rule, t),
             rule.amount ? formatCurrency(rule.amount, rule.currency ?? 'KRW') : null,
-            rule.nextRunOn ? t('inbox.ruleNext', { date: rule.nextRunOn }) : t('inbox.ruleNextNone'),
+            // 주기가 없으면 예정일 자리를 비운다. 주기 칸이 이미 "수동생성"을 말한다.
+            isManual
+              ? null
+              : rule.nextRunOn
+                ? t('inbox.ruleNext', { date: rule.nextRunOn })
+                : t('inbox.ruleNextNone'),
           ]
             .filter(Boolean)
             .join(' · ')}
@@ -547,27 +596,29 @@ function RuleRow({
 
       {canEdit ? (
         <Pressable
-          onPress={onToggle}
+          onPress={isManual ? onMakeNow : onToggle}
           hitSlop={6}
+          accessibilityRole="button"
           className={`rounded-lg border px-3 py-2 ${
-            rule.isActive ? 'border-blue-300 bg-blue-50' : 'border-gray-300'
+            isManual
+              ? 'border-blue-600 bg-blue-600 active:bg-blue-700'
+              : rule.isActive
+                ? 'border-blue-300 bg-blue-50'
+                : 'border-gray-300'
           }`}
         >
-          <Text className={`text-xs font-medium ${rule.isActive ? 'text-blue-700' : 'text-gray-500'}`}>
-            {t(rule.isActive ? 'inbox.ruleActive' : 'inbox.rulePaused')}
+          <Text
+            className={`text-xs font-medium ${
+              isManual ? 'text-white' : rule.isActive ? 'text-blue-700' : 'text-gray-500'
+            }`}
+          >
+            {isManual
+              ? t('inbox.ruleMakeNow')
+              : t(rule.isActive ? 'inbox.ruleActive' : 'inbox.rulePaused')}
           </Text>
         </Pressable>
       ) : null}
-      {canEdit ? (
-        <Pressable
-          onPress={onEdit}
-          hitSlop={6}
-          className="h-9 w-9 items-center justify-center rounded-lg border border-gray-300 active:bg-gray-50"
-        >
-          <Pencil size={16} color="#4b5563" />
-        </Pressable>
-      ) : null}
-    </View>
+    </Pressable>
   );
 }
 
@@ -576,6 +627,14 @@ function RuleRow({
  *
  * 금액이 맨 위다. 후보를 보는 까닭이 "얼마짜리를 적을 것인가"이고, 못 읽은 금액은
  * 그 자리에 그렇다고 적는다 -- 비워 두면 0원처럼 읽힌다.
+ *
+ * **상자 전체가 "거래로 적기" 다.** 아래에 파란 단추를 따로 두었더니 줄에서 누를 자리가
+ * 셋(단추·무시·원문)이 되어, 제일 흔한 일이 제일 아래에 있었다. 안에 있는 무시와 원문
+ * 펼치기는 RN 의 누름 임자 규칙에 따라 부모까지 올라가지 않는다.
+ *
+ * 지우기(휴지통)는 두지 않는다. 무시와 겉보기가 같아서 -- 둘 다 줄이 사라진다 --
+ * 어느 쪽이 무엇인지 알 수 없었다. 남긴 것은 **무시** 다. 표시가 남아 같은 알림이
+ * 다시 담기지 않는다. 지우기는 표시까지 없애 같은 알림이 다시 오면 후보가 다시 생긴다.
  */
 function DraftRow({
   draft,
@@ -584,7 +643,6 @@ function DraftRow({
   canEdit,
   onAdd,
   onDismiss,
-  onRemove,
 }: {
   draft: EntryDraftDto.Response;
   timeZone: string;
@@ -593,16 +651,21 @@ function DraftRow({
   canEdit: boolean;
   onAdd: () => void;
   onDismiss: () => void;
-  onRemove: () => void;
 }) {
   const { t } = useTranslation();
   const [isRawOpen, setIsRawOpen] = useState(false);
 
-  /** 사람이 채워야 하는 칸이 남았는가. 금액과 결제수단이 그 둘이다. */
-  const needsFix = !draft.amount || (!draft.cardId && !draft.accountId);
+  /** 사람이 채워야 하는 칸이 남았는가. 금액·결제수단·대분류 셋을 본다. */
+  const needsFix = draftNeedsFix(draft);
 
   return (
-    <View className="gap-2 p-4">
+    <Pressable
+      onPress={canEdit ? onAdd : undefined}
+      disabled={!canEdit}
+      accessibilityRole="button"
+      accessibilityLabel={canEdit ? t('inbox.add') : undefined}
+      className={`gap-2 p-4 ${canEdit ? 'active:bg-gray-50' : ''}`}
+    >
       <View className="flex-row items-start justify-between gap-3">
         <View className="flex-1">
           <Text className="text-lg font-bold text-gray-900">
@@ -627,22 +690,15 @@ function DraftRow({
         </View>
 
         {canEdit ? (
-          <View className="flex-row items-center gap-2">
-            <Pressable
-              onPress={onDismiss}
-              hitSlop={6}
-              className="h-9 w-9 items-center justify-center rounded-lg border border-gray-300 active:bg-gray-50"
-            >
-              <X size={16} color="#4b5563" />
-            </Pressable>
-            <Pressable
-              onPress={onRemove}
-              hitSlop={6}
-              className="h-9 w-9 items-center justify-center rounded-lg border border-red-300 active:bg-red-50"
-            >
-              <Trash2 size={16} color="#dc2626" />
-            </Pressable>
-          </View>
+          <Pressable
+            onPress={onDismiss}
+            hitSlop={6}
+            accessibilityRole="button"
+            accessibilityLabel={t('inbox.dismiss')}
+            className="h-9 w-9 items-center justify-center rounded-lg border border-gray-300 active:bg-gray-50"
+          >
+            <X size={16} color="#4b5563" />
+          </Pressable>
         ) : null}
       </View>
 
@@ -650,15 +706,6 @@ function DraftRow({
         <Text className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-800">
           {t('inbox.needsFix')}
         </Text>
-      ) : null}
-
-      {canEdit ? (
-        <Pressable
-          onPress={onAdd}
-          className="items-center rounded-lg bg-blue-600 px-4 py-3 active:bg-blue-700"
-        >
-          <Text className="text-base font-semibold text-white">{t('inbox.add')}</Text>
-        </Pressable>
       ) : null}
 
       {/*
@@ -676,6 +723,6 @@ function DraftRow({
           <Text className="text-xs text-gray-600">{draft.rawText}</Text>
         </ScrollView>
       ) : null}
-    </View>
+    </Pressable>
   );
 }

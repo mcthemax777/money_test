@@ -36,6 +36,33 @@ export interface MerchantHistoryRow {
 export const NO_HINTS: CollectHints = { accounts: [], cards: [], history: [] };
 
 /**
+ * 이체·카드대금에는 분류가 없다.
+ *
+ * 돈이 통장 사이를 옮겨 다닌 것뿐이라 "무엇에 썼는가"가 없다. 후보를 만들 때
+ * `categoryId` 를 일부러 비우고(아래 `collectItem`), 폼도 그 칸을 감춘다. 그래서
+ * "빈 칸이 있다"고 셀 때도 이 둘은 빼야 한다 -- 넣으면 이체 후보가 채울 것도 없이
+ * 늘 경고를 달고 있게 된다.
+ */
+function needsCategory(kind: EntryDraftDto.Response['kind']): boolean {
+  return kind !== 'transfer' && kind !== 'card_payment';
+}
+
+/**
+ * 사람이 채워야 할 칸이 남았는가. 보관함의 "빈 칸이 있습니다" 가 이것을 본다.
+ *
+ * 셋을 본다. **금액**·**결제수단**·**대분류**. 알림이나 캡처에서 못 읽거나 짐작이
+ * 빗나가면 비는 칸들이고, 비어 있으면 폼을 열었을 때 사람이 고르지 않고 지나칠 수
+ * 있다.
+ *
+ * 웹과 앱이 함께 쓴다. 두 곳에 따로 두면 같은 후보가 한쪽에서만 경고를 단다.
+ */
+export function draftNeedsFix(draft: EntryDraftDto.Response): boolean {
+  if (!draft.amount) return true;
+  if (!draft.cardId && !draft.accountId) return true;
+  return needsCategory(draft.kind) && !draft.categoryId;
+}
+
+/**
  * 읽어 낸 값 하나를 서버가 받는 모양으로.
  *
  * 결제수단은 맞춤이 찾은 것을 넣고, 못 찾으면 비운다. 분류는 지출·수입에만 붙인다 --

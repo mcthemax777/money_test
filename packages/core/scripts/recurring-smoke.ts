@@ -20,7 +20,7 @@ import {
   type RecurringSchedule,
 } from '@money/types';
 
-import { recurringDraftItems } from '../src/lib/recurring-drafts';
+import { manualDraftItem, recurringDraftItems } from '../src/lib/recurring-drafts';
 
 let fail = 0;
 function eq(label: string, actual: unknown, expected: unknown) {
@@ -225,6 +225,62 @@ console.log('\n── 후보로 옮기기 ──');
     31,
   );
   eq('둘을 함께', recurringDraftItems([rule(), rule({ id: 'rule2' })], '2026-09-03', 'Asia/Seoul').length, 2);
+}
+
+/*
+ * 주기 없는 반복.
+ *
+ * 저절로 오는 날이 하나도 없어야 한다 -- 하루라도 돌려주면 보관함을 열 때마다 후보가
+ * 저절로 쌓인다. 만들기를 누른 것만 생기고, 두 번 누르면 두 건이어야 한다(날짜가
+ * 같아도 열쇠가 달라야 한다).
+ */
+console.log('\n── 주기 없음 ──');
+{
+  const schedule: RecurringSchedule = { frequency: 'none', startDate: '2026-09-01' };
+  eq('저절로 오는 날이 없다', dueOccurrences(schedule, '2026-09-30').length, 0);
+  eq('다음 예정일도 없다', nextOccurrence(schedule, '2026-09-05'), null);
+  eq('저장할 수 있는 일정이다', checkRecurring(schedule), null);
+  eq(
+    '시작일이 지나도 없다',
+    dueOccurrences({ ...schedule, startDate: '2024-01-01' }, '2026-09-05').length,
+    0,
+  );
+
+  const manual = (): RecurringRuleDto.Response =>
+    ({
+      id: 'rule9',
+      isActive: true,
+      frequency: 'none',
+      everyDays: null,
+      dayOfMonth: null,
+      month: null,
+      startDate: '2026-09-01',
+      endDate: null,
+      timeOfDay: null,
+      kind: 'expense',
+      amount: '4500',
+      currency: 'KRW',
+      description: '아침 커피',
+      merchant: '아침 커피',
+      personId: null,
+      categoryId: 'cat1',
+      accountId: null,
+      cardId: 'card1',
+      installmentMonths: null,
+      lastMadeOn: null,
+      nextRunOn: null,
+    }) as RecurringRuleDto.Response;
+
+  eq('목록을 읽어도 만들지 않는다', recurringDraftItems([manual()], '2026-09-05', 'Asia/Seoul').length, 0);
+
+  const one = manualDraftItem(manual(), '2026-09-05', 'Asia/Seoul');
+  eq('누르면 그 날짜로 하나', one.occurredAt, '2026-09-05T03:00:00.000Z');
+  eq('반복을 가리킨다', one.recurringRuleId, 'rule9');
+  eq('값을 그대로 담는다', one.amount, '4500');
+  eq('열쇠가 그 날짜로 시작한다', one.dedupeKey?.startsWith('r:rule9:2026-09-05:'), true);
+
+  const other = manualDraftItem(manual(), '2026-09-05', 'Asia/Seoul');
+  eq('두 번 누르면 열쇠가 다르다', one.dedupeKey !== other.dedupeKey, true);
 }
 
 console.log(fail === 0 ? '\n전부 통과' : `\n${fail}건 실패`);

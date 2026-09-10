@@ -228,7 +228,9 @@ export class RecurringService {
     return {
       frequency,
       everyDays: frequency === 'daily' ? Math.max(1, Number(schedule.everyDays ?? 1)) : null,
-      dayOfMonth: frequency === 'daily' ? null : Number(schedule.dayOfMonth),
+      // 주기가 없으면 셋 다 비운다. 저절로 오는 날이 없어 정할 것이 없다.
+      dayOfMonth:
+        frequency === 'monthly' || frequency === 'yearly' ? Number(schedule.dayOfMonth) : null,
       month: frequency === 'yearly' ? Number(schedule.month) : null,
       startDate: schedule.startDate,
       endDate: schedule.endDate ?? null,
@@ -311,13 +313,17 @@ function toResponse(
 /**
  * 후보 열쇠(`r:<규칙>:<날짜>`)에서 날짜만.
  *
+ * 뒤에 표가 하나 더 붙는 열쇠도 있다(`r:<규칙>:<날짜>:<표>`). 사람이 "만들기"를 눌러
+ * 만든 회차인데, 같은 날짜로 여러 건이 생길 수 있어 날짜만으로는 열쇠가 겹친다.
+ * 그래서 마지막 토막이 아니라 **날짜 모양인 토막**을 찾는다 -- 마지막을 집으면 그
+ * 열쇠에서 표를 날짜로 읽는다.
+ *
  * 모양이 어긋난 열쇠는 없는 것으로 본다. 그러면 그 회차를 한 번 더 올리게 되지만,
  * 유일 제약이 잡아 주므로 후보가 늘지는 않는다.
  */
 function dateFromDedupeKey(key: string | null): string | null {
-  if (!key) return null;
-  const dateKey = key.slice(key.lastIndexOf(':') + 1);
-  return /^\d{4}-\d{2}-\d{2}$/.test(dateKey) ? dateKey : null;
+  const found = key?.match(/:(\d{4}-\d{2}-\d{2})(?::|$)/);
+  return found ? found[1] : null;
 }
 
 /** 할부 개월수. 1 은 일시불이라 담지 않는다 (전표 쪽 규칙과 같다). */

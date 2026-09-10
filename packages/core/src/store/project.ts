@@ -41,6 +41,20 @@ export function useProjectTimeZone(): string {
 }
 
 /**
+ * 선택한 프로젝트의 이름.
+ *
+ * 화면 제목이 쓴다. 아직 목록을 못 받았으면 빈 글자다 -- 부르는 쪽이 그때 무엇을
+ * 적을지 정한다. 여기서 "프로젝트" 같은 말을 지어 넣으면 잠깐 그 말이 보이고 이름이
+ * 도착하면서 바뀐다.
+ */
+export function useProjectName(): string {
+  return useProject((state) => {
+    const selected = state.projects.find((p) => p.id === state.selectedProjectId);
+    return selected?.name ?? '';
+  });
+}
+
+/**
  * 선택한 프로젝트의 표시 통화.
  *
  * 서버가 주는 합계(지출, 예산, 순자산)는 전부 이 통화로 환산돼 온다.
