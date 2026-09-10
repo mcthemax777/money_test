@@ -37,8 +37,8 @@ export interface UseRecurringRulesResult {
   /**
    * 지금 바로 후보 하나를 만든다. **주기 없는 반복**의 "만들기" 가 부른다.
    *
-   * 날짜는 오늘이다(프로젝트 타임존). 여러 번 눌러도 그때마다 하나가 생긴다 --
-   * 열쇠 뒤에 그 누름을 가리키는 표가 붙어 날짜가 같아도 겹치지 않는다.
+   * 날짜와 시각은 **누른 그 순간**이다(프로젝트 타임존). 여러 번 눌러도 그때마다
+   * 하나가 생긴다 -- 열쇠 뒤에 그 누름을 가리키는 표가 붙어 날짜가 같아도 겹치지 않는다.
    */
   makeNow: (rule: RecurringRuleDto.Response) => Promise<boolean>;
   remove: (id: string) => Promise<boolean>;
@@ -155,7 +155,7 @@ export function useRecurringRules(projectId: string | null): UseRecurringRulesRe
       if (!projectId) return false;
 
       try {
-        const item = manualDraftItem(rule, todayKey(timeZone), timeZone);
+        const item = manualDraftItem(rule, timeZone);
         const result = await draftPort().add(projectId, [item]);
         /*
          * 담긴 수를 그대로 알린다.

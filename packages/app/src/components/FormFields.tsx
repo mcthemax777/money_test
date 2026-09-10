@@ -7,8 +7,9 @@
  * **알약(`Chip`)은 검색 창과 같은 것을 쓴다.** 같은 것을 고르는 자리가 화면마다 다르게
  * 보이면 사용자는 그 둘이 다른 것이라고 읽는다.
  */
-import { Fragment } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { Fragment, useState } from 'react';
+import { Pressable, ScrollView, Text, View } from 'react-native';
+import { ChevronDown } from 'lucide-react-native';
 import type { CategoryDto } from '@money/types';
 
 import { groupCategories } from '@money/core/lib/category-tree';
@@ -28,6 +29,75 @@ export function Field({
         {label}
       </Text>
       {children}
+    </View>
+  );
+}
+
+/**
+ * 하나를 고르는 **선택박스**. 접힌 칸을 누르면 목록이 아래로 펼쳐진다.
+ *
+ * 고를 것이 많은 자리에 쓴다. 알약 줄(`Chips`)은 서른한 개를 늘어놓으면 다섯 줄을
+ * 먹어 그 아래 칸들이 화면 밖으로 밀린다. 접어 두면 답한 칸은 한 줄이고, 펼친 목록은
+ * 정해진 높이(최대 240) 안에서 굴러간다.
+ *
+ * 목록을 안에서 굴린다(ScrollView). 다 펼쳐 두면 서른한 줄이 1300 픽셀이라 팝업을
+ * 통째로 밀어 내린다 -- 무엇을 고르려다 왔는지 잊게 되는 높이다.
+ *
+ * 웹의 `<select>` 자리다. RN 에는 그것이 없어 같은 일을 하는 칸을 손으로 만든다.
+ */
+export function Select({
+  value,
+  options,
+  onSelect,
+  placeholder,
+}: {
+  value: string;
+  options: Array<{ value: string; label: string }>;
+  onSelect: (value: string) => void;
+  /** 고른 것이 없을 때 접힌 칸에 적을 글자 */
+  placeholder?: string;
+}) {
+  const [isOpen, setIsOpen] = useState(false);
+  const picked = options.find((option) => option.value === value);
+
+  return (
+    <View>
+      <Pressable
+        onPress={() => setIsOpen((open) => !open)}
+        accessibilityRole="button"
+        className="flex-row items-center justify-between rounded-lg border border-gray-300 px-3 py-3 active:bg-gray-50"
+      >
+        <Text className={`text-base ${picked ? 'text-gray-900' : 'text-gray-400'}`}>
+          {picked?.label ?? placeholder ?? ''}
+        </Text>
+        {/* 펼침 표시. 열려 있으면 뒤집어 지금 상태를 보인다. */}
+        <ChevronDown size={18} color="#6b7280" style={{ transform: [{ rotate: isOpen ? '180deg' : '0deg' }] }} />
+      </Pressable>
+
+      {isOpen ? (
+        <View className="mt-1 max-h-60 overflow-hidden rounded-lg border border-gray-300">
+          <ScrollView>
+            {options.map((option) => (
+              <Pressable
+                key={option.value || 'none'}
+                onPress={() => {
+                  onSelect(option.value);
+                  setIsOpen(false);
+                }}
+                className={`px-3 py-3 ${option.value === value ? 'bg-blue-50' : 'active:bg-gray-50'}`}
+              >
+                <Text
+                  className={`text-base ${
+                    option.value === value ? 'font-medium text-blue-700' : 'text-gray-900'
+                  }`}
+                >
+                  {option.label}
+                </Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      ) : null}
     </View>
   );
 }

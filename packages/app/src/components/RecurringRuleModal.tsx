@@ -23,7 +23,7 @@ import { useProjectTimeZone } from '@money/core/store/project';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
 
 import DatePickerPanel from './DatePickerPanel';
-import { Chips, Field } from './FormFields';
+import { Chips, Field, Select } from './FormFields';
 import Modal from './Modal';
 
 const FREQUENCIES: Array<{ id: RecurringFrequency; labelKey: MessageKey }> = [
@@ -35,6 +35,19 @@ const FREQUENCIES: Array<{ id: RecurringFrequency; labelKey: MessageKey }> = [
 
 /** "HH:mm" 인가. 앱에는 시각 입력이 없어 글자로 받고 여기서 본다. */
 const TIME_PATTERN = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+/**
+ * 며칟날 하나의 이름. 31 일에는 "(말일)" 을 붙인다.
+ *
+ * 31 을 고르면 **모든 달의 마지막 날**이 된다. 그 달에 없는 날은 마지막 날로 당기기
+ * 때문이다(`@money/types` 의 onDayOfMonth). 2월은 28·29일, 4월은 30일이다. 숫자만
+ * 두면 "31일이 없는 달에는 안 만들어지나" 로 읽혀, 달마다 도는 월세를 30일로 골라
+ * 두게 된다.
+ */
+function dayOfMonthLabel(day: number, t: (key: MessageKey) => string): string {
+  const name = `${day}${t('inbox.dayOfMonthUnit')}`;
+  return day === 31 ? `${name} ${t('inbox.dayOfMonthLast')}` : name;
+}
 
 /** 폼이 들고 있는 값. 전부 글자다 (입력란이 주는 그대로). */
 interface FormValues {
@@ -297,25 +310,30 @@ export default function RecurringRuleModal({
           </Field>
         ) : (
           <>
+            {/*
+              몇 월과 며칟날은 **선택박스**로 받는다. 알약 줄로 두면 열두 개와 서른한
+              개가 다섯 줄을 먹어, 그 아래 시작일·결제수단·분류가 화면 밖으로 밀린다.
+              웹도 같은 자리를 <select> 로 받는다.
+            */}
             {values.frequency === 'yearly' ? (
               <Field label={t('inbox.monthLabel')}>
-                <Chips
+                <Select
                   options={Array.from({ length: 12 }, (_, index) => ({
                     value: String(index + 1),
                     label: `${index + 1}${t('inbox.monthUnit')}`,
                   }))}
-                  selected={values.month}
+                  value={values.month}
                   onSelect={(value) => set('month', value)}
                 />
               </Field>
             ) : null}
             <Field label={t('inbox.dayOfMonth')}>
-              <Chips
+              <Select
                 options={Array.from({ length: 31 }, (_, index) => ({
                   value: String(index + 1),
-                  label: `${index + 1}${t('inbox.dayOfMonthUnit')}`,
+                  label: dayOfMonthLabel(index + 1, t),
                 }))}
-                selected={values.dayOfMonth}
+                value={values.dayOfMonth}
                 onSelect={(value) => set('dayOfMonth', value)}
               />
             </Field>
@@ -373,16 +391,25 @@ export default function RecurringRuleModal({
           </View>
         ) : null}
 
-        <Field label={t('inbox.ruleTime')}>
-          <TextInput
-            value={values.timeOfDay}
-            onChangeText={(text) => set('timeOfDay', text)}
-            placeholder="09:00"
-            keyboardType="numbers-and-punctuation"
-            maxLength={5}
-            className="w-28 rounded-lg border border-gray-300 px-3 py-3 text-base"
-          />
-        </Field>
+        {/*
+          시각. 정해진 날의 몇 시로 담을지다.
+
+          수동생성에는 두지 않는다. 그 반복은 사람이 누르는 그 순간의 시각으로 담기므로
+          (core 의 `manualDraftItem`) 여기서 적어 둔 값을 아무도 보지 않는다. 칸을 남겨
+          두면 적어 넣고서 그 시각으로 담기기를 기다리게 된다.
+        */}
+        {isManual ? null : (
+          <Field label={t('inbox.ruleTime')}>
+            <TextInput
+              value={values.timeOfDay}
+              onChangeText={(text) => set('timeOfDay', text)}
+              placeholder="09:00"
+              keyboardType="numbers-and-punctuation"
+              maxLength={5}
+              className="w-28 rounded-lg border border-gray-300 px-3 py-3 text-base"
+            />
+          </Field>
+        )}
 
         <Field label={t('editor.method')}>
           <Chips
@@ -480,7 +507,12 @@ function toBody(values: FormValues): RecurringRuleDto.Body {
     startDate: values.startDate,
     // 끝나는 날도 저절로 오는 날에 걸리는 값이다. 주기가 없으면 가지고 있지 않는다.
     endDate: scheduled ? values.endDate || null : null,
-    timeOfDay: values.timeOfDay || null,
+    /*
+     * 시각도 마찬가지다. 수동생성은 누르는 그 순간의 시각으로 담기므로 적어 둘 것이
+     * 없다. 폼에서 칸을 감췄어도 여기서 비우지 않으면, 주기를 바꾸기 전에 적어 둔
+     * 값이 표에 그대로 남는다.
+     */
+    timeOfDay: scheduled ? values.timeOfDay || null : null,
     kind: values.kind,
     amount: values.amount.trim() || null,
     description: values.description.trim(),

@@ -16,6 +16,7 @@ import {
   checkRecurring,
   dueOccurrences,
   nextOccurrence,
+  zonedDateKey,
   type RecurringRuleDto,
   type RecurringSchedule,
 } from '@money/types';
@@ -246,7 +247,7 @@ console.log('\n── 주기 없음 ──');
     0,
   );
 
-  const manual = (): RecurringRuleDto.Response =>
+  const manual = (extra: Partial<RecurringRuleDto.Response> = {}): RecurringRuleDto.Response =>
     ({
       id: 'rule9',
       isActive: true,
@@ -269,17 +270,33 @@ console.log('\n── 주기 없음 ──');
       installmentMonths: null,
       lastMadeOn: null,
       nextRunOn: null,
+      ...extra,
     }) as RecurringRuleDto.Response;
 
   eq('목록을 읽어도 만들지 않는다', recurringDraftItems([manual()], '2026-09-05', 'Asia/Seoul').length, 0);
 
-  const one = manualDraftItem(manual(), '2026-09-05', 'Asia/Seoul');
-  eq('누르면 그 날짜로 하나', one.occurredAt, '2026-09-05T03:00:00.000Z');
+  /*
+   * 누르면 **그 순간**으로 담긴다. 정해 둔 시각(timeOfDay)을 보지 않는다.
+   *
+   * 시각을 고정 값과 견줄 수 없으므로, 부르기 직전과 직후 사이에 들어오는지를 본다.
+   * 열쇠의 날짜와 거래 시각의 날짜가 같은 것도 함께 본다 -- 서버가 그 둘을 견주어
+   * 다르면 거절한다.
+   */
+  const timeZone = 'Asia/Seoul';
+  const before = Date.now();
+  const one = manualDraftItem(manual({ timeOfDay: '07:30' }), timeZone);
+  const after = Date.now();
+  const at = new Date(one.occurredAt ?? 0).getTime();
+
+  eq('누른 순간으로 담는다', at >= before && at <= after, true);
+  eq('정해 둔 시각을 보지 않는다', one.occurredAt?.endsWith('22:30:00.000Z'), false);
   eq('반복을 가리킨다', one.recurringRuleId, 'rule9');
   eq('값을 그대로 담는다', one.amount, '4500');
-  eq('열쇠가 그 날짜로 시작한다', one.dedupeKey?.startsWith('r:rule9:2026-09-05:'), true);
 
-  const other = manualDraftItem(manual(), '2026-09-05', 'Asia/Seoul');
+  const dateKey = zonedDateKey(new Date(at), timeZone);
+  eq('열쇠의 날짜가 거래 날짜와 같다', one.dedupeKey?.startsWith(`r:rule9:${dateKey}:`), true);
+
+  const other = manualDraftItem(manual(), timeZone);
   eq('두 번 누르면 열쇠가 다르다', one.dedupeKey !== other.dedupeKey, true);
 }
 

@@ -15,6 +15,7 @@
 
 import {
   dueOccurrences,
+  zonedDateKey,
   zonedFormValueToUtc,
   type EntryDraftDto,
   type RecurringRuleDto,
@@ -102,15 +103,23 @@ export function recurringDraftItems(
  * 들어간 뒤로는 어느 쪽에서 왔는지 구별하지 않고, 서버의 구간 검사도 같은 것을 본다.
  * 다른 것은 열쇠 뒤에 붙는 표뿐이다(`manualDedupeKey`).
  *
+ * **누른 그 순간의 시각으로 담는다.** 정해 둔 시각(`timeOfDay`)을 보지 않는다 -- 주기
+ * 없는 반복에는 "몇 시에 만들어질 날" 이라는 것이 없고, 사람이 지금 쓴 돈을 지금 적는
+ * 것이라 그때가 곧 거래 시각이다. 폼에서도 그 칸을 감춘다.
+ *
+ * 날짜와 시각을 **한 순간에서** 뽑는다. 날짜를 밖에서 받아 시각만 여기서 읽으면 자정을
+ * 넘는 순간에 둘이 어긋나고, 그때 열쇠의 날짜와 거래 시각의 날짜가 달라 서버가 거절한다.
+ *
  * 꺼 둔 반복도 만든다. 끄고 켜는 것은 "저절로 만들어질지"를 정하는 것이고, 주기 없는
  * 반복에는 저절로 만들어지는 일이 없어 그 단추 자리에 "만들기"가 대신 선다.
  */
 export function manualDraftItem(
   rule: RecurringRuleDto.Response,
-  dateKey: string,
   timeZone: string,
 ): EntryDraftDto.CreateItem {
-  return draftItem(rule, dateKey, timeZone, manualDedupeKey(rule.id, dateKey));
+  const now = new Date();
+  const dateKey = zonedDateKey(now, timeZone);
+  return draftItem(rule, dateKey, timeZone, manualDedupeKey(rule.id, dateKey), now);
 }
 
 /** 반복 하나를 그 날짜의 후보로. 밀린 회차와 손으로 누른 회차가 함께 쓴다. */
@@ -119,6 +128,8 @@ function draftItem(
   dateKey: string,
   timeZone: string,
   dedupeKey: string,
+  /** 손으로 누른 회차의 시각. 없으면 정해 둔 시각(없으면 정오)으로 그 날에 담는다. */
+  at?: Date,
 ): EntryDraftDto.CreateItem {
   /*
    * 그 날의 몇 시로 적을지.
@@ -126,7 +137,7 @@ function draftItem(
    * 시각을 정해 두지 않았으면 정오로 둔다 -- 어느 시간대에서 보아도 같은 날에
    * 남는다. 하루의 시작(00:00)으로 두면 시간대가 다른 곳에서 전날이 된다.
    */
-  const occurredAt = zonedFormValueToUtc(dateKey, rule.timeOfDay ?? '12:00', timeZone);
+  const occurredAt = at ?? zonedFormValueToUtc(dateKey, rule.timeOfDay ?? '12:00', timeZone);
 
   return {
     source: 'recurring',

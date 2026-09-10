@@ -234,7 +234,13 @@ export class RecurringService {
       month: frequency === 'yearly' ? Number(schedule.month) : null,
       startDate: schedule.startDate,
       endDate: schedule.endDate ?? null,
-      timeOfDay: (schedule as RecurringRuleDto.Body).timeOfDay ?? null,
+      /*
+       * 시각은 정해진 날의 몇 시로 담을지다. 주기가 없으면 그 날이 없다 -- 사람이
+       * 누르는 그 순간의 시각으로 담기므로(core 의 `manualDraftItem`) 적어 둔 값을
+       * 아무도 보지 않는다. 남겨 두면 표에 쓰이지 않는 값이 남는다.
+       */
+      timeOfDay:
+        frequency === 'none' ? null : ((schedule as RecurringRuleDto.Body).timeOfDay ?? null),
     };
   }
 

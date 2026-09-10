@@ -1018,6 +1018,7 @@ export const ja: Record<MessageKey, string> = {
   'inbox.everyDays': '何日ごと',
   'inbox.everyDaysUnit': '日ごと',
   'inbox.dayOfMonth': '日にち',
+  'inbox.dayOfMonthLast': '(末日)',
   'inbox.dayOfMonthUnit': '日',
   'inbox.monthLabel': '月',
   'inbox.monthUnit': '月',

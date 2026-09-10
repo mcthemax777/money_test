@@ -1051,6 +1051,7 @@ export const ko = {
   'inbox.everyDays': '며칠마다',
   'inbox.everyDaysUnit': '일마다',
   'inbox.dayOfMonth': '며칟날',
+  'inbox.dayOfMonthLast': '(말일)',
   'inbox.dayOfMonthUnit': '일',
   'inbox.monthLabel': '몇 월',
   'inbox.monthUnit': '월',

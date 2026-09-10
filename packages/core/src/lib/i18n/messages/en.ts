@@ -1027,6 +1027,7 @@ export const en: Record<MessageKey, string> = {
   'inbox.everyDays': 'Every',
   'inbox.everyDaysUnit': 'day(s)',
   'inbox.dayOfMonth': 'Day',
+  'inbox.dayOfMonthLast': '(last day)',
   'inbox.dayOfMonthUnit': ' ',
   'inbox.monthLabel': 'Month',
   'inbox.monthUnit': ' ',
