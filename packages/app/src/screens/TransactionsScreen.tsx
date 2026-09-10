@@ -524,7 +524,7 @@ export default function TransactionsScreen() {
       return (
         <View
           key={`${tx.tab}-${row.key}`}
-          className={divided ? 'border-b border-blue-300' : undefined}
+          className={divided ? 'border-b border-blue-200' : undefined}
         >
           <Line
             depth={1}
@@ -762,7 +762,7 @@ export default function TransactionsScreen() {
                     글자가 같은 자리에서 시작해야 한다 -- 테두리는 그 여백 안에 선다.
                   */}
                 {level >= 1 ? (
-                  <View className="mb-2 overflow-hidden rounded-lg border border-blue-300">
+                  <View className="mb-2 overflow-hidden rounded-lg border border-blue-200">
                     {level2(month.yearMonth)}
                   </View>
                 ) : null}

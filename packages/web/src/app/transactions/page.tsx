@@ -421,7 +421,7 @@ export default function TransactionsPage() {
       return (
         <div
           key={`${tx.tab}-${row.key}`}
-          className={divided ? 'border-b border-blue-300' : undefined}
+          className={divided ? 'border-b border-blue-200' : undefined}
         >
           <Line
             depth={1}
@@ -928,7 +928,7 @@ export default function TransactionsPage() {
                     글자가 같은 자리에서 시작해야 한다 -- 테두리는 그 여백 안에 선다.
                   */}
                 {level >= 1 ? (
-                  <div className="unfold mb-2 overflow-hidden rounded-lg border border-blue-300">
+                  <div className="unfold mb-2 overflow-hidden rounded-lg border border-blue-200">
                     {level2(month.yearMonth)}
                   </div>
                 ) : null}
