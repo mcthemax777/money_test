@@ -7,6 +7,7 @@ import { apiClient } from '@money/core/lib/api-client';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
 import { formatCurrency, toAmountString, toNumber } from '@money/core/lib/money';
 import { sumNetWorth, type NetWorthParts } from '@money/core/lib/net-worth';
+import { accountDueOf } from '@money/core/lib/card-settlement';
 import { useUserFilter } from '@money/core/store/user-filter';
 import { formatDate, monthInputToIso } from '@money/core/lib/datetime';
 import { type ReportDto } from '@money/types';
@@ -109,6 +110,40 @@ function AccountProfitLine({
       {/* 손실에 "수익 -"를 붙이면 두 번 읽어야 한다. 부호 대신 이름을 바꾼다. */}
       {value > 0 ? t('assets.profit') : t('assets.loss')}
       {formatCurrency(Math.abs(value), account.currency)}
+    </p>
+  );
+}
+
+/**
+ * 카드 줄 오른쪽 끝의 남은 대금.
+ *
+ * 아직 정산하지 않은 것이 있을 때만 적는다. 0원을 적어 두면 다 갚은 카드가 밀린
+ * 카드와 같은 무게로 보인다. 체크카드는 결제 즉시 통장에서 빠져 갚을 것이 남지 않는다.
+ *
+ * 음수는 카드사가 갚을 돈이다(사용을 취소했거나 대금을 더 가져간 뒤). 부호만 바꿔
+ * 적으면 빚으로 읽히므로 이름과 색을 함께 바꾼다 -- 정산 판과 같은 규칙이다.
+ */
+function CardOutstanding({ card, currency }: { card: Card; currency: string }) {
+  // 훅은 이른 반환보다 앞이어야 한다.
+  const { t } = useTranslation();
+
+  if (card.cardType !== 'credit') return null;
+
+  const outstanding = toNumber(card.currentUsage);
+  if (outstanding === 0) return null;
+
+  const refundPending = outstanding < 0;
+
+  return (
+    <p
+      className={`shrink-0 text-sm font-bold tabular-nums ${
+        refundPending ? 'text-emerald-700' : 'text-red-600'
+      }`}
+    >
+      {refundPending && (
+        <span className="mr-1 text-xs font-medium">{t('settlement.refundPending')}</span>
+      )}
+      {formatCurrency(Math.abs(outstanding), currency)}
     </p>
   );
 }
@@ -1848,21 +1883,19 @@ function PersonAssetList({
             selected?.type === 'person' && selected.id === person.id ? SELECTED_MARK : ''
           } ${draggingId === person.id ? 'opacity-50' : ''}`}
         >
+          {/*
+            이름과 소계를 한 줄의 양 끝에 둔다. "소계"라는 말은 적지 않는다 -- 사람
+            이름 옆의 금액은 그 사람 몫이라는 뜻 말고 읽힐 것이 없다. 계좌·카드 줄도
+            같은 자리에 금액을 두어, 오른쪽 끝을 따라 내려가며 셋을 견줄 수 있다.
+          */}
           <button onClick={() => onPersonClick(person)} className="w-full text-left mb-6">
-            <div className="flex justify-between items-center">
-              <div>
-                <h2 className="text-xl font-bold text-gray-900">
-                  {person.name}
-                </h2>
-                <p className="text-sm text-gray-600">
-                  {t('assets.personSubtotal', {
-                    amount: formatCurrency(
-                      netWorthByPerson.get(person.id)?.total ?? 0,
-                      displayCurrency,
-                    ),
-                  })}
-                </p>
-              </div>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="min-w-0 truncate text-xl font-bold text-gray-900">
+                {person.name}
+              </h2>
+              <p className="shrink-0 text-xl font-bold tabular-nums text-gray-900">
+                {formatCurrency(netWorthByPerson.get(person.id)?.total ?? 0, displayCurrency)}
+              </p>
             </div>
           </button>
 
@@ -1924,70 +1957,93 @@ function AccountList({
 
   return (
     <div className="space-y-4">
-      {items.map((account) => (
-        <div
-          key={account.id}
-          {...dragProps(account.id)}
-          /* 오른쪽 패널에 펼쳐 둔 계좌를 목록에서도 알 수 있게 표시한다 */
-          className={`rounded-lg border border-gray-200 p-4 hover:shadow-md transition ${
-            selected?.type === 'account' && selected.id === account.id
-              ? `${SELECTED_MARK} bg-blue-50`
-              : ''
-          } ${draggingId === account.id ? 'opacity-50' : ''}`}
-        >
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onAccountClick(account);
-            }}
-            className="w-full text-left hover:opacity-70 transition"
+      {items.map((account) => {
+        const cards = cardsOf(account.id);
+        /* 이 통장으로 빠져나갈 카드 대금과, 그것을 뺀 남은 금액. 셈은 core 가 한다. */
+        const { due, remaining } = accountDueOf(account.balance, cards);
+
+        return (
+          <div
+            key={account.id}
+            {...dragProps(account.id)}
+            /* 오른쪽 패널에 펼쳐 둔 계좌를 목록에서도 알 수 있게 표시한다 */
+            className={`rounded-lg border border-gray-200 p-4 hover:shadow-md transition ${
+              selected?.type === 'account' && selected.id === account.id
+                ? `${SELECTED_MARK} bg-blue-50`
+                : ''
+            } ${draggingId === account.id ? 'opacity-50' : ''}`}
           >
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onAccountClick(account);
+              }}
+              className="w-full text-left hover:opacity-70 transition"
+            >
+              {/*
+                왼쪽에 계좌명, 오른쪽 끝에 남은 금액이다. 어느 계좌인지 먼저 알아야 하고,
+                금액은 오른쪽 끝에 모여 있어야 위아래로 훑으며 견줄 수 있다.
+
+                유형은 총자산을 현금성·투자·부채로 나누는 기준이라 목록에서 바로 보여야
+                하므로 계좌명 옆에 붙인다.
+              */}
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <p className="truncate text-sm text-gray-600">{account.name}</p>
+                  <AccountTypeBadge type={account.type} />
+                </div>
+                {/*
+                  잔액이 아니라 카드 대금을 뺀 남은 금액이다. 통장에 찍힌 돈에는 카드사가
+                  이미 가져가기로 된 몫이 섞여 있어, 잔액만 보면 쓸 수 있는 돈을 그만큼
+                  부풀려 읽는다.
+                */}
+                <p className="shrink-0 text-2xl font-bold tabular-nums text-gray-900">
+                  {formatCurrency(remaining, account.currency)}
+                </p>
+              </div>
+              {/*
+                무엇을 뺀 값인지는 대금이 있을 때만 풀어 쓴다. 대금이 없으면 남은 금액이
+                곧 잔액이라, 같은 수를 한 번 더 적는 줄이 된다.
+              */}
+              {due !== 0 && (
+                <p className="mt-1 text-right text-xs tabular-nums text-gray-500">
+                  {t(due > 0 ? 'assets.balanceWithDue' : 'assets.balanceWithRefund', {
+                    balance: formatCurrency(account.balance, account.currency),
+                    due: formatCurrency(Math.abs(due), account.currency),
+                  })}
+                </p>
+              )}
+              <AccountProfitLine
+                account={account}
+                profit={accountProfit.get(account.id)}
+              />
+              {account.accountNumber && (
+                <p className="text-xs text-gray-400 mt-1">{account.accountNumber}</p>
+              )}
+            </button>
+
             {/*
-              위에는 계좌명, 아래에는 개설 기관을 둔다. 어느 계좌인지 먼저 알아야 하고,
-              은행은 계좌를 여러 개 가진 사람에게만 필요한 부속 정보다.
+              카드는 결제 통장 밑에 붙는다. 그 통장이 곧 이 계좌다.
 
-              유형은 총자산을 현금성·투자·부채로 나누는 기준이라 목록에서 바로 보여야
-              하므로 계좌명 옆에 붙인다.
+              가름줄은 이 묶음 위에 둔다. 버튼과 카드 목록이 한 덩이로 보이고, 계좌
+              자신의 정보와 갈린다. 줄이 버튼 아래에 있으면 버튼이 계좌 쪽에 붙어
+              "이 계좌를 고치는 버튼"처럼 읽힌다.
             */}
-            <div className="flex items-center gap-1.5">
-              <p className="text-sm text-gray-600">{account.name}</p>
-              <AccountTypeBadge type={account.type} />
+            <div className="mt-4 border-t border-gray-200 pt-4">
+              <AddButton label={t('card.add')} onClick={() => onAddCard(account.id)} />
+
+              <CardList
+                cards={cards}
+                /* 사용액·남은 대금은 모두 결제 통장의 통화다 (기준통화 환산액이 아니다). */
+                currency={account.currency}
+                selected={selected}
+                onCardClick={onCardClick}
+                onReorder={onReorderCards}
+              />
             </div>
-            <p className="text-2xl font-bold text-gray-900 mt-2">
-              {formatCurrency(account.balance, account.currency)}
-            </p>
-            <AccountProfitLine
-              account={account}
-              profit={accountProfit.get(account.id)}
-            />
-            {/* 현금과 부동산은 개설 기관이 없다 */}
-            {account.institution?.name && (
-              <p className="text-xs text-gray-500 mt-2">{account.institution.name}</p>
-            )}
-            {account.accountNumber && (
-              <p className="text-xs text-gray-400 mt-1">{account.accountNumber}</p>
-            )}
-          </button>
-
-          {/*
-            카드는 결제 통장 밑에 붙는다. 그 통장이 곧 이 계좌다.
-
-            가름줄은 이 묶음 위에 둔다. 버튼과 카드 목록이 한 덩이로 보이고, 계좌
-            자신의 정보와 갈린다. 줄이 버튼 아래에 있으면 버튼이 계좌 쪽에 붙어
-            "이 계좌를 고치는 버튼"처럼 읽힌다.
-          */}
-          <div className="mt-4 border-t border-gray-200 pt-4">
-            <AddButton label={t('card.add')} onClick={() => onAddCard(account.id)} />
-
-            <CardList
-              cards={cardsOf(account.id)}
-              selected={selected}
-              onCardClick={onCardClick}
-              onReorder={onReorderCards}
-            />
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -1995,11 +2051,14 @@ function AccountList({
 /** 한 계좌에 연결된 카드 목록 */
 function CardList({
   cards,
+  currency,
   selected,
   onCardClick,
   onReorder,
 }: {
   cards: Card[];
+  /** 결제 통장의 통화. 카드 금액은 전부 이 통화다. */
+  currency: string;
   selected: SelectedItem;
   onCardClick: (card: Card) => void;
   onReorder: (ids: string[]) => void;
@@ -2029,10 +2088,12 @@ function CardList({
             }}
             className="w-full text-left"
           >
-            <p className="text-sm font-medium text-gray-900">
-              💳 {card.name}
-            </p>
-            <p className="text-xs text-gray-600">{card.issuer?.name}</p>
+            <div className="flex items-center justify-between gap-3">
+              <p className="min-w-0 truncate text-sm font-medium text-gray-900">
+                💳 {card.name}
+              </p>
+              <CardOutstanding card={card} currency={currency} />
+            </div>
             <p className="text-xs text-gray-600">
               {t(card.cardType === 'debit' ? 'method.debit_card' : 'method.credit_card')}
             </p>

@@ -37,3 +37,38 @@ export function overTransferOf(input: {
   const room = input.direction === 'refund' ? -input.outstanding : input.outstanding;
   return amount > room ? amount - Math.max(room, 0) : 0;
 }
+
+/** 통장에 걸린 카드 대금과, 그것을 뺀 남은 금액. */
+export interface AccountDueSummary {
+  /**
+   * 이 통장으로 빠져나갈 신용카드 대금의 합.
+   *
+   * 음수면 카드사가 갚을 돈이 더 많은 상태다(환불 예정). 그때는 남은 금액이 잔액보다
+   * 커지는데, 실제로 그만큼 더 들어올 돈이라 맞는 값이다.
+   */
+  due: number;
+  /** 대금을 치르고 나면 통장에 남는 돈 */
+  remaining: number;
+}
+
+/**
+ * 통장 잔액에서 카드 대금을 뺀 "남은 금액".
+ *
+ * 통장에 찍힌 잔액은 아직 카드사가 가져가지 않은 돈까지 품고 있다. 자산 목록에서
+ * 잔액만 보면 이번 달 쓸 수 있는 돈을 그만큼 부풀려 읽게 된다. 그래서 목록에는 이
+ * 남은 금액을 적고, 잔액과 대금은 그 아래에 풀어 쓴다.
+ *
+ * 체크카드는 결제 즉시 통장에서 빠져 갚을 것이 남지 않으므로 세지 않는다
+ * (서버도 그런 카드에는 부채 계정을 만들지 않아 currentUsage 가 null 이다).
+ */
+export function accountDueOf(
+  balance: string | number | null | undefined,
+  cards: readonly { cardType: string; currentUsage?: string | null }[],
+): AccountDueSummary {
+  const due = cards.reduce(
+    (sum, card) => (card.cardType === 'credit' ? sum + toNumber(card.currentUsage) : sum),
+    0,
+  );
+
+  return { due, remaining: toNumber(balance) - due };
+}

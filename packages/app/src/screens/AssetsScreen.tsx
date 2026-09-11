@@ -4,6 +4,7 @@ import { Pressable, Text, View } from 'react-native';
 import { useAssetsData } from '@money/core/hooks/useAssetsData';
 import { EMPTY_SEARCH } from '@money/core/hooks/useTransactions';
 import { accountTypeLabel } from '@money/core/lib/account-type';
+import { accountDueOf } from '@money/core/lib/card-settlement';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import type { Account, Card, Person } from '@money/core/lib/types';
@@ -274,18 +275,23 @@ export default function AssetsScreen() {
                   고치는 창은 그 상세의 머리글에 있다 -- 읽기 전용 구성원에게는 그 단추가
                   없고, 상세 자체는 누구나 읽는다.
                 */}
+                {/*
+                  이름과 소계를 한 줄의 양 끝에 둔다. "소계"라는 말은 적지 않는다 --
+                  사람 이름 옆의 금액은 그 사람 몫이라는 뜻 말고 읽힐 것이 없다.
+                  계좌·카드 줄도 같은 자리에 금액을 두어 오른쪽 끝이 나란히 선다.
+                */}
                 <Pressable
-                  className="mb-6"
+                  className="mb-6 flex-row items-center justify-between gap-3"
                   onPress={() => openDetail({ kind: 'person', id: person.id })}
                 >
-                  <Text className="text-xl font-bold text-gray-900">{person.name}</Text>
-                  <Text className="text-sm text-gray-600">
-                    {t('assets.personSubtotal', {
-                      amount: formatCurrency(
-                        assets.netWorthByPerson.get(person.id)?.total ?? 0,
-                        displayCurrency,
-                      ),
-                    })}
+                  <Text numberOfLines={1} className="shrink text-xl font-bold text-gray-900">
+                    {person.name}
+                  </Text>
+                  <Text className="text-xl font-bold text-gray-900">
+                    {formatCurrency(
+                      assets.netWorthByPerson.get(person.id)?.total ?? 0,
+                      displayCurrency,
+                    )}
                   </Text>
                 </Pressable>
 
@@ -405,10 +411,42 @@ export default function AssetsScreen() {
  * 같은 무게가 되어, 있는 것과 만들 자리가 눈에 섞인다.
  */
 /**
+ * 카드 줄 오른쪽 끝의 남은 대금. 웹의 자산 목록과 같은 규칙이다.
+ *
+ * 아직 정산하지 않은 것이 있을 때만 적는다. 0원을 적어 두면 다 갚은 카드가 밀린
+ * 카드와 같은 무게로 보인다. 체크카드는 결제 즉시 통장에서 빠져 갚을 것이 남지 않는다.
+ *
+ * 음수는 카드사가 갚을 돈이다(사용을 취소했거나 대금을 더 가져간 뒤). 부호만 바꿔
+ * 적으면 빚으로 읽히므로 이름과 색을 함께 바꾼다 -- 정산 판과 같은 규칙이다.
+ */
+function CardOutstanding({ card, currency }: { card: Card; currency: string }) {
+  // 훅은 이른 반환보다 앞이어야 한다.
+  const { t } = useTranslation();
+
+  if (card.cardType !== 'credit') return null;
+
+  const outstanding = toNumber(card.currentUsage);
+  if (outstanding === 0) return null;
+
+  const refundPending = outstanding < 0;
+
+  return (
+    <Text
+      className={`text-sm font-bold ${refundPending ? 'text-emerald-700' : 'text-red-600'}`}
+    >
+      {refundPending ? (
+        <Text className="text-xs font-medium">{t('settlement.refundPending')} </Text>
+      ) : null}
+      {formatCurrency(Math.abs(outstanding), currency)}
+    </Text>
+  );
+}
+
+/**
  * 계좌 한 줄과 그 아래 카드들.
  *
- * 위에는 계좌명, 아래에는 개설 기관을 둔다. 어느 계좌인지 먼저 알아야 하고, 은행은
- * 계좌를 여러 개 가진 사람에게만 필요한 부속 정보다. 유형은 총자산을 현금성·투자·
+ * 왼쪽에 계좌명, 오른쪽 끝에 남은 금액을 둔다. 어느 계좌인지 먼저 알아야 하고, 금액은
+ * 오른쪽 끝에 모여 있어야 위아래로 훑으며 견줄 수 있다. 유형은 총자산을 현금성·투자·
  * 부채로 나누는 기준이라 계좌명 옆에 붙인다.
  */
 function AccountRow({
@@ -433,39 +471,68 @@ function AccountRow({
 }) {
   const { t } = useTranslation();
   const profitAmount = toNumber(profit);
+  /* 이 통장으로 빠져나갈 카드 대금과, 그것을 뺀 남은 금액. 셈은 core 가 한다(웹과 같은 값). */
+  const { due, remaining } = accountDueOf(account.balance, cards);
 
   /* 겉 상자는 목록(DragList)이 씌운다. 여기서 또 씌우면 테두리가 두 겹이 된다. */
   return (
     <>
-      {/* 이름 줄을 누르면 상세가 열린다. 잔액을 누르는 것과 헷갈리지 않게 이름 줄만 받는다. */}
-      <Pressable className="flex-row items-center gap-1.5" onPress={onOpen}>
-        <Text className="text-sm text-gray-600">{account.name}</Text>
-        <Text className="rounded bg-gray-100 px-1.5 py-px text-[11px] text-gray-600">
-          {accountTypeLabel(account.type)}
-        </Text>
+      {/*
+        계좌 칸 전체가 누를 자리다 (웹의 계좌 버튼과 같다). 예전에는 이름 줄만 받아서,
+        정작 크게 적힌 금액이나 그 아래 줄을 눌러서는 상세가 열리지 않았다.
+
+        칸의 여백(DragList 가 준 p-4)까지 누를 자리로 삼는다. 여백을 음수 여백으로 도로
+        덮고 같은 크기의 안 여백을 주면, 보이는 모양은 그대로면서 손이 닿는 자리만 넓어진다.
+
+        카드 묶음은 이 밖에 둔다. 그쪽을 함께 받으면 카드를 누른 것이 계좌 상세로 간다.
+      */}
+      <Pressable className="-mx-4 -mt-4 px-4 pt-4 active:opacity-70" onPress={onOpen}>
+        <View className="flex-row items-center justify-between gap-3">
+          <View className="shrink flex-row items-center gap-1.5">
+            <Text numberOfLines={1} className="shrink text-sm text-gray-600">
+              {account.name}
+            </Text>
+            <Text className="rounded bg-gray-100 px-1.5 py-px text-[11px] text-gray-600">
+              {accountTypeLabel(account.type)}
+            </Text>
+          </View>
+          {/*
+            잔액이 아니라 카드 대금을 뺀 남은 금액이다. 통장에 찍힌 돈에는 카드사가
+            이미 가져가기로 된 몫이 섞여 있어, 잔액만 보면 쓸 수 있는 돈을 그만큼
+            부풀려 읽는다.
+          */}
+          <Text className="text-2xl font-bold text-gray-900">
+            {formatCurrency(remaining, account.currency)}
+          </Text>
+        </View>
+
+        {/*
+          무엇을 뺀 값인지는 대금이 있을 때만 풀어 쓴다. 대금이 없으면 남은 금액이
+          곧 잔액이라, 같은 수를 한 번 더 적는 줄이 된다.
+        */}
+        {due !== 0 ? (
+          <Text className="mt-1 text-right text-xs text-gray-500">
+            {t(due > 0 ? 'assets.balanceWithDue' : 'assets.balanceWithRefund', {
+              balance: formatCurrency(account.balance, account.currency),
+              due: formatCurrency(Math.abs(due), account.currency),
+            })}
+          </Text>
+        ) : null}
+
+        {/* 손실에 "수익 -"를 붙이면 두 번 읽어야 한다. 부호 대신 이름을 바꾼다. */}
+        {profit !== undefined && profitAmount !== 0 ? (
+          <Text
+            className={`mt-1 text-xs ${profitAmount > 0 ? 'text-green-600' : 'text-red-600'}`}
+          >
+            {t(profitAmount > 0 ? 'assets.profit' : 'assets.loss')}
+            {formatCurrency(Math.abs(profitAmount), account.currency)}
+          </Text>
+        ) : null}
+
+        {account.accountNumber ? (
+          <Text className="mt-1 text-xs text-gray-400">{account.accountNumber}</Text>
+        ) : null}
       </Pressable>
-
-      <Text className="mt-2 text-2xl font-bold text-gray-900">
-        {formatCurrency(account.balance, account.currency)}
-      </Text>
-
-      {/* 손실에 "수익 -"를 붙이면 두 번 읽어야 한다. 부호 대신 이름을 바꾼다. */}
-      {profit !== undefined && profitAmount !== 0 ? (
-        <Text
-          className={`mt-1 text-xs ${profitAmount > 0 ? 'text-green-600' : 'text-red-600'}`}
-        >
-          {t(profitAmount > 0 ? 'assets.profit' : 'assets.loss')}
-          {formatCurrency(Math.abs(profitAmount), account.currency)}
-        </Text>
-      ) : null}
-
-      {/* 현금과 부동산은 개설 기관이 없다 */}
-      {account.institution?.name ? (
-        <Text className="mt-2 text-xs text-gray-500">{account.institution.name}</Text>
-      ) : null}
-      {account.accountNumber ? (
-        <Text className="mt-1 text-xs text-gray-400">{account.accountNumber}</Text>
-      ) : null}
 
       <View className="mt-4 border-t border-gray-200 pt-4">
         <AddButton label={t('card.add')} onPress={onAddCard} />
@@ -479,10 +546,13 @@ function AccountRow({
           onReorder={onReorderCards}
           renderItem={(card) => (
             <>
-              <Text className="text-sm font-medium text-gray-900">{card.name}</Text>
-              {card.issuer?.name ? (
-                <Text className="text-xs text-gray-600">{card.issuer.name}</Text>
-              ) : null}
+              <View className="flex-row items-center justify-between gap-3">
+                <Text numberOfLines={1} className="shrink text-sm font-medium text-gray-900">
+                  {card.name}
+                </Text>
+                {/* 카드 금액은 전부 결제 통장의 통화다 (기준통화 환산액이 아니다). */}
+                <CardOutstanding card={card} currency={account.currency} />
+              </View>
               <Text className="text-xs text-gray-600">
                 {t(card.cardType === 'debit' ? 'method.debit_card' : 'method.credit_card')}
               </Text>
