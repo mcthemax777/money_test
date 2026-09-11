@@ -179,6 +179,7 @@ function Line({
   income,
   open,
   depth,
+  showNet,
   check,
   onClick,
 }: {
@@ -190,6 +191,15 @@ function Line({
   expense: number;
   income: number;
   open?: boolean;
+  /**
+   * 수입에서 지출을 뺀 값을 둘째 줄에 적을지. 년월 줄만 켜고 쓴다.
+   *
+   * 자리가 남는 웹에서도 세 번째 칸을 만들지 않고 앱과 같은 두 줄로 둔다. 두 화면이
+   * 같은 숫자를 다른 자리에서 보여 주면, 폰으로 본 것을 웹에서 다시 찾게 된다.
+   * (앱은 자리가 아예 없다 -- 360dp 기기에서 줄 안쪽 304dp 중 수입·지출이 30% 씩을
+   * 쓰고 `₩1,234,567` 하나가 83dp 라, 칸을 더 넣으면 달 이름 자리가 6dp 만 남는다.)
+   */
+  showNet?: boolean;
   /** 고르는 중이면 왼쪽에 체크박스를 둔다. */
   check?: { checked: boolean; pending?: boolean; onToggle: () => void };
   /**
@@ -202,65 +212,98 @@ function Line({
   depth: 0 | 1;
   onClick: () => void;
 }) {
+  const { t } = useTranslation();
   const currency = useProjectDisplayCurrency();
+
+  /*
+   * 순수입 줄은 오간 돈이 있을 때만 선다. 이체만 있던 달은 수입도 지출도 0 이라
+   * "순수입 0" 을 적어 봐야 위 줄의 "-" 를 되풀이할 뿐이다.
+   */
+  const net = income - expense;
+  const showsNet = Boolean(showNet) && (income > 0 || expense > 0);
 
   return (
     <button
       type="button"
       onClick={onClick}
       aria-expanded={Boolean(open)}
-      className="flex w-full items-center gap-2 px-3 py-2 text-left"
+      className="block w-full px-3 py-2 text-left"
     >
-      {check ? (
-        <CheckBox checked={check.checked} pending={check.pending} onToggle={check.onToggle} />
-      ) : null}
-      {/*
-        펼침 표시(▸▾)는 두지 않는다. 누르면 바로 아래가 열리고 닫히는 것이 보이므로
-        화살표는 한 줄에서 자리만 차지한다. 열린 상태는 aria-expanded 로만 알린다.
-      */}
-      <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-        <span
-          className={`truncate text-gray-900 ${
-            depth === 0 ? 'text-[15px] font-semibold' : 'text-sm font-medium'
-          }`}
-        >
-          {label}
+      <span className="flex items-center gap-2">
+        {check ? (
+          <CheckBox checked={check.checked} pending={check.pending} onToggle={check.onToggle} />
+        ) : null}
+        {/*
+          펼침 표시(▸▾)는 두지 않는다. 누르면 바로 아래가 열리고 닫히는 것이 보이므로
+          화살표는 한 줄에서 자리만 차지한다. 열린 상태는 aria-expanded 로만 알린다.
+        */}
+        <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+          <span
+            className={`truncate text-gray-900 ${
+              depth === 0 ? 'text-[15px] font-semibold' : 'text-sm font-medium'
+            }`}
+          >
+            {label}
+          </span>
+          {/*
+            요일. 일자 바로 옆에 붙여 "9 (토)" 로 읽히게 한다. 잔글씨(건수)보다 앞에
+            두는 것은 요일이 날짜의 일부이기 때문이다.
+          */}
+          {weekday ? (
+            <span className={`shrink-0 text-sm ${WEEKDAY_COLOR[weekday.day] ?? 'text-gray-900'}`}>
+              ({weekday.label})
+            </span>
+          ) : null}
+          {meta ? <span className="shrink-0 text-xs text-gray-500">{meta}</span> : null}
         </span>
         {/*
-          요일. 일자 바로 옆에 붙여 "9 (토)" 로 읽히게 한다. 잔글씨(건수)보다 앞에
-          두는 것은 요일이 날짜의 일부이기 때문이다.
-        */}
-        {weekday ? (
-          <span className={`shrink-0 text-sm ${WEEKDAY_COLOR[weekday.day] ?? 'text-gray-900'}`}>
-            ({weekday.label})
-          </span>
-        ) : null}
-        {meta ? <span className="shrink-0 text-xs text-gray-500">{meta}</span> : null}
-      </span>
-      {/*
-        들어온 돈은 줄 가운데, 나간 돈은 오른쪽 끝. 둘에게 제 칸을 주고 못 박는다.
+          들어온 돈은 줄 가운데, 나간 돈은 오른쪽 끝. 둘에게 제 칸을 주고 못 박는다.
 
-        한 덩어리로 두면 두 숫자가 서로 옆에 붙어 어느 쪽이 들어온 돈인지 색으로만
-        갈린다. 한쪽이 없는 달에는 남은 숫자가 오른쪽으로 미끄러져, 줄을 훑을 때
-        같은 자리에서 같은 뜻을 읽을 수 없다. 칸을 고정하면 없는 쪽은 빈 자리로
-        남고 있는 쪽은 늘 제 자리에 선다.
+          한 덩어리로 두면 두 숫자가 서로 옆에 붙어 어느 쪽이 들어온 돈인지 색으로만
+          갈린다. 한쪽이 없는 달에는 남은 숫자가 오른쪽으로 미끄러져, 줄을 훑을 때
+          같은 자리에서 같은 뜻을 읽을 수 없다. 칸을 고정하면 없는 쪽은 빈 자리로
+          남고 있는 쪽은 늘 제 자리에 선다.
+        */}
+        <span
+          className={`flex w-[30%] shrink-0 justify-center overflow-hidden font-semibold tabular-nums ${AMOUNT_SIZE[depth]}`}
+        >
+          {income > 0 ? (
+            <span className="truncate text-green-600">+{formatCurrency(income, currency)}</span>
+          ) : null}
+        </span>
+        <span
+          className={`flex w-[30%] shrink-0 justify-end overflow-hidden font-semibold tabular-nums ${AMOUNT_SIZE[depth]}`}
+        >
+          {expense > 0 ? (
+            <span className="truncate text-red-600">-{formatCurrency(expense, currency)}</span>
+          ) : income === 0 ? (
+            <span className="font-normal text-gray-400">-</span>
+          ) : null}
+        </span>
+      </span>
+
+      {/*
+        순수입. 수입·지출 칸 바로 아래, 같은 오른쪽 끝에 세운다.
+
+        위 두 숫자를 세로로 더한 결과라 같은 세로선에 서야 눈이 옆으로 새지 않는다.
+        낱말을 앞에 붙이는 것은 색만으로는 "적게 쓴 달"과 "수입이 컸던 달"이 갈리지
+        않아서다 -- 초록 숫자가 둘이 되면 위의 것이 수입인지 남은 돈인지 모른다.
+
+        글자는 한 단 작게 둔다. 이 줄은 위의 두 숫자에서 나온 값이라, 같은 크기로
+        두면 달마다 굵은 금액이 셋이 되어 무엇을 먼저 읽을지 알 수 없다.
       */}
-      <span
-        className={`flex w-[30%] shrink-0 justify-center overflow-hidden font-semibold tabular-nums ${AMOUNT_SIZE[depth]}`}
-      >
-        {income > 0 ? (
-          <span className="truncate text-green-600">+{formatCurrency(income, currency)}</span>
-        ) : null}
-      </span>
-      <span
-        className={`flex w-[30%] shrink-0 justify-end overflow-hidden font-semibold tabular-nums ${AMOUNT_SIZE[depth]}`}
-      >
-        {expense > 0 ? (
-          <span className="truncate text-red-600">-{formatCurrency(expense, currency)}</span>
-        ) : income === 0 ? (
-          <span className="font-normal text-gray-400">-</span>
-        ) : null}
-      </span>
+      {showsNet ? (
+        <span className="flex justify-end pt-0.5">
+          <span
+            className={`text-xs font-semibold tabular-nums ${
+              net >= 0 ? 'text-green-600' : 'text-red-600'
+            }`}
+          >
+            {t('ledgerSummary.net')} {net >= 0 ? '+' : '-'}
+            {formatCurrency(Math.abs(net), currency)}
+          </span>
+        </span>
+      ) : null}
     </button>
   );
 }
@@ -472,8 +515,9 @@ export default function TransactionsView({
        * 펴 둔 줄과 다음 줄 사이에 파란 선을 긋는다.
        *
        * 거래내역이 끝나는 자리와 다음 줄이 시작하는 자리가 맞붙어 있어, 선이 없으면
-       * 마지막 거래가 다음 줄에 딸린 것처럼 읽힌다. 테두리와 같은 파랑으로 두어 그
-       * 상자 안의 칸막이임을 보인다.
+       * 마지막 거래가 다음 줄에 딸린 것처럼 읽힌다. 바깥 테두리와 **같은 색**으로 두어
+       * 그 상자 안의 칸막이임을 보인다 -- 그래서 테두리를 회색으로 바꾸면 이 선도
+       * 함께 간다. 혼자 파랑으로 남으면 상자와 무관한 줄로 읽힌다.
        *
        * 접힌 줄 사이에는 긋지 않는다. 그 줄들은 한 줄 높이로 나란히 서 있어 선을
        * 넣으면 목록이 표가 된다 -- 나눌 것이 생기는 것은 사이에 거래내역이 끼어들
@@ -484,7 +528,7 @@ export default function TransactionsView({
       return (
         <div
           key={`${tx.tab}-${row.key}`}
-          className={divided ? 'border-b border-blue-200' : undefined}
+          className={divided ? 'border-b border-gray-200' : undefined}
         >
           <Line
             depth={1}
@@ -963,16 +1007,35 @@ export default function TransactionsView({
         ) : tx.months.length === 0 ? (
           <p className="p-3 text-sm text-gray-500">{t('tx.noMonths')}</p>
         ) : (
-          tx.months.map((month) => {
+          tx.months.map((month, index) => {
             const level = tx.levelOf(month.yearMonth);
+            /*
+             * 년월 줄끼리 맞붙는 자리에 선을 긋는다.
+             *
+             * 접힌 달은 한 줄 높이로 서로 붙어 서 있어, 선이 없으면 두 줄을 가르는
+             * 것이 글자 사이 여백뿐이다. 줄마다 순수입이 아래 붙어 두 줄 높이가
+             * 되면서 그 여백이 더 흐려졌다 -- 어느 금액이 어느 달의 것인지 눈으로
+             * 끊기 어렵다.
+             *
+             * **위 달이 접혀 있을 때만 긋는다.** 펴 둔 달은 아래에 테두리 상자가
+             * 따라오고 그 상자가 mb-2 만큼 떨어져 있어 이미 눈에 보이는 경계가 있다.
+             * 거기에 선을 더하면 여백 뒤에 뜬 선 하나가 남아 상자의 일부처럼 읽힌다.
+             */
+            const touchesPrevious =
+              index > 0 && tx.levelOf(tx.months[index - 1].yearMonth) === 0;
+
             return (
-              <div key={month.yearMonth}>
+              <div
+                key={month.yearMonth}
+                className={touchesPrevious ? 'border-t border-gray-200' : undefined}
+              >
                 <Line
                   depth={0}
                   label={monthLabel(month.yearMonth)}
                   expense={toNumber(month.expense)}
                   income={toNumber(month.income)}
                   open={level >= 1}
+                  showNet
                   check={
                     tx.isSelecting
                       ? {
@@ -985,14 +1048,15 @@ export default function TransactionsView({
                   onClick={() => tx.cycleMonth(month.yearMonth)}
                 />
                 {/*
-                    펼친 것을 파란 테두리로 두른다. "여기서 여기까지가 그 달의 것" 을
+                    펼친 것을 테두리로 두른다. "여기서 여기까지가 그 달의 것" 을
                     네 변이 말한다.
 
-                    파랑으로 두는 것은 회색 테두리가 이 화면에서 걷어낸 상자와 같은
-                    색이어서다. 그 색으로 두르면 지운 상자가 되돌아온 것처럼 보이고,
-                    안에 든 거래내역의 흰 상자와도 겹으로 읽힌다. 파랑은 이 저장소에서
-                    "지금 고른 것" 을 가리키는 색이라(알약·단추), 펴 둔 달을 가리키는
-                    자리에 맞다.
+                    한때 파랑이었다. 회색 테두리가 이 화면에서 걷어낸 상자와 같은
+                    색이라, 그 색으로 두르면 지운 상자가 되돌아온 것처럼 보이고 안에
+                    든 거래내역의 흰 상자와도 겹으로 읽힐 것을 걱정해서였다. 회색으로
+                    바꿔 눈으로 견준 결과 그렇게 보이지 않아, 년월 줄 사이의 구분선과
+                    같은 회색으로 두었다 -- 이 화면에서 선을 긋는 자리는 모두 한 색이고,
+                    파랑은 "지금 고른 것"(알약·단추)에만 남는다.
 
                     안에 든 것을 테두리 모양대로 잘라 낸다(overflow-hidden). 맨 아래
                     거래내역은 흰 바탕에 모서리가 각져 있어, 그대로 두면 그 흰 사각이
@@ -1005,7 +1069,7 @@ export default function TransactionsView({
                     글자가 같은 자리에서 시작해야 한다 -- 테두리는 그 여백 안에 선다.
                   */}
                 {level >= 1 ? (
-                  <div className="unfold mb-2 overflow-hidden rounded-lg border border-blue-200">
+                  <div className="unfold mb-2 overflow-hidden rounded-lg border border-gray-200">
                     {level2(month.yearMonth)}
                   </div>
                 ) : null}
