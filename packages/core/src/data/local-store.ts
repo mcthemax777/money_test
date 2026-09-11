@@ -2951,18 +2951,22 @@ function searchFilter(search?: ParsedEntrySearch): { sql: string; params: string
   const cardIds = search.paymentCardIds ?? [];
   if (accountIds.length > 0 || cardIds.length > 0) {
     const negative = `substr(mp.amount, 1, 1) = '-'`;
+    // 들어온 쪽. 0 은 어느 쪽도 아니라 뺀다 (유형 조건의 `positive` 와 같은 규칙이다).
+    const positive = `substr(mp.amount, 1, 1) != '-' AND mp.amount != '0'`;
     const branches: string[] = [];
 
     if (accountIds.length > 0) {
       /*
-       * 결제수단 관점이다. 이 통장에서 실제로 돈이 나간 전표만 본다.
-       *
-       * 체크카드 결제는 연결 통장 다리에도 걸리므로 카드가 붙은 다리를 빼고, 이체로
-       * 돈이 들어온 쪽(+)도 뺀다. 수단별 목록에 적힌 금액과 그것을 눌러 나온 거래의
-       * 합이 어긋나지 않아야 한다.
+       * 이 통장의 관점이다. **나간 돈과 들어온 수입 둘 다** 본다.
+       * 서버의 `entrySearchConditions` 와 같은 규칙이라 온라인·오프라인이 같은
+       * 목록을 낸다 (그 자리에 왜 이렇게 두었는지가 적혀 있다).
        */
       branches.push(
-        `(mp.accountId IN (${accountIds.map(() => '?').join(', ')}) AND mp.cardId IS NULL AND ${negative})`,
+        `(mp.accountId IN (${accountIds.map(() => '?').join(', ')}) AND mp.cardId IS NULL
+            AND (${negative} OR (${positive} AND EXISTS (
+                  SELECT 1 FROM posting ip JOIN category ic ON ic.id = ip.categoryId
+                   WHERE ip.entryId = mp.entryId AND ic.type = 'income'
+                ))))`,
       );
       params.push(...accountIds);
     }

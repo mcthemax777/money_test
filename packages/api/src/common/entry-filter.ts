@@ -106,16 +106,31 @@ export function entrySearchConditions(search: ParsedEntrySearch): Prisma.Posting
   const methods: Prisma.PostingWhereInput[] = [];
   if (search.paymentAccountIds && search.paymentAccountIds.length > 0) {
     /*
-     * 결제수단 관점이다. 이 통장에서 실제로 돈이 나간 전표만 본다.
+     * 이 통장의 관점이다. **나간 돈과 들어온 수입 둘 다** 본다.
      *
-     * 체크카드 결제는 연결 통장 다리에도 걸리므로 카드가 붙은 다리를 빼고, 이체로
-     * 돈이 들어온 쪽(+)도 뺀다. /reports/payment-methods 와 같은 규칙이라, 수단별
-     * 목록에 적힌 금액과 그것을 눌러 나온 거래의 합이 어긋나지 않는다.
+     * 나간 쪽(-)에서는 카드가 붙은 다리를 뺀다. 체크카드 결제가 연결 통장 다리에도
+     * 걸려 카드와 통장에 두 번 세어지기 때문이다. 이체로 들어온 쪽(+)도 뺀다 --
+     * 받는 통장이 쓴 돈이 아니다.
+     *
+     * 수입은 따로 담는다. 수입 전표의 통장 다리는 받는 쪽이라 금액이 양수여서,
+     * "나간 돈"만 보면 하나도 걸리지 않는다. 그런데 /reports/payment-methods 는
+     * 그 금액을 이미 수단의 income 칸에 적고 있다 -- 빼 두면 줄에는 수입이 적혀
+     * 있는데 그 줄을 눌러 편 목록에는 지출만 나온다. 목록과 합계가 같은 규칙을
+     * 써야 한다는 것이 이 자리의 원칙이라, 수입도 같이 든다.
+     *
+     * 들어온 쪽을 수입으로만 좁히는 것은 이체·카드정산의 받는 다리까지 들이지
+     * 않기 위해서다. 그 둘은 보내는 통장에서 이미 한 번 걸린다.
      */
     methods.push({
       accountId: { in: search.paymentAccountIds },
       cardId: null,
-      amount: { lt: 0 },
+      OR: [
+        { amount: { lt: 0 } },
+        {
+          amount: { gt: 0 },
+          entry: { postings: { some: { category: { type: CategoryType.income } } } },
+        },
+      ],
     });
   }
   if (search.paymentCardIds && search.paymentCardIds.length > 0) {

@@ -315,18 +315,21 @@ runSmoke('transactions', async (ctx) => {
    * 둘을 AND 로 묶으면 여기서 0건이 된다. 한 전표가 통장 다리와 카드 다리를 함께
    * 갖는 일은 체크카드뿐이고, 그때도 통장 다리에는 카드가 붙어 결제수단 관점에서 빠진다.
    *
-   * 넷이다. **수입과 개설잔액은 여기 들지 않는다** -- 결제수단 관점은 "그 수단에서 돈이
-   * 나간 전표"이고 둘은 통장 다리가 양수다. 이 화면의 수단별 목록도 같은 규칙으로 금액을
-   * 세므로, 줄에 적힌 사용액과 눌러서 나온 거래가 서로 맞는다.
+   * **나간 돈과 그 통장으로 들어온 수입이 함께 든다.** 수단별 목록이 수단마다 사용액과
+   * 수입을 함께 적으므로(`paymentMethods`), 줄에 적힌 두 숫자와 그 줄을 눌러 나온
+   * 거래가 서로 맞으려면 목록에도 수입이 있어야 한다.
    *   6월 외식(통장) · 카드 외식(체크) · 전기요금(통장) · 비상금 외식(비상금)
-   *   · 비상금으로 옮김(통장에서 나감) · 카드 대금(통장에서 나감)
+   *   · 비상금으로 옮김(통장에서 나감) · 카드 대금(통장에서 나감) · 월급(통장으로 들어옴)
+   *
+   * **개설잔액은 그래도 빠진다.** 통장 다리가 양수지만 수입 분류 다리가 없어서다.
+   * 이체·카드정산의 받는 다리도 같은 이유로 빠진다 -- 그 둘은 보내는 통장에서 한 번 든다.
    */
   const accountsAndCards = await entries.getEntries(
     uid,
     { paymentAccountIds: `${bank.id},${other.id}`, paymentCardIds: card.id },
     pid,
   );
-  ctx.check('통장 둘 또는 카드 하나 (10건)', accountsAndCards.data.length, 10);
+  ctx.check('통장 둘 또는 카드 하나 (11건)', accountsAndCards.data.length, 11);
 
   /*
    * ── 유형 필터 ──
@@ -485,11 +488,20 @@ runSmoke('transactions', async (ctx) => {
   ctx.check('수입만 고른 8월 지출은 0', incomeMonths[0]?.expense, '0');
 
   /*
-   * 수입이 정말로 빠지는지 따로 못 박는다. 위 숫자가 왜 4인지가 여기 있다.
-   * 월급은 통장에 들어온 것이라 "통장으로 쓴 것"에는 들지 않는다.
+   * 수입이 정말로 드는지 따로 못 박는다. 이것이 빠지면 수단별 줄에는 수입이 적혀
+   * 있는데 그 줄을 눌러 편 목록에는 지출만 나온다 (예전에 그랬다).
+   *
+   * 개설잔액은 같은 통장의 양수 다리인데도 빠져야 한다. 들어온 쪽을 "수입 분류
+   * 다리가 있는 전표"로 좁힌 것이 여기서 갈린다 -- 둘을 가르지 않으면 통장을 고를
+   * 때마다 기초잔액 한 건이 목록 맨 앞에 끼어든다.
    */
-  const hasSalary = accountsAndCards.data.some((row) => row.description === '월급');
-  ctx.check('수입은 결제수단 관점에서 빠진다', hasSalary, false);
+  const descriptions = accountsAndCards.data.map((row) => row.description);
+  ctx.check('통장으로 들어온 수입이 든다', descriptions.includes('월급'), true);
+  ctx.check(
+    '개설잔액은 양수 다리여도 빠진다',
+    descriptions.some((text) => text?.includes('기초잔액')),
+    false,
+  );
 
   // ── 7. 무리끼리는 AND ──
   const andAcross = await entries.getEntries(

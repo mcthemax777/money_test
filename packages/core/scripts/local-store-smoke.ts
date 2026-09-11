@@ -491,6 +491,9 @@ const entry = (
         monthEntries: Record<string, string[]>;
 
         /* 사본 쪽 검사가 물어볼 때 쓰는 id 들. */
+        /** 통장 하나로 좁힌 목록. 수단별 줄을 눌렀을 때 나오는 것이다. */
+        methodEntries: string[];
+        bankAccountId: string;
         searchCategoryId: string;
         personId: string;
         otherPersonId: string;
@@ -988,6 +991,25 @@ const entry = (
     eq('거래 화면: 검색 결과가 같은 거래다',
       searched.map((row) => row.id).join(','),
       dump.server.searchedEntries.map((row) => row.id).join(','));
+
+    /*
+     * 수단(통장) 하나로 좁힌 목록. 수단별 줄을 누르면 이 조회가 나간다.
+     *
+     * 이 통장에서 나간 돈과 이 통장으로 들어온 수입이 함께 들고, 기초잔액과 이체의
+     * 받는 쪽은 빠져야 한다. 두 저장소가 각자 조건을 만드는 자리라(서버는 Prisma,
+     * 사본은 손으로 옮긴 SQL) 갈리면 같은 통장을 눌러도 온라인과 오프라인의 목록이
+     * 달라진다 -- 건수만이 아니라 어느 거래인지까지 견준다.
+     */
+    const methodEntries = await port.getAllEntries(
+      { paymentAccountIds: dump.server.bankAccountId, limit: 200 },
+      real.projectId,
+    );
+    eq('거래 화면: 수단으로 좁힌 건수', methodEntries.length, dump.server.methodEntries.length);
+    eq('거래 화면: 수단으로 좁힌 것이 같은 거래다',
+      methodEntries.map((row) => row.id).join(','),
+      dump.server.methodEntries.join(','));
+    eq('거래 화면: 그 통장으로 들어온 수입이 든다',
+      methodEntries.some((row) => row.kind === 'income'), true);
 
     // 고르지 않은 무리는 조건이 서지 않는다. 빈 값과 다르다.
     const noSearch = await port.getAllEntries({ limit: 200 }, real.projectId);

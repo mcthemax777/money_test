@@ -338,6 +338,17 @@ runSmoke('sync-pull-dump', async (ctx) => {
         ]),
       ),
     ),
+    /*
+     * 수단(통장) 하나로 좁힌 목록.
+     *
+     * 나간 돈과 그 통장으로 들어온 수입이 함께 들고, 기초잔액과 이체의 받는 쪽은
+     * 빠져야 한다. 서버와 사본이 각자 조건을 손으로 만드는 자리라(entrySearchConditions
+     * ↔ searchFilter) 갈리면 같은 통장을 눌러도 온라인·오프라인 목록이 달라진다.
+     */
+    methodEntries: (
+      await entries.getEntries(uid, { paymentAccountIds: bank.id, limit: 200 }, pid)
+    ).data.map((row) => row.id),
+    bankAccountId: bank.id,
     searchCategoryId: dining.id,
     /** 사본 쪽 검사가 "낸 사람"으로 물어볼 사람들과 태그. */
     personId: person.id,
