@@ -507,8 +507,7 @@ export const ko = {
   'history.backToNow': '지금으로',
   'history.empty': '표시할 잔액 기록이 없습니다.',
   'history.balance': '잔액',
-  'history.appDrillHint': '좌우로 끌면 앞뒤 구간, 칸을 누르면 그 안을 한 단 더 자세히 봅니다.',
-  'history.appReadHint': '좌우로 끌면 앞뒤 구간, 칸을 누르면 그 날의 잔액을 읽습니다.',
+  'history.appReadHint': '좌우로 끌면 앞뒤 구간, 칸을 누르면 그 자리의 잔액을 읽습니다.',
 
   // ===== 가계 화면 =====
   'ledger.noun': '가계',

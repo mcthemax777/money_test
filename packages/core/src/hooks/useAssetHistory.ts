@@ -16,6 +16,9 @@ import {
   currentYearMonth,
   daysBetweenKeys,
   formatMonthShort,
+  formatYearMonth,
+  formatYearMonthDay,
+  formatYearOnly,
   lastDayOfMonth,
   monthsBetween,
   shiftDateKey,
@@ -36,9 +39,29 @@ export interface AssetHistoryPoint {
    * 서버가 준 그대로의 날짜. 연이면 "YYYY", 월이면 "YYYY-MM", 일이면 "YYYY-MM-DD".
    *
    * 축에 적는 이름(label)은 언어에 따라 "8월"·"Aug" 로 달라져 되읽을 수 없다. 눌러서
-   * 한 단 아래로 내려갈 때 어느 구간인지는 이 값으로 말한다.
+   * 한 단 아래로 내려갈 때 어느 구간인지는 이 값으로 말하고, `historyPointLabel` 이
+   * 이것을 화면에 적는 말(연도까지)로 옮긴다.
    */
   date: string;
+}
+
+/**
+ * 그 칸이 어느 때인지 적는 말. 축의 짧은 이름과 달리 **연도까지 적는다.**
+ *
+ *   일 "2026년 9월 10일" · 월 "2026년 9월" · 년 "2026년"
+ *
+ * 축 이름(`label`)을 그대로 쓸 수 없다. 그쪽은 눈금이 겹치지 않게 "9/10"·"9월" 로
+ * 줄여 둔 것이라, 창을 해가 바뀌는 자리로 끌면 어느 해의 9월인지 알 수 없다. 값을
+ * 읽는 자리는 한 칸뿐이라 길어도 된다 -- 앱은 그래프 위의 한 줄, 웹은 툴팁이다.
+ *
+ * 단위는 값의 생김새가 말한다 (`AssetHistoryPoint.date` 의 규칙이다). 단위를 따로
+ * 받으면 부르는 쪽이 점과 단위를 짝지어 넘겨야 하고, 그 둘이 어긋난 채로도 돌아간다.
+ */
+export function historyPointLabel(date: string): string {
+  const [year, month, day] = date.split('-');
+  if (day !== undefined) return formatYearMonthDay(date);
+  if (month !== undefined) return formatYearMonth(Number(year), Number(month));
+  return formatYearOnly(Number(year));
 }
 
 /**

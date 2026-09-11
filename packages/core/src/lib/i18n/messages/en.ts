@@ -484,7 +484,6 @@ export const en: Record<MessageKey, string> = {
   'history.backToNow': 'Back to now',
   'history.empty': 'No balance records to show.',
   'history.balance': 'Balance',
-  'history.appDrillHint': 'Drag sideways for other periods; tap a slot to look inside it.',
   'history.appReadHint': 'Drag sideways for other periods; tap a slot to read that balance.',
 
   // ===== Ledger screen =====

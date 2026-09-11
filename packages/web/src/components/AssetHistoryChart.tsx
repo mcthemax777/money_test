@@ -12,7 +12,6 @@ import {
   YAxis,
 } from 'recharts';
 import { useTranslation } from '@money/core/lib/i18n';
-import { formatCurrency } from '@money/core/lib/money';
 import {
   CHART_ACTIVE_DOT,
   CHART_COLOR,
@@ -25,6 +24,7 @@ import {
 } from '@money/core/lib/chart';
 import {
   GRANULARITY_OPTIONS,
+  historyPointLabel,
   useAssetHistory,
   type AssetHistoryInput,
 } from '@money/core/hooks/useAssetHistory';
@@ -189,6 +189,19 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
                 formatter={(value: any) =>
                   formatTooltipAmount(value, t('history.balance'), displayCurrency)
                 }
+                /*
+                 * 머리글은 **연도까지** 적는다. 기본값은 X축 이름(label)인데, 그쪽은
+                 * 눈금이 겹치지 않게 "9/10"·"9월" 로 줄여 둔 것이라 창을 해가 바뀌는
+                 * 자리로 끌면 어느 해의 9월인지 알 수 없다.
+                 *
+                 * 날짜는 점이 들고 있다. recharts 는 두 번째 인자로 그 칸의 원본
+                 * 데이터를 함께 주므로 거기서 꺼낸다 -- 첫 인자(label)로는 되읽을 수
+                 * 없다. 아직 아무 칸도 가리키지 않은 순간에는 빈 글자다.
+                 */
+                labelFormatter={(_label: any, payload: any) => {
+                  const date = payload?.[0]?.payload?.date;
+                  return date ? historyPointLabel(date) : '';
+                }}
                 contentStyle={CHART_TOOLTIP_STYLE}
               />
               <Line
@@ -202,8 +215,13 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
                 isAnimationActive={false}
               />
               {/*
-                금액은 점 왼쪽에 적는다. 마지막 점은 오른쪽 끝에 붙어 있어 위나
-                오른쪽에 적으면 글자가 그래프 밖으로 잘린다.
+                선이 끝나는 점. 점만 찍고 금액은 적지 않는다.
+
+                예전에는 이 점 왼쪽에 잔액을 적었다. 값을 읽는 길이 이미 둘 있는데
+                (마우스를 올리면 툴팁, 아래의 잔액 칸) 그래프 안에까지 적으면 같은
+                숫자가 한 화면에 셋이 되고, 그 글자는 선을 따라 오르내려 격자선·X축
+                이름과 겹치는 자리가 생긴다. 점은 남긴다 -- 선이 어디서 끝나는지는
+                그것 말고 말해 주는 것이 없다.
               */}
               {lastPoint && (
                 <ReferenceDot
@@ -213,14 +231,6 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
                   fill={CHART_COLOR}
                   stroke="#fff"
                   strokeWidth={2}
-                  label={{
-                    value: formatCurrency(lastPoint.balance, displayCurrency),
-                    position: 'left',
-                    offset: 10,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    fill: '#374151',
-                  }}
                 />
               )}
             </LineChart>

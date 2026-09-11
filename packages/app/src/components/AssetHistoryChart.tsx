@@ -3,7 +3,7 @@
  *
  * 무엇을 받아 어느 칸을 그릴지는 core 의 useAssetHistory 가 정한다 (웹과 같은 훅이다).
  * 여기 있는 것은 그리는 일과 손가락을 받는 일뿐이다 -- 선은 react-native-svg 로 긋고,
- * 좌우로 끌면 창이 시간 위를 미끄러지고, 칸을 누르면 한 단 아래로 내려간다.
+ * 좌우로 끌면 창이 시간 위를 미끄러지고, 칸을 누르면 그 자리의 잔액을 읽는다.
  */
 import { useRef, useState } from 'react';
 import {
@@ -19,6 +19,7 @@ import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 import { CHART_COLOR } from '@money/core/lib/chart';
 import {
   GRANULARITY_OPTIONS,
+  historyPointLabel,
   useAssetHistory,
   type AssetHistoryInput,
 } from '@money/core/hooks/useAssetHistory';
@@ -52,24 +53,27 @@ const MAX_X_LABELS = 6;
 /** 격자선 색 (tailwind gray-200). 웹 그래프의 가로 점선과 같은 자리다. */
 const GRID_COLOR = '#e5e7eb';
 const AXIS_TEXT_COLOR = '#6b7280';
-const LABEL_TEXT_COLOR = '#374151';
 
 export default function AssetHistoryChart(props: AssetHistoryInput) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
   const history = useAssetHistory(props);
-  const { points, yAxis, canDrill } = history;
+  const { points, yAxis } = history;
 
   /** 그리는 자리의 폭. 글자 길이와 화면 크기에 따라 달라 그려진 뒤 잰다. */
   const [width, setWidth] = useState(0);
   const measure = (event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width);
 
   /**
-   * 눌러서 값을 읽어 둔 칸.
+   * 눌러서 값을 읽어 둔 칸. **null 이면 맨 오른쪽 칸**이다.
    *
-   * 웹은 마우스를 올리면 툴팁이 뜨지만 앱에는 그런 자리가 없다. 일별은 눌러도 내려갈
-   * 곳이 없으므로(가장 아래 단), 그 누름을 값 읽기로 쓴다. 월·연에서는 누름이 한 단
-   * 아래로 내려가는 길이라 이 값을 두지 않는다.
+   * 단위를 가리지 않는다 -- 일·월·연 모두 누른 자리의 잔액을 읽는다. 예전에는
+   * 월·연의 누름이 한 단 아래로 내려가는 길이었는데, 내려갈 곳은 위의 탭이 이미
+   * 가리키고 있어 같은 자리에 두 가지 뜻이 겹쳐 있었다.
+   *
+   * 고르지 않은 상태를 "맨 오른쪽"으로 두는 것이 요점이다. 숫자로 굳혀 두면 창을
+   * 끌 때 그 자리에 눌러 둔 칸이 남아, 화면에 보이지도 않는 날짜의 잔액이 읽힌다.
+   * null 로 두면 끌어도 늘 선이 끝나는 칸을 읽는다.
    */
   const [picked, setPicked] = useState<number | null>(null);
 
@@ -130,16 +134,20 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
 
     const index = Math.round((locationX - AXIS_WIDTH) / gap);
     const clamped = Math.min(Math.max(index, 0), points.length - 1);
-    const point = points[clamped];
-
-    if (canDrill) history.drillInto(point.date);
-    else setPicked(clamped);
+    setPicked(clamped);
   };
 
   /** X축에 이름을 적을 칸. 너무 촘촘하면 몇 칸씩 건너뛴다. */
   const labelStep = Math.max(1, Math.ceil(points.length / MAX_X_LABELS));
   const lastIndex = points.length - 1;
-  const pickedPoint = picked !== null && picked <= lastIndex ? points[picked] : null;
+  /*
+   * 지금 읽고 있는 칸. 아직 아무 데도 누르지 않았으면 맨 오른쪽이다.
+   *
+   * 눌러 둔 자리가 창 밖으로 밀려난 경우(다시 받는 중이라 점이 창보다 적다)에도
+   * 맨 오른쪽으로 되돌린다 -- 없는 칸을 가리키면 읽는 줄이 통째로 사라진다.
+   */
+  const activeIndex = picked !== null && picked <= lastIndex ? picked : lastIndex;
+  const activePoint = activeIndex >= 0 ? points[activeIndex] : null;
 
   return (
     <View className="rounded-lg bg-white p-4 shadow-sm">
@@ -181,17 +189,23 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
       ) : (
         <>
           {/*
-            눌러서 읽은 값. 웹의 툴팁이 하던 일이다.
+            읽고 있는 칸의 때와 잔액. 그래프 오른쪽 위에 선다.
 
-            자리를 늘 비워 둔다(h-5). 눌렀을 때만 한 줄이 생기면 그래프가 그만큼
+            날짜는 **연도까지** 적는다(historyPointLabel). X축은 눈금이 겹치지 않게
+            "9/10"·"9월" 로 줄여 두는데, 창을 해가 바뀌는 자리로 끌면 그것만으로는
+            어느 해인지 알 수 없다. 읽는 자리는 한 칸뿐이라 길어도 된다.
+
+            자리를 늘 비워 둔다(h-5). 값이 있을 때만 한 줄이 생기면 그래프가 그만큼
             아래로 밀려, 누른 손가락 밑에서 선이 움직인다.
           */}
           <View className="h-5 flex-row items-center justify-end gap-2">
-            {pickedPoint ? (
+            {activePoint ? (
               <>
-                <Text className="text-xs text-gray-500">{pickedPoint.label}</Text>
+                <Text className="text-xs text-gray-500">
+                  {historyPointLabel(activePoint.date)}
+                </Text>
                 <Text className="text-xs font-semibold text-gray-900">
-                  {formatCurrency(pickedPoint.balance, displayCurrency)}
+                  {formatCurrency(activePoint.balance, displayCurrency)}
                 </Text>
               </>
             ) : null}
@@ -257,51 +271,31 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
                 ) : null}
 
                 {/*
-                  선이 끝나는 점. 여기에만 점을 찍고 금액을 적는다.
+                  읽고 있는 칸. 세로선으로 짚고 그 위에 점을 찍는다.
 
-                  금액은 점 왼쪽에 적는다. 마지막 점은 오른쪽 끝에 붙어 있어 위나
-                  오른쪽에 적으면 글자가 그래프 밖으로 잘린다.
+                  금액은 그리는 자리 안에 적지 않는다. 값은 위의 읽는 줄이 이미
+                  말하고 있어, 선 옆에 또 적으면 같은 숫자가 한 화면에 둘이 된다.
+                  게다가 그 글자는 선을 따라 오르내리므로 격자선·X축 이름과 겹치는
+                  자리가 생긴다.
                 */}
-                {lastIndex >= 0 ? (
-                  <>
-                    <Circle
-                      cx={xOf(lastIndex)}
-                      cy={yOf(points[lastIndex].balance)}
-                      r={4}
-                      fill={CHART_COLOR}
-                      stroke="#ffffff"
-                      strokeWidth={2}
-                    />
-                    <SvgText
-                      x={xOf(lastIndex) - 10}
-                      y={yOf(points[lastIndex].balance) - 8}
-                      fontSize={11}
-                      fontWeight="600"
-                      fill={LABEL_TEXT_COLOR}
-                      textAnchor="end"
-                    >
-                      {formatCurrency(points[lastIndex].balance, displayCurrency)}
-                    </SvgText>
-                  </>
-                ) : null}
-
-                {/* 눌러 둔 칸. 어디를 읽고 있는지 세로선으로 짚어 준다. */}
-                {pickedPoint && picked !== null ? (
+                {activePoint ? (
                   <>
                     <Line
-                      x1={xOf(picked)}
+                      x1={xOf(activeIndex)}
                       y1={TOP_PAD}
-                      x2={xOf(picked)}
+                      x2={xOf(activeIndex)}
                       y2={TOP_PAD + plotHeight}
                       stroke={CHART_COLOR}
                       strokeWidth={1}
                       strokeDasharray="3 3"
                     />
                     <Circle
-                      cx={xOf(picked)}
-                      cy={yOf(pickedPoint.balance)}
+                      cx={xOf(activeIndex)}
+                      cy={yOf(activePoint.balance)}
                       r={4}
                       fill={CHART_COLOR}
+                      stroke="#ffffff"
+                      strokeWidth={2}
                     />
                   </>
                 ) : null}
@@ -310,9 +304,7 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
           </View>
 
           {/* 무엇을 할 수 있는 그래프인지 적어 둔다. 앱에는 마우스 모양이 없다. */}
-          <Text className="mt-1 text-xs text-gray-500">
-            {t(canDrill ? 'history.appDrillHint' : 'history.appReadHint')}
-          </Text>
+          <Text className="mt-1 text-xs text-gray-500">{t('history.appReadHint')}</Text>
         </>
       )}
     </View>

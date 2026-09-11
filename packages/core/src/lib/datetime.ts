@@ -217,6 +217,25 @@ export function formatYearMonth(year: number, month: number): string {
   }).format(monthDate(year, month));
 }
 
+/**
+ * 날짜 하나를 온전히. "2026년 9월 10일" / "September 10, 2026" / "2026年9月10日"
+ *
+ * 달력 날짜('YYYY-MM-DD')를 받는다. `formatDate` 와 달리 시각이 아니라 달력의 하루를
+ * 다루는 자리에 쓴다 -- 자산 추이 그래프에서 고른 칸이 어느 날인지 적는 것이 그렇다.
+ * 그래서 UTC 자정으로 만들어 UTC 로 읽는다 (formatYearMonth 와 같은 이유다).
+ *
+ * 달 이름과 차례는 Intl 이 정한다. 사전에 "{year}년 {month}월 {day}일" 틀을 두면
+ * 영어의 "September" 를 숫자로 적게 된다.
+ */
+export function formatYearMonthDay(dateKey: string): string {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return dateFormatter('yearMonthDay', 'UTC', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric',
+  }).format(new Date(Date.UTC(year, month - 1, day)));
+}
+
 /** 달 하나. 달 고르는 표와 그래프 범례처럼 좁은 자리에 쓴다. "8월" / "Aug" / "8月" */
 export function formatMonthShort(month: number): string {
   return dateFormatter('monthShort', 'UTC', {

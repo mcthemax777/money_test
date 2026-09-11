@@ -482,8 +482,7 @@ export const ja: Record<MessageKey, string> = {
   'history.backToNow': '現在に戻る',
   'history.empty': '表示できる残高の記録がありません。',
   'history.balance': '残高',
-  'history.appDrillHint': '左右にドラッグで前後の期間、マスを押すとその中をさらに細かく見ます。',
-  'history.appReadHint': '左右にドラッグで前後の期間、マスを押すとその日の残高を読みます。',
+  'history.appReadHint': '左右にドラッグで前後の期間、マスを押すとその時点の残高を読みます。',
 
   // ===== 家計簿画面 =====
   'ledger.noun': '家計簿',
