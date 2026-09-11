@@ -13,31 +13,38 @@ import { useTranslation } from '@money/core/lib/i18n';
  * `backHref`는 사이드탭에 없는 하위 화면(설정 > 내 정보 등)에서만 쓴다.
  * 브라우저 히스토리(router.back)가 아니라 고정 경로로 보낸다. 새 탭이나
  * 링크로 바로 들어온 경우 돌아갈 히스토리가 없기 때문이다.
+ *
+ * `onBack`은 돌아가기 전에 할 일이 있는 자리가 쓴다 (분류에서 건너온 거래 화면은
+ * 떠나온 상세를 다시 펴 달라고 남기고 간다). 둘 다 주면 `onBack`이 이긴다.
  */
 export default function PageHeader({
   title,
   action,
   backHref,
+  onBack,
 }: {
   /** 글자면 그대로 제목이 되고, 노드면 그 자리에 들어간다 (자산주인을 겸하는 제목 등) */
   title: React.ReactNode;
   action?: React.ReactNode;
   backHref?: string;
+  onBack?: () => void;
 }) {
   const { t } = useTranslation();
+  const backClassName =
+    'flex h-8 w-8 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 transition hover:bg-gray-50';
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex items-center gap-3">
-        {backHref && (
-          <Link
-            href={backHref}
-            aria-label={t('common.back')}
-            className="flex h-8 w-8 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 transition hover:bg-gray-50"
-          >
+        {onBack ? (
+          <button type="button" onClick={onBack} aria-label={t('common.back')} className={backClassName}>
+            ←
+          </button>
+        ) : backHref ? (
+          <Link href={backHref} aria-label={t('common.back')} className={backClassName}>
             ←
           </Link>
-        )}
+        ) : null}
         {typeof title === 'string' ? (
           /*
             위아래 여백은 홈의 자산주인 제목(누를 수 있어 py-1 을 갖는다)과 맞춘 것이다.

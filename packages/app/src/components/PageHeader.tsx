@@ -8,25 +8,30 @@ import { useNavigation } from '../shell/navigation';
  *
  * 오른쪽 `action` 에는 그 화면의 주요 버튼을 넣는다. `showBack` 은 메뉴에 없는
  * 하위 화면(설정 > 내 정보)에서만 쓴다.
+ *
+ * `onBack` 은 돌아가기 전에 할 일이 있는 자리가 쓴다 (분류에서 건너온 거래 화면은
+ * 떠나온 상세를 다시 펴 달라고 남기고 간다). 주면 ← 가 서고 그 일을 대신 한다.
  */
 export default function PageHeader({
   title,
   action,
   showBack,
+  onBack,
 }: {
   /** 글자면 그대로 제목이 되고, 노드면 그 자리에 들어간다 (자산주인을 겸하는 제목 등) */
   title: ReactNode;
   action?: ReactNode;
   showBack?: boolean;
+  onBack?: () => void;
 }) {
   const { back } = useNavigation();
 
   return (
     <View className="flex-row flex-wrap items-center justify-between gap-3">
       <View className="flex-row items-center gap-3">
-        {showBack ? (
+        {showBack || onBack ? (
           <Pressable
-            onPress={back}
+            onPress={onBack ?? back}
             className="h-8 w-8 items-center justify-center rounded-lg border border-gray-300 bg-white active:bg-gray-50"
           >
             <Text className="text-gray-600">←</Text>

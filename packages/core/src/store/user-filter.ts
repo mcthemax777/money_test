@@ -12,6 +12,15 @@ interface UserFilterStore {
   setSelectedPersonIds: (personIds: string[]) => void;
   togglePersonId: (personId: string) => void;
   /**
+   * 선택과 "건드림" 표시를 한 번에 박는다.
+   *
+   * 선택을 한 사람으로 좁혀 두고 나중에 그대로 되돌리는 자리(자산 상세의
+   * "거래내역 보기")가 쓴다. 표시를 함께 켜지 않으면 usePersonFilterSync 가 좁혀 둔
+   * 선택을 "한 번도 고르지 않은 상태"로 보고 전체 선택으로 되돌린다. 되돌릴 때는
+   * 떠나기 전의 표시를 그대로 다시 박아야 그 뒤의 동작도 예전과 같아진다.
+   */
+  setPersonFilter: (personIds: string[], touched: boolean) => void;
+  /**
    * 사용자가 체크박스를 한 번이라도 건드렸는지.
    *
    * 아무도 고르지 않은 상태는 "거래 없음"을 뜻한다. 그래서 첫 방문의 빈 배열과
@@ -72,6 +81,8 @@ export const useUserFilter = create<UserFilterStore>()(
       filterProjectId: null,
       setSelectedPersonIds: (personIds: string[]) =>
         set({ selectedPersonIds: personIds }),
+      setPersonFilter: (personIds: string[], touched: boolean) =>
+        set({ selectedPersonIds: personIds, personFilterTouched: touched }),
       resetPersonFilterFor: (projectId: string, personIds: string[]) =>
         set({
           filterProjectId: projectId,

@@ -1,8 +1,14 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { currencyDecimals, type CardDto } from '@money/types';
+import { type CardDto } from '@money/types';
 import { apiClient } from '@money/core/lib/api-client';
+import {
+  billedFromRate,
+  derivedRate,
+  filledPendingItems,
+  groupPendingByMonth,
+} from '@money/core/lib/pending-rates';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, formatNumber, toAmountString, toNumber } from '@money/core/lib/money';
 import { formatDateMarker } from '@money/core/lib/datetime';
@@ -54,38 +60,17 @@ export default function PendingRatePanel({ cardId, onSettled }: Props) {
   const items = data?.items ?? [];
   const currency = data?.currency ?? 'KRW';
 
-  // 주기별로 묶는다. 사용자가 대조하는 단위가 명세서 한 장이기 때문이다.
-  const groups = useMemo(() => {
-    const byMonth = new Map<string, CardDto.PendingRateItem[]>();
-    for (const item of items) {
-      byMonth.set(item.closingMonth, [...(byMonth.get(item.closingMonth) ?? []), item]);
-    }
-    return [...byMonth.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [items]);
+  // 묶는 법과 채우는 법은 core 가 정한다 (앱의 같은 판과 같은 규칙이다).
+  const groups = useMemo(() => groupPendingByMonth(items), [items]);
 
   /** 채워 넣은 것만 보낸다. 빈 칸은 아직 명세서를 못 본 건이다. */
-  const filled = items.filter((item) => toNumber(billed[item.entryId]) > 0);
+  const filled = filledPendingItems(items, billed);
 
-  /**
-   * 환율로 청구액 칸을 채운다.
-   *
-   * 저장은 청구액으로 한 경로만 쓴다. 화면에 보이는 숫자와 저장되는 값이 같아야
-   * 사용자가 저장 전에 확인할 수 있고, 반올림 결과도 미리 드러난다.
-   */
+  /** 적용환율 한 줄로 청구액 칸을 모두 채운다. */
   const applyRate = () => {
     const rate = toNumber(bulkRate);
     if (rate <= 0) return;
-
-    // 카드 통화의 자릿수로 맞춘다. 원은 원 단위, 달러는 센트까지다.
-    const decimals = currencyDecimals(currency);
-    setBilled(
-      Object.fromEntries(
-        items.map((item) => [
-          item.entryId,
-          (toNumber(item.originalAmount) * rate).toFixed(decimals),
-        ]),
-      ),
-    );
+    setBilled(billedFromRate(items, rate, currency));
   };
 
   const save = async () => {
@@ -149,9 +134,8 @@ export default function PendingRatePanel({ cardId, onSettled }: Props) {
 
           {group.map((item) => {
             const value = billed[item.entryId] ?? '';
-            const amount = toNumber(value);
             // 확정하면 실제로 적용될 환율. 저장 전에 눈으로 확인할 수 있어야 한다.
-            const rate = amount > 0 ? amount / toNumber(item.originalAmount) : 0;
+            const rate = derivedRate(value, item.originalAmount);
 
             return (
               <div key={item.entryId} className="px-3 py-2 bg-gray-50 rounded-lg space-y-1">
@@ -186,7 +170,7 @@ export default function PendingRatePanel({ cardId, onSettled }: Props) {
 
                 {rate > 0 && (
                   <p className="text-xs text-gray-500 text-right">
-                    {t('pending.rate', { rate: formatNumber(Math.round(rate * 100) / 100) })}
+                    {t('pending.rate', { rate: formatNumber(rate) })}
                   </p>
                 )}
               </div>

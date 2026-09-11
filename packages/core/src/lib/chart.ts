@@ -170,6 +170,22 @@ export function barDomain(values: number[]): [number, number] {
   return [0, max > 0 ? Math.ceil((max * 1.2) / 100) * 100 : 1000];
 }
 
+/**
+ * 막대 축의 눈금. 아래끝에서 위끝까지 읽기 쉬운 간격으로 오른다.
+ *
+ * 웹은 recharts 가 축을 받아 스스로 눈금을 만들지만, 앱의 그래프는 눈금도 직접
+ * 그린다. 간격을 고르는 법은 꺾은선 축과 같다(1·2·5·10 배).
+ */
+export function barTicks(bottom: number, top: number): number[] {
+  const step = niceStep(Math.max(top - bottom, 1));
+  const ticks: number[] = [];
+  // 부동소수 누적 오차를 피하려고 간격의 배수로 만든다.
+  const first = Math.ceil(bottom / step) * step;
+  // 위끝을 넘는 눈금은 만들지 않는다. 그리는 자리 밖이라 선과 글자가 그래프 위로 빠진다.
+  for (let i = 0; first + step * i <= top; i += 1) ticks.push(first + step * i);
+  return ticks;
+}
+
 export interface LineAxis {
   domain: [number, number];
   ticks: number[];

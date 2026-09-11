@@ -9,7 +9,8 @@
  * 카테고리와 달리 **지우기를 막지 않는다.** 태그를 떼어 내도 거래는 온전하고 분류별
  * 합계도 그대로다. 막아 두면 오래된 태그를 영영 정리하지 못한다.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Receipt } from 'lucide-react';
 import type { TagDto } from '@money/types';
 
 import { EMPTY_TAG_FORM, useTagManager, type TagFormValues } from '@money/core/hooks/useTagManager';
@@ -40,7 +41,26 @@ const COLORS = [
   '#ec4899',
 ];
 
-export default function TagsPanel({ projectId }: { projectId: string | null }) {
+export default function TagsPanel({
+  projectId,
+  onShowEntries,
+  reopenTagId,
+  onReopened,
+}: {
+  projectId: string | null;
+  /**
+   * 이 태그가 붙은 거래내역을 보여 달라고 할 때. 없으면 그 단추를 그리지 않는다.
+   *
+   * 펼치는 일은 이 판이 하지 않는다. 태그 판은 분류 화면 안의 한 탭이라, 거래내역을
+   * 여기서 그리면 탭 안에 화면이 또 생긴다 -- 바깥 화면이 제 자리를 통째로 바꾸는
+   * 쪽이 맞다.
+   */
+  onShowEntries?: (tag: TagDto.Response) => void;
+  /** 거래내역에서 돌아왔을 때 다시 펼 태그. 목록에 그 태그가 있으면 고치는 창이 열린다. */
+  reopenTagId?: string | null;
+  /** 그 창을 펴고 나면 알린다. 부르는 쪽이 표시를 지운다. */
+  onReopened?: () => void;
+}) {
   const { t } = useTranslation();
   /** 읽기 전용 구성원에게는 쓰기 단추를 그리지 않는다. */
   const canEdit = useCanEdit();
@@ -80,6 +100,25 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
     setError('');
     setIsFormOpen(true);
   };
+
+  /*
+   * 거래내역에서 ←로 돌아왔을 때 떠나온 태그 창을 다시 편다.
+   *
+   * 목록이 도착해야 그 태그를 찾을 수 있으므로 올 때까지 기다린다. 지운 태그로
+   * 돌아오는 일도 있어(다른 기기에서 지웠다) 못 찾으면 아무것도 하지 않는다.
+   */
+  useEffect(() => {
+    if (!reopenTagId) return;
+
+    const tag = manager.tags.find((item) => item.id === reopenTagId);
+    if (!tag) return;
+
+    openEdit(tag);
+    onReopened?.();
+    // openEdit 은 렌더마다 새로 만들어지는 함수라 의존성에 넣지 않는다. 여는 일은
+    // 표시와 목록이 갖춰졌을 때 한 번이면 된다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reopenTagId, manager.tags, onReopened]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -165,6 +204,28 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
         isOpen={isFormOpen}
         onClose={() => setIsFormOpen(false)}
         title={t(editingId ? 'tags.edit' : 'tags.add')}
+        /*
+          이 태그가 붙은 거래내역으로 건너간다. 새로 만드는 중에는 볼 것이 없으므로
+          고치는 창에만 선다.
+        */
+        headerAction={
+          editingId && onShowEntries ? (
+            <button
+              type="button"
+              onClick={() => {
+                const tag = manager.tags.find((item) => item.id === editingId);
+                if (!tag) return;
+                setIsFormOpen(false);
+                onShowEntries(tag);
+              }}
+              aria-label={t('tags.viewEntries')}
+              title={t('tags.viewEntries')}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-900 transition-colors hover:bg-gray-100"
+            >
+              <Receipt className="h-4 w-4" aria-hidden />
+            </button>
+          ) : null
+        }
         footer={
           <button
             type="submit"

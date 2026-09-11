@@ -85,6 +85,13 @@ interface ScrollControl {
   area: MutableRefObject<{ top: number; height: number }>;
   /** 이만큼 더 굴린다. 끝에 닿으면 그 이상은 움직이지 않는다. */
   scrollBy: (dy: number) => void;
+  /**
+   * 맨 위로 올린다.
+   *
+   * 화면 안에서 보는 것이 통째로 바뀌는 자리(자산 목록 -> 고른 항목의 상세)가 쓴다.
+   * 내려와 있던 자리에 그대로 두면 새로 그린 칸의 가운데부터 보인다.
+   */
+  scrollToTop: () => void;
 }
 
 /** `ScrollView` 에서 쓰는 것만 추린 모양. 시험에서 갈아 끼우기 쉽다. */
@@ -111,9 +118,13 @@ function ScrollLockProvider({ children }: { children: ReactNode }) {
     view.current.scrollTo({ y: next, animated: false });
   }, []);
 
+  const scrollToTop = useCallback(() => {
+    view.current?.scrollTo({ y: 0, animated: true });
+  }, []);
+
   const value = useMemo(
-    () => ({ isLocked, setLocked, attach, offset, area, scrollBy }),
-    [attach, isLocked, scrollBy],
+    () => ({ isLocked, setLocked, attach, offset, area, scrollBy, scrollToTop }),
+    [attach, isLocked, scrollBy, scrollToTop],
   );
 
   return <ScrollControlContext.Provider value={value}>{children}</ScrollControlContext.Provider>;
@@ -122,6 +133,17 @@ function ScrollLockProvider({ children }: { children: ReactNode }) {
 /** 껍데기가 읽는다. 잠겨 있으면 손가락 스크롤을 끈다. */
 export function useScrollLocked(): boolean {
   return useContext(ScrollControlContext)?.isLocked ?? false;
+}
+
+/**
+ * 화면이 쓰는 "맨 위로".
+ *
+ * 껍데기가 스크롤을 들고 있어 화면은 제 스크롤을 갖지 않는다. 껍데기 밖(시험 등)에서
+ * 부르면 아무 일도 하지 않는다.
+ */
+export function useScrollToTop(): () => void {
+  const context = useContext(ScrollControlContext);
+  return useCallback(() => context?.scrollToTop(), [context]);
 }
 
 /** 껍데기가 제 스크롤을 등록하고, 내려온 만큼을 알려 주는 손잡이. */

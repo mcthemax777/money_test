@@ -42,7 +42,7 @@ const SERVERS = {
 } as const;
 
 /** 지금 보는 서버. 바꿀 때는 이 줄만 고치고 다시 빌드한다. */
-const SERVER = SERVERS.local;
+const SERVER = SERVERS.deployed;
 
 export const API_URL = SERVER.apiUrl;
 

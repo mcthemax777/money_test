@@ -1,14 +1,19 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
+import { Receipt } from 'lucide-react-native';
 
 import {
   NO_SUB_CATEGORIES,
   useCategoryManager,
   type CategoryFormValues,
 } from '@money/core/hooks/useCategoryManager';
+import { EMPTY_SEARCH } from '@money/core/hooks/useTransactions';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import type { Category } from '@money/core/lib/types';
+import { useEntryFocus } from '@money/core/store/entry-focus';
 import { useProject } from '@money/core/store/project';
+
+import { useNavigation } from '../shell/navigation';
 
 import Modal from '../components/Modal';
 import AddButton from '../components/AddButton';
@@ -55,6 +60,11 @@ export default function CategoriesScreen() {
   const selectedProjectId = useProject((state) => state.selectedProjectId);
   const manager = useCategoryManager(selectedProjectId);
   const { categories, isLoading, isSubmitting } = manager;
+  const nav = useNavigation();
+  /** 거래 화면과 주고받는 쪽지. 건너갈 때 걸 검색과 돌아와서 다시 펼 상세가 담긴다. */
+  const focusEntries = useEntryFocus((state) => state.focusEntries);
+  const reopen = useEntryFocus((state) => state.reopen);
+  const clearReopen = useEntryFocus((state) => state.clearReopen);
 
   const [error, setError] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -85,6 +95,44 @@ export default function CategoriesScreen() {
     setFormData({ ...EMPTY_FORM, type });
     setIsModalOpen(true);
     setError('');
+  };
+
+  /*
+   * 거래 화면에서 ←로 돌아왔을 때 떠나온 상세를 다시 편다.
+   *
+   * 분류는 목록이 도착해야 그 분류를 찾을 수 있으므로 올 때까지 기다린다. 태그는
+   * 태그 판이 제 목록을 들고 있어 그쪽에서 편다 -- 여기서는 그 탭으로 옮겨 판이
+   * 화면에 서게만 해 준다.
+   */
+  useEffect(() => {
+    if (!reopen) return;
+    if (reopen.kind === 'tag') {
+      setSection('tags');
+      return;
+    }
+
+    const category = categories.find((item) => item.id === reopen.id);
+    if (!category) return;
+
+    setSection('categories');
+    setSelectedCategory(category);
+    setIsDetailModalOpen(true);
+    clearReopen();
+  }, [reopen, categories, clearReopen]);
+
+  /**
+   * 이 분류로 걸린 거래내역을 본다.
+   *
+   * 대분류를 고르면 그 아래 소분류와, 소분류 없이 대분류에 바로 적은 거래까지 걸린다
+   * (서버의 검색 규칙). 상세에서 보고 있는 그 분류의 거래가 그대로 나오는 셈이다.
+   */
+  const showEntriesOf = (category: Category) => {
+    focusEntries(
+      { kind: 'category', id: category.id },
+      { ...EMPTY_SEARCH, categoryIds: [category.id] },
+    );
+    setIsDetailModalOpen(false);
+    nav.go('/transactions');
   };
 
   const openEditor = (category: Category) => {
@@ -254,6 +302,23 @@ export default function CategoriesScreen() {
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
         title={t('categories.detail')}
+        /*
+          이 분류의 거래내역으로 건너간다. 머리글 오른쪽에 둔다 -- 아래 단추 자리는
+          이 분류를 고치고 지우는 자리이고, 이것은 분류를 건드리지 않는 다른 일이다.
+        */
+        headerAction={
+          selectedCategory ? (
+            <Pressable
+              onPress={() => showEntriesOf(selectedCategory)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={t('categories.viewEntries')}
+              className="h-8 w-8 items-center justify-center rounded-lg active:bg-gray-100"
+            >
+              <Receipt size={18} color="#111827" />
+            </Pressable>
+          ) : null
+        }
         footer={
           selectedCategory ? (
             <View className="flex-row gap-2">

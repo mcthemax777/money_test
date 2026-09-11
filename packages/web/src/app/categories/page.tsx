@@ -1,8 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { Receipt } from 'lucide-react';
 import { useAuth } from '@money/core/store/auth';
 import { useCanEdit, useProject } from '@money/core/store/project';
+import { EMPTY_SEARCH, type TransactionSearch } from '@money/core/hooks/useTransactions';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import {
   NO_SUB_CATEGORIES,
@@ -14,6 +16,7 @@ import CategoryFormFields from '@/components/CategoryFormFields';
 import AddButton from '@/components/AddButton';
 import PageHeader from '@/components/PageHeader';
 import TagsPanel from '@/components/TagsPanel';
+import TransactionsView from '@/components/TransactionsView';
 import type { Category } from '@money/core/lib/types';
 import { useDragReorder } from '@/hooks/useDragReorder';
 
@@ -46,6 +49,9 @@ const TYPE_PANELS: Array<{
 ];
 
 
+/** 거래내역을 펼쳐 놓은 대상. 돌아올 때 이 자리의 상세를 다시 편다. */
+type EntriesTarget = { kind: 'category' | 'tag'; id: string };
+
 export default function CategoriesPage() {
   const { t } = useTranslation();
   /** 읽기 전용 구성원에게는 쓰기 단추를 그리지 않는다. */
@@ -54,6 +60,17 @@ export default function CategoriesPage() {
   const { selectedProjectId } = useProject();
   const manager = useCategoryManager(selectedProjectId);
   const { categories, isLoading, isSubmitting } = manager;
+  /**
+   * 지금 이 자리에 펼쳐 둔 거래내역. null 이면 평소의 분류·태그 화면이다.
+   *
+   * 거래 탭으로 넘기지 않는다. 분류를 보다가 그 분류의 거래를 들여다보는 일은 분류
+   * 화면 안에서 끝나는 한 걸음이라, 넘겨 두면 돌아오는 길이 탭을 되짚는 길이 된다.
+   */
+  const [entries, setEntries] = useState<{ target: EntriesTarget; search: TransactionSearch } | null>(
+    null,
+  );
+  /** 거래내역에서 ← 로 돌아왔을 때 다시 펼 상세. 펴고 나면 비운다. */
+  const [reopen, setReopen] = useState<EntriesTarget | null>(null);
 
   const [error, setError] = useState('');
   /*
@@ -84,6 +101,29 @@ export default function CategoriesPage() {
     loadUser();
   }, [loadUser]);
 
+  /*
+   * 거래 화면에서 ←로 돌아왔을 때 떠나온 상세를 다시 편다.
+   *
+   * 분류는 목록이 도착해야 그 분류를 찾을 수 있으므로 목록이 올 때까지 기다린다.
+   * 태그는 태그 판이 제 목록을 들고 있어 그쪽에서 편다 -- 여기서는 그 탭으로 옮겨
+   * 판이 화면에 서게만 해 준다.
+   */
+  useEffect(() => {
+    if (!reopen) return;
+    if (reopen.kind === 'tag') {
+      setSection('tags');
+      return;
+    }
+
+    const category = categories.find((item) => item.id === reopen.id);
+    if (!category) return;
+
+    setSection('categories');
+    setSelectedCategory(category);
+    setIsDetailModalOpen(true);
+    setReopen(null);
+  }, [reopen, categories]);
+
   const handleModalClose = () => {
     setIsModalOpen(false);
     setFormData({
@@ -101,6 +141,27 @@ export default function CategoriesPage() {
     setFormData({ name: '', type, subCategories: NO_SUB_CATEGORIES });
     setIsModalOpen(true);
     setError('');
+  };
+
+  /**
+   * 이 분류로 걸린 거래내역을 본다.
+   *
+   * 대분류를 고르면 그 아래 소분류와, 소분류 없이 대분류에 바로 적은 거래까지 걸린다
+   * (서버의 검색 규칙). 상세에서 보고 있는 그 분류의 거래가 그대로 나오는 셈이다.
+   */
+  const showEntriesOf = (category: Category) => {
+    setEntries({
+      target: { kind: 'category', id: category.id },
+      search: { ...EMPTY_SEARCH, categoryIds: [category.id] },
+    });
+    setIsDetailModalOpen(false);
+  };
+
+  /** 거래내역을 접고 떠나온 상세로 돌아간다. */
+  const closeEntries = () => {
+    if (!entries) return;
+    setReopen(entries.target);
+    setEntries(null);
   };
 
   const handleCategoryClick = (category: Category) => {
@@ -148,6 +209,23 @@ export default function CategoriesPage() {
 
   const mainCategories = categories.filter((c) => !c.parentId);
 
+  /*
+   * 거래내역을 펼쳐 둔 동안에는 그것만 그린다.
+   *
+   * 분류 목록을 아래에 남겨 두면 한 화면에 목록 둘이 서서 어느 것을 보고 있는지가
+   * 흐려진다. 거래 화면이 제 머리글(제목·검색·보기 방식)을 그대로 들고 오므로,
+   * 돌아가는 길인 ← 만 얹어 주면 된다.
+   */
+  if (entries) {
+    return (
+      <TransactionsView
+        projectId={selectedProjectId}
+        search={entries.search}
+        onBack={closeEntries}
+      />
+    );
+  }
+
   return (
     <div className="space-y-6">
       {/*
@@ -186,7 +264,19 @@ export default function CategoriesPage() {
       </div>
 
       {section === 'tags' ? (
-        <TagsPanel projectId={selectedProjectId} />
+        <TagsPanel
+          projectId={selectedProjectId}
+          /* 태그 창의 "거래내역 보기". 펼치는 일은 이 화면이 맡는다. */
+          onShowEntries={(tag) =>
+            setEntries({
+              target: { kind: 'tag', id: tag.id },
+              search: { ...EMPTY_SEARCH, tagIds: [tag.id] },
+            })
+          }
+          /* 거래내역에서 돌아왔을 때 다시 펼 태그. 펴고 나면 태그 판이 알려 준다. */
+          reopenTagId={reopen?.kind === 'tag' ? reopen.id : null}
+          onReopened={() => setReopen(null)}
+        />
       ) : isLoading && categories.length === 0 ? (
         <p className="text-gray-600">{t('common.loading')}</p>
       ) : categories.length === 0 ? (
@@ -263,6 +353,23 @@ export default function CategoriesPage() {
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
         title={t('categories.detail')}
+        /*
+          이 분류의 거래내역으로 건너간다. 머리글 오른쪽에 둔다 -- 아래 단추 자리는
+          이 분류를 고치고 지우는 자리이고, 이것은 분류를 건드리지 않는 다른 일이다.
+        */
+        headerAction={
+          selectedCategory ? (
+            <button
+              type="button"
+              onClick={() => showEntriesOf(selectedCategory)}
+              aria-label={t('categories.viewEntries')}
+              title={t('categories.viewEntries')}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-900 transition-colors hover:bg-gray-100"
+            >
+              <Receipt className="h-4 w-4" aria-hidden />
+            </button>
+          ) : null
+        }
         footer={
           /* 읽기 전용 구성원에게는 손댈 단추가 없다. 상세는 그대로 읽힌다. */
           selectedCategory && canEdit ? (

@@ -42,6 +42,7 @@ import {
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import { useEntryDrafts } from '@money/core/hooks/useEntryDrafts';
 import { useUserFilter } from '@money/core/store/user-filter';
+import { useEntryFocus, type EntryFocusOrigin } from '@money/core/store/entry-focus';
 
 import { useNavigation } from '../shell/navigation';
 import EntryDetailModal from '../components/EntryDetailModal';
@@ -53,6 +54,19 @@ import PersonScopeTitle from '../components/PersonScopeTitle';
 import TransactionItem from '../components/TransactionItem';
 import TagPickModal from '../components/TagPickModal';
 import TransactionSearchModal from '../components/TransactionSearchModal';
+
+/**
+ * 건너온 자리가 어느 화면에 있는가. ←가 그 화면으로 돌려보낸다.
+ *
+ * 분류와 태그는 한 화면의 두 탭이라 같은 주소다.
+ */
+const ORIGIN_SCREEN: Record<EntryFocusOrigin['kind'], string> = {
+  category: '/categories',
+  tag: '/categories',
+  person: '/assets',
+  account: '/assets',
+  card: '/assets',
+};
 
 const TABS: Array<{ id: TransactionTab; labelKey: MessageKey }> = [
   { id: 'date', labelKey: 'tx.tab.date' },
@@ -307,6 +321,47 @@ export default function TransactionsScreen() {
    * 맞추지 않으면 제목이 이름을 잃고, 저장해 둔 선택이 남의 프로젝트 것으로 남는다.
    */
   usePersonFilterSync(selectedProjectId, tx.people);
+  /*
+   * 분류·태그 상세에서 건너왔는지.
+   *
+   * 쪽지를 집어 들면서 곧바로 비우고(takeFocus), 돌아갈 자리는 이 화면이 제 것으로
+   * 들고 있는다. 스토어에 남겨 두면 탭으로 떠났다 들어올 때 사용자가 그 사이에 고친
+   * 검색이 처음 것으로 되돌아간다.
+   */
+  const focus = useEntryFocus((state) => state.focus);
+  const takeFocus = useEntryFocus((state) => state.takeFocus);
+  const requestReopen = useEntryFocus((state) => state.requestReopen);
+  const restorePersonScope = useEntryFocus((state) => state.restorePersonScope);
+  const [origin, setOrigin] = useState<EntryFocusOrigin | null>(null);
+
+  /** 건너오면서 들고 온 검색을 건다. 한 번만 걸고 쪽지는 비운다. */
+  useEffect(() => {
+    if (!focus) return;
+    setOrigin(focus.origin);
+    tx.setSearch(focus.search);
+    takeFocus();
+  }, [focus, takeFocus, tx.setSearch]);
+
+  /**
+   * 떠나온 상세로 되돌아간다.
+   *
+   * 돌아갈 자리를 남기고 그 화면으로 보낸다. 그 화면이 쪽지를 보고 상세를 다시 편다.
+   */
+  const goBackToOrigin = () => {
+    if (!origin) return;
+    requestReopen(origin);
+    go(ORIGIN_SCREEN[origin.kind]);
+  };
+
+  /*
+   * 이 화면을 벗어나면 좁혀 둔 자산주인 선택을 되돌린다.
+   *
+   * 자산의 구성원 상세에서 건너오면 그 사람만 고른 상태가 된다. ←로 돌아가든 탭으로
+   * 떠나든 원래대로 두지 않으면, 다음에 자산·가계 화면을 열었을 때 한 사람만 남아
+   * 있는 것을 사용자가 고른 적 없이 마주한다. 좁힌 것이 없으면 아무 일도 하지 않는다.
+   */
+  useEffect(() => restorePersonScope, [restorePersonScope]);
+
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   /** 더보기 선택창. 태그와 삭제 둘이다. */
   const [isMoreOpen, setIsMoreOpen] = useState(false);
@@ -315,13 +370,16 @@ export default function TransactionsScreen() {
   /** 상세를 띄운 거래. null 이면 닫힌 상태다. */
   const [detail, setDetail] = useState<EntryListItem | null>(null);
   /**
-   * 내용을 베껴 새로 적는 중인 거래. null 이면 입력 팝업이 닫힌 상태다.
+   * 내용을 베껴 새로 적는 중인 거래. null 이면 베끼기로 연 팝업이 없다는 뜻이다.
    *
-   * 이 화면은 거래를 만드는 자리가 아니라, 베끼기를 누른 동안만 입력 팝업을 세운다
-   * (그래서 `null` 이면 편집기를 아예 그리지 않는다 -- 편집기는 고를 목록 다섯 벌을
-   * 따로 읽으므로, 늘 붙여 두면 이 화면이 이미 읽은 것을 한 번 더 읽는다).
+   * 이 화면은 거래를 만드는 자리가 아니라, 상세에서 베끼기나 고치기를 누른 동안만
+   * 입력 팝업을 세운다 (그래서 둘 다 `null` 이면 편집기를 아예 그리지 않는다 --
+   * 편집기는 고를 목록 다섯 벌을 따로 읽으므로, 늘 붙여 두면 이 화면이 이미 읽은
+   * 것을 한 번 더 읽는다).
    */
   const [copying, setCopying] = useState<EntryListItem | null>(null);
+  /** 고치는 중인 거래. 베끼기와 따로 든다 -- 편집기에 둘이 함께 가면 안 된다. */
+  const [editing, setEditing] = useState<EntryListItem | null>(null);
   /** 지우다 남은 것 같은 알림. 빈 글자면 아무것도 그리지 않는다. */
   const [notice, setNotice] = useState('');
 
@@ -432,6 +490,28 @@ export default function TransactionsScreen() {
     );
   };
 
+  /**
+   * 상세에서 이 거래 하나만 지운다.
+   *
+   * 고르기를 거치지 않는 길이라 건수를 적지 않고 한 번만 묻는다. 묻기 전에 상세를
+   * 닫지 않는다 -- 취소했을 때 읽고 있던 거래가 사라지면 안 된다.
+   */
+  const askDeleteDetail = (entry: EntryListItem) => {
+    Alert.alert(t('tx.detail.deleteConfirm'), t('tx.deleteConfirmBody'), [
+      { text: t('common.cancel'), style: 'cancel' },
+      {
+        text: t('entryForm.delete'),
+        style: 'destructive',
+        onPress: () => {
+          setDetail(null);
+          void tx.deleteEntry(entry.id).then((deleted) => {
+            setNotice(deleted ? '' : t('tx.deleteFailed', { count: 1 }));
+          });
+        },
+      },
+    ]);
+  };
+
   const entryList = (yearMonth: string, key: string) => {
     // 한 번만 묻는다. 두 번 물으면 그 달을 날짜로 묶는 일이 줄마다 두 번씩 돈다.
     const entries = tx.entriesOf(yearMonth, key);
@@ -457,12 +537,21 @@ export default function TransactionsScreen() {
              * 옆에 세우고 누름만 갈아 끼운다.
              */
             tx.isSelecting ? (
-              <View key={entry.id} className="flex-row items-center gap-2 pl-1">
+              /*
+               * 체크박스는 년월 줄·안쪽 줄과 같은 자리에 선다. 그 줄들은 px-3 안에서
+               * 체크박스를 세우므로 여기도 pl-3 이다. 세 겹의 체크박스가 한 세로줄에
+               * 서지 않으면 훑을 때 눈이 좌우로 흔들린다.
+               *
+               * TransactionItem 은 제 px-3 을 가지고 있어 그대로 두면 글자가 줄보다
+               * 한 칸 더 들어간다. 그만큼 왼쪽으로 당겨 글자도 같은 자리에서 시작하게
+               * 한다 -- 줄과 거래가 같은 세로줄에 서는 것은 이 화면의 규칙이다.
+               */
+              <View key={entry.id} className="flex-row items-center gap-2 pl-3">
                 <CheckBox
                   checked={tx.isEntrySelected(entry.id)}
                   onPress={() => tx.toggleEntrySelected(entry.id)}
                 />
-                <View className="flex-1">
+                <View className="-ml-3 flex-1">
                   <TransactionItem entry={entry} onPress={toggleEntry} />
                 </View>
               </View>
@@ -600,6 +689,11 @@ export default function TransactionsScreen() {
         </View>
       ) : (
         <PageHeader
+          /*
+            분류·태그 상세에서 건너왔으면 ← 가 선다. 누르면 떠나온 상세가 다시 펴진다.
+            평소의 거래 화면은 아래 탭에 있는 자리라 돌아갈 곳이 없다.
+          */
+          onBack={origin ? goBackToOrigin : undefined}
           title={
             <PersonScopeTitle
               noun={t('tx.noun')}
@@ -843,7 +937,7 @@ export default function TransactionsScreen() {
         entry={detail}
         onClose={() => setDetail(null)}
         /*
-          읽기 전용 구성원에게는 베끼기 단추가 없다. 상세는 그대로 읽을 수 있다.
+          읽기 전용 구성원에게는 베끼기·고치기 단추가 없다. 상세는 그대로 읽을 수 있다.
           상세를 닫고 입력 팝업을 세운다 -- 팝업 둘이 겹쳐 뜨면 뒤로가기가 어느 것을
           닫는지 알 수 없다.
         */
@@ -856,14 +950,34 @@ export default function TransactionsScreen() {
               }
             : undefined
         }
+        onEdit={
+          canEdit
+            ? (entry) => {
+                setDetail(null);
+                setNotice('');
+                setEditing(entry);
+              }
+            : undefined
+        }
+        onDelete={canEdit ? askDeleteDetail : undefined}
       />
 
-      {copying ? (
+      {/*
+        입력 팝업. 베끼면 새 거래가 되고, 고치면 그 거래가 고쳐진다.
+
+        둘을 한 자리에서 세우되 상태는 나눠 든다 -- `editing` 과 `copying` 을 함께
+        넘기면 편집기가 고치기를 택하므로, 베끼려던 것이 조용히 원본 수정이 된다.
+      */}
+      {copying || editing ? (
         <EntryEditor
           isOpen
           copying={copying}
-          onClose={() => setCopying(null)}
-          /* 새 거래가 생겼으므로 달·줄·목록을 다시 읽는다. 오프라인이면 사본에서 온다. */
+          editing={editing}
+          onClose={() => {
+            setCopying(null);
+            setEditing(null);
+          }}
+          /* 거래가 생기거나 바뀌었으므로 달·줄·목록을 다시 읽는다. 오프라인이면 사본에서 온다. */
           onSaved={tx.reload}
           onNotEditable={() => setNotice(t('editor.notEditable'))}
         />

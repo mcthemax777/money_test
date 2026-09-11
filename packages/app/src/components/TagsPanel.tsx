@@ -7,14 +7,17 @@
  * 카테고리와 달리 **지우기를 막지 않는다.** 태그를 떼어 내도 거래는 온전하고 분류별
  * 합계도 그대로다. 막아 두면 오래된 태그를 영영 정리하지 못한다.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Alert, LayoutAnimation, Pressable, Text, TextInput, View } from 'react-native';
-import { X } from 'lucide-react-native';
+import { Receipt, X } from 'lucide-react-native';
 import type { TagDto } from '@money/types';
 
 import { EMPTY_TAG_FORM, useTagManager, type TagFormValues } from '@money/core/hooks/useTagManager';
+import { EMPTY_SEARCH } from '@money/core/hooks/useTransactions';
 import { useTranslation } from '@money/core/lib/i18n';
+import { useEntryFocus } from '@money/core/store/entry-focus';
 
+import { useNavigation } from '../shell/navigation';
 import Modal from './Modal';
 import AddButton from './AddButton';
 import MoveRow from './MoveRow';
@@ -43,6 +46,11 @@ const SHIFT = LayoutAnimation.create(180, 'easeInEaseOut', 'opacity');
 export default function TagsPanel({ projectId }: { projectId: string | null }) {
   const { t } = useTranslation();
   const manager = useTagManager(projectId);
+  const nav = useNavigation();
+  /** 거래 화면과 주고받는 쪽지. 분류 화면의 것과 같은 자리를 쓴다. */
+  const focusEntries = useEntryFocus((state) => state.focusEntries);
+  const reopen = useEntryFocus((state) => state.reopen);
+  const clearReopen = useEntryFocus((state) => state.clearReopen);
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -61,6 +69,32 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
     setValues(manager.formValuesOf(tag));
     setError('');
     setIsFormOpen(true);
+  };
+
+  /*
+   * 거래 화면에서 ←로 돌아왔을 때 떠나온 태그 창을 다시 편다.
+   *
+   * 목록이 도착해야 그 태그를 찾을 수 있으므로 올 때까지 기다린다. 지운 태그로
+   * 돌아오는 일도 있어(다른 기기에서 지웠다) 못 찾으면 아무것도 하지 않는다.
+   */
+  useEffect(() => {
+    if (reopen?.kind !== 'tag') return;
+
+    const tag = manager.tags.find((item) => item.id === reopen.id);
+    if (!tag) return;
+
+    openEdit(tag);
+    clearReopen();
+    // openEdit 은 렌더마다 새로 만들어지는 함수라 의존성에 넣지 않는다. 여는 일은
+    // 쪽지와 목록이 갖춰졌을 때 한 번이면 된다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reopen, manager.tags, clearReopen]);
+
+  /** 이 태그가 붙은 거래내역을 본다. */
+  const showEntriesOf = (tag: TagDto.Response) => {
+    focusEntries({ kind: 'tag', id: tag.id }, { ...EMPTY_SEARCH, tagIds: [tag.id] });
+    setIsFormOpen(false);
+    nav.go('/transactions');
   };
 
   const submit = async () => {
@@ -150,6 +184,26 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
         isOpen={isFormOpen}
         onClose={() => setIsFormOpen(false)}
         title={t(editingId ? 'tags.edit' : 'tags.add')}
+        /*
+          이 태그가 붙은 거래내역으로 건너간다. 새로 만드는 중에는 볼 것이 없으므로
+          고치는 창에만 선다.
+        */
+        headerAction={
+          editingId ? (
+            <Pressable
+              onPress={() => {
+                const tag = manager.tags.find((item) => item.id === editingId);
+                if (tag) showEntriesOf(tag);
+              }}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={t('tags.viewEntries')}
+              className="h-8 w-8 items-center justify-center rounded-lg active:bg-gray-100"
+            >
+              <Receipt size={18} color="#111827" />
+            </Pressable>
+          ) : null
+        }
         footer={
           <Pressable
             disabled={manager.isSubmitting}

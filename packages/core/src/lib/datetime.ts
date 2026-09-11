@@ -317,6 +317,46 @@ export function shiftYearMonth(yearMonth: string, delta: number): string {
 }
 
 /**
+ * "YYYY-MM-DD"에서 delta일 옮긴 "YYYY-MM-DD".
+ *
+ * 달력 날짜의 셈이라 UTC 자정으로 만들어 UTC로 읽는다. 브라우저 타임존으로 읽으면
+ * 서머타임이 있는 곳에서 하루가 밀 수 있다. 달·연 넘김은 Date.UTC 가 대신 처리한다.
+ * shiftYearMonth 가 달에 하는 일을 날에 한다.
+ */
+export function shiftDateKey(dateKey: string, delta: number): string {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  const shifted = new Date(Date.UTC(year, month - 1, day + delta));
+  const pad = (value: number) => String(value).padStart(2, '0');
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
+}
+
+/**
+ * "YYYY-MM" 두 개 사이의 개월 수. to 가 뒤면 양수다.
+ *
+ * 달의 길이를 몰라도 되는 셈이라 연·월을 따로 빼서 더한다. shiftYearMonth 의
+ * 반대 방향이다.
+ */
+export function monthsBetween(fromYearMonth: string, toYearMonth: string): number {
+  const [fromYear, fromMonth] = fromYearMonth.split('-').map(Number);
+  const [toYear, toMonth] = toYearMonth.split('-').map(Number);
+  return (toYear - fromYear) * 12 + (toMonth - fromMonth);
+}
+
+/**
+ * 달력 날짜 두 개 사이의 날수. toKey 가 뒤면 양수다.
+ *
+ * UTC 자정끼리 견준다. 브라우저 타임존으로 세면 서머타임이 있는 곳에서 하루가
+ * 모자라거나 남는다. shiftDateKey 의 반대 방향이다.
+ */
+export function daysBetweenKeys(fromKey: string, toKey: string): number {
+  const midnight = (key: string) => {
+    const [year, month, day] = key.split('-').map(Number);
+    return Date.UTC(year, month - 1, day);
+  };
+  return Math.round((midnight(toKey) - midnight(fromKey)) / 86_400_000);
+}
+
+/**
  * 그 달의 선을 며칠까지 그을지.
  *
  * 지난 달은 말일까지 다 그린다. 이번 달은 오늘까지다. 아직 오지 않은 날을 0으로

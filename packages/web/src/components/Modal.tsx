@@ -1,6 +1,8 @@
 'use client';
 
 import { ReactNode, useEffect, useRef } from 'react';
+import { X } from 'lucide-react';
+import { useTranslation } from '@money/core/lib/i18n';
 
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 
@@ -50,6 +52,7 @@ export default function Modal({
   footer,
   headerAction,
 }: ModalProps) {
+  const { t } = useTranslation();
   const bodyRef = useRef<HTMLDivElement>(null);
 
   // 휴대폰의 뒤로가기는 화면을 나가는 것이 아니라 이 팝업을 닫는다.
@@ -88,11 +91,22 @@ export default function Modal({
           <h2 className="text-lg font-bold text-gray-900">{title}</h2>
           <div className="flex items-center gap-3">
             {headerAction}
+            {/*
+              닫기. 글자 "×" 가 아니라 아이콘이다.
+
+              글자로 두면 그 칸 안에서 글자가 어디에 놓이는지를 글꼴이 정한다. ×(곱셈
+              기호)의 먹은 글자 가운데가 아니라 수학 축 언저리에 그려져, 같은 크기의
+              네모에 넣어도 옆의 아이콘보다 한두 픽셀 아래에 선다. 그 한두 픽셀 때문에
+              제목과 아이콘이 올라간 것처럼 읽힌다. 같은 자리에 같은 방식으로 그려지는
+              아이콘으로 두면 넷이 한 축에 선다.
+            */}
             <button
               onClick={onClose}
-              className="text-gray-500 hover:text-gray-700 text-2xl leading-none"
+              aria-label={t('common.close')}
+              title={t('common.close')}
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-700"
             >
-              ×
+              <X className="h-5 w-5" aria-hidden />
             </button>
           </div>
         </div>

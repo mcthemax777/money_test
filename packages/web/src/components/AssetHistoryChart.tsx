@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useRef } from 'react';
 import {
   CartesianGrid,
   Line,
@@ -11,10 +11,8 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { apiClient } from '@money/core/lib/api-client';
-import { formatMonthShort, formatYearMonth } from '@money/core/lib/datetime';
-import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
-import { formatCurrency, toNumber } from '@money/core/lib/money';
+import { useTranslation } from '@money/core/lib/i18n';
+import { formatCurrency } from '@money/core/lib/money';
 import {
   CHART_ACTIVE_DOT,
   CHART_COLOR,
@@ -24,208 +22,87 @@ import {
   CHART_TOOLTIP_STYLE,
   CHART_Y_AXIS_WIDTH,
   formatTooltipAmount,
-  lineAxis,
 } from '@money/core/lib/chart';
+import {
+  GRANULARITY_OPTIONS,
+  useAssetHistory,
+  type AssetHistoryInput,
+} from '@money/core/hooks/useAssetHistory';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 
-interface AssetHistoryChartProps {
-  /** 생략하면 자본 계정을 뺀 전체 자산 합계 */
-  accountId?: string;
-  /** 한 구성원이 가진 계좌들의 합계. accountId 와 함께 쓰지 않는다. */
-  ownerId?: string;
-  /**
-   * 여러 구성원이 가진 계좌들의 합계. accountId/ownerId 와 함께 쓰지 않는다.
-   *
-   * 생략하면 전체, 빈 배열이면 아무도 고르지 않은 것이라 빈 그래프가 된다.
-   * 화면의 자산주인 선택과 같은 세 상태 규칙이다.
-   */
-  ownerIds?: string[];
-  projectId?: string | null;
-  /** 처음 보여줄 12개월 구간의 마지막 달. 생략하면 이번 달 */
-  endMonth?: string;
-}
+/**
+ * Y축 눈금과 좌우 여백이 먹는 폭의 어림값(px).
+ *
+ * 정확할 필요는 없다. "몇 px을 끌면 한 칸이 넘어가는가" 하나를 정하는 데만 쓴다.
+ * Y축 너비는 눈금 글자에 맞춰 자동이라 미리 알 수 없어 어림으로 둔다.
+ */
+const PLOT_INSET = 90;
 
-interface Point {
-  label: string;
-  balance: number;
-  /** 월 단위일 때만. 클릭해서 일별로 내려갈 때 쓴다 */
-  yearMonth?: string;
-}
+/** 이보다 적게 움직인 것은 끌기가 아니라 누르다가 손이 떨린 것이다(px). */
+const DRAG_THRESHOLD = 3;
 
-/** 직접 고르는 구간 단위. 드릴다운으로 들어간 일별 보기와는 별개다. */
-type Granularity = 'day' | 'month' | 'year';
-
-const GRANULARITY_OPTIONS: Array<{ value: Granularity; labelKey: MessageKey }> = [
-  { value: 'day', labelKey: 'history.day' as const },
-  { value: 'month', labelKey: 'history.month' as const },
-  { value: 'year', labelKey: 'history.year' as const },
-];
-
-/** 단위별 창 크기. 서버 기본값과 같은 값을 쓴다. */
-const RECENT_DAYS = 30;
-const MONTHS = 12;
-const YEARS = 5;
-
-export default function AssetHistoryChart({
-  accountId,
-  ownerId,
-  ownerIds,
-  projectId,
-  endMonth,
-}: AssetHistoryChartProps) {
+/**
+ * 자산 추이. 무엇을 받아 어느 칸을 그릴지는 core 의 useAssetHistory 가 정한다.
+ *
+ * 여기 남은 것은 그리는 일뿐이다 -- recharts 로 선을 긋고, 손가락(마우스)을 받아
+ * 창을 옮기고, 칸을 눌러 한 단 아래로 내려간다. 앱의 같은 그래프가 같은 훅 위에
+ * 제 방식으로(react-native-svg) 그려진다.
+ */
+export default function AssetHistoryChart(props: AssetHistoryInput) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
-  const [granularity, setGranularity] = useState<Granularity>('month');
-  /*
-   * null이 아니면 그 달의 일별 보기다.
-   *
-   * 단위 토글과 따로 두는 이유는 돌아갈 자리가 다르기 때문이다. 드릴다운은 "월별
-   * 그래프의 이 달"이라는 맥락을 갖고 들어온 것이라 나갈 때 월별로 되돌아가야 한다.
-   * 토글로 고른 일별 보기는 그 자체가 목적지라 돌아갈 곳이 없다.
-   */
-  const [drilledMonth, setDrilledMonth] = useState<string | null>(null);
-  const [points, setPoints] = useState<Point[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState('');
+  const history = useAssetHistory(props);
+  const { points, lastPoint, yAxis, canDrill } = history;
 
   /*
-   * 의존성으로 쓸 자산주인 키.
+   * 끌기. 손가락(마우스)을 따라 창이 시간 위를 미끄러진다.
    *
-   * 배열은 렌더마다 새 참조라 그대로 의존성에 넣으면 값이 같아도 매번 다시 부른다.
-   * 서버로 넘길 모양과 같은 쉼표 문자열로 굳힌다. null이면 전체다.
+   * 오른쪽으로 끌면 지난 날짜가 왼쪽에서 들어오고 최근 날짜가 오른쪽으로 빠진다 --
+   * 종이를 오른쪽으로 미는 것과 같은 방향이다. 한 칸이 화면에서 차지하는 폭만큼
+   * 끌 때마다 한 칸이 넘어가므로, 빨리 끌면 그만큼 여러 칸이 한 번에 지나간다.
    */
-  const ownerKey = ownerIds === undefined ? null : ownerIds.join(',');
-
-  // 계좌나 프로젝트가 바뀌면 일별 보기에 머물러 있을 이유가 없다. 월별로 되돌린다.
-  useEffect(() => {
-    setDrilledMonth(null);
-  }, [accountId, ownerId, ownerKey, projectId]);
-
-  /** 단위를 직접 고르면 드릴다운으로 들어온 맥락은 버린다. */
-  const selectGranularity = (value: Granularity) => {
-    setDrilledMonth(null);
-    setGranularity(value);
-  };
-
-  const load = useCallback(async () => {
-    try {
-      setIsLoading(true);
-      setError('');
-
-      const target = accountId
-        ? { accountId }
-        : ownerId
-          ? { ownerId }
-          : ownerKey === null
-            ? {}
-            : { ownerIds: ownerKey };
-      const window = endMonth ? { endMonth } : {};
-      const rows = await apiClient.getBalanceHistory(
-        drilledMonth
-          ? { ...target, granularity: 'day', yearMonth: drilledMonth }
-          : granularity === 'day'
-            ? { ...target, granularity: 'day', days: RECENT_DAYS }
-            : granularity === 'year'
-              ? { ...target, granularity: 'year', years: YEARS, ...window }
-              : { ...target, granularity: 'month', months: MONTHS, ...window },
-        projectId,
-      );
-
-      /*
-       * 축 이름은 단위마다 다르게 짧게 적는다.
-       *
-       * 드릴다운한 일별은 한 달 안이라 "N일"이면 충분하지만, 토글로 고른 최근 30일은
-       * 달을 넘나들어서 날짜만 적으면 어느 달인지 알 수 없다.
-       */
-      setPoints(
-        (rows ?? []).map((row) => {
-          const balance = toNumber(row.balance);
-          if (drilledMonth) {
-            return { label: t('chart.dayTick', { day: Number(row.date.slice(8)) }), balance };
-          }
-          if (granularity === 'day') {
-            return { label: `${Number(row.date.slice(5, 7))}/${Number(row.date.slice(8))}`, balance };
-          }
-          if (granularity === 'year') {
-            return { label: t('history.yearLabel', { year: row.date }), balance };
-          }
-          return {
-            label: formatMonthShort(Number(row.date.slice(5))),
-            balance,
-            yearMonth: row.date,
-          };
-        }),
-      );
-    } catch {
-      // 그래프를 못 불러와도 나머지 화면은 살아 있어야 한다.
-      setPoints([]);
-      setError(t('history.loadFailed'));
-    } finally {
-      setIsLoading(false);
-    }
-  }, [accountId, ownerId, ownerKey, projectId, endMonth, drilledMonth, granularity]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
-
-  // 값이 전부 0이면 recharts의 domain이 [0,0]이 되어 선이 축에 붙는다.
-  const hasAnyValue = points.some((p) => p.balance !== 0);
-
-  /*
-   * Y축을 잔액이 움직인 구간에 맞춘다.
-   *
-   * 0에서 시작하면 1,000만 원이 1,001만 원이 된 한 달이 직선으로 보인다. 자산 추이는
-   * "얼마인가"보다 "늘었는가 줄었는가"를 보는 그래프라 아래를 잘라도 뜻이 뒤집히지 않는다.
-   */
-  const yAxis = lineAxis(points.map((point) => point.balance), displayCurrency);
-
+  const plotRef = useRef<HTMLDivElement>(null);
+  const drag = useRef<{ x: number; offset: number } | null>(null);
   /**
-   * 선이 끝나는 점. 여기에만 점을 찍고 금액을 적는다.
+   * 이번 누름이 끌기였는지.
    *
-   * 선만 있으면 지금 얼마인지 알려고 Y축 눈금을 되짚어야 한다. 마지막 값은 이
-   * 그래프에서 가장 자주 찾는 숫자라 그 자리에 그대로 적는다.
+   * 월별 그래프는 눌러서 일별로 내려가는 자리이기도 하다. 끌고 나서 손을 떼면 클릭도
+   * 함께 오므로, 끈 것이면 그 클릭은 흘려보낸다. 누를 때마다 다시 false가 되어
+   * 다음 클릭까지 남지 않는다.
    */
-  const lastPoint = points.length > 0 ? points[points.length - 1] : null;
+  const didDrag = useRef(false);
 
-  /** 월별 보기에서만 그 달의 일별로 내려간다. 일·연 단위에는 내려갈 곳이 없다. */
-  const canDrill = !drilledMonth && granularity === 'month';
-
-  const title = drilledMonth
-    ? t('history.dailyTitle', {
-        month: formatYearMonth(Number(drilledMonth.slice(0, 4)), Number(drilledMonth.slice(5))),
-      })
-    : granularity === 'day'
-      ? t('history.recentTitle', { days: RECENT_DAYS })
-      : granularity === 'year'
-        ? t('history.yearlyTitle', { years: YEARS })
-        : t('history.monthlyTitle', { months: MONTHS });
+  /** 한 칸이 화면에서 차지하는 폭(px). 이만큼 끌면 한 칸이 넘어간다. */
+  const stepWidth = () => {
+    const width = plotRef.current?.clientWidth ?? 0;
+    return Math.max((width - PLOT_INSET) / Math.max(history.span - 1, 1), 8);
+  };
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <div className="flex flex-wrap items-center justify-between gap-2 mb-4">
-        <h3 className="text-lg font-semibold text-gray-900">{title}</h3>
+        <h3 className="text-lg font-semibold text-gray-900">{t(history.titleKey)}</h3>
 
         <div className="flex items-center gap-2">
-          {drilledMonth && (
+          {/* 지난 날짜든 앞날이든 지금을 벗어나 있을 때. 그만큼 다시 끌지 않아도 된다. */}
+          {history.offset !== 0 && (
             <button
               type="button"
-              onClick={() => setDrilledMonth(null)}
+              onClick={history.resetWindow}
               className="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
             >
-              {t('history.backToMonth')}
+              {t('history.backToNow')}
             </button>
           )}
 
-          {/* 드릴다운 중에도 단위를 고를 수 있다. 고르면 그 단위의 전체 창으로 나간다. */}
           <div className="flex rounded border border-gray-300 overflow-hidden">
             {GRANULARITY_OPTIONS.map((option) => (
               <button
                 key={option.value}
                 type="button"
-                onClick={() => selectGranularity(option.value)}
+                onClick={() => history.selectGranularity(option.value)}
                 className={`px-3 py-1 text-sm ${
-                  !drilledMonth && granularity === option.value
+                  history.granularity === option.value
                     ? 'bg-blue-600 text-white'
                     : 'bg-white text-gray-700 hover:bg-gray-100'
                 }`}
@@ -237,79 +114,118 @@ export default function AssetHistoryChart({
         </div>
       </div>
 
-      {canDrill && (
-        <p className="text-xs text-gray-500 mb-2">{t('history.drillHint')}</p>
-      )}
-
-      {isLoading ? (
+      {/* 처음 한 번만 자리를 비운다. 끌면서 다시 받는 동안에는 그리던 선을 그대로 둔다. */}
+      {history.isLoading && points.length === 0 ? (
         <p className="text-gray-500 text-sm py-12 text-center">{t('feed.loadingMore')}</p>
-      ) : error ? (
-        <p className="text-red-600 text-sm py-12 text-center">{error}</p>
-      ) : !hasAnyValue ? (
+      ) : history.error ? (
+        <p className="text-red-600 text-sm py-12 text-center">{history.error}</p>
+      ) : !history.hasAnyValue && history.offset === 0 ? (
         <p className="text-gray-500 text-sm py-12 text-center">{t('history.empty')}</p>
       ) : (
-        <ResponsiveContainer width="100%" height={300}>
-          <LineChart
-            data={points}
-            margin={CHART_MARGIN}
-            // 점이 아니라 빈 곳을 눌러도 그 달로 내려가도록 차트 전체에서 받는다.
-            // recharts 3에서 activeTooltipIndex는 number가 아닐 수 있어 숫자로 확인하고 쓴다.
-            onClick={(state: any) => {
-              if (!canDrill) return;
-              const index = Number(state?.activeTooltipIndex);
-              if (!Number.isInteger(index) || index < 0) return;
-              const clicked = points[index];
-              if (clicked?.yearMonth) setDrilledMonth(clicked.yearMonth);
-            }}
-            style={{ cursor: canDrill ? 'pointer' : 'default' }}
-          >
-            <CartesianGrid {...CHART_GRID} />
-            <XAxis dataKey="label" tick={CHART_TICK} />
-            <YAxis
-              domain={yAxis.domain}
-              ticks={yAxis.ticks}
-              tickFormatter={yAxis.tickFormatter}
-              tick={CHART_TICK}
-              width={CHART_Y_AXIS_WIDTH}
-            />
-            <Tooltip
-              formatter={(value: any) =>
+        <div
+          ref={plotRef}
+          // 세로 스크롤은 화면에 넘기고 가로 끌기만 받는다. 손가락으로 훑어 내리는 길을 막지 않는다.
+          style={{ touchAction: 'pan-y' }}
+          className="select-none"
+          onPointerDown={(event) => {
+            didDrag.current = false;
+            drag.current = { x: event.clientX, offset: history.offset };
+          }}
+          onPointerMove={(event) => {
+            const start = drag.current;
+            if (!start) return;
+            const dx = event.clientX - start.x;
+            // 손 떨림은 끌기가 아니다. 문턱을 넘기 전까지는 그냥 누른 것으로 둔다.
+            if (Math.abs(dx) <= DRAG_THRESHOLD) return;
+            /*
+             * 문턱을 넘은 뒤에야 손을 붙잡는다.
+             *
+             * 누르자마자 붙잡으면 뒤따르는 클릭까지 이 칸으로 끌려와, 월별 그래프에서
+             * 달을 눌러 일별로 내려가는 길이 막힌다.
+             */
+            if (!didDrag.current) {
+              didDrag.current = true;
+              event.currentTarget.setPointerCapture(event.pointerId);
+            }
+            // 오른쪽으로 끌면 지난 날짜(+), 왼쪽으로 끌면 앞날(-)이다.
+            history.panFrom(start.offset, Math.round(dx / stepWidth()));
+          }}
+          onPointerUp={(event) => {
+            drag.current = null;
+            if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+              event.currentTarget.releasePointerCapture(event.pointerId);
+            }
+          }}
+          onPointerCancel={() => {
+            drag.current = null;
+          }}
+        >
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart
+              data={points}
+              margin={CHART_MARGIN}
+              // 점이 아니라 빈 곳을 눌러도 한 단 아래로 내려가도록 차트 전체에서 받는다.
+              // recharts 3에서 activeTooltipIndex는 number가 아닐 수 있어 숫자로 확인하고 쓴다.
+              onClick={(state: any) => {
+                if (!canDrill || didDrag.current) return;
+                const index = Number(state?.activeTooltipIndex);
+                if (!Number.isInteger(index) || index < 0) return;
+                const clicked = points[index];
+                if (!clicked) return;
+                history.drillInto(clicked.date);
+              }}
+              style={{ cursor: canDrill ? 'pointer' : 'grab' }}
+            >
+              <CartesianGrid {...CHART_GRID} />
+              <XAxis dataKey="label" tick={CHART_TICK} />
+              <YAxis
+                domain={yAxis.domain}
+                ticks={yAxis.ticks}
+                tickFormatter={yAxis.tickFormatter}
+                tick={CHART_TICK}
+                width={CHART_Y_AXIS_WIDTH}
+              />
+              <Tooltip
+                formatter={(value: any) =>
                   formatTooltipAmount(value, t('history.balance'), displayCurrency)
                 }
-              contentStyle={CHART_TOOLTIP_STYLE}
-            />
-            <Line
-              type="monotone"
-              dataKey="balance"
-              stroke={CHART_COLOR}
-              strokeWidth={2}
-              dot={false}
-              activeDot={CHART_ACTIVE_DOT}
-            />
-            {/*
-              금액은 점 왼쪽에 적는다. 마지막 점은 오른쪽 끝에 붙어 있어 위나
-              오른쪽에 적으면 글자가 그래프 밖으로 잘린다.
-            */}
-            {lastPoint && (
-              <ReferenceDot
-                x={lastPoint.label}
-                y={lastPoint.balance}
-                r={4}
-                fill={CHART_COLOR}
-                stroke="#fff"
-                strokeWidth={2}
-                label={{
-                  value: formatCurrency(lastPoint.balance, displayCurrency),
-                  position: 'left',
-                  offset: 10,
-                  fontSize: 11,
-                  fontWeight: 600,
-                  fill: '#374151',
-                }}
+                contentStyle={CHART_TOOLTIP_STYLE}
               />
-            )}
-          </LineChart>
-        </ResponsiveContainer>
+              <Line
+                type="monotone"
+                dataKey="balance"
+                stroke={CHART_COLOR}
+                strokeWidth={2}
+                dot={false}
+                activeDot={CHART_ACTIVE_DOT}
+                // 끄는 동안 점이 하나씩 갈리므로 그때마다 선이 다시 자라면 어지럽다.
+                isAnimationActive={false}
+              />
+              {/*
+                금액은 점 왼쪽에 적는다. 마지막 점은 오른쪽 끝에 붙어 있어 위나
+                오른쪽에 적으면 글자가 그래프 밖으로 잘린다.
+              */}
+              {lastPoint && (
+                <ReferenceDot
+                  x={lastPoint.label}
+                  y={lastPoint.balance}
+                  r={4}
+                  fill={CHART_COLOR}
+                  stroke="#fff"
+                  strokeWidth={2}
+                  label={{
+                    value: formatCurrency(lastPoint.balance, displayCurrency),
+                    position: 'left',
+                    offset: 10,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    fill: '#374151',
+                  }}
+                />
+              )}
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
       )}
     </div>
   );

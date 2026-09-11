@@ -171,6 +171,25 @@ export function isCopyableEntry(entry: EntryListItem): boolean {
   return entry.kind !== 'adjustment' && entry.splitCount <= 1;
 }
 
+/**
+ * 이 폼으로 고칠 수 있는 거래.
+ *
+ * 잔액 조정만 뺀다. 기초잔액 전표는 계좌 잔액에서 역산되는 값이라 거래 폼으로 고칠
+ * 대상이 아니다 (자산 화면의 잔액 수정이 담당한다).
+ *
+ * 카드대금 결제는 연다. 결제일이 오기 전에 잘못 눌러 넣은 결제를 되돌리려면 금액이나
+ * 날짜를 고쳐야 하고, 그것이 사용 내역을 건드리지 않고 바로잡는 가장 짧은 길이다.
+ * 카드와 통장은 폼이 잠근다 (바꿀 일이면 삭제가 낫다).
+ *
+ * 분할 거래도 연다. 베끼기와 달리 원본이 그 자리에 있어 줄이 합쳐진 것을 알아챌 수 있다.
+ *
+ * 상세를 이 컴포넌트 밖에서 그리는 화면(거래)도 이것으로 단추를 그린다. 규칙을 그쪽에
+ * 또 적으면 여기가 막는 거래에 단추가 남는다.
+ */
+export function isEditableEntry(entry: EntryListItem): boolean {
+  return entry.kind !== 'adjustment';
+}
+
 export interface EntryEditorHandle {
   /** 거래 상세 팝업을 연다. 목록에서 한 건을 눌렀을 때 부른다. */
   openDetail: (entry: EntryListItem) => void;
@@ -183,6 +202,13 @@ export interface EntryEditorHandle {
    * 베낀 원본은 그대로 남는다.
    */
   openCopy: (entry: EntryListItem) => void;
+  /**
+   * 있는 거래를 고치는 팝업을 연다.
+   *
+   * 상세를 이 컴포넌트 밖에서 그리는 화면(거래)이 쓴다. 저장하면 그 거래가 고쳐진다 --
+   * 베끼기(`openCopy`)와 달리 새 거래가 생기지 않는다.
+   */
+  openEdit: (entry: EntryListItem) => void;
   /**
    * 보관함의 후보로 거래 추가 팝업을 연다.
    *
@@ -812,17 +838,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     handleCopyClick(selectedTransaction);
   };
 
-  /**
-   * 수정할 수 있는 전표.
-   *
-   * 잔액 조정만 제외한다. 기초잔액 전표는 계좌 잔액에서 역산되는 값이라
-   * 거래 폼으로 고칠 수 있는 대상이 아니다 (자산 화면의 잔액 수정이 담당한다).
-   *
-   * 카드대금 결제는 폼을 열 수 있다. 결제일이 오기 전에 잘못 눌러 넣은 결제를
-   * 되돌리려면 금액이나 날짜를 고쳐야 하고, 그것이 사용 내역을 건드리지 않고
-   * 바로잡는 가장 짧은 경로다. 카드와 통장은 바꿀 수 없다 (바꿀 일이면 삭제가 낫다).
-   */
-  const isEditable = (entry: EntryListItem) => entry.kind !== 'adjustment';
+  /** 규칙은 모듈 자리의 `isEditableEntry` 가 갖는다. 거래 화면의 상세도 그것으로 그린다. */
+  const isEditable = isEditableEntry;
 
   /** 카드대금 결제 수정 중인지. 폼이 분류·유형·이체 칸을 감춘다. */
   const isCardPaymentForm = formData.type === 'card_payment';
@@ -1182,6 +1199,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     },
     openAdd: handleAddClick,
     openCopy: handleCopyClick,
+    openEdit: handleEditClick,
     openDraft: handleDraftClick,
   }));
 
@@ -2060,7 +2078,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               onClick={handleDetailCopyClick}
               aria-label={t('tx.detail.copy')}
               title={t('tx.detail.copy')}
-              className="flex h-8 w-8 items-center justify-center rounded-lg text-blue-600 transition-colors hover:bg-blue-50"
+              className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-900 transition-colors hover:bg-gray-100"
             >
               <Copy className="h-4 w-4" aria-hidden />
             </button>

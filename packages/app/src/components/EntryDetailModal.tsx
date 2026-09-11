@@ -10,7 +10,7 @@
  * 상세도 낼 수 있다.
  */
 import { Pressable, Text, View } from 'react-native';
-import { Copy } from 'lucide-react-native';
+import { Copy, Pencil, Trash2 } from 'lucide-react-native';
 import type { EntryListItem } from '@money/types';
 
 import { formatDateTime } from '@money/core/lib/datetime';
@@ -41,10 +41,26 @@ function Row({ label, value }: { label: string; value: string | null }) {
   );
 }
 
+/**
+ * 머리글 단추의 색. 베끼기와 고치기가 같은 먹색이다.
+ *
+ * 나란히 선 두 단추에 서로 다른 색을 주면 한쪽이 더 중요한 일처럼 읽히는데, 여기서는
+ * 어느 쪽을 고를지가 하려는 일에 달렸다. lucide 는 className 이 아니라 color 를 받는다.
+ */
+const ACTION_COLOR = '#111827';
+
+/** 지우기만 빨강이다. 되돌릴 수 없는 일이라 나머지와 갈라 놓는다. */
+const DELETE_COLOR = '#dc2626';
+
+/** 머리글 단추가 잡는 칸. 닫기(×)와 같은 크기라야 셋이 한 줄에 선다. */
+const ACTION_BOX = 'h-8 w-8 items-center justify-center rounded-lg active:bg-gray-100';
+
 export default function EntryDetailModal({
   entry,
   onClose,
   onCopy,
+  onEdit,
+  onDelete,
 }: {
   /** null 이면 닫힌 상태다. 여는 쪽이 고른 거래를 그대로 넘긴다. */
   entry: EntryListItem | null;
@@ -56,6 +72,18 @@ export default function EntryDetailModal({
    * 입력 팝업을 연다 -- 이 컴포넌트가 편집기를 알면 오프라인 창구까지 딸려 온다.
    */
   onCopy?: (entry: EntryListItem) => void;
+  /**
+   * 이 거래를 고치는 팝업을 열 때. 없으면 단추를 그리지 않는다.
+   *
+   * 베끼기와 마찬가지로 여는 일은 화면이 한다. 이 컴포넌트는 읽기만 하는 자리다.
+   */
+  onEdit?: (entry: EntryListItem) => void;
+  /**
+   * 이 거래를 지울 때. 없으면 단추를 그리지 않는다.
+   *
+   * 묻는 일도 화면이 한다. 이 컴포넌트는 읽기만 하는 자리라 지우는 길을 직접 갖지 않는다.
+   */
+  onDelete?: (entry: EntryListItem) => void;
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
@@ -79,12 +107,20 @@ export default function EntryDetailModal({
   const fee = entry?.feeAmount ? toNumber(entry.feeAmount) : 0;
 
   /*
-   * 베낄 수 있는 거래인지.
+   * 베끼거나 고칠 수 있는 거래인지.
    *
    * 잔액 맞추기가 만든 조정은 입력 폼이 만드는 것이 아니다(계좌 잔액에서 역산된다).
-   * 눌러도 "웹에서 고쳐 주세요"만 뜨는 단추라면 그리지 않는 편이 낫다.
+   * 눌러도 "웹에서 고쳐 주세요"만 뜨는 단추라면 그리지 않는 편이 낫다. 두 단추가 같은
+   * 조건인 것은 폼이 다룰 수 있는 갈래가 하나로 정해져 있기 때문이다.
    */
-  const copyTarget = onCopy && entry && entry.kind !== 'adjustment' ? entry : null;
+  const canUseForm = entry !== null && entry.kind !== 'adjustment';
+  const copyTarget = onCopy && canUseForm ? entry : null;
+  const editTarget = onEdit && canUseForm ? entry : null;
+  /*
+   * 지우기는 갈래를 가리지 않는다. 폼이 못 다루는 것과 없앨 수 없는 것은 다른
+   * 이야기라, 잔액 조정도 지울 수는 있다.
+   */
+  const deleteTarget = onDelete && entry ? entry : null;
 
   return (
     <Modal
@@ -92,17 +128,43 @@ export default function EntryDetailModal({
       onClose={onClose}
       title={t('tx.detail.title')}
       headerAction={
-        copyTarget ? (
-          <Pressable
-            onPress={() => onCopy?.(copyTarget)}
-            hitSlop={8}
-            accessibilityRole="button"
-            accessibilityLabel={t('tx.detail.copy')}
-            className="rounded-lg p-1 active:bg-gray-100"
-          >
-            <Copy size={18} color="#2563eb" />
-          </Pressable>
-        ) : null
+        <View className="flex-row items-center gap-1">
+          {copyTarget ? (
+            <Pressable
+              onPress={() => onCopy?.(copyTarget)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={t('tx.detail.copy')}
+              className={ACTION_BOX}
+            >
+              <Copy size={18} color={ACTION_COLOR} />
+            </Pressable>
+          ) : null}
+
+          {editTarget ? (
+            <Pressable
+              onPress={() => onEdit?.(editTarget)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={t('tx.detail.edit')}
+              className={ACTION_BOX}
+            >
+              <Pencil size={18} color={ACTION_COLOR} />
+            </Pressable>
+          ) : null}
+
+          {deleteTarget ? (
+            <Pressable
+              onPress={() => onDelete?.(deleteTarget)}
+              hitSlop={8}
+              accessibilityRole="button"
+              accessibilityLabel={t('tx.detail.delete')}
+              className="h-8 w-8 items-center justify-center rounded-lg active:bg-red-50"
+            >
+              <Trash2 size={18} color={DELETE_COLOR} />
+            </Pressable>
+          ) : null}
+        </View>
       }
     >
       {entry ? (

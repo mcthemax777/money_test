@@ -1,15 +1,21 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
 import { useAssetsData } from '@money/core/hooks/useAssetsData';
+import { EMPTY_SEARCH } from '@money/core/hooks/useTransactions';
 import { accountTypeLabel } from '@money/core/lib/account-type';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import type { Account, Card, Person } from '@money/core/lib/types';
 import { useCanEdit, useProject, useProjectDisplayCurrency } from '@money/core/store/project';
+import { useEntryFocus } from '@money/core/store/entry-focus';
 import { useUserFilter } from '@money/core/store/user-filter';
 
+import { useNavigation } from '../shell/navigation';
+import { useScrollToTop } from '../shell/scroll';
 import AddButton from '../components/AddButton';
+import AssetDetailView, { type AssetDetailTarget } from '../components/AssetDetailView';
+import AssetHistoryChart from '../components/AssetHistoryChart';
 import AssetTypeSummary from '../components/AssetTypeSummary';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import { AddAccountModal, AddCardModal, AddPersonModal } from '../components/AssetAddModals';
@@ -24,7 +30,7 @@ import {
  * 자산. 웹의 /assets 를 옮긴 것이다.
  *
  * 총자산과 구성원별 계좌·카드 목록을 보여 주고, 목록 안에서 구성원·계좌·카드를 만든다.
- * 수정과 계좌 상세(잔액 추이, 거래 목록)는 아직 웹에만 있다.
+ * 목록에서 하나를 누르면 그 상세(잔액 추이, 카드 실적)가 화면을 통째로 쓴다.
  */
 export default function AssetsScreen() {
   const { t } = useTranslation();
@@ -34,6 +40,11 @@ export default function AssetsScreen() {
   const togglePersonId = useUserFilter((state) => state.togglePersonId);
 
   const assets = useAssetsData(selectedProjectId);
+  const nav = useNavigation();
+  const focusEntries = useEntryFocus((state) => state.focusEntries);
+  const narrowPersonScope = useEntryFocus((state) => state.narrowPersonScope);
+  const reopen = useEntryFocus((state) => state.reopen);
+  const clearReopen = useEntryFocus((state) => state.clearReopen);
 
   /*
    * 열려 있는 만들기 창.
@@ -49,8 +60,153 @@ export default function AssetsScreen() {
   const [accountAddFor, setAccountAddFor] = useState<Person | null>(null);
   const [cardAddFor, setCardAddFor] = useState<Account | null>(null);
 
+  /**
+   * 펼쳐 둔 상세. 항목 자체가 아니라 종류와 id 만 들고 있는다.
+   *
+   * 목록을 다시 읽으면(고친 뒤, 사본이 바뀐 뒤) 항목은 새 객체가 된다. 사본을 들고
+   * 있으면 그 상세가 옛 잔액을 그대로 적는다.
+   */
+  const [detail, setDetail] = useState<{
+    kind: AssetDetailTarget['kind'];
+    id: string;
+  } | null>(null);
+  /*
+   * 상세를 펼치거나 접으면 맨 위로 올린다.
+   *
+   * 화면에 보이는 것이 통째로 바뀌는 자리다. 내려와 있던 자리에 그대로 두면 새로 그린
+   * 칸의 가운데부터 보이고, 접고 나면 목록의 엉뚱한 데에 서 있다.
+   */
+  const scrollToTop = useScrollToTop();
+  const openDetail = (next: { kind: AssetDetailTarget['kind']; id: string } | null) => {
+    setDetail(next);
+    scrollToTop();
+  };
+
+  /*
+   * 지금 그릴 상세. 목록에서 다시 찾아 온다.
+   *
+   * 못 찾으면 null 이다 -- 지웠거나, 숨겼거나, 자산주인 선택에서 빠졌다. 자산주인에서
+   * 빠진 항목을 그대로 두면 왼쪽 목록에 없는 것의 내역이 화면에 남고, 위의 총자산에도
+   * 들어가지 않아 화면 안에서 숫자가 어긋난다 (웹과 같은 규칙이다).
+   */
+  const visibleIds = new Set(assets.visiblePeople.map((person) => person.id));
+  const ownerOfAccount = (accountId: string) =>
+    assets.accounts.find((account) => account.id === accountId)?.ownerId ?? null;
+
+  const detailTarget: AssetDetailTarget | null = (() => {
+    if (!detail) return null;
+
+    if (detail.kind === 'person') {
+      const person = assets.visiblePeople.find((item) => item.id === detail.id);
+      return person ? { kind: 'person', person } : null;
+    }
+
+    if (detail.kind === 'account') {
+      const account = assets.accounts.find((item) => item.id === detail.id);
+      if (!account || !visibleIds.has(account.ownerId ?? '')) return null;
+      return { kind: 'account', account };
+    }
+
+    const card = assets.cards.find((item) => item.id === detail.id);
+    if (!card) return null;
+    const ownerId = ownerOfAccount(card.paymentAccountId);
+    return ownerId && visibleIds.has(ownerId) ? { kind: 'card', card } : null;
+  })();
+
+  /*
+   * 사라진 항목의 표시는 지운다. 다시 나타나도 저절로 펼쳐지지 않아야 한다.
+   *
+   * 목록이 오는 중에는 건드리지 않는다. 거래 화면에서 ←로 돌아오면 이 화면이 새로
+   * 서면서 펼 항목을 쪽지에서 받는데, 그때 목록은 아직 비어 있다. 그 순간을 "사라졌다"
+   * 로 읽으면 돌아온 자리에서 상세가 곧바로 닫힌다.
+   */
+  useEffect(() => {
+    if (!detail || detailTarget || assets.isLoading) return;
+    setDetail(null);
+  }, [detail, detailTarget, assets.isLoading]);
+
+  /** 카드의 통화. 결제 통장에 달려 있어 카드만 보고는 알 수 없다. */
+  const currencyOfCard = (card: Card) =>
+    assets.accounts.find((account) => account.id === card.paymentAccountId)?.currency ?? 'KRW';
+
+  /*
+   * 거래 화면에서 ←로 돌아왔을 때 떠나온 상세를 다시 편다.
+   *
+   * 분류·태그와 같은 쪽지를 쓴다. 목록이 도착해야 그 항목을 찾을 수 있지만, 여기서는
+   * 종류와 id 만 담아 두면 되므로 기다릴 것이 없다 -- 못 찾으면 detailTarget 이 null 이
+   * 되어 목록이 그대로 보인다.
+   */
+  useEffect(() => {
+    if (!reopen) return;
+    if (reopen.kind === 'category' || reopen.kind === 'tag') return;
+
+    setDetail({ kind: reopen.kind, id: reopen.id });
+    clearReopen();
+  }, [reopen, clearReopen]);
+
+  /**
+   * 이 항목으로 걸린 거래내역을 본다. 거래 화면으로 건너간다.
+   *
+   * 통장·카드는 검색 조건으로 걸리지만(결제수단), 구성원은 자산주인 선택을 그 사람만
+   * 으로 좁힌다 -- 상세에 있던 최근 거래와 같은 기준이 그것이다. 좁힌 선택은 거래
+   * 화면을 벗어날 때 저절로 되돌아온다 (core 의 entry-focus).
+   */
+  const showEntries = () => {
+    if (!detailTarget) return;
+
+    if (detailTarget.kind === 'person') {
+      narrowPersonScope(detailTarget.person.id);
+      focusEntries({ kind: 'person', id: detailTarget.person.id }, EMPTY_SEARCH);
+    } else if (detailTarget.kind === 'account') {
+      focusEntries({ kind: 'account', id: detailTarget.account.id }, {
+        ...EMPTY_SEARCH,
+        paymentAccountIds: [detailTarget.account.id],
+      });
+    } else {
+      focusEntries({ kind: 'card', id: detailTarget.card.id }, {
+        ...EMPTY_SEARCH,
+        paymentCardIds: [detailTarget.card.id],
+      });
+    }
+
+    nav.go('/transactions');
+  };
+
+  /** 상세의 "고치기". 종류에 맞는 창을 연다. 상세는 그 아래 그대로 남는다. */
+  const openEditOfDetail = () => {
+    if (!detailTarget) return;
+    if (detailTarget.kind === 'person') setPersonEdit(detailTarget.person);
+    else if (detailTarget.kind === 'account') setAccountEdit(detailTarget.account);
+    else setCardEdit(detailTarget.card);
+  };
+
   return (
     <View className="gap-6">
+      {/*
+        상세를 펼쳐 두면 그것만 그린다.
+
+        총자산과 목록을 위에 남겨 두면 좁은 화면에서 그래프가 한참 아래로 밀리고,
+        무엇을 보고 있는지도 흐려진다. 닫으면 목록이 그 자리에 그대로 돌아온다.
+      */}
+      {detailTarget ? (
+        <AssetDetailView
+          target={detailTarget}
+          netWorthByPerson={assets.netWorthByPerson}
+          cardCurrency={
+            detailTarget.kind === 'card' ? currencyOfCard(detailTarget.card) : displayCurrency
+          }
+          paymentAccountOwnerId={
+            detailTarget.kind === 'card'
+              ? ownerOfAccount(detailTarget.card.paymentAccountId)
+              : undefined
+          }
+          onClose={() => openDetail(null)}
+          onEdit={openEditOfDetail}
+          onShowEntries={showEntries}
+          onChanged={assets.reload}
+        />
+      ) : (
+        <>
       {/*
         화면의 첫 줄이자 제목이다. 이름을 누르면 자산주인을, 유형 카드를 누르면
         무엇을 더한 금액인지 고른다. 홈에 있던 칸을 그대로 옮겨 왔다.
@@ -70,6 +226,16 @@ export default function AssetsScreen() {
             onTogglePerson={togglePersonId}
           />
         }
+      />
+
+      {/*
+        전체 추이. 고른 자산주인만 그린다.
+
+        전원이면 ownerIds 를 빼서 주인 없는 계좌까지 담는다 (웹과 같은 규칙이다).
+      */}
+      <AssetHistoryChart
+        projectId={selectedProjectId}
+        ownerIds={assets.allPeopleSelected ? undefined : assets.selectedPersonIds}
       />
 
       {assets.hasError ? (
@@ -104,12 +270,13 @@ export default function AssetsScreen() {
             return (
               <>
                 {/*
-                  이름을 누르면 고친다. 자산 화면에서 가장 잦은 손질이 이름과 자리다.
-                  읽기 전용 구성원에게는 누름을 주지 않는다 (목록은 그대로 읽힌다).
+                  이름을 누르면 그 사람의 상세가 열린다 (웹에서 오른쪽에 펼치던 칸이다).
+                  고치는 창은 그 상세의 머리글에 있다 -- 읽기 전용 구성원에게는 그 단추가
+                  없고, 상세 자체는 누구나 읽는다.
                 */}
                 <Pressable
                   className="mb-6"
-                  onPress={canEdit ? () => setPersonEdit(person) : undefined}
+                  onPress={() => openDetail({ kind: 'person', id: person.id })}
                 >
                   <Text className="text-xl font-bold text-gray-900">{person.name}</Text>
                   <Text className="text-sm text-gray-600">
@@ -140,8 +307,8 @@ export default function AssetsScreen() {
                         profit={assets.accountProfit.get(account.id)}
                         cards={assets.cardsOf(account.id)}
                         onAddCard={() => setCardAddFor(account)}
-                        onEdit={() => setAccountEdit(account)}
-                        onEditCard={setCardEdit}
+                        onOpen={() => openDetail({ kind: 'account', id: account.id })}
+                        onOpenCard={(card) => openDetail({ kind: 'card', id: card.id })}
                         onReorderCards={(id, toIndex) =>
                           void assets.moveCardTo(id, account.id, toIndex)
                         }
@@ -158,6 +325,8 @@ export default function AssetsScreen() {
 
       {/* 아직 웹에만 있는 것들. 없는 채로 두면 앱에서 할 수 있는 일로 오해한다. */}
       <Text className="text-xs text-gray-500">{t('assets.webOnlyRest')}</Text>
+        </>
+      )}
 
       {/*
         열 때만 만든다. 세 창이 같은 규칙이다 -- 숨긴 채로 붙여 두면 열리지 않는 일이
@@ -247,8 +416,8 @@ function AccountRow({
   profit,
   cards,
   onAddCard,
-  onEdit,
-  onEditCard,
+  onOpen,
+  onOpenCard,
   onReorderCards,
 }: {
   account: Account;
@@ -256,19 +425,20 @@ function AccountRow({
   cards: Card[];
   /** 카드는 결제 통장 밑에 붙는다. 그 통장이 곧 이 계좌다. */
   onAddCard: () => void;
-  onEdit: () => void;
-  onEditCard: (card: Card) => void;
+  /** 이 계좌의 상세(잔액 추이)를 펼친다 */
+  onOpen: () => void;
+  /** 그 카드의 상세(실적, 주기별 사용액)를 펼친다 */
+  onOpenCard: (card: Card) => void;
   onReorderCards: (id: string, toIndex: number) => void;
 }) {
   const { t } = useTranslation();
-  const canEdit = useCanEdit();
   const profitAmount = toNumber(profit);
 
   /* 겉 상자는 목록(DragList)이 씌운다. 여기서 또 씌우면 테두리가 두 겹이 된다. */
   return (
     <>
-      {/* 이름 줄을 누르면 고친다. 잔액을 누르는 것과 헷갈리지 않게 이름 줄만 받는다. */}
-      <Pressable className="flex-row items-center gap-1.5" onPress={canEdit ? onEdit : undefined}>
+      {/* 이름 줄을 누르면 상세가 열린다. 잔액을 누르는 것과 헷갈리지 않게 이름 줄만 받는다. */}
+      <Pressable className="flex-row items-center gap-1.5" onPress={onOpen}>
         <Text className="text-sm text-gray-600">{account.name}</Text>
         <Text className="rounded bg-gray-100 px-1.5 py-px text-[11px] text-gray-600">
           {accountTypeLabel(account.type)}
@@ -305,7 +475,7 @@ function AccountRow({
         <DragList
           items={cards}
           itemClassName="rounded border border-green-100 bg-green-50 px-3 py-2 active:bg-green-100"
-          onPressItem={onEditCard}
+          onPressItem={onOpenCard}
           onReorder={onReorderCards}
           renderItem={(card) => (
             <>

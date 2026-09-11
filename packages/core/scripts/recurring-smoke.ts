@@ -174,6 +174,7 @@ console.log('\n── 후보로 옮기기 ──');
     accountId: null,
     cardId: null,
     installmentMonths: null,
+    tagIds: [],
     createdAt: '2026-09-03T00:00:00.000Z',
     updatedAt: '2026-09-03T00:00:00.000Z',
     nextRunOn: null,

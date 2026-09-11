@@ -1051,10 +1051,20 @@ export namespace ReportDto {
      */
     endMonth?: string;
     /**
-     * granularity=day에서 그 달 1일~말일을 그린다 ("YYYY-MM").
-     * 월별 그래프에서 한 달을 눌러 들어올 때 쓴다. 생략하면 오늘까지 최근 days일.
+     * granularity=day에서 그 달 1일~말일을 그린다 ("YYYY-MM"). 생략하면 days일 창이다.
+     *
+     * 창이 달에 딱 맞아야 하는 자리를 위한 것이다. 자산 추이 그래프는 달을 눌러도
+     * 일별 창(days + endDate)을 그 달에 갖다 대는 쪽을 쓴다 -- 그래야 거기서 앞뒤
+     * 날짜로 이어 끌 수 있다.
      */
     yearMonth?: string;
+    /**
+     * granularity=day이고 yearMonth가 없을 때 창의 마지막 날 "YYYY-MM-DD". 생략하면 오늘.
+     *
+     * 그래프를 가로로 끌어 지난 날짜를 볼 때 쓴다. endMonth 가 월·연 단위에서 하는
+     * 일을 일 단위에서 한다 -- 창의 크기(days)는 그대로 두고 끝나는 자리만 옮긴다.
+     */
+    endDate?: string;
     /** granularity=month일 때만 쓴다. 기본 12, 최대 60 */
     months?: number;
     /** granularity=year일 때만 쓴다. 기본 5, 최대 30 */

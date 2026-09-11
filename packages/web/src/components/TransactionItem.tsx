@@ -3,7 +3,8 @@
 import type { EntryListItem } from '@money/types';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency, formatOriginal, toNumber } from '@money/core/lib/money';
-import { formatTime } from '@money/core/lib/datetime';
+import { entryAssetName } from '@money/core/lib/entries';
+import { formatDate, formatTime } from '@money/core/lib/datetime';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 
 /**
@@ -82,8 +83,8 @@ function titleOf(
  * 목록의 거래 한 줄.
  *
  * 휴대폰에서 한 화면에 여러 건이 들어와야 하므로 두 줄로 고정한다.
- *   1줄: 무슨 거래인가 + 얼마
- *   2줄: 시각 같은 부속 정보 + 외화 원금액
+ *   1줄: 무슨 거래인가 + 붙은 태그 + 얼마
+ *   2줄: 분류 · 쓴 자산 · 날짜 · 시각 + 외화 원금액
  * 긴 이름은 잘라 낸다. 줄이 늘어나면 카드마다 높이가 달라져 훑어보기 어렵다.
  */
 export default function TransactionItem({ entry, onClick, isSelected }: TransactionItemProps) {
@@ -111,8 +112,9 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
       ? `${entry.accountName} → ${flowTo}`
       : '';
 
-  // 카테고리는 "대분류 > 소분류"로 표시한다. 대분류만 지정한 거래는 앞부분만 나온다.
-  // 부속 정보 줄에서는 뺐지만, 설명이 빈 거래의 이름으로는 여전히 쓴다.
+  // 설명이 빈 거래의 이름으로 쓰는 분류. 이름 자리에는 "대분류 > 소분류"를 다 적는다
+  // -- 그 줄에서 유일하게 무슨 거래인지 말하는 글자라 좁히지 않는다. 아래 부속 정보
+  // 줄의 분류는 이와 달리 잎사귀 하나만 적는다.
   const categoryLabel = entry.parentCategoryName
     ? `${entry.parentCategoryName} > ${entry.categoryName}`
     : entry.categoryName;
@@ -123,12 +125,22 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
   /*
    * 2줄에 들어가는 부속 정보. 있는 것만 " · "로 잇는다.
    *
-   * 어느 거래든 시각만 적는다. 분류와 결제수단은 거래를 눌러 상세에서 본다.
+   * 분류 · 쓴 자산 · 날짜 · 시각의 차례다. 무엇에 썼는가가 먼저 읽히고, 언제인가가
+   * 뒤따른다. 분류는 **잎사귀 하나만** 적는다 -- 소분류가 있으면 소분류, 없으면
+   * 대분류다. "식비 > 식료품" 처럼 둘을 다 적으면 한 줄에서 자리를 너무 차지해
+   * 뒤의 것들이 잘려 나간다 (둘 다 필요한 자리는 상세와 제목 대신 쓰는 자리다).
    *
-   * 잔액 조정은 상대 계좌가 있으면 함께 남긴다. 제목이 "잔액 조정"뿐이라 어느
-   * 계좌 이야기인지가 이 줄에만 있다.
+   * 날짜는 날짜별로 묶인 목록에서는 머리글과 겹치지만, 분류·결제수단으로 묶어 볼
+   * 때는 이 줄에만 있다. 어느 묶음에서 보든 같은 줄이 서는 쪽을 택한다.
+   *
+   * 쓴 자산의 규칙은 core 의 entryAssetName 이 갖는다. 앱의 한 줄도 같은 것을 쓴다.
    */
-  const meta = (entry.kind === 'adjustment' ? [flow, time] : [time])
+  const meta = [
+    entry.categoryName,
+    entryAssetName(entry, flow),
+    formatDate(entry.date, timeZone),
+    time,
+  ]
     .filter(Boolean)
     .join(' · ');
 
@@ -139,29 +151,23 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
         onClick ? 'cursor-pointer hover:bg-gray-50 active:bg-gray-100' : ''
       } ${isSelected ? 'bg-blue-50' : ''}`}
     >
-      <div className="flex items-baseline justify-between gap-3">
-        <p className="truncate text-[15px] font-medium text-gray-900">{title}</p>
-        <p
-          className={`shrink-0 text-[15px] font-semibold tabular-nums ${
-            AMOUNT_COLOR_BY_KIND[entry.kind]
-          }`}
-        >
-          {SIGN_BY_KIND[entry.kind]}
-          {formatCurrency(entry.amount, displayCurrency)}
-        </p>
-      </div>
+      <div className="flex items-baseline gap-3">
+        {/*
+          제목과 태그를 한 덩어리로 묶어 왼쪽을 채운다.
 
-      {/*
-        붙은 태그. 금액 줄 아래에 둔다.
-        이름만 작게 늘어놓는다 -- 목록 한 줄에서 태그는 "이 거래가 어느 일에 딸렸나"를
-        알려 주는 곁말이라, 제목만큼 크면 무엇이 거래인지 흐려진다.
-      */}
-      {entry.tags.length > 0 && (
-        <div className="mt-1 flex flex-wrap items-center gap-1">
+          태그는 제목 바로 오른쪽에 붙는다 -- "이 거래가 어느 일에 딸렸나"는 거래
+          이름에 이어 읽히는 곁말이다. 이름만 작게 적는다. 제목만큼 크면 무엇이
+          거래인지 흐려진다.
+
+          넘치면 제목이 먼저 줄고(min-w-0 + truncate), 그래도 넘치는 태그는 잘라
+          낸다(overflow-hidden). 금액은 줄어들지 않아 오른쪽 끝에 그대로 선다.
+        */}
+        <div className="flex min-w-0 flex-1 items-baseline gap-1.5 overflow-hidden">
+          <p className="min-w-0 truncate text-[15px] font-medium text-gray-900">{title}</p>
           {entry.tags.map((tag) => (
             <span
               key={tag.id}
-              className="flex items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600"
+              className="flex shrink-0 items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600"
             >
               {tag.color && (
                 <span
@@ -173,7 +179,15 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
             </span>
           ))}
         </div>
-      )}
+        <p
+          className={`shrink-0 text-[15px] font-semibold tabular-nums ${
+            AMOUNT_COLOR_BY_KIND[entry.kind]
+          }`}
+        >
+          {SIGN_BY_KIND[entry.kind]}
+          {formatCurrency(entry.amount, displayCurrency)}
+        </p>
+      </div>
 
       {/* 2줄에 담을 것이 하나도 없는 거래도 있다. 그때는 빈 줄을 만들지 않는다. */}
       {(meta || hasFee || original) && (

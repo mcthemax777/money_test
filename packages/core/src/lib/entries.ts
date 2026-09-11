@@ -57,6 +57,25 @@ export function expenseAmountOf(entry: EntryListItem): number {
   return 0;
 }
 
+/**
+ * 목록 한 줄이 곁말에 적는 "쓴 자산". 카드로 냈으면 카드, 아니면 통장이다.
+ *
+ * 제목에 이미 선 이름은 다시 적지 않는다. 이체는 제목이 곧 "보낸 곳 -> 받은 곳"이라
+ * 통장 이름이 한 줄에 두 번 서고, 카드 대금은 카드 이름이 제목이므로 여기서는 돈이
+ * 빠져나간 통장을 적는다. 잔액 조정은 제목이 "잔액 조정" 뿐이라 상대가 있으면 그
+ * 흐름을, 없으면 조정한 계좌 하나를 적는다.
+ *
+ * `flow` 는 부르는 쪽이 만든 "A -> B" 글자다. 잔액 조정에만 쓰인다.
+ *
+ * 웹과 앱의 거래 한 줄이 같은 규칙으로 읽혀야 해서 여기 둔다.
+ */
+export function entryAssetName(entry: EntryListItem, flow: string): string {
+  if (entry.kind === 'transfer') return '';
+  if (entry.kind === 'adjustment') return flow || entry.accountName || '';
+  if (entry.kind === 'card_payment') return entry.accountName ?? '';
+  return entry.cardName ?? entry.accountName ?? '';
+}
+
 /** 전표 하나가 "수입"에 보태는 금액 */
 export function incomeAmountOf(entry: EntryListItem): number {
   return entry.kind === 'income' ? toNumber(entry.amount) : 0;

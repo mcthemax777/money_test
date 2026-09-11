@@ -405,7 +405,11 @@ export class ReportsService {
       granularity === 'day'
         ? query.yearMonth
           ? dayBuckets(assertYearMonth(query.yearMonth, '조회 월'), timeZone)
-          : recentDayBuckets(clampCount(query.days, 30, 366), timeZone)
+          : recentDayBuckets(
+              clampCount(query.days, 30, 366),
+              timeZone,
+              query.endDate ? assertDateKey(query.endDate, '기준일') : undefined,
+            )
         : granularity === 'year'
           ? yearBuckets(Number(endMonth.slice(0, 4)), clampCount(query.years, 5, 30), timeZone)
           : monthBuckets(endMonth, clampCount(query.months, 12, 60), timeZone);
@@ -1059,13 +1063,22 @@ function yearBuckets(endYear: number, years: number, timeZone: string): BalanceB
 }
 
 /**
- * 일 단위 구간. 오늘을 포함해 뒤로 days개.
+ * 일 단위 구간. endDate(없으면 오늘)를 포함해 뒤로 days개.
  *
  * zonedDayStart는 day가 1보다 작아도 앞 달로 넘어간다(Date.UTC의 규칙).
  * 달 경계를 따로 다루지 않아도 되는 이유다.
+ *
+ * endDate는 달력 날짜다. 그래프를 끌어 지난 날짜를 볼 때 화면이 보내며, 타임존
+ * 변환 없이 그대로 읽는다 -- 어느 날인지는 이미 프로젝트 타임존으로 정해진 값이다.
  */
-function recentDayBuckets(days: number, timeZone: string): BalanceBucket[] {
-  const { year, month, day } = zonedParts(new Date(), timeZone);
+function recentDayBuckets(days: number, timeZone: string, endDate?: string): BalanceBucket[] {
+  const { year, month, day } = endDate
+    ? {
+        year: Number(endDate.slice(0, 4)),
+        month: Number(endDate.slice(5, 7)),
+        day: Number(endDate.slice(8, 10)),
+      }
+    : zonedParts(new Date(), timeZone);
   const buckets: BalanceBucket[] = [];
   for (let i = days - 1; i >= 0; i--) {
     const start = zonedDayStart(year, month, day - i, timeZone);

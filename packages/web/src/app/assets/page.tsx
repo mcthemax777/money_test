@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '@money/core/lib/api-client';
@@ -10,6 +10,8 @@ import { sumNetWorth, type NetWorthParts } from '@money/core/lib/net-worth';
 import { useUserFilter } from '@money/core/store/user-filter';
 import { formatDate, monthInputToIso } from '@money/core/lib/datetime';
 import { type ReportDto } from '@money/types';
+import { Info, Receipt, X } from 'lucide-react';
+import { EMPTY_SEARCH, type TransactionSearch } from '@money/core/hooks/useTransactions';
 import { useDragReorder } from '@/hooks/useDragReorder';
 import AddButton from '@/components/AddButton';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
@@ -55,6 +57,7 @@ import HiddenItemsPanel from '@/components/HiddenItemsPanel';
 import AssetHistoryChart from '@/components/AssetHistoryChart';
 import CardColorPicker from '@/components/CardColorPicker';
 import TransactionListView from '@/components/TransactionListView';
+import TransactionsView from '@/components/TransactionsView';
 import type { EntryListItem } from '@/components/TransactionItem';
 import CardPerformanceField from '@/components/CardPerformanceField';
 import CardPerformancePanel from '@/components/CardPerformancePanel';
@@ -120,6 +123,44 @@ function AccountTypeBadge({ type }: { type: string }) {
 }
 
 /**
+ * 상세 머리글의 아이콘 단추. 사용자·자산·카드 세 상세가 같은 것을 쓴다.
+ *
+ * 셋 다 아이콘이다. 글자 단추 둘 옆에 아이콘 하나만 서면 그것이 다른 종류의
+ * 것으로 읽히고, 제목 옆에 글자가 넷(이름·금액·단추 둘) 늘어서 어느 것이 누를
+ * 것인지도 흐려진다. 이름은 aria-label과 title로 남겨 둔다.
+ *
+ * 테두리와 바탕도 없앴다. 네모 셋이 이름 옆에 서면 그쪽이 무게를 가져가, 정작
+ * 보러 온 금액과 추이보다 단추가 먼저 읽힌다.
+ */
+function DetailIconButton({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      /*
+        테두리도 바탕도 없다. 아이콘만 놓는다.
+
+        누를 수 있다는 표시는 색으로 한다 -- 바탕 없이 크기만 잡아 두면 h-10 w-10 은
+        손가락이 닿는 자리로 남고 눈에는 아이콘 셋만 보인다.
+      */
+      className="flex h-10 w-10 shrink-0 items-center justify-center text-gray-600 transition-colors hover:text-gray-900"
+    >
+      {children}
+    </button>
+  );
+}
+
+/**
  * "현금성 · 투자 · 부채" 한 줄.
  *
  * 전체 총자산 상자와 구성원 패널이 같은 형식을 쓴다.
@@ -156,7 +197,8 @@ export default function DashboardPage() {
   const canEdit = useCanEdit();
   const { messageOf } = useApiError();
   const router = useRouter();
-  const { setPeople: setStorePeople, selectedPersonIds, togglePersonId } = useUserFilter();
+  const { setPeople: setStorePeople, selectedPersonIds, togglePersonId, setPersonFilter } =
+    useUserFilter();
   const { selectedProjectId } = useProject();
   const myPersonId = useMyPersonId();
   const timeZone = useProjectTimeZone();
@@ -191,6 +233,27 @@ export default function DashboardPage() {
   const [isCardDetailOpen, setIsCardDetailOpen] = useState(false);
   /** 고른 구성원의 최근 거래. 계좌 원장과 달리 전표 단위다. */
   const [personEntries, setPersonEntries] = useState<EntryListItem[]>([]);
+  /**
+   * 상세에서 "거래내역 보기"로 건너간 검색. null이면 자산 화면을 그린다.
+   *
+   * 고른 항목(detailType·selected*)은 그대로 두므로 ←로 돌아오면 떠나온 상세가 그
+   * 자리에 서 있다. 분류·태그 화면처럼 다시 펼 표시를 따로 들 필요가 없다.
+   */
+  const [entriesSearch, setEntriesSearch] = useState<TransactionSearch | null>(null);
+  /**
+   * 사용자 상세에서 거래내역으로 건너가기 전의 자산주인 선택.
+   *
+   * 사용자의 거래는 검색 조건으로 걸지 않는다. "이 사람의 거래"는 **돈이 오간 계좌의
+   * 주인**이 그 사람인 거래이고(상세의 최근 거래도 같은 기준이다), 그 조건을 가진
+   * 것은 화면 위쪽의 자산주인 선택뿐이다. 검색 창의 사람 조건은 "거래를 낸 사람"이라
+   * 남의 카드로 쓴 건에서 갈린다.
+   *
+   * 전역 선택을 건드리는 값이므로 떠나기 전 상태를 들고 있다가 돌아올 때 되돌린다.
+   */
+  const personScope = useRef<{
+    selectedPersonIds: string[];
+    personFilterTouched: boolean;
+  } | null>(null);
   const [isEditAccountModalOpen, setIsEditAccountModalOpen] = useState(false);
   const [isEditCardModalOpen, setIsEditCardModalOpen] = useState(false);
 
@@ -332,6 +395,40 @@ export default function DashboardPage() {
     if (!ownerId || selectedPersonIds.includes(ownerId)) return;
     setDetailType(null);
   }, [detailType, selectedPersonIds, accounts, selectedPerson, selectedAccount, selectedCard]);
+
+  /**
+   * 한 사람의 거래내역으로 건너간다.
+   *
+   * 자산주인 선택을 그 사람만으로 좁힌다. 거래 화면은 이 선택으로 목록·합계를
+   * 만들므로, 그렇게 해야 상세에 있던 최근 거래와 같은 기준이 된다.
+   */
+  const showPersonEntries = (personId: string) => {
+    const state = useUserFilter.getState();
+    personScope.current = {
+      selectedPersonIds: state.selectedPersonIds,
+      personFilterTouched: state.personFilterTouched,
+    };
+    // 건드림 표시를 함께 켠다. 켜지 않으면 거래 화면의 usePersonFilterSync 가 이
+    // 선택을 "한 번도 고르지 않은 상태"로 보고 전체 선택으로 되돌린다.
+    setPersonFilter([personId], true);
+    setEntriesSearch(EMPTY_SEARCH);
+  };
+
+  /**
+   * 거래내역을 접고 떠나온 상세로 돌아간다.
+   *
+   * 좁혀 두었던 자산주인 선택을 떠나기 전 그대로 되돌린다. 거래 화면에서 사람을
+   * 바꿔 봤더라도 되돌린다 -- 이 화면은 거래 탭이 아니라 자산 상세에서 한 걸음
+   * 들어온 자리다. 그 걸음이 화면 전체의 자산주인 설정을 바꿔 놓고 끝나면, 돌아온
+   * 자산 목록이 들어가기 전과 달라져 있다.
+   */
+  const closeEntries = () => {
+    setEntriesSearch(null);
+
+    const before = personScope.current;
+    personScope.current = null;
+    if (before) setPersonFilter(before.selectedPersonIds, before.personFilterTouched);
+  };
 
   /**
    * 거래를 저장하거나 지운 뒤.
@@ -740,6 +837,33 @@ export default function DashboardPage() {
     ? netWorth
     : sumNetWorth(selectedPersonIds.map((id) => netWorthByPerson.get(id)));
 
+  /*
+   * 거래내역을 펼쳐 둔 동안에는 그것만 그린다 (분류·태그 화면과 같은 규칙).
+   *
+   * 자산 목록을 아래에 남겨 두면 한 화면에 목록 둘이 서서 어느 것을 보고 있는지가
+   * 흐려진다. 거래 화면이 제 머리글을 그대로 들고 오므로 돌아가는 길인 ←만 얹는다.
+   */
+  if (entriesSearch) {
+    return (
+      <TransactionsView
+        projectId={selectedProjectId}
+        search={entriesSearch}
+        onBack={closeEntries}
+      />
+    );
+  }
+
+  /*
+   * 좁은 화면에서 상세를 펼쳐 두었을 때 접는 자리.
+   *
+   * 넓은 화면은 목록과 상세가 나란하다. 좁은 화면에서는 둘이 위아래로 쌓여 상세가
+   * 목록 한참 아래에 서고, 그래프를 보려면 그만큼 훑어 내려야 한다. 그래서 고른
+   * 항목의 상세가 화면을 통째로 쓰고 나머지는 접는다 (앱과 같은 규칙이다).
+   *
+   * 닫으면 접었던 것이 그대로 돌아온다. 상세의 머리글에 닫기 아이콘이 있다.
+   */
+  const hideOnNarrow = detailType ? 'hidden lg:block' : '';
+
   return (
     <div className="space-y-6">
       {/*
@@ -747,28 +871,32 @@ export default function DashboardPage() {
         무엇을 더한 금액인지 고른다. 홈에 있던 칸을 그대로 옮겨 왔다. 자산 금액은
         자산 화면에서 보는 것이 제자리고, 홈에서는 이 달의 흐름만 본다.
       */}
-      <AssetTypeSummary
-        byType={scopedNetWorth?.byType}
-        hasNoScope={people.length > 0 && selectedPersonIds.length === 0}
-        scopeTitle={
-          <PersonScopeTitle
-            noun={t('home.assetsNoun')}
-            people={people}
-            myPersonId={myPersonId}
-            selectedPersonIds={selectedPersonIds}
-            onTogglePerson={togglePersonId}
-          />
-        }
-      />
+      <div className={hideOnNarrow}>
+        <AssetTypeSummary
+          byType={scopedNetWorth?.byType}
+          hasNoScope={people.length > 0 && selectedPersonIds.length === 0}
+          scopeTitle={
+            <PersonScopeTitle
+              noun={t('home.assetsNoun')}
+              people={people}
+              myPersonId={myPersonId}
+              selectedPersonIds={selectedPersonIds}
+              onTogglePerson={togglePersonId}
+            />
+          }
+        />
+      </div>
 
       {/*
         전체 추이는 계좌를 골라도 그대로 둔다. 고른 계좌는 아래 오른쪽에 펼친다.
         고른 자산주인만 그린다. 전원이면 ownerIds를 빼서 주인 없는 계좌까지 담는다.
       */}
-      <AssetHistoryChart
-        projectId={selectedProjectId}
-        ownerIds={allPeopleSelected ? undefined : selectedPersonIds}
-      />
+      <div className={hideOnNarrow}>
+        <AssetHistoryChart
+          projectId={selectedProjectId}
+          ownerIds={allPeopleSelected ? undefined : selectedPersonIds}
+        />
+      </div>
 
       {error && (
         <div className="p-3 bg-red-50 text-red-800 text-sm rounded">
@@ -788,6 +916,7 @@ export default function DashboardPage() {
         */
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
           {/* 왼쪽: 구성원별 목록. 드래그로 순서를 바꿀 수 있다. */}
+          <div className={hideOnNarrow}>
           <PersonAssetList
             people={displayPeople}
             accounts={accounts}
@@ -820,6 +949,7 @@ export default function DashboardPage() {
             onAddAccount={openAccountAdd}
             onAddCard={openCardAdd}
           />
+          </div>
 
           {/* 오른쪽: 고른 계좌의 잔액 추이와 거래 내역 */}
           {detailType === 'account' && selectedAccount ? (
@@ -840,21 +970,32 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => setIsAccountDetailOpen(true)}
-                    className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                  <DetailIconButton
+                    label={t('assets.viewEntries')}
+                    onClick={() =>
+                      setEntriesSearch({
+                        ...EMPTY_SEARCH,
+                        paymentAccountIds: [selectedAccount.id],
+                      })
+                    }
                   >
-                    {t('account.detail')}
-                  </button>
-                  <button
+                    <Receipt className="h-5 w-5" aria-hidden />
+                  </DetailIconButton>
+                  <DetailIconButton
+                    label={t('account.detail')}
+                    onClick={() => setIsAccountDetailOpen(true)}
+                  >
+                    <Info className="h-5 w-5" aria-hidden />
+                  </DetailIconButton>
+                  <DetailIconButton
+                    label={t('common.close')}
                     onClick={() => {
                       setDetailType(null);
                       setSelectedAccount(null);
                     }}
-                    className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
                   >
-                    {t('common.close')}
-                  </button>
+                    <X className="h-5 w-5" aria-hidden />
+                  </DetailIconButton>
                 </div>
               </div>
 
@@ -945,21 +1086,27 @@ export default function DashboardPage() {
                   />
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => setIsPersonDetailOpen(true)}
-                    className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                  <DetailIconButton
+                    label={t('assets.viewEntries')}
+                    onClick={() => showPersonEntries(selectedPerson.id)}
                   >
-                    {t('assets.detail')}
-                  </button>
-                  <button
+                    <Receipt className="h-5 w-5" aria-hidden />
+                  </DetailIconButton>
+                  <DetailIconButton
+                    label={t('assets.detail')}
+                    onClick={() => setIsPersonDetailOpen(true)}
+                  >
+                    <Info className="h-5 w-5" aria-hidden />
+                  </DetailIconButton>
+                  <DetailIconButton
+                    label={t('common.close')}
                     onClick={() => {
                       setDetailType(null);
                       setSelectedPerson(null);
                     }}
-                    className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
                   >
-                    {t('common.close')}
-                  </button>
+                    <X className="h-5 w-5" aria-hidden />
+                  </DetailIconButton>
                 </div>
               </div>
 
@@ -1003,21 +1150,29 @@ export default function DashboardPage() {
                   )}
                 </div>
                 <div className="flex gap-2">
-                  <button
-                    onClick={() => setIsCardDetailOpen(true)}
-                    className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
+                  <DetailIconButton
+                    label={t('assets.viewEntries')}
+                    onClick={() =>
+                      setEntriesSearch({ ...EMPTY_SEARCH, paymentCardIds: [selectedCard.id] })
+                    }
                   >
-                    {t('card.detail')}
-                  </button>
-                  <button
+                    <Receipt className="h-5 w-5" aria-hidden />
+                  </DetailIconButton>
+                  <DetailIconButton
+                    label={t('card.detail')}
+                    onClick={() => setIsCardDetailOpen(true)}
+                  >
+                    <Info className="h-5 w-5" aria-hidden />
+                  </DetailIconButton>
+                  <DetailIconButton
+                    label={t('common.close')}
                     onClick={() => {
                       setDetailType(null);
                       setSelectedCard(null);
                     }}
-                    className="px-4 py-2 bg-gray-300 text-gray-700 rounded-lg hover:bg-gray-400"
                   >
-                    {t('common.close')}
-                  </button>
+                    <X className="h-5 w-5" aria-hidden />
+                  </DetailIconButton>
                 </div>
               </div>
 
@@ -1052,6 +1207,7 @@ export default function DashboardPage() {
         읽고, 목록은 그만큼 아래로 밀린다. 다 보고 나서 "숨긴 게 있었나" 할 때 그 자리에
         있으면 된다.
       */}
+      <div className={hideOnNarrow}>
       <HiddenItemsPanel
         projectId={selectedProjectId}
         reloadToken={hiddenVersion}
@@ -1067,6 +1223,7 @@ export default function DashboardPage() {
           await loadNetWorth();
         }}
       />
+      </div>
 
       {/* 계좌 상세정보 모달 */}
       {isAccountDetailOpen && selectedAccount && (

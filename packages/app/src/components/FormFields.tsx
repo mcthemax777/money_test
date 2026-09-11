@@ -9,7 +9,7 @@
  */
 import { Fragment, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import { ChevronDown } from 'lucide-react-native';
+import { CalendarDays, ChevronDown, Clock } from 'lucide-react-native';
 import type { CategoryDto } from '@money/types';
 
 import { groupCategories } from '@money/core/lib/category-tree';
@@ -312,5 +312,43 @@ export function CategoryChips({
         </Fragment>
       ))}
     </View>
+  );
+}
+
+/**
+ * 날짜·시각을 여는 칸. 값이 없으면 모양(YYYY-MM-DD)을 옅게 적는다.
+ *
+ * 검색 창의 기간 칸과 같은 모양이다 (`TransactionSearchModal` 의 DateButton). 열려 있는
+ * 동안 테두리가 파래서, 아래 판이 어느 칸의 것인지 보인다.
+ *
+ * 거래 추가 팝업과 카드 대금 팝업이 함께 쓴다.
+ */
+export function PickerButton({
+  icon,
+  value,
+  placeholder,
+  isOpen,
+  onPress,
+}: {
+  icon: 'date' | 'time';
+  value: string;
+  placeholder: string;
+  isOpen: boolean;
+  onPress: () => void;
+}) {
+  const Icon = icon === 'date' ? CalendarDays : Clock;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      className={`flex-row items-center gap-2 rounded-lg border bg-white px-3 py-3 ${
+        isOpen ? 'border-blue-600' : 'border-gray-300'
+      }`}
+    >
+      <Icon size={16} color={isOpen ? '#2563eb' : '#6b7280'} />
+      <Text className={`text-base ${value ? 'text-gray-900' : 'text-gray-400'}`}>
+        {value || placeholder}
+      </Text>
+    </Pressable>
   );
 }

@@ -15,7 +15,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Pressable, Text, TextInput, View } from 'react-native';
 import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
-import { CalendarDays, Clock } from 'lucide-react-native';
 import type { EntryDraftDto, EntryListItem, TagDto } from '@money/types';
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -24,7 +23,7 @@ import type { EntryFormKind, EntryFormValues } from '@money/core/data/entry-form
 import { useMyPersonId, useProject, useProjectTimeZone } from '@money/core/store/project';
 
 import DatePickerPanel from './DatePickerPanel';
-import { CategoryChips, Chip, Chips, Field } from './FormFields';
+import { CategoryChips, Chip, Chips, Field, PickerButton } from './FormFields';
 import Modal from './Modal';
 
 /** 갈래 넷. 조정(잔액 맞추기)은 이 폼이 만드는 것이 아니라 여기 없다. */
@@ -617,41 +616,6 @@ export default function EntryEditor({
   );
 }
 
-/**
- * 날짜·시각을 여는 칸. 값이 없으면 모양(YYYY-MM-DD)을 옅게 적는다.
- *
- * 검색 창의 기간 칸과 같은 모양이다 (`TransactionSearchModal` 의 DateButton). 열려 있는
- * 동안 테두리가 파래서, 아래 판이 어느 칸의 것인지 보인다.
- */
-function PickerButton({
-  icon,
-  value,
-  placeholder,
-  isOpen,
-  onPress,
-}: {
-  icon: 'date' | 'time';
-  value: string;
-  placeholder: string;
-  isOpen: boolean;
-  onPress: () => void;
-}) {
-  const Icon = icon === 'date' ? CalendarDays : Clock;
-
-  return (
-    <Pressable
-      onPress={onPress}
-      className={`flex-row items-center gap-2 rounded-lg border bg-white px-3 py-3 ${
-        isOpen ? 'border-blue-600' : 'border-gray-300'
-      }`}
-    >
-      <Icon size={16} color={isOpen ? '#2563eb' : '#6b7280'} />
-      <Text className={`text-base ${value ? 'text-gray-900' : 'text-gray-400'}`}>
-        {value || placeholder}
-      </Text>
-    </Pressable>
-  );
-}
 
 /**
  * 태그를 고르는 알약 줄. 여럿을 고를 수 있다.

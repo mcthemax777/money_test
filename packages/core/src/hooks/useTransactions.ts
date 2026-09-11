@@ -1417,6 +1417,29 @@ export function useTransactions(projectId: string | null) {
   }, [selected]);
 
   /**
+   * 한 건을 지운다. 상세에서 지우기를 눌렀을 때.
+   *
+   * 고른 것 지우기(`deleteSelected`)와 같은 창구를 쓴다 -- 온라인이면 서버로,
+   * 오프라인이면 사본과 아웃박스로 간다. 다른 점은 고르는 상태를 건드리지 않는
+   * 것뿐이다. 상세에서 지우는 것은 고르기를 거치지 않은 길이라, 거기서 체크를
+   * 비우면 고르던 중이던 사람의 손이 지워진다.
+   *
+   * 지운 뒤에는 받아 둔 것을 전부 버린다. 년월 합계까지 달라진다.
+   */
+  const deleteEntry = useCallback(async (id: string): Promise<boolean> => {
+    setIsDeleting(true);
+    try {
+      await entryWritePort().deleteEntry(id);
+      return true;
+    } catch {
+      return false;
+    } finally {
+      setIsDeleting(false);
+      setReloadToken((token) => token + 1);
+    }
+  }, []);
+
+  /**
    * 아는 거래별 태그. 열쇠는 거래 id 다.
    *
    * 세 곳에서 모은다. 그 달의 목록(날짜별 탭), 줄의 거래(분류별·수단별 탭), 그리고 접힌
@@ -1642,6 +1665,8 @@ export function useTransactions(projectId: string | null) {
       [rangePending, monthKeyOf, rowKeyOf],
     ),
     deleteSelected,
+    /** 상세에서 한 건만 지운다. 고르는 상태는 건드리지 않는다. */
+    deleteEntry,
     isDeleting,
     /** 지금 고르는 것이 무엇을 위한 것인가. 머리글의 버튼이 이 값으로 갈린다. */
     selectPurpose,

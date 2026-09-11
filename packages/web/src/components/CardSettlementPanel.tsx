@@ -8,11 +8,13 @@ import {
   type CardTransferDirection,
 } from '@money/types';
 import { apiClient } from '@money/core/lib/api-client';
+import { outstandingOf, overTransferOf } from '@money/core/lib/card-settlement';
 import type { CardUsage } from '@money/core/lib/types';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toAmountString, toNumber } from '@money/core/lib/money';
-import { formatDateMarker, nowTimeKey, todayKey } from '@money/core/lib/datetime';
+import { nowTimeKey, todayKey } from '@money/core/lib/datetime';
 import { useProjectTimeZone } from '@money/core/store/project';
+import CardUsageChart from './CardUsageChart';
 import Modal from './Modal';
 import PendingRatePanel from './PendingRatePanel';
 import { useApiError } from '@money/core/lib/api-error';
@@ -32,6 +34,13 @@ interface CardSettlementPanelProps {
     cardType: 'debit' | 'credit';
     /** 대금이 오가는 통장. 카드에 붙어 있어 사용자가 고르지 않는다. */
     paymentAccountId: string;
+    /**
+     * 실적 기준액. 주기별 사용액 그래프의 기준선이 된다.
+     *
+     * 카드에 적혀 있는 값을 그대로 쓴다. 실적 API를 또 부르지 않는 이유는 그쪽이
+     * 진행 중인 한 주기만 알려 주기 때문이다 -- 지난 주기들에도 같은 선을 그어야 한다.
+     */
+    performanceAmount?: string | null;
   };
   /**
    * 결제 통장의 주인. 대금 전표에 사람을 달아야 해서 필요하다.
@@ -49,7 +58,9 @@ interface CardSettlementPanelProps {
 /**
  * 신용카드 정산.
  *
- * 남은 대금, 마감일 기준 주기별 사용액, 대금 기록, 외화 청구액 확정이 한 덩어리다.
+ * 마감일 기준 주기별 사용액, 남은 대금과 대금 기록, 외화 청구액 확정이 한 덩어리다.
+ * 사용액 그래프가 맨 위다. 카드를 열었을 때 먼저 보는 것은 얼마를 썼나이고, 대금은
+ * 그 뒤에 하는 일이다.
  * 자산 화면의 카드 상세와 가계 화면의 수단별 탭이 같은 것을 보여 줘야 해서 컴포넌트로
  * 뽑았다. 예전에는 자산 화면 안에만 있어서 가계 화면에서 카드를 보다가 대금을
  * 기록하려면 화면을 옮겨야 했다.
@@ -91,6 +102,16 @@ export default function CardSettlementPanel({
 
   const isCredit = card.cardType === 'credit';
 
+  /*
+   * 그래프에 그을 실적 기준선. 0 이하는 기준이 없는 것으로 본다.
+   *
+   * 0을 기준으로 삼으면 한 푼도 쓰지 않은 주기까지 "달성"으로 칠해진다.
+   */
+  const performanceTarget = (() => {
+    const amount = toNumber(card.performanceAmount ?? 0);
+    return amount > 0 ? amount : null;
+  })();
+
   const loadUsage = useCallback(async () => {
     try {
       setUsage(await apiClient.getCardUsage(card.id));
@@ -105,16 +126,15 @@ export default function CardSettlementPanel({
     loadUsage();
   }, [loadUsage, reloadToken]);
 
-  // 남은 대금이 음수면 카드사가 갚을 돈이 남은 상태다.
-  const outstanding = Number(usage?.outstanding ?? 0);
+  // 남은 대금이 음수면 카드사가 갚을 돈이 남은 상태다. 셈은 core 가 한다(앱과 같은 값).
+  const outstanding = outstandingOf(usage);
   const refundPending = outstanding < 0;
   /** 입력 금액이 남은 쪽 잔액을 넘는 정도. 막지는 않고 알리기만 한다. */
-  const overTransfer = (() => {
-    const amount = toNumber(paymentForm.amount);
-    if (!amount) return 0;
-    const room = paymentForm.direction === 'refund' ? -outstanding : outstanding;
-    return amount > room ? amount - Math.max(room, 0) : 0;
-  })();
+  const overTransfer = overTransferOf({
+    amount: paymentForm.amount,
+    direction: paymentForm.direction,
+    outstanding,
+  });
 
   /** 이체 팝업 열기. 시각은 거래 추가 폼처럼 지금으로 채운다. */
   const openPaymentModal = () => {
@@ -175,9 +195,29 @@ export default function CardSettlementPanel({
   return (
     <>
       <div className="space-y-3">
+        <div>
+          <h3 className="text-sm font-medium text-gray-700 mb-2">
+            {t(isCredit ? 'settlement.usageByStatement' : 'settlement.usageByMonth')}
+          </h3>
+          {/*
+            줄글 목록 대신 막대로 그린다. 실적 기준선을 함께 그으면 어느 주기가
+            기준을 넘겼는지 숫자를 견주지 않고 높이로 읽힌다.
+          */}
+          <CardUsageChart
+            periods={usage.periods}
+            currency={usage.currency}
+            target={performanceTarget}
+          />
+          <p className="mt-2 text-xs text-gray-500">
+            {isCredit
+              ? t('settlement.creditHint')
+              : t('settlement.debitHint')}
+          </p>
+        </div>
+
         {/*
           남은 대금과 대금 기록은 신용카드만이다. 체크카드는 결제 즉시 통장에서
-          빠져 갚을 것이 남지 않는다. 대신 아래 달별 사용액은 똑같이 보여 준다.
+          빠져 갚을 것이 남지 않는다. 대신 위 달별 사용액은 똑같이 보여 준다.
         */}
         {isCredit && (
         <div
@@ -218,35 +258,6 @@ export default function CardSettlementPanel({
           )}
         </div>
         )}
-
-        <div>
-          <h3 className="text-sm font-medium text-gray-700 mb-2">
-            {t(isCredit ? 'settlement.usageByStatement' : 'settlement.usageByMonth')}
-          </h3>
-          <div className="space-y-1">
-            {usage.periods.map((period) => (
-              <div
-                key={period.periodEnd}
-                className="flex justify-between items-center px-3 py-2 bg-gray-50 rounded-lg"
-              >
-                <div className="text-sm text-gray-700">
-                  {formatDateMarker(period.periodStart)} ~ {formatDateMarker(period.periodEnd)}
-                  <span className="ml-2 text-xs text-gray-500">
-                    {t(period.closed ? 'settlement.closed' : 'settlement.ongoing')}
-                  </span>
-                </div>
-                <span className="text-sm font-medium text-gray-900">
-                  {formatCurrency(period.usage, usage.currency)}
-                </span>
-              </div>
-            ))}
-          </div>
-          <p className="mt-2 text-xs text-gray-500">
-            {isCredit
-              ? t('settlement.creditHint')
-              : t('settlement.debitHint')}
-          </p>
-        </div>
 
         {/*
           외화 결제의 청구액 확정.
