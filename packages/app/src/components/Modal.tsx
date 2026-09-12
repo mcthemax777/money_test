@@ -38,9 +38,6 @@ const DISMISS_DISTANCE = 96;
  */
 const FLICK_VELOCITY = 0.6;
 
-/** 손가락이 이만큼 내려가기 전에는 잡지 않는다. 머리글의 단추를 누른 손이 삼켜지지 않게 한다. */
-const TOUCH_SLOP = 6;
-
 /** 손을 뗀 뒤 제자리로 돌아가거나 마저 내려가는 데 걸리는 시간(ms). */
 const SETTLE_MS = 200;
 
@@ -57,8 +54,9 @@ const SETTLE_MS = 200;
  *
  * **아래에 붙는 창은 윗부분을 잡아 내려서 닫는다.** 올라온 것은 내려서 보내는 것이
  * 손에 맞다. 닫기 단추는 머리글 오른쪽 끝, 화면 위쪽에 있어 한 손으로는 멀다. 잡는
- * 자리는 손잡이 막대와 머리글이고, 끄는 동안 창이 손끝을 따라오며 뒤 막이 옅어진다.
- * 조금만 내리고 놓으면 제자리로 돌아온다.
+ * 자리는 손잡이 막대와 제목 칸이고(오른쪽 단추 묶음은 빼 둔다 -- 까닭은 아래 제스처에
+ * 적었다), 끄는 동안 창이 손끝을 따라오며 뒤 막이 옅어진다. 조금만 내리고 놓으면
+ * 제자리로 돌아온다.
  *
  * 줄을 눌러 여는 거래 상세도 이 창을 쓴다. 클릭해서 여는 자리가 저마다 다른 모양으로
  * 나타나면 화면마다 닫는 길을 다시 찾아야 한다.
@@ -113,13 +111,24 @@ export default function Modal({
   const responder = useRef(
     PanResponder.create({
       /*
-       * 움직이기 시작할 때만 잡는다(should**Move**Set).
+       * **누르는 순간 잡는다 (Start, 그것도 capture).**
        *
-       * 누르는 순간 잡으면 머리글 안의 닫기·헤더 단추가 눌리지 않는다. 아래로 가는
-       * 손만 받는 것도 같은 까닭이다 -- 옆으로 스치는 손까지 잡을 일이 없다.
+       * 움직일 때 잡는 쪽(onMoveShouldSet...)이 손에는 더 맞지만, 이 창에서는 한 번도
+       * 물어보지 않는다. 껍데기(AppShell)가 화면 전체를 하나의 ScrollView 로 감싸는데,
+       * 팝업은 그 화면 안에서 그려지므로 리액트 나무에서는 그 ScrollView 의 자손이다
+       * (안드로이드에서 따로 뜬 창이어도 나무는 그대로다). 손이 닿는 순간 그 ScrollView
+       * 가 손짓의 주인이 되고, 그 다음 움직임부터는 "주인과 닿은 곳의 공통 조상"까지만
+       * 물어본다. 우리는 그 아래라 묻는 자리에 끼지 못한다. 실제로 기기에서 누름은
+       * 물어보는데(startCapture·startBubble) 움직임은 한 번도 오지 않았다.
+       *
+       * 누름 단계의 capture 는 바깥에서 안으로 물으므로 조상보다 우리가 먼저다. 거기서
+       * 잡으면 주인이 바뀔 일이 없다.
+       *
+       * 그 대가로 **잡는 자리 안에는 단추를 둘 수 없다.** 여기서 시작한 손은 모두 우리
+       * 것이라 안에 있는 단추는 눌리지 않는다. 그래서 닫기와 머리글 단추는 이 자리
+       * 밖에 둔다 (아래 dragZone 이 손잡이 막대와 제목까지만 덮는다).
        */
-      onMoveShouldSetPanResponder: (_event, gesture) =>
-        latest.current.canDrag && gesture.dy > TOUCH_SLOP && gesture.dy > Math.abs(gesture.dx),
+      onStartShouldSetPanResponderCapture: () => latest.current.canDrag,
       onPanResponderMove: (_event, gesture) => {
         // 위로는 따라가지 않는다. 올릴 자리가 없는 창이라 따라 올리면 위가 뜬다.
         dragY.value = Math.max(0, gesture.dy);
@@ -139,7 +148,9 @@ export default function Modal({
         }
         dragY.value = withTiming(0, { duration: SETTLE_MS, easing: Easing.out(Easing.quad) });
       },
-      // 다른 것이 제스처를 가져갔다(화면 회전 등). 창은 제자리로 돌려놓는다.
+      // 끄는 도중에는 내주지 않는다. 껍데기의 ScrollView 가 도로 가져가면 창이 멈춘다.
+      onPanResponderTerminationRequest: () => false,
+      // 그래도 빼앗겼다(화면 회전 등). 창은 제자리로 돌려놓는다.
       onPanResponderTerminate: () => {
         dragY.value = withTiming(0, { duration: SETTLE_MS, easing: Easing.out(Easing.quad) });
       },
@@ -161,11 +172,17 @@ export default function Modal({
     return { opacity: DIM * (1 - gone) };
   });
 
+  /** 잡아 내리는 자리에 붙이는 손짓. 넓은 화면에서는 아무것도 붙이지 않는다. */
+  const dragZone = isWide ? {} : responder.panHandlers;
+
   const header = (
     <View className="flex-row items-center justify-between gap-3 border-b border-gray-200 px-6 py-4">
-      <Text numberOfLines={1} className="flex-1 text-lg font-bold text-gray-900">
-        {title}
-      </Text>
+      {/* 제목 칸도 잡는 자리다. 단추는 오른쪽 묶음에 있어 이 안에 들어오지 않는다. */}
+      <View className="flex-1" {...dragZone}>
+        <Text numberOfLines={1} className="text-lg font-bold text-gray-900">
+          {title}
+        </Text>
+      </View>
       <View className="flex-row items-center gap-4">
         {headerAction}
         {/*
@@ -226,21 +243,20 @@ export default function Modal({
               isWide ? 'rounded-lg' : 'rounded-t-2xl'
             }`}
           >
-            {/* 잡아 내리는 자리. 손잡이 막대와 머리글이 한 덩어리다. */}
-            <View {...(isWide ? {} : responder.panHandlers)}>
-              {isWide ? null : (
-                /*
-                  손잡이 막대.
+            {isWide ? null : (
+              /*
+                손잡이 막대. 여기도 잡는 자리다.
 
-                  끌 수 있다는 것은 눌러 보기 전에는 보이지 않는다. 아래에 붙는 창마다
-                  같은 자리에 같은 막대를 두어, 한 번 배운 손이 다음 창에서도 통하게 한다.
-                */
-                <View className="items-center pb-1 pt-2">
-                  <View className="h-1 w-10 rounded-full bg-gray-300" />
-                </View>
-              )}
-              {header}
-            </View>
+                끌 수 있다는 것은 눌러 보기 전에는 보이지 않는다. 아래에 붙는 창마다
+                같은 자리에 같은 막대를 두어, 한 번 배운 손이 다음 창에서도 통하게 한다.
+                누르는 칸은 막대보다 넉넉하다(pt-3 pb-2) -- 1px 짜리 막대를 정확히
+                짚어야 한다면 없는 것이나 같다.
+              */
+              <View className="items-center pb-2 pt-3" {...dragZone}>
+                <View className="h-1 w-10 rounded-full bg-gray-300" />
+              </View>
+            )}
+            {header}
 
             <ScrollView
               contentContainerClassName="p-6"
