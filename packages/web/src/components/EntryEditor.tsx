@@ -1,7 +1,7 @@
 'use client';
 
 import { forwardRef, useImperativeHandle, useMemo, useState } from 'react';
-import { Copy } from 'lucide-react';
+import { Copy, X } from 'lucide-react';
 import { useUserFilter } from '@money/core/store/user-filter';
 import {
   useCanEdit,
@@ -33,6 +33,7 @@ import {
 } from '@money/core/lib/datetime';
 import {
   CURRENCY_LABEL,
+  Dec,
   LEDGER_MIN_ENTRY_DATE_KEY,
   SUPPORTED_CURRENCIES,
   isCurrencyCode,
@@ -79,6 +80,34 @@ function installmentOptions(t: ReturnType<typeof useTranslation>['t']) {
       name: t('editor.installmentMonths', { months }),
     })),
   ];
+}
+
+/**
+ * 분류를 나눈 한 줄.
+ *
+ * 폼은 대분류·소분류를 나눠 들고(웹의 분류 칸이 두 개다), 저장 직전에 가장 구체적인
+ * 것 하나로 합쳐 보낸다. 서버는 줄마다 카테고리 하나와 금액만 받는다.
+ */
+interface EntryFormSplitRow {
+  mainCategoryId: string;
+  subCategoryId: string;
+  amount: string;
+}
+
+/** 빈 분할 줄. */
+function blankSplitRow(): EntryFormSplitRow {
+  return { mainCategoryId: '', subCategoryId: '', amount: '' };
+}
+
+/**
+ * 분할 줄의 금액. 비었거나 0 이하면 null 이다.
+ *
+ * 화면 값은 문자열이라 숫자로 바꿔 더하면 원 단위가 어긋난다. Dec 로 받아 두면 줄들의
+ * 합이 전체 금액과 같은지 정확히 견줄 수 있다.
+ */
+function splitAmountOf(value: string): Dec | null {
+  const amount = Dec.of(toAmountString(value));
+  return amount.isPositive() ? amount : null;
 }
 
 /**
@@ -139,6 +168,12 @@ function emptyEntryForm(timeZone: string, ledgerCurrency: CurrencyCode) {
      * 일에 딸린 거래인가"라, 여행에는 항공권 지출과 환불 수입이 함께 든다.
      */
     tagIds: [] as string[],
+    /**
+     * 분류를 나눈 줄들. 비어 있으면 분류 하나짜리 거래다.
+     *
+     * 줄이 있는 동안에는 위의 대분류·소분류를 쓰지 않는다. 저장도 줄들만 보낸다.
+     */
+    splits: [] as EntryFormSplitRow[],
   };
 }
 
@@ -646,6 +681,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         installmentMonths: keepsInstallment ? prev.installmentMonths : '',
         mainCategoryId: prev.type === 'expense' ? prev.mainCategoryId : '',
         subCategoryId: prev.type === 'expense' ? prev.subCategoryId : '',
+        // 카드는 지출만 만든다. 분류가 버려지면 그것을 나눈 줄도 함께 버린다.
+        splits: prev.type === 'expense' ? prev.splits : [],
       }));
       return;
     }
@@ -658,6 +695,66 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       installmentMonths: '',
       ...currencyFields(prev),
     }));
+  };
+
+  /**
+   * 분류를 나눈 줄을 더한다.
+   *
+   * 첫 줄에는 **지금까지 적은 금액과 분류**를 옮겨 담는다. 빈 줄 둘로 시작하면 이미
+   * 적어 둔 것을 다시 적어야 한다. 앱의 `useEntryForm.addSplit` 과 같은 규칙이다.
+   */
+  const addSplitRow = () => {
+    setFormData((prev) => ({
+      ...prev,
+      splits:
+        prev.splits.length > 0
+          ? [...prev.splits, blankSplitRow()]
+          : [
+              {
+                mainCategoryId: prev.mainCategoryId,
+                subCategoryId: prev.subCategoryId,
+                amount: prev.amount,
+              },
+              blankSplitRow(),
+            ],
+    }));
+    setError('');
+  };
+
+  /**
+   * 나눈 줄을 뺀다. 하나만 남으면 나누기를 그만둔다.
+   *
+   * 줄 하나짜리 분할은 분류 하나짜리 거래와 같은 전표라, 그때는 원래 칸으로 되돌려
+   * 화면을 단순하게 둔다.
+   */
+  const removeSplitRow = (index: number) => {
+    setFormData((prev) => {
+      const rest = prev.splits.filter((_, at) => at !== index);
+      if (rest.length > 1) return { ...prev, splits: rest };
+
+      const only = rest[0];
+      return {
+        ...prev,
+        splits: [],
+        ...(only
+          ? {
+              mainCategoryId: only.mainCategoryId,
+              subCategoryId: only.subCategoryId,
+              amount: only.amount,
+            }
+          : {}),
+      };
+    });
+    setError('');
+  };
+
+  /** 나눈 줄 하나의 칸을 고친다. */
+  const updateSplitRow = (index: number, patch: Partial<EntryFormSplitRow>) => {
+    setFormData((prev) => ({
+      ...prev,
+      splits: prev.splits.map((split, at) => (at === index ? { ...split, ...patch } : split)),
+    }));
+    setError('');
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -678,6 +775,36 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     ) {
       setError(t('editor.feeCategoryRequired'));
       return;
+    }
+
+    /*
+     * 나눈 줄은 줄마다 분류와 금액이 있어야 하고, 합이 전체 금액과 같아야 한다.
+     *
+     * 서버는 줄들의 합을 그대로 그 거래의 금액으로 삼는다(entry-build 의
+     * resolveRequestLines). 어긋난 채 보내면 위 칸에 적은 금액과 다른 거래가 조용히
+     * 저장되므로, 남는 것을 마지막 줄에 몰아주지도 않고 여기서 막는다.
+     */
+    if (hasSplits) {
+      let total = Dec.of(0);
+      for (const split of formData.splits) {
+        if (!split.mainCategoryId) {
+          setError(t('editor.splitCategoryRequired'));
+          return;
+        }
+
+        const line = splitAmountOf(split.amount);
+        if (!line) {
+          setError(t('editor.splitAmountInvalid'));
+          return;
+        }
+
+        total = total.plus(line);
+      }
+
+      if (!total.eq(Dec.of(toAmountString(formData.amount)))) {
+        setError(t('editor.splitSumMismatch'));
+        return;
+      }
     }
 
     try {
@@ -757,7 +884,15 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         if (useCard) payload.cardId = formData.cardId;
         else payload.accountId = formData.accountId;
         // posting은 가장 구체적인 카테고리 하나만 가리킨다
-        payload.categoryId = formData.subCategoryId || formData.mainCategoryId;
+        if (hasSplits) {
+          // 나눈 줄이 있으면 대표 분류는 보내지 않는다. 줄마다 따로 있기 때문이다.
+          payload.splits = formData.splits.map((split) => ({
+            categoryId: split.subCategoryId || split.mainCategoryId,
+            amount: toAmountString(split.amount),
+          }));
+        } else {
+          payload.categoryId = formData.subCategoryId || formData.mainCategoryId;
+        }
         // 할부는 신용카드 지출에만 붙는다. 2개월 미만이면 일시불이라 보내지 않는다.
         // canInstall이 카드 종류까지 본다. 체크카드로 바꾼 뒤 남은 값이 새지 않게 막는다.
         const months = Number(formData.installmentMonths);
@@ -843,6 +978,41 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
   /** 카드대금 결제 수정 중인지. 폼이 분류·유형·이체 칸을 감춘다. */
   const isCardPaymentForm = formData.type === 'card_payment';
+
+  /**
+   * 분류를 나눠 적는 중인지.
+   *
+   * 이체와 카드대금 결제에는 분류 칸 자체가 없으므로 줄이 남아 있어도 쓰지 않는다
+   * (유형을 바꿀 때 비우지만, 어느 쪽으로 들어와도 같게 읽히도록 갈래까지 본다).
+   */
+  const hasSplits =
+    formData.type !== 'transfer' && !isCardPaymentForm && formData.splits.length > 0;
+
+  /** 지금 유형의 대분류. 대표 분류 칸과 나눈 줄이 함께 쓴다. */
+  const mainCategoryOptions = useMemo(
+    () =>
+      categories
+        .filter((c) => !c.parentId && c.type === formData.type)
+        .map((cat) => ({ id: cat.id, name: cat.name })),
+    [categories, formData.type],
+  );
+
+  /** 고른 대분류에 딸린 소분류. 대분류를 고르기 전에는 고를 것이 없다고 알린다. */
+  const subCategoryOptions = (mainCategoryId: string) =>
+    mainCategoryId
+      ? categories
+          .filter((c) => Boolean(c.parentId) && c.parentId === mainCategoryId)
+          .map((cat) => ({ id: cat.id, name: cat.name }))
+      : [{ id: '', name: t('editor.none') }];
+
+  /** 아직 줄에 담기지 않은 금액. 저장을 눌러 보기 전에 보여 준다. */
+  const splitLeft = useMemo(() => {
+    const total = formData.splits.reduce(
+      (sum, split) => sum.plus(splitAmountOf(split.amount) ?? Dec.of(0)),
+      Dec.of(0),
+    );
+    return Dec.of(toAmountString(formData.amount)).minus(total).toString();
+  }, [formData.amount, formData.splits]);
 
   /**
    * 대분류/소분류로 나눈다.
@@ -934,11 +1104,36 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       tagIds: entry.tags.map((tag) => tag.id),
       // 놓치면 환불 입금을 고칠 때 대금 결제로 뒤집힌다
       cardTransferDirection: entry.cardTransferDirection ?? 'payment',
+      /*
+       * 나눈 줄. 목록이 줄 전부를 실어 줄 때만 되살린다.
+       *
+       * 대표 분류(`categoryId`)는 그중 첫 줄이라, 그것만 폼에 담아 저장하면 나머지
+       * 줄이 조용히 사라진다. 줄이 실려 오지 않은 분할은 아예 열지 않는다
+       * (`handleEditClick`).
+       */
+      splits: (entry.splits ?? []).map((split) => ({
+        ...splitCategory(split.categoryId),
+        amount: split.amount,
+      })),
     };
   };
 
   const handleEditClick = (entry: EntryListItem) => {
     if (!isEditable(entry)) {
+      setError(t('editor.notEditable'));
+      return;
+    }
+
+    /*
+     * 줄이 실려 오지 않은 분할은 열지 않는다 (옛 서버가 그렇다).
+     *
+     * 폼에는 대표 분류 하나만 담기고, 그대로 저장하면 나머지 줄이 사라진다. 열지
+     * 않으면 적어도 있던 거래가 그 자리에 남는다. 앱도 같은 규칙이다
+     * (core 의 entryFormValuesOf).
+     */
+    const isSplit =
+      (entry.kind === 'expense' || entry.kind === 'income') && entry.splitCount > 1;
+    if (isSplit && !entry.splits?.length) {
       setError(t('editor.notEditable'));
       return;
     }
@@ -1262,6 +1457,9 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                         type: tab.id,
                         mainCategoryId: '',
                         subCategoryId: '',
+                        // 분류를 버리면 그것을 나눈 줄도 함께 버린다. 지출 분류로 나눠 둔
+                        // 줄이 수입에 남으면 고를 수 없는 분류가 적힌 채 저장된다.
+                        splits: [],
                       })}
                       className={`flex-1 px-3 py-2 text-sm font-medium rounded-md transition ${
                         selected
@@ -1488,15 +1686,99 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               </div>
 
               {formData.type !== 'transfer' && !isCardPaymentForm && (
+                hasSplits ? (
+                  /*
+                    분류를 나눈 줄들.
+
+                    줄이 있는 동안에는 위의 대분류·소분류 칸을 감춘다. 둘이 함께 보이면
+                    어느 쪽이 저장되는지 알 수 없는데, 실제로 저장되는 것은 줄들뿐이다.
+                  */
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {t('editor.split')}
+                    </label>
+
+                    <div className="space-y-3">
+                      {formData.splits.map((split, index) => (
+                        <div
+                          key={index}
+                          className="unfold p-3 space-y-2 border border-gray-200 rounded-lg"
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="text-xs font-medium text-gray-500">
+                              {t('editor.splitRow', { index: index + 1 })}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => removeSplitRow(index)}
+                              aria-label={t('editor.splitRemove')}
+                              className="p-1 text-gray-400 rounded transition-colors hover:text-gray-700 hover:bg-gray-100"
+                            >
+                              <X className="w-4 h-4" />
+                            </button>
+                          </div>
+
+                          <input
+                            type="number"
+                            value={split.amount}
+                            onChange={(e) => updateSplitRow(index, { amount: e.target.value })}
+                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                            placeholder="0"
+                          />
+
+                          <CustomSelect
+                            options={mainCategoryOptions}
+                            value={split.mainCategoryId}
+                            onChange={(value) =>
+                              updateSplitRow(index, { mainCategoryId: value, subCategoryId: '' })
+                            }
+                            placeholder={t('editor.parentCategory')}
+                            onAddClick={() => openCategoryModal()}
+                            addButtonLabel={t('editor.addParentCategory')}
+                          />
+
+                          <CustomSelect
+                            options={subCategoryOptions(split.mainCategoryId)}
+                            value={split.subCategoryId}
+                            onChange={(value) => updateSplitRow(index, { subCategoryId: value })}
+                            placeholder={t('editor.none')}
+                            /* 소분류는 대분류 아래에 붙는다. 고르기 전에는 붙일 곳이 없다. */
+                            onAddClick={
+                              split.mainCategoryId
+                                ? () => openCategoryModal(split.mainCategoryId)
+                                : undefined
+                            }
+                            addButtonLabel={t('editor.addChildCategory')}
+                          />
+                        </div>
+                      ))}
+
+                      <button
+                        type="button"
+                        onClick={addSplitRow}
+                        className="w-full px-3 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg transition-colors hover:bg-gray-50"
+                      >
+                        {t('editor.splitAdd')}
+                      </button>
+
+                      {/*
+                        남은 금액을 보여 준다. 합이 맞아야 저장되므로, 저장을 눌러 보고서야
+                        어긋난 것을 알게 하지 않는다.
+                      */}
+                      <p className="text-xs text-gray-500">
+                        {t('editor.splitLeft', { amount: formatNumber(splitLeft) })}
+                      </p>
+                      <p className="text-xs text-gray-500">{t('editor.splitHint')}</p>
+                    </div>
+                  </div>
+                ) : (
                 <>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">
                       {t('editor.parentCategory')}
                     </label>
                     <CustomSelect
-                      options={categories
-                        .filter((c) => !c.parentId && c.type === formData.type)
-                        .map((cat) => ({ id: cat.id, name: cat.name }))}
+                      options={mainCategoryOptions}
                       value={formData.mainCategoryId}
                       onChange={(value) =>
                         setFormData({
@@ -1515,36 +1797,35 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                       {t('editor.childCategory')}
                     </label>
                     <CustomSelect
-                      options={
-                        formData.mainCategoryId
-                          ? categories
-                              .filter(
-                                (c) =>
-                                  Boolean(c.parentId) &&
-                                  c.parentId === formData.mainCategoryId
-                              )
-                              .map((cat) => ({ id: cat.id, name: cat.name }))
-                          : [{ id: '', name: t('editor.none') }]
-                      }
+                      options={subCategoryOptions(formData.mainCategoryId)}
                       value={formData.subCategoryId}
                       onChange={(value) =>
                         setFormData({ ...formData, subCategoryId: value })
                       }
-                  placeholder={t('editor.none')}
-                  /*
-                    소분류는 대분류 아래에 붙는다. 대분류를 고르기 전에는 붙일 곳이
-                    없으므로 버튼 자체를 내리고, 고른 뒤에는 그 대분류로 팝업을 연다.
-                  */
-                  onAddClick={
-                    formData.mainCategoryId
-                      ? () => openCategoryModal(formData.mainCategoryId)
-                      : undefined
-                  }
-                  addButtonLabel={t('editor.addChildCategory')}
-                />
+                      placeholder={t('editor.none')}
+                      /*
+                        소분류는 대분류 아래에 붙는다. 대분류를 고르기 전에는 붙일 곳이
+                        없으므로 버튼 자체를 내리고, 고른 뒤에는 그 대분류로 팝업을 연다.
+                      */
+                      onAddClick={
+                        formData.mainCategoryId
+                          ? () => openCategoryModal(formData.mainCategoryId)
+                          : undefined
+                      }
+                      addButtonLabel={t('editor.addChildCategory')}
+                    />
                   </div>
 
+                  {/* 분류를 나누는 자리. 누르면 지금 적은 금액과 분류가 첫 줄로 옮겨 간다. */}
+                  <button
+                    type="button"
+                    onClick={addSplitRow}
+                    className="w-full px-3 py-2 text-sm text-gray-700 border border-gray-300 rounded-lg transition-colors hover:bg-gray-50"
+                  >
+                    {t('editor.splitAdd')}
+                  </button>
                 </>
+                )
               )}
 
               {formData.type === 'transfer' && (
