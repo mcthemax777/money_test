@@ -196,6 +196,26 @@ runSmoke('filters', async (ctx) => {
     (await transferList(chulsoo.id)).join(','), '남편에게 이체');
   ctx.check('받는 계좌 주인에게는 잡히지 않는다', (await transferList(younghee.id)).length, 0);
 
+  /*
+   * 수단으로 좁힌 목록은 **그 통장에서 오간 돈 전부**다.
+   *
+   * 자산주인 필터(위)와 뜻이 다르다. 그쪽은 "누구의 돈이 움직였나"라 보내는 쪽만 보고,
+   * 이쪽은 "이 통장에 무엇이 닿았나"라 받은 것도 든다. 예전에는 들어온 쪽을 수입으로만
+   * 좁혀 두어, 이체로 돈을 받은 통장을 골라도 그 이체가 목록에 없었다.
+   */
+  const methodList = async (accountId: string) =>
+    (await entries.getEntries(uid, {
+      paymentAccountIds: accountId, startDate: aug(1), endDate: aug(28),
+    }, pid)).data.map((e) => e.description);
+  ctx.check('수단 필터: 이체를 보낸 통장에 든다',
+    (await methodList(bank.id)).includes('남편에게 이체'), true);
+  ctx.check('수단 필터: 이체를 받은 통장에도 든다',
+    (await methodList(wifeBank.id)).includes('남편에게 이체'), true);
+  ctx.check('수단 필터: 그 통장으로 들어온 수입은 그대로 든다',
+    (await methodList(wifeBank.id)).includes('아내 통장으로 입금'), true);
+  ctx.check('수단 필터: 합계는 그 통장에서 나간 지출만 센다',
+    (await reports.getSummary(uid, { ...month, paymentAccountIds: wifeBank.id })).expense, '15000');
+
   // ── 기초잔액 전표는 그 계좌 주인의 것 (자본 계정 다리에 걸려 사라지면 안 된다) ──
   //
   // 기초잔액은 사용자가 고른 기준일이 아니라 원장 맨 앞(1899-01-01)에 놓인다.
@@ -227,4 +247,32 @@ runSmoke('filters', async (ctx) => {
   ctx.check('예산 사용금액: 자산주인 김철수', await usedOf({ personIds: chulsoo.id }), 30000);
   ctx.check('예산 사용금액: 자산주인 이영희', await usedOf({ personIds: younghee.id }), 15000);
   ctx.check('예산 사용금액: 아무도 안 고르면 0', await usedOf({ personIds: '' }), 0);
+
+  /*
+   * ── 카드 하나로 좁힌 목록 ──
+   *
+   * 쓴 것과 갚은 것이 함께 나와야 한다. 대금 결제는 이 카드의 부채가 줄어드는 일이라
+   * 카드 다리가 **양수**인데, 나간 쪽(-)만 보면 그 줄이 통째로 빠진다. 실제로 그랬다 --
+   * 카드 하나로 걸러 보면 환불 입금(음수)은 나오는데 대금 결제만 없었다.
+   *
+   * 합계는 달라지지 않는다. 대금 이동에는 카테고리 다리가 없어 더할 것이 없다.
+   */
+  const credit = await cards.createCard(uid, {
+    paymentAccountId: bank.id, name: '주카드', cardType: 'credit', issuerId: 'fi_card_shinhan',
+    statementClosingDay: 15, paymentDueDay: 25,
+  }, pid);
+  await entries.createEntry(uid, { kind: 'expense', personId: chulsoo.id, date: aug(8),
+    description: '카드 점심', amount: '20000', categoryId: dining.id, cardId: credit.id }, pid);
+  await entries.createEntry(uid, { kind: 'card_payment', personId: chulsoo.id, date: aug(20),
+    description: '카드 대금', amount: '20000', cardId: credit.id, accountId: bank.id,
+    cardTransferDirection: 'payment' }, pid);
+
+  const cardEntries = await entries.getEntries(uid, {
+    paymentCardIds: credit.id, startDate: aug(1), endDate: aug(28),
+  }, pid);
+  ctx.check('카드 필터: 쓴 것과 갚은 것이 함께 나온다', cardEntries.data.length, 2);
+  ctx.check('카드 필터: 대금 결제가 든다',
+    cardEntries.data.some((row) => row.kind === 'card_payment'), true);
+  ctx.check('카드 필터: 합계는 쓴 것만 센다',
+    (await reports.getSummary(uid, { ...month, paymentCardIds: credit.id })).expense, '20000');
 });

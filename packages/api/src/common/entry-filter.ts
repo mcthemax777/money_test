@@ -106,35 +106,42 @@ export function entrySearchConditions(search: ParsedEntrySearch): Prisma.Posting
   const methods: Prisma.PostingWhereInput[] = [];
   if (search.paymentAccountIds && search.paymentAccountIds.length > 0) {
     /*
-     * 이 통장의 관점이다. **나간 돈과 들어온 수입 둘 다** 본다.
+     * 이 통장의 관점이다. **이 통장에서 오간 돈 전부**를 본다 -- 나간 것도, 들어온 것도.
      *
-     * 나간 쪽(-)에서는 카드가 붙은 다리를 뺀다. 체크카드 결제가 연결 통장 다리에도
-     * 걸려 카드와 통장에 두 번 세어지기 때문이다. 이체로 들어온 쪽(+)도 뺀다 --
-     * 받는 통장이 쓴 돈이 아니다.
+     * 예전에는 들어온 쪽(+)을 수입으로만 좁혔다. 받는 통장이 쓴 돈은 아니라는 이유였는데,
+     * 그 탓에 통장 하나로 걸러 보면 **이체로 들어온 돈이 통째로 빠졌다**. 그 통장의
+     * 내역을 보러 온 사람에게는 잔액이 왜 늘었는지 알 길이 없는 목록이 남는다.
      *
-     * 수입은 따로 담는다. 수입 전표의 통장 다리는 받는 쪽이라 금액이 양수여서,
-     * "나간 돈"만 보면 하나도 걸리지 않는다. 그런데 /reports/payment-methods 는
-     * 그 금액을 이미 수단의 income 칸에 적고 있다 -- 빼 두면 줄에는 수입이 적혀
-     * 있는데 그 줄을 눌러 편 목록에는 지출만 나온다. 목록과 합계가 같은 규칙을
-     * 써야 한다는 것이 이 자리의 원칙이라, 수입도 같이 든다.
+     * 이체가 보내는 통장과 받는 통장 양쪽에 걸리는 것은 맞다. 한 전표가 두 통장에서
+     * 오간 일이고, 목록은 전표 단위라 한쪽을 골라도 그 전표는 한 번만 나온다.
      *
-     * 들어온 쪽을 수입으로만 좁히는 것은 이체·카드정산의 받는 다리까지 들이지
-     * 않기 위해서다. 그 둘은 보내는 통장에서 이미 한 번 걸린다.
+     * 합계는 흐트러지지 않는다. 합계는 걸린 전표의 **카테고리 다리**를 더하는데, 이체와
+     * 대금 이동에는 그 다리가 없다(수수료만 있다). 년월 줄에 이체가 0으로 세어지는 것과
+     * 같은 규칙이다.
+     *
+     * 나간 쪽에서 카드가 붙은 다리는 여전히 뺀다. 체크카드 결제가 연결 통장 다리에도
+     * 걸려 카드와 통장에 두 번 세어지기 때문이다 (그 거래는 카드로 걸러 볼 수 있다).
+     * 0원짜리 다리도 뺀다 -- 어느 쪽으로도 오간 것이 없다.
      */
     methods.push({
       accountId: { in: search.paymentAccountIds },
       cardId: null,
-      OR: [
-        { amount: { lt: 0 } },
-        {
-          amount: { gt: 0 },
-          entry: { postings: { some: { category: { type: CategoryType.income } } } },
-        },
-      ],
+      NOT: { amount: 0 },
     });
   }
   if (search.paymentCardIds && search.paymentCardIds.length > 0) {
-    methods.push({ cardId: { in: search.paymentCardIds }, amount: { lt: 0 } });
+    /*
+     * 이 카드의 관점이다. **쓴 것과 갚은 것 둘 다** 본다.
+     *
+     * 예전에는 나간 쪽(-)만 보았다. 그런데 카드 대금 결제는 이 카드의 부채가 줄어드는
+     * 일이라 카드 다리가 양수로 남는다. 그래서 카드 하나로 걸러 보면 환불 입금은
+     * 나오는데(그쪽은 음수다) 정작 대금 결제만 빠졌다 -- 카드에서 오간 돈을 보러 온
+     * 사람에게 갚은 기록이 없으면 남은 대금이 왜 줄었는지 알 길이 없다.
+     *
+     * 합계는 달라지지 않는다. 대금 이동에는 카테고리 다리가 없어 더할 것이 없다
+     * (그래서 사용액과 대금 결제가 이중으로 세어지지도 않는다).
+     */
+    methods.push({ cardId: { in: search.paymentCardIds } });
   }
   if (methods.length > 0) {
     conditions.push(methods.length === 1 ? methods[0] : { OR: methods });

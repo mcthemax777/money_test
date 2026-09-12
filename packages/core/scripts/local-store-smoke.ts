@@ -493,6 +493,8 @@ const entry = (
         /* 사본 쪽 검사가 물어볼 때 쓰는 id 들. */
         /** 통장 하나로 좁힌 목록. 수단별 줄을 눌렀을 때 나오는 것이다. */
         methodEntries: string[];
+        /** 카드 하나로 좁힌 목록. 쓴 것과 갚은 것이 함께 든다. */
+        cardMethodEntries?: string[];
         bankAccountId: string;
         searchCategoryId: string;
         personId: string;
@@ -1010,6 +1012,26 @@ const entry = (
       dump.server.methodEntries.join(','));
     eq('거래 화면: 그 통장으로 들어온 수입이 든다',
       methodEntries.some((row) => row.kind === 'income'), true);
+
+    /*
+     * 카드 하나로 좁힌 목록.
+     *
+     * 쓴 것과 **갚은 것**이 함께 들어야 한다. 대금 결제는 카드의 부채가 줄어드는 일이라
+     * 카드 다리가 양수인데, 나간 쪽만 보면 그 줄이 통째로 빠진다.
+     *
+     * 옛 파일에는 이 자리가 없다. 그때는 건너뛴다 (떠 놓은 응답을 다시 만들면 돈다).
+     */
+    if (dump.server.cardMethodEntries) {
+      const cardEntries = await port.getAllEntries(
+        { paymentCardIds: dump.server.cardId, limit: 200 },
+        real.projectId,
+      );
+      eq('거래 화면: 카드로 좁힌 것이 같은 거래다',
+        cardEntries.map((row) => row.id).join(','),
+        dump.server.cardMethodEntries.join(','));
+      eq('거래 화면: 카드 대금 결제가 든다',
+        cardEntries.some((row) => row.kind === 'card_payment'), true);
+    }
 
     // 고르지 않은 무리는 조건이 서지 않는다. 빈 값과 다르다.
     const noSearch = await port.getAllEntries({ limit: 200 }, real.projectId);

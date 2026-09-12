@@ -2957,23 +2957,23 @@ function searchFilter(search?: ParsedEntrySearch): { sql: string; params: string
 
     if (accountIds.length > 0) {
       /*
-       * 이 통장의 관점이다. **나간 돈과 들어온 수입 둘 다** 본다.
-       * 서버의 `entrySearchConditions` 와 같은 규칙이라 온라인·오프라인이 같은
-       * 목록을 낸다 (그 자리에 왜 이렇게 두었는지가 적혀 있다).
+       * 이 통장의 관점이다. **이 통장에서 오간 돈 전부**를 본다 -- 나간 것도, 들어온 것도.
+       * 이체로 들어온 돈도 든다. 서버의 `entrySearchConditions` 와 같은 규칙이라
+       * 온라인·오프라인이 같은 목록을 낸다 (그 자리에 왜 이렇게 두었는지가 적혀 있다).
        */
       branches.push(
         `(mp.accountId IN (${accountIds.map(() => '?').join(', ')}) AND mp.cardId IS NULL
-            AND (${negative} OR (${positive} AND EXISTS (
-                  SELECT 1 FROM posting ip JOIN category ic ON ic.id = ip.categoryId
-                   WHERE ip.entryId = mp.entryId AND ic.type = 'income'
-                ))))`,
+            AND (${negative} OR ${positive}))`,
       );
       params.push(...accountIds);
     }
     if (cardIds.length > 0) {
-      branches.push(
-        `(mp.cardId IN (${cardIds.map(() => '?').join(', ')}) AND ${negative})`,
-      );
+      /*
+       * 이 카드의 관점이다. **쓴 것과 갚은 것 둘 다** 본다. 대금 결제는 부채가 줄어드는
+       * 일이라 카드 다리가 양수로 남으므로, 나간 쪽만 보면 그 줄이 통째로 빠진다.
+       * 서버의 `entrySearchConditions` 와 같은 규칙이다 (그 자리에 까닭이 적혀 있다).
+       */
+      branches.push(`(mp.cardId IN (${cardIds.map(() => '?').join(', ')}))`);
       params.push(...cardIds);
     }
 
