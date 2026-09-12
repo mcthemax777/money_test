@@ -61,3 +61,48 @@ body {
     animation: none;
   }
 }
+
+
+/*
+ * 팝업이 서는 움직임.
+ *
+ * 좁은 화면에서는 **아래에서 올라온다.** 손가락이 닿는 자리가 화면 아래쪽이라,
+ * 그 자리에서 올라와 그 자리에 서는 창이 누르기도 닫기도 가깝다. 넓은 화면에서는
+ * 가운데에 뜨므로 올라오는 움직임이 뜻을 갖지 않는다 -- 살짝 떠오르기만 한다.
+ */
+@keyframes sheet-up {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.dialog-enter {
+  animation: dialog-in 160ms ease-out;
+}
+
+/* 768px 은 Tailwind 의 md 다. 클래스의 md: 와 같은 자리에서 갈려야 한다. */
+@media (max-width: 767px) {
+  .dialog-enter {
+    animation: sheet-up 240ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dialog-enter {
+    animation: none;
+  }
+}

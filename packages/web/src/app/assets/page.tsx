@@ -10,8 +10,8 @@ import { sumNetWorth, type NetWorthParts } from '@money/core/lib/net-worth';
 import { accountDueOf } from '@money/core/lib/card-settlement';
 import { useUserFilter } from '@money/core/store/user-filter';
 import { formatDate, monthInputToIso } from '@money/core/lib/datetime';
-import { type ReportDto } from '@money/types';
-import { Info, Receipt, X } from 'lucide-react';
+import { type AccountDto, type ReportDto } from '@money/types';
+import { ArrowLeft, Info, Receipt, X } from 'lucide-react';
 import { EMPTY_SEARCH, type TransactionSearch } from '@money/core/hooks/useTransactions';
 import { useDragReorder } from '@/hooks/useDragReorder';
 import AddButton from '@/components/AddButton';
@@ -71,6 +71,8 @@ import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import { accountTypeLabel } from '@money/core/lib/account-type';
 import { useTranslation } from '@money/core/lib/i18n';
 import { apiErrorCode, useApiError } from '@money/core/lib/api-error';
+import { useAccountLedger } from '@money/core/hooks/useAccountLedger';
+import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 
 
@@ -192,6 +194,164 @@ function DetailIconButton({
     >
       {children}
     </button>
+  );
+}
+
+/**
+ * 원장 줄 목록. 통장 상세와 카드 상세가 함께 쓴다.
+ *
+ * 줄마다 그 거래 직후의 잔액이 붙는다. 카드에서는 그 잔액이 "남은 대금"이라, 쓴 줄을
+ * 만나면 늘고 결제한 줄을 만나면 줄어드는 것이 그대로 보인다.
+ *
+ * **카드는 부호를 뒤집어 읽는다.** 사용과 결제는 카드의 부채 계정에 쌓이는데 그 계정은
+ * 빚이 늘수록 음수다. 그대로 그리면 쓴 돈이 마이너스로, 갚은 돈이 플러스로 보인다.
+ * 카드에서 알고 싶은 것은 "얼마를 썼고 얼마가 남았는가"이므로 사용을 +로 세운다.
+ */
+function LedgerList({
+  rows,
+  currency,
+  kind,
+  hasMore,
+  isLoading,
+  onMore,
+}: {
+  rows: AccountDto.LedgerRow[];
+  /** 그 계좌의 통화. 기준통화 환산액이 아니라 원장에 적힌 그대로다. */
+  currency: string;
+  /** 'asset' 은 통장, 'liability' 는 카드의 부채 계정이다. */
+  kind: 'asset' | 'liability';
+  hasMore: boolean;
+  isLoading: boolean;
+  onMore: () => void;
+}) {
+  const { t } = useTranslation();
+  const timeZone = useProjectTimeZone();
+  const isCard = kind === 'liability';
+
+  if (rows.length === 0) {
+    return <p className="text-gray-600 text-center py-8">{t('assets.noEntries')}</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      {rows.map((row) => {
+        // 원장 posting의 amount는 이미 부호를 갖는다 (자산 증가 +, 감소 -).
+        // 부호를 그대로 두고 앞에 '-'를 또 붙이면 '--₩10,000'이 된다. 절댓값으로 찍는다.
+        const amount = isCard ? -toNumber(row.amount) : toNumber(row.amount);
+        const balance = isCard ? -toNumber(row.balanceAfter) : toNumber(row.balanceAfter);
+        const isUp = amount > 0;
+        /*
+          색. 통장은 들어온 돈이 초록이고, 카드는 반대다 -- 쌓인 대금이 갚아야 할
+          돈이라 빨강, 결제가 그것을 더는 일이라 초록이다.
+        */
+        const color = (isCard ? !isUp : isUp) ? 'text-green-600' : 'text-red-600';
+        /*
+          카드 이름은 통장에서만 뜻이 있다. 그 통장에서 무엇으로 결제했는지가 줄마다
+          다르기 때문이다. 카드 상세에서는 모든 줄이 그 카드라 이름만 줄줄이 남는다.
+        */
+        const label = (isCard ? row.merchant : row.merchant || row.cardName) || '';
+
+        return (
+          <div
+            key={row.postingId}
+            className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition"
+          >
+            <div className="flex justify-between items-start gap-4">
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-gray-900">{row.description || t('entry.noTitle')}</p>
+                {label && <p className="text-sm text-gray-600 mt-1">{label}</p>}
+                <p className="text-xs text-gray-500 mt-1">{formatDate(row.date, timeZone)}</p>
+              </div>
+              <div className="text-right whitespace-nowrap">
+                {/*
+                  원장의 금액과 잔액은 그 계좌의 통화다 (기준통화 환산액이 아니다).
+                  통화를 넘기지 않으면 달러 통장의 $100이 ₩100으로 보인다.
+                */}
+                <p className={`font-bold text-lg ${color}`}>
+                  {isUp ? '+' : '-'}
+                  {formatCurrency(Math.abs(amount), currency)}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  {t(isCard ? 'assets.cardBalanceAfter' : 'assets.balanceAfter', {
+                    amount: formatCurrency(balance, currency),
+                  })}
+                </p>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+
+      {hasMore && (
+        <button
+          type="button"
+          onClick={onMore}
+          disabled={isLoading}
+          className="w-full py-3 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
+        >
+          {isLoading ? t('feed.loadingMore') : t('assets.more')}
+        </button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 상세의 머리글. 구성원·계좌·카드 셋이 같은 것을 쓴다.
+ *
+ * 좁은 화면에서는 이 상세가 화면을 통째로 덮는다(목록은 접힌다). 그래서 보관함·거래
+ * 상세와 같은 모양을 쓴다 -- **왼쪽 위의 ←** 로 목록에 돌아가고, 오른쪽 끝의
+ * 닫기(×)는 내린다. 클릭해서 들어가는 자리가 화면마다 다른 모양이면 돌아가는 길을
+ * 그때마다 찾아야 한다.
+ *
+ * 넓은 화면에서는 목록이 옆에 그대로 있어 "돌아갈 곳"이 없으므로 지금처럼 × 만 둔다.
+ */
+function AssetDetailHeader({
+  title,
+  onClose,
+  actions,
+  children,
+}: {
+  title: string;
+  onClose: () => void;
+  /** 이 상세에서만 쓰는 단추 (거래 보기·기본 정보). 좁은 화면에서는 ← 와 한 줄에 선다. */
+  actions: ReactNode;
+  /** 이름 아래에 붙는 것 (금액, 기관 이름, 유형 표). */
+  children: ReactNode;
+}) {
+  const { t } = useTranslation();
+
+  return (
+    <>
+      {/* 좁은 화면. 보관함·거래 상세와 같은 머리글 줄이다. */}
+      <div className="mb-4 flex items-center gap-3 lg:hidden">
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label={t('common.back')}
+          title={t('common.back')}
+          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 transition hover:bg-gray-50"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+        </button>
+        <h2 className="min-w-0 flex-1 truncate text-lg font-bold text-gray-900">{title}</h2>
+        <div className="flex shrink-0 items-center">{actions}</div>
+      </div>
+
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          {/* 이름. 좁은 화면에서는 위 머리글 줄이 갖는다. */}
+          <h2 className="hidden text-2xl font-bold text-gray-900 lg:block">{title}</h2>
+          {children}
+        </div>
+        <div className="hidden shrink-0 gap-2 lg:flex">
+          {actions}
+          <DetailIconButton label={t('common.close')} onClick={onClose}>
+            <X className="h-5 w-5" aria-hidden />
+          </DetailIconButton>
+        </div>
+      </div>
+    </>
   );
 }
 
@@ -321,7 +481,7 @@ export default function DashboardPage() {
   });
   const [addError, setAddError] = useState('');
 
-  const [accountTransactions, setAccountTransactions] = useState<any[]>([]);
+  const [accountTransactions, setAccountTransactions] = useState<AccountDto.LedgerRow[]>([]);
   /** 원장의 다음 페이지 커서. null이면 끝까지 봤다는 뜻이다. */
   const [ledgerCursor, setLedgerCursor] = useState<string | null>(null);
   const [isLoadingLedger, setIsLoadingLedger] = useState(false);
@@ -466,6 +626,28 @@ export default function DashboardPage() {
   };
 
   /**
+   * 상세를 접는다.
+   *
+   * 좁은 화면의 ←, 넓은 화면의 ×, 그리고 브라우저의 뒤로가기가 함께 쓴다. 세 곳이
+   * 각자 지우면 어느 하나가 빠져 목록에 없는 항목의 상세가 남는다.
+   */
+  const closeDetail = () => {
+    setDetailType(null);
+    setSelectedPerson(null);
+    setSelectedAccount(null);
+    setSelectedCard(null);
+  };
+
+  /*
+   * 브라우저(그리고 휴대폰)의 뒤로가기는 머리글의 ← 를 누른 것과 같게 동작한다.
+   *
+   * 한 걸음 들어간 자리가 둘이다 -- 상세를 펴고, 거기서 거래내역까지 들어갈 수 있다.
+   * 나중에 연 것이 먼저 닫힌다(useCloseOnBack 이 쌓인 차례대로 닫는다).
+   */
+  useCloseOnBack(detailType !== null, closeDetail);
+  useCloseOnBack(entriesSearch !== null, closeEntries);
+
+  /**
    * 거래를 저장하거나 지운 뒤.
    *
    * 목록(구성원 거래, 계좌 원장)은 entryVersion을 보고 각자 다시 읽는다. 잔액과
@@ -579,6 +761,17 @@ export default function DashboardPage() {
       setLedgerCursor(null);
     }
   }, [selectedAccount, detailType, loadAccountTransactions, entryVersion, mirrorVersion]);
+
+  /*
+   * 카드의 사용·결제 내역.
+   *
+   * 카드의 부채 계정 원장이다. 통장 상세가 보는 것과 같은 줄이라 받아 오는 자리도
+   * 같다(core 의 useAccountLedger). 체크카드는 그 계정이 없어 비어 있다.
+   */
+  const cardLedger = useAccountLedger(
+    detailType === 'card' ? selectedCard?.liabilityAccountId ?? null : null,
+    entryVersion + mirrorVersion,
+  );
 
   const getAccountCards = (accountId: string) =>
     cards.filter((c) => c.paymentAccountId === accountId);
@@ -704,6 +897,8 @@ export default function DashboardPage() {
     setCards((await apiClient.getCards(selectedProjectId)) || []);
     // 카드 부채는 총자산에서 빠지는 값이라 함께 다시 받는다.
     await loadNetWorth();
+    // 대금을 기록하면 거래가 하나 생긴다. 그 줄을 보는 목록들도 다시 읽어야 한다.
+    setEntryVersion((version) => version + 1);
   }, [loadNetWorth, selectedProjectId]);
 
   /*
@@ -895,12 +1090,19 @@ export default function DashboardPage() {
    * 목록 한참 아래에 서고, 그래프를 보려면 그만큼 훑어 내려야 한다. 그래서 고른
    * 항목의 상세가 화면을 통째로 쓰고 나머지는 접는다 (앱과 같은 규칙이다).
    *
-   * 닫으면 접었던 것이 그대로 돌아온다. 상세의 머리글에 닫기 아이콘이 있다.
+   * 닫으면 접었던 것이 그대로 돌아온다. 좁은 화면에서는 상세 머리글의 ← 가, 넓은
+   * 화면에서는 닫기(×)가 그 일을 한다 (`AssetDetailHeader`).
    */
   const hideOnNarrow = detailType ? 'hidden lg:block' : '';
 
   return (
-    <div className="space-y-6">
+    /*
+      좁은 화면에서 상세를 펼치면 위의 칸들이 접힌다(hideOnNarrow). 접힌 칸도 줄
+      간격의 대상이라 상세만 남아도 위에 한 칸이 비는데, 그러면 보관함처럼 화면 맨
+      위에서 시작하지 않는다. 그때는 간격을 넓은 화면에만 둔다 -- 좁은 화면에 남는
+      칸은 상세 하나뿐이라 벌릴 사이가 없다.
+    */
+    <div className={detailType ? 'space-y-0 lg:space-y-6' : 'space-y-6'}>
       {/*
         화면의 첫 줄이자 제목이다. 이름을 누르면 자산주인을, 유형 카드를 누르면
         무엇을 더한 금액인지 고른다. 홈에 있던 칸을 그대로 옮겨 왔다. 자산 금액은
@@ -988,12 +1190,40 @@ export default function DashboardPage() {
 
           {/* 오른쪽: 고른 계좌의 잔액 추이와 거래 내역 */}
           {detailType === 'account' && selectedAccount ? (
-            <div className="bg-white rounded-lg shadow p-6">
+            /*
+              좁은 화면에서는 상세가 화면을 통째로 쓰므로 감싸는 상자를 두지 않는다
+              (보관함과 같은 모양이다). 그래프가 제 상자를 갖고 있어 두 겹이 되기도 한다.
+              넓은 화면에서는 목록 옆에 놓이는 칸이라 상자가 그 경계를 그린다.
+            */
+            <div className="lg:rounded-lg lg:bg-white lg:p-6 lg:shadow">
               {/* 헤더: 계좌명 및 버튼 */}
-              <div className="flex justify-between items-start gap-4 mb-6">
-                <div>
+              <div className="mb-6">
+                <AssetDetailHeader
+                  title={selectedAccount.name}
+                  onClose={closeDetail}
+                  actions={
+                    <>
+                      <DetailIconButton
+                        label={t('assets.viewEntries')}
+                        onClick={() =>
+                          setEntriesSearch({
+                            ...EMPTY_SEARCH,
+                            paymentAccountIds: [selectedAccount.id],
+                          })
+                        }
+                      >
+                        <Receipt className="h-5 w-5" aria-hidden />
+                      </DetailIconButton>
+                      <DetailIconButton
+                        label={t('account.detail')}
+                        onClick={() => setIsAccountDetailOpen(true)}
+                      >
+                        <Info className="h-5 w-5" aria-hidden />
+                      </DetailIconButton>
+                    </>
+                  }
+                >
                   {/* 예전에는 상단 총자산 박스가 이 값을 보여줬다. 총자산을 그대로 두는 대신 여기에 적는다. */}
-                  <h2 className="text-2xl font-bold text-gray-900">{selectedAccount.name}</h2>
                   <p className="text-xl font-bold text-blue-600 mt-1">
                     {formatCurrency(selectedAccount.balance, selectedAccount.currency)}
                   </p>
@@ -1003,35 +1233,7 @@ export default function DashboardPage() {
                     )}
                     <AccountTypeBadge type={selectedAccount.type} />
                   </div>
-                </div>
-                <div className="flex gap-2">
-                  <DetailIconButton
-                    label={t('assets.viewEntries')}
-                    onClick={() =>
-                      setEntriesSearch({
-                        ...EMPTY_SEARCH,
-                        paymentAccountIds: [selectedAccount.id],
-                      })
-                    }
-                  >
-                    <Receipt className="h-5 w-5" aria-hidden />
-                  </DetailIconButton>
-                  <DetailIconButton
-                    label={t('account.detail')}
-                    onClick={() => setIsAccountDetailOpen(true)}
-                  >
-                    <Info className="h-5 w-5" aria-hidden />
-                  </DetailIconButton>
-                  <DetailIconButton
-                    label={t('common.close')}
-                    onClick={() => {
-                      setDetailType(null);
-                      setSelectedAccount(null);
-                    }}
-                  >
-                    <X className="h-5 w-5" aria-hidden />
-                  </DetailIconButton>
-                </div>
+                </AssetDetailHeader>
               </div>
 
               {/* 이 계좌의 잔액 추이 */}
@@ -1050,100 +1252,47 @@ export default function DashboardPage() {
               )}
 
               {/* 거래 내역 */}
-              {accountTransactions.length === 0 ? (
-                <p className="text-gray-600 text-center py-8">{t('assets.noEntries')}</p>
-              ) : (
-                <div className="space-y-3">
-                  {accountTransactions.map((tx: any) => {
-                    // 원장 posting의 amount는 이미 부호를 갖는다 (자산 증가 +, 감소 -).
-                    // 부호를 그대로 두고 앞에 '-'를 또 붙이면 '--₩10,000'이 된다. 절댓값으로 찍는다.
-                    const amount = toNumber(tx.amount);
-                    const isIncoming = amount > 0;
-                    const label = tx.merchant || tx.cardName || '';
-                    return (
-                      <div key={tx.postingId} className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition">
-                        <div className="flex justify-between items-start gap-4">
-                          <div className="flex-1 min-w-0">
-                            <p className="font-bold text-gray-900">{tx.description || t('entry.noTitle')}</p>
-                            {label && (
-                              <p className="text-sm text-gray-600 mt-1">{label}</p>
-                            )}
-                            <p className="text-xs text-gray-500 mt-1">
-                              {formatDate(tx.date, timeZone)}
-                            </p>
-                          </div>
-                          <div className="text-right whitespace-nowrap">
-                            {/*
-                              원장의 금액과 잔액은 이 계좌의 통화다 (기준통화 환산액이 아니다).
-                              통화를 넘기지 않으면 달러 통장의 $100이 ₩100으로 보인다.
-                            */}
-                            <p className={`font-bold text-lg ${isIncoming ? 'text-green-600' : 'text-red-600'}`}>
-                              {isIncoming ? '+' : '-'}
-                              {formatCurrency(Math.abs(amount), selectedAccount.currency)}
-                            </p>
-                            <p className="text-xs text-gray-500 mt-1">
-                              {t('assets.balanceAfter', {
-                            amount: formatCurrency(tx.balanceAfter, selectedAccount.currency),
-                          })}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    );
-                  })}
-
-                  {ledgerCursor && (
-                    <button
-                      type="button"
-                      onClick={loadMoreAccountTransactions}
-                      disabled={isLoadingLedger}
-                      className="w-full py-3 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
-                    >
-                      {isLoadingLedger ? t('feed.loadingMore') : t('assets.more')}
-                    </button>
-                  )}
-                </div>
-              )}
+              <LedgerList
+                rows={accountTransactions}
+                currency={selectedAccount.currency}
+                kind="asset"
+                hasMore={Boolean(ledgerCursor)}
+                isLoading={isLoadingLedger}
+                onMore={loadMoreAccountTransactions}
+              />
             </div>
           ) : detailType === 'person' && selectedPerson ? (
             /* 구성원: 그 사람 계좌들의 합계 추이와 최근 거래 */
-            <div className="bg-white rounded-lg shadow p-6 space-y-4">
-              <div className="flex justify-between items-start gap-4">
-                <div>
-                  <h2 className="text-2xl font-bold text-gray-900">{selectedPerson.name}</h2>
-                  <p className="text-xl font-bold text-blue-600 mt-1">
-                    {formatCurrency(netWorthByPerson.get(selectedPerson.id)?.total ?? 0, displayCurrency)}
-                  </p>
-                  {/* 전체 총자산 상자와 같은 형식으로 무엇이 얼마인지 쪼개 보여 준다 */}
-                  <NetWorthBreakdown
-                    parts={netWorthByPerson.get(selectedPerson.id)}
-                    className="text-sm text-gray-600 mt-1"
-                  />
-                </div>
-                <div className="flex gap-2">
-                  <DetailIconButton
-                    label={t('assets.viewEntries')}
-                    onClick={() => showPersonEntries(selectedPerson.id)}
-                  >
-                    <Receipt className="h-5 w-5" aria-hidden />
-                  </DetailIconButton>
-                  <DetailIconButton
-                    label={t('assets.detail')}
-                    onClick={() => setIsPersonDetailOpen(true)}
-                  >
-                    <Info className="h-5 w-5" aria-hidden />
-                  </DetailIconButton>
-                  <DetailIconButton
-                    label={t('common.close')}
-                    onClick={() => {
-                      setDetailType(null);
-                      setSelectedPerson(null);
-                    }}
-                  >
-                    <X className="h-5 w-5" aria-hidden />
-                  </DetailIconButton>
-                </div>
-              </div>
+            <div className="space-y-4 lg:rounded-lg lg:bg-white lg:p-6 lg:shadow">
+              <AssetDetailHeader
+                title={selectedPerson.name}
+                onClose={closeDetail}
+                actions={
+                  <>
+                    <DetailIconButton
+                      label={t('assets.viewEntries')}
+                      onClick={() => showPersonEntries(selectedPerson.id)}
+                    >
+                      <Receipt className="h-5 w-5" aria-hidden />
+                    </DetailIconButton>
+                    <DetailIconButton
+                      label={t('assets.detail')}
+                      onClick={() => setIsPersonDetailOpen(true)}
+                    >
+                      <Info className="h-5 w-5" aria-hidden />
+                    </DetailIconButton>
+                  </>
+                }
+              >
+                <p className="text-xl font-bold text-blue-600 mt-1">
+                  {formatCurrency(netWorthByPerson.get(selectedPerson.id)?.total ?? 0, displayCurrency)}
+                </p>
+                {/* 전체 총자산 상자와 같은 형식으로 무엇이 얼마인지 쪼개 보여 준다 */}
+                <NetWorthBreakdown
+                  parts={netWorthByPerson.get(selectedPerson.id)}
+                  className="text-sm text-gray-600 mt-1"
+                />
+              </AssetDetailHeader>
 
               {/* 이 사람이 가진 계좌들의 합계 추이 */}
               <AssetHistoryChart ownerId={selectedPerson.id} projectId={selectedProjectId} />
@@ -1173,43 +1322,36 @@ export default function DashboardPage() {
               카드 번호나 유효기간 같은 기본 정보는 "카드 상세정보" 팝업으로 옮겼다.
               이 자리에서 자주 보는 것은 남은 대금과 이번 주기 사용액이다.
             */
-            <div className="bg-white rounded-lg shadow p-6 space-y-4">
-              <div className="flex justify-between items-start gap-4">
-                <div>
-                  <h2 className="text-2xl font-bold text-gray-900">{selectedCard.name}</h2>
-                  <p className="text-xl font-bold text-blue-600 mt-1">
-                    {formatCurrency(selectedCard.currentUsage, currencyOfCard(selectedCard))}
-                  </p>
-                  {selectedCard.issuer?.name && (
-                    <p className="text-sm text-gray-600 mt-1">{selectedCard.issuer.name}</p>
-                  )}
-                </div>
-                <div className="flex gap-2">
-                  <DetailIconButton
-                    label={t('assets.viewEntries')}
-                    onClick={() =>
-                      setEntriesSearch({ ...EMPTY_SEARCH, paymentCardIds: [selectedCard.id] })
-                    }
-                  >
-                    <Receipt className="h-5 w-5" aria-hidden />
-                  </DetailIconButton>
-                  <DetailIconButton
-                    label={t('card.detail')}
-                    onClick={() => setIsCardDetailOpen(true)}
-                  >
-                    <Info className="h-5 w-5" aria-hidden />
-                  </DetailIconButton>
-                  <DetailIconButton
-                    label={t('common.close')}
-                    onClick={() => {
-                      setDetailType(null);
-                      setSelectedCard(null);
-                    }}
-                  >
-                    <X className="h-5 w-5" aria-hidden />
-                  </DetailIconButton>
-                </div>
-              </div>
+            <div className="space-y-4 lg:rounded-lg lg:bg-white lg:p-6 lg:shadow">
+              <AssetDetailHeader
+                title={selectedCard.name}
+                onClose={closeDetail}
+                actions={
+                  <>
+                    <DetailIconButton
+                      label={t('assets.viewEntries')}
+                      onClick={() =>
+                        setEntriesSearch({ ...EMPTY_SEARCH, paymentCardIds: [selectedCard.id] })
+                      }
+                    >
+                      <Receipt className="h-5 w-5" aria-hidden />
+                    </DetailIconButton>
+                    <DetailIconButton
+                      label={t('card.detail')}
+                      onClick={() => setIsCardDetailOpen(true)}
+                    >
+                      <Info className="h-5 w-5" aria-hidden />
+                    </DetailIconButton>
+                  </>
+                }
+              >
+                <p className="text-xl font-bold text-blue-600 mt-1">
+                  {formatCurrency(selectedCard.currentUsage, currencyOfCard(selectedCard))}
+                </p>
+                {selectedCard.issuer?.name && (
+                  <p className="text-sm text-gray-600 mt-1">{selectedCard.issuer.name}</p>
+                )}
+              </AssetDetailHeader>
 
               {/* 실적은 카드 종류를 가리지 않는다. 세는 구간만 다르다. */}
               <CardPerformancePanel cardId={selectedCard.id} reloadToken={entryVersion} />
@@ -1224,6 +1366,29 @@ export default function DashboardPage() {
                   onChange={refreshAfterCardChange}
                 />
               </div>
+
+              {/*
+                사용·결제 내역. 통장 상세의 거래 내역과 같은 목록이다.
+
+                신용카드만 그린다. 체크카드는 쓰는 즉시 통장에서 빠져 쌓이는 대금이
+                없고, 그 내역은 결제 통장의 거래 내역에 그대로 있다.
+              */}
+              {selectedCard.liabilityAccountId && (
+                <div className="pt-4 border-t space-y-3">
+                  <div>
+                    <h3 className="text-sm font-medium text-gray-700">{t('assets.cardLedger')}</h3>
+                    <p className="mt-1 text-xs text-gray-500">{t('assets.cardLedgerHint')}</p>
+                  </div>
+                  <LedgerList
+                    rows={cardLedger.rows}
+                    currency={currencyOfCard(selectedCard)}
+                    kind="liability"
+                    hasMore={cardLedger.hasMore}
+                    isLoading={cardLedger.isLoading}
+                    onMore={cardLedger.loadMore}
+                  />
+                </div>
+              )}
             </div>
           ) : (
             <div className="bg-white rounded-lg border border-dashed border-gray-300 p-10 text-center">

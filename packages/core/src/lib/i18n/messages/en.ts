@@ -22,6 +22,7 @@ export const en: Record<MessageKey, string> = {
   'nav.settings': 'Settings',
 
   // ===== Shell =====
+  'shell.exitHint': 'Press back again to exit',
   'shell.signingIn': 'Signing in...',
   'screen.webOnly': 'This screen is available on the web for now.',
   'sidebar.projects': 'Projects',
@@ -353,6 +354,9 @@ export const en: Record<MessageKey, string> = {
     'The trend is a book value converted into {display}. It builds up at the rate of each entry, so its unit differs from the balance above ({account}).',
   'assets.noEntries': 'No entries yet.',
   'assets.balanceAfter': 'Balance {amount}',
+  'assets.cardLedger': 'Charges and payments',
+  'assets.cardBalanceAfter': 'Owed {amount}',
+  'assets.cardLedgerHint': 'Charges add up; each payment brings the balance back down.',
   'assets.more': 'Show more',
   'assets.detail': 'Details',
   'assets.viewEntries': 'See entries',

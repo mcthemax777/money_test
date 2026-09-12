@@ -18,6 +18,7 @@ import PageHeader from '@/components/PageHeader';
 import TagsPanel from '@/components/TagsPanel';
 import TransactionsView from '@/components/TransactionsView';
 import type { Category } from '@money/core/lib/types';
+import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useDragReorder } from '@/hooks/useDragReorder';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
@@ -163,6 +164,9 @@ export default function CategoriesPage() {
     setReopen(entries.target);
     setEntries(null);
   };
+
+  /* 브라우저(그리고 휴대폰)의 뒤로가기는 머리글의 ← 를 누른 것과 같게 동작한다. */
+  useCloseOnBack(entries !== null, closeEntries);
 
   const handleCategoryClick = (category: Category) => {
     setSelectedCategory(category);

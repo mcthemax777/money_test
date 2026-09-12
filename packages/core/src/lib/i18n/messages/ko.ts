@@ -32,6 +32,7 @@ export const ko = {
   'nav.settings': '설정',
 
   // ===== 껍데기 =====
+  'shell.exitHint': '한 번 더 누르면 종료됩니다',
   'shell.signingIn': '로그인 중...',
   'screen.webOnly': '이 화면은 아직 웹에서만 볼 수 있습니다.',
   'sidebar.projects': '프로젝트',
@@ -380,6 +381,9 @@ export const ko = {
     '추이는 {display} 환산 장부가입니다. 거래 시점의 환율로 쌓인 값이라 위 잔액({account})과 단위가 다릅니다.',
   'assets.noEntries': '거래 내역이 없습니다.',
   'assets.balanceAfter': '잔액 {amount}',
+  'assets.cardLedger': '사용·결제 내역',
+  'assets.cardBalanceAfter': '남은 대금 {amount}',
+  'assets.cardLedgerHint': '쓴 금액은 쌓이고 대금을 결제하면 그만큼 줄어듭니다.',
   'assets.more': '더 보기',
   'assets.detail': '상세정보',
   'assets.viewEntries': '거래내역 보기',

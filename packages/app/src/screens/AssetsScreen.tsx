@@ -12,7 +12,7 @@ import { useCanEdit, useProject, useProjectDisplayCurrency } from '@money/core/s
 import { useEntryFocus } from '@money/core/store/entry-focus';
 import { useUserFilter } from '@money/core/store/user-filter';
 
-import { useNavigation } from '../shell/navigation';
+import { useCloseOnBack, useNavigation } from '../shell/navigation';
 import { useScrollToTop } from '../shell/scroll';
 import AddButton from '../components/AddButton';
 import AssetDetailView, { type AssetDetailTarget } from '../components/AssetDetailView';
@@ -82,6 +82,9 @@ export default function AssetsScreen() {
     setDetail(next);
     scrollToTop();
   };
+
+  /* 기기의 뒤로가기는 머리글의 ← 와 같은 일을 한다 -- 목록으로 돌아간다. */
+  useCloseOnBack(detail !== null, () => openDetail(null));
 
   /*
    * 지금 그릴 상세. 목록에서 다시 찾아 온다.

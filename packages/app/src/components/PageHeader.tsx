@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
+import { ArrowLeft } from 'lucide-react-native';
 
 import { useNavigation } from '../shell/navigation';
 
@@ -32,9 +33,14 @@ export default function PageHeader({
         {showBack || onBack ? (
           <Pressable
             onPress={onBack ?? back}
+            /*
+              이 모양을 화면을 덮는 상세(거래·자산)도 그대로 쓴다. 클릭해서 들어가는
+              자리는 어디서나 같은 자리에 같은 단추가 있어야 한다. 글자 "←" 가 아니라
+              아이콘인 것은 닫기(×)와 같은 까닭이다 (Modal 머리말).
+            */
             className="h-8 w-8 items-center justify-center rounded-lg border border-gray-300 bg-white active:bg-gray-50"
           >
-            <Text className="text-gray-600">←</Text>
+            <ArrowLeft size={16} color="#4b5563" />
           </Pressable>
         ) : null}
         {typeof title === 'string' ? (

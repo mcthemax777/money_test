@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { ArrowLeft } from 'lucide-react';
 
 import { useTranslation } from '@money/core/lib/i18n';
 
@@ -30,19 +31,26 @@ export default function PageHeader({
   onBack?: () => void;
 }) {
   const { t } = useTranslation();
+  /*
+    돌아가기 단추. 이 모양을 화면을 덮는 상세(거래·자산)도 그대로 쓴다.
+
+    클릭해서 들어가는 자리는 어디서나 같은 자리에 같은 단추가 있어야 한다. 글자
+    "←" 가 아니라 아이콘인 것은 닫기(×)와 같은 까닭이다 -- 글자는 글꼴이 정한
+    위아래 여백을 달고 와 옆의 아이콘과 한 축에 서지 않는다 (Modal 머리말).
+  */
   const backClassName =
-    'flex h-8 w-8 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 transition hover:bg-gray-50';
+    'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-gray-300 bg-white text-gray-600 transition hover:bg-gray-50';
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div className="flex items-center gap-3">
         {onBack ? (
           <button type="button" onClick={onBack} aria-label={t('common.back')} className={backClassName}>
-            ←
+            <ArrowLeft className="h-4 w-4" aria-hidden />
           </button>
         ) : backHref ? (
           <Link href={backHref} aria-label={t('common.back')} className={backClassName}>
-            ←
+            <ArrowLeft className="h-4 w-4" aria-hidden />
           </Link>
         ) : null}
         {typeof title === 'string' ? (

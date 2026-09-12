@@ -77,6 +77,7 @@ import EntryEditor, {
 } from '@/components/EntryEditor';
 import Modal from '@/components/Modal';
 import PageHeader from '@/components/PageHeader';
+import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import TransactionItem from '@/components/TransactionItem';
 
@@ -350,6 +351,15 @@ export default function TransactionsView({
   const togglePersonId = useUserFilter((state) => state.togglePersonId);
 
   const tx = useTransactions(selectedProjectId);
+
+  /*
+   * 뒤로가기는 머리글의 ← 를 누른 것과 같게 동작한다.
+   *
+   * 고르는 중에는 머리글이 통째로 바뀌고 그 왼쪽에 서는 것이 ← 다. 그때의 뒤로가기는
+   * 화면을 떠나는 것이 아니라 고르기를 그만두는 일이어야 한다.
+   */
+  useCloseOnBack(tx.isSelecting, tx.stopSelecting);
+
   /*
    * 보관함에 몇 건이 기다리는가.
    *
@@ -1035,7 +1045,14 @@ export default function TransactionsView({
                   expense={toNumber(month.expense)}
                   income={toNumber(month.income)}
                   open={level >= 1}
-                  showNet
+                  /*
+                    순수입은 검색을 걸지 않았을 때만 적는다.
+
+                    검색을 켜면 이 줄의 수입·지출은 걸린 거래만 센 값이라, 그 차액은
+                    그 달에 남은 돈이 아니라 "골라 낸 것들의 차액"이다. 같은 자리에
+                    같은 낱말로 적히면 달의 순수입으로 읽힌다.
+                  */
+                  showNet={tx.searchCount === 0}
                   check={
                     tx.isSelecting
                       ? {

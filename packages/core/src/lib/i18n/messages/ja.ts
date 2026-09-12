@@ -22,6 +22,7 @@ export const ja: Record<MessageKey, string> = {
   'nav.settings': '設定',
 
   // ===== 全体 =====
+  'shell.exitHint': 'もう一度押すと終了します',
   'shell.signingIn': 'ログイン中...',
   'screen.webOnly': 'この画面は今のところウェブのみで見られます。',
   'sidebar.projects': 'プロジェクト',
@@ -352,6 +353,9 @@ export const ja: Record<MessageKey, string> = {
     '推移は{display}に換算した簿価です。取引時点のレートで積み上げた値なので、上の残高({account})とは単位が異なります。',
   'assets.noEntries': '取引がありません。',
   'assets.balanceAfter': '残高 {amount}',
+  'assets.cardLedger': '利用・支払い履歴',
+  'assets.cardBalanceAfter': '残り {amount}',
+  'assets.cardLedgerHint': '利用額は積み上がり、支払うとその分だけ減ります。',
   'assets.more': 'もっと見る',
   'assets.detail': '詳細',
   'assets.viewEntries': '取引を見る',

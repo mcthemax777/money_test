@@ -44,7 +44,7 @@ import { useEntryDrafts } from '@money/core/hooks/useEntryDrafts';
 import { useUserFilter } from '@money/core/store/user-filter';
 import { useEntryFocus, type EntryFocusOrigin } from '@money/core/store/entry-focus';
 
-import { useNavigation } from '../shell/navigation';
+import { useCloseOnBack, useNavigation } from '../shell/navigation';
 import EntryDetailModal from '../components/EntryDetailModal';
 import EntryEditor from '../components/EntryEditor';
 import Modal from '../components/Modal';
@@ -394,6 +394,16 @@ export default function TransactionsScreen() {
     requestReopen(origin);
     go(ORIGIN_SCREEN[origin.kind]);
   };
+
+  /*
+   * 기기의 뒤로가기는 머리글의 ← 와 같은 일을 한다.
+   *
+   * 고르는 중이면 고르기를 그만두고(그때 머리글 왼쪽에 서는 것이 ← 다), 다른 화면에서
+   * 건너왔으면 떠나온 상세로 돌아간다. 둘 다면 고르기를 먼저 그만둔다 -- 나중에 시작한
+   * 것이 먼저 닫힌다.
+   */
+  useCloseOnBack(origin !== null, goBackToOrigin);
+  useCloseOnBack(tx.isSelecting, tx.stopSelecting);
 
   /*
    * 이 화면을 벗어나면 좁혀 둔 자산주인 선택을 되돌린다.
@@ -890,7 +900,14 @@ export default function TransactionsScreen() {
                   open={level >= 1}
                   yearMonth={month.yearMonth}
                   rowKey=""
-                  showNet
+                  /*
+                    순수입은 검색을 걸지 않았을 때만 적는다.
+
+                    검색을 켜면 이 줄의 수입·지출은 걸린 거래만 센 값이라, 그 차액은
+                    그 달에 남은 돈이 아니라 "골라 낸 것들의 차액"이다. 같은 자리에
+                    같은 낱말로 적히면 달의 순수입으로 읽힌다.
+                  */
+                  showNet={tx.searchCount === 0}
                   checkable={tx.isSelecting}
                   checked={tx.isSelecting ? tx.monthChecked(month.yearMonth) : false}
                   checkPending={tx.isSelecting ? tx.isRangePending(month.yearMonth) : false}

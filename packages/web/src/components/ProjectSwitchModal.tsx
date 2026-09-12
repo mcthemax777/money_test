@@ -23,8 +23,9 @@ export default function ProjectSwitchModal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-      <div className="bg-white rounded-lg shadow-lg p-6 max-w-sm w-full mx-4">
+    /* 공용 Modal 과 같은 모양으로 선다 -- 좁은 화면에서는 아래에서 올라오고, 넓으면 가운데다. */
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-center">
+      <div className="dialog-enter w-full rounded-t-2xl bg-white p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] shadow-lg md:mx-4 md:max-w-sm md:rounded-lg md:pb-6">
         <h2 className="text-lg font-semibold text-gray-900 mb-4">{t('projectSwitch.title')}</h2>
         <p className="text-gray-600 mb-6">{t('projectSwitch.body')}</p>
         <div className="flex gap-3">

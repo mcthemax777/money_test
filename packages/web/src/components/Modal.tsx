@@ -85,10 +85,15 @@ export default function Modal({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center">
-      <div className="bg-white rounded-lg shadow-lg max-w-md w-full mx-4 max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 z-10 bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center">
-          <h2 className="text-lg font-bold text-gray-900">{title}</h2>
+    // 좁은 화면에서는 아래에 붙는다. 넓은 화면에서만 가운데로 온다.
+    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 md:items-center">
+      {/*
+        아래에서 올라오는 창. 좁은 화면에서는 폭을 다 쓰고 위쪽 모서리만 둥글다
+        (아래는 화면 끝에 붙어 있어 둥글릴 자리가 없다).
+      */}
+      <div className="dialog-enter w-full max-h-[90vh] overflow-y-auto rounded-t-2xl bg-white shadow-lg md:mx-4 md:max-w-md md:rounded-lg">
+        <div className="sticky top-0 z-10 bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center gap-3">
+          <h2 className="min-w-0 truncate text-lg font-bold text-gray-900">{title}</h2>
           <div className="flex items-center gap-3">
             {headerAction}
             {/*
@@ -110,11 +115,15 @@ export default function Modal({
             </button>
           </div>
         </div>
-        <div ref={bodyRef} className="p-6">
+        <div
+          ref={bodyRef}
+          /* 아래에 붙는 창이라 마지막 줄이 홈 표시줄에 가리지 않게 그만큼 더 띄운다. */
+          className="p-6 pb-[calc(1.5rem+env(safe-area-inset-bottom))] md:pb-6"
+        >
           {children}
         </div>
         {footer && (
-          <div className="sticky bottom-0 z-10 bg-white border-t border-gray-200 px-6 py-4">
+          <div className="sticky bottom-0 z-10 border-t border-gray-200 bg-white px-6 pt-4 pb-[calc(1rem+env(safe-area-inset-bottom))] md:pb-4">
             {footer}
           </div>
         )}
