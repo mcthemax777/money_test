@@ -258,15 +258,19 @@ function Line({
           {meta ? <span className="shrink-0 text-xs text-gray-500">{meta}</span> : null}
         </span>
         {/*
-          들어온 돈은 줄 가운데, 나간 돈은 오른쪽 끝. 둘에게 제 칸을 주고 못 박는다.
+          들어온 돈과 나간 돈에 각자의 칸을 주고, 칸 안에서는 둘 다 오른쪽 끝에 붙인다.
 
           한 덩어리로 두면 두 숫자가 서로 옆에 붙어 어느 쪽이 들어온 돈인지 색으로만
           갈린다. 한쪽이 없는 달에는 남은 숫자가 오른쪽으로 미끄러져, 줄을 훑을 때
           같은 자리에서 같은 뜻을 읽을 수 없다. 칸을 고정하면 없는 쪽은 빈 자리로
           남고 있는 쪽은 늘 제 자리에 선다.
+
+          칸 안에서 가운데에 두지 않는 것은 자릿수 때문이다. 1,110 과 222,110 이 위아래로
+          서면 일의 자리가 서로 어긋나, 어느 쪽이 큰 금액인지 길이로 읽을 수 없다.
+          오른쪽에 붙이면 일의 자리가 한 줄로 서서 자릿수가 그대로 보인다.
         */}
         <span
-          className={`flex w-[30%] shrink-0 justify-center overflow-hidden font-semibold tabular-nums ${AMOUNT_SIZE[depth]}`}
+          className={`flex w-[30%] shrink-0 justify-end overflow-hidden font-semibold tabular-nums ${AMOUNT_SIZE[depth]}`}
         >
           {income > 0 ? (
             <span className="truncate text-green-600">+{formatCurrency(income, currency)}</span>

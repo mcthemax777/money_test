@@ -269,17 +269,22 @@ function LineView({
           {meta ? <Text className="text-xs text-gray-500">{meta}</Text> : null}
         </View>
         {/*
-          들어온 돈은 줄 가운데, 나간 돈은 오른쪽 끝. 둘에게 제 칸을 주고 못 박는다.
+          들어온 돈과 나간 돈에 각자의 칸을 주고, 칸 안에서는 둘 다 오른쪽 끝에 붙인다.
 
           한 덩어리로 두면 두 숫자가 서로 옆에 붙어 어느 쪽이 들어온 돈인지 색으로만
           갈린다. 한쪽이 없는 달에는 남은 숫자가 오른쪽으로 미끄러져, 줄을 훑을 때
           같은 자리에서 같은 뜻을 읽을 수 없다. 칸을 고정하면 없는 쪽은 빈 자리로
           남고 있는 쪽은 늘 제 자리에 선다.
+
+          칸 안에서 가운데에 두지 않는 것은 자릿수 때문이다. 1,110 과 222,110 이 위아래로
+          서면 일의 자리가 서로 어긋나, 어느 쪽이 큰 금액인지 길이로 읽을 수 없다.
+          오른쪽에 붙이면 일의 자리가 한 줄로 서서 자릿수가 그대로 보인다.
         */}
-        <View className="w-[30%] shrink-0 flex-row justify-center">
+        <View className="w-[30%] shrink-0 flex-row justify-end">
           {income > 0 ? (
             <Text
               numberOfLines={1}
+              style={TABULAR}
               className={`font-semibold text-green-600 ${AMOUNT_SIZE[depth]}`}
             >
               +{formatCurrency(income, currency)}
@@ -288,7 +293,11 @@ function LineView({
         </View>
         <View className="w-[30%] shrink-0 flex-row justify-end">
           {expense > 0 ? (
-            <Text numberOfLines={1} className={`font-semibold text-red-600 ${AMOUNT_SIZE[depth]}`}>
+            <Text
+              numberOfLines={1}
+              style={TABULAR}
+              className={`font-semibold text-red-600 ${AMOUNT_SIZE[depth]}`}
+            >
               -{formatCurrency(expense, currency)}
             </Text>
           ) : income === 0 ? (
@@ -311,6 +320,7 @@ function LineView({
         <View className="flex-row justify-end pt-0.5">
           <Text
             numberOfLines={1}
+            style={TABULAR}
             className={`text-xs font-semibold ${net >= 0 ? 'text-green-600' : 'text-red-600'}`}
           >
             {t('ledgerSummary.net')} {net >= 0 ? '+' : '-'}
@@ -328,6 +338,14 @@ function LineView({
  * 달력이 주말을 그렇게 적어 왔으니 같은 규칙을 쓴다. 표로 두는 것은 줄마다 도는
  * 자리라 조건을 두 번 견주지 않기 위해서다.
  */
+/**
+ * 숫자를 같은 폭으로 그린다. 웹의 `tabular-nums` 와 같은 구실이다.
+ *
+ * 폰트가 정하는 대로 두면 1 이 다른 숫자보다 좁아, 위아래로 선 금액의 자릿수가
+ * 조금씩 어긋난다. 오른쪽 끝을 맞춰도 쉼표 자리가 들쭉날쭉해 길이로 읽기 어렵다.
+ */
+const TABULAR = { fontVariant: ['tabular-nums' as const] };
+
 const WEEKDAY_COLOR: Record<number, string> = { 0: 'text-red-600', 6: 'text-blue-600' };
 
 /**
