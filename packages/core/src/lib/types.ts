@@ -30,6 +30,18 @@ export type CardUsagePeriod = CardDto.UsagePeriod;
 /** 계좌 원장 한 줄 (거래별 잔액 추이 포함) */
 export type LedgerRow = AccountDto.LedgerRow;
 
+/**
+ * 원장 모양의 한 줄. 잔액 칸이 비어 있을 수 있다.
+ *
+ * 자산 상세의 목록이 받는 줄이다. 통장과 신용카드는 계정이 있어 거래마다 잔액(남은
+ * 대금)이 따라오지만, 체크카드는 쓰는 즉시 결제 통장에서 빠져 쌓이는 계정이 없다
+ * (useCardEntries 가 전표를 이 모양으로 옮긴다). 그 한 칸만 비고 나머지는 같으므로
+ * 세 갈래가 한 목록을 쓴다.
+ */
+export type LedgerLikeRow = Omit<AccountDto.LedgerRow, 'balanceAfter'> & {
+  balanceAfter: string | null;
+};
+
 export type {
   AccountType,
   CardType,

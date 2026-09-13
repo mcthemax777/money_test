@@ -349,13 +349,11 @@ export const ja: Record<MessageKey, string> = {
   'assets.moveUp': '上へ',
   'assets.moveDown': '下へ',
   'assets.orderSaveFailed': '並び順を保存できませんでした。',
-  'assets.trendNote':
-    '推移は{display}に換算した簿価です。取引時点のレートで積み上げた値なので、上の残高({account})とは単位が異なります。',
   'assets.noEntries': '取引がありません。',
   'assets.balanceAfter': '残高 {amount}',
-  'assets.cardLedger': '利用・支払い履歴',
+  'assets.accountLedger': '入出金明細',
+  'assets.cardLedger': '決済明細',
   'assets.cardBalanceAfter': '残り {amount}',
-  'assets.cardLedgerHint': '利用額は積み上がり、支払うとその分だけ減ります。',
   'assets.more': 'もっと見る',
   'assets.detail': '詳細',
   'assets.viewEntries': '取引を見る',
@@ -368,7 +366,6 @@ export const ja: Record<MessageKey, string> = {
   'assets.balanceWithDue': '実際の残高 {balance} · 支払予定額 {due}',
   'assets.balanceWithRefund': '実際の残高 {balance} · 返金予定 {due}',
   'assets.noAccounts': '登録された口座がありません。',
-  'assets.webOnlyRest': '口座の元帳は今のところウェブのみです。',
   'account.detail': '口座の詳細',
   'account.bank': '銀行',
   'account.balance': '残高',
@@ -427,11 +424,6 @@ export const ja: Record<MessageKey, string> = {
   'settlement.ongoing': '進行中',
   'settlement.upcoming': '予定',
   'settlement.targetLine': '実績 {amount}',
-  'settlement.chartHint': '点線が実績の基準額です。超えた期間は緑、届かない期間はオレンジで、薄い棒はまだ進行中です。',
-  'settlement.chartFutureHint': 'グレーの棒は分割払いの金額だけが先に入った今後の期間です。',
-  'settlement.creditHint':
-    '分割払いは当月分だけが入ります。未払い残高は支払いまで反映した値なので、合計とは異なります。',
-  'settlement.debitHint': '決済と同時に口座から引かれた金額です。暦の月で数えます。',
   'settlement.modalTitle': 'カード代金の記録',
   'settlement.submitting': '処理中...',
   'settlement.submit': '記録する',
@@ -486,7 +478,6 @@ export const ja: Record<MessageKey, string> = {
   'history.backToNow': '現在に戻る',
   'history.empty': '表示できる残高の記録がありません。',
   'history.balance': '残高',
-  'history.appReadHint': '左右にドラッグで前後の期間、マスを押すとその時点の残高を読みます。',
 
   // ===== 家計簿画面 =====
   'ledger.noun': '家計簿',

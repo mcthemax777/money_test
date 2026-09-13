@@ -7,15 +7,18 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Info, Receipt } from 'lucide-react-native';
+import { MAX_USAGE_PERIODS } from '@money/types';
 
 import { useAccountLedger } from '@money/core/hooks/useAccountLedger';
+import { useCardEntries } from '@money/core/hooks/useCardEntries';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { accountTypeLabel } from '@money/core/lib/account-type';
 import { formatDate } from '@money/core/lib/datetime';
+import { categoryTitleOf } from '@money/core/lib/entries';
 import { apiClient } from '@money/core/lib/api-client';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
-import type { Account, Card, CardUsage, Person } from '@money/core/lib/types';
+import type { Account, Card, CardUsage, LedgerLikeRow, Person } from '@money/core/lib/types';
 import {
   useCanEdit,
   useProject,
@@ -125,55 +128,54 @@ export default function AssetDetailView({
 
         흰 상자로 감싸지 않는다. 보관함과 같은 모양이어야 하고, 아래 그래프가 이미
         제 상자를 갖고 있어 여기까지 상자를 두면 머리글 밑에 네모가 줄줄이 선다.
+
+        **카드에는 큰 금액을 적지 않는다.** 여기 있던 값은 이번 주기의 사용액이었는데,
+        바로 아래 실적 판과 사용액 그래프가 같은 값을 구간까지 밝혀 다시 말한다.
+        머리글에 한 번 더 두면 같은 숫자가 한 화면에 셋이 되고, 그중 이것만 무엇을 센
+        값인지 적혀 있지 않아 "남은 대금"으로 읽혔다.
       */}
-      <View>
-        {target.kind === 'person' ? (
+      {target.kind === 'person' ? (
+        <Text className="text-xl font-bold text-blue-600">
+          {formatCurrency(netWorthByPerson.get(target.person.id)?.total ?? 0, displayCurrency)}
+        </Text>
+      ) : target.kind === 'account' ? (
+        <View>
           <Text className="text-xl font-bold text-blue-600">
-            {formatCurrency(netWorthByPerson.get(target.person.id)?.total ?? 0, displayCurrency)}
+            {formatCurrency(target.account.balance, target.account.currency)}
           </Text>
-        ) : target.kind === 'account' ? (
-          <>
-            <Text className="text-xl font-bold text-blue-600">
-              {formatCurrency(target.account.balance, target.account.currency)}
-            </Text>
-            <View className="mt-1 flex-row items-center gap-1.5">
-              {target.account.institution?.name ? (
-                <Text className="text-sm text-gray-600">{target.account.institution.name}</Text>
-              ) : null}
-              <Text className="rounded bg-gray-100 px-1.5 py-px text-[11px] text-gray-600">
-                {accountTypeLabel(target.account.type)}
-              </Text>
-            </View>
-          </>
-        ) : (
-          <>
-            <Text className="text-xl font-bold text-blue-600">
-              {formatCurrency(target.card.currentUsage, cardCurrency)}
-            </Text>
-            {target.card.issuer?.name ? (
-              <Text className="mt-1 text-sm text-gray-600">{target.card.issuer.name}</Text>
+          <View className="mt-1 flex-row items-center gap-1.5">
+            {target.account.institution?.name ? (
+              <Text className="text-sm text-gray-600">{target.account.institution.name}</Text>
             ) : null}
-          </>
-        )}
-      </View>
+            <Text className="rounded bg-gray-100 px-1.5 py-px text-[11px] text-gray-600">
+              {accountTypeLabel(target.account.type)}
+            </Text>
+          </View>
+        </View>
+      ) : target.card.issuer?.name ? (
+        <Text className="text-sm text-gray-600">{target.card.issuer.name}</Text>
+      ) : null}
 
       {target.kind === 'person' ? (
         <AssetHistoryChart ownerId={target.person.id} projectId={selectedProjectId} />
       ) : target.kind === 'account' ? (
         <>
           <AssetHistoryChart accountId={target.account.id} projectId={selectedProjectId} />
+
           {/*
-            추이는 기준통화 장부가다. 위 잔액(계좌 통화)과 단위가 다르므로 밝혀 둔다.
-            거래마다 그때의 환율로 쌓인 값이라 최신 환율로 다시 환산한 값과도 다르다.
+            거래 내역. 카드 상세의 사용·결제 내역과 같은 줄이다 (웹과 같다).
+
+            자산 탭에서 통장을 눌러도 들고 난 돈이 보이지 않았다 -- 카드에는 있던
+            칸이 통장에만 없어, 잔액이 왜 그 값인지 알 길이 없었다.
           */}
-          {target.account.currency !== displayCurrency ? (
-            <Text className="text-xs text-gray-500">
-              {t('assets.trendNote', {
-                display: displayCurrency,
-                account: target.account.currency,
-              })}
-            </Text>
-          ) : null}
+          <View className="gap-2 rounded-lg bg-white p-4 shadow-sm">
+            <Text className="text-sm font-medium text-gray-700">{t('assets.accountLedger')}</Text>
+            <AccountLedgerList
+              accountId={target.account.id}
+              currency={target.account.currency}
+              kind="asset"
+            />
+          </View>
         </>
       ) : (
         <CardCharts
@@ -218,7 +220,13 @@ function CardCharts({
   const load = useCallback(async () => {
     try {
       setError('');
-      setUsage(await apiClient.getCardUsage(card.id));
+      /*
+       * 화면에 그리는 여섯 주기보다 훨씬 넉넉히 받아 둔다.
+       *
+       * 그래프를 좌우로 끌어 앞뒤 주기를 보는데, 창만큼만 받으면 끌 때마다 서버를
+       * 물어야 하고 답이 올 때까지 막대가 멈춰 있다 (useCardUsageWindow 참고).
+       */
+      setUsage(await apiClient.getCardUsage(card.id, MAX_USAGE_PERIODS));
     } catch {
       setUsage(null);
       setError(t('settlement.loadFailed'));
@@ -257,16 +265,12 @@ function CardCharts({
         ) : !usage ? (
           <Text className="text-sm text-gray-600">{t('settlement.loading')}</Text>
         ) : (
-          <>
-            <CardUsageChart
-              periods={usage.periods}
-              currency={usage.currency}
-              target={target}
-            />
-            <Text className="mt-2 text-xs text-gray-500">
-              {t(isCredit ? 'settlement.creditHint' : 'settlement.debitHint')}
-            </Text>
-          </>
+          <CardUsageChart
+            periods={usage.periods}
+            currency={usage.currency}
+            target={target}
+            cardId={card.id}
+          />
         )}
       </View>
 
@@ -310,123 +314,192 @@ function CardCharts({
       ) : null}
 
       {/*
-        사용·결제 내역. 통장 상세의 거래 내역과 같은 줄이다 (웹과 같다).
+        결제 내역. 통장 상세의 입출금 내역과 같은 자리다 (웹과 같다).
 
-        신용카드만 그린다. 체크카드는 쓰는 즉시 통장에서 빠져 쌓이는 대금이 없고,
-        그 내역은 결제 통장 쪽에 그대로 있다.
+        두 카드가 다른 데서 읽는다. 신용카드는 그 카드의 부채 계정에 사용과 대금이
+        쌓이므로 원장을 그대로 읽어 줄마다 남은 대금까지 붙지만, 체크카드는 쓰는 즉시
+        결제 통장에서 빠져 카드 쪽에 쌓이는 계정이 없다 -- 그쪽은 전표를 카드로 걸러
+        받는다. 예전에는 그 길이 없어 체크카드에만 이 칸이 통째로 비어 있었다.
       */}
-      {isCredit ? (
-        <CardLedger
-          card={card}
-          currency={currency}
-          reloadToken={mirrorVersion + ledgerVersion}
-        />
-      ) : null}
+      <View className="gap-2">
+        <Text className="text-sm font-medium text-gray-700">{t('assets.cardLedger')}</Text>
+        {isCredit ? (
+          <AccountLedgerList
+            accountId={card.liabilityAccountId}
+            currency={currency}
+            kind="liability"
+            reloadToken={ledgerVersion}
+          />
+        ) : (
+          <CardEntryList cardId={card.id} />
+        )}
+      </View>
     </View>
   );
 }
 
 /**
- * 카드의 사용·결제 내역.
+ * 한 계좌의 원장 줄. 통장과 신용카드가 함께 쓴다.
  *
- * 줄마다 그 거래 직후의 **남은 대금**이 붙는다. 쓴 줄을 만나면 늘고 결제한 줄을 만나면
- * 줄어드는 것이 그대로 보인다 -- 지금 얼마가 남았는지만 보고는 그 금액이 어디서 왔는지
- * 알 수 없다.
- *
- * 부호를 뒤집어 읽는다. 사용과 결제는 카드의 부채 계정에 쌓이는데 그 계정은 빚이 늘수록
- * 음수라, 그대로 그리면 쓴 돈이 마이너스로 보인다.
+ * 카드의 사용과 대금 결제는 그 카드의 **부채 계정**에 쌓이므로 통장과 같은 원장이다.
+ * 웹과 같은 규칙이라, 같은 항목을 눌러 웹과 앱이 같은 줄을 본다.
  */
-function CardLedger({
-  card,
+function AccountLedgerList({
+  accountId,
   currency,
-  reloadToken,
+  kind,
+  reloadToken = 0,
 }: {
-  card: Card;
+  /** 신용카드는 그 카드의 부채 계정 id 다. */
+  accountId: string | null;
   /** 원장에 적힌 통화. 기준통화 환산액이 아니다. */
   currency: string;
-  reloadToken: number;
+  /** 'asset' 은 통장, 'liability' 는 카드의 부채 계정이다. */
+  kind: 'asset' | 'liability';
+  /** 부르는 자리에서 다시 읽게 하는 값. 대금을 기록하면 카드 쪽이 올린다. */
+  reloadToken?: number;
+}) {
+  // 남이 적은 거래도 들어와야 한다. 사본이 바뀌면 다시 읽는다 (웹은 0에 머문다).
+  const mirrorVersion = useMirrorVersion();
+  const ledger = useAccountLedger(accountId, mirrorVersion + reloadToken);
+
+  return <LedgerRows ledger={ledger} currency={currency} kind={kind} />;
+}
+
+/**
+ * 체크카드의 결제 줄.
+ *
+ * 쓰는 즉시 결제 통장에서 빠져 카드 쪽에 쌓이는 계정이 없다. 전표를 그 카드로 걸러
+ * 받아 원장과 같은 모양으로 옮긴 뒤(core 의 useCardEntries) 같은 목록에 태운다 --
+ * 잔액 한 칸만 비고 나머지는 신용카드와 똑같이 읽힌다.
+ */
+function CardEntryList({ cardId }: { cardId: string }) {
+  const selectedProjectId = useProject((state) => state.selectedProjectId);
+  /*
+   * 금액은 표시 통화다 (EntryListItem.amount). 신용카드 줄은 부채 계정의 원장이라 그
+   * 계정의 통화로 적혀 있지만, 이쪽은 전표 목록에서 온 값이라 이미 환산되어 있다.
+   */
+  const displayCurrency = useProjectDisplayCurrency();
+  // 남이 그 카드로 결제한 것도 들어와야 한다. 사본이 바뀌면 다시 읽는다.
+  const mirrorVersion = useMirrorVersion();
+  const ledger = useCardEntries(cardId, selectedProjectId, mirrorVersion);
+
+  return <LedgerRows ledger={ledger} currency={displayCurrency} kind="liability" />;
+}
+
+/**
+ * 원장 줄을 그린다. 어디서 받아 온 줄인지는 보지 않는다.
+ *
+ * **카드는 부호를 뒤집어 읽는다.** 부채 계정은 빚이 늘수록 음수라 그대로 그리면 쓴 돈이
+ * 마이너스로 보인다. 카드에서 알고 싶은 것은 얼마를 썼고 얼마가 남았는가다.
+ */
+function LedgerRows({
+  ledger,
+  currency,
+  kind,
+}: {
+  ledger: {
+    rows: LedgerLikeRow[];
+    hasMore: boolean;
+    isLoading: boolean;
+    hasError: boolean;
+    loadMore: () => void;
+  };
+  /** 원장에 적힌 통화. 기준통화 환산액이 아니다. */
+  currency: string;
+  /** 'asset' 은 통장, 'liability' 는 카드다 (부채 계정이 없는 체크카드까지). */
+  kind: 'asset' | 'liability';
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
-  const { rows, hasMore, isLoading, hasError, loadMore } = useAccountLedger(
-    card.liabilityAccountId,
-    reloadToken,
-  );
+  const { rows, hasMore, isLoading, hasError, loadMore } = ledger;
+
+  const isCard = kind === 'liability';
+
+  if (hasError) {
+    return <Text className="text-sm text-red-600">{t('feed.loadFailed')}</Text>;
+  }
+
+  if (rows.length === 0) {
+    return (
+      <Text className="text-sm text-gray-600">
+        {isLoading ? t('settlement.loading') : t('assets.noEntries')}
+      </Text>
+    );
+  }
 
   return (
-    <View className="gap-2">
-      <View>
-        <Text className="text-sm font-medium text-gray-700">{t('assets.cardLedger')}</Text>
-        <Text className="mt-1 text-xs text-gray-500">{t('assets.cardLedgerHint')}</Text>
-      </View>
+    <>
+      {rows.map((row) => {
+        // 원장 금액은 계정 관점이다 (부채가 늘면 음수). 카드에서 읽을 값으로 뒤집는다.
+        const amount = isCard ? -toNumber(row.amount) : toNumber(row.amount);
+        /*
+          그 거래 직후의 잔액. 체크카드에는 없다 -- 쓰는 즉시 결제 통장에서 빠져
+          카드 쪽에 쌓이는 것이 없으므로 "남은 대금"이라 부를 값이 아예 없다.
+        */
+        const balance =
+          row.balanceAfter === null
+            ? null
+            : isCard
+              ? -toNumber(row.balanceAfter)
+              : toNumber(row.balanceAfter);
+        const isUp = amount > 0;
+        /*
+          색. 통장은 들어온 돈이 초록이고, 카드는 반대다 -- 쌓인 대금이 갚아야 할
+          돈이라 빨강, 결제가 그것을 더는 일이라 초록이다.
+        */
+        const isGood = isCard ? !isUp : isUp;
+        /*
+          제목. 설명이 비어 있으면 분류가 그 줄의 이름 노릇을 한다 ("대분류 > 소분류").
 
-      {hasError ? (
-        <Text className="text-sm text-red-600">{t('feed.loadFailed')}</Text>
-      ) : rows.length === 0 ? (
-        <Text className="text-sm text-gray-600">
-          {isLoading ? t('settlement.loading') : t('assets.noEntries')}
-        </Text>
-      ) : (
-        <>
-          {rows.map((row) => {
-            // 원장 금액은 계정 관점이다 (부채가 늘면 음수). 카드에서 읽을 값으로 뒤집는다.
-            const amount = -toNumber(row.amount);
-            const remaining = -toNumber(row.balanceAfter);
-            const isUsed = amount > 0;
+          예전에는 제목 아래에 가맹점을 한 줄 더 적었다. 그런데 가맹점은 설명과 같은
+          글자인 일이 많아(카드 내역을 들여올 때 둘 다 상호가 된다) 같은 말이 두 번
+          섰다. 분류는 이체 계열에 없으므로 그때는 "(내용 없음)"이 남는다.
+        */
+        const title = row.description || categoryTitleOf(row) || t('entry.noTitle');
 
-            return (
-              <View
-                key={row.postingId}
-                className="flex-row items-start justify-between gap-3 border-b border-gray-100 py-2.5"
+        return (
+          <View
+            key={row.postingId}
+            className="flex-row items-start justify-between gap-3 border-b border-gray-100 py-2.5"
+          >
+            <View className="flex-1">
+              <Text className="text-[15px] text-gray-900">{title}</Text>
+              <Text className="mt-0.5 text-xs text-gray-500">{formatDate(row.date, timeZone)}</Text>
+            </View>
+
+            <View className="items-end">
+              <Text
+                className={`text-[15px] font-bold ${isGood ? 'text-green-600' : 'text-red-600'}`}
               >
-                <View className="flex-1">
-                  <Text className="text-[15px] text-gray-900">
-                    {row.description || t('entry.noTitle')}
-                  </Text>
-                  {row.merchant ? (
-                    <Text className="mt-0.5 text-xs text-gray-600">{row.merchant}</Text>
-                  ) : null}
-                  <Text className="mt-0.5 text-xs text-gray-500">
-                    {formatDate(row.date, timeZone)}
-                  </Text>
-                </View>
-
-                <View className="items-end">
-                  {/*
-                    쌓인 대금이 빨강, 결제가 초록이다. 통장과 색이 반대인 것은 뜻이
-                    반대이기 때문이다 -- 카드에서 늘어나는 돈은 갚아야 할 돈이다.
-                  */}
-                  <Text
-                    className={`text-[15px] font-bold ${isUsed ? 'text-red-600' : 'text-green-600'}`}
-                  >
-                    {isUsed ? '+' : '-'}
-                    {formatCurrency(Math.abs(amount), currency)}
-                  </Text>
-                  <Text className="mt-0.5 text-xs text-gray-500">
-                    {t('assets.cardBalanceAfter', {
-                      amount: formatCurrency(remaining, currency),
-                    })}
-                  </Text>
-                </View>
-              </View>
-            );
-          })}
-
-          {hasMore ? (
-            <Pressable
-              onPress={loadMore}
-              disabled={isLoading}
-              className={`items-center rounded-lg border border-gray-200 px-3 py-3 active:bg-gray-50 ${
-                isLoading ? 'opacity-50' : ''
-              }`}
-            >
-              <Text className="text-sm font-medium text-gray-600">
-                {isLoading ? t('feed.loadingMore') : t('assets.more')}
+                {isUp ? '+' : '-'}
+                {formatCurrency(Math.abs(amount), currency)}
               </Text>
-            </Pressable>
-          ) : null}
-        </>
-      )}
-    </View>
+              {balance !== null ? (
+                <Text className="mt-0.5 text-xs text-gray-500">
+                  {t(isCard ? 'assets.cardBalanceAfter' : 'assets.balanceAfter', {
+                    amount: formatCurrency(balance, currency),
+                  })}
+                </Text>
+              ) : null}
+            </View>
+          </View>
+        );
+      })}
+
+      {hasMore ? (
+        <Pressable
+          onPress={loadMore}
+          disabled={isLoading}
+          className={`items-center rounded-lg border border-gray-200 px-3 py-3 active:bg-gray-50 ${
+            isLoading ? 'opacity-50' : ''
+          }`}
+        >
+          <Text className="text-sm font-medium text-gray-600">
+            {isLoading ? t('feed.loadingMore') : t('assets.more')}
+          </Text>
+        </Pressable>
+      ) : null}
+    </>
   );
 }

@@ -302,9 +302,6 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
               </Svg>
             </Pressable>
           </View>
-
-          {/* 무엇을 할 수 있는 그래프인지 적어 둔다. 앱에는 마우스 모양이 없다. */}
-          <Text className="mt-1 text-xs text-gray-500">{t('history.appReadHint')}</Text>
         </>
       )}
     </View>

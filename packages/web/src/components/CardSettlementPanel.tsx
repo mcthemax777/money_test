@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import {
   LEDGER_MIN_ENTRY_DATE_KEY,
+  MAX_USAGE_PERIODS,
   ledgerMaxEntryDateKey,
   zonedFormValueToUtc,
   type CardTransferDirection,
@@ -114,7 +115,13 @@ export default function CardSettlementPanel({
 
   const loadUsage = useCallback(async () => {
     try {
-      setUsage(await apiClient.getCardUsage(card.id));
+      /*
+       * 화면에 그리는 여섯 주기보다 훨씬 넉넉히 받아 둔다.
+       *
+       * 그래프를 좌우로 끌어 앞뒤 주기를 보는데, 창만큼만 받으면 끌 때마다 서버를
+       * 물어야 하고 답이 올 때까지 막대가 멈춰 있다 (useCardUsageWindow 참고).
+       */
+      setUsage(await apiClient.getCardUsage(card.id, MAX_USAGE_PERIODS));
     } catch (err) {
       console.error('카드 사용 현황 조회 실패:', err);
       setUsage(null);
@@ -207,12 +214,8 @@ export default function CardSettlementPanel({
             periods={usage.periods}
             currency={usage.currency}
             target={performanceTarget}
+            cardId={card.id}
           />
-          <p className="mt-2 text-xs text-gray-500">
-            {isCredit
-              ? t('settlement.creditHint')
-              : t('settlement.debitHint')}
-          </p>
         </div>
 
         {/*

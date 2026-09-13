@@ -350,13 +350,11 @@ export const en: Record<MessageKey, string> = {
   'assets.moveUp': 'Move up',
   'assets.moveDown': 'Move down',
   'assets.orderSaveFailed': 'Could not save the new order.',
-  'assets.trendNote':
-    'The trend is a book value converted into {display}. It builds up at the rate of each entry, so its unit differs from the balance above ({account}).',
   'assets.noEntries': 'No entries yet.',
   'assets.balanceAfter': 'Balance {amount}',
-  'assets.cardLedger': 'Charges and payments',
+  'assets.accountLedger': 'Deposits and withdrawals',
+  'assets.cardLedger': 'Payments',
   'assets.cardBalanceAfter': 'Owed {amount}',
-  'assets.cardLedgerHint': 'Charges add up; each payment brings the balance back down.',
   'assets.more': 'Show more',
   'assets.detail': 'Details',
   'assets.viewEntries': 'See entries',
@@ -369,7 +367,6 @@ export const en: Record<MessageKey, string> = {
   'assets.balanceWithDue': 'Balance {balance} · Card due {due}',
   'assets.balanceWithRefund': 'Balance {balance} · Refund pending {due}',
   'assets.noAccounts': 'No accounts yet.',
-  'assets.webOnlyRest': 'Account ledgers are available on the web for now.',
   'account.detail': 'Account details',
   'account.bank': 'Bank',
   'account.balance': 'Balance',
@@ -429,11 +426,6 @@ export const en: Record<MessageKey, string> = {
   'settlement.ongoing': 'Open',
   'settlement.upcoming': 'Upcoming',
   'settlement.targetLine': 'Target {amount}',
-  'settlement.chartHint': 'The dashed line is the spending target. Bars above it are green, bars below are amber, and a faded bar is still open.',
-  'settlement.chartFutureHint': 'Grey bars are upcoming periods that only hold scheduled installments.',
-  'settlement.creditHint':
-    'Installments count only the current portion. The outstanding amount already reflects payments, so it differs from this total.',
-  'settlement.debitHint': 'This left the account immediately. It is counted by calendar month.',
   'settlement.modalTitle': 'Record a card payment',
   'settlement.submitting': 'Working...',
   'settlement.submit': 'Record',
@@ -488,7 +480,6 @@ export const en: Record<MessageKey, string> = {
   'history.backToNow': 'Back to now',
   'history.empty': 'No balance records to show.',
   'history.balance': 'Balance',
-  'history.appReadHint': 'Drag sideways for other periods; tap a slot to read that balance.',
 
   // ===== Ledger screen =====
   'ledger.noun': 'ledger',

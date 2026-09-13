@@ -4,7 +4,7 @@ import { useEffect, useState, useMemo, useCallback, useRef, type ReactNode } fro
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '@money/core/lib/api-client';
-import type { Account, Card, Category, Person } from '@money/core/lib/types';
+import type { Account, Card, Category, LedgerLikeRow, Person } from '@money/core/lib/types';
 import { formatCurrency, toAmountString, toNumber } from '@money/core/lib/money';
 import { sumNetWorth, type NetWorthParts } from '@money/core/lib/net-worth';
 import { accountDueOf } from '@money/core/lib/card-settlement';
@@ -72,6 +72,8 @@ import { accountTypeLabel } from '@money/core/lib/account-type';
 import { useTranslation } from '@money/core/lib/i18n';
 import { apiErrorCode, useApiError } from '@money/core/lib/api-error';
 import { useAccountLedger } from '@money/core/hooks/useAccountLedger';
+import { useCardEntries } from '@money/core/hooks/useCardEntries';
+import { categoryTitleOf } from '@money/core/lib/entries';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 
@@ -215,10 +217,10 @@ function LedgerList({
   isLoading,
   onMore,
 }: {
-  rows: AccountDto.LedgerRow[];
+  rows: LedgerLikeRow[];
   /** 그 계좌의 통화. 기준통화 환산액이 아니라 원장에 적힌 그대로다. */
   currency: string;
-  /** 'asset' 은 통장, 'liability' 는 카드의 부채 계정이다. */
+  /** 'asset' 은 통장, 'liability' 는 카드다 (부채 계정이 없는 체크카드까지). */
   kind: 'asset' | 'liability';
   hasMore: boolean;
   isLoading: boolean;
@@ -229,54 +231,65 @@ function LedgerList({
   const isCard = kind === 'liability';
 
   if (rows.length === 0) {
-    return <p className="text-gray-600 text-center py-8">{t('assets.noEntries')}</p>;
+    return <p className="text-sm text-gray-600">{t('assets.noEntries')}</p>;
   }
 
   return (
-    <div className="space-y-3">
+    <div>
       {rows.map((row) => {
         // 원장 posting의 amount는 이미 부호를 갖는다 (자산 증가 +, 감소 -).
         // 부호를 그대로 두고 앞에 '-'를 또 붙이면 '--₩10,000'이 된다. 절댓값으로 찍는다.
         const amount = isCard ? -toNumber(row.amount) : toNumber(row.amount);
-        const balance = isCard ? -toNumber(row.balanceAfter) : toNumber(row.balanceAfter);
+        /*
+          그 거래 직후의 잔액. 체크카드에는 없다 -- 쓰는 즉시 결제 통장에서 빠져
+          카드 쪽에 쌓이는 것이 없으므로 "남은 대금"이라 부를 값이 아예 없다.
+        */
+        const balance =
+          row.balanceAfter === null
+            ? null
+            : isCard
+              ? -toNumber(row.balanceAfter)
+              : toNumber(row.balanceAfter);
         const isUp = amount > 0;
         /*
           색. 통장은 들어온 돈이 초록이고, 카드는 반대다 -- 쌓인 대금이 갚아야 할
-          돈이라 빨강, 결제가 그것을 더는 일이라 초록이다.
+          돈이라 빨강, 결제가 그것을 더는 일이다.
         */
         const color = (isCard ? !isUp : isUp) ? 'text-green-600' : 'text-red-600';
         /*
-          카드 이름은 통장에서만 뜻이 있다. 그 통장에서 무엇으로 결제했는지가 줄마다
-          다르기 때문이다. 카드 상세에서는 모든 줄이 그 카드라 이름만 줄줄이 남는다.
+          제목. 설명이 비어 있으면 분류가 그 줄의 이름 노릇을 한다 ("대분류 > 소분류").
+
+          예전에는 제목 아래에 가맹점을 한 줄 더 적었다. 그런데 가맹점은 설명과 같은
+          글자인 일이 많아(카드 내역을 들여올 때 둘 다 상호가 된다) 같은 말이 두 번
+          섰다. 분류는 이체 계열에 없으므로 그때는 "(내용 없음)"이 남는다.
         */
-        const label = (isCard ? row.merchant : row.merchant || row.cardName) || '';
+        const title = row.description || categoryTitleOf(row) || t('entry.noTitle');
 
         return (
           <div
             key={row.postingId}
-            className="border border-gray-200 rounded-lg p-4 hover:shadow-md transition"
+            className="flex items-start justify-between gap-3 border-b border-gray-100 py-2.5"
           >
-            <div className="flex justify-between items-start gap-4">
-              <div className="flex-1 min-w-0">
-                <p className="font-bold text-gray-900">{row.description || t('entry.noTitle')}</p>
-                {label && <p className="text-sm text-gray-600 mt-1">{label}</p>}
-                <p className="text-xs text-gray-500 mt-1">{formatDate(row.date, timeZone)}</p>
-              </div>
-              <div className="text-right whitespace-nowrap">
-                {/*
-                  원장의 금액과 잔액은 그 계좌의 통화다 (기준통화 환산액이 아니다).
-                  통화를 넘기지 않으면 달러 통장의 $100이 ₩100으로 보인다.
-                */}
-                <p className={`font-bold text-lg ${color}`}>
-                  {isUp ? '+' : '-'}
-                  {formatCurrency(Math.abs(amount), currency)}
-                </p>
-                <p className="text-xs text-gray-500 mt-1">
+            <div className="flex-1 min-w-0">
+              <p className="text-[15px] text-gray-900">{title}</p>
+              <p className="mt-0.5 text-xs text-gray-500">{formatDate(row.date, timeZone)}</p>
+            </div>
+            <div className="text-right whitespace-nowrap">
+              {/*
+                원장의 금액과 잔액은 그 계좌의 통화다 (기준통화 환산액이 아니다).
+                통화를 넘기지 않으면 달러 통장의 $100이 ₩100으로 보인다.
+              */}
+              <p className={`text-[15px] font-bold ${color}`}>
+                {isUp ? '+' : '-'}
+                {formatCurrency(Math.abs(amount), currency)}
+              </p>
+              {balance !== null && (
+                <p className="mt-0.5 text-xs text-gray-500">
                   {t(isCard ? 'assets.cardBalanceAfter' : 'assets.balanceAfter', {
                     amount: formatCurrency(balance, currency),
                   })}
                 </p>
-              </div>
+              )}
             </div>
           </div>
         );
@@ -287,7 +300,7 @@ function LedgerList({
           type="button"
           onClick={onMore}
           disabled={isLoading}
-          className="w-full py-3 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
+          className="mt-2 w-full py-3 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
         >
           {isLoading ? t('feed.loadingMore') : t('assets.more')}
         </button>
@@ -763,7 +776,7 @@ export default function DashboardPage() {
   }, [selectedAccount, detailType, loadAccountTransactions, entryVersion, mirrorVersion]);
 
   /*
-   * 카드의 사용·결제 내역.
+   * 신용카드의 결제 내역.
    *
    * 카드의 부채 계정 원장이다. 통장 상세가 보는 것과 같은 줄이라 받아 오는 자리도
    * 같다(core 의 useAccountLedger). 체크카드는 그 계정이 없어 비어 있다.
@@ -772,6 +785,28 @@ export default function DashboardPage() {
     detailType === 'card' ? selectedCard?.liabilityAccountId ?? null : null,
     entryVersion + mirrorVersion,
   );
+
+  /*
+   * 체크카드의 결제 내역.
+   *
+   * 쓰는 즉시 결제 통장에서 빠져 카드 쪽에 쌓이는 계정이 없다. 통장 원장에서는 다른
+   * 수단으로 쓴 것과 뒤섞여 있으므로, 전표를 그 카드로 걸러 받아 같은 모양의 줄로
+   * 옮긴다 (core 의 useCardEntries).
+   */
+  const debitLedger = useCardEntries(
+    detailType === 'card' && selectedCard && !selectedCard.liabilityAccountId
+      ? selectedCard.id
+      : null,
+    selectedProjectId,
+    entryVersion + mirrorVersion,
+  );
+
+  /**
+   * 고른 카드의 결제 내역. 두 갈래 중 그 카드가 쓰는 쪽이다.
+   *
+   * 어디서 읽었든 줄의 모양이 같아(LedgerLikeRow) 화면은 하나만 그린다.
+   */
+  const cardPayments = selectedCard?.liabilityAccountId ? cardLedger : debitLedger;
 
   const getAccountCards = (accountId: string) =>
     cards.filter((c) => c.paymentAccountId === accountId);
@@ -1238,28 +1273,29 @@ export default function DashboardPage() {
 
               {/* 이 계좌의 잔액 추이 */}
               <AssetHistoryChart accountId={selectedAccount.id} projectId={selectedProjectId} />
-              {/*
-                추이는 기준통화 장부가다. 위 잔액(계좌 통화)과 단위가 다르므로 밝혀 둔다.
-                거래마다 그때의 환율로 쌓인 값이라 최신 환율로 다시 환산한 값과도 다르다.
-              */}
-              {selectedAccount.currency !== displayCurrency && (
-                <p className="-mt-2 text-xs text-gray-500">
-                  {t('assets.trendNote', {
-                    display: displayCurrency,
-                    account: selectedAccount.currency,
-                  })}
-                </p>
-              )}
 
-              {/* 거래 내역 */}
-              <LedgerList
-                rows={accountTransactions}
-                currency={selectedAccount.currency}
-                kind="asset"
-                hasMore={Boolean(ledgerCursor)}
-                isLoading={isLoadingLedger}
-                onMore={loadMoreAccountTransactions}
-              />
+              {/*
+                거래 내역. 앱의 통장 상세와 같은 머리글·같은 줄이다.
+
+                위에 선을 하나 긋는다. 추이 그래프가 제 상자 없이 바로 위에 서 있어,
+                선이 없으면 그래프의 가로축과 첫 거래 줄이 한 덩어리로 읽힌다
+                (카드 상세의 사용·결제 내역과 같은 구분선이다).
+
+                이 칸을 감싸는 상자에는 자식 사이 간격이 없다. 선에 위 여백을 주지 않으면
+                그래프의 가로축 글자에 그대로 붙는다 -- 아래(pt-4)보다 위(mt-8)를 넓게 두어
+                선이 그래프가 아니라 이 칸의 머리로 읽히게 한다.
+              */}
+              <div className="mt-8 space-y-3 border-t pt-4">
+                <h3 className="text-sm font-medium text-gray-700">{t('assets.accountLedger')}</h3>
+                <LedgerList
+                  rows={accountTransactions}
+                  currency={selectedAccount.currency}
+                  kind="asset"
+                  hasMore={Boolean(ledgerCursor)}
+                  isLoading={isLoadingLedger}
+                  onMore={loadMoreAccountTransactions}
+                />
+              </div>
             </div>
           ) : detailType === 'person' && selectedPerson ? (
             /* 구성원: 그 사람 계좌들의 합계 추이와 최근 거래 */
@@ -1345,9 +1381,14 @@ export default function DashboardPage() {
                   </>
                 }
               >
-                <p className="text-xl font-bold text-blue-600 mt-1">
-                  {formatCurrency(selectedCard.currentUsage, currencyOfCard(selectedCard))}
-                </p>
+                {/*
+                  카드에는 큰 금액을 적지 않는다.
+
+                  여기 있던 값은 이번 주기의 사용액이었는데, 바로 아래 실적 판과
+                  사용액 그래프가 같은 값을 구간까지 밝혀 다시 말한다. 머리글에 한 번
+                  더 두면 같은 숫자가 한 화면에 셋이 되고, 그중 이것만 무엇을 센
+                  값인지 적혀 있지 않아 "남은 대금"으로 읽혔다.
+                */}
                 {selectedCard.issuer?.name && (
                   <p className="text-sm text-gray-600 mt-1">{selectedCard.issuer.name}</p>
                 )}
@@ -1368,27 +1409,34 @@ export default function DashboardPage() {
               </div>
 
               {/*
-                사용·결제 내역. 통장 상세의 거래 내역과 같은 목록이다.
+                결제 내역. 통장 상세의 입출금 내역과 같은 자리다.
 
-                신용카드만 그린다. 체크카드는 쓰는 즉시 통장에서 빠져 쌓이는 대금이
-                없고, 그 내역은 결제 통장의 거래 내역에 그대로 있다.
+                두 카드가 다른 데서 읽는다. 신용카드는 그 카드의 부채 계정에 사용과
+                대금이 쌓이므로 원장을 그대로 읽어 줄마다 남은 대금까지 붙지만,
+                체크카드는 쓰는 즉시 결제 통장에서 빠져 카드 쪽에 쌓이는 계정이 없다 --
+                그쪽은 전표를 카드로 걸러 받는다. 예전에는 그 길이 없어 체크카드에만
+                이 칸이 통째로 없었다.
               */}
-              {selectedCard.liabilityAccountId && (
-                <div className="pt-4 border-t space-y-3">
-                  <div>
-                    <h3 className="text-sm font-medium text-gray-700">{t('assets.cardLedger')}</h3>
-                    <p className="mt-1 text-xs text-gray-500">{t('assets.cardLedgerHint')}</p>
-                  </div>
-                  <LedgerList
-                    rows={cardLedger.rows}
-                    currency={currencyOfCard(selectedCard)}
-                    kind="liability"
-                    hasMore={cardLedger.hasMore}
-                    isLoading={cardLedger.isLoading}
-                    onMore={cardLedger.loadMore}
-                  />
-                </div>
-              )}
+              <div className="pt-4 border-t space-y-3">
+                <h3 className="text-sm font-medium text-gray-700">{t('assets.cardLedger')}</h3>
+                <LedgerList
+                  rows={cardPayments.rows}
+                  /*
+                    통화가 갈린다. 신용카드 줄은 부채 계정의 원장이라 그 계정의 통화로
+                    적혀 있지만, 체크카드 줄은 전표 목록에서 온 것이라 표시 통화로
+                    환산된 금액이다 (EntryListItem.amount).
+                  */
+                  currency={
+                    selectedCard.liabilityAccountId
+                      ? currencyOfCard(selectedCard)
+                      : displayCurrency
+                  }
+                  kind="liability"
+                  hasMore={cardPayments.hasMore}
+                  isLoading={cardPayments.isLoading}
+                  onMore={cardPayments.loadMore}
+                />
+              </div>
             </div>
           ) : (
             <div className="bg-white rounded-lg border border-dashed border-gray-300 p-10 text-center">

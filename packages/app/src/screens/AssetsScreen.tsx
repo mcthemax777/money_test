@@ -331,9 +331,6 @@ export default function AssetsScreen() {
         />
       )}
       </View>
-
-      {/* 아직 웹에만 있는 것들. 없는 채로 두면 앱에서 할 수 있는 일로 오해한다. */}
-      <Text className="text-xs text-gray-500">{t('assets.webOnlyRest')}</Text>
         </>
       )}
 
