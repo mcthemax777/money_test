@@ -477,26 +477,38 @@ export default function TransactionsScreen() {
   });
 
   /*
-   * 펼치고 접는 누름. 예산을 처음으로 되돌리고 움직임을 건다.
+   * 예산을 **지금 그려 둔 만큼**으로 되돌린다. 펼치고 접을 때마다 부른다.
    *
    * 되돌리지 않으면 한 달을 펼쳤다 접고 다른 달을 펼칠 때 예산이 이미 커져 있어, 그
    * 달도 한 번에 다 그린다 -- 곧 처음의 멈춤이 그대로 돌아온다.
+   *
+   * 그렇다고 `FIRST_CHUNK` 로 깎으면 안 된다. 앱은 화면 전체가 껍데기의 스크롤 하나라
+   * (`shell/AppShell`) 이미 그려 둔 줄이 열두 개로 줄어드는 순간 내용이 화면보다
+   * 짧아지고, ScrollView 는 갈 곳 없는 스크롤을 맨 위로 자른다 -- 아래쪽에서 년월 줄을
+   * 눌렀을 뿐인데 화면이 첫 달로 튀어 오른다. 그려 둔 것은 그대로 두고 새로 필 것만
+   * 차례로 세우면, 내용은 늘기만 하므로 보던 자리가 그대로 남는다.
    */
+  const restartBudget = useCallback(
+    () => setBudget((room) => Math.min(wantedEntries.current, room) + FIRST_CHUNK),
+    [],
+  );
+
+  /** 펼치고 접는 누름. 움직임을 걸고 예산을 다시 잡는다. */
   const unfoldMonth = useCallback(
     (yearMonth: string) => {
       LayoutAnimation.configureNext(UNFOLD);
-      setBudget(FIRST_CHUNK);
+      restartBudget();
       tx.cycleMonth(yearMonth);
     },
-    [tx.cycleMonth],
+    [restartBudget, tx.cycleMonth],
   );
   const unfoldRow = useCallback(
     (yearMonth: string, key: string) => {
       LayoutAnimation.configureNext(UNFOLD);
-      setBudget(FIRST_CHUNK);
+      restartBudget();
       tx.toggleRow(yearMonth, key);
     },
-    [tx.toggleRow],
+    [restartBudget, tx.toggleRow],
   );
 
   /*
