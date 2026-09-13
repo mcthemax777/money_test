@@ -164,6 +164,14 @@ export namespace AccountDto {
     balanceAfter: string;
     cardId: string | null;
     cardName: string | null;
+    /*
+     * 설명이 빈 줄의 이름으로 쓸 분류. 목록 한 줄과 같은 규칙이다 (EntryListItem).
+     *
+     * 이체 계열(계좌 다리가 둘 이상)에는 없다 -- 그 전표의 카테고리 다리는 수수료라
+     * 대표 분류가 아니다. 소분류면 `parentCategoryName` 이 함께 온다.
+     */
+    categoryName: string | null;
+    parentCategoryName: string | null;
   }
 
   export type LedgerResponse = CursorPage<LedgerRow>;

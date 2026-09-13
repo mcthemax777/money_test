@@ -58,6 +58,24 @@ export function expenseAmountOf(entry: EntryListItem): number {
 }
 
 /**
+ * 설명이 빈 줄의 이름으로 쓰는 분류. "대분류 > 소분류" 를 다 적는다.
+ *
+ * 소분류가 없으면 대분류 하나, 분류 자체가 없으면 빈 글자다 (부르는 쪽이 "(내용 없음)"
+ * 으로 받는다). 이름 자리에서는 계층을 좁히지 않는다 -- 그 줄에서 유일하게 무슨 거래인지
+ * 말하는 글자이기 때문이다. 곁말에 적는 분류는 이와 달리 잎사귀 하나만 적는다.
+ *
+ * 거래 목록 한 줄과 자산 상세의 원장 한 줄이 함께 쓴다. 웹과 앱까지 넷이 같은 규칙으로
+ * 읽혀야 해서 여기 둔다.
+ */
+export function categoryTitleOf(row: {
+  categoryName: string | null;
+  parentCategoryName: string | null;
+}): string {
+  if (!row.categoryName) return '';
+  return row.parentCategoryName ? `${row.parentCategoryName} > ${row.categoryName}` : row.categoryName;
+}
+
+/**
  * 목록 한 줄이 곁말에 적는 "쓴 자산". 카드로 냈으면 카드, 아니면 통장이다.
  *
  * 제목에 이미 선 이름은 다시 적지 않는다. 이체는 제목이 곧 "보낸 곳 -> 받은 곳"이라

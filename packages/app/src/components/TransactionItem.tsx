@@ -8,7 +8,7 @@ import { Pressable, Text, View } from 'react-native';
 import type { EntryListItem } from '@money/types';
 
 import { formatDate, formatTime } from '@money/core/lib/datetime';
-import { entryAssetName } from '@money/core/lib/entries';
+import { categoryTitleOf, entryAssetName } from '@money/core/lib/entries';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
@@ -56,12 +56,9 @@ function TransactionItemView({
       ? `${entry.accountName} → ${flowTo}`
       : '';
 
-  // 설명이 빈 거래의 이름으로 쓰는 분류. 이름 자리에는 "대분류 > 소분류"를 다 적는다
-  // -- 그 줄에서 유일하게 무슨 거래인지 말하는 글자라 좁히지 않는다. 아래 부속 정보
-  // 줄의 분류는 이와 달리 잎사귀 하나만 적는다.
-  const categoryLabel = entry.parentCategoryName
-    ? `${entry.parentCategoryName} > ${entry.categoryName}`
-    : entry.categoryName;
+  // 설명이 빈 거래의 이름으로 쓰는 분류 ("대분류 > 소분류"). 자산 상세의 원장 줄도
+  // 같은 것을 쓰므로 규칙은 core 에 있다.
+  const categoryLabel = categoryTitleOf(entry);
 
   const title = (() => {
     if (entry.kind === 'card_payment') {

@@ -360,4 +360,18 @@ runSmoke('reports', async (ctx) => {
   ctx.check('원장 첫 행 잔액 = 현재 잔액', ledgerView.data[0].balanceAfter, bankBalance.toString());
   const oldest = ledgerView.data[ledgerView.data.length - 1];
   ctx.check('원장 마지막 행이 기초잔액', oldest.description.includes('기초잔액'), true);
+
+  /*
+   * 원장 줄의 대표 분류. 설명이 빈 줄의 이름 자리에 쓴다.
+   *
+   * 이체는 분류를 달지 않는다 -- 그 전표의 카테고리 다리는 수수료라, 그것을 이름으로
+   * 삼으면 "저축 이체" 가 "수수료" 로 읽힌다 (목록 한 줄의 classifyEntry 와 같은 규칙).
+   */
+  const ledgerOf = (description: string) =>
+    ledgerView.data.find((row) => row.description === description);
+  const expenseRow = ledgerOf('7월 점심');
+  ctx.check('원장: 지출 줄에 분류가 온다', expenseRow?.categoryName, '점심');
+  ctx.check('원장: 소분류면 대분류도 온다', expenseRow?.parentCategoryName, '외식');
+  ctx.check('원장: 수입 줄에도 분류가 온다', ledgerOf('급여')?.categoryName, '급여');
+  ctx.check('원장: 이체 줄에는 분류가 없다', ledgerOf('저축 이체')?.categoryName, null);
 });

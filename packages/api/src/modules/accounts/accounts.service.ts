@@ -285,7 +285,28 @@ export class AccountsService {
     const rows = await this.prisma.posting.findMany({
       where: { accountId: id },
       include: {
-        entry: { select: { id: true, date: true, description: true, merchant: true } },
+        entry: {
+          select: {
+            id: true,
+            date: true,
+            description: true,
+            merchant: true,
+            /*
+             * 같은 전표의 다리들. 설명이 빈 줄에 적을 분류를 여기서 고른다.
+             *
+             * 분류는 이 계좌 다리가 아니라 형제 다리에 붙어 있어, 원장 한 줄만 보아서는
+             * 알 수 없다. 다리 수는 전표당 두엇이라 한 쪽(100줄)에 얹어도 가볍다.
+             */
+            postings: {
+              select: {
+                accountId: true,
+                categoryId: true,
+                category: { select: { name: true, parent: { select: { name: true } } } },
+              },
+              orderBy: { id: 'asc' },
+            },
+          },
+        },
         card: { select: { id: true, name: true } },
       },
       orderBy: [{ entry: { date: 'desc' } }, { id: 'desc' }],
@@ -318,6 +339,8 @@ export class AccountsService {
       .reverse()
       .map((posting) => {
         running = running.add(posting.amount);
+        const category = this.ledgerRowCategory(posting.entry.postings);
+
         return {
           postingId: posting.id,
           entryId: posting.entry.id,
@@ -328,11 +351,31 @@ export class AccountsService {
           balanceAfter: running.toString(),
           cardId: posting.card?.id ?? null,
           cardName: posting.card?.name ?? null,
+          categoryName: category?.name ?? null,
+          parentCategoryName: category?.parent?.name ?? null,
         };
       })
       .reverse();
 
     return { data, nextCursor: hasMore ? page[page.length - 1].id : null };
+  }
+
+  /**
+   * 원장 한 줄에 적을 대표 분류. 설명이 빈 줄의 이름 노릇을 한다.
+   *
+   * 목록 한 줄과 같은 규칙이다 (`classifyEntry`). 계좌 다리가 둘 이상이면 이체 계열이라
+   * 분류를 달지 않는다 -- 그 전표에 카테고리 다리가 있어도 그것은 수수료이지 무슨 거래
+   * 인지를 말하는 분류가 아니다. 분할된 전표는 첫 다리를 대표로 삼는다.
+   */
+  private ledgerRowCategory(
+    legs: Array<{
+      accountId: string | null;
+      categoryId: string | null;
+      category: { name: string; parent: { name: string } | null } | null;
+    }>,
+  ) {
+    if (legs.filter((leg) => leg.accountId).length >= 2) return null;
+    return legs.find((leg) => leg.categoryId)?.category ?? null;
   }
 
   /**
