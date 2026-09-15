@@ -386,7 +386,6 @@ export const en: Record<MessageKey, string> = {
   'card.numberPlaceholder': '16 digits',
   'card.type': 'Card type',
   'card.issuer': 'Issuer',
-  'card.dayDefaultsNote': 'The statement and due days start from defaults. Adjust them on the web to match your issuer.',
   'card.issuerPlaceholder': 'Choose a card issuer',
   'card.issuerRequired': 'Choose a card issuer.',
   'card.usage': 'Spent',
@@ -855,6 +854,7 @@ export const en: Record<MessageKey, string> = {
   'editor.feeParentCategory': 'Fee category',
   'editor.feeChildCategory': 'Fee subcategory (optional)',
   'editor.description': 'Description',
+  'editor.descriptionOptional': 'Description (optional)',
   'editor.descriptionPlaceholder': 'What was it',
   'editor.merchant': 'Merchant (optional)',
   'editor.merchantPlaceholder': 'Shop, payee, ... (optional)',
@@ -877,7 +877,6 @@ export const en: Record<MessageKey, string> = {
   'editor.subCategoryAddTitle': 'Add a subcategory under {parent}',
 
   // ===== 앱의 거래 입력 폼 =====
-  'entryForm.descriptionRequired': 'Enter a description.',
   'entryForm.amountRequired': 'Enter an amount greater than zero.',
   'entryForm.dateInvalid': 'Enter the date as YYYY-MM-DD.',
   'entryForm.timeInvalid': 'Enter the time as HH:MM.',

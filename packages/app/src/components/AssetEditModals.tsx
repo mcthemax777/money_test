@@ -13,8 +13,16 @@ import { useEffect, useState } from 'react';
 import { Alert, Pressable, Text, TextInput, View } from 'react-native';
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import {
+  dayOfMonthHint,
+  DEFAULT_PAYMENT_DUE_DAY,
+  DEFAULT_STATEMENT_CLOSING_DAY,
+} from '@money/core/lib/day-of-month';
+import { toAmountString } from '@money/core/lib/money';
 import type { AssetSaveResult } from '@money/core/hooks/useAssetsData';
 
+import CardPerformanceField from './CardPerformanceField';
+import DayOfMonthSelect from './DayOfMonthSelect';
 import Modal from './Modal';
 import MoveRow from './MoveRow';
 
@@ -312,20 +320,58 @@ export function EditAccountModal({
 
 export function EditCardModal({
   target,
+  currency,
   onClose,
   isSubmitting,
   onSave,
   onMove,
   onRemove,
-}: RemovableEditProps<{ id: string; name: string }>) {
+}: {
+  /** 이 카드 금액의 통화. 결제 통장에 달려 있어 카드만 보고는 알 수 없다. */
+  currency: string;
+} & RemovableEditProps<{
+  id: string;
+  name: string;
+  cardType: 'debit' | 'credit';
+  statementClosingDay: number | null;
+  paymentDueDay: number | null;
+  creditLimit: string | null;
+  performanceAmount: string | null;
+}>) {
   const { t } = useTranslation();
   const [name, setName] = useState(target.name);
+  /**
+   * 마감일과 결제일. 신용카드에만 있다.
+   *
+   * 만들 때 기본값으로 들어가고 카드사 날짜는 대개 명세서를 봐야 아는 값이라, 고치는
+   * 자리가 더 자주 쓰인다. 예전에는 앱에 이 칸이 아예 없어 웹으로 가야만 고칠 수 있었다.
+   */
+  const [closingDay, setClosingDay] = useState(
+    target.statementClosingDay ?? DEFAULT_STATEMENT_CLOSING_DAY,
+  );
+  const [dueDay, setDueDay] = useState(target.paymentDueDay ?? DEFAULT_PAYMENT_DUE_DAY);
+  const [creditLimit, setCreditLimit] = useState(target.creditLimit ?? '');
+  /** 실적 기준액. 앱의 실적 판과 사용액 그래프 기준선이 이 값으로 그려진다. */
+  const [performanceAmount, setPerformanceAmount] = useState(target.performanceAmount ?? '');
   const [error, setError] = useState('');
+
+  const isCredit = target.cardType === 'credit';
 
   useEffect(() => {
     setName(target.name);
+    setClosingDay(target.statementClosingDay ?? DEFAULT_STATEMENT_CLOSING_DAY);
+    setDueDay(target.paymentDueDay ?? DEFAULT_PAYMENT_DUE_DAY);
+    setCreditLimit(target.creditLimit ?? '');
+    setPerformanceAmount(target.performanceAmount ?? '');
     setError('');
-  }, [target.id, target.name]);
+  }, [
+    target.id,
+    target.name,
+    target.statementClosingDay,
+    target.paymentDueDay,
+    target.creditLimit,
+    target.performanceAmount,
+  ]);
 
   const run = async (task: Promise<AssetSaveResult>, close: boolean) => {
     const result = await task;
@@ -345,7 +391,26 @@ export function EditCardModal({
         <Footer
           isSubmitting={isSubmitting}
           canSave={!isSubmitting && !!name.trim()}
-          onSave={() => run(onSave({ name: name.trim() }), true)}
+          onSave={() =>
+            run(
+              onSave({
+                name: name.trim(),
+                // 체크카드에는 청구 주기도 한도도 없다. 보내면 서버가 거부한다.
+                ...(isCredit
+                  ? {
+                      statementClosingDay: closingDay,
+                      paymentDueDay: dueDay,
+                      creditLimit: creditLimit.trim() ? toAmountString(creditLimit) : null,
+                    }
+                  : {}),
+                // 빈 값은 "조건 없음"이다. 지울 수 있어야 하므로 비어 있어도 보낸다.
+                performanceAmount: performanceAmount.trim()
+                  ? toAmountString(performanceAmount)
+                  : null,
+              }),
+              true,
+            )
+          }
           onRemovePress={() =>
             askThenRemove({
               t,
@@ -362,6 +427,35 @@ export function EditCardModal({
         <Field label={t('card.name')}>
           <TextInput value={name} onChangeText={setName} className={INPUT} />
         </Field>
+
+        {isCredit ? (
+          <>
+            <Field label={t('card.closingDay')}>
+              <DayOfMonthSelect value={closingDay} onSelect={setClosingDay} />
+            </Field>
+            <Field label={t('card.paymentDay')}>
+              <DayOfMonthSelect value={dueDay} onSelect={setDueDay} />
+            </Field>
+            <Text className="text-xs leading-5 text-gray-500">{dayOfMonthHint()}</Text>
+
+            <Field label={t('card.limit', { currency })}>
+              <TextInput
+                value={creditLimit}
+                onChangeText={setCreditLimit}
+                keyboardType="numeric"
+                className={INPUT}
+              />
+            </Field>
+          </>
+        ) : null}
+
+        <CardPerformanceField
+          cardType={target.cardType}
+          value={performanceAmount}
+          onChange={setPerformanceAmount}
+          statementClosingDay={isCredit ? closingDay : undefined}
+          inputClassName={INPUT}
+        />
 
         <MoveRow disabled={isSubmitting} onMove={(step) => void run(onMove(step), false)} />
         <ErrorLine message={error} />

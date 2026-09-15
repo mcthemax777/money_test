@@ -21,6 +21,10 @@ import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useEntryForm } from '@money/core/hooks/useEntryForm';
 import { useQuickAdd, type QuickAddResult } from '@money/core/hooks/useQuickAdd';
 import {
+  filledSubCategories,
+  type CategoryFormValues,
+} from '@money/core/hooks/useCategoryManager';
+import {
   accountValue,
   cardValue,
   parseMethod,
@@ -57,7 +61,6 @@ const INSTALLMENT_MONTHS = ['', '2', '3', '6', '12'];
 /** 검증이 짚은 자리를 화면의 문구로. 코드 이름은 규칙 쪽 이름 그대로다. */
 const VIOLATION_KEY: Record<string, MessageKey> = {
   PERSON_REQUIRED: 'editor.personRequired',
-  DESCRIPTION_REQUIRED: 'entryForm.descriptionRequired',
   AMOUNT_INVALID: 'entryForm.amountRequired',
   DATE_INVALID: 'entryForm.dateInvalid',
   TIME_INVALID: 'entryForm.timeInvalid',
@@ -167,6 +170,44 @@ export default function EntryEditor({
 
   /** 새 분류의 유형. 거래의 갈래가 정한다 (form.categoryChoices 와 같은 규칙). */
   const categoryType = values.kind === 'income' ? 'income' : 'expense';
+
+  /**
+   * 분류를 만든다. 대분류 하나와, 적어 둔 소분류들.
+   *
+   * 곧바로 고를 하나의 id 를 함께 돌려준다 -- 소분류를 하나만 적었으면 그것이 적으려던
+   * 분류이고, 아니면 대분류다 (여럿을 적었으면 어느 것인지 알 수 없다).
+   *
+   * 소분류를 만들다 실패해도 대분류는 되돌리지 않는다. 만들어진 것을 지우면 그 사이
+   * 남이 쓴 분류를 지우게 될 수 있고, 목록에 남아 있으면 사용자가 이어서 손볼 수 있다.
+   */
+  const createCategory = async ({
+    values,
+    parentId,
+  }: {
+    values: CategoryFormValues;
+    parentId?: string;
+  }): Promise<QuickAddResult> => {
+    /* 붙일 대분류를 골랐으면 그것을 쓰고, 아니면 새로 만든다. */
+    let parent = parentId;
+    if (!parent) {
+      const made = await quickAdd.addCategory({ name: values.name, type: values.type });
+      if (!made.ok || !made.id) return made;
+      parent = made.id;
+    }
+
+    const madeSubs: string[] = [];
+    for (const row of filledSubCategories(values.subCategories)) {
+      const made = await quickAdd.addCategory({
+        name: row.name.trim(),
+        type: values.type,
+        parentId: parent,
+      });
+      if (!made.ok) return made;
+      if (made.id) madeSubs.push(made.id);
+    }
+
+    return { ok: true, id: madeSubs.length === 1 ? madeSubs[0] : parent };
+  };
 
   /** 소분류를 붙일 수 있는 대분류. 지금 갈래의 것만이다. */
   const categoryParents = form.categoryChoices.filter((category) => !category.parentId);
@@ -420,7 +461,7 @@ export default function EntryEditor({
             </Field>
           ) : null}
 
-          <Field label={t('editor.description')} invalid={violation?.field === 'description'}>
+          <Field label={t('editor.descriptionOptional')}>
             <TextInput
               value={values.description}
               onChangeText={(text) => setField('description', text)}
@@ -792,10 +833,10 @@ export default function EntryEditor({
         isOpen={adding === 'category'}
         onClose={() => setAdding(null)}
         isSubmitting={quickAdd.isSubmitting}
-        parents={categoryParents}
         type={categoryType}
+        parents={categoryParents}
         onSubmit={(input) =>
-          addThenPick(quickAdd.addCategory(input), (id) => {
+          addThenPick(createCategory(input), (id) => {
             /*
               만든 분류를 그 자리에 꽂는다.
 

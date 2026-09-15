@@ -413,7 +413,6 @@ export const ko = {
   'card.numberPlaceholder': '16자리',
   'card.type': '카드 유형',
   'card.issuer': '발급사',
-  'card.dayDefaultsNote': '마감일과 결제일은 기본값으로 넣습니다. 카드사 날짜에 맞추려면 웹에서 고칠 수 있습니다.',
   'card.issuerPlaceholder': '카드사를 선택하세요',
   'card.issuerRequired': '발급사를 선택하세요.',
   'card.usage': '사용액',
@@ -880,6 +879,8 @@ export const ko = {
   'editor.feeParentCategory': '수수료 대분류',
   'editor.feeChildCategory': '수수료 소분류 (선택)',
   'editor.description': '설명',
+  /** 폼의 이름표. 상세(읽기)는 위의 'editor.description' 을 그대로 쓴다. */
+  'editor.descriptionOptional': '설명 (선택)',
   'editor.descriptionPlaceholder': '거래 설명',
   'editor.merchant': '거래처 (선택)',
   'editor.merchantPlaceholder': '가맹점, 송금 계좌주 등 (선택사항)',
@@ -901,7 +902,6 @@ export const ko = {
   'editor.subCategoryAddTitle': '{parent} 소분류 추가',
 
   // ===== 앱의 거래 입력 폼 =====
-  'entryForm.descriptionRequired': '설명을 입력해주세요.',
   'entryForm.amountRequired': '금액을 0보다 크게 입력해주세요.',
   'entryForm.dateInvalid': '날짜를 YYYY-MM-DD 로 입력해주세요.',
   'entryForm.timeInvalid': '시간을 HH:MM 으로 입력해주세요.',

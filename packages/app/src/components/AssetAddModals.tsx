@@ -15,7 +15,9 @@ import { Pressable, Text, TextInput, View } from 'react-native';
 import { ACCOUNT_TYPE_OPTIONS, NO_BANK_TYPES } from '@money/core/lib/account-type';
 import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import { useTranslation } from '@money/core/lib/i18n';
-import { toAmountString } from '@money/core/lib/money';
+import { dayOfMonthHint } from '@money/core/lib/day-of-month';
+import { currencyLabel, toAmountString } from '@money/core/lib/money';
+import { SUPPORTED_CURRENCIES, type CurrencyCode } from '@money/types';
 import {
   DEFAULT_PAYMENT_DUE_DAY,
   DEFAULT_STATEMENT_CLOSING_DAY,
@@ -24,6 +26,8 @@ import type { AssetSaveResult } from '@money/core/hooks/useAssetsData';
 import type { Account, AccountType } from '@money/core/lib/types';
 import { useProjectLedgerCurrency } from '@money/core/store/project';
 
+import CardPerformanceField from './CardPerformanceField';
+import DayOfMonthSelect from './DayOfMonthSelect';
 import Modal from './Modal';
 
 /** 폼 한 칸. 이름표와 입력이 늘 같은 간격으로 놓인다. */
@@ -192,6 +196,8 @@ export function AddAccountModal({
     type: AccountType;
     name: string;
     institutionId?: string;
+    accountNumber?: string;
+    currency?: string;
     openingBalance?: string;
   }) => Promise<AssetSaveResult>;
   isSubmitting: boolean;
@@ -207,6 +213,9 @@ export function AddAccountModal({
   const [type, setType] = useState<AccountType>('deposit');
   const [institutionId, setInstitutionId] = useState('');
   const [openingBalance, setOpeningBalance] = useState('');
+  const [accountNumber, setAccountNumber] = useState('');
+  /** 이 통장의 통화. 만든 뒤에는 바꿀 수 없어 여기서만 고른다. */
+  const [currency, setCurrency] = useState<CurrencyCode>(ledgerCurrency as CurrencyCode);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -215,6 +224,8 @@ export function AddAccountModal({
       setType('deposit');
       setInstitutionId('');
       setOpeningBalance('');
+      setAccountNumber('');
+      setCurrency(ledgerCurrency as CurrencyCode);
       setError('');
     }
   }, [isOpen]);
@@ -228,6 +239,8 @@ export function AddAccountModal({
       type,
       name: name.trim(),
       ...(needsBank && institutionId ? { institutionId } : {}),
+      ...(accountNumber.trim() ? { accountNumber: accountNumber.trim() } : {}),
+      currency,
       openingBalance: toAmountString(openingBalance || '0'),
     });
     if (result.ok) onClose();
@@ -284,12 +297,35 @@ export function AddAccountModal({
           </Field>
         ) : null}
 
-        <Field label={t('account.openingBalance', { currency: ledgerCurrency })}>
+        {/*
+          통화. 만든 뒤에는 바꿀 수 없어(원장이 이 통화로 쌓인다) 여기서만 고른다.
+          예전에는 이 칸이 없어 앱에서는 외화 통장을 만들 수 없었다.
+        */}
+        <Field label={t('account.currency')}>
+          <PickRow
+            options={SUPPORTED_CURRENCIES.map((code) => ({ id: code, name: currencyLabel(code) }))}
+            value={currency}
+            onPick={(id) => setCurrency(id as CurrencyCode)}
+          />
+          <Text className="mt-1 text-xs text-gray-500">{t('account.currencyHint')}</Text>
+        </Field>
+
+        <Field label={t('account.openingBalance', { currency })}>
           <TextInput
             value={openingBalance}
             onChangeText={setOpeningBalance}
             keyboardType="numeric"
             placeholder="0"
+            placeholderTextColor="#9ca3af"
+            className={INPUT}
+          />
+        </Field>
+
+        <Field label={t('account.number')}>
+          <TextInput
+            value={accountNumber}
+            onChangeText={setAccountNumber}
+            placeholder={t('account.numberPlaceholder')}
             placeholderTextColor="#9ca3af"
             className={INPUT}
           />
@@ -317,6 +353,8 @@ export function AddCardModal({
     issuerId: string;
     statementClosingDay?: number;
     paymentDueDay?: number;
+    creditLimit?: string;
+    performanceAmount?: string;
   }) => Promise<AssetSaveResult>;
   isSubmitting: boolean;
   /** 결제 통장. 목록에서 눌러 들어온 계좌다. */
@@ -327,6 +365,13 @@ export function AddCardModal({
   const [name, setName] = useState('');
   const [cardType, setCardType] = useState<'debit' | 'credit'>('debit');
   const [issuerId, setIssuerId] = useState('');
+  /** 신용카드의 마감일·결제일. 기본값에서 시작해 카드사 날짜에 맞춘다. */
+  const [closingDay, setClosingDay] = useState(DEFAULT_STATEMENT_CLOSING_DAY);
+  const [dueDay, setDueDay] = useState(DEFAULT_PAYMENT_DUE_DAY);
+  /** 신용한도. 신용카드에만 있다. */
+  const [creditLimit, setCreditLimit] = useState('');
+  /** 실적 기준액. 체크카드에도 있다 (그때는 달력 월로 센다). */
+  const [performanceAmount, setPerformanceAmount] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -334,6 +379,10 @@ export function AddCardModal({
       setName('');
       setCardType('debit');
       setIssuerId('');
+      setClosingDay(DEFAULT_STATEMENT_CLOSING_DAY);
+      setDueDay(DEFAULT_PAYMENT_DUE_DAY);
+      setCreditLimit('');
+      setPerformanceAmount('');
       setError('');
     }
   }, [isOpen]);
@@ -344,17 +393,16 @@ export function AddCardModal({
       name: name.trim(),
       cardType,
       issuerId,
-      /*
-       * 신용카드는 마감일과 결제일이 있어야 한다 (서버가 막는다).
-       *
-       * 기본값으로 넣고 웹에서 고치게 둔다. 카드사마다 다른 날짜라 여기서 물으면
-       * 칸이 둘 더 붙는데, 그 값을 아는 사람은 대개 만들 때가 아니라 명세서를 볼 때 안다.
-       */
+      // 신용카드는 마감일과 결제일이 있어야 한다 (서버가 막는다). 한도도 신용카드만이다.
       ...(cardType === 'credit'
         ? {
-            statementClosingDay: DEFAULT_STATEMENT_CLOSING_DAY,
-            paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
+            statementClosingDay: closingDay,
+            paymentDueDay: dueDay,
+            ...(creditLimit.trim() ? { creditLimit: toAmountString(creditLimit) } : {}),
           }
+        : {}),
+      ...(performanceAmount.trim()
+        ? { performanceAmount: toAmountString(performanceAmount) }
         : {}),
     });
     if (result.ok) onClose();
@@ -409,9 +457,48 @@ export function AddCardModal({
           )}
         </Field>
 
+        {/*
+          마감일과 결제일. 신용카드에만 있다 -- 체크카드는 결제 즉시 통장에서 빠져
+          청구 주기가 없다.
+
+          예전에는 기본값으로 넣고 "웹에서 고칠 수 있습니다"라고만 적었다. 그런데 앱의
+          카드 수정 창에도 이 칸이 없어, 한 번 만든 카드의 날짜를 앱에서는 영영 고칠 수
+          없었다. 정산과 사용액 그래프가 이 날짜로 구간을 나눈다.
+        */}
         {cardType === 'credit' ? (
-          <Text className="text-xs leading-5 text-gray-500">{t('card.dayDefaultsNote')}</Text>
+          <>
+            <Field label={t('card.closingDay')}>
+              <DayOfMonthSelect value={closingDay} onSelect={setClosingDay} />
+            </Field>
+            <Field label={t('card.paymentDay')}>
+              <DayOfMonthSelect value={dueDay} onSelect={setDueDay} />
+            </Field>
+            <Text className="text-xs leading-5 text-gray-500">{dayOfMonthHint()}</Text>
+
+            <Field label={t('card.limit', { currency: account.currency })}>
+              <TextInput
+                value={creditLimit}
+                onChangeText={setCreditLimit}
+                keyboardType="numeric"
+                placeholder="0"
+                placeholderTextColor="#9ca3af"
+                className={INPUT}
+              />
+            </Field>
+          </>
         ) : null}
+
+        {/*
+          실적 기준액. 앱이 이 값으로 실적 판과 사용액 그래프의 기준선을 그린다 --
+          비워 두면 그 둘이 아예 뜨지 않아, 앱에서만 쓰는 사람은 볼 길이 없었다.
+        */}
+        <CardPerformanceField
+          cardType={cardType}
+          value={performanceAmount}
+          onChange={setPerformanceAmount}
+          statementClosingDay={cardType === 'credit' ? closingDay : undefined}
+          inputClassName={INPUT}
+        />
 
         <ErrorLine message={error} />
       </View>

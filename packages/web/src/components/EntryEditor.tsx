@@ -1979,7 +1979,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t('editor.description')}
+                  {t('editor.descriptionOptional')}
                 </label>
                 <input
                   type="text"

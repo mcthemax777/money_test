@@ -385,7 +385,6 @@ export const ja: Record<MessageKey, string> = {
   'card.numberPlaceholder': '16桁',
   'card.type': 'カードの種類',
   'card.issuer': '発行会社',
-  'card.dayDefaultsNote': '締め日と支払日は既定値で登録します。カード会社に合わせるにはウェブで直せます。',
   'card.issuerPlaceholder': 'カード会社を選んでください',
   'card.issuerRequired': 'カード会社を選んでください。',
   'card.usage': '利用額',
@@ -851,6 +850,7 @@ export const ja: Record<MessageKey, string> = {
   'editor.feeParentCategory': '手数料の大カテゴリ',
   'editor.feeChildCategory': '手数料の小カテゴリ (任意)',
   'editor.description': '説明',
+  'editor.descriptionOptional': '説明 (任意)',
   'editor.descriptionPlaceholder': '取引の説明',
   'editor.merchant': '取引先 (任意)',
   'editor.merchantPlaceholder': '店舗、送金先など (任意)',
@@ -872,7 +872,6 @@ export const ja: Record<MessageKey, string> = {
   'editor.subCategoryAddTitle': '{parent}に小カテゴリを追加',
 
   // ===== 앱의 거래 입력 폼 =====
-  'entryForm.descriptionRequired': '説明を入力してください。',
   'entryForm.amountRequired': '金額を0より大きく入力してください。',
   'entryForm.dateInvalid': '日付をYYYY-MM-DDで入力してください。',
   'entryForm.timeInvalid': '時刻をHH:MMで入力してください。',

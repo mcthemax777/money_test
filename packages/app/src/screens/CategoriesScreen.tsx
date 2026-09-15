@@ -18,6 +18,7 @@ import { useNavigation } from '../shell/navigation';
 
 import Modal from '../components/Modal';
 import AddButton from '../components/AddButton';
+import CategoryFormFields from '../components/CategoryFormFields';
 import CategoryMergeModal from '../components/CategoryMergeModal';
 import MoveRow from '../components/MoveRow';
 import PageHeader from '../components/PageHeader';
@@ -512,89 +513,16 @@ export default function CategoriesScreen() {
         }
       >
         <View className="gap-4">
-          <View>
-            <Text className="mb-1 text-sm font-medium text-gray-700">{t('categories.name')}</Text>
-            <TextInput
-              value={formData.name}
-              onChangeText={(name) => setFormData({ ...formData, name })}
-              placeholder={t('categories.parentPlaceholder')}
-              className="rounded-lg border border-gray-300 px-3 py-2 text-gray-900"
-            />
-          </View>
-
-          {/* 유형은 만들 때만 고른다. 고친 뒤 바꾸면 그 분류의 거래가 갈 곳을 잃는다. */}
-          {!editingId ? (
-            <View>
-              <Text className="mb-1 text-sm font-medium text-gray-700">{t('account.type')}</Text>
-              <View className="flex-row gap-2">
-                {TYPE_PANELS.map((panel) => {
-                  const isSelected = formData.type === panel.type;
-
-                  return (
-                    <Pressable
-                      key={panel.type}
-                      onPress={() => setFormData({ ...formData, type: panel.type })}
-                      className={`flex-1 items-center rounded-lg border px-4 py-2 ${
-                        isSelected ? 'border-blue-600 bg-blue-50' : 'border-gray-300'
-                      }`}
-                    >
-                      <Text className={isSelected ? 'text-blue-600' : 'text-gray-700'}>
-                        {t(panel.type === 'expense' ? 'home.tab.expense' : 'home.tab.income')}
-                      </Text>
-                    </Pressable>
-                  );
-                })}
-              </View>
-            </View>
-          ) : null}
-
-          <View>
-            <Text className="mb-1 text-sm font-medium text-gray-700">
-              {t('categories.subcategories')}
-            </Text>
-            <View className="gap-2">
-              {formData.subCategories.map((row, index) => (
-                <View key={row.id || `new-${index}`} className="flex-row items-center gap-2">
-                  <TextInput
-                    value={row.name}
-                    placeholder={t('categories.subPlaceholder')}
-                    onChangeText={(name) => {
-                      const next = [...formData.subCategories];
-                      next[index] = { ...row, name };
-                      setFormData({ ...formData, subCategories: next });
-                    }}
-                    className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-gray-900"
-                  />
-                  <Pressable
-                    onPress={() =>
-                      setFormData({
-                        ...formData,
-                        subCategories: formData.subCategories.filter((_, i) => i !== index),
-                      })
-                    }
-                    className="rounded-lg border border-gray-300 px-3 py-2"
-                  >
-                    <Text className="text-gray-600">×</Text>
-                  </Pressable>
-                </View>
-              ))}
-
-              <Pressable
-                onPress={() =>
-                  setFormData({
-                    ...formData,
-                    subCategories: [
-                      ...formData.subCategories,
-                      { id: '', name: '' },
-                    ],
-                  })
-                }
-                className="items-center rounded-lg border border-gray-300 px-4 py-2"
-              >
-                <Text className="text-sm text-gray-700">{t('categories.addSub')}</Text>
-              </Pressable>
-            </View>
-          </View>
+          <CategoryFormFields
+            name={formData.name}
+            onNameChange={(name) => setFormData({ ...formData, name })}
+            type={formData.type}
+            onTypeChange={(type) => setFormData({ ...formData, type })}
+            subCategories={formData.subCategories}
+            onSubCategoriesChange={(subCategories) => setFormData({ ...formData, subCategories })}
+            /* 유형은 만들 때만 고른다. 고친 뒤 바꾸면 그 분류의 거래가 갈 곳을 잃는다. */
+            canPickType={!editingId}
+          />
 
           {error ? (
             <View className="rounded bg-red-50 p-3">

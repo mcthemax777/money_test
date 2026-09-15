@@ -344,7 +344,14 @@ export interface EntryFormViolation {
  */
 export function checkEntryForm(values: EntryFormValues): EntryFormViolation | null {
   if (!values.personId) return { field: 'personId', code: 'PERSON_REQUIRED' };
-  if (!values.description.trim()) return { field: 'description', code: 'DESCRIPTION_REQUIRED' };
+
+  /*
+   * 설명은 묻지 않는다.
+   *
+   * 웹과 서버는 처음부터 비워 두는 것을 받아들였고 목록도 그때를 대비해 그려 둔다 --
+   * 설명이 비면 분류가 그 줄의 이름이 되고, 그것마저 없으면 "(내용 없음)"이 선다.
+   * 여기서만 막고 있어, 같은 거래를 웹에서는 적을 수 있고 앱에서는 적을 수 없었다.
+   */
 
   const amount = toDec(values.amount);
   if (!amount || !amount.isPositive()) return { field: 'amount', code: 'AMOUNT_INVALID' };

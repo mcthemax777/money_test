@@ -392,6 +392,7 @@ export default function AssetsScreen() {
       {cardEdit ? (
         <EditCardModal
           target={cardEdit}
+          currency={currencyOfCard(cardEdit)}
           onClose={() => setCardEdit(null)}
           isSubmitting={assets.isSubmitting}
           onSave={(patch) => assets.updateCard(cardEdit.id, patch)}
