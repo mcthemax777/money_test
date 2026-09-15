@@ -209,8 +209,6 @@ export default function EntryEditor({
     return { ok: true, id: madeSubs.length === 1 ? madeSubs[0] : parent };
   };
 
-  /** 소분류를 붙일 수 있는 대분류. 지금 갈래의 것만이다. */
-  const categoryParents = form.categoryChoices.filter((category) => !category.parentId);
 
   /** 새 통장의 주인. 폼에서 고른 거래자이고, 아직 없으면 첫 구성원이다. */
   const newAccountOwner =
@@ -834,7 +832,7 @@ export default function EntryEditor({
         onClose={() => setAdding(null)}
         isSubmitting={quickAdd.isSubmitting}
         type={categoryType}
-        parents={categoryParents}
+        categories={form.categoryChoices}
         onSubmit={(input) =>
           addThenPick(createCategory(input), (id) => {
             /*

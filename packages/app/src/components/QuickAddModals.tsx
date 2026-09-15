@@ -75,7 +75,7 @@ export function AddCategoryModal({
   isOpen,
   onClose,
   type,
-  parents,
+  categories,
   onSubmit,
   isSubmitting,
 }: {
@@ -84,13 +84,14 @@ export function AddCategoryModal({
   /** 지금 적는 거래의 갈래가 정한다. */
   type: 'income' | 'expense';
   /**
-   * 소분류를 붙일 수 있는 대분류. 지금 갈래의 것만 온다.
+   * 지금 갈래에서 고를 수 있는 분류 전부. 대분류와 소분류가 섞여 온다.
    *
-   * 웹은 소분류 칸의 "+ 추가"로 들어와 대분류가 이미 정해져 있지만, 앱의 분류 칸은
-   * 대분류와 소분류가 한 줄에 섞여 있어 그 길이 없다. 그래서 창 안에서 고르게 한다 --
-   * 이 칸이 없으면 이미 있는 대분류 밑에 소분류를 붙일 방법이 아예 없다.
+   * 대분류는 "붙일 자리"의 목록이 되고, 소분류는 그 자리를 골랐을 때 이미 있는 것으로
+   * 보여 준다. 웹은 소분류 칸의 "+ 추가"로 들어와 대분류가 이미 정해져 있지만, 앱의
+   * 분류 칸은 대분류와 소분류가 한 줄에 섞여 있어 그 길이 없다 -- 그래서 창 안에서
+   * 고르게 한다.
    */
-  parents: CategoryDto.Response[];
+  categories: CategoryDto.Response[];
   /**
    * 대분류와 소분류들을 만든다. 만들어진 것 중 **곧바로 고를 하나**의 id 를 돌려준다.
    *
@@ -110,7 +111,28 @@ export function AddCategoryModal({
   const [parentId, setParentId] = useState('');
   const [error, setError] = useState('');
 
+  const parents = categories.filter((row) => !row.parentId);
   const parent = parents.find((row) => row.id === parentId);
+  /** 고른 대분류에 이미 있는 소분류. 읽기만 한다. */
+  const existingSubs = parentId ? categories.filter((row) => row.parentId === parentId) : [];
+
+  /**
+   * 붙일 자리를 바꾼다. 적던 소분류 줄은 버린다.
+   *
+   * 자리를 옮기면 그 줄들이 갈 곳이 달라진다. 그대로 두면 "식비 밑에 적으려던 이름"이
+   * 교통 밑으로 따라가고, 사용자는 그것을 알아채지 못한 채 저장한다.
+   *
+   * 대분류를 골랐으면 빈 줄 하나를 미리 편다. 그 창을 연 까닭이 곧 소분류를 적는 것이라,
+   * "소분류 추가"를 한 번 더 누르게 할 까닭이 없다.
+   */
+  const pickParent = (next: string) => {
+    setParentId(next);
+    setError('');
+    setValues((previous) => ({
+      ...previous,
+      subCategories: next ? [{ id: '', name: '' }] : NO_SUB_CATEGORIES,
+    }));
+  };
 
   // 열 때마다 비운다. 지난번에 적다 만 것이 남으면 엉뚱한 이름이 저장된다.
   useEffect(() => {
@@ -166,7 +188,7 @@ export function AddCategoryModal({
                 { value: '', label: t('categories.asParent') },
                 ...parents.map((row) => ({ value: row.id, label: row.name })),
               ]}
-              onSelect={setParentId}
+              onSelect={pickParent}
             />
           </Field>
         ) : null}
@@ -182,6 +204,7 @@ export function AddCategoryModal({
           }
           canPickType={false}
           parentName={parent?.name}
+          existingSubCategories={parent ? existingSubs : undefined}
         />
       </View>
     </Modal>

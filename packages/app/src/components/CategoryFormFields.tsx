@@ -32,6 +32,7 @@ export default function CategoryFormFields({
    */
   canPickType = true,
   parentName,
+  existingSubCategories,
 }: {
   name: string;
   onNameChange: (name: string) => void;
@@ -47,6 +48,15 @@ export default function CategoryFormFields({
    * 없고, 소분류 줄만 남는다 (웹의 같은 이름 컴포넌트와 같은 규칙이다).
    */
   parentName?: string;
+  /**
+   * 이 대분류에 **이미 있는** 소분류. 읽기만 한다.
+   *
+   * 붙일 자리를 고르고 나서야 "여기에 뭐가 있더라"를 알게 되는데, 보이지 않으면 이미
+   * 있는 이름을 다시 적게 된다. 고치고 지우는 일은 분류 화면의 몫이라 여기서는 막는다 --
+   * 거래를 적다 말고 분류를 손보는 자리가 아니고, 지우기는 쓰이고 있으면 옮길 곳까지
+   * 물어야 하는 일이다.
+   */
+  existingSubCategories?: Array<{ id: string; name: string }>;
 }) {
   const { t } = useTranslation();
 
@@ -98,6 +108,13 @@ export default function CategoryFormFields({
           {t('categories.subcategories')}
         </Text>
         <View className="gap-2">
+          {/* 이미 있는 것. 회색 줄로 두어 아래의 적는 칸과 한눈에 갈린다. */}
+          {existingSubCategories?.map((row) => (
+            <View key={row.id} className="rounded-lg bg-gray-50 px-3 py-2">
+              <Text className="text-gray-500">{row.name}</Text>
+            </View>
+          ))}
+
           {subCategories.map((row, index) => (
             <View key={row.id || `new-${index}`} className="flex-row items-center gap-2">
               <TextInput
