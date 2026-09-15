@@ -1468,6 +1468,50 @@ export class LocalStore {
   }
 
   /**
+   * 그 이름이 이미 쓰이고 있는가. 서버의 유일성 제약과 같은 규칙이다.
+   *
+   *   소분류  (가계부, 이름, 부모) 가 유일하다.
+   *   대분류  (가계부, 유형, 이름) 이 유일하다 -- 지출 "기타"와 수입 "기타"는 함께 산다.
+   *
+   * **숨긴 분류도 센다.** 서버의 인덱스가 `isActive` 를 보지 않아, 숨겨 둔 것과 같은
+   * 이름으로는 다시 만들 수 없다. 여기서 빼고 세면 사본에서는 만들어지고 서버가
+   * 거절해, 보류 칸으로 가는 명령이 된다.
+   */
+  async categoryNameTaken(
+    projectId: string,
+    name: string,
+    parentId: string | null,
+    type: string,
+    /** 이름을 고치는 중이라면 그 분류 자신. 제 이름에 걸리지 않게 뺀다. */
+    exceptId?: string,
+  ): Promise<boolean> {
+    const skip = exceptId ? ' AND id <> ?' : '';
+    const skipParam = exceptId ? [exceptId] : [];
+    const rows = parentId
+      ? await this.db.all<Row>(
+          `SELECT 1 FROM category
+            WHERE projectId = ? AND name = ? AND parentId = ?${skip} LIMIT 1`,
+          [projectId, name, parentId, ...skipParam],
+        )
+      : await this.db.all<Row>(
+          `SELECT 1 FROM category
+            WHERE projectId = ? AND name = ? AND type = ? AND parentId IS NULL${skip} LIMIT 1`,
+          [projectId, name, type, ...skipParam],
+        );
+    return rows.length > 0;
+  }
+
+  /** 분류 한 줄의 자리(유형과 부모). 이름을 고칠 때 어느 묶음에서 견줄지 정한다. */
+  async categorySlot(id: string): Promise<{ type: string; parentId: string | null } | null> {
+    const [row] = await this.db.all<Row>(
+      `SELECT type, parentId FROM category WHERE id = ?`,
+      [id],
+    );
+    if (!row) return null;
+    return { type: String(row.type), parentId: asText(row.parentId) };
+  }
+
+  /**
    * 그 분류와 그 소분류에 달린 거래 다리의 수. 열쇠는 분류 id 다.
    *
    * 없애기를 막는 데 쓴다. 서버의 `deleteCategory` 는 쓰이고 있는 분류를 막는데

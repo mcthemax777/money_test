@@ -946,6 +946,7 @@ export const ko = {
   'error.CARD_HAS_UNPAID': '갚지 않은 카드 사용액이 남아 있어 숨길 수 없습니다.',
   'error.PERSON_HAS_ACCOUNTS': '이 사람이 주인인 통장이 있어서 숨길 수 없습니다.',
   'error.CATEGORY_NAME_REQUIRED': '분류명을 입력해주세요.',
+  'error.CATEGORY_NAME_DUPLICATE': '같은 이름의 분류가 이미 있습니다. 숨긴 분류도 그 이름을 쓰고 있을 수 있습니다.',
   'error.CATEGORY_IN_USE': '이 분류가 거래에 사용되어 삭제할 수 없습니다.',
   'error.CATEGORY_MERGE_EMPTY': '옮길 분류가 없습니다.',
   'error.CATEGORY_MERGE_INTO_REMOVED': '함께 없애는 분류로는 옮길 수 없습니다.',

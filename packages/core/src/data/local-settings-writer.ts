@@ -246,18 +246,30 @@ export function createLocalSettingsWriter({
     },
 
     async addCategory(input: CategoryDto.CreateRequest) {
+      /*
+       * 같은 이름이 이미 있으면 여기서 막는다.
+       *
+       * 서버의 유일성 제약과 같은 규칙이다. 이 창구는 사본에 먼저 쓰고 명령을 쌓으므로
+       * 서버의 거절이 화면에 닿지 않는다 -- 만들어진 것처럼 보이고 목록에도 뜨다가,
+       * 다음 동기화에서 보류 칸으로 가 사용자가 직접 버려야 했다.
+       */
+      const name = input.name.trim();
+      if (await store.categoryNameTaken(projectId, name, input.parentId ?? null, input.type)) {
+        throw codedError('CATEGORY_NAME_DUPLICATE');
+      }
+
       const id = input.id ?? newId();
       await commit(
         'category.create',
         id,
         {
-          name: input.name,
+          name,
           type: input.type,
           parentId: input.parentId ?? null,
           icon: input.icon ?? null,
         },
         {
-          name: input.name,
+          name,
           type: input.type,
           parentId: input.parentId ?? null,
           icon: input.icon ?? null,
@@ -281,6 +293,23 @@ export function createLocalSettingsWriter({
         const counts = await store.categoryPostingCounts(id);
         const used = Object.values(counts).reduce((sum, count) => sum + count, 0);
         if (used > 0) throw codedError('CATEGORY_IN_USE');
+      }
+
+      /* 이름을 고치는 것도 만드는 것과 같은 규칙으로 본다 (서버도 같은 제약에 걸린다). */
+      if (patch.name !== undefined) {
+        const slot = await store.categorySlot(id);
+        if (
+          slot &&
+          (await store.categoryNameTaken(
+            projectId,
+            patch.name.trim(),
+            slot.parentId,
+            slot.type,
+            id,
+          ))
+        ) {
+          throw codedError('CATEGORY_NAME_DUPLICATE');
+        }
       }
 
       await commit('category.update', id, { ...patch }, { ...patch });

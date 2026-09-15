@@ -918,6 +918,7 @@ export const en: Record<MessageKey, string> = {
   'error.CARD_HAS_UNPAID': 'The card still has an unpaid balance, so it cannot be hidden.',
   'error.PERSON_HAS_ACCOUNTS': 'This person still owns accounts, so they cannot be hidden.',
   'error.CATEGORY_NAME_REQUIRED': 'Enter a category name.',
+  'error.CATEGORY_NAME_DUPLICATE': 'A category with that name already exists. A hidden one may be holding the name.',
   'error.CATEGORY_IN_USE': 'Entries use this category, so it cannot be deleted.',
   'error.CATEGORY_MERGE_EMPTY': 'There is nothing to move.',
   'error.CATEGORY_MERGE_INTO_REMOVED': 'You cannot move into a category that is also being removed.',

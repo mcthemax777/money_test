@@ -909,6 +909,7 @@ export const ja: Record<MessageKey, string> = {
   'error.CARD_HAS_UNPAID': '未払いのカード利用額が残っているため隠せません。',
   'error.PERSON_HAS_ACCOUNTS': 'この人が持ち主の口座があるため隠せません。',
   'error.CATEGORY_NAME_REQUIRED': 'カテゴリ名を入力してください。',
+  'error.CATEGORY_NAME_DUPLICATE': '同じ名前の分類がすでにあります。隠した分類がその名前を使っていることもあります。',
   'error.CATEGORY_IN_USE': 'このカテゴリは取引で使われているため削除できません。',
   'error.CATEGORY_MERGE_EMPTY': '移す分類がありません。',
   'error.CATEGORY_MERGE_INTO_REMOVED': '一緒に削除する分類へは移せません。',

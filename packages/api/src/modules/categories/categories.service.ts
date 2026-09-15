@@ -352,7 +352,12 @@ export class CategoriesService {
       error instanceof Prisma.PrismaClientKnownRequestError &&
       error.code === 'P2002'
     ) {
-      return new BadRequestException('같은 이름의 카테고리가 이미 있습니다.');
+      /*
+       * 코드를 붙인다. 문장만 돌려주면 화면이 그 뜻을 알 수 없어 "분류 추가에
+       * 실패했습니다" 로 덮어 버린다 -- 사용자는 무엇이 잘못됐는지 모른 채 같은 이름을
+       * 다시 적는다 (코드 없는 오류는 부르는 쪽의 기본 문구로 덮는 것이 규칙이다).
+       */
+      return badRequest('CATEGORY_NAME_DUPLICATE', '같은 이름의 카테고리가 이미 있습니다.');
     }
     return error;
   }
