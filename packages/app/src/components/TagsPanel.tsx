@@ -8,7 +8,7 @@
  * 합계도 그대로다. 막아 두면 오래된 태그를 영영 정리하지 못한다.
  */
 import { useEffect, useState } from 'react';
-import { Alert, LayoutAnimation, Pressable, Text, TextInput, View } from 'react-native';
+import { Alert, LayoutAnimation, Pressable, Text, View } from 'react-native';
 import { Receipt, X } from 'lucide-react-native';
 import type { TagDto } from '@money/types';
 
@@ -22,23 +22,7 @@ import Modal from './Modal';
 import AddButton from './AddButton';
 import MoveRow from './MoveRow';
 import DragList from './DragList';
-
-/**
- * 고를 수 있는 색.
- *
- * 자유 입력을 두지 않는다. 색을 직접 적게 하면 목록에서 서로 구별되지 않는 비슷한
- * 색들이 쌓이고, 앱에는 색 고르는 기본 위젯이 없다. 카드 색과 같은 방식이다.
- */
-const COLORS = [
-  '#ef4444',
-  '#f97316',
-  '#eab308',
-  '#22c55e',
-  '#06b6d4',
-  '#3b82f6',
-  '#8b5cf6',
-  '#ec4899',
-];
+import { TagFields } from './TagFields';
 
 /** 목록이 늘고 줄 때의 움직임. 새 줄은 옅은 데서 떠오르고 아래는 밀려 내려간다. */
 const SHIFT = LayoutAnimation.create(180, 'easeInEaseOut', 'opacity');
@@ -226,34 +210,7 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
             </View>
           ) : null}
 
-          <View>
-            <Text className="mb-2 text-sm font-medium text-gray-700">{t('tags.name')}</Text>
-            <TextInput
-              value={values.name}
-              onChangeText={(text) => setValues((previous) => ({ ...previous, name: text }))}
-              className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
-            />
-          </View>
-
-          <View>
-            <Text className="mb-2 text-sm font-medium text-gray-700">{t('tags.color')}</Text>
-            <View className="flex-row flex-wrap gap-2">
-              {/* 색을 고르지 않는 것도 하나의 선택이다. 빈 동그라미가 그 자리다. */}
-              <ColorDot
-                color=""
-                isSelected={values.color === ''}
-                onPress={() => setValues((previous) => ({ ...previous, color: '' }))}
-              />
-              {COLORS.map((color) => (
-                <ColorDot
-                  key={color}
-                  color={color}
-                  isSelected={values.color === color}
-                  onPress={() => setValues((previous) => ({ ...previous, color }))}
-                />
-              ))}
-            </View>
-          </View>
+          <TagFields values={values} onChange={setValues} />
 
           {/*
             순서는 **만든 뒤에** 옮긴다. 아직 없는 줄에는 이웃이 없다.
@@ -275,31 +232,5 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
         </View>
       </Modal>
     </View>
-  );
-}
-
-/** 색 하나. 고른 것은 테두리로 보인다 -- 색 위에 체크를 얹으면 밝은 색에서 보이지 않는다. */
-function ColorDot({
-  color,
-  isSelected,
-  onPress,
-}: {
-  color: string;
-  isSelected: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityLabel={color || undefined}
-      className={`h-9 w-9 items-center justify-center rounded-full border-2 ${
-        isSelected ? 'border-blue-600' : 'border-transparent'
-      }`}
-    >
-      <View
-        className={`h-6 w-6 rounded-full ${color ? '' : 'border border-gray-300'}`}
-        style={color ? { backgroundColor: color } : undefined}
-      />
-    </Pressable>
   );
 }

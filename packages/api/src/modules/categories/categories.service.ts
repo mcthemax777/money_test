@@ -135,6 +135,177 @@ export class CategoriesService {
     return category;
   }
 
+  /**
+   * 이 분류와 그 소분류에 달린 거래 다리의 수.
+   *
+   * 없애기 전에 묻는 데 쓴다. 예전에는 "지우시겠습니까"를 먼저 묻고 그다음에야 막혔는데,
+   * 거래가 있는 분류에서는 그 물음이 헛걸음이었다 -- 어차피 지워지지 않는다.
+   *
+   * 소분류마다 따로 센다. 대분류를 없앨 때 **거래가 있는 소분류에만** 갈 곳을 묻기
+   * 위해서다 (빈 소분류까지 고르게 하면 뜻 없는 선택이 줄줄이 늘어난다).
+   */
+  async getCategoryUsage(id: string, userId: string): Promise<CategoryDto.UsageResponse> {
+    const category = await this.getCategoryById(id, userId);
+
+    // 소분류를 없애는 일에는 딸린 것이 없다.
+    const children = category.parentId
+      ? []
+      : await this.prisma.category.findMany({
+          where: { parentId: id },
+          select: { id: true },
+        });
+    const ids = [id, ...children.map((child) => child.id)];
+
+    const grouped = await this.prisma.posting.groupBy({
+      by: ['categoryId'],
+      where: { categoryId: { in: ids } },
+      _count: { _all: true },
+    });
+
+    // 한 건도 없는 분류도 0 으로 담는다. 빠져 있으면 부르는 쪽이 "모른다"와 가를 수 없다.
+    const counts: Record<string, number> = Object.fromEntries(ids.map((row) => [row, 0]));
+    for (const row of grouped) {
+      if (row.categoryId) counts[row.categoryId] = row._count._all;
+    }
+    return { counts };
+  }
+
+  /**
+   * 분류를 없애면서 그 거래를 다른 분류로 옮긴다.
+   *
+   * **없애기가 막히는 자리를 푸는 길이다.** `deleteCategory` 는 거래에 쓰이고 있으면
+   * 막는데(CATEGORY_IN_USE), 그때 사용자에게 남는 길은 거래를 하나씩 손보는 것뿐이었다.
+   * 오래 쓴 가계부일수록 그 수가 수백 건이라 사실상 못 없애는 분류가 된다.
+   *
+   * 옮길 곳은 줄마다 받는다. 대분류를 없애면 소분류도 함께 사라지는데, 소분류마다
+   * 성격이 달라 한 곳으로 몰 수 없다 -- 부르는 쪽이 짝을 지어 보낸다.
+   *
+   * 거래 다리(posting)만 옮기지 않는다. 보관함 후보와 반복 등록도 이 분류를 가리키고
+   * 있어, 그대로 두면 **감춘 분류로 거래를 만드는 규칙**이 남는다.
+   *
+   * 예산(Budget)은 건드리지 않는다. (프로젝트, 분류, 유형, 시작일)이 유일해야 해서
+   * 옮기면 부딪히는 줄이 생기고, 그때 무엇을 버릴지는 서버가 정할 일이 아니다. 지금도
+   * 거래 없는 분류를 감추면 그 예산은 그대로 남아 있어, 새로 생기는 문제가 아니다.
+   */
+  async mergeCategories(userId: string, dto: CategoryDto.MergeRequest, projectId?: string) {
+    const moves = dto.moves ?? [];
+    if (moves.length === 0) {
+      throw badRequest('CATEGORY_MERGE_EMPTY', '옮길 분류가 없습니다.');
+    }
+
+    const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(
+      userId,
+      projectId || dto.projectId,
+      'editor',
+    );
+
+    const fromIds = [...new Set(moves.map((move) => move.fromId))];
+    // 갈 곳이 없는 줄(감추기만 하는 줄)은 빼고 본다.
+    const toIds = [...new Set(moves.map((move) => move.toId).filter((id): id is string => !!id))];
+
+    /*
+     * 없애는 것으로 옮길 수는 없다.
+     *
+     * 소분류 둘을 서로에게 보내면 어느 쪽을 먼저 처리하느냐에 따라 결과가 달라지고,
+     * 어느 차례로 하든 마지막에는 감춘 분류에 거래가 남는다.
+     */
+    const removing = new Set(fromIds);
+    if (toIds.some((id) => removing.has(id))) {
+      throw badRequest('CATEGORY_MERGE_INTO_REMOVED', '없애는 분류로는 옮길 수 없습니다.');
+    }
+
+    const rows = await this.prisma.category.findMany({
+      where: { id: { in: [...fromIds, ...toIds] }, projectId: finalProjectId },
+    });
+    const byId = new Map(rows.map((row) => [row.id, row]));
+
+    for (const id of [...fromIds, ...toIds]) {
+      if (!byId.has(id)) throw new NotFoundException('카테고리를 찾을 수 없습니다.');
+    }
+
+    for (const move of moves) {
+      const from = byId.get(move.fromId)!;
+
+      // 기본 분류는 지우지 못한다. 없애기와 같은 규칙이다.
+      if (from.isDefault) {
+        throw badRequest('CATEGORY_DEFAULT_LOCKED', '기본 카테고리는 삭제할 수 없습니다.');
+      }
+
+      /*
+       * 갈 곳이 없는 줄은 감추기만 한다. 거래가 없을 때만이다.
+       *
+       * 거래가 있는데 그냥 감추면 그 다리는 목록에 없는 분류를 가리킨 채 남아, 분류별
+       * 합계에서만 보이는 유령이 된다 -- `deleteCategory` 가 막는 바로 그 상태다.
+       */
+      if (!move.toId) {
+        const used = await this.prisma.posting.count({ where: { categoryId: move.fromId } });
+        if (used > 0) {
+          throw badRequest(
+            'CATEGORY_MERGE_TARGET_REQUIRED',
+            '거래가 있는 분류는 옮길 곳을 골라야 합니다.',
+          );
+        }
+        continue;
+      }
+
+      // 지출을 수입으로 옮기면 그 거래의 부호가 뒤집힌다. 합계가 조용히 어긋난다.
+      if (from.type !== byId.get(move.toId)!.type) {
+        throw badRequest('CATEGORY_MERGE_TYPE_MISMATCH', '같은 유형의 분류로만 옮길 수 있습니다.');
+      }
+    }
+
+    const stamp = this.clock.now();
+
+    /*
+     * 옮기기와 감추기를 한 트랜잭션에 넣고 원장 쓰기를 먼저 줄 세운다.
+     * 밖에서 하면 옮긴 뒤 감추기 전에 그 분류로 거래가 하나 들어올 수 있다
+     * (`deleteCategory` 와 같은 까닭이다).
+     */
+    return this.prisma.$transaction(async (tx) => {
+      await lockLedgerWrites(tx, finalProjectId);
+
+      let movedPostings = 0;
+
+      for (const move of moves) {
+        const toId = move.toId;
+        if (!toId) continue;
+
+        const moved = await tx.posting.updateMany({
+          where: { categoryId: move.fromId },
+          data: { categoryId: toId },
+        });
+        movedPostings += moved.count;
+
+        // 아직 거래가 아닌 것들도 함께 옮긴다. 감춘 분류를 가리킨 채 남으면 안 된다.
+        await tx.entryDraft.updateMany({
+          where: { categoryId: move.fromId },
+          data: { categoryId: toId },
+        });
+        await tx.recurringRule.updateMany({
+          where: { categoryId: move.fromId },
+          data: { categoryId: toId },
+        });
+      }
+
+      /*
+       * 한 줄씩 감춘다. `updateMany` 가 더 짧지만 시계를 찍을 수 없다 -- 필드별 시계는
+       * 그 행이 지금 들고 있는 값 위에 얹는 것이라 행마다 다르다 (`deleteCategory` 와 같다).
+       */
+      for (const id of fromIds) {
+        const category = byId.get(id)!;
+        await tx.category.update({
+          where: { id },
+          data: {
+            isActive: false,
+            fieldHlc: stampFieldClocks(category.fieldHlc, ['isActive'], stamp),
+          },
+        });
+      }
+
+      return { movedPostings, removedCategories: fromIds.length };
+    });
+  }
+
   async updateCategory(
     id: string,
     userId: string,

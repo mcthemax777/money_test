@@ -1,7 +1,9 @@
-import { useEffect, useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import {
+  Keyboard,
   Modal as RNModal,
   PanResponder,
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -162,6 +164,49 @@ export default function Modal({
     if (isOpen) dragY.value = 0;
   }, [isOpen, dragY]);
 
+  /**
+   * 키보드에 가려지는 만큼. 이만큼 창을 위로 올린다.
+   *
+   * **키보드 높이를 그대로 쓰지 않는다.** 안드로이드는 창 자체가 줄어드는 일이 있어
+   * (windowSoftInputMode 의 resize) 그때 키보드 높이만큼 또 올리면 창이 두 번 올라가
+   * 머리글이 화면 위로 잘려 나간다. 그래서 **겹친 만큼만** 잰다 -- 이 상자의 아래 끝이
+   * 키보드 윗변보다 얼마나 내려와 있는가. 이미 줄어든 화면에서는 0 이 나온다.
+   *
+   * 값이 없으면 아래에 붙는 창은 키보드 밑에 깔리고, 가운데 뜨는 창은 그 자리에 선 채
+   * 아래쪽 입력칸이 가려진다 (둘 다 실제로 그랬다).
+   */
+  const [keyboardLift, setKeyboardLift] = useState(0);
+  const frameRef = useRef<View>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setKeyboardLift(0);
+      return;
+    }
+
+    /* iOS 는 올라오기 전에 알려 주어 창과 키보드가 함께 움직인다. 안드로이드는 Will 이 없다. */
+    const showEvent = Platform.OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = Platform.OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+
+    const show = Keyboard.addListener(showEvent, (event) => {
+      const keyboardTop = event.endCoordinates.screenY;
+      /*
+        이미 올려 둔 값에 **더한다.** 재는 것은 지금 자리의 겹침이라, 키보드가 한 번 더
+        바뀌면(자판을 이모지로 바꾸는 따위) 그때의 모자란 만큼만 나온다. 갈아 끼우면
+        이미 올린 만큼이 지워져 창이 도로 내려간다. 줄어들 때는 음수가 나와 저절로 내려간다.
+      */
+      frameRef.current?.measureInWindow((_x, y, _width, height) => {
+        setKeyboardLift((previous) => Math.max(0, previous + (y + height - keyboardTop)));
+      });
+    });
+    const hide = Keyboard.addListener(hideEvent, () => setKeyboardLift(0));
+
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, [isOpen]);
+
   const sheetStyle = useAnimatedStyle(() => ({
     transform: [{ translateY: dragY.value }],
   }));
@@ -215,7 +260,18 @@ export default function Modal({
       animationType={isWide ? 'fade' : 'slide'}
       onRequestClose={onClose}
     >
-      <View className={`flex-1 ${isWide ? 'items-center justify-center px-4' : 'justify-end'}`}>
+      {/*
+        아래 여백이 키보드 자리다.
+
+        창을 올리는 대신 이 상자를 줄인다. 그래야 창의 maxHeight(90%)가 줄어든 높이를
+        기준으로 다시 잡혀, 긴 본문이 화면 위로 넘치지 않는다 -- 올리기만 하면 머리글이
+        잘린다.
+      */}
+      <View
+        ref={frameRef}
+        className={`flex-1 ${isWide ? 'items-center justify-center px-4' : 'justify-end'}`}
+        style={{ paddingBottom: keyboardLift }}
+      >
         {/* 뒤 막. 끌면 옅어져야 해서 클래스(bg-black/50)가 아니라 움직이는 값으로 칠한다. */}
         <Animated.View
           pointerEvents="none"
@@ -259,6 +315,11 @@ export default function Modal({
             {header}
 
             <ScrollView
+              /*
+                키보드가 올라온 채로 눌러도 한 번에 듣는다. 기본값이면 첫 누름이
+                키보드를 내리는 데만 쓰여, 알약이나 단추를 두 번 눌러야 한다.
+              */
+              keyboardShouldPersistTaps="handled"
               contentContainerClassName="p-6"
               /* 홈 표시줄 자리. 아래에 붙는 창이라 마지막 줄이 그 밑으로 들어가지 않게 한다. */
               contentContainerStyle={isWide ? undefined : { paddingBottom: 24 + insets.bottom }}

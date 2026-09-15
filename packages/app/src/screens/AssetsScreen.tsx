@@ -1,13 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
 import { useAssetsData } from '@money/core/hooks/useAssetsData';
+import { homeDataPort } from '@money/core/data/home-port';
 import { EMPTY_SEARCH } from '@money/core/hooks/useTransactions';
 import { accountTypeLabel } from '@money/core/lib/account-type';
 import { accountDueOf } from '@money/core/lib/card-settlement';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import type { Account, Card, Person } from '@money/core/lib/types';
+import type { EntryListItem } from '@money/types';
 import { useCanEdit, useProject, useProjectDisplayCurrency } from '@money/core/store/project';
 import { useEntryFocus } from '@money/core/store/entry-focus';
 import { useUserFilter } from '@money/core/store/user-filter';
@@ -18,6 +20,8 @@ import AddButton from '../components/AddButton';
 import AssetDetailView, { type AssetDetailTarget } from '../components/AssetDetailView';
 import AssetHistoryChart from '../components/AssetHistoryChart';
 import AssetTypeSummary from '../components/AssetTypeSummary';
+import EntryDetailModal from '../components/EntryDetailModal';
+import EntryEditor from '../components/EntryEditor';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import { AddAccountModal, AddCardModal, AddPersonModal } from '../components/AssetAddModals';
 import DragList from '../components/DragList';
@@ -60,6 +64,30 @@ export default function AssetsScreen() {
   const [cardEdit, setCardEdit] = useState<Card | null>(null);
   const [accountAddFor, setAccountAddFor] = useState<Person | null>(null);
   const [cardAddFor, setCardAddFor] = useState<Account | null>(null);
+
+  /**
+   * 원장 줄에서 연 거래. 상세와 고치기는 거래 화면과 같은 짝을 쓴다.
+   *
+   * 원장 줄이 들고 있는 것은 전표 id 뿐이라 여기서 그 거래를 읽어 온다. 사본에 없으면
+   * (아직 내려받지 못한 달) 조용히 아무것도 열지 않는다 -- 열리지 않는 팝업을 세우느니
+   * 누르지 않은 것처럼 두는 편이 낫다.
+   */
+  const [entryDetail, setEntryDetail] = useState<EntryListItem | null>(null);
+  const [entryEditing, setEntryEditing] = useState<EntryListItem | null>(null);
+
+  const openEntry = useCallback(
+    (entryId: string) => {
+      void homeDataPort()
+        .getEntry(entryId, selectedProjectId)
+        .then((entry) => {
+          if (entry) setEntryDetail(entry);
+        })
+        .catch(() => {
+          /* 못 읽었으면 열지 않는다. 다음 누름에 다시 해 본다. */
+        });
+    },
+    [selectedProjectId],
+  );
 
   /**
    * 펼쳐 둔 상세. 항목 자체가 아니라 종류와 id 만 들고 있는다.
@@ -207,6 +235,7 @@ export default function AssetsScreen() {
           onClose={() => openDetail(null)}
           onEdit={openEditOfDetail}
           onShowEntries={showEntries}
+          onOpenEntry={openEntry}
           onChanged={assets.reload}
         />
       ) : (
@@ -400,6 +429,36 @@ export default function AssetsScreen() {
           account={cardAddFor}
         />
       ) : null}
+
+      {/*
+        원장 줄에서 연 거래. 상세를 읽고 거기서 고친다.
+
+        베끼기는 두지 않는다 -- 베낀 것은 이 통장의 거래가 아닐 수도 있어 여기서 만들면
+        보고 있던 원장과 상관없는 거래가 조용히 생긴다. 지우기도 마찬가지로 두지 않는다
+        (거래 화면에서 한다).
+      */}
+      <EntryDetailModal
+        entry={entryDetail}
+        onClose={() => setEntryDetail(null)}
+        onEdit={
+          canEdit
+            ? (entry) => {
+                setEntryDetail(null);
+                setEntryEditing(entry);
+              }
+            : undefined
+        }
+      />
+
+      {entryEditing ? (
+        <EntryEditor
+          isOpen
+          editing={entryEditing}
+          onClose={() => setEntryEditing(null)}
+          /* 금액이 바뀌면 잔액도 대금도 달라진다. 목록과 총자산을 다시 읽는다. */
+          onSaved={assets.reload}
+        />
+      ) : null}
     </View>
   );
 }
@@ -507,14 +566,21 @@ function AccountRow({
         </View>
 
         {/*
-          무엇을 뺀 값인지는 대금이 있을 때만 풀어 쓴다. 대금이 없으면 남은 금액이
-          곧 잔액이라, 같은 수를 한 번 더 적는 줄이 된다.
+          통장에 실제로 찍힌 돈. 카드 대금이 있을 때만 적는다.
+
+          대금이 없으면 남은 금액이 곧 잔액이라, 같은 수를 한 번 더 적는 줄이 된다.
+          대금 액수는 여기 적지 않는다 -- 카드 줄이 바로 아래에 붙어 있어 그쪽에서
+          카드마다 얼마인지 읽는 편이 낫다.
         */}
         {due !== 0 ? (
-          <Text className="mt-1 text-right text-xs text-gray-500">
-            {t(due > 0 ? 'assets.balanceWithDue' : 'assets.balanceWithRefund', {
+          /*
+            큰 금액 다음으로 자주 읽는 줄이라 12px 회색으로 두지 않는다.
+            이것이 안 보이면 큰 금액이 왜 그 값인지 알 수 없다. 큰 금액보다는 작게
+            두어 차례는 지킨다.
+          */
+          <Text className="mt-1 text-right text-sm font-medium text-gray-700">
+            {t('assets.balanceLine', {
               balance: formatCurrency(account.balance, account.currency),
-              due: formatCurrency(Math.abs(due), account.currency),
             })}
           </Text>
         ) : null}

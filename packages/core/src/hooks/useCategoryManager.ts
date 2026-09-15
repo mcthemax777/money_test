@@ -36,7 +36,17 @@ export function filledSubCategories(rows: SubCategoryRow[]): SubCategoryRow[] {
 }
 
 /** 저장·삭제의 결과. 실패하면 화면에 그대로 적을 문장이 함께 온다. */
-export type CategoryResult = { ok: true } | { ok: false; message: string };
+export type CategoryResult =
+  /** 통합은 옮긴 거래 다리의 수를 함께 준다. 화면이 "N건을 옮겼습니다"로 적는다. */
+  | { ok: true; movedPostings?: number }
+  /**
+   * `inUse` 는 "거래에 쓰이고 있어 막혔다"다.
+   *
+   * 화면이 이 갈래에서 길을 둘 내준다 -- 그 거래를 보러 가거나, 다른 분류로 옮기거나.
+   * 문장만 돌려주면 사용자에게 남는 길은 거래를 하나씩 손보는 것뿐이고, 오래 쓴
+   * 가계부에서는 그 수가 수백 건이라 사실상 못 없애는 분류가 된다.
+   */
+  | { ok: false; message: string; inUse?: boolean };
 
 /**
  * 카테고리 목록과 그 손질.
@@ -171,6 +181,25 @@ export function useCategoryManager(projectId: string | null) {
     [categories, messageOf, projectId, reload, say],
   );
 
+  /**
+   * 이 분류와 그 소분류에 달린 거래 수. 읽지 못하면 null.
+   *
+   * 없애기 전에 본다. 거래가 있으면 "지우시겠습니까"를 묻지 않고 곧바로 길을 내주고
+   * (그 물음은 어차피 지워지지 않을 일에 대한 헛걸음이다), 통합 창은 이 값으로
+   * **거래가 있는 줄에만** 갈 곳을 묻는다.
+   *
+   * null 을 돌려주는 것이 요점이다. 못 읽었다고 없애기를 막으면 안 되므로, 부르는 쪽은
+   * 그때 지금까지의 길(물어보고 없애기)로 간다.
+   */
+  const usageOf = useCallback(async (id: string): Promise<Record<string, number> | null> => {
+    try {
+      const { counts } = await homeDataPort().getCategoryUsage(id);
+      return counts;
+    } catch {
+      return null;
+    }
+  }, []);
+
   /** 기본 제공 분류는 지울 수 없다. 서버도 같은 규칙으로 막는다. */
   const remove = useCallback(
     async (id: string): Promise<CategoryResult> => {
@@ -185,12 +214,44 @@ export function useCategoryManager(projectId: string | null) {
         await reload();
         return { ok: true };
       } catch (error) {
-        return { ok: false, message: messageOf(error, 'categories.deleteFailed') };
+        return {
+          ok: false,
+          message: messageOf(error, 'categories.deleteFailed'),
+          // 서버가 붙인 코드로 가른다. 오류 문장을 뒤지면 언어가 바뀔 때 깨진다.
+          inUse: apiErrorCode(error) === 'CATEGORY_IN_USE',
+        };
       } finally {
         setIsSubmitting(false);
       }
     },
     [categories, messageOf, reload, say],
+  );
+
+  /**
+   * 없앨 분류의 거래를 다른 분류로 옮기고 감춘다.
+   *
+   * 없애기가 막힌 자리를 푸는 길이다(`remove` 의 `inUse`). 짝은 부르는 쪽이 정한다 --
+   * 대분류를 없애면 소분류도 함께 사라지는데, 소분류마다 갈 곳이 다르다.
+   *
+   * 창구를 거치지 않고 서버로 곧바로 간다. 원장의 다리 수백 개가 한꺼번에 바뀌는 일이라
+   * 오프라인 명령 하나로 담을 수 없다 -- 끊겨 있으면 그대로 실패하고 화면이 이유를 적는다.
+   */
+  const merge = useCallback(
+    async (moves: CategoryDto.MergeMove[]): Promise<CategoryResult> => {
+      if (moves.length === 0) return { ok: true };
+
+      try {
+        setIsSubmitting(true);
+        const result = await apiClient.mergeCategories(moves, projectId);
+        await reload();
+        return { ok: true, movedPostings: result.movedPostings };
+      } catch (error) {
+        return { ok: false, message: messageOf(error, 'categories.mergeFailed') };
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [messageOf, projectId, reload],
   );
 
   /** 드래그로 바꾼 순서를 저장한다. 실패하면 목록을 다시 받아 원래 순서로 되돌린다. */
@@ -287,6 +348,8 @@ export function useCategoryManager(projectId: string | null) {
     reload,
     save,
     remove,
+    usageOf,
+    merge,
     reorder,
     /** 한 칸 위로(-1) 또는 아래로(+1). 같은 묶음 안에서만 움직인다. */
     move,

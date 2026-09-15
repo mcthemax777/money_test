@@ -128,7 +128,8 @@ export default function EntryDetailModal({
       onClose={onClose}
       title={t('tx.detail.title')}
       headerAction={
-        <View className="flex-row items-center gap-1">
+        /* 단추 사이는 닫기와 같은 간격이다. 붙여 두면 옆 단추를 잘못 누른다. */
+        <View className="flex-row items-center gap-3">
           {copyTarget ? (
             <Pressable
               onPress={() => onCopy?.(copyTarget)}

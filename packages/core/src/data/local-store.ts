@@ -1467,6 +1467,52 @@ export class LocalStore {
     return this.attachPostings(entries);
   }
 
+  /**
+   * 그 분류와 그 소분류에 달린 거래 다리의 수. 열쇠는 분류 id 다.
+   *
+   * 없애기를 막는 데 쓴다. 서버의 `deleteCategory` 는 쓰이고 있는 분류를 막는데
+   * (CATEGORY_IN_USE), 앱은 사본에 먼저 쓰므로 그 규칙을 여기서도 한 번 본다 --
+   * 그러지 않으면 화면에는 지워진 것처럼 보이다가 다음 동기화에서 되돌아온다.
+   *
+   * 소분류마다 따로 센다. 대분류를 없앨 때 **거래가 있는 소분류에만** 갈 곳을 묻기
+   * 위해서다 (서버의 `getCategoryUsage` 와 같은 모양이다).
+   */
+  async categoryPostingCounts(categoryId: string): Promise<Record<string, number>> {
+    const [target] = await this.db.all<Row>(`SELECT id, parentId FROM category WHERE id = ?`, [
+      categoryId,
+    ]);
+    if (!target) return {};
+
+    // 소분류를 없애는 일에는 딸린 것이 없다.
+    const children = target.parentId
+      ? []
+      : await this.db.all<Row>(`SELECT id FROM category WHERE parentId = ?`, [categoryId]);
+    const ids = [categoryId, ...children.map((row) => String(row.id))];
+
+    const rows = await this.db.all<Row>(
+      `SELECT categoryId, COUNT(*) AS n FROM posting
+        WHERE categoryId IN (${ids.map(() => '?').join(', ')})
+        GROUP BY categoryId`,
+      ids,
+    );
+
+    // 한 건도 없는 분류도 0 으로 담는다. 빠져 있으면 부르는 쪽이 "모른다"와 가를 수 없다.
+    const counts: Record<string, number> = Object.fromEntries(ids.map((id) => [id, 0]));
+    for (const row of rows) counts[String(row.categoryId)] = Number(row.n ?? 0);
+    return counts;
+  }
+
+  /**
+   * 전표 하나를 id 로 읽는다. 없으면 null.
+   *
+   * 자산 상세의 원장 줄이 쓴다. 그 줄은 다리(posting) 한 개짜리라 거래 한 줄로 펼 수
+   * 없고, 눌러서 상세를 열려면 그 전표를 통째로 읽어야 한다.
+   */
+  async viewEntryById(id: string): Promise<ViewEntry | null> {
+    const [entry] = await this.viewEntriesByIds([id]);
+    return entry ?? null;
+  }
+
   /** id 목록으로 전표를 읽는다. 커서 페이지가 고른 줄에 다리를 붙일 때 쓴다. */
   private async viewEntriesByIds(ids: string[]): Promise<ViewEntry[]> {
     const placeholders = ids.map(() => '?').join(', ');
@@ -2935,16 +2981,32 @@ function searchFilter(search?: ParsedEntrySearch): { sql: string; params: string
   const params: string[] = [];
 
   const categoryIds = search.categoryIds ?? [];
-  if (categoryIds.length > 0) {
-    const list = categoryIds.map(() => '?').join(', ');
-    // 대분류를 고르면 소분류까지. 서버의 entrySearchConditions 와 같은 규칙이다.
+  const categorySelfIds = search.categorySelfIds ?? [];
+  if (categoryIds.length > 0 || categorySelfIds.length > 0) {
+    /*
+     * 분류 한 무리. 두 갈래를 OR 로 잇는다. 서버의 entrySearchConditions 와 같은 규칙이다.
+     *
+     *   `categoryIds`      대분류를 고르면 소분류까지.
+     *   `categorySelfIds`  그 분류에 **직접** 적은 것만 (미분류).
+     *
+     * 둘이 한 무리라 "식비 미분류 또는 교통 전체"가 그대로 표현된다.
+     */
+    const branches: string[] = [];
+    if (categoryIds.length > 0) {
+      const list = categoryIds.map(() => '?').join(', ');
+      branches.push(`sp.categoryId IN (${list}) OR sc.parentId IN (${list})`);
+      params.push(...categoryIds, ...categoryIds);
+    }
+    if (categorySelfIds.length > 0) {
+      branches.push(`sp.categoryId IN (${categorySelfIds.map(() => '?').join(', ')})`);
+      params.push(...categorySelfIds);
+    }
+
     sql += `
         AND EXISTS (
           SELECT 1 FROM posting sp LEFT JOIN category sc ON sc.id = sp.categoryId
-           WHERE sp.entryId = e.id
-             AND (sp.categoryId IN (${list}) OR sc.parentId IN (${list}))
+           WHERE sp.entryId = e.id AND (${branches.join(' OR ')})
         )`;
-    params.push(...categoryIds, ...categoryIds);
   }
 
   const accountIds = search.paymentAccountIds ?? [];

@@ -20,26 +20,10 @@ import { useCanEdit } from '@money/core/store/project';
 import Modal from '@/components/Modal';
 import AddButton from '@/components/AddButton';
 import { useDragReorder } from '@/hooks/useDragReorder';
+import { TagFields } from '@/components/TagFields';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const FORM_ID = 'tag-form';
-
-/**
- * 고를 수 있는 색.
- *
- * 자유 입력을 두지 않는다. 색을 직접 적게 하면 목록에서 서로 구별되지 않는 비슷한
- * 색들이 쌓인다. 앱의 태그 판과 같은 값이라 두 화면의 색이 어긋나지 않는다.
- */
-const COLORS = [
-  '#ef4444',
-  '#f97316',
-  '#eab308',
-  '#22c55e',
-  '#06b6d4',
-  '#3b82f6',
-  '#8b5cf6',
-  '#ec4899',
-];
 
 export default function TagsPanel({
   projectId,
@@ -238,73 +222,9 @@ export default function TagsPanel({
         }
       >
         <form id={FORM_ID} onSubmit={submit} className="space-y-5">
-          <div>
-            <label className="mb-2 block text-sm font-medium text-gray-700" htmlFor="tag-name">
-              {t('tags.name')}
-            </label>
-            <input
-              id="tag-name"
-              value={values.name}
-              onChange={(event) =>
-                setValues((previous) => ({ ...previous, name: event.target.value }))
-              }
-              className="w-full rounded-lg border border-gray-300 px-3 py-2.5 text-gray-900"
-            />
-          </div>
-
-          <div>
-            <span className="mb-2 block text-sm font-medium text-gray-700">{t('tags.color')}</span>
-            <div className="flex flex-wrap gap-2">
-              {/* 색을 고르지 않는 것도 하나의 선택이다. 빈 동그라미가 그 자리다. */}
-              <ColorDot
-                color=""
-                label={t('tags.colorNone')}
-                isSelected={values.color === ''}
-                onSelect={() => setValues((previous) => ({ ...previous, color: '' }))}
-              />
-              {COLORS.map((color) => (
-                <ColorDot
-                  key={color}
-                  color={color}
-                  label={color}
-                  isSelected={values.color === color}
-                  onSelect={() => setValues((previous) => ({ ...previous, color }))}
-                />
-              ))}
-            </div>
-          </div>
+          <TagFields values={values} onChange={setValues} />
         </form>
       </Modal>
     </div>
-  );
-}
-
-/** 색 하나. 고른 것은 테두리로 보인다 -- 색 위에 체크를 얹으면 밝은 색에서 보이지 않는다. */
-function ColorDot({
-  color,
-  label,
-  isSelected,
-  onSelect,
-}: {
-  color: string;
-  label: string;
-  isSelected: boolean;
-  onSelect: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onSelect}
-      aria-label={label}
-      aria-pressed={isSelected}
-      className={`flex h-9 w-9 items-center justify-center rounded-full border-2 transition ${
-        isSelected ? 'border-blue-600' : 'border-transparent hover:border-gray-300'
-      }`}
-    >
-      <span
-        className={`h-6 w-6 rounded-full ${color ? '' : 'border border-gray-300'}`}
-        style={color ? { backgroundColor: color } : undefined}
-      />
-    </button>
   );
 }

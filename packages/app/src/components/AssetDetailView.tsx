@@ -48,6 +48,7 @@ export default function AssetDetailView({
   onClose,
   onEdit,
   onShowEntries,
+  onOpenEntry,
   onChanged,
 }: {
   target: AssetDetailTarget;
@@ -62,6 +63,13 @@ export default function AssetDetailView({
   onEdit: () => void;
   /** 이 항목으로 걸린 거래내역을 본다. 거래 화면으로 건너간다. */
   onShowEntries: () => void;
+  /**
+   * 원장 한 줄을 눌렀을 때. 그 거래의 상세를 연다.
+   *
+   * 여는 일은 화면이 맡는다 -- 상세 팝업과 입력 팝업은 이 판이 아니라 자산 화면이
+   * 들고 있고(거래 화면과 같은 짝이다), 이 판은 어느 전표인지만 알려 준다.
+   */
+  onOpenEntry?: (entryId: string) => void;
   /** 대금이 오간 뒤. 목록과 총자산을 다시 읽는 자리다. */
   onChanged?: () => void | Promise<void>;
 }) {
@@ -174,6 +182,7 @@ export default function AssetDetailView({
               accountId={target.account.id}
               currency={target.account.currency}
               kind="asset"
+              onOpenEntry={onOpenEntry}
             />
           </View>
         </>
@@ -182,6 +191,7 @@ export default function AssetDetailView({
           card={target.card}
           currency={cardCurrency}
           paymentAccountOwnerId={paymentAccountOwnerId}
+          onOpenEntry={onOpenEntry}
           onChanged={onChanged}
         />
       )}
@@ -199,12 +209,15 @@ function CardCharts({
   card,
   currency,
   paymentAccountOwnerId,
+  onOpenEntry,
   onChanged,
 }: {
   card: Card;
   /** 카드 금액의 통화. 결제 통장에 달려 있어 카드만 보고는 알 수 없다. */
   currency: string;
   paymentAccountOwnerId?: string | null;
+  /** 결제 내역 한 줄을 눌렀을 때. 대금 결제 줄도 똑같이 전표라 함께 열린다. */
+  onOpenEntry?: (entryId: string) => void;
   onChanged?: () => void | Promise<void>;
 }) {
   const { t } = useTranslation();
@@ -252,76 +265,84 @@ function CardCharts({
   const isCredit = card.cardType === 'credit';
 
   return (
-    <View className="gap-4 rounded-lg bg-white p-4 shadow-sm">
-      <CardPerformancePanel cardId={card.id} />
+    /*
+      상자를 둘로 나눈다. 위는 이 카드를 얼마나 썼고 얼마를 갚아야 하는가이고,
+      아래는 그 금액을 이룬 거래 하나하나다 -- 통장 상세도 추이 상자와 입출금 내역
+      상자가 따로 서 있다. 한 상자에 다 넣으면 실적·그래프·대금·내역이 한 덩어리로
+      읽혀, 어디까지가 요약이고 어디부터가 목록인지 경계가 없다.
+    */
+    <>
+      <View className="gap-4 rounded-lg bg-white p-4 shadow-sm">
+        <CardPerformancePanel cardId={card.id} />
 
-      <View>
-        <Text className="mb-2 text-sm font-medium text-gray-700">
-          {t(isCredit ? 'settlement.usageByStatement' : 'settlement.usageByMonth')}
-        </Text>
+        <View>
+          <Text className="mb-2 text-sm font-medium text-gray-700">
+            {t(isCredit ? 'settlement.usageByStatement' : 'settlement.usageByMonth')}
+          </Text>
 
-        {error ? (
-          <Text className="text-sm text-red-600">{error}</Text>
-        ) : !usage ? (
-          <Text className="text-sm text-gray-600">{t('settlement.loading')}</Text>
-        ) : (
-          <CardUsageChart
-            periods={usage.periods}
-            currency={usage.currency}
-            target={target}
-            cardId={card.id}
+          {error ? (
+            <Text className="text-sm text-red-600">{error}</Text>
+          ) : !usage ? (
+            <Text className="text-sm text-gray-600">{t('settlement.loading')}</Text>
+          ) : (
+            <CardUsageChart
+              periods={usage.periods}
+              currency={usage.currency}
+              target={target}
+              cardId={card.id}
+            />
+          )}
+        </View>
+
+        {/*
+          남은 대금과 대금 기록은 신용카드만이다. 체크카드는 결제 즉시 통장에서 빠져
+          갚을 것이 남지 않는다 (위 사용액은 체크카드도 똑같이 보여 준다).
+
+          사용액 그래프 아래에 둔다. 카드를 열었을 때 먼저 보는 것은 얼마를 썼나이고,
+          대금은 그 뒤에 하는 일이다 (웹과 같은 차례다).
+        */}
+        {isCredit ? (
+          <CardSettlementPanel
+            card={card}
+            paymentAccountOwnerId={paymentAccountOwnerId}
+            reloadToken={settledVersion}
+            onChanged={async () => {
+              // 대금을 기록하면 거래가 하나 생긴다. 아래 내역도 그 줄을 받아야 한다.
+              setLedgerVersion((version) => version + 1);
+              await onChanged?.();
+            }}
           />
-        )}
+        ) : null}
+
+        {/*
+          외화 결제의 청구액 확정.
+
+          추정 환율로 들어간 건이 남아 있으면 남은 대금이 명세서와 어긋나므로, 그
+          건들을 여기 모아 한 번에 맞춘다. 확정할 것이 없으면 아무것도 그리지 않는다.
+        */}
+        {isCredit ? (
+          <PendingRatePanel
+            cardId={card.id}
+            onSettled={async () => {
+              // 확정하면 네 값이 함께 달라진다 -- 주기별 사용액, 남은 대금, 내역, 총자산.
+              setSettledVersion((version) => version + 1);
+              setLedgerVersion((version) => version + 1);
+              await load();
+              await onChanged?.();
+            }}
+          />
+        ) : null}
       </View>
 
       {/*
-        남은 대금과 대금 기록은 신용카드만이다. 체크카드는 결제 즉시 통장에서 빠져
-        갚을 것이 남지 않는다 (위 사용액은 체크카드도 똑같이 보여 준다).
-
-        사용액 그래프 아래에 둔다. 카드를 열었을 때 먼저 보는 것은 얼마를 썼나이고,
-        대금은 그 뒤에 하는 일이다 (웹과 같은 차례다).
-      */}
-      {isCredit ? (
-        <CardSettlementPanel
-          card={card}
-          paymentAccountOwnerId={paymentAccountOwnerId}
-          reloadToken={settledVersion}
-          onChanged={async () => {
-            // 대금을 기록하면 거래가 하나 생긴다. 아래 내역도 그 줄을 받아야 한다.
-            setLedgerVersion((version) => version + 1);
-            await onChanged?.();
-          }}
-        />
-      ) : null}
-
-      {/*
-        외화 결제의 청구액 확정.
-
-        추정 환율로 들어간 건이 남아 있으면 남은 대금이 명세서와 어긋나므로, 그
-        건들을 여기 모아 한 번에 맞춘다. 확정할 것이 없으면 아무것도 그리지 않는다.
-      */}
-      {isCredit ? (
-        <PendingRatePanel
-          cardId={card.id}
-          onSettled={async () => {
-            // 확정하면 네 값이 함께 달라진다 -- 주기별 사용액, 남은 대금, 내역, 총자산.
-            setSettledVersion((version) => version + 1);
-            setLedgerVersion((version) => version + 1);
-            await load();
-            await onChanged?.();
-          }}
-        />
-      ) : null}
-
-      {/*
-        결제 내역. 통장 상세의 입출금 내역과 같은 자리다 (웹과 같다).
+        결제 내역. 통장 상세의 입출금 내역과 같은 상자다.
 
         두 카드가 다른 데서 읽는다. 신용카드는 그 카드의 부채 계정에 사용과 대금이
         쌓이므로 원장을 그대로 읽어 줄마다 남은 대금까지 붙지만, 체크카드는 쓰는 즉시
         결제 통장에서 빠져 카드 쪽에 쌓이는 계정이 없다 -- 그쪽은 전표를 카드로 걸러
         받는다. 예전에는 그 길이 없어 체크카드에만 이 칸이 통째로 비어 있었다.
       */}
-      <View className="gap-2">
+      <View className="gap-2 rounded-lg bg-white p-4 shadow-sm">
         <Text className="text-sm font-medium text-gray-700">{t('assets.cardLedger')}</Text>
         {isCredit ? (
           <AccountLedgerList
@@ -329,12 +350,13 @@ function CardCharts({
             currency={currency}
             kind="liability"
             reloadToken={ledgerVersion}
+            onOpenEntry={onOpenEntry}
           />
         ) : (
-          <CardEntryList cardId={card.id} />
+          <CardEntryList cardId={card.id} onOpenEntry={onOpenEntry} />
         )}
       </View>
-    </View>
+    </>
   );
 }
 
@@ -349,6 +371,7 @@ function AccountLedgerList({
   currency,
   kind,
   reloadToken = 0,
+  onOpenEntry,
 }: {
   /** 신용카드는 그 카드의 부채 계정 id 다. */
   accountId: string | null;
@@ -358,12 +381,15 @@ function AccountLedgerList({
   kind: 'asset' | 'liability';
   /** 부르는 자리에서 다시 읽게 하는 값. 대금을 기록하면 카드 쪽이 올린다. */
   reloadToken?: number;
+  onOpenEntry?: (entryId: string) => void;
 }) {
   // 남이 적은 거래도 들어와야 한다. 사본이 바뀌면 다시 읽는다 (웹은 0에 머문다).
   const mirrorVersion = useMirrorVersion();
   const ledger = useAccountLedger(accountId, mirrorVersion + reloadToken);
 
-  return <LedgerRows ledger={ledger} currency={currency} kind={kind} />;
+  return (
+    <LedgerRows ledger={ledger} currency={currency} kind={kind} onOpenEntry={onOpenEntry} />
+  );
 }
 
 /**
@@ -373,7 +399,13 @@ function AccountLedgerList({
  * 받아 원장과 같은 모양으로 옮긴 뒤(core 의 useCardEntries) 같은 목록에 태운다 --
  * 잔액 한 칸만 비고 나머지는 신용카드와 똑같이 읽힌다.
  */
-function CardEntryList({ cardId }: { cardId: string }) {
+function CardEntryList({
+  cardId,
+  onOpenEntry,
+}: {
+  cardId: string;
+  onOpenEntry?: (entryId: string) => void;
+}) {
   const selectedProjectId = useProject((state) => state.selectedProjectId);
   /*
    * 금액은 표시 통화다 (EntryListItem.amount). 신용카드 줄은 부채 계정의 원장이라 그
@@ -384,7 +416,14 @@ function CardEntryList({ cardId }: { cardId: string }) {
   const mirrorVersion = useMirrorVersion();
   const ledger = useCardEntries(cardId, selectedProjectId, mirrorVersion);
 
-  return <LedgerRows ledger={ledger} currency={displayCurrency} kind="liability" />;
+  return (
+    <LedgerRows
+      ledger={ledger}
+      currency={displayCurrency}
+      kind="liability"
+      onOpenEntry={onOpenEntry}
+    />
+  );
 }
 
 /**
@@ -397,6 +436,7 @@ function LedgerRows({
   ledger,
   currency,
   kind,
+  onOpenEntry,
 }: {
   ledger: {
     rows: LedgerLikeRow[];
@@ -409,6 +449,8 @@ function LedgerRows({
   currency: string;
   /** 'asset' 은 통장, 'liability' 는 카드다 (부채 계정이 없는 체크카드까지). */
   kind: 'asset' | 'liability';
+  /** 주면 줄을 눌러 그 거래의 상세를 연다. 없으면 읽기만 하는 목록이다. */
+  onOpenEntry?: (entryId: string) => void;
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
@@ -459,9 +501,20 @@ function LedgerRows({
         const title = row.description || categoryTitleOf(row) || t('entry.noTitle');
 
         return (
-          <View
+          /*
+            줄 전체가 누를 자리다. 거래 목록에서 한 줄을 눌러 상세를 여는 것과 같은
+            손짓이라, 원장에서만 누를 수 없으면 "여기 것은 못 고치는 줄"로 읽힌다.
+
+            대금 결제 줄도 똑같이 전표라 함께 열린다. 폼으로 고칠 수 없는 갈래는
+            상세 팝업이 고치기 단추를 감춘다 -- 여기서 가릴 일이 아니다.
+          */
+          <Pressable
             key={row.postingId}
-            className="flex-row items-start justify-between gap-3 border-b border-gray-100 py-2.5"
+            onPress={onOpenEntry ? () => onOpenEntry(row.entryId) : undefined}
+            disabled={!onOpenEntry}
+            className={`flex-row items-start justify-between gap-3 border-b border-gray-100 py-2.5 ${
+              onOpenEntry ? 'active:opacity-70' : ''
+            }`}
           >
             <View className="flex-1">
               <Text className="text-[15px] text-gray-900">{title}</Text>
@@ -483,7 +536,7 @@ function LedgerRows({
                 </Text>
               ) : null}
             </View>
-          </View>
+          </Pressable>
         );
       })}
 

@@ -611,10 +611,13 @@ export namespace EntryDto {
     personId?: string;
     categoryId?: string;
     /**
-     * categoryId를 정확히 그 분류로만 본다.
+     * 단일 `categoryId` 를 정확히 그 분류로만 본다 (소분류 제외).
      *
-     * 기본은 대분류를 지정하면 소분류 거래까지 포함이다. 화면의 "미분류"(소분류
+     * 기본은 대분류를 지정하면 소분류 거래까지 포함이다. 예산 화면의 "미분류"(소분류
      * 없이 대분류에 바로 기록한 건)만 따로 보려면 이 값을 켠다.
+     *
+     * 거래 화면의 검색은 이 값을 쓰지 않는다. 그쪽은 분류를 여럿 고르고 **분류마다**
+     * 전체·미분류가 갈려야 해서, 고른 값 자체에 표를 붙인다 (`SELF_CATEGORY_PREFIX`).
      */
     categoryExact?: boolean;
     /**
@@ -686,6 +689,53 @@ export namespace CategoryDto {
 
   export interface Tree extends Response {
     children?: Tree[];
+  }
+
+  /**
+   * 분류 하나를 없애면서 그 거래를 다른 분류로 옮긴다.
+   *
+   * **옮길 곳을 줄마다 고른다.** 대분류를 없애면 그 소분류도 함께 사라지는데, 소분류마다
+   * 성격이 달라 한 곳으로 몰아 보낼 수 없다 ("식비 > 외식"과 "식비 > 카페"가 같은 데로
+   * 갈 까닭이 없다). 그래서 없앨 것마다 짝을 적는다.
+   *
+   * 없애기만 하고 옮기지 않는 길은 여기 없다. 거래가 없는 분류는 그냥 지우면 된다
+   * (`DELETE /categories/:id`). 이 요청은 거래가 있어서 막힌 자리를 푸는 것이다.
+   */
+  export interface MergeRequest {
+    projectId?: string;
+    moves: MergeMove[];
+  }
+
+  export interface MergeMove {
+    /** 없앨 분류. 이 분류에 달린 거래가 `toId` 로 옮겨진 뒤 감춰진다. */
+    fromId: string;
+    /**
+     * 옮겨 받을 분류. 같은 유형이어야 하고, 함께 없애는 것 중 하나일 수 없다.
+     *
+     * **없으면 옮기지 않고 감추기만 한다.** 거래가 하나도 없는 분류에는 옮길 것이
+     * 없는데, 그때도 갈 곳을 고르게 하면 대분류 하나를 없애려고 빈 소분류마다
+     * 뜻 없는 선택을 해야 한다. 거래가 있는 분류에 이 값이 없으면 서버가 막는다.
+     */
+    toId?: string;
+  }
+
+  /**
+   * 이 분류와 그 소분류에 달린 거래 다리의 수. 열쇠는 분류 id 다.
+   *
+   * 없애기 전에 묻는 데 쓴다. 거래가 있으면 곧바로 "어떻게 할까요"를 내주고, 없으면
+   * 지금까지처럼 한 번 물어보고 지운다. 소분류마다 따로 세는 까닭은, 대분류를 없앨 때
+   * 거래가 있는 소분류에만 갈 곳을 묻기 위해서다.
+   */
+  export interface UsageResponse {
+    counts: Record<string, number>;
+  }
+
+  /** 통합의 결과. 몇 줄이 옮겨졌는지 알려 준다. */
+  export interface MergeResponse {
+    /** 옮긴 거래 다리의 수. 화면이 "N건을 옮겼습니다"로 적는다. */
+    movedPostings: number;
+    /** 감춘 분류의 수. 대분류를 없애면 소분류까지 세어진다. */
+    removedCategories: number;
   }
 }
 

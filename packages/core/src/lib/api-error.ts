@@ -42,6 +42,10 @@ const MESSAGE_KEY: Record<ErrorCode, MessageKey> = {
   CATEGORY_NAME_REQUIRED: 'error.CATEGORY_NAME_REQUIRED',
   CATEGORY_IN_USE: 'error.CATEGORY_IN_USE',
   CATEGORY_DEFAULT_LOCKED: 'error.CATEGORY_DEFAULT_LOCKED',
+  CATEGORY_MERGE_EMPTY: 'error.CATEGORY_MERGE_EMPTY',
+  CATEGORY_MERGE_INTO_REMOVED: 'error.CATEGORY_MERGE_INTO_REMOVED',
+  CATEGORY_MERGE_TYPE_MISMATCH: 'error.CATEGORY_MERGE_TYPE_MISMATCH',
+  CATEGORY_MERGE_TARGET_REQUIRED: 'error.CATEGORY_MERGE_TARGET_REQUIRED',
 
   TAG_NAME_REQUIRED: 'error.TAG_NAME_REQUIRED',
   TAG_NAME_DUPLICATE: 'error.TAG_NAME_DUPLICATE',
@@ -105,6 +109,24 @@ function readApiError(error: unknown): ApiError {
         ? (details as Record<string, string | number>)
         : undefined,
   };
+}
+
+/**
+ * 서버를 거치지 않고 이 자리에서 만드는, 코드가 붙은 오류.
+ *
+ * 앱은 사본에 먼저 쓰고 명령을 쌓으므로(오프라인 동기화), 서버가 막는 규칙 가운데
+ * 사본에서도 알 수 있는 것은 **여기서** 막아야 한다. 그러지 않으면 화면에는 된 것처럼
+ * 보이다가 다음 동기화에서 조용히 되돌아간다.
+ *
+ * 서버 응답과 같은 모양으로 싼다. 받는 쪽(`apiErrorCode`·`messageOf`)이 어디서 온
+ * 오류인지 가리지 않아야, 웹과 앱의 화면이 같은 코드 한 벌로 갈린다.
+ */
+export function codedError(code: ErrorCode, details?: Record<string, string | number>): Error {
+  const error = new Error(code) as Error & {
+    response?: { data: { error: { code: ErrorCode; details?: Record<string, string | number> } } };
+  };
+  error.response = { data: { error: { code, ...(details ? { details } : {}) } } };
+  return error;
 }
 
 /**

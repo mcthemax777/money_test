@@ -13,10 +13,13 @@
  *   3. **소분류를 다 고르면 대분류로 접히는가.** 그 둘은 같은 뜻이라, 알약도 하나로
  *      모아야 무엇을 골랐는지 읽힌다.
  */
+import { selfCategoryPick } from '@money/types';
+
 import {
   groupCategories,
   groupCategoriesByType,
-  isCategoryPicked,
+  groupParts,
+  categoryPickState,
   toggleCategory,
 } from '../src/lib/category-tree';
 
@@ -76,6 +79,9 @@ eq('한쪽만 있으면 그 칸만 선다',
 const foodGroup = groups[1];
 const food = foodGroup.parent!;
 const [out, mart, cafe] = foodGroup.children;
+/** 소분류가 없는 대분류. 미분류 칸이 없는 쪽을 함께 본다. */
+const utilGroup = groups[2];
+const util = utilGroup.parent!;
 
 eq('빈 상태에서 대분류를 고르면 그것 하나',
   toggleCategory([], food, foodGroup).join(','), 'food');
@@ -94,8 +100,9 @@ eq('켜 둔 소분류를 다시 누르면 빠진다',
  * 요점. 대분류가 켜진 채로 소분류 하나를 끄면, 대분류가 내려가고 나머지 소분류가 켜진다.
  * 대분류를 그대로 두면 뺀 소분류가 계속 걸려 아무 일도 하지 않은 것처럼 보인다.
  */
-eq('대분류 켜진 채 소분류를 끄면 나머지만 남는다',
-  toggleCategory(['pay', 'food'], out, foodGroup).join(','), 'pay,food-mart,food-cafe');
+eq('대분류 켜진 채 소분류를 끄면 나머지 칸이 남는다',
+  toggleCategory(['pay', 'food'], out, foodGroup).join(','),
+  'pay,food-mart,food-cafe,' + selfCategoryPick('food'));
 eq('그때 대분류는 목록에서 빠진다',
   toggleCategory(['food'], out, foodGroup).includes('food'), false);
 
@@ -104,24 +111,66 @@ eq('그때 대분류는 목록에서 빠진다',
  * 알약도 대분류 하나로 접는다. 다 골랐는데 대분류만 꺼져 있으면 고른 것을 알약에서
  * 읽을 수 없다.
  */
-eq('마지막 소분류를 켜면 대분류로 접힌다',
-  toggleCategory(['food-out', 'food-mart'], cafe, foodGroup).join(','), 'food');
+eq('마지막 칸(미분류)을 켜면 대분류로 접힌다',
+  toggleCategory(['food-out', 'food-mart', 'food-cafe'], { id: selfCategoryPick('food') }, foodGroup)
+    .join(','),
+  'food');
 eq('아직 남았으면 접지 않는다',
   toggleCategory(['food-out'], mart, foodGroup).join(','), 'food-out,food-mart');
 eq('다른 무리의 것은 접으면서도 그대로 둔다',
-  toggleCategory(['pay', 'food-out', 'food-mart'], cafe, foodGroup).join(','), 'pay,food');
-eq('접은 뒤 하나를 끄면 나머지가 켜진다',
-  toggleCategory(toggleCategory(['food-out', 'food-mart'], cafe, foodGroup), cafe, foodGroup)
-    .join(','),
-  'food-out,food-mart');
+  toggleCategory(
+    ['pay', 'food-out', 'food-mart', 'food-cafe'],
+    { id: selfCategoryPick('food') },
+    foodGroup,
+  ).join(','),
+  'pay,food');
 
-// ── 3. 켜져 보이는가 ──
-eq('대분류를 켜면 소분류도 켜진 것으로 보인다',
-  isCategoryPicked(['food'], out, foodGroup), true);
-eq('그 대분류 자신도 켜져 보인다', isCategoryPicked(['food'], food, foodGroup), true);
+// ── 3. 어떻게 보이는가 ──
+eq('대분류를 켜면 소분류는 덮인 것으로 보인다',
+  categoryPickState(['food'], out, foodGroup), 'covered');
+eq('그 대분류 자신은 켜져 보인다', categoryPickState(['food'], food, foodGroup), 'on');
 eq('고르지 않은 소분류는 꺼져 보인다',
-  isCategoryPicked(['food-mart'], out, foodGroup), false);
-eq('고른 소분류는 켜져 보인다', isCategoryPicked(['food-out'], out, foodGroup), true);
+  categoryPickState(['food-mart'], out, foodGroup), 'off');
+eq('고른 소분류는 켜져 보인다', categoryPickState(['food-out'], out, foodGroup), 'on');
+
+// ── 4. 미분류 (소분류 없이 대분류에 바로 적은 것) ──
+const foodSelf = selfCategoryPick('food');
+
+eq('무리의 칸은 소분류 셋과 미분류 하나',
+  groupParts(foodGroup).join(','), 'food-out,food-mart,food-cafe,' + foodSelf);
+eq('소분류가 없는 대분류에는 미분류 칸이 없다', groupParts(groups[0]).length, 0);
+
+eq('미분류만 골라 둘 수 있다',
+  toggleCategory([], { id: foodSelf }, foodGroup).join(','), foodSelf);
+
+/*
+ * 요점. 식비는 미분류만, 교통은 전체 -- 한 검색에 함께 담긴다. 검색 전체에 걸리는
+ * 스위치 하나로 두면 분류마다 다르게 정할 수가 없다.
+ */
+eq('식비 미분류와 교통 전체를 함께 고른다',
+  toggleCategory([foodSelf], util, utilGroup).join(','), foodSelf + ',util');
+
+eq('대분류를 켜면 미분류도 덮인다',
+  categoryPickState(['food'], { id: foodSelf }, foodGroup), 'covered');
+eq('고른 미분류는 켜져 보인다',
+  categoryPickState([foodSelf], { id: foodSelf }, foodGroup), 'on');
+
+eq('대분류를 켜면 미분류 칸도 목록에서 빠진다',
+  toggleCategory([foodSelf], food, foodGroup).join(','), 'food');
+
+/*
+ * 소분류를 다 켜도 대분류로 접히지 않는다. 미분류가 아직 남아 있어 대분류와 뜻이
+ * 다르기 때문이다 -- 예전에는 여기서 접혀, 대분류에 바로 적은 거래가 조용히 들어왔다.
+ */
+eq('소분류만 다 켜면 접지 않는다',
+  toggleCategory(['food-out', 'food-mart'], cafe, foodGroup).join(','),
+  'food-out,food-mart,food-cafe');
+eq('미분류까지 켜야 대분류로 접힌다',
+  toggleCategory(['food-out', 'food-mart', 'food-cafe'], { id: foodSelf }, foodGroup).join(','),
+  'food');
+eq('대분류 켜진 채 미분류를 끄면 소분류만 남는다',
+  toggleCategory(['food'], { id: foodSelf }, foodGroup).join(','),
+  'food-out,food-mart,food-cafe');
 
 console.log(fail === 0 ? '\n전체 통과' : `\n실패 ${fail}건`);
 process.exit(fail === 0 ? 0 : 1);

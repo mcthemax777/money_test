@@ -27,7 +27,12 @@ import type {
   EntryScopeQuery,
   ReportDto,
 } from '@money/types';
-import { HIDDEN_ACCOUNT_TYPES, NO_TAG, toEntrySearchQuery } from '@money/types';
+import {
+  HIDDEN_ACCOUNT_TYPES,
+  NO_TAG,
+  parseCategoryPick,
+  toEntrySearchQuery,
+} from '@money/types';
 
 import { assetOwnerNames, hasSeveralOwners } from '../lib/asset-owner';
 
@@ -76,6 +81,13 @@ export interface TransactionSearch {
    * "이 글자가 든 것 중에서" 나머지 조건을 본다.
    */
   text: string;
+  /**
+   * 고른 분류. 고른 것끼리 OR 이고 다른 무리와는 AND 다.
+   *
+   * **"미분류"가 분류 id 자리에 함께 담긴다** (`selfCategoryPick`). 소분류 없이 대분류에
+   * 바로 적은 거래를 가리키는 값이라, 소분류들과 나란히 고를 수 있다 -- "식비는 미분류만,
+   * 교통은 전체"가 한 검색에 담기는 까닭이다.
+   */
   categoryIds: string[];
   paymentAccountIds: string[];
   paymentCardIds: string[];
@@ -195,13 +207,17 @@ export function searchChipsOf(
 
   const parentOf = new Map(categories.map((row) => [row.id, row.parentId]));
   const categoryName = new Map(categories.map((row) => [row.id, row.name]));
-  for (const id of search.categoryIds) {
+  for (const value of search.categoryIds) {
+    const { id, self } = parseCategoryPick(value);
     const name = categoryName.get(id);
     const parentName = categoryName.get(parentOf.get(id) ?? '');
+    // 같은 이름의 소분류가 여럿 있다. 검색 창과 같은 모양으로 적는다.
+    const full = name ? (parentName ? `${parentName} > ${name}` : name) : t('tx.search.categories');
+
     chips.push({
-      id: `category:${id}`,
-      // 같은 이름의 소분류가 여럿 있다. 검색 창과 같은 모양으로 적는다.
-      label: name ? (parentName ? `${parentName} > ${name}` : name) : t('tx.search.categories'),
+      id: `category:${value}`,
+      // 미분류는 무엇의 미분류인지 함께 적는다. "미분류" 하나로는 어느 대분류인지 모른다.
+      label: self ? t('category.exact', { name: full }) : full,
     });
   }
 
@@ -868,14 +884,31 @@ export function useTransactions(projectId: string | null) {
      * 거래가 통째로 들고, 그 거래의 다른 분류(식비)까지 줄로 나온다. 합계로는 맞지만
      * 목록으로는 틀리다 -- 고르지 않은 분류가 목록에 있으면 검색이 듣지 않는 것처럼 보인다.
      *
-     * 롤업 때문에 줄은 대분류다. 고른 것이 소분류면 그 부모 줄을 남긴다.
+     * 줄과 고른 것이 층이 다를 수 있어 **위아래 양쪽으로** 편다.
+     *
+     * 롤업이 켜져 있으면 줄은 대분류다. 고른 것이 소분류면 그 부모 줄을 남겨야 한다.
+     * 거꾸로 줄이 소분류인데(롤업을 끈 자리) 고른 것이 대분류이면 그 자식 줄을 남겨야
+     * 한다 -- 대분류를 고르면 소분류까지 걸리는 것이 검색의 규칙이라, 한쪽만 펴 두면
+     * 걸려 온 거래가 줄에서만 사라진다.
      */
-    const parentOf = new Map(pickerCategories.map((row) => [row.id, row.parentId]));
+    /*
+     * 미분류로 고른 것은 그 대분류 줄만 남긴다. 그 아래 소분류는 걸리지 않는다.
+     * 펴서 고른 것(`spread`)만 위아래로 넓힌다.
+     */
+    const spread = new Set<string>();
     const keep = new Set<string>();
-    for (const id of selected) {
+    for (const value of selected) {
+      const { id, self } = parseCategoryPick(value);
       keep.add(id);
-      const parent = parentOf.get(id);
-      if (parent) keep.add(parent);
+      if (!self) spread.add(id);
+    }
+
+    for (const row of pickerCategories) {
+      if (!row.parentId) continue;
+      // 고른 것이 소분류면 그 부모 줄을 남긴다 (줄이 대분류로 롤업되어 있다).
+      if (spread.has(row.id)) keep.add(row.parentId);
+      // 대분류를 폈으면 그 소분류 줄도 남긴다.
+      if (spread.has(row.parentId)) keep.add(row.id);
     }
     return keep;
   }, [search.categoryIds, pickerCategories]);
@@ -991,10 +1024,16 @@ export function useTransactions(projectId: string | null) {
     (row: TransactionRow) => {
       if (tab === 'category') {
         const parentOf = new Map(pickerCategories.map((c) => [c.id, c.parentId]));
-        // 줄은 롤업된 대분류다. 고른 소분류가 있으면 그것만 남긴다.
-        const chosen = search.categoryIds.filter(
-          (cid) => cid === row.key || parentOf.get(cid) === row.key,
-        );
+        /*
+         * 줄은 롤업된 대분류다. 고른 소분류가 있으면 그것만 남긴다.
+         *
+         * 미분류로 고른 것도 그대로 이어받는다 -- 줄에 적힌 금액이 이미 그 조건으로
+         * 걸러 온 값이라, 여기서 펴 버리면 줄의 합계와 펼친 목록의 합이 어긋난다.
+         */
+        const chosen = search.categoryIds.filter((value) => {
+          const { id } = parseCategoryPick(value);
+          return id === row.key || parentOf.get(id) === row.key;
+        });
         return toEntrySearchQuery({
           text: search.text,
           categoryIds: chosen.length > 0 ? chosen : [row.key],

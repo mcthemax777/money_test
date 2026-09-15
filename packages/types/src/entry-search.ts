@@ -34,6 +34,37 @@ export function splitIdList(value: string): string[] {
  */
 export const NO_TAG = 'none';
 
+/**
+ * "이 분류에 직접 적은 것만"을 가리키는 표. 분류 id 앞에 붙는다 (`self:식비`).
+ *
+ * 분류 무리 안에서 분류 id 자리에 함께 온다 -- 태그 무리의 `NO_TAG` 와 같은 방식이다.
+ * 무리 안은 OR 이므로 "식비 미분류 또는 교통 전체"가 그대로 표현된다.
+ *
+ * **왜 값에 실어 보내는가.** 예전에는 검색 전체에 걸리는 스위치 하나였는데, 그러면
+ * "식비는 미분류만 보고 교통은 전체를 본다"를 한 검색에 담을 수 없었다. 분류마다
+ * 달라야 하는 값이므로 분류 옆에 붙어 다녀야 한다.
+ *
+ * 분류 id 는 cuid 라 이 표와 겹치지 않는다.
+ */
+export const SELF_CATEGORY_PREFIX = 'self:';
+
+/** 이 값이 "그 분류에 직접 적은 것만"인가. */
+export function isSelfCategoryPick(value: string): boolean {
+  return value.startsWith(SELF_CATEGORY_PREFIX);
+}
+
+/** 고른 값 하나를 분류 id 와 "직접만"인지로 가른다. */
+export function parseCategoryPick(value: string): { id: string; self: boolean } {
+  return isSelfCategoryPick(value)
+    ? { id: value.slice(SELF_CATEGORY_PREFIX.length), self: true }
+    : { id: value, self: false };
+}
+
+/** 그 분류의 "미분류"를 가리키는 값. */
+export function selfCategoryPick(id: string): string {
+  return `${SELF_CATEGORY_PREFIX}${id}`;
+}
+
 export interface EntrySearchQuery {
   /**
    * 거래를 낸 사람 (쉼표로 잇는다).
@@ -78,8 +109,20 @@ export interface ParsedEntrySearch {
    * 있지만, 글자는 적는 칸이라 비운 것이 곧 "적지 않았다"이기 때문이다.
    */
   text?: string;
-  /** undefined 면 분류로 거르지 않는다 */
+  /**
+   * 소분류까지 펴서 볼 분류. undefined 면 분류로 거르지 않는다.
+   *
+   * 대분류가 담기면 그 소분류 거래도 함께 걸린다. 소분류가 담기면 그것만이다.
+   */
   categoryIds?: string[];
+  /**
+   * **그 분류에 직접 적은 거래만** 볼 분류 (미분류).
+   *
+   * `categoryIds` 와 한 무리이고 둘은 OR 로 이어진다. 그래서 "식비는 미분류만, 교통은
+   * 전체"가 한 검색에 담긴다 -- 예전에는 검색 전체에 걸리는 스위치 하나였는데,
+   * 그러면 분류마다 다르게 정할 수가 없었다.
+   */
+  categorySelfIds?: string[];
   paymentAccountIds?: string[];
   paymentCardIds?: string[];
   /**
@@ -121,6 +164,7 @@ export function hasEntrySearch(search: ParsedEntrySearch): boolean {
     search.noTag ||
     (search.entryPersonIds?.length ?? 0) > 0 ||
     (search.categoryIds?.length ?? 0) > 0 ||
+    (search.categorySelfIds?.length ?? 0) > 0 ||
     (search.paymentAccountIds?.length ?? 0) > 0 ||
     (search.paymentCardIds?.length ?? 0) > 0 ||
     (search.kinds?.length ?? 0) > 0 ||
@@ -145,7 +189,17 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
   // 적지 않은 것과 지운 것을 같게 본다. 빈 칸으로 결과를 비우면 지우는 순간 목록이 사라진다.
   const text = query.text?.trim() ? query.text.trim() : undefined;
 
-  const categoryIds = idsOf(query.categoryIds);
+  /*
+   * 분류 무리. "미분류"(그 분류에 직접 적은 것만)가 분류 id 자리에 함께 온다.
+   *
+   * 태그 무리의 `NO_TAG` 와 같은 방식이다. 무리 안은 OR 이므로 "식비 전체 또는 교통
+   * 미분류"가 그대로 표현되고, 따로 두면 그 무리와 AND 로 이어져 빈 조건이 된다.
+   */
+  const rawCategoryIds = idsOf(query.categoryIds);
+  const categoryIds = rawCategoryIds?.filter((id) => !isSelfCategoryPick(id));
+  const categorySelfIds = rawCategoryIds
+    ?.filter(isSelfCategoryPick)
+    .map((id) => id.slice(SELF_CATEGORY_PREFIX.length));
   const paymentAccountIds = idsOf(query.paymentAccountIds);
   const paymentCardIds = idsOf(query.paymentCardIds);
   const entryPersonIds = idsOf(query.entryPersonIds);
@@ -176,7 +230,8 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
    * 보면 그런 검색이 언제나 빈 결과가 된다.
    */
   let matchNothing = false;
-  if (categoryIds !== undefined && categoryIds.length === 0) matchNothing = true;
+  // 분류는 두 갈래로 갈리지만 한 무리다. 둘 다 비어야 "열어 놓고 하나도 고르지 않음"이다.
+  if (rawCategoryIds !== undefined && rawCategoryIds.length === 0) matchNothing = true;
 
   const methodsGiven = paymentAccountIds !== undefined || paymentCardIds !== undefined;
   const methodCount = (paymentAccountIds?.length ?? 0) + (paymentCardIds?.length ?? 0);
@@ -199,6 +254,7 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
   return {
     text,
     categoryIds,
+    categorySelfIds,
     paymentAccountIds,
     paymentCardIds,
     kinds: everyKind ? undefined : kinds,

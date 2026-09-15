@@ -13,11 +13,14 @@ import {
 } from '@money/core/hooks/useCategoryManager';
 import Modal from '@/components/Modal';
 import CategoryFormFields from '@/components/CategoryFormFields';
+import CategoryMergeModal from '@/components/CategoryMergeModal';
+import ChoiceModal from '@/components/ChoiceModal';
 import AddButton from '@/components/AddButton';
 import PageHeader from '@/components/PageHeader';
 import TagsPanel from '@/components/TagsPanel';
 import TransactionsView from '@/components/TransactionsView';
 import type { Category } from '@money/core/lib/types';
+import type { CategoryDto } from '@money/types';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useDragReorder } from '@/hooks/useDragReorder';
 
@@ -74,6 +77,8 @@ export default function CategoriesPage() {
   const [reopen, setReopen] = useState<EntriesTarget | null>(null);
 
   const [error, setError] = useState('');
+  /** 잘 끝난 일을 적는 줄. 오류와 색이 달라야 해서 따로 든다. */
+  const [notice, setNotice] = useState('');
   /*
    * 카테고리와 태그. 둘 다 "거래를 무엇으로 묶어 보나"를 정하는 일이라 한 화면에 둔다.
    *
@@ -85,6 +90,22 @@ export default function CategoriesPage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  /**
+   * 없애려다 거래에 막힌 분류. 이 값이 있으면 "어떻게 할까요" 창이 선다.
+   *
+   * 통합 창과 따로 든다 -- 무엇을 할지 고르는 자리와 옮길 곳을 고르는 자리는 되돌아갈
+   * 수 있어야 하는 두 걸음이다.
+   */
+  const [inUseId, setInUseId] = useState<string | null>(null);
+  /** 옮길 곳을 고르는 중인 분류. 위의 창에서 "통합하기"를 누르면 여기로 넘어온다. */
+  const [mergeId, setMergeId] = useState<string | null>(null);
+  /**
+   * 없애려는 분류와 그 소분류의 거래 수. 열쇠는 분류 id 다.
+   *
+   * 통합 창이 이 값으로 **거래가 있는 줄에만** 갈 곳을 묻는다. 없앨 때 한 번 읽어 두고
+   * 창이 닫힐 때까지 그대로 쓴다 -- 창 안에서 다시 읽을 까닭이 없다.
+   */
+  const [usage, setUsage] = useState<Record<string, number>>({});
   const [formData, setFormData] = useState<CategoryFormValues>({
     name: '',
     type: 'expense',
@@ -168,6 +189,9 @@ export default function CategoriesPage() {
   /* 브라우저(그리고 휴대폰)의 뒤로가기는 머리글의 ← 를 누른 것과 같게 동작한다. */
   useCloseOnBack(entries !== null, closeEntries);
 
+  /** 없애려다 막힌 분류. 이 값이 있으면 무엇을 할지 묻는 창이 선다. */
+  const inUseCategory = categories.find((row) => row.id === inUseId) ?? null;
+
   const handleCategoryClick = (category: Category) => {
     setSelectedCategory(category);
     setIsDetailModalOpen(true);
@@ -187,11 +211,62 @@ export default function CategoriesPage() {
     openEditor(selectedCategory);
   };
 
+  /**
+   * 없애기. 거래에 쓰이고 있으면 막히는데, 그때는 길을 둘 내준다.
+   *
+   * 예전에는 "삭제할 수 없습니다" 한 줄로 끝났다. 그 분류를 정리하려면 거래를 하나씩
+   * 찾아 고쳐야 했고, 어디에 몇 건이 있는지도 화면에 없었다.
+   */
   const handleDeleteClick = async (id: string) => {
+    setNotice('');
+
+    /*
+     * 거래가 있으면 "지우시겠습니까"를 묻지 않는다.
+     *
+     * 그 물음은 어차피 지워지지 않을 일에 대한 헛걸음이다 -- 예라고 답해도 막히고,
+     * 그제서야 길을 고르는 창이 뜬다. 거래가 있다는 것을 먼저 알았으니 곧바로 그
+     * 창을 연다.
+     */
+    const counts = await manager.usageOf(id);
+    if (counts && Object.values(counts).some((count) => count > 0)) {
+      setError('');
+      setUsage(counts);
+      setInUseId(id);
+      return;
+    }
+
     if (!window.confirm(t('account.deleteConfirm'))) return;
 
     const result = await manager.remove(id);
-    setError(result.ok ? '' : result.message);
+    if (result.ok) {
+      setError('');
+      return;
+    }
+
+    if (result.inUse) {
+      // 거래 수를 못 읽었던 경우다. 막힌 이유는 창이 말하므로 오류 줄은 띄우지 않는다.
+      setError('');
+      setUsage(counts ?? {});
+      setInUseId(id);
+      return;
+    }
+    setError(result.message);
+  };
+
+  /**
+   * 옮기고 없앤다. 끝나면 몇 건이 옮겨졌는지 알린다.
+   *
+   * 알림이 필요한 까닭이 있다. 이 일은 거래 수백 건을 한꺼번에 옮기는데, 끝나고 나면
+   * 화면에서 사라지는 것은 분류 한 줄뿐이라 무슨 일이 일어났는지 볼 곳이 없다.
+   */
+  const handleMerge = async (moves: CategoryDto.MergeMove[]) => {
+    const result = await manager.merge(moves);
+    if (result.ok) {
+      setMergeId(null);
+      setIsDetailModalOpen(false);
+      setNotice(t('categories.mergeDone', { count: result.movedPostings ?? 0 }));
+    }
+    return result;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -237,6 +312,13 @@ export default function CategoriesPage() {
         무엇에 더하는 것인지가 버튼 아래에 곧바로 이어져 보인다.
       */}
       <PageHeader title={t('nav.categories')} />
+
+      {/* 잘 끝난 일. 통합처럼 화면에 자취가 남지 않는 일이 여기서 말한다. */}
+      {notice ? (
+        <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">
+          {notice}
+        </div>
+      ) : null}
 
       {/*
         보기 방식. 흰 알약을 하나 두고 옮긴다 -- 칸마다 바탕을 켜고 끄면 두 탭이 한 줄에
@@ -483,6 +565,53 @@ export default function CategoriesPage() {
 
       </form>
       </Modal>
+
+      {/*
+        없애려다 막혔을 때. 무엇을 할지 먼저 묻는다.
+
+        곧바로 통합 창을 열지 않는다. 거래가 몇 건인지, 무엇에 쓰인 분류인지 모르는 채로
+        옮길 곳부터 고르게 되기 때문이다 -- 먼저 그 거래를 보러 갈 길을 나란히 둔다.
+      */}
+      <ChoiceModal
+        isOpen={inUseCategory !== null}
+        onClose={() => setInUseId(null)}
+        title={t('categories.inUseTitle')}
+        choices={[
+          {
+            key: 'entries',
+            icon: '🧾',
+            label: t('categories.inUseShowEntries'),
+            description: t('categories.inUseShowEntriesHint'),
+            tone: 'blue',
+            onSelect: () => {
+              const target = inUseCategory;
+              setInUseId(null);
+              if (target) showEntriesOf(target);
+            },
+          },
+          {
+            key: 'merge',
+            icon: '🔀',
+            label: t('categories.inUseMerge'),
+            description: t('categories.inUseMergeHint'),
+            tone: 'green',
+            onSelect: () => {
+              setMergeId(inUseId);
+              setInUseId(null);
+            },
+          },
+        ]}
+      />
+
+      <CategoryMergeModal
+        isOpen={mergeId !== null}
+        onClose={() => setMergeId(null)}
+        categories={categories}
+        targetId={mergeId}
+        usage={usage}
+        isSubmitting={isSubmitting}
+        onSubmit={handleMerge}
+      />
     </div>
   );
 }

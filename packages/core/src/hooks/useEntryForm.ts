@@ -9,7 +9,7 @@
  * 같은 폼을 쓰기로 하면 그때 옮길 것이 없다.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { fallbackRate } from '@money/types';
 import type {
   AccountDto,
@@ -109,6 +109,8 @@ export function useEntryForm({
   onSaved,
 }: UseEntryFormOptions) {
   const [lists, setLists] = useState<EntryFormLists>(EMPTY_LISTS);
+  /** 목록 조회의 번호. 뒤늦게 온 답이 새 목록을 덮지 않게 한다. */
+  const listsRun = useRef(0);
   const [values, setValues] = useState<EntryFormValues>(() =>
     emptyEntryForm({ personId: defaultPersonId, timeZone }),
   );
@@ -123,35 +125,52 @@ export function useEntryForm({
   /** 서버가 코드로 말한 오류를 고른 언어의 문장으로. */
   const { messageOf } = useApiError();
 
-  // 고를 목록. 사본이 채워지면(오프라인 동기화) 다시 읽는다.
-  useEffect(() => {
+  /**
+   * 고를 목록을 다시 읽는다. 읽은 것을 그대로 돌려준다.
+   *
+   * 돌려주는 것이 요점이다. 폼 안에서 무언가를 만들면(구성원·통장·카드·분류·태그)
+   * 그것을 곧바로 골라야 하는데, 상태가 반영되기를 기다릴 수 없으므로 만든 쪽이
+   * 이 결과에서 그 줄을 찾아 쓴다.
+   */
+  const reloadLists = useCallback(async (): Promise<EntryFormLists> => {
+    /*
+     * 이 조회가 아직 유효한지 가리는 표.
+     *
+     * 가계부를 바꾸면 앞서 떠난 조회가 뒤늦게 돌아와 남의 가계부 목록을 붙인다.
+     * 돌려주는 값은 그대로 둔다 -- 부른 쪽은 자기가 만든 것을 찾는 데 쓰고, 화면에
+     * 붙이는 것만 마지막 조회의 몫이다.
+     */
+    const run = ++listsRun.current;
+
     if (!projectId) {
-      setLists(EMPTY_LISTS);
-      return;
+      if (listsRun.current === run) setLists(EMPTY_LISTS);
+      return EMPTY_LISTS;
     }
 
-    let cancelled = false;
-    void (async () => {
-      const port = homeDataPort();
-      try {
-        const [people, accounts, cards, categories, tags] = await Promise.all([
-          port.getPeople(projectId),
-          port.getAccountsV2(projectId),
-          port.getCards(projectId),
-          port.getCategories(projectId),
-          port.getTags(projectId),
-        ]);
-        if (!cancelled) setLists({ people, accounts, cards, categories, tags });
-      } catch {
-        // 목록을 읽지 못해도 폼은 뜬다. 고를 것이 없으면 검증이 막는다.
-        if (!cancelled) setLists(EMPTY_LISTS);
-      }
-    })();
+    const port = homeDataPort();
+    try {
+      const [people, accounts, cards, categories, tags] = await Promise.all([
+        port.getPeople(projectId),
+        port.getAccountsV2(projectId),
+        port.getCards(projectId),
+        port.getCategories(projectId),
+        port.getTags(projectId),
+      ]);
+      const next = { people, accounts, cards, categories, tags };
+      if (listsRun.current === run) setLists(next);
+      return next;
+    } catch {
+      // 목록을 읽지 못해도 폼은 뜬다. 고를 것이 없으면 검증이 막는다.
+      if (listsRun.current === run) setLists(EMPTY_LISTS);
+      return EMPTY_LISTS;
+    }
+  }, [projectId]);
 
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, mirrorVersion]);
+  // 고를 목록. 사본이 채워지면(오프라인 동기화) 다시 읽는다.
+  useEffect(() => {
+    void reloadLists();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadLists, mirrorVersion]);
 
   /** 새로 적기. 팝업을 열 때 부른다. */
   const startNew = useCallback(() => {
@@ -267,7 +286,10 @@ export function useEntryForm({
          */
         if (field === 'currency') {
           if (!next.currency) return { ...next, exchangeRate: '' };
-          return { ...next, exchangeRate: fallbackRate(next.currency, ledgerCurrency) ?? '' };
+          return {
+            ...next,
+            exchangeRate: fallbackRate(next.currency, ledgerCurrency) ?? '',
+          };
         }
 
         // 결제수단을 통장으로 바꾸면 할부는 뜻이 없다.
@@ -355,9 +377,15 @@ export function useEntryForm({
          * 사본 창구는 이 값을 쓰지 않는다. 그쪽은 사본이 아는 시계를 스스로 읽어
          * 명령의 시계를 그 뒤로 발급받는다 -- 판정을 서버에 맡기지 않고 병합한다.
          */
-        await port.updateEntry(editingId, { ...request, baseHlc: values.baseHlc });
+        await port.updateEntry(editingId, {
+          ...request,
+          baseHlc: values.baseHlc,
+        });
       } else {
-        const created = await port.createEntry({ ...request, projectId: projectId ?? undefined });
+        const created = await port.createEntry({
+          ...request,
+          projectId: projectId ?? undefined,
+        });
         savedId = created.id;
       }
       onSaved?.({ entryId: savedId });
@@ -464,6 +492,7 @@ export function useEntryForm({
     values,
     setField,
     lists,
+    reloadLists,
     methodChoices,
     toAccountChoices,
     categoryChoices,

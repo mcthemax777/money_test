@@ -13,21 +13,52 @@ import { CalendarDays, ChevronDown, Clock } from 'lucide-react-native';
 import type { CategoryDto } from '@money/types';
 
 import { groupCategories } from '@money/core/lib/category-tree';
+import { useTranslation } from '@money/core/lib/i18n';
 
 export function Field({
   label,
   invalid,
+  onAdd,
+  addLabel,
   children,
 }: {
   label: string;
   invalid?: boolean;
+  /**
+   * 이 칸에서 고를 것을 그 자리에서 만든다. 주면 이름표 오른쪽에 "+ 추가"가 선다.
+   *
+   * 적으려는 순간에야 "이 카드가 아직 없다"를 알게 되는 일이 잦다. 폼을 닫고 자산
+   * 화면으로 건너가 만들고 돌아오면 적던 내용이 사라지므로, 고르는 칸마다 만드는
+   * 길을 붙인다 (웹의 선택 상자 아래 "+ 추가"와 같은 자리다).
+   */
+  onAdd?: () => void;
+  /**
+   * 무엇을 만드는지. 단추에는 "+ 추가"만 서고 이 말은 읽어 주는 데만 쓴다 -- 이름표
+   * 옆에 "구성원 추가"까지 적으면 같은 말이 한 줄에 두 번 선다.
+   */
+  addLabel?: string;
   children: React.ReactNode;
 }) {
+  const { t } = useTranslation();
+
   return (
     <View>
-      <Text className={`mb-2 text-sm font-medium ${invalid ? 'text-red-600' : 'text-gray-700'}`}>
-        {label}
-      </Text>
+      <View className="mb-2 flex-row items-center justify-between gap-2">
+        <Text className={`text-sm font-medium ${invalid ? 'text-red-600' : 'text-gray-700'}`}>
+          {label}
+        </Text>
+        {onAdd ? (
+          <Pressable
+            onPress={onAdd}
+            hitSlop={8}
+            accessibilityRole="button"
+            accessibilityLabel={addLabel ?? t('common.add')}
+            className="rounded px-2 py-0.5 active:bg-blue-50"
+          >
+            <Text className="text-sm font-medium text-blue-600">+ {t('common.add')}</Text>
+          </Pressable>
+        ) : null}
+      </View>
       {children}
     </View>
   );
@@ -117,12 +148,20 @@ export function Select({
 export function Chip({
   label,
   selected,
+  covered,
   onPress,
   color,
   subtle,
 }: {
   label: string;
   selected: boolean;
+  /**
+   * 고른 것은 아니지만 함께 걸리는 자리 (대분류를 켰을 때의 그 소분류).
+   *
+   * 파랗게 칠하지 않고 파란 글자만 남긴다. 켠 것과 같은 모양으로 두면 대분류 하나를
+   * 눌렀을 때 아래가 전부 켜져 보여, 무엇을 골랐는지 화면에서 읽을 수 없다.
+   */
+  covered?: boolean;
   onPress: () => void;
   /** 태그의 색. 그 밖의 알약은 색이 없다. */
   color?: string | null;
@@ -146,10 +185,12 @@ export function Chip({
       className={`flex-row items-center gap-1.5 rounded-full border px-3 py-1.5 ${
         selected
           ? 'border-blue-600 bg-blue-50'
-          : subtle
-            ? // 테두리를 없애지 않고 **투명하게** 둔다. 굵기가 그대로라 줄바꿈 자리가 움직이지 않는다.
-              'border-transparent bg-white'
-            : 'border-gray-300 bg-white'
+          : covered
+            ? 'border-blue-200 bg-white'
+            : subtle
+              ? // 테두리를 없애지 않고 **투명하게** 둔다. 굵기가 그대로라 줄바꿈 자리가 움직이지 않는다.
+                'border-transparent bg-white'
+              : 'border-gray-300 bg-white'
       }`}
     >
       {color ? (
@@ -157,7 +198,13 @@ export function Chip({
       ) : null}
       <Text
         className={`text-sm ${subtle ? 'font-light' : ''} ${
-          selected ? 'text-blue-600' : subtle ? 'text-gray-500' : 'text-gray-700'
+          selected
+            ? 'text-blue-600'
+            : covered
+              ? 'text-blue-400'
+              : subtle
+                ? 'text-gray-500'
+                : 'text-gray-700'
         }`}
       >
         {label}
@@ -256,7 +303,10 @@ export function CategoryChips({
   const picked = selected
     ? groups
         .flatMap((group) =>
-          [group.parent, ...group.children].map((category) => ({ category, group })),
+          [group.parent, ...group.children].map((category) => ({
+            category,
+            group,
+          })),
         )
         .find((row) => row.category?.id === selected)
     : null;

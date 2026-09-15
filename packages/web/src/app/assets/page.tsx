@@ -216,6 +216,7 @@ function LedgerList({
   hasMore,
   isLoading,
   onMore,
+  onOpenEntry,
 }: {
   rows: LedgerLikeRow[];
   /** 그 계좌의 통화. 기준통화 환산액이 아니라 원장에 적힌 그대로다. */
@@ -225,6 +226,12 @@ function LedgerList({
   hasMore: boolean;
   isLoading: boolean;
   onMore: () => void;
+  /**
+   * 주면 줄을 눌러 그 거래의 상세를 연다. 없으면 읽기만 하는 목록이다.
+   *
+   * 여는 일은 화면이 맡는다 -- 상세 팝업은 이 목록이 아니라 자산 화면이 들고 있다.
+   */
+  onOpenEntry?: (entryId: string) => void;
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
@@ -265,10 +272,24 @@ function LedgerList({
         */
         const title = row.description || categoryTitleOf(row) || t('entry.noTitle');
 
+        /*
+          줄 전체가 누를 자리다. 거래 목록에서 한 줄을 눌러 상세를 여는 것과 같은
+          손짓이라, 원장에서만 누를 수 없으면 "여기 것은 못 고치는 줄"로 읽힌다.
+
+          대금 결제 줄도 똑같이 전표라 함께 열린다. 폼으로 고칠 수 없는 갈래는 상세
+          팝업이 고치기 단추를 감춘다 -- 여기서 가릴 일이 아니다.
+        */
+        const Row = onOpenEntry ? 'button' : 'div';
+
         return (
-          <div
+          <Row
             key={row.postingId}
-            className="flex items-start justify-between gap-3 border-b border-gray-100 py-2.5"
+            {...(onOpenEntry
+              ? { type: 'button' as const, onClick: () => onOpenEntry(row.entryId) }
+              : {})}
+            className={`flex w-full items-start justify-between gap-3 border-b border-gray-100 py-2.5 text-left ${
+              onOpenEntry ? 'transition hover:bg-gray-50' : ''
+            }`}
           >
             <div className="flex-1 min-w-0">
               <p className="text-[15px] text-gray-900">{title}</p>
@@ -291,7 +312,7 @@ function LedgerList({
                 </p>
               )}
             </div>
-          </div>
+          </Row>
         );
       })}
 
@@ -521,6 +542,20 @@ export default function DashboardPage() {
   const [entryVersion, setEntryVersion] = useState(0);
   /** 거래 상세·추가 팝업. 가계 화면과 같은 컴포넌트를 쓴다. */
   const entryEditorRef = useRef<EntryEditorHandle>(null);
+
+  /**
+   * 원장 한 줄을 눌렀을 때. 그 전표를 읽어 거래 상세를 연다.
+   *
+   * 원장 줄이 들고 있는 것은 `entryId` 뿐이라, 상세 팝업이 받는 한 줄(`EntryListItem`)로
+   * 펴려면 그 전표를 따로 읽어야 한다. 못 읽으면 조용히 아무것도 열지 않는다 --
+   * 열리지 않는 팝업을 세우느니 누르지 않은 것처럼 두는 편이 낫다.
+   */
+  const openLedgerEntry = useCallback((entryId: string) => {
+    void apiClient
+      .getEntry(entryId)
+      .then((entry) => entryEditorRef.current?.openDetail(entry))
+      .catch(() => {});
+  }, []);
 
   /**
    * 총자산과 사람별 소계, 그리고 계좌 수익.
@@ -1294,6 +1329,7 @@ export default function DashboardPage() {
                   hasMore={Boolean(ledgerCursor)}
                   isLoading={isLoadingLedger}
                   onMore={loadMoreAccountTransactions}
+                  onOpenEntry={openLedgerEntry}
                 />
               </div>
             </div>
@@ -1435,6 +1471,7 @@ export default function DashboardPage() {
                   hasMore={cardPayments.hasMore}
                   isLoading={cardPayments.isLoading}
                   onMore={cardPayments.loadMore}
+                  onOpenEntry={openLedgerEntry}
                 />
               </div>
             </div>
@@ -2215,14 +2252,21 @@ function AccountList({
                 </p>
               </div>
               {/*
-                무엇을 뺀 값인지는 대금이 있을 때만 풀어 쓴다. 대금이 없으면 남은 금액이
-                곧 잔액이라, 같은 수를 한 번 더 적는 줄이 된다.
+                통장에 실제로 찍힌 돈. 카드 대금이 있을 때만 적는다.
+
+                대금이 없으면 남은 금액이 곧 잔액이라, 같은 수를 한 번 더 적는 줄이 된다.
+                대금 액수는 여기 적지 않는다 -- 카드 줄이 바로 아래에 붙어 있어 그쪽에서
+                카드마다 얼마인지 읽는 편이 낫다.
               */}
               {due !== 0 && (
-                <p className="mt-1 text-right text-xs tabular-nums text-gray-500">
-                  {t(due > 0 ? 'assets.balanceWithDue' : 'assets.balanceWithRefund', {
+                /*
+                  큰 금액 다음으로 자주 읽는 줄이라 12px 회색으로 두지 않는다.
+                  이것이 안 보이면 큰 금액이 왜 그 값인지 알 수 없다. 큰 금액보다는
+                  작게 두어 차례는 지킨다.
+                */
+                <p className="mt-1 text-right text-sm font-medium tabular-nums text-gray-700">
+                  {t('assets.balanceLine', {
                     balance: formatCurrency(account.balance, account.currency),
-                    due: formatCurrency(Math.abs(due), account.currency),
                   })}
                 </p>
               )}

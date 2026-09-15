@@ -11,7 +11,8 @@ import {
   useProjectTimeZone,
 } from '@money/core/store/project';
 import { useExchangeRates } from '@money/core/hooks/useExchangeRates';
-import { useTagManager } from '@money/core/hooks/useTagManager';
+import { useTagManager, type TagFormValues } from '@money/core/hooks/useTagManager';
+import { useQuickAdd } from '@money/core/hooks/useQuickAdd';
 import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import { apiClient } from '@money/core/lib/api-client';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -52,6 +53,7 @@ import ChoiceModal from '@/components/ChoiceModal';
 import Modal from '@/components/Modal';
 import AddAccountModal from '@/components/AddAccountModal';
 import PersonModal from '@/components/PersonModal';
+import { AddTagModal } from '@/components/TagFields';
 import type { EntryListItem } from '@/components/TransactionItem';
 import type { EntryDraftDto } from '@money/types';
 import CardColorPicker from '@/components/CardColorPicker';
@@ -339,10 +341,12 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
    * 태그 목록. 계좌·분류와 달리 prop 으로 받지 않고 여기서 읽는다.
    *
    * 이 팝업을 여는 화면이 여럿이라(가계·자산·거래) prop 으로 두면 그 화면마다 목록을
-   * 받아 내려보내는 일이 늘어난다. 태그는 이 팝업에서 만들 수 없으므로 목록이 바깥과
-   * 어긋날 일도 없다.
+   * 받아 내려보내는 일이 늘어난다. 여기서 태그를 만들면 `reloadTags` 로 이 목록만
+   * 다시 읽는다 -- 바깥 화면의 태그 필터는 제 목록을 따로 들고 있어 다음에 열 때 따라온다.
    */
-  const { tags } = useTagManager(projectId);
+  const { tags, reload: reloadTags } = useTagManager(projectId);
+  /** 태그를 그 자리에서 만드는 창구. 만든 것의 id 를 받아 곧바로 고른다. */
+  const quickAdd = useQuickAdd(projectId);
   const [formData, setFormData] = useState(() => emptyEntryForm(timeZone, ledgerCurrency));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -355,6 +359,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [isCardModalOpen, setIsCardModalOpen] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  /** 태그를 그 자리에서 만드는 창. 다른 것과 달리 목록이 이 팝업 안에 있다. */
+  const [isTagModalOpen, setIsTagModalOpen] = useState(false);
   // 계좌 추가 폼 상태는 AddAccountModal이 직접 들고 있다. 여기서는 열림 여부만 관리한다.
   const [cardFormData, setCardFormData] = useState({
     accountId: '',
@@ -1306,6 +1312,27 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     }
   };
 
+  /**
+   * 태그 하나를 만들고 그 자리에서 고른다.
+   *
+   * 태그를 만들러 창을 연 이유는 그 태그로 이 거래를 묶으려는 것이다. 목록만 갱신하고
+   * 두면 알약 줄에서 같은 값을 한 번 더 눌러야 한다 (소분류를 만들 때와 같은 뜻이다).
+   */
+  const handleTagCreate = async (values: TagFormValues) => {
+    const result = await quickAdd.addTag({
+      name: values.name,
+      ...(values.color ? { color: values.color } : {}),
+    });
+    if (!result.ok || !result.id) return result;
+
+    await reloadTags();
+    const id = result.id;
+    setFormData((previous) =>
+      previous.tagIds.includes(id) ? previous : { ...previous, tagIds: [...previous.tagIds, id] },
+    );
+    return result;
+  };
+
   /** 카테고리 팝업을 닫고 폼을 비운다. 다음에 열 때 지난 입력이 남아 있으면 안 된다. */
   const closeCategoryModal = () => {
     setIsCategoryModalOpen(false);
@@ -1995,11 +2022,25 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 카테고리와 달리 **여럿을 고른다.** 그래서 select 가 아니라 알약 줄이다 --
                 여러 개 고르는 select 는 무엇이 골라졌는지 열어 봐야 알 수 있다.
               */}
-              {tags.length > 0 && (
-                <div>
-                  <span className="mb-1 block text-sm font-medium text-gray-700">
-                    {t('tags.pick')}
-                  </span>
+              {/*
+                태그가 하나도 없어도 이 자리는 선다. 만드는 길이 여기뿐이라, 비었다고
+                접으면 첫 태그를 만들 곳이 없다.
+              */}
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="block text-sm font-medium text-gray-700">{t('tags.pick')}</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsTagModalOpen(true)}
+                    aria-label={t('tags.add')}
+                    className="rounded px-2 py-0.5 text-sm font-medium text-blue-600 transition hover:bg-blue-50"
+                  >
+                    + {t('common.add')}
+                  </button>
+                </div>
+                {tags.length === 0 ? (
+                  <p className="text-sm text-gray-500">{t('tags.empty')}</p>
+                ) : (
                   <div className="flex flex-wrap gap-2">
                     {tags.map((tag) => {
                       const isSelected = formData.tagIds.includes(tag.id);
@@ -2043,9 +2084,11 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                       );
                     })}
                   </div>
+                )}
+                {tags.length > 0 ? (
                   <p className="mt-1 text-xs text-gray-500">{t('tags.pickHint')}</p>
-                </div>
-              )}
+                ) : null}
+              </div>
 
               {/*
                 할부. 자주 쓰는 값이 아니라 폼 맨 아래에 둔다.
@@ -2109,6 +2152,13 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
             },
           },
         ]}
+      />
+
+      <AddTagModal
+        isOpen={isTagModalOpen}
+        onClose={() => setIsTagModalOpen(false)}
+        onSubmit={handleTagCreate}
+        isSubmitting={quickAdd.isSubmitting}
       />
 
       <PersonModal

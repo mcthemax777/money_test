@@ -53,6 +53,24 @@ export class CategoriesController {
     return this.categoriesService.reorderCategories(req.user.id, dto.ids, projectId);
   }
 
+  // ':id' 보다 먼저 선언해야 'merge'가 id로 잡히지 않는다 (reorder 와 같은 까닭).
+  @Post('merge')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '카테고리 통합 (거래를 옮기고 감춘다)' })
+  merge(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: CategoryDto.MergeRequest,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.categoriesService.mergeCategories(req.user.id, dto, projectId);
+  }
+
+  @Get(':id/usage')
+  @ApiOperation({ summary: '이 분류와 소분류에 달린 거래 수' })
+  usage(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.categoriesService.getCategoryUsage(id, req.user.id);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: '카테고리 상세' })
   getById(@Request() req: AuthenticatedRequest, @Param('id') id: string) {

@@ -24,6 +24,7 @@ import {
   Minus,
   MoreVertical,
   Pencil,
+  Plus,
   Search,
   Tag,
   Trash2,
@@ -32,6 +33,7 @@ import {
 import {
   NO_TAG,
   SEARCHABLE_ENTRY_KINDS,
+  selfCategoryPick,
   type EntryListItem as EntryListItemDto,
 } from '@money/types';
 
@@ -46,7 +48,7 @@ import {
 } from '@money/core/lib/asset-owner';
 import {
   groupCategoriesByType,
-  isCategoryPicked,
+  categoryPickState,
   toggleCategory,
 } from '@money/core/lib/category-tree';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
@@ -631,6 +633,7 @@ export default function TransactionsView({
   const Chip = ({
     label,
     selected,
+    covered,
     onClick,
     color,
     partial,
@@ -639,6 +642,13 @@ export default function TransactionsView({
   }: {
     label: string;
     selected: boolean;
+    /**
+     * 고른 것은 아니지만 함께 걸리는 자리 (대분류를 켰을 때의 그 소분류).
+     *
+     * 파랗게 칠하지 않고 옅은 파란 테두리와 글자만 남긴다. 켠 것과 같은 모양으로 두면
+     * 대분류 하나를 눌렀을 때 아래가 전부 켜져 보여, 무엇을 골랐는지 읽을 수 없다.
+     */
+    covered?: boolean;
     onClick: () => void;
     /** 태그의 색. 그 밖의 알약은 색이 없다. */
     color?: string | null;
@@ -680,12 +690,14 @@ export default function TransactionsView({
       } ${
         selected
           ? 'border-blue-600 bg-blue-50 text-blue-600'
-          : partial
-            ? 'border-gray-400 bg-gray-50 text-gray-800'
-            : subtle
-              ? // 테두리를 없애지 않고 **투명하게** 둔다. 굵기가 그대로라 줄바꿈 자리가 움직이지 않는다.
-                'border-transparent bg-white text-gray-500 hover:bg-gray-50'
-              : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+          : covered
+            ? 'border-blue-200 bg-white text-blue-400 hover:bg-blue-50'
+            : partial
+              ? 'border-gray-400 bg-gray-50 text-gray-800'
+              : subtle
+                ? // 테두리를 없애지 않고 **투명하게** 둔다. 굵기가 그대로라 줄바꿈 자리가 움직이지 않는다.
+                  'border-transparent bg-white text-gray-500 hover:bg-gray-50'
+                : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
       }`}
     >
       {color ? (
@@ -1438,7 +1450,10 @@ export default function TransactionsView({
                               {group.parent ? (
                                 <Chip
                                   label={group.parent.name}
-                                  selected={isCategoryPicked(draft.categoryIds, group.parent, group)}
+                                  selected={
+                                    categoryPickState(draft.categoryIds, group.parent, group) ===
+                                    'on'
+                                  }
                                   onClick={() => pick(group.parent!)}
                                 />
                               ) : null}
@@ -1447,16 +1462,50 @@ export default function TransactionsView({
                                 <Divider mark="›" />
                               ) : null}
 
-                              {group.children.map((child) => (
-                                <Chip
-                                  key={child.id}
-                                  label={child.name}
-                                  selected={isCategoryPicked(draft.categoryIds, child, group)}
-                                  onClick={() => pick(child)}
-                                  // 한 단 아래다. 옅게 그려 대분류가 먼저 읽히게 한다.
-                                  subtle
-                                />
-                              ))}
+                              {group.children.map((child) => {
+                                const state = categoryPickState(draft.categoryIds, child, group);
+
+                                return (
+                                  <Chip
+                                    key={child.id}
+                                    label={child.name}
+                                    selected={state === 'on'}
+                                    // 대분류를 켜서 함께 걸리는 자리. 켠 것과 다르게 그린다.
+                                    covered={state === 'covered'}
+                                    onClick={() => pick(child)}
+                                    // 한 단 아래다. 옅게 그려 대분류가 먼저 읽히게 한다.
+                                    subtle
+                                  />
+                                );
+                              })}
+
+                              {/*
+                                미분류. 소분류 없이 이 대분류에 바로 적은 거래다.
+
+                                소분류들과 나란히 서는 한 칸이라 알약도 그 줄에 둔다.
+                                소분류가 없는 대분류에는 두지 않는다 -- 그 대분류가 곧
+                                미분류라 같은 것을 가리키는 알약이 둘이 된다.
+                              */}
+                              {group.parent && group.children.length > 0
+                                ? (() => {
+                                    const selfId = selfCategoryPick(group.parent.id);
+                                    const state = categoryPickState(
+                                      draft.categoryIds,
+                                      { id: selfId },
+                                      group,
+                                    );
+
+                                    return (
+                                      <Chip
+                                        label={t('category.uncategorized')}
+                                        selected={state === 'on'}
+                                        covered={state === 'covered'}
+                                        onClick={() => pick({ id: selfId })}
+                                        subtle
+                                      />
+                                    );
+                                  })()
+                                : null}
 
                               {/* 묶음의 끝. 마지막 묶음 뒤에는 가를 것이 없다. */}
                               {index < section.groups.length - 1 ? <Divider mark="/" /> : null}
@@ -1466,6 +1515,7 @@ export default function TransactionsView({
                       </div>
                     </div>
                   ))}
+
                 </div>
               </div>
             ) : null}
@@ -1643,7 +1693,29 @@ export default function TransactionsView({
       </Modal>
 
       {/*
-        거래 입력 팝업. 상세의 베끼기와 고치기가 이것을 연다 (이 화면에는 추가 버튼이 없다).
+        거래 추가. 화면 오른쪽 아래에 붙박인다(fixed).
+
+        목록 위에 두지 않는다 -- 이 화면의 목록은 달을 펴고 줄을 펴며 얼마든지 길어져,
+        위에 둔 단추는 몇 번만 굴리면 화면 밖으로 사라진다. 고르는 중에는 거두어 둔다.
+        그때의 누름은 체크이고, 머리글에 지우기·태그 단추가 따로 서 있다.
+
+        좁은 화면에서는 아래쪽 탭 막대를 피해 그 위에 선다. 읽기 전용 구성원에게는
+        그리지 않는다.
+      */}
+      {canEdit && !tx.isSelecting ? (
+        <button
+          type="button"
+          onClick={() => entryEditorRef.current?.openAdd()}
+          aria-label={t('entryForm.addButton')}
+          title={t('entryForm.addButton')}
+          className="fixed bottom-20 right-4 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg transition hover:bg-blue-700 active:scale-95 motion-reduce:transition-none motion-reduce:active:scale-100 md:bottom-6 md:right-6"
+        >
+          <Plus className="h-6 w-6" aria-hidden />
+        </button>
+      ) : null}
+
+      {/*
+        거래 입력 팝업. 붙박이 추가 단추와, 상세의 베끼기·고치기가 이것을 연다.
 
         고를 목록은 훅이 이미 읽어 둔 것을 그대로 준다 -- 검색 창이 고르는 계좌·카드·
         분류가 거래를 적을 때 고르는 것과 같은 목록이다.

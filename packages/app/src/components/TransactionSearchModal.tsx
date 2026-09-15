@@ -14,7 +14,7 @@ import { Pressable, Text, TextInput, View } from 'react-native';
 import { CalendarDays } from 'lucide-react-native';
 import type { AccountDto, CardDto, CategoryDto, PersonDto, TagDto } from '@money/types';
 
-import { NO_TAG, SEARCHABLE_ENTRY_KINDS } from '@money/types';
+import { NO_TAG, SEARCHABLE_ENTRY_KINDS, selfCategoryPick } from '@money/types';
 
 import {
   assetOwnerNames,
@@ -24,7 +24,7 @@ import {
 } from '@money/core/lib/asset-owner';
 import {
   groupCategoriesByType,
-  isCategoryPicked,
+  categoryPickState,
   toggleCategory,
 } from '@money/core/lib/category-tree';
 import { useTranslation } from '@money/core/lib/i18n';
@@ -440,23 +440,60 @@ export default function TransactionSearchModal({
                             {group.parent ? (
                               <Chip
                                 label={group.parent.name}
-                                selected={isCategoryPicked(draft.categoryIds, group.parent, group)}
+                                selected={
+                                  categoryPickState(draft.categoryIds, group.parent, group) ===
+                                  'on'
+                                }
                                 onPress={() => pick(group.parent!)}
                               />
                             ) : null}
 
                             {group.parent && group.children.length > 0 ? <Divider mark="›" /> : null}
 
-                            {group.children.map((child) => (
-                              <Chip
-                                key={child.id}
-                                label={child.name}
-                                selected={isCategoryPicked(draft.categoryIds, child, group)}
-                                onPress={() => pick(child)}
-                                // 한 단 아래다. 옅게 그려 대분류가 먼저 읽히게 한다.
-                                subtle
-                              />
-                            ))}
+                            {group.children.map((child) => {
+                              const state = categoryPickState(draft.categoryIds, child, group);
+
+                              return (
+                                <Chip
+                                  key={child.id}
+                                  label={child.name}
+                                  selected={state === 'on'}
+                                  // 대분류를 켜서 함께 걸리는 자리. 켠 것과 다르게 그린다.
+                                  covered={state === 'covered'}
+                                  onPress={() => pick(child)}
+                                  // 한 단 아래다. 옅게 그려 대분류가 먼저 읽히게 한다.
+                                  subtle
+                                />
+                              );
+                            })}
+
+                            {/*
+                              미분류. 소분류 없이 이 대분류에 바로 적은 거래다.
+
+                              소분류들과 나란히 서는 한 칸이라 알약도 그 줄에 둔다.
+                              소분류가 없는 대분류에는 두지 않는다 -- 그 대분류가 곧
+                              미분류라 같은 것을 가리키는 알약이 둘이 된다.
+                            */}
+                            {group.parent && group.children.length > 0
+                              ? (() => {
+                                  const selfId = selfCategoryPick(group.parent.id);
+                                  const state = categoryPickState(
+                                    draft.categoryIds,
+                                    { id: selfId },
+                                    group,
+                                  );
+
+                                  return (
+                                    <Chip
+                                      label={t('category.uncategorized')}
+                                      selected={state === 'on'}
+                                      covered={state === 'covered'}
+                                      onPress={() => pick({ id: selfId })}
+                                      subtle
+                                    />
+                                  );
+                                })()
+                              : null}
 
                             {/* 묶음의 끝. 마지막 묶음 뒤에는 가를 것이 없다. */}
                             {index < section.groups.length - 1 ? <Divider mark="/" /> : null}
@@ -466,6 +503,7 @@ export default function TransactionSearchModal({
                     </View>
                   </View>
                 ))}
+
               </View>
             ) : null}
 

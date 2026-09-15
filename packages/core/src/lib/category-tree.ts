@@ -5,7 +5,7 @@
  * 어느 것이 그 아래인지 이름을 읽어야 안다. 묶어 두면 대분류 한 줄 아래에 그 소분류들이
  * 붙어 눈으로 구조가 보인다.
  */
-import type { CategoryDto } from '@money/types';
+import { selfCategoryPick, type CategoryDto } from '@money/types';
 
 export interface CategoryGroup {
   /**
@@ -99,14 +99,17 @@ export function groupCategoriesByType(
  * 접어 두면 그 무리에서 무엇을 골랐는지가 알약 하나로 읽히고, 다시 하나를 끄면 넷째
  * 줄의 규칙이 나머지를 도로 켠다.
  *
- * **접는 순간 걸리는 범위가 조금 넓어진다.** 대분류는 그 아래 소분류뿐 아니라 **소분류
- * 없이 대분류에 바로 적은 거래**까지 담는다(서버의 entrySearchConditions). 소분류를 다
- * 고른 것과 대분류를 고른 것이 사실 같은 뜻이라고 보는 쪽을 택했다 -- 화면의 알약이
- * 그렇게 보이기 때문이다.
+ * **"미분류"도 이 무리의 한 칸이다.** 소분류 없이 대분류에 바로 적은 거래를 가리키는
+ * 자리이고(`selfCategoryPick`), 소분류들과 나란히 선다. 그래서 무리의 칸은 소분류 여럿과
+ * 미분류 하나이고, 대분류는 **그 칸들을 모두 켠 것과 같은 뜻**이다 -- 접고 펴는 규칙이
+ * 정확해진다. 예전에는 미분류를 고를 자리가 없어, 소분류를 다 골라도 대분류에 바로 적은
+ * 거래가 빠졌다.
  *
- * 한 가지는 알고 써야 한다. 그렇게 바꾼 뒤에는 **소분류 없이 대분류에 바로 적은 거래**가
- * 빠진다. 고른 것이 소분류들뿐이기 때문이다. 그것까지 담으려면 "대분류에 바로 적은 것"을
- * 따로 고르는 자리가 있어야 하는데, 지금 검색에는 그 자리가 없다.
+ * 그 덕에 "식비는 미분류만, 교통은 전체"가 한 검색에 담긴다. 검색 전체에 걸리는 스위치로
+ * 두면 분류마다 다르게 정할 수가 없다.
+ *
+ * 소분류가 없는 대분류에는 미분류 칸을 두지 않는다. 그 대분류는 그 자신이 곧 미분류라,
+ * 같은 것을 가리키는 알약이 둘이 된다.
  */
 export function toggleCategory(
   selected: readonly string[],
@@ -115,7 +118,7 @@ export function toggleCategory(
   group: CategoryGroup,
 ): string[] {
   const parent = group.parent;
-  const childIds = group.children.map((child) => child.id);
+  const parts = groupParts(group);
   const without = (ids: readonly string[], drop: readonly string[]) => {
     const gone = new Set(drop);
     return ids.filter((id) => !gone.has(id));
@@ -124,12 +127,12 @@ export function toggleCategory(
   if (parent && target.id === parent.id) {
     return selected.includes(parent.id)
       ? without(selected, [parent.id])
-      : [...without(selected, childIds), parent.id];
+      : [...without(selected, parts), parent.id];
   }
 
-  // 대분류가 켜진 채로 소분류를 끈다: 대분류를 내리고 나머지 소분류를 켠다.
+  // 대분류가 켜진 채로 한 칸을 끈다: 대분류를 내리고 나머지 칸을 켠다.
   if (parent && selected.includes(parent.id)) {
-    const rest = childIds.filter((id) => id !== target.id);
+    const rest = parts.filter((id) => id !== target.id);
     return [...without(selected, [parent.id]), ...rest];
   }
 
@@ -137,24 +140,104 @@ export function toggleCategory(
 
   const next = [...selected, target.id];
 
-  // 소분류를 마지막 하나까지 켰다: 같은 뜻인 대분류 하나로 접는다.
-  if (parent && childIds.length > 0 && childIds.every((id) => next.includes(id))) {
-    return [...without(next, childIds), parent.id];
+  // 마지막 칸까지 켰다: 같은 뜻인 대분류 하나로 접는다.
+  if (parent && parts.length > 0 && parts.every((id) => next.includes(id))) {
+    return [...without(next, parts), parent.id];
   }
 
   return next;
 }
 
 /**
- * 이 알약이 켜져 보여야 하는가.
+ * 한 무리 안에서 대분류가 담고 있는 칸들 -- 소분류 여럿과 미분류 하나.
  *
- * 대분류가 켜져 있으면 그 소분류도 켜진 것으로 보인다 -- 실제로 함께 걸리기 때문이다.
+ * 대분류를 켠 것은 이 칸들을 모두 켠 것과 같은 뜻이다. 접고 펴는 규칙이 이 목록 하나를
+ * 본다. 소분류가 없는 대분류는 그 자신이 곧 미분류라 칸이 없다.
  */
-export function isCategoryPicked(
+export function groupParts(group: CategoryGroup): string[] {
+  if (!group.parent || group.children.length === 0) return [];
+  return [...group.children.map((child) => child.id), selfCategoryPick(group.parent.id)];
+}
+
+/**
+ * 알약 하나가 놓인 자리.
+ *
+ * `covered` 는 "내가 고른 것은 아니지만 함께 걸린다"다. 대분류를 켜면 그 소분류가
+ * 그렇게 된다 (태그 고르기의 `partial` 과 같은 자리의 값이다).
+ */
+export type CategoryPickState = 'on' | 'covered' | 'off';
+
+/**
+ * 이 알약이 어떻게 보여야 하는가.
+ *
+ * **켜진 것과 덮인 것을 가른다.** 예전에는 둘을 같은 파란 알약으로 그렸는데, 그러면
+ * 대분류 하나를 눌렀을 때 그 아래 소분류가 전부 파랗게 켜져 "대분류만 고른 상태"를
+ * 화면에서 만들 수가 없었다 -- 고른 것이 하나인지 여럿인지 알 길이 없다.
+ *
+ * 걸리는 범위는 달라지지 않는다. 덮인 소분류의 거래도 여전히 함께 나온다(서버의
+ * `entrySearchConditions`). 이 함수가 가르는 것은 **무엇을 골랐는가**뿐이다.
+ */
+export function categoryPickState(
   selected: readonly string[],
+  /** 소분류, 대분류, 또는 미분류 칸(`selfCategoryPick`) */
   category: { id: string },
   group: CategoryGroup,
-): boolean {
-  if (selected.includes(category.id)) return true;
-  return Boolean(group.parent) && selected.includes(group.parent!.id);
+): CategoryPickState {
+  if (selected.includes(category.id)) return 'on';
+  if (group.parent && group.parent.id !== category.id && selected.includes(group.parent.id)) {
+    return 'covered';
+  }
+  return 'off';
+}
+
+/**
+ * 분류 하나를 없앨 때 함께 사라지는 것들.
+ *
+ * 대분류를 없애면 그 소분류도 함께 없어진다(서버의 `deleteCategory` 와 같은 규칙).
+ * 그래서 옮길 곳도 그만큼 골라야 한다 -- 없앨 것마다 한 줄씩이다.
+ *
+ * 차례는 대분류가 먼저다. 창에서 첫 줄이 "지금 없애려는 그것"이어야, 아래 줄들이
+ * 그것에 딸린 것으로 읽힌다.
+ */
+export function categoriesRemovedWith(
+  categories: readonly CategoryDto.Response[],
+  targetId: string,
+): CategoryDto.Response[] {
+  const target = categories.find((row) => row.id === targetId);
+  if (!target) return [];
+
+  // 소분류를 없애는 일에는 딸린 것이 없다.
+  if (target.parentId) return [target];
+
+  return [target, ...categories.filter((row) => row.parentId === targetId)];
+}
+
+/**
+ * 옮겨 받을 수 있는 분류.
+ *
+ * **같은 유형이면 층은 가리지 않는다.** 소분류를 대분류로 합치는 일도(“외식을 그냥
+ * 식비로”), 대분류를 남의 소분류로 보내는 일도(“경조사를 생활 > 경조사로”) 사용자가
+ * 실제로 하려는 정리다. 유형만은 가른다 -- 지출을 수입으로 옮기면 그 거래의 부호가
+ * 뒤집혀 합계가 조용히 어긋난다.
+ *
+ * 함께 없애는 것은 뺀다. 그리로 옮기면 마지막에 감춘 분류에 거래가 남는다.
+ */
+export function mergeTargetsOf(
+  categories: readonly CategoryDto.Response[],
+  removing: readonly string[],
+  type: CategoryDto.Response['type'],
+): CategoryDto.Response[] {
+  const gone = new Set(removing);
+  return categories.filter((row) => row.type === type && !gone.has(row.id));
+}
+
+/** 옮길 곳 목록에 적을 이름. 소분류는 대분류를 앞에 붙여야 같은 이름끼리 갈린다. */
+export function mergeTargetLabel(
+  categories: readonly CategoryDto.Response[],
+  category: CategoryDto.Response,
+): string {
+  if (!category.parentId) return category.name;
+
+  const parent = categories.find((row) => row.id === category.parentId);
+  return parent ? `${parent.name} > ${category.name}` : category.name;
 }

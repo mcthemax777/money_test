@@ -10,6 +10,7 @@ import {
 import { EMPTY_SEARCH } from '@money/core/hooks/useTransactions';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import type { Category } from '@money/core/lib/types';
+import type { CategoryDto } from '@money/types';
 import { useEntryFocus } from '@money/core/store/entry-focus';
 import { useProject } from '@money/core/store/project';
 
@@ -17,6 +18,7 @@ import { useNavigation } from '../shell/navigation';
 
 import Modal from '../components/Modal';
 import AddButton from '../components/AddButton';
+import CategoryMergeModal from '../components/CategoryMergeModal';
 import MoveRow from '../components/MoveRow';
 import PageHeader from '../components/PageHeader';
 import SegmentedTabs from '../components/SegmentedTabs';
@@ -67,10 +69,28 @@ export default function CategoriesScreen() {
   const clearReopen = useEntryFocus((state) => state.clearReopen);
 
   const [error, setError] = useState('');
+  /** 잘 끝난 일을 적는 줄. 오류와 색이 달라야 해서 따로 든다. */
+  const [notice, setNotice] = useState('');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<Category | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  /**
+   * 없애려다 거래에 막힌 분류. 이 값이 있으면 "어떻게 할까요" 창이 선다.
+   *
+   * 통합 창과 따로 든다 -- 무엇을 할지 고르는 자리와 옮길 곳을 고르는 자리는 되돌아갈
+   * 수 있어야 하는 두 걸음이다.
+   */
+  const [inUseId, setInUseId] = useState<string | null>(null);
+  /** 옮길 곳을 고르는 중인 분류. 위의 창에서 "통합하기"를 누르면 여기로 넘어온다. */
+  const [mergeId, setMergeId] = useState<string | null>(null);
+  /**
+   * 없애려는 분류와 그 소분류의 거래 수. 열쇠는 분류 id 다.
+   *
+   * 통합 창이 이 값으로 **거래가 있는 줄에만** 갈 곳을 묻는다. 없앨 때 한 번 읽어 두고
+   * 창이 닫힐 때까지 그대로 쓴다 -- 창 안에서 다시 읽을 까닭이 없다.
+   */
+  const [usage, setUsage] = useState<Record<string, number>>({});
   const [formData, setFormData] = useState<CategoryFormValues>(EMPTY_FORM);
   /** 좁은 화면에서 보고 있는 단. 넓은 화면에서는 두 단이 함께 보이므로 쓰이지 않는다. */
   const [activeType, setActiveType] = useState<'expense' | 'income'>('expense');
@@ -151,9 +171,59 @@ export default function CategoriesScreen() {
     closeForm();
   };
 
+  /**
+   * 없애기. 거래에 쓰이고 있으면 막히는데, 그때는 길을 둘 내준다.
+   *
+   * 예전에는 "삭제할 수 없습니다" 한 줄로 끝났다. 그 분류를 정리하려면 거래를 하나씩
+   * 찾아 고쳐야 했고, 어디에 몇 건이 있는지도 화면에 없었다.
+   */
   const remove = async (id: string) => {
+    setNotice('');
+
+    /*
+     * 거래가 있으면 없애려 들지 않고 곧바로 길을 내준다.
+     *
+     * 어차피 막히는 일이라(사본도 서버와 같은 규칙으로 막는다) 한 번 다녀오는 걸음이
+     * 헛수고다. 거래가 있다는 것을 먼저 알았으니 바로 그 창을 연다.
+     */
+    const counts = await manager.usageOf(id);
+    if (counts && Object.values(counts).some((count) => count > 0)) {
+      setError('');
+      setUsage(counts);
+      setInUseId(id);
+      return;
+    }
+
     const result = await manager.remove(id);
-    setError(result.ok ? '' : result.message);
+    if (result.ok) {
+      setError('');
+      return;
+    }
+
+    if (result.inUse) {
+      // 거래 수를 못 읽었던 경우다. 막힌 이유는 창이 말하므로 오류 줄은 띄우지 않는다.
+      setError('');
+      setUsage(counts ?? {});
+      setInUseId(id);
+      return;
+    }
+    setError(result.message);
+  };
+
+  /**
+   * 옮기고 없앤다. 끝나면 몇 건이 옮겨졌는지 알린다.
+   *
+   * 알림이 필요한 까닭이 있다. 이 일은 거래 수백 건을 한꺼번에 옮기는데, 끝나고 나면
+   * 화면에서 사라지는 것은 분류 한 줄뿐이라 무슨 일이 일어났는지 볼 곳이 없다.
+   */
+  const merge = async (moves: CategoryDto.MergeMove[]) => {
+    const result = await manager.merge(moves);
+    if (result.ok) {
+      setMergeId(null);
+      setIsDetailModalOpen(false);
+      setNotice(t('categories.mergeDone', { count: result.movedPostings ?? 0 }));
+    }
+    return result;
   };
 
   /**
@@ -163,6 +233,9 @@ export default function CategoriesScreen() {
    * 어느 쪽을 눌러야 하는지 알 수 있다. 이웃은 훅이 고른다 -- 소분류는 같은 부모
    * 아래에서, 대분류는 같은 유형의 단 안에서다.
    */
+  /** 없애려다 막힌 분류. 이 값이 있으면 무엇을 할지 묻는 창이 선다. */
+  const inUseCategory = categories.find((row) => row.id === inUseId) ?? null;
+
   const move = async (id: string, step: 1 | -1) => {
     const result = await manager.move(id, step);
     setError(result.ok ? '' : result.message);
@@ -181,6 +254,13 @@ export default function CategoriesScreen() {
         무엇에 더하는 것인지가 버튼 아래에 곧바로 이어져 보인다.
       */}
       <PageHeader title={t('nav.categories')} />
+
+      {/* 잘 끝난 일. 통합처럼 화면에 자취가 남지 않는 일이 여기서 말한다. */}
+      {notice ? (
+        <View className="rounded-lg border border-green-200 bg-green-50 px-3 py-2">
+          <Text className="text-sm text-green-700">{notice}</Text>
+        </View>
+      ) : null}
 
       <SegmentedTabs
         tabs={[
@@ -523,6 +603,73 @@ export default function CategoriesScreen() {
           ) : null}
         </View>
       </Modal>
+
+      {/*
+        없애려다 막혔을 때. 무엇을 할지 먼저 묻는다.
+
+        곧바로 통합 창을 열지 않는다. 거래가 몇 건인지, 무엇에 쓰인 분류인지 모르는 채로
+        옮길 곳부터 고르게 되기 때문이다 -- 먼저 그 거래를 보러 갈 길을 나란히 둔다.
+      */}
+      <Modal
+        isOpen={inUseCategory !== null}
+        onClose={() => setInUseId(null)}
+        title={t('categories.inUseTitle')}
+      >
+        <View className="gap-3">
+          <Text className="text-sm text-gray-600">
+            {t('categories.inUseHint', { name: inUseCategory?.name ?? '' })}
+          </Text>
+
+          <InUseChoice
+            label={t('categories.inUseShowEntries')}
+            description={t('categories.inUseShowEntriesHint')}
+            onPress={() => {
+              const target = inUseCategory;
+              setInUseId(null);
+              if (target) showEntriesOf(target);
+            }}
+          />
+          <InUseChoice
+            label={t('categories.inUseMerge')}
+            description={t('categories.inUseMergeHint')}
+            onPress={() => {
+              setMergeId(inUseId);
+              setInUseId(null);
+            }}
+          />
+        </View>
+      </Modal>
+
+      <CategoryMergeModal
+        isOpen={mergeId !== null}
+        onClose={() => setMergeId(null)}
+        categories={categories}
+        targetId={mergeId}
+        usage={usage}
+        isSubmitting={manager.isSubmitting}
+        onSubmit={merge}
+      />
     </View>
+  );
+}
+
+/** 막힌 자리에서 고르는 줄. 둘뿐이라 목록 대신 큰 단추 둘이다 (웹의 ChoiceModal 과 같다). */
+function InUseChoice({
+  label,
+  description,
+  onPress,
+}: {
+  label: string;
+  description: string;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      className="rounded-lg border border-gray-200 px-4 py-3 active:bg-gray-50"
+    >
+      <Text className="text-base font-medium text-gray-900">{label}</Text>
+      <Text className="mt-0.5 text-sm text-gray-500">{description}</Text>
+    </Pressable>
   );
 }

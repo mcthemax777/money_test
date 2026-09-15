@@ -577,6 +577,30 @@ class ApiClient {
     await this.client.delete(`/categories/${id}`);
   }
 
+  /** 이 분류와 그 소분류에 달린 거래 다리의 수. 없애기 전에 묻는 데 쓴다. */
+  async getCategoryUsage(id: string): Promise<CategoryDto.UsageResponse> {
+    const response = await this.client.get<CategoryDto.UsageResponse>(`/categories/${id}/usage`);
+    return response.data;
+  }
+
+  /**
+   * 분류를 없애면서 그 거래를 다른 분류로 옮긴다.
+   *
+   * 오프라인 창구를 타지 않는다. 사본에서 원장을 통째로 다시 쓰는 일이라(다리 수백 개의
+   * 분류가 한꺼번에 바뀐다) 명령 하나로 담을 수 없다. 끊긴 동안에는 화면이 이유를 적는다.
+   */
+  async mergeCategories(
+    moves: CategoryDto.MergeMove[],
+    projectId?: string | null,
+  ): Promise<CategoryDto.MergeResponse> {
+    const response = await this.client.post<CategoryDto.MergeResponse>(
+      '/categories/merge',
+      { moves },
+      { params: projectId ? { projectId } : {} },
+    );
+    return response.data;
+  }
+
   // 보관함 API Methods (아직 거래가 아닌 후보)
 
   async getEntryDrafts(

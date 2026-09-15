@@ -19,12 +19,21 @@ import type { EntryDraftDto, EntryListItem, TagDto } from '@money/types';
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useEntryForm } from '@money/core/hooks/useEntryForm';
-import type { EntryFormKind, EntryFormValues } from '@money/core/data/entry-form';
+import { useQuickAdd, type QuickAddResult } from '@money/core/hooks/useQuickAdd';
+import {
+  accountValue,
+  cardValue,
+  parseMethod,
+  type EntryFormKind,
+  type EntryFormValues,
+} from '@money/core/data/entry-form';
 import { useMyPersonId, useProject, useProjectTimeZone } from '@money/core/store/project';
 
+import { AddAccountModal, AddCardModal, AddPersonModal } from './AssetAddModals';
 import DatePickerPanel from './DatePickerPanel';
 import { CategoryChips, Chip, Chips, Field, PickerButton } from './FormFields';
 import Modal from './Modal';
+import { AddCategoryModal, AddTagModal } from './QuickAddModals';
 
 /** 갈래 넷. 조정(잔액 맞추기)은 이 폼이 만드는 것이 아니라 여기 없다. */
 const KINDS: Array<{ id: EntryFormKind; labelKey: MessageKey }> = [
@@ -120,7 +129,70 @@ export default function EntryEditor({
   });
   const { values, setField, violation } = form;
 
-/**
+  const quickAdd = useQuickAdd(projectId);
+
+  /**
+   * 지금 열려 있는 만들기 창. null 이면 없다.
+   *
+   * 한 번에 하나만 연다 -- 폼 위에 창을 겹쳐 쌓으면 어느 것을 닫는 중인지 알 수 없다.
+   * 'method' 는 통장인지 카드인지를 묻는 갈림길이다 (결제수단 칸이 둘을 한 목록에서
+   * 고르게 하므로 무엇을 만들지는 여기서 묻는다 -- 웹과 같다).
+   */
+  const [adding, setAdding] = useState<
+    null | 'method' | 'person' | 'account' | 'card' | 'category' | 'tag'
+  >(null);
+
+  // 팝업을 닫으면 그 위의 창도 함께 접는다. 다시 열었을 때 남아 있으면 안 된다.
+  useEffect(() => {
+    if (!isOpen) setAdding(null);
+  }, [isOpen]);
+
+  /**
+   * 만들고 나서 그 값을 곧바로 고른다.
+   *
+   * 목록을 다시 읽어야 알약 줄에 나타나고, 만든 id 를 폼에 꽂아야 고르러 한 번 더
+   * 누르지 않는다. 실패는 그대로 돌려준다 -- 창이 닫히지 않고 그 자리에 이유를 적는다.
+   */
+  const addThenPick = async (
+    making: Promise<QuickAddResult>,
+    pick: (id: string) => void,
+  ): Promise<QuickAddResult> => {
+    const result = await making;
+    if (result.ok && result.id) {
+      await form.reloadLists();
+      pick(result.id);
+    }
+    return result;
+  };
+
+  /** 새 분류의 유형. 거래의 갈래가 정한다 (form.categoryChoices 와 같은 규칙). */
+  const categoryType = values.kind === 'income' ? 'income' : 'expense';
+
+  /** 소분류를 붙일 수 있는 대분류. 지금 갈래의 것만이다. */
+  const categoryParents = form.categoryChoices.filter((category) => !category.parentId);
+
+  /** 새 통장의 주인. 폼에서 고른 거래자이고, 아직 없으면 첫 구성원이다. */
+  const newAccountOwner =
+    form.lists.people.find((person) => person.id === values.personId) ??
+    form.lists.people.find((person) => person.isActive) ??
+    null;
+
+  /**
+   * 새 카드의 결제 통장.
+   *
+   * 지금 고른 결제수단이 통장이면 그것, 아니면 고를 수 있는 첫 통장이다. 고를 수 있는
+   * 것은 결제수단 목록이 이미 가려 두었다 -- 카드 부채 계정과 자본 계정은 빠져 있다.
+   */
+  const newCardAccount = (() => {
+    const ids = form.methodChoices
+      .map((choice) => parseMethod(choice.value).accountId)
+      .filter((id): id is string => Boolean(id));
+    const chosen = parseMethod(values.method).accountId;
+    const id = chosen && ids.includes(chosen) ? chosen : ids[0];
+    return form.lists.accounts.find((account) => account.id === id) ?? null;
+  })();
+
+  /**
    * 달력이 펼쳐져 있는가.
    *
    * 팝업을 닫을 때 접는다 -- 다시 열었을 때 지난번에 펼쳐 둔 판이 그대로 있으면 폼의
@@ -235,66 +307,80 @@ export default function EntryEditor({
   const message = messageOf();
 
   return (
-    <Modal
-      isOpen={isOpen}
-      onClose={onClose}
-      title={t(form.isEditing ? 'editor.titleEdit' : 'editor.titleAdd')}
-      footer={
-        <View className="flex-row gap-2">
-          {form.isEditing ? (
+    /*
+      만들기 창들은 이 팝업의 **형제**로 둔다. 안에 넣으면 팝업 본문(ScrollView)의
+      자식이 되어, 창을 여는 동안 본문이 스크롤 자리를 잃는다.
+    */
+    <>
+      <Modal
+        isOpen={isOpen}
+        onClose={onClose}
+        title={t(form.isEditing ? 'editor.titleEdit' : 'editor.titleAdd')}
+        footer={
+          <View className="flex-row gap-2">
+            {form.isEditing ? (
+              <Pressable
+                disabled={form.isSubmitting}
+                onPress={remove}
+                className={`rounded-lg border border-red-300 px-4 py-3 ${
+                  form.isSubmitting ? 'opacity-50' : ''
+                }`}
+              >
+                <Text className="text-sm font-medium text-red-600">
+                  {t(form.isSubmitting ? 'entryForm.deleting' : 'entryForm.delete')}
+                </Text>
+              </Pressable>
+            ) : null}
             <Pressable
               disabled={form.isSubmitting}
-              onPress={remove}
-              className={`rounded-lg border border-red-300 px-4 py-3 ${
+              onPress={save}
+              className={`flex-1 items-center rounded-lg bg-blue-600 px-4 py-3 ${
                 form.isSubmitting ? 'opacity-50' : ''
               }`}
             >
-              <Text className="text-sm font-medium text-red-600">
-                {t(form.isSubmitting ? 'entryForm.deleting' : 'entryForm.delete')}
+              <Text className="text-base font-semibold text-white">
+                {t(form.isSubmitting ? 'common.saving' : 'common.save')}
               </Text>
             </Pressable>
-          ) : null}
-          <Pressable
-            disabled={form.isSubmitting}
-            onPress={save}
-            className={`flex-1 items-center rounded-lg bg-blue-600 px-4 py-3 ${
-              form.isSubmitting ? 'opacity-50' : ''
-            }`}
-          >
-            <Text className="text-base font-semibold text-white">
-              {t(form.isSubmitting ? 'common.saving' : 'common.save')}
-            </Text>
-          </Pressable>
-        </View>
-      }
-    >
-      <View className="gap-5">
-        {message ? (
-          <View className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
-            <Text className="text-sm text-red-600">{message}</Text>
           </View>
-        ) : null}
+        }
+      >
+        <View className="gap-5">
+          {message ? (
+            <View className="rounded-lg border border-red-200 bg-red-50 px-3 py-2">
+              <Text className="text-sm text-red-600">{message}</Text>
+            </View>
+          ) : null}
 
-        {/* 갈래. 바꾸면 그 갈래에서 뜻이 없는 칸은 훅이 비운다. */}
-        <Field label={t('editor.kindLabel')}>
-          <Chips
-            options={KINDS.map((kind) => ({ value: kind.id, label: t(kind.labelKey) }))}
-            selected={values.kind}
-            onSelect={(value) => setField('kind', value as EntryFormKind)}
-          />
-        </Field>
+          {/* 갈래. 바꾸면 그 갈래에서 뜻이 없는 칸은 훅이 비운다. */}
+          <Field label={t('editor.kindLabel')}>
+            <Chips
+              options={KINDS.map((kind) => ({
+                value: kind.id,
+                label: t(kind.labelKey),
+              }))}
+              selected={values.kind}
+              onSelect={(value) => setField('kind', value as EntryFormKind)}
+            />
+          </Field>
 
-        <Field label={t('editor.amount')} invalid={violation?.field === 'amount'}>
-          <TextInput
-            value={values.amount}
-            onChangeText={(text) => setField('amount', text)}
-            keyboardType="numeric"
-            placeholder="0"
-            className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
-          />
-        </Field>
+          <Field label={t('editor.amount')} invalid={violation?.field === 'amount'}>
+            <TextInput
+              value={values.amount}
+              onChangeText={(text) => setField('amount', text)}
+              keyboardType="numeric"
+              /*
+                팝업이 열리면 여기부터 적는다. 거래를 적는 일은 언제나 금액에서
+                시작하고, 다른 칸은 고르는 칸이라 손으로 짚는 편이 빠르다
+                (웹은 같은 자리를 data-autofocus 로 짚는다).
+              */
+              autoFocus
+              placeholder="0"
+              className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
+            />
+          </Field>
 
-        {/*
+          {/*
           통화와 환율.
 
           기준통화로 적으면 환산할 것이 없으므로 환율 칸을 아예 만들지 않는다. 통화를
@@ -302,317 +388,461 @@ export default function EntryEditor({
           보내는 것이 요점이다** -- 비워 두면 며칠 뒤 재생할 때 그날 환율로 값이 다시
           매겨져, 기기가 보여 준 금액과 서버에 남는 금액이 갈린다 (설계 문서의 D7).
         */}
-        <Field label={t('editor.currency')}>
-          <Chips
-            options={[
-              { value: '', label: form.ledgerCurrency },
-              ...CURRENCIES.filter((code) => code !== form.ledgerCurrency).map((code) => ({
-                value: code,
-                label: code,
-              })),
-            ]}
-            selected={values.currency}
-            onSelect={(value) => setField('currency', value)}
-          />
-        </Field>
+          <Field label={t('editor.currency')}>
+            <Chips
+              options={[
+                { value: '', label: form.ledgerCurrency },
+                ...CURRENCIES.filter((code) => code !== form.ledgerCurrency).map((code) => ({
+                  value: code,
+                  label: code,
+                })),
+              ]}
+              selected={values.currency}
+              onSelect={(value) => setField('currency', value)}
+            />
+          </Field>
 
-        {values.currency ? (
-          <Field label={t('editor.rate')} invalid={violation?.field === 'exchangeRate'}>
+          {values.currency ? (
+            <Field label={t('editor.rate')} invalid={violation?.field === 'exchangeRate'}>
+              <TextInput
+                value={values.exchangeRate}
+                onChangeText={(text) => setField('exchangeRate', text)}
+                keyboardType="numeric"
+                placeholder="0"
+                className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
+              />
+              <Text className="mt-1 text-xs text-gray-500">
+                {t('editor.rateHint', {
+                  currency: values.currency,
+                  ledger: form.ledgerCurrency,
+                })}
+              </Text>
+            </Field>
+          ) : null}
+
+          <Field label={t('editor.description')} invalid={violation?.field === 'description'}>
             <TextInput
-              value={values.exchangeRate}
-              onChangeText={(text) => setField('exchangeRate', text)}
-              keyboardType="numeric"
-              placeholder="0"
+              value={values.description}
+              onChangeText={(text) => setField('description', text)}
+              placeholder={t('editor.descriptionPlaceholder')}
               className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
             />
-            <Text className="mt-1 text-xs text-gray-500">
-              {t('editor.rateHint', { currency: values.currency, ledger: form.ledgerCurrency })}
-            </Text>
           </Field>
-        ) : null}
 
-        <Field label={t('editor.description')} invalid={violation?.field === 'description'}>
-          <TextInput
-            value={values.description}
-            onChangeText={(text) => setField('description', text)}
-            placeholder={t('editor.descriptionPlaceholder')}
-            className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
-          />
-        </Field>
-
-        {/*
+          {/*
           날짜와 시각. **손으로 적지 않고 골라 넣는다.**
 
           글자로 받으면 "2026-02-31" 이나 "25:99" 처럼 저장할 수 없는 값이 나오고, 사람은
           저장을 눌러 보고서야 그것을 안다. 날짜는 아래에 달력이 펼쳐지고, 시각은 안드로이드
           시계 대화상자가 뜬다.
         */}
-        <View className="flex-row gap-3">
-          <View className="flex-1">
-            <Field label={t('editor.date')} invalid={violation?.field === 'dateKey'}>
-              <PickerButton
-                icon="date"
-                value={values.dateKey}
-                placeholder="YYYY-MM-DD"
-                isOpen={isCalendarOpen}
-                onPress={() => setIsCalendarOpen(!isCalendarOpen)}
-              />
-            </Field>
+          <View className="flex-row gap-3">
+            <View className="flex-1">
+              <Field label={t('editor.date')} invalid={violation?.field === 'dateKey'}>
+                <PickerButton
+                  icon="date"
+                  value={values.dateKey}
+                  placeholder="YYYY-MM-DD"
+                  isOpen={isCalendarOpen}
+                  onPress={() => setIsCalendarOpen(!isCalendarOpen)}
+                />
+              </Field>
+            </View>
+            <View className="w-32">
+              <Field label={t('editor.time')} invalid={violation?.field === 'timeKey'}>
+                <PickerButton
+                  icon="time"
+                  value={values.timeKey}
+                  placeholder="HH:MM"
+                  isOpen={false}
+                  onPress={openTimePicker}
+                />
+              </Field>
+            </View>
           </View>
-          <View className="w-32">
-            <Field label={t('editor.time')} invalid={violation?.field === 'timeKey'}>
-              <PickerButton
-                icon="time"
-                value={values.timeKey}
-                placeholder="HH:MM"
-                isOpen={false}
-                onPress={openTimePicker}
-              />
-            </Field>
-          </View>
-        </View>
 
-        {isCalendarOpen ? (
-          <DatePickerPanel
-            value={values.dateKey}
-            onSelect={(dateKey) => {
-              setField('dateKey', dateKey);
-              setIsCalendarOpen(false);
-            }}
-          />
-        ) : null}
+          {isCalendarOpen ? (
+            <DatePickerPanel
+              value={values.dateKey}
+              onSelect={(dateKey) => {
+                setField('dateKey', dateKey);
+                setIsCalendarOpen(false);
+              }}
+            />
+          ) : null}
 
-        <Field label={t('editor.person')} invalid={violation?.field === 'personId'}>
-          <Chips
-            options={form.lists.people
-              .filter((person) => person.isActive)
-              .map((person) => ({ value: person.id, label: person.name }))}
-            selected={values.personId}
-            onSelect={(value) => setField('personId', value)}
-            collapse
-          />
-        </Field>
-
-        <Field
-          label={
-            values.kind === 'transfer' || values.kind === 'card_payment'
-              ? t('editor.fromAccount')
-              : t('editor.method')
-          }
-          invalid={violation?.field === 'method'}
-        >
-          {form.methodChoices.length === 0 ? (
-            <Text className="text-sm text-gray-500">{t('entryForm.noMethods')}</Text>
-          ) : (
+          <Field
+            label={t('editor.person')}
+            invalid={violation?.field === 'personId'}
+            onAdd={() => setAdding('person')}
+            addLabel={t('person.add')}
+          >
             <Chips
-              options={form.methodChoices.map((choice) => ({
-                value: choice.value,
-                label: choice.name,
-              }))}
-              selected={values.method}
-              onSelect={(value) => setField('method', value)}
+              options={form.lists.people
+                .filter((person) => person.isActive)
+                .map((person) => ({ value: person.id, label: person.name }))}
+              selected={values.personId}
+              onSelect={(value) => setField('personId', value)}
               collapse
             />
-          )}
-        </Field>
+          </Field>
 
-        {values.kind === 'card_payment' ? (
-          <>
-            {/*
+          <Field
+            label={
+              values.kind === 'transfer' || values.kind === 'card_payment'
+                ? t('editor.fromAccount')
+                : t('editor.method')
+            }
+            invalid={violation?.field === 'method'}
+            onAdd={() => setAdding('method')}
+            addLabel={t('editor.addMethod')}
+          >
+            {form.methodChoices.length === 0 ? (
+              <Text className="text-sm text-gray-500">{t('entryForm.noMethods')}</Text>
+            ) : (
+              <Chips
+                options={form.methodChoices.map((choice) => ({
+                  value: choice.value,
+                  label: choice.name,
+                }))}
+                selected={values.method}
+                onSelect={(value) => setField('method', value)}
+                collapse
+              />
+            )}
+          </Field>
+
+          {values.kind === 'card_payment' ? (
+            <>
+              {/*
               갚을 카드. 신용카드만 고를 수 있다 -- 체크카드는 결제하는 자리에서 통장에서
               빠지므로 나중에 갚을 대금이 없다.
             */}
-            <Field label={t('editor.card')} invalid={violation?.field === 'cardId'}>
-              {form.cardChoices.length === 0 ? (
-                <Text className="text-sm text-gray-500">{t('editor.noCreditCards')}</Text>
-              ) : (
+              <Field label={t('editor.card')} invalid={violation?.field === 'cardId'}>
+                {form.cardChoices.length === 0 ? (
+                  <Text className="text-sm text-gray-500">{t('editor.noCreditCards')}</Text>
+                ) : (
+                  <Chips
+                    options={form.cardChoices.map((card) => ({
+                      value: card.id,
+                      label: card.name,
+                    }))}
+                    selected={values.cardId}
+                    onSelect={(value) => setField('cardId', value)}
+                    collapse
+                  />
+                )}
+              </Field>
+
+              {/* 부채가 줄면 대금 결제, 늘면 환불 입금이다. */}
+              <Field label={t('editor.cardDirection')}>
                 <Chips
-                  options={form.cardChoices.map((card) => ({ value: card.id, label: card.name }))}
-                  selected={values.cardId}
-                  onSelect={(value) => setField('cardId', value)}
-                  collapse
-                />
-              )}
-            </Field>
-
-            {/* 부채가 줄면 대금 결제, 늘면 환불 입금이다. */}
-            <Field label={t('editor.cardDirection')}>
-              <Chips
-                options={[
-                  { value: 'payment', label: t('editor.directionPayment') },
-                  { value: 'refund', label: t('editor.directionRefund') },
-                ]}
-                selected={values.cardDirection}
-                onSelect={(value) => setField('cardDirection', value as 'payment' | 'refund')}
-              />
-            </Field>
-          </>
-        ) : values.kind === 'transfer' ? (
-          <>
-            <Field label={t('editor.toAccount')} invalid={violation?.field === 'toAccountId'}>
-              <Chips
-                options={form.toAccountChoices.map((account) => ({
-                  value: account.id,
-                  label: account.name,
-                }))}
-                selected={values.toAccountId}
-                onSelect={(value) => setField('toAccountId', value)}
-                collapse
-              />
-            </Field>
-
-            <Field label={t('editor.transferFee')} invalid={violation?.field === 'transferFee'}>
-              <TextInput
-                value={values.transferFee}
-                onChangeText={(text) => setField('transferFee', text)}
-                keyboardType="numeric"
-                placeholder="0"
-                className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
-              />
-            </Field>
-
-            {/* 수수료를 적었을 때만 분류를 묻는다. 0원 이체에 분류를 강요하지 않는다. */}
-            {values.transferFee ? (
-              <Field
-                label={t('editor.feeParentCategory')}
-                invalid={violation?.field === 'transferFeeCategoryId'}
-              >
-                <CategoryChips
-                  categories={form.categoryChoices}
-                  selected={values.transferFeeCategoryId}
-                  onSelect={(value) => setField('transferFeeCategoryId', value)}
+                  options={[
+                    { value: 'payment', label: t('editor.directionPayment') },
+                    { value: 'refund', label: t('editor.directionRefund') },
+                  ]}
+                  selected={values.cardDirection}
+                  onSelect={(value) => setField('cardDirection', value as 'payment' | 'refund')}
                 />
               </Field>
-            ) : null}
-          </>
-        ) : values.splits.length > 0 ? (
-          /*
+            </>
+          ) : values.kind === 'transfer' ? (
+            <>
+              <Field label={t('editor.toAccount')} invalid={violation?.field === 'toAccountId'}>
+                <Chips
+                  options={form.toAccountChoices.map((account) => ({
+                    value: account.id,
+                    label: account.name,
+                  }))}
+                  selected={values.toAccountId}
+                  onSelect={(value) => setField('toAccountId', value)}
+                  collapse
+                />
+              </Field>
+
+              <Field label={t('editor.transferFee')} invalid={violation?.field === 'transferFee'}>
+                <TextInput
+                  value={values.transferFee}
+                  onChangeText={(text) => setField('transferFee', text)}
+                  keyboardType="numeric"
+                  placeholder="0"
+                  className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
+                />
+              </Field>
+
+              {/* 수수료를 적었을 때만 분류를 묻는다. 0원 이체에 분류를 강요하지 않는다. */}
+              {values.transferFee ? (
+                <Field
+                  label={t('editor.feeCategory')}
+                  invalid={violation?.field === 'transferFeeCategoryId'}
+                  onAdd={() => setAdding('category')}
+                  addLabel={t('categories.add')}
+                >
+                  <CategoryChips
+                    categories={form.categoryChoices}
+                    selected={values.transferFeeCategoryId}
+                    onSelect={(value) => setField('transferFeeCategoryId', value)}
+                  />
+                </Field>
+              ) : null}
+            </>
+          ) : values.splits.length > 0 ? (
+            /*
             분할. 줄마다 분류와 금액을 따로 적는다.
 
             줄이 있는 동안에는 위의 분류 칸을 감춘다. 둘이 함께 보이면 어느 쪽이
             저장되는지 알 수 없고, 실제로 저장되는 것은 줄들뿐이다.
           */
-          <Field label={t('editor.split')} invalid={violation?.field === 'splits'}>
-            <View className="gap-3">
-              {values.splits.map((split, index) => (
-                <View key={index} className="gap-2 rounded-lg border border-gray-200 p-3">
-                  <View className="flex-row items-center justify-between">
-                    <Text className="text-xs font-medium text-gray-500">
-                      {t('editor.splitRow', { index: index + 1 })}
-                    </Text>
-                    <Pressable
-                      onPress={() => form.removeSplit(index)}
-                      hitSlop={8}
-                      accessibilityLabel={t('editor.splitRemove')}
-                    >
-                      <Text className="text-sm text-gray-400">×</Text>
-                    </Pressable>
-                  </View>
+            <Field label={t('editor.split')} invalid={violation?.field === 'splits'}>
+              <View className="gap-3">
+                {values.splits.map((split, index) => (
+                  <View key={index} className="gap-2 rounded-lg border border-gray-200 p-3">
+                    <View className="flex-row items-center justify-between">
+                      <Text className="text-xs font-medium text-gray-500">
+                        {t('editor.splitRow', { index: index + 1 })}
+                      </Text>
+                      <Pressable
+                        onPress={() => form.removeSplit(index)}
+                        hitSlop={8}
+                        accessibilityLabel={t('editor.splitRemove')}
+                      >
+                        <Text className="text-sm text-gray-400">×</Text>
+                      </Pressable>
+                    </View>
 
-                  <TextInput
-                    value={split.amount}
-                    onChangeText={(text) => form.setSplit(index, 'amount', text)}
-                    keyboardType="numeric"
-                    placeholder="0"
-                    className="rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-900"
-                  />
-
-                  {form.categoryChoices.length === 0 ? (
-                    <Text className="text-sm text-gray-500">{t('entryForm.noCategories')}</Text>
-                  ) : (
-                    <CategoryChips
-                      categories={form.categoryChoices}
-                      selected={split.categoryId}
-                      onSelect={(value) => form.setSplit(index, 'categoryId', value)}
+                    <TextInput
+                      value={split.amount}
+                      onChangeText={(text) => form.setSplit(index, 'amount', text)}
+                      keyboardType="numeric"
+                      placeholder="0"
+                      className="rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-900"
                     />
-                  )}
-                </View>
-              ))}
 
+                    {form.categoryChoices.length === 0 ? (
+                      <Text className="text-sm text-gray-500">{t('entryForm.noCategories')}</Text>
+                    ) : (
+                      <CategoryChips
+                        categories={form.categoryChoices}
+                        selected={split.categoryId}
+                        onSelect={(value) => form.setSplit(index, 'categoryId', value)}
+                      />
+                    )}
+                  </View>
+                ))}
+
+                <Pressable
+                  onPress={form.addSplit}
+                  className="items-center rounded-lg border border-gray-300 px-3 py-2"
+                >
+                  <Text className="text-sm text-gray-700">{t('editor.splitAdd')}</Text>
+                </Pressable>
+
+                {/*
+                남은 금액을 보여 준다. 합이 맞아야 저장되므로, 저장을 눌러 보고서야
+                알게 하지 않는다.
+              */}
+                <Text className="text-xs text-gray-500">
+                  {t('editor.splitLeft', {
+                    amount: String((Number(values.amount) || 0) - form.splitTotal),
+                  })}
+                </Text>
+                <Text className="text-xs text-gray-500">{t('editor.splitHint')}</Text>
+              </View>
+            </Field>
+          ) : (
+            <>
+              <Field
+                label={t('entryForm.category')}
+                invalid={violation?.field === 'categoryId'}
+                onAdd={() => setAdding('category')}
+                addLabel={t('categories.add')}
+              >
+                {form.categoryChoices.length === 0 ? (
+                  <Text className="text-sm text-gray-500">{t('entryForm.noCategories')}</Text>
+                ) : (
+                  <CategoryChips
+                    categories={form.categoryChoices}
+                    selected={values.categoryId}
+                    onSelect={(value) => setField('categoryId', value)}
+                  />
+                )}
+              </Field>
+
+              {/* 분류를 나누는 자리. 누르면 지금 적은 금액과 분류가 첫 줄로 옮겨 간다. */}
               <Pressable
                 onPress={form.addSplit}
                 className="items-center rounded-lg border border-gray-300 px-3 py-2"
               >
                 <Text className="text-sm text-gray-700">{t('editor.splitAdd')}</Text>
               </Pressable>
+            </>
+          )}
 
-              {/*
-                남은 금액을 보여 준다. 합이 맞아야 저장되므로, 저장을 눌러 보고서야
-                알게 하지 않는다.
-              */}
-              <Text className="text-xs text-gray-500">
-                {t('editor.splitLeft', {
-                  amount: String((Number(values.amount) || 0) - form.splitTotal),
-                })}
-              </Text>
-              <Text className="text-xs text-gray-500">{t('editor.splitHint')}</Text>
-            </View>
-          </Field>
-        ) : (
-          <>
-            <Field label={t('entryForm.category')} invalid={violation?.field === 'categoryId'}>
-              {form.categoryChoices.length === 0 ? (
-                <Text className="text-sm text-gray-500">{t('entryForm.noCategories')}</Text>
-              ) : (
-                <CategoryChips
-                  categories={form.categoryChoices}
-                  selected={values.categoryId}
-                  onSelect={(value) => setField('categoryId', value)}
-                />
-              )}
+          {/* 할부는 신용카드 지출에만 뜻이 있다. 그 밖에서는 칸 자체를 만들지 않는다. */}
+          {values.kind === 'expense' && form.isCreditCard ? (
+            <Field label={t('editor.installment')}>
+              <Chips
+                options={INSTALLMENT_MONTHS.map((months) => ({
+                  value: months,
+                  label: months
+                    ? t('editor.installmentMonths', { months })
+                    : t('editor.installmentOnce'),
+                }))}
+                selected={values.installmentMonths}
+                onSelect={(value) => setField('installmentMonths', value)}
+              />
+              <Text className="mt-1 text-xs text-gray-500">{t('editor.installmentHint')}</Text>
             </Field>
+          ) : null}
 
-            {/* 분류를 나누는 자리. 누르면 지금 적은 금액과 분류가 첫 줄로 옮겨 간다. */}
-            <Pressable
-              onPress={form.addSplit}
-              className="items-center rounded-lg border border-gray-300 px-3 py-2"
-            >
-              <Text className="text-sm text-gray-700">{t('editor.splitAdd')}</Text>
-            </Pressable>
-          </>
-        )}
-
-        {/* 할부는 신용카드 지출에만 뜻이 있다. 그 밖에서는 칸 자체를 만들지 않는다. */}
-        {values.kind === 'expense' && form.isCreditCard ? (
-          <Field label={t('editor.installment')}>
-            <Chips
-              options={INSTALLMENT_MONTHS.map((months) => ({
-                value: months,
-                label: months
-                  ? t('editor.installmentMonths', { months })
-                  : t('editor.installmentOnce'),
-              }))}
-              selected={values.installmentMonths}
-              onSelect={(value) => setField('installmentMonths', value)}
-            />
-            <Text className="mt-1 text-xs text-gray-500">{t('editor.installmentHint')}</Text>
-          </Field>
-        ) : null}
-
-        {/*
+          {/*
           태그. 갈래를 가리지 않으므로 이체에도 뜬다.
 
           카테고리와 달리 **여럿을 고른다.** 그래서 같은 알약 줄을 쓰되 고름 표시가
           누적되고, 누르면 붙었다 떨어진다.
         */}
-        <Field label={t('tags.pick')}>
-          {form.lists.tags.length === 0 ? (
-            <Text className="text-sm text-gray-500">{t('tags.empty')}</Text>
-          ) : (
-            <>
-              <TagChips
-                tags={form.lists.tags}
-                selected={values.tagIds}
-                onToggle={form.toggleTag}
-              />
-              <Text className="mt-1 text-xs text-gray-500">{t('tags.pickHint')}</Text>
-            </>
-          )}
-        </Field>
+          <Field label={t('tags.pick')} onAdd={() => setAdding('tag')} addLabel={t('tags.add')}>
+            {form.lists.tags.length === 0 ? (
+              <Text className="text-sm text-gray-500">{t('tags.empty')}</Text>
+            ) : (
+              <>
+                <TagChips
+                  tags={form.lists.tags}
+                  selected={values.tagIds}
+                  onToggle={form.toggleTag}
+                />
+                <Text className="mt-1 text-xs text-gray-500">{t('tags.pickHint')}</Text>
+              </>
+            )}
+          </Field>
 
-        <Text className="text-xs text-gray-500">{t('entryForm.offlineNote')}</Text>
-      </View>
-    </Modal>
+          <Text className="text-xs text-gray-500">{t('entryForm.offlineNote')}</Text>
+        </View>
+      </Modal>
+
+      {/*
+        고르는 칸에서 그 자리에 만드는 창들.
+
+        구성원·통장·카드는 자산 화면이 쓰는 창을 그대로 쓴다. 같은 것을 만드는 자리가
+        화면마다 다르게 생기면 사용자는 그 둘이 다른 것이라고 읽는다.
+      */}
+      <AddPersonModal
+        isOpen={adding === 'person'}
+        onClose={() => setAdding(null)}
+        isSubmitting={quickAdd.isSubmitting}
+        onSubmit={(input) =>
+          addThenPick(quickAdd.addPerson(input), (id) => setField('personId', id))
+        }
+      />
+
+      {/* 결제수단은 통장과 카드를 한 목록에서 고르므로 무엇을 만들지 먼저 묻는다. */}
+      <Modal
+        isOpen={adding === 'method'}
+        onClose={() => setAdding(null)}
+        title={t('editor.addMethod')}
+      >
+        <View className="gap-3">
+          <MethodChoice
+            label={t('account.add')}
+            description={t('account.addDescription')}
+            disabled={!newAccountOwner}
+            onPress={() => setAdding('account')}
+          />
+          <MethodChoice
+            label={t('card.add')}
+            description={t('card.addDescription')}
+            disabled={!newCardAccount}
+            onPress={() => setAdding('card')}
+          />
+          {/* 둘 다 잠겼으면 왜 그런지 적는다. 눌리지 않는 단추만 두면 고장으로 보인다. */}
+          {!newAccountOwner ? (
+            <Text className="text-sm text-gray-500">{t('editor.needPerson')}</Text>
+          ) : !newCardAccount ? (
+            <Text className="text-sm text-gray-500">{t('assets.noAccounts')}</Text>
+          ) : null}
+        </View>
+      </Modal>
+
+      {newAccountOwner ? (
+        <AddAccountModal
+          isOpen={adding === 'account'}
+          onClose={() => setAdding(null)}
+          isSubmitting={quickAdd.isSubmitting}
+          ownerId={newAccountOwner.id}
+          ownerName={newAccountOwner.name}
+          onSubmit={(input) =>
+            addThenPick(quickAdd.addAccount(input), (id) => setField('method', accountValue(id)))
+          }
+        />
+      ) : null}
+
+      {newCardAccount ? (
+        <AddCardModal
+          isOpen={adding === 'card'}
+          onClose={() => setAdding(null)}
+          isSubmitting={quickAdd.isSubmitting}
+          account={newCardAccount}
+          onSubmit={(input) =>
+            addThenPick(quickAdd.addCard(input), (id) => setField('method', cardValue(id)))
+          }
+        />
+      ) : null}
+
+      <AddCategoryModal
+        isOpen={adding === 'category'}
+        onClose={() => setAdding(null)}
+        isSubmitting={quickAdd.isSubmitting}
+        parents={categoryParents}
+        type={categoryType}
+        onSubmit={(input) =>
+          addThenPick(quickAdd.addCategory(input), (id) => {
+            /*
+              만든 분류를 그 자리에 꽂는다.
+
+              이체의 수수료 칸은 분류를 따로 들고 있어 그쪽에서 열었으면 그쪽에 넣는다.
+              분할 줄은 줄마다 분류가 달라 어느 줄에 넣을지 알 수 없으므로 두지 않는다 --
+              목록에는 나타나므로 원하는 줄에서 누르면 된다.
+            */
+            if (values.kind === 'transfer') setField('transferFeeCategoryId', id);
+            else if (values.splits.length === 0) setField('categoryId', id);
+          })
+        }
+      />
+
+      <AddTagModal
+        isOpen={adding === 'tag'}
+        onClose={() => setAdding(null)}
+        isSubmitting={quickAdd.isSubmitting}
+        onSubmit={(input) => addThenPick(quickAdd.addTag(input), form.toggleTag)}
+      />
+    </>
+  );
+}
+
+/** 무엇을 만들지 고르는 줄. 통장과 카드 둘뿐이라 목록 대신 큰 단추 둘이다. */
+function MethodChoice({
+  label,
+  description,
+  disabled,
+  onPress,
+}: {
+  label: string;
+  description: string;
+  /** 만들 바탕이 없을 때. 통장은 주인이, 카드는 결제 통장이 있어야 한다. */
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      className={`rounded-lg border border-gray-200 px-4 py-3 active:bg-gray-50 ${
+        disabled ? 'opacity-40' : ''
+      }`}
+    >
+      <Text className="text-base font-medium text-gray-900">{label}</Text>
+      <Text className="mt-0.5 text-sm text-gray-500">{description}</Text>
+    </Pressable>
   );
 }
 
@@ -668,8 +898,17 @@ function TagChip({
   const press = () => {
     // 눌렀다 놓는 한 번의 움직임. 위치만 바꾸므로 UI 스레드에 맡긴다.
     Animated.sequence([
-      Animated.timing(scale, { toValue: 0.92, duration: 80, useNativeDriver: true }),
-      Animated.spring(scale, { toValue: 1, friction: 4, tension: 220, useNativeDriver: true }),
+      Animated.timing(scale, {
+        toValue: 0.92,
+        duration: 80,
+        useNativeDriver: true,
+      }),
+      Animated.spring(scale, {
+        toValue: 1,
+        friction: 4,
+        tension: 220,
+        useNativeDriver: true,
+      }),
     ]).start();
     onPress();
   };

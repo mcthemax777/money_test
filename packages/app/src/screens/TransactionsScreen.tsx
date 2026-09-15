@@ -44,6 +44,7 @@ import { useEntryDrafts } from '@money/core/hooks/useEntryDrafts';
 import { useUserFilter } from '@money/core/store/user-filter';
 import { useEntryFocus, type EntryFocusOrigin } from '@money/core/store/entry-focus';
 
+import { useFloatingActionSlot } from '../shell/floating-action';
 import { useCloseOnBack, useNavigation } from '../shell/navigation';
 import EntryDetailModal from '../components/EntryDetailModal';
 import EntryEditor from '../components/EntryEditor';
@@ -450,8 +451,32 @@ export default function TransactionsScreen() {
   const [copying, setCopying] = useState<EntryListItem | null>(null);
   /** 고치는 중인 거래. 베끼기와 따로 든다 -- 편집기에 둘이 함께 가면 안 된다. */
   const [editing, setEditing] = useState<EntryListItem | null>(null);
+  /** 새로 적는 중인가. 베끼기·고치기와 달리 바탕이 되는 거래가 없다. */
+  const [isAdding, setIsAdding] = useState(false);
   /** 지우다 남은 것 같은 알림. 빈 글자면 아무것도 그리지 않는다. */
   const [notice, setNotice] = useState('');
+
+  /**
+   * 거래 추가. 껍데기가 오른쪽 아래에 붙박이로 그린다.
+   *
+   * 목록 위에 두지 않는다 -- 이 화면의 목록은 달을 펴고 줄을 펴며 얼마든지 길어져,
+   * 위에 둔 단추는 몇 번만 내려도 화면 밖으로 사라진다. 고르는 중에는 거두어 둔다.
+   * 그때의 손짓은 체크이고, 오른쪽 아래에는 지우기·태그 단추가 서 있다.
+   *
+   * 읽기 전용 구성원에게는 그리지 않는다. 서버가 어차피 거절하지만, 이 앱은 사본에
+   * 먼저 커밋하므로 그때까지는 저장된 것처럼 보인다 -- 헛일을 시키지 않는다.
+   */
+  useFloatingActionSlot(
+    canEdit && !tx.isSelecting
+      ? {
+          label: t('entryForm.addButton'),
+          onPress: () => {
+            setNotice('');
+            setIsAdding(true);
+          },
+        }
+      : null,
+  );
 
   /*
    * 탭 막대의 폭. 흰 알약이 어디로 미끄러질지 이 값으로 센다.
@@ -1078,7 +1103,7 @@ export default function TransactionsScreen() {
         둘을 한 자리에서 세우되 상태는 나눠 든다 -- `editing` 과 `copying` 을 함께
         넘기면 편집기가 고치기를 택하므로, 베끼려던 것이 조용히 원본 수정이 된다.
       */}
-      {copying || editing ? (
+      {copying || editing || isAdding ? (
         <EntryEditor
           isOpen
           copying={copying}
@@ -1086,6 +1111,7 @@ export default function TransactionsScreen() {
           onClose={() => {
             setCopying(null);
             setEditing(null);
+            setIsAdding(false);
           }}
           /* 거래가 생기거나 바뀌었으므로 달·줄·목록을 다시 읽는다. 오프라인이면 사본에서 온다. */
           onSaved={tx.reload}

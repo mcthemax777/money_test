@@ -498,6 +498,29 @@ export function createLocalHomePort(
       );
     },
 
+    /** 이 분류와 그 소분류에 달린 거래 다리의 수. 사본의 원장을 그대로 센다. */
+    async getCategoryUsage(id) {
+      note('categoryUsage');
+      return { counts: await store.categoryPostingCounts(id) };
+    },
+
+    /**
+     * 거래 하나. 사본에 없으면 null 이다 (아직 내려받지 못한 달의 거래).
+     *
+     * 목록과 같은 함수로 편다(`toListItem`). 상세 팝업이 받는 한 줄은 어디서 왔든
+     * 같은 모양이어야, 원장에서 연 상세와 목록에서 연 상세가 다르게 보이지 않는다.
+     */
+    async getEntry(id, projectId) {
+      note('entry');
+
+      const entry = await store.viewEntryById(id);
+      if (!entry) return null;
+
+      // 환산율은 가계부마다 다르다. 전표에는 그 값이 없어 부르는 쪽이 준 것을 쓴다.
+      const show = await converter(requireProject(projectId));
+      return toListItem(entry, { convert: (value) => value.times(show.rate), rate: show.rate });
+    },
+
     /**
      * 한 쪽씩 받는 목록.
      *

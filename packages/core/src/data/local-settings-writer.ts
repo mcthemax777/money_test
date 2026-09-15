@@ -33,6 +33,7 @@ import type {
 import { settingTableOf, type LocalStore } from './local-store';
 import { notifyMirrorChanged } from './mirror-events';
 import { apiClient } from '../lib/api-client';
+import { codedError } from '../lib/api-error';
 
 export interface LocalSettingsWriterOptions {
   store: LocalStore;
@@ -268,6 +269,20 @@ export function createLocalSettingsWriter({
     },
 
     async updateCategory(id: string, patch: CategoryPatch) {
+      /*
+       * 거래에 쓰이고 있으면 여기서 막는다.
+       *
+       * 서버의 `deleteCategory` 와 같은 규칙인데, 이 창구는 사본에 먼저 쓰고 명령을
+       * 쌓으므로 서버의 거절이 화면에 닿지 않는다 -- 지워진 것처럼 보이다가 다음
+       * 동기화에서 조용히 되돌아왔다. 코드를 붙여 던지면 웹과 같은 갈래로 읽히고,
+       * 화면이 "거래내역 보기 / 다른 분류와 통합하기"를 내준다.
+       */
+      if (patch.isActive === false) {
+        const counts = await store.categoryPostingCounts(id);
+        const used = Object.values(counts).reduce((sum, count) => sum + count, 0);
+        if (used > 0) throw codedError('CATEGORY_IN_USE');
+      }
+
       await commit('category.update', id, { ...patch }, { ...patch });
     },
 

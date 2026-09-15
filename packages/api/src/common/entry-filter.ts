@@ -93,14 +93,27 @@ export function assetOwnerCondition(
 export function entrySearchConditions(search: ParsedEntrySearch): Prisma.PostingWhereInput[] {
   const conditions: Prisma.PostingWhereInput[] = [];
 
-  if (search.categoryIds && search.categoryIds.length > 0) {
-    // 대분류를 고르면 소분류까지. entries.getEntries 의 categoryId 한 개짜리와 같은 규칙이다.
-    conditions.push({
-      OR: [
-        { categoryId: { in: search.categoryIds } },
-        { category: { parentId: { in: search.categoryIds } } },
-      ],
-    });
+  const categoryIds = search.categoryIds ?? [];
+  const categorySelfIds = search.categorySelfIds ?? [];
+  if (categoryIds.length > 0 || categorySelfIds.length > 0) {
+    /*
+     * 분류 한 무리. 두 갈래를 OR 로 잇는다.
+     *
+     *   `categoryIds`      대분류를 고르면 소분류까지 (entries.getEntries 의
+     *                      categoryId 한 개짜리와 같은 규칙이다).
+     *   `categorySelfIds`  그 분류에 **직접** 적은 것만 (미분류). 소분류를 만들어
+     *                      두고도 대분류에 그냥 적은 거래를 찾아 정리할 때 쓴다.
+     *
+     * 둘이 한 무리라 "식비 미분류 또는 교통 전체"가 그대로 표현된다.
+     */
+    const branches: Prisma.PostingWhereInput[] = [];
+    if (categoryIds.length > 0) {
+      branches.push({ categoryId: { in: categoryIds } });
+      branches.push({ category: { parentId: { in: categoryIds } } });
+    }
+    if (categorySelfIds.length > 0) branches.push({ categoryId: { in: categorySelfIds } });
+
+    conditions.push(branches.length === 1 ? branches[0] : { OR: branches });
   }
 
   const methods: Prisma.PostingWhereInput[] = [];

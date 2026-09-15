@@ -15,6 +15,7 @@
 import type {
   AccountDto,
   EntryDto,
+  EntryListItem,
   BudgetDto,
   CardDto,
   CategoryDto,
@@ -97,6 +98,22 @@ export interface HomeDataPort {
     projectId?: string | null,
   ): Promise<EntryDto.ListResponse['data']>;
 
+  /**
+   * 이 분류와 그 소분류에 달린 거래 다리의 수. 열쇠는 분류 id 다.
+   *
+   * 없애기 전에 묻는 데 쓴다 -- 거래가 있으면 "어떻게 할까요"를 곧바로 내주고, 없으면
+   * 지금까지처럼 한 번 물어보고 지운다.
+   */
+  getCategoryUsage(id: string): Promise<CategoryDto.UsageResponse>;
+
+  /**
+   * 거래 하나. 없으면 null.
+   *
+   * 자산 상세의 원장 줄이 쓴다. 그 줄이 들고 있는 것은 `entryId` 뿐이라, 상세 팝업이
+   * 받는 한 줄(`EntryListItem`)로 펴려면 그 전표를 따로 읽어야 한다.
+   */
+  getEntry(id: string, projectId?: string | null): Promise<EntryListItem | null>;
+
   /** 한 쪽씩 받는 목록. 무한 스크롤이 쓴다. */
   getEntries(
     query: EntryDto.ListQuery,
@@ -122,6 +139,8 @@ export const httpHomePort: HomeDataPort = {
     apiClient.getCategoryBreakdown(period, type, projectId, options),
   getEntryMonths: (projectId, filter) => apiClient.getEntryMonths(projectId, filter),
   getAllEntries: (query, projectId) => apiClient.getAllEntries(query, projectId),
+  getCategoryUsage: (id) => apiClient.getCategoryUsage(id),
+  getEntry: (id) => apiClient.getEntry(id),
   getEntries: (query, projectId) => apiClient.getEntries(query, projectId),
 };
 
