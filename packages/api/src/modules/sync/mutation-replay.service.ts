@@ -1075,6 +1075,7 @@ export class MutationReplayService {
       cardTransferDirection: payload.cardTransferDirection,
       // 결제 자리에서 깎인 금액. 기기가 조립한 전표와 같은 모양이 나와야 한다.
       discountAmount: payload.discountAmount,
+      countsPerformance: payload.countsPerformance,
     });
 
     return {

@@ -88,6 +88,15 @@ export interface EntryFormValues {
    * 통화는 `amount` 와 같다. 지출에만 뜻이 있고, 빈 문자열이면 차감이 없다.
    */
   discountAmount: string;
+  /**
+   * 이 거래를 카드 실적에 셀지. 카드를 골랐을 때만 화면에 뜬다.
+   *
+   * 기본값이 갈래마다 다르다 -- 지출은 켜짐, 카드로 들어온 수입은 꺼짐이다. 갈래를
+   * 바꾸면 그 갈래의 기본값으로 되돌린다(`defaultCountsPerformance`).
+   *
+   * 꺼도 갚을 대금은 그대로다. 실적과 청구액은 다른 값이다.
+   */
+  countsPerformance: boolean;
   transferFee: string;
   transferFeeCategoryId: string;
   /**
@@ -150,6 +159,7 @@ export function emptyEntryForm({ personId = '', timeZone, now }: EntryFormDefaul
     toAccountId: '',
     installmentMonths: '',
     discountAmount: '',
+    countsPerformance: true,
     transferFee: '',
     transferFeeCategoryId: '',
     splits: [],
@@ -236,6 +246,7 @@ export function entryFormFromItem(
      */
     amount: item.originalAmount ?? grossOf(item),
     discountAmount: item.discountAmount ?? '',
+    countsPerformance: item.countsPerformance,
     // 소분류가 있으면 그것이 고른 값이다. 목록은 가장 구체적인 분류를 준다.
     categoryId: item.categoryId ?? '',
     /*
@@ -276,6 +287,18 @@ export function entryFormFromItem(
     exchangeRate: item.originalCurrency ? item.exchangeRate ?? '' : '',
     tagIds: item.tags.map((tag) => tag.id),
   };
+}
+
+/**
+ * 그 갈래에서 카드 실적에 세는 것이 기본인가.
+ *
+ * 지출은 쓴 돈이라 센다. 카드로 들어온 돈은 캐시백이나 이벤트 지급이 흔해 세지 않는
+ * 것을 기본으로 둔다 -- 결제를 되돌려 받은 환급이라면 사용자가 켜서 함께 뺀다.
+ *
+ * 화면과 조립이 같은 답을 내야 해서 여기 한 곳에 둔다.
+ */
+export function defaultCountsPerformance(kind: EntryFormKind): boolean {
+  return kind !== 'income';
 }
 
 /**
@@ -586,6 +609,17 @@ export function entryFormToRequest(
       : {};
 
   /*
+   * 카드 실적. 카드로 냈고 기본값과 다를 때만 싣는다.
+   *
+   * 기본값은 조립이 갈래를 보고 정하므로, 같은 값을 굳이 보내지 않는다. 짐만 보고도
+   * 사용자가 손댄 자리가 드러난다.
+   */
+  const performanceExtra =
+    method.cardId && values.countsPerformance !== defaultCountsPerformance(values.kind)
+      ? { countsPerformance: values.countsPerformance }
+      : {};
+
+  /*
    * 분할이면 줄들을 싣고 대표 분류는 싣지 않는다.
    *
    * 조립이 둘을 함께 받으면 분할을 쓰고 분류는 버린다(`resolveRequestLines`). 그래도
@@ -604,6 +638,7 @@ export function entryFormToRequest(
         ? { installmentMonths: Number(values.installmentMonths) }
         : {}),
       ...expenseExtras,
+      ...performanceExtra,
     };
   }
 
@@ -617,6 +652,7 @@ export function entryFormToRequest(
       ? { installmentMonths: months }
       : {}),
     ...expenseExtras,
+    ...performanceExtra,
   };
 }
 

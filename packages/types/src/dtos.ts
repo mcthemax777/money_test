@@ -539,6 +539,13 @@ export namespace EntryDto {
      * 시점에 전액이 승인되어 부채가 그대로 잡힌다.
      */
     discountAmount?: string;
+    /**
+     * 이 거래를 카드 실적에 셀지. 카드로 낼 때만 뜻이 있다.
+     *
+     * 생략하면 갈래의 기본값을 쓴다 -- **지출은 포함, 카드로 들어온 수입은 제외**다.
+     * 꺼도 갚을 대금은 그대로 남는다. 실적과 청구액은 다른 값이다.
+     */
+    countsPerformance?: boolean;
 
     // ── transfer ──
     toAccountId?: string;

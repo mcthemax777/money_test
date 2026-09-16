@@ -656,6 +656,18 @@ model JournalEntry {
   // 전액 포인트 결제가 그 모양이고, 있었던 일이므로 지우지 않는다.
   discountAmount Decimal? @db.Decimal(19, 4)
 
+  // 이 거래를 카드 실적에 세는가. 카드로 낸 거래에만 뜻이 있다.
+  //
+  // 실적과 청구액은 다른 값이다. 카드사는 갚아야 할 돈과 별개로 "이번 주기에 얼마
+  // 썼나"를 따로 세고, 세금·공과금·상품권처럼 청구는 되지만 실적에서 빠지는 결제가
+  // 있다. 반대로 카드사가 되돌려 준 돈은 빚을 줄이되 실적까지 깎지 않는 것이 보통이다.
+  //
+  // 기본값이 갈래마다 다르다 -- 지출은 포함, 카드로 들어온 수입은 제외다. 그 판단은
+  // 조립(entry-build)이 하고 여기에는 정해진 값만 담긴다.
+  //
+  // 카드가 끼지 않은 거래는 true 로 둔다. 실적 질의가 카드 다리만 보므로 읽히지 않는다.
+  countsPerformance Boolean @default(true)
+
   createdByUserId String? // 입력자 추적용. 조회 필터로 쓰지 않는다 (프로젝트 멤버는 모두 같은 데이터를 본다)
 
   project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)

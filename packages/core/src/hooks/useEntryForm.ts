@@ -24,6 +24,7 @@ import {
   accountValue,
   cardValue,
   checkEntryForm,
+  defaultCountsPerformance,
   emptyEntryForm,
   entryFormFromDraft,
   entryFormFromItem,
@@ -288,6 +289,13 @@ export function useEntryForm({
             splits: hasCategory ? next.splits : [],
             // 차감은 지출에만 뜻이 있다.
             discountAmount: next.kind === 'expense' ? next.discountAmount : '',
+            /*
+             * 실적 포함은 갈래마다 기본값이 다르다. 갈래를 바꾸면 되돌린다.
+             *
+             * 그대로 두면 지출에서 켜 둔 값이 수입으로 따라와, 카드사가 준 캐시백이
+             * 실적을 깎는다. 사용자는 켠 적이 없는데도 그렇게 된다.
+             */
+            countsPerformance: defaultCountsPerformance(next.kind),
           };
         }
 

@@ -130,6 +130,8 @@ export interface EntryInput {
    * `originalAmount` 를 함께 적어 두는 것과 같은 까닭이다.
    */
   discountAmount?: Prisma.Decimal | null;
+  /** 이 거래를 카드 실적에 세는가. 조립이 갈래의 기본값까지 정해서 넘긴다. */
+  countsPerformance?: boolean;
   /**
    * 이 전표에 붙일 태그의 id.
    *
@@ -289,6 +291,7 @@ export class LedgerService {
           originalAmount: input.originalAmount ?? null,
           rateProvisional: input.rateProvisional ?? false,
           discountAmount: input.discountAmount ?? null,
+          countsPerformance: input.countsPerformance ?? true,
           updatedHlc: input.updatedHlc ?? this.clock.now(),
           postings: { create: input.postings.map((p) => this.toPostingData(p)) },
         },
@@ -371,6 +374,7 @@ export class LedgerService {
           originalAmount: input.originalAmount ?? null,
           rateProvisional: input.rateProvisional ?? false,
           discountAmount: input.discountAmount ?? null,
+          countsPerformance: input.countsPerformance ?? true,
           updatedHlc: input.updatedHlc ?? this.clock.now(),
           postings: { create: input.postings.map((p) => this.toPostingData(p)) },
         },
@@ -740,6 +744,7 @@ export class LedgerService {
       rateProvisional: built.rateProvisional,
       installmentMonths: built.installmentMonths,
       discountAmount: dec(built.discountAmount) ?? null,
+      countsPerformance: built.countsPerformance ?? true,
       postings: built.postings.map((posting) => ({
         accountId: posting.accountId,
         categoryId: posting.categoryId,

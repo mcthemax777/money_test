@@ -17,6 +17,7 @@ import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import { apiClient } from '@money/core/lib/api-client';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
+import { defaultCountsPerformance } from '@money/core/data/entry-form';
 import { entryAmountLook } from '@money/core/lib/entries';
 import { formatCurrency, formatNumber, toAmountString, toNumber } from '@money/core/lib/money';
 import {
@@ -153,6 +154,13 @@ function emptyEntryForm(timeZone: string, ledgerCurrency: CurrencyCode) {
      * 적다. 전액을 적으면 0원 거래로 남는다. 통화는 `amount` 와 같다.
      */
     discountAmount: '',
+    /**
+     * 이 거래를 카드 실적에 셀지. 카드를 골랐을 때만 화면에 뜬다.
+     *
+     * 기본값이 갈래마다 다르다 -- 지출은 켜짐, 카드로 들어온 수입은 꺼짐이다.
+     * 꺼도 갚을 대금은 그대로다. 실적과 청구액은 다른 값이다.
+     */
+    countsPerformance: true,
     /** 위 금액을 입력한 통화. 결제수단을 고르면 그 계좌 통화로 맞춰진다. */
     currency: ledgerCurrency,
     /**
@@ -965,10 +973,18 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
          * 이 가지는 수입도 함께 지나가므로 갈래를 한 번 더 본다. 유형을 옮기면 폼이
          * 값을 비우지만, 비우기가 늦는 자리가 생기면 수입에 차감이 실린다.
          */
-        if (kind === 'expense') {
-          if (toNumber(formData.discountAmount) > 0) {
-            payload.discountAmount = toAmountString(formData.discountAmount);
-          }
+        if (kind === 'expense' && toNumber(formData.discountAmount) > 0) {
+          payload.discountAmount = toAmountString(formData.discountAmount);
+        }
+
+        /*
+         * 카드 실적. 카드로 냈고 기본값과 다를 때만 싣는다.
+         *
+         * 기본값은 서버가 갈래를 보고 정하므로 같은 값을 굳이 보내지 않는다. 짐만 보고도
+         * 사용자가 손댄 자리가 드러난다.
+         */
+        if (useCard && formData.countsPerformance !== defaultCountsPerformance(kind)) {
+          payload.countsPerformance = formData.countsPerformance;
         }
       }
 
@@ -1199,6 +1215,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
        * 통화는 위 `amount` 와 같다 -- 외화 거래면 둘 다 그 외화다.
        */
       discountAmount: entry.discountAmount ?? '',
+      countsPerformance: entry.countsPerformance,
       tagIds: entry.tags.map((tag) => tag.id),
       /*
        * 나눈 줄. 목록이 줄 전부를 실어 줄 때만 되살린다.
@@ -1563,9 +1580,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                         // 분류를 버리면 그것을 나눈 줄도 함께 버린다. 지출 분류로 나눠 둔
                         // 줄이 수입에 남으면 고를 수 없는 분류가 적힌 채 저장된다.
                         splits: [],
-                        // 즉시 차감과 되돌린 결제는 지출에만 뜻이 있다. 칸이 사라져도
-                        // 값이 남으면 화면에 보이지 않는 값으로 저장이 거절된다.
+                        // 차감은 지출에만 뜻이 있다. 칸이 사라져도 값이 남으면
+                        // 화면에 보이지 않는 값으로 저장이 거절된다.
                         discountAmount: '',
+                        /*
+                          실적 포함은 갈래마다 기본값이 다르다. 그대로 두면 지출에서 켠
+                          값이 수입으로 따라와, 켠 적 없는 캐시백이 실적을 깎는다.
+                        */
+                        countsPerformance: defaultCountsPerformance(tab.id),
                       })}
                       className={`flex-1 px-3 py-2 text-sm font-medium rounded-md transition ${
                         selected
@@ -1747,6 +1769,34 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                     onAddClick={() => setIsMethodChooserOpen(true)}
                     addButtonLabel={t('editor.addMethod')}
                   />
+
+                  {/*
+                    카드 실적에 셀지. 카드를 골랐을 때만 뜬다.
+
+                    청구액과는 다른 값이다 -- 꺼도 갚을 대금은 그대로다. 지출은 켜짐이
+                    기본이고(쓴 돈이다) 카드로 들어온 돈은 꺼짐이 기본이다(캐시백은
+                    실적을 깎지 않는다).
+                  */}
+                  {formData.method === 'card' && formData.cardId && (
+                    <label className="mt-2 flex items-start gap-2 rounded-lg border border-gray-200 p-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.countsPerformance}
+                        onChange={(e) =>
+                          setFormData({ ...formData, countsPerformance: e.target.checked })
+                        }
+                        className="mt-0.5 h-4 w-4"
+                      />
+                      <span className="flex-1">
+                        <span className="block text-sm text-gray-900">
+                          {t('editor.countsPerformance')}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-gray-500">
+                          {t('editor.countsPerformanceHint')}
+                        </span>
+                      </span>
+                    </label>
+                  )}
 
                   {/*
                     수입을 카드로 받는 자리.
@@ -2684,6 +2734,12 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   {t('entry.discount', {
                     amount: formatCurrency(selectedTransaction.discountAmount, displayCurrency),
                   })}
+                </p>
+              )}
+              {/* 실적에서 뺀 카드 거래만 적는다. 센 것은 굳이 말할 것이 없다. */}
+              {selectedTransaction.cardId && !selectedTransaction.countsPerformance && (
+                <p className="mt-1 text-xs text-gray-500">
+                  {t('tx.detail.performance')} · {t('editor.performanceExcluded')}
                 </p>
               )}
 

@@ -114,7 +114,19 @@ export class CardLedgerService {
         accountId: card.liabilityAccountId!,
         entry: {
           date: { gte: since },
+          /*
+           * 사용만 센다. 대금 결제와 환불 입금은 분류 다리가 없어 여기서 빠진다.
+           * 갚은 돈이 사용액을 깎으면 실적이 두 번 움직인다.
+           */
           postings: { some: { categoryId: { not: null } } },
+          /*
+           * 실적에서 뺀 거래도 빠진다.
+           *
+           * 청구액과는 다른 값이다 -- 여기서 빠져도 부채 계정에는 그대로 쌓여 있어
+           * 갚을 대금은 줄지 않는다. 세금·공과금처럼 청구는 되지만 카드사가 실적에서
+           * 빼는 결제, 그리고 카드사가 되돌려 준 돈이 그 자리다.
+           */
+          countsPerformance: true,
         },
       },
       select: {
@@ -211,7 +223,8 @@ export class CardLedgerService {
     const { start } = zonedMonthRange(key, timeZone);
 
     const rows = await this.prisma.posting.findMany({
-      where: { cardId, entry: { date: { gte: start } } },
+      // 실적에서 뺀 거래는 세지 않는다. 통장에서 빠진 돈은 그대로다(신용카드와 같은 규칙).
+      where: { cardId, entry: { date: { gte: start }, countsPerformance: true } },
       select: { amount: true, entry: { select: { date: true } } },
     });
     return rows.map((row) => ({ amount: row.amount, date: row.entry.date }));

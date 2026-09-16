@@ -557,6 +557,37 @@ export default function EntryEditor({
             신용카드면 통장으로 들어오는 돈이 아니라 그 카드의 빚이 줄고, 체크카드면
             연결 통장으로 들어온다. 둘이 전혀 다른 일이라 고른 뒤에야 알게 하지 않는다.
           */}
+          {/*
+            카드 실적에 셀지. 카드를 골랐을 때만 뜬다.
+
+            청구액과는 다른 값이다 -- 꺼도 갚을 대금은 그대로다. 지출은 켜짐이 기본이고
+            (쓴 돈이다) 카드로 들어온 돈은 꺼짐이 기본이다(캐시백은 실적을 깎지 않는다).
+          */}
+          {form.selectedCard ? (
+            <Pressable
+              onPress={() => setField('countsPerformance', !values.countsPerformance)}
+              className="flex-row items-start gap-2 rounded-lg border border-gray-200 p-3"
+            >
+              <View
+                className={`mt-0.5 h-5 w-5 items-center justify-center rounded border ${
+                  values.countsPerformance
+                    ? 'border-blue-600 bg-blue-600'
+                    : 'border-gray-300 bg-white'
+                }`}
+              >
+                {values.countsPerformance ? (
+                  <Text className="text-xs font-bold text-white">✓</Text>
+                ) : null}
+              </View>
+              <View className="flex-1">
+                <Text className="text-sm text-gray-900">{t('editor.countsPerformance')}</Text>
+                <Text className="mt-0.5 text-xs text-gray-500">
+                  {t('editor.countsPerformanceHint')}
+                </Text>
+              </View>
+            </Pressable>
+          ) : null}
+
           {values.kind === 'income' && form.selectedCard ? (
             <View className="rounded-lg border border-blue-200 bg-blue-50 p-3">
               <Text className="text-sm text-blue-800">

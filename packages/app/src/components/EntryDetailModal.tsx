@@ -208,6 +208,13 @@ export default function EntryDetailModal({
             label={t('editor.discount')}
             value={entry.discountAmount ? money(entry.discountAmount) : null}
           />
+          {/* 실적에서 뺀 카드 거래만 적는다. 센 것은 굳이 말할 것이 없다. */}
+          <Row
+            label={t('tx.detail.performance')}
+            value={
+              entry.cardId && !entry.countsPerformance ? t('editor.performanceExcluded') : null
+            }
+          />
 
           {/*
             외화가 얽힌 거래만 원래 금액이 있다. 위 금액은 언제나 표시 통화 환산액이라,

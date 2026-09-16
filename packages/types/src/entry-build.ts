@@ -134,6 +134,13 @@ export interface BuiltEntry {
    * 까닭이다.
    */
   discountAmount?: Dec | null;
+  /**
+   * 이 거래를 카드 실적에 세는가. 카드로 낸 거래에만 뜻이 있다.
+   *
+   * 실적과 청구액은 다른 값이다 -- 실적에서 빼도 갚을 대금은 그대로 남는다.
+   * 기본값은 갈래마다 다르다(지출 포함, 카드 수입 제외).
+   */
+  countsPerformance?: boolean;
 }
 
 /** 카테고리 한 줄. 분할이면 여럿이다. */
@@ -180,6 +187,13 @@ export interface ExpenseBuildInput extends CommonBuildInput {
    * 시점에 전액이 승인되어 부채가 그대로 잡히므로, 이 자리에서 깎으면 명세서와 어긋난다.
    */
   discount?: DecInput;
+  /**
+   * 카드 실적에 셀지. 카드로 낼 때만 뜻이 있고 **기본은 포함**이다.
+   *
+   * 세금·공과금·상품권처럼 청구는 되지만 카드사가 실적에서 빼는 결제가 있다. 그때
+   * 꺼 두면 갚을 대금은 그대로 두고 실적에서만 빠진다.
+   */
+  countsPerformance?: boolean;
 }
 
 export interface IncomeBuildInput extends CommonBuildInput {
@@ -193,6 +207,14 @@ export interface IncomeBuildInput extends CommonBuildInput {
    */
   accountId?: string;
   cardId?: string;
+  /**
+   * 카드 실적에 셀지. **기본은 제외**다.
+   *
+   * 지출과 반대인 까닭은 이 돈의 성격 때문이다. 카드사가 주는 캐시백이나 이벤트
+   * 지급은 쓴 돈이 아니라서 실적을 깎지 않는다. 결제를 되돌려 받은 환급이라면 그
+   * 결제가 실적에 들어가 있었으므로 켜서 함께 빼 준다.
+   */
+  countsPerformance?: boolean;
 }
 
 export interface TransferBuildInput extends CommonBuildInput {
@@ -288,6 +310,8 @@ export async function buildExpense(
     installmentMonths: months,
     // 깎인 금액은 원장에 들어가지 않는다. 정가를 되살리는 데만 쓰는 표시값이다.
     discountAmount: discount.isZero() ? null : discount,
+    // 카드로 낸 지출은 기본이 실적 포함이다. 카드가 아니면 읽히지 않는 자리다.
+    countsPerformance: source.cardId ? input.countsPerformance ?? true : true,
     postings,
   };
 }
@@ -401,6 +425,8 @@ export async function buildIncome(
     ...common(input),
     ...foreign,
     rateProvisional: provisional,
+    // 카드로 들어온 돈은 기본이 실적 제외다. 쓴 돈이 아니라 받은 돈이기 때문이다.
+    countsPerformance: source.cardId ? input.countsPerformance ?? false : true,
     postings: [
       ...baseLines.map((line) =>
         baseLeg({ categoryId: line.categoryId }, line.baseAmount.negated(), base),
@@ -611,6 +637,8 @@ export interface EntryBuildRequest extends CommonBuildInput {
   cardTransferDirection?: CardTransferDirection;
   /** 결제 자리에서 깎인 금액. 분류는 묻지 않는다. */
   discountAmount?: DecInput;
+  /** 카드 실적에 셀지. 생략하면 갈래의 기본값을 쓴다 (지출 포함, 수입 제외). */
+  countsPerformance?: boolean;
 }
 
 export async function buildEntry(
@@ -627,6 +655,7 @@ export async function buildEntry(
           cardId: request.cardId,
           installmentMonths: request.installmentMonths,
           discount: request.discountAmount,
+          countsPerformance: request.countsPerformance,
         },
         lookup,
       );
@@ -638,6 +667,7 @@ export async function buildEntry(
           lines: resolveRequestLines(request),
           accountId: request.accountId,
           cardId: request.cardId,
+          countsPerformance: request.countsPerformance,
         },
         lookup,
       );

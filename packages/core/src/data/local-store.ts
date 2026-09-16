@@ -608,6 +608,7 @@ export class LocalStore {
           originalAmount: asText(row.originalAmount),
           rateProvisional: asFlag(row.rateProvisional),
           discountAmount: asText(row.discountAmount),
+          countsPerformance: asFlag(row.countsPerformance),
           createdByUserId: asText(row.createdByUserId),
           updatedHlc: asText(row.updatedHlc),
           updatedVersion: asInt(row.updatedVersion),
@@ -1672,6 +1673,7 @@ export class LocalStore {
       originalAmount: asText(entry.originalAmount),
       rateProvisional: Boolean(entry.rateProvisional),
       discountAmount: asText(entry.discountAmount),
+      countsPerformance: Boolean(entry.countsPerformance),
       // 목록 한 줄에 실린다. 서버 창구를 쓰는 화면이 수정할 때 이 값을 되돌려 준다.
       updatedHlc: asText(entry.updatedHlc),
       postings: byEntry.get(String(entry.id)) ?? [],
@@ -1806,6 +1808,7 @@ export class LocalStore {
         originalAmount: built.originalAmount ? built.originalAmount.toString() : null,
         rateProvisional: asFlag(built.rateProvisional),
         discountAmount: built.discountAmount ? built.discountAmount.toString() : null,
+        countsPerformance: asFlag(built.countsPerformance ?? true),
         createdByUserId: null,
         // 이 편집의 시계. 다음에 이 전표를 고칠 때 이 값보다 뒤를 발급한다.
         updatedHlc: options.hlc,
@@ -2712,7 +2715,8 @@ export class LocalStore {
          JOIN entry e ON e.id = p.entryId
          LEFT JOIN installment_plan ip ON ip.postingId = p.id
         WHERE p.accountId = ?
-          AND EXISTS (SELECT 1 FROM posting c WHERE c.entryId = e.id AND c.categoryId IS NOT NULL)`,
+          AND EXISTS (SELECT 1 FROM posting c WHERE c.entryId = e.id AND c.categoryId IS NOT NULL)
+          AND e.countsPerformance = 1`,
       [liabilityAccountId],
     );
     return rows.map(toCardPosting);
@@ -2729,7 +2733,8 @@ export class LocalStore {
       `SELECT p.amount, e.date, NULL AS totalMonths
          FROM posting p
          JOIN entry e ON e.id = p.entryId
-        WHERE p.cardId = ?`,
+        WHERE p.cardId = ?
+          AND e.countsPerformance = 1`,
       [cardId],
     );
     return rows.map(toCardPosting);

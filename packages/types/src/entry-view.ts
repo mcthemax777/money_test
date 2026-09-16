@@ -48,6 +48,8 @@ export interface ViewEntry {
   rateProvisional: boolean;
   /** 결제 자리에서 깎인 금액. 다리에는 들어가지 않는 표시값이다. */
   discountAmount?: DecInput | null;
+  /** 이 거래를 카드 실적에 세는가. 옛 전표는 비어 있고, 그때는 센 것으로 본다. */
+  countsPerformance?: boolean | null;
   /**
    * 이 전표를 마지막으로 고친 편집의 시계.
    *
@@ -219,6 +221,8 @@ export function toListItem(
     discountAmount: discount
       ? (entry.originalCurrency ? discount : show.convert(discount)).toString()
       : null,
+    // 값이 없던 시절의 전표는 센 것으로 본다. 그때는 모든 카드 거래가 실적에 들어갔다.
+    countsPerformance: entry.countsPerformance ?? true,
     categoryId: primaryCategory?.category?.id ?? null,
     categoryName: primaryCategory?.category?.name ?? null,
     parentCategoryId: primaryCategory?.category?.parent?.id ?? null,
