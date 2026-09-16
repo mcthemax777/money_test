@@ -608,7 +608,15 @@ export class LocalStore {
           originalAmount: asText(row.originalAmount),
           rateProvisional: asFlag(row.rateProvisional),
           discountAmount: asText(row.discountAmount),
-          countsPerformance: asFlag(row.countsPerformance),
+          /*
+           * 값이 없으면 센 것으로 본다.
+           *
+           * 서버가 이 필드를 알기 전에 앱이 먼저 올라갈 수 있고, 그때 응답에는 이 칸이
+           * 아예 없다. `asFlag(undefined)` 는 0 이라, 그대로 두면 모든 카드 거래가
+           * 실적에서 빠져 사용액이 0원으로 보인다 (2026-09-17 에 실기기에서 겪었다).
+           * 목록 한 줄을 펴는 규칙도 같은 기본값을 쓴다 (`toListItem` 의 ?? true).
+           */
+          countsPerformance: asFlag(row.countsPerformance ?? true),
           createdByUserId: asText(row.createdByUserId),
           updatedHlc: asText(row.updatedHlc),
           updatedVersion: asInt(row.updatedVersion),
