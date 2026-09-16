@@ -17,6 +17,7 @@ import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import { apiClient } from '@money/core/lib/api-client';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
+import { entryAmountLook } from '@money/core/lib/entries';
 import { formatCurrency, formatNumber, toAmountString, toNumber } from '@money/core/lib/money';
 import {
   dayOfMonthHint,
@@ -145,8 +146,13 @@ function emptyEntryForm(timeZone: string, ledgerCurrency: CurrencyCode) {
     time: '',
     /** 할부 개월수. 빈 값이거나 1이면 일시불 */
     installmentMonths: '',
-    /** 카드사 이체의 방향. 수정으로만 들어오며 그대로 되돌려 보낸다 */
-    cardTransferDirection: 'payment' as CardTransferDirection,
+    /**
+     * 결제 자리에서 깎인 금액. 포인트 사용, 자동할인, 그리고 **취소**가 모두 이 칸이다.
+     *
+     * 셋은 전표에서 같은 모양이다 -- 정가(`amount`)는 그대로인데 계좌에서 빠지는 돈만
+     * 적다. 전액을 적으면 0원 거래로 남는다. 통화는 `amount` 와 같다.
+     */
+    discountAmount: '',
     /** 위 금액을 입력한 통화. 결제수단을 고르면 그 계좌 통화로 맞춰진다. */
     currency: ledgerCurrency,
     /**
@@ -515,18 +521,45 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     return options;
   }, [accounts, cards, people]);
 
-  /** 이체 양쪽 중 카드 부채 계정인 쪽. 없으면 일반 이체다. */
+  /** 신용카드 부채 계정의 id 들. 이체 양쪽이 카드인지 가리는 데 쓴다. */
+  const cardLiabilityIds = useMemo(
+    () => new Set(cards.filter((c) => c.liabilityAccountId).map((c) => c.liabilityAccountId!)),
+    [cards],
+  );
+
+  /**
+   * 이체 한쪽에서 고를 수 있는 계좌. 반대쪽으로 고른 것과 **카드끼리**를 뺀다.
+   *
+   * 한쪽이 카드면 반대쪽 목록에서 카드가 사라진다. 카드에서 카드로 바로 옮기는 거래는
+   * 저장할 수 없는데(`TRANSFER_BOTH_CARDS`), 고를 수 있게 두면 다 적고 나서야 알게 된다.
+   */
+  const transferOptionsFor = (otherSideId: string) => {
+    const otherIsCard = cardLiabilityIds.has(otherSideId);
+    return transferAccountOptions.filter(
+      (option) => option.id !== otherSideId && !(otherIsCard && cardLiabilityIds.has(option.id)),
+    );
+  };
+
+  /** 이체 양쪽 중 카드 부채 계정인 쪽. 없거나 둘 다 카드면 null 이다. */
   const transferCardSide = (() => {
     if (formData.type !== 'transfer') return null;
-    const liabilityIds = new Set(
-      cards.filter((c) => c.liabilityAccountId).map((c) => c.liabilityAccountId!),
-    );
-    const fromIsCard = liabilityIds.has(formData.accountId);
-    const toIsCard = liabilityIds.has(formData.toAccountId);
+    const fromIsCard = cardLiabilityIds.has(formData.accountId);
+    const toIsCard = cardLiabilityIds.has(formData.toAccountId);
     if (fromIsCard && !toIsCard) return 'refund' as const;
     if (toIsCard && !fromIsCard) return 'payment' as const;
     return null;
   })();
+
+  /*
+   * 양쪽이 다 카드인 이동. 저장할 수 없다.
+   *
+   * 목록은 그 전표를 카드대금으로 읽고 "어느 카드의 대금인가"를 하나로 정해야 해서
+   * 어느 쪽을 골라도 반쪽만 보인다. 조립도 같은 이유로 막는다.
+   */
+  const transferBothCards =
+    formData.type === 'transfer' &&
+    cardLiabilityIds.has(formData.accountId) &&
+    cardLiabilityIds.has(formData.toAccountId);
 
   /*
    * 통화.
@@ -677,19 +710,25 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       kind === 'card' && cards.find((c) => c.id === id)?.cardType === 'credit';
 
     if (kind === 'card') {
-      setFormData((prev) => ({
-        ...prev,
-        method: 'card',
-        cardId: id,
-        accountId: '',
-        type: 'expense',
-        ...currencyFields(prev),
-        installmentMonths: keepsInstallment ? prev.installmentMonths : '',
-        mainCategoryId: prev.type === 'expense' ? prev.mainCategoryId : '',
-        subCategoryId: prev.type === 'expense' ? prev.subCategoryId : '',
-        // 카드는 지출만 만든다. 분류가 버려지면 그것을 나눈 줄도 함께 버린다.
-        splits: prev.type === 'expense' ? prev.splits : [],
-      }));
+      setFormData((prev) => {
+        // 카드로는 이체를 만들 수 없다. 이체 중이었으면 지출로 돌린다.
+        const type = prev.type === 'transfer' ? 'expense' : prev.type;
+        // 갈래가 바뀌면 그 갈래의 분류가 아니다. 나눈 줄도 함께 버린다.
+        const keepsCategory = type === prev.type;
+
+        return {
+          ...prev,
+          method: 'card',
+          cardId: id,
+          accountId: '',
+          type,
+          ...currencyFields(prev),
+          installmentMonths: keepsInstallment ? prev.installmentMonths : '',
+          mainCategoryId: keepsCategory ? prev.mainCategoryId : '',
+          subCategoryId: keepsCategory ? prev.subCategoryId : '',
+          splits: keepsCategory ? prev.splits : [],
+        };
+      });
       return;
     }
 
@@ -771,6 +810,11 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       return;
     }
 
+    if (transferBothCards) {
+      setError(t('entryForm.bothCards'));
+      return;
+    }
+
     // 수수료를 넣었으면 분류가 있어야 한다. 없이 보내면 서버가 거절하는데,
     // 그 오류만 보고는 어느 칸이 비었는지 알기 어렵다.
     if (
@@ -781,6 +825,20 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     ) {
       setError(t('editor.feeCategoryRequired'));
       return;
+    }
+
+    /*
+     * 차감·취소. 정가보다 클 수 없다.
+     *
+     * 같아도 된다 -- 전액을 깎으면 0원 거래로 남고, 전액 취소와 전액 포인트 결제가
+     * 그 모양이다. 넘으면 지출이 아니라 입금이 되어 서버가 막는다.
+     */
+    if (formData.type === 'expense') {
+      const discount = toNumber(formData.discountAmount);
+      if (discount > toNumber(formData.amount)) {
+        setError(t('entryForm.discountTooLarge'));
+        return;
+      }
     }
 
     /*
@@ -823,16 +881,18 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         timeZone,
       ).toISOString();
 
-      // 화면의 개념을 그대로 보낸다. 서버가 전표(postings)로 번역한다.
-      // card_payment는 수정으로만 들어온다 (새로 만드는 것은 자산 화면의 결제하기다).
+      /*
+       * 화면의 개념을 그대로 보낸다. 서버가 전표(postings)로 번역한다.
+       *
+       * 카드대금 결제라는 갈래는 보내지 않는다. 이체에서 카드 부채 계정을 고르면
+       * 서버가 같은 전표를 만들고, 목록이 그것을 `card_payment` 로 되읽는다.
+       */
       const kind =
-        formData.type === 'card_payment'
-          ? 'card_payment'
-          : formData.type === 'income'
-            ? 'income'
-            : formData.type === 'transfer'
-              ? 'transfer'
-              : 'expense';
+        formData.type === 'income'
+          ? 'income'
+          : formData.type === 'transfer'
+            ? 'transfer'
+            : 'expense';
       const useCard = formData.method === 'card' && Boolean(formData.cardId);
 
       const payload: any = {
@@ -865,12 +925,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       if (formData.merchant) payload.merchant = formData.merchant;
       if (formData.detailedNote) payload.detailedNote = formData.detailedNote;
 
-      if (kind === 'card_payment') {
-        // 부채가 줄어드는 카드와 돈이 오가는 통장을 함께 보낸다. 둘 다 폼에서 고정이다.
-        payload.cardId = formData.cardId;
-        payload.accountId = formData.accountId;
-        payload.cardTransferDirection = formData.cardTransferDirection;
-      } else if (kind === 'transfer') {
+      if (kind === 'transfer') {
         payload.accountId = formData.accountId;
         payload.toAccountId = formData.toAccountId;
         // 통화가 다른 환전은 받은 금액을 그대로 적는다. 그러면 실제 적용된
@@ -903,9 +958,22 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         // canInstall이 카드 종류까지 본다. 체크카드로 바꾼 뒤 남은 값이 새지 않게 막는다.
         const months = Number(formData.installmentMonths);
         if (canInstall && months >= 2) payload.installmentMonths = months;
+
+        /*
+         * 즉시 차감과 되돌린 결제. 지출에만 싣는다.
+         *
+         * 이 가지는 수입도 함께 지나가므로 갈래를 한 번 더 본다. 유형을 옮기면 폼이
+         * 값을 비우지만, 비우기가 늦는 자리가 생기면 수입에 차감이 실린다.
+         */
+        if (kind === 'expense') {
+          if (toNumber(formData.discountAmount) > 0) {
+            payload.discountAmount = toAmountString(formData.discountAmount);
+          }
+        }
       }
 
       let savedId: string | null = editingId;
+
       if (editingId) {
         // 팝업을 열 때 본 판을 함께 보낸다. 그 사이의 편집을 서버가 알아채는 근거다.
         await apiClient.updateEntry(editingId, { ...payload, baseHlc });
@@ -918,7 +986,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       setFormData(emptyEntryForm(timeZone, ledgerCurrency));
       setEditingId(null);
       setBaseHlc(null);
-      setError('');
+        setError('');
       setIsModalOpen(false);
     } catch (err) {
       /*
@@ -983,7 +1051,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
   const isEditable = isEditableEntry;
 
   /** 카드대금 결제 수정 중인지. 폼이 분류·유형·이체 칸을 감춘다. */
-  const isCardPaymentForm = formData.type === 'card_payment';
 
   /**
    * 분류를 나눠 적는 중인지.
@@ -992,7 +1059,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
    * (유형을 바꿀 때 비우지만, 어느 쪽으로 들어와도 같게 읽히도록 갈래까지 본다).
    */
   const hasSplits =
-    formData.type !== 'transfer' && !isCardPaymentForm && formData.splits.length > 0;
+    formData.type !== 'transfer' && formData.splits.length > 0;
 
   /** 지금 유형의 대분류. 대표 분류 칸과 나눈 줄이 함께 쓴다. */
   const mainCategoryOptions = useMemo(
@@ -1035,6 +1102,18 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
   };
 
   /**
+   * 목록 한 줄의 금액을 폼이 드는 정가로 되돌린다.
+   *
+   * 목록의 금액은 차감을 뺀 뒤의 값이고(실제로 나간 돈), 되돌린 결제는 음수다. 폼의
+   * 금액 칸은 언제나 "깎이기 전의 값을 양수로" 이므로 둘을 여기서 되돌린다.
+   */
+  const grossAmountOf = (entry: EntryListItem): string => {
+    const magnitude = Dec.of(toAmountString(entry.amount)).abs();
+    if (!entry.discountAmount) return magnitude.toString();
+    return magnitude.plus(toAmountString(entry.discountAmount)).toString();
+  };
+
+  /**
    * 있는 거래를 폼 값으로 되돌린다.
    *
    * 고치기와 베끼기가 함께 쓴다. 두 길의 값이 갈리면 "고쳐 저장한 것"과 "베껴 저장한
@@ -1066,11 +1145,18 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     return {
       // 카드대금 결제는 통장에서 돈이 나가고 카드 부채가 줄어든다. 두 값을 다 들고 있어야
       // 저장할 때 그대로 돌려보낼 수 있으므로 method로 하나만 고르지 않는다.
+      /*
+       * 카드대금 결제는 이체 폼으로 편다.
+       *
+       * 저장된 전표는 통장 다리와 카드 부채 다리 둘뿐이라 이체와 같은 모양이고, 목록이
+       * 나간 쪽을 accountId, 들어온 쪽을 toAccountId 로 준다. 앱도 같은 규칙이다
+       * (core 의 entryFormFromItem).
+       */
       method: entry.kind === 'card_payment' ? 'account' : entry.cardId ? 'card' : 'account',
       accountId: entry.accountId || '',
       cardId: entry.cardId || '',
       personId: entry.personId || '',
-      type: entry.kind,
+      type: entry.kind === 'card_payment' ? 'transfer' : entry.kind,
       mainCategoryId: category.mainCategoryId,
       subCategoryId: category.subCategoryId,
       /*
@@ -1080,7 +1166,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
        * 환산액을 보여 주면 사용자가 입력했던 값과 달라 혼란스러우므로, 원 통화
        * 금액이 함께 왔으면 그것을 되돌려 놓는다.
        */
-      amount: entry.originalAmount ?? entry.amount,
+      amount: entry.originalAmount ?? grossAmountOf(entry),
       currency: isCurrencyCode(entry.originalCurrency) ? entry.originalCurrency : ledgerCurrency,
       /*
        * 확정된 거래만 금액을 되돌려 놓는다 (billedPrefill 참고).
@@ -1107,9 +1193,13 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       date: dateKeyOf(entry.date, timeZone),
       time: timeInputOf(entry.date, timeZone),
       installmentMonths: entry.installmentMonths ? String(entry.installmentMonths) : '',
+      /*
+       * 차감. 목록의 금액은 이미 차감된 뒤이므로 위 `amount` 와 짝으로 되돌린다.
+       *
+       * 통화는 위 `amount` 와 같다 -- 외화 거래면 둘 다 그 외화다.
+       */
+      discountAmount: entry.discountAmount ?? '',
       tagIds: entry.tags.map((tag) => tag.id),
-      // 놓치면 환불 입금을 고칠 때 대금 결제로 뒤집힌다
-      cardTransferDirection: entry.cardTransferDirection ?? 'payment',
       /*
        * 나눈 줄. 목록이 줄 전부를 실어 줄 때만 되살린다.
        *
@@ -1430,15 +1520,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       <Modal
         isOpen={isModalOpen}
         onClose={handleModalClose}
-        title={
-          isCardPaymentForm
-            ? formData.cardTransferDirection === 'refund'
-              ? t('editor.titleRefund')
-              : t('editor.titleCardPayment')
-            : editingId
-              ? t('editor.titleEdit')
-              : t('editor.titleAdd')
-        }
+        title={editingId ? t('editor.titleEdit') : t('editor.titleAdd')}
         /* 버튼은 form 밖(하단 고정 영역)이라 form 속성으로 묶는다 */
         footer={
           <button
@@ -1454,22 +1536,16 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         }
       >
         <form id={ENTRY_FORM_ID} onSubmit={handleSubmit} className="space-y-4">
-              {isCardPaymentForm && (
-                <div className="p-3 bg-blue-50 border border-blue-200 text-blue-800 text-sm rounded-lg">
-                  {formData.cardTransferDirection === 'refund'
-                    ? t('editor.refundNote')
-                    : t('editor.paymentNote')}{' '}
-                  {t('editor.cardTransferHint')}
-                </div>
-              )}
-
               {/* 유형을 맨 위에서 탭으로 고른다. 아래 입력이 유형에 따라 달라지므로 먼저 정한다. */}
-              {/* 카드대금 결제는 다른 유형으로 바꿀 수 없다. 부채 상환이라 대응하는 탭이 없다. */}
-              {!isCardPaymentForm && (
               <div role="tablist" aria-label={t('editor.kindTablist')} className="flex gap-1 p-1 bg-gray-100 rounded-lg">
                 {ENTRY_TYPE_TABS.map((tab) => {
                   // 카드는 지출만 만들 수 있고, 결제된 청구서에 속한 내역은 유형을 못 바꾼다.
-                  const disabled = formData.method === 'card' && tab.id !== 'expense';
+                  /*
+                    카드로는 이체를 만들 수 없다. 지출과 수입은 둘 다 된다.
+                    (카드사가 되돌려 주는 돈은 그 카드의 빚이 주는 수입이다.)
+                    카드대금 결제는 이체에서 카드 부채 계정을 골라 적는다.
+                  */
+                  const disabled = formData.method === 'card' && tab.id === 'transfer';
                   const selected = formData.type === tab.id;
 
                   return (
@@ -1487,6 +1563,9 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                         // 분류를 버리면 그것을 나눈 줄도 함께 버린다. 지출 분류로 나눠 둔
                         // 줄이 수입에 남으면 고를 수 없는 분류가 적힌 채 저장된다.
                         splits: [],
+                        // 즉시 차감과 되돌린 결제는 지출에만 뜻이 있다. 칸이 사라져도
+                        // 값이 남으면 화면에 보이지 않는 값으로 저장이 거절된다.
+                        discountAmount: '',
                       })}
                       className={`flex-1 px-3 py-2 text-sm font-medium rounded-md transition ${
                         selected
@@ -1499,7 +1578,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   );
                 })}
               </div>
-              )}
 
               {/* 금액은 유형 바로 아래에 둔다. 팝업이 열릴 때 여기로 포커스가 가므로
                   아래쪽에 있으면 본문이 스크롤돼 유형 탭이 가려진다. */}
@@ -1642,41 +1720,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 </div>
               </div>
 
-              {isCardPaymentForm ? (
-                /*
-                 * 카드와 통장은 고정이다. 바꾸면 다른 카드의 부채를 갚는 전혀 다른 거래가
-                 * 되므로, 잘못 골랐다면 지우고 자산 화면에서 다시 결제하는 것이 맞다.
-                 */
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">{t('editor.card')}</label>
-                    <p className="px-3 py-2 bg-gray-100 rounded-lg text-gray-700">
-                      {cards.find((c) => c.id === formData.cardId)?.name ?? '-'}
-                    </p>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      {t(
-                    formData.cardTransferDirection === 'refund'
-                      ? 'editor.refundAccount'
-                      : 'editor.paymentAccountLabel',
-                  )}
-                    </label>
-                    <p className="px-3 py-2 bg-gray-100 rounded-lg text-gray-700">
-                      {accounts.find((a) => a.id === formData.accountId)?.name ?? '-'}
-                    </p>
-                  </div>
-                </div>
-              ) : formData.type === 'transfer' ? (
+              {formData.type === 'transfer' ? (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     {t('editor.fromAccount')}
                   </label>
                   {/* 신용카드를 고르면 카드사에 대금을 갚는 것이 아니라 환불을 받는 쪽이 된다 */}
                   <CustomSelect
-                    options={transferAccountOptions.filter(
-                      (option) => option.id !== formData.toAccountId,
-                    )}
+                    options={transferOptionsFor(formData.toAccountId)}
                     value={formData.accountId}
                     onChange={(value) =>
                       setFormData({ ...formData, method: 'account', accountId: value, cardId: '' })
@@ -1696,6 +1747,29 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                     onAddClick={() => setIsMethodChooserOpen(true)}
                     addButtonLabel={t('editor.addMethod')}
                   />
+
+                  {/*
+                    수입을 카드로 받는 자리.
+
+                    신용카드면 통장으로 들어오는 돈이 아니라 그 카드의 빚이 줄고,
+                    체크카드면 연결 통장으로 들어온다. 둘이 전혀 다른 일이라 고른
+                    뒤에야 알게 하지 않는다.
+                  */}
+                  {formData.type === 'income' && formData.method === 'card' && formData.cardId && (
+                    <p className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                      {isCreditCardSelected
+                        ? t('editor.cardIncomeNote')
+                        : t('editor.cardIncomeDebitNote', {
+                            account:
+                              accounts.find(
+                                (account) =>
+                                  account.id ===
+                                  cards.find((card) => card.id === formData.cardId)
+                                    ?.paymentAccountId,
+                              )?.name ?? t('editor.methodAccount'),
+                          })}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -1712,7 +1786,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 />
               </div>
 
-              {formData.type !== 'transfer' && !isCardPaymentForm && (
+              {formData.type !== 'transfer' && (
                 hasSplits ? (
                   /*
                     분류를 나눈 줄들.
@@ -1862,9 +1936,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                       {t('editor.toAccount')}
                     </label>
                     <CustomSelect
-                      options={transferAccountOptions.filter(
-                        (option) => option.id !== formData.accountId,
-                      )}
+                      options={transferOptionsFor(formData.accountId)}
                       value={formData.toAccountId}
                       onChange={(value) => setFormData({ ...formData, toAccountId: value })}
                     />
@@ -2111,6 +2183,46 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   <p className="mt-1 text-xs text-gray-500">
                     {t('editor.installmentHint')}
                   </p>
+                </div>
+              )}
+
+              {/*
+                차감·취소. 포인트 사용, 자동할인, 그리고 취소가 이 칸 하나로 들어간다.
+
+                셋은 전표에서 같은 모양이다 -- 정가는 위 금액 칸에 그대로 두고, 여기에는
+                덜 나간 몫을 적는다. 전액을 적으면 0원 거래로 남는다. 지우지 않는 것은
+                있었던 일이기 때문이다.
+              */}
+              {formData.type === 'expense' && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {t('editor.discount')}
+                  </label>
+                  <input
+                    type="number"
+                    value={formData.discountAmount}
+                    onChange={(e) =>
+                      setFormData({ ...formData, discountAmount: e.target.value })
+                    }
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="0"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">{t('editor.discountHint')}</p>
+
+                  {toNumber(formData.discountAmount) > 0 && (
+                    <div className="mt-2 space-y-2">
+                      {/* 실제로 빠지는 금액. 저장하고 목록에서 보고서야 알게 하지 않는다. */}
+                      <p className="text-xs font-medium text-gray-700">
+                        {t('editor.netAmount', {
+                          amount: formatCurrency(
+                            toNumber(formData.amount) - toNumber(formData.discountAmount),
+                            formData.currency,
+                          ),
+                        })}
+                      </p>
+
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -2548,12 +2660,33 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 {t('editor.amount')}
               </label>
-              <p className={`px-3 py-2 bg-gray-50 rounded-lg text-lg font-bold ${
-                selectedTransaction.kind === 'income' ? 'text-green-600' : 'text-red-600'
-              }`}>
-                {selectedTransaction.kind === 'income' ? '+' : '-'}
-                {formatCurrency(selectedTransaction.amount, displayCurrency)}
-              </p>
+              {/*
+                부호와 색은 목록 한 줄과 같은 규칙을 쓴다 (core 의 entryAmountLook).
+                되돌린 결제는 갈래가 지출인데 돈이 돌아온 쪽이라, 갈래만 보면 "--10,000"
+                이 찍힌다.
+              */}
+              {(() => {
+                const look = entryAmountLook(selectedTransaction);
+                return (
+                  <p
+                    className={`px-3 py-2 bg-gray-50 rounded-lg text-lg font-bold ${
+                      look.tone === 'income' ? 'text-green-600' : 'text-red-600'
+                    }`}
+                  >
+                    {look.sign}
+                    {formatCurrency(look.amount, displayCurrency)}
+                  </p>
+                );
+              })()}
+              {/* 결제 자리에서 깎인 금액. 위 금액은 이미 깎인 뒤라 이것이 없으면 정가를 알 수 없다. */}
+              {selectedTransaction.discountAmount && (
+                <p className="mt-1 text-xs text-green-600">
+                  {t('entry.discount', {
+                    amount: formatCurrency(selectedTransaction.discountAmount, displayCurrency),
+                  })}
+                </p>
+              )}
+
             </div>
 
             <div>

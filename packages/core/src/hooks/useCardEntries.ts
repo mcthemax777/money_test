@@ -26,6 +26,7 @@ const PAGE_SIZE = 100;
  * 잔액은 비운다. 체크카드에는 쌓이는 것이 없어 "이 거래 직후의 남은 대금"이 없다.
  */
 function toLedgerRow(entry: EntryListItem): LedgerLikeRow {
+  // 돈이 돌아온 쪽은 양수다. 카드 부채 계정의 부호 규칙과 같다.
   const signed = entry.kind === 'income' ? entry.amount : `-${entry.amount}`;
 
   return {

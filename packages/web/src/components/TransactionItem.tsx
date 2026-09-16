@@ -3,7 +3,12 @@
 import type { EntryListItem } from '@money/types';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency, formatOriginal, toNumber } from '@money/core/lib/money';
-import { categoryTitleOf, entryAssetName } from '@money/core/lib/entries';
+import {
+  categoryTitleOf,
+  entryAmountLook,
+  entryAssetName,
+  type EntryAmountTone,
+} from '@money/core/lib/entries';
 import { formatDate, formatTime } from '@money/core/lib/datetime';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 
@@ -30,18 +35,11 @@ interface TransactionItemProps {
  * 예전에는 같은 뜻을 왼쪽 색 띠와 카드 배경색으로 한 번 더 칠했다. 한 줄에 색이
  * 셋이면 어느 것이 뜻을 담은 색인지 알기 어렵고, 목록이 알록달록해진다.
  */
-const AMOUNT_COLOR_BY_KIND: Record<EntryListItem['kind'], string> = {
+const AMOUNT_COLOR_BY_TONE: Record<EntryAmountTone, string> = {
   income: 'text-green-600',
   expense: 'text-red-600',
-  transfer: 'text-gray-500',
-  card_payment: 'text-gray-500',
+  neutral: 'text-gray-500',
   adjustment: 'text-amber-600',
-};
-
-/** 부호는 합계를 움직이는 거래에만 붙는다 */
-const SIGN_BY_KIND: Partial<Record<EntryListItem['kind'], string>> = {
-  income: '+',
-  expense: '-',
 };
 
 /** 계좌 사이를 오가는 거래는 "A → B"로 보여준다. */
@@ -99,6 +97,11 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
 
   const time = formatTime(entry.date, timeZone);
   const original = formatOriginal(entry);
+
+  // 부호와 색. 되돌린 결제는 갈래가 지출이어도 돈이 돌아온 쪽이라 규칙이 core 에 있다.
+  const look = entryAmountLook(entry);
+  // 결제 자리에서 곧바로 빠진 금액 (포인트 사용·자동할인). 없으면 0 이다.
+  const discount = toNumber(entry.discountAmount);
 
   /*
    * "보낸 곳 → 받은 곳". 계좌 사이를 오가는 거래에만 만든다.
@@ -178,16 +181,16 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
         </div>
         <p
           className={`shrink-0 text-[15px] font-semibold tabular-nums ${
-            AMOUNT_COLOR_BY_KIND[entry.kind]
+            AMOUNT_COLOR_BY_TONE[look.tone]
           }`}
         >
-          {SIGN_BY_KIND[entry.kind]}
-          {formatCurrency(entry.amount, displayCurrency)}
+          {look.sign}
+          {formatCurrency(look.amount, displayCurrency)}
         </p>
       </div>
 
       {/* 2줄에 담을 것이 하나도 없는 거래도 있다. 그때는 빈 줄을 만들지 않는다. */}
-      {(meta || hasFee || original) && (
+      {(meta || hasFee || original || discount > 0) && (
       <div className="mt-0.5 flex items-center gap-1.5 text-xs text-gray-500">
         <span className="min-w-0 truncate">{meta}</span>
 
@@ -213,6 +216,16 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
           {hasFee && (
             <span className="font-medium tabular-nums text-red-600">
               {t('entry.fee', { amount: formatCurrency(fee, displayCurrency) })}
+            </span>
+          )}
+
+          {/*
+            결제 자리에서 깎인 금액. 위 금액은 이미 깎인 뒤라 이것이 없으면 정가를
+            알 수 없다. 나간 돈이 아니므로 초록으로 적는다.
+          */}
+          {discount > 0 && (
+            <span className="font-medium tabular-nums text-green-600">
+              {t('entry.discount', { amount: formatCurrency(discount, displayCurrency) })}
             </span>
           )}
 

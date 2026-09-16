@@ -511,7 +511,13 @@ export namespace EntryDto {
      */
     tagIds?: string[];
 
-    // ── 결제수단 (expense는 둘 중 하나, income은 accountId) ──
+    // ── 결제수단 (expense·income 모두 둘 중 하나) ──
+    /**
+     * 수입에도 카드를 쓸 수 있다.
+     *
+     * 카드사가 되돌려 주는 돈이 통장을 거치지 않고 다음 청구에서 빠지는 일이 있어,
+     * 그때 돈이 들어오는 자리는 통장이 아니라 그 카드의 빚이다.
+     */
     accountId?: string;
     cardId?: string;
     /**
@@ -521,6 +527,18 @@ export namespace EntryDto {
      * 회차별 금액과 귀속 주기는 저장하지 않고 읽을 때 계산한다.
      */
     installmentMonths?: number;
+
+    // ── 즉시 차감 (expense) ──
+    /**
+     * 결제 그 자리에서 깎인 금액. 카드 포인트 사용, 자동할인, 그리고 **취소**가 든다.
+     *
+     * `amount` 는 정가 그대로 보낸다. 서버가 정가를 분류에, 이 값을 차감 분류에 음수로
+     * 적어 실제로 나간 돈과 지출 총계를 맞춘다. 정가보다 작아야 한다.
+     *
+     * 청구서에서 나중에 빠지는 신용카드 청구할인은 여기 들지 않는다. 그쪽은 결제
+     * 시점에 전액이 승인되어 부채가 그대로 잡힌다.
+     */
+    discountAmount?: string;
 
     // ── transfer ──
     toAccountId?: string;

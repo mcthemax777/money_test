@@ -533,6 +533,8 @@ export class EntriesService {
       toAccountId: dto.toAccountId,
       cardId: dto.cardId,
       installmentMonths: dto.installmentMonths,
+      // 결제 자리에서 깎인 금액. 분류는 없다 -- 정가에서 빼고 전표에 표시값으로 남는다.
+      discountAmount: optional(dto.discountAmount, '차감액'),
       toAmount: optional(dto.toAmount, '받는 금액'),
       transferFee: optional(dto.transferFee, '이체 수수료'),
       transferFeeCategoryId: dto.transferFeeCategoryId,

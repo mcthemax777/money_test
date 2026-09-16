@@ -46,6 +46,8 @@ export interface ViewEntry {
   originalCurrency: string | null;
   originalAmount: DecInput | null;
   rateProvisional: boolean;
+  /** 결제 자리에서 깎인 금액. 다리에는 들어가지 않는 표시값이다. */
+  discountAmount?: DecInput | null;
   /**
    * 이 전표를 마지막으로 고친 편집의 시계.
    *
@@ -119,13 +121,21 @@ export function toListItem(
   const base = (posting: ViewPosting) => Dec.of(posting.baseAmount);
 
   /*
-   * 표시 금액은 항상 양수, 그리고 항상 기준통화(baseAmount)다.
+   * 결제 자리에서 깎인 금액. 다리가 아니라 전표에 적혀 있다.
+   *
+   * 다리는 이미 깎인 뒤의 금액이라, 편집 화면이 정가 칸을 되돌리려면 이 값을 더한다.
+   */
+  const discount = entry.discountAmount ? Dec.of(entry.discountAmount) : null;
+
+  /*
+   * 표시 금액은 항상 기준통화(baseAmount)이고 음수가 되지 않는다.
    *
    * 통화별로 쪼개면 목록 소계와 상단 합계가 어긋난다. 원래 통화의 금액은
    * originalCurrency/originalAmount 로 따로 실어 화면이 함께 보여 준다.
    */
   let amount: Dec;
   if (kind === 'expense') {
+    // 차감을 뺀 뒤의 값, 곧 실제로 계좌에서 빠진 금액이다. 전액을 깎았으면 0 이다.
     amount = Dec.sum(categoryPostings.map(base));
   } else if (kind === 'income') {
     amount = Dec.sum(categoryPostings.map(base)).abs();
@@ -193,6 +203,22 @@ export function toListItem(
           })),
         }
       : {}),
+    /*
+     * 결제 자리에서 곧바로 빠진 금액. 없으면 null 이다.
+     *
+     * 위 `amount` 는 이미 차감된 뒤의 값이라, 편집 화면이 정가 칸을 되돌리려면
+     * 둘을 더해야 한다. 그 덧셈을 화면마다 따로 적지 않도록 여기서 실어 보낸다.
+     */
+    /*
+     * 깎인 금액. **원 통화 금액과 같은 규칙으로 싣는다.**
+     *
+     * 이 값의 통화는 사용자가 적은 통화다(정가와 같은 칸에서 뺀 값이라 그렇다).
+     * 외화로 적은 거래는 `originalAmount` 처럼 그대로 두고, 장부 통화로 적은 거래만
+     * 표시 통화로 옮긴다. 옮기지 않으면 원화 가계부에서 달러 값이 원화 자리에 선다.
+     */
+    discountAmount: discount
+      ? (entry.originalCurrency ? discount : show.convert(discount)).toString()
+      : null,
     categoryId: primaryCategory?.category?.id ?? null,
     categoryName: primaryCategory?.category?.name ?? null,
     parentCategoryId: primaryCategory?.category?.parent?.id ?? null,

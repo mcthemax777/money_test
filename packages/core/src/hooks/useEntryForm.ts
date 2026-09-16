@@ -45,6 +45,13 @@ export interface PaymentChoice {
   name: string;
   /** 신용카드인가. 할부 칸을 열지 정하는 값이다. */
   isCreditCard: boolean;
+  /**
+   * 이체 목록에 낀 카드 부채 계정인가.
+   *
+   * 한쪽에 카드를 고르면 반대쪽 목록에서 카드를 빼는 데 쓴다. 카드에서 카드로 바로
+   * 옮기는 거래는 저장할 수 없어서다.
+   */
+  isCardLiability?: boolean;
 }
 
 export interface EntryFormLists {
@@ -266,15 +273,21 @@ export function useEntryForm({
           return {
             ...next,
             categoryId: hasCategory ? next.categoryId : '',
-            // 카드는 지출에서만 결제수단이다. 카드사 대금 이동의 카드는 따로 든다.
-            method: next.kind !== 'expense' && isCard ? '' : next.method,
+            /*
+             * 이체는 계좌끼리다. 카드를 고른 채 이체로 옮기면 비운다.
+             *
+             * 이체에서 카드는 **부채 계정**으로 고른다(`transferChoices`). 결제수단으로
+             * 고른 카드가 그대로 남으면 화면에 보이지 않는 값으로 저장이 거절된다.
+             */
+            method: next.kind === 'transfer' && isCard ? '' : next.method,
             toAccountId: next.kind === 'transfer' ? next.toAccountId : '',
             installmentMonths: next.kind === 'expense' ? next.installmentMonths : '',
             transferFee: next.kind === 'transfer' ? next.transferFee : '',
             transferFeeCategoryId: next.kind === 'transfer' ? next.transferFeeCategoryId : '',
             // 분할은 분류를 갖는 갈래에만 뜻이 있다.
             splits: hasCategory ? next.splits : [],
-            cardId: next.kind === 'card_payment' ? next.cardId : '',
+            // 차감은 지출에만 뜻이 있다.
+            discountAmount: next.kind === 'expense' ? next.discountAmount : '',
           };
         }
 
@@ -304,7 +317,18 @@ export function useEntryForm({
   );
 
   /** 화면이 고르는 결제수단. 지출은 통장과 카드, 그 밖은 통장만. */
-  const methodChoices = useMemo((): PaymentChoice[] => {
+  /**
+   * 이체에서 고를 수 있는 계좌. 신용카드의 부채 계정을 함께 넣는다.
+   *
+   * **카드대금 결제가 곧 이체이기 때문이다.** 통장에서 돈이 나가고 그만큼 카드 빚이
+   * 주는 일이라, 한쪽에 카드를 고르면 그대로 대금 결제가 되고 반대로 고르면 환불
+   * 입금이 된다. 갈래를 따로 두지 않는 까닭이 이것이다.
+   *
+   * 부채 계정은 통장 목록에서 감춰져 있다(`HIDDEN_TYPES`). 지출 결제수단이나 자산
+   * 화면에 새어 나가면 안 되므로 목록을 열지 않고, 이미 받아 둔 카드에서 꺼내 여기서만
+   * 조립한다. 웹의 `transferAccountOptions` 와 같은 규칙이다.
+   */
+  const transferChoices = useMemo((): PaymentChoice[] => {
     const accounts = lists.accounts
       .filter((account) => account.isActive && !HIDDEN_TYPES.includes(account.type))
       .map((account) => ({
@@ -313,8 +337,54 @@ export function useEntryForm({
         isCreditCard: false,
       }));
 
-    if (values.kind !== 'expense') return accounts;
+    const liabilities = lists.cards
+      .filter((card) => card.isActive && card.cardType === 'credit' && card.liabilityAccountId)
+      .map((card) => ({
+        value: accountValue(card.liabilityAccountId!),
+        name: card.name,
+        // 카드 부채 계정이지 결제수단 카드가 아니다. 할부 칸을 열 자리가 아니다.
+        isCreditCard: false,
+        isCardLiability: true,
+      }));
 
+    return [...accounts, ...liabilities];
+  }, [lists.accounts, lists.cards]);
+
+  /**
+   * 이체 한쪽에서 고를 수 있는 것. 반대쪽으로 고른 것과 **카드끼리**를 뺀다.
+   *
+   * 한쪽이 카드면 반대쪽 목록에서 카드가 사라진다. 카드에서 카드로 바로 옮기는 거래는
+   * 저장할 수 없는데(`TRANSFER_BOTH_CARDS`), 고를 수 있게 두면 다 적고 나서야 알게 된다.
+   */
+  const transferOptionsFor = useCallback(
+    (otherValue: string): PaymentChoice[] => {
+      const otherIsCard = transferChoices.some(
+        (choice) => choice.value === otherValue && choice.isCardLiability,
+      );
+      return transferChoices.filter(
+        (choice) => choice.value !== otherValue && !(otherIsCard && choice.isCardLiability),
+      );
+    },
+    [transferChoices],
+  );
+
+  const methodChoices = useMemo((): PaymentChoice[] => {
+    if (values.kind === 'transfer') return transferOptionsFor(accountValue(values.toAccountId));
+
+    const accounts = lists.accounts
+      .filter((account) => account.isActive && !HIDDEN_TYPES.includes(account.type))
+      .map((account) => ({
+        value: accountValue(account.id),
+        name: account.name,
+        isCreditCard: false,
+      }));
+
+    /*
+     * 지출과 수입 모두 카드를 고를 수 있다.
+     *
+     * 수입에도 여는 것은 카드사가 되돌려 주는 돈이 통장을 거치지 않고 다음 청구에서
+     * 빠지는 일이 있어서다. 그때 돈이 들어오는 자리는 통장이 아니라 그 카드의 빚이다.
+     */
     const cards = lists.cards
       .filter((card) => card.isActive)
       .map((card) => ({
@@ -324,25 +394,21 @@ export function useEntryForm({
       }));
 
     return [...accounts, ...cards];
-  }, [lists.accounts, lists.cards, values.kind]);
+  }, [lists.accounts, lists.cards, transferOptionsFor, values.kind, values.toAccountId]);
 
   /**
-   * 카드사 대금 이동에서 고를 카드. 신용카드만이다.
+   * 이체에서 받는 쪽. 보내는 쪽으로 고른 것만 뺀다.
    *
-   * 체크카드는 결제하는 자리에서 통장에서 빠지므로 나중에 갚을 대금이 없다.
+   * 받는 쪽은 계좌 id 를 그대로 든다(`toAccountId`). 보내는 쪽만 접두사가 붙는데,
+   * 그 칸은 지출에서 카드와 통장을 한 목록에서 고르는 자리를 함께 쓰기 때문이다.
    */
-  const cardChoices = useMemo(
-    () => lists.cards.filter((card) => card.isActive && card.cardType === 'credit'),
-    [lists.cards],
-  );
-
-  /** 이체에서 받는 계좌. 보내는 계좌는 뺀다. */
   const toAccountChoices = useMemo(
     () =>
-      lists.accounts
-        .filter((account) => account.isActive && !HIDDEN_TYPES.includes(account.type))
-        .filter((account) => account.id !== parseMethod(values.method).accountId),
-    [lists.accounts, values.method],
+      transferOptionsFor(values.method).map((choice) => ({
+        id: parseMethod(choice.value).accountId ?? '',
+        name: choice.name,
+      })),
+    [transferOptionsFor, values.method],
   );
 
   /** 그 갈래의 분류. 이체는 수수료 자리에만 쓰므로 지출 분류를 준다. */
@@ -351,14 +417,62 @@ export function useEntryForm({
     return lists.categories.filter((category) => category.isActive && category.type === type);
   }, [lists.categories, values.kind]);
 
+  /**
+   * 이체 양쪽 가운데 카드 부채 계정인 쪽. 카드가 끼지 않았으면 null.
+   *
+   *   payment 통장 -> 카드   대금 결제 (빚이 준다)
+   *   refund  카드 -> 통장   환불 입금 (카드사가 돌려준다)
+   *
+   * 화면이 "이 이체는 카드대금으로 기록됩니다"를 미리 알려 주는 데 쓴다. 저장되는
+   * 전표에는 방향이 부호로만 남아, 적고 나서야 알게 하면 늦다.
+   */
+  const transferCardSide = useMemo((): 'payment' | 'refund' | null => {
+    if (values.kind !== 'transfer') return null;
+
+    const liabilities = new Set(
+      lists.cards
+        .filter((card) => card.liabilityAccountId)
+        .map((card) => card.liabilityAccountId!),
+    );
+    const from = parseMethod(values.method).accountId;
+    const fromIsCard = Boolean(from && liabilities.has(from));
+    const toIsCard = Boolean(values.toAccountId && liabilities.has(values.toAccountId));
+
+    if (fromIsCard && !toIsCard) return 'refund';
+    if (toIsCard && !fromIsCard) return 'payment';
+    return null;
+  }, [lists.cards, values.kind, values.method, values.toAccountId]);
+
   /** 지금 고른 수단이 신용카드인가. 할부 칸을 열지 정한다. */
   const isCreditCard = useMemo(
     () => methodChoices.find((choice) => choice.value === values.method)?.isCreditCard ?? false,
     [methodChoices, values.method],
   );
 
+  /**
+   * 결제수단으로 고른 카드. 통장을 골랐거나 이체면 null 이다.
+   *
+   * 화면이 카드 종류에 따라 다른 안내를 띄우는 데 쓴다 -- 신용카드로 받은 수입은
+   * 갚을 대금에서 빠지고, 체크카드로 받은 수입은 연결 통장으로 들어온다.
+   */
+  const selectedCard = useMemo(() => {
+    const cardId = parseMethod(values.method).cardId;
+    return cardId ? lists.cards.find((card) => card.id === cardId) ?? null : null;
+  }, [lists.cards, values.method]);
+
+  /** 신용카드 부채 계정의 id 들. 검증이 "양쪽 다 카드인 이체"를 가리는 데 쓴다. */
+  const cardLiabilityIds = useMemo(
+    () =>
+      new Set(
+        lists.cards
+          .filter((card) => card.liabilityAccountId)
+          .map((card) => card.liabilityAccountId!),
+      ),
+    [lists.cards],
+  );
+
   const save = useCallback(async (): Promise<boolean> => {
-    const found = checkEntryForm(values);
+    const found = checkEntryForm(values, cardLiabilityIds);
     if (found) {
       setViolation(found);
       return false;
@@ -367,9 +481,10 @@ export function useEntryForm({
     setIsSubmitting(true);
     setError('');
     try {
-      const request = entryFormToRequest(values, timeZone);
       const port = entryWritePort();
       let savedId: string | null = editingId;
+
+      const request = entryFormToRequest(values, timeZone);
       if (editingId) {
         /*
          * 폼을 열 때 본 판을 함께 보낸다. 서버가 그 사이의 편집을 알아채는 근거다.
@@ -411,7 +526,7 @@ export function useEntryForm({
     } finally {
       setIsSubmitting(false);
     }
-  }, [editingId, messageOf, onSaved, projectId, timeZone, values]);
+  }, [cardLiabilityIds, editingId, messageOf, onSaved, projectId, timeZone, values]);
 
   const remove = useCallback(async (): Promise<boolean> => {
     if (!editingId) return false;
@@ -496,8 +611,9 @@ export function useEntryForm({
     methodChoices,
     toAccountChoices,
     categoryChoices,
-    cardChoices,
     isCreditCard,
+    selectedCard,
+    transferCardSide,
     ledgerCurrency,
     /** 분할 줄의 합. 화면이 "얼마 남았다"를 보여 줄 때 쓴다. */
     splitTotal: useMemo(

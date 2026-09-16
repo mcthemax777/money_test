@@ -31,6 +31,7 @@ import {
   type EntryFormKind,
   type EntryFormValues,
 } from '@money/core/data/entry-form';
+import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { useMyPersonId, useProject, useProjectTimeZone } from '@money/core/store/project';
 
 import { AddAccountModal, AddCardModal, AddPersonModal } from './AssetAddModals';
@@ -44,7 +45,6 @@ const KINDS: Array<{ id: EntryFormKind; labelKey: MessageKey }> = [
   { id: 'expense', labelKey: 'editor.kind.expense' },
   { id: 'income', labelKey: 'editor.kind.income' },
   { id: 'transfer', labelKey: 'editor.kind.transfer' },
-  { id: 'card_payment', labelKey: 'editor.kind.card_payment' },
 ];
 
 /**
@@ -77,6 +77,10 @@ const VIOLATION_KEY: Record<string, MessageKey> = {
   SPLIT_AMOUNT_INVALID: 'editor.splitAmountInvalid',
   RATE_INVALID: 'editor.rateInvalid',
   CARD_REQUIRED: 'editor.cardRequired',
+  DISCOUNT_INVALID: 'entryForm.discountInvalid',
+  DISCOUNT_TOO_LARGE: 'entryForm.discountTooLarge',
+  DISCOUNT_AMOUNT_REQUIRED: 'entryForm.discountAmountRequired',
+  TRANSFER_BOTH_CARDS: 'entryForm.bothCards',
 };
 
 export interface EntryEditorProps {
@@ -527,11 +531,7 @@ export default function EntryEditor({
           </Field>
 
           <Field
-            label={
-              values.kind === 'transfer' || values.kind === 'card_payment'
-                ? t('editor.fromAccount')
-                : t('editor.method')
-            }
+            label={values.kind === 'transfer' ? t('editor.fromAccount') : t('editor.method')}
             invalid={violation?.field === 'method'}
             onAdd={() => setAdding('method')}
             addLabel={t('editor.addMethod')}
@@ -551,41 +551,28 @@ export default function EntryEditor({
             )}
           </Field>
 
-          {values.kind === 'card_payment' ? (
-            <>
-              {/*
-              갚을 카드. 신용카드만 고를 수 있다 -- 체크카드는 결제하는 자리에서 통장에서
-              빠지므로 나중에 갚을 대금이 없다.
-            */}
-              <Field label={t('editor.card')} invalid={violation?.field === 'cardId'}>
-                {form.cardChoices.length === 0 ? (
-                  <Text className="text-sm text-gray-500">{t('editor.noCreditCards')}</Text>
-                ) : (
-                  <Chips
-                    options={form.cardChoices.map((card) => ({
-                      value: card.id,
-                      label: card.name,
-                    }))}
-                    selected={values.cardId}
-                    onSelect={(value) => setField('cardId', value)}
-                    collapse
-                  />
-                )}
-              </Field>
+          {/*
+            수입을 카드로 받는 자리.
 
-              {/* 부채가 줄면 대금 결제, 늘면 환불 입금이다. */}
-              <Field label={t('editor.cardDirection')}>
-                <Chips
-                  options={[
-                    { value: 'payment', label: t('editor.directionPayment') },
-                    { value: 'refund', label: t('editor.directionRefund') },
-                  ]}
-                  selected={values.cardDirection}
-                  onSelect={(value) => setField('cardDirection', value as 'payment' | 'refund')}
-                />
-              </Field>
-            </>
-          ) : values.kind === 'transfer' ? (
+            신용카드면 통장으로 들어오는 돈이 아니라 그 카드의 빚이 줄고, 체크카드면
+            연결 통장으로 들어온다. 둘이 전혀 다른 일이라 고른 뒤에야 알게 하지 않는다.
+          */}
+          {values.kind === 'income' && form.selectedCard ? (
+            <View className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+              <Text className="text-sm text-blue-800">
+                {form.selectedCard.cardType === 'credit'
+                  ? t('editor.cardIncomeNote')
+                  : t('editor.cardIncomeDebitNote', {
+                      account:
+                        form.lists.accounts.find(
+                          (account) => account.id === form.selectedCard!.paymentAccountId,
+                        )?.name ?? t('editor.methodAccount'),
+                    })}
+              </Text>
+            </View>
+          ) : null}
+
+          {values.kind === 'transfer' ? (
             <>
               <Field label={t('editor.toAccount')} invalid={violation?.field === 'toAccountId'}>
                 <Chips
@@ -599,18 +586,36 @@ export default function EntryEditor({
                 />
               </Field>
 
-              <Field label={t('editor.transferFee')} invalid={violation?.field === 'transferFee'}>
-                <TextInput
-                  value={values.transferFee}
-                  onChangeText={(text) => setField('transferFee', text)}
-                  keyboardType="numeric"
-                  placeholder="0"
-                  className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
-                />
-              </Field>
+              {/*
+                한쪽이 신용카드면 카드사와의 자금 이동이다. 방향이 뜻을 바꾸므로
+                저장하기 전에 무엇으로 기록되는지 알려 준다 (웹의 이체 화면과 같다).
+              */}
+              {form.transferCardSide ? (
+                <View className="rounded-lg border border-blue-200 bg-blue-50 p-3">
+                  <Text className="text-sm text-blue-800">
+                    {form.transferCardSide === 'payment'
+                      ? t('editor.toCardPayment')
+                      : t('editor.toCardRefund')}{' '}
+                    {t('editor.cardTransferNote')}
+                  </Text>
+                </View>
+              ) : null}
+
+              {/* 카드사와의 이체에는 수수료를 붙일 수 없다 (조립도 거부한다). */}
+              {form.transferCardSide ? null : (
+                <Field label={t('editor.transferFee')} invalid={violation?.field === 'transferFee'}>
+                  <TextInput
+                    value={values.transferFee}
+                    onChangeText={(text) => setField('transferFee', text)}
+                    keyboardType="numeric"
+                    placeholder="0"
+                    className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
+                  />
+                </Field>
+              )}
 
               {/* 수수료를 적었을 때만 분류를 묻는다. 0원 이체에 분류를 강요하지 않는다. */}
-              {values.transferFee ? (
+              {values.transferFee && !form.transferCardSide ? (
                 <Field
                   label={t('editor.feeCategory')}
                   invalid={violation?.field === 'transferFeeCategoryId'}
@@ -731,6 +736,40 @@ export default function EntryEditor({
                 onSelect={(value) => setField('installmentMonths', value)}
               />
               <Text className="mt-1 text-xs text-gray-500">{t('editor.installmentHint')}</Text>
+            </Field>
+          ) : null}
+
+          {/*
+            차감·취소. 포인트 사용, 자동할인, 그리고 취소가 이 칸 하나로 들어간다.
+
+            셋은 전표에서 같은 모양이다 -- 정가는 그대로인데 계좌에서 빠지는 돈만 적다.
+            전액을 적으면 0원 거래로 남는다. 지우지 않는 것은 있었던 일이기 때문이다.
+          */}
+          {values.kind === 'expense' ? (
+            <Field label={t('editor.discount')} invalid={violation?.field === 'discountAmount'}>
+              <TextInput
+                value={values.discountAmount}
+                onChangeText={(text) => setField('discountAmount', text)}
+                keyboardType="numeric"
+                placeholder="0"
+                className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
+              />
+              <Text className="mt-1 text-xs text-gray-500">{t('editor.discountHint')}</Text>
+
+              {values.discountAmount ? (
+                <View className="mt-3 gap-2">
+                  {/* 실제로 빠지는 금액. 저장하고 목록에서 보고서야 알게 하지 않는다. */}
+                  <Text className="text-xs text-gray-500">
+                    {t('editor.netAmount', {
+                      amount: formatCurrency(
+                        toNumber(values.amount) - toNumber(values.discountAmount),
+                        values.currency || form.ledgerCurrency,
+                      ),
+                    })}
+                  </Text>
+
+                </View>
+              ) : null}
             </Field>
           ) : null}
 

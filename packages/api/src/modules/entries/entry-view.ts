@@ -50,6 +50,8 @@ export type EntryWithPostings = {
   originalCurrency: string | null;
   originalAmount: Prisma.Decimal | null;
   rateProvisional: boolean;
+  /** 결제 자리에서 깎인 금액. 다리에는 들어가지 않는 표시값이다. */
+  discountAmount?: Prisma.Decimal | null;
   /**
    * 이 전표를 마지막으로 고친 편집의 시계.
    *

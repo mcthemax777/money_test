@@ -108,6 +108,7 @@ export function paymentMethods(
     card: PaymentMethodCard,
     amount: string,
     count: number,
+    income = '0',
   ): ReportDto.PaymentMethodItem => ({
     kind: card.cardType === 'credit' ? 'credit_card' : 'debit_card',
     id: card.id,
@@ -116,7 +117,7 @@ export function paymentMethods(
     ownerName: card.ownerName,
     amount,
     count,
-    income: '0',
+    income,
     // 없는 값은 키 자체를 두지 않는다. 화면이 "설정하지 않았다"와 0을 가른다.
     ...(card.performanceTarget !== null ? { performanceTarget: card.performanceTarget } : {}),
     ...(card.color !== null ? { color: card.color } : {}),
@@ -155,7 +156,12 @@ export function paymentMethods(
   for (const item of matchNothing ? [] : items) {
     const amount = Dec.of(item.amount || 0);
 
-    // 셀 몫이 없으면 건수도 세지 않는다. "0원인데 3건"이 되지 않게 한다.
+    /*
+     * 셀 몫이 없으면 건수도 세지 않는다. "0원인데 3건"이 되지 않게 한다.
+     *
+     * 전액을 취소한 거래가 0원으로 남으므로 여기서 빠진다. 쓴 돈도 건수도 없는 것이
+     * 맞다 -- 승인이 있었다가 그대로 되돌아갔다.
+     */
     if (amount.lte(ZERO) && item.kind !== 'transfer') continue;
 
     if (item.kind === 'transfer') {
@@ -173,13 +179,21 @@ export function paymentMethods(
     }
 
     /*
-     * 통장으로 들어온 수입.
+     * 들어온 수입.
      *
-     * 수입은 받는 계좌 다리에 붙는다(entry-view 가 accountId 를 그 계좌로 준다).
-     * 카드는 여기에 걸리지 않는다. 카드로는 수입이 들어오지 않고, 환불 입금은
-     * card_payment 로 기록된다.
+     * 수입은 받는 쪽 다리에 붙는다(entry-view 가 accountId 를 그 계좌로 준다).
+     *
+     * **카드로도 들어온다.** 카드사가 되돌려 주는 돈이 통장을 거치지 않고 다음 청구에서
+     * 빠지면, 그 돈이 들어온 자리는 그 카드의 빚이다. 그때는 카드 칸에 붙인다 --
+     * 계좌로 붙이면 목록에서 감춰 둔 카드 부채 계정이 결제수단으로 튀어나온다.
      */
     if (item.kind === 'income') {
+      if (item.cardId) {
+        const card = cardById.get(item.cardId);
+        if (!card || !isVisibleOwner(card.ownerId)) continue;
+        addTo(cardBucket(card, '0', 0, amount.toString()));
+        continue;
+      }
       if (!item.accountId) continue;
       const account = accountById.get(item.accountId);
       if (!account || !isVisibleOwner(account.ownerId)) continue;

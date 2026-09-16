@@ -71,6 +71,8 @@ export function createLocalEntryWriter({
     transferFee: text(data.transferFee),
     transferFeeCategoryId: data.transferFeeCategoryId,
     cardTransferDirection: data.cardTransferDirection,
+    // 결제 자리에서 깎인 금액. 서버가 재생할 때 같은 전표가 나와야 한다.
+    discountAmount: text(data.discountAmount),
     tagIds: data.tagIds,
     currency: data.currency,
     exchangeRate: text(data.exchangeRate),

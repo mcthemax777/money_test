@@ -94,6 +94,42 @@ export function entryAssetName(entry: EntryListItem, flow: string): string {
   return entry.cardName ?? entry.accountName ?? '';
 }
 
+/**
+ * 목록 한 줄의 금액을 어떤 부호와 색으로 적을지.
+ *
+ * 부호를 `kind` 만으로 정할 수 없어서 생겼다. 전액을 깎아 0원으로 남은 거래는 갈래가
+ * 지출이어도 나간 돈이 없어서, 같은 규칙을 쓰면 "-0" 이 찍힌다. 웹과 앱의 거래 한 줄이
+ * 각자 판별하면 한쪽만 고쳐질 자리라 여기 둔다.
+ *
+ * 색 이름은 화면이 옮긴다. 이 파일은 방향만 말한다.
+ */
+export interface EntryAmountLook {
+  /** 금액 앞에 붙일 부호. 합계를 움직이지 않는 거래(이체·카드대금)는 빈 글자다. */
+  sign: string;
+  /** 부호를 뗀 금액. 되돌린 결제도 여기서는 양수다. */
+  amount: number;
+  tone: EntryAmountTone;
+}
+
+export type EntryAmountTone = 'income' | 'expense' | 'neutral' | 'adjustment';
+
+export function entryAmountLook(entry: EntryListItem): EntryAmountLook {
+  const amount = toNumber(entry.amount);
+
+  /*
+   * 전액이 깎여 0원으로 남은 거래. 부호를 붙이지 않는다.
+   *
+   * 전액 취소와 전액 포인트 결제가 이 모양이다. 지출이라고 "-0" 을 적으면 돈이 나간
+   * 것처럼 읽히고, 실제로는 한 푼도 움직이지 않았다.
+   */
+  if (amount === 0) return { sign: '', amount: 0, tone: 'neutral' };
+
+  if (entry.kind === 'income') return { sign: '+', amount, tone: 'income' };
+  if (entry.kind === 'expense') return { sign: '-', amount, tone: 'expense' };
+  if (entry.kind === 'adjustment') return { sign: '', amount, tone: 'adjustment' };
+  return { sign: '', amount, tone: 'neutral' };
+}
+
 /** 전표 하나가 "수입"에 보태는 금액 */
 export function incomeAmountOf(entry: EntryListItem): number {
   return entry.kind === 'income' ? toNumber(entry.amount) : 0;

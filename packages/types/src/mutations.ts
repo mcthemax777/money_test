@@ -98,6 +98,8 @@ export interface EntryMutationPayload {
   transferFee?: string;
   transferFeeCategoryId?: string;
   cardTransferDirection?: CardTransferDirection;
+  /** 결제 자리에서 깎인 금액. 분류는 없다 (전표에 표시값으로 적힌다). */
+  discountAmount?: string;
   /**
    * 이 거래에 붙일 태그. 서버의 `EntryDto.CreateRequest.tagIds` 와 같은 규칙이다.
    *

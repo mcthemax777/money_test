@@ -126,6 +126,14 @@ export interface BuiltEntry {
   rateProvisional?: boolean;
   /** 할부 개월수. 신용카드 지출에만 붙는다. */
   installmentMonths?: number;
+  /**
+   * 결제 자리에서 깎인 금액. 표시 전용이라 다리에는 들어가지 않는다.
+   *
+   * 다리는 이미 깎인 뒤의 금액이라, 이 값이 없으면 "13,000짜리를 3,000 깎아 샀다"가
+   * 사라지고 "10,000을 썼다"만 남는다. `originalAmount` 를 함께 적어 두는 것과 같은
+   * 까닭이다.
+   */
+  discountAmount?: Dec | null;
 }
 
 /** 카테고리 한 줄. 분할이면 여럿이다. */
@@ -155,11 +163,36 @@ export interface ExpenseBuildInput extends CommonBuildInput {
   accountId?: string;
   cardId?: string;
   installmentMonths?: number;
+  /**
+   * 결제 그 자리에서 깎인 금액. 카드 포인트 사용, 자동할인, 그리고 **취소**가 든다.
+   *
+   * **분류를 묻지 않는다.** 정가에서 이 금액을 뺀 값이 분류 줄에 그대로 적히고, 깎인
+   * 금액 자체는 전표에 표시용으로 남는다 (`originalAmount` 와 같은 자리다). 다리를
+   * 따로 만들면 그 다리가 가리킬 분류를 사용자가 골라야 하는데, 차감은 "어디에 썼나"가
+   * 아니라 "얼마가 덜 나갔나"라 고를 것이 없다.
+   *
+   * 정가와 같아도 된다. 그때는 모든 다리가 0이 되어 0원 거래로 남는다 -- 전액 취소와
+   * 전액 포인트 결제가 그 모양이고, 있었던 일이므로 지우지 않는다.
+   *
+   * 통화는 정가와 같다(입력 통화). 전표에 그대로 적히므로 외화 결제에도 붙는다.
+   *
+   * 청구서에서 나중에 빠지는 신용카드 청구할인은 여기 들지 않는다. 그쪽은 결제
+   * 시점에 전액이 승인되어 부채가 그대로 잡히므로, 이 자리에서 깎으면 명세서와 어긋난다.
+   */
+  discount?: DecInput;
 }
 
 export interface IncomeBuildInput extends CommonBuildInput {
   lines: CategoryLine[];
-  accountId: string;
+  /**
+   * accountId 와 cardId 중 정확히 하나. 지출과 같은 규칙이다.
+   *
+   * **카드로도 돈이 들어온다.** 카드사가 되돌려 주는 돈이 통장을 거치지 않고 다음
+   * 청구에서 빠지는 일이 있어, 그때 돈이 들어오는 자리는 통장이 아니라 그 카드의
+   * 빚이다. 신용카드면 부채 계정이 줄고, 체크카드면 연결 통장으로 들어온다.
+   */
+  accountId?: string;
+  cardId?: string;
 }
 
 export interface TransferBuildInput extends CommonBuildInput {
@@ -209,9 +242,23 @@ export async function buildExpense(
     lookup,
   );
 
-  const enteredTotal = sum(lines.map((line) => line.amount));
+  const gross = sum(lines.map((line) => line.amount));
+  // 빈 값은 "차감 없음"이다. 화면이 비운 칸을 그대로 실어 보내는 일이 있다.
+  const raw = input.discount;
+  const discount = raw === undefined || raw === null || raw === '' ? ZERO : Dec.of(raw);
+  assertDiscountValid(discount, gross);
+
+  /*
+   * 차감은 줄마다 비율대로 빼서 **순액**을 만든다. 다리를 따로 만들지 않는다.
+   *
+   * `allocate` 가 끝수를 첫 줄에 몰아 주므로 줄 합계가 순액과 정확히 같다. 나누어
+   * 빼지 않고 한 줄에서만 빼면 분할 거래의 분류별 합계가 한쪽으로 쏠린다.
+   */
+  const netLines = withDiscount(lines, gross, discount, entered);
+
+  const enteredTotal = sum(netLines.map((line) => line.amount));
   const billed = resolveBilled(input.billedAmount, entered, account.currency, base);
-  const baseLines = toBaseLines(lines, rate, base, billed);
+  const baseLines = toBaseLines(netLines, rate, base, billed);
   const baseTotal = sum(baseLines.map((line) => line.baseAmount));
   const foreign = foreignNote(entered, account.currency, base, enteredTotal);
   // 청구액을 받았으면 추정이 아니다. 확정된 금액 그대로 들어간다.
@@ -219,18 +266,87 @@ export async function buildExpense(
   assertCanEstimate(provisional, source.isCreditCard, base);
   assertCanInstall(input.installmentMonths, source.isCreditCard);
 
+  /*
+   * 전액이 빠져 0원이 된 거래에는 할부가 없다.
+   *
+   * 나눌 청구가 남아 있지 않다. 그대로 두면 회차가 전부 0원인 일정이 붙고, 서버의
+   * `saveInstallmentPlan` 은 음수인 카드 다리를 찾지 못해 엉뚱한 오류를 던진다.
+   */
+  const months = baseTotal.isZero() ? undefined : input.installmentMonths;
+
+  const postings = [
+    // 지출 발생 = + (언제나 기준통화)
+    ...baseLines.map((line) => baseLeg({ categoryId: line.categoryId }, line.baseAmount, base)),
+    // 자산 감소 또는 부채 증가 = -
+    paymentLeg(source, account.currency, entered, rate, base, enteredTotal, baseTotal),
+  ];
+
   return {
     ...common(input),
     ...foreign,
     rateProvisional: provisional,
-    installmentMonths: input.installmentMonths,
-    postings: [
-      // 지출 발생 = + (언제나 기준통화)
-      ...baseLines.map((line) => baseLeg({ categoryId: line.categoryId }, line.baseAmount, base)),
-      // 자산 감소 또는 부채 증가 = -
-      paymentLeg(source, account.currency, entered, rate, base, enteredTotal, baseTotal),
-    ],
+    installmentMonths: months,
+    // 깎인 금액은 원장에 들어가지 않는다. 정가를 되살리는 데만 쓰는 표시값이다.
+    discountAmount: discount.isZero() ? null : discount,
+    postings,
   };
+}
+
+/**
+ * 줄마다 비율대로 차감해 순액 줄을 만든다.
+ *
+ * 차감이 없으면 그대로 돌려준다. 정가와 같으면 모든 줄이 0이 되는데, 그 전표는
+ * 통째로 0이라 원장 규칙이 받아들인다 (`checkPostings` 의 allZero).
+ */
+function withDiscount(
+  lines: Array<{ categoryId: string; amount: Dec }>,
+  gross: Dec,
+  discount: Dec,
+  entered: string,
+): Array<{ categoryId: string; amount: Dec }> {
+  if (discount.isZero()) return lines;
+
+  const shares = allocate(
+    gross.minus(discount),
+    lines.map((line) => line.amount),
+    currencyDecimals(entered),
+  );
+
+  /*
+   * 일부 줄만 0으로 내려앉았는가.
+   *
+   * 분할의 한 줄이 아주 작고 차감이 크면 그 줄만 0이 된다. 전표가 통째로 0인 것과
+   * 달리 이것은 원장이 받지 않으므로(POSTING_ZERO_AMOUNT), 저장을 눌러 보고 알게
+   * 하지 않고 여기서 이유를 말해 준다.
+   */
+  const zeros = shares.filter((share) => share.isZero()).length;
+  if (zeros > 0 && zeros < shares.length) {
+    fail(
+      'DISCOUNT_SPLIT_ZERO',
+      '차감이 커서 일부 분류 줄이 0원이 됩니다. 차감액을 줄이거나 분류를 합쳐 주세요.',
+    );
+  }
+
+  return lines.map((line, index) => ({ ...line, amount: shares[index] }));
+}
+
+/**
+ * 차감액이 쓸 수 있는 값인지 본다.
+ *
+ * 정가와 **같아도 된다**. 그때는 전표가 통째로 0이 되고, 그 모양은 원장 규칙이
+ * 받아들인다 -- 전액 취소와 전액 포인트 결제가 실제로 그 모양이다. 넘으면 지출이
+ * 아니라 입금이 되므로 막는다.
+ *
+ * **차감액의 통화는 입력 통화다.** 정가와 같은 칸에 적힌 값이라 그래야 뺄 수 있고,
+ * 다시 열 때 정가를 되살리는 덧셈도 같은 통화 안에서 끝난다. 그래서 외화 결제에도
+ * 그대로 붙는다 -- 전표의 표시값이라 기준통화로 옮길 이유가 없다.
+ */
+function assertDiscountValid(discount: Dec, gross: Dec) {
+  if (discount.isZero()) return;
+  if (discount.isNegative()) fail('DISCOUNT_INVALID', '차감액은 0보다 커야 합니다.');
+  if (discount.gt(gross)) {
+    fail('DISCOUNT_TOO_LARGE', '차감액은 결제 금액보다 클 수 없습니다.');
+  }
 }
 
 /** 수입. 수입 카테고리는 -, 입금 계좌는 +. */
@@ -239,7 +355,9 @@ export async function buildIncome(
   lookup: LedgerLookup,
 ): Promise<BuiltEntry> {
   const lines = await resolveLines(input.projectId, input.lines, 'income', lookup);
-  const account = await requireAccount(input.projectId, input.accountId, lookup);
+  // 결제수단을 자금 계좌로 옮기는 규칙은 지출과 한 벌이다 (체크카드는 통장, 신용카드는 부채).
+  const source = await resolvePaymentSource(input.projectId, input, lookup);
+  const account = await requireAccount(input.projectId, source.accountId, lookup);
   const { base, entered, rate, estimatedRate } = await resolveConversion(
     input.projectId,
     input.currency,
@@ -258,7 +376,7 @@ export async function buildIncome(
    * 마지막에 뒤집는다. 계좌가 외화인 경우의 환산 규칙이 한 곳에만 있어야 한다.
    */
   const outgoing = paymentLeg(
-    { accountId: account.id },
+    { accountId: account.id, ...(source.cardId ? { cardId: source.cardId } : {}) },
     account.currency,
     entered,
     rate,
@@ -270,22 +388,19 @@ export async function buildIncome(
   const foreign = foreignNote(entered, account.currency, base, enteredTotal);
 
   /*
-   * 수입은 통장으로 바로 들어온다. 신용카드가 없으므로 추정으로 남길 수 없다.
+   * 통장으로 들어온 수입은 추정으로 남길 수 없다.
    *
    * 확정할 자리가 없기 때문이다. 카드 대조 화면은 신용카드 전용이라 통장 거래는 거기
-   * 올라오지 않고, 그러면 틀린 환산액이 고칠 길 없이 남는다.
+   * 올라오지 않고, 그러면 틀린 환산액이 고칠 길 없이 남는다. 신용카드로 되돌려받은
+   * 돈은 그 화면에 오르므로 지출과 같은 규칙으로 둔다.
    */
-  assertCanEstimate(
-    foreign.originalCurrency !== undefined && estimatedRate && !billed,
-    false,
-    base,
-  );
+  const provisional = foreign.originalCurrency !== undefined && estimatedRate && !billed;
+  assertCanEstimate(provisional, source.isCreditCard, base);
 
   return {
     ...common(input),
     ...foreign,
-    // 수입에는 확정을 기다리는 값이 없다. 위에서 추정을 이미 막았다.
-    rateProvisional: false,
+    rateProvisional: provisional,
     postings: [
       ...baseLines.map((line) =>
         baseLeg({ categoryId: line.categoryId }, line.baseAmount.negated(), base),
@@ -324,6 +439,18 @@ export async function buildTransfer(
   // 카드가 끼면 그 다리에 cardId 를 채운다. 비워 두면 카드별 거래 조회에서 빠진다.
   const fromCardId = await cardIdForLiability(input.projectId, from, lookup);
   const toCardId = await cardIdForLiability(input.projectId, to, lookup);
+
+  /*
+   * 양쪽이 다 카드인 이동은 받지 않는다.
+   *
+   * 카드 빚을 다른 카드로 옮기는 일은 원장에 담을 수 있지만, 목록은 이 전표를
+   * `card_payment` 로 읽고 "어느 카드의 대금인가"를 하나로 정해야 해서 어느 쪽을
+   * 골라도 반쪽만 보인다. 실제로 그런 거래가 있다면 통장을 거쳐 두 번 적는 편이
+   * 카드 명세서와도 맞는다.
+   */
+  if (fromCardId && toCardId) {
+    fail('TRANSFER_BOTH_CARDS', '카드에서 카드로 바로 옮기는 거래는 적을 수 없습니다.');
+  }
 
   if (fee.gt(ZERO) && (fromCardId || toCardId)) {
     /*
@@ -482,6 +609,8 @@ export interface EntryBuildRequest extends CommonBuildInput {
   transferFee?: DecInput;
   transferFeeCategoryId?: string;
   cardTransferDirection?: CardTransferDirection;
+  /** 결제 자리에서 깎인 금액. 분류는 묻지 않는다. */
+  discountAmount?: DecInput;
 }
 
 export async function buildEntry(
@@ -497,14 +626,19 @@ export async function buildEntry(
           accountId: request.accountId,
           cardId: request.cardId,
           installmentMonths: request.installmentMonths,
+          discount: request.discountAmount,
         },
         lookup,
       );
 
     case 'income':
-      if (!request.accountId) fail('INCOME_ACCOUNT_REQUIRED', '수입은 입금 계좌가 필요합니다.');
       return buildIncome(
-        { ...request, lines: resolveRequestLines(request), accountId: request.accountId! },
+        {
+          ...request,
+          lines: resolveRequestLines(request),
+          accountId: request.accountId,
+          cardId: request.cardId,
+        },
         lookup,
       );
 
@@ -525,6 +659,14 @@ export async function buildEntry(
         lookup,
       );
 
+    /*
+     * 카드사 대금 이동. **화면은 더 이상 이 갈래로 보내지 않는다.**
+     *
+     * 이체에서 카드 부채 계정을 고르면 같은 전표가 나오고, 목록이 그것을 다시
+     * `card_payment` 로 읽는다. 이 자리를 남겨 두는 것은 둘 때문이다 -- 기기의
+     * 아웃박스에 쌓여 있던 옛 명령을 재생해야 하고, 자산 화면의 "결제하기"가
+     * 서버에서 이 입구를 그대로 쓴다.
+     */
     case 'card_payment':
       if (!request.accountId || !request.cardId) {
         fail('CARD_PAYMENT_REQUIRED', '카드사 이체는 통장과 카드가 필요합니다.');

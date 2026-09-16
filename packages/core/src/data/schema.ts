@@ -18,7 +18,7 @@
  */
 
 /** 스키마가 바뀌면 올린다. 다르면 사본을 버리고 처음부터 다시 받는다. */
-export const SCHEMA_VERSION = 14;
+export const SCHEMA_VERSION = 16;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -191,6 +191,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      originalCurrency TEXT,
      originalAmount  TEXT,
      rateProvisional INTEGER NOT NULL DEFAULT 0,
+     /* 결제 자리에서 깎인 금액. 다리에는 이미 깎인 뒤의 값이 들어가 있다. */
+     discountAmount  TEXT,
      createdByUserId TEXT,
      /*
       * 이 전표를 마지막으로 고친 편집의 시계.

@@ -8,21 +8,23 @@ import { Pressable, Text, View } from 'react-native';
 import type { EntryListItem } from '@money/types';
 
 import { formatDate, formatTime } from '@money/core/lib/datetime';
-import { categoryTitleOf, entryAssetName } from '@money/core/lib/entries';
+import {
+  categoryTitleOf,
+  entryAmountLook,
+  entryAssetName,
+  type EntryAmountTone,
+} from '@money/core/lib/entries';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 
 /** 금액 색이 곧 "합계에 들어가는가"다. 이체와 카드사 이체는 회색이다. */
-const AMOUNT_COLOR: Record<EntryListItem['kind'], string> = {
+const AMOUNT_COLOR: Record<EntryAmountTone, string> = {
   income: 'text-green-600',
   expense: 'text-red-600',
-  transfer: 'text-gray-500',
-  card_payment: 'text-gray-500',
+  neutral: 'text-gray-500',
   adjustment: 'text-amber-600',
 };
-
-const SIGN: Partial<Record<EntryListItem['kind'], string>> = { income: '+', expense: '-' };
 
 /** 계좌 사이를 오가는 거래. 이것들만 "A → B" 로 적는다. */
 const TWO_SIDED: Array<EntryListItem['kind']> = ['transfer', 'card_payment', 'adjustment'];
@@ -74,6 +76,10 @@ function TransactionItemView({
   })();
 
   const time = formatTime(entry.date, timeZone);
+  // 부호와 색. 규칙은 core 에 있다 (웹의 한 줄과 같아야 한다).
+  const look = entryAmountLook(entry);
+  // 결제 자리에서 곧바로 빠진 금액 (포인트 사용·자동할인). 없으면 0 이다.
+  const discount = toNumber(entry.discountAmount);
 
   /*
    * 2줄에 들어가는 부속 정보. 있는 것만 " · "로 잇는다.
@@ -129,16 +135,27 @@ function TransactionItemView({
             </View>
           ))}
         </View>
-        <Text className={`text-[15px] font-semibold ${AMOUNT_COLOR[entry.kind]}`}>
-          {SIGN[entry.kind]}
-          {formatCurrency(entry.amount, displayCurrency)}
+        <Text className={`text-[15px] font-semibold ${AMOUNT_COLOR[look.tone]}`}>
+          {look.sign}
+          {formatCurrency(look.amount, displayCurrency)}
         </Text>
       </View>
 
-      {meta ? (
-        <Text numberOfLines={1} className="mt-0.5 text-xs text-gray-500">
-          {meta}
-        </Text>
+      {meta || discount > 0 ? (
+        <View className="mt-0.5 flex-row items-center gap-1.5">
+          <Text numberOfLines={1} className="shrink text-xs text-gray-500">
+            {meta}
+          </Text>
+          {/*
+            결제 자리에서 깎인 금액. 위 금액은 이미 깎인 뒤라 이것이 없으면 정가를
+            알 수 없다. 나간 돈이 아니므로 초록으로 적는다.
+          */}
+          {discount > 0 ? (
+            <Text className="ml-auto text-xs font-medium text-green-600">
+              {t('entry.discount', { amount: formatCurrency(discount, displayCurrency) })}
+            </Text>
+          ) : null}
+        </View>
       ) : null}
     </Pressable>
   );

@@ -14,6 +14,7 @@ import { Copy, Pencil, Trash2 } from 'lucide-react-native';
 import type { EntryListItem } from '@money/types';
 
 import { formatDateTime } from '@money/core/lib/datetime';
+import { entryAmountLook } from '@money/core/lib/entries';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
@@ -170,9 +171,15 @@ export default function EntryDetailModal({
     >
       {entry ? (
         <View>
-          {/* 금액을 맨 위에 크게 둔다. 상세를 여는 까닭이 대개 "얼마였지"다. */}
+          {/*
+            금액을 맨 위에 크게 둔다. 상세를 여는 까닭이 대개 "얼마였지"다.
+
+            부호는 목록 한 줄과 같은 규칙을 쓴다 (core 의 entryAmountLook). 되돌린
+            결제는 갈래가 지출인데 돈이 돌아온 쪽이라 부호가 뒤집힌다.
+          */}
           <Text className="mb-1 text-3xl font-bold text-gray-900">
-            {formatCurrency(entry.amount, currency)}
+            {entryAmountLook(entry).sign}
+            {formatCurrency(entryAmountLook(entry).amount, currency)}
           </Text>
           <Text className="mb-4 text-base text-gray-600">
             {entry.description || categoryLabel || t('entry.noTitle')}
@@ -193,6 +200,15 @@ export default function EntryDetailModal({
             }
           />
           <Row label={t('tx.detail.fee')} value={fee > 0 ? money(entry.feeAmount) : null} />
+          {/*
+            결제 자리에서 깎인 금액 (포인트 사용·자동할인). 위 금액은 이미 깎인 뒤라
+            이것이 없으면 정가를 알 수 없다.
+          */}
+          <Row
+            label={t('editor.discount')}
+            value={entry.discountAmount ? money(entry.discountAmount) : null}
+          />
+
           {/*
             외화가 얽힌 거래만 원래 금액이 있다. 위 금액은 언제나 표시 통화 환산액이라,
             "$50.00" 을 함께 적지 않으면 명세서와 대조할 기준이 사라진다.

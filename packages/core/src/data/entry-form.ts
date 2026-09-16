@@ -14,7 +14,6 @@
 
 import {
   Dec,
-  type CardTransferDirection,
   type EntryDto,
   type EntryListItem,
   zonedFormValueToUtc,
@@ -22,8 +21,16 @@ import {
 
 import { dateKeyOf, isDateKey, nowTimeKey, timeInputOf, todayKey } from '../lib/datetime';
 
-/** 이 폼이 다루는 갈래. 조정(adjustment)은 잔액 맞추기가 만드는 것이라 여기 없다. */
-export type EntryFormKind = 'expense' | 'income' | 'transfer' | 'card_payment';
+/**
+ * 이 폼이 다루는 갈래. 셋뿐이다.
+ *
+ * **카드대금 결제는 이체다.** 통장과 카드 부채 계정 사이를 돈이 오가는 일이라 규칙이
+ * 이체와 같고, 갈래를 따로 두면 계좌를 고르는 칸이 한 벌 더 생긴다. 저장된 전표는
+ * `classifyEntry` 가 `card_payment` 로 되읽으므로 목록과 집계는 그대로다.
+ *
+ * 조정(adjustment)은 잔액 맞추기가 만드는 것이라 여기 없다.
+ */
+export type EntryFormKind = 'expense' | 'income' | 'transfer';
 
 /**
  * 분할의 한 줄.
@@ -72,6 +79,15 @@ export interface EntryFormValues {
   toAccountId: string;
   /** 할부 개월수. 빈 문자열이 일시불이다. */
   installmentMonths: string;
+  /**
+   * 결제 자리에서 깎인 금액. 포인트 사용, 자동할인, 그리고 **취소**가 모두 이 칸이다.
+   *
+   * 셋은 전표에서 같은 모양이다 -- 정가(`amount`)는 그대로인데 계좌에서 빠지는 돈만
+   * 적다. 둘의 차이가 실제로 나가는 금액이고, 같으면 0원 거래로 남는다.
+   *
+   * 통화는 `amount` 와 같다. 지출에만 뜻이 있고, 빈 문자열이면 차감이 없다.
+   */
+  discountAmount: string;
   transferFee: string;
   transferFeeCategoryId: string;
   /**
@@ -90,15 +106,6 @@ export interface EntryFormValues {
   currency: string;
   /** 1 currency = exchangeRate 기준통화. 통화가 기준통화면 쓰이지 않는다. */
   exchangeRate: string;
-  /**
-   * 카드사 대금 이동의 카드.
-   *
-   * 이 갈래만 결제수단을 둘 잡는다 -- 통장에서 돈이 나가고 그만큼 카드 부채가 준다.
-   * 그래서 `method`(통장) 와 별개로 카드를 따로 든다. 다른 갈래에서는 쓰이지 않는다.
-   */
-  cardId: string;
-  /** 카드사 대금 이동의 방향. 대금 결제인지 환불 입금인지. */
-  cardDirection: CardTransferDirection;
   /**
    * 이 거래에 붙일 태그. 카테고리와 달리 여럿을 고를 수 있다.
    *
@@ -142,18 +149,34 @@ export function emptyEntryForm({ personId = '', timeZone, now }: EntryFormDefaul
     method: '',
     toAccountId: '',
     installmentMonths: '',
+    discountAmount: '',
     transferFee: '',
     transferFeeCategoryId: '',
     splits: [],
     currency: '',
     exchangeRate: '',
-    cardId: '',
-    cardDirection: 'payment',
     tagIds: [],
     // 새로 적는 중이라 딛고 설 판이 없다. 만들기는 겹칠 대상 자체가 없다.
     baseHlc: null,
     ...(now ? { dateKey: dateKeyOf(now, timeZone), timeKey: timeInputOf(now, timeZone) } : {}),
   };
+}
+
+/**
+ * 목록 한 줄의 금액을 폼이 드는 정가로 되돌린다.
+ *
+ * 목록의 금액은 차감을 뺀 뒤의 값이고(실제로 나간 돈), 되돌린 결제는 음수다. 폼의
+ * 금액 칸은 언제나 "깎이기 전의 값을 양수로" 이므로 둘을 여기서 되돌린다.
+ */
+function grossOf(item: EntryListItem): string {
+  const magnitude = item.amount.startsWith('-') ? item.amount.slice(1) : item.amount;
+  if (!item.discountAmount) return magnitude;
+
+  const net = toDec(magnitude);
+  const discount = toDec(item.discountAmount);
+  // 숫자가 아니면 손대지 않는다. 검증이 그 값을 막는다.
+  if (!net || !discount) return magnitude;
+  return net.plus(discount).toString();
 }
 
 /**
@@ -180,11 +203,20 @@ export function entryFormFromItem(
     return null;
   }
 
+  /*
+   * 카드대금 결제는 이체 폼으로 편다.
+   *
+   * 저장된 전표는 통장 다리와 카드 부채 다리 둘뿐이라 이체와 같은 모양이다. 목록이
+   * 나간 쪽을 `accountId`, 들어온 쪽을 `toAccountId` 로 주므로 방향도 그대로 살아난다
+   * (대금 결제는 통장 -> 카드, 환불 입금은 카드 -> 통장).
+   */
+  const kind: EntryFormKind = item.kind === 'card_payment' ? 'transfer' : item.kind;
+
   const isSplit = (item.kind === 'expense' || item.kind === 'income') && item.splitCount > 1;
   if (isSplit && !item.splits?.length) return null;
 
   return {
-    kind: item.kind,
+    kind,
     personId: item.personId,
     // 이 줄을 본 시점의 판. 저장할 때 그대로 되돌려 주어 그 사이의 편집을 알아채게 한다.
     baseHlc: item.updatedHlc,
@@ -197,17 +229,23 @@ export function entryFormFromItem(
      * 목록의 `amount` 는 표시 통화로 환산한 값이다. 외화 거래를 그 값으로 열면 "$50"
      * 자리에 "70,000"이 들어앉고, 그대로 저장하면 50달러가 70,000달러가 된다.
      */
-    amount: item.originalAmount ?? item.amount,
+    /*
+     * 목록의 금액은 차감한 뒤의 값이고, 되돌린 결제는 음수다. 폼은 정가를 양수로 든다.
+     *
+     * 외화 거래에는 차감이 붙을 수 없어(조립이 막는다) 두 보정이 겹치지 않는다.
+     */
+    amount: item.originalAmount ?? grossOf(item),
+    discountAmount: item.discountAmount ?? '',
     // 소분류가 있으면 그것이 고른 값이다. 목록은 가장 구체적인 분류를 준다.
     categoryId: item.categoryId ?? '',
     /*
-     * 결제수단. 카드사 대금 이동만 다르다.
+     * 결제수단. 이체에서는 **보내는 쪽**이다.
      *
-     * 그 갈래는 통장과 카드를 함께 들므로 여기에는 **통장**이 온다. 카드를 여기 넣으면
-     * 돈이 어디서 나갔는지 잃는다.
+     * 이체(카드대금 포함)는 계좌 사이의 이동이라 카드가 아니라 계좌를 든다. 카드로
+     * 낸 지출만 카드를 든다.
      */
     method:
-      item.kind === 'card_payment'
+      kind === 'transfer'
         ? item.accountId
           ? accountValue(item.accountId)
           : ''
@@ -236,9 +274,6 @@ export function entryFormFromItem(
      */
     currency: item.originalCurrency ?? '',
     exchangeRate: item.originalCurrency ? item.exchangeRate ?? '' : '',
-    // 카드사 대금 이동은 통장과 카드를 함께 든다. 그 밖의 갈래에서는 method 가 카드를 든다.
-    cardId: item.kind === 'card_payment' ? item.cardId ?? '' : '',
-    cardDirection: item.cardTransferDirection ?? 'payment',
     tagIds: item.tags.map((tag) => tag.id),
   };
 }
@@ -275,9 +310,7 @@ export function entryFormFromDraft(
   const base = emptyEntryForm(options);
 
   const kind: EntryFormKind =
-    draft.kind === 'income' || draft.kind === 'transfer' || draft.kind === 'card_payment'
-      ? draft.kind
-      : 'expense';
+    draft.kind === 'income' || draft.kind === 'transfer' ? draft.kind : 'expense';
 
   /*
    * 결제수단. 카드가 있으면 카드, 없으면 통장이다.
@@ -297,9 +330,7 @@ export function entryFormFromDraft(
   return {
     ...base,
     kind,
-    // 카드사 대금 이동만 카드를 따로 든다. 그 갈래를 후보로 만드는 규칙은 아직 없다.
-    method: kind === 'card_payment' ? '' : method,
-    cardId: kind === 'card_payment' ? draft.cardId ?? '' : '',
+    method,
     amount: draft.amount ?? '',
     /*
      * 통화. 장부 통화면 비워 둔다.
@@ -342,7 +373,15 @@ export interface EntryFormViolation {
  * 서버가 어차피 다시 보지만 여기서 먼저 거른다. 오프라인에서는 서버가 없고, 규칙에 어긋난
  * 명령을 큐에 넣으면 서버가 영구히 거절하는 독이 된다 (설계 문서의 D3).
  */
-export function checkEntryForm(values: EntryFormValues): EntryFormViolation | null {
+export function checkEntryForm(
+  values: EntryFormValues,
+  /**
+   * 신용카드 부채 계정의 id 들. 이체 양쪽이 다 카드인지 가리는 데만 쓴다.
+   *
+   * 폼 값만으로는 알 수 없어 받는다. 넘기지 않으면 그 검사는 건너뛰고 조립이 막는다.
+   */
+  cardLiabilityIds: ReadonlySet<string> = new Set(),
+): EntryFormViolation | null {
   if (!values.personId) return { field: 'personId', code: 'PERSON_REQUIRED' };
 
   /*
@@ -379,11 +418,15 @@ export function checkEntryForm(values: EntryFormValues): EntryFormViolation | nu
     if (!rate || !rate.isPositive()) return { field: 'exchangeRate', code: 'RATE_INVALID' };
   }
 
-  if (values.kind === 'card_payment') {
-    const account = parseMethod(values.method).accountId;
-    if (!account) return { field: 'method', code: 'ACCOUNT_REQUIRED' };
-    if (!values.cardId) return { field: 'cardId', code: 'CARD_REQUIRED' };
-    return null;
+  /*
+   * 즉시 차감과 되돌린 결제. 지출에만 붙는다.
+   *
+   * 다른 갈래에서 값이 남아 있어도 `entryFormToRequest` 가 싣지 않으므로 여기서는
+   * 지출일 때만 본다 -- 갈래를 옮겨 다니는 사이에 저장이 막히면 이유를 알 수 없다.
+   */
+  if (values.kind === 'expense') {
+    const violation = checkExpenseExtras(values, amount);
+    if (violation) return violation;
   }
 
   if (values.kind === 'transfer') {
@@ -391,6 +434,17 @@ export function checkEntryForm(values: EntryFormValues): EntryFormViolation | nu
     if (!from) return { field: 'method', code: 'FROM_ACCOUNT_REQUIRED' };
     if (!values.toAccountId) return { field: 'toAccountId', code: 'TO_ACCOUNT_REQUIRED' };
     if (from === values.toAccountId) return { field: 'toAccountId', code: 'TRANSFER_SAME_ACCOUNT' };
+
+    /*
+     * 양쪽이 다 카드인 이동은 받지 않는다.
+     *
+     * 목록은 그 전표를 카드대금으로 읽고 "어느 카드의 대금인가"를 하나로 정해야 해서
+     * 어느 쪽을 골라도 반쪽만 보인다. 조립도 같은 이유로 막는다(TRANSFER_BOTH_CARDS).
+     * 이 검사는 카드 목록을 알아야 하므로 부르는 쪽이 넘겨 준다.
+     */
+    if (cardLiabilityIds.has(from) && cardLiabilityIds.has(values.toAccountId)) {
+      return { field: 'toAccountId', code: 'TRANSFER_BOTH_CARDS' };
+    }
 
     const fee = values.transferFee ? toDec(values.transferFee) : null;
     if (values.transferFee && (!fee || fee.isNegative())) {
@@ -421,11 +475,7 @@ export function checkEntryForm(values: EntryFormValues): EntryFormViolation | nu
     if (!total.eq(amount)) return { field: 'splits', code: 'SPLIT_SUM_MISMATCH' };
 
     // 분할이 있으면 대표 분류는 쓰이지 않는다. 줄마다 따로 있기 때문이다.
-    const method = parseMethod(values.method);
-    if (values.kind === 'income' && !method.accountId) {
-      return { field: 'method', code: 'ACCOUNT_REQUIRED' };
-    }
-    if (values.kind === 'expense' && !method.accountId && !method.cardId) {
+    if (!parseMethod(values.method).accountId && !parseMethod(values.method).cardId) {
       return { field: 'method', code: 'METHOD_REQUIRED' };
     }
     return null;
@@ -433,12 +483,40 @@ export function checkEntryForm(values: EntryFormValues): EntryFormViolation | nu
 
   if (!values.categoryId) return { field: 'categoryId', code: 'CATEGORY_REQUIRED' };
 
+  /*
+   * 지출도 수입도 통장과 카드 중 하나를 고른다.
+   *
+   * 수입에 카드를 여는 것은 카드사가 되돌려 주는 돈이 통장을 거치지 않고 다음 청구에서
+   * 빠지는 일이 있어서다. 그때 돈이 들어오는 자리는 통장이 아니라 그 카드의 빚이다.
+   */
   const method = parseMethod(values.method);
-  if (values.kind === 'income' && !method.accountId) {
-    return { field: 'method', code: 'ACCOUNT_REQUIRED' };
-  }
-  if (values.kind === 'expense' && !method.accountId && !method.cardId) {
+  if (!method.accountId && !method.cardId) {
     return { field: 'method', code: 'METHOD_REQUIRED' };
+  }
+
+  return null;
+}
+
+/**
+ * 지출에만 붙는 두 칸을 본다. 맞으면 null.
+ *
+ * 차감액은 정가보다 **작아야** 한다. 같으면 계좌에서 빠지는 금액이 0이 되어 원장이
+ * 0원 다리를 만들 수 없고, 크면 지출이 아니라 입금이 된다. 전액을 포인트로 치른
+ * 결제는 아직 다루지 않는다.
+ */
+function checkExpenseExtras(values: EntryFormValues, amount: Dec): EntryFormViolation | null {
+  if (!values.discountAmount.trim()) return null;
+
+  const discount = toDec(values.discountAmount);
+  if (!discount || !discount.isPositive()) {
+    return { field: 'discountAmount', code: 'DISCOUNT_INVALID' };
+  }
+  /*
+   * 정가와 같아도 된다. 전액을 깎으면 0원 거래로 남고, 전액 취소와 전액 포인트 결제가
+   * 그 모양이다. 넘으면 지출이 아니라 입금이 되므로 막는다.
+   */
+  if (discount.gt(amount)) {
+    return { field: 'discountAmount', code: 'DISCOUNT_TOO_LARGE' };
   }
 
   return null;
@@ -479,15 +557,6 @@ export function entryFormToRequest(
       : {}),
   };
 
-  if (values.kind === 'card_payment') {
-    return {
-      ...base,
-      accountId: method.accountId,
-      cardId: values.cardId,
-      cardTransferDirection: values.cardDirection,
-    };
-  }
-
   if (values.kind === 'transfer') {
     const fee = values.transferFee ? toDec(values.transferFee) : null;
     return {
@@ -504,6 +573,17 @@ export function entryFormToRequest(
   }
 
   const months = Number(values.installmentMonths);
+
+  /*
+   * 즉시 차감과 되돌린 결제. 지출에만 싣는다.
+   *
+   * 갈래를 옮겨도 폼은 값을 들고 있으므로(이체로 갔다가 돌아오면 그대로다) 여기서
+   * 갈래를 한 번 더 본다. 분할이든 아니든 같은 값이라 한 곳에서 만든다.
+   */
+  const expenseExtras =
+    values.kind === 'expense' && values.discountAmount.trim()
+      ? { discountAmount: values.discountAmount }
+      : {};
 
   /*
    * 분할이면 줄들을 싣고 대표 분류는 싣지 않는다.
@@ -523,6 +603,7 @@ export function entryFormToRequest(
       ...(values.kind === 'expense' && method.cardId && Number(values.installmentMonths) >= 2
         ? { installmentMonths: Number(values.installmentMonths) }
         : {}),
+      ...expenseExtras,
     };
   }
 
@@ -535,6 +616,7 @@ export function entryFormToRequest(
     ...(values.kind === 'expense' && method.cardId && months >= 2
       ? { installmentMonths: months }
       : {}),
+    ...expenseExtras,
   };
 }
 

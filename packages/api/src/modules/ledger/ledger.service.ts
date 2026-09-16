@@ -124,6 +124,13 @@ export interface EntryInput {
    */
   installmentMonths?: number;
   /**
+   * 결제 자리에서 깎인 금액. 표시 전용이라 다리에는 들어가지 않는다.
+   *
+   * 다리는 이미 깎인 뒤의 금액이라, 이 값이 없으면 정가를 되살릴 수 없다.
+   * `originalAmount` 를 함께 적어 두는 것과 같은 까닭이다.
+   */
+  discountAmount?: Prisma.Decimal | null;
+  /**
    * 이 전표에 붙일 태그의 id.
    *
    * **주면 그 목록이 그대로 전표의 태그가 된다.** 수정이 전표를 통째로 갈아 끼우는
@@ -281,6 +288,7 @@ export class LedgerService {
           originalCurrency: input.originalCurrency ?? null,
           originalAmount: input.originalAmount ?? null,
           rateProvisional: input.rateProvisional ?? false,
+          discountAmount: input.discountAmount ?? null,
           updatedHlc: input.updatedHlc ?? this.clock.now(),
           postings: { create: input.postings.map((p) => this.toPostingData(p)) },
         },
@@ -362,6 +370,7 @@ export class LedgerService {
           originalCurrency: input.originalCurrency ?? null,
           originalAmount: input.originalAmount ?? null,
           rateProvisional: input.rateProvisional ?? false,
+          discountAmount: input.discountAmount ?? null,
           updatedHlc: input.updatedHlc ?? this.clock.now(),
           postings: { create: input.postings.map((p) => this.toPostingData(p)) },
         },
@@ -730,6 +739,7 @@ export class LedgerService {
       originalAmount: dec(built.originalAmount),
       rateProvisional: built.rateProvisional,
       installmentMonths: built.installmentMonths,
+      discountAmount: dec(built.discountAmount) ?? null,
       postings: built.postings.map((posting) => ({
         accountId: posting.accountId,
         categoryId: posting.categoryId,

@@ -646,6 +646,16 @@ model JournalEntry {
   // 이미 사실이라 확정할 것이 없고, 사용자가 환율을 직접 넣은 거래도 마찬가지다.
   rateProvisional Boolean @default(false)
 
+  // 결제 자리에서 깎인 금액. 카드 포인트 사용, 자동할인, 같은 주기 안의 취소가 든다.
+  //
+  // 표시 전용이다. 다리(posting)에는 이미 깎인 뒤의 금액이 들어가 있어, 이 값이 없으면
+  // "13,000짜리를 3,000 깎아 샀다"가 사라지고 "10,000을 썼다"만 남는다.
+  // originalAmount 를 함께 적어 두는 것과 같은 까닭이다.
+  //
+  // 정가와 같을 수 있다. 그때는 모든 다리가 0이 되어 0원 거래로 남는다 -- 전액 취소와
+  // 전액 포인트 결제가 그 모양이고, 있었던 일이므로 지우지 않는다.
+  discountAmount Decimal? @db.Decimal(19, 4)
+
   createdByUserId String? // 입력자 추적용. 조회 필터로 쓰지 않는다 (프로젝트 멤버는 모두 같은 데이터를 본다)
 
   project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)

@@ -607,6 +607,7 @@ export class LocalStore {
           originalCurrency: asText(row.originalCurrency),
           originalAmount: asText(row.originalAmount),
           rateProvisional: asFlag(row.rateProvisional),
+          discountAmount: asText(row.discountAmount),
           createdByUserId: asText(row.createdByUserId),
           updatedHlc: asText(row.updatedHlc),
           updatedVersion: asInt(row.updatedVersion),
@@ -1670,6 +1671,7 @@ export class LocalStore {
       originalCurrency: asText(entry.originalCurrency),
       originalAmount: asText(entry.originalAmount),
       rateProvisional: Boolean(entry.rateProvisional),
+      discountAmount: asText(entry.discountAmount),
       // 목록 한 줄에 실린다. 서버 창구를 쓰는 화면이 수정할 때 이 값을 되돌려 준다.
       updatedHlc: asText(entry.updatedHlc),
       postings: byEntry.get(String(entry.id)) ?? [],
@@ -1803,6 +1805,7 @@ export class LocalStore {
         originalCurrency: built.originalCurrency ?? null,
         originalAmount: built.originalAmount ? built.originalAmount.toString() : null,
         rateProvisional: asFlag(built.rateProvisional),
+        discountAmount: built.discountAmount ? built.discountAmount.toString() : null,
         createdByUserId: null,
         // 이 편집의 시계. 다음에 이 전표를 고칠 때 이 값보다 뒤를 발급한다.
         updatedHlc: options.hlc,

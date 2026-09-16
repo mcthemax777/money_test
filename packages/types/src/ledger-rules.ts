@@ -52,6 +52,18 @@ export function checkPostings(postings: readonly PostingRuleInput[]): LedgerRule
     return { code: 'POSTING_TOO_FEW', message: '전표에는 최소 2개의 posting이 필요합니다.' };
   }
 
+  /*
+   * 전표가 통째로 0인가.
+   *
+   * 전액을 되돌린 결제(카드 사용 취소)와 전액을 포인트로 치른 결제가 이 모양이다.
+   * 13,000원 결제에서 13,000원이 빠지면 분류 다리도 결제수단 다리도 0이 되는데,
+   * 그 거래는 있었던 일이므로 지우지 않고 0원으로 남긴다.
+   *
+   * **일부만 0인 전표는 그대로 막는다.** 그것은 사람이 적은 모양이 아니라 조립이
+   * 잘못됐을 때 나오는 모양이고, 0원 금지 규칙이 값을 하는 자리가 바로 거기다.
+   */
+  const allZero = postings.every((p) => Dec.of(p.amount).isZero());
+
   for (const p of postings) {
     const hasAccount = Boolean(p.accountId);
     const hasCategory = Boolean(p.categoryId);
@@ -71,7 +83,7 @@ export function checkPostings(postings: readonly PostingRuleInput[]): LedgerRule
     }
 
     const amount = Dec.of(p.amount);
-    if (amount.isZero()) {
+    if (amount.isZero() && !allZero) {
       return { code: 'POSTING_ZERO_AMOUNT', message: '금액이 0인 posting은 만들 수 없습니다.' };
     }
 
