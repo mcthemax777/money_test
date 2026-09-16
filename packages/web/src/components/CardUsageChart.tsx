@@ -27,7 +27,10 @@ import {
   formatAxisAmount,
   formatTooltipAmount,
 } from '@money/core/lib/chart';
-import { CARD_USAGE_TARGET_COLOR } from '@money/core/lib/card-usage-chart';
+import {
+  CARD_USAGE_TARGET_COLOR,
+  type CardUsageMeasure,
+} from '@money/core/lib/card-usage-chart';
 import { useCardUsageWindow } from '@money/core/hooks/useCardUsageWindow';
 
 /** 막대 위에 금액을 적는 최대 개수. 이보다 많으면 글자끼리 겹친다. */
@@ -52,6 +55,13 @@ interface CardUsageChartProps {
   target: number | null;
   /** 어느 카드의 그래프인지. 카드가 바뀌면 끌어 둔 창을 제자리로 되돌린다. */
   cardId?: string;
+  /**
+   * 무엇을 그릴지. 기본은 실적이다.
+   *
+   * 청구액은 실적에서 뺀 결제까지 전부 세는 다른 값이라, 카드 상세는 두 그래프를
+   * 따로 그린다. 청구액 쪽에는 기준선이 없으므로 `target` 을 null 로 준다.
+   */
+  measure?: CardUsageMeasure;
   height?: number;
 }
 
@@ -73,10 +83,11 @@ export default function CardUsageChart({
   currency,
   target,
   cardId,
+  measure,
   height = 240,
 }: CardUsageChartProps) {
   const { t } = useTranslation();
-  const usage = useCardUsageWindow(periods, target, cardId);
+  const usage = useCardUsageWindow(periods, target, cardId, undefined, measure);
   const { bars } = usage;
 
   /*

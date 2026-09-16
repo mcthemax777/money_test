@@ -46,6 +46,13 @@ export interface CardUsagePosting {
   date: Date | string;
   /** 할부 개월수. 일시불이면 null 이나 1 이다. */
   installmentMonths?: number | null;
+  /**
+   * 이 거래를 실적에 세는가. 없으면 센 것으로 본다.
+   *
+   * 청구액과는 다른 값이다 -- 꺼져 있어도 청구는 그대로 되므로 `billed` 에는 들어가고
+   * `usage` 에서만 빠진다.
+   */
+  countsPerformance?: boolean;
 }
 
 export interface CreditUsageInput {
@@ -84,23 +91,39 @@ export function creditUsagePeriods(input: CreditUsageInput): CreditUsageResult {
   const { statementClosingDay, paymentDueDay, timeZone, span } = input;
   const now = input.now ?? new Date();
 
-  // 마감 연월 -> 그 주기에 청구되는 금액
-  const byMonth = new Map<string, Dec>();
-  const add = (closing: { year: number; month: number }, amount: Dec) => {
+  /*
+   * 마감 연월 -> 금액. 두 벌을 따로 센다.
+   *
+   * `billed` 는 그 주기에 청구되는 전부이고, `usage` 는 그중 실적에 드는 것만이다.
+   * 실적에서 뺀 거래가 있으면 둘이 갈리는데, 한 값으로 두면 그래프가 남은 대금과
+   * 어긋난다 -- 청구는 되었는데 그래프에는 없는 돈이 생긴다.
+   */
+  const billedByMonth = new Map<string, Dec>();
+  const usageByMonth = new Map<string, Dec>();
+  const add = (
+    into: Map<string, Dec>,
+    closing: { year: number; month: number },
+    amount: Dec,
+  ) => {
     const key = closingMonthKey(closing);
-    byMonth.set(key, (byMonth.get(key) ?? Dec.of(0)).plus(amount));
+    into.set(key, (into.get(key) ?? Dec.of(0)).plus(amount));
   };
 
   for (const posting of input.postings) {
     // 부채 다리는 사용이 음수다. 표시용으로 뒤집는다.
     const total = Dec.of(posting.amount).negated();
     const purchase = closingMonthOf(asDate(posting.date), statementClosingDay, timeZone);
+    const counts = posting.countsPerformance ?? true;
 
     const shares = splitInstallment(total, posting.installmentMonths ?? 1);
     for (let offset = 0; offset < shares.length; offset += 1) {
-      add(shiftClosingMonth(purchase, offset), shares[offset]);
+      const closing = shiftClosingMonth(purchase, offset);
+      add(billedByMonth, closing, shares[offset]);
+      if (counts) add(usageByMonth, closing, shares[offset]);
     }
   }
+  // 주기를 만들 때는 청구가 잡힌 달을 본다. 실적만 있는 달은 있을 수 없다.
+  const byMonth = billedByMonth;
 
   const today = zonedParts(now, timeZone);
   const current = closingMonthOf(now, statementClosingDay, timeZone);
@@ -138,7 +161,8 @@ export function creditUsagePeriods(input: CreditUsageInput): CreditUsageResult {
       periodEnd: period.periodEnd.toISOString(),
       dueDate: period.dueDate.toISOString(),
       closed: period.periodEnd.getTime() < todayMarker,
-      usage: (byMonth.get(closingMonthKey(cursor)) ?? Dec.of(0)).toString(),
+      usage: (usageByMonth.get(closingMonthKey(cursor)) ?? Dec.of(0)).toString(),
+      billed: (billedByMonth.get(closingMonthKey(cursor)) ?? Dec.of(0)).toString(),
     });
   }
 
@@ -163,10 +187,16 @@ export function debitUsagePeriods(input: DebitUsageInput): CardDto.UsagePeriod[]
   const { timeZone, span } = input;
   const now = input.now ?? new Date();
 
-  const byMonth = new Map<string, Dec>();
+  // 신용카드와 같은 규칙으로 두 벌을 센다 (청구 전부 / 실적에 드는 것만).
+  const billedByMonth = new Map<string, Dec>();
+  const usageByMonth = new Map<string, Dec>();
   for (const posting of input.postings) {
     const key = zonedYearMonth(asDate(posting.date), timeZone);
-    byMonth.set(key, (byMonth.get(key) ?? Dec.of(0)).plus(Dec.of(posting.amount).negated()));
+    const amount = Dec.of(posting.amount).negated();
+    billedByMonth.set(key, (billedByMonth.get(key) ?? Dec.of(0)).plus(amount));
+    if (posting.countsPerformance ?? true) {
+      usageByMonth.set(key, (usageByMonth.get(key) ?? Dec.of(0)).plus(amount));
+    }
   }
 
   const [thisYear, thisMonth] = zonedYearMonth(now, timeZone).split('-').map(Number);
@@ -184,7 +214,8 @@ export function debitUsagePeriods(input: DebitUsageInput): CardDto.UsagePeriod[]
       periodEnd: new Date(Date.UTC(year, month, 0)).toISOString(),
       // 이번 달만 아직 늘어날 수 있다.
       closed: offset > 0,
-      usage: (byMonth.get(key) ?? Dec.of(0)).toString(),
+      usage: (usageByMonth.get(key) ?? Dec.of(0)).toString(),
+      billed: (billedByMonth.get(key) ?? Dec.of(0)).toString(),
     });
   }
 

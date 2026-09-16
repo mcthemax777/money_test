@@ -16,6 +16,7 @@ import { formatCurrency, toAmountString, toNumber } from '@money/core/lib/money'
 import { nowTimeKey, todayKey } from '@money/core/lib/datetime';
 import { useProjectTimeZone } from '@money/core/store/project';
 import CardUsageChart from './CardUsageChart';
+import type { CardUsageMeasure } from '@money/core/lib/card-usage-chart';
 import Modal from './Modal';
 import PendingRatePanel from './PendingRatePanel';
 import { useApiError } from '@money/core/lib/api-error';
@@ -54,6 +55,13 @@ interface CardSettlementPanelProps {
   reloadToken?: number;
   /** 대금을 기록하거나 환율을 확정한 뒤. 부모가 카드 목록·총자산을 다시 읽는다. */
   onChange?: () => void | Promise<void>;
+  /**
+   * 어느 값을 그릴지. 카드 상세의 탭이 정한다.
+   *
+   *   performance 실적. 기준선을 함께 긋는다.
+   *   billed      청구액. 남은 대금·대금 기록도 이 탭의 것이다.
+   */
+  measure?: CardUsageMeasure;
 }
 
 /**
@@ -74,6 +82,7 @@ export default function CardSettlementPanel({
   paymentAccountOwnerId,
   reloadToken = 0,
   onChange,
+  measure = 'performance',
 }: CardSettlementPanelProps) {
   const { t } = useTranslation();
   const { messageOf } = useApiError();
@@ -204,25 +213,47 @@ export default function CardSettlementPanel({
       <div className="space-y-3">
         <div>
           <h3 className="text-sm font-medium text-gray-700 mb-2">
-            {t(isCredit ? 'settlement.usageByStatement' : 'settlement.usageByMonth')}
+            {t(
+              measure === 'performance'
+                ? isCredit
+                  ? 'settlement.performanceByStatement'
+                  : 'settlement.performanceByMonth'
+                : isCredit
+                  ? 'settlement.billedByStatement'
+                  : 'settlement.billedByMonth',
+            )}
           </h3>
           {/*
             줄글 목록 대신 막대로 그린다. 실적 기준선을 함께 그으면 어느 주기가
             기준을 넘겼는지 숫자를 견주지 않고 높이로 읽힌다.
+
+            기준선은 실적에만 긋는다 -- 실적 기준은 청구액에 대고 재는 값이 아니다.
+            탭을 바꾸면 그래프도 새로 서야 해서 key 로 갈아 끼운다(끌어 둔 창까지).
           */}
           <CardUsageChart
+            key={measure}
             periods={usage.periods}
             currency={usage.currency}
-            target={performanceTarget}
+            target={measure === 'performance' ? performanceTarget : null}
             cardId={card.id}
+            measure={measure}
           />
+          {measure === 'billed' && (
+            <p className="mt-1 text-xs text-gray-500">{t('settlement.billedHint')}</p>
+          )}
         </div>
 
         {/*
           남은 대금과 대금 기록은 신용카드만이다. 체크카드는 결제 즉시 통장에서
           빠져 갚을 것이 남지 않는다. 대신 위 달별 사용액은 똑같이 보여 준다.
         */}
-        {isCredit && (
+        {/*
+          남은 대금과 대금 기록은 결제대금 탭의 것이다. 실적 탭에서 묻는 것은 "얼마를
+          썼나"이지 "얼마를 갚아야 하나"가 아니다.
+
+          신용카드만이다 -- 체크카드는 결제 즉시 통장에서 빠져 갚을 것이 남지 않는다.
+        */}
+        {isCredit && measure === 'billed' && (
         <div
           className={`rounded-lg p-4 space-y-3 ${refundPending ? 'bg-emerald-50' : 'bg-red-50'}`}
         >
@@ -267,7 +298,9 @@ export default function CardSettlementPanel({
           추정 환율로 들어간 건이 남아 있으면 남은 대금이 명세서와 어긋나므로,
           그 건들을 여기 모아 한 번에 맞춘다.
         */}
-        {isCredit && <PendingRatePanel cardId={card.id} onSettled={refresh} />}
+        {isCredit && measure === 'billed' && (
+          <PendingRatePanel cardId={card.id} onSettled={refresh} />
+        )}
       </div>
 
       {/* 카드사 자금 이동 모달 */}

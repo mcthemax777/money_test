@@ -75,15 +75,28 @@ export function cardUsageAxisLabel(startKey: string, endKey: string): string {
 }
 
 /**
+ * 막대가 어느 값을 그리는가.
+ *
+ *   performance 실적. 카드사가 혜택을 정할 때 세는 값이다. 기준선을 함께 긋는다.
+ *   billed      청구액. 실적에서 뺀 결제까지 전부 든다. 남은 대금과 이어지는 값이다.
+ *
+ * 둘은 갈릴 수 있다 -- 세금·공과금처럼 청구는 되지만 실적에서 빠지는 결제가 있다.
+ * 그래서 카드 상세는 두 그래프를 나란히 그린다.
+ */
+export type CardUsageMeasure = 'performance' | 'billed';
+
+/**
  * 주기 목록을 막대로 옮긴다.
  *
  * @param todayKey 프로젝트 타임존의 오늘 "YYYY-MM-DD". 아직 오지 않은 주기를 가른다.
  * @param target 실적 기준액. 없으면 색으로 달성 여부를 말하지 않는다.
+ * @param measure 무엇을 그릴지. 청구액은 기준선이 없으므로 `target` 을 주지 않는다.
  */
 export function cardUsageBars(
   periods: CardUsagePeriod[],
   todayKey: string,
   target: number | null,
+  measure: CardUsageMeasure = 'performance',
 ): CardUsageBar[] {
   const t = (key: MessageKey) => translate(activeLocale(), key);
 
@@ -96,7 +109,7 @@ export function cardUsageBars(
       : startKey > todayKey
         ? 'future'
         : 'ongoing';
-    const amount = toNumber(period.usage);
+    const amount = toNumber(measure === 'billed' ? period.billed : period.usage);
 
     return {
       key: endKey,

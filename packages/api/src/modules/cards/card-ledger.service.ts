@@ -119,19 +119,17 @@ export class CardLedgerService {
            * 갚은 돈이 사용액을 깎으면 실적이 두 번 움직인다.
            */
           postings: { some: { categoryId: { not: null } } },
-          /*
-           * 실적에서 뺀 거래도 빠진다.
-           *
-           * 청구액과는 다른 값이다 -- 여기서 빠져도 부채 계정에는 그대로 쌓여 있어
-           * 갚을 대금은 줄지 않는다. 세금·공과금처럼 청구는 되지만 카드사가 실적에서
-           * 빼는 결제, 그리고 카드사가 되돌려 준 돈이 그 자리다.
-           */
-          countsPerformance: true,
         },
       },
+      /*
+       * 실적에서 뺀 거래도 함께 읽는다. 거르지 않고 표를 실어 보낸다.
+       *
+       * 청구는 되지만 실적에서 빠지는 결제가 있어, 여기서 걸러 버리면 청구액 그래프가
+       * 남은 대금과 어긋난다. 나누는 일은 집계(`creditUsagePeriods`)가 한다.
+       */
       select: {
         amount: true,
-        entry: { select: { date: true } },
+        entry: { select: { date: true, countsPerformance: true } },
         installmentPlan: { select: { totalMonths: true } },
       },
     });
@@ -141,6 +139,7 @@ export class CardLedgerService {
         amount: usage.amount,
         date: usage.entry.date,
         installmentMonths: usage.installmentPlan?.totalMonths ?? null,
+        countsPerformance: usage.entry.countsPerformance,
       })),
       statementClosingDay: card.statementClosingDay!,
       paymentDueDay: card.paymentDueDay!,
@@ -216,18 +215,22 @@ export class CardLedgerService {
     cardId: string,
     timeZone: string,
     span: number,
-  ): Promise<Array<{ amount: Prisma.Decimal; date: Date }>> {
+  ): Promise<Array<{ amount: Prisma.Decimal; date: Date; countsPerformance: boolean }>> {
     const [year, month] = zonedCurrentYearMonth(timeZone).split('-').map(Number);
     const earliest = new Date(Date.UTC(year, month - span, 1));
     const key = `${earliest.getUTCFullYear()}-${String(earliest.getUTCMonth() + 1).padStart(2, '0')}`;
     const { start } = zonedMonthRange(key, timeZone);
 
     const rows = await this.prisma.posting.findMany({
-      // 실적에서 뺀 거래는 세지 않는다. 통장에서 빠진 돈은 그대로다(신용카드와 같은 규칙).
-      where: { cardId, entry: { date: { gte: start }, countsPerformance: true } },
-      select: { amount: true, entry: { select: { date: true } } },
+      // 실적에서 뺀 거래도 함께 읽는다. 나누는 일은 집계가 한다 (신용카드와 같은 규칙).
+      where: { cardId, entry: { date: { gte: start } } },
+      select: { amount: true, entry: { select: { date: true, countsPerformance: true } } },
     });
-    return rows.map((row) => ({ amount: row.amount, date: row.entry.date }));
+    return rows.map((row) => ({
+      amount: row.amount,
+      date: row.entry.date,
+      countsPerformance: row.entry.countsPerformance,
+    }));
   }
 
   /**

@@ -12,7 +12,12 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 
-import { cardUsageBars, cardUsageDomain, type CardUsageBar } from '../lib/card-usage-chart';
+import {
+  cardUsageBars,
+  cardUsageDomain,
+  type CardUsageBar,
+  type CardUsageMeasure,
+} from '../lib/card-usage-chart';
 import { todayKey } from '../lib/datetime';
 import type { CardUsagePeriod } from '../lib/types';
 import { useProjectTimeZone } from '../store/project';
@@ -57,6 +62,8 @@ export function useCardUsageWindow(
   target: number | null,
   resetKey?: string,
   span: number = CARD_USAGE_WINDOW,
+  /** 무엇을 그릴지. 실적과 청구액은 갈릴 수 있어 그래프를 나눠 그린다. */
+  measure: CardUsageMeasure = 'performance',
 ): CardUsageWindow {
   const timeZone = useProjectTimeZone();
   const [offset, setOffset] = useState(0);
@@ -75,7 +82,7 @@ export function useCardUsageWindow(
    * 주기 배열만 보고 기억해 두면 언어를 바꿔도 옛 말이 남는다. 스물넉 개를 다시
    * 만드는 값이라 기억해 두어 아낄 것이 없다.
    */
-  const all = cardUsageBars(periods, todayKey(timeZone), target);
+  const all = cardUsageBars(periods, todayKey(timeZone), target, measure);
 
   /*
    * 창이 제자리에 있을 때의 오른쪽 끝. 진행 중인 주기까지다.

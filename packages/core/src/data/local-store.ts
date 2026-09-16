@@ -147,6 +147,8 @@ export interface StoredCardPosting {
   amount: string;
   date: string;
   installmentMonths: number | null;
+  /** 실적에 세는가. 청구액에는 어느 쪽이든 들어간다. */
+  countsPerformance: boolean;
 }
 
 type Row = Record<string, SqlValue>;
@@ -221,6 +223,7 @@ const toCardPosting = (row: Row): StoredCardPosting => ({
   amount: asMoney(row.amount),
   date: String(row.date),
   installmentMonths: row.totalMonths == null ? null : Number(row.totalMonths),
+  countsPerformance: Boolean(row.countsPerformance),
 });
 
 const asInt = (value: unknown): number => {
@@ -2718,13 +2721,18 @@ export class LocalStore {
    */
   async creditCardPostings(liabilityAccountId: string): Promise<StoredCardPosting[]> {
     const rows = await this.db.all<Row>(
-      `SELECT p.amount, e.date, ip.totalMonths
+      /*
+       * 실적에서 뺀 거래도 함께 읽는다. 나누는 일은 집계(`creditUsagePeriods`)가 한다.
+       *
+       * 여기서 걸러 버리면 청구액 그래프가 남은 대금과 어긋난다 -- 청구는 되었는데
+       * 그래프에는 없는 돈이 생긴다.
+       */
+      `SELECT p.amount, e.date, e.countsPerformance, ip.totalMonths
          FROM posting p
          JOIN entry e ON e.id = p.entryId
          LEFT JOIN installment_plan ip ON ip.postingId = p.id
         WHERE p.accountId = ?
-          AND EXISTS (SELECT 1 FROM posting c WHERE c.entryId = e.id AND c.categoryId IS NOT NULL)
-          AND e.countsPerformance = 1`,
+          AND EXISTS (SELECT 1 FROM posting c WHERE c.entryId = e.id AND c.categoryId IS NOT NULL)`,
       [liabilityAccountId],
     );
     return rows.map(toCardPosting);
@@ -2738,11 +2746,10 @@ export class LocalStore {
    */
   async debitCardPostings(cardId: string): Promise<StoredCardPosting[]> {
     const rows = await this.db.all<Row>(
-      `SELECT p.amount, e.date, NULL AS totalMonths
+      `SELECT p.amount, e.date, e.countsPerformance, NULL AS totalMonths
          FROM posting p
          JOIN entry e ON e.id = p.entryId
-        WHERE p.cardId = ?
-          AND e.countsPerformance = 1`,
+        WHERE p.cardId = ?`,
       [cardId],
     );
     return rows.map(toCardPosting);

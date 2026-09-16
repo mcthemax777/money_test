@@ -16,7 +16,10 @@ import {
 } from 'react-native';
 import Svg, { Line, Rect, Text as SvgText } from 'react-native-svg';
 
-import { CARD_USAGE_TARGET_COLOR } from '@money/core/lib/card-usage-chart';
+import {
+  CARD_USAGE_TARGET_COLOR,
+  type CardUsageMeasure,
+} from '@money/core/lib/card-usage-chart';
 import { useCardUsageWindow } from '@money/core/hooks/useCardUsageWindow';
 import { CHART_COLOR, barTicks, formatAxisAmount } from '@money/core/lib/chart';
 import { useTranslation } from '@money/core/lib/i18n';
@@ -47,6 +50,7 @@ export default function CardUsageChart({
   currency,
   target,
   cardId,
+  measure,
 }: {
   periods: CardUsagePeriod[];
   /** 사용액·기준액의 통화 (= 결제 통장의 통화) */
@@ -55,13 +59,21 @@ export default function CardUsageChart({
   target: number | null;
   /** 어느 카드의 그래프인지. 카드가 바뀌면 끌어 둔 창을 제자리로 되돌린다. */
   cardId?: string;
+  /**
+   * 무엇을 그릴지. 기본은 실적이다.
+   *
+   * 청구액은 실적에서 뺀 결제까지 전부 세는 다른 값이라, 카드 상세는 두 그래프를
+   * 따로 그린다. 청구액 쪽에는 기준선이 없으므로 `target` 을 null 로 준다.
+   */
+  measure?: CardUsageMeasure;
 }) {
   const { t } = useTranslation();
-  const usage = useCardUsageWindow(periods, target, cardId);
+  const usage = useCardUsageWindow(periods, target, cardId, undefined, measure);
   const bars = usage.bars;
 
   const [width, setWidth] = useState(0);
-  const measure = (event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width);
+  // 그래프 폭 재기. 이름이 measure 였는데 무엇을 그릴지 고르는 prop 과 겹쳤다.
+  const handleLayout = (event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width);
   /**
    * 눌러 둔 막대. 웹에서 마우스를 올리면 뜨는 툴팁이 하던 일이다.
    *
@@ -156,7 +168,7 @@ export default function CardUsageChart({
         ) : null}
       </View>
 
-      <View onLayout={measure} {...pan.current!.panHandlers}>
+      <View onLayout={handleLayout} {...pan.current!.panHandlers}>
         <Pressable
           onPress={(event) => {
             const index = Math.floor((event.nativeEvent.locationX - AXIS_WIDTH) / slot);

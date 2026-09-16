@@ -130,6 +130,25 @@ export function entryAmountLook(entry: EntryListItem): EntryAmountLook {
   return { sign: '', amount, tone: 'neutral' };
 }
 
+/**
+ * 원장 한 줄이 카드 실적에 드는가. 카드 상세의 실적 탭이 줄을 거르는 규칙이다.
+ *
+ * **두 가지를 함께 본다.**
+ *
+ *   1. 그 거래를 실적에 세기로 했는가 (`countsPerformance`)
+ *   2. 사용인가 (분류가 붙어 있는가)
+ *
+ * 둘째가 빠지면 대금 결제와 환불 입금이 실적 탭에 섞인다. 그 줄들은 분류 다리가 없어
+ * `categoryName` 이 비는데(원장 한 줄의 규칙), 표만 보면 true 라 걸러지지 않는다.
+ * 실적 집계가 "분류 다리가 있는 전표만" 세는 것과 같은 조건이다.
+ */
+export function rowCountsPerformance(row: {
+  countsPerformance: boolean;
+  categoryName: string | null;
+}): boolean {
+  return row.countsPerformance && row.categoryName !== null;
+}
+
 /** 전표 하나가 "수입"에 보태는 금액 */
 export function incomeAmountOf(entry: EntryListItem): number {
   return entry.kind === 'income' ? toNumber(entry.amount) : 0;

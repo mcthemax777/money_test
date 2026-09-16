@@ -291,6 +291,8 @@ export class AccountsService {
             date: true,
             description: true,
             merchant: true,
+            // 카드 상세의 실적 탭이 줄을 거르는 데 쓴다.
+            countsPerformance: true,
             /*
              * 같은 전표의 다리들. 설명이 빈 줄에 적을 분류를 여기서 고른다.
              *
@@ -353,6 +355,7 @@ export class AccountsService {
           cardName: posting.card?.name ?? null,
           categoryName: category?.name ?? null,
           parentCategoryName: category?.parent?.name ?? null,
+          countsPerformance: posting.entry.countsPerformance,
         };
       })
       .reverse();

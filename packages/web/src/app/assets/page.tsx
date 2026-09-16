@@ -73,7 +73,7 @@ import { useTranslation } from '@money/core/lib/i18n';
 import { apiErrorCode, useApiError } from '@money/core/lib/api-error';
 import { useAccountLedger } from '@money/core/hooks/useAccountLedger';
 import { useCardEntries } from '@money/core/hooks/useCardEntries';
-import { categoryTitleOf } from '@money/core/lib/entries';
+import { categoryTitleOf, rowCountsPerformance } from '@money/core/lib/entries';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 
@@ -843,6 +843,17 @@ export default function DashboardPage() {
    */
   const cardPayments = selectedCard?.liabilityAccountId ? cardLedger : debitLedger;
 
+  /*
+   * 카드 상세를 두 탭으로 가른다. 실적과 결제대금은 다른 질문이다.
+   *
+   *   결제대금  얼마를 갚아야 하나. 실적에서 뺀 결제까지 전부 센다.
+   *   실적      혜택을 받을 만큼 썼나. 뺀 결제는 그래프에도 내역에도 없다.
+   *
+   * 한 화면에 나란히 두면 같은 축의 막대 둘이 서로 다른 숫자를 말해, 어느 쪽을 보고
+   * 있는지가 흐려진다. 기본은 결제대금이다 -- 카드를 열어 먼저 묻는 것이 그쪽이다.
+   */
+  const [cardTab, setCardTab] = useState<'billed' | 'performance'>('billed');
+
   const getAccountCards = (accountId: string) =>
     cards.filter((c) => c.paymentAccountId === accountId);
 
@@ -1430,8 +1441,38 @@ export default function DashboardPage() {
                 )}
               </AssetDetailHeader>
 
-              {/* 실적은 카드 종류를 가리지 않는다. 세는 구간만 다르다. */}
-              <CardPerformancePanel cardId={selectedCard.id} reloadToken={entryVersion} />
+              <div
+                role="tablist"
+                aria-label={t('assets.cardLedger')}
+                className="mt-4 flex gap-1 rounded-lg bg-gray-100 p-1"
+              >
+                {(
+                  [
+                    { id: 'billed', labelKey: 'settlement.tabBilled' },
+                    { id: 'performance', labelKey: 'settlement.tabPerformance' },
+                  ] as const
+                ).map((tab) => (
+                  <button
+                    key={tab.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={cardTab === tab.id}
+                    onClick={() => setCardTab(tab.id)}
+                    className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition ${
+                      cardTab === tab.id
+                        ? 'bg-white text-blue-600 shadow-sm'
+                        : 'text-gray-600 hover:text-gray-900'
+                    }`}
+                  >
+                    {t(tab.labelKey)}
+                  </button>
+                ))}
+              </div>
+
+              {/* 실적 진행률은 실적 탭의 것이다. 세는 구간은 카드 종류가 정한다. */}
+              {cardTab === 'performance' && (
+                <CardPerformancePanel cardId={selectedCard.id} reloadToken={entryVersion} />
+              )}
 
               <div className="pt-4 border-t">
                 <CardSettlementPanel
@@ -1441,6 +1482,7 @@ export default function DashboardPage() {
                   }
                   reloadToken={entryVersion}
                   onChange={refreshAfterCardChange}
+                  measure={cardTab}
                 />
               </div>
 
@@ -1455,8 +1497,16 @@ export default function DashboardPage() {
               */}
               <div className="pt-4 border-t space-y-3">
                 <h3 className="text-sm font-medium text-gray-700">{t('assets.cardLedger')}</h3>
+                {/* 실적 탭에서는 그 그래프를 이룬 줄만 보인다. 대금 결제와 뺀 결제는 빠진다. */}
+                {cardTab === 'performance' && (
+                  <p className="text-xs text-gray-500">{t('settlement.performanceLedgerHint')}</p>
+                )}
                 <LedgerList
-                  rows={cardPayments.rows}
+                  rows={
+                    cardTab === 'performance'
+                      ? cardPayments.rows.filter(rowCountsPerformance)
+                      : cardPayments.rows
+                  }
                   /*
                     통화가 갈린다. 신용카드 줄은 부채 계정의 원장이라 그 계정의 통화로
                     적혀 있지만, 체크카드 줄은 전표 목록에서 온 것이라 표시 통화로

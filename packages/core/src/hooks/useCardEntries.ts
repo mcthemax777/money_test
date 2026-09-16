@@ -42,6 +42,7 @@ function toLedgerRow(entry: EntryListItem): LedgerLikeRow {
     cardName: entry.cardName,
     categoryName: entry.categoryName,
     parentCategoryName: entry.parentCategoryName,
+    countsPerformance: entry.countsPerformance,
   };
 }
 

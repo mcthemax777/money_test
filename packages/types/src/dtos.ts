@@ -172,6 +172,13 @@ export namespace AccountDto {
      */
     categoryName: string | null;
     parentCategoryName: string | null;
+    /**
+     * 이 거래를 카드 실적에 세는가. 카드 상세의 실적 탭이 줄을 거르는 데 쓴다.
+     *
+     * 이 값만으로는 모자란다 -- 대금 결제도 true 로 오지만 실적에 들지 않는다.
+     * 가르는 규칙은 `rowCountsPerformance` 한 곳에 있다.
+     */
+    countsPerformance: boolean;
   }
 
   export type LedgerResponse = CursorPage<LedgerRow>;
@@ -273,8 +280,20 @@ export namespace CardDto {
     dueDate?: IsoDateString;
     /** 마감일이 지났으면 true. 진행 중인 주기는 금액이 더 늘 수 있다. */
     closed: boolean;
-    /** 이 주기에 청구되는 사용액. 할부는 회차분만 들어간다. */
+    /**
+     * 이 주기의 **실적** 사용액. 할부는 회차분만 들어간다.
+     *
+     * 실적에서 뺀 거래(`countsPerformance` 가 꺼진 것)는 여기 들지 않는다. 카드사가
+     * 혜택을 정할 때 세는 값이 이것이다.
+     */
     usage: string;
+    /**
+     * 이 주기에 **청구되는** 금액. 실적에서 뺀 거래까지 전부 들어간다.
+     *
+     * `usage` 와 다른 값이다. 세금·공과금처럼 청구는 되지만 실적에서 빠지는 결제가
+     * 있어, 둘을 한 값으로 두면 그래프가 남은 대금과 어긋난다.
+     */
+    billed: string;
   }
 
   /**

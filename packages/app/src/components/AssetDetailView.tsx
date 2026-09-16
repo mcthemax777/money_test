@@ -14,7 +14,7 @@ import { useCardEntries } from '@money/core/hooks/useCardEntries';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { accountTypeLabel } from '@money/core/lib/account-type';
 import { formatDate } from '@money/core/lib/datetime';
-import { categoryTitleOf } from '@money/core/lib/entries';
+import { categoryTitleOf, rowCountsPerformance } from '@money/core/lib/entries';
 import { apiClient } from '@money/core/lib/api-client';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
@@ -30,6 +30,7 @@ import AssetHistoryChart from './AssetHistoryChart';
 import CardPerformancePanel from './CardPerformancePanel';
 import CardSettlementPanel from './CardSettlementPanel';
 import CardUsageChart from './CardUsageChart';
+import SegmentedTabs from './SegmentedTabs';
 import PageHeader from './PageHeader';
 import PendingRatePanel from './PendingRatePanel';
 
@@ -264,6 +265,17 @@ function CardCharts({
 
   const isCredit = card.cardType === 'credit';
 
+  /*
+   * 카드 상세를 두 탭으로 가른다. 실적과 결제대금은 다른 질문이다.
+   *
+   *   결제대금  얼마를 갚아야 하나. 실적에서 뺀 결제까지 전부 센다.
+   *   실적      혜택을 받을 만큼 썼나. 뺀 결제는 그래프에도 내역에도 없다.
+   *
+   * 한 화면에 나란히 두었더니 같은 축의 막대 둘이 서로 다른 숫자를 말해, 어느 쪽을
+   * 보고 있는지가 흐려졌다. 기본은 결제대금이다 -- 카드를 열어 먼저 묻는 것이 그쪽이다.
+   */
+  const [tab, setTab] = useState<'billed' | 'performance'>('billed');
+
   return (
     /*
       상자를 둘로 나눈다. 위는 이 카드를 얼마나 썼고 얼마를 갚아야 하는가이고,
@@ -273,11 +285,28 @@ function CardCharts({
     */
     <>
       <View className="gap-4 rounded-lg bg-white p-4 shadow-sm">
-        <CardPerformancePanel cardId={card.id} />
+        <SegmentedTabs
+          tabs={[
+            { id: 'billed', label: t('settlement.tabBilled') },
+            { id: 'performance', label: t('settlement.tabPerformance') },
+          ]}
+          selected={tab}
+          onSelect={setTab}
+        />
+
+        {tab === 'performance' ? <CardPerformancePanel cardId={card.id} /> : null}
 
         <View>
           <Text className="mb-2 text-sm font-medium text-gray-700">
-            {t(isCredit ? 'settlement.usageByStatement' : 'settlement.usageByMonth')}
+            {t(
+              tab === 'performance'
+                ? isCredit
+                  ? 'settlement.performanceByStatement'
+                  : 'settlement.performanceByMonth'
+                : isCredit
+                  ? 'settlement.billedByStatement'
+                  : 'settlement.billedByMonth',
+            )}
           </Text>
 
           {error ? (
@@ -285,13 +314,23 @@ function CardCharts({
           ) : !usage ? (
             <Text className="text-sm text-gray-600">{t('settlement.loading')}</Text>
           ) : (
+            /*
+              기준선은 실적에만 긋는다. 실적 기준은 청구액에 대고 재는 값이 아니다.
+              탭을 바꾸면 그래프도 새로 서야 해서 key 로 갈아 끼운다(끌어 둔 창까지).
+            */
             <CardUsageChart
+              key={tab}
               periods={usage.periods}
               currency={usage.currency}
-              target={target}
+              target={tab === 'performance' ? target : null}
               cardId={card.id}
+              measure={tab === 'performance' ? 'performance' : 'billed'}
             />
           )}
+
+          {tab === 'billed' ? (
+            <Text className="mt-1 text-xs text-gray-500">{t('settlement.billedHint')}</Text>
+          ) : null}
         </View>
 
         {/*
@@ -301,7 +340,7 @@ function CardCharts({
           사용액 그래프 아래에 둔다. 카드를 열었을 때 먼저 보는 것은 얼마를 썼나이고,
           대금은 그 뒤에 하는 일이다 (웹과 같은 차례다).
         */}
-        {isCredit ? (
+        {isCredit && tab === 'billed' ? (
           <CardSettlementPanel
             card={card}
             paymentAccountOwnerId={paymentAccountOwnerId}
@@ -320,7 +359,7 @@ function CardCharts({
           추정 환율로 들어간 건이 남아 있으면 남은 대금이 명세서와 어긋나므로, 그
           건들을 여기 모아 한 번에 맞춘다. 확정할 것이 없으면 아무것도 그리지 않는다.
         */}
-        {isCredit ? (
+        {isCredit && tab === 'billed' ? (
           <PendingRatePanel
             cardId={card.id}
             onSettled={async () => {
@@ -344,6 +383,10 @@ function CardCharts({
       */}
       <View className="gap-2 rounded-lg bg-white p-4 shadow-sm">
         <Text className="text-sm font-medium text-gray-700">{t('assets.cardLedger')}</Text>
+        {/* 실적 탭에서는 그 그래프를 이룬 줄만 보인다. 대금 결제와 뺀 결제는 빠진다. */}
+        {tab === 'performance' ? (
+          <Text className="text-xs text-gray-500">{t('settlement.performanceLedgerHint')}</Text>
+        ) : null}
         {isCredit ? (
           <AccountLedgerList
             accountId={card.liabilityAccountId}
@@ -351,9 +394,14 @@ function CardCharts({
             kind="liability"
             reloadToken={ledgerVersion}
             onOpenEntry={onOpenEntry}
+            onlyPerformance={tab === 'performance'}
           />
         ) : (
-          <CardEntryList cardId={card.id} onOpenEntry={onOpenEntry} />
+          <CardEntryList
+            cardId={card.id}
+            onOpenEntry={onOpenEntry}
+            onlyPerformance={tab === 'performance'}
+          />
         )}
       </View>
     </>
@@ -372,6 +420,7 @@ function AccountLedgerList({
   kind,
   reloadToken = 0,
   onOpenEntry,
+  onlyPerformance = false,
 }: {
   /** 신용카드는 그 카드의 부채 계정 id 다. */
   accountId: string | null;
@@ -382,13 +431,21 @@ function AccountLedgerList({
   /** 부르는 자리에서 다시 읽게 하는 값. 대금을 기록하면 카드 쪽이 올린다. */
   reloadToken?: number;
   onOpenEntry?: (entryId: string) => void;
+  /** 실적에 드는 줄만 보일지. 카드 상세의 실적 탭이 켠다. */
+  onlyPerformance?: boolean;
 }) {
   // 남이 적은 거래도 들어와야 한다. 사본이 바뀌면 다시 읽는다 (웹은 0에 머문다).
   const mirrorVersion = useMirrorVersion();
   const ledger = useAccountLedger(accountId, mirrorVersion + reloadToken);
 
   return (
-    <LedgerRows ledger={ledger} currency={currency} kind={kind} onOpenEntry={onOpenEntry} />
+    <LedgerRows
+      ledger={ledger}
+      currency={currency}
+      kind={kind}
+      onOpenEntry={onOpenEntry}
+      onlyPerformance={onlyPerformance}
+    />
   );
 }
 
@@ -402,9 +459,12 @@ function AccountLedgerList({
 function CardEntryList({
   cardId,
   onOpenEntry,
+  onlyPerformance = false,
 }: {
   cardId: string;
   onOpenEntry?: (entryId: string) => void;
+  /** 실적에 드는 줄만 보일지. 카드 상세의 실적 탭이 켠다. */
+  onlyPerformance?: boolean;
 }) {
   const selectedProjectId = useProject((state) => state.selectedProjectId);
   /*
@@ -422,6 +482,7 @@ function CardEntryList({
       currency={displayCurrency}
       kind="liability"
       onOpenEntry={onOpenEntry}
+      onlyPerformance={onlyPerformance}
     />
   );
 }
@@ -437,6 +498,7 @@ function LedgerRows({
   currency,
   kind,
   onOpenEntry,
+  onlyPerformance = false,
 }: {
   ledger: {
     rows: LedgerLikeRow[];
@@ -451,10 +513,19 @@ function LedgerRows({
   kind: 'asset' | 'liability';
   /** 주면 줄을 눌러 그 거래의 상세를 연다. 없으면 읽기만 하는 목록이다. */
   onOpenEntry?: (entryId: string) => void;
+  /**
+   * 실적에 드는 줄만 보일지.
+   *
+   * 받아 둔 쪽에서 거른다. 서버에 따로 묻지 않는 것은 한 쪽이 100줄이라 걸러 내도
+   * 화면에 남는 양이 크게 다르지 않아서다 -- 대신 "더 보기"가 한 번에 가져오는 줄 수는
+   * 탭마다 달라진다.
+   */
+  onlyPerformance?: boolean;
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
-  const { rows, hasMore, isLoading, hasError, loadMore } = ledger;
+  const { hasMore, isLoading, hasError, loadMore } = ledger;
+  const rows = onlyPerformance ? ledger.rows.filter(rowCountsPerformance) : ledger.rows;
 
   const isCard = kind === 'liability';
 
