@@ -5,13 +5,13 @@
  * 잇는다. 다른 것은 줄에 붙는 값이다. 남은 대금 자리에 **그 주기에 지금까지 쌓인 실적**이
  * 든다.
  *
- * 누적을 기기에서 세지 않는다. 화면에 올라온 줄만으로 더하면 아직 받지 않은 앞부분이
- * 빠진 값이 나온다 -- 서버가 주기를 통째로 세어 줄마다 붙여 준다.
+ * 누적을 화면에서 세지 않는다. 올라온 줄만으로 더하면 아직 받지 않은 앞부분이 빠진 값이
+ * 나온다 -- 창구가 주기를 통째로 세어 줄마다 붙여 준다(웹은 서버가, 앱은 기기 사본이).
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CardDto } from '@money/types';
 
-import { apiClient } from '../lib/api-client';
+import { homeDataPort } from '../data/home-port';
 
 /** 한 번에 받아 오는 줄 수. 통장·카드 원장이 쓰는 값과 같다. */
 const PAGE_SIZE = 20;
@@ -42,7 +42,7 @@ export function useCardPerformanceLedger(cardId: string | null, reloadToken = 0)
       setIsLoading(true);
       setHasError(false);
 
-      const page = await apiClient.getCardPerformanceLedger(id, {
+      const page = await homeDataPort().getCardPerformanceLedger(id, {
         limit: PAGE_SIZE,
         ...(after ? { cursor: after } : {}),
       });

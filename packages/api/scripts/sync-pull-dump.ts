@@ -224,6 +224,20 @@ runSmoke('sync-pull-dump', async (ctx) => {
      */
     cardPerformance: await cardLedger.getPerformance(credit.id, uid),
     /*
+     * 자산 상세가 쓰는 셋. 사본 창구가 같은 숫자를 내야 카드·통장 상세가 오프라인에서 돈다.
+     *
+     * 실적은 위와 같은 까닭으로 "지금"에 매인다 -- 마감일이 지나가면 다시 떠서 돌린다.
+     */
+    accountLedger: await accounts.getAccountPostings(bank.id, uid, { limit: 20 }),
+    cardLedger: await accounts.getAccountPostings(credit.liabilityAccountId!, uid, { limit: 20 }),
+    cardUsage: await cardLedger.getUsage(credit.id, uid),
+    performanceLedger: await cardLedger.getPerformanceLedger(credit.id, uid, { limit: 20 }),
+    /** 잔액은 다리 합이다. 사본이 세어 낸 값과 견준다. */
+    accountBalances: Object.fromEntries(
+      (await accounts.getAccounts(uid, pid, true)).map((row) => [row.id, row.balance]),
+    ),
+    liabilityAccountId: credit.liabilityAccountId!,
+    /*
      * 거래 화면이 쓰는 셋. 사본 창구가 같은 숫자를 내야 그 화면이 오프라인에서 돈다.
      *
      * 검색은 **한 무리에 하나씩** 골라 둔다. 그래야 무리끼리 AND 로 이어지는지가

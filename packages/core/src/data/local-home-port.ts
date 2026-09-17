@@ -22,19 +22,27 @@ import {
   type ReportDto,
   categoryBreakdown,
   categoryUsage,
+  creditPerformanceShares,
   creditUsagePeriods,
   currencyDecimals,
+  debitPerformanceShares,
   debitUsagePeriods,
   entryMonths,
   isBudgetApplicable,
   netWorth,
+  closingMonthKey,
+  closingMonthOf,
   parseEntrySearch,
   paymentMethods,
   performanceOf,
+  periodForClosingMonth,
+  usageSpan,
   summarize,
   toListItem,
   totalUsage,
   zonedDateKey,
+  zonedParts,
+  zonedYearMonth,
   fallbackRate,
 } from '@money/types';
 
@@ -471,6 +479,249 @@ export function createLocalHomePort(
     },
 
     /**
+     * 주기별 사용액과 남은 대금.
+     *
+     * 실적 막대와 같은 재료로 낸다(`getCardPerformance`). 남은 대금은 부채 계정의 다리
+     * 합을 뒤집은 값이라 서버가 준 잔액 칸을 읽지 않는다 -- 아직 보내지 못한 결제도
+     * 그대로 셈에 든다.
+     */
+    async getCardUsage(cardId, months) {
+      const card = await store.cardForPerformance(cardId);
+      const isCredit = card?.cardType === 'credit';
+      const usable =
+        card &&
+        (!isCredit ||
+          (card.statementClosingDay !== null &&
+            card.paymentDueDay !== null &&
+            card.liabilityAccountId !== null));
+      if (!card || !usable) return fallback.getCardUsage(cardId, months);
+
+      note('cardUsage');
+      const timeZone = await timeZoneOf(store, card.projectId);
+      const span = usageSpan(months);
+
+      if (isCredit) {
+        const { periods } = creditUsagePeriods({
+          postings: await store.creditCardPostings(card.liabilityAccountId!),
+          statementClosingDay: card.statementClosingDay!,
+          paymentDueDay: card.paymentDueDay!,
+          timeZone,
+          span,
+        });
+
+        return {
+          cardId: card.id,
+          currency: card.liabilityCurrency ?? card.paymentCurrency,
+          // 부채는 음수로 쌓인다. 남은 대금은 부호를 뒤집은 값이다.
+          outstanding: Dec.of(card.liabilityBalance ?? '0').negated().toString(),
+          periods,
+        };
+      }
+
+      return {
+        cardId: card.id,
+        currency: card.paymentCurrency,
+        // 체크카드는 결제 즉시 통장에서 빠진다. 갚을 대금이 남지 않는다.
+        outstanding: '0',
+        periods: debitUsagePeriods({
+          postings: await store.debitCardPostings(card.id),
+          timeZone,
+          span,
+        }),
+      };
+    },
+
+    /**
+     * 계좌 원장 한 쪽.
+     *
+     * 줄마다 붙는 잔액은 **가장 오래된 다리부터 더한 값**이다. 서버도 같은 규칙이고
+     * (`cumulativeBalanceThrough`), 계좌 잔액 자체가 그 합이라 마지막 줄의 잔액과
+     * 화면 위의 잔액이 정의상 맞는다.
+     *
+     * 금액은 다리 전부를 읽어 더하고, 화면에 적을 것은 보여 줄 줄에만 붙인다.
+     */
+    async getAccountPostings(accountId, params) {
+      note('accountPostings');
+
+      const limit = Math.min(Math.max(Number(params?.limit) || 50, 1), 200);
+      const amounts = await store.accountPostingAmounts(accountId);
+
+      // 오래된 것부터 더해 줄마다의 잔액을 만든다. 목록은 그 반대로 읽는다.
+      let running = Dec.of(0);
+      const withBalance = amounts.map((row) => {
+        running = running.plus(row.amount);
+        return { ...row, balanceAfter: running.toString() };
+      });
+      withBalance.reverse();
+
+      /*
+       * 커서는 앞 쪽의 마지막 다리 id 다(서버와 같다). 그 줄이 사라졌으면 이어 붙일
+       * 자리를 알 수 없으므로 빈 쪽을 준다 -- 처음부터 다시 주면 같은 줄이 두 번 선다.
+       */
+      const from = params?.cursor
+        ? withBalance.findIndex((row) => row.postingId === params.cursor) + 1
+        : 0;
+      if (params?.cursor && from === 0) return { data: [], nextCursor: null };
+
+      const page = withBalance.slice(from, from + limit);
+      const detail = await store.ledgerRows(page.map((row) => row.postingId));
+
+      const data = page.flatMap((row) => {
+        const found = detail.get(row.postingId);
+        return found ? [{ ...found, balanceAfter: row.balanceAfter }] : [];
+      });
+
+      return {
+        data,
+        nextCursor: from + limit < withBalance.length ? page[page.length - 1].postingId : null,
+      };
+    },
+
+    /**
+     * 실적 원장 한 쪽.
+     *
+     * 주기를 나누고 할부를 쪼개고 차감을 되살리는 규칙은 서버와 같은 함수가 갖는다
+     * (`creditPerformanceShares`). 사본은 그 카드의 다리를 한 번에 읽어 주기마다 줄을
+     * 만든 뒤, 보여 줄 만큼만 잘라 준다 -- 누적은 주기 시작부터 센 값 그대로다.
+     */
+    async getCardPerformanceLedger(cardId, params) {
+      const card = await store.cardForPerformance(cardId);
+      const isCredit = card?.cardType === 'credit';
+      const usable =
+        card &&
+        (!isCredit ||
+          (card.statementClosingDay !== null &&
+            card.paymentDueDay !== null &&
+            card.liabilityAccountId !== null));
+      if (!card || !usable) return fallback.getCardPerformanceLedger(cardId, params);
+
+      note('cardPerformanceLedger');
+      const timeZone = await timeZoneOf(store, card.projectId);
+      const limit = Math.min(Math.max(Number(params?.limit) || 20, 1), 100);
+
+      const postings = await store.cardLedgerPostings(
+        isCredit ? { liabilityAccountId: card.liabilityAccountId } : { cardId: card.id },
+      );
+
+      /** 마감 연월 -> 그 주기의 줄. 오래된 것이 앞이다(누적을 그 차례로 더한다). */
+      const byPeriod = new Map<string, CardDto.PerformanceLedgerRow[]>();
+      for (const posting of postings) {
+        const shares = isCredit
+          ? creditPerformanceShares(posting, card.statementClosingDay!, timeZone)
+          : debitPerformanceShares(posting, timeZone);
+
+        for (const share of shares) {
+          const rows = byPeriod.get(share.closingKey) ?? [];
+          rows.push({
+            key: share.months > 1 ? `${posting.postingId}:${share.index}` : posting.postingId,
+            entryId: posting.entryId,
+            date: posting.date,
+            description: posting.description,
+            merchant: posting.merchant,
+            // 계좌 원장과 같은 부호 규칙이다. 사용이 음수라 화면이 뒤집어 읽는다.
+            amount: Dec.of(share.amount).negated().toString(),
+            performanceAfter: '0',
+            periodStart: '',
+            cardId: card.id,
+            cardName: null,
+            categoryName: posting.categoryName,
+            parentCategoryName: posting.parentCategoryName,
+            installmentIndex: share.index,
+            installmentMonths: share.months,
+          });
+          byPeriod.set(share.closingKey, rows);
+        }
+      }
+
+      const today = zonedParts(new Date(), timeZone);
+      const todayMarker = Date.UTC(today.year, today.month - 1, today.day);
+
+      const periods: CardDto.PerformanceLedgerPeriod[] = [];
+      const rows: CardDto.PerformanceLedgerRow[] = [];
+      /** 주기 시작 -> 마감 연월. 커서에 그 키를 실어 서버와 같은 모양을 쓴다. */
+      const closingOf = new Map<string, string>();
+
+      /*
+       * 진행 중인 주기까지만 본다. 키가 "YYYY-MM" 이라 글자 차례가 곧 시간 차례다.
+       *
+       * 할부는 뒤 주기로 넘어가므로 아직 오지 않은 주기에도 회차가 놓인다. 그 주기는
+       * 쌓인 것이 없는 자리라 목록에 세우지 않는다 (서버도 같은 자리에서 멈춘다).
+       */
+      const currentKey = isCredit
+        ? closingMonthKey(
+            closingMonthOf(new Date(), card.statementClosingDay!, timeZone),
+          )
+        : zonedYearMonth(new Date(), timeZone);
+
+      for (const key of [...byPeriod.keys()]
+        .filter((key) => key <= currentKey)
+        .sort()
+        .reverse()) {
+        const [year, month] = key.split('-').map(Number);
+        const span = isCredit
+          ? periodForClosingMonth(year, month, card.statementClosingDay!, card.paymentDueDay!)
+          : {
+              // 달력 월 표시자. 청구 주기 쪽과 같은 형태다 (그 달 1일 ~ 말일).
+              periodStart: new Date(Date.UTC(year, month - 1, 1)),
+              periodEnd: new Date(Date.UTC(year, month, 0)),
+            };
+        const periodStart = span.periodStart.toISOString();
+        closingOf.set(periodStart, key);
+
+        // 누적은 가장 오래된 줄부터 더하고, 보여 주는 차례는 그 반대다.
+        let running = Dec.of(0);
+        const filled = (byPeriod.get(key) ?? []).map((row) => {
+          running = running.plus(Dec.of(row.amount).negated());
+          return { ...row, periodStart, performanceAfter: running.toString() };
+        });
+        filled.reverse();
+
+        periods.push({
+          periodStart,
+          periodEnd: span.periodEnd.toISOString(),
+          closed: span.periodEnd.getTime() < todayMarker,
+          total: running.toString(),
+        });
+        rows.push(...filled);
+      }
+
+      /*
+       * 커서는 "주기|줄키" 다(서버와 같다). 그 줄 다음부터 limit 만큼 준다.
+       * 사라진 줄을 가리키면 빈 쪽을 준다 -- 처음부터 주면 같은 줄이 두 번 선다.
+       */
+      const cursorKey = params?.cursor?.split('|').slice(1).join('|');
+      const from = cursorKey ? rows.findIndex((row) => row.key === cursorKey) + 1 : 0;
+      if (params?.cursor && from === 0) {
+        return {
+          cardId: card.id,
+          currency: isCredit ? card.liabilityCurrency ?? card.paymentCurrency : card.paymentCurrency,
+          basis: isCredit ? 'statement' : 'month',
+          target: card.performanceAmount,
+          periods: [],
+          rows: [],
+          nextCursor: null,
+        };
+      }
+
+      const page = rows.slice(from, from + limit);
+      const shown = new Set(page.map((row) => row.periodStart));
+      const last = page[page.length - 1];
+
+      return {
+        cardId: card.id,
+        currency: isCredit ? card.liabilityCurrency ?? card.paymentCurrency : card.paymentCurrency,
+        basis: isCredit ? 'statement' : 'month',
+        target: card.performanceAmount,
+        periods: periods.filter((period) => shown.has(period.periodStart)),
+        rows: page,
+        nextCursor:
+          from + limit < rows.length && last
+            ? `${closingOf.get(last.periodStart) ?? ''}|${last.key}`
+            : null,
+      };
+    },
+
+    /**
      * 그 구간의 거래 목록.
      *
      * 목록 API 는 인스턴트(startDate·endDate)를 받지만 사본은 달력 키로 고른다.
@@ -542,6 +793,8 @@ export function createLocalHomePort(
         yearMonth: query.yearMonth,
         ownerIds: ownerIdsOf(query),
         search: parseEntrySearch(query),
+        // 카드 상세의 결제 내역이 이 조건으로 그 카드의 거래만 받는다.
+        cardId: query.cardId,
         limit,
         cursor: decodeCursor(query.cursor),
       });

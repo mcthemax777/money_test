@@ -142,6 +142,35 @@ export interface HeldMutation extends Mutation {
   targetMissing: boolean;
 }
 
+/**
+ * 실적 원장 한 줄의 재료. 주기별 사용액이 보는 값에 화면에 적을 것이 붙었다.
+ *
+ * 서버의 `performanceLedgerEntrySelect` 와 같은 자리다.
+ */
+export interface StoredCardLedgerPosting extends StoredCardPosting {
+  postingId: string;
+  entryId: string;
+  description: string;
+  merchant: string | null;
+  categoryName: string | null;
+  parentCategoryName: string | null;
+}
+
+/** 계좌 원장 한 줄의 재료. 잔액 누적은 읽는 쪽이 붙인다. */
+export interface StoredLedgerRow {
+  postingId: string;
+  entryId: string;
+  date: string;
+  description: string;
+  merchant: string | null;
+  amount: string;
+  cardId: string | null;
+  cardName: string | null;
+  categoryName: string | null;
+  parentCategoryName: string | null;
+  countsPerformance: boolean;
+}
+
 /** 주기별 사용액이 보는 다리 하나. */
 export interface StoredCardPosting {
   amount: string;
@@ -222,6 +251,20 @@ const toMutation = (row: Row, clientId: string): Mutation => ({
   targets: JSON.parse(String(row.targets)) as string[],
   payload: JSON.parse(String(row.payload)) as unknown,
 });
+
+/**
+ * 세기 전에 깔아 두는 값. **서버가 아직 모르는 계좌의 기초 잔액**이다.
+ *
+ * 기기에서 통장을 만들면 기초 잔액이 잔액 칸에만 적힌다 -- 그것을 전표로 만드는 일은
+ * 서버가 명령을 재생할 때 한다. 그래서 그 전표가 돌아오기 전까지는 다리를 세어도 0 이고,
+ * 방금 "50,000원으로 개설"한 통장이 0원으로 보인다.
+ *
+ * 서버가 아는 줄(번호가 붙은 줄)에는 깔지 않는다. 그때는 기초 잔액이 이미 다리로 들어와
+ * 있어, 함께 세면 두 번 센다.
+ */
+function openingSeed(row: Row): Dec {
+  return asInt(row.updatedVersion) === 0 ? Dec.of(asMoney(row.balance)) : Dec.of(0);
+}
 
 const toCardPosting = (row: Row): StoredCardPosting => ({
   amount: asMoney(row.amount),
@@ -882,15 +925,19 @@ export class LocalStore {
   }
 
   async accounts(projectId: string): Promise<StoredAccount[]> {
-    const rows = await this.db.all<Row>(
-      `SELECT a.id, a.ownerId, p.name AS ownerName, a.type, a.name, a.currency,
-              a.balance, a.isActive, a.sortRank
-         FROM account a
-         LEFT JOIN person p ON p.id = a.ownerId
-        WHERE a.projectId = ?
-        ORDER BY a.sortRank, a.name`,
-      [projectId],
-    );
+    const [rows, balances] = await Promise.all([
+      this.db.all<Row>(
+        `SELECT a.id, a.ownerId, p.name AS ownerName, a.type, a.name, a.currency,
+                a.isActive, a.sortRank
+           FROM account a
+           LEFT JOIN person p ON p.id = a.ownerId
+          WHERE a.projectId = ?
+          ORDER BY a.sortRank, a.name`,
+        [projectId],
+      ),
+      this.accountBalances(projectId),
+    ]);
+
     return rows.map((row) => ({
       id: String(row.id),
       ownerId: asText(row.ownerId),
@@ -898,19 +945,72 @@ export class LocalStore {
       type: String(row.type),
       name: String(row.name),
       currency: String(row.currency),
-      balance: asMoney(row.balance),
+      balance: balances.get(String(row.id)) ?? '0',
       isActive: Boolean(row.isActive),
       sortRank: String(row.sortRank),
     }));
   }
 
   /**
+   * 계좌마다 지금 잔액. **서버가 준 `account.balance` 칸을 읽지 않고 다리를 더한다.**
+   *
+   * 잔액은 그 계좌에 걸린 다리 금액의 합이고, 서버의 그 칸은 쓸 때마다 증분으로
+   * 움직이는 캐시다(api 의 `check-balances` 가 그 정의를 지킨다). 사본에는 다리가 전부
+   * 있으므로 기기도 같은 값을 낼 수 있다.
+   *
+   * 세는 쪽을 고른 까닭은 **아직 보내지 못한 거래**다. 오프라인에서 적은 전표는 사본의
+   * 다리로 들어가지만 서버의 캐시에는 없어, 그 칸을 읽으면 화면 위의 잔액과 원장 줄의
+   * 누적 잔액이 그 금액만큼 벌어진다. 세면 둘이 정의상 맞는다.
+   *
+   * 더하는 일은 SQL 이 아니라 Dec 가 한다 (`bookValues` 와 같은 까닭이다 -- SQLite 의
+   * SUM 은 REAL 로 되돌려 원 단위가 어긋난다).
+   */
+  async accountBalances(projectId: string): Promise<Map<string, string>> {
+    const [seeds, rows] = await Promise.all([
+      this.db.all<Row>(
+        `SELECT a.id, a.balance, a.updatedVersion FROM account a WHERE a.projectId = ?`,
+        [projectId],
+      ),
+      this.db.all<Row>(
+        `SELECT p.accountId, p.amount
+           FROM posting p
+           JOIN account a ON a.id = p.accountId
+          WHERE a.projectId = ?`,
+        [projectId],
+      ),
+    ]);
+
+    const totals = new Map<string, Dec>(
+      seeds.map((row) => [String(row.id), openingSeed(row)]),
+    );
+    for (const row of rows) {
+      const id = String(row.accountId);
+      totals.set(id, (totals.get(id) ?? Dec.of(0)).plus(asMoney(row.amount)));
+    }
+    return new Map([...totals].map(([id, total]) => [id, total.toString()]));
+  }
+
+  /** 계좌 하나의 잔액. 카드 상세처럼 한 계좌만 볼 때 쓴다. */
+  async accountBalance(accountId: string): Promise<string> {
+    const [seeds, rows] = await Promise.all([
+      this.db.all<Row>(
+        `SELECT a.id, a.balance, a.updatedVersion FROM account a WHERE a.id = ?`,
+        [accountId],
+      ),
+      this.db.all<Row>(`SELECT p.amount FROM posting p WHERE p.accountId = ?`, [accountId]),
+    ]);
+
+    let total = seeds[0] ? openingSeed(seeds[0]) : Dec.of(0);
+    for (const row of rows) total = total.plus(asMoney(row.amount));
+    return total.toString();
+  }
+
+  /**
    * 순자산 계산에 넣을 계좌들.
    *
-   * 시가와 장부가는 아직 담지 않는다. 평가액(AssetValuation)이 변경 피드에 없고
-   * 장부가는 전 기간의 다리 합계라 최근 몇 달만 담은 사본으로는 낼 수 없다.
-   * 그래서 오프라인 순자산은 투자 계좌를 장부 잔액으로 세고 미실현 손익은 0이 된다.
-   * 온라인에서 본 값과 다를 수 있는 자리라, 화면이 그 차이를 감추지 않아야 한다.
+   * 시가는 평가 기록에서, 장부가는 다리 합에서 낸다. 둘 다 사본에 있다 -- 평가액은
+   * 변경 피드로 함께 오고(`assetValuations`), 전표는 날짜로 자르지 않고 전부 받는다.
+   * 평가 기록이 없는 계좌는 순자산 함수가 장부 잔액으로 되돌아간다.
    */
   async netWorthRows(projectId: string): Promise<NetWorthAccountRow[]> {
     const rows = (await this.accounts(projectId)).filter((row) => row.isActive);
@@ -1430,14 +1530,17 @@ export class LocalStore {
    * 체크카드는 빚이 생기지 않으므로 null 이다.
    */
   async cardRows(projectId: string): Promise<CardDto.Response[]> {
-    const rows = await this.db.all<Row>(
-      `SELECT c.*, liability.balance AS liabilityBalance
-         FROM card c
-         LEFT JOIN account liability ON liability.id = c.liabilityAccountId
-        WHERE c.projectId = ?
-        ORDER BY c.sortRank, c.createdAt`,
-      [projectId],
-    );
+    // 부채 잔액도 다리를 세어 낸다 (`accountBalances` 의 까닭과 같다).
+    const [rows, balances] = await Promise.all([
+      this.db.all<Row>(
+        `SELECT c.*
+           FROM card c
+          WHERE c.projectId = ?
+          ORDER BY c.sortRank, c.createdAt`,
+        [projectId],
+      ),
+      this.accountBalances(projectId),
+    ]);
 
     return rows.map((row) => ({
       id: String(row.id),
@@ -1458,10 +1561,11 @@ export class LocalStore {
       createdAt: String(row.createdAt),
       updatedAt: String(row.updatedAt),
       sortRank: String(row.sortRank),
-      currentUsage:
-        row.liabilityBalance == null
-          ? null
-          : Dec.of(asMoney(row.liabilityBalance)).negated().toString(),
+      currentUsage: row.liabilityAccountId
+        ? Dec.of(balances.get(String(row.liabilityAccountId)) ?? '0')
+            .negated()
+            .toString()
+        : null,
     }) as unknown as CardDto.Response);
   }
 
@@ -1728,6 +1832,7 @@ export class LocalStore {
     const owner = ownerFilter(options.ownerIds);
     const search = searchFilter(options.search);
     const period = periodFilter(options);
+    const card = cardFilter(options.cardId);
     const cursor = options.cursor;
     // 튜플 비교. (date, id) < (커서의 date, 커서의 id)
     const keyset = cursor ? ` AND (e.date < ? OR (e.date = ? AND e.id < ?))` : '';
@@ -1735,7 +1840,7 @@ export class LocalStore {
 
     const rows = await this.db.all<Row>(
       `SELECT e.id FROM entry e
-        WHERE e.projectId = ?${period.sql}${owner.sql}${search.sql}${keyset}
+        WHERE e.projectId = ?${period.sql}${owner.sql}${search.sql}${card.sql}${keyset}
         ORDER BY e.date DESC, e.id DESC
         LIMIT ?`,
       [
@@ -1743,6 +1848,7 @@ export class LocalStore {
         ...period.params,
         ...owner.params,
         ...search.params,
+        ...card.params,
         ...keysetParams,
         options.limit + 1,
       ],
@@ -1802,8 +1908,8 @@ export class LocalStore {
    * 갈리지 않는다.
    *
    * 잔액(account.balance)은 건드리지 않는다. 파생값이라 동기화하지 않기로 했고(D7),
-   * 기기가 여기서 증분을 더하면 서버 값이 도착할 때 드리프트가 남는다. 화면이 "아직
-   * 보내지 못한 명령의 증분"을 따로 얹는 것이 그 자리다.
+   * 기기가 여기서 증분을 더하면 서버 값이 도착할 때 드리프트가 남는다. 읽는 쪽이 그때그때
+   * 다리를 세는 것이 그 자리다 (`accountBalances`) -- 세는 값에는 드리프트가 남지 않는다.
    */
   async writeEntry(
     entryId: string,
@@ -2700,7 +2806,7 @@ export class LocalStore {
       `SELECT c.id, c.projectId, c.cardType, c.statementClosingDay, c.paymentDueDay,
               c.performanceAmount, c.liabilityAccountId,
               pay.currency AS paymentCurrency,
-              liability.currency AS liabilityCurrency, liability.balance AS liabilityBalance
+              liability.currency AS liabilityCurrency
          FROM card c
          LEFT JOIN account pay ON pay.id = c.paymentAccountId
          LEFT JOIN account liability ON liability.id = c.liabilityAccountId
@@ -2721,7 +2827,10 @@ export class LocalStore {
       liabilityAccountId: asText(row.liabilityAccountId),
       paymentCurrency: asText(row.paymentCurrency) ?? 'KRW',
       liabilityCurrency: asText(row.liabilityCurrency),
-      liabilityBalance: asText(row.liabilityBalance),
+      // 남은 대금도 다리를 세어 낸다. 부채 계정이 없는 체크카드는 셀 것이 없다.
+      liabilityBalance: row.liabilityAccountId
+        ? await this.accountBalance(String(row.liabilityAccountId))
+        : null,
     };
   }
 
@@ -2772,6 +2881,132 @@ export class LocalStore {
       [cardId],
     );
     return rows.map(toCardPosting);
+  }
+
+  /**
+   * 실적 원장의 재료. 주기별 사용액이 읽는 다리에 화면에 적을 것을 붙여 준다.
+   *
+   * 신용카드는 부채 계정의 다리를, 체크카드는 그 카드가 찍힌 다리를 읽는다. 고르는
+   * 조건은 위의 두 질의와 같아야 한다 -- 실적 표와 그래프가 다른 거래를 세면 목록의
+   * 합과 진행률 막대가 갈린다.
+   */
+  async cardLedgerPostings(input: {
+    liabilityAccountId?: string | null;
+    cardId?: string | null;
+  }): Promise<StoredCardLedgerPosting[]> {
+    const credit = Boolean(input.liabilityAccountId);
+    const rows = await this.db.all<Row>(
+      `SELECT p.id AS postingId, p.amount, e.id AS entryId, e.date, e.description, e.merchant,
+              e.countsPerformance, e.discountAmount, e.discountCountsPerformance,
+              e.originalCurrency,
+              ${credit ? 'ip.totalMonths' : 'NULL AS totalMonths'},
+              cat.name AS categoryName, parent.name AS parentCategoryName
+         FROM posting p
+         JOIN entry e ON e.id = p.entryId
+         ${credit ? 'LEFT JOIN installment_plan ip ON ip.postingId = p.id' : ''}
+         /*
+          * 대표 분류. 형제 다리에 붙어 있어 한 줄만 보아서는 알 수 없다.
+          * 분할이면 첫 다리를 대표로 삼는다 (서버의 ledgerRowCategory 와 같은 규칙).
+          */
+         LEFT JOIN posting cp
+           ON cp.id = (SELECT c.id FROM posting c
+                        WHERE c.entryId = e.id AND c.categoryId IS NOT NULL
+                        ORDER BY c.id LIMIT 1)
+         LEFT JOIN category cat ON cat.id = cp.categoryId
+         LEFT JOIN category parent ON parent.id = cat.parentId
+        WHERE ${credit ? 'p.accountId = ?' : 'p.cardId = ?'}
+          ${credit ? 'AND cp.id IS NOT NULL' : ''}
+        ORDER BY e.date, p.id`,
+      [credit ? String(input.liabilityAccountId) : String(input.cardId)],
+    );
+
+    return rows.map((row) => ({
+      ...toCardPosting(row),
+      postingId: String(row.postingId),
+      entryId: String(row.entryId),
+      description: asText(row.description) ?? '',
+      merchant: asText(row.merchant),
+      categoryName: asText(row.categoryName),
+      parentCategoryName: asText(row.parentCategoryName),
+    }));
+  }
+
+  /**
+   * 한 계좌의 다리 전부. 날짜 오름차순이고 잔액 누적의 바탕이 된다.
+   *
+   * 금액만 읽는다. 화면에 적을 것(설명·분류)은 보여 줄 줄에만 붙이면 되므로 따로
+   * 읽는다 -- 오래된 통장이면 다리가 수천 줄이라 그때마다 다 가져올 까닭이 없다.
+   */
+  async accountPostingAmounts(
+    accountId: string,
+  ): Promise<Array<{ postingId: string; date: string; amount: string }>> {
+    const rows = await this.db.all<Row>(
+      `SELECT p.id AS postingId, e.date, p.amount
+         FROM posting p
+         JOIN entry e ON e.id = p.entryId
+        WHERE p.accountId = ?
+        ORDER BY e.date, p.id`,
+      [accountId],
+    );
+
+    return rows.map((row) => ({
+      postingId: String(row.postingId),
+      date: String(row.date),
+      amount: asMoney(row.amount),
+    }));
+  }
+
+  /** 고른 다리의 화면 값. 원장 한 쪽에 실을 줄만 읽는다. */
+  async ledgerRows(postingIds: string[]): Promise<Map<string, StoredLedgerRow>> {
+    if (postingIds.length === 0) return new Map();
+
+    const marks = postingIds.map(() => '?').join(',');
+    const rows = await this.db.all<Row>(
+      `SELECT p.id AS postingId, p.amount, p.cardId, card.name AS cardName,
+              e.id AS entryId, e.date, e.description, e.merchant, e.countsPerformance,
+              cat.name AS categoryName, parent.name AS parentCategoryName,
+              (SELECT COUNT(*) FROM posting a WHERE a.entryId = e.id AND a.accountId IS NOT NULL)
+                AS accountLegs
+         FROM posting p
+         JOIN entry e ON e.id = p.entryId
+         LEFT JOIN card ON card.id = p.cardId
+         LEFT JOIN posting cp
+           ON cp.id = (SELECT c.id FROM posting c
+                        WHERE c.entryId = e.id AND c.categoryId IS NOT NULL
+                        ORDER BY c.id LIMIT 1)
+         LEFT JOIN category cat ON cat.id = cp.categoryId
+         LEFT JOIN category parent ON parent.id = cat.parentId
+        WHERE p.id IN (${marks})`,
+      postingIds,
+    );
+
+    return new Map(
+      rows.map((row) => {
+        /*
+         * 이체 계열에는 대표 분류를 달지 않는다. 계좌 다리가 둘 이상이면 그 전표의
+         * 카테고리 다리는 수수료이지 무슨 거래인지를 말하는 분류가 아니다
+         * (서버의 `ledgerRowCategory` 와 같은 규칙).
+         */
+        const isTransfer = asInt(row.accountLegs) > 1;
+
+        return [
+          String(row.postingId),
+          {
+            postingId: String(row.postingId),
+            entryId: String(row.entryId),
+            date: String(row.date),
+            description: asText(row.description) ?? '',
+            merchant: asText(row.merchant),
+            amount: asMoney(row.amount),
+            cardId: asText(row.cardId),
+            cardName: asText(row.cardName),
+            categoryName: isTransfer ? null : asText(row.categoryName),
+            parentCategoryName: isTransfer ? null : asText(row.parentCategoryName),
+            countsPerformance: Boolean(row.countsPerformance),
+          },
+        ];
+      }),
+    );
   }
 
   /** 사본에 담긴 행 수. 화면이 "얼마나 받았는지" 보여 줄 때와 검증에 쓴다. */
@@ -2980,6 +3215,22 @@ export interface MirrorEntryScope {
   yearMonth?: string;
   ownerIds?: string[];
   search?: ParsedEntrySearch;
+  /** 이 카드로 낸 거래만. 카드 상세의 결제 내역이 쓴다. */
+  cardId?: string;
+}
+
+/**
+ * 카드 조건. 그 카드가 찍힌 다리를 가진 전표만.
+ *
+ * 체크카드 사용은 연결 통장의 다리에, 신용카드 사용은 부채 계정의 다리에 카드가 찍힌다.
+ * 어느 쪽이든 이 조건 하나로 그 카드의 거래만 걸린다 (서버의 목록 필터와 같다).
+ */
+function cardFilter(cardId?: string): { sql: string; params: string[] } {
+  if (!cardId) return { sql: '', params: [] };
+  return {
+    sql: ' AND EXISTS (SELECT 1 FROM posting cp WHERE cp.entryId = e.id AND cp.cardId = ?)',
+    params: [cardId],
+  };
 }
 
 /** 기간 조건. 달 이름이 있으면 그것이 앞선다. */

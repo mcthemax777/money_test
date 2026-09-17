@@ -11,7 +11,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { apiClient } from '../lib/api-client';
+import { homeDataPort } from '../data/home-port';
 import type { EntryListItem, LedgerLikeRow } from '../lib/types';
 
 /** 한 번에 받아 오는 줄 수. 통장·신용카드 원장이 쓰는 값과 같다. */
@@ -66,7 +66,7 @@ export function useCardEntries(cardId: string | null, projectId?: string | null,
         setIsLoading(true);
         setHasError(false);
 
-        const page = await apiClient.getEntries(
+        const page = await homeDataPort().getEntries(
           { cardId: id, limit: PAGE_SIZE, ...(after ? { cursor: after } : {}) },
           projectId,
         );

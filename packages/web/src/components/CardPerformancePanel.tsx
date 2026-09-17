@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import type { CardDto } from '@money/types';
-import { apiClient } from '@money/core/lib/api-client';
+import { homeDataPort } from '@money/core/data/home-port';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { formatDateMarker } from '@money/core/lib/datetime';
@@ -36,7 +36,7 @@ export default function CardPerformancePanel({
   const load = useCallback(async () => {
     try {
       setError('');
-      setPerformance(await apiClient.getCardPerformance(cardId));
+      setPerformance(await homeDataPort().getCardPerformance(cardId));
     } catch {
       setPerformance(null);
       setError(t('performance.loadFailed'));

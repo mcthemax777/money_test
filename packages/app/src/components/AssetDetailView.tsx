@@ -16,7 +16,7 @@ import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { accountTypeLabel } from '@money/core/lib/account-type';
 import { formatDate } from '@money/core/lib/datetime';
 import { categoryTitleOf } from '@money/core/lib/entries';
-import { apiClient } from '@money/core/lib/api-client';
+import { homeDataPort } from '@money/core/data/home-port';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import type { Account, Card, CardUsage, LedgerLikeRow, Person } from '@money/core/lib/types';
@@ -243,7 +243,7 @@ function CardCharts({
        * 그래프를 좌우로 끌어 앞뒤 주기를 보는데, 창만큼만 받으면 끌 때마다 서버를
        * 물어야 하고 답이 올 때까지 막대가 멈춰 있다 (useCardUsageWindow 참고).
        */
-      setUsage(await apiClient.getCardUsage(card.id, MAX_USAGE_PERIODS));
+      setUsage(await homeDataPort().getCardUsage(card.id, MAX_USAGE_PERIODS));
     } catch {
       setUsage(null);
       setError(t('settlement.loadFailed'));

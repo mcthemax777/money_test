@@ -44,6 +44,16 @@ function eq(label: string, actual: unknown, expected: unknown) {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}  (기대 ${expected}, 실제 ${actual})`);
 }
 
+/** 원장 한 줄 중 견줄 것만. 서버 응답과 사본 창구가 같은 이름을 쓴다. */
+interface LedgerLike {
+  postingId: string;
+  entryId: string;
+  amount: string;
+  balanceAfter: string;
+  description: string;
+  categoryName: string | null;
+}
+
 const KST = 'Asia/Seoul';
 const PID = 'project-1';
 
@@ -85,6 +95,59 @@ function pullResponse(
     tombstoneFloor,
   };
 }
+
+/**
+ * 기초잔액 전표. 계좌 다리 하나와 자본 계정의 상대 다리로 이룬다.
+ *
+ * 잔액은 그 계좌 다리의 합이라(서버의 `check-balances` 가 지키는 규칙), 표본도 그
+ * 규칙을 지켜야 한다. 잔액만 적고 다리를 두지 않으면 사본이 세는 값과 갈린다.
+ */
+const opening = (id: string, accountId: string, amount: string, version = 1) => {
+  // 상대 다리는 부호를 뒤집는다. 음수 잔액(카드 부채)이면 부호를 떼는 것이 그 일이다.
+  const opposite = amount.startsWith('-') ? amount.slice(1) : `-${amount}`;
+
+  return {
+  id,
+  projectId: PID,
+  personId: 'p1',
+  date: '1899-12-31T00:00:00.000Z',
+  description: `${accountId} 기초잔액`,
+  merchant: null,
+  detailedNote: null,
+  originalCurrency: null,
+  originalAmount: null,
+  rateProvisional: false,
+  createdByUserId: null,
+  updatedVersion: version,
+  tagIds: [] as string[],
+  postings: [
+    {
+      id: `${id}-acc`,
+      entryId: id,
+      accountId,
+      categoryId: null,
+      amount,
+      quantity: null,
+      currency: 'KRW',
+      baseAmount: amount,
+      exchangeRate: '1',
+      cardId: null,
+    },
+    {
+      id: `${id}-open`,
+      entryId: id,
+      accountId: 'a-open',
+      categoryId: null,
+      amount: opposite,
+      quantity: null,
+      currency: 'KRW',
+      baseAmount: opposite,
+      exchangeRate: '1',
+      cardId: null,
+    },
+  ],
+  };
+};
 
 const entry = (
   id: string,
@@ -234,6 +297,10 @@ const entry = (
       // 시가로 평가하는 계좌. 장부 잔액 50만이 평가액 80만으로 대체되어야 한다.
       { id: 'a3', projectId: PID, ownerId: 'p1', type: 'investment', name: '주식계좌', institutionId: null,
         accountNumber: null, currency: 'KRW', balance: '500000', isActive: true, sortOrder: 2, updatedVersion: 11 },
+      // 기초잔액의 상대편. 순자산에서 빠지는 자본 계정이다 (EQUITY_ACCOUNT_TYPES).
+      { id: 'a-open', projectId: PID, ownerId: null, type: 'opening_balance', name: '기초자본',
+        institutionId: null, accountNumber: null, currency: 'KRW', balance: '-1530000',
+        isActive: true, sortOrder: 9, updatedVersion: 11 },
     ],
     assetValuations: [
       { id: 'v1', accountId: 'a3', date: '2026-08-31T00:00:00.000Z', quantity: '10',
@@ -261,6 +328,15 @@ const entry = (
         date: '2026-08-20T00:00:00.000Z', source: 'manual', updatedVersion: 11 },
     ],
     entries: [
+      /*
+       * 기초잔액. 계좌마다 하나씩 둔다.
+       *
+       * 8월 거래 8만원이 통장에서 빠지므로 108만에서 시작해야 잔액이 100만이 된다.
+       * 사본은 잔액을 다리 합으로 세므로 이 줄이 없으면 순자산이 통째로 어긋난다.
+       */
+      opening('e-open1', 'a1', '1080000', 12),
+      opening('e-open2', 'a2', '-50000', 12),
+      opening('e-open3', 'a3', '500000', 12),
       // 한국 시간 8/6 00:30 (UTC 로는 8/5 15:30). 달력 키가 타임존을 따라야 한다.
       entry('e1', '2026-08-05T15:30:00.000Z', '30000', 'c-lunch', 'a1', 12),
       entry('e2', '2026-08-10T03:00:00.000Z', '50000', 'c-dining', 'a1', 12),
@@ -284,14 +360,15 @@ const entry = (
 
   const counts = await store.counts(PID);
   eq('사람', counts.person, 1);
-  eq('계좌', counts.account, 3);
+  eq('계좌', counts.account, 4);
   eq('카테고리', counts.category, 3);
-  eq('전표', counts.entry, 2);
-  eq('다리', counts.posting, 4);
+  eq('전표', counts.entry, 5);
+  eq('다리', counts.posting, 10);
 
   // ── 2. 달력 키가 타임존을 따른다 ──
+  // 기초잔액 전표(1899년)는 여기서 볼 것이 아니다. 이름으로 골라낸다.
   const rows = await driver.all<{ id: string; dateKey: string; yearMonth: string }>(
-    'SELECT id, dateKey, yearMonth FROM entry ORDER BY id',
+    "SELECT id, dateKey, yearMonth FROM entry WHERE id LIKE 'e_' ORDER BY id",
   );
   eq('KST 새벽 거래의 날짜 키', rows[0]?.dateKey, '2026-08-06');
   eq('그 거래의 달', rows[0]?.yearMonth, '2026-08');
@@ -345,10 +422,10 @@ const entry = (
   /*
    * 미실현손익 = 시가 - 장부가.
    *
-   * 장부가는 그 계좌 다리의 저장 통화 합계다. 표본에는 주식계좌를 건드린 거래가 없어
-   * 0 이고, 그래서 평가액 80만이 그대로 손익이 된다.
+   * 장부가는 그 계좌 다리의 저장 통화 합계다. 주식계좌에는 기초잔액 50만이 들어 있어
+   * 평가액 80만과의 차이 30만이 손익이 된다.
    */
-  eq('미실현손익 (시가 - 장부가 0)', worth.unrealizedGain.toString(), '800000');
+  eq('미실현손익 (시가 - 장부가)', worth.unrealizedGain.toString(), '300000');
 
   eq('최신 환율을 고른다 (날짜 내림차순 첫 줄)', await store.latestRate(PID, 'USD', 'KRW'), '1400');
 
@@ -362,7 +439,8 @@ const entry = (
     fromDateKey: '2026-08-01', toDateKey: '2026-08-31',
   });
   eq('수정된 전표의 금액이 반영된다', summarize(afterEdit).expense.toString(), '70000');
-  eq('옛 다리가 남지 않는다', (await store.counts(PID)).posting, 4);
+  // 기초잔액 셋(6줄) + 갈아 끼운 전표의 다리 넷.
+  eq('옛 다리가 남지 않는다', (await store.counts(PID)).posting, 10);
 
   // ── 5. 자리표 ──
   pulls.push(pullResponse(24, {}, [
@@ -373,13 +451,14 @@ const entry = (
   await syncProject(store, pull, PID, KST);
 
   const afterDelete = await store.counts(PID);
-  eq('지운 전표가 사라진다', afterDelete.entry, 1);
-  eq('그 전표의 다리도 사라진다', afterDelete.posting, 2);
+  // 기초잔액 셋이 남고 8월 전표 하나가 남는다.
+  eq('지운 전표가 사라진다', afterDelete.entry, 4);
+  eq('그 전표의 다리도 사라진다', afterDelete.posting, 8);
   eq('예산도 사라진다', afterDelete.budget, 0);
   eq('예산의 조정값도 함께 사라진다',
     (await driver.all('SELECT id FROM budget_override')).length, 0);
   eq('사람도 사라진다', afterDelete.person, 0);
-  eq('주인이 사라져도 계좌는 남는다 (참조만 비어 있다)', afterDelete.account, 3);
+  eq('주인이 사라져도 계좌는 남는다 (참조만 비어 있다)', afterDelete.account, 4);
   const orphan = await store.accounts(PID);
   eq('그 계좌의 주인 이름은 비어 있다', String(orphan[0]?.ownerName), 'null');
 
@@ -402,7 +481,7 @@ const entry = (
   const offline = await syncProject(store, offlinePull, PID, KST);
   eq('오프라인이라고 답한다', offline.offline, true);
   eq('커서는 그대로', offline.version, 34);
-  eq('사본은 그대로 읽을 수 있다', (await store.counts(PID)).entry, 1);
+  eq('사본은 그대로 읽을 수 있다', (await store.counts(PID)).entry, 4);
 
   // 401 같은 거절은 오프라인이 아니다. 부르는 쪽이 다뤄야 한다.
   const rejectPull = async () => {
@@ -418,8 +497,9 @@ const entry = (
 
   // ── 8. 타임존이 바뀌면 달력 키를 다시 계산한다 ──
   await store.recomputeCalendarKeys(PID, 'America/New_York');
+  // 기초잔액 전표(1899년)는 여기서 볼 것이 아니다.
   const moved = await driver.all<{ dateKey: string; yearMonth: string }>(
-    'SELECT dateKey, yearMonth FROM entry',
+    "SELECT dateKey, yearMonth FROM entry WHERE id LIKE 'e_'",
   );
   eq('뉴욕 기준으로 날짜가 옮겨진다', moved[0]?.dateKey, '2026-08-09');
   const cursorAfter = await store.cursor(PID);
@@ -427,7 +507,9 @@ const entry = (
 
   // init 이 타임존 차이를 스스로 알아채는지
   await store.init(PID, KST);
-  const back = await driver.all<{ dateKey: string }>('SELECT dateKey FROM entry');
+  const back = await driver.all<{ dateKey: string }>(
+    "SELECT dateKey FROM entry WHERE id LIKE 'e_'",
+  );
   eq('다시 서울로 돌리면 원래 날짜로', back[0]?.dateKey, '2026-08-10');
 
   // ── 9. 스키마 번호가 다르면 사본을 버린다 ──
@@ -495,6 +577,24 @@ const entry = (
         methodEntries: string[];
         /** 카드 하나로 좁힌 목록. 쓴 것과 갚은 것이 함께 든다. */
         cardMethodEntries?: string[];
+        /** 자산 상세가 쓰는 셋. 사본 창구가 같은 값을 내야 오프라인에서 돈다. */
+        accountLedger: { data: LedgerLike[]; nextCursor: string | null };
+        cardLedger: { data: LedgerLike[]; nextCursor: string | null };
+        cardUsage: {
+          currency: string;
+          outstanding: string;
+          periods: Array<{ periodStart: string; usage: string; billed: string }>;
+        };
+        performanceLedger: {
+          currency: string;
+          basis: string;
+          target: string | null;
+          periods: Array<{ periodStart: string; total: string }>;
+          rows: Array<{ key: string; amount: string; performanceAfter: string }>;
+          nextCursor: string | null;
+        };
+        accountBalances: Record<string, string>;
+        liabilityAccountId: string;
         bankAccountId: string;
         searchCategoryId: string;
         personId: string;
@@ -690,6 +790,76 @@ const entry = (
     ] as const) {
       eq(`카드 실적: ${field}`, String(localPerf[field]), String(server.cardPerformance[field]));
     }
+
+    /*
+     * 자산 상세. 통장 원장, 카드 원장, 주기별 사용액, 실적 원장.
+     *
+     * 넷 다 서버가 낸 값과 줄 단위로 견준다. 손으로 기대값을 적으면 사본과 기대가 같은
+     * 이유로 함께 틀릴 수 있다.
+     */
+    const localLedger = await port.getAccountPostings(server.bankAccountId, { limit: 20 });
+    eq('통장 원장: 줄 수', localLedger.data.length, server.accountLedger.data.length);
+    for (const field of ['postingId', 'entryId', 'amount', 'balanceAfter', 'description'] as const) {
+      eq(
+        `통장 원장: ${field}`,
+        localLedger.data.map((row) => String(row[field])).join(','),
+        server.accountLedger.data.map((row) => String(row[field])).join(','),
+      );
+    }
+    eq('통장 원장: 다음 커서', localLedger.nextCursor ?? null, server.accountLedger.nextCursor ?? null);
+
+    // 카드의 사용과 대금은 부채 계정의 원장이다. 분류가 없는 대금 결제 줄도 함께 온다.
+    const localCardLedger = await port.getAccountPostings(server.liabilityAccountId, { limit: 20 });
+    eq(
+      '카드 원장: 줄과 잔액',
+      localCardLedger.data.map((row) => `${row.postingId}/${row.balanceAfter}`).join(','),
+      server.cardLedger.data.map((row) => `${row.postingId}/${row.balanceAfter}`).join(','),
+    );
+    eq(
+      '카드 원장: 분류 이름 (이체 계열은 비어 있다)',
+      localCardLedger.data.map((row) => String(row.categoryName)).join(','),
+      server.cardLedger.data.map((row) => String(row.categoryName)).join(','),
+    );
+
+    const localUsage = await port.getCardUsage(server.cardId);
+    eq('사용액: 통화', localUsage.currency, server.cardUsage.currency);
+    eq('사용액: 남은 대금', localUsage.outstanding, server.cardUsage.outstanding);
+    eq(
+      '사용액: 주기별 실적과 청구',
+      localUsage.periods.map((row) => `${row.periodStart}:${row.usage}/${row.billed}`).join(','),
+      server.cardUsage.periods
+        .map((row) => `${row.periodStart}:${row.usage}/${row.billed}`)
+        .join(','),
+    );
+
+    const localPerfLedger = await port.getCardPerformanceLedger(server.cardId, { limit: 20 });
+    eq('실적 원장: 기준', localPerfLedger.basis, server.performanceLedger.basis);
+    eq('실적 원장: 기준액', String(localPerfLedger.target), String(server.performanceLedger.target));
+    eq(
+      '실적 원장: 줄과 누적',
+      localPerfLedger.rows.map((row) => `${row.key}/${row.performanceAfter}`).join(','),
+      server.performanceLedger.rows.map((row) => `${row.key}/${row.performanceAfter}`).join(','),
+    );
+    eq(
+      '실적 원장: 주기 머리글',
+      localPerfLedger.periods.map((row) => `${row.periodStart}:${row.total}`).join(','),
+      server.performanceLedger.periods.map((row) => `${row.periodStart}:${row.total}`).join(','),
+    );
+    eq(
+      '실적 원장: 다음 커서',
+      localPerfLedger.nextCursor ?? null,
+      server.performanceLedger.nextCursor ?? null,
+    );
+
+    /*
+     * 잔액은 사본이 다리를 세어 낸다. 서버가 캐시로 들고 있는 값과 같아야 한다 --
+     * 두 값이 갈리면 화면 위의 잔액과 원장 줄의 누적 잔액이 어긋난다.
+     */
+    const localBalances = await realStore.accountBalances(real.projectId);
+    const balanceGap = Object.entries(server.accountBalances)
+      .filter(([id, balance]) => (localBalances.get(id) ?? '0') !== String(balance))
+      .map(([id]) => id);
+    eq('잔액: 사본이 센 값 = 서버의 값', balanceGap.join(',') || '없음', '없음');
 
         const serverDining = server.budgets.find((row) => row.categoryName === '외식');
     eq('서버와 대조: 예산 금액', dining?.monthlyAmount, serverDining?.monthlyAmount);

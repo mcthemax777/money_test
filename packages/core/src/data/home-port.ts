@@ -63,6 +63,26 @@ export interface HomeDataPort {
   ): Promise<ReportDto.PaymentMethodItem[]>;
   getCardPerformance(cardId: string): Promise<CardDto.PerformanceResponse>;
 
+  /** 주기별 사용액과 남은 대금. 카드 상세의 그래프가 쓴다. */
+  getCardUsage(cardId: string, months?: number): Promise<CardDto.UsageResponse>;
+
+  /** 실적 원장 한 쪽. 카드 상세의 실적 탭이 쓴다. */
+  getCardPerformanceLedger(
+    cardId: string,
+    params?: { limit?: number; cursor?: string },
+  ): Promise<CardDto.PerformanceLedgerResponse>;
+
+  /**
+   * 계좌 원장 한 쪽. 줄마다 그 거래 직후의 잔액이 붙는다.
+   *
+   * 통장만 쓰는 것이 아니다. 신용카드의 사용과 대금은 그 카드의 부채 계정에 쌓이므로
+   * 카드 상세도 그 계정 id 로 같은 줄을 받는다.
+   */
+  getAccountPostings(
+    accountId: string,
+    params?: { limit?: number; cursor?: string },
+  ): Promise<AccountDto.LedgerResponse>;
+
   /**
    * 분류별 구성비. 거래 화면의 분류별 목록이 쓴다.
    *
@@ -135,6 +155,10 @@ export const httpHomePort: HomeDataPort = {
   getPaymentMethods: (period, projectId, filter) =>
     apiClient.getPaymentMethods(period, projectId, filter),
   getCardPerformance: (cardId) => apiClient.getCardPerformance(cardId),
+  getCardUsage: (cardId, months) => apiClient.getCardUsage(cardId, months),
+  getCardPerformanceLedger: (cardId, params) =>
+    apiClient.getCardPerformanceLedger(cardId, params),
+  getAccountPostings: (accountId, params) => apiClient.getAccountPostings(accountId, params),
   getCategoryBreakdown: (period, type, projectId, options) =>
     apiClient.getCategoryBreakdown(period, type, projectId, options),
   getEntryMonths: (projectId, filter) => apiClient.getEntryMonths(projectId, filter),

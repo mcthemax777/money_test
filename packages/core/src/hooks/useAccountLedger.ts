@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AccountDto } from '@money/types';
 
-import { apiClient } from '../lib/api-client';
+import { homeDataPort } from '../data/home-port';
 
 /**
  * 한 번에 받아 오는 줄 수. 홈의 거래 목록과 같다 (`useEntryFeed` 의 pageSize).
@@ -22,9 +22,8 @@ const PAGE_SIZE = 20;
  * 부호는 계정 관점 그대로 둔다. 부채 계정은 빚이 늘면 음수라 카드 상세가 뒤집어
  * 읽는다. 여기서 뒤집으면 통장과 규칙이 갈려 어느 쪽이 기준인지 알 수 없게 된다.
  *
- * 서버에서만 받는다. 카드 상세의 다른 칸(실적·주기별 사용액)도 그러하므로 오프라인
- * 에서는 함께 비어 있게 둔다 -- 여기만 사본에서 읽으면 같은 화면의 숫자가 서로 다른
- * 시점을 가리킨다.
+ * **창구를 거친다.** 웹은 서버에서, 앱은 기기 사본에서 받는다. 카드 상세의 다른 칸도
+ * 같은 창구를 쓰므로 한 화면의 숫자가 늘 같은 시점을 가리킨다 -- 오프라인에서도 그렇다.
  */
 export function useAccountLedger(accountId: string | null, reloadToken = 0) {
   const [rows, setRows] = useState<AccountDto.LedgerRow[]>([]);
@@ -46,7 +45,7 @@ export function useAccountLedger(accountId: string | null, reloadToken = 0) {
         setIsLoading(true);
         setHasError(false);
 
-        const page = await apiClient.getAccountPostings(id, {
+        const page = await homeDataPort().getAccountPostings(id, {
           limit: PAGE_SIZE,
           ...(after ? { cursor: after } : {}),
         });

@@ -14,6 +14,7 @@ import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { apiClient } from '@money/core/lib/api-client';
+import { homeDataPort } from '@money/core/data/home-port';
 import { useApiError } from '@money/core/lib/api-error';
 import { outstandingOf, overTransferOf } from '@money/core/lib/card-settlement';
 import { nowTimeKey, todayKey } from '@money/core/lib/datetime';
@@ -70,7 +71,7 @@ export default function CardSettlementPanel({
 
   const load = useCallback(async () => {
     try {
-      setUsage(await apiClient.getCardUsage(card.id));
+      setUsage(await homeDataPort().getCardUsage(card.id));
     } catch {
       setUsage(null);
     }

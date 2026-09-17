@@ -9,6 +9,7 @@ import {
   type CardTransferDirection,
 } from '@money/types';
 import { apiClient } from '@money/core/lib/api-client';
+import { homeDataPort } from '@money/core/data/home-port';
 import { outstandingOf, overTransferOf } from '@money/core/lib/card-settlement';
 import type { CardUsage } from '@money/core/lib/types';
 import { useTranslation } from '@money/core/lib/i18n';
@@ -130,7 +131,7 @@ export default function CardSettlementPanel({
        * 그래프를 좌우로 끌어 앞뒤 주기를 보는데, 창만큼만 받으면 끌 때마다 서버를
        * 물어야 하고 답이 올 때까지 막대가 멈춰 있다 (useCardUsageWindow 참고).
        */
-      setUsage(await apiClient.getCardUsage(card.id, MAX_USAGE_PERIODS));
+      setUsage(await homeDataPort().getCardUsage(card.id, MAX_USAGE_PERIODS));
     } catch (err) {
       console.error('카드 사용 현황 조회 실패:', err);
       setUsage(null);
