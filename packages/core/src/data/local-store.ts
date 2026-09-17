@@ -2913,6 +2913,8 @@ const MIRROR_TABLES: readonly string[] = ALL_TABLES;
 const CHILD_TABLES: ReadonlyArray<{ table: string; column: string; parent: string }> = [
   // 태그 연결은 전표에 딸린다. 이 표에는 projectId 가 없어 부모를 따라 치운다.
   { table: 'entry_tag', column: 'entryId', parent: 'entry' },
+  // 후보의 태그도 같은 짜임이다. 빠뜨리면 사본을 버리는 길이 통째로 막힌다.
+  { table: 'entry_draft_tag', column: 'draftId', parent: 'entry_draft' },
   { table: 'posting', column: 'entryId', parent: 'entry' },
   { table: 'installment_plan', column: 'postingId', parent: 'posting' },
   { table: 'budget_override', column: 'budgetId', parent: 'budget' },
