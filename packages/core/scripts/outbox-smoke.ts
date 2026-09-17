@@ -173,6 +173,21 @@ const KST = 'Asia/Seoul';
   }
   eq(`조립: 필드 ${compared.length}개를 줄마다 대조`, mismatch, 0);
 
+  /*
+   * 카드 대금 결제. 자산 화면의 "결제하기"가 오프라인에서 쌓는 명령이다.
+   *
+   * 설명을 비워 보냈으므로 조립이 카드 이름으로 채운 글자가 양쪽에 같아야 한다 --
+   * 그 기본값이 서버에만 있으면 오프라인에서 적은 기록만 "(내용 없음)"으로 남는다.
+   */
+  const settlement = localEntries.find((row) => row.kind === 'card_payment');
+  eq('카드 대금: 사본에도 그 갈래로 선다', Boolean(settlement), true);
+  eq('카드 대금: 기본 설명을 조립이 채운다', settlement?.description, '신한 신용 대금 결제');
+  eq(
+    '카드 대금: 서버가 재생한 줄과 같은 글자',
+    settlement?.description,
+    serverEntries.find((row) => row.kind === 'card_payment')?.description,
+  );
+
   // 규칙이 옮겨 왔는지 콕 집어 본다. 위의 대조가 통째로 지나가도 이 셋은 눈에 띄어야 한다.
   const groceries = localEntries.find((row) => row.description === '장보기');
   eq('분할 합계', groceries?.amount, '50000');

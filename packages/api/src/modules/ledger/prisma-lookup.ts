@@ -49,6 +49,7 @@ export function prismaLedgerLookup(
       return {
         id: card.id,
         projectId: card.projectId,
+        name: card.name,
         cardType: card.cardType,
         paymentAccountId: card.paymentAccountId,
         liabilityAccountId: card.liabilityAccountId,

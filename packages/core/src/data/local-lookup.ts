@@ -57,6 +57,7 @@ export function localLedgerLookup(store: LocalStore): LedgerLookup {
         row && {
           id: row.id,
           projectId,
+          name: row.name,
           cardType: row.cardType as LookupCard['cardType'],
           paymentAccountId: row.paymentAccountId,
           liabilityAccountId: row.liabilityAccountId,

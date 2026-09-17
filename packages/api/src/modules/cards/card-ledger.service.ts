@@ -81,7 +81,8 @@ export class CardLedgerService {
       projectId: card.projectId,
       personId: dto.personId,
       date: new Date(dto.date),
-      description: dto.description || defaultDescription(card.name, dto.direction),
+      // 비워 두면 조립이 카드 이름으로 채운다 (기기가 적은 것과 같은 글자가 된다).
+      description: dto.description ?? '',
       createdByUserId: userId,
       cardId: card.id,
       accountId: dto.accountId,
@@ -920,6 +921,4 @@ function fillPeriod(rows: CardDto.PerformanceLedgerRow[]): {
   return { rows: filled.reverse(), total: running.toString() };
 }
 
-function defaultDescription(cardName: string, direction: CardDto.TransferRequest['direction']) {
-  return direction === 'refund' ? `${cardName} 환불 입금` : `${cardName} 대금 결제`;
-}
+

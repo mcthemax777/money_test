@@ -183,6 +183,32 @@ runSmoke('entries', async (ctx) => {
   ctx.check('문자열 비교 함정: 사용<예산인데 초과로 보이면 안 된다',
     percentage('10000', '3000') > 100, false);
 
+  /*
+   * 카드 대금 결제. 자산 화면의 "결제하기"가 거래 입구로 보내는 갈래다.
+   *
+   * 카드 전용 엔드포인트가 아니라 이 길로 보내야 기기가 오프라인에서도 같은 명령을
+   * 쌓을 수 있다. 설명을 비우면 조립이 카드 이름으로 채운다.
+   */
+  const settlement = await entries.createEntry(
+    uid,
+    {
+      kind: 'card_payment',
+      personId: person.id,
+      date: '2026-08-25T03:00:00.000Z',
+      description: '',
+      amount: '100000',
+      accountId: bank.id,
+      cardId: credit.id,
+      cardTransferDirection: 'payment',
+    } as never,
+    pid,
+  );
+  const settlementRow = (await entries.getEntries(uid, { limit: 200 }, pid)).data.find(
+    (row) => row.id === settlement.id,
+  );
+  ctx.check('카드 대금: 거래 입구로도 만들어진다', settlementRow?.kind, 'card_payment');
+  ctx.check('카드 대금: 기본 설명을 조립이 채운다', settlementRow?.description, '신한 신용 대금 결제');
+
   // ── 정합성 ──
   /*
    * 균형은 환산액(baseAmount)으로 본다. 통화가 섞인 전표는 amount 합계가 0이 될

@@ -165,12 +165,23 @@ runSmoke('sync-push-dump', async (ctx) => {
       ...common, id: id(6), kind: 'expense', description: '노트북',
       amount: '300000', categoryId: dining.id, cardId: credit.id, installmentMonths: 3,
     }),
-    // 8. 지우기. 사본에서도 사라져야 한다.
-    mutation(8, 'entry.create', id(7), {
+    /*
+     * 8. 카드 대금 결제. 자산 화면의 "결제하기"가 오프라인에서 쌓는 명령이다.
+     *
+     * 설명을 비워 보낸다 -- 조립이 카드 이름으로 채우므로(defaultTransferDescription)
+     * 기기가 만든 줄과 서버가 재생한 줄의 글자가 같아야 한다.
+     */
+    mutation(8, 'entry.create', id(8), {
+      ...common, id: id(8), kind: 'card_payment', description: '',
+      amount: '100000', accountId: bank.id, cardId: credit.id,
+      cardTransferDirection: 'payment',
+    }),
+    // 9. 지우기. 사본에서도 사라져야 한다.
+    mutation(9, 'entry.create', id(7), {
       ...common, id: id(7), kind: 'expense', description: '지울 거래',
       amount: '1000', categoryId: dining.id, accountId: bank.id,
     }),
-    mutation(9, 'entry.delete', id(7), { id: id(7) }),
+    mutation(10, 'entry.delete', id(7), { id: id(7) }),
   ];
 
   const pushed = await replay.push(uid, { projectId: pid, clientId: 'device-a', mutations });
@@ -205,7 +216,7 @@ runSmoke('sync-push-dump', async (ctx) => {
   ctx.check('명령이 전부 적용되었다',
     wire.server.results.filter((row: { status: string }) => row.status === 'applied').length,
     mutations.length);
-  ctx.check('남은 전표 (기초잔액 둘 + 만든 것 여섯, 지운 것 하나 제외)',
-    wire.server.entries.length, 6);
+  ctx.check('남은 전표 (기초잔액 둘 + 만든 것 일곱, 지운 것 하나 제외)',
+    wire.server.entries.length, 7);
   console.log(`\n떠 둔 곳: ${target}`);
 });

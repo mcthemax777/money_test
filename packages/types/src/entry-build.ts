@@ -67,6 +67,8 @@ export interface LookupAccount {
 export interface LookupCard {
   id: string;
   projectId: string;
+  /** 카드 이름. 대금 이동의 기본 설명이 이 값으로 만들어진다. */
+  name: string;
   cardType: CardType;
   paymentAccountId: string;
   liabilityAccountId: string | null;
@@ -617,6 +619,14 @@ export async function buildCardTransfer(
 
   return {
     ...common(input),
+    /*
+     * 설명을 비우고 보내면 카드 이름으로 채운다.
+     *
+     * 화면이 두 곳(웹·앱)이고 길이 둘(서버 입구와 기기의 아웃박스)이라, 그 문구를
+     * 부르는 쪽마다 두면 어디선가 갈린다. 조립이 한 번만 정하면 오프라인에서 적은
+     * 기록과 온라인에서 적은 기록이 같은 글자를 갖는다.
+     */
+    description: input.description.trim() || defaultTransferDescription(card.name, input.direction),
     postings: [
       {
         accountId: input.accountId,
@@ -635,6 +645,14 @@ export async function buildCardTransfer(
       },
     ],
   };
+}
+
+/** 대금 이동의 기본 설명. 사용자가 적지 않으면 이 글자가 남는다. */
+export function defaultTransferDescription(
+  cardName: string,
+  direction: CardTransferDirection,
+): string {
+  return direction === 'refund' ? `${cardName} 환불 입금` : `${cardName} 대금 결제`;
 }
 
 /**
@@ -714,12 +732,13 @@ export async function buildEntry(
       );
 
     /*
-     * 카드사 대금 이동. **화면은 더 이상 이 갈래로 보내지 않는다.**
+     * 카드사 대금 이동. **거래 폼은 이 갈래로 보내지 않는다.**
      *
      * 이체에서 카드 부채 계정을 고르면 같은 전표가 나오고, 목록이 그것을 다시
-     * `card_payment` 로 읽는다. 이 자리를 남겨 두는 것은 둘 때문이다 -- 기기의
-     * 아웃박스에 쌓여 있던 옛 명령을 재생해야 하고, 자산 화면의 "결제하기"가
-     * 서버에서 이 입구를 그대로 쓴다.
+     * `card_payment` 로 읽는다. 이 자리를 남겨 두는 것은 셋 때문이다 -- 기기의
+     * 아웃박스에 쌓여 있던 옛 명령을 재생해야 하고, 자산 화면의 "결제하기"가 통장과
+     * 카드와 방향만 알면 되는 자리라 이 입구로 보내며(오프라인에서도 같은 길이다),
+     * 카드 전용 엔드포인트(`/cards/:id/transfer`)가 그대로 서 있다.
      */
     case 'card_payment':
       if (!request.accountId || !request.cardId) {

@@ -13,7 +13,7 @@ import { Alert, Pressable, Text, TextInput, View } from 'react-native';
 import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
-import { apiClient } from '@money/core/lib/api-client';
+import { entryWritePort } from '@money/core/data/entry-write-port';
 import { homeDataPort } from '@money/core/data/home-port';
 import { useApiError } from '@money/core/lib/api-error';
 import { outstandingOf, overTransferOf } from '@money/core/lib/card-settlement';
@@ -21,7 +21,7 @@ import { nowTimeKey, todayKey } from '@money/core/lib/datetime';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toAmountString } from '@money/core/lib/money';
 import type { Card, CardUsage } from '@money/core/lib/types';
-import { useProjectTimeZone } from '@money/core/store/project';
+import { useProject, useProjectTimeZone } from '@money/core/store/project';
 import { zonedFormValueToUtc, type CardTransferDirection } from '@money/types';
 
 import DatePickerPanel from './DatePickerPanel';
@@ -53,6 +53,7 @@ export default function CardSettlementPanel({
   const { t } = useTranslation();
   const { messageOf } = useApiError();
   const timeZone = useProjectTimeZone();
+  const selectedProjectId = useProject((state) => state.selectedProjectId);
   // 남이 그 카드로 결제한 것도 남은 대금에 들어와야 한다.
   const mirrorVersion = useMirrorVersion();
 
@@ -129,11 +130,22 @@ export default function CardSettlementPanel({
 
     try {
       setIsSubmitting(true);
-      await apiClient.createCardTransfer(card.id, {
-        accountId: card.paymentAccountId,
+      /*
+       * 대금 결제도 전표다. 거래를 적는 창구로 보낸다 -- 온라인이면 서버로, 오프라인이면
+       * 기기 사본과 아웃박스로 간다. 카드 전용 입구(`/cards/:id/transfer`)로 보내면
+       * 오프라인에서 적을 길이 없다.
+       *
+       * 설명은 비워 둔다. 조립이 카드 이름으로 채우므로(`defaultTransferDescription`)
+       * 어느 길로 가든 같은 글자가 남는다.
+       */
+      await entryWritePort().createEntry({
+        kind: 'card_payment',
         personId: paymentAccountOwnerId,
+        description: '',
+        accountId: card.paymentAccountId,
+        cardId: card.id,
+        cardTransferDirection: form.direction,
         amount: toAmountString(form.amount),
-        direction: form.direction,
         // 적은 날짜·시각은 프로젝트 타임존의 벽시계다. 그 기준으로 UTC 인스턴트를 만든다.
         // 시각을 비우면 그 날의 0시가 된다 (거래 추가 폼과 같다).
         date: zonedFormValueToUtc(
@@ -141,6 +153,7 @@ export default function CardSettlementPanel({
           form.time || undefined,
           timeZone,
         ).toISOString(),
+        ...(selectedProjectId ? { projectId: selectedProjectId } : {}),
       });
 
       close();

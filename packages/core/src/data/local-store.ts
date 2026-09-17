@@ -2292,12 +2292,13 @@ export class LocalStore {
     cardId: string,
   ): Promise<{
     id: string;
+    name: string;
     cardType: string;
     paymentAccountId: string;
     liabilityAccountId: string | null;
   } | null> {
     const rows = await this.db.all<Row>(
-      `SELECT id, cardType, paymentAccountId, liabilityAccountId
+      `SELECT id, name, cardType, paymentAccountId, liabilityAccountId
          FROM card WHERE id = ? AND projectId = ?`,
       [cardId, projectId],
     );
@@ -2305,6 +2306,7 @@ export class LocalStore {
     return row
       ? {
           id: String(row.id),
+          name: String(row.name),
           cardType: String(row.cardType),
           paymentAccountId: String(row.paymentAccountId),
           liabilityAccountId: asText(row.liabilityAccountId),
