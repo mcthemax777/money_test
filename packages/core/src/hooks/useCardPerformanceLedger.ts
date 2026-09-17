@@ -1,37 +1,33 @@
 /**
  * 카드 실적 원장. 주기마다 0에서 다시 쌓는 줄들.
  *
- * 계좌 원장(`useAccountLedger`)과 나눈 까닭은 페이지를 끊는 단위가 다르기 때문이다.
- * 쌓인 실적은 주기 시작을 기준으로만 뜻이 있어, 줄 단위로 끊으면 한 주기의 앞부분을
- * 아직 받지 못한 채 합계를 그리게 된다. 그래서 **더 보기가 주기를 늘린다.**
+ * 받아 오는 모양은 계좌 원장(`useAccountLedger`)과 같다 -- 같은 수만큼 끊어 받고 커서로
+ * 잇는다. 다른 것은 줄에 붙는 값이다. 남은 대금 자리에 **그 주기에 지금까지 쌓인 실적**이
+ * 든다.
  *
- * 누적을 기기에서 세지 않는 것도 같은 까닭이다. 화면에 올라온 줄만으로 더하면 아직
- * 받지 않은 앞부분이 빠진 값이 나온다 (서버가 주기 시작부터 세어 줄마다 붙여 준다).
+ * 누적을 기기에서 세지 않는다. 화면에 올라온 줄만으로 더하면 아직 받지 않은 앞부분이
+ * 빠진 값이 나온다 -- 서버가 주기를 통째로 세어 줄마다 붙여 준다.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { CardDto } from '@money/types';
 
 import { apiClient } from '../lib/api-client';
 
-/** 처음에 받아 오는 주기 수. 진행 중인 주기와 그 앞 둘이다. */
-const FIRST_PERIODS = 3;
-/** "더 보기"가 한 번에 늘리는 주기 수 */
-const MORE_PERIODS = 3;
+/** 한 번에 받아 오는 줄 수. 통장·카드 원장이 쓰는 값과 같다. */
+const PAGE_SIZE = 20;
 
 export function useCardPerformanceLedger(cardId: string | null, reloadToken = 0) {
-  const [data, setData] = useState<CardDto.PerformanceLedgerResponse | null>(null);
+  const [rows, setRows] = useState<CardDto.PerformanceLedgerRow[]>([]);
+  /** 줄의 머리글이 되는 주기. 같은 주기가 두 쪽에 걸쳐 오므로 시작 시각으로 합친다. */
+  const [periods, setPeriods] = useState<Record<string, CardDto.PerformanceLedgerPeriod>>({});
+  const [meta, setMeta] = useState<{
+    currency: string | null;
+    target: string | null;
+    basis: 'statement' | 'month' | null;
+  }>({ currency: null, target: null, basis: null });
+  const [cursor, setCursor] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [hasError, setHasError] = useState(false);
-
-  /*
-   * 지금 보고 있는 카드와 판, 그리고 받아 올 주기 수를 한 덩어리로 든다.
-   *
-   * 카드를 옮기거나 거래가 바뀌면 주기 수를 처음으로 되돌려야 하는데, 그것을 따로
-   * 두면 "되돌리는 렌더"와 "다시 받는 렌더"가 갈려 조회가 두 번 나간다.
-   */
-  const key = `${cardId ?? ''}:${reloadToken}`;
-  const [view, setView] = useState({ key, periods: FIRST_PERIODS });
-  if (view.key !== key) setView({ key, periods: FIRST_PERIODS });
 
   /*
    * 지금 유효한 조회인지 가리는 표.
@@ -41,52 +37,67 @@ export function useCardPerformanceLedger(cardId: string | null, reloadToken = 0)
    */
   const runRef = useRef(0);
 
+  const load = useCallback(async (id: string, after: string | null, run: number) => {
+    try {
+      setIsLoading(true);
+      setHasError(false);
+
+      const page = await apiClient.getCardPerformanceLedger(id, {
+        limit: PAGE_SIZE,
+        ...(after ? { cursor: after } : {}),
+      });
+      if (runRef.current !== run) return;
+
+      setRows((prev) => (after ? [...prev, ...page.rows] : page.rows));
+      setPeriods((prev) => {
+        const next = after ? { ...prev } : {};
+        for (const period of page.periods) next[period.periodStart] = period;
+        return next;
+      });
+      setMeta({ currency: page.currency, target: page.target, basis: page.basis });
+      setCursor(page.nextCursor);
+    } catch {
+      if (runRef.current !== run) return;
+      setHasError(true);
+      // 첫 쪽이 실패했으면 비운다. 다음 쪽이 실패한 것이면 받아 둔 줄은 그대로 둔다.
+      if (!after) {
+        setRows([]);
+        setPeriods({});
+        setCursor(null);
+      }
+    } finally {
+      if (runRef.current === run) setIsLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     const run = runRef.current + 1;
     runRef.current = run;
 
     if (!cardId) {
-      setData(null);
+      setRows([]);
+      setPeriods({});
+      setCursor(null);
       setHasError(false);
       return;
     }
 
-    let cancelled = false;
-    setIsLoading(true);
-    setHasError(false);
+    void load(cardId, null, run);
+  }, [cardId, reloadToken, load]);
 
-    apiClient
-      .getCardPerformanceLedger(cardId, view.periods)
-      .then((page) => {
-        if (cancelled || runRef.current !== run) return;
-        setData(page);
-      })
-      .catch(() => {
-        if (cancelled || runRef.current !== run) return;
-        setHasError(true);
-        setData(null);
-      })
-      .finally(() => {
-        if (cancelled || runRef.current !== run) return;
-        setIsLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-    // view.key 에 cardId 와 판이 들어 있다. cardId 를 따로 넣으면 같은 조회가 두 번 난다.
-  }, [cardId, view.key, view.periods]);
-
+  /** 다음 쪽. 더 없거나 받는 중이면 아무 일도 하지 않는다. */
   const loadMore = useCallback(() => {
-    setView((prev) => ({ ...prev, periods: prev.periods + MORE_PERIODS }));
-  }, []);
+    if (!cardId || !cursor || isLoading) return;
+    void load(cardId, cursor, runRef.current);
+  }, [cardId, cursor, isLoading, load]);
 
   return {
-    periods: data?.periods ?? [],
-    currency: data?.currency ?? null,
-    target: data?.target ?? null,
-    basis: data?.basis ?? null,
-    hasMore: data?.hasMore ?? false,
+    rows,
+    periods,
+    currency: meta.currency,
+    target: meta.target,
+    basis: meta.basis,
+    hasMore: cursor !== null,
     isLoading,
     hasError,
     loadMore,

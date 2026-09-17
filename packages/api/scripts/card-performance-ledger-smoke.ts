@@ -88,18 +88,30 @@ runSmoke('card-performance-ledger', async (ctx) => {
       pid,
     );
 
-  /** 진행 중인 주기. 실적 원장은 최신 주기가 앞이다. */
-  const currentPeriod = async (months = 3) =>
-    (await cardLedger.getPerformanceLedger(card.id, uid, months)).periods[0];
+  /**
+   * 진행 중인 주기. 실적 원장은 최신 줄이 앞이라 첫 줄이 든 주기가 그것이다.
+   *
+   * 쪽은 넉넉히 받아 온다. 끊어 받는 것은 따로 본다.
+   */
+  const currentPeriod = async () => {
+    const page = await cardLedger.getPerformanceLedger(card.id, uid, { limit: 50 });
+    const start = page.rows[0]?.periodStart ?? null;
+    const period = page.periods.find((row) => row.periodStart === start) ?? null;
+    return {
+      total: period?.total ?? '0',
+      periodEnd: period?.periodEnd ?? null,
+      rows: page.rows.filter((row) => row.periodStart === start),
+      page,
+    };
+  };
 
   // ── 빈 카드 ──
-  const empty = await cardLedger.getPerformanceLedger(card.id, uid, 3);
-  ctx.check('주기 셋을 준다', empty.periods.length, 3);
+  const empty = await cardLedger.getPerformanceLedger(card.id, uid, { limit: 20 });
   ctx.check('기준은 청구 주기', empty.basis, 'statement');
   ctx.check('기준액이 실린다', empty.target, '300000');
-  ctx.check('줄이 없다', empty.periods[0].rows.length, 0);
-  ctx.check('합계 0', empty.periods[0].total, '0');
-  ctx.check('진행 중인 주기가 앞', empty.periods[0].closed, false);
+  ctx.check('줄이 없다', empty.rows.length, 0);
+  ctx.check('머리글도 없다', empty.periods.length, 0);
+  ctx.check('더 볼 것도 없다', empty.nextCursor ?? null, null);
 
   // ── 이번 주기에 쌓인다 ──
   await spend({ amount: '30000', description: '첫 결제', date: daysAgo(0) });
@@ -145,10 +157,15 @@ runSmoke('card-performance-ledger', async (ctx) => {
 
   // ── 지난 주기는 0에서 다시 쌓는다 ──
   await spend({ amount: '40000', description: '두 주기 전', date: daysAgo(60) });
-  const wide = await cardLedger.getPerformanceLedger(card.id, uid, 3);
-  const older = wide.periods.find((period) => period.rows.some((row) => row.description === '두 주기 전'));
-  ctx.check('지난 주기에도 줄이 있다', older?.rows.length, 1);
-  ctx.check('지난 주기는 0에서 다시 쌓는다', older?.rows[0].performanceAfter, '40000');
+  const wide = await cardLedger.getPerformanceLedger(card.id, uid, { limit: 50 });
+  const olderRow = wide.rows.find((row) => row.description === '두 주기 전');
+  ctx.check('지난 주기에도 줄이 있다', Boolean(olderRow), true);
+  ctx.check('지난 주기는 0에서 다시 쌓는다', olderRow?.performanceAfter, '40000');
+  ctx.check(
+    '머리글이 주기마다 하나씩 실린다',
+    new Set(wide.rows.map((row) => row.periodStart)).size,
+    wide.periods.length,
+  );
   ctx.check('이번 주기 누적은 그대로', (await currentPeriod()).total, '50000');
 
   // ── 할부는 회차마다 한 줄 ──
@@ -202,6 +219,98 @@ runSmoke('card-performance-ledger', async (ctx) => {
   );
 
   // 청구는 어느 쪽이든 깎인 금액 그대로다.
+  // ── 끊어 받기 ──
+  //
+  // 다른 원장과 같은 방식으로 줄을 끊어 준다. 누적은 잘린 자리와 상관없이 주기 시작부터
+  // 센 값이라, 한 줄씩 받아도 한꺼번에 받은 것과 같은 값이 나와야 한다.
+  const whole = await cardLedger.getPerformanceLedger(card.id, uid, { limit: 50 });
+  const byPage: typeof whole.rows = [];
+  let cursor: string | null = null;
+  let guard = 0;
+  do {
+    const page = await cardLedger.getPerformanceLedger(card.id, uid, {
+      limit: 1,
+      cursor: cursor ?? undefined,
+    });
+    byPage.push(...page.rows);
+    cursor = page.nextCursor;
+    guard += 1;
+  } while (cursor && guard < 50);
+
+  ctx.check('한 줄씩 받아도 줄 수가 같다', byPage.length, whole.rows.length);
+  ctx.check(
+    '차례도 같다',
+    byPage.map((row) => row.key).join(','),
+    whole.rows.map((row) => row.key).join(','),
+  );
+  ctx.check(
+    '누적도 같다 (잘린 자리와 무관하다)',
+    byPage.map((row) => row.performanceAfter).join(','),
+    whole.rows.map((row) => row.performanceAfter).join(','),
+  );
+  ctx.check('끝에서는 커서를 끊는다', cursor ?? null, null);
+
+  // ── 체크카드 ──
+  //
+  // 자를 기준만 달력 월로 바뀌고 나머지는 같다. 청구 주기도 할부도 없는 길이라 따로 본다.
+  const debit = await cards.createCard(
+    uid,
+    {
+      paymentAccountId: bank.id,
+      name: '신한 체크',
+      cardType: 'debit',
+      issuerId: 'fi_card_shinhan',
+      performanceAmount: '200000',
+    },
+    pid,
+  );
+  await entries.createEntry(
+    uid,
+    {
+      kind: 'expense',
+      personId: person.id,
+      cardId: debit.id,
+      date: daysAgo(0),
+      description: '체크 오늘',
+      amount: '15000',
+      categoryId: food.id,
+    } as any,
+    pid,
+  );
+  await entries.createEntry(
+    uid,
+    {
+      kind: 'expense',
+      personId: person.id,
+      cardId: debit.id,
+      date: daysAgo(0),
+      description: '체크 오늘 둘째',
+      amount: '25000',
+      categoryId: food.id,
+    } as any,
+    pid,
+  );
+
+  const debitPage = await cardLedger.getPerformanceLedger(debit.id, uid, { limit: 20 });
+  ctx.check('체크: 기준은 달력 월', debitPage.basis, 'month');
+  ctx.check('체크: 구간 시작은 1일', new Date(debitPage.periods[0].periodStart).getUTCDate(), 1);
+  ctx.check('체크: 줄 둘', debitPage.rows.length, 2);
+  ctx.check('체크: 누적이 쌓인다', debitPage.rows[0].performanceAfter, '40000');
+  ctx.check('체크: 구간 합계', debitPage.periods[0].total, '40000');
+  ctx.check(
+    '체크: 합계 = 진행률 막대',
+    debitPage.periods[0].total,
+    (await cardLedger.getPerformance(debit.id, uid)).usage,
+  );
+
+  const debitFirst = await cardLedger.getPerformanceLedger(debit.id, uid, { limit: 1 });
+  ctx.check('체크: 한 줄만 받는다', debitFirst.rows.length, 1);
+  const debitNext = await cardLedger.getPerformanceLedger(debit.id, uid, {
+    limit: 1,
+    cursor: debitFirst.nextCursor ?? undefined,
+  });
+  ctx.check('체크: 다음 줄이 이어진다', debitNext.rows[0]?.key, debitPage.rows[1].key);
+
   const usage = await cardLedger.getUsage(card.id, uid, 3);
   const currentBilled = usage.periods.find(
     (period) => period.periodEnd === kept.periodEnd,

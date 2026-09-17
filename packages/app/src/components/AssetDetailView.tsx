@@ -27,6 +27,8 @@ import {
   useProjectTimeZone,
 } from '@money/core/store/project';
 
+import { useNearBottom } from '../shell/scroll';
+
 import AssetHistoryChart from './AssetHistoryChart';
 import CardPerformancePanel from './CardPerformancePanel';
 import CardSettlementPanel from './CardSettlementPanel';
@@ -510,6 +512,11 @@ function LedgerRows({
   const { t } = useTranslation();
   const { rows, hasMore, isLoading, hasError, loadMore } = ledger;
 
+  /* 바닥까지 내려오면 다음 쪽을 잇는다. 홈의 거래 목록과 같다 (shell/scroll). */
+  useNearBottom(() => {
+    if (hasMore && !isLoading) loadMore();
+  });
+
   const isCard = kind === 'liability';
 
   if (hasError) {
@@ -583,12 +590,16 @@ function PerformanceLedgerList({
   const ledger = useCardPerformanceLedger(cardId, mirrorVersion + reloadToken);
   const currency = ledger.currency ?? fallbackCurrency;
 
+  /* 바닥까지 내려오면 다음 쪽을 잇는다. 다른 원장과 같다. */
+  useNearBottom(() => {
+    if (ledger.hasMore && !ledger.isLoading) ledger.loadMore();
+  });
+
   if (ledger.hasError) {
     return <Text className="text-sm text-red-600">{t('feed.loadFailed')}</Text>;
   }
 
-  // 줄이 하나도 없는 주기만 받았으면 "내역 없음"이다. 빈 구간 머리글만 늘어놓지 않는다.
-  if (ledger.periods.every((period) => period.rows.length === 0)) {
+  if (ledger.rows.length === 0) {
     return (
       <Text className="text-sm text-gray-600">
         {ledger.isLoading ? t('settlement.loading') : t('assets.noEntries')}
@@ -598,49 +609,53 @@ function PerformanceLedgerList({
 
   return (
     <>
-      {ledger.periods.map((period) =>
-        period.rows.length === 0 ? null : (
-          <View key={period.periodStart}>
-            {/* 구간 머리글. 어디서 0으로 돌아가는지가 이 줄로 드러난다. */}
-            <View className="mt-2 flex-row items-baseline justify-between gap-2 border-b border-gray-200 pb-1">
-              <Text className="text-xs font-medium text-gray-700">
-                {formatDate(period.periodStart, timeZone)} ~{' '}
-                {formatDate(period.periodEnd, timeZone)}
-              </Text>
-              <Text className="text-xs text-gray-500">
-                {t('assets.performancePeriodTotal', {
-                  amount: formatCurrency(toNumber(period.total), currency),
-                })}
-              </Text>
-            </View>
+      {ledger.rows.map((row, index) => {
+        // 주기가 바뀌는 자리에만 머리글을 세운다. 어디서 0으로 돌아가는지가 그 줄로 드러난다.
+        const period =
+          row.periodStart === ledger.rows[index - 1]?.periodStart
+            ? null
+            : ledger.periods[row.periodStart];
 
-            {period.rows.map((row) => (
-              <LedgerRow
-                key={row.key}
-                row={row}
-                currency={currency}
-                isCard
-                onOpenEntry={onOpenEntry}
-                note={t('assets.performanceAfter', {
-                  amount: formatCurrency(toNumber(row.performanceAfter), currency),
-                })}
-                /*
-                  할부는 회차마다 한 줄이다. 주기 합계가 회차분만 세므로, 구매한 달에
-                  전액을 한 줄로 두면 줄의 합과 진행률 막대가 갈린다.
-                */
-                badge={
-                  row.installmentMonths > 1
-                    ? t('assets.performanceInstallment', {
-                        index: row.installmentIndex,
-                        months: row.installmentMonths,
-                      })
-                    : null
-                }
-              />
-            ))}
+        return (
+          <View key={row.key}>
+            {period ? (
+              <View className="mt-2 flex-row items-baseline justify-between gap-2 border-b border-gray-200 pb-1">
+                <Text className="text-xs font-medium text-gray-700">
+                  {formatDate(period.periodStart, timeZone)} ~{' '}
+                  {formatDate(period.periodEnd, timeZone)}
+                </Text>
+                <Text className="text-xs text-gray-500">
+                  {t('assets.performancePeriodTotal', {
+                    amount: formatCurrency(toNumber(period.total), currency),
+                  })}
+                </Text>
+              </View>
+            ) : null}
+
+            <LedgerRow
+              row={row}
+              currency={currency}
+              isCard
+              onOpenEntry={onOpenEntry}
+              note={t('assets.performanceAfter', {
+                amount: formatCurrency(toNumber(row.performanceAfter), currency),
+              })}
+              /*
+                할부는 회차마다 한 줄이다. 주기 합계가 회차분만 세므로, 구매한 달에
+                전액을 한 줄로 두면 줄의 합과 진행률 막대가 갈린다.
+              */
+              badge={
+                row.installmentMonths > 1
+                  ? t('assets.performanceInstallment', {
+                      index: row.installmentIndex,
+                      months: row.installmentMonths,
+                    })
+                  : null
+              }
+            />
           </View>
-        ),
-      )}
+        );
+      })}
 
       <MoreButton
         hasMore={ledger.hasMore}

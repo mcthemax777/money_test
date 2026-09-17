@@ -14,8 +14,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { apiClient } from '../lib/api-client';
 import type { EntryListItem, LedgerLikeRow } from '../lib/types';
 
-/** 한 번에 받아 오는 줄 수. 통장·신용카드 원장이 쓰는 값을 그대로 둔다. */
-const PAGE_SIZE = 100;
+/** 한 번에 받아 오는 줄 수. 통장·신용카드 원장이 쓰는 값과 같다. */
+const PAGE_SIZE = 20;
 
 /**
  * 전표 한 줄을 카드 관점의 원장 줄로 옮긴다.

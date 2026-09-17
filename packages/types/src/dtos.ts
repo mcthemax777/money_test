@@ -427,6 +427,8 @@ export namespace CardDto {
     amount: string;
     /** 이 주기 시작부터 이 줄까지 쌓인 실적. 사용이 양수다. */
     performanceAfter: string;
+    /** 이 줄이 든 주기의 시작. 같은 값을 가진 줄끼리 한 머리글 아래 선다. */
+    periodStart: IsoDateString;
     cardId: string | null;
     cardName: string | null;
     categoryName: string | null;
@@ -436,7 +438,12 @@ export namespace CardDto {
     installmentMonths: number;
   }
 
-  /** 실적 원장의 한 주기. 줄은 최신이 앞이다. */
+  /**
+   * 실적 원장의 한 주기. 줄의 머리글이 되는 값이다.
+   *
+   * 합계는 **그 주기 전부**의 값이다. 한 쪽에 그 주기의 뒷부분만 실려 와도 머리글의
+   * 숫자는 달라지지 않는다 -- 주기는 통째로 세고 자르는 것은 보여 줄 줄뿐이다.
+   */
   export interface PerformanceLedgerPeriod {
     periodStart: IsoDateString;
     periodEnd: IsoDateString;
@@ -444,14 +451,13 @@ export namespace CardDto {
     closed: boolean;
     /** 이 주기의 실적 합계. 가장 오래된 줄부터 더한 값이고 `UsagePeriod.usage` 와 같다. */
     total: string;
-    rows: PerformanceLedgerRow[];
   }
 
   /**
-   * 카드 실적 원장. 주기마다 0에서 다시 쌓는다.
+   * 카드 실적 원장 한 쪽. 주기마다 0에서 다시 쌓는다.
    *
-   * 페이지를 줄이 아니라 **주기로 나눈다.** 누적은 주기 시작을 기준으로만 뜻이 있어,
-   * 줄 단위로 끊으면 한 주기의 앞부분을 아직 받지 못한 채 합계를 그리게 된다.
+   * 다른 원장과 같은 수만큼 끊어 준다. 줄에 붙은 누적은 잘린 자리와 상관없이 **주기
+   * 시작부터** 센 값이다 -- 주기는 통째로 만들어 두고 자르는 것은 보여 줄 줄뿐이다.
    */
   export interface PerformanceLedgerResponse {
     cardId: string;
@@ -461,10 +467,12 @@ export namespace CardDto {
     basis: 'statement' | 'month';
     /** 실적 기준액. 설정하지 않았으면 null 이다. */
     target: string | null;
-    /** 진행 중인 주기가 앞이다. */
+    /** 이 쪽에 실린 줄들이 속한 주기. 최신이 앞이다. */
     periods: PerformanceLedgerPeriod[];
-    /** 더 오래된 주기에 실적에 드는 거래가 남아 있는가. */
-    hasMore: boolean;
+    /** 줄. 최신이 앞이고, 주기가 바뀌는 자리는 `periodStart` 로 가른다. */
+    rows: PerformanceLedgerRow[];
+    /** 다음 쪽을 부를 자리. null 이면 더 볼 것이 없다. */
+    nextCursor: string | null;
   }
 }
 

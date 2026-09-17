@@ -1025,18 +1025,18 @@ class ApiClient {
   }
 
   /**
-   * 실적 원장. `months` 는 보여 줄 주기 수다 (진행 중인 주기를 포함한다).
+   * 실적 원장 한 쪽. 계좌 원장과 같은 방식으로 커서를 이어 받는다.
    *
-   * 줄이 아니라 주기로 나눈다. 누적은 주기 시작에서만 뜻이 있어, 줄 단위로 끊으면
-   * 한 주기의 앞부분을 받지 못한 채 합계를 그리게 된다.
+   * 줄에 붙은 누적은 잘린 자리와 상관없이 주기 시작부터 센 값이다. 주기는 서버가
+   * 통째로 만들어 두고 자르는 것은 보여 줄 줄뿐이다.
    */
   async getCardPerformanceLedger(
     cardId: string,
-    months: number,
+    params: { limit?: number; cursor?: string } = {},
   ): Promise<CardDto.PerformanceLedgerResponse> {
     const response = await this.client.get<CardDto.PerformanceLedgerResponse>(
       `/cards/${cardId}/performance-ledger`,
-      { params: { months } },
+      { params },
     );
     return response.data;
   }

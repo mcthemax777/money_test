@@ -81,18 +81,18 @@ export class CardsController {
 
   @Get(':id/performance-ledger')
   @ApiOperation({
-    summary: '실적 원장 (주기마다 0에서 다시 쌓는 줄들)',
+    summary: '실적 원장 한 쪽 (주기마다 0에서 다시 쌓는 줄들)',
   })
   performanceLedger(
     @Request() req: AuthenticatedRequest,
     @Param('id') id: string,
-    @Query('months') months?: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
   ) {
-    return this.cardLedger.getPerformanceLedger(
-      id,
-      req.user.id,
-      months ? Number(months) : undefined,
-    );
+    return this.cardLedger.getPerformanceLedger(id, req.user.id, {
+      limit: limit ? Number(limit) : undefined,
+      cursor,
+    });
   }
 
   @Get(':id/pending-rates')

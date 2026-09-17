@@ -74,6 +74,8 @@ import { apiErrorCode, useApiError } from '@money/core/lib/api-error';
 import { useAccountLedger } from '@money/core/hooks/useAccountLedger';
 import { useCardEntries } from '@money/core/hooks/useCardEntries';
 import { useCardPerformanceLedger } from '@money/core/hooks/useCardPerformanceLedger';
+import PullFooter from '@/components/PullFooter';
+import { useBottomPull } from '@/hooks/useBottomPull';
 import { categoryTitleOf } from '@money/core/lib/entries';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
@@ -232,6 +234,8 @@ function LedgerList({
 }) {
   const { t } = useTranslation();
   const isCard = kind === 'liability';
+  /* 바닥에서 한 번 더 당기면 다음 쪽이 온다. 홈의 거래 목록과 같은 손짓이다. */
+  const pull = useBottomPull({ hasMore, isLoading, count: rows.length, loadMore: onMore });
 
   if (rows.length === 0) {
     return <p className="text-sm text-gray-600">{t('assets.noEntries')}</p>;
@@ -263,7 +267,7 @@ function LedgerList({
         />
       ))}
 
-      <MoreButton hasMore={hasMore} isLoading={isLoading} onMore={onMore} />
+      <PullFooter pull={pull} isLoading={isLoading} hasMore={hasMore} isEmpty={false} />
     </div>
   );
 }
@@ -293,13 +297,19 @@ function PerformanceLedgerList({
   const timeZone = useProjectTimeZone();
   const ledger = useCardPerformanceLedger(cardId, reloadToken);
   const currency = ledger.currency ?? fallbackCurrency;
+  /* 바닥에서 한 번 더 당기면 다음 쪽이 온다. 다른 원장과 같은 손짓이다. */
+  const pull = useBottomPull({
+    hasMore: ledger.hasMore,
+    isLoading: ledger.isLoading,
+    count: ledger.rows.length,
+    loadMore: ledger.loadMore,
+  });
 
   if (ledger.hasError) {
     return <p className="text-sm text-red-600">{t('feed.loadFailed')}</p>;
   }
 
-  // 줄이 하나도 없는 주기만 받았으면 "내역 없음"이다. 빈 구간 머리글만 늘어놓지 않는다.
-  if (ledger.periods.every((period) => period.rows.length === 0)) {
+  if (ledger.rows.length === 0) {
     return (
       <p className="text-sm text-gray-600">
         {ledger.isLoading ? t('settlement.loading') : t('assets.noEntries')}
@@ -309,54 +319,59 @@ function PerformanceLedgerList({
 
   return (
     <div>
-      {ledger.periods.map((period) =>
-        period.rows.length === 0 ? null : (
-          <div key={period.periodStart}>
-            {/* 구간 머리글. 어디서 0으로 돌아가는지가 이 줄로 드러난다. */}
-            <div className="mt-2 flex items-baseline justify-between gap-2 border-b border-gray-200 pb-1">
-              <p className="text-xs font-medium text-gray-700">
-                {formatDate(period.periodStart, timeZone)} ~{' '}
-                {formatDate(period.periodEnd, timeZone)}
-              </p>
-              <p className="text-xs text-gray-500 whitespace-nowrap">
-                {t('assets.performancePeriodTotal', {
-                  amount: formatCurrency(toNumber(period.total), currency),
-                })}
-              </p>
-            </div>
+      {ledger.rows.map((row, index) => {
+        // 주기가 바뀌는 자리에만 머리글을 세운다. 어디서 0으로 돌아가는지가 그 줄로 드러난다.
+        const period =
+          row.periodStart === ledger.rows[index - 1]?.periodStart
+            ? null
+            : ledger.periods[row.periodStart];
 
-            {period.rows.map((row) => (
-              <LedgerRow
-                key={row.key}
-                row={row}
-                currency={currency}
-                isCard
-                onOpenEntry={onOpenEntry}
-                note={t('assets.performanceAfter', {
-                  amount: formatCurrency(toNumber(row.performanceAfter), currency),
-                })}
-                /*
-                  할부는 회차마다 한 줄이다. 주기 합계가 회차분만 세므로, 구매한 달에
-                  전액을 한 줄로 두면 줄의 합과 진행률 막대가 갈린다.
-                */
-                badge={
-                  row.installmentMonths > 1
-                    ? t('assets.performanceInstallment', {
-                        index: row.installmentIndex,
-                        months: row.installmentMonths,
-                      })
-                    : null
-                }
-              />
-            ))}
+        return (
+          <div key={row.key}>
+            {period && (
+              <div className="mt-2 flex items-baseline justify-between gap-2 border-b border-gray-200 pb-1">
+                <p className="text-xs font-medium text-gray-700">
+                  {formatDate(period.periodStart, timeZone)} ~{' '}
+                  {formatDate(period.periodEnd, timeZone)}
+                </p>
+                <p className="text-xs text-gray-500 whitespace-nowrap">
+                  {t('assets.performancePeriodTotal', {
+                    amount: formatCurrency(toNumber(period.total), currency),
+                  })}
+                </p>
+              </div>
+            )}
+
+            <LedgerRow
+              row={row}
+              currency={currency}
+              isCard
+              onOpenEntry={onOpenEntry}
+              note={t('assets.performanceAfter', {
+                amount: formatCurrency(toNumber(row.performanceAfter), currency),
+              })}
+              /*
+                할부는 회차마다 한 줄이다. 주기 합계가 회차분만 세므로, 구매한 달에
+                전액을 한 줄로 두면 줄의 합과 진행률 막대가 갈린다.
+              */
+              badge={
+                row.installmentMonths > 1
+                  ? t('assets.performanceInstallment', {
+                      index: row.installmentIndex,
+                      months: row.installmentMonths,
+                    })
+                  : null
+              }
+            />
           </div>
-        ),
-      )}
+        );
+      })}
 
-      <MoreButton
-        hasMore={ledger.hasMore}
+      <PullFooter
+        pull={pull}
         isLoading={ledger.isLoading}
-        onMore={ledger.loadMore}
+        hasMore={ledger.hasMore}
+        isEmpty={false}
       />
     </div>
   );
@@ -452,30 +467,6 @@ function LedgerRow({
   );
 }
 
-/** 더 보기. 원장 목록 둘이 같은 단추를 쓴다. */
-function MoreButton({
-  hasMore,
-  isLoading,
-  onMore,
-}: {
-  hasMore: boolean;
-  isLoading: boolean;
-  onMore: () => void;
-}) {
-  const { t } = useTranslation();
-  if (!hasMore) return null;
-
-  return (
-    <button
-      type="button"
-      onClick={onMore}
-      disabled={isLoading}
-      className="mt-2 w-full py-3 text-sm font-medium text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
-    >
-      {isLoading ? t('feed.loadingMore') : t('assets.more')}
-    </button>
-  );
-}
 
 /**
  * 상세의 머리글. 구성원·계좌·카드 셋이 같은 것을 쓴다.

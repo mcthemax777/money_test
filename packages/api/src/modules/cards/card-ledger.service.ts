@@ -358,24 +358,29 @@ export class CardLedgerService {
    *   - 할부가 회차마다 한 줄이다. 주기 합계가 회차분만 세므로, 구매한 달에 전액을
    *     한 줄로 두면 줄의 합과 진행률 막대가 갈린다.
    *
-   * 페이지를 줄이 아니라 주기로 나눈다. 누적은 주기 시작을 기준으로만 뜻이 있어,
-   * 줄 단위로 끊으면 한 주기의 앞부분을 받지 못한 채 합계를 그리게 된다.
+   * **줄로 끊어 준다.** 다른 원장과 같은 수만큼 받아 같은 손짓으로 잇는다. 누적은
+   * 주기 시작부터 세야 하므로 **주기는 통째로 만들어 두고 자르는 것은 보여 줄 줄뿐이다**
+   * -- 그래서 한 주기의 뒷부분만 받아도 줄에 붙은 누적은 처음부터 센 값이다.
+   *
+   * 주기를 거슬러 오르며 `limit` 만큼 채운다. 거래가 없는 달이 이어져도 한 번의 요청이
+   * 스물네 주기까지 훑으므로 빈 쪽이 계속 돌아오지 않는다.
    */
   async getPerformanceLedger(
     cardId: string,
     userId: string,
-    months?: number,
+    options: { limit?: number; cursor?: string } = {},
   ): Promise<CardDto.PerformanceLedgerResponse> {
     const card = await this.prisma.card.findUnique({ where: { id: cardId } });
     if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId);
 
     const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
-    const span = usageSpan(months);
+    const limit = Math.min(Math.max(Number(options.limit) || 20, 1), 100);
+    const cursor = parseLedgerCursor(options.cursor);
 
     return card.cardType === CardType.credit
-      ? this.creditPerformanceLedger(cardId, userId, timeZone, span)
-      : this.debitPerformanceLedger(card, timeZone, span);
+      ? this.creditPerformanceLedger(cardId, userId, timeZone, limit, cursor)
+      : this.debitPerformanceLedger(card, timeZone, limit, cursor);
   }
 
   /** 신용카드의 실적 원장. 주기는 마감일로 자른다. */
@@ -383,7 +388,8 @@ export class CardLedgerService {
     cardId: string,
     userId: string,
     timeZone: string,
-    span: number,
+    limit: number,
+    cursor: LedgerCursor | null,
   ): Promise<CardDto.PerformanceLedgerResponse> {
     const card = await this.loadCreditCard(cardId, userId);
     const closingDay = card.statementClosingDay!;
@@ -394,93 +400,86 @@ export class CardLedgerService {
       select: { currency: true },
     });
 
-    // 보여 줄 주기. 진행 중인 주기가 마지막이다 (할부가 걸린 미래 주기는 아직 쌓인 것이 없다).
-    const current = closingMonthOf(new Date(), closingDay, timeZone);
-    const shown: Array<{ key: string; period: CardDto.PerformanceLedgerPeriod }> = [];
-    const todayMarker = todayUtcMarker(timeZone);
-    for (let offset = span - 1; offset >= 0; offset -= 1) {
-      const closing = shiftClosingMonth(current, -offset);
-      const period = periodForClosingMonth(
-        closing.year,
-        closing.month,
-        closingDay,
-        card.paymentDueDay!,
-      );
-      shown.push({
-        key: closingMonthKey(closing),
-        period: {
-          periodStart: period.periodStart.toISOString(),
-          periodEnd: period.periodEnd.toISOString(),
-          closed: period.periodEnd.getTime() < todayMarker,
-          total: '0',
-          rows: [],
-        },
-      });
-    }
-    const earliestStart = new Date(shown[0].period.periodStart);
-
     /*
-     * 할부는 예전 구매가 지금 주기에 걸린다. 최장 할부 개월수만큼 앞에서부터 읽는다
-     * (사용 현황 질의와 같은 규칙이다). 주기 경계보다 한 달 더 앞에서 자른다.
+     * 할부는 예전 구매가 지금 주기에 걸린다. 주기마다 최장 할부 개월수만큼 앞에서부터
+     * 읽어야 그 회차가 빠지지 않는다 (사용 현황 질의와 같은 규칙이다).
      */
     const longestPlan = await this.prisma.installmentPlan.aggregate({
       _max: { totalMonths: true },
       where: { posting: { accountId: liabilityAccountId } },
     });
-    const since = new Date(earliestStart);
-    since.setUTCMonth(since.getUTCMonth() - (longestPlan._max.totalMonths ?? 1) - 1);
+    const lookback = (longestPlan._max.totalMonths ?? 1) + 1;
 
-    const usages = await this.prisma.posting.findMany({
-      where: {
-        accountId: liabilityAccountId,
-        entry: {
-          date: { gte: since },
-          // 사용만 센다. 대금 결제는 분류 다리가 없어 여기서 빠진다 (사용 현황과 같은 조건).
-          postings: { some: { categoryId: { not: null } } },
-        },
+    const page = await this.walkPerformancePeriods({
+      limit,
+      cursor,
+      // 커서가 없으면 진행 중인 주기부터다.
+      from: cursor?.closing ?? closingMonthOf(new Date(), closingDay, timeZone),
+      timeZone,
+      periodOf: (closing) => {
+        const period = periodForClosingMonth(
+          closing.year,
+          closing.month,
+          closingDay,
+          card.paymentDueDay!,
+        );
+        return { start: period.periodStart, end: period.periodEnd };
       },
-      select: {
-        id: true,
-        amount: true,
-        entry: { select: performanceLedgerEntrySelect },
-        installmentPlan: { select: { totalMonths: true } },
+      rowsOf: async (closing, period) => {
+        const since = new Date(period.start);
+        since.setUTCMonth(since.getUTCMonth() - lookback);
+
+        const usages = await this.prisma.posting.findMany({
+          where: {
+            accountId: liabilityAccountId,
+            entry: {
+              date: { gte: since, lte: period.end },
+              // 사용만 센다. 대금 결제는 분류 다리가 없어 여기서 빠진다.
+              postings: { some: { categoryId: { not: null } } },
+            },
+          },
+          select: {
+            id: true,
+            amount: true,
+            entry: { select: performanceLedgerEntrySelect },
+            installmentPlan: { select: { totalMonths: true } },
+          },
+          orderBy: [{ entry: { date: 'asc' } }, { id: 'asc' }],
+        });
+
+        const wanted = closingMonthKey(closing);
+        const rows: CardDto.PerformanceLedgerRow[] = [];
+        for (const usage of usages) {
+          const shares = creditPerformanceShares(
+            {
+              amount: usage.amount,
+              date: usage.entry.date,
+              installmentMonths: usage.installmentPlan?.totalMonths ?? null,
+              countsPerformance: usage.entry.countsPerformance,
+              ...performanceDiscount(usage.entry),
+            },
+            closingDay,
+            timeZone,
+          );
+          for (const share of shares) {
+            if (share.closingKey !== wanted) continue;
+            rows.push(this.performanceRow(usage.id, usage.entry, cardId, card.name, share, period));
+          }
+        }
+        return rows;
       },
-      orderBy: [{ entry: { date: 'asc' } }, { id: 'asc' }],
-    });
-
-    // 보여 줄 주기만 칸을 만들어 둔다. 칸이 없는 주기의 몫은 그대로 버린다.
-    const byPeriod = new Map(shown.map(({ key }) => [key, [] as CardDto.PerformanceLedgerRow[]]));
-    for (const usage of usages) {
-      const shares = creditPerformanceShares(
-        {
-          amount: usage.amount,
-          date: usage.entry.date,
-          installmentMonths: usage.installmentPlan?.totalMonths ?? null,
-          countsPerformance: usage.entry.countsPerformance,
-          ...performanceDiscount(usage.entry),
-        },
-        closingDay,
-        timeZone,
-      );
-
-      for (const share of shares) {
-        const rows = byPeriod.get(share.closingKey);
-        if (!rows) continue;
-        rows.push(this.performanceRow(usage.id, usage.entry, cardId, card.name, share));
-      }
-    }
-
-    // 더 오래된 주기에 실적에 드는 거래가 남아 있는가.
-    const older = await this.prisma.posting.findFirst({
-      where: {
-        accountId: liabilityAccountId,
-        entry: {
-          date: { lt: earliestStart },
-          countsPerformance: true,
-          postings: { some: { categoryId: { not: null } } },
-        },
-      },
-      select: { id: true },
+      olderExists: (start) =>
+        this.prisma.posting.findFirst({
+          where: {
+            accountId: liabilityAccountId,
+            entry: {
+              date: { lt: start },
+              countsPerformance: true,
+              postings: { some: { categoryId: { not: null } } },
+            },
+          },
+          select: { id: true },
+        }),
     });
 
     return {
@@ -488,10 +487,7 @@ export class CardLedgerService {
       currency: liability.currency,
       basis: 'statement',
       target: card.performanceAmount?.toString() ?? null,
-      periods: shown
-        .map(({ key, period }) => fillPeriod(period, byPeriod.get(key) ?? []))
-        .reverse(),
-      hasMore: older !== null,
+      ...page,
     };
   }
 
@@ -504,7 +500,8 @@ export class CardLedgerService {
       performanceAmount: Prisma.Decimal | null;
     },
     timeZone: string,
-    span: number,
+    limit: number,
+    cursor: LedgerCursor | null,
   ): Promise<CardDto.PerformanceLedgerResponse> {
     const cardId = card.id;
     const paymentAccount = await this.prisma.account.findUniqueOrThrow({
@@ -513,56 +510,57 @@ export class CardLedgerService {
     });
 
     const [thisYear, thisMonth] = zonedCurrentYearMonth(timeZone).split('-').map(Number);
-    const shown: Array<{ key: string; period: CardDto.PerformanceLedgerPeriod }> = [];
-    for (let offset = span - 1; offset >= 0; offset -= 1) {
-      const cursor = new Date(Date.UTC(thisYear, thisMonth - 1 - offset, 1));
-      const year = cursor.getUTCFullYear();
-      const month = cursor.getUTCMonth() + 1;
-      shown.push({
-        key: `${year}-${String(month).padStart(2, '0')}`,
-        period: {
-          // 달력 날짜 표시자. 청구 주기 쪽과 같은 형태다 (그 달 1일 ~ 말일).
-          periodStart: new Date(Date.UTC(year, month - 1, 1)).toISOString(),
-          periodEnd: new Date(Date.UTC(year, month, 0)).toISOString(),
-          closed: offset > 0,
-          total: '0',
-          rows: [],
-        },
-      });
-    }
 
-    const { start } = zonedMonthRange(shown[0].key, timeZone);
-    const rows = await this.prisma.posting.findMany({
-      where: { cardId, entry: { date: { gte: start } } },
-      select: {
-        id: true,
-        amount: true,
-        entry: { select: performanceLedgerEntrySelect },
+    const page = await this.walkPerformancePeriods({
+      limit,
+      cursor,
+      from: cursor?.closing ?? { year: thisYear, month: thisMonth },
+      timeZone,
+      // 달력 월 표시자. 청구 주기 쪽과 같은 형태다 (그 달 1일 ~ 말일).
+      periodOf: (closing) => ({
+        start: new Date(Date.UTC(closing.year, closing.month - 1, 1)),
+        end: new Date(Date.UTC(closing.year, closing.month, 0)),
+      }),
+      rowsOf: async (closing, period) => {
+        /*
+         * 질의 경계는 그 달의 실제 인스턴트다(타임존을 본다). 위 periodOf 가 주는 것은
+         * 화면에 적을 달력 날짜 표시자라, 둘을 섞으면 말일 거래가 시차만큼 빠진다.
+         */
+        const { start, end } = zonedMonthRange(closingMonthKey(closing), timeZone);
+
+        const postings = await this.prisma.posting.findMany({
+          where: { cardId, entry: { date: { gte: start, lt: end } } },
+          select: {
+            id: true,
+            amount: true,
+            entry: { select: performanceLedgerEntrySelect },
+          },
+          orderBy: [{ entry: { date: 'asc' } }, { id: 'asc' }],
+        });
+
+        const rows: CardDto.PerformanceLedgerRow[] = [];
+        for (const posting of postings) {
+          for (const share of debitPerformanceShares(
+            {
+              amount: posting.amount,
+              date: posting.entry.date,
+              countsPerformance: posting.entry.countsPerformance,
+              ...performanceDiscount(posting.entry),
+            },
+            timeZone,
+          )) {
+            rows.push(
+              this.performanceRow(posting.id, posting.entry, cardId, card.name, share, period),
+            );
+          }
+        }
+        return rows;
       },
-      orderBy: [{ entry: { date: 'asc' } }, { id: 'asc' }],
-    });
-
-    const byPeriod = new Map(shown.map(({ key }) => [key, [] as CardDto.PerformanceLedgerRow[]]));
-    for (const row of rows) {
-      const shares = debitPerformanceShares(
-        {
-          amount: row.amount,
-          date: row.entry.date,
-          countsPerformance: row.entry.countsPerformance,
-          ...performanceDiscount(row.entry),
-        },
-        timeZone,
-      );
-      for (const share of shares) {
-        const into = byPeriod.get(share.closingKey);
-        if (!into) continue;
-        into.push(this.performanceRow(row.id, row.entry, cardId, card.name, share));
-      }
-    }
-
-    const older = await this.prisma.posting.findFirst({
-      where: { cardId, entry: { date: { lt: start }, countsPerformance: true } },
-      select: { id: true },
+      olderExists: (start) =>
+        this.prisma.posting.findFirst({
+          where: { cardId, entry: { date: { lt: start }, countsPerformance: true } },
+          select: { id: true },
+        }),
     });
 
     return {
@@ -570,10 +568,88 @@ export class CardLedgerService {
       currency: paymentAccount.currency,
       basis: 'month',
       target: card.performanceAmount?.toString() ?? null,
-      periods: shown
-        .map(({ key, period }) => fillPeriod(period, byPeriod.get(key) ?? []))
-        .reverse(),
-      hasMore: older !== null,
+      ...page,
+    };
+  }
+
+  /**
+   * 주기를 거슬러 오르며 줄을 `limit` 만큼 모은다. 신용·체크가 이 한 길을 쓴다.
+   *
+   * **주기는 통째로 만든다.** 누적은 주기 시작부터 세야 뜻이 있어, 뒷부분만 보여 줄
+   * 때에도 앞부터 더한 값을 붙여야 한다. 자르는 것은 보여 줄 줄뿐이다.
+   *
+   * 한 번에 스물네 주기까지 훑는다. 그 안에서 채우지 못하면 더 오래된 줄이 있는지
+   * 한 번 물어, 없으면 커서를 끊어 목록이 끝나게 한다 -- 끊지 않으면 빈 쪽을 부르는
+   * 일이 되풀이된다.
+   */
+  private async walkPerformancePeriods(input: {
+    limit: number;
+    cursor: LedgerCursor | null;
+    from: ClosingMonth;
+    timeZone: string;
+    periodOf: (closing: ClosingMonth) => { start: Date; end: Date };
+    rowsOf: (
+      closing: ClosingMonth,
+      period: { start: Date; end: Date },
+    ) => Promise<CardDto.PerformanceLedgerRow[]>;
+    olderExists: (start: Date) => Promise<{ id: string } | null>;
+  }): Promise<{
+    periods: CardDto.PerformanceLedgerPeriod[];
+    rows: CardDto.PerformanceLedgerRow[];
+    nextCursor: string | null;
+  }> {
+    const todayMarker = todayUtcMarker(input.timeZone);
+    const periods: CardDto.PerformanceLedgerPeriod[] = [];
+    const rows: CardDto.PerformanceLedgerRow[] = [];
+
+    let closing = input.from;
+    let scanned = input.from;
+    let leftover = false;
+
+    for (let step = 0; step < MAX_USAGE_PERIODS && rows.length < input.limit; step += 1) {
+      scanned = closing;
+      const period = input.periodOf(closing);
+      const built = fillPeriod(await input.rowsOf(closing, period));
+
+      const key = closingMonthKey(closing);
+      // 커서가 가리키는 주기에서는 그 줄 다음부터다. 더 오래된 주기는 통째로 잇는다.
+      const rest =
+        input.cursor && input.cursor.key && key === closingMonthKey(input.cursor.closing)
+          ? built.rows.slice(built.rows.findIndex((row) => row.key === input.cursor!.key) + 1)
+          : built.rows;
+
+      if (rest.length > 0) {
+        const room = input.limit - rows.length;
+        rows.push(...rest.slice(0, room));
+        leftover = rest.length > room;
+        periods.push({
+          periodStart: period.start.toISOString(),
+          periodEnd: period.end.toISOString(),
+          closed: period.end.getTime() < todayMarker,
+          total: built.total,
+        });
+      }
+
+      if (rows.length >= input.limit) break;
+      closing = shiftClosingMonth(closing, -1);
+    }
+
+    /*
+     * 다음 자리.
+     *
+     * 본 주기에 줄이 남았으면 마지막 줄이 그 자리다. 다 봤으면 더 오래된 줄이 있는지
+     * 물어, 있으면 훑던 다음 주기부터 이어 가고 없으면 끊는다.
+     */
+    const last = rows[rows.length - 1];
+    if (leftover && last) {
+      return { periods, rows, nextCursor: `${closingMonthKey(scanned)}|${last.key}` };
+    }
+
+    const older = await input.olderExists(input.periodOf(scanned).start);
+    return {
+      periods,
+      rows,
+      nextCursor: older ? `${closingMonthKey(shiftClosingMonth(scanned, -1))}|` : null,
     };
   }
 
@@ -584,6 +660,7 @@ export class CardLedgerService {
     cardId: string,
     cardName: string | null,
     share: PerformanceShare,
+    period: { start: Date },
   ): CardDto.PerformanceLedgerRow {
     const category = entry.postings.find((leg) => leg.categoryId !== null)?.category ?? null;
 
@@ -597,6 +674,7 @@ export class CardLedgerService {
       // 계좌 원장과 같은 부호 규칙이다. 사용이 음수라 화면이 뒤집어 읽는다.
       amount: new Prisma.Decimal(share.amount).neg().toString(),
       performanceAfter: '0',
+      periodStart: period.start.toISOString(),
       cardId,
       cardName,
       categoryName: category?.name ?? null,
@@ -794,16 +872,44 @@ function todayUtcMarker(timeZone: string): number {
   return Date.UTC(today.year, today.month - 1, today.day);
 }
 
+/** 마감 연월 하나. 체크카드는 달력 월이 그 자리에 든다. */
+interface ClosingMonth {
+  year: number;
+  month: number;
+}
+
+/** 실적 원장의 다음 자리. "이 주기의 이 줄 다음부터"를 가리킨다. */
+interface LedgerCursor {
+  closing: ClosingMonth;
+  /** 비어 있으면 그 주기의 첫 줄부터다 (거래가 없는 달을 건너뛴 자리). */
+  key: string;
+}
+
+/** 'YYYY-MM|줄키' 를 되돌린다. 모양이 아니면 처음부터 본다. */
+function parseLedgerCursor(raw?: string): LedgerCursor | null {
+  if (!raw) return null;
+
+  const [month, ...rest] = raw.split('|');
+  const matched = /^(\d{4})-(\d{2})$/.exec(month ?? '');
+  if (!matched) return null;
+
+  return {
+    closing: { year: Number(matched[1]), month: Number(matched[2]) },
+    key: rest.join('|'),
+  };
+}
+
 /**
- * 한 주기를 줄로 채운다. 쌓인 실적은 **가장 오래된 줄부터** 더해 붙인다.
+ * 한 주기의 줄에 쌓인 실적을 붙인다. **가장 오래된 줄부터** 더한다.
  *
  * 돌려줄 때는 최신이 앞이다. 목록은 언제나 최근 것부터 읽는데, 누적은 주기 시작에서만
- * 뜻이 있어 더하는 방향과 보여 주는 방향이 반대다.
+ * 뜻이 있어 더하는 방향과 보여 주는 방향이 반대다. 합계는 그 주기 전부의 값이라,
+ * 뒷부분만 보여 줄 때에도 머리글의 숫자는 달라지지 않는다.
  */
-function fillPeriod(
-  period: CardDto.PerformanceLedgerPeriod,
-  rows: CardDto.PerformanceLedgerRow[],
-): CardDto.PerformanceLedgerPeriod {
+function fillPeriod(rows: CardDto.PerformanceLedgerRow[]): {
+  rows: CardDto.PerformanceLedgerRow[];
+  total: string;
+} {
   let running = ZERO;
   const filled = rows.map((row) => {
     // 줄의 금액은 카드 관점이라 사용이 음수다. 쌓이는 실적은 그 반대 부호다.
@@ -811,7 +917,7 @@ function fillPeriod(
     return { ...row, performanceAfter: running.toString() };
   });
 
-  return { ...period, total: running.toString(), rows: filled.reverse() };
+  return { rows: filled.reverse(), total: running.toString() };
 }
 
 function defaultDescription(cardName: string, direction: CardDto.TransferRequest['direction']) {

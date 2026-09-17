@@ -3,8 +3,13 @@ import type { AccountDto } from '@money/types';
 
 import { apiClient } from '../lib/api-client';
 
-/** 한 번에 받아 오는 줄 수. 통장 상세가 쓰던 값을 그대로 둔다. */
-const PAGE_SIZE = 100;
+/**
+ * 한 번에 받아 오는 줄 수. 홈의 거래 목록과 같다 (`useEntryFeed` 의 pageSize).
+ *
+ * 100 줄씩 받던 것을 줄였다. 화면은 스무 줄이면 이미 한 화면을 넘기고, 나머지는
+ * 내려오는 동안 이어 붙인다 -- 첫 화면이 그만큼 빨리 뜬다.
+ */
+const PAGE_SIZE = 20;
 
 /**
  * 한 계좌의 원장 줄. 줄마다 그 거래 직후의 잔액이 함께 온다.
