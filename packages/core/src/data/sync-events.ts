@@ -33,11 +33,28 @@ export interface SyncEventsOptions {
   onVersion: (version: number) => void;
   /** 진단용. 넣지 않으면 조용히 다시 붙는다. */
   onError?: (error: unknown) => void;
+  /**
+   * 이만큼 아무것도 오지 않으면 끊고 다시 붙는다. 검사에서만 바꾼다.
+   *
+   * 기본값은 서버 ping 간격(25초)의 두 배 남짓이다.
+   */
+  idleMs?: number;
 }
 
 /** 다시 붙기까지 기다리는 시간. 곱절로 늘리되 이 값에서 멈춘다. */
 const BACKOFF_START_MS = 1_000;
 const BACKOFF_MAX_MS = 60_000;
+
+/**
+ * 이만큼 아무것도 오지 않으면 끊어진 것으로 본다.
+ *
+ * **연결은 조용히 죽는다.** 와이파이에서 셀룰러로 넘어가거나 중간 장비가 상태를 잃으면
+ * 소켓은 열려 있는 채로 아무것도 오지 않는다. 그때는 오류도 끝도 없어서, 기기는 멀쩡히
+ * 붙어 있다고 믿고 다시 붙지 않는다 -- 그 사이의 변경은 앱을 다시 열 때까지 오지 않는다.
+ *
+ * 서버가 25초마다 ping 을 보내므로 그 두 배 남짓을 기다렸다 스스로 끊고 다시 붙는다.
+ */
+const IDLE_TIMEOUT_MS = 60_000;
 
 /** 열어 둔 알림 연결. */
 export interface SyncEventsHandle {
@@ -67,6 +84,8 @@ export function openSyncEvents(options: SyncEventsOptions): SyncEventsHandle {
   let backoff = BACKOFF_START_MS;
   /** 지금 간격을 기다리는 중이면 그 기다림을 끝내는 함수. 붙어 있는 동안은 null 이다. */
   let resumeWait: (() => void) | null = null;
+  /** 조용해서 우리가 끊은 것인가. 그러면 오류로 알리지 않고 곧바로 다시 붙는다. */
+  let idleCut = false;
 
   const url = `${options.baseUrl.replace(/\/$/, '')}/sync/events?projectId=${encodeURIComponent(
     options.projectId,
@@ -93,6 +112,16 @@ export function openSyncEvents(options: SyncEventsOptions): SyncEventsHandle {
         if (closed) return;
 
         /*
+         * 우리가 끊은 것이면 알릴 것이 없다. 조용한 연결을 걷어낸 것뿐이라 곧바로
+         * 다시 붙는다 -- 기다렸다 붙으면 그만큼 변경을 늦게 받는다.
+         */
+        if (idleCut) {
+          idleCut = false;
+          backoff = BACKOFF_START_MS;
+          continue;
+        }
+
+        /*
          * 오프라인은 오류가 아니다. 조용히 기다린다.
          *
          * 그 밖의 오류는 알려 준다. 권한이 사라졌거나 서버가 500 을 내는 상황은
@@ -108,8 +137,38 @@ export function openSyncEvents(options: SyncEventsOptions): SyncEventsHandle {
   };
 
   const connect = async () => {
+    const mine = new AbortController();
+    controller = mine;
+
+    /*
+     * 조용한 연결을 걷어내는 시계. 프레임이 올 때마다 되감는다.
+     *
+     * **붙는 동안에도 켜 둔다.** 소켓은 받아 놓고 헤더를 보내지 않는 중간 장비가 있어,
+     * 그때는 fetch 가 영영 돌아오지 않는다 -- 읽기 시작한 뒤에만 지키면 그 자리가 빈다.
+     *
+     * 붙고 나서는 ping 이 시계를 되감는다(서버가 25초마다 보낸다). 되감기지 않으면 그
+     * 연결은 살아 있어도 아무것도 나르지 못하는 것이므로 끊고 다시 붙는다.
+     */
+    let idle: ReturnType<typeof setTimeout> | null = null;
+    const bump = () => {
+      if (idle) clearTimeout(idle);
+      idle = setTimeout(() => {
+        idleCut = true;
+        mine.abort();
+      }, options.idleMs ?? IDLE_TIMEOUT_MS);
+    };
+
+    try {
+      bump();
+      await readVersions(mine, bump);
+    } finally {
+      if (idle) clearTimeout(idle);
+    }
+  };
+
+  /** 붙어서 프레임을 읽는다. 시계는 부르는 쪽이 들고 되감아 준다. */
+  const readVersions = async (mine: AbortController, bump: () => void) => {
     const token = await options.getToken();
-    controller = new AbortController();
 
     /*
      * fetch 를 옵션에서 **꺼내서** 부른다. `options.fetchFn(...)` 로 부르면 안 된다.
@@ -128,7 +187,7 @@ export function openSyncEvents(options: SyncEventsOptions): SyncEventsHandle {
         Accept: 'text/event-stream',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
-      signal: controller.signal,
+      signal: mine.signal,
     });
 
     if (!response.ok) throw new Error(`알림 연결이 거절되었습니다 (${response.status})`);
@@ -136,8 +195,10 @@ export function openSyncEvents(options: SyncEventsOptions): SyncEventsHandle {
 
     // 한 번이라도 붙었으면 간격을 되돌린다. 오래 붙어 있다 끊긴 연결은 처음처럼 다룬다.
     backoff = BACKOFF_START_MS;
+    bump();
 
     await readStream(response.body, (frame) => {
+      bump();
       const version = versionOf(frame);
       if (version !== null) options.onVersion(version);
     });

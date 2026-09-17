@@ -359,14 +359,17 @@ export function listenForChanges(projectId: string, timeZone: string): SyncEvent
  * 사라진 것처럼 보인다. **사라지지 않았다는 사실을 그 자리에서 말해 주는 것**이
  * 이 함수가 있는 이유다.
  *
- * 프로젝트를 묻지 않는 까닭은 그 자리에 고른 프로젝트가 없기 때문이다. 세션이 끊기면
- * 프로젝트 스토어도 비워질 수 있어, 있는 것을 다 세는 편이 맞다.
+ * 프로젝트를 묻지 않으면 다 센다. 로그인 화면이 그렇게 부른다 -- 세션이 끊기면 프로젝트
+ * 스토어도 비워질 수 있어 그 자리에는 고른 프로젝트가 없다.
+ *
+ * 프로젝트를 주면 그것만 센다. 동기화를 다시 걸지 정하는 자리가 그렇게 부른다. 한 프로젝트의
+ * 동기화는 그 프로젝트의 큐만 비우므로, 다 세면 남의 큐 때문에 영영 두드리게 된다.
  */
-export async function unsentCount(): Promise<{ pending: number; held: number }> {
+export async function unsentCount(projectId?: string): Promise<{ pending: number; held: number }> {
   if (!store) return { pending: 0, held: 0 };
 
   try {
-    return await store.outboxCount();
+    return await store.outboxCount(projectId);
   } catch (error) {
     // 세지 못한 것을 오류로 올리지 않는다. 로그인 화면이 이것 때문에 막히면 안 된다.
     console.error('보내지 못한 기록을 세지 못했습니다:', error);

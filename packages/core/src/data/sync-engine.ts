@@ -59,6 +59,22 @@ export interface SyncResult {
 const MAX_ROUNDS = 50;
 
 /**
+ * 한 쪽에 받을 행 수. 서버의 기본값과 같다.
+ *
+ * 느린 회선에서는 이 값이 그대로 실패의 원인이 된다 -- 한 쪽이 요청 시간 제한(10초)을
+ * 넘기면 받은 것 없이 끊기고, 다음 시도가 **같은 크기로** 다시 시작해 영영 따라잡지
+ * 못한다. 그래서 끊기면 반으로 줄여 다시 청한다.
+ */
+const PULL_PAGE_START = 500;
+
+/** 더는 줄이지 않는 크기. 이보다 작게 청해도 못 받으면 회선이 아니라 다른 문제다. */
+const PULL_PAGE_MIN = 25;
+
+/** 한 번에 밀어 올릴 명령 수. 받는 쪽과 같은 까닭으로 끊기면 반으로 줄인다. */
+const PUSH_BATCH_START = 100;
+const PUSH_BATCH_MIN = 1;
+
+/**
  * 사본을 지금까지의 서버 상태로 맞춘다.
  *
  * `hasMore` 가 참이면 서버가 안전한 자리에서 끊은 것이므로 이어서 받는다. 커서가
@@ -109,13 +125,29 @@ export async function syncProject(
   }
   if (outbox.pushed > 0) changed = true;
 
+  let pageSize = PULL_PAGE_START;
+
   for (;;) {
     let response: SyncDto.PullResponse;
     try {
-      response = await pull({ projectId, since: version });
+      response = await pull({ projectId, since: version, limit: pageSize });
     } catch (error) {
-      // 네트워크가 없으면 여기서 끝낸다. 사본은 그대로 쓸 수 있다.
       if (isOfflineError(error)) {
+        /*
+         * 끊겼다. **한 쪽이 너무 커서일 수 있다.**
+         *
+         * 회선이 느리면 큰 쪽은 늘 시간 제한에 걸리고, 다음 시도가 같은 크기로 다시
+         * 시작해 기기는 영영 첫 쪽을 넘지 못한다. 반으로 줄여 한 번 더 청해 본다 --
+         * 정말로 네트워크가 없으면 작은 쪽도 실패하므로 몇 번 만에 그만둔다.
+         */
+        if (pageSize > PULL_PAGE_MIN) {
+          pageSize = Math.max(Math.floor(pageSize / 2), PULL_PAGE_MIN);
+          rounds += 1;
+          if (rounds >= MAX_ROUNDS) break;
+          continue;
+        }
+
+        // 여기까지 왔으면 네트워크가 없는 것이다. 사본은 그대로 쓸 수 있다.
         return {
           version,
           rounds,
@@ -200,6 +232,14 @@ export async function syncProject(
 const SEQ_RETRY_ROUNDS = 2;
 
 /**
+ * 묶음을 줄여 가며 더 돌 수 있는 횟수.
+ *
+ * 100 에서 1 까지 반으로 줄이면 일곱 번이다. 남은 큐를 이어 보내는 데에도 같은 여유를
+ * 쓴다 -- 한 번의 동기화가 끝없이 돌지 않을 만큼만 둔다.
+ */
+const PUSH_SHRINK_ROUNDS = 10;
+
+/**
  * 아웃박스를 비운다.
  *
  * 한 번에 한 묶음만 보낸다. 일주일치를 한 요청에 밀면 끊기고(요청 시간 제한), 부분 성공을
@@ -218,10 +258,19 @@ async function pushOutbox(
   projectId: string,
 ): Promise<{ pushed: number; held: number; offline: boolean }> {
   let sent = 0;
+  let batch = PUSH_BATCH_START;
 
-  for (let round = 0; round < SEQ_RETRY_ROUNDS; round += 1) {
-    const mutations = await store.pendingMutations(projectId);
+  for (let round = 0; round < SEQ_RETRY_ROUNDS + PUSH_SHRINK_ROUNDS; round += 1) {
+    const mutations = await store.pendingMutations(projectId, batch);
     if (mutations.length === 0) break;
+
+    /*
+     * 보낸 수는 **큐가 줄어든 만큼**으로 센다.
+     *
+     * 묶음 크기만큼만 보내므로 "보낸 것 - 남은 것"으로 세면 큐가 묶음보다 길 때 음수가
+     * 된다. 화면 로그에만 쓰이는 값이지만 틀린 수를 적어 둘 이유가 없다.
+     */
+    const before = (await store.outboxCount(projectId)).pending;
 
     let requeued = 0;
     try {
@@ -232,8 +281,19 @@ async function pushOutbox(
       });
       ({ requeued } = await store.settleMutations(response.results, newId));
     } catch (error) {
-      // 오프라인은 오류가 아니다. 큐를 그대로 두고 다음 기회에 다시 보낸다.
       if (isOfflineError(error)) {
+        /*
+         * 받는 쪽과 같다. 묶음이 커서 끊겼을 수 있으므로 반으로 줄여 한 번 더 보낸다.
+         *
+         * 여러 날치를 한 요청에 밀면 느린 회선에서 늘 시간 제한에 걸리고, 그러면 그
+         * 기기는 적어 둔 것을 영영 올리지 못한다. 한 건까지 줄여도 안 되면 네트워크가
+         * 없는 것이다.
+         */
+        if (batch > PUSH_BATCH_MIN && mutations.length > PUSH_BATCH_MIN) {
+          batch = Math.max(Math.floor(batch / 2), PUSH_BATCH_MIN);
+          continue;
+        }
+
         const counts = await store.outboxCount(projectId);
         return { pushed: sent, held: counts.held, offline: true };
       }
@@ -241,8 +301,14 @@ async function pushOutbox(
     }
 
     const counts = await store.outboxCount(projectId);
-    sent += mutations.length - counts.pending;
-    if (requeued === 0) break;
+    sent += Math.max(before - counts.pending, 0);
+    /*
+     * 한 묶음이 나갔다. 남은 것이 있으면 이어서 보낸다.
+     *
+     * 예전에는 순번 충돌일 때만 한 번 더 돌았다. 그러면 큐가 묶음 크기보다 길 때 나머지가
+     * 다음 동기화까지 기다리는데, 그 "다음"이 언제인지는 아무도 모른다.
+     */
+    if (requeued === 0 && counts.pending === 0) break;
   }
 
   const counts = await store.outboxCount(projectId);

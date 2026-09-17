@@ -184,6 +184,53 @@ async function main() {
     eq('깨우면 기다리지 않고 다시 붙는다', requests > attempts, true);
     eq('그 시도로 연결이 선다', (await waitForConnection(connections.length + 1, 2_000)) > 0, true);
 
+    /*
+     * ── 6-2. 조용한 연결은 스스로 걷어낸다 ──
+     *
+     * 연결은 조용히 죽는다. 와이파이에서 셀룰러로 넘어가면 소켓은 열려 있는 채로
+     * 아무것도 오지 않고, 오류도 끝도 없다. 그때 기기는 멀쩡히 붙어 있다고 믿어
+     * **앱을 다시 열 때까지 그 사이의 변경을 받지 못한다.**
+     *
+     * 서버가 ping 을 보내므로 침묵은 곧 죽은 연결이다. 검사에서는 그 기다림을 짧게
+     * 줄여(idleMs) 스스로 끊고 다시 붙는지 본다.
+     */
+    const quietVersions: number[] = [];
+    const quietStart = connections.length;
+    const quiet = openSyncEvents({
+      baseUrl: `http://127.0.0.1:${port}`,
+      projectId: 'p1',
+      getToken: () => 'token',
+      fetchFn: fetch as unknown as StreamingFetch,
+      onVersion: (version) => quietVersions.push(version),
+      idleMs: 300,
+    });
+
+    try {
+      eq('조용한 연결: 먼저 붙는다', await waitForConnection(quietStart + 1), quietStart + 1);
+      // 아무것도 보내지 않는다. 300ms 가 지나면 클라이언트가 스스로 끊어야 한다.
+      eq(
+        '아무것도 오지 않으면 끊고 다시 붙는다',
+        await waitForConnection(quietStart + 2, 5_000),
+        quietStart + 2,
+      );
+
+      // 다시 붙은 연결은 멀쩡히 일한다. 끊었다 붙이는 것으로 끝나면 안 된다.
+      connections[connections.length - 1].write('event: sync\ndata: {"version":77}\n\n');
+      const gotQuiet = Date.now() + 3_000;
+      while (Date.now() < gotQuiet && quietVersions.length === 0) await sleep(20);
+      eq('새로 붙은 연결로 번호가 온다', quietVersions[0], 77);
+
+      // ping 만 와도 살아 있는 연결이다. 그때는 끊지 않는다.
+      const aliveStart = connections.length;
+      for (let i = 0; i < 4; i += 1) {
+        connections[connections.length - 1].write('event: ping\ndata: \n\n');
+        await sleep(150);
+      }
+      eq('ping 이 오는 동안은 끊지 않는다', connections.length, aliveStart);
+    } finally {
+      quiet.close();
+    }
+
     // ── 7. 닫으면 멈춘다 ──
     listener.close();
     await sleep(300);
