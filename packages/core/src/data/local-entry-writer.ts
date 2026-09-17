@@ -73,6 +73,12 @@ export function createLocalEntryWriter({
     cardTransferDirection: data.cardTransferDirection,
     // 결제 자리에서 깎인 금액. 서버가 재생할 때 같은 전표가 나와야 한다.
     discountAmount: text(data.discountAmount),
+    /*
+     * 실적 표 둘. 빠뜨리면 폼에서 끈 값이 사본에도 명령에도 남지 않아, 조립이 갈래의
+     * 기본값으로 되돌린다 -- 화면에서는 체크가 아무 일도 하지 않는 것으로 보인다.
+     */
+    countsPerformance: data.countsPerformance,
+    discountCountsPerformance: data.discountCountsPerformance,
     tagIds: data.tagIds,
     currency: data.currency,
     exchangeRate: text(data.exchangeRate),

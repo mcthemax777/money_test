@@ -537,6 +537,8 @@ export class EntriesService {
       discountAmount: optional(dto.discountAmount, '차감액'),
       // 카드 실적에 셀지. 생략하면 조립이 갈래의 기본값을 쓴다.
       countsPerformance: dto.countsPerformance,
+      // 차감액을 실적에서도 뺄지. 생략하면 뺀다.
+      discountCountsPerformance: dto.discountCountsPerformance,
       toAmount: optional(dto.toAmount, '받는 금액'),
       transferFee: optional(dto.transferFee, '이체 수수료'),
       transferFeeCategoryId: dto.transferFeeCategoryId,

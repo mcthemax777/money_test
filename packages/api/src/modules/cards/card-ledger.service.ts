@@ -2,6 +2,10 @@ import { Injectable, BadRequestException, Logger, NotFoundException } from '@nes
 import { Prisma, CardType, ProjectRole } from '@prisma/client';
 import {
   CardDto,
+  type CardUsagePosting,
+  type PerformanceShare,
+  creditPerformanceShares,
+  debitPerformanceShares,
   MAX_USAGE_PERIODS,
   closingMonthKey,
   closingMonthOf,
@@ -23,6 +27,24 @@ import { LedgerService } from '../ledger/ledger.service';
 import { notFound } from '@/common/app-error';
 
 const ZERO = new Prisma.Decimal(0);
+
+/**
+ * 실적을 정가로 셀 때 되살릴 차감액.
+ *
+ * 차감액은 사용자가 적은 통화이고 카드 다리는 계좌 통화라, 둘이 갈리는 거래(원화
+ * 카드로 한 외화 결제)에서는 그대로 더할 수 없다. 그때는 되살리지 않고 지금까지의
+ * 규칙(차감이 실적도 깎는다)을 그대로 둔다 -- 폼도 그 거래에는 이 칸을 띄우지 않는다.
+ */
+function performanceDiscount(entry: {
+  discountAmount: Prisma.Decimal | null;
+  discountCountsPerformance: boolean;
+  originalCurrency: string | null;
+}): Pick<CardUsagePosting, 'discountAmount' | 'discountCountsPerformance'> {
+  return {
+    discountAmount: entry.originalCurrency ? null : entry.discountAmount,
+    discountCountsPerformance: entry.discountCountsPerformance,
+  };
+}
 
 /*
  * 주기를 만들고 할부를 나누는 규칙은 `@money/types` 의 card-usage 가 갖는다.
@@ -129,7 +151,15 @@ export class CardLedgerService {
        */
       select: {
         amount: true,
-        entry: { select: { date: true, countsPerformance: true } },
+        entry: {
+          select: {
+            date: true,
+            countsPerformance: true,
+            discountAmount: true,
+            discountCountsPerformance: true,
+            originalCurrency: true,
+          },
+        },
         installmentPlan: { select: { totalMonths: true } },
       },
     });
@@ -140,6 +170,7 @@ export class CardLedgerService {
         date: usage.entry.date,
         installmentMonths: usage.installmentPlan?.totalMonths ?? null,
         countsPerformance: usage.entry.countsPerformance,
+        ...performanceDiscount(usage.entry),
       })),
       statementClosingDay: card.statementClosingDay!,
       paymentDueDay: card.paymentDueDay!,
@@ -215,7 +246,7 @@ export class CardLedgerService {
     cardId: string,
     timeZone: string,
     span: number,
-  ): Promise<Array<{ amount: Prisma.Decimal; date: Date; countsPerformance: boolean }>> {
+  ): Promise<CardUsagePosting[]> {
     const [year, month] = zonedCurrentYearMonth(timeZone).split('-').map(Number);
     const earliest = new Date(Date.UTC(year, month - span, 1));
     const key = `${earliest.getUTCFullYear()}-${String(earliest.getUTCMonth() + 1).padStart(2, '0')}`;
@@ -224,12 +255,24 @@ export class CardLedgerService {
     const rows = await this.prisma.posting.findMany({
       // 실적에서 뺀 거래도 함께 읽는다. 나누는 일은 집계가 한다 (신용카드와 같은 규칙).
       where: { cardId, entry: { date: { gte: start } } },
-      select: { amount: true, entry: { select: { date: true, countsPerformance: true } } },
+      select: {
+        amount: true,
+        entry: {
+          select: {
+            date: true,
+            countsPerformance: true,
+            discountAmount: true,
+            discountCountsPerformance: true,
+            originalCurrency: true,
+          },
+        },
+      },
     });
     return rows.map((row) => ({
       amount: row.amount,
       date: row.entry.date,
       countsPerformance: row.entry.countsPerformance,
+      ...performanceDiscount(row.entry),
     }));
   }
 
@@ -305,6 +348,262 @@ export class CardLedgerService {
       previousUsage: previous.usage,
       target,
     });
+  }
+
+  /**
+   * 실적 원장. 주기마다 0에서 다시 쌓는 줄들.
+   *
+   * 카드 상세의 실적 탭이 그린다. 계좌 원장과 다른 것이 둘이다.
+   *   - 잔액 자리에 **쌓인 실적**이 든다. 남은 대금은 결제대금 탭이 보여 준다.
+   *   - 할부가 회차마다 한 줄이다. 주기 합계가 회차분만 세므로, 구매한 달에 전액을
+   *     한 줄로 두면 줄의 합과 진행률 막대가 갈린다.
+   *
+   * 페이지를 줄이 아니라 주기로 나눈다. 누적은 주기 시작을 기준으로만 뜻이 있어,
+   * 줄 단위로 끊으면 한 주기의 앞부분을 받지 못한 채 합계를 그리게 된다.
+   */
+  async getPerformanceLedger(
+    cardId: string,
+    userId: string,
+    months?: number,
+  ): Promise<CardDto.PerformanceLedgerResponse> {
+    const card = await this.prisma.card.findUnique({ where: { id: cardId } });
+    if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
+    await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId);
+
+    const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
+    const span = usageSpan(months);
+
+    return card.cardType === CardType.credit
+      ? this.creditPerformanceLedger(cardId, userId, timeZone, span)
+      : this.debitPerformanceLedger(card, timeZone, span);
+  }
+
+  /** 신용카드의 실적 원장. 주기는 마감일로 자른다. */
+  private async creditPerformanceLedger(
+    cardId: string,
+    userId: string,
+    timeZone: string,
+    span: number,
+  ): Promise<CardDto.PerformanceLedgerResponse> {
+    const card = await this.loadCreditCard(cardId, userId);
+    const closingDay = card.statementClosingDay!;
+    const liabilityAccountId = card.liabilityAccountId!;
+
+    const liability = await this.prisma.account.findUniqueOrThrow({
+      where: { id: liabilityAccountId },
+      select: { currency: true },
+    });
+
+    // 보여 줄 주기. 진행 중인 주기가 마지막이다 (할부가 걸린 미래 주기는 아직 쌓인 것이 없다).
+    const current = closingMonthOf(new Date(), closingDay, timeZone);
+    const shown: Array<{ key: string; period: CardDto.PerformanceLedgerPeriod }> = [];
+    const todayMarker = todayUtcMarker(timeZone);
+    for (let offset = span - 1; offset >= 0; offset -= 1) {
+      const closing = shiftClosingMonth(current, -offset);
+      const period = periodForClosingMonth(
+        closing.year,
+        closing.month,
+        closingDay,
+        card.paymentDueDay!,
+      );
+      shown.push({
+        key: closingMonthKey(closing),
+        period: {
+          periodStart: period.periodStart.toISOString(),
+          periodEnd: period.periodEnd.toISOString(),
+          closed: period.periodEnd.getTime() < todayMarker,
+          total: '0',
+          rows: [],
+        },
+      });
+    }
+    const earliestStart = new Date(shown[0].period.periodStart);
+
+    /*
+     * 할부는 예전 구매가 지금 주기에 걸린다. 최장 할부 개월수만큼 앞에서부터 읽는다
+     * (사용 현황 질의와 같은 규칙이다). 주기 경계보다 한 달 더 앞에서 자른다.
+     */
+    const longestPlan = await this.prisma.installmentPlan.aggregate({
+      _max: { totalMonths: true },
+      where: { posting: { accountId: liabilityAccountId } },
+    });
+    const since = new Date(earliestStart);
+    since.setUTCMonth(since.getUTCMonth() - (longestPlan._max.totalMonths ?? 1) - 1);
+
+    const usages = await this.prisma.posting.findMany({
+      where: {
+        accountId: liabilityAccountId,
+        entry: {
+          date: { gte: since },
+          // 사용만 센다. 대금 결제는 분류 다리가 없어 여기서 빠진다 (사용 현황과 같은 조건).
+          postings: { some: { categoryId: { not: null } } },
+        },
+      },
+      select: {
+        id: true,
+        amount: true,
+        entry: { select: performanceLedgerEntrySelect },
+        installmentPlan: { select: { totalMonths: true } },
+      },
+      orderBy: [{ entry: { date: 'asc' } }, { id: 'asc' }],
+    });
+
+    // 보여 줄 주기만 칸을 만들어 둔다. 칸이 없는 주기의 몫은 그대로 버린다.
+    const byPeriod = new Map(shown.map(({ key }) => [key, [] as CardDto.PerformanceLedgerRow[]]));
+    for (const usage of usages) {
+      const shares = creditPerformanceShares(
+        {
+          amount: usage.amount,
+          date: usage.entry.date,
+          installmentMonths: usage.installmentPlan?.totalMonths ?? null,
+          countsPerformance: usage.entry.countsPerformance,
+          ...performanceDiscount(usage.entry),
+        },
+        closingDay,
+        timeZone,
+      );
+
+      for (const share of shares) {
+        const rows = byPeriod.get(share.closingKey);
+        if (!rows) continue;
+        rows.push(this.performanceRow(usage.id, usage.entry, cardId, card.name, share));
+      }
+    }
+
+    // 더 오래된 주기에 실적에 드는 거래가 남아 있는가.
+    const older = await this.prisma.posting.findFirst({
+      where: {
+        accountId: liabilityAccountId,
+        entry: {
+          date: { lt: earliestStart },
+          countsPerformance: true,
+          postings: { some: { categoryId: { not: null } } },
+        },
+      },
+      select: { id: true },
+    });
+
+    return {
+      cardId,
+      currency: liability.currency,
+      basis: 'statement',
+      target: card.performanceAmount?.toString() ?? null,
+      periods: shown
+        .map(({ key, period }) => fillPeriod(period, byPeriod.get(key) ?? []))
+        .reverse(),
+      hasMore: older !== null,
+    };
+  }
+
+  /** 체크카드의 실적 원장. 자를 기준이 달력 월뿐이다. */
+  private async debitPerformanceLedger(
+    card: {
+      id: string;
+      name: string;
+      paymentAccountId: string;
+      performanceAmount: Prisma.Decimal | null;
+    },
+    timeZone: string,
+    span: number,
+  ): Promise<CardDto.PerformanceLedgerResponse> {
+    const cardId = card.id;
+    const paymentAccount = await this.prisma.account.findUniqueOrThrow({
+      where: { id: card.paymentAccountId },
+      select: { currency: true },
+    });
+
+    const [thisYear, thisMonth] = zonedCurrentYearMonth(timeZone).split('-').map(Number);
+    const shown: Array<{ key: string; period: CardDto.PerformanceLedgerPeriod }> = [];
+    for (let offset = span - 1; offset >= 0; offset -= 1) {
+      const cursor = new Date(Date.UTC(thisYear, thisMonth - 1 - offset, 1));
+      const year = cursor.getUTCFullYear();
+      const month = cursor.getUTCMonth() + 1;
+      shown.push({
+        key: `${year}-${String(month).padStart(2, '0')}`,
+        period: {
+          // 달력 날짜 표시자. 청구 주기 쪽과 같은 형태다 (그 달 1일 ~ 말일).
+          periodStart: new Date(Date.UTC(year, month - 1, 1)).toISOString(),
+          periodEnd: new Date(Date.UTC(year, month, 0)).toISOString(),
+          closed: offset > 0,
+          total: '0',
+          rows: [],
+        },
+      });
+    }
+
+    const { start } = zonedMonthRange(shown[0].key, timeZone);
+    const rows = await this.prisma.posting.findMany({
+      where: { cardId, entry: { date: { gte: start } } },
+      select: {
+        id: true,
+        amount: true,
+        entry: { select: performanceLedgerEntrySelect },
+      },
+      orderBy: [{ entry: { date: 'asc' } }, { id: 'asc' }],
+    });
+
+    const byPeriod = new Map(shown.map(({ key }) => [key, [] as CardDto.PerformanceLedgerRow[]]));
+    for (const row of rows) {
+      const shares = debitPerformanceShares(
+        {
+          amount: row.amount,
+          date: row.entry.date,
+          countsPerformance: row.entry.countsPerformance,
+          ...performanceDiscount(row.entry),
+        },
+        timeZone,
+      );
+      for (const share of shares) {
+        const into = byPeriod.get(share.closingKey);
+        if (!into) continue;
+        into.push(this.performanceRow(row.id, row.entry, cardId, card.name, share));
+      }
+    }
+
+    const older = await this.prisma.posting.findFirst({
+      where: { cardId, entry: { date: { lt: start }, countsPerformance: true } },
+      select: { id: true },
+    });
+
+    return {
+      cardId,
+      currency: paymentAccount.currency,
+      basis: 'month',
+      target: card.performanceAmount?.toString() ?? null,
+      periods: shown
+        .map(({ key, period }) => fillPeriod(period, byPeriod.get(key) ?? []))
+        .reverse(),
+      hasMore: older !== null,
+    };
+  }
+
+  /** 실적 원장 한 줄. 쌓인 값은 주기를 채울 때 붙인다. */
+  private performanceRow(
+    postingId: string,
+    entry: PerformanceLedgerEntry,
+    cardId: string,
+    cardName: string | null,
+    share: PerformanceShare,
+  ): CardDto.PerformanceLedgerRow {
+    const category = entry.postings.find((leg) => leg.categoryId !== null)?.category ?? null;
+
+    return {
+      // 할부는 한 다리가 여러 주기에 나뉘어 들어가, 회차 번호까지 붙여야 줄마다 다르다.
+      key: share.months > 1 ? `${postingId}:${share.index}` : postingId,
+      entryId: entry.id,
+      date: entry.date.toISOString(),
+      description: entry.description,
+      merchant: entry.merchant,
+      // 계좌 원장과 같은 부호 규칙이다. 사용이 음수라 화면이 뒤집어 읽는다.
+      amount: new Prisma.Decimal(share.amount).neg().toString(),
+      performanceAfter: '0',
+      cardId,
+      cardName,
+      categoryName: category?.name ?? null,
+      parentCategoryName: category?.parent?.name ?? null,
+      installmentIndex: share.index,
+      installmentMonths: share.months,
+    };
   }
 
   /**
@@ -464,6 +763,55 @@ export class CardLedgerService {
     }
     return card;
   }
+}
+
+/** 실적 원장 한 줄이 전표에서 읽는 것. 분류는 형제 다리에 붙어 있다. */
+const performanceLedgerEntrySelect = {
+  id: true,
+  date: true,
+  description: true,
+  merchant: true,
+  countsPerformance: true,
+  discountAmount: true,
+  discountCountsPerformance: true,
+  originalCurrency: true,
+  postings: {
+    select: {
+      categoryId: true,
+      category: { select: { name: true, parent: { select: { name: true } } } },
+    },
+    orderBy: { id: 'asc' },
+  },
+} satisfies Prisma.JournalEntrySelect;
+
+type PerformanceLedgerEntry = Prisma.JournalEntryGetPayload<{
+  select: typeof performanceLedgerEntrySelect;
+}>;
+
+/** 오늘을 달력 날짜로 찍은 표시자. 주기가 닫혔는지 보는 데 쓴다. */
+function todayUtcMarker(timeZone: string): number {
+  const today = zonedParts(new Date(), timeZone);
+  return Date.UTC(today.year, today.month - 1, today.day);
+}
+
+/**
+ * 한 주기를 줄로 채운다. 쌓인 실적은 **가장 오래된 줄부터** 더해 붙인다.
+ *
+ * 돌려줄 때는 최신이 앞이다. 목록은 언제나 최근 것부터 읽는데, 누적은 주기 시작에서만
+ * 뜻이 있어 더하는 방향과 보여 주는 방향이 반대다.
+ */
+function fillPeriod(
+  period: CardDto.PerformanceLedgerPeriod,
+  rows: CardDto.PerformanceLedgerRow[],
+): CardDto.PerformanceLedgerPeriod {
+  let running = ZERO;
+  const filled = rows.map((row) => {
+    // 줄의 금액은 카드 관점이라 사용이 음수다. 쌓이는 실적은 그 반대 부호다.
+    running = running.add(new Prisma.Decimal(row.amount).neg());
+    return { ...row, performanceAfter: running.toString() };
+  });
+
+  return { ...period, total: running.toString(), rows: filled.reverse() };
 }
 
 function defaultDescription(cardName: string, direction: CardDto.TransferRequest['direction']) {

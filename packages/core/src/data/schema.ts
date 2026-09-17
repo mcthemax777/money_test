@@ -23,8 +23,10 @@
  * **잘못 적힌 값을 버릴 때도 올린다.** 17 은 서버가 `countsPerformance` 를 주기 전에
  * 받은 거래를 전부 "실적 제외"로 적었다. 사본은 바뀐 행만 다시 받으므로 그 값들은
  * 스스로 고쳐지지 않는다.
+ *
+ * 19 는 `discountCountsPerformance` 칸이 늘어난 판이다.
  */
-export const SCHEMA_VERSION = 18;
+export const SCHEMA_VERSION = 19;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -201,6 +203,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      discountAmount  TEXT,
      /* 이 거래를 카드 실적에 세는가. 청구액과는 다른 값이다. */
      countsPerformance INTEGER NOT NULL DEFAULT 1,
+     /* 차감·취소 금액을 실적에서도 뺄지. 꺼져 있으면 실적만 정가로 센다. */
+     discountCountsPerformance INTEGER NOT NULL DEFAULT 1,
      createdByUserId TEXT,
      /*
       * 이 전표를 마지막으로 고친 편집의 시계.

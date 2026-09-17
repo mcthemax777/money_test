@@ -102,6 +102,8 @@ export interface EntryMutationPayload {
   discountAmount?: string;
   /** 카드 실적에 셀지. 생략하면 갈래의 기본값을 쓴다. */
   countsPerformance?: boolean;
+  /** 차감·취소 금액을 실적에서도 뺄지. 생략하면 뺀다. */
+  discountCountsPerformance?: boolean;
   /**
    * 이 거래에 붙일 태그. 서버의 `EntryDto.CreateRequest.tagIds` 와 같은 규칙이다.
    *

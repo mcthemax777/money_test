@@ -28,6 +28,7 @@ import {
   accountValue,
   cardValue,
   parseMethod,
+  showDiscountPerformance,
   type EntryFormKind,
   type EntryFormValues,
 } from '@money/core/data/entry-form';
@@ -564,28 +565,12 @@ export default function EntryEditor({
             (쓴 돈이다) 카드로 들어온 돈은 꺼짐이 기본이다(캐시백은 실적을 깎지 않는다).
           */}
           {form.selectedCard ? (
-            <Pressable
-              onPress={() => setField('countsPerformance', !values.countsPerformance)}
-              className="flex-row items-start gap-2 rounded-lg border border-gray-200 p-3"
-            >
-              <View
-                className={`mt-0.5 h-5 w-5 items-center justify-center rounded border ${
-                  values.countsPerformance
-                    ? 'border-blue-600 bg-blue-600'
-                    : 'border-gray-300 bg-white'
-                }`}
-              >
-                {values.countsPerformance ? (
-                  <Text className="text-xs font-bold text-white">✓</Text>
-                ) : null}
-              </View>
-              <View className="flex-1">
-                <Text className="text-sm text-gray-900">{t('editor.countsPerformance')}</Text>
-                <Text className="mt-0.5 text-xs text-gray-500">
-                  {t('editor.countsPerformanceHint')}
-                </Text>
-              </View>
-            </Pressable>
+            <CheckRow
+              checked={values.countsPerformance}
+              onToggle={() => setField('countsPerformance', !values.countsPerformance)}
+              label={t('editor.countsPerformance')}
+              hint={t('editor.countsPerformanceHint')}
+            />
           ) : null}
 
           {values.kind === 'income' && form.selectedCard ? (
@@ -799,6 +784,30 @@ export default function EntryEditor({
                     })}
                   </Text>
 
+                  {/*
+                    깎인 만큼 실적도 줄일지. 기본은 줄인다 -- 다리가 이미 순액이라 그것이
+                    지금까지의 동작이다. 카드사가 환불을 실적에서 빼지 않는 경우가 있어,
+                    끄면 실적만 정가로 센다.
+
+                    거래 자체를 실적에서 뺐으면 뜨지 않는다. 그때는 어느 쪽이든 실적이
+                    움직이지 않아 물을 것이 없다 (`showDiscountPerformance`).
+                  */}
+                  {showDiscountPerformance({
+                    kind: values.kind,
+                    discountAmount: values.discountAmount,
+                    countsPerformance: values.countsPerformance,
+                    isCard: Boolean(form.selectedCard),
+                    isLedgerCurrency: !values.currency,
+                  }) ? (
+                    <CheckRow
+                      checked={values.discountCountsPerformance}
+                      onToggle={() =>
+                        setField('discountCountsPerformance', !values.discountCountsPerformance)
+                      }
+                      label={t('editor.discountCountsPerformance')}
+                      hint={t('editor.discountCountsPerformanceHint')}
+                    />
+                  ) : null}
                 </View>
               ) : null}
             </Field>
@@ -929,6 +938,42 @@ export default function EntryEditor({
 }
 
 /** 무엇을 만들지 고르는 줄. 통장과 카드 둘뿐이라 목록 대신 큰 단추 둘이다. */
+/**
+ * 체크 한 줄. 줄 전체가 누를 자리다.
+ *
+ * 앱에는 체크박스가 없어 네모와 글자를 직접 그린다. 실적 관련 칸이 둘이라 한 곳에 둔다.
+ */
+function CheckRow({
+  checked,
+  onToggle,
+  label,
+  hint,
+}: {
+  checked: boolean;
+  onToggle: () => void;
+  label: string;
+  hint: string;
+}) {
+  return (
+    <Pressable
+      onPress={onToggle}
+      className="flex-row items-start gap-2 rounded-lg border border-gray-200 p-3"
+    >
+      <View
+        className={`mt-0.5 h-5 w-5 items-center justify-center rounded border ${
+          checked ? 'border-blue-600 bg-blue-600' : 'border-gray-300 bg-white'
+        }`}
+      >
+        {checked ? <Text className="text-xs font-bold text-white">✓</Text> : null}
+      </View>
+      <View className="flex-1">
+        <Text className="text-sm text-gray-900">{label}</Text>
+        <Text className="mt-0.5 text-xs text-gray-500">{hint}</Text>
+      </View>
+    </Pressable>
+  );
+}
+
 function MethodChoice({
   label,
   description,

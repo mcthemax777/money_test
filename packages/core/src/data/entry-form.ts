@@ -97,6 +97,15 @@ export interface EntryFormValues {
    * 꺼도 갚을 대금은 그대로다. 실적과 청구액은 다른 값이다.
    */
   countsPerformance: boolean;
+  /**
+   * 차감·취소 금액을 카드 실적에서도 뺄지. 차감을 적은 카드 지출에만 화면에 뜬다.
+   *
+   * **기본은 뺀다.** 다리에 이미 깎인 금액이 들어가 있어 그것이 지금까지의 동작이다.
+   * 끄면 실적만 정가로 세고, 갚을 대금은 어느 쪽이든 깎인 금액 그대로다.
+   *
+   * 거래 자체를 실적에서 뺐으면(`countsPerformance` 가 꺼짐) 물을 것이 없다.
+   */
+  discountCountsPerformance: boolean;
   transferFee: string;
   transferFeeCategoryId: string;
   /**
@@ -160,6 +169,7 @@ export function emptyEntryForm({ personId = '', timeZone, now }: EntryFormDefaul
     installmentMonths: '',
     discountAmount: '',
     countsPerformance: true,
+    discountCountsPerformance: true,
     transferFee: '',
     transferFeeCategoryId: '',
     splits: [],
@@ -247,6 +257,7 @@ export function entryFormFromItem(
     amount: item.originalAmount ?? grossOf(item),
     discountAmount: item.discountAmount ?? '',
     countsPerformance: item.countsPerformance,
+    discountCountsPerformance: item.discountCountsPerformance,
     // 소분류가 있으면 그것이 고른 값이다. 목록은 가장 구체적인 분류를 준다.
     categoryId: item.categoryId ?? '',
     /*
@@ -299,6 +310,36 @@ export function entryFormFromItem(
  */
 export function defaultCountsPerformance(kind: EntryFormKind): boolean {
   return kind !== 'income';
+}
+
+/**
+ * "차감을 실적에서도 뺀다" 칸을 띄울 자리인가.
+ *
+ * 넷이 모두 맞아야 뜻이 있다 -- 카드로 낸 지출이고, 차감을 적었고, 그 거래를 실적에
+ * 세기로 했고, 장부 통화로 적었다. 마지막 조건은 집계가 되살릴 수 있는 범위다:
+ * 차감액은 사용자가 적은 통화이고 카드 다리는 계좌 통화라, 원화 카드로 한 외화 결제
+ * 에서는 더할 수 없어 서버와 사본 양쪽이 그 거래의 차감을 되살리지 않는다. 외화
+ * 계좌로 그 통화를 결제한 거래는 되살릴 수 있지만 여기서는 함께 감춘다 -- 화면이
+ * 카드의 계좌 통화를 들고 있지 않아서다.
+ *
+ * 화면과 조립이 같은 답을 내야 해서 여기 한 곳에 둔다.
+ */
+export function showDiscountPerformance(input: {
+  kind: EntryFormKind;
+  /** 차감·취소 금액. 비었거나 0이면 물을 것이 없다. */
+  discountAmount: string;
+  /** 그 거래를 실적에 세는가. 세지 않으면 차감이 실적을 움직일 일도 없다. */
+  countsPerformance: boolean;
+  /** 카드로 냈는가. 통장에서 나간 돈에는 실적이 없다. */
+  isCard: boolean;
+  /** 장부 통화로 적었는가. 웹과 앱이 이 값을 각자의 칸에서 만든다. */
+  isLedgerCurrency: boolean;
+}): boolean {
+  if (!input.isCard || input.kind !== 'expense') return false;
+  if (!input.countsPerformance || !input.isLedgerCurrency) return false;
+
+  const discount = toDec(input.discountAmount);
+  return Boolean(discount?.isPositive());
 }
 
 /**
@@ -614,10 +655,26 @@ export function entryFormToRequest(
    * 기본값은 조립이 갈래를 보고 정하므로, 같은 값을 굳이 보내지 않는다. 짐만 보고도
    * 사용자가 손댄 자리가 드러난다.
    */
-  const performanceExtra =
-    method.cardId && values.countsPerformance !== defaultCountsPerformance(values.kind)
+  const performanceExtra = {
+    ...(method.cardId && values.countsPerformance !== defaultCountsPerformance(values.kind)
       ? { countsPerformance: values.countsPerformance }
-      : {};
+      : {}),
+    /*
+     * 차감을 실적에서 빼지 않기로 한 것. 그 칸이 화면에 떠 있었을 때만 싣는다.
+     *
+     * 화면이 보여 주지 않은 값을 실어 보내면, 지출에서 끈 뒤 차감을 지운 거래가
+     * 사용자가 볼 수 없는 값을 들고 다니게 된다 (`showDiscountPerformance`).
+     */
+    ...(showDiscountPerformance({
+      kind: values.kind,
+      discountAmount: values.discountAmount,
+      countsPerformance: values.countsPerformance,
+      isCard: Boolean(method.cardId),
+      isLedgerCurrency: !values.currency,
+    }) && !values.discountCountsPerformance
+      ? { discountCountsPerformance: false }
+      : {}),
+  };
 
   /*
    * 분할이면 줄들을 싣고 대표 분류는 싣지 않는다.

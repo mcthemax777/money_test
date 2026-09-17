@@ -17,7 +17,7 @@ import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import { apiClient } from '@money/core/lib/api-client';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
-import { defaultCountsPerformance } from '@money/core/data/entry-form';
+import { defaultCountsPerformance, showDiscountPerformance } from '@money/core/data/entry-form';
 import { entryAmountLook } from '@money/core/lib/entries';
 import { formatCurrency, formatNumber, toAmountString, toNumber } from '@money/core/lib/money';
 import {
@@ -161,6 +161,13 @@ function emptyEntryForm(timeZone: string, ledgerCurrency: CurrencyCode) {
      * 꺼도 갚을 대금은 그대로다. 실적과 청구액은 다른 값이다.
      */
     countsPerformance: true,
+    /**
+     * 차감·취소 금액을 카드 실적에서도 뺄지. 차감을 적은 카드 지출에만 화면에 뜬다.
+     *
+     * **기본은 뺀다.** 다리에 이미 깎인 금액이 들어가 있어 그것이 지금까지의 동작이다.
+     * 끄면 실적만 정가로 세고, 갚을 대금은 어느 쪽이든 깎인 금액 그대로다.
+     */
+    discountCountsPerformance: true,
     /** 위 금액을 입력한 통화. 결제수단을 고르면 그 계좌 통화로 맞춰진다. */
     currency: ledgerCurrency,
     /**
@@ -986,6 +993,25 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         if (useCard && formData.countsPerformance !== defaultCountsPerformance(kind)) {
           payload.countsPerformance = formData.countsPerformance;
         }
+
+        /*
+         * 차감을 실적에서 빼지 않기로 한 것. 그 칸이 화면에 떠 있었을 때만 싣는다.
+         *
+         * 보여 주지 않은 값을 실어 보내면, 껐다가 차감을 지운 거래가 사용자가 볼 수
+         * 없는 값을 들고 다닌다 (앱과 같은 규칙: `showDiscountPerformance`).
+         */
+        if (
+          showDiscountPerformance({
+            kind,
+            discountAmount: formData.discountAmount,
+            countsPerformance: formData.countsPerformance,
+            isCard: useCard,
+            isLedgerCurrency: formData.currency === ledgerCurrency,
+          }) &&
+          !formData.discountCountsPerformance
+        ) {
+          payload.discountCountsPerformance = false;
+        }
       }
 
       let savedId: string | null = editingId;
@@ -1216,6 +1242,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
        */
       discountAmount: entry.discountAmount ?? '',
       countsPerformance: entry.countsPerformance,
+      discountCountsPerformance: entry.discountCountsPerformance,
       tagIds: entry.tags.map((tag) => tag.id),
       /*
        * 나눈 줄. 목록이 줄 전부를 실어 줄 때만 되살린다.
@@ -1588,6 +1615,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                           값이 수입으로 따라와, 켠 적 없는 캐시백이 실적을 깎는다.
                         */
                         countsPerformance: defaultCountsPerformance(tab.id),
+                        // 차감에 딸린 값이라 함께 되돌린다. 차감 자체도 위에서 비운다.
+                        discountCountsPerformance: true,
                       })}
                       className={`flex-1 px-3 py-2 text-sm font-medium rounded-md transition ${
                         selected
@@ -2271,6 +2300,43 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                         })}
                       </p>
 
+                      {/*
+                        깎인 만큼 실적도 줄일지. 기본은 줄인다 -- 다리가 이미 순액이라
+                        그것이 지금까지의 동작이다. 카드사가 환불을 실적에서 빼지 않는
+                        경우가 있어, 끄면 실적만 정가로 센다.
+
+                        거래 자체를 실적에서 뺐으면 뜨지 않는다. 그때는 어느 쪽이든
+                        실적이 움직이지 않아 물을 것이 없다.
+                      */}
+                      {showDiscountPerformance({
+                        kind: 'expense',
+                        discountAmount: formData.discountAmount,
+                        countsPerformance: formData.countsPerformance,
+                        isCard: formData.method === 'card' && Boolean(formData.cardId),
+                        isLedgerCurrency: formData.currency === ledgerCurrency,
+                      }) && (
+                        <label className="flex items-start gap-2 rounded-lg border border-gray-200 p-3 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={formData.discountCountsPerformance}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                discountCountsPerformance: e.target.checked,
+                              })
+                            }
+                            className="mt-0.5 h-4 w-4"
+                          />
+                          <span className="flex-1">
+                            <span className="block text-sm text-gray-900">
+                              {t('editor.discountCountsPerformance')}
+                            </span>
+                            <span className="mt-0.5 block text-xs text-gray-500">
+                              {t('editor.discountCountsPerformanceHint')}
+                            </span>
+                          </span>
+                        </label>
+                      )}
                     </div>
                   )}
                 </div>
@@ -2742,6 +2808,15 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   {t('tx.detail.performance')} · {t('editor.performanceExcluded')}
                 </p>
               )}
+              {/* 차감을 실적에서 빼지 않은 거래. 기본과 다른 것만 적는다. */}
+              {selectedTransaction.cardId &&
+                selectedTransaction.countsPerformance &&
+                selectedTransaction.discountAmount &&
+                !selectedTransaction.discountCountsPerformance && (
+                  <p className="mt-1 text-xs text-gray-500">
+                    {t('tx.detail.performance')} · {t('editor.discountPerformanceKept')}
+                  </p>
+                )}
 
             </div>
 

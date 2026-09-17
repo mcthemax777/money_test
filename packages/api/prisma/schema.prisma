@@ -668,6 +668,14 @@ model JournalEntry {
   // 카드가 끼지 않은 거래는 true 로 둔다. 실적 질의가 카드 다리만 보므로 읽히지 않는다.
   countsPerformance Boolean @default(true)
 
+  // 차감·취소 금액(discountAmount)을 카드 실적에서도 뺄지.
+  //
+  // 다리에는 이미 깎인 뒤의 금액이 들어가 있어, 이 값이 true 면 실적도 그만큼 줄어든다.
+  // false 면 실적만 정가로 센다 -- 갚을 대금은 어느 쪽이든 깎인 금액 그대로다.
+  //
+  // 차감이 없는 거래와 countsPerformance 가 꺼진 거래에서는 읽히지 않는다.
+  discountCountsPerformance Boolean @default(true)
+
   createdByUserId String? // 입력자 추적용. 조회 필터로 쓰지 않는다 (프로젝트 멤버는 모두 같은 데이터를 본다)
 
   project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)

@@ -54,6 +54,8 @@ export type EntryWithPostings = {
   discountAmount?: Prisma.Decimal | null;
   /** 이 거래를 카드 실적에 세는가. */
   countsPerformance?: boolean;
+  /** 차감액을 실적에서도 뺄지. */
+  discountCountsPerformance?: boolean;
   /**
    * 이 전표를 마지막으로 고친 편집의 시계.
    *

@@ -53,6 +53,91 @@ export interface CardUsagePosting {
    * `usage` 에서만 빠진다.
    */
   countsPerformance?: boolean;
+  /**
+   * 결제 자리에서 깎인 금액 (포인트·자동할인·취소). 양수다.
+   *
+   * 다리 금액은 이미 깎인 뒤의 값이라, 실적을 정가로 셀 때 여기서 되살린다.
+   */
+  discountAmount?: DecInput | null;
+  /**
+   * 그 차감액을 실적에서도 뺄지. 없으면 뺀 것으로 본다 (지금까지의 동작).
+   *
+   * 꺼져 있으면 `usage` 만 정가로 세고 `billed` 는 깎인 금액 그대로다 -- 갚을 대금은
+   * 어느 쪽이든 달라지지 않는다.
+   */
+  discountCountsPerformance?: boolean;
+}
+
+/**
+ * 실적에 셀 금액. 청구액과 갈리는 자리는 차감 하나뿐이다.
+ *
+ * 받는 `billed` 는 이미 부호를 뒤집은 값이다 (사용이 양수).
+ */
+function performanceAmount(billed: Dec, posting: CardUsagePosting): Dec {
+  if (posting.discountCountsPerformance ?? true) return billed;
+
+  const discount = posting.discountAmount;
+  if (discount === undefined || discount === null || discount === '') return billed;
+  return billed.plus(Dec.of(discount));
+}
+
+/** 한 다리가 어느 주기에 얼마를 쌓는가. 할부는 회차마다 하나씩이다. */
+export interface PerformanceShare {
+  /** 마감 연월 키 (`closingMonthKey`). 체크카드는 달력 월 키다. */
+  closingKey: string;
+  /** 그 주기의 실적에 더해지는 금액. 사용이 양수다. */
+  amount: string;
+  /** 할부 회차. 일시불이면 1 이다. */
+  index: number;
+  /** 할부 개월수. 일시불이면 1 이다. */
+  months: number;
+}
+
+/**
+ * 신용카드 다리 하나가 실적에 더하는 몫. 주기마다 하나씩.
+ *
+ * 실적에서 뺀 거래는 빈 목록이다. 할부는 회차만큼 나뉘고, 차감을 실적에서 빼지 않기로
+ * 한 거래는 정가로 나눈다 -- 주기 합계(`creditUsagePeriods`)가 이 함수를 그대로 쓴다.
+ */
+export function creditPerformanceShares(
+  posting: CardUsagePosting,
+  statementClosingDay: number,
+  timeZone: string,
+): PerformanceShare[] {
+  if (!(posting.countsPerformance ?? true)) return [];
+
+  const months = Math.max(posting.installmentMonths ?? 1, 1);
+  const total = performanceAmount(Dec.of(posting.amount).negated(), posting);
+  const purchase = closingMonthOf(asDate(posting.date), statementClosingDay, timeZone);
+
+  return splitInstallment(total, months).map((share, offset) => ({
+    closingKey: closingMonthKey(shiftClosingMonth(purchase, offset)),
+    amount: share.toString(),
+    index: offset + 1,
+    months,
+  }));
+}
+
+/**
+ * 체크카드 다리 하나가 실적에 더하는 몫. 달력 월 하나뿐이다.
+ *
+ * 체크카드에는 할부가 없어 나눌 것이 없다. 실적에서 뺀 거래는 빈 목록이다.
+ */
+export function debitPerformanceShares(
+  posting: CardUsagePosting,
+  timeZone: string,
+): PerformanceShare[] {
+  if (!(posting.countsPerformance ?? true)) return [];
+
+  const amount = performanceAmount(Dec.of(posting.amount).negated(), posting);
+  return [
+    {
+      closingKey: zonedYearMonth(asDate(posting.date), timeZone),
+      amount: amount.toString(),
+      index: 1,
+      months: 1,
+    },
+  ];
 }
 
 export interface CreditUsageInput {
@@ -100,12 +185,7 @@ export function creditUsagePeriods(input: CreditUsageInput): CreditUsageResult {
    */
   const billedByMonth = new Map<string, Dec>();
   const usageByMonth = new Map<string, Dec>();
-  const add = (
-    into: Map<string, Dec>,
-    closing: { year: number; month: number },
-    amount: Dec,
-  ) => {
-    const key = closingMonthKey(closing);
+  const add = (into: Map<string, Dec>, key: string, amount: Dec) => {
     into.set(key, (into.get(key) ?? Dec.of(0)).plus(amount));
   };
 
@@ -113,13 +193,19 @@ export function creditUsagePeriods(input: CreditUsageInput): CreditUsageResult {
     // 부채 다리는 사용이 음수다. 표시용으로 뒤집는다.
     const total = Dec.of(posting.amount).negated();
     const purchase = closingMonthOf(asDate(posting.date), statementClosingDay, timeZone);
-    const counts = posting.countsPerformance ?? true;
 
     const shares = splitInstallment(total, posting.installmentMonths ?? 1);
     for (let offset = 0; offset < shares.length; offset += 1) {
-      const closing = shiftClosingMonth(purchase, offset);
-      add(billedByMonth, closing, shares[offset]);
-      if (counts) add(usageByMonth, closing, shares[offset]);
+      add(billedByMonth, closingMonthKey(shiftClosingMonth(purchase, offset)), shares[offset]);
+    }
+
+    /*
+     * 실적 몫은 따로 나눈다. 차감을 실적에서 빼지 않기로 한 거래는 정가가 기준이라
+     * 회차 금액도 청구 쪽과 다르다. 나누는 규칙은 실적 원장과 한 함수에 둔다 --
+     * 두 벌로 두면 줄마다 쌓이는 값과 주기 합계가 갈린다.
+     */
+    for (const share of creditPerformanceShares(posting, statementClosingDay, timeZone)) {
+      add(usageByMonth, share.closingKey, Dec.of(share.amount));
     }
   }
   // 주기를 만들 때는 청구가 잡힌 달을 본다. 실적만 있는 달은 있을 수 없다.
@@ -194,8 +280,10 @@ export function debitUsagePeriods(input: DebitUsageInput): CardDto.UsagePeriod[]
     const key = zonedYearMonth(asDate(posting.date), timeZone);
     const amount = Dec.of(posting.amount).negated();
     billedByMonth.set(key, (billedByMonth.get(key) ?? Dec.of(0)).plus(amount));
-    if (posting.countsPerformance ?? true) {
-      usageByMonth.set(key, (usageByMonth.get(key) ?? Dec.of(0)).plus(amount));
+    // 실적 쪽은 실적 원장과 같은 함수로 낸다 (차감을 되살리는 규칙이 한 곳에 있다).
+    for (const share of debitPerformanceShares(posting, timeZone)) {
+      const at = share.closingKey;
+      usageByMonth.set(at, (usageByMonth.get(at) ?? Dec.of(0)).plus(Dec.of(share.amount)));
     }
   }
 

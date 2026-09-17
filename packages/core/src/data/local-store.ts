@@ -149,6 +149,10 @@ export interface StoredCardPosting {
   installmentMonths: number | null;
   /** 실적에 세는가. 청구액에는 어느 쪽이든 들어간다. */
   countsPerformance: boolean;
+  /** 실적을 정가로 셀 때 되살릴 차감액. 되살리지 않는 거래는 null 이다. */
+  discountAmount: string | null;
+  /** 차감액을 실적에서도 뺄지. */
+  discountCountsPerformance: boolean;
 }
 
 type Row = Record<string, SqlValue>;
@@ -224,6 +228,13 @@ const toCardPosting = (row: Row): StoredCardPosting => ({
   date: String(row.date),
   installmentMonths: row.totalMonths == null ? null : Number(row.totalMonths),
   countsPerformance: Boolean(row.countsPerformance),
+  /*
+   * 차감액은 사용자가 적은 통화이고 카드 다리는 계좌 통화다. 둘이 갈리는 거래(원화
+   * 카드로 한 외화 결제)에서는 더할 수 없어 되살리지 않는다 -- 서버의 같은 질의
+   * (`performanceDiscount`) 와 한 규칙이다.
+   */
+  discountAmount: row.originalCurrency ? null : asText(row.discountAmount),
+  discountCountsPerformance: Boolean(row.discountCountsPerformance ?? 1),
 });
 
 const asInt = (value: unknown): number => {
@@ -620,6 +631,8 @@ export class LocalStore {
            * 목록 한 줄을 펴는 규칙도 같은 기본값을 쓴다 (`toListItem` 의 ?? true).
            */
           countsPerformance: asFlag(row.countsPerformance ?? true),
+          // 같은 까닭으로 기본값을 둔다. 값이 없으면 차감이 실적도 깎던 그때의 규칙이다.
+          discountCountsPerformance: asFlag(row.discountCountsPerformance ?? true),
           createdByUserId: asText(row.createdByUserId),
           updatedHlc: asText(row.updatedHlc),
           updatedVersion: asInt(row.updatedVersion),
@@ -1685,6 +1698,7 @@ export class LocalStore {
       rateProvisional: Boolean(entry.rateProvisional),
       discountAmount: asText(entry.discountAmount),
       countsPerformance: Boolean(entry.countsPerformance),
+      discountCountsPerformance: Boolean(entry.discountCountsPerformance),
       // 목록 한 줄에 실린다. 서버 창구를 쓰는 화면이 수정할 때 이 값을 되돌려 준다.
       updatedHlc: asText(entry.updatedHlc),
       postings: byEntry.get(String(entry.id)) ?? [],
@@ -1820,6 +1834,7 @@ export class LocalStore {
         rateProvisional: asFlag(built.rateProvisional),
         discountAmount: built.discountAmount ? built.discountAmount.toString() : null,
         countsPerformance: asFlag(built.countsPerformance ?? true),
+        discountCountsPerformance: asFlag(built.discountCountsPerformance ?? true),
         createdByUserId: null,
         // 이 편집의 시계. 다음에 이 전표를 고칠 때 이 값보다 뒤를 발급한다.
         updatedHlc: options.hlc,
@@ -2727,7 +2742,9 @@ export class LocalStore {
        * 여기서 걸러 버리면 청구액 그래프가 남은 대금과 어긋난다 -- 청구는 되었는데
        * 그래프에는 없는 돈이 생긴다.
        */
-      `SELECT p.amount, e.date, e.countsPerformance, ip.totalMonths
+      `SELECT p.amount, e.date, e.countsPerformance,
+              e.discountAmount, e.discountCountsPerformance, e.originalCurrency,
+              ip.totalMonths
          FROM posting p
          JOIN entry e ON e.id = p.entryId
          LEFT JOIN installment_plan ip ON ip.postingId = p.id
@@ -2746,7 +2763,9 @@ export class LocalStore {
    */
   async debitCardPostings(cardId: string): Promise<StoredCardPosting[]> {
     const rows = await this.db.all<Row>(
-      `SELECT p.amount, e.date, e.countsPerformance, NULL AS totalMonths
+      `SELECT p.amount, e.date, e.countsPerformance,
+              e.discountAmount, e.discountCountsPerformance, e.originalCurrency,
+              NULL AS totalMonths
          FROM posting p
          JOIN entry e ON e.id = p.entryId
         WHERE p.cardId = ?`,

@@ -173,10 +173,10 @@ export namespace AccountDto {
     categoryName: string | null;
     parentCategoryName: string | null;
     /**
-     * 이 거래를 카드 실적에 세는가. 카드 상세의 실적 탭이 줄을 거르는 데 쓴다.
+     * 이 거래를 카드 실적에 세는가.
      *
-     * 이 값만으로는 모자란다 -- 대금 결제도 true 로 오지만 실적에 들지 않는다.
-     * 가르는 규칙은 `rowCountsPerformance` 한 곳에 있다.
+     * 이 값만으로 실적에 드는 줄을 가릴 수는 없다 -- 대금 결제도 true 로 온다. 실적
+     * 탭이 그리는 줄은 서버가 따로 골라 준다 (`CardDto.PerformanceLedgerRow`).
      */
     countsPerformance: boolean;
   }
@@ -401,6 +401,71 @@ export namespace CardDto {
     outstanding: string;
     periods: UsagePeriod[];
   }
+
+  /**
+   * 실적 원장 한 줄.
+   *
+   * 계좌 원장 한 줄(`AccountDto.LedgerRow`)과 같은 모양이되 **잔액 자리에 쌓인 실적이
+   * 든다.** 카드 상세의 실적 탭이 그리는 값은 남은 대금이 아니라 "이 주기에 지금까지
+   * 얼마를 쌓았나"라서다.
+   *
+   * 할부는 회차마다 한 줄이다. 주기별 합계(`UsagePeriod.usage`)가 회차분만 세므로,
+   * 구매한 달에 전액을 한 줄로 두면 줄의 합과 진행률 막대가 갈린다.
+   */
+  export interface PerformanceLedgerRow {
+    /**
+     * 줄을 가르는 값. 다리 id 하나로는 모자란다.
+     *
+     * 할부는 한 다리가 여러 주기에 나뉘어 들어가, 회차 번호까지 붙여야 줄마다 다르다.
+     */
+    key: string;
+    entryId: string;
+    date: IsoDateString;
+    description: string;
+    merchant: string | null;
+    /** 카드 관점의 증감. 계좌 원장과 같은 부호 규칙이라 **사용이 음수**다. */
+    amount: string;
+    /** 이 주기 시작부터 이 줄까지 쌓인 실적. 사용이 양수다. */
+    performanceAfter: string;
+    cardId: string | null;
+    cardName: string | null;
+    categoryName: string | null;
+    parentCategoryName: string | null;
+    /** 할부 회차와 개월수. 일시불이면 둘 다 1 이다. */
+    installmentIndex: number;
+    installmentMonths: number;
+  }
+
+  /** 실적 원장의 한 주기. 줄은 최신이 앞이다. */
+  export interface PerformanceLedgerPeriod {
+    periodStart: IsoDateString;
+    periodEnd: IsoDateString;
+    /** 마감일이 지났으면 true. 진행 중인 주기는 더 늘 수 있다. */
+    closed: boolean;
+    /** 이 주기의 실적 합계. 가장 오래된 줄부터 더한 값이고 `UsagePeriod.usage` 와 같다. */
+    total: string;
+    rows: PerformanceLedgerRow[];
+  }
+
+  /**
+   * 카드 실적 원장. 주기마다 0에서 다시 쌓는다.
+   *
+   * 페이지를 줄이 아니라 **주기로 나눈다.** 누적은 주기 시작을 기준으로만 뜻이 있어,
+   * 줄 단위로 끊으면 한 주기의 앞부분을 아직 받지 못한 채 합계를 그리게 된다.
+   */
+  export interface PerformanceLedgerResponse {
+    cardId: string;
+    /** 아래 금액들의 통화 (= 결제 통장의 통화) */
+    currency: string;
+    /** 'statement' = 마감일 기준 청구 주기, 'month' = 달력 월 */
+    basis: 'statement' | 'month';
+    /** 실적 기준액. 설정하지 않았으면 null 이다. */
+    target: string | null;
+    /** 진행 중인 주기가 앞이다. */
+    periods: PerformanceLedgerPeriod[];
+    /** 더 오래된 주기에 실적에 드는 거래가 남아 있는가. */
+    hasMore: boolean;
+  }
 }
 
 
@@ -565,6 +630,13 @@ export namespace EntryDto {
      * 꺼도 갚을 대금은 그대로 남는다. 실적과 청구액은 다른 값이다.
      */
     countsPerformance?: boolean;
+    /**
+     * 차감·취소 금액을 카드 실적에서도 뺄지. 지출에만 뜻이 있다.
+     *
+     * 생략하면 뺀다. 다리에 이미 깎인 금액이 들어가 있어 그것이 지금까지의 동작이고,
+     * 꺼 두면 실적만 정가로 센다 -- 갚을 대금은 어느 쪽이든 깎인 금액 그대로다.
+     */
+    discountCountsPerformance?: boolean;
 
     // ── transfer ──
     toAccountId?: string;

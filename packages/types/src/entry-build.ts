@@ -141,6 +141,13 @@ export interface BuiltEntry {
    * 기본값은 갈래마다 다르다(지출 포함, 카드 수입 제외).
    */
   countsPerformance?: boolean;
+  /**
+   * 차감·취소 금액을 카드 실적에서도 뺄지. 차감이 붙은 카드 지출에만 뜻이 있다.
+   *
+   * 다리에는 이미 깎인 금액이 들어가 있어 켜져 있으면 실적도 함께 줄어든다(기본값).
+   * 꺼 두면 집계가 `discountAmount` 를 되살려 실적만 정가로 센다.
+   */
+  discountCountsPerformance?: boolean;
 }
 
 /** 카테고리 한 줄. 분할이면 여럿이다. */
@@ -194,6 +201,13 @@ export interface ExpenseBuildInput extends CommonBuildInput {
    * 꺼 두면 갚을 대금은 그대로 두고 실적에서만 빠진다.
    */
   countsPerformance?: boolean;
+  /**
+   * 깎인 금액을 실적에서도 뺄지. **기본은 뺀다**.
+   *
+   * 다리가 이미 순액이라 그것이 지금까지의 동작이다. 카드사가 환불을 실적에서 빼지
+   * 않는 경우가 있어, 그때 꺼 두면 실적만 정가로 센다.
+   */
+  discountCountsPerformance?: boolean;
 }
 
 export interface IncomeBuildInput extends CommonBuildInput {
@@ -312,6 +326,13 @@ export async function buildExpense(
     discountAmount: discount.isZero() ? null : discount,
     // 카드로 낸 지출은 기본이 실적 포함이다. 카드가 아니면 읽히지 않는 자리다.
     countsPerformance: source.cardId ? input.countsPerformance ?? true : true,
+    /*
+     * 차감을 실적에서도 뺄지. 기본은 뺀다 (다리가 이미 순액이라 그것이 지금까지의 동작).
+     *
+     * 차감이 없으면 읽히지 않으므로 값을 가리지 않고 그대로 담는다 -- 사용자가 차감을
+     * 지웠다가 다시 적어도 고른 값이 남는다.
+     */
+    discountCountsPerformance: source.cardId ? input.discountCountsPerformance ?? true : true,
     postings,
   };
 }
@@ -639,6 +660,8 @@ export interface EntryBuildRequest extends CommonBuildInput {
   discountAmount?: DecInput;
   /** 카드 실적에 셀지. 생략하면 갈래의 기본값을 쓴다 (지출 포함, 수입 제외). */
   countsPerformance?: boolean;
+  /** 차감·취소 금액을 실적에서도 뺄지. 생략하면 뺀다. 지출에만 뜻이 있다. */
+  discountCountsPerformance?: boolean;
 }
 
 export async function buildEntry(
@@ -656,6 +679,7 @@ export async function buildEntry(
           installmentMonths: request.installmentMonths,
           discount: request.discountAmount,
           countsPerformance: request.countsPerformance,
+          discountCountsPerformance: request.discountCountsPerformance,
         },
         lookup,
       );

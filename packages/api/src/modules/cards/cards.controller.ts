@@ -79,6 +79,22 @@ export class CardsController {
     return this.cardLedger.getPerformance(id, req.user.id);
   }
 
+  @Get(':id/performance-ledger')
+  @ApiOperation({
+    summary: '실적 원장 (주기마다 0에서 다시 쌓는 줄들)',
+  })
+  performanceLedger(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Query('months') months?: string,
+  ) {
+    return this.cardLedger.getPerformanceLedger(
+      id,
+      req.user.id,
+      months ? Number(months) : undefined,
+    );
+  }
+
   @Get(':id/pending-rates')
   @ApiOperation({ summary: '청구액이 확정되지 않은 외화 결제 목록' })
   pendingRates(@Request() req: AuthenticatedRequest, @Param('id') id: string) {

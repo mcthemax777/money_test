@@ -296,6 +296,8 @@ export function useEntryForm({
              * 실적을 깎는다. 사용자는 켠 적이 없는데도 그렇게 된다.
              */
             countsPerformance: defaultCountsPerformance(next.kind),
+            // 차감이 딸려 있는 값이라 함께 되돌린다. 차감 자체도 위에서 비운다.
+            discountCountsPerformance: true,
           };
         }
 

@@ -246,6 +246,13 @@ export interface EntryListItem {
    */
   countsPerformance: boolean;
   /**
+   * 차감·취소 금액을 카드 실적에서도 뺄지.
+   *
+   * 다리에는 이미 깎인 뒤의 금액이 들어가 있어, 켜져 있으면 실적도 함께 줄어든다
+   * (지금까지의 동작이고 기본값이다). 꺼 두면 실적만 정가로 센다.
+   */
+  discountCountsPerformance: boolean;
+  /**
    * 이 거래의 카테고리 다리 수. 분할이면 2 이상이다.
    *
    * 목록 한 줄은 대표 분류 하나만 담는다. 그 줄을 폼으로 되돌려 저장하면 분할의 나머지
