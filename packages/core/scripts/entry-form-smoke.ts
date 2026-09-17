@@ -66,20 +66,24 @@ const validExpense: EntryFormValues = {
   method: accountValue('a1'),
   toAccountId: '',
   installmentMonths: '',
+  discountAmount: '',
+  countsPerformance: true,
+  discountCountsPerformance: true,
   transferFee: '',
   transferFeeCategoryId: '',
   splits: [],
   currency: '',
   exchangeRate: '',
-  cardId: '',
-  cardDirection: 'payment',
   tagIds: [],
   // 새로 적는 폼과 같다. 딛고 선 판이 없다는 뜻이라, 저장은 수정이 아니라 생성으로 간다.
   baseHlc: null,
 };
 
+/** 신용카드 부채 계정. 이체 양쪽이 다 카드인지 가리는 검사가 이 목록을 본다. */
+const CARD_LIABILITY = new Set(['k1', 'k2']);
+
 const codeOf = (values: Partial<EntryFormValues>) =>
-  checkEntryForm({ ...validExpense, ...values })?.code ?? null;
+  checkEntryForm({ ...validExpense, ...values }, CARD_LIABILITY)?.code ?? null;
 
 (async () => {
   // ── 1. 빈 폼 ──
@@ -90,16 +94,32 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('그 타임존의 시각 (UTC 03시 = KST 12시)', empty.timeKey, '12:00');
 
   // ── 2. 검증 ──
-  eq('맞는 값은 통과', checkEntryForm(validExpense), null);
+  eq('맞는 값은 통과', checkEntryForm(validExpense, CARD_LIABILITY), null);
   eq('사람 없음', codeOf({ personId: '' }), 'PERSON_REQUIRED');
-  eq('설명 없음', codeOf({ description: '  ' }), 'DESCRIPTION_REQUIRED');
+  /*
+   * 설명은 묻지 않는다. 웹과 서버가 처음부터 빈 설명을 받아들였고 목록도 그때를
+   * 대비해 그린다 (분류가 그 줄의 이름이 된다). 여기서만 막으면 같은 거래를 웹에서는
+   * 적을 수 있고 앱에서는 적을 수 없다.
+   */
+  eq('설명은 비어도 통과', codeOf({ description: '  ' }), null);
   eq('금액 0', codeOf({ amount: '0' }), 'AMOUNT_INVALID');
   eq('금액 음수', codeOf({ amount: '-100' }), 'AMOUNT_INVALID');
   eq('금액이 숫자가 아니다', codeOf({ amount: '천원' }), 'AMOUNT_INVALID');
   eq('분류 없음', codeOf({ categoryId: '' }), 'CATEGORY_REQUIRED');
   eq('수단 없음', codeOf({ method: '' }), 'METHOD_REQUIRED');
-  eq('수입은 통장이 필요하다',
-    codeOf({ kind: 'income', method: cardValue('card1') }), 'ACCOUNT_REQUIRED');
+  /*
+   * 수입에도 카드를 고른다. 카드사가 되돌려 주는 돈은 통장을 거치지 않고 다음 청구에서
+   * 빠지므로, 들어오는 자리가 통장이 아니라 그 카드의 빚이다.
+   */
+  eq('수입도 카드로 받을 수 있다',
+    codeOf({ kind: 'income', method: cardValue('card1') }), null);
+
+  // 차감·취소. 지출에만 붙는다.
+  eq('차감이 0이면 막는다', codeOf({ discountAmount: '0' }), 'DISCOUNT_INVALID');
+  eq('차감이 숫자가 아니다', codeOf({ discountAmount: '삼천' }), 'DISCOUNT_INVALID');
+  eq('차감이 정가보다 크다', codeOf({ discountAmount: '9001' }), 'DISCOUNT_TOO_LARGE');
+  // 전액을 깎으면 0원 거래로 남는다. 전액 취소와 전액 포인트 결제가 그 모양이다.
+  eq('차감이 정가와 같아도 된다', codeOf({ discountAmount: '9000' }), null);
 
   eq('날짜 모양', codeOf({ dateKey: '2026/08/20' }), 'DATE_INVALID');
   eq('없는 날 (2월 31일)', codeOf({ dateKey: '2026-02-31' }), 'DATE_INVALID');
@@ -111,6 +131,7 @@ const codeOf = (values: Partial<EntryFormValues>) =>
     kind: 'transfer', categoryId: '', method: accountValue('a1'), toAccountId: 'a2',
   };
   eq('이체는 분류가 없어도 된다', codeOf(transfer), null);
+  eq('보내는 계좌 없음', codeOf({ ...transfer, method: '' }), 'FROM_ACCOUNT_REQUIRED');
   eq('받는 계좌 없음', codeOf({ ...transfer, toAccountId: '' }), 'TO_ACCOUNT_REQUIRED');
   eq('같은 계좌로 이체', codeOf({ ...transfer, toAccountId: 'a1' }), 'TRANSFER_SAME_ACCOUNT');
   eq('수수료만 있고 분류가 없다',
@@ -184,27 +205,72 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('환율이 함께 간다', foreignRequest.exchangeRate, '1385.2');
   eq('기준통화면 통화 키가 없다', 'currency' in entryFormToRequest(validExpense, KST), false);
 
-  // 카드사 대금 이동
-  const cardPayment = {
-    ...validExpense,
-    kind: 'card_payment',
-    method: accountValue('a1'),
-    cardId: 'k1',
+  /*
+   * 카드대금 결제는 따로 된 갈래가 아니라 **이체**다.
+   *
+   * 이체의 계좌 목록에 신용카드의 부채 계정이 끼어 있고, 그리로 보내면 목록이 그 전표를
+   * 카드대금으로 되읽는다(`classifyEntry`). 앱에만 있던 네 번째 탭을 걷어낸 자리다.
+   */
+  const cardTransfer: Partial<EntryFormValues> = {
+    kind: 'transfer',
     categoryId: '',
-  } as EntryFormValues;
-  eq('통장과 카드가 있으면 통과', codeOf(cardPayment), null);
-  eq('카드가 없다', codeOf({ ...cardPayment, cardId: '' }), 'CARD_REQUIRED');
-  eq('통장이 없다', codeOf({ ...cardPayment, method: '' }), 'ACCOUNT_REQUIRED');
-  eq('분류를 묻지 않는다', codeOf({ ...cardPayment, categoryId: '' }), null);
+    method: accountValue('a1'),
+    toAccountId: 'k1',
+  };
+  eq('통장에서 카드로 보내면 통과', codeOf(cardTransfer), null);
+  /*
+   * 양쪽이 다 카드인 이동은 받지 않는다. 목록이 "어느 카드의 대금인가"를 하나로 정해야
+   * 해서 어느 쪽을 골라도 반쪽만 보인다 (조립도 TRANSFER_BOTH_CARDS 로 막는다).
+   */
+  eq('양쪽이 다 카드면 막는다',
+    codeOf({ ...cardTransfer, method: accountValue('k2') }), 'TRANSFER_BOTH_CARDS');
 
-  const cardRequest = entryFormToRequest(cardPayment, KST);
-  eq('통장과 카드를 함께 싣는다',
-    `${cardRequest.accountId}/${cardRequest.cardId}`, 'a1/k1');
-  eq('방향이 실린다', cardRequest.cardTransferDirection, 'payment');
-  eq('환불 방향도 실린다',
-    entryFormToRequest({ ...cardPayment, cardDirection: 'refund' } as EntryFormValues, KST)
-      .cardTransferDirection,
-    'refund');
+  const cardRequest = entryFormToRequest(
+    { ...validExpense, ...cardTransfer } as EntryFormValues,
+    KST,
+  );
+  eq('갈래는 이체로 나간다', cardRequest.kind, 'transfer');
+  eq('두 계좌를 싣는다',
+    `${cardRequest.accountId}->${cardRequest.toAccountId}`, 'a1->k1');
+  eq('카드 키는 싣지 않는다', 'cardId' in cardRequest, false);
+
+  // ── 3-3. 실적 표 둘 ──
+  //
+  // 카드로 냈고 **기본값과 다를 때만** 싣는다. 짐만 보고도 사용자가 손댄 자리가 드러난다.
+  const cardExpense = { ...validExpense, method: cardValue('card1') } as EntryFormValues;
+  eq('기본값이면 싣지 않는다',
+    'countsPerformance' in entryFormToRequest(cardExpense, KST), false);
+  eq('실적에서 빼면 실린다',
+    entryFormToRequest({ ...cardExpense, countsPerformance: false }, KST).countsPerformance,
+    false);
+  eq('통장 결제에는 싣지 않는다',
+    'countsPerformance' in entryFormToRequest({ ...validExpense, countsPerformance: false }, KST),
+    false);
+
+  /*
+   * 차감 실적 제외는 **그 칸이 화면에 떠 있었을 때만** 싣는다 (`showDiscountPerformance`).
+   * 보여 주지 않은 값을 실어 보내면 사용자가 볼 수 없는 값을 거래가 들고 다닌다.
+   */
+  const discounted = {
+    ...cardExpense,
+    discountAmount: '2000',
+    discountCountsPerformance: false,
+  } as EntryFormValues;
+  eq('차감을 적고 끄면 실린다',
+    entryFormToRequest(discounted, KST).discountCountsPerformance, false);
+  eq('차감이 없으면 싣지 않는다',
+    'discountCountsPerformance' in
+      entryFormToRequest({ ...cardExpense, discountCountsPerformance: false }, KST),
+    false);
+  eq('거래를 실적에서 뺐으면 싣지 않는다',
+    'discountCountsPerformance' in
+      entryFormToRequest({ ...discounted, countsPerformance: false }, KST),
+    false);
+  // 외화는 집계가 차감을 되살릴 수 없다. 차감액의 통화가 카드 다리와 다르기 때문이다.
+  eq('외화로 적었으면 싣지 않는다',
+    'discountCountsPerformance' in
+      entryFormToRequest({ ...discounted, currency: 'USD', exchangeRate: '1385.2' }, KST),
+    false);
 
   // ── 4. 왕복이 거래를 바꾸지 않는가 ──
   const dumpPath = process.argv[2] ?? '/tmp/sync-push-dump.json';
@@ -260,6 +326,11 @@ const codeOf = (values: Partial<EntryFormValues>) =>
     'splitCount',
     // 외화. 원 통화 금액과 통화가 그대로 남는지 본다.
     'originalCurrency', 'originalAmount',
+    /*
+     * 차감과 실적 표 둘. 앱의 사본 창구가 이 값들을 짐에 담지 않아 조용히 사라진 적이
+     * 있다 (2026-09-17 의 countsPerformance). 왕복에서 그 손실이 드러난다.
+     */
+    'discountAmount', 'countsPerformance', 'discountCountsPerformance',
     // 카드사 대금 이동의 방향. 놓치면 결제와 환불이 뒤집힌다.
     'cardTransferDirection',
   ] as const;
