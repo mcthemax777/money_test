@@ -16,7 +16,7 @@ import {
   type EntryAmountTone,
 } from '@money/core/lib/entries';
 import { useTranslation } from '@money/core/lib/i18n';
-import { formatCurrency, toNumber } from '@money/core/lib/money';
+import { formatCurrency, formatOriginal, toNumber } from '@money/core/lib/money';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 
 /** 금액 색이 곧 "합계에 들어가는가"다. 이체와 카드사 이체는 회색이다. */
@@ -107,6 +107,24 @@ function TransactionItemView({
   const discount = toNumber(line ? line.discountAmount : entry.discountAmount);
 
   /*
+   * 이체에 붙은 수수료.
+   *
+   * 이체는 "얼마를 어디로 보냈는가"와 "수수료를 얼마 냈는가"가 서로 다른 정보다. 위
+   * 금액은 보낸 돈이라 회색으로 서고, 실제로 쓴 돈은 수수료뿐이므로 그것만 빨갛게 적는다.
+   * 적지 않으면 통장에서 빠진 돈과 목록의 금액이 어긋나 보인다. 웹의 한 줄과 같다.
+   */
+  const fee = entry.kind === 'transfer' ? toNumber(entry.feeAmount) : 0;
+  const hasFee = fee > 0;
+
+  /*
+   * 외화가 얽힌 거래의 원래 금액. 없으면 빈 글자다.
+   *
+   * 위 금액은 언제나 기준통화 환산액이라 그것만으로는 카드 명세서와 대조할 수 없다.
+   * "$50.00 · 환율 1,380" 처럼 원래 금액과 환율을 함께 적는다. 웹의 한 줄과 같다.
+   */
+  const original = formatOriginal(entry);
+
+  /*
    * 2줄에 들어가는 부속 정보. 있는 것만 " · "로 잇는다.
    *
    * 분류 · 쓴 자산 · 날짜 · 시각의 차례다. 무엇에 썼는가가 먼저 읽히고, 언제인가가
@@ -173,19 +191,48 @@ function TransactionItemView({
         </Text>
       </View>
 
-      {meta || discount > 0 ? (
+      {meta || original || hasFee || discount > 0 ? (
         <View className="mt-0.5 flex-row items-center gap-1.5">
           <Text numberOfLines={1} className="shrink text-xs text-gray-500">
             {meta}
           </Text>
           {/*
-            결제 자리에서 깎인 금액. 위 금액은 이미 깎인 뒤라 이것이 없으면 정가를
-            알 수 없다. 나간 돈이 아니므로 초록으로 적는다.
+            금액이 붙는 표시는 오른쪽 끝에 모은다. 위 줄의 금액과 같은 세로선에 선다.
+
+            차례는 웹과 같다 -- 원래 금액, 수수료, 차감이다. 한 거래에 여럿이 함께 오는
+            일은 드물지만(이체에는 차감 칸이 없다), 차례가 갈리면 두 화면을 견줄 때
+            헷갈린다.
           */}
-          {discount > 0 ? (
-            <Text className="ml-auto text-xs font-medium text-green-600">
-              {t('entry.discount', { amount: formatCurrency(discount, displayCurrency) })}
-            </Text>
+          {original || hasFee || discount > 0 ? (
+            <View className="ml-auto flex-row items-center gap-1.5">
+              {original ? (
+                <Text className="text-xs text-gray-400">
+                  {original}
+                  {/*
+                    청구액이 아직 카드사 확정 전이라는 표시. 이 값이 붙어 있는 동안 위
+                    금액은 서버 추정 환율로 만든 값이고, 카드 화면에서 명세서의 실제
+                    청구액으로 확정한다.
+                  */}
+                  {entry.rateProvisional ? (
+                    <Text className="text-amber-600"> · {t('entry.provisional')}</Text>
+                  ) : null}
+                </Text>
+              ) : null}
+              {hasFee ? (
+                <Text className="text-xs font-medium text-red-600">
+                  {t('entry.fee', { amount: formatCurrency(fee, displayCurrency) })}
+                </Text>
+              ) : null}
+              {/*
+                결제 자리에서 깎인 금액. 위 금액은 이미 깎인 뒤라 이것이 없으면 정가를
+                알 수 없다. 나간 돈이 아니므로 초록으로 적는다.
+              */}
+              {discount > 0 ? (
+                <Text className="text-xs font-medium text-green-600">
+                  {t('entry.discount', { amount: formatCurrency(discount, displayCurrency) })}
+                </Text>
+              ) : null}
+            </View>
           ) : null}
         </View>
       ) : null}
