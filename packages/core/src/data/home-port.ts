@@ -69,8 +69,14 @@ export interface HomeDataPort {
   /** 실적 원장 한 쪽. 카드 상세의 실적 탭이 쓴다. */
   getCardPerformanceLedger(
     cardId: string,
-    params?: CardDto.PerformanceLedgerQuery,
-  ): Promise<CardDto.PerformanceLedgerResponse>;
+    params?: CardDto.PeriodLedgerQuery,
+  ): Promise<CardDto.PeriodLedgerResponse>;
+
+  /** 청구 내역 한 쪽. 카드 상세에서 청구 주기 하나를 골랐을 때 쓴다. */
+  getCardBilledLedger(
+    cardId: string,
+    params?: CardDto.PeriodLedgerQuery,
+  ): Promise<CardDto.PeriodLedgerResponse>;
 
   /**
    * 계좌 원장 한 쪽. 줄마다 그 거래 직후의 잔액이 붙는다.
@@ -158,6 +164,7 @@ export const httpHomePort: HomeDataPort = {
   getCardUsage: (cardId, months) => apiClient.getCardUsage(cardId, months),
   getCardPerformanceLedger: (cardId, params) =>
     apiClient.getCardPerformanceLedger(cardId, params),
+  getCardBilledLedger: (cardId, params) => apiClient.getCardBilledLedger(cardId, params),
   getAccountPostings: (accountId, params) => apiClient.getAccountPostings(accountId, params),
   getCategoryBreakdown: (period, type, projectId, options) =>
     apiClient.getCategoryBreakdown(period, type, projectId, options),

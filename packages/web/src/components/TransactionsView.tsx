@@ -78,6 +78,7 @@ import {
   useProjectTimeZone,
 } from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
+import { installmentLabel } from '@money/core/lib/period-ledger';
 
 import EntryEditor, {
   isCopyableEntry,
@@ -834,12 +835,7 @@ export default function TransactionsView({
           value: detail.cardName ?? detail.accountName,
         },
         { label: t('tx.detail.merchant'), value: detail.merchant },
-        {
-          label: t('tx.detail.installment'),
-          value: detail.installmentMonths
-            ? t('tx.detail.installmentMonths', { months: detail.installmentMonths })
-            : null,
-        },
+        { label: t('tx.detail.installment'), value: installmentLabel(t, detail) },
         {
           label: t('tx.detail.fee'),
           value:

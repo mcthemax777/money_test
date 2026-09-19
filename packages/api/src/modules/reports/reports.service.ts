@@ -6,6 +6,7 @@ import { ENTRY_INCLUDE, classifyEntry, toListItem } from '../entries/entry-view'
 import {
   MATCH_NOTHING,
   assetOwnerCondition,
+  entryFeatureCondition,
   entryKindCondition,
   entryPersonCondition,
   entryTagCondition,
@@ -13,6 +14,7 @@ import {
   entrySearchConditions,
   lineMatcherOf,
   parseEntryFilter,
+  splitEntryIds,
   splitList,
 } from '@/common/entry-filter';
 import { assertDateKey, assertYearMonth } from '@/common/year-month';
@@ -165,7 +167,7 @@ export class ReportsService {
       query.projectId,
     );
     const range = this.resolvePeriod(query, timeZone);
-    const scope = this.entryScope(projectId, range, query);
+    const scope = await this.entryScope(projectId, range, query);
     /*
      * 합계는 전부 기준통화 환산액이다. amount는 그 다리의 통화라 섞으면 못 더한다.
      *
@@ -211,7 +213,7 @@ export class ReportsService {
     const isIncome = query.type === 'income';
     const type = isIncome ? CategoryType.income : CategoryType.expense;
     const postings = await this.prisma.posting.findMany({
-      where: { category: { type }, entry: this.entryScope(projectId, range, query) },
+      where: { category: { type }, entry: await this.entryScope(projectId, range, query) },
       select: ReportsService.AGGREGATE_SELECT,
     });
 
@@ -251,7 +253,7 @@ export class ReportsService {
      * 그 두 번째 조회가 사라지고, 기기도 같은 모양의 행으로 같은 함수를 쓸 수 있다.
      */
     const rows = await this.prisma.posting.findMany({
-      where: { category: { type }, entry: this.entryScope(projectId, range, query) },
+      where: { category: { type }, entry: await this.entryScope(projectId, range, query) },
       select: {
         ...ReportsService.AGGREGATE_SELECT,
         category: {
@@ -581,15 +583,26 @@ export class ReportsService {
     // 설명의 글자와 낸 사람도 전표에 있다.
     const textCondition = entryTextCondition(search.text);
     const personCondition = entryPersonCondition(search.entryPersonIds);
+    const window = this.resolveWindow(query, timeZone);
+    // 모양(분할·할부). 분할은 분류 다리를 세어야 해서 id 를 먼저 받아 온다.
+    const featureCondition = entryFeatureCondition(
+      search.features,
+      search.features?.includes('split')
+        ? await splitEntryIds(this.prisma, {
+            projectId,
+            ...(window ? { date: window } : {}),
+          })
+        : undefined,
+    );
     const conditions = [
       ...(owner ? [owner] : []),
       ...(kindCondition ? [kindCondition] : []),
       ...(tagCondition ? [tagCondition] : []),
       ...(textCondition ? [textCondition] : []),
       ...(personCondition ? [personCondition] : []),
+      ...(featureCondition ? [featureCondition] : []),
       ...entrySearchConditions(search).map((posting) => ({ postings: { some: posting } })),
     ];
-    const window = this.resolveWindow(query, timeZone);
     const scope = {
       projectId,
       ...(window ? { date: window } : {}),
@@ -786,7 +799,7 @@ export class ReportsService {
     const range = this.resolvePeriod(query, timeZone);
 
     const entries = await this.prisma.journalEntry.findMany({
-      where: this.entryScope(projectId, range, query),
+      where: await this.entryScope(projectId, range, query),
       include: ENTRY_INCLUDE,
     });
     const filter = parseEntryFilter(query);
@@ -1009,11 +1022,11 @@ export class ReportsService {
     };
   }
 
-  private entryScope(
+  private async entryScope(
     projectId: string,
     range: { start: Date; end: Date },
     query: ReportDto.PeriodQuery,
-  ): Prisma.JournalEntryWhereInput {
+  ): Promise<Prisma.JournalEntryWhereInput> {
     const filter = parseEntryFilter(query);
     const search = parseEntrySearch(query);
     // 아무것도 고르지 않았으면 어떤 전표도 걸리지 않아야 한다.
@@ -1034,12 +1047,23 @@ export class ReportsService {
     // 설명의 글자와 낸 사람도 전표에 있다.
     const textCondition = entryTextCondition(search.text);
     const personCondition = entryPersonCondition(search.entryPersonIds);
+    // 모양(분할·할부). 분할은 분류 다리를 세어야 해서 id 를 먼저 받아 온다.
+    const featureCondition = entryFeatureCondition(
+      search.features,
+      search.features?.includes('split')
+        ? await splitEntryIds(this.prisma, {
+            projectId,
+            date: { gte: range.start, lt: range.end },
+          })
+        : undefined,
+    );
     const conditions = [
       ...(owner ? [owner] : []),
       ...(kindCondition ? [kindCondition] : []),
       ...(tagCondition ? [tagCondition] : []),
       ...(textCondition ? [textCondition] : []),
       ...(personCondition ? [personCondition] : []),
+      ...(featureCondition ? [featureCondition] : []),
       ...entrySearchConditions(search).map((posting) => ({ postings: { some: posting } })),
     ];
 

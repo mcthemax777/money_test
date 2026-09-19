@@ -10,7 +10,7 @@ import { sumNetWorth, type NetWorthParts } from '@money/core/lib/net-worth';
 import { accountDueOf } from '@money/core/lib/card-settlement';
 import { useUserFilter } from '@money/core/store/user-filter';
 import { formatDate, formatDateMarker, monthInputToIso } from '@money/core/lib/datetime';
-import { type AccountDto, type ReportDto } from '@money/types';
+import { type AccountDto, type CardDto, type ReportDto } from '@money/types';
 import { ArrowLeft, Info, Receipt, X } from 'lucide-react';
 import { EMPTY_SEARCH, type TransactionSearch } from '@money/core/hooks/useTransactions';
 import { useDragReorder } from '@/hooks/useDragReorder';
@@ -73,7 +73,9 @@ import { useTranslation } from '@money/core/lib/i18n';
 import { apiErrorCode, useApiError } from '@money/core/lib/api-error';
 import { useAccountLedger } from '@money/core/hooks/useAccountLedger';
 import { useCardEntries } from '@money/core/hooks/useCardEntries';
-import { useCardPerformanceLedger } from '@money/core/hooks/useCardPerformanceLedger';
+import { useCardPeriodLedger } from '@money/core/hooks/useCardPeriodLedger';
+import { installmentBadge } from '@money/core/lib/period-ledger';
+import type { CardUsageMeasure } from '@money/core/lib/card-usage-chart';
 import PullFooter from '@/components/PullFooter';
 import { useBottomPull } from '@/hooks/useBottomPull';
 import { categoryTitleOf } from '@money/core/lib/entries';
@@ -272,23 +274,38 @@ function LedgerList({
   );
 }
 
+/** 할부 배지의 글자. 어느 배지를 붙일지는 core 가 정한다(웹과 앱이 같다). */
+function badgeTextOf(
+  t: ReturnType<typeof useTranslation>['t'],
+  row: CardDto.PeriodLedgerRow,
+): string | null {
+  const badge = installmentBadge(row);
+  return badge ? t(badge.key, badge.params) : null;
+}
+
 /**
- * 카드 실적 원장. 주기마다 0에서 다시 쌓는다.
+ * 카드 주기 원장. 주기마다 0에서 다시 쌓는다.
  *
- * 줄마다 붙는 값이 남은 대금이 아니라 **그 주기에 지금까지 쌓인 실적**이다. 9월 8일이
+ * 줄마다 붙는 값이 남은 대금이 아니라 **그 주기에 지금까지 쌓인 값**이다. 9월 8일이
  * 주기의 첫날이면 그날 첫 줄이 0에서 시작한다 -- 카드사가 혜택을 정할 때 세는 방식이
- * 그러하고, 바로 위의 진행률 막대도 같은 값을 그린다.
+ * 그러하고, 바로 위의 막대도 같은 값을 그린다.
+ *
+ * 실적과 청구가 할부에서 갈린다. 실적은 결제한 주기에 전액이 한 줄로 들고, 청구는
+ * 회차마다 한 줄씩 뒤 주기로 퍼진다 -- 24개월 할부의 이번 달 몫은 청구 쪽에만 있다.
  *
  * 누적은 서버가 붙여 준다. 화면에 올라온 줄만으로 더하면 아직 받지 않은 앞부분이 빠진다.
  */
-function PerformanceLedgerList({
+function PeriodLedgerList({
   cardId,
+  measure,
   fallbackCurrency,
   reloadToken = 0,
   closingKey,
   onOpenEntry,
 }: {
   cardId: string;
+  /** 실적 원장인가 청구 내역인가. 카드 상세의 탭이 정한다. */
+  measure: CardUsageMeasure;
   /** 응답이 오기 전에 쓸 통화. 카드 상세가 이미 알고 있는 값이다. */
   fallbackCurrency: string;
   reloadToken?: number;
@@ -298,7 +315,8 @@ function PerformanceLedgerList({
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
-  const ledger = useCardPerformanceLedger(cardId, reloadToken, closingKey);
+  const isBilled = measure === 'billed';
+  const ledger = useCardPeriodLedger(cardId, measure, reloadToken, closingKey);
   const currency = ledger.currency ?? fallbackCurrency;
   /* 바닥에서 한 번 더 당기면 다음 쪽이 온다. 다른 원장과 같은 손짓이다. */
   const pull = useBottomPull({
@@ -338,7 +356,7 @@ function PerformanceLedgerList({
                   {formatDate(period.periodEnd, timeZone)}
                 </p>
                 <p className="text-xs text-gray-500 whitespace-nowrap">
-                  {t('assets.performancePeriodTotal', {
+                  {t(isBilled ? 'assets.billedPeriodTotal' : 'assets.performancePeriodTotal', {
                     amount: formatCurrency(toNumber(period.total), currency),
                   })}
                 </p>
@@ -350,21 +368,14 @@ function PerformanceLedgerList({
               currency={currency}
               isCard
               onOpenEntry={onOpenEntry}
-              note={t('assets.performanceAfter', {
-                amount: formatCurrency(toNumber(row.performanceAfter), currency),
+              note={t(isBilled ? 'assets.billedAfter' : 'assets.performanceAfter', {
+                amount: formatCurrency(toNumber(row.runningTotal), currency),
               })}
               /*
-                할부는 회차마다 한 줄이다. 주기 합계가 회차분만 세므로, 구매한 달에
-                전액을 한 줄로 두면 줄의 합과 진행률 막대가 갈린다.
+                청구는 회차마다 한 줄이라 "3/24회차"가 붙고, 실적은 결제한 주기에 전액이
+                한 줄로 들어 개월수만 적는다.
               */
-              badge={
-                row.installmentMonths > 1
-                  ? t('assets.performanceInstallment', {
-                      index: row.installmentIndex,
-                      months: row.installmentMonths,
-                    })
-                  : null
-              }
+              badge={badgeTextOf(t, row)}
             />
           </div>
         );
@@ -988,10 +999,11 @@ export default function DashboardPage() {
   const cardLedger = useAccountLedger(
     detailType === 'card' ? selectedCard?.liabilityAccountId ?? null : null,
     entryVersion + mirrorVersion,
-    // 그래프 아래에서 주기를 골랐으면 그 구간만. 줄에 붙는 잔액은 그대로 맨 앞부터다.
-    cardTab === 'billed' && pickedPeriod
-      ? { startDate: pickedPeriod.periodStart, endDate: pickedPeriod.periodEnd }
-      : null,
+    /*
+     * 구간으로 좁히지 않는다. 주기를 고르면 이 목록 대신 청구 내역을 그리기 때문이다 --
+     * 원장을 날짜로 자르면 그 주기에 청구되는 할부 회차가 빠진다.
+     */
+    null,
   );
 
   /*
@@ -1018,6 +1030,14 @@ export default function DashboardPage() {
    * 어디서 읽었든 줄의 모양이 같아(LedgerLikeRow) 화면은 하나만 그린다.
    */
   const cardPayments = selectedCard?.liabilityAccountId ? cardLedger : debitLedger;
+
+  /**
+   * 고른 주기의 청구 내역을 그릴 수 있는가.
+   *
+   * 신용카드만이다. 체크카드는 쓰는 즉시 통장에서 빠져 청구라는 것이 없고, 주기를
+   * 골라도 그 달 전표가 그대로 답이라 목록을 바꿀 까닭이 없다.
+   */
+  const billedLedgerReady = Boolean(selectedCard?.liabilityAccountId);
 
   const getAccountCards = (accountId: string) =>
     cards.filter((c) => c.paymentAccountId === accountId);
@@ -1649,6 +1669,7 @@ export default function DashboardPage() {
                   onChange={refreshAfterCardChange}
                   measure={cardTab}
                   selectedPeriodKey={pickedPeriod?.closingKey ?? null}
+                  onOpenEntry={openLedgerEntry}
                   onSelectPeriod={setPickedPeriod}
                 />
               </div>
@@ -1671,7 +1692,13 @@ export default function DashboardPage() {
                   "내역이 없습니다"가 뜨고, 그 까닭이 화면 어디에도 없었다.
                 */}
                 <div className="flex items-baseline gap-2">
-                  <h3 className="text-sm font-medium text-gray-700">{t('assets.cardLedger')}</h3>
+                  <h3 className="text-sm font-medium text-gray-700">
+                    {t(
+                      cardTab === 'billed' && pickedPeriod && billedLedgerReady
+                        ? 'assets.billedLedger'
+                        : 'assets.cardLedger',
+                    )}
+                  </h3>
                   <span className="text-xs text-gray-500">
                     {pickedPeriod
                       ? `${formatDateMarker(pickedPeriod.periodStart)} ~ ${formatDateMarker(
@@ -1681,17 +1708,19 @@ export default function DashboardPage() {
                   </span>
                 </div>
                 {/*
-                  실적 탭은 아예 다른 줄을 본다.
+                  세 갈래다. 묻는 것이 다르면 줄도 달라야 한다.
 
-                  결제대금 탭이 계좌 원장(줄마다 남은 대금)을 그리는 자리에, 실적 탭은
-                  주기마다 0에서 다시 쌓는 실적 원장을 그린다. "지금 얼마 쌓였나"는 남은
-                  대금과 다른 질문이라, 같은 줄에 다른 숫자를 붙이는 것으로는 답이 되지
-                  않는다.
+                  실적 탭은 주기마다 0에서 다시 쌓는 실적 원장을 그린다. 결제대금 탭은
+                  기본이 계좌 원장(줄마다 남은 대금)이고, **주기를 고르면 그 주기의 청구
+                  내역**으로 바뀐다 -- 청구는 할부 회차가 뒤 주기로 넘어가므로 원장을
+                  날짜로 자르면 막대는 큰데 목록은 비는 일이 생긴다. 24개월 할부로 산
+                  차가 매달 청구될 때가 그렇다.
                 */}
-                {cardTab === 'performance' ? (
+                {cardTab === 'performance' || (pickedPeriod && billedLedgerReady) ? (
                   <>
-                    <PerformanceLedgerList
+                    <PeriodLedgerList
                       cardId={selectedCard.id}
+                      measure={cardTab}
                       fallbackCurrency={
                         selectedCard.liabilityAccountId
                           ? currencyOfCard(selectedCard)

@@ -177,7 +177,7 @@ export namespace AccountDto {
      * 이 거래를 카드 실적에 세는가.
      *
      * 이 값만으로 실적에 드는 줄을 가릴 수는 없다 -- 대금 결제도 true 로 온다. 실적
-     * 탭이 그리는 줄은 서버가 따로 골라 준다 (`CardDto.PerformanceLedgerRow`).
+     * 탭이 그리는 줄은 서버가 따로 골라 준다 (`CardDto.PeriodLedgerRow`).
      */
     countsPerformance: boolean;
   }
@@ -303,7 +303,7 @@ export namespace CardDto {
     /** 마감일이 지났으면 true. 진행 중인 주기는 금액이 더 늘 수 있다. */
     closed: boolean;
     /**
-     * 이 주기의 **실적** 사용액. 할부는 회차분만 들어간다.
+     * 이 주기의 **실적** 사용액. 할부는 결제한 주기에 전액이 든다.
      *
      * 실적에서 뺀 거래(`countsPerformance` 가 꺼진 것)는 여기 들지 않는다. 카드사가
      * 혜택을 정할 때 세는 값이 이것이다.
@@ -312,8 +312,9 @@ export namespace CardDto {
     /**
      * 이 주기에 **청구되는** 금액. 실적에서 뺀 거래까지 전부 들어간다.
      *
-     * `usage` 와 다른 값이다. 세금·공과금처럼 청구는 되지만 실적에서 빠지는 결제가
-     * 있어, 둘을 한 값으로 두면 그래프가 남은 대금과 어긋난다.
+     * `usage` 와 다른 값이다. 할부는 여기에만 회차분으로 나뉘어 들어가고, 세금처럼
+     * 청구는 되지만 실적에서 빠지는 결제도 있다. 둘을 한 값으로 두면 그래프가 남은
+     * 대금과 어긋난다.
      */
     billed: string;
   }
@@ -376,6 +377,76 @@ export namespace CardDto {
   }
 
   /**
+   * 수수료를 아직 적지 않은 할부 회차 하나.
+   *
+   * 유이자 할부는 회차마다 수수료가 붙는데 금액이 카드사·잔여원금마다 달라 계산으로
+   * 맞출 수 없다. 그래서 그 회차의 주기가 마감되면 여기 떠오르고, 사용자가 명세서를
+   * 보고 적으면 그 금액으로 수수료 전표가 하나 생긴다 (외화 청구액 확정과 같다).
+   */
+  export interface PendingFeeItem {
+    planId: string;
+    /** 몇 회차인가. 1부터 센다. */
+    sequence: number;
+    months: number;
+    /** 원 구매 전표. 목록에서 눌러 열어 본다. */
+    entryId: string;
+    description: string;
+    merchant: string | null;
+    /**
+     * 그 결제의 분류. 설명이 비어 있을 때 목록이 이 이름으로 줄을 세운다.
+     *
+     * 설명을 적지 않고 지나가는 일이 흔하다. 그때 이름 자리가 비면 밀린 회차가 여러
+     * 거래에서 왔을 때 어느 것이 어느 결제인지 화면에서 가릴 수 없다.
+     */
+    categoryName: string | null;
+    purchaseDate: IsoDateString;
+    /** 이 회차가 청구된 주기의 마감 연월 ("YYYY-MM") */
+    closingMonth: string;
+    /**
+     * 그 주기의 결제일. 언제 통장에서 빠졌는지를 화면에 적는다.
+     *
+     * 수수료 전표의 날짜는 이 값이 아니라 주기의 마감일이다 -- 수수료는 그 회차와
+     * 함께 청구되는 돈이라 그 청구서에 들어가야 한다.
+     */
+    dueDate: IsoDateString;
+    /** 그 회차의 원금. 명세서에서 수수료를 가려내는 기준이다. */
+    principal: string;
+  }
+
+  export interface PendingFeesResponse {
+    cardId: string;
+    /** 아래 금액들의 통화 (= 카드 통화) */
+    currency: string;
+    /**
+     * 지난번에 수수료로 쓴 분류. 처음이면 null 이고 화면이 고르게 한다.
+     *
+     * 할부수수료 분류를 서버가 만들지 않는다. 가계부마다 분류 나무가 달라서, 한 번
+     * 고른 것을 다음부터 기본으로 삼는 편이 낫다.
+     */
+    suggestedCategoryId: string | null;
+    items: PendingFeeItem[];
+  }
+
+  /** 회차 수수료를 적는다. 적은 만큼 전표가 생긴다. */
+  export interface SettleFeesRequest {
+    /** 수수료 전표의 주체. 카드 결제 통장의 주인을 화면이 채운다. */
+    personId: string;
+    /** 수수료를 담을 지출 분류. */
+    categoryId: string;
+    items: Array<{
+      planId: string;
+      sequence: number;
+      /** 그 회차의 수수료 (카드 통화, 양수) */
+      amount: string;
+    }>;
+  }
+
+  export interface SettleFeesResponse {
+    /** 적은 건수 */
+    settled: number;
+  }
+
+  /**
    * 실적 진행 상황.
    *
    * 실적을 세는 구간이 카드 종류마다 다르다. 신용카드는 마감일 기준 청구 주기이고
@@ -425,20 +496,21 @@ export namespace CardDto {
   }
 
   /**
-   * 실적 원장 한 줄.
+   * 주기 원장 한 줄. 실적 원장과 청구 내역이 같은 모양을 쓴다.
    *
-   * 계좌 원장 한 줄(`AccountDto.LedgerRow`)과 같은 모양이되 **잔액 자리에 쌓인 실적이
-   * 든다.** 카드 상세의 실적 탭이 그리는 값은 남은 대금이 아니라 "이 주기에 지금까지
-   * 얼마를 쌓았나"라서다.
+   * 계좌 원장 한 줄(`AccountDto.LedgerRow`)과 같되 **잔액 자리에 그 주기의 누계가
+   * 든다.** 카드 상세가 주기 안에서 묻는 것은 남은 대금이 아니라 "이 주기에 지금까지
+   * 얼마인가"라서다.
    *
-   * 할부는 회차마다 한 줄이다. 주기별 합계(`UsagePeriod.usage`)가 회차분만 세므로,
-   * 구매한 달에 전액을 한 줄로 두면 줄의 합과 진행률 막대가 갈린다.
+   * 할부가 두 원장을 가른다. 실적은 결제한 주기에 전액이 한 줄로 들고, 청구는 회차마다
+   * 한 줄씩 뒤 주기로 퍼진다. 24개월 할부의 이번 달 몫이 보이는 곳은 청구 쪽이다.
    */
-  export interface PerformanceLedgerRow {
+  export interface PeriodLedgerRow {
     /**
-     * 줄을 가르는 값. 다리 id 하나로는 모자란다.
+     * 줄을 가르는 값.
      *
-     * 할부는 한 다리가 여러 주기에 나뉘어 들어가, 회차 번호까지 붙여야 줄마다 다르다.
+     * 실적은 다리 id 하나로 충분하다. 청구는 한 다리가 여러 주기에 나뉘어 들어가므로
+     * 회차 번호까지 붙는다 (`<postingId>:<회차>`).
      */
     key: string;
     entryId: string;
@@ -447,66 +519,77 @@ export namespace CardDto {
     merchant: string | null;
     /** 카드 관점의 증감. 계좌 원장과 같은 부호 규칙이라 **사용이 음수**다. */
     amount: string;
-    /** 이 주기 시작부터 이 줄까지 쌓인 실적. 사용이 양수다. */
-    performanceAfter: string;
+    /** 이 주기 시작부터 이 줄까지 쌓인 값(실적 또는 청구). 사용이 양수다. */
+    runningTotal: string;
     /** 이 줄이 든 주기의 시작. 같은 값을 가진 줄끼리 한 머리글 아래 선다. */
     periodStart: IsoDateString;
     cardId: string | null;
     cardName: string | null;
     categoryName: string | null;
     parentCategoryName: string | null;
-    /** 할부 회차와 개월수. 일시불이면 둘 다 1 이다. */
-    installmentIndex: number;
+    /** 할부 개월수. 일시불이면 1 이다. 줄에 "3개월 할부"를 적는 데 쓴다. */
     installmentMonths: number;
+    /**
+     * 할부 회차. 일시불이면 1 이다.
+     *
+     * 청구 내역에만 있다 -- 실적은 나뉘지 않아 회차라는 것이 없다. 이 값이 있어야
+     * "24개월 중 3회차"를 적을 수 있고, 그 줄이 왜 이번 달 대금에 들었는지가 드러난다.
+     */
+    installmentIndex?: number;
   }
 
   /**
-   * 실적 원장의 한 주기. 줄의 머리글이 되는 값이다.
+   * 주기 원장의 한 주기. 줄의 머리글이 되는 값이다.
    *
    * 합계는 **그 주기 전부**의 값이다. 한 쪽에 그 주기의 뒷부분만 실려 와도 머리글의
    * 숫자는 달라지지 않는다 -- 주기는 통째로 세고 자르는 것은 보여 줄 줄뿐이다.
    */
-  export interface PerformanceLedgerPeriod {
+  export interface PeriodLedgerPeriod {
     periodStart: IsoDateString;
     periodEnd: IsoDateString;
     /** 마감일이 지났으면 true. 진행 중인 주기는 더 늘 수 있다. */
     closed: boolean;
-    /** 이 주기의 실적 합계. 가장 오래된 줄부터 더한 값이고 `UsagePeriod.usage` 와 같다. */
+    /**
+     * 이 주기의 합계. 가장 오래된 줄부터 더한 값이다.
+     *
+     * 실적 원장이면 `UsagePeriod.usage` 와, 청구 내역이면 `UsagePeriod.billed` 와 같다.
+     * 그래프의 막대와 아래 목록이 같은 숫자를 말해야 하므로 이 둘은 어긋나면 안 된다.
+     */
     total: string;
   }
 
   /**
-   * 카드 실적 원장 한 쪽. 주기마다 0에서 다시 쌓는다.
+   * 카드 주기 원장 한 쪽. 주기마다 0에서 다시 쌓는다.
    *
    * 다른 원장과 같은 수만큼 끊어 준다. 줄에 붙은 누적은 잘린 자리와 상관없이 **주기
    * 시작부터** 센 값이다 -- 주기는 통째로 만들어 두고 자르는 것은 보여 줄 줄뿐이다.
    */
-  /** 실적 원장 한 쪽을 부를 때의 조건. */
-  export interface PerformanceLedgerQuery {
+  /** 주기 원장 한 쪽을 부를 때의 조건. */
+  export interface PeriodLedgerQuery {
     limit?: number;
     cursor?: string;
     /**
      * 이 주기의 줄만 ('YYYY-MM', `UsagePeriod.closingKey`).
      *
      * 그래프에서 주기 하나를 골랐을 때 쓴다. 날짜 구간이 아니라 주기 이름으로 가리키는
-     * 것은, 할부 회차가 산 날이 아니라 청구되는 주기에 쌓이기 때문이다 -- 날짜로 자르면
-     * 그 주기에 쌓인 회차가 빠진다.
+     * 것은, 청구 회차가 산 날이 아니라 청구되는 주기에 드는 데다 주기 경계도 마감일이
+     * 정하기 때문이다 -- 날짜로 자르면 그 주기에 든 회차와 경계의 며칠이 어긋난다.
      */
     closingKey?: string;
   }
 
-  export interface PerformanceLedgerResponse {
+  export interface PeriodLedgerResponse {
     cardId: string;
     /** 아래 금액들의 통화 (= 결제 통장의 통화) */
     currency: string;
     /** 'statement' = 마감일 기준 청구 주기, 'month' = 달력 월 */
     basis: 'statement' | 'month';
-    /** 실적 기준액. 설정하지 않았으면 null 이다. */
+    /** 실적 기준액. 설정하지 않았거나 청구 내역이면 null 이다. */
     target: string | null;
     /** 이 쪽에 실린 줄들이 속한 주기. 최신이 앞이다. */
-    periods: PerformanceLedgerPeriod[];
+    periods: PeriodLedgerPeriod[];
     /** 줄. 최신이 앞이고, 주기가 바뀌는 자리는 `periodStart` 로 가른다. */
-    rows: PerformanceLedgerRow[];
+    rows: PeriodLedgerRow[];
     /** 다음 쪽을 부를 자리. null 이면 더 볼 것이 없다. */
     nextCursor: string | null;
   }
@@ -685,6 +768,21 @@ export namespace EntryDto {
      * 회차별 금액과 귀속 주기는 저장하지 않고 읽을 때 계산한다.
      */
     installmentMonths?: number;
+    /**
+     * 수수료가 붙는 할부인가. 개월수가 2 이상일 때만 읽는다.
+     *
+     * 수수료는 저장하지 않는다. 카드사마다 다르고 회차마다 조금씩 달라 계산으로는
+     * 명세서와 맞출 수 없어, 회차가 마감되면 카드 상세에 떠올라 사용자가 적는다.
+     */
+    installmentInterest?: boolean;
+    /**
+     * 회차별 원금. 생략하면 개월수로 나눈 값을 쓴다.
+     *
+     * 끝수를 어느 회차에 몰아주는지가 카드사마다 달라, 계산만으로는 명세서와 맞출 수
+     * 없는 자리가 있다. 개수는 개월수와 같아야 하고 합은 카드에 청구되는 금액과 같아야
+     * 한다 (조립이 검사한다).
+     */
+    installmentShares?: string[];
 
     // ── 즉시 차감 (expense) ──
     /**

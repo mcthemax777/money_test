@@ -18,6 +18,7 @@ import { entryAmountLook } from '@money/core/lib/entries';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
+import { installmentLabel } from '@money/core/lib/period-ledger';
 
 import Modal from './Modal';
 
@@ -215,14 +216,7 @@ export default function EntryDetailModal({
           )}
           <Row label={t('tx.detail.method')} value={methodLabel} />
           <Row label={t('tx.detail.merchant')} value={entry.merchant} />
-          <Row
-            label={t('tx.detail.installment')}
-            value={
-              entry.installmentMonths
-                ? t('tx.detail.installmentMonths', { months: entry.installmentMonths })
-                : null
-            }
-          />
+          <Row label={t('tx.detail.installment')} value={installmentLabel(t, entry)} />
           <Row label={t('tx.detail.fee')} value={fee > 0 ? money(entry.feeAmount) : null} />
           {/*
             결제 자리에서 깎인 금액 (포인트 사용·자동할인). 위 금액은 이미 깎인 뒤라

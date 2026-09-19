@@ -141,6 +141,16 @@ export interface BuiltEntry {
   /** 할부 개월수. 신용카드 지출에만 붙는다. */
   installmentMonths?: number;
   /**
+   * 수수료가 붙는 할부인가 (`InstallmentPlan.interestBearing`).
+   *
+   * 무이자면 청구가 원금을 개월수로 나눈 값 그대로다. 유이자면 회차마다 수수료가
+   * 붙는데 금액이 조금씩 달라 계산으로 맞출 수 없어, 그 회차가 마감되면 카드 상세에
+   * 떠올라 사용자가 명세서를 보고 적는다.
+   */
+  installmentInterest?: boolean;
+  /** 회차별 원금 (사용자가 적은 값). 적지 않았으면 없고, 그때는 개월수로 나눈다. */
+  installmentShares?: string[];
+  /**
    * 이 거래를 카드 실적에 세는가. 카드로 낸 거래에만 뜻이 있다.
    *
    * **분할해도 하나다.** 실적을 세는 쪽은 카드사이고 그쪽이 보는 것은 승인 한 건이라,
@@ -228,6 +238,15 @@ export interface ExpenseBuildInput extends CommonBuildInput {
   accountId?: string;
   cardId?: string;
   installmentMonths?: number;
+  /** 수수료가 붙는 할부인가. 개월수를 고른 신용카드 지출에만 뜻이 있다. */
+  installmentInterest?: boolean;
+  /**
+   * 회차별 원금. 생략하면 개월수로 나눈 값을 쓴다.
+   *
+   * 개수는 개월수와 같아야 하고 합은 카드에 청구되는 금액과 같아야 한다. 끝수를 어느
+   * 회차에 몰아주는지가 카드사마다 달라, 명세서와 맞추려면 사람이 적은 값을 쓴다.
+   */
+  installmentShares?: DecInput[];
   /**
    * 카드 실적에 셀지. 카드로 낼 때만 뜻이 있고 **기본은 포함**이다.
    *
@@ -359,19 +378,32 @@ export async function buildExpense(
    * `saveInstallmentPlan` 은 음수인 카드 다리를 찾지 못해 엉뚱한 오류를 던진다.
    */
   const months = baseTotal.isZero() ? undefined : input.installmentMonths;
+  // 유이자 여부는 할부에만 뜻이 있다. 일시불로 되돌리면 함께 떨어진다.
+  const interest = months && months >= 2 ? input.installmentInterest ?? false : undefined;
 
+  const payment = paymentLeg(source, account.currency, entered, rate, base, enteredTotal, baseTotal);
   const postings = [
     // 지출 발생 = + (언제나 기준통화)
     ...baseLines.map((line) => categoryLeg(line, line.baseAmount, base)),
     // 자산 감소 또는 부채 증가 = -
-    paymentLeg(source, account.currency, entered, rate, base, enteredTotal, baseTotal),
+    payment,
   ];
+
+  /*
+   * 사용자가 적어 둔 회차 원금. 기준은 카드 다리의 금액이다.
+   *
+   * 통화가 갈리는 거래(원화 카드로 한 외화 결제)에서는 입력한 금액이 아니라 카드에
+   * 청구되는 금액이 나뉜다. 그 값이 곧 카드 다리라, 다리를 보고 검사한다.
+   */
+  const shares = installmentSharesOf(input.installmentShares, months, payment.amount);
 
   return {
     ...common(input),
     ...foreign,
     rateProvisional: provisional,
     installmentMonths: months,
+    installmentInterest: interest,
+    installmentShares: shares,
     // 카드로 낸 지출은 기본이 실적 포함이다. 카드가 아니면 읽히지 않는 자리다.
     countsPerformance: source.cardId ? input.countsPerformance ?? true : true,
     /*
@@ -701,6 +733,8 @@ export interface EntryBuildRequest extends CommonBuildInput {
   toAccountId?: string;
   cardId?: string;
   installmentMonths?: number;
+  installmentInterest?: boolean;
+  installmentShares?: DecInput[];
   toAmount?: DecInput;
   transferFee?: DecInput;
   transferFeeCategoryId?: string;
@@ -742,6 +776,8 @@ export async function buildEntry(
           accountId: request.accountId,
           cardId: request.cardId,
           installmentMonths: request.installmentMonths,
+          installmentInterest: request.installmentInterest,
+          installmentShares: request.installmentShares,
           countsPerformance: request.countsPerformance,
           discountCountsPerformance: request.discountCountsPerformance,
         },
@@ -1024,6 +1060,42 @@ function assertCanEstimate(provisional: boolean, isCreditCard: boolean, base: st
     'RATE_ESTIMATE_NOT_ALLOWED',
     `실제로 빠진 ${base} 금액을 입력해 주세요. 청구액을 나중에 확정하는 것은 신용카드 결제만 됩니다.`,
   );
+}
+
+/**
+ * 사용자가 적어 둔 회차 원금을 검사한다. 적지 않았으면 undefined.
+ *
+ * 끝수를 어느 회차에 몰아주는지는 카드사마다 다르다. 1,000원 3개월이 334/333/333 일
+ * 수도 334/334/332 일 수도 있어, 명세서와 맞추려면 사람이 적은 값을 그대로 써야 한다.
+ * 그래서 값 자체는 손대지 않고 **합과 개수만** 본다.
+ *
+ * 합이 어긋난 채 저장되면 카드 화면의 주기별 청구액 합계가 갚을 대금과 달라진다.
+ * 그 어긋남은 몇 달 뒤 명세서를 대조할 때에야 드러나므로 여기서 막는다.
+ */
+function installmentSharesOf(
+  shares: readonly DecInput[] | undefined,
+  months: number | undefined,
+  cardLegAmount: Dec,
+): string[] | undefined {
+  if (!shares || shares.length === 0) return undefined;
+  // 일시불로 되돌렸으면 적어 둔 값도 뜻이 없다.
+  if (!months || months < 2) return undefined;
+
+  if (shares.length !== months) {
+    fail('INSTALLMENT_SHARES_COUNT', '회차 금액의 개수가 할부 개월수와 다릅니다.');
+  }
+
+  const values = shares.map((share) => Dec.of(share));
+  if (values.some((value) => value.isNegative())) {
+    fail('INSTALLMENT_SHARE_NEGATIVE', '회차 금액은 0보다 작을 수 없습니다.');
+  }
+
+  // 카드 다리는 사용이 음수다. 회차는 청구 금액이라 양수로 견준다.
+  if (!sum(values).eq(cardLegAmount.negated())) {
+    fail('INSTALLMENT_SHARES_SUM', '회차 금액의 합이 결제 금액과 달라요.');
+  }
+
+  return values.map((value) => value.toString());
 }
 
 /**

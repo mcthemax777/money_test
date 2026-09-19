@@ -22,6 +22,7 @@ import {
   type ReportDto,
   categoryBreakdown,
   categoryUsage,
+  billedShares,
   creditPerformanceShares,
   creditUsagePeriods,
   currencyDecimals,
@@ -51,7 +52,11 @@ import {
 
 import type { ReportPeriod } from '../lib/api-client';
 import type { HomeDataPort } from './home-port';
-import type { LocalStore } from './local-store';
+import type {
+  LocalStore,
+  StoredCardLedgerPosting,
+  StoredPerformanceCard,
+} from './local-store';
 
 /** 서버 창구. 사본이 낼 수 없는 값을 물어볼 곳이다. */
 export interface LocalHomePortOptions {
@@ -608,153 +613,95 @@ export function createLocalHomePort(
     /**
      * 실적 원장 한 쪽.
      *
-     * 주기를 나누고 할부를 쪼개고 차감을 되살리는 규칙은 서버와 같은 함수가 갖는다
+     * 주기를 나누고 차감을 되살리는 규칙은 서버와 같은 함수가 갖는다
      * (`creditPerformanceShares`). 사본은 그 카드의 다리를 한 번에 읽어 주기마다 줄을
      * 만든 뒤, 보여 줄 만큼만 잘라 준다 -- 누적은 주기 시작부터 센 값 그대로다.
      */
     async getCardPerformanceLedger(cardId, params) {
       const card = await store.cardForPerformance(cardId);
       const isCredit = card?.cardType === 'credit';
-      const usable =
-        card &&
-        (!isCredit ||
-          (card.statementClosingDay !== null &&
-            card.paymentDueDay !== null &&
-            card.liabilityAccountId !== null));
-      if (!card || !usable) return fallback.getCardPerformanceLedger(cardId, params);
+      if (!card || !ledgerReady(card)) return fallback.getCardPerformanceLedger(cardId, params);
 
       note('cardPerformanceLedger');
       const timeZone = await timeZoneOf(store, card.projectId);
-      const limit = Math.min(Math.max(Number(params?.limit) || 20, 1), 100);
 
       const postings = await store.cardLedgerPostings(
         isCredit ? { liabilityAccountId: card.liabilityAccountId } : { cardId: card.id },
       );
 
       /** 마감 연월 -> 그 주기의 줄. 오래된 것이 앞이다(누적을 그 차례로 더한다). */
-      const byPeriod = new Map<string, CardDto.PerformanceLedgerRow[]>();
+      const byPeriod = new Map<string, CardDto.PeriodLedgerRow[]>();
       for (const posting of postings) {
         const shares = isCredit
           ? creditPerformanceShares(posting, card.statementClosingDay!, timeZone)
           : debitPerformanceShares(posting, timeZone);
 
         for (const share of shares) {
-          const rows = byPeriod.get(share.closingKey) ?? [];
-          rows.push({
-            key: share.months > 1 ? `${posting.postingId}:${share.index}` : posting.postingId,
-            entryId: posting.entryId,
-            date: posting.date,
-            description: posting.description,
-            merchant: posting.merchant,
-            // 계좌 원장과 같은 부호 규칙이다. 사용이 음수라 화면이 뒤집어 읽는다.
-            amount: Dec.of(share.amount).negated().toString(),
-            performanceAfter: '0',
-            periodStart: '',
-            cardId: card.id,
-            cardName: null,
-            categoryName: posting.categoryName,
-            parentCategoryName: posting.parentCategoryName,
-            installmentIndex: share.index,
+          push(byPeriod, share.closingKey, {
+            ...ledgerRowOf(posting, card.id, share.amount),
             installmentMonths: share.months,
           });
-          byPeriod.set(share.closingKey, rows);
         }
       }
 
-      const today = zonedParts(new Date(), timeZone);
-      const todayMarker = Date.UTC(today.year, today.month - 1, today.day);
-
-      const periods: CardDto.PerformanceLedgerPeriod[] = [];
-      const rows: CardDto.PerformanceLedgerRow[] = [];
-      /** 주기 시작 -> 마감 연월. 커서에 그 키를 실어 서버와 같은 모양을 쓴다. */
-      const closingOf = new Map<string, string>();
-
-      /*
-       * 진행 중인 주기까지만 본다. 키가 "YYYY-MM" 이라 글자 차례가 곧 시간 차례다.
-       *
-       * 할부는 뒤 주기로 넘어가므로 아직 오지 않은 주기에도 회차가 놓인다. 그 주기는
-       * 쌓인 것이 없는 자리라 목록에 세우지 않는다 (서버도 같은 자리에서 멈춘다).
-       */
-      const currentKey = isCredit
-        ? closingMonthKey(
-            closingMonthOf(new Date(), card.statementClosingDay!, timeZone),
-          )
-        : zonedYearMonth(new Date(), timeZone);
-
-      /*
-       * 주기 하나만 보는 조회. 그래프에서 막대를 눌렀을 때 온다.
-       *
-       * 날짜 구간이 아니라 주기 이름으로 가린다. 할부 회차는 산 날이 아니라 청구되는
-       * 주기에 쌓이므로, 날짜로 자르면 그 주기에 쌓인 회차가 빠진다 (서버와 같은 규칙).
-       */
-      const only = params?.closingKey;
-
-      for (const key of [...byPeriod.keys()]
-        .filter((key) => key <= currentKey && (!only || key === only))
-        .sort()
-        .reverse()) {
-        const [year, month] = key.split('-').map(Number);
-        const span = isCredit
-          ? periodForClosingMonth(year, month, card.statementClosingDay!, card.paymentDueDay!)
-          : {
-              // 달력 월 표시자. 청구 주기 쪽과 같은 형태다 (그 달 1일 ~ 말일).
-              periodStart: new Date(Date.UTC(year, month - 1, 1)),
-              periodEnd: new Date(Date.UTC(year, month, 0)),
-            };
-        const periodStart = span.periodStart.toISOString();
-        closingOf.set(periodStart, key);
-
-        // 누적은 가장 오래된 줄부터 더하고, 보여 주는 차례는 그 반대다.
-        let running = Dec.of(0);
-        const filled = (byPeriod.get(key) ?? []).map((row) => {
-          running = running.plus(Dec.of(row.amount).negated());
-          return { ...row, periodStart, performanceAfter: running.toString() };
-        });
-        filled.reverse();
-
-        periods.push({
-          periodStart,
-          periodEnd: span.periodEnd.toISOString(),
-          closed: span.periodEnd.getTime() < todayMarker,
-          total: running.toString(),
-        });
-        rows.push(...filled);
-      }
-
-      /*
-       * 커서는 "주기|줄키" 다(서버와 같다). 그 줄 다음부터 limit 만큼 준다.
-       * 사라진 줄을 가리키면 빈 쪽을 준다 -- 처음부터 주면 같은 줄이 두 번 선다.
-       */
-      const cursorKey = params?.cursor?.split('|').slice(1).join('|');
-      const from = cursorKey ? rows.findIndex((row) => row.key === cursorKey) + 1 : 0;
-      if (params?.cursor && from === 0) {
-        return {
-          cardId: card.id,
-          currency: isCredit ? card.liabilityCurrency ?? card.paymentCurrency : card.paymentCurrency,
-          basis: isCredit ? 'statement' : 'month',
-          target: card.performanceAmount,
-          periods: [],
-          rows: [],
-          nextCursor: null,
-        };
-      }
-
-      const page = rows.slice(from, from + limit);
-      const shown = new Set(page.map((row) => row.periodStart));
-      const last = page[page.length - 1];
-
-      return {
-        cardId: card.id,
-        currency: isCredit ? card.liabilityCurrency ?? card.paymentCurrency : card.paymentCurrency,
-        basis: isCredit ? 'statement' : 'month',
+      return periodLedgerPage({
+        byPeriod,
+        params,
+        timeZone,
+        card,
+        isCredit,
         target: card.performanceAmount,
-        periods: periods.filter((period) => shown.has(period.periodStart)),
-        rows: page,
-        nextCursor:
-          from + limit < rows.length && last
-            ? `${closingOf.get(last.periodStart) ?? ''}|${last.key}`
-            : null,
-      };
+      });
+    },
+
+    /**
+     * 청구 내역 한 쪽. 이 주기의 청구서에 무엇이 얼마씩 들었는가.
+     *
+     * 실적 원장과 같은 길을 쓰되 나누는 함수만 다르다(`billedShares`). **할부가 회차마다
+     * 한 줄이다** -- 24개월 할부로 산 차는 원장에 산 달 한 줄뿐이라, 그 뒤 주기에서는
+     * 대금이 왜 이만큼 나가는지 목록에서 알 수 없었다.
+     *
+     * 신용카드만이다. 체크카드는 쓰는 즉시 통장에서 빠져 청구라는 것이 없다.
+     */
+    async getCardBilledLedger(cardId, params) {
+      const card = await store.cardForPerformance(cardId);
+      if (!card || card.cardType !== 'credit' || !ledgerReady(card)) {
+        return fallback.getCardBilledLedger(cardId, params);
+      }
+
+      note('cardBilledLedger');
+      const timeZone = await timeZoneOf(store, card.projectId);
+
+      const postings = await store.cardLedgerPostings({
+        liabilityAccountId: card.liabilityAccountId,
+      });
+
+      const byPeriod = new Map<string, CardDto.PeriodLedgerRow[]>();
+      for (const posting of postings) {
+        /*
+         * 실적에서 뺀 거래도 그대로 싣는다. 청구는 실적과 상관없이 되므로, 여기서
+         * 거르면 줄의 합이 막대(`UsagePeriod.billed`)와 어긋난다.
+         */
+        for (const share of billedShares(posting, card.statementClosingDay!, timeZone)) {
+          push(byPeriod, share.closingKey, {
+            ...ledgerRowOf(posting, card.id, share.amount),
+            // 한 다리가 여러 주기에 나뉘어 들어가, 회차 번호까지 붙여야 줄마다 다르다.
+            key: share.months > 1 ? `${posting.postingId}:${share.index}` : posting.postingId,
+            installmentIndex: share.index,
+            installmentMonths: share.months,
+          });
+        }
+      }
+
+      return periodLedgerPage({
+        byPeriod,
+        params,
+        timeZone,
+        card,
+        isCredit: true,
+        // 실적 기준액은 청구와 상관없는 값이다. 막대에 기준선을 긋지 않는다.
+        target: null,
+      });
     },
 
     /**
@@ -870,6 +817,164 @@ export function createLocalHomePort(
 async function timeZoneOf(store: LocalStore, projectId: string): Promise<string> {
   const project = await store.projectRow(projectId);
   return project?.timeZone ?? 'Asia/Seoul';
+}
+
+/**
+ * 이 카드를 사본만으로 그릴 수 있는가.
+ *
+ * 신용카드는 마감일·결제일·부채 계정이 다 있어야 주기를 자를 수 있다. 하나라도 비면
+ * 서버가 오류를 주는 쪽이 맞으므로 그대로 넘긴다.
+ */
+function ledgerReady(card: StoredPerformanceCard): boolean {
+  if (card.cardType !== 'credit') return true;
+  return (
+    card.statementClosingDay !== null &&
+    card.paymentDueDay !== null &&
+    card.liabilityAccountId !== null
+  );
+}
+
+/** 마감 연월 칸에 줄 하나를 더한다. */
+function push(byPeriod: Map<string, CardDto.PeriodLedgerRow[]>, key: string, row: CardDto.PeriodLedgerRow) {
+  const rows = byPeriod.get(key) ?? [];
+  rows.push(row);
+  byPeriod.set(key, rows);
+}
+
+/** 주기 원장 한 줄의 바탕. 누적과 주기 시작은 쪽을 만들 때 붙인다. */
+function ledgerRowOf(
+  posting: StoredCardLedgerPosting,
+  cardId: string,
+  amount: string,
+): CardDto.PeriodLedgerRow {
+  return {
+    key: posting.postingId,
+    entryId: posting.entryId,
+    date: posting.date,
+    description: posting.description,
+    merchant: posting.merchant,
+    // 계좌 원장과 같은 부호 규칙이다. 사용이 음수라 화면이 뒤집어 읽는다.
+    amount: Dec.of(amount).negated().toString(),
+    runningTotal: '0',
+    periodStart: '',
+    cardId,
+    cardName: null,
+    categoryName: posting.categoryName,
+    parentCategoryName: posting.parentCategoryName,
+    installmentMonths: 1,
+  };
+}
+
+/**
+ * 주기마다 만든 줄을 한 쪽으로 자른다. 실적 원장과 청구 내역이 이 한 길을 쓴다.
+ *
+ * 누적은 주기 시작부터 세야 뜻이 있어, 주기는 통째로 만들어 두고 자르는 것은 보여 줄
+ * 줄뿐이다 -- 뒷부분만 받아도 줄에 붙은 누적은 처음부터 센 값이다 (서버와 같은 규칙).
+ */
+function periodLedgerPage(input: {
+  byPeriod: Map<string, CardDto.PeriodLedgerRow[]>;
+  params?: CardDto.PeriodLedgerQuery;
+  timeZone: string;
+  card: StoredPerformanceCard;
+  isCredit: boolean;
+  target: string | null;
+}): CardDto.PeriodLedgerResponse {
+  const { byPeriod, params, timeZone, card, isCredit } = input;
+  const limit = Math.min(Math.max(Number(params?.limit) || 20, 1), 100);
+
+  const head = {
+    cardId: card.id,
+    currency: isCredit ? card.liabilityCurrency ?? card.paymentCurrency : card.paymentCurrency,
+    basis: (isCredit ? 'statement' : 'month') as 'statement' | 'month',
+    target: input.target,
+  };
+
+  const today = zonedParts(new Date(), timeZone);
+  const todayMarker = Date.UTC(today.year, today.month - 1, today.day);
+
+  const periods: CardDto.PeriodLedgerPeriod[] = [];
+  const rows: CardDto.PeriodLedgerRow[] = [];
+  /** 주기 시작 -> 마감 연월. 커서에 그 키를 실어 서버와 같은 모양을 쓴다. */
+  const closingOf = new Map<string, string>();
+
+  /*
+   * 쭉 훑을 때는 진행 중인 주기까지다. 키가 "YYYY-MM" 이라 글자 차례가 곧 시간 차례다.
+   *
+   * 할부 청구는 뒤 주기로 넘어가고 날짜를 잘못 적은 거래도 있어, 아직 오지 않은 주기에
+   * 줄이 놓일 수 있다. 고르지 않은 채로 훑는 목록에는 세우지 않는다 -- 서버도 진행 중인
+   * 주기에서 시작해 거슬러 오른다.
+   */
+  const currentKey = isCredit
+    ? closingMonthKey(closingMonthOf(new Date(), card.statementClosingDay!, timeZone))
+    : zonedYearMonth(new Date(), timeZone);
+
+  /*
+   * 주기 하나만 보는 조회. 그래프에서 막대를 눌렀을 때 온다.
+   *
+   * 날짜 구간이 아니라 주기 이름으로 가린다. 주기 경계는 마감일이 정하고 할부 회차는
+   * 산 날이 아니라 청구되는 주기에 들어, 날짜로 자르면 둘 다 어긋난다.
+   */
+  const only = params?.closingKey;
+
+  for (const key of [...byPeriod.keys()]
+    /*
+     * 고른 주기가 있으면 그것만이다. 아직 오지 않은 주기여도 보여 준다 -- 24개월 할부의
+     * 다음 달 몫을 그래프에서 눌러 열어 보는 자리이고, 서버도 같은 줄을 준다.
+     */
+    .filter((key) => (only ? key === only : key <= currentKey))
+    .sort()
+    .reverse()) {
+    const [year, month] = key.split('-').map(Number);
+    const span = isCredit
+      ? periodForClosingMonth(year, month, card.statementClosingDay!, card.paymentDueDay!)
+      : {
+          // 달력 월 표시자. 청구 주기 쪽과 같은 형태다 (그 달 1일 ~ 말일).
+          periodStart: new Date(Date.UTC(year, month - 1, 1)),
+          periodEnd: new Date(Date.UTC(year, month, 0)),
+        };
+    const periodStart = span.periodStart.toISOString();
+    closingOf.set(periodStart, key);
+
+    // 누적은 가장 오래된 줄부터 더하고, 보여 주는 차례는 그 반대다.
+    let running = Dec.of(0);
+    const filled = (byPeriod.get(key) ?? []).map((row) => {
+      running = running.plus(Dec.of(row.amount).negated());
+      return { ...row, periodStart, runningTotal: running.toString() };
+    });
+    filled.reverse();
+
+    periods.push({
+      periodStart,
+      periodEnd: span.periodEnd.toISOString(),
+      closed: span.periodEnd.getTime() < todayMarker,
+      total: running.toString(),
+    });
+    rows.push(...filled);
+  }
+
+  /*
+   * 커서는 "주기|줄키" 다(서버와 같다). 그 줄 다음부터 limit 만큼 준다.
+   * 사라진 줄을 가리키면 빈 쪽을 준다 -- 처음부터 주면 같은 줄이 두 번 선다.
+   */
+  const cursorKey = params?.cursor?.split('|').slice(1).join('|');
+  const from = cursorKey ? rows.findIndex((row) => row.key === cursorKey) + 1 : 0;
+  if (params?.cursor && from === 0) {
+    return { ...head, periods: [], rows: [], nextCursor: null };
+  }
+
+  const page = rows.slice(from, from + limit);
+  const shown = new Set(page.map((row) => row.periodStart));
+  const last = page[page.length - 1];
+
+  return {
+    ...head,
+    periods: periods.filter((period) => shown.has(period.periodStart)),
+    rows: page,
+    nextCursor:
+      from + limit < rows.length && last
+        ? `${closingOf.get(last.periodStart) ?? ''}|${last.key}`
+        : null,
+  };
 }
 
 function requireProject(projectId?: string | null): string {

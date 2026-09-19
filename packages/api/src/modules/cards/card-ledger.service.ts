@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto';
 import { Injectable, BadRequestException, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, CardType, ProjectRole } from '@prisma/client';
 import {
   CardDto,
   type CardUsagePosting,
   type PerformanceShare,
+  billedShares,
   creditPerformanceShares,
   debitPerformanceShares,
   MAX_USAGE_PERIODS,
@@ -179,7 +181,7 @@ export class CardLedgerService {
             postings: { select: USAGE_LEG_SELECT },
           },
         },
-        installmentPlan: { select: { totalMonths: true } },
+        installmentPlan: { select: { totalMonths: true, principalShares: true } },
       },
     });
 
@@ -188,6 +190,7 @@ export class CardLedgerService {
         amount: usage.amount,
         date: usage.entry.date,
         installmentMonths: usage.installmentPlan?.totalMonths ?? null,
+        installmentShares: toShares(usage.installmentPlan?.principalShares),
         countsPerformance: usage.entry.countsPerformance,
         ...performanceDiscount(usage.entry),
       })),
@@ -387,8 +390,8 @@ export class CardLedgerService {
   async getPerformanceLedger(
     cardId: string,
     userId: string,
-    options: CardDto.PerformanceLedgerQuery = {},
-  ): Promise<CardDto.PerformanceLedgerResponse> {
+    options: CardDto.PeriodLedgerQuery = {},
+  ): Promise<CardDto.PeriodLedgerResponse> {
     const card = await this.prisma.card.findUnique({ where: { id: cardId } });
     if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId);
@@ -417,7 +420,7 @@ export class CardLedgerService {
     limit: number,
     cursor: LedgerCursor | null,
     only: ClosingMonth | null,
-  ): Promise<CardDto.PerformanceLedgerResponse> {
+  ): Promise<CardDto.PeriodLedgerResponse> {
     const card = await this.loadCreditCard(cardId, userId);
     const closingDay = card.statementClosingDay!;
     const liabilityAccountId = card.liabilityAccountId!;
@@ -437,7 +440,7 @@ export class CardLedgerService {
     });
     const lookback = (longestPlan._max.totalMonths ?? 1) + 1;
 
-    const page = await this.walkPerformancePeriods({
+    const page = await this.walkPeriods({
       limit,
       cursor,
       only,
@@ -469,14 +472,14 @@ export class CardLedgerService {
           select: {
             id: true,
             amount: true,
-            entry: { select: performanceLedgerEntrySelect },
-            installmentPlan: { select: { totalMonths: true } },
+            entry: { select: periodLedgerEntrySelect },
+            installmentPlan: { select: { totalMonths: true, principalShares: true } },
           },
           orderBy: [{ entry: { date: 'asc' } }, { id: 'asc' }],
         });
 
         const wanted = closingMonthKey(closing);
-        const rows: CardDto.PerformanceLedgerRow[] = [];
+        const rows: CardDto.PeriodLedgerRow[] = [];
         for (const usage of usages) {
           const shares = creditPerformanceShares(
             {
@@ -519,6 +522,149 @@ export class CardLedgerService {
     };
   }
 
+  /**
+   * 청구 내역. 이 주기의 청구서에 무엇이 얼마씩 들었는가.
+   *
+   * 실적 원장과 같은 뼈대를 쓰지만 나누는 규칙이 다르다. **할부가 회차마다 한 줄이다.**
+   * 24개월 할부로 산 차는 산 달에만 원장에 한 줄로 서고 그 뒤 스물세 주기에는 아무
+   * 줄도 없는데, 대금은 매달 나간다 -- 그 달 청구서를 열면 막대는 큰데 목록이 비어
+   * 있어, 왜 이만큼 나가는지 화면 어디에서도 알 수 없었다.
+   *
+   * 대금 결제와 환불 입금은 여기 들지 않는다. 청구서에 실리는 것은 사용이고, 갚은 돈은
+   * 결제대금 탭의 계좌 원장이 보여 준다.
+   *
+   * 신용카드만이다. 체크카드는 쓰는 즉시 통장에서 빠져 청구라는 것이 없다.
+   */
+  async getBilledLedger(
+    cardId: string,
+    userId: string,
+    options: CardDto.PeriodLedgerQuery = {},
+  ): Promise<CardDto.PeriodLedgerResponse> {
+    const card = await this.loadCreditCard(cardId, userId);
+    const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
+    const limit = Math.min(Math.max(Number(options.limit) || 20, 1), 100);
+    const cursor = parseLedgerCursor(options.cursor);
+    const only = parseClosingKey(options.closingKey);
+
+    const closingDay = card.statementClosingDay!;
+    const liabilityAccountId = card.liabilityAccountId!;
+
+    const liability = await this.prisma.account.findUniqueOrThrow({
+      where: { id: liabilityAccountId },
+      select: { currency: true },
+    });
+
+    /*
+     * 할부는 예전 구매가 지금 주기에 걸린다. 주기마다 최장 할부 개월수만큼 앞에서부터
+     * 읽어야 그 회차가 빠지지 않는다 (사용 현황 질의와 같은 규칙이다).
+     */
+    const longestPlan = await this.prisma.installmentPlan.aggregate({
+      _max: { totalMonths: true },
+      where: { posting: { accountId: liabilityAccountId } },
+    });
+    const lookback = (longestPlan._max.totalMonths ?? 1) + 1;
+
+    const page = await this.walkPeriods({
+      limit,
+      cursor,
+      only,
+      from: cursor?.closing ?? only ?? closingMonthOf(new Date(), closingDay, timeZone),
+      timeZone,
+      periodOf: (closing) => {
+        const period = periodForClosingMonth(
+          closing.year,
+          closing.month,
+          closingDay,
+          card.paymentDueDay!,
+        );
+        return { start: period.periodStart, end: period.periodEnd };
+      },
+      rowsOf: async (closing, period) => {
+        const since = new Date(period.start);
+        since.setUTCMonth(since.getUTCMonth() - lookback);
+
+        const usages = await this.prisma.posting.findMany({
+          where: {
+            accountId: liabilityAccountId,
+            entry: {
+              date: { gte: since, lte: period.end },
+              // 사용만 싣는다. 대금 결제와 환불 입금은 분류 다리가 없어 여기서 빠진다.
+              postings: { some: { categoryId: { not: null } } },
+            },
+          },
+          select: {
+            id: true,
+            amount: true,
+            entry: { select: periodLedgerEntrySelect },
+            installmentPlan: { select: { totalMonths: true, principalShares: true } },
+          },
+          orderBy: [{ entry: { date: 'asc' } }, { id: 'asc' }],
+        });
+
+        const wanted = closingMonthKey(closing);
+        const rows: CardDto.PeriodLedgerRow[] = [];
+        for (const usage of usages) {
+          /*
+           * 실적에서 뺀 거래도 그대로 싣는다. 청구는 실적과 상관없이 되므로, 여기서
+           * 거르면 줄의 합이 막대(`UsagePeriod.billed`)와 어긋난다.
+           */
+          const shares = billedShares(
+            {
+              amount: usage.amount,
+              date: usage.entry.date,
+              installmentMonths: usage.installmentPlan?.totalMonths ?? null,
+              installmentShares: toShares(usage.installmentPlan?.principalShares),
+            },
+            closingDay,
+            timeZone,
+          );
+          for (const share of shares) {
+            if (share.closingKey !== wanted) continue;
+            rows.push({
+              // 한 다리가 여러 주기에 나뉘어 들어가, 회차 번호까지 붙여야 줄마다 다르다.
+              key: share.months > 1 ? `${usage.id}:${share.index}` : usage.id,
+              entryId: usage.entry.id,
+              date: usage.entry.date.toISOString(),
+              description: usage.entry.description,
+              merchant: usage.entry.merchant,
+              // 계좌 원장과 같은 부호 규칙이다. 사용이 음수라 화면이 뒤집어 읽는다.
+              amount: new Prisma.Decimal(share.amount).neg().toString(),
+              runningTotal: '0',
+              periodStart: period.start.toISOString(),
+              cardId,
+              cardName: card.name,
+              categoryName: categoryOf(usage.entry)?.name ?? null,
+              parentCategoryName: categoryOf(usage.entry)?.parent?.name ?? null,
+              installmentIndex: share.index,
+              installmentMonths: share.months,
+            });
+          }
+        }
+        return rows;
+      },
+      olderExists: (start) =>
+        this.prisma.posting.findFirst({
+          where: {
+            accountId: liabilityAccountId,
+            entry: {
+              date: { lt: start },
+              postings: { some: { categoryId: { not: null } } },
+            },
+          },
+          select: { id: true },
+        }),
+    });
+
+    return {
+      cardId,
+      currency: liability.currency,
+      basis: 'statement',
+      // 실적 기준액은 청구와 상관없는 값이다. 막대에 기준선을 긋지 않는다.
+      target: null,
+      ...page,
+    };
+  }
+
   /** 체크카드의 실적 원장. 자를 기준이 달력 월뿐이다. */
   private async debitPerformanceLedger(
     card: {
@@ -531,7 +677,7 @@ export class CardLedgerService {
     limit: number,
     cursor: LedgerCursor | null,
     only: ClosingMonth | null,
-  ): Promise<CardDto.PerformanceLedgerResponse> {
+  ): Promise<CardDto.PeriodLedgerResponse> {
     const cardId = card.id;
     const paymentAccount = await this.prisma.account.findUniqueOrThrow({
       where: { id: card.paymentAccountId },
@@ -540,7 +686,7 @@ export class CardLedgerService {
 
     const [thisYear, thisMonth] = zonedCurrentYearMonth(timeZone).split('-').map(Number);
 
-    const page = await this.walkPerformancePeriods({
+    const page = await this.walkPeriods({
       limit,
       cursor,
       only,
@@ -563,12 +709,12 @@ export class CardLedgerService {
           select: {
             id: true,
             amount: true,
-            entry: { select: performanceLedgerEntrySelect },
+            entry: { select: periodLedgerEntrySelect },
           },
           orderBy: [{ entry: { date: 'asc' } }, { id: 'asc' }],
         });
 
-        const rows: CardDto.PerformanceLedgerRow[] = [];
+        const rows: CardDto.PeriodLedgerRow[] = [];
         for (const posting of postings) {
           for (const share of debitPerformanceShares(
             {
@@ -612,7 +758,7 @@ export class CardLedgerService {
    * 한 번 물어, 없으면 커서를 끊어 목록이 끝나게 한다 -- 끊지 않으면 빈 쪽을 부르는
    * 일이 되풀이된다.
    */
-  private async walkPerformancePeriods(input: {
+  private async walkPeriods(input: {
     limit: number;
     cursor: LedgerCursor | null;
     /**
@@ -629,16 +775,16 @@ export class CardLedgerService {
     rowsOf: (
       closing: ClosingMonth,
       period: { start: Date; end: Date },
-    ) => Promise<CardDto.PerformanceLedgerRow[]>;
+    ) => Promise<CardDto.PeriodLedgerRow[]>;
     olderExists: (start: Date) => Promise<{ id: string } | null>;
   }): Promise<{
-    periods: CardDto.PerformanceLedgerPeriod[];
-    rows: CardDto.PerformanceLedgerRow[];
+    periods: CardDto.PeriodLedgerPeriod[];
+    rows: CardDto.PeriodLedgerRow[];
     nextCursor: string | null;
   }> {
     const todayMarker = todayUtcMarker(input.timeZone);
-    const periods: CardDto.PerformanceLedgerPeriod[] = [];
-    const rows: CardDto.PerformanceLedgerRow[] = [];
+    const periods: CardDto.PeriodLedgerPeriod[] = [];
+    const rows: CardDto.PeriodLedgerRow[] = [];
 
     let closing = input.from;
     let scanned = input.from;
@@ -699,30 +845,28 @@ export class CardLedgerService {
   /** 실적 원장 한 줄. 쌓인 값은 주기를 채울 때 붙인다. */
   private performanceRow(
     postingId: string,
-    entry: PerformanceLedgerEntry,
+    entry: PeriodLedgerEntry,
     cardId: string,
     cardName: string | null,
     share: PerformanceShare,
     period: { start: Date },
-  ): CardDto.PerformanceLedgerRow {
-    const category = entry.postings.find((leg) => leg.categoryId !== null)?.category ?? null;
+  ): CardDto.PeriodLedgerRow {
+    const category = categoryOf(entry);
 
     return {
-      // 할부는 한 다리가 여러 주기에 나뉘어 들어가, 회차 번호까지 붙여야 줄마다 다르다.
-      key: share.months > 1 ? `${postingId}:${share.index}` : postingId,
+      key: postingId,
       entryId: entry.id,
       date: entry.date.toISOString(),
       description: entry.description,
       merchant: entry.merchant,
       // 계좌 원장과 같은 부호 규칙이다. 사용이 음수라 화면이 뒤집어 읽는다.
       amount: new Prisma.Decimal(share.amount).neg().toString(),
-      performanceAfter: '0',
+      runningTotal: '0',
       periodStart: period.start.toISOString(),
       cardId,
       cardName,
       categoryName: category?.name ?? null,
       parentCategoryName: category?.parent?.name ?? null,
-      installmentIndex: share.index,
       installmentMonths: share.months,
     };
   }
@@ -867,6 +1011,245 @@ export class CardLedgerService {
     return { settled: targets.length };
   }
 
+
+  /**
+   * 수수료를 아직 적지 않은 할부 회차.
+   *
+   * 유이자 할부는 회차마다 수수료가 붙는데, 카드사와 남은 원금에 따라 금액이 조금씩
+   * 달라 계산으로는 명세서와 맞출 수 없다. 그래서 회차의 주기가 마감되면 여기 떠오르고,
+   * 사용자가 명세서를 보고 적으면 그때 수수료 전표가 하나 생긴다.
+   *
+   * 마감되지 않은 회차는 아직 청구서에 오르지 않아 적을 금액이 없다. 무이자 할부는
+   * 애초에 떠오르지 않는다.
+   */
+  async listPendingFees(cardId: string, userId: string): Promise<CardDto.PendingFeesResponse> {
+    const card = await this.loadCreditCard(cardId, userId);
+    const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
+    const closingDay = card.statementClosingDay!;
+
+    const liability = await this.prisma.account.findUniqueOrThrow({
+      where: { id: card.liabilityAccountId! },
+      select: { currency: true },
+    });
+
+    const plans = await this.prisma.installmentPlan.findMany({
+      where: {
+        interestBearing: true,
+        posting: { accountId: card.liabilityAccountId! },
+      },
+      select: {
+        id: true,
+        totalMonths: true,
+        principalShares: true,
+        posting: {
+          select: {
+            amount: true,
+            entry: {
+              select: {
+                id: true,
+                date: true,
+                description: true,
+                merchant: true,
+                // 설명이 빈 거래를 가릴 이름. 분할이면 첫 줄이 대표다.
+                postings: {
+                  where: { categoryId: { not: null } },
+                  select: { category: { select: { name: true } } },
+                  orderBy: { id: 'asc' },
+                  take: 1,
+                },
+              },
+            },
+          },
+        },
+        // 이미 적은 회차. 다시 묻지 않는다.
+        fees: { select: { installmentSequence: true } },
+      },
+    });
+
+    const todayMarker = todayUtcMarker(timeZone);
+    const items: CardDto.PendingFeeItem[] = [];
+
+    for (const plan of plans) {
+      const settled = new Set(plan.fees.map((fee) => fee.installmentSequence));
+      const shares = billedShares(
+        {
+          amount: plan.posting.amount,
+          date: plan.posting.entry.date,
+          installmentMonths: plan.totalMonths,
+          installmentShares: toShares(plan.principalShares),
+        },
+        closingDay,
+        timeZone,
+      );
+
+      for (const share of shares) {
+        if (settled.has(share.index)) continue;
+
+        const [year, month] = share.closingKey.split('-').map(Number);
+        const period = periodForClosingMonth(year, month, closingDay, card.paymentDueDay!);
+        // 마감 전 회차는 청구서에 오르지 않았다. 적을 금액이 아직 없다.
+        if (period.periodEnd.getTime() >= todayMarker) continue;
+
+        items.push({
+          planId: plan.id,
+          sequence: share.index,
+          months: share.months,
+          entryId: plan.posting.entry.id,
+          description: plan.posting.entry.description,
+          merchant: plan.posting.entry.merchant,
+          categoryName: plan.posting.entry.postings[0]?.category?.name ?? null,
+          purchaseDate: plan.posting.entry.date.toISOString(),
+          closingMonth: share.closingKey,
+          dueDate: period.dueDate.toISOString(),
+          principal: share.amount,
+        });
+      }
+    }
+
+    // 오래된 회차가 앞이다. 밀린 것부터 적는다.
+    items.sort((a, b) => (a.dueDate === b.dueDate ? a.sequence - b.sequence : a.dueDate < b.dueDate ? -1 : 1));
+
+    return {
+      cardId: card.id,
+      currency: liability.currency,
+      suggestedCategoryId: await this.lastFeeCategoryId(card.projectId),
+      items,
+    };
+  }
+
+  /**
+   * 지난번에 수수료로 쓴 분류.
+   *
+   * 할부수수료 분류를 서버가 만들지 않는다. 가계부마다 분류 나무가 달라 남의 자리에
+   * 이름 하나를 끼워 넣는 꼴이 된다. 한 번 고른 것을 다음부터 기본으로 삼는다.
+   */
+  private async lastFeeCategoryId(projectId: string): Promise<string | null> {
+    const last = await this.prisma.posting.findFirst({
+      where: {
+        categoryId: { not: null },
+        entry: { projectId, installmentPlanId: { not: null } },
+      },
+      orderBy: { entry: { date: 'desc' } },
+      select: { categoryId: true },
+    });
+    return last?.categoryId ?? null;
+  }
+
+  /**
+   * 회차 수수료를 적는다. 적은 만큼 수수료 전표가 생긴다.
+   *
+   * 전표로 남기는 까닭은 부채가 전표 합이기 때문이다. 계획에 수수료 총액만 적어 두면
+   * 청구만 늘고 갚을 대금은 그대로라, 카드 화면의 두 숫자가 어긋난다. 전표로 두면 그
+   * 수수료가 지출로도 잡혀 "할부로 얼마를 더 냈나"가 분류 합계에 남는다.
+   *
+   * 실적에서는 뺀다. 카드사가 혜택을 정할 때 세는 것은 결제액이지 수수료가 아니다.
+   */
+  async settleFees(
+    cardId: string,
+    userId: string,
+    dto: CardDto.SettleFeesRequest,
+  ): Promise<CardDto.SettleFeesResponse> {
+    const card = await this.loadCreditCard(cardId, userId, ProjectRole.editor);
+    const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
+    const closingDay = card.statementClosingDay!;
+
+    const items = Array.isArray(dto?.items) ? dto.items : [];
+    if (items.length === 0) {
+      throw new BadRequestException('적을 회차를 골라 주세요.');
+    }
+    if (!dto.categoryId) {
+      throw new BadRequestException('수수료를 담을 분류를 골라 주세요.');
+    }
+    if (!dto.personId) {
+      throw new BadRequestException('수수료를 적을 사람을 골라 주세요.');
+    }
+
+    // 남의 카드 회차를 섞어 보내는 요청을 막는다. 이 카드에 달린 계획인지 확인한다.
+    const plans = await this.prisma.installmentPlan.findMany({
+      where: {
+        id: { in: items.map((item) => item.planId) },
+        posting: { accountId: card.liabilityAccountId! },
+      },
+      select: {
+        id: true,
+        totalMonths: true,
+        interestBearing: true,
+        posting: {
+          select: { amount: true, entry: { select: { date: true, description: true, merchant: true } } },
+        },
+        fees: { select: { installmentSequence: true } },
+      },
+    });
+    const byId = new Map(plans.map((plan) => [plan.id, plan]));
+
+    const targets = items.map((item) => {
+      const plan = byId.get(item.planId);
+      if (!plan) throw new NotFoundException('이 카드의 할부가 아닙니다.');
+      if (!plan.interestBearing) {
+        throw new BadRequestException('무이자 할부에는 수수료가 붙지 않습니다.');
+      }
+      if (!Number.isInteger(item.sequence) || item.sequence < 1 || item.sequence > plan.totalMonths) {
+        throw new BadRequestException('없는 회차입니다.');
+      }
+      if (plan.fees.some((fee) => fee.installmentSequence === item.sequence)) {
+        throw new BadRequestException('이미 수수료를 적은 회차입니다.');
+      }
+
+      const amount = toMoney(item.amount, '할부 수수료');
+      if (amount.lte(ZERO)) {
+        throw new BadRequestException('수수료는 0보다 커야 합니다.');
+      }
+
+      /*
+       * 전표 날짜는 그 회차 주기의 **마감일**이다. 결제일이 아니다.
+       *
+       * 수수료는 그 회차와 함께 청구되는 돈이라 그 청구서에 들어가야 한다. 결제일로
+       * 두면 (마감 15일 / 결제 25일 카드에서) 다음 주기 청구서로 넘어가, 명세서와
+       * 대조할 때 한 달씩 밀린다. 통장에서 빠지는 것은 대금 결제 전표의 몫이다.
+       */
+      const purchase = closingMonthOf(plan.posting.entry.date, closingDay, timeZone);
+      const closing = shiftClosingMonth(purchase, item.sequence - 1);
+      const period = periodForClosingMonth(closing.year, closing.month, closingDay, card.paymentDueDay!);
+
+      return { plan, sequence: item.sequence, amount, date: period.periodEnd };
+    });
+
+    for (const target of targets) {
+      const entry = await this.ledger.createExpense({
+        projectId: card.projectId,
+        personId: dto.personId,
+        date: target.date,
+        description: `${target.plan.posting.entry.description} ${target.sequence}/${target.plan.totalMonths}회차 수수료`,
+        merchant: target.plan.posting.entry.merchant,
+        createdByUserId: userId,
+        cardId: card.id,
+        // 카드사가 혜택을 정할 때 세는 것은 결제액이지 수수료가 아니다.
+        countsPerformance: false,
+        lines: [
+          {
+            categoryId: dto.categoryId,
+            amount: target.amount,
+            // 줄 키는 만드는 쪽이 정한다. 화면이 없는 자리라 여기서 만든다.
+            lineKey: randomUUID(),
+          },
+        ],
+      });
+
+      /*
+       * 어느 회차의 것인지 표를 남긴다. 이것이 있어야 그 회차가 다시 떠오르지 않는다.
+       *
+       * 전표를 만든 뒤에 붙이는 까닭은 조립이 이 칸을 모르기 때문이다 -- 원장의 규칙과
+       * 상관없는 꼬리표라, 조립을 거치게 하면 갈래마다 뜻 없는 칸이 하나씩 는다.
+       */
+      await this.prisma.journalEntry.update({
+        where: { id: entry.id },
+        data: { installmentPlanId: target.plan.id, installmentSequence: target.sequence },
+      });
+    }
+
+    return { settled: targets.length };
+  }
+
   private async loadCreditCard(
     cardId: string,
     userId: string,
@@ -887,7 +1270,7 @@ export class CardLedgerService {
 }
 
 /** 실적 원장 한 줄이 전표에서 읽는 것. 분류는 형제 다리에 붙어 있다. */
-const performanceLedgerEntrySelect = {
+const periodLedgerEntrySelect = {
   id: true,
   date: true,
   description: true,
@@ -904,9 +1287,25 @@ const performanceLedgerEntrySelect = {
   },
 } satisfies Prisma.JournalEntrySelect;
 
-type PerformanceLedgerEntry = Prisma.JournalEntryGetPayload<{
-  select: typeof performanceLedgerEntrySelect;
+type PeriodLedgerEntry = Prisma.JournalEntryGetPayload<{
+  select: typeof periodLedgerEntrySelect;
 }>;
+
+/** 줄에 적을 분류. 전표의 첫 분류 다리가 대표다 (분할이면 첫 줄). */
+function categoryOf(entry: PeriodLedgerEntry) {
+  return entry.postings.find((leg) => leg.categoryId !== null)?.category ?? null;
+}
+
+/**
+ * 계획에 적힌 회차 원금을 문자열 배열로 가린다.
+ *
+ * JSON 칸이라 무엇이든 들어올 수 있다. 모양이 아니면 없는 것으로 보고 개월수로 나눈다
+ * (`@money/types` 의 목록 뷰와 같은 규칙이다).
+ */
+function toShares(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  return value.map((share) => String(share));
+}
 
 /** 오늘을 달력 날짜로 찍은 표시자. 주기가 닫혔는지 보는 데 쓴다. */
 function todayUtcMarker(timeZone: string): number {
@@ -952,21 +1351,21 @@ function parseLedgerCursor(raw?: string): LedgerCursor | null {
 }
 
 /**
- * 한 주기의 줄에 쌓인 실적을 붙인다. **가장 오래된 줄부터** 더한다.
+ * 한 주기의 줄에 쌓인 값을 붙인다. **가장 오래된 줄부터** 더한다.
  *
  * 돌려줄 때는 최신이 앞이다. 목록은 언제나 최근 것부터 읽는데, 누적은 주기 시작에서만
  * 뜻이 있어 더하는 방향과 보여 주는 방향이 반대다. 합계는 그 주기 전부의 값이라,
  * 뒷부분만 보여 줄 때에도 머리글의 숫자는 달라지지 않는다.
  */
-function fillPeriod(rows: CardDto.PerformanceLedgerRow[]): {
-  rows: CardDto.PerformanceLedgerRow[];
+function fillPeriod(rows: CardDto.PeriodLedgerRow[]): {
+  rows: CardDto.PeriodLedgerRow[];
   total: string;
 } {
   let running = ZERO;
   const filled = rows.map((row) => {
-    // 줄의 금액은 카드 관점이라 사용이 음수다. 쌓이는 실적은 그 반대 부호다.
+    // 줄의 금액은 카드 관점이라 사용이 음수다. 쌓이는 값은 그 반대 부호다.
     running = running.add(new Prisma.Decimal(row.amount).neg());
-    return { ...row, performanceAfter: running.toString() };
+    return { ...row, runningTotal: running.toString() };
   });
 
   return { rows: filled.reverse(), total: running.toString() };

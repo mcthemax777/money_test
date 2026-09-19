@@ -178,6 +178,8 @@ export interface StoredCardPosting {
   amount: string;
   date: string;
   installmentMonths: number | null;
+  /** 사용자가 적어 둔 회차별 원금. 없으면 개월수로 나눈다. */
+  installmentShares: string[] | null;
   /** 실적에 세는가. 분할해도 하나다. 청구액에는 어느 쪽이든 들어간다. */
   countsPerformance: boolean;
   /** 실적을 정가로 셀 때 되살릴 차감액. 줄마다의 값을 더한 것이고, 안 되살리면 null 이다. */
@@ -232,6 +234,23 @@ const asText = (value: unknown): string | null =>
 const asMoney = (value: unknown): string => asText(value) ?? '0';
 
 const asFlag = (value: unknown): number => (value ? 1 : 0);
+
+/**
+ * 계획에 적어 둔 회차 원금. 사본에는 JSON 글자로 담긴다.
+ *
+ * 모양이 아니면 없는 것으로 본다 -- 그때는 읽는 쪽이 개월수로 나누므로, 빈 배열을
+ * 돌려주어 회차가 통째로 사라지는 것보다 낫다 (서버의 `toShares` 와 같은 규칙이다).
+ */
+const parseShares = (value: unknown): string[] | null => {
+  if (typeof value !== 'string' || value === '') return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!Array.isArray(parsed) || parsed.length === 0) return null;
+    return parsed.map((share) => String(share));
+  } catch {
+    return null;
+  }
+};
 
 /** `IN (?, ?, ?)` 의 물음표들. 개수가 0 이면 아무것도 맞지 않는 절이 된다. */
 const placeholders = (count: number): string =>
@@ -288,6 +307,7 @@ const toCardPosting = (row: Row, legs: readonly Row[]): StoredCardPosting => {
     amount: asMoney(row.amount),
     date: String(row.date),
     installmentMonths: row.totalMonths == null ? null : Number(row.totalMonths),
+    installmentShares: parseShares(row.principalShares),
     countsPerformance: Boolean(row.countsPerformance),
     discountAmount: discount && !discount.isZero() ? discount.toString() : null,
     discountCountsPerformance: Boolean(row.discountCountsPerformance ?? 1),
@@ -859,7 +879,9 @@ export class LocalStore {
           id: String(row.id),
           postingId: String(row.postingId),
           totalMonths: asInt(row.totalMonths),
-          feeAmount: asText(row.feeAmount),
+          interestBearing: asFlag(row.interestBearing),
+          // JSON 배열을 글자 그대로 담는다. 읽는 쪽이 편다.
+          principalShares: row.principalShares == null ? null : JSON.stringify(row.principalShares),
           updatedVersion: asInt(row.updatedVersion),
         });
       }
@@ -1746,7 +1768,8 @@ export class LocalStore {
               c.id AS categoryRowId, c.name AS categoryName, c.type AS categoryType,
               c.parentId AS categoryParentId, parent.name AS categoryParentName,
               cd.id AS cardRowId, cd.name AS cardName,
-              ip.totalMonths AS installmentMonths
+              ip.totalMonths AS installmentMonths, ip.interestBearing AS installmentInterest,
+              ip.principalShares AS installmentShares
          FROM posting po
          LEFT JOIN account a ON a.id = po.accountId
          LEFT JOIN category c ON c.id = po.categoryId
@@ -1825,7 +1848,11 @@ export class LocalStore {
         installmentPlan:
           row.installmentMonths == null
             ? null
-            : { totalMonths: asInt(row.installmentMonths) },
+            : {
+                totalMonths: asInt(row.installmentMonths),
+                interestBearing: Boolean(row.installmentInterest),
+                principalShares: parseShares(row.installmentShares),
+              },
       });
       byEntry.set(String(row.entryId), list);
     }
@@ -2061,7 +2088,9 @@ export class LocalStore {
             id: options.makeId(),
             postingId,
             totalMonths: built.installmentMonths,
-            feeAmount: null,
+            interestBearing: built.installmentInterest ? 1 : 0,
+            // 적어 둔 회차 금액. 없으면 읽는 쪽이 개월수로 나눈다.
+            principalShares: built.installmentShares ? JSON.stringify(built.installmentShares) : null,
             updatedVersion: 0,
           });
         }
@@ -3026,7 +3055,8 @@ export class LocalStore {
        * 그래프에는 없는 돈이 생긴다.
        */
       `SELECT p.amount, p.entryId, e.date, e.originalCurrency,
-              e.countsPerformance, e.discountCountsPerformance, ip.totalMonths
+              e.countsPerformance, e.discountCountsPerformance,
+              ip.totalMonths, ip.principalShares
          FROM posting p
          JOIN entry e ON e.id = p.entryId
          LEFT JOIN installment_plan ip ON ip.postingId = p.id
@@ -3047,7 +3077,8 @@ export class LocalStore {
   async debitCardPostings(cardId: string): Promise<StoredCardPosting[]> {
     const rows = await this.db.all<Row>(
       `SELECT p.amount, p.entryId, e.date, e.originalCurrency,
-              e.countsPerformance, e.discountCountsPerformance, NULL AS totalMonths
+              e.countsPerformance, e.discountCountsPerformance,
+              NULL AS totalMonths, NULL AS principalShares
          FROM posting p
          JOIN entry e ON e.id = p.entryId
         WHERE p.cardId = ?`,
@@ -3072,7 +3103,7 @@ export class LocalStore {
     const rows = await this.db.all<Row>(
       `SELECT p.id AS postingId, p.amount, e.id AS entryId, e.date, e.description, e.merchant,
               e.countsPerformance, e.discountCountsPerformance, e.originalCurrency,
-              ${credit ? 'ip.totalMonths' : 'NULL AS totalMonths'},
+              ${credit ? 'ip.totalMonths, ip.principalShares' : 'NULL AS totalMonths, NULL AS principalShares'},
               cat.name AS categoryName, parent.name AS parentCategoryName
          FROM posting p
          JOIN entry e ON e.id = p.entryId
@@ -3514,6 +3545,36 @@ function kindFilter(kinds?: readonly string[]): string {
         AND (${kinds.map(of).join(' OR ')})`;
 }
 
+/**
+ * 모양 조건. 고른 모양끼리 OR 로 잇는다. 서버의 `entryFeatureCondition` 과 같은 규칙이다.
+ *
+ *   분할  분류 다리가 둘 이상인 전표
+ *   할부  할부 계획이 붙은 다리를 가진 전표
+ *
+ * 서버는 분할을 셀 수 없어 id 목록을 따로 받아 오지만(Prisma 의 관계 조건은 some/every/
+ * none 뿐이다), 여기서는 하위 질의가 그 자리에서 센다. 세는 규칙은 같다.
+ */
+function featureFilter(features?: readonly string[]): string {
+  if (!features || features.length === 0) return '';
+
+  const branches: string[] = [];
+  if (features.includes('installment')) {
+    branches.push(`EXISTS (
+          SELECT 1 FROM posting fp JOIN installment_plan fi ON fi.postingId = fp.id
+           WHERE fp.entryId = e.id
+        )`);
+  }
+  if (features.includes('split')) {
+    branches.push(`(
+          SELECT COUNT(*) FROM posting fp
+           WHERE fp.entryId = e.id AND fp.categoryId IS NOT NULL
+        ) > 1`);
+  }
+
+  return `
+        AND (${branches.join(' OR ')})`;
+}
+
 function searchFilter(search?: ParsedEntrySearch): { sql: string; params: string[] } {
   if (!search) return { sql: '', params: [] };
 
@@ -3639,6 +3700,8 @@ function searchFilter(search?: ParsedEntrySearch): { sql: string; params: string
 
   // 유형. 값이 상수뿐이라 자리표를 쓰지 않는다 (`parseEntrySearch` 가 아는 값만 남긴다).
   sql += kindFilter(search.kinds);
+  // 모양(분할·할부)도 값이 상수뿐이다.
+  sql += featureFilter(search.features);
 
   return { sql, params };
 }

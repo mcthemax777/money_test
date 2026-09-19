@@ -71,6 +71,7 @@ export function createLocalEntryWriter({
     toAccountId: data.toAccountId,
     cardId: data.cardId,
     installmentMonths: data.installmentMonths,
+    installmentInterest: data.installmentInterest,
     toAmount: text(data.toAmount),
     transferFee: text(data.transferFee),
     transferFeeCategoryId: data.transferFeeCategoryId,

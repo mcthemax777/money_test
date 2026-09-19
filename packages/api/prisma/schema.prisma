@@ -575,9 +575,8 @@ model CardStatement {
   // status 컬럼은 두지 않는다. (마감일, 청구액 합계, 결제액 합계)에서 유도되는 값이라
   // 저장하면 잔액 캐시와 같은 드리프트가 생긴다. 서비스에서 계산해 응답에 담는다.
 
-  card     Card                @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  card     Card      @relation(fields: [cardId], references: [id], onDelete: Cascade)
   postings Posting[]
-  charges  InstallmentCharge[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -590,40 +589,47 @@ model CardStatement {
 // 할부
 // ─────────────────────────────────────────────
 
-// 원금은 구매 즉시 전액 부채로 잡힌다. 아래 두 테이블은 "언제 청구되는지"의 일정표일 뿐
-// 새로운 Posting을 만들지 않는다.
+// 원금은 구매 즉시 전액 부채로 잡힌다. 아래 표는 "언제 얼마가 청구되는지"의 일정표일 뿐
+// 새로운 Posting을 만들지 않는다. 수수료만 전표로 남는다 (실제로 나가는 돈이 늘어서다).
 model InstallmentPlan {
-  id          String   @id @default(cuid())
-  postingId   String   @unique // 원 구매의 카드측 posting
+  id          String @id @default(cuid())
+  postingId   String @unique // 원 구매의 카드측 posting
   totalMonths Int
-  feeAmount   Decimal? @db.Decimal(19, 4) // 일반할부 수수료 총액. 무이자면 null
 
-  posting Posting             @relation(fields: [postingId], references: [id], onDelete: Cascade)
-  charges InstallmentCharge[]
+  /// 수수료가 붙는 할부인가.
+  ///
+  /// 회차 금액은 원금을 개월수로 나눈 값이라 계산으로 얻지만, 수수료는 카드사마다
+  /// 다르고 회차마다 조금씩 달라 계산으로 맞출 수 없다. 그래서 유이자로 적은 할부는
+  /// 마감된 회차마다 "수수료 미입력"으로 떠오르고, 사용자가 명세서를 보고 적으면 그때
+  /// 수수료 전표가 생긴다 (환율 확정과 같은 손짓이다).
+  ///
+  /// 이 값이 없던 때에 적은 할부는 무이자로 본다. 수수료 전표가 없다는 뜻이라 그때까지의
+  /// 숫자가 그대로 남는다.
+  interestBearing Boolean @default(false)
+
+  /// 사용자가 적어 둔 회차별 원금. 문자열 배열이고, 적지 않았으면 null 이다.
+  ///
+  /// 끝수를 어느 회차에 몰아주는지가 카드사마다 다르다. 1,000원 3개월이 334/333/333 일
+  /// 수도 334/334/332 일 수도 있어, 계산만으로는 명세서와 맞출 수 없는 자리가 있다.
+  ///
+  /// null 이면 총액을 개월수로 나눈다(`installmentPrincipals`). 금액이나 개월수를 고치면
+  /// 이 값을 버리고 다시 나눈다 -- 길이나 합이 어긋난 옛 값이 남으면 주기별 청구액이
+  /// 갚을 대금과 달라진다.
+  principalShares Json?
+
+  posting Posting        @relation(fields: [postingId], references: [id], onDelete: Cascade)
+  fees    JournalEntry[] @relation("InstallmentFee")
 
   /// 변경 피드가 보는 번호. 다리와 전표를 거쳐 프로젝트를 찾는다.
   ///
-  /// 회차(InstallmentCharge)는 여기 들지 않는다. 총액과 개월수에서 다시 계산되는
-  /// 파생값이라 동기화하지 않는다 (설계 문서의 D7).
+  /// 회차는 표로 두지 않는다. 원금 회차는 총액과 개월수에서 다시 계산되는 파생값이고
+  /// (설계 문서의 D7), 수수료는 전표로 남는다 -- 전표 합이 곧 카드 부채라 수수료만
+  /// 따로 적어 두면 갚을 대금과 원장이 어긋난다.
   updatedVersion Int @default(0)
 
   createdAt DateTime @default(now())
 
   @@index([updatedVersion])
-}
-
-model InstallmentCharge {
-  id          String  @id @default(cuid())
-  planId      String
-  sequence    Int // 1회차 ~ N회차
-  amount      Decimal @db.Decimal(19, 4)
-  statementId String? // 귀속 청구서. 마감 전이면 null
-
-  plan      InstallmentPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
-  statement CardStatement?  @relation(fields: [statementId], references: [id], onDelete: SetNull)
-
-  @@unique([planId, sequence])
-  @@index([statementId])
 }
 
 // ─────────────────────────────────────────────
@@ -687,13 +693,25 @@ model JournalEntry {
 
   createdByUserId String? // 입력자 추적용. 조회 필터로 쓰지 않는다 (프로젝트 멤버는 모두 같은 데이터를 본다)
 
-  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  person    Person       @relation(fields: [personId], references: [id])
-  createdBy User?        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
-  postings  Posting[]
-  tags      EntryTag[]
+  /// 이 전표가 메우는 할부 회차. **수수료 전표에만** 있다.
+  ///
+  /// 유이자 할부는 회차마다 수수료가 붙고 금액이 조금씩 다르다. 사용자가 명세서를 보고
+  /// 적으면 그 주기 결제일에 수수료 전표 하나가 생기는데, 어느 회차를 이미 적었는지
+  /// 알아야 같은 회차가 다시 떠오르지 않는다. 그 표가 이 두 칸이다.
+  ///
+  /// 계획이 사라져도(원 구매를 지우면 다리와 함께 지워진다) 전표는 남는다. 그 수수료는
+  /// 실제로 나간 돈이라, 지우면 통장과 원장이 어긋난다.
+  installmentPlanId   String?
+  installmentSequence Int?
+
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  person          Person           @relation(fields: [personId], references: [id])
+  createdBy       User?            @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  installmentPlan InstallmentPlan? @relation("InstallmentFee", fields: [installmentPlanId], references: [id], onDelete: SetNull)
+  postings        Posting[]
+  tags            EntryTag[]
   /// 이 전표를 만들어 낸 보관함 후보. 대개 없다 (손으로 적은 거래).
-  drafts    EntryDraft[]
+  drafts          EntryDraft[]
 
   /// 변경 피드가 보는 번호. Project.syncVersion 에서 발급된다.
   updatedVersion Int @default(0)
@@ -708,6 +726,8 @@ model JournalEntry {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  /// 한 회차의 수수료는 한 번만 적는다. 두 기기가 같은 회차를 동시에 확정하면 뒤엣것이 막힌다.
+  @@unique([installmentPlanId, installmentSequence])
   // 커서 페이지네이션 (date desc, id desc)
   @@index([projectId, date, id])
   @@index([projectId, updatedVersion])
@@ -760,7 +780,6 @@ model Posting {
   ///
   /// 한 값만 담는다. 여러 번의 부분 환불을 시점별로 남기는 이력은 다른 요구사항이다.
   discountAmount Decimal? @db.Decimal(19, 4)
-
 
   entry           JournalEntry     @relation(fields: [entryId], references: [id], onDelete: Cascade)
   account         Account?         @relation(fields: [accountId], references: [id], onDelete: Cascade)

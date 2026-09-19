@@ -39,7 +39,12 @@ type PostingWithRefs = {
     parent: { id: string; name: string } | null;
   } | null;
   card: { id: string; name: string } | null;
-  installmentPlan: { totalMonths: number } | null;
+  installmentPlan: {
+    totalMonths: number;
+    interestBearing: boolean;
+    /** JSON 칸이라 무엇이든 온다. 모양을 가리는 일은 `@money/types` 의 뷰가 한다. */
+    principalShares: unknown;
+  } | null;
 };
 
 export type EntryWithPostings = {
@@ -137,7 +142,9 @@ export const ENTRY_INCLUDE = {
         },
       },
       card: { select: { id: true, name: true } },
-      installmentPlan: { select: { totalMonths: true } },
+      installmentPlan: {
+        select: { totalMonths: true, interestBearing: true, principalShares: true },
+      },
     },
   },
   /*

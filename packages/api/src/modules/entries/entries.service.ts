@@ -679,6 +679,8 @@ export class EntriesService {
       toAccountId: dto.toAccountId,
       cardId: dto.cardId,
       installmentMonths: dto.installmentMonths,
+      installmentInterest: dto.installmentInterest,
+      installmentShares: dto.installmentShares,
       // 분류 줄 하나뿐인 거래의 줄 값들. 분할이면 splits 쪽이 쓰인다.
       lineKey: dto.lineKey,
       discountAmount: optional(dto.discountAmount, '차감액'),

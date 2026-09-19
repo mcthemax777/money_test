@@ -43,8 +43,18 @@ export interface ViewPosting {
     parent: { id: string; name: string } | null;
   } | null;
   card: { id: string; name: string } | null;
-  /** 할부 개월수. 일시불이면 null 이다. */
-  installmentPlan: { totalMonths: number } | null;
+  /** 할부 계획. 일시불이면 null 이다. */
+  installmentPlan: {
+    totalMonths: number;
+    interestBearing: boolean;
+    /**
+     * 사용자가 적어 둔 회차 원금. 적지 않았으면 null 이다.
+     *
+     * 서버에서는 JSON 칸이라 무엇이든 들어올 수 있다(`Prisma.JsonValue`). 모양을
+     * 가리는 일은 `toShares` 가 한 곳에서 한다.
+     */
+    principalShares: unknown;
+  } | null;
 }
 
 export interface ViewEntry {
@@ -313,6 +323,8 @@ export function toListItem(
     cardId: cardPosting?.card?.id ?? null,
     cardName: cardPosting?.card?.name ?? null,
     installmentMonths: cardPosting?.installmentPlan?.totalMonths ?? null,
+    installmentInterest: cardPosting?.installmentPlan?.interestBearing ?? null,
+    installmentShares: toShares(cardPosting?.installmentPlan?.principalShares),
     feeAmount,
     feeCategoryId: feePosting?.category?.id ?? null,
     feeCategoryName: feePosting?.category?.name ?? null,
@@ -438,4 +450,15 @@ export function lineMatcherOf(search: ParsedEntrySearch): LineMatcher | undefine
     }
     return true;
   };
+}
+
+/**
+ * 계획에 적힌 회차 원금을 문자열 배열로 가린다.
+ *
+ * JSON 칸이라 무엇이든 들어올 수 있다. 모양이 아니면 없는 것으로 본다 -- 그때는 화면이
+ * 개월수로 나눈 기본값을 보여 주므로 빈 목록보다 낫다.
+ */
+function toShares(value: unknown): string[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  return value.map((share) => String(share));
 }

@@ -35,6 +35,7 @@ import {
 } from '../src/data/entry-form';
 import { createLocalEntryWriter } from '../src/data/local-entry-writer';
 import { httpHomePort } from '../src/data/home-port';
+import { installmentShareInputs } from '../src/lib/period-ledger';
 import { createLocalHomePort } from '../src/data/local-home-port';
 import { LocalStore } from '../src/data/local-store';
 import { nodeSqliteDriver } from './node-sqlite-driver';
@@ -69,6 +70,8 @@ const validExpense: EntryFormValues = {
   method: accountValue('a1'),
   toAccountId: '',
   installmentMonths: '',
+  installmentInterest: '',
+  installmentShares: [],
   discountAmount: '',
   countsPerformance: true,
   discountCountsPerformance: true,
@@ -147,10 +150,82 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('계좌가 실린다', request.accountId, 'a1');
   eq('카드는 실리지 않는다', request.cardId ?? null, null);
   const installment = entryFormToRequest(
-    { ...validExpense, method: cardValue('card1'), installmentMonths: '3' },
+    {
+      ...validExpense,
+      method: cardValue('card1'),
+      installmentMonths: '3',
+      installmentInterest: 'interest',
+    },
     KST,
   );
   eq('할부가 실린다', installment.installmentMonths, 3);
+  eq('유이자가 실린다', installment.installmentInterest, true);
+  // 고른 값 그대로다. 무이자를 골랐으면 false 가 실려 서버가 계획에 적는다.
+  eq(
+    '무이자도 실린다',
+    entryFormToRequest(
+      { ...validExpense, method: cardValue('card1'), installmentMonths: '3', installmentInterest: 'free' },
+      KST,
+    ).installmentInterest,
+    false,
+  );
+  // 할부를 골랐는데 종류를 고르지 않으면 저장이 막힌다.
+  eq(
+    '할부 종류를 고르지 않으면 막는다',
+    checkEntryForm({
+      ...validExpense,
+      method: cardValue('card1'),
+      installmentMonths: '3',
+    })?.code,
+    'INSTALLMENT_INTEREST_REQUIRED',
+  );
+  eq(
+    '일시불에는 묻지 않는다',
+    checkEntryForm({ ...validExpense, method: cardValue('card1') }),
+    null,
+  );
+
+  /*
+   * 회차 금액. 끝수를 어디에 붙이는지가 카드사마다 달라 사람이 고쳐 적는다.
+   * 값 자체는 손대지 않고 개수와 합만 본다.
+   */
+  const withShares = (shares: string[]) => ({
+    ...validExpense,
+    amount: '1000',
+    method: cardValue('card1'),
+    installmentMonths: '3',
+    installmentInterest: 'free' as const,
+    installmentShares: shares,
+  });
+  eq('적어 둔 회차가 실린다',
+    entryFormToRequest(withShares(['334', '334', '332']), KST).installmentShares?.join(','),
+    '334,334,332');
+  eq('비워 두면 싣지 않는다',
+    'installmentShares' in entryFormToRequest(withShares([]), KST),
+    false);
+  eq('합이 다르면 막는다',
+    checkEntryForm(withShares(['334', '334', '333']))?.code,
+    'INSTALLMENT_SHARES_SUM');
+  eq('개수가 다르면 막는다',
+    checkEntryForm(withShares(['500', '500']))?.code,
+    'INSTALLMENT_SHARES_COUNT');
+  eq('맞으면 통과', checkEntryForm(withShares(['334', '334', '332'])), null);
+
+  /*
+   * 치는 중의 빈 칸. 한 칸을 지운 순간이 곧 이 모양이다.
+   *
+   * 예전에는 화면이 이 값을 십진값으로 읽으려다 넘어졌고(RangeError), 검증은 "0보다
+   * 작을 수 없습니다"라는 엉뚱한 말을 냈다. 빈 칸은 0 으로 보고 합계로 막는다.
+   */
+  eq('빈 칸이 있어도 칸은 그대로 그린다',
+    installmentShareInputs('1000', 3, ['334', '', '332']).join('|'), '334||332');
+  eq('개수가 어긋나면 기본 분할을 보여 준다',
+    installmentShareInputs('1000', 3, ['500', '500']).join('|'), '334|333|333');
+  eq('한 칸을 비우면 합계로 막는다',
+    checkEntryForm(withShares(['334', '', '332']))?.code, 'INSTALLMENT_SHARES_SUM');
+  eq('비운 칸은 0 으로 실린다',
+    entryFormToRequest(withShares(['334', '', '666']), KST).installmentShares?.join(','),
+    '334,0,666');
   eq('통장 결제에는 할부가 없다',
     'installmentMonths' in entryFormToRequest({ ...validExpense, installmentMonths: '3' }, KST),
     false);
@@ -319,7 +394,8 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   let mismatch = 0;
   const compared = [
     'kind', 'description', 'amount', 'categoryId', 'accountId', 'toAccountId',
-    'cardId', 'installmentMonths', 'feeAmount', 'feeCategoryId', 'personId', 'date',
+    'cardId', 'installmentMonths', 'installmentInterest', 'feeAmount', 'feeCategoryId',
+    'personId', 'date',
     /*
      * 분류 다리 수. **이 한 줄이 분할 손실을 잡는다.**
      *

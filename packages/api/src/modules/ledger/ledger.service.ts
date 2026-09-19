@@ -138,6 +138,21 @@ export interface EntryInput {
    * 저장하지 않고 읽을 때 계산한다.
    */
   installmentMonths?: number;
+  /**
+   * 수수료가 붙는 할부인가. 개월수가 2 이상일 때만 읽는다.
+   *
+   * 수수료 금액은 여기 담기지 않는다. 회차마다 조금씩 달라 계산으로 맞출 수 없어,
+   * 마감된 회차가 카드 상세에 떠오르고 사용자가 명세서를 보고 적으면 그때 수수료
+   * 전표가 하나 생긴다.
+   */
+  installmentInterest?: boolean;
+  /**
+   * 사용자가 적어 둔 회차별 원금. 없으면 총액을 개월수로 나눈다.
+   *
+   * 끝수를 어느 회차에 몰아주는지가 카드사마다 달라, 계산만으로는 명세서와 맞출 수
+   * 없는 자리가 있다. 조립이 개수와 합을 이미 검사했다.
+   */
+  installmentShares?: string[];
   /** 이 거래를 카드 실적에 세는가. 분할해도 하나다. 조립이 갈래의 기본값까지 정해서 넘긴다. */
   countsPerformance?: boolean;
   /** 차감액을 실적에서도 뺄지. 분할해도 하나다. 조립이 정해서 넘긴다. */
@@ -200,6 +215,17 @@ export interface ExpenseInput extends CommonInput {
   cardId?: string;
   /** 할부 개월수. 신용카드일 때만 쓴다. */
   installmentMonths?: number;
+  /** 수수료가 붙는 할부인가. 할부일 때만 쓴다. */
+  installmentInterest?: boolean;
+  /** 사용자가 적어 둔 회차별 원금. 없으면 개월수로 나눈다. */
+  installmentShares?: string[];
+  /**
+   * 카드 실적에 셀지. 생략하면 조립이 갈래의 기본값(지출은 포함)을 쓴다.
+   *
+   * 서버가 스스로 만드는 전표에서 쓴다. 할부 수수료가 그렇다 -- 청구는 되지만 카드사가
+   * 혜택을 정할 때 세는 것은 결제액이지 수수료가 아니다.
+   */
+  countsPerformance?: boolean;
 }
 
 export interface IncomeInput extends CommonInput {
@@ -314,7 +340,13 @@ export class LedgerService {
 
       await this.saveTags(tx, entry.id, input.projectId, input.postings, input.tagIds);
       await this.applyBalanceDeltas(tx, input.postings);
-      await this.saveInstallmentPlan(tx, entry.postings, input.installmentMonths);
+      await this.saveInstallmentPlan(
+        tx,
+        entry.postings,
+        input.installmentMonths,
+        input.installmentInterest,
+        input.installmentShares,
+      );
       return entry;
     });
   }
@@ -363,6 +395,19 @@ export class LedgerService {
         throw conflict('ENTRY_MODIFIED', '다른 사람이 이 거래를 먼저 고쳤습니다.');
       }
 
+      /*
+       * 옛 할부 계획과 거기 달린 수수료 전표.
+       *
+       * 아래에서 다리를 지우면 계획도 cascade 로 사라지고, 수수료 전표의 연결은
+       * null 이 된다 (전표 자체는 남는다 -- 실제로 나간 돈이다). 그대로 두면 이미
+       * 적은 회차가 "수수료 미입력"으로 다시 떠올라 같은 수수료를 두 번 적게 된다.
+       * 그래서 계획을 같은 id 로 다시 만들고 연결을 도로 맺는다.
+       */
+      const oldPlan = await tx.installmentPlan.findFirst({
+        where: { posting: { entryId } },
+        select: { id: true, fees: { select: { id: true } } },
+      });
+
       // 1) 옛 posting의 잔액 영향을 되돌린다
       await this.applyBalanceDeltas(
         tx,
@@ -400,7 +445,27 @@ export class LedgerService {
       // 3) 새 posting의 잔액을 적용한다
       await this.applyBalanceDeltas(tx, input.postings);
       // posting을 새로 만들었으므로 할부 일정도 다시 붙인다 (옛 것은 cascade로 사라졌다)
-      await this.saveInstallmentPlan(tx, entry.postings, input.installmentMonths);
+      const plan = await this.saveInstallmentPlan(
+        tx,
+        entry.postings,
+        input.installmentMonths,
+        input.installmentInterest,
+        input.installmentShares,
+        oldPlan?.id,
+      );
+
+      /*
+       * 수수료 전표를 새 계획에 도로 맺는다.
+       *
+       * 할부를 일시불로 바꾸면 계획이 없으므로 연결이 끊긴 채 남는다. 그 수수료는
+       * 이미 나간 돈이라 지우지 않고, 보통 지출 한 건으로 남는다.
+       */
+      if (plan && oldPlan && oldPlan.fees.length > 0) {
+        await tx.journalEntry.updateMany({
+          where: { id: { in: oldPlan.fees.map((fee) => fee.id) } },
+          data: { installmentPlanId: plan.id },
+        });
+      }
       return entry;
     });
   }
@@ -758,6 +823,8 @@ export class LedgerService {
       originalAmount: dec(built.originalAmount),
       rateProvisional: built.rateProvisional,
       installmentMonths: built.installmentMonths,
+      installmentInterest: built.installmentInterest,
+      installmentShares: built.installmentShares,
       countsPerformance: built.countsPerformance ?? true,
       discountCountsPerformance: built.discountCountsPerformance ?? true,
       ...(built.tagIds ? { tagIds: built.tagIds } : {}),
@@ -818,6 +885,9 @@ export class LedgerService {
           accountId: input.accountId,
           cardId: input.cardId,
           installmentMonths: input.installmentMonths,
+          installmentInterest: input.installmentInterest,
+          installmentShares: input.installmentShares,
+          countsPerformance: input.countsPerformance,
         },
         this.lookup,
       )),
@@ -1219,16 +1289,33 @@ export class LedgerService {
     tx: Tx,
     postings: Array<{ id: string; cardId: string | null; amount: Prisma.Decimal }>,
     months?: number,
+    interestBearing?: boolean,
+    shares?: string[],
+    /** 고칠 때 쓰던 계획 id. 같은 이름으로 다시 만들어 수수료 전표의 연결을 살린다. */
+    keepId?: string,
   ) {
-    if (!months || months < 2) return;
+    if (!months || months < 2) return null;
 
     // 카드 부채 다리가 할부의 주인이다. 지출이면 음수 다리 하나뿐이다.
     const cardLeg = postings.find((p) => p.cardId && p.amount.lt(ZERO));
     if (!cardLeg) {
       throw badRequest('INSTALLMENT_CREDIT_ONLY', '할부는 신용카드 지출에만 설정할 수 있습니다.');
     }
-    await tx.installmentPlan.create({
-      data: { postingId: cardLeg.id, totalMonths: months },
+    return tx.installmentPlan.create({
+      data: {
+        ...(keepId ? { id: keepId } : {}),
+        postingId: cardLeg.id,
+        totalMonths: months,
+        interestBearing: interestBearing ?? false,
+        /*
+         * 적어 둔 회차 금액. 없으면 읽는 쪽이 개월수로 나눈다.
+         *
+         * 금액이나 개월수를 고치면 화면이 새 값을 보내거나 아무것도 보내지 않는다.
+         * 여기서 옛 값을 이어받지 않는 것이 요점이다 -- 길이나 합이 어긋난 값이 남으면
+         * 주기별 청구액이 갚을 대금과 달라진다.
+         */
+        principalShares: shares ?? Prisma.JsonNull,
+      },
     });
   }
 

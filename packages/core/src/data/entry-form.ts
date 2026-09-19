@@ -110,6 +110,21 @@ export interface EntryFormValues {
   /** 할부 개월수. 빈 문자열이 일시불이다. */
   installmentMonths: string;
   /**
+   * 할부에 수수료가 붙는가. `''` 는 아직 고르지 않았다는 뜻이다.
+   *
+   * 기본값을 두지 않는다. 무이자로 두면 유이자 할부가 조용히 수수료 없이 지나가고,
+   * 유이자로 두면 무이자 결제마다 "수수료 미입력"이 쌓인다. 할부는 자주 적는 것이
+   * 아니라, 개월수를 고른 사람에게 한 번 묻는 편이 양쪽보다 낫다.
+   */
+  installmentInterest: '' | 'free' | 'interest';
+  /**
+   * 회차별 원금. 비어 있으면 개월수로 나눈 기본값을 쓴다.
+   *
+   * 끝수를 어느 회차에 몰아주는지가 카드사마다 다르다. 1,000원 3개월이 334/333/333 일
+   * 수도 334/334/332 일 수도 있어, 명세서와 다르면 사람이 고쳐 적는다.
+   */
+  installmentShares: string[];
+  /**
    * 분류 하나짜리 거래의 줄 키. 분할이면 `splits[].lineKey` 가 쓰인다.
    *
    * 폼을 열 때 정해지고 저장할 때까지 바뀌지 않는다. 이 값이 이어져야 그 줄에 붙은
@@ -204,6 +219,8 @@ export function emptyEntryForm({ personId = '', timeZone, now }: EntryFormDefaul
     method: '',
     toAccountId: '',
     installmentMonths: '',
+    installmentInterest: '',
+    installmentShares: [],
     // 분류 하나짜리 거래의 줄 키. 폼을 여는 자리에서 한 번 정해진다.
     lineKey: newLineKey(),
     discountAmount: '',
@@ -334,6 +351,17 @@ export function entryFormFromItem(
             : '',
     toAccountId: item.toAccountId ?? '',
     installmentMonths: item.installmentMonths ? String(item.installmentMonths) : '',
+    /*
+     * 옛 할부에는 이 값이 없다(null). 그때는 수수료 전표가 없다는 뜻이라 무이자로 연다 --
+     * 고치려고 열었을 뿐인데 저장이 막히면 까닭을 알 수 없다.
+     */
+    installmentInterest: item.installmentMonths
+      ? item.installmentInterest
+        ? 'interest'
+        : 'free'
+      : '',
+    // 적어 둔 값이 없으면 비워 둔다. 화면이 개월수로 나눈 기본값을 채워 보여 준다.
+    installmentShares: item.installmentShares ?? [],
     transferFee: item.feeAmount && item.feeAmount !== '0' ? item.feeAmount : '',
     transferFeeCategoryId: item.feeCategoryId ?? '',
     splits: isSplit
@@ -584,6 +612,51 @@ export function checkEntryForm(
     }
   }
 
+  /*
+   * 할부를 골랐으면 수수료가 붙는지도 골라야 한다.
+   *
+   * 기본값으로 대신하지 않는 까닭은 `EntryFormValues.installmentInterest` 에 적었다.
+   * 개월수를 고른 신용카드 지출에만 묻는다.
+   */
+  if (
+    values.kind === 'expense' &&
+    parseMethod(values.method).cardId &&
+    Number(values.installmentMonths) >= 2 &&
+    !values.installmentInterest
+  ) {
+    return { field: 'installmentInterest', code: 'INSTALLMENT_INTEREST_REQUIRED' };
+  }
+
+  /*
+   * 적어 둔 회차 금액. 개수와 합만 본다.
+   *
+   * 값 자체는 손대지 않는다 -- 끝수를 어디에 붙이는지가 카드사마다 달라, 사람이 적은
+   * 값이 곧 사실이다. 합이 어긋난 채 저장되면 카드 화면의 주기별 청구액이 갚을 대금과
+   * 달라지고, 그 어긋남은 몇 달 뒤 명세서를 대조할 때에야 드러난다.
+   *
+   * 외화 결제는 여기서 보지 않는다. 카드에 청구되는 금액이 환산 뒤에야 정해져 폼의
+   * 값만으로는 견줄 수 없다 -- 그때는 조립(entry-build)이 카드 다리를 보고 막는다.
+   */
+  if (values.installmentShares.length > 0 && !values.currency) {
+    const months = Number(values.installmentMonths);
+    if (values.installmentShares.length !== months) {
+      return { field: 'installmentShares', code: 'INSTALLMENT_SHARES_COUNT' };
+    }
+    /*
+     * 빈 칸은 0 으로 본다. 치는 중에는 늘 빈 칸이 생기고, 그 한 칸 때문에 "회차 금액은
+     * 0보다 작을 수 없습니다" 같은 엉뚱한 말이 뜨면 어디를 고쳐야 하는지 알 수 없다.
+     * 채우지 않은 채로 저장하려 하면 아래 합계 검사가 막는다.
+     */
+    const shares = values.installmentShares.map((share) => toDec(share) ?? Dec.of(0));
+    if (shares.some((share) => share.isNegative())) {
+      return { field: 'installmentShares', code: 'INSTALLMENT_SHARE_NEGATIVE' };
+    }
+    const total = shares.reduce<Dec>((acc, share) => acc.plus(share), Dec.of(0));
+    if (!total.eq(amount)) {
+      return { field: 'installmentShares', code: 'INSTALLMENT_SHARES_SUM' };
+    }
+  }
+
   if (values.kind === 'transfer') {
     const from = parseMethod(values.method).accountId;
     if (!from) return { field: 'method', code: 'FROM_ACCOUNT_REQUIRED' };
@@ -683,6 +756,24 @@ function checkExpenseExtras(
  * 날짜는 프로젝트 타임존의 벽시계를 인스턴트로 되돌린다. 기기 시간대로 만들면 여행 중에
  * 적은 거래가 하루 밀린다.
  */
+/**
+ * 회차 금액을 짐에 싣는다. 손대지 않았으면 싣지 않는다.
+ *
+ * 비어 있으면 서버가 개월수로 나눈다. 그래야 나중에 금액을 고쳤을 때 회차도 함께
+ * 다시 나뉜다 -- 한 번 채워 보내 두면 옛 금액의 회차가 남는다.
+ */
+function installmentSharesPayload(values: EntryFormValues): { installmentShares?: string[] } {
+  // 한 칸도 손대지 않았으면 싣지 않는다. 그때는 서버가 개월수로 나눈다.
+  if (values.installmentShares.every((share) => share.trim() === '')) return {};
+
+  // 비운 칸은 0 이다. 개수를 줄여 보내면 서버가 "개수가 다르다"로 거절해 까닭이 흐려진다.
+  return {
+    installmentShares: values.installmentShares.map((share) =>
+      share.trim() === '' ? '0' : share.trim(),
+    ),
+  };
+}
+
 export function entryFormToRequest(
   values: EntryFormValues,
   timeZone: string,
@@ -795,7 +886,11 @@ export function entryFormToRequest(
       ...(method.accountId ? { accountId: method.accountId } : {}),
       ...(method.cardId ? { cardId: method.cardId } : {}),
       ...(values.kind === 'expense' && method.cardId && Number(values.installmentMonths) >= 2
-        ? { installmentMonths: Number(values.installmentMonths) }
+        ? {
+            installmentMonths: Number(values.installmentMonths),
+            installmentInterest: values.installmentInterest === 'interest',
+            ...installmentSharesPayload(values),
+          }
         : {}),
       ...performanceExtra,
     };
@@ -810,7 +905,11 @@ export function entryFormToRequest(
     ...(method.cardId ? { cardId: method.cardId } : {}),
     // 할부는 신용카드 지출에만 붙는다. 그 판단은 조립이 다시 한다.
     ...(values.kind === 'expense' && method.cardId && months >= 2
-      ? { installmentMonths: months }
+      ? {
+          installmentMonths: months,
+          installmentInterest: values.installmentInterest === 'interest',
+          ...installmentSharesPayload(values),
+        }
       : {}),
     ...lineDiscount(values.discountAmount),
     ...performanceExtra,

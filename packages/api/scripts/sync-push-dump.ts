@@ -168,11 +168,16 @@ runSmoke('sync-push-dump', async (ctx) => {
       amount: '500000', accountId: bank.id, toAccountId: savings.id,
       transferFee: '1000', transferFeeCategoryId: fee.id, transferFeeLineKey: line(6),
     }),
-    // 7. 신용카드 할부. 부채 계정에 쌓이고 할부 계획이 붙는다.
+    /*
+     * 7. 신용카드 할부. 부채 계정에 쌓이고 할부 계획이 붙는다.
+     *
+     * 유이자로 둔다. 무이자가 기본값이라, 이 표가 명령에서 빠져도 무이자 쪽은 우연히
+     * 같은 값이 나와 왕복 검사를 통과한다.
+     */
     mutation(7, 'entry.create', id(6), {
       ...common, id: id(6), kind: 'expense', description: '노트북',
       amount: '300000', categoryId: dining.id, cardId: credit.id, installmentMonths: 3,
-      lineKey: line(7),
+      installmentInterest: true, lineKey: line(7),
     }),
     /*
      * 8. 카드 대금 결제. 자산 화면의 "결제하기"가 오프라인에서 쌓는 명령이다.

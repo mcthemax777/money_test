@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import {
+  cardUsageAnchorEnd,
   cardUsageBars,
   cardUsageDomain,
   type CardUsageBar,
@@ -85,13 +86,11 @@ export function useCardUsageWindow(
   const all = cardUsageBars(periods, todayKey(timeZone), target, measure);
 
   /*
-   * 창이 제자리에 있을 때의 오른쪽 끝. 진행 중인 주기까지다.
+   * 제자리의 오른쪽 끝. 규칙은 `cardUsageAnchorEnd` 가 갖는다 (웹·앱이 같다).
    *
-   * 그 뒤는 할부로 금액만 미리 잡혀 있는 앞 주기라, 왼쪽으로 끌어야 나온다. 처음부터
-   * 보여 주면 아직 오지도 않은 달이 오른쪽 끝을 차지해 이번 달 막대가 가운데로 밀린다.
+   * 진행 중인 주기가 오른쪽 끝이다. 할부로 금액이 잡힌 앞 주기는 왼쪽으로 끌면 나온다.
    */
-  const future = all.findIndex((bar) => bar.phase === 'future');
-  const anchorEnd = future === -1 ? all.length : future;
+  const anchorEnd = cardUsageAnchorEnd(all);
 
   /** 창의 오른쪽 끝이 설 수 있는 자리. 배열 밖으로는 나가지 않는다. */
   const minEnd = Math.min(span, all.length);

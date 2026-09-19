@@ -19,6 +19,7 @@ import type { EntryDraftDto, EntryListItem, TagDto } from '@money/types';
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useEntryForm } from '@money/core/hooks/useEntryForm';
+import { installmentShareInputs, installmentShareTotal } from '@money/core/lib/period-ledger';
 import { useQuickAdd, type QuickAddResult } from '@money/core/hooks/useQuickAdd';
 import {
   filledSubCategories,
@@ -82,6 +83,10 @@ const VIOLATION_KEY: Record<string, MessageKey> = {
   DISCOUNT_INVALID: 'entryForm.discountInvalid',
   DISCOUNT_TOO_LARGE: 'entryForm.discountTooLarge',
   DISCOUNT_AMOUNT_REQUIRED: 'entryForm.discountAmountRequired',
+  INSTALLMENT_INTEREST_REQUIRED: 'entryForm.installmentInterestRequired',
+  INSTALLMENT_SHARES_COUNT: 'entryForm.installmentSharesCount',
+  INSTALLMENT_SHARE_NEGATIVE: 'entryForm.installmentShareNegative',
+  INSTALLMENT_SHARES_SUM: 'entryForm.installmentSharesSum',
   TRANSFER_BOTH_CARDS: 'entryForm.bothCards',
 };
 
@@ -350,6 +355,18 @@ export default function EntryEditor({
   };
 
   const message = messageOf();
+
+  /*
+   * 회차 금액 칸에 보일 값. 적어 둔 것이 없으면 개월수로 나눈 기본값이다.
+   *
+   * 빈 칸으로 두지 않는 까닭은 고칠 자리가 한두 회차뿐이기 때문이다 -- 기본값을 보여
+   * 주고 다른 회차만 고치게 한다.
+   */
+  const shareInputs = installmentShareInputs(
+    values.amount,
+    Number(values.installmentMonths),
+    values.installmentShares,
+  );
 
   return (
     /*
@@ -823,9 +840,91 @@ export default function EntryEditor({
                     : t('editor.installmentOnce'),
                 }))}
                 selected={values.installmentMonths}
-                onSelect={(value) => setField('installmentMonths', value)}
+                onSelect={(value) => {
+                  setField('installmentMonths', value);
+                  // 개월수가 바뀌면 적어 둔 회차 금액은 어느 회차의 것인지 알 수 없다.
+                  setField('installmentShares', []);
+                }}
               />
               <Text className="mt-1 text-xs text-gray-500">{t('editor.installmentHint')}</Text>
+
+              {/*
+                수수료가 붙는 할부인가. 개월수를 고른 뒤에만 묻는다.
+
+                기본값을 두지 않는다. 무이자로 두면 유이자 할부가 조용히 수수료 없이
+                지나가고, 유이자로 두면 무이자 결제마다 "수수료 미입력"이 쌓인다.
+              */}
+              {Number(values.installmentMonths) >= 2 ? (
+                <View className="mt-2">
+                  <Chips
+                    options={[
+                      { value: 'free', label: t('editor.installmentFree') },
+                      { value: 'interest', label: t('editor.installmentInterest') },
+                    ]}
+                    selected={values.installmentInterest}
+                    onSelect={(value) =>
+                      setField('installmentInterest', value as EntryFormValues['installmentInterest'])
+                    }
+                  />
+                  <Text className="mt-1 text-xs text-gray-500">
+                    {values.installmentInterest === 'interest'
+                      ? t('editor.installmentInterestHint')
+                      : t('editor.installmentFreeHint')}
+                  </Text>
+
+                  {/*
+                    회차 금액. 기본값을 채워 두고 다른 자리만 고치게 한다.
+
+                    끝수를 어느 회차에 붙이는지가 카드사마다 다르다 -- 1,000원 3개월이
+                    334/333/333 일 수도 334/334/332 일 수도 있어, 계산만으로는 명세서와
+                    맞출 수 없다.
+                  */}
+                  <View className="mt-3 gap-1">
+                    <View className="flex-row items-baseline justify-between">
+                      <Text className="text-xs font-medium text-gray-700">
+                        {t('editor.installmentShares')}
+                      </Text>
+                      {values.installmentShares.length > 0 ? (
+                        <Pressable onPress={() => setField('installmentShares', [])}>
+                          <Text className="text-xs text-blue-600">
+                            {t('editor.installmentSharesReset')}
+                          </Text>
+                        </Pressable>
+                      ) : null}
+                    </View>
+
+                    {shareInputs.map((share, index) => (
+                      <View key={index} className="flex-row items-center gap-2">
+                        <Text className="w-16 text-xs text-gray-500">
+                          {t('editor.installmentShareRow', { index: index + 1 })}
+                        </Text>
+                        <TextInput
+                          value={share}
+                          onChangeText={(next) =>
+                            setField(
+                              'installmentShares',
+                              shareInputs.map((old, at) => (at === index ? next : old)),
+                            )
+                          }
+                          keyboardType="decimal-pad"
+                          className="flex-1 rounded border border-gray-300 bg-white px-2 py-1 text-right text-sm text-gray-900"
+                        />
+                      </View>
+                    ))}
+
+                    <Text
+                      className={`text-right text-xs ${
+                        violation?.field === 'installmentShares' ? 'text-red-600' : 'text-gray-500'
+                      }`}
+                    >
+                      {t('editor.installmentSharesSum', {
+                        total: installmentShareTotal(shareInputs),
+                        amount: values.amount || '0',
+                      })}
+                    </Text>
+                  </View>
+                </View>
+              ) : null}
             </Field>
           ) : null}
 

@@ -102,6 +102,8 @@ export interface EntryMutationPayload {
   toAccountId?: string;
   cardId?: string;
   installmentMonths?: number;
+  installmentInterest?: boolean;
+  installmentShares?: string[];
   toAmount?: string;
   transferFee?: string;
   transferFeeCategoryId?: string;

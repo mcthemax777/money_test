@@ -1061,10 +1061,27 @@ class ApiClient {
    */
   async getCardPerformanceLedger(
     cardId: string,
-    params: CardDto.PerformanceLedgerQuery = {},
-  ): Promise<CardDto.PerformanceLedgerResponse> {
-    const response = await this.client.get<CardDto.PerformanceLedgerResponse>(
+    params: CardDto.PeriodLedgerQuery = {},
+  ): Promise<CardDto.PeriodLedgerResponse> {
+    const response = await this.client.get<CardDto.PeriodLedgerResponse>(
       `/cards/${cardId}/performance-ledger`,
+      { params },
+    );
+    return response.data;
+  }
+
+  /**
+   * 청구 내역 한 쪽. 그 주기 청구서에 든 줄들이고, 할부는 회차마다 하나다.
+   *
+   * 실적 원장과 같은 모양으로 온다. 다른 것은 나뉘는 방식뿐이다 -- 실적은 결제한
+   * 주기에 전액이 들고, 청구는 회차마다 뒤 주기로 퍼진다.
+   */
+  async getCardBilledLedger(
+    cardId: string,
+    params: CardDto.PeriodLedgerQuery = {},
+  ): Promise<CardDto.PeriodLedgerResponse> {
+    const response = await this.client.get<CardDto.PeriodLedgerResponse>(
+      `/cards/${cardId}/billed-ledger`,
       { params },
     );
     return response.data;
@@ -1103,6 +1120,31 @@ class ApiClient {
   ): Promise<CardDto.SettleRatesResponse> {
     const response = await this.client.patch<CardDto.SettleRatesResponse>(
       `/cards/${cardId}/pending-rates`,
+      data,
+    );
+    return response.data;
+  }
+
+  /**
+   * 수수료를 아직 적지 않은 유이자 할부 회차.
+   *
+   * 회차 수수료는 카드사와 남은 원금에 따라 조금씩 달라 계산으로 맞출 수 없다. 그
+   * 회차의 주기가 마감되면 여기 떠오르고, 명세서를 보고 적으면 전표가 하나 생긴다.
+   */
+  async getCardPendingFees(cardId: string): Promise<CardDto.PendingFeesResponse> {
+    const response = await this.client.get<CardDto.PendingFeesResponse>(
+      `/cards/${cardId}/pending-fees`,
+    );
+    return response.data;
+  }
+
+  /** 회차 수수료를 적는다. 적은 만큼 수수료 전표가 생긴다. */
+  async settleCardFees(
+    cardId: string,
+    data: CardDto.SettleFeesRequest,
+  ): Promise<CardDto.SettleFeesResponse> {
+    const response = await this.client.patch<CardDto.SettleFeesResponse>(
+      `/cards/${cardId}/pending-fees`,
       data,
     );
     return response.data;

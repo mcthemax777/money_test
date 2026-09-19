@@ -146,6 +146,21 @@ export function cardUsageBars(
 }
 
 /**
+ * 창이 제자리에 있을 때 오른쪽 끝이 설 자리 (막대 배열의 색인).
+ *
+ * **진행 중인 주기까지다.** 카드를 열었을 때 먼저 보는 것은 지금이고, 오른쪽 끝이 곧
+ * 지금이어야 그 앞이 지나온 달로 읽힌다. "지금으로"를 누르면 이 자리로 돌아온다.
+ *
+ * 할부를 걸면 아직 오지 않은 주기에도 갚을 돈이 잡히지만, 그 칸을 제자리에 끼워 두지
+ * 않는다. 24개월 할부 하나면 창이 통째로 앞 달로 채워져 이번 달이 밀려난다. 앞 주기는
+ * 왼쪽으로 끌어서 본다.
+ */
+export function cardUsageAnchorEnd(bars: readonly CardUsageBar[]): number {
+  const future = bars.findIndex((bar) => bar.phase === 'future');
+  return future === -1 ? bars.length : future;
+}
+
+/**
  * 막대 축의 아래끝·위끝.
  *
  * 위끝은 기준선까지 함께 센다. 선이 그래프 밖으로 나가면 선을 그은 뜻이 없다.

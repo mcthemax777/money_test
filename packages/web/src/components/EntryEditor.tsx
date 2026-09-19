@@ -62,6 +62,7 @@ import type { EntryDraftDto } from '@money/types';
 import CardColorPicker from '@/components/CardColorPicker';
 import CardPerformanceField from '@/components/CardPerformanceField';
 import { useApiError } from '@money/core/lib/api-error';
+import { installmentShareInputs, installmentShareTotal } from '@money/core/lib/period-ledger';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const ENTRY_FORM_ID = 'entry-form';
@@ -179,6 +180,10 @@ function emptyEntryForm(timeZone: string, ledgerCurrency: CurrencyCode) {
     time: '',
     /** 할부 개월수. 빈 값이거나 1이면 일시불 */
     installmentMonths: '',
+    /** 할부에 수수료가 붙는가. '' 는 아직 고르지 않았다는 뜻이다 (기본값을 두지 않는다). */
+    installmentInterest: '' as '' | 'free' | 'interest',
+    /** 회차별 원금. 비어 있으면 개월수로 나눈 기본값을 쓴다. */
+    installmentShares: [] as string[],
     /**
      * 결제 자리에서 깎인 금액. 포인트 사용, 자동할인, 그리고 **취소**가 모두 이 칸이다.
      *
@@ -684,6 +689,18 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
   const canInstall =
     formData.type === 'expense' && formData.method === 'card' && isCreditCardSelected;
 
+  /*
+   * 회차 금액 칸에 보일 값. 적어 둔 것이 없으면 개월수로 나눈 기본값이다.
+   *
+   * 빈 칸으로 두지 않는 까닭은 고칠 자리가 한두 회차뿐이기 때문이다 -- 기본값을 보여
+   * 주고 다른 회차만 고치게 한다.
+   */
+  const shareInputs = installmentShareInputs(
+    formData.amount,
+    Number(formData.installmentMonths),
+    formData.installmentShares,
+  );
+
   /**
    * 저장하면 얼마로 기록되는지. 저장 전에 눈으로 확인하게 한다.
    *
@@ -778,6 +795,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
           type,
           ...currencyFields(prev),
           installmentMonths: keepsInstallment ? prev.installmentMonths : '',
+          installmentInterest: keepsInstallment ? prev.installmentInterest : '',
+          installmentShares: keepsInstallment ? prev.installmentShares : [],
           mainCategoryId: keepsCategory ? prev.mainCategoryId : '',
           subCategoryId: keepsCategory ? prev.subCategoryId : '',
           splits: keepsCategory ? prev.splits : [],
@@ -792,6 +811,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       accountId: id,
       cardId: '',
       installmentMonths: '',
+      installmentInterest: '',
+      installmentShares: [],
       ...currencyFields(prev),
     }));
   };
@@ -887,6 +908,43 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     ) {
       setError(t('editor.feeCategoryRequired'));
       return;
+    }
+
+    /*
+     * 할부를 골랐으면 수수료가 붙는지도 골라야 한다.
+     *
+     * 기본값으로 대신하지 않는다. 무이자로 두면 유이자 할부가 조용히 수수료 없이
+     * 지나가고, 유이자로 두면 무이자 결제마다 "수수료 미입력"이 쌓인다. 앱도 같은
+     * 규칙으로 막는다 (core 의 checkEntryForm).
+     */
+    if (canInstall && Number(formData.installmentMonths) >= 2 && !formData.installmentInterest) {
+      setError(t('entryForm.installmentInterestRequired'));
+      return;
+    }
+
+    /*
+     * 적어 둔 회차 금액은 개수와 합이 맞아야 한다.
+     *
+     * 외화 결제는 여기서 보지 않는다. 카드에 청구되는 금액이 환산 뒤에야 정해져 폼의
+     * 값만으로는 견줄 수 없다 -- 그때는 서버가 카드 다리를 보고 막는다.
+     */
+    if (
+      canInstall &&
+      formData.installmentShares.some((share) => share.trim() !== '') &&
+      !formData.currency
+    ) {
+      if (formData.installmentShares.length !== Number(formData.installmentMonths)) {
+        setError(t('entryForm.installmentSharesCount'));
+        return;
+      }
+      const shareSum = formData.installmentShares.reduce(
+        (acc, share) => acc + toNumber(share),
+        0,
+      );
+      if (shareSum !== toNumber(formData.amount)) {
+        setError(t('entryForm.installmentSharesSum'));
+        return;
+      }
     }
 
     /*
@@ -1070,7 +1128,23 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         // 할부는 신용카드 지출에만 붙는다. 2개월 미만이면 일시불이라 보내지 않는다.
         // canInstall이 카드 종류까지 본다. 체크카드로 바꾼 뒤 남은 값이 새지 않게 막는다.
         const months = Number(formData.installmentMonths);
-        if (canInstall && months >= 2) payload.installmentMonths = months;
+        if (canInstall && months >= 2) {
+          payload.installmentMonths = months;
+          // 수수료가 붙는지는 사용자가 고른다. 고르지 않으면 아래 검사에서 막힌다.
+          payload.installmentInterest = formData.installmentInterest === 'interest';
+          /*
+           * 회차 금액은 손댔을 때만 보낸다.
+           *
+           * 비워 두면 서버가 개월수로 나눈다. 그래야 나중에 금액을 고쳤을 때 회차도
+           * 함께 다시 나뉜다 -- 한 번 채워 보내 두면 옛 금액의 회차가 남는다.
+           */
+          if (formData.installmentShares.some((share) => share.trim() !== '')) {
+            // 비운 칸은 0 이다. 개수를 줄여 보내면 서버가 "개수가 다르다"로 거절한다.
+            payload.installmentShares = formData.installmentShares.map((share) =>
+              toAmountString(share),
+            );
+          }
+        }
 
       }
 
@@ -1318,6 +1392,17 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       time: timeInputOf(entry.date, timeZone),
       installmentMonths: entry.installmentMonths ? String(entry.installmentMonths) : '',
       /*
+       * 옛 할부에는 이 값이 없다(null). 그때는 수수료 전표가 없다는 뜻이라 무이자로 연다 --
+       * 고치려고 열었을 뿐인데 저장이 막히면 까닭을 알 수 없다.
+       */
+      installmentInterest: entry.installmentMonths
+        ? entry.installmentInterest
+          ? ('interest' as const)
+          : ('free' as const)
+        : ('' as const),
+      // 적어 둔 값이 없으면 비워 둔다. 화면이 개월수로 나눈 기본값을 채워 보여 준다.
+      installmentShares: entry.installmentShares ?? [],
+      /*
        * 차감. 목록의 금액은 이미 차감된 뒤이므로 위 `amount` 와 짝으로 되돌린다.
        *
        * 통화는 위 `amount` 와 같다 -- 외화 거래면 둘 다 그 외화다.
@@ -1449,6 +1534,9 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       tagIds: draft.tagIds ?? [],
       installmentMonths:
         type === 'expense' && draft.installmentMonths ? String(draft.installmentMonths) : '',
+      // 후보에는 수수료 여부가 없다. 문자 한 줄로는 알 수 없어 사용자가 고른다.
+      installmentInterest: '' as const,
+      installmentShares: [] as string[],
       ...(hasWhen
         ? {
             date: dateKeyOf(when as Date, timeZone),
@@ -2475,12 +2563,115 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   <CustomSelect
                     options={installmentOptions(t)}
                     value={formData.installmentMonths}
-                    onChange={(value) => setFormData({ ...formData, installmentMonths: value })}
+                    onChange={(value) =>
+                      setFormData({
+                        ...formData,
+                        installmentMonths: value,
+                        // 일시불로 되돌리면 고른 종류도 함께 떨어진다.
+                        installmentInterest: Number(value) >= 2 ? formData.installmentInterest : '',
+                        // 개월수가 바뀌면 적어 둔 회차 금액은 개수가 맞지 않는다.
+                        installmentShares: [],
+                      })
+                    }
                     placeholder={t('editor.installmentOnce')}
                   />
                   <p className="mt-1 text-xs text-gray-500">
                     {t('editor.installmentHint')}
                   </p>
+
+                  {/*
+                    수수료가 붙는 할부인가. 개월수를 고른 뒤에만 묻는다.
+
+                    기본값을 두지 않는다. 무이자로 두면 유이자 할부가 조용히 수수료 없이
+                    지나가고, 유이자로 두면 무이자 결제마다 "수수료 미입력"이 쌓인다.
+                  */}
+                  {Number(formData.installmentMonths) >= 2 && (
+                    <div className="mt-2">
+                      <div className="flex gap-2">
+                        {(['free', 'interest'] as const).map((choice) => (
+                          <button
+                            key={choice}
+                            type="button"
+                            onClick={() =>
+                              setFormData({ ...formData, installmentInterest: choice })
+                            }
+                            className={`flex-1 rounded-lg border px-3 py-2 text-sm ${
+                              formData.installmentInterest === choice
+                                ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                : 'border-gray-300 text-gray-700'
+                            }`}
+                          >
+                            {t(
+                              choice === 'free'
+                                ? 'editor.installmentFree'
+                                : 'editor.installmentInterest',
+                            )}
+                          </button>
+                        ))}
+                      </div>
+                      <p className="mt-1 text-xs text-gray-500">
+                        {t(
+                          formData.installmentInterest === 'interest'
+                            ? 'editor.installmentInterestHint'
+                            : 'editor.installmentFreeHint',
+                        )}
+                      </p>
+
+                      {/*
+                        회차 금액. 기본값을 채워 두고 다른 자리만 고치게 한다.
+
+                        끝수를 어느 회차에 붙이는지가 카드사마다 다르다 -- 1,000원
+                        3개월이 334/333/333 일 수도 334/334/332 일 수도 있어, 계산만으로는
+                        명세서와 맞출 수 없다.
+                      */}
+                      <div className="mt-3 space-y-1">
+                        <div className="flex items-baseline justify-between">
+                          <span className="text-xs font-medium text-gray-700">
+                            {t('editor.installmentShares')}
+                          </span>
+                          {formData.installmentShares.length > 0 && (
+                            <button
+                              type="button"
+                              onClick={() => setFormData({ ...formData, installmentShares: [] })}
+                              className="text-xs text-blue-600"
+                            >
+                              {t('editor.installmentSharesReset')}
+                            </button>
+                          )}
+                        </div>
+
+                        {shareInputs.map((share, index) => (
+                          <div key={index} className="flex items-center gap-2">
+                            <span className="w-16 text-xs text-gray-500">
+                              {t('editor.installmentShareRow', { index: index + 1 })}
+                            </span>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              value={share}
+                              onChange={(e) =>
+                                setFormData({
+                                  ...formData,
+                                  installmentShares: shareInputs.map((old, at) =>
+                                    at === index ? e.target.value : old,
+                                  ),
+                                })
+                              }
+                              className="flex-1 px-2 py-1 border rounded text-sm text-right"
+                            />
+                          </div>
+                        ))}
+
+                        <p className="text-right text-xs text-gray-500">
+                          {t('editor.installmentSharesSum', {
+                            total: installmentShareTotal(shareInputs),
+                            amount: formData.amount || '0',
+                          })}
+                        </p>
+                        <p className="text-xs text-gray-500">{t('editor.installmentSharesHint')}</p>
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

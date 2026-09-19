@@ -20,6 +20,7 @@ import CardUsageChart from './CardUsageChart';
 import type { CardUsageMeasure } from '@money/core/lib/card-usage-chart';
 import Modal from './Modal';
 import PendingRatePanel from './PendingRatePanel';
+import PendingFeePanel from './PendingFeePanel';
 import { useApiError } from '@money/core/lib/api-error';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
@@ -65,6 +66,8 @@ interface CardSettlementPanelProps {
   measure?: CardUsageMeasure;
   /** 지금 고른 주기 ('YYYY-MM'). 아래 내역을 그 주기로 좁힌 화면이 알려 준다. */
   selectedPeriodKey?: string | null;
+  /** 거래 하나를 열 때. 수수료 칸에서 "어느 결제의 것인가"를 확인하는 자리다. */
+  onOpenEntry?: (entryId: string) => void;
   /** 주기를 누를 때. 이미 고른 주기를 다시 누르면 null 이 온다. */
   onSelectPeriod?: (
     period: { closingKey: string; periodStart: string; periodEnd: string } | null,
@@ -91,6 +94,7 @@ export default function CardSettlementPanel({
   onChange,
   measure = 'performance',
   selectedPeriodKey,
+  onOpenEntry,
   onSelectPeriod,
 }: CardSettlementPanelProps) {
   const { t } = useTranslation();
@@ -286,6 +290,21 @@ export default function CardSettlementPanel({
         */}
         {isCredit && measure === 'billed' && (
           <PendingRatePanel cardId={card.id} onSettled={refresh} />
+        )}
+
+        {/*
+          유이자 할부의 회차 수수료.
+          금액이 회차마다 조금씩 달라 계산으로 맞출 수 없다. 마감된 회차를 여기 모아
+          명세서를 보고 적으면 그때 수수료 전표가 생긴다.
+        */}
+        {isCredit && measure === 'billed' && (
+          <PendingFeePanel
+            cardId={card.id}
+            projectId={selectedProjectId}
+            personId={paymentAccountOwnerId ?? undefined}
+            onOpenEntry={onOpenEntry}
+            onSettled={refresh}
+          />
         )}
 
         {/*

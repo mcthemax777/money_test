@@ -1075,6 +1075,8 @@ export class MutationReplayService {
       toAccountId: payload.toAccountId,
       cardId: payload.cardId,
       installmentMonths: payload.installmentMonths,
+      installmentInterest: payload.installmentInterest,
+      installmentShares: payload.installmentShares,
       toAmount: payload.toAmount,
       transferFee: payload.transferFee,
       transferFeeCategoryId: payload.transferFeeCategoryId,

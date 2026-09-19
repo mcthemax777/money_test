@@ -121,8 +121,8 @@ runSmoke('card-performance-ledger', async (ctx) => {
   ctx.check('줄 둘', two.rows.length, 2);
   ctx.check('구간 합계', two.total, '50000');
   // 목록은 최신이 앞이고 누적은 오래된 줄부터 쌓인다. 마지막 줄이 0에서 시작한 값이다.
-  ctx.check('가장 오래된 줄의 누적', two.rows[two.rows.length - 1].performanceAfter, '30000');
-  ctx.check('최신 줄의 누적', two.rows[0].performanceAfter, '50000');
+  ctx.check('가장 오래된 줄의 누적', two.rows[two.rows.length - 1].runningTotal, '30000');
+  ctx.check('최신 줄의 누적', two.rows[0].runningTotal, '50000');
   ctx.check(
     '줄 금액은 카드 부호 규칙 (사용이 음수)',
     two.rows[0].amount,
@@ -160,7 +160,7 @@ runSmoke('card-performance-ledger', async (ctx) => {
   const wide = await cardLedger.getPerformanceLedger(card.id, uid, { limit: 50 });
   const olderRow = wide.rows.find((row) => row.description === '두 주기 전');
   ctx.check('지난 주기에도 줄이 있다', Boolean(olderRow), true);
-  ctx.check('지난 주기는 0에서 다시 쌓는다', olderRow?.performanceAfter, '40000');
+  ctx.check('지난 주기는 0에서 다시 쌓는다', olderRow?.runningTotal, '40000');
   ctx.check(
     '머리글이 주기마다 하나씩 실린다',
     new Set(wide.rows.map((row) => row.periodStart)).size,
@@ -168,16 +168,16 @@ runSmoke('card-performance-ledger', async (ctx) => {
   );
   ctx.check('이번 주기 누적은 그대로', (await currentPeriod()).total, '50000');
 
-  // ── 할부는 회차마다 한 줄 ──
+  // ── 할부도 한 줄이고 전액이다 ──
   //
-  // 주기 합계가 회차분만 세므로, 구매한 달에 전액을 한 줄로 두면 줄의 합과 진행률
-  // 막대가 갈린다.
+  // 카드사가 실적으로 세는 것은 승인 한 건이라, 나눠 갚는다고 그 달 실적이 회차분만
+  // 오르지 않는다. 나뉘는 것은 청구뿐이다 (그쪽은 청구 내역이 회차마다 보여 준다).
   await spend({ amount: '30000', description: '할부', installmentMonths: 3 });
   const withPlan = await currentPeriod();
   const planRow = withPlan.rows.find((row) => row.description === '할부');
-  ctx.check('할부 첫 회차만 이번 주기', planRow?.amount, '-10000');
-  ctx.check('회차 번호', planRow?.installmentIndex, 1);
+  ctx.check('할부는 결제한 주기에 전액', planRow?.amount, '-30000');
   ctx.check('할부 개월수', planRow?.installmentMonths, 3);
+  ctx.check('할부 줄은 하나뿐', withPlan.rows.filter((row) => row.description === '할부').length, 1);
   ctx.check(
     '할부를 더해도 합계 = 진행률 막대',
     withPlan.total,
@@ -245,8 +245,8 @@ runSmoke('card-performance-ledger', async (ctx) => {
   );
   ctx.check(
     '누적도 같다 (잘린 자리와 무관하다)',
-    byPage.map((row) => row.performanceAfter).join(','),
-    whole.rows.map((row) => row.performanceAfter).join(','),
+    byPage.map((row) => row.runningTotal).join(','),
+    whole.rows.map((row) => row.runningTotal).join(','),
   );
   ctx.check('끝에서는 커서를 끊는다', cursor ?? null, null);
 
@@ -295,7 +295,7 @@ runSmoke('card-performance-ledger', async (ctx) => {
   ctx.check('체크: 기준은 달력 월', debitPage.basis, 'month');
   ctx.check('체크: 구간 시작은 1일', new Date(debitPage.periods[0].periodStart).getUTCDate(), 1);
   ctx.check('체크: 줄 둘', debitPage.rows.length, 2);
-  ctx.check('체크: 누적이 쌓인다', debitPage.rows[0].performanceAfter, '40000');
+  ctx.check('체크: 누적이 쌓인다', debitPage.rows[0].runningTotal, '40000');
   ctx.check('체크: 구간 합계', debitPage.periods[0].total, '40000');
   ctx.check(
     '체크: 합계 = 진행률 막대',
@@ -316,6 +316,7 @@ runSmoke('card-performance-ledger', async (ctx) => {
     (period) => period.periodEnd === kept.periodEnd,
   );
   ctx.check('청구액은 깎인 금액 그대로', currentBilled?.billed, '160000');
-  // 실적 = 30,000 + 20,000 + 할부 첫 회차 10,000 + 정가 50,000. 세금은 실적에서 뺐다.
-  ctx.check('실적은 정가로', currentBilled?.usage, '110000');
+  // 실적 = 30,000 + 20,000 + 할부 전액 30,000 + 정가 50,000. 세금은 실적에서 뺐다.
+  // 청구액과 갈린다. 청구에는 세금 70,000 이 들고 할부는 첫 회차 10,000 만 든다.
+  ctx.check('실적은 정가로', currentBilled?.usage, '130000');
 });

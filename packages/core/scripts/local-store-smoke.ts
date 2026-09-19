@@ -54,6 +54,22 @@ interface LedgerLike {
   categoryName: string | null;
 }
 
+/** 주기 원장 한 쪽 중 견줄 것만. 실적 원장과 청구 내역이 같은 모양이다. */
+interface PeriodLedgerDump {
+  currency: string;
+  basis: string;
+  target: string | null;
+  periods: Array<{ periodStart: string; total: string }>;
+  rows: Array<{
+    key: string;
+    amount: string;
+    runningTotal: string;
+    installmentIndex?: number;
+    installmentMonths: number;
+  }>;
+  nextCursor: string | null;
+}
+
 const KST = 'Asia/Seoul';
 const PID = 'project-1';
 
@@ -588,14 +604,8 @@ const entry = (
           outstanding: string;
           periods: Array<{ periodStart: string; usage: string; billed: string }>;
         };
-        performanceLedger: {
-          currency: string;
-          basis: string;
-          target: string | null;
-          periods: Array<{ periodStart: string; total: string }>;
-          rows: Array<{ key: string; amount: string; performanceAfter: string }>;
-          nextCursor: string | null;
-        };
+        performanceLedger: PeriodLedgerDump;
+        billedLedger: PeriodLedgerDump;
         accountBalances: Record<string, string>;
         liabilityAccountId: string;
         bankAccountId: string;
@@ -840,8 +850,8 @@ const entry = (
     eq('실적 원장: 기준액', String(localPerfLedger.target), String(server.performanceLedger.target));
     eq(
       '실적 원장: 줄과 누적',
-      localPerfLedger.rows.map((row) => `${row.key}/${row.performanceAfter}`).join(','),
-      server.performanceLedger.rows.map((row) => `${row.key}/${row.performanceAfter}`).join(','),
+      localPerfLedger.rows.map((row) => `${row.key}/${row.runningTotal}`).join(','),
+      server.performanceLedger.rows.map((row) => `${row.key}/${row.runningTotal}`).join(','),
     );
     eq(
       '실적 원장: 주기 머리글',
@@ -852,6 +862,32 @@ const entry = (
       '실적 원장: 다음 커서',
       localPerfLedger.nextCursor ?? null,
       server.performanceLedger.nextCursor ?? null,
+    );
+
+    /*
+     * 청구 내역. 실적 원장과 줄부터 다르다 -- 할부가 회차마다 한 줄이라, 나누는 자리를
+     * 한쪽만 고치면 여기서 드러난다.
+     */
+    const localBilledLedger = await port.getCardBilledLedger(server.cardId, { limit: 20 });
+    eq(
+      '청구 내역: 줄과 누적',
+      localBilledLedger.rows.map((row) => `${row.key}/${row.runningTotal}`).join(','),
+      server.billedLedger.rows.map((row) => `${row.key}/${row.runningTotal}`).join(','),
+    );
+    eq(
+      '청구 내역: 회차',
+      localBilledLedger.rows.map((row) => `${row.installmentIndex}/${row.installmentMonths}`).join(','),
+      server.billedLedger.rows.map((row) => `${row.installmentIndex}/${row.installmentMonths}`).join(','),
+    );
+    eq(
+      '청구 내역: 주기 머리글',
+      localBilledLedger.periods.map((row) => `${row.periodStart}:${row.total}`).join(','),
+      server.billedLedger.periods.map((row) => `${row.periodStart}:${row.total}`).join(','),
+    );
+    eq(
+      '청구 내역: 다음 커서',
+      localBilledLedger.nextCursor ?? null,
+      server.billedLedger.nextCursor ?? null,
     );
 
     /*

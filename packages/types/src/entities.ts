@@ -320,6 +320,14 @@ export interface EntryListItem {
   cardName: string | null;
   /** 할부 개월수. 일시불이거나 카드 거래가 아니면 null. */
   installmentMonths: number | null;
+  /** 수수료가 붙는 할부인가. 할부가 아니면 null. */
+  installmentInterest: boolean | null;
+  /**
+   * 회차별 원금. 사용자가 적어 둔 값이고, 적지 않았으면 null 이다.
+   *
+   * null 이면 화면이 개월수로 나눈 기본값을 보여 준다(`installmentPrincipals`).
+   */
+  installmentShares: string[] | null;
   /**
    * 이체에 붙은 수수료. 이체가 아니면 null, 수수료가 없는 이체면 "0".
    * 이체 자체는 소비가 아니지만 수수료는 지출이라 따로 보여준다.

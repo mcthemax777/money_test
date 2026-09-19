@@ -47,6 +47,14 @@ export interface CardUsagePosting {
   /** 할부 개월수. 일시불이면 null 이나 1 이다. */
   installmentMonths?: number | null;
   /**
+   * 사용자가 적어 둔 회차별 원금. 없으면 개월수로 나눈 값을 쓴다.
+   *
+   * 끝수를 어느 회차에 몰아주는지는 카드사마다 다르다. 1,000원 3개월이 334/333/333 일
+   * 수도 334/334/332 일 수도 있어, 명세서와 맞추려면 사람이 적은 값을 그대로 써야 한다.
+   * 길이는 개월수와 같고 합은 결제 금액과 같다 (조립이 그때 검사한다).
+   */
+  installmentShares?: readonly DecInput[] | null;
+  /**
    * 이 거래를 실적에 세는가. 없으면 센 것으로 본다.
    *
    * **분할해도 하나다.** 카드사가 보는 것은 승인 한 건이라, 분류로 나눴다고 절반만
@@ -83,23 +91,25 @@ function performanceAmount(billed: Dec, posting: CardUsagePosting): Dec {
   return billed.plus(Dec.of(discount));
 }
 
-/** 한 다리가 어느 주기에 얼마를 쌓는가. 할부는 회차마다 하나씩이다. */
+/** 한 다리가 어느 주기에 얼마를 쌓는가. 실적은 주기 하나에만 들어간다. */
 export interface PerformanceShare {
   /** 마감 연월 키 (`closingMonthKey`). 체크카드는 달력 월 키다. */
   closingKey: string;
   /** 그 주기의 실적에 더해지는 금액. 사용이 양수다. */
   amount: string;
-  /** 할부 회차. 일시불이면 1 이다. */
-  index: number;
-  /** 할부 개월수. 일시불이면 1 이다. */
+  /** 할부 개월수. 일시불이면 1 이다. 화면이 "3개월 할부"로 적는 데 쓴다. */
   months: number;
 }
 
 /**
- * 신용카드 다리 하나가 실적에 더하는 몫. 주기마다 하나씩.
+ * 신용카드 다리 하나가 실적에 더하는 몫. 언제나 하나다.
  *
- * 실적에서 뺀 거래는 빈 목록이다. 할부는 회차만큼 나뉘고, 차감을 실적에서 빼지 않기로
- * 한 거래는 정가로 나눈다 -- 주기 합계(`creditUsagePeriods`)가 이 함수를 그대로 쓴다.
+ * **할부도 결제한 주기에 전액이 든다.** 카드사가 실적으로 세는 것은 승인 한 건이라,
+ * 24개월로 나눠 갚는다고 그 달 실적이 1/24 만 오르지 않는다. 청구는 회차로 나뉘므로
+ * 이 함수와 `billedShares` 가 갈리고, 그래서 주기마다 실적과 청구가 다른 값이다.
+ *
+ * 실적에서 뺀 거래는 빈 목록이다. 차감을 실적에서 빼지 않기로 한 거래는 정가로 센다 --
+ * 주기 합계(`creditUsagePeriods`)가 이 함수를 그대로 쓴다.
  */
 export function creditPerformanceShares(
   posting: CardUsagePosting,
@@ -108,16 +118,14 @@ export function creditPerformanceShares(
 ): PerformanceShare[] {
   if (!(posting.countsPerformance ?? true)) return [];
 
-  const months = Math.max(posting.installmentMonths ?? 1, 1);
-  const total = performanceAmount(Dec.of(posting.amount).negated(), posting);
   const purchase = closingMonthOf(asDate(posting.date), statementClosingDay, timeZone);
-
-  return splitInstallment(total, months).map((share, offset) => ({
-    closingKey: closingMonthKey(shiftClosingMonth(purchase, offset)),
-    amount: share.toString(),
-    index: offset + 1,
-    months,
-  }));
+  return [
+    {
+      closingKey: closingMonthKey(purchase),
+      amount: performanceAmount(Dec.of(posting.amount).negated(), posting).toString(),
+      months: Math.max(posting.installmentMonths ?? 1, 1),
+    },
+  ];
 }
 
 /**
@@ -136,10 +144,47 @@ export function debitPerformanceShares(
     {
       closingKey: zonedYearMonth(asDate(posting.date), timeZone),
       amount: amount.toString(),
-      index: 1,
       months: 1,
     },
   ];
+}
+
+/** 한 다리가 어느 주기에 얼마를 청구하는가. 할부는 회차마다 하나씩이다. */
+export interface BilledShare {
+  /** 마감 연월 키 (`closingMonthKey`). */
+  closingKey: string;
+  /** 그 주기에 청구되는 금액. 사용이 양수다. */
+  amount: string;
+  /** 할부 회차. 일시불이면 1 이다. */
+  index: number;
+  /** 할부 개월수. 일시불이면 1 이다. */
+  months: number;
+}
+
+/**
+ * 신용카드 다리 하나가 주기마다 청구하는 몫. 할부는 회차만큼이다.
+ *
+ * 실적과 달리 여기서는 차감을 되살리지 않는다. 깎인 금액은 갚을 대금에서도 빠지므로
+ * 다리 금액(이미 순액)이 그대로 청구액이다. 실적에서 뺀 거래도 청구는 그대로 된다.
+ *
+ * 24개월 할부처럼 오래 끌리는 청구가 뒤 주기에 얼마씩 얹히는지는 이 목록이 답한다.
+ * 원장에는 구매한 날 한 줄뿐이라, 그 줄만 보아서는 이번 달 대금이 왜 큰지 알 수 없다.
+ */
+export function billedShares(
+  posting: CardUsagePosting,
+  statementClosingDay: number,
+  timeZone: string,
+): BilledShare[] {
+  const months = Math.max(posting.installmentMonths ?? 1, 1);
+  const total = Dec.of(posting.amount).negated();
+  const purchase = closingMonthOf(asDate(posting.date), statementClosingDay, timeZone);
+
+  return installmentPrincipals(total, months, posting.installmentShares).map((share, offset) => ({
+    closingKey: closingMonthKey(shiftClosingMonth(purchase, offset)),
+    amount: share.toString(),
+    index: offset + 1,
+    months,
+  }));
 }
 
 export interface CreditUsageInput {
@@ -171,8 +216,9 @@ export function usageSpan(months?: number): number {
 /**
  * 신용카드의 주기별 사용액.
  *
- * 마감일 기준으로 자른다. 마감일이 15일이면 8/16~9/15가 한 주기다. 할부는 구매한
- * 주기에 전액이 아니라 회차분만 들어가고, 나머지는 뒤 주기로 넘어간다.
+ * 마감일 기준으로 자른다. 마감일이 15일이면 8/16~9/15가 한 주기다. 할부의 청구는
+ * 구매한 주기에 회차분만 들어가고 나머지는 뒤 주기로 넘어가지만, 실적은 구매한 주기에
+ * 전액이 든다. 그래서 주기마다 `billed` 와 `usage` 가 크게 갈릴 수 있다.
  */
 export function creditUsagePeriods(input: CreditUsageInput): CreditUsageResult {
   const { statementClosingDay, paymentDueDay, timeZone, span } = input;
@@ -192,20 +238,16 @@ export function creditUsagePeriods(input: CreditUsageInput): CreditUsageResult {
   };
 
   for (const posting of input.postings) {
-    // 부채 다리는 사용이 음수다. 표시용으로 뒤집는다.
-    const total = Dec.of(posting.amount).negated();
-    const purchase = closingMonthOf(asDate(posting.date), statementClosingDay, timeZone);
-
-    const shares = splitInstallment(total, posting.installmentMonths ?? 1);
-    for (let offset = 0; offset < shares.length; offset += 1) {
-      add(billedByMonth, closingMonthKey(shiftClosingMonth(purchase, offset)), shares[offset]);
-    }
-
     /*
-     * 실적 몫은 따로 나눈다. 차감을 실적에서 빼지 않기로 한 거래는 정가가 기준이라
-     * 회차 금액도 청구 쪽과 다르다. 나누는 규칙은 실적 원장과 한 함수에 둔다 --
-     * 두 벌로 두면 줄마다 쌓이는 값과 주기 합계가 갈린다.
+     * 청구와 실적을 각자의 함수로 낸다. 두 값은 나뉘는 방식부터 다르다 -- 청구는 할부
+     * 회차만큼 뒤 주기로 퍼지고, 실적은 결제한 주기에 전액이 든다.
+     *
+     * 나누는 규칙은 목록을 그리는 쪽(청구 내역·실적 원장)과 한 함수에 둔다. 두 벌로
+     * 두면 줄마다 적히는 값과 주기 합계가 갈린다.
      */
+    for (const share of billedShares(posting, statementClosingDay, timeZone)) {
+      add(billedByMonth, share.closingKey, Dec.of(share.amount));
+    }
     for (const share of creditPerformanceShares(posting, statementClosingDay, timeZone)) {
       add(usageByMonth, share.closingKey, Dec.of(share.amount));
     }
@@ -354,8 +396,51 @@ export function performanceOf(input: {
 }
 
 /**
- * 할부 회차 금액. 나누어떨어지지 않는 끝수는 첫 회차에 몰아준다.
+ * 이 할부가 회차마다 청구하는 원금.
+ *
+ * 사용자가 적어 둔 값이 있으면 그것이 사실이다. 끝수를 어느 회차에 몰아주는지는
+ * 카드사마다 달라, 계산으로는 명세서와 맞출 수 없는 자리가 있다.
+ *
+ * 적어 둔 값의 길이가 개월수와 다르면 버린다. 금액이나 개월수를 고친 뒤 남은 옛 값이라,
+ * 그대로 쓰면 회차 합이 결제 금액과 어긋난다.
+ */
+export function installmentPrincipals(
+  total: DecInput,
+  months: number,
+  shares?: readonly DecInput[] | null,
+): Dec[] {
+  if (shares && shares.length === months) {
+    /*
+     * 읽을 수 없는 값이 섞여 있으면 통째로 버리고 나눈다.
+     *
+     * 적어 둔 값은 JSON 칸에 담겨 오므로 무엇이든 들어올 수 있다. 한 칸 때문에 카드
+     * 화면이 통째로 넘어지는 것보다, 나눈 값으로 그리고 사용자가 다시 적는 편이 낫다.
+     */
+    const parsed = toDecList(shares);
+    if (parsed) return parsed;
+  }
+  return splitInstallment(total, months);
+}
+
+/** 전부 십진값으로 읽히면 그 목록, 하나라도 아니면 null. */
+function toDecList(shares: readonly DecInput[]): Dec[] | null {
+  const parsed: Dec[] = [];
+  for (const share of shares) {
+    try {
+      parsed.push(Dec.of(share));
+    } catch {
+      return null;
+    }
+  }
+  return parsed;
+}
+
+/**
+ * 할부 회차 금액의 기본값. 나누어떨어지지 않는 끝수는 첫 회차에 몰아준다.
  * 10,000원 3개월이면 3,334 / 3,333 / 3,333 이 된다.
+ *
+ * 카드사가 끝수를 마지막 회차에 붙이는 경우도 있다. 그때는 사용자가 회차 금액을 직접
+ * 적고, 그 값이 이 기본값을 대신한다 (`installmentPrincipals`).
  */
 export function splitInstallment(total: DecInput, months: number): Dec[] {
   const amount = Dec.of(total);

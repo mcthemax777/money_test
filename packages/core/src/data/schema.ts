@@ -36,8 +36,12 @@
  * 21 은 분류·태그에서 `isActive` 가 사라진 판이다. 그 둘에는 감춰진 상태가 없다 --
  * 지우기가 행을 정말 지운다. 옛 사본에는 감춘 줄이 남아 있어, 칸만 떼면 목록에 없던
  * 것이 갑자기 나타난다. 버리고 다시 받는다.
+ *
+ * 22 는 할부 계획에 `interestBearing` 과 `principalShares` 가 생기고, 쓰이지 않던
+ * `feeAmount` 가 빠진 판이다. 옛 사본의 계획 행에는 그 값들이 없어, 편집 화면이 유이자
+ * 할부를 무이자로 되돌려 보내고 회차 금액도 적어 둔 값 대신 나눈 값으로 보인다.
  */
-export const SCHEMA_VERSION = 21;
+export const SCHEMA_VERSION = 22;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -310,7 +314,10 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      id             TEXT PRIMARY KEY,
      postingId      TEXT NOT NULL,
      totalMonths    INTEGER NOT NULL,
-     feeAmount      TEXT,
+     /* 수수료가 붙는 할부인가. 수수료 금액은 회차마다 전표로 남는다. */
+     interestBearing INTEGER NOT NULL DEFAULT 0,
+     /* 사용자가 적어 둔 회차별 원금 (JSON 배열). 없으면 개월수로 나눈다. */
+     principalShares TEXT,
      updatedVersion INTEGER NOT NULL DEFAULT 0
    )`,
 

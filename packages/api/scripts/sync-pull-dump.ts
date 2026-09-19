@@ -232,6 +232,8 @@ runSmoke('sync-pull-dump', async (ctx) => {
     cardLedger: await accounts.getAccountPostings(credit.liabilityAccountId!, uid, { limit: 20 }),
     cardUsage: await cardLedger.getUsage(credit.id, uid),
     performanceLedger: await cardLedger.getPerformanceLedger(credit.id, uid, { limit: 20 }),
+    /** 청구 내역. 할부가 회차마다 한 줄이라 실적 원장과 줄 수부터 다르다. */
+    billedLedger: await cardLedger.getBilledLedger(credit.id, uid, { limit: 20 }),
     /** 잔액은 다리 합이다. 사본이 세어 낸 값과 견준다. */
     accountBalances: Object.fromEntries(
       (await accounts.getAccounts(uid, pid, true)).map((row) => [row.id, row.balance]),

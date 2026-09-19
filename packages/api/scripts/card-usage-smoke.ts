@@ -124,9 +124,13 @@ runSmoke('card-usage', async (ctx) => {
   });
   ctx.check('할부 개월수가 응답에 실린다',
     (await entries.getEntryById(plan.id, uid)).installmentMonths, 3);
-  ctx.check('1회차', (await usageOf('2026-10-15'))?.usage, '3334');
-  ctx.check('2회차', (await usageOf('2026-11-15'))?.usage, '3333');
-  ctx.check('3회차', (await usageOf('2026-12-15'))?.usage, '3333');
+  // 청구는 세 주기로 나뉜다. 끝수는 첫 회차에 몰아준다.
+  ctx.check('1회차 청구', (await usageOf('2026-10-15'))?.billed, '3334');
+  ctx.check('2회차 청구', (await usageOf('2026-11-15'))?.billed, '3333');
+  ctx.check('3회차 청구', (await usageOf('2026-12-15'))?.billed, '3333');
+  // 실적은 나뉘지 않는다. 카드사가 세는 것은 승인 한 건이다.
+  ctx.check('실적은 결제한 주기에 전액', (await usageOf('2026-10-15'))?.usage, '10000');
+  ctx.check('뒤 주기 실적은 0', (await usageOf('2026-11-15'))?.usage, '0');
   // 청구는 3회로 나뉘지만 갚아야 할 돈은 구매 시점에 전액 생긴다
   ctx.check('부채는 구매 시점에 전액', Number(await outstanding()) - debtBefore, 10000);
 
@@ -137,12 +141,13 @@ runSmoke('card-usage', async (ctx) => {
   } as any);
   ctx.check('수정 후에도 할부 유지',
     (await entries.getEntryById(plan.id, uid)).installmentMonths, 3);
-  ctx.check('수정 후 1회차', (await usageOf('2026-10-15'))?.usage, '10000');
+  ctx.check('수정 후 1회차 청구', (await usageOf('2026-10-15'))?.billed, '10000');
+  ctx.check('수정 후 실적은 전액', (await usageOf('2026-10-15'))?.usage, '30000');
 
   // ── 마감일을 바꾸면 과거 주기까지 즉시 다시 그려진다 ──
   await cards.updateCard(card.id, uid, { statementClosingDay: 25, paymentDueDay: 5 });
   ctx.check('마감 25일로 바꾸면 10/3은 10/25 마감 주기',
-    (await usageOf('2026-10-25'))?.usage, '10000');
+    (await usageOf('2026-10-25'))?.usage, '30000');
   ctx.check('옛 경계 주기는 사라진다', await usageOf('2026-10-15'), undefined);
   ctx.check('결제일도 다시 계산된다',
     (await usageOf('2026-10-25'))?.dueDate?.slice(0, 10), '2026-11-05');

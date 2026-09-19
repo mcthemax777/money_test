@@ -98,6 +98,24 @@ export class CardsController {
     });
   }
 
+  @Get(':id/billed-ledger')
+  @ApiOperation({
+    summary: '청구 내역 한 쪽 (그 주기 청구서에 든 줄들. 할부는 회차마다 하나)',
+  })
+  billedLedger(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+    @Query('closingKey') closingKey?: string,
+  ) {
+    return this.cardLedger.getBilledLedger(id, req.user.id, {
+      limit: limit ? Number(limit) : undefined,
+      cursor,
+      closingKey,
+    });
+  }
+
   @Get(':id/pending-rates')
   @ApiOperation({ summary: '청구액이 확정되지 않은 외화 결제 목록' })
   pendingRates(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
@@ -112,6 +130,22 @@ export class CardsController {
     @Body() dto: CardDto.SettleRatesRequest,
   ) {
     return this.cardLedger.settleRates(id, req.user.id, dto);
+  }
+
+  @Get(':id/pending-fees')
+  @ApiOperation({ summary: '수수료를 아직 적지 않은 유이자 할부 회차' })
+  pendingFees(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.cardLedger.listPendingFees(id, req.user.id);
+  }
+
+  @Patch(':id/pending-fees')
+  @ApiOperation({ summary: '명세서의 회차 수수료를 적는다 (수수료 전표가 생긴다)' })
+  settleFees(
+    @Request() req: AuthenticatedRequest,
+    @Param('id') id: string,
+    @Body() dto: CardDto.SettleFeesRequest,
+  ) {
+    return this.cardLedger.settleFees(id, req.user.id, dto);
   }
 
   @Post(':id/transfers')
