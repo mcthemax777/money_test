@@ -355,23 +355,57 @@ export function nowTimeKey(timeZone: string): string {
  * 1밀리초를 빼서 그 달의 마지막 순간으로 만든다.
  */
 /**
+ * 그 값이 가리키는 달력 날짜.
+ *
+ * 두 모양을 받는다 -- 날짜 키("2026-07-01")와 **그 날짜의 UTC 자정 표시자**
+ * ("2026-07-01T00:00:00.000Z"). 뒤의 것은 카드 청구 주기가 들고 다니는 모양이다
+ * (`statement-period` 의 `dateMarker`). 둘 다 앞의 열 글자가 곧 그 날짜다.
+ *
+ * **표시자를 날짜 키로 알고 넘겼다가 앱이 꺼졌다.** `split('-')` 이 NaN 을 내고 그 값으로
+ * 만든 날짜가 `toISOString` 에서 RangeError 로 터진다. 여기서 한 번 읽어 그 자리를 없앤다.
+ *
+ * 마지막 손길로 타임존을 거쳐 읽는다. 앞의 둘이 아닌 값(진짜 인스턴트)이 와도 그럴듯한
+ * 날짜가 나오고, 그것마저 읽을 수 없을 때만 무엇이 잘못됐는지 말하며 멈춘다.
+ */
+function dayKeyOf(value: string, timeZone: string): string {
+  const head = value.slice(0, 10);
+  if (isDateKey(head)) return head;
+
+  /*
+   * 읽히는 날짜인지 먼저 본다.
+   *
+   * `zonedDateKey` 는 형식기를 거치므로 읽을 수 없는 값에 RangeError 를 던진다. 그대로
+   * 두면 여기서 말하려던 "무엇이 잘못됐는가" 가 그 오류에 묻힌다.
+   */
+  const parsed = new Date(value);
+  if (!Number.isNaN(parsed.getTime())) {
+    const zoned = zonedDateKey(parsed, timeZone);
+    if (isDateKey(zoned)) return zoned;
+  }
+
+  throw new Error(`날짜로 읽을 수 없는 값입니다: ${value}`);
+}
+
+/**
  * 임의 기간의 목록 조회 구간.
  *
- * 달력 날짜 두 개("YYYY-MM-DD", 양끝 포함)를 받아 목록 API가 쓰는 인스턴트로 바꾼다.
- * 끝날은 그날 23:59:59.999 다. 그날 0시로 자르면 종료일 하루가 통째로 빠진다.
- * 월 단위는 monthQueryRange 가 같은 일을 한다.
+ * 달력 날짜 두 개(양끝 포함)를 받아 목록 API가 쓰는 인스턴트로 바꾼다. 끝날은 그날
+ * 23:59:59.999 다. 그날 0시로 자르면 종료일 하루가 통째로 빠진다. 월 단위는
+ * monthQueryRange 가 같은 일을 한다.
+ *
+ * 받는 모양은 `dayKeyOf` 가 안다 -- 날짜 키든 UTC 자정 표시자든 된다.
  */
 export function dayRangeQuery(
   startKey: string,
   endKey: string,
   timeZone: string,
 ): { startDate: string; endDate: string } {
-  const [year, month, day] = endKey.split('-').map(Number);
+  const [year, month, day] = dayKeyOf(endKey, timeZone).split('-').map(Number);
   // 다음 날 0시에서 1밀리초를 뺀다. Date 생성자가 월·연 넘김을 처리한다.
   const endExclusive = zonedDayStart(year, month, day + 1, timeZone);
 
   return {
-    startDate: zonedDateStringToUtc(startKey, timeZone).toISOString(),
+    startDate: zonedDateStringToUtc(dayKeyOf(startKey, timeZone), timeZone).toISOString(),
     endDate: new Date(endExclusive.getTime() - 1).toISOString(),
   };
 }
