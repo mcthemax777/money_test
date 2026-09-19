@@ -17,6 +17,7 @@ import {
 import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 
 import { CHART_COLOR } from '@money/core/lib/chart';
+import { monotonePath } from '@money/core/lib/chart-path';
 import {
   GRANULARITY_OPTIONS,
   historyPointLabel,
@@ -255,15 +256,22 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
                   ) : null,
                 )}
 
-                {/* 잔액 선 */}
+                {/*
+                  잔액 선. **웹과 같은 부드러운 곡선이다** (`monotonePath`).
+
+                  점과 점을 직선으로 이으면 같은 값을 웹은 곡선으로, 앱은 꺾은선으로
+                  그려 두 화면의 추이가 다르게 읽힌다. 곡선 규칙은 core 에 한 벌로
+                  두었고, 단조 보간이라 구간 안에서 두 끝값을 넘지 않는다 -- 넘치면
+                  있지도 않았던 잔액이 봉우리로 선다.
+                */}
                 {points.length > 1 ? (
                   <Path
-                    d={points
-                      .map(
-                        (point, index) =>
-                          `${index === 0 ? 'M' : 'L'} ${xOf(index)} ${yOf(point.balance)}`,
-                      )
-                      .join(' ')}
+                    d={monotonePath(
+                      points.map((point, index) => ({
+                        x: xOf(index),
+                        y: yOf(point.balance),
+                      })),
+                    )}
                     stroke={CHART_COLOR}
                     strokeWidth={2}
                     fill="none"
