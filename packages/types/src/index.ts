@@ -7,6 +7,7 @@ export * from './id';
 export * from './ledger-rules';
 export * from './report-aggregation';
 export * from './entry-view';
+export * from './entry-rows';
 export * from './entry-search';
 export * from './net-worth-aggregation';
 export * from './budget-usage';

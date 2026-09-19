@@ -215,6 +215,7 @@ export const ja: Record<MessageKey, string> = {
   'entry.noTitle': '(内容なし)',
   'entry.fee': '手数料{amount}',
   'entry.discount': '差引 {amount}',
+  'entry.split': '分割した取引の一行です。開くと残りの行も見えます。',
   'entry.provisional': '暫定',
 
   // ===== アプリ名 =====
@@ -434,6 +435,8 @@ export const ja: Record<MessageKey, string> = {
   'settlement.ongoing': '進行中',
   'settlement.upcoming': '予定',
   'settlement.targetLine': '実績 {amount}',
+  'settlement.periodPicked': '{range} のみ表示中です。もう一度押すと全体に戻ります。',
+  'settlement.periodPickHint': '行を押すとその周期の内訳だけを見ます。',
   'settlement.modalTitle': 'カード代金の記録',
   'settlement.submitting': '処理中...',
   'settlement.submit': '記録する',
@@ -893,7 +896,7 @@ export const ja: Record<MessageKey, string> = {
   'entryForm.toAccountRequired': '受け取る口座を選択してください。',
   'entryForm.feeInvalid': '手数料を0以上で入力してください。',
   'entryForm.discountInvalid': '差引額を0より大きく入力してください。',
-  'entryForm.discountTooLarge': '差引額は支払金額より大きくできません。',
+  'entryForm.discountTooLarge': '差引額は決済金額より大きくできません。',
   'entryForm.discountAmountRequired': '差引額を入力してください。',
   'entryForm.bothCards': 'カードからカードへ直接動かす取引は記録できません。口座を経由して2件に分けてください。',
   'entryForm.category': '分類',
@@ -1033,6 +1036,7 @@ export const ja: Record<MessageKey, string> = {
   'tx.tagPartialHint': '斜線は一部の取引にだけ付いている印です。オンにするとすべてに付き、そのままなら何も変わりません。',
   'tx.tagDone': '{count}件のタグを変えました。',
   'tx.tagNothingNew': '変わったものはありません。',
+  'tx.tagSkipped': '{count} 行はすでに無くなっており、付けられませんでした。',
   'tx.tagFailed': 'タグを変えられませんでした。接続を確認してください。',
   'tx.selected': '{count}件選択',
   'tx.deleteSelected': '選んだ取引を削除',

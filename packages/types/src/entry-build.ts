@@ -113,6 +113,18 @@ export interface BuiltPosting {
   exchangeRate: Dec;
   baseAmount: Dec;
   cardId?: string;
+  /**
+   * 이 줄의 신원. **분류 다리에만 있다.**
+   *
+   * 화면이 만들어 보낸 값을 그대로 담는다. 조립이 새로 만들지 않는 것이 요점이다 --
+   * 저장할 때마다 다리를 지우고 새로 만드는데(replaceEntry), 조립이 키까지 새로
+   * 만들면 줄에 붙은 태그와 차감이 매번 끊긴다.
+   */
+  lineKey?: string;
+  /** 이 줄에서 깎인 금액 (입력 통화, 양수). 차감이 없으면 비운다. */
+  discountAmount?: Dec | null;
+  /** 이 줄에 붙일 태그. 주면 그 목록이 그대로 줄의 태그가 된다. */
+  tagIds?: string[];
 }
 
 export interface BuiltEntry {
@@ -129,33 +141,70 @@ export interface BuiltEntry {
   /** 할부 개월수. 신용카드 지출에만 붙는다. */
   installmentMonths?: number;
   /**
-   * 결제 자리에서 깎인 금액. 표시 전용이라 다리에는 들어가지 않는다.
-   *
-   * 다리는 이미 깎인 뒤의 금액이라, 이 값이 없으면 "13,000짜리를 3,000 깎아 샀다"가
-   * 사라지고 "10,000을 썼다"만 남는다. `originalAmount` 를 함께 적어 두는 것과 같은
-   * 까닭이다.
-   */
-  discountAmount?: Dec | null;
-  /**
    * 이 거래를 카드 실적에 세는가. 카드로 낸 거래에만 뜻이 있다.
    *
-   * 실적과 청구액은 다른 값이다 -- 실적에서 빼도 갚을 대금은 그대로 남는다.
+   * **분할해도 하나다.** 실적을 세는 쪽은 카드사이고 그쪽이 보는 것은 승인 한 건이라,
+   * 한 결제를 분류로 나눴다고 절반만 실적에 드는 일은 없다.
+   *
+   * 실적과 청구액은 다른 값이다 -- 꺼 두어도 갚을 대금은 그대로 남는다.
    * 기본값은 갈래마다 다르다(지출 포함, 카드 수입 제외).
    */
   countsPerformance?: boolean;
   /**
    * 차감·취소 금액을 카드 실적에서도 뺄지. 차감이 붙은 카드 지출에만 뜻이 있다.
    *
-   * 다리에는 이미 깎인 금액이 들어가 있어 켜져 있으면 실적도 함께 줄어든다(기본값).
-   * 꺼 두면 집계가 `discountAmount` 를 되살려 실적만 정가로 센다.
+   * 깎인 금액은 줄마다 따로 적지만(`BuiltPosting.discountAmount`), 그것을 실적에서
+   * 뺄지는 카드사의 방침 하나라 여기 둔다.
    */
   discountCountsPerformance?: boolean;
+  /**
+   * 거래 자체에 붙일 태그. **분류 줄이 없는 전표에만 쓴다** (이체, 카드 대금 결제).
+   *
+   * 지출·수입의 태그는 줄에 붙으므로 `BuiltPosting.tagIds` 로 간다. 한 결제를 둘로
+   * 나눴을 때 "여행"이 두 줄에 함께 뜨지 않게 하는 것이 이 갈림의 전부다.
+   */
+  tagIds?: string[];
 }
 
-/** 카테고리 한 줄. 분할이면 여럿이다. */
+/**
+ * 카테고리 한 줄. 분할이면 여럿이다.
+ *
+ * 태그와 차감과 실적 여부가 모두 여기 달린다. 전표에 달려 있던 시절에는 분할의 한
+ * 줄만 환불받아도 비율 배분이 나머지 줄까지 깎았고, 실적에서 빼야 할 분류가 한 줄만
+ * 섞여도 결제 전체가 실적에서 빠졌다.
+ */
 export interface CategoryLine {
   categoryId: string;
+  /** 정가. 차감을 빼기 전의 금액이다. */
   amount: DecInput;
+  /**
+   * 이 줄의 신원. **화면이 만들어 보낸다** (uuid).
+   *
+   * 분할 줄을 더하는 순간 붙이고, 편집 내내 들고 다니다가 저장할 때마다 그대로
+   * 되돌려 보낸다. 서버는 옛 값과 새 값을 짝지을 필요 없이 받은 값을 써 넣는다.
+   * 비어 있으면 거절한다 -- 조립이 대신 만들면 그 줄의 태그와 차감이 끊긴다.
+   */
+  lineKey: string;
+  /**
+   * 이 줄에서 깎인 금액 (포인트·자동할인·취소). 정가와 같은 통화다.
+   *
+   * **정가보다 작아야 한다.** 같으면 그 줄이 0원이 되는데, 원장은 0원 다리를 받지
+   * 않는다(POSTING_ZERO_AMOUNT). 화면도 같은 규칙으로 저장 버튼을 막는다.
+   */
+  discount?: DecInput | null;
+  /** 이 줄에 붙일 태그. */
+  tagIds?: string[];
+}
+
+/** 조립이 검증을 마친 카테고리 줄. 금액은 차감을 뺀 순액이다. */
+interface ResolvedLine {
+  categoryId: string;
+  lineKey: string;
+  /** 차감을 뺀 순액. 언제나 0보다 크다. */
+  amount: Dec;
+  /** 이 줄에서 깎인 금액. 없으면 null. */
+  discount: Dec | null;
+  tagIds?: string[];
 }
 
 interface CommonBuildInput {
@@ -180,36 +229,29 @@ export interface ExpenseBuildInput extends CommonBuildInput {
   cardId?: string;
   installmentMonths?: number;
   /**
-   * 결제 그 자리에서 깎인 금액. 카드 포인트 사용, 자동할인, 그리고 **취소**가 든다.
-   *
-   * **분류를 묻지 않는다.** 정가에서 이 금액을 뺀 값이 분류 줄에 그대로 적히고, 깎인
-   * 금액 자체는 전표에 표시용으로 남는다 (`originalAmount` 와 같은 자리다). 다리를
-   * 따로 만들면 그 다리가 가리킬 분류를 사용자가 골라야 하는데, 차감은 "어디에 썼나"가
-   * 아니라 "얼마가 덜 나갔나"라 고를 것이 없다.
-   *
-   * 정가와 같아도 된다. 그때는 모든 다리가 0이 되어 0원 거래로 남는다 -- 전액 취소와
-   * 전액 포인트 결제가 그 모양이고, 있었던 일이므로 지우지 않는다.
-   *
-   * 통화는 정가와 같다(입력 통화). 전표에 그대로 적히므로 외화 결제에도 붙는다.
-   *
-   * 청구서에서 나중에 빠지는 신용카드 청구할인은 여기 들지 않는다. 그쪽은 결제
-   * 시점에 전액이 승인되어 부채가 그대로 잡히므로, 이 자리에서 깎으면 명세서와 어긋난다.
-   */
-  discount?: DecInput;
-  /**
    * 카드 실적에 셀지. 카드로 낼 때만 뜻이 있고 **기본은 포함**이다.
    *
    * 세금·공과금·상품권처럼 청구는 되지만 카드사가 실적에서 빼는 결제가 있다. 그때
    * 꺼 두면 갚을 대금은 그대로 두고 실적에서만 빠진다.
+   *
+   * **분할해도 하나다.** 카드사가 보는 것은 승인 한 건이라, 분류로 나눴다고 절반만
+   * 실적에 드는 일은 없다.
    */
   countsPerformance?: boolean;
   /**
    * 깎인 금액을 실적에서도 뺄지. **기본은 뺀다**.
    *
    * 다리가 이미 순액이라 그것이 지금까지의 동작이다. 카드사가 환불을 실적에서 빼지
-   * 않는 경우가 있어, 그때 꺼 두면 실적만 정가로 센다.
+   * 않는 경우가 있어, 그때 꺼 두면 실적만 정가로 센다. 깎인 금액은 줄마다 따로 적지만
+   * 이 선택은 카드사의 방침 하나라 거래에 둔다.
    */
   discountCountsPerformance?: boolean;
+  /**
+   * 거래 자체에 붙일 태그. 지출에는 쓰지 않는다 -- 태그는 줄에 붙는다(`lines[].tagIds`).
+   *
+   * 자리를 비워 두는 것은 갈래마다 입력 모양이 달라지지 않게 하기 위함이다.
+   */
+  tagIds?: string[];
 }
 
 export interface IncomeBuildInput extends CommonBuildInput {
@@ -231,6 +273,8 @@ export interface IncomeBuildInput extends CommonBuildInput {
    * 결제가 실적에 들어가 있었으므로 켜서 함께 빼 준다.
    */
   countsPerformance?: boolean;
+  /** 거래 자체에 붙일 태그. 수입도 태그는 줄에 붙으므로 쓰지 않는다. */
+  tagIds?: string[];
 }
 
 export interface TransferBuildInput extends CommonBuildInput {
@@ -241,6 +285,16 @@ export interface TransferBuildInput extends CommonBuildInput {
   toAmount?: DecInput;
   feeAmount?: DecInput;
   feeCategoryId?: string;
+  /** 수수료 줄의 신원. 수수료를 적었으면 함께 보낸다. */
+  feeLineKey?: string;
+  /**
+   * 이 거래에 붙일 태그.
+   *
+   * 이체는 분류 줄로 펴지 않으므로(목록도 한 줄이다) 태그가 거래 자체에 붙는다.
+   * 수수료 줄에 붙이지 않는 것은 그 줄이 목록에 서지 않기 때문이다 -- 붙여 두면
+   * 어디에도 보이지 않는 태그가 된다.
+   */
+  tagIds?: string[];
 }
 
 export interface CardTransferBuildInput extends CommonBuildInput {
@@ -248,6 +302,8 @@ export interface CardTransferBuildInput extends CommonBuildInput {
   accountId: string;
   amount: DecInput;
   direction: CardTransferDirection;
+  /** 이 거래에 붙일 태그. 분류 줄이 없어 거래 자체에 붙는다. */
+  tagIds?: string[];
 }
 
 // ───────────────────────────────────────────
@@ -280,23 +336,15 @@ export async function buildExpense(
     lookup,
   );
 
-  const gross = sum(lines.map((line) => line.amount));
-  // 빈 값은 "차감 없음"이다. 화면이 비운 칸을 그대로 실어 보내는 일이 있다.
-  const raw = input.discount;
-  const discount = raw === undefined || raw === null || raw === '' ? ZERO : Dec.of(raw);
-  assertDiscountValid(discount, gross);
-
   /*
-   * 차감은 줄마다 비율대로 빼서 **순액**을 만든다. 다리를 따로 만들지 않는다.
+   * 줄 금액은 이미 순액이다 (`resolveLines` 가 줄마다 차감을 뺀다).
    *
-   * `allocate` 가 끝수를 첫 줄에 몰아 주므로 줄 합계가 순액과 정확히 같다. 나누어
-   * 빼지 않고 한 줄에서만 빼면 분할 거래의 분류별 합계가 한쪽으로 쏠린다.
+   * 예전에는 전표에 차감 하나를 받아 줄마다 비율로 나눴다. 여행경비만 환불받아도
+   * 식비 줄이 함께 깎여, 분류별 분석이 사실과 어긋났다.
    */
-  const netLines = withDiscount(lines, gross, discount, entered);
-
-  const enteredTotal = sum(netLines.map((line) => line.amount));
+  const enteredTotal = sum(lines.map((line) => line.amount));
   const billed = resolveBilled(input.billedAmount, entered, account.currency, base);
-  const baseLines = toBaseLines(netLines, rate, base, billed);
+  const baseLines = toBaseLines(lines, rate, base, billed);
   const baseTotal = sum(baseLines.map((line) => line.baseAmount));
   const foreign = foreignNote(entered, account.currency, base, enteredTotal);
   // 청구액을 받았으면 추정이 아니다. 확정된 금액 그대로 들어간다.
@@ -305,7 +353,7 @@ export async function buildExpense(
   assertCanInstall(input.installmentMonths, source.isCreditCard);
 
   /*
-   * 전액이 빠져 0원이 된 거래에는 할부가 없다.
+   * 환산액이 0으로 내려앉은 거래에는 할부가 없다.
    *
    * 나눌 청구가 남아 있지 않다. 그대로 두면 회차가 전부 0원인 일정이 붙고, 서버의
    * `saveInstallmentPlan` 은 음수인 카드 다리를 찾지 못해 엉뚱한 오류를 던진다.
@@ -314,7 +362,7 @@ export async function buildExpense(
 
   const postings = [
     // 지출 발생 = + (언제나 기준통화)
-    ...baseLines.map((line) => baseLeg({ categoryId: line.categoryId }, line.baseAmount, base)),
+    ...baseLines.map((line) => categoryLeg(line, line.baseAmount, base)),
     // 자산 감소 또는 부채 증가 = -
     paymentLeg(source, account.currency, entered, rate, base, enteredTotal, baseTotal),
   ];
@@ -324,75 +372,43 @@ export async function buildExpense(
     ...foreign,
     rateProvisional: provisional,
     installmentMonths: months,
-    // 깎인 금액은 원장에 들어가지 않는다. 정가를 되살리는 데만 쓰는 표시값이다.
-    discountAmount: discount.isZero() ? null : discount,
     // 카드로 낸 지출은 기본이 실적 포함이다. 카드가 아니면 읽히지 않는 자리다.
     countsPerformance: source.cardId ? input.countsPerformance ?? true : true,
     /*
-     * 차감을 실적에서도 뺄지. 기본은 뺀다 (다리가 이미 순액이라 그것이 지금까지의 동작).
-     *
-     * 차감이 없으면 읽히지 않으므로 값을 가리지 않고 그대로 담는다 -- 사용자가 차감을
-     * 지웠다가 다시 적어도 고른 값이 남는다.
+     * 차감을 실적에서도 뺄지. 기본은 뺀다 (다리가 이미 순액이라 그것이 지금까지의
+     * 동작이다). 차감이 없으면 읽히지 않으므로 값을 가리지 않고 그대로 담는다 --
+     * 사용자가 차감을 지웠다가 다시 적어도 고른 값이 남는다.
      */
-    discountCountsPerformance: source.cardId ? input.discountCountsPerformance ?? true : true,
+    discountCountsPerformance: source.cardId
+      ? input.discountCountsPerformance ?? true
+      : true,
     postings,
   };
 }
 
 /**
- * 줄마다 비율대로 차감해 순액 줄을 만든다.
+ * 줄의 차감액이 쓸 수 있는 값인지 본다.
  *
- * 차감이 없으면 그대로 돌려준다. 정가와 같으면 모든 줄이 0이 되는데, 그 전표는
- * 통째로 0이라 원장 규칙이 받아들인다 (`checkPostings` 의 allZero).
- */
-function withDiscount(
-  lines: Array<{ categoryId: string; amount: Dec }>,
-  gross: Dec,
-  discount: Dec,
-  entered: string,
-): Array<{ categoryId: string; amount: Dec }> {
-  if (discount.isZero()) return lines;
-
-  const shares = allocate(
-    gross.minus(discount),
-    lines.map((line) => line.amount),
-    currencyDecimals(entered),
-  );
-
-  /*
-   * 일부 줄만 0으로 내려앉았는가.
-   *
-   * 분할의 한 줄이 아주 작고 차감이 크면 그 줄만 0이 된다. 전표가 통째로 0인 것과
-   * 달리 이것은 원장이 받지 않으므로(POSTING_ZERO_AMOUNT), 저장을 눌러 보고 알게
-   * 하지 않고 여기서 이유를 말해 준다.
-   */
-  const zeros = shares.filter((share) => share.isZero()).length;
-  if (zeros > 0 && zeros < shares.length) {
-    fail(
-      'DISCOUNT_SPLIT_ZERO',
-      '차감이 커서 일부 분류 줄이 0원이 됩니다. 차감액을 줄이거나 분류를 합쳐 주세요.',
-    );
-  }
-
-  return lines.map((line, index) => ({ ...line, amount: shares[index] }));
-}
-
-/**
- * 차감액이 쓸 수 있는 값인지 본다.
+ * **정가와 같아도 된다.** 그때 그 줄은 0원으로 남는다 -- 1,000원을 결제하고 1,000원을
+ * 돌려받은 일은 있었던 일이고, 카드 명세서에도 승인과 취소가 함께 남는다. 분할의 한
+ * 줄만 그렇게 되는 것도 같다(여행경비만 전액 환불되고 식비 줄은 남는다). 원장도 그
+ * 0원을 "환불로 그렇게 된 것"으로 가려 받는다 (`checkPostings` 의 zeroAllowed).
  *
- * 정가와 **같아도 된다**. 그때는 전표가 통째로 0이 되고, 그 모양은 원장 규칙이
- * 받아들인다 -- 전액 취소와 전액 포인트 결제가 실제로 그 모양이다. 넘으면 지출이
- * 아니라 입금이 되므로 막는다.
+ * 넘으면 지출이 아니라 입금이 되므로 막는다. 정가 자체가 0인 줄은 `resolveLines` 가
+ * 따로 막는다 -- 그것은 사람이 적을 수 없는 모양이다.
  *
  * **차감액의 통화는 입력 통화다.** 정가와 같은 칸에 적힌 값이라 그래야 뺄 수 있고,
  * 다시 열 때 정가를 되살리는 덧셈도 같은 통화 안에서 끝난다. 그래서 외화 결제에도
  * 그대로 붙는다 -- 전표의 표시값이라 기준통화로 옮길 이유가 없다.
  */
-function assertDiscountValid(discount: Dec, gross: Dec) {
+function assertDiscountValid(discount: Dec, gross: Dec, categoryId: string) {
   if (discount.isZero()) return;
   if (discount.isNegative()) fail('DISCOUNT_INVALID', '차감액은 0보다 커야 합니다.');
   if (discount.gt(gross)) {
-    fail('DISCOUNT_TOO_LARGE', '차감액은 결제 금액보다 클 수 없습니다.');
+    fail(
+      'DISCOUNT_TOO_LARGE',
+      `차감액은 그 줄의 금액보다 클 수 없습니다 (분류 ${categoryId}).`,
+    );
   }
 }
 
@@ -451,9 +467,7 @@ export async function buildIncome(
     // 카드로 들어온 돈은 기본이 실적 제외다. 쓴 돈이 아니라 받은 돈이기 때문이다.
     countsPerformance: source.cardId ? input.countsPerformance ?? false : true,
     postings: [
-      ...baseLines.map((line) =>
-        baseLeg({ categoryId: line.categoryId }, line.baseAmount.negated(), base),
-      ),
+      ...baseLines.map((line) => categoryLeg(line, line.baseAmount.negated(), base)),
       { ...outgoing, amount: outgoing.amount.negated(), baseAmount: outgoing.baseAmount.negated() },
     ],
   };
@@ -480,6 +494,9 @@ export async function buildTransfer(
   const fee = input.feeAmount === undefined ? ZERO : Dec.of(input.feeAmount);
   if (fee.gt(ZERO) && !input.feeCategoryId) {
     fail('TRANSFER_FEE_CATEGORY_REQUIRED', '수수료를 입력하려면 수수료 카테고리가 필요합니다.');
+  }
+  if (fee.gt(ZERO) && !input.feeLineKey) {
+    fail('LINE_KEY_REQUIRED', '수수료 줄의 키가 없습니다. 화면을 새로고침한 뒤 다시 저장해 주세요.');
   }
 
   const from = await requireAccount(input.projectId, input.fromAccountId, lookup);
@@ -562,14 +579,18 @@ export async function buildTransfer(
      */
     const [line] = await resolveLines(
       input.projectId,
-      [{ categoryId: input.feeCategoryId!, amount: fee }],
+      [{ categoryId: input.feeCategoryId!, amount: fee, lineKey: input.feeLineKey! }],
       'expense',
       lookup,
     );
-    postings.push(baseLeg({ categoryId: line.categoryId }, feeBase, base));
+    /*
+     * 수수료도 줄 키를 갖는다. 목록은 이체를 한 줄로 보여 주지만, 줄의 신원이 갈래마다
+     * 다르면 저장·동기화 규칙이 두 벌이 된다.
+     */
+    postings.push(categoryLeg(line, feeBase, base));
   }
 
-  return { ...common(input), postings };
+  return { ...common(input), postings, ...(input.tagIds ? { tagIds: input.tagIds } : {}) };
 }
 
 /**
@@ -619,6 +640,7 @@ export async function buildCardTransfer(
 
   return {
     ...common(input),
+    ...(input.tagIds ? { tagIds: input.tagIds } : {}),
     /*
      * 설명을 비우고 보내면 카드 이름으로 채운다.
      *
@@ -665,7 +687,16 @@ export interface EntryBuildRequest extends CommonBuildInput {
   kind: EntryKind | string;
   amount?: DecInput;
   categoryId?: string;
-  splits?: Array<{ categoryId: string; amount: DecInput }>;
+  splits?: Array<{
+    categoryId: string;
+    amount: DecInput;
+    /** 이 줄의 키. 화면이 만들어 편집 내내 들고 다닌다. */
+    lineKey: string;
+    /** 이 줄에서 깎인 금액. */
+    discountAmount?: DecInput;
+    /** 이 줄에 붙일 태그. */
+    tagIds?: string[];
+  }>;
   accountId?: string;
   toAccountId?: string;
   cardId?: string;
@@ -674,12 +705,28 @@ export interface EntryBuildRequest extends CommonBuildInput {
   transferFee?: DecInput;
   transferFeeCategoryId?: string;
   cardTransferDirection?: CardTransferDirection;
-  /** 결제 자리에서 깎인 금액. 분류는 묻지 않는다. */
+  /**
+   * 분류 줄 하나뿐인 거래의 줄 키. 화면이 만든다.
+   *
+   * 분할이면 `splits[].lineKey` 가 대신 쓰인다. 지출·수입에는 둘 중 하나가 반드시
+   * 있어야 하고, 없으면 조립이 거절한다.
+   */
+  lineKey?: string;
+  /** 분류 줄 하나뿐인 거래에서 그 줄이 깎인 금액. 분할이면 `splits[].discountAmount`. */
   discountAmount?: DecInput;
-  /** 카드 실적에 셀지. 생략하면 갈래의 기본값을 쓴다 (지출 포함, 수입 제외). */
+  /** 이 거래를 카드 실적에 셀지. **분할해도 하나다.** 생략하면 갈래의 기본값을 쓴다. */
   countsPerformance?: boolean;
-  /** 차감·취소 금액을 실적에서도 뺄지. 생략하면 뺀다. 지출에만 뜻이 있다. */
+  /** 차감 금액을 실적에서도 뺄지. **분할해도 하나다.** 생략하면 뺀다. */
   discountCountsPerformance?: boolean;
+  /** 이체 수수료 줄의 키. 수수료를 적었으면 함께 보낸다. */
+  transferFeeLineKey?: string;
+  /**
+   * 붙일 태그.
+   *
+   * 지출·수입이면 **그 거래의 분류 줄 하나**에 붙는다 (분할이면 `splits[].tagIds` 를
+   * 쓴다). 이체와 카드 대금 결제는 분류 줄이 없어 거래 자체에 붙는다.
+   */
+  tagIds?: string[];
 }
 
 export async function buildEntry(
@@ -695,7 +742,6 @@ export async function buildEntry(
           accountId: request.accountId,
           cardId: request.cardId,
           installmentMonths: request.installmentMonths,
-          discount: request.discountAmount,
           countsPerformance: request.countsPerformance,
           discountCountsPerformance: request.discountCountsPerformance,
         },
@@ -727,6 +773,8 @@ export async function buildEntry(
           toAmount: request.toAmount,
           feeAmount: request.transferFee,
           feeCategoryId: request.transferFeeCategoryId,
+          feeLineKey: request.transferFeeLineKey,
+          tagIds: request.tagIds,
         },
         lookup,
       );
@@ -751,6 +799,7 @@ export async function buildEntry(
           accountId: request.accountId!,
           amount: requireAmount(request.amount, '카드 대금'),
           direction: request.cardTransferDirection ?? 'payment',
+          tagIds: request.tagIds,
         },
         lookup,
       );
@@ -760,19 +809,35 @@ export async function buildEntry(
   }
 }
 
-/** 분할이 있으면 그것을, 없으면 단일 카테고리를 한 줄짜리 분할로 취급한다. */
+/**
+ * 분할이 있으면 그것을, 없으면 단일 카테고리를 한 줄짜리 분할로 취급한다.
+ *
+ * 한 줄짜리 거래에서는 줄에 달리는 것(키·차감·태그)이 요청의 맨 위에 있다. 분류를
+ * 하나만 고른 사람에게 "줄"이라는 개념을 보여 줄 까닭이 없어서다.
+ *
+ * 실적 두 칸은 분할이든 아니든 언제나 맨 위다. 줄에 달리는 값이 아니기 때문이다.
+ */
 function resolveRequestLines(request: EntryBuildRequest): CategoryLine[] {
   if (request.splits?.length) {
     return request.splits.map((split) => ({
       categoryId: split.categoryId,
       amount: split.amount,
+      lineKey: split.lineKey,
+      discount: split.discountAmount,
+      tagIds: split.tagIds,
     }));
   }
 
   if (!request.categoryId) fail('CATEGORY_REQUIRED', '카테고리를 지정해야 합니다.');
 
   return [
-    { categoryId: request.categoryId!, amount: requireAmount(request.amount, '금액') },
+    {
+      categoryId: request.categoryId!,
+      amount: requireAmount(request.amount, '금액'),
+      lineKey: request.lineKey!,
+      discount: request.discountAmount,
+      tagIds: request.tagIds,
+    },
   ];
 }
 
@@ -853,6 +918,24 @@ function foreignNote(
 ): { originalCurrency?: string; originalAmount?: Dec } {
   if (entered === accountCurrency || entered === base) return {};
   return { originalCurrency: entered, originalAmount: enteredTotal };
+}
+
+/**
+ * 분류 다리 하나. 줄에 달린 것(키·차감·실적·태그)을 함께 싣는다.
+ *
+ * 금액은 언제나 기준통화다. 그래야 "8월 식비"가 통화별로 쪼개지지 않는다.
+ */
+function categoryLeg(line: ResolvedLine, amount: Dec, base: string): BuiltPosting {
+  return {
+    categoryId: line.categoryId,
+    lineKey: line.lineKey,
+    amount,
+    currency: base,
+    exchangeRate: ONE,
+    baseAmount: amount,
+    ...(line.discount ? { discountAmount: line.discount } : {}),
+    ...(line.tagIds ? { tagIds: line.tagIds } : {}),
+  };
 }
 
 /** 기준통화로 기록되는 다리 (카테고리, 자본 계정) */
@@ -1007,8 +1090,25 @@ async function resolveLines(
   lines: readonly CategoryLine[],
   expectedType: 'income' | 'expense',
   lookup: LedgerLookup,
-): Promise<Array<{ categoryId: string; amount: Dec }>> {
+): Promise<ResolvedLine[]> {
   if (lines.length === 0) fail('CATEGORY_REQUIRED', '카테고리를 최소 하나 지정해야 합니다.');
+
+  /*
+   * 줄 키가 없으면 거절한다. 조립이 대신 만들지 않는다.
+   *
+   * 만들어 주면 저장은 되지만 그 줄의 태그와 차감이 옛 키에 매달린 채 남는다. 화면이
+   * 키를 잃은 것이 원인이므로, 조용히 메우지 말고 그 자리에서 알려야 한다.
+   */
+  const seen = new Set<string>();
+  for (const line of lines) {
+    if (!line.lineKey) {
+      fail('LINE_KEY_REQUIRED', '분류 줄의 키가 없습니다. 화면을 새로고침한 뒤 다시 저장해 주세요.');
+    }
+    if (seen.has(line.lineKey)) {
+      fail('LINE_KEY_DUPLICATE', '한 거래 안에서 분류 줄의 키가 겹칩니다.');
+    }
+    seen.add(line.lineKey);
+  }
 
   const found = await lookup.categories(projectId, lines.map((line) => line.categoryId));
   const byId = new Map(found.map((category) => [category.id, category]));
@@ -1025,10 +1125,22 @@ async function resolveLines(
       );
     }
 
-    const amount = Dec.of(line.amount);
-    if (amount.lte(ZERO)) fail('AMOUNT_INVALID', '금액은 0보다 커야 합니다.');
+    const gross = Dec.of(line.amount);
+    if (gross.lte(ZERO)) fail('AMOUNT_INVALID', '금액은 0보다 커야 합니다.');
 
-    return { categoryId: line.categoryId, amount };
+    // 빈 값은 "차감 없음"이다. 화면이 비운 칸을 그대로 실어 보내는 일이 있다.
+    const raw = line.discount;
+    const discount = raw === undefined || raw === null || raw === '' ? ZERO : Dec.of(raw);
+    assertDiscountValid(discount, gross, line.categoryId);
+
+    return {
+      categoryId: line.categoryId,
+      lineKey: line.lineKey,
+      // 원장에 들어가는 것은 순액이다. 정가는 차감액과 더해 되살린다.
+      amount: gross.minus(discount),
+      discount: discount.isZero() ? null : discount,
+      tagIds: line.tagIds,
+    };
   });
 }
 

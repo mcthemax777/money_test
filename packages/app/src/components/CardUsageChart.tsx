@@ -51,6 +51,8 @@ export default function CardUsageChart({
   target,
   cardId,
   measure,
+  selectedKey,
+  onSelectPeriod,
 }: {
   periods: CardUsagePeriod[];
   /** 사용액·기준액의 통화 (= 결제 통장의 통화) */
@@ -66,6 +68,12 @@ export default function CardUsageChart({
    * 따로 그린다. 청구액 쪽에는 기준선이 없으므로 `target` 을 null 로 준다.
    */
   measure?: CardUsageMeasure;
+  /** 지금 고른 주기 ('YYYY-MM'). 아래 목록에서 그 줄이 눌린 것으로 그려진다. */
+  selectedKey?: string | null;
+  /** 주기를 누를 때. 이미 고른 주기를 다시 누르면 null 이 온다. */
+  onSelectPeriod?: (
+    period: { closingKey: string; periodStart: string; periodEnd: string } | null,
+  ) => void;
 }) {
   const { t } = useTranslation();
   const usage = useCardUsageWindow(periods, target, cardId, undefined, measure);
@@ -291,20 +299,60 @@ export default function CardUsageChart({
         눌러 보지 않으면 읽을 수 없었다.
       */}
       <View className="mt-3 border-t border-gray-100">
-        {bars.map((bar) => (
-          <View
-            key={`row-${bar.key}`}
-            className="flex-row items-center justify-between gap-3 border-b border-gray-100 py-1.5"
-          >
-            <Text className="shrink text-xs text-gray-500" numberOfLines={1}>
-              {bar.range}
-            </Text>
-            <Text className="text-sm font-medium text-gray-900">
-              {formatCurrency(bar.amount, currency)}
-            </Text>
-          </View>
-        ))}
+        {bars.map((bar) => {
+          const chosen = selectedKey === bar.closingKey;
+          /*
+            누르면 아래 내역이 그 주기만 남는다. 한 번 더 누르면 풀린다.
+
+            줄 자체가 단추다. 옆에 따로 단추를 두면 "이 줄을 누르면 무엇이 되는가"가
+            줄마다 두 갈래가 된다.
+          */
+          return (
+            <Pressable
+              key={`row-${bar.key}`}
+              onPress={
+                onSelectPeriod
+                  ? () =>
+                      onSelectPeriod(
+                        chosen
+                          ? null
+                          : {
+                              closingKey: bar.closingKey,
+                              periodStart: bar.periodStart,
+                              periodEnd: bar.periodEnd,
+                            },
+                      )
+                  : undefined
+              }
+              disabled={!onSelectPeriod}
+              className={`flex-row items-center justify-between gap-3 border-b border-gray-100 px-1 py-1.5 ${
+                chosen ? 'bg-blue-50' : ''
+              }`}
+            >
+              <Text
+                className={`shrink text-xs ${chosen ? 'text-blue-700' : 'text-gray-500'}`}
+                numberOfLines={1}
+              >
+                {bar.range}
+              </Text>
+              <Text
+                className={`text-sm font-medium ${chosen ? 'text-blue-700' : 'text-gray-900'}`}
+              >
+                {formatCurrency(bar.amount, currency)}
+              </Text>
+            </Pressable>
+          );
+        })}
       </View>
+      {onSelectPeriod ? (
+        <Text className="mt-1 text-xs text-gray-500">
+          {selectedKey
+            ? t('settlement.periodPicked', {
+                range: bars.find((bar) => bar.closingKey === selectedKey)?.range ?? '',
+              })
+            : t('settlement.periodPickHint')}
+        </Text>
+      ) : null}
     </View>
   );
 }

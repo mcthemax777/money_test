@@ -49,14 +49,16 @@ export interface CardUsagePosting {
   /**
    * 이 거래를 실적에 세는가. 없으면 센 것으로 본다.
    *
-   * 청구액과는 다른 값이다 -- 꺼져 있어도 청구는 그대로 되므로 `billed` 에는 들어가고
-   * `usage` 에서만 빠진다.
+   * **분할해도 하나다.** 카드사가 보는 것은 승인 한 건이라, 분류로 나눴다고 절반만
+   * 실적에 드는 일은 없다. 청구액과도 다른 값이다 -- 꺼져 있어도 청구는 그대로 되므로
+   * `billed` 에는 들어가고 `usage` 에서만 빠진다.
    */
   countsPerformance?: boolean;
   /**
    * 결제 자리에서 깎인 금액 (포인트·자동할인·취소). 양수다.
    *
-   * 다리 금액은 이미 깎인 뒤의 값이라, 실적을 정가로 셀 때 여기서 되살린다.
+   * 깎인 금액은 줄마다 따로 적히므로(`Posting.discountAmount`) 부르는 쪽이 그 합을
+   * 담는다. 다리 금액은 이미 깎인 뒤의 값이라, 실적을 정가로 셀 때 여기서 되살린다.
    */
   discountAmount?: DecInput | null;
   /**
@@ -243,6 +245,7 @@ export function creditUsagePeriods(input: CreditUsageInput): CreditUsageResult {
       paymentDueDay,
     );
     periods.push({
+      closingKey: closingMonthKey(cursor),
       periodStart: period.periodStart.toISOString(),
       periodEnd: period.periodEnd.toISOString(),
       dueDate: period.dueDate.toISOString(),
@@ -297,6 +300,7 @@ export function debitUsagePeriods(input: DebitUsageInput): CardDto.UsagePeriod[]
     const key = `${year}-${String(month).padStart(2, '0')}`;
 
     periods.push({
+      closingKey: key,
       // 달력 날짜 표시자. 청구 주기 쪽과 같은 형태로 맞춘다 (그 달 1일 ~ 말일).
       periodStart: new Date(Date.UTC(year, month - 1, 1)).toISOString(),
       periodEnd: new Date(Date.UTC(year, month, 0)).toISOString(),

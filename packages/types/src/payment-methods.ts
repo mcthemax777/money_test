@@ -20,6 +20,7 @@
 import { Dec } from './decimal';
 import type { ReportDto } from './dtos';
 import type { AccountType, EntryListItem } from './entities';
+import { matchedAmountOf } from './entry-rows';
 
 /**
  * 사용자가 "통장"으로 인식하지 않는 내부 계정.
@@ -154,7 +155,13 @@ export function paymentMethods(
 
   // 필터가 아무것도 고르지 않았으면 금액은 없지만 목록은 그대로 둔다.
   for (const item of matchNothing ? [] : items) {
-    const amount = Dec.of(item.amount || 0);
+    /*
+     * 걸린 줄만 센다.
+     *
+     * 분류나 태그로 좁힌 화면은 걸린 줄만 보여 준다. 거래 전체를 더하면 목록에 5,000원
+     * 한 줄이 서 있는데 그 카드 줄에는 10,000원이 적힌다.
+     */
+    const amount = Dec.of(matchedAmountOf(item) || 0);
 
     /*
      * 셀 몫이 없으면 건수도 세지 않는다. "0원인데 3건"이 되지 않게 한다.

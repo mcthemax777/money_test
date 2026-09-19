@@ -41,6 +41,7 @@ import {
   SUPPORTED_CURRENCIES,
   isCurrencyCode,
   ledgerMaxEntryDateKey,
+  newLineKey,
   zonedFormValueToUtc,
   type CardTransferDirection,
   type CurrencyCode,
@@ -95,12 +96,43 @@ function installmentOptions(t: ReturnType<typeof useTranslation>['t']) {
 interface EntryFormSplitRow {
   mainCategoryId: string;
   subCategoryId: string;
+  /** 정가. 차감을 빼기 전의 값이다. */
   amount: string;
+  /**
+   * 이 줄의 신원. 줄을 더하는 순간 붙고, 편집 내내 바뀌지 않는다.
+   *
+   * 저장할 때마다 서버가 다리를 지우고 새로 만들기 때문에 다리 id 로는 줄을 가리킬 수
+   * 없다. 줄에 붙는 것(태그·차감)이 이 키에 매달리고, 서버는 키 없는 요청을 거절한다.
+   */
+  lineKey: string;
+  /** 이 줄에서 깎인 금액. 정가보다 클 수 없다. 같으면 그 줄이 0원으로 남는다. */
+  discountAmount: string;
+  /** 이 줄에 붙일 태그. 나눈 두 줄이 서로 다른 태그를 가질 수 있다. */
+  tagIds: string[];
 }
 
-/** 빈 분할 줄. */
+/** 나눈 거래인가. 줄이 둘 이상인 지출·수입이다. */
+function isSplitEntry(entry: EntryListItem): boolean {
+  return (entry.kind === 'expense' || entry.kind === 'income') && entry.splitCount > 1;
+}
+
+/** 이 거래의 폼 갈래. 카드 대금 결제는 이체 폼으로 편다. */
+function kindOf(entry: EntryListItem): 'expense' | 'income' | 'transfer' {
+  if (entry.kind === 'income') return 'income';
+  if (entry.kind === 'expense') return 'expense';
+  return 'transfer';
+}
+
+/** 빈 분할 줄. 줄 키는 여기서 붙는다. */
 function blankSplitRow(): EntryFormSplitRow {
-  return { mainCategoryId: '', subCategoryId: '', amount: '' };
+  return {
+    mainCategoryId: '',
+    subCategoryId: '',
+    amount: '',
+    lineKey: newLineKey(),
+    discountAmount: '',
+    tagIds: [],
+  };
 }
 
 /**
@@ -197,6 +229,13 @@ function emptyEntryForm(timeZone: string, ledgerCurrency: CurrencyCode) {
      * 줄이 있는 동안에는 위의 대분류·소분류를 쓰지 않는다. 저장도 줄들만 보낸다.
      */
     splits: [] as EntryFormSplitRow[],
+    /**
+     * 분류 하나짜리 거래의 줄 키. 나눈 거래는 줄마다 따로 든다.
+     *
+     * 폼을 열 때 정해지고 저장할 때까지 바뀌지 않는다. 이 값이 이어져야 그 줄에 붙은
+     * 태그와 차감이 수정을 건너 살아남는다.
+     */
+    lineKey: newLineKey(),
   };
 }
 
@@ -770,10 +809,18 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         prev.splits.length > 0
           ? [...prev.splits, blankSplitRow()]
           : [
+              /*
+               * 첫 줄은 지금까지 적은 값을 그대로 물려받는다. **줄 키도 함께 옮긴다** --
+               * 이미 저장된 거래를 나누는 중이면, 그 키에 붙어 있던 태그와 차감이 첫
+               * 줄에 그대로 이어져야 한다.
+               */
               {
                 mainCategoryId: prev.mainCategoryId,
                 subCategoryId: prev.subCategoryId,
                 amount: prev.amount,
+                lineKey: prev.lineKey,
+                discountAmount: prev.discountAmount,
+                tagIds: prev.tagIds,
               },
               blankSplitRow(),
             ],
@@ -843,14 +890,19 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     }
 
     /*
-     * 차감·취소. 정가보다 클 수 없다.
+     * 차감·취소. **정가보다 클 수 없다.**
      *
-     * 같아도 된다 -- 전액을 깎으면 0원 거래로 남고, 전액 취소와 전액 포인트 결제가
-     * 그 모양이다. 넘으면 지출이 아니라 입금이 되어 서버가 막는다.
+     * 같아도 된다 -- 그때 그 줄은 0원으로 남고, 전액 환불이 그 모양이다. 넘으면
+     * 지출이 아니라 입금이 되어 서버가 거절하므로 여기서 먼저 막는다.
      */
     if (formData.type === 'expense') {
-      const discount = toNumber(formData.discountAmount);
-      if (discount > toNumber(formData.amount)) {
+      const lines = hasSplits
+        ? formData.splits.map((split) => ({
+            discount: toNumber(split.discountAmount),
+            amount: toNumber(split.amount),
+          }))
+        : [{ discount: toNumber(formData.discountAmount), amount: toNumber(formData.amount) }];
+      if (lines.some((line) => line.discount > line.amount)) {
         setError(t('entryForm.discountTooLarge'));
         return;
       }
@@ -954,46 +1006,48 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
           // 수수료는 소분류가 있으면 소분류를, 없으면 대분류를 쓴다
           payload.transferFeeCategoryId =
             formData.transferFeeSubCategoryId || formData.transferFeeMainCategoryId;
+          // 수수료도 분류 줄이라 키를 갖는다. 폼의 줄 키를 그대로 쓴다.
+          payload.transferFeeLineKey = formData.lineKey;
         }
       } else {
         // 결제수단은 계좌와 카드 중 하나만 보낸다. 둘 다 보내면 서버가 거부한다.
         if (useCard) payload.cardId = formData.cardId;
         else payload.accountId = formData.accountId;
         // posting은 가장 구체적인 카테고리 하나만 가리킨다
+        /** 그 줄에서 깎인 금액. 지출에만 싣는다. */
+        const lineDiscount = (discountAmount: string) =>
+          kind === 'expense' && toNumber(discountAmount) > 0
+            ? { discountAmount: toAmountString(discountAmount) }
+            : {};
+
         if (hasSplits) {
           // 나눈 줄이 있으면 대표 분류는 보내지 않는다. 줄마다 따로 있기 때문이다.
           payload.splits = formData.splits.map((split) => ({
             categoryId: split.subCategoryId || split.mainCategoryId,
             amount: toAmountString(split.amount),
+            lineKey: split.lineKey,
+            // 태그도 줄마다 싣는다. 비었어도 뺄 수 없다 -- 생략은 "비운다"로 읽힌다.
+            tagIds: split.tagIds,
+            ...lineDiscount(split.discountAmount),
           }));
+          // 나눈 거래는 줄마다 태그가 다르다. 거래 단위 목록은 싣지 않는다.
+          delete payload.tagIds;
         } else {
           payload.categoryId = formData.subCategoryId || formData.mainCategoryId;
-        }
-        // 할부는 신용카드 지출에만 붙는다. 2개월 미만이면 일시불이라 보내지 않는다.
-        // canInstall이 카드 종류까지 본다. 체크카드로 바꾼 뒤 남은 값이 새지 않게 막는다.
-        const months = Number(formData.installmentMonths);
-        if (canInstall && months >= 2) payload.installmentMonths = months;
-
-        /*
-         * 즉시 차감과 되돌린 결제. 지출에만 싣는다.
-         *
-         * 이 가지는 수입도 함께 지나가므로 갈래를 한 번 더 본다. 유형을 옮기면 폼이
-         * 값을 비우지만, 비우기가 늦는 자리가 생기면 수입에 차감이 실린다.
-         */
-        if (kind === 'expense' && toNumber(formData.discountAmount) > 0) {
-          payload.discountAmount = toAmountString(formData.discountAmount);
+          // 그 줄의 키. 이 값이 이어져야 줄에 붙은 태그와 차감이 살아남는다.
+          payload.lineKey = formData.lineKey;
+          Object.assign(payload, lineDiscount(formData.discountAmount));
         }
 
         /*
-         * 카드 실적. 카드로 냈고 기본값과 다를 때만 싣는다.
+         * 카드 실적 두 칸. **분할이든 아니든 거래에 하나씩이다.**
          *
-         * 기본값은 서버가 갈래를 보고 정하므로 같은 값을 굳이 보내지 않는다. 짐만 보고도
-         * 사용자가 손댄 자리가 드러난다.
+         * 카드로 냈고 기본값과 다를 때만 싣는다. 기본값은 서버가 갈래를 보고 정하므로
+         * 같은 값을 굳이 보내지 않는다 -- 짐만 보고도 사용자가 손댄 자리가 드러난다.
          */
         if (useCard && formData.countsPerformance !== defaultCountsPerformance(kind)) {
           payload.countsPerformance = formData.countsPerformance;
         }
-
         /*
          * 차감을 실적에서 빼지 않기로 한 것. 그 칸이 화면에 떠 있었을 때만 싣는다.
          *
@@ -1003,7 +1057,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         if (
           showDiscountPerformance({
             kind,
-            discountAmount: formData.discountAmount,
+            discountAmount: totalDiscount,
             countsPerformance: formData.countsPerformance,
             isCard: useCard,
             isLedgerCurrency: formData.currency === ledgerCurrency,
@@ -1012,6 +1066,12 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         ) {
           payload.discountCountsPerformance = false;
         }
+
+        // 할부는 신용카드 지출에만 붙는다. 2개월 미만이면 일시불이라 보내지 않는다.
+        // canInstall이 카드 종류까지 본다. 체크카드로 바꾼 뒤 남은 값이 새지 않게 막는다.
+        const months = Number(formData.installmentMonths);
+        if (canInstall && months >= 2) payload.installmentMonths = months;
+
       }
 
       let savedId: string | null = editingId;
@@ -1103,6 +1163,18 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
   const hasSplits =
     formData.type !== 'transfer' && formData.splits.length > 0;
 
+  /**
+   * 이 거래에서 깎인 금액의 합.
+   *
+   * 분할이면 줄마다 적은 값을 더한 것이 그 거래의 차감이다. "차감을 실적에서 뺄지"는
+   * 거래에 하나뿐이라 그 판단에 이 합을 쓴다.
+   */
+  const totalDiscount = String(
+    hasSplits
+      ? formData.splits.reduce((sum, split) => sum + toNumber(split.discountAmount), 0)
+      : toNumber(formData.discountAmount),
+  );
+
   /** 지금 유형의 대분류. 대표 분류 칸과 나눈 줄이 함께 쓴다. */
   const mainCategoryOptions = useMemo(
     () =>
@@ -1155,6 +1227,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     return magnitude.plus(toAmountString(entry.discountAmount)).toString();
   };
 
+  /** 줄 하나의 정가. 목록이 주는 줄 금액도 차감을 뺀 뒤의 값이다. */
+  const grossOfLine = (line: { amount: string; discountAmount: string | null }): string => {
+    if (!line.discountAmount) return line.amount;
+    return Dec.of(toAmountString(line.amount))
+      .plus(toAmountString(line.discountAmount))
+      .toString();
+  };
+
   /**
    * 있는 거래를 폼 값으로 되돌린다.
    *
@@ -1165,6 +1245,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
   const formValuesOf = (entry: EntryListItem) => {
     const category = splitCategory(entry.categoryId);
     const fee = splitCategory(entry.feeCategoryId);
+    // 분류 하나짜리 거래의 그 줄. 이체·카드 대금 결제에는 없다.
+    const only = isSplitEntry(entry) ? null : entry.lines[0] ?? null;
 
     /*
      * 청구액을 되돌려 놓을 수 있는 거래인지.
@@ -1240,21 +1322,35 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
        *
        * 통화는 위 `amount` 와 같다 -- 외화 거래면 둘 다 그 외화다.
        */
-      discountAmount: entry.discountAmount ?? '',
+      /*
+       * 줄에 달린 값들. 분류 하나짜리 거래는 그 줄의 것을 그대로 든다.
+       *
+       * 나눈 거래는 아래 `splits` 가 줄마다 들고, 여기 담긴 것은 줄을 새로 더할 때 쓰는
+       * 기본값으로만 남는다. 이체와 카드 대금 결제에는 분류 줄이 없어 빈 값이다.
+       */
+      lineKey: only?.lineKey ?? newLineKey(),
+      discountAmount: only?.discountAmount ?? '',
+      // 실적 두 칸은 거래에 하나씩이다. 분할이어도 여기서 든다.
       countsPerformance: entry.countsPerformance,
       discountCountsPerformance: entry.discountCountsPerformance,
-      tagIds: entry.tags.map((tag) => tag.id),
+      tagIds: isSplitEntry(entry) ? [] : (only?.tags ?? entry.tags).map((tag) => tag.id),
       /*
-       * 나눈 줄. 목록이 줄 전부를 실어 줄 때만 되살린다.
+       * 나눈 줄.
        *
        * 대표 분류(`categoryId`)는 그중 첫 줄이라, 그것만 폼에 담아 저장하면 나머지
        * 줄이 조용히 사라진다. 줄이 실려 오지 않은 분할은 아예 열지 않는다
        * (`handleEditClick`).
        */
-      splits: (entry.splits ?? []).map((split) => ({
-        ...splitCategory(split.categoryId),
-        amount: split.amount,
-      })),
+      splits: isSplitEntry(entry)
+        ? entry.lines.map((line) => ({
+            ...splitCategory(line.categoryId),
+            // 폼은 정가를 든다. 목록의 금액은 차감을 뺀 뒤의 값이다.
+            amount: grossOfLine(line),
+            lineKey: line.lineKey,
+            discountAmount: line.discountAmount ?? '',
+            tagIds: line.tags.map((tag) => tag.id),
+          }))
+        : [],
     };
   };
 
@@ -1271,9 +1367,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
      * 않으면 적어도 있던 거래가 그 자리에 남는다. 앱도 같은 규칙이다
      * (core 의 entryFormValuesOf).
      */
-    const isSplit =
-      (entry.kind === 'expense' || entry.kind === 'income') && entry.splitCount > 1;
-    if (isSplit && !entry.splits?.length) {
+    if (isSplitEntry(entry) && entry.lines.length !== entry.splitCount) {
       setError(t('editor.notEditable'));
       return;
     }
@@ -1930,6 +2024,126 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                             }
                             addButtonLabel={t('editor.addChildCategory')}
                           />
+
+                          {/*
+                            이 줄에서 깎인 금액.
+
+                            줄마다 따로 받는다. 여행경비만 환불받았는데 비율로 나누면
+                            식비 줄까지 함께 깎여, 분류별 분석이 사실과 어긋난다.
+                          */}
+                          {formData.type === 'expense' && (
+                            <div>
+                              <label className="mb-1 block text-xs font-medium text-gray-500">
+                                {t('editor.discount')}
+                              </label>
+                              <input
+                                type="number"
+                                value={split.discountAmount}
+                                onChange={(e) =>
+                                  updateSplitRow(index, { discountAmount: e.target.value })
+                                }
+                                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                placeholder="0"
+                              />
+                              {toNumber(split.discountAmount) > 0 && (
+                                <p className="mt-1 text-xs font-medium text-gray-700">
+                                  {t('editor.netAmount', {
+                                    amount: formatCurrency(
+                                      toNumber(split.amount) - toNumber(split.discountAmount),
+                                      formData.currency,
+                                    ),
+                                  })}
+                                </p>
+                              )}
+
+                              {/*
+                                깎인 만큼 실적도 줄일지. 환불액을 적은 줄 바로 아래에 둔다.
+
+                                **값은 거래에 하나뿐이다.** 깎인 금액은 줄마다 다르지만
+                                그것을 실적에서 뺄지는 카드사의 방침 하나라, 어느 줄의
+                                체크를 건드려도 나머지 줄의 체크가 같이 움직인다.
+                              */}
+                              {showDiscountPerformance({
+                                kind: 'expense',
+                                discountAmount: split.discountAmount,
+                                countsPerformance: formData.countsPerformance,
+                                isCard: formData.method === 'card' && Boolean(formData.cardId),
+                                isLedgerCurrency: formData.currency === ledgerCurrency,
+                              }) && (
+                                <label className="mt-2 flex items-start gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={formData.discountCountsPerformance}
+                                    onChange={(e) =>
+                                      setFormData({
+                                        ...formData,
+                                        discountCountsPerformance: e.target.checked,
+                                      })
+                                    }
+                                    className="mt-0.5 h-4 w-4"
+                                  />
+                                  <span className="flex-1 text-xs text-gray-600">
+                                    {t('editor.discountCountsPerformance')}
+                                  </span>
+                                </label>
+                              )}
+                            </div>
+                          )}
+
+                          {/*
+                            이 줄의 태그.
+
+                            태그가 줄에 붙으므로 여기서 고른다. 나눈 두 줄이 서로 다른
+                            태그를 갖는 것이 이 바꿈의 요점이다 -- "이 결제는 여행이었다"가
+                            여행경비 줄의 사실이지 식비 줄의 사실은 아니다.
+                          */}
+                          {tags.length > 0 && (
+                            <div>
+                              <span className="mb-1 block text-xs font-medium text-gray-500">
+                                {t('tags.pick')}
+                              </span>
+                              <div className="flex flex-wrap gap-1.5">
+                                {tags.map((tag) => {
+                                  const isSelected = split.tagIds.includes(tag.id);
+                                  return (
+                                    <button
+                                      key={tag.id}
+                                      type="button"
+                                      aria-pressed={isSelected}
+                                      onClick={() =>
+                                        setFormData((previous) => ({
+                                          ...previous,
+                                          splits: previous.splits.map((row, at) =>
+                                            at === index
+                                              ? {
+                                                  ...row,
+                                                  tagIds: row.tagIds.includes(tag.id)
+                                                    ? row.tagIds.filter((id) => id !== tag.id)
+                                                    : [...row.tagIds, tag.id],
+                                                }
+                                              : row,
+                                          ),
+                                        }))
+                                      }
+                                      className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs transition active:scale-95 motion-reduce:transition-none motion-reduce:active:scale-100 ${
+                                        isSelected
+                                          ? 'border-blue-600 bg-blue-50 font-medium text-blue-600'
+                                          : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                                      }`}
+                                    >
+                                      {tag.color && (
+                                        <span
+                                          className="h-2 w-2 rounded-full"
+                                          style={{ backgroundColor: tag.color }}
+                                        />
+                                      )}
+                                      {tag.name}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          )}
                         </div>
                       ))}
 
@@ -2176,7 +2390,11 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               {/*
                 태그가 하나도 없어도 이 자리는 선다. 만드는 길이 여기뿐이라, 비었다고
                 접으면 첫 태그를 만들 곳이 없다.
+
+                **나눈 거래에서는 감춘다.** 그때는 태그가 줄마다 붙으므로 위의 줄 칸에서
+                고른다. 둘이 함께 보이면 어느 쪽이 저장되는지 알 수 없다.
               */}
+              {!hasSplits && (
               <div>
                 <div className="mb-1 flex items-center justify-between gap-2">
                   <span className="block text-sm font-medium text-gray-700">{t('tags.pick')}</span>
@@ -2240,6 +2458,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   <p className="mt-1 text-xs text-gray-500">{t('tags.pickHint')}</p>
                 ) : null}
               </div>
+              )}
 
               {/*
                 할부. 자주 쓰는 값이 아니라 폼 맨 아래에 둔다.
@@ -2271,8 +2490,11 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 셋은 전표에서 같은 모양이다 -- 정가는 위 금액 칸에 그대로 두고, 여기에는
                 덜 나간 몫을 적는다. 전액을 적으면 0원 거래로 남는다. 지우지 않는 것은
                 있었던 일이기 때문이다.
+
+                **나눈 거래에서는 감춘다.** 그때는 깎인 금액을 줄마다 적으므로(위의 줄
+                칸) 여기 한 칸을 더 두면 어느 쪽이 저장되는지 알 수 없다.
               */}
-              {formData.type === 'expense' && (
+              {formData.type === 'expense' && !hasSplits && (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     {t('editor.discount')}
@@ -2288,58 +2510,60 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   />
                   <p className="mt-1 text-xs text-gray-500">{t('editor.discountHint')}</p>
 
+                  {/* 실제로 빠지는 금액. 저장하고 목록에서 보고서야 알게 하지 않는다. */}
                   {toNumber(formData.discountAmount) > 0 && (
-                    <div className="mt-2 space-y-2">
-                      {/* 실제로 빠지는 금액. 저장하고 목록에서 보고서야 알게 하지 않는다. */}
-                      <p className="text-xs font-medium text-gray-700">
-                        {t('editor.netAmount', {
-                          amount: formatCurrency(
-                            toNumber(formData.amount) - toNumber(formData.discountAmount),
-                            formData.currency,
-                          ),
-                        })}
-                      </p>
-
-                      {/*
-                        깎인 만큼 실적도 줄일지. 기본은 줄인다 -- 다리가 이미 순액이라
-                        그것이 지금까지의 동작이다. 카드사가 환불을 실적에서 빼지 않는
-                        경우가 있어, 끄면 실적만 정가로 센다.
-
-                        거래 자체를 실적에서 뺐으면 뜨지 않는다. 그때는 어느 쪽이든
-                        실적이 움직이지 않아 물을 것이 없다.
-                      */}
-                      {showDiscountPerformance({
-                        kind: 'expense',
-                        discountAmount: formData.discountAmount,
-                        countsPerformance: formData.countsPerformance,
-                        isCard: formData.method === 'card' && Boolean(formData.cardId),
-                        isLedgerCurrency: formData.currency === ledgerCurrency,
-                      }) && (
-                        <label className="flex items-start gap-2 rounded-lg border border-gray-200 p-3 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            checked={formData.discountCountsPerformance}
-                            onChange={(e) =>
-                              setFormData({
-                                ...formData,
-                                discountCountsPerformance: e.target.checked,
-                              })
-                            }
-                            className="mt-0.5 h-4 w-4"
-                          />
-                          <span className="flex-1">
-                            <span className="block text-sm text-gray-900">
-                              {t('editor.discountCountsPerformance')}
-                            </span>
-                            <span className="mt-0.5 block text-xs text-gray-500">
-                              {t('editor.discountCountsPerformanceHint')}
-                            </span>
-                          </span>
-                        </label>
-                      )}
-                    </div>
+                    <p className="mt-2 text-xs font-medium text-gray-700">
+                      {t('editor.netAmount', {
+                        amount: formatCurrency(
+                          toNumber(formData.amount) - toNumber(formData.discountAmount),
+                          formData.currency,
+                        ),
+                      })}
+                    </p>
                   )}
                 </div>
+              )}
+
+              {/*
+                깎인 만큼 실적도 줄일지. 기본은 줄인다 -- 다리가 이미 순액이라 그것이
+                지금까지의 동작이다. 카드사가 환불을 실적에서 빼지 않는 경우가 있어,
+                끄면 실적만 정가로 센다.
+
+                **나눈 거래에서는 감춘다.** 그때는 환불액을 적는 줄마다 같은 체크가
+                바로 아래에 서 있다. 값은 어느 쪽이든 하나라 함께 움직인다.
+
+                거래 자체를 실적에서 뺐으면 뜨지 않는다. 그때는 어느 쪽이든 실적이
+                움직이지 않아 물을 것이 없다.
+              */}
+              {!hasSplits &&
+                showDiscountPerformance({
+                  kind: formData.type === 'income' ? 'income' : 'expense',
+                  discountAmount: totalDiscount,
+                  countsPerformance: formData.countsPerformance,
+                  isCard: formData.method === 'card' && Boolean(formData.cardId),
+                  isLedgerCurrency: formData.currency === ledgerCurrency,
+                }) && (
+                <label className="flex items-start gap-2 rounded-lg border border-gray-200 p-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.discountCountsPerformance}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        discountCountsPerformance: e.target.checked,
+                      })
+                    }
+                    className="mt-0.5 h-4 w-4"
+                  />
+                  <span className="flex-1">
+                    <span className="block text-sm text-gray-900">
+                      {t('editor.discountCountsPerformance')}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-gray-500">
+                      {t('editor.discountCountsPerformanceHint')}
+                    </span>
+                  </span>
+                </label>
               )}
 
               {error && (
@@ -2752,24 +2976,87 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               </p>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t('editor.parentCategory')}
-              </label>
-              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {selectedTransaction.parentCategoryName || selectedTransaction.categoryName || '-'}
-              </p>
-            </div>
+            {/*
+              나눈 거래는 줄을 그대로 풀어서 보여 준다.
 
-            {selectedTransaction.parentCategoryName && (
+              예전에는 "분할 N건"으로 뭉쳐 대표 분류 하나만 적었다. 목록이 줄로 펴 보여
+              주는데 상세에서 다시 뭉치면, 눌러서 연 화면이 눌렀던 줄보다 적게 말한다.
+              태그와 차감도 줄마다 다를 수 있어 여기서 함께 적는다.
+            */}
+            {isSplitEntry(selectedTransaction) ? (
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t('categories.subcategories')}
+                  {t('editor.split')}
                 </label>
-                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                  {selectedTransaction.categoryName || '-'}
-                </p>
+                <div className="divide-y divide-gray-100 rounded-lg bg-gray-50">
+                  {selectedTransaction.lines.map((line) => (
+                    <div key={line.lineKey} className="px-3 py-2">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="min-w-0 truncate text-gray-900">
+                          {line.parentCategoryName
+                            ? `${line.parentCategoryName} · ${line.categoryName}`
+                            : line.categoryName || '-'}
+                        </span>
+                        <span className="shrink-0 tabular-nums text-gray-900">
+                          {formatCurrency(toNumber(line.amount), displayCurrency)}
+                        </span>
+                      </div>
+                      {(line.tags.length > 0 || line.discountAmount) && (
+                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
+                          {line.tags.map((tag) => (
+                            <span
+                              key={tag.id}
+                              className="flex items-center gap-1 rounded-full bg-white px-2 py-0.5 text-gray-600"
+                            >
+                              {tag.color && (
+                                <span
+                                  className="h-1.5 w-1.5 rounded-full"
+                                  style={{ backgroundColor: tag.color }}
+                                />
+                              )}
+                              {tag.name}
+                            </span>
+                          ))}
+                          {line.discountAmount && (
+                            <span className="font-medium tabular-nums text-green-600">
+                              {t('entry.discount', {
+                                amount: formatCurrency(
+                                  toNumber(line.discountAmount),
+                                  displayCurrency,
+                                ),
+                              })}
+                            </span>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
               </div>
+            ) : (
+              <>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {t('editor.parentCategory')}
+                  </label>
+                  <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                    {selectedTransaction.parentCategoryName ||
+                      selectedTransaction.categoryName ||
+                      '-'}
+                  </p>
+                </div>
+
+                {selectedTransaction.parentCategoryName && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      {t('categories.subcategories')}
+                    </label>
+                    <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                      {selectedTransaction.categoryName || '-'}
+                    </p>
+                  </div>
+                )}
+              </>
             )}
 
             <div>

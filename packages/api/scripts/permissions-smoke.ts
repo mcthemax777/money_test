@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 /**
  * 권한과 응답 위생을 실제 HTTP 경로로 확인한다.
  *
@@ -66,7 +67,7 @@ runSmoke('permissions', async (ctx) => {
 
   // ── 쓰기는 editor만 된다 ───────────────────────────────────
   const expenseBody = {
-    kind: 'expense',
+    kind: 'expense', lineKey: randomUUID(),
     personId: person.body.id,
     date: new Date().toISOString(),
     description: '점심',

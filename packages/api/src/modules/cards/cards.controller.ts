@@ -88,10 +88,13 @@ export class CardsController {
     @Param('id') id: string,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
+    @Query('closingKey') closingKey?: string,
   ) {
     return this.cardLedger.getPerformanceLedger(id, req.user.id, {
       limit: limit ? Number(limit) : undefined,
       cursor,
+      // 주기 하나만 보는 조회. 그래프에서 막대를 눌렀을 때 온다.
+      closingKey,
     });
   }
 

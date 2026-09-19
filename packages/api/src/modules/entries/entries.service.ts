@@ -22,6 +22,7 @@ import {
   entryTagCondition,
   entryTextCondition,
   entrySearchConditions,
+  lineMatcherOf,
   parseEntryFilter,
 } from '@/common/entry-filter';
 import { badRequest, notFound } from '@/common/app-error';
@@ -105,9 +106,12 @@ export class EntriesService {
   }
 
   /**
-   * 여러 거래의 태그를 한 번에 바꾼다. 더할 것과 뗄 것을 따로 받는다.
+   * 여러 **줄**의 태그를 한 번에 바꾼다. 더할 것과 뗄 것을 따로 받는다.
    *
-   * 어느 쪽에도 없는 태그는 건드리지 않는다. 고른 거래마다 붙은 태그가 다를 수 있어,
+   * 태그가 줄에 붙으므로 대상도 줄이다. 목록에서 분할 거래의 한 줄만 골라 "여행"을
+   * 붙일 수 있어야 하고, 전표 단위로 두면 같은 결제의 식비 줄까지 함께 붙는다.
+   *
+   * 어느 쪽에도 없는 태그는 건드리지 않는다. 고른 줄마다 붙은 태그가 다를 수 있어,
    * 목록 하나를 "이것이 전부다"로 받으면 화면에 보이지 않던 태그가 사라진다.
    *
    * 전표는 건드리지 않는다. 연결만 넣고 빼므로 금액·다리·분할이 그대로 남는다. 다만
@@ -120,14 +124,17 @@ export class EntriesService {
     projectIdParam?: string,
     replay?: ReplayOptions,
   ) {
-    const entryIds = [...new Set(dto.entryIds ?? [])];
+    const keyOf = (target: { entryId: string; lineKey?: string | null }) =>
+      `${target.entryId}\u0000${target.lineKey === undefined ? '*' : target.lineKey ?? ''}`;
+
+    const targets = [...new Map((dto.targets ?? []).map((t) => [keyOf(t), t])).values()];
     const addTagIds = [...new Set(dto.addTagIds ?? [])];
     const removeTagIds = [...new Set(dto.removeTagIds ?? [])];
 
-    if (entryIds.length === 0 || (addTagIds.length === 0 && removeTagIds.length === 0)) {
+    if (targets.length === 0 || (addTagIds.length === 0 && removeTagIds.length === 0)) {
       throw badRequest('TAG_TARGETS_REQUIRED', '거래와 태그를 함께 골라주세요.');
     }
-    if (entryIds.length > MAX_TAG_TARGETS) {
+    if (targets.length > MAX_TAG_TARGETS) {
       throw badRequest('TAG_TARGETS_TOO_MANY', '한 번에 표시할 수 있는 거래 수를 넘었습니다.');
     }
     /*
@@ -147,6 +154,7 @@ export class EntriesService {
     );
 
     return this.prisma.$transaction(async (tx) => {
+      const entryIds = [...new Set(targets.map((target) => target.entryId))];
       /*
        * 남의 프로젝트 것이 섞였는지 먼저 본다.
        *
@@ -155,7 +163,10 @@ export class EntriesService {
        */
       const tagIds = [...addTagIds, ...removeTagIds];
       const [entries, tags] = await Promise.all([
-        tx.journalEntry.findMany({ where: { id: { in: entryIds }, projectId }, select: { id: true } }),
+        tx.journalEntry.findMany({
+          where: { id: { in: entryIds }, projectId },
+          select: { id: true, postings: { select: { lineKey: true, categoryId: true } } },
+        }),
         tx.tag.findMany({ where: { id: { in: tagIds }, projectId }, select: { id: true } }),
       ]);
       /*
@@ -166,26 +177,68 @@ export class EntriesService {
        * 때문이다. 반대로 며칠 전 오프라인에서 쌓인 명령은 그 사이 다른 기기가 거래
        * 하나를 지웠다는 것만으로 나머지 스무 건의 표시까지 영영 막는다.
        */
-      const present = new Set(entries.map((entry) => entry.id));
-      const targets = replay ? entryIds.filter((id) => present.has(id)) : entryIds;
       if (!replay && entries.length !== entryIds.length) {
         throw notFound('ENTRY_NOT_FOUND', '거래를 찾을 수 없습니다.');
       }
-      if (targets.length === 0) return { added: 0, removed: 0, entries: 0 };
       if (tags.length !== tagIds.length) {
         throw badRequest('TAG_NOT_IN_PROJECT', '이 프로젝트에 없는 태그가 포함되어 있습니다.');
       }
 
+      const byEntry = new Map(entries.map((entry) => [entry.id, entry]));
+
+      /*
+       * 사라진 줄을 가린다.
+       *
+       * 다른 기기가 그 사이 분할을 고쳐 줄이 없어졌을 수 있다. 그런 대상은 적용하지
+       * 않고 `skipped` 로 돌려준다 -- 조용히 버리면 사용자는 표시가 된 줄 알고, 다음
+       * 동기화가 태그 없는 모습으로 덮을 때에야 알게 된다. 화면이 이 목록으로 한 번
+       * 알린다.
+       */
+      const applicable: Array<{ entryId: string; lineKey: string | null }> = [];
+      const skipped: Array<{ entryId: string; lineKey?: string | null }> = [];
+      for (const target of targets) {
+        const entry = byEntry.get(target.entryId);
+        if (!entry) {
+          skipped.push(target);
+          continue;
+        }
+        const lineKeys = entry.postings
+          .filter((posting) => posting.categoryId !== null && posting.lineKey)
+          .map((posting) => posting.lineKey!);
+
+        /*
+         * 줄을 가리지 않은 대상은 그 전표의 모든 줄로 편다.
+         *
+         * 목록에서 "이 달 전부"처럼 범위를 골랐을 때다. 그 거래들은 화면에 없어 줄 키를
+         * 알 수 없고, 사용자가 바란 것도 그 범위의 모든 것이다.
+         */
+        if (target.lineKey === undefined) {
+          if (lineKeys.length === 0) applicable.push({ entryId: target.entryId, lineKey: null });
+          else {
+            for (const lineKey of lineKeys) applicable.push({ entryId: target.entryId, lineKey });
+          }
+          continue;
+        }
+
+        const exists =
+          target.lineKey === null ? lineKeys.length === 0 : lineKeys.includes(target.lineKey);
+        if (exists) applicable.push({ entryId: target.entryId, lineKey: target.lineKey });
+        else skipped.push(target);
+      }
+
+      if (applicable.length === 0) return { added: 0, removed: 0, entries: 0, skipped };
+
       // 지금 붙어 있는 것. 무엇이 실제로 달라지는지 세려면 이것부터 알아야 한다.
       const existing = await tx.entryTag.findMany({
-        where: { entryId: { in: targets }, tagId: { in: tagIds } },
-        select: { entryId: true, tagId: true },
+        where: { entryId: { in: entryIds }, tagId: { in: tagIds } },
+        select: { entryId: true, lineKey: true, tagId: true },
       });
       const currentOf = new Map<string, Set<string>>();
       for (const row of existing) {
-        const set = currentOf.get(row.entryId) ?? new Set<string>();
+        const key = keyOf(row);
+        const set = currentOf.get(key) ?? new Set<string>();
         set.add(row.tagId);
-        currentOf.set(row.entryId, set);
+        currentOf.set(key, set);
       }
 
       /*
@@ -195,36 +248,47 @@ export class EntriesService {
        * 다음 동기화가 사본을 덮을 때에야 드러난다.
        */
       const touched = new Set<string>();
-      const rows: Array<{ entryId: string; tagId: string }> = [];
+      const rows: Array<{ entryId: string; lineKey: string | null; tagId: string }> = [];
+      const removals: Array<{ entryId: string; lineKey: string | null }> = [];
       let removed = 0;
-      for (const entryId of targets) {
-        const change = applyTagChange(currentOf.get(entryId) ?? [], addTagIds, removeTagIds);
-        for (const tagId of change.added) rows.push({ entryId, tagId });
+      for (const target of applicable) {
+        const change = applyTagChange(currentOf.get(keyOf(target)) ?? [], addTagIds, removeTagIds);
+        for (const tagId of change.added) {
+          rows.push({ entryId: target.entryId, lineKey: target.lineKey, tagId });
+        }
+        if (change.removed.length > 0) removals.push(target);
         removed += change.removed.length;
-        if (change.changed) touched.add(entryId);
+        if (change.changed) touched.add(target.entryId);
       }
 
       /*
-       * 떼는 것은 한 문장으로 지운다. 뗄 태그 목록이 전표마다 같으므로 줄마다 도는 것과
-       * 결과가 같고, 왕복이 하나로 줄어든다.
+       * 떼는 것은 대상 줄마다 지운다.
+       *
+       * 예전에는 한 문장으로 지웠다. 대상이 전표였고 뗄 태그 목록이 전표마다 같아서
+       * 결과가 같았기 때문이다. 이제는 같은 전표의 어떤 줄은 고르고 어떤 줄은 고르지
+       * 않을 수 있어, 한 문장으로 지우면 고르지 않은 줄의 태그까지 떨어진다.
        */
-      if (removeTagIds.length > 0) {
+      for (const target of removals) {
         await tx.entryTag.deleteMany({
-          where: { entryId: { in: targets }, tagId: { in: removeTagIds } },
+          where: {
+            entryId: target.entryId,
+            lineKey: target.lineKey,
+            tagId: { in: removeTagIds },
+          },
         });
       }
 
       /*
        * 이미 있는 연결은 건너뛴다.
        *
-       * 두 사람이 같은 거래에 같은 태그를 동시에 붙이면, 위에서 "지금 붙어 있는 것"을
+       * 두 사람이 같은 줄에 같은 태그를 동시에 붙이면, 위에서 "지금 붙어 있는 것"을
        * 읽는 질의는 잠그지 않으므로 둘 다 "아직 없다"로 읽고 둘 다 넣는다. 늦은 쪽이
-       * 유일 제약(entryId, tagId)에 걸려 500 이 되는데, 둘이 바란 결과는 같다 --
-       * 그 태그가 붙어 있는 것이다. 오류로 만들 이유가 없다.
+       * 유일 제약에 걸려 500 이 되는데, 둘이 바란 결과는 같다 -- 그 태그가 붙어 있는
+       * 것이다. 오류로 만들 이유가 없다.
        */
       if (rows.length > 0) await tx.entryTag.createMany({ data: rows, skipDuplicates: true });
 
-      if (touched.size === 0) return { added: 0, removed: 0, entries: 0 };
+      if (touched.size === 0) return { added: 0, removed: 0, entries: 0, skipped };
 
       /*
        * 바뀐 전표에 번호와 시계를 찍는다.
@@ -258,7 +322,7 @@ export class EntriesService {
         data: { updatedAt: new Date() },
       });
 
-      return { added: rows.length, removed, entries: touched.size };
+      return { added: rows.length, removed, entries: touched.size, skipped };
     });
   }
 
@@ -298,6 +362,8 @@ export class EntriesService {
 
     // 거래 화면의 검색(분류 여럿 · 자산 여럿). 무리 안은 OR, 무리끼리는 AND.
     const search = parseEntrySearch(query);
+    // 걸린 줄만 보여 주기 위한 판정기. 줄 수준 조건이 없으면 undefined 다.
+    const matchLine = lineMatcherOf(search);
     if (search.matchNothing) Object.assign(where, MATCH_NOTHING);
 
     /*
@@ -431,7 +497,14 @@ export class EntriesService {
       if (page.length === 0) break;
 
       for (const entry of page) {
-        const item = toListItem(entry, show);
+        /*
+         * 걸린 줄만 표시되게 한다.
+         *
+         * 질의는 전표 수준으로 걸려 분할의 나머지 줄까지 데려온다 (entry-filter 머리말).
+         * 여행경비로 찾았는데 같은 결제의 식비 줄이 함께 뜨면 찾은 것이 아니게 된다.
+         * 리포트의 합계도 같은 판정기를 쓴다 -- 화면의 합과 리포트의 합이 갈리지 않는다.
+         */
+        const item = toListItem(entry, show, matchLine);
         if (!query.kind || item.kind === query.kind) {
           collected.push({ item, date: entry.date, id: entry.id });
         }
@@ -486,6 +559,7 @@ export class EntriesService {
         baseAmount: p.baseAmount.toString(),
         exchangeRate: p.exchangeRate.toString(),
         cardId: p.cardId,
+        lineKey: p.lineKey,
       })),
     };
   }
@@ -528,30 +602,40 @@ export class EntriesService {
       splits: dto.splits?.map((split) => ({
         categoryId: split.categoryId,
         amount: toMoney(split.amount, '분할 금액').toString(),
+        // 줄 키는 화면이 만든다. 비어 있으면 조립이 거절한다.
+        lineKey: split.lineKey,
+        discountAmount: optional(split.discountAmount, '차감액'),
+        // 생략은 "비운다"다. 전표 전체 교체와 같은 규칙이다.
+        tagIds: split.tagIds ?? [],
       })),
       accountId: dto.accountId,
       toAccountId: dto.toAccountId,
       cardId: dto.cardId,
       installmentMonths: dto.installmentMonths,
-      // 결제 자리에서 깎인 금액. 분류는 없다 -- 정가에서 빼고 전표에 표시값으로 남는다.
+      // 분류 줄 하나뿐인 거래의 줄 값들. 분할이면 splits 쪽이 쓰인다.
+      lineKey: dto.lineKey,
       discountAmount: optional(dto.discountAmount, '차감액'),
-      // 카드 실적에 셀지. 생략하면 조립이 갈래의 기본값을 쓴다.
+      // 실적 두 칸은 분할이든 아니든 거래에 하나씩이다.
       countsPerformance: dto.countsPerformance,
-      // 차감액을 실적에서도 뺄지. 생략하면 뺀다.
       discountCountsPerformance: dto.discountCountsPerformance,
       toAmount: optional(dto.toAmount, '받는 금액'),
       transferFee: optional(dto.transferFee, '이체 수수료'),
       transferFeeCategoryId: dto.transferFeeCategoryId,
+      transferFeeLineKey: dto.transferFeeLineKey,
       cardTransferDirection: dto.cardTransferDirection,
+      /*
+       * 태그는 조립이 줄에 실어 준다.
+       *
+       * 지출·수입이면 분류 줄 하나에 붙고(분할이면 splits 쪽), 이체와 카드 대금 결제는
+       * 분류 줄이 없어 거래 자체에 붙는다. 어느 쪽인지는 갈래가 정하므로 여기서
+       * 나누지 않는다.
+       *
+       * **생략은 "비운다"다.** 수정이 전표를 통째로 갈아 끼우는 것과 같은 규칙이다.
+       */
+      tagIds: dto.tagIds ?? [],
     });
 
-    /*
-     * 태그는 조립 규칙(entry-build)이 다루지 않는다. 다리를 하나도 바꾸지 않기 때문이다.
-     *
-     * **생략은 "비운다"다.** 수정이 전표를 통째로 갈아 끼우는 것과 같은 규칙이라,
-     * 여기만 "생략은 유지"로 두면 태그를 다 뗀 수정을 표현할 길이 없다.
-     */
-    return { ...input, tagIds: dto.tagIds ?? [] };
+    return input;
   }
 
   /** 저장 통화 -> 표시 통화. 목록의 금액은 이 환산을 거쳐 나간다. */

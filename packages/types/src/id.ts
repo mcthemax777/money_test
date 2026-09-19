@@ -132,3 +132,18 @@ export function idTimestamp(id: string): number | null {
   const hex = id.replace(/-/g, '').slice(0, 12);
   return parseInt(hex, 16);
 }
+
+/**
+ * 분류 줄의 신원 하나.
+ *
+ * 전표 id 와 달리 **가계부 전체에서 유일할 필요가 없다.** 한 전표 안에서만 겹치지
+ * 않으면 된다 (`Posting` 의 `(entryId, lineKey)` 유일 제약). 그래서 난수원이 없는
+ * 자리에서도 만들 수 있다 -- 서버가 대신 만들어 주지 않으므로(줄에 붙은 태그와 차감이
+ * 끊긴다) 화면이 어떤 상황에서도 값을 낼 수 있어야 한다.
+ */
+export function newLineKey(): string {
+  if (hasRandomSource()) return newId();
+
+  // 난수원이 없는 자리(구형 웹뷰 등). 한 전표 안에서 겹치지 않으면 충분하다.
+  return `l-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}

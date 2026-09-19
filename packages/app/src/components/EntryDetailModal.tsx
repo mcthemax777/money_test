@@ -188,7 +188,31 @@ export default function EntryDetailModal({
           <Row label={t('tx.detail.kind')} value={t(KIND_KEY[entry.kind])} />
           <Row label={t('tx.detail.date')} value={formatDateTime(entry.date, timeZone)} />
           <Row label={t('tx.detail.person')} value={entry.personName} />
-          <Row label={t('tx.detail.category')} value={categoryLabel} />
+          {/*
+            나눈 거래는 줄을 그대로 풀어서 보여 준다.
+
+            목록이 줄로 펴 보여 주는데 상세에서 다시 뭉치면, 눌러서 연 화면이 눌렀던
+            줄보다 적게 말한다. 태그와 차감도 줄마다 다를 수 있어 함께 적는다.
+          */}
+          {entry.lines.length > 1 ? (
+            entry.lines.map((line) => (
+              <Row
+                key={line.lineKey}
+                label={line.categoryName || t('tx.detail.category')}
+                value={[
+                  money(line.amount),
+                  line.discountAmount
+                    ? t('entry.discount', { amount: money(line.discountAmount) ?? '' })
+                    : null,
+                  line.tags.map((tag) => tag.name).join(', ') || null,
+                ]
+                  .filter(Boolean)
+                  .join(' · ')}
+              />
+            ))
+          ) : (
+            <Row label={t('tx.detail.category')} value={categoryLabel} />
+          )}
           <Row label={t('tx.detail.method')} value={methodLabel} />
           <Row label={t('tx.detail.merchant')} value={entry.merchant} />
           <Row

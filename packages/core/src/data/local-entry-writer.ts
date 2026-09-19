@@ -62,6 +62,10 @@ export function createLocalEntryWriter({
     splits: data.splits?.map((split) => ({
       categoryId: split.categoryId,
       amount: String(split.amount),
+      // 줄에 달린 것. 재생한 전표가 기기가 만든 것과 같은 모양이어야 한다.
+      lineKey: split.lineKey,
+      discountAmount: text(split.discountAmount),
+      tagIds: split.tagIds,
     })),
     accountId: data.accountId,
     toAccountId: data.toAccountId,
@@ -71,7 +75,10 @@ export function createLocalEntryWriter({
     transferFee: text(data.transferFee),
     transferFeeCategoryId: data.transferFeeCategoryId,
     cardTransferDirection: data.cardTransferDirection,
-    // 결제 자리에서 깎인 금액. 서버가 재생할 때 같은 전표가 나와야 한다.
+    // 분류 하나짜리 거래의 줄 키. 없으면 서버가 재생에서 거절한다.
+    lineKey: data.lineKey,
+    transferFeeLineKey: data.transferFeeLineKey,
+    // 그 줄에서 깎인 금액. 서버가 재생할 때 같은 전표가 나와야 한다.
     discountAmount: text(data.discountAmount),
     /*
      * 실적 표 둘. 빠뜨리면 폼에서 끈 값이 사본에도 명령에도 남지 않아, 조립이 갈래의
@@ -148,12 +155,13 @@ export function createLocalEntryWriter({
      * 전표의 시계도 뒤로 가지 않는다. 서버가 재생할 때도 같은 시계를 쓰므로 두 자리의
      * 전표가 같은 값을 갖는다.
      */
-    async changeEntryTags({ entryIds, addTagIds, removeTagIds }) {
-      if (entryIds.length === 0 || (addTagIds.length === 0 && removeTagIds.length === 0)) {
-        return { entries: 0 };
+    async changeEntryTags({ targets, addTagIds, removeTagIds }) {
+      if (targets.length === 0 || (addTagIds.length === 0 && removeTagIds.length === 0)) {
+        return { entries: 0, skipped: [] };
       }
 
-      const payload: EntryTagsPayload = { entryIds, addTagIds, removeTagIds };
+      const entryIds = [...new Set(targets.map((one) => one.entryId))];
+      const payload: EntryTagsPayload = { targets, addTagIds, removeTagIds };
       const mutation = await store.enqueue({
         projectId,
         mutationId: newId(),
@@ -163,16 +171,11 @@ export function createLocalEntryWriter({
         observed: await store.latestEntryHlc(entryIds),
       });
 
-      const entries = await store.changeEntryTags(
-        entryIds,
-        addTagIds,
-        removeTagIds,
-        mutation.hlc,
-      );
+      const result = await store.changeEntryTags(targets, addTagIds, removeTagIds, mutation.hlc);
 
       notifyMirrorChanged();
       onQueued?.(mutation);
-      return { entries };
+      return result;
     },
 
     async deleteEntry(id) {

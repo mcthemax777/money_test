@@ -30,6 +30,7 @@ import {
   makeTags,
   projectAccessStub,
   runSmoke,
+  lineTargets,
 } from './smoke-harness';
 
 runSmoke('entry-concurrency', async (ctx) => {
@@ -162,9 +163,10 @@ runSmoke('entry-concurrency', async (ctx) => {
   // 둘 다 "아직 없다"로 읽고 둘 다 넣는다. 늦은 쪽이 유일 제약에 걸려 500 이 되던 자리다.
   // 둘이 바란 결과는 같으므로 오류가 아니라 같은 상태에 닿아야 한다.
   const tag = await tags.createTag(uid, { name: '여행' } as never, pid);
+  const tagTargets = await lineTargets(ctx.prisma, [target.id]);
   const tagged = await Promise.allSettled([
-    entries.changeTags(uid, { entryIds: [target.id], addTagIds: [tag.id] }, pid),
-    entries.changeTags(uid, { entryIds: [target.id], addTagIds: [tag.id] }, pid),
+    entries.changeTags(uid, { targets: tagTargets, addTagIds: [tag.id] }, pid),
+    entries.changeTags(uid, { targets: tagTargets, addTagIds: [tag.id] }, pid),
   ]);
   ctx.check(
     '같은 태그를 동시에 붙여도 터지지 않는다',

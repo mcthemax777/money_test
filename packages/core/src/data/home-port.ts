@@ -69,7 +69,7 @@ export interface HomeDataPort {
   /** 실적 원장 한 쪽. 카드 상세의 실적 탭이 쓴다. */
   getCardPerformanceLedger(
     cardId: string,
-    params?: { limit?: number; cursor?: string },
+    params?: CardDto.PerformanceLedgerQuery,
   ): Promise<CardDto.PerformanceLedgerResponse>;
 
   /**
@@ -80,7 +80,7 @@ export interface HomeDataPort {
    */
   getAccountPostings(
     accountId: string,
-    params?: { limit?: number; cursor?: string },
+    params?: AccountDto.LedgerQuery,
   ): Promise<AccountDto.LedgerResponse>;
 
   /**

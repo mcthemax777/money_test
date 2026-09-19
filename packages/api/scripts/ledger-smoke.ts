@@ -8,6 +8,7 @@ import {
   makeLedger,
   projectAccessStub,
   runSmoke,
+  lineKey,
 } from './smoke-harness';
 
 runSmoke('ledger', async (ctx) => {
@@ -69,14 +70,14 @@ runSmoke('ledger', async (ctx) => {
   // ── 1. 체크카드 지출 ──
   await ledger.createExpense({
     ...base, description: '스타벅스', cardId: debitCard.id,
-    lines: [{ categoryId: food.id, amount: D(5000) }],
+    lines: [{ categoryId: food.id, amount: D(5000), lineKey: lineKey() }],
   });
   ctx.check('체크카드 지출 후 예금', (await ctx.prisma.account.findUniqueOrThrow({ where: { id: bank.id } })).balance, '995000');
 
   // ── 2. 신용카드 지출 (부채 계정에만 쌓인다) ──
   await ledger.createExpense({
     ...base, description: '이마트', cardId: creditCard.id,
-    lines: [{ categoryId: food.id, amount: D(30000) }, { categoryId: goods.id, amount: D(10000) }],
+    lines: [{ categoryId: food.id, amount: D(30000), lineKey: lineKey() }, { categoryId: goods.id, amount: D(10000), lineKey: lineKey() }],
   });
   ctx.check('신용카드 지출 후 예금 (변동 없어야 함)', (await ctx.prisma.account.findUniqueOrThrow({ where: { id: bank.id } })).balance, '995000');
   ctx.check('신용카드 부채', (await ctx.prisma.account.findUniqueOrThrow({ where: { id: cardLiability.id } })).balance, '-40000');
@@ -88,13 +89,13 @@ runSmoke('ledger', async (ctx) => {
   // ── 3. 통장에서 나가는 지출 ──
   await ledger.createExpense({
     ...base, description: '월세', accountId: bank.id,
-    lines: [{ categoryId: rent.id, amount: D(700000) }],
+    lines: [{ categoryId: rent.id, amount: D(700000), lineKey: lineKey() }],
   });
 
   // ── 4. 수입 ──
   await ledger.createIncome({
     ...base, description: '8월 급여', accountId: bank.id,
-    lines: [{ categoryId: salary.id, amount: D(3_000_000) }],
+    lines: [{ categoryId: salary.id, amount: D(3_000_000), lineKey: lineKey() }],
   });
   ctx.check('급여 입금 후 예금', (await ctx.prisma.account.findUniqueOrThrow({ where: { id: bank.id } })).balance, '3295000');
 
@@ -102,7 +103,7 @@ runSmoke('ledger', async (ctx) => {
   const transfer = await ledger.createTransfer({
     ...base, description: '저축 이체',
     fromAccountId: bank.id, toAccountId: savings.id,
-    amount: D(100_000), feeAmount: D(500), feeCategoryId: fee.id,
+    amount: D(100_000), feeAmount: D(500), feeCategoryId: fee.id, feeLineKey: lineKey(),
   });
   ctx.check('이체 전표 leg 수', transfer.postings.length, 3);
   ctx.check('이체 후 보내는 계좌', (await ctx.prisma.account.findUniqueOrThrow({ where: { id: bank.id } })).balance, '3194500');
@@ -184,11 +185,11 @@ runSmoke('ledger', async (ctx) => {
 
   // ── 11. 검증 실패 케이스 ──
   await ctx.expectReject('수입 카테고리로 지출 생성 거부', () => ledger.createExpense({
-    ...base, description: 'x', accountId: bank.id, lines: [{ categoryId: salary.id, amount: D(100) }],
+    ...base, description: 'x', accountId: bank.id, lines: [{ categoryId: salary.id, amount: D(100), lineKey: lineKey() }],
   }));
   await ctx.expectReject('계좌와 카드 동시 지정 거부', () => ledger.createExpense({
     ...base, description: 'x', accountId: bank.id, cardId: debitCard.id,
-    lines: [{ categoryId: food.id, amount: D(100) }],
+    lines: [{ categoryId: food.id, amount: D(100), lineKey: lineKey() }],
   }));
   await ctx.expectReject('같은 계좌 이체 거부', () => ledger.createTransfer({
     ...base, description: 'x', fromAccountId: bank.id, toAccountId: bank.id, amount: D(100),
@@ -205,7 +206,7 @@ runSmoke('ledger', async (ctx) => {
   // ── 12. 미결제 사용액이 남은 카드는 삭제 불가 ──
   await ledger.createExpense({
     ...base, description: '미결제 남기기', cardId: creditCard.id,
-    lines: [{ categoryId: food.id, amount: D(1000) }],
+    lines: [{ categoryId: food.id, amount: D(1000), lineKey: lineKey() }],
   });
   await ctx.expectReject('사용액 남은 카드 숨기기 거부', () => cards.deactivateCard(creditCard.id, 'u1'));
   await ledger.createCardTransfer({

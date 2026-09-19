@@ -16,6 +16,7 @@ import {
   Dec,
   type EntryDto,
   type EntryListItem,
+  newLineKey,
   zonedFormValueToUtc,
 } from '@money/types';
 
@@ -40,7 +41,36 @@ export type EntryFormKind = 'expense' | 'income' | 'transfer';
  */
 export interface EntryFormSplit {
   categoryId: string;
+  /** 정가. 차감을 빼기 전의 값이다. */
   amount: string;
+  /**
+   * 이 줄의 신원. 줄을 더하는 순간 화면이 만들고, 편집 내내 들고 다닌다.
+   *
+   * 저장할 때마다 서버가 다리를 지우고 새로 만들기 때문에 다리 id 로는 줄을 가리킬 수
+   * 없다. 줄에 붙는 것(태그·차감)이 이 키에 매달린다. 서버는 키 없는 요청을 거절한다.
+   */
+  lineKey: string;
+  /**
+   * 이 줄에서 깎인 금액. **정가보다 작아야 한다** -- 같으면 그 줄이 0원이 된다.
+   *
+   * 여행경비만 환불받았다면 그 줄에만 값이 실린다. 예전에는 전표에 하나만 두고 줄마다
+   * 비율로 나눠서, 식비 줄까지 함께 깎였다.
+   */
+  discountAmount: string;
+  /** 이 줄에 붙일 태그. 분할된 두 줄이 서로 다른 태그를 가질 수 있다. */
+  tagIds: string[];
+}
+
+/** 분할 줄 하나를 새로 만든다. 줄 키는 여기서 붙는다. */
+export function newSplitLine(values: Partial<EntryFormSplit> = {}): EntryFormSplit {
+  return {
+    categoryId: '',
+    amount: '',
+    discountAmount: '',
+    tagIds: [],
+    ...values,
+    lineKey: values.lineKey ?? newLineKey(),
+  };
 }
 
 /**
@@ -79,6 +109,13 @@ export interface EntryFormValues {
   toAccountId: string;
   /** 할부 개월수. 빈 문자열이 일시불이다. */
   installmentMonths: string;
+  /**
+   * 분류 하나짜리 거래의 줄 키. 분할이면 `splits[].lineKey` 가 쓰인다.
+   *
+   * 폼을 열 때 정해지고 저장할 때까지 바뀌지 않는다. 이 값이 이어져야 그 줄에 붙은
+   * 태그와 차감이 수정을 건너 살아남는다 (서버는 키 없는 요청을 거절한다).
+   */
+  lineKey: string;
   /**
    * 결제 자리에서 깎인 금액. 포인트 사용, 자동할인, 그리고 **취소**가 모두 이 칸이다.
    *
@@ -167,6 +204,8 @@ export function emptyEntryForm({ personId = '', timeZone, now }: EntryFormDefaul
     method: '',
     toAccountId: '',
     installmentMonths: '',
+    // 분류 하나짜리 거래의 줄 키. 폼을 여는 자리에서 한 번 정해진다.
+    lineKey: newLineKey(),
     discountAmount: '',
     countsPerformance: true,
     discountCountsPerformance: true,
@@ -233,7 +272,16 @@ export function entryFormFromItem(
   const kind: EntryFormKind = item.kind === 'card_payment' ? 'transfer' : item.kind;
 
   const isSplit = (item.kind === 'expense' || item.kind === 'income') && item.splitCount > 1;
-  if (isSplit && !item.splits?.length) return null;
+  /*
+   * 분할은 줄 전부가 있어야 되돌릴 수 있다.
+   *
+   * 대표 분류 하나만 보고 저장하면 나머지가 조용히 사라진다 -- 금액은 그대로인데
+   * 분류별 합계만 바뀌는, 알아채기 어려운 손실이다.
+   */
+  if (isSplit && item.lines.length !== item.splitCount) return null;
+
+  // 분류 하나짜리 거래의 그 줄. 이체·카드 대금 결제에는 없다.
+  const only = isSplit ? null : item.lines[0] ?? null;
 
   return {
     kind,
@@ -255,7 +303,15 @@ export function entryFormFromItem(
      * 외화 거래에는 차감이 붙을 수 없어(조립이 막는다) 두 보정이 겹치지 않는다.
      */
     amount: item.originalAmount ?? grossOf(item),
-    discountAmount: item.discountAmount ?? '',
+    /*
+     * 줄에 달린 값들. 분류 하나짜리 거래는 그 줄의 것을 그대로 든다.
+     *
+     * 분할이면 아래 `splits` 가 줄마다 들고, 여기는 새 줄을 더할 때 쓰는 기본값으로
+     * 남는다. 이체·카드 대금 결제에는 분류 줄이 없어 빈 값이다.
+     */
+    lineKey: only?.lineKey ?? newLineKey(),
+    discountAmount: only?.discountAmount ?? '',
+    // 실적 두 칸은 거래에 하나씩이다. 분할이어도 여기서 든다.
     countsPerformance: item.countsPerformance,
     discountCountsPerformance: item.discountCountsPerformance,
     // 소분류가 있으면 그것이 고른 값이다. 목록은 가장 구체적인 분류를 준다.
@@ -281,10 +337,16 @@ export function entryFormFromItem(
     transferFee: item.feeAmount && item.feeAmount !== '0' ? item.feeAmount : '',
     transferFeeCategoryId: item.feeCategoryId ?? '',
     splits: isSplit
-      ? (item.splits ?? []).map((split) => ({
-          categoryId: split.categoryId,
-          amount: split.amount,
-        }))
+      ? item.lines.map((line) =>
+          newSplitLine({
+            categoryId: line.categoryId,
+            // 폼은 정가를 든다. 목록의 금액은 차감을 뺀 뒤의 값이다.
+            amount: grossOfLine(line),
+            lineKey: line.lineKey,
+            discountAmount: line.discountAmount ?? '',
+            tagIds: line.tags.map((tag) => tag.id),
+          }),
+        )
       : [],
     /*
      * 외화. 원래 통화가 실려 있으면 그것으로 적은 거래다.
@@ -296,8 +358,22 @@ export function entryFormFromItem(
      */
     currency: item.originalCurrency ?? '',
     exchangeRate: item.originalCurrency ? item.exchangeRate ?? '' : '',
-    tagIds: item.tags.map((tag) => tag.id),
+    /*
+     * 태그. 분류 하나짜리 거래는 그 줄의 것, 이체와 카드 대금 결제는 거래 자체의 것이다.
+     *
+     * 분할이면 줄마다 다를 수 있어 여기 담지 않는다 (`splits[].tagIds`).
+     */
+    tagIds: isSplit ? [] : (only?.tags ?? item.tags).map((tag) => tag.id),
   };
+}
+
+/** 줄 하나의 정가. 목록이 주는 금액은 차감을 뺀 뒤의 값이다. */
+function grossOfLine(line: { amount: string; discountAmount: string | null }): string {
+  if (!line.discountAmount) return line.amount;
+  const net = toDec(line.amount);
+  const discount = toDec(line.discountAmount);
+  if (!net || !discount) return line.amount;
+  return net.plus(discount).toString();
 }
 
 /**
@@ -489,8 +565,23 @@ export function checkEntryForm(
    * 지출일 때만 본다 -- 갈래를 옮겨 다니는 사이에 저장이 막히면 이유를 알 수 없다.
    */
   if (values.kind === 'expense') {
-    const violation = checkExpenseExtras(values, amount);
-    if (violation) return violation;
+    /*
+     * 차감은 줄마다 본다. 정가보다 크지만 않으면 된다.
+     *
+     * 줄 하나가 0원으로 남는 것은 받는다 -- 전액 환불이 그 모양이고, 분할의 한 줄만
+     * 그렇게 되는 일도 있다 (여행경비만 돌려받고 식비 줄은 남는다).
+     */
+    const lines =
+      values.splits.length > 0
+        ? values.splits.map((split) => ({
+            discountAmount: split.discountAmount,
+            amount: toDec(split.amount),
+          }))
+        : [{ discountAmount: values.discountAmount, amount }];
+    for (const line of lines) {
+      const violation = checkExpenseExtras(line.discountAmount, line.amount);
+      if (violation) return violation;
+    }
   }
 
   if (values.kind === 'transfer') {
@@ -562,24 +653,24 @@ export function checkEntryForm(
 }
 
 /**
- * 지출에만 붙는 두 칸을 본다. 맞으면 null.
+ * 줄 하나의 차감액을 본다. 맞으면 null.
  *
- * 차감액은 정가보다 **작아야** 한다. 같으면 계좌에서 빠지는 금액이 0이 되어 원장이
- * 0원 다리를 만들 수 없고, 크면 지출이 아니라 입금이 된다. 전액을 포인트로 치른
- * 결제는 아직 다루지 않는다.
+ * **정가와 같아도 된다.** 그때 그 줄은 0원으로 남는다 -- 1,000원을 결제하고 1,000원을
+ * 돌려받은 일은 있었던 일이다. 분할의 한 줄만 그렇게 되는 것도 같다. 넘으면 지출이
+ * 아니라 입금이 되므로 막는다. 조립도 같은 값으로 거절한다(`assertDiscountValid`) --
+ * 저장을 눌러 보고서야 알게 하지 않으려고 여기서도 본다.
  */
-function checkExpenseExtras(values: EntryFormValues, amount: Dec): EntryFormViolation | null {
-  if (!values.discountAmount.trim()) return null;
+function checkExpenseExtras(
+  discountAmount: string,
+  amount: Dec | null,
+): EntryFormViolation | null {
+  if (!discountAmount.trim()) return null;
 
-  const discount = toDec(values.discountAmount);
+  const discount = toDec(discountAmount);
   if (!discount || !discount.isPositive()) {
     return { field: 'discountAmount', code: 'DISCOUNT_INVALID' };
   }
-  /*
-   * 정가와 같아도 된다. 전액을 깎으면 0원 거래로 남고, 전액 취소와 전액 포인트 결제가
-   * 그 모양이다. 넘으면 지출이 아니라 입금이 되므로 막는다.
-   */
-  if (discount.gt(amount)) {
+  if (!amount || discount.gt(amount)) {
     return { field: 'discountAmount', code: 'DISCOUNT_TOO_LARGE' };
   }
 
@@ -631,6 +722,8 @@ export function entryFormToRequest(
         ? {
             transferFee: values.transferFee,
             transferFeeCategoryId: values.transferFeeCategoryId,
+            // 수수료도 분류 줄이라 키를 갖는다. 폼의 줄 키를 그대로 쓴다.
+            transferFeeLineKey: values.lineKey,
           }
         : {}),
     };
@@ -639,21 +732,23 @@ export function entryFormToRequest(
   const months = Number(values.installmentMonths);
 
   /*
-   * 즉시 차감과 되돌린 결제. 지출에만 싣는다.
+   * 줄에 달린 값들을 짐에 싣는 규칙. 분류 하나짜리와 분할이 같은 함수를 쓴다.
    *
-   * 갈래를 옮겨도 폼은 값을 들고 있으므로(이체로 갔다가 돌아오면 그대로다) 여기서
-   * 갈래를 한 번 더 본다. 분할이든 아니든 같은 값이라 한 곳에서 만든다.
+   * 차감은 지출에만 싣는다. 갈래를 옮겨도 폼은 값을 들고 있으므로(이체로 갔다가
+   * 돌아오면 그대로다) 여기서 갈래를 한 번 더 본다.
+   *
+   * 실적 값은 **기본값과 다를 때만** 싣는다. 기본값은 조립이 갈래를 보고 정하므로 같은
+   * 값을 굳이 보내지 않는다 -- 짐만 보고도 사용자가 손댄 자리가 드러난다.
    */
-  const expenseExtras =
-    values.kind === 'expense' && values.discountAmount.trim()
-      ? { discountAmount: values.discountAmount }
-      : {};
+  /** 그 줄에서 깎인 금액. 지출에만 싣는다. */
+  const lineDiscount = (discountAmount: string) =>
+    values.kind === 'expense' && discountAmount.trim() ? { discountAmount } : {};
 
   /*
-   * 카드 실적. 카드로 냈고 기본값과 다를 때만 싣는다.
+   * 카드 실적 두 칸. **분할이든 아니든 거래에 하나씩이다.**
    *
-   * 기본값은 조립이 갈래를 보고 정하므로, 같은 값을 굳이 보내지 않는다. 짐만 보고도
-   * 사용자가 손댄 자리가 드러난다.
+   * 기본값과 다를 때만 싣는다. 기본값은 조립이 갈래를 보고 정하므로 같은 값을 굳이
+   * 보내지 않는다 -- 짐만 보고도 사용자가 손댄 자리가 드러난다.
    */
   const performanceExtra = {
     ...(method.cardId && values.countsPerformance !== defaultCountsPerformance(values.kind)
@@ -667,7 +762,7 @@ export function entryFormToRequest(
      */
     ...(showDiscountPerformance({
       kind: values.kind,
-      discountAmount: values.discountAmount,
+      discountAmount: totalDiscountOf(values),
       countsPerformance: values.countsPerformance,
       isCard: Boolean(method.cardId),
       isLedgerCurrency: !values.currency,
@@ -681,20 +776,27 @@ export function entryFormToRequest(
    *
    * 조립이 둘을 함께 받으면 분할을 쓰고 분류는 버린다(`resolveRequestLines`). 그래도
    * 보내지 않는 편이 낫다 -- 짐만 보고도 이 거래가 분할이라는 것이 드러난다.
+   *
+   * 태그도 줄마다 싣는다. 비었어도 뺄 수 없다 -- 생략은 "비운다"가 아니라 "그대로
+   * 둔다"로 읽히면 태그를 전부 뗀 수정을 표현할 길이 없다.
    */
   if (values.splits.length > 0) {
     return {
       ...base,
+      // 분할은 줄마다 태그가 다르다. 전표 단위 목록은 싣지 않는다.
+      tagIds: undefined,
       splits: values.splits.map((split) => ({
         categoryId: split.categoryId,
         amount: split.amount,
+        lineKey: split.lineKey,
+        tagIds: split.tagIds,
+        ...lineDiscount(split.discountAmount),
       })),
       ...(method.accountId ? { accountId: method.accountId } : {}),
       ...(method.cardId ? { cardId: method.cardId } : {}),
       ...(values.kind === 'expense' && method.cardId && Number(values.installmentMonths) >= 2
         ? { installmentMonths: Number(values.installmentMonths) }
         : {}),
-      ...expenseExtras,
       ...performanceExtra,
     };
   }
@@ -702,15 +804,34 @@ export function entryFormToRequest(
   return {
     ...base,
     categoryId: values.categoryId,
+    // 분류 하나짜리 거래의 줄 키. 이 값이 이어져야 그 줄의 태그와 차감이 살아남는다.
+    lineKey: values.lineKey,
     ...(method.accountId ? { accountId: method.accountId } : {}),
     ...(method.cardId ? { cardId: method.cardId } : {}),
     // 할부는 신용카드 지출에만 붙는다. 그 판단은 조립이 다시 한다.
     ...(values.kind === 'expense' && method.cardId && months >= 2
       ? { installmentMonths: months }
       : {}),
-    ...expenseExtras,
+    ...lineDiscount(values.discountAmount),
     ...performanceExtra,
   };
+}
+
+/**
+ * 이 거래에서 깎인 금액의 합.
+ *
+ * 실적 칸을 띄울지 가리는 데 쓴다. 분할이면 줄마다 적은 값을 더한 것이 그 거래의
+ * 차감이고, 아니면 칸 하나가 곧 그 값이다. 웹과 앱의 폼도 같은 것을 쓴다 -- "차감을
+ * 실적에서 뺄지" 칸이 화면마다 다른 조건으로 뜨면 안 된다.
+ */
+export function totalDiscountOf(values: EntryFormValues): string {
+  if (values.splits.length === 0) return values.discountAmount;
+
+  const total = values.splits.reduce((acc, split) => {
+    const amount = toDec(split.discountAmount);
+    return amount ? acc.plus(amount) : acc;
+  }, Dec.of(0));
+  return total.isZero() ? '' : total.toString();
 }
 
 /** 'YYYY-MM-DD' 이고 실제로 있는 날인가. 2026-02-31 은 모양은 맞지만 없는 날이다. */

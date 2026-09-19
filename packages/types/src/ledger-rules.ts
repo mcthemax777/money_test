@@ -39,6 +39,29 @@ export interface PostingRuleInput {
   baseAmount: DecInput;
   exchangeRate: DecInput;
   quantity?: DecInput | null;
+  /**
+   * 이 줄에서 깎인 금액 (포인트·자동할인·취소). 분류 다리에만 있다.
+   *
+   * 0원 다리를 받을지 가르는 데 쓴다. 정가가 0인 줄은 사람이 적을 수 없는 모양이지만,
+   * **환불로 순액이 0이 된 줄은 있었던 일이다**.
+   */
+  discountAmount?: DecInput | null;
+}
+
+/** 환불로 0이 된 다리인가. 위 `checkPostings` 의 0원 규칙이 쓴다. */
+function zeroAllowed(
+  posting: PostingRuleInput,
+  postings: readonly PostingRuleInput[],
+): boolean {
+  if (posting.categoryId) {
+    const discount = posting.discountAmount;
+    if (discount === undefined || discount === null || discount === '') return false;
+    return Dec.of(discount).isPositive();
+  }
+
+  // 계좌 다리. 분류 줄이 하나라도 있고 그것이 모두 0일 때만이다.
+  const lines = postings.filter((leg) => leg.categoryId);
+  return lines.length > 0 && lines.every((leg) => Dec.of(leg.amount).isZero());
 }
 
 /**
@@ -51,18 +74,6 @@ export function checkPostings(postings: readonly PostingRuleInput[]): LedgerRule
   if (postings.length < 2) {
     return { code: 'POSTING_TOO_FEW', message: '전표에는 최소 2개의 posting이 필요합니다.' };
   }
-
-  /*
-   * 전표가 통째로 0인가.
-   *
-   * 전액을 되돌린 결제(카드 사용 취소)와 전액을 포인트로 치른 결제가 이 모양이다.
-   * 13,000원 결제에서 13,000원이 빠지면 분류 다리도 결제수단 다리도 0이 되는데,
-   * 그 거래는 있었던 일이므로 지우지 않고 0원으로 남긴다.
-   *
-   * **일부만 0인 전표는 그대로 막는다.** 그것은 사람이 적은 모양이 아니라 조립이
-   * 잘못됐을 때 나오는 모양이고, 0원 금지 규칙이 값을 하는 자리가 바로 거기다.
-   */
-  const allZero = postings.every((p) => Dec.of(p.amount).isZero());
 
   for (const p of postings) {
     const hasAccount = Boolean(p.accountId);
@@ -82,8 +93,21 @@ export function checkPostings(postings: readonly PostingRuleInput[]): LedgerRule
       };
     }
 
+    /*
+     * 0원 다리는 **환불로 그렇게 된 것만** 받는다.
+     *
+     * 정가가 0인 줄은 사람이 적을 수 없는 모양이고, 그런 0원은 조립이 잘못됐다는
+     * 신호다. 반대로 1,000원을 결제하고 1,000원을 돌려받은 일은 실제로 있었던 일이라
+     * 지우지 않고 0원으로 남긴다 -- 카드 명세서에도 승인과 취소가 함께 남는다.
+     *
+     * 그래서 둘을 가른다.
+     *   분류 다리  깎인 금액이 있으면 0이어도 받는다. 분할의 한 줄만 0인 경우도 같다
+     *              (여행경비만 전액 환불되고 식비 줄은 남는 일이 실제로 있다).
+     *   계좌 다리  그 전표의 분류 줄이 **모두** 0일 때만 받는다. 계좌 다리는 줄들의
+     *              합이라, 하나라도 남아 있으면 0이 될 수 없다.
+     */
     const amount = Dec.of(p.amount);
-    if (amount.isZero() && !allZero) {
+    if (amount.isZero() && !zeroAllowed(p, postings)) {
       return { code: 'POSTING_ZERO_AMOUNT', message: '금액이 0인 posting은 만들 수 없습니다.' };
     }
 

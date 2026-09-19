@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 /**
  * 다중 통화.
  *
@@ -88,7 +89,7 @@ runSmoke('currency', async (ctx) => {
 
   // ── 달러 통장에서 달러로 지출 ───────────────────────────────
   const usdExpense = await call('POST', `/entries${q}`, {
-    kind: 'expense', personId: person.body.id, date: today,
+    kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date: today,
     description: '현지 식당', amount: '50',
     categoryId: dining.body.id, accountId: usdBank.body.id,
   });
@@ -109,7 +110,7 @@ runSmoke('currency', async (ctx) => {
     issuerId: issuer.body[0].id, statementClosingDay: 15, paymentDueDay: 25,
   });
   const foreignOnKrwCard = await call('POST', `/entries${q}`, {
-    kind: 'expense', personId: person.body.id, date: today,
+    kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date: today,
     description: '해외 결제', amount: '50', currency: 'USD',
     categoryId: dining.body.id, cardId: card.body.id,
   });
@@ -131,7 +132,7 @@ runSmoke('currency', async (ctx) => {
 
   // ── 사용자가 환율을 직접 고칠 수 있다 ──────────────────────
   const customRate = await call('POST', `/entries${q}`, {
-    kind: 'expense', personId: person.body.id, date: today,
+    kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date: today,
     description: '명세서 환율 적용', amount: '100', currency: 'USD', exchangeRate: '1400',
     categoryId: dining.body.id, cardId: card.body.id,
   });
@@ -139,7 +140,7 @@ runSmoke('currency', async (ctx) => {
 
   // ── 달러 수입 ──────────────────────────────────────────────
   const usdIncome = await call('POST', `/entries${q}`, {
-    kind: 'income', personId: person.body.id, date: today,
+    kind: 'income', lineKey: randomUUID(), personId: person.body.id, date: today,
     description: '해외 급여', amount: '200',
     categoryId: salary.body.id, accountId: usdBank.body.id,
   });

@@ -31,6 +31,7 @@ import {
   entryFormToRequest,
   parseMethod,
   type EntryFormSplit,
+  newSplitLine,
   type EntryFormValues,
   type EntryFormViolation,
 } from '../data/entry-form';
@@ -79,8 +80,8 @@ const EMPTY_LISTS: EntryFormLists = {
  */
 const HIDDEN_TYPES = ['credit_card', 'opening_balance'];
 
-/** 빈 분할 줄. */
-const blankSplit = (): EntryFormSplit => ({ categoryId: '', amount: '' });
+/** 빈 분할 줄. 줄 키는 `newSplitLine` 이 붙인다. */
+const blankSplit = (): EntryFormSplit => newSplitLine();
 
 /**
  * 적힌 금액들의 합. 숫자가 아닌 칸은 0으로 본다.
@@ -567,10 +568,21 @@ export function useEntryForm({
       if (previous.splits.length > 0) {
         return { ...previous, splits: [...previous.splits, blankSplit()] };
       }
+      /*
+       * 첫 줄은 지금까지 적은 값을 그대로 물려받는다. **줄 키도 함께 옮긴다** --
+       * 이미 저장된 거래를 분할로 바꾸는 중이면, 그 키에 붙어 있던 태그와 차감이
+       * 첫 줄에 그대로 이어져야 한다.
+       */
       return {
         ...previous,
         splits: [
-          { categoryId: previous.categoryId, amount: previous.amount },
+          newSplitLine({
+            categoryId: previous.categoryId,
+            amount: previous.amount,
+            lineKey: previous.lineKey,
+            discountAmount: previous.discountAmount,
+            tagIds: previous.tagIds,
+          }),
           blankSplit(),
         ],
       };

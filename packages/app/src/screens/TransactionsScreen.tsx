@@ -23,7 +23,7 @@ import {
   View,
 } from 'react-native';
 import { Archive, ArrowLeft, Check, MoreVertical, Search, Tag, Trash2, X } from 'lucide-react-native';
-import type { EntryListItem } from '@money/types';
+import { entryRows, type EntryListItem, type EntryRow } from '@money/types';
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
@@ -563,7 +563,12 @@ export default function TransactionsScreen() {
    */
   const openDetail = useCallback((entry: EntryListItem) => setDetail(entry), []);
   const toggleEntry = useCallback(
-    (entry: EntryListItem) => tx.toggleEntrySelected(entry.id),
+    (entry: EntryListItem, row?: EntryRow) =>
+      tx.toggleEntrySelected(
+        entry.id,
+        row?.line?.lineKey ?? null,
+        entry.lines.map((line) => line.lineKey),
+      ),
     [tx.toggleEntrySelected],
   );
 
@@ -622,12 +627,19 @@ export default function TransactionsScreen() {
   const entryList = (yearMonth: string, key: string) => {
     // 한 번만 묻는다. 두 번 물으면 그 달을 날짜로 묶는 일이 줄마다 두 번씩 돈다.
     const entries = tx.entriesOf(yearMonth, key);
+    /*
+     * 나눈 거래를 줄로 편다. 웹 목록과 같은 함수다.
+     *
+     * 10,000원을 식비 5,000 + 여행경비 5,000으로 나눴다면 두 줄이 선다. 분류나 태그로
+     * 좁힌 목록에서는 걸린 줄만 나온다.
+     */
+    const rows = entryRows(entries);
 
     // 예산에서 이 줄의 몫을 떼어 온다. 모자라면 앞에서부터 그만큼만 세운다.
     const taken = wantedEntries.current;
-    wantedEntries.current = taken + entries.length;
+    wantedEntries.current = taken + rows.length;
     const shown =
-      taken + entries.length <= budget ? entries : entries.slice(0, Math.max(0, budget - taken));
+      taken + rows.length <= budget ? rows : rows.slice(0, Math.max(0, budget - taken));
 
     return (
       <View className="bg-white">
@@ -636,7 +648,7 @@ export default function TransactionsScreen() {
         ) : entries.length === 0 ? (
           <Text className="px-3 py-3 text-sm text-gray-500">{t('feed.empty')}</Text>
         ) : (
-          shown.map((entry) =>
+          shown.map((row) =>
             /*
              * 고르는 중에는 누름의 뜻이 바뀐다. 상세를 띄우는 대신 체크한다.
              *
@@ -653,17 +665,28 @@ export default function TransactionsScreen() {
                * 한 칸 더 들어간다. 그만큼 왼쪽으로 당겨 글자도 같은 자리에서 시작하게
                * 한다 -- 줄과 거래가 같은 세로줄에 서는 것은 이 화면의 규칙이다.
                */
-              <View key={entry.id} className="flex-row items-center gap-2 pl-3">
+              <View key={row.key} className="flex-row items-center gap-2 pl-3">
                 <CheckBox
-                  checked={tx.isEntrySelected(entry.id)}
-                  onPress={() => tx.toggleEntrySelected(entry.id)}
+                  checked={tx.isEntrySelected(row.entry.id, row.line?.lineKey ?? null)}
+                  onPress={() =>
+                    tx.toggleEntrySelected(
+                      row.entry.id,
+                      row.line?.lineKey ?? null,
+                      row.entry.lines.map((line) => line.lineKey),
+                    )
+                  }
                 />
                 <View className="-ml-3 flex-1">
-                  <TransactionItem entry={entry} onPress={toggleEntry} />
+                  <TransactionItem entry={row.entry} row={row} onPress={toggleEntry} />
                 </View>
               </View>
             ) : (
-              <TransactionItem key={entry.id} entry={entry} onPress={openDetail} />
+              <TransactionItem
+                key={row.key}
+                entry={row.entry}
+                row={row}
+                onPress={openDetail}
+              />
             ),
           )
         )}
@@ -1010,13 +1033,17 @@ export default function TransactionsScreen() {
         commonTagIds={tx.commonTagIds}
         partialTagIds={tx.partialTagIds}
         onApply={(addTagIds, removeTagIds) => {
-          void tx.tagSelected(addTagIds, removeTagIds).then(({ tagged, failed }) => {
+          void tx.tagSelected(addTagIds, removeTagIds).then(({ tagged, failed, skipped }) => {
             setIsTagPickOpen(false);
             /*
              * 결과를 글자로 알린다. 목록이 다시 그려지는 데 잠깐 걸려, 아무 말이 없으면
              * 눌린 것인지 알 수 없다. 0건은 "이미 다 붙어 있었다"는 뜻이라 따로 적는다.
+             *
+             * 사라진 줄이 있었으면 그것을 먼저 알린다. 다른 기기가 그 사이 분할을 고쳐
+             * 붙일 자리가 없어진 경우다 -- 조용히 넘기면 표시가 된 줄 안다.
              */
             if (failed) setNotice(t('tx.tagFailed'));
+            else if (skipped > 0) setNotice(t('tx.tagSkipped', { count: skipped }));
             else if (tagged === 0) setNotice(t('tx.tagNothingNew'));
             else setNotice(t('tx.tagDone', { count: tagged }));
           });

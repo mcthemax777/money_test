@@ -25,7 +25,17 @@ const PAGE_SIZE = 20;
  * **창구를 거친다.** 웹은 서버에서, 앱은 기기 사본에서 받는다. 카드 상세의 다른 칸도
  * 같은 창구를 쓰므로 한 화면의 숫자가 늘 같은 시점을 가리킨다 -- 오프라인에서도 그렇다.
  */
-export function useAccountLedger(accountId: string | null, reloadToken = 0) {
+export function useAccountLedger(
+  accountId: string | null,
+  reloadToken = 0,
+  /**
+   * 이 구간의 줄만. 카드 상세에서 청구 주기 하나를 골랐을 때 준다.
+   *
+   * 줄에 붙는 잔액은 구간과 상관없이 맨 앞부터 쌓은 값이다 -- 구간만큼만 세면 그 줄의
+   * 잔액이 통장의 실제 잔액과 달라진다. 자르는 것은 보여 줄 줄뿐이다.
+   */
+  range?: { startDate: string; endDate: string } | null,
+) {
   const [rows, setRows] = useState<AccountDto.LedgerRow[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -39,15 +49,20 @@ export function useAccountLedger(accountId: string | null, reloadToken = 0) {
    */
   const runRef = useRef(0);
 
+  // 구간은 문자열 둘이라 그대로 두면 그릴 때마다 새 객체다. 아래 효과가 끝없이 돈다.
+  const rangeKey = range ? `${range.startDate}|${range.endDate}` : '';
+
   const load = useCallback(
     async (id: string, after: string | null, run: number) => {
       try {
         setIsLoading(true);
         setHasError(false);
 
+        const [startDate, endDate] = rangeKey ? rangeKey.split('|') : [];
         const page = await homeDataPort().getAccountPostings(id, {
           limit: PAGE_SIZE,
           ...(after ? { cursor: after } : {}),
+          ...(rangeKey ? { startDate, endDate } : {}),
         });
         if (runRef.current !== run) return;
 
@@ -65,7 +80,7 @@ export function useAccountLedger(accountId: string | null, reloadToken = 0) {
         if (runRef.current === run) setIsLoading(false);
       }
     },
-    [],
+    [rangeKey],
   );
 
   useEffect(() => {

@@ -119,7 +119,8 @@ const opening = (id: string, accountId: string, amount: string, version = 1) => 
   rateProvisional: false,
   createdByUserId: null,
   updatedVersion: version,
-  tagIds: [] as string[],
+  // 태그 연결. 줄 키가 함께 온다 (분류 줄이 없는 전표는 null 이다).
+  tagLinks: [] as Array<{ lineKey: string | null; tagId: string }>,
   postings: [
     {
       id: `${id}-acc`,
@@ -169,8 +170,8 @@ const entry = (
   rateProvisional: false,
   createdByUserId: null,
   updatedVersion: version,
-  // 서버는 전표에 붙은 태그를 id 목록으로 실어 준다. 이 표본에는 태그가 없다.
-  tagIds: [] as string[],
+  // 서버는 전표에 달린 태그 연결을 줄 키와 함께 실어 준다. 이 표본에는 태그가 없다.
+  tagLinks: [] as Array<{ lineKey: string | null; tagId: string }>,
   postings: [
     {
       id: `${id}-cat`,
@@ -183,6 +184,8 @@ const entry = (
       baseAmount: amount,
       exchangeRate: '1',
       cardId: null,
+      // 분류 줄의 신원. 서버가 만들거나 화면이 만들어 보낸 값이 그대로 내려온다.
+      lineKey: `${id}-line`,
     },
     {
       id: `${id}-acc`,

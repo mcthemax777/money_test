@@ -470,23 +470,36 @@ model Tag {
   @@index([projectId, sortRank])
 }
 
-/// 전표에 붙은 태그.
+/// 목록 한 줄에 붙은 태그.
 ///
-/// **전표에 붙이고 다리에 붙이지 않는다.** 사용자가 고르는 자리가 거래 하나이고,
-/// 분할한 줄마다 따로 고르게 하면 "이 결제는 여행이었다"를 적는 데 줄 수만큼 손이
-/// 간다. 그래서 분할 거래의 태그 통계는 그 전표의 지출 전체를 센다.
+/// **줄에 붙이고 전표에 붙이지 않는다.** 10,000원을 식비 5,000 + 여행경비 5,000으로
+/// 나눴다면 "여행"은 여행경비 줄의 사실이지 결제 전체의 사실이 아니다. 전표에 붙이면
+/// 두 줄에 같은 태그가 늘 함께 떠서, 태그로 좁힌 화면이 식비까지 데려온다.
+///
+/// 줄은 `(entryId, lineKey)` 로 가리킨다. `postingId` 가 아닌 까닭은 Posting.lineKey 참고.
+///
+/// `lineKey` 가 null 인 행은 **분류 줄이 없는 전표**의 것이다 -- 이체와 카드 대금
+/// 결제가 그렇고, 목록도 그 둘을 한 줄로 보여 준다. 지출·수입에는 만들지 않는다.
 ///
 /// 이 표에는 번호(updatedVersion)를 붙이지 않는다. 전표가 다리와 함께 한 단위로
 /// 움직이는 것과 같은 이유다(설계 문서의 D5) -- 전표가 바뀌면 그 전표의 태그 연결을
 /// 통째로 갈아 끼우고, 변경 피드도 전표에 실어 함께 보낸다.
 model EntryTag {
+  /// 대리 키. 줄 키가 null 일 수 있어 복합 기본키를 쓸 수 없다.
+  id      String  @id @default(cuid())
   entryId String
+  lineKey String?
   tagId   String
 
   entry JournalEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
   tag   Tag          @relation(fields: [tagId], references: [id], onDelete: Cascade)
 
-  @@id([entryId, tagId])
+  /// 한 줄에 같은 태그를 두 번 붙이지 않는다.
+  ///
+  /// null 인 줄 키는 이 제약에 걸리지 않으므로(Postgres는 null을 서로 다르게 본다),
+  /// 그쪽은 마이그레이션이 부분 유니크 색인으로 따로 막는다.
+  @@unique([entryId, lineKey, tagId])
+  @@index([entryId])
   @@index([tagId])
 }
 
@@ -646,21 +659,14 @@ model JournalEntry {
   // 이미 사실이라 확정할 것이 없고, 사용자가 환율을 직접 넣은 거래도 마찬가지다.
   rateProvisional Boolean @default(false)
 
-  // 결제 자리에서 깎인 금액. 카드 포인트 사용, 자동할인, 같은 주기 안의 취소가 든다.
-  //
-  // 표시 전용이다. 다리(posting)에는 이미 깎인 뒤의 금액이 들어가 있어, 이 값이 없으면
-  // "13,000짜리를 3,000 깎아 샀다"가 사라지고 "10,000을 썼다"만 남는다.
-  // originalAmount 를 함께 적어 두는 것과 같은 까닭이다.
-  //
-  // 정가와 같을 수 있다. 그때는 모든 다리가 0이 되어 0원 거래로 남는다 -- 전액 취소와
-  // 전액 포인트 결제가 그 모양이고, 있었던 일이므로 지우지 않는다.
-  discountAmount Decimal? @db.Decimal(19, 4)
-
   // 이 거래를 카드 실적에 세는가. 카드로 낸 거래에만 뜻이 있다.
   //
   // 실적과 청구액은 다른 값이다. 카드사는 갚아야 할 돈과 별개로 "이번 주기에 얼마
   // 썼나"를 따로 세고, 세금·공과금·상품권처럼 청구는 되지만 실적에서 빠지는 결제가
   // 있다. 반대로 카드사가 되돌려 준 돈은 빚을 줄이되 실적까지 깎지 않는 것이 보통이다.
+  //
+  // **분할해도 하나다.** 실적을 세는 쪽은 카드사이고 그쪽이 보는 것은 승인 한 건이라,
+  // 한 결제를 분류로 나눴다고 절반만 실적에 드는 일은 없다.
   //
   // 기본값이 갈래마다 다르다 -- 지출은 포함, 카드로 들어온 수입은 제외다. 그 판단은
   // 조립(entry-build)이 하고 여기에는 정해진 값만 담긴다.
@@ -668,10 +674,13 @@ model JournalEntry {
   // 카드가 끼지 않은 거래는 true 로 둔다. 실적 질의가 카드 다리만 보므로 읽히지 않는다.
   countsPerformance Boolean @default(true)
 
-  // 차감·취소 금액(discountAmount)을 카드 실적에서도 뺄지.
+  // 차감·취소 금액을 카드 실적에서도 뺄지.
   //
   // 다리에는 이미 깎인 뒤의 금액이 들어가 있어, 이 값이 true 면 실적도 그만큼 줄어든다.
   // false 면 실적만 정가로 센다 -- 갚을 대금은 어느 쪽이든 깎인 금액 그대로다.
+  //
+  // **분할해도 하나다.** 깎인 금액은 줄마다 따로 적지만(Posting.discountAmount),
+  // "그것을 실적에서 뺄지"는 카드사의 방침 하나라 줄마다 갈릴 값이 아니다.
   //
   // 차감이 없는 거래와 countsPerformance 가 꺼진 거래에서는 읽히지 않는다.
   discountCountsPerformance Boolean @default(true)
@@ -723,6 +732,36 @@ model Posting {
   statementId  String? // 신용카드 posting만 사용
   cardId       String? // 표시/분석용. 체크카드 사용 시에도 채운다
 
+  /// 이 줄의 신원. **분류 다리에만 채운다** (계좌 다리는 null).
+  ///
+  /// id 로는 줄을 가리킬 수 없다. 전표를 고칠 때마다 다리를 통째로 지우고 새로
+  /// 만들기 때문에(`LedgerService.replaceEntry`), 분류와 무관한 사소한 수정에도
+  /// 모든 posting 의 id 가 바뀐다. 그래서 줄에 붙는 것(태그·차감)이 id 를 가리키면
+  /// 한 번의 수정으로 전부 끊긴다.
+  ///
+  /// **화면이 만들어 편집 내내 들고 다닌다.** 분할 줄을 더하는 순간 uuid 를 붙이고,
+  /// 저장할 때마다 그대로 되돌려 보낸다. 서버는 옛 값과 새 값을 짝지을 필요 없이
+  /// 받은 값을 그대로 써 넣는다. 오프라인에서도 같은 길이다.
+  ///
+  /// 이체 수수료도 분류 다리라 키를 갖는다. 목록은 이체를 한 줄로 보여 주지만,
+  /// 그 줄의 신원이 갈래마다 다르면 규칙이 두 벌이 된다.
+  lineKey String?
+
+  /// 이 줄에서 깎인 금액 (포인트·자동할인·취소). 양수이고 **분류 다리에만** 있다.
+  ///
+  /// 통화는 사용자가 적은 통화다 (정가와 같은 칸에서 뺀 값이라 그렇다).
+  /// `amount` 는 이미 이 값을 뺀 순액이라, 편집 화면이 정가 칸을 되살릴 때 둘을 더한다.
+  ///
+  /// 예전에는 전표에 하나만 두고 줄마다 비율로 나눴다. 여행경비만 환불받아도 식비 줄이
+  /// 함께 깎여 분류별 분석이 사실과 어긋났다.
+  ///
+  /// **실적 여부는 여기 없다.** 깎인 금액은 줄마다 다르지만 "그것을 실적에서 뺄지"는
+  /// 카드사의 방침 하나라 전표에 둔다 (JournalEntry.discountCountsPerformance).
+  ///
+  /// 한 값만 담는다. 여러 번의 부분 환불을 시점별로 남기는 이력은 다른 요구사항이다.
+  discountAmount Decimal? @db.Decimal(19, 4)
+
+
   entry           JournalEntry     @relation(fields: [entryId], references: [id], onDelete: Cascade)
   account         Account?         @relation(fields: [accountId], references: [id], onDelete: Cascade)
   category        Category?        @relation(fields: [categoryId], references: [id], onDelete: Cascade)
@@ -730,6 +769,9 @@ model Posting {
   card            Card?            @relation(fields: [cardId], references: [id], onDelete: SetNull)
   installmentPlan InstallmentPlan?
 
+  /// 한 전표 안에서 줄 키는 겹치지 않는다. 계좌 다리의 null 은 서로 다른 값으로
+  /// 취급되어(Postgres) 여러 개가 함께 있어도 걸리지 않는다.
+  @@unique([entryId, lineKey])
   @@index([entryId])
   @@index([accountId, entryId])
   @@index([categoryId])

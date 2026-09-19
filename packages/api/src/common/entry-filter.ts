@@ -1,5 +1,18 @@
 import { AccountType, CategoryType, Prisma } from '@prisma/client';
-import { EntryFilterQuery, type EntryKind, type ParsedEntrySearch } from '@money/types';
+import {
+  EntryFilterQuery,
+  type EntryKind,
+  type ParsedEntrySearch,
+  lineMatcherOf,
+} from '@money/types';
+
+/*
+ * 걸린 줄만 남기는 판정기는 공용 규칙이 갖는다 (`@money/types` 의 entry-view).
+ *
+ * 기기도 오프라인에서 같은 목록을 그려야 한다. 규칙이 두 벌이면 같은 검색이 서버에서는
+ * 한 줄, 사본에서는 두 줄을 보여 준다. 부르는 쪽이 여기서 찾을 수 있도록 다시 내보낸다.
+ */
+export { lineMatcherOf };
 
 /**
  * 화면의 사람 필터를 Prisma 조건으로 옮긴다.
@@ -295,3 +308,4 @@ export function entryKindCondition(
   const branches = kinds.map(of);
   return branches.length === 1 ? branches[0] : { OR: branches };
 }
+

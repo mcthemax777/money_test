@@ -5,7 +5,8 @@
  */
 import { memo } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import type { EntryListItem } from '@money/types';
+import { Split } from 'lucide-react-native';
+import type { EntryListItem, EntryRow } from '@money/types';
 
 import { formatDate, formatTime } from '@money/core/lib/datetime';
 import {
@@ -38,10 +39,17 @@ const TWO_SIDED: Array<EntryListItem['kind']> = ['transfer', 'card_payment', 'ad
  */
 function TransactionItemView({
   entry,
+  row,
   onPress,
 }: {
   entry: EntryListItem;
-  onPress?: (entry: EntryListItem) => void;
+  /**
+   * 이 줄이 가리키는 분류 줄. 나눈 거래를 줄로 펴서 그릴 때 준다.
+   *
+   * 없으면 거래 하나를 한 줄로 그린다 -- 계좌 관점으로 보는 화면이 그렇다.
+   */
+  row?: EntryRow;
+  onPress?: (entry: EntryListItem, row?: EntryRow) => void;
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
@@ -58,9 +66,26 @@ function TransactionItemView({
       ? `${entry.accountName} → ${flowTo}`
       : '';
 
-  // 설명이 빈 거래의 이름으로 쓰는 분류 ("대분류 > 소분류"). 자산 상세의 원장 줄도
-  // 같은 것을 쓰므로 규칙은 core 에 있다.
-  const categoryLabel = categoryTitleOf(entry);
+  /*
+   * 설명이 빈 거래의 이름으로 쓰는 분류 ("대분류 > 소분류").
+   *
+   * **그 줄의 분류를 쓴다.** 거래에 실린 대표 분류는 나눈 줄 중 첫 줄이라, 여행경비로
+   * 좁혀 여행경비 한 줄만 서 있는데 제목에는 식비가 뜨는 일이 생긴다.
+   *
+   * 자산 상세의 원장 줄도 같은 것을 쓰므로 규칙은 core 에 있다.
+   */
+  const categoryLabel = categoryTitleOf(row?.line ?? entry);
+
+  /*
+   * 나눈 거래의 줄은 **아이콘 하나로** 표시한다. 웹의 한 줄과 같은 규칙이다.
+   *
+   * 줄마다 적는 것은 다르지 않다 -- 첫 줄이든 둘째 줄이든 가맹점명·날짜·시각을 그대로
+   * 적고, 같은 아이콘이 "이 줄은 나눈 거래의 일부"라고 말한다.
+   *
+   * 기준은 화면에 몇 줄이 그려지는가가 아니라 **그 거래가 나뉘어 있는가**(`splitCount`)다.
+   */
+  const isSplitLine = Boolean(row?.line) && entry.splitCount > 1;
+  const line = row?.line ?? null;
 
   const title = (() => {
     if (entry.kind === 'card_payment') {
@@ -77,9 +102,9 @@ function TransactionItemView({
 
   const time = formatTime(entry.date, timeZone);
   // 부호와 색. 규칙은 core 에 있다 (웹의 한 줄과 같아야 한다).
-  const look = entryAmountLook(entry);
+  const look = entryAmountLook(entry, row?.amount ?? entry.amount);
   // 결제 자리에서 곧바로 빠진 금액 (포인트 사용·자동할인). 없으면 0 이다.
-  const discount = toNumber(entry.discountAmount);
+  const discount = toNumber(line ? line.discountAmount : entry.discountAmount);
 
   /*
    * 2줄에 들어가는 부속 정보. 있는 것만 " · "로 잇는다.
@@ -94,7 +119,7 @@ function TransactionItemView({
    * 쓴 자산의 규칙은 core 의 entryAssetName 이 갖는다. 웹의 한 줄도 같은 것을 쓴다.
    */
   const meta = [
-    entry.categoryName,
+    line?.categoryName ?? entry.categoryName,
     entryAssetName(entry, flow),
     formatDate(entry.date, timeZone),
     time,
@@ -104,7 +129,7 @@ function TransactionItemView({
 
   return (
     <Pressable
-      onPress={onPress && (() => onPress(entry))}
+      onPress={onPress && (() => onPress(entry, row))}
       disabled={!onPress}
       className="border-b border-gray-100 px-3 py-2.5 active:bg-gray-50"
     >
@@ -120,10 +145,17 @@ function TransactionItemView({
           낸다(overflow-hidden). 금액은 줄어들지 않아 오른쪽 끝에 그대로 선다.
         */}
         <View className="flex-1 flex-row items-baseline gap-1.5 overflow-hidden">
+          {/*
+            나눈 거래의 줄. 제목 앞에 작게 세워 "이 줄은 그 결제의 일부"라고 말한다.
+            줄마다 같은 아이콘이다 -- 나눈 줄 사이에 앞뒤가 없기 때문이다.
+          */}
+          {isSplitLine ? (
+            <Split size={12} color="#9ca3af" accessibilityLabel={t('entry.split')} />
+          ) : null}
           <Text numberOfLines={1} className="shrink text-[15px] font-medium text-gray-900">
             {title}
           </Text>
-          {entry.tags.map((tag) => (
+          {(line?.tags ?? entry.tags).map((tag) => (
             <View
               key={tag.id}
               className="flex-row items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5"

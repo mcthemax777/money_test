@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 /**
  * 실제 사용 중에 드러난 경계 조건들.
  *
@@ -65,7 +66,7 @@ runSmoke('edge-cases', async (ctx) => {
 
   // ── 거래 날짜 상한 ──
   const entryAt = (date: string) => ({
-    kind: 'expense', personId: person.body.id, date,
+    kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date,
     description: '점심', amount: '5000',
     categoryId: dining.body.id, accountId: account.body.id,
   });
@@ -134,7 +135,7 @@ runSmoke('edge-cases', async (ctx) => {
   // ── 숨기기: 기록이 있어도 되고, 되돌릴 수 있다 ──
   const spender = await call('POST', `/people${q}`, { name: '숨길사람' });
   await call('POST', `/entries${q}`, {
-    kind: 'expense', personId: spender.body.id, date: new Date().toISOString(),
+    kind: 'expense', lineKey: randomUUID(), personId: spender.body.id, date: new Date().toISOString(),
     description: '거래', amount: '1000',
     categoryId: dining.body.id, accountId: account.body.id,
   });

@@ -16,7 +16,17 @@ import { homeDataPort } from '../data/home-port';
 /** 한 번에 받아 오는 줄 수. 통장·카드 원장이 쓰는 값과 같다. */
 const PAGE_SIZE = 20;
 
-export function useCardPerformanceLedger(cardId: string | null, reloadToken = 0) {
+export function useCardPerformanceLedger(
+  cardId: string | null,
+  reloadToken = 0,
+  /**
+   * 이 주기의 줄만 ('YYYY-MM'). 그래프에서 막대를 골랐을 때 준다.
+   *
+   * 날짜 구간이 아니라 주기 이름으로 가리킨다. 할부 회차는 산 날이 아니라 청구되는
+   * 주기에 쌓이므로, 날짜로 자르면 그 주기에 쌓인 회차가 빠진다.
+   */
+  closingKey?: string | null,
+) {
   const [rows, setRows] = useState<CardDto.PerformanceLedgerRow[]>([]);
   /** 줄의 머리글이 되는 주기. 같은 주기가 두 쪽에 걸쳐 오므로 시작 시각으로 합친다. */
   const [periods, setPeriods] = useState<Record<string, CardDto.PerformanceLedgerPeriod>>({});
@@ -45,6 +55,7 @@ export function useCardPerformanceLedger(cardId: string | null, reloadToken = 0)
       const page = await homeDataPort().getCardPerformanceLedger(id, {
         limit: PAGE_SIZE,
         ...(after ? { cursor: after } : {}),
+        ...(closingKey ? { closingKey } : {}),
       });
       if (runRef.current !== run) return;
 
@@ -68,7 +79,7 @@ export function useCardPerformanceLedger(cardId: string | null, reloadToken = 0)
     } finally {
       if (runRef.current === run) setIsLoading(false);
     }
-  }, []);
+  }, [closingKey]);
 
   useEffect(() => {
     const run = runRef.current + 1;

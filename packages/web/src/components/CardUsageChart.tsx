@@ -63,6 +63,17 @@ interface CardUsageChartProps {
    */
   measure?: CardUsageMeasure;
   height?: number;
+  /**
+   * 지금 고른 주기 ('YYYY-MM'). 아래 목록에서 그 줄이 눌린 것으로 그려진다.
+   *
+   * 고르고 푸는 것은 부르는 쪽이 한다. 이 그래프는 어느 주기가 눌렸는지만 보여 주고,
+   * 그 주기로 좁히는 일은 목록을 들고 있는 화면의 몫이다.
+   */
+  selectedKey?: string | null;
+  /** 주기를 누를 때. 이미 고른 주기를 다시 누르면 null 이 온다. */
+  onSelectPeriod?: (
+    period: { closingKey: string; periodStart: string; periodEnd: string } | null,
+  ) => void;
 }
 
 /**
@@ -85,6 +96,8 @@ export default function CardUsageChart({
   cardId,
   measure,
   height = 240,
+  selectedKey,
+  onSelectPeriod,
 }: CardUsageChartProps) {
   const { t } = useTranslation();
   const usage = useCardUsageWindow(periods, target, cardId, undefined, measure);
@@ -193,7 +206,14 @@ export default function CardUsageChart({
             {/* 끄는 동안 막대가 하나씩 갈리므로 그때마다 다시 자라면 어지럽다. */}
             <Bar dataKey="amount" radius={CHART_BAR_RADIUS} isAnimationActive={false}>
               {bars.map((bar) => (
-                <Cell key={bar.key} fill={bar.fill ?? CHART_COLOR} fillOpacity={bar.fillOpacity} />
+                <Cell
+                  key={bar.key}
+                  fill={bar.fill ?? CHART_COLOR}
+                  fillOpacity={bar.fillOpacity}
+                  /* 고른 주기는 테두리로 짚어 준다. 아래 목록의 눌린 줄과 짝이다. */
+                  stroke={selectedKey === bar.closingKey ? CARD_USAGE_TARGET_COLOR : undefined}
+                  strokeWidth={selectedKey === bar.closingKey ? 2 : 0}
+                />
               ))}
               {bars.length <= LABEL_LIMIT && (
                 <LabelList
@@ -219,18 +239,59 @@ export default function CardUsageChart({
         않으면 읽을 수 없었다.
       */}
       <ul className="mt-3 border-t border-gray-100">
-        {bars.map((bar) => (
-          <li
-            key={bar.key}
-            className="flex items-baseline justify-between gap-3 border-b border-gray-100 py-1.5"
-          >
-            <span className="text-xs text-gray-500">{bar.range}</span>
-            <span className="text-sm font-medium tabular-nums text-gray-900">
-              {formatCurrency(bar.amount, currency)}
-            </span>
-          </li>
-        ))}
+        {bars.map((bar) => {
+          const picked = selectedKey === bar.closingKey;
+          /*
+            누르면 아래 내역이 그 주기만 남는다. 한 번 더 누르면 풀린다.
+
+            줄 자체가 단추다. 옆에 따로 단추를 두면 "이 줄을 누르면 무엇이 되는가"가
+            줄마다 두 갈래가 된다.
+          */
+          return (
+            <li key={bar.key}>
+              <button
+                type="button"
+                aria-pressed={picked}
+                onClick={() =>
+                  onSelectPeriod?.(
+                    picked
+                      ? null
+                      : {
+                          closingKey: bar.closingKey,
+                          periodStart: bar.periodStart,
+                          periodEnd: bar.periodEnd,
+                        },
+                  )
+                }
+                disabled={!onSelectPeriod}
+                className={`flex w-full items-baseline justify-between gap-3 border-b border-gray-100 px-1 py-1.5 text-left transition-colors ${
+                  picked ? 'bg-blue-50' : onSelectPeriod ? 'hover:bg-gray-50' : ''
+                }`}
+              >
+                <span className={`text-xs ${picked ? 'text-blue-700' : 'text-gray-500'}`}>
+                  {bar.range}
+                </span>
+                <span
+                  className={`text-sm font-medium tabular-nums ${
+                    picked ? 'text-blue-700' : 'text-gray-900'
+                  }`}
+                >
+                  {formatCurrency(bar.amount, currency)}
+                </span>
+              </button>
+            </li>
+          );
+        })}
       </ul>
+      {onSelectPeriod && (
+        <p className="mt-1 text-xs text-gray-500">
+          {selectedKey
+            ? t('settlement.periodPicked', {
+                range: bars.find((bar) => bar.closingKey === selectedKey)?.range ?? '',
+              })
+            : t('settlement.periodPickHint')}
+        </p>
+      )}
     </div>
   );
 }

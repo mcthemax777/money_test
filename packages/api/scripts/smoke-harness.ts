@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { ForbiddenException } from '@nestjs/common';
 import { Prisma, PrismaClient } from '@prisma/client';
 import { LedgerService } from '@/modules/ledger/ledger.service';
@@ -253,17 +254,86 @@ export function makeReports(prisma: PrismaClient, access: unknown) {
 /** 거래 서비스 조립. 목록 금액을 표시 통화로 옮기느라 환율 서비스를 쓴다. */
 export function makeEntries(prisma: PrismaClient, access: unknown, ledger: unknown) {
   const exchangeRates = new ExchangeRatesService(prisma as any);
-  return new EntriesService(
+  const service = new EntriesService(
     prisma as any,
     access as any,
     ledger as any,
     exchangeRates,
     new ServerClockService(),
   );
+
+  /*
+   * 줄 키를 화면 대신 채워 준다.
+   *
+   * 서버는 키 없는 요청을 거절한다 (`resolveLines` 의 LINE_KEY_REQUIRED). 그 규칙은
+   * 그대로 두되, 스모크가 검사하려는 것은 대개 키가 아니라 금액·잔액·집계다. 스크립트
+   * 스무 개에 같은 한 줄을 흩어 두는 대신 여기서 한 번 채운다 -- 키 자체를 검사하는
+   * 자리는 그 값을 직접 실어 보내면 되고, 그러면 이 채우기가 비켜선다.
+   */
+  const fill = <T extends Record<string, any>>(dto: T): T => {
+    if (!dto) return dto;
+    // 이체 수수료도 분류 줄이라 키를 갖는다.
+    const fee = dto.transferFee ? { transferFeeLineKey: dto.transferFeeLineKey ?? lineKey() } : {};
+    if (dto.kind !== 'expense' && dto.kind !== 'income') return { ...dto, ...fee };
+    return {
+      ...dto,
+      ...fee,
+      ...(dto.splits
+        ? {
+            splits: dto.splits.map((split: Record<string, any>) => ({
+              ...split,
+              lineKey: split.lineKey ?? lineKey(),
+            })),
+          }
+        : { lineKey: dto.lineKey ?? lineKey() }),
+    };
+  };
+
+  const createEntry = service.createEntry.bind(service);
+  const updateEntry = service.updateEntry.bind(service);
+  service.createEntry = ((userId: string, dto: any, projectId?: string) =>
+    createEntry(userId, fill(dto), projectId)) as typeof service.createEntry;
+  service.updateEntry = ((id: string, userId: string, dto: any) =>
+    updateEntry(id, userId, fill(dto))) as typeof service.updateEntry;
+
+  return service;
 }
 
 /** 예산 서비스 조립. 예산액을 저장 통화 <-> 표시 통화로 옮긴다. */
 export function makeBudgets(prisma: PrismaClient, access: unknown) {
   const exchangeRates = new ExchangeRatesService(prisma as any);
   return new BudgetsService(prisma as any, access as any, exchangeRates, new ServerClockService());
+}
+
+/**
+ * 분류 줄의 키 하나. 실제로는 화면이 만드는 값이라 스모크에서도 여기서 만든다.
+ *
+ * 서버는 키를 대신 만들지 않는다 (`resolveLines` 의 LINE_KEY_REQUIRED). 줄에 붙는
+ * 태그와 차감이 이 키에 매달리는데, 서버가 메우면 저장할 때마다 그 연결이 끊긴다.
+ */
+export function lineKey(): string {
+  return randomUUID();
+}
+
+/**
+ * 이 전표들의 분류 줄을 태그 명령의 대상 모양으로.
+ *
+ * 태그는 줄에 붙으므로 대상도 줄이다. 분류 줄이 없는 전표(이체, 카드 대금 결제)는
+ * `lineKey` 가 null 인 대상 하나가 된다.
+ */
+export async function lineTargets(
+  prisma: PrismaClient,
+  entryIds: string[],
+): Promise<Array<{ entryId: string; lineKey: string | null }>> {
+  const postings = await prisma.posting.findMany({
+    where: { entryId: { in: entryIds }, categoryId: { not: null } },
+    select: { entryId: true, lineKey: true },
+    orderBy: { id: 'asc' },
+  });
+  return entryIds.flatMap((entryId) => {
+    const lines = postings.filter((posting) => posting.entryId === entryId);
+    return lines.length === 0
+      ? [{ entryId, lineKey: null }]
+      : lines.map((line) => ({ entryId, lineKey: line.lineKey }));
+  });
 }

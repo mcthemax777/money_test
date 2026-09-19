@@ -89,7 +89,15 @@ export interface EntryMutationPayload {
   detailedNote?: string | null;
   amount?: string;
   categoryId?: string;
-  splits?: Array<{ categoryId: string; amount: string }>;
+  /** 분류 줄 하나뿐인 거래의 줄 키. 화면이 만든다. */
+  lineKey?: string;
+  splits?: Array<{
+    categoryId: string;
+    amount: string;
+    lineKey: string;
+    discountAmount?: string;
+    tagIds?: string[];
+  }>;
   accountId?: string;
   toAccountId?: string;
   cardId?: string;
@@ -97,17 +105,20 @@ export interface EntryMutationPayload {
   toAmount?: string;
   transferFee?: string;
   transferFeeCategoryId?: string;
+  /** 이체 수수료 줄의 키. */
+  transferFeeLineKey?: string;
   cardTransferDirection?: CardTransferDirection;
-  /** 결제 자리에서 깎인 금액. 분류는 없다 (전표에 표시값으로 적힌다). */
+  /** 분류 줄 하나뿐인 거래에서 그 줄이 깎인 금액. 분할이면 `splits[].discountAmount`. */
   discountAmount?: string;
-  /** 카드 실적에 셀지. 생략하면 갈래의 기본값을 쓴다. */
+  /** 이 거래를 카드 실적에 셀지. **분할해도 하나다.** */
   countsPerformance?: boolean;
-  /** 차감·취소 금액을 실적에서도 뺄지. 생략하면 뺀다. */
+  /** 차감 금액을 실적에서도 뺄지. **분할해도 하나다.** */
   discountCountsPerformance?: boolean;
   /**
-   * 이 거래에 붙일 태그. 서버의 `EntryDto.CreateRequest.tagIds` 와 같은 규칙이다.
+   * 붙일 태그. 서버의 `EntryDto.CreateRequest.tagIds` 와 같은 규칙이다.
    *
-   * 목록이 그대로 그 전표의 태그가 되고, 생략은 "비운다"다.
+   * 지출·수입이면 분류 줄 하나에 붙고(분할이면 `splits[].tagIds`), 이체와 카드 대금
+   * 결제는 거래 자체에 붙는다. 생략은 "비운다"다.
    */
   tagIds?: string[];
   /**
@@ -139,8 +150,29 @@ export interface EntryDeletePayload {
  * 범위 질의가 아니라는 점이 D12 와 갈린다 -- 대상 전표를 이름으로 다 적어 보내므로,
  * 며칠 뒤에 재생해도 같은 전표에 같은 태그가 붙는다.
  */
+/**
+ * 태그를 바꿀 대상 하나.
+ *
+ * `lineKey` 가 셋을 가른다.
+ *   문자열  그 분류 줄 하나.
+ *   null    거래 자체. 분류 줄이 없는 거래(이체, 카드 대금 결제)의 자리다.
+ *   생략    **그 거래의 모든 줄.** 목록에서 "이 달 전부"처럼 범위를 골랐을 때다 --
+ *           그 거래들은 화면에 없어 줄 키를 알 수 없고, 사용자가 바란 것도 "그 범위의
+ *           모든 것"이다. 받는 쪽이 그 전표의 분류 줄로 펴서 적용한다.
+ */
+export interface TagTarget {
+  entryId: string;
+  lineKey?: string | null;
+}
+
 export interface EntryTagsPayload {
-  entryIds: string[];
+  /**
+   * 태그를 바꿀 줄들.
+   *
+   * 태그가 줄에 붙으므로 대상도 줄이다. `lineKey` 가 null 인 대상은 분류 줄이 없는
+   * 거래(이체, 카드 대금 결제)의 것이다.
+   */
+  targets: TagTarget[];
   addTagIds: string[];
   removeTagIds: string[];
 }
@@ -201,6 +233,15 @@ export interface MutationResult {
    * 기기가 스스로 이 값 다음으로 번호를 앞당겨 다시 내야 한다.
    */
   lastClientSeq?: number;
+  /**
+   * 적용하지 못한 태그 대상. 그 줄이 이미 사라진 경우다 (`entry.tags` 명령에만 실린다).
+   *
+   * 다른 기기가 그 사이 분할을 고쳤거나 거래를 지웠으면 태그를 붙일 자리가 없다.
+   * 나머지는 그대로 적용하고 이 목록만 돌려준다 -- 한 줄이 사라졌다고 스무 줄의 표시를
+   * 통째로 보류 칸에 올릴 일은 아니고, 조용히 버리면 사용자는 표시가 된 줄 안다.
+   * 기기가 이 목록으로 한 번 알린다.
+   */
+  skippedTagTargets?: TagTarget[];
 }
 
 export interface PushRequest {

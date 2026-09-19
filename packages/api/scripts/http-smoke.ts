@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 /**
  * 실제 HTTP 경로로 확인한다.
  * 서비스 직접 호출로는 잡히지 않는 DTO/컨트롤러 불일치를 여기서 잡는다.
@@ -78,7 +79,7 @@ runSmoke('http', async (ctx) => {
 
   // 6) 거래 (신용카드 지출)
   const entry = await call('POST', `/entries${q}`, {
-    kind: 'expense',
+    kind: 'expense', lineKey: randomUUID(),
     personId: person.body.id,
     date: '2026-08-03T00:00:00.000Z',
     description: '스타벅스',

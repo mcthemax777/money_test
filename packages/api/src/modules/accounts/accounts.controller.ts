@@ -70,10 +70,15 @@ export class AccountsController {
     @Param('id') id: string,
     @Query('limit') limit?: string,
     @Query('cursor') cursor?: string,
+    @Query('startDate') startDate?: string,
+    @Query('endDate') endDate?: string,
   ) {
     return this.accountsService.getAccountPostings(id, req.user.id, {
       limit: limit ? Number(limit) : undefined,
       cursor,
+      // 구간을 고른 조회. 카드 상세에서 청구 주기 하나를 눌렀을 때 온다.
+      startDate,
+      endDate,
     });
   }
 

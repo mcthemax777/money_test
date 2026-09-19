@@ -40,6 +40,16 @@ export const CARD_USAGE_ONGOING_OPACITY = 0.55;
 export interface CardUsageBar {
   /** 주기를 가리키는 값. 목록의 열쇠로 쓴다. */
   key: string;
+  /**
+   * 이 주기의 이름 ('YYYY-MM'). 눌러서 목록을 좁힐 때 이 값으로 가리킨다.
+   *
+   * 실적 원장은 주기가 곧 단위라 이 이름으로 자르고(할부 회차가 산 날이 아니라 청구되는
+   * 주기에 쌓인다), 결제내역은 아래 양끝 날짜로 자른다.
+   */
+  closingKey: string;
+  /** 구간의 양끝. 결제내역을 이 구간으로 좁힌다. */
+  periodStart: string;
+  periodEnd: string;
   /** 축에 적는 이름 */
   label: string;
   /** 눌렀을 때 적는 말. 구간 전체와 마감 여부다. */
@@ -113,6 +123,9 @@ export function cardUsageBars(
 
     return {
       key: endKey,
+      closingKey: period.closingKey,
+      periodStart: period.periodStart,
+      periodEnd: period.periodEnd,
       label: cardUsageAxisLabel(startKey, endKey),
       range: `${formatDateMarker(period.periodStart)} ~ ${formatDateMarker(period.periodEnd)} · ${t(
         PHASE_LABEL[phase],

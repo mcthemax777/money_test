@@ -1,4 +1,4 @@
-import type { EntryListItem } from '@money/types';
+import { matchedAmountOf, type EntryListItem } from '@money/types';
 
 import { activeLocale, translate, type MessageKey } from '../lib/i18n';
 import { dateKeyOf } from './datetime';
@@ -49,9 +49,12 @@ export function groupEntriesByDate<T extends { date: string | Date }>(
  *
  * 서버의 "지출 = 지출 카테고리 posting의 합"과 같은 기준이다.
  * 날짜별 합계, 일별 누적, 목록 소계가 전부 이 함수를 쓰므로 화면끼리 어긋나지 않는다.
+ *
+ * **걸린 줄만 센다.** 분류나 태그로 좁힌 화면은 걸린 줄만 보여 주는데, 여기서 거래
+ * 전체를 더하면 목록에 5,000원 한 줄이 서 있는 날의 합계가 10,000원이 된다.
  */
 export function expenseAmountOf(entry: EntryListItem): number {
-  if (entry.kind === 'expense') return toNumber(entry.amount);
+  if (entry.kind === 'expense') return toNumber(matchedAmountOf(entry));
   // 이체 금액은 소비가 아니다. 붙은 수수료만 지출이다.
   if (entry.kind === 'transfer') return toNumber(entry.feeAmount);
   return 0;
@@ -113,8 +116,12 @@ export interface EntryAmountLook {
 
 export type EntryAmountTone = 'income' | 'expense' | 'neutral' | 'adjustment';
 
-export function entryAmountLook(entry: EntryListItem): EntryAmountLook {
-  const amount = toNumber(entry.amount);
+export function entryAmountLook(
+  entry: EntryListItem,
+  /** 그 줄만의 금액. 나눈 거래를 줄로 펴서 그릴 때 준다. 생략하면 거래 전체다. */
+  amountText: string = entry.amount,
+): EntryAmountLook {
+  const amount = toNumber(amountText);
 
   /*
    * 전액이 깎여 0원으로 남은 거래. 부호를 붙이지 않는다.
@@ -130,9 +137,9 @@ export function entryAmountLook(entry: EntryListItem): EntryAmountLook {
   return { sign: '', amount, tone: 'neutral' };
 }
 
-/** 전표 하나가 "수입"에 보태는 금액 */
+/** 전표 하나가 "수입"에 보태는 금액. 지출과 같이 걸린 줄만 센다. */
 export function incomeAmountOf(entry: EntryListItem): number {
-  return entry.kind === 'income' ? toNumber(entry.amount) : 0;
+  return entry.kind === 'income' ? toNumber(matchedAmountOf(entry)) : 0;
 }
 
 /** 날짜별 수입/지출 소계 */

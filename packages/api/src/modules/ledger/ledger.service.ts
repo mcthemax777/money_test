@@ -66,6 +66,21 @@ export interface PostingInput {
   exchangeRate: Prisma.Decimal;
   baseAmount: Prisma.Decimal;
   cardId?: string;
+  /**
+   * 이 줄의 신원. 분류 다리에만 있다 (schema.prisma 의 Posting.lineKey).
+   *
+   * 조립이 화면에서 받은 값을 그대로 실어 온다. 원장은 다시 만들지 않고 받은 값을
+   * 써 넣기만 한다 -- 수정마다 다리를 지우고 새로 만들어도 줄의 신원이 이어진다.
+   */
+  lineKey?: string;
+  /** 이 줄에서 깎인 금액 (입력 통화, 양수). */
+  discountAmount?: Prisma.Decimal | null;
+  /**
+   * 이 줄에 붙일 태그.
+   *
+   * **주면 그 목록이 그대로 줄의 태그가 된다.** 주지 않으면(`undefined`) 손대지 않는다.
+   */
+  tagIds?: string[];
 }
 
 export interface EntryInput {
@@ -123,23 +138,16 @@ export interface EntryInput {
    * 저장하지 않고 읽을 때 계산한다.
    */
   installmentMonths?: number;
-  /**
-   * 결제 자리에서 깎인 금액. 표시 전용이라 다리에는 들어가지 않는다.
-   *
-   * 다리는 이미 깎인 뒤의 금액이라, 이 값이 없으면 정가를 되살릴 수 없다.
-   * `originalAmount` 를 함께 적어 두는 것과 같은 까닭이다.
-   */
-  discountAmount?: Prisma.Decimal | null;
-  /** 이 거래를 카드 실적에 세는가. 조립이 갈래의 기본값까지 정해서 넘긴다. */
+  /** 이 거래를 카드 실적에 세는가. 분할해도 하나다. 조립이 갈래의 기본값까지 정해서 넘긴다. */
   countsPerformance?: boolean;
-  /** 차감액을 실적에서도 뺄지. 조립이 정해서 넘긴다. */
+  /** 차감액을 실적에서도 뺄지. 분할해도 하나다. 조립이 정해서 넘긴다. */
   discountCountsPerformance?: boolean;
   /**
-   * 이 전표에 붙일 태그의 id.
+   * **거래 자체에 붙일** 태그의 id. 분류 줄이 없는 전표에만 쓴다 (이체, 카드 대금 결제).
    *
-   * **주면 그 목록이 그대로 전표의 태그가 된다.** 수정이 전표를 통째로 갈아 끼우는
-   * 것과 같은 규칙이다. 주지 않으면(`undefined`) 손대지 않는데, 그 자리는 잔액 조정처럼
-   * 원장이 스스로 만드는 전표뿐이다 -- 사용자의 수정은 언제나 목록을 실어 보낸다.
+   * 지출·수입의 태그는 줄에 붙으므로 `PostingInput.tagIds` 로 온다. 주면 그 목록이
+   * 그대로 태그가 되고, 주지 않으면 손대지 않는다 -- 잔액 조정처럼 원장이 스스로
+   * 만드는 전표가 그 자리다.
    */
   tagIds?: string[];
 }
@@ -148,6 +156,8 @@ export interface EntryInput {
 export interface CategoryLine {
   categoryId: string;
   amount: Prisma.Decimal;
+  /** 이 줄의 신원. 부르는 쪽이 만든다 (화면이면 uuid). */
+  lineKey: string;
 }
 
 interface CommonInput {
@@ -212,6 +222,8 @@ export interface TransferInput extends CommonInput {
   /** 이체 수수료. 보내는 계좌에서 함께 빠진다. */
   feeAmount?: Prisma.Decimal;
   feeCategoryId?: string;
+  /** 수수료 줄의 신원. 수수료도 분류 다리라 키를 갖는다. */
+  feeLineKey?: string;
 }
 
 /**
@@ -292,7 +304,6 @@ export class LedgerService {
           originalCurrency: input.originalCurrency ?? null,
           originalAmount: input.originalAmount ?? null,
           rateProvisional: input.rateProvisional ?? false,
-          discountAmount: input.discountAmount ?? null,
           countsPerformance: input.countsPerformance ?? true,
           discountCountsPerformance: input.discountCountsPerformance ?? true,
           updatedHlc: input.updatedHlc ?? this.clock.now(),
@@ -301,7 +312,7 @@ export class LedgerService {
         include: { postings: true },
       });
 
-      await this.saveTags(tx, entry.id, input.projectId, input.tagIds);
+      await this.saveTags(tx, entry.id, input.projectId, input.postings, input.tagIds);
       await this.applyBalanceDeltas(tx, input.postings);
       await this.saveInstallmentPlan(tx, entry.postings, input.installmentMonths);
       return entry;
@@ -376,7 +387,6 @@ export class LedgerService {
           originalCurrency: input.originalCurrency ?? null,
           originalAmount: input.originalAmount ?? null,
           rateProvisional: input.rateProvisional ?? false,
-          discountAmount: input.discountAmount ?? null,
           countsPerformance: input.countsPerformance ?? true,
           discountCountsPerformance: input.discountCountsPerformance ?? true,
           updatedHlc: input.updatedHlc ?? this.clock.now(),
@@ -385,7 +395,7 @@ export class LedgerService {
         include: { postings: true },
       });
 
-      await this.saveTags(tx, entryId, input.projectId, input.tagIds);
+      await this.saveTags(tx, entryId, input.projectId, input.postings, input.tagIds);
 
       // 3) 새 posting의 잔액을 적용한다
       await this.applyBalanceDeltas(tx, input.postings);
@@ -722,6 +732,7 @@ export class LedgerService {
     return lines.map((line) => ({
       categoryId: line.categoryId,
       amount: line.amount,
+      lineKey: line.lineKey,
     }));
   }
 
@@ -747,9 +758,9 @@ export class LedgerService {
       originalAmount: dec(built.originalAmount),
       rateProvisional: built.rateProvisional,
       installmentMonths: built.installmentMonths,
-      discountAmount: dec(built.discountAmount) ?? null,
       countsPerformance: built.countsPerformance ?? true,
       discountCountsPerformance: built.discountCountsPerformance ?? true,
+      ...(built.tagIds ? { tagIds: built.tagIds } : {}),
       postings: built.postings.map((posting) => ({
         accountId: posting.accountId,
         categoryId: posting.categoryId,
@@ -759,6 +770,9 @@ export class LedgerService {
         exchangeRate: new Prisma.Decimal(posting.exchangeRate.toString()),
         baseAmount: new Prisma.Decimal(posting.baseAmount.toString()),
         cardId: posting.cardId,
+        lineKey: posting.lineKey,
+        discountAmount: dec(posting.discountAmount) ?? null,
+        tagIds: posting.tagIds,
       })),
     };
   }
@@ -858,6 +872,7 @@ export class LedgerService {
             toAmount: input.toAmount,
             feeAmount: input.feeAmount,
             feeCategoryId: input.feeCategoryId,
+            feeLineKey: input.feeLineKey,
           },
           this.lookup,
         ),
@@ -1056,6 +1071,9 @@ export class LedgerService {
       // 빌더가 정한 값을 그대로 쓴다. 여기서 다시 곱하면 반올림이 어긋난다.
       baseAmount: p.baseAmount,
       cardId: p.cardId ?? null,
+      // 화면이 만든 줄 키를 그대로 써 넣는다. 짝짓기는 하지 않는다.
+      lineKey: p.lineKey ?? null,
+      discountAmount: p.discountAmount ?? null,
     };
   }
 
@@ -1144,14 +1162,41 @@ export class LedgerService {
    * 남의 프로젝트 태그를 붙이지 못하게 여기서 막는다. 붙고 나면 그 거래를 보는
    * 사람에게 자기 프로젝트에 없는 이름이 뜬다.
    */
-  private async saveTags(tx: Tx, entryId: string, projectId: string, tagIds?: string[]) {
-    if (tagIds === undefined) return;
+  /**
+   * 태그 연결을 통째로 갈아 끼운다.
+   *
+   * 태그는 **줄에 붙는다.** 분류 다리마다 `tagIds` 가 실려 오고, 그 줄의 키로 연결이
+   * 만들어진다. 분류 줄이 없는 전표(이체, 카드 대금 결제)만 `entryTagIds` 로 거래 자체에
+   * 붙인다.
+   *
+   * 어느 쪽도 실려 오지 않으면 손대지 않는다. 잔액 조정처럼 원장이 스스로 만드는
+   * 전표가 그 자리다 -- 사용자의 수정은 언제나 목록을 실어 보낸다(빈 목록도 목록이다).
+   */
+  private async saveTags(
+    tx: Tx,
+    entryId: string,
+    projectId: string,
+    postings: PostingInput[],
+    entryTagIds?: string[],
+  ) {
+    const lineTagged = postings.some((posting) => posting.tagIds !== undefined);
+    if (entryTagIds === undefined && !lineTagged) return;
 
     await tx.entryTag.deleteMany({ where: { entryId } });
 
-    const unique = [...new Set(tagIds)];
-    if (unique.length === 0) return;
+    const rows: Array<{ entryId: string; lineKey: string | null; tagId: string }> = [];
+    for (const posting of postings) {
+      if (!posting.tagIds || !posting.lineKey) continue;
+      for (const tagId of new Set(posting.tagIds)) {
+        rows.push({ entryId, lineKey: posting.lineKey, tagId });
+      }
+    }
+    for (const tagId of new Set(entryTagIds ?? [])) {
+      rows.push({ entryId, lineKey: null, tagId });
+    }
+    if (rows.length === 0) return;
 
+    const unique = [...new Set(rows.map((row) => row.tagId))];
     const found = await tx.tag.findMany({
       where: { id: { in: unique }, projectId },
       select: { id: true },
@@ -1160,9 +1205,7 @@ export class LedgerService {
       throw badRequest('TAG_NOT_IN_PROJECT', '이 프로젝트에 없는 태그가 포함되어 있습니다.');
     }
 
-    await tx.entryTag.createMany({
-      data: unique.map((tagId) => ({ entryId, tagId })),
-    });
+    await tx.entryTag.createMany({ data: rows });
   }
 
   /** 계좌 잔액과 투자 수량 캐시를 posting 합계만큼 움직인다. */

@@ -279,6 +279,21 @@ function CardCharts({
    */
   const [tab, setTab] = useState<'billed' | 'performance'>('billed');
 
+  /**
+   * 그래프 아래에서 고른 주기. null 이면 전체를 본다.
+   *
+   * 탭을 옮기면 푼다 -- 청구 주기와 실적 주기는 같은 달이어도 세는 것이 다르다.
+   */
+  const [pickedPeriod, setPickedPeriod] = useState<{
+    closingKey: string;
+    periodStart: string;
+    periodEnd: string;
+  } | null>(null);
+
+  useEffect(() => {
+    setPickedPeriod(null);
+  }, [card.id, tab]);
+
   return (
     /*
       상자를 둘로 나눈다. 위는 이 카드를 얼마나 썼고 얼마를 갚아야 하는가이고,
@@ -328,6 +343,8 @@ function CardCharts({
               target={tab === 'performance' ? target : null}
               cardId={card.id}
               measure={tab === 'performance' ? 'performance' : 'billed'}
+              selectedKey={pickedPeriod?.closingKey ?? null}
+              onSelectPeriod={setPickedPeriod}
             />
           )}
 
@@ -400,6 +417,7 @@ function CardCharts({
               cardId={card.id}
               fallbackCurrency={currency}
               reloadToken={ledgerVersion}
+              closingKey={pickedPeriod?.closingKey ?? null}
               onOpenEntry={onOpenEntry}
             />
           </>
@@ -409,10 +427,24 @@ function CardCharts({
             currency={currency}
             kind="liability"
             reloadToken={ledgerVersion}
+            /* 그래프 아래에서 주기를 골랐으면 그 구간만. 잔액은 그대로 맨 앞부터다. */
+            range={
+              pickedPeriod
+                ? { startDate: pickedPeriod.periodStart, endDate: pickedPeriod.periodEnd }
+                : null
+            }
             onOpenEntry={onOpenEntry}
           />
         ) : (
-          <CardEntryList cardId={card.id} onOpenEntry={onOpenEntry} />
+          <CardEntryList
+            cardId={card.id}
+            range={
+              pickedPeriod
+                ? { startDate: pickedPeriod.periodStart, endDate: pickedPeriod.periodEnd }
+                : null
+            }
+            onOpenEntry={onOpenEntry}
+          />
         )}
       </View>
     </>
@@ -430,6 +462,7 @@ function AccountLedgerList({
   currency,
   kind,
   reloadToken = 0,
+  range,
   onOpenEntry,
 }: {
   /** 신용카드는 그 카드의 부채 계정 id 다. */
@@ -440,11 +473,13 @@ function AccountLedgerList({
   kind: 'asset' | 'liability';
   /** 부르는 자리에서 다시 읽게 하는 값. 대금을 기록하면 카드 쪽이 올린다. */
   reloadToken?: number;
+  /** 이 구간의 줄만. 그래프 아래에서 주기를 골랐을 때 온다. */
+  range?: { startDate: string; endDate: string } | null;
   onOpenEntry?: (entryId: string) => void;
 }) {
   // 남이 적은 거래도 들어와야 한다. 사본이 바뀌면 다시 읽는다 (웹은 0에 머문다).
   const mirrorVersion = useMirrorVersion();
-  const ledger = useAccountLedger(accountId, mirrorVersion + reloadToken);
+  const ledger = useAccountLedger(accountId, mirrorVersion + reloadToken, range);
 
   return <LedgerRows ledger={ledger} currency={currency} kind={kind} onOpenEntry={onOpenEntry} />;
 }
@@ -458,9 +493,12 @@ function AccountLedgerList({
  */
 function CardEntryList({
   cardId,
+  range,
   onOpenEntry,
 }: {
   cardId: string;
+  /** 이 구간의 줄만. 그래프 아래에서 달을 골랐을 때 온다. */
+  range?: { startDate: string; endDate: string } | null;
   onOpenEntry?: (entryId: string) => void;
 }) {
   const selectedProjectId = useProject((state) => state.selectedProjectId);
@@ -471,7 +509,7 @@ function CardEntryList({
   const displayCurrency = useProjectDisplayCurrency();
   // 남이 그 카드로 결제한 것도 들어와야 한다. 사본이 바뀌면 다시 읽는다.
   const mirrorVersion = useMirrorVersion();
-  const ledger = useCardEntries(cardId, selectedProjectId, mirrorVersion);
+  const ledger = useCardEntries(cardId, selectedProjectId, mirrorVersion, range);
 
   return (
     <LedgerRows
@@ -575,19 +613,22 @@ function PerformanceLedgerList({
   cardId,
   fallbackCurrency,
   reloadToken = 0,
+  closingKey,
   onOpenEntry,
 }: {
   cardId: string;
   /** 응답이 오기 전에 쓸 통화. 카드 상세가 이미 알고 있는 값이다. */
   fallbackCurrency: string;
   reloadToken?: number;
+  /** 이 주기의 줄만 ('YYYY-MM'). 그래프 아래 줄을 눌러 고른 주기다. */
+  closingKey?: string | null;
   onOpenEntry?: (entryId: string) => void;
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
   // 남이 그 카드로 결제한 것도 실적에 들어와야 한다. 사본이 바뀌면 다시 읽는다.
   const mirrorVersion = useMirrorVersion();
-  const ledger = useCardPerformanceLedger(cardId, mirrorVersion + reloadToken);
+  const ledger = useCardPerformanceLedger(cardId, mirrorVersion + reloadToken, closingKey);
   const currency = ledger.currency ?? fallbackCurrency;
 
   /* 바닥까지 내려오면 다음 쪽을 잇는다. 다른 원장과 같다. */

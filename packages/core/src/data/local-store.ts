@@ -19,6 +19,7 @@ import {
   type EntryDraftDto,
   type EntryTag,
   type EntryTagsPayload,
+  type TagTarget,
   type TagDto,
   Dec,
   type PersonDto,
@@ -35,6 +36,7 @@ import {
   HIDDEN_ACCOUNT_TYPES,
   applyTagChange,
   type NetWorthAccountRow,
+  lineMatcherOf,
   type ParsedEntrySearch,
   SyncDto,
   decodeHlc,
@@ -176,11 +178,11 @@ export interface StoredCardPosting {
   amount: string;
   date: string;
   installmentMonths: number | null;
-  /** 실적에 세는가. 청구액에는 어느 쪽이든 들어간다. */
+  /** 실적에 세는가. 분할해도 하나다. 청구액에는 어느 쪽이든 들어간다. */
   countsPerformance: boolean;
-  /** 실적을 정가로 셀 때 되살릴 차감액. 되살리지 않는 거래는 null 이다. */
+  /** 실적을 정가로 셀 때 되살릴 차감액. 줄마다의 값을 더한 것이고, 안 되살리면 null 이다. */
   discountAmount: string | null;
-  /** 차감액을 실적에서도 뺄지. */
+  /** 차감액을 실적에서도 뺄지. 분할해도 하나다. */
   discountCountsPerformance: boolean;
 }
 
@@ -266,19 +268,31 @@ function openingSeed(row: Row): Dec {
   return asInt(row.updatedVersion) === 0 ? Dec.of(asMoney(row.balance)) : Dec.of(0);
 }
 
-const toCardPosting = (row: Row): StoredCardPosting => ({
-  amount: asMoney(row.amount),
-  date: String(row.date),
-  installmentMonths: row.totalMonths == null ? null : Number(row.totalMonths),
-  countsPerformance: Boolean(row.countsPerformance),
-  /*
-   * 차감액은 사용자가 적은 통화이고 카드 다리는 계좌 통화다. 둘이 갈리는 거래(원화
-   * 카드로 한 외화 결제)에서는 더할 수 없어 되살리지 않는다 -- 서버의 같은 질의
-   * (`performanceDiscount`) 와 한 규칙이다.
-   */
-  discountAmount: row.originalCurrency ? null : asText(row.discountAmount),
-  discountCountsPerformance: Boolean(row.discountCountsPerformance ?? 1),
-});
+/**
+ * 카드 다리 한 줄. 실적을 되살릴 차감액을 줄들에서 더해 붙인다.
+ *
+ * 깎인 금액은 줄마다 적히므로(`posting.discountAmount`) 그 합이 이 결제의 차감액이다.
+ * 차감액은 사용자가 적은 통화이고 카드 다리는 계좌 통화라, 둘이 갈리는 거래(원화
+ * 카드로 한 외화 결제)에서는 더할 수 없어 되살리지 않는다 -- 서버의 `performanceDiscount`
+ * 와 한 규칙이다.
+ */
+const toCardPosting = (row: Row, legs: readonly Row[]): StoredCardPosting => {
+  const discount = row.originalCurrency
+    ? null
+    : legs.reduce(
+        (acc, leg) => (leg.discountAmount == null ? acc : acc.plus(asMoney(leg.discountAmount))),
+        Dec.of(0),
+      );
+
+  return {
+    amount: asMoney(row.amount),
+    date: String(row.date),
+    installmentMonths: row.totalMonths == null ? null : Number(row.totalMonths),
+    countsPerformance: Boolean(row.countsPerformance),
+    discountAmount: discount && !discount.isZero() ? discount.toString() : null,
+    discountCountsPerformance: Boolean(row.discountCountsPerformance ?? 1),
+  };
+};
 
 const asInt = (value: unknown): number => {
   const parsed = Number(value);
@@ -664,14 +678,12 @@ export class LocalStore {
           originalCurrency: asText(row.originalCurrency),
           originalAmount: asText(row.originalAmount),
           rateProvisional: asFlag(row.rateProvisional),
-          discountAmount: asText(row.discountAmount),
           /*
            * 값이 없으면 센 것으로 본다.
            *
            * 서버가 이 필드를 알기 전에 앱이 먼저 올라갈 수 있고, 그때 응답에는 이 칸이
            * 아예 없다. `asFlag(undefined)` 는 0 이라, 그대로 두면 모든 카드 거래가
            * 실적에서 빠져 사용액이 0원으로 보인다 (2026-09-17 에 실기기에서 겪었다).
-           * 목록 한 줄을 펴는 규칙도 같은 기본값을 쓴다 (`toListItem` 의 ?? true).
            */
           countsPerformance: asFlag(row.countsPerformance ?? true),
           // 같은 까닭으로 기본값을 둔다. 값이 없으면 차감이 실적도 깎던 그때의 규칙이다.
@@ -704,11 +716,11 @@ export class LocalStore {
          * 전표의 태그 전부다. 없으면 비운다.
          */
         await this.db.run(`DELETE FROM entry_tag WHERE entryId = ?`, [String(row.id)]);
-        for (const tagId of (entry.tagIds ?? []) as string[]) {
-          // `upsert` 는 id 하나를 열쇠로 본다. 이 표의 열쇠는 두 컬럼이라 직접 넣는다.
+        for (const link of (entry.tagLinks ?? []) as Row[]) {
+          // `upsert` 는 id 하나를 열쇠로 본다. 이 표의 열쇠는 세 컬럼이라 직접 넣는다.
           await this.db.run(
-            `INSERT OR IGNORE INTO entry_tag (entryId, tagId) VALUES (?, ?)`,
-            [String(row.id), String(tagId)],
+            `INSERT OR IGNORE INTO entry_tag (entryId, lineKey, tagId) VALUES (?, ?, ?)`,
+            [String(row.id), asText(link.lineKey), String(link.tagId)],
           );
         }
         for (const posting of (entry.postings ?? []) as Row[]) {
@@ -723,6 +735,9 @@ export class LocalStore {
             baseAmount: asMoney(posting.baseAmount),
             exchangeRate: asMoney(posting.exchangeRate),
             cardId: asText(posting.cardId),
+            // 줄에 달린 것. 태그와 차감이 이 줄의 사실이다.
+            lineKey: asText(posting.lineKey),
+            discountAmount: asText(posting.discountAmount),
           });
         }
       }
@@ -1108,7 +1123,15 @@ export class LocalStore {
     const rows = await this.db.all<Row>(
       `SELECT p.categoryId, c.type AS categoryType, c.name AS categoryName,
               c.parentId AS parentCategoryId, parent.name AS parentCategoryName,
-              p.baseAmount, e.date
+              p.baseAmount, e.date,
+              /*
+               * 이 줄에 붙은 태그. 걸린 줄만 남기는 판정기가 읽는다.
+               *
+               * 전표에 붙은 태그(줄 키가 없는 이체·카드 대금)는 분류 줄과 상관없어
+               * 여기 오지 않는다.
+               */
+              (SELECT group_concat(et.tagId) FROM entry_tag et
+                WHERE et.entryId = e.id AND et.lineKey = p.lineKey) AS lineTagIds
          FROM posting p
          JOIN entry e ON e.id = p.entryId
          JOIN category c ON c.id = p.categoryId
@@ -1117,7 +1140,27 @@ export class LocalStore {
       [projectId, range.fromDateKey, range.toDateKey, ...owner.params, ...search.params],
     );
 
-    return rows.map((row) => ({
+    /*
+     * 걸린 줄만 남긴다. 서버의 리포트가 같은 함수를 쓴다(`lineMatcherOf`).
+     *
+     * 질의는 전표 수준이라 분할의 나머지 줄까지 데려온다. 그대로 더하면 화면에 5,000원
+     * 한 줄이 서 있는 달의 합계가 10,000원이 된다.
+     */
+    const matchLine = range.search ? lineMatcherOf(range.search) : undefined;
+
+    return rows
+      .filter(
+        (row) =>
+          !matchLine ||
+          matchLine({
+            categoryId: asText(row.categoryId),
+            parentCategoryId: asText(row.parentCategoryId),
+            tagIds: String(row.lineTagIds ?? '')
+              .split(',')
+              .filter(Boolean),
+          }),
+      )
+      .map((row) => ({
       categoryId: String(row.categoryId),
       categoryType: String(row.categoryType) as NamedCategoryPostingRow['categoryType'],
       categoryName: String(row.categoryName),
@@ -1732,7 +1775,7 @@ export class LocalStore {
      * 이름을 아직 받지 못한 연결은 조인이 비어 빠진다.
      */
     const tagRows = await this.db.all<Row>(
-      `SELECT et.entryId, t.id, t.name, t.color
+      `SELECT et.entryId, et.lineKey, t.id, t.name, t.color
          FROM entry_tag et
          JOIN tag t ON t.id = et.tagId
         WHERE et.entryId IN (${placeholders})
@@ -1740,10 +1783,17 @@ export class LocalStore {
       ids,
     );
 
-    const tagsByEntry = new Map<string, EntryTag[]>();
+    type TagLink = EntryTag & { lineKey: string | null };
+    const tagsByEntry = new Map<string, TagLink[]>();
     for (const row of tagRows) {
       const list = tagsByEntry.get(String(row.entryId)) ?? [];
-      list.push({ id: String(row.id), name: String(row.name), color: asText(row.color) });
+      list.push({
+        id: String(row.id),
+        name: String(row.name),
+        color: asText(row.color),
+        // 어느 줄의 태그인지. 비어 있으면 거래 자체의 것이다.
+        lineKey: asText(row.lineKey),
+      });
       tagsByEntry.set(String(row.entryId), list);
     }
 
@@ -1759,6 +1809,8 @@ export class LocalStore {
         exchangeRate: asMoney(row.exchangeRate),
         baseAmount: asMoney(row.baseAmount),
         cardId: asText(row.cardId),
+        lineKey: asText(row.lineKey),
+        discountAmount: asText(row.discountAmount),
         account: row.accountRowId
           ? {
               id: String(row.accountRowId),
@@ -1800,7 +1852,6 @@ export class LocalStore {
       originalCurrency: asText(entry.originalCurrency),
       originalAmount: asText(entry.originalAmount),
       rateProvisional: Boolean(entry.rateProvisional),
-      discountAmount: asText(entry.discountAmount),
       countsPerformance: Boolean(entry.countsPerformance),
       discountCountsPerformance: Boolean(entry.discountCountsPerformance),
       // 목록 한 줄에 실린다. 서버 창구를 쓰는 화면이 수정할 때 이 값을 되돌려 준다.
@@ -1918,7 +1969,12 @@ export class LocalStore {
       timeZone: string;
       hlc: string;
       makeId: () => string;
-      /** 이 전표의 태그 전부. 다리와 같이 통째로 갈아 끼운다. */
+      /**
+       * **거래 자체**에 붙는 태그. 분류 줄이 없는 전표에만 쓴다 (이체, 카드 대금 결제).
+       *
+       * 지출·수입의 태그는 조립이 줄에 실어 온다 (`BuiltPosting.tagIds`). 다리와 같이
+       * 통째로 갈아 끼운다.
+       */
       tagIds?: string[];
     },
   ): Promise<void> {
@@ -1938,7 +1994,6 @@ export class LocalStore {
         originalCurrency: built.originalCurrency ?? null,
         originalAmount: built.originalAmount ? built.originalAmount.toString() : null,
         rateProvisional: asFlag(built.rateProvisional),
-        discountAmount: built.discountAmount ? built.discountAmount.toString() : null,
         countsPerformance: asFlag(built.countsPerformance ?? true),
         discountCountsPerformance: asFlag(built.discountCountsPerformance ?? true),
         createdByUserId: null,
@@ -1960,13 +2015,18 @@ export class LocalStore {
       );
       await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [entryId]);
 
-      // 태그 연결도 다리와 같이 통째로 갈아 끼운다. 주지 않으면 비운다.
+      /*
+       * 태그 연결도 다리와 같이 통째로 갈아 끼운다. 주지 않으면 비운다.
+       *
+       * 줄에 붙는 태그는 아래 다리 고리에서 그 줄의 키로 넣는다. 여기 넣는 것은 분류
+       * 줄이 없는 전표의 것뿐이다.
+       */
       await this.db.run(`DELETE FROM entry_tag WHERE entryId = ?`, [entryId]);
-      for (const tagId of options.tagIds ?? []) {
-        await this.db.run(`INSERT OR IGNORE INTO entry_tag (entryId, tagId) VALUES (?, ?)`, [
-          entryId,
-          tagId,
-        ]);
+      for (const tagId of options.tagIds ?? built.tagIds ?? []) {
+        await this.db.run(
+          `INSERT OR IGNORE INTO entry_tag (entryId, lineKey, tagId) VALUES (?, NULL, ?)`,
+          [entryId, tagId],
+        );
       }
 
       for (const posting of built.postings) {
@@ -1982,7 +2042,20 @@ export class LocalStore {
           baseAmount: posting.baseAmount.toString(),
           exchangeRate: posting.exchangeRate.toString(),
           cardId: posting.cardId ?? null,
+          // 줄 키는 화면이 만든 값이다. 조립이 그대로 실어 온다.
+          lineKey: posting.lineKey ?? null,
+          discountAmount: posting.discountAmount ? posting.discountAmount.toString() : null,
         });
+
+        // 이 줄에 붙는 태그. 줄 키가 있어야 가리킬 수 있다.
+        if (posting.lineKey && posting.tagIds) {
+          for (const tagId of posting.tagIds) {
+            await this.db.run(
+              `INSERT OR IGNORE INTO entry_tag (entryId, lineKey, tagId) VALUES (?, ?, ?)`,
+              [entryId, posting.lineKey, tagId],
+            );
+          }
+        }
 
         /*
          * 할부는 카드 다리에 붙는다. 서버의 `saveInstallmentPlan` 과 같은 조건이다.
@@ -2148,57 +2221,133 @@ export class LocalStore {
    * 돌려주는 것은 실제로 달라진 전표의 수다. 화면이 "몇 건에 표시했다"로 쓴다.
    */
   async changeEntryTags(
-    entryIds: readonly string[],
+    targets: readonly TagTarget[],
     addTagIds: readonly string[],
     removeTagIds: readonly string[],
     hlc: string,
-  ): Promise<number> {
-    if (entryIds.length === 0) return 0;
-    if (addTagIds.length === 0 && removeTagIds.length === 0) return 0;
+  ): Promise<{ entries: number; skipped: TagTarget[] }> {
+    if (targets.length === 0) return { entries: 0, skipped: [] };
+    if (addTagIds.length === 0 && removeTagIds.length === 0) {
+      return { entries: 0, skipped: [] };
+    }
 
+    const keyOf = (target: TagTarget) =>
+      `${target.entryId}\u0000${target.lineKey === undefined ? '*' : target.lineKey ?? ''}`;
     const touched = new Set<string>();
+    const skipped: TagTarget[] = [];
 
     await this.db.transaction(async () => {
+      const entryIds = [...new Set(targets.map((target) => target.entryId))];
       const known = await this.db.all<Row>(
         `SELECT id FROM entry WHERE id IN (${placeholders(entryIds.length)})`,
         [...entryIds],
       );
-      const ids = known.map((row) => String(row.id));
-      if (ids.length === 0) return;
+      const present = new Set(known.map((row) => String(row.id)));
+      if (present.size === 0) {
+        skipped.push(...targets);
+        return;
+      }
+
+      /*
+       * 사라진 줄을 가린다.
+       *
+       * 다른 기기가 그 사이 분할을 고쳐 줄이 없어졌을 수 있다. 조용히 버리면 사용자는
+       * 표시가 된 줄 알고, 다음 pull 이 태그 없는 모습으로 덮을 때에야 알게 된다.
+       * 서버의 `changeTags` 와 같은 규칙이다.
+       */
+      const lines = await this.db.all<Row>(
+        `SELECT entryId, lineKey FROM posting
+          WHERE entryId IN (${placeholders(entryIds.length)}) AND categoryId IS NOT NULL`,
+        [...entryIds],
+      );
+      const lineKeysOf = new Map<string, Set<string>>();
+      for (const row of lines) {
+        const set = lineKeysOf.get(String(row.entryId)) ?? new Set<string>();
+        if (row.lineKey != null) set.add(String(row.lineKey));
+        lineKeysOf.set(String(row.entryId), set);
+      }
+
+      const applicable: Array<{ entryId: string; lineKey: string | null }> = [];
+      for (const target of targets) {
+        if (!present.has(target.entryId)) {
+          skipped.push(target);
+          continue;
+        }
+        /*
+         * 분류 줄이 하나도 없는 전표는 빈 집합이다.
+         *
+         * 이체와 카드 대금 결제가 그렇고, 그때 태그는 거래 자체에 붙는다(`lineKey` 가
+         * null). 없는 것과 "줄이 없다"를 가르지 않으면 그 둘에 태그를 못 붙인다.
+         */
+        const keys = lineKeysOf.get(target.entryId) ?? new Set<string>();
+
+        /*
+         * 줄을 가리지 않은 대상은 그 전표의 모든 줄로 편다. 서버의 `changeTags` 와 같은
+         * 규칙이다 -- 목록에서 범위를 골랐을 때 그 거래들의 줄 키를 화면이 모른다.
+         */
+        if (target.lineKey === undefined) {
+          if (keys.size === 0) applicable.push({ entryId: target.entryId, lineKey: null });
+          else {
+            for (const lineKey of keys) applicable.push({ entryId: target.entryId, lineKey });
+          }
+          continue;
+        }
+
+        const exists = target.lineKey === null ? keys.size === 0 : keys.has(target.lineKey);
+        if (exists) applicable.push({ entryId: target.entryId, lineKey: target.lineKey });
+        else skipped.push(target);
+      }
+      if (applicable.length === 0) return;
 
       // 지금 붙어 있는 것. 무엇이 실제로 달라지는지 세려면 이것부터 알아야 한다.
       const tagIds = [...addTagIds, ...removeTagIds];
       const existing = await this.db.all<Row>(
-        `SELECT entryId, tagId FROM entry_tag
-          WHERE entryId IN (${placeholders(ids.length)})
+        `SELECT entryId, lineKey, tagId FROM entry_tag
+          WHERE entryId IN (${placeholders(entryIds.length)})
             AND tagId IN (${placeholders(tagIds.length)})`,
-        [...ids, ...tagIds],
+        [...entryIds, ...tagIds],
       );
       const currentOf = new Map<string, Set<string>>();
       for (const row of existing) {
-        const set = currentOf.get(String(row.entryId)) ?? new Set<string>();
+        const key = keyOf({ entryId: String(row.entryId), lineKey: asText(row.lineKey) });
+        const set = currentOf.get(key) ?? new Set<string>();
         set.add(String(row.tagId));
-        currentOf.set(String(row.entryId), set);
+        currentOf.set(key, set);
       }
 
-      for (const entryId of ids) {
-        const change = applyTagChange(currentOf.get(entryId) ?? [], addTagIds, removeTagIds);
-        for (const tagId of change.added) {
-          await this.db.run(`INSERT OR IGNORE INTO entry_tag (entryId, tagId) VALUES (?, ?)`, [
-            entryId,
-            tagId,
-          ]);
-        }
-        if (change.changed) touched.add(entryId);
-      }
-
-      if (removeTagIds.length > 0) {
-        await this.db.run(
-          `DELETE FROM entry_tag
-            WHERE entryId IN (${placeholders(ids.length)})
-              AND tagId IN (${placeholders(removeTagIds.length)})`,
-          [...ids, ...removeTagIds],
+      for (const target of applicable) {
+        const change = applyTagChange(
+          currentOf.get(keyOf(target)) ?? [],
+          addTagIds,
+          removeTagIds,
         );
+        for (const tagId of change.added) {
+          await this.db.run(
+            `INSERT OR IGNORE INTO entry_tag (entryId, lineKey, tagId) VALUES (?, ?, ?)`,
+            [target.entryId, target.lineKey, tagId],
+          );
+        }
+        /*
+         * 떼는 것은 줄마다 지운다.
+         *
+         * 한 문장으로 지우면 고르지 않은 형제 줄의 태그까지 떨어진다 -- 같은 전표의
+         * 어떤 줄은 고르고 어떤 줄은 고르지 않을 수 있다.
+         */
+        if (change.removed.length > 0) {
+          await this.db.run(
+            target.lineKey === null
+              ? `DELETE FROM entry_tag
+                  WHERE entryId = ? AND lineKey IS NULL
+                    AND tagId IN (${placeholders(change.removed.length)})`
+              : `DELETE FROM entry_tag
+                  WHERE entryId = ? AND lineKey = ?
+                    AND tagId IN (${placeholders(change.removed.length)})`,
+            target.lineKey === null
+              ? [target.entryId, ...change.removed]
+              : [target.entryId, target.lineKey, ...change.removed],
+          );
+        }
+        if (change.changed) touched.add(target.entryId);
       }
 
       if (touched.size === 0) return;
@@ -2210,7 +2359,7 @@ export class LocalStore {
       );
     });
 
-    return touched.size;
+    return { entries: touched.size, skipped };
   }
 
   /**
@@ -2735,8 +2884,8 @@ export class LocalStore {
      * (쌓을 때와 같은 값이다).
      */
     if (kind === 'entry.tags') {
-      const entryIds = (payload as EntryTagsPayload | null)?.entryIds ?? [];
-      return this.latestEntryHlc(entryIds);
+      const targetsOf = (payload as EntryTagsPayload | null)?.targets ?? [];
+      return this.latestEntryHlc(targetsOf.map((one) => one.entryId));
     }
 
     return targets.length > 0 ? this.entryHlc(targets[0]) : null;
@@ -2853,9 +3002,8 @@ export class LocalStore {
        * 여기서 걸러 버리면 청구액 그래프가 남은 대금과 어긋난다 -- 청구는 되었는데
        * 그래프에는 없는 돈이 생긴다.
        */
-      `SELECT p.amount, e.date, e.countsPerformance,
-              e.discountAmount, e.discountCountsPerformance, e.originalCurrency,
-              ip.totalMonths
+      `SELECT p.amount, p.entryId, e.date, e.originalCurrency,
+              e.countsPerformance, e.discountCountsPerformance, ip.totalMonths
          FROM posting p
          JOIN entry e ON e.id = p.entryId
          LEFT JOIN installment_plan ip ON ip.postingId = p.id
@@ -2863,7 +3011,8 @@ export class LocalStore {
           AND EXISTS (SELECT 1 FROM posting c WHERE c.entryId = e.id AND c.categoryId IS NOT NULL)`,
       [liabilityAccountId],
     );
-    return rows.map(toCardPosting);
+    const legs = await this.usageLegs(rows.map((row) => String(row.entryId)));
+    return rows.map((row) => toCardPosting(row, legs.get(String(row.entryId)) ?? []));
   }
 
   /**
@@ -2874,15 +3023,15 @@ export class LocalStore {
    */
   async debitCardPostings(cardId: string): Promise<StoredCardPosting[]> {
     const rows = await this.db.all<Row>(
-      `SELECT p.amount, e.date, e.countsPerformance,
-              e.discountAmount, e.discountCountsPerformance, e.originalCurrency,
-              NULL AS totalMonths
+      `SELECT p.amount, p.entryId, e.date, e.originalCurrency,
+              e.countsPerformance, e.discountCountsPerformance, NULL AS totalMonths
          FROM posting p
          JOIN entry e ON e.id = p.entryId
         WHERE p.cardId = ?`,
       [cardId],
     );
-    return rows.map(toCardPosting);
+    const legs = await this.usageLegs(rows.map((row) => String(row.entryId)));
+    return rows.map((row) => toCardPosting(row, legs.get(String(row.entryId)) ?? []));
   }
 
   /**
@@ -2899,8 +3048,7 @@ export class LocalStore {
     const credit = Boolean(input.liabilityAccountId);
     const rows = await this.db.all<Row>(
       `SELECT p.id AS postingId, p.amount, e.id AS entryId, e.date, e.description, e.merchant,
-              e.countsPerformance, e.discountAmount, e.discountCountsPerformance,
-              e.originalCurrency,
+              e.countsPerformance, e.discountCountsPerformance, e.originalCurrency,
               ${credit ? 'ip.totalMonths' : 'NULL AS totalMonths'},
               cat.name AS categoryName, parent.name AS parentCategoryName
          FROM posting p
@@ -2922,8 +3070,9 @@ export class LocalStore {
       [credit ? String(input.liabilityAccountId) : String(input.cardId)],
     );
 
+    const legs = await this.usageLegs(rows.map((row) => String(row.entryId)));
     return rows.map((row) => ({
-      ...toCardPosting(row),
+      ...toCardPosting(row, legs.get(String(row.entryId)) ?? []),
       postingId: String(row.postingId),
       entryId: String(row.entryId),
       description: asText(row.description) ?? '',
@@ -3009,6 +3158,33 @@ export class LocalStore {
         ];
       }),
     );
+  }
+
+  /**
+   * 그 전표들의 분류 줄에 적힌 차감액. 실적을 정가로 되살릴 때 쓴다.
+   *
+   * 깎인 금액은 줄마다 적히므로(분할의 한 줄만 환불될 수 있다) 한 번에 읽어 전표별로
+   * 묶는다. 서버도 같은 것을 `USAGE_LEG_SELECT` 로 함께 읽는다.
+   */
+  private async usageLegs(entryIds: readonly string[]): Promise<Map<string, Row[]>> {
+    const unique = [...new Set(entryIds)];
+    if (unique.length === 0) return new Map();
+
+    const rows = await this.db.all<Row>(
+      `SELECT entryId, discountAmount
+         FROM posting
+        WHERE entryId IN (${placeholders(unique.length)}) AND categoryId IS NOT NULL
+        ORDER BY id`,
+      [...unique],
+    );
+
+    const byEntry = new Map<string, Row[]>();
+    for (const row of rows) {
+      const list = byEntry.get(String(row.entryId)) ?? [];
+      list.push(row);
+      byEntry.set(String(row.entryId), list);
+    }
+    return byEntry;
   }
 
   /** 사본에 담긴 행 수. 화면이 "얼마나 받았는지" 보여 줄 때와 검증에 쓴다. */

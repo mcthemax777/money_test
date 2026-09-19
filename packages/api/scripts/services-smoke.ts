@@ -13,6 +13,7 @@ import {
   makePeople,
   projectAccessStub,
   runSmoke,
+  lineKey,
 } from './smoke-harness';
 
 runSmoke('services', async (ctx) => {
@@ -153,7 +154,7 @@ runSmoke('services', async (ctx) => {
   await ledger.createExpense({
     projectId: pid, personId: keptPerson.id, date: new Date('2026-08-02T00:00:00Z'),
     description: '검증 지출', accountId: bank.id,
-    lines: [{ categoryId: sub.id, amount: D(1000) }],
+    lines: [{ categoryId: sub.id, amount: D(1000), lineKey: lineKey() }],
   });
   await ctx.expectReject(
     '거래가 있는 구성원 삭제 거부',
@@ -178,7 +179,7 @@ runSmoke('services', async (ctx) => {
     await ledger.createExpense({
       projectId: pid, personId: person.id, date: new Date('2026-08-01T00:00:00Z'),
       description: '점심', accountId: bank.id,
-      lines: [{ categoryId: sub.id, amount: D(9000) }],
+      lines: [{ categoryId: sub.id, amount: D(9000), lineKey: lineKey() }],
     });
     await categories.deleteCategory(sub.id, u1.id);
   });

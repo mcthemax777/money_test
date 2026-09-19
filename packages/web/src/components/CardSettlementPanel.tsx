@@ -63,6 +63,12 @@ interface CardSettlementPanelProps {
    *   billed      청구액. 남은 대금·대금 기록도 이 탭의 것이다.
    */
   measure?: CardUsageMeasure;
+  /** 지금 고른 주기 ('YYYY-MM'). 아래 내역을 그 주기로 좁힌 화면이 알려 준다. */
+  selectedPeriodKey?: string | null;
+  /** 주기를 누를 때. 이미 고른 주기를 다시 누르면 null 이 온다. */
+  onSelectPeriod?: (
+    period: { closingKey: string; periodStart: string; periodEnd: string } | null,
+  ) => void;
 }
 
 /**
@@ -84,6 +90,8 @@ export default function CardSettlementPanel({
   reloadToken = 0,
   onChange,
   measure = 'performance',
+  selectedPeriodKey,
+  onSelectPeriod,
 }: CardSettlementPanelProps) {
   const { t } = useTranslation();
   const { messageOf } = useApiError();
@@ -247,6 +255,8 @@ export default function CardSettlementPanel({
             target={measure === 'performance' ? performanceTarget : null}
             cardId={card.id}
             measure={measure}
+            selectedKey={selectedPeriodKey}
+            onSelectPeriod={onSelectPeriod}
           />
           {measure === 'billed' && (
             <p className="mt-1 text-xs text-gray-500">{t('settlement.billedHint')}</p>

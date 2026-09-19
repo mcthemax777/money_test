@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 /**
  * 환율 경계 조건.
  *
@@ -74,7 +75,7 @@ runSmoke('currency-edge', async (ctx) => {
   // ── 1. 잘못된 환율은 거부한다 ──────────────────────────────
   const badRate = (rate: string) =>
     call('POST', `/entries${q}`, {
-      kind: 'expense', personId: person.body.id, date: today,
+      kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date: today,
       description: 'x', amount: '10', currency: 'USD', exchangeRate: rate,
       categoryId: dining.body.id, accountId: usdBank.body.id,
     });
@@ -85,7 +86,7 @@ runSmoke('currency-edge', async (ctx) => {
   // ── 2. 다룰 수 없는 통화 조합은 조용히 넘기지 않는다 ────────
   // 달러 통장에 엔화로 결제. 계좌 통화도 기준통화도 아니라 환산 기준이 없다.
   const jpyOnUsd = await call('POST', `/entries${q}`, {
-    kind: 'expense', personId: person.body.id, date: today,
+    kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date: today,
     description: 'x', amount: '1000', currency: 'JPY',
     categoryId: dining.body.id, accountId: usdBank.body.id,
   });
@@ -94,7 +95,7 @@ runSmoke('currency-edge', async (ctx) => {
   // ── 3. 엔화 반올림 (JPY는 소수를 쓰지 않는다) ───────────────
   // ¥3 * 9.2 = ₩27.6 -> 28. 원 단위로 떨어져야 한다.
   const jpySmall = await call('POST', `/entries${q}`, {
-    kind: 'expense', personId: person.body.id, date: today,
+    kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date: today,
     description: '자판기', amount: '3',
     categoryId: dining.body.id, accountId: jpyBank.body.id,
   });
@@ -114,12 +115,12 @@ runSmoke('currency-edge', async (ctx) => {
   // ── 4. 분할 지출의 반올림 (줄마다 반올림해도 합계가 맞아야) ──
   // $33.33 + $33.33 + $33.34 를 1380으로. 줄마다 반올림한 합계와 계좌 다리가 같아야 한다.
   const split = await call('POST', `/entries${q}`, {
-    kind: 'expense', personId: person.body.id, date: today,
+    kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date: today,
     description: '분할', amount: '100',
     splits: [
-      { categoryId: dining.body.id, amount: '33.33' },
-      { categoryId: cafe.body.id, amount: '33.33' },
-      { categoryId: dining.body.id, amount: '33.34' },
+      { categoryId: dining.body.id, amount: '33.33', lineKey: randomUUID() },
+      { categoryId: cafe.body.id, amount: '33.33', lineKey: randomUUID() },
+      { categoryId: dining.body.id, amount: '33.34', lineKey: randomUUID() },
     ],
     accountId: usdBank.body.id,
   });
@@ -158,7 +159,7 @@ runSmoke('currency-edge', async (ctx) => {
   );
 
   const atNewRate = await call('POST', `/entries${q}`, {
-    kind: 'expense', personId: person.body.id, date: today,
+    kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date: today,
     description: '새 환율', amount: '10',
     categoryId: dining.body.id, accountId: usdBank.body.id,
   });
@@ -212,7 +213,7 @@ runSmoke('currency-edge', async (ctx) => {
     statementClosingDay: 15, paymentDueDay: 25,
   });
   const estimated = await call('POST', `/entries${q}`, {
-    kind: 'expense', personId: person.body.id, date: today,
+    kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date: today,
     description: '설정 환율로 추정', amount: '10', currency: 'USD',
     categoryId: dining.body.id, cardId: krwCard.body.id,
   });
@@ -242,7 +243,7 @@ runSmoke('currency-edge', async (ctx) => {
   // ── 6. 외화 거래 수정 왕복 (금액이 흔들리지 않아야) ─────────
   const before = await call('GET', `/accounts/${usdBank.body.id}`);
   const edited = await call('PATCH', `/entries/${atNewRate.body.id}`, {
-    kind: 'expense', personId: person.body.id, date: today,
+    kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date: today,
     description: '새 환율 (수정)',
     // 화면이 되돌려 보내는 값 그대로: 원 통화 금액 + 그때 적용된 환율
     amount: atNewRate.body.originalAmount,
@@ -276,7 +277,7 @@ runSmoke('currency-edge', async (ctx) => {
     kind: 'transfer', personId: person.body.id, date: today,
     description: '수수료 환전', accountId: usdBank.body.id, toAccountId: krwBank.body.id,
     amount: '100', toAmount: '135000',
-    transferFee: '2', transferFeeCategoryId: feeCategory.body.id,
+    transferFee: '2', transferFeeCategoryId: feeCategory.body.id, transferFeeLineKey: randomUUID(),
   });
   ctx.check('수수료 환전 생성', exchange.status, 201);
   const exchangeLegs = await ctx.prisma.posting.findMany({
@@ -318,7 +319,7 @@ runSmoke('currency-edge', async (ctx) => {
   });
   ctx.check('달러 카드 생성', usdCard.status, 201);
   await call('POST', `/entries${q}`, {
-    kind: 'expense', personId: person.body.id, date: today,
+    kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date: today,
     description: '카드 결제', amount: '40',
     categoryId: dining.body.id, cardId: usdCard.body.id,
   });
@@ -352,7 +353,7 @@ runSmoke('currency-edge', async (ctx) => {
   // 1380으로 나누어떨어지지 않는 원화 금액을 몇 건 넣는다.
   for (const amount of ['13333', '77777', '1', '999999']) {
     await call('POST', `/entries${q}`, {
-      kind: 'expense', personId: person.body.id, date: today,
+      kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date: today,
       description: `우수리 ${amount}`, amount,
       categoryId: dining.body.id, accountId: krwBank.body.id,
     });

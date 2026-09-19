@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 /**
  * 청구액 확정 (원화 카드의 외화 결제).
  *
@@ -73,7 +74,7 @@ runSmoke('pending-rate', async (ctx) => {
 
   const expense = (body: Record<string, unknown>) =>
     call('POST', `/entries${q}`, {
-      kind: 'expense', personId: person.body.id, date: today, ...body,
+      kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date: today, ...body,
     });
   const pending = () => call('GET', `/cards/${card.body.id}/pending-rates`);
   const settle = (body: unknown) => call('PATCH', `/cards/${card.body.id}/pending-rates`, body);
@@ -173,8 +174,8 @@ runSmoke('pending-rate', async (ctx) => {
     description: '해외 분할', currency: 'USD', amount: '100',
     cardId: card.body.id,
     splits: [
-      { categoryId: dining.body.id, amount: '33.33' },
-      { categoryId: shopping.body.id, amount: '66.67' },
+      { categoryId: dining.body.id, amount: '33.33', lineKey: randomUUID() },
+      { categoryId: shopping.body.id, amount: '66.67', lineKey: randomUUID() },
     ],
   });
   ctx.check('분할 거래 생성', split.status, 201);
@@ -266,8 +267,8 @@ runSmoke('pending-rate', async (ctx) => {
     description: '청구액 분할', currency: 'USD', amount: '100', billedAmount: '141111',
     cardId: card.body.id,
     splits: [
-      { categoryId: dining.body.id, amount: '33.33' },
-      { categoryId: shopping.body.id, amount: '66.67' },
+      { categoryId: dining.body.id, amount: '33.33', lineKey: randomUUID() },
+      { categoryId: shopping.body.id, amount: '66.67', lineKey: randomUUID() },
     ],
   });
   const splitBilledLines = await ctx.prisma.posting.findMany({
@@ -290,7 +291,7 @@ runSmoke('pending-rate', async (ctx) => {
   });
   ctx.check('수정 전에는 잠정', editTarget.body.rateProvisional, true);
   const edited = await call('PATCH', `/entries/${editTarget.body.id}${q}`, {
-    kind: 'expense', personId: person.body.id, date: today,
+    kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date: today,
     description: '수정으로 확정', amount: '20', currency: 'USD', billedAmount: '28450',
     categoryId: dining.body.id, cardId: card.body.id,
   });
@@ -305,7 +306,7 @@ runSmoke('pending-rate', async (ctx) => {
     categoryId: dining.body.id, cardId: card.body.id,
   });
   const renamed = await call('PATCH', `/entries/${keepProvisional.body.id}${q}`, {
-    kind: 'expense', personId: person.body.id, date: today,
+    kind: 'expense', lineKey: randomUUID(), personId: person.body.id, date: today,
     description: '설명을 고쳤다', amount: '20', currency: 'USD',
     categoryId: dining.body.id, cardId: card.body.id,
   });
@@ -356,14 +357,14 @@ runSmoke('pending-rate', async (ctx) => {
   ctx.check(
     '외화 수입도 실제 입금액이 필요하다',
     (await call('POST', `/entries${q}`, {
-      kind: 'income', personId: person.body.id, date: today,
+      kind: 'income', lineKey: randomUUID(), personId: person.body.id, date: today,
       description: '달러 수입', amount: '100', currency: 'USD',
       categoryId: salary.body.id, accountId: bank.body.id,
     })).status,
     400,
   );
   const income = await call('POST', `/entries${q}`, {
-    kind: 'income', personId: person.body.id, date: today,
+    kind: 'income', lineKey: randomUUID(), personId: person.body.id, date: today,
     description: '달러 수입', amount: '100', currency: 'USD', billedAmount: '138500',
     categoryId: salary.body.id, accountId: bank.body.id,
   });

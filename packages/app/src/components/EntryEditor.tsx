@@ -29,6 +29,7 @@ import {
   cardValue,
   parseMethod,
   showDiscountPerformance,
+  totalDiscountOf,
   type EntryFormKind,
   type EntryFormValues,
 } from '@money/core/data/entry-form';
@@ -687,6 +688,79 @@ export default function EntryEditor({
                         onSelect={(value) => form.setSplit(index, 'categoryId', value)}
                       />
                     )}
+
+                    {/*
+                      이 줄에서 깎인 금액.
+
+                      줄마다 따로 받는다. 여행경비만 환불받았는데 비율로 나누면 식비
+                      줄까지 함께 깎여, 분류별 분석이 사실과 어긋난다.
+                    */}
+                    {values.kind === 'expense' ? (
+                      <>
+                        <Text className="text-xs font-medium text-gray-500">
+                          {t('editor.discount')}
+                        </Text>
+                        <TextInput
+                          value={split.discountAmount}
+                          onChangeText={(text) => form.setSplit(index, 'discountAmount', text)}
+                          keyboardType="numeric"
+                          placeholder="0"
+                          className="rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-900"
+                        />
+
+                        {/*
+                          깎인 만큼 실적도 줄일지. 환불액을 적은 줄 바로 아래에 둔다.
+
+                          **값은 거래에 하나뿐이다.** 깎인 금액은 줄마다 다르지만 그것을
+                          실적에서 뺄지는 카드사의 방침 하나라, 어느 줄의 체크를 건드려도
+                          나머지 줄의 체크가 같이 움직인다.
+                        */}
+                        {showDiscountPerformance({
+                          kind: values.kind,
+                          discountAmount: split.discountAmount,
+                          countsPerformance: values.countsPerformance,
+                          isCard: Boolean(form.selectedCard),
+                          isLedgerCurrency: !values.currency,
+                        }) ? (
+                          <CheckRow
+                            checked={values.discountCountsPerformance}
+                            onToggle={() =>
+                              setField(
+                                'discountCountsPerformance',
+                                !values.discountCountsPerformance,
+                              )
+                            }
+                            label={t('editor.discountCountsPerformance')}
+                            hint={t('editor.discountCountsPerformanceHint')}
+                          />
+                        ) : null}
+                      </>
+                    ) : null}
+
+                    {/*
+                      이 줄의 태그.
+
+                      태그가 줄에 붙으므로 여기서 고른다. 나눈 두 줄이 서로 다른 태그를
+                      갖는 것이 이 바꿈의 요점이다.
+                    */}
+                    {form.lists.tags.length > 0 ? (
+                      <>
+                        <Text className="text-xs font-medium text-gray-500">{t('tags.pick')}</Text>
+                        <TagChips
+                          tags={form.lists.tags}
+                          selected={split.tagIds}
+                          onToggle={(tagId) =>
+                            form.setSplit(
+                              index,
+                              'tagIds',
+                              split.tagIds.includes(tagId)
+                                ? split.tagIds.filter((id) => id !== tagId)
+                                : [...split.tagIds, tagId],
+                            )
+                          }
+                        />
+                      </>
+                    ) : null}
                   </View>
                 ))}
 
@@ -760,8 +834,11 @@ export default function EntryEditor({
 
             셋은 전표에서 같은 모양이다 -- 정가는 그대로인데 계좌에서 빠지는 돈만 적다.
             전액을 적으면 0원 거래로 남는다. 지우지 않는 것은 있었던 일이기 때문이다.
+
+            **분할이면 감춘다.** 그때는 깎인 금액을 줄마다 적으므로(위의 줄 칸) 여기
+            한 칸을 더 두면 어느 쪽이 저장되는지 알 수 없다.
           */}
-          {values.kind === 'expense' ? (
+          {values.kind === 'expense' && values.splits.length === 0 ? (
             <Field label={t('editor.discount')} invalid={violation?.field === 'discountAmount'}>
               <TextInput
                 value={values.discountAmount}
@@ -772,45 +849,47 @@ export default function EntryEditor({
               />
               <Text className="mt-1 text-xs text-gray-500">{t('editor.discountHint')}</Text>
 
+              {/* 실제로 빠지는 금액. 저장하고 목록에서 보고서야 알게 하지 않는다. */}
               {values.discountAmount ? (
-                <View className="mt-3 gap-2">
-                  {/* 실제로 빠지는 금액. 저장하고 목록에서 보고서야 알게 하지 않는다. */}
-                  <Text className="text-xs text-gray-500">
-                    {t('editor.netAmount', {
-                      amount: formatCurrency(
-                        toNumber(values.amount) - toNumber(values.discountAmount),
-                        values.currency || form.ledgerCurrency,
-                      ),
-                    })}
-                  </Text>
-
-                  {/*
-                    깎인 만큼 실적도 줄일지. 기본은 줄인다 -- 다리가 이미 순액이라 그것이
-                    지금까지의 동작이다. 카드사가 환불을 실적에서 빼지 않는 경우가 있어,
-                    끄면 실적만 정가로 센다.
-
-                    거래 자체를 실적에서 뺐으면 뜨지 않는다. 그때는 어느 쪽이든 실적이
-                    움직이지 않아 물을 것이 없다 (`showDiscountPerformance`).
-                  */}
-                  {showDiscountPerformance({
-                    kind: values.kind,
-                    discountAmount: values.discountAmount,
-                    countsPerformance: values.countsPerformance,
-                    isCard: Boolean(form.selectedCard),
-                    isLedgerCurrency: !values.currency,
-                  }) ? (
-                    <CheckRow
-                      checked={values.discountCountsPerformance}
-                      onToggle={() =>
-                        setField('discountCountsPerformance', !values.discountCountsPerformance)
-                      }
-                      label={t('editor.discountCountsPerformance')}
-                      hint={t('editor.discountCountsPerformanceHint')}
-                    />
-                  ) : null}
-                </View>
+                <Text className="mt-3 text-xs text-gray-500">
+                  {t('editor.netAmount', {
+                    amount: formatCurrency(
+                      toNumber(values.amount) - toNumber(values.discountAmount),
+                      values.currency || form.ledgerCurrency,
+                    ),
+                  })}
+                </Text>
               ) : null}
             </Field>
+          ) : null}
+
+          {/*
+            깎인 만큼 실적도 줄일지. 기본은 줄인다 -- 다리가 이미 순액이라 그것이
+            지금까지의 동작이다. 카드사가 환불을 실적에서 빼지 않는 경우가 있어, 끄면
+            실적만 정가로 센다.
+
+            **분할이면 감춘다.** 그때는 환불액을 적는 줄마다 같은 체크가 바로 아래에
+            서 있다. 값은 어느 쪽이든 하나라 함께 움직인다.
+
+            거래 자체를 실적에서 뺐으면 뜨지 않는다. 그때는 어느 쪽이든 실적이 움직이지
+            않아 물을 것이 없다 (`showDiscountPerformance`).
+          */}
+          {values.splits.length === 0 &&
+          showDiscountPerformance({
+            kind: values.kind,
+            discountAmount: totalDiscountOf(values),
+            countsPerformance: values.countsPerformance,
+            isCard: Boolean(form.selectedCard),
+            isLedgerCurrency: !values.currency,
+          }) ? (
+            <CheckRow
+              checked={values.discountCountsPerformance}
+              onToggle={() =>
+                setField('discountCountsPerformance', !values.discountCountsPerformance)
+              }
+              label={t('editor.discountCountsPerformance')}
+              hint={t('editor.discountCountsPerformanceHint')}
+            />
           ) : null}
 
           {/*
@@ -819,6 +898,11 @@ export default function EntryEditor({
           카테고리와 달리 **여럿을 고른다.** 그래서 같은 알약 줄을 쓰되 고름 표시가
           누적되고, 누르면 붙었다 떨어진다.
         */}
+          {/*
+            **나눈 거래에서는 감춘다.** 그때는 태그가 줄마다 붙으므로 위의 줄 칸에서
+            고른다. 둘이 함께 보이면 어느 쪽이 저장되는지 알 수 없다.
+          */}
+          {values.splits.length === 0 ? (
           <Field label={t('tags.pick')} onAdd={() => setAdding('tag')} addLabel={t('tags.add')}>
             {form.lists.tags.length === 0 ? (
               <Text className="text-sm text-gray-500">{t('tags.empty')}</Text>
@@ -833,6 +917,7 @@ export default function EntryEditor({
               </>
             )}
           </Field>
+          ) : null}
 
           <Text className="text-xs text-gray-500">{t('entryForm.offlineNote')}</Text>
         </View>

@@ -6,6 +6,7 @@ import {
   type ViewConverter,
   type ViewEntry,
   type ViewPosting,
+  type LineMatcher,
   classifyEntry as classifyShared,
   toListItem as toListItemShared,
 } from '@money/types';
@@ -27,6 +28,8 @@ type PostingWithRefs = {
   exchangeRate: Prisma.Decimal;
   baseAmount: Prisma.Decimal;
   cardId: string | null;
+  lineKey: string | null;
+  discountAmount: Prisma.Decimal | null;
   account: { id: string; name: string; type: AccountType } | null;
   category: {
     id: string;
@@ -50,11 +53,9 @@ export type EntryWithPostings = {
   originalCurrency: string | null;
   originalAmount: Prisma.Decimal | null;
   rateProvisional: boolean;
-  /** 결제 자리에서 깎인 금액. 다리에는 들어가지 않는 표시값이다. */
-  discountAmount?: Prisma.Decimal | null;
-  /** 이 거래를 카드 실적에 세는가. */
+  /** 이 거래를 카드 실적에 세는가. 분할해도 하나다. */
   countsPerformance?: boolean;
-  /** 차감액을 실적에서도 뺄지. */
+  /** 차감액을 실적에서도 뺄지. 분할해도 하나다. */
   discountCountsPerformance?: boolean;
   /**
    * 이 전표를 마지막으로 고친 편집의 시계.
@@ -70,7 +71,7 @@ export type EntryWithPostings = {
    * 선택적으로 둔 것은 태그를 읽지 않는 가벼운 조회가 있기 때문이다(잔액 되돌리기처럼
    * 다리만 보는 자리). 그때 목록 한 줄은 태그가 없는 것으로 그려진다.
    */
-  tags?: Array<{ tag: { id: string; name: string; color: string | null } }>;
+  tags?: Array<{ lineKey: string | null; tag: { id: string; name: string; color: string | null } }>;
 };
 
 /**
@@ -95,8 +96,8 @@ function toViewEntry(entry: EntryWithPostings): ViewEntry {
   return {
     ...entry,
     postings: entry.postings as unknown as ViewPosting[],
-    // 조인 행을 벗겨 태그만 남긴다. 공용 규칙은 조인을 모른다.
-    tags: entry.tags?.map((row) => row.tag),
+    // 조인 행을 벗겨 태그만 남긴다. 어느 줄의 것인지는 함께 남겨야 한다.
+    tags: entry.tags?.map((row) => ({ ...row.tag, lineKey: row.lineKey })),
   } as unknown as ViewEntry;
 }
 
@@ -115,8 +116,9 @@ export function classifyEntry(postings: PostingWithRefs[]): EntryKind {
 export function toListItem(
   entry: EntryWithPostings,
   show: AmountConverter = IDENTITY,
+  matchLine?: LineMatcher,
 ): EntryListItem {
-  return toListItemShared(toViewEntry(entry), toViewConverter(show));
+  return toListItemShared(toViewEntry(entry), toViewConverter(show), matchLine);
 }
 
 /** 목록/상세 조회에서 공통으로 쓰는 include. toListItem이 요구하는 관계와 짝이다. */
@@ -146,6 +148,6 @@ export const ENTRY_INCLUDE = {
    * 않는다"이지 "지난 기록에서 없앤다"가 아니다.
    */
   tags: {
-    select: { tag: { select: { id: true, name: true, color: true } } },
+    select: { lineKey: true, tag: { select: { id: true, name: true, color: true } } },
   },
 } satisfies Prisma.JournalEntryInclude;

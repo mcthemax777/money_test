@@ -10,7 +10,15 @@
  */
 
 import { Dec, type DecInput } from './decimal';
-import type { AccountType, CategoryType, EntryKind, EntryListItem, EntryTag } from './entities';
+import type { ParsedEntrySearch } from './entry-search';
+import type {
+  AccountType,
+  CategoryType,
+  EntryKind,
+  EntryLine,
+  EntryListItem,
+  EntryTag,
+} from './entities';
 
 /** 판별에 필요한 만큼만 본 다리. */
 export interface ViewPosting {
@@ -22,6 +30,10 @@ export interface ViewPosting {
   exchangeRate: DecInput;
   baseAmount: DecInput;
   cardId: string | null;
+  /** 이 줄의 신원. 분류 다리에만 있다. */
+  lineKey: string | null;
+  /** 이 줄에서 깎인 금액 (입력 통화, 양수). 분류 다리에만 있다. */
+  discountAmount?: DecInput | null;
   account: { id: string; name: string; type: AccountType } | null;
   category: {
     id: string;
@@ -46,8 +58,6 @@ export interface ViewEntry {
   originalCurrency: string | null;
   originalAmount: DecInput | null;
   rateProvisional: boolean;
-  /** 결제 자리에서 깎인 금액. 다리에는 들어가지 않는 표시값이다. */
-  discountAmount?: DecInput | null;
   /** 이 거래를 카드 실적에 세는가. 옛 전표는 비어 있고, 그때는 센 것으로 본다. */
   countsPerformance?: boolean | null;
   /** 차감액을 실적에서도 뺄지. 옛 전표는 비어 있고, 그때는 뺀 것으로 본다. */
@@ -62,12 +72,15 @@ export interface ViewEntry {
   updatedHlc?: string | null;
   postings: ViewPosting[];
   /**
-   * 이 전표에 붙은 태그. 서버는 조인 표를 펴서, 기기는 사본의 `entry_tag` 를 읽어 넣는다.
+   * 이 전표에 달린 태그 연결. 서버는 조인 표를 펴서, 기기는 사본의 `entry_tag` 를 읽어 넣는다.
+   *
+   * **어느 줄의 태그인지가 함께 온다.** `lineKey` 가 있으면 그 분류 줄의 것이고,
+   * null 이면 거래 자체의 것이다 (분류 줄이 없는 이체·카드 대금 결제).
    *
    * 없으면 빈 배열이다. 태그를 아직 읽지 않은 자리(가벼운 조회)는 `undefined` 를 두어도
    * 되고, 그때 목록 한 줄은 태그가 없는 것으로 그려진다.
    */
-  tags?: EntryTag[];
+  tags?: Array<EntryTag & { lineKey: string | null }>;
 }
 
 /**
@@ -113,10 +126,33 @@ export function classifyEntry(postings: readonly ViewPosting[]): EntryKind {
   return 'expense';
 }
 
-/** 전표 한 건을 목록 한 줄로. */
+/**
+ * 이 줄이 지금 화면의 검색 조건에 걸리는가.
+ *
+ * 조건을 푸는 일은 부르는 쪽이 한다 -- 서버는 파싱한 검색어를, 기기는 사본의 질의를
+ * 들고 있고, 여기까지 그 모양을 끌고 오면 규칙이 한 벌로 묶이지 않는다. 이 자리는
+ * "걸린 줄만 남긴다"는 표시만 받는다.
+ */
+export type LineMatcher = (line: {
+  categoryId: string | null;
+  parentCategoryId: string | null;
+  tagIds: readonly string[];
+}) => boolean;
+
+/**
+ * 전표 한 건을 목록 한 줄로.
+ *
+ * 분할 거래도 여기서는 한 건이다. 줄로 펴는 일은 화면이 `entryRows` 로 한다 --
+ * 자산 탭의 결제내역처럼 계좌 관점으로 보는 화면은 펴지 않아야 하기 때문이다.
+ *
+ * `matchLine` 을 주면 걸린 줄에만 `matched` 가 선다. 아무 줄도 걸리지 않으면 모두
+ * 세운다. 전표 자체는 조건에 걸려서 여기까지 온 것이라(설명 글자나 계좌 조건), 그때
+ * 줄을 다 지우면 거래가 통째로 사라진다.
+ */
 export function toListItem(
   entry: ViewEntry,
   show: ViewConverter = IDENTITY_CONVERTER,
+  matchLine?: LineMatcher,
 ): EntryListItem {
   const kind = classifyEntry(entry.postings);
   const categoryPostings = entry.postings.filter((posting) => posting.category);
@@ -125,11 +161,72 @@ export function toListItem(
   const base = (posting: ViewPosting) => Dec.of(posting.baseAmount);
 
   /*
-   * 결제 자리에서 깎인 금액. 다리가 아니라 전표에 적혀 있다.
+   * 깎인 금액은 줄에 적혀 있다. 통화는 사용자가 적은 통화다.
    *
-   * 다리는 이미 깎인 뒤의 금액이라, 편집 화면이 정가 칸을 되돌리려면 이 값을 더한다.
+   * 외화로 적은 거래는 `originalAmount` 처럼 그대로 두고, 장부 통화로 적은 거래만
+   * 표시 통화로 옮긴다. 옮기지 않으면 원화 가계부에서 달러 값이 원화 자리에 선다.
    */
-  const discount = entry.discountAmount ? Dec.of(entry.discountAmount) : null;
+  const showDiscount = (value: DecInput | null | undefined): Dec | null => {
+    if (value === undefined || value === null || value === '') return null;
+    const raw = Dec.of(value);
+    if (raw.isZero()) return null;
+    return entry.originalCurrency ? raw : show.convert(raw);
+  };
+
+  // 줄에 붙은 태그와 거래 자체에 붙은 태그를 나눈다.
+  const lineTags = new Map<string, EntryTag[]>();
+  const entryTags: EntryTag[] = [];
+  for (const link of entry.tags ?? []) {
+    const tag = { id: link.id, name: link.name, color: link.color };
+    if (link.lineKey === null || link.lineKey === undefined) {
+      entryTags.push(tag);
+      continue;
+    }
+    const bucket = lineTags.get(link.lineKey);
+    if (bucket) bucket.push(tag);
+    else lineTags.set(link.lineKey, [tag]);
+  }
+
+  const lines: EntryLine[] = categoryPostings.map((posting) => {
+    /*
+     * 줄 키가 비어 있으면 다리 id 로 물러선다.
+     *
+     * 마이그레이션이 모든 분류 다리를 채우고 저장 요청도 키 없이는 거절되므로 여기
+     * 오는 일은 없다. 그래도 화면이 키 하나 때문에 그려지지 않는 것보다는 낫다.
+     */
+    const lineKey = posting.lineKey ?? posting.id;
+    const tags = lineTags.get(lineKey) ?? [];
+    const lineDiscount = showDiscount(posting.discountAmount);
+    return {
+      lineKey,
+      categoryId: posting.category?.id ?? '',
+      categoryName: posting.category?.name ?? '',
+      parentCategoryId: posting.category?.parent?.id ?? null,
+      parentCategoryName: posting.category?.parent?.name ?? null,
+      amount: show.convert(base(posting).abs()).toString(),
+      discountAmount: lineDiscount ? lineDiscount.toString() : null,
+      tags,
+      matched: matchLine
+        ? matchLine({
+            categoryId: posting.category?.id ?? null,
+            parentCategoryId: posting.category?.parent?.id ?? null,
+            tagIds: tags.map((tag) => tag.id),
+          })
+        : true,
+    };
+  });
+
+  // 아무 줄도 걸리지 않았으면 좁히지 않는다. 위 주석 참고.
+  if (matchLine && lines.length > 0 && !lines.some((line) => line.matched)) {
+    for (const line of lines) line.matched = true;
+  }
+
+  // 거래 전체에서 깎인 금액. 줄마다의 값을 그대로 더한다.
+  const discount = lines.reduce<Dec | null>((acc, line) => {
+    if (!line.discountAmount) return acc;
+    const value = Dec.of(line.discountAmount);
+    return acc ? acc.plus(value) : value;
+  }, null);
 
   /*
    * 표시 금액은 항상 기준통화(baseAmount)이고 음수가 되지 않는다.
@@ -176,53 +273,30 @@ export function toListItem(
     date: entry.date instanceof Date ? entry.date.toISOString() : String(entry.date),
     description: entry.description,
     merchant: entry.merchant,
-    tags: entry.tags ?? [],
+    // 거래 자체에 붙은 태그. 지출·수입은 언제나 비어 있다 (그쪽은 줄에 붙는다).
+    tags: entryTags,
     detailedNote: entry.detailedNote,
     personId: entry.personId,
     personName: entry.person?.name ?? '',
     amount: show.convert(amount).toString(),
     /*
-     * 카테고리 다리 수.
+     * 분류 줄 전부. 분할이면 여럿이다.
      *
-     * 목록 한 줄은 대표 분류 하나만 보여 준다. 그래서 분할 거래를 그 한 줄에서 되돌려
-     * 저장하면 나머지 줄이 조용히 사라진다. 편집 화면이 그것을 막으려면 "여럿이었다"는
-     * 사실을 알아야 하는데, 다른 필드로는 알 수 없다.
+     * 목록이 줄로 펴는 재료이자 편집 화면이 분할을 되살리는 재료다. 예전에는 대표 분류
+     * 하나만 실어 보내고 둘 이상일 때만 `splits` 를 덧붙였는데, 그 한 줄을 폼으로
+     * 되돌려 저장하면 나머지가 조용히 사라졌다.
      *
-     * 이체는 수수료 다리 하나가 세어진다(1). 카드사 대금 이동은 카테고리가 없어 0이다.
+     * 이체는 수수료 줄 하나가 들어가고, 카드사 대금 이동은 분류가 없어 빈 배열이다.
      */
-    splitCount: categoryPostings.length,
+    lines,
+    splitCount: lines.length,
     /*
-     * 분할의 줄들. 둘 이상일 때만 싣는다.
+     * 거래 전체에서 깎인 금액. 줄마다의 값을 더한 것이고, 없으면 null 이다.
      *
-     * 금액은 위의 `amount` 와 같은 단위(표시 통화)로 맞춘다. 폼이 이 값을 그대로
-     * 되돌려 보내므로 단위가 어긋나면 저장할 때 금액이 달라진다.
-     *
-     * 지출·수입에만 뜻이 있다. 이체의 카테고리 다리는 수수료 하나라 분할이 아니다.
+     * 위 `amount` 는 이미 차감된 뒤의 값이라, 화면이 거래의 정가를 되돌리려면 둘을
+     * 더한다. 줄마다의 정가는 `lines[].discountAmount` 로 같은 방식으로 되살린다.
      */
-    ...((kind === 'expense' || kind === 'income') && categoryPostings.length > 1
-      ? {
-          splits: categoryPostings.map((posting) => ({
-            categoryId: posting.category?.id ?? '',
-            amount: show.convert(base(posting).abs()).toString(),
-          })),
-        }
-      : {}),
-    /*
-     * 결제 자리에서 곧바로 빠진 금액. 없으면 null 이다.
-     *
-     * 위 `amount` 는 이미 차감된 뒤의 값이라, 편집 화면이 정가 칸을 되돌리려면
-     * 둘을 더해야 한다. 그 덧셈을 화면마다 따로 적지 않도록 여기서 실어 보낸다.
-     */
-    /*
-     * 깎인 금액. **원 통화 금액과 같은 규칙으로 싣는다.**
-     *
-     * 이 값의 통화는 사용자가 적은 통화다(정가와 같은 칸에서 뺀 값이라 그렇다).
-     * 외화로 적은 거래는 `originalAmount` 처럼 그대로 두고, 장부 통화로 적은 거래만
-     * 표시 통화로 옮긴다. 옮기지 않으면 원화 가계부에서 달러 값이 원화 자리에 선다.
-     */
-    discountAmount: discount
-      ? (entry.originalCurrency ? discount : show.convert(discount)).toString()
-      : null,
+    discountAmount: discount ? discount.toString() : null,
     // 값이 없던 시절의 전표는 센 것으로 본다. 그때는 모든 카드 거래가 실적에 들어갔다.
     countsPerformance: entry.countsPerformance ?? true,
     // 값이 없던 시절의 전표는 차감이 실적을 함께 깎고 있었다.
@@ -322,4 +396,46 @@ function deriveRate(original: Dec, base: Dec): string | null {
 /** 카드사 이체에서 카드 부채 쪽 다리 */
 function cardLeg(accountPostings: readonly ViewPosting[]): ViewPosting | null {
   return accountPostings.find((posting) => posting.account?.type === 'credit_card') ?? null;
+}
+
+
+/**
+ * 검색 조건에 걸리는 **줄**인지 보는 판정기.
+ *
+ * 질의 자체는 전표 수준으로 건다 (`entrySearchConditions` 머리말). 그래서 여행경비로
+ * 찾아도 식비가 섞인 그 전표가 통째로 걸려 온다. 그 다음이 이 판정기의 일이다 --
+ * 걸려 온 전표에서 **실제로 조건에 맞는 줄만** 남긴다. 목록은 그 줄만 그리고, 리포트는
+ * 그 줄만 더한다. 둘이 같은 함수를 쓰므로 화면의 합과 리포트의 합이 어긋나지 않는다.
+ *
+ * 줄 수준 조건이 하나도 없으면 undefined 를 준다. 그때는 거르지 않는다 -- 날짜나
+ * 설명 글자로만 찾은 목록에서 분할 거래의 한 줄이 사라지면 그것이 오히려 이상하다.
+ *
+ * 무리가 여럿이면 **모두** 만족해야 한다 (질의가 AND 로 잇는 것과 같은 규칙이다).
+ */
+export function lineMatcherOf(search: ParsedEntrySearch): LineMatcher | undefined {
+  const categoryIds = new Set(search.categoryIds ?? []);
+  const categorySelfIds = new Set(search.categorySelfIds ?? []);
+  const tagIds = new Set(search.tagIds ?? []);
+  const noTag = search.noTag === true;
+
+  const byCategory = categoryIds.size > 0 || categorySelfIds.size > 0;
+  const byTag = tagIds.size > 0 || noTag;
+  if (!byCategory && !byTag) return undefined;
+
+  return (line) => {
+    if (byCategory) {
+      // 대분류를 고르면 소분류까지. 직접 지정(미분류)은 그 분류에 바로 적은 줄만.
+      const hit =
+        (line.categoryId !== null &&
+          (categoryIds.has(line.categoryId) || categorySelfIds.has(line.categoryId))) ||
+        (line.parentCategoryId !== null && categoryIds.has(line.parentCategoryId));
+      if (!hit) return false;
+    }
+    if (byTag) {
+      const hit =
+        (noTag && line.tagIds.length === 0) || line.tagIds.some((id) => tagIds.has(id));
+      if (!hit) return false;
+    }
+    return true;
+  };
 }

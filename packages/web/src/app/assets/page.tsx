@@ -285,17 +285,20 @@ function PerformanceLedgerList({
   cardId,
   fallbackCurrency,
   reloadToken = 0,
+  closingKey,
   onOpenEntry,
 }: {
   cardId: string;
   /** 응답이 오기 전에 쓸 통화. 카드 상세가 이미 알고 있는 값이다. */
   fallbackCurrency: string;
   reloadToken?: number;
+  /** 이 주기의 줄만 ('YYYY-MM'). 그래프 아래 줄을 눌러 고른 주기다. */
+  closingKey?: string | null;
   onOpenEntry?: (entryId: string) => void;
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
-  const ledger = useCardPerformanceLedger(cardId, reloadToken);
+  const ledger = useCardPerformanceLedger(cardId, reloadToken, closingKey);
   const currency = ledger.currency ?? fallbackCurrency;
   /* 바닥에서 한 번 더 당기면 다음 쪽이 온다. 다른 원장과 같은 손짓이다. */
   const pull = useBottomPull({
@@ -949,6 +952,34 @@ export default function DashboardPage() {
   }, [selectedAccount, detailType, loadAccountTransactions, entryVersion, mirrorVersion]);
 
   /*
+   * 카드 상세를 두 탭으로 가른다. 실적과 결제대금은 다른 질문이다.
+   *
+   *   결제대금  얼마를 갚아야 하나. 실적에서 뺀 결제까지 전부 센다.
+   *   실적      혜택을 받을 만큼 썼나. 뺀 결제는 그래프에도 내역에도 없다.
+   *
+   * 한 화면에 나란히 두면 같은 축의 막대 둘이 서로 다른 숫자를 말해, 어느 쪽을 보고
+   * 있는지가 흐려진다. 기본은 결제대금이다 -- 카드를 열어 먼저 묻는 것이 그쪽이다.
+   */
+  const [cardTab, setCardTab] = useState<'billed' | 'performance'>('billed');
+
+  /**
+   * 그래프 아래에서 고른 주기. null 이면 전체를 본다.
+   *
+   * 결제내역과 실적 원장을 그 주기로 좁히는 데 쓴다. 카드나 탭을 옮기면 푼다 -- 다른
+   * 카드의 주기를 그대로 들고 있으면 빈 목록이 서고, 탭마다 주기의 뜻이 다르다
+   * (청구 주기와 실적 주기는 같은 달이어도 세는 것이 다르다).
+   */
+  const [pickedPeriod, setPickedPeriod] = useState<{
+    closingKey: string;
+    periodStart: string;
+    periodEnd: string;
+  } | null>(null);
+
+  useEffect(() => {
+    setPickedPeriod(null);
+  }, [selectedCard?.id, cardTab]);
+
+  /*
    * 신용카드의 결제 내역.
    *
    * 카드의 부채 계정 원장이다. 통장 상세가 보는 것과 같은 줄이라 받아 오는 자리도
@@ -957,6 +988,10 @@ export default function DashboardPage() {
   const cardLedger = useAccountLedger(
     detailType === 'card' ? selectedCard?.liabilityAccountId ?? null : null,
     entryVersion + mirrorVersion,
+    // 그래프 아래에서 주기를 골랐으면 그 구간만. 줄에 붙는 잔액은 그대로 맨 앞부터다.
+    cardTab === 'billed' && pickedPeriod
+      ? { startDate: pickedPeriod.periodStart, endDate: pickedPeriod.periodEnd }
+      : null,
   );
 
   /*
@@ -972,6 +1007,9 @@ export default function DashboardPage() {
       : null,
     selectedProjectId,
     entryVersion + mirrorVersion,
+    cardTab === 'billed' && pickedPeriod
+      ? { startDate: pickedPeriod.periodStart, endDate: pickedPeriod.periodEnd }
+      : null,
   );
 
   /**
@@ -980,17 +1018,6 @@ export default function DashboardPage() {
    * 어디서 읽었든 줄의 모양이 같아(LedgerLikeRow) 화면은 하나만 그린다.
    */
   const cardPayments = selectedCard?.liabilityAccountId ? cardLedger : debitLedger;
-
-  /*
-   * 카드 상세를 두 탭으로 가른다. 실적과 결제대금은 다른 질문이다.
-   *
-   *   결제대금  얼마를 갚아야 하나. 실적에서 뺀 결제까지 전부 센다.
-   *   실적      혜택을 받을 만큼 썼나. 뺀 결제는 그래프에도 내역에도 없다.
-   *
-   * 한 화면에 나란히 두면 같은 축의 막대 둘이 서로 다른 숫자를 말해, 어느 쪽을 보고
-   * 있는지가 흐려진다. 기본은 결제대금이다 -- 카드를 열어 먼저 묻는 것이 그쪽이다.
-   */
-  const [cardTab, setCardTab] = useState<'billed' | 'performance'>('billed');
 
   const getAccountCards = (accountId: string) =>
     cards.filter((c) => c.paymentAccountId === accountId);
@@ -1621,6 +1648,8 @@ export default function DashboardPage() {
                   reloadToken={entryVersion}
                   onChange={refreshAfterCardChange}
                   measure={cardTab}
+                  selectedPeriodKey={pickedPeriod?.closingKey ?? null}
+                  onSelectPeriod={setPickedPeriod}
                 />
               </div>
 
@@ -1656,6 +1685,7 @@ export default function DashboardPage() {
                           : displayCurrency
                       }
                       reloadToken={entryVersion}
+                      closingKey={pickedPeriod?.closingKey ?? null}
                       onOpenEntry={openLedgerEntry}
                     />
                   </>

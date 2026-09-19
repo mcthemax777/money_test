@@ -146,6 +146,8 @@ async function main() {
   // ── 1. 실적에서 뺀 거래 ──
   const excluded = await writer.createEntry({
     ...base,
+    // 줄 키는 화면이 만든다. 없으면 조립이 거절한다.
+    lineKey: 'line-tax',
     description: '세금',
     amount: '70000',
     countsPerformance: false,
@@ -154,6 +156,7 @@ async function main() {
   // ── 2. 차감을 실적에서 빼지 않는 거래 ──
   const kept = await writer.createEntry({
     ...base,
+    lineKey: 'line-point',
     description: '포인트 결제',
     amount: '50000',
     discountAmount: '20000',
@@ -163,6 +166,7 @@ async function main() {
   // ── 3. 아무것도 고르지 않은 거래 ──
   await writer.createEntry({
     ...base,
+    lineKey: 'line-plain',
     description: '그냥 결제',
     amount: '30000',
   } as never);
@@ -174,6 +178,10 @@ async function main() {
     limit: 10,
   });
   const byName = new Map(page.entries.map((entry) => [entry.description, entry]));
+  /*
+   * 실적 여부는 **전표**에 있다. 카드사가 보는 것은 승인 한 건이라, 분류로 나눴다고
+   * 절반만 실적에 드는 일은 없다. 깎인 금액만 줄에 적힌다.
+   */
   eq('실적 제외가 사본에 남는다', byName.get('세금')?.countsPerformance, false);
   eq('고르지 않으면 실적 포함', byName.get('그냥 결제')?.countsPerformance, true);
   eq(
@@ -185,6 +193,13 @@ async function main() {
     '고르지 않으면 차감이 실적도 깎는다',
     byName.get('그냥 결제')?.discountCountsPerformance,
     true,
+  );
+  // 깎인 금액은 줄에 남는다. 분할의 한 줄만 환불되는 일이 있어서다.
+  eq(
+    '깎인 금액은 줄에 남는다',
+    byName.get('포인트 결제')?.postings.find((posting) => posting.categoryId !== null)
+      ?.discountAmount,
+    '20000',
   );
 
   // 큐에 쌓인 명령. 서버가 이것으로 같은 전표를 다시 만든다.

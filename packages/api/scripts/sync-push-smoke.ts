@@ -38,6 +38,8 @@ import {
   makeTags,
   projectAccessStub,
   runSmoke,
+  lineKey,
+  lineTargets,
 } from './smoke-harness';
 
 /** 기기 시계를 흉내 낸다. 벽시계를 고정해 검사가 시간에 흔들리지 않게 한다. */
@@ -95,6 +97,9 @@ runSmoke('sync-push', async (ctx) => {
   const CLIENT = 'client-a';
 
   /** 기기가 만드는 명령 하나. id 는 기기가 정한다(0단계에서 그렇게 바꿨다). */
+  // 점심 거래의 줄 키. 화면이 만들어 만들 때와 고칠 때 같은 값을 보낸다.
+  const LUNCH_LINE_KEY = lineKey();
+
   const expenseMutation = (
     entryId: string,
     amount: string,
@@ -117,6 +122,8 @@ runSmoke('sync-push', async (ctx) => {
       amount,
       categoryId: food.id,
       accountId: bank.id,
+      // 줄 키는 화면이 만든다. 명령에 실려 오지 않으면 서버가 거절한다.
+      lineKey: entryId === lunchId ? LUNCH_LINE_KEY : lineKey(),
     },
     ...overrides,
   });
@@ -175,6 +182,8 @@ runSmoke('sync-push', async (ctx) => {
       amount,
       categoryId: food.id,
       accountId: bank.id,
+      // 화면이 편집 내내 들고 있던 줄 키를 그대로 되돌려 보낸다.
+      lineKey: LUNCH_LINE_KEY,
     },
   });
 
@@ -454,7 +463,11 @@ runSmoke('sync-push', async (ctx) => {
   // 태그만 바꾼 것도 편집이다. 시계가 올라가지 않으면 옛 명령이 태그를 지운다.
   const beforeTagChange = onlineRow.updatedHlc;
   const tag = await tags.createTag(uid, { name: `동기화검사-${RUN}` }, pid);
-  await entries.changeTags(uid, { entryIds: [online.id], addTagIds: [tag.id] } as any, pid);
+  await entries.changeTags(
+    uid,
+    { targets: await lineTargets(ctx.prisma, [online.id]), addTagIds: [tag.id] },
+    pid,
+  );
   const afterTagChange = (await ctx.prisma.journalEntry.findUniqueOrThrow({
     where: { id: online.id },
     select: { updatedHlc: true },
@@ -476,7 +489,7 @@ runSmoke('sync-push', async (ctx) => {
   await push(taggedIds.map((id) => expenseMutation(id, '4000', T0 + 5_000_000)));
 
   const tagsMutation = (
-    entryIds: string[],
+    targets: Array<{ entryId: string; lineKey: string | null }>,
     addTagIds: string[],
     removeTagIds: string[],
     at: number,
@@ -488,15 +501,18 @@ runSmoke('sync-push', async (ctx) => {
     hlc: hlcAt(at),
     kind: 'entry.tags',
     projectId: pid,
-    targets: [...entryIds, ...addTagIds, ...removeTagIds],
-    payload: { entryIds, addTagIds, removeTagIds },
+    targets: [...targets.map((one) => one.entryId), ...addTagIds, ...removeTagIds],
+    payload: { targets, addTagIds, removeTagIds },
     ...overrides,
   });
 
   const linkCount = (entryId: string, tagId: string) =>
     ctx.prisma.entryTag.count({ where: { entryId, tagId } });
 
-  const attach = tagsMutation(taggedIds, [tagA.id], [], T0 + 5_100_000);
+  // 태그 명령의 대상은 줄이다. 전표 id 로 그 전표의 분류 줄을 찾아 온다.
+  const targetsOf = (ids: string[]) => lineTargets(ctx.prisma, ids);
+
+  const attach = tagsMutation(await targetsOf(taggedIds), [tagA.id], [], T0 + 5_100_000);
   const attached = await push([attach]);
   ctx.check('태그 명령이 적용된다', statusOf(attached.results, attach.mutationId), 'applied');
   ctx.check('첫 거래에 붙었다', await linkCount(taggedIds[0], tagA.id), 1);
@@ -506,15 +522,19 @@ runSmoke('sync-push', async (ctx) => {
     hlcAt(T0 + 5_100_000));
 
   // 재전송. 같은 명령이 두 번 적히면 연결이 둘이 되거나 오류가 난다.
-  const attachedAgain = await push([tagsMutation(taggedIds, [tagA.id], [], T0 + 5_100_000, {
+  const attachedAgain = await push([tagsMutation(await targetsOf(taggedIds), [tagA.id], [], T0 + 5_100_000, {
     mutationId: attach.mutationId, clientSeq: attach.clientSeq,
   })]);
   ctx.check('재전송은 duplicate', attachedAgain.results[0]?.status, 'duplicate');
   ctx.check('연결이 하나뿐이다', await linkCount(taggedIds[0], tagA.id), 1);
 
   // 다른 기기가 붙인 태그는 그대로 남는다. 어느 쪽에도 없는 태그는 건드리지 않는다.
-  await entries.changeTags(uid, { entryIds: [taggedIds[0]], addTagIds: [tagB.id] } as any, pid);
-  const detach = tagsMutation([taggedIds[0]], [], [tagA.id], T0 + 5_200_000);
+  await entries.changeTags(
+    uid,
+    { targets: await lineTargets(ctx.prisma, [taggedIds[0]]), addTagIds: [tagB.id] },
+    pid,
+  );
+  const detach = tagsMutation(await targetsOf([taggedIds[0]]), [], [tagA.id], T0 + 5_200_000);
   const detached = await push([detach]);
   ctx.check('떼는 명령도 적용된다', statusOf(detached.results, detach.mutationId), 'applied');
   ctx.check('뗀 태그는 사라졌다', await linkCount(taggedIds[0], tagA.id), 0);
@@ -528,7 +548,9 @@ runSmoke('sync-push', async (ctx) => {
    */
   const far = hlcAt(T0 + 9_000_000, 'device-b');
   await ctx.prisma.journalEntry.update({ where: { id: taggedIds[1] }, data: { updatedHlc: far } });
-  const stamped2 = await push([tagsMutation([taggedIds[1]], [tagB.id], [], T0 + 5_300_000)]);
+  const stamped2 = await push([
+    tagsMutation(await targetsOf([taggedIds[1]]), [tagB.id], [], T0 + 5_300_000),
+  ]);
   ctx.check('그래도 태그는 붙는다', stamped2.results[0]?.status, 'applied');
   ctx.check('붙었다', await linkCount(taggedIds[1], tagB.id), 1);
   ctx.check('더 늦은 시계는 그대로다',
@@ -543,16 +565,22 @@ runSmoke('sync-push', async (ctx) => {
    */
   const goneId = '019273aa-0000-7000-8000-000000000012';
   await push([expenseMutation(goneId, '2000', T0 + 5_400_000)]);
+  // 대상은 지우기 전에 잡는다. 오프라인 기기가 들고 있던 줄 키가 그런 모양이다.
+  const partialTargets = await targetsOf([goneId, taggedIds[0]]);
   await entries.deleteEntry(goneId, uid);
-  const partial = tagsMutation([goneId, taggedIds[0]], [tagA.id], [], T0 + 5_500_000);
+  const partial = tagsMutation(partialTargets, [tagA.id], [], T0 + 5_500_000);
   const partialResult = await push([partial]);
   ctx.check('사라진 거래가 섞여도 적용된다',
     statusOf(partialResult.results, partial.mutationId), 'applied');
   ctx.check('남은 거래에는 붙었다', await linkCount(taggedIds[0], tagA.id), 1);
 
   // 없는 태그로 표시하라는 명령은 거절이다. 조용히 넘기면 사용자는 표시된 줄 안다.
-  const ghostTag = tagsMutation([taggedIds[0]], ['019273aa-0000-7000-8000-0000000000ff'], [],
-    T0 + 5_600_000);
+  const ghostTag = tagsMutation(
+    await targetsOf([taggedIds[0]]),
+    ['019273aa-0000-7000-8000-0000000000ff'],
+    [],
+    T0 + 5_600_000,
+  );
   const ghostTagged = await push([ghostTag]);
   ctx.check('없는 태그는 거절된다', statusOf(ghostTagged.results, ghostTag.mutationId), 'rejected');
 });

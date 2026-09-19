@@ -114,7 +114,7 @@ export class SyncService {
            * 태그 연결은 전표에 실어 함께 보낸다. 다리와 같은 이유다 -- 이 표에는
            * 번호가 없어 따로 실을 수 없다. 태그 자신(이름·색)은 위의 `tags` 로 온다.
            */
-          include: { postings: true, tags: { select: { tagId: true } } },
+          include: { postings: true, tags: { select: { lineKey: true, tagId: true } } },
           ...page,
         }),
         tx.budget.findMany({ where: { projectId, updatedVersion: window }, ...page }),
@@ -209,10 +209,15 @@ export class SyncService {
           categories: within(categories),
           tags: within(tags),
           cards: within(cards),
-          // 조인 행을 id 목록으로 편다. 기기가 다루는 것은 연결이지 조인 행이 아니다.
+          /*
+           * 조인 행을 연결 목록으로 편다. 기기가 다루는 것은 연결이지 조인 행이 아니다.
+           *
+           * 줄 키를 함께 보낸다. 태그가 줄에 붙으므로 기기도 어느 줄의 것인지 알아야
+           * 목록을 그릴 수 있다.
+           */
           entries: within(entries).map(({ tags: entryTags, ...entry }) => ({
             ...entry,
-            tagIds: entryTags.map((row) => row.tagId),
+            tagLinks: entryTags.map((row) => ({ lineKey: row.lineKey, tagId: row.tagId })),
           })) as unknown as SyncDto.EntryRow[],
           budgets: within(budgets),
           budgetOverrides: within(budgetOverrides),

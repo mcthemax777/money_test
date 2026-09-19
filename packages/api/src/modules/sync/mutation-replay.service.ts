@@ -517,17 +517,19 @@ export class MutationReplayService {
   ): Promise<MutationResult> {
     const payload = mutation.payload as EntryTagsPayload;
 
+    let skipped: Array<{ entryId: string; lineKey?: string | null }> = [];
     try {
-      await this.entries.changeTags(
+      const result = await this.entries.changeTags(
         userId,
         {
-          entryIds: payload.entryIds ?? [],
+          targets: payload.targets ?? [],
           addTagIds: payload.addTagIds ?? [],
           removeTagIds: payload.removeTagIds ?? [],
         },
         projectId,
         { hlc: mutation.hlc },
       );
+      skipped = result.skipped;
     } catch (error) {
       /*
        * 태그가 없어졌거나 남의 프로젝트 것이면 거절이다.
@@ -543,7 +545,9 @@ export class MutationReplayService {
       };
     }
 
-    return this.applied(mutation, projectId, payload.entryIds?.[0] ?? '');
+    const result = await this.applied(mutation, projectId, payload.targets?.[0]?.entryId ?? '');
+    // 사라진 줄이 있었으면 함께 돌려준다. 기기가 그 사실을 한 번 알린다.
+    return skipped.length > 0 ? { ...result, skippedTagTargets: skipped } : result;
   }
 
   // ───────────────────────────────────────────
@@ -1073,16 +1077,23 @@ export class MutationReplayService {
       transferFee: payload.transferFee,
       transferFeeCategoryId: payload.transferFeeCategoryId,
       cardTransferDirection: payload.cardTransferDirection,
-      // 결제 자리에서 깎인 금액. 기기가 조립한 전표와 같은 모양이 나와야 한다.
+      /*
+       * 줄에 달린 것들. 기기가 조립한 전표와 같은 모양이 나와야 한다.
+       *
+       * 줄 키를 그대로 옮기는 것이 요점이다. 서버가 새로 만들면 기기 사본의 태그와
+       * 차감이 그 줄을 가리키지 못하고, 다음 pull 이 사본을 덮을 때 조용히 사라진다.
+       */
+      lineKey: payload.lineKey,
+      transferFeeLineKey: payload.transferFeeLineKey,
       discountAmount: payload.discountAmount,
       countsPerformance: payload.countsPerformance,
       discountCountsPerformance: payload.discountCountsPerformance,
+      // 태그도 조립이 줄에 실어 준다. 짐에서 그대로 옮긴다.
+      tagIds: payload.tagIds ?? [],
     });
 
     return {
       ...input,
-      // 태그는 조립 규칙이 다루지 않는다(다리를 바꾸지 않는다). 짐에서 그대로 옮긴다.
-      tagIds: payload.tagIds ?? [],
       updatedHlc: hlc || encodeHlc(hlcNext(null, 'server')),
     };
   }

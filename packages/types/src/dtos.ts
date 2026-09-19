@@ -182,6 +182,20 @@ export namespace AccountDto {
   }
 
   export type LedgerResponse = CursorPage<LedgerRow>;
+
+  /** 계좌 원장 한 쪽을 부를 때의 조건. */
+  export interface LedgerQuery {
+    limit?: number;
+    cursor?: string;
+    /**
+     * 이 구간의 줄만. 카드 상세에서 청구 주기 하나를 골랐을 때 쓴다.
+     *
+     * 줄에 붙는 잔액은 **구간과 상관없이** 맨 앞부터 쌓은 값이다. 구간만큼만 세면
+     * 그 줄의 잔액이 통장의 실제 잔액과 달라진다.
+     */
+    startDate?: IsoDateString;
+    endDate?: IsoDateString;
+  }
 }
 
 
@@ -273,6 +287,13 @@ export namespace CardDto {
 
   /** 마감일 기준 청구 주기 하나 */
   export interface UsagePeriod {
+    /**
+     * 이 주기의 이름 ('YYYY-MM'). 신용카드는 마감 연월, 체크카드는 달력 월이다.
+     *
+     * 화면이 주기 하나를 골라 목록을 좁힐 때 이 값으로 가리킨다. 날짜 두 개로 가리키면
+     * 실적 원장처럼 주기가 곧 단위인 자리에서 경계를 다시 맞춰야 한다.
+     */
+    closingKey: string;
     /** `@db.Date` 성격의 달력 날짜 표시자 */
     periodStart: IsoDateString;
     periodEnd: IsoDateString;
@@ -459,6 +480,20 @@ export namespace CardDto {
    * 다른 원장과 같은 수만큼 끊어 준다. 줄에 붙은 누적은 잘린 자리와 상관없이 **주기
    * 시작부터** 센 값이다 -- 주기는 통째로 만들어 두고 자르는 것은 보여 줄 줄뿐이다.
    */
+  /** 실적 원장 한 쪽을 부를 때의 조건. */
+  export interface PerformanceLedgerQuery {
+    limit?: number;
+    cursor?: string;
+    /**
+     * 이 주기의 줄만 ('YYYY-MM', `UsagePeriod.closingKey`).
+     *
+     * 그래프에서 주기 하나를 골랐을 때 쓴다. 날짜 구간이 아니라 주기 이름으로 가리키는
+     * 것은, 할부 회차가 산 날이 아니라 청구되는 주기에 쌓이기 때문이다 -- 날짜로 자르면
+     * 그 주기에 쌓인 회차가 빠진다.
+     */
+    closingKey?: string;
+  }
+
   export interface PerformanceLedgerResponse {
     cardId: string;
     /** 아래 금액들의 통화 (= 결제 통장의 통화) */
@@ -590,16 +625,46 @@ export namespace EntryDto {
     // ── expense / income ──
     /** 가장 구체적인 카테고리 하나 (소분류가 있으면 소분류). 대분류는 parentId로 유도된다. */
     categoryId?: string;
-    /** 한 결제를 여러 카테고리로 쪼갤 때. 지정하면 categoryId/amount 대신 이 값을 쓴다. */
-    splits?: Array<{ categoryId: string; amount: string }>;
+    /**
+     * 분류 줄 하나뿐인 거래의 줄 키. **화면이 만든다** (uuid).
+     *
+     * 지출·수입에는 반드시 있어야 하고, 없으면 서버가 거절한다. 줄에 붙는 것(태그·차감)이
+     * 이 키에 매달리는데, 서버가 대신 만들면 그 연결이 저장할 때마다 끊긴다.
+     * 분할이면 `splits[].lineKey` 가 대신 쓰인다.
+     */
+    lineKey?: string;
+    /**
+     * 한 결제를 여러 카테고리로 쪼갤 때. 지정하면 categoryId/amount 대신 이 값을 쓴다.
+     *
+     * 태그와 차감이 줄마다 따로다. 여행경비만 환불받았다면 그 줄의 `discountAmount`
+     * 에만 값이 실리고, 식비 줄은 그대로 남는다.
+     *
+     * **실적 두 칸은 줄에 없다.** 카드사가 보는 것은 승인 한 건이라 거래에 하나씩 둔다
+     * (`countsPerformance`, `discountCountsPerformance`).
+     */
+    splits?: Array<{
+      categoryId: string;
+      amount: string;
+      /** 이 줄의 키. 화면이 만들어 편집 내내 들고 다닌다. */
+      lineKey: string;
+      /** 이 줄에서 깎인 금액. `amount` 는 정가 그대로 보낸다. 정가보다 클 수 없다. */
+      discountAmount?: string;
+      /** 이 줄에 붙일 태그. 생략은 "비운다"다 (`tagIds` 와 같은 규칙). */
+      tagIds?: string[];
+    }>;
+    /** 이체 수수료 줄의 키. 수수료를 적었으면 함께 보낸다. */
+    transferFeeLineKey?: string;
 
     /**
-     * 이 거래에 붙일 태그. 갈래(kind)를 가리지 않는다.
+     * 붙일 태그.
      *
-     * **수정은 전체 교체다.** 준 목록이 그대로 그 전표의 태그가 되고, 생략하면
-     * 태그를 건드리지 않는 것이 아니라 **비운다** -- 수정이 전표를 통째로 갈아
-     * 끼우는 것과 같은 규칙이라, 여기만 "생략은 유지"로 두면 태그를 다 뗀 수정과
-     * 구별할 수 없다.
+     * **태그는 줄에 붙는다.** 지출·수입이면 이 목록은 그 거래의 분류 줄 하나에 붙고,
+     * 분할이면 `splits[].tagIds` 를 대신 쓴다. 이체와 카드 대금 결제는 분류 줄이 없어
+     * 거래 자체에 붙는다.
+     *
+     * **수정은 전체 교체다.** 준 목록이 그대로 그 줄의 태그가 되고, 생략하면 태그를
+     * 건드리지 않는 것이 아니라 **비운다** -- 수정이 전표를 통째로 갈아 끼우는 것과
+     * 같은 규칙이라, 여기만 "생략은 유지"로 두면 태그를 다 뗀 수정과 구별할 수 없다.
      */
     tagIds?: string[];
 
@@ -622,7 +687,9 @@ export namespace EntryDto {
 
     // ── 즉시 차감 (expense) ──
     /**
-     * 결제 그 자리에서 깎인 금액. 카드 포인트 사용, 자동할인, 그리고 **취소**가 든다.
+     * 분류 줄 하나뿐인 거래에서 그 줄이 깎인 금액. 분할이면 `splits[].discountAmount`.
+     *
+     * 카드 포인트 사용, 자동할인, 그리고 **취소**가 든다.
      *
      * `amount` 는 정가 그대로 보낸다. 서버가 정가를 분류에, 이 값을 차감 분류에 음수로
      * 적어 실제로 나간 돈과 지출 총계를 맞춘다. 정가보다 작아야 한다.
@@ -634,15 +701,19 @@ export namespace EntryDto {
     /**
      * 이 거래를 카드 실적에 셀지. 카드로 낼 때만 뜻이 있다.
      *
+     * **분할해도 하나다.** 카드사가 보는 것은 승인 한 건이라, 분류로 나눴다고 절반만
+     * 실적에 드는 일은 없다.
+     *
      * 생략하면 갈래의 기본값을 쓴다 -- **지출은 포함, 카드로 들어온 수입은 제외**다.
      * 꺼도 갚을 대금은 그대로 남는다. 실적과 청구액은 다른 값이다.
      */
     countsPerformance?: boolean;
     /**
-     * 차감·취소 금액을 카드 실적에서도 뺄지. 지출에만 뜻이 있다.
+     * 차감·취소 금액을 카드 실적에서도 뺄지. 지출에만 뜻이 있다. **분할해도 하나다.**
      *
-     * 생략하면 뺀다. 다리에 이미 깎인 금액이 들어가 있어 그것이 지금까지의 동작이고,
-     * 꺼 두면 실적만 정가로 센다 -- 갚을 대금은 어느 쪽이든 깎인 금액 그대로다.
+     * 깎인 금액은 줄마다 따로 적지만, 그것을 실적에서 뺄지는 카드사의 방침 하나라
+     * 거래에 둔다. 생략하면 뺀다 -- 다리에 이미 깎인 금액이 들어가 있어 그것이
+     * 지금까지의 동작이고, 꺼 두면 실적만 정가로 센다.
      */
     discountCountsPerformance?: boolean;
 
@@ -693,8 +764,14 @@ export namespace EntryDto {
    *    나머지 줄이 없어, 그것으로 수정을 만들면 분할 거래가 조용히 뭉개진다.
    */
   export interface ChangeTagsRequest {
-    /** 손댈 거래. 한 번에 보낼 수 있는 수는 서버가 제한한다. */
-    entryIds: string[];
+    /**
+     * 손댈 줄. 한 번에 보낼 수 있는 수는 서버가 제한한다.
+     *
+     * 태그가 줄에 붙으므로 대상도 줄이다 -- 목록에서 분할 거래의 한 줄만 골라 표시할
+     * 수 있어야 하고, 그것이 이 바꿈을 전표 단위로 두지 않은 까닭이다. 분류 줄이 없는
+     * 거래(이체, 카드 대금 결제)는 `lineKey` 를 null 로 둔다.
+     */
+    targets: Array<{ entryId: string; lineKey?: string | null }>;
     /** 더할 태그. 이미 붙어 있는 것은 그대로 지나간다. */
     addTagIds?: string[];
     /** 뗄 태그. 붙어 있지 않은 것은 그대로 지나간다. */
@@ -707,8 +784,16 @@ export namespace EntryDto {
     added: number;
     /** 떼어 낸 연결의 수. 붙어 있지 않던 것은 세지 않는다. */
     removed: number;
-    /** 태그가 하나라도 달라진 거래의 수. */
+    /** 태그가 하나라도 달라진 거래의 수. 줄 수가 아니다. */
     entries: number;
+    /**
+     * 적용하지 못한 대상. 그 줄이 이미 사라진 경우다.
+     *
+     * 다른 기기가 그 사이 분할을 고쳤거나 거래를 지웠으면 붙일 자리가 없다. 조용히
+     * 버리면 사용자는 표시가 된 줄 알고 다음 동기화가 덮을 때에야 알게 되므로,
+     * 무엇이 빠졌는지 돌려주어 화면이 한 번 알린다.
+     */
+    skipped: Array<{ entryId: string; lineKey?: string | null }>;
   }
 
   export interface ListQuery extends EntryFilterQuery, EntrySearchQuery {
@@ -1538,12 +1623,15 @@ export namespace SyncDto {
     id: string;
     postings: unknown[];
     /**
-     * 이 전표에 붙은 태그의 id. 다리와 같은 이유로 전표에 실어 함께 보낸다.
+     * 이 전표에 달린 태그 연결. 다리와 같은 이유로 전표에 실어 함께 보낸다.
+     *
+     * **어느 줄의 태그인지가 함께 온다.** `lineKey` 가 있으면 그 분류 줄의 것이고,
+     * null 이면 거래 자체의 것이다 (분류 줄이 없는 이체·카드 대금 결제).
      *
      * 태그 자체(이름·색)는 `changes.tags` 로 따로 오고 여기에는 연결만 담는다.
      * 이름이 바뀌었다고 그 태그가 붙은 전표를 전부 다시 보낼 수는 없기 때문이다.
      */
-    tagIds: string[];
+    tagLinks: Array<{ lineKey: string | null; tagId: string }>;
   }
 
   export interface Changes {

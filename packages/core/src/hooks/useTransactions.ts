@@ -31,6 +31,8 @@ import {
   HIDDEN_ACCOUNT_TYPES,
   NO_TAG,
   parseCategoryPick,
+  parseSelectionKey,
+  selectionKey,
   toEntrySearchQuery,
 } from '@money/types';
 
@@ -477,6 +479,13 @@ export function useTransactions(projectId: string | null) {
   const [selectPurpose, setSelectPurpose] = useState<SelectPurpose | null>(null);
   const isSelecting = selectPurpose !== null;
   /** 고른 거래. 열쇠는 거래 id 다. */
+  /**
+   * 골라 둔 줄. 열쇠는 `selectionKey` 가 만든다.
+   *
+   * 태그가 줄에 붙으므로 고르는 단위도 줄이다. 다만 접힌 달을 통째로 체크할 때는 그
+   * 거래들이 화면에 없어 줄 키를 알 수 없고, 그때는 "그 거래의 모든 줄"을 뜻하는
+   * 거래 단위 열쇠가 들어간다 (`selectionKey(id)`).
+   */
   const [selected, setSelected] = useState<Record<string, true>>({});
   /**
    * 범위(달·줄)에 든 거래 id.
@@ -672,6 +681,24 @@ export function useTransactions(projectId: string | null) {
 
   monthDataRef.current = monthData;
 
+  /**
+   * 값이 바뀌어 다시 받아야 하는 회차의 표.
+   *
+   * **조건이 바뀐 것과 다르다.** 검색이나 프로젝트가 바뀌면 받아 둔 것이 남의 값이
+   * 되므로 비우고 처음부터 받는다. 반대로 거래 하나를 고쳐서 다시 받는 것은 같은
+   * 조건의 같은 화면이다 -- 그때 비우면 목록이 사라졌다가 돌아오고, 그 사이에 화면이
+   * 짧아져 **스크롤이 맨 위로 튄다.**
+   *
+   * 그래서 값이 바뀔 때는 비우지 않고 **덮어쓴다.** 받아 둔 것은 새 값이 도착할 때까지
+   * 그대로 서 있고, 도착하면 그 자리에서 바뀐다. 앱에서 한 번 고칠 때 사본 커밋과
+   * 서버 응답으로 번호가 두 번 오르는데, 그 두 번이 모두 보이지 않게 지나간다.
+   */
+  const refreshToken = `${mirrorVersion}|${reloadToken}`;
+  const monthRefreshRef = useRef(refreshToken);
+  const rowRefreshRef = useRef(refreshToken);
+  /** 이 조건으로 달 목록을 한 번이라도 받았는가. 처음 받을 때만 "로딩 중"을 띄운다. */
+  const monthsLoadedRef = useRef(false);
+
   /** 조건이 바뀌면 받아 둔 것을 버린다. 남겨 두면 옛 조건의 값이 화면에 남는다. */
   useEffect(() => {
     /*
@@ -688,6 +715,7 @@ export function useTransactions(projectId: string | null) {
     setRowEntries({});
     setLoadingMonths({});
     setLoadingRows({});
+    monthsLoadedRef.current = false;
     /*
      * 나가 있던 것도 잊는다.
      *
@@ -697,7 +725,7 @@ export function useTransactions(projectId: string | null) {
      */
     inFlightRef.current = new Set();
     setRangePending({});
-  }, [scopeKey, projectId, mirrorVersion, reloadToken]);
+  }, [scopeKey, projectId]);
 
   /** 조건이 바뀌면 손으로 정한 펼침도 지운다. 그 달이 목록에서 사라질 수 있다. */
   useEffect(() => {
@@ -766,13 +794,21 @@ export function useTransactions(projectId: string | null) {
     }
 
     let alive = true;
-    setIsLoadingMonths(true);
+    /*
+     * 이미 받아 둔 목록이 있으면 "로딩 중"을 띄우지 않는다.
+     *
+     * 띄우면 화면이 목록 대신 한 줄짜리 문구로 바뀌고, 그만큼 짧아진 화면에서 스크롤이
+     * 맨 위로 튄다. 거래 하나를 고쳤을 뿐인데 보던 자리를 잃는다.
+     */
+    if (!monthsLoadedRef.current) setIsLoadingMonths(true);
     setHasError(false);
 
     homeDataPort()
       .getEntryMonths(projectId, { ...scope, ...monthsQuery })
       .then((rows) => {
-        if (alive) setMonths(rows);
+        if (!alive) return;
+        setMonths(rows);
+        monthsLoadedRef.current = true;
       })
       .catch((error) => {
         if (!alive) return;
@@ -799,13 +835,22 @@ export function useTransactions(projectId: string | null) {
   useEffect(() => {
     if (!projectId || openMonths.length === 0) return;
 
+    /*
+     * 값이 바뀌어 도는 회차인가. 그때는 받아 둔 것을 믿지 않고 다시 받는다.
+     *
+     * 비우지 않으므로(위 "값이 바뀌어 다시 받아야 하는 회차의 표") 이 표시가 없으면
+     * "이미 받아 뒀다"로 읽고 건너뛴다 -- 고친 거래가 목록에 반영되지 않는다.
+     */
+    const refreshing = monthRefreshRef.current !== refreshToken;
+    monthRefreshRef.current = refreshToken;
+
     const port = homeDataPort();
     const askedScope = scopeKey;
 
     const load = async (yearMonth: string) => {
       // 이미 받아 둔 탭은 다시 받지 않는다. ref 로 보는 것은 이 효과가 monthData 에
       // 의존하면 채울 때마다 다시 돌아 그치지 않기 때문이다.
-      const have = monthDataRef.current[yearMonth];
+      const have = refreshing ? undefined : monthDataRef.current[yearMonth];
       if (tab === 'date' && have?.entries) return;
       if (tab === 'category' && have?.categories) return;
       if (tab === 'method' && have?.methods) return;
@@ -872,7 +917,7 @@ export function useTransactions(projectId: string | null) {
     void Promise.all(openMonths.map(load));
 
     // 정리 함수를 두지 않는다 (3단 효과와 같은 이유).
-  }, [projectId, openMonthsKey, tab, scopeKey, mirrorVersion, reloadToken, fail]);
+  }, [projectId, openMonthsKey, tab, scopeKey, refreshToken, fail]);
 
   /** 검색이 고른 분류에 드는 줄만 남긴다. 고르지 않았으면 null. */
   const keepCategoryIds = useMemo(() => {
@@ -1073,12 +1118,16 @@ export function useTransactions(projectId: string | null) {
   useEffect(() => {
     if (!projectId || tab === 'date') return;
 
+    // 값이 바뀐 회차에는 받아 둔 줄도 다시 받는다 (2단과 같은 규칙).
+    const refreshing = rowRefreshRef.current !== refreshToken;
+    rowRefreshRef.current = refreshToken;
+
     const needed: Array<{ yearMonth: string; row: TransactionRow }> = [];
     for (const yearMonth of openMonths) {
       for (const row of rowsOf(yearMonth)) {
         if (!isRowOpen(yearMonth, row.key)) continue;
         const id = rowId(yearMonth, row.key);
-        if (rowEntries[id]) continue;
+        if (!refreshing && rowEntries[id]) continue;
         // 이미 나가 있는 줄은 다시 부르지 않는다. 이것이 중복을 막는 유일한 자리다.
         if (inFlightRef.current.has(id)) continue;
         needed.push({ yearMonth, row });
@@ -1145,6 +1194,13 @@ export function useTransactions(projectId: string | null) {
     levels,
     defaultLevel,
     scopeKey,
+    /*
+     * 값이 바뀐 회차를 알아채려면 여기 있어야 한다.
+     *
+     * 예전에는 받아 둔 것을 비워 `monthData` 가 달라지는 바람에 저절로 돌았다. 이제는
+     * 비우지 않으므로 이 값이 없으면 고친 거래가 3단에 반영되지 않는다.
+     */
+    refreshToken,
     rowEntries,
     rowsOf,
     isRowOpen,
@@ -1266,7 +1322,17 @@ export function useTransactions(projectId: string | null) {
     [selected],
   );
 
-  const isEntrySelected = useCallback((id: string) => selected[id] === true, [selected]);
+  /**
+   * 이 줄이 골라져 있는가.
+   *
+   * 그 줄을 따로 골랐거나, 그 거래가 통째로 골라졌으면 참이다. 범위 체크는 거래 단위로
+   * 들어오므로 둘을 함께 봐야 한다.
+   */
+  const isEntrySelected = useCallback(
+    (id: string, lineKey?: string | null) =>
+      selected[id] === true || (lineKey !== undefined && selected[selectionKey(id, lineKey)] === true),
+    [selected],
+  );
 
   /**
    * 년월 줄의 체크.
@@ -1305,15 +1371,35 @@ export function useTransactions(projectId: string | null) {
     [pickedOf, knownMonthIds, knownRowIds],
   );
 
-  const toggleEntrySelected = useCallback((id: string) => {
-    setSelected((prev) => {
-      if (prev[id]) {
-        const { [id]: _dropped, ...rest } = prev;
-        return rest;
-      }
-      return { ...prev, [id]: true };
-    });
-  }, []);
+  /**
+   * 줄 하나를 고르거나 푼다.
+   *
+   * 줄 키를 주지 않으면 그 거래 전부다 (분류 줄이 없는 이체·카드 대금 결제의 자리).
+   *
+   * 거래가 통째로 골라져 있는데 그 안의 한 줄을 풀면, 거래 단위 열쇠를 줄 단위 열쇠들로
+   * 편 뒤 그 하나만 뺀다. 그러지 않으면 누른 줄이 풀리지 않는다.
+   */
+  const toggleEntrySelected = useCallback(
+    (id: string, lineKey?: string | null, siblingKeys?: readonly string[]) => {
+      const key = selectionKey(id, lineKey);
+      setSelected((prev) => {
+        if (prev[key]) {
+          const { [key]: _dropped, ...rest } = prev;
+          return rest;
+        }
+        if (prev[id] && lineKey !== undefined) {
+          const { [id]: _whole, ...rest } = prev;
+          for (const sibling of siblingKeys ?? []) {
+            if (sibling === lineKey) continue;
+            rest[selectionKey(id, sibling)] = true;
+          }
+          return rest;
+        }
+        return { ...prev, [key]: true };
+      });
+    },
+    [],
+  );
 
   /** 범위를 한꺼번에 고르거나 푼다. 전부 골라져 있으면 푸는 것이 뜻에 맞는다. */
   const toggleRange = useCallback(
@@ -1426,7 +1512,8 @@ export function useTransactions(projectId: string | null) {
    * 도움이 되지 않고, 무엇이 남았는지는 숫자로 돌려준다.
    */
   const deleteSelected = useCallback(async (): Promise<{ deleted: number; failed: number }> => {
-    const ids = Object.keys(selected);
+    // 지우는 것은 거래다. 줄 하나만 지울 수는 없다 -- 그것은 분할을 고치는 일이다.
+    const ids = [...new Set(Object.keys(selected).map((key) => parseSelectionKey(key).entryId))];
     if (ids.length === 0) return { deleted: 0, failed: 0 };
 
     setIsDeleting(true);
@@ -1489,7 +1576,28 @@ export function useTransactions(projectId: string | null) {
   const tagsById = useMemo(() => {
     const map = new Map<string, string[]>();
     const put = (rows: EntryListItem[]) => {
-      for (const row of rows) map.set(row.id, row.tags.map((tag) => tag.id));
+      for (const row of rows) {
+        /*
+         * 거래 단위 열쇠에는 **모든 줄이 함께 가진 태그**를 담는다.
+         *
+         * 범위를 체크하면 그 거래의 모든 줄이 대상이 된다. 체크를 풀면 전부에서 떼므로,
+         * 한 줄만 가진 태그를 "전부가 가졌다"로 보여 주면 나머지 줄에서 없는 것을
+         * 뗀 것으로 읽힌다.
+         */
+        if (row.lines.length === 0) {
+          map.set(row.id, row.tags.map((tag) => tag.id));
+        } else {
+          let shared: string[] = row.lines[0].tags.map((tag) => tag.id);
+          for (const line of row.lines.slice(1)) {
+            const own = new Set(line.tags.map((tag) => tag.id));
+            shared = shared.filter((id) => own.has(id));
+          }
+          map.set(row.id, shared);
+          for (const line of row.lines) {
+            map.set(selectionKey(row.id, line.lineKey), line.tags.map((tag) => tag.id));
+          }
+        }
+      }
     };
 
     for (const data of Object.values(monthData)) {
@@ -1553,24 +1661,30 @@ export function useTransactions(projectId: string | null) {
     async (
       addTagIds: string[],
       removeTagIds: string[] = [],
-    ): Promise<{ tagged: number; failed: boolean }> => {
-      const entryIds = Object.keys(selected);
-      if (entryIds.length === 0 || (addTagIds.length === 0 && removeTagIds.length === 0)) {
-        return { tagged: 0, failed: false };
+    ): Promise<{ tagged: number; failed: boolean; skipped: number }> => {
+      const targets = Object.keys(selected).map(parseSelectionKey);
+      if (targets.length === 0 || (addTagIds.length === 0 && removeTagIds.length === 0)) {
+        return { tagged: 0, failed: false, skipped: 0 };
       }
 
       setIsTagging(true);
       try {
         const result = await entryWritePort().changeEntryTags({
-          entryIds,
+          targets,
           addTagIds,
           removeTagIds,
           projectId,
         });
-        return { tagged: result.entries, failed: false };
+        /*
+         * 적용하지 못한 줄. 다른 기기가 그 사이 분할을 고쳐 없어진 자리다.
+         *
+         * 화면이 이 수로 한 번 알린다. 조용히 넘기면 사용자는 표시가 된 줄 알고, 다음
+         * 동기화가 태그 없는 모습으로 덮을 때에야 알게 된다.
+         */
+        return { tagged: result.entries, failed: false, skipped: result.skipped.length };
       } catch (error) {
         fail(error);
-        return { tagged: 0, failed: true };
+        return { tagged: 0, failed: true, skipped: 0 };
       } finally {
         setIsTagging(false);
         setSelectPurpose(null);
@@ -1656,13 +1770,32 @@ export function useTransactions(projectId: string | null) {
     setSelected({});
   }, []);
 
+  /**
+   * 그 달의 안쪽을 아직 그릴 수 없는가.
+   *
+   * **받아 둔 것이 있으면 로딩이라고 말하지 않는다.** 거래 하나를 고쳐 다시 받는 중에도
+   * 앞선 값이 그대로 서 있어야 한다. "로딩 중" 한 줄로 바꿔 버리면 목록이 사라졌다가
+   * 돌아오고, 그 사이에 짧아진 화면에서 스크롤이 맨 위로 튄다.
+   */
   const isLoadingMonth = useCallback(
-    (yearMonth: string) => loadingMonths[yearMonth] === true,
-    [loadingMonths],
+    (yearMonth: string) => {
+      if (loadingMonths[yearMonth] !== true) return false;
+      const have = monthData[yearMonth];
+      if (tab === 'date') return !have?.entries;
+      if (tab === 'category') return !have?.categories;
+      return !have?.methods;
+    },
+    [loadingMonths, monthData, tab],
   );
+  /** 그 줄의 거래를 아직 그릴 수 없는가. 달과 같은 규칙이다. */
   const isLoadingRow = useCallback(
-    (yearMonth: string, key: string) => loadingRows[rowId(yearMonth, key)] === true,
-    [loadingRows, rowId],
+    (yearMonth: string, key: string) => {
+      const id = rowId(yearMonth, key);
+      if (loadingRows[id] !== true) return false;
+      // 날짜별은 그 달의 목록에서 고르므로 줄마다 따로 받지 않는다.
+      return tab === 'date' ? true : !rowEntries[id];
+    },
+    [loadingRows, rowEntries, rowId, tab],
   );
 
   return {

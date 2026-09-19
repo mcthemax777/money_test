@@ -277,13 +277,27 @@ export class AccountsService {
   async getAccountPostings(
     id: string,
     userId: string,
-    options: { limit?: number; cursor?: string } = {},
+    options: AccountDto.LedgerQuery = {},
   ) {
     await this.getAccountById(id, userId);
     const limit = Math.min(Number(options.limit) || 50, 200);
 
+    /*
+     * 구간을 고른 조회. 카드 상세에서 청구 주기 하나를 눌렀을 때 온다.
+     *
+     * 줄에 붙는 잔액은 구간과 상관없이 맨 앞부터 쌓은 값이다 (`cumulativeBalanceThrough`
+     * 가 그 줄까지 전부 센다). 구간만큼만 세면 그 줄의 잔액이 실제 잔액과 달라진다.
+     */
+    const date =
+      options.startDate || options.endDate
+        ? {
+            ...(options.startDate ? { gte: new Date(options.startDate) } : {}),
+            ...(options.endDate ? { lte: new Date(options.endDate) } : {}),
+          }
+        : undefined;
+
     const rows = await this.prisma.posting.findMany({
-      where: { accountId: id },
+      where: { accountId: id, ...(date ? { entry: { date } } : {}) },
       include: {
         entry: {
           select: {

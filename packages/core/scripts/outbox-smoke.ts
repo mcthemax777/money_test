@@ -344,8 +344,16 @@ const KST = 'Asia/Seoul';
   const taggedIds = localEntries.slice(0, 2).map((row) => String(row.id));
   const beforeHlc = await store.latestEntryHlc(taggedIds);
 
+  /*
+   * 태그는 줄에 붙으므로 대상도 줄이다.
+   *
+   * 줄 키를 가리지 않으면 "그 거래의 모든 줄"이다. 접힌 달을 통째로 체크했을 때
+   * 화면이 줄 키를 모르는 자리가 그 모양이고, 받는 쪽이 분류 줄로 펴서 적용한다.
+   */
+  const tagTargets = taggedIds.map((entryId) => ({ entryId }));
+
   const tagged = await writer.changeEntryTags({
-    entryIds: taggedIds,
+    targets: tagTargets,
     addTagIds: [tripTagId],
     removeTagIds: [],
   });
@@ -357,8 +365,17 @@ const KST = 'Asia/Seoul';
       projectId,
     )).find((row) => String(row.id) === entryId);
 
-  eq('사본에 칩이 붙는다', (await readBack(taggedIds[0]))?.tags?.[0]?.name, '여행');
-  eq('둘째 거래에도 붙는다', (await readBack(taggedIds[1]))?.tags?.length, 1);
+  /*
+   * 칩은 **줄**에 붙는다. 분류 줄이 없는 거래(이체·카드 대금)만 거래 자체에 붙는다.
+   *
+   * 목록 한 줄이 어느 쪽을 그릴지는 갈래가 정한다 (`entryRows`). 검사도 같은 규칙으로
+   * 읽어야 화면이 보는 것과 어긋나지 않는다.
+   */
+  const chipsOf = (row?: { tags: Array<{ name: string }>; lines: Array<{ tags: Array<{ name: string }> }> }) =>
+    row ? (row.lines.length > 0 ? row.lines.flatMap((line) => line.tags) : row.tags) : [];
+
+  eq('사본에 칩이 붙는다', chipsOf(await readBack(taggedIds[0]))[0]?.name, '여행');
+  eq('둘째 거래에도 붙는다', chipsOf(await readBack(taggedIds[1])).length, 1);
 
   const tagCommand = (await store.pendingMutations(projectId)).find(
     (row) => row.kind === 'entry.tags',
@@ -366,7 +383,7 @@ const KST = 'Asia/Seoul';
   eq('큐에 태그 명령이 쌓인다', tagCommand?.kind, 'entry.tags');
   eq('짐에 더할 것과 뗄 것이 나뉘어 담긴다',
     JSON.stringify(tagCommand?.payload),
-    JSON.stringify({ entryIds: taggedIds, addTagIds: [tripTagId], removeTagIds: [] }));
+    JSON.stringify({ targets: tagTargets, addTagIds: [tripTagId], removeTagIds: [] }));
   /*
    * 대상에 전표와 태그를 모두 담는다.
    *
@@ -386,30 +403,32 @@ const KST = 'Asia/Seoul';
 
   // 이미 붙어 있는 것을 다시 붙이면 달라지는 것이 없다.
   const twice = await writer.changeEntryTags({
-    entryIds: [taggedIds[0]],
+    targets: [{ entryId: taggedIds[0] }],
     addTagIds: [tripTagId],
     removeTagIds: [],
   });
   eq('이미 붙어 있으면 0 건', twice.entries, 0);
-  eq('연결이 늘지 않는다', (await readBack(taggedIds[0]))?.tags?.length, 1);
+  eq('연결이 늘지 않는다', chipsOf(await readBack(taggedIds[0])).length, 1);
 
   // 떼기. 어느 쪽에도 없는 태그는 건드리지 않는다.
   const untagged = await writer.changeEntryTags({
-    entryIds: [taggedIds[0]],
+    targets: [{ entryId: taggedIds[0] }],
     addTagIds: [],
     removeTagIds: [tripTagId],
   });
   eq('뗀 건수를 돌려준다', untagged.entries, 1);
-  eq('칩이 사라진다', (await readBack(taggedIds[0]))?.tags?.length, 0);
-  eq('건드리지 않은 거래는 그대로다', (await readBack(taggedIds[1]))?.tags?.length, 1);
+  eq('칩이 사라진다', chipsOf(await readBack(taggedIds[0])).length, 0);
+  eq('건드리지 않은 거래는 그대로다', chipsOf(await readBack(taggedIds[1])).length, 1);
 
   // 사본에 없는 전표는 건너뛴다. 그 사이 다른 기기가 지운 경우다.
   const skipped = await writer.changeEntryTags({
-    entryIds: ['019273dd-0000-7000-8000-0000000000ff'],
+    targets: [{ entryId: '019273dd-0000-7000-8000-0000000000ff' }],
     addTagIds: [tripTagId],
     removeTagIds: [],
   });
   eq('없는 거래는 건너뛴다', skipped.entries, 0);
+  // 조용히 버리지 않는다. 화면이 이 목록으로 사용자에게 한 번 알린다.
+  eq('사라진 대상을 돌려준다', skipped.skipped.length, 1);
 
   // 쌓인 명령을 모두 적용으로 정리한다. 다음 절이 큐가 빈 데서 시작한다.
   await store.settleMutations(
@@ -431,6 +450,8 @@ const KST = 'Asia/Seoul';
     amount: '4000',
     categoryId: dump.server.categories.dining,
     accountId: dump.server.accounts.bank,
+    // 줄 키는 화면이 만든다. 없으면 조립이 거절한다.
+    lineKey: '019273cc-0000-7000-8000-00000000line1',
   } as unknown as EntryDto.CreateRequest);
 
   const offlineResult = await syncProject(

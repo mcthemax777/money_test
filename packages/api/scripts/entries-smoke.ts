@@ -14,6 +14,7 @@ import {
   makePeople,
   projectAccessStub,
   runSmoke,
+  lineKey,
 } from './smoke-harness';
 
 runSmoke('entries', async (ctx) => {
@@ -94,8 +95,8 @@ runSmoke('entries', async (ctx) => {
     ...base, kind: 'expense', description: '이마트', amount: '40000',
     accountId: bank.id,
     splits: [
-      { categoryId: lunch.id, amount: '30000' },
-      { categoryId: dining.id, amount: '10000' },
+      { categoryId: lunch.id, amount: '30000', lineKey: lineKey() },
+      { categoryId: dining.id, amount: '10000', lineKey: lineKey() },
     ],
   }, pid);
   ctx.check('분할 지출 leg 수', split.postings.length, 3);

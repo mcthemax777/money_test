@@ -33,6 +33,7 @@ import {
 import {
   NO_TAG,
   SEARCHABLE_ENTRY_KINDS,
+  entryRows,
   selfCategoryPick,
   type EntryListItem as EntryListItemDto,
 } from '@money/types';
@@ -460,6 +461,14 @@ export default function TransactionsView({
   const entryList = (yearMonth: string, key: string) => {
     // 한 번만 묻는다. 두 번 물으면 그 달을 날짜로 묶는 일이 줄마다 두 번씩 돈다.
     const entries = tx.entriesOf(yearMonth, key);
+    /*
+     * 나눈 거래를 줄로 편다.
+     *
+     * 10,000원을 식비 5,000 + 여행경비 5,000으로 나눴다면 두 줄이 선다. 뭉쳐서 한 줄로
+     * 보여 주면 대표 분류 하나만 남아 "여행경비를 썼다"가 사라진다. 분류나 태그로 좁힌
+     * 목록에서는 걸린 줄만 나온다 (그 판단은 서버와 사본이 같은 함수로 한다).
+     */
+    const rows = entryRows(entries);
 
     /*
      * 거래 사이는 선으로만 나눈다. 줄마다 카드를 띄우면 그림자와 여백이 줄 수만큼
@@ -476,14 +485,22 @@ export default function TransactionsView({
         ) : entries.length === 0 ? (
           <p className="px-3 py-3 text-sm text-gray-500">{t('feed.empty')}</p>
         ) : (
-          entries.map((entry) =>
+          rows.map((row) => {
+            // 그 줄의 태그를 고른다. 나눈 줄마다 따로 표시할 수 있어야 한다.
+            const toggle = () =>
+              tx.toggleEntrySelected(
+                row.entry.id,
+                row.line?.lineKey ?? null,
+                row.entry.lines.map((line) => line.lineKey),
+              );
+
             /*
              * 고르는 중에는 누름의 뜻이 바뀐다. 상세를 띄우는 대신 체크한다.
              *
              * TransactionItem 은 가계 화면도 쓰는 컴포넌트라 손대지 않고, 체크박스를
              * 옆에 세우고 누름만 갈아 끼운다.
              */
-            tx.isSelecting ? (
+            return tx.isSelecting ? (
               /*
                * 체크박스는 년월 줄·안쪽 줄과 같은 자리에 선다. 그 줄들은 px-3 안에서
                * 체크박스를 세우므로 여기도 pl-3 이다. 세 겹의 체크박스가 한 세로줄에
@@ -493,19 +510,24 @@ export default function TransactionsView({
                * 한 칸 더 들어간다. 그만큼 왼쪽으로 당겨 글자도 같은 자리에서 시작하게
                * 한다 -- 줄과 거래가 같은 세로줄에 서는 것은 이 화면의 규칙이다.
                */
-              <div key={entry.id} className="flex items-center gap-2 pl-3">
+              <div key={row.key} className="flex items-center gap-2 pl-3">
                 <CheckBox
-                  checked={tx.isEntrySelected(entry.id)}
-                  onToggle={() => tx.toggleEntrySelected(entry.id)}
+                  checked={tx.isEntrySelected(row.entry.id, row.line?.lineKey ?? null)}
+                  onToggle={toggle}
                 />
                 <div className="-ml-3 min-w-0 flex-1">
-                  <TransactionItem entry={entry} onClick={() => tx.toggleEntrySelected(entry.id)} />
+                  <TransactionItem entry={row.entry} row={row} onClick={toggle} />
                 </div>
               </div>
             ) : (
-              <TransactionItem key={entry.id} entry={entry} onClick={() => setDetail(entry)} />
-            ),
-          )
+              <TransactionItem
+                key={row.key}
+                entry={row.entry}
+                row={row}
+                onClick={() => setDetail(row.entry)}
+              />
+            );
+          })
         )}
       </div>
     );
@@ -1166,9 +1188,16 @@ export default function TransactionsView({
             type="button"
             disabled={!hasTagChange || tx.isTagging}
             onClick={() => {
-              void tx.tagSelected(tagAddIds, tagRemoveIds).then(({ tagged, failed }) => {
+              void tx.tagSelected(tagAddIds, tagRemoveIds).then(({ tagged, failed, skipped }) => {
                 setIsTagPickOpen(false);
                 if (failed) setNotice(t('tx.tagFailed'));
+                /*
+                 * 사라진 줄은 한 번 알린다. 다른 기기가 그 사이 분할을 고친 자리다.
+                 *
+                 * 조용히 넘기면 사용자는 표시가 된 줄 알고, 다음 동기화가 태그 없는
+                 * 모습으로 덮을 때에야 알게 된다.
+                 */
+                else if (skipped > 0) setNotice(t('tx.tagSkipped', { count: skipped }));
                 else if (tagged === 0) setNotice(t('tx.tagNothingNew'));
                 else setNotice(t('tx.tagDone', { count: tagged }));
               });

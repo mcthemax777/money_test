@@ -46,7 +46,13 @@ function toLedgerRow(entry: EntryListItem): LedgerLikeRow {
   };
 }
 
-export function useCardEntries(cardId: string | null, projectId?: string | null, reloadToken = 0) {
+export function useCardEntries(
+  cardId: string | null,
+  projectId?: string | null,
+  reloadToken = 0,
+  /** 이 구간의 줄만. 카드 상세에서 달 하나를 골랐을 때 준다. */
+  range?: { startDate: string; endDate: string } | null,
+) {
   const [rows, setRows] = useState<LedgerLikeRow[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -60,14 +66,23 @@ export function useCardEntries(cardId: string | null, projectId?: string | null,
    */
   const runRef = useRef(0);
 
+  // 구간은 문자열 둘이라 그대로 두면 그릴 때마다 새 객체다. 아래 효과가 끝없이 돈다.
+  const rangeKey = range ? `${range.startDate}|${range.endDate}` : '';
+
   const load = useCallback(
     async (id: string, after: string | null, run: number) => {
       try {
         setIsLoading(true);
         setHasError(false);
 
+        const [startDate, endDate] = rangeKey ? rangeKey.split('|') : [];
         const page = await homeDataPort().getEntries(
-          { cardId: id, limit: PAGE_SIZE, ...(after ? { cursor: after } : {}) },
+          {
+            cardId: id,
+            limit: PAGE_SIZE,
+            ...(after ? { cursor: after } : {}),
+            ...(rangeKey ? { startDate, endDate } : {}),
+          },
           projectId,
         );
         if (runRef.current !== run) return;
@@ -87,7 +102,7 @@ export function useCardEntries(cardId: string | null, projectId?: string | null,
         if (runRef.current === run) setIsLoading(false);
       }
     },
-    [projectId],
+    [projectId, rangeKey],
   );
 
   useEffect(() => {

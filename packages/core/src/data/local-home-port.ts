@@ -38,6 +38,7 @@ import {
   periodForClosingMonth,
   usageSpan,
   summarize,
+  lineMatcherOf,
   toListItem,
   totalUsage,
   zonedDateKey,
@@ -367,8 +368,19 @@ export function createLocalHomePort(
         );
       }
 
+      /*
+       * 걸린 줄만 세도록 판정기를 함께 넘긴다. 서버의 `getPaymentMethods` 와 한 규칙이다.
+       *
+       * 목록이 걸린 줄만 보여 주는데 수단 줄이 거래 전체를 더하면, 화면에 5,000원 한
+       * 줄이 서 있고 그 카드 옆에는 10,000원이 적힌다.
+       */
+      const matchLine = lineMatcherOf(parseEntrySearch(filter ?? {}));
       const items = entries.map((entry) =>
-        toListItem(entry, { convert: (value) => value.times(show.rate), rate: show.rate }),
+        toListItem(
+          entry,
+          { convert: (value) => value.times(show.rate), rate: show.rate },
+          matchLine,
+        ),
       );
 
       return paymentMethods(
@@ -555,15 +567,33 @@ export function createLocalHomePort(
       withBalance.reverse();
 
       /*
+       * 구간을 고른 조회는 **잔액을 다 쌓은 뒤에** 자른다.
+       *
+       * 줄에 붙는 잔액은 구간과 상관없이 맨 앞부터 센 값이다. 구간만큼만 더하면 그
+       * 줄의 잔액이 통장의 실제 잔액과 달라진다 (서버도 같은 규칙이다).
+       */
+      const fromTime = params?.startDate ? new Date(params.startDate).getTime() : null;
+      const toTime = params?.endDate ? new Date(params.endDate).getTime() : null;
+      const inRange =
+        fromTime === null && toTime === null
+          ? withBalance
+          : withBalance.filter((row) => {
+              const at = new Date(row.date).getTime();
+              if (fromTime !== null && at < fromTime) return false;
+              if (toTime !== null && at > toTime) return false;
+              return true;
+            });
+
+      /*
        * 커서는 앞 쪽의 마지막 다리 id 다(서버와 같다). 그 줄이 사라졌으면 이어 붙일
        * 자리를 알 수 없으므로 빈 쪽을 준다 -- 처음부터 다시 주면 같은 줄이 두 번 선다.
        */
       const from = params?.cursor
-        ? withBalance.findIndex((row) => row.postingId === params.cursor) + 1
+        ? inRange.findIndex((row) => row.postingId === params.cursor) + 1
         : 0;
       if (params?.cursor && from === 0) return { data: [], nextCursor: null };
 
-      const page = withBalance.slice(from, from + limit);
+      const page = inRange.slice(from, from + limit);
       const detail = await store.ledgerRows(page.map((row) => row.postingId));
 
       const data = page.flatMap((row) => {
@@ -573,7 +603,7 @@ export function createLocalHomePort(
 
       return {
         data,
-        nextCursor: from + limit < withBalance.length ? page[page.length - 1].postingId : null,
+        nextCursor: from + limit < inRange.length ? page[page.length - 1].postingId : null,
       };
     },
 
@@ -653,8 +683,16 @@ export function createLocalHomePort(
           )
         : zonedYearMonth(new Date(), timeZone);
 
+      /*
+       * 주기 하나만 보는 조회. 그래프에서 막대를 눌렀을 때 온다.
+       *
+       * 날짜 구간이 아니라 주기 이름으로 가린다. 할부 회차는 산 날이 아니라 청구되는
+       * 주기에 쌓이므로, 날짜로 자르면 그 주기에 쌓인 회차가 빠진다 (서버와 같은 규칙).
+       */
+      const only = params?.closingKey;
+
       for (const key of [...byPeriod.keys()]
-        .filter((key) => key <= currentKey)
+        .filter((key) => key <= currentKey && (!only || key === only))
         .sort()
         .reverse()) {
         const [year, month] = key.split('-').map(Number);
@@ -735,17 +773,24 @@ export function createLocalHomePort(
       const timeZone = project?.timeZone ?? 'Asia/Seoul';
       const show = await converter(id);
 
+      const search = parseEntrySearch(query);
       const entries = await store.viewEntries(id, {
         fromDateKey: dateKeyOf(query.startDate, timeZone, '0000-01-01'),
         toDateKey: dateKeyOf(query.endDate, timeZone, '9999-12-31'),
         // 한 달만 볼 때는 박아 둔 컬럼을 쓴다. 달 길이도 시차도 다시 따질 것이 없다.
         yearMonth: query.yearMonth,
         ownerIds: ownerIdsOf(query),
-        search: parseEntrySearch(query),
+        search,
       });
 
+      // 서버와 같은 판정기로 걸린 줄만 남긴다. 규칙이 두 벌이면 목록이 갈린다.
+      const matchLine = lineMatcherOf(search);
       return entries.map((entry) =>
-        toListItem(entry, { convert: (value) => value.times(show.rate), rate: show.rate }),
+        toListItem(
+          entry,
+          { convert: (value) => value.times(show.rate), rate: show.rate },
+          matchLine,
+        ),
       );
     },
 
@@ -787,20 +832,26 @@ export function createLocalHomePort(
       const show = await converter(id);
       const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 200);
 
+      const search = parseEntrySearch(query);
       const page = await store.viewEntriesPage(id, {
         fromDateKey: dateKeyOf(query.startDate, timeZone, '0000-01-01'),
         toDateKey: dateKeyOf(query.endDate, timeZone, '9999-12-31'),
         yearMonth: query.yearMonth,
         ownerIds: ownerIdsOf(query),
-        search: parseEntrySearch(query),
+        search,
         // 카드 상세의 결제 내역이 이 조건으로 그 카드의 거래만 받는다.
         cardId: query.cardId,
         limit,
         cursor: decodeCursor(query.cursor),
       });
 
+      const matchLine = lineMatcherOf(search);
       const rows = page.entries.map((entry) =>
-        toListItem(entry, { convert: (value) => value.times(show.rate), rate: show.rate }),
+        toListItem(
+          entry,
+          { convert: (value) => value.times(show.rate), rate: show.rate },
+          matchLine,
+        ),
       );
 
       const last = page.entries[page.entries.length - 1];

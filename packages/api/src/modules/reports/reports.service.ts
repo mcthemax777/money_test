@@ -11,6 +11,7 @@ import {
   entryTagCondition,
   entryTextCondition,
   entrySearchConditions,
+  lineMatcherOf,
   parseEntryFilter,
   splitList,
 } from '@/common/entry-filter';
@@ -22,6 +23,7 @@ import {
 import {
   type CategoryPostingRow,
   Dec,
+  type LineMatcher,
   type NamedCategoryPostingRow,
   ReportDto,
   categoryBreakdown,
@@ -75,24 +77,34 @@ export class ReportsService {
    * 쓰기 때문에 서버가 SQL 로 다시 더하면 두 벌이 된다. 여기서는 행을 그 모양으로
    * 옮겨 주는 일만 한다.
    */
+  /**
+   * 집계가 다리에서 읽는 것.
+   *
+   * 줄 키와 부모 분류와 전표의 태그가 함께 온다. 분류나 태그로 좁힌 질의에서 **걸린
+   * 줄만** 더하기 위해서다 -- 질의는 전표 수준으로 걸려 분할의 나머지 줄까지 데려온다.
+   * 태그 행은 전표당 두엇이라 다리마다 실려도 가볍다.
+   */
   private static readonly AGGREGATE_SELECT = {
     categoryId: true,
+    lineKey: true,
     baseAmount: true,
-    category: { select: { type: true } },
-    entry: { select: { date: true } },
+    category: { select: { type: true, parentId: true } },
+    entry: { select: { date: true, tags: { select: { lineKey: true, tagId: true } } } },
   } as const;
 
   private toAggregateRows(
     rows: Array<{
       categoryId: string | null;
+      lineKey: string | null;
       baseAmount: Prisma.Decimal;
-      category: { type: CategoryType } | null;
-      entry: { date: Date };
+      category: { type: CategoryType; parentId: string | null } | null;
+      entry: { date: Date; tags: Array<{ lineKey: string | null; tagId: string }> };
     }>,
+    matchLine?: LineMatcher,
   ): CategoryPostingRow[] {
     // 계좌 다리는 오지 않지만(질의가 카테고리 다리만 고른다) 타입이 null 을 허용하므로 걸러 둔다.
     return rows.flatMap((row) =>
-      row.categoryId && row.category
+      row.categoryId && row.category && this.lineMatches(row, matchLine)
         ? [{
             categoryId: row.categoryId,
             categoryType: row.category.type,
@@ -101,6 +113,26 @@ export class ReportsService {
           }]
         : [],
     );
+  }
+
+  /** 이 다리가 검색 조건에 걸린 줄인가. 조건이 없으면 언제나 참이다. */
+  private lineMatches(
+    row: {
+      categoryId: string | null;
+      lineKey: string | null;
+      category: { parentId: string | null } | null;
+      entry: { tags: Array<{ lineKey: string | null; tagId: string }> };
+    },
+    matchLine?: LineMatcher,
+  ): boolean {
+    if (!matchLine) return true;
+    return matchLine({
+      categoryId: row.categoryId,
+      parentCategoryId: row.category?.parentId ?? null,
+      tagIds: row.entry.tags
+        .filter((tag) => tag.lineKey !== null && tag.lineKey === row.lineKey)
+        .map((tag) => tag.tagId),
+    });
   }
 
   /** 집계 결과를 표시 환산기에 넣을 수 있는 모양으로. */
@@ -143,7 +175,7 @@ export class ReportsService {
       where: { categoryId: { not: null }, entry: scope },
       select: ReportsService.AGGREGATE_SELECT,
     });
-    const totals = summarize(this.toAggregateRows(rows));
+    const totals = summarize(this.toAggregateRows(rows, lineMatcherOf(parseEntrySearch(query))));
 
     const show = await this.displayConverter(projectId);
     const asString = (value: Dec) => show.toString(this.toDecimal(value));
@@ -182,7 +214,10 @@ export class ReportsService {
     });
 
     // 날짜별로 묶는 규칙은 공용 함수가 갖는다.
-    const days = dailyTotals(this.toAggregateRows(postings), { timeZone, type });
+    const days = dailyTotals(
+      this.toAggregateRows(postings, lineMatcherOf(parseEntrySearch(query))),
+      { timeZone, type },
+    );
 
     const show = await this.displayConverter(projectId);
     return days.map((day) => ({
@@ -218,13 +253,19 @@ export class ReportsService {
       select: {
         ...ReportsService.AGGREGATE_SELECT,
         category: {
-          select: { type: true, name: true, parent: { select: { id: true, name: true } } },
+          select: {
+            type: true,
+            name: true,
+            parentId: true,
+            parent: { select: { id: true, name: true } },
+          },
         },
       },
     });
 
+    const matchLine = lineMatcherOf(parseEntrySearch(query));
     const named: NamedCategoryPostingRow[] = rows.flatMap((row) =>
-      row.categoryId && row.category
+      row.categoryId && row.category && this.lineMatches(row, matchLine)
         ? [{
             categoryId: row.categoryId,
             categoryType: row.category.type,
@@ -578,7 +619,7 @@ export class ReportsService {
     ]);
 
     const show = await this.displayConverter(projectId);
-    return entryMonths(this.toAggregateRows(rows), {
+    return entryMonths(this.toAggregateRows(rows, lineMatcherOf(search)), {
       timeZone,
       entryDates: dates.map((row) => row.date),
     }).map(
@@ -623,6 +664,10 @@ export class ReportsService {
       select: ReportsService.AGGREGATE_SELECT,
     });
 
+    /*
+     * 추이는 판정기가 필요 없다. 조건이 이미 다리 자신에 걸려 있다
+     * (`trendByCategoryWhere` 의 categoryId, `trendByPaymentMethodWhere` 의 결제수단).
+     */
     const points = monthlyTotals(this.toAggregateRows(rows), {
       timeZone,
       endYearMonth: endMonth,
@@ -777,8 +822,15 @@ export class ReportsService {
 
     // 세는 규칙은 공용 함수가 갖는다. 기기도 오프라인에서 같은 함수를 부른다.
     const show = await this.displayConverter(projectId);
+    /*
+     * 걸린 줄만 세도록 판정기를 함께 넘긴다.
+     *
+     * 목록이 걸린 줄만 보여 주는데 수단 줄이 거래 전체를 더하면, 화면에 5,000원 한
+     * 줄이 서 있고 그 카드 옆에는 10,000원이 적힌다.
+     */
+    const matchLine = lineMatcherOf(parseEntrySearch(query));
     return paymentMethods(
-      entries.map((entry) => toListItem(entry, show)),
+      entries.map((entry) => toListItem(entry, show, matchLine)),
       accounts.map((account) => ({
         id: account.id,
         name: account.name,

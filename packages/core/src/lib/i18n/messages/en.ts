@@ -214,6 +214,7 @@ export const en: Record<MessageKey, string> = {
   'entry.noTitle': '(no description)',
   'entry.fee': 'Fee {amount}',
   'entry.discount': 'Saved {amount}',
+  'entry.split': 'One line of a split transaction. Open it to see the other lines.',
   'entry.provisional': 'provisional',
 
   // ===== App name =====
@@ -436,6 +437,8 @@ export const en: Record<MessageKey, string> = {
   'settlement.ongoing': 'Open',
   'settlement.upcoming': 'Upcoming',
   'settlement.targetLine': 'Target {amount}',
+  'settlement.periodPicked': 'Showing {range} only. Tap again to see everything.',
+  'settlement.periodPickHint': 'Tap a row to see only that period.',
   'settlement.modalTitle': 'Record a card payment',
   'settlement.submitting': 'Working...',
   'settlement.submit': 'Record',
@@ -898,7 +901,7 @@ export const en: Record<MessageKey, string> = {
   'entryForm.toAccountRequired': 'Choose the destination account.',
   'entryForm.feeInvalid': 'Enter a fee of zero or more.',
   'entryForm.discountInvalid': 'Enter a deduction greater than 0.',
-  'entryForm.discountTooLarge': 'The deduction cannot be larger than the amount.',
+  'entryForm.discountTooLarge': 'The discount cannot exceed the payment amount.',
   'entryForm.discountAmountRequired': 'Enter the deducted amount.',
   'entryForm.bothCards': 'Money cannot move straight from one card to another. Record it through an account in two steps.',
   'entryForm.category': 'Category',
@@ -1042,6 +1045,7 @@ export const en: Record<MessageKey, string> = {
   'tx.tagPartialHint': 'A dash means the tag is on only some of them. Turn it on to add it to all; leave it and nothing changes.',
   'tx.tagDone': 'Updated tags on {count} transactions.',
   'tx.tagNothingNew': 'Nothing changed.',
+  'tx.tagSkipped': '{count} line(s) no longer exist, so they were not tagged.',
   'tx.tagFailed': 'Could not update the tags. Check your connection.',
   'tx.selected': '{count} selected',
   'tx.deleteSelected': 'Delete selected',

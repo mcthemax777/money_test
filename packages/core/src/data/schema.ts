@@ -25,8 +25,15 @@
  * 스스로 고쳐지지 않는다.
  *
  * 19 는 `discountCountsPerformance` 칸이 늘어난 판이다.
+ *
+ * 20 은 차감과 태그가 전표에서 **분류 줄**로 내려간 판이다. 다리에 줄 키(lineKey)가
+ * 생기고 태그 연결이 그 키를 가리킨다. 옛 사본에는 그 값이 없어 되살릴 수 없으므로
+ * 버리고 다시 받는다 -- 화면이 줄 키 없이 저장 요청을 보내면 서버가 거절한다.
+ *
+ * 실적 두 칸은 전표에 그대로 둔다. 카드사가 보는 것은 승인 한 건이라, 분류로 나눴다고
+ * 절반만 실적에 드는 일은 없다.
  */
-export const SCHEMA_VERSION = 19;
+export const SCHEMA_VERSION = 20;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -152,14 +159,18 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
    )`,
 
   /*
-   * 전표에 붙은 태그. 다리와 같이 전표에 실려 움직인다.
+   * 목록 한 줄에 붙은 태그. 다리와 같이 전표에 실려 움직인다.
    *
    * 그래서 번호를 두지 않고, 전표가 바뀌면 그 전표의 행을 통째로 지우고 다시 넣는다.
+   *
+   * `lineKey` 가 가리키는 것은 분류 다리다. 비어 있는 행은 분류 줄이 없는 전표의 것이다
+   * (이체, 카드 대금 결제). 서버의 EntryTag 와 같은 짜임이다.
    */
   `CREATE TABLE IF NOT EXISTS entry_tag (
      entryId TEXT NOT NULL,
+     lineKey TEXT,
      tagId   TEXT NOT NULL,
-     PRIMARY KEY (entryId, tagId)
+     PRIMARY KEY (entryId, lineKey, tagId)
    )`,
 
   `CREATE TABLE IF NOT EXISTS card (
@@ -199,11 +210,10 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      originalCurrency TEXT,
      originalAmount  TEXT,
      rateProvisional INTEGER NOT NULL DEFAULT 0,
-     /* 결제 자리에서 깎인 금액. 다리에는 이미 깎인 뒤의 값이 들어가 있다. */
-     discountAmount  TEXT,
-     /* 이 거래를 카드 실적에 세는가. 청구액과는 다른 값이다. */
+     /* 깎인 금액은 분류 줄(posting)에 있다. 분할의 한 줄만 환불되는 일이 있다. */
+     /* 이 거래를 카드 실적에 세는가. 분할해도 하나다. */
      countsPerformance INTEGER NOT NULL DEFAULT 1,
-     /* 차감·취소 금액을 실적에서도 뺄지. 꺼져 있으면 실적만 정가로 센다. */
+     /* 차감 금액을 실적에서도 뺄지. 분할해도 하나다. */
      discountCountsPerformance INTEGER NOT NULL DEFAULT 1,
      createdByUserId TEXT,
      /*
@@ -231,7 +241,11 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      currency     TEXT NOT NULL,
      baseAmount   TEXT NOT NULL,
      exchangeRate TEXT NOT NULL,
-     cardId       TEXT
+     cardId       TEXT,
+     /* 이 줄의 신원. 분류 다리에만 있다. 화면이 만들어 저장할 때마다 되돌려 보낸다. */
+     lineKey      TEXT,
+     /* 이 줄에서 깎인 금액 (입력 통화, 양수). */
+     discountAmount TEXT
    )`,
 
   `CREATE TABLE IF NOT EXISTS budget (
@@ -436,6 +450,7 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE INDEX IF NOT EXISTS tag_project_idx ON tag (projectId, isActive)`,
   // 태그별 통계가 쓸 길. 한 태그에 붙은 전표를 고른다.
   `CREATE INDEX IF NOT EXISTS entry_tag_tag_idx ON entry_tag (tagId)`,
+  `CREATE INDEX IF NOT EXISTS entry_tag_entry_idx ON entry_tag (entryId)`,
   `CREATE INDEX IF NOT EXISTS override_budget_idx ON budget_override (budgetId, year, month)`,
   // 계좌의 최신 평가액을 고르는 길. 날짜 내림차순 한 건만 읽는다.
   `CREATE INDEX IF NOT EXISTS valuation_account_idx ON asset_valuation (accountId, date)`,

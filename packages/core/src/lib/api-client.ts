@@ -539,7 +539,7 @@ class ApiClient {
 
   async getAccountPostings(
     accountId: string,
-    query?: { limit?: number; cursor?: string },
+    query?: AccountDto.LedgerQuery,
   ): Promise<AccountDto.LedgerResponse> {
     const response = await this.client.get<AccountDto.LedgerResponse>(`/accounts/${accountId}/postings`, {
       params: query ?? {},
@@ -728,7 +728,11 @@ class ApiClient {
    * 온전한 값이 필요하다.
    */
   async changeEntryTags(
-    data: { entryIds: string[]; addTagIds?: string[]; removeTagIds?: string[] },
+    data: {
+      targets: Array<{ entryId: string; lineKey?: string | null }>;
+      addTagIds?: string[];
+      removeTagIds?: string[];
+    },
     projectId?: string | null,
   ): Promise<EntryDto.ChangeTagsResponse> {
     const response = await this.client.post<EntryDto.ChangeTagsResponse>('/entries/tags', data, {
@@ -1032,7 +1036,7 @@ class ApiClient {
    */
   async getCardPerformanceLedger(
     cardId: string,
-    params: { limit?: number; cursor?: string } = {},
+    params: CardDto.PerformanceLedgerQuery = {},
   ): Promise<CardDto.PerformanceLedgerResponse> {
     const response = await this.client.get<CardDto.PerformanceLedgerResponse>(
       `/cards/${cardId}/performance-ledger`,

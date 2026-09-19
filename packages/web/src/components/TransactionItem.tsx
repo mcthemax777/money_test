@@ -1,6 +1,7 @@
 'use client';
 
-import type { EntryListItem } from '@money/types';
+import { Split } from 'lucide-react';
+import type { EntryListItem, EntryRow } from '@money/types';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency, formatOriginal, toNumber } from '@money/core/lib/money';
 import {
@@ -23,6 +24,13 @@ export type { EntryListItem };
 
 interface TransactionItemProps {
   entry: EntryListItem;
+  /**
+   * 이 줄이 가리키는 분류 줄. 나눈 거래를 줄로 펴서 그릴 때 준다.
+   *
+   * 없으면 거래 하나를 한 줄로 그린다 -- 자산 탭의 결제내역처럼 계좌 관점으로 보는
+   * 화면이 그렇다.
+   */
+  row?: EntryRow;
   onClick?: () => void;
   isSelected?: boolean;
 }
@@ -85,7 +93,12 @@ function titleOf(
  *   2줄: 분류 · 쓴 자산 · 날짜 · 시각 + 외화 원금액
  * 긴 이름은 잘라 낸다. 줄이 늘어나면 카드마다 높이가 달라져 훑어보기 어렵다.
  */
-export default function TransactionItem({ entry, onClick, isSelected }: TransactionItemProps) {
+export default function TransactionItem({
+  entry,
+  row,
+  onClick,
+  isSelected,
+}: TransactionItemProps) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
   const displayCurrency = useProjectDisplayCurrency();
@@ -98,10 +111,24 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
   const time = formatTime(entry.date, timeZone);
   const original = formatOriginal(entry);
 
+  /*
+   * 나눈 거래의 줄은 **아이콘 하나로** 표시한다.
+   *
+   * 줄마다 적는 것은 다르지 않다 -- 첫 줄이든 둘째 줄이든 가맹점명·날짜·시각을 그대로
+   * 적고, 같은 아이콘이 "이 줄은 나눈 거래의 일부"라고 말한다. 줄을 가려 적으면 분류로
+   * 좁힌 목록에서 둘째 줄만 걸렸을 때 날짜도 가맹점명도 없는 줄이 남는다.
+   *
+   * 기준은 화면에 몇 줄이 그려지는가가 아니라 **그 거래가 나뉘어 있는가**(`splitCount`)다.
+   * 좁힌 목록에서 한 줄만 걸려도 그 줄은 더 큰 거래의 일부이고, 눌러서 열면 나머지가
+   * 함께 보인다.
+   */
+  const isSplitLine = Boolean(row?.line) && entry.splitCount > 1;
+  const line = row?.line ?? null;
+
   // 부호와 색. 되돌린 결제는 갈래가 지출이어도 돈이 돌아온 쪽이라 규칙이 core 에 있다.
-  const look = entryAmountLook(entry);
+  const look = entryAmountLook(entry, row?.amount ?? entry.amount);
   // 결제 자리에서 곧바로 빠진 금액 (포인트 사용·자동할인). 없으면 0 이다.
-  const discount = toNumber(entry.discountAmount);
+  const discount = toNumber(line ? line.discountAmount : entry.discountAmount);
 
   /*
    * "보낸 곳 → 받은 곳". 계좌 사이를 오가는 거래에만 만든다.
@@ -115,11 +142,17 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
       ? `${entry.accountName} → ${flowTo}`
       : '';
 
-  // 설명이 빈 거래의 이름으로 쓰는 분류 ("대분류 > 소분류"). 자산 상세의 원장 줄도
-  // 같은 것을 쓰므로 규칙은 core 에 있다.
-  const categoryLabel = categoryTitleOf(entry);
+  /*
+   * 설명이 빈 거래의 이름으로 쓰는 분류 ("대분류 > 소분류").
+   *
+   * **그 줄의 분류를 쓴다.** 거래에 실린 대표 분류는 나눈 줄 중 첫 줄이라, 여행경비로
+   * 좁혀 여행경비 한 줄만 서 있는데 제목에는 식비가 뜨는 일이 생긴다.
+   *
+   * 자산 상세의 원장 줄도 같은 것을 쓰므로 규칙은 core 에 있다.
+   */
+  const categoryLabel = categoryTitleOf(row?.line ?? entry);
 
-  // 설명을 비워 둔 거래도 있다. 그때는 분류가 그 거래의 이름 노릇을 한다.
+  // 설명을 비워 둔 거래도 있다. 그때는 그 줄의 분류가 이름 노릇을 한다.
   const title = titleOf(t, entry, flow) || categoryLabel || t('entry.noTitle');
 
   /*
@@ -136,7 +169,7 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
    * 쓴 자산의 규칙은 core 의 entryAssetName 이 갖는다. 앱의 한 줄도 같은 것을 쓴다.
    */
   const meta = [
-    entry.categoryName,
+    line?.categoryName ?? entry.categoryName,
     entryAssetName(entry, flow),
     formatDate(entry.date, timeZone),
     time,
@@ -163,8 +196,20 @@ export default function TransactionItem({ entry, onClick, isSelected }: Transact
           낸다(overflow-hidden). 금액은 줄어들지 않아 오른쪽 끝에 그대로 선다.
         */}
         <div className="flex min-w-0 flex-1 items-baseline gap-1.5 overflow-hidden">
+          {/*
+            나눈 거래의 줄. 제목 앞에 작게 세워 "이 줄은 그 결제의 일부"라고 말한다.
+
+            줄마다 같은 아이콘이다. 첫 줄과 둘째 줄을 다르게 그리면 어느 쪽이 원래
+            거래인지 묻게 되는데, 나눈 줄 사이에 그런 앞뒤는 없다.
+          */}
+          {isSplitLine && (
+            <Split
+              className="w-3 h-3 shrink-0 self-center text-gray-400"
+              aria-label={t('entry.split')}
+            />
+          )}
           <p className="min-w-0 truncate text-[15px] font-medium text-gray-900">{title}</p>
-          {entry.tags.map((tag) => (
+          {(line?.tags ?? entry.tags).map((tag) => (
             <span
               key={tag.id}
               className="flex shrink-0 items-center gap-1 rounded-full bg-gray-100 px-2 py-0.5 text-[11px] text-gray-600"

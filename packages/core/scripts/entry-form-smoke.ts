@@ -29,6 +29,7 @@ import {
   emptyEntryForm,
   entryFormFromItem,
   entryFormToRequest,
+  newSplitLine,
   parseMethod,
   type EntryFormValues,
 } from '../src/data/entry-form';
@@ -57,6 +58,8 @@ const KST = 'Asia/Seoul';
 /** 검증만 보는 최소 폼. 갈래마다 필요한 칸을 채워 둔다. */
 const validExpense: EntryFormValues = {
   kind: 'expense',
+  // 줄 키는 화면이 만든다. 검증만 보는 폼에도 있어야 저장 요청이 만들어진다.
+  lineKey: 'line-1',
   personId: 'p1',
   dateKey: '2026-08-20',
   timeKey: '12:00',
@@ -172,8 +175,8 @@ const codeOf = (values: Partial<EntryFormValues>) =>
     ...validExpense,
     amount: '10000',
     splits: [
-      { categoryId: 'c-food', amount: '7000' },
-      { categoryId: 'c-fun', amount: '3000' },
+      newSplitLine({ categoryId: 'c-food', amount: '7000' }),
+      newSplitLine({ categoryId: 'c-fun', amount: '3000' }),
     ],
   } as EntryFormValues;
 
@@ -181,10 +184,10 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('합이 어긋나면 막는다',
     codeOf({ ...splitForm, amount: '9000' }), 'SPLIT_SUM_MISMATCH');
   eq('줄에 분류가 없다',
-    codeOf({ ...splitForm, splits: [{ categoryId: '', amount: '10000' }] }),
+    codeOf({ ...splitForm, splits: [newSplitLine({ categoryId: '', amount: '10000' })] }),
     'SPLIT_CATEGORY_REQUIRED');
   eq('줄 금액이 0이다',
-    codeOf({ ...splitForm, splits: [{ categoryId: 'c1', amount: '0' }] }),
+    codeOf({ ...splitForm, splits: [newSplitLine({ categoryId: 'c1', amount: '0' })] }),
     'SPLIT_AMOUNT_INVALID');
 
   const splitRequest = entryFormToRequest(splitForm, KST);
@@ -385,16 +388,19 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('줄 수가 그대로다', splitBack?.splits.length, split?.splitCount);
   eq('줄 금액이 그대로다',
     splitBack?.splits.map((row) => row.amount).join(','),
-    (split?.splits ?? []).map((row) => row.amount).join(','));
+    (split?.lines ?? []).map((row) => row.amount).join(','));
+  eq('줄 키가 그대로 이어진다',
+    splitBack?.splits.map((row) => row.lineKey).join(','),
+    (split?.lines ?? []).map((row) => row.lineKey).join(','));
   eq('줄 합이 전체 금액과 같다', splitBack ? checkEntryForm(splitBack)?.code ?? null : 'no-sample', null);
 
   /*
-   * 줄이 여럿인데 `splits` 가 실려 오지 않으면 열지 않는다.
+   * 줄이 여럿인데 줄 목록이 덜 실려 오면 열지 않는다.
    *
-   * 옛 서버가 그렇다. 그때 대표 분류 하나로 열어 저장하면 나머지가 조용히 사라진다.
+   * 그때 대표 분류 하나로 열어 저장하면 나머지가 조용히 사라진다.
    */
-  eq('줄이 여럿인데 splits 가 없으면 열지 않는다',
-    split ? entryFormFromItem({ ...split, splits: undefined }, KST) : 'no-sample', null);
+  eq('줄이 여럿인데 줄 목록이 비면 열지 않는다',
+    split ? entryFormFromItem({ ...split, lines: [] }, KST) : 'no-sample', null);
 
   eq('건너뛴 거래는 없다 (넷 다 다룬다)', skipped, 0);
 

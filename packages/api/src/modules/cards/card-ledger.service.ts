@@ -31,20 +31,37 @@ const ZERO = new Prisma.Decimal(0);
 /**
  * 실적을 정가로 셀 때 되살릴 차감액.
  *
+ * 깎인 금액은 **줄마다** 적히므로(`Posting.discountAmount`) 그 합을 쓴다. 그것을
+ * 실적에서 뺄지는 카드사의 방침 하나라 전표에 있다.
+ *
  * 차감액은 사용자가 적은 통화이고 카드 다리는 계좌 통화라, 둘이 갈리는 거래(원화
  * 카드로 한 외화 결제)에서는 그대로 더할 수 없다. 그때는 되살리지 않고 지금까지의
  * 규칙(차감이 실적도 깎는다)을 그대로 둔다 -- 폼도 그 거래에는 이 칸을 띄우지 않는다.
  */
 function performanceDiscount(entry: {
-  discountAmount: Prisma.Decimal | null;
   discountCountsPerformance: boolean;
   originalCurrency: string | null;
+  postings: Array<{ categoryId: string | null; discountAmount: Prisma.Decimal | null }>;
 }): Pick<CardUsagePosting, 'discountAmount' | 'discountCountsPerformance'> {
+  if (entry.originalCurrency) {
+    return { discountAmount: null, discountCountsPerformance: entry.discountCountsPerformance };
+  }
+
+  const total = entry.postings.reduce(
+    (acc, leg) => (leg.categoryId !== null && leg.discountAmount ? acc.add(leg.discountAmount) : acc),
+    ZERO,
+  );
   return {
-    discountAmount: entry.originalCurrency ? null : entry.discountAmount,
+    discountAmount: total.isZero() ? null : total,
     discountCountsPerformance: entry.discountCountsPerformance,
   };
 }
+
+/** 깎인 금액을 더하려면 분류 다리를 함께 읽어야 한다. 카드 다리를 읽는 질의마다 붙인다. */
+const USAGE_LEG_SELECT = {
+  categoryId: true,
+  discountAmount: true,
+} satisfies Prisma.PostingSelect;
 
 /*
  * 주기를 만들고 할부를 나누는 규칙은 `@money/types` 의 card-usage 가 갖는다.
@@ -156,9 +173,10 @@ export class CardLedgerService {
           select: {
             date: true,
             countsPerformance: true,
-            discountAmount: true,
             discountCountsPerformance: true,
             originalCurrency: true,
+            // 깎인 금액은 줄마다 적힌다. 그 합을 쓰려고 분류 다리를 함께 읽는다.
+            postings: { select: USAGE_LEG_SELECT },
           },
         },
         installmentPlan: { select: { totalMonths: true } },
@@ -262,9 +280,9 @@ export class CardLedgerService {
           select: {
             date: true,
             countsPerformance: true,
-            discountAmount: true,
             discountCountsPerformance: true,
             originalCurrency: true,
+            postings: { select: USAGE_LEG_SELECT },
           },
         },
       },
@@ -369,7 +387,7 @@ export class CardLedgerService {
   async getPerformanceLedger(
     cardId: string,
     userId: string,
-    options: { limit?: number; cursor?: string } = {},
+    options: CardDto.PerformanceLedgerQuery = {},
   ): Promise<CardDto.PerformanceLedgerResponse> {
     const card = await this.prisma.card.findUnique({ where: { id: cardId } });
     if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
@@ -378,10 +396,17 @@ export class CardLedgerService {
     const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
     const limit = Math.min(Math.max(Number(options.limit) || 20, 1), 100);
     const cursor = parseLedgerCursor(options.cursor);
+    /*
+     * 주기 하나만 보는 조회. 그래프에서 막대를 눌렀을 때 온다.
+     *
+     * 날짜 구간이 아니라 주기 이름으로 받는다. 할부 회차는 산 날이 아니라 청구되는
+     * 주기에 쌓이므로, 날짜로 자르면 그 주기에 쌓인 회차가 빠진다.
+     */
+    const only = parseClosingKey(options.closingKey);
 
     return card.cardType === CardType.credit
-      ? this.creditPerformanceLedger(cardId, userId, timeZone, limit, cursor)
-      : this.debitPerformanceLedger(card, timeZone, limit, cursor);
+      ? this.creditPerformanceLedger(cardId, userId, timeZone, limit, cursor, only)
+      : this.debitPerformanceLedger(card, timeZone, limit, cursor, only);
   }
 
   /** 신용카드의 실적 원장. 주기는 마감일로 자른다. */
@@ -391,6 +416,7 @@ export class CardLedgerService {
     timeZone: string,
     limit: number,
     cursor: LedgerCursor | null,
+    only: ClosingMonth | null,
   ): Promise<CardDto.PerformanceLedgerResponse> {
     const card = await this.loadCreditCard(cardId, userId);
     const closingDay = card.statementClosingDay!;
@@ -414,8 +440,9 @@ export class CardLedgerService {
     const page = await this.walkPerformancePeriods({
       limit,
       cursor,
-      // 커서가 없으면 진행 중인 주기부터다.
-      from: cursor?.closing ?? closingMonthOf(new Date(), closingDay, timeZone),
+      only,
+      // 커서가 없으면 고른 주기부터, 그것도 없으면 진행 중인 주기부터다.
+      from: cursor?.closing ?? only ?? closingMonthOf(new Date(), closingDay, timeZone),
       timeZone,
       periodOf: (closing) => {
         const period = periodForClosingMonth(
@@ -503,6 +530,7 @@ export class CardLedgerService {
     timeZone: string,
     limit: number,
     cursor: LedgerCursor | null,
+    only: ClosingMonth | null,
   ): Promise<CardDto.PerformanceLedgerResponse> {
     const cardId = card.id;
     const paymentAccount = await this.prisma.account.findUniqueOrThrow({
@@ -515,7 +543,8 @@ export class CardLedgerService {
     const page = await this.walkPerformancePeriods({
       limit,
       cursor,
-      from: cursor?.closing ?? { year: thisYear, month: thisMonth },
+      only,
+      from: cursor?.closing ?? only ?? { year: thisYear, month: thisMonth },
       timeZone,
       // 달력 월 표시자. 청구 주기 쪽과 같은 형태다 (그 달 1일 ~ 말일).
       periodOf: (closing) => ({
@@ -586,6 +615,14 @@ export class CardLedgerService {
   private async walkPerformancePeriods(input: {
     limit: number;
     cursor: LedgerCursor | null;
+    /**
+     * 이 주기 하나만 본다. 더 오래된 주기로 내려가지 않는다.
+     *
+     * 그래프에서 막대를 눌러 한 주기로 좁힌 자리다. 그 주기 안에서 줄이 한 쪽을 넘으면
+     * 이어 받을 수 있지만, 다 보고 나면 끝이다 -- 고르지 않은 주기를 이어 붙이면 화면이
+     * 좁혀 놓은 것과 달라진다.
+     */
+    only?: ClosingMonth | null;
     from: ClosingMonth;
     timeZone: string;
     periodOf: (closing: ClosingMonth) => { start: Date; end: Date };
@@ -632,6 +669,8 @@ export class CardLedgerService {
       }
 
       if (rows.length >= input.limit) break;
+      // 한 주기만 보는 조회는 여기서 끝난다.
+      if (input.only) break;
       closing = shiftClosingMonth(closing, -1);
     }
 
@@ -645,6 +684,9 @@ export class CardLedgerService {
     if (leftover && last) {
       return { periods, rows, nextCursor: `${closingMonthKey(scanned)}|${last.key}` };
     }
+
+    // 한 주기만 보기로 했으면 더 오래된 줄을 묻지 않는다.
+    if (input.only) return { periods, rows, nextCursor: null };
 
     const older = await input.olderExists(input.periodOf(scanned).start);
     return {
@@ -851,12 +893,11 @@ const performanceLedgerEntrySelect = {
   description: true,
   merchant: true,
   countsPerformance: true,
-  discountAmount: true,
   discountCountsPerformance: true,
   originalCurrency: true,
   postings: {
     select: {
-      categoryId: true,
+      ...USAGE_LEG_SELECT,
       category: { select: { name: true, parent: { select: { name: true } } } },
     },
     orderBy: { id: 'asc' },
@@ -884,6 +925,16 @@ interface LedgerCursor {
   closing: ClosingMonth;
   /** 비어 있으면 그 주기의 첫 줄부터다 (거래가 없는 달을 건너뛴 자리). */
   key: string;
+}
+
+/** 'YYYY-MM' 을 마감 연월로. 모양이 아니면 null (전체를 본다). */
+function parseClosingKey(value?: string): ClosingMonth | null {
+  if (!value) return null;
+  const match = /^(\d{4})-(\d{2})$/.exec(value);
+  if (!match) return null;
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) return null;
+  return { year: Number(match[1]), month };
 }
 
 /** 'YYYY-MM|줄키' 를 되돌린다. 모양이 아니면 처음부터 본다. */

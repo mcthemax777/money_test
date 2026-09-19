@@ -124,46 +124,55 @@ runSmoke('sync-push-dump', async (ctx) => {
 
   const common = { personId: person.id, date: new Date(T0).toISOString() };
 
+  /*
+   * 줄 키. 화면이 만들어 편집 내내 들고 다니는 값이라 여기서도 고정해 둔다.
+   *
+   * 만들 때와 고칠 때 같은 값을 보내는 것이 요점이다. 새로 만들면 그 줄에 붙은 태그와
+   * 차감이 수정 한 번에 끊긴다.
+   */
+  const line = (n: number) => `019273aa-0000-7000-8000-00000000line${String(n).padStart(2, '0')}`;
+
   const mutations: Mutation[] = [
     // 1. 가장 흔한 것 — 통장에서 나간 지출
     mutation(1, 'entry.create', id(1), {
       ...common, id: id(1), kind: 'expense', description: '점심',
-      amount: '9000', categoryId: dining.id, accountId: bank.id,
+      amount: '9000', categoryId: dining.id, accountId: bank.id, lineKey: line(1),
     }),
     // 2. 그 거래를 고친다 (통째 교체다)
     mutation(2, 'entry.replace', id(1), {
       ...common, id: id(1), kind: 'expense', description: '점심 (수정)',
-      amount: '12000', categoryId: dining.id, accountId: bank.id,
+      amount: '12000', categoryId: dining.id, accountId: bank.id, lineKey: line(1),
     }),
     // 3. 다른 분류로 적은 지출.
     mutation(3, 'entry.create', id(2), {
       ...common, id: id(2), kind: 'expense', description: '충동구매',
-      amount: '50000', categoryId: luxury.id, accountId: bank.id,
+      amount: '50000', categoryId: luxury.id, accountId: bank.id, lineKey: line(2),
     }),
     // 4. 분할. 한 거래가 두 분류로 나뉜다.
     mutation(4, 'entry.create', id(3), {
       ...common, id: id(3), kind: 'expense', description: '장보기',
       accountId: bank.id,
       splits: [
-        { categoryId: dining.id, amount: '30000' },
-        { categoryId: luxury.id, amount: '20000' },
+        { categoryId: dining.id, amount: '30000', lineKey: line(3) },
+        { categoryId: luxury.id, amount: '20000', lineKey: line(4) },
       ],
     }),
     // 5. 수입
     mutation(5, 'entry.create', id(4), {
       ...common, id: id(4), kind: 'income', description: '월급',
-      amount: '3000000', categoryId: salary.id, accountId: bank.id,
+      amount: '3000000', categoryId: salary.id, accountId: bank.id, lineKey: line(5),
     }),
     // 6. 이체 + 수수료. 다리가 셋이 되는 갈래다.
     mutation(6, 'entry.create', id(5), {
       ...common, id: id(5), kind: 'transfer', description: '적금 이체',
       amount: '500000', accountId: bank.id, toAccountId: savings.id,
-      transferFee: '1000', transferFeeCategoryId: fee.id,
+      transferFee: '1000', transferFeeCategoryId: fee.id, transferFeeLineKey: line(6),
     }),
     // 7. 신용카드 할부. 부채 계정에 쌓이고 할부 계획이 붙는다.
     mutation(7, 'entry.create', id(6), {
       ...common, id: id(6), kind: 'expense', description: '노트북',
       amount: '300000', categoryId: dining.id, cardId: credit.id, installmentMonths: 3,
+      lineKey: line(7),
     }),
     /*
      * 8. 카드 대금 결제. 자산 화면의 "결제하기"가 오프라인에서 쌓는 명령이다.
@@ -179,7 +188,7 @@ runSmoke('sync-push-dump', async (ctx) => {
     // 9. 지우기. 사본에서도 사라져야 한다.
     mutation(9, 'entry.create', id(7), {
       ...common, id: id(7), kind: 'expense', description: '지울 거래',
-      amount: '1000', categoryId: dining.id, accountId: bank.id,
+      amount: '1000', categoryId: dining.id, accountId: bank.id, lineKey: line(8),
     }),
     mutation(10, 'entry.delete', id(7), { id: id(7) }),
   ];

@@ -243,6 +243,7 @@ export const ko = {
   'entry.noTitle': '(내용 없음)',
   'entry.fee': '수수료 {amount}',
   'entry.discount': '차감 {amount}',
+  'entry.split': '분할된 거래의 한 줄입니다. 눌러서 열면 나머지 줄도 함께 보입니다.',
   'entry.provisional': '잠정',
 
   // ===== 앱 이름 =====
@@ -461,6 +462,8 @@ export const ko = {
   'settlement.ongoing': '진행',
   'settlement.upcoming': '예정',
   'settlement.targetLine': '실적 {amount}',
+  'settlement.periodPicked': '{range} 만 보는 중입니다. 한 번 더 누르면 전체로 돌아갑니다.',
+  'settlement.periodPickHint': '줄을 누르면 그 주기의 내역만 봅니다.',
   'settlement.modalTitle': '카드 대금 기록',
   'settlement.submitting': '처리 중...',
   'settlement.submit': '기록하기',
@@ -1072,6 +1075,7 @@ export const ko = {
   'tx.tagPartialHint': '빗금 표시는 일부 거래에만 붙어 있다는 뜻입니다. 켜면 전부에 붙고, 그대로 두면 손대지 않습니다.',
   'tx.tagDone': '{count}건의 태그를 바꿨습니다.',
   'tx.tagNothingNew': '바뀐 것이 없습니다.',
+  'tx.tagSkipped': '{count}개 줄은 이미 사라져 표시하지 못했습니다.',
   'tx.tagFailed': '태그를 바꾸지 못했습니다. 연결을 확인해 주세요.',
   'tx.selected': '{count}개 선택됨',
   'tx.deleteSelected': '고른 거래 삭제',
