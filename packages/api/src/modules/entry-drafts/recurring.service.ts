@@ -39,6 +39,15 @@ type RuleRow = Prisma.RecurringRuleGetPayload<{
 /** 후보가 담을 수 있는 갈래. 잔액 조정은 사람이 적는 것이 아니라 여기 없다. */
 const KINDS = ['expense', 'income', 'transfer', 'card_payment'] as const;
 
+/**
+ * 일정에 시각을 붙인 모양. 표에 저장하는 칸이 이만큼이다.
+ *
+ * 셈하는 함수(`dueOccurrences`·`nextOccurrence`)는 날짜만 보므로 `RecurringSchedule`
+ * 에는 시각이 없다. 하지만 저장은 둘을 함께 쓰므로, 저장 모양을 만드는 자리에서는
+ * 시각이 빠지지 않게 타입으로 못을 박는다.
+ */
+type ScheduleWithTime = RecurringSchedule & { timeOfDay?: string | null };
+
 @Injectable()
 export class RecurringService {
   constructor(
@@ -156,8 +165,15 @@ export class RecurringService {
     const rule = await this.find(id, userId, 'editor');
     const project = await this.projectOf(rule.projectId);
 
-    // 일정 칸을 하나라도 건드리면 바뀐 뒤의 모습으로 검사한다.
-    const merged = { ...toSchedule(rule), ...schedulePatch(dto) };
+    /*
+     * 일정 칸을 하나라도 건드리면 바뀐 뒤의 모습으로 검사한다.
+     *
+     * **시각도 함께 들고 온다.** `scheduleData` 가 일정 칸과 한 덩어리로 시각을
+     * 내놓으므로, 합치는 값에 시각이 없으면 "며칠마다"만 고쳐도 적어 둔 시각이 null 로
+     * 지워진다. 그러면 그 뒤의 회차가 조용히 정오로 담긴다 -- 9:30 으로 적어 둔 반복이
+     * 12:00 짜리 후보를 만든다.
+     */
+    const merged = { ...toSchedule(rule), timeOfDay: rule.timeOfDay, ...schedulePatch(dto) };
     this.checkSchedule(merged);
 
     const data: Prisma.RecurringRuleUncheckedUpdateInput = {};
@@ -167,7 +183,15 @@ export class RecurringService {
     }
     if ('startDate' in dto) data.startDate = merged.startDate;
     if ('endDate' in dto) data.endDate = merged.endDate ?? null;
-    if ('timeOfDay' in dto) data.timeOfDay = dto.timeOfDay ?? null;
+    /*
+     * 시각만 고칠 때는 위의 일정 저장이 돌지 않으므로 여기서 넣는다.
+     *
+     * 주기 없는 반복에는 정해진 날이 없어 비운다 -- `scheduleData` 와 같은 규칙이라야
+     * "며칠마다와 함께 고칠 때"와 "시각만 고칠 때"의 결과가 같다.
+     */
+    if ('timeOfDay' in dto) {
+      data.timeOfDay = merged.frequency === 'none' ? null : (merged.timeOfDay ?? null);
+    }
 
     if ('kind' in dto && dto.kind) data.kind = this.checkKind(dto.kind);
     if ('amount' in dto) data.amount = toOptionalMoney(dto.amount ?? null, '반복 금액');
@@ -251,8 +275,13 @@ export class RecurringService {
     }
   }
 
-  /** 일정 칸만 골라 저장 모양으로. 갈래에 뜻이 없는 칸은 비운다. */
-  private scheduleData(schedule: RecurringSchedule | RecurringRuleDto.Body) {
+  /**
+   * 일정 칸만 골라 저장 모양으로. 갈래에 뜻이 없는 칸은 비운다.
+   *
+   * **시각까지 함께 내놓는다.** 부르는 쪽은 그것을 빠뜨린 채로 주면 안 된다 -- 여기서
+   * `?? null` 로 읽히므로 적어 둔 시각이 조용히 지워진다.
+   */
+  private scheduleData(schedule: ScheduleWithTime) {
     const frequency = schedule.frequency;
     return {
       frequency,
@@ -268,8 +297,7 @@ export class RecurringService {
        * 누르는 그 순간의 시각으로 담기므로(core 의 `manualDraftItem`) 적어 둔 값을
        * 아무도 보지 않는다. 남겨 두면 표에 쓰이지 않는 값이 남는다.
        */
-      timeOfDay:
-        frequency === 'none' ? null : ((schedule as RecurringRuleDto.Body).timeOfDay ?? null),
+      timeOfDay: frequency === 'none' ? null : (schedule.timeOfDay ?? null),
     };
   }
 
@@ -323,9 +351,15 @@ function toSchedule(rule: RuleRow, lastMadeOn: string | null = null): RecurringS
   };
 }
 
-/** 수정 요청에서 일정 칸만. 준 것만 담아 합칠 수 있게 한다. */
-function schedulePatch(dto: RecurringRuleDto.UpdateRequest): Partial<RecurringSchedule> {
-  const patch: Partial<RecurringSchedule> = {};
+/**
+ * 수정 요청에서 일정 칸만. 준 것만 담아 합칠 수 있게 한다.
+ *
+ * 시각도 여기 담는다. 셈하는 함수는 그 값을 보지 않지만(`RecurringSchedule` 에 없다)
+ * 저장 모양을 만드는 `scheduleData` 는 본다.
+ */
+function schedulePatch(dto: RecurringRuleDto.UpdateRequest): Partial<ScheduleWithTime> {
+  const patch: Partial<ScheduleWithTime> = {};
+  if ('timeOfDay' in dto) patch.timeOfDay = dto.timeOfDay ?? null;
   if ('frequency' in dto && dto.frequency) patch.frequency = dto.frequency;
   if ('everyDays' in dto) patch.everyDays = dto.everyDays ?? null;
   if ('dayOfMonth' in dto) patch.dayOfMonth = dto.dayOfMonth ?? null;
