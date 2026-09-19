@@ -9,7 +9,7 @@ import { formatCurrency, toAmountString, toNumber } from '@money/core/lib/money'
 import { sumNetWorth, type NetWorthParts } from '@money/core/lib/net-worth';
 import { accountDueOf } from '@money/core/lib/card-settlement';
 import { useUserFilter } from '@money/core/store/user-filter';
-import { formatDate, monthInputToIso } from '@money/core/lib/datetime';
+import { formatDate, formatDateMarker, monthInputToIso } from '@money/core/lib/datetime';
 import { type AccountDto, type ReportDto } from '@money/types';
 import { ArrowLeft, Info, Receipt, X } from 'lucide-react';
 import { EMPTY_SEARCH, type TransactionSearch } from '@money/core/hooks/useTransactions';
@@ -1663,7 +1663,23 @@ export default function DashboardPage() {
                 이 칸이 통째로 없었다.
               */}
               <div className="pt-4 border-t space-y-3">
-                <h3 className="text-sm font-medium text-gray-700">{t('assets.cardLedger')}</h3>
+                {/*
+                  어느 구간을 보고 있는지 이름 옆에 적는다.
+
+                  그래프에서 주기를 누르면 아래 목록이 그 주기만 남는데, 목록만 보아서는
+                  그것이 전부인지 걸러진 것인지 알 수 없다 -- 거래가 적은 주기를 고르면
+                  "내역이 없습니다"가 뜨고, 그 까닭이 화면 어디에도 없었다.
+                */}
+                <div className="flex items-baseline gap-2">
+                  <h3 className="text-sm font-medium text-gray-700">{t('assets.cardLedger')}</h3>
+                  <span className="text-xs text-gray-500">
+                    {pickedPeriod
+                      ? `${formatDateMarker(pickedPeriod.periodStart)} ~ ${formatDateMarker(
+                          pickedPeriod.periodEnd,
+                        )}`
+                      : t('assets.ledgerAllPeriod')}
+                  </span>
+                </div>
                 {/*
                   실적 탭은 아예 다른 줄을 본다.
 
@@ -1674,9 +1690,6 @@ export default function DashboardPage() {
                 */}
                 {cardTab === 'performance' ? (
                   <>
-                    <p className="text-xs text-gray-500">
-                      {t('settlement.performanceLedgerHint')}
-                    </p>
                     <PerformanceLedgerList
                       cardId={selectedCard.id}
                       fallbackCurrency={

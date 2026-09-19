@@ -229,40 +229,6 @@ export default function CardSettlementPanel({
   return (
     <>
       <div className="space-y-3">
-        <div>
-          <h3 className="text-sm font-medium text-gray-700 mb-2">
-            {t(
-              measure === 'performance'
-                ? isCredit
-                  ? 'settlement.performanceByStatement'
-                  : 'settlement.performanceByMonth'
-                : isCredit
-                  ? 'settlement.billedByStatement'
-                  : 'settlement.billedByMonth',
-            )}
-          </h3>
-          {/*
-            줄글 목록 대신 막대로 그린다. 실적 기준선을 함께 그으면 어느 주기가
-            기준을 넘겼는지 숫자를 견주지 않고 높이로 읽힌다.
-
-            기준선은 실적에만 긋는다 -- 실적 기준은 청구액에 대고 재는 값이 아니다.
-            탭을 바꾸면 그래프도 새로 서야 해서 key 로 갈아 끼운다(끌어 둔 창까지).
-          */}
-          <CardUsageChart
-            key={measure}
-            periods={usage.periods}
-            currency={usage.currency}
-            target={measure === 'performance' ? performanceTarget : null}
-            cardId={card.id}
-            measure={measure}
-            selectedKey={selectedPeriodKey}
-            onSelectPeriod={onSelectPeriod}
-          />
-          {measure === 'billed' && (
-            <p className="mt-1 text-xs text-gray-500">{t('settlement.billedHint')}</p>
-          )}
-        </div>
-
         {/*
           남은 대금과 대금 기록은 신용카드만이다. 체크카드는 결제 즉시 통장에서
           빠져 갚을 것이 남지 않는다. 대신 위 달별 사용액은 똑같이 보여 준다.
@@ -321,6 +287,44 @@ export default function CardSettlementPanel({
         {isCredit && measure === 'billed' && (
           <PendingRatePanel cardId={card.id} onSettled={refresh} />
         )}
+
+        {/*
+          주기별 사용액. **대금 결제와 환율 확정 아래**다.
+
+          카드를 열어 먼저 하는 일은 "얼마를 갚아야 하나"와 그 대금을 적는 것이다.
+          그래프는 그 숫자가 어떻게 쌓였는지를 되짚어 보는 자리라, 손이 가는 단추가
+          그래프 아래에 묻혀 있으면 카드를 열 때마다 스크롤이 한 번 더 든다.
+        */}
+        <div>
+          <h3 className="text-sm font-medium text-gray-700 mb-2">
+            {t(
+              measure === 'performance'
+                ? isCredit
+                  ? 'settlement.performanceByStatement'
+                  : 'settlement.performanceByMonth'
+                : isCredit
+                  ? 'settlement.billedByStatement'
+                  : 'settlement.billedByMonth',
+            )}
+          </h3>
+          {/*
+            줄글 목록 대신 막대로 그린다. 실적 기준선을 함께 그으면 어느 주기가
+            기준을 넘겼는지 숫자를 견주지 않고 높이로 읽힌다.
+
+            기준선은 실적에만 긋는다 -- 실적 기준은 청구액에 대고 재는 값이 아니다.
+            탭을 바꾸면 그래프도 새로 서야 해서 key 로 갈아 끼운다(끌어 둔 창까지).
+          */}
+          <CardUsageChart
+            key={measure}
+            periods={usage.periods}
+            currency={usage.currency}
+            target={measure === 'performance' ? performanceTarget : null}
+            cardId={card.id}
+            measure={measure}
+            selectedKey={selectedPeriodKey}
+            onSelectPeriod={onSelectPeriod}
+          />
+        </div>
       </div>
 
       {/* 카드사 자금 이동 모달 */}

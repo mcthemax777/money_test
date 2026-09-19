@@ -344,15 +344,6 @@ export default function CardUsageChart({
           );
         })}
       </View>
-      {onSelectPeriod ? (
-        <Text className="mt-1 text-xs text-gray-500">
-          {selectedKey
-            ? t('settlement.periodPicked', {
-                range: bars.find((bar) => bar.closingKey === selectedKey)?.range ?? '',
-              })
-            : t('settlement.periodPickHint')}
-        </Text>
-      ) : null}
     </View>
   );
 }

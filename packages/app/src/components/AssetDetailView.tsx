@@ -14,7 +14,7 @@ import { useCardEntries } from '@money/core/hooks/useCardEntries';
 import { useCardPerformanceLedger } from '@money/core/hooks/useCardPerformanceLedger';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { accountTypeLabel } from '@money/core/lib/account-type';
-import { formatDate } from '@money/core/lib/datetime';
+import { formatDate, formatDateMarker } from '@money/core/lib/datetime';
 import { categoryTitleOf } from '@money/core/lib/entries';
 import { homeDataPort } from '@money/core/data/home-port';
 import { useTranslation } from '@money/core/lib/i18n';
@@ -314,45 +314,6 @@ function CardCharts({
 
         {tab === 'performance' ? <CardPerformancePanel cardId={card.id} /> : null}
 
-        <View>
-          <Text className="mb-2 text-sm font-medium text-gray-700">
-            {t(
-              tab === 'performance'
-                ? isCredit
-                  ? 'settlement.performanceByStatement'
-                  : 'settlement.performanceByMonth'
-                : isCredit
-                  ? 'settlement.billedByStatement'
-                  : 'settlement.billedByMonth',
-            )}
-          </Text>
-
-          {error ? (
-            <Text className="text-sm text-red-600">{error}</Text>
-          ) : !usage ? (
-            <Text className="text-sm text-gray-600">{t('settlement.loading')}</Text>
-          ) : (
-            /*
-              기준선은 실적에만 긋는다. 실적 기준은 청구액에 대고 재는 값이 아니다.
-              탭을 바꾸면 그래프도 새로 서야 해서 key 로 갈아 끼운다(끌어 둔 창까지).
-            */
-            <CardUsageChart
-              key={tab}
-              periods={usage.periods}
-              currency={usage.currency}
-              target={tab === 'performance' ? target : null}
-              cardId={card.id}
-              measure={tab === 'performance' ? 'performance' : 'billed'}
-              selectedKey={pickedPeriod?.closingKey ?? null}
-              onSelectPeriod={setPickedPeriod}
-            />
-          )}
-
-          {tab === 'billed' ? (
-            <Text className="mt-1 text-xs text-gray-500">{t('settlement.billedHint')}</Text>
-          ) : null}
-        </View>
-
         {/*
           남은 대금과 대금 기록은 신용카드만이다. 체크카드는 결제 즉시 통장에서 빠져
           갚을 것이 남지 않는다 (위 사용액은 체크카드도 똑같이 보여 준다).
@@ -391,6 +352,48 @@ function CardCharts({
             }}
           />
         ) : null}
+
+        {/*
+          주기별 사용액. **대금 결제와 환율 확정 아래**다.
+
+          카드를 열어 먼저 하는 일은 "얼마를 갚아야 하나"와 그 대금을 적는 것이다.
+          그래프는 그 숫자가 어떻게 쌓였는지를 되짚어 보는 자리라, 손이 가는 단추가
+          그래프 아래에 묻혀 있으면 카드를 열 때마다 손가락이 한 번 더 든다.
+        */}
+        <View>
+          <Text className="mb-2 text-sm font-medium text-gray-700">
+            {t(
+              tab === 'performance'
+                ? isCredit
+                  ? 'settlement.performanceByStatement'
+                  : 'settlement.performanceByMonth'
+                : isCredit
+                  ? 'settlement.billedByStatement'
+                  : 'settlement.billedByMonth',
+            )}
+          </Text>
+
+          {error ? (
+            <Text className="text-sm text-red-600">{error}</Text>
+          ) : !usage ? (
+            <Text className="text-sm text-gray-600">{t('settlement.loading')}</Text>
+          ) : (
+            /*
+              기준선은 실적에만 긋는다. 실적 기준은 청구액에 대고 재는 값이 아니다.
+              탭을 바꾸면 그래프도 새로 서야 해서 key 로 갈아 끼운다(끌어 둔 창까지).
+            */
+            <CardUsageChart
+              key={tab}
+              periods={usage.periods}
+              currency={usage.currency}
+              target={tab === 'performance' ? target : null}
+              cardId={card.id}
+              measure={tab === 'performance' ? 'performance' : 'billed'}
+              selectedKey={pickedPeriod?.closingKey ?? null}
+              onSelectPeriod={setPickedPeriod}
+            />
+          )}
+        </View>
       </View>
 
       {/*
@@ -402,7 +405,21 @@ function CardCharts({
         받는다. 예전에는 그 길이 없어 체크카드에만 이 칸이 통째로 비어 있었다.
       */}
       <View className="gap-2 rounded-lg bg-white p-4 shadow-sm">
-        <Text className="text-sm font-medium text-gray-700">{t('assets.cardLedger')}</Text>
+        {/*
+          어느 구간을 보고 있는지 이름 옆에 적는다.
+
+          그래프에서 주기를 누르면 아래 목록이 그 주기만 남는데, 목록만 보아서는 그것이
+          전부인지 걸러진 것인지 알 수 없다 -- 거래가 적은 주기를 고르면 "내역이 없습니다"
+          가 뜨고, 그 까닭이 화면 어디에도 없었다.
+        */}
+        <View className="flex-row items-baseline gap-2">
+          <Text className="text-sm font-medium text-gray-700">{t('assets.cardLedger')}</Text>
+          <Text className="shrink text-xs text-gray-500" numberOfLines={1}>
+            {pickedPeriod
+              ? `${formatDateMarker(pickedPeriod.periodStart)} ~ ${formatDateMarker(pickedPeriod.periodEnd)}`
+              : t('assets.ledgerAllPeriod')}
+          </Text>
+        </View>
         {/*
           실적 탭은 아예 다른 줄을 본다.
 
@@ -412,7 +429,6 @@ function CardCharts({
         */}
         {tab === 'performance' ? (
           <>
-            <Text className="text-xs text-gray-500">{t('settlement.performanceLedgerHint')}</Text>
             <PerformanceLedgerList
               cardId={card.id}
               fallbackCurrency={currency}
