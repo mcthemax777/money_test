@@ -1045,6 +1045,11 @@ export const en: Record<MessageKey, string> = {
 
 
   'tx.search.kinds': 'Type',
+  'tx.search.features': 'Form',
+  'tx.search.feature.split': 'Split',
+  'tx.search.feature.installment': 'Installment',
+  'tx.viewCalendar': 'Calendar view',
+  'tx.viewList': 'List view',
   'tx.kind.expense': 'Expense',
   'tx.kind.income': 'Income',
   'tx.kind.transfer': 'Transfer',

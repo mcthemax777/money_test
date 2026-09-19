@@ -1036,6 +1036,11 @@ export const ja: Record<MessageKey, string> = {
 
 
   'tx.search.kinds': '種類',
+  'tx.search.features': '形態',
+  'tx.search.feature.split': '分割',
+  'tx.search.feature.installment': '分割払い',
+  'tx.viewCalendar': 'カレンダー表示',
+  'tx.viewList': 'リスト表示',
   'tx.kind.expense': '支出',
   'tx.kind.income': '収入',
   'tx.kind.transfer': '振替',

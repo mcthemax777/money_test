@@ -37,6 +37,7 @@ import {
   selectionKey,
   unitOfKey,
   toEntrySearchQuery,
+  type EntryFeature,
   type EntryPeriodUnit,
 } from '@money/types';
 
@@ -121,6 +122,13 @@ export interface TransactionSearch {
    */
   entryPersonIds: string[];
   /**
+   * 거래의 모양(분할·할부). 고른 것끼리 OR 이고 다른 무리와는 AND 다.
+   *
+   * **유형과 다른 무리다.** 유형은 한 거래가 하나만 갖는 갈래이고, 모양은 그 위에 겹쳐
+   * 붙는 표시다 -- 할부로 낸 지출을 둘로 나눠 적으면 둘 다 붙는다.
+   */
+  features: EntryFeature[];
+  /**
    * 기간. 프로젝트 타임존의 달력 날짜 'YYYY-MM-DD' 이고 양끝을 포함한다.
    *
    * 빈 문자열은 "정하지 않았다"이고, **한쪽만 적으면 그쪽만 걸린다**. 시작일만 적으면
@@ -139,6 +147,7 @@ export const EMPTY_SEARCH: TransactionSearch = {
   kinds: [],
   tagIds: [],
   entryPersonIds: [],
+  features: [],
   startDate: '',
   endDate: '',
 };
@@ -158,6 +167,12 @@ export const ENTRY_KIND_LABEL: Record<EntryKind, MessageKey> = {
   transfer: 'tx.kind.transfer',
   card_payment: 'tx.kind.card_payment',
   adjustment: 'entry.adjustment',
+};
+
+/** 모양의 이름. 유형과 같은 방식으로 적어 두어 사전에서 찾을 수 있게 한다. */
+export const ENTRY_FEATURE_LABEL: Record<EntryFeature, MessageKey> = {
+  split: 'tx.search.feature.split',
+  installment: 'tx.search.feature.installment',
 };
 
 /**
@@ -273,6 +288,10 @@ export function searchChipsOf(
     chips.push({ id: `person:${id}`, label: personName.get(id) ?? t('tx.search.people') });
   }
 
+  for (const feature of search.features) {
+    chips.push({ id: `feature:${feature}`, label: t(ENTRY_FEATURE_LABEL[feature]) });
+  }
+
   return chips;
 }
 
@@ -301,6 +320,8 @@ export function withoutChip(search: TransactionSearch, chipId: string): Transact
       return { ...search, tagIds: drop(search.tagIds) };
     case 'person':
       return { ...search, entryPersonIds: drop(search.entryPersonIds) };
+    case 'feature':
+      return { ...search, features: drop(search.features) };
     default:
       return search;
   }
@@ -664,6 +685,7 @@ export function useTransactions(projectId: string | null) {
     search.kinds.length +
     search.tagIds.length +
     search.entryPersonIds.length +
+    search.features.length +
     // 기간은 두 칸이지만 조건 하나다. 사용자가 고른 것은 구간 하나다.
     (range ? 1 : 0);
 
@@ -1170,6 +1192,7 @@ export function useTransactions(projectId: string | null) {
           kinds: search.kinds,
           tagIds: search.tagIds,
           entryPersonIds: search.entryPersonIds,
+          features: search.features,
         });
       }
 
@@ -1181,6 +1204,7 @@ export function useTransactions(projectId: string | null) {
         kinds: search.kinds,
         tagIds: search.tagIds,
         entryPersonIds: search.entryPersonIds,
+        features: search.features,
       });
     },
     [tab, pickerCategories, search],

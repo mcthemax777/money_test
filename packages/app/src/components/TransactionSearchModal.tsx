@@ -14,7 +14,7 @@ import { Pressable, Text, TextInput, View } from 'react-native';
 import { CalendarDays } from 'lucide-react-native';
 import type { AccountDto, CardDto, CategoryDto, PersonDto, TagDto } from '@money/types';
 
-import { NO_TAG, SEARCHABLE_ENTRY_KINDS, selfCategoryPick } from '@money/types';
+import { ENTRY_FEATURES, NO_TAG, SEARCHABLE_ENTRY_KINDS, selfCategoryPick } from '@money/types';
 
 import {
   assetOwnerNames,
@@ -30,6 +30,7 @@ import {
 import { useTranslation } from '@money/core/lib/i18n';
 import {
   EMPTY_SEARCH,
+  ENTRY_FEATURE_LABEL,
   ENTRY_KIND_LABEL,
   searchRange,
   type TransactionSearch,
@@ -185,6 +186,7 @@ export default function TransactionSearchModal({
     draft.paymentAccountIds.length +
     draft.paymentCardIds.length +
     draft.kinds.length +
+    draft.features.length +
     draft.tagIds.length +
     draft.entryPersonIds.length +
     (range ? 1 : 0);
@@ -345,6 +347,24 @@ export default function TransactionSearchModal({
                   label={t(ENTRY_KIND_LABEL[kind])}
                   selected={draft.kinds.includes(kind)}
                   onPress={() => setDraft((prev) => ({ ...prev, kinds: toggle(prev.kinds, kind) }))}
+                />
+              ))}
+            </Group>
+
+            {/*
+              형태(분할·할부)를 유형 바로 아래 둔다. 유형과 같은 층으로 읽히지만 **다른
+              무리다** -- 한 거래가 유형은 하나지만 형태는 둘 다 가질 수 있다(할부로 낸
+              결제를 둘로 나눠 적은 것). 그래서 칸을 갈라 놓는다.
+            */}
+            <Group title={t('tx.search.features')}>
+              {ENTRY_FEATURES.map((feature) => (
+                <Chip
+                  key={feature}
+                  label={t(ENTRY_FEATURE_LABEL[feature])}
+                  selected={draft.features.includes(feature)}
+                  onPress={() =>
+                    setDraft((prev) => ({ ...prev, features: toggle(prev.features, feature) }))
+                  }
                 />
               ))}
             </Group>

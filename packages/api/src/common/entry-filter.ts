@@ -1,6 +1,7 @@
-import { AccountType, CategoryType, Prisma } from '@prisma/client';
+import { AccountType, CategoryType, Prisma, type PrismaClient } from '@prisma/client';
 import {
   EntryFilterQuery,
+  type EntryFeature,
   type EntryKind,
   type ParsedEntrySearch,
   lineMatcherOf,
@@ -226,6 +227,55 @@ export function entryTagCondition(
   if (chosen.length > 0) branches.push({ tags: { some: { tagId: { in: chosen } } } });
   // 태그가 하나도 붙지 않은 전표. "여행 또는 태그 없음"이 무리 안의 OR 로 이어진다.
   if (noTag) branches.push({ tags: { none: {} } });
+
+  return branches.length === 1 ? branches[0] : { OR: branches };
+}
+
+/**
+ * 분할 거래의 id. 분류 다리가 둘 이상인 전표를 세어 온다.
+ *
+ * **왜 조건이 아니라 목록인가.** Prisma 의 관계 조건은 some/every/none 뿐이라 "그런
+ * 다리가 둘 이상"을 셀 수 없다 -- 다리 하나만 보는 조건으로는 분할을 가려낼 수 없어서,
+ * 세는 일만 따로 질의해 id 로 받는다. 사본(SQLite)은 하위 질의로 그 자리에서 센다.
+ *
+ * `scope` 는 좁게 줄수록 목록이 짧아진다. 프로젝트와 기간만 주어도 맞는 값이 나온다 --
+ * 이 목록은 나머지 조건과 AND 로 이어지므로 넓게 세어 와도 결과가 달라지지 않는다.
+ */
+export async function splitEntryIds(
+  prisma: PrismaClient,
+  scope: Prisma.JournalEntryWhereInput,
+): Promise<string[]> {
+  const rows = await prisma.posting.groupBy({
+    by: ['entryId'],
+    where: { categoryId: { not: null }, entry: scope },
+    having: { entryId: { _count: { gt: 1 } } },
+  });
+  return rows.map((row) => row.entryId);
+}
+
+/**
+ * 모양 조건. 고른 모양끼리 OR 로 잇는다. 고르지 않았으면 undefined.
+ *
+ * **다리가 아니라 전표를 본다** -- 유형·태그와 같은 자리다. 할부는 "할부 계획이 붙은
+ * 카드 다리를 가진 전표"이고, 분할은 세어 온 id 목록(`splitEntryIds`)이다.
+ *
+ * 분할을 골랐는데 `splitIds` 를 주지 않으면 분할 가지를 빼지 않고 **아무것도 걸리지
+ * 않게** 한다. 세는 질의를 빠뜨린 자리에서 조건이 조용히 사라지면, 걸러지지 않은 목록이
+ * 걸러진 것처럼 보인다.
+ */
+export function entryFeatureCondition(
+  features: readonly EntryFeature[] | undefined,
+  splitIds?: readonly string[],
+): Prisma.JournalEntryWhereInput | undefined {
+  if (!features || features.length === 0) return undefined;
+
+  const branches: Prisma.JournalEntryWhereInput[] = [];
+  if (features.includes('installment')) {
+    branches.push({ postings: { some: { installmentPlan: { isNot: null } } } });
+  }
+  if (features.includes('split')) {
+    branches.push({ id: { in: splitIds ? [...splitIds] : [] } });
+  }
 
   return branches.length === 1 ? branches[0] : { OR: branches };
 }

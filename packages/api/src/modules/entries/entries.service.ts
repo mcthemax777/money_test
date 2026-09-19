@@ -19,6 +19,7 @@ import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import {
   MATCH_NOTHING,
   assetOwnerCondition,
+  entryFeatureCondition,
   entryKindCondition,
   entryPersonCondition,
   entryTagCondition,
@@ -26,6 +27,7 @@ import {
   entrySearchConditions,
   lineMatcherOf,
   parseEntryFilter,
+  splitEntryIds,
 } from '@/common/entry-filter';
 import { badRequest, notFound } from '@/common/app-error';
 import { assertYearMonth } from '@/common/year-month';
@@ -493,6 +495,24 @@ export class EntriesService {
     // 설명의 글자도 전표에 있다.
     const textCondition = entryTextCondition(search.text);
     if (textCondition) entryFilters.push(textCondition);
+
+    /*
+     * 거래의 모양(분할·할부)도 전표 조건이다.
+     *
+     * 분할은 분류 다리를 세어야 해서 id 를 먼저 받아 온다 (`splitEntryIds` 머리말).
+     * 세는 범위는 이 목록이 보는 기간까지다 -- 나머지 조건과 AND 로 이어지므로 넓게
+     * 세어 와도 결과는 같고, 좁힐수록 목록만 짧아진다.
+     */
+    const featureCondition = entryFeatureCondition(
+      search.features,
+      search.features?.includes('split')
+        ? await splitEntryIds(this.prisma, {
+            projectId: finalProjectId,
+            ...(where.date ? { date: where.date } : {}),
+          })
+        : undefined,
+    );
+    if (featureCondition) entryFilters.push(featureCondition);
 
     // kind='expense'는 이체를 빼지만 categoryType='expense'는 수수료 붙은 이체를 포함한다
     if (query.categoryType) {

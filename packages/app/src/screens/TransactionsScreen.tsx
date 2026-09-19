@@ -25,9 +25,11 @@ import {
 import {
   Archive,
   ArrowLeft,
+  CalendarDays,
   Check,
   ChevronDown,
   ChevronUp,
+  List,
   MoreVertical,
   Search,
   Tag,
@@ -70,6 +72,7 @@ import SegmentedTabs from '../components/SegmentedTabs';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import TransactionItem from '../components/TransactionItem';
 import TagPickModal from '../components/TagPickModal';
+import TransactionCalendarView from '../components/TransactionCalendarView';
 import TransactionSearchModal from '../components/TransactionSearchModal';
 
 /**
@@ -456,6 +459,13 @@ export default function TransactionsScreen() {
   const [isTagPickOpen, setIsTagPickOpen] = useState(false);
   /** 상세를 띄운 거래. null 이면 닫힌 상태다. */
   const [detail, setDetail] = useState<EntryListItem | null>(null);
+  /**
+   * 달력으로 보는 중인가. 머리글의 단추가 켜고 끈다.
+   *
+   * 목록 보기와 묻는 것이 다르다 -- 목록은 "무엇으로 묶어 볼까", 달력은 "그 달 어느
+   * 날에 무엇이 있었나" 다. 한 화면에 섞으면 어느 쪽도 또렷하지 않다.
+   */
+  const [isCalendar, setIsCalendar] = useState(false);
   /**
    * 내용을 베껴 새로 적는 중인 거래. null 이면 베끼기로 연 팝업이 없다는 뜻이다.
    *
@@ -869,6 +879,22 @@ export default function TransactionsScreen() {
                   <Text className="text-sm font-semibold text-blue-600">{inboxCount}</Text>
                 ) : null}
               </Pressable>
+              {/*
+                보기를 바꾸는 단추. 지금 무엇을 보고 있는지가 아니라 **누르면 무엇이
+                되는지**를 그린다 -- 목록을 보는 중이면 달력, 달력을 보는 중이면 목록이다.
+                누를 자리와 그 결과가 한 그림이라 설명이 필요 없다.
+              */}
+              <Pressable
+                onPress={() => setIsCalendar((on) => !on)}
+                accessibilityLabel={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
+                className="items-center justify-center p-2"
+              >
+                {isCalendar ? (
+                  <List size={18} color="#2563eb" />
+                ) : (
+                  <CalendarDays size={18} color="#4b5563" />
+                )}
+              </Pressable>
               <Pressable
                 onPress={() => setIsSearchOpen(true)}
                 accessibilityLabel={t('tx.search')}
@@ -915,6 +941,17 @@ export default function TransactionsScreen() {
         </View>
       ) : null}
 
+      {/*
+        달력 보기. 머리글의 단추가 고른다.
+
+        목록 쪽(묶음 알약·검색 조건·기간 줄)은 통째로 감춘다 -- 달력은 한 달을 펼쳐
+        놓고 날을 짚는 자리라, 해·주로 묶거나 분류로 파고드는 손잡이가 뜻을 갖지 않는다.
+      */}
+      {isCalendar ? (
+        /* 상세는 읽기 전용 구성원도 연다. 목록 보기의 줄과 같은 규칙이다. */
+        <TransactionCalendarView projectId={selectedProjectId} onOpenEntry={openDetail} />
+      ) : (
+        <>
       {/* 보기 방식. 년월 목록 위에 두어 어떤 기준으로 파고드는지 먼저 정한다. */}
       <SegmentedTabs
         tabs={TABS.map((item) => ({ id: item.id, label: t(item.labelKey) }))}
@@ -1051,6 +1088,8 @@ export default function TransactionsScreen() {
           })
         )}
       </View>
+        </>
+      )}
 
       <TagPickModal
         isOpen={isTagPickOpen}

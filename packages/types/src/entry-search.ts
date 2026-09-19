@@ -35,6 +35,20 @@ export function splitIdList(value: string): string[] {
 export const NO_TAG = 'none';
 
 /**
+ * 거래를 적은 **모양**. 분류·태그처럼 고르는 한 무리다.
+ *
+ *   split        분류 줄이 둘 이상인 거래 (한 결제를 나눠 적은 것)
+ *   installment  할부로 낸 거래 (카드 다리에 할부 계획이 붙어 있다)
+ *
+ * 왜 유형(EntryKind) 무리에 섞지 않는가. 유형은 한 거래가 하나만 갖는 갈래이고, 모양은
+ * 그 위에 겹쳐 붙는 표시다 -- 할부로 낸 지출을 둘로 나눠 적으면 둘 다 붙는다. 한 무리로
+ * 두면 "지출 또는 할부"처럼 층이 다른 것이 나란히 놓인다.
+ */
+export const ENTRY_FEATURES = ['split', 'installment'] as const;
+
+export type EntryFeature = (typeof ENTRY_FEATURES)[number];
+
+/**
  * "이 분류에 직접 적은 것만"을 가리키는 표. 분류 id 앞에 붙는다 (`self:식비`).
  *
  * 분류 무리 안에서 분류 id 자리에 함께 온다 -- 태그 무리의 `NO_TAG` 와 같은 방식이다.
@@ -98,6 +112,14 @@ export interface EntrySearchQuery {
    * "둘 다 붙은 거래"만 남아, 다른 무리와 규칙이 어긋난다.
    */
   tagIds?: string;
+  /**
+   * 거래의 모양 (쉼표로 잇는다, "split,installment").
+   *
+   * 이것도 한 무리다. 고른 모양끼리는 OR 이고 다른 무리와는 AND 다 -- "분할했거나
+   * 할부로 낸 것 중에서 식비인 것". 무리 안을 AND 로 두면 둘을 고르는 순간 "나눠 적은
+   * 할부"만 남아 다른 무리와 규칙이 어긋난다.
+   */
+  features?: string;
 }
 
 export interface ParsedEntrySearch {
@@ -149,6 +171,14 @@ export interface ParsedEntrySearch {
    */
   entryPersonIds?: string[];
   /**
+   * 고른 모양. undefined 면 모양으로 거르지 않는다.
+   *
+   * **저장된 값이 아니라 다리에서 유도되는 값이다** (유형과 같다). 분할은 분류 다리의
+   * 개수이고, 할부는 카드 다리에 붙은 계획이다. 그래서 조건도 저장소마다 다리를 세는
+   * 모양이 된다.
+   */
+  features?: EntryFeature[];
+  /**
    * 무리 하나를 열어 놓고 아무것도 고르지 않았다. 어떤 결과도 나오지 않아야 한다.
    *
    * 체크를 모두 푼 상태를 "전체"로 되돌리면 사용자가 고른 것과 반대로 보인다. 이
@@ -168,7 +198,8 @@ export function hasEntrySearch(search: ParsedEntrySearch): boolean {
     (search.paymentAccountIds?.length ?? 0) > 0 ||
     (search.paymentCardIds?.length ?? 0) > 0 ||
     (search.kinds?.length ?? 0) > 0 ||
-    (search.tagIds?.length ?? 0) > 0
+    (search.tagIds?.length ?? 0) > 0 ||
+    (search.features?.length ?? 0) > 0
   );
 }
 
@@ -221,6 +252,14 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
           ALL_KINDS.includes(kind as EntryKind),
         ) as EntryKind[]);
 
+  // 모양도 아는 값만 받는다 (유형과 같은 규칙).
+  const features =
+    query.features === undefined
+      ? undefined
+      : (splitIdList(query.features).filter((feature) =>
+          ENTRY_FEATURES.includes(feature as EntryFeature),
+        ) as EntryFeature[]);
+
   /*
    * 비어 있는지는 **무리 단위로** 본다.
    *
@@ -241,6 +280,7 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
   // "태그 없음"만 고른 것은 빈 무리가 아니다. 그때는 태그가 없는 전표를 찾는다.
   if (tagIds !== undefined && tagIds.length === 0 && !noTag) matchNothing = true;
   if (entryPersonIds !== undefined && entryPersonIds.length === 0) matchNothing = true;
+  if (features !== undefined && features.length === 0) matchNothing = true;
 
   /*
    * 다 고른 것은 고르지 않은 것과 같다.
@@ -261,6 +301,11 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
     tagIds,
     noTag,
     entryPersonIds,
+    /*
+     * 유형과 달리 **다 고른 것을 지우지 않는다.** 모양은 겹쳐 붙는 표시라 둘을 모두
+     * 고른 것은 "분할이거나 할부인 것"이고, 그것은 전체가 아니다.
+     */
+    features,
     matchNothing,
   };
 }
@@ -279,6 +324,7 @@ export function toEntrySearchQuery(selection: {
   paymentCardIds?: readonly string[];
   kinds?: readonly EntryKind[];
   tagIds?: readonly string[];
+  features?: readonly EntryFeature[];
 }): EntrySearchQuery {
   const query: EntrySearchQuery = {};
   if (selection.text?.trim()) query.text = selection.text.trim();
@@ -292,5 +338,6 @@ export function toEntrySearchQuery(selection: {
   if (selection.entryPersonIds?.length) {
     query.entryPersonIds = selection.entryPersonIds.join(',');
   }
+  if (selection.features?.length) query.features = selection.features.join(',');
   return query;
 }

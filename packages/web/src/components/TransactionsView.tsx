@@ -18,9 +18,11 @@ import Link from 'next/link';
 import {
   Archive,
   ArrowLeft,
+  CalendarDays,
   Check,
   ChevronDown,
   ChevronUp,
+  List,
   Copy,
   Loader2,
   Minus,
@@ -33,6 +35,7 @@ import {
   X,
 } from 'lucide-react';
 import {
+  ENTRY_FEATURES,
   NO_TAG,
   SEARCHABLE_ENTRY_KINDS,
   entryRows,
@@ -58,6 +61,7 @@ import {
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import {
   EMPTY_SEARCH,
+  ENTRY_FEATURE_LABEL,
   ENTRY_KIND_LABEL,
   searchRange,
   useTransactions,
@@ -82,6 +86,7 @@ import EntryEditor, {
   type ReferenceDataPatch,
 } from '@/components/EntryEditor';
 import Modal from '@/components/Modal';
+import TransactionCalendarView from '@/components/TransactionCalendarView';
 import PageHeader from '@/components/PageHeader';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
@@ -385,6 +390,13 @@ export default function TransactionsView({
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   /** 더보기 선택창. 지금은 삭제 하나뿐이다. */
   const [isMoreOpen, setIsMoreOpen] = useState(false);
+  /**
+   * 달력으로 보는 중인가. 머리글의 단추가 켜고 끈다.
+   *
+   * 목록 보기와 묻는 것이 다르다 -- 목록은 "무엇으로 묶어 볼까", 달력은 "그 달 어느
+   * 날에 무엇이 있었나" 다. 한 화면에 섞으면 어느 쪽도 또렷하지 않다.
+   */
+  const [isCalendar, setIsCalendar] = useState(false);
   /** 고른 거래에 붙일 태그를 정하는 창. */
   const [isTagPickOpen, setIsTagPickOpen] = useState(false);
   /**
@@ -785,6 +797,7 @@ export default function TransactionsView({
     draft.paymentAccountIds.length +
     draft.paymentCardIds.length +
     draft.kinds.length +
+    draft.features.length +
     draft.tagIds.length +
     draft.entryPersonIds.length +
     (draftRange ? 1 : 0);
@@ -941,6 +954,26 @@ export default function TransactionsView({
                 <Archive className="h-4 w-4" aria-hidden />
                 {inboxCount > 0 ? <span className="font-semibold">{inboxCount}</span> : null}
               </Link>
+              {/*
+                보기를 바꾸는 단추. 지금 무엇을 보고 있는지가 아니라 **누르면 무엇이
+                되는지**를 그린다 -- 목록을 보는 중이면 달력, 달력을 보는 중이면 목록이다.
+                누를 자리와 그 결과가 한 그림이라 설명이 필요 없다.
+              */}
+              <button
+                type="button"
+                onClick={() => setIsCalendar((on) => !on)}
+                aria-label={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
+                title={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
+                className={`flex items-center justify-center p-2 ${
+                  isCalendar ? 'text-blue-600' : 'text-gray-600'
+                }`}
+              >
+                {isCalendar ? (
+                  <List className="h-4 w-4" aria-hidden />
+                ) : (
+                  <CalendarDays className="h-4 w-4" aria-hidden />
+                )}
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -988,6 +1021,20 @@ export default function TransactionsView({
         </div>
       ) : null}
 
+      {/*
+        달력 보기. 머리글의 단추가 고른다.
+
+        목록 쪽(묶음 알약·검색 조건·기간 줄)은 통째로 감춘다 -- 달력은 한 달을 펼쳐
+        놓고 날을 짚는 자리라, 해·주로 묶거나 분류로 파고드는 손잡이가 뜻을 갖지 않는다.
+      */}
+      {isCalendar ? (
+        <TransactionCalendarView
+          projectId={selectedProjectId}
+          /* 상세는 목록 보기의 줄과 같은 자리로 연다 (읽기 전용 구성원도 읽는다). */
+          onOpenEntry={setDetail}
+        />
+      ) : (
+        <>
       {/*
         보기 방식.
 
@@ -1149,6 +1196,8 @@ export default function TransactionsView({
           })
         )}
       </div>
+        </>
+      )}
 
       {/*
         더보기 선택창.
@@ -1413,6 +1462,29 @@ export default function TransactionsView({
                     selected={draft.kinds.includes(kind)}
                     onClick={() =>
                       setDraft((prev) => ({ ...prev, kinds: toggleId(prev.kinds, kind) }))
+                    }
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/*
+              형태(분할·할부)를 유형 바로 아래 둔다. 유형과 같은 층으로 읽히지만 **다른
+              무리다** -- 한 거래가 유형은 하나지만 형태는 둘 다 가질 수 있다(할부로 낸
+              결제를 둘로 나눠 적은 것). 그래서 칸을 갈라 놓는다.
+            */}
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
+                {t('tx.search.features')}
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {ENTRY_FEATURES.map((feature) => (
+                  <Chip
+                    key={feature}
+                    label={t(ENTRY_FEATURE_LABEL[feature])}
+                    selected={draft.features.includes(feature)}
+                    onClick={() =>
+                      setDraft((prev) => ({ ...prev, features: toggleId(prev.features, feature) }))
                     }
                   />
                 ))}

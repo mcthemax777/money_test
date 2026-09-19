@@ -1075,6 +1075,12 @@ export const ko = {
 
 
   'tx.search.kinds': '유형',
+  /** 분할·할부는 유형 위에 겹쳐 붙는 표시라 한 무리로 따로 둔다. */
+  'tx.search.features': '형태',
+  'tx.search.feature.split': '분할',
+  'tx.search.feature.installment': '할부',
+  'tx.viewCalendar': '달력으로 보기',
+  'tx.viewList': '목록으로 보기',
   'tx.kind.expense': '지출',
   'tx.kind.income': '수입',
   'tx.kind.transfer': '이체',
