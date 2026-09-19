@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { AccountDto } from '@money/types';
 
 import { homeDataPort } from '../data/home-port';
+import { dayRangeQuery } from '../lib/datetime';
+import { useProjectTimeZone } from '../store/project';
 
 /**
  * 한 번에 받아 오는 줄 수. 홈의 거래 목록과 같다 (`useEntryFeed` 의 pageSize).
@@ -31,6 +33,11 @@ export function useAccountLedger(
   /**
    * 이 구간의 줄만. 카드 상세에서 청구 주기 하나를 골랐을 때 준다.
    *
+   * **프로젝트 타임존의 달력 날짜다** ("YYYY-MM-DD", 양끝 포함). 목록 창구는 인스턴트를
+   * 받으므로 여기서 바꿔 보낸다(`dayRangeQuery`) -- 달력 날짜를 그대로 넘기면 UTC 자정으로
+   * 읽혀, 한국 기준으로 시작일은 오전 아홉 시부터가 되고 종료일은 오전 아홉 시에 잘린다.
+   * 7월 주기를 골랐을 때 7월 31일 오후의 결제가 목록에서 사라지던 자리다.
+   *
    * 줄에 붙는 잔액은 구간과 상관없이 맨 앞부터 쌓은 값이다 -- 구간만큼만 세면 그 줄의
    * 잔액이 통장의 실제 잔액과 달라진다. 자르는 것은 보여 줄 줄뿐이다.
    */
@@ -50,7 +57,13 @@ export function useAccountLedger(
   const runRef = useRef(0);
 
   // 구간은 문자열 둘이라 그대로 두면 그릴 때마다 새 객체다. 아래 효과가 끝없이 돈다.
-  const rangeKey = range ? `${range.startDate}|${range.endDate}` : '';
+  const timeZone = useProjectTimeZone();
+  const rangeKey = range
+    ? (() => {
+        const query = dayRangeQuery(range.startDate, range.endDate, timeZone);
+        return `${query.startDate}|${query.endDate}`;
+      })()
+    : '';
 
   const load = useCallback(
     async (id: string, after: string | null, run: number) => {

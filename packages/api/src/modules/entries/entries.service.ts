@@ -10,6 +10,8 @@ import {
   EntryListItem,
   applyTagChange,
   parseEntrySearch,
+  zonedDateStringToUtc,
+  zonedDayStart,
   zonedMonthRange,
 } from '@money/types';
 import { toMoney } from '@/common/money';
@@ -28,6 +30,32 @@ import {
 import { badRequest, notFound } from '@/common/app-error';
 import { assertYearMonth } from '@/common/year-month';
 import { clientId, rejectDuplicateId } from '@/common/client-id';
+
+/** 달력 날짜만 적힌 값인가. "2026-07-31" 이면 참, 시각이 붙어 있으면 거짓이다. */
+const DATE_KEY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * 구간의 시작 인스턴트.
+ *
+ * 달력 날짜가 오면 그 지역의 **하루 시작**이다. 인스턴트가 오면 그대로 쓴다.
+ */
+function dayStartOf(value: string, timeZone: string): Date {
+  return DATE_KEY_ONLY.test(value) ? zonedDateStringToUtc(value, timeZone) : new Date(value);
+}
+
+/**
+ * 구간의 끝 인스턴트 (**이 값 미만**).
+ *
+ * 달력 날짜가 오면 그 다음 날의 시작이라, 그 날이 통째로 든다. 인스턴트가 오면 그 값을
+ * 포함해야 하므로 1밀리초를 더한다 -- 화면이 주는 끝값은 `dayRangeQuery` 가 만든
+ * "23:59:59.999" 이고, 그것까지 담아야 말일 밤의 거래가 빠지지 않는다.
+ */
+function dayAfterOf(value: string, timeZone: string): Date {
+  if (!DATE_KEY_ONLY.test(value)) return new Date(new Date(value).getTime() + 1);
+
+  const [year, month, day] = value.split('-').map(Number);
+  return zonedDayStart(year, month, day + 1, timeZone);
+}
 
 const ZERO = new Prisma.Decimal(0);
 const DEFAULT_LIMIT = 50;
@@ -377,9 +405,22 @@ export class EntriesService {
       const range = zonedMonthRange(assertYearMonth(query.yearMonth, '연월'), timeZone);
       where.date = { gte: range.start, lt: range.end };
     } else if (query.startDate || query.endDate) {
+      /*
+       * 구간. **인스턴트가 원칙이고, 달력 날짜도 받는다.**
+       *
+       * 같은 이름의 칸이 창구마다 뜻이 다르다 -- 목록은 인스턴트를, 구간 조회
+       * (`ReportDto.PeriodQuery`)는 달력 날짜를 받는다. 그래서 화면이 달력 날짜를
+       * 그대로 넘기는 일이 실제로 있었고(카드 주기를 누른 결제 내역), 그때 `new Date`
+       * 가 UTC 자정으로 읽어 **한국 기준 양끝이 아홉 시간씩 잘렸다** -- 7월 주기를
+       * 골랐는데 7월 31일 오후의 결제가 목록에 없었다.
+       *
+       * 잘라 내는 쪽보다 넓게 읽는 쪽이 낫다. "2026-07-31" 이 오면 그 날 **끝까지**로
+       * 읽는다. 기기 사본도 받은 값을 프로젝트 타임존의 날짜 키로 바꿔 같은 답을 낸다
+       * (`local-home-port` 의 `dateKeyOf`) -- 두 창구가 같은 줄을 내야 한다.
+       */
       where.date = {};
-      if (query.startDate) where.date.gte = new Date(query.startDate);
-      if (query.endDate) where.date.lte = new Date(query.endDate);
+      if (query.startDate) where.date.gte = dayStartOf(query.startDate, timeZone);
+      if (query.endDate) where.date.lt = dayAfterOf(query.endDate, timeZone);
     }
 
     // posting 조건은 "이 전표에 그런 다리가 하나라도 있는가"로 건다.

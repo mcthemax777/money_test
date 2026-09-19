@@ -117,4 +117,51 @@ runSmoke('timezone', async (ctx) => {
   ctx.check('마감일이 9/15로 넘어간다', used[0]?.periodEnd.slice(0, 10), '2026-09-15');
   ctx.check('주기 시작은 8/16', used[0]?.periodStart.slice(0, 10), '2026-08-16');
   ctx.check('결제일은 9/25', used[0]?.dueDate?.slice(0, 10), '2026-09-25');
+
+  /*
+   * ── 주기를 눌러 좁힌 목록은 그 지역의 하루를 온전히 담는다 ──
+   *
+   * 목록 창구의 startDate/endDate 는 **인스턴트**다. 화면이 주기의 달력 날짜를 그대로
+   * 넘기면 UTC 자정으로 읽혀, 한국 기준으로 시작일은 오전 아홉 시부터가 되고 종료일은
+   * 오전 아홉 시에 잘린다. 7월 주기를 골랐을 때 **7월 31일 오후의 결제가 사라졌다.**
+   *
+   * 바꾸는 일은 화면이 한다(core 의 `dayRangeQuery`). 여기서는 그 결과를 그대로 보내
+   * 양끝이 온전히 드는지 못 박는다 -- 7월 1일 0시부터 8월 1일 0시 직전까지다.
+   */
+  await seoul.entries.createEntry(uid, {
+    kind: 'expense', personId: seoul.person.id, date: '2026-07-31T05:00:00.000Z',
+    description: '말일 오후', amount: '11000',
+    categoryId: seoul.dining.id, accountId: seoul.bank.id,
+  }, seoul.pid);
+  await seoul.entries.createEntry(uid, {
+    kind: 'expense', personId: seoul.person.id, date: '2026-06-30T16:00:00.000Z',
+    description: '초하루 새벽', amount: '12000',
+    categoryId: seoul.dining.id, accountId: seoul.bank.id,
+  }, seoul.pid);
+
+  const july = await seoul.entries.getEntries(uid, {
+    // `dayRangeQuery('2026-07-01', '2026-07-31', 'Asia/Seoul')` 가 내는 값이다.
+    startDate: '2026-06-30T15:00:00.000Z',
+    endDate: '2026-07-31T14:59:59.999Z',
+  }, seoul.pid);
+  const names = july.data.map((row) => row.description);
+  ctx.check('7월 말일 오후의 결제가 든다', names.includes('말일 오후'), true);
+  ctx.check('7월 초하루 새벽의 결제도 든다', names.includes('초하루 새벽'), true);
+  ctx.check('8월로 넘어간 자정 거래는 빠진다', names.includes('자정 넘긴 야식'), false);
+
+  /*
+   * 달력 날짜를 그대로 넘겨도 같은 줄이 온다.
+   *
+   * 같은 이름의 칸이 창구마다 뜻이 달라(목록은 인스턴트, 구간 조회는 달력 날짜) 화면이
+   * 헷갈릴 자리가 남아 있다. 잘라 내는 쪽보다 넓게 읽는 쪽이 낫다 -- "2026-07-31" 은
+   * 그 날 끝까지다.
+   */
+  const julyByKey = await seoul.entries.getEntries(uid, {
+    startDate: '2026-07-01',
+    endDate: '2026-07-31',
+  }, seoul.pid);
+  const keyNames = julyByKey.data.map((row) => row.description);
+  ctx.check('달력 날짜로 줘도 말일 오후가 든다', keyNames.includes('말일 오후'), true);
+  ctx.check('달력 날짜로 줘도 초하루 새벽이 든다', keyNames.includes('초하루 새벽'), true);
+  ctx.check('달력 날짜로 줘도 8월 거래는 빠진다', keyNames.includes('자정 넘긴 야식'), false);
 });
