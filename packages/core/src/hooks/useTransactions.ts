@@ -766,7 +766,7 @@ export function useTransactions(projectId: string | null) {
       .then(([personRows, categoryRows, accountRows, cardRows, tagRows]) => {
         if (!alive) return;
         setPeople(personRows);
-        setPickerCategories(categoryRows.filter((row) => row.isActive));
+        setPickerCategories(categoryRows);
         /*
          * 고를 수 없는 계좌를 목록에서 뺀다.
          *

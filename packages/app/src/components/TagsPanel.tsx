@@ -6,6 +6,9 @@
  *
  * 카테고리와 달리 **지우기를 막지 않는다.** 태그를 떼어 내도 거래는 온전하고 분류별
  * 합계도 그대로다. 막아 두면 오래된 태그를 영영 정리하지 못한다.
+ *
+ * 대신 붙은 데가 있으면 **무엇을 할지 묻는다**(`TagDeleteModal`). 붙은 데가 없으면
+ * 지금까지처럼 한 번 물어보고 지운다 -- 고를 것이 하나뿐인 물음은 물음이 아니다.
  */
 import { useEffect, useState } from 'react';
 import { Alert, LayoutAnimation, Pressable, Text, View } from 'react-native';
@@ -19,6 +22,7 @@ import { useEntryFocus } from '@money/core/store/entry-focus';
 
 import { useNavigation } from '../shell/navigation';
 import Modal from './Modal';
+import TagDeleteModal from './TagDeleteModal';
 import AddButton from './AddButton';
 import MoveRow from './MoveRow';
 import DragList from './DragList';
@@ -92,23 +96,49 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
     setIsFormOpen(false);
   };
 
-  const remove = (tag: TagDto.Response) => {
-    Alert.alert(t('tags.deleteConfirm', { name: tag.name }), t('tags.deleteConfirmBody'), [
-      { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('entryForm.delete'),
-        style: 'destructive',
-        onPress: () => {
-          void manager.remove(tag.id).then((result) => {
-            if (!result.ok) {
-              setError(result.message);
-              return;
-            }
-            LayoutAnimation.configureNext(SHIFT);
-          });
+  /** 없애려던 태그와 그 태그가 붙은 자리의 수. 둘 다 있을 때만 묻는 창이 열린다. */
+  const [removing, setRemoving] = useState<{
+    tag: TagDto.Response;
+    usage: TagDto.UsageResponse;
+  } | null>(null);
+
+  /** 지운 뒤의 뒷정리. 목록이 한 줄 줄어드는 것을 보이게 한다. */
+  const afterRemoved = (result: { ok: boolean; message?: string }) => {
+    if (!result.ok) return result;
+    LayoutAnimation.configureNext(SHIFT);
+    return result;
+  };
+
+  /**
+   * 없애기를 누르면 먼저 센다.
+   *
+   * 붙은 데가 없으면 물어볼 것이 없어 지금까지처럼 한 번 묻고 지운다. 세지 못하면
+   * (연결이 없다) 그 길로 간다 -- 옮기기는 어차피 서버가 있어야 하고, 떼고 없애기는
+   * 사본에서도 된다.
+   */
+  const remove = async (tag: TagDto.Response) => {
+    const usage = await manager.usageOf(tag.id);
+    const attached = usage ? usage.entries + usage.drafts + usage.rules : 0;
+
+    if (!usage || attached === 0) {
+      Alert.alert(t('tags.deleteConfirm', { name: tag.name }), t('tags.deleteConfirmBody'), [
+        { text: t('common.cancel'), style: 'cancel' },
+        {
+          text: t('entryForm.delete'),
+          style: 'destructive',
+          onPress: () => {
+            void manager.remove(tag.id).then((result) => {
+              if (!result.ok) setError(result.message);
+              else afterRemoved(result);
+            });
+          },
         },
-      },
-    ]);
+      ]);
+      return;
+    }
+
+    setError('');
+    setRemoving({ tag, usage });
   };
 
   return (
@@ -152,7 +182,7 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
               />
               <Text className="flex-1 font-medium text-gray-900">{tag.name}</Text>
               <Pressable
-                onPress={() => remove(tag)}
+                onPress={() => void remove(tag)}
                 hitSlop={8}
                 accessibilityLabel={t('entryForm.delete')}
                 className="p-1"
@@ -163,6 +193,26 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
           )}
         />
       )}
+
+      <TagDeleteModal
+        isOpen={removing !== null}
+        onClose={() => setRemoving(null)}
+        tag={removing?.tag ?? null}
+        tags={manager.tags}
+        usage={removing?.usage ?? { entries: 0, drafts: 0, rules: 0 }}
+        isSubmitting={manager.isSubmitting}
+        onMove={(toId) => manager.merge(removing!.tag.id, toId).then(afterRemoved)}
+        onDrop={() => manager.remove(removing!.tag.id).then(afterRemoved)}
+        /*
+          거래내역으로 건너갈 때는 없애지 않는다. 손으로 손보고 돌아와 다시 누르는
+          길이라, 여기서 지우면 돌아올 태그가 없다.
+        */
+        onVisit={() => {
+          const tag = removing?.tag;
+          setRemoving(null);
+          if (tag) showEntriesOf(tag);
+        }}
+      />
 
       <Modal
         isOpen={isFormOpen}

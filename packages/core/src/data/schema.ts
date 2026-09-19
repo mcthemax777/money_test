@@ -32,8 +32,12 @@
  *
  * 실적 두 칸은 전표에 그대로 둔다. 카드사가 보는 것은 승인 한 건이라, 분류로 나눴다고
  * 절반만 실적에 드는 일은 없다.
+ *
+ * 21 은 분류·태그에서 `isActive` 가 사라진 판이다. 그 둘에는 감춰진 상태가 없다 --
+ * 지우기가 행을 정말 지운다. 옛 사본에는 감춘 줄이 남아 있어, 칸만 떼면 목록에 없던
+ * 것이 갑자기 나타난다. 버리고 다시 받는다.
  */
-export const SCHEMA_VERSION = 20;
+export const SCHEMA_VERSION = 21;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -130,7 +134,6 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      type           TEXT NOT NULL,
      icon           TEXT,
      isDefault      INTEGER NOT NULL DEFAULT 0,
-     isActive       INTEGER NOT NULL DEFAULT 1,
      sortRank       TEXT NOT NULL DEFAULT 'V',
      fieldHlc       TEXT,
      createdAt      TEXT NOT NULL DEFAULT '',
@@ -150,7 +153,6 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      projectId      TEXT NOT NULL,
      name           TEXT NOT NULL,
      color          TEXT,
-     isActive       INTEGER NOT NULL DEFAULT 1,
      sortRank       TEXT NOT NULL DEFAULT 'V',
      fieldHlc       TEXT,
      createdAt      TEXT NOT NULL DEFAULT '',
@@ -446,8 +448,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE INDEX IF NOT EXISTS posting_category_idx ON posting (categoryId)`,
   `CREATE INDEX IF NOT EXISTS posting_account_idx ON posting (accountId)`,
   `CREATE INDEX IF NOT EXISTS account_project_idx ON account (projectId, isActive)`,
-  `CREATE INDEX IF NOT EXISTS category_project_idx ON category (projectId, isActive)`,
-  `CREATE INDEX IF NOT EXISTS tag_project_idx ON tag (projectId, isActive)`,
+  `CREATE INDEX IF NOT EXISTS category_project_idx ON category (projectId, type)`,
+  `CREATE INDEX IF NOT EXISTS tag_project_idx ON tag (projectId, sortRank)`,
   // 태그별 통계가 쓸 길. 한 태그에 붙은 전표를 고른다.
   `CREATE INDEX IF NOT EXISTS entry_tag_tag_idx ON entry_tag (tagId)`,
   `CREATE INDEX IF NOT EXISTS entry_tag_entry_idx ON entry_tag (entryId)`,

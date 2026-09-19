@@ -152,7 +152,7 @@ export default function RecurringRuleModal({
   /** 그 갈래의 분류만 고른다. 이체·카드대금에는 분류가 없다. */
   const categories = lists.categories.filter(
     (category) =>
-      category.isActive && category.type === (values.kind === 'income' ? 'income' : 'expense'),
+      category.type === (values.kind === 'income' ? 'income' : 'expense'),
   );
 
   const submit = async (event: React.FormEvent) => {
@@ -436,7 +436,6 @@ export default function RecurringRuleModal({
           <Field label={t('tags.pick')}>
             <div className="flex flex-wrap gap-2">
               {lists.tags
-                .filter((tag) => tag.isActive)
                 .map((tag) => {
                   const on = values.tagIds.includes(tag.id);
                   return (

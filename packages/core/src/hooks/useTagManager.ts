@@ -109,10 +109,33 @@ export function useTagManager(projectId: string | null) {
   );
 
   /**
-   * 태그를 감춘다.
+   * 이 태그가 붙어 있는 자리의 수.
+   *
+   * 없애기 전에 묻는다. 붙은 데가 없으면 한 번 물어보고 지우고, 있으면 화면이
+   * "어떻게 할까요"를 내준다 -- 다른 태그로 옮길지, 거래내역을 열어 손볼지, 전부
+   * 떼고 없앨지.
+   *
+   * **서버에서 곧바로 읽는다.** 사본에서 세면 아직 올라가지 않은 편집이 빠진 수가
+   * 나오는데, 그 수를 보고 "붙은 데가 없다"로 판단하면 조용히 뗄 것을 뗀다.
+   * 연결이 끊겨 셀 수 없으면 null 이고, 화면은 그때 옮기기를 내주지 않는다.
+   */
+  const usageOf = useCallback(async (id: string): Promise<TagDto.UsageResponse | null> => {
+    try {
+      return await apiClient.getTagUsage(id);
+    } catch {
+      return null;
+    }
+  }, []);
+
+  /**
+   * 태그를 지운다. **붙어 있던 자리는 전부 뗀다.**
    *
    * 카테고리와 달리 거래에 쓰이고 있어도 막지 않는다. 태그를 떼어 내도 거래는 온전하고
-   * 카테고리 합계도 그대로다. 지난 거래에 붙어 있던 이름은 목록에 그대로 남는다.
+   * 카테고리 합계도 그대로다. 대신 이름만 남기지 않는다 -- 목록에서 고를 수 없는 태그가
+   * 지난 거래에 그대로 보이면 "지웠는데 아직 있다"가 된다.
+   *
+   * 떼는 일은 서버의 `deleteTag` 가 한다. 앱에서는 사본에서도 함께 떼어, 다음 동기화가
+   * 오기 전에도 그 거래에서 태그가 사라진다.
    */
   const remove = useCallback(
     async (id: string): Promise<TagResult> => {
@@ -128,6 +151,33 @@ export function useTagManager(projectId: string | null) {
       }
     },
     [messageOf, reload],
+  );
+
+  /**
+   * 태그를 없애면서 붙어 있던 자리를 다른 태그로 옮긴다.
+   *
+   * 분류의 통합과 같이 **서버로 곧바로 간다.** 거래 수백 줄의 태그가 한꺼번에 바뀌는
+   * 일이라 오프라인 명령 하나로 담을 수 없다. 끊겨 있으면 그 사실을 문장으로 돌려준다.
+   */
+  const merge = useCallback(
+    async (fromId: string, toId: string): Promise<TagResult> => {
+      try {
+        setIsSubmitting(true);
+        await apiClient.mergeTags(fromId, toId, projectId);
+        await reload();
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          message: isOfflineError(error)
+            ? say('tags.mergeOffline')
+            : messageOf(error, 'tags.mergeFailed'),
+        };
+      } finally {
+        setIsSubmitting(false);
+      }
+    },
+    [messageOf, projectId, reload, say],
   );
 
   /** 드래그로 바꾼 순서를 저장한다. 실패하면 목록을 다시 받아 원래 순서로 되돌린다. */
@@ -192,6 +242,8 @@ export function useTagManager(projectId: string | null) {
     reload,
     save,
     remove,
+    merge,
+    usageOf,
     reorder,
     moveTo,
     /** 한 칸 위로(-1) 또는 아래로(+1). */

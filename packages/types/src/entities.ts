@@ -394,7 +394,6 @@ export interface Category {
   type: CategoryType;
   icon: string | null;
   isDefault: boolean;      // 기본 카테고리 (삭제 불가)
-  isActive: boolean;
   /**
    * 목록에서의 자리 (분수 색인). 사전순 비교가 곧 목록 순서다.
    *
@@ -423,7 +422,6 @@ export interface Tag {
   name: string;
   /** 목록에서 알아보는 색 "#RRGGBB". 정하지 않았으면 null. */
   color: string | null;
-  isActive: boolean;
   /** 목록에서의 자리 (분수 색인). 사전순 비교가 곧 목록 순서다. */
   sortRank: string;
   createdAt: IsoDateString;

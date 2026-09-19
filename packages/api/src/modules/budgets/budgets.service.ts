@@ -429,7 +429,7 @@ export class BudgetsService {
     const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
 
     const [categories, budgets, overrides] = await Promise.all([
-      this.prisma.category.findMany({ where: { projectId, isActive: true } }),
+      this.prisma.category.findMany({ where: { projectId } }),
       this.prisma.budget.findMany({ where: { projectId }, include: { category: true } }),
       this.prisma.budgetOverride.findMany({
         where: { budget: { projectId }, year, month },

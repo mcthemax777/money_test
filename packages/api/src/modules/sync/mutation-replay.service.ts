@@ -807,20 +807,20 @@ export class MutationReplayService {
     if (Object.keys(merged.apply).length === 0) return this.allFieldsLost(mutation, merged.lost);
 
     /*
-     * 숨기기는 따로 부른다. 자산 셋과 같은 규칙이다 (D11).
+     * 지우기는 따로 부른다. 자산 셋과 같은 규칙이다 (D11).
      *
-     * 선행조건(이 분류를 쓰는 거래가 없을 것)이 그 함수 안에 있고, 그것을 건너뛰면
-     * 목록에 없는 분류를 쓰는 거래가 남아 분류별 합계에서만 보인다. 대분류를 숨길 때
-     * 소분류가 함께 내려가는 것도 그쪽 규칙이다.
+     * `isActive: false` 는 끊긴 기기가 "지워 달라"고 적어 보내는 표식이다 -- 설정 명령에
+     * 지우기 갈래가 따로 없어 이 칸을 쓴다. 선행조건(이 분류를 쓰는 거래가 없을 것)이 그
+     * 함수 안에 있고, 그것을 건너뛰면 `Posting.categoryId` 가 cascade 라 그 거래의 다리가
+     * 함께 사라진다. 대분류를 지울 때 소분류가 함께 가는 것도 그쪽 규칙이다.
+     *
+     * 되살리기(`isActive: true`)는 받지 않는다. 지운 행은 남아 있지 않다.
      */
     const { isActive, ...rest } = merged.apply as CategoryUpdatePayload;
     if (Object.keys(rest).length > 0) {
       await this.categories.updateCategory(payload.id, userId, rest as never, mutation.hlc);
     }
     if (isActive === false) await this.categories.deleteCategory(payload.id, userId, mutation.hlc);
-    if (isActive === true) {
-      await this.categories.updateCategory(payload.id, userId, { isActive: true }, mutation.hlc);
-    }
 
     return this.applied(mutation, projectId, payload.id);
   }
@@ -873,15 +873,17 @@ export class MutationReplayService {
     const merged = mergeFields(patch, mutation.hlc, readFieldClocks(tag.fieldHlc));
     if (Object.keys(merged.apply).length === 0) return this.allFieldsLost(mutation, merged.lost);
 
+    /*
+     * `isActive: false` 는 분류와 같이 "지워 달라"는 표식이다.
+     *
+     * 태그의 지우기에는 선행조건이 없다 -- 붙어 있던 자리를 전부 떼고 지운다. 떼어 내도
+     * 거래는 온전하고 분류별 합계도 그대로다. 되살리기는 받지 않는다.
+     */
     const { isActive, ...rest } = merged.apply as TagUpdatePayload;
     if (Object.keys(rest).length > 0) {
       await this.tags.updateTag(payload.id, userId, rest as never, mutation.hlc);
     }
-    // 태그의 숨기기는 선행조건이 없다. 떼어 내도 거래는 온전하다.
     if (isActive === false) await this.tags.deleteTag(payload.id, userId, mutation.hlc);
-    if (isActive === true) {
-      await this.tags.updateTag(payload.id, userId, { isActive: true }, mutation.hlc);
-    }
 
     return this.applied(mutation, projectId, payload.id);
   }

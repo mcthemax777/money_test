@@ -721,6 +721,31 @@ class ApiClient {
     await this.client.delete(`/tags/${id}`);
   }
 
+  /** 이 태그가 붙어 있는 자리의 수. 없애기 전에 무엇을 물을지 여기서 갈린다. */
+  async getTagUsage(id: string): Promise<TagDto.UsageResponse> {
+    const response = await this.client.get<TagDto.UsageResponse>(`/tags/${id}/usage`);
+    return response.data;
+  }
+
+  /**
+   * 태그를 없애면서 붙어 있던 자리를 다른 태그로 옮긴다.
+   *
+   * 분류의 통합과 같이 오프라인 창구를 타지 않는다. 거래 수백 줄의 태그가 한꺼번에
+   * 바뀌는 일이라 명령 하나로 담을 수 없다. 끊긴 동안에는 화면이 이유를 적는다.
+   */
+  async mergeTags(
+    fromId: string,
+    toId: string,
+    projectId?: string | null,
+  ): Promise<TagDto.MergeResponse> {
+    const response = await this.client.post<TagDto.MergeResponse>(
+      '/tags/merge',
+      { fromId, toId },
+      { params: projectId ? { projectId } : {} },
+    );
+    return response.data;
+  }
+
   /**
    * 여러 거래의 태그를 바꾼다. 더할 것과 뗄 것을 따로 보낸다.
    *

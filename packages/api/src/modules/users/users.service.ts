@@ -143,12 +143,9 @@ export class UsersService {
         }),
         this.prisma.category.findMany({
           // parentId가 null인 것이 대분류다 (level 컬럼은 없앴다)
-          where: { projectId: finalProjectId, isActive: true, parentId: null },
+          where: { projectId: finalProjectId, parentId: null },
           include: {
-            children: {
-              where: { isActive: true },
-              orderBy: { name: 'asc' },
-            },
+            children: { orderBy: { name: 'asc' } },
           },
           orderBy: { name: 'asc' },
         }),

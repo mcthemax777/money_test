@@ -96,7 +96,7 @@ export default function CategoryBreakdown({
    * 금액은 서버의 rollup 값을 그대로 쓴다.
    */
   const parentRows = categories
-    .filter((category) => !category.parentId && category.isActive && category.type === type)
+    .filter((category) => !category.parentId && category.type === type)
     .map((category) => {
       const row = rows.find((item) => item.categoryId === category.id);
       return {
@@ -135,7 +135,7 @@ export default function CategoryBreakdown({
           <View className="gap-1">
             {parentRows.map((row) => {
               const children = categories
-                .filter((category) => category.parentId === row.categoryId && category.isActive)
+                .filter((category) => category.parentId === row.categoryId)
                 .map((category) => ({
                   id: category.id,
                   name: category.name,

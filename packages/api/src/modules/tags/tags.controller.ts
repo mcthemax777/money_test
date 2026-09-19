@@ -53,6 +53,24 @@ export class TagsController {
     return this.tagsService.reorderTags(req.user.id, dto.ids, projectId);
   }
 
+  // ':id' 보다 먼저 선언해야 'merge'가 id로 잡히지 않는다 (reorder 와 같은 까닭).
+  @Post('merge')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: '태그 통합 (붙어 있던 자리를 옮기고 감춘다)' })
+  merge(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: TagDto.MergeRequest,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.tagsService.mergeTags(req.user.id, dto, projectId);
+  }
+
+  @Get(':id/usage')
+  @ApiOperation({ summary: '이 태그가 붙어 있는 자리의 수' })
+  usage(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
+    return this.tagsService.getTagUsage(id, req.user.id);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: '태그 상세' })
   getById(@Request() req: AuthenticatedRequest, @Param('id') id: string) {

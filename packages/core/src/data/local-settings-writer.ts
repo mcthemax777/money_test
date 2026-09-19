@@ -274,7 +274,6 @@ export function createLocalSettingsWriter({
           parentId: input.parentId ?? null,
           icon: input.icon ?? null,
           isDefault: false,
-          isActive: true,
         },
       );
       return { id };
@@ -312,6 +311,21 @@ export function createLocalSettingsWriter({
         }
       }
 
+      /*
+       * 지우기는 사본에서도 **지우기**다.
+       *
+       * `isActive: false` 는 표에 담는 값이 아니라 "지워 달라"는 명령의 이름이다
+       * (`CategoryDto.UpdateRequest`). 사본에 그 값을 적을 칸이 없으므로 명령만 쌓고,
+       * 행은 여기서 걷어낸다. 서버가 거절하면 다음 동기화가 도로 실어 온다.
+       */
+      if (patch.isActive === false) {
+        const { isActive: _removed, ...rest } = patch;
+        await commit('category.update', id, { ...patch }, { ...rest });
+        await store.removeCategory(id);
+        notifyMirrorChanged();
+        return;
+      }
+
       await commit('category.update', id, { ...patch }, { ...patch });
     },
 
@@ -321,12 +335,27 @@ export function createLocalSettingsWriter({
         'tag.create',
         id,
         { name: input.name, color: input.color ?? null },
-        { name: input.name, color: input.color ?? null, isActive: true },
+        { name: input.name, color: input.color ?? null },
       );
       return { id };
     },
 
     async updateTag(id: string, patch: TagPatch) {
+      /*
+       * 지우기는 사본에서도 **지우기**다. 분류와 같은 규칙이다.
+       *
+       * 붙어 있던 연결도 함께 걷어낸다 -- 서버의 `deleteTag` 가 하는 일이 그것이다.
+       * 명령 뒤에 하는 까닭은, 명령이 쌓이지 못하면(권한·저장소) 사본만 지워진 채로
+       * 남지 않게 하기 위해서다.
+       */
+      if (patch.isActive === false) {
+        const { isActive: _removed, ...rest } = patch;
+        await commit('tag.update', id, { ...patch }, { ...rest });
+        await store.removeTag(id);
+        notifyMirrorChanged();
+        return;
+      }
+
       await commit('tag.update', id, { ...patch }, { ...patch });
     },
 

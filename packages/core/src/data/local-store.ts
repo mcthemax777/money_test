@@ -610,7 +610,6 @@ export class LocalStore {
           type: String(row.type),
           icon: asText(row.icon),
           isDefault: asFlag(row.isDefault),
-          isActive: asFlag(row.isActive),
           sortRank: asText(row.sortRank) ?? FIRST_RANK,
           fieldHlc: asJson(row.fieldHlc),
           createdAt: asIso(row.createdAt),
@@ -625,7 +624,6 @@ export class LocalStore {
           projectId,
           name: asText(row.name) ?? '',
           color: asText(row.color),
-          isActive: asFlag(row.isActive),
           sortRank: asText(row.sortRank) ?? FIRST_RANK,
           fieldHlc: asJson(row.fieldHlc),
           createdAt: asIso(row.createdAt),
@@ -929,7 +927,7 @@ export class LocalStore {
 
   async categories(projectId: string): Promise<CategoryNode[]> {
     const rows = await this.db.all<Row>(
-      `SELECT id, type, parentId FROM category WHERE projectId = ? AND isActive = 1`,
+      `SELECT id, type, parentId FROM category WHERE projectId = ?`,
       [projectId],
     );
     return rows.map((row) => ({
@@ -1340,22 +1338,16 @@ export class LocalStore {
       type: String(row.type),
       icon: asText(row.icon),
       isDefault: Boolean(row.isDefault),
-      isActive: Boolean(row.isActive),
       createdAt: String(row.createdAt),
       updatedAt: String(row.updatedAt),
       sortRank: String(row.sortRank),
     }) as unknown as CategoryDto.Response);
   }
 
-  /**
-   * 태그 행. 감춘 것까지 담아 두지만 고르는 목록에는 살아 있는 것만 준다.
-   *
-   * 지난 거래에 붙은 태그의 이름은 `attachPostings` 가 표에서 직접 읽으므로, 여기서
-   * 감춘 것을 빼도 목록의 칩이 사라지지 않는다.
-   */
+  /** 태그 행. 감춰진 상태가 없어 있는 것이 곧 고를 수 있는 것이다. */
   async tagRows(projectId: string): Promise<TagDto.Response[]> {
     const rows = await this.db.all<Row>(
-      `SELECT * FROM tag WHERE projectId = ? AND isActive = 1 ORDER BY sortRank, name`,
+      `SELECT * FROM tag WHERE projectId = ? ORDER BY sortRank, name`,
       [projectId],
     );
     return rows.map((row) => ({
@@ -1363,7 +1355,6 @@ export class LocalStore {
       projectId,
       name: String(row.name),
       color: asText(row.color),
-      isActive: Boolean(row.isActive),
       sortRank: String(row.sortRank),
       createdAt: String(row.createdAt),
       updatedAt: String(row.updatedAt),
@@ -1646,9 +1637,8 @@ export class LocalStore {
    *   소분류  (가계부, 이름, 부모) 가 유일하다.
    *   대분류  (가계부, 유형, 이름) 이 유일하다 -- 지출 "기타"와 수입 "기타"는 함께 산다.
    *
-   * **숨긴 분류도 센다.** 서버의 인덱스가 `isActive` 를 보지 않아, 숨겨 둔 것과 같은
-   * 이름으로는 다시 만들 수 없다. 여기서 빼고 세면 사본에서는 만들어지고 서버가
-   * 거절해, 보류 칸으로 가는 명령이 된다.
+   * 감춘 분류를 가릴 일이 없다. 분류에는 감춰진 상태가 없고, 지운 분류는 행이 사라져
+   * 그 이름이 곧바로 풀린다.
    */
   async categoryNameTaken(
     projectId: string,
@@ -1770,9 +1760,8 @@ export class LocalStore {
     /*
      * 태그도 한 번에 읽어 붙인다.
      *
-     * 감춘 태그(isActive=0)도 함께 온다. 이미 붙어 있던 것을 목록에서 지우면 그 거래가
-     * 왜 그 통계에 들었는지 설명할 수 없다 -- 서버의 `ENTRY_INCLUDE` 와 같은 규칙이다.
-     * 이름을 아직 받지 못한 연결은 조인이 비어 빠진다.
+     * 이름을 아직 받지 못한 연결은 조인이 비어 빠진다. 지운 태그는 연결도 함께 사라져
+     * 여기에 오지 않는다.
      */
     const tagRows = await this.db.all<Row>(
       `SELECT et.entryId, et.lineKey, t.id, t.name, t.color
@@ -2397,6 +2386,40 @@ export class LocalStore {
        */
       await this.db.run(`DELETE FROM entry_tag WHERE tagId = ?`, [id]);
     }
+  }
+
+  /**
+   * 태그를 사본에서 지운다. 붙어 있던 연결도 함께 간다.
+   *
+   * 서버의 `deleteTag` 가 하는 일을 사본에서도 한다. 하지 않으면 다음 동기화가 올
+   * 때까지 지운 태그가 목록과 거래에 그대로 남는다 -- 오프라인에서 지우면 그 사이가
+   * 몇 시간이 되기도 한다.
+   *
+   * 서버가 거절하면(권한이 없다) 다음 동기화가 그 행을 도로 실어 온다. 지우기가
+   * 사본에서만 앞서 가는 것은 자산·분류와 같은 규칙이다.
+   */
+  async removeTag(tagId: string): Promise<void> {
+    await this.db.transaction(async () => {
+      await this.db.run(`DELETE FROM entry_tag WHERE tagId = ?`, [tagId]);
+      await this.db.run(`DELETE FROM entry_draft_tag WHERE tagId = ?`, [tagId]);
+      await this.db.run(`DELETE FROM tag WHERE id = ?`, [tagId]);
+    });
+  }
+
+  /**
+   * 분류를 사본에서 지운다. 소분류도 함께 간다(서버도 cascade 로 지운다).
+   *
+   * 예산은 서버가 함께 지우고, 그 자리표가 다음 동기화에 실려 온다. 여기서 미리
+   * 지우지 않는 까닭은 예산이 달마다 조정을 달고 있어(budget_override) 되돌릴 자리가
+   * 넓기 때문이다 -- 목록에서 분류가 사라지는 것만으로 화면은 충분히 설명된다.
+   */
+  async removeCategory(categoryId: string): Promise<void> {
+    await this.db.transaction(async () => {
+      await this.db.run(`DELETE FROM category WHERE id = ? OR parentId = ?`, [
+        categoryId,
+        categoryId,
+      ]);
+    });
   }
 
   /** 전표를 사본에서 지운다. 딸린 다리와 할부 계획도 함께 간다. */

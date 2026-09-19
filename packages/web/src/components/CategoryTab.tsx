@@ -154,7 +154,7 @@ export default function CategoryTab({
       flatRows.find((row) => row.categoryId === categoryId)?.count ?? 0;
 
     const children = categories
-      .filter((category) => category.parentId === parentId && category.isActive)
+      .filter((category) => category.parentId === parentId)
       .map((category) => ({
         categoryId: category.id,
         categoryName: category.name,
@@ -178,7 +178,7 @@ export default function CategoryTab({
    * 어긋날 여지가 생긴다.
    */
   const parentRows = categories
-    .filter((category) => !category.parentId && category.isActive && category.type === type)
+    .filter((category) => !category.parentId && category.type === type)
     .map((category) => {
       const row = rows.find((item) => item.categoryId === category.id);
       return {

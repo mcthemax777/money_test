@@ -194,6 +194,33 @@ const PROJECT = 'p-assets';
   eq('큐가 번호 순으로 남는다',
     pending.map((row) => row.clientSeq).join(','), '1,2,3,4,5,6,7,8,10,11');
 
+  /*
+   * 지우기는 사본에서도 지우기다.
+   *
+   * 분류·태그에는 감춰진 상태가 없다. `isActive: false` 는 표에 담는 값이 아니라
+   * "지워 달라"는 명령의 이름이라, 사본에서는 행을 걷어낸다. 남겨 두면 다음 동기화가
+   * 올 때까지 지운 것이 목록과 거래에 그대로 보인다 -- 오프라인에서 지우면 그 사이가
+   * 몇 시간이 되기도 한다.
+   */
+  const count = async (sql: string, id: string) =>
+    (await driver.all<{ n: number }>(sql, [id]))[0]?.n ?? 0;
+
+  await driver.run(`INSERT INTO entry_tag (entryId, lineKey, tagId) VALUES (?, NULL, ?)`, [
+    'e-tagged',
+    tagId,
+  ]);
+  eq('사본에 태그가 붙었다', await count(`SELECT count(*) AS n FROM entry_tag WHERE tagId = ?`, tagId), 1);
+
+  await writer.updateTag(tagId, { isActive: false });
+  eq('지우면 태그 행이 사라진다', await count(`SELECT count(*) AS n FROM tag WHERE id = ?`, tagId), 0);
+  eq('붙어 있던 자리도 함께 간다', await count(`SELECT count(*) AS n FROM entry_tag WHERE tagId = ?`, tagId), 0);
+  eq('명령은 그대로 쌓인다', queued[queued.length - 1].kind, 'tag.update');
+
+  /* 분류도 같다. 소분류는 부모와 함께 간다 (서버도 cascade 로 지운다). */
+  await writer.updateCategory(childId, { isActive: false });
+  eq('소분류가 사본에서 사라진다',
+    await count(`SELECT count(*) AS n FROM category WHERE id = ?`, childId), 0);
+
   driver.close();
   console.log(fail === 0 ? '\n전부 통과' : `\n실패 ${fail}건`);
   process.exit(fail === 0 ? 0 : 1);

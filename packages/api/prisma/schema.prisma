@@ -392,7 +392,6 @@ model Category {
   type      CategoryType
   icon      String?
   isDefault Boolean      @default(false) // "선택안함" 등 삭제 불가 항목
-  isActive  Boolean      @default(true)
   /// 화면 표시 순서 (분수 색인). 같은 부모 안에서만 의미가 있다.
   /// 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
   /// 비교는 바이트 순서다. 컬럼에 `COLLATE "C"` 를 박아 두었다 (20260907100000).
@@ -418,8 +417,11 @@ model Category {
   // 부분 유니크 인덱스가 막는다:
   //   CREATE UNIQUE INDEX "Category_project_root_type_name_key"
   //     ON "Category"("projectId", "type", "name") WHERE "parentId" IS NULL;
+  //
+  // 지운 이름은 아무것도 막지 않는다. 지우기가 행을 **정말 지우기** 때문이다 --
+  // 감춰 두는 자리가 없어졌다(20260919150000_no_hidden_rows).
   @@unique([projectId, name, parentId])
-  @@index([projectId, type, isActive])
+  @@index([projectId, type])
   @@index([projectId, updatedVersion])
   @@index([parentId])
   @@index([projectId, sortRank])
@@ -444,7 +446,6 @@ model Tag {
   name      String
   /// 목록에서 알아보는 색. 카드와 같은 규칙(#RRGGBB)이고, 정하지 않으면 null 이다.
   color     String?
-  isActive  Boolean @default(true)
   /// 화면 표시 순서 (분수 색인). 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
   /// 비교는 바이트 순서다. 컬럼에 `COLLATE "C"` 를 박아 두었다 (20260907100000).
   sortRank  String  @default("V")
@@ -465,7 +466,6 @@ model Tag {
   updatedAt DateTime @updatedAt
 
   @@unique([projectId, name])
-  @@index([projectId, isActive])
   @@index([projectId, updatedVersion])
   @@index([projectId, sortRank])
 }
@@ -874,9 +874,10 @@ model BudgetOverride {
 
 /// 지워진 행의 자리표.
 ///
-/// 소프트 삭제(isActive = false)는 그냥 변경으로 흐르므로 여기 오지 않는다. 행이
-/// 실제로 사라지는 곳(전표, 예산, 월 조정, 환율, 멤버)만 남긴다. 자리표가 없으면
-/// 오프라인 기기는 "사라진 것"을 알 방법이 없어 지운 거래가 그 기기에 계속 남는다.
+/// 소프트 삭제(isActive = false)는 그냥 변경으로 흐르므로 여기 오지 않는다 -- 구성원과
+/// 통장·카드가 그렇다. 행이 실제로 사라지는 곳(전표, 분류, 태그, 예산, 월 조정, 환율,
+/// 멤버)만 남긴다. 자리표가 없으면 오프라인 기기는 "사라진 것"을 알 방법이 없어 지운
+/// 것이 그 기기에 계속 남는다.
 ///
 /// 부모가 cascade 로 함께 지워지는 자식(월 조정)은 자리표를 남기지 않는다. 부모의
 /// 자리표를 받은 기기가 자기 쪽에서 함께 지우면 되고, 트리거가 부모를 다시 읽을 수도

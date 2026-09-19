@@ -425,7 +425,7 @@ export function useEntryForm({
   /** 그 갈래의 분류. 이체는 수수료 자리에만 쓰므로 지출 분류를 준다. */
   const categoryChoices = useMemo(() => {
     const type = values.kind === 'income' ? 'income' : 'expense';
-    return lists.categories.filter((category) => category.isActive && category.type === type);
+    return lists.categories.filter((category) => category.type === type);
   }, [lists.categories, values.kind]);
 
   /**

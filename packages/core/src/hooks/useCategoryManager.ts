@@ -228,7 +228,7 @@ export function useCategoryManager(projectId: string | null) {
   );
 
   /**
-   * 없앨 분류의 거래를 다른 분류로 옮기고 감춘다.
+   * 없앨 분류의 거래를 다른 분류로 옮기고 지운다.
    *
    * 없애기가 막힌 자리를 푸는 길이다(`remove` 의 `inUse`). 짝은 부르는 쪽이 정한다 --
    * 대분류를 없애면 소분류도 함께 사라지는데, 소분류마다 갈 곳이 다르다.

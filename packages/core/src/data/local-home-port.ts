@@ -121,15 +121,9 @@ export function createLocalHomePort(
 
     async getCategories(projectId) {
       note('categories');
-      /*
-       * 숨긴 분류는 뺀다. 서버의 `/categories` 와 같은 규칙이다.
-       *
-       * 사본에는 숨긴 것도 남아 있어야 한다 -- 지난 거래에 붙은 이름을 그 표에서 읽기
-       * 때문이다(`getBudgetForMonth` 가 그렇게 쓴다). 그래서 표가 아니라 이 자리에서
-       * 거른다. 거르지 않으면 오프라인에서만 지운 분류가 목록에 되살아난다.
-       */
-      const rows = await store.categoryRows(requireProject(projectId));
-      return rows.filter((row) => row.isActive);
+      // 사본에 있는 것이 곧 고를 수 있는 것이다. 감춰진 분류는 없고, 지운 분류는 행이
+      // 사라진다 (서버의 `/categories` 와 같은 규칙이다).
+      return store.categoryRows(requireProject(projectId));
     },
 
     async getTags(projectId) {
@@ -248,7 +242,6 @@ export function createLocalHomePort(
         result.push(rowOf(byType.get(type), undefined, type, totalUsage(usage, categories, type)));
       }
       for (const category of names) {
-        if (!category.isActive) continue;
         result.push(
           rowOf(
             byCategory.get(category.id),

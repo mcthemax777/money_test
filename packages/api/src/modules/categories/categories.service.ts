@@ -87,7 +87,6 @@ export class CategoriesService {
     return this.prisma.category.findMany({
       where: {
         projectId: finalProjectId,
-        isActive: true,
         ...(type ? { type: type as CategoryType } : {}),
       },
       // 대분류(parentId = null)를 먼저, 그다음 이름순
@@ -181,11 +180,12 @@ export class CategoriesService {
    * 성격이 달라 한 곳으로 몰 수 없다 -- 부르는 쪽이 짝을 지어 보낸다.
    *
    * 거래 다리(posting)만 옮기지 않는다. 보관함 후보와 반복 등록도 이 분류를 가리키고
-   * 있어, 그대로 두면 **감춘 분류로 거래를 만드는 규칙**이 남는다.
+   * 있어, 그대로 두면 **없는 분류로 거래를 만드는 규칙**이 남는다.
    *
    * 예산(Budget)은 건드리지 않는다. (프로젝트, 분류, 유형, 시작일)이 유일해야 해서
    * 옮기면 부딪히는 줄이 생기고, 그때 무엇을 버릴지는 서버가 정할 일이 아니다. 지금도
-   * 거래 없는 분류를 감추면 그 예산은 그대로 남아 있어, 새로 생기는 문제가 아니다.
+   * 그 분류의 예산은 함께 지운다 (`releaseCategories`). 분류가 없어진 뒤의 예산은 뜻이
+   * 없고, `Budget.categoryId` 가 SetNull 이라 그냥 두면 조용히 "전체 예산"이 된다.
    */
   async mergeCategories(userId: string, dto: CategoryDto.MergeRequest, projectId?: string) {
     const moves = dto.moves ?? [];
@@ -200,14 +200,14 @@ export class CategoriesService {
     );
 
     const fromIds = [...new Set(moves.map((move) => move.fromId))];
-    // 갈 곳이 없는 줄(감추기만 하는 줄)은 빼고 본다.
+    // 갈 곳이 없는 줄(옮기지 않고 지우기만 하는 줄)은 빼고 본다.
     const toIds = [...new Set(moves.map((move) => move.toId).filter((id): id is string => !!id))];
 
     /*
      * 없애는 것으로 옮길 수는 없다.
      *
      * 소분류 둘을 서로에게 보내면 어느 쪽을 먼저 처리하느냐에 따라 결과가 달라지고,
-     * 어느 차례로 하든 마지막에는 감춘 분류에 거래가 남는다.
+     * 어느 차례로 하든 마지막에는 사라진 분류에 거래가 남는다.
      */
     const removing = new Set(fromIds);
     if (toIds.some((id) => removing.has(id))) {
@@ -232,10 +232,10 @@ export class CategoriesService {
       }
 
       /*
-       * 갈 곳이 없는 줄은 감추기만 한다. 거래가 없을 때만이다.
+       * 갈 곳이 없는 줄은 옮기지 않고 지우기만 한다. 거래가 없을 때만이다.
        *
-       * 거래가 있는데 그냥 감추면 그 다리는 목록에 없는 분류를 가리킨 채 남아, 분류별
-       * 합계에서만 보이는 유령이 된다 -- `deleteCategory` 가 막는 바로 그 상태다.
+       * 거래가 있는데 그냥 지우면 `Posting.categoryId` 가 cascade 라 그 거래의 다리가
+       * 함께 사라진다 -- `deleteCategory` 가 막는 바로 그 자리다.
        */
       if (!move.toId) {
         const used = await this.prisma.posting.count({ where: { categoryId: move.fromId } });
@@ -254,11 +254,9 @@ export class CategoriesService {
       }
     }
 
-    const stamp = this.clock.now();
-
     /*
-     * 옮기기와 감추기를 한 트랜잭션에 넣고 원장 쓰기를 먼저 줄 세운다.
-     * 밖에서 하면 옮긴 뒤 감추기 전에 그 분류로 거래가 하나 들어올 수 있다
+     * 옮기기와 지우기를 한 트랜잭션에 넣고 원장 쓰기를 먼저 줄 세운다.
+     * 밖에서 하면 옮긴 뒤 지우기 전에 그 분류로 거래가 하나 들어올 수 있다
      * (`deleteCategory` 와 같은 까닭이다).
      */
     return this.prisma.$transaction(async (tx) => {
@@ -276,7 +274,7 @@ export class CategoriesService {
         });
         movedPostings += moved.count;
 
-        // 아직 거래가 아닌 것들도 함께 옮긴다. 감춘 분류를 가리킨 채 남으면 안 된다.
+        // 아직 거래가 아닌 것들도 함께 옮긴다. 사라진 분류를 가리킨 채 남으면 안 된다.
         await tx.entryDraft.updateMany({
           where: { categoryId: move.fromId },
           data: { categoryId: toId },
@@ -288,21 +286,16 @@ export class CategoriesService {
       }
 
       /*
-       * 한 줄씩 감춘다. `updateMany` 가 더 짧지만 시계를 찍을 수 없다 -- 필드별 시계는
-       * 그 행이 지금 들고 있는 값 위에 얹는 것이라 행마다 다르다 (`deleteCategory` 와 같다).
+       * 옮기고 나면 가리키는 거래가 없다. 그때 지운다.
+       *
+       * 소분류는 부모가 사라지면 cascade 로 함께 가지만, 여기서는 없앨 것을 줄마다
+       * 받았으므로(대분류와 그 소분류가 따로 온다) 받은 대로 지운다. 이미 사라진 줄은
+       * `deleteMany` 가 조용히 건너뛴다.
        */
-      for (const id of fromIds) {
-        const category = byId.get(id)!;
-        await tx.category.update({
-          where: { id },
-          data: {
-            isActive: false,
-            fieldHlc: stampFieldClocks(category.fieldHlc, ['isActive'], stamp),
-          },
-        });
-      }
+      await this.releaseCategories(tx, fromIds);
+      const removed = await tx.category.deleteMany({ where: { id: { in: fromIds } } });
 
-      return { movedPostings, removedCategories: fromIds.length };
+      return { movedPostings, removedCategories: removed.count };
     });
   }
 
@@ -321,7 +314,6 @@ export class CategoriesService {
       data.name = name;
     }
     if (dto.icon !== undefined) data.icon = dto.icon;
-    if (dto.isActive !== undefined) data.isActive = dto.isActive;
     // 순서 바꾸기는 이 필드 하나다 (분수 색인).
     if (dto.sortRank !== undefined) data.sortRank = dto.sortRank;
 
@@ -363,13 +355,17 @@ export class CategoriesService {
   }
 
   /**
-   * 분류 숨기기. 거래에 쓰이고 있으면 막는다.
+   * 분류를 지운다. **거래가 하나라도 있으면 막는다.**
    *
-   * `hlc` 는 기기의 오프라인 명령을 재생할 때만 온다. 나머지 넷(구성원·통장·카드·태그)과
-   * 같은 규칙이다 -- 숨기기도 하나의 편집이므로 시계를 남겨야, 그보다 앞선 편집이
-   * 나중에 도착해 되살리는 일이 없다.
+   * 감춰 두지 않고 행을 정말 지운다. 감추기는 "지울 수 없을 때의 차선"으로 두었던
+   * 자리인데, 지울 수 있는 분류는 애초에 가리키는 거래가 없는 분류뿐이라 지켜 줄 것이
+   * 없었다. 남은 것은 목록에 보이지 않는 줄이 이름을 붙들고 있는 일뿐이었다.
+   *
+   * `hlc` 는 기기의 오프라인 명령을 재생할 때만 온다. 지우기에는 쓸 자리가 없다 --
+   * 필드별 시계는 남는 행의 것이고, 이 행은 남지 않는다. 자리표(Tombstone)가 그 일을
+   * 대신한다.
    */
-  async deleteCategory(id: string, userId: string, hlc?: string) {
+  async deleteCategory(id: string, userId: string, _hlc?: string) {
     const category = await this.getCategoryById(id, userId, 'editor');
 
     if (category.isDefault) {
@@ -377,52 +373,58 @@ export class CategoriesService {
     }
 
     const isMain = category.parentId === null;
-    const stamp = hlc ?? this.clock.now();
 
     /*
-     * 확인과 숨기기를 한 트랜잭션에 넣고, 먼저 원장 쓰기를 줄 세운다 (`lockLedgerWrites`).
+     * 확인과 지우기를 한 트랜잭션에 넣고, 먼저 원장 쓰기를 줄 세운다 (`lockLedgerWrites`).
      *
-     * 밖에서 세면 "쓰이지 않는다"를 읽은 뒤 숨기기 전에 그 분류로 거래가 하나 들어올 수
-     * 있다. 그러면 목록에 없는 분류를 쓰는 거래가 남아, 분류별 합계에서만 보인다.
+     * 밖에서 세면 "쓰이지 않는다"를 읽은 뒤 지우기 전에 그 분류로 거래가 하나 들어올 수
+     * 있다. 그때 `Posting.categoryId` 가 cascade 라 그 거래의 다리가 함께 사라진다 --
+     * 감추기 시절에는 합계가 어긋나는 데서 그쳤지만, 이제는 장부가 깨진다.
      */
     return this.prisma.$transaction(async (tx) => {
       await lockLedgerWrites(tx, category.projectId);
 
-      // 대분류를 지우면 소분류도 함께 지워지므로, 사용 여부는 자신과 자식을 함께 본다.
-      const children = isMain
-        ? await tx.category.findMany({ where: { parentId: id } })
-        : [];
+      // 대분류를 지우면 소분류도 함께 지워지므로(cascade), 사용 여부도 함께 본다.
+      const children = isMain ? await tx.category.findMany({ where: { parentId: id } }) : [];
       const affectedIds = [id, ...children.map((child) => child.id)];
 
-      const usedCount = await tx.posting.count({
-        where: { categoryId: { in: affectedIds } },
-      });
+      const usedCount = await tx.posting.count({ where: { categoryId: { in: affectedIds } } });
       if (usedCount > 0) {
         throw badRequest('CATEGORY_IN_USE', '이 카테고리가 거래에 사용되어 삭제할 수 없습니다.');
       }
 
-      /*
-       * 소분류도 한 줄씩 고친다. `updateMany` 가 더 짧지만 시계를 찍을 수 없다 --
-       * 필드별 시계는 그 행이 지금 들고 있는 값 위에 얹는 것이라 행마다 다르다.
-       * 찍지 않으면 그보다 앞선 오프라인 편집이 나중에 도착해 소분류만 되살린다.
-       */
-      for (const child of children) {
-        await tx.category.update({
-          where: { id: child.id },
-          data: {
-            isActive: false,
-            fieldHlc: stampFieldClocks(child.fieldHlc, ['isActive'], stamp),
-          },
-        });
-      }
+      await this.releaseCategories(tx, affectedIds);
 
-      return tx.category.update({
-        where: { id },
-        data: {
-          isActive: false,
-          fieldHlc: stampFieldClocks(category.fieldHlc, ['isActive'], stamp),
-        },
-      });
+      /*
+       * 소분류는 따로 지우지 않는다. `Category.parentId` 가 cascade 라 부모가 사라지면
+       * 함께 간다. 자리표도 트리거가 줄마다 남긴다.
+       */
+      return tx.category.delete({ where: { id } });
+    });
+  }
+
+  /**
+   * 지워질 분류를 가리키던 것들을 놓아 준다.
+   *
+   * 셋을 본다.
+   *
+   *   - **예산.** `Budget.categoryId` 는 SetNull 이라, 그냥 지우면 그 예산이 조용히
+   *     "전체 예산"으로 둔갑한다. 같은 (프로젝트, 분류, 유형, 시작일) 이 유일해야 해서
+   *     둘이 부딪히기도 한다. 그 분류의 예산은 함께 지운다 -- 분류가 없어진 뒤의 예산은
+   *     뜻이 없다.
+   *   - **보관함 후보**와 **반복 등록.** 이 둘의 `categoryId` 에는 외래 키가 없어
+   *     (짐작한 값이라 느슨하게 둔다) 지워도 아무 일이 일어나지 않고, 없는 분류를
+   *     가리키는 값만 남는다. 비워 두면 화면이 "분류 없음"으로 읽고 사람이 고른다.
+   */
+  private async releaseCategories(tx: Prisma.TransactionClient, ids: string[]): Promise<void> {
+    await tx.budget.deleteMany({ where: { categoryId: { in: ids } } });
+    await tx.entryDraft.updateMany({
+      where: { categoryId: { in: ids } },
+      data: { categoryId: null },
+    });
+    await tx.recurringRule.updateMany({
+      where: { categoryId: { in: ids } },
+      data: { categoryId: null },
     });
   }
 

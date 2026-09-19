@@ -889,7 +889,17 @@ export namespace CategoryDto {
   export interface UpdateRequest {
     name?: string;
     icon?: string;
-    isActive?: boolean;
+    /**
+     * **오직 `false` 만, 그리고 "지워 달라"는 뜻으로만 쓴다.**
+     *
+     * 분류와 태그에는 감춰진 상태가 없다 -- 지우기는 행을 정말 지운다. 그런데 기기가
+     * 끊긴 동안 쌓는 명령(`category.update`·`tag.update`)에는 지우기 갈래가 따로 없어,
+     * 이 칸이 그 표식 노릇을 한다. 서버는 이 값을 보면 `deleteCategory`/`deleteTag` 를
+     * 부르고, 그 앞의 조건(거래가 없을 것, 붙은 자리를 뗄 것)을 그대로 지킨다.
+     *
+     * 표에는 이런 칸이 없다. 값을 저장하는 자리가 아니라 명령의 이름이다.
+     */
+    isActive?: false;
     /** 목록에서의 자리 (분수 색인). 순서 바꾸기는 이 값 하나로 한다. */
     sortRank?: string;
   }
@@ -1139,12 +1149,63 @@ export namespace TagDto {
     name?: string;
     /** null 을 주면 색을 지운다. 생략은 "건드리지 않는다"이고 둘은 다르다. */
     color?: string | null;
-    isActive?: boolean;
+    /**
+     * **오직 `false` 만, 그리고 "지워 달라"는 뜻으로만 쓴다.**
+     *
+     * 분류와 태그에는 감춰진 상태가 없다 -- 지우기는 행을 정말 지운다. 그런데 기기가
+     * 끊긴 동안 쌓는 명령(`category.update`·`tag.update`)에는 지우기 갈래가 따로 없어,
+     * 이 칸이 그 표식 노릇을 한다. 서버는 이 값을 보면 `deleteCategory`/`deleteTag` 를
+     * 부르고, 그 앞의 조건(거래가 없을 것, 붙은 자리를 뗄 것)을 그대로 지킨다.
+     *
+     * 표에는 이런 칸이 없다. 값을 저장하는 자리가 아니라 명령의 이름이다.
+     */
+    isActive?: false;
     /** 목록에서의 자리 (분수 색인). 순서 바꾸기는 이 값 하나로 한다. */
     sortRank?: string;
   }
 
   export interface Response extends Tag {}
+
+  /**
+   * 이 태그가 붙어 있는 자리의 수.
+   *
+   * 없애기 전에 묻는 데 쓴다. 붙은 데가 없으면 지금까지처럼 한 번 물어보고 감추고,
+   * 있으면 "어떻게 할까요"를 내준다 -- 다른 태그로 옮길지, 거래내역을 열어 손으로
+   * 손볼지, 전부 떼고 없앨지.
+   *
+   * 거래는 **줄 단위**로 센다. 한 거래를 둘로 나눠 두 줄에 같은 태그를 붙였으면 2 다.
+   * 사람이 보는 수와 어긋나지만, 뗄 연결의 수가 그만큼이고 옮기기도 그 단위다.
+   */
+  export interface UsageResponse {
+    /** 거래 줄 */
+    entries: number;
+    /** 보관함 후보 */
+    drafts: number;
+    /** 반복 등록 */
+    rules: number;
+  }
+
+  /**
+   * 태그를 없애면서 붙어 있던 자리를 다른 태그로 옮긴다.
+   *
+   * 분류의 통합(`CategoryDto.MergeRequest`)과 달리 줄이 하나다. 태그는 계층이 없어
+   * "함께 사라지는 것"이 없고, 없앨 것도 옮길 곳도 늘 하나씩이다.
+   */
+  export interface MergeRequest {
+    projectId?: string;
+    /** 없앨 태그. 붙어 있던 자리가 `toId` 로 옮겨진 뒤 감춰진다. */
+    fromId: string;
+    /** 옮겨 받을 태그. 없앨 태그 자신일 수 없고, 감춘 태그일 수 없다. */
+    toId: string;
+  }
+
+  /** 옮기기의 결과. 어디로 몇 줄이 갔는지 알려 준다. */
+  export interface MergeResponse {
+    /** 옮긴 거래 줄. 옮길 곳에 이미 그 태그가 있던 줄은 세지 않는다. */
+    movedEntries: number;
+    movedDrafts: number;
+    movedRules: number;
+  }
 }
 
 // ===== Reports =====
