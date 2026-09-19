@@ -72,10 +72,18 @@ export const MATCH_NOTHING: Prisma.JournalEntryWhereInput = { id: { in: [] } };
  * 기준으로 목록을 만들기 때문에, 목록·합계·차트도 같은 기준이어야 어긋나지 않는다.
  *
  * 어느 계좌를 보는지는 entry-view의 표시 규칙과 같다.
- *   - 돈이 나간 쪽(음수 다리)을 본다. 이체는 보내는 계좌가 기준이 된다.
+ *   - 돈이 나간 쪽(0 이하인 다리)을 본다. 이체는 보내는 계좌가 기준이 된다.
  *   - 나간 쪽이 없으면(수입, 잔액 증가 조정) 들어온 쪽을 본다.
  * 자본 계정은 주인이 없으므로 "나간 쪽"을 찾을 때 제외한다. 그러지 않으면
  * 기초잔액·조정 전표가 주인 없는 다리에 걸려 아무에게도 속하지 않게 된다.
+ *
+ * **나간 쪽에 0 을 넣는다.** 전액을 깎은 결제는 그 통장에서 빠져나간 돈이 0 이라,
+ * 음수만 보면 나간 쪽이 없는 전표가 된다. 그러면 들어온 쪽을 찾는 둘째 가지로 내려가는데
+ * 들어온 쪽도 없어서 **아무에게도 속하지 않는 거래**가 되고, 사람을 고른 목록에서 통째로
+ * 사라진다. 거래 화면은 늘 사람으로 좁혀 보므로 그 거래는 어디에서도 보이지 않는다.
+ *
+ * 둘째 가지의 문지기도 같은 기준이어야 한다. 한쪽만 0 을 받으면 0원 다리를 가진 전표가
+ * 두 가지에 함께 걸려, 나간 쪽 주인과 들어온 쪽 주인 양쪽 목록에 나온다.
  */
 export function assetOwnerCondition(
   filter: ParsedEntryFilter,
@@ -85,10 +93,10 @@ export function assetOwnerCondition(
 
   return {
     OR: [
-      { postings: { some: { amount: { lt: 0 }, account: { ownerId: { in: ids } } } } },
+      { postings: { some: { amount: { lte: 0 }, account: { ownerId: { in: ids } } } } },
       {
         AND: [
-          { postings: { none: { amount: { lt: 0 }, account: { ownerId: { not: null } } } } },
+          { postings: { none: { amount: { lte: 0 }, account: { ownerId: { not: null } } } } },
           { postings: { some: { amount: { gt: 0 }, account: { ownerId: { in: ids } } } } },
         ],
       },
@@ -147,12 +155,15 @@ export function entrySearchConditions(search: ParsedEntrySearch): Prisma.Posting
      *
      * 나간 쪽에서 카드가 붙은 다리는 여전히 뺀다. 체크카드 결제가 연결 통장 다리에도
      * 걸려 카드와 통장에 두 번 세어지기 때문이다 (그 거래는 카드로 걸러 볼 수 있다).
-     * 0원짜리 다리도 뺀다 -- 어느 쪽으로도 오간 것이 없다.
+     *
+     * **0원짜리 다리도 함께 본다.** 예전에는 "어느 쪽으로도 오간 것이 없다"며 뺐는데,
+     * 그 탓에 **전액을 깎은 결제가 통째로 사라졌다** -- 포인트로 전액을 낸 거래는 정가가
+     * 그대로 적혀 있고 그 통장으로 결제한 것도 맞는데, 빠져나간 돈만 0이다. 그 통장의
+     * 내역을 보러 온 사람에게 "그날 그 결제가 없었다"로 보인다.
      */
     methods.push({
       accountId: { in: search.paymentAccountIds },
       cardId: null,
-      NOT: { amount: 0 },
     });
   }
   if (search.paymentCardIds && search.paymentCardIds.length > 0) {

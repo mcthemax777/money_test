@@ -216,6 +216,42 @@ runSmoke('filters', async (ctx) => {
   ctx.check('수단 필터: 합계는 그 통장에서 나간 지출만 센다',
     (await reports.getSummary(uid, { ...month, paymentAccountIds: wifeBank.id })).expense, '15000');
 
+  /*
+   * 전액을 깎은 결제도 그 통장에 든다.
+   *
+   * 포인트로 전액을 낸 거래는 정가가 그대로 적혀 있고 그 통장으로 결제한 것도 맞는데,
+   * 빠져나간 돈만 0 이다. 예전에는 "어느 쪽으로도 오간 것이 없다"며 0원 다리를 빼서
+   * **그 결제가 목록에서 통째로 사라졌다.** 그 통장의 내역을 보러 온 사람에게는 그날
+   * 그 결제가 없었던 일이 된다.
+   */
+  const bankExpense = async () =>
+    (await reports.getSummary(uid, { ...month, paymentAccountIds: bank.id })).expense;
+  const beforeZero = await bankExpense();
+
+  await entries.createEntry(uid, { kind: 'expense', personId: chulsoo.id, date: aug(21),
+    description: '전액 포인트 결제', amount: '9000', discountAmount: '9000',
+    categoryId: dining.id, accountId: bank.id }, pid);
+
+  ctx.check('수단 필터: 전액을 깎아 0원이 된 결제도 든다',
+    (await methodList(bank.id)).includes('전액 포인트 결제'), true);
+  ctx.check('수단 필터: 0원이라 합계는 그대로다', await bankExpense(), beforeZero);
+
+  /*
+   * 자산 주인으로 좁힌 목록에도 든다.
+   *
+   * 주인 판정은 "돈이 나간 다리의 주인"인데, 전액을 깎으면 그 다리가 0 이다. 0 을
+   * 나간 쪽으로 보지 않으면 나간 쪽도 들어온 쪽도 없는 전표가 되어 **아무에게도 속하지
+   * 않는다.** 거래 화면은 늘 사람으로 좁혀 보므로 그 거래가 어디에서도 보이지 않는다.
+   */
+  const ownerList = async (personId: string) =>
+    (await entries.getEntries(uid, {
+      personIds: personId, startDate: aug(1), endDate: aug(28),
+    }, pid)).data.map((e) => e.description);
+  ctx.check('자산주인 필터: 전액을 깎아 0원이 된 결제도 든다',
+    (await ownerList(chulsoo.id)).includes('전액 포인트 결제'), true);
+  ctx.check('자산주인 필터: 남의 목록에는 들지 않는다',
+    (await ownerList(younghee.id)).includes('전액 포인트 결제'), false);
+
   // ── 기초잔액 전표는 그 계좌 주인의 것 (자본 계정 다리에 걸려 사라지면 안 된다) ──
   //
   // 기초잔액은 사용자가 고른 기준일이 아니라 원장 맨 앞(1899-01-01)에 놓인다.

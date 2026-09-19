@@ -3552,20 +3552,20 @@ function searchFilter(search?: ParsedEntrySearch): { sql: string; params: string
   const accountIds = search.paymentAccountIds ?? [];
   const cardIds = search.paymentCardIds ?? [];
   if (accountIds.length > 0 || cardIds.length > 0) {
-    const negative = `substr(mp.amount, 1, 1) = '-'`;
-    // 들어온 쪽. 0 은 어느 쪽도 아니라 뺀다 (유형 조건의 `positive` 와 같은 규칙이다).
-    const positive = `substr(mp.amount, 1, 1) != '-' AND mp.amount != '0'`;
     const branches: string[] = [];
 
     if (accountIds.length > 0) {
       /*
-       * 이 통장의 관점이다. **이 통장에서 오간 돈 전부**를 본다 -- 나간 것도, 들어온 것도.
-       * 이체로 들어온 돈도 든다. 서버의 `entrySearchConditions` 와 같은 규칙이라
-       * 온라인·오프라인이 같은 목록을 낸다 (그 자리에 왜 이렇게 두었는지가 적혀 있다).
+       * 이 통장의 관점이다. **이 통장에서 오간 돈 전부**를 본다 -- 나간 것도, 들어온 것도,
+       * 0원짜리도. 이체로 들어온 돈도 들고, 전액을 깎아 빠져나간 돈이 0인 결제도 든다
+       * (0을 빼면 그 결제가 통째로 사라진다). 서버의 `entrySearchConditions` 와 같은
+       * 규칙이라 온라인·오프라인이 같은 목록을 낸다 (그 자리에 까닭이 적혀 있다).
+       *
+       * 그래서 금액은 아예 보지 않는다. 카드가 붙은 다리만 뺀다 -- 체크카드 결제가
+       * 연결 통장 다리에도 걸려 카드와 통장에 두 번 세어지기 때문이다.
        */
       branches.push(
-        `(mp.accountId IN (${accountIds.map(() => '?').join(', ')}) AND mp.cardId IS NULL
-            AND (${negative} OR ${positive}))`,
+        `(mp.accountId IN (${accountIds.map(() => '?').join(', ')}) AND mp.cardId IS NULL)`,
       );
       params.push(...accountIds);
     }
@@ -3647,19 +3647,29 @@ function ownerFilter(ownerIds?: string[]): { sql: string; params: string[] } {
   if (!ownerIds || ownerIds.length === 0) return { sql: '', params: [] };
 
   const list = ownerIds.map(() => '?').join(', ');
-  const negative = `substr(op.amount, 1, 1) = '-'`;
+  /*
+   * 돈이 나간 쪽. **0 도 여기 든다.**
+   *
+   * 전액을 깎은 결제는 그 통장에서 빠져나간 돈이 0 이다. 음수만 보면 나간 쪽이 없는
+   * 전표가 되고, 들어온 쪽도 없어 아무에게도 속하지 않는다 -- 사람을 고른 목록에서
+   * 통째로 사라진다. 서버의 `assetOwnerCondition` 과 같은 판단이다.
+   *
+   * 그래서 들어온 쪽은 0 을 뺀다. 양쪽이 0 을 받으면 같은 전표가 두 가지에 함께 걸려
+   * 나간 쪽 주인과 들어온 쪽 주인 양쪽 목록에 나온다.
+   */
+  const outgoing = `(substr(op.amount, 1, 1) = '-' OR op.amount = '0')`;
   const positive = `substr(op.amount, 1, 1) != '-' AND op.amount != '0'`;
 
   const sql = `
         AND (
           EXISTS (
             SELECT 1 FROM posting op JOIN account oa ON oa.id = op.accountId
-             WHERE op.entryId = e.id AND ${negative} AND oa.ownerId IN (${list})
+             WHERE op.entryId = e.id AND ${outgoing} AND oa.ownerId IN (${list})
           )
           OR (
             NOT EXISTS (
               SELECT 1 FROM posting op JOIN account oa ON oa.id = op.accountId
-               WHERE op.entryId = e.id AND ${negative} AND oa.ownerId IS NOT NULL
+               WHERE op.entryId = e.id AND ${outgoing} AND oa.ownerId IS NOT NULL
             )
             AND EXISTS (
               SELECT 1 FROM posting op JOIN account oa ON oa.id = op.accountId

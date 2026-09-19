@@ -395,19 +395,25 @@ export class EntriesService {
     if (query.accountId) postingFilters.push({ accountId: query.accountId });
     if (query.cardId) postingFilters.push({ cardId: query.cardId });
 
-    // 결제수단 관점: 이 수단으로 실제 돈이 나간 전표.
-    // 체크카드 결제는 연결 통장에도 걸리므로 카드가 붙은 건을 빼고,
-    // 이체 받는 계좌(+)가 걸리지 않도록 음수 다리만 본다.
-    // reports.trendByPaymentMethod 와 같은 규칙이다.
+    /*
+     * 결제수단 관점: 이 수단으로 돈이 나간 전표.
+     *
+     * 체크카드 결제는 연결 통장에도 걸리므로 카드가 붙은 건을 빼고, 이체 받는 계좌(+)가
+     * 걸리지 않도록 나간 쪽만 본다. reports.trendByPaymentMethod 와 같은 규칙이다.
+     *
+     * **0 을 함께 본다(`lte`).** 전액을 깎은 결제는 빠져나간 돈이 0 이라 `lt` 로는
+     * 걸리지 않는다 -- 그 수단으로 낸 것이 맞는데 목록에서 사라진다. 받는 쪽은 여전히
+     * 양수라 그대로 빠진다 (`entrySearchConditions` 의 통장 가지와 같은 판단이다).
+     */
     if (query.paymentAccountId) {
       postingFilters.push({
         accountId: query.paymentAccountId,
         cardId: null,
-        amount: { lt: 0 },
+        amount: { lte: 0 },
       });
     }
     if (query.paymentCardId) {
-      postingFilters.push({ cardId: query.paymentCardId, amount: { lt: 0 } });
+      postingFilters.push({ cardId: query.paymentCardId, amount: { lte: 0 } });
     }
 
     // 대분류를 지정하면 소분류 거래까지 포함한다. reports.trendByCategory 와 같은 규칙이다.
