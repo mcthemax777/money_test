@@ -5,6 +5,7 @@ export * from './currency';
 export * from './decimal';
 export * from './id';
 export * from './ledger-rules';
+export * from './entry-period';
 export * from './report-aggregation';
 export * from './entry-view';
 export * from './entry-rows';

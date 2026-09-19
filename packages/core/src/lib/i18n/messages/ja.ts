@@ -200,6 +200,7 @@ export const ja: Record<MessageKey, string> = {
   'currencyUnit.JPY': '円',
   'money.amountWithUnit': '{value}{unit}',
   'money.rate': 'レート{rate}',
+  'date.weekOfMonth': '{month} 第{week}週',
 
   // ===== 取引一覧 =====
   'feed.loadFailed': '取引を読み込めませんでした。',
@@ -428,15 +429,15 @@ export const ja: Record<MessageKey, string> = {
   'settlement.billedByStatement': '締め日基準の請求額',
   'settlement.billedByMonth': '月ごとの請求額',
   'settlement.billedHint': '実績から外した決済も含めて数えます。支払う代金につながる値です。',
+  'settlement.performanceLedgerHint': '実績に入る取引だけが表示されます。',
+  'settlement.periodPicked': '{range} のみ表示中です。もう一度押すと全体に戻ります。',
+  'settlement.periodPickHint': '行を押すとその周期の内訳だけを見ます。',
   'settlement.tabBilled': '請求代金',
   'settlement.tabPerformance': '実績',
-  'settlement.performanceLedgerHint': '実績に入る取引だけが表示されます。',
   'settlement.closed': '締め済み',
   'settlement.ongoing': '進行中',
   'settlement.upcoming': '予定',
   'settlement.targetLine': '実績 {amount}',
-  'settlement.periodPicked': '{range} のみ表示中です。もう一度押すと全体に戻ります。',
-  'settlement.periodPickHint': '行を押すとその周期の内訳だけを見ます。',
   'settlement.modalTitle': 'カード代金の記録',
   'settlement.submitting': '処理中...',
   'settlement.submit': '記録する',
@@ -1045,6 +1046,10 @@ export const ja: Record<MessageKey, string> = {
 
 
   'tx.more': 'その他',
+  'tx.unit': 'まとめ方',
+  'tx.unit.year': '年',
+  'tx.unit.month': '月',
+  'tx.unit.week': '週',
   'tx.select': '削除する取引を選ぶ',
   'tx.tagSelect': 'タグを整理',
   'tx.tagSelected': '選んだ取引のタグ',

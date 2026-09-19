@@ -228,6 +228,7 @@ export const ko = {
   /** 금액과 통화 이름 사이. 한국어·일본어는 붙여 쓰고 영어는 띄어 쓴다. */
   'money.amountWithUnit': '{value}{unit}',
   'money.rate': '환율 {rate}',
+  'date.weekOfMonth': '{month} {week}주차',
 
   // ===== 거래 목록 =====
   'feed.loadFailed': '거래를 불러오지 못했습니다.',
@@ -455,15 +456,15 @@ export const ko = {
   'settlement.billedByStatement': '마감일 기준 청구액',
   'settlement.billedByMonth': '달별 청구액',
   'settlement.billedHint': '실적에서 뺀 결제까지 전부 셉니다. 갚을 대금과 이어지는 값입니다.',
+  'settlement.performanceLedgerHint': '실적에 드는 거래만 보입니다.',
+  'settlement.periodPicked': '{range} 만 보는 중입니다. 한 번 더 누르면 전체로 돌아갑니다.',
+  'settlement.periodPickHint': '줄을 누르면 그 주기의 내역만 봅니다.',
   'settlement.tabBilled': '결제대금',
   'settlement.tabPerformance': '실적',
-  'settlement.performanceLedgerHint': '실적에 드는 거래만 보입니다.',
   'settlement.closed': '마감',
   'settlement.ongoing': '진행',
   'settlement.upcoming': '예정',
   'settlement.targetLine': '실적 {amount}',
-  'settlement.periodPicked': '{range} 만 보는 중입니다. 한 번 더 누르면 전체로 돌아갑니다.',
-  'settlement.periodPickHint': '줄을 누르면 그 주기의 내역만 봅니다.',
   'settlement.modalTitle': '카드 대금 기록',
   'settlement.submitting': '처리 중...',
   'settlement.submit': '기록하기',
@@ -1084,6 +1085,10 @@ export const ko = {
 
 
   'tx.more': '더보기',
+  'tx.unit': '묶는 단위',
+  'tx.unit.year': '년',
+  'tx.unit.month': '월',
+  'tx.unit.week': '주',
   'tx.select': '삭제할 거래 고르기',
   'tx.tagSelect': '태그 손보기',
   'tx.tagSelected': '고른 거래의 태그',

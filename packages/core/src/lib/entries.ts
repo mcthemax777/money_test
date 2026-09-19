@@ -29,10 +29,28 @@ export function groupEntriesByDate<T extends { date: string | Date }>(
   entries: T[],
   timeZone: string,
 ): Map<string, T[]> {
+  return groupEntriesByBucket(entries, timeZone, 'day');
+}
+
+/**
+ * 거래를 날 또는 달로 묶는다. 위 함수의 넓은 짝이다.
+ *
+ * 거래 화면의 날짜별 탭이 쓴다. 바깥 묶음이 **해**일 때는 안쪽을 날로 끊으면 줄이
+ * 삼백예순 개가 되므로 달로 끊는다 -- 해 > 달 > 거래다. 달과 주는 지금처럼 날이다.
+ *
+ * 거래마다 한 번만 타임존 변환을 하는 것은 같다 (위 머리말).
+ */
+export function groupEntriesByBucket<T extends { date: string | Date }>(
+  entries: T[],
+  timeZone: string,
+  bucket: 'day' | 'month',
+): Map<string, T[]> {
   const grouped = new Map<string, T[]>();
 
   for (const entry of entries) {
-    const key = dateKeyOf(entry.date, timeZone);
+    const dateKey = dateKeyOf(entry.date, timeZone);
+    // 달 열쇠는 날 열쇠의 앞자리다. 변환을 두 번 하지 않는다.
+    const key = bucket === 'month' ? dateKey.slice(0, 7) : dateKey;
     const list = grouped.get(key);
     if (list) list.push(entry);
     else grouped.set(key, [entry]);

@@ -29,10 +29,18 @@ export default function SegmentedTabs<T extends string>({
   tabs,
   selected,
   onSelect,
+  selectedTrailing,
 }: {
   tabs: ReadonlyArray<SegmentedTab<T>>;
   selected: T;
   onSelect: (id: T) => void;
+  /**
+   * 고른 탭의 글자 뒤에 붙는 것. 없으면 아무것도 그리지 않는다.
+   *
+   * 거래 화면이 꺾쇠를 붙여 "한 번 더 누르면 펴진다"를 말한다. 다른 화면의 탭은 누름이
+   * 한 가지 뜻뿐이라 붙일 것이 없다 -- 그래서 이 판이 아니라 부르는 쪽이 정한다.
+   */
+  selectedTrailing?: React.ReactNode;
 }) {
   /*
    * 탭 막대의 폭. 흰 알약이 어디로 미끄러질지 이 값으로 센다.
@@ -58,7 +66,7 @@ export default function SegmentedTabs<T extends string>({
           key={tab.id}
           onPress={() => onSelect(tab.id)}
           /* 바탕은 위의 알약이 맡는다. 여기서 켜면 알약이 도착하기 전에 두 칸이 희다. */
-          className="flex-1 items-center rounded-md px-4 py-2"
+          className="flex-1 flex-row items-center justify-center gap-1 rounded-md px-4 py-2"
         >
           <Text
             className={`font-medium ${
@@ -67,6 +75,7 @@ export default function SegmentedTabs<T extends string>({
           >
             {tab.label}
           </Text>
+          {tab.id === selected ? selectedTrailing : null}
         </Pressable>
       ))}
     </View>

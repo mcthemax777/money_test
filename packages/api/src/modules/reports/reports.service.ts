@@ -30,6 +30,8 @@ import {
   currencyDecimals,
   dailyTotals,
   entryMonths,
+  isEntryPeriodUnit,
+  DEFAULT_ENTRY_PERIOD,
   monthlyTotals,
   parseEntrySearch,
   netWorth,
@@ -619,9 +621,16 @@ export class ReportsService {
     ]);
 
     const show = await this.displayConverter(projectId);
+    /*
+     * 묶는 단위는 요청이 정한다. 옛 기기는 이 칸을 보내지 않고, 그때는 달이다.
+     * 모르는 값이 오면 조용히 달로 읽는다 -- 목록이 비는 것보다 낫다.
+     */
+    const unit = isEntryPeriodUnit(query.unit) ? query.unit : DEFAULT_ENTRY_PERIOD;
+
     return entryMonths(this.toAggregateRows(rows, lineMatcherOf(search)), {
       timeZone,
       entryDates: dates.map((row) => row.date),
+      unit,
     }).map(
       (month) => ({
         yearMonth: month.yearMonth,

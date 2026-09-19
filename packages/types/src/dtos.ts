@@ -18,6 +18,7 @@ import type {
   CardTransferDirection,
   Posting,
 } from './entities';
+import type { EntryPeriodUnit } from './entry-period';
 import type { EntrySearchQuery } from './entry-search';
 import type { RecurringFrequency } from './recurring';
 
@@ -1344,11 +1345,28 @@ export namespace ReportDto {
      */
     startDate?: string;
     endDate?: string;
+    /**
+     * 무엇으로 묶을지 -- 해·달·주. 보내지 않으면 달이다.
+     *
+     * 거래 화면의 바깥 묶음이다. 옛 기기는 이 칸을 모르고 보내지 않으므로 지금까지와
+     * 똑같이 달을 받는다.
+     */
+    unit?: EntryPeriodUnit;
   }
 
-  /** 최신 달이 먼저 온다. */
+  /** 최신 묶음이 먼저 온다. */
   export interface EntryMonth {
-    /** "YYYY-MM" */
+    /**
+     * 그 묶음의 열쇠. 요청의 `unit` 이 정한다 (`periodKeyOf`).
+     *
+     *   year   "2026"
+     *   month  "2026-09"   -- 보내지 않으면 이것이다
+     *   week   "2026-09-13"
+     *
+     * 칸 이름이 `yearMonth` 인 것은 달만 있던 시절의 흔적이다. 옛 기기가 이 이름으로
+     * 읽고 있고 그쪽은 `unit` 을 보내지 않으므로, 그 기기에는 늘 진짜 "YYYY-MM" 이
+     * 온다. 이름을 바꾸면 그 화면의 목록이 통째로 빈다.
+     */
     yearMonth: string;
     income: string;
     expense: string;

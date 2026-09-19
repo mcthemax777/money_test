@@ -19,6 +19,8 @@ import {
   Archive,
   ArrowLeft,
   Check,
+  ChevronDown,
+  ChevronUp,
   Copy,
   Loader2,
   Minus,
@@ -36,9 +38,10 @@ import {
   entryRows,
   selfCategoryPick,
   type EntryListItem as EntryListItemDto,
+  type EntryPeriodUnit,
 } from '@money/types';
 
-import { formatDateTime, formatYearMonth } from '@money/core/lib/datetime';
+import { formatDateTime, periodLabel } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { tagPickResult, tagPickState, toggleTagPick } from '@money/core/lib/tag-pick';
 import {
@@ -90,11 +93,12 @@ const TABS: Array<{ id: TransactionTab; labelKey: MessageKey }> = [
   { id: 'method', labelKey: 'tx.tab.method' },
 ];
 
-/** "2026-08" 을 화면의 달 이름으로. core 의 형식기는 숫자 둘을 받는다. */
-function monthLabel(yearMonth: string): string {
-  const [year, month] = yearMonth.split('-').map(Number);
-  return formatYearMonth(year, month);
-}
+/** 묶는 단위를 고르는 알약의 차례. 좁은 것에서 넓은 것으로 간다. */
+const UNITS: Array<{ id: EntryPeriodUnit; labelKey: MessageKey }> = [
+  { id: 'week', labelKey: 'tx.unit.week' },
+  { id: 'month', labelKey: 'tx.unit.month' },
+  { id: 'year', labelKey: 'tx.unit.year' },
+];
 
 /**
  * 체크박스. 세 상태를 보인다 -- 빈 칸 / 체크 / 줄(일부만 고름).
@@ -1011,11 +1015,23 @@ export default function TransactionsView({
             type="button"
             onClick={() => tx.changeTab(item.id)}
             /* 바탕은 위의 알약이 맡는다. 글자가 그 위에 오도록 자리를 잡아 준다. */
-            className={`relative flex-1 rounded-md px-4 py-2 font-medium ${
+            className={`relative flex flex-1 items-center justify-center gap-1 rounded-md px-4 py-2 font-medium ${
               tx.tab === item.id ? 'text-blue-600' : 'text-gray-600'
             }`}
           >
             {t(item.labelKey)}
+            {/*
+              고른 탭에만 꺾쇠를 둔다. 다음 누름이 무엇을 할지 미리 말한다 -- 펴는
+              중이면 아래, 다 펴서 이제 접을 차례면 위다. 이것이 없으면 이미 고른
+              탭을 다시 누를 까닭을 아무도 모른다.
+            */}
+            {tx.tab === item.id ? (
+              tx.tabLevel === 2 ? (
+                <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+              ) : (
+                <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+              )
+            ) : null}
           </button>
         ))}
       </div>
@@ -1079,7 +1095,7 @@ export default function TransactionsView({
               >
                 <Line
                   depth={0}
-                  label={monthLabel(month.yearMonth)}
+                  label={periodLabel(month.yearMonth)}
                   expense={toNumber(month.expense)}
                   income={toNumber(month.income)}
                   open={level >= 1}
@@ -1141,6 +1157,32 @@ export default function TransactionsView({
         값이 다르다.
       */}
       <Modal isOpen={isMoreOpen} onClose={() => setIsMoreOpen(false)} title={t('tx.more')}>
+        {/*
+          무엇으로 묶어 볼지. 창을 닫지 않는다 -- 셋을 눌러 보며 고르는 자리라,
+          누를 때마다 닫히면 다시 열어야 한다. 아래 두 개는 그 자리에서 일이 시작되므로
+          닫는다.
+        */}
+        <div className="px-2 pb-3 pt-1">
+          <p className="mb-2 text-sm font-medium text-gray-700">{t('tx.unit')}</p>
+          <div className="flex gap-2 rounded-lg bg-gray-100 p-1">
+            {UNITS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => tx.changeUnit(item.id)}
+                className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition ${
+                  tx.unit === item.id
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {t(item.labelKey)}
+              </button>
+            ))}
+          </div>
+        </div>
+        <div className="mb-1 border-t border-gray-200" />
+
         <button
           type="button"
           onClick={() => {

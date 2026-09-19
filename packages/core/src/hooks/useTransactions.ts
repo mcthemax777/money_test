@@ -28,23 +28,33 @@ import type {
   ReportDto,
 } from '@money/types';
 import {
+  DEFAULT_ENTRY_PERIOD,
   HIDDEN_ACCOUNT_TYPES,
   NO_TAG,
   parseCategoryPick,
   parseSelectionKey,
+  periodDayRange,
   selectionKey,
+  unitOfKey,
   toEntrySearchQuery,
+  type EntryPeriodUnit,
 } from '@money/types';
 
 import { assetOwnerNames, hasSeveralOwners } from '../lib/asset-owner';
 
-import { dayRangeQuery, isDateKey, lastDayOfMonth, weekdayOf } from '../lib/datetime';
+import {
+  dayRangeQuery,
+  formatDateKey,
+  isDateKey,
+  periodLabel,
+  weekdayOf,
+} from '../lib/datetime';
 import { useTranslation, type MessageKey } from '../lib/i18n';
 import { apiClient } from '../lib/api-client';
 import { entryWritePort } from '../data/entry-write-port';
 import { homeDataPort } from '../data/home-port';
 import { useMirrorVersion } from './useMirrorVersion';
-import { groupEntriesByDate, sumEntries } from '../lib/entries';
+import { groupEntriesByBucket, sumEntries } from '../lib/entries';
 import { isOfflineError } from '../lib/offline-error';
 import { useProject, useProjectTimeZone } from '../store/project';
 import { useUserFilter } from '../store/user-filter';
@@ -381,10 +391,23 @@ interface MonthData {
 const monthRange = (yearMonth: string) => ({ yearMonth });
 
 /**
- * 그 달과 고른 기간이 겹치는 자리.
+ * 그 기간을 통째로 가리키는 조회 조건.
  *
- * 통째로 덮이면 null 이다. 그때는 달 이름을 그대로 넘기는 편이 낫다 -- 경계를 만드는
- * 일을 서버와 사본이 각자 아는 방법으로 하게 두는 것이 이 화면의 규칙이다.
+ * **달은 이름을 그대로 넘긴다.** 경계를 만드는 일을 서버와 사본이 각자 아는 방법으로
+ * 하게 두는 것이 위의 규칙이고, 그 길이 가장 잘 닳아 있다. 해와 주는 그 이름이 없어
+ * 달력 날짜 두 개로 적는다 -- 양끝을 이 자리에서 만드는 것은 `periodDayRange` 가
+ * 서버·사본과 같은 함수이기 때문이다.
+ */
+function wholePeriod(key: string) {
+  if (unitOfKey(key) === 'month') return monthRange(key);
+  const { startKey, endKey } = periodDayRange(key);
+  return { startDate: startKey, endDate: endKey };
+}
+
+/**
+ * 그 기간과 고른 기간이 겹치는 자리.
+ *
+ * 통째로 덮이면 null 이다. 그때는 기간을 통째로 가리키는 조건을 쓴다 (`wholePeriod`).
  */
 function clipMonth(
   yearMonth: string,
@@ -392,8 +415,7 @@ function clipMonth(
 ): { startKey: string; endKey: string } | null {
   if (!range) return null;
 
-  const first = `${yearMonth}-01`;
-  const last = `${yearMonth}-${String(lastDayOfMonth(yearMonth)).padStart(2, '0')}`;
+  const { startKey: first, endKey: last } = periodDayRange(yearMonth);
   /*
    * 달력 키는 0을 채운 문자열이라 사전순 비교가 곧 날짜 비교다.
    *
@@ -436,6 +458,13 @@ export function useTransactions(projectId: string | null) {
   const [search, setSearch] = useState<TransactionSearch>(EMPTY_SEARCH);
   const [tab, setTab] = useState<TransactionTab>('date');
   /**
+   * 바깥 묶음 -- 해·달·주. 안쪽 탭(날짜별·분류별·수단별)과는 다른 축이다.
+   *
+   * 오래 쓴 가계부에서는 달이 예순 줄이 되어 한 해를 한눈에 볼 수 없고, 반대로 이번
+   * 달만 촘촘히 보려는 사람에게는 달이 너무 성기다. 기본은 지금까지의 달이다.
+   */
+  const [unit, setUnit] = useState<EntryPeriodUnit>(DEFAULT_ENTRY_PERIOD);
+  /**
    * 사용자가 직접 정한 펼침 정도. 손대지 않은 달은 아래 기본값을 따른다.
    *
    * 열쇠가 `탭|달` 이다. **탭마다 따로 접고 펴야 한다** -- 날짜별에서 8월을 펼쳐 둔
@@ -443,6 +472,14 @@ export function useTransactions(projectId: string | null) {
    * 보려던 것이 아닌 자리가 펼쳐져 있다.
    */
   const [levels, setLevels] = useState<Record<string, MonthLevel>>({});
+  /**
+   * 탭마다의 **바닥 펼침**. 손대지 않은 기간 줄이 이 단계로 선다.
+   *
+   * 고른 탭을 한 번 더 누르면 여기가 한 단 오른다 -- 기간 줄 하나를 누르는 것이 그
+   * 줄만 펴는 일이라면, 탭을 누르는 것은 그 탭을 통째로 펴는 일이다. 목록이 예순 줄일
+   * 때 한 줄씩 눌러 펴는 것 말고는 길이 없던 자리다.
+   */
+  const [tabLevels, setTabLevels] = useState<Partial<Record<TransactionTab, MonthLevel>>>({});
   /** 1단에서 손으로 편 줄. 2단에서는 이것과 무관하게 전부 펼친다. */
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
 
@@ -568,21 +605,23 @@ export function useTransactions(projectId: string | null) {
   const range = useMemo(() => searchRange(search), [search]);
   /** 년월 목록에 실어 보내는 기간. 그 구간에 걸친 달만, 걸친 만큼만 세어 온다. */
   const monthsQuery = useMemo(
-    () =>
-      range
+    () => ({
+      unit,
+      ...(range
         ? {
             ...(range.startKey ? { startDate: range.startKey } : {}),
             ...(range.endKey ? { endDate: range.endKey } : {}),
           }
-        : {},
-    [range],
+        : {}),
+    }),
+    [range, unit],
   );
 
   /*
    * 타임존도 열쇠에 넣는다. 기간을 인스턴트로 바꾸는 일이 그 값에 매여 있어서,
    * 프로젝트 타임존을 바꾸면 받아 둔 목록이 옛 경계의 것이 된다.
    */
-  const scopeKey = JSON.stringify([scope, range, timeZone]);
+  const scopeKey = JSON.stringify([scope, range, timeZone, unit]);
   /*
    * 지금 조건. 도착한 값이 아직 쓸 것인지 판단한다.
    *
@@ -634,7 +673,13 @@ export function useTransactions(projectId: string | null) {
    * **검색을 켜면 전부 펼친다.** 검색은 이미 좁힌 결과라, 그 안에서 다시 한 줄씩 눌러
    * 열게 하면 좁힌 뜻이 사라진다. 검색을 켠 사람이 보고 싶은 것은 남은 거래 전부다.
    */
-  const defaultLevel: MonthLevel = searchCount > 0 ? 2 : 0;
+  /*
+   * 손대지 않은 기간 줄의 단계.
+   *
+   * 검색을 켜면 무조건 끝까지 편다 -- 걸러 낸 것을 보러 온 사람에게 접힌 목록을
+   * 내주면 무엇이 걸렸는지 한 줄도 보이지 않는다. 그 밖에는 탭의 바닥을 따른다.
+   */
+  const defaultLevel: MonthLevel = searchCount > 0 ? 2 : (tabLevels[tab] ?? 0);
   /** 펼침을 적어 두는 열쇠. 탭이 다르면 다른 자리다. */
   const levelKey = useCallback((yearMonth: string) => `${tab}|${yearMonth}`, [tab]);
   const levelOf = useCallback(
@@ -652,7 +697,7 @@ export function useTransactions(projectId: string | null) {
       const clipped = clipMonth(yearMonth, range);
       return clipped
         ? { startDate: clipped.startKey, endDate: clipped.endKey }
-        : { yearMonth };
+        : wholePeriod(yearMonth);
     },
     [range],
   );
@@ -667,9 +712,11 @@ export function useTransactions(projectId: string | null) {
   const listRangeOf = useCallback(
     (yearMonth: string) => {
       const clipped = clipMonth(yearMonth, range);
-      return clipped
-        ? dayRangeQuery(clipped.startKey, clipped.endKey, timeZone)
-        : monthRange(yearMonth);
+      if (clipped) return dayRangeQuery(clipped.startKey, clipped.endKey, timeZone);
+      // 달은 이름 하나로 끝난다. 해와 주는 그 이름이 없어 인스턴트 구간으로 적는다.
+      if (unitOfKey(yearMonth) === 'month') return monthRange(yearMonth);
+      const { startKey, endKey } = periodDayRange(yearMonth);
+      return dayRangeQuery(startKey, endKey, timeZone);
     },
     [range, timeZone],
   );
@@ -731,6 +778,13 @@ export function useTransactions(projectId: string | null) {
   useEffect(() => {
     setLevels({});
     setOpenRows({});
+    /*
+     * 탭의 바닥도 되돌린다.
+     *
+     * 남겨 두면 프로젝트나 묶음 단위를 바꾸는 순간 새 목록이 통째로 펼쳐진 채 서고,
+     * 그만큼의 조회가 한꺼번에 나간다. 펼치는 것은 사용자가 그 목록을 보고 고르는 일이다.
+     */
+    setTabLevels({});
     /*
      * 고른 것도 버린다.
      *
@@ -914,7 +968,18 @@ export function useTransactions(projectId: string | null) {
       }
     };
 
-    void Promise.all(openMonths.map(load));
+    /*
+     * 나눠 보낸다. 줄 조회와 같은 규칙이다 (`ROW_BATCH`).
+     *
+     * 예전에는 한꺼번에 던져도 괜찮았다. 펼치는 일이 달 하나씩이었기 때문이다. 지금은
+     * 탭을 두 번 눌러 **목록을 통째로 펼 수 있어서**, 오래 쓴 가계부에서는 예순 개가
+     * 한 번에 나간다. 나눠 보내면 화면이 위에서부터 차례로 채워진다.
+     */
+    void (async () => {
+      for (let index = 0; index < openMonths.length; index += ROW_BATCH) {
+        await Promise.all(openMonths.slice(index, index + ROW_BATCH).map(load));
+      }
+    })();
 
     // 정리 함수를 두지 않는다 (3단 효과와 같은 이유).
   }, [projectId, openMonthsKey, tab, scopeKey, refreshToken, fail]);
@@ -974,13 +1039,23 @@ export function useTransactions(projectId: string | null) {
    *
    * 여기서 한 번 묶어 두면 줄과 거래가 같은 Map 을 나눠 본다.
    */
+  /**
+   * 날짜별 탭의 안쪽 줄을 무엇으로 끊는가.
+   *
+   * 바깥 묶음이 해면 달이다 -- 날로 끊으면 한 해에 줄이 삼백예순 개가 되어 펼치는
+   * 뜻이 없어진다. 달과 주는 지금처럼 날이다.
+   */
+  const innerBucket: 'day' | 'month' = unit === 'year' ? 'month' : 'day';
+
   const groupedByMonth = useMemo(() => {
     const grouped = new Map<string, Map<string, EntryListItem[]>>();
     for (const [yearMonth, data] of Object.entries(monthData)) {
-      if (data?.entries) grouped.set(yearMonth, groupEntriesByDate(data.entries, timeZone));
+      if (data?.entries) {
+        grouped.set(yearMonth, groupEntriesByBucket(data.entries, timeZone, innerBucket));
+      }
     }
     return grouped;
-  }, [monthData, timeZone]);
+  }, [monthData, timeZone, innerBucket]);
 
   /**
    * 받아 둔 달의 안쪽 줄. 탭에 따라 무엇을 세는지가 다르다.
@@ -1002,10 +1077,18 @@ export function useTransactions(projectId: string | null) {
           .sort(([a], [b]) => b.localeCompare(a))
           .map(([dateKey, rows]) => {
             const totals = sumEntries(rows);
+            /*
+             * 날짜는 해까지 적는다. "19" 하나만 두면 그 줄이 어느 달의 며칟날인지
+             * 줄 자신이 말하지 못한다 -- 위의 기간 줄을 눈으로 되짚어야 하고, 분류별·
+             * 수단별에서 넘어오면 그 기간 줄도 화면 밖일 수 있다.
+             *
+             * 해로 묶어 볼 때는 안쪽이 달이라 요일이 없다.
+             */
             return {
               key: dateKey,
-              label: String(Number(dateKey.slice(8, 10))),
-              weekday: weekdayOf(dateKey),
+              label:
+                innerBucket === 'month' ? periodLabel(dateKey) : formatDateKey(dateKey),
+              ...(innerBucket === 'day' ? { weekday: weekdayOf(dateKey) } : {}),
               count: rows.length,
               expense: totals.expenseTotal,
               income: totals.incomeTotal,
@@ -1765,8 +1848,58 @@ export function useTransactions(projectId: string | null) {
    * 들고 수단별로 넘어가면 화면의 체크와 실제로 골라진 거래가 어긋난다. 지우는
    * 일에서 그런 어긋남은 두면 안 된다.
    */
-  const changeTab = useCallback((next: TransactionTab) => {
-    setTab(next);
+  const changeTab = useCallback(
+    (next: TransactionTab) => {
+      /*
+       * 이미 고른 탭을 또 누르면 **그 탭을 한 단 편다.** 기간 줄과 같은 차례로 돈다
+       * (접힘 → 안쪽 줄 → 거래까지 → 접힘).
+       *
+       * 손으로 정해 둔 줄은 지운다. 남겨 두면 "전부 펴라"고 눌렀는데 접어 둔 줄이
+       * 그대로 접혀 있어, 눌러도 아무 일이 없는 것처럼 보인다.
+       */
+      if (next === tab) {
+        const level = ((defaultLevel + 1) % 3) as MonthLevel;
+        setTabLevels((prev) => ({ ...prev, [next]: level }));
+        setLevels((prev) => {
+          const kept: Record<string, MonthLevel> = {};
+          for (const [id, value] of Object.entries(prev)) {
+            if (!id.startsWith(`${next}|`)) kept[id] = value;
+          }
+          return kept;
+        });
+        /*
+         * 접으면 이 탭에서 손으로 편 줄도 함께 정리한다 (`cycleMonth` 와 같다).
+         *
+         * 줄의 열쇠는 `달|탭|줄` 이라 탭 이름이 가운데에 있다. 그 조각으로 가른다 --
+         * 다른 탭에서 펴 둔 줄은 그대로 남는다.
+         */
+        if (level === 0) {
+          setOpenRows((prev) => {
+            const kept: Record<string, boolean> = {};
+            for (const [id, open] of Object.entries(prev)) {
+              if (!id.includes(`|${next}|`)) kept[id] = open;
+            }
+            return kept;
+          });
+        }
+        return;
+      }
+
+      setTab(next);
+      setSelected({});
+    },
+    [tab, defaultLevel],
+  );
+
+  /**
+   * 묶는 단위를 바꾼다.
+   *
+   * 받아 둔 목록과 펼침은 `scopeKey` 가 단위를 들고 있어 저절로 비워진다 -- 열쇠의
+   * 모양 자체가 달라지므로("2026-09" → "2026"), 남겨 두면 어느 줄도 맞지 않는다.
+   * 고른 것만 여기서 지운다. 탭을 옮길 때와 같은 까닭이다.
+   */
+  const changeUnit = useCallback((next: EntryPeriodUnit) => {
+    setUnit(next);
     setSelected({});
   }, []);
 
@@ -1807,6 +1940,16 @@ export function useTransactions(projectId: string | null) {
     // 2단
     tab,
     changeTab,
+    /**
+     * 지금 탭의 바닥 펼침. 고른 탭을 또 누르면 한 단 오른다.
+     *
+     * 화면이 이 값으로 탭의 꺾쇠 방향을 정한다 -- 다음 누름이 펴는 것인지 접는 것인지를
+     * 미리 말해 주지 않으면, 이미 고른 탭을 다시 누를 까닭을 아무도 모른다.
+     */
+    tabLevel: defaultLevel,
+    /** 바깥 묶음 -- 해·달·주. 화면의 더보기 메뉴가 바꾼다. */
+    unit,
+    changeUnit,
     rowsOf,
     isLoadingMonth,
     // 3단

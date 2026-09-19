@@ -11,8 +11,9 @@
  *   - 달력 날짜 표시자: CardStatement.periodEnd 처럼 `@db.Date`로 저장된 값.
  *     날짜만 의미가 있고 UTC 자정으로 내려오므로 UTC 필드를 그대로 읽는다.
  */
-import { activeLocaleTag } from '../lib/i18n';
+import { activeLocale, activeLocaleTag, translate } from '../lib/i18n';
 import {
+  unitOfKey,
   zonedDateKey,
   zonedDateStringToUtc,
   zonedDayStart,
@@ -234,6 +235,73 @@ export function formatYearMonthDay(dateKey: string): string {
     month: 'long',
     day: 'numeric',
   }).format(new Date(Date.UTC(year, month - 1, day)));
+}
+
+/**
+ * 달력 날짜 하나를 숫자로. "2026. 9. 19." / "9/19/2026" / "2026/9/19"
+ *
+ * `formatYearMonthDay` 의 짧은 짝이다. 그쪽은 달 이름을 말로 적어("2026년 9월 19일")
+ * 제목 자리에 어울리고, 이쪽은 목록의 줄처럼 옆에 금액이 함께 서는 좁은 자리에 쓴다.
+ *
+ * 달력 날짜('YYYY-MM-DD')를 받는다. 시각이 아니라 달력의 하루라 타임존을 보지 않는다.
+ */
+export function formatDateKey(dateKey: string): string {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return trimTrailingMark(
+    dateFormatter('dateKey', 'UTC', {
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+    }).format(new Date(Date.UTC(year, month - 1, day))),
+  );
+}
+
+/**
+ * 끝에 남는 구두점을 뗀다. "2026. 9. 19." -> "2026. 9. 19"
+ *
+ * 한국어의 숫자 날짜는 마지막 숫자 뒤에도 점을 찍는다. 문장 안에서는 그것이 맞지만
+ * 목록의 줄에서는 이름의 끝이 문장이 아니라 값이라, 점 하나가 글자와 금액 사이에
+ * 뜬 티끌처럼 남는다. 일본어·영어는 애초에 붙지 않아 이 함수가 아무 일도 하지 않는다.
+ */
+function trimTrailingMark(value: string): string {
+  return value.replace(/[.\s]+$/, '');
+}
+
+/**
+ * 거래 목록의 기간 줄 이름. 열쇠의 생김새가 모양을 정한다 (`unitOfKey`).
+ *
+ *   year   "2026년"
+ *   month  "2026년 9월"
+ *   week   "2026년 9월 2주차"
+ *
+ * **주는 몇째 주인지로 적는다.** 날짜 구간("9. 13 ~ 9. 19")으로 적어 보았는데, 그것은
+ * 그 줄이 무엇인지가 아니라 어디부터 어디까지인지만 말한다 -- 사람이 주를 기억하는
+ * 방식은 "9월 둘째 주" 이지 "13일부터 19일까지" 가 아니다.
+ *
+ * 몇째 주인가는 **그 주의 일요일이 그 달의 몇 번째 일요일인가**로 센다. 열쇠가 곧 그
+ * 일요일이라(`periodKeyOf`) 셈이 열쇠 안에서 끝나고, 달을 걸친 주도 어느 달의 것인지
+ * 흔들리지 않는다 -- 8월 30일에 시작해 9월 5일에 끝나는 주는 8월 5주차다.
+ *
+ * 해를 함께 적는다. 주로 묶으면 한 해가 쉰두 줄이라, 해가 없으면 지난해의 같은 주와
+ * 구별되지 않는다.
+ *
+ * 웹과 앱이 함께 쓴다. 두 화면이 같은 주를 다른 이름으로 적으면 폰으로 본 것을 웹에서
+ * 다시 찾게 된다.
+ */
+export function periodLabel(key: string): string {
+  const unit = unitOfKey(key);
+  if (unit === 'year') return formatYearOnly(Number(key));
+  if (unit === 'month') {
+    const [year, month] = key.split('-').map(Number);
+    return formatYearMonth(year, month);
+  }
+
+  // 열쇠가 그 주의 일요일이다. 그 달의 몇 번째 일요일인지가 곧 몇째 주인지다.
+  const [year, month, day] = key.split('-').map(Number);
+  return translate(activeLocale(), 'date.weekOfMonth', {
+    month: formatYearMonth(year, month),
+    week: Math.floor((day - 1) / 7) + 1,
+  });
 }
 
 /** 달 하나. 달 고르는 표와 그래프 범례처럼 좁은 자리에 쓴다. "8월" / "Aug" / "8月" */

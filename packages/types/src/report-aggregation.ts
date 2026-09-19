@@ -21,6 +21,7 @@
 
 import { Dec, type DecInput } from './decimal';
 import type { CategoryType } from './entities';
+import { DEFAULT_ENTRY_PERIOD, periodKeyOf, type EntryPeriodUnit } from './entry-period';
 import { zonedDateKey, zonedYearMonth } from './tz';
 
 /**
@@ -217,7 +218,16 @@ export function shiftYearMonth(year: number, month: number, delta: number): stri
 }
 
 export interface EntryMonthTotal {
-  /** "YYYY-MM" */
+  /**
+   * 그 묶음의 열쇠. 단위가 정한다 (`periodKeyOf`).
+   *
+   *   year   "2026"
+   *   month  "2026-09"
+   *   week   "2026-09-13"
+   *
+   * 이름이 `yearMonth` 인 것은 달만 있던 시절의 흔적이다. 와이어의 칸 이름이라
+   * 함부로 바꾸면 옛 기기가 목록을 그리지 못한다(`ReportDto.EntryMonth`).
+   */
   yearMonth: string;
   income: Dec;
   expense: Dec;
@@ -248,27 +258,38 @@ export function entryMonths(
      * 넘기지 않으면 다리가 있는 달만 만든다.
      */
     entryDates?: readonly (Date | string)[];
+    /**
+     * 무엇으로 묶을지. 없으면 달이다.
+     *
+     * 거래 화면이 해·달·주를 오가며 본다(`EntryPeriodUnit`). 묶는 규칙이 한 곳이라
+     * 서버와 기기 사본이 같은 줄을 낸다 -- 두 벌이면 같은 주가 두 날에서 시작한다.
+     */
+    unit?: EntryPeriodUnit;
   },
 ): EntryMonthTotal[] {
-  const { timeZone, entryDates } = options;
+  const { timeZone, entryDates, unit = DEFAULT_ENTRY_PERIOD } = options;
 
-  const byMonth = new Map<string, { income: Dec; expense: Dec }>();
+  const byPeriod = new Map<string, { income: Dec; expense: Dec }>();
 
   for (const date of entryDates ?? []) {
-    const key = zonedYearMonth(new Date(date), timeZone);
-    if (!byMonth.has(key)) byMonth.set(key, { income: Dec.of(0), expense: Dec.of(0) });
+    const key = periodKeyOf(date, timeZone, unit);
+    if (!byPeriod.has(key)) byPeriod.set(key, { income: Dec.of(0), expense: Dec.of(0) });
   }
   for (const row of rows) {
     const selected = selectedAmount(row);
 
-    const key = zonedYearMonth(new Date(row.date), timeZone);
-    const bucket = byMonth.get(key) ?? { income: Dec.of(0), expense: Dec.of(0) };
+    const key = periodKeyOf(row.date, timeZone, unit);
+    const bucket = byPeriod.get(key) ?? { income: Dec.of(0), expense: Dec.of(0) };
     if (row.categoryType === 'expense') bucket.expense = bucket.expense.plus(selected);
     else bucket.income = bucket.income.plus(selected);
-    byMonth.set(key, bucket);
+    byPeriod.set(key, bucket);
   }
 
-  return [...byMonth.entries()]
+  /*
+   * 새 줄이 위다. 같은 단위의 열쇠는 자릿수가 고정이라 사전순 비교가 곧 날짜 비교다
+   * (`periodKeyOf` 의 머리말).
+   */
+  return [...byPeriod.entries()]
     .sort(([a], [b]) => b.localeCompare(a))
     .map(([yearMonth, bucket]) => ({ yearMonth, ...bucket }));
 }

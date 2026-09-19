@@ -22,12 +22,28 @@ import {
   Text,
   View,
 } from 'react-native';
-import { Archive, ArrowLeft, Check, MoreVertical, Search, Tag, Trash2, X } from 'lucide-react-native';
-import { entryRows, type EntryListItem, type EntryRow } from '@money/types';
+import {
+  Archive,
+  ArrowLeft,
+  Check,
+  ChevronDown,
+  ChevronUp,
+  MoreVertical,
+  Search,
+  Tag,
+  Trash2,
+  X,
+} from 'lucide-react-native';
+import {
+  entryRows,
+  type EntryListItem,
+  type EntryPeriodUnit,
+  type EntryRow,
+} from '@money/types';
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
-import { formatYearMonth } from '@money/core/lib/datetime';
+import { periodLabel } from '@money/core/lib/datetime';
 import {
   useTransactions,
   type TransactionRow,
@@ -904,6 +920,18 @@ export default function TransactionsScreen() {
         tabs={TABS.map((item) => ({ id: item.id, label: t(item.labelKey) }))}
         selected={tx.tab}
         onSelect={tx.changeTab}
+        /*
+          고른 탭의 꺾쇠. 다음 누름이 무엇을 할지 미리 말한다 -- 펴는 중이면 아래,
+          다 펴서 이제 접을 차례면 위다. 이것이 없으면 이미 고른 탭을 다시 누를
+          까닭을 아무도 모른다.
+        */
+        selectedTrailing={
+          tx.tabLevel === 2 ? (
+            <ChevronUp size={14} color="#2563eb" />
+          ) : (
+            <ChevronDown size={14} color="#2563eb" />
+          )
+        }
       />
 
       {/*
@@ -972,7 +1000,7 @@ export default function TransactionsScreen() {
               >
                 <Line
                   depth={0}
-                  label={monthLabel(month.yearMonth)}
+                  label={periodLabel(month.yearMonth)}
                   expense={toNumber(month.expense)}
                   income={toNumber(month.income)}
                   open={level >= 1}
@@ -1068,6 +1096,35 @@ export default function TransactionsScreen() {
       */}
       <Modal isOpen={isMoreOpen} onClose={() => setIsMoreOpen(false)} title={t('tx.more')}>
         {/*
+          무엇으로 묶어 볼지. 창을 닫지 않는다 -- 셋을 눌러 보며 고르는 자리라,
+          누를 때마다 닫히면 다시 열어야 한다. 아래 둘은 그 자리에서 일이 시작되므로
+          닫는다.
+        */}
+        <View className="px-2 pb-3 pt-1">
+          <Text className="mb-2 text-sm font-medium text-gray-700">{t('tx.unit')}</Text>
+          <View className="flex-row gap-2 rounded-lg bg-gray-100 p-1">
+            {UNITS.map((item) => (
+              <Pressable
+                key={item.id}
+                onPress={() => tx.changeUnit(item.id)}
+                className={`flex-1 items-center rounded-md px-3 py-2 ${
+                  tx.unit === item.id ? 'bg-white' : ''
+                }`}
+              >
+                <Text
+                  className={`text-sm font-medium ${
+                    tx.unit === item.id ? 'text-blue-600' : 'text-gray-600'
+                  }`}
+                >
+                  {t(item.labelKey)}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+        </View>
+        <View className="mb-1 border-t border-gray-200" />
+
+        {/*
           태그가 위, 지우기가 아래다. 되돌릴 수 있는 일을 먼저 둔다 -- 손가락이
           닿는 목록에서 지우기가 위에 있으면 잘못 누를 때의 값이 크다.
         */}
@@ -1149,8 +1206,9 @@ export default function TransactionsScreen() {
   );
 }
 
-/** "2026-08" 을 화면의 달 이름으로. core 의 형식기는 숫자 둘을 받는다. */
-function monthLabel(yearMonth: string): string {
-  const [year, month] = yearMonth.split('-').map(Number);
-  return formatYearMonth(year, month);
-}
+/** 묶는 단위를 고르는 알약의 차례. 좁은 것에서 넓은 것으로 간다. */
+const UNITS: Array<{ id: EntryPeriodUnit; labelKey: MessageKey }> = [
+  { id: 'week', labelKey: 'tx.unit.week' },
+  { id: 'month', labelKey: 'tx.unit.month' },
+  { id: 'year', labelKey: 'tx.unit.year' },
+];

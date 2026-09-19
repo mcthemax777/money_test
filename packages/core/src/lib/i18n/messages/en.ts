@@ -199,6 +199,7 @@ export const en: Record<MessageKey, string> = {
   'currencyUnit.JPY': 'yen',
   'money.amountWithUnit': '{value} {unit}',
   'money.rate': 'rate {rate}',
+  'date.weekOfMonth': '{month}, week {week}',
 
   // ===== Entry list =====
   'feed.loadFailed': 'Could not load the entries.',
@@ -430,15 +431,15 @@ export const en: Record<MessageKey, string> = {
   'settlement.billedByStatement': 'Billed in the statement cycle',
   'settlement.billedByMonth': 'Billed this month',
   'settlement.billedHint': 'Counts every charge, including ones left out of the requirement. This is what you owe.',
+  'settlement.performanceLedgerHint': 'Only the transactions that count are listed.',
+  'settlement.periodPicked': 'Showing {range} only. Tap again to see everything.',
+  'settlement.periodPickHint': 'Tap a row to see only that period.',
   'settlement.tabBilled': 'Bill',
   'settlement.tabPerformance': 'Requirement',
-  'settlement.performanceLedgerHint': 'Only the transactions that count are listed.',
   'settlement.closed': 'Closed',
   'settlement.ongoing': 'Open',
   'settlement.upcoming': 'Upcoming',
   'settlement.targetLine': 'Target {amount}',
-  'settlement.periodPicked': 'Showing {range} only. Tap again to see everything.',
-  'settlement.periodPickHint': 'Tap a row to see only that period.',
   'settlement.modalTitle': 'Record a card payment',
   'settlement.submitting': 'Working...',
   'settlement.submit': 'Record',
@@ -1054,6 +1055,10 @@ export const en: Record<MessageKey, string> = {
 
 
   'tx.more': 'More',
+  'tx.unit': 'Group by',
+  'tx.unit.year': 'Year',
+  'tx.unit.month': 'Month',
+  'tx.unit.week': 'Week',
   'tx.select': 'Select entries to delete',
   'tx.tagSelect': 'Edit tags',
   'tx.tagSelected': 'Tags on selected',

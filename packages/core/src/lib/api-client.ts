@@ -498,7 +498,7 @@ class ApiClient {
     const rows: any[] = [];
     let cursor: string | null = null;
     // 커서가 전진하지 않는 서버 버그가 생겨도 화면이 멈추지는 않게 한다.
-    // 200 * 50 = 10,000건이면 어떤 한 달 조회에도 충분하다.
+    // 200 * 50 = 10,000건이면 한 달은 물론 거래 화면이 해로 묶어 볼 때도 충분하다.
     const MAX_PAGES = 50;
 
     for (let page = 0; page < MAX_PAGES; page += 1) {

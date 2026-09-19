@@ -28,6 +28,8 @@ import {
   debitPerformanceShares,
   debitUsagePeriods,
   entryMonths,
+  isEntryPeriodUnit,
+  DEFAULT_ENTRY_PERIOD,
   isBudgetApplicable,
   netWorth,
   closingMonthKey,
@@ -323,7 +325,10 @@ export function createLocalHomePort(
         converter(id),
       ]);
 
-      return entryMonths(rows, { timeZone, entryDates: dates }).map((month) => ({
+      // 묶는 단위는 화면이 정한다. 없으면 달이다 (서버의 `getEntryMonths` 와 같다).
+      const unit = isEntryPeriodUnit(filter?.unit) ? filter.unit : DEFAULT_ENTRY_PERIOD;
+
+      return entryMonths(rows, { timeZone, entryDates: dates, unit }).map((month) => ({
         yearMonth: month.yearMonth,
         income: show.toString(month.income),
         expense: show.toString(month.expense),
