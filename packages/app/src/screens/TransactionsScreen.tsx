@@ -895,22 +895,31 @@ export default function TransactionsScreen() {
                   <CalendarDays size={18} color="#4b5563" />
                 )}
               </Pressable>
-              <Pressable
-                onPress={() => setIsSearchOpen(true)}
-                accessibilityLabel={t('tx.search')}
-                /*
-                  아이콘만 둔다. 테두리·바탕도, 누를 때의 바탕도 없다. 머리글에서
-                  이름 옆에 붙는 자리라 상자를 그리면 아이콘보다 상자가 먼저 보인다.
-                  걸어 둔 검색이 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
-                */
-                className="flex-row items-center gap-1.5 px-2 py-2"
-              >
-                {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
-                <Search size={18} color={tx.searchCount > 0 ? '#2563eb' : '#4b5563'} />
-                {tx.searchCount > 0 ? (
-                  <Text className="text-sm font-semibold text-blue-600">{tx.searchCount}</Text>
-                ) : null}
-              </Pressable>
+              {/*
+                검색. 달력 보기에서는 감춘다.
+
+                아래 목록 쪽이 통째로 빠지는 자리라 걸어 둔 검색이 달력에는 걸리지
+                않는다. 단추만 남겨 두면 눌러서 조건을 거는데 화면은 그대로여서,
+                걸렸는지 아닌지 알 길이 없다. 목록으로 돌아오면 걸어 둔 것은 그대로다.
+              */}
+              {!isCalendar ? (
+                <Pressable
+                  onPress={() => setIsSearchOpen(true)}
+                  accessibilityLabel={t('tx.search')}
+                  /*
+                    아이콘만 둔다. 테두리·바탕도, 누를 때의 바탕도 없다. 머리글에서
+                    이름 옆에 붙는 자리라 상자를 그리면 아이콘보다 상자가 먼저 보인다.
+                    걸어 둔 검색이 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
+                  */
+                  className="flex-row items-center gap-1.5 px-2 py-2"
+                >
+                  {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
+                  <Search size={18} color={tx.searchCount > 0 ? '#2563eb' : '#4b5563'} />
+                  {tx.searchCount > 0 ? (
+                    <Text className="text-sm font-semibold text-blue-600">{tx.searchCount}</Text>
+                  ) : null}
+                </Pressable>
+              ) : null}
               {/*
                 더보기에는 쓰는 일만 들어 있다(태그 붙이기·지우기). 읽기 전용
                 구성원에게는 열 것이 없으므로 버튼째 감춘다.

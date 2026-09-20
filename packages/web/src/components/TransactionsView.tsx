@@ -970,29 +970,38 @@ export default function TransactionsView({
                   <CalendarDays className="h-4 w-4" aria-hidden />
                 )}
               </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setDraft(tx.search);
-                  setIsSearchOpen(true);
-                }}
-                aria-label={t('tx.search')}
-                title={t('tx.search')}
-                /*
-                  아이콘만 둔다. 테두리·바탕도, 손을 올렸을 때의 바탕도 없다. 앱과
-                  같은 모양이다 -- 머리글에서는 상자보다 아이콘이 먼저 보여야 한다.
-                  검색이 걸려 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
-                */
-                className={`flex items-center gap-1.5 px-2 py-2 text-sm font-medium ${
-                  tx.searchCount > 0 ? 'text-blue-600' : 'text-gray-600'
-                }`}
-              >
-                {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
-                <Search className="h-4 w-4" aria-hidden />
-                {tx.searchCount > 0 ? (
-                  <span className="font-semibold">{tx.searchCount}</span>
-                ) : null}
-              </button>
+              {/*
+                검색. 달력 보기에서는 감춘다.
+
+                아래 목록 쪽이 통째로 빠지는 자리라 걸어 둔 검색이 달력에는 걸리지
+                않는다. 단추만 남겨 두면 눌러서 조건을 거는데 화면은 그대로여서,
+                걸렸는지 아닌지 알 길이 없다. 목록으로 돌아오면 걸어 둔 것은 그대로다.
+              */}
+              {!isCalendar ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDraft(tx.search);
+                    setIsSearchOpen(true);
+                  }}
+                  aria-label={t('tx.search')}
+                  title={t('tx.search')}
+                  /*
+                    아이콘만 둔다. 테두리·바탕도, 손을 올렸을 때의 바탕도 없다. 앱과
+                    같은 모양이다 -- 머리글에서는 상자보다 아이콘이 먼저 보여야 한다.
+                    검색이 걸려 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
+                  */
+                  className={`flex items-center gap-1.5 px-2 py-2 text-sm font-medium ${
+                    tx.searchCount > 0 ? 'text-blue-600' : 'text-gray-600'
+                  }`}
+                >
+                  {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
+                  <Search className="h-4 w-4" aria-hidden />
+                  {tx.searchCount > 0 ? (
+                    <span className="font-semibold">{tx.searchCount}</span>
+                  ) : null}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => setIsMoreOpen(true)}
