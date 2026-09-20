@@ -509,13 +509,9 @@ export const ja: Record<MessageKey, string> = {
 
   // ===== 家計簿画面 =====
   'ledger.noun': '家計簿',
-  'ledger.addEntry': '取引を追加',
-  'ledger.tab.daily': '日付別',
   'ledger.tab.category': 'カテゴリ別',
   'ledger.tab.method': '支払方法別',
   'ledger.noFiltered': 'フィルターに合う取引がありません。',
-  'ledger.calendarLimit':
-    'カレンダーは{months}か月までです。それ以外の期間は一覧とカテゴリ別で見られます。',
   'ledger.entryCount': '{count}件',
   'ledger.totalExpense': '支出全体',
   'ledger.totalIncome': '収入全体',

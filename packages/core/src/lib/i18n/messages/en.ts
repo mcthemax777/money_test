@@ -511,13 +511,9 @@ export const en: Record<MessageKey, string> = {
 
   // ===== Ledger screen =====
   'ledger.noun': 'ledger',
-  'ledger.addEntry': 'Add entry',
-  'ledger.tab.daily': 'By date',
   'ledger.tab.category': 'By category',
   'ledger.tab.method': 'By method',
   'ledger.noFiltered': 'No entries match the filter.',
-  'ledger.calendarLimit':
-    'The calendar covers up to {months} months. For the rest, use the list and the category tab.',
   'ledger.entryCount': '{count}',
   'ledger.totalExpense': 'All spending',
   'ledger.totalIncome': 'All income',

@@ -1,19 +1,29 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-import { X } from 'lucide-react';
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+} from 'recharts';
 import Modal from './Modal';
 import type { EntryListItem } from './TransactionItem';
 import TransactionListView from './TransactionListView';
-import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
-import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
-import { formatCurrency, toNumber } from '@money/core/lib/money';
+import { useCategoryDetail } from '@money/core/hooks/useCategoryDetail';
+import { type ReportPeriod } from '@money/core/lib/api-client';
+import { formatCurrency } from '@money/core/lib/money';
 import {
   CHART_BAR_RADIUS,
   CHART_COLOR,
   CHART_GRID,
   CHART_MARGIN,
+  CHART_PIE_COLORS,
   CHART_TICK,
   CHART_TOOLTIP_STYLE,
   CHART_Y_AXIS_WIDTH,
@@ -21,33 +31,11 @@ import {
   formatAxisAmount,
   formatTooltipAmount,
 } from '@money/core/lib/chart';
-import { buildDailyCumulative, monthDateKeys } from '@money/core/lib/entries';
-import { dayRangeQuery, formatMonthShort, throughDayOf } from '@money/core/lib/datetime';
-import { activeLocale, translate, useTranslation } from '@money/core/lib/i18n';
-import { loadPreviousMonths } from '@money/core/lib/month-compare';
-import DailyCumulativeChart, {
-  type CumulativeSeries,
-  type DailyCumulativePoint,
-} from './DailyCumulativeChart';
+import { useTranslation } from '@money/core/lib/i18n';
+import DailyCumulativeChart from './DailyCumulativeChart';
 import type { EntryFilterQuery } from '@money/types';
-import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
+import { useProjectDisplayCurrency } from '@money/core/store/project';
 import type { Category } from '@money/core/lib/types';
-
-const COLORS = [
-  '#FF6B6B',
-  '#4ECDC4',
-  '#45B7D1',
-  '#FFA07A',
-  '#98D8C8',
-  '#F7DC6F',
-  '#BB8FCE',
-  '#85C1E2',
-  '#F8B88B',
-  '#ABEBC6',
-  '#F5B041',
-  '#D7BCCB',
-];
-
 
 interface BudgetDetailModalProps {
   isOpen: boolean;
@@ -80,52 +68,13 @@ interface BudgetDetailModalProps {
   reloadToken?: number;
 }
 
-interface MonthlyData {
-  month: string;
-  amount: number;
-}
-
-interface PieChartData {
-  name: string;
-  value: number;
-  /** 소분류만 가진다. 이 값이 없으면 더 파고들 수 없는 조각이다. */
-  id?: string;
-}
-
-type BreakdownRow = {
-  categoryId: string;
-  categoryName: string;
-  parentCategoryId: string | null;
-  amount: string;
-};
-
 /**
- * 대분류 하나의 구성비 조각을 만든다.
+ * 분류 하나(또는 그 유형 전체)의 상세.
  *
- * 소분류 행과 함께, 소분류 없이 그 대분류에 바로 기록된 금액을 '미분류'로 넣는다.
- * 이것을 빼면 조각 합계가 예산 카드에 보이는 사용액보다 적어져서 돈이 사라진 것처럼 보인다.
- * '미분류'에는 id를 주지 않는다. 실제 카테고리가 아니므로 눌러도 내려갈 곳이 없다.
- *
- * 소분류가 아예 없는 대분류는 빈 배열을 준다. '미분류' 한 조각만 100%로 그리면
- * 쪼개 보여주는 것이 없으면서 분류가 빠진 듯한 오해만 준다. 이때는 원형차트를 걸러야 한다.
+ * 무엇을 받아 무엇을 그릴지는 core 의 useCategoryDetail 이 정한다. 앱의 분류 상세
+ * 화면이 같은 훅을 쓰므로, 같은 분류를 누르면 두 화면이 같은 값을 말한다. 여기
+ * 있는 것은 recharts 로 그리는 일뿐이다.
  */
-function buildSubcategoryStats(rows: BreakdownRow[], parentId: string): PieChartData[] {
-  const stats: PieChartData[] = rows
-    .filter((item) => item.parentCategoryId === parentId)
-    .map((item) => ({ id: item.categoryId, name: item.categoryName, value: toNumber(item.amount) }));
-
-  if (stats.length === 0) return [];
-
-  const direct = rows.find((item) => item.categoryId === parentId);
-  const directAmount = direct ? toNumber(direct.amount) : 0;
-  if (directAmount > 0) {
-    // 훅 밖의 순수 함수라 지금 언어를 직접 읽는다.
-    stats.push({ name: translate(activeLocale(), 'category.uncategorized'), value: directAmount });
-  }
-
-  return stats.sort((a, b) => b.value - a.value);
-}
-
 export function BudgetDetailModal({
   isOpen,
   onClose,
@@ -141,247 +90,44 @@ export function BudgetDetailModal({
   reloadToken,
 }: BudgetDetailModalProps) {
   const { t } = useTranslation();
-  const timeZone = useProjectTimeZone();
   const displayCurrency = useProjectDisplayCurrency();
-  const mirrorVersion = useMirrorVersion();
 
-  /*
-   * 구간을 세 형태로 쓴다 (PaymentMethodTab과 같은 규칙).
-   *   dayKeys  : 일별 누적 그래프의 x축 (달력 날짜)
-   *   endMonth : 12개월 추이의 마지막 달
-   *   periodKey: 구간이 바뀌었는지 판단할 값 (객체는 렌더마다 새로 만들어진다)
-   */
-  const dayKeys = period.yearMonth
-    ? monthDateKeys(Number(period.yearMonth.slice(0, 4)), Number(period.yearMonth.slice(5, 7)))
-    : { startKey: period.startDate!, endKey: period.endDate! };
-  const endMonth = dayKeys.endKey.slice(0, 7);
-  const periodKey = `${dayKeys.startKey}~${dayKeys.endKey}`;
-
-  const [monthlyData, setMonthlyData] = useState<MonthlyData[]>([]);
-  const [dailyData, setDailyData] = useState<DailyCumulativePoint[]>([]);
-  /** 겹쳐 그릴 전전달·지난달. 달 단위로 볼 때만 채운다. */
-  const [comparisons, setComparisons] = useState<CumulativeSeries[]>([]);
-  const [periodEntries, setCurrentMonthEntries] = useState<EntryListItem[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [selectedPieCategory, setSelectedPieCategory] = useState<string | null>(null);
-  const [categoryStats, setCategoryStats] = useState<PieChartData[]>([]);
-  // 대분류를 클릭했을 때 소분류로 내려가기 위한 평면 집계 (rollup=false)
-  const [flatBreakdown, setFlatBreakdown] = useState<
-    Array<{ categoryId: string; categoryName: string; parentCategoryId: string | null; amount: string }>
-  >([]);
-  const [subCategoryStats, setSubCategoryStats] = useState<PieChartData[]>([]);
-
-  /**
-   * categoryId가 무엇을 가리키는지 판별한다.
-   * 'total-expense' / 'total-income'은 전체 합계, 그 외는 실제 카테고리다.
-   */
-  const resolveTarget = (catId: string) => {
-    if (catId === 'total-expense') return { scope: 'total' as const, type: 'expense' as const };
-    if (catId === 'total-income') return { scope: 'total' as const, type: 'income' as const };
-
-    const category = categories?.find((c) => c.id === catId);
-    return {
-      scope: 'category' as const,
-      type: (category?.type ?? 'expense') as 'income' | 'expense',
-      // parentId가 있으면 소분류다. 소분류는 더 쪼갤 것이 없다.
-      // "미분류"(exactCategory)도 마찬가지로 더 내려갈 곳이 없다.
-      isLeaf: Boolean(category?.parentId) || exactCategory,
-    };
-  };
-
-  useEffect(() => {
-    if (!isOpen || !categoryId) return;
-
-    setSelectedPieCategory(null);
-
-    const loadData = async () => {
-      setLoading(true);
-
-      try {
-        const target = resolveTarget(categoryId);
-        // 구간 경계는 프로젝트 타임존 기준이다 (서버의 합계와 같은 규칙).
-        const { startDate, endDate } = dayRangeQuery(dayKeys.startKey, dayKeys.endKey, timeZone);
-
-        // 12개월 시계열은 서버가 계산한다.
-        // PaymentMethodTab과 각자 구현하던 것을 /reports/trend 하나로 합쳤다.
-        const trendPromise =
-          target.scope === 'total'
-            ? apiClient.getTrend('total', { type: target.type, endMonth, months: 12, ...filter }, projectId)
-            : apiClient.getTrend(
-                'category',
-                { targetId: categoryId, endMonth, months: 12, exact: exactCategory, ...filter },
-                projectId,
-              );
-
-        /*
-         * 이 구간의 거래를 뽑는 조건. 날짜만 빼 둔다.
-         *
-         * 전체 지출은 kind='expense'가 아니라 categoryType='expense'로 뽑는다.
-         * kind로 걸면 수수료가 붙은 이체가 빠져서, 12개월 그래프(수수료 포함)와
-         * 어긋난다. 앞선 달을 겹쳐 그릴 때 날짜만 바꿔 이 조건을 그대로 다시 쓴다.
-         */
-        const entryQuery = {
-          ...filter,
-          ...(target.scope === 'category'
-            ? { categoryId, ...(exactCategory ? { categoryExact: true } : {}) }
-            : { categoryType: target.type }),
-        };
-
-        // 일별 누적과 목록에 쓴다. 커서를 끝까지 따라간다. 한 페이지만 받으면
-        // 아래 일별 누적이 12개월 그래프(서버 집계, 전량)와 어긋난다.
-        const entriesPromise = apiClient.getAllEntries(
-          { ...entryQuery, startDate, endDate },
-          projectId,
-        );
-
-        /*
-         * 겹쳐 그릴 앞선 두 달.
-         *
-         * 기간을 직접 정했을 때는 받지 않는다. 열흘짜리 구간의 "지난달"이 한 달인지
-         * 같은 열흘인지 정해지지 않아 견줄 대상이 없다.
-         */
-        const comparisonPromise = period.yearMonth
-          ? loadPreviousMonths(period.yearMonth, entryQuery, projectId, timeZone)
-          : Promise.resolve([] as CumulativeSeries[]);
-
-        // 원형차트: 전체면 대분류별, 대분류를 보고 있으면 소분류별
-        const breakdownPromise =
-          target.scope === 'total'
-            ? apiClient.getCategoryBreakdown(period, target.type, projectId, { ...filter })
-            : target.isLeaf
-              ? Promise.resolve([])
-              : apiClient.getCategoryBreakdown(period, target.type, projectId, { rollup: false, ...filter });
-
-        // 드릴다운(대분류 -> 소분류)에도 서버 집계를 쓴다
-        const flatPromise = target.isLeaf
-          ? Promise.resolve([])
-          : apiClient.getCategoryBreakdown(period, target.type, projectId, { rollup: false, ...filter });
-
-        const [trendRes, entriesRes, breakdownRes, flatRes, comparisonRes] = await Promise.all([
-          trendPromise,
-          entriesPromise,
-          breakdownPromise,
-          flatPromise,
-          comparisonPromise,
-        ]);
-        setFlatBreakdown((flatRes ?? []) as any);
-
-        const trend = (trendRes ?? []) as Array<{ yearMonth: string; amount: string }>;
-        setMonthlyData(
-          trend.map((point) => ({
-            month: formatMonthShort(Number(point.yearMonth.split('-')[1])),
-            amount: toNumber(point.amount),
-          })),
-        );
-
-        const rows: EntryListItem[] = (entriesRes ?? []) as EntryListItem[];
-        setCurrentMonthEntries(rows);
-
-        // 일별 누적. 이체는 금액이 아니라 수수료만 쌓는다.
-        setDailyData(
-          buildDailyCumulative(rows, dayKeys.startKey, dayKeys.endKey, timeZone),
-        );
-        setComparisons(comparisonRes);
-
-        const breakdown = (breakdownRes ?? []) as BreakdownRow[];
-        // 대분류를 보고 있으면 그 아래 소분류 + 미분류만 남긴다
-        // (rollup=false로 받았으므로 소분류와 대분류 직접 금액이 전부 들어 있다)
-        setCategoryStats(
-          target.scope === 'category'
-            ? buildSubcategoryStats(breakdown, categoryId)
-            : breakdown.map((item) => ({
-                id: item.categoryId,
-                name: item.categoryName,
-                value: toNumber(item.amount),
-              })),
-        );
-      } catch (error) {
-        console.error('분류별 상세 데이터를 불러오지 못했습니다:', error);
-        // 실패했을 때 이전 구간의 데이터가 남아 있으면 잘못된 값을 보게 되므로 비운다.
-        setMonthlyData([]);
-        setDailyData([]);
-        setComparisons([]);
-        setCurrentMonthEntries([]);
-        setCategoryStats([]);
-        setFlatBreakdown([]);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadData();
-  }, [
-    isOpen,
+  const detail = useCategoryDetail({
     categoryId,
     categories,
-    periodKey,
+    period,
     exactCategory,
     projectId,
-    timeZone,
     filter,
     reloadToken,
-    // 남이 고친 거래도 이 상세에 들어와야 한다. reloadToken 은 이 화면의 편집만 센다.
-    mirrorVersion,
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  ]);
-
-  // 이 목록은 categoryId나 categoryType으로 조회한 결과라 카테고리 다리가 없는
-  // 카드사 이체는 애초에 들어오지 않는다. 따로 걸러 내지 않는다.
-  const visibleEntries = periodEntries;
-
-  /*
-   * 달 단위로 볼 때만 쓰는 값. 이번 달 선의 이름과, 그 선을 며칠까지 그을지다.
-   * 기간 보기에서는 견줄 달이 없어 둘 다 필요 없다.
-   */
-  const currentMonthName = period.yearMonth
-    ? formatMonthShort(Number(period.yearMonth.slice(5)))
-    : undefined;
-  const throughDay = period.yearMonth ? throughDayOf(period.yearMonth, timeZone) : undefined;
-
-  const hasMonthlyAmount = monthlyData.some((d) => d.amount > 0);
-  /*
-   * 이 달에 쓴 것이 없어도 앞선 달에 있으면 그린다. "지난달에는 여기에 이만큼
-   * 썼는데 이번 달은 0"이 그림으로 보여야 한다.
-   */
-  const hasDailyAmount =
-    dailyData.some((d) => d.cumulative > 0) ||
-    comparisons.some((series) => series.points.some((point) => point.cumulative > 0));
-
-  const handlePieClick = (data: PieChartData) => {
-    if (!data.id) return;
-
-    // 서버가 이미 계산한 평면 집계를 쓴다. 패널에서 대분류를 직접 볼 때와 같은 규칙이어야 한다.
-    setSubCategoryStats(buildSubcategoryStats(flatBreakdown, data.id));
-    setSelectedPieCategory(data.id);
-  };
+    // 닫혀 있는 팝업은 받지 않는다. 인라인으로 쓸 때는 늘 보이는 자리다.
+    enabled: isOpen,
+  });
 
   const content = (
     <div className="space-y-8 p-4">
-      {loading ? (
+      {detail.isLoading ? (
         <div className="text-center text-gray-500">{t('detail.loading')}</div>
       ) : (
         <>
-          {/* 원형차트: categoryStats가 있을 때 표시 */}
-          {categoryStats.length > 0 && (
+          {/* 원형차트: 조각이 있을 때 표시 */}
+          {detail.slices.length > 0 && (
             <div>
               <div className="flex items-center justify-between mb-4">
                 <h3 className="text-lg font-semibold">
                   {(() => {
                     if (categoryId === 'total-expense') {
-                      return t(selectedPieCategory ? 'detail.pieExpenseChild' : 'detail.pieExpenseParent');
+                      return t(detail.drilledId ? 'detail.pieExpenseChild' : 'detail.pieExpenseParent');
                     } else if (categoryId === 'total-income') {
-                      return t(selectedPieCategory ? 'detail.pieIncomeChild' : 'detail.pieIncomeParent');
+                      return t(detail.drilledId ? 'detail.pieIncomeChild' : 'detail.pieIncomeParent');
                     } else {
                       return t('detail.pieExpenseChild');
                     }
                   })()}
                 </h3>
-                {selectedPieCategory && (
+                {detail.drilledId && (
                   <button
-                    onClick={() => {
-                      setSelectedPieCategory(null);
-                      setSubCategoryStats([]);
-                    }}
+                    onClick={detail.resetDrill}
                     className="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
                   >
                     {t('detail.back')}
@@ -391,7 +137,7 @@ export function BudgetDetailModal({
               <ResponsiveContainer width="100%" height={400}>
                 <PieChart>
                   <Pie
-                    data={selectedPieCategory ? subCategoryStats : categoryStats}
+                    data={detail.slices}
                     cx="50%"
                     cy="50%"
                     labelLine={false}
@@ -402,23 +148,16 @@ export function BudgetDetailModal({
                     fill="#8884d8"
                     dataKey="value"
                     onClick={(entry: any) => {
-                      if (!selectedPieCategory && entry.id) {
-                        const data = categoryStats.find((item) => item.id === entry.id);
-                        if (data) {
-                          handlePieClick(data);
-                        }
-                      }
+                      if (!detail.drilledId && entry.id) detail.drill(entry.id);
                     }}
                   >
-                    {(selectedPieCategory ? subCategoryStats : categoryStats).map(
-                      (entry, index) => (
-                        <Cell
-                          key={`cell-${index}`}
-                          fill={COLORS[index % COLORS.length]}
-                          style={{ cursor: !selectedPieCategory ? 'pointer' : 'default' }}
-                        />
-                      )
-                    )}
+                    {detail.slices.map((entry, index) => (
+                      <Cell
+                        key={`cell-${index}`}
+                        fill={CHART_PIE_COLORS[index % CHART_PIE_COLORS.length]}
+                        style={{ cursor: !detail.drilledId && entry.id ? 'pointer' : 'default' }}
+                      />
+                    ))}
                   </Pie>
                   <Tooltip
                     formatter={(value: any) => formatCurrency(value, displayCurrency)}
@@ -432,13 +171,13 @@ export function BudgetDetailModal({
           {/* 12개월 바차트 */}
           <div>
             <h3 className="text-lg font-semibold mb-4">{t('detail.monthlyUsage')}</h3>
-            {hasMonthlyAmount ? (
+            {detail.hasMonthlyAmount ? (
               <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={monthlyData} margin={CHART_MARGIN}>
+                <BarChart data={detail.monthly} margin={CHART_MARGIN}>
                   <CartesianGrid {...CHART_GRID} />
                   <XAxis dataKey="month" tick={CHART_TICK} />
                   <YAxis
-                    domain={barDomain(monthlyData.map((d) => d.amount))}
+                    domain={barDomain(detail.monthly.map((d) => d.amount))}
                     tickFormatter={(value: number) => formatAxisAmount(value, displayCurrency)}
                     tick={CHART_TICK}
                     width={CHART_Y_AXIS_WIDTH}
@@ -462,12 +201,12 @@ export function BudgetDetailModal({
           {/* 일별 라인차트 */}
           <div>
             <h3 className="text-lg font-semibold mb-4">{t('detail.dailyCumulative')}</h3>
-            {hasDailyAmount ? (
+            {detail.hasDailyAmount ? (
               <DailyCumulativeChart
-                current={dailyData}
-                comparisons={comparisons}
-                currentName={currentMonthName}
-                throughDay={throughDay}
+                current={detail.daily}
+                comparisons={detail.comparisons}
+                currentName={detail.currentMonthName}
+                throughDay={detail.throughDay}
                 tooltipName={t('detail.cumulativeUsage')}
                 height={300}
               />
@@ -481,11 +220,11 @@ export function BudgetDetailModal({
           {/* 거래내역 */}
           <div>
             <h3 className="text-lg font-semibold mb-4">{t('detail.entries')}</h3>
-            {visibleEntries.length === 0 ? (
+            {detail.entries.length === 0 ? (
               <p className="text-gray-500 text-sm">{t('detail.noEntries')}</p>
             ) : (
               <TransactionListView
-                entries={visibleEntries}
+                entries={detail.entries}
                 onEntryClick={onEntryClick ?? (() => undefined)}
               />
             )}

@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import type { EntryFilterQuery } from '@money/types';
 
 import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
+import { totalIdOf } from '@money/core/hooks/useCategoryDetail';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
@@ -19,15 +20,28 @@ interface BreakdownRow {
   count: number;
 }
 
+/** 목록에서 무엇을 눌렀는지. 상세 화면이 그대로 받아 조회한다. */
+export interface CategoryTarget {
+  /** 실제 분류 id, 또는 'total-expense'/'total-income' */
+  categoryId: string;
+  /** 상세 머리글에 적을 이름. 목록이 쓰던 이름을 그대로 넘긴다. */
+  name: string;
+  /** "미분류"를 눌렀는지 (소분류를 뺀 그 대분류만 본다) */
+  exact: boolean;
+}
+
 /**
  * 분류별. 웹 가계 화면의 분류별 탭에서 왼쪽 목록을 옮긴 것이다.
  *
  * 합계는 서버가 posting 기준으로 계산한다. 화면에서 거래 목록을 더하면 한 거래를
  * 여러 분류로 쪼갠 건이 대표 분류에 통째로 잡혀 숫자가 틀어진다.
  *
- * 대분류를 누르면 그 아래 소분류가 펼쳐진다. 거래가 없는 소분류도 0원으로 함께
- * 보여 준다. 목록에서 빠지면 "이 기간에 안 썼다"와 "그런 분류가 없다"를 구분할 수 없다.
- * 예산 진행률과 상세(그래프·거래 목록)는 아직 웹에만 있다.
+ * **소분류를 처음부터 펼쳐 둔다.** 예전에는 대분류를 눌러야 펼쳐졌는데, 그러면 그
+ * 누름이 "펼치기"에 묶여 상세로 들어가는 길이 없었다. 지금은 누름이 전부 상세로
+ * 가고, 무엇이 있는지는 접지 않고 그대로 보여 준다. 거래가 없는 소분류도 0원으로
+ * 함께 남긴다 -- 빠지면 "이 기간에 안 썼다"와 "그런 분류가 없다"를 구분할 수 없다.
+ *
+ * 예산 진행률은 아직 웹에만 있다.
  */
 export default function CategoryBreakdown({
   period,
@@ -35,12 +49,15 @@ export default function CategoryBreakdown({
   filter,
   categories,
   reloadToken,
+  onSelect,
 }: {
   period: ReportPeriod;
   projectId?: string | null;
   filter?: EntryFilterQuery;
   categories: Category[];
   reloadToken?: number;
+  /** 합계·대분류·소분류·미분류 중 하나를 누를 때. 부모가 상세 화면을 연다. */
+  onSelect: (target: CategoryTarget) => void;
 }) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
@@ -50,9 +67,8 @@ export default function CategoryBreakdown({
   const [type, setType] = useState<EntryType>('expense');
   /** 대분류로 합친 집계(rollup). 목록의 윗줄이다. */
   const [rows, setRows] = useState<BreakdownRow[]>([]);
-  /** 쪼개지 않은 집계. 대분류를 펼쳤을 때 소분류 줄을 만든다. */
+  /** 쪼개지 않은 집계. 소분류 줄을 여기서 만든다. */
   const [flatRows, setFlatRows] = useState<BreakdownRow[]>([]);
-  const [expandedId, setExpandedId] = useState('');
   const [isLoading, setIsLoading] = useState(true);
 
   const periodKey = period.yearMonth ?? `${period.startDate}~${period.endDate}`;
@@ -114,6 +130,8 @@ export default function CategoryBreakdown({
 
   const amountOf = (categoryId: string) =>
     toNumber(flatRows.find((row) => row.categoryId === categoryId)?.amount);
+  const countOf = (categoryId: string) =>
+    flatRows.find((row) => row.categoryId === categoryId)?.count ?? 0;
 
   return (
     <View className="gap-3 rounded-lg bg-white p-4 shadow-sm">
@@ -125,12 +143,22 @@ export default function CategoryBreakdown({
         <Text className="text-gray-600">{t('category.none')}</Text>
       ) : (
         <>
-          <View className="flex-row items-baseline justify-between px-3 py-2">
+          {/* 합계. 누르면 그 유형 전체를 대분류별로 쪼갠 상세가 열린다. */}
+          <Pressable
+            onPress={() =>
+              onSelect({
+                categoryId: totalIdOf(type),
+                name: t(type === 'expense' ? 'category.totalExpense' : 'category.totalIncome'),
+                exact: false,
+              })
+            }
+            className="flex-row items-baseline justify-between rounded-lg px-3 py-2 active:bg-gray-50"
+          >
             <Text className="text-sm text-gray-600">{t('budget.total')}</Text>
             <Text className="text-lg font-bold text-gray-900">
               {formatCurrency(total, displayCurrency)}
             </Text>
-          </View>
+          </Pressable>
 
           <View className="gap-1">
             {parentRows.map((row) => {
@@ -140,27 +168,24 @@ export default function CategoryBreakdown({
                   id: category.id,
                   name: category.name,
                   amount: amountOf(category.id),
+                  count: countOf(category.id),
                 }))
                 .sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name));
               /* 소분류 없이 대분류에 바로 기록한 금액. 빼면 돈이 사라진 것처럼 보인다. */
               const directAmount = amountOf(row.categoryId);
-              const isExpanded = expandedId === row.categoryId && children.length > 0;
               /** 비율은 그 대분류 안에서의 몫이다. 전체 대비로 적으면 어느 소분류가 큰지 알 수 없다. */
               const shareOf = (amount: number) => (row.amount > 0 ? (amount / row.amount) * 100 : 0);
 
               return (
                 <View key={row.categoryId}>
                   <Pressable
-                    onPress={() => setExpandedId(isExpanded ? '' : row.categoryId)}
+                    onPress={() =>
+                      onSelect({ categoryId: row.categoryId, name: row.categoryName, exact: false })
+                    }
                     className="rounded-lg px-3 py-2 active:bg-gray-50"
                   >
                     <View className="flex-row items-baseline justify-between gap-2">
                       <Text numberOfLines={1} className="shrink text-sm text-gray-800">
-                        {children.length > 0 ? (
-                          <Text className="text-xs text-gray-400">
-                            {isExpanded ? '▾ ' : '▸ '}
-                          </Text>
-                        ) : null}
                         {row.categoryName}
                         <Text className="text-xs text-gray-500">
                           {' '}
@@ -183,12 +208,15 @@ export default function CategoryBreakdown({
                     </View>
                   </Pressable>
 
-                  {isExpanded ? (
+                  {children.length > 0 ? (
                     <View className="ml-4 mt-1 gap-1 border-l border-gray-200 pl-3">
                       {children.map((child) => (
-                        <View
+                        <Pressable
                           key={child.id}
-                          className="flex-row items-baseline justify-between gap-2 px-2 py-1"
+                          onPress={() =>
+                            onSelect({ categoryId: child.id, name: child.name, exact: false })
+                          }
+                          className="flex-row items-baseline justify-between gap-2 rounded px-2 py-1 active:bg-gray-50"
                         >
                           <Text numberOfLines={1} className="shrink text-sm text-gray-700">
                             {child.name}
@@ -196,6 +224,12 @@ export default function CategoryBreakdown({
                               {' '}
                               ({shareOf(child.amount).toFixed(0)}%)
                             </Text>
+                            {child.count > 0 ? (
+                              <Text className="text-xs text-gray-400">
+                                {' '}
+                                {t('ledger.entryCount', { count: child.count })}
+                              </Text>
+                            ) : null}
                           </Text>
                           <Text
                             className={`text-sm ${
@@ -204,11 +238,25 @@ export default function CategoryBreakdown({
                           >
                             {formatCurrency(child.amount, displayCurrency)}
                           </Text>
-                        </View>
+                        </Pressable>
                       ))}
 
+                      {/*
+                        소분류 없이 대분류에 바로 기록한 건. 자기 분류가 없을 뿐
+                        거래는 실재하므로 눌러서 볼 수 있어야 한다. 대분류 id 에
+                        "소분류 제외"를 붙여 조회한다.
+                      */}
                       {directAmount > 0 ? (
-                        <View className="flex-row items-baseline justify-between gap-2 px-2 py-1">
+                        <Pressable
+                          onPress={() =>
+                            onSelect({
+                              categoryId: row.categoryId,
+                              name: t('category.exact', { name: row.categoryName }),
+                              exact: true,
+                            })
+                          }
+                          className="flex-row items-baseline justify-between gap-2 rounded px-2 py-1 active:bg-gray-50"
+                        >
                           <Text className="text-sm text-gray-500">
                             {t('category.uncategorized')}
                             <Text className="text-xs text-gray-500">
@@ -219,7 +267,7 @@ export default function CategoryBreakdown({
                           <Text className="text-sm text-gray-600">
                             {formatCurrency(directAmount, displayCurrency)}
                           </Text>
-                        </View>
+                        </Pressable>
                       ) : null}
                     </View>
                   ) : null}

@@ -5,7 +5,6 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@money/core/store/auth';
 import { useUserFilter } from '@money/core/store/user-filter';
 import {
-  useCanEdit,
   useMyPersonId,
   useProject,
   useProjectDisplayCurrency,
@@ -19,13 +18,10 @@ import {
   dateKeyOf,
   dayRangeQuery,
   currentYearMonth,
-  formatYearMonth,
   monthQueryRange,
 } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import Modal from '@/components/Modal';
-import TransactionCalendar from '@/components/TransactionCalendar';
-import TransactionListView from '@/components/TransactionListView';
 import MonthHeader from '@/components/MonthHeader';
 import LedgerKindSummary from '@/components/LedgerKindSummary';
 import { EntryListItem } from '@/components/TransactionItem';
@@ -43,14 +39,6 @@ import { useProjectGuard } from '@/hooks/useProjectGuard';
 import type { EntryFilterQuery } from '@money/types';
 import { useApiError } from '@money/core/lib/api-error';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
-
-/**
- * 기간 보기에서 그릴 달력 장수 상한.
- *
- * 달마다 한 장이라 구간이 길면 끝없이 늘어난다. 1년치면 화면을 훑어보는 한계에
- * 가깝고, 그보다 길면 목록과 분류별로 보는 편이 낫다.
- */
-const CALENDAR_MAX_MONTHS = 12;
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const BUDGET_FORM_ID = 'detail-budget-form';
@@ -82,12 +70,16 @@ const BUDGET_SCOPE_OPTIONS: Array<{
 ];
 
 /** 가계 화면의 보기 방식. 날짜별·분류별·수단별 셋이다. */
-type ViewType = 'calendar' | 'budget' | 'payment-method';
+/**
+ * 가계가 보여 주는 두 가지.
+ *
+ * 날짜별(달력 + 그 날의 목록)은 여기 없다. 거래 화면이 같은 일을 더 넓게 하므로
+ * (년월 -> 날짜 -> 거래, 달력 보기, 검색) 같은 것을 두 자리에서 기르지 않는다.
+ */
+type ViewType = 'budget' | 'payment-method';
 
 export default function TransactionsPage() {
   const { t } = useTranslation();
-  /** 읽기 전용 구성원에게는 쓰기 단추를 그리지 않는다. */
-  const canEdit = useCanEdit();
   const { messageOf } = useApiError();
   const { isAuthenticated, user, defaultProjectData } = useAuth();
   const { selectedPersonIds, togglePersonId } = useUserFilter();
@@ -107,21 +99,16 @@ export default function TransactionsPage() {
     resetBudgets: resetBudgetsApi,
   } = useBudget();
   const router = useRouter();
-  const [entries, setEntries] = useState<EntryListItem[]>([]);
   // 월 합계는 서버가 계산한다 (/reports/summary)
   const [summary, setSummary] = useState<{ income: string; expense: string }>({ income: '0', expense: '0' });
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [people, setPeople] = useState<Person[]>([]);
   const [cards, setCards] = useState<Card[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
-  const [startDate, setStartDate] = useState<Date | null>(null);
-  const [endDate, setEndDate] = useState<Date | null>(null);
-  const [displayEntries, setDisplayEntries] = useState<EntryListItem[]>([]);
   const [currentMonth, setCurrentMonth] = useState<number>(() => currentYearMonth(timeZone).month);
   const [currentYear, setCurrentYear] = useState<number>(() => currentYearMonth(timeZone).year);
-  const [viewType, setViewType] = useState<ViewType>('calendar');
+  const [viewType, setViewType] = useState<ViewType>('budget');
   /*
    * 한 번 열어 본 보기는 지우지 않고 감춘다.
    *
@@ -131,9 +118,8 @@ export default function TransactionsPage() {
    * 앱의 가계 화면도 같은 방식이다.
    */
   const mirrorVersion = useMirrorVersion();
-  const [visited, setVisited] = useState<ViewType[]>(['calendar']);
+  const [visited, setVisited] = useState<ViewType[]>(['budget']);
   const [visits, setVisits] = useState<Record<ViewType, number>>({
-    calendar: 0,
     budget: 0,
     'payment-method': 0,
   });
@@ -176,7 +162,6 @@ export default function TransactionsPage() {
   const [budgetScheduleToken, setBudgetScheduleToken] = useState(0);
   const [isResettingBudgets, setIsResettingBudgets] = useState(false);
   const [selectedCategoryId, setSelectedCategoryId] = useState('');
-  const dateTransactionsRef = useRef<HTMLDivElement>(null);
   /** 거래 상세·추가 팝업. 이 화면과 자산 화면이 같은 컴포넌트를 쓴다. */
   const entryEditorRef = useRef<EntryEditorHandle>(null);
 
@@ -192,8 +177,6 @@ export default function TransactionsPage() {
 
     const loadData = async () => {
       try {
-        setIsLoading(true);
-
         // 항상 API에서 최신 데이터 가져오기 (캐시 사용 안 함)
         console.log('[Dashboard] 📡 Fetching data for project:', selectedProjectId);
         const [accountsData, peopleData, cardsData, categoriesData] = await Promise.all([
@@ -212,13 +195,10 @@ export default function TransactionsPage() {
         // 초기 월 설정. 거래는 아래 월별 useEffect가 불러온다.
         // 이번 달 판단도 프로젝트 타임존 기준이다.
         const today = currentYearMonth(timeZone);
-        setDisplayEntries([]);
         setCurrentMonth(today.month);
         setCurrentYear(today.year);
       } catch (err) {
         setError(t('home.loadFailed'));
-      } finally {
-        setIsLoading(false);
       }
     };
 
@@ -243,8 +223,6 @@ export default function TransactionsPage() {
     };
   }, [selectedPersonIds, people.length]);
   const appliedFilter = useDebouncedValue(entryFilter, 250);
-  /** 필터가 걸려 있는지. 목록이 비었을 때 이유를 알려주는 데 쓴다. */
-  const isFilterNarrowed = Object.keys(appliedFilter).length > 0;
 
   // 예산 사용금액도 같은 필터를 탄다. 이 선언은 appliedFilter 뒤에 있어야 한다
   // (의존성 배열은 렌더 중에 평가되므로 앞에 두면 초기화 전 접근이 된다).
@@ -275,29 +253,6 @@ export default function TransactionsPage() {
    * 만들어 두 곳에 넘긴다. 한쪽만 바꾸면 목록과 상단 합계가 서로 다른 구간을 본다.
    */
   const isRangeMode = periodMode === 'range' && Boolean(rangeStart && rangeEnd);
-  /**
-   * 기간이 걸쳐 있는 달들. 기간 보기의 달력은 달마다 한 장씩 그린다.
-   *
-   * 장수를 12로 자른다. 3년 구간이면 달력 36장이 되는데, 그 화면은 아무도 읽지
-   * 않으면서 렌더만 무거워진다. 잘랐다는 사실은 달력 아래에 적는다.
-   */
-  const monthsInRange = useMemo(() => {
-    if (!isRangeMode) return [];
-
-    const [startYear, startMonth] = rangeStart.split('-').map(Number);
-    const [endYear, endMonth] = rangeEnd.split('-').map(Number);
-    const months: Array<{ year: number; month: number }> = [];
-
-    for (
-      let cursor = new Date(Date.UTC(startYear, startMonth - 1, 1));
-      cursor.getTime() <= Date.UTC(endYear, endMonth - 1, 1) && months.length < CALENDAR_MAX_MONTHS;
-      cursor.setUTCMonth(cursor.getUTCMonth() + 1)
-    ) {
-      months.push({ year: cursor.getUTCFullYear(), month: cursor.getUTCMonth() + 1 });
-    }
-
-    return months;
-  }, [isRangeMode, rangeStart, rangeEnd]);
   const reportPeriod: ReportPeriod = isRangeMode
     ? { startDate: rangeStart, endDate: rangeEnd }
     : { yearMonth: `${currentYear}-${String(currentMonth).padStart(2, '0')}` };
@@ -307,18 +262,17 @@ export default function TransactionsPage() {
   // 객체는 렌더마다 새로 만들어지므로 의존성에는 값을 쓴다.
   const rangeKey = `${entryRange.startDate}~${entryRange.endDate}`;
 
+  /**
+   * 위 머리글의 합계.
+   *
+   * 거래 목록은 받지 않는다. 날짜별 보기가 빠지면서 이 화면이 한 달치 거래를
+   * 통째로 들고 있을 까닭이 없어졌다 -- 분류별·수단별은 서버 집계를 쓰고, 상세는
+   * 자기가 필요한 구간만 따로 받는다.
+   */
   const reloadPeriod = useCallback(async () => {
     if (!selectedProjectId || !currentYear || !currentMonth) return;
 
-    // 커서를 끝까지 따라간다. 한 페이지(200건)만 받으면 목록이 잘리는 것보다,
-    // 달력의 일별 합계와 일별 누적 그래프가 조용히 과소 집계되는 것이 문제다.
-    // 상단 요약은 서버가 전량으로 계산하므로 같은 화면 안에서 숫자가 어긋난다.
-    const [entryRows, summaryRes] = await Promise.all([
-      apiClient.getAllEntries({ ...entryRange, ...appliedFilter }, selectedProjectId),
-      apiClient.getSummary(reportPeriod, selectedProjectId, appliedFilter),
-    ]);
-
-    setEntries(entryRows ?? []);
+    const summaryRes = await apiClient.getSummary(reportPeriod, selectedProjectId, appliedFilter);
     setSummary(summaryRes ?? { income: '0', expense: '0' });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProjectId, currentYear, currentMonth, rangeKey, appliedFilter]);
@@ -328,14 +282,12 @@ export default function TransactionsPage() {
     setViewType(next);
     setVisited((prev) => (prev.includes(next) ? prev : [...prev, next]));
     setVisits((prev) => ({ ...prev, [next]: prev[next] + 1 }));
-    // 날짜별은 이 화면이 들고 있는 값이라 여기서 직접 다시 받는다.
-    if (next === 'calendar') reloadPeriod();
   };
 
   useEffect(() => {
     reloadPeriod().catch((err: unknown) => {
-      console.error('거래 조회 실패:', err);
-      setEntries([]);
+      console.error('합계 조회 실패:', err);
+      setSummary({ income: '0', expense: '0' });
     });
   }, [reloadPeriod]);
 
@@ -427,52 +379,15 @@ export default function TransactionsPage() {
     entryEditorRef.current?.openDetail(entry);
   };
 
-  const handleAddClick = () => {
-    entryEditorRef.current?.openAdd();
-  };
-
-  /**
-   * 목록에 보여 줄 거래.
-   *
-   * 이체와 카드사 이체도 그대로 보여 준다. 돈이 움직인 사실은 가계부에 남아야 한다.
-   * 대신 합계에는 들어가지 않는다. 내 계좌 사이의 이동이라 수입도 지출도 아니고,
-   * 카드 사용액은 결제할 때가 아니라 그을 때 이미 지출로 잡혔기 때문이다.
-   * 세면 같은 돈을 두 번 세게 된다.
-   *
-   * 그 규칙은 걸러 내기가 아니라 `expenseAmountOf`/`incomeAmountOf`가 지킨다.
-   * 두 함수가 이체와 카드사 이체에 0을 돌려주므로 목록에 있어도 합계가 흔들리지 않는다.
-   */
-  const visibleEntries = entries;
-
   const monthlyTotals = useMemo(
     () => ({ incomeTotal: toNumber(summary.income), expenseTotal: toNumber(summary.expense) }),
     [summary],
   );
 
 
-  const handleCalendarDateSelect = (clickedDate: Date, dayEntries: EntryListItem[]) => {
-    if (startDate &&
-        clickedDate.getFullYear() === startDate.getFullYear() &&
-        clickedDate.getMonth() === startDate.getMonth() &&
-        clickedDate.getDate() === startDate.getDate()
-    ) {
-      setStartDate(null);
-      setDisplayEntries([]);
-    } else {
-      setStartDate(clickedDate);
-      setDisplayEntries(dayEntries);
-    }
-
-    setTimeout(() => {
-      dateTransactionsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }, 0);
-  };
-
   const handleMonthChange = (year: number, month: number) => {
     setCurrentYear(year);
     setCurrentMonth(month);
-    setStartDate(null);
-    setDisplayEntries([]);
   };
 
   /**
@@ -491,17 +406,12 @@ export default function TransactionsPage() {
       setRangeStart(dateKeyOf(start, timeZone));
       setRangeEnd(dateKeyOf(end, timeZone));
     }
-    // 기간 보기에는 달력이 없다. 달력이 고른 날짜 필터를 들고 넘어가면
-    // 목록이 그 하루만 남은 채로 보인다.
-    setStartDate(null);
-    setDisplayEntries([]);
     setPeriodMode(mode);
   };
 
   const handleRangeChange = (start: string, end: string) => {
     setRangeStart(start);
     setRangeEnd(end);
-    setDisplayEntries([]);
   };
 
 
@@ -785,55 +695,35 @@ export default function TransactionsPage() {
       )}
 
       {/*
-        보기 방식과 거래 추가.
+        보기 방식. 목록에 무엇을 할지 고르는 것이라 목록 바로 위에 둔다.
 
-        예전에는 탭이 달 머리글 오른쪽에, 추가 버튼이 제목 오른쪽에 있었다. 첫 문장이
-        머리글 자리를 가져가면서 둘을 한 줄로 모았다 -- 목록에 무엇을 할지 고르는 것들이
-        목록 바로 위에 함께 있다.
+        거래를 적는 것은 거래 화면이 맡는다. 가계는 읽는 자리다.
+
+        w-fit 으로 글자만큼만 차지하게 둔다. 예전에는 추가 버튼과 한 줄을 이루며
+        justify-between 이 이 상자를 왼쪽으로 밀었는데, 버튼이 빠지면서 그 틀이
+        없어졌다. 그냥 두면 회색 띠가 화면 끝까지 늘어난다.
       */}
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="flex gap-2 bg-gray-200 rounded-lg p-1">
-          <button
-            onClick={() => openView('calendar')}
-            className={`px-4 py-2 rounded-md font-medium transition ${
-              viewType === 'calendar'
-                ? 'bg-white text-blue-600 shadow'
-                : 'text-gray-600 hover:text-gray-900'
-            }`}
-          >
-            {t('ledger.tab.daily')}
-          </button>
-          <button
-            onClick={() => openView('budget')}
-            className={`px-4 py-2 rounded-md font-medium transition ${
-              viewType === 'budget'
-                ? 'bg-white text-blue-600 shadow'
-                : 'text-gray-600 hover:text-gray-900'
-            }`}
-          >
-            {t('ledger.tab.category')}
-          </button>
-          <button
-            onClick={() => openView('payment-method')}
-            className={`px-4 py-2 rounded-md font-medium transition ${
-              viewType === 'payment-method'
-                ? 'bg-white text-blue-600 shadow'
-                : 'text-gray-600 hover:text-gray-900'
-            }`}
-          >
-            {t('ledger.tab.method')}
-          </button>
-        </div>
-
-        {/* 읽기 전용 구성원에게는 그리지 않는다 -- 서버가 어차피 거절한다. */}
-        {canEdit ? (
-          <button
-            onClick={handleAddClick}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition whitespace-nowrap"
-          >
-            {t('ledger.addEntry')}
-          </button>
-        ) : null}
+      <div className="flex w-fit gap-2 bg-gray-200 rounded-lg p-1">
+        <button
+          onClick={() => openView('budget')}
+          className={`px-4 py-2 rounded-md font-medium transition ${
+            viewType === 'budget'
+              ? 'bg-white text-blue-600 shadow'
+              : 'text-gray-600 hover:text-gray-900'
+          }`}
+        >
+          {t('ledger.tab.category')}
+        </button>
+        <button
+          onClick={() => openView('payment-method')}
+          className={`px-4 py-2 rounded-md font-medium transition ${
+            viewType === 'payment-method'
+              ? 'bg-white text-blue-600 shadow'
+              : 'text-gray-600 hover:text-gray-900'
+          }`}
+        >
+          {t('ledger.tab.method')}
+        </button>
       </div>
 
       {/* 감춘 보기도 그려 둔 채로 남긴다. 다시 누르면 받아 둔 값이 바로 보인다. */}
@@ -885,73 +775,6 @@ export default function TransactionsPage() {
           />
         </div>
       )}
-
-      <div hidden={viewType !== 'calendar'}>
-        {isLoading ? (
-          <p className="text-gray-600">{t('common.loading')}</p>
-        ) : visibleEntries.length === 0 ? (
-          /* 필터로 비었는지 원래 없는지 구분해 준다. 체크를 다 풀면 결과가 없는 게 정상이다. */
-          <p className="text-gray-600">
-            {isFilterNarrowed ? t('ledger.noFiltered') : t('feed.empty')}
-          </p>
-        ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-            <div className="lg:col-span-1 space-y-4">
-              {/*
-                기간 보기는 걸쳐 있는 달마다 달력을 한 장씩 그린다. 구간 밖의 날은
-                흐리게 두고 누를 수 없게 한다 (그 날짜의 거래는 받아오지 않았다).
-              */}
-              {isRangeMode ? (
-                <>
-                  {monthsInRange.map(({ year, month }) => (
-                    <div key={`${year}-${month}`}>
-                      <p className="mb-1 text-sm font-semibold text-gray-700">
-                        {formatYearMonth(year, month)}
-                      </p>
-                      <TransactionCalendar
-                        entries={visibleEntries}
-                        year={year}
-                        month={month}
-                        onDateSelect={handleCalendarDateSelect}
-                        onMonthChange={handleMonthChange}
-                        startDate={startDate}
-                        endDate={endDate}
-                        periodStart={rangeStart}
-                        periodEnd={rangeEnd}
-                      />
-                    </div>
-                  ))}
-                  {monthsInRange.length >= CALENDAR_MAX_MONTHS && (
-                    <p className="text-xs text-gray-500">
-                      {t('ledger.calendarLimit', { months: CALENDAR_MAX_MONTHS })}
-                    </p>
-                  )}
-                </>
-              ) : (
-                <TransactionCalendar
-                  entries={visibleEntries}
-                  year={currentYear}
-                  month={currentMonth}
-                  onDateSelect={handleCalendarDateSelect}
-                  onMonthChange={handleMonthChange}
-                  startDate={startDate}
-                  endDate={endDate}
-                />
-              )}
-            </div>
-
-            {/* 달력이 날짜를 고르는 도구라서 좁은 화면에서도 달력을 위에 둔다 */}
-            {(displayEntries.length > 0 || !startDate) && (
-              <div ref={dateTransactionsRef} className="lg:col-span-1">
-                <TransactionListView
-                  entries={startDate ? displayEntries : visibleEntries}
-                  onEntryClick={handleTransactionClick}
-                />
-              </div>
-            )}
-          </div>
-        )}
-      </div>
 
       <EntryEditor
         ref={entryEditorRef}

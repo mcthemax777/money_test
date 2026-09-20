@@ -25,8 +25,11 @@ import {
   formatTooltipAmount,
   lineAxis,
 } from '@money/core/lib/chart';
-import type { CumulativeSeries, DailyCumulativePoint } from '@money/core/lib/entries';
-import { useTranslation } from '@money/core/lib/i18n';
+import {
+  buildCumulativeRows,
+  type CumulativeSeries,
+  type DailyCumulativePoint,
+} from '@money/core/lib/entries';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 /*
@@ -74,23 +77,14 @@ export default function DailyCumulativeChart({
   tooltipName,
   height,
 }: Props) {
-  const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
   const [earlier, previous] = comparisons;
 
-  const rows = useMemo(() => {
-    const length = Math.max(current.length, ...comparisons.map((c) => c.points.length), 0);
-    const drawUntil = throughDay ?? current.length;
-
-    return Array.from({ length }, (_, index) => ({
-      // 앞선 달이 이 달보다 길면(31일 vs 30일) 이 달에는 없는 날이 생긴다.
-      // 견주기는 달 단위에서만 하므로 그 자리의 이름은 날짜 그대로다.
-      label: current[index]?.label ?? t('chart.dayTick', { day: index + 1 }),
-      current: index < drawUntil ? (current[index]?.cumulative ?? null) : null,
-      previous: previous?.points[index]?.cumulative ?? null,
-      earlier: earlier?.points[index]?.cumulative ?? null,
-    }));
-  }, [current, comparisons, previous, earlier, throughDay, t]);
+  /* 줄을 만드는 규칙은 core 에 둔다. 앱의 같은 그래프가 그대로 쓴다. */
+  const rows = useMemo(
+    () => buildCumulativeRows(current, comparisons, throughDay),
+    [current, comparisons, throughDay],
+  );
 
   const axis = lineAxis(
     rows

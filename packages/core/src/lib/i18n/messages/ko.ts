@@ -536,13 +536,9 @@ export const ko = {
 
   // ===== 가계 화면 =====
   'ledger.noun': '가계',
-  'ledger.addEntry': '거래 추가',
-  'ledger.tab.daily': '날짜별',
   'ledger.tab.category': '분류별',
   'ledger.tab.method': '수단별',
   'ledger.noFiltered': '필터에 맞는 거래가 없습니다.',
-  'ledger.calendarLimit':
-    '달력은 {months}개월까지만 그립니다. 나머지 기간은 목록과 분류별에서 볼 수 있습니다.',
   'ledger.entryCount': '{count}건',
   'ledger.totalExpense': '전체지출',
   'ledger.totalIncome': '전체수입',

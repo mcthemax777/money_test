@@ -225,6 +225,51 @@ export function buildDailyCumulative(
   return result;
 }
 
+/** buildCumulativeRows 한 줄. 같은 날짜 자리에 선 세 개의 값이 나란히 선다. */
+export interface CumulativeRow {
+  label: string;
+  /** 보고 있는 달. 아직 오지 않은 날은 null 이라 선이 거기서 끊긴다. */
+  current: number | null;
+  /** 지난달 */
+  previous: number | null;
+  /** 전전달 */
+  earlier: number | null;
+}
+
+/**
+ * 일별 누적 그래프가 그릴 줄. 이번 달 선 위에 앞선 두 달을 겹친다.
+ *
+ * 웹(recharts)과 앱(react-native-svg)이 함께 쓴다. 그리는 방법은 달라도 "며칠
+ * 자리에 어느 값이 서는가"는 같아야, 같은 달을 본 두 화면이 같은 그림을 말한다.
+ *
+ * 앞선 달이 이 달보다 길면(31일 vs 30일) 이 달에는 없는 날이 생긴다. 그 자리의
+ * 이름은 날짜 그대로 적는다 -- 견주기는 달 단위에서만 하므로 헷갈릴 자리가 없다.
+ */
+export function buildCumulativeRows(
+  current: DailyCumulativePoint[],
+  comparisons: CumulativeSeries[],
+  /**
+   * 이번 달 선을 그 달의 며칠까지 그을지. 주지 않으면 끝까지 그린다.
+   *
+   * 오늘 이후는 쓴 적이 없는 것이 아니라 아직 오지 않은 날이다. 평평하게 이어
+   * 그리면 앞선 달 선 아래에 붙어 "이번 달은 덜 썼다"로 잘못 읽힌다.
+   */
+  throughDay?: number,
+): CumulativeRow[] {
+  const [earlier, previous] = comparisons;
+  const length = Math.max(current.length, ...comparisons.map((series) => series.points.length), 0);
+  const drawUntil = throughDay ?? current.length;
+
+  return Array.from({ length }, (_, index) => ({
+    label:
+      current[index]?.label ??
+      translate(activeLocale(), 'chart.dayTick', { day: index + 1 }),
+    current: index < drawUntil ? (current[index]?.cumulative ?? null) : null,
+    previous: previous?.points[index]?.cumulative ?? null,
+    earlier: earlier?.points[index]?.cumulative ?? null,
+  }));
+}
+
 /** 그 달의 첫날과 말일 ("YYYY-MM-DD"). 달 단위 화면이 위 함수에 넘길 값이다. */
 export function monthDateKeys(year: number, month: number): { startKey: string; endKey: string } {
   const pad = (n: number) => String(n).padStart(2, '0');
