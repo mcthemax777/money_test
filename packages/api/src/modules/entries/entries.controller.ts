@@ -59,6 +59,19 @@ export class EntriesController {
     return this.entriesService.getEntries(req.user.id, query, projectId);
   }
 
+  /*
+   * ':id' 보다 먼저 선언해야 'installment-rows' 가 id 로 잡히지 않는다.
+   */
+  @Get('installment-rows')
+  @ApiOperation({ summary: '이 구간에 회차가 서는 지난 할부 (회차 기준 보기)' })
+  installmentRows(
+    @Request() req: AuthenticatedRequest,
+    @Query() query: EntryDto.ListQuery,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.entriesService.getInstallmentRows(req.user.id, query, projectId);
+  }
+
   @Get(':id')
   @ApiOperation({ summary: '거래 상세 (postings 포함)' })
   getById(@Request() req: AuthenticatedRequest, @Param('id') id: string) {

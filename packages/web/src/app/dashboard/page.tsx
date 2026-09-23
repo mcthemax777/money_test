@@ -36,7 +36,7 @@ import BudgetScheduleList from '@/components/BudgetScheduleList';
 import { useDebouncedValue } from '@money/core/hooks/useDebouncedValue';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import { useProjectGuard } from '@/hooks/useProjectGuard';
-import type { EntryFilterQuery } from '@money/types';
+import type { EntryScopeQuery } from '@money/types';
 import { useApiError } from '@money/core/lib/api-error';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 
@@ -215,11 +215,19 @@ export default function TransactionsPage() {
    * 빈 값을 보내 "결과 없음"을 뜻하게 한다. 빼는 것과 빈 값은 서버에서 다르게 읽는다.
    * 체크박스를 연달아 누르는 동안은 디바운스로 조회를 미룬다.
    */
-  const entryFilter = useMemo<EntryFilterQuery>(() => {
+  const entryFilter = useMemo<EntryScopeQuery>(() => {
     const allPeopleSelected =
       people.length > 0 && selectedPersonIds.length === people.length;
     return {
       ...(allPeopleSelected ? {} : { personIds: selectedPersonIds.join(',') }),
+      /*
+       * 세는 기준. 할부는 회차가 서는 달마다 그 달의 원금과 이자만 센다.
+       *
+       * 거래 화면의 기본과 같다. 이 화면이 답하는 물음이 "이 달에 어디에 얼마를
+       * 썼나"라서, 24개월치를 산 달 하나에 몰아 두면 그 달의 분류별·수단별이 통째로
+       * 기울고 나머지 스물세 달에는 실제로 나가는 돈이 보이지 않는다.
+       */
+      basis: 'installment',
     };
   }, [selectedPersonIds, people.length]);
   const appliedFilter = useDebouncedValue(entryFilter, 250);

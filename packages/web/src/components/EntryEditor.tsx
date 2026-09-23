@@ -17,7 +17,12 @@ import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import { apiClient } from '@money/core/lib/api-client';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
-import { defaultCountsPerformance, showDiscountPerformance } from '@money/core/data/entry-form';
+import {
+  defaultCountsPerformance,
+  interestInAmount,
+  showDiscountPerformance,
+  withoutInterest,
+} from '@money/core/data/entry-form';
 import { entryAmountLook } from '@money/core/lib/entries';
 import { formatCurrency, formatNumber, toAmountString, toNumber } from '@money/core/lib/money';
 import {
@@ -62,7 +67,12 @@ import type { EntryDraftDto } from '@money/types';
 import CardColorPicker from '@/components/CardColorPicker';
 import CardPerformanceField from '@/components/CardPerformanceField';
 import { useApiError } from '@money/core/lib/api-error';
-import { installmentShareInputs, installmentShareTotal } from '@money/core/lib/period-ledger';
+import {
+  installmentInterestInputs,
+  installmentShareInputs,
+  installmentShareTotal,
+  type InstallmentInterestMode,
+} from '@money/core/lib/period-ledger';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const ENTRY_FORM_ID = 'entry-form';
@@ -184,6 +194,19 @@ function emptyEntryForm(timeZone: string, ledgerCurrency: CurrencyCode) {
     installmentInterest: '' as '' | 'free' | 'interest',
     /** 회차별 원금. 비어 있으면 개월수로 나눈 기본값을 쓴다. */
     installmentShares: [] as string[],
+    /**
+     * 유이자 할부의 이자를 어떻게 정하는가. '' 는 아직 고르지 않았다는 뜻이다.
+     *
+     * 고정형은 매달 같은 금액을 내고, 변동형은 연이율만 정해져 있다. 고르지 않으면
+     * 이자 칸이 비어 있고 명세서를 보고 회차마다 적는다.
+     */
+    installmentInterestMode: '' as InstallmentInterestMode,
+    /** 고정형의 월 납입액. */
+    installmentMonthlyPayment: '',
+    /** 변동형의 연이율 (퍼센트). */
+    installmentAnnualRate: '',
+    /** 회차별 이자. 비어 있으면 고른 방식으로 계산한 기본값을 쓴다. */
+    installmentInterestShares: [] as string[],
     /**
      * 결제 자리에서 깎인 금액. 포인트 사용, 자동할인, 그리고 **취소**가 모두 이 칸이다.
      *
@@ -701,6 +724,21 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     formData.installmentShares,
   );
 
+  /*
+   * 회차 이자 칸에 보일 값. 고른 방식으로 계산한 기본값이고, 고치면 그 값이 남는다.
+   *
+   * 방식을 고르지 않았으면 빈 칸이다 -- 0 으로 채우면 "이자 없음"과 구별되지 않는다.
+   */
+  const interestInputs = installmentInterestInputs({
+    total: formData.amount,
+    months: Number(formData.installmentMonths),
+    principals: shareInputs,
+    mode: formData.installmentInterestMode,
+    monthlyPayment: formData.installmentMonthlyPayment,
+    annualRate: formData.installmentAnnualRate,
+    saved: formData.installmentInterestShares,
+  });
+
   /**
    * 저장하면 얼마로 기록되는지. 저장 전에 눈으로 확인하게 한다.
    *
@@ -797,6 +835,10 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
           installmentMonths: keepsInstallment ? prev.installmentMonths : '',
           installmentInterest: keepsInstallment ? prev.installmentInterest : '',
           installmentShares: keepsInstallment ? prev.installmentShares : [],
+          installmentInterestMode: keepsInstallment ? prev.installmentInterestMode : '',
+          installmentMonthlyPayment: keepsInstallment ? prev.installmentMonthlyPayment : '',
+          installmentAnnualRate: keepsInstallment ? prev.installmentAnnualRate : '',
+          installmentInterestShares: keepsInstallment ? prev.installmentInterestShares : [],
           mainCategoryId: keepsCategory ? prev.mainCategoryId : '',
           subCategoryId: keepsCategory ? prev.subCategoryId : '',
           splits: keepsCategory ? prev.splits : [],
@@ -813,6 +855,10 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       installmentMonths: '',
       installmentInterest: '',
       installmentShares: [],
+      installmentInterestMode: '',
+      installmentMonthlyPayment: '',
+      installmentAnnualRate: '',
+      installmentInterestShares: [],
       ...currencyFields(prev),
     }));
   };
@@ -926,12 +972,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
      * 적어 둔 회차 금액은 개수와 합이 맞아야 한다.
      *
      * 외화 결제는 여기서 보지 않는다. 카드에 청구되는 금액이 환산 뒤에야 정해져 폼의
-     * 값만으로는 견줄 수 없다 -- 그때는 서버가 카드 다리를 보고 막는다.
+     * 값만으로는 견줄 수 없다 -- 그때는 서버가 카드 다리를 보고 막는다. **장부 통화와
+     * 견주는 것이 요점이다.** 이 폼의 통화 칸은 비는 법이 없어(원화 결제에도 'KRW' 가
+     * 들어 있다) 빈 값으로 판단하면 이 검사가 영영 돌지 않는다.
      */
     if (
       canInstall &&
       formData.installmentShares.some((share) => share.trim() !== '') &&
-      !formData.currency
+      formData.currency === ledgerCurrency
     ) {
       if (formData.installmentShares.length !== Number(formData.installmentMonths)) {
         setError(t('entryForm.installmentSharesCount'));
@@ -944,6 +992,64 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       if (shareSum !== toNumber(formData.amount)) {
         setError(t('entryForm.installmentSharesSum'));
         return;
+      }
+    }
+
+    /*
+     * 이자 쪽. 유이자 할부에만 본다.
+     *
+     * 고정형은 낸 돈의 합이 산 값에 못 미치면 표가 풀리지 않는다. 그때 이자 칸이 왜
+     * 비어 있는지를 저장할 때가 아니라 적는 자리에서 알려 준다.
+     */
+    if (canInstall && formData.installmentInterest === 'interest') {
+      const months = Number(formData.installmentMonths);
+
+      /*
+       * 외화가 얽힌 결제에는 유이자 할부를 적을 수 없다.
+       *
+       * 이자는 명세서 금액 그대로 적는 값이라 환산할 환율이 없다. 조립도 막지만
+       * (`assertInterestCurrency`), 고른 자리에서 알려 주는 편이 낫다.
+       *
+       * **장부 통화와 견준다.** 이 폼의 통화 칸은 비어 있는 법이 없고 원화 결제에도
+       * 'KRW' 가 들어 있다 -- 빈 값으로 판단하면 모든 유이자 할부가 막힌다
+       * (core 의 `checkEntryForm` 은 외화일 때만 값이 차는 폼을 본다).
+       */
+      if (formData.currency !== ledgerCurrency) {
+        setError(t('entryForm.installmentInterestCurrency'));
+        return;
+      }
+
+      if (formData.installmentInterestMode === 'fixed' && formData.installmentMonthlyPayment.trim()) {
+        const payment = toNumber(formData.installmentMonthlyPayment);
+        if (!(payment > 0)) {
+          setError(t('entryForm.installmentPaymentInvalid'));
+          return;
+        }
+        // 외화 결제는 청구액이 환산 뒤에 정해져 폼의 금액과 견줄 수 없다 (위와 같은 판단).
+        if (formData.currency === ledgerCurrency && payment * months < toNumber(formData.amount)) {
+          setError(t('entryForm.installmentPaymentTooSmall'));
+          return;
+        }
+      }
+
+      if (
+        formData.installmentInterestMode === 'rate' &&
+        formData.installmentAnnualRate.trim() &&
+        toNumber(formData.installmentAnnualRate) < 0
+      ) {
+        setError(t('entryForm.installmentRateInvalid'));
+        return;
+      }
+
+      if (formData.installmentInterestShares.some((share) => share.trim() !== '')) {
+        if (formData.installmentInterestShares.length !== months) {
+          setError(t('entryForm.installmentInterestSharesCount'));
+          return;
+        }
+        if (formData.installmentInterestShares.some((share) => toNumber(share) < 0)) {
+          setError(t('entryForm.installmentInterestNegative'));
+          return;
+        }
       }
     }
 
@@ -1144,6 +1250,33 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               toAmountString(share),
             );
           }
+
+          /*
+           * 이자 쪽은 유이자 할부에만 싣는다.
+           *
+           * 무이자면 아무것도 싣지 않아 서버가 계획의 이자 칸을 비운다 -- 유이자로
+           * 적었다가 되돌린 할부에 옛 이자가 남지 않는다.
+           */
+          if (formData.installmentInterest === 'interest') {
+            /*
+             * **화면에 보이는 값을 그대로 싣는다.** 계산으로 채워 준 기본값도 손대지
+             * 않았다고 버리지 않는다 -- 이자는 전표 금액 안에 들어가는 값이라, 보이는
+             * 대로 저장하지 않으면 고쳐 저장하는 순간 갚을 돈이 원금만 남는다.
+             * 서버는 이자를 계산하지 않으므로 여기서 싣지 않으면 되살릴 자리가 없다.
+             * (앱도 같은 규칙이다: core 의 `installmentInterestPayload`)
+             */
+            if (interestInputs.some((share) => share.trim() !== '')) {
+              payload.installmentInterestShares = interestInputs.map((share) =>
+                toAmountString(share),
+              );
+            }
+            if (formData.installmentInterestMode === 'fixed' && formData.installmentMonthlyPayment.trim()) {
+              payload.installmentMonthlyPayment = toAmountString(formData.installmentMonthlyPayment);
+            }
+            if (formData.installmentInterestMode === 'rate' && formData.installmentAnnualRate.trim()) {
+              payload.installmentAnnualRate = formData.installmentAnnualRate.trim();
+            }
+          }
         }
 
       }
@@ -1331,6 +1464,13 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
      *
      * 나머지 조건은 폼의 needsBilled 와 같다.
      */
+    /*
+     * 이 거래의 금액에 들어 있는 할부 이자. 유이자 할부가 아니면 0 이다.
+     *
+     * 금액 칸과 나눈 줄에서 같은 규칙으로 되뺀다 (`entryFormFromItem` 과 한 함수다).
+     */
+    const interest = interestInAmount(entry);
+
     const billedPrefill =
       !entry.rateProvisional &&
       isCurrencyCode(entry.originalCurrency) &&
@@ -1364,7 +1504,15 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
        * 환산액을 보여 주면 사용자가 입력했던 값과 달라 혼란스러우므로, 원 통화
        * 금액이 함께 왔으면 그것을 되돌려 놓는다.
        */
-      amount: entry.originalAmount ?? grossAmountOf(entry),
+      /*
+       * 유이자 할부의 이자는 전표 금액 안에 있다. 폼은 **산 값**을 든다.
+       *
+       * 갚을 돈 전부를 금액 칸에 넣으면 회차 원금의 합과 어긋나 저장이 막히고, 사용자가
+       * 적은 적 없는 숫자가 칸에 들어앉는다. 되빼는 규칙은 앱과 한 함수를 쓴다.
+       */
+      amount:
+        entry.originalAmount ??
+        withoutInterest(grossAmountOf(entry), interest.total, interest.total),
       currency: isCurrencyCode(entry.originalCurrency) ? entry.originalCurrency : ledgerCurrency,
       /*
        * 확정된 거래만 금액을 되돌려 놓는다 (billedPrefill 참고).
@@ -1403,6 +1551,18 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       // 적어 둔 값이 없으면 비워 둔다. 화면이 개월수로 나눈 기본값을 채워 보여 준다.
       installmentShares: entry.installmentShares ?? [],
       /*
+       * 이자를 무엇으로 정했는지는 적어 둔 입력이 말해 준다. 둘 다 없으면 사용자가
+       * 손으로 적은 이자라, 방식을 고르지 않은 채로 연다.
+       */
+      installmentInterestMode: (entry.installmentMonthlyPayment
+        ? 'fixed'
+        : entry.installmentAnnualRate
+          ? 'rate'
+          : '') as InstallmentInterestMode,
+      installmentMonthlyPayment: entry.installmentMonthlyPayment ?? '',
+      installmentAnnualRate: entry.installmentAnnualRate ?? '',
+      installmentInterestShares: entry.installmentInterestShares ?? [],
+      /*
        * 차감. 목록의 금액은 이미 차감된 뒤이므로 위 `amount` 와 짝으로 되돌린다.
        *
        * 통화는 위 `amount` 와 같다 -- 외화 거래면 둘 다 그 외화다.
@@ -1429,8 +1589,12 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       splits: isSplitEntry(entry)
         ? entry.lines.map((line) => ({
             ...splitCategory(line.categoryId),
-            // 폼은 정가를 든다. 목록의 금액은 차감을 뺀 뒤의 값이다.
-            amount: grossOfLine(line),
+            // 폼은 정가를 든다. 목록의 금액은 차감을 뺀 뒤의 값이고 이자를 품는다.
+            amount: withoutInterest(
+              grossOfLine(line),
+              interest.shareOf(line.amount),
+              interest.total,
+            ),
             lineKey: line.lineKey,
             discountAmount: line.discountAmount ?? '',
             tagIds: line.tags.map((tag) => tag.id),
@@ -1537,6 +1701,10 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       // 후보에는 수수료 여부가 없다. 문자 한 줄로는 알 수 없어 사용자가 고른다.
       installmentInterest: '' as const,
       installmentShares: [] as string[],
+      installmentInterestMode: '' as InstallmentInterestMode,
+      installmentMonthlyPayment: '',
+      installmentAnnualRate: '',
+      installmentInterestShares: [] as string[],
       ...(hasWhen
         ? {
             date: dateKeyOf(when as Date, timeZone),
@@ -2571,6 +2739,17 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                         installmentInterest: Number(value) >= 2 ? formData.installmentInterest : '',
                         // 개월수가 바뀌면 적어 둔 회차 금액은 개수가 맞지 않는다.
                         installmentShares: [],
+                        installmentInterestShares: [],
+                        /*
+                         * 월 납입액도 함께 비운다. **개월수와 한 쌍인 값**이라서다 --
+                         * "10,000원을 3개월, 매달 4,000원"의 4,000원은 3개월일 때의
+                         * 사실이고, 6개월로 바꾸면 그 값으로는 표가 풀리지 않는다.
+                         * 그대로 두면 저장할 때 "매달 내는 금액 x 개월수가 결제 금액보다
+                         * 적습니다"로 막혀, 어디를 고쳐야 하는지 알 수 없다.
+                         *
+                         * 연이율은 개월수와 무관해 그대로 둔다.
+                         */
+                        installmentMonthlyPayment: '',
                       })
                     }
                     placeholder={t('editor.installmentOnce')}
@@ -2593,7 +2772,23 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                             key={choice}
                             type="button"
                             onClick={() =>
-                              setFormData({ ...formData, installmentInterest: choice })
+                              setFormData({
+                                ...formData,
+                                installmentInterest: choice,
+                                /*
+                                 * 무이자로 되돌리면 이자 쪽을 통째로 비운다. 남겨 두면
+                                 * 수수료가 없는 할부에 이자가 붙어 보이고, 회차 기준으로
+                                 * 볼 때 그 달 지출이 실제보다 커진다.
+                                 */
+                                ...(choice === 'interest'
+                                  ? {}
+                                  : {
+                                      installmentInterestMode: '' as InstallmentInterestMode,
+                                      installmentMonthlyPayment: '',
+                                      installmentAnnualRate: '',
+                                      installmentInterestShares: [],
+                                    }),
+                              })
                             }
                             className={`flex-1 rounded-lg border px-3 py-2 text-sm ${
                               formData.installmentInterest === choice
@@ -2670,6 +2865,158 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                         </p>
                         <p className="text-xs text-gray-500">{t('editor.installmentSharesHint')}</p>
                       </div>
+
+                      {/*
+                        이자. 유이자 할부에만 묻는다.
+
+                        카드사가 정하는 방식이 둘이다. 매달 같은 금액을 내는 할부는 낸
+                        돈에서 이자를 먼저 떼어 앞 회차일수록 이자가 크고, 연이율만
+                        정해진 할부는 남은 원금에 매달 이자가 붙어 뒤로 갈수록 가볍다.
+                        어느 쪽도 아니면 빈 칸으로 두고 명세서를 보고 적는다.
+                      */}
+                      {formData.installmentInterest === 'interest' && (
+                        <div className="mt-3 space-y-1">
+                          <span className="text-xs font-medium text-gray-700">
+                            {t('editor.installmentInterestMode')}
+                          </span>
+                          <div className="flex gap-2">
+                            {(['fixed', 'rate', ''] as const).map((mode) => (
+                              <button
+                                key={mode || 'manual'}
+                                type="button"
+                                onClick={() =>
+                                  setFormData({
+                                    ...formData,
+                                    installmentInterestMode: mode,
+                                    // 방식을 바꾸면 계산이 다시 채운다. 고친 값은 그 방식의 것이다.
+                                    installmentInterestShares: [],
+                                  })
+                                }
+                                className={`flex-1 rounded-lg border px-3 py-2 text-sm ${
+                                  formData.installmentInterestMode === mode
+                                    ? 'border-blue-500 bg-blue-50 text-blue-700'
+                                    : 'border-gray-300 text-gray-700'
+                                }`}
+                              >
+                                {t(
+                                  mode === 'fixed'
+                                    ? 'editor.installmentModeFixed'
+                                    : mode === 'rate'
+                                      ? 'editor.installmentModeRate'
+                                      : 'editor.installmentModeManual',
+                                )}
+                              </button>
+                            ))}
+                          </div>
+
+                          {formData.installmentInterestMode === 'fixed' && (
+                            <>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={formData.installmentMonthlyPayment}
+                                onChange={(e) =>
+                                  setFormData({
+                                    ...formData,
+                                    installmentMonthlyPayment: e.target.value,
+                                    installmentInterestShares: [],
+                                  })
+                                }
+                                placeholder={t('editor.installmentMonthlyPayment')}
+                                className="w-full px-2 py-1 border rounded text-sm text-right"
+                              />
+                              <p className="text-xs text-gray-500">
+                                {t('editor.installmentMonthlyPaymentHint')}
+                              </p>
+                            </>
+                          )}
+
+                          {formData.installmentInterestMode === 'rate' && (
+                            <>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={formData.installmentAnnualRate}
+                                onChange={(e) =>
+                                  setFormData({
+                                    ...formData,
+                                    installmentAnnualRate: e.target.value,
+                                    installmentInterestShares: [],
+                                  })
+                                }
+                                placeholder={t('editor.installmentAnnualRate')}
+                                className="w-full px-2 py-1 border rounded text-sm text-right"
+                              />
+                              <p className="text-xs text-gray-500">
+                                {t('editor.installmentAnnualRateHint')}
+                              </p>
+                            </>
+                          )}
+
+                          <div className="flex items-baseline justify-between pt-2">
+                            <span className="text-xs font-medium text-gray-700">
+                              {t('editor.installmentInterestShares')}
+                            </span>
+                            {formData.installmentInterestShares.length > 0 && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setFormData({ ...formData, installmentInterestShares: [] })
+                                }
+                                className="text-xs text-blue-600"
+                              >
+                                {t('editor.installmentInterestReset')}
+                              </button>
+                            )}
+                          </div>
+
+                          {interestInputs.map((interest, index) => (
+                            <div key={index} className="flex items-center gap-2">
+                              <span className="w-20 text-xs text-gray-500">
+                                {t('editor.installmentInterestRow', { index: index + 1 })}
+                              </span>
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={interest}
+                                onChange={(e) =>
+                                  setFormData({
+                                    ...formData,
+                                    installmentInterestShares: interestInputs.map((old, at) =>
+                                      at === index ? e.target.value : old,
+                                    ),
+                                  })
+                                }
+                                className="flex-1 px-2 py-1 border rounded text-sm text-right"
+                              />
+                            </div>
+                          ))}
+
+                          <p className="text-right text-xs text-gray-500">
+                            {t('editor.installmentInterestTotal', {
+                              total: installmentShareTotal(interestInputs),
+                            })}
+                          </p>
+                          {/*
+                            카드에 갚을 돈. 이자가 금액에 더해져 거래에 적힌다.
+
+                            금액 칸은 산 값 그대로 두고 여기서만 밝힌다 -- 사용자가 적은
+                            숫자를 화면이 말없이 올리면 무엇을 저장하는지 알 수 없다.
+                          */}
+                          <p className="text-right text-xs font-medium text-gray-700">
+                            {t('editor.installmentTotalDue', {
+                              total: installmentShareTotal([
+                                formData.amount || '0',
+                                installmentShareTotal(interestInputs),
+                              ]),
+                              amount: formData.amount || '0',
+                            })}
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            {t('editor.installmentInterestSharesHint')}
+                          </p>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

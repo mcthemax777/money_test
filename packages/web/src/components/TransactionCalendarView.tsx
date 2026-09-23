@@ -16,7 +16,7 @@
  * 거래인지 눈으로 좇아야 한다.
  */
 import { useState } from 'react';
-import { entryRows, type EntryListItem } from '@money/types';
+import { entryRows, originalEntry, type EntryListItem } from '@money/types';
 
 import { useLedgerData } from '@money/core/hooks/useLedgerData';
 import { currentYearMonth } from '@money/core/lib/datetime';
@@ -110,7 +110,8 @@ export default function TransactionCalendarView({
                   key={row.key}
                   entry={row.entry}
                   row={row}
-                  onClick={onOpenEntry ? () => onOpenEntry(row.entry) : undefined}
+                  // 여는 것은 사용자가 적은 거래다 (`originalEntry`).
+                  onClick={onOpenEntry ? () => onOpenEntry(originalEntry(row.entry)) : undefined}
                 />
               ))}
             </div>

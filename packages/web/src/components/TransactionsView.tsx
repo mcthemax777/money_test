@@ -37,8 +37,8 @@ import {
 import {
   ENTRY_FEATURES,
   NO_TAG,
+  originalEntry,
   SEARCHABLE_ENTRY_KINDS,
-  entryRows,
   selfCategoryPick,
   type EntryListItem as EntryListItemDto,
   type EntryPeriodUnit,
@@ -485,7 +485,7 @@ export default function TransactionsView({
      * 보여 주면 대표 분류 하나만 남아 "여행경비를 썼다"가 사라진다. 분류나 태그로 좁힌
      * 목록에서는 걸린 줄만 나온다 (그 판단은 서버와 사본이 같은 함수로 한다).
      */
-    const rows = entryRows(entries);
+    const rows = tx.entryRowsOf(yearMonth, key);
 
     /*
      * 거래 사이는 선으로만 나눈다. 줄마다 카드를 띄우면 그림자와 여백이 줄 수만큼
@@ -541,7 +541,8 @@ export default function TransactionsView({
                 key={row.key}
                 entry={row.entry}
                 row={row}
-                onClick={() => setDetail(row.entry)}
+                // 여는 것은 사용자가 적은 거래다. 목록에 선 것은 그 달의 회차 몫이다.
+                onClick={() => setDetail(originalEntry(row.entry))}
               />
             );
           })
@@ -835,7 +836,14 @@ export default function TransactionsView({
           value: detail.cardName ?? detail.accountName,
         },
         { label: t('tx.detail.merchant'), value: detail.merchant },
-        { label: t('tx.detail.installment'), value: installmentLabel(t, detail) },
+        {
+          label: t('tx.detail.installment'),
+          /*
+            유이자면 그중 얼마가 이자인지 함께 적는다 -- 이자는 금액 안에 들어 있어,
+            적어 두지 않으면 산 값보다 큰 까닭이 화면 어디에도 없다.
+          */
+          value: installmentLabel(t, detail, (amount) => formatCurrency(amount, currency)),
+        },
         {
           label: t('tx.detail.fee'),
           value:
@@ -1234,6 +1242,34 @@ export default function TransactionsView({
               </button>
             ))}
           </div>
+        </div>
+        {/*
+          무엇을 "그 달에 쓴 돈"으로 셀지. 묶음 단위와 같은 자리에 둔다 -- 둘 다 목록의
+          숫자가 무엇인지 정하는 값이고, 자주 바꾸는 것이 아니다.
+
+          기본은 회차 기준이다. 할부를 산 달 하나에 몰아 두면 그 달만 혼자 튀고, 매달
+          빠져나가는 돈은 어느 달에서도 보이지 않는다. 발생 기준은 "언제 샀나"를 묻는
+          화면을 위해 남겨 두었다.
+        */}
+        <div className="px-2 pb-3">
+          <p className="mb-2 text-sm font-medium text-gray-700">{t('tx.basis')}</p>
+          <div className="flex gap-2 rounded-lg bg-gray-100 p-1">
+            {(['accrual', 'installment'] as const).map((item) => (
+              <button
+                key={item}
+                type="button"
+                onClick={() => tx.setBasis(item)}
+                className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition ${
+                  tx.basis === item
+                    ? 'bg-white text-blue-600 shadow-sm'
+                    : 'text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {t(item === 'accrual' ? 'tx.basis.accrual' : 'tx.basis.installment')}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-xs text-gray-500">{t('tx.basisHint')}</p>
         </div>
         <div className="mb-1 border-t border-gray-200" />
 

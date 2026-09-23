@@ -21,6 +21,11 @@ import {
 } from '@money/types';
 
 import { dateKeyOf, isDateKey, nowTimeKey, timeInputOf, todayKey } from '../lib/datetime';
+import {
+  installmentInterestInputs,
+  installmentShareInputs,
+  type InstallmentInterestMode,
+} from '../lib/period-ledger';
 
 /**
  * 이 폼이 다루는 갈래. 셋뿐이다.
@@ -125,6 +130,23 @@ export interface EntryFormValues {
    */
   installmentShares: string[];
   /**
+   * 유이자 할부의 이자를 어떻게 정하는가. `''` 는 아직 고르지 않았다는 뜻이다.
+   *
+   * 고정형은 매달 같은 금액을 내고, 변동형은 연이율만 정해져 있다. 고르지 않으면
+   * 이자 칸이 비어 있고 사용자가 명세서를 보고 회차마다 적는다.
+   */
+  installmentInterestMode: InstallmentInterestMode;
+  /** 고정형의 월 납입액. */
+  installmentMonthlyPayment: string;
+  /** 변동형의 연이율 (퍼센트). */
+  installmentAnnualRate: string;
+  /**
+   * 회차별 이자. 비어 있으면 고른 방식으로 계산한 기본값을 쓴다.
+   *
+   * 원금과 같은 규칙이다 -- 계산이 채워 주고, 명세서와 다르면 사람이 고친다.
+   */
+  installmentInterestShares: string[];
+  /**
    * 분류 하나짜리 거래의 줄 키. 분할이면 `splits[].lineKey` 가 쓰인다.
    *
    * 폼을 열 때 정해지고 저장할 때까지 바뀌지 않는다. 이 값이 이어져야 그 줄에 붙은
@@ -221,6 +243,10 @@ export function emptyEntryForm({ personId = '', timeZone, now }: EntryFormDefaul
     installmentMonths: '',
     installmentInterest: '',
     installmentShares: [],
+    installmentInterestMode: '',
+    installmentMonthlyPayment: '',
+    installmentAnnualRate: '',
+    installmentInterestShares: [],
     // 분류 하나짜리 거래의 줄 키. 폼을 여는 자리에서 한 번 정해진다.
     lineKey: newLineKey(),
     discountAmount: '',
@@ -300,6 +326,15 @@ export function entryFormFromItem(
   // 분류 하나짜리 거래의 그 줄. 이체·카드 대금 결제에는 없다.
   const only = isSplit ? null : item.lines[0] ?? null;
 
+  /*
+   * 유이자 할부의 이자는 전표 금액 안에 들어 있다. 폼은 **산 값**을 든다.
+   *
+   * 금액 칸에 갚을 돈 전부를 넣으면 회차 원금의 합과 어긋나 저장이 막히고, 사용자가
+   * 적은 적 없는 숫자가 칸에 들어앉는다. 그래서 여기서 이자를 되뺀다 -- 저장할 때
+   * 조립이 다시 얹는다.
+   */
+  const interest = interestInAmount(item);
+
   return {
     kind,
     personId: item.personId,
@@ -319,7 +354,7 @@ export function entryFormFromItem(
      *
      * 외화 거래에는 차감이 붙을 수 없어(조립이 막는다) 두 보정이 겹치지 않는다.
      */
-    amount: item.originalAmount ?? grossOf(item),
+    amount: item.originalAmount ?? withoutInterest(grossOf(item), interest.total, interest.total),
     /*
      * 줄에 달린 값들. 분류 하나짜리 거래는 그 줄의 것을 그대로 든다.
      *
@@ -362,14 +397,26 @@ export function entryFormFromItem(
       : '',
     // 적어 둔 값이 없으면 비워 둔다. 화면이 개월수로 나눈 기본값을 채워 보여 준다.
     installmentShares: item.installmentShares ?? [],
+    /*
+     * 이자를 무엇으로 정했는지는 적어 둔 입력이 말해 준다. 둘 다 없으면 사용자가
+     * 손으로 적은 이자라, 방식을 고르지 않은 채로 연다.
+     */
+    installmentInterestMode: item.installmentMonthlyPayment
+      ? 'fixed'
+      : item.installmentAnnualRate
+        ? 'rate'
+        : '',
+    installmentMonthlyPayment: item.installmentMonthlyPayment ?? '',
+    installmentAnnualRate: item.installmentAnnualRate ?? '',
+    installmentInterestShares: item.installmentInterestShares ?? [],
     transferFee: item.feeAmount && item.feeAmount !== '0' ? item.feeAmount : '',
     transferFeeCategoryId: item.feeCategoryId ?? '',
     splits: isSplit
       ? item.lines.map((line) =>
           newSplitLine({
             categoryId: line.categoryId,
-            // 폼은 정가를 든다. 목록의 금액은 차감을 뺀 뒤의 값이다.
-            amount: grossOfLine(line),
+            // 폼은 정가를 든다. 목록의 금액은 차감을 뺀 뒤의 값이고 이자를 품는다.
+            amount: withoutInterest(grossOfLine(line), interest.shareOf(line.amount), interest.total),
             lineKey: line.lineKey,
             discountAmount: line.discountAmount ?? '',
             tagIds: line.tags.map((tag) => tag.id),
@@ -393,6 +440,64 @@ export function entryFormFromItem(
      */
     tagIds: isSplit ? [] : (only?.tags ?? item.tags).map((tag) => tag.id),
   };
+}
+
+/**
+ * 이 거래의 금액에 들어 있는 할부 이자.
+ *
+ * 분할이면 줄마다의 몫도 낸다. 나누는 저울은 줄 금액이고, 끝수는 첫 줄이 가져간다 --
+ * 조립이 얹을 때와 같은 규칙이라 고쳐 저장해도 줄 금액이 제자리로 돌아온다.
+ *
+ * **폼을 스스로 채우는 화면도 이 함수를 쓴다.** 웹 편집기는 자기 모양의 상태를 들고
+ * 있어 `entryFormFromItem` 을 거치지 않는데, 되빼는 규칙이 두 벌이면 같은 거래를
+ * 웹에서 열 때와 앱에서 열 때 금액 칸이 갈린다.
+ */
+export function interestInAmount(item: EntryListItem): {
+  total: Dec;
+  shareOf: (lineAmount: string) => Dec;
+} {
+  const months = item.installmentMonths ?? 0;
+  const shares = item.installmentInterestShares;
+  const none = { total: Dec.of(0), shareOf: () => Dec.of(0) };
+  if (months < 2 || !shares || shares.length !== months) return none;
+
+  let total: Dec;
+  try {
+    total = shares.reduce<Dec>((acc, share) => acc.plus(Dec.of(share)), Dec.of(0));
+  } catch {
+    return none;
+  }
+  if (total.isZero()) return none;
+
+  const whole = Dec.of(item.amount).abs();
+  const first = item.lines[0]?.amount ?? null;
+  return {
+    total,
+    shareOf: (lineAmount: string) => {
+      if (whole.isZero()) return Dec.of(0);
+      const line = Dec.of(lineAmount).abs();
+      if (line.eq(whole)) return total;
+      const share = total.times(line).dividedBy(whole, 0, 'down');
+      // 끝수는 첫 줄이 가져간다. 줄마다 내림하면 합이 이자 총액에 못 미친다.
+      if (first === null || lineAmount !== first) return share;
+      return share.plus(total.minus(allShares(total, whole, item)));
+    },
+  };
+}
+
+/** 줄마다 내림해 나눈 이자의 합. 첫 줄의 끝수를 구하는 데 쓴다. */
+function allShares(total: Dec, whole: Dec, item: EntryListItem): Dec {
+  return item.lines.reduce<Dec>(
+    (acc, line) => acc.plus(total.times(Dec.of(line.amount).abs()).dividedBy(whole, 0, 'down')),
+    Dec.of(0),
+  );
+}
+
+/** 금액에서 그 몫의 이자를 뺀다. 이자가 없으면 글자를 그대로 돌려준다. */
+export function withoutInterest(amount: string, share: Dec, total: Dec): string {
+  if (total.isZero() || share.isZero()) return amount;
+  const value = toDec(amount);
+  return value ? value.minus(share).toString() : amount;
 }
 
 /** 줄 하나의 정가. 목록이 주는 금액은 차감을 뺀 뒤의 값이다. */
@@ -657,6 +762,57 @@ export function checkEntryForm(
     }
   }
 
+  /*
+   * 이자 쪽. 유이자 할부에만 뜻이 있다.
+   *
+   * 고정형은 낸 돈의 합이 산 값에 못 미치면 할부가 아니다 -- 이율을 아무리 낮춰도
+   * 표가 풀리지 않아 이자 칸이 비어 버린다. 그 까닭을 저장할 때가 아니라 적는 자리에서
+   * 알려 준다. 회차 이자는 개수와 부호만 본다. 맞춰야 할 총액이 없기 때문이다.
+   */
+  if (values.installmentInterest === 'interest' && Number(values.installmentMonths) >= 2) {
+    const months = Number(values.installmentMonths);
+
+    /*
+     * 외화가 얽힌 결제에는 유이자 할부를 적을 수 없다.
+     *
+     * 이자는 명세서에 찍힌 금액 그대로 적는 값이라 환산할 환율이 없고, 이자가 섞인
+     * 환산액에서 환율을 되짚으면 적은 적 없는 환율이 화면에 뜬다. 조립도 같은 자리를
+     * 막지만(`assertInterestCurrency`), 고른 순간에 알려 주는 편이 낫다.
+     */
+    if (values.currency) {
+      return { field: 'installmentInterest', code: 'INSTALLMENT_INTEREST_CURRENCY' };
+    }
+
+    if (values.installmentInterestMode === 'fixed' && values.installmentMonthlyPayment.trim()) {
+      const payment = toDec(values.installmentMonthlyPayment);
+      if (!payment || !payment.isPositive()) {
+        return { field: 'installmentMonthlyPayment', code: 'INSTALLMENT_PAYMENT_INVALID' };
+      }
+      // 외화 결제는 청구액이 환산 뒤에 정해져 폼의 금액과 견줄 수 없다.
+      if (!values.currency && payment.times(months).lt(amount)) {
+        return { field: 'installmentMonthlyPayment', code: 'INSTALLMENT_PAYMENT_TOO_SMALL' };
+      }
+    }
+
+    if (values.installmentInterestMode === 'rate' && values.installmentAnnualRate.trim()) {
+      const rate = toDec(values.installmentAnnualRate);
+      if (!rate || rate.isNegative()) {
+        return { field: 'installmentAnnualRate', code: 'INSTALLMENT_RATE_INVALID' };
+      }
+    }
+
+    if (values.installmentInterestShares.length > 0) {
+      if (values.installmentInterestShares.length !== months) {
+        return { field: 'installmentInterestShares', code: 'INSTALLMENT_INTEREST_SHARES_COUNT' };
+      }
+      // 빈 칸은 0 이다. 치는 중에 한 칸이 비었다고 막지 않는다 (회차 원금과 같은 규칙).
+      const interests = values.installmentInterestShares.map((share) => toDec(share) ?? Dec.of(0));
+      if (interests.some((interest) => interest.isNegative())) {
+        return { field: 'installmentInterestShares', code: 'INSTALLMENT_INTEREST_NEGATIVE' };
+      }
+    }
+  }
+
   if (values.kind === 'transfer') {
     const from = parseMethod(values.method).accountId;
     if (!from) return { field: 'method', code: 'FROM_ACCOUNT_REQUIRED' };
@@ -771,6 +927,58 @@ function installmentSharesPayload(values: EntryFormValues): { installmentShares?
     installmentShares: values.installmentShares.map((share) =>
       share.trim() === '' ? '0' : share.trim(),
     ),
+  };
+}
+
+/**
+ * 이자 쪽을 짐에 싣는다. 유이자 할부에만 실린다.
+ *
+ * 무이자면 아무것도 싣지 않는다 -- 서버가 계획의 이자 칸을 비우므로, 유이자로 적었다가
+ * 되돌린 할부에 옛 이자가 남지 않는다.
+ *
+ * **화면에 보이는 값을 그대로 싣는다.** 계산으로 채워 준 기본값도 사용자가 손대지
+ * 않았다고 버리지 않는다 -- 이자는 전표 금액 안에 들어가는 값이라, 보이는 대로 저장하지
+ * 않으면 고쳐 저장하는 순간 갚을 돈이 원금만 남는다. 서버는 이자를 계산하지 않으므로
+ * 여기서 싣지 않으면 되살릴 자리가 없다.
+ *
+ * 방식을 고르지 않아 칸이 비어 있으면 아무것도 싣지 않는다. 0 이 스물넉 줄 저장되면
+ * "아직 모른다"와 "이자가 없다"가 구별되지 않는다.
+ */
+function installmentInterestPayload(values: EntryFormValues): {
+  installmentInterestShares?: string[];
+  installmentMonthlyPayment?: string;
+  installmentAnnualRate?: string;
+} {
+  if (values.installmentInterest !== 'interest') return {};
+
+  const months = Number(values.installmentMonths);
+  // 화면이 채워 보여 주는 값과 같은 함수다 (`EntryEditor` 의 interestInputs).
+  const shown = installmentInterestInputs({
+    total: values.amount,
+    months,
+    principals: installmentShareInputs(values.amount, months, values.installmentShares),
+    mode: values.installmentInterestMode,
+    monthlyPayment: values.installmentMonthlyPayment,
+    annualRate: values.installmentAnnualRate,
+    saved: values.installmentInterestShares,
+  });
+
+  const filled = shown.some((share) => share.trim() !== '');
+  const payment =
+    values.installmentInterestMode === 'fixed' ? values.installmentMonthlyPayment.trim() : '';
+  const rate =
+    values.installmentInterestMode === 'rate' ? values.installmentAnnualRate.trim() : '';
+
+  return {
+    ...(filled
+      ? {
+          installmentInterestShares: shown.map((share) =>
+            share.trim() === '' ? '0' : share.trim(),
+          ),
+        }
+      : {}),
+    ...(payment ? { installmentMonthlyPayment: payment } : {}),
+    ...(rate ? { installmentAnnualRate: rate } : {}),
   };
 }
 
@@ -890,6 +1098,7 @@ export function entryFormToRequest(
             installmentMonths: Number(values.installmentMonths),
             installmentInterest: values.installmentInterest === 'interest',
             ...installmentSharesPayload(values),
+            ...installmentInterestPayload(values),
           }
         : {}),
       ...performanceExtra,
@@ -909,6 +1118,7 @@ export function entryFormToRequest(
           installmentMonths: months,
           installmentInterest: values.installmentInterest === 'interest',
           ...installmentSharesPayload(values),
+          ...installmentInterestPayload(values),
         }
       : {}),
     ...lineDiscount(values.discountAmount),

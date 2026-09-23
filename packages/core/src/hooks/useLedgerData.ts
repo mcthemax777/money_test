@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { EntryFilterQuery, EntryListItem, ReportDto } from '@money/types';
 
+import { installmentEntryViews } from '@money/types';
+
 import { homeDataPort } from '../data/home-port';
 import { type ReportPeriod } from '../lib/api-client';
 import { dayRangeQuery, monthQueryRange } from '../lib/datetime';
@@ -22,6 +24,15 @@ import { usePersonFilterSync } from './usePersonFilterSync';
  * 값을 어디서 얻는지는 창구(`homeDataPort`)가 정한다. 웹은 서버에서 곧바로 받고,
  * 앱은 기기 사본에서 읽는다. 이 훅과 화면은 어느 쪽인지 모른 채 같은 코드를 쓴다.
  */
+/**
+ * 이 화면이 무엇을 "그 달에 쓴 돈"으로 세는가.
+ *
+ * 회차 기준이다. 할부를 산 달에 전액으로 세면 그 달만 혼자 튀고, 실제로 매달 빠져나가는
+ * 돈은 어느 달에서도 보이지 않는다. 거래 화면의 기본과 같은 기준이라 두 화면의 숫자가
+ * 어긋나지 않는다.
+ */
+const LEDGER_BASIS = 'installment' as const;
+
 export function useLedgerData({
   projectId,
   year,
@@ -148,12 +159,26 @@ export function useLedgerData({
        * 같은 화면 안에서 숫자가 어긋난다.
        */
       const port = homeDataPort();
-      const [entryRows, summaryRow] = await Promise.all([
-        port.getAllEntries({ ...entryRange, ...filter }, projectId),
-        port.getSummary(reportPeriod, projectId, filter),
+      /*
+       * 회차 기준으로 센다. 거래 화면과 같은 규칙이다.
+       *
+       * 할부는 회차가 서는 달마다 그 달의 원금과 이자만 든다. 지난달에 산 할부의
+       * 이번 달 회차는 목록 질의에 걸리지 않으므로(전표 날짜로 자른다) 따로 받아
+       * 합친 뒤, 구간에 서는 회차만 남기고 날짜를 그 달로 옮긴다.
+       */
+      const [entryRows, pastRows, summaryRow] = await Promise.all([
+        port.getAllEntries({ ...entryRange, ...filter, basis: LEDGER_BASIS }, projectId),
+        port.getInstallmentRows({ ...entryRange, ...filter }, projectId),
+        port.getSummary(reportPeriod, projectId, { ...filter, basis: LEDGER_BASIS }),
       ]);
 
-      setEntries((entryRows ?? []) as EntryListItem[]);
+      setEntries(
+        installmentEntryViews([...((entryRows ?? []) as EntryListItem[]), ...(pastRows ?? [])], {
+          timeZone,
+          from: entryRange.startDate,
+          to: entryRange.endDate,
+        }),
+      );
       setSummary(summaryRow ?? null);
     } catch (error) {
       console.error('거래 조회 실패:', error);
@@ -161,7 +186,7 @@ export function useLedgerData({
       setHasError(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, rangeKey, filter, mirrorVersion]);
+  }, [projectId, rangeKey, filter, timeZone, mirrorVersion]);
 
   useEffect(() => {
     reloadPeriod();
@@ -173,6 +198,14 @@ export function useLedgerData({
     setDataVersion((version) => version + 1);
   }, [reloadPeriod]);
 
+  /**
+   * 아래 탭들이 그대로 실어 보내는 조건.
+   *
+   * 세는 기준을 함께 싣는다 -- 분류별·수단별이 목록·상단 합계와 다른 기준으로 세면
+   * 한 화면 안에서 숫자가 갈린다.
+   */
+  const scope = useMemo(() => ({ ...filter, basis: LEDGER_BASIS }), [filter]);
+
   return {
     accounts,
     people,
@@ -183,8 +216,13 @@ export function useLedgerData({
 
     entries,
     summary,
-    filter,
-    /** 필터가 걸려 있는지. 목록이 비었을 때 까닭을 알려 주는 데 쓴다. */
+    filter: scope,
+    /**
+     * 필터가 걸려 있는지. 목록이 비었을 때 까닭을 알려 주는 데 쓴다.
+     *
+     * 세는 기준은 거르는 조건이 아니라 세는 방식이라 여기서 빠진다 -- 넣으면 아무것도
+     * 고르지 않은 화면에서도 "필터 때문에 비었다"로 읽힌다.
+     */
     isFilterNarrowed: Object.keys(filter).length > 0,
 
     reportPeriod,

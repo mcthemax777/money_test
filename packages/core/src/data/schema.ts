@@ -41,7 +41,7 @@
  * `feeAmount` 가 빠진 판이다. 옛 사본의 계획 행에는 그 값들이 없어, 편집 화면이 유이자
  * 할부를 무이자로 되돌려 보내고 회차 금액도 적어 둔 값 대신 나눈 값으로 보인다.
  */
-export const SCHEMA_VERSION = 22;
+export const SCHEMA_VERSION = 23;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -318,6 +318,12 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      interestBearing INTEGER NOT NULL DEFAULT 0,
      /* 사용자가 적어 둔 회차별 원금 (JSON 배열). 없으면 개월수로 나눈다. */
      principalShares TEXT,
+     /* 회차별 이자 (JSON 배열). 유이자 할부에만 있다. */
+     interestShares TEXT,
+     /* 고정형 유이자 할부의 월 납입액. 표를 다시 계산할 때 쓴다. */
+     monthlyPayment TEXT,
+     /* 변동형 유이자 할부의 연이율 (퍼센트). */
+     annualRate TEXT,
      updatedVersion INTEGER NOT NULL DEFAULT 0
    )`,
 

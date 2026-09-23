@@ -54,6 +54,16 @@ export interface ViewPosting {
      * 가리는 일은 `toShares` 가 한 곳에서 한다.
      */
     principalShares: unknown;
+    /**
+     * 사용자가 적어 둔 회차별 이자. 유이자 할부에만 있다.
+     *
+     * 원금과 같은 JSON 칸이라 모양은 `toShares` 가 가린다.
+     */
+    interestShares?: unknown;
+    /** 고정형 유이자 할부의 월 납입액. Prisma.Decimal 이나 문자열로 온다. */
+    monthlyPayment?: unknown;
+    /** 변동형 유이자 할부의 연이율 (퍼센트). */
+    annualRate?: unknown;
   } | null;
 }
 
@@ -325,6 +335,9 @@ export function toListItem(
     installmentMonths: cardPosting?.installmentPlan?.totalMonths ?? null,
     installmentInterest: cardPosting?.installmentPlan?.interestBearing ?? null,
     installmentShares: toShares(cardPosting?.installmentPlan?.principalShares),
+    installmentInterestShares: toShares(cardPosting?.installmentPlan?.interestShares),
+    installmentMonthlyPayment: toAmount(cardPosting?.installmentPlan?.monthlyPayment),
+    installmentAnnualRate: toAmount(cardPosting?.installmentPlan?.annualRate),
     feeAmount,
     feeCategoryId: feePosting?.category?.id ?? null,
     feeCategoryName: feePosting?.category?.name ?? null,
@@ -461,4 +474,16 @@ export function lineMatcherOf(search: ParsedEntrySearch): LineMatcher | undefine
 function toShares(value: unknown): string[] | null {
   if (!Array.isArray(value) || value.length === 0) return null;
   return value.map((share) => String(share));
+}
+
+/**
+ * 계획에 적힌 금액 한 칸을 문자열로 가린다.
+ *
+ * 서버에서는 Prisma.Decimal 이고 기기 사본에서는 문자열이나 숫자다. 없으면 null 이라,
+ * 그때는 사용자가 이자를 손으로 적었거나 무이자 할부다.
+ */
+function toAmount(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const text = String(value);
+  return text === '' ? null : text;
 }

@@ -224,6 +224,29 @@ function TransactionItemView({
                 </Text>
               ) : null}
               {/*
+                회차 기준으로 볼 때의 할부 줄. 위 금액은 이미 그 회차 몫이다.
+
+                이자는 **이체 수수료와 같은 모양으로** 적는다. 그 달에 나가는 돈 안에서
+                원금이 아닌 부분이라, 내는 돈이 왜 회차 원금보다 큰지가 그 한 줄로 드러난다.
+              */}
+              {row?.installment ? (
+                <>
+                  <Text className="text-xs text-gray-500">
+                    {t('entry.installmentRow', {
+                      index: row.installment.index,
+                      months: row.installment.months,
+                    })}
+                  </Text>
+                  {Number(row.installment.interest) > 0 ? (
+                    <Text className="text-xs font-medium text-red-600">
+                      {t('entry.installmentInterest', {
+                        amount: formatCurrency(Number(row.installment.interest), displayCurrency),
+                      })}
+                    </Text>
+                  ) : null}
+                </>
+              ) : null}
+              {/*
                 결제 자리에서 깎인 금액. 위 금액은 이미 깎인 뒤라 이것이 없으면 정가를
                 알 수 없다. 나간 돈이 아니므로 초록으로 적는다.
               */}

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { EntryFilterQuery } from '@money/types';
+import type { EntryScopeQuery } from '@money/types';
 import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { budgetPercentage } from '@money/core/lib/budget';
@@ -22,7 +22,7 @@ export interface BudgetRow {
 interface Props {
   period: ReportPeriod;
   projectId?: string | null;
-  filter?: EntryFilterQuery;
+  filter?: EntryScopeQuery;
   /** 분류를 고르면 상세 패널이 쓴다 (대분류인지 소분류인지 판별). */
   categories: Category[];
   onEntryClick: (entry: EntryListItem) => void;

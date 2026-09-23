@@ -216,7 +216,14 @@ export default function EntryDetailModal({
           )}
           <Row label={t('tx.detail.method')} value={methodLabel} />
           <Row label={t('tx.detail.merchant')} value={entry.merchant} />
-          <Row label={t('tx.detail.installment')} value={installmentLabel(t, entry)} />
+          {/*
+            할부 한 마디. 유이자면 그중 얼마가 이자인지 함께 적는다 -- 이자는 금액 안에
+            들어 있어, 적어 두지 않으면 산 값보다 큰 까닭이 화면 어디에도 없다.
+          */}
+          <Row
+            label={t('tx.detail.installment')}
+            value={installmentLabel(t, entry, (amount) => formatCurrency(amount, currency))}
+          />
           <Row label={t('tx.detail.fee')} value={fee > 0 ? money(entry.feeAmount) : null} />
           {/*
             결제 자리에서 깎인 금액 (포인트 사용·자동할인). 위 금액은 이미 깎인 뒤라

@@ -55,6 +55,14 @@ export interface CardUsagePosting {
    */
   installmentShares?: readonly DecInput[] | null;
   /**
+   * 사용자가 적어 둔 회차별 이자. 없거나 개수가 어긋나면 이자가 없는 것으로 본다.
+   *
+   * 다리 금액에는 이 이자가 **이미 들어 있다**. 카드사에 갚을 돈이 원금과 이자를
+   * 합한 값이기 때문이다. 그래서 청구는 회차마다 원금에 이자를 더해 세고, 실적은
+   * 반대로 이자를 빼고 센다 -- 카드사가 혜택을 정할 때 세는 것은 결제액뿐이다.
+   */
+  installmentInterestShares?: readonly DecInput[] | null;
+  /**
    * 이 거래를 실적에 세는가. 없으면 센 것으로 본다.
    *
    * **분할해도 하나다.** 카드사가 보는 것은 승인 한 건이라, 분류로 나눴다고 절반만
@@ -84,11 +92,50 @@ export interface CardUsagePosting {
  * 받는 `billed` 는 이미 부호를 뒤집은 값이다 (사용이 양수).
  */
 function performanceAmount(billed: Dec, posting: CardUsagePosting): Dec {
-  if (posting.discountCountsPerformance ?? true) return billed;
+  /*
+   * 이자는 실적에서 뺀다. 다리 금액에 들어 있으므로 여기서 덜어낸다.
+   *
+   * 카드사가 혜택을 정할 때 세는 것은 승인된 결제액이다. 할부 수수료를 얼마나 냈는지는
+   * 그 셈에 들어가지 않으므로, 전표가 이자까지 담게 된 뒤에도 실적은 구매가 그대로다.
+   */
+  const amount = billed.minus(
+    installmentInterestTotal(posting.installmentInterestShares, installmentMonthsOf(posting)),
+  );
+
+  if (posting.discountCountsPerformance ?? true) return amount;
 
   const discount = posting.discountAmount;
-  if (discount === undefined || discount === null || discount === '') return billed;
-  return billed.plus(Dec.of(discount));
+  if (discount === undefined || discount === null || discount === '') return amount;
+  return amount.plus(Dec.of(discount));
+}
+
+/** 이 다리의 할부 개월수. 일시불이면 1 이다. */
+function installmentMonthsOf(posting: CardUsagePosting): number {
+  return Math.max(posting.installmentMonths ?? 1, 1);
+}
+
+/**
+ * 적어 둔 회차 이자. 개수가 개월수와 다르면 null 이다.
+ *
+ * 개수가 어긋난 값은 금액이나 개월수를 고친 뒤 남은 옛 값이다. 어느 회차의 이자인지
+ * 알 수 없으므로 없는 것으로 본다 (회차 원금과 같은 판단이다).
+ */
+export function installmentInterests(
+  interests: readonly DecInput[] | null | undefined,
+  months: number,
+): Dec[] | null {
+  if (!interests || interests.length !== months) return null;
+  return toDecList(interests);
+}
+
+/** 회차 이자의 합. 적어 둔 것이 없으면 0 이다. */
+export function installmentInterestTotal(
+  interests: readonly DecInput[] | null | undefined,
+  months: number,
+): Dec {
+  const values = installmentInterests(interests, months);
+  if (!values) return Dec.of(0);
+  return values.reduce<Dec>((acc, value) => acc.plus(value), Dec.of(0));
 }
 
 /** 한 다리가 어느 주기에 얼마를 쌓는가. 실적은 주기 하나에만 들어간다. */
@@ -167,6 +214,9 @@ export interface BilledShare {
  * 실적과 달리 여기서는 차감을 되살리지 않는다. 깎인 금액은 갚을 대금에서도 빠지므로
  * 다리 금액(이미 순액)이 그대로 청구액이다. 실적에서 뺀 거래도 청구는 그대로 된다.
  *
+ * **회차마다 원금에 그 회차의 이자를 더한다.** 명세서에 찍히는 것이 그 값이고, 다리
+ * 금액도 이미 이자를 품고 있어 회차 합이 다리와 같다.
+ *
  * 24개월 할부처럼 오래 끌리는 청구가 뒤 주기에 얼마씩 얹히는지는 이 목록이 답한다.
  * 원장에는 구매한 날 한 줄뿐이라, 그 줄만 보아서는 이번 달 대금이 왜 큰지 알 수 없다.
  */
@@ -176,15 +226,21 @@ export function billedShares(
   timeZone: string,
 ): BilledShare[] {
   const months = Math.max(posting.installmentMonths ?? 1, 1);
-  const total = Dec.of(posting.amount).negated();
+  const charged = Dec.of(posting.amount).negated();
+  const interests = installmentInterests(posting.installmentInterestShares, months);
+  const principalTotal = charged.minus(
+    installmentInterestTotal(posting.installmentInterestShares, months),
+  );
   const purchase = closingMonthOf(asDate(posting.date), statementClosingDay, timeZone);
 
-  return installmentPrincipals(total, months, posting.installmentShares).map((share, offset) => ({
-    closingKey: closingMonthKey(shiftClosingMonth(purchase, offset)),
-    amount: share.toString(),
-    index: offset + 1,
-    months,
-  }));
+  return installmentPrincipals(principalTotal, months, posting.installmentShares).map(
+    (share, offset) => ({
+      closingKey: closingMonthKey(shiftClosingMonth(purchase, offset)),
+      amount: share.plus(interests?.[offset] ?? Dec.of(0)).toString(),
+      index: offset + 1,
+      months,
+    }),
+  );
 }
 
 export interface CreditUsageInput {

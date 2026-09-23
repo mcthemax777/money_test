@@ -104,6 +104,12 @@ export interface EntryMutationPayload {
   installmentMonths?: number;
   installmentInterest?: boolean;
   installmentShares?: string[];
+  /** 회차별 이자. 유이자 할부에만 싣는다. */
+  installmentInterestShares?: string[];
+  /** 고정형 유이자 할부의 월 납입액. */
+  installmentMonthlyPayment?: string;
+  /** 변동형 유이자 할부의 연이율 (퍼센트). */
+  installmentAnnualRate?: string;
   toAmount?: string;
   transferFee?: string;
   transferFeeCategoryId?: string;

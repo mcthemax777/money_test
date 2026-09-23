@@ -150,6 +150,12 @@ export interface BuiltEntry {
   installmentInterest?: boolean;
   /** 회차별 원금 (사용자가 적은 값). 적지 않았으면 없고, 그때는 개월수로 나눈다. */
   installmentShares?: string[];
+  /** 회차별 이자 (계산한 기본값이거나 사용자가 고친 값). 무이자 할부에는 없다. */
+  installmentInterestShares?: string[];
+  /** 고정형 유이자 할부의 월 납입액. 이 값이 회차 표를 만든 입력이다. */
+  installmentMonthlyPayment?: string;
+  /** 변동형 유이자 할부의 연이율 (퍼센트). */
+  installmentAnnualRate?: string;
   /**
    * 이 거래를 카드 실적에 세는가. 카드로 낸 거래에만 뜻이 있다.
    *
@@ -247,6 +253,17 @@ export interface ExpenseBuildInput extends CommonBuildInput {
    * 회차에 몰아주는지가 카드사마다 달라, 명세서와 맞추려면 사람이 적은 값을 쓴다.
    */
   installmentShares?: DecInput[];
+  /**
+   * 회차별 이자. 유이자 할부에만 뜻이 있고, 개수는 개월수와 같아야 한다.
+   *
+   * 합은 보지 않는다. 원금과 달리 이자는 무엇과도 맞아야 할 총액이 없다 -- 카드사가
+   * 매기는 값이고, 명세서를 보고 회차마다 고쳐 적는 자리다.
+   */
+  installmentInterestShares?: DecInput[];
+  /** 고정형 유이자 할부의 월 납입액. 회차 표를 다시 계산할 때 쓴다. */
+  installmentMonthlyPayment?: DecInput;
+  /** 변동형 유이자 할부의 연이율 (퍼센트). */
+  installmentAnnualRate?: DecInput;
   /**
    * 카드 실적에 셀지. 카드로 낼 때만 뜻이 있고 **기본은 포함**이다.
    *
@@ -381,21 +398,72 @@ export async function buildExpense(
   // 유이자 여부는 할부에만 뜻이 있다. 일시불로 되돌리면 함께 떨어진다.
   const interest = months && months >= 2 ? input.installmentInterest ?? false : undefined;
 
-  const payment = paymentLeg(source, account.currency, entered, rate, base, enteredTotal, baseTotal);
+  /*
+   * 회차별 이자와 그것을 만든 입력. 유이자 할부에만 남는다.
+   *
+   * 무이자로 되돌리면 함께 떨어진다 -- 남겨 두면 수수료가 없는 할부에 이자가 붙어
+   * 보이고, 회차 기준으로 볼 때 그 달 지출이 실제보다 커진다.
+   */
+  const bearing = interest === true;
+  const interestShares = bearing
+    ? installmentInterestSharesOf(input.installmentInterestShares, months)
+    : undefined;
+  const interestTotal = interestShares ? sum(interestShares.map((share) => Dec.of(share))) : ZERO;
+  assertInterestCurrency(interestTotal, entered, account.currency, base);
+
+  /*
+   * 이자를 분류 줄에 얹는다. **전표 금액이 곧 카드사에 갚을 돈이다.**
+   *
+   * 수수료 전표를 따로 만들지 않기로 한 자리다. 따로 만들면 그 돈이 언제 부채가
+   * 되는지가 원 거래와 갈리고, 회차마다 사람이 적어 줄 때까지 카드 빚이 실제보다
+   * 작게 남는다. 여기서 얹으면 산 날 하루에 갚을 돈이 전부 잡힌다.
+   *
+   * 분류는 거래의 분류를 따라간다 -- 한 결제에서 나온 돈이라 따로 세면 "그 달에
+   * 식비로 얼마 나갔나"의 답이 갈린다. 분할이면 줄 금액의 비율로 나눈다.
+   */
+  const interestByLine = allocate(
+    interestTotal,
+    baseLines.map((line) => line.baseAmount),
+    currencyDecimals(base),
+  );
+  const chargedLines = baseLines.map((line, index) => ({
+    ...line,
+    baseAmount: line.baseAmount.plus(interestByLine[index] ?? ZERO),
+  }));
+  const chargedTotal = baseTotal.plus(interestTotal);
+
+  const payment = paymentLeg(
+    source,
+    account.currency,
+    entered,
+    rate,
+    base,
+    // 이자가 있으면 입력 통화가 곧 기준통화다 (`assertInterestCurrency`).
+    enteredTotal.plus(interestTotal),
+    chargedTotal,
+  );
   const postings = [
     // 지출 발생 = + (언제나 기준통화)
-    ...baseLines.map((line) => categoryLeg(line, line.baseAmount, base)),
+    ...chargedLines.map((line) => categoryLeg(line, line.baseAmount, base)),
     // 자산 감소 또는 부채 증가 = -
     payment,
   ];
 
   /*
-   * 사용자가 적어 둔 회차 원금. 기준은 카드 다리의 금액이다.
+   * 사용자가 적어 둔 회차 원금. 기준은 카드 다리에서 이자를 뺀 금액이다.
    *
    * 통화가 갈리는 거래(원화 카드로 한 외화 결제)에서는 입력한 금액이 아니라 카드에
    * 청구되는 금액이 나뉜다. 그 값이 곧 카드 다리라, 다리를 보고 검사한다.
    */
-  const shares = installmentSharesOf(input.installmentShares, months, payment.amount);
+  const shares = installmentSharesOf(input.installmentShares, months, payment.amount, interestTotal);
+  const monthlyPayment =
+    bearing && input.installmentMonthlyPayment !== undefined
+      ? Dec.of(input.installmentMonthlyPayment).toString()
+      : undefined;
+  const annualRate =
+    bearing && input.installmentAnnualRate !== undefined
+      ? Dec.of(input.installmentAnnualRate).toString()
+      : undefined;
 
   return {
     ...common(input),
@@ -404,6 +472,9 @@ export async function buildExpense(
     installmentMonths: months,
     installmentInterest: interest,
     installmentShares: shares,
+    installmentInterestShares: interestShares,
+    installmentMonthlyPayment: monthlyPayment,
+    installmentAnnualRate: annualRate,
     // 카드로 낸 지출은 기본이 실적 포함이다. 카드가 아니면 읽히지 않는 자리다.
     countsPerformance: source.cardId ? input.countsPerformance ?? true : true,
     /*
@@ -735,6 +806,9 @@ export interface EntryBuildRequest extends CommonBuildInput {
   installmentMonths?: number;
   installmentInterest?: boolean;
   installmentShares?: DecInput[];
+  installmentInterestShares?: DecInput[];
+  installmentMonthlyPayment?: DecInput;
+  installmentAnnualRate?: DecInput;
   toAmount?: DecInput;
   transferFee?: DecInput;
   transferFeeCategoryId?: string;
@@ -778,6 +852,9 @@ export async function buildEntry(
           installmentMonths: request.installmentMonths,
           installmentInterest: request.installmentInterest,
           installmentShares: request.installmentShares,
+          installmentInterestShares: request.installmentInterestShares,
+          installmentMonthlyPayment: request.installmentMonthlyPayment,
+          installmentAnnualRate: request.installmentAnnualRate,
           countsPerformance: request.countsPerformance,
           discountCountsPerformance: request.discountCountsPerformance,
         },
@@ -1076,6 +1153,8 @@ function installmentSharesOf(
   shares: readonly DecInput[] | undefined,
   months: number | undefined,
   cardLegAmount: Dec,
+  /** 카드 다리에 얹은 이자 합. 회차 원금은 그것을 뺀 금액을 나눈다. */
+  interestTotal: Dec,
 ): string[] | undefined {
   if (!shares || shares.length === 0) return undefined;
   // 일시불로 되돌렸으면 적어 둔 값도 뜻이 없다.
@@ -1090,12 +1169,66 @@ function installmentSharesOf(
     fail('INSTALLMENT_SHARE_NEGATIVE', '회차 금액은 0보다 작을 수 없습니다.');
   }
 
-  // 카드 다리는 사용이 음수다. 회차는 청구 금액이라 양수로 견준다.
-  if (!sum(values).eq(cardLegAmount.negated())) {
+  /*
+   * 카드 다리는 사용이 음수다. 회차는 청구 금액이라 양수로 견준다.
+   *
+   * 다리에는 이자가 얹혀 있으므로 그만큼을 뺀 값, 곧 구매가와 견준다. 회차 원금에
+   * 이자가 섞이면 실적에서 이자를 덜어낼 수 없다.
+   */
+  if (!sum(values).eq(cardLegAmount.negated().minus(interestTotal))) {
     fail('INSTALLMENT_SHARES_SUM', '회차 금액의 합이 결제 금액과 달라요.');
   }
 
   return values.map((value) => value.toString());
+}
+
+/**
+ * 회차별 이자를 검사한다. 적지 않았으면 undefined.
+ *
+ * 원금과 달리 합을 보지 않는다. 맞춰야 할 총액이 없기 때문이다 -- 이자는 카드사가
+ * 매기고, 계산은 기본값을 채워 줄 뿐이라 사용자가 고친 값이 곧 사실이다. 개수만
+ * 본다. 개월수와 다르면 어느 회차의 이자인지 알 수 없다.
+ */
+function installmentInterestSharesOf(
+  shares: readonly DecInput[] | undefined,
+  months: number | undefined,
+): string[] | undefined {
+  if (!shares || shares.length === 0) return undefined;
+  // 일시불로 되돌렸으면 적어 둔 값도 뜻이 없다.
+  if (!months || months < 2) return undefined;
+
+  if (shares.length !== months) {
+    fail('INSTALLMENT_INTEREST_SHARES_COUNT', '회차 이자의 개수가 할부 개월수와 다릅니다.');
+  }
+
+  const values = shares.map((share) => Dec.of(share));
+  if (values.some((value) => value.isNegative())) {
+    fail('INSTALLMENT_INTEREST_NEGATIVE', '회차 이자는 0보다 작을 수 없습니다.');
+  }
+
+  return values.map((value) => value.toString());
+}
+
+/**
+ * 유이자 할부를 적을 수 있는 결제인지.
+ *
+ * **장부 통화로 적은 결제에만** 된다. 이자는 명세서에 찍힌 금액 그대로 적는 값이라
+ * 환산할 그때의 환율이 계획에 없다. 외화 청구 카드에 원화 이자를 얹으면 그 다리의
+ * 통화가 뒤섞이고, 원화 카드로 한 외화 결제에 얹으면 적은 적 없는 환율이 생긴다 --
+ * 화면은 "원래 금액 ÷ 환산액"으로 환율을 되짚으므로(`deriveRate`), 이자가 섞인
+ * 환산액에서는 $50를 1,400원에 산 것으로 읽힌다.
+ */
+function assertInterestCurrency(
+  interestTotal: Dec,
+  entered: string,
+  accountCurrency: string,
+  base: string,
+) {
+  if (interestTotal.isZero() || (entered === base && accountCurrency === base)) return;
+  fail(
+    'INSTALLMENT_INTEREST_CURRENCY',
+    '외화가 얽힌 결제에는 유이자 할부를 적을 수 없습니다. 이자는 장부 통화로만 적습니다.',
+  );
 }
 
 /**

@@ -181,7 +181,9 @@ export class CardLedgerService {
             postings: { select: USAGE_LEG_SELECT },
           },
         },
-        installmentPlan: { select: { totalMonths: true, principalShares: true } },
+        installmentPlan: {
+              select: { totalMonths: true, principalShares: true, interestShares: true },
+            },
       },
     });
 
@@ -191,6 +193,7 @@ export class CardLedgerService {
         date: usage.entry.date,
         installmentMonths: usage.installmentPlan?.totalMonths ?? null,
         installmentShares: toShares(usage.installmentPlan?.principalShares),
+        installmentInterestShares: toShares(usage.installmentPlan?.interestShares),
         countsPerformance: usage.entry.countsPerformance,
         ...performanceDiscount(usage.entry),
       })),
@@ -473,7 +476,9 @@ export class CardLedgerService {
             id: true,
             amount: true,
             entry: { select: periodLedgerEntrySelect },
-            installmentPlan: { select: { totalMonths: true, principalShares: true } },
+            installmentPlan: {
+              select: { totalMonths: true, principalShares: true, interestShares: true },
+            },
           },
           orderBy: [{ entry: { date: 'asc' } }, { id: 'asc' }],
         });
@@ -486,6 +491,8 @@ export class CardLedgerService {
               amount: usage.amount,
               date: usage.entry.date,
               installmentMonths: usage.installmentPlan?.totalMonths ?? null,
+              // 실적은 이자를 뺀 결제액이다. 빼려면 회차 이자를 함께 넘겨야 한다.
+              installmentInterestShares: toShares(usage.installmentPlan?.interestShares),
               countsPerformance: usage.entry.countsPerformance,
               ...performanceDiscount(usage.entry),
             },
@@ -596,7 +603,9 @@ export class CardLedgerService {
             id: true,
             amount: true,
             entry: { select: periodLedgerEntrySelect },
-            installmentPlan: { select: { totalMonths: true, principalShares: true } },
+            installmentPlan: {
+              select: { totalMonths: true, principalShares: true, interestShares: true },
+            },
           },
           orderBy: [{ entry: { date: 'asc' } }, { id: 'asc' }],
         });
@@ -614,6 +623,8 @@ export class CardLedgerService {
               date: usage.entry.date,
               installmentMonths: usage.installmentPlan?.totalMonths ?? null,
               installmentShares: toShares(usage.installmentPlan?.principalShares),
+              // 회차 청구액은 원금에 그 회차의 이자를 더한 값이다.
+              installmentInterestShares: toShares(usage.installmentPlan?.interestShares),
             },
             closingDay,
             timeZone,
@@ -1012,244 +1023,6 @@ export class CardLedgerService {
   }
 
 
-  /**
-   * 수수료를 아직 적지 않은 할부 회차.
-   *
-   * 유이자 할부는 회차마다 수수료가 붙는데, 카드사와 남은 원금에 따라 금액이 조금씩
-   * 달라 계산으로는 명세서와 맞출 수 없다. 그래서 회차의 주기가 마감되면 여기 떠오르고,
-   * 사용자가 명세서를 보고 적으면 그때 수수료 전표가 하나 생긴다.
-   *
-   * 마감되지 않은 회차는 아직 청구서에 오르지 않아 적을 금액이 없다. 무이자 할부는
-   * 애초에 떠오르지 않는다.
-   */
-  async listPendingFees(cardId: string, userId: string): Promise<CardDto.PendingFeesResponse> {
-    const card = await this.loadCreditCard(cardId, userId);
-    const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
-    const closingDay = card.statementClosingDay!;
-
-    const liability = await this.prisma.account.findUniqueOrThrow({
-      where: { id: card.liabilityAccountId! },
-      select: { currency: true },
-    });
-
-    const plans = await this.prisma.installmentPlan.findMany({
-      where: {
-        interestBearing: true,
-        posting: { accountId: card.liabilityAccountId! },
-      },
-      select: {
-        id: true,
-        totalMonths: true,
-        principalShares: true,
-        posting: {
-          select: {
-            amount: true,
-            entry: {
-              select: {
-                id: true,
-                date: true,
-                description: true,
-                merchant: true,
-                // 설명이 빈 거래를 가릴 이름. 분할이면 첫 줄이 대표다.
-                postings: {
-                  where: { categoryId: { not: null } },
-                  select: { category: { select: { name: true } } },
-                  orderBy: { id: 'asc' },
-                  take: 1,
-                },
-              },
-            },
-          },
-        },
-        // 이미 적은 회차. 다시 묻지 않는다.
-        fees: { select: { installmentSequence: true } },
-      },
-    });
-
-    const todayMarker = todayUtcMarker(timeZone);
-    const items: CardDto.PendingFeeItem[] = [];
-
-    for (const plan of plans) {
-      const settled = new Set(plan.fees.map((fee) => fee.installmentSequence));
-      const shares = billedShares(
-        {
-          amount: plan.posting.amount,
-          date: plan.posting.entry.date,
-          installmentMonths: plan.totalMonths,
-          installmentShares: toShares(plan.principalShares),
-        },
-        closingDay,
-        timeZone,
-      );
-
-      for (const share of shares) {
-        if (settled.has(share.index)) continue;
-
-        const [year, month] = share.closingKey.split('-').map(Number);
-        const period = periodForClosingMonth(year, month, closingDay, card.paymentDueDay!);
-        // 마감 전 회차는 청구서에 오르지 않았다. 적을 금액이 아직 없다.
-        if (period.periodEnd.getTime() >= todayMarker) continue;
-
-        items.push({
-          planId: plan.id,
-          sequence: share.index,
-          months: share.months,
-          entryId: plan.posting.entry.id,
-          description: plan.posting.entry.description,
-          merchant: plan.posting.entry.merchant,
-          categoryName: plan.posting.entry.postings[0]?.category?.name ?? null,
-          purchaseDate: plan.posting.entry.date.toISOString(),
-          closingMonth: share.closingKey,
-          dueDate: period.dueDate.toISOString(),
-          principal: share.amount,
-        });
-      }
-    }
-
-    // 오래된 회차가 앞이다. 밀린 것부터 적는다.
-    items.sort((a, b) => (a.dueDate === b.dueDate ? a.sequence - b.sequence : a.dueDate < b.dueDate ? -1 : 1));
-
-    return {
-      cardId: card.id,
-      currency: liability.currency,
-      suggestedCategoryId: await this.lastFeeCategoryId(card.projectId),
-      items,
-    };
-  }
-
-  /**
-   * 지난번에 수수료로 쓴 분류.
-   *
-   * 할부수수료 분류를 서버가 만들지 않는다. 가계부마다 분류 나무가 달라 남의 자리에
-   * 이름 하나를 끼워 넣는 꼴이 된다. 한 번 고른 것을 다음부터 기본으로 삼는다.
-   */
-  private async lastFeeCategoryId(projectId: string): Promise<string | null> {
-    const last = await this.prisma.posting.findFirst({
-      where: {
-        categoryId: { not: null },
-        entry: { projectId, installmentPlanId: { not: null } },
-      },
-      orderBy: { entry: { date: 'desc' } },
-      select: { categoryId: true },
-    });
-    return last?.categoryId ?? null;
-  }
-
-  /**
-   * 회차 수수료를 적는다. 적은 만큼 수수료 전표가 생긴다.
-   *
-   * 전표로 남기는 까닭은 부채가 전표 합이기 때문이다. 계획에 수수료 총액만 적어 두면
-   * 청구만 늘고 갚을 대금은 그대로라, 카드 화면의 두 숫자가 어긋난다. 전표로 두면 그
-   * 수수료가 지출로도 잡혀 "할부로 얼마를 더 냈나"가 분류 합계에 남는다.
-   *
-   * 실적에서는 뺀다. 카드사가 혜택을 정할 때 세는 것은 결제액이지 수수료가 아니다.
-   */
-  async settleFees(
-    cardId: string,
-    userId: string,
-    dto: CardDto.SettleFeesRequest,
-  ): Promise<CardDto.SettleFeesResponse> {
-    const card = await this.loadCreditCard(cardId, userId, ProjectRole.editor);
-    const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
-    const closingDay = card.statementClosingDay!;
-
-    const items = Array.isArray(dto?.items) ? dto.items : [];
-    if (items.length === 0) {
-      throw new BadRequestException('적을 회차를 골라 주세요.');
-    }
-    if (!dto.categoryId) {
-      throw new BadRequestException('수수료를 담을 분류를 골라 주세요.');
-    }
-    if (!dto.personId) {
-      throw new BadRequestException('수수료를 적을 사람을 골라 주세요.');
-    }
-
-    // 남의 카드 회차를 섞어 보내는 요청을 막는다. 이 카드에 달린 계획인지 확인한다.
-    const plans = await this.prisma.installmentPlan.findMany({
-      where: {
-        id: { in: items.map((item) => item.planId) },
-        posting: { accountId: card.liabilityAccountId! },
-      },
-      select: {
-        id: true,
-        totalMonths: true,
-        interestBearing: true,
-        posting: {
-          select: { amount: true, entry: { select: { date: true, description: true, merchant: true } } },
-        },
-        fees: { select: { installmentSequence: true } },
-      },
-    });
-    const byId = new Map(plans.map((plan) => [plan.id, plan]));
-
-    const targets = items.map((item) => {
-      const plan = byId.get(item.planId);
-      if (!plan) throw new NotFoundException('이 카드의 할부가 아닙니다.');
-      if (!plan.interestBearing) {
-        throw new BadRequestException('무이자 할부에는 수수료가 붙지 않습니다.');
-      }
-      if (!Number.isInteger(item.sequence) || item.sequence < 1 || item.sequence > plan.totalMonths) {
-        throw new BadRequestException('없는 회차입니다.');
-      }
-      if (plan.fees.some((fee) => fee.installmentSequence === item.sequence)) {
-        throw new BadRequestException('이미 수수료를 적은 회차입니다.');
-      }
-
-      const amount = toMoney(item.amount, '할부 수수료');
-      if (amount.lte(ZERO)) {
-        throw new BadRequestException('수수료는 0보다 커야 합니다.');
-      }
-
-      /*
-       * 전표 날짜는 그 회차 주기의 **마감일**이다. 결제일이 아니다.
-       *
-       * 수수료는 그 회차와 함께 청구되는 돈이라 그 청구서에 들어가야 한다. 결제일로
-       * 두면 (마감 15일 / 결제 25일 카드에서) 다음 주기 청구서로 넘어가, 명세서와
-       * 대조할 때 한 달씩 밀린다. 통장에서 빠지는 것은 대금 결제 전표의 몫이다.
-       */
-      const purchase = closingMonthOf(plan.posting.entry.date, closingDay, timeZone);
-      const closing = shiftClosingMonth(purchase, item.sequence - 1);
-      const period = periodForClosingMonth(closing.year, closing.month, closingDay, card.paymentDueDay!);
-
-      return { plan, sequence: item.sequence, amount, date: period.periodEnd };
-    });
-
-    for (const target of targets) {
-      const entry = await this.ledger.createExpense({
-        projectId: card.projectId,
-        personId: dto.personId,
-        date: target.date,
-        description: `${target.plan.posting.entry.description} ${target.sequence}/${target.plan.totalMonths}회차 수수료`,
-        merchant: target.plan.posting.entry.merchant,
-        createdByUserId: userId,
-        cardId: card.id,
-        // 카드사가 혜택을 정할 때 세는 것은 결제액이지 수수료가 아니다.
-        countsPerformance: false,
-        lines: [
-          {
-            categoryId: dto.categoryId,
-            amount: target.amount,
-            // 줄 키는 만드는 쪽이 정한다. 화면이 없는 자리라 여기서 만든다.
-            lineKey: randomUUID(),
-          },
-        ],
-      });
-
-      /*
-       * 어느 회차의 것인지 표를 남긴다. 이것이 있어야 그 회차가 다시 떠오르지 않는다.
-       *
-       * 전표를 만든 뒤에 붙이는 까닭은 조립이 이 칸을 모르기 때문이다 -- 원장의 규칙과
-       * 상관없는 꼬리표라, 조립을 거치게 하면 갈래마다 뜻 없는 칸이 하나씩 는다.
-       */
-      await this.prisma.journalEntry.update({
-        where: { id: entry.id },
-        data: { installmentPlanId: target.plan.id, installmentSequence: target.sequence },
-      });
-    }
-
-    return { settled: targets.length };
-  }
-
   private async loadCreditCard(
     cardId: string,
     userId: string,
@@ -1370,5 +1143,3 @@ function fillPeriod(rows: CardDto.PeriodLedgerRow[]): {
 
   return { rows: filled.reverse(), total: running.toString() };
 }
-
-

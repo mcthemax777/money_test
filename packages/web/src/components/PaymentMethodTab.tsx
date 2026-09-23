@@ -28,7 +28,7 @@ import {
   formatAxisAmount,
   formatTooltipAmount,
 } from '@money/core/lib/chart';
-import type { EntryFilterQuery } from '@money/types';
+import type { EntryScopeQuery } from '@money/types';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 import type { Account, Card } from '@money/core/lib/types';
 import Modal from './Modal';
@@ -57,7 +57,7 @@ interface Props {
   period: ReportPeriod;
   projectId?: string | null;
   /** 가계 화면의 사람/고정 필터. 합계와 목록이 같은 조건을 써야 한다. */
-  filter?: EntryFilterQuery;
+  filter?: EntryScopeQuery;
   /** 거래를 누르면 호출한다. 날짜별 보기와 같은 상세 팝업을 열기 위한 통로다. */
   onEntryClick?: (entry: EntryListItem) => void;
   /** 값이 바뀌면 데이터를 다시 받는다. 부모 화면에서 거래를 고쳤을 때 쓴다. */

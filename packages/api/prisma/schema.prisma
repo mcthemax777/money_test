@@ -589,22 +589,20 @@ model CardStatement {
 // 할부
 // ─────────────────────────────────────────────
 
-// 원금은 구매 즉시 전액 부채로 잡힌다. 아래 표는 "언제 얼마가 청구되는지"의 일정표일 뿐
-// 새로운 Posting을 만들지 않는다. 수수료만 전표로 남는다 (실제로 나가는 돈이 늘어서다).
+// 원금도 이자도 구매 즉시 전액 부채로 잡힌다 (전표 금액이 곧 카드에 갚을 돈이다).
+// 아래 표는 "언제 얼마가 청구되는지"의 일정표일 뿐 새로운 Posting 을 만들지 않는다.
 model InstallmentPlan {
   id          String @id @default(cuid())
   postingId   String @unique // 원 구매의 카드측 posting
   totalMonths Int
 
-  /// 수수료가 붙는 할부인가.
+  /// 이자가 붙는 할부인가.
   ///
-  /// 회차 금액은 원금을 개월수로 나눈 값이라 계산으로 얻지만, 수수료는 카드사마다
-  /// 다르고 회차마다 조금씩 달라 계산으로 맞출 수 없다. 그래서 유이자로 적은 할부는
-  /// 마감된 회차마다 "수수료 미입력"으로 떠오르고, 사용자가 명세서를 보고 적으면 그때
-  /// 수수료 전표가 생긴다 (환율 확정과 같은 손짓이다).
+  /// 유이자면 거래를 적을 때 회차마다의 이자를 함께 적고, 그 합이 전표 금액에 들어간다.
+  /// 회차 금액은 개월수로 나눠 얻지만 이자는 카드사마다 달라 계산으로 맞출 수 없다 --
+  /// 계산은 기본값을 채우는 데까지이고, 명세서와 다르면 사용자가 고쳐 적는다.
   ///
-  /// 이 값이 없던 때에 적은 할부는 무이자로 본다. 수수료 전표가 없다는 뜻이라 그때까지의
-  /// 숫자가 그대로 남는다.
+  /// 이 값이 없던 때에 적은 할부는 무이자로 본다. 그때까지의 숫자가 그대로 남는다.
   interestBearing Boolean @default(false)
 
   /// 사용자가 적어 둔 회차별 원금. 문자열 배열이고, 적지 않았으면 null 이다.
@@ -617,14 +615,33 @@ model InstallmentPlan {
   /// 갚을 대금과 달라진다.
   principalShares Json?
 
-  posting Posting        @relation(fields: [postingId], references: [id], onDelete: Cascade)
-  fees    JournalEntry[] @relation("InstallmentFee")
+  /// 사용자가 적어 둔 회차별 이자. 유이자 할부에만 있고, 문자열 배열이다.
+  ///
+  /// 이자는 계산으로 기본값을 채우지만(`fixedPaymentSchedule`, `annualRateSchedule`)
+  /// 그 값이 곧 사실은 아니다. 카드사마다 올림하는 자리가 다르고 첫 달만 일할로
+  /// 매기는 곳도 있어, 명세서와 다르면 사용자가 회차마다 고쳐 적는다.
+  ///
+  /// 이 합은 **전표 금액 안에 들어 있다.** 카드에 갚을 돈이 원금과 이자를 합한 값이라
+  /// 회차 원금은 전표 금액에서 이 합을 뺀 것을 나눈 값이고, 실적은 반대로 이 합을 뺀다.
+  interestShares Json?
+
+  /// 고정형 유이자 할부의 월 납입액. 변동형이거나 무이자면 null 이다.
+  ///
+  /// 매달 같은 금액을 내는 할부다. 낸 돈에서 이자를 먼저 떼고 남은 것이 원금이라
+  /// 앞 회차일수록 이자가 크다. 회차 표를 다시 계산하려면 이 값이 있어야 해서
+  /// 계산 결과와 함께 적어 둔다.
+  monthlyPayment Decimal? @db.Decimal(19, 4)
+
+  /// 변동형 유이자 할부의 연이율 (퍼센트). 고정형이거나 무이자면 null 이다.
+  annualRate Decimal? @db.Decimal(19, 4)
+
+  posting Posting @relation(fields: [postingId], references: [id], onDelete: Cascade)
 
   /// 변경 피드가 보는 번호. 다리와 전표를 거쳐 프로젝트를 찾는다.
   ///
-  /// 회차는 표로 두지 않는다. 원금 회차는 총액과 개월수에서 다시 계산되는 파생값이고
-  /// (설계 문서의 D7), 수수료는 전표로 남는다 -- 전표 합이 곧 카드 부채라 수수료만
-  /// 따로 적어 두면 갚을 대금과 원장이 어긋난다.
+  /// 회차는 표로 두지 않는다. 회차 금액은 총액·개월수·적어 둔 표에서 다시 계산되는
+  /// 파생값이고(설계 문서의 D7), 이자는 전표 금액 안에 들어 있다 -- 전표 합이 곧
+  /// 카드 부채라, 이자를 따로 적어 두면 갚을 대금과 원장이 어긋난다.
   updatedVersion Int @default(0)
 
   createdAt DateTime @default(now())
@@ -693,23 +710,11 @@ model JournalEntry {
 
   createdByUserId String? // 입력자 추적용. 조회 필터로 쓰지 않는다 (프로젝트 멤버는 모두 같은 데이터를 본다)
 
-  /// 이 전표가 메우는 할부 회차. **수수료 전표에만** 있다.
-  ///
-  /// 유이자 할부는 회차마다 수수료가 붙고 금액이 조금씩 다르다. 사용자가 명세서를 보고
-  /// 적으면 그 주기 결제일에 수수료 전표 하나가 생기는데, 어느 회차를 이미 적었는지
-  /// 알아야 같은 회차가 다시 떠오르지 않는다. 그 표가 이 두 칸이다.
-  ///
-  /// 계획이 사라져도(원 구매를 지우면 다리와 함께 지워진다) 전표는 남는다. 그 수수료는
-  /// 실제로 나간 돈이라, 지우면 통장과 원장이 어긋난다.
-  installmentPlanId   String?
-  installmentSequence Int?
-
-  project         Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  person          Person           @relation(fields: [personId], references: [id])
-  createdBy       User?            @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
-  installmentPlan InstallmentPlan? @relation("InstallmentFee", fields: [installmentPlanId], references: [id], onDelete: SetNull)
-  postings        Posting[]
-  tags            EntryTag[]
+  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  person    Person    @relation(fields: [personId], references: [id])
+  createdBy User?     @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  postings  Posting[]
+  tags      EntryTag[]
   /// 이 전표를 만들어 낸 보관함 후보. 대개 없다 (손으로 적은 거래).
   drafts          EntryDraft[]
 
@@ -726,8 +731,6 @@ model JournalEntry {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  /// 한 회차의 수수료는 한 번만 적는다. 두 기기가 같은 회차를 동시에 확정하면 뒤엣것이 막힌다.
-  @@unique([installmentPlanId, installmentSequence])
   // 커서 페이지네이션 (date desc, id desc)
   @@index([projectId, date, id])
   @@index([projectId, updatedVersion])

@@ -33,12 +33,17 @@ import {
   NO_TAG,
   parseCategoryPick,
   parseSelectionKey,
+  entryRows,
+  installmentEntryViews,
   periodDayRange,
   selectionKey,
+  zonedMonthRange,
   unitOfKey,
   toEntrySearchQuery,
+  type EntryBasis,
   type EntryFeature,
   type EntryPeriodUnit,
+  type EntryRow,
 } from '@money/types';
 
 import { assetOwnerNames, hasSeveralOwners } from '../lib/asset-owner';
@@ -477,6 +482,18 @@ export function useTransactions(projectId: string | null) {
   const mirrorVersion = useMirrorVersion();
 
   const [search, setSearch] = useState<TransactionSearch>(EMPTY_SEARCH);
+  /**
+   * 무엇을 "그 달에 쓴 돈"으로 셀지.
+   *
+   * 기본은 **회차 기준**이다. 할부는 회차가 서는 달마다 그 달 몫(원금 + 이자)으로
+   * 나뉘고, 할부가 아닌 거래는 달라지는 것이 없다. 이 화면이 답하는 물음이 "이 달에
+   * 얼마가 나갔나"라서, 24개월치를 산 달 하나에 몰아 두면 그 달만 혼자 튀고 나머지
+   * 스물세 달은 실제로 나가는 돈이 어디에도 보이지 않는다.
+   *
+   * 발생 기준(산 달에 전액)은 더보기에서 고를 수 있다. 언제 샀는지를 묻는 화면 --
+   * 이를테면 그 달의 카드값을 명세서와 대조할 때 -- 이 그쪽이다.
+   */
+  const [basis, setBasis] = useState<EntryBasis>('installment');
   const [tab, setTab] = useState<TransactionTab>('date');
   /**
    * 바깥 묶음 -- 해·달·주. 안쪽 탭(날짜별·분류별·수단별)과는 다른 축이다.
@@ -612,8 +629,10 @@ export function useTransactions(projectId: string | null) {
     () => ({
       personIds: selectedPersonIds.join(','),
       ...toEntrySearchQuery(search),
+      // 세는 방식. 발생 기준이면 싣지 않는다 -- 옛 서버와 사본이 그 칸을 모른다.
+      ...(basis === 'installment' ? { basis } : {}),
     }),
-    [selectedPersonIds, search],
+    [selectedPersonIds, search, basis],
   );
 
   /**
@@ -739,6 +758,27 @@ export function useTransactions(projectId: string | null) {
       if (unitOfKey(yearMonth) === 'month') return monthRange(yearMonth);
       const { startKey, endKey } = periodDayRange(yearMonth);
       return dayRangeQuery(startKey, endKey, timeZone);
+    },
+    [range, timeZone],
+  );
+
+  /**
+   * 그 기간 줄이 보는 구간. **인스턴트 두 개다.**
+   *
+   * 조회 조건(`listRangeOf`)은 달을 이름으로 넘기지만, 회차를 가릴 때는 실제 경계가
+   * 있어야 한다 -- 지난달에 산 할부의 어느 회차가 이 달에 서는지를 시각으로 견준다.
+   */
+  const windowOf = useCallback(
+    (yearMonth: string): { start: Date; end: Date } => {
+      const clipped = clipMonth(yearMonth, range);
+      if (clipped) {
+        const query = dayRangeQuery(clipped.startKey, clipped.endKey, timeZone);
+        return { start: new Date(query.startDate), end: new Date(query.endDate) };
+      }
+      if (unitOfKey(yearMonth) === 'month') return zonedMonthRange(yearMonth, timeZone);
+      const { startKey, endKey } = periodDayRange(yearMonth);
+      const query = dayRangeQuery(startKey, endKey, timeZone);
+      return { start: new Date(query.startDate), end: new Date(query.endDate) };
     },
     [range, timeZone],
   );
@@ -946,10 +986,20 @@ export function useTransactions(projectId: string | null) {
          * 하나의 거래)에서도 그대로 쓰이므로, 받아 두면 날짜를 눌러도 요청이 없다.
          */
         if (tab === 'date') {
-          const rows = await port.getAllEntries(
-            { ...scope, ...listRangeOf(yearMonth), limit: 200 },
-            projectId,
-          );
+          /*
+           * 회차 기준이면 **지난달에 산 할부도 이 달의 줄이 된다.**
+           *
+           * 목록 질의는 전표의 날짜로 자르므로 그 거래는 여기 오지 않는다. 따로 받아
+           * 합쳐 두면 회차를 고르고 구간 밖을 버리는 일은 `viewsOf` 가 한다.
+           */
+          const listRange = listRangeOf(yearMonth);
+          const [own, past] = await Promise.all([
+            port.getAllEntries({ ...scope, ...listRange, limit: 200 }, projectId),
+            basis === 'installment'
+              ? port.getInstallmentRows({ ...scope, ...listRange }, projectId)
+              : Promise.resolve([] as EntryListItem[]),
+          ]);
+          const rows = past.length > 0 ? [...own, ...past] : own;
           if (scopeKeyRef.current === askedScope) {
             setMonthData((prev) => ({
               ...prev,
@@ -1069,15 +1119,51 @@ export function useTransactions(projectId: string | null) {
    */
   const innerBucket: 'day' | 'month' = unit === 'year' ? 'month' : 'day';
 
+  /**
+   * 그 기간 줄이 보는 거래. 회차 기준이면 **회차로 옮긴 거래**다.
+   *
+   * 옮기는 일을 한 곳에서 하는 까닭은 날짜 때문이다. 회차는 그 달의 같은 날로 옮겨지고
+   * (`installmentEntryViews`), 날짜별 줄도 달력도 그 날짜를 보고 선다 -- 옮기기 전의
+   * 목록으로 묶으면 지난달에 산 할부가 지난달 날짜로 이번 달 안에 선다.
+   */
+  const viewsOf = useCallback(
+    (yearMonth: string, entries: EntryListItem[]): EntryListItem[] => {
+      if (basis !== 'installment') return entries;
+      const window = windowOf(yearMonth);
+      return installmentEntryViews(entries, { timeZone, from: window.start, to: window.end });
+    },
+    [basis, windowOf, timeZone],
+  );
+
   const groupedByMonth = useMemo(() => {
     const grouped = new Map<string, Map<string, EntryListItem[]>>();
     for (const [yearMonth, data] of Object.entries(monthData)) {
       if (data?.entries) {
-        grouped.set(yearMonth, groupEntriesByBucket(data.entries, timeZone, innerBucket));
+        grouped.set(
+          yearMonth,
+          groupEntriesByBucket(viewsOf(yearMonth, data.entries), timeZone, innerBucket),
+        );
       }
     }
     return grouped;
-  }, [monthData, timeZone, innerBucket]);
+  }, [monthData, timeZone, innerBucket, viewsOf]);
+
+  /**
+   * 분류별·수단별 줄이 펼쳐 보여 주는 거래. 날짜별과 같은 규칙으로 옮긴다.
+   *
+   * 한 번 만들어 두는 것은 같은 배열을 돌려주기 위해서다 -- 부를 때마다 옮기면 줄이
+   * 매번 새 목록을 받아 다시 그린다.
+   */
+  const rowEntryViews = useMemo(() => {
+    if (basis !== 'installment') return rowEntries;
+
+    const views: Record<string, EntryListItem[]> = {};
+    for (const [id, entries] of Object.entries(rowEntries)) {
+      // 열쇠는 `${yearMonth}|${tab}|${key}` 다. 앞자리가 그 줄이 선 기간이다.
+      views[id] = viewsOf(id.slice(0, id.indexOf('|')), entries);
+    }
+    return views;
+  }, [rowEntries, basis, viewsOf]);
 
   /**
    * 받아 둔 달의 안쪽 줄. 탭에 따라 무엇을 세는지가 다르다.
@@ -1250,16 +1336,20 @@ export function useTransactions(projectId: string | null) {
       inFlightRef.current.add(id);
       setLoadingRows((prev) => ({ ...prev, [id]: true }));
       try {
-        const rows = await port.getAllEntries(
-          {
-            // 검색 키는 narrowOf 가 통째로 정한다(태그와 글자까지). 사람 필터만 남긴다.
-            personIds: scope.personIds,
-            ...listRangeOf(yearMonth),
-            ...narrowOf(row),
-            limit: 200,
-          },
-          projectId,
-        );
+        const narrow = {
+          // 검색 키는 narrowOf 가 통째로 정한다(태그와 글자까지). 사람 필터만 남긴다.
+          personIds: scope.personIds,
+          ...listRangeOf(yearMonth),
+          ...narrowOf(row),
+        };
+        const [own, past] = await Promise.all([
+          port.getAllEntries({ ...narrow, limit: 200 }, projectId),
+          // 회차 기준이면 지난 할부도 이 줄에 설 수 있다 (날짜별 탭과 같은 규칙이다).
+          basis === 'installment'
+            ? port.getInstallmentRows(narrow, projectId)
+            : Promise.resolve([] as EntryListItem[]),
+        ]);
+        const rows = past.length > 0 ? [...own, ...past] : own;
         /*
          * 조건이 그대로일 때만 쓴다.
          *
@@ -1323,9 +1413,21 @@ export function useTransactions(projectId: string | null) {
       if (tab === 'date') {
         return (groupedByMonth.get(yearMonth) ?? EMPTY_GROUP).get(key) ?? EMPTY_ENTRIES;
       }
-      return rowEntries[rowId(yearMonth, key)] ?? EMPTY_ENTRIES;
+      return rowEntryViews[rowId(yearMonth, key)] ?? EMPTY_ENTRIES;
     },
-    [tab, groupedByMonth, rowEntries, rowId],
+    [tab, groupedByMonth, rowEntryViews, rowId],
+  );
+
+  /**
+   * 화면에 그릴 줄. 분할은 분류 줄마다, 회차 기준이면 그 구간에 선 회차만이다.
+   *
+   * 펴는 일을 화면이 아니라 여기서 하는 까닭은 회차 기준 때문이다 -- 줄을 세려면 그
+   * 기간 줄이 보는 구간을 알아야 하는데, 그 구간을 아는 곳이 이 갈고리다.
+   */
+  const entryRowsOf = useCallback(
+    // 회차로 옮기는 일은 `entriesOf` 가 이미 했다. 여기서는 분류 줄로 펴기만 한다.
+    (yearMonth: string, key: string): EntryRow[] => entryRows(entriesOf(yearMonth, key)),
+    [entriesOf],
   );
 
   // ── 지울 것 고르기 ──
@@ -1980,6 +2082,9 @@ export function useTransactions(projectId: string | null) {
     isRowOpen,
     toggleRow,
     entriesOf,
+    entryRowsOf,
+    basis,
+    setBasis,
     isLoadingRow,
     // 검색
     search,

@@ -19,7 +19,7 @@ import type {
   Posting,
 } from './entities';
 import type { EntryPeriodUnit } from './entry-period';
-import type { EntrySearchQuery } from './entry-search';
+import type { EntryBasis, EntrySearchQuery } from './entry-search';
 import type { RecurringFrequency } from './recurring';
 
 // ===== Auth =====
@@ -377,76 +377,6 @@ export namespace CardDto {
   }
 
   /**
-   * 수수료를 아직 적지 않은 할부 회차 하나.
-   *
-   * 유이자 할부는 회차마다 수수료가 붙는데 금액이 카드사·잔여원금마다 달라 계산으로
-   * 맞출 수 없다. 그래서 그 회차의 주기가 마감되면 여기 떠오르고, 사용자가 명세서를
-   * 보고 적으면 그 금액으로 수수료 전표가 하나 생긴다 (외화 청구액 확정과 같다).
-   */
-  export interface PendingFeeItem {
-    planId: string;
-    /** 몇 회차인가. 1부터 센다. */
-    sequence: number;
-    months: number;
-    /** 원 구매 전표. 목록에서 눌러 열어 본다. */
-    entryId: string;
-    description: string;
-    merchant: string | null;
-    /**
-     * 그 결제의 분류. 설명이 비어 있을 때 목록이 이 이름으로 줄을 세운다.
-     *
-     * 설명을 적지 않고 지나가는 일이 흔하다. 그때 이름 자리가 비면 밀린 회차가 여러
-     * 거래에서 왔을 때 어느 것이 어느 결제인지 화면에서 가릴 수 없다.
-     */
-    categoryName: string | null;
-    purchaseDate: IsoDateString;
-    /** 이 회차가 청구된 주기의 마감 연월 ("YYYY-MM") */
-    closingMonth: string;
-    /**
-     * 그 주기의 결제일. 언제 통장에서 빠졌는지를 화면에 적는다.
-     *
-     * 수수료 전표의 날짜는 이 값이 아니라 주기의 마감일이다 -- 수수료는 그 회차와
-     * 함께 청구되는 돈이라 그 청구서에 들어가야 한다.
-     */
-    dueDate: IsoDateString;
-    /** 그 회차의 원금. 명세서에서 수수료를 가려내는 기준이다. */
-    principal: string;
-  }
-
-  export interface PendingFeesResponse {
-    cardId: string;
-    /** 아래 금액들의 통화 (= 카드 통화) */
-    currency: string;
-    /**
-     * 지난번에 수수료로 쓴 분류. 처음이면 null 이고 화면이 고르게 한다.
-     *
-     * 할부수수료 분류를 서버가 만들지 않는다. 가계부마다 분류 나무가 달라서, 한 번
-     * 고른 것을 다음부터 기본으로 삼는 편이 낫다.
-     */
-    suggestedCategoryId: string | null;
-    items: PendingFeeItem[];
-  }
-
-  /** 회차 수수료를 적는다. 적은 만큼 전표가 생긴다. */
-  export interface SettleFeesRequest {
-    /** 수수료 전표의 주체. 카드 결제 통장의 주인을 화면이 채운다. */
-    personId: string;
-    /** 수수료를 담을 지출 분류. */
-    categoryId: string;
-    items: Array<{
-      planId: string;
-      sequence: number;
-      /** 그 회차의 수수료 (카드 통화, 양수) */
-      amount: string;
-    }>;
-  }
-
-  export interface SettleFeesResponse {
-    /** 적은 건수 */
-    settled: number;
-  }
-
-  /**
    * 실적 진행 상황.
    *
    * 실적을 세는 구간이 카드 종류마다 다르다. 신용카드는 마감일 기준 청구 주기이고
@@ -783,6 +713,20 @@ export namespace EntryDto {
      * 한다 (조립이 검사한다).
      */
     installmentShares?: string[];
+    /**
+     * 회차별 이자. 유이자 할부에만 보낸다.
+     *
+     * 계산으로 채운 기본값이거나 사용자가 명세서를 보고 고친 값이다. 개수는 개월수와
+     * 같아야 하고, 합은 보지 않는다 -- 맞춰야 할 총액이 없다.
+     *
+     * 이 값은 **얼마가 나갈지**를 보여 줄 뿐이다. 카드 부채에 드는 수수료는 회차가
+     * 마감된 뒤 사람이 확인해 전표로 남는다.
+     */
+    installmentInterestShares?: string[];
+    /** 고정형 유이자 할부의 월 납입액. 회차 표를 다시 계산할 때 쓴다. */
+    installmentMonthlyPayment?: string;
+    /** 변동형 유이자 할부의 연이율 (퍼센트). */
+    installmentAnnualRate?: string;
 
     // ── 즉시 차감 (expense) ──
     /**
@@ -1415,6 +1359,8 @@ export namespace ReportDto {
      * 지정하면 소분류까지 합친다.
      */
     exact?: boolean;
+    /** 무엇을 "그 달에 쓴 돈"으로 셀지. 보내지 않으면 발생 기준이다. */
+    basis?: EntryBasis;
   }
 
   export interface TrendPoint {

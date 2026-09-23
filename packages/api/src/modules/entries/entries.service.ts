@@ -9,6 +9,7 @@ import {
   EntryDto,
   EntryListItem,
   applyTagChange,
+  installmentRowDate,
   parseEntrySearch,
   zonedDateStringToUtc,
   zonedDayStart,
@@ -59,6 +60,27 @@ function dayAfterOf(value: string, timeZone: string): Date {
   return zonedDayStart(year, month, day + 1, timeZone);
 }
 
+/**
+ * 목록 질의가 가리키는 구간. 달 이름이 먼저고, 없으면 인스턴트 두 개다.
+ *
+ * 무엇으로도 가리키지 않으면 null 이다 (전체 기간). 자르는 규칙은 `getEntries` 의
+ * 날짜 조건과 같아야 한다 -- 목록에 실리는 구간과 회차를 가리는 구간이 다르면 같은
+ * 달의 목록과 합계가 어긋난다.
+ */
+function monthOrRangeOf(
+  query: { yearMonth?: string; startDate?: string; endDate?: string },
+  timeZone: string,
+): { start: Date; end: Date } | null {
+  if (query.yearMonth) {
+    return zonedMonthRange(assertYearMonth(query.yearMonth, '연월'), timeZone);
+  }
+  if (!query.startDate || !query.endDate) return null;
+
+  const start = dayStartOf(query.startDate, timeZone);
+  const end = dayAfterOf(query.endDate, timeZone);
+  return Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) ? null : { start, end };
+}
+
 const ZERO = new Prisma.Decimal(0);
 const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
@@ -89,6 +111,14 @@ export interface ReplayOptions {
  * 적게 주되 커서는 유효하게 남겨 클라이언트가 이어서 읽게 한다.
  */
 const MAX_FILTER_ROUNDS = 10;
+
+/**
+ * 회차 기준에서 할부를 앞으로 몇 달까지 거슬러 볼지.
+ *
+ * 리포트 쪽과 같은 값이다. 쓰이는 개월수는 길어야 서른여섯이라 넉넉하고, 조건을
+ * 지우면 원장을 통째로 읽게 된다.
+ */
+const INSTALLMENT_LOOKBACK_MONTHS = 60;
 
 @Injectable()
 export class EntriesService {
@@ -373,6 +403,80 @@ export class EntriesService {
    * 목록 조회. 커서 기반 페이지네이션이다.
    * (date desc, id desc) 순서이며 @@index([projectId, date, id])가 뒷받침한다.
    */
+  /**
+   * 이 구간에 회차가 서는 **지난 할부**. 회차 기준으로 볼 때만 쓴다.
+   *
+   * 목록 질의는 전표의 날짜로 자르므로 3월에 산 할부는 4월 목록에 들지 않는다. 그런데
+   * 회차 기준에서는 4월에도 2회차가 서야 한다. 그래서 구간보다 앞에서 산 할부를 따로
+   * 읽어 주고, 화면이 자기 달의 거래와 합쳐 줄을 만든다(`entryRows` 의 회차 기준).
+   *
+   * 구간 안에서 산 할부는 여기 오지 않는다. 그쪽은 이미 목록에 들어 있다.
+   */
+  async getInstallmentRows(
+    userId: string,
+    query: EntryDto.ListQuery,
+    projectId?: string,
+  ): Promise<EntryDto.ListResponse['data']> {
+    const { timeZone } = await this.projectAccess.resolveProject(userId, projectId);
+
+    /*
+     * 구간은 목록 질의와 **같은 방식으로** 읽는다. 달 이름이든 인스턴트 두 개든 된다.
+     *
+     * 예전에는 인스턴트만 받았는데, 거래 화면은 달을 볼 때 이름 하나만 보낸다
+     * (`listRangeOf`). 그래서 이 조회가 언제나 빈 목록을 내주었고, 화면에는 산 달의
+     * 1회차만 서고 나머지 회차는 합계에만 잡혔다.
+     */
+    const window = monthOrRangeOf(query, timeZone);
+    if (!window) return [];
+    const { start: from, end: to } = window;
+
+    /*
+     * 얼마나 앞까지 볼 것인가. 쓰이는 개월수는 길어야 서른여섯이라 넉넉하다.
+     * 조건을 아예 지우면 원장을 통째로 읽게 된다 (리포트 쪽과 같은 판단이다).
+     */
+    const lookback = new Date(from.getTime());
+    lookback.setUTCMonth(lookback.getUTCMonth() - INSTALLMENT_LOOKBACK_MONTHS);
+
+    const past: EntryDto.ListResponse['data'] = [];
+    let cursor: string | undefined;
+    for (let round = 0; round < MAX_FILTER_ROUNDS; round += 1) {
+      const page = await this.getEntries(
+        userId,
+        {
+          ...query,
+          // 할부만 본다. 사용자가 고른 모양이 있어도 이 조회에서는 할부가 대상이다.
+          features: 'installment',
+          /*
+           * 달 이름을 지운다. 남겨 두면 목록 질의가 그것을 먼저 보아(`getEntries`)
+           * 아래 구간을 통째로 무시하고, 이 달에 산 할부만 돌려준다.
+           */
+          yearMonth: undefined,
+          startDate: lookback.toISOString(),
+          // 구간이 시작하기 전까지다. 구간 안의 할부는 이미 목록에 있다.
+          endDate: from.toISOString(),
+          limit: MAX_LIMIT,
+          cursor,
+        },
+        projectId,
+      );
+      past.push(...page.data);
+      if (!page.nextCursor) break;
+      cursor = page.nextCursor;
+    }
+
+    // 회차가 이 구간에 서는 것만 남긴다. 다 갚은 할부는 여기서 빠진다.
+    return past.filter((entry) => {
+      const months = entry.installmentMonths ?? 1;
+      if (months < 2) return false;
+      for (let index = 1; index < months; index += 1) {
+        const at = installmentRowDate(entry.date, index, timeZone);
+        const time = (at instanceof Date ? at : new Date(at)).getTime();
+        if (time >= from.getTime() && time < to.getTime()) return true;
+      }
+      return false;
+    });
+  }
+
   async getEntries(
     userId: string,
     query: EntryDto.ListQuery,
@@ -681,6 +785,9 @@ export class EntriesService {
       installmentMonths: dto.installmentMonths,
       installmentInterest: dto.installmentInterest,
       installmentShares: dto.installmentShares,
+      installmentInterestShares: dto.installmentInterestShares,
+      installmentMonthlyPayment: dto.installmentMonthlyPayment,
+      installmentAnnualRate: dto.installmentAnnualRate,
       // 분류 줄 하나뿐인 거래의 줄 값들. 분할이면 splits 쪽이 쓰인다.
       lineKey: dto.lineKey,
       discountAmount: optional(dto.discountAmount, '차감액'),

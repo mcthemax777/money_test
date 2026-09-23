@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import type { EntryFilterQuery } from '@money/types';
+import type { EntryScopeQuery } from '@money/types';
 
 import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -66,7 +66,7 @@ export default function PaymentMethodBreakdown({
 }: {
   period: ReportPeriod;
   projectId?: string | null;
-  filter?: EntryFilterQuery;
+  filter?: EntryScopeQuery;
   reloadToken?: number;
 }) {
   const { t } = useTranslation();

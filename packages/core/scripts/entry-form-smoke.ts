@@ -35,7 +35,11 @@ import {
 } from '../src/data/entry-form';
 import { createLocalEntryWriter } from '../src/data/local-entry-writer';
 import { httpHomePort } from '../src/data/home-port';
-import { installmentShareInputs } from '../src/lib/period-ledger';
+import {
+  installmentInterestInputs,
+  installmentLabel,
+  installmentShareInputs,
+} from '../src/lib/period-ledger';
 import { createLocalHomePort } from '../src/data/local-home-port';
 import { LocalStore } from '../src/data/local-store';
 import { nodeSqliteDriver } from './node-sqlite-driver';
@@ -72,6 +76,10 @@ const validExpense: EntryFormValues = {
   installmentMonths: '',
   installmentInterest: '',
   installmentShares: [],
+  installmentInterestMode: '',
+  installmentMonthlyPayment: '',
+  installmentAnnualRate: '',
+  installmentInterestShares: [],
   discountAmount: '',
   countsPerformance: true,
   discountCountsPerformance: true,
@@ -226,6 +234,189 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('비운 칸은 0 으로 실린다',
     entryFormToRequest(withShares(['334', '', '666']), KST).installmentShares?.join(','),
     '334,0,666');
+  /*
+   * 이자. 유이자 할부에만 뜻이 있다.
+   *
+   * 계산은 칸을 채워 주는 데까지고, 저장되는 값은 화면에 보이는 그 값이다. 그래서
+   * 검사도 개수와 부호만 본다 -- 이자는 맞춰야 할 총액이 없다.
+   */
+  const withInterest = (values: Partial<EntryFormValues>) => ({
+    ...validExpense,
+    amount: '10000',
+    method: cardValue('card1'),
+    installmentMonths: '3',
+    installmentInterest: 'interest' as const,
+    ...values,
+  });
+
+  eq('고정형이 회차 이자를 채운다',
+    installmentInterestInputs({
+      total: '10000',
+      months: 3,
+      principals: ['3334', '3333', '3333'],
+      mode: 'fixed',
+      monthlyPayment: '4000',
+      annualRate: '',
+      saved: [],
+    }).join('|'),
+    '970|676|354');
+  eq('방식을 고르지 않으면 빈 칸이다',
+    installmentInterestInputs({
+      total: '10000', months: 3, principals: ['3334', '3333', '3333'],
+      mode: '', monthlyPayment: '', annualRate: '', saved: [],
+    }).join('|'),
+    '||');
+  eq('고친 값이 계산을 이긴다',
+    installmentInterestInputs({
+      total: '10000', months: 3, principals: ['3334', '3333', '3333'],
+      mode: 'fixed', monthlyPayment: '4000', annualRate: '', saved: ['1', '2', '3'],
+    }).join('|'),
+    '1|2|3');
+
+  /*
+   * 손대지 않아도 화면에 보이는 값이 실린다.
+   *
+   * 이자는 전표 금액 안에 들어가는 값이라, 고쳐 저장할 때 싣지 않으면 갚을 돈이 원금만
+   * 남는다. 서버는 이자를 계산하지 않아 되살릴 자리가 없다.
+   */
+  eq('방식을 고르면 계산한 이자가 그대로 실린다',
+    entryFormToRequest(
+      withInterest({ installmentInterestMode: 'fixed', installmentMonthlyPayment: '4000' }),
+      KST,
+    ).installmentInterestShares?.join(','),
+    '970,676,354');
+  eq('방식을 고르지 않았으면 싣지 않는다',
+    'installmentInterestShares' in entryFormToRequest(withInterest({}), KST),
+    false);
+
+  eq('회차 이자가 실린다',
+    entryFormToRequest(
+      withInterest({ installmentInterestShares: ['970', '676', '354'] }),
+      KST,
+    ).installmentInterestShares?.join(','),
+    '970,676,354');
+  eq('월 납입액도 함께 실린다',
+    entryFormToRequest(
+      withInterest({ installmentInterestMode: 'fixed', installmentMonthlyPayment: '4000' }),
+      KST,
+    ).installmentMonthlyPayment,
+    '4000');
+  eq('연이율은 고른 방식일 때만 실린다',
+    'installmentAnnualRate' in
+      entryFormToRequest(
+        withInterest({ installmentInterestMode: 'fixed', installmentAnnualRate: '12' }),
+        KST,
+      ),
+    false);
+  eq('무이자면 이자 쪽을 싣지 않는다',
+    'installmentInterestShares' in
+      entryFormToRequest(
+        withInterest({
+          installmentInterest: 'free',
+          installmentInterestShares: ['970', '676', '354'],
+        }),
+        KST,
+      ),
+    false);
+  eq('낸 돈의 합이 산 값에 못 미치면 막는다',
+    checkEntryForm(
+      withInterest({ installmentInterestMode: 'fixed', installmentMonthlyPayment: '3000' }),
+    )?.code,
+    'INSTALLMENT_PAYMENT_TOO_SMALL');
+  eq('외화 결제의 유이자 할부는 막는다',
+    checkEntryForm(withInterest({ currency: 'USD', exchangeRate: '1380' }))?.code,
+    'INSTALLMENT_INTEREST_CURRENCY');
+  eq('연이율이 음수면 막는다',
+    checkEntryForm(
+      withInterest({ installmentInterestMode: 'rate', installmentAnnualRate: '-1' }),
+    )?.code,
+    'INSTALLMENT_RATE_INVALID');
+
+  /*
+   * 고치려고 열 때는 **이자를 되뺀다.** 전표 금액은 원금과 이자를 합한 값이고, 폼의
+   * 금액 칸은 산 값이다. 그대로 열면 회차 원금의 합과 어긋나 저장이 막히고, 사용자가
+   * 적은 적 없는 숫자가 칸에 들어앉는다.
+   */
+  const installmentItem = (over: Partial<EntryListItem> = {}): EntryListItem =>
+    ({
+      id: 'e-fridge', kind: 'expense', date: '2026-03-01T03:00:00.000Z',
+      description: '냉장고', merchant: null, tags: [], detailedNote: null,
+      personId: 'p1', personName: '김철수',
+      // 원금 300,000 + 이자 6,000
+      amount: '306000', discountAmount: null, splitCount: 1,
+      lines: [
+        { lineKey: 'l1', categoryId: 'c1', categoryName: '가전', parentCategoryId: null,
+          parentCategoryName: null, amount: '306000', discountAmount: null, tags: [], matched: true },
+      ],
+      countsPerformance: true, discountCountsPerformance: true,
+      categoryId: 'c1', categoryName: '가전', parentCategoryId: null, parentCategoryName: null,
+      accountId: null, accountName: null, toAccountId: null, toAccountName: null,
+      cardId: 'card1', cardName: '신한 신용',
+      installmentMonths: 3, installmentInterest: true, installmentShares: null,
+      installmentInterestShares: ['3000', '2000', '1000'],
+      installmentMonthlyPayment: null, installmentAnnualRate: null,
+      feeAmount: null, feeCategoryId: null, feeCategoryName: null,
+      cardTransferDirection: null, originalCurrency: null, originalAmount: null,
+      exchangeRate: null, rateProvisional: false, updatedHlc: null,
+      ...over,
+    }) as unknown as EntryListItem;
+
+  eq('고칠 때 금액 칸은 산 값', entryFormFromItem(installmentItem(), KST)?.amount, '300000');
+
+  /*
+   * 상세의 할부 한 마디. 이자가 금액 안에 있으므로 얼마가 이자인지 함께 적는다 --
+   * 적어 두지 않으면 산 값보다 큰 까닭이 화면 어디에도 없다.
+   */
+  /** 사전 대신 쓰는 짧은 옮김이. 자리값을 채워 넣어 실제 문장과 같은 모양을 낸다. */
+  const say = (key: string, params?: Record<string, string | number>) => {
+    const text =
+      key === 'tx.detail.installmentMonths'
+        ? '{months}개월'
+        : key === 'editor.installmentInterest'
+          ? '유이자'
+          : key === 'editor.installmentFree'
+            ? '무이자'
+            : '이자 {amount} 포함';
+    return text.replace(/\{(\w+)\}/g, (_, name: string) => String(params?.[name] ?? ''));
+  };
+  const label = (item: EntryListItem) =>
+    installmentLabel(say as never, item, (amount) => amount);
+  eq('유이자 할부는 이자를 밝힌다', label(installmentItem()), '3개월 · 유이자 · 이자 6000 포함');
+  eq(
+    '적어 둔 이자가 없으면 개월수와 종류만',
+    label(installmentItem({ installmentInterestShares: null })),
+    '3개월 · 유이자',
+  );
+  eq('무이자면 금액 그대로',
+    entryFormFromItem(installmentItem({ installmentInterestShares: null }), KST)?.amount,
+    '306000');
+
+  const installmentSplit = installmentItem({
+    splitCount: 2,
+    lines: [
+      { lineKey: 'l1', categoryId: 'c1', categoryName: '가전', parentCategoryId: null,
+        parentCategoryName: null, amount: '204000', discountAmount: null, tags: [], matched: true },
+      { lineKey: 'l2', categoryId: 'c2', categoryName: '식비', parentCategoryId: null,
+        parentCategoryName: null, amount: '102000', discountAmount: null, tags: [], matched: true },
+    ],
+  } as Partial<EntryListItem>);
+  const installmentSplitForm = entryFormFromItem(installmentSplit, KST);
+  eq('나눈 줄에서도 이자를 되뺀다',
+    installmentSplitForm?.splits.map((line) => line.amount).join('|'),
+    '200000|100000');
+  eq('줄 합은 금액 칸과 같다',
+    installmentSplitForm?.splits.reduce((acc, line) => acc + Number(line.amount), 0),
+    300000);
+  eq('회차 이자의 개수가 다르면 막는다',
+    checkEntryForm(withInterest({ installmentInterestShares: ['100', '100'] }))?.code,
+    'INSTALLMENT_INTEREST_SHARES_COUNT');
+  eq('이자가 음수면 막는다',
+    checkEntryForm(withInterest({ installmentInterestShares: ['100', '-1', '100'] }))?.code,
+    'INSTALLMENT_INTEREST_NEGATIVE');
+  eq('이자 합은 보지 않는다',
+    checkEntryForm(withInterest({ installmentInterestShares: ['1', '2', '3'] })),
+    null);
+
   eq('통장 결제에는 할부가 없다',
     'installmentMonths' in entryFormToRequest({ ...validExpense, installmentMonths: '3' }, KST),
     false);

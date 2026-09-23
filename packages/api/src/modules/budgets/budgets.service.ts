@@ -29,6 +29,12 @@ import {
   assetOwnerCondition,
   parseEntryFilter,
 } from '@/common/entry-filter';
+import {
+  INSTALLMENT_LEG_SELECT,
+  installmentPlanOf,
+  installmentScope,
+  spreadRows,
+} from '@/common/installment-scope';
 
 const ZERO = new Prisma.Decimal(0);
 
@@ -484,27 +490,41 @@ export class BudgetsService {
      * 섞였을 때 진행률이 맞는다. 그리고 이 합계는 리포트의 합계와 같은 규칙이어야
      * 한다. 두 값이 갈리면 같은 화면에 "8월 지출 24만"과 "예산 사용 21만"이 나란히
      * 보인다. 그래서 규칙을 `@money/types` 한 곳에 두고 양쪽이 그것을 쓴다.
+     *
+     * **회차 기준으로 센다.** 할부는 회차가 서는 달마다 그 달의 원금과 이자만 든다.
+     * 화면이 고르는 값이 아니라 늘 그렇다 -- 예산은 "이 달에 이만큼까지 쓴다"는 약속인데,
+     * 24개월 할부를 산 달에 전액으로 세면 그 달 하나가 통째로 터지고 남은 스물세 달은
+     * 실제로 나가는 돈이 진행률에 잡히지 않는다. 가계·거래 화면과도 같은 기준이다.
      */
+    const spread = { timeZone, window: { gte: startDate, lt: endDate } };
     const postings = await this.prisma.posting.findMany({
-      where: { categoryId: { in: categories.map((c) => c.id) }, entry: entryScope },
+      where: {
+        categoryId: { in: categories.map((c) => c.id) },
+        // 앞에서 산 할부의 회차가 이 달에 선다. 할부만 창을 앞으로 넓혀 읽는다.
+        entry: installmentScope(entryScope),
+      },
       select: {
         categoryId: true,
         baseAmount: true,
         category: { select: { type: true } },
-        entry: { select: { date: true } },
+        entry: { select: { date: true, postings: INSTALLMENT_LEG_SELECT } },
       },
     });
 
     const usage = categoryUsage(
-      postings.flatMap((row) =>
-        row.categoryId && row.category
-          ? [{
-              categoryId: row.categoryId,
-              categoryType: row.category.type,
-              baseAmount: row.baseAmount,
-              date: row.entry.date,
-            }]
-          : [],
+      spreadRows(
+        postings.flatMap((row) =>
+          row.categoryId && row.category
+            ? [{
+                categoryId: row.categoryId,
+                categoryType: row.category.type,
+                baseAmount: row.baseAmount,
+                date: row.entry.date,
+                installment: installmentPlanOf(row.entry.postings),
+              }]
+            : [],
+        ),
+        spread,
       ),
       categories,
     );

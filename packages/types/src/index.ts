@@ -17,6 +17,7 @@ export * from './errors';
 export * from './card-color';
 export * from './statement-period';
 export * from './card-usage';
+export * from './installment-schedule';
 export * from './payment-methods';
 export * from './entry-build';
 export * from './fallback-rates';

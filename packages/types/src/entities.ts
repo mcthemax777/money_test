@@ -240,12 +240,30 @@ export interface EntryLine {
   /** 이 줄에 붙은 태그. 없으면 빈 배열이다. */
   tags: EntryTag[];
   /**
+   * 회차 기준으로 볼 때 이 줄이 가리키는 회차 몫. 그 밖에는 없다.
+   *
+   * `installmentEntryViews` 가 채운다. `amount` 는 이미 이 회차의 몫이고, 화면은
+   * 여기서 "3개월 중 2회차"와 그중 얼마가 이자인지를 읽는다.
+   */
+  installment?: InstallmentRowShare;
+  /**
    * 지금 화면의 검색 조건에 이 줄이 걸렸는가.
    *
    * 분류나 태그로 좁힌 목록은 걸린 줄만 보여 준다. 여행경비로 찾았는데 같은 결제의
    * 식비 줄까지 따라오면 찾은 것이 아니게 된다. 조건이 없는 평소 목록은 모두 true 다.
    */
   matched: boolean;
+}
+
+/** 회차 기준으로 볼 때 한 줄이 가리키는 회차. 금액은 이미 그 회차 몫이다. */
+export interface InstallmentRowShare {
+  /** 회차 번호. 1부터 센다. */
+  index: number;
+  months: number;
+  /** 그 회차의 원금 몫. */
+  principal: string;
+  /** 그 회차의 이자 몫. 무이자이거나 아직 적지 않았으면 "0" 이다. */
+  interest: string;
 }
 
 export interface EntryListItem {
@@ -320,7 +338,7 @@ export interface EntryListItem {
   cardName: string | null;
   /** 할부 개월수. 일시불이거나 카드 거래가 아니면 null. */
   installmentMonths: number | null;
-  /** 수수료가 붙는 할부인가. 할부가 아니면 null. */
+  /** 이자가 붙는 할부인가. 할부가 아니면 null. 이자는 금액 안에 들어 있다. */
   installmentInterest: boolean | null;
   /**
    * 회차별 원금. 사용자가 적어 둔 값이고, 적지 않았으면 null 이다.
@@ -328,6 +346,33 @@ export interface EntryListItem {
    * null 이면 화면이 개월수로 나눈 기본값을 보여 준다(`installmentPrincipals`).
    */
   installmentShares: string[] | null;
+  /**
+   * 회차별 이자. 유이자 할부에만 있고, 그 밖에는 null 이다.
+   *
+   * 계산으로 채운 기본값이거나 사용자가 명세서를 보고 고친 값이다. **이 합은 `amount`
+   * 안에 들어 있다** -- 카드에 갚을 돈이 원금과 이자를 합한 값이라, 회차 원금은 금액에서
+   * 이 합을 뺀 것을 나눈 값이다.
+   */
+  installmentInterestShares: string[] | null;
+  /** 고정형 유이자 할부의 월 납입액. 변동형이거나 무이자면 null. */
+  installmentMonthlyPayment: string | null;
+  /** 변동형 유이자 할부의 연이율 (퍼센트). 고정형이거나 무이자면 null. */
+  installmentAnnualRate: string | null;
+  /**
+   * 회차 기준으로 볼 때 이 거래가 그 달에 무는 회차. 그 밖에는 없다.
+   *
+   * `installmentEntryViews` 가 채운다. 이 값이 있으면 `amount`·`date`·줄 금액이 모두
+   * 그 회차의 것이다 -- 날짜는 회차가 서는 달의 같은 날로 옮겨져 있다.
+   */
+  installment?: InstallmentRowShare;
+  /**
+   * 회차로 옮기기 전의 거래. 옮긴 것에만 있다. **와이어로 나가지 않는다.**
+   *
+   * 목록과 합계는 회차 몫을 보지만, 자세히 보기와 고치기는 사용자가 적은 것 -- 산 날의
+   * 전액 -- 을 열어야 한다. 1회차를 눌렀는데 금액 칸에 1회차 금액이 들어앉으면, 그대로
+   * 저장하는 순간 24개월 할부가 한 달치 금액으로 바뀐다.
+   */
+  origin?: EntryListItem;
   /**
    * 이체에 붙은 수수료. 이체가 아니면 null, 수수료가 없는 이체면 "0".
    * 이체 자체는 소비가 아니지만 수수료는 지출이라 따로 보여준다.

@@ -515,6 +515,25 @@ class ApiClient {
     return rows;
   }
 
+  /**
+   * 이 구간에 회차가 서는 **지난 할부**. 회차 기준으로 볼 때만 부른다.
+   *
+   * 목록 조회는 전표의 날짜로 자르므로 3월에 산 할부는 4월 목록에 들지 않는다. 화면은
+   * 이 목록을 그 달의 거래와 합쳐 두고, 줄을 세는 일은 `entryRows` 가 구간을 보고 한다.
+   */
+  async getInstallmentRows(
+    query?: EntryDto.ListQuery,
+    projectId?: string | null,
+  ): Promise<EntryDto.ListResponse['data']> {
+    const params: Record<string, unknown> = { ...query };
+    if (projectId) params.projectId = projectId;
+    const response = await this.client.get<EntryDto.ListResponse['data']>(
+      '/entries/installment-rows',
+      { params },
+    );
+    return response.data ?? [];
+  }
+
   async getEntry(id: string): Promise<EntryDto.Detail> {
     const response = await this.client.get<EntryDto.Detail>(`/entries/${id}`);
     return response.data;
@@ -1120,31 +1139,6 @@ class ApiClient {
   ): Promise<CardDto.SettleRatesResponse> {
     const response = await this.client.patch<CardDto.SettleRatesResponse>(
       `/cards/${cardId}/pending-rates`,
-      data,
-    );
-    return response.data;
-  }
-
-  /**
-   * 수수료를 아직 적지 않은 유이자 할부 회차.
-   *
-   * 회차 수수료는 카드사와 남은 원금에 따라 조금씩 달라 계산으로 맞출 수 없다. 그
-   * 회차의 주기가 마감되면 여기 떠오르고, 명세서를 보고 적으면 전표가 하나 생긴다.
-   */
-  async getCardPendingFees(cardId: string): Promise<CardDto.PendingFeesResponse> {
-    const response = await this.client.get<CardDto.PendingFeesResponse>(
-      `/cards/${cardId}/pending-fees`,
-    );
-    return response.data;
-  }
-
-  /** 회차 수수료를 적는다. 적은 만큼 수수료 전표가 생긴다. */
-  async settleCardFees(
-    cardId: string,
-    data: CardDto.SettleFeesRequest,
-  ): Promise<CardDto.SettleFeesResponse> {
-    const response = await this.client.patch<CardDto.SettleFeesResponse>(
-      `/cards/${cardId}/pending-fees`,
       data,
     );
     return response.data;

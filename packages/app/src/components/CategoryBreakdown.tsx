@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import type { EntryFilterQuery } from '@money/types';
+import type { EntryScopeQuery } from '@money/types';
 
 import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
 import { totalIdOf } from '@money/core/hooks/useCategoryDetail';
@@ -53,7 +53,7 @@ export default function CategoryBreakdown({
 }: {
   period: ReportPeriod;
   projectId?: string | null;
-  filter?: EntryFilterQuery;
+  filter?: EntryScopeQuery;
   categories: Category[];
   reloadToken?: number;
   /** 합계·대분류·소분류·미분류 중 하나를 누를 때. 부모가 상세 화면을 연다. */

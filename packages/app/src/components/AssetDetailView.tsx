@@ -37,7 +37,6 @@ import CardSettlementPanel from './CardSettlementPanel';
 import CardUsageChart from './CardUsageChart';
 import SegmentedTabs from './SegmentedTabs';
 import PageHeader from './PageHeader';
-import PendingFeePanel from './PendingFeePanel';
 import PendingRatePanel from './PendingRatePanel';
 
 /** 무엇을 펼쳐 두었는가. 세 갈래가 같은 머리글과 같은 그래프 자리를 쓴다. */
@@ -350,28 +349,6 @@ function CardCharts({
             cardId={card.id}
             onSettled={async () => {
               // 확정하면 네 값이 함께 달라진다 -- 주기별 사용액, 남은 대금, 내역, 총자산.
-              setSettledVersion((version) => version + 1);
-              setLedgerVersion((version) => version + 1);
-              await load();
-              await onChanged?.();
-            }}
-          />
-        ) : null}
-
-        {/*
-          유이자 할부의 회차 수수료.
-
-          금액이 회차마다 조금씩 달라 계산으로 맞출 수 없다. 마감된 회차를 여기 모아
-          명세서를 보고 적으면 그때 수수료 전표가 생긴다.
-        */}
-        {isCredit && tab === 'billed' ? (
-          <PendingFeePanel
-            cardId={card.id}
-            projectId={projectId}
-            personId={paymentAccountOwnerId}
-            onOpenEntry={onOpenEntry}
-            onSettled={async () => {
-              // 수수료도 전표라 청구액·남은 대금·내역·총자산이 함께 달라진다.
               setSettledVersion((version) => version + 1);
               setLedgerVersion((version) => version + 1);
               await load();

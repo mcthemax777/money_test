@@ -51,6 +51,7 @@ import {
   rankAfter,
   zonedDateKey,
   zonedYearMonth,
+  type InstallmentRowPlan,
 } from '@money/types';
 
 import { ALL_TABLES, SCHEMA_STATEMENTS, SCHEMA_VERSION } from './schema';
@@ -180,6 +181,12 @@ export interface StoredCardPosting {
   installmentMonths: number | null;
   /** 사용자가 적어 둔 회차별 원금. 없으면 개월수로 나눈다. */
   installmentShares: string[] | null;
+  /**
+   * 적어 둔 회차별 이자. 다리 금액에 이미 들어 있는 값이다.
+   *
+   * 청구는 회차마다 원금에 이 값을 더해 세고, 실적은 반대로 이 합을 뺀다.
+   */
+  installmentInterestShares: string[] | null;
   /** 실적에 세는가. 분할해도 하나다. 청구액에는 어느 쪽이든 들어간다. */
   countsPerformance: boolean;
   /** 실적을 정가로 셀 때 되살릴 차감액. 줄마다의 값을 더한 것이고, 안 되살리면 null 이다. */
@@ -308,6 +315,7 @@ const toCardPosting = (row: Row, legs: readonly Row[]): StoredCardPosting => {
     date: String(row.date),
     installmentMonths: row.totalMonths == null ? null : Number(row.totalMonths),
     installmentShares: parseShares(row.principalShares),
+    installmentInterestShares: parseShares(row.interestShares),
     countsPerformance: Boolean(row.countsPerformance),
     discountAmount: discount && !discount.isZero() ? discount.toString() : null,
     discountCountsPerformance: Boolean(row.discountCountsPerformance ?? 1),
@@ -882,6 +890,10 @@ export class LocalStore {
           interestBearing: asFlag(row.interestBearing),
           // JSON 배열을 글자 그대로 담는다. 읽는 쪽이 편다.
           principalShares: row.principalShares == null ? null : JSON.stringify(row.principalShares),
+          interestShares: row.interestShares == null ? null : JSON.stringify(row.interestShares),
+          // 금액은 글자로 담는다. Decimal 을 숫자로 바꾸면 원 단위가 흔들린다.
+          monthlyPayment: row.monthlyPayment == null ? null : String(row.monthlyPayment),
+          annualRate: row.annualRate == null ? null : String(row.annualRate),
           updatedVersion: asInt(row.updatedVersion),
         });
       }
@@ -1140,10 +1152,34 @@ export class LocalStore {
      * 같은 규칙이다.
      */
     const search = searchFilter(range.search);
+    /*
+     * 회차 기준이면 할부 계획을 줄에 함께 싣는다.
+     *
+     * 할부는 카드 다리에 걸리므로 같은 전표의 그 다리를 찾아 읽는다. 한 전표에 하나뿐이라
+     * 딸림질의가 한 줄씩만 낸다. 서버의 AGGREGATE_SELECT 와 같은 값을 모은다.
+     */
+    const plan = range.withInstallment
+      ? `,
+              (SELECT ip.totalMonths FROM posting cp
+                 JOIN installment_plan ip ON ip.postingId = cp.id
+                WHERE cp.entryId = e.id LIMIT 1) AS installmentMonths,
+              (SELECT ip.principalShares FROM posting cp
+                 JOIN installment_plan ip ON ip.postingId = cp.id
+                WHERE cp.entryId = e.id LIMIT 1) AS principalShares,
+              (SELECT ip.interestShares FROM posting cp
+                 JOIN installment_plan ip ON ip.postingId = cp.id
+                WHERE cp.entryId = e.id LIMIT 1) AS interestShares,
+              (SELECT cp.baseAmount FROM posting cp
+                 JOIN installment_plan ip ON ip.postingId = cp.id
+                WHERE cp.entryId = e.id LIMIT 1) AS installmentBase,
+              (SELECT cp.amount FROM posting cp
+                 JOIN installment_plan ip ON ip.postingId = cp.id
+                WHERE cp.entryId = e.id LIMIT 1) AS installmentAmount`
+      : '';
     const rows = await this.db.all<Row>(
       `SELECT p.categoryId, c.type AS categoryType, c.name AS categoryName,
               c.parentId AS parentCategoryId, parent.name AS parentCategoryName,
-              p.baseAmount, e.date,
+              p.baseAmount, e.date${plan},
               /*
                * 이 줄에 붙은 태그. 걸린 줄만 남기는 판정기가 읽는다.
                *
@@ -1188,6 +1224,7 @@ export class LocalStore {
       parentCategoryName: asText(row.parentCategoryName),
       baseAmount: asMoney(row.baseAmount),
       date: String(row.date),
+      ...(range.withInstallment ? { installment: installmentOf(row) } : {}),
     }));
   }
 
@@ -1769,7 +1806,8 @@ export class LocalStore {
               c.parentId AS categoryParentId, parent.name AS categoryParentName,
               cd.id AS cardRowId, cd.name AS cardName,
               ip.totalMonths AS installmentMonths, ip.interestBearing AS installmentInterest,
-              ip.principalShares AS installmentShares
+              ip.principalShares AS installmentShares, ip.interestShares AS installmentInterestShares,
+              ip.monthlyPayment AS installmentMonthlyPayment, ip.annualRate AS installmentAnnualRate
          FROM posting po
          LEFT JOIN account a ON a.id = po.accountId
          LEFT JOIN category c ON c.id = po.categoryId
@@ -1852,6 +1890,9 @@ export class LocalStore {
                 totalMonths: asInt(row.installmentMonths),
                 interestBearing: Boolean(row.installmentInterest),
                 principalShares: parseShares(row.installmentShares),
+                interestShares: parseShares(row.installmentInterestShares),
+                monthlyPayment: asText(row.installmentMonthlyPayment),
+                annualRate: asText(row.installmentAnnualRate),
               },
       });
       byEntry.set(String(row.entryId), list);
@@ -2091,6 +2132,17 @@ export class LocalStore {
             interestBearing: built.installmentInterest ? 1 : 0,
             // 적어 둔 회차 금액. 없으면 읽는 쪽이 개월수로 나눈다.
             principalShares: built.installmentShares ? JSON.stringify(built.installmentShares) : null,
+            /*
+             * 회차별 이자와 그것을 만든 입력. 유이자 할부에만 담긴다.
+             *
+             * 서버의 `saveInstallmentPlan` 과 같은 값이 들어가야 한다 -- 여기서 빠지면
+             * 오프라인에서 적은 할부의 이자가 다음 pull 까지 화면에서 사라진다.
+             */
+            interestShares: built.installmentInterestShares
+              ? JSON.stringify(built.installmentInterestShares)
+              : null,
+            monthlyPayment: built.installmentMonthlyPayment ?? null,
+            annualRate: built.installmentAnnualRate ?? null,
             updatedVersion: 0,
           });
         }
@@ -3056,7 +3108,7 @@ export class LocalStore {
        */
       `SELECT p.amount, p.entryId, e.date, e.originalCurrency,
               e.countsPerformance, e.discountCountsPerformance,
-              ip.totalMonths, ip.principalShares
+              ip.totalMonths, ip.principalShares, ip.interestShares
          FROM posting p
          JOIN entry e ON e.id = p.entryId
          LEFT JOIN installment_plan ip ON ip.postingId = p.id
@@ -3078,7 +3130,7 @@ export class LocalStore {
     const rows = await this.db.all<Row>(
       `SELECT p.amount, p.entryId, e.date, e.originalCurrency,
               e.countsPerformance, e.discountCountsPerformance,
-              NULL AS totalMonths, NULL AS principalShares
+              NULL AS totalMonths, NULL AS principalShares, NULL AS interestShares
          FROM posting p
          JOIN entry e ON e.id = p.entryId
         WHERE p.cardId = ?`,
@@ -3103,7 +3155,11 @@ export class LocalStore {
     const rows = await this.db.all<Row>(
       `SELECT p.id AS postingId, p.amount, e.id AS entryId, e.date, e.description, e.merchant,
               e.countsPerformance, e.discountCountsPerformance, e.originalCurrency,
-              ${credit ? 'ip.totalMonths, ip.principalShares' : 'NULL AS totalMonths, NULL AS principalShares'},
+              ${
+                credit
+                  ? 'ip.totalMonths, ip.principalShares, ip.interestShares'
+                  : 'NULL AS totalMonths, NULL AS principalShares, NULL AS interestShares'
+              },
               cat.name AS categoryName, parent.name AS parentCategoryName
          FROM posting p
          JOIN entry e ON e.id = p.entryId
@@ -3434,6 +3490,26 @@ function maskCardNumber(value: string | null): string {
  * 무엇을 고른 것으로 볼지는 서버와 한 벌이어야 하고, 그것을 **문장으로 옮기는 일**만
  * 저장소마다 다르다.
  */
+/**
+ * 줄에 실을 할부 계획. 할부가 아니면 undefined.
+ *
+ * 회차 금액은 **비율로만** 쓰이므로 카드 통화가 기준통화와 달라도 원금은 제대로 나뉜다.
+ * 이자는 금액 그대로 더하는 값이라 통화가 갈리면 싣지 않는다 (서버와 같은 판단이다).
+ */
+function installmentOf(row: Row): InstallmentRowPlan | undefined {
+  const months = row.installmentMonths == null ? 0 : asInt(row.installmentMonths);
+  if (months < 2) return undefined;
+
+  const base = asMoney(row.installmentBase ?? '0');
+  const sameCurrency = String(row.installmentAmount ?? '') === String(row.installmentBase ?? '');
+  return {
+    months,
+    total: Dec.of(base).abs().toString(),
+    principals: parseShares(row.principalShares),
+    interests: sameCurrency ? parseShares(row.interestShares) : null,
+  };
+}
+
 export interface MirrorEntryScope {
   fromDateKey: string;
   toDateKey: string;
@@ -3449,6 +3525,13 @@ export interface MirrorEntryScope {
   search?: ParsedEntrySearch;
   /** 이 카드로 낸 거래만. 카드 상세의 결제 내역이 쓴다. */
   cardId?: string;
+  /**
+   * 회차 기준으로 셀 때 켠다. 할부 계획을 줄에 함께 실어 온다.
+   *
+   * 늘 싣지 않는 까닭은 값이다 -- 전표마다 딸림질의가 넷 붙는다. 발생 기준에서는
+   * 읽히지 않는 값이라 켤 때만 붙인다.
+   */
+  withInstallment?: boolean;
 }
 
 /**

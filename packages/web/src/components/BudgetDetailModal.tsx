@@ -33,7 +33,7 @@ import {
 } from '@money/core/lib/chart';
 import { useTranslation } from '@money/core/lib/i18n';
 import DailyCumulativeChart from './DailyCumulativeChart';
-import type { EntryFilterQuery } from '@money/types';
+import type { EntryScopeQuery } from '@money/types';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 import type { Category } from '@money/core/lib/types';
 
@@ -61,7 +61,7 @@ interface BudgetDetailModalProps {
   /** 선택된 프로젝트. 넘기지 않으면 서버가 기본 프로젝트로 조회한다. */
   projectId?: string | null;
   /** 가계 화면의 사람 필터. 상단 합계와 같은 조건을 써야 한다. */
-  filter?: EntryFilterQuery;
+  filter?: EntryScopeQuery;
   /** 거래를 누르면 호출한다. 날짜별 보기와 같은 상세 팝업을 열기 위한 통로다. */
   onEntryClick?: (entry: EntryListItem) => void;
   /** 값이 바뀌면 데이터를 다시 받는다. 부모 화면에서 거래를 고쳤을 때 쓴다. */

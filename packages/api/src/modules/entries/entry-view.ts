@@ -44,6 +44,10 @@ type PostingWithRefs = {
     interestBearing: boolean;
     /** JSON 칸이라 무엇이든 온다. 모양을 가리는 일은 `@money/types` 의 뷰가 한다. */
     principalShares: unknown;
+    /** 회차별 이자. 원금과 같은 JSON 칸이다. */
+    interestShares: unknown;
+    monthlyPayment: unknown;
+    annualRate: unknown;
   } | null;
 };
 
@@ -143,7 +147,14 @@ export const ENTRY_INCLUDE = {
       },
       card: { select: { id: true, name: true } },
       installmentPlan: {
-        select: { totalMonths: true, interestBearing: true, principalShares: true },
+        select: {
+          totalMonths: true,
+          interestBearing: true,
+          principalShares: true,
+          interestShares: true,
+          monthlyPayment: true,
+          annualRate: true,
+        },
       },
     },
   },

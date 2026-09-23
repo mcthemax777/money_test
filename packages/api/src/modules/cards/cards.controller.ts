@@ -132,22 +132,6 @@ export class CardsController {
     return this.cardLedger.settleRates(id, req.user.id, dto);
   }
 
-  @Get(':id/pending-fees')
-  @ApiOperation({ summary: '수수료를 아직 적지 않은 유이자 할부 회차' })
-  pendingFees(@Request() req: AuthenticatedRequest, @Param('id') id: string) {
-    return this.cardLedger.listPendingFees(id, req.user.id);
-  }
-
-  @Patch(':id/pending-fees')
-  @ApiOperation({ summary: '명세서의 회차 수수료를 적는다 (수수료 전표가 생긴다)' })
-  settleFees(
-    @Request() req: AuthenticatedRequest,
-    @Param('id') id: string,
-    @Body() dto: CardDto.SettleFeesRequest,
-  ) {
-    return this.cardLedger.settleFees(id, req.user.id, dto);
-  }
-
   @Post(':id/transfers')
   @HttpCode(HttpStatus.CREATED)
   @ApiOperation({ summary: '카드사와 통장 사이 자금 이동 (대금 결제 / 환불 입금)' })

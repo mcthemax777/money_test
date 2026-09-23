@@ -14,7 +14,7 @@
  */
 import { useState } from 'react';
 import { Text, View } from 'react-native';
-import { entryRows, type EntryListItem } from '@money/types';
+import { entryRows, originalEntry, type EntryListItem } from '@money/types';
 
 import { useLedgerData } from '@money/core/hooks/useLedgerData';
 import { currentYearMonth } from '@money/core/lib/datetime';
@@ -102,7 +102,8 @@ export default function TransactionCalendarView({
                   key={row.key}
                   entry={row.entry}
                   row={row}
-                  onPress={onOpenEntry}
+                  // 여는 것은 사용자가 적은 거래다 (`originalEntry`).
+                  onPress={onOpenEntry && ((entry) => onOpenEntry(originalEntry(entry)))}
                 />
               ))}
             </View>

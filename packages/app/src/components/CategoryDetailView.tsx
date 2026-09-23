@@ -10,7 +10,7 @@
  * 훅이다). 같은 분류를 누르면 두 화면이 같은 값을 말한다.
  */
 import { Pressable, Text, View } from 'react-native';
-import type { EntryFilterQuery, EntryListItem } from '@money/types';
+import type { EntryScopeQuery, EntryListItem } from '@money/types';
 
 import {
   TOTAL_EXPENSE_ID,
@@ -49,7 +49,7 @@ export default function CategoryDetailView({
   /** 목록의 "미분류"에서 들어왔는지 (소분류를 뺀 그 대분류만 본다) */
   exactCategory?: boolean;
   projectId?: string | null;
-  filter?: EntryFilterQuery;
+  filter?: EntryScopeQuery;
   reloadToken?: number;
   onClose: () => void;
   /** 거래를 누르면 부른다. 가계 화면의 고치기 팝업으로 잇는 통로다. */

@@ -37,7 +37,7 @@ import {
   X,
 } from 'lucide-react-native';
 import {
-  entryRows,
+  originalEntry,
   type EntryListItem,
   type EntryPeriodUnit,
   type EntryRow,
@@ -587,7 +587,8 @@ export default function TransactionsScreen() {
    * 만들어 넘기면 그 값이 매번 새것이라 memo 가 헛돈다. 한 달을 통째로 펼치면 줄이
    * 200개까지 서므로 그 차이가 곧 버벅임이다.
    */
-  const openDetail = useCallback((entry: EntryListItem) => setDetail(entry), []);
+  /** 여는 것은 사용자가 적은 거래다. 목록에 선 것은 그 달의 회차 몫이다. */
+  const openDetail = useCallback((entry: EntryListItem) => setDetail(originalEntry(entry)), []);
   const toggleEntry = useCallback(
     (entry: EntryListItem, row?: EntryRow) =>
       tx.toggleEntrySelected(
@@ -659,7 +660,7 @@ export default function TransactionsScreen() {
      * 10,000원을 식비 5,000 + 여행경비 5,000으로 나눴다면 두 줄이 선다. 분류나 태그로
      * 좁힌 목록에서는 걸린 줄만 나온다.
      */
-    const rows = entryRows(entries);
+    const rows = tx.entryRowsOf(yearMonth, key);
 
     // 예산에서 이 줄의 몫을 떼어 온다. 모자라면 앞에서부터 그만큼만 세운다.
     const taken = wantedEntries.current;
@@ -1169,6 +1170,37 @@ export default function TransactionsScreen() {
               </Pressable>
             ))}
           </View>
+        </View>
+        {/*
+          무엇을 "그 달에 쓴 돈"으로 셀지. 묶음 단위와 같은 자리에 둔다 -- 둘 다 목록의
+          숫자가 무엇인지 정하는 값이고, 자주 바꾸는 것이 아니다.
+
+          기본은 회차 기준이다. 할부를 산 달 하나에 몰아 두면 그 달만 혼자 튀고, 매달
+          빠져나가는 돈은 어느 달에서도 보이지 않는다. 발생 기준은 "언제 샀나"를 묻는
+          화면을 위해 남겨 두었다.
+        */}
+        <View className="px-2 pb-3">
+          <Text className="mb-2 text-sm font-medium text-gray-700">{t('tx.basis')}</Text>
+          <View className="flex-row gap-2 rounded-lg bg-gray-100 p-1">
+            {(['accrual', 'installment'] as const).map((item) => (
+              <Pressable
+                key={item}
+                onPress={() => tx.setBasis(item)}
+                className={`flex-1 items-center rounded-md px-3 py-2 ${
+                  tx.basis === item ? 'bg-white' : ''
+                }`}
+              >
+                <Text
+                  className={`text-sm font-medium ${
+                    tx.basis === item ? 'text-blue-600' : 'text-gray-600'
+                  }`}
+                >
+                  {t(item === 'accrual' ? 'tx.basis.accrual' : 'tx.basis.installment')}
+                </Text>
+              </Pressable>
+            ))}
+          </View>
+          <Text className="mt-2 text-xs text-gray-500">{t('tx.basisHint')}</Text>
         </View>
         <View className="mb-1 border-t border-gray-200" />
 

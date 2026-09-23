@@ -22,6 +22,11 @@
 import { Dec, type DecInput } from './decimal';
 import type { CategoryType } from './entities';
 import { DEFAULT_ENTRY_PERIOD, periodKeyOf, type EntryPeriodUnit } from './entry-period';
+import {
+  installmentLineShares,
+  installmentMonthShares,
+  installmentRowDate,
+} from './installment-schedule';
 import { zonedDateKey, zonedYearMonth } from './tz';
 
 /**
@@ -37,7 +42,77 @@ export interface CategoryPostingRow {
   baseAmount: DecInput;
   /** 전표 시각. 달력 경계는 프로젝트 타임존으로 계산한다. */
   date: Date | string;
+  /**
+   * 이 줄이 걸린 할부. 회차 기준으로 셀 때만 채워 보낸다.
+   *
+   * 발생 기준(기본)에서는 없는 것과 같다 -- 할부도 산 달에 전액이 들기 때문이다.
+   */
+  installment?: InstallmentRowPlan;
 }
+
+/** 회차 기준으로 펼 때 필요한 것. 카드 다리에 걸린 계획에서 온다. */
+export interface InstallmentRowPlan {
+  months: number;
+  /** 카드에 청구된 총액. 양수이고 이자를 품는다. 줄 몫을 나누는 분모이기도 하다. */
+  total: DecInput;
+  /** 사용자가 적어 둔 회차 원금. 없으면 개월수로 나눈다. */
+  principals?: readonly DecInput[] | null;
+  /** 적어 둔 회차 이자. 없으면 이자를 세지 않는다. */
+  interests?: readonly DecInput[] | null;
+}
+
+/**
+ * 할부 줄을 회차대로 편다. 할부가 아닌 줄은 그대로 지나간다.
+ *
+ * 한 줄이 개월수만큼의 줄이 되고, 각 줄은 그 회차가 서는 달의 날짜를 갖는다. 날짜는
+ * 산 날의 **며칟날을 그대로** 옮긴 것이다 (말일이 없는 달은 그 달의 마지막 날이다).
+ * 회차에는 정해진 날이 없지만, 날짜별 합계가 달의 첫날에 몰리지 않아야 한다.
+ *
+ * 이자는 줄 금액 안에 이미 들어 있다. 전표가 원금과 이자를 합해 적히므로, 이자의
+ * 분류는 그 거래의 분류를 그대로 따라간다 -- 한 결제에서 나온 돈이라 따로 세면
+ * "그 달에 식비로 얼마 나갔나"의 답이 갈린다.
+ *
+ * 부르는 쪽이 **창 밖의 회차를 걸러야 한다.** 이 함수는 개월수만큼을 다 낸다.
+ */
+export function expandInstallmentRows<T extends CategoryPostingRow>(
+  rows: readonly T[],
+  timeZone: string,
+): T[] {
+  return rows.flatMap((row): T[] => {
+    const plan = row.installment;
+    if (!plan || plan.months < 2) return [{ ...row, installment: undefined }];
+
+    const shares = installmentMonthShares({
+      date: row.date,
+      total: plan.total,
+      months: plan.months,
+      principals: plan.principals,
+      interests: plan.interests,
+      timeZone,
+    });
+    /*
+     * 줄 몫. 분할이 아니면 회차 금액 그대로이고, 분할이면 줄 금액의 비율이다.
+     *
+     * 나누는 저울은 회차마다 나가는 돈(원금 + 이자)이다. 전표 금액이 이미 이자를
+     * 품고 있어, 회차를 다 더하면 줄 금액으로 정확히 돌아온다.
+     */
+    const lineShares = installmentLineShares(
+      Dec.of(row.baseAmount).abs(),
+      shares.map((share) => share.amount),
+    );
+
+    const negative = Dec.of(row.baseAmount).isNegative();
+    return shares.map((share, index) => ({
+      ...row,
+      installment: undefined,
+      // 수입 다리는 음수로 온다. 부호를 지켜야 합계가 갈래를 가린다.
+      baseAmount: negative ? lineShares[index].negated() : lineShares[index],
+      date: installmentRowDate(row.date, index, timeZone),
+    }));
+  });
+}
+
+
 
 /** 구성비에 이름을 실어 주려면 이만큼이 더 필요하다. */
 export interface NamedCategoryPostingRow extends CategoryPostingRow {

@@ -153,6 +153,12 @@ export interface EntryInput {
    * 없는 자리가 있다. 조립이 개수와 합을 이미 검사했다.
    */
   installmentShares?: string[];
+  /** 회차별 이자. 유이자 할부에만 있고, 조립이 개수를 이미 검사했다. */
+  installmentInterestShares?: string[];
+  /** 고정형 유이자 할부의 월 납입액. 회차 표를 다시 계산할 때 쓴다. */
+  installmentMonthlyPayment?: string;
+  /** 변동형 유이자 할부의 연이율 (퍼센트). */
+  installmentAnnualRate?: string;
   /** 이 거래를 카드 실적에 세는가. 분할해도 하나다. 조립이 갈래의 기본값까지 정해서 넘긴다. */
   countsPerformance?: boolean;
   /** 차감액을 실적에서도 뺄지. 분할해도 하나다. 조립이 정해서 넘긴다. */
@@ -219,6 +225,12 @@ export interface ExpenseInput extends CommonInput {
   installmentInterest?: boolean;
   /** 사용자가 적어 둔 회차별 원금. 없으면 개월수로 나눈다. */
   installmentShares?: string[];
+  /** 회차별 이자. 유이자 할부에만 쓴다. */
+  installmentInterestShares?: string[];
+  /** 고정형 유이자 할부의 월 납입액. */
+  installmentMonthlyPayment?: string;
+  /** 변동형 유이자 할부의 연이율 (퍼센트). */
+  installmentAnnualRate?: string;
   /**
    * 카드 실적에 셀지. 생략하면 조립이 갈래의 기본값(지출은 포함)을 쓴다.
    *
@@ -346,6 +358,7 @@ export class LedgerService {
         input.installmentMonths,
         input.installmentInterest,
         input.installmentShares,
+        interestOf(input),
       );
       return entry;
     });
@@ -395,19 +408,6 @@ export class LedgerService {
         throw conflict('ENTRY_MODIFIED', '다른 사람이 이 거래를 먼저 고쳤습니다.');
       }
 
-      /*
-       * 옛 할부 계획과 거기 달린 수수료 전표.
-       *
-       * 아래에서 다리를 지우면 계획도 cascade 로 사라지고, 수수료 전표의 연결은
-       * null 이 된다 (전표 자체는 남는다 -- 실제로 나간 돈이다). 그대로 두면 이미
-       * 적은 회차가 "수수료 미입력"으로 다시 떠올라 같은 수수료를 두 번 적게 된다.
-       * 그래서 계획을 같은 id 로 다시 만들고 연결을 도로 맺는다.
-       */
-      const oldPlan = await tx.installmentPlan.findFirst({
-        where: { posting: { entryId } },
-        select: { id: true, fees: { select: { id: true } } },
-      });
-
       // 1) 옛 posting의 잔액 영향을 되돌린다
       await this.applyBalanceDeltas(
         tx,
@@ -445,27 +445,14 @@ export class LedgerService {
       // 3) 새 posting의 잔액을 적용한다
       await this.applyBalanceDeltas(tx, input.postings);
       // posting을 새로 만들었으므로 할부 일정도 다시 붙인다 (옛 것은 cascade로 사라졌다)
-      const plan = await this.saveInstallmentPlan(
+      await this.saveInstallmentPlan(
         tx,
         entry.postings,
         input.installmentMonths,
         input.installmentInterest,
         input.installmentShares,
-        oldPlan?.id,
+        interestOf(input),
       );
-
-      /*
-       * 수수료 전표를 새 계획에 도로 맺는다.
-       *
-       * 할부를 일시불로 바꾸면 계획이 없으므로 연결이 끊긴 채 남는다. 그 수수료는
-       * 이미 나간 돈이라 지우지 않고, 보통 지출 한 건으로 남는다.
-       */
-      if (plan && oldPlan && oldPlan.fees.length > 0) {
-        await tx.journalEntry.updateMany({
-          where: { id: { in: oldPlan.fees.map((fee) => fee.id) } },
-          data: { installmentPlanId: plan.id },
-        });
-      }
       return entry;
     });
   }
@@ -825,6 +812,9 @@ export class LedgerService {
       installmentMonths: built.installmentMonths,
       installmentInterest: built.installmentInterest,
       installmentShares: built.installmentShares,
+      installmentInterestShares: built.installmentInterestShares,
+      installmentMonthlyPayment: built.installmentMonthlyPayment,
+      installmentAnnualRate: built.installmentAnnualRate,
       countsPerformance: built.countsPerformance ?? true,
       discountCountsPerformance: built.discountCountsPerformance ?? true,
       ...(built.tagIds ? { tagIds: built.tagIds } : {}),
@@ -887,6 +877,9 @@ export class LedgerService {
           installmentMonths: input.installmentMonths,
           installmentInterest: input.installmentInterest,
           installmentShares: input.installmentShares,
+          installmentInterestShares: input.installmentInterestShares,
+          installmentMonthlyPayment: input.installmentMonthlyPayment,
+          installmentAnnualRate: input.installmentAnnualRate,
           countsPerformance: input.countsPerformance,
         },
         this.lookup,
@@ -1291,8 +1284,8 @@ export class LedgerService {
     months?: number,
     interestBearing?: boolean,
     shares?: string[],
-    /** 고칠 때 쓰던 계획 id. 같은 이름으로 다시 만들어 수수료 전표의 연결을 살린다. */
-    keepId?: string,
+    /** 회차별 이자와 그것을 만든 입력. 유이자 할부에만 있다. */
+    interest?: InstallmentInterest,
   ) {
     if (!months || months < 2) return null;
 
@@ -1303,7 +1296,6 @@ export class LedgerService {
     }
     return tx.installmentPlan.create({
       data: {
-        ...(keepId ? { id: keepId } : {}),
         postingId: cardLeg.id,
         totalMonths: months,
         interestBearing: interestBearing ?? false,
@@ -1315,6 +1307,16 @@ export class LedgerService {
          * 주기별 청구액이 갚을 대금과 달라진다.
          */
         principalShares: shares ?? Prisma.JsonNull,
+        /*
+         * 회차별 이자와 그것을 만든 입력. 무이자로 되돌리면 조립이 비워 보낸다.
+         *
+         * 원금과 같은 규칙이다 -- 옛 값을 이어받지 않는다. 금액이나 개월수를 고치면
+         * 화면이 새 표를 보내거나 아무것도 보내지 않고, 남은 옛 이자는 그 달에 나갈
+         * 돈을 실제와 다르게 보여 준다.
+         */
+        interestShares: interest?.shares ?? Prisma.JsonNull,
+        monthlyPayment: interest?.monthlyPayment ?? null,
+        annualRate: interest?.annualRate ?? null,
       },
     });
   }
@@ -1367,4 +1369,36 @@ export class LedgerService {
     }
     return card;
   }
+}
+
+/** 할부 계획에 적어 둘 이자. 유이자 할부에만 채워진다. */
+interface InstallmentInterest {
+  shares?: string[];
+  monthlyPayment?: Prisma.Decimal;
+  annualRate?: Prisma.Decimal;
+}
+
+/**
+ * 전표 입력에서 이자 쪽만 골라낸다. 적을 것이 없으면 undefined.
+ *
+ * 세 값이 함께 움직인다 -- 입력(월 납입액 또는 연이율)이 회차 표를 만들고, 표는
+ * 사용자가 고칠 수 있다. 무이자로 되돌리면 조립이 셋을 다 비워 보내므로 여기서
+ * 가릴 것이 없다.
+ */
+function interestOf(input: {
+  installmentInterestShares?: string[];
+  installmentMonthlyPayment?: string;
+  installmentAnnualRate?: string;
+}): InstallmentInterest | undefined {
+  const { installmentInterestShares, installmentMonthlyPayment, installmentAnnualRate } = input;
+  if (!installmentInterestShares && !installmentMonthlyPayment && !installmentAnnualRate) {
+    return undefined;
+  }
+  return {
+    shares: installmentInterestShares,
+    monthlyPayment: installmentMonthlyPayment
+      ? new Prisma.Decimal(installmentMonthlyPayment)
+      : undefined,
+    annualRate: installmentAnnualRate ? new Prisma.Decimal(installmentAnnualRate) : undefined,
+  };
 }

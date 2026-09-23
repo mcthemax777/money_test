@@ -120,6 +120,28 @@ export interface EntrySearchQuery {
    * 할부"만 남아 다른 무리와 규칙이 어긋난다.
    */
   features?: string;
+  /**
+   * 무엇을 "이 달에 쓴 돈"으로 셀지. 보내지 않으면 발생 기준이다.
+   *
+   * 거르는 조건이 아니라 **세는 방식**이라 `ParsedEntrySearch` 에 들어가지 않는다.
+   * 화면이 이미 이 꾸러미로 조건을 보내고 있어 같은 자리에 싣는다.
+   */
+  basis?: EntryBasis;
+}
+
+/**
+ * 월별 지출을 세는 기준.
+ *
+ * - `accrual` 발생 기준. 산 달에 전액이다. 지금까지의 규칙이고 기본값이다.
+ * - `installment` 회차 기준. 할부는 회차가 서는 달마다 그 달의 원금과 이자만 센다.
+ *
+ * 기본을 발생 기준으로 두는 까닭은 보고 있던 숫자가 말없이 바뀌면 안 되기 때문이다.
+ */
+export type EntryBasis = 'accrual' | 'installment';
+
+/** 쿼리스트링으로 온 값을 가린다. 아는 값이 아니면 발생 기준이다. */
+export function parseEntryBasis(value?: string | null): EntryBasis {
+  return value === 'installment' ? 'installment' : 'accrual';
 }
 
 export interface ParsedEntrySearch {

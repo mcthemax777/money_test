@@ -29,14 +29,19 @@ import {
   debitPerformanceShares,
   debitUsagePeriods,
   entryMonths,
+  expandInstallmentRows,
+  installmentEntryViews,
+  installmentRowDate,
   isEntryPeriodUnit,
   DEFAULT_ENTRY_PERIOD,
   isBudgetApplicable,
   netWorth,
   closingMonthKey,
   closingMonthOf,
+  parseEntryBasis,
   parseEntrySearch,
   paymentMethods,
+  shiftYearMonth,
   performanceOf,
   periodForClosingMonth,
   usageSpan,
@@ -45,6 +50,9 @@ import {
   toListItem,
   totalUsage,
   zonedDateKey,
+  zonedDateStringToUtc,
+  zonedDayStart,
+  zonedMonthRange,
   zonedParts,
   zonedYearMonth,
   fallbackRate,
@@ -98,17 +106,38 @@ export function createLocalHomePort(
    * `<= '2026-08-31'` 이 그 달의 마지막 날까지를 정확히 담는다(달의 길이를 몰라도 된다).
    * 그 키는 이미 프로젝트 타임존으로 계산해 넣은 값이므로 여기서 타임존을 다시 볼 일이 없다.
    */
-  const monthPostings = (
+  const monthPostings = async (
     projectId: string,
     period: ReportPeriod,
     filter?: EntryFilterQuery & EntrySearchQuery & { personId?: string },
-  ) =>
-    store.categoryPostings(projectId, {
-      ...periodKeys(period),
+  ) => {
+    const keys = periodKeys(period);
+    const scope = {
       ownerIds: ownerIdsOf(filter),
       // 거래 화면의 검색. 고르지 않았으면 조건이 서지 않는다.
       search: parseEntrySearch(filter ?? {}),
+    };
+    if (parseEntryBasis(filter?.basis) !== 'installment') {
+      return store.categoryPostings(projectId, { ...keys, ...scope });
+    }
+
+    /*
+     * 회차 기준. 앞에서 산 할부의 회차가 이 구간에 서므로 **앞으로 넓혀 읽고 편 뒤에
+     * 구간 밖을 버린다.** 서버의 리포트와 같은 차례다 -- 규칙이 두 벌이면 같은 달의
+     * 숫자가 웹과 기기에서 갈린다.
+     */
+    const timeZone = await timeZoneOf(store, projectId);
+    const rows = await store.categoryPostings(projectId, {
+      ...keys,
+      ...scope,
+      fromDateKey: shiftDateKeyMonths(keys.fromDateKey, -INSTALLMENT_LOOKBACK_MONTHS),
+      withInstallment: true,
     });
+    return expandInstallmentRows(rows, timeZone).filter((row) => {
+      const key = dateKeyOfRow(row.date, timeZone);
+      return key >= keys.fromDateKey && key <= keys.toDateKey;
+    });
+  };
 
   return {
     async getPeople(projectId) {
@@ -204,7 +233,12 @@ export function createLocalHomePort(
 
       const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
       const [rows, categories, budgets, show] = await Promise.all([
-        monthPostings(id, { yearMonth }, filter),
+        /*
+         * **회차 기준으로 센다.** 서버와 같은 규칙이다 -- 예산은 "이 달에 이만큼까지
+         * 쓴다"는 약속이라, 24개월 할부를 산 달에 전액으로 세면 그 달 하나가 통째로
+         * 터지고 남은 달에는 실제로 나가는 돈이 진행률에 잡히지 않는다.
+         */
+        monthPostings(id, { yearMonth }, { ...filter, basis: 'installment' }),
         store.categories(id),
         store.budgets(id, year, month),
         converter(id),
@@ -323,17 +357,41 @@ export function createLocalHomePort(
         ownerIds: ownerIdsOf(filter),
         search: parseEntrySearch(filter ?? {}),
       };
-      const [rows, dates, show] = await Promise.all([
-        store.categoryPostings(id, scope),
+      const spread = parseEntryBasis(filter?.basis) === 'installment';
+      const [read, dates, show] = await Promise.all([
+        store.categoryPostings(id, {
+          ...scope,
+          // 회차 기준이면 앞에서 산 할부까지 읽는다. 그 회차가 이 구간에 선다.
+          ...(spread
+            ? {
+                fromDateKey: shiftDateKeyMonths(scope.fromDateKey, -INSTALLMENT_LOOKBACK_MONTHS),
+                withInstallment: true,
+              }
+            : {}),
+        }),
         // 이체·카드정산은 카테고리 다리가 없어 다리만 보면 달이 만들어지지 않는다.
         store.entryDates(id, scope),
         converter(id),
       ]);
 
+      const rows = spread
+        ? expandInstallmentRows(read, timeZone).filter((row) => {
+            const key = dateKeyOfRow(row.date, timeZone);
+            return key >= scope.fromDateKey && key <= scope.toDateKey;
+          })
+        : read;
+      /*
+       * 회차가 선 달도 줄이 되어야 한다. 지난달에 산 할부의 이번 달 회차에는 전표가
+       * 없어, 편 줄의 날짜를 함께 넘기지 않으면 그 달이 목록에서 빠진다.
+       */
+      const monthDates = spread
+        ? [...dates, ...rows.map((row) => dateKeyOfRow(row.date, timeZone))]
+        : dates;
+
       // 묶는 단위는 화면이 정한다. 없으면 달이다 (서버의 `getEntryMonths` 와 같다).
       const unit = isEntryPeriodUnit(filter?.unit) ? filter.unit : DEFAULT_ENTRY_PERIOD;
 
-      return entryMonths(rows, { timeZone, entryDates: dates, unit }).map((month) => ({
+      return entryMonths(rows, { timeZone, entryDates: monthDates, unit }).map((month) => ({
         yearMonth: month.yearMonth,
         income: show.toString(month.income),
         expense: show.toString(month.expense),
@@ -344,9 +402,19 @@ export function createLocalHomePort(
       const id = requireProject(projectId);
       note('paymentMethods');
 
+      const keys = periodKeys(period);
+      const spread = parseEntryBasis(filter?.basis) === 'installment';
+      const timeZone = await timeZoneOf(store, id);
       const [entries, accounts, cards, show] = await Promise.all([
         store.viewEntries(id, {
-          ...periodKeys(period),
+          ...keys,
+          /*
+           * 회차 기준이면 앞에서 산 할부도 이 구간의 거래가 된다. 목록·분류 탭과 같은
+           * 규칙이라, 한 화면 안에서 카드 합계와 분류 합계가 어긋나지 않는다.
+           */
+          ...(spread
+            ? { fromDateKey: shiftDateKeyMonths(keys.fromDateKey, -INSTALLMENT_LOOKBACK_MONTHS) }
+            : {}),
           ownerIds: ownerIdsOf(filter),
           // 거래 화면의 검색. 이것을 빠뜨리면 고르지 않은 카드가 금액을 갖고 목록에 남는다.
           search: parseEntrySearch(filter ?? {}),
@@ -385,9 +453,13 @@ export function createLocalHomePort(
           matchLine,
         ),
       );
+      // 회차 기준이면 금액을 그 회차 몫으로 바꾸고, 회차가 없는 할부는 뺀다.
+      const counted = spread
+        ? installmentEntryViews(items, { timeZone, ...periodWindow(period, keys, timeZone) })
+        : items;
 
       return paymentMethods(
-        items,
+        counted,
         accounts.map((account) => ({
           id: account.id,
           name: account.name,
@@ -740,6 +812,78 @@ export function createLocalHomePort(
     },
 
     /** 이 분류와 그 소분류에 달린 거래 다리의 수. 사본의 원장을 그대로 센다. */
+    /**
+     * 이 구간에 회차가 서는 지난 할부. 회차 기준으로 볼 때만 부른다.
+     *
+     * 서버의 `/entries/installment-rows` 와 같은 답을 내야 한다 -- 오프라인에서 목록이
+     * 달라지면 같은 달을 두 기기에서 다르게 보게 된다.
+     */
+    async getInstallmentRows(query, projectId) {
+      const id = requireProject(projectId);
+      note('entries');
+
+      const project = await store.projectRow(id);
+      const timeZone = project?.timeZone ?? 'Asia/Seoul';
+
+      /*
+       * 구간은 목록 질의와 **같은 방식으로** 읽는다. 달 이름이든 인스턴트 두 개든 된다.
+       *
+       * 거래 화면은 달을 볼 때 이름 하나만 보낸다(`listRangeOf`). 인스턴트만 받으면 이
+       * 조회가 늘 빈 목록을 내주어, 산 달의 1회차만 서고 나머지 회차는 합계에만 잡힌다.
+       */
+      const window = query.yearMonth
+        ? zonedMonthRange(query.yearMonth, timeZone)
+        : query.startDate && query.endDate
+          ? { start: new Date(query.startDate), end: new Date(query.endDate) }
+          : null;
+      if (!window) return [];
+
+      const { start: from, end: to } = window;
+      if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) return [];
+
+      const show = await converter(id);
+
+      /*
+       * 구간이 시작하기 **전날까지** 산 할부를 본다. 구간 안의 할부는 이미 목록에 있어
+       * 다시 실으면 같은 거래가 두 줄로 선다.
+       */
+      const toKey = dateKeyOf(new Date(from.getTime() - 1).toISOString(), timeZone, '9999-12-31');
+      const fromKey = shiftDateKeyMonths(
+        dateKeyOf(from.toISOString(), timeZone, '0000-01-01'),
+        -INSTALLMENT_LOOKBACK_MONTHS,
+      );
+
+      // 할부만 본다. 사용자가 고른 모양이 있어도 이 조회에서는 할부가 대상이다.
+      const search = parseEntrySearch({ ...query, features: 'installment' });
+      const entries = await store.viewEntries(id, {
+        fromDateKey: fromKey,
+        toDateKey: toKey,
+        ownerIds: ownerIdsOf(query),
+        search,
+      });
+
+      const matchLine = lineMatcherOf(search);
+      const items = entries.map((entry) =>
+        toListItem(
+          entry,
+          { convert: (value) => value.times(show.rate), rate: show.rate },
+          matchLine,
+        ),
+      );
+
+      // 회차가 이 구간에 서는 것만 남긴다. 다 갚은 할부는 여기서 빠진다.
+      return items.filter((entry) => {
+        const months = entry.installmentMonths ?? 1;
+        if (months < 2) return false;
+        for (let index = 1; index < months; index += 1) {
+          const at = installmentRowDate(entry.date, index, timeZone);
+          const time = (at instanceof Date ? at : new Date(at)).getTime();
+          if (time >= from.getTime() && time < to.getTime()) return true;
+        }
+        return false;
+      });
+    },
+
     async getCategoryUsage(id) {
       note('categoryUsage');
       return { counts: await store.categoryPostingCounts(id) };
@@ -1094,4 +1238,48 @@ function toBase64Url(text: string): string {
 function fromBase64Url(text: string): string {
   const padded = text.replace(/-/g, '+').replace(/_/g, '/');
   return atob(padded + '='.repeat((4 - (padded.length % 4)) % 4));
+}
+
+/**
+ * 회차 기준에서 할부를 앞으로 몇 달까지 거슬러 볼지. 서버와 같은 값이다.
+ *
+ * 쓰이는 개월수는 길어야 서른여섯이라 넉넉하고, 조건을 지우면 사본을 통째로 읽게 된다.
+ */
+const INSTALLMENT_LOOKBACK_MONTHS = 60;
+
+/** 달력 키를 달 단위로 옮긴다. 며칟날은 그대로 두고 달만 센다. */
+function shiftDateKeyMonths(dateKey: string, delta: number): string {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  if (!year || !month) return dateKey;
+
+  const shifted = shiftYearMonth(year, month, delta);
+  return `${shifted}-${String(day || 1).padStart(2, '0')}`;
+}
+
+/** 편 줄의 날짜를 달력 키로. 사본의 줄은 글자로, 편 줄은 Date 로 온다. */
+function dateKeyOfRow(date: Date | string, timeZone: string): string {
+  return zonedDateKey(date instanceof Date ? date : new Date(date), timeZone);
+}
+
+/**
+ * 회차를 가릴 구간. 시작은 포함, 끝은 열려 있다.
+ *
+ * 달은 이름으로 만든다. 달력 키로 만들면 말일을 `-31` 로 적는 자리(`periodKeys`)에서
+ * 2월이 3월 초사흘까지 늘어나, 없는 날이 다음 달 회차를 끌어온다.
+ */
+function periodWindow(
+  period: ReportPeriod,
+  keys: { fromDateKey: string; toDateKey: string },
+  timeZone: string,
+): { from: Date; to: Date } {
+  if (period.yearMonth) {
+    const { start, end } = zonedMonthRange(period.yearMonth, timeZone);
+    return { from: start, to: end };
+  }
+  const [year, month, day] = keys.toDateKey.split('-').map(Number);
+  return {
+    from: zonedDateStringToUtc(keys.fromDateKey, timeZone),
+    // 끝날을 포함하려면 다음 날 0시까지다. 달 넘김은 날짜 계산이 맡는다.
+    to: zonedDayStart(year, month, day + 1, timeZone),
+  };
 }

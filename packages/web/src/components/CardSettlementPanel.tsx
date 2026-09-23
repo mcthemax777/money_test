@@ -20,7 +20,6 @@ import CardUsageChart from './CardUsageChart';
 import type { CardUsageMeasure } from '@money/core/lib/card-usage-chart';
 import Modal from './Modal';
 import PendingRatePanel from './PendingRatePanel';
-import PendingFeePanel from './PendingFeePanel';
 import { useApiError } from '@money/core/lib/api-error';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
@@ -290,21 +289,6 @@ export default function CardSettlementPanel({
         */}
         {isCredit && measure === 'billed' && (
           <PendingRatePanel cardId={card.id} onSettled={refresh} />
-        )}
-
-        {/*
-          유이자 할부의 회차 수수료.
-          금액이 회차마다 조금씩 달라 계산으로 맞출 수 없다. 마감된 회차를 여기 모아
-          명세서를 보고 적으면 그때 수수료 전표가 생긴다.
-        */}
-        {isCredit && measure === 'billed' && (
-          <PendingFeePanel
-            cardId={card.id}
-            projectId={selectedProjectId}
-            personId={paymentAccountOwnerId ?? undefined}
-            onOpenEntry={onOpenEntry}
-            onSettled={refresh}
-          />
         )}
 
         {/*

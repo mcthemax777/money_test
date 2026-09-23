@@ -125,6 +125,17 @@ export interface HomeDataPort {
   ): Promise<EntryDto.ListResponse['data']>;
 
   /**
+   * 이 구간에 회차가 서는 지난 할부. 회차 기준으로 볼 때만 부른다.
+   *
+   * 구간보다 앞에서 산 할부만 온다 -- 구간 안의 것은 이미 목록에 있다. 줄을 세는 일은
+   * 화면이 `entryRows` 로 하고, 여기서는 그 재료만 나른다.
+   */
+  getInstallmentRows(
+    query: EntryDto.ListQuery,
+    projectId?: string | null,
+  ): Promise<EntryDto.ListResponse['data']>;
+
+  /**
    * 이 분류와 그 소분류에 달린 거래 다리의 수. 열쇠는 분류 id 다.
    *
    * 없애기 전에 묻는 데 쓴다 -- 거래가 있으면 "어떻게 할까요"를 곧바로 내주고, 없으면
@@ -170,6 +181,7 @@ export const httpHomePort: HomeDataPort = {
     apiClient.getCategoryBreakdown(period, type, projectId, options),
   getEntryMonths: (projectId, filter) => apiClient.getEntryMonths(projectId, filter),
   getAllEntries: (query, projectId) => apiClient.getAllEntries(query, projectId),
+  getInstallmentRows: (query, projectId) => apiClient.getInstallmentRows(query, projectId),
   getCategoryUsage: (id) => apiClient.getCategoryUsage(id),
   getEntry: (id) => apiClient.getEntry(id),
   getEntries: (query, projectId) => apiClient.getEntries(query, projectId),
