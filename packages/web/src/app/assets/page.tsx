@@ -53,6 +53,7 @@ import EditAccountModal from '@/components/EditAccountModal';
 import EditCardModal from '@/components/EditCardModal';
 import AddAccountModal from '@/components/AddAccountModal';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
+import PersonTabs from '@/components/PersonTabs';
 import AssetTypeSummary from '@/components/AssetTypeSummary';
 import HiddenItemsPanel from '@/components/HiddenItemsPanel';
 import AssetHistoryChart from '@/components/AssetHistoryChart';
@@ -596,6 +597,13 @@ export default function DashboardPage() {
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [detailType, setDetailType] = useState<'person' | 'account' | 'card' | null>(null);
+  /**
+   * 목록에서 보고 있는 사람. null 이면 고른 자산주인을 전부 늘어놓는다.
+   *
+   * 위의 총자산과 추이 그래프는 이 값을 보지 않는다. 그쪽은 제목에서 고른 자산주인
+   * 전체의 값이고, 이 탭은 긴 목록에서 한 사람에게 바로 가는 길이다.
+   */
+  const [listPersonId, setListPersonId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { options: issuerOptions } = useInstitutions('card_issuer');
 
@@ -1328,6 +1336,19 @@ export default function DashboardPage() {
   const displayPeople = people.filter((person) => selectedPersonIds.includes(person.id));
 
   /*
+   * 탭이 가리키는 사람. 고른 자산주인에서 빠졌으면 전체로 되돌린다.
+   *
+   * 값을 고쳐 두는 대신 그릴 때마다 가린다. 목록이 오는 동안은 displayPeople 이 비어
+   * 있는데, 그 순간을 "사라졌다"로 읽고 상태를 지우면 다시 들어온 뒤에도 전체가 된다.
+   */
+  const listPerson = displayPeople.some((person) => person.id === listPersonId)
+    ? listPersonId
+    : null;
+  const listedPeople = listPerson
+    ? displayPeople.filter((person) => person.id === listPerson)
+    : displayPeople;
+
+  /*
    * 전원을 고른 상태인지.
    *
    * 총자산과 추이 그래프는 이때만 서버의 전체 기준 값을 그대로 쓴다. 주인이 없는
@@ -1413,21 +1434,39 @@ export default function DashboardPage() {
         </div>
       )}
 
-      {isLoading ? (
-        <p className="text-gray-600">{t('common.loading')}</p>
-      ) : displayPeople.length === 0 ? (
-        <p className="text-gray-600">{t('assets.noSelection')}</p>
-      ) : (
-        /*
-          왼쪽은 항상 구성원·계좌·카드 목록, 오른쪽은 고른 계좌의 내역이다.
-          예전에는 계좌를 누르면 목록이 사라지고 화면이 통째로 바뀌어서, 다른 계좌로
-          옮기려면 매번 닫아야 했다.
-        */
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
+      {/*
+        왼쪽은 항상 구성원·계좌·카드 목록, 오른쪽은 고른 계좌의 내역이다.
+        예전에는 계좌를 누르면 목록이 사라지고 화면이 통째로 바뀌어서, 다른 계좌로
+        옮기려면 매번 닫아야 했다.
+
+        불러오는 중이나 고른 자산주인이 없을 때도 이 짜임을 그대로 둔다. 예전에는 그때
+        두 단이 통째로 사라져, 구성원을 만들 자리(탭 줄의 더하기)까지 함께 없어졌다 --
+        아무도 고르지 않은 가계부에서는 구성원을 더할 길이 아예 막혔다. 고쳐 놓고 다시
+        읽는 동안 오른쪽 상세가 깜빡이던 것도 함께 가라앉는다 (앱과 같은 규칙이다).
+      */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
           {/* 왼쪽: 구성원별 목록. 드래그로 순서를 바꿀 수 있다. */}
           <div className={hideOnNarrow}>
-          <PersonAssetList
+          {/*
+            목록을 한 사람 것으로 좁히는 탭. 구성원 추가도 이 줄의 오른쪽 끝에 있다.
+
+            만들 자리는 여전히 목록 바로 위다 -- 무엇에 더하는지가 아래에 곧바로 이어져
+            보이고, 목록이 길어져도 버튼을 찾아 내려갈 일이 없다 (`AddButton` 과 같은 규칙).
+          */}
+          <PersonTabs
             people={displayPeople}
+            selectedId={listPerson}
+            onSelect={setListPersonId}
+            onAddPerson={openPersonAdd}
+          />
+
+          {isLoading ? (
+            <p className="text-gray-600">{t('common.loading')}</p>
+          ) : displayPeople.length === 0 ? (
+            <p className="text-gray-600">{t('assets.noSelection')}</p>
+          ) : (
+          <PersonAssetList
+            people={listedPeople}
             accounts={accounts}
             cardsOf={getAccountCards}
             netWorthByPerson={netWorthByPerson}
@@ -1454,10 +1493,10 @@ export default function DashboardPage() {
             onReorderPeople={handleReorderPeople}
             onReorderAccounts={handleReorderAccounts}
             onReorderCards={handleReorderCards}
-            onAddPerson={openPersonAdd}
             onAddAccount={openAccountAdd}
             onAddCard={openCardAdd}
           />
+          )}
           </div>
 
           {/* 오른쪽: 고른 계좌의 잔액 추이와 거래 내역 */}
@@ -1766,8 +1805,7 @@ export default function DashboardPage() {
               </p>
             </div>
           )}
-        </div>
-      )}
+      </div>
 
       {/*
         숨긴 항목은 **목록 맨 아래**다.
@@ -2374,7 +2412,6 @@ function PersonAssetList({
   onReorderPeople,
   onReorderAccounts,
   onReorderCards,
-  onAddPerson,
   onAddAccount,
   onAddCard,
 }: {
@@ -2392,11 +2429,11 @@ function PersonAssetList({
   onReorderAccounts: (ids: string[]) => void;
   onReorderCards: (ids: string[]) => void;
   /*
-   * 추가는 만들 자리에서 시작한다. 구성원은 목록 끝에서, 계좌는 그 사람 안에서,
-   * 카드는 그 계좌 안에서. 눌러서 들어온 자리가 곧 주인·결제 통장이라 폼에서 다시
-   * 고를 것이 없다.
+   * 추가는 만들 자리에서 시작한다. 계좌는 그 사람 안에서, 카드는 그 계좌 안에서.
+   * 눌러서 들어온 자리가 곧 주인·결제 통장이라 폼에서 다시 고를 것이 없다.
+   *
+   * 구성원 추가만 이 목록 밖에 있다. 목록 위의 사람 탭(`PersonTabs`)이 그 자리다.
    */
-  onAddPerson: () => void;
   onAddAccount: (personId: string) => void;
   onAddCard: (accountId: string) => void;
 }) {
@@ -2406,14 +2443,6 @@ function PersonAssetList({
 
   return (
     <div>
-      {/*
-        구성원은 목록 맨 위에서 더한다. 만들 자리가 목록보다 먼저 보인다.
-
-        사람 카드끼리는 넓게(space-y-8) 벌리지만 이 버튼은 바로 아래 카드에 붙여 둔다.
-        같은 간격으로 띄우면 어느 목록에 더하는 버튼인지 멀어져 읽히지 않는다.
-      */}
-      <AddButton label={t('person.add')} onClick={onAddPerson} />
-
       <div className="space-y-8">
       {items.map((person) => (
         <div

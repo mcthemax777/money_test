@@ -23,6 +23,7 @@ import AssetTypeSummary from '../components/AssetTypeSummary';
 import EntryDetailModal from '../components/EntryDetailModal';
 import EntryEditor from '../components/EntryEditor';
 import PersonScopeTitle from '../components/PersonScopeTitle';
+import PersonTabs from '../components/PersonTabs';
 import { AddAccountModal, AddCardModal, AddPersonModal } from '../components/AssetAddModals';
 import DragList from '../components/DragList';
 import {
@@ -64,6 +65,14 @@ export default function AssetsScreen() {
   const [cardEdit, setCardEdit] = useState<Card | null>(null);
   const [accountAddFor, setAccountAddFor] = useState<Person | null>(null);
   const [cardAddFor, setCardAddFor] = useState<Account | null>(null);
+
+  /**
+   * 목록에서 보고 있는 사람. null 이면 고른 자산주인을 전부 늘어놓는다.
+   *
+   * 위의 총자산과 추이 그래프는 이 값을 보지 않는다. 그쪽은 제목에서 고른 자산주인
+   * 전체의 값이고, 이 탭은 긴 목록에서 한 사람에게 바로 가는 길이다.
+   */
+  const [listPersonId, setListPersonId] = useState<string | null>(null);
 
   /**
    * 원장 줄에서 연 거래. 상세와 고치기는 거래 화면과 같은 짝을 쓴다.
@@ -156,6 +165,19 @@ export default function AssetsScreen() {
     if (!detail || detailTarget || assets.isLoading) return;
     setDetail(null);
   }, [detail, detailTarget, assets.isLoading]);
+
+  /*
+   * 탭이 가리키는 사람. 고른 자산주인에서 빠졌으면 전체로 되돌린다.
+   *
+   * 값을 고쳐 두는 대신 그릴 때마다 가린다. 목록이 오는 동안은 visiblePeople 이 비어
+   * 있는데, 그 순간을 "사라졌다"로 읽고 상태를 지우면 다시 들어온 뒤에도 전체가 된다.
+   */
+  const listPerson = assets.visiblePeople.some((person) => person.id === listPersonId)
+    ? listPersonId
+    : null;
+  const listedPeople = listPerson
+    ? assets.visiblePeople.filter((person) => person.id === listPerson)
+    : assets.visiblePeople;
 
   /** 카드의 통화. 결제 통장에 달려 있어 카드만 보고는 알 수 없다. */
   const currencyOfCard = (card: Card) =>
@@ -281,14 +303,19 @@ export default function AssetsScreen() {
         </View>
       ) : null}
 
-      {/*
-        구성원은 목록 맨 위에서 더한다. 만들 자리가 목록보다 먼저 보인다.
-
-        사람 카드끼리는 넓게(gap-8) 벌리지만 이 버튼은 바로 아래 카드에 붙여 둔다.
-        같은 간격으로 띄우면 어느 목록에 더하는 버튼인지 멀어져 읽히지 않는다.
-      */}
       <View>
-      <AddButton label={t('person.add')} onPress={() => setIsPersonAddOpen(true)} />
+      {/*
+        목록을 한 사람 것으로 좁히는 탭. 구성원 추가도 이 줄의 오른쪽 끝에 있다.
+
+        만들 자리는 여전히 목록 바로 위다 -- 무엇에 더하는지가 아래에 곧바로 이어져
+        보이고, 목록이 길어져도 버튼을 찾아 내려갈 일이 없다 (`AddButton` 과 같은 규칙).
+      */}
+      <PersonTabs
+        people={assets.visiblePeople}
+        selectedId={listPerson}
+        onSelect={setListPersonId}
+        onAddPerson={() => setIsPersonAddOpen(true)}
+      />
 
       {assets.isLoading && assets.people.length === 0 ? (
         <Text className="text-gray-600">{t('common.loading')}</Text>
@@ -297,7 +324,7 @@ export default function AssetsScreen() {
       ) : (
         /* 길게 누르면 끌어서 자리를 바꾼다. 구성원·계좌·카드가 모두 같은 규칙이다. */
         <DragList
-          items={assets.visiblePeople}
+          items={listedPeople}
           gap={32}
           itemClassName="rounded-lg bg-white p-6 shadow-sm"
           onReorder={(id, toIndex) => void assets.movePersonTo(id, toIndex)}
