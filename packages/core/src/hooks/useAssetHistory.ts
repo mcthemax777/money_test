@@ -18,9 +18,7 @@ import {
   currentYearMonth,
   daysBetweenKeys,
   formatMonthShort,
-  formatYearMonth,
   formatYearMonthDay,
-  formatYearOnly,
   lastDayOfMonth,
   monthsBetween,
   periodLabel,
@@ -60,19 +58,21 @@ export interface AssetHistoryPoint {
  * 줄여 둔 것이라, 창을 해가 바뀌는 자리로 끌면 어느 해의 9월인지 알 수 없다. 값을
  * 읽는 자리는 한 칸뿐이라 길어도 된다 -- 앱은 그래프 위의 한 줄, 웹은 툴팁이다.
  *
- * **단위를 함께 받는다.** 예전에는 값의 생김새가 단위를 말했는데(4·7·10 자), 주가
- * 들어오면서 일과 같은 열 자가 되어 더는 가를 수 없다. 부르는 쪽은 지금 보고 있는
- * 단위를 이미 손에 들고 있다 (`AssetHistory.granularity`).
+ * **단위는 값의 생김새가 말한다**(`periodLabel`). 넘겨받은 단위는 열 자짜리 값이 주인지
+ * 일인지를 가르는 데에만 쓴다 -- 그 둘만 생김새가 같다.
+ *
+ * 단위를 곧이곧대로 믿으면 안 된다. 탭을 누르면 단위가 먼저 바뀌고 그 단위의 점은
+ * 조회가 끝난 뒤에 온다. 그 사이의 한 번은 **옛 점을 새 단위로** 읽게 되는데, 그때
+ * "2026-09" 를 해로 읽으면 `Number` 가 NaN 이 되고 형식기가 터진다 -- 년을 누르면 앱이
+ * 그대로 죽었다(2026-09-24, 릴리스에서 실제로 겪었다). 생김새로 읽으면 그 자리가 없다.
  */
 export function historyPointLabel(date: string, granularity: Granularity): string {
-  if (granularity === 'day') return formatYearMonthDay(date);
-  // 주는 그 주의 일요일 날짜가 열쇠다. 거래 목록의 주 줄과 같은 이름을 쓴다.
-  if (granularity === 'week') return periodLabel(date);
-  if (granularity === 'month') {
-    const [year, month] = date.split('-').map(Number);
-    return formatYearMonth(year, month);
-  }
-  return formatYearOnly(Number(date));
+  /*
+   * 일별만 날짜로 적는다. 열 자짜리 값은 주의 일요일일 수도, 그냥 그 날일 수도 있어
+   * 생김새만으로는 갈리지 않는 유일한 자리다.
+   */
+  if (granularity === 'day' && date.length === 10) return formatYearMonthDay(date);
+  return periodLabel(date);
 }
 
 /**
