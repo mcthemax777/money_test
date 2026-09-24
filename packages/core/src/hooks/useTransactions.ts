@@ -1916,11 +1916,27 @@ export function useTransactions(projectId: string | null) {
   /**
    * 년월 줄을 누른다. 접힘 -> 목록 -> 거래까지 -> 접힘 으로 돈다.
    *
+   * **안쪽 줄을 하나라도 펴 두었으면 그 다음 누름은 곧바로 접는다.** 한 줄을 열어
+   * 거래까지 본 사람이 년월 줄을 누르는 것은 "그만 보겠다"는 뜻이지 나머지 줄까지
+   * 마저 펴 달라는 뜻이 아니다. 다시 펴려면 한 번 더 누르면 된다.
+   *
    * 다른 달을 건드리지 않는다. 8월을 보다가 7월을 열어도 8월은 그대로 있어야 한다.
    */
   const cycleMonth = useCallback(
     (yearMonth: string) => {
-      const next = ((levelOf(yearMonth) + 1) % 3) as MonthLevel;
+      const level = levelOf(yearMonth);
+      /*
+       * 손으로 펴 둔 줄이 있는가. 열쇠가 `달|탭|줄` 이라 앞 두 조각으로 가른다.
+       *
+       * 2단은 줄마다 펴 둔 것과 무관하게 전부 펼친 상태고 다음이 이미 접힘이라
+       * 1단에서만 본다. 접힌 달(0단)에 남은 자국은 없다 -- 접을 때 함께 지운다.
+       */
+      const hasOpenRow =
+        level === 1 &&
+        Object.entries(openRows).some(
+          ([id, open]) => open && id.startsWith(`${yearMonth}|${tab}|`),
+        );
+      const next = (hasOpenRow ? 0 : (level + 1) % 3) as MonthLevel;
       setLevels((prev) => ({ ...prev, [levelKey(yearMonth)]: next }));
       // 접으면 이 탭에서 그 달에 손으로 편 줄도 함께 정리한다. 다른 탭은 그대로 둔다.
       if (next === 0) {
@@ -1933,7 +1949,7 @@ export function useTransactions(projectId: string | null) {
         });
       }
     },
-    [levelOf, levelKey, tab],
+    [levelOf, levelKey, openRows, tab],
   );
 
   /** 안쪽 줄을 누른다. */

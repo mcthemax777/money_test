@@ -1049,51 +1049,61 @@ export default function TransactionsView({
       ) : (
         <>
       {/*
-        보기 방식.
+        굴려도 화면 위에 남는다(sticky).
 
-        흰 알약을 눌린 칸에 그리지 않고 **하나를 두고 옮긴다.** 칸마다 바탕을 켜고
-        끄면 탭이 순간이동해, 세 탭이 한 줄에 나란한 것인지 서로 다른 화면인지가
-        흐려진다. 미끄러져 가면 "옆으로 옮겼다"가 그대로 보인다.
-
-        폭과 걸음은 calc 로 센다 -- 글자 길이가 언어마다 달라(날짜/Date/日付) 미리
-        적어 둘 수 없고, 재서 옮기려면 그리고 난 뒤를 기다려야 한다.
-        `p-1`(0.25rem) 과 `gap-2`(0.5rem) 가 아래 숫자의 출처다.
+        목록이 길어지면 지금 무엇을 기준으로 보고 있는지가 화면 밖으로 밀려나고, 탭을
+        옮기거나 한 단 더 펴려면 맨 위까지 되돌아가야 했다. 바탕은 페이지와 같은 회색이라
+        아래를 지나가는 줄이 알약의 둥근 모서리로 비쳐 보이지 않는다. 위아래 여백도
+        그 바탕이라 알약이 줄에 닿기 전에 회색이 먼저 온다 (앱도 같은 8px 이다).
       */}
-      <div className="relative flex gap-2 rounded-lg bg-gray-200 p-1">
-        <span
-          aria-hidden
-          className="pointer-events-none absolute inset-y-1 left-1 rounded-md bg-white transition-transform duration-200 ease-out motion-reduce:transition-none"
-          style={{
-            width: 'calc((100% - 1.5rem) / 3)',
-            // 여기서의 100% 는 알약 자신의 폭, 곧 칸 하나다.
-            transform: `translateX(calc(${activeTabIndex} * (100% + 0.5rem)))`,
-          }}
-        />
-        {TABS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => tx.changeTab(item.id)}
-            /* 바탕은 위의 알약이 맡는다. 글자가 그 위에 오도록 자리를 잡아 준다. */
-            className={`relative flex flex-1 items-center justify-center gap-1 rounded-md px-4 py-2 font-medium ${
-              tx.tab === item.id ? 'text-blue-600' : 'text-gray-600'
-            }`}
-          >
-            {t(item.labelKey)}
-            {/*
-              고른 탭에만 꺾쇠를 둔다. 다음 누름이 무엇을 할지 미리 말한다 -- 펴는
-              중이면 아래, 다 펴서 이제 접을 차례면 위다. 이것이 없으면 이미 고른
-              탭을 다시 누를 까닭을 아무도 모른다.
-            */}
-            {tx.tab === item.id ? (
-              tx.tabLevel === 2 ? (
-                <ChevronUp className="h-3.5 w-3.5" aria-hidden />
-              ) : (
-                <ChevronDown className="h-3.5 w-3.5" aria-hidden />
-              )
-            ) : null}
-          </button>
-        ))}
+      <div className="sticky top-0 z-20 bg-gray-50 py-2">
+        {/*
+          보기 방식.
+
+          흰 알약을 눌린 칸에 그리지 않고 **하나를 두고 옮긴다.** 칸마다 바탕을 켜고
+          끄면 탭이 순간이동해, 세 탭이 한 줄에 나란한 것인지 서로 다른 화면인지가
+          흐려진다. 미끄러져 가면 "옆으로 옮겼다"가 그대로 보인다.
+
+          폭과 걸음은 calc 로 센다 -- 글자 길이가 언어마다 달라(날짜/Date/日付) 미리
+          적어 둘 수 없고, 재서 옮기려면 그리고 난 뒤를 기다려야 한다.
+          `p-1`(0.25rem) 과 `gap-2`(0.5rem) 가 아래 숫자의 출처다.
+        */}
+        <div className="relative flex gap-2 rounded-lg bg-gray-200 p-1">
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-y-1 left-1 rounded-md bg-white transition-transform duration-200 ease-out motion-reduce:transition-none"
+            style={{
+              width: 'calc((100% - 1.5rem) / 3)',
+              // 여기서의 100% 는 알약 자신의 폭, 곧 칸 하나다.
+              transform: `translateX(calc(${activeTabIndex} * (100% + 0.5rem)))`,
+            }}
+          />
+          {TABS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => tx.changeTab(item.id)}
+              /* 바탕은 위의 알약이 맡는다. 글자가 그 위에 오도록 자리를 잡아 준다. */
+              className={`relative flex flex-1 items-center justify-center gap-1 rounded-md px-4 py-2 font-medium ${
+                tx.tab === item.id ? 'text-blue-600' : 'text-gray-600'
+              }`}
+            >
+              {t(item.labelKey)}
+              {/*
+                고른 탭에만 꺾쇠를 둔다. 다음 누름이 무엇을 할지 미리 말한다 -- 펴는
+                중이면 아래, 다 펴서 이제 접을 차례면 위다. 이것이 없으면 이미 고른
+                탭을 다시 누를 까닭을 아무도 모른다.
+              */}
+              {tx.tab === item.id ? (
+                tx.tabLevel === 2 ? (
+                  <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+                ) : (
+                  <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                )
+              ) : null}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/*

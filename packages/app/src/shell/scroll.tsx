@@ -10,6 +10,7 @@ import {
 } from 'react';
 import type { MutableRefObject } from 'react';
 import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
+import { useSharedValue, type SharedValue } from 'react-native-reanimated';
 
 /**
  * 화면 바닥에 닿았다는 소식.
@@ -81,6 +82,13 @@ interface ScrollControl {
   attach: (view: ScrollHandle | null, area: { top: number; height: number }) => void;
   /** 지금 얼마나 내려와 있는가. 끄는 줄의 자리를 계산하는 데 쓴다. */
   offset: MutableRefObject<number>;
+  /**
+   * 같은 값을 UI 실에서도 읽을 수 있게 둔 사본.
+   *
+   * 붙박이 머리글(`StickyTop`)은 굴러간 만큼을 프레임마다 읽어 제자리에 남는다. ref 는
+   * UI 실의 worklet 에서 읽을 수 없어 공유값이 따로 있어야 한다.
+   */
+  scrollY: SharedValue<number>;
   /** 화면에서 스크롤 영역이 차지하는 자리. 가장자리를 재는 기준이다. */
   area: MutableRefObject<{ top: number; height: number }>;
   /** 이만큼 더 굴린다. 끝에 닿으면 그 이상은 움직이지 않는다. */
@@ -105,6 +113,7 @@ function ScrollLockProvider({ children }: { children: ReactNode }) {
   const [isLocked, setLocked] = useState(false);
   const view = useRef<ScrollHandle | null>(null);
   const offset = useRef(0);
+  const scrollY = useSharedValue(0);
   const area = useRef({ top: 0, height: 0 });
 
   const attach = useCallback((next: ScrollHandle | null, nextArea: { top: number; height: number }) => {
@@ -123,8 +132,8 @@ function ScrollLockProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ isLocked, setLocked, attach, offset, area, scrollBy, scrollToTop }),
-    [attach, isLocked, scrollBy, scrollToTop],
+    () => ({ isLocked, setLocked, attach, offset, scrollY, area, scrollBy, scrollToTop }),
+    [attach, isLocked, scrollBy, scrollToTop, scrollY],
   );
 
   return <ScrollControlContext.Provider value={value}>{children}</ScrollControlContext.Provider>;
@@ -154,11 +163,25 @@ export function useScrollRegistration() {
     attach: context?.attach,
     noteOffset: useCallback(
       (y: number) => {
-        if (context) context.offset.current = y;
+        if (!context) return;
+        context.offset.current = y;
+        context.scrollY.value = y;
       },
       [context],
     ),
   };
+}
+
+/**
+ * 붙박이 머리글이 읽는 스크롤 자리.
+ *
+ * 껍데기 밖(모달·시험)에서는 늘 0 인 제 값을 쥔다 -- 굴러가지 않으니 머리글도 붙을
+ * 일이 없고, 부르는 쪽이 껍데기가 있는지 따지지 않아도 된다.
+ */
+export function useScrollY(): SharedValue<number> {
+  const context = useContext(ScrollControlContext);
+  const alone = useSharedValue(0);
+  return context?.scrollY ?? alone;
 }
 
 /** 목록이 쥐는 손잡이. 껍데기 밖(모달 등)에서는 아무 일도 하지 않는다. */

@@ -64,6 +64,7 @@ import { useEntryFocus, type EntryFocusOrigin } from '@money/core/store/entry-fo
 
 import { useFloatingActionSlot } from '../shell/floating-action';
 import { useCloseOnBack, useNavigation } from '../shell/navigation';
+import StickyTop from '../shell/StickyTop';
 import EntryDetailModal from '../components/EntryDetailModal';
 import EntryEditor from '../components/EntryEditor';
 import Modal from '../components/Modal';
@@ -962,24 +963,32 @@ export default function TransactionsScreen() {
         <TransactionCalendarView projectId={selectedProjectId} onOpenEntry={openDetail} />
       ) : (
         <>
-      {/* 보기 방식. 년월 목록 위에 두어 어떤 기준으로 파고드는지 먼저 정한다. */}
-      <SegmentedTabs
-        tabs={TABS.map((item) => ({ id: item.id, label: t(item.labelKey) }))}
-        selected={tx.tab}
-        onSelect={tx.changeTab}
-        /*
-          고른 탭의 꺾쇠. 다음 누름이 무엇을 할지 미리 말한다 -- 펴는 중이면 아래,
-          다 펴서 이제 접을 차례면 위다. 이것이 없으면 이미 고른 탭을 다시 누를
-          까닭을 아무도 모른다.
-        */
-        selectedTrailing={
-          tx.tabLevel === 2 ? (
-            <ChevronUp size={14} color="#2563eb" />
-          ) : (
-            <ChevronDown size={14} color="#2563eb" />
-          )
-        }
-      />
+      {/*
+        보기 방식. 년월 목록 위에 두어 어떤 기준으로 파고드는지 먼저 정한다.
+
+        굴려도 화면 위에 남는다(`StickyTop`). 목록이 길어지면 지금 무엇을 기준으로 보고
+        있는지가 화면 밖으로 밀려나고, 탭을 옮기거나 한 단 더 펴려면 맨 위까지 되돌아가야
+        했다. 웹도 같은 자리를 sticky 로 둔다.
+      */}
+      <StickyTop>
+        <SegmentedTabs
+          tabs={TABS.map((item) => ({ id: item.id, label: t(item.labelKey) }))}
+          selected={tx.tab}
+          onSelect={tx.changeTab}
+          /*
+            고른 탭의 꺾쇠. 다음 누름이 무엇을 할지 미리 말한다 -- 펴는 중이면 아래,
+            다 펴서 이제 접을 차례면 위다. 이것이 없으면 이미 고른 탭을 다시 누를
+            까닭을 아무도 모른다.
+          */
+          selectedTrailing={
+            tx.tabLevel === 2 ? (
+              <ChevronUp size={14} color="#2563eb" />
+            ) : (
+              <ChevronDown size={14} color="#2563eb" />
+            )
+          }
+        />
+      </StickyTop>
 
       {/*
         걸려 있는 조건. 탭 바로 아래에 둔다.
