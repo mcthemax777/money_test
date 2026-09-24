@@ -85,8 +85,8 @@ interface ScrollControl {
   /**
    * 같은 값을 UI 실에서도 읽을 수 있게 둔 사본.
    *
-   * 붙박이 머리글(`StickyTop`)은 굴러간 만큼을 프레임마다 읽어 제자리에 남는다. ref 는
-   * UI 실의 worklet 에서 읽을 수 없어 공유값이 따로 있어야 한다.
+   * 붙박이 머리글(`RevealTop`, `StickySection`)은 굴러간 만큼을 프레임마다 읽어 제자리에
+   * 남는다. ref 는 UI 실의 worklet 에서 읽을 수 없어 공유값이 따로 있어야 한다.
    */
   scrollY: SharedValue<number>;
   /** 화면에서 스크롤 영역이 차지하는 자리. 가장자리를 재는 기준이다. */

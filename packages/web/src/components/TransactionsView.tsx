@@ -90,6 +90,7 @@ import Modal from '@/components/Modal';
 import TransactionCalendarView from '@/components/TransactionCalendarView';
 import PageHeader from '@/components/PageHeader';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
+import { useTopReveal } from '@/hooks/useTopReveal';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import TransactionItem from '@/components/TransactionItem';
 
@@ -474,6 +475,15 @@ export default function TransactionsView({
     0,
     TABS.findIndex((item) => item.id === tx.tab),
   );
+
+  /*
+   * 위쪽 한 덩어리(제목·탭·조건)가 비켜서 있는가와 그 높이.
+   *
+   * 년월 줄은 그 아래에 선다. 덩어리가 비켜서면 화면 맨 위(0), 되돌아오면 그 높이만큼
+   * 내려온 자리다 -- 같은 길이의 시간을 들여 함께 움직여야 두 줄이 겹쳐 보이지 않는다.
+   */
+  const { ref: topRef, height: topHeight, hidden: isTopHidden } = useTopReveal<HTMLDivElement>();
+  const stickyTop = isTopHidden ? 0 : topHeight;
 
   const entryList = (yearMonth: string, key: string) => {
     // 한 번만 묻는다. 두 번 물으면 그 달을 날짜로 묶는 일이 줄마다 두 번씩 돈다.
@@ -869,170 +879,274 @@ export default function TransactionsView({
   return (
     <div className="space-y-4">
       {/*
-        고르는 중에는 머리글이 통째로 바뀐다.
-        뒤로가기 · 몇 개를 골랐는지 · 삭제. 제목과 검색은 그때 쓸 것이 아니다.
+        위쪽 한 덩어리 -- 제목, 알림, 탭, 걸어 둔 조건.
+
+        **내리는 동안에는 비켜서고, 조금이라도 위로 올리면 되돌아온다**(`useTopReveal`).
+        화면 위에 계속 붙여 두면 긴 목록에서 자리를 빼앗고, 그냥 흘려보내면 탭 하나를
+        옮기거나 검색을 고치려고 맨 위까지 되돌아가야 한다. 올릴 때 한 덩어리로
+        내려오므로 제목과 탭 중 무엇이 필요했든 같은 손짓으로 닿는다.
+
+        굴러가는 동안 화면 맨 위에 남는 것은 이 덩어리가 아니라 **그 달의 년월 줄**이다
+        (아래 목록의 sticky). 지금 보고 있는 것이 몇 월인지가 탭 이름보다 먼저 알고 싶은
+        것이라, 늘 붙어 있을 한 줄의 자리를 그쪽에 내주었다.
+
+        바탕은 페이지와 같은 회색이고 좌우 여백 바깥까지 늘린다(-mx-4). 그러지 않으면
+        아래를 지나가는 줄이 양옆 여백으로 비쳐 보인다. 위쪽 여백은 페이지의 것을
+        그대로 먹어(-mt-4 pt-4) 붙는 순간에 글자가 튀지 않게 한다.
       */}
-      {tx.isSelecting ? (
-        <div className="flex items-center gap-3">
-          <button
-            type="button"
-            onClick={tx.stopSelecting}
-            aria-label={t('common.back')}
-            title={t('common.back')}
-            className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white hover:bg-gray-50"
-          >
-            <ArrowLeft className="h-4 w-4 text-gray-600" aria-hidden />
-          </button>
-
-          {/*
-            태그를 붙이러 왔으면 그 버튼이 왼쪽, 뒤로가기 옆에 선다.
-            지우기는 오른쪽 끝이다 -- 되돌릴 수 없는 일이라 뒤로가기에서 멀어야 한다.
-          */}
-          {tx.selectPurpose === 'tag' ? (
+      <div
+        ref={topRef}
+        className="sticky top-0 z-30 -mx-4 -mt-4 space-y-4 bg-gray-50 px-4 pb-2 pt-4 transition-transform duration-200 ease-out motion-reduce:transition-none md:-mt-8 md:pt-8"
+        style={{ transform: `translateY(${isTopHidden ? -topHeight : 0}px)` }}
+      >
+        {/*
+          고르는 중에는 머리글이 통째로 바뀐다.
+          뒤로가기 · 몇 개를 골랐는지 · 삭제. 제목과 검색은 그때 쓸 것이 아니다.
+        */}
+        {tx.isSelecting ? (
+          <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={() => {
-                // 열 때마다 비운다. 지난번에 손댄 것이 남으면 엉뚱한 태그가 바뀐다.
-                setTagChanged({});
-                setIsTagPickOpen(true);
-              }}
-              disabled={tx.isTagging}
-              aria-label={t('tx.tagSelected')}
-              title={t('tx.tagSelected')}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-blue-300 bg-white hover:bg-blue-50 disabled:opacity-50"
+              onClick={tx.stopSelecting}
+              aria-label={t('common.back')}
+              title={t('common.back')}
+              className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white hover:bg-gray-50"
             >
-              <Tag className="h-4 w-4 text-blue-600" aria-hidden />
+              <ArrowLeft className="h-4 w-4 text-gray-600" aria-hidden />
             </button>
-          ) : null}
 
-          <p className="flex-1 text-base font-semibold text-gray-900">
-            {t('tx.selected', { count: tx.selectedCount })}
-          </p>
-
-          {tx.selectPurpose === 'delete' ? (
-            <button
-              type="button"
-              onClick={askDelete}
-              disabled={tx.isDeleting}
-              aria-label={t('tx.deleteSelected')}
-              title={t('tx.deleteSelected')}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-red-300 bg-white hover:bg-red-50 disabled:opacity-50"
-            >
-              <Trash2 className="h-4 w-4 text-red-600" aria-hidden />
-            </button>
-          ) : null}
-        </div>
-      ) : (
-        <PageHeader
-          /*
-            분류·태그 상세에서 건너왔으면 ←가 선다. 누르면 떠나온 상세가 다시 펴진다.
-            평소의 거래 화면은 메뉴에 있는 자리라 돌아갈 곳이 없다.
-          */
-          onBack={onBack}
-          title={
-            <PersonScopeTitle
-              noun={t('tx.noun')}
-              people={tx.people}
-              myPersonId={myPersonId}
-              selectedPersonIds={selectedPersonIds}
-              onTogglePerson={togglePersonId}
-            />
-          }
-          action={
-            <div className="flex gap-2">
-              {/*
-                보관함. 검색 왼쪽에 둔다.
-
-                아직 거래가 아닌 후보가 쌓이는 자리라 거래 화면에서 들어가는 것이
-                맞다 -- 그 후보가 되려는 것이 이 화면의 줄이다. 대기 건수를 옆에
-                숫자로 붙인다(검색이 걸린 개수를 적는 것과 같은 모양이다).
-              */}
-              <Link
-                href="/transactions/inbox"
-                aria-label={t('inbox.open')}
-                title={t('inbox.title')}
-                className={`flex items-center gap-1.5 px-2 py-2 text-sm font-medium ${
-                  inboxCount > 0 ? 'text-blue-600' : 'text-gray-600'
-                }`}
-              >
-                <Archive className="h-4 w-4" aria-hidden />
-                {inboxCount > 0 ? <span className="font-semibold">{inboxCount}</span> : null}
-              </Link>
-              {/*
-                보기를 바꾸는 단추. 지금 무엇을 보고 있는지가 아니라 **누르면 무엇이
-                되는지**를 그린다 -- 목록을 보는 중이면 달력, 달력을 보는 중이면 목록이다.
-                누를 자리와 그 결과가 한 그림이라 설명이 필요 없다.
-              */}
+            {/*
+              태그를 붙이러 왔으면 그 버튼이 왼쪽, 뒤로가기 옆에 선다.
+              지우기는 오른쪽 끝이다 -- 되돌릴 수 없는 일이라 뒤로가기에서 멀어야 한다.
+            */}
+            {tx.selectPurpose === 'tag' ? (
               <button
                 type="button"
-                onClick={() => setIsCalendar((on) => !on)}
-                aria-label={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
-                title={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
-                className={`flex items-center justify-center p-2 ${
-                  isCalendar ? 'text-blue-600' : 'text-gray-600'
-                }`}
+                onClick={() => {
+                  // 열 때마다 비운다. 지난번에 손댄 것이 남으면 엉뚱한 태그가 바뀐다.
+                  setTagChanged({});
+                  setIsTagPickOpen(true);
+                }}
+                disabled={tx.isTagging}
+                aria-label={t('tx.tagSelected')}
+                title={t('tx.tagSelected')}
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-blue-300 bg-white hover:bg-blue-50 disabled:opacity-50"
               >
-                {isCalendar ? (
-                  <List className="h-4 w-4" aria-hidden />
-                ) : (
-                  <CalendarDays className="h-4 w-4" aria-hidden />
-                )}
+                <Tag className="h-4 w-4 text-blue-600" aria-hidden />
               </button>
-              {/*
-                검색. 달력 보기에서는 감춘다.
+            ) : null}
 
-                아래 목록 쪽이 통째로 빠지는 자리라 걸어 둔 검색이 달력에는 걸리지
-                않는다. 단추만 남겨 두면 눌러서 조건을 거는데 화면은 그대로여서,
-                걸렸는지 아닌지 알 길이 없다. 목록으로 돌아오면 걸어 둔 것은 그대로다.
-              */}
-              {!isCalendar ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDraft(tx.search);
-                    setIsSearchOpen(true);
-                  }}
-                  aria-label={t('tx.search')}
-                  title={t('tx.search')}
-                  /*
-                    아이콘만 둔다. 테두리·바탕도, 손을 올렸을 때의 바탕도 없다. 앱과
-                    같은 모양이다 -- 머리글에서는 상자보다 아이콘이 먼저 보여야 한다.
-                    검색이 걸려 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
-                  */
+            <p className="flex-1 text-base font-semibold text-gray-900">
+              {t('tx.selected', { count: tx.selectedCount })}
+            </p>
+
+            {tx.selectPurpose === 'delete' ? (
+              <button
+                type="button"
+                onClick={askDelete}
+                disabled={tx.isDeleting}
+                aria-label={t('tx.deleteSelected')}
+                title={t('tx.deleteSelected')}
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-red-300 bg-white hover:bg-red-50 disabled:opacity-50"
+              >
+                <Trash2 className="h-4 w-4 text-red-600" aria-hidden />
+              </button>
+            ) : null}
+          </div>
+        ) : (
+          <PageHeader
+            /*
+              분류·태그 상세에서 건너왔으면 ←가 선다. 누르면 떠나온 상세가 다시 펴진다.
+              평소의 거래 화면은 메뉴에 있는 자리라 돌아갈 곳이 없다.
+            */
+            onBack={onBack}
+            title={
+              <PersonScopeTitle
+                noun={t('tx.noun')}
+                people={tx.people}
+                myPersonId={myPersonId}
+                selectedPersonIds={selectedPersonIds}
+                onTogglePerson={togglePersonId}
+              />
+            }
+            action={
+              <div className="flex gap-2">
+                {/*
+                  보관함. 검색 왼쪽에 둔다.
+
+                  아직 거래가 아닌 후보가 쌓이는 자리라 거래 화면에서 들어가는 것이
+                  맞다 -- 그 후보가 되려는 것이 이 화면의 줄이다. 대기 건수를 옆에
+                  숫자로 붙인다(검색이 걸린 개수를 적는 것과 같은 모양이다).
+                */}
+                <Link
+                  href="/transactions/inbox"
+                  aria-label={t('inbox.open')}
+                  title={t('inbox.title')}
                   className={`flex items-center gap-1.5 px-2 py-2 text-sm font-medium ${
-                    tx.searchCount > 0 ? 'text-blue-600' : 'text-gray-600'
+                    inboxCount > 0 ? 'text-blue-600' : 'text-gray-600'
                   }`}
                 >
-                  {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
-                  <Search className="h-4 w-4" aria-hidden />
-                  {tx.searchCount > 0 ? (
-                    <span className="font-semibold">{tx.searchCount}</span>
+                  <Archive className="h-4 w-4" aria-hidden />
+                  {inboxCount > 0 ? <span className="font-semibold">{inboxCount}</span> : null}
+                </Link>
+                {/*
+                  보기를 바꾸는 단추. 지금 무엇을 보고 있는지가 아니라 **누르면 무엇이
+                  되는지**를 그린다 -- 목록을 보는 중이면 달력, 달력을 보는 중이면 목록이다.
+                  누를 자리와 그 결과가 한 그림이라 설명이 필요 없다.
+                */}
+                <button
+                  type="button"
+                  onClick={() => setIsCalendar((on) => !on)}
+                  aria-label={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
+                  title={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
+                  className={`flex items-center justify-center p-2 ${
+                    isCalendar ? 'text-blue-600' : 'text-gray-600'
+                  }`}
+                >
+                  {isCalendar ? (
+                    <List className="h-4 w-4" aria-hidden />
+                  ) : (
+                    <CalendarDays className="h-4 w-4" aria-hidden />
+                  )}
+                </button>
+                {/*
+                  검색. 달력 보기에서는 감춘다.
+
+                  아래 목록 쪽이 통째로 빠지는 자리라 걸어 둔 검색이 달력에는 걸리지
+                  않는다. 단추만 남겨 두면 눌러서 조건을 거는데 화면은 그대로여서,
+                  걸렸는지 아닌지 알 길이 없다. 목록으로 돌아오면 걸어 둔 것은 그대로다.
+                */}
+                {!isCalendar ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setDraft(tx.search);
+                      setIsSearchOpen(true);
+                    }}
+                    aria-label={t('tx.search')}
+                    title={t('tx.search')}
+                    /*
+                      아이콘만 둔다. 테두리·바탕도, 손을 올렸을 때의 바탕도 없다. 앱과
+                      같은 모양이다 -- 머리글에서는 상자보다 아이콘이 먼저 보여야 한다.
+                      검색이 걸려 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
+                    */
+                    className={`flex items-center gap-1.5 px-2 py-2 text-sm font-medium ${
+                      tx.searchCount > 0 ? 'text-blue-600' : 'text-gray-600'
+                    }`}
+                  >
+                    {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
+                    <Search className="h-4 w-4" aria-hidden />
+                    {tx.searchCount > 0 ? (
+                      <span className="font-semibold">{tx.searchCount}</span>
+                    ) : null}
+                  </button>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={() => setIsMoreOpen(true)}
+                  aria-label={t('tx.more')}
+                  title={t('tx.more')}
+                  className="flex items-center justify-center p-2 text-gray-600"
+                >
+                  <MoreVertical className="h-4 w-4" aria-hidden />
+                </button>
+              </div>
+            }
+          />
+        )}
+
+        {tx.hasError ? (
+          <div className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{t('tx.loadFailed')}</div>
+        ) : null}
+
+        {notice ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+            {notice}
+          </div>
+        ) : null}
+
+        {/* 달력 보기에서는 목록 쪽 손잡이를 감춘다 (바로 아래 주석 참고). */}
+        {!isCalendar ? (
+          <>
+            {/*
+              보기 방식.
+
+              흰 알약을 눌린 칸에 그리지 않고 **하나를 두고 옮긴다.** 칸마다 바탕을 켜고
+              끄면 탭이 순간이동해, 세 탭이 한 줄에 나란한 것인지 서로 다른 화면인지가
+              흐려진다. 미끄러져 가면 "옆으로 옮겼다"가 그대로 보인다.
+
+              폭과 걸음은 calc 로 센다 -- 글자 길이가 언어마다 달라(날짜/Date/日付) 미리
+              적어 둘 수 없고, 재서 옮기려면 그리고 난 뒤를 기다려야 한다.
+              `p-1`(0.25rem) 과 `gap-2`(0.5rem) 가 아래 숫자의 출처다.
+            */}
+            <div className="relative flex gap-2 rounded-lg bg-gray-200 p-1">
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-y-1 left-1 rounded-md bg-white transition-transform duration-200 ease-out motion-reduce:transition-none"
+                style={{
+                  width: 'calc((100% - 1.5rem) / 3)',
+                  // 여기서의 100% 는 알약 자신의 폭, 곧 칸 하나다.
+                  transform: `translateX(calc(${activeTabIndex} * (100% + 0.5rem)))`,
+                }}
+              />
+              {TABS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => tx.changeTab(item.id)}
+                  /* 바탕은 위의 알약이 맡는다. 글자가 그 위에 오도록 자리를 잡아 준다. */
+                  className={`relative flex flex-1 items-center justify-center gap-1 rounded-md px-4 py-2 font-medium ${
+                    tx.tab === item.id ? 'text-blue-600' : 'text-gray-600'
+                  }`}
+                >
+                  {t(item.labelKey)}
+                  {/*
+                    고른 탭에만 꺾쇠를 둔다. 다음 누름이 무엇을 할지 미리 말한다 -- 한
+                    달도 펴져 있지 않으면 아래(편다), 한 달이라도 펴져 있으면 위(접는다)다.
+                    이것이 없으면 이미 고른 탭을 다시 누를 까닭을 아무도 모른다.
+                  */}
+                  {tx.tab === item.id ? (
+                    tx.tabOpen ? (
+                      <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+                    ) : (
+                      <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                    )
                   ) : null}
                 </button>
-              ) : null}
-              <button
-                type="button"
-                onClick={() => setIsMoreOpen(true)}
-                aria-label={t('tx.more')}
-                title={t('tx.more')}
-                className="flex items-center justify-center p-2 text-gray-600"
-              >
-                <MoreVertical className="h-4 w-4" aria-hidden />
-              </button>
+              ))}
             </div>
-          }
-        />
-      )}
 
-      {tx.hasError ? (
-        <div className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{t('tx.loadFailed')}</div>
-      ) : null}
+          {/*
+            걸려 있는 조건. 탭 바로 아래에 둔다.
 
-      {notice ? (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          {notice}
-        </div>
-      ) : null}
+            검색 창을 열어야 무엇을 골랐는지 알 수 있으면, 결과가 비었을 때 이유를 찾으려
+            창을 다시 열게 된다. 여기 늘어놓으면 그 걸음이 사라지고, 하나만 빼는 일도
+            창을 열지 않고 끝난다.
+
+            많아지면 가로로 굴린다. 줄바꿈으로 두면 조건이 열 개 넘을 때 목록이 화면 밖으로
+            밀린다.
+          */}
+          {tx.searchChips.length > 0 ? (
+            <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+              {tx.searchChips.map((chip) => (
+                <button
+                  key={chip.id}
+                  type="button"
+                  onClick={() => tx.removeSearchChip(chip.id)}
+                  // 지우는 버튼이라 이름을 함께 읽어 준다. 알약만으로는 무엇이 빠지는지 모른다.
+                  aria-label={`${chip.label} ${t('tx.search.chipRemove')}`}
+                  title={t('tx.search.chipRemove')}
+                  className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+                >
+                  {chip.label}
+                  <X className="h-3.5 w-3.5" aria-hidden />
+                </button>
+              ))}
+            </div>
+          ) : null}
+          </>
+        ) : null}
+      </div>
 
       {/*
         달력 보기. 머리글의 단추가 고른다.
@@ -1047,95 +1161,14 @@ export default function TransactionsView({
           onOpenEntry={setDetail}
         />
       ) : (
-        <>
-      {/*
-        굴려도 화면 위에 남는다(sticky).
-
-        목록이 길어지면 지금 무엇을 기준으로 보고 있는지가 화면 밖으로 밀려나고, 탭을
-        옮기거나 한 단 더 펴려면 맨 위까지 되돌아가야 했다. 바탕은 페이지와 같은 회색이라
-        아래를 지나가는 줄이 알약의 둥근 모서리로 비쳐 보이지 않는다. 위아래 여백도
-        그 바탕이라 알약이 줄에 닿기 전에 회색이 먼저 온다 (앱도 같은 8px 이다).
-      */}
-      <div className="sticky top-0 z-20 bg-gray-50 py-2">
-        {/*
-          보기 방식.
-
-          흰 알약을 눌린 칸에 그리지 않고 **하나를 두고 옮긴다.** 칸마다 바탕을 켜고
-          끄면 탭이 순간이동해, 세 탭이 한 줄에 나란한 것인지 서로 다른 화면인지가
-          흐려진다. 미끄러져 가면 "옆으로 옮겼다"가 그대로 보인다.
-
-          폭과 걸음은 calc 로 센다 -- 글자 길이가 언어마다 달라(날짜/Date/日付) 미리
-          적어 둘 수 없고, 재서 옮기려면 그리고 난 뒤를 기다려야 한다.
-          `p-1`(0.25rem) 과 `gap-2`(0.5rem) 가 아래 숫자의 출처다.
-        */}
-        <div className="relative flex gap-2 rounded-lg bg-gray-200 p-1">
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-y-1 left-1 rounded-md bg-white transition-transform duration-200 ease-out motion-reduce:transition-none"
-            style={{
-              width: 'calc((100% - 1.5rem) / 3)',
-              // 여기서의 100% 는 알약 자신의 폭, 곧 칸 하나다.
-              transform: `translateX(calc(${activeTabIndex} * (100% + 0.5rem)))`,
-            }}
-          />
-          {TABS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => tx.changeTab(item.id)}
-              /* 바탕은 위의 알약이 맡는다. 글자가 그 위에 오도록 자리를 잡아 준다. */
-              className={`relative flex flex-1 items-center justify-center gap-1 rounded-md px-4 py-2 font-medium ${
-                tx.tab === item.id ? 'text-blue-600' : 'text-gray-600'
-              }`}
-            >
-              {t(item.labelKey)}
-              {/*
-                고른 탭에만 꺾쇠를 둔다. 다음 누름이 무엇을 할지 미리 말한다 -- 펴는
-                중이면 아래, 다 펴서 이제 접을 차례면 위다. 이것이 없으면 이미 고른
-                탭을 다시 누를 까닭을 아무도 모른다.
-              */}
-              {tx.tab === item.id ? (
-                tx.tabLevel === 2 ? (
-                  <ChevronUp className="h-3.5 w-3.5" aria-hidden />
-                ) : (
-                  <ChevronDown className="h-3.5 w-3.5" aria-hidden />
-                )
-              ) : null}
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/*
-        걸려 있는 조건. 탭 바로 아래에 둔다.
-
-        검색 창을 열어야 무엇을 골랐는지 알 수 있으면, 결과가 비었을 때 이유를 찾으려
-        창을 다시 열게 된다. 여기 늘어놓으면 그 걸음이 사라지고, 하나만 빼는 일도
-        창을 열지 않고 끝난다.
-
-        많아지면 가로로 굴린다. 줄바꿈으로 두면 조건이 열 개 넘을 때 목록이 화면 밖으로
-        밀린다.
-      */}
-      {tx.searchChips.length > 0 ? (
-        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-          {tx.searchChips.map((chip) => (
-            <button
-              key={chip.id}
-              type="button"
-              onClick={() => tx.removeSearchChip(chip.id)}
-              // 지우는 버튼이라 이름을 함께 읽어 준다. 알약만으로는 무엇이 빠지는지 모른다.
-              aria-label={`${chip.label} ${t('tx.search.chipRemove')}`}
-              title={t('tx.search.chipRemove')}
-              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
-            >
-              {chip.label}
-              <X className="h-3.5 w-3.5" aria-hidden />
-            </button>
-          ))}
-        </div>
-      ) : null}
-
-      <div className="overflow-hidden rounded-lg">
+      <div
+        /*
+          자르지 않는다(overflow-hidden 을 두지 않는다). 안의 년월 줄이 굴러도 화면 위에
+          남아야 하는데, 잘라 내는 상자는 그 줄을 제 안에 가둬 sticky 를 죽인다. 상자에는
+          바탕도 테두리도 없어 잘라 낼 것도 없다.
+        */
+        className="rounded-lg"
+      >
         {tx.isLoadingMonths && tx.months.length === 0 ? (
           <p className="p-3 text-sm text-gray-500">{t('common.loading')}</p>
         ) : tx.months.length === 0 ? (
@@ -1163,31 +1196,51 @@ export default function TransactionsView({
                 key={month.yearMonth}
                 className={touchesPrevious ? 'border-t border-gray-200' : undefined}
               >
-                <Line
-                  depth={0}
-                  label={periodLabel(month.yearMonth)}
-                  expense={toNumber(month.expense)}
-                  income={toNumber(month.income)}
-                  open={level >= 1}
-                  /*
-                    순수입은 검색을 걸지 않았을 때만 적는다.
+                {/*
+                  년월 줄은 그 달을 지나는 동안 화면 위에 남는다(sticky).
 
-                    검색을 켜면 이 줄의 수입·지출은 걸린 거래만 센 값이라, 그 차액은
-                    그 달에 남은 돈이 아니라 "골라 낸 것들의 차액"이다. 같은 자리에
-                    같은 낱말로 적히면 달의 순수입으로 읽힌다.
-                  */
-                  showNet={tx.searchCount === 0}
-                  check={
-                    tx.isSelecting
-                      ? {
-                          checked: tx.monthChecked(month.yearMonth),
-                          pending: tx.isRangePending(month.yearMonth),
-                          onToggle: () => void tx.toggleRange(month.yearMonth),
-                        }
-                      : undefined
-                  }
-                  onClick={() => tx.cycleMonth(month.yearMonth)}
-                />
+                  9월을 훑는 동안 "9월"이 위에 붙어 있고, 8월이 올라와 제 줄이 그 자리에
+                  닿으면 9월을 밀어내고 8월이 선다. 붙박이 상자는 제 달(바깥 div) 안에서만
+                  움직이므로, 미는 일에 따로 손댈 것이 없다 -- 9월 상자가 끝나는 곳이
+                  9월 줄이 갈 수 있는 끝이다.
+
+                  서는 높이는 위 덩어리가 정한다. 비켜서 있으면 화면 맨 위, 되돌아와
+                  있으면 그 아래다. 덩어리와 같은 시간을 들여 움직여야 내려오는 제목 밑으로
+                  이 줄이 미끄러져 들어가는 것으로 보인다.
+
+                  바탕은 페이지와 같은 회색이다. 투명하게 두면 아래를 지나가는 흰 거래줄이
+                  달 이름과 겹쳐 읽힌다.
+                */}
+                <div
+                  className="sticky z-10 bg-gray-50 transition-[top] duration-200 ease-out motion-reduce:transition-none"
+                  style={{ top: stickyTop }}
+                >
+                  <Line
+                    depth={0}
+                    label={periodLabel(month.yearMonth)}
+                    expense={toNumber(month.expense)}
+                    income={toNumber(month.income)}
+                    open={level >= 1}
+                    /*
+                      순수입은 검색을 걸지 않았을 때만 적는다.
+
+                      검색을 켜면 이 줄의 수입·지출은 걸린 거래만 센 값이라, 그 차액은
+                      그 달에 남은 돈이 아니라 "골라 낸 것들의 차액"이다. 같은 자리에
+                      같은 낱말로 적히면 달의 순수입으로 읽힌다.
+                    */
+                    showNet={tx.searchCount === 0}
+                    check={
+                      tx.isSelecting
+                        ? {
+                            checked: tx.monthChecked(month.yearMonth),
+                            pending: tx.isRangePending(month.yearMonth),
+                            onToggle: () => void tx.toggleRange(month.yearMonth),
+                          }
+                        : undefined
+                    }
+                    onClick={() => tx.cycleMonth(month.yearMonth)}
+                  />
+                </div>
                 {/*
                     펼친 것을 테두리로 두른다. "여기서 여기까지가 그 달의 것" 을
                     네 변이 말한다.
@@ -1219,7 +1272,6 @@ export default function TransactionsView({
           })
         )}
       </div>
-        </>
       )}
 
       {/*

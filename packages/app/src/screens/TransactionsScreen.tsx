@@ -36,6 +36,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react-native';
+import { useSharedValue } from 'react-native-reanimated';
 import {
   originalEntry,
   type EntryListItem,
@@ -64,7 +65,8 @@ import { useEntryFocus, type EntryFocusOrigin } from '@money/core/store/entry-fo
 
 import { useFloatingActionSlot } from '../shell/floating-action';
 import { useCloseOnBack, useNavigation } from '../shell/navigation';
-import StickyTop from '../shell/StickyTop';
+import RevealTop from '../shell/RevealTop';
+import { StickySection, StickySections } from '../shell/StickySection';
 import EntryDetailModal from '../components/EntryDetailModal';
 import EntryEditor from '../components/EntryEditor';
 import Modal from '../components/Modal';
@@ -468,6 +470,13 @@ export default function TransactionsScreen() {
    */
   const [isCalendar, setIsCalendar] = useState(false);
   /**
+   * 위 머리글(제목·탭·조건)이 되돌아와 있는 높이. `RevealTop` 이 적고 년월 줄이 읽는다.
+   *
+   * 년월 줄은 굴러가는 동안 화면 위에 남는데(`StickySection`), 그 자리가 되돌아온
+   * 머리글과 겹치면 안 된다. 머리글이 비켜서면 0, 되돌아오면 그 높이만큼 아래다.
+   */
+  const topInset = useSharedValue(0);
+  /**
    * 내용을 베껴 새로 적는 중인 거래. null 이면 베끼기로 연 팝업이 없다는 뜻이다.
    *
    * 이 화면은 거래를 만드는 자리가 아니라, 상세에서 베끼기나 고치기를 누른 동안만
@@ -799,158 +808,234 @@ export default function TransactionsScreen() {
   return (
     <View className="gap-4">
       {/*
-        고르는 중에는 머리글이 통째로 바뀐다.
-        뒤로가기 · 몇 개를 골랐는지 · 삭제. 제목과 검색은 그때 쓸 것이 아니다.
+        위쪽 한 덩어리 -- 제목, 알림, 탭, 걸어 둔 조건.
+
+        **내리는 동안에는 비켜서고, 조금이라도 위로 올리면 되돌아온다**(`RevealTop`).
+        화면 위에 계속 붙여 두면 긴 목록에서 자리를 빼앗고, 그냥 흘려보내면 탭 하나를
+        옮기거나 검색을 고치려고 맨 위까지 되돌아가야 한다. 올릴 때 한 덩어리로
+        내려오므로 제목과 탭 중 무엇이 필요했든 같은 손짓으로 닿는다.
+
+        굴러가는 동안 화면 맨 위에 남는 한 줄은 이 덩어리가 아니라 **그 달의 년월 줄**이
+        맡는다(아래 `StickySections`). 지금 보는 것이 몇 월인지가 탭 이름보다 먼저 알고
+        싶은 것이라, 늘 붙어 있을 자리를 그쪽에 내주었다. 웹도 같은 규칙이다.
       */}
-      {tx.isSelecting ? (
-        <View className="flex-row items-center gap-3">
-          <Pressable
-            onPress={tx.stopSelecting}
-            accessibilityLabel={t('common.back')}
-            className="h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white active:bg-gray-50"
-          >
-            <ArrowLeft size={18} color="#4b5563" />
-          </Pressable>
-
+      <RevealTop inset={topInset}>
+        <View className="gap-4">
           {/*
-            태그를 붙이러 왔으면 그 버튼이 왼쪽, 뒤로가기 옆에 선다.
-            지우기는 오른쪽 끝이다 -- 되돌릴 수 없는 일이라 뒤로가기에서 멀어야 한다.
+            고르는 중에는 머리글이 통째로 바뀐다.
+            뒤로가기 · 몇 개를 골랐는지 · 삭제. 제목과 검색은 그때 쓸 것이 아니다.
           */}
-          {tx.selectPurpose === 'tag' ? (
-            <Pressable
-              onPress={() => setIsTagPickOpen(true)}
-              disabled={tx.isTagging}
-              accessibilityLabel={t('tx.tagSelected')}
-              className={`h-9 w-9 items-center justify-center rounded-lg border border-blue-300 bg-white active:bg-blue-50 ${
-                tx.isTagging ? 'opacity-50' : ''
-              }`}
-            >
-              <Tag size={18} color="#2563eb" />
-            </Pressable>
-          ) : null}
-
-          <Text className="flex-1 text-base font-semibold text-gray-900">
-            {t('tx.selected', { count: tx.selectedCount })}
-          </Text>
-
-          {tx.selectPurpose === 'delete' ? (
-            <Pressable
-              onPress={askDelete}
-              disabled={tx.isDeleting}
-              accessibilityLabel={t('tx.deleteSelected')}
-              className={`h-9 w-9 items-center justify-center rounded-lg border border-red-300 bg-white active:bg-red-50 ${
-                tx.isDeleting ? 'opacity-50' : ''
-              }`}
-            >
-              <Trash2 size={18} color="#dc2626" />
-            </Pressable>
-          ) : null}
-        </View>
-      ) : (
-        <PageHeader
-          /*
-            분류·태그 상세에서 건너왔으면 ← 가 선다. 누르면 떠나온 상세가 다시 펴진다.
-            평소의 거래 화면은 아래 탭에 있는 자리라 돌아갈 곳이 없다.
-          */
-          onBack={origin ? goBackToOrigin : undefined}
-          title={
-            <PersonScopeTitle
-              noun={t('tx.noun')}
-              people={tx.people}
-              myPersonId={myPersonId}
-              selectedPersonIds={selectedPersonIds}
-              onTogglePerson={togglePersonId}
-            />
-          }
-          action={
-            <View className="flex-row gap-2">
-              {/*
-                보관함. 검색 왼쪽에 둔다.
-
-                아직 거래가 아닌 후보가 쌓이는 자리라 거래 화면에서 들어가는 것이
-                맞다 -- 그 후보가 되려는 것이 이 화면의 줄이다. 대기 건수는 옆에
-                숫자로 붙인다(검색 개수와 같은 모양이다).
-              */}
+          {tx.isSelecting ? (
+            <View className="flex-row items-center gap-3">
               <Pressable
-                onPress={() => go('/transactions/inbox')}
-                accessibilityLabel={t('inbox.open')}
-                className="flex-row items-center gap-1.5 px-2 py-2"
+                onPress={tx.stopSelecting}
+                accessibilityLabel={t('common.back')}
+                className="h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white active:bg-gray-50"
               >
-                <Archive size={18} color={inboxCount > 0 ? '#2563eb' : '#4b5563'} />
-                {inboxCount > 0 ? (
-                  <Text className="text-sm font-semibold text-blue-600">{inboxCount}</Text>
-                ) : null}
+                <ArrowLeft size={18} color="#4b5563" />
               </Pressable>
-              {/*
-                보기를 바꾸는 단추. 지금 무엇을 보고 있는지가 아니라 **누르면 무엇이
-                되는지**를 그린다 -- 목록을 보는 중이면 달력, 달력을 보는 중이면 목록이다.
-                누를 자리와 그 결과가 한 그림이라 설명이 필요 없다.
-              */}
-              <Pressable
-                onPress={() => setIsCalendar((on) => !on)}
-                accessibilityLabel={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
-                className="items-center justify-center p-2"
-              >
-                {isCalendar ? (
-                  <List size={18} color="#2563eb" />
-                ) : (
-                  <CalendarDays size={18} color="#4b5563" />
-                )}
-              </Pressable>
-              {/*
-                검색. 달력 보기에서는 감춘다.
 
-                아래 목록 쪽이 통째로 빠지는 자리라 걸어 둔 검색이 달력에는 걸리지
-                않는다. 단추만 남겨 두면 눌러서 조건을 거는데 화면은 그대로여서,
-                걸렸는지 아닌지 알 길이 없다. 목록으로 돌아오면 걸어 둔 것은 그대로다.
+              {/*
+                태그를 붙이러 왔으면 그 버튼이 왼쪽, 뒤로가기 옆에 선다.
+                지우기는 오른쪽 끝이다 -- 되돌릴 수 없는 일이라 뒤로가기에서 멀어야 한다.
               */}
-              {!isCalendar ? (
+              {tx.selectPurpose === 'tag' ? (
                 <Pressable
-                  onPress={() => setIsSearchOpen(true)}
-                  accessibilityLabel={t('tx.search')}
-                  /*
-                    아이콘만 둔다. 테두리·바탕도, 누를 때의 바탕도 없다. 머리글에서
-                    이름 옆에 붙는 자리라 상자를 그리면 아이콘보다 상자가 먼저 보인다.
-                    걸어 둔 검색이 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
-                  */
-                  className="flex-row items-center gap-1.5 px-2 py-2"
+                  onPress={() => setIsTagPickOpen(true)}
+                  disabled={tx.isTagging}
+                  accessibilityLabel={t('tx.tagSelected')}
+                  className={`h-9 w-9 items-center justify-center rounded-lg border border-blue-300 bg-white active:bg-blue-50 ${
+                    tx.isTagging ? 'opacity-50' : ''
+                  }`}
                 >
-                  {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
-                  <Search size={18} color={tx.searchCount > 0 ? '#2563eb' : '#4b5563'} />
-                  {tx.searchCount > 0 ? (
-                    <Text className="text-sm font-semibold text-blue-600">{tx.searchCount}</Text>
-                  ) : null}
+                  <Tag size={18} color="#2563eb" />
                 </Pressable>
               ) : null}
-              {/*
-                더보기에는 쓰는 일만 들어 있다(태그 붙이기·지우기). 읽기 전용
-                구성원에게는 열 것이 없으므로 버튼째 감춘다.
-              */}
-              {canEdit ? (
+
+              <Text className="flex-1 text-base font-semibold text-gray-900">
+                {t('tx.selected', { count: tx.selectedCount })}
+              </Text>
+
+              {tx.selectPurpose === 'delete' ? (
                 <Pressable
-                  onPress={() => setIsMoreOpen(true)}
-                  accessibilityLabel={t('tx.more')}
-                  className="items-center justify-center p-2"
+                  onPress={askDelete}
+                  disabled={tx.isDeleting}
+                  accessibilityLabel={t('tx.deleteSelected')}
+                  className={`h-9 w-9 items-center justify-center rounded-lg border border-red-300 bg-white active:bg-red-50 ${
+                    tx.isDeleting ? 'opacity-50' : ''
+                  }`}
                 >
-                  <MoreVertical size={18} color="#4b5563" />
+                  <Trash2 size={18} color="#dc2626" />
                 </Pressable>
               ) : null}
             </View>
-          }
-        />
-      )}
+          ) : (
+            <PageHeader
+              /*
+                분류·태그 상세에서 건너왔으면 ← 가 선다. 누르면 떠나온 상세가 다시 펴진다.
+                평소의 거래 화면은 아래 탭에 있는 자리라 돌아갈 곳이 없다.
+              */
+              onBack={origin ? goBackToOrigin : undefined}
+              title={
+                <PersonScopeTitle
+                  noun={t('tx.noun')}
+                  people={tx.people}
+                  myPersonId={myPersonId}
+                  selectedPersonIds={selectedPersonIds}
+                  onTogglePerson={togglePersonId}
+                />
+              }
+              action={
+                <View className="flex-row gap-2">
+                  {/*
+                    보관함. 검색 왼쪽에 둔다.
 
-      {tx.hasError ? (
-        <View className="rounded-lg bg-red-50 p-3">
-          <Text className="text-sm text-red-800">{t('tx.loadFailed')}</Text>
-        </View>
-      ) : null}
+                    아직 거래가 아닌 후보가 쌓이는 자리라 거래 화면에서 들어가는 것이
+                    맞다 -- 그 후보가 되려는 것이 이 화면의 줄이다. 대기 건수는 옆에
+                    숫자로 붙인다(검색 개수와 같은 모양이다).
+                  */}
+                  <Pressable
+                    onPress={() => go('/transactions/inbox')}
+                    accessibilityLabel={t('inbox.open')}
+                    className="flex-row items-center gap-1.5 px-2 py-2"
+                  >
+                    <Archive size={18} color={inboxCount > 0 ? '#2563eb' : '#4b5563'} />
+                    {inboxCount > 0 ? (
+                      <Text className="text-sm font-semibold text-blue-600">{inboxCount}</Text>
+                    ) : null}
+                  </Pressable>
+                  {/*
+                    보기를 바꾸는 단추. 지금 무엇을 보고 있는지가 아니라 **누르면 무엇이
+                    되는지**를 그린다 -- 목록을 보는 중이면 달력, 달력을 보는 중이면 목록이다.
+                    누를 자리와 그 결과가 한 그림이라 설명이 필요 없다.
+                  */}
+                  <Pressable
+                    onPress={() => setIsCalendar((on) => !on)}
+                    accessibilityLabel={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
+                    className="items-center justify-center p-2"
+                  >
+                    {isCalendar ? (
+                      <List size={18} color="#2563eb" />
+                    ) : (
+                      <CalendarDays size={18} color="#4b5563" />
+                    )}
+                  </Pressable>
+                  {/*
+                    검색. 달력 보기에서는 감춘다.
 
-      {notice ? (
-        <View className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
-          <Text className="text-sm text-amber-800">{notice}</Text>
+                    아래 목록 쪽이 통째로 빠지는 자리라 걸어 둔 검색이 달력에는 걸리지
+                    않는다. 단추만 남겨 두면 눌러서 조건을 거는데 화면은 그대로여서,
+                    걸렸는지 아닌지 알 길이 없다. 목록으로 돌아오면 걸어 둔 것은 그대로다.
+                  */}
+                  {!isCalendar ? (
+                    <Pressable
+                      onPress={() => setIsSearchOpen(true)}
+                      accessibilityLabel={t('tx.search')}
+                      /*
+                        아이콘만 둔다. 테두리·바탕도, 누를 때의 바탕도 없다. 머리글에서
+                        이름 옆에 붙는 자리라 상자를 그리면 아이콘보다 상자가 먼저 보인다.
+                        걸어 둔 검색이 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
+                      */
+                      className="flex-row items-center gap-1.5 px-2 py-2"
+                    >
+                      {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
+                      <Search size={18} color={tx.searchCount > 0 ? '#2563eb' : '#4b5563'} />
+                      {tx.searchCount > 0 ? (
+                        <Text className="text-sm font-semibold text-blue-600">{tx.searchCount}</Text>
+                      ) : null}
+                    </Pressable>
+                  ) : null}
+                  {/*
+                    더보기에는 쓰는 일만 들어 있다(태그 붙이기·지우기). 읽기 전용
+                    구성원에게는 열 것이 없으므로 버튼째 감춘다.
+                  */}
+                  {canEdit ? (
+                    <Pressable
+                      onPress={() => setIsMoreOpen(true)}
+                      accessibilityLabel={t('tx.more')}
+                      className="items-center justify-center p-2"
+                    >
+                      <MoreVertical size={18} color="#4b5563" />
+                    </Pressable>
+                  ) : null}
+                </View>
+              }
+            />
+          )}
+
+          {tx.hasError ? (
+            <View className="rounded-lg bg-red-50 p-3">
+              <Text className="text-sm text-red-800">{t('tx.loadFailed')}</Text>
+            </View>
+          ) : null}
+
+          {notice ? (
+            <View className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2">
+              <Text className="text-sm text-amber-800">{notice}</Text>
+            </View>
+          ) : null}
+
+          {/* 달력 보기에서는 목록 쪽 손잡이를 감춘다 (바로 아래 주석 참고). */}
+          {!isCalendar ? (
+            <>
+              {/* 보기 방식. 년월 목록 위에 두어 어떤 기준으로 파고드는지 먼저 정한다. */}
+              <SegmentedTabs
+                tabs={TABS.map((item) => ({ id: item.id, label: t(item.labelKey) }))}
+                selected={tx.tab}
+                onSelect={tx.changeTab}
+                /*
+                  고른 탭의 꺾쇠. 다음 누름이 무엇을 할지 미리 말한다 -- 한 달도 펴져
+                  있지 않으면 아래(편다), 한 달이라도 펴져 있으면 위(접는다)다. 이것이
+                  없으면 이미 고른 탭을 다시 누를 까닭을 아무도 모른다.
+                */
+                selectedTrailing={
+                  tx.tabOpen ? (
+                    <ChevronUp size={14} color="#2563eb" />
+                  ) : (
+                    <ChevronDown size={14} color="#2563eb" />
+                  )
+                }
+              />
+
+              {/*
+                걸려 있는 조건. 탭 바로 아래에 둔다.
+
+                검색 창을 열어야 무엇을 골랐는지 알 수 있으면, 결과가 비었을 때 이유를 찾으려
+                창을 다시 열게 된다. 여기 늘어놓으면 그 걸음이 사라지고, 하나만 빼는 일도
+                창을 열지 않고 끝난다.
+
+                많아지면 가로로 굴린다. 줄바꿈으로 두면 조건이 열 개 넘을 때 목록이 화면 밖으로
+                밀린다.
+              */}
+              {tx.searchChips.length > 0 ? (
+                <ScrollView
+                  horizontal
+                  showsHorizontalScrollIndicator={false}
+                  /*
+                   * 늘어나지 않게 못 박는다. ScrollView 는 기본 스타일에 flexGrow:1 이 있어
+                   * 세로로 늘어선 칸 안에서 남는 높이를 먹는다. 알약 줄은 알약 높이면 된다.
+                   */
+                  className="grow-0"
+                  contentContainerClassName="flex-row items-center gap-2 pr-4"
+                >
+                  {tx.searchChips.map((chip) => (
+                    <Pressable
+                      key={chip.id}
+                      onPress={() => tx.removeSearchChip(chip.id)}
+                      // 손가락이 닿는 자리라 알약 자체를 누르게 한다. x 만 누르게 하면 빗나간다.
+                      accessibilityLabel={`${chip.label} ${t('tx.search.chipRemove')}`}
+                      className="flex-row items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 active:bg-blue-100"
+                    >
+                      <Text className="text-sm font-medium text-blue-700">{chip.label}</Text>
+                      <X size={14} color="#1d4ed8" />
+                    </Pressable>
+                  ))}
+                </ScrollView>
+              ) : null}
+            </>
+          ) : null}
         </View>
-      ) : null}
+      </RevealTop>
 
       {/*
         달력 보기. 머리글의 단추가 고른다.
@@ -962,71 +1047,15 @@ export default function TransactionsScreen() {
         /* 상세는 읽기 전용 구성원도 연다. 목록 보기의 줄과 같은 규칙이다. */
         <TransactionCalendarView projectId={selectedProjectId} onOpenEntry={openDetail} />
       ) : (
-        <>
-      {/*
-        보기 방식. 년월 목록 위에 두어 어떤 기준으로 파고드는지 먼저 정한다.
-
-        굴려도 화면 위에 남는다(`StickyTop`). 목록이 길어지면 지금 무엇을 기준으로 보고
-        있는지가 화면 밖으로 밀려나고, 탭을 옮기거나 한 단 더 펴려면 맨 위까지 되돌아가야
-        했다. 웹도 같은 자리를 sticky 로 둔다.
-      */}
-      <StickyTop>
-        <SegmentedTabs
-          tabs={TABS.map((item) => ({ id: item.id, label: t(item.labelKey) }))}
-          selected={tx.tab}
-          onSelect={tx.changeTab}
-          /*
-            고른 탭의 꺾쇠. 다음 누름이 무엇을 할지 미리 말한다 -- 펴는 중이면 아래,
-            다 펴서 이제 접을 차례면 위다. 이것이 없으면 이미 고른 탭을 다시 누를
-            까닭을 아무도 모른다.
-          */
-          selectedTrailing={
-            tx.tabLevel === 2 ? (
-              <ChevronUp size={14} color="#2563eb" />
-            ) : (
-              <ChevronDown size={14} color="#2563eb" />
-            )
-          }
-        />
-      </StickyTop>
-
-      {/*
-        걸려 있는 조건. 탭 바로 아래에 둔다.
-
-        검색 창을 열어야 무엇을 골랐는지 알 수 있으면, 결과가 비었을 때 이유를 찾으려
-        창을 다시 열게 된다. 여기 늘어놓으면 그 걸음이 사라지고, 하나만 빼는 일도
-        창을 열지 않고 끝난다.
-
-        많아지면 가로로 굴린다. 줄바꿈으로 두면 조건이 열 개 넘을 때 목록이 화면 밖으로
-        밀린다.
-      */}
-      {tx.searchChips.length > 0 ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          /*
-           * 늘어나지 않게 못 박는다. ScrollView 는 기본 스타일에 flexGrow:1 이 있어
-           * 세로로 늘어선 칸 안에서 남는 높이를 먹는다. 알약 줄은 알약 높이면 된다.
-           */
-          className="grow-0"
-          contentContainerClassName="flex-row items-center gap-2 pr-4"
-        >
-          {tx.searchChips.map((chip) => (
-            <Pressable
-              key={chip.id}
-              onPress={() => tx.removeSearchChip(chip.id)}
-              // 손가락이 닿는 자리라 알약 자체를 누르게 한다. x 만 누르게 하면 빗나간다.
-              accessibilityLabel={`${chip.label} ${t('tx.search.chipRemove')}`}
-              className="flex-row items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 active:bg-blue-100"
-            >
-              <Text className="text-sm font-medium text-blue-700">{chip.label}</Text>
-              <X size={14} color="#1d4ed8" />
-            </Pressable>
-          ))}
-        </ScrollView>
-      ) : null}
-
-      <View className="overflow-hidden rounded-lg">
+      <StickySections
+        /*
+          자르지 않는다(overflow-hidden 을 두지 않는다). 상자에는 바탕도 테두리도 없어
+          잘라 낼 것이 없고, 웹은 이 자리를 자르면 안의 년월 줄이 붙지 못한다 -- 잘라 내는
+          상자가 sticky 의 기준이 되어 버린다. 두 화면을 같은 모양으로 둔다.
+        */
+        className="rounded-lg"
+        inset={topInset}
+      >
         {tx.isLoadingMonths && tx.months.length === 0 ? (
           <Text className="p-3 text-sm text-gray-500">{t('common.loading')}</Text>
         ) : tx.months.length === 0 ? (
@@ -1050,32 +1079,41 @@ export default function TransactionsScreen() {
               index > 0 && tx.levelOf(tx.months[index - 1].yearMonth) === 0;
 
             return (
-              <View
+              /*
+                년월 줄은 그 달을 지나는 동안 화면 위에 남는다(`StickySection`).
+
+                9월을 훑는 동안 "9월"이 위에 붙어 있고, 8월이 올라와 제 줄이 그 자리에
+                닿으면 9월을 밀어내고 8월이 선다. 위 머리글이 되돌아와 있으면 그 아래가
+                이 줄의 자리다(`inset`).
+              */
+              <StickySection
                 key={month.yearMonth}
                 className={touchesPrevious ? 'border-t border-gray-200' : undefined}
-              >
-                <Line
-                  depth={0}
-                  label={periodLabel(month.yearMonth)}
-                  expense={toNumber(month.expense)}
-                  income={toNumber(month.income)}
-                  open={level >= 1}
-                  yearMonth={month.yearMonth}
-                  rowKey=""
-                  /*
-                    순수입은 검색을 걸지 않았을 때만 적는다.
+                header={
+                  <Line
+                    depth={0}
+                    label={periodLabel(month.yearMonth)}
+                    expense={toNumber(month.expense)}
+                    income={toNumber(month.income)}
+                    open={level >= 1}
+                    yearMonth={month.yearMonth}
+                    rowKey=""
+                    /*
+                      순수입은 검색을 걸지 않았을 때만 적는다.
 
-                    검색을 켜면 이 줄의 수입·지출은 걸린 거래만 센 값이라, 그 차액은
-                    그 달에 남은 돈이 아니라 "골라 낸 것들의 차액"이다. 같은 자리에
-                    같은 낱말로 적히면 달의 순수입으로 읽힌다.
-                  */
-                  showNet={tx.searchCount === 0}
-                  checkable={tx.isSelecting}
-                  checked={tx.isSelecting ? tx.monthChecked(month.yearMonth) : false}
-                  checkPending={tx.isSelecting ? tx.isRangePending(month.yearMonth) : false}
-                  onToggle={toggleMonthRange}
-                  onPress={unfoldMonth}
-                />
+                      검색을 켜면 이 줄의 수입·지출은 걸린 거래만 센 값이라, 그 차액은
+                      그 달에 남은 돈이 아니라 "골라 낸 것들의 차액"이다. 같은 자리에
+                      같은 낱말로 적히면 달의 순수입으로 읽힌다.
+                    */
+                    showNet={tx.searchCount === 0}
+                    checkable={tx.isSelecting}
+                    checked={tx.isSelecting ? tx.monthChecked(month.yearMonth) : false}
+                    checkPending={tx.isSelecting ? tx.isRangePending(month.yearMonth) : false}
+                    onToggle={toggleMonthRange}
+                    onPress={unfoldMonth}
+                  />
+                }
+              >
                 {/*
                     펼친 것을 테두리로 두른다. "여기서 여기까지가 그 달의 것" 을
                     네 변이 말한다.
@@ -1102,12 +1140,11 @@ export default function TransactionsScreen() {
                     {level2(month.yearMonth)}
                   </View>
                 ) : null}
-              </View>
+              </StickySection>
             );
           })
         )}
-      </View>
-        </>
+      </StickySections>
       )}
 
       <TagPickModal

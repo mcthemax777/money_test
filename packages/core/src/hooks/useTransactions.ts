@@ -1993,14 +1993,22 @@ export function useTransactions(projectId: string | null) {
   const changeTab = useCallback(
     (next: TransactionTab) => {
       /*
-       * 이미 고른 탭을 또 누르면 **그 탭을 한 단 편다.** 기간 줄과 같은 차례로 돈다
-       * (접힘 → 안쪽 줄 → 거래까지 → 접힘).
+       * 이미 고른 탭을 또 누르면 **켜고 끈다.** 접힘 ↔ 안쪽 줄, 둘 사이만 오간다.
+       *
+       * 기간 줄처럼 세 단으로 돌지 않는다. 탭은 모든 달에 한꺼번에 걸리는 손잡이라,
+       * 가운데 단(거래까지 펼침)을 지나가게 두면 한 번 더 누를 때마다 수백 줄이
+       * 섰다 사라진다 -- 접으려고 누른 사람에게는 앱이 멎은 것으로 보인다. 달 하나를
+       * 거래까지 펴는 일은 그 달의 년월 줄이 맡는다(`cycleMonth`).
+       *
+       * **한 달이라도 펴져 있으면 접는 차례다.** 탭의 바닥이 아니라 화면에 보이는
+       * 것을 따른다 -- 9월 하나를 손으로 펴 둔 사람이 탭을 누르는 것은 "그만 보겠다"는
+       * 뜻이지 나머지 달까지 마저 펴 달라는 뜻이 아니다 (`cycleMonth` 와 같은 규칙이다).
        *
        * 손으로 정해 둔 줄은 지운다. 남겨 두면 "전부 펴라"고 눌렀는데 접어 둔 줄이
        * 그대로 접혀 있어, 눌러도 아무 일이 없는 것처럼 보인다.
        */
       if (next === tab) {
-        const level = ((defaultLevel + 1) % 3) as MonthLevel;
+        const level: MonthLevel = openMonths.length > 0 ? 0 : 1;
         setTabLevels((prev) => ({ ...prev, [next]: level }));
         setLevels((prev) => {
           const kept: Record<string, MonthLevel> = {};
@@ -2030,7 +2038,7 @@ export function useTransactions(projectId: string | null) {
       setTab(next);
       setSelected({});
     },
-    [tab, defaultLevel],
+    [tab, openMonths],
   );
 
   /**
@@ -2083,12 +2091,12 @@ export function useTransactions(projectId: string | null) {
     tab,
     changeTab,
     /**
-     * 지금 탭의 바닥 펼침. 고른 탭을 또 누르면 한 단 오른다.
+     * 한 달이라도 펴져 있는가. 곧 **고른 탭을 다시 누르면 접힌다**는 뜻이다.
      *
      * 화면이 이 값으로 탭의 꺾쇠 방향을 정한다 -- 다음 누름이 펴는 것인지 접는 것인지를
      * 미리 말해 주지 않으면, 이미 고른 탭을 다시 누를 까닭을 아무도 모른다.
      */
-    tabLevel: defaultLevel,
+    tabOpen: openMonths.length > 0,
     /** 바깥 묶음 -- 해·달·주. 화면의 더보기 메뉴가 바꾼다. */
     unit,
     changeUnit,
