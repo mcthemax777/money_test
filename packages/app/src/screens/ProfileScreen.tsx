@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { GoogleSignin } from '@react-native-google-signin/google-signin';
 
 import { apiClient } from '@money/core/lib/api-client';
 import { useApiError } from '@money/core/lib/api-error';
 import { activeLocaleTag, useTranslation } from '@money/core/lib/i18n';
 import { useAuth } from '@money/core/store/auth';
 
+import { signOutGoogle } from '../api';
 import PageHeader from '../components/PageHeader';
 import { UserAvatar } from '../components/UserAvatar';
 
@@ -58,18 +58,11 @@ export default function ProfileScreen() {
     }
   };
 
-  /**
-   * 로그아웃.
-   *
-   * 구글 쪽 세션도 함께 끊는다. 우리 토큰만 지우면 다음에 "구글로 로그인"을 눌렀을 때
-   * 계정을 묻지 않고 같은 계정으로 들어가, 로그아웃이 안 된 것처럼 보인다.
-   */
+  /** 로그아웃. 구글 쪽 세션도 함께 끊는다 (`signOutGoogle` 의 주석 참고). */
   const signOut = async () => {
     setIsLoggingOut(true);
     try {
-      await GoogleSignin.signOut();
-    } catch {
-      // 구글로 로그인한 적이 없는 경우. 우리 로그아웃은 그대로 진행한다.
+      await signOutGoogle();
     } finally {
       await logout();
       setIsLoggingOut(false);

@@ -19,6 +19,10 @@ import { useProject } from '@money/core/store/project';
  * 전제로 그려져, 이 자리에서는 어느 칸을 눌러도 빈 화면이 나온다. 로그인 화면과 같은
  * 모양으로 혼자 선다.
  *
+ * **먼저 고르고, 그 다음에 적는다.** 처음에는 단추 둘만 선다 -- 만들 사람에게 번호 칸을,
+ * 들어올 사람에게 이름 칸을 함께 보여 주면 제 것이 아닌 칸을 한 번 읽고 지나가야 한다.
+ * 고른 뒤에야 그 길의 칸이 나오고, 뒤로 눌러 다시 고를 수 있다 (앱도 같은 두 걸음이다).
+ *
  * QR 찍기는 앱에서 한다. 브라우저에서도 카메라를 열 수는 있지만 https 와 권한이 필요하고
  * 데스크톱에는 카메라가 없는 일이 많아, 여기서는 번호를 받는다. 앱은 같은 화면에서
  * 카메라를 연다.
@@ -30,6 +34,13 @@ export default function StartPage() {
   const projects = useProject((state) => state.projects);
   const start = useProjectStart();
 
+  /**
+   * 고른 길. `null` 이면 아직 고르지 않아 단추 둘만 선다.
+   *
+   * 초대를 찾아 둔 동안에는 이 값과 무관하게 그 카드만 보여 준다 -- 무엇에 들어가는지
+   * 확인시키는 자리라 옆에 다른 칸이 있으면 눈이 갈린다.
+   */
+  const [mode, setMode] = useState<'create' | 'join' | null>(null);
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
@@ -45,6 +56,16 @@ export default function StartPage() {
    * 여기서는 고른 값이 생겼는지만 본다.
    */
   const goHome = () => router.push('/home');
+
+  /** 한 걸음 물러선다. 초대 카드 -> 고른 길 -> 단추 둘 의 차례다. */
+  const goBack = () => {
+    setError('');
+    if (start.invite) {
+      start.clearInvite();
+      return;
+    }
+    setMode(null);
+  };
 
   const submitCreate = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -116,9 +137,8 @@ export default function StartPage() {
               <button
                 type="button"
                 onClick={() => {
-                  start.clearInvite();
                   setCode('');
-                  setError('');
+                  goBack();
                 }}
                 className="rounded-lg border border-gray-300 bg-white px-4 py-2.5 text-gray-700 hover:bg-gray-50"
               >
@@ -126,79 +146,131 @@ export default function StartPage() {
               </button>
             </div>
           </section>
+        ) : mode === null ? (
+          /*
+            고르는 자리. 단추 둘뿐이다.
+
+            각 단추 아래에 한 줄을 적어 둔다 -- 이름만으로는 "참여하기"가 무엇을 요구하는지
+            (번호나 QR) 눌러 보기 전에는 알 수 없다.
+          */
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={() => {
+                setError('');
+                setMode('create');
+              }}
+              className="w-full rounded-xl border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:border-blue-300 hover:bg-blue-50/40"
+            >
+              <span className="block text-lg font-semibold text-gray-900">
+                {t('start.createTitle')}
+              </span>
+              <span className="mt-1 block text-sm text-gray-600">{t('start.createHint')}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setError('');
+                setMode('join');
+              }}
+              className="w-full rounded-xl border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:border-blue-300 hover:bg-blue-50/40"
+            >
+              <span className="block text-lg font-semibold text-gray-900">
+                {t('start.joinTitle')}
+              </span>
+              <span className="mt-1 block text-sm text-gray-600">{t('start.joinHint')}</span>
+            </button>
+          </div>
+        ) : mode === 'create' ? (
+          <section className="space-y-3 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">{t('start.createTitle')}</h2>
+              <p className="mt-1 text-sm text-gray-600">{t('start.createHint')}</p>
+            </div>
+
+            <form onSubmit={submitCreate} className="space-y-3">
+              <div>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  {t('start.nameLabel')}
+                </label>
+                <input
+                  type="text"
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder={t('start.namePlaceholder')}
+                  autoFocus
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={!name.trim() || start.isBusy}
+                className="w-full rounded-lg bg-blue-600 px-4 py-2.5 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+              >
+                {t(start.isBusy ? 'start.creating' : 'start.createSubmit')}
+              </button>
+            </form>
+
+              <button
+                type="button"
+                onClick={goBack}
+                className="w-full py-1 text-sm text-gray-500 hover:underline"
+              >
+                {t('common.back')}
+              </button>
+          </section>
         ) : (
-          <>
-            <section className="space-y-3 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+          <section className="space-y-3 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-900">{t('start.joinTitle')}</h2>
+              <p className="mt-1 text-sm text-gray-600">{t('start.joinHint')}</p>
+            </div>
+
+            <form onSubmit={submitCode} className="space-y-3">
               <div>
-                <h2 className="text-lg font-semibold text-gray-900">{t('start.createTitle')}</h2>
-                <p className="mt-1 text-sm text-gray-600">{t('start.createHint')}</p>
+                <label className="mb-1 block text-sm font-medium text-gray-700">
+                  {t('start.codeLabel')}
+                </label>
+                <input
+                  type="text"
+                  value={code}
+                  /*
+                    사람이 치는 번호라 대문자로 올려 보여 준다. 서버도 그렇게 찾는다
+                    (`normalizeInvitationCode`). 붙여 넣은 링크는 그대로 두어야 하므로
+                    주소처럼 생겼으면 손대지 않는다.
+                  */
+                  onChange={(event) =>
+                    setCode(
+                      /[/:?]/.test(event.target.value)
+                        ? event.target.value
+                        : event.target.value.toUpperCase(),
+                    )
+                  }
+                  placeholder="ABCD2345"
+                  autoFocus
+                  className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
               </div>
+              <button
+                type="submit"
+                disabled={!code.trim() || start.isBusy}
+                className="w-full rounded-lg border border-blue-600 px-4 py-2.5 font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
+              >
+                {t('start.codeSubmit')}
+              </button>
+            </form>
 
-              <form onSubmit={submitCreate} className="space-y-3">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    {t('start.nameLabel')}
-                  </label>
-                  <input
-                    type="text"
-                    value={name}
-                    onChange={(event) => setName(event.target.value)}
-                    placeholder={t('start.namePlaceholder')}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={!name.trim() || start.isBusy}
-                  className="w-full rounded-lg bg-blue-600 px-4 py-2.5 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-                >
-                  {t(start.isBusy ? 'start.creating' : 'start.createSubmit')}
-                </button>
-              </form>
-            </section>
+            <p className="text-xs text-gray-500">{t('start.scanApp')}</p>
 
-            <section className="space-y-3 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
-              <div>
-                <h2 className="text-lg font-semibold text-gray-900">{t('start.joinTitle')}</h2>
-                <p className="mt-1 text-sm text-gray-600">{t('start.joinHint')}</p>
-              </div>
-
-              <form onSubmit={submitCode} className="space-y-3">
-                <div>
-                  <label className="mb-1 block text-sm font-medium text-gray-700">
-                    {t('start.codeLabel')}
-                  </label>
-                  <input
-                    type="text"
-                    value={code}
-                    /*
-                      사람이 치는 번호라 대문자로 올려 보여 준다. 서버도 그렇게 찾는다
-                      (`normalizeInvitationCode`). 붙여 넣은 링크는 그대로 두어야 하므로
-                      주소처럼 생겼으면 손대지 않는다.
-                    */
-                    onChange={(event) =>
-                      setCode(
-                        /[/:?]/.test(event.target.value)
-                          ? event.target.value
-                          : event.target.value.toUpperCase(),
-                      )
-                    }
-                    placeholder="ABCD2345"
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 font-mono tracking-widest focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-                <button
-                  type="submit"
-                  disabled={!code.trim() || start.isBusy}
-                  className="w-full rounded-lg border border-blue-600 px-4 py-2.5 font-medium text-blue-700 hover:bg-blue-50 disabled:opacity-50"
-                >
-                  {t('start.codeSubmit')}
-                </button>
-              </form>
-
-              <p className="text-xs text-gray-500">{t('start.scanApp')}</p>
-            </section>
-          </>
+              <button
+                type="button"
+                onClick={goBack}
+                className="w-full py-1 text-sm text-gray-500 hover:underline"
+              >
+                {t('common.back')}
+              </button>
+          </section>
         )}
 
         {/*
@@ -207,21 +279,24 @@ export default function StartPage() {
           바꾸려면 여기서 나갈 수 있어야 한다.
         */}
         <div className="flex justify-center gap-4 text-sm">
+          {/* 고르는 자리에서만. 길에 들어선 뒤에는 그 자리를 "뒤로"가 쓴다. */}
           {projects.length > 0 ? (
             <button type="button" onClick={goHome} className="text-blue-600 hover:underline">
               {t('common.goHome')}
             </button>
           ) : null}
-          <button
-            type="button"
-            onClick={() => {
-              logout();
-              router.push('/login');
-            }}
-            className="text-gray-500 hover:underline"
-          >
-            {t('profile.logout')}
-          </button>
+          {mode === null && !invite ? (
+            <button
+              type="button"
+              onClick={() => {
+                logout();
+                router.push('/login');
+              }}
+              className="text-gray-500 hover:underline"
+            >
+              {t('profile.logout')}
+            </button>
+          ) : null}
         </div>
       </div>
     </div>

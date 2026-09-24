@@ -8,11 +8,15 @@
  * 껍데기(AppShell)를 쓰지 않는다. 사이드바와 아래 탭은 가계부 하나를 고른 상태를
  * 전제로 그려져, 이 자리에서는 어느 칸을 눌러도 빈 화면이 나온다.
  *
+ * **먼저 고르고, 그 다음에 적는다.** 처음에는 단추 둘만 선다 -- 만들 사람에게 번호 칸을,
+ * 들어올 사람에게 이름 칸을 함께 보여 주면 제 것이 아닌 칸을 한 번 읽고 지나가야 한다.
+ * 고른 뒤에야 그 길의 칸이 나오고, 뒤로 눌러 다시 고를 수 있다.
+ *
  * **QR 은 여기서 찍는다.** 웹에는 없는 길이다 -- 초대를 보여 주는 쪽은 대개 큰 화면이고
  * 찍는 쪽은 폰이라, 카메라가 있는 이쪽에만 두면 된다. 번호를 손으로 치는 길은 양쪽에
  * 모두 있다.
  */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -25,6 +29,7 @@ import {
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { signOutGoogle } from '../api';
 import { useProjectStart } from '@money/core/hooks/useProjectStart';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useAuth } from '@money/core/store/auth';
@@ -37,6 +42,13 @@ export default function StartScreen() {
   const { logout } = useAuth();
   const start = useProjectStart();
 
+  /**
+   * 고른 길. `null` 이면 아직 고르지 않아 단추 둘만 선다.
+   *
+   * 초대를 찾아 둔 동안에는 이 값과 무관하게 그 카드만 보여 준다 -- 무엇에 들어가는지
+   * 확인시키는 자리라 옆에 다른 칸이 있으면 눈이 갈린다.
+   */
+  const [mode, setMode] = useState<'create' | 'join' | null>(null);
   const [name, setName] = useState('');
   const [code, setCode] = useState('');
   const [error, setError] = useState('');
@@ -59,28 +71,53 @@ export default function StartScreen() {
     if (!result.ok) setError(result.message || t('start.codeInvalid'));
   };
 
+  /** 로그아웃. 구글 쪽 세션도 함께 끊는다 (`signOutGoogle` 의 주석 참고). */
+  const signOut = async () => {
+    await signOutGoogle();
+    await logout();
+  };
+
   const join = async () => {
     setError('');
     const result = await start.join();
     if (!result.ok) setError(result.message);
   };
 
-  /*
-   * 카메라를 연 동안의 뒤로가기는 그 카메라를 닫는다.
+  /**
+   * 한 걸음 물러서기. 뒤로가기와 화면의 "뒤로"가 함께 쓴다.
    *
-   * 이 화면은 껍데기 밖에 있어 `useCloseOnBack`(navigation.tsx)이 닿지 않는다 -- 그쪽의
-   * 뒤로가기 처리는 NavigationProvider 안에서만 걸린다. 걸어 두지 않으면 카메라에서
-   * 누른 뒤로가기가 앱을 닫는다.
+   * 카메라 -> 고른 길 -> 단추 둘 의 차례로 돌아간다. 돌아갈 곳이 없으면 false 를 주어
+   * 기기의 뒤로가기가 제 일을 하게 둔다(앱을 닫는다).
    */
-  useEffect(() => {
-    if (!isScanning) return;
-
-    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+  const goBack = useCallback(() => {
+    if (isScanning) {
       setIsScanning(false);
       return true;
-    });
+    }
+    if (invite) {
+      start.clearInvite();
+      setError('');
+      return true;
+    }
+    if (mode) {
+      setMode(null);
+      setError('');
+      return true;
+    }
+    return false;
+  }, [invite, isScanning, mode, start]);
+
+  /*
+   * 기기의 뒤로가기를 여기서 받는다.
+   *
+   * 이 화면은 껍데기 밖에 있어 `useCloseOnBack`(navigation.tsx)이 닿지 않는다 -- 그쪽의
+   * 뒤로가기 처리는 NavigationProvider 안에서만 걸린다. 걸어 두지 않으면 카메라를 연
+   * 채 누른 뒤로가기가 앱을 닫는다.
+   */
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', goBack);
     return () => subscription.remove();
-  }, [isScanning]);
+  }, [goBack]);
 
   const openScanner = async () => {
     setError('');
@@ -184,103 +221,149 @@ export default function StartScreen() {
           </Pressable>
           <Pressable
             onPress={() => {
-              start.clearInvite();
               setCode('');
-              setError('');
+              goBack();
             }}
             className="items-center rounded-lg border border-gray-300 px-4 py-3 active:bg-gray-50"
           >
             <Text className="text-base text-gray-700">{t('start.joinOther')}</Text>
           </Pressable>
         </View>
+      ) : mode === null ? (
+        /*
+          고르는 자리. 단추 둘뿐이다.
+
+          각 단추 아래에 한 줄을 적어 둔다 -- 이름만으로는 "참여하기"가 무엇을 요구하는지
+          (번호나 QR) 눌러 보기 전에는 알 수 없다.
+        */
+        <View className="gap-3">
+          <Pressable
+            onPress={() => {
+              setError('');
+              setMode('create');
+            }}
+            className="gap-1 rounded-xl border border-gray-200 bg-white p-5 active:bg-gray-50"
+          >
+            <Text className="text-lg font-semibold text-gray-900">{t('start.createTitle')}</Text>
+            <Text className="text-sm text-gray-600">{t('start.createHint')}</Text>
+          </Pressable>
+
+          <Pressable
+            onPress={() => {
+              setError('');
+              setMode('join');
+            }}
+            className="gap-1 rounded-xl border border-gray-200 bg-white p-5 active:bg-gray-50"
+          >
+            <Text className="text-lg font-semibold text-gray-900">{t('start.joinTitle')}</Text>
+            <Text className="text-sm text-gray-600">{t('start.joinHint')}</Text>
+          </Pressable>
+        </View>
+      ) : mode === 'create' ? (
+        <View className="gap-3 rounded-xl border border-gray-200 bg-white p-5">
+          <View>
+            <Text className="text-lg font-semibold text-gray-900">{t('start.createTitle')}</Text>
+            <Text className="mt-1 text-sm text-gray-600">{t('start.createHint')}</Text>
+          </View>
+
+          <View>
+            <Text className="mb-1 text-sm font-medium text-gray-700">{t('start.nameLabel')}</Text>
+            <TextInput
+              value={name}
+              onChangeText={setName}
+              placeholder={t('start.namePlaceholder')}
+              placeholderTextColor="#9ca3af"
+              autoFocus
+              className={INPUT}
+            />
+          </View>
+
+          <Pressable
+            onPress={create}
+            disabled={!name.trim() || start.isBusy}
+            className={`items-center rounded-lg bg-blue-600 px-4 py-3 active:bg-blue-700 ${
+              !name.trim() || start.isBusy ? 'opacity-50' : ''
+            }`}
+          >
+            <Text className="text-base font-medium text-white">
+              {t(start.isBusy ? 'start.creating' : 'start.createSubmit')}
+            </Text>
+          </Pressable>
+
+          <BackRow onPress={goBack} label={t('common.back')} />
+        </View>
       ) : (
-        <>
-          <View className="gap-3 rounded-xl border border-gray-200 bg-white p-5">
-            <View>
-              <Text className="text-lg font-semibold text-gray-900">{t('start.createTitle')}</Text>
-              <Text className="mt-1 text-sm text-gray-600">{t('start.createHint')}</Text>
-            </View>
-
-            <View>
-              <Text className="mb-1 text-sm font-medium text-gray-700">{t('start.nameLabel')}</Text>
-              <TextInput
-                value={name}
-                onChangeText={setName}
-                placeholder={t('start.namePlaceholder')}
-                placeholderTextColor="#9ca3af"
-                className={INPUT}
-              />
-            </View>
-
-            <Pressable
-              onPress={create}
-              disabled={!name.trim() || start.isBusy}
-              className={`items-center rounded-lg bg-blue-600 px-4 py-3 active:bg-blue-700 ${
-                !name.trim() || start.isBusy ? 'opacity-50' : ''
-              }`}
-            >
-              <Text className="text-base font-medium text-white">
-                {t(start.isBusy ? 'start.creating' : 'start.createSubmit')}
-              </Text>
-            </Pressable>
+        <View className="gap-3 rounded-xl border border-gray-200 bg-white p-5">
+          <View>
+            <Text className="text-lg font-semibold text-gray-900">{t('start.joinTitle')}</Text>
+            <Text className="mt-1 text-sm text-gray-600">{t('start.joinHint')}</Text>
           </View>
 
-          <View className="gap-3 rounded-xl border border-gray-200 bg-white p-5">
-            <View>
-              <Text className="text-lg font-semibold text-gray-900">{t('start.joinTitle')}</Text>
-              <Text className="mt-1 text-sm text-gray-600">{t('start.joinHint')}</Text>
-            </View>
+          <Pressable
+            onPress={openScanner}
+            className="items-center rounded-lg bg-gray-900 px-4 py-3 active:bg-gray-800"
+          >
+            <Text className="text-base font-medium text-white">{t('start.scan')}</Text>
+          </Pressable>
 
-            <Pressable
-              onPress={openScanner}
-              className="items-center rounded-lg bg-gray-900 px-4 py-3 active:bg-gray-800"
-            >
-              <Text className="text-base font-medium text-white">{t('start.scan')}</Text>
-            </Pressable>
-
-            <View>
-              <Text className="mb-1 text-sm font-medium text-gray-700">{t('start.codeLabel')}</Text>
-              <TextInput
-                value={code}
-                /*
-                  사람이 치는 번호라 대문자로 올려 보여 준다. 서버도 그렇게 찾는다
-                  (`normalizeInvitationCode`). 붙여 넣은 링크는 그대로 두어야 하므로
-                  주소처럼 생겼으면 손대지 않는다.
-                */
-                onChangeText={(value) =>
-                  setCode(/[/:?]/.test(value) ? value : value.toUpperCase())
-                }
-                autoCapitalize="characters"
-                autoCorrect={false}
-                placeholder="ABCD2345"
-                placeholderTextColor="#9ca3af"
-                className={`${INPUT} tracking-widest`}
-              />
-            </View>
-
-            <Pressable
-              onPress={() => void check(code)}
-              disabled={!code.trim() || start.isBusy}
-              className={`items-center rounded-lg border border-blue-600 px-4 py-3 active:bg-blue-50 ${
-                !code.trim() || start.isBusy ? 'opacity-50' : ''
-              }`}
-            >
-              {start.isBusy ? (
-                <ActivityIndicator color="#2563eb" />
-              ) : (
-                <Text className="text-base font-medium text-blue-700">{t('start.codeSubmit')}</Text>
-              )}
-            </Pressable>
+          <View>
+            <Text className="mb-1 text-sm font-medium text-gray-700">{t('start.codeLabel')}</Text>
+            <TextInput
+              value={code}
+              /*
+                사람이 치는 번호라 대문자로 올려 보여 준다. 서버도 그렇게 찾는다
+                (`normalizeInvitationCode`). 붙여 넣은 링크는 그대로 두어야 하므로
+                주소처럼 생겼으면 손대지 않는다.
+              */
+              onChangeText={(value) => setCode(/[/:?]/.test(value) ? value : value.toUpperCase())}
+              autoCapitalize="characters"
+              autoCorrect={false}
+              placeholder="ABCD2345"
+              placeholderTextColor="#9ca3af"
+              className={`${INPUT} tracking-widest`}
+            />
           </View>
-        </>
+
+          <Pressable
+            onPress={() => void check(code)}
+            disabled={!code.trim() || start.isBusy}
+            className={`items-center rounded-lg border border-blue-600 px-4 py-3 active:bg-blue-50 ${
+              !code.trim() || start.isBusy ? 'opacity-50' : ''
+            }`}
+          >
+            {start.isBusy ? (
+              <ActivityIndicator color="#2563eb" />
+            ) : (
+              <Text className="text-base font-medium text-blue-700">{t('start.codeSubmit')}</Text>
+            )}
+          </Pressable>
+
+          <BackRow onPress={goBack} label={t('common.back')} />
+        </View>
       )}
 
       {/*
         가계부가 없는 사람에게는 이 화면이 전부다. 계정을 바꾸려면 여기서 나갈 수 있어야 한다.
+
+        **구글 쪽 세션도 함께 끊는다**(signOutGoogle). 우리 토큰만 지우면 다음에 "구글로
+        로그인"을 눌렀을 때 계정을 묻지 않고 방금 나간 계정으로 그대로 들어간다.
+
+        고르는 자리에서만 보인다. 길에 들어선 뒤에는 그 자리를 "뒤로"가 쓴다.
       */}
-      <Pressable onPress={() => void logout()} className="items-center py-2">
-        <Text className="text-sm text-gray-500">{t('profile.logout')}</Text>
-      </Pressable>
+      {mode === null && !invite ? (
+        <Pressable onPress={signOut} className="items-center py-2">
+          <Text className="text-sm text-gray-500">{t('profile.logout')}</Text>
+        </Pressable>
+      ) : null}
     </ScrollView>
+  );
+}
+
+/** 한 걸음 물러서는 줄. 두 길의 아래에 같은 모양으로 선다. */
+function BackRow({ onPress, label }: { onPress: () => void; label: string }) {
+  return (
+    <Pressable onPress={onPress} className="items-center py-2">
+      <Text className="text-sm text-gray-500">{label}</Text>
+    </Pressable>
   );
 }

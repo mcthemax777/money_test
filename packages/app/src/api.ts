@@ -88,3 +88,18 @@ export async function setupApi(onUnauthorized: () => void): Promise<void> {
   // 로그인 화면이 뜨기 전에 해 둔다. configure 는 그 자리에서 끝나는 설정이다.
   GoogleSignin.configure({ webClientId: GOOGLE_WEB_CLIENT_ID });
 }
+
+/**
+ * 구글 쪽 세션을 끊는다. **우리 로그아웃과 늘 함께 부른다.**
+ *
+ * 우리 토큰만 지우면 다음에 "구글로 로그인"을 눌렀을 때 계정을 묻지 않고 방금 나간
+ * 계정으로 그대로 들어간다 -- 로그아웃이 안 된 것처럼 보이고, 다른 계정으로 바꿀 길도
+ * 없다. 로그아웃하는 자리가 둘이라(내 정보, 시작 화면) 한쪽만 부르는 일이 실제로 있었다.
+ */
+export async function signOutGoogle(): Promise<void> {
+  try {
+    await GoogleSignin.signOut();
+  } catch {
+    // 구글로 로그인한 적이 없는 경우(개발용 토큰). 우리 로그아웃은 그대로 진행한다.
+  }
+}
