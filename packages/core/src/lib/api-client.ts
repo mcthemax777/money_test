@@ -106,6 +106,9 @@ class ApiClient {
    */
   private refreshPromise: Promise<string> | null = null;
 
+  /** 내보내졌다는 소식을 받을 곳. 등록하지 않으면 아무 일도 하지 않는다. */
+  private onProjectAccessLost: (() => void) | null = null;
+
   private setupInterceptors() {
     this.client.interceptors.request.use(async (config) => {
       /*
@@ -155,6 +158,19 @@ class ApiClient {
         const isSessionRequest =
           originalRequest?.url?.includes('/auth/refresh') ||
           originalRequest?.url?.includes('/auth/google');
+
+        /*
+         * 이 가계부에서 내보내졌는가.
+         *
+         * 서버가 붙인 코드로만 본다. 맨 403 을 그렇게 보면 안 된다 -- editor 에서
+         * viewer 로 내려간 사람도 쓰기에서 403 을 받는데, 그쪽은 아직 구성원이다.
+         * 무엇을 할지는 등록된 쪽이 정한다 (`lib/project-access`).
+         */
+        const code = (error.response?.data as { error?: { code?: string } } | undefined)?.error
+          ?.code;
+        if (code === 'PROJECT_FORBIDDEN' || code === 'NOT_PROJECT_MEMBER') {
+          this.onProjectAccessLost?.();
+        }
 
         if (error.response?.status !== 401 || !originalRequest || isSessionRequest) {
           if (error.response?.status === 401) this.clearSession();
@@ -289,6 +305,16 @@ class ApiClient {
   /** 세션이 끊겼을 때 부를 것을 등록한다 (앱은 로그인 화면으로 되돌린다). */
   setUnauthorizedHandler(handler: () => void) {
     this.onUnauthorized = handler;
+  }
+
+  /**
+   * 이 가계부에서 내보내졌을 때 부를 곳. 화면 쪽이 등록한다.
+   *
+   * 여기서 스토어를 건드리지 않는 것은 서로를 부르는 고리를 만들지 않기 위해서다 --
+   * 처리하는 쪽(`lib/project-access`)이 이 창구를 쓴다.
+   */
+  setProjectAccessLostHandler(handler: (() => void) | null) {
+    this.onProjectAccessLost = handler;
   }
 
   private clearSession() {

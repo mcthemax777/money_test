@@ -8,6 +8,7 @@ import { useTranslation } from '@money/core/lib/i18n';
 import { useAuth } from '@money/core/store/auth';
 import DashboardSidebar from '@/components/DashboardSidebar';
 import MobileTabBar from '@/components/MobileTabBar';
+import ProjectAccessLostDialog from '@/components/ProjectAccessLostDialog';
 
 /**
  * 로그인 뒤 화면들의 공통 껍데기.
@@ -64,6 +65,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </main>
 
       <MobileTabBar />
+
+      {/*
+        내보내졌다는 알림. 시작 화면(`/start`)에도 같은 것이 있다 -- 마지막 가계부에서
+        내보내지면 그쪽으로 옮겨 가므로, 한쪽에만 두면 그 순간에 소식이 사라진다.
+      */}
+      <ProjectAccessLostDialog />
     </div>
   );
 }

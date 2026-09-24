@@ -25,6 +25,18 @@ interface ProjectStore {
   setProjects: (projects: Project[]) => void;
   selectedProjectId: string | null;
   setSelectedProjectId: (projectId?: string | null) => void;
+  /**
+   * 방금 내보내진 가계부의 이름. 아직 알리지 않은 소식이 있을 때만 들어 있다.
+   *
+   * 알아채는 자리(`lib/project-access`)와 알리는 자리(웹의 팝업, 앱의 Alert)가 달라
+   * 여기를 거친다. 특히 **화면이 갈리는 순간을 넘겨야 한다** -- 마지막 가계부에서
+   * 내보내지면 그 자리에서 시작 화면으로 바뀌는데, 알림을 그 전 화면이 들고 있으면
+   * 함께 사라진다.
+   *
+   * 저장하지 않는다(partialize). 앱을 다시 켤 때까지 남을 소식이 아니다.
+   */
+  accessLostName: string | null;
+  setAccessLostName: (name: string | null) => void;
 }
 
 /**
@@ -113,6 +125,8 @@ export const useProject = create<ProjectStore>()(
       setProjects: (projects: Project[]) => set({ projects }),
       selectedProjectId: null,
       setSelectedProjectId: (projectId?: string | null) => set({ selectedProjectId: projectId ?? null }),
+      accessLostName: null,
+      setAccessLostName: (name: string | null) => set({ accessLostName: name }),
     }),
     {
       name: 'project-storage',

@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
+import ProjectAccessLostDialog from '@/components/ProjectAccessLostDialog';
 import { useProjectStart } from '@money/core/hooks/useProjectStart';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useAuth } from '@money/core/store/auth';
@@ -299,6 +300,9 @@ export default function StartPage() {
           ) : null}
         </div>
       </div>
+
+      {/* 내보내져서 여기로 온 사람에게 그 사실을 알린다 (껍데기에도 같은 것이 있다). */}
+      <ProjectAccessLostDialog />
     </div>
   );
 }

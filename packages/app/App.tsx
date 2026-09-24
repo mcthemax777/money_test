@@ -19,6 +19,7 @@ import { setupApi } from './src/api';
 import { setupOffline } from './src/offline';
 import { hydrateStores } from './src/persistence';
 import OfflineSync from './src/shell/OfflineSync';
+import ProjectAccessLostAlert from './src/shell/ProjectAccessLostAlert';
 import AssetsScreen from './src/screens/AssetsScreen';
 import CategoriesScreen from './src/screens/CategoriesScreen';
 import HomeScreen from './src/screens/HomeScreen';
@@ -99,15 +100,24 @@ function Authenticated() {
     );
   }
 
-  if (hasNoProject) return <StartScreen />;
-
+  /*
+   * 내보내졌다는 알림은 껍데기 밖에 둔다. 마지막 가계부에서 내보내지면 이 자리에서
+   * 시작 화면으로 바뀌는데, 껍데기 안에 두면 알림도 함께 사라진다.
+   */
   return (
-    <NavigationProvider>
-      <OfflineSync />
-      <AppShell>
-        <Screen />
-      </AppShell>
-    </NavigationProvider>
+    <>
+      <ProjectAccessLostAlert />
+      {hasNoProject ? (
+        <StartScreen />
+      ) : (
+        <NavigationProvider>
+          <OfflineSync />
+          <AppShell>
+            <Screen />
+          </AppShell>
+        </NavigationProvider>
+      )}
+    </>
   );
 }
 

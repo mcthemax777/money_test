@@ -11,10 +11,10 @@
  * 실패는 조용히 넘긴다. 사본은 이미 읽을 수 있고, 오프라인은 오류가 아니다.
  */
 import { useEffect } from 'react';
-import { Alert, AppState, type AppStateStatus } from 'react-native';
+import { AppState, type AppStateStatus } from 'react-native';
 import * as Network from 'expo-network';
 
-import { useTranslation } from '@money/core/lib/i18n';
+import { reportProjectAccessLost } from '@money/core/lib/project-access';
 import { useProject, useProjectTimeZone } from '@money/core/store/project';
 
 import {
@@ -38,31 +38,21 @@ const RETRY_MAX_MS = 60_000;
 export default function OfflineSync() {
   const projectId = useProject((state) => state.selectedProjectId);
   const timeZone = useProjectTimeZone();
-  const setProjects = useProject((state) => state.setProjects);
-  const setSelectedProjectId = useProject((state) => state.setSelectedProjectId);
-  const { t } = useTranslation();
 
   /*
-   * 이 프로젝트에 더 갈 수 없게 되면 알린다.
+   * 동기화가 "더 갈 수 없다"로 돌아오면 그대로 넘긴다.
    *
-   * 사본은 이미 버려졌다(`offline.ts`). 여기서는 사람에게 그 사실을 말하고, 목록에서도
-   * 그 프로젝트를 뺀다 -- 남겨 두면 고를 때마다 같은 자리를 다시 밟는다.
+   * 사본은 이미 버려졌다(`offline.ts`). 그 뒤에 할 일 -- 목록을 다시 받고, 남은 가계부로
+   * 옮기고, 사람에게 알리는 것 -- 은 core 가 한 자리에서 한다(`reportProjectAccessLost`).
+   * 웹도 같은 자리를 쓴다. 알림을 그리는 것은 App 의 `ProjectAccessLostAlert` 다.
    *
    * 조용히 넘기면 안 되는 자리다. 오류가 나지 않으니 사용자는 며칠 지난 사본을 최신으로
    * 믿고, 거기에 계속 적는다.
    */
   useEffect(() => {
-    setAccessLostHandler((lostId) => {
-      const { projects } = useProject.getState();
-      const remaining = projects.filter((project) => project.id !== lostId);
-
-      setProjects(remaining);
-      setSelectedProjectId(remaining[0]?.id ?? null);
-      Alert.alert(t('project.accessLost.title'), t('project.accessLost.body'));
-    });
-
+    setAccessLostHandler((lostId) => void reportProjectAccessLost(lostId));
     return () => setAccessLostHandler(null);
-  }, [setProjects, setSelectedProjectId, t]);
+  }, []);
 
   // 쓰기 창구를 이 프로젝트의 사본으로. 그려지기 전에 걸어 두어야 첫 입력이 새지 않는다.
   useLocalWrites(projectId ?? '', timeZone);
