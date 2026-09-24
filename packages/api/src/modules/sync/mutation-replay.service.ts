@@ -708,6 +708,7 @@ export class MutationReplayService {
         statementClosingDay: payload.statementClosingDay ?? undefined,
         paymentDueDay: payload.paymentDueDay ?? undefined,
         color: payload.color ?? undefined,
+        expiryDate: payload.expiryDate ?? undefined,
         matchText: payload.matchText ?? undefined,
       } as never,
       projectId,

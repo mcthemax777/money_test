@@ -5,15 +5,17 @@
  * 주인·결제 통장이라 폼이 묻는 것이 몇 칸뿐이다. 화면 파일에 붙이면 목록을 그리는 코드와
  * 폼이 뒤섞인다.
  *
- * **웹보다 묻는 것이 적다.** 웹의 폼은 계좌번호·만료월·한도·카드 색까지 받지만, 여기서는
- * 서버가 반드시 받아야 하는 것과 나중에 고치기 번거로운 것만 받는다. 나머지는 웹에서
- * 고칠 수 있고, 좁은 화면에서 칸이 길어지면 만들다 그만두게 된다.
+ * **웹과 같은 것을 묻는다.** 예전에는 서버가 반드시 받아야 하는 것만 받고 계좌번호·만료월·
+ * 카드 색은 "웹에서 고치세요"로 두었다. 그런데 앱만 쓰는 사람에게 그 칸들은 없는 것과
+ * 같았다 -- 넣을 자리가 화면 어디에도 없었다. 주인과 결제 통장만 묻지 않는다. 누르고 들어온
+ * 자리가 그것을 이미 정했기 때문이다.
  */
 import { useEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 
 import { ACCOUNT_TYPE_OPTIONS, NO_BANK_TYPES } from '@money/core/lib/account-type';
 import { useInstitutions } from '@money/core/hooks/useInstitutions';
+import { monthInputToIso } from '@money/core/lib/datetime';
 import { useTranslation } from '@money/core/lib/i18n';
 import { dayOfMonthHint } from '@money/core/lib/day-of-month';
 import { currencyLabel, toAmountString } from '@money/core/lib/money';
@@ -26,8 +28,10 @@ import type { AssetSaveResult } from '@money/core/hooks/useAssetsData';
 import type { Account, AccountType } from '@money/core/lib/types';
 import { useProjectLedgerCurrency } from '@money/core/store/project';
 
+import CardColorPicker from './CardColorPicker';
 import CardPerformanceField from './CardPerformanceField';
 import DayOfMonthSelect from './DayOfMonthSelect';
+import ExpiryMonthSelect from './ExpiryMonthSelect';
 import MatchTextField from './MatchTextField';
 import Modal from './Modal';
 
@@ -48,8 +52,11 @@ const INPUT = 'rounded-lg border border-gray-300 bg-white px-3 py-2 text-base te
  *
  * 은행은 서른 개가 넘어 창 안에서 굴려 고른다. 좁은 화면에 드롭다운을 얹는 것보다
  * 알약이 손가락에 맞고, 고른 것이 한눈에 보인다.
+ *
+ * 고치기 창(`AssetEditModals`)도 이것을 쓴다. 같은 것(기관·카드사)을 고르는 자리가
+ * 만들 때와 고칠 때 다르게 보이면 사용자는 둘을 다른 칸으로 읽는다.
  */
-function PickRow({
+export function PickRow({
   options,
   value,
   onPick,
@@ -360,10 +367,16 @@ export function AddCardModal({
     name: string;
     cardType: 'debit' | 'credit';
     issuerId: string;
+    /** 실제 카드 번호. 서버가 마스킹해 보관한다. */
+    cardNumber?: string;
+    /** 만료 월의 말일 (ISO). */
+    expiryDate?: string;
     statementClosingDay?: number;
     paymentDueDay?: number;
     creditLimit?: string;
     performanceAmount?: string;
+    /** 카드 앞면 색. 비우면 카드 종류의 기본색이다. */
+    color?: string;
     /** 알림에서 이 카드를 알아보는 말. 한 줄에 하나씩이다. */
     matchText?: string;
   }) => Promise<AssetSaveResult>;
@@ -376,6 +389,12 @@ export function AddCardModal({
   const [name, setName] = useState('');
   const [cardType, setCardType] = useState<'debit' | 'credit'>('debit');
   const [issuerId, setIssuerId] = useState('');
+  /** 실제 카드 번호. 서버가 마스킹해 보관하므로 여기서만 온전한 값을 적는다. */
+  const [cardNumber, setCardNumber] = useState('');
+  /** 만료 월 "YYYY-MM". 저장은 그 달의 말일로 한다. */
+  const [expiryMonth, setExpiryMonth] = useState('');
+  /** 카드 앞면 색. 비워 두면 카드 종류의 기본색으로 그린다. */
+  const [color, setColor] = useState('');
   /** 신용카드의 마감일·결제일. 기본값에서 시작해 카드사 날짜에 맞춘다. */
   const [closingDay, setClosingDay] = useState(DEFAULT_STATEMENT_CLOSING_DAY);
   const [dueDay, setDueDay] = useState(DEFAULT_PAYMENT_DUE_DAY);
@@ -392,6 +411,9 @@ export function AddCardModal({
       setName('');
       setCardType('debit');
       setIssuerId('');
+      setCardNumber('');
+      setExpiryMonth('');
+      setColor('');
       setClosingDay(DEFAULT_STATEMENT_CLOSING_DAY);
       setDueDay(DEFAULT_PAYMENT_DUE_DAY);
       setCreditLimit('');
@@ -402,11 +424,17 @@ export function AddCardModal({
   }, [isOpen]);
 
   const save = async () => {
+    // 만료일은 월까지만 받는다. 저장은 그 달의 말일이다 (웹과 같다).
+    const expiryDate = monthInputToIso(expiryMonth);
+
     const result = await onSubmit({
       paymentAccountId: account.id,
       name: name.trim(),
       cardType,
       issuerId,
+      ...(cardNumber.trim() ? { cardNumber: cardNumber.trim() } : {}),
+      ...(expiryDate ? { expiryDate } : {}),
+      ...(color ? { color } : {}),
       // 신용카드는 마감일과 결제일이 있어야 한다 (서버가 막는다). 한도도 신용카드만이다.
       ...(cardType === 'credit'
         ? {
@@ -453,6 +481,19 @@ export function AddCardModal({
           />
         </Field>
 
+        {/* 카드 번호. 서버가 마스킹해 보관하므로 온전한 값을 적는 자리는 여기뿐이다. */}
+        <Field label={t('card.numberOptional')}>
+          <TextInput
+            value={cardNumber}
+            onChangeText={setCardNumber}
+            keyboardType="number-pad"
+            placeholder={t('card.numberPlaceholder')}
+            placeholderTextColor="#9ca3af"
+            className={INPUT}
+          />
+          <Text className="mt-1 text-xs text-gray-500">{t('card.numberMaskHint')}</Text>
+        </Field>
+
         <Field label={t('card.type')}>
           <PickRow
             options={[
@@ -470,6 +511,22 @@ export function AddCardModal({
           ) : (
             <PickRow options={issuerOptions} value={issuerId} onPick={setIssuerId} />
           )}
+        </Field>
+
+        <Field label={t('card.expiry')}>
+          <ExpiryMonthSelect value={expiryMonth} onChange={setExpiryMonth} />
+        </Field>
+
+        {/* 홈 화면의 카드 앞면 색. 고르지 않으면 종류의 기본색으로 보인다. */}
+        <Field label={t('card.color')}>
+          <CardColorPicker value={color} onChange={setColor} />
+          <Text className="mt-1 text-xs text-gray-500">
+            {t('card.colorHint', {
+              default: t(
+                cardType === 'credit' ? 'card.colorDefaultCredit' : 'card.colorDefaultDebit',
+              ),
+            })}
+          </Text>
         </Field>
 
         {/*

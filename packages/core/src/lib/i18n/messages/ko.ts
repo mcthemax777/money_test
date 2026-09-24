@@ -313,6 +313,8 @@ export const ko = {
   'day.hint': '그 달에 없는 날짜는 말일로 처리합니다.',
   'common.retry': '다시 시도',
   'common.add': '추가',
+  /** 고르지 않았음. 카드 색·만료 월처럼 비워 둘 수 있는 칸이 쓴다. */
+  'common.none': '정하지 않음',
   'select.placeholder': '선택하세요',
   'projectSwitch.failed': '프로젝트 변경에 실패했습니다.',
   'institutions.loadFailed': '목록을 불러오지 못했습니다.',
@@ -435,6 +437,8 @@ export const ko = {
   'card.limit': '신용한도 ({currency})',
   'card.limitPlain': '신용한도',
   'card.expiry': '만료 월 (선택)',
+  'card.expiryYear': '연도',
+  'card.expiryMonth': '월',
   'card.color': '카드 색 (선택)',
   'card.colorHint': '홈 화면의 카드 앞면 색입니다. 고르지 않으면 {default}으로 보입니다.',
   'card.colorDefaultCredit': '신용카드 기본색(파랑)',

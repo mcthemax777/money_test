@@ -161,6 +161,10 @@ export default function AssetsScreen() {
   const currencyOfCard = (card: Card) =>
     assets.accounts.find((account) => account.id === card.paymentAccountId)?.currency ?? 'KRW';
 
+  /** 결제 통장의 이름. 카드 고치기 창이 "이 카드는 어느 통장에서 빠지는가"를 적는다. */
+  const nameOfAccount = (accountId: string) =>
+    assets.accounts.find((account) => account.id === accountId)?.name ?? '';
+
   /*
    * 거래 화면에서 ←로 돌아왔을 때 떠나온 상세를 다시 편다.
    *
@@ -381,6 +385,10 @@ export default function AssetsScreen() {
       {accountEdit ? (
         <EditAccountModal
           target={accountEdit}
+          /* 주인은 고치지 못하지만 누구 것인지는 창에 적는다 (웹과 같다). */
+          ownerName={
+            assets.people.find((person) => person.id === accountEdit.ownerId)?.name ?? ''
+          }
           onClose={() => setAccountEdit(null)}
           isSubmitting={assets.isSubmitting}
           onSave={(patch) => assets.updateAccount(accountEdit.id, patch)}
@@ -393,6 +401,7 @@ export default function AssetsScreen() {
         <EditCardModal
           target={cardEdit}
           currency={currencyOfCard(cardEdit)}
+          accountName={nameOfAccount(cardEdit.paymentAccountId)}
           onClose={() => setCardEdit(null)}
           isSubmitting={assets.isSubmitting}
           onSave={(patch) => assets.updateCard(cardEdit.id, patch)}

@@ -24,6 +24,14 @@ export interface PersonPatch {
 
 export interface AccountPatch {
   name?: string;
+  /**
+   * 현재 잔액을 이 값으로 맞춘다. **이 필드만 아웃박스를 거치지 않는다** (D12).
+   *
+   * `useAssetsData` 가 여기서 떼어 `setAccountBalance` 로 보낸다. 사본 창구의
+   * `updateAccount` 로 들어오면 명령에 실려 재생 때 다른 값이 나오므로, 담아 보내는
+   * 쪽은 반드시 그 훅을 거친다.
+   */
+  balance?: string;
   ownerId?: string | null;
   institutionId?: string | null;
   accountNumber?: string | null;
@@ -39,6 +47,8 @@ export interface CardPatch {
   issuerId?: string;
   paymentAccountId?: string;
   cardNumber?: string | null;
+  /** 만료 월의 말일 (ISO). null 이면 지운다. */
+  expiryDate?: string | null;
   creditLimit?: string | null;
   performanceAmount?: string | null;
   statementClosingDay?: number | null;
@@ -73,6 +83,16 @@ export interface SettingsWritePort {
 
   addAccount(input: AccountDto.CreateRequest): Promise<{ id: string }>;
   updateAccount(id: string, patch: AccountPatch): Promise<void>;
+
+  /**
+   * 현재 잔액을 이 값으로 맞춘다. **아웃박스를 거치지 않고 곧바로 서버에 묻는다.**
+   *
+   * 이 파일 머리글의 D12 그대로다 -- 기초잔액 전표를 "목표 잔액 - 나머지 거래 합계"로
+   * 다시 계산하는 조작이라, 며칠 뒤에 재생하면 그 사이 달라진 거래 위에서 다른 값이
+   * 나온다. 그래서 다른 고치기와 갈라 두고 온라인에서만 되게 한다. 오프라인이면 실패하고
+   * 화면이 그 자리에 이유를 적는다 (삭제와 같은 규칙이다).
+   */
+  setAccountBalance(id: string, balance: string): Promise<void>;
 
   addCard(input: CardDto.CreateRequest): Promise<{ id: string }>;
   updateCard(id: string, patch: CardPatch): Promise<void>;
@@ -161,6 +181,9 @@ export const httpSettingsWritePort: SettingsWritePort = {
       return;
     }
     await apiClient.updateAccountV2(id, patch as AccountDto.UpdateRequest);
+  },
+  async setAccountBalance(id, balance) {
+    await apiClient.updateAccountV2(id, { balance });
   },
   async removeAccount(id) {
     await apiClient.deleteAccountV2(id);

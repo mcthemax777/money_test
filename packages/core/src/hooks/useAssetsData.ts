@@ -194,9 +194,21 @@ export function useAssetsData(projectId: string | null) {
     [submit],
   );
 
+  /**
+   * 통장 고치기. **잔액만 다른 길로 간다.**
+   *
+   * 잔액 맞추기는 기초잔액 전표를 다시 계산하는 조작이라 아웃박스에 실리지 않는다
+   * (`settings-write-port` 의 D12). 그래서 여기서 갈라, 나머지 필드는 평소의 고치기로
+   * 보내고 잔액은 서버에 곧바로 묻는다. 오프라인이면 잔액 쪽만 실패하고, 창이 그 자리에
+   * 이유를 적는다 -- 이름·계좌번호는 이미 사본에 적힌 뒤다.
+   */
   const updateAccount = useCallback(
     (id: string, patch: AccountPatch) =>
-      submit(() => settingsWritePort().updateAccount(id, patch), 'account.addFailed'),
+      submit(async () => {
+        const { balance, ...rest } = patch;
+        if (Object.keys(rest).length > 0) await settingsWritePort().updateAccount(id, rest);
+        if (balance !== undefined) await settingsWritePort().setAccountBalance(id, balance);
+      }, 'account.addFailed'),
     [submit],
   );
 

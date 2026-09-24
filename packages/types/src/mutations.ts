@@ -13,7 +13,7 @@
  * 다르다 -- 전표는 통째로, 설정은 **필드별로** 늦은 값이 이긴다 (설계 문서의 D5).
  */
 
-import type { CardTransferDirection, EntryKind } from './entities';
+import type { CardTransferDirection, EntryKind, IsoDateString } from './entities';
 
 /**
  * 다룰 수 있는 명령. 화면의 개념 그대로다.
@@ -333,6 +333,8 @@ export interface CardCreatePayload {
   statementClosingDay?: number | null;
   paymentDueDay?: number | null;
   color?: string | null;
+  /** 만료 월의 말일. 카드는 그 달의 마지막 날까지 쓴다. */
+  expiryDate?: IsoDateString | null;
   /** 알림·캡처에서 이 수단을 알아보는 말. 한 줄에 하나씩이다. */
   matchText?: string | null;
 }
@@ -348,6 +350,8 @@ export interface CardUpdatePayload {
   statementClosingDay?: number | null;
   paymentDueDay?: number | null;
   color?: string | null;
+  /** 만료 월의 말일. null 이면 지운다. */
+  expiryDate?: IsoDateString | null;
   /** 알림·캡처에서 이 수단을 알아보는 말. 한 줄에 하나씩이다. */
   matchText?: string | null;
   isActive?: boolean;

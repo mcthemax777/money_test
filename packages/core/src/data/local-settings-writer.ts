@@ -41,6 +41,13 @@ export interface LocalSettingsWriterOptions {
   projectId: string;
   /** 명령을 쌓은 뒤 곧바로 보내 볼 기회. 온라인이면 여기서 나간다. */
   onQueued?: (mutation: Mutation) => void;
+  /**
+   * 아웃박스를 거치지 않고 서버에 곧바로 쓴 뒤 부른다. 사본을 다시 맞출 기회다.
+   *
+   * 잔액 맞추기가 여기 든다 -- 서버가 기초잔액 전표를 다시 계산하므로, 그 결과를
+   * 받아 오기 전까지 사본의 잔액과 원장 줄은 옛 값이다.
+   */
+  onServerWrite?: () => void;
 }
 
 /** 사본에 담을 수 있는 값만 남긴다. undefined 는 "안 보냈다"라 아예 뺀다. */
@@ -60,6 +67,7 @@ export function createLocalSettingsWriter({
   store,
   projectId,
   onQueued,
+  onServerWrite,
 }: LocalSettingsWriterOptions): SettingsWritePort {
   /**
    * 사본에 적고 명령을 쌓는다.
@@ -154,6 +162,19 @@ export function createLocalSettingsWriter({
       await commit('account.update', id, { ...patch }, { ...patch });
     },
 
+    /*
+     * 잔액 맞추기. **아웃박스를 거치지 않고 곧바로 서버에 묻는다** (창구 정의의 D12).
+     *
+     * 서버가 기초잔액 전표를 "목표 잔액 - 나머지 거래 합계"로 다시 계산한다. 그 뺄셈은
+     * 지금 서버에 있는 거래를 세므로, 며칠 뒤에 재생하면 다른 값이 나온다. 그래서 삭제와
+     * 같이 온라인에서만 되고, 끝나면 동기화를 한 번 돌려 다시 계산된 전표를 받아 온다
+     * -- 그 전까지는 사본의 잔액이 옛 값이다.
+     */
+    async setAccountBalance(id: string, balance: string) {
+      await apiClient.updateAccountV2(id, { balance });
+      onServerWrite?.();
+    },
+
     async addCard(input: CardDto.CreateRequest) {
       const id = input.id ?? newId();
       const isCredit = input.cardType === 'credit';
@@ -176,6 +197,7 @@ export function createLocalSettingsWriter({
           statementClosingDay: input.statementClosingDay ?? null,
           paymentDueDay: input.paymentDueDay ?? null,
           color: input.color ?? null,
+          expiryDate: input.expiryDate ?? null,
           matchText: input.matchText || null,
         },
         {
@@ -190,6 +212,7 @@ export function createLocalSettingsWriter({
           statementClosingDay: input.statementClosingDay ?? null,
           paymentDueDay: input.paymentDueDay ?? null,
           color: input.color ?? null,
+          expiryDate: input.expiryDate ?? null,
           matchText: input.matchText || null,
           isActive: true,
         },

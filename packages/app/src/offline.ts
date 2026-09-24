@@ -111,7 +111,13 @@ export function useLocalWrites(projectId: string, timeZone: string): void {
 
   setEntryWritePort(createLocalEntryWriter({ store, projectId, timeZone, onQueued }));
   // 설정 엔티티(구성원·통장·카드·분류·태그)도 같은 길로 간다. 병합 규칙만 다르다 (필드별).
-  setSettingsWritePort(createLocalSettingsWriter({ store, projectId, onQueued }));
+  /*
+   * 잔액 맞추기처럼 서버에 곧바로 쓰는 것이 있다. 끝나면 같은 길로 한 번 맞춘다 --
+   * 서버가 다시 계산한 전표를 받아 와야 화면의 잔액이 방금 적은 값이 된다.
+   */
+  setSettingsWritePort(
+    createLocalSettingsWriter({ store, projectId, onQueued, onServerWrite: onQueued }),
+  );
 }
 
 /**
