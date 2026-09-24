@@ -21,8 +21,10 @@ export interface DraftMatch {
 /**
  * 후보의 결제수단을 찾는다.
  *
- * 네 가지 단서를 순서대로 본다.
+ * 다섯 가지 단서를 순서대로 본다.
  *
+ *   0. **사람이 적어 둔 말**(`matchText`). 사람이 이 카드·통장을 가리키라고 직접 적은
+ *      것이라 어떤 짐작보다 앞선다.
  *   1. **카드 번호 끝 네 자리.** 가장 확실하다. 카드마다 다르고 문구에 그대로 적힌다.
  *   2. **등록해 둔 카드 이름이 그대로 적혀 있는가.** 캡처와 알림에는 카드 이름이
  *      함께 적히는 일이 많다(카드사 앱의 이용내역은 거래마다 "nori 체크카드(2395)"
@@ -43,6 +45,28 @@ export function matchPaymentMethod(
 
   const cards = lists.cards.filter((card) => card.isActive);
   const accounts = lists.accounts.filter((account) => account.isActive);
+
+  /*
+   * 0) 사람이 적어 둔 말.
+   *
+   * 아래의 넷은 전부 짐작이다 -- 끝 네 자리가 없고 카드사 카드가 둘이면 어느 것인지
+   * 알 길이 없어 빈 칸으로 남는다. 그때 그 알림에 늘 함께 오는 말을 사람이 한 번 적어
+   * 두면(설정 > 자산의 카드·통장) 그 뒤로는 저절로 채워진다.
+   *
+   * **둘 이상 걸리면 손대지 않고 아래로 내려간다.** 적어 둔 말이 서로 겹칠 수 있고
+   * (한 카드에 "국민", 다른 카드에 "국민체크"), 그때는 끝 네 자리 쪽이 더 확실하다.
+   */
+  const text = draft.rawText || draft.cardText;
+  const byText = [
+    ...cards.filter((card) => registeredTextAppearsIn(card.matchText, text)).map((card) => ({
+      cardId: card.id,
+      accountId: null,
+    })),
+    ...accounts
+      .filter((account) => registeredTextAppearsIn(account.matchText, text))
+      .map((account) => ({ cardId: null, accountId: account.id })),
+  ];
+  if (byText.length === 1) return byText[0];
 
   // 1) 끝 네 자리. 마스킹된 번호에서 숫자만 남겨 뒤 네 자리를 견준다.
   if (draft.cardTail) {
@@ -116,6 +140,34 @@ export function guessCategoryId(
     }
   }
   return null;
+}
+
+/**
+ * 사람이 적어 둔 말이 그 글 안에 있는가. 한 줄이라도 걸리면 그 수단이다.
+ *
+ * 견주기 전에 **공백만 떼고 소문자로** 만든다. 이름 견주기(`normalizeName`)처럼
+ * "카드"·"은행"을 떼지 않는다 -- 그쪽은 등록한 이름과 문구의 표기가 다른 것을 잇는
+ * 일이지만, 이 값은 사람이 그 글을 보고 그대로 옮겨 적은 것이라 손대면 도리어 어긋난다.
+ * ("국민카드" 라고 적었는데 "카드" 가 떨어지면 "국민은행" 알림에도 걸린다.)
+ *
+ * 한 글자짜리 줄은 보지 않는다. 아무 글에나 들어 있어 그 수단이 엉뚱한 거래에 붙는다.
+ */
+function registeredTextAppearsIn(matchText: string | null | undefined, text: string | null): boolean {
+  if (!matchText || !text) return false;
+
+  const haystack = squash(text);
+  if (!haystack) return false;
+
+  return matchText
+    .split('\n')
+    .map(squash)
+    .filter((line) => line.length >= 2)
+    .some((line) => haystack.includes(line));
+}
+
+/** 공백을 떼고 소문자로. 줄바꿈과 사이 띄어쓰기 때문에 어긋나지 않게 한다. */
+function squash(value: string): string {
+  return value.toLowerCase().replace(/\s/g, '');
 }
 
 /**

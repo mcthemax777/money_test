@@ -23,6 +23,7 @@ import type { AssetSaveResult } from '@money/core/hooks/useAssetsData';
 
 import CardPerformanceField from './CardPerformanceField';
 import DayOfMonthSelect from './DayOfMonthSelect';
+import MatchTextField from './MatchTextField';
 import Modal from './Modal';
 import MoveRow from './MoveRow';
 
@@ -251,17 +252,25 @@ export function EditAccountModal({
   onSave,
   onMove,
   onRemove,
-}: RemovableEditProps<{ id: string; name: string; accountNumber?: string | null }>) {
+}: RemovableEditProps<{
+  id: string;
+  name: string;
+  accountNumber?: string | null;
+  /** 알림에서 이 통장을 알아보는 말. 한 줄에 하나씩이다. */
+  matchText?: string | null;
+}>) {
   const { t } = useTranslation();
   const [name, setName] = useState(target.name);
   const [accountNumber, setAccountNumber] = useState(target.accountNumber ?? '');
+  const [matchText, setMatchText] = useState(target.matchText ?? '');
   const [error, setError] = useState('');
 
   useEffect(() => {
     setName(target.name);
     setAccountNumber(target.accountNumber ?? '');
+    setMatchText(target.matchText ?? '');
     setError('');
-  }, [target.id, target.name, target.accountNumber]);
+  }, [target.id, target.name, target.accountNumber, target.matchText]);
 
   const run = async (task: Promise<AssetSaveResult>, close: boolean) => {
     const result = await task;
@@ -282,7 +291,15 @@ export function EditAccountModal({
           isSubmitting={isSubmitting}
           canSave={!isSubmitting && !!name.trim()}
           onSave={() =>
-            run(onSave({ name: name.trim(), accountNumber: accountNumber.trim() || null }), true)
+            run(
+              onSave({
+                name: name.trim(),
+                accountNumber: accountNumber.trim() || null,
+                // 비우면 null 을 보내 지운다. 적어 둔 말을 지울 길이 있어야 한다.
+                matchText: matchText.trim() || null,
+              }),
+              true,
+            )
           }
           onRemovePress={() =>
             askThenRemove({
@@ -311,6 +328,8 @@ export function EditAccountModal({
           />
         </Field>
 
+        <MatchTextField value={matchText} onChange={setMatchText} />
+
         <MoveRow disabled={isSubmitting} onMove={(step) => void run(onMove(step), false)} />
         <ErrorLine message={error} />
       </View>
@@ -337,6 +356,8 @@ export function EditCardModal({
   paymentDueDay: number | null;
   creditLimit: string | null;
   performanceAmount: string | null;
+  /** 알림에서 이 카드를 알아보는 말. 한 줄에 하나씩이다. */
+  matchText?: string | null;
 }>) {
   const { t } = useTranslation();
   const [name, setName] = useState(target.name);
@@ -353,6 +374,7 @@ export function EditCardModal({
   const [creditLimit, setCreditLimit] = useState(target.creditLimit ?? '');
   /** 실적 기준액. 앱의 실적 판과 사용액 그래프 기준선이 이 값으로 그려진다. */
   const [performanceAmount, setPerformanceAmount] = useState(target.performanceAmount ?? '');
+  const [matchText, setMatchText] = useState(target.matchText ?? '');
   const [error, setError] = useState('');
 
   const isCredit = target.cardType === 'credit';
@@ -363,6 +385,7 @@ export function EditCardModal({
     setDueDay(target.paymentDueDay ?? DEFAULT_PAYMENT_DUE_DAY);
     setCreditLimit(target.creditLimit ?? '');
     setPerformanceAmount(target.performanceAmount ?? '');
+    setMatchText(target.matchText ?? '');
     setError('');
   }, [
     target.id,
@@ -371,6 +394,7 @@ export function EditCardModal({
     target.paymentDueDay,
     target.creditLimit,
     target.performanceAmount,
+    target.matchText,
   ]);
 
   const run = async (task: Promise<AssetSaveResult>, close: boolean) => {
@@ -407,6 +431,8 @@ export function EditCardModal({
                 performanceAmount: performanceAmount.trim()
                   ? toAmountString(performanceAmount)
                   : null,
+                // 빈 값은 "지우기"다. 실적 기준액과 같은 규칙이다.
+                matchText: matchText.trim() || null,
               }),
               true,
             )
@@ -456,6 +482,8 @@ export function EditCardModal({
           statementClosingDay={isCredit ? closingDay : undefined}
           inputClassName={INPUT}
         />
+
+        <MatchTextField value={matchText} onChange={setMatchText} />
 
         <MoveRow disabled={isSubmitting} onMove={(step) => void run(onMove(step), false)} />
         <ErrorLine message={error} />

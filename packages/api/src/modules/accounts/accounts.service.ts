@@ -125,11 +125,13 @@ export class AccountsService {
         name: dto.name,
         institutionId,
         accountNumber: dto.accountNumber ?? null,
+        // 알림에서 이 통장을 알아보는 말. 빈 값이면 단서가 없는 것이라 null 이다.
+        matchText: dto.matchText || null,
         currency,
         sortRank: rankAfter(lastRank._max.sortRank),
         fieldHlc: stampFieldClocks(
           null,
-          ['name', 'ownerId', 'institutionId', 'accountNumber'],
+          ['name', 'ownerId', 'institutionId', 'accountNumber', 'matchText'],
           hlc ?? this.clock.now(),
         ),
       },
@@ -228,6 +230,8 @@ export class AccountsService {
     const data: Prisma.AccountUpdateInput = {};
     if (dto.name !== undefined) data.name = dto.name;
     if (dto.accountNumber !== undefined) data.accountNumber = dto.accountNumber;
+    // 빈 문자열은 "지우기"다. 적어 둔 말을 지울 길이 있어야 한다 (카드의 색과 같다).
+    if (dto.matchText !== undefined) data.matchText = dto.matchText || null;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     // 순서 바꾸기는 이 필드 하나다 (분수 색인).
     if (dto.sortRank !== undefined) data.sortRank = dto.sortRank;

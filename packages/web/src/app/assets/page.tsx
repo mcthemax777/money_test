@@ -56,6 +56,7 @@ import PersonScopeTitle from '@/components/PersonScopeTitle';
 import AssetTypeSummary from '@/components/AssetTypeSummary';
 import HiddenItemsPanel from '@/components/HiddenItemsPanel';
 import AssetHistoryChart from '@/components/AssetHistoryChart';
+import MatchTextField from '@/components/MatchTextField';
 import CardColorPicker from '@/components/CardColorPicker';
 import TransactionListView from '@/components/TransactionListView';
 import TransactionsView from '@/components/TransactionsView';
@@ -661,6 +662,8 @@ export default function DashboardPage() {
     performanceAmount: '',
     /** 카드 앞면 색. 빈 값이면 카드 종류의 기본색으로 그린다. */
     color: '',
+    /** 알림에서 이 카드를 알아보는 말. 여러 줄이다. */
+    matchText: '',
     // 청구 주기는 마감일과 결제일 두 값으로 계산한다
     statementClosingDay: DEFAULT_STATEMENT_CLOSING_DAY,
     paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
@@ -1217,6 +1220,8 @@ export default function DashboardPage() {
           : '',
         // 비워 두면 보내지 않는다. 서버는 null로 두고 화면이 종류별 기본색을 쓴다.
         color: cardForm.color || undefined,
+        // 알림에서 알아보는 말. 비워 두면 보내지 않는다.
+        matchText: cardForm.matchText || undefined,
         statementClosingDay:
           cardForm.cardType === 'credit' ? cardForm.statementClosingDay : undefined,
         paymentDueDay: cardForm.cardType === 'credit' ? cardForm.paymentDueDay : undefined,
@@ -1234,6 +1239,7 @@ export default function DashboardPage() {
         creditLimit: '',
         performanceAmount: '',
         color: '',
+        matchText: '',
         statementClosingDay: DEFAULT_STATEMENT_CLOSING_DAY,
         paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
       });
@@ -2140,6 +2146,7 @@ export default function DashboardPage() {
             creditLimit: '',
             performanceAmount: '',
             color: '',
+            matchText: '',
             statementClosingDay: DEFAULT_STATEMENT_CLOSING_DAY,
             paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
           });
@@ -2258,6 +2265,11 @@ export default function DashboardPage() {
             value={cardForm.performanceAmount}
             onChange={(performanceAmount) => setCardForm({ ...cardForm, performanceAmount })}
             statementClosingDay={cardForm.statementClosingDay}
+          />
+
+          <MatchTextField
+            value={cardForm.matchText}
+            onChange={(matchText) => setCardForm({ ...cardForm, matchText })}
           />
 
           {cardForm.cardType === 'credit' && (

@@ -317,6 +317,9 @@ export const ja: Record<MessageKey, string> = {
   'account.balanceHint':
     '残高を変えると、取引履歴の先頭にある期首残高が計算し直されます ({from} → {to})。新しい取引は作られず、入力済みの取引もそのまま残ります。',
   'account.number': '口座番号 (任意)',
+  'match.label': '通知で見分ける言葉 (任意)',
+  'match.hint': '通知やキャプチャに必ず入る言葉を一行に一つずつ書きます。その言葉があれば受信箱がこの手段で埋めます。',
+  'match.placeholder': 'KB国民カード\n国民チェック(1234)',
   'account.numberPlaceholder': '例: 123-456-7890',
 
   'person.add': 'メンバーを追加',

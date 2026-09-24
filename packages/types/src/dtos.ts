@@ -125,6 +125,12 @@ export namespace AccountDto {
      */
     openingBalance?: string;
     currency?: string;
+    /**
+     * 알림·캡처 글에서 이 수단을 알아보는 말. 한 줄에 하나씩이다.
+     *
+     * 빈 문자열을 보내면 지운다 (`색`과 같은 규칙이다).
+     */
+    matchText?: string;
     projectId?: string;
   }
 
@@ -133,6 +139,12 @@ export namespace AccountDto {
     /** null을 주면 기관 연결을 끊는다 */
     institutionId?: string | null;
     accountNumber?: string;
+    /**
+     * 알림·캡처 글에서 이 수단을 알아보는 말. 한 줄에 하나씩이다.
+     *
+     * 빈 문자열을 보내면 지운다 (`색`과 같은 규칙이다).
+     */
+    matchText?: string;
     /**
      * 현재 잔액을 이 값으로 맞춘다.
      *
@@ -235,6 +247,12 @@ export namespace CardDto {
     paymentDueDay?: number;       // 신용카드 필수. 1~31
     /** 카드 앞면 색 (CardColor). 생략하면 카드 종류의 기본색이다. */
     color?: string;
+    /**
+     * 알림·캡처 글에서 이 수단을 알아보는 말. 한 줄에 하나씩이다.
+     *
+     * 빈 문자열을 보내면 지운다 (`색`과 같은 규칙이다).
+     */
+    matchText?: string;
     projectId?: string;
   }
 
@@ -256,6 +274,12 @@ export namespace CardDto {
     paymentDueDay?: number;
     /** 카드 앞면 색 (CardColor) */
     color?: string;
+    /**
+     * 알림·캡처 글에서 이 수단을 알아보는 말. 한 줄에 하나씩이다.
+     *
+     * 빈 문자열을 보내면 지운다 (`색`과 같은 규칙이다).
+     */
+    matchText?: string;
     isActive?: boolean;
     /** 목록에서의 자리 (분수 색인). 순서 바꾸기는 이 값 하나로 한다. */
     sortRank?: string;

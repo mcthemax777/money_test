@@ -40,8 +40,11 @@
  * 22 는 할부 계획에 `interestBearing` 과 `principalShares` 가 생기고, 쓰이지 않던
  * `feeAmount` 가 빠진 판이다. 옛 사본의 계획 행에는 그 값들이 없어, 편집 화면이 유이자
  * 할부를 무이자로 되돌려 보내고 회차 금액도 적어 둔 값 대신 나눈 값으로 보인다.
+ *
+ * 24 는 통장·카드에 `matchText` 가 생긴 판이다. 알림에서 그 수단을 알아보는 말이라,
+ * 옛 사본에 그 칸이 없으면 알림 후보의 수단이 늘 비어 온다.
  */
-export const SCHEMA_VERSION = 23;
+export const SCHEMA_VERSION = 24;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -123,6 +126,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      currency       TEXT NOT NULL,
      balance        TEXT NOT NULL DEFAULT '0',
      isActive       INTEGER NOT NULL DEFAULT 1,
+     /* 알림·캡처에서 이 통장을 알아보는 말. 한 줄에 하나씩이다. */
+     matchText      TEXT,
      sortRank       TEXT NOT NULL DEFAULT 'V',
      fieldHlc       TEXT,
      createdAt      TEXT NOT NULL DEFAULT '',
@@ -195,6 +200,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      color               TEXT,
      expiryDate          TEXT,
      isActive            INTEGER NOT NULL DEFAULT 1,
+     /* 알림·캡처에서 이 카드를 알아보는 말. 한 줄에 하나씩이다. */
+     matchText           TEXT,
      sortRank            TEXT NOT NULL DEFAULT 'V',
      fieldHlc            TEXT,
      createdAt           TEXT NOT NULL DEFAULT '',

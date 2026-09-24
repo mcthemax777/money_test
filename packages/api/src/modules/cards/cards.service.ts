@@ -137,6 +137,8 @@ export class CardsService {
           paymentDueDay: dto.paymentDueDay ?? null,
           // 고르지 않으면 null이다. 종류별 기본색은 화면이 정한다.
           color: dto.color ?? null,
+          // 알림에서 이 카드를 알아보는 말. 빈 값이면 단서가 없는 것이라 null 이다.
+          matchText: dto.matchText || null,
           /*
            * 부채 계정 이름은 카드 이름에서 파생된다. 그래서 그쪽 행에는 이름 시계를 찍지
            * 않는다 -- 필드별 병합의 대상이 아니라 따라 움직이는 값이다 (07절의 표).
@@ -153,6 +155,7 @@ export class CardsService {
               'statementClosingDay',
               'paymentDueDay',
               'color',
+              'matchText',
             ],
             hlc ?? this.clock.now(),
           ),
@@ -250,6 +253,8 @@ export class CardsService {
     if (dto.paymentDueDay !== undefined) data.paymentDueDay = dto.paymentDueDay;
     // 빈 문자열은 "기본색으로 되돌리기"다. 색 선택은 비울 수 있어야 한다.
     if (dto.color !== undefined) data.color = dto.color || null;
+    // 알림에서 이 카드를 알아보는 말. 빈 문자열은 "지우기"다.
+    if (dto.matchText !== undefined) data.matchText = dto.matchText || null;
     if (dto.creditLimit !== undefined) data.creditLimit = toOptionalMoney(dto.creditLimit, '카드 한도');
     if (dto.performanceAmount !== undefined) {
       data.performanceAmount = toOptionalMoney(dto.performanceAmount, '카드 실적 기준액');

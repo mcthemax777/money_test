@@ -300,6 +300,8 @@ export interface AccountCreatePayload {
   institutionId?: string | null;
   accountNumber?: string | null;
   currency?: string;
+  /** 알림·캡처에서 이 수단을 알아보는 말. 한 줄에 하나씩이다. */
+  matchText?: string | null;
   /** 기초 잔액. 서버가 기초잔액 전표로 만든다. */
   initialBalance?: string;
 }
@@ -310,6 +312,8 @@ export interface AccountUpdatePayload {
   ownerId?: string | null;
   institutionId?: string | null;
   accountNumber?: string | null;
+  /** 알림·캡처에서 이 수단을 알아보는 말. 한 줄에 하나씩이다. */
+  matchText?: string | null;
   isActive?: boolean;
   /** 목록에서의 자리 (분수 색인). */
   sortRank?: string;
@@ -329,6 +333,8 @@ export interface CardCreatePayload {
   statementClosingDay?: number | null;
   paymentDueDay?: number | null;
   color?: string | null;
+  /** 알림·캡처에서 이 수단을 알아보는 말. 한 줄에 하나씩이다. */
+  matchText?: string | null;
 }
 
 export interface CardUpdatePayload {
@@ -342,6 +348,8 @@ export interface CardUpdatePayload {
   statementClosingDay?: number | null;
   paymentDueDay?: number | null;
   color?: string | null;
+  /** 알림·캡처에서 이 수단을 알아보는 말. 한 줄에 하나씩이다. */
+  matchText?: string | null;
   isActive?: boolean;
   /** 목록에서의 자리 (분수 색인). */
   sortRank?: string;

@@ -17,6 +17,7 @@ import {
   DEFAULT_STATEMENT_CLOSING_DAY,
 } from '@money/core/lib/day-of-month';
 import CardColorPicker from '@/components/CardColorPicker';
+import MatchTextField from '@/components/MatchTextField';
 import CardPerformanceField from '@/components/CardPerformanceField';
 import { useApiError } from '@money/core/lib/api-error';
 
@@ -36,6 +37,8 @@ const EMPTY_FORM = {
   cardNumber: '',
   /** 카드 앞면 색. 빈 값이면 카드 종류의 기본색으로 그린다. */
   color: '',
+  /** 알림에서 이 카드를 알아보는 말. 여러 줄이다. */
+  matchText: '',
   // 신용카드는 마감일과 결제일을 따로 관리한다 (구 statementClosingDay 하나를 대체)
   statementClosingDay: DEFAULT_STATEMENT_CLOSING_DAY,
   paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
@@ -83,6 +86,7 @@ export default function EditCardModal({
         cardType: card.cardType,
         cardNumber: '',
         color: card.color ?? '',
+        matchText: card.matchText ?? '',
         statementClosingDay: card.statementClosingDay ?? DEFAULT_STATEMENT_CLOSING_DAY,
         paymentDueDay: card.paymentDueDay ?? DEFAULT_PAYMENT_DUE_DAY,
       });
@@ -121,6 +125,8 @@ export default function EditCardModal({
           : '',
         // 비우면 빈 문자열을 보내 기본색으로 되돌린다.
         color: formData.color,
+        // 알림에서 알아보는 말도 비우면 빈 문자열을 보내 지운다.
+        matchText: formData.matchText,
         ...(isCredit
           ? {
               creditLimit: toAmountString(formData.creditLimit),
@@ -281,6 +287,11 @@ export default function EditCardModal({
           value={formData.performanceAmount}
           onChange={(performanceAmount) => setFormData({ ...formData, performanceAmount })}
           statementClosingDay={formData.statementClosingDay}
+        />
+
+        <MatchTextField
+          value={formData.matchText}
+          onChange={(matchText) => setFormData({ ...formData, matchText })}
         />
 
         {formData.cardType === 'credit' && (

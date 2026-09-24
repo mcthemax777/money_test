@@ -28,6 +28,7 @@ import { useProjectLedgerCurrency } from '@money/core/store/project';
 
 import CardPerformanceField from './CardPerformanceField';
 import DayOfMonthSelect from './DayOfMonthSelect';
+import MatchTextField from './MatchTextField';
 import Modal from './Modal';
 
 /** 폼 한 칸. 이름표와 입력이 늘 같은 간격으로 놓인다. */
@@ -197,6 +198,8 @@ export function AddAccountModal({
     name: string;
     institutionId?: string;
     accountNumber?: string;
+    /** 알림에서 이 통장을 알아보는 말. 한 줄에 하나씩이다. */
+    matchText?: string;
     currency?: string;
     openingBalance?: string;
   }) => Promise<AssetSaveResult>;
@@ -214,6 +217,8 @@ export function AddAccountModal({
   const [institutionId, setInstitutionId] = useState('');
   const [openingBalance, setOpeningBalance] = useState('');
   const [accountNumber, setAccountNumber] = useState('');
+  /** 알림에서 이 통장을 알아보는 말. 여러 줄이다. */
+  const [matchText, setMatchText] = useState('');
   /** 이 통장의 통화. 만든 뒤에는 바꿀 수 없어 여기서만 고른다. */
   const [currency, setCurrency] = useState<CurrencyCode>(ledgerCurrency as CurrencyCode);
   const [error, setError] = useState('');
@@ -225,6 +230,7 @@ export function AddAccountModal({
       setInstitutionId('');
       setOpeningBalance('');
       setAccountNumber('');
+      setMatchText('');
       setCurrency(ledgerCurrency as CurrencyCode);
       setError('');
     }
@@ -240,6 +246,7 @@ export function AddAccountModal({
       name: name.trim(),
       ...(needsBank && institutionId ? { institutionId } : {}),
       ...(accountNumber.trim() ? { accountNumber: accountNumber.trim() } : {}),
+      ...(matchText.trim() ? { matchText: matchText.trim() } : {}),
       currency,
       openingBalance: toAmountString(openingBalance || '0'),
     });
@@ -331,6 +338,8 @@ export function AddAccountModal({
           />
         </Field>
 
+        <MatchTextField value={matchText} onChange={setMatchText} />
+
         <ErrorLine message={error} />
       </View>
     </Modal>
@@ -355,6 +364,8 @@ export function AddCardModal({
     paymentDueDay?: number;
     creditLimit?: string;
     performanceAmount?: string;
+    /** 알림에서 이 카드를 알아보는 말. 한 줄에 하나씩이다. */
+    matchText?: string;
   }) => Promise<AssetSaveResult>;
   isSubmitting: boolean;
   /** 결제 통장. 목록에서 눌러 들어온 계좌다. */
@@ -372,6 +383,8 @@ export function AddCardModal({
   const [creditLimit, setCreditLimit] = useState('');
   /** 실적 기준액. 체크카드에도 있다 (그때는 달력 월로 센다). */
   const [performanceAmount, setPerformanceAmount] = useState('');
+  /** 알림에서 이 카드를 알아보는 말. 여러 줄이다. */
+  const [matchText, setMatchText] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -383,6 +396,7 @@ export function AddCardModal({
       setDueDay(DEFAULT_PAYMENT_DUE_DAY);
       setCreditLimit('');
       setPerformanceAmount('');
+      setMatchText('');
       setError('');
     }
   }, [isOpen]);
@@ -404,6 +418,7 @@ export function AddCardModal({
       ...(performanceAmount.trim()
         ? { performanceAmount: toAmountString(performanceAmount) }
         : {}),
+      ...(matchText.trim() ? { matchText: matchText.trim() } : {}),
     });
     if (result.ok) onClose();
     else setError(result.message ?? '');
@@ -499,6 +514,8 @@ export function AddCardModal({
           statementClosingDay={cardType === 'credit' ? closingDay : undefined}
           inputClassName={INPUT}
         />
+
+        <MatchTextField value={matchText} onChange={setMatchText} />
 
         <ErrorLine message={error} />
       </View>

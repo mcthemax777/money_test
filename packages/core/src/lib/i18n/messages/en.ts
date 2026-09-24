@@ -317,6 +317,9 @@ export const en: Record<MessageKey, string> = {
   'account.balanceHint':
     'Changing the balance recalculates the opening balance entry at the start of the history ({from} → {to}). No new entry is created, and everything you have entered stays as it is.',
   'account.number': 'Account number (optional)',
+  'match.label': 'Words to recognize in alerts (optional)',
+  'match.hint': 'Enter one phrase per line that always appears in the alert or screenshot. When it shows up, the inbox fills in this card or account.',
+  'match.placeholder': 'KB Kookmin Card\nCheck card (1234)',
   'account.numberPlaceholder': 'e.g. 123-456-7890',
 
   'person.add': 'Add member',

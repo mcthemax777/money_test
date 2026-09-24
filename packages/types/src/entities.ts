@@ -125,6 +125,15 @@ export interface Account {
   balance: string;
   currency: string;
   isActive: boolean;
+  /**
+   * 알림·캡처 글에서 이 수단을 알아보는 말. 한 줄에 하나씩 적는다.
+   *
+   * 보관함이 문구를 읽어 후보를 만들 때(`draft-match`) 가장 먼저 보는 단서다. 카드
+   * 이름이나 끝 네 자리로는 갈리지 않는 알림이 있다 -- "[Web발신] KB국민 승인" 처럼
+   * 카드사만 적히고 같은 카드사 카드가 둘이면 기기는 어느 것인지 알 수 없다. 그 글에
+   * 늘 함께 오는 말을 사람이 한 번 적어 두면 그 뒤로는 저절로 채워진다.
+   */
+  matchText: string | null;
   /** 목록에서의 자리 (분수 색인). 사전순 비교가 곧 목록 순서다. */
   sortRank: string;
   createdAt: IsoDateString;
@@ -163,6 +172,15 @@ export interface Card {
   /** 카드 앞면 색 (CardColor). null이면 카드 종류의 기본색으로 그린다. */
   color: string | null;
   isActive: boolean;
+  /**
+   * 알림·캡처 글에서 이 수단을 알아보는 말. 한 줄에 하나씩 적는다.
+   *
+   * 보관함이 문구를 읽어 후보를 만들 때(`draft-match`) 가장 먼저 보는 단서다. 카드
+   * 이름이나 끝 네 자리로는 갈리지 않는 알림이 있다 -- "[Web발신] KB국민 승인" 처럼
+   * 카드사만 적히고 같은 카드사 카드가 둘이면 기기는 어느 것인지 알 수 없다. 그 글에
+   * 늘 함께 오는 말을 사람이 한 번 적어 두면 그 뒤로는 저절로 채워진다.
+   */
+  matchText: string | null;
   /** 목록에서의 자리 (분수 색인). 사전순 비교가 곧 목록 순서다. */
   sortRank: string;
   createdAt: IsoDateString;

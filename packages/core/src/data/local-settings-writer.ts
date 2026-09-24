@@ -127,6 +127,7 @@ export function createLocalSettingsWriter({
           ownerId: input.ownerId ?? null,
           institutionId: input.institutionId ?? null,
           accountNumber: input.accountNumber ?? null,
+          matchText: input.matchText || null,
           currency: input.currency,
           initialBalance: input.openingBalance,
         },
@@ -136,6 +137,7 @@ export function createLocalSettingsWriter({
           ownerId: input.ownerId ?? null,
           institutionId: input.institutionId ?? null,
           accountNumber: input.accountNumber ?? null,
+          matchText: input.matchText || null,
           currency: input.currency ?? 'KRW',
           /*
            * 기초 잔액은 서버가 전표로 만든다. 사본에는 그 값을 잔액 컬럼에 그대로 적어
@@ -174,6 +176,7 @@ export function createLocalSettingsWriter({
           statementClosingDay: input.statementClosingDay ?? null,
           paymentDueDay: input.paymentDueDay ?? null,
           color: input.color ?? null,
+          matchText: input.matchText || null,
         },
         {
           liabilityAccountId: liabilityAccountId ?? null,
@@ -187,6 +190,7 @@ export function createLocalSettingsWriter({
           statementClosingDay: input.statementClosingDay ?? null,
           paymentDueDay: input.paymentDueDay ?? null,
           color: input.color ?? null,
+          matchText: input.matchText || null,
           isActive: true,
         },
         liabilityAccountId

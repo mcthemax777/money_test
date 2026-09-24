@@ -683,6 +683,61 @@ console.log('\n── 이 가계부의 것과 맞추기 ──');
   eq('모르는 카드사는 카드를 비운다', noFallback.cardId, 'null');
   eq('모르는 카드사는 통장으로 내려가지 않는다', noFallback.accountId, 'null');
 
+  /*
+   * 사람이 적어 둔 말. 다른 단서를 전부 이긴다.
+   *
+   * 아래 알림에는 끝 네 자리도 카드 이름도 없고 카드사만 적혀 있어, 적어 두지 않았다면
+   * "국민 신용"(c2)이 걸린다. 적어 둔 쪽으로 가는지를 본다.
+   */
+  const registered = [
+    { id: 'c1', name: '신한 체크', cardNumberMasked: null, isActive: true, matchText: '국민카드 승인' },
+    { id: 'c2', name: '국민 신용', cardNumberMasked: null, isActive: true, matchText: null },
+  ] as never;
+  eq(
+    '적어 둔 말이 카드사 짐작을 이긴다',
+    matchPaymentMethod(notify('국민카드 승인 5,000원 09/08 카페')!, { accounts, cards: registered })
+      .cardId,
+    'c1',
+  );
+  eq(
+    '띄어쓰기가 달라도 걸린다',
+    matchPaymentMethod(notify('국민 카드 승인 5,000원 09/08 카페')!, {
+      accounts,
+      cards: registered,
+    }).cardId,
+    'c1',
+  );
+
+  // 통장에도 적어 둘 수 있다. 입금 알림은 카드가 아니라 통장에서 난다.
+  eq(
+    '통장에 적어 둔 말도 본다',
+    matchPaymentMethod(notify('우리 입금 5,000원 09/08 이자')!, {
+      accounts: [
+        { id: 'a1', name: '카카오뱅크 통장', isActive: true, matchText: null },
+        { id: 'a2', name: '국민은행 통장', isActive: true, matchText: '우리 입금' },
+      ] as never,
+      cards,
+    }).accountId,
+    'a2',
+  );
+
+  /*
+   * 둘 이상 걸리면 손대지 않고 아래 단서로 내려간다.
+   *
+   * 적어 둔 말이 서로 겹칠 수 있다("국민"과 "국민카드"). 그때는 끝 네 자리가 더 확실하다.
+   */
+  eq(
+    '겹치면 끝 네 자리로 내려간다',
+    matchPaymentMethod(notify('국민카드(9876) 승인 5,000원 09/08 카페')!, {
+      accounts,
+      cards: [
+        { id: 'c1', name: '신한 체크', cardNumberMasked: '**** 1234', isActive: true, matchText: '국민' },
+        { id: 'c2', name: '국민 신용', cardNumberMasked: '**** 9876', isActive: true, matchText: '국민카드' },
+      ] as never,
+    }).cardId,
+    'c2',
+  );
+
   eq(
     '지난 거래의 분류를 이어 쓴다',
     guessCategoryId('스타벅스강남2호점', [

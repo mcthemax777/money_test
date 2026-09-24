@@ -27,6 +27,8 @@ export interface AccountPatch {
   ownerId?: string | null;
   institutionId?: string | null;
   accountNumber?: string | null;
+  /** 알림·캡처에서 이 수단을 알아보는 말. 한 줄에 하나씩이다. */
+  matchText?: string | null;
   isActive?: boolean;
   /** 목록에서의 자리 (분수 색인). */
   sortRank?: string;
@@ -42,6 +44,8 @@ export interface CardPatch {
   statementClosingDay?: number | null;
   paymentDueDay?: number | null;
   color?: string | null;
+  /** 알림·캡처에서 이 수단을 알아보는 말. 한 줄에 하나씩이다. */
+  matchText?: string | null;
   isActive?: boolean;
   /** 목록에서의 자리 (분수 색인). */
   sortRank?: string;

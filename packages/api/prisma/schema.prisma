@@ -314,6 +314,10 @@ model Account {
   // 캐시된 잔액. 근거는 Posting.amount 합계이며 6절 검증 쿼리로 대조한다.
   balance       Decimal     @default(0) @db.Decimal(19, 4)
   isActive      Boolean     @default(true)
+  /// 알림·캡처 글에서 이 수단을 알아보는 말. 한 줄에 하나씩이다.
+  /// 보관함의 맞추기(@money/core 의 draft-match)가 가장 먼저 보는 단서다.
+  matchText     String?
+
   /// 화면 표시 순서 (분수 색인). 이웃 사이에 값을 끼워 넣어 한 줄만 고친다.
   /// 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
   /// 비교는 바이트 순서다. 컬럼에 `COLLATE "C"` 를 박아 두었다 (20260907100000).
@@ -535,6 +539,10 @@ model Card {
   // null이면 카드 종류의 기본색(신용 파랑, 체크 초록)으로 그린다.
   color               String?
   isActive            Boolean   @default(true)
+  /// 알림·캡처 글에서 이 수단을 알아보는 말. 한 줄에 하나씩이다.
+  /// 보관함의 맞추기(@money/core 의 draft-match)가 가장 먼저 보는 단서다.
+  matchText           String?
+
   /// 화면 표시 순서 (분수 색인). 이웃 사이에 값을 끼워 넣어 한 줄만 고친다.
   /// 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
   /// 비교는 바이트 순서다. 컬럼에 `COLLATE "C"` 를 박아 두었다 (20260907100000).

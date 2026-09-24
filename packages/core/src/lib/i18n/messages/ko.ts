@@ -345,6 +345,9 @@ export const ko = {
   'account.balanceHint':
     '잔액을 바꾸면 거래내역 맨 앞의 기초잔액 금액이 다시 계산됩니다 ({from} → {to}). 새 거래내역은 생기지 않고, 그동안 입력한 거래도 그대로 남습니다.',
   'account.number': '계좌번호 (선택)',
+  'match.label': '알림에서 알아보는 말 (선택)',
+  'match.hint': '알림이나 캡처에 늘 함께 오는 말을 한 줄에 하나씩 적습니다. 그 말이 보이면 보관함이 이 수단으로 채웁니다.',
+  'match.placeholder': 'KB국민카드\n국민체크(1234)',
   'account.numberPlaceholder': '예: 123-456-7890',
 
   'person.add': '구성원 추가',

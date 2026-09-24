@@ -6,6 +6,7 @@ import {
   SUPPORTED_CURRENCIES,
   type CurrencyCode,
 } from '@money/types';
+import MatchTextField from '@/components/MatchTextField';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@money/core/hooks/useInstitutions';
@@ -45,6 +46,8 @@ const EMPTY_FORM = {
   currency: 'KRW' as CurrencyCode,
   openingBalance: '',
   accountNumber: '',
+  /** 알림에서 이 통장을 알아보는 말. 여러 줄이다. */
+  matchText: '',
 };
 
 export default function AddAccountModal({
@@ -88,6 +91,7 @@ export default function AddAccountModal({
           ? { institutionId: formData.institutionId }
           : {}),
         ...(formData.accountNumber ? { accountNumber: formData.accountNumber } : {}),
+        ...(formData.matchText ? { matchText: formData.matchText } : {}),
         ...(projectId ? { projectId } : {}),
       });
       const data = await apiClient.getAccountsV2(projectId);
@@ -226,6 +230,11 @@ export default function AddAccountModal({
             placeholder={t('account.numberPlaceholder')}
           />
         </div>
+
+        <MatchTextField
+          value={formData.matchText}
+          onChange={(matchText) => setFormData({ ...formData, matchText })}
+        />
 
         {error && (
           <div className="p-3 bg-red-50 text-red-800 text-sm rounded">{error}</div>

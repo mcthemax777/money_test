@@ -6,6 +6,7 @@ import type { Account, Person } from '@money/core/lib/types';
 import { NO_BANK_TYPES } from '@money/core/lib/account-type';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toAmountString } from '@money/core/lib/money';
+import MatchTextField from '@/components/MatchTextField';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@money/core/hooks/useInstitutions';
@@ -21,6 +22,8 @@ const EMPTY_FORM = {
   name: '',
   institutionId: '',
   accountNumber: '',
+  /** 알림에서 이 통장을 알아보는 말. 여러 줄이다. */
+  matchText: '',
   balance: '',
 };
 
@@ -64,6 +67,7 @@ export default function EditAccountModal({
         name: account.name,
         institutionId: account.institutionId ?? '',
         accountNumber: account.accountNumber || '',
+        matchText: account.matchText ?? '',
         balance: account.balance,
       });
     }
@@ -84,6 +88,8 @@ export default function EditAccountModal({
         // 기관을 비우면 null을 보내 연결을 끊는다. ''를 그대로 보내면 서버가 없는 id로 본다.
         ...(needsBankName ? { institutionId: formData.institutionId || null } : {}),
         ...(formData.accountNumber && { accountNumber: formData.accountNumber }),
+        // 비우면 빈 문자열을 보내 지운다. 적어 둔 말을 지울 길이 있어야 한다.
+        matchText: formData.matchText,
       });
       const data = await apiClient.getAccountsV2(projectId);
       onSuccess(data || []);
@@ -225,6 +231,11 @@ export default function EditAccountModal({
             placeholder={t('account.numberPlaceholder')}
           />
         </div>
+
+        <MatchTextField
+          value={formData.matchText}
+          onChange={(matchText) => setFormData({ ...formData, matchText })}
+        />
 
         {error && (
           <div className="p-3 bg-red-50 text-red-800 text-sm rounded">
