@@ -10,8 +10,9 @@ import { useProject } from '@money/core/store/project';
 /**
  * 화면이 프로젝트 하나를 고른 상태로 시작하게 만든다.
  *
- *   - 참여 중인 프로젝트가 없으면 생성 화면으로 보낸다. 그러지 않으면 아무것도
- *     불러올 수 없는 채로 로딩 상태에 갇힌다.
+ *   - 참여 중인 가계부가 없으면 시작 화면(`/start`)으로 보낸다. 그러지 않으면 아무것도
+ *     불러올 수 없는 채로 로딩 상태에 갇힌다. 첫 로그인 때 서버가 가계부를 만들어 주지
+ *     않으므로(`auth.service`) 가입한 사람은 모두 한 번 그 화면을 지난다.
  *   - 저장된 선택이 지워졌거나 탈퇴한 프로젝트를 가리키면 첫 프로젝트로 되돌린다.
  *
  * 홈과 가계가 각자 들고 있던 코드다. 로그인 직후 처음 열리는 화면이 둘 중 무엇이든
@@ -32,7 +33,7 @@ export function useProjectGuard(): string | null {
 
         if (!projects || projects.length === 0) {
           setSelectedProjectId(null);
-          router.push('/settings/projects');
+          router.push('/start');
           return;
         }
 

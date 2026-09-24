@@ -13,7 +13,10 @@ import { currencyLabel } from '@money/core/lib/money';
 import { TIME_ZONE_OPTIONS } from '@money/core/lib/time-zones';
 import type { Project } from '@money/core/store/project';
 
+import { WEB_ORIGIN } from '../api';
+import { inviteUrlOf } from '@money/core/lib/invite';
 import PageHeader from '../components/PageHeader';
+import QrCode from '../components/QrCode';
 import { useConnectivity } from '@money/core/store/connectivity';
 
 /**
@@ -617,10 +620,19 @@ export default function ProjectsScreen() {
                             key={invitation.id}
                             className="flex-row flex-wrap items-center justify-between gap-2 rounded-lg bg-gray-50 px-4 py-3"
                           >
+                            {/*
+                              QR 과 번호를 함께 둔다. 웹의 같은 자리와 같은 모양이다.
+
+                              사람을 들이는 일은 대개 옆에 앉아서 한다 -- 그때는 링크를
+                              주고받는 것보다 이 화면을 보여 주고 상대가 폰으로 찍는
+                              쪽이 빠르다. 번호는 QR 을 읽을 수 없을 때 쓰는 길이다.
+                            */}
+                            <QrCode text={inviteUrlOf(WEB_ORIGIN, invitation.invitationCode)} size={88} />
                             <View className="flex-1">
-                              <Text selectable className="text-xs text-gray-700">
-                                /join?code={invitation.invitationCode}
+                              <Text selectable className="text-base font-semibold tracking-widest text-gray-900">
+                                {invitation.invitationCode}
                               </Text>
+                              <Text className="mt-0.5 text-xs text-gray-500">{t('invite.qrHint')}</Text>
                               <Text className="mt-1 text-xs text-gray-500">
                                 {t('projects.rolePermission', { role: roleLabel(invitation.role) })}
                                 {invitation.expiresAt

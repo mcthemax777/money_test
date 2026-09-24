@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { useAuth } from '@money/core/store/auth';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
+import QrCode from '@/components/QrCode';
 import { useProjectAdmin } from '@money/core/hooks/useProjectAdmin';
 import {
   useProjectMembership,
@@ -750,10 +751,20 @@ export default function ProjectsPage() {
                           key={invitation.id}
                           className="flex flex-wrap items-center justify-between gap-2 bg-gray-50 rounded-lg px-4 py-3"
                         >
-                          <div className="min-w-0">
-                            <p className="text-xs text-gray-700 break-all font-mono">
-                              /join?code={invitation.invitationCode}
+                          {/*
+                            QR 과 번호를 함께 둔다.
+
+                            링크를 복사해 보내는 길만 있던 자리다. 그런데 사람을 들이는
+                            일은 대개 옆에 앉아서 한다 -- 그때는 링크를 주고받는 것보다
+                            화면을 보여 주고 폰으로 찍는 쪽이 빠르다. 번호는 QR 을 읽을
+                            수 없을 때(다른 방에 있다, 전화로 불러 준다) 쓰는 길이다.
+                          */}
+                          <QrCode text={buildInviteUrl(invitation.invitationCode)} size={96} />
+                          <div className="min-w-0 flex-1">
+                            <p className="font-mono text-base font-semibold tracking-widest text-gray-900">
+                              {invitation.invitationCode}
                             </p>
+                            <p className="mt-0.5 text-xs text-gray-500">{t('invite.qrHint')}</p>
                             <p className="text-xs text-gray-500 mt-1">
                               {t('projects.rolePermission', { role: getRoleLabel(invitation.role) })}
                               {invitation.expiresAt &&

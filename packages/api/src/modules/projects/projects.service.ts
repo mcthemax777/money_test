@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
 import { PrismaService } from '../../config/prisma.service';
-import { randomBytes, randomInt } from 'crypto';
+import { randomInt } from 'crypto';
 import { ProjectAccessService } from '../../common/project-access.guard';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { badRequest, forbidden, notFound } from '@/common/app-error';
@@ -264,7 +264,7 @@ export class ProjectsService {
     const invitation = await this.prisma.projectInvitation.create({
       data: {
         projectId,
-        invitationCode: this.generateInvitationCode(),
+        invitationCode: await this.issueInvitationCode(),
         role,
         status: 'pending',
         invitedByUserId: userId,
@@ -283,14 +283,7 @@ export class ProjectsService {
   // 초대 코드로 어떤 프로젝트인지 확인한다. 아직 멤버가 아닌 사람이 호출하므로
   // 가계부 내용은 담지 않는다.
   async getInvitationByCode(invitationCode: string, userId: string) {
-    const invitation = await this.prisma.projectInvitation.findUnique({
-      where: { invitationCode },
-      include: {
-        project: {
-          include: { members: { include: { user: true } } },
-        },
-      },
-    });
+    const invitation = await this.findInvitation(invitationCode);
 
     if (!invitation) {
       throw notFound('INVITATION_NOT_FOUND', '초대를 찾을 수 없습니다');
@@ -337,9 +330,7 @@ export class ProjectsService {
   }
 
   async acceptInvitation(invitationCode: string, userId: string) {
-    const invitation = await this.prisma.projectInvitation.findUnique({
-      where: { invitationCode },
-    });
+    const invitation = await this.findInvitation(invitationCode);
 
     if (!invitation) {
       throw notFound('INVITATION_NOT_FOUND', '초대를 찾을 수 없습니다');
@@ -616,7 +607,6 @@ export class ProjectsService {
   }
 
   // 중복은 사실상 발생하지 않지만, unique 제약에 걸려 프로젝트 생성이 실패하는 것을 막는다.
-  // 가입 시 기본 프로젝트를 만드는 AuthService도 같은 규칙을 써야 하므로 공개한다.
   async issueProjectKey(): Promise<string> {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       const key = this.generateProjectKey();
@@ -847,8 +837,63 @@ export class ProjectsService {
     return { success: true };
   }
 
+  /**
+   * 초대 번호. **사람이 눈으로 읽고 손으로 치는 값이다.**
+   *
+   * 예전에는 32 자 16진수였다. 링크에 실어 보낼 때는 아무래도 좋았지만, 첫 화면에서
+   * "받은 번호로 들어가기"를 하려면 옮겨 적을 수 있어야 한다. 참여 키와 같은 알파벳을
+   * 쓴다 -- 0/O, 1/I/L 처럼 헷갈리는 글자가 빠져 있다.
+   *
+   * 여덟 자리에 서른한 글자면 약 8.5 x 10^11 가지다. 30일이면 만료되고 아래에서 중복을
+   * 한 번 더 본다.
+   */
   private generateInvitationCode(): string {
-    return randomBytes(16).toString('hex');
+    const alphabet = ProjectsService.PROJECT_KEY_ALPHABET;
+    let code = '';
+    for (let i = 0; i < ProjectsService.PROJECT_KEY_LENGTH; i += 1) {
+      code += alphabet[randomInt(alphabet.length)];
+    }
+    return code;
+  }
+
+  /** 쓰이지 않은 번호가 나올 때까지. 참여 키(`issueProjectKey`)와 같은 규칙이다. */
+  private async issueInvitationCode(): Promise<string> {
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const code = this.generateInvitationCode();
+      const taken = await this.prisma.projectInvitation.findUnique({
+        where: { invitationCode: code },
+      });
+      if (!taken) return code;
+    }
+    throw new BadRequestException('초대 번호를 발급하지 못했습니다. 다시 시도해주세요.');
+  }
+
+  /**
+   * 사람이 친 번호를 찾을 수 있는 모양으로.
+   *
+   * 앞뒤 공백과 사이의 붙임표를 떼고 대문자로 만든다. 사람은 "ab-cd-ef" 처럼 적어 오고,
+   * 폰 자판은 첫 글자를 소문자로 낸다.
+   *
+   * **옛 번호(32 자 16진수)는 소문자다.** 그래서 부르는 쪽은 들어온 값 그대로 한 번,
+   * 여기를 지난 값으로 한 번 찾는다.
+   */
+  private static normalizeInvitationCode(code: string): string {
+    return (code ?? '').trim().replace(/-/g, '').toUpperCase();
+  }
+
+  /** 번호로 초대를 찾는다. 옛 번호와 새 번호를 함께 받는다. */
+  private async findInvitation(invitationCode: string) {
+    const raw = (invitationCode ?? '').trim();
+    const normalized = ProjectsService.normalizeInvitationCode(raw);
+
+    for (const code of raw === normalized ? [raw] : [raw, normalized]) {
+      const found = await this.prisma.projectInvitation.findUnique({
+        where: { invitationCode: code },
+        include: { project: { include: { members: { include: { user: true } } } } },
+      });
+      if (found) return found;
+    }
+    return null;
   }
 }
 

@@ -3,8 +3,6 @@ import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../config/prisma.service';
 import { ConfigService } from '../../config/config.service';
 import { UsersService } from '../users/users.service';
-import { ProjectsService } from '../projects/projects.service';
-import { CategoriesService } from '../categories/categories.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { OAuth2Client, type TokenPayload as GoogleTokenPayload } from 'google-auth-library';
 import { Auth, DEFAULT_LOCALE, isLocale } from '@money/types';
@@ -23,8 +21,6 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
-    private readonly projectsService: ProjectsService,
-    private readonly categoriesService: CategoriesService,
     private readonly projectAccess: ProjectAccessService,
   ) {}
 
@@ -95,7 +91,11 @@ export class AuthService {
     name: string;
     avatar: string | null;
   }) {
-    let user: { id: string };
+    /*
+     * 만든 행을 그대로 돌려준다. 예전에는 기본 가계부를 만들어 붙이느라 id 만 들고
+     * 있다가 다시 읽었는데, 이제 그 걸음이 없어 처음 읽은 행이 곧 답이다.
+     */
+    let user: Awaited<ReturnType<typeof this.prisma.user.create>>;
     try {
       user = await this.prisma.user.create({ data });
     } catch (error) {
@@ -118,12 +118,17 @@ export class AuthService {
       throw error;
     }
 
-    const defaultProject = await this.createDefaultProject(user.id, data.name);
-
-    return this.prisma.user.update({
-      where: { id: user.id },
-      data: { defaultProjectId: defaultProject.id },
-    });
+    /*
+     * **가계부는 만들지 않는다.** 첫 화면에서 사람이 고른다.
+     *
+     * 예전에는 여기서 "OOO의 프로젝트"를 만들어 주었다. 그러면 남의 가계부에 들어오려고
+     * 가입한 사람에게도 제 가계부가 하나 생기고, 그것을 지우는 일이 따로 남는다. 들어온
+     * 사람은 대개 그것을 지우지 않아 빈 가계부가 목록에 계속 선다.
+     *
+     * 가계부가 없는 사람은 시작 화면으로 간다 (웹 `/start`, 앱의 StartScreen).
+     * 거기서 만들거나, 받은 번호·QR 로 남의 가계부에 들어간다.
+     */
+    return user;
   }
 
   private async buildAuthResponse(user: {
@@ -154,42 +159,6 @@ export class AuthService {
       },
       defaultProjectData: defaultProjectData as any,
     };
-  }
-
-  /**
-   * 첫 로그인 때 만드는 기본 프로젝트.
-   *
-   * 이름에 사용자명을 넣는다(예: "홍길동의 프로젝트"). 여러 프로젝트를 함께 쓰거나
-   * 다른 사람의 프로젝트에 참여했을 때 어느 것이 자기 것인지 바로 알아보게 하려는 것이다.
-   * userName은 호출 지점에서 이미 비어 있지 않음이 보장되지만(구글 이름이 없으면
-   * 이메일 앞부분을 쓴다) 여기서도 한 번 더 확인해 "의 프로젝트"만 남는 것을 막는다.
-   */
-  private async createDefaultProject(userId: string, userName: string) {
-    const name = userName.trim() ? `${userName.trim()}의 프로젝트` : '나의 프로젝트';
-
-    const project = await this.prisma.project.create({
-      data: {
-        name,
-        description: '첫 번째 프로젝트',
-        // 다른 사용자가 검색해 가입 요청할 수 있도록 키를 함께 발급한다.
-        projectKey: await this.projectsService.issueProjectKey(),
-      },
-    });
-
-    await this.prisma.projectMember.create({
-      data: {
-        projectId: project.id,
-        userId,
-        role: 'owner',
-      },
-    });
-
-    // 만든 사람을 첫 구성원으로 세우고 "나"로 지정한다 (ProjectsService.ensureMyPerson).
-    // 구성원이 하나도 없으면 홈도 자산도 빈 화면이고 거래를 적을 자리가 없다.
-    await this.projectsService.ensureMyPerson(project.id, userId);
-    await this.categoriesService.createDefaultCategories(project.id);
-
-    return project;
   }
 
   async refresh(dto: Auth.RefreshRequest): Promise<Auth.AuthResponse> {

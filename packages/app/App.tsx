@@ -11,6 +11,7 @@ import { ActivityIndicator, Text, View } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
+import { useProjectBootstrap } from '@money/core/hooks/useProjectBootstrap';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useAuth } from '@money/core/store/auth';
 
@@ -28,6 +29,7 @@ import OutboxScreen from './src/screens/OutboxScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ProjectsScreen from './src/screens/ProjectsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
+import StartScreen from './src/screens/StartScreen';
 import TransactionsScreen from './src/screens/TransactionsScreen';
 import AppShell from './src/shell/AppShell';
 import { NavigationProvider, useNavigation } from './src/shell/navigation';
@@ -66,16 +68,46 @@ export default function App() {
           <ActivityIndicator />
         </View>
       ) : isAuthenticated ? (
-        <NavigationProvider>
-          <OfflineSync />
-          <AppShell>
-            <Screen />
-          </AppShell>
-        </NavigationProvider>
+        <Authenticated />
       ) : (
         <LoginScreen startupError={startupError} />
       )}
     </SafeAreaProvider>
+  );
+}
+
+/**
+ * 로그인한 사람에게 보여 줄 것.
+ *
+ * **가계부를 하나도 갖지 않은 사람은 껍데기로 들어오지 못한다.** 사이드바와 아래 탭은
+ * 가계부 하나를 고른 상태를 전제로 그려져, 그 사람에게는 어느 칸을 눌러도 빈 화면이
+ * 나온다. 첫 로그인 때 서버가 가계부를 만들어 주지 않으므로(`auth.service`) 가입한
+ * 사람은 모두 한 번 시작 화면을 지난다.
+ *
+ * 목록을 받는 일을 여기서 한다. 예전에는 껍데기가 했는데, 껍데기를 그릴지 말지를
+ * 그 결과로 정하게 되어 자리가 어긋났다 -- 받기 전에는 "없다"가 아니라 "모른다"이므로
+ * 그 동안에는 아무것도 그리지 않고 기다린다 (isLoading).
+ */
+function Authenticated() {
+  const { hasNoProject, isLoading } = useProjectBootstrap();
+
+  if (isLoading) {
+    return (
+      <View className="flex-1 items-center justify-center bg-gray-50">
+        <ActivityIndicator />
+      </View>
+    );
+  }
+
+  if (hasNoProject) return <StartScreen />;
+
+  return (
+    <NavigationProvider>
+      <OfflineSync />
+      <AppShell>
+        <Screen />
+      </AppShell>
+    </NavigationProvider>
   );
 }
 

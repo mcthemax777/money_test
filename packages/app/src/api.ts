@@ -33,11 +33,13 @@ const SERVERS = {
   local: {
     apiUrl: 'http://localhost:3001',
     googleWebClientId: '183293757909-g5mjgmv67f4p88kktsamd72iv47gcn2q.apps.googleusercontent.com',
+    webOrigin: 'http://localhost:3002',
   },
   /** 배포 서버. 그 호스트는 /api 로 오는 것만 API 로 넘긴다. */
   deployed: {
     apiUrl: 'https://bboyong.online/api',
     googleWebClientId: '183293757909-5km72508a6ttn2bgk5il5p7neinejjv3.apps.googleusercontent.com',
+    webOrigin: 'https://bboyong.online',
   },
 } as const;
 
@@ -45,6 +47,17 @@ const SERVERS = {
 const SERVER = SERVERS.deployed;
 
 export const API_URL = SERVER.apiUrl;
+
+/**
+ * 초대 QR 에 담는 웹 주소의 뿌리.
+ *
+ * QR 에 번호만 담으면 기기의 기본 카메라로 찍었을 때 글자만 뜨고 아무 데도 가지 못한다.
+ * 링크면 그 자리에서 가계부가 열린다 (우리 앱의 스캐너는 링크에서 번호만 떼어 쓴다).
+ *
+ * API 주소에서 깎아 내지 않고 따로 적는다. 배포에서는 `/api` 를 떼면 맞지만 로컬에서는
+ * 웹이 다른 포트에 있어(3002) 규칙이 서지 않는다.
+ */
+export const WEB_ORIGIN = SERVER.webOrigin;
 
 /**
  * 구글 로그인의 웹 클라이언트 ID.

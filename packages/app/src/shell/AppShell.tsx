@@ -3,7 +3,6 @@ import { Plus } from 'lucide-react-native';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { useProjectBootstrap } from '@money/core/hooks/useProjectBootstrap';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useAuth } from '@money/core/store/auth';
 
@@ -50,8 +49,11 @@ function Shell({ children }: { children: ReactNode }) {
   const { attach, noteOffset } = useScrollRegistration();
   const scrollRef = useRef<ScrollView>(null);
 
-  // 프로젝트 목록과 첫 선택. 웹의 껍데기도 같은 훅을 쓴다.
-  useProjectBootstrap();
+  /*
+   * 프로젝트 목록은 여기서 받지 않는다. App 의 Authenticated 가 먼저 받는다 --
+   * 가계부가 없는 사람은 껍데기 대신 시작 화면으로 가야 해서, 그 판단이 이 바깥에서
+   * 끝나야 한다. 두 곳에서 부르면 열 때마다 같은 목록을 두 번 받는다.
+   */
 
   if (isInitializing || !isAuthenticated) {
     return (

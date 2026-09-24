@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 import { apiClient } from '../lib/api-client';
 import { useAuth } from '../store/auth';
@@ -17,7 +17,7 @@ import { useMirrorVersion } from './useMirrorVersion';
  */
 export function useProjectBootstrap(): {
   selectedProjectId: string | null;
-  /** 목록을 받아 봤는데 참여 중인 프로젝트가 없다. 만들라고 안내할 자리다. */
+  /** 목록을 받아 봤는데 참여 중인 프로젝트가 없다. 시작 화면으로 보낼 자리다. */
   hasNoProject: boolean;
   /** 아직 목록을 못 받았다. 이때의 hasNoProject 는 "없다"가 아니라 "모른다"다. */
   isLoading: boolean;
@@ -34,6 +34,14 @@ export function useProjectBootstrap(): {
    * 때마다 한 번 더 받는다 -- 목록은 작고, 이 훅은 앱이 도는 동안 한 번만 붙는다.
    */
   const mirrorVersion = useMirrorVersion();
+  /**
+   * 목록을 한 번이라도 받아 봤는가.
+   *
+   * "없다"와 "아직 모른다"를 가르는 값이다. 목록의 길이만 보면 받기 전에도 0 이라,
+   * 가계부가 있는 사람에게도 시작 화면이 한 번 번쩍인다. 고른 값이 저장돼 있는지로는
+   * 가를 수 없다 -- 지워진 가계부를 가리키는 옛 선택이 남아 있을 수 있다.
+   */
+  const [isLoaded, setLoaded] = useState(false);
 
   useEffect(() => {
     if (!isAuthenticated) return;
@@ -59,6 +67,12 @@ export function useProjectBootstrap(): {
       } catch (error) {
         // 목록을 못 받아도 화면은 떠야 한다. 저장해 둔 선택으로 그린다.
         console.error('프로젝트 목록 조회 실패:', error);
+      } finally {
+        /*
+         * 실패해도 세운다. 서버에 닿지 못한 사람을 로딩 표시에 가둬 두면 오프라인에서는
+         * 아무 화면도 뜨지 않는다 -- 사본으로 그릴 수 있는 것이 이미 있다.
+         */
+        if (!cancelled) setLoaded(true);
       }
     };
 
@@ -72,7 +86,7 @@ export function useProjectBootstrap(): {
 
   return {
     selectedProjectId,
-    hasNoProject: isAuthenticated && projects.length === 0,
-    isLoading: isAuthenticated && projects.length === 0 && selectedProjectId === null,
+    hasNoProject: isAuthenticated && isLoaded && projects.length === 0,
+    isLoading: isAuthenticated && !isLoaded,
   };
 }

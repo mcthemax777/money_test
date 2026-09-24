@@ -31,6 +31,12 @@
           "useSQLCipher": true
         }
       ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "가계부 초대 QR 을 찍을 때만 카메라를 씁니다."
+        }
+      ],
       "@react-native-google-signin/google-signin",
       "./plugins/with-signing",
       "@react-native-community/datetimepicker"
