@@ -410,13 +410,6 @@ export const ko = {
   'assets.addTitle': '추가하기',
   /** 큰 금액(카드 대금을 뺀 남은 금액) 아래에 통장에 실제로 찍힌 돈을 적는 줄. */
   'assets.balanceLine': '잔액 {balance}',
-  /*
-   * 목록 위의 사람 탭. 하나를 고르면 그 사람의 계좌·카드만 남는다.
-   *
-   * 위의 총자산과 추이 그래프는 고른 자산주인 전체를 그대로 둔다 -- 이 탭은 긴 목록에서
-   * 두 번째 사람에게 바로 가는 길일 뿐, 보고 있는 범위를 바꾸지 않는다.
-   */
-  'assets.personTab.all': '전체',
   'assets.noAccounts': '등록된 계좌가 없습니다.',
   'account.detail': '계좌 상세정보',
   'account.bank': '은행',

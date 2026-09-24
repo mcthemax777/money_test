@@ -598,7 +598,7 @@ export default function DashboardPage() {
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [detailType, setDetailType] = useState<'person' | 'account' | 'card' | null>(null);
   /**
-   * 목록에서 보고 있는 사람. null 이면 고른 자산주인을 전부 늘어놓는다.
+   * 목록에서 보고 있는 사람. 아직 고르지 않았으면 null 이고, 그때는 아래에서 정한다.
    *
    * 위의 총자산과 추이 그래프는 이 값을 보지 않는다. 그쪽은 제목에서 고른 자산주인
    * 전체의 값이고, 이 탭은 긴 목록에서 한 사람에게 바로 가는 길이다.
@@ -1336,17 +1336,20 @@ export default function DashboardPage() {
   const displayPeople = people.filter((person) => selectedPersonIds.includes(person.id));
 
   /*
-   * 탭이 가리키는 사람. 고른 자산주인에서 빠졌으면 전체로 되돌린다.
+   * 탭이 가리키는 사람. 목록은 늘 한 사람 것이다.
    *
-   * 값을 고쳐 두는 대신 그릴 때마다 가린다. 목록이 오는 동안은 displayPeople 이 비어
-   * 있는데, 그 순간을 "사라졌다"로 읽고 상태를 지우면 다시 들어온 뒤에도 전체가 된다.
+   * 아직 고르지 않았거나 고른 사람이 자산주인에서 빠졌으면 "나"로, 나도 없으면 목록의
+   * 첫 사람으로 되돌린다. 화면을 열면 제 자산부터 보는 것이 자연스럽다.
+   *
+   * 값을 고쳐 두는 대신 그릴 때마다 고른다. 목록이 오는 동안은 displayPeople 이 비어
+   * 있는데, 그 순간을 "사라졌다"로 읽고 상태를 지우면 다시 들어온 뒤에도 남이 펴진다.
    */
-  const listPerson = displayPeople.some((person) => person.id === listPersonId)
-    ? listPersonId
-    : null;
-  const listedPeople = listPerson
-    ? displayPeople.filter((person) => person.id === listPerson)
-    : displayPeople;
+  const listPerson =
+    displayPeople.find((person) => person.id === listPersonId) ??
+    displayPeople.find((person) => person.id === myPersonId) ??
+    displayPeople[0] ??
+    null;
+  const listedPeople = listPerson ? [listPerson] : [];
 
   /*
    * 전원을 고른 상태인지.
@@ -1455,9 +1458,10 @@ export default function DashboardPage() {
           */}
           <PersonTabs
             people={displayPeople}
-            selectedId={listPerson}
+            selectedId={listPerson?.id ?? null}
             onSelect={setListPersonId}
             onAddPerson={openPersonAdd}
+            onReorder={handleReorderPeople}
           />
 
           {isLoading ? (
@@ -1490,7 +1494,6 @@ export default function DashboardPage() {
               setSelectedCard(card);
               setDetailType('card');
             }}
-            onReorderPeople={handleReorderPeople}
             onReorderAccounts={handleReorderAccounts}
             onReorderCards={handleReorderCards}
             onAddAccount={openAccountAdd}
@@ -2409,7 +2412,6 @@ function PersonAssetList({
   onPersonClick,
   onAccountClick,
   onCardClick,
-  onReorderPeople,
   onReorderAccounts,
   onReorderCards,
   onAddAccount,
@@ -2425,7 +2427,6 @@ function PersonAssetList({
   onPersonClick: (person: Person) => void;
   onAccountClick: (account: Account) => void;
   onCardClick: (card: Card) => void;
-  onReorderPeople: (ids: string[]) => void;
   onReorderAccounts: (ids: string[]) => void;
   onReorderCards: (ids: string[]) => void;
   /*
@@ -2439,18 +2440,16 @@ function PersonAssetList({
 }) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
-  const { items, dragProps, draggingId } = useDragReorder(people, onReorderPeople);
 
   return (
     <div>
       <div className="space-y-8">
-      {items.map((person) => (
+      {people.map((person) => (
         <div
           key={person.id}
-          {...dragProps(person.id)}
           className={`bg-white rounded-lg shadow p-6 hover:shadow-md transition ${
             selected?.type === 'person' && selected.id === person.id ? SELECTED_MARK : ''
-          } ${draggingId === person.id ? 'opacity-50' : ''}`}
+          }`}
         >
           {/*
             이름과 소계를 한 줄의 양 끝에 둔다. "소계"라는 말은 적지 않는다 -- 사람

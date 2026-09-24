@@ -36,6 +36,14 @@ const SCROLL_MAX = 16;
 export function useDragReorder<T extends { id: string }>(
   source: T[],
   onCommit: (ids: string[]) => void,
+  /**
+   * 줄이 늘어선 방향. 세로가 기본이다.
+   *
+   * 가로('x')는 자산 화면의 사람 탭이 쓴다. 달라지는 것은 둘뿐이다 -- 자리를 재는 축과,
+   * 창 가장자리에서 화면을 굴리는 일(가로줄은 굴릴 것이 없어 하지 않는다). 잡는 법과
+   * 저장하는 법은 같으므로 한 벌로 둔다.
+   */
+  axis: 'x' | 'y' = 'y',
 ) {
   const [ids, setIds] = useState<string[]>(() => source.map((item) => item.id));
   const [draggingId, setDraggingId] = useState<string | null>(null);
@@ -47,6 +55,11 @@ export function useDragReorder<T extends { id: string }>(
   const nodes = useRef(new Map<string, HTMLElement>());
   /** 순서가 바뀌기 직전에 잰 자리. */
   const prevTops = useRef(new Map<string, number>());
+  /** 그 줄이 선 자리. 세로줄은 위끝, 가로줄은 왼끝이다. */
+  const spotOf = (node: HTMLElement) => {
+    const box = node.getBoundingClientRect();
+    return axis === 'x' ? box.left : box.top;
+  };
   // dragEnd 시점에 최신 순서를 읽기 위한 거울. 핸들러가 오래된 값을 붙잡는 것을 막는다.
   const idsRef = useRef(ids);
   idsRef.current = ids;
@@ -89,11 +102,11 @@ export function useDragReorder<T extends { id: string }>(
       const from = before.get(id);
       if (from === undefined || id === draggingId) continue;
 
-      const delta = from - node.getBoundingClientRect().top;
+      const delta = from - spotOf(node);
       if (Math.abs(delta) < 1) continue;
 
       node.style.transition = 'none';
-      node.style.transform = `translateY(${delta}px)`;
+      node.style.transform = axis === 'x' ? `translateX(${delta}px)` : `translateY(${delta}px)`;
       // 다음 프레임에 풀어 준다. 같은 프레임에 풀면 브라우저가 한 번에 그려 버린다.
       requestAnimationFrame(() => {
         node.style.transition = `transform ${SHIFT_MS}ms ease-out`;
@@ -109,7 +122,8 @@ export function useDragReorder<T extends { id: string }>(
    * 멈춰 있어도 굴러가야 하므로 굴리는 일은 프레임마다 따로 돈다.
    */
   useEffect(() => {
-    if (!draggingId) return;
+    // 가로줄은 창을 굴려도 줄이 따라오지 않는다. 한 줄에 다 서거나 제 상자가 넘긴다.
+    if (!draggingId || axis === 'x') return;
 
     let speed = 0;
     let frame = 0;
@@ -139,13 +153,11 @@ export function useDragReorder<T extends { id: string }>(
       document.removeEventListener('dragover', onDragOver);
       cancelAnimationFrame(frame);
     };
-  }, [draggingId]);
+  }, [draggingId, axis]);
 
   const moveBefore = (dragged: string, target: string) => {
     // 바뀌기 직전의 자리를 재 둔다. 위의 useLayoutEffect 가 이 값을 쓴다.
-    prevTops.current = new Map(
-      [...nodes.current].map(([id, node]) => [id, node.getBoundingClientRect().top]),
-    );
+    prevTops.current = new Map([...nodes.current].map(([id, node]) => [id, spotOf(node)]));
 
     setIds((prev) => {
       const from = prev.indexOf(dragged);

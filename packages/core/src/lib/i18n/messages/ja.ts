@@ -381,7 +381,6 @@ export const ja: Record<MessageKey, string> = {
   'assets.addTo': '{name}に項目を追加',
   'assets.addTitle': '追加する',
   'assets.balanceLine': '残高 {balance}',
-  'assets.personTab.all': '全体',
   'assets.noAccounts': '登録された口座がありません。',
   'account.detail': '口座の詳細',
   'account.bank': '銀行',

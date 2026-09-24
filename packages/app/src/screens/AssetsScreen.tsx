@@ -67,7 +67,7 @@ export default function AssetsScreen() {
   const [cardAddFor, setCardAddFor] = useState<Account | null>(null);
 
   /**
-   * 목록에서 보고 있는 사람. null 이면 고른 자산주인을 전부 늘어놓는다.
+   * 목록에서 보고 있는 사람. 아직 고르지 않았으면 null 이고, 그때는 아래에서 정한다.
    *
    * 위의 총자산과 추이 그래프는 이 값을 보지 않는다. 그쪽은 제목에서 고른 자산주인
    * 전체의 값이고, 이 탭은 긴 목록에서 한 사람에게 바로 가는 길이다.
@@ -167,17 +167,20 @@ export default function AssetsScreen() {
   }, [detail, detailTarget, assets.isLoading]);
 
   /*
-   * 탭이 가리키는 사람. 고른 자산주인에서 빠졌으면 전체로 되돌린다.
+   * 탭이 가리키는 사람. 목록은 늘 한 사람 것이다.
    *
-   * 값을 고쳐 두는 대신 그릴 때마다 가린다. 목록이 오는 동안은 visiblePeople 이 비어
-   * 있는데, 그 순간을 "사라졌다"로 읽고 상태를 지우면 다시 들어온 뒤에도 전체가 된다.
+   * 아직 고르지 않았거나 고른 사람이 자산주인에서 빠졌으면 "나"로, 나도 없으면 목록의
+   * 첫 사람으로 되돌린다. 화면을 열면 제 자산부터 보는 것이 자연스럽다.
+   *
+   * 값을 고쳐 두는 대신 그릴 때마다 고른다. 목록이 오는 동안은 visiblePeople 이 비어
+   * 있는데, 그 순간을 "사라졌다"로 읽고 상태를 지우면 다시 들어온 뒤에도 남이 펴진다.
    */
-  const listPerson = assets.visiblePeople.some((person) => person.id === listPersonId)
-    ? listPersonId
-    : null;
-  const listedPeople = listPerson
-    ? assets.visiblePeople.filter((person) => person.id === listPerson)
-    : assets.visiblePeople;
+  const listPerson =
+    assets.visiblePeople.find((person) => person.id === listPersonId) ??
+    assets.visiblePeople.find((person) => person.id === assets.myPersonId) ??
+    assets.visiblePeople[0] ??
+    null;
+  const listedPeople = listPerson ? [listPerson] : [];
 
   /** 카드의 통화. 결제 통장에 달려 있어 카드만 보고는 알 수 없다. */
   const currencyOfCard = (card: Card) =>
@@ -312,9 +315,10 @@ export default function AssetsScreen() {
       */}
       <PersonTabs
         people={assets.visiblePeople}
-        selectedId={listPerson}
+        selectedId={listPerson?.id ?? null}
         onSelect={setListPersonId}
         onAddPerson={() => setIsPersonAddOpen(true)}
+        onReorder={(id, toIndex) => void assets.movePersonTo(id, toIndex)}
       />
 
       {assets.isLoading && assets.people.length === 0 ? (
@@ -322,17 +326,12 @@ export default function AssetsScreen() {
       ) : assets.visiblePeople.length === 0 ? (
         <Text className="text-gray-600">{t('assets.noSelection')}</Text>
       ) : (
-        /* 길게 누르면 끌어서 자리를 바꾼다. 구성원·계좌·카드가 모두 같은 규칙이다. */
-        <DragList
-          items={listedPeople}
-          gap={32}
-          itemClassName="rounded-lg bg-white p-6 shadow-sm"
-          onReorder={(id, toIndex) => void assets.movePersonTo(id, toIndex)}
-          renderItem={(person) => {
-            const owned = assets.accounts.filter((account) => account.ownerId === person.id);
+        /* 탭이 가리키는 한 사람. 구성원 차례는 탭을 끌어 바꾸므로 여기서는 끌 것이 없다. */
+        listedPeople.map((person) => {
+          const owned = assets.accounts.filter((account) => account.ownerId === person.id);
 
-            return (
-              <>
+          return (
+            <View key={person.id} className="rounded-lg bg-white p-6 shadow-sm">
                 {/*
                   이름을 누르면 그 사람의 상세가 열린다 (웹에서 오른쪽에 펼치던 칸이다).
                   고치는 창은 그 상세의 머리글에 있다 -- 읽기 전용 구성원에게는 그 단추가
@@ -385,10 +384,9 @@ export default function AssetsScreen() {
                     )}
                   />
                 )}
-              </>
-            );
-          }}
-        />
+            </View>
+          );
+        })
       )}
       </View>
         </>

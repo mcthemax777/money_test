@@ -382,7 +382,6 @@ export const en: Record<MessageKey, string> = {
   'assets.addTo': 'Add to {name}',
   'assets.addTitle': 'Add',
   'assets.balanceLine': 'Balance {balance}',
-  'assets.personTab.all': 'All',
   'assets.noAccounts': 'No accounts yet.',
   'account.detail': 'Account details',
   'account.bank': 'Bank',
