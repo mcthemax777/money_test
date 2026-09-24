@@ -487,11 +487,13 @@ export const ja: Record<MessageKey, string> = {
 
   // ===== 資産推移グラフ =====
   'history.day': '日',
+  'history.week': '週',
   'history.month': '月',
   'history.year': '年',
   'history.yearLabel': '{year}年',
   'history.loadFailed': '資産の推移を読み込めませんでした。',
   'history.dayTitle': '日別の資産推移',
+  'history.weeklyTitle': '週別の資産推移',
   'history.yearlyTitle': '年別の資産推移',
   'history.monthlyTitle': '月別の資産推移',
   'history.backToNow': '現在に戻る',

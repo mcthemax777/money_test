@@ -512,11 +512,13 @@ export const ko = {
 
   // ===== 자산 추이 그래프 =====
   'history.day': '일',
+  'history.week': '주',
   'history.month': '월',
   'history.year': '년',
   'history.yearLabel': '{year}년',
   'history.loadFailed': '자산 추이를 불러오지 못했습니다.',
   'history.dayTitle': '일별 자산 추이',
+  'history.weeklyTitle': '주별 자산 추이',
   'history.yearlyTitle': '연도별 자산 추이',
   'history.monthlyTitle': '월별 자산 추이',
   'history.backToNow': '지금으로',

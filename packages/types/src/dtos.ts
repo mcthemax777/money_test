@@ -1434,7 +1434,7 @@ export namespace ReportDto {
      */
     ownerIds?: string;
     /** 기본 month */
-    granularity?: 'year' | 'month' | 'day';
+    granularity?: 'year' | 'month' | 'week' | 'day';
     /**
      * 창의 마지막 달 "YYYY-MM". 생략하면 이번 달.
      * granularity=year면 이 값의 연도가 마지막 해가 된다.
@@ -1449,10 +1449,13 @@ export namespace ReportDto {
      */
     yearMonth?: string;
     /**
-     * granularity=day이고 yearMonth가 없을 때 창의 마지막 날 "YYYY-MM-DD". 생략하면 오늘.
+     * 창의 마지막 날 "YYYY-MM-DD". 생략하면 오늘.
      *
-     * 그래프를 가로로 끌어 지난 날짜를 볼 때 쓴다. endMonth 가 월·연 단위에서 하는
-     * 일을 일 단위에서 한다 -- 창의 크기(days)는 그대로 두고 끝나는 자리만 옮긴다.
+     * granularity=day(yearMonth 가 없을 때)와 granularity=week 이 쓴다. 주 단위에서는
+     * **이 날이 든 주**가 마지막 칸이 된다 -- 일요일을 따로 계산해 보내지 않아도 된다.
+     *
+     * endMonth 가 월·연 단위에서 하는 일을 여기서 한다 -- 창의 크기(days·weeks)는
+     * 그대로 두고 끝나는 자리만 옮긴다.
      */
     endDate?: string;
     /** granularity=month일 때만 쓴다. 기본 12, 최대 60 */
@@ -1461,10 +1464,17 @@ export namespace ReportDto {
     years?: number;
     /** granularity=day이고 yearMonth가 없을 때. 오늘을 포함해 뒤로 며칠. 기본 30, 최대 366 */
     days?: number;
+    /** granularity=week일 때만 쓴다. 끝나는 주를 포함해 뒤로 몇 주. 기본 13, 최대 260 */
+    weeks?: number;
   }
 
   export interface BalanceHistoryPoint {
-    /** granularity=year면 "YYYY", month면 "YYYY-MM", day면 "YYYY-MM-DD" */
+    /**
+     * granularity=year면 "YYYY", month면 "YYYY-MM", day·week면 "YYYY-MM-DD".
+     *
+     * 주는 **그 주의 일요일**이다 (`periodKeyOf` 와 같은 규칙이다). 일과 생김새가
+     * 같으므로 읽는 쪽은 자기가 무엇을 물었는지로 가른다.
+     */
     date: string;
     /** 그 시점까지의 누적 잔액 */
     balance: string;

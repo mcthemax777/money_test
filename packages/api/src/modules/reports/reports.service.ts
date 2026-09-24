@@ -55,6 +55,7 @@ import {
   VALUED_ACCOUNT_TYPES,
   shiftYearMonth,
   summarize,
+  weekStartKey,
   zonedCurrentYearMonth,
   zonedDateKey,
   zonedDateStringToUtc,
@@ -483,7 +484,9 @@ export class ReportsService {
       query.projectId,
     );
     const granularity =
-      query.granularity === 'day' || query.granularity === 'year' ? query.granularity : 'month';
+      query.granularity === 'day' || query.granularity === 'week' || query.granularity === 'year'
+        ? query.granularity
+        : 'month';
 
     /*
      * 여러 구성원을 한 선으로 볼 때 쓴다. 목록 필터와 같은 세 상태 규칙이라
@@ -537,9 +540,15 @@ export class ReportsService {
               timeZone,
               query.endDate ? assertDateKey(query.endDate, '기준일') : undefined,
             )
-        : granularity === 'year'
-          ? yearBuckets(Number(endMonth.slice(0, 4)), clampCount(query.years, 5, 30), timeZone)
-          : monthBuckets(endMonth, clampCount(query.months, 12, 60), timeZone);
+        : granularity === 'week'
+          ? weekBuckets(
+              clampCount(query.weeks, 13, 260),
+              timeZone,
+              query.endDate ? assertDateKey(query.endDate, '기준일') : undefined,
+            )
+          : granularity === 'year'
+            ? yearBuckets(Number(endMonth.slice(0, 4)), clampCount(query.years, 5, 30), timeZone)
+            : monthBuckets(endMonth, clampCount(query.months, 12, 60), timeZone);
     const windowStart = buckets[0].start;
     const windowEnd = buckets[buckets.length - 1].end;
 
@@ -556,6 +565,20 @@ export class ReportsService {
       GROUP BY 1
     `;
 
+    /*
+     * 구간의 첫 시각을 세는 식. 로컬 벽시계로 바꾼 뒤 자른다.
+     *
+     * **주는 일요일에서 끊는다.** 포스트그레스의 `date_trunc('week')` 는 월요일에서
+     * 끊으므로, 하루 밀어 자르고 다시 하루를 뺀다. 이 저장소는 주를 일요일에서 세고
+     * 있고(`weekStartKey`, 거래 화면의 주 묶음), 한쪽만 월요일이면 같은 거래가 화면마다
+     * 다른 주에 들어간다.
+     */
+    const localDate = Prisma.sql`timezone(${timeZone}, timezone('UTC', e."date"))`;
+    const bucketStart =
+      granularity === 'week'
+        ? Prisma.sql`date_trunc('week', ${localDate} + interval '1 day') - interval '1 day'`
+        : Prisma.sql`date_trunc(${granularity}, ${localDate})`;
+
     // 창 안의 구간별 계좌별 증감
     const stepRows = await this.prisma.$queryRaw<
       Array<{ accountId: string; period: Date; delta: Prisma.Decimal }>
@@ -563,7 +586,7 @@ export class ReportsService {
       SELECT p."accountId" AS "accountId",
              -- 구간 경계는 프로젝트 타임존 기준이다. 로컬 벽시계로 바꿔 자른 뒤
              -- 다시 UTC 인스턴트로 되돌려야 아래 bucket.start와 값이 맞는다.
-             timezone('UTC', timezone(${timeZone}, date_trunc(${granularity}, timezone(${timeZone}, timezone('UTC', e."date"))))) AS period,
+             timezone('UTC', timezone(${timeZone}, ${bucketStart})) AS period,
              SUM(p."baseAmount") AS delta
       FROM "Posting" p
       JOIN "JournalEntry" e ON e.id = p."entryId"
@@ -1285,6 +1308,33 @@ function recentDayBuckets(days: number, timeZone: string, endDate?: string): Bal
       label: zonedDateKey(start, timeZone),
       start,
       end: zonedDayStart(year, month, day - i + 1, timeZone),
+    });
+  }
+  return buckets;
+}
+
+/**
+ * 주 단위 구간. endDate(없으면 오늘)가 든 주를 포함해 뒤로 weeks개.
+ *
+ * 주는 **일요일**에 시작한다 (`weekStartKey`). 끝나는 주를 날짜 하나로 받는 것은
+ * 부르는 쪽이 일요일을 따로 셈하지 않게 하려는 것이다 -- 두 곳에서 세면 한쪽만 고친
+ * 날부터 화면과 서버가 다른 주를 가리킨다.
+ *
+ * 이름표는 그 주의 일요일 날짜다. 일 단위와 생김새가 같고, 무엇을 물었는지는 부르는
+ * 쪽이 안다 (`BalanceHistoryPoint.date`).
+ */
+function weekBuckets(weeks: number, timeZone: string, endDate?: string): BalanceBucket[] {
+  const endKey = endDate ?? zonedDateKey(new Date(), timeZone);
+  const [year, month, day] = weekStartKey(endKey).split('-').map(Number);
+
+  const buckets: BalanceBucket[] = [];
+  for (let i = weeks - 1; i >= 0; i--) {
+    // zonedDayStart 는 day 가 1보다 작아도 앞 달로 넘어간다 (recentDayBuckets 와 같다).
+    const start = zonedDayStart(year, month, day - i * 7, timeZone);
+    buckets.push({
+      label: zonedDateKey(start, timeZone),
+      start,
+      end: zonedDayStart(year, month, day - i * 7 + 7, timeZone),
     });
   }
   return buckets;

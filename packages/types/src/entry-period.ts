@@ -93,10 +93,13 @@ export function periodDayRange(key: string): { startKey: string; endKey: string 
 /**
  * 그 날짜가 속한 주의 일요일.
  *
+ * 주로 묶는 자리는 전부 이것을 지난다 -- 거래 목록의 주 묶음도, 자산 추이의 주 단위
+ * 그래프도(`reports.service` 의 `weekBuckets`) 같은 날에서 주를 끊는다.
+ *
  * UTC 로 센다. 달력 날짜만 다루므로 서머타임이 끼어들 자리가 없다 (`recurring.ts` 의
  * `addDays` 와 같은 까닭이다).
  */
-function weekStartKey(dateKey: string): string {
+export function weekStartKey(dateKey: string): string {
   const [year, month, day] = dateKey.split('-').map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
   date.setUTCDate(date.getUTCDate() - date.getUTCDay());

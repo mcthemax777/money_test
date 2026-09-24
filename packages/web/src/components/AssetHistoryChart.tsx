@@ -200,7 +200,7 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
                  */
                 labelFormatter={(_label: any, payload: any) => {
                   const date = payload?.[0]?.payload?.date;
-                  return date ? historyPointLabel(date) : '';
+                  return date ? historyPointLabel(date, history.granularity) : '';
                 }}
                 contentStyle={CHART_TOOLTIP_STYLE}
               />

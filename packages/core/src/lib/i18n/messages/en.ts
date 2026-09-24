@@ -487,11 +487,13 @@ export const en: Record<MessageKey, string> = {
 
   // ===== Balance history chart =====
   'history.day': 'Day',
+  'history.week': 'Week',
   'history.month': 'Month',
   'history.year': 'Year',
   'history.yearLabel': '{year}',
   'history.loadFailed': 'Could not load the balance history.',
   'history.dayTitle': 'Balance by day',
+  'history.weeklyTitle': 'Balance by week',
   'history.yearlyTitle': 'Balance by year',
   'history.monthlyTitle': 'Balance by month',
   'history.backToNow': 'Back to now',

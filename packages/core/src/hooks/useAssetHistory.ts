@@ -10,6 +10,8 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { weekStartKey } from '@money/types';
+
 import { apiClient } from '../lib/api-client';
 import { lineAxis, type LineAxis } from '../lib/chart';
 import {
@@ -21,6 +23,7 @@ import {
   formatYearOnly,
   lastDayOfMonth,
   monthsBetween,
+  periodLabel,
   shiftDateKey,
   shiftYearMonth,
   todayKey,
@@ -29,14 +32,17 @@ import { activeLocale, translate, type MessageKey } from '../lib/i18n';
 import { toNumber } from '../lib/money';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '../store/project';
 
-/** 직접 고르는 구간 단위. 드릴다운으로 들어간 일별 보기와는 별개다. */
-export type Granularity = 'day' | 'month' | 'year';
+/** 직접 고르는 구간 단위. 눌러서 한 단 내려가는 길(`drillInto`)도 같은 단위를 쓴다. */
+export type Granularity = 'day' | 'week' | 'month' | 'year';
 
 export interface AssetHistoryPoint {
   label: string;
   balance: number;
   /**
-   * 서버가 준 그대로의 날짜. 연이면 "YYYY", 월이면 "YYYY-MM", 일이면 "YYYY-MM-DD".
+   * 서버가 준 그대로의 날짜. 연이면 "YYYY", 월이면 "YYYY-MM", 주·일이면 "YYYY-MM-DD".
+   *
+   * 주는 그 주의 **일요일**이다 (`weekStartKey`). 일과 생김새가 같으므로 읽는 쪽은
+   * 지금 보고 있는 단위와 함께 읽는다.
    *
    * 축에 적는 이름(label)은 언어에 따라 "8월"·"Aug" 로 달라져 되읽을 수 없다. 눌러서
    * 한 단 아래로 내려갈 때 어느 구간인지는 이 값으로 말하고, `historyPointLabel` 이
@@ -48,20 +54,25 @@ export interface AssetHistoryPoint {
 /**
  * 그 칸이 어느 때인지 적는 말. 축의 짧은 이름과 달리 **연도까지 적는다.**
  *
- *   일 "2026년 9월 10일" · 월 "2026년 9월" · 년 "2026년"
+ *   일 "2026년 9월 10일" · 주 "2026년 9월 2주차" · 월 "2026년 9월" · 년 "2026년"
  *
  * 축 이름(`label`)을 그대로 쓸 수 없다. 그쪽은 눈금이 겹치지 않게 "9/10"·"9월" 로
  * 줄여 둔 것이라, 창을 해가 바뀌는 자리로 끌면 어느 해의 9월인지 알 수 없다. 값을
  * 읽는 자리는 한 칸뿐이라 길어도 된다 -- 앱은 그래프 위의 한 줄, 웹은 툴팁이다.
  *
- * 단위는 값의 생김새가 말한다 (`AssetHistoryPoint.date` 의 규칙이다). 단위를 따로
- * 받으면 부르는 쪽이 점과 단위를 짝지어 넘겨야 하고, 그 둘이 어긋난 채로도 돌아간다.
+ * **단위를 함께 받는다.** 예전에는 값의 생김새가 단위를 말했는데(4·7·10 자), 주가
+ * 들어오면서 일과 같은 열 자가 되어 더는 가를 수 없다. 부르는 쪽은 지금 보고 있는
+ * 단위를 이미 손에 들고 있다 (`AssetHistory.granularity`).
  */
-export function historyPointLabel(date: string): string {
-  const [year, month, day] = date.split('-');
-  if (day !== undefined) return formatYearMonthDay(date);
-  if (month !== undefined) return formatYearMonth(Number(year), Number(month));
-  return formatYearOnly(Number(year));
+export function historyPointLabel(date: string, granularity: Granularity): string {
+  if (granularity === 'day') return formatYearMonthDay(date);
+  // 주는 그 주의 일요일 날짜가 열쇠다. 거래 목록의 주 줄과 같은 이름을 쓴다.
+  if (granularity === 'week') return periodLabel(date);
+  if (granularity === 'month') {
+    const [year, month] = date.split('-').map(Number);
+    return formatYearMonth(year, month);
+  }
+  return formatYearOnly(Number(date));
 }
 
 /**
@@ -72,12 +83,14 @@ export function historyPointLabel(date: string): string {
  */
 export const HISTORY_TITLE_KEY: Record<Granularity, MessageKey> = {
   day: 'history.dayTitle',
+  week: 'history.weeklyTitle',
   month: 'history.monthlyTitle',
   year: 'history.yearlyTitle',
 };
 
 export const GRANULARITY_OPTIONS: Array<{ value: Granularity; labelKey: MessageKey }> = [
   { value: 'day', labelKey: 'history.day' as const },
+  { value: 'week', labelKey: 'history.week' as const },
   { value: 'month', labelKey: 'history.month' as const },
   { value: 'year', labelKey: 'history.year' as const },
 ];
@@ -85,17 +98,22 @@ export const GRANULARITY_OPTIONS: Array<{ value: Granularity; labelKey: MessageK
 /**
  * 단위별 창 크기.
  *
- * 일별은 서른하루다. 달을 눌러 일별로 갈 때 어느 달이든 1일부터 말일까지가 한 창에
- * 다 들어와야 해서, 가장 긴 달에 맞춘다 -- 서른 날로 두면 서른하루인 달만 첫날이
- * 밀려나, 달마다 보이는 범위가 달라진다.
+ * 일별은 서른두 날이다. 가장 긴 달(서른하루)이 통째로 들어오고 하루가 남는다 -- 주를
+ * 눌러 일별로 내려오면 그 주의 일곱 날이 오른쪽 끝에 서고 앞선 날들이 함께 보인다.
+ *
+ * 주별은 열세 주다. 석 달 남짓이라 지난 분기가 한 화면에 들어온다. 월별 열세 달은
+ * 지난해 같은 달과 이번 달을 나란히 놓기 위한 것이다 -- 열두 달이면 한 해 전이 창
+ * 밖으로 밀려나 "작년 이맘때"를 견줄 수 없다.
  */
-const RECENT_DAYS = 31;
-const MONTHS = 12;
+const RECENT_DAYS = 32;
+const WEEKS = 13;
+const MONTHS = 13;
 const YEARS = 5;
 
 /** 한 화면에 그리는 구간 수. 끌어도 이 개수는 그대로고 창이 놓인 자리만 옮긴다. */
 export const WINDOW_SIZE: Record<Granularity, number> = {
   day: RECENT_DAYS,
+  week: WEEKS,
   month: MONTHS,
   year: YEARS,
 };
@@ -108,7 +126,7 @@ export const WINDOW_SIZE: Record<Granularity, number> = {
  * 받아 둔 끝에 닿을 때만 다시 묻는다. 그때도 창을 한가운데 놓고 받으므로 양쪽으로
  * 창 하나만큼 더 끌 여유가 남는다.
  *
- * 서버의 상한(일 366, 월 60, 연 30)을 넘지 않는 배수다.
+ * 서버의 상한(일 366, 주 260, 월 60, 연 30)을 넘지 않는 배수다.
  */
 const FETCH_MULTIPLE = 3;
 
@@ -121,7 +139,7 @@ const FETCH_MULTIPLE = 3;
  *
  * 그 너머는 양쪽 다 평평한 선뿐이라 돌아오는 길만 멀어진다.
  */
-const PAN_LIMIT: Record<Granularity, number> = { day: 3650, month: 120, year: 10 };
+const PAN_LIMIT: Record<Granularity, number> = { day: 3650, week: 520, month: 120, year: 10 };
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
@@ -169,7 +187,7 @@ export interface AssetHistory {
   yAxis: LineAxis;
   /** 선이 끝나는 점. 여기에만 점을 찍고 금액을 적는다. */
   lastPoint: AssetHistoryPoint | null;
-  /** 연별은 월별로, 월별은 일별로 내려간다. 일별 아래에는 내려갈 곳이 없다. */
+  /** 연 → 월 → 주 → 일 로 한 단씩 내려간다. 일별 아래에는 내려갈 곳이 없다. */
   canDrill: boolean;
   /** 그 칸을 눌러 한 단 아래로 내려간다. 일별에서는 아무 일도 하지 않는다. */
   drillInto: (date: string) => void;
@@ -262,28 +280,53 @@ export function useAssetHistory({
   );
 
   /**
-   * 월별에서 한 달을 눌렀을 때. 일별 그래프를 그 달에 갖다 댄다.
+   * 월별에서 한 달을 눌렀을 때. 주별 그래프를 그 달의 끝에 갖다 댄다.
    *
-   * 일별 창을 따로 띄우지 않는다. 단위를 일로 바꾸고 창의 끝을 그 달의 말일에 맞출
-   * 뿐이라, 거기서 그대로 좌우로 끌어 앞뒤 날짜로 이어 갈 수 있다. 따로 띄우면 그
-   * 창은 한 달에 못 박혀 있어 끌 수도, 이웃한 달로 넘어갈 수도 없었다.
+   * 한 단 아래는 주다 (연 → 월 → 주 → 일). 창을 따로 띄우지 않는다 -- 단위만 바꾸고
+   * 창의 끝을 그 달의 말일이 든 주에 맞추므로, 거기서 그대로 좌우로 끌어 앞뒤 주로
+   * 이어 갈 수 있다. 따로 띄우면 그 창은 한 달에 못 박혀 끌 수도 없다.
    *
-   * 창이 서른하루라 어느 달이든 1일부터 말일까지가 다 들어온다. 서른 날 이하인 달은
-   * 앞선 달의 끝자락이 왼쪽에 몇 날 따라 붙는다 -- 창 크기는 늘 같아야 한다.
+   * 창이 열세 주라 그 달의 주들이 오른쪽 끝에 서고 앞선 두 달 남짓이 왼쪽에 따라
+   * 붙는다. 한 달만 잘라 보여 주지 않는 것은 창 크기가 늘 같아야 하기 때문이다.
    *
    * 이번 달과 앞날의 달도 말일까지 그린다. 아직 오지 않은 날은 잔액이 그대로 이어지고,
    * 적어 둔 거래가 있으면 그날 선이 움직인다. 오늘에서 끊으면 적어 둔 것이 보이지 않는다.
    */
-  const showMonthAsDays = useCallback(
+  const showMonthAsWeeks = useCallback(
     (yearMonth: string) => {
       const monthEnd = `${yearMonth}-${String(lastDayOfMonth(yearMonth)).padStart(2, '0')}`;
-      // 앞날의 달이면 음수다. 창이 오늘보다 뒤에 선다.
-      const next = daysBetweenKeys(monthEnd, todayKey(timeZone));
+      /*
+       * 그 말일이 든 주가 이번 주에서 몇 주 떨어져 있는가.
+       *
+       * 두 날의 **일요일끼리** 견준다. 날짜 차이를 그냥 이레로 나누면 같은 주의 두 날이
+       * 다른 주로 갈린다(수요일과 다음 월요일은 닷새 차이지만 다른 주다).
+       * 앞날의 달이면 음수다 -- 창이 이번 주보다 뒤에 선다.
+       */
+      const next =
+        daysBetweenKeys(weekStartKey(monthEnd), weekStartKey(todayKey(timeZone))) / 7;
+
+      setGranularity('week');
+      setOffset(next);
+      // 받아 둔 구간도 그 자리를 한가운데 삼는다. 달 단위로 세어 둔 옛 자리는 주 단위에서
+      // 뜻이 다르므로 그대로 두면 엉뚱한 데를 받아 온다.
+      setAnchor(next);
+    },
+    [timeZone],
+  );
+
+  /**
+   * 주별에서 한 주를 눌렀을 때. 일별 그래프를 그 주의 끝에 갖다 댄다.
+   *
+   * 눌린 값은 그 주의 일요일이라, 창의 끝은 엿새 뒤 토요일이다. 창이 서른두 날이므로
+   * 그 주의 이레가 오른쪽 끝에 서고 앞선 스무닷새가 왼쪽에 따라 붙는다.
+   */
+  const showWeekAsDays = useCallback(
+    (weekStart: string) => {
+      // 앞날의 주면 음수다. 창이 오늘보다 뒤에 선다.
+      const next = daysBetweenKeys(shiftDateKey(weekStart, 6), todayKey(timeZone));
 
       setGranularity('day');
       setOffset(next);
-      // 받아 둔 구간도 그 자리를 한가운데 삼는다. 달 단위로 세어 둔 옛 자리는 일 단위에서
-      // 뜻이 다르므로 그대로 두면 엉뚱한 데를 받아 온다.
       setAnchor(next);
     },
     [timeZone],
@@ -292,9 +335,10 @@ export function useAssetHistory({
   /**
    * 연별에서 한 해를 눌렀을 때. 월별 그래프를 그 해에 갖다 댄다.
    *
-   * 달을 눌러 일별로 가는 것과 같은 규칙이다. 창의 끝을 그 해의 12월에 맞추고, 창
-   * 크기는 열두 달 그대로라 1월부터 12월까지가 한 창에 다 들어온다. 올해와 앞날의
-   * 해도 12월까지 그린다 -- 아직 오지 않은 달에도 적어 둔 거래가 있을 수 있다.
+   * 달을 눌러 주별로 가는 것과 같은 규칙이다. 창의 끝을 그 해의 12월에 맞춘다. 창이
+   * 열세 달이라 1월부터 12월까지가 다 들어오고 앞선 해의 12월이 왼쪽에 하나 따라
+   * 붙는다. 올해와 앞날의 해도 12월까지 그린다 -- 아직 오지 않은 달에도 적어 둔
+   * 거래가 있을 수 있다.
    */
   const showYearAsMonths = useCallback(
     (year: string) => {
@@ -375,24 +419,36 @@ export function useAssetHistory({
               days: fetchSpan,
               endDate: shiftDateKey(todayKey(timeZone), -endOffset),
             }
-          : granularity === 'year'
-            ? { ...target, granularity: 'year', years: fetchSpan, ...window }
-            : { ...target, granularity: 'month', months: fetchSpan, ...window },
+          : granularity === 'week'
+            ? {
+                ...target,
+                granularity: 'week',
+                weeks: fetchSpan,
+                /*
+                 * 한 칸이 이레다. 끝나는 날이 든 주가 마지막 칸이 되므로 일요일을
+                 * 여기서 셈하지 않는다 -- 그 일은 서버(`weekBuckets`) 한 곳에서 한다.
+                 */
+                endDate: shiftDateKey(todayKey(timeZone), -endOffset * 7),
+              }
+            : granularity === 'year'
+              ? { ...target, granularity: 'year', years: fetchSpan, ...window }
+              : { ...target, granularity: 'month', months: fetchSpan, ...window },
         projectId,
       );
 
       // 뒤늦게 온 답은 버린다. 지금 그리고 있는 것이 더 새 것이다.
       if (id !== requestId.current) return;
 
-      /*
-       * 축 이름은 단위마다 다르게 짧게 적는다.
-       *
-       * 일별은 달을 넘나드는 창이라 날짜만 적으면 어느 달인지 알 수 없다. 달까지 적는다.
-       */
       const points = (rows ?? []).map((row): AssetHistoryPoint => {
         const balance = toNumber(row.balance);
+        /*
+         * 축 이름은 단위마다 다르게 짧게 적는다.
+         *
+         * 일과 주는 달을 넘나드는 창이라 날짜만 적으면 어느 달인지 알 수 없다. 달까지
+         * 적는다 -- 주는 그 주가 시작하는 일요일이다.
+         */
         const label =
-          granularity === 'day'
+          granularity === 'day' || granularity === 'week'
             ? `${Number(row.date.slice(5, 7))}/${Number(row.date.slice(8))}`
             : granularity === 'year'
               ? t('history.yearLabel', { year: row.date })
@@ -453,9 +509,10 @@ export function useAssetHistory({
   const drillInto = useCallback(
     (date: string) => {
       if (granularity === 'year') showYearAsMonths(date);
-      else if (granularity === 'month') showMonthAsDays(date);
+      else if (granularity === 'month') showMonthAsWeeks(date);
+      else if (granularity === 'week') showWeekAsDays(date);
     },
-    [granularity, showMonthAsDays, showYearAsMonths],
+    [granularity, showMonthAsWeeks, showWeekAsDays, showYearAsMonths],
   );
 
   return {

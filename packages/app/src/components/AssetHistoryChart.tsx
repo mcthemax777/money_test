@@ -203,7 +203,7 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
             {activePoint ? (
               <>
                 <Text className="text-xs text-gray-500">
-                  {historyPointLabel(activePoint.date)}
+                  {historyPointLabel(activePoint.date, history.granularity)}
                 </Text>
                 <Text className="text-xs font-semibold text-gray-900">
                   {formatCurrency(activePoint.balance, displayCurrency)}
