@@ -318,13 +318,6 @@ runSmoke('sync-push-assets', async (ctx) => {
   ctx.check('색도 함께 담긴다',
     (await ctx.prisma.tag.findUniqueOrThrow({ where: { id: tagId } })).color, '#ef4444');
 
-  const hidTag = await push([
-    command('tag.update', tagId, { id: tagId, isActive: false }, T0 + 800_400),
-  ]);
-  ctx.check('태그 숨기기', hidTag.results[0]?.status, 'applied');
-  ctx.check('숨긴 것이 반영된다',
-    (await ctx.prisma.tag.findUniqueOrThrow({ where: { id: tagId } })).isActive, false);
-
   // ── 6-1. 같은 이름을 두 기기가 만들면 ──
   //
   // 다른 기기가 만든 셈 치고 다른 id 로 같은 이름을 보낸다. 서버는 이미 있는 행을
@@ -344,6 +337,20 @@ runSmoke('sync-push-assets', async (ctx) => {
     command('tag.create', twinTagId, { id: twinTagId, name: '오프라인 태그' }, T0 + 900_100),
   ]);
   ctx.check('태그도 같은 규칙', twinTag.results[0]?.alias?.to, tagId);
+
+  /*
+   * 태그 지우기. 감춰 두는 자리가 없어져(20260919150000_no_hidden_rows) `isActive: false`
+   * 는 "지워 달라"는 표식으로 남았다 -- 행은 사라지고 자리표만 남는다.
+   *
+   * 같은 이름을 채택하는 6-1 뒤에 둔다. 먼저 지우면 채택할 행이 없어 그 검사가 뜻을 잃는다.
+   */
+  const goneTag = await push([
+    command('tag.update', tagId, { id: tagId, isActive: false }, T0 + 950_000),
+  ]);
+  ctx.check('태그 지우기', goneTag.results[0]?.status, 'applied');
+  ctx.check('행이 사라진다', await ctx.prisma.tag.count({ where: { id: tagId } }), 0);
+  ctx.check('지운 자리에 자리표가 남는다',
+    await ctx.prisma.tombstone.count({ where: { entity: 'Tag', entityId: tagId } }), 1);
 
   // ── 5-4. 예산: 행은 필드별, 월 조정은 키별 ──
   const budgetId = '019273cc-0000-7000-8000-000000000030';

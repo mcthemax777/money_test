@@ -16,8 +16,8 @@
  *      `ENTRY_MODIFIED` 로 거절한다. 조용히 덮으면 그 편집이 흔적 없이 사라진다 (D6).
  *   3. **본 판 그대로면 저장된다.** 1·2 를 지키느라 멀쩡한 수정까지 막으면 안 된다.
  *   4. **같은 뜻의 두 요청은 같은 곳에 닿는다.** 같은 태그를 동시에 붙여도 오류가 아니다.
- *   5. **숨기기는 확인한 조건 위에서만 이뤄진다.** 잔액이 남은 통장, 쓰이는 분류는 그대로
- *      거절되고, 숨긴 자리에는 시계가 남는다(그러지 않으면 옛 편집이 되살린다).
+ *   5. **지우기는 확인한 조건 위에서만 이뤄진다.** 잔액이 남은 통장, 쓰이는 분류는 그대로
+ *      거절되고, 지운 자리에는 자리표가 남는다(그러지 않으면 기기의 사본에 유령이 남는다).
  */
 import { Prisma } from '@prisma/client';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
@@ -187,22 +187,21 @@ runSmoke('entry-concurrency', async (ctx) => {
     accounts.deactivateAccount(bank.id, uid),
   );
 
-  // ── 7. 분류를 숨기면 시계가 남는다 ──
+  // ── 7. 분류를 지우면 행이 사라지고 자리표가 남는다 ──
   //
-  // 남기지 않으면 그보다 앞선 오프라인 편집이 나중에 도착해 되살린다. 나머지 넷
-  // (구성원·통장·카드·태그)과 같은 규칙이다.
+  // 감춰 두는 자리는 없어졌다(20260919150000_no_hidden_rows). 지운 것을 오프라인 기기에
+  // 알리는 길은 자리표뿐이라, 남기지 않으면 지운 줄이 그 기기의 사본에 그대로 남는다.
   const spare = await categories.createCategory(uid, { name: '안 쓰는 분류', type: 'expense' } as never, pid);
   await categories.deleteCategory(spare.id, uid);
-  const hidden = await ctx.prisma.category.findUniqueOrThrow({ where: { id: spare.id } });
-  ctx.check('분류가 숨겨졌다', hidden.isActive, false);
+  ctx.check('분류가 지워졌다', await ctx.prisma.category.count({ where: { id: spare.id } }), 0);
   ctx.check(
-    '숨기기에 시계가 남는다',
-    typeof (hidden.fieldHlc as Record<string, string> | null)?.isActive,
-    'string',
+    '지운 자리에 자리표가 남는다',
+    await ctx.prisma.tombstone.count({ where: { entity: 'Category', entityId: spare.id } }),
+    1,
   );
 
-  // 쓰이고 있는 분류는 숨길 수 없다. 확인이 트랜잭션 안으로 들어가도 그대로다.
-  await ctx.expectReject('쓰이는 분류 숨기기 거부', () =>
+  // 쓰이고 있는 분류는 지울 수 없다. 확인이 트랜잭션 안으로 들어가도 그대로다.
+  await ctx.expectReject('쓰이는 분류 지우기 거부', () =>
     categories.deleteCategory(dining.id, uid),
   );
 });
