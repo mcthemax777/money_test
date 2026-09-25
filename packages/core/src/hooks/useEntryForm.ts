@@ -37,6 +37,7 @@ import {
 } from '../data/entry-form';
 import { entryWritePort } from '../data/entry-write-port';
 import { homeDataPort } from '../data/home-port';
+import { assetOwnerNames, hasSeveralOwners } from '../lib/asset-owner';
 import { apiErrorCode, useApiError } from '../lib/api-error';
 import { useProjectLedgerCurrency } from '../store/project';
 import { useMirrorVersion } from './useMirrorVersion';
@@ -54,6 +55,13 @@ export interface PaymentChoice {
    * 옮기는 거래는 저장할 수 없어서다.
    */
   isCardLiability?: boolean;
+  /**
+   * 이 통장·카드의 주인 이름. 알 수 없으면 없다.
+   *
+   * 화면이 묶어 그리는 데 쓴다 -- "국민은행 통장"이 셋 있는 집에서는 이름만으로 어느
+   * 것을 고르는지 알 수 없다 (검색 창과 같은 규칙, lib/asset-owner).
+   */
+  owner?: string;
 }
 
 export interface EntryFormLists {
@@ -327,6 +335,44 @@ export function useEntryForm({
     [ledgerCurrency],
   );
 
+  /**
+   * 통장·카드의 주인. 카드는 결제 통장의 주인을 따른다 (lib/asset-owner).
+   *
+   * 검색 창이 쓰는 것과 같은 자리다. 고르는 목록이 같은 물음에 답하므로 규칙도 같아야
+   * 한다 -- 한쪽만 주인을 적으면 검색에서 고른 것을 폼에서 다시 찾을 수 없다.
+   */
+  const assetOwners = useMemo(
+    () => assetOwnerNames(lists.accounts, lists.cards, lists.people),
+    [lists.accounts, lists.cards, lists.people],
+  );
+
+  /**
+   * 주인 이름을 적어야 하는가. 주인이 하나뿐인 가계부에서는 적지 않는다.
+   *
+   * 모든 줄에 같은 이름이 붙으면 고르는 데 도움이 되지 않고 이름만 길어진다.
+   */
+  const showAssetOwner = useMemo(() => hasSeveralOwners(assetOwners), [assetOwners]);
+
+  /**
+   * 구성원 차례로 세운다. 주인을 알 수 없는 것은 맨 뒤다.
+   *
+   * 자산 화면·검색 창이 구성원을 그 차례로 세우므로 여기서도 같은 차례여야 한다
+   * (lib/asset-owner 의 `groupByOwner`). 같은 주인끼리는 받은 차례 그대로다 --
+   * 정렬이 안정적이라 통장 다음에 카드가 오는 순서가 지켜진다.
+   */
+  const byOwner = useCallback(
+    (choices: PaymentChoice[]): PaymentChoice[] => {
+      const place = new Map(lists.people.map((person, index) => [person.name, index]));
+      const placeOf = (choice: PaymentChoice) =>
+        choice.owner === undefined
+          ? lists.people.length + 1
+          : (place.get(choice.owner) ?? lists.people.length);
+
+      return [...choices].sort((a, b) => placeOf(a) - placeOf(b));
+    },
+    [lists.people],
+  );
+
   /** 화면이 고르는 결제수단. 지출은 통장과 카드, 그 밖은 통장만. */
   /**
    * 이체에서 고를 수 있는 계좌. 신용카드의 부채 계정을 함께 넣는다.
@@ -346,6 +392,7 @@ export function useEntryForm({
         value: accountValue(account.id),
         name: account.name,
         isCreditCard: false,
+        owner: assetOwners.get(account.id),
       }));
 
     const liabilities = lists.cards
@@ -356,10 +403,12 @@ export function useEntryForm({
         // 카드 부채 계정이지 결제수단 카드가 아니다. 할부 칸을 열 자리가 아니다.
         isCreditCard: false,
         isCardLiability: true,
+        // 카드의 주인은 결제 통장의 주인이다. 부채 계정이 아니라 카드 id 로 찾는다.
+        owner: assetOwners.get(card.id),
       }));
 
-    return [...accounts, ...liabilities];
-  }, [lists.accounts, lists.cards]);
+    return byOwner([...accounts, ...liabilities]);
+  }, [lists.accounts, lists.cards, assetOwners, byOwner]);
 
   /**
    * 이체 한쪽에서 고를 수 있는 것. 반대쪽으로 고른 것과 **카드끼리**를 뺀다.
@@ -388,6 +437,7 @@ export function useEntryForm({
         value: accountValue(account.id),
         name: account.name,
         isCreditCard: false,
+        owner: assetOwners.get(account.id),
       }));
 
     /*
@@ -402,10 +452,20 @@ export function useEntryForm({
         value: cardValue(card.id),
         name: card.name,
         isCreditCard: card.cardType === 'credit',
+        // 카드는 결제 통장의 주인을 따른다 (lib/asset-owner).
+        owner: assetOwners.get(card.id),
       }));
 
-    return [...accounts, ...cards];
-  }, [lists.accounts, lists.cards, transferOptionsFor, values.kind, values.toAccountId]);
+    return byOwner([...accounts, ...cards]);
+  }, [
+    lists.accounts,
+    lists.cards,
+    assetOwners,
+    byOwner,
+    transferOptionsFor,
+    values.kind,
+    values.toAccountId,
+  ]);
 
   /**
    * 이체에서 받는 쪽. 보내는 쪽으로 고른 것만 뺀다.
@@ -418,6 +478,7 @@ export function useEntryForm({
       transferOptionsFor(values.method).map((choice) => ({
         id: parseMethod(choice.value).accountId ?? '',
         name: choice.name,
+        owner: choice.owner,
       })),
     [transferOptionsFor, values.method],
   );
@@ -633,6 +694,7 @@ export function useEntryForm({
     methodChoices,
     toAccountChoices,
     categoryChoices,
+    showAssetOwner,
     isCreditCard,
     selectedCard,
     transferCardSide,

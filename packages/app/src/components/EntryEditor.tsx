@@ -584,9 +584,14 @@ export default function EntryEditor({
               <Text className="text-sm text-gray-500">{t('entryForm.noMethods')}</Text>
             ) : (
               <Chips
+                /*
+                  주인이 여럿인 가계부에서는 주인별로 묶어 그린다 (검색 창과 같은 규칙).
+                  "국민은행 통장"이 셋 있으면 이름만으로는 어느 것을 고르는지 알 수 없다.
+                */
                 options={form.methodChoices.map((choice) => ({
                   value: choice.value,
                   label: choice.name,
+                  group: form.showAssetOwner ? choice.owner : undefined,
                 }))}
                 selected={values.method}
                 onSelect={(value) => setField('method', value)}
@@ -638,6 +643,7 @@ export default function EntryEditor({
                   options={form.toAccountChoices.map((account) => ({
                     value: account.id,
                     label: account.name,
+                    group: form.showAssetOwner ? account.owner : undefined,
                   }))}
                   selected={values.toAccountId}
                   onSelect={(value) => setField('toAccountId', value)}

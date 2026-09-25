@@ -45,6 +45,18 @@ export default function CustomSelect({
   const ref = useRef<HTMLDivElement>(null);
 
   const selectedOption = options.find((opt) => opt.id === value);
+  /**
+   * 닫힌 단추에도 묶음 이름을 적을지.
+   *
+   * 묶음이 둘 이상일 때만 적는다. 계좌 주인이 하나뿐인 가계부에서는 모든 줄에 같은
+   * 이름이 붙어 알려 주는 것이 없고 이름만 길어진다 (검색 창과 같은 규칙이다 --
+   * core 의 `hasSeveralOwners`).
+   *
+   * 열어 놓은 목록은 머리글이 그 일을 하지만, 닫고 나면 고른 것이 누구 것인지 화면에서
+   * 사라진다. 결제수단은 "국민은행 통장"이 셋 있는 집에서 이름만으로 갈리지 않는다.
+   */
+  const showGroup =
+    new Set(options.map((option) => option.group).filter(Boolean)).size > 1;
 
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
@@ -72,6 +84,9 @@ export default function CustomSelect({
             <img src={selectedOption.icon} alt="" className="w-5 h-5" />
           )}
           <span>{selectedOption?.name || placeholderText}</span>
+          {showGroup && selectedOption?.group && (
+            <span className="text-gray-500">· {selectedOption.group}</span>
+          )}
         </span>
         {!disabled && (
           <span className={`transition-transform ${isOpen ? 'rotate-180' : ''}`}>▼</span>

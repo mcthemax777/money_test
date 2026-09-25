@@ -152,6 +152,7 @@ export function Chip({
   onPress,
   color,
   subtle,
+  sub,
 }: {
   label: string;
   selected: boolean;
@@ -173,6 +174,13 @@ export function Chip({
    * 고른 소분류는 파란 테두리가 다시 보인다. 골랐다는 것은 보여야 한다.
    */
   subtle?: boolean;
+  /**
+   * 이름 뒤에 옅게 붙는 한 마디 (통장·카드의 주인).
+   *
+   * 접힌 알약에만 쓴다. 펼친 목록은 주인별 묶음의 머리글이 그 일을 하지만, 접히고 나면
+   * 고른 것이 누구 것인지 화면에서 사라진다.
+   */
+  sub?: string;
 }) {
   /*
    * **누른다고 크기가 달라지지 않는다.** 테두리 굵기도 글자 굵기도 상태와 무관하게 같고,
@@ -208,6 +216,7 @@ export function Chip({
         }`}
       >
         {label}
+        {sub ? <Text className="text-gray-500"> · {sub}</Text> : null}
       </Text>
     </Pressable>
   );
@@ -236,7 +245,14 @@ export function Chips({
   onSelect,
   collapse = false,
 }: {
-  options: Array<{ value: string; label: string }>;
+  /**
+   * 고를 것들. `group` 이 있으면 그 이름으로 묶어 그린다 (통장·카드의 주인).
+   *
+   * 묶음 이름은 목록이 이미 그 차례로 서 있다고 보고 **앞 항목과 달라지는 자리마다**
+   * 머리글을 넣는다 (웹의 `CustomSelect` 와 같은 규칙). 섞여 오면 같은 이름이 여러 번
+   * 선다 -- 세우는 일은 목록을 만드는 쪽이 한다 (core 의 `useEntryForm`).
+   */
+  options: Array<{ value: string; label: string; group?: string }>;
   selected: string;
   onSelect: (value: string) => void;
   /**
@@ -257,19 +273,73 @@ export function Chips({
    */
   const picked = collapse && selected ? options.find((option) => option.value === selected) : null;
 
-  return (
-    <View className="flex-row flex-wrap items-center gap-2">
-      {(picked ? [picked] : options).map((option) => (
+  /*
+   * 접힌 한 알약. 묶음 이름을 옆에 옅게 달아 준다 -- 머리글이 함께 접혀 사라지므로
+   * 그대로 두면 고른 것이 누구 것인지 알 수 없다 (분류 알약이 대분류를 붙이는 것과 같다).
+   */
+  if (picked) {
+    return (
+      <View className="flex-row flex-wrap items-center gap-2">
         <Chip
-          key={option.value || 'none'}
-          label={option.label}
-          selected={option.value === selected}
+          label={picked.label}
+          sub={picked.group}
+          selected
           // 접힌 알약을 다시 누르면 고름이 풀리고 목록이 돌아온다.
-          onPress={() => onSelect(picked ? '' : option.value)}
+          onPress={() => onSelect('')}
         />
+      </View>
+    );
+  }
+
+  const chipOf = (option: { value: string; label: string }) => (
+    <Chip
+      key={option.value || 'none'}
+      label={option.label}
+      selected={option.value === selected}
+      onPress={() => onSelect(option.value)}
+    />
+  );
+
+  if (!options.some((option) => option.group)) {
+    return (
+      <View className="flex-row flex-wrap items-center gap-2">{options.map(chipOf)}</View>
+    );
+  }
+
+  return (
+    <View className="gap-3">
+      {groupChips(options).map((group) => (
+        <View key={group.name ?? ''}>
+          {/* 묶음 머리글. 고를 수 없는 정보라 알약이 아니다 (검색 창과 같은 모양이다). */}
+          <Text className="mb-1.5 text-xs text-gray-500">{group.name ?? '-'}</Text>
+          <View className="flex-row flex-wrap items-center gap-2">
+            {group.options.map(chipOf)}
+          </View>
+        </View>
       ))}
     </View>
   );
+}
+
+/**
+ * 앞 항목과 달라지는 자리마다 묶음을 연다. 차례는 받은 목록 그대로다.
+ *
+ * 묶음이 없는 항목은 이름 없는 묶음(`null`)으로 모인다 -- 조용히 버리면 주인을 알 수
+ * 없는 통장이 목록에서 사라져 고를 수 없게 된다.
+ */
+function groupChips<T extends { group?: string }>(
+  options: T[],
+): Array<{ name: string | null; options: T[] }> {
+  const groups: Array<{ name: string | null; options: T[] }> = [];
+
+  for (const option of options) {
+    const name = option.group ?? null;
+    const last = groups[groups.length - 1];
+    if (last && last.name === name) last.options.push(option);
+    else groups.push({ name, options: [option] });
+  }
+
+  return groups;
 }
 
 /**
