@@ -46,7 +46,7 @@ function Shell({ children }: { children: ReactNode }) {
   const onScroll = useNearBottomScroll();
   const isScrollLocked = useScrollLocked();
   /* 목록이 끌기 중에 이 스크롤을 빌려 쓴다 (shell/scroll 참고). */
-  const { attach, noteOffset } = useScrollRegistration();
+  const { attach, noteOffset, noteContentHeight, cancelRestore } = useScrollRegistration();
   const scrollRef = useRef<ScrollView>(null);
 
   /*
@@ -110,6 +110,13 @@ function Shell({ children }: { children: ReactNode }) {
               noteOffset(event.nativeEvent.contentOffset.y);
               onScroll?.(event);
             }}
+            /*
+             * 내용이 길어지는 때를 알려 준다. 상세를 접고 목록으로 나오는 길에 보던
+             * 자리로 되돌리는데, 목록이 다 그려지기 전에는 그만큼 굴릴 데가 없다.
+             */
+            onContentSizeChange={(_width, height) => noteContentHeight?.(height)}
+            /* 사람이 손으로 굴리기 시작하면 기다리던 되돌리기는 그만둔다. */
+            onScrollBeginDrag={() => cancelRestore?.()}
             /*
              * 끌기 중에는 자주 받아야 한다. 굴러간 만큼을 알아야 줄이 손끝에 붙어 있는다.
              * 평소에는 바닥 감지에만 쓰이므로 이 값이 촘촘해도 부담이 없다(값만 읽는다).

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
 import { useAssetsData } from '@money/core/hooks/useAssetsData';
@@ -22,7 +22,7 @@ import { useEntryFocus } from '@money/core/store/entry-focus';
 import { useUserFilter } from '@money/core/store/user-filter';
 
 import { useCloseOnBack, useNavigation } from '../shell/navigation';
-import { useScrollToTop } from '../shell/scroll';
+import { useScrollRestore, useScrollToTop } from '../shell/scroll';
 import AddButton from '../components/AddButton';
 import AssetDetailView, { type AssetDetailTarget } from '../components/AssetDetailView';
 import AssetHistoryChart from '../components/AssetHistoryChart';
@@ -108,15 +108,24 @@ export default function AssetsScreen() {
     id: string;
   } | null>(null);
   /*
-   * 상세를 펼치거나 접으면 맨 위로 올린다.
+   * 상세를 펼치면 맨 위로 올리고, 접으면 목록에서 보던 자리로 되돌린다.
    *
-   * 화면에 보이는 것이 통째로 바뀌는 자리다. 내려와 있던 자리에 그대로 두면 새로 그린
-   * 칸의 가운데부터 보이고, 접고 나면 목록의 엉뚱한 데에 서 있다.
+   * 화면에 보이는 것이 통째로 바뀌는 자리다. 펼 때 내려와 있던 자리에 그대로 두면 새로
+   * 그린 칸의 가운데부터 보인다. 접을 때도 맨 위로 올리면, 한참 내려가 고른 카드를
+   * 보고 나온 사람이 목록의 맨 처음부터 다시 훑어 내려야 한다.
    */
   const scrollToTop = useScrollToTop();
+  const { offsetOf, restoreTo } = useScrollRestore();
+  /** 상세로 들어가기 전 목록에서 보던 자리. */
+  const listOffset = useRef(0);
+
   const openDetail = (next: { kind: AssetDetailTarget['kind']; id: string } | null) => {
+    /* 목록에서 들어가는 걸음에서만 적는다. 상세끼리 갈아타도 떠나온 자리는 그대로다. */
+    if (next && !detail) listOffset.current = offsetOf();
+
     setDetail(next);
-    scrollToTop();
+    if (next) scrollToTop();
+    else restoreTo(listOffset.current);
   };
 
   /* 기기의 뒤로가기는 머리글의 ← 와 같은 일을 한다 -- 목록으로 돌아간다. */

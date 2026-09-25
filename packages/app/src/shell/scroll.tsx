@@ -100,6 +100,18 @@ interface ScrollControl {
    * 내려와 있던 자리에 그대로 두면 새로 그린 칸의 가운데부터 보인다.
    */
   scrollToTop: () => void;
+  /**
+   * 보던 자리로 되돌린다.
+   *
+   * 상세를 접고 목록으로 나오는 길에 쓴다. 되돌릴 때는 아직 목록이 그려지기 전이라
+   * 내용이 짧아 그 자리까지 갈 수 없다. 그래서 목표만 적어 두었다가 내용이 그만큼
+   * 길어지는 순간에 굴린다.
+   */
+  restoreTo: (y: number) => void;
+  /** 껍데기가 내용 길이가 바뀔 때마다 알려 준다. 기다리던 되돌리기가 여기서 이뤄진다. */
+  noteContentHeight: (height: number) => void;
+  /** 기다리던 되돌리기를 그만둔다. 사람이 손으로 굴리기 시작하면 껍데기가 부른다. */
+  cancelRestore: () => void;
 }
 
 /** `ScrollView` 에서 쓰는 것만 추린 모양. 시험에서 갈아 끼우기 쉽다. */
@@ -121,19 +133,90 @@ function ScrollLockProvider({ children }: { children: ReactNode }) {
     area.current = nextArea;
   }, []);
 
-  const scrollBy = useCallback((dy: number) => {
-    if (!view.current) return;
-    const next = Math.max(0, offset.current + dy);
-    view.current.scrollTo({ y: next, animated: false });
+  /** 지금 내용의 길이. 되돌릴 자리까지 갈 수 있는지 재는 데 쓴다. */
+  const contentHeight = useRef(0);
+  /** 되돌아갈 자리. 아직 내용이 짧아 가지 못했으면 들고 기다린다. */
+  const pendingRestore = useRef<number | null>(null);
+
+  const cancelRestore = useCallback(() => {
+    pendingRestore.current = null;
   }, []);
+
+  /**
+   * 기다리던 되돌리기를 해 본다.
+   *
+   * 내용이 그 자리까지 길어지지 않았으면 아무것도 하지 않는다 -- 그대로 굴리면 끝에
+   * 걸려 어중간한 데 서고, 뒤이어 목록이 다 그려져도 그 자리가 되지 않는다.
+   */
+  const applyRestore = useCallback(() => {
+    const target = pendingRestore.current;
+    if (target === null || !view.current) return;
+    if (contentHeight.current - area.current.height < target) return;
+
+    pendingRestore.current = null;
+    view.current.scrollTo({ y: target, animated: false });
+  }, []);
+
+  const scrollBy = useCallback(
+    (dy: number) => {
+      if (!view.current) return;
+      cancelRestore();
+      const next = Math.max(0, offset.current + dy);
+      view.current.scrollTo({ y: next, animated: false });
+    },
+    [cancelRestore],
+  );
 
   const scrollToTop = useCallback(() => {
+    cancelRestore();
     view.current?.scrollTo({ y: 0, animated: true });
-  }, []);
+  }, [cancelRestore]);
+
+  const restoreTo = useCallback(
+    (y: number) => {
+      /* 맨 위였으면 되돌릴 것이 없다. 이미 거기서 시작한다. */
+      if (y <= 0) {
+        cancelRestore();
+        return;
+      }
+      pendingRestore.current = y;
+      applyRestore();
+    },
+    [applyRestore, cancelRestore],
+  );
+
+  const noteContentHeight = useCallback(
+    (height: number) => {
+      contentHeight.current = height;
+      applyRestore();
+    },
+    [applyRestore],
+  );
 
   const value = useMemo(
-    () => ({ isLocked, setLocked, attach, offset, scrollY, area, scrollBy, scrollToTop }),
-    [attach, isLocked, scrollBy, scrollToTop, scrollY],
+    () => ({
+      isLocked,
+      setLocked,
+      attach,
+      offset,
+      scrollY,
+      area,
+      scrollBy,
+      scrollToTop,
+      restoreTo,
+      noteContentHeight,
+      cancelRestore,
+    }),
+    [
+      attach,
+      cancelRestore,
+      isLocked,
+      noteContentHeight,
+      restoreTo,
+      scrollBy,
+      scrollToTop,
+      scrollY,
+    ],
   );
 
   return <ScrollControlContext.Provider value={value}>{children}</ScrollControlContext.Provider>;
@@ -155,12 +238,35 @@ export function useScrollToTop(): () => void {
   return useCallback(() => context?.scrollToTop(), [context]);
 }
 
+/**
+ * 화면이 쓰는 "보던 자리로".
+ *
+ * 상세를 펼치기 전 자리를 적어 두었다가(`offsetOf`) 접고 나올 때 그리로 되돌린다
+ * (`restoreTo`). 껍데기 밖(시험 등)에서는 0 을 주고 아무 일도 하지 않는다.
+ */
+export function useScrollRestore(): {
+  offsetOf: () => number;
+  restoreTo: (y: number) => void;
+} {
+  const context = useContext(ScrollControlContext);
+
+  return useMemo(
+    () => ({
+      offsetOf: () => context?.offset.current ?? 0,
+      restoreTo: (y: number) => context?.restoreTo(y),
+    }),
+    [context],
+  );
+}
+
 /** 껍데기가 제 스크롤을 등록하고, 내려온 만큼을 알려 주는 손잡이. */
 export function useScrollRegistration() {
   const context = useContext(ScrollControlContext);
 
   return {
     attach: context?.attach,
+    noteContentHeight: context?.noteContentHeight,
+    cancelRestore: context?.cancelRestore,
     noteOffset: useCallback(
       (y: number) => {
         if (!context) return;

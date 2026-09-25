@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { MoreVertical } from 'lucide-react-native';
 import type { EntryListItem } from '@money/types';
@@ -21,7 +21,7 @@ import MonthHeader from '../components/MonthHeader';
 import PaymentMethodBreakdown from '../components/PaymentMethodBreakdown';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import { useCloseOnBack } from '../shell/navigation';
-import { useScrollToTop } from '../shell/scroll';
+import { useScrollRestore, useScrollToTop } from '../shell/scroll';
 
 type ViewType = 'category' | 'method';
 
@@ -99,16 +99,25 @@ export default function LedgerScreen() {
   /*
    * 펼쳐 둔 분류 상세. null 이면 목록을 본다.
    *
-   * 펼치거나 접으면 맨 위로 올린다. 화면에 보이는 것이 통째로 바뀌는 자리라, 내려와
-   * 있던 자리에 그대로 두면 새로 그린 칸의 가운데부터 보이고 접고 나면 목록의
-   * 엉뚱한 데에 서 있다 (자산 화면과 같은 규칙이다).
+   * 펼치면 맨 위로 올리고, 접으면 목록에서 보던 자리로 되돌린다. 화면에 보이는 것이
+   * 통째로 바뀌는 자리라, 펼 때 내려와 있던 자리에 그대로 두면 새로 그린 칸의
+   * 가운데부터 보인다. 접을 때도 맨 위로 올리면 한참 내려가 고른 분류를 보고 나온
+   * 사람이 목록을 처음부터 다시 훑어 내려야 한다 (자산 화면과 같은 규칙이다).
    */
   const [detail, setDetail] = useState<CategoryTarget | null>(null);
   const scrollToTop = useScrollToTop();
+  const { offsetOf, restoreTo } = useScrollRestore();
+  /** 상세로 들어가기 전 목록에서 보던 자리. */
+  const listOffset = useRef(0);
+
   const openDetail = (next: CategoryTarget | null) => {
+    /* 목록에서 들어가는 걸음에서만 적는다. 상세끼리 갈아타도 떠나온 자리는 그대로다. */
+    if (next && !detail) listOffset.current = offsetOf();
+
     setNotice('');
     setDetail(next);
-    scrollToTop();
+    if (next) scrollToTop();
+    else restoreTo(listOffset.current);
   };
 
   /* 기기의 뒤로가기는 머리글의 ← 와 같은 일을 한다 -- 목록으로 돌아간다. */

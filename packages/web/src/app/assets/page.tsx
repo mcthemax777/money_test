@@ -1,6 +1,14 @@
 'use client';
 
-import { useEffect, useState, useMemo, useCallback, useRef, type ReactNode } from 'react';
+import {
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useMemo,
+  useCallback,
+  useRef,
+  type ReactNode,
+} from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { apiClient } from '@money/core/lib/api-client';
@@ -35,6 +43,13 @@ import {
 const PERSON_ENTRY_LIMIT = 30;
 
 const CARD_ADD_FORM_ID = 'card-add-form';
+
+/**
+ * 상세가 화면을 통째로 쓰는 너비. `hideOnNarrow` 의 `lg:` 와 같은 자리에서 갈린다.
+ *
+ * 이 너비에서만 목록이 접히므로, 스크롤 자리를 적고 되돌리는 것도 여기서만 한다.
+ */
+const DETAIL_ALONE = '(max-width: 1023px)';
 
 /*
  * 오른쪽 패널이 지금 보고 있는 항목은 목록에서 바탕색으로 표시한다 (구성원·계좌는
@@ -839,6 +854,38 @@ export default function DashboardPage() {
     setSelectedCard(null);
   };
 
+  /**
+   * 상세로 들어가기 전 목록에서 보던 자리. 좁은 화면에서만 쓴다.
+   *
+   * 좁은 화면에서는 상세가 화면을 통째로 쓰므로 위의 칸들이 접힌다(`hideOnNarrow`).
+   * 접히는 순간 문서가 짧아져 브라우저가 스크롤을 끌어올리기 때문에, 상세를 여는
+   * 손짓에서 미리 적어 둔다 -- 접힌 뒤에 읽으면 이미 0 이다.
+   */
+  const listScrollY = useRef(0);
+  const rememberListScroll = () => {
+    if (window.matchMedia(DETAIL_ALONE).matches) listScrollY.current = window.scrollY;
+  };
+
+  /*
+   * 상세를 펼치면 맨 위로, 접으면 보던 자리로.
+   *
+   * 좁은 화면에서 목록이 접히고 펴지는 자리다. 펼 때 내려와 있던 자리에 그대로 두면
+   * 상세의 가운데부터 보이고(상세가 길면 브라우저가 끌어올려 주지도 않는다), 접고
+   * 나서 맨 위에 서 있으면 한참 내려가 고른 카드를 보고 나온 사람이 목록을 처음부터
+   * 다시 훑어 내려야 한다.
+   *
+   * 넓은 화면은 목록과 상세가 나란해 접히는 것이 없으므로 건드리지 않는다.
+   */
+  const wasDetailOpen = useRef(false);
+  useLayoutEffect(() => {
+    const isOpen = detailType !== null;
+    if (isOpen === wasDetailOpen.current) return;
+    wasDetailOpen.current = isOpen;
+
+    if (!window.matchMedia(DETAIL_ALONE).matches) return;
+    window.scrollTo({ top: isOpen ? 0 : listScrollY.current });
+  }, [detailType]);
+
   /*
    * 브라우저(그리고 휴대폰)의 뒤로가기는 머리글의 ← 를 누른 것과 같게 동작한다.
    *
@@ -1464,14 +1511,17 @@ export default function DashboardPage() {
               detailType && selectedIdOfDetail ? { type: detailType, id: selectedIdOfDetail } : null
             }
             onPersonClick={(person) => {
+              rememberListScroll();
               setSelectedPerson(person);
               setDetailType('person');
             }}
             onAccountClick={(account) => {
+              rememberListScroll();
               setSelectedAccount(account);
               setDetailType('account');
             }}
             onCardClick={(card) => {
+              rememberListScroll();
               setSelectedCard(card);
               setDetailType('card');
             }}
