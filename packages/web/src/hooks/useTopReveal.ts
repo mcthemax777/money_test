@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, type RefObject } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 /**
  * 굴리는 방향을 따라 숨었다 되돌아오는 머리글.
@@ -17,7 +17,17 @@ import { useEffect, useRef, useState, type RefObject } from 'react';
 const TURN = 16;
 
 export function useTopReveal<T extends HTMLElement>(): {
-  ref: RefObject<T | null>;
+  /**
+   * 머리글 상자에 걸 자리.
+   *
+   * `RefObject<T | null>` 이라 적지 않는다. 그 이름이 가리키는 모양이 @types/react
+   * 18 과 19 에서 다르다 -- 18 은 `{ readonly current: T | null }`, 19 는
+   * `{ current: T }` 다. 이 저장소에는 둘 다 있고(웹 18, 앱 19) 설치 배치에 따라
+   * 한 컴파일 안에서 섞이면 `ref=` 가 받지 못하는 짝이 나온다 -- 2026-09-26 배포
+   * 서버의 next build 가 그렇게 깨졌다(로컬에서는 18 로만 풀려 통과했다).
+   * 모양을 그대로 적으면 어느 쪽으로 풀려도 들어맞는다.
+   */
+  ref: { current: T | null };
   /** 머리글의 높이. 아래 붙박이 줄은 이만큼 내려온 자리에 선다. */
   height: number;
   /** 지금 비켜 나 있는가. */
