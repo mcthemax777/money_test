@@ -6,6 +6,13 @@ import { homeDataPort } from '@money/core/data/home-port';
 import { EMPTY_SEARCH } from '@money/core/hooks/useTransactions';
 import { accountTypeLabel } from '@money/core/lib/account-type';
 import { accountDueOf } from '@money/core/lib/card-settlement';
+import { mergeOrder } from '@money/core/lib/reorder';
+import {
+  accountBalanceLine,
+  accountMetaParts,
+  type AssetMetaPart,
+  type AssetMetaTone,
+} from '@money/core/lib/asset-meta';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import type { Account, Card, Person } from '@money/core/lib/types';
@@ -23,7 +30,6 @@ import AssetTypeSummary from '../components/AssetTypeSummary';
 import EntryDetailModal from '../components/EntryDetailModal';
 import EntryEditor from '../components/EntryEditor';
 import PersonScopeTitle from '../components/PersonScopeTitle';
-import PersonTabs from '../components/PersonTabs';
 import { AddAccountModal, AddCardModal, AddPersonModal } from '../components/AssetAddModals';
 import DragList from '../components/DragList';
 import {
@@ -66,13 +72,6 @@ export default function AssetsScreen() {
   const [accountAddFor, setAccountAddFor] = useState<Person | null>(null);
   const [cardAddFor, setCardAddFor] = useState<Account | null>(null);
 
-  /**
-   * 목록에서 보고 있는 사람. 아직 고르지 않았으면 null 이고, 그때는 아래에서 정한다.
-   *
-   * 위의 총자산과 추이 그래프는 이 값을 보지 않는다. 그쪽은 제목에서 고른 자산주인
-   * 전체의 값이고, 이 탭은 긴 목록에서 한 사람에게 바로 가는 길이다.
-   */
-  const [listPersonId, setListPersonId] = useState<string | null>(null);
 
   /**
    * 원장 줄에서 연 거래. 상세와 고치기는 거래 화면과 같은 짝을 쓴다.
@@ -166,21 +165,25 @@ export default function AssetsScreen() {
     setDetail(null);
   }, [detail, detailTarget, assets.isLoading]);
 
-  /*
-   * 탭이 가리키는 사람. 목록은 늘 한 사람 것이다.
+  /**
+   * 끌어서 바꾼 구성원 차례를 저장한다.
    *
-   * 아직 고르지 않았거나 고른 사람이 자산주인에서 빠졌으면 "나"로, 나도 없으면 목록의
-   * 첫 사람으로 되돌린다. 화면을 열면 제 자산부터 보는 것이 자연스럽다.
-   *
-   * 값을 고쳐 두는 대신 그릴 때마다 고른다. 목록이 오는 동안은 visiblePeople 이 비어
-   * 있는데, 그 순간을 "사라졌다"로 읽고 상태를 지우면 다시 들어온 뒤에도 남이 펴진다.
+   * 목록에는 고른 자산주인만 서 있으므로 놓은 자리도 그 안에서의 번호다. 차례 값을
+   * 매기는 쪽은 구성원 전부를 보므로(`movePersonTo`) 전체에서 몇 번째인지로 바꿔 준다
+   * -- 그러지 않으면 자산주인을 좁혀 놓고 옮겼을 때 엉뚱한 자리에 앉는다.
    */
-  const listPerson =
-    assets.visiblePeople.find((person) => person.id === listPersonId) ??
-    assets.visiblePeople.find((person) => person.id === assets.myPersonId) ??
-    assets.visiblePeople[0] ??
-    null;
-  const listedPeople = listPerson ? [listPerson] : [];
+  const movePersonWithin = (id: string, toIndex: number) => {
+    const visible = assets.visiblePeople.map((person) => person.id);
+    const next = visible.filter((personId) => personId !== id);
+    next.splice(toIndex, 0, id);
+
+    const full = mergeOrder(
+      assets.people.map((person) => person.id),
+      next,
+    );
+    void assets.movePersonTo(id, full.indexOf(id));
+  };
+
 
   /** 카드의 통화. 결제 통장에 달려 있어 카드만 보고는 알 수 없다. */
   const currencyOfCard = (card: Card) =>
@@ -285,6 +288,11 @@ export default function AssetsScreen() {
             people={assets.people}
             myPersonId={assets.myPersonId}
             selectedPersonIds={assets.selectedPersonIds}
+            /*
+              구성원을 더하고, 열고, 차례를 바꾸는 일은 여기 없다. 아래 목록이 그
+              자리다 -- 추가는 목록 위 버튼, 상세는 상자의 머리글, 차례는 상자를 끌어
+              정한다. 이 창은 보는 범위만 고른다.
+            */
             onTogglePerson={togglePersonId}
           />
         }
@@ -307,86 +315,102 @@ export default function AssetsScreen() {
       ) : null}
 
       <View>
-      {/*
-        목록을 한 사람 것으로 좁히는 탭. 구성원 추가도 이 줄의 오른쪽 끝에 있다.
-
-        만들 자리는 여전히 목록 바로 위다 -- 무엇에 더하는지가 아래에 곧바로 이어져
-        보이고, 목록이 길어져도 버튼을 찾아 내려갈 일이 없다 (`AddButton` 과 같은 규칙).
-      */}
-      <PersonTabs
-        people={assets.visiblePeople}
-        selectedId={listPerson?.id ?? null}
-        onSelect={setListPersonId}
-        onAddPerson={() => setIsPersonAddOpen(true)}
-        onReorder={(id, toIndex) => void assets.movePersonTo(id, toIndex)}
-      />
-
       {assets.isLoading && assets.people.length === 0 ? (
         <Text className="text-gray-600">{t('common.loading')}</Text>
-      ) : assets.visiblePeople.length === 0 ? (
-        <Text className="text-gray-600">{t('assets.noSelection')}</Text>
       ) : (
-        /* 탭이 가리키는 한 사람. 구성원 차례는 탭을 끌어 바꾸므로 여기서는 끌 것이 없다. */
-        listedPeople.map((person) => {
-          const owned = assets.accounts.filter((account) => account.ownerId === person.id);
+        /*
+          **사람마다 한 상자다** (웹과 같다).
 
-          return (
-            <View key={person.id} className="rounded-lg bg-white p-6 shadow-sm">
-                {/*
-                  이름을 누르면 그 사람의 상세가 열린다 (웹에서 오른쪽에 펼치던 칸이다).
-                  고치는 창은 그 상세의 머리글에 있다 -- 읽기 전용 구성원에게는 그 단추가
-                  없고, 상세 자체는 누구나 읽는다.
-                */}
-                {/*
-                  이름과 소계를 한 줄의 양 끝에 둔다. "소계"라는 말은 적지 않는다 --
-                  사람 이름 옆의 금액은 그 사람 몫이라는 뜻 말고 읽힐 것이 없다.
-                  계좌·카드 줄도 같은 자리에 금액을 두어 오른쪽 끝이 나란히 선다.
-                */}
-                <Pressable
-                  className="mb-6 flex-row items-center justify-between gap-3"
-                  onPress={() => openDetail({ kind: 'person', id: person.id })}
-                >
-                  <Text numberOfLines={1} className="shrink text-xl font-bold text-gray-900">
-                    {person.name}
-                  </Text>
-                  <Text className="text-xl font-bold text-gray-900">
-                    {formatCurrency(
-                      assets.netWorthByPerson.get(person.id)?.total ?? 0,
-                      displayCurrency,
-                    )}
-                  </Text>
-                </Pressable>
+          계좌의 자리(sortRank)가 주인 안에서의 자리라 남의 통장 사이로 끌어다 놓을
+          자리가 없다. 사람을 지우고 한 줄기로 늘어놓아 보니, 끌어도 어떤 줄 앞에서는
+          멎는 목록이 되어 고장으로 보였다. 상자가 그 경계다.
 
-                <AddButton label={t('account.add')} onPress={() => setAccountAddFor(person)} />
+          상자로 나누면 끌어 옮기는 모습도 제대로 보인다. 한 장의 목록에서는 머리글만
+          떠올라 제 계좌들을 남겨 둔 채 움직였다. 지금은 사람 하나가 통째로 들린다.
 
-                {owned.length === 0 ? (
-                  <Text className="text-gray-600">{t('assets.noAccounts')}</Text>
-                ) : (
-                  <DragList
-                    items={owned}
-                    gap={16}
-                    itemClassName="rounded-lg border border-gray-200 p-4"
-                    onReorder={(id, toIndex) =>
-                      void assets.moveAccountTo(id, person.id, toIndex)
-                    }
-                    renderItem={(account) => (
-                      <AccountRow
-                        account={account}
-                        profit={assets.accountProfit.get(account.id)}
-                        cards={assets.cardsOf(account.id)}
-                        onAddCard={() => setCardAddFor(account)}
-                        onOpen={() => openDetail({ kind: 'account', id: account.id })}
-                        onOpenCard={(card) => openDetail({ kind: 'card', id: card.id })}
-                        onReorderCards={(id, toIndex) =>
-                          void assets.moveCardTo(id, account.id, toIndex)
-                        }
-                      />
-                    )}
-                  />
-                )}
-            </View>
-          );
-        })
+          머리글은 이름과 소계뿐이다. 누르면 그 사람의 상세가 열리고, **조금 길게 눌러
+          끌면 구성원 차례가 바뀐다** (계좌·카드와 같은 손짓이다). 계좌가 없는 사람도
+          상자는 내준다 -- 그 상자가 없으면 그 사람만 차례를 바꿀 수 없고, 계좌를 만들
+          자리도 없다.
+        */
+        <View>
+          {/* 만들 자리는 목록 바로 위다 (`AddButton` 과 같은 규칙). */}
+          <AddButton label={t('person.add')} onPress={() => setIsPersonAddOpen(true)} />
+
+          {/*
+            상자 끌기. 안쪽 목록(계좌·카드)도 같은 것을 쓰지만 서로 밟지 않는다 --
+            줄이 제 손짓의 전파를 끊어 **안쪽이 이긴다** (`DragList` 의 onTouchStart).
+          */}
+          <DragList
+            items={assets.visiblePeople}
+            gap={12}
+            itemClassName="overflow-hidden rounded-lg bg-white shadow-sm"
+            onPressItem={(person) => openDetail({ kind: 'person', id: person.id })}
+            onReorder={movePersonWithin}
+            renderItem={(person) => {
+              const owned = assets.accounts.filter((account) => account.ownerId === person.id);
+
+              return (
+                <>
+                  {/*
+                    상자의 머리글. 이름과 소계를 한 줄의 양 끝에 둔다. "소계"라는 말은
+                    적지 않는다 -- 사람 이름 옆의 금액은 그 사람 몫이라는 뜻 말고 읽힐
+                    것이 없다.
+                  */}
+                  <View className="flex-row items-center justify-between gap-3 border-b border-gray-200 bg-gray-50 px-4 py-2">
+                    <Text numberOfLines={1} className="shrink text-sm font-bold text-gray-900">
+                      {person.name}
+                    </Text>
+                    <Text className="text-sm font-bold text-gray-900">
+                      {formatCurrency(
+                        assets.netWorthByPerson.get(person.id)?.total ?? 0,
+                        displayCurrency,
+                      )}
+                    </Text>
+                  </View>
+
+                  <View className="px-4 pt-2">
+                    <AddButton
+                      dense
+                      label={t('account.add')}
+                      onPress={() => setAccountAddFor(person)}
+                    />
+                  </View>
+
+                  {owned.length === 0 ? (
+                    <Text className="px-4 pb-3 text-sm text-gray-600">{t('assets.noAccounts')}</Text>
+                  ) : (
+                    <DragList
+                      items={owned}
+                      gap={0}
+                      itemClassName="border-t border-gray-100 px-4 py-2"
+                      onReorder={(id, toIndex) =>
+                        void assets.moveAccountTo(id, person.id, toIndex)
+                      }
+                      renderItem={(account) => (
+                        <AccountRow
+                          account={account}
+                          profit={assets.accountProfit.get(account.id)}
+                          cards={assets.cardsOf(account.id)}
+                          onAddCard={() => setCardAddFor(account)}
+                          onOpen={() => openDetail({ kind: 'account', id: account.id })}
+                          onOpenCard={(card) => openDetail({ kind: 'card', id: card.id })}
+                          onReorderCards={(id, toIndex) =>
+                            void assets.moveCardTo(id, account.id, toIndex)
+                          }
+                        />
+                      )}
+                    />
+                  )}
+                </>
+              );
+            }}
+          />
+
+          {assets.visiblePeople.length === 0 ? (
+            <Text className="text-sm text-gray-600">{t('assets.noSelection')}</Text>
+          ) : null}
+        </View>
       )}
       </View>
         </>
@@ -450,8 +474,9 @@ export default function AssetsScreen() {
           onClose={() => setAccountAddFor(null)}
           onSubmit={assets.addAccount}
           isSubmitting={assets.isSubmitting}
-          ownerId={accountAddFor.id}
-          ownerName={accountAddFor.name}
+          /* 눌러서 들어온 상자가 주인을 정한다. 잘못 골랐으면 폼에서 바꾼다. */
+          people={assets.visiblePeople}
+          defaultOwnerId={accountAddFor.id}
         />
       ) : null}
 
@@ -505,6 +530,38 @@ export default function AssetsScreen() {
  * 같은 무게가 되어, 있는 것과 만들 자리가 눈에 섞인다.
  */
 /**
+ * 계좌 이름 밑에 한 줄로 이어 붙는 작은 글씨들 (core 의 `accountMetaParts`).
+ *
+ * 수익·계좌번호를 줄마다 하나씩 쌓으면 계좌 하나가 네 줄이 된다. 가운뎃점으로
+ * 이어 한 줄에 두되, 좁은 화면에서는 접혀 내려가게 둔다 -- 잘라 내면 뒤에 선
+ * 계좌번호가 통째로 사라진다.
+ *
+ * 무게는 조각마다 다르다. 셋을 같은 색으로 두면 한 줄에 모인 순간 어느 것이 큰 금액을
+ * 설명하는 수인지 알 수 없다.
+ */
+const META_TONE_CLASS: Record<AssetMetaTone, string> = {
+  profit: 'font-semibold text-green-600',
+  loss: 'font-semibold text-red-600',
+  muted: 'text-gray-400',
+};
+
+function AssetMetaLine({ parts }: { parts: AssetMetaPart[] }) {
+  if (parts.length === 0) return null;
+
+  return (
+    <View className="shrink flex-row flex-wrap items-center">
+      {parts.map((part, index) => (
+        <View key={part.key} className="flex-row items-center">
+          {/* 가운뎃점은 앞 조각의 색을 따르지 않는다. 이어 주는 표시일 뿐이다. */}
+          {index > 0 ? <Text className="px-1.5 text-xs text-gray-300">·</Text> : null}
+          <Text className={`text-xs ${META_TONE_CLASS[part.tone]}`}>{part.text}</Text>
+        </View>
+      ))}
+    </View>
+  );
+}
+
+/**
  * 카드 줄 오른쪽 끝의 남은 대금. 웹의 자산 목록과 같은 규칙이다.
  *
  * 아직 정산하지 않은 것이 있을 때만 적는다. 0원을 적어 두면 다 갚은 카드가 밀린
@@ -537,7 +594,7 @@ function CardOutstanding({ card, currency }: { card: Card; currency: string }) {
 }
 
 /**
- * 계좌 한 줄과 그 아래 카드들.
+ * 계좌 한 줄과 그 줄에 달려 내려오는 카드들.
  *
  * 왼쪽에 계좌명, 오른쪽 끝에 남은 금액을 둔다. 어느 계좌인지 먼저 알아야 하고, 금액은
  * 오른쪽 끝에 모여 있어야 위아래로 훑으며 견줄 수 있다. 유형은 총자산을 현금성·투자·
@@ -564,9 +621,10 @@ function AccountRow({
   onReorderCards: (id: string, toIndex: number) => void;
 }) {
   const { t } = useTranslation();
-  const profitAmount = toNumber(profit);
   /* 이 통장으로 빠져나갈 카드 대금과, 그것을 뺀 남은 금액. 셈은 core 가 한다(웹과 같은 값). */
   const { due, remaining } = accountDueOf(account.balance, cards);
+  const balanceLine = accountBalanceLine(account, { due, t });
+  const metaParts = accountMetaParts(account, { profit, t });
 
   /* 겉 상자는 목록(DragList)이 씌운다. 여기서 또 씌우면 테두리가 두 겹이 된다. */
   return (
@@ -575,15 +633,15 @@ function AccountRow({
         계좌 칸 전체가 누를 자리다 (웹의 계좌 버튼과 같다). 예전에는 이름 줄만 받아서,
         정작 크게 적힌 금액이나 그 아래 줄을 눌러서는 상세가 열리지 않았다.
 
-        칸의 여백(DragList 가 준 p-4)까지 누를 자리로 삼는다. 여백을 음수 여백으로 도로
+        줄의 여백(DragList 가 준 px-4 py-2)까지 누를 자리로 삼는다. 여백을 음수 여백으로 도로
         덮고 같은 크기의 안 여백을 주면, 보이는 모양은 그대로면서 손이 닿는 자리만 넓어진다.
 
         카드 묶음은 이 밖에 둔다. 그쪽을 함께 받으면 카드를 누른 것이 계좌 상세로 간다.
       */}
-      <Pressable className="-mx-4 -mt-4 px-4 pt-4 active:opacity-70" onPress={onOpen}>
+      <Pressable className="-mx-4 -mt-2 px-4 pt-2 active:opacity-70" onPress={onOpen}>
         <View className="flex-row items-center justify-between gap-3">
           <View className="shrink flex-row items-center gap-1.5">
-            <Text numberOfLines={1} className="shrink text-sm text-gray-600">
+            <Text numberOfLines={1} className="shrink text-sm font-medium text-gray-900">
               {account.name}
             </Text>
             <Text className="rounded bg-gray-100 px-1.5 py-px text-[11px] text-gray-600">
@@ -595,72 +653,75 @@ function AccountRow({
             이미 가져가기로 된 몫이 섞여 있어, 잔액만 보면 쓸 수 있는 돈을 그만큼
             부풀려 읽는다.
           */}
-          <Text className="text-2xl font-bold text-gray-900">
+          <Text className="text-base font-bold text-gray-900">
             {formatCurrency(remaining, account.currency)}
           </Text>
         </View>
 
         {/*
-          통장에 실제로 찍힌 돈. 카드 대금이 있을 때만 적는다.
+          둘째 줄. 왼쪽에 수익·계좌번호, 오른쪽 끝에 잔액이다. 무엇을 적을지는 core 가
+          정한다 (`accountMetaParts`·`accountBalanceLine` -- 웹과 같다).
 
-          대금이 없으면 남은 금액이 곧 잔액이라, 같은 수를 한 번 더 적는 줄이 된다.
-          대금 액수는 여기 적지 않는다 -- 카드 줄이 바로 아래에 붙어 있어 그쪽에서
-          카드마다 얼마인지 읽는 편이 낫다.
+          윗줄과 같은 짜임이라 이름 밑에 주인이, 큰 금액 밑에 잔액이 선다. 잔액을 따로 한
+          줄 더 내리면 계좌 하나가 세 줄이 되고, 왼쪽에 끼워 넣으면 어느 수를 설명하는
+          줄인지 사라진다.
         */}
-        {due !== 0 ? (
-          /*
-            큰 금액 다음으로 자주 읽는 줄이라 12px 회색으로 두지 않는다.
-            이것이 안 보이면 큰 금액이 왜 그 값인지 알 수 없다. 큰 금액보다는 작게
-            두어 차례는 지킨다.
-          */
-          <Text className="mt-1 text-right text-sm font-medium text-gray-700">
-            {t('assets.balanceLine', {
-              balance: formatCurrency(account.balance, account.currency),
-            })}
-          </Text>
-        ) : null}
-
-        {/* 손실에 "수익 -"를 붙이면 두 번 읽어야 한다. 부호 대신 이름을 바꾼다. */}
-        {profit !== undefined && profitAmount !== 0 ? (
-          <Text
-            className={`mt-1 text-xs ${profitAmount > 0 ? 'text-green-600' : 'text-red-600'}`}
-          >
-            {t(profitAmount > 0 ? 'assets.profit' : 'assets.loss')}
-            {formatCurrency(Math.abs(profitAmount), account.currency)}
-          </Text>
-        ) : null}
-
-        {account.accountNumber ? (
-          <Text className="mt-1 text-xs text-gray-400">{account.accountNumber}</Text>
+        {metaParts.length > 0 || balanceLine ? (
+          <View className="mt-0.5 flex-row items-center justify-between gap-3">
+            {/*
+              왼쪽이 비어도 자리는 남긴다. 적을 것이 잔액뿐일 때 감싸는 칸까지 사라지면
+              잔액이 왼쪽으로 붙어, 윗줄의 큰 금액과 어긋난다.
+            */}
+            <View className="flex-1">
+              <AssetMetaLine parts={metaParts} />
+            </View>
+            {balanceLine ? (
+              <Text className="text-xs font-medium text-gray-700">{balanceLine}</Text>
+            ) : null}
+          </View>
         ) : null}
       </Pressable>
 
-      <View className="mt-4 border-t border-gray-200 pt-4">
-        <AddButton label={t('card.add')} onPress={onAddCard} />
-      </View>
+      {/*
+        카드는 결제 통장에 **달려 내려온다.** 그 통장이 곧 이 계좌다.
 
-      {cards.length > 0 ? (
-        <DragList
-          items={cards}
-          itemClassName="rounded border border-green-100 bg-green-50 px-3 py-2 active:bg-green-100"
-          onPressItem={onOpenCard}
-          onReorder={onReorderCards}
-          renderItem={(card) => (
-            <>
-              <View className="flex-row items-center justify-between gap-3">
-                <Text numberOfLines={1} className="shrink text-sm font-medium text-gray-900">
-                  {card.name}
-                </Text>
+        왼쪽의 세로줄 하나와 들여쓰기가 딸린 것임을 말한다. 예전에는 가름줄을 긋고 초록
+        상자를 쌓았는데, 상자는 그 자체로 한 항목의 무게라 통장과 카드가 같은 층에 선
+        것처럼 보였다. 세로줄은 자리를 거의 쓰지 않으면서 층을 만든다 (웹과 같다).
+      */}
+      <View className="ml-1 mt-1 border-l border-gray-200 pl-3">
+        <AddButton dense label={t('card.add')} onPress={onAddCard} />
+
+        {cards.length > 0 ? (
+          <DragList
+            items={cards}
+            gap={0}
+            /* 줄은 좁지만 손이 닿는 자리는 따로다. 글자 위아래로 조금 더 준다. */
+            itemClassName="py-1"
+            onPressItem={onOpenCard}
+            onReorder={onReorderCards}
+            /*
+              한 줄에 다 넣는다. 갈래(신용·체크)를 아랫줄로 내리면 카드 하나가 두 줄이
+              되어, 통장마다 카드가 둘씩만 있어도 목록이 화면을 훌쩍 넘는다. 갈래는 이름
+              옆의 작은 배지다 -- 계좌 유형 배지와 같은 자리, 같은 모양이다 (웹과 같다).
+            */
+            renderItem={(card) => (
+              <View className="flex-row items-center justify-between gap-2">
+                <View className="shrink flex-row items-center gap-1.5">
+                  <Text numberOfLines={1} className="shrink text-sm text-gray-700">
+                    💳 {card.name}
+                  </Text>
+                  <Text className="rounded bg-gray-100 px-1.5 py-px text-[11px] text-gray-600">
+                    {t(card.cardType === 'debit' ? 'method.debit_card' : 'method.credit_card')}
+                  </Text>
+                </View>
                 {/* 카드 금액은 전부 결제 통장의 통화다 (기준통화 환산액이 아니다). */}
                 <CardOutstanding card={card} currency={account.currency} />
               </View>
-              <Text className="text-xs text-gray-600">
-                {t(card.cardType === 'debit' ? 'method.debit_card' : 'method.credit_card')}
-              </Text>
-            </>
-          )}
-        />
-      ) : null}
+            )}
+          />
+        ) : null}
+      </View>
     </>
   );
 }

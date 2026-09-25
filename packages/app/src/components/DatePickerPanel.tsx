@@ -19,6 +19,8 @@ import { ChevronLeft, ChevronRight } from 'lucide-react-native';
 import { formatYearMonth, isDateKey, todayKey, weekdayNames } from '@money/core/lib/datetime';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useProjectTimeZone } from '@money/core/store/project';
+import { useWeekStart } from '@money/core/store/week-start';
+import { weekdayOffset } from '@money/types';
 
 /** 로컬 Date 의 "YYYY-MM-DD". 달력 칸은 시각이 아니라 날짜라 로컬 필드를 그대로 쓴다. */
 function dateKeyOfCell(date: Date): string {
@@ -45,6 +47,8 @@ export default function DatePickerPanel({
   // "오늘"은 프로젝트 타임존 기준이다 (거래가 며칠에 들리는지와 같은 기준).
   const timeZone = useProjectTimeZone();
   const today = todayKey(timeZone);
+  // 첫 칸이 무슨 요일인지. 거래 달력과 같은 설정을 본다.
+  const weekStart = useWeekStart();
 
   /*
    * 처음 보여 줄 달. 고른 날 → 다른 쪽 날짜 → 이번 달 차례로 잡는다.
@@ -68,16 +72,16 @@ export default function DatePickerPanel({
 
   const days = useMemo(() => {
     const first = new Date(cursor.year, cursor.month - 1, 1);
-    // 그 주의 일요일부터 센다. 1 - 요일 로 지난달까지 자연히 넘어간다.
+    // 그 주의 첫날부터 센다. 1 - 메울 칸 수 로 지난달까지 자연히 넘어간다.
     const start = new Date(first);
-    start.setDate(1 - first.getDay());
+    start.setDate(1 - weekdayOffset(first.getDay(), weekStart));
 
     return Array.from({ length: 42 }, (_, index) => {
       const date = new Date(start);
       date.setDate(start.getDate() + index);
       return date;
     });
-  }, [cursor]);
+  }, [cursor, weekStart]);
 
   return (
     <View className="rounded-lg border border-gray-200 bg-white p-3">
@@ -102,7 +106,7 @@ export default function DatePickerPanel({
       </View>
 
       <View className="flex-row">
-        {weekdayNames().map((day) => (
+        {weekdayNames(weekStart).map((day) => (
           <View key={day} className="w-[14.28%] py-1">
             <Text className="text-center text-xs text-gray-500">{day}</Text>
           </View>

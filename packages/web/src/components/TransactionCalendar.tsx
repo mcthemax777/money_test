@@ -6,6 +6,8 @@ import { groupEntriesByDate, sumEntries } from '@money/core/lib/entries';
 import { currentYearMonth, weekdayNames } from '@money/core/lib/datetime';
 import { formatNumber } from '@money/core/lib/money';
 import { useProjectTimeZone } from '@money/core/store/project';
+import { useWeekStart } from '@money/core/store/week-start';
+import { weekdayOffset } from '@money/types';
 import { useTranslation } from '@money/core/lib/i18n';
 
 interface CalendarDay {
@@ -50,6 +52,8 @@ export default function TransactionCalendar({
   const { t } = useTranslation();
   // 거래가 며칠 칸에 들어가는지는 프로젝트 타임존 기준으로 판단한다.
   const timeZone = useProjectTimeZone();
+  // 첫 칸이 무슨 요일인지. 설정에서 고른 값이고, 거래의 주 묶음도 같은 값을 본다.
+  const weekStart = useWeekStart();
   // 표시 월은 부모가 관리한다. 내부 상태를 두면 홈 상단의 월 이동과 어긋난다.
   const currentDate = useMemo(() => new Date(year, month - 1, 1), [year, month]);
 
@@ -83,11 +87,16 @@ export default function TransactionCalendar({
     const firstDay = new Date(year, month, 1);
     const lastDay = new Date(year, month + 1, 0);
 
+    /*
+     * 앞뒤로 이웃 달을 메워 줄을 채운다. 메울 칸 수는 그 요일이 한 주에서 몇 번째
+     * 칸인지로 센다 (`weekdayOffset`). 머리글의 차례도 같은 값을 보므로(weekdayNames),
+     * 한쪽만 옮겨 이름과 칸이 어긋나는 일이 없다.
+     */
     const startDate = new Date(firstDay);
-    startDate.setDate(startDate.getDate() - firstDay.getDay());
+    startDate.setDate(startDate.getDate() - weekdayOffset(firstDay.getDay(), weekStart));
 
     const endDate = new Date(lastDay);
-    endDate.setDate(endDate.getDate() + (6 - lastDay.getDay()));
+    endDate.setDate(endDate.getDate() + (6 - weekdayOffset(lastDay.getDay(), weekStart)));
 
     const calendarDays: CalendarDay[] = [];
     const currentDay = new Date(startDate);
@@ -125,7 +134,7 @@ export default function TransactionCalendar({
     }
 
     return calendarDays;
-  }, [currentDate, entries, timeZone]);
+  }, [currentDate, entries, timeZone, weekStart]);
 
   // Date 생성자가 월 넘김(1월->전년 12월, 12월->다음해 1월)을 알아서 처리한다.
   const handlePrevMonth = () => {
@@ -145,7 +154,7 @@ export default function TransactionCalendar({
     onMonthChange(todayYear, todayMonth);
   };
 
-  const weekDays = weekdayNames();
+  const weekDays = weekdayNames(weekStart);
 
   return (
     <div className="w-full">

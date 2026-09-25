@@ -1420,6 +1420,15 @@ export namespace ReportDto {
      * 똑같이 달을 받는다.
      */
     unit?: EntryPeriodUnit;
+    /**
+     * 주로 묶을 때 한 주를 어느 요일에서 끊을지 (0=일 … 6=토). 보내지 않으면 일요일이다.
+     *
+     * 사용자 설정이다(`WeekStart`, User.weekStart). 값을 조회에 싣는 것은 서버가 사용자
+     * 행을 한 번 더 읽지 않게 하려는 것이고, 무엇보다 기기 사본이 오프라인에서 같은 줄을
+     * 내려면 어차피 화면이 그 값을 들고 있어야 하기 때문이다. `unit` 이 'week' 가 아니면
+     * 아무 일도 하지 않는다.
+     */
+    weekStart?: number;
   }
 
   /** 최신 묶음이 먼저 온다. */
@@ -1429,7 +1438,7 @@ export namespace ReportDto {
      *
      *   year   "2026"
      *   month  "2026-09"   -- 보내지 않으면 이것이다
-     *   week   "2026-09-13"
+     *   week   "2026-09-13"   -- 그 주의 첫날. 어느 요일인지는 요청의 `weekStart` 가 정한다
      *
      * 칸 이름이 `yearMonth` 인 것은 달만 있던 시절의 흔적이다. 옛 기기가 이 이름으로
      * 읽고 있고 그쪽은 `unit` 을 보내지 않으므로, 그 기기에는 늘 진짜 "YYYY-MM" 이
@@ -1476,7 +1485,7 @@ export namespace ReportDto {
      * 창의 마지막 날 "YYYY-MM-DD". 생략하면 오늘.
      *
      * granularity=day(yearMonth 가 없을 때)와 granularity=week 이 쓴다. 주 단위에서는
-     * **이 날이 든 주**가 마지막 칸이 된다 -- 일요일을 따로 계산해 보내지 않아도 된다.
+     * **이 날이 든 주**가 마지막 칸이 된다 -- 그 주의 첫날을 따로 계산해 보내지 않아도 된다.
      *
      * endMonth 가 월·연 단위에서 하는 일을 여기서 한다 -- 창의 크기(days·weeks)는
      * 그대로 두고 끝나는 자리만 옮긴다.
@@ -1490,14 +1499,23 @@ export namespace ReportDto {
     days?: number;
     /** granularity=week일 때만 쓴다. 끝나는 주를 포함해 뒤로 몇 주. 기본 13, 최대 260 */
     weeks?: number;
+    /**
+     * granularity=week 에서 한 주를 어느 요일에서 끊을지 (0=일 … 6=토). 없으면 일요일이다.
+     *
+     * 사용자 설정이다(`WeekStart`, User.weekStart). 거래 목록의 주 묶음과 같은 값을
+     * 실어 보내야 한다 (`EntryMonthsQuery.weekStart`) -- 한쪽만 다르면 그래프의 한 칸과
+     * 목록의 한 줄이 다른 이레가 된다.
+     */
+    weekStart?: number;
   }
 
   export interface BalanceHistoryPoint {
     /**
      * granularity=year면 "YYYY", month면 "YYYY-MM", day·week면 "YYYY-MM-DD".
      *
-     * 주는 **그 주의 일요일**이다 (`periodKeyOf` 와 같은 규칙이다). 일과 생김새가
-     * 같으므로 읽는 쪽은 자기가 무엇을 물었는지로 가른다.
+     * 주는 **그 주의 첫날**이다 (`periodKeyOf` 와 같은 규칙이다. 어느 요일인지는 요청의
+     * `weekStart` 가 정한다). 일과 생김새가 같으므로 읽는 쪽은 자기가 무엇을 물었는지로
+     * 가른다.
      */
     date: string;
     /** 그 시점까지의 누적 잔액 */

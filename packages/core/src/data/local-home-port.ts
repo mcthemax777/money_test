@@ -32,6 +32,7 @@ import {
   expandInstallmentRows,
   installmentEntryViews,
   installmentRowDate,
+  asWeekStart,
   isEntryPeriodUnit,
   DEFAULT_ENTRY_PERIOD,
   isBudgetApplicable,
@@ -390,12 +391,16 @@ export function createLocalHomePort(
 
       // 묶는 단위는 화면이 정한다. 없으면 달이다 (서버의 `getEntryMonths` 와 같다).
       const unit = isEntryPeriodUnit(filter?.unit) ? filter.unit : DEFAULT_ENTRY_PERIOD;
+      // 주를 끊는 요일도 화면이 실어 보낸다. 없으면 일요일이다.
+      const weekStart = asWeekStart(filter?.weekStart);
 
-      return entryMonths(rows, { timeZone, entryDates: monthDates, unit }).map((month) => ({
-        yearMonth: month.yearMonth,
-        income: show.toString(month.income),
-        expense: show.toString(month.expense),
-      }));
+      return entryMonths(rows, { timeZone, entryDates: monthDates, unit, weekStart }).map(
+        (month) => ({
+          yearMonth: month.yearMonth,
+          income: show.toString(month.income),
+          expense: show.toString(month.expense),
+        }),
+      );
     },
 
     async getPaymentMethods(period, projectId, filter) {

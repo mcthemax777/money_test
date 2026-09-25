@@ -13,6 +13,7 @@ export * from './entry-search';
 export * from './net-worth-aggregation';
 export * from './budget-usage';
 export * from './locale';
+export * from './week-start';
 export * from './errors';
 export * from './card-color';
 export * from './statement-period';

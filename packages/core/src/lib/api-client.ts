@@ -28,6 +28,7 @@ import type {
   PersonDto,
   ReportDto,
   EntryScopeQuery,
+  WeekStart,
 } from '@money/types';
 
 /**
@@ -350,7 +351,12 @@ class ApiClient {
   }
 
   /** 이름·사진·화면 언어. 서버는 준 값만 고친다. */
-  async updateProfile(data: { name?: string; avatar?: string; locale?: Locale }) {
+  async updateProfile(data: {
+    name?: string;
+    avatar?: string;
+    locale?: Locale;
+    weekStart?: WeekStart;
+  }) {
     const response = await this.client.patch<any>('/users/me', data);
     return response.data;
   }

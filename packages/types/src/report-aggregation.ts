@@ -22,6 +22,7 @@
 import { Dec, type DecInput } from './decimal';
 import type { CategoryType } from './entities';
 import { DEFAULT_ENTRY_PERIOD, periodKeyOf, type EntryPeriodUnit } from './entry-period';
+import { DEFAULT_WEEK_START, type WeekStart } from './week-start';
 import {
   installmentLineShares,
   installmentMonthShares,
@@ -340,20 +341,32 @@ export function entryMonths(
      * 서버와 기기 사본이 같은 줄을 낸다 -- 두 벌이면 같은 주가 두 날에서 시작한다.
      */
     unit?: EntryPeriodUnit;
+    /**
+     * 주로 묶을 때 한 주를 어느 요일에서 끊을지. 없으면 일요일이다.
+     *
+     * 사용자가 고르는 값이라(`WeekStart`) 조회에 실려 온다. 달·해로 묶을 때는 쓰이지
+     * 않는다 -- 달의 경계는 시작 요일과 무관하다.
+     */
+    weekStart?: WeekStart;
   },
 ): EntryMonthTotal[] {
-  const { timeZone, entryDates, unit = DEFAULT_ENTRY_PERIOD } = options;
+  const {
+    timeZone,
+    entryDates,
+    unit = DEFAULT_ENTRY_PERIOD,
+    weekStart = DEFAULT_WEEK_START,
+  } = options;
 
   const byPeriod = new Map<string, { income: Dec; expense: Dec }>();
 
   for (const date of entryDates ?? []) {
-    const key = periodKeyOf(date, timeZone, unit);
+    const key = periodKeyOf(date, timeZone, unit, weekStart);
     if (!byPeriod.has(key)) byPeriod.set(key, { income: Dec.of(0), expense: Dec.of(0) });
   }
   for (const row of rows) {
     const selected = selectedAmount(row);
 
-    const key = periodKeyOf(row.date, timeZone, unit);
+    const key = periodKeyOf(row.date, timeZone, unit, weekStart);
     const bucket = byPeriod.get(key) ?? { income: Dec.of(0), expense: Dec.of(0) };
     if (row.categoryType === 'expense') bucket.expense = bucket.expense.plus(selected);
     else bucket.income = bucket.income.plus(selected);

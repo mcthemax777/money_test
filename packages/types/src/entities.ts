@@ -1,6 +1,7 @@
 // 도메인 엔티티 - packages/api/prisma/schema.prisma 와 동기화
 
 import type { Locale } from './locale';
+import type { WeekStart } from './week-start';
 import type { RecurringFrequency } from './recurring';
 
 /**
@@ -45,6 +46,8 @@ export interface User {
   avatar: string | null;
   defaultProjectId: string | null;
   locale: Locale; // 화면 언어. 고른 적이 없으면 'ko'
+  weekStart: WeekStart; // 한 주의 시작 요일(0=일 … 6=토). 고른 적이 없으면 일요일
+
   createdAt: IsoDateString;
   updatedAt: IsoDateString;
 }

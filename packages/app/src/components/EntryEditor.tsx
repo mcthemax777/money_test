@@ -1252,8 +1252,9 @@ export default function EntryEditor({
           isOpen={adding === 'account'}
           onClose={() => setAdding(null)}
           isSubmitting={quickAdd.isSubmitting}
-          ownerId={newAccountOwner.id}
-          ownerName={newAccountOwner.name}
+          /* 거래를 적다가 만드는 통장이다. 주인은 폼에서 고른 거래자로 채워 둔다. */
+          people={form.lists.people}
+          defaultOwnerId={newAccountOwner.id}
           onSubmit={(input) =>
             addThenPick(quickAdd.addAccount(input), (id) => setField('method', accountValue(id)))
           }

@@ -18,10 +18,10 @@ export class UsersController {
   }
 
   @Patch('me')
-  @ApiOperation({ summary: '사용자 정보 수정 (이름, 사진, 화면 언어)' })
+  @ApiOperation({ summary: '사용자 정보 수정 (이름, 사진, 화면 언어, 시작 요일)' })
   updateProfile(
     @Request() req: AuthenticatedRequest,
-    @Body() data: { name?: string; avatar?: string; locale?: string },
+    @Body() data: { name?: string; avatar?: string; locale?: string; weekStart?: number },
   ) {
     return this.usersService.updateProfile(req.user.id, data);
   }

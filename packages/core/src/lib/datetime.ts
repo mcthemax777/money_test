@@ -13,12 +13,14 @@
  */
 import { activeLocale, activeLocaleTag, translate } from '../lib/i18n';
 import {
+  DEFAULT_WEEK_START,
   unitOfKey,
   zonedDateKey,
   zonedDateStringToUtc,
   zonedDayStart,
   zonedMonthRange,
   zonedTimeKey,
+  type WeekStart,
 } from '@money/types';
 
 /**
@@ -278,9 +280,10 @@ function trimTrailingMark(value: string): string {
  * 그 줄이 무엇인지가 아니라 어디부터 어디까지인지만 말한다 -- 사람이 주를 기억하는
  * 방식은 "9월 둘째 주" 이지 "13일부터 19일까지" 가 아니다.
  *
- * 몇째 주인가는 **그 주의 일요일이 그 달의 몇 번째 일요일인가**로 센다. 열쇠가 곧 그
- * 일요일이라(`periodKeyOf`) 셈이 열쇠 안에서 끝나고, 달을 걸친 주도 어느 달의 것인지
- * 흔들리지 않는다 -- 8월 30일에 시작해 9월 5일에 끝나는 주는 8월 5주차다.
+ * 몇째 주인가는 **그 주의 첫날이 그 달의 몇 번째 같은 요일인가**로 센다. 열쇠가 곧 그
+ * 첫날이라(`periodKeyOf`) 셈이 열쇠 안에서 끝나고, 시작 요일을 바꾸어도 이 자리는
+ * 고칠 것이 없다. 달을 걸친 주도 어느 달의 것인지 흔들리지 않는다 -- 8월 30일에 시작해
+ * 9월 5일에 끝나는 주는 8월 5주차다.
  *
  * 해를 함께 적는다. 주로 묶으면 한 해가 쉰두 줄이라, 해가 없으면 지난해의 같은 주와
  * 구별되지 않는다.
@@ -296,7 +299,7 @@ export function periodLabel(key: string): string {
     return formatYearMonth(year, month);
   }
 
-  // 열쇠가 그 주의 일요일이다. 그 달의 몇 번째 일요일인지가 곧 몇째 주인지다.
+  // 열쇠가 그 주의 첫날이다. 그 달의 몇 번째 같은 요일인지가 곧 몇째 주인지다.
   const [year, month, day] = key.split('-').map(Number);
   return translate(activeLocale(), 'date.weekOfMonth', {
     month: formatYearMonth(year, month),
@@ -319,16 +322,19 @@ export function formatYearOnly(year: number): string {
 }
 
 /**
- * 일요일부터 시작하는 요일 이름 일곱.
+ * 요일 이름 일곱. 고른 시작 요일부터 차례로 늘어놓는다.
  *
  * 달력 머리글이 쓴다. 사전에 적어 두면 언어마다 일곱 줄이 늘어나는데, 요일 이름은
- * 표준이 이미 아는 값이다. 2024-01-07이 일요일이라 그날부터 이레를 센다.
+ * 표준이 이미 아는 값이다. 2024-01-07이 일요일이라 그날에 시작 요일을 더해 센다.
+ *
+ * 머리글의 차례와 칸을 메우는 셈이 같은 값을 보아야 한다 (`weekdayOffset`). 한쪽만
+ * 옮기면 이름은 월요일인데 그 칸에 일요일이 앉는다.
  */
-export function weekdayNames(): string[] {
+export function weekdayNames(weekStart: WeekStart = DEFAULT_WEEK_START): string[] {
   const format = dateFormatter('weekday', 'UTC', { weekday: 'short' });
 
   return Array.from({ length: 7 }, (_, index) =>
-    format.format(new Date(Date.UTC(2024, 0, 7 + index))),
+    format.format(new Date(Date.UTC(2024, 0, 7 + weekStart + index))),
   );
 }
 

@@ -18,7 +18,6 @@ export const en: Record<MessageKey, string> = {
   'nav.transactions': 'Entries',
   'nav.ledger': 'Ledger',
   'nav.assets': 'Assets',
-  'nav.categories': 'Categories',
   'nav.settings': 'Settings',
 
   // ===== Shell =====
@@ -37,6 +36,8 @@ export const en: Record<MessageKey, string> = {
   'settings.profile.description': 'Review your account and change your display name',
   'settings.projects.title': 'Projects',
   'settings.projects.description': 'Create projects, manage members, invite links and join requests',
+  'settings.categories.title': 'Categories and tags',
+  'settings.categories.description': 'Create and organize expense and income categories and tags',
 
   // ===== 보내지 못한 거래 (아웃박스) =====
   'settings.outbox.title': 'Unsent entries',
@@ -81,6 +82,10 @@ export const en: Record<MessageKey, string> = {
   'settings.language.description':
     'Choose the language of this app. The choice is saved to your account, so it follows you to other devices.',
   'settings.language.saveFailed': 'Could not change the language.',
+  'settings.weekStart.title': 'First day of the week',
+  'settings.weekStart.description':
+    'Choose the day a week starts on. The transaction calendar and the weekly view break on this day.',
+  'settings.weekStart.saveFailed': 'Could not change the first day of the week.',
 
   'language.ko': '한국어',
   'language.en': 'English',
@@ -1003,6 +1008,7 @@ export const en: Record<MessageKey, string> = {
   'error.NAME_TOO_LONG': 'A name can be at most {max} characters.',
   'error.NOTHING_TO_UPDATE': 'Nothing has changed.',
   'error.UNSUPPORTED_LOCALE': 'That language is not supported.',
+  'error.INVALID_WEEK_START': 'That is not a valid first day of the week.',
   'error.PROJECT_NOT_FOUND': 'The project no longer exists.',
   'error.PROJECT_FORBIDDEN': 'You do not have access to this project.',
   'error.PROJECT_OWNER_ONLY': 'Only the project owner can do this.',

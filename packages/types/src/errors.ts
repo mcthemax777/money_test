@@ -23,6 +23,7 @@ export const ERROR_CODES = [
   'NAME_TOO_LONG',
   'NOTHING_TO_UPDATE',
   'UNSUPPORTED_LOCALE',
+  'INVALID_WEEK_START',
 
   // 프로젝트 접근
   'PROJECT_NOT_FOUND',

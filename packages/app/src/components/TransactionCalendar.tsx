@@ -1,12 +1,13 @@
 import { useMemo } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import type { EntryListItem } from '@money/types';
+import { weekdayOffset, type EntryListItem } from '@money/types';
 
 import { weekdayNames } from '@money/core/lib/datetime';
 import { groupEntriesByDate, sumEntries } from '@money/core/lib/entries';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatNumber } from '@money/core/lib/money';
 import { useProjectTimeZone } from '@money/core/store/project';
+import { useWeekStart } from '@money/core/store/week-start';
 
 interface CalendarDay {
   date: Date;
@@ -38,15 +39,21 @@ export default function TransactionCalendar({
   const { t } = useTranslation();
   // 거래가 며칠 칸에 들어가는지는 프로젝트 타임존 기준으로 판단한다.
   const timeZone = useProjectTimeZone();
+  // 첫 칸이 무슨 요일인지. 설정에서 고른 값이고, 웹의 달력도 같은 값을 본다.
+  const weekStart = useWeekStart();
 
   const days = useMemo(() => {
     const first = new Date(year, month - 1, 1);
     const last = new Date(year, month, 0);
 
+    /*
+     * 앞뒤로 이웃 달을 메워 줄을 채운다. 메울 칸 수는 그 요일이 한 주에서 몇 번째
+     * 칸인지로 센다 (`weekdayOffset`). 머리글의 차례도 같은 값을 본다.
+     */
     const start = new Date(first);
-    start.setDate(start.getDate() - first.getDay());
+    start.setDate(start.getDate() - weekdayOffset(first.getDay(), weekStart));
     const end = new Date(last);
-    end.setDate(end.getDate() + (6 - last.getDay()));
+    end.setDate(end.getDate() + (6 - weekdayOffset(last.getDay(), weekStart)));
 
     const dateKey = (date: Date) =>
       `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
@@ -79,7 +86,7 @@ export default function TransactionCalendar({
     }
 
     return rows;
-  }, [entries, month, timeZone, year]);
+  }, [entries, month, timeZone, weekStart, year]);
 
   const isSelected = (date: Date) =>
     Boolean(selectedDate) && date.getTime() === selectedDate?.getTime();
@@ -87,7 +94,7 @@ export default function TransactionCalendar({
   return (
     <View className="overflow-hidden rounded-lg border border-gray-100 bg-white">
       <View className="flex-row border-b border-gray-100 bg-gray-50">
-        {weekdayNames().map((day) => (
+        {weekdayNames(weekStart).map((day) => (
           <View key={day} className="flex-1 p-3">
             <Text className="text-center text-sm font-semibold text-gray-600">{day}</Text>
           </View>

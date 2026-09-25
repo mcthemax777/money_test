@@ -63,6 +63,7 @@ import { useMirrorVersion } from './useMirrorVersion';
 import { groupEntriesByBucket, sumEntries } from '../lib/entries';
 import { isOfflineError } from '../lib/offline-error';
 import { useProject, useProjectTimeZone } from '../store/project';
+import { useWeekStart } from '../store/week-start';
 import { useUserFilter } from '../store/user-filter';
 
 /** 년월 아래에서 무엇으로 나눠 볼지. */
@@ -476,6 +477,8 @@ const EMPTY_GROUP = new Map<string, EntryListItem[]>();
 export function useTransactions(projectId: string | null) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
+  /** 주로 묶을 때 한 주를 어디서 끊을지. 설정에서 고른 값이다. */
+  const weekStart = useWeekStart();
   const projects = useProject((state) => state.projects);
   const selectedPersonIds = useUserFilter((state) => state.selectedPersonIds);
   /** 동기화가 사본을 채우면 올라간다. 이 값이 바뀌면 화면이 다시 읽는다. */
@@ -647,6 +650,11 @@ export function useTransactions(projectId: string | null) {
   const monthsQuery = useMemo(
     () => ({
       unit,
+      /*
+       * 시작 요일은 주로 묶을 때만 싣는다. 달·해의 경계는 이 값과 무관하고, 늘 실으면
+       * 그 칸을 모르는 옛 서버에까지 뜻 없는 조건이 하나 붙는다.
+       */
+      ...(unit === 'week' ? { weekStart } : {}),
       ...(range
         ? {
             ...(range.startKey ? { startDate: range.startKey } : {}),
@@ -654,14 +662,15 @@ export function useTransactions(projectId: string | null) {
           }
         : {}),
     }),
-    [range, unit],
+    [range, unit, weekStart],
   );
 
   /*
    * 타임존도 열쇠에 넣는다. 기간을 인스턴트로 바꾸는 일이 그 값에 매여 있어서,
-   * 프로젝트 타임존을 바꾸면 받아 둔 목록이 옛 경계의 것이 된다.
+   * 프로젝트 타임존을 바꾸면 받아 둔 목록이 옛 경계의 것이 된다. 시작 요일도 같다 --
+   * 설정에서 요일을 바꾸면 받아 둔 주 줄은 옛 요일에서 끊은 것이라 통째로 버려야 한다.
    */
-  const scopeKey = JSON.stringify([scope, range, timeZone, unit]);
+  const scopeKey = JSON.stringify([scope, range, timeZone, unit, weekStart]);
   /*
    * 지금 조건. 도착한 값이 아직 쓸 것인지 판단한다.
    *

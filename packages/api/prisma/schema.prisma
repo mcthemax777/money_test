@@ -92,6 +92,10 @@ model User {
   // enum으로 두지 않는 것은 언어를 하나 더할 때마다 마이그레이션이 필요해지기 때문이다.
   locale String @default("ko")
 
+  // 한 주를 어느 요일에서 끊는지 (0=일 … 6=토, Date.getDay()와 같은 번호).
+  // 달력의 첫 칸과 거래 목록의 주 묶음이 이 값을 본다 (@money/types의 WeekStart).
+  weekStart Int @default(0)
+
   projectMembers      ProjectMember[]
   projectInvitations  ProjectInvitation[]
   projectJoinRequests ProjectJoinRequest[]

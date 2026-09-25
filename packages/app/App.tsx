@@ -142,12 +142,13 @@ function Screen() {
       return <LedgerScreen />;
     case '/assets':
       return <AssetsScreen />;
-    case '/categories':
-      return <CategoriesScreen />;
     case '/settings':
       return <SettingsScreen />;
     case '/settings/profile':
       return <ProfileScreen />;
+    // 분류와 태그. 메뉴가 아니라 설정에서 들어가는 하위 화면이다.
+    case '/settings/categories':
+      return <CategoriesScreen />;
     case '/settings/projects':
       return <ProjectsScreen />;
     case '/settings/outbox':

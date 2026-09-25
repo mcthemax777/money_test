@@ -8,6 +8,13 @@ import type { Account, Card, Category, LedgerLikeRow, Person } from '@money/core
 import { formatCurrency, toAmountString, toNumber } from '@money/core/lib/money';
 import { sumNetWorth, type NetWorthParts } from '@money/core/lib/net-worth';
 import { accountDueOf } from '@money/core/lib/card-settlement';
+import { mergeOrder } from '@money/core/lib/reorder';
+import {
+  accountBalanceLine,
+  accountMetaParts,
+  type AssetMetaPart,
+  type AssetMetaTone,
+} from '@money/core/lib/asset-meta';
 import { useUserFilter } from '@money/core/store/user-filter';
 import { formatDate, formatDateMarker, monthInputToIso } from '@money/core/lib/datetime';
 import { type AccountDto, type CardDto, type ReportDto } from '@money/types';
@@ -29,16 +36,14 @@ const PERSON_ENTRY_LIMIT = 30;
 
 const CARD_ADD_FORM_ID = 'card-add-form';
 
-/**
- * 오른쪽 패널이 지금 보고 있는 항목 표시.
+/*
+ * 오른쪽 패널이 지금 보고 있는 항목은 목록에서 바탕색으로 표시한다 (구성원·계좌는
+ * bg-blue-50, 카드는 그 위에 얹히므로 한 단 진한 bg-blue-100).
  *
- * 구성원·계좌·카드 세 목록이 같은 모양을 쓴다. 예전에는 계좌만 표시가 있어서,
- * 사용자나 카드를 누르면 오른쪽만 바뀌고 목록에서는 무엇을 눌렀는지 알 수 없었다.
- *
- * 테두리 두께를 바꾸는 대신 ring을 쓴다. border를 굵히면 그 줄만 1px 커져서
- * 누를 때마다 목록이 미세하게 움직인다.
+ * 예전에는 테두리 링(ring)이었다. 줄이 제 상자를 갖고 있을 때의 표시라, 상자를 걷어낸
+ * 지금은 줄 하나를 링이 감싸면 도로 상자가 하나 생긴다. 바탕은 줄의 높이를 바꾸지
+ * 않으므로 눌러도 목록이 미세하게 움직이지 않는다.
  */
-const SELECTED_MARK = 'ring-2 ring-blue-500';
 import {
   useCanEdit,
   useMyPersonId,
@@ -53,7 +58,6 @@ import EditAccountModal from '@/components/EditAccountModal';
 import EditCardModal from '@/components/EditCardModal';
 import AddAccountModal from '@/components/AddAccountModal';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
-import PersonTabs from '@/components/PersonTabs';
 import AssetTypeSummary from '@/components/AssetTypeSummary';
 import HiddenItemsPanel from '@/components/HiddenItemsPanel';
 import AssetHistoryChart from '@/components/AssetHistoryChart';
@@ -87,41 +91,34 @@ import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 
 
 /**
- * 투자·저축 계좌의 누적 수익.
+ * 계좌 이름 밑에 한 줄로 이어 붙는 작은 글씨들 (core 의 `accountMetaParts`).
  *
- * 이체로 넣은 돈은 원금이라 잔액만 보면 불었는지 알 수 없다. 그 계좌에 수입·지출로
- * 기록한 것(배당, 매매 차익, 이자, 수수료)의 합이 수익이다.
+ * 수익·계좌번호를 줄마다 하나씩 쌓으면 계좌 하나가 네 줄이 된다. 가운뎃점으로
+ * 이어 한 줄에 두되, 좁은 화면에서는 접혀 내려가게 둔다 -- 잘라 내면 뒤에 선
+ * 계좌번호가 통째로 사라진다.
  *
- * 어느 유형에 수익이 있는지는 서버가 정한다(reports.service.ts의 PROFIT_TYPES).
- * 화면이 유형을 한 번 더 적어 두면 한쪽만 고쳤을 때 어긋나므로, 서버가 그 계좌를
- * 돌려줬는지만 본다.
- *
- * 아직 기록이 없으면 아무것도 그리지 않는다. 0원을 적어 두면 "계산이 안 됐다"와
- * "아직 수익이 없다"를 구별할 수 없다.
+ * 무게는 조각마다 다르다. 셋을 같은 색으로 두면 한 줄에 모인 순간 어느 것이 큰 금액을
+ * 설명하는 수인지 알 수 없다.
  */
-function AccountProfitLine({
-  account,
-  profit,
-}: {
-  account: Account;
-  profit: string | undefined;
-}) {
-  // 훅은 이른 반환보다 앞이어야 한다.
-  const { t } = useTranslation();
+const META_TONE_CLASS: Record<AssetMetaTone, string> = {
+  profit: 'font-semibold text-green-600',
+  loss: 'font-semibold text-red-600',
+  muted: 'text-gray-400',
+};
 
-  if (profit === undefined) return null;
-
-  const value = toNumber(profit);
-  if (value === 0) return null;
+function AssetMetaLine({ parts }: { parts: AssetMetaPart[] }) {
+  if (parts.length === 0) return null;
 
   return (
-    <p
-      className={`mt-1 text-sm font-semibold ${value > 0 ? 'text-green-600' : 'text-red-600'}`}
-    >
-      {/* 손실에 "수익 -"를 붙이면 두 번 읽어야 한다. 부호 대신 이름을 바꾼다. */}
-      {value > 0 ? t('assets.profit') : t('assets.loss')}
-      {formatCurrency(Math.abs(value), account.currency)}
-    </p>
+    <div className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-xs tabular-nums">
+      {parts.map((part, index) => (
+        <span key={part.key} className={META_TONE_CLASS[part.tone]}>
+          {/* 가운뎃점은 앞 조각의 색을 따르지 않는다. 이어 주는 표시일 뿐이다. */}
+          {index > 0 && <span className="mr-1.5 text-gray-300">·</span>}
+          {part.text}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -597,13 +594,6 @@ export default function DashboardPage() {
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
   const [detailType, setDetailType] = useState<'person' | 'account' | 'card' | null>(null);
-  /**
-   * 목록에서 보고 있는 사람. 아직 고르지 않았으면 null 이고, 그때는 아래에서 정한다.
-   *
-   * 위의 총자산과 추이 그래프는 이 값을 보지 않는다. 그쪽은 제목에서 고른 자산주인
-   * 전체의 값이고, 이 탭은 긴 목록에서 한 사람에게 바로 가는 길이다.
-   */
-  const [listPersonId, setListPersonId] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { options: issuerOptions } = useInstitutions('card_issuer');
 
@@ -1187,7 +1177,7 @@ export default function DashboardPage() {
    */
   const openPersonAdd = () => setIsPersonAddModalOpen(true);
 
-  const openAccountAdd = (personId: string) => {
+  const openAccountAdd = (personId: string | null) => {
     setAddedForPersonId(personId);
     setIsAccountModalOpen(true);
   };
@@ -1267,7 +1257,19 @@ export default function DashboardPage() {
   };
 
   /** 드래그로 바꾼 구성원 순서 저장 */
-  const handleReorderPeople = async (ids: string[]) => {
+  /**
+   * 드래그로 바꾼 구성원 순서 저장.
+   *
+   * 목록에는 고른 자산주인만 서 있으므로 받은 차례도 그만큼이다. 서버는 **받은 목록에만**
+   * 차례 값을 다시 매기므로 그대로 보내면 빠진 사람들의 자리가 그 사이로 뭉개진다.
+   * 보이는 것들이 앉아 있던 자리에 새 차례를 끼워 넣어 전체를 만든 뒤 보낸다.
+   */
+  const handleReorderPeople = async (visibleIds: string[]) => {
+    const ids = mergeOrder(
+      people.map((person) => person.id),
+      visibleIds,
+    );
+
     try {
       const updated = await apiClient.reorderPeople(ids, selectedProjectId);
       setPeople((updated || []) as Person[]);
@@ -1335,21 +1337,6 @@ export default function DashboardPage() {
   // 계좌가 없는 구성원도 표시한다. 제목에서 고른 자산주인만 남는다.
   const displayPeople = people.filter((person) => selectedPersonIds.includes(person.id));
 
-  /*
-   * 탭이 가리키는 사람. 목록은 늘 한 사람 것이다.
-   *
-   * 아직 고르지 않았거나 고른 사람이 자산주인에서 빠졌으면 "나"로, 나도 없으면 목록의
-   * 첫 사람으로 되돌린다. 화면을 열면 제 자산부터 보는 것이 자연스럽다.
-   *
-   * 값을 고쳐 두는 대신 그릴 때마다 고른다. 목록이 오는 동안은 displayPeople 이 비어
-   * 있는데, 그 순간을 "사라졌다"로 읽고 상태를 지우면 다시 들어온 뒤에도 남이 펴진다.
-   */
-  const listPerson =
-    displayPeople.find((person) => person.id === listPersonId) ??
-    displayPeople.find((person) => person.id === myPersonId) ??
-    displayPeople[0] ??
-    null;
-  const listedPeople = listPerson ? [listPerson] : [];
 
   /*
    * 전원을 고른 상태인지.
@@ -1414,6 +1401,11 @@ export default function DashboardPage() {
               people={people}
               myPersonId={myPersonId}
               selectedPersonIds={selectedPersonIds}
+              /*
+                구성원을 더하고, 열고, 차례를 바꾸는 일은 여기 없다. 아래 목록이 그
+                자리다 -- 추가는 목록 위 버튼, 상세는 상자의 머리글, 차례는 상자를 끌어
+                정한다. 이 창은 보는 범위만 고른다.
+              */
               onTogglePerson={togglePersonId}
             />
           }
@@ -1448,35 +1440,24 @@ export default function DashboardPage() {
         읽는 동안 오른쪽 상세가 깜빡이던 것도 함께 가라앉는다 (앱과 같은 규칙이다).
       */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 items-start">
-          {/* 왼쪽: 구성원별 목록. 드래그로 순서를 바꿀 수 있다. */}
+          {/* 왼쪽: 통장과 카드 목록. 드래그로 순서를 바꿀 수 있다. */}
           <div className={hideOnNarrow}>
-          {/*
-            목록을 한 사람 것으로 좁히는 탭. 구성원 추가도 이 줄의 오른쪽 끝에 있다.
-
-            만들 자리는 여전히 목록 바로 위다 -- 무엇에 더하는지가 아래에 곧바로 이어져
-            보이고, 목록이 길어져도 버튼을 찾아 내려갈 일이 없다 (`AddButton` 과 같은 규칙).
-          */}
-          <PersonTabs
-            people={displayPeople}
-            selectedId={listPerson?.id ?? null}
-            onSelect={setListPersonId}
-            onAddPerson={openPersonAdd}
-            onReorder={handleReorderPeople}
-          />
-
           {isLoading ? (
             <p className="text-gray-600">{t('common.loading')}</p>
-          ) : displayPeople.length === 0 ? (
-            <p className="text-gray-600">{t('assets.noSelection')}</p>
           ) : (
-          <PersonAssetList
-            people={listedPeople}
+          /*
+            고른 자산주인이 없어도 목록 자체는 그린다. 안내와 함께 구성원 추가 버튼이
+            그 안에 있어서다 -- 예전에는 이 판이 통째로 사라져, 아무도 없는 가계부에서는
+            구성원을 더할 길이 아예 막혔다.
+          */
+          <AssetList
+            people={displayPeople}
             accounts={accounts}
             cardsOf={getAccountCards}
             netWorthByPerson={netWorthByPerson}
             accountProfit={accountProfit}
             /*
-              지금 펼쳐 둔 항목. detailType과 함께 넘겨야 한다. 고른 계좌·카드·구성원은
+              지금 펼쳐 둔 항목. detailType과 함께 넘겨야 한다. 고른 구성원·계좌·카드는
               닫아도 state에 남으므로 id만 보면 오른쪽에 없는 항목까지 강조된다.
             */
             selected={
@@ -1494,8 +1475,10 @@ export default function DashboardPage() {
               setSelectedCard(card);
               setDetailType('card');
             }}
+            onReorderPeople={handleReorderPeople}
             onReorderAccounts={handleReorderAccounts}
             onReorderCards={handleReorderCards}
+            onAddPerson={openPersonAdd}
             onAddAccount={openAccountAdd}
             onAddCard={openCardAdd}
           />
@@ -2393,16 +2376,24 @@ export default function DashboardPage() {
   );
 }
 
-/**
- * 구성원별 자산 목록. 구성원과 계좌를 각각 드래그로 정렬한다.
- *
- * 계좌 목록은 구성원마다 별도 컴포넌트로 두어야 한다. 훅은 목록 하나를 다루므로
- * 한 컴포넌트에서 여러 묶음을 처리할 수 없다.
- */
-/** 오른쪽 패널이 보고 있는 항목. 세 목록이 이것을 보고 저마다 한 줄을 강조한다. */
+/** 오른쪽 패널이 보고 있는 항목. 두 목록이 이것을 보고 저마다 한 줄을 강조한다. */
 type SelectedItem = { type: 'person' | 'account' | 'card'; id: string } | null;
 
-function PersonAssetList({
+/**
+ * 통장과 카드 목록. **사람마다 한 상자다.**
+ *
+ * 계좌의 자리(sortRank)가 주인 안에서의 자리라 남의 통장 사이로 끌어다 놓을 자리가
+ * 없다. 사람을 지우고 한 줄기로 늘어놓아 보니, 끌어도 어떤 줄 앞에서는 멎는 목록이
+ * 되어 고장으로 보였다. 상자가 그 경계다 -- 끌 수 있는 데까지가 그 상자 안이다.
+ *
+ * 상자로 나누면 끌어 옮기는 모습도 제대로 보인다. 한 장의 목록에서는 머리글만 떠올라
+ * 제 계좌들을 남겨 둔 채 움직였다. 지금은 사람 하나가 통째로 들린다.
+ *
+ * 머리글은 이름과 소계뿐이다. 누르면 그 사람의 상세가 열리고, **조금 길게 눌러 끌면
+ * 구성원 차례가 바뀐다** (계좌·카드와 같은 손짓이다). 계좌가 없는 사람도 상자는
+ * 내준다 -- 그 상자가 없으면 그 사람만 차례를 바꿀 수 없고, 계좌를 만들 자리도 없다.
+ */
+function AssetList({
   people,
   accounts,
   cardsOf,
@@ -2412,8 +2403,10 @@ function PersonAssetList({
   onPersonClick,
   onAccountClick,
   onCardClick,
+  onReorderPeople,
   onReorderAccounts,
   onReorderCards,
+  onAddPerson,
   onAddAccount,
   onAddCard,
 }: {
@@ -2427,74 +2420,106 @@ function PersonAssetList({
   onPersonClick: (person: Person) => void;
   onAccountClick: (account: Account) => void;
   onCardClick: (card: Card) => void;
+  /** 끌어서 바꾼 구성원 차례. 목록에 선 사람들만 들어 있다. */
+  onReorderPeople: (ids: string[]) => void;
   onReorderAccounts: (ids: string[]) => void;
   onReorderCards: (ids: string[]) => void;
   /*
-   * 추가는 만들 자리에서 시작한다. 계좌는 그 사람 안에서, 카드는 그 계좌 안에서.
-   * 눌러서 들어온 자리가 곧 주인·결제 통장이라 폼에서 다시 고를 것이 없다.
-   *
-   * 구성원 추가만 이 목록 밖에 있다. 목록 위의 사람 탭(`PersonTabs`)이 그 자리다.
+   * 추가는 만들 자리에서 시작한다. 구성원은 목록 위에서, 계좌는 그 사람의 상자 안에서,
+   * 카드는 그 계좌 안에서. 눌러서 들어온 자리가 곧 주인·결제 통장이라 폼에서 다시 고를
+   * 것이 없다.
    */
+  onAddPerson: () => void;
   onAddAccount: (personId: string) => void;
   onAddCard: (accountId: string) => void;
 }) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
+  /*
+   * 묶음 끌기. 안쪽 목록(계좌·카드)도 같은 훅을 쓰지만 서로 밟지 않는다 -- 훅이 제
+   * 손짓의 전파를 끊어 **안쪽이 이긴다** (계좌를 잡으면 계좌만 움직인다).
+   */
+  const { items, dragProps, draggingId } = useDragReorder(people, onReorderPeople);
 
   return (
     <div>
-      <div className="space-y-8">
-      {people.map((person) => (
-        <div
-          key={person.id}
-          className={`bg-white rounded-lg shadow p-6 hover:shadow-md transition ${
-            selected?.type === 'person' && selected.id === person.id ? SELECTED_MARK : ''
-          }`}
-        >
-          {/*
-            이름과 소계를 한 줄의 양 끝에 둔다. "소계"라는 말은 적지 않는다 -- 사람
-            이름 옆의 금액은 그 사람 몫이라는 뜻 말고 읽힐 것이 없다. 계좌·카드 줄도
-            같은 자리에 금액을 두어, 오른쪽 끝을 따라 내려가며 셋을 견줄 수 있다.
-          */}
-          <button onClick={() => onPersonClick(person)} className="w-full text-left mb-6">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="min-w-0 truncate text-xl font-bold text-gray-900">
-                {person.name}
-              </h2>
-              <p className="shrink-0 text-xl font-bold tabular-nums text-gray-900">
-                {formatCurrency(netWorthByPerson.get(person.id)?.total ?? 0, displayCurrency)}
-              </p>
-            </div>
-          </button>
+      {/* 만들 자리는 목록 바로 위다 (`AddButton` 과 같은 규칙). */}
+      <AddButton label={t('person.add')} onClick={onAddPerson} />
 
-          <AddButton label={t('account.add')} onClick={() => onAddAccount(person.id)} />
+      {people.length === 0 ? (
+        <p className="text-sm text-gray-600">{t('assets.noSelection')}</p>
+      ) : (
+        <div className="space-y-3">
+          {items.map((person) => {
+            const owned = accounts.filter((account) => account.ownerId === person.id);
 
-          <AccountList
-            accounts={accounts.filter((account) => account.ownerId === person.id)}
-            cardsOf={cardsOf}
-            accountProfit={accountProfit}
-            selected={selected}
-            onAccountClick={onAccountClick}
-            onCardClick={onCardClick}
-            onReorder={onReorderAccounts}
-            onReorderCards={onReorderCards}
-            onAddCard={onAddCard}
-          />
+            return (
+              <div
+                key={person.id}
+                {...dragProps(person.id)}
+                className={`overflow-hidden rounded-lg bg-white shadow transition ${
+                  draggingId === person.id ? 'opacity-50' : ''
+                }`}
+              >
+                {/*
+                  상자의 머리글. 이름과 소계를 한 줄의 양 끝에 둔다. "소계"라는 말은
+                  적지 않는다 -- 사람 이름 옆의 금액은 그 사람 몫이라는 뜻 말고 읽힐
+                  것이 없다. 계좌 줄도 같은 자리에 금액을 두어 오른쪽 끝이 나란히 선다.
+                */}
+                <button
+                  onClick={() => onPersonClick(person)}
+                  className={`flex w-full items-center justify-between gap-3 border-b border-gray-200 px-4 py-2 text-left transition ${
+                    selected?.type === 'person' && selected.id === person.id
+                      ? 'bg-blue-50'
+                      : 'bg-gray-50 hover:bg-gray-100'
+                  }`}
+                >
+                  <h2 className="min-w-0 truncate text-sm font-bold text-gray-900">
+                    {person.name}
+                  </h2>
+                  <p className="shrink-0 text-sm font-bold tabular-nums text-gray-900">
+                    {formatCurrency(netWorthByPerson.get(person.id)?.total ?? 0, displayCurrency)}
+                  </p>
+                </button>
 
+                <div className="px-4 pt-2">
+                  <AddButton
+                    dense
+                    label={t('account.add')}
+                    onClick={() => onAddAccount(person.id)}
+                  />
+                </div>
+
+                {owned.length === 0 ? (
+                  <p className="px-4 pb-3 text-sm text-gray-600">{t('assets.noAccounts')}</p>
+                ) : (
+                  <AccountList
+                    accounts={owned}
+                    cardsOf={cardsOf}
+                    accountProfit={accountProfit}
+                    selected={selected}
+                    onAccountClick={onAccountClick}
+                    onCardClick={onCardClick}
+                    onReorder={onReorderAccounts}
+                    onReorderCards={onReorderCards}
+                    onAddCard={onAddCard}
+                  />
+                )}
+              </div>
+            );
+          })}
         </div>
-      ))}
-      </div>
+      )}
     </div>
   );
 }
 
 /**
- * 목록 안에서 하나 더 만드는 버튼.
+ * 한 주인의 계좌들. 머리글 바로 밑에 선다.
  *
- * 점선으로 둘러 "여기에 하나 더"로 읽히게 한다. 채워진 버튼으로 두면 목록의 항목과
- * 같은 무게가 되어, 있는 것과 만들 자리가 눈에 섞인다.
+ * 묶음마다 컴포넌트를 따로 두어야 한다 -- 끌기 훅은 목록 하나를 다루므로 한 컴포넌트가
+ * 여러 묶음을 맡을 수 없다.
  */
-/** 한 구성원의 계좌 목록 */
 function AccountList({
   accounts,
   cardsOf,
@@ -2519,26 +2544,30 @@ function AccountList({
   const { t } = useTranslation();
   const { items, dragProps, draggingId } = useDragReorder(accounts, onReorder);
 
-  if (items.length === 0) {
-    return <p className="text-gray-600">{t('assets.noAccounts')}</p>;
-  }
+  // 빈 상자는 부르는 쪽이 이미 가려냈다. 그래도 그리는 동안 비는 순간은 있다.
+  if (items.length === 0) return null;
 
   return (
-    <div className="space-y-4">
+    <div className="divide-y divide-gray-100 border-t border-gray-100">
       {items.map((account) => {
         const cards = cardsOf(account.id);
         /* 이 통장으로 빠져나갈 카드 대금과, 그것을 뺀 남은 금액. 셈은 core 가 한다. */
         const { due, remaining } = accountDueOf(account.balance, cards);
+        const balanceLine = accountBalanceLine(account, { due, t });
+        const metaParts = accountMetaParts(account, {
+          profit: accountProfit.get(account.id),
+          t,
+        });
 
         return (
           <div
             key={account.id}
             {...dragProps(account.id)}
             /* 오른쪽 패널에 펼쳐 둔 계좌를 목록에서도 알 수 있게 표시한다 */
-            className={`rounded-lg border border-gray-200 p-4 hover:shadow-md transition ${
+            className={`px-4 py-2 transition ${
               selected?.type === 'account' && selected.id === account.id
-                ? `${SELECTED_MARK} bg-blue-50`
-                : ''
+                ? 'bg-blue-50'
+                : 'hover:bg-gray-50'
             } ${draggingId === account.id ? 'opacity-50' : ''}`}
           >
             <button
@@ -2546,7 +2575,7 @@ function AccountList({
                 e.stopPropagation();
                 onAccountClick(account);
               }}
-              className="w-full text-left hover:opacity-70 transition"
+              className="w-full text-left"
             >
               {/*
                 왼쪽에 계좌명, 오른쪽 끝에 남은 금액이다. 어느 계좌인지 먼저 알아야 하고,
@@ -2556,56 +2585,57 @@ function AccountList({
                 하므로 계좌명 옆에 붙인다.
               */}
               <div className="flex items-center justify-between gap-3">
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <p className="truncate text-sm text-gray-600">{account.name}</p>
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <span className="truncate text-sm font-medium text-gray-900">
+                    {account.name}
+                  </span>
                   <AccountTypeBadge type={account.type} />
-                </div>
+                </span>
                 {/*
                   잔액이 아니라 카드 대금을 뺀 남은 금액이다. 통장에 찍힌 돈에는 카드사가
                   이미 가져가기로 된 몫이 섞여 있어, 잔액만 보면 쓸 수 있는 돈을 그만큼
                   부풀려 읽는다.
                 */}
-                <p className="shrink-0 text-2xl font-bold tabular-nums text-gray-900">
+                <span className="shrink-0 text-base font-bold tabular-nums text-gray-900">
                   {formatCurrency(remaining, account.currency)}
-                </p>
+                </span>
               </div>
-              {/*
-                통장에 실제로 찍힌 돈. 카드 대금이 있을 때만 적는다.
 
-                대금이 없으면 남은 금액이 곧 잔액이라, 같은 수를 한 번 더 적는 줄이 된다.
-                대금 액수는 여기 적지 않는다 -- 카드 줄이 바로 아래에 붙어 있어 그쪽에서
-                카드마다 얼마인지 읽는 편이 낫다.
+              {/*
+                둘째 줄. 왼쪽에 수익·계좌번호, 오른쪽 끝에 잔액이다. 무엇을 적을지는
+                core 가 정한다 (`accountMetaParts`·`accountBalanceLine` -- 앱과 같다).
+
+                윗줄과 같은 짜임이라 이름 밑에 주인이, 큰 금액 밑에 잔액이 선다. 잔액을
+                따로 한 줄 더 내리면 계좌 하나가 세 줄이 되고, 왼쪽에 끼워 넣으면 어느
+                수를 설명하는 줄인지 사라진다.
               */}
-              {due !== 0 && (
-                /*
-                  큰 금액 다음으로 자주 읽는 줄이라 12px 회색으로 두지 않는다.
-                  이것이 안 보이면 큰 금액이 왜 그 값인지 알 수 없다. 큰 금액보다는
-                  작게 두어 차례는 지킨다.
-                */
-                <p className="mt-1 text-right text-sm font-medium tabular-nums text-gray-700">
-                  {t('assets.balanceLine', {
-                    balance: formatCurrency(account.balance, account.currency),
-                  })}
-                </p>
-              )}
-              <AccountProfitLine
-                account={account}
-                profit={accountProfit.get(account.id)}
-              />
-              {account.accountNumber && (
-                <p className="text-xs text-gray-400 mt-1">{account.accountNumber}</p>
+              {(metaParts.length > 0 || balanceLine) && (
+                <div className="mt-0.5 flex items-center justify-between gap-3">
+                  {/*
+                    왼쪽이 비어도 자리는 남긴다. 적을 것이 잔액뿐일 때 감싸는 칸까지
+                    사라지면 잔액이 왼쪽으로 붙어, 윗줄의 큰 금액과 어긋난다.
+                  */}
+                  <div className="min-w-0 flex-1">
+                    <AssetMetaLine parts={metaParts} />
+                  </div>
+                  {balanceLine && (
+                    <span className="shrink-0 text-xs font-medium tabular-nums text-gray-700">
+                      {balanceLine}
+                    </span>
+                  )}
+                </div>
               )}
             </button>
 
             {/*
-              카드는 결제 통장 밑에 붙는다. 그 통장이 곧 이 계좌다.
+              카드는 결제 통장에 **달려 내려온다.** 그 통장이 곧 이 계좌다.
 
-              가름줄은 이 묶음 위에 둔다. 버튼과 카드 목록이 한 덩이로 보이고, 계좌
-              자신의 정보와 갈린다. 줄이 버튼 아래에 있으면 버튼이 계좌 쪽에 붙어
-              "이 계좌를 고치는 버튼"처럼 읽힌다.
+              왼쪽의 세로줄 하나와 들여쓰기가 딸린 것임을 말한다. 예전에는 가름줄을
+              긋고 초록 상자를 쌓았는데, 상자는 그 자체로 한 항목의 무게라 통장과 카드가
+              같은 층에 선 것처럼 보였다. 세로줄은 자리를 거의 쓰지 않으면서 층을 만든다.
             */}
-            <div className="mt-4 border-t border-gray-200 pt-4">
-              <AddButton label={t('card.add')} onClick={() => onAddCard(account.id)} />
+            <div className="ml-1 mt-1 border-l border-gray-200 pl-3">
+              <AddButton dense label={t('card.add')} onClick={() => onAddCard(account.id)} />
 
               <CardList
                 cards={cards}
@@ -2623,7 +2653,7 @@ function AccountList({
   );
 }
 
-/** 한 계좌에 연결된 카드 목록 */
+/** 한 계좌에 달린 카드 목록 */
 function CardList({
   cards,
   currency,
@@ -2643,17 +2673,17 @@ function CardList({
 
   if (items.length === 0) return null;
 
-  /* 가름줄과 위 여백은 부르는 쪽(AccountList)이 갖는다. 카드 추가 버튼과 한 덩이라서다. */
+  /* 들여쓰기와 세로줄은 부르는 쪽(AccountList)이 갖는다. 카드 추가 버튼과 한 덩이라서다. */
   return (
-    <div className="space-y-2">
+    <div>
       {items.map((card) => (
         <div
           key={card.id}
           {...dragProps(card.id)}
-          className={`px-3 py-2 rounded border transition ${
+          className={`-mx-1 rounded px-1 transition ${
             selected?.type === 'card' && selected.id === card.id
-              ? `${SELECTED_MARK} border-blue-200 bg-blue-50`
-              : 'border-green-100 bg-green-50 hover:bg-green-100'
+              ? 'bg-blue-100'
+              : 'hover:bg-gray-100'
           } ${draggingId === card.id ? 'opacity-50' : ''}`}
         >
           <button
@@ -2661,17 +2691,22 @@ function CardList({
               e.stopPropagation();
               onCardClick(card);
             }}
-            className="w-full text-left"
+            className="w-full py-1 text-left"
           >
-            <div className="flex items-center justify-between gap-3">
-              <p className="min-w-0 truncate text-sm font-medium text-gray-900">
-                💳 {card.name}
-              </p>
+            {/*
+              한 줄에 다 넣는다. 갈래(신용·체크)를 아랫줄로 내리면 카드 하나가 두 줄이
+              되어, 통장마다 카드가 둘씩만 있어도 목록이 화면을 훌쩍 넘는다. 갈래는 이름
+              옆의 작은 배지다 -- 계좌 유형 배지와 같은 자리, 같은 모양이다.
+            */}
+            <div className="flex items-center justify-between gap-2">
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className="truncate text-sm text-gray-700">💳 {card.name}</span>
+                <span className="shrink-0 rounded bg-gray-100 px-1.5 py-px text-[11px] text-gray-600">
+                  {t(card.cardType === 'debit' ? 'method.debit_card' : 'method.credit_card')}
+                </span>
+              </span>
               <CardOutstanding card={card} currency={currency} />
             </div>
-            <p className="text-xs text-gray-600">
-              {t(card.cardType === 'debit' ? 'method.debit_card' : 'method.credit_card')}
-            </p>
           </button>
         </div>
       ))}

@@ -85,8 +85,8 @@ import TransactionSearchModal from '../components/TransactionSearchModal';
  * 분류와 태그는 한 화면의 두 탭이라 같은 주소다.
  */
 const ORIGIN_SCREEN: Record<EntryFocusOrigin['kind'], string> = {
-  category: '/categories',
-  tag: '/categories',
+  category: '/settings/categories',
+  tag: '/settings/categories',
   person: '/assets',
   account: '/assets',
   card: '/assets',

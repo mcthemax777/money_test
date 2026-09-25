@@ -50,14 +50,18 @@ interface AuthStore {
 }
 
 /**
- * 서버가 준 언어를 화면에 반영한다.
+ * 서버가 준 화면 설정(언어·시작 요일)을 화면에 반영한다.
  *
  * 스토어를 정적으로 import하지 않는 것은 다른 스토어들과 같은 이유다. 로그인
  * 스토어가 화면 스토어를 붙들면 서로를 부르는 고리가 생기기 쉽다.
  */
-async function applyUserLocale(locale: unknown) {
-  const { useLocaleStore } = await import('./locale');
-  useLocaleStore.getState().applyServerLocale(locale);
+async function applyUserDisplay(user: { locale?: unknown; weekStart?: unknown } | null | undefined) {
+  const [{ useLocaleStore }, { useWeekStartStore }] = await Promise.all([
+    import('./locale'),
+    import('./week-start'),
+  ]);
+  useLocaleStore.getState().applyServerLocale(user?.locale);
+  useWeekStartStore.getState().applyServerWeekStart(user?.weekStart);
 }
 
 export const useAuth = create<AuthStore>()(
@@ -102,8 +106,8 @@ export const useAuth = create<AuthStore>()(
       }
       // 이 사본은 이제 이 사람의 것이다. 다음 로그인이 이 값을 보고 가른다.
       if (response.user?.id) await claimMirrorFor(response.user.id);
-      // 이 계정이 고른 말로 화면을 맞춘다. 앞 사용자가 남긴 언어가 이어지면 안 된다.
-      applyUserLocale(response.user?.locale);
+      // 이 계정이 고른 말과 요일로 화면을 맞춘다. 앞 사용자가 남긴 값이 이어지면 안 된다.
+      applyUserDisplay(response.user);
       set({
         user: response.user,
         defaultProjectData: response.defaultProjectData,
@@ -185,7 +189,7 @@ export const useAuth = create<AuthStore>()(
       }
 
       const user = await apiClient.getProfile();
-      applyUserLocale(user?.locale);
+      applyUserDisplay(user);
       /*
        * 여기서도 주인을 적어 둔다.
        *

@@ -29,6 +29,7 @@ import {
 import { activeLocale, translate, type MessageKey } from '../lib/i18n';
 import { toNumber } from '../lib/money';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '../store/project';
+import { useWeekStart } from '../store/week-start';
 
 /** 직접 고르는 구간 단위. 눌러서 한 단 내려가는 길(`drillInto`)도 같은 단위를 쓴다. */
 export type Granularity = 'day' | 'week' | 'month' | 'year';
@@ -39,8 +40,8 @@ export interface AssetHistoryPoint {
   /**
    * 서버가 준 그대로의 날짜. 연이면 "YYYY", 월이면 "YYYY-MM", 주·일이면 "YYYY-MM-DD".
    *
-   * 주는 그 주의 **일요일**이다 (`weekStartKey`). 일과 생김새가 같으므로 읽는 쪽은
-   * 지금 보고 있는 단위와 함께 읽는다.
+   * 주는 그 주의 **첫날**이다 (`weekStartKey`). 어느 요일인지는 설정이 정한다. 일과
+   * 생김새가 같으므로 읽는 쪽은 지금 보고 있는 단위와 함께 읽는다.
    *
    * 축에 적는 이름(label)은 언어에 따라 "8월"·"Aug" 로 달라져 되읽을 수 없다. 눌러서
    * 한 단 아래로 내려갈 때 어느 구간인지는 이 값으로 말하고, `historyPointLabel` 이
@@ -68,7 +69,7 @@ export interface AssetHistoryPoint {
  */
 export function historyPointLabel(date: string, granularity: Granularity): string {
   /*
-   * 일별만 날짜로 적는다. 열 자짜리 값은 주의 일요일일 수도, 그냥 그 날일 수도 있어
+   * 일별만 날짜로 적는다. 열 자짜리 값은 주의 첫날일 수도, 그냥 그 날일 수도 있어
    * 생김새만으로는 갈리지 않는 유일한 자리다.
    */
   if (granularity === 'day' && date.length === 10) return formatYearMonthDay(date);
@@ -203,6 +204,8 @@ export function useAssetHistory({
 }: AssetHistoryInput): AssetHistory {
   const displayCurrency = useProjectDisplayCurrency();
   const timeZone = useProjectTimeZone();
+  /** 주 단위에서 한 주를 어디서 끊을지. 거래 화면의 주 묶음과 같은 설정이다. */
+  const weekStart = useWeekStart();
   const [granularity, setGranularity] = useState<Granularity>('month');
   /**
    * 창이 지금에서 몇 칸 떨어져 있는지. 0이면 오늘(이번 달, 올해)로 끝나는 창이다.
@@ -298,12 +301,15 @@ export function useAssetHistory({
       /*
        * 그 말일이 든 주가 이번 주에서 몇 주 떨어져 있는가.
        *
-       * 두 날의 **일요일끼리** 견준다. 날짜 차이를 그냥 이레로 나누면 같은 주의 두 날이
-       * 다른 주로 갈린다(수요일과 다음 월요일은 닷새 차이지만 다른 주다).
+       * 두 날이 **든 주의 첫날끼리** 견준다. 날짜 차이를 그냥 이레로 나누면 같은 주의
+       * 두 날이 다른 주로 갈린다(같은 주의 두 날도 닷새가 벌어질 수 있다).
        * 앞날의 달이면 음수다 -- 창이 이번 주보다 뒤에 선다.
        */
       const next =
-        daysBetweenKeys(weekStartKey(monthEnd), weekStartKey(todayKey(timeZone))) / 7;
+        daysBetweenKeys(
+          weekStartKey(monthEnd, weekStart),
+          weekStartKey(todayKey(timeZone), weekStart),
+        ) / 7;
 
       setGranularity('week');
       setOffset(next);
@@ -311,19 +317,19 @@ export function useAssetHistory({
       // 뜻이 다르므로 그대로 두면 엉뚱한 데를 받아 온다.
       setAnchor(next);
     },
-    [timeZone],
+    [timeZone, weekStart],
   );
 
   /**
    * 주별에서 한 주를 눌렀을 때. 일별 그래프를 그 주의 끝에 갖다 댄다.
    *
-   * 눌린 값은 그 주의 일요일이라, 창의 끝은 엿새 뒤 토요일이다. 창이 서른두 날이므로
+   * 눌린 값은 그 주의 첫날이라, 창의 끝은 엿새 뒤 마지막 날이다. 창이 서른두 날이므로
    * 그 주의 이레가 오른쪽 끝에 서고 앞선 스무닷새가 왼쪽에 따라 붙는다.
    */
   const showWeekAsDays = useCallback(
-    (weekStart: string) => {
+    (weekKey: string) => {
       // 앞날의 주면 음수다. 창이 오늘보다 뒤에 선다.
-      const next = daysBetweenKeys(shiftDateKey(weekStart, 6), todayKey(timeZone));
+      const next = daysBetweenKeys(shiftDateKey(weekKey, 6), todayKey(timeZone));
 
       setGranularity('day');
       setOffset(next);
@@ -425,10 +431,12 @@ export function useAssetHistory({
                 granularity: 'week',
                 weeks: fetchSpan,
                 /*
-                 * 한 칸이 이레다. 끝나는 날이 든 주가 마지막 칸이 되므로 일요일을
+                 * 한 칸이 이레다. 끝나는 날이 든 주가 마지막 칸이 되므로 그 주의 첫날을
                  * 여기서 셈하지 않는다 -- 그 일은 서버(`weekBuckets`) 한 곳에서 한다.
                  */
                 endDate: shiftDateKey(todayKey(timeZone), -endOffset * 7),
+                // 어느 요일에서 끊을지는 설정이 정한다. 거래 목록의 주 묶음과 같은 값이다.
+                weekStart,
               }
             : granularity === 'year'
               ? { ...target, granularity: 'year', years: fetchSpan, ...window }
@@ -445,7 +453,7 @@ export function useAssetHistory({
          * 축 이름은 단위마다 다르게 짧게 적는다.
          *
          * 일과 주는 달을 넘나드는 창이라 날짜만 적으면 어느 달인지 알 수 없다. 달까지
-         * 적는다 -- 주는 그 주가 시작하는 일요일이다.
+         * 적는다 -- 주는 그 주가 시작하는 날이다.
          */
         const label =
           granularity === 'day' || granularity === 'week'
@@ -475,6 +483,7 @@ export function useAssetHistory({
     pad,
     fetchSpan,
     timeZone,
+    weekStart,
   ]);
 
   useEffect(() => {

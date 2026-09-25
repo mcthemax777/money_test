@@ -25,7 +25,7 @@ import {
   DEFAULT_STATEMENT_CLOSING_DAY,
 } from '@money/core/lib/day-of-month';
 import type { AssetSaveResult } from '@money/core/hooks/useAssetsData';
-import type { Account, AccountType } from '@money/core/lib/types';
+import type { Account, AccountType, Person } from '@money/core/lib/types';
 import { useProjectLedgerCurrency } from '@money/core/store/project';
 
 import CardColorPicker from './CardColorPicker';
@@ -194,8 +194,8 @@ export function AddAccountModal({
   onClose,
   onSubmit,
   isSubmitting,
-  ownerName,
-  ownerId,
+  people,
+  defaultOwnerId,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -211,14 +211,21 @@ export function AddAccountModal({
     openingBalance?: string;
   }) => Promise<AssetSaveResult>;
   isSubmitting: boolean;
-  /** 누가 가진 계좌인지. 목록에서 눌러 들어온 자리가 정한다. */
-  ownerName: string;
-  ownerId: string;
+  /**
+   * 고를 수 있는 주인들. 지금 보고 있는 자산주인이다.
+   *
+   * 예전에는 목록에서 그 사람의 버튼을 눌러 들어와 주인이 이미 정해져 있었다. 목록에서
+   * 사람 줄을 걷어내면서 그 자리가 없어졌으므로 여기서 고른다 (웹과 같다).
+   */
+  people: Person[];
+  /** 처음 골라 둘 주인. 대개 "나"다. 아무도 없으면 null 이고, 그때는 저장할 수 없다. */
+  defaultOwnerId: string | null;
 }) {
   const { t } = useTranslation();
   /* 개설 잔액은 저장 통화로 적는다. 계좌 통화는 웹에서 고른다 (여기서는 프로젝트 기본값). */
   const ledgerCurrency = useProjectLedgerCurrency();
   const { options: bankOptions, error: bankError } = useInstitutions('bank');
+  const [ownerId, setOwnerId] = useState(defaultOwnerId ?? '');
   const [name, setName] = useState('');
   const [type, setType] = useState<AccountType>('deposit');
   const [institutionId, setInstitutionId] = useState('');
@@ -232,6 +239,7 @@ export function AddAccountModal({
 
   useEffect(() => {
     if (isOpen) {
+      setOwnerId(defaultOwnerId ?? '');
       setName('');
       setType('deposit');
       setInstitutionId('');
@@ -269,15 +277,23 @@ export function AddAccountModal({
       footer={
         <SubmitButton
           label={t(isSubmitting ? 'account.adding' : 'account.addSubmit')}
-          disabled={isSubmitting || !name.trim()}
+          /* 주인 없는 계좌는 만들 수 없다. 서버가 ownerId 를 반드시 받는다. */
+          disabled={isSubmitting || !name.trim() || !ownerId}
           onPress={save}
         />
       }
     >
       <View className="gap-4">
-        {/* 주인은 누른 자리가 정한다. 바꾸려면 그 사람의 버튼으로 들어온다. */}
+        {/*
+          주인. 혼자뿐이어도 고른 채로 보여 준다 -- 누구 밑에 만드는지가 폼에 적혀 있어야
+          하고, 구성원이 늘어난 날 갑자기 새 칸이 생기지도 않는다.
+        */}
         <Field label={t('account.owner')}>
-          <Text className="rounded-lg bg-gray-50 px-3 py-2 text-gray-900">{ownerName}</Text>
+          <PickRow
+            options={people.map((person) => ({ id: person.id, name: person.name }))}
+            value={ownerId}
+            onPick={setOwnerId}
+          />
         </Field>
 
         <Field label={t('account.name')}>

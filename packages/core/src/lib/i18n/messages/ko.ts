@@ -28,7 +28,6 @@ export const ko = {
   'nav.transactions': '거래',
   'nav.ledger': '가계',
   'nav.assets': '자산',
-  'nav.categories': '분류/태그',
   'nav.settings': '설정',
 
   // ===== 껍데기 =====
@@ -47,6 +46,8 @@ export const ko = {
   'settings.profile.description': '계정 정보를 확인하고 이름을 변경합니다',
   'settings.projects.title': '프로젝트 관리',
   'settings.projects.description': '프로젝트 생성, 멤버와 초대 링크, 가입 요청을 관리합니다',
+  'settings.categories.title': '분류/태그',
+  'settings.categories.description': '지출·수입 분류와 태그를 만들고 정리합니다',
 
   // ===== 보내지 못한 거래 (아웃박스) =====
   'settings.outbox.title': '보내지 못한 거래',
@@ -91,6 +92,10 @@ export const ko = {
   'settings.language.description':
     '화면에 쓰는 말을 고릅니다. 계정에 저장되므로 다른 기기에서도 그대로 이어집니다.',
   'settings.language.saveFailed': '언어를 바꾸지 못했습니다.',
+  'settings.weekStart.title': '시작 요일',
+  'settings.weekStart.description':
+    '한 주를 어느 요일에서 시작할지 고릅니다. 거래의 달력과 주 단위 보기가 이 요일에서 끊깁니다.',
+  'settings.weekStart.saveFailed': '시작 요일을 바꾸지 못했습니다.',
 
   /*
    * 언어 이름은 그 언어로 적는다.
@@ -1034,6 +1039,7 @@ export const ko = {
   'error.NAME_TOO_LONG': '이름은 {max}자 이하로 입력해주세요.',
   'error.NOTHING_TO_UPDATE': '변경할 내용이 없습니다.',
   'error.UNSUPPORTED_LOCALE': '지원하지 않는 언어입니다.',
+  'error.INVALID_WEEK_START': '시작 요일이 올바르지 않습니다.',
   'error.PROJECT_NOT_FOUND': '프로젝트를 찾을 수 없습니다.',
   'error.PROJECT_FORBIDDEN': '이 프로젝트에 접근 권한이 없습니다.',
   'error.PROJECT_OWNER_ONLY': '프로젝트 소유자만 할 수 있는 일입니다.',

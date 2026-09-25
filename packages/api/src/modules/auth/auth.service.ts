@@ -5,7 +5,7 @@ import { ConfigService } from '../../config/config.service';
 import { UsersService } from '../users/users.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { OAuth2Client, type TokenPayload as GoogleTokenPayload } from 'google-auth-library';
-import { Auth, DEFAULT_LOCALE, isLocale } from '@money/types';
+import { asWeekStart, Auth, DEFAULT_LOCALE, isLocale } from '@money/types';
 
 interface TokenPayload {
   sub: string;
@@ -138,6 +138,7 @@ export class AuthService {
     avatar: string | null;
     defaultProjectId: string | null;
     locale: string;
+    weekStart: number;
     createdAt: Date;
     updatedAt: Date;
   }): Promise<Auth.AuthResponse> {
@@ -228,6 +229,7 @@ export class AuthService {
     name: string;
     avatar: string | null;
     locale: string;
+    weekStart: number;
     createdAt: Date;
     updatedAt: Date;
   }) {
@@ -239,6 +241,9 @@ export class AuthService {
       // locale 컬럼은 TEXT다. 지원하지 않는 값이 남아 있어도(언어를 뺀 뒤 등)
       // 화면이 빈 사전을 들고 깨지지 않도록 기본값으로 되돌린다.
       locale: isLocale(user.locale) ? user.locale : DEFAULT_LOCALE,
+      // 시작 요일도 같은 까닭으로 한 번 거른다. 컬럼이 INTEGER라 범위 밖 값이
+      // 남아 있어도 달력이 첫 줄을 엉뚱하게 메우지 않는다.
+      weekStart: asWeekStart(user.weekStart),
       // 와이어 계약은 ISO 문자열이다 (IsoDateString)
       createdAt: user.createdAt.toISOString(),
       updatedAt: user.updatedAt.toISOString(),

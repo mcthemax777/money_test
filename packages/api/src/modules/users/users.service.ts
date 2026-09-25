@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { AccountType } from '@prisma/client';
-import { isLocale, type Locale } from '@money/types';
+import { isLocale, isWeekStart, type Locale, type WeekStart } from '@money/types';
 import { PrismaService } from '../../config/prisma.service';
 import { ProjectAccessService } from '../../common/project-access.guard';
 import { HIDDEN_ACCOUNT_TYPES } from '../accounts/accounts.service';
@@ -24,6 +24,7 @@ export class UsersService {
         avatar: true,
         defaultProjectId: true,
         locale: true,
+        weekStart: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -34,9 +35,14 @@ export class UsersService {
 
   async updateProfile(
     userId: string,
-    data: { name?: string; avatar?: string; locale?: string },
+    data: { name?: string; avatar?: string; locale?: string; weekStart?: number },
   ) {
-    const payload: { name?: string; avatar?: string; locale?: Locale } = {};
+    const payload: {
+      name?: string;
+      avatar?: string;
+      locale?: Locale;
+      weekStart?: WeekStart;
+    } = {};
 
     // 이름은 다른 멤버에게 보이는 값이므로 공백만 들어가지 않도록 막는다.
     if (data.name !== undefined) {
@@ -73,6 +79,21 @@ export class UsersService {
       payload.locale = data.locale;
     }
 
+    /*
+     * 한 주의 시작 요일.
+     *
+     * 컬럼이 INTEGER라 7이든 -1이든 들어간다. 그 값이 저장되면 달력은 첫 줄을 몇 칸
+     * 메울지 알 수 없고, 거래 목록의 주 묶음은 같은 주를 두 줄로 낸다. 언어와 같이
+     * 모르는 값은 조용히 일요일로 바꾸지 않고 되돌려 말한다.
+     */
+    if (data.weekStart !== undefined) {
+      if (!isWeekStart(data.weekStart)) {
+        throw badRequest('INVALID_WEEK_START', '시작 요일이 올바르지 않습니다.');
+      }
+
+      payload.weekStart = data.weekStart;
+    }
+
     if (Object.keys(payload).length === 0) {
       throw badRequest('NOTHING_TO_UPDATE', '변경할 내용이 없습니다.');
     }
@@ -87,6 +108,7 @@ export class UsersService {
         avatar: true,
         defaultProjectId: true,
         locale: true,
+        weekStart: true,
         createdAt: true,
         updatedAt: true,
       },

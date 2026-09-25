@@ -13,13 +13,7 @@ import type { MessageKey } from '../lib/i18n';
  * 그림 자체는 여기 두지 않는다. 웹은 lucide-react, 앱은 lucide-react-native 로
  * 서로 다른 컴포넌트를 쓰기 때문이다. 무엇을 그릴지만 정하고 고르는 일은 화면에 맡긴다.
  */
-export type NavIconName =
-  | 'home'
-  | 'transactions'
-  | 'ledger'
-  | 'assets'
-  | 'categories'
-  | 'settings';
+export type NavIconName = 'home' | 'transactions' | 'ledger' | 'assets' | 'settings';
 
 export interface NavItem {
   /**
@@ -51,7 +45,6 @@ const PROJECT_ITEMS: NavItem[] = [
   // 가계는 장부다. 자산(Landmark)과 갈라 보이도록 펼친 책으로 둔다.
   { labelKey: 'nav.ledger', href: '/dashboard', icon: 'ledger' },
   { labelKey: 'nav.assets', href: '/assets', icon: 'assets' },
-  { labelKey: 'nav.categories', href: '/categories', icon: 'categories' },
 ];
 
 /** 프로젝트가 없어도 갈 수 있어야 하는 메뉴 (여기서 프로젝트를 만든다) */

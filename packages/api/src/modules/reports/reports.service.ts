@@ -44,6 +44,8 @@ import {
   currencyDecimals,
   dailyTotals,
   entryMonths,
+  asWeekStart,
+  DEFAULT_WEEK_START,
   isEntryPeriodUnit,
   DEFAULT_ENTRY_PERIOD,
   monthlyTotals,
@@ -56,6 +58,7 @@ import {
   shiftYearMonth,
   summarize,
   weekStartKey,
+  type WeekStart,
   zonedCurrentYearMonth,
   zonedDateKey,
   zonedDateStringToUtc,
@@ -487,6 +490,14 @@ export class ReportsService {
       query.granularity === 'day' || query.granularity === 'week' || query.granularity === 'year'
         ? query.granularity
         : 'month';
+    /*
+     * 주를 어느 요일에서 끊을지. 사용자 설정이고 조회에 실려 온다 (`BalanceHistoryQuery`).
+     *
+     * 거래 목록의 주 묶음(`getEntryMonths`)과 같은 값을 받아야 한다. 한쪽만 월요일이면
+     * 같은 주를 두 화면이 다른 날에서 끊어, 그래프의 한 칸과 목록의 한 줄이 다른 이레가
+     * 된다. 주 단위가 아니면 쓰이지 않는다.
+     */
+    const weekStart = asWeekStart(query.weekStart);
 
     /*
      * 여러 구성원을 한 선으로 볼 때 쓴다. 목록 필터와 같은 세 상태 규칙이라
@@ -545,6 +556,7 @@ export class ReportsService {
               clampCount(query.weeks, 13, 260),
               timeZone,
               query.endDate ? assertDateKey(query.endDate, '기준일') : undefined,
+              weekStart,
             )
           : granularity === 'year'
             ? yearBuckets(Number(endMonth.slice(0, 4)), clampCount(query.years, 5, 30), timeZone)
@@ -568,15 +580,23 @@ export class ReportsService {
     /*
      * 구간의 첫 시각을 세는 식. 로컬 벽시계로 바꾼 뒤 자른다.
      *
-     * **주는 일요일에서 끊는다.** 포스트그레스의 `date_trunc('week')` 는 월요일에서
-     * 끊으므로, 하루 밀어 자르고 다시 하루를 뺀다. 이 저장소는 주를 일요일에서 세고
-     * 있고(`weekStartKey`, 거래 화면의 주 묶음), 한쪽만 월요일이면 같은 거래가 화면마다
-     * 다른 주에 들어간다.
+     * **주는 사용자가 고른 요일에서 끊는다.** 포스트그레스의 `date_trunc('week')` 는 늘
+     * 월요일에서 끊으므로, 고른 요일이 월요일에 오도록 밀어 자르고 같은 만큼 되돌린다
+     * (일요일 시작이면 하루다). 칸의 경계는 `weekBuckets` 가 따로 세므로 두 셈이 같은
+     * 날을 가리켜야 한다 -- 어긋나면 그 칸의 증감이 이웃 칸으로 넘어간다.
      */
     const localDate = Prisma.sql`timezone(${timeZone}, timezone('UTC', e."date"))`;
+    /*
+     * 고른 요일을 월요일 자리로 옮기는 날수. 0~6 이다 (월요일 시작이면 0).
+     *
+     * `::int` 를 붙이는 것은 Prisma 가 자바스크립트의 수를 bigint 로 실어 보내기
+     * 때문이다. `make_interval(days => bigint)` 라는 함수는 없어, 캐스트가 없으면
+     * 질의가 42883 으로 떨어진다(실제로 그랬다).
+     */
+    const toMonday = (8 - weekStart) % 7;
     const bucketStart =
       granularity === 'week'
-        ? Prisma.sql`date_trunc('week', ${localDate} + interval '1 day') - interval '1 day'`
+        ? Prisma.sql`date_trunc('week', ${localDate} + make_interval(days => ${toMonday}::int)) - make_interval(days => ${toMonday}::int)`
         : Prisma.sql`date_trunc(${granularity}, ${localDate})`;
 
     // 창 안의 구간별 계좌별 증감
@@ -747,6 +767,13 @@ export class ReportsService {
      * 모르는 값이 오면 조용히 달로 읽는다 -- 목록이 비는 것보다 낫다.
      */
     const unit = isEntryPeriodUnit(query.unit) ? query.unit : DEFAULT_ENTRY_PERIOD;
+    /*
+     * 주를 어느 요일에서 끊을지. 사용자 설정이고 조회에 실려 온다 (`EntryMonthsQuery`).
+     *
+     * 질의 문자열이라 숫자가 문자로 온다. 읽을 수 없는 값은 일요일로 센다 -- 단위와
+     * 같은 규칙이다. 달·해로 묶을 때는 쓰이지 않는다.
+     */
+    const weekStart = asWeekStart(query.weekStart);
 
     /*
      * 회차 기준이면 회차가 선 달도 줄이 되어야 한다.
@@ -767,6 +794,7 @@ export class ReportsService {
       timeZone,
       entryDates: monthDates,
       unit,
+      weekStart,
     }).map(
       (month) => ({
         yearMonth: month.yearMonth,
@@ -1316,16 +1344,21 @@ function recentDayBuckets(days: number, timeZone: string, endDate?: string): Bal
 /**
  * 주 단위 구간. endDate(없으면 오늘)가 든 주를 포함해 뒤로 weeks개.
  *
- * 주는 **일요일**에 시작한다 (`weekStartKey`). 끝나는 주를 날짜 하나로 받는 것은
- * 부르는 쪽이 일요일을 따로 셈하지 않게 하려는 것이다 -- 두 곳에서 세면 한쪽만 고친
- * 날부터 화면과 서버가 다른 주를 가리킨다.
+ * 주는 사용자가 고른 요일에 시작한다 (`weekStartKey`, 기본은 일요일). 끝나는 주를 날짜
+ * 하나로 받는 것은 부르는 쪽이 그 주의 첫날을 따로 셈하지 않게 하려는 것이다 -- 두
+ * 곳에서 세면 한쪽만 고친 날부터 화면과 서버가 다른 주를 가리킨다.
  *
- * 이름표는 그 주의 일요일 날짜다. 일 단위와 생김새가 같고, 무엇을 물었는지는 부르는
+ * 이름표는 그 주의 첫날 날짜다. 일 단위와 생김새가 같고, 무엇을 물었는지는 부르는
  * 쪽이 안다 (`BalanceHistoryPoint.date`).
  */
-function weekBuckets(weeks: number, timeZone: string, endDate?: string): BalanceBucket[] {
+function weekBuckets(
+  weeks: number,
+  timeZone: string,
+  endDate?: string,
+  weekStart: WeekStart = DEFAULT_WEEK_START,
+): BalanceBucket[] {
   const endKey = endDate ?? zonedDateKey(new Date(), timeZone);
-  const [year, month, day] = weekStartKey(endKey).split('-').map(Number);
+  const [year, month, day] = weekStartKey(endKey, weekStart).split('-').map(Number);
 
   const buckets: BalanceBucket[] = [];
   for (let i = weeks - 1; i >= 0; i--) {

@@ -57,7 +57,7 @@ const EMPTY_FORM: CategoryFormValues = {
   subCategories: NO_SUB_CATEGORIES,
 };
 
-/** 카테고리 화면. 웹의 /categories 와 같은 배치다. */
+/** 카테고리 화면. 웹의 /settings/categories 와 같은 배치다. */
 export default function CategoriesScreen() {
   const { t } = useTranslation();
   const selectedProjectId = useProject((state) => state.selectedProjectId);
@@ -254,7 +254,7 @@ export default function CategoriesScreen() {
         추가 버튼은 머리글이 아니라 **목록 바로 위**에 있다 (자산 화면과 같은 규칙).
         무엇에 더하는 것인지가 버튼 아래에 곧바로 이어져 보인다.
       */}
-      <PageHeader title={t('nav.categories')} />
+      <PageHeader title={t('settings.categories.title')} showBack />
 
       {/* 잘 끝난 일. 통합처럼 화면에 자취가 남지 않는 일이 여기서 말한다. */}
       {notice ? (

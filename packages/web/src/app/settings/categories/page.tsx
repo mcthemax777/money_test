@@ -311,7 +311,7 @@ export default function CategoriesPage() {
         추가 버튼은 머리글이 아니라 **목록 바로 위**에 있다 (자산 화면과 같은 규칙).
         무엇에 더하는 것인지가 버튼 아래에 곧바로 이어져 보인다.
       */}
-      <PageHeader title={t('nav.categories')} />
+      <PageHeader title={t('settings.categories.title')} backHref="/settings" />
 
       {/* 잘 끝난 일. 통합처럼 화면에 자취가 남지 않는 일이 여기서 말한다. */}
       {notice ? (

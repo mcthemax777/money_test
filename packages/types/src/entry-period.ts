@@ -15,6 +15,7 @@
  */
 
 import { zonedDateKey } from './tz';
+import { DEFAULT_WEEK_START, weekdayOffset, type WeekStart } from './week-start';
 
 export type EntryPeriodUnit = 'year' | 'month' | 'week';
 
@@ -30,11 +31,11 @@ export function isEntryPeriodUnit(value: unknown): value is EntryPeriodUnit {
  *
  *   year   "2026"
  *   month  "2026-09"
- *   week   "2026-09-13"  -- 그 주의 **일요일** 날짜다
+ *   week   "2026-09-13"  -- 그 주의 **첫날** 날짜다
  *
- * 주를 일요일에서 끊는 것은 이 저장소가 이미 그렇게 하고 있기 때문이다 -- 달력
- * (`TransactionCalendar`)이 `getDay()` 로 앞을 메우고, 요일 이름(`weekdayNames`)도
- * 일요일부터 센다. 한 화면에서 주가 월요일에 시작하고 다른 화면에서 일요일에 시작하면
+ * 주를 어느 요일에서 끊을지는 사용자가 고른다 (`WeekStart`, 기본은 일요일). 달력
+ * (`TransactionCalendar`)이 앞을 메우는 칸 수도 요일 이름의 차례(`weekdayNames`)도
+ * 같은 값을 본다. 한 화면에서 주가 월요일에 시작하고 다른 화면에서 일요일에 시작하면
  * 같은 거래가 다른 주에 들어간다.
  *
  * 열쇠는 **자릿수가 고정된 문자열**이라 같은 단위끼리는 사전순 비교가 곧 날짜 비교다.
@@ -44,11 +45,12 @@ export function periodKeyOf(
   date: Date | string,
   timeZone: string,
   unit: EntryPeriodUnit,
+  weekStart: WeekStart = DEFAULT_WEEK_START,
 ): string {
   const dateKey = zonedDateKey(new Date(date), timeZone);
   if (unit === 'year') return dateKey.slice(0, 4);
   if (unit === 'month') return dateKey.slice(0, 7);
-  return weekStartKey(dateKey);
+  return weekStartKey(dateKey, weekStart);
 }
 
 /**
@@ -91,18 +93,24 @@ export function periodDayRange(key: string): { startKey: string; endKey: string 
 }
 
 /**
- * 그 날짜가 속한 주의 일요일.
+ * 그 날짜가 속한 주의 첫날.
  *
  * 주로 묶는 자리는 전부 이것을 지난다 -- 거래 목록의 주 묶음도, 자산 추이의 주 단위
  * 그래프도(`reports.service` 의 `weekBuckets`) 같은 날에서 주를 끊는다.
  *
+ * 시작 요일을 받지 않으면 일요일이다. 사용자가 고른 요일을 아는 자리(거래 화면과
+ * 그 조회)만 값을 넘기고, 그 설정이 닿지 않는 자리는 지금까지와 같이 센다.
+ *
  * UTC 로 센다. 달력 날짜만 다루므로 서머타임이 끼어들 자리가 없다 (`recurring.ts` 의
  * `addDays` 와 같은 까닭이다).
  */
-export function weekStartKey(dateKey: string): string {
+export function weekStartKey(
+  dateKey: string,
+  weekStart: WeekStart = DEFAULT_WEEK_START,
+): string {
   const [year, month, day] = dateKey.split('-').map(Number);
   const date = new Date(Date.UTC(year, month - 1, day));
-  date.setUTCDate(date.getUTCDate() - date.getUTCDay());
+  date.setUTCDate(date.getUTCDate() - weekdayOffset(date.getUTCDay(), weekStart));
   return formatKey(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate());
 }
 

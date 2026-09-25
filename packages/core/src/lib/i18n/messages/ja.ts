@@ -18,7 +18,6 @@ export const ja: Record<MessageKey, string> = {
   'nav.transactions': '取引',
   'nav.ledger': '家計簿',
   'nav.assets': '資産',
-  'nav.categories': 'カテゴリ',
   'nav.settings': '設定',
 
   // ===== 全体 =====
@@ -38,6 +37,8 @@ export const ja: Record<MessageKey, string> = {
   'settings.profile.description': 'アカウント情報を確認し、名前を変更します',
   'settings.projects.title': 'プロジェクト管理',
   'settings.projects.description': 'プロジェクトの作成、メンバーと招待リンク、参加申請を管理します',
+  'settings.categories.title': 'カテゴリ・タグ',
+  'settings.categories.description': '支出・収入のカテゴリとタグを作成し、整理します',
 
   // ===== 보내지 못한 거래 (아웃박스) =====
   'settings.outbox.title': '未送信の取引',
@@ -82,6 +83,10 @@ export const ja: Record<MessageKey, string> = {
   'settings.language.description':
     'アプリに表示する言語を選びます。アカウントに保存されるので、別の端末でも同じ言語になります。',
   'settings.language.saveFailed': '言語を変更できませんでした。',
+  'settings.weekStart.title': '週の始まり',
+  'settings.weekStart.description':
+    '週をどの曜日から始めるかを選びます。取引のカレンダーと週単位の表示がこの曜日で区切られます。',
+  'settings.weekStart.saveFailed': '週の始まりを変更できませんでした。',
 
   'language.ko': '한국어',
   'language.en': 'English',
@@ -1000,6 +1005,7 @@ export const ja: Record<MessageKey, string> = {
   'error.NAME_TOO_LONG': '名前は{max}文字以内で入力してください。',
   'error.NOTHING_TO_UPDATE': '変更する内容がありません。',
   'error.UNSUPPORTED_LOCALE': '対応していない言語です。',
+  'error.INVALID_WEEK_START': '週の始まりが正しくありません。',
   'error.PROJECT_NOT_FOUND': 'プロジェクトが見つかりません。',
   'error.PROJECT_FORBIDDEN': 'このプロジェクトにアクセスする権限がありません。',
   'error.PROJECT_OWNER_ONLY': 'プロジェクトのオーナーだけができる操作です。',
