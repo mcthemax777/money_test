@@ -1,18 +1,22 @@
 import { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
+import { MoreVertical } from 'lucide-react-native';
 import type { EntryListItem } from '@money/types';
 
 import { useLedgerData } from '@money/core/hooks/useLedgerData';
 import { currentYearMonth } from '@money/core/lib/datetime';
 import { sumEntries } from '@money/core/lib/entries';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { useLedgerBasis } from '@money/core/store/ledger-basis';
 import { useCanEdit, useProject, useProjectTimeZone } from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
 
+import BasisPicker from '../components/BasisPicker';
 import CategoryBreakdown, { type CategoryTarget } from '../components/CategoryBreakdown';
 import CategoryDetailView from '../components/CategoryDetailView';
 import EntryEditor from '../components/EntryEditor';
 import LedgerKindSummary from '../components/LedgerKindSummary';
+import Modal from '../components/Modal';
 import MonthHeader from '../components/MonthHeader';
 import PaymentMethodBreakdown from '../components/PaymentMethodBreakdown';
 import PersonScopeTitle from '../components/PersonScopeTitle';
@@ -79,6 +83,12 @@ export default function LedgerScreen() {
   });
   /** 이 화면이 다루지 않는 갈래를 눌렀을 때의 안내 (카드사 대금 이동 등) */
   const [notice, setNotice] = useState('');
+  /*
+   * 더보기. 세는 기준 하나만 든다 -- 이 화면에서 쓰기는 일어나지 않으므로(거래를 적는
+   * 것은 거래 화면이 맡는다) 태그·지우기 같은 것이 들어올 자리가 없다.
+   */
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
+  const { basis, setBasis } = useLedgerBasis();
 
   const ledger = useLedgerData({
     projectId: selectedProjectId,
@@ -154,6 +164,16 @@ export default function LedgerScreen() {
                 selectedPersonIds={ledger.selectedPersonIds}
                 onTogglePerson={togglePersonId}
               />
+            }
+            action={
+              /* 더보기. 거래 화면과 같은 자리, 같은 아이콘이다. */
+              <Pressable
+                onPress={() => setIsMoreOpen(true)}
+                accessibilityLabel={t('tx.more')}
+                className="items-center justify-center p-2"
+              >
+                <MoreVertical size={18} color="#4b5563" />
+              </Pressable>
             }
             dateControl={
               <MonthHeader
@@ -233,6 +253,15 @@ export default function LedgerScreen() {
           ) : null}
         </>
       )}
+
+      {/* 더보기. 세는 기준 하나만 든다 (거래 화면의 같은 창과 같은 모양이다). */}
+      <Modal isOpen={isMoreOpen} onClose={() => setIsMoreOpen(false)} title={t('tx.more')}>
+        {/*
+          창을 닫지 않는다 -- 둘을 눌러 보며 숫자가 어떻게 달라지는지 견주는 자리라,
+          누를 때마다 닫히면 다시 열어야 한다.
+        */}
+        <BasisPicker value={basis} onChange={setBasis} />
+      </Modal>
 
       <EntryEditor
         isOpen={editor.isOpen}

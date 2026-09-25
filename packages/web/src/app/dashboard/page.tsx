@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
+import { MoreVertical } from 'lucide-react';
 import { useAuth } from '@money/core/store/auth';
 import { useUserFilter } from '@money/core/store/user-filter';
 import {
@@ -11,6 +12,7 @@ import {
   useProjectTimeZone,
 } from '@money/core/store/project';
 import { useBudget } from '@money/core/store/budget';
+import { useLedgerBasis } from '@money/core/store/ledger-basis';
 import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
 import { toAmountString, toNumber } from '@money/core/lib/money';
@@ -21,6 +23,7 @@ import {
   monthQueryRange,
 } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import BasisPicker from '@/components/BasisPicker';
 import Modal from '@/components/Modal';
 import MonthHeader from '@/components/MonthHeader';
 import LedgerKindSummary from '@/components/LedgerKindSummary';
@@ -106,6 +109,15 @@ export default function TransactionsPage() {
   const [cards, setCards] = useState<Card[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [error, setError] = useState('');
+  /*
+   * 무엇을 "그 달에 쓴 돈"으로 셀지. 머리글의 더보기에서 고른다 (거래 화면과 같은 둘).
+   *
+   * 이 화면이 답하는 물음이 "이 달에 어디에 얼마를 썼나"라 기본은 회차 기준이다 --
+   * 24개월치를 산 달 하나에 몰아 두면 그 달의 분류별·수단별이 통째로 기울고 나머지
+   * 스물세 달에는 실제로 나가는 돈이 보이지 않는다.
+   */
+  const { basis, setBasis } = useLedgerBasis();
+  const [isMoreOpen, setIsMoreOpen] = useState(false);
   const [currentMonth, setCurrentMonth] = useState<number>(() => currentYearMonth(timeZone).month);
   const [currentYear, setCurrentYear] = useState<number>(() => currentYearMonth(timeZone).year);
   const [viewType, setViewType] = useState<ViewType>('budget');
@@ -221,15 +233,12 @@ export default function TransactionsPage() {
     return {
       ...(allPeopleSelected ? {} : { personIds: selectedPersonIds.join(',') }),
       /*
-       * 세는 기준. 할부는 회차가 서는 달마다 그 달의 원금과 이자만 센다.
-       *
-       * 거래 화면의 기본과 같다. 이 화면이 답하는 물음이 "이 달에 어디에 얼마를
-       * 썼나"라서, 24개월치를 산 달 하나에 몰아 두면 그 달의 분류별·수단별이 통째로
-       * 기울고 나머지 스물세 달에는 실제로 나가는 돈이 보이지 않는다.
+       * 세는 기준. 상단 합계·예산·분류별·수단별이 모두 이 값을 함께 싣는다 -- 한쪽만
+       * 다른 기준으로 세면 한 화면 안에서 숫자가 갈린다.
        */
-      basis: 'installment',
+      basis,
     };
-  }, [selectedPersonIds, people.length]);
+  }, [selectedPersonIds, people.length, basis]);
   const appliedFilter = useDebouncedValue(entryFilter, 250);
 
   // 예산 사용금액도 같은 필터를 탄다. 이 선언은 appliedFilter 뒤에 있어야 한다
@@ -678,21 +687,47 @@ export default function TransactionsPage() {
           />
         }
         action={
-          /*
-            달 보기 <-> 기간 보기. 지금이 어느 쪽인지에 따라 반대쪽 이름을 적는다 --
-            누르면 무엇이 되는지가 버튼 이름이다.
-          */
-          <button
-            type="button"
-            onClick={() => handlePeriodModeChange(periodMode === 'range' ? 'month' : 'range')}
-            className="px-3 py-1.5 text-sm border rounded-lg text-gray-700 hover:bg-gray-100 whitespace-nowrap"
-          >
-            {t(periodMode === 'range' ? 'month.byMonth' : 'month.byRange')}
-          </button>
+          <div className="flex items-center gap-1">
+            {/*
+              달 보기 <-> 기간 보기. 지금이 어느 쪽인지에 따라 반대쪽 이름을 적는다 --
+              누르면 무엇이 되는지가 버튼 이름이다.
+            */}
+            <button
+              type="button"
+              onClick={() => handlePeriodModeChange(periodMode === 'range' ? 'month' : 'range')}
+              className="px-3 py-1.5 text-sm border rounded-lg text-gray-700 hover:bg-gray-100 whitespace-nowrap"
+            >
+              {t(periodMode === 'range' ? 'month.byMonth' : 'month.byRange')}
+            </button>
+            {/*
+              더보기. 거래 화면과 같은 자리, 같은 아이콘이다.
+
+              안에 세는 기준만 든다 -- 이 화면에서 쓰기는 일어나지 않으므로(거래를 적는
+              것은 거래 화면이 맡는다) 태그·지우기 같은 것이 들어올 자리가 없다.
+            */}
+            <button
+              type="button"
+              onClick={() => setIsMoreOpen(true)}
+              aria-label={t('tx.more')}
+              title={t('tx.more')}
+              className="flex items-center justify-center p-2 text-gray-600 hover:text-gray-900"
+            >
+              <MoreVertical className="h-4 w-4" aria-hidden />
+            </button>
+          </div>
         }
         incomeTotal={monthlyTotals.incomeTotal}
         expenseTotal={monthlyTotals.expenseTotal}
       />
+
+      {/* 더보기. 세는 기준 하나만 든다 (거래 화면의 같은 창과 같은 모양이다). */}
+      <Modal isOpen={isMoreOpen} onClose={() => setIsMoreOpen(false)} title={t('tx.more')}>
+        {/*
+          창을 닫지 않는다 -- 둘을 눌러 보며 숫자가 어떻게 달라지는지 견주는 자리라,
+          누를 때마다 닫히면 다시 열어야 한다.
+        */}
+        <BasisPicker value={basis} onChange={setBasis} />
+      </Modal>
 
       {/*
         데이터를 못 받았을 때. 예전에는 이 메시지가 거래 추가 팝업 안에만 있어서,

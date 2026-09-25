@@ -67,6 +67,7 @@ import { useFloatingActionSlot } from '../shell/floating-action';
 import { useCloseOnBack, useNavigation } from '../shell/navigation';
 import RevealTop from '../shell/RevealTop';
 import { StickySection, StickySections } from '../shell/StickySection';
+import BasisPicker from '../components/BasisPicker';
 import EntryDetailModal from '../components/EntryDetailModal';
 import EntryEditor from '../components/EntryEditor';
 import Modal from '../components/Modal';
@@ -1225,29 +1226,7 @@ export default function TransactionsScreen() {
           빠져나가는 돈은 어느 달에서도 보이지 않는다. 발생 기준은 "언제 샀나"를 묻는
           화면을 위해 남겨 두었다.
         */}
-        <View className="px-2 pb-3">
-          <Text className="mb-2 text-sm font-medium text-gray-700">{t('tx.basis')}</Text>
-          <View className="flex-row gap-2 rounded-lg bg-gray-100 p-1">
-            {(['accrual', 'installment'] as const).map((item) => (
-              <Pressable
-                key={item}
-                onPress={() => tx.setBasis(item)}
-                className={`flex-1 items-center rounded-md px-3 py-2 ${
-                  tx.basis === item ? 'bg-white' : ''
-                }`}
-              >
-                <Text
-                  className={`text-sm font-medium ${
-                    tx.basis === item ? 'text-blue-600' : 'text-gray-600'
-                  }`}
-                >
-                  {t(item === 'accrual' ? 'tx.basis.accrual' : 'tx.basis.installment')}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-          <Text className="mt-2 text-xs text-gray-500">{t('tx.basisHint')}</Text>
-        </View>
+        <BasisPicker value={tx.basis} onChange={tx.setBasis} />
         <View className="mb-1 border-t border-gray-200" />
 
         {/*

@@ -86,6 +86,7 @@ import EntryEditor, {
   type EntryEditorHandle,
   type ReferenceDataPatch,
 } from '@/components/EntryEditor';
+import BasisPicker from '@/components/BasisPicker';
 import Modal from '@/components/Modal';
 import TransactionCalendarView from '@/components/TransactionCalendarView';
 import PageHeader from '@/components/PageHeader';
@@ -1313,26 +1314,7 @@ export default function TransactionsView({
           빠져나가는 돈은 어느 달에서도 보이지 않는다. 발생 기준은 "언제 샀나"를 묻는
           화면을 위해 남겨 두었다.
         */}
-        <div className="px-2 pb-3">
-          <p className="mb-2 text-sm font-medium text-gray-700">{t('tx.basis')}</p>
-          <div className="flex gap-2 rounded-lg bg-gray-100 p-1">
-            {(['accrual', 'installment'] as const).map((item) => (
-              <button
-                key={item}
-                type="button"
-                onClick={() => tx.setBasis(item)}
-                className={`flex-1 rounded-md px-3 py-2 text-sm font-medium transition ${
-                  tx.basis === item
-                    ? 'bg-white text-blue-600 shadow-sm'
-                    : 'text-gray-600 hover:bg-gray-200'
-                }`}
-              >
-                {t(item === 'accrual' ? 'tx.basis.accrual' : 'tx.basis.installment')}
-              </button>
-            ))}
-          </div>
-          <p className="mt-2 text-xs text-gray-500">{t('tx.basisHint')}</p>
-        </div>
+        <BasisPicker value={tx.basis} onChange={tx.setBasis} />
         <div className="mb-1 border-t border-gray-200" />
 
         <button

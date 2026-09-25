@@ -7,6 +7,7 @@ import { homeDataPort } from '../data/home-port';
 import { type ReportPeriod } from '../lib/api-client';
 import { dayRangeQuery, monthQueryRange } from '../lib/datetime';
 import type { Account, Card, Category, Person } from '../lib/types';
+import { useLedgerBasis } from '../store/ledger-basis';
 import { useProject } from '../store/project';
 import { useUserFilter } from '../store/user-filter';
 import { useDebouncedValue } from './useDebouncedValue';
@@ -24,15 +25,6 @@ import { usePersonFilterSync } from './usePersonFilterSync';
  * 값을 어디서 얻는지는 창구(`homeDataPort`)가 정한다. 웹은 서버에서 곧바로 받고,
  * 앱은 기기 사본에서 읽는다. 이 훅과 화면은 어느 쪽인지 모른 채 같은 코드를 쓴다.
  */
-/**
- * 이 화면이 무엇을 "그 달에 쓴 돈"으로 세는가.
- *
- * 회차 기준이다. 할부를 산 달에 전액으로 세면 그 달만 혼자 튀고, 실제로 매달 빠져나가는
- * 돈은 어느 달에서도 보이지 않는다. 거래 화면의 기본과 같은 기준이라 두 화면의 숫자가
- * 어긋나지 않는다.
- */
-const LEDGER_BASIS = 'installment' as const;
-
 export function useLedgerData({
   projectId,
   year,
@@ -52,6 +44,13 @@ export function useLedgerData({
     return selected?.timezone || 'Asia/Seoul';
   });
   const { selectedPersonIds } = useUserFilter();
+  /*
+   * 무엇을 "그 달에 쓴 돈"으로 셀지. 머리글의 더보기에서 고른다 (거래 화면과 같은 둘).
+   *
+   * 기본은 회차 기준이다. 할부를 산 달에 전액으로 세면 그 달만 혼자 튀고, 실제로 매달
+   * 빠져나가는 돈은 어느 달에서도 보이지 않는다.
+   */
+  const basis = useLedgerBasis((state) => state.basis);
   const myPersonId = useProject((state) => {
     const selected = state.projects.find((project) => project.id === state.selectedProjectId);
     return selected?.myPersonId ?? null;
@@ -160,24 +159,33 @@ export function useLedgerData({
        */
       const port = homeDataPort();
       /*
-       * 회차 기준으로 센다. 거래 화면과 같은 규칙이다.
+       * 회차 기준이면 **지난달에 산 할부도 이 달의 줄이 된다.**
        *
        * 할부는 회차가 서는 달마다 그 달의 원금과 이자만 든다. 지난달에 산 할부의
        * 이번 달 회차는 목록 질의에 걸리지 않으므로(전표 날짜로 자른다) 따로 받아
        * 합친 뒤, 구간에 서는 회차만 남기고 날짜를 그 달로 옮긴다.
+       *
+       * 발생 기준이면 그 한 벌을 아예 받지 않는다 -- 산 달에 전액을 세는 규칙이라
+       * 합칠 것도 옮길 것도 없고, 받아 두면 지난달 거래가 이 달 목록에 그대로 낀다.
        */
+      const spread = basis === 'installment';
       const [entryRows, pastRows, summaryRow] = await Promise.all([
-        port.getAllEntries({ ...entryRange, ...filter, basis: LEDGER_BASIS }, projectId),
-        port.getInstallmentRows({ ...entryRange, ...filter }, projectId),
-        port.getSummary(reportPeriod, projectId, { ...filter, basis: LEDGER_BASIS }),
+        port.getAllEntries({ ...entryRange, ...filter, basis }, projectId),
+        spread
+          ? port.getInstallmentRows({ ...entryRange, ...filter }, projectId)
+          : Promise.resolve([] as EntryListItem[]),
+        port.getSummary(reportPeriod, projectId, { ...filter, basis }),
       ]);
 
+      const rows = [...((entryRows ?? []) as EntryListItem[]), ...(pastRows ?? [])];
       setEntries(
-        installmentEntryViews([...((entryRows ?? []) as EntryListItem[]), ...(pastRows ?? [])], {
-          timeZone,
-          from: entryRange.startDate,
-          to: entryRange.endDate,
-        }),
+        spread
+          ? installmentEntryViews(rows, {
+              timeZone,
+              from: entryRange.startDate,
+              to: entryRange.endDate,
+            })
+          : rows,
       );
       setSummary(summaryRow ?? null);
     } catch (error) {
@@ -186,7 +194,7 @@ export function useLedgerData({
       setHasError(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, rangeKey, filter, timeZone, mirrorVersion]);
+  }, [projectId, rangeKey, filter, basis, timeZone, mirrorVersion]);
 
   useEffect(() => {
     reloadPeriod();
@@ -204,7 +212,7 @@ export function useLedgerData({
    * 세는 기준을 함께 싣는다 -- 분류별·수단별이 목록·상단 합계와 다른 기준으로 세면
    * 한 화면 안에서 숫자가 갈린다.
    */
-  const scope = useMemo(() => ({ ...filter, basis: LEDGER_BASIS }), [filter]);
+  const scope = useMemo(() => ({ ...filter, basis }), [filter, basis]);
 
   return {
     accounts,

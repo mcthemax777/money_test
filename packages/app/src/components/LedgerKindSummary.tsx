@@ -38,6 +38,7 @@ const TONE_CLASS: Record<LedgerTone, string> = {
 export default function LedgerKindSummary({
   scopeTitle,
   dateControl,
+  action,
   incomeTotal,
   expenseTotal,
 }: {
@@ -50,6 +51,14 @@ export default function LedgerKindSummary({
   scopeTitle: ReactNode;
   /** 둘째 줄 왼쪽. 어느 달을 보고 있는지 고르는 자리다. */
   dateControl: ReactNode;
+  /**
+   * 첫 줄 오른쪽 끝. 보기 방식을 바꾸는 것들이 여기 온다 (더보기).
+   *
+   * 문장 안에 두지 않는 이유가 있다. 날짜는 "언제의 순수입인가"라 문장의 일부지만,
+   * 무엇을 세는지 고르는 일은 화면을 다루는 방법이다. 문장 사이에 끼우면 읽는 흐름이
+   * 끊기고, 제목 줄은 오른쪽이 비어 있어 그 자리가 제자리다.
+   */
+  action?: ReactNode;
   incomeTotal: number;
   expenseTotal: number;
 }) {
@@ -65,8 +74,11 @@ export default function LedgerKindSummary({
   return (
     <View className="gap-4">
       <View>
-        {/* 첫 줄. 누구의 가계인지. */}
-        {scopeTitle}
+        {/* 첫 줄. 누구의 가계인지. 오른쪽 끝은 보기 방식을 바꾸는 자리다. */}
+        <View className="flex-row items-start justify-between gap-3">
+          <View className="shrink">{scopeTitle}</View>
+          {action}
+        </View>
 
         {/*
           둘째 줄. 날짜와 낱말이 한 문장으로 이어 읽힌다.
