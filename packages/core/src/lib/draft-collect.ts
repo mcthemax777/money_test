@@ -151,3 +151,124 @@ export function historyFromEntries(entries: EntryListItem[]): MerchantHistoryRow
     categoryId: entry.categoryId,
   }));
 }
+
+/**
+ * 같은 결제로 보는 시각의 폭. 알림이 온 시각(또는 문구의 시각)이 이 안이면 같은 때다.
+ *
+ * 한 번의 결제에 알림이 여럿 온다 -- 카드사 앱, 문자, 은행 앱이 저마다 몇 초 사이를
+ * 두고 보낸다. 폭을 넓히면 연달아 긁은 같은 금액의 다른 결제가 하나로 합쳐지므로 1분으로
+ * 좁게 둔다.
+ */
+export const NOTIFICATION_DUPLICATE_WINDOW_MS = 60 * 1000;
+
+/** 겹침을 가리는 데 쓰는 칸. 새로 담을 것(`CreateItem`)과 이미 담긴 것(`Response`)이 함께 가진다. */
+type DuplicateShape = Pick<
+  EntryDraftDto.CreateItem,
+  | 'kind'
+  | 'amount'
+  | 'currency'
+  | 'occurredAt'
+  | 'merchant'
+  | 'description'
+  | 'installmentMonths'
+  | 'cardId'
+  | 'accountId'
+  | 'rawText'
+>;
+
+/**
+ * 두 알림 후보가 같은 결제인가.
+ *
+ * 금액과 통화가 같고, 시각이 폭 안이고, 갈래가 서로 어긋나지 않아야 한다. 갈래는
+ * **수입과 수입 아닌 것**만 가른다 -- 같은 카드 결제를 카드사는 "승인"(지출)으로, 은행은
+ * "출금"(이체)으로 적어 갈래가 달리 읽히기 때문이다. 같은 때 같은 금액이 들어오고
+ * 나간 것은 서로 다른 거래다.
+ *
+ * 금액이나 시각을 못 읽은 후보는 무엇과도 겹치지 않는다. 모르는 것끼리 묶으면 서로 다른
+ * 결제가 사라진다.
+ */
+function isSameNotificationPayment(left: DuplicateShape, right: DuplicateShape): boolean {
+  if (!left.amount || left.amount !== right.amount) return false;
+  if ((left.currency ?? 'KRW') !== (right.currency ?? 'KRW')) return false;
+  if ((left.kind === 'income') !== (right.kind === 'income')) return false;
+
+  const leftAt = left.occurredAt ? Date.parse(left.occurredAt) : NaN;
+  const rightAt = right.occurredAt ? Date.parse(right.occurredAt) : NaN;
+  if (Number.isNaN(leftAt) || Number.isNaN(rightAt)) return false;
+  return Math.abs(leftAt - rightAt) <= NOTIFICATION_DUPLICATE_WINDOW_MS;
+}
+
+/**
+ * 겹친 알림 가운데 무엇이 더 많이 알려 주는가. 양수면 왼쪽이 낫다.
+ *
+ * 1. **결제수단을 찾았는가.** 카드·통장이 채워진 쪽이 사람이 손볼 칸이 적다.
+ * 2. **채워진 칸의 수.** 갈래·가맹점·내용·할부.
+ * 3. **원문의 길이.** 위가 같으면 더 긴 문구가 대개 카드 이름·끝자리를 더 적는다.
+ */
+function compareRichness(left: DuplicateShape, right: DuplicateShape): number {
+  const paid = (row: DuplicateShape) => (row.cardId || row.accountId ? 1 : 0);
+  const filled = (row: DuplicateShape) =>
+    [row.kind, row.merchant, row.description, row.installmentMonths].filter(
+      (value) => value !== null && value !== undefined && value !== '',
+    ).length;
+  return (
+    paid(left) - paid(right) ||
+    filled(left) - filled(right) ||
+    (left.rawText?.length ?? 0) - (right.rawText?.length ?? 0)
+  );
+}
+
+/** 겹침을 걸러 낸 결과. */
+export interface NotificationDedupe<T> {
+  /** 담을 것. 겹친 무리마다 가장 많이 알려 주는 하나만 남는다. */
+  keep: T[];
+  /**
+   * 새 것에 밀려 지울, 이미 담긴 대기 중 후보의 id.
+   *
+   * 먼저 온 알림이 이미 보관함에 있는데 나중 알림이 카드를 더 잘 가리키면 그쪽으로
+   * 갈아 끼운다. 등록·무시한 것은 사람이 이미 손댄 것이라 건드리지 않고 새 것을 버린다.
+   */
+  replace: string[];
+}
+
+/**
+ * 한 결제로 온 알림 여러 건을 하나로 줄인다.
+ *
+ * 먼저 이번에 읽은 것끼리 묶어 무리마다 하나를 남기고, 남은 것을 이미 담긴 알림
+ * 후보와 견준다. 이미 담긴 것이 등록·무시됐거나 더 낫다면 새 것을 버리고, 대기 중인데
+ * 새 것이 더 나으면 새 것을 담고 옛 것을 지운다.
+ *
+ * `T` 에 알림 열쇠 같은 것을 함께 실어 부르는 쪽이 버퍼 정리에 쓴다.
+ */
+export function dedupeNotificationItems<T extends { item: EntryDraftDto.CreateItem }>(
+  incoming: T[],
+  existing: EntryDraftDto.Response[],
+): NotificationDedupe<T> {
+  const groups: T[][] = [];
+  for (const candidate of incoming) {
+    const group = groups.find((members) =>
+      members.some((member) => isSameNotificationPayment(member.item, candidate.item)),
+    );
+    if (group) group.push(candidate);
+    else groups.push([candidate]);
+  }
+
+  const keep: T[] = [];
+  const replace = new Set<string>();
+  for (const group of groups) {
+    const best = group.reduce((winner, member) =>
+      compareRichness(member.item, winner.item) > 0 ? member : winner,
+    );
+
+    const already = existing.filter(
+      (draft) => draft.source === 'notification' && isSameNotificationPayment(draft, best.item),
+    );
+    if (already.some((draft) => draft.status !== 'pending')) continue;
+    if (already.some((draft) => compareRichness(draft, best.item) >= 0)) continue;
+
+    keep.push(best);
+    for (const draft of already) replace.add(draft.id);
+  }
+
+  return { keep, replace: [...replace] };
+}

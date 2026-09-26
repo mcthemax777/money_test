@@ -53,20 +53,28 @@ export function matchPaymentMethod(
    * 알 길이 없어 빈 칸으로 남는다. 그때 그 알림에 늘 함께 오는 말을 사람이 한 번 적어
    * 두면(설정 > 자산의 카드·통장) 그 뒤로는 저절로 채워진다.
    *
-   * **둘 이상 걸리면 손대지 않고 아래로 내려간다.** 적어 둔 말이 서로 겹칠 수 있고
-   * (한 카드에 "국민", 다른 카드에 "국민체크"), 그때는 끝 네 자리 쪽이 더 확실하다.
+   * **둘 이상 걸리면 더 많이 맞는 쪽을 고른다.** 적어 둔 말이 서로 겹칠 수 있다(한
+   * 카드에 "국민", 다른 카드에 "국민체크"). 그때 맞은 줄이 많은 쪽, 줄 수가 같으면 맞은
+   * 글자가 긴 쪽이 그 알림을 더 자세히 가리킨 것이다. 그래도 똑같으면 어느 쪽인지 알 길이
+   * 없으니 손대지 않고 아래 단서로 내려간다.
    */
   const text = draft.rawText || draft.cardText;
   const byText = [
-    ...cards.filter((card) => registeredTextAppearsIn(card.matchText, text)).map((card) => ({
-      cardId: card.id,
-      accountId: null,
+    ...cards.map((card) => ({
+      match: { cardId: card.id, accountId: null },
+      score: registeredTextScore(card.matchText, text),
     })),
-    ...accounts
-      .filter((account) => registeredTextAppearsIn(account.matchText, text))
-      .map((account) => ({ cardId: null, accountId: account.id })),
-  ];
-  if (byText.length === 1) return byText[0];
+    ...accounts.map((account) => ({
+      match: { cardId: null, accountId: account.id },
+      score: registeredTextScore(account.matchText, text),
+    })),
+  ]
+    .filter((candidate) => candidate.score.lines > 0)
+    .sort((left, right) => compareScore(right.score, left.score));
+  if (byText.length === 1) return byText[0].match;
+  if (byText.length > 1 && compareScore(byText[0].score, byText[1].score) > 0) {
+    return byText[0].match;
+  }
 
   // 1) 끝 네 자리. 마스킹된 번호에서 숫자만 남겨 뒤 네 자리를 견준다.
   if (draft.cardTail) {
@@ -142,8 +150,14 @@ export function guessCategoryId(
   return null;
 }
 
+/** 적어 둔 말이 글에 얼마나 맞았는가. 맞은 줄 수와 그 줄들의 글자 수. */
+interface TextScore {
+  lines: number;
+  chars: number;
+}
+
 /**
- * 사람이 적어 둔 말이 그 글 안에 있는가. 한 줄이라도 걸리면 그 수단이다.
+ * 사람이 적어 둔 말이 그 글 안에 얼마나 있는가. 한 줄도 안 걸리면 0 이다.
  *
  * 견주기 전에 **공백만 떼고 소문자로** 만든다. 이름 견주기(`normalizeName`)처럼
  * "카드"·"은행"을 떼지 않는다 -- 그쪽은 등록한 이름과 문구의 표기가 다른 것을 잇는
@@ -151,18 +165,24 @@ export function guessCategoryId(
  * ("국민카드" 라고 적었는데 "카드" 가 떨어지면 "국민은행" 알림에도 걸린다.)
  *
  * 한 글자짜리 줄은 보지 않는다. 아무 글에나 들어 있어 그 수단이 엉뚱한 거래에 붙는다.
+ * 같은 줄을 두 번 적어도 한 번으로 센다 -- 겹쳐 적은 쪽이 이기면 안 된다.
  */
-function registeredTextAppearsIn(matchText: string | null | undefined, text: string | null): boolean {
-  if (!matchText || !text) return false;
+function registeredTextScore(matchText: string | null | undefined, text: string | null): TextScore {
+  const none: TextScore = { lines: 0, chars: 0 };
+  if (!matchText || !text) return none;
 
   const haystack = squash(text);
-  if (!haystack) return false;
+  if (!haystack) return none;
 
-  return matchText
-    .split('\n')
-    .map(squash)
-    .filter((line) => line.length >= 2)
-    .some((line) => haystack.includes(line));
+  const hits = [...new Set(matchText.split('\n').map(squash))].filter(
+    (line) => line.length >= 2 && haystack.includes(line),
+  );
+  return { lines: hits.length, chars: hits.reduce((sum, line) => sum + line.length, 0) };
+}
+
+/** 맞은 줄 수가 먼저, 같으면 글자 수. 양수면 왼쪽이 더 많이 맞았다. */
+function compareScore(left: TextScore, right: TextScore): number {
+  return left.lines - right.lines || left.chars - right.chars;
 }
 
 /** 공백을 떼고 소문자로. 줄바꿈과 사이 띄어쓰기 때문에 어긋나지 않게 한다. */

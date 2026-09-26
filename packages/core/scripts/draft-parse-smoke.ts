@@ -21,7 +21,7 @@ import {
   type NotificationInput,
 } from '../src/lib/draft-parse';
 import { guessCategoryId, matchPaymentMethod } from '../src/lib/draft-match';
-import { captureItems } from '../src/lib/draft-collect';
+import { captureItems, dedupeNotificationItems } from '../src/lib/draft-collect';
 
 let fail = 0;
 function eq(label: string, actual: unknown, expected: unknown) {
@@ -722,16 +722,52 @@ console.log('\n── 이 가계부의 것과 맞추기 ──');
   );
 
   /*
-   * 둘 이상 걸리면 손대지 않고 아래 단서로 내려간다.
+   * 둘 이상 걸리면 더 많이 맞는 쪽으로 간다.
    *
-   * 적어 둔 말이 서로 겹칠 수 있다("국민"과 "국민카드"). 그때는 끝 네 자리가 더 확실하다.
+   * 적어 둔 말이 서로 겹칠 수 있다("국민"과 "국민카드"). 맞은 줄 수, 그다음 맞은 글자
+   * 수가 많은 쪽이 그 알림을 더 자세히 가리킨 것이다.
    */
   eq(
-    '겹치면 끝 네 자리로 내려간다',
+    '겹치면 더 길게 맞는 쪽',
     matchPaymentMethod(notify('국민카드(9876) 승인 5,000원 09/08 카페')!, {
       accounts,
       cards: [
         { id: 'c1', name: '신한 체크', cardNumberMasked: '**** 1234', isActive: true, matchText: '국민' },
+        { id: 'c2', name: '국민 신용', cardNumberMasked: '**** 9876', isActive: true, matchText: '국민카드' },
+      ] as never,
+    }).cardId,
+    'c2',
+  );
+
+  eq(
+    '겹치면 더 많은 줄이 맞는 쪽',
+    matchPaymentMethod(notify('국민카드 승인 5,000원 09/08 스타벅스')!, {
+      accounts,
+      cards: [
+        { id: 'c1', name: '신한 체크', cardNumberMasked: null, isActive: true, matchText: '국민카드 승인' },
+        { id: 'c2', name: '국민 신용', cardNumberMasked: null, isActive: true, matchText: '국민\n스타벅스' },
+      ] as never,
+    }).cardId,
+    'c2',
+  );
+  eq(
+    '카드와 통장 사이에서도 더 많이 맞는 쪽',
+    matchPaymentMethod(notify('우리은행 출금 5,000원 09/08 국민카드')!, {
+      accounts: [{ id: 'a1', name: '우리 통장', isActive: true, matchText: '우리은행 출금' }] as never,
+      cards: [{ id: 'c1', name: '국민 신용', cardNumberMasked: null, isActive: true, matchText: '국민카드' }] as never,
+    }).accountId,
+    'a1',
+  );
+  /*
+   * 똑같이 맞으면 어느 쪽인지 모른다. 적어 둔 말을 버리고 아래 단서(끝 네 자리)로 간다.
+   * 같은 줄을 두 번 적어 이기는 일도 없어야 한다.
+   */
+  eq(
+    '똑같이 맞으면 아래 단서로',
+    matchPaymentMethod(notify('국민카드(9876) 승인 5,000원 09/08 카페')!, {
+      accounts,
+      cards: [
+        { id: 'c1', name: '신한 체크', cardNumberMasked: '**** 1234', isActive: true, matchText: '국민카드\n국민카드' },
         { id: 'c2', name: '국민 신용', cardNumberMasked: '**** 9876', isActive: true, matchText: '국민카드' },
       ] as never,
     }).cardId,
@@ -752,6 +788,86 @@ console.log('\n── 이 가계부의 것과 맞추기 ──');
     ]),
     'null',
   );
+}
+
+/*
+ * 한 결제에 알림이 여럿 온다. 같은 때 같은 금액이면 하나만 남기고, 카드를 찾았거나
+ * 문구가 더 자세한 쪽을 남긴다.
+ */
+{
+  const at = (minute: number, second = 0) => new Date(2026, 8, 8, 14, minute, second).toISOString();
+  const item = (key: string, over: Record<string, unknown>) => ({
+    key,
+    item: {
+      source: 'notification',
+      dedupeKey: key,
+      rawText: 'x',
+      kind: 'expense',
+      amount: '5000',
+      currency: 'KRW',
+      occurredAt: at(3),
+      merchant: null,
+      cardId: null,
+      accountId: null,
+      ...over,
+    } as never,
+  });
+
+  const same = dedupeNotificationItems(
+    [
+      item('sms', { rawText: '국민카드 승인 5,000원' }),
+      item('app', { rawText: '국민카드(9876) 승인 5,000원 스타벅스', merchant: '스타벅스', cardId: 'c2', occurredAt: at(3, 40) }),
+      item('bank', { rawText: '출금 5,000원', kind: 'transfer', occurredAt: at(4) }),
+    ],
+    [],
+  );
+  eq('같은 때 같은 금액은 하나만', same.keep.length, 1);
+  eq('카드를 찾은 알림을 남긴다', same.keep[0]?.key, 'app');
+
+  const apart = dedupeNotificationItems(
+    [item('a', {}), item('b', { occurredAt: at(10) }), item('c', { amount: '6000' }), item('d', { kind: 'income' })],
+    [],
+  );
+  eq('시각·금액·수입이 다르면 따로', apart.keep.length, 4);
+
+  const noAmount = dedupeNotificationItems([item('a', { amount: null }), item('b', { amount: null })], []);
+  eq('금액을 못 읽은 것끼리는 묶지 않는다', noAmount.keep.length, 2);
+
+  const existing = (status: string, over: Record<string, unknown> = {}) =>
+    ({
+      id: `old-${status}`,
+      source: 'notification',
+      status,
+      rawText: '국민카드 승인 5,000원',
+      kind: 'expense',
+      amount: '5000',
+      currency: 'KRW',
+      occurredAt: at(3),
+      merchant: null,
+      description: null,
+      installmentMonths: null,
+      cardId: null,
+      accountId: null,
+      ...over,
+    }) as never;
+
+  const registered = dedupeNotificationItems(
+    [item('late', { cardId: 'c2', occurredAt: at(4) })],
+    [existing('registered')],
+  );
+  eq('등록한 결제에 늦게 온 알림은 버린다', registered.keep.length, 0);
+
+  const richer = dedupeNotificationItems(
+    [item('late', { cardId: 'c2', occurredAt: at(4) })],
+    [existing('pending')],
+  );
+  eq('더 자세한 새 알림이 대기 중 후보를 갈아 끼운다', `${richer.keep.length}/${richer.replace}`, '1/old-pending');
+
+  const poorer = dedupeNotificationItems(
+    [item('late', { occurredAt: at(4), rawText: '5,000원' })],
+    [existing('pending', { cardId: 'c2' })],
+  );
+  eq('덜 자세한 새 알림은 버린다', `${poorer.keep.length}/${poorer.replace.length}`, '0/0');
 }
 
 console.log(fail === 0 ? '\n전부 통과' : `\n${fail}건 실패`);
