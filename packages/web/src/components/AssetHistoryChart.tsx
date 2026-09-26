@@ -53,6 +53,14 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
   const displayCurrency = useProjectDisplayCurrency();
   const history = useAssetHistory(props);
   const { points, lastPoint, yAxis, canDrill } = history;
+  /**
+   * X축의 열쇠는 날짜, 눈금에 적는 것은 이름이다.
+   *
+   * 이름("9월")을 열쇠로 쓰면 안 된다. 월별 창은 열세 달이라 같은 달 이름이 두 번 서는데,
+   * recharts 는 같은 이름을 한 칸으로 읽어 마지막 칸의 툴팁이 한 해 전 값을 보이고 끝점도
+   * 그리지 못했다. 날짜는 창 안에서 겹치지 않는다.
+   */
+  const labelOf = new Map(points.map((point) => [point.date, point.label]));
 
   /*
    * 끌기. 손가락(마우스)을 따라 창이 시간 위를 미끄러진다.
@@ -177,7 +185,11 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
               style={{ cursor: canDrill ? 'pointer' : 'grab' }}
             >
               <CartesianGrid {...CHART_GRID} />
-              <XAxis dataKey="label" tick={CHART_TICK} />
+              <XAxis
+                dataKey="date"
+                tickFormatter={(date: string) => labelOf.get(date) ?? ''}
+                tick={CHART_TICK}
+              />
               <YAxis
                 domain={yAxis.domain}
                 ticks={yAxis.ticks}
@@ -225,7 +237,7 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
               */}
               {lastPoint && (
                 <ReferenceDot
-                  x={lastPoint.label}
+                  x={lastPoint.date}
                   y={lastPoint.balance}
                   r={4}
                   fill={CHART_COLOR}
