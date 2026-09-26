@@ -374,7 +374,8 @@ export function AddCardModal({
   onClose,
   onSubmit,
   isSubmitting,
-  account,
+  accounts,
+  defaultAccountId,
 }: {
   isOpen: boolean;
   onClose: () => void;
@@ -397,11 +398,22 @@ export function AddCardModal({
     matchText?: string;
   }) => Promise<AssetSaveResult>;
   isSubmitting: boolean;
-  /** 결제 통장. 목록에서 눌러 들어온 계좌다. */
-  account: Account;
+  /**
+   * 고를 수 있는 결제 통장들. 지금 보고 있는 자산주인의 계좌다.
+   *
+   * 예전에는 목록의 계좌 칸에서 눌러 들어와 통장이 이미 정해져 있었다. 추가를 붙박이
+   * 단추 하나로 모으면서 그 자리가 없어졌으므로 여기서 고른다 (웹과 같다).
+   */
+  accounts: Account[];
+  /** 처음 골라 둘 통장. 계좌·카드 상세에서 열었을 때만 있다. 없으면 비워 둔다. */
+  defaultAccountId: string | null;
 }) {
   const { t } = useTranslation();
   const { options: issuerOptions, error: issuerError } = useInstitutions('card_issuer');
+  const [accountId, setAccountId] = useState(defaultAccountId ?? '');
+  /* 한도는 결제 통장의 통화로 적는다. 고르기 전에는 첫 통장의 통화를 보여 준다. */
+  const account = accounts.find((item) => item.id === accountId);
+  const currency = account?.currency ?? accounts[0]?.currency ?? '';
   const [name, setName] = useState('');
   const [cardType, setCardType] = useState<'debit' | 'credit'>('debit');
   const [issuerId, setIssuerId] = useState('');
@@ -424,6 +436,7 @@ export function AddCardModal({
 
   useEffect(() => {
     if (isOpen) {
+      setAccountId(defaultAccountId ?? '');
       setName('');
       setCardType('debit');
       setIssuerId('');
@@ -444,7 +457,7 @@ export function AddCardModal({
     const expiryDate = monthInputToIso(expiryMonth);
 
     const result = await onSubmit({
-      paymentAccountId: account.id,
+      paymentAccountId: accountId,
       name: name.trim(),
       cardType,
       issuerId,
@@ -476,15 +489,19 @@ export function AddCardModal({
       footer={
         <SubmitButton
           label={t(isSubmitting ? 'account.adding' : 'account.addSubmit')}
-          disabled={isSubmitting || !name.trim() || !issuerId}
+          /* 결제 통장 없는 카드는 만들 수 없다. 서버가 paymentAccountId 를 반드시 받는다. */
+          disabled={isSubmitting || !name.trim() || !issuerId || !accountId}
           onPress={save}
         />
       }
     >
       <View className="gap-4">
-        {/* 결제 통장은 누른 자리가 정한다. */}
         <Field label={t('card.account')}>
-          <Text className="rounded-lg bg-gray-50 px-3 py-2 text-gray-900">{account.name}</Text>
+          <PickRow
+            options={accounts.map((item) => ({ id: item.id, name: item.name }))}
+            value={accountId}
+            onPick={setAccountId}
+          />
         </Field>
 
         <Field label={t('card.name')}>
@@ -563,7 +580,7 @@ export function AddCardModal({
             </Field>
             <Text className="text-xs leading-5 text-gray-500">{dayOfMonthHint()}</Text>
 
-            <Field label={t('card.limit', { currency: account.currency })}>
+            <Field label={t('card.limit', { currency })}>
               <TextInput
                 value={creditLimit}
                 onChangeText={setCreditLimit}

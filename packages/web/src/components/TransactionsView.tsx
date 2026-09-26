@@ -90,6 +90,8 @@ import BasisPicker from '@/components/BasisPicker';
 import Modal from '@/components/Modal';
 import TransactionCalendarView from '@/components/TransactionCalendarView';
 import PageHeader from '@/components/PageHeader';
+import PullFooter from '@/components/PullFooter';
+import { useBottomPull } from '@/hooks/useBottomPull';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useTopReveal } from '@/hooks/useTopReveal';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
@@ -400,6 +402,19 @@ export default function TransactionsView({
    * 날에 무엇이 있었나" 다. 한 화면에 섞으면 어느 쪽도 또렷하지 않다.
    */
   const [isCalendar, setIsCalendar] = useState(false);
+  /*
+   * 검색 중에는 바닥에서 한 번 더 당길 때마다 다음 기간 줄들을 끝까지 편다
+   * (`revealMore`). 홈의 거래 목록과 같은 손짓이다.
+   *
+   * 펼친 곳을 받는 중이면 기다린다(`isLoadingOpen`). 첫 묶음이 화면을 못 채우면 스스로
+   * 잇는데, 받기도 전에 이으면 결국 한꺼번에 편 것과 같아진다. 달력에서는 목록이 없다.
+   */
+  const revealPull = useBottomPull({
+    hasMore: tx.canRevealMore && !isCalendar,
+    isLoading: tx.isLoadingOpen,
+    count: tx.months.length,
+    loadMore: tx.revealMore,
+  });
   /** 고른 거래에 붙일 태그를 정하는 창. */
   const [isTagPickOpen, setIsTagPickOpen] = useState(false);
   /**
@@ -1011,14 +1026,9 @@ export default function TransactionsView({
                   )}
                 </button>
                 {/*
-                  검색. 달력 보기에서는 감춘다.
-
-                  아래 목록 쪽이 통째로 빠지는 자리라 걸어 둔 검색이 달력에는 걸리지
-                  않는다. 단추만 남겨 두면 눌러서 조건을 거는데 화면은 그대로여서,
-                  걸렸는지 아닌지 알 길이 없다. 목록으로 돌아오면 걸어 둔 것은 그대로다.
+                  검색. 달력 보기에서도 둔다 -- 걸어 둔 조건이 달력에도 그대로 걸린다.
                 */}
-                {!isCalendar ? (
-                  <button
+                <button
                     type="button"
                     onClick={() => {
                       setDraft(tx.search);
@@ -1041,7 +1051,6 @@ export default function TransactionsView({
                       <span className="font-semibold">{tx.searchCount}</span>
                     ) : null}
                   </button>
-                ) : null}
                 <button
                   type="button"
                   onClick={() => setIsMoreOpen(true)}
@@ -1063,6 +1072,35 @@ export default function TransactionsView({
         {notice ? (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             {notice}
+          </div>
+        ) : null}
+
+        {/*
+          걸려 있는 조건. 탭 위에 둔다. 달력 보기에서도 남는다 -- 달력에도 같은 조건이 걸린다.
+
+          검색 창을 열어야 무엇을 골랐는지 알 수 있으면, 결과가 비었을 때 이유를 찾으려
+          창을 다시 열게 된다. 여기 늘어놓으면 그 걸음이 사라지고, 하나만 빼는 일도
+          창을 열지 않고 끝난다.
+
+          많아지면 가로로 굴린다. 줄바꿈으로 두면 조건이 열 개 넘을 때 목록이 화면 밖으로
+          밀린다.
+        */}
+        {tx.searchChips.length > 0 ? (
+          <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+            {tx.searchChips.map((chip) => (
+              <button
+                key={chip.id}
+                type="button"
+                onClick={() => tx.removeSearchChip(chip.id)}
+                // 지우는 버튼이라 이름을 함께 읽어 준다. 알약만으로는 무엇이 빠지는지 모른다.
+                aria-label={`${chip.label} ${t('tx.search.chipRemove')}`}
+                title={t('tx.search.chipRemove')}
+                className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+              >
+                {chip.label}
+                <X className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            ))}
           </div>
         ) : null}
 
@@ -1116,35 +1154,6 @@ export default function TransactionsView({
                 </button>
               ))}
             </div>
-
-          {/*
-            걸려 있는 조건. 탭 바로 아래에 둔다.
-
-            검색 창을 열어야 무엇을 골랐는지 알 수 있으면, 결과가 비었을 때 이유를 찾으려
-            창을 다시 열게 된다. 여기 늘어놓으면 그 걸음이 사라지고, 하나만 빼는 일도
-            창을 열지 않고 끝난다.
-
-            많아지면 가로로 굴린다. 줄바꿈으로 두면 조건이 열 개 넘을 때 목록이 화면 밖으로
-            밀린다.
-          */}
-          {tx.searchChips.length > 0 ? (
-            <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-              {tx.searchChips.map((chip) => (
-                <button
-                  key={chip.id}
-                  type="button"
-                  onClick={() => tx.removeSearchChip(chip.id)}
-                  // 지우는 버튼이라 이름을 함께 읽어 준다. 알약만으로는 무엇이 빠지는지 모른다.
-                  aria-label={`${chip.label} ${t('tx.search.chipRemove')}`}
-                  title={t('tx.search.chipRemove')}
-                  className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
-                >
-                  {chip.label}
-                  <X className="h-3.5 w-3.5" aria-hidden />
-                </button>
-              ))}
-            </div>
-          ) : null}
           </>
         ) : null}
       </div>
@@ -1152,12 +1161,13 @@ export default function TransactionsView({
       {/*
         달력 보기. 머리글의 단추가 고른다.
 
-        목록 쪽(묶음 알약·검색 조건·기간 줄)은 통째로 감춘다 -- 달력은 한 달을 펼쳐
+        묶음 알약과 기간 줄은 감춘다(검색 조건은 달력에도 걸린다) -- 달력은 한 달을 펼쳐
         놓고 날을 짚는 자리라, 해·주로 묶거나 분류로 파고드는 손잡이가 뜻을 갖지 않는다.
       */}
       {isCalendar ? (
         <TransactionCalendarView
           projectId={selectedProjectId}
+          search={tx.search}
           /* 상세는 목록 보기의 줄과 같은 자리로 연다 (읽기 전용 구성원도 읽는다). */
           onOpenEntry={setDetail}
         />
@@ -1272,6 +1282,10 @@ export default function TransactionsView({
             );
           })
         )}
+        {/* 검색 중에 아직 펴지 않은 기간 줄이 남았을 때만 선다. 당기면 다음 묶음을 편다. */}
+        {tx.canRevealMore ? (
+          <PullFooter pull={revealPull} isLoading={tx.isLoadingOpen} hasMore isEmpty={false} />
+        ) : null}
       </div>
       )}
 

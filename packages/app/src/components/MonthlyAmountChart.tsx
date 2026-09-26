@@ -1,5 +1,6 @@
 /*
- * 12개월 추이 막대. 웹 분류 상세의 같은 그래프를 앱에 옮긴 것이다.
+ * 12개월 추이 막대. 웹 분류 상세의 같은 그래프를 앱에 옮긴 것이다. 요일별·시간대별
+ * 평균도 같은 막대라 이것으로 그린다 (X축 이름을 어디에 적을지만 다르다).
  *
  * 그릴 값은 core 의 useCategoryDetail 이 준다. 여기 있는 것은 react-native-svg 로
  * 그리는 일과, 막대를 눌러 그 달의 금액을 읽는 일뿐이다 (웹에서 마우스를 올리면
@@ -10,7 +11,7 @@ import { Pressable, Text, View, type LayoutChangeEvent } from 'react-native';
 import Svg, { Line, Rect, Text as SvgText } from 'react-native-svg';
 
 import { CHART_COLOR, barDomain, barTicks, formatAxisAmount } from '@money/core/lib/chart';
-import type { MonthlyPoint } from '@money/core/hooks/useCategoryDetail';
+import type { BarPoint } from '@money/core/lib/usage-pattern';
 import { formatCurrency } from '@money/core/lib/money';
 
 /** 그리는 자리의 높이(px). 웹은 300 이지만 앱에서는 그만큼이 화면 절반을 먹는다. */
@@ -29,13 +30,22 @@ const BAR_RATIO = 0.62;
 const GRID_COLOR = '#e5e7eb';
 const AXIS_TEXT_COLOR = '#6b7280';
 
+/**
+ * 열두 달은 다 적으면 글자가 겹치므로 한 칸 걸러 적는다. 마지막 달(= 보고 있는 달)
+ * 부터 거꾸로 세므로 그 달은 늘 적힌다.
+ */
+const everyOtherFromEnd = (index: number, count: number) => (count - 1 - index) % 2 === 0;
+
 export default function MonthlyAmountChart({
   points,
   currency,
+  showAxisLabel = everyOtherFromEnd,
 }: {
-  points: MonthlyPoint[];
+  points: BarPoint[];
   /** 금액의 통화. 축과 읽는 줄이 함께 쓴다. */
   currency: string;
+  /** 몇 번째 막대 밑에 이름을 적을지. 적지 않은 막대도 눌러서 이름을 읽는다. */
+  showAxisLabel?: (index: number, count: number) => boolean;
 }) {
   /** 그리는 자리의 폭. 화면 크기에 따라 달라 그려진 뒤 잰다. */
   const [width, setWidth] = useState(0);
@@ -72,7 +82,7 @@ export default function MonthlyAmountChart({
         {pickedPoint ? (
           <>
             <Text className="shrink text-xs text-gray-500" numberOfLines={1}>
-              {pickedPoint.month}
+              {pickedPoint.label}
             </Text>
             <Text className="text-xs font-semibold text-gray-900">
               {formatCurrency(pickedPoint.amount, currency)}
@@ -122,7 +132,7 @@ export default function MonthlyAmountChart({
 
               return (
                 <Rect
-                  key={`bar-${point.month}-${index}`}
+                  key={`bar-${point.label}-${index}`}
                   x={centerOf(index) - barWidth / 2}
                   y={Math.min(valueY, baseY)}
                   width={barWidth}
@@ -135,21 +145,18 @@ export default function MonthlyAmountChart({
               );
             })}
 
-            {/*
-              X축 이름. 열두 달을 다 적으면 글자가 겹치므로 한 칸 걸러 적는다.
-              마지막 달(= 보고 있는 달)부터 거꾸로 세므로 그 달은 늘 적힌다.
-            */}
+            {/* X축 이름. 어느 막대에 적을지는 showAxisLabel 이 정한다. */}
             {points.map((point, index) =>
-              (points.length - 1 - index) % 2 === 0 ? (
+              showAxisLabel(index, points.length) ? (
                 <SvgText
-                  key={`label-${point.month}-${index}`}
+                  key={`label-${point.label}-${index}`}
                   x={centerOf(index)}
                   y={PLOT_HEIGHT - 6}
                   fontSize={10}
                   fill={AXIS_TEXT_COLOR}
                   textAnchor="middle"
                 >
-                  {point.month}
+                  {point.label}
                 </SvgText>
               ) : null,
             )}

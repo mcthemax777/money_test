@@ -9,32 +9,59 @@
  * 한 번에 하나만 선다. 두 화면이 동시에 떠 있지 않으므로 목록으로 둘 까닭이 없고,
  * 겹쳐 서면 어느 것을 누르는지 알 수 없다.
  */
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useRef,
+  useState,
+  type ComponentType,
+  type Dispatch,
+  type ReactNode,
+  type SetStateAction,
+} from 'react';
 
 /** 단추에 실리는 것. 무엇을 하는 단추인지는 부르는 화면이 정한다. */
 export interface FloatingAction {
   /** 읽어 주는 말. 단추에는 그림만 선다. */
   label: string;
   onPress: () => void;
+  /**
+   * 단추의 그림. 비우면 더하기(+)다.
+   *
+   * 같은 자리에 서는 단추라도 화면마다 만드는 것이 다르다 (거래 추가와 자산 추가).
+   * 그림까지 같으면 무엇을 만드는 단추인지 눌러 봐야 안다.
+   */
+  icon?: ComponentType;
 }
 
-interface FloatingActionSlot {
-  action: FloatingAction | null;
-  set: (action: FloatingAction | null) => void;
-}
-
-const FloatingActionContext = createContext<FloatingActionSlot | null>(null);
+/*
+ * 그릴 단추와 세우는 함수를 다른 컨텍스트에 둔다.
+ *
+ * 하나에 담으면 단추를 세우는 화면도 단추 값을 구독하게 된다. 세울 때마다 그 화면이
+ * 다시 그려지고, 다시 그려지며 새로 만든 `onPress` 로 또 세우는 고리가 생긴다 -- 거래
+ * 화면이 그렇게 초당 백 번 넘게 다시 그려져 JS 가 내내 100% 였다. 세우는 함수는
+ * useState 의 것이라 바뀌지 않으므로, 이쪽만 구독하는 화면은 단추가 바뀌어도 그대로다.
+ */
+const FloatingActionContext = createContext<FloatingAction | null>(null);
+const FloatingActionSetterContext = createContext<Dispatch<
+  SetStateAction<FloatingAction | null>
+> | null>(null);
 
 export function FloatingActionProvider({ children }: { children: ReactNode }) {
   const [action, setAction] = useState<FloatingAction | null>(null);
-  const value = useMemo(() => ({ action, set: setAction }), [action]);
 
-  return <FloatingActionContext.Provider value={value}>{children}</FloatingActionContext.Provider>;
+  return (
+    <FloatingActionSetterContext.Provider value={setAction}>
+      <FloatingActionContext.Provider value={action}>{children}</FloatingActionContext.Provider>
+    </FloatingActionSetterContext.Provider>
+  );
 }
 
 /** 껍데기가 지금 그릴 단추. 없으면 null. */
 export function useFloatingAction(): FloatingAction | null {
-  return useContext(FloatingActionContext)?.action ?? null;
+  return useContext(FloatingActionContext);
 }
 
 /**
@@ -42,18 +69,25 @@ export function useFloatingAction(): FloatingAction | null {
  *
  * 화면을 떠날 때 거두는 일까지 여기서 한다 -- 거두지 않으면 다음 화면에 남의 단추가
  * 서고, 그것을 누르면 보이지 않는 화면의 팝업이 열린다.
+ *
+ * `onPress` 는 매번 새 함수여도 된다. 누를 때 가장 최근 것을 부르고, 그것이 바뀌었다고
+ * 단추를 다시 세우지는 않는다 -- 다시 세우는 것은 이름·그림이 바뀌거나 단추가
+ * 생기고 사라질 때뿐이다.
  */
 export function useFloatingActionSlot(action: FloatingAction | null) {
-  const slot = useContext(FloatingActionContext);
-  const { label, onPress } = action ?? {};
+  const setAction = useContext(FloatingActionSetterContext);
+  const onPressRef = useRef(action?.onPress);
+  onPressRef.current = action?.onPress;
+  const onPress = useCallback(() => onPressRef.current?.(), []);
+
+  const label = action?.label;
+  const icon = action?.icon;
+  const isShown = Boolean(label && action?.onPress);
 
   useEffect(() => {
-    if (!slot) return;
+    if (!setAction) return;
 
-    slot.set(label && onPress ? { label, onPress } : null);
-    return () => slot.set(null);
-    // slot 은 값이 바뀔 때마다 새로 만들어지므로(action 을 담고 있다) 의존성에 넣지
-    // 않는다. 넣으면 세우자마자 거두는 일이 끝없이 되풀이된다.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [label, onPress]);
+    setAction(isShown && label ? { label, onPress, icon } : null);
+    return () => setAction(null);
+  }, [setAction, isShown, label, icon, onPress]);
 }

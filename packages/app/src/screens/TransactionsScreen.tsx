@@ -64,6 +64,7 @@ import { useUserFilter } from '@money/core/store/user-filter';
 import { useEntryFocus, type EntryFocusOrigin } from '@money/core/store/entry-focus';
 
 import { useFloatingActionSlot } from '../shell/floating-action';
+import { useNearBottom } from '../shell/scroll';
 import { useCloseOnBack, useNavigation } from '../shell/navigation';
 import RevealTop from '../shell/RevealTop';
 import { StickySection, StickySections } from '../shell/StickySection';
@@ -470,6 +471,17 @@ export default function TransactionsScreen() {
    * 날에 무엇이 있었나" 다. 한 화면에 섞으면 어느 쪽도 또렷하지 않다.
    */
   const [isCalendar, setIsCalendar] = useState(false);
+  /*
+   * 검색 중에는 바닥에 닿을 때마다 다음 기간 줄들을 끝까지 편다(`revealMore`).
+   *
+   * 펼친 곳을 아직 받는 중이면 기다린다. 받는 중인 줄은 짧아 바닥이 가까워 보이는데,
+   * 그때 또 펴면 받기도 전에 다음 묶음이 나가 결국 한꺼번에 편 것과 같아진다. 달력
+   * 보기에서는 목록이 없으니 펴지 않는다 -- 펴면 보이지 않는 줄의 조회가 나간다.
+   */
+  useNearBottom(() => {
+    if (tx.canRevealMore && !tx.isLoadingOpen && !isCalendar) tx.revealMore();
+  });
+
   /**
    * 위 머리글(제목·탭·조건)이 되돌아와 있는 높이. `RevealTop` 이 적고 년월 줄이 읽는다.
    *
@@ -922,30 +934,24 @@ export default function TransactionsScreen() {
                     )}
                   </Pressable>
                   {/*
-                    검색. 달력 보기에서는 감춘다.
-
-                    아래 목록 쪽이 통째로 빠지는 자리라 걸어 둔 검색이 달력에는 걸리지
-                    않는다. 단추만 남겨 두면 눌러서 조건을 거는데 화면은 그대로여서,
-                    걸렸는지 아닌지 알 길이 없다. 목록으로 돌아오면 걸어 둔 것은 그대로다.
+                    검색. 달력 보기에서도 둔다 -- 걸어 둔 조건이 달력에도 그대로 걸린다.
                   */}
-                  {!isCalendar ? (
-                    <Pressable
-                      onPress={() => setIsSearchOpen(true)}
-                      accessibilityLabel={t('tx.search')}
-                      /*
-                        아이콘만 둔다. 테두리·바탕도, 누를 때의 바탕도 없다. 머리글에서
-                        이름 옆에 붙는 자리라 상자를 그리면 아이콘보다 상자가 먼저 보인다.
-                        걸어 둔 검색이 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
-                      */
-                      className="flex-row items-center gap-1.5 px-2 py-2"
-                    >
-                      {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
-                      <Search size={18} color={tx.searchCount > 0 ? '#2563eb' : '#4b5563'} />
-                      {tx.searchCount > 0 ? (
-                        <Text className="text-sm font-semibold text-blue-600">{tx.searchCount}</Text>
-                      ) : null}
-                    </Pressable>
-                  ) : null}
+                  <Pressable
+                    onPress={() => setIsSearchOpen(true)}
+                    accessibilityLabel={t('tx.search')}
+                    /*
+                      아이콘만 둔다. 테두리·바탕도, 누를 때의 바탕도 없다. 머리글에서
+                      이름 옆에 붙는 자리라 상자를 그리면 아이콘보다 상자가 먼저 보인다.
+                      걸어 둔 검색이 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
+                    */
+                    className="flex-row items-center gap-1.5 px-2 py-2"
+                  >
+                    {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
+                    <Search size={18} color={tx.searchCount > 0 ? '#2563eb' : '#4b5563'} />
+                    {tx.searchCount > 0 ? (
+                      <Text className="text-sm font-semibold text-blue-600">{tx.searchCount}</Text>
+                    ) : null}
+                  </Pressable>
                   {/*
                     더보기에는 쓰는 일만 들어 있다(태그 붙이기·지우기). 읽기 전용
                     구성원에게는 열 것이 없으므로 버튼째 감춘다.
@@ -976,6 +982,42 @@ export default function TransactionsScreen() {
             </View>
           ) : null}
 
+          {/*
+            걸려 있는 조건. 탭 위에 둔다. 달력 보기에서도 남는다 -- 달력에도 같은 조건이 걸린다.
+
+            검색 창을 열어야 무엇을 골랐는지 알 수 있으면, 결과가 비었을 때 이유를 찾으려
+            창을 다시 열게 된다. 여기 늘어놓으면 그 걸음이 사라지고, 하나만 빼는 일도
+            창을 열지 않고 끝난다.
+
+            많아지면 가로로 굴린다. 줄바꿈으로 두면 조건이 열 개 넘을 때 목록이 화면 밖으로
+            밀린다.
+          */}
+          {tx.searchChips.length > 0 ? (
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              /*
+               * 늘어나지 않게 못 박는다. ScrollView 는 기본 스타일에 flexGrow:1 이 있어
+               * 세로로 늘어선 칸 안에서 남는 높이를 먹는다. 알약 줄은 알약 높이면 된다.
+               */
+              className="grow-0"
+              contentContainerClassName="flex-row items-center gap-2 pr-4"
+            >
+              {tx.searchChips.map((chip) => (
+                <Pressable
+                  key={chip.id}
+                  onPress={() => tx.removeSearchChip(chip.id)}
+                  // 손가락이 닿는 자리라 알약 자체를 누르게 한다. x 만 누르게 하면 빗나간다.
+                  accessibilityLabel={`${chip.label} ${t('tx.search.chipRemove')}`}
+                  className="flex-row items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 active:bg-blue-100"
+                >
+                  <Text className="text-sm font-medium text-blue-700">{chip.label}</Text>
+                  <X size={14} color="#1d4ed8" />
+                </Pressable>
+              ))}
+            </ScrollView>
+          ) : null}
+
           {/* 달력 보기에서는 목록 쪽 손잡이를 감춘다 (바로 아래 주석 참고). */}
           {!isCalendar ? (
             <>
@@ -997,42 +1039,6 @@ export default function TransactionsScreen() {
                   )
                 }
               />
-
-              {/*
-                걸려 있는 조건. 탭 바로 아래에 둔다.
-
-                검색 창을 열어야 무엇을 골랐는지 알 수 있으면, 결과가 비었을 때 이유를 찾으려
-                창을 다시 열게 된다. 여기 늘어놓으면 그 걸음이 사라지고, 하나만 빼는 일도
-                창을 열지 않고 끝난다.
-
-                많아지면 가로로 굴린다. 줄바꿈으로 두면 조건이 열 개 넘을 때 목록이 화면 밖으로
-                밀린다.
-              */}
-              {tx.searchChips.length > 0 ? (
-                <ScrollView
-                  horizontal
-                  showsHorizontalScrollIndicator={false}
-                  /*
-                   * 늘어나지 않게 못 박는다. ScrollView 는 기본 스타일에 flexGrow:1 이 있어
-                   * 세로로 늘어선 칸 안에서 남는 높이를 먹는다. 알약 줄은 알약 높이면 된다.
-                   */
-                  className="grow-0"
-                  contentContainerClassName="flex-row items-center gap-2 pr-4"
-                >
-                  {tx.searchChips.map((chip) => (
-                    <Pressable
-                      key={chip.id}
-                      onPress={() => tx.removeSearchChip(chip.id)}
-                      // 손가락이 닿는 자리라 알약 자체를 누르게 한다. x 만 누르게 하면 빗나간다.
-                      accessibilityLabel={`${chip.label} ${t('tx.search.chipRemove')}`}
-                      className="flex-row items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 active:bg-blue-100"
-                    >
-                      <Text className="text-sm font-medium text-blue-700">{chip.label}</Text>
-                      <X size={14} color="#1d4ed8" />
-                    </Pressable>
-                  ))}
-                </ScrollView>
-              ) : null}
             </>
           ) : null}
         </View>
@@ -1041,12 +1047,16 @@ export default function TransactionsScreen() {
       {/*
         달력 보기. 머리글의 단추가 고른다.
 
-        목록 쪽(묶음 알약·검색 조건·기간 줄)은 통째로 감춘다 -- 달력은 한 달을 펼쳐
+        묶음 알약과 기간 줄은 감춘다(검색 조건은 달력에도 걸린다) -- 달력은 한 달을 펼쳐
         놓고 날을 짚는 자리라, 해·주로 묶거나 분류로 파고드는 손잡이가 뜻을 갖지 않는다.
       */}
       {isCalendar ? (
         /* 상세는 읽기 전용 구성원도 연다. 목록 보기의 줄과 같은 규칙이다. */
-        <TransactionCalendarView projectId={selectedProjectId} onOpenEntry={openDetail} />
+        <TransactionCalendarView
+          projectId={selectedProjectId}
+          search={tx.search}
+          onOpenEntry={openDetail}
+        />
       ) : (
       <StickySections
         /*

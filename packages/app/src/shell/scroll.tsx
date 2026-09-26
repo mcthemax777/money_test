@@ -26,6 +26,10 @@ type Handler = () => void;
 interface NearBottom {
   register: (handler: Handler) => () => void;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
+  /** 껍데기가 스크롤 영역의 높이를 알려 준다(`onLayout`). */
+  noteViewport: (height: number) => void;
+  /** 껍데기가 내용 길이가 바뀔 때마다 알려 준다(`onContentSizeChange`). */
+  noteContent: (height: number) => void;
 }
 
 /** 바닥에서 이만큼 남았을 때 미리 부른다. 다 닿은 뒤에 부르면 빈 자리가 한 번 보인다. */
@@ -45,18 +49,62 @@ export function NearBottomProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
-  const onScroll = useCallback((event: NativeSyntheticEvent<NativeScrollEvent>) => {
-    const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
-    const remaining = contentSize.height - contentOffset.y - layoutMeasurement.height;
-    const isNear = remaining <= THRESHOLD;
+  /** 마지막으로 안 자리·영역·내용의 길이. 스크롤 없이 길이만 바뀔 때 다시 잰다. */
+  const size = useRef({ offset: 0, viewport: 0, content: 0 });
 
-    if (isNear && !wasNearBottom.current) {
+  /**
+   * 바닥 가까이인지 잰다.
+   *
+   * 스크롤할 때는 **들어올 때만** 부른다(바닥 언저리에서 굴리는 동안 거듭 부르지 않게).
+   * 길이가 바뀔 때는 **여전히 가까우면 또 부른다.** 내용이 화면을 다 채우지 못하면
+   * 스크롤이 생기지 않아 굴려서 들어올 수가 없다 -- 한 번 부르고 말면 더 이을 것이 있어도
+   * 거기서 멈춘다. 이어 붙인 것이 화면을 넘기면 바닥에서 멀어져 저절로 그친다.
+   */
+  const check = useCallback((fromSizeChange: boolean) => {
+    const { offset, viewport, content } = size.current;
+    // 아직 재지 못했다. 0 으로 재면 빈 화면을 "바닥"으로 읽는다.
+    if (viewport <= 0 || content <= 0) return;
+
+    const isNear = content - offset - viewport <= THRESHOLD;
+    if (isNear && (fromSizeChange || !wasNearBottom.current)) {
       handlers.current.forEach((handler) => handler());
     }
     wasNearBottom.current = isNear;
   }, []);
 
-  const value = useMemo(() => ({ register, onScroll }), [register, onScroll]);
+  const onScroll = useCallback(
+    (event: NativeSyntheticEvent<NativeScrollEvent>) => {
+      const { contentOffset, contentSize, layoutMeasurement } = event.nativeEvent;
+      size.current = {
+        offset: contentOffset.y,
+        viewport: layoutMeasurement.height,
+        content: contentSize.height,
+      };
+      check(false);
+    },
+    [check],
+  );
+
+  const noteViewport = useCallback(
+    (height: number) => {
+      size.current = { ...size.current, viewport: height };
+      check(true);
+    },
+    [check],
+  );
+
+  const noteContent = useCallback(
+    (height: number) => {
+      size.current = { ...size.current, content: height };
+      check(true);
+    },
+    [check],
+  );
+
+  const value = useMemo(
+    () => ({ register, onScroll, noteViewport, noteContent }),
+    [register, onScroll, noteViewport, noteContent],
+  );
 
   return (
     <NearBottomContext.Provider value={value}>
@@ -267,11 +315,19 @@ export function useScrollRegistration() {
     attach: context?.attach,
     noteContentHeight: context?.noteContentHeight,
     cancelRestore: context?.cancelRestore,
+    /*
+     * 붙박이 머리글이 읽는 공유값. 껍데기가 UI 실에서 스크롤 사건을 받아 직접 적는다
+     * (`useScrollOffset`).
+     *
+     * 여기(`noteOffset`)서 적지 않는다. 이 길은 JS 실을 거쳐 한두 프레임 늦게 오는데,
+     * 그 값으로 머리글을 옮기면 내용이 먼저 굴러간 뒤에 머리글이 뒤따라 돌아와 --
+     * 년월 줄이 스크롤을 따라가려다 제자리로 튀는 것처럼 떨린다.
+     */
+    scrollY: context?.scrollY,
     noteOffset: useCallback(
       (y: number) => {
         if (!context) return;
         context.offset.current = y;
-        context.scrollY.value = y;
       },
       [context],
     ),
@@ -309,7 +365,12 @@ export function useScrollControl() {
 
 /** 껍데기가 스크롤에 붙일 값. */
 export function useNearBottomScroll() {
-  return useContext(NearBottomContext)?.onScroll;
+  const context = useContext(NearBottomContext);
+  return {
+    onScroll: context?.onScroll,
+    noteViewport: context?.noteViewport,
+    noteContent: context?.noteContent,
+  };
 }
 
 /** 바닥에 닿으면 부를 것을 등록한다. 화면을 떠나면 저절로 풀린다. */

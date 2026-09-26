@@ -1266,7 +1266,9 @@ export default function EntryEditor({
           isOpen={adding === 'card'}
           onClose={() => setAdding(null)}
           isSubmitting={quickAdd.isSubmitting}
-          account={newCardAccount}
+          /* 결제 통장은 거래에서 이미 정해졌다. 그 하나만 고른 채로 보여 준다. */
+          accounts={[newCardAccount]}
+          defaultAccountId={newCardAccount.id}
           onSubmit={(input) =>
             addThenPick(quickAdd.addCard(input), (id) => setField('method', cardValue(id)))
           }

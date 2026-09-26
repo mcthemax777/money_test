@@ -172,7 +172,7 @@ export function sumEntries(entries: EntryListItem[]) {
 }
 
 /**
- * 일별 누적 그래프 데이터. 지출 기준으로 쌓는다.
+ * 일별 누적 그래프 데이터. 지출 기준으로 쌓고, 수입 분류를 볼 때는 type 으로 수입을 쌓는다.
  *
  * 달 단위가 아니라 구간(startKey ~ endKey, "YYYY-MM-DD", 양끝 포함)을 받는다.
  * 가계 화면이 달을 넘는 기간도 보여 주기 때문이다. 거래가 없는 날도 점을 만들어
@@ -186,10 +186,12 @@ export function buildDailyCumulative(
   startKey: string,
   endKey: string,
   timeZone: string,
+  type: 'income' | 'expense' = 'expense',
 ): DailyCumulativePoint[] {
+  const amountOf = type === 'expense' ? expenseAmountOf : incomeAmountOf;
   const byDay = new Map<string, number>();
   for (const entry of entries) {
-    const amount = expenseAmountOf(entry);
+    const amount = amountOf(entry);
     if (amount === 0) continue;
     // 며칠에 속하는지는 프로젝트 타임존 기준이다 (UTC로 읽으면 하루 밀린다).
     const key = dateKeyOf(entry.date, timeZone);

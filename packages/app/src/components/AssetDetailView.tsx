@@ -576,7 +576,8 @@ function LedgerRows({
 
   /* 바닥까지 내려오면 다음 쪽을 잇는다. 홈의 거래 목록과 같다 (shell/scroll). */
   useNearBottom(() => {
-    if (hasMore && !isLoading) loadMore();
+    // 실패했으면 스스로 다시 부르지 않는다. 다시 해 보기는 사람이 누른다.
+    if (hasMore && !isLoading && !hasError) loadMore();
   });
 
   const isCard = kind === 'liability';
@@ -673,7 +674,7 @@ function PeriodLedgerList({
 
   /* 바닥까지 내려오면 다음 쪽을 잇는다. 다른 원장과 같다. */
   useNearBottom(() => {
-    if (ledger.hasMore && !ledger.isLoading) ledger.loadMore();
+    if (ledger.hasMore && !ledger.isLoading && !ledger.hasError) ledger.loadMore();
   });
 
   if (ledger.hasError) {

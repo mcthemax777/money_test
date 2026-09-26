@@ -31,6 +31,8 @@ export async function loadPreviousMonths(
   query: EntryDto.ListQuery,
   projectId: string | null | undefined,
   timeZone: string,
+  /** 무엇을 쌓을지. 이번 달 선과 같은 값이어야 한다. */
+  type: 'income' | 'expense' = 'expense',
 ): Promise<CumulativeSeries[]> {
   const months = Array.from({ length: COMPARE_MONTHS }, (_, index) =>
     shiftYearMonth(yearMonth, -(COMPARE_MONTHS - index)),
@@ -51,7 +53,7 @@ export async function loadPreviousMonths(
       return {
         name: formatMonthShort(Number(month.slice(5))),
         // 앞선 달도 이번 달과 같은 몫을 세야 선끼리 견줄 수 있다.
-        points: buildDailyCumulative(rows ?? [], startKey, endKey, timeZone),
+        points: buildDailyCumulative(rows ?? [], startKey, endKey, timeZone, type),
       };
     }),
   );

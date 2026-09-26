@@ -225,6 +225,7 @@ export const ko = {
 
   // ===== 누적 그래프 =====
   'chart.dayTick': '{day}일',
+  'chart.hourTick': '{hour}시',
   'chart.monthStart': '월초',
   'chart.comparePrevious': '지난달 같은 기간',
 
@@ -420,6 +421,8 @@ export const ko = {
   'assets.emptyHint': '구성원·계좌·카드를 누르면 추이와 내역이 여기에 나옵니다.',
   'assets.addTo': '{name} 항목 추가',
   'assets.addTitle': '추가하기',
+  'assets.addNeedsPerson': '구성원을 먼저 추가하세요.',
+  'assets.addNeedsAccount': '계좌를 먼저 추가하세요.',
   /** 큰 금액(카드 대금을 뺀 남은 금액) 아래에 통장에 실제로 찍힌 돈을 적는 줄. */
   'assets.balanceLine': '잔액 {balance}',
   'assets.noAccounts': '등록된 계좌가 없습니다.',
@@ -445,6 +448,7 @@ export const ko = {
   'card.issuer': '발급사',
   'card.issuerPlaceholder': '카드사를 선택하세요',
   'card.issuerRequired': '발급사를 선택하세요.',
+  'card.accountRequired': '결제 계좌를 선택하세요.',
   'card.usage': '사용액',
   'card.limit': '신용한도 ({currency})',
   'card.limitPlain': '신용한도',
@@ -618,6 +622,24 @@ export const ko = {
   'detail.noMonthUsage': '이번 달 사용 내역이 없습니다.',
   'detail.entries': '거래기록',
   'detail.noEntries': '거래내역이 없습니다.',
+  'detail.weekdayAverage': '요일별 평균 사용금액',
+  'detail.hourAverage': '시간대별 평균 사용금액',
+  'detail.methodUsage': '수단별 사용금액',
+  'detail.dailyAverage': '하루 평균',
+  'detail.weekdayNote': '그 요일 하루 평균입니다.',
+  'detail.hourNote': '구간 안의 하루 평균입니다.',
+  'detail.hourUntimed': '시간을 적지 않은 거래 {count}건은 빼고 셉니다.',
+  'detail.noHourUsage': '시간을 적은 거래가 없습니다.',
+  'detail.noMethod': '수단 없음',
+  'detail.monthlyIncome': '월별 수입금액',
+  'detail.income': '수입금액',
+  'detail.noYearIncome': '최근 12개월 수입 내역이 없습니다.',
+  'detail.dailyCumulativeIncome': '일별 누적 수입금액',
+  'detail.cumulativeIncome': '누적 수입금액',
+  'detail.noMonthIncome': '이번 달 수입 내역이 없습니다.',
+  'detail.weekdayAverageIncome': '요일별 평균 수입금액',
+  'detail.hourAverageIncome': '시간대별 평균 수입금액',
+  'detail.methodIncome': '수단별 수입금액',
 
   // ===== 월별 예산 목록 =====
   'schedule.title': '월별 예산',

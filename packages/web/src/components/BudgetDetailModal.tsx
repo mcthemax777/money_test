@@ -15,7 +15,8 @@ import {
 import Modal from './Modal';
 import type { EntryListItem } from './TransactionItem';
 import TransactionListView from './TransactionListView';
-import { useCategoryDetail } from '@money/core/hooks/useCategoryDetail';
+import { useCategoryDetail, type CategorySlice } from '@money/core/hooks/useCategoryDetail';
+import type { BarPoint } from '@money/core/lib/usage-pattern';
 import { type ReportPeriod } from '@money/core/lib/api-client';
 import { formatCurrency } from '@money/core/lib/money';
 import {
@@ -69,6 +70,90 @@ interface BudgetDetailModalProps {
 }
 
 /**
+ * 구성비 원형. 분류 조각과 수단 조각이 함께 쓴다 (앱의 CategoryPieChart 와 같은 자리).
+ *
+ * onDrill 을 주면 id 가 있는 조각을 눌러 한 단 내려간다. id 가 없는 조각("미분류")이나
+ * 수단 조각은 내려갈 곳이 없다.
+ */
+function SlicePieChart({
+  slices,
+  currency,
+  onDrill,
+}: {
+  slices: CategorySlice[];
+  currency: string;
+  onDrill?: (categoryId: string) => void;
+}) {
+  return (
+    <ResponsiveContainer width="100%" height={400}>
+      <PieChart>
+        <Pie
+          data={slices}
+          cx="50%"
+          cy="50%"
+          labelLine={false}
+          label={({ name, value, percent }) =>
+            `${name} ${value || 0} (${((percent || 0) * 100).toFixed(1)}%)`
+          }
+          outerRadius={100}
+          fill="#8884d8"
+          dataKey="value"
+          onClick={(entry: any) => {
+            if (onDrill && entry.id) onDrill(entry.id);
+          }}
+        >
+          {slices.map((entry, index) => (
+            <Cell
+              key={`cell-${index}`}
+              fill={CHART_PIE_COLORS[index % CHART_PIE_COLORS.length]}
+              style={{ cursor: onDrill && entry.id ? 'pointer' : 'default' }}
+            />
+          ))}
+        </Pie>
+        <Tooltip
+          formatter={(value: any) => formatCurrency(value, currency)}
+          contentStyle={CHART_TOOLTIP_STYLE}
+        />
+      </PieChart>
+    </ResponsiveContainer>
+  );
+}
+
+/** 금액 막대. 12개월 추이와 요일별·시간대별 평균이 함께 쓴다. */
+function AmountBarChart({
+  data,
+  currency,
+  tooltipName,
+  interval,
+}: {
+  data: BarPoint[];
+  currency: string;
+  tooltipName: string;
+  /** X축 이름을 몇 칸 걸러 적을지. 0 이면 다 적는다. 비우면 recharts 가 겹치지 않게 고른다. */
+  interval?: number;
+}) {
+  return (
+    <ResponsiveContainer width="100%" height={300}>
+      <BarChart data={data} margin={CHART_MARGIN}>
+        <CartesianGrid {...CHART_GRID} />
+        <XAxis dataKey="label" tick={CHART_TICK} interval={interval} />
+        <YAxis
+          domain={barDomain(data.map((d) => d.amount))}
+          tickFormatter={(value: number) => formatAxisAmount(value, currency)}
+          tick={CHART_TICK}
+          width={CHART_Y_AXIS_WIDTH}
+        />
+        <Tooltip
+          formatter={(value: any) => formatTooltipAmount(value, tooltipName, currency)}
+          contentStyle={CHART_TOOLTIP_STYLE}
+        />
+        <Bar dataKey="amount" fill={CHART_COLOR} radius={CHART_BAR_RADIUS} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+/**
  * 분류 하나(또는 그 유형 전체)의 상세.
  *
  * 무엇을 받아 무엇을 그릴지는 core 의 useCategoryDetail 이 정한다. 앱의 분류 상세
@@ -104,6 +189,9 @@ export function BudgetDetailModal({
     enabled: isOpen,
   });
 
+  /** 거래내역에서 세는 세 그래프가 비었을 때의 안내. 일별 누적과 같은 말을 쓴다. */
+  const emptyPattern = t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noPeriod);
+
   const content = (
     <div className="space-y-8 p-4">
       {detail.isLoading ? (
@@ -134,85 +222,98 @@ export function BudgetDetailModal({
                   </button>
                 )}
               </div>
-              <ResponsiveContainer width="100%" height={400}>
-                <PieChart>
-                  <Pie
-                    data={detail.slices}
-                    cx="50%"
-                    cy="50%"
-                    labelLine={false}
-                    label={({ name, value, percent }) =>
-                      `${name} ${value || 0} (${((percent || 0) * 100).toFixed(1)}%)`
-                    }
-                    outerRadius={100}
-                    fill="#8884d8"
-                    dataKey="value"
-                    onClick={(entry: any) => {
-                      if (!detail.drilledId && entry.id) detail.drill(entry.id);
-                    }}
-                  >
-                    {detail.slices.map((entry, index) => (
-                      <Cell
-                        key={`cell-${index}`}
-                        fill={CHART_PIE_COLORS[index % CHART_PIE_COLORS.length]}
-                        style={{ cursor: !detail.drilledId && entry.id ? 'pointer' : 'default' }}
-                      />
-                    ))}
-                  </Pie>
-                  <Tooltip
-                    formatter={(value: any) => formatCurrency(value, displayCurrency)}
-                    contentStyle={CHART_TOOLTIP_STYLE}
-                  />
-                </PieChart>
-              </ResponsiveContainer>
+              <SlicePieChart
+                slices={detail.slices}
+                currency={displayCurrency}
+                /* 한 단 더 내려간 뒤에는 쪼갤 것이 없다. 그때는 누를 수 없는 그림이다. */
+                onDrill={detail.drilledId ? undefined : detail.drill}
+              />
             </div>
           )}
 
           {/* 12개월 바차트 */}
           <div>
-            <h3 className="text-lg font-semibold mb-4">{t('detail.monthlyUsage')}</h3>
+            <h3 className="text-lg font-semibold mb-4">{t(detail.labels.monthly)}</h3>
             {detail.hasMonthlyAmount ? (
-              <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={detail.monthly} margin={CHART_MARGIN}>
-                  <CartesianGrid {...CHART_GRID} />
-                  <XAxis dataKey="month" tick={CHART_TICK} />
-                  <YAxis
-                    domain={barDomain(detail.monthly.map((d) => d.amount))}
-                    tickFormatter={(value: number) => formatAxisAmount(value, displayCurrency)}
-                    tick={CHART_TICK}
-                    width={CHART_Y_AXIS_WIDTH}
-                  />
-                  <Tooltip
-                    formatter={(value: any) =>
-                    formatTooltipAmount(value, t('detail.usage'), displayCurrency)
-                  }
-                    contentStyle={CHART_TOOLTIP_STYLE}
-                  />
-                  <Bar dataKey="amount" fill={CHART_COLOR} radius={CHART_BAR_RADIUS} />
-                </BarChart>
-              </ResponsiveContainer>
+              <AmountBarChart
+                data={detail.monthly}
+                currency={displayCurrency}
+                tooltipName={t(detail.labels.amount)}
+              />
             ) : (
               <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
-                {t(detail.isOffline ? 'online.viewOnlyOnline' : 'detail.noYearUsage')}
+                {t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noYear)}
               </p>
             )}
           </div>
 
           {/* 일별 라인차트 */}
           <div>
-            <h3 className="text-lg font-semibold mb-4">{t('detail.dailyCumulative')}</h3>
+            <h3 className="text-lg font-semibold mb-4">{t(detail.labels.daily)}</h3>
             {detail.hasDailyAmount ? (
               <DailyCumulativeChart
                 current={detail.daily}
                 comparisons={detail.comparisons}
                 currentName={detail.currentMonthName}
                 throughDay={detail.throughDay}
-                tooltipName={t('detail.cumulativeUsage')}
+                tooltipName={t(detail.labels.cumulative)}
                 height={300}
               />
             ) : (
               <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
-                {t(detail.isOffline ? 'online.viewOnlyOnline' : 'detail.noMonthUsage')}
+                {t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noPeriod)}
+              </p>
+            )}
+          </div>
+
+          {/* 요일·시간대·수단. 셋 다 아래 거래내역에서 센다. */}
+          <div>
+            <h3 className="text-lg font-semibold">{t(detail.labels.weekday)}</h3>
+            <p className="mb-4 text-xs text-gray-500">{t('detail.weekdayNote')}</p>
+            {detail.hasPatternAmount ? (
+              <AmountBarChart
+                data={detail.pattern.weekday}
+                currency={displayCurrency}
+                tooltipName={t('detail.dailyAverage')}
+                interval={0}
+              />
+            ) : (
+              <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
+                {emptyPattern}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <h3 className="text-lg font-semibold">{t(detail.labels.hour)}</h3>
+            <p className="mb-4 text-xs text-gray-500">
+              {t('detail.hourNote')}
+              {detail.pattern.untimedCount > 0 &&
+                ` ${t('detail.hourUntimed', { count: detail.pattern.untimedCount })}`}
+            </p>
+            {detail.pattern.hasTimedAmount ? (
+              <AmountBarChart
+                data={detail.pattern.hour}
+                currency={displayCurrency}
+                tooltipName={t('detail.dailyAverage')}
+                /* 스물넷을 다 적으면 좁은 패널에서 겹친다. 0·3·6…시만 적는다. */
+                interval={2}
+              />
+            ) : (
+              <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
+                {detail.hasPatternAmount ? t('detail.noHourUsage') : emptyPattern}
+              </p>
+            )}
+          </div>
+
+          <div>
+            <h3 className="text-lg font-semibold mb-4">{t(detail.labels.method)}</h3>
+            {detail.hasPatternAmount ? (
+              /* 수단은 분류가 아니라 더 내려갈 곳이 없다. 누를 수 없는 그림이다. */
+              <SlicePieChart slices={detail.pattern.methods} currency={displayCurrency} />
+            ) : (
+              <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
+                {emptyPattern}
               </p>
             )}
           </div>

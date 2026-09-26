@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import type { EntryFilterQuery, EntryListItem, ReportDto } from '@money/types';
+import type { EntryFilterQuery, EntryListItem, EntrySearchQuery, ReportDto } from '@money/types';
 
-import { installmentEntryViews } from '@money/types';
+import { installmentEntryViews, toEntrySearchQuery } from '@money/types';
 
 import { homeDataPort } from '../data/home-port';
 import { type ReportPeriod } from '../lib/api-client';
-import { dayRangeQuery, monthQueryRange } from '../lib/datetime';
+import { dateKeyOf, dayRangeQuery, monthQueryRange } from '../lib/datetime';
 import type { Account, Card, Category, Person } from '../lib/types';
 import { useLedgerBasis } from '../store/ledger-basis';
 import { useProject } from '../store/project';
@@ -13,6 +13,7 @@ import { useUserFilter } from '../store/user-filter';
 import { useDebouncedValue } from './useDebouncedValue';
 import { useMirrorVersion } from './useMirrorVersion';
 import { usePersonFilterSync } from './usePersonFilterSync';
+import { searchRange, type TransactionSearch } from './useTransactions';
 
 /**
  * 가계 화면이 보는 값 전부.
@@ -31,6 +32,7 @@ export function useLedgerData({
   month,
   rangeStart,
   rangeEnd,
+  search,
 }: {
   projectId: string | null;
   year: number;
@@ -38,6 +40,13 @@ export function useLedgerData({
   /** 기간 보기. 둘 다 있으면 달 대신 이 구간을 본다 ("YYYY-MM-DD"). */
   rangeStart?: string;
   rangeEnd?: string;
+  /**
+   * 거래 화면의 검색. 달력 보기가 목록 보기에서 걸어 둔 조건을 그대로 이어받는다.
+   *
+   * 목록에만 걸린다. 상단 합계(summary)에는 싣지 않는다 -- 달력은 합계를 받은 목록으로
+   * 직접 세고(`sumEntries`), 요약 API 가 검색 칸을 받는지는 여기서 기대지 않는다.
+   */
+  search?: TransactionSearch;
 }) {
   const timeZone = useProject((state) => {
     const selected = state.projects.find((project) => project.id === state.selectedProjectId);
@@ -131,6 +140,20 @@ export function useLedgerData({
   }, [people.length, selectedPersonIds]);
   const filter = useDebouncedValue(entryFilter, 250);
 
+  /*
+   * 검색을 조회 조건과 기간으로 나눈다. 객체는 렌더마다 새로 만들어지므로 의존성에는
+   * 문자열로 굳힌 값을 쓴다.
+   *
+   * 기간은 서버로 보내지 않고 받은 뒤 날짜로 자른다. 이 훅은 한 달을 통째로 받아
+   * 달력을 채우는데, 조회 구간을 좁히면 회차 기준 할부를 옮겨 오는 구간까지 함께 좁아진다.
+   * 기간을 잘못 적었으면(searchRange 가 null) 목록 보기와 같이 기간 조건이 없는 것으로 본다.
+   */
+  const searchQueryKey = search ? JSON.stringify(toEntrySearchQuery(search)) : '{}';
+  const searchPeriod = search ? searchRange(search) : null;
+  const searchPeriodKey = searchPeriod
+    ? `${searchPeriod.startKey ?? ''}~${searchPeriod.endKey ?? ''}`
+    : '';
+
   const isRangeMode = Boolean(rangeStart && rangeEnd);
   /**
    * 지금 보고 있는 구간.
@@ -169,23 +192,35 @@ export function useLedgerData({
        * 합칠 것도 옮길 것도 없고, 받아 두면 지난달 거래가 이 달 목록에 그대로 낀다.
        */
       const spread = basis === 'installment';
+      const searchQuery = JSON.parse(searchQueryKey) as EntrySearchQuery;
       const [entryRows, pastRows, summaryRow] = await Promise.all([
-        port.getAllEntries({ ...entryRange, ...filter, basis }, projectId),
+        port.getAllEntries({ ...entryRange, ...filter, ...searchQuery, basis }, projectId),
         spread
-          ? port.getInstallmentRows({ ...entryRange, ...filter }, projectId)
+          ? port.getInstallmentRows({ ...entryRange, ...filter, ...searchQuery }, projectId)
           : Promise.resolve([] as EntryListItem[]),
         port.getSummary(reportPeriod, projectId, { ...filter, basis }),
       ]);
 
       const rows = [...((entryRows ?? []) as EntryListItem[]), ...(pastRows ?? [])];
+      const viewed = spread
+        ? installmentEntryViews(rows, {
+            timeZone,
+            from: entryRange.startDate,
+            to: entryRange.endDate,
+          })
+        : rows;
+      /*
+       * 검색 기간. 회차를 그 달로 옮긴 뒤에 자른다 -- 달력에 서는 날짜가 그것이다.
+       * 날짜 키는 0을 채운 문자열이라 사전순 비교가 곧 날짜 비교다. 없는 쪽은 열려 있다.
+       */
+      const [periodStart, periodEnd] = searchPeriodKey.split('~');
       setEntries(
-        spread
-          ? installmentEntryViews(rows, {
-              timeZone,
-              from: entryRange.startDate,
-              to: entryRange.endDate,
+        searchPeriodKey
+          ? viewed.filter((entry) => {
+              const key = dateKeyOf(entry.date, timeZone);
+              return (!periodStart || key >= periodStart) && (!periodEnd || key <= periodEnd);
             })
-          : rows,
+          : viewed,
       );
       setSummary(summaryRow ?? null);
     } catch (error) {
@@ -194,7 +229,7 @@ export function useLedgerData({
       setHasError(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, rangeKey, filter, basis, timeZone, mirrorVersion]);
+  }, [projectId, rangeKey, filter, basis, timeZone, mirrorVersion, searchQueryKey, searchPeriodKey]);
 
   useEffect(() => {
     reloadPeriod();
@@ -231,7 +266,8 @@ export function useLedgerData({
      * 세는 기준은 거르는 조건이 아니라 세는 방식이라 여기서 빠진다 -- 넣으면 아무것도
      * 고르지 않은 화면에서도 "필터 때문에 비었다"로 읽힌다.
      */
-    isFilterNarrowed: Object.keys(filter).length > 0,
+    isFilterNarrowed:
+      Object.keys(filter).length > 0 || searchQueryKey !== '{}' || searchPeriodKey !== '',
 
     reportPeriod,
     entryRange,

@@ -463,6 +463,15 @@ function clipMonth(
  */
 const ROW_BATCH = 6;
 
+/**
+ * 검색을 켰을 때 한 번에 끝까지 펴는 기간 줄의 수.
+ *
+ * 검색 결과는 끝까지 펴서 보여 주되, 한꺼번에 펴지 않는다. 분류별·수단별은 펼친 기간의
+ * 줄마다 조회가 둘씩 나가서, 주로 묶은 몇 년 치를 통째로 펴면 수천 건이 된다. 위에서부터
+ * 이만큼 펴고, 바닥에 닿을 때마다(`revealMore`) 이만큼 더 편다.
+ */
+const SEARCH_REVEAL_STEP = 3;
+
 /*
  * 빈 값은 하나를 나눠 쓴다.
  *
@@ -471,6 +480,7 @@ const ROW_BATCH = 6;
  */
 const EMPTY_ENTRIES: EntryListItem[] = [];
 const EMPTY_ROWS: TransactionRow[] = [];
+const EMPTY_MONTHS: ReportDto.EntryMonth[] = [];
 const EMPTY_GROUP = new Map<string, EntryListItem[]>();
 
 export function useTransactions(projectId: string | null) {
@@ -520,6 +530,8 @@ export function useTransactions(projectId: string | null) {
    * 때 한 줄씩 눌러 펴는 것 말고는 길이 없던 자리다.
    */
   const [tabLevels, setTabLevels] = useState<Partial<Record<TransactionTab, MonthLevel>>>({});
+  /** 검색을 켰을 때 위에서부터 끝까지 편 기간 줄의 수 (`SEARCH_REVEAL_STEP`). */
+  const [searchReveal, setSearchReveal] = useState(SEARCH_REVEAL_STEP);
   /** 1단에서 손으로 편 줄. 2단에서는 이것과 무관하게 전부 펼친다. */
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
 
@@ -535,7 +547,15 @@ export function useTransactions(projectId: string | null) {
   const [pickerCards, setPickerCards] = useState<CardDto.Response[]>([]);
   const [pickerTags, setPickerTags] = useState<TagDto.Response[]>([]);
 
-  const [months, setMonths] = useState<ReportDto.EntryMonth[]>([]);
+  /**
+   * 거래가 있는 달과, 그 목록을 받은 조건(`scopeKey`).
+   *
+   * 조건을 함께 적어 두는 이유는 아래 `months` 에 있다.
+   */
+  const [monthsState, setMonthsState] = useState<{
+    scopeKey: string;
+    rows: ReportDto.EntryMonth[];
+  }>({ scopeKey: '', rows: EMPTY_MONTHS });
   const [monthData, setMonthData] = useState<Record<string, MonthData>>({});
   /** 줄 하나의 거래. 열쇠는 `달|탭|줄`. 접었다 펴도 다시 받지 않는다. */
   const [rowEntries, setRowEntries] = useState<Record<string, EntryListItem[]>>({});
@@ -679,6 +699,20 @@ export function useTransactions(projectId: string | null) {
   const scopeKeyRef = useRef(scopeKey);
   scopeKeyRef.current = scopeKey;
 
+  /*
+   * 지금 조건으로 받은 달 목록. 옛 조건의 것은 없는 것으로 본다.
+   *
+   * 새 목록이 도착하기 전까지 옛 목록을 세워 두면, 그 줄들이 펼쳐진 채로 새 조건의
+   * 2단·3단 조회를 부른다. 묶는 단위를 바꾸면 옛 열쇠("2026-W38")로 해 단위 조건의
+   * 조회가 나가고, 검색이 걸려 있으면(전부 펼침) 그것이 줄마다 나간다. 주·월·년을 몇 번
+   * 번갈아 누르면 그 조회가 수천 건 쌓여 JS 가 몇 분씩 멈췄다.
+   *
+   * 같은 조건으로 다시 받는 것(거래를 고친 뒤)은 열쇠가 같아 그대로 서 있다 -- 그때
+   * 목록이 사라지면 스크롤이 맨 위로 튄다(아래 1단의 "로딩 중" 설명).
+   */
+  const isMonthsStale = monthsState.scopeKey !== scopeKey;
+  const months = isMonthsStale ? EMPTY_MONTHS : monthsState.rows;
+
   /**
    * 걸려 있는 조건 알약. 목록 위에 늘어놓고, 하나를 누르면 그 조건만 빠진다.
    *
@@ -716,25 +750,47 @@ export function useTransactions(projectId: string | null) {
     // 기간은 두 칸이지만 조건 하나다. 사용자가 고른 것은 구간 하나다.
     (range ? 1 : 0);
 
-  /**
-   * 손대지 않은 달의 펼침 정도.
-   *
-   * **검색을 켜면 전부 펼친다.** 검색은 이미 좁힌 결과라, 그 안에서 다시 한 줄씩 눌러
-   * 열게 하면 좁힌 뜻이 사라진다. 검색을 켠 사람이 보고 싶은 것은 남은 거래 전부다.
-   */
-  /*
-   * 손대지 않은 기간 줄의 단계.
-   *
-   * 검색을 켜면 무조건 끝까지 편다 -- 걸러 낸 것을 보러 온 사람에게 접힌 목록을
-   * 내주면 무엇이 걸렸는지 한 줄도 보이지 않는다. 그 밖에는 탭의 바닥을 따른다.
-   */
-  const defaultLevel: MonthLevel = searchCount > 0 ? 2 : (tabLevels[tab] ?? 0);
+  const isSearching = searchCount > 0;
+  /** 기간 줄이 목록의 몇 번째인가. 검색 중에 어디까지 폈는지 이것으로 가른다. */
+  const monthOrder = useMemo(
+    () => new Map(months.map((month, index) => [month.yearMonth, index])),
+    [months],
+  );
   /** 펼침을 적어 두는 열쇠. 탭이 다르면 다른 자리다. */
   const levelKey = useCallback((yearMonth: string) => `${tab}|${yearMonth}`, [tab]);
+  /*
+   * 기간 줄의 단계. 손으로 정한 것이 먼저다.
+   *
+   * 손대지 않은 줄은 검색을 켜면 끝까지 편다 -- 걸러 낸 것을 보러 온 사람에게 접힌
+   * 목록을 내주면 무엇이 걸렸는지 한 줄도 보이지 않는다. 다만 위에서부터
+   * `searchReveal` 개까지만이고, 그 아래는 바닥에 닿을 때 차례로 편다. 아직 펴지 않은
+   * 줄도 기간 줄의 합계는 검색 조건으로 센 것이라 무엇이 걸렸는지는 보인다.
+   *
+   * 검색이 없으면 탭의 바닥을 따른다.
+   */
   const levelOf = useCallback(
-    (yearMonth: string): MonthLevel => levels[levelKey(yearMonth)] ?? defaultLevel,
-    [levels, levelKey, defaultLevel],
+    (yearMonth: string): MonthLevel => {
+      const chosen = levels[levelKey(yearMonth)];
+      if (chosen !== undefined) return chosen;
+      if (!isSearching) return tabLevels[tab] ?? 0;
+      const order = monthOrder.get(yearMonth);
+      return order !== undefined && order < searchReveal ? 2 : 0;
+    },
+    [levels, levelKey, isSearching, tabLevels, tab, monthOrder, searchReveal],
   );
+
+  /**
+   * 검색 중에 다음 기간 줄들을 편다. 화면이 바닥에 닿을 때 부른다.
+   *
+   * 검색이 없거나 이미 다 폈으면 아무 일도 없다 -- 바닥 감지는 내용이 짧으면 길이가
+   * 바뀔 때마다 부르므로, 그때 값을 올리면 뜻 없이 다시 그린다.
+   */
+  const revealMore = useCallback(() => {
+    if (!isSearching) return;
+    setSearchReveal((count) =>
+      count < months.length ? count + SEARCH_REVEAL_STEP : count,
+    );
+  }, [isSearching, months.length]);
 
   /**
    * 구간 조회가 볼 기간. 달력 날짜다 (ReportDto.PeriodQuery 의 규칙).
@@ -855,6 +911,8 @@ export function useTransactions(projectId: string | null) {
      * 그만큼의 조회가 한꺼번에 나간다. 펼치는 것은 사용자가 그 목록을 보고 고르는 일이다.
      */
     setTabLevels({});
+    // 검색 중에 편 곳도 처음으로 돌린다. 새 목록은 위에서부터 다시 편다.
+    setSearchReveal(SEARCH_REVEAL_STEP);
     /*
      * 고른 것도 버린다.
      *
@@ -912,8 +970,9 @@ export function useTransactions(projectId: string | null) {
 
   // ── 1단. 거래가 있는 달 ──
   useEffect(() => {
+    const askedScope = scopeKey;
     if (!projectId) {
-      setMonths([]);
+      setMonthsState({ scopeKey: askedScope, rows: EMPTY_MONTHS });
       return;
     }
 
@@ -931,12 +990,12 @@ export function useTransactions(projectId: string | null) {
       .getEntryMonths(projectId, { ...scope, ...monthsQuery })
       .then((rows) => {
         if (!alive) return;
-        setMonths(rows);
+        setMonthsState({ scopeKey: askedScope, rows });
         monthsLoadedRef.current = true;
       })
       .catch((error) => {
         if (!alive) return;
-        setMonths([]);
+        setMonthsState({ scopeKey: askedScope, rows: EMPTY_MONTHS });
         fail(error);
       })
       .finally(() => {
@@ -1057,6 +1116,13 @@ export function useTransactions(projectId: string | null) {
      */
     void (async () => {
       for (let index = 0; index < openMonths.length; index += ROW_BATCH) {
+        /*
+         * 조건이 바뀌었으면 남은 묶음은 보내지 않는다. 도착해도 버려질 값이다.
+         *
+         * 나간 묶음은 끝맺게 두고(끊으면 로딩 표시가 남는다), 아직 나가지 않은 것만
+         * 거둔다. 이것이 없으면 단위를 바꿀 때마다 옛 조건의 조회가 끝까지 돌아 쌓인다.
+         */
+        if (scopeKeyRef.current !== askedScope) return;
         await Promise.all(openMonths.slice(index, index + ROW_BATCH).map(load));
       }
     })();
@@ -1380,6 +1446,8 @@ export function useTransactions(projectId: string | null) {
     void (async () => {
       // 나눠 보낸다. 서른 개를 한꺼번에 던지면 받는 쪽에서 밀린다.
       for (let index = 0; index < needed.length; index += ROW_BATCH) {
+        // 조건이 바뀌었으면 남은 묶음은 보내지 않는다 (2단과 같은 규칙).
+        if (scopeKeyRef.current !== askedScope) return;
         await Promise.all(needed.slice(index, index + ROW_BATCH).map(load));
       }
     })();
@@ -1397,7 +1465,6 @@ export function useTransactions(projectId: string | null) {
     monthData,
     openRows,
     levels,
-    defaultLevel,
     scopeKey,
     /*
      * 값이 바뀐 회차를 알아채려면 여기 있어야 한다.
@@ -2089,12 +2156,47 @@ export function useTransactions(projectId: string | null) {
     [loadingRows, rowEntries, rowId, tab],
   );
 
+  /**
+   * 펼친 곳 가운데 아직 값이 오지 않은 것이 있는가.
+   *
+   * 그동안은 `revealMore` 를 부르지 않는다. 받는 중인 줄은 짧게 서 있어 화면이 바닥에
+   * 가까워 보이는데, 그때 또 펴면 받기도 전에 다음 묶음이 나가 결국 한꺼번에 편다.
+   *
+   * **로딩 표시(`loadingMonths`)로 보지 않는다.** 그 표시는 펼친 뒤의 효과가 켜므로,
+   * 펼친 그림과 표시가 켜지는 그림 사이에 틈이 있다. 그 틈에 바닥 감지가 불려 다음 묶음이
+   * 곧바로 펴지는 것을 기기에서 보았다(3 -> 6 -> 9 가 51ms 사이). 값이 있는지로 보면 틈이
+   * 없다. 받다가 실패한 곳도 값이 없으므로 여기서 멈춘다 -- 받지 못하는 곳 아래를 더 펴 봐야
+   * 같은 실패가 늘 뿐이다.
+   */
+  const isLoadingOpen = useMemo(() => {
+    for (const yearMonth of openMonths) {
+      const have = monthData[yearMonth];
+      if (tab === 'date') {
+        if (!have?.entries) return true;
+        continue;
+      }
+      if (tab === 'category' ? !have?.categories : !have?.methods) return true;
+      for (const row of rowsOf(yearMonth)) {
+        if (isRowOpen(yearMonth, row.key) && !rowEntries[rowId(yearMonth, row.key)]) return true;
+      }
+    }
+    return false;
+  }, [openMonths, monthData, tab, rowsOf, isRowOpen, rowEntries, rowId]);
+
   return {
     // 1단
     months,
-    isLoadingMonths,
+    /*
+     * 조건을 바꾼 직후, 1단 효과가 돌기 전의 한 그림도 로딩으로 본다. 그 그림에서는
+     * 목록이 비어 있어 "거래가 없습니다"가 한 번 스친다.
+     */
+    isLoadingMonths: isLoadingMonths || isMonthsStale,
     levelOf,
     cycleMonth,
+    revealMore,
+    /** 검색 중이고 아직 펴지 않은 기간 줄이 남았는가. */
+    canRevealMore: isSearching && searchReveal < months.length,
+    isLoadingOpen,
     // 2단
     tab,
     changeTab,

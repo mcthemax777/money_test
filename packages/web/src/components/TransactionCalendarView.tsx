@@ -15,10 +15,11 @@
  * 한 건은 같은 모양이어야 한다 -- 달력을 켜고 끌 때마다 줄의 생김새가 바뀌면 같은
  * 거래인지 눈으로 좇아야 한다.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { entryRows, originalEntry, type EntryListItem } from '@money/types';
 
 import { useLedgerData } from '@money/core/hooks/useLedgerData';
+import type { TransactionSearch } from '@money/core/hooks/useTransactions';
 import { currentYearMonth } from '@money/core/lib/datetime';
 import { sumEntries } from '@money/core/lib/entries';
 import { useTranslation } from '@money/core/lib/i18n';
@@ -30,9 +31,15 @@ import TransactionItem from '@/components/TransactionItem';
 
 export default function TransactionCalendarView({
   projectId,
+  search,
   onOpenEntry,
 }: {
   projectId: string | null;
+  /**
+   * 목록 보기에서 걸어 둔 검색. 달력도 같은 조건으로 거른다 -- 보기를 바꿨다고 조건이
+   * 풀리면, 걸어 둔 것이 아직 살아 있는지 머리글의 숫자만 보고는 알 수 없다.
+   */
+  search?: TransactionSearch;
   /** 줄을 누르면 상세를 연다. */
   onOpenEntry?: (entry: EntryListItem) => void;
 }) {
@@ -51,7 +58,17 @@ export default function TransactionCalendarView({
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [dayEntries, setDayEntries] = useState<EntryListItem[]>([]);
 
-  const ledger = useLedgerData({ projectId, year: view.year, month: view.month });
+  const ledger = useLedgerData({ projectId, year: view.year, month: view.month, search });
+
+  /*
+   * 검색을 바꾸면 고른 날을 푼다. 고른 날의 거래는 누를 때 받아 둔 것이라, 조건이 바뀐
+   * 뒤에도 그대로 두면 달력에서는 사라진 거래가 아래 목록에 남는다.
+   */
+  const searchKey = search ? JSON.stringify(search) : '';
+  useEffect(() => {
+    setSelectedDate(null);
+    setDayEntries([]);
+  }, [searchKey]);
   const totals = sumEntries(ledger.entries);
 
   const changeMonth = (year: number, month: number) => {

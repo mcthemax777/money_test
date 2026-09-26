@@ -1,6 +1,7 @@
-import { useRef, type ReactNode } from 'react';
+import { useCallback, useRef, type ReactNode } from 'react';
 import { Plus } from 'lucide-react-native';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import { useAnimatedRef, useScrollOffset } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTranslation } from '@money/core/lib/i18n';
@@ -43,11 +44,27 @@ function Shell({ children }: { children: ReactNode }) {
   const { isAuthenticated, isInitializing } = useAuth();
   const insets = useSafeAreaInsets();
   /* 바닥에 닿으면 목록이 다음 쪽을 잇는다 (shell/scroll 참고). */
-  const onScroll = useNearBottomScroll();
+  const nearBottom = useNearBottomScroll();
   const isScrollLocked = useScrollLocked();
   /* 목록이 끌기 중에 이 스크롤을 빌려 쓴다 (shell/scroll 참고). */
-  const { attach, noteOffset, noteContentHeight, cancelRestore } = useScrollRegistration();
+  const { attach, noteOffset, noteContentHeight, cancelRestore, scrollY } = useScrollRegistration();
   const scrollRef = useRef<ScrollView>(null);
+  /*
+   * 붙박이 머리글(년월 줄·`RevealTop`)이 읽는 스크롤 자리를 UI 실에서 적는다.
+   *
+   * `onScroll` 로 받아 적으면 JS 실을 거쳐 한두 프레임 늦다. 내용은 이미 굴러갔는데
+   * 머리글은 옛 값으로 서 있다가 뒤늦게 돌아와, 굴릴 때마다 따라가다 튀는 것처럼 보인다.
+   */
+  const animatedRef = useAnimatedRef<ScrollView>();
+  useScrollOffset(animatedRef, scrollY);
+  /* 두 ref 를 한 자리에 건다. 매번 새 함수를 주면 그릴 때마다 사건을 새로 등록한다. */
+  const setScrollRef = useCallback(
+    (node: ScrollView | null) => {
+      scrollRef.current = node;
+      animatedRef(node);
+    },
+    [animatedRef],
+  );
 
   /*
    * 프로젝트 목록은 여기서 받지 않는다. App 의 Authenticated 가 먼저 받는다 --
@@ -97,7 +114,7 @@ function Shell({ children }: { children: ReactNode }) {
             scrollEnabled={!isScrollLocked}
             contentContainerClassName="mx-auto w-full max-w-7xl px-4 pb-8 pt-4 md:pt-8"
             contentContainerStyle={{ paddingBottom: 32 + insets.bottom }}
-            ref={scrollRef}
+            ref={setScrollRef}
             /*
              * 스크롤 영역이 화면 어디에 있는지 함께 넘긴다. 목록이 가장자리를 잴 때 쓴다 --
              * 위로는 안전 영역만큼, 아래로는 탭 막대만큼 화면과 어긋나 있다.
@@ -105,16 +122,24 @@ function Shell({ children }: { children: ReactNode }) {
             onLayout={(event) => {
               const { y, height } = event.nativeEvent.layout;
               attach?.(scrollRef.current, { top: insets.top + y, height });
+              nearBottom.noteViewport?.(height);
             }}
             onScroll={(event) => {
               noteOffset(event.nativeEvent.contentOffset.y);
-              onScroll?.(event);
+              nearBottom.onScroll?.(event);
             }}
             /*
              * 내용이 길어지는 때를 알려 준다. 상세를 접고 목록으로 나오는 길에 보던
              * 자리로 되돌리는데, 목록이 다 그려지기 전에는 그만큼 굴릴 데가 없다.
              */
-            onContentSizeChange={(_width, height) => noteContentHeight?.(height)}
+            /*
+             * 바닥 감지도 함께 받는다. 내용이 화면보다 짧으면 스크롤이 없어, 길이가 바뀌는
+             * 이 자리가 아니면 "더 이을 때"를 알 길이 없다.
+             */
+            onContentSizeChange={(_width, height) => {
+              noteContentHeight?.(height);
+              nearBottom.noteContent?.(height);
+            }}
             /* 사람이 손으로 굴리기 시작하면 기다리던 되돌리기는 그만둔다. */
             onScrollBeginDrag={() => cancelRestore?.()}
             /*
@@ -148,6 +173,7 @@ function Shell({ children }: { children: ReactNode }) {
 function FloatingButton() {
   const action = useFloatingAction();
   if (!action) return null;
+  const Icon = action.icon;
 
   return (
     /*
@@ -161,7 +187,7 @@ function FloatingButton() {
         accessibilityLabel={action.label}
         className="h-14 w-14 items-center justify-center rounded-full bg-blue-600 shadow-lg active:bg-blue-700"
       >
-        <Plus size={26} color="#ffffff" />
+        {Icon ? <Icon /> : <Plus size={26} color="#ffffff" />}
       </Pressable>
     </View>
   );

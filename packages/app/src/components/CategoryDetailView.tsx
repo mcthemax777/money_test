@@ -9,6 +9,7 @@
  * 무엇을 받아 무엇을 그릴지는 core 의 useCategoryDetail 이 정한다(웹의 상세와 같은
  * 훅이다). 같은 분류를 누르면 두 화면이 같은 값을 말한다.
  */
+import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import type { EntryScopeQuery, EntryListItem } from '@money/types';
 
@@ -27,6 +28,24 @@ import MonthlyAmountChart from './MonthlyAmountChart';
 import CategoryPieChart from './CategoryPieChart';
 import PageHeader from './PageHeader';
 import TransactionListView from './TransactionListView';
+
+/** 시간대 막대 스물넷 중 이름을 적는 것. 0·3·6…시만 적어야 폰 너비에서 겹치지 않는다. */
+const everyThirdHour = (index: number) => index % 3 === 0;
+/** 요일은 일곱뿐이라 다 적는다. */
+const everyWeekday = () => true;
+
+/** 그래프 한 장의 카드. 제목 밑에 무엇의 평균인지 적는 한 줄을 둘 수 있다. */
+function ChartCard({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
+  return (
+    <View className="gap-3 rounded-lg bg-white p-4 shadow-sm">
+      <View className="gap-1">
+        <Text className="text-base font-semibold text-gray-900">{title}</Text>
+        {note ? <Text className="text-xs text-gray-500">{note}</Text> : null}
+      </View>
+      {children}
+    </View>
+  );
+}
 
 export default function CategoryDetailView({
   categoryId,
@@ -79,6 +98,9 @@ export default function CategoryDetailView({
     return t('detail.pieExpenseChild');
   })();
 
+  /** 거래 목록에서 세는 세 그래프가 비었을 때의 안내. 일별 누적과 같은 말을 쓴다. */
+  const emptyPattern = t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noPeriod);
+
   return (
     <View className="gap-6">
       <PageHeader title={t('category.detailTitle', { name: categoryName })} onBack={onClose} />
@@ -113,20 +135,20 @@ export default function CategoryDetailView({
 
           <View className="gap-3 rounded-lg bg-white p-4 shadow-sm">
             <Text className="text-base font-semibold text-gray-900">
-              {t('detail.monthlyUsage')}
+              {t(detail.labels.monthly)}
             </Text>
             {detail.hasMonthlyAmount ? (
               <MonthlyAmountChart points={detail.monthly} currency={displayCurrency} />
             ) : (
               <Text className="py-12 text-center text-sm text-gray-500">
-                {t(detail.isOffline ? 'online.viewOnlyOnline' : 'detail.noYearUsage')}
+                {t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noYear)}
               </Text>
             )}
           </View>
 
           <View className="gap-3 rounded-lg bg-white p-4 shadow-sm">
             <Text className="text-base font-semibold text-gray-900">
-              {t('detail.dailyCumulative')}
+              {t(detail.labels.daily)}
             </Text>
             {detail.hasDailyAmount ? (
               <DailyCumulativeChart
@@ -134,14 +156,60 @@ export default function CategoryDetailView({
                 comparisons={detail.comparisons}
                 currentName={detail.currentMonthName}
                 throughDay={detail.throughDay}
-                tooltipName={t('detail.cumulativeUsage')}
+                tooltipName={t(detail.labels.cumulative)}
               />
             ) : (
               <Text className="py-12 text-center text-sm text-gray-500">
-                {t(detail.isOffline ? 'online.viewOnlyOnline' : 'detail.noMonthUsage')}
+                {t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noPeriod)}
               </Text>
             )}
           </View>
+
+          {/* 요일·시간대·수단. 셋 다 아래 거래 목록에서 센다. */}
+          <ChartCard title={t(detail.labels.weekday)} note={t('detail.weekdayNote')}>
+            {detail.hasPatternAmount ? (
+              <MonthlyAmountChart
+                points={detail.pattern.weekday}
+                currency={displayCurrency}
+                showAxisLabel={everyWeekday}
+              />
+            ) : (
+              <Text className="py-12 text-center text-sm text-gray-500">{emptyPattern}</Text>
+            )}
+          </ChartCard>
+
+          <ChartCard
+            title={t(detail.labels.hour)}
+            note={[
+              t('detail.hourNote'),
+              detail.pattern.untimedCount > 0
+                ? t('detail.hourUntimed', { count: detail.pattern.untimedCount })
+                : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+          >
+            {detail.pattern.hasTimedAmount ? (
+              <MonthlyAmountChart
+                points={detail.pattern.hour}
+                currency={displayCurrency}
+                showAxisLabel={everyThirdHour}
+              />
+            ) : (
+              <Text className="py-12 text-center text-sm text-gray-500">
+                {detail.hasPatternAmount ? t('detail.noHourUsage') : emptyPattern}
+              </Text>
+            )}
+          </ChartCard>
+
+          <ChartCard title={t(detail.labels.method)}>
+            {detail.hasPatternAmount ? (
+              /* 수단은 분류가 아니라 더 내려갈 곳이 없다. onDrill 을 주지 않는다. */
+              <CategoryPieChart slices={detail.pattern.methods} currency={displayCurrency} />
+            ) : (
+              <Text className="py-12 text-center text-sm text-gray-500">{emptyPattern}</Text>
+            )}
+          </ChartCard>
 
           <View className="gap-3">
             <Text className="text-base font-semibold text-gray-900">{t('detail.entries')}</Text>

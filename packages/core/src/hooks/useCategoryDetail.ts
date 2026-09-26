@@ -3,30 +3,33 @@
  *
  * 웹의 가계 > 분류별 오른쪽 패널과 앱의 분류 상세 화면이 함께 쓴다. 받아 오는 것은
  * 넷이다 -- 구성비 조각(원형차트), 12개월 추이, 일별 누적, 그 구간의 거래 목록.
+ * 요일별·시간대별 평균과 수단별 합계는 그 거래 목록에서 센다 (`usage-pattern.ts`).
  *
  * 두 화면이 같은 값을 보게 하려고 여기에 두었다. 조회 조건이 조금이라도 갈라지면
  * 웹과 앱이 같은 분류를 눌렀는데 다른 금액을 말하게 된다. 그리는 일(원형·막대·선)만
  * 각자 맡는다 -- 웹은 recharts, 앱은 react-native-svg 라 컴포넌트를 나눌 수 없다.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { EntryDto, EntryFilterQuery, EntryListItem } from '@money/types';
 
 import { useMirrorVersion } from './useMirrorVersion';
 import { homeDataPort } from '../data/home-port';
 import { apiClient, type ReportPeriod } from '../lib/api-client';
-import { dayRangeQuery, formatMonthShort, throughDayOf } from '../lib/datetime';
+import { dayRangeQuery, formatMonthShort, throughDayOf, todayKey } from '../lib/datetime';
 import {
   buildDailyCumulative,
   monthDateKeys,
   type CumulativeSeries,
   type DailyCumulativePoint,
 } from '../lib/entries';
-import { activeLocale, translate } from '../lib/i18n';
+import { activeLocale, translate, type MessageKey } from '../lib/i18n';
 import { toNumber } from '../lib/money';
 import { loadPreviousMonths } from '../lib/month-compare';
 import { isOfflineError } from '../lib/offline-error';
 import type { Category } from '../lib/types';
+import { buildUsagePattern, type BarPoint, type UsagePattern } from '../lib/usage-pattern';
 import { useProjectTimeZone } from '../store/project';
+import { useWeekStart } from '../store/week-start';
 
 /** 합계를 가리키는 가짜 분류 id. 실제 분류 id 와 섞이지 않는 값이다. */
 export const TOTAL_EXPENSE_ID = 'total-expense';
@@ -37,6 +40,50 @@ export function totalIdOf(type: 'income' | 'expense'): string {
   return type === 'expense' ? TOTAL_EXPENSE_ID : TOTAL_INCOME_ID;
 }
 
+/**
+ * 그래프 제목과 안내 문구. 수입 분류는 "사용금액" 대신 "수입금액"으로 적는다.
+ * 웹과 앱이 같은 말을 고르도록 여기서 정한다.
+ */
+export interface DetailLabels {
+  monthly: MessageKey;
+  /** 12개월 막대 툴팁의 이름 */
+  amount: MessageKey;
+  noYear: MessageKey;
+  daily: MessageKey;
+  /** 일별 누적 툴팁의 이름 */
+  cumulative: MessageKey;
+  /** 이 구간에 센 것이 없을 때. 일별 누적과 요일·시간대·수단이 함께 쓴다. */
+  noPeriod: MessageKey;
+  weekday: MessageKey;
+  hour: MessageKey;
+  method: MessageKey;
+}
+
+const DETAIL_LABELS: Record<'income' | 'expense', DetailLabels> = {
+  expense: {
+    monthly: 'detail.monthlyUsage',
+    amount: 'detail.usage',
+    noYear: 'detail.noYearUsage',
+    daily: 'detail.dailyCumulative',
+    cumulative: 'detail.cumulativeUsage',
+    noPeriod: 'detail.noMonthUsage',
+    weekday: 'detail.weekdayAverage',
+    hour: 'detail.hourAverage',
+    method: 'detail.methodUsage',
+  },
+  income: {
+    monthly: 'detail.monthlyIncome',
+    amount: 'detail.income',
+    noYear: 'detail.noYearIncome',
+    daily: 'detail.dailyCumulativeIncome',
+    cumulative: 'detail.cumulativeIncome',
+    noPeriod: 'detail.noMonthIncome',
+    weekday: 'detail.weekdayAverageIncome',
+    hour: 'detail.hourAverageIncome',
+    method: 'detail.methodIncome',
+  },
+};
+
 /** 원형차트 조각 하나 */
 export interface CategorySlice {
   name: string;
@@ -45,12 +92,8 @@ export interface CategorySlice {
   id?: string;
 }
 
-/** 12개월 추이의 한 점 */
-export interface MonthlyPoint {
-  /** "8월" */
-  month: string;
-  amount: number;
-}
+/** 12개월 추이의 한 점. label 은 "8월"이다. 요일·시간대 막대와 같은 모양이다. */
+export type MonthlyPoint = BarPoint;
 
 interface BreakdownRow {
   categoryId: string;
@@ -128,6 +171,8 @@ export interface CategoryDetailInput {
 
 export interface CategoryDetail {
   isLoading: boolean;
+  /** 보고 있는 분류의 유형에 맞춘 제목과 안내 문구 */
+  labels: DetailLabels;
   /** 12개월 추이 */
   monthly: MonthlyPoint[];
   /** 이 구간의 일별 누적 */
@@ -136,6 +181,10 @@ export interface CategoryDetail {
   comparisons: CumulativeSeries[];
   /** 이 구간의 거래. 일별 누적과 같은 조회에서 온다. */
   entries: EntryListItem[];
+  /** 요일별·시간대별 하루 평균과 수단별 합계. 위 거래 목록에서 센다. */
+  pattern: UsagePattern;
+  /** 이 구간에 센 금액이 있는지. 없으면 세 그래프 자리에 안내를 적는다. */
+  hasPatternAmount: boolean;
   /** 지금 그릴 원형차트 조각. 파고든 상태면 그 대분류의 소분류들이다. */
   slices: CategorySlice[];
   /** 조각을 눌러 파고든 대분류. null 이면 첫 단계다. */
@@ -173,6 +222,8 @@ export function useCategoryDetail({
   const timeZone = useProjectTimeZone();
   // 남이 고친 거래도 이 상세에 들어와야 한다. reloadToken 은 이 화면의 편집만 센다.
   const mirrorVersion = useMirrorVersion();
+  // 요일별 평균의 차례. 달력 머리글과 같은 요일에서 시작한다.
+  const weekStart = useWeekStart();
 
   /*
    * 구간을 세 형태로 쓴다.
@@ -274,7 +325,7 @@ export function useCategoryDetail({
          * 같은 열흘인지 정해지지 않아 견줄 대상이 없다.
          */
         const comparisonPromise = period.yearMonth
-          ? serverOnly(loadPreviousMonths(period.yearMonth, entryQuery, projectId, timeZone), [])
+          ? serverOnly(loadPreviousMonths(period.yearMonth, entryQuery, projectId, timeZone, target.type), [])
           : Promise.resolve([] as CumulativeSeries[]);
 
         // 원형차트: 전체면 대분류별, 대분류를 보고 있으면 소분류별.
@@ -307,15 +358,17 @@ export function useCategoryDetail({
         const trend = (trendRes ?? []) as Array<{ yearMonth: string; amount: string }>;
         setMonthly(
           trend.map((point) => ({
-            month: formatMonthShort(Number(point.yearMonth.split('-')[1])),
+            label: formatMonthShort(Number(point.yearMonth.split('-')[1])),
             amount: toNumber(point.amount),
           })),
         );
 
         const rows = (entriesRes ?? []) as EntryListItem[];
         setEntries(rows);
-        // 일별 누적. 이체는 금액이 아니라 수수료만 쌓는다.
-        setDaily(buildDailyCumulative(rows, dayKeys.startKey, dayKeys.endKey, timeZone));
+        // 일별 누적. 수입 분류는 수입을, 지출은 지출을 쌓는다 (이체는 수수료만).
+        setDaily(
+          buildDailyCumulative(rows, dayKeys.startKey, dayKeys.endKey, timeZone, target.type),
+        );
         setComparisons(comparisonRes);
 
         const breakdown = (breakdownRes ?? []) as BreakdownRow[];
@@ -366,6 +419,26 @@ export function useCategoryDetail({
     target.isLeaf,
   ]);
 
+  /*
+   * 거래 목록에서 세는 세 그래프. 목록이 바뀔 때만 다시 센다 -- 거래마다 타임존 변환을
+   * 두 번 하므로 렌더마다 돌리기에는 무겁다. "오늘"은 날이 바뀌어도 목록을 다시 받을
+   * 때 따라온다.
+   */
+  const pattern = useMemo(
+    () =>
+      buildUsagePattern({
+        entries,
+        type: target.type,
+        startKey: dayKeys.startKey,
+        endKey: dayKeys.endKey,
+        todayKey: todayKey(timeZone),
+        timeZone,
+        weekStart,
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [entries, target.type, periodKey, timeZone, weekStart],
+  );
+
   const drill = (id: string) => {
     // 서버가 이미 계산한 평면 집계를 쓴다. 대분류를 직접 볼 때와 같은 규칙이어야 한다.
     const next = buildSubcategoryStats(flatBreakdown, id);
@@ -382,10 +455,13 @@ export function useCategoryDetail({
 
   return {
     isLoading,
+    labels: DETAIL_LABELS[target.type],
     monthly,
     daily,
     comparisons,
     entries,
+    pattern,
+    hasPatternAmount: pattern.methods.length > 0,
     slices: drilledId ? drilledSlices : slices,
     drilledId,
     drill,

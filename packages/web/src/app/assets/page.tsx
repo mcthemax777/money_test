@@ -29,7 +29,7 @@ import { type AccountDto, type CardDto, type ReportDto } from '@money/types';
 import { ArrowLeft, Info, Receipt, X } from 'lucide-react';
 import { EMPTY_SEARCH, type TransactionSearch } from '@money/core/hooks/useTransactions';
 import { useDragReorder } from '@/hooks/useDragReorder';
-import AddButton from '@/components/AddButton';
+import AssetAddChooser, { AssetAddIcon, type AssetAddKind } from '@/components/AssetAddChooser';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import {
   dayOfMonthHint,
@@ -663,6 +663,8 @@ export default function DashboardPage() {
   const [addedForPersonId, setAddedForPersonId] = useState<string | null>(null);
   const [isAccountModalOpen, setIsAccountModalOpen] = useState(false);
   const [isPersonAddModalOpen, setIsPersonAddModalOpen] = useState(false);
+  /** 붙박이 추가 단추가 연, 무엇을 만들지 고르는 팝업. */
+  const [isAddChooserOpen, setIsAddChooserOpen] = useState(false);
   const [cardForm, setCardForm] = useState({
     accountId: '',
     name: '',
@@ -1216,11 +1218,11 @@ export default function DashboardPage() {
   }, [loadNetWorth, selectedProjectId]);
 
   /*
-   * 추가는 목록 안에서 시작한다.
+   * 추가는 오른쪽 아래 붙박이 단추 하나에서 시작한다 (거래 화면과 같은 자리).
    *
-   * 예전에는 머리글의 "추가하기" 하나로 들어가 무엇을 만들지 고르고, 그다음에 주인이나
-   * 결제 통장을 다시 골랐다. 만들 자리를 화면에서 이미 누르고 들어왔는데 그것을 폼에서
-   * 또 고르는 셈이었다. 지금은 그 자리의 버튼이 주인·통장을 채운 채로 연다.
+   * 예전에는 목록 곳곳에 추가 버튼이 서 있어, 통장이 늘수록 같은 버튼이 그만큼 쌓였다.
+   * 지금은 단추가 무엇을 만들지 묻고, 주인·결제 통장은 폼에서 고른다. 상세의 버튼은
+   * 그 자리가 주인·통장을 채운 채로 연다.
    */
   const openPersonAdd = () => setIsPersonAddModalOpen(true);
 
@@ -1234,11 +1236,50 @@ export default function DashboardPage() {
     setAddType('card');
   };
 
+  /**
+   * 붙박이 단추로 연 폼에 미리 채울 주인과 결제 통장.
+   *
+   * 상세를 펼쳐 두었으면 그 항목에서 읽는다 -- 보고 있던 사람·통장 밑에 만들 때가
+   * 가장 흔하다. 아니면 주인은 "나"(목록에 없으면 목록의 첫 사람)이고, 결제 통장은
+   * 비워 둔다. 통장은 사람마다 여럿이라 아무것이나 골라 두면 모르고 저장하기 쉽다.
+   */
+  const addDefaults = (): { ownerId: string | null; accountId: string } => {
+    if (detailType === 'person' && selectedPerson) {
+      return { ownerId: selectedPerson.id, accountId: '' };
+    }
+    if (detailType === 'account' && selectedAccount) {
+      return { ownerId: selectedAccount.ownerId ?? null, accountId: selectedAccount.id };
+    }
+    if (detailType === 'card' && selectedCard) {
+      const account = accounts.find((item) => item.id === selectedCard.paymentAccountId);
+      return { ownerId: account?.ownerId ?? null, accountId: selectedCard.paymentAccountId };
+    }
+    const fallbackOwner = displayPeople.some((person) => person.id === myPersonId)
+      ? myPersonId
+      : (displayPeople[0]?.id ?? null);
+    return { ownerId: fallbackOwner, accountId: '' };
+  };
+
+  const chooseAdd = (kind: AssetAddKind) => {
+    setIsAddChooserOpen(false);
+    const { ownerId, accountId } = addDefaults();
+    if (kind === 'person') openPersonAdd();
+    else if (kind === 'account') openAccountAdd(ownerId);
+    else openCardAdd(accountId);
+  };
+
   const handleAddCard = async (e: React.FormEvent) => {
     e.preventDefault();
     try {
       setIsSubmitting(true);
       setAddError('');
+
+      // 결제 통장도 필수다. 붙박이 단추로 열면 비어 있을 수 있다.
+      if (!cardForm.accountId) {
+        setAddError(t('card.accountRequired'));
+        setIsSubmitting(false);
+        return;
+      }
 
       // 카드사는 필수다. CustomSelect는 <input required>와 달리 브라우저 검증이 없어
       // 비워 두면 서버에서 "기관을 찾을 수 없습니다"가 돌아와 원인을 알기 어렵다.
@@ -1449,9 +1490,9 @@ export default function DashboardPage() {
               myPersonId={myPersonId}
               selectedPersonIds={selectedPersonIds}
               /*
-                구성원을 더하고, 열고, 차례를 바꾸는 일은 여기 없다. 아래 목록이 그
-                자리다 -- 추가는 목록 위 버튼, 상세는 상자의 머리글, 차례는 상자를 끌어
-                정한다. 이 창은 보는 범위만 고른다.
+                구성원을 더하고, 열고, 차례를 바꾸는 일은 여기 없다. 추가는 오른쪽 아래
+                붙박이 단추, 상세는 상자의 머리글, 차례는 상자를 끌어 정한다. 이 창은
+                보는 범위만 고른다.
               */
               onTogglePerson={togglePersonId}
             />
@@ -1493,9 +1534,8 @@ export default function DashboardPage() {
             <p className="text-gray-600">{t('common.loading')}</p>
           ) : (
           /*
-            고른 자산주인이 없어도 목록 자체는 그린다. 안내와 함께 구성원 추가 버튼이
-            그 안에 있어서다 -- 예전에는 이 판이 통째로 사라져, 아무도 없는 가계부에서는
-            구성원을 더할 길이 아예 막혔다.
+            고른 자산주인이 없어도 목록 자체는 그린다. 비었다는 안내가 그 안에 있다.
+            구성원·계좌·카드 추가는 오른쪽 아래 붙박이 단추가 맡는다.
           */
           <AssetList
             people={displayPeople}
@@ -1528,9 +1568,6 @@ export default function DashboardPage() {
             onReorderPeople={handleReorderPeople}
             onReorderAccounts={handleReorderAccounts}
             onReorderCards={handleReorderCards}
-            onAddPerson={openPersonAdd}
-            onAddAccount={openAccountAdd}
-            onAddCard={openCardAdd}
           />
           )}
           </div>
@@ -1983,7 +2020,7 @@ export default function DashboardPage() {
             <div className="flex gap-2">
               {/*
                 이 사람 밑에 계좌를 바로 만든다. 카드는 계좌 밑에 붙으므로 여기서 고를 것이
-                없다 -- 목록의 계좌 안에 그 버튼이 있다.
+                없다 -- 계좌 상세나 붙박이 추가 단추에서 만든다.
 
                 상세를 닫고 여는 것은 이 화면의 다른 팝업과 같은 규칙이다. 모달을 겹쳐
                 띄우지 않는다.
@@ -2177,6 +2214,34 @@ export default function DashboardPage() {
         onDelete={handleDeleteCard}
       />
 
+      {/*
+        자산 추가. 화면 오른쪽 아래에 붙박인다 (거래 화면의 추가 단추와 같은 자리·모양).
+
+        목록 위에 두지 않는다 -- 사람·통장이 늘면 목록이 길어져, 위에 둔 단추는 몇 번만
+        굴려도 화면 밖으로 사라진다. 좁은 화면에서는 아래쪽 탭 막대를 피해 그 위에 선다.
+        읽기 전용 구성원에게는 그리지 않는다. 그림은 +가 아니라 지갑이다
+        (`AssetAddIcon`) -- 거래 추가 단추와 헷갈리지 않게.
+      */}
+      {canEdit ? (
+        <button
+          type="button"
+          onClick={() => setIsAddChooserOpen(true)}
+          aria-label={t('assets.addTitle')}
+          title={t('assets.addTitle')}
+          className="fixed bottom-20 right-4 z-30 flex h-14 w-14 items-center justify-center rounded-full bg-blue-600 text-white shadow-lg transition hover:bg-blue-700 active:scale-95 motion-reduce:transition-none motion-reduce:active:scale-100 md:bottom-6 md:right-6"
+        >
+          <AssetAddIcon />
+        </button>
+      ) : null}
+
+      <AssetAddChooser
+        isOpen={isAddChooserOpen}
+        onClose={() => setIsAddChooserOpen(false)}
+        onChoose={chooseAdd}
+        hasPeople={people.length > 0}
+        hasAccounts={accounts.length > 0}
+      />
+
       {/* 구성원 추가 모달 */}
       <PersonModal
         isOpen={isPersonAddModalOpen}
@@ -2201,7 +2266,7 @@ export default function DashboardPage() {
         }}
         people={people}
         projectId={selectedProjectId}
-        /* 구성원 상세에서 들어왔으면 그 사람이 주인이다. 폼에서 바꿀 수 있다. */
+        /* 상세에서 들어왔으면 그 사람이, 아니면 "나"가 주인이다. 폼에서 바꿀 수 있다. */
         defaultOwnerId={addedForPersonId}
       />
 
@@ -2441,7 +2506,7 @@ type SelectedItem = { type: 'person' | 'account' | 'card'; id: string } | null;
  *
  * 머리글은 이름과 소계뿐이다. 누르면 그 사람의 상세가 열리고, **조금 길게 눌러 끌면
  * 구성원 차례가 바뀐다** (계좌·카드와 같은 손짓이다). 계좌가 없는 사람도 상자는
- * 내준다 -- 그 상자가 없으면 그 사람만 차례를 바꿀 수 없고, 계좌를 만들 자리도 없다.
+ * 내준다 -- 그 상자가 없으면 그 사람만 차례를 바꿀 수 없다.
  */
 function AssetList({
   people,
@@ -2456,9 +2521,6 @@ function AssetList({
   onReorderPeople,
   onReorderAccounts,
   onReorderCards,
-  onAddPerson,
-  onAddAccount,
-  onAddCard,
 }: {
   people: Person[];
   accounts: Account[];
@@ -2474,14 +2536,6 @@ function AssetList({
   onReorderPeople: (ids: string[]) => void;
   onReorderAccounts: (ids: string[]) => void;
   onReorderCards: (ids: string[]) => void;
-  /*
-   * 추가는 만들 자리에서 시작한다. 구성원은 목록 위에서, 계좌는 그 사람의 상자 안에서,
-   * 카드는 그 계좌 안에서. 눌러서 들어온 자리가 곧 주인·결제 통장이라 폼에서 다시 고를
-   * 것이 없다.
-   */
-  onAddPerson: () => void;
-  onAddAccount: (personId: string) => void;
-  onAddCard: (accountId: string) => void;
 }) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
@@ -2493,9 +2547,6 @@ function AssetList({
 
   return (
     <div>
-      {/* 만들 자리는 목록 바로 위다 (`AddButton` 과 같은 규칙). */}
-      <AddButton label={t('person.add')} onClick={onAddPerson} />
-
       {people.length === 0 ? (
         <p className="text-sm text-gray-600">{t('assets.noSelection')}</p>
       ) : (
@@ -2532,16 +2583,8 @@ function AssetList({
                   </p>
                 </button>
 
-                <div className="px-4 pt-2">
-                  <AddButton
-                    dense
-                    label={t('account.add')}
-                    onClick={() => onAddAccount(person.id)}
-                  />
-                </div>
-
                 {owned.length === 0 ? (
-                  <p className="px-4 pb-3 text-sm text-gray-600">{t('assets.noAccounts')}</p>
+                  <p className="px-4 py-3 text-sm text-gray-600">{t('assets.noAccounts')}</p>
                 ) : (
                   <AccountList
                     accounts={owned}
@@ -2552,7 +2595,6 @@ function AssetList({
                     onCardClick={onCardClick}
                     onReorder={onReorderAccounts}
                     onReorderCards={onReorderCards}
-                    onAddCard={onAddCard}
                   />
                 )}
               </div>
@@ -2579,7 +2621,6 @@ function AccountList({
   onCardClick,
   onReorder,
   onReorderCards,
-  onAddCard,
 }: {
   accounts: Account[];
   cardsOf: (accountId: string) => Card[];
@@ -2589,7 +2630,6 @@ function AccountList({
   onCardClick: (card: Card) => void;
   onReorder: (ids: string[]) => void;
   onReorderCards: (ids: string[]) => void;
-  onAddCard: (accountId: string) => void;
 }) {
   const { t } = useTranslation();
   const { items, dragProps, draggingId } = useDragReorder(accounts, onReorder);
@@ -2684,9 +2724,8 @@ function AccountList({
               긋고 초록 상자를 쌓았는데, 상자는 그 자체로 한 항목의 무게라 통장과 카드가
               같은 층에 선 것처럼 보였다. 세로줄은 자리를 거의 쓰지 않으면서 층을 만든다.
             */}
+            {cards.length > 0 && (
             <div className="ml-1 mt-1 border-l border-gray-200 pl-3">
-              <AddButton dense label={t('card.add')} onClick={() => onAddCard(account.id)} />
-
               <CardList
                 cards={cards}
                 /* 사용액·남은 대금은 모두 결제 통장의 통화다 (기준통화 환산액이 아니다). */
@@ -2696,6 +2735,7 @@ function AccountList({
                 onReorder={onReorderCards}
               />
             </div>
+            )}
           </div>
         );
       })}
@@ -2723,7 +2763,7 @@ function CardList({
 
   if (items.length === 0) return null;
 
-  /* 들여쓰기와 세로줄은 부르는 쪽(AccountList)이 갖는다. 카드 추가 버튼과 한 덩이라서다. */
+  /* 들여쓰기와 세로줄은 부르는 쪽(AccountList)이 갖는다. 카드가 없으면 세로줄도 긋지 않는다. */
   return (
     <div>
       {items.map((card) => (

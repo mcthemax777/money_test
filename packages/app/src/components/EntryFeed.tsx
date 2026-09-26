@@ -38,9 +38,14 @@ export default function EntryFeed({
     reloadToken,
   });
 
-  /* 바닥까지 내려오면 다음 쪽을 잇는다. 이미 받는 중이거나 더 없으면 아무 일도 없다. */
+  /*
+   * 바닥까지 내려오면 다음 쪽을 잇는다. 이미 받는 중이거나 더 없으면 아무 일도 없다.
+   *
+   * 실패했을 때도 부르지 않는다. 내용이 짧으면 길이가 바뀔 때마다 불려(shell/scroll),
+   * 오프라인에서 실패와 다시 부르기가 끝없이 돈다. 다시 해 보기는 아래 단추가 맡는다.
+   */
   useNearBottom(() => {
-    if (hasMore && !isLoading) loadNext();
+    if (hasMore && !isLoading && !hasError) loadNext();
   });
 
   if (!isLoading && entries.length === 0 && !hasError) {

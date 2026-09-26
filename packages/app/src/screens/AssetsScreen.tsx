@@ -24,7 +24,8 @@ import { useUserFilter } from '@money/core/store/user-filter';
 
 import { useCloseOnBack, useNavigation } from '../shell/navigation';
 import { useScrollRestore, useScrollToTop } from '../shell/scroll';
-import AddButton from '../components/AddButton';
+import { useFloatingActionSlot } from '../shell/floating-action';
+import AssetAddChooser, { AssetAddIcon, type AssetAddKind } from '../components/AssetAddChooser';
 import AssetDetailView, { type AssetDetailTarget } from '../components/AssetDetailView';
 import AssetHistoryChart from '../components/AssetHistoryChart';
 import AssetTypeSummary from '../components/AssetTypeSummary';
@@ -43,7 +44,8 @@ import {
 /**
  * 자산. 웹의 /assets 를 옮긴 것이다.
  *
- * 총자산과 구성원별 계좌·카드 목록을 보여 주고, 목록 안에서 구성원·계좌·카드를 만든다.
+ * 총자산과 구성원별 계좌·카드 목록을 보여 주고, 오른쪽 아래 붙박이 단추로 구성원·계좌·카드를
+ * 만든다.
  * 목록에서 하나를 누르면 그 상세(잔액 추이, 카드 실적)가 화면을 통째로 쓴다.
  */
 export default function AssetsScreen() {
@@ -63,16 +65,16 @@ export default function AssetsScreen() {
   /*
    * 열려 있는 만들기 창.
    *
-   * 계좌는 어느 사람 밑에, 카드는 어느 계좌 밑에 만드는지가 함께 있어야 한다. 눌러서
-   * 들어온 자리가 그것을 정하므로 그 대상을 그대로 담는다 -- 폼에서 다시 고를 것이 없다.
+   * 계좌·카드 창은 처음 골라 둘 주인·결제 통장을 함께 든다. 폼에서 바꿀 수 있다.
    */
+  const [isAddChooserOpen, setIsAddChooserOpen] = useState(false);
   const [isPersonAddOpen, setIsPersonAddOpen] = useState(false);
   /** 고치는 중인 대상. 한 번에 하나만 연다 (만들기 창과 같은 규칙). */
   const [personEdit, setPersonEdit] = useState<Person | null>(null);
   const [accountEdit, setAccountEdit] = useState<Account | null>(null);
   const [cardEdit, setCardEdit] = useState<Card | null>(null);
-  const [accountAddFor, setAccountAddFor] = useState<Person | null>(null);
-  const [cardAddFor, setCardAddFor] = useState<Account | null>(null);
+  const [accountAdd, setAccountAdd] = useState<{ ownerId: string | null } | null>(null);
+  const [cardAdd, setCardAdd] = useState<{ accountId: string | null } | null>(null);
 
 
   /**
@@ -163,6 +165,57 @@ export default function AssetsScreen() {
     const ownerId = ownerOfAccount(card.paymentAccountId);
     return ownerId && visibleIds.has(ownerId) ? { kind: 'card', card } : null;
   })();
+
+  /** 카드의 결제 통장으로 고를 수 있는 계좌. 목록에 선 사람들의 것만이다. */
+  const visibleAccounts = assets.accounts.filter((account) =>
+    visibleIds.has(account.ownerId ?? ''),
+  );
+
+  /**
+   * 붙박이 단추로 연 폼에 미리 채울 주인과 결제 통장 (웹의 `addDefaults` 와 같은 규칙).
+   *
+   * 상세를 펼쳐 두었으면 그 항목에서 읽는다 -- 보고 있던 사람·통장 밑에 만들 때가
+   * 가장 흔하다. 아니면 주인은 "나"(목록에 없으면 목록의 첫 사람)이고, 결제 통장은
+   * 비워 둔다. 통장은 사람마다 여럿이라 아무것이나 골라 두면 모르고 저장하기 쉽다.
+   */
+  const addDefaults = (): { ownerId: string | null; accountId: string | null } => {
+    if (detailTarget?.kind === 'person') {
+      return { ownerId: detailTarget.person.id, accountId: null };
+    }
+    if (detailTarget?.kind === 'account') {
+      return { ownerId: detailTarget.account.ownerId ?? null, accountId: detailTarget.account.id };
+    }
+    if (detailTarget?.kind === 'card') {
+      const accountId = detailTarget.card.paymentAccountId;
+      return { ownerId: ownerOfAccount(accountId), accountId };
+    }
+    const fallbackOwner = visibleIds.has(assets.myPersonId ?? '')
+      ? assets.myPersonId
+      : (assets.visiblePeople[0]?.id ?? null);
+    return { ownerId: fallbackOwner, accountId: null };
+  };
+
+  const chooseAdd = (kind: AssetAddKind) => {
+    setIsAddChooserOpen(false);
+    const { ownerId, accountId } = addDefaults();
+    if (kind === 'person') setIsPersonAddOpen(true);
+    else if (kind === 'account') setAccountAdd({ ownerId });
+    else setCardAdd({ accountId });
+  };
+
+  /*
+   * 자산 추가. 껍데기가 오른쪽 아래에 붙박이로 그린다 (거래 화면의 추가 단추와 같은 자리).
+   *
+   * 목록 위에 두지 않는다 -- 사람·통장이 늘면 목록이 길어져, 위에 둔 단추는 몇 번만
+   * 내려도 화면 밖으로 사라진다. 읽기 전용 구성원에게는 그리지 않는다. 그림은 +가 아니라
+   * 지갑이다 (`AssetAddIcon`) -- 거래 추가 단추와 헷갈리지 않게.
+   *
+   * 누름은 한 번 만들어 둔다. 껍데기는 누름이 바뀔 때마다 단추를 다시 세운다.
+   */
+  const openAddChooser = useCallback(() => setIsAddChooserOpen(true), []);
+  useFloatingActionSlot(
+    canEdit ? { label: t('assets.addTitle'), onPress: openAddChooser, icon: AssetAddIcon } : null,
+  );
 
   /*
    * 사라진 항목의 표시는 지운다. 다시 나타나도 저절로 펼쳐지지 않아야 한다.
@@ -300,9 +353,9 @@ export default function AssetsScreen() {
             myPersonId={assets.myPersonId}
             selectedPersonIds={assets.selectedPersonIds}
             /*
-              구성원을 더하고, 열고, 차례를 바꾸는 일은 여기 없다. 아래 목록이 그
-              자리다 -- 추가는 목록 위 버튼, 상세는 상자의 머리글, 차례는 상자를 끌어
-              정한다. 이 창은 보는 범위만 고른다.
+              구성원을 더하고, 열고, 차례를 바꾸는 일은 여기 없다. 추가는 오른쪽 아래
+              붙박이 단추, 상세는 상자의 머리글, 차례는 상자를 끌어 정한다. 이 창은
+              보는 범위만 고른다.
             */
             onTogglePerson={togglePersonId}
           />
@@ -341,13 +394,9 @@ export default function AssetsScreen() {
 
           머리글은 이름과 소계뿐이다. 누르면 그 사람의 상세가 열리고, **조금 길게 눌러
           끌면 구성원 차례가 바뀐다** (계좌·카드와 같은 손짓이다). 계좌가 없는 사람도
-          상자는 내준다 -- 그 상자가 없으면 그 사람만 차례를 바꿀 수 없고, 계좌를 만들
-          자리도 없다.
+          상자는 내준다 -- 그 상자가 없으면 그 사람만 차례를 바꿀 수 없다.
         */
         <View>
-          {/* 만들 자리는 목록 바로 위다 (`AddButton` 과 같은 규칙). */}
-          <AddButton label={t('person.add')} onPress={() => setIsPersonAddOpen(true)} />
-
           {/*
             상자 끌기. 안쪽 목록(계좌·카드)도 같은 것을 쓰지만 서로 밟지 않는다 --
             줄이 제 손짓의 전파를 끊어 **안쪽이 이긴다** (`DragList` 의 onTouchStart).
@@ -380,16 +429,8 @@ export default function AssetsScreen() {
                     </Text>
                   </View>
 
-                  <View className="px-4 pt-2">
-                    <AddButton
-                      dense
-                      label={t('account.add')}
-                      onPress={() => setAccountAddFor(person)}
-                    />
-                  </View>
-
                   {owned.length === 0 ? (
-                    <Text className="px-4 pb-3 text-sm text-gray-600">{t('assets.noAccounts')}</Text>
+                    <Text className="px-4 py-3 text-sm text-gray-600">{t('assets.noAccounts')}</Text>
                   ) : (
                     <DragList
                       items={owned}
@@ -403,7 +444,6 @@ export default function AssetsScreen() {
                           account={account}
                           profit={assets.accountProfit.get(account.id)}
                           cards={assets.cardsOf(account.id)}
-                          onAddCard={() => setCardAddFor(account)}
                           onOpen={() => openDetail({ kind: 'account', id: account.id })}
                           onOpenCard={(card) => openDetail({ kind: 'card', id: card.id })}
                           onReorderCards={(id, toIndex) =>
@@ -479,25 +519,34 @@ export default function AssetsScreen() {
         />
       ) : null}
 
-      {accountAddFor ? (
+      <AssetAddChooser
+        isOpen={isAddChooserOpen}
+        onClose={() => setIsAddChooserOpen(false)}
+        onChoose={chooseAdd}
+        hasPeople={assets.visiblePeople.length > 0}
+        hasAccounts={visibleAccounts.length > 0}
+      />
+
+      {accountAdd ? (
         <AddAccountModal
           isOpen
-          onClose={() => setAccountAddFor(null)}
+          onClose={() => setAccountAdd(null)}
           onSubmit={assets.addAccount}
           isSubmitting={assets.isSubmitting}
-          /* 눌러서 들어온 상자가 주인을 정한다. 잘못 골랐으면 폼에서 바꾼다. */
+          /* 상세에서 열었으면 그 주인이, 아니면 "나"가 골라져 있다. 폼에서 바꾼다. */
           people={assets.visiblePeople}
-          defaultOwnerId={accountAddFor.id}
+          defaultOwnerId={accountAdd.ownerId}
         />
       ) : null}
 
-      {cardAddFor ? (
+      {cardAdd ? (
         <AddCardModal
           isOpen
-          onClose={() => setCardAddFor(null)}
+          onClose={() => setCardAdd(null)}
           onSubmit={assets.addCard}
           isSubmitting={assets.isSubmitting}
-          account={cardAddFor}
+          accounts={visibleAccounts}
+          defaultAccountId={cardAdd.accountId}
         />
       ) : null}
 
@@ -615,7 +664,6 @@ function AccountRow({
   account,
   profit,
   cards,
-  onAddCard,
   onOpen,
   onOpenCard,
   onReorderCards,
@@ -623,8 +671,6 @@ function AccountRow({
   account: Account;
   profit?: string;
   cards: Card[];
-  /** 카드는 결제 통장 밑에 붙는다. 그 통장이 곧 이 계좌다. */
-  onAddCard: () => void;
   /** 이 계좌의 상세(잔액 추이)를 펼친다 */
   onOpen: () => void;
   /** 그 카드의 상세(실적, 주기별 사용액)를 펼친다 */
@@ -712,10 +758,8 @@ function AccountRow({
         상자를 쌓았는데, 상자는 그 자체로 한 항목의 무게라 통장과 카드가 같은 층에 선
         것처럼 보였다. 세로줄은 자리를 거의 쓰지 않으면서 층을 만든다 (웹과 같다).
       */}
+      {cards.length > 0 ? (
       <View className="ml-1 mt-1 border-l border-gray-200 pl-3">
-        <AddButton dense label={t('card.add')} onPress={onAddCard} />
-
-        {cards.length > 0 ? (
           <DragList
             items={cards}
             gap={0}
@@ -743,8 +787,8 @@ function AccountRow({
               </View>
             )}
           />
-        ) : null}
       </View>
+      ) : null}
     </>
   );
 }
