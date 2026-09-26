@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
+import Animated from 'react-native-reanimated';
 
 import { useAssetsData } from '@money/core/hooks/useAssetsData';
 import { homeDataPort } from '@money/core/data/home-port';
@@ -32,6 +33,7 @@ import EntryEditor from '../components/EntryEditor';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import { AddAccountModal, AddCardModal, AddPersonModal } from '../components/AssetAddModals';
 import DragList from '../components/DragList';
+import { usePressFade } from '../components/usePressFade';
 import {
   EditAccountModal,
   EditCardModal,
@@ -634,6 +636,7 @@ function AccountRow({
   const { due, remaining } = accountDueOf(account.balance, cards);
   const balanceLine = accountBalanceLine(account, { due, t });
   const metaParts = accountMetaParts(account, { profit, t });
+  const fade = usePressFade();
 
   /* 겉 상자는 목록(DragList)이 씌운다. 여기서 또 씌우면 테두리가 두 겹이 된다. */
   return (
@@ -647,7 +650,17 @@ function AccountRow({
 
         카드 묶음은 이 밖에 둔다. 그쪽을 함께 받으면 카드를 누른 것이 계좌 상세로 간다.
       */}
-      <Pressable className="-mx-4 -mt-2 px-4 pt-2 active:opacity-70" onPress={onOpen}>
+      <Pressable
+        className="-mx-4 -mt-2 px-4 pt-2"
+        onPressIn={fade.onPressIn}
+        onPressOut={fade.onPressOut}
+        onPress={onOpen}
+      >
+        {/*
+          흐림은 안쪽에 준다. 겉의 Pressable 은 음수 여백으로 줄 밖까지 누를 자리를 넓혀
+          두었는데, 그것을 다른 뷰로 감싸면 안드로이드는 감싼 뷰 밖의 손끝을 받지 않는다.
+        */}
+        <Animated.View style={fade.style}>
         <View className="flex-row items-center justify-between gap-3">
           <View className="shrink flex-row items-center gap-1.5">
             <Text numberOfLines={1} className="shrink text-sm font-medium text-gray-900">
@@ -689,6 +702,7 @@ function AccountRow({
             ) : null}
           </View>
         ) : null}
+        </Animated.View>
       </Pressable>
 
       {/*

@@ -2520,8 +2520,8 @@ function AssetList({
                   onClick={() => onPersonClick(person)}
                   className={`flex w-full items-center justify-between gap-3 border-b border-gray-200 px-4 py-2 text-left transition ${
                     selected?.type === 'person' && selected.id === person.id
-                      ? 'bg-blue-50'
-                      : 'bg-gray-50 hover:bg-gray-100'
+                      ? 'bg-blue-50 active:bg-blue-100'
+                      : 'bg-gray-50 hover:bg-gray-100 active:bg-gray-200'
                   }`}
                 >
                   <h2 className="min-w-0 truncate text-sm font-bold text-gray-900">
@@ -2616,8 +2616,8 @@ function AccountList({
             /* 오른쪽 패널에 펼쳐 둔 계좌를 목록에서도 알 수 있게 표시한다 */
             className={`px-4 py-2 transition ${
               selected?.type === 'account' && selected.id === account.id
-                ? 'bg-blue-50'
-                : 'hover:bg-gray-50'
+                ? 'bg-blue-50 active:bg-blue-100'
+                : 'hover:bg-gray-50 active:bg-gray-100'
             } ${draggingId === account.id ? 'opacity-50' : ''}`}
           >
             <button
@@ -2732,8 +2732,8 @@ function CardList({
           {...dragProps(card.id)}
           className={`-mx-1 rounded px-1 transition ${
             selected?.type === 'card' && selected.id === card.id
-              ? 'bg-blue-100'
-              : 'hover:bg-gray-100'
+              ? 'bg-blue-100 active:bg-blue-200'
+              : 'hover:bg-gray-100 active:bg-gray-200'
           } ${draggingId === card.id ? 'opacity-50' : ''}`}
         >
           <button

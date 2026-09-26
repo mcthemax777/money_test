@@ -24,6 +24,7 @@ import Animated, {
   withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
+import { pressedOpacity, usePressFade } from './usePressFade';
 
 /** 이만큼 누르고 있으면 끌 수 있다. 짧으면 목록을 훑다가 잡히고, 길면 눌러도 안 잡힌다. */
 const HOLD_MS = 220;
@@ -371,6 +372,8 @@ function DragRow({
    */
   const blockPressRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /* 누를 수 있는 줄만 흐려진다. 눌러도 열리는 것이 없는 줄(자산의 계좌 줄)은 그대로다. */
+  const fade = usePressFade();
 
   /* 제 차례가 아니면 아무것도 하지 않는 스타일. 늘 붙어 있어야 값이 남지 않는다. */
   const style = useAnimatedStyle(() => {
@@ -384,7 +387,7 @@ function DragRow({
       // 끄는 줄이 이웃 위로 올라와야 어디 있는지 보인다.
       zIndex: isActive ? 10 : 0,
       elevation: isActive ? lift.value * 6 : 0,
-      opacity: isActive ? 1 - lift.value * 0.06 : 1,
+      opacity: isActive ? 1 - lift.value * 0.06 : pressedOpacity(fade.pressed.value),
     };
   });
 
@@ -488,6 +491,12 @@ function DragRow({
     >
       <Pressable
         className={className}
+        /*
+         * 끌려고 잡히면 Pressable 이 누름을 놓치므로(onPressOut) 흐림도 저절로 풀린다.
+         * 들린 줄은 위의 스타일이 lift 로 따로 그린다.
+         */
+        onPressIn={onPress ? fade.onPressIn : undefined}
+        onPressOut={onPress ? fade.onPressOut : undefined}
         onPress={() => {
           /*
            * 끌고 나서 손을 뗀 것은 탭이 아니다. 길게 누르기만 하고 움직이지 않은 것도
