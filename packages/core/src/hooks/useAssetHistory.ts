@@ -29,11 +29,12 @@ import {
 import { activeLocale, translate, type MessageKey } from '../lib/i18n';
 import { toNumber } from '../lib/money';
 import { isOfflineError } from '../lib/offline-error';
+import { useHistoryGranularity, type HistoryGranularity } from '../store/history-granularity';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '../store/project';
 import { useWeekStart } from '../store/week-start';
 
 /** 직접 고르는 구간 단위. 눌러서 한 단 내려가는 길(`drillInto`)도 같은 단위를 쓴다. */
-export type Granularity = 'day' | 'week' | 'month' | 'year';
+export type Granularity = HistoryGranularity;
 
 export interface AssetHistoryPoint {
   label: string;
@@ -207,7 +208,15 @@ export function useAssetHistory({
   const timeZone = useProjectTimeZone();
   /** 주 단위에서 한 주를 어디서 끊을지. 거래 화면의 주 묶음과 같은 설정이다. */
   const weekStart = useWeekStart();
-  const [granularity, setGranularity] = useState<Granularity>('month');
+  /**
+   * 직접 고른 단위는 기기에 남고, 모든 추이 그래프가 그 값 하나를 따른다.
+   *
+   * 그리는 단위는 이 화면의 상태로 따로 든다. 칸을 눌러 내려간 단위는 이 그래프에서만
+   * 산다 -- 그것까지 스토어에 적으면 함께 떠 있는 다른 그래프도 같이 내려간다.
+   */
+  const savedGranularity = useHistoryGranularity((state) => state.granularity);
+  const saveGranularity = useHistoryGranularity((state) => state.setGranularity);
+  const [granularity, setGranularity] = useState<Granularity>(savedGranularity);
   /**
    * 창이 지금에서 몇 칸 떨어져 있는지. 0이면 오늘(이번 달, 올해)로 끝나는 창이다.
    *
@@ -279,9 +288,19 @@ export function useAssetHistory({
     (value: Granularity) => {
       resetWindow();
       setGranularity(value);
+      saveGranularity(value);
     },
-    [resetWindow],
+    [resetWindow, saveGranularity],
   );
+
+  /*
+   * 다른 그래프에서 단위를 고르면 떠 있는 이 그래프도 그 단위의 가장 최근 창으로 간다.
+   * 웹은 전체 추이와 계좌 추이가 한 화면에 함께 있을 수 있다.
+   */
+  useEffect(() => {
+    resetWindow();
+    setGranularity(savedGranularity);
+  }, [savedGranularity, resetWindow]);
 
   /**
    * 월별에서 한 달을 눌렀을 때. 주별 그래프를 그 달의 끝에 갖다 댄다.

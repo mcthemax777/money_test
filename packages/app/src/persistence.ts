@@ -12,8 +12,22 @@ import { useProject } from '@money/core/store/project';
 import { useLocaleStore } from '@money/core/store/locale';
 import { useUserFilter } from '@money/core/store/user-filter';
 import { useAssetTypeFilter } from '@money/core/store/asset-type-filter';
+import { useHistoryGranularity } from '@money/core/store/history-granularity';
+import { useLedgerBasis } from '@money/core/store/ledger-basis';
+import { useLedgerKindFilter } from '@money/core/store/ledger-kind-filter';
+import { useWeekStartStore } from '@money/core/store/week-start';
 
-const PERSISTED = [useAuth, useProject, useLocaleStore, useUserFilter, useAssetTypeFilter];
+const PERSISTED = [
+  useAuth,
+  useProject,
+  useLocaleStore,
+  useUserFilter,
+  useAssetTypeFilter,
+  useHistoryGranularity,
+  useWeekStartStore,
+  useLedgerBasis,
+  useLedgerKindFilter,
+];
 
 export async function hydrateStores(): Promise<void> {
   setPersistStorage(AsyncStorage);
