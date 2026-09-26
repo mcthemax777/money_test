@@ -44,7 +44,21 @@ export default function ExchangeRateSettings() {
   /** 입력 중인 값. 저장하기 전까지는 화면에만 있다. */
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
-  if (rates.length === 0) return null;
+  /*
+   * 목록이 비었다. 쓰는 외화가 없으면 칸을 두지 않지만, **받지 못해서** 빈 것이면
+   * 칸을 두고 이유를 적는다 -- 오프라인에서 칸이 통째로 사라지면 설정이 없어진 줄 안다.
+   */
+  if (rates.length === 0) {
+    if (failure !== 'load') return null;
+    return (
+      <View className="rounded-lg bg-white p-6 shadow-sm">
+        <Text className="text-lg font-semibold text-gray-900">{t('exchangeRate.title')}</Text>
+        <Text className="mt-2 text-sm text-gray-500">
+          {t(isOffline ? 'online.onlyOnline' : 'exchangeRate.loadFailed')}
+        </Text>
+      </View>
+    );
+  }
 
   return (
     <View className="rounded-lg bg-white p-6 shadow-sm">

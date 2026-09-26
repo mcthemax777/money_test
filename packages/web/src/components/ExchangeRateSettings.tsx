@@ -4,6 +4,7 @@ import { useState } from 'react';
 import type { ExchangeRateInfo } from '@money/types';
 import { useExchangeRateSettings } from '@money/core/hooks/useExchangeRates';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { useConnectivity } from '@money/core/store/connectivity';
 import { toNumber } from '@money/core/lib/money';
 
 /** 무엇을 하다 실패했는지에 따른 문구. */
@@ -39,9 +40,24 @@ export default function ExchangeRateSettings() {
   const { ledgerCurrency, rates, savingPair, failure, save, reset } = useExchangeRateSettings();
   /** 입력 중인 값. 저장하기 전까지는 화면에만 있다. */
   const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const isOffline = useConnectivity((state) => state.isOffline);
 
 
-  if (rates.length === 0) return null;
+  /*
+   * 목록이 비었다. 쓰는 외화가 없으면 칸을 두지 않지만, **받지 못해서** 빈 것이면
+   * 칸을 두고 이유를 적는다 (앱의 같은 칸과 같다).
+   */
+  if (rates.length === 0) {
+    if (failure !== 'load') return null;
+    return (
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-lg font-semibold text-gray-900">{t('exchangeRate.title')}</h2>
+        <p className="mt-2 text-sm text-gray-500">
+          {t(isOffline ? 'online.onlyOnline' : 'exchangeRate.loadFailed')}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="bg-white rounded-lg shadow p-6">

@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import type { EntryScopeQuery } from '@money/types';
 
-import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
+import { homeDataPort } from '@money/core/data/home-port';
+import type { ReportPeriod } from '@money/core/lib/api-client';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
@@ -83,7 +84,7 @@ export default function PaymentMethodBreakdown({
     let cancelled = false;
     setIsLoading(true);
 
-    apiClient
+    homeDataPort()
       .getPaymentMethods(period, projectId, filter)
       .then((rows) => {
         if (!cancelled) setMethods((rows ?? []) as PaymentMethodItem[]);

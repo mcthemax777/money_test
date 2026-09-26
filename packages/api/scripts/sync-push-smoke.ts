@@ -21,6 +21,7 @@
  *   8. **태그는 더한 것과 뗀 것만 적용한다.** 통째 교체가 아니라, 두 기기가 서로 다른
  *      태그를 붙이면 둘 다 남는다. 그 사이 지워진 거래는 건너뛰고 나머지는 적용된다.
  */
+import { Prisma } from '@prisma/client';
 import { CategoriesService } from '@/modules/categories/categories.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
 import { PeopleService } from '@/modules/people/people.service';
@@ -31,6 +32,7 @@ import {
   makeAccounts,
   makeBudgets,
   makeCards,
+  makeCardLedger,
   makeCategories,
   makeEntries,
   makeLedger,
@@ -73,6 +75,7 @@ runSmoke('sync-push', async (ctx) => {
   const cards = makeCards(ctx.prisma, access, institutions);
   const budgets = makeBudgets(ctx.prisma, access);
   const entries = makeEntries(ctx.prisma, access, ledger);
+  const cardLedger = makeCardLedger(ctx.prisma, access, ledger);
   const replay = new MutationReplayService(
     ctx.prisma as any,
     access as any,
@@ -81,6 +84,7 @@ runSmoke('sync-push', async (ctx) => {
     people as any,
     accounts as any,
     cards as any,
+    cardLedger as any,
     categories as any,
     tags as any,
     budgets as any,
@@ -320,6 +324,7 @@ runSmoke('sync-push', async (ctx) => {
     people as any,
     accounts as any,
     cards as any,
+    makeCardLedger(ctx.prisma, viewerAccess, ledger) as any,
     categories as any,
     tags as any,
     budgets as any,
@@ -583,4 +588,121 @@ runSmoke('sync-push', async (ctx) => {
   );
   const ghostTagged = await push([ghostTag]);
   ctx.check('없는 태그는 거절된다', statusOf(ghostTagged.results, ghostTag.mutationId), 'rejected');
+
+  // ── 9. 외화 청구액 확정 (entry.restate) ──
+  //
+  // 전표 수정과 병합 규칙이 같다 -- 담긴 전표 가운데 하나라도 더 늦게 고쳐졌으면 통째로
+  // 충돌이다. 다른 점은 다리를 새로 만들지 않고 금액만 다시 쓴다는 것이다.
+  const credit = await cards.createCard(uid, {
+    paymentAccountId: bank.id, name: `신용-${RUN}`, cardType: 'credit',
+    issuerId: 'fi_card_shinhan', statementClosingDay: 15, paymentDueDay: 25,
+  }, pid);
+  const foreignIds = [
+    '019273aa-0000-7000-8000-000000000020',
+    '019273aa-0000-7000-8000-000000000021',
+  ];
+  const foreignLine = lineKey();
+  await push(foreignIds.map((entryId, index) =>
+    expenseMutation(entryId, '50', T0 + 6_000_000, {
+      payload: {
+        id: entryId, kind: 'expense', personId: person.id, date: new Date(T0).toISOString(),
+        description: `해외 ${index}`, amount: '50', currency: 'USD', categoryId: food.id,
+        cardId: credit.id, lineKey: index === 0 ? foreignLine : lineKey(),
+      },
+    })));
+  const pendingBefore = await cardLedger.listPendingRates(credit.id, uid);
+  ctx.check('확정 전: 둘 다 미확정 목록에 있다', pendingBefore.items.length, 2);
+
+  const restateMutation = (
+    items: Array<{ entryId: string; billedAmount: string }>,
+    at: number,
+    cardId = credit.id,
+  ): Mutation => ({
+    mutationId: `${RUN}-m-restate-${(seq += 1)}`,
+    clientId: CLIENT,
+    clientSeq: seq,
+    hlc: hlcAt(at),
+    kind: 'entry.restate',
+    projectId: pid,
+    targets: items.map((item) => item.entryId),
+    payload: { cardId, items },
+  });
+  const liability = async () =>
+    (await ctx.prisma.account.findUniqueOrThrow({ where: { id: credit.liabilityAccountId! } }))
+      .balance.toString();
+  const liabilityBefore = await liability();
+
+  const restatedSettle = restateMutation([{ entryId: foreignIds[0], billedAmount: '70500' }], T0 + 6_100_000);
+  const restatedSettled = await push([restatedSettle]);
+  ctx.check('확정 명령이 적용된다', statusOf(restatedSettled.results, restatedSettle.mutationId), 'applied');
+  const restatedSettledEntry = await ctx.prisma.journalEntry.findUniqueOrThrow({
+    where: { id: foreignIds[0] },
+    include: { postings: true },
+  });
+  ctx.check('확정: 미확정 표가 꺼진다', restatedSettledEntry.rateProvisional, false);
+  ctx.check('확정: 시계는 명령의 것이다', restatedSettledEntry.updatedHlc, restatedSettle.hlc);
+  ctx.check('확정: 줄 키가 남는다 (다리를 새로 만들지 않는다)',
+    restatedSettledEntry.postings.some((posting) => posting.lineKey === foreignLine), true);
+  ctx.check('확정: 카드 부채가 청구액만큼 움직인다',
+    new Prisma.Decimal(await liability()).sub(liabilityBefore).toString(),
+    new Prisma.Decimal(pendingBefore.items[0].estimatedAmount).sub('70500').toString());
+  ctx.check('확정 뒤: 남은 한 건만 목록에 있다',
+    (await cardLedger.listPendingRates(credit.id, uid)).items.map((row) => row.entryId).join(','),
+    foreignIds[1]);
+
+  // 같은 명령을 다시 보내면 다시 적용하지 않는다.
+  const restatedSettledAgain = await push([restatedSettle]);
+  ctx.check('확정: 다시 보내도 한 번만', statusOf(restatedSettledAgain.results, restatedSettle.mutationId), 'duplicate');
+
+  // 그 사이 다른 기기가 더 늦게 고쳤으면, 뒤늦게 도착한 옛 확정은 진다.
+  await ctx.prisma.journalEntry.update({
+    where: { id: foreignIds[1] },
+    data: { updatedHlc: hlcAt(T0 + 7_000_000, 'device-b') },
+  });
+  const restatedStale = restateMutation(
+    [
+      { entryId: foreignIds[0], billedAmount: '71000' },
+      { entryId: foreignIds[1], billedAmount: '71000' },
+    ],
+    T0 + 6_500_000,
+  );
+  const restatedStaleResult = await push([restatedStale]);
+  ctx.check('확정: 늦은 편집이 있으면 통째로 충돌', statusOf(restatedStaleResult.results, restatedStale.mutationId), 'conflict');
+  ctx.check('확정: 충돌이면 이긴 쪽 값이 그대로다',
+    (await ctx.prisma.posting.findFirstOrThrow({
+      where: { entryId: foreignIds[0], lineKey: foreignLine },
+    })).amount.toString(), '70500');
+
+  /*
+   * 이미 확정된 거래도 더 늦은 확정이면 다시 쓴다.
+   *
+   * 두 기기가 같은 명세서를 따로 맞췄을 수 있다. 온라인 요청이면 "이미 확정"으로 막지만
+   * 재생은 시계가 정한다 -- 늦은 쪽이 이긴다는 규칙을 여기서만 뒤집으면 안 된다.
+   */
+  const restatedLater = restateMutation([{ entryId: foreignIds[0], billedAmount: '70800' }], T0 + 8_000_000);
+  const restatedLaterResult = await push([restatedLater]);
+  ctx.check('확정: 더 늦은 확정은 확정된 거래도 고친다',
+    statusOf(restatedLaterResult.results, restatedLater.mutationId), 'applied');
+  ctx.check('확정: 그 값이 남는다',
+    (await ctx.prisma.posting.findFirstOrThrow({
+      where: { entryId: foreignIds[0], lineKey: foreignLine },
+    })).amount.toString(), '70800');
+
+  // 이 카드의 거래가 아니면 거절이다. id 만 바꿔 남의 거래를 고칠 수 없다.
+  const restatedNotCard = restateMutation([{ entryId: lunchId, billedAmount: '1000' }], T0 + 9_000_000);
+  const restatedNotCardResult = await push([restatedNotCard]);
+  ctx.check('확정: 카드 거래가 아니면 거절', statusOf(restatedNotCardResult.results, restatedNotCard.mutationId), 'rejected');
+
+  // 없는 거래가 섞이면 통째로 거절이다. 명세서 합계를 맞추는 중이라 일부만 적용하지 않는다.
+  const restatedGhost = restateMutation(
+    [
+      { entryId: foreignIds[1], billedAmount: '69000' },
+      { entryId: '019273aa-0000-7000-8000-0000000000fe', billedAmount: '1000' },
+    ],
+    T0 + 9_100_000,
+  );
+  const restatedGhostResult = await push([restatedGhost]);
+  ctx.check('확정: 없는 거래가 섞이면 거절', statusOf(restatedGhostResult.results, restatedGhost.mutationId), 'rejected');
+  ctx.check('확정: 거절이면 나머지도 그대로다',
+    (await cardLedger.listPendingRates(credit.id, uid)).items.length, 1);
 });

@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { SUPPORTED_LOCALES, type Locale } from '@money/types';
 
+import { useApiError } from '@money/core/lib/api-error';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useLocaleStore } from '@money/core/store/locale';
 
@@ -23,6 +24,7 @@ export default function LanguageSettings() {
   const { t, locale } = useTranslation();
   const { setLocale, isSaving } = useLocaleStore();
   const [error, setError] = useState('');
+  const { messageOf } = useApiError();
 
   const choose = async (next: Locale) => {
     setError('');
@@ -32,7 +34,8 @@ export default function LanguageSettings() {
     } catch (err) {
       console.error('언어 변경 실패:', err);
       // 스토어가 이미 이전 언어로 되돌려 두었다. 알림은 그 언어로 적힌다.
-      setError(t('settings.language.saveFailed'));
+      // 서버에 닿지 못했으면 "연결되면 할 수 있습니다"로 말한다 (messageOf 가 가른다).
+      setError(messageOf(err, 'settings.language.saveFailed'));
     }
   };
 

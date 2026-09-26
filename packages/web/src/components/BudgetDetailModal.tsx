@@ -193,7 +193,7 @@ export function BudgetDetailModal({
               </ResponsiveContainer>
             ) : (
               <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
-                {t('detail.noYearUsage')}
+                {t(detail.isOffline ? 'online.viewOnlyOnline' : 'detail.noYearUsage')}
               </p>
             )}
           </div>
@@ -212,7 +212,7 @@ export function BudgetDetailModal({
               />
             ) : (
               <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
-                {t('detail.noMonthUsage')}
+                {t(detail.isOffline ? 'online.viewOnlyOnline' : 'detail.noMonthUsage')}
               </p>
             )}
           </div>
@@ -221,7 +221,7 @@ export function BudgetDetailModal({
           <div>
             <h3 className="text-lg font-semibold mb-4">{t('detail.entries')}</h3>
             {detail.entries.length === 0 ? (
-              <p className="text-gray-500 text-sm">{t('detail.noEntries')}</p>
+              <p className="text-gray-500 text-sm">{t(detail.isOffline ? 'online.viewOnlyOnline' : 'detail.noEntries')}</p>
             ) : (
               <TransactionListView
                 entries={detail.entries}

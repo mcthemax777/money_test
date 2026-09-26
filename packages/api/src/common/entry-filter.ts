@@ -161,10 +161,17 @@ export function entrySearchConditions(search: ParsedEntrySearch): Prisma.Posting
      * 그 탓에 **전액을 깎은 결제가 통째로 사라졌다** -- 포인트로 전액을 낸 거래는 정가가
      * 그대로 적혀 있고 그 통장으로 결제한 것도 맞는데, 빠져나간 돈만 0이다. 그 통장의
      * 내역을 보러 온 사람에게 "그날 그 결제가 없었다"로 보인다.
+     *
+     * **기초잔액 전표는 뺀다.** 들어온 돈 전부를 보게 되면서 그 전표도 양수 다리로
+     * 걸렸는데, 사용자가 적은 거래가 아니라 계좌를 만들 때(그리고 잔액 맞추기가) 원장
+     * 맨 앞에 두는 자본 전표다. 빼지 않으면 통장을 고를 때마다 기초잔액 한 건이 목록에
+     * 끼어든다. 거래 목록의 달 줄이 그 전표를 빼는 것과 같은 판단이다
+     * (reports.service 의 전표 시각 질의).
      */
     methods.push({
       accountId: { in: search.paymentAccountIds },
       cardId: null,
+      entry: { postings: { none: { account: { type: AccountType.opening_balance } } } },
     });
   }
   if (search.paymentCardIds && search.paymentCardIds.length > 0) {

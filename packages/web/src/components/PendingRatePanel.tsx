@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { type CardDto } from '@money/types';
-import { apiClient } from '@money/core/lib/api-client';
+import { entryWritePort } from '@money/core/data/entry-write-port';
+import { homeDataPort } from '@money/core/data/home-port';
 import {
   billedFromRate,
   derivedRate,
   filledPendingItems,
   groupPendingByMonth,
 } from '@money/core/lib/pending-rates';
+import { useApiError } from '@money/core/lib/api-error';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, formatNumber, toAmountString, toNumber } from '@money/core/lib/money';
 import { formatDateMarker } from '@money/core/lib/datetime';
@@ -35,6 +37,7 @@ interface Props {
  */
 export default function PendingRatePanel({ cardId, onSettled }: Props) {
   const { t } = useTranslation();
+  const { messageOf } = useApiError();
   const [data, setData] = useState<CardDto.PendingRatesResponse | null>(null);
   const [billed, setBilled] = useState<Record<string, string>>({});
   const [bulkRate, setBulkRate] = useState('');
@@ -44,7 +47,8 @@ export default function PendingRatePanel({ cardId, onSettled }: Props) {
   const load = useCallback(async () => {
     try {
       setError('');
-      setData(await apiClient.getCardPendingRates(cardId));
+      // 창구를 거친다. 앱에서는 사본이 답하므로 오프라인에서도 목록이 나온다.
+      setData(await homeDataPort().getCardPendingRates(cardId));
     } catch (err) {
       console.error('미확정 외화 결제 조회 실패:', err);
       setData(null);
@@ -78,18 +82,24 @@ export default function PendingRatePanel({ cardId, onSettled }: Props) {
     try {
       setIsSaving(true);
       setError('');
-      await apiClient.settleCardRates(cardId, {
-        items: filled.map((item) => ({
+      /*
+       * 확정도 창구를 거친다. 앱은 사본에 먼저 적고 명령을 쌓으므로 오프라인에서도 된다.
+       * 건마다 금액을 보낸다 -- 한 번에 채우기로 채운 칸도 이미 금액이다.
+       */
+      await entryWritePort().settleForeignRates(
+        cardId,
+        filled.map((item) => ({
           entryId: item.entryId,
           billedAmount: toAmountString(billed[item.entryId]),
         })),
-      });
+      );
       setBilled({});
       setBulkRate('');
       await load();
       onSettled();
     } catch (err: any) {
-      setError(err?.response?.data?.message || t('pending.confirmFailed'));
+      // 서버 문장을 그대로 띄우지 않는다. 코드가 있으면 그 문구, 없으면 이 판의 문구다.
+      setError(messageOf(err, 'pending.confirmFailed'));
     } finally {
       setIsSaving(false);
     }

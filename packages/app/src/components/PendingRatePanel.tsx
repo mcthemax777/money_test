@@ -16,7 +16,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
-import { apiClient } from '@money/core/lib/api-client';
+import { entryWritePort } from '@money/core/data/entry-write-port';
+import { homeDataPort } from '@money/core/data/home-port';
 import { useApiError } from '@money/core/lib/api-error';
 import { formatDateMarker } from '@money/core/lib/datetime';
 import { useTranslation } from '@money/core/lib/i18n';
@@ -52,7 +53,8 @@ export default function PendingRatePanel({
   const load = useCallback(async () => {
     try {
       setError('');
-      setData(await apiClient.getCardPendingRates(cardId));
+      // 창구를 거친다. 앱에서는 사본이 답하므로 오프라인에서도 목록이 나온다.
+      setData(await homeDataPort().getCardPendingRates(cardId));
     } catch {
       setData(null);
     }
@@ -79,12 +81,17 @@ export default function PendingRatePanel({
     try {
       setIsSaving(true);
       setError('');
-      await apiClient.settleCardRates(cardId, {
-        items: filled.map((item) => ({
+      /*
+       * 확정도 창구를 거친다. 앱은 사본에 먼저 적고 명령을 쌓으므로 오프라인에서도 된다.
+       * 건마다 금액을 보낸다 -- 한 번에 채우기로 채운 칸도 이미 금액이다.
+       */
+      await entryWritePort().settleForeignRates(
+        cardId,
+        filled.map((item) => ({
           entryId: item.entryId,
           billedAmount: toAmountString(billed[item.entryId]),
         })),
-      });
+      );
       setBilled({});
       setBulkRate('');
       await load();

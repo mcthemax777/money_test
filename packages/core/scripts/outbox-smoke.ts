@@ -20,7 +20,9 @@
  */
 import { existsSync, readFileSync } from 'fs';
 import {
+  type CardDto,
   type EntryDto,
+  type EntryRestatePayload,
   type Mutation,
   type MutationResult,
   type PushRequest,
@@ -79,6 +81,7 @@ const KST = 'Asia/Seoul';
       accounts: { bank: string; savings: string };
       categories: { dining: string; salary: string; fee: string; luxury: string };
       cardId: string;
+      pendingRates: CardDto.PendingRatesResponse;
     };
   };
 
@@ -108,6 +111,9 @@ const KST = 'Asia/Seoul';
       await writer.createEntry(asRequest(payload));
     } else if (mutation.kind === 'entry.replace') {
       await writer.updateEntry(String(payload.id), asRequest(payload));
+    } else if (mutation.kind === 'entry.restate') {
+      const restate = payload as unknown as EntryRestatePayload;
+      await writer.settleForeignRates(restate.cardId, restate.items);
     } else {
       await writer.deleteEntry(String(payload.id));
     }
@@ -172,6 +178,64 @@ const KST = 'Asia/Seoul';
     }
   }
   eq(`조립: 필드 ${compared.length}개를 줄마다 대조`, mismatch, 0);
+
+  /*
+   * 청구액 확정. 다리 금액을 **분류 줄마다** 견준다.
+   *
+   * 위의 대조는 전표 합계만 보므로, 끝수 1원이 두 자리에서 다른 줄로 가도 그대로
+   * 지나간다. 줄 키로 짝지어 금액을 본다.
+   */
+  const linesOf = (row: Record<string, unknown> | undefined) =>
+    ((row?.lines as Array<{ lineKey: string; amount: string }> | undefined) ?? [])
+      .map((one) => `${one.lineKey}=${one.amount}`)
+      .sort()
+      .join(',');
+  const restatedIds = dump.mutations
+    .filter((row) => row.kind === 'entry.restate')
+    .flatMap((row) => (row.payload as EntryRestatePayload).items.map((item) => item.entryId));
+  eq('확정: 덤프에 확정한 거래가 있다', restatedIds.length > 0, true);
+  let restateMismatch = 0;
+  for (const entryId of restatedIds) {
+    const local = localEntries.find((row) => row.id === entryId);
+    const server = byId.get(entryId);
+    if (linesOf(local as unknown as Record<string, unknown>) !== linesOf(server)) {
+      restateMismatch += 1;
+      console.log(`FAIL  확정 줄 ${entryId} (서버 ${linesOf(server)}, 사본 ${linesOf(
+        local as unknown as Record<string, unknown>)})`);
+    }
+  }
+  eq('확정: 줄마다 청구액이 서버와 같다', restateMismatch, 0);
+
+  // 큐에 실린 확정 명령. 대상은 고른 전표 전부이고, 시계는 그중 가장 늦은 것 뒤다.
+  const restateQueued = (await store.pendingMutations(projectId)).find(
+    (row) => row.kind === 'entry.restate',
+  );
+  eq('확정: 명령의 대상이 고른 전표 전부다',
+    restateQueued?.targets.join(','), restatedIds.join(','));
+
+  /*
+   * 서버도 영영 거절할 확정은 큐에 넣지 않는다.
+   *
+   * 원 통화가 없는 거래(원화 지출)는 확정할 수 없다. 사본에서 먼저 셈해 보고 그 자리에서
+   * 던져야 한다 -- 큐에 넣으면 보류 칸에 뜨고, 그사이 사본에는 틀린 금액이 남는다.
+   */
+  const lunch = localEntries.find((row) => row.description === '점심 (수정)');
+  const queuedBefore = (await store.outboxCount(projectId)).pending;
+  let refused = '';
+  try {
+    await writer.settleForeignRates(dump.server.cardId, [
+      { entryId: String(lunch?.id), billedAmount: '1000' },
+    ]);
+  } catch (error) {
+    refused = (error as { code?: string }).code ?? 'thrown';
+  }
+  eq('확정: 원화 거래는 그 자리에서 거절', refused, 'NO_ORIGINAL_AMOUNT');
+  eq('확정: 거절이면 큐에 쌓이지 않는다', (await store.outboxCount(projectId)).pending, queuedBefore);
+
+  // 미확정 목록. 사본이 고르고 주기를 매긴 결과가 서버의 것과 같아야 한다.
+  const localPending = await port.getCardPendingRates(dump.server.cardId);
+  eq('미확정 목록: 서버와 같다',
+    JSON.stringify(localPending), JSON.stringify(dump.server.pendingRates));
 
   /*
    * 카드 대금 결제. 자산 화면의 "결제하기"가 오프라인에서 쌓는 명령이다.

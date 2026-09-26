@@ -28,6 +28,7 @@ import {
 } from '../lib/datetime';
 import { activeLocale, translate, type MessageKey } from '../lib/i18n';
 import { toNumber } from '../lib/money';
+import { isOfflineError } from '../lib/offline-error';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '../store/project';
 import { useWeekStart } from '../store/week-start';
 
@@ -464,11 +465,12 @@ export function useAssetHistory({
         return { label, balance, date: row.date };
       });
       setSeries({ endOffset, points });
-    } catch {
+    } catch (error) {
       // 그래프를 못 불러와도 나머지 화면은 살아 있어야 한다.
       if (id !== requestId.current) return;
       setSeries({ endOffset: anchor - pad, points: [] });
-      setError(t('history.loadFailed'));
+      // 추이는 누적합이라 사본으로 내지 않는다. 오프라인이면 고장이 아니라 "나중에"다.
+      setError(t(isOfflineError(error) ? 'online.viewOnlyOnline' : 'history.loadFailed'));
     } finally {
       if (id === requestId.current) setIsLoading(false);
     }

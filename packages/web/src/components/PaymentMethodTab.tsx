@@ -6,6 +6,7 @@ import {
 } from 'recharts';
 import type { EntryListItem } from './TransactionItem';
 import TransactionListView from './TransactionListView';
+import { homeDataPort } from '@money/core/data/home-port';
 import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { buildDailyCumulative, monthDateKeys } from '@money/core/lib/entries';
@@ -164,7 +165,7 @@ export default function PaymentMethodTab({
   useEffect(() => {
     let cancelled = false;
 
-    apiClient
+    homeDataPort()
       .getPaymentMethods(period, projectId, filter)
       .then((res) => {
         if (cancelled) return;

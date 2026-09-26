@@ -4,7 +4,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import type { EntryFilterQuery } from '@money/types';
 
-import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
+import { homeDataPort } from '@money/core/data/home-port';
+import type { ReportPeriod } from '@money/core/lib/api-client';
 import { CHART_CATEGORY_COLORS, CHART_TOOLTIP_STYLE, formatTooltipAmount } from '@money/core/lib/chart';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
@@ -97,7 +98,7 @@ export default function CategoryDonutChart({
 
     setIsLoading(true);
     setError('');
-    apiClient
+    homeDataPort()
       .getCategoryBreakdown(period, type, projectId, filter)
       .then((data: BreakdownRow[]) => {
         if (cancelled) return;

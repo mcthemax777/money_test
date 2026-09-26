@@ -13,6 +13,7 @@ import { ServerClockService } from '@/common/server-clock';
   imports: [DatabaseModule, AccountsModule, InstitutionsModule, LedgerModule],
   controllers: [CardsController],
   providers: [CardsService, CardLedgerService, ProjectAccessService, ServerClockService],
-  exports: [CardsService],
+  // 재생(sync)이 청구액 확정을 온라인과 같은 서비스로 돌린다.
+  exports: [CardsService, CardLedgerService],
 })
 export class CardsModule {}

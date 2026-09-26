@@ -32,6 +32,7 @@ import {
   type CardUpdatePayload,
   type EntryDeletePayload,
   type EntryMutationPayload,
+  type EntryRestatePayload,
   type EntryTagsPayload,
   type Mutation,
   type MutationResult,
@@ -54,6 +55,7 @@ import { EntriesService } from '../entries/entries.service';
 import { PeopleService } from '../people/people.service';
 import { AccountsService } from '../accounts/accounts.service';
 import { CardsService } from '../cards/cards.service';
+import { CardLedgerService } from '../cards/card-ledger.service';
 import { CategoriesService } from '../categories/categories.service';
 import { TagsService } from '../tags/tags.service';
 import { BudgetsService } from '../budgets/budgets.service';
@@ -94,6 +96,7 @@ export class MutationReplayService {
     private readonly people: PeopleService,
     private readonly accounts: AccountsService,
     private readonly cards: CardsService,
+    private readonly cardLedger: CardLedgerService,
     private readonly categories: CategoriesService,
     private readonly tags: TagsService,
     private readonly budgets: BudgetsService,
@@ -359,6 +362,8 @@ export class MutationReplayService {
         return this.deleteEntry(userId, projectId, mutation);
       case 'entry.tags':
         return this.changeEntryTags(userId, projectId, mutation);
+      case 'entry.restate':
+        return this.restateEntries(userId, projectId, mutation);
       case 'person.create':
         return this.createPerson(userId, projectId, mutation);
       case 'person.update':
@@ -548,6 +553,69 @@ export class MutationReplayService {
     const result = await this.applied(mutation, projectId, payload.targets?.[0]?.entryId ?? '');
     // 사라진 줄이 있었으면 함께 돌려준다. 기기가 그 사실을 한 번 알린다.
     return skipped.length > 0 ? { ...result, skippedTagTargets: skipped } : result;
+  }
+
+  /**
+   * 외화 결제의 청구액 확정.
+   *
+   * 병합은 전표 수정과 같다 -- 담긴 전표 가운데 하나라도 이 명령보다 늦게 고쳐졌으면
+   * 통째로 충돌이다. 명세서 한 장을 한 번에 맞추는 일이라 일부만 적용하면 남은 대금이
+   * 어중간해진다. 진 쪽은 기기가 충돌 목록에 남겨 사람이 고른다 (D6).
+   *
+   * 확정 자체는 온라인 요청과 같은 서비스가 한다. 카드의 거래인지, 원 통화 금액이 있는지,
+   * 모든 다리가 기준통화인지를 거기서 다시 본다. 시계는 명령의 것을 찍는다.
+   */
+  private async restateEntries(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as EntryRestatePayload;
+    const items = Array.isArray(payload?.items) ? payload.items : [];
+    if (!payload?.cardId || items.length === 0) {
+      return {
+        mutationId: mutation.mutationId,
+        status: 'rejected',
+        error: '확정할 거래가 없습니다.',
+      };
+    }
+
+    const entryIds = items.map((item) => item.entryId);
+    const existing = await this.prisma.journalEntry.findMany({
+      where: { id: { in: entryIds } },
+      select: { id: true, projectId: true, updatedHlc: true },
+    });
+    const byId = new Map(existing.map((entry) => [entry.id, entry]));
+
+    /*
+     * 그 사이 지워진 거래가 있으면 거절이다.
+     *
+     * 태그 명령처럼 건너뛰지 않는다. 명세서 금액을 맞추는 중이라 한 건이 빠진 채 나머지만
+     * 확정하면, 사용자가 보고 맞춘 합계와 원장이 조용히 갈린다.
+     */
+    if (entryIds.some((id) => byId.get(id)?.projectId !== projectId)) {
+      return {
+        mutationId: mutation.mutationId,
+        status: 'rejected',
+        code: 'ENTRY_NOT_FOUND',
+        error: '거래를 찾을 수 없습니다.',
+      };
+    }
+    if (existing.some((entry) => isAfterHlc(entry.updatedHlc, mutation.hlc))) {
+      return {
+        mutationId: mutation.mutationId,
+        status: 'conflict',
+        error: '다른 기기에서 이 거래를 더 늦게 고쳤습니다.',
+      };
+    }
+
+    await this.cardLedger.settleRates(
+      payload.cardId,
+      userId,
+      { items: items.map((item) => ({ entryId: item.entryId, billedAmount: item.billedAmount })) },
+      { hlc: mutation.hlc },
+    );
+    return this.applied(mutation, projectId, entryIds[0]);
   }
 
   // ───────────────────────────────────────────

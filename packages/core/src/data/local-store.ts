@@ -52,6 +52,9 @@ import {
   zonedDateKey,
   zonedYearMonth,
   type InstallmentRowPlan,
+  RestateError,
+  pendingRateItems,
+  restateAmounts,
 } from '@money/types';
 
 import { ALL_TABLES, SCHEMA_STATEMENTS, SCHEMA_VERSION } from './schema';
@@ -241,6 +244,12 @@ const asText = (value: unknown): string | null =>
 const asMoney = (value: unknown): string => asText(value) ?? '0';
 
 const asFlag = (value: unknown): number => (value ? 1 : 0);
+
+/** 사본에서 셈한 청구액 확정. 전표마다 다시 쓸 다리 금액이다 (`planRestate`). */
+export type RestatePlan = Array<{
+  entryId: string;
+  postings: Array<{ id: string; amount: string }>;
+}>;
 
 /**
  * 계획에 적어 둔 회차 원금. 사본에는 JSON 글자로 담긴다.
@@ -2437,6 +2446,136 @@ export class LocalStore {
   }
 
   /**
+   * 이 카드의 청구액 미확정 외화 결제. 서버의 `/cards/:id/pending-rates` 와 같은 답이다.
+   *
+   * 고르는 조건도 서버와 같다 -- 카드 부채 계정에 걸린 다리 가운데 전표가 미확정이고
+   * 원 통화가 있는 것. 주기를 매기는 일은 공용 함수(`pendingRateItems`)가 한다.
+   *
+   * 마감일·결제일이 없는 카드는 빈 목록이다. 서버는 그런 카드를 거절하는데, 화면은
+   * 목록이 비면 판을 그리지 않으므로 결과가 같다.
+   */
+  async pendingRates(cardId: string): Promise<CardDto.PendingRatesResponse> {
+    const cards = await this.db.all<Row>(
+      `SELECT c.projectId, c.liabilityAccountId, c.statementClosingDay, c.paymentDueDay,
+              a.currency AS liabilityCurrency
+         FROM card c LEFT JOIN account a ON a.id = c.liabilityAccountId
+        WHERE c.id = ?`,
+      [cardId],
+    );
+    const card = cards[0];
+    const empty = { cardId, currency: asText(card?.liabilityCurrency) ?? 'KRW', items: [] };
+    if (!card?.liabilityAccountId || card.statementClosingDay == null || card.paymentDueDay == null) {
+      return empty;
+    }
+
+    const project = await this.projectRow(String(card.projectId));
+    const rows = await this.db.all<Row>(
+      `SELECT e.id, e.date, e.description, e.merchant, e.originalCurrency, e.originalAmount,
+              p.amount
+         FROM posting p JOIN entry e ON e.id = p.entryId
+        WHERE p.accountId = ? AND e.rateProvisional = 1 AND e.originalCurrency IS NOT NULL
+        ORDER BY e.date, e.id`,
+      [String(card.liabilityAccountId)],
+    );
+
+    return {
+      ...empty,
+      items: pendingRateItems(
+        rows.map((row) => ({
+          entryId: String(row.id),
+          date: new Date(String(row.date)),
+          description: String(row.description),
+          merchant: asText(row.merchant),
+          originalCurrency: String(row.originalCurrency),
+          originalAmount: asMoney(row.originalAmount),
+          liabilityAmount: asMoney(row.amount),
+        })),
+        { statementClosingDay: asInt(card.statementClosingDay), paymentDueDay: asInt(card.paymentDueDay) },
+        project?.timeZone ?? 'Asia/Seoul',
+      ),
+    };
+  }
+
+  /**
+   * 청구액 확정을 사본에서 셈한다. **쓰지 않는다.**
+   *
+   * 셈과 쓰기를 가르는 이유. 규칙에 어긋나는 확정(외화 다리가 있는 거래, 원 통화가 없는
+   * 거래)은 서버도 영영 거절하므로 큐에 넣으면 안 된다. 먼저 셈해 보고 던지면 부르는
+   * 쪽이 명령을 쌓기 전에 멈춘다. 쓰기는 `applyRestate` 가 한다.
+   *
+   * 나누는 규칙은 서버와 같은 함수다(`restateAmounts`). 끝수가 가는 줄까지 같아야 재생한
+   * 전표와 사본의 금액이 1원도 어긋나지 않는다.
+   */
+  async planRestate(
+    projectId: string,
+    items: readonly { entryId: string; billedAmount: string }[],
+  ): Promise<RestatePlan> {
+    const project = await this.projectRow(projectId);
+    const base = project?.ledgerCurrency ?? 'KRW';
+    const plan: RestatePlan = [];
+
+    for (const item of items) {
+      const entries = await this.db.all<Row>(
+        `SELECT originalAmount FROM entry WHERE id = ? AND projectId = ?`,
+        [item.entryId, projectId],
+      );
+      if (!entries[0]) throw new RestateError('ENTRY_NOT_FOUND', '거래를 찾을 수 없습니다.');
+      if (entries[0].originalAmount == null) {
+        throw new RestateError(
+          'NO_ORIGINAL_AMOUNT',
+          '원 통화 금액이 없는 거래는 청구액을 확정할 수 없습니다.',
+        );
+      }
+
+      const postings = await this.db.all<Row>(
+        `SELECT id, amount, currency, lineKey FROM posting WHERE entryId = ?`,
+        [item.entryId],
+      );
+      const next = restateAmounts(
+        postings.map((row) => ({
+          id: String(row.id),
+          amount: asMoney(row.amount),
+          currency: String(row.currency),
+          lineKey: asText(row.lineKey),
+        })),
+        item.billedAmount,
+        base,
+      );
+      plan.push({
+        entryId: item.entryId,
+        postings: [...next.entries()].map(([id, amount]) => ({ id, amount: amount.toString() })),
+      });
+    }
+    return plan;
+  }
+
+  /**
+   * 셈한 확정을 사본에 적는다. 다리 금액만 바꾸고 전표를 확정으로 돌린다.
+   *
+   * 잔액은 건드리지 않는다 -- 읽는 쪽이 다리를 세므로(`accountBalances`) 다리만 바뀌면
+   * 잔액도 따라온다. 다리가 전부 기준통화라 환산액도 같은 값이다(서버와 같다).
+   */
+  async applyRestate(plan: RestatePlan, hlc: string): Promise<void> {
+    if (plan.length === 0) return;
+
+    await this.db.transaction(async () => {
+      for (const entry of plan) {
+        for (const posting of entry.postings) {
+          await this.db.run(`UPDATE posting SET amount = ?, baseAmount = ? WHERE id = ?`, [
+            posting.amount,
+            posting.amount,
+            posting.id,
+          ]);
+        }
+        await this.db.run(
+          `UPDATE entry SET rateProvisional = 0, updatedHlc = ? WHERE id = ?`,
+          [hlc, entry.entryId],
+        );
+      }
+    });
+  }
+
+  /**
    * 사본에서 한 줄을 지운다. 딸린 줄까지 함께 간다 (서버의 cascade 와 같은 자리).
    *
    * 자리표를 받았을 때와, 화면이 삭제를 서버에 성공시킨 직후에 부른다. 두 자리가 같은
@@ -2995,6 +3134,8 @@ export class LocalStore {
       const targetsOf = (payload as EntryTagsPayload | null)?.targets ?? [];
       return this.latestEntryHlc(targetsOf.map((one) => one.entryId));
     }
+    // 청구액 확정도 여러 전표를 한 번에 건드린다. 대상이 전부 전표다.
+    if (kind === 'entry.restate') return this.latestEntryHlc(targets);
 
     return targets.length > 0 ? this.entryHlc(targets[0]) : null;
   }
@@ -3711,9 +3852,16 @@ function searchFilter(search?: ParsedEntrySearch): { sql: string; params: string
        *
        * 그래서 금액은 아예 보지 않는다. 카드가 붙은 다리만 뺀다 -- 체크카드 결제가
        * 연결 통장 다리에도 걸려 카드와 통장에 두 번 세어지기 때문이다.
+       *
+       * 기초잔액 전표는 뺀다. 사용자가 적은 거래가 아닌 자본 전표라, 두면 통장을 고를
+       * 때마다 목록에 끼어든다 (서버의 같은 자리에 까닭이 적혀 있다).
        */
       branches.push(
-        `(mp.accountId IN (${accountIds.map(() => '?').join(', ')}) AND mp.cardId IS NULL)`,
+        `(mp.accountId IN (${accountIds.map(() => '?').join(', ')}) AND mp.cardId IS NULL
+          AND NOT EXISTS (
+            SELECT 1 FROM posting op JOIN account oa ON oa.id = op.accountId
+             WHERE op.entryId = e.id AND oa.type = 'opening_balance'
+          ))`,
       );
       params.push(...accountIds);
     }

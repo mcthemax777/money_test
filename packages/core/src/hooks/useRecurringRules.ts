@@ -101,7 +101,7 @@ export function useRecurringRules(projectId: string | null): UseRecurringRulesRe
       }
     } catch (caught) {
       setRules([]);
-      setError(messageOf(caught, 'inbox.loadFailed'));
+      setError(messageOf(caught, 'inbox.loadFailed', 'online.viewOnlyOnline'));
     } finally {
       setIsLoading(false);
     }

@@ -8,6 +8,7 @@ import { ReportsService } from '@/modules/reports/reports.service';
 import { AccountsService } from '@/modules/accounts/accounts.service';
 import { PeopleService } from '@/modules/people/people.service';
 import { CardsService } from '@/modules/cards/cards.service';
+import { CardLedgerService } from '@/modules/cards/card-ledger.service';
 import { CategoriesService } from '@/modules/categories/categories.service';
 import { TagsService } from '@/modules/tags/tags.service';
 import { EntriesService } from '@/modules/entries/entries.service';
@@ -225,6 +226,11 @@ export function makeCards(prisma: PrismaClient, access: unknown, institutions: u
     institutions as any,
     new ServerClockService(),
   );
+}
+
+/** 카드 원장(실적·청구·청구액 확정). 재생 서비스가 외화 청구액 확정에 쓴다. */
+export function makeCardLedger(prisma: PrismaClient, access: unknown, ledger: unknown) {
+  return new CardLedgerService(prisma as any, access as any, ledger as any);
 }
 
 /** 계좌 서비스 조립. 통화 검증 때문에 환율 서비스를 함께 쓴다. */

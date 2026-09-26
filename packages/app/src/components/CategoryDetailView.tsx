@@ -119,7 +119,7 @@ export default function CategoryDetailView({
               <MonthlyAmountChart points={detail.monthly} currency={displayCurrency} />
             ) : (
               <Text className="py-12 text-center text-sm text-gray-500">
-                {t('detail.noYearUsage')}
+                {t(detail.isOffline ? 'online.viewOnlyOnline' : 'detail.noYearUsage')}
               </Text>
             )}
           </View>
@@ -138,7 +138,7 @@ export default function CategoryDetailView({
               />
             ) : (
               <Text className="py-12 text-center text-sm text-gray-500">
-                {t('detail.noMonthUsage')}
+                {t(detail.isOffline ? 'online.viewOnlyOnline' : 'detail.noMonthUsage')}
               </Text>
             )}
           </View>
@@ -146,7 +146,7 @@ export default function CategoryDetailView({
           <View className="gap-3">
             <Text className="text-base font-semibold text-gray-900">{t('detail.entries')}</Text>
             {detail.entries.length === 0 ? (
-              <Text className="text-sm text-gray-500">{t('detail.noEntries')}</Text>
+              <Text className="text-sm text-gray-500">{t(detail.isOffline ? 'online.viewOnlyOnline' : 'detail.noEntries')}</Text>
             ) : (
               <TransactionListView entries={detail.entries} onEntryClick={onEntryClick} />
             )}

@@ -44,6 +44,7 @@ const KIND_KEY: Record<string, MessageKey> = {
   'entry.replace': 'outbox.kind.replace',
   'entry.delete': 'outbox.kind.delete',
   'entry.tags': 'outbox.kind.entryTags',
+  'entry.restate': 'outbox.kind.entryRestate',
   'person.create': 'outbox.kind.personCreate',
   'person.update': 'outbox.kind.personUpdate',
   'account.create': 'outbox.kind.accountCreate',
@@ -66,6 +67,24 @@ const KIND_KEY: Record<string, MessageKey> = {
  */
 function titleOf(payload: { description?: string; name?: string }): string | null {
   return payload.description || payload.name || null;
+}
+
+/**
+ * 줄의 제목. 이름이 없는 명령은 무엇을 하려 했는지로 대신한다.
+ *
+ * 청구액 확정은 여러 건을 한 번에 담아 이름이 없다. 갈래 이름을 제목으로 쓰면 아래 줄과
+ * 같은 말이 두 번 서므로, 몇 건을 맞추려 했는지를 적는다.
+ */
+function headingOf(
+  mutation: Mutation,
+  t: (key: MessageKey, params?: Record<string, string | number>) => string,
+): string {
+  if (mutation.kind === 'entry.restate') {
+    const items = (mutation.payload as { items?: unknown[] } | null)?.items ?? [];
+    return t('outbox.restateCount', { count: items.length });
+  }
+  const payload = mutation.payload as { description?: string; name?: string };
+  return titleOf(payload) ?? t(KIND_KEY[mutation.kind] ?? 'outbox.kind.create');
 }
 
 export default function OutboxScreen() {
@@ -218,7 +237,7 @@ function QueuedCard({ mutation }: { mutation: Mutation }) {
     <View className="flex-row items-start justify-between gap-3 rounded-lg bg-white p-4 shadow-sm">
       <View className="shrink">
         <Text className="text-base font-medium text-gray-900">
-          {titleOf(payload) ?? t(KIND_KEY[mutation.kind] ?? 'outbox.kind.create')}
+          {headingOf(mutation, t)}
         </Text>
         <Text className="mt-1 text-sm text-gray-600">
           {t(KIND_KEY[mutation.kind] ?? 'outbox.kind.create')}
@@ -257,7 +276,7 @@ function HeldCard({
       <View className="flex-row items-start justify-between gap-3">
         <View className="shrink">
           <Text className="text-base font-medium text-gray-900">
-            {titleOf(payload) ?? t(KIND_KEY[mutation.kind] ?? 'outbox.kind.create')}
+            {headingOf(mutation, t)}
           </Text>
           {/*
             충돌은 이유를 덧붙이지 않는다. 서버가 주는 말("다른 기기에서 더 늦게

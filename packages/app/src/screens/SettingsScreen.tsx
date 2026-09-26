@@ -1,6 +1,8 @@
+import { useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { SUPPORTED_LOCALES, WEEK_START_DAYS, type Locale, type WeekStart } from '@money/types';
 
+import { useApiError } from '@money/core/lib/api-error';
 import { weekdayNames } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useLocaleStore } from '@money/core/store/locale';
@@ -107,6 +109,8 @@ function SettingsCard({
 function LanguageSettings() {
   const { t, locale } = useTranslation();
   const { setLocale, isSaving } = useLocaleStore();
+  const { messageOf } = useApiError();
+  const [error, setError] = useState('');
 
   return (
     <View className="rounded-lg bg-white p-6 shadow-sm">
@@ -122,8 +126,12 @@ function LanguageSettings() {
               key={code}
               disabled={isSaving}
               onPress={() => {
-                // 저장이 실패하면 스토어가 이전 언어로 되돌린다. 화면은 그 결과를 따른다.
-                setLocale(code).catch(() => {});
+                // 저장이 실패하면 스토어가 이전 언어로 되돌린다. 말없이 되돌아가면 눌러도
+                // 안 되는 것으로 보이므로 이유를 적는다 (웹의 LanguageSettings 와 같다).
+                setError('');
+                setLocale(code).catch((err) =>
+                  setError(messageOf(err, 'settings.language.saveFailed')),
+                );
               }}
               /* 고른 칸 표시는 사이드바 메뉴·분류 목록과 같은 값을 쓴다. */
               className={`min-w-24 items-center rounded-lg border px-4 py-2 ${
@@ -137,6 +145,8 @@ function LanguageSettings() {
           );
         })}
       </View>
+
+      {error ? <Text className="mt-3 text-sm text-red-600">{error}</Text> : null}
     </View>
   );
 }
@@ -150,6 +160,8 @@ function LanguageSettings() {
 function WeekStartSettings() {
   const { t } = useTranslation();
   const { weekStart, setWeekStart, isSaving } = useWeekStartStore();
+  const { messageOf } = useApiError();
+  const [error, setError] = useState('');
   // useTranslation 이 언어 스토어를 구독하므로, 언어를 바꾸면 이름도 다시 만들어진다.
   const names = weekdayNames();
 
@@ -167,8 +179,11 @@ function WeekStartSettings() {
               key={day}
               disabled={isSaving}
               onPress={() => {
-                // 저장이 실패하면 스토어가 이전 요일로 되돌린다. 화면은 그 결과를 따른다.
-                setWeekStart(day).catch(() => {});
+                // 저장이 실패하면 스토어가 이전 요일로 되돌린다. 이유는 아래에 적는다.
+                setError('');
+                setWeekStart(day).catch((err) =>
+                  setError(messageOf(err, 'settings.weekStart.saveFailed')),
+                );
               }}
               /* 고른 칸 표시는 언어 칸과 같은 값을 쓴다. */
               className={`min-w-14 items-center rounded-lg border px-4 py-2 ${
@@ -182,6 +197,8 @@ function WeekStartSettings() {
           );
         })}
       </View>
+
+      {error ? <Text className="mt-3 text-sm text-red-600">{error}</Text> : null}
     </View>
   );
 }

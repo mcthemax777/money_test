@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { WEEK_START_DAYS, type WeekStart } from '@money/types';
 
 import { weekdayNames } from '@money/core/lib/datetime';
+import { useApiError } from '@money/core/lib/api-error';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useWeekStartStore } from '@money/core/store/week-start';
 
@@ -21,6 +22,7 @@ export default function WeekStartSettings() {
   const { t } = useTranslation();
   const { weekStart, setWeekStart, isSaving } = useWeekStartStore();
   const [error, setError] = useState('');
+  const { messageOf } = useApiError();
 
   // useTranslation 이 언어 스토어를 구독하므로, 언어를 바꾸면 이름도 다시 만들어진다.
   const names = weekdayNames();
@@ -33,7 +35,8 @@ export default function WeekStartSettings() {
     } catch (err) {
       console.error('시작 요일 변경 실패:', err);
       // 스토어가 이미 이전 요일로 되돌려 두었다.
-      setError(t('settings.weekStart.saveFailed'));
+      // 서버에 닿지 못했으면 "연결되면 할 수 있습니다"로 말한다 (messageOf 가 가른다).
+      setError(messageOf(err, 'settings.weekStart.saveFailed'));
     }
   };
 

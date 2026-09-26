@@ -7,7 +7,7 @@
  * 웹과 앱이 같은 묶음·같은 반올림을 보여 줘야 해서 여기 둔다 -- 한쪽만 고치면 같은
  * 명세서를 두 화면에서 다르게 채우게 된다.
  */
-import { currencyDecimals, type CardDto } from '@money/types';
+import { billedAmountFromRate, currencyDecimals, type CardDto } from '@money/types';
 
 import { toNumber } from './money';
 
@@ -32,7 +32,8 @@ export function groupPendingByMonth(
  * 저장은 청구액으로 한 경로만 쓴다. 화면에 보이는 숫자와 저장되는 값이 같아야
  * 사용자가 저장 전에 확인할 수 있고, 반올림 결과도 미리 드러난다.
  *
- * 카드 통화의 자릿수로 맞춘다. 원은 원 단위, 달러는 센트까지다.
+ * 카드 통화의 자릿수로 맞춘다. 원은 원 단위, 달러는 센트까지다. 셈은 서버와 같은 함수다
+ * (`billedAmountFromRate`) -- 부동소수로 곱하면 1원씩 어긋나는 금액이 생긴다.
  */
 export function billedFromRate(
   items: CardDto.PendingRateItem[],
@@ -41,7 +42,10 @@ export function billedFromRate(
 ): Record<string, string> {
   const decimals = currencyDecimals(currency);
   return Object.fromEntries(
-    items.map((item) => [item.entryId, (toNumber(item.originalAmount) * rate).toFixed(decimals)]),
+    items.map((item) => [
+      item.entryId,
+      billedAmountFromRate(item.originalAmount, String(rate), currency).toFixed(decimals),
+    ]),
   );
 }
 

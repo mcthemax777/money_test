@@ -63,6 +63,12 @@ export interface HomeDataPort {
   ): Promise<ReportDto.PaymentMethodItem[]>;
   getCardPerformance(cardId: string): Promise<CardDto.PerformanceResponse>;
 
+  /**
+   * 청구액이 아직 확정되지 않은 외화 결제. 카드 상세의 명세서 대조 판이 쓴다.
+   * 앱에서는 사본이 답하므로 오프라인에서도 목록이 나오고 확정할 수 있다.
+   */
+  getCardPendingRates(cardId: string): Promise<CardDto.PendingRatesResponse>;
+
   /** 주기별 사용액과 남은 대금. 카드 상세의 그래프가 쓴다. */
   getCardUsage(cardId: string, months?: number): Promise<CardDto.UsageResponse>;
 
@@ -90,10 +96,8 @@ export interface HomeDataPort {
   ): Promise<AccountDto.LedgerResponse>;
 
   /**
-   * 분류별 구성비. 거래 화면의 분류별 목록이 쓴다.
-   *
-   * 가계 화면의 같은 탭은 `apiClient` 를 직접 불러서 오프라인에서 빈다. 거래 화면은
-   * 오프라인에서도 돌아야 하므로 창구를 거친다.
+   * 분류별 구성비. 거래 화면의 분류별 목록, 가계 화면의 분류별 탭, 분류 상세의
+   * 원형차트가 쓴다. 모두 창구를 거치므로 오프라인에서도 사본으로 그려진다.
    */
   getCategoryBreakdown(
     period: ReportPeriod,
@@ -172,6 +176,7 @@ export const httpHomePort: HomeDataPort = {
   getPaymentMethods: (period, projectId, filter) =>
     apiClient.getPaymentMethods(period, projectId, filter),
   getCardPerformance: (cardId) => apiClient.getCardPerformance(cardId),
+  getCardPendingRates: (cardId) => apiClient.getCardPendingRates(cardId),
   getCardUsage: (cardId, months) => apiClient.getCardUsage(cardId, months),
   getCardPerformanceLedger: (cardId, params) =>
     apiClient.getCardPerformanceLedger(cardId, params),

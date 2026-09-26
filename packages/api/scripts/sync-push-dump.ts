@@ -18,11 +18,12 @@ import { InstitutionsService } from '@/modules/institutions/institutions.service
 import { PeopleService } from '@/modules/people/people.service';
 import { SyncService } from '@/modules/sync/sync.service';
 import { MutationReplayService } from '@/modules/sync/mutation-replay.service';
-import { encodeHlc, type Mutation } from '@money/types';
+import { billedAmountFromRate, encodeHlc, type Mutation } from '@money/types';
 import {
   makeAccounts,
   makeBudgets,
   makeCards,
+  makeCardLedger,
   makeCategories,
   makeEntries,
   makeLedger,
@@ -63,6 +64,7 @@ runSmoke('sync-push-dump', async (ctx) => {
   const budgets = makeBudgets(ctx.prisma, access);
   const entries = makeEntries(ctx.prisma, access, ledger);
   const sync = new SyncService(ctx.prisma as any, access as any);
+  const cardLedger = makeCardLedger(ctx.prisma, access, ledger);
   const replay = new MutationReplayService(
     ctx.prisma as any,
     access as any,
@@ -71,6 +73,7 @@ runSmoke('sync-push-dump', async (ctx) => {
     people as any,
     accounts as any,
     cards as any,
+    cardLedger as any,
     categories as any,
     tags as any,
     budgets as any,
@@ -105,6 +108,8 @@ runSmoke('sync-push-dump', async (ctx) => {
 
   const at = (index: number) => hlcAt(T0 + index * 60_000);
   const id = (n: number) => `019273bb-0000-7000-8000-00000000000${n}`;
+  /** 열 번째 넘는 전표. 끝 칸이 열두 자리여야 UUID 로 받아 준다. */
+  const idB = (n: number) => `019273bb-0000-7000-8000-0000000001${String(n).padStart(2, '0')}`;
 
   const mutation = (
     index: number,
@@ -196,6 +201,52 @@ runSmoke('sync-push-dump', async (ctx) => {
       amount: '1000', categoryId: dining.id, accountId: bank.id, lineKey: line(8),
     }),
     mutation(10, 'entry.delete', id(7), { id: id(7) }),
+    /*
+     * 11~14. 원화 신용카드로 쓴 외화. 추정 환율로 적혔다가 명세서로 확정된다.
+     *
+     * 환율을 싣지 않는다. 사용자가 환율을 넣으면 조립이 추정이 아닌 것으로 본다
+     * (`resolveConversion`) -- 그러면 미확정 목록에 오르지 않는다.
+     *
+     * 분할을 하나 넣는다. 청구액을 두 줄에 나누면 끝수가 한 줄로 몰리는데, **어느 줄로
+     * 가는지가 기기와 서버에서 같아야 한다** -- 다리 id 가 양쪽에서 달라 차례로 고르면
+     * 1원이 다른 줄에 앉는다. 70,001 을 30:20 으로 나누면 42,000.6 / 28,000.4 라 끝수 1이 생긴다.
+     */
+    mutation(11, 'entry.create', id(9), {
+      ...common, id: id(9), kind: 'expense', description: '해외 장보기',
+      cardId: credit.id, currency: 'USD',
+      splits: [
+        { categoryId: dining.id, amount: '30', lineKey: line(9) },
+        { categoryId: luxury.id, amount: '20', lineKey: line(10) },
+      ],
+    }),
+    // 확정하지 않고 남겨 둘 것. 미확정 목록이 기기와 서버에서 같은지 본다.
+    mutation(12, 'entry.create', idB(1), {
+      ...common, id: idB(1), kind: 'expense', description: '해외 구독',
+      amount: '10', categoryId: dining.id, cardId: credit.id,
+      currency: 'USD', lineKey: line(11),
+    }),
+    mutation(13, 'entry.create', idB(2), {
+      ...common, id: idB(2), kind: 'expense', description: '해외 커피',
+      amount: '7.77', categoryId: dining.id, cardId: credit.id,
+      currency: 'USD', lineKey: line(12),
+    }),
+    /*
+     * 한 명령에 둘을 담는다. 하나는 명세서의 금액 그대로, 하나는 적용 환율 한 줄로
+     * 채운 값이다 -- 환율로 채워도 기기가 건마다 금액을 정해 싣는다.
+     */
+    {
+      ...mutation(14, 'entry.restate', id(9), {
+        cardId: credit.id,
+        items: [
+          { entryId: id(9), billedAmount: '70001' },
+          {
+            entryId: idB(2),
+            billedAmount: billedAmountFromRate('7.77', '1391.5', 'KRW').toString(),
+          },
+        ],
+      }),
+      targets: [id(9), idB(2)],
+    },
   ];
 
   const pushed = await replay.push(uid, { projectId: pid, clientId: 'device-a', mutations });
@@ -215,6 +266,8 @@ runSmoke('sync-push-dump', async (ctx) => {
     accounts: { bank: bank.id, savings: savings.id },
     categories: { dining: dining.id, salary: salary.id, fee: fee.id, luxury: luxury.id },
     cardId: credit.id,
+    // 재생 뒤의 미확정 목록. 확정하지 않은 한 건만 남아야 한다.
+    pendingRates: await cardLedger.listPendingRates(credit.id, uid),
   };
 
   const wire = JSON.parse(JSON.stringify({ base, mutations, server }));
@@ -230,7 +283,19 @@ runSmoke('sync-push-dump', async (ctx) => {
   ctx.check('명령이 전부 적용되었다',
     wire.server.results.filter((row: { status: string }) => row.status === 'applied').length,
     mutations.length);
-  ctx.check('남은 전표 (기초잔액 둘 + 만든 것 일곱, 지운 것 하나 제외)',
-    wire.server.entries.length, 7);
+  ctx.check('남은 전표 (기초잔액 둘 + 만든 것 열, 지운 것 하나 제외)',
+    wire.server.entries.length, 10);
+
+  // 재생이 실제로 확정했는지. 이것이 빠지면 기기 쪽 대조가 "둘 다 확정 안 됨"으로 통과한다.
+  const restated = wire.server.entries.find((row: { id: string }) => row.id === id(9));
+  ctx.check('확정: 청구액이 적힌다', restated?.amount, '70001');
+  ctx.check('확정: 미확정 표가 꺼진다', restated?.rateProvisional, false);
+  ctx.check('확정: 끝수는 큰 줄로 간다',
+    restated?.lines.map((one: { amount: string }) => one.amount).join(','), '42001,28000');
+  ctx.check('확정: 환율로 채운 건', wire.server.entries.find(
+    (row: { id: string }) => row.id === idB(2))?.amount, '10812');
+  ctx.check('미확정 목록에는 남긴 한 건뿐',
+    wire.server.pendingRates.items.map((row: { entryId: string }) => row.entryId).join(','),
+    idB(1));
   console.log(`\n떠 둔 곳: ${target}`);
 });

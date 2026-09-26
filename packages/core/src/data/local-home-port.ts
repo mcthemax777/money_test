@@ -570,6 +570,12 @@ export function createLocalHomePort(
       });
     },
 
+    /** 청구액 미확정 외화 결제. 고르는 조건과 주기 매기기는 서버와 같다 (`pendingRates`). */
+    async getCardPendingRates(cardId) {
+      note('pendingRates');
+      return store.pendingRates(cardId);
+    },
+
     /**
      * 주기별 사용액과 남은 대금.
      *

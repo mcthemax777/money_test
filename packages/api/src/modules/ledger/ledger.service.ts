@@ -6,6 +6,8 @@ import {
   type EntryBuildRequest,
   buildEntry,
   LedgerBuildError,
+  RestateError,
+  restateAmounts,
   buildCardTransfer,
   buildExpense,
   buildIncome,
@@ -504,11 +506,14 @@ export class LedgerService {
     projectId: string,
     billedTotal: Prisma.Decimal,
     outerTx?: Tx,
+    /**
+     * 오프라인 명령을 재생할 때 그 명령의 시계. 없으면 지금 시계를 찍는다.
+     *
+     * 재생에서 오늘 시계를 찍으면 그 사이 다른 기기가 이 거래를 고친 편집보다 뒤로 가서,
+     * 며칠 전의 확정이 그 편집을 이긴 것처럼 남는다.
+     */
+    hlc?: string,
   ) {
-    if (billedTotal.lte(ZERO)) {
-      throw new BadRequestException('청구액은 0보다 커야 합니다.');
-    }
-
     return this.runInTransaction(outerTx, async (tx) => {
       // 옛 금액에서 새 금액을 빼 잔액을 움직이므로, 여기도 읽기 전에 잠근다.
       await this.lockLedger(tx, projectId);
@@ -525,48 +530,31 @@ export class LedgerService {
       }
 
       /*
-       * 이 경로는 모든 다리가 기준통화인 전표만 다룬다.
-       *
-       * 원화 카드의 외화 결제가 그렇다. 청구되는 돈이 원화라 카드 다리도 원화이고,
-       * 외화라는 사실은 originalAmount 에만 남는다. 반대로 외화 계좌 거래는
-       * 다리 자체가 외화라 금액이 이미 사실이고, 환율만 바뀌면 환산액도 함께
-       * 움직여야 하므로 규칙이 다르다. 섞어서 처리하면 조용히 틀린다.
+       * 나누는 규칙은 기기와 같은 함수다 (`@money/types` 의 restateAmounts). 기기는
+       * 오프라인에서 확정한 결과를 사본에 먼저 적으므로, 끝수를 어느 줄에 몰지가 여기와
+       * 다르면 같은 거래가 두 자리에서 1원씩 갈린다.
        */
       const base = await this.projectAccess.getProjectLedgerCurrency(projectId);
-      if (entry.postings.some((p) => p.currency !== base)) {
-        throw new BadRequestException(
-          '외화 계좌 거래는 여기서 확정할 수 없습니다. 거래를 직접 수정해 주세요.',
+      let shares: Map<string, Dec>;
+      try {
+        shares = restateAmounts(
+          entry.postings.map((p) => ({
+            id: p.id,
+            amount: p.amount.toString(),
+            currency: p.currency,
+            lineKey: p.lineKey,
+          })),
+          billedTotal.toString(),
+          base,
         );
-      }
-
-      const positives = entry.postings.filter((p) => p.amount.gt(ZERO));
-      const negatives = entry.postings.filter((p) => p.amount.lt(ZERO));
-      const oldTotal = this.sum(positives.map((p) => p.amount));
-      if (oldTotal.isZero()) {
-        throw new BadRequestException('금액이 0인 거래는 청구액을 확정할 수 없습니다.');
-      }
-
-      // 양쪽에 같은 총액을 나눠 담으므로 합계는 정확히 0으로 남는다.
-      const decimals = currencyDecimals(base);
-      const shares = new Map<string, Prisma.Decimal>();
-      for (const [i, share] of this.allocate(
-        billedTotal,
-        positives.map((p) => p.amount),
-        decimals,
-      ).entries()) {
-        shares.set(positives[i].id, share);
-      }
-      for (const [i, share] of this.allocate(
-        billedTotal,
-        negatives.map((p) => p.amount.neg()),
-        decimals,
-      ).entries()) {
-        shares.set(negatives[i].id, share.neg());
+      } catch (error) {
+        if (error instanceof RestateError) throw new BadRequestException(error.message);
+        throw error;
       }
 
       const deltas: Array<{ accountId?: string; amount: Prisma.Decimal }> = [];
       for (const posting of entry.postings) {
-        const next = shares.get(posting.id) ?? ZERO;
+        const next = new Prisma.Decimal((shares.get(posting.id) ?? Dec.of(0)).toString());
         if (next.equals(posting.amount)) continue;
 
         await tx.posting.update({
@@ -591,33 +579,10 @@ export class LedgerService {
          * 도착해 조용히 이긴다. 명세서로 확정한 실제 청구액이 추정액으로 되돌아가는
          * 자리다. 시계가 있으면 충돌로 갈려 사람이 고른다.
          */
-        data: { rateProvisional: false, updatedHlc: this.clock.now() },
+        data: { rateProvisional: false, updatedHlc: hlc ?? this.clock.now() },
         include: { postings: true },
       });
     });
-  }
-
-  /**
-   * 총액을 가중치 비율로 나눈다. 끝수는 첫 항목에 몰아준다.
-   *
-   * 분할 지출을 확정할 때 줄마다 따로 반올림하면 합계가 총액에서 벗어나
-   * 전표 균형이 깨진다. 그래서 나머지를 버린 뒤 남은 끝수를 한 곳에 몰아준다.
-   * splitInstallment(card-ledger)와 같은 규칙이다.
-   */
-  private allocate(
-    total: Prisma.Decimal,
-    weights: Prisma.Decimal[],
-    decimals: number,
-  ): Prisma.Decimal[] {
-    if (weights.length === 0) return [];
-    if (weights.length === 1) return [total];
-
-    const sum = this.sum(weights);
-    const shares = weights.map((w) =>
-      total.mul(w).div(sum).toDecimalPlaces(decimals, Prisma.Decimal.ROUND_DOWN),
-    );
-    shares[0] = shares[0].add(total.sub(this.sum(shares)));
-    return shares;
   }
 
   /**
@@ -1138,10 +1103,6 @@ export class LedgerService {
       lineKey: p.lineKey ?? null,
       discountAmount: p.discountAmount ?? null,
     };
-  }
-
-  private sum(amounts: Prisma.Decimal[]): Prisma.Decimal {
-    return amounts.reduce((acc, a) => acc.add(a), ZERO);
   }
 
   /**

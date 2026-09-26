@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react';
 import type { EntryDto, EntryFilterQuery, EntryListItem } from '@money/types';
 
 import { useMirrorVersion } from './useMirrorVersion';
+import { homeDataPort } from '../data/home-port';
 import { apiClient, type ReportPeriod } from '../lib/api-client';
 import { dayRangeQuery, formatMonthShort, throughDayOf } from '../lib/datetime';
 import {
@@ -23,6 +24,7 @@ import {
 import { activeLocale, translate } from '../lib/i18n';
 import { toNumber } from '../lib/money';
 import { loadPreviousMonths } from '../lib/month-compare';
+import { isOfflineError } from '../lib/offline-error';
 import type { Category } from '../lib/types';
 import { useProjectTimeZone } from '../store/project';
 
@@ -150,6 +152,11 @@ export interface CategoryDetail {
   hasMonthlyAmount: boolean;
   /** 이 달이나 앞선 달에 쌓인 것이 있는지. */
   hasDailyAmount: boolean;
+  /**
+   * 서버에서만 오는 값(12개월 추이·일별 누적·앞선 달·거래)을 받지 못했는가.
+   * 원형차트는 사본에서도 나오므로 그것만 그려지고, 나머지 자리에 안내를 적는다.
+   */
+  isOffline: boolean;
 }
 
 export function useCategoryDetail({
@@ -193,6 +200,7 @@ export function useCategoryDetail({
   const [flatBreakdown, setFlatBreakdown] = useState<BreakdownRow[]>([]);
   const [drilledId, setDrilledId] = useState<string | null>(null);
   const [drilledSlices, setDrilledSlices] = useState<CategorySlice[]>([]);
+  const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
     if (!enabled || !categoryId) return;
@@ -204,12 +212,26 @@ export function useCategoryDetail({
     setIsLoading(true);
 
     const load = async () => {
+      /*
+       * 서버에서만 오는 값은 닿지 못하면 비우고 표시만 남긴다.
+       *
+       * 하나가 실패했다고 전부 버리면 사본으로 그릴 수 있는 원형차트까지 사라진다.
+       * 0원 그래프로 두면 "이 분류에 쓴 것이 없다"로 읽히므로 화면이 안내를 적는다.
+       */
+      let offline = false;
+      const serverOnly = <T,>(promise: Promise<T>, empty: T): Promise<T> =>
+        promise.catch((error) => {
+          if (!isOfflineError(error)) throw error;
+          offline = true;
+          return empty;
+        });
+
       try {
         // 구간 경계는 프로젝트 타임존 기준이다 (서버의 합계와 같은 규칙).
         const { startDate, endDate } = dayRangeQuery(dayKeys.startKey, dayKeys.endKey, timeZone);
 
         // 12개월 시계열은 서버가 계산한다.
-        const trendPromise =
+        const trendPromise = serverOnly<unknown>(
           target.scope === 'total'
             ? apiClient.getTrend(
                 'total',
@@ -220,7 +242,9 @@ export function useCategoryDetail({
                 'category',
                 { targetId: categoryId, endMonth, months: 12, exact: exactCategory, ...filter },
                 projectId,
-              );
+              ),
+          [],
+        );
 
         /*
          * 이 구간의 거래를 뽑는 조건. 날짜만 빼 둔다.
@@ -238,9 +262,9 @@ export function useCategoryDetail({
 
         // 커서를 끝까지 따라간다. 한 페이지만 받으면 일별 누적이 12개월 그래프
         // (서버 집계, 전량)와 어긋난다.
-        const entriesPromise = apiClient.getAllEntries(
-          { ...entryQuery, startDate, endDate },
-          projectId,
+        const entriesPromise = serverOnly<unknown>(
+          apiClient.getAllEntries({ ...entryQuery, startDate, endDate }, projectId),
+          [],
         );
 
         /*
@@ -250,20 +274,22 @@ export function useCategoryDetail({
          * 같은 열흘인지 정해지지 않아 견줄 대상이 없다.
          */
         const comparisonPromise = period.yearMonth
-          ? loadPreviousMonths(period.yearMonth, entryQuery, projectId, timeZone)
+          ? serverOnly(loadPreviousMonths(period.yearMonth, entryQuery, projectId, timeZone), [])
           : Promise.resolve([] as CumulativeSeries[]);
 
         // 원형차트: 전체면 대분류별, 대분류를 보고 있으면 소분류별.
         // 파고들기(대분류 -> 소분류)에도 같은 평면 집계를 쓴다.
+        // 창구를 거친다 -- 앱에서는 사본이 답하므로 오프라인에서도 그려진다.
+        const port = homeDataPort();
         const flatPromise = target.isLeaf
           ? Promise.resolve([] as BreakdownRow[])
-          : apiClient.getCategoryBreakdown(period, target.type, projectId, {
+          : port.getCategoryBreakdown(period, target.type, projectId, {
               rollup: false,
               ...filter,
             });
         const breakdownPromise =
           target.scope === 'total'
-            ? apiClient.getCategoryBreakdown(period, target.type, projectId, { ...filter })
+            ? port.getCategoryBreakdown(period, target.type, projectId, { ...filter })
             : flatPromise;
 
         const [trendRes, entriesRes, breakdownRes, flatRes, comparisonRes] = await Promise.all([
@@ -275,6 +301,7 @@ export function useCategoryDetail({
         ]);
         if (cancelled) return;
 
+        setIsOffline(offline);
         setFlatBreakdown((flatRes ?? []) as BreakdownRow[]);
 
         const trend = (trendRes ?? []) as Array<{ yearMonth: string; amount: string }>;
@@ -305,6 +332,7 @@ export function useCategoryDetail({
         console.error('분류별 상세 데이터를 불러오지 못했습니다:', error);
         if (cancelled) return;
         // 앞 구간의 값이 남아 있으면 틀린 숫자를 보게 되므로 비운다.
+        setIsOffline(false);
         setMonthly([]);
         setDaily([]);
         setComparisons([]);
@@ -371,6 +399,7 @@ export function useCategoryDetail({
       : undefined,
     throughDay: period.yearMonth ? throughDayOf(period.yearMonth, timeZone) : undefined,
     hasMonthlyAmount: monthly.some((point) => point.amount > 0),
+    isOffline,
     /*
      * 이 달에 쓴 것이 없어도 앞선 달에 있으면 그린다. "지난달에는 여기에 이만큼
      * 썼는데 이번 달은 0"이 그림으로 보여야 한다.

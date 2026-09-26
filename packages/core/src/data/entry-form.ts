@@ -322,6 +322,15 @@ export function entryFormFromItem(
    * 분류별 합계만 바뀌는, 알아채기 어려운 손실이다.
    */
   if (isSplit && item.lines.length !== item.splitCount) return null;
+  /*
+   * 외화 분할도 열지 않는다.
+   *
+   * 목록의 줄 금액은 기준통화 환산액이다(42,001원 / 28,000원). 폼은 줄 금액을 입력 통화로
+   * 들므로 그대로 펴면 "$42,001"이 되고, 줄 합이 전체($50)와 맞지 않아 저장이 막힌다.
+   * 환율로 되돌리면 끝수가 원래 값과 어긋나 이번에는 조용히 틀린다. 줄마다 원래 금액을
+   * 목록이 싣기 전까지는 열지 않는 쪽이 안전하다.
+   */
+  if (isSplit && item.originalCurrency) return null;
 
   // 분류 하나짜리 거래의 그 줄. 이체·카드 대금 결제에는 없다.
   const only = isSplit ? null : item.lines[0] ?? null;

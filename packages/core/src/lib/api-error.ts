@@ -13,6 +13,7 @@ import { useCallback, useMemo } from 'react';
 import { isErrorCode, type ErrorCode } from '@money/types';
 
 import { translate, type MessageKey } from '../lib/i18n';
+import { isOfflineError } from '../lib/offline-error';
 import { useLocaleStore } from '../store/locale';
 
 /** 코드마다 화면이 쓸 문구. 코드를 더하면 여기가 비어 빌드가 막힌다. */
@@ -148,12 +149,20 @@ export function apiErrorCode(error: unknown): ErrorCode | undefined {
  *
  * `fallbackKey`는 코드가 없거나 모르는 코드일 때 쓸 그 화면의 기본 문구다.
  * "저장에 실패했습니다"처럼 무엇을 하다 실패했는지 아는 쪽이 정해야 한다.
+ *
+ * **서버에 닿지 못한 것은 실패가 아니라 "나중에"로 말한다.** 사본과 아웃박스를 지나지
+ * 않는 조작(프로젝트·멤버, 반복 등록, 합치기 등)은 오프라인이면 그냥 실패하는데, 그때
+ * "저장하지 못했습니다"라고 하면 고장으로 읽힌다. 읽기라면 `offlineKey` 에
+ * 'online.viewOnlyOnline' 을 넘긴다.
  */
 export function apiErrorMessage(
   locale: Parameters<typeof translate>[0],
   error: unknown,
   fallbackKey: MessageKey,
+  offlineKey: MessageKey = 'online.onlyOnline',
 ): string {
+  if (isOfflineError(error)) return translate(locale, offlineKey);
+
   const { code, details } = readApiError(error);
   if (!code) return translate(locale, fallbackKey);
 
@@ -172,7 +181,8 @@ export function useApiError() {
   const locale = useLocaleStore((state) => state.locale);
 
   const messageOf = useCallback(
-    (error: unknown, fallbackKey: MessageKey) => apiErrorMessage(locale, error, fallbackKey),
+    (error: unknown, fallbackKey: MessageKey, offlineKey?: MessageKey) =>
+      apiErrorMessage(locale, error, fallbackKey, offlineKey),
     [locale],
   );
 

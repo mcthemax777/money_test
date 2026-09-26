@@ -13,6 +13,7 @@ import { useEffect, useState } from 'react';
 import { Alert, Pressable, Text, TextInput, View } from 'react-native';
 
 import { useInstitutions } from '@money/core/hooks/useInstitutions';
+import { useConnectivity } from '@money/core/store/connectivity';
 import { NO_BANK_TYPES } from '@money/core/lib/account-type';
 import { monthInputOf, monthInputToIso } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -104,13 +105,19 @@ function askThenRemove({
       onDone();
       return;
     }
-    if (!HIDE_INSTEAD_CODES.includes(result.code ?? '')) {
+    /*
+     * 오프라인이면 삭제는 못 해도 숨기기는 된다(사본에 적고 나중에 보낸다). 지우기는
+     * 붙은 것을 서버가 세어 판단해야 해서 연결이 있어야 한다 -- 그래서 같은 물음으로
+     * 이어 간다. 이유만 다르다.
+     */
+    const reason = result.offline ? t('assets.removeOffline') : result.message;
+    if (!result.offline && !HIDE_INSTEAD_CODES.includes(result.code ?? '')) {
       onFail(result.message ?? '');
       return;
     }
 
     ask(
-      `${result.message}\n\n${t('assets.hideInstead')}`,
+      `${reason}\n\n${t('assets.hideInstead')}`,
       t('common.confirm'),
       t('common.cancel'),
       async () => {
@@ -296,6 +303,7 @@ export function EditAccountModal({
    * 아래 한 줄에 이유가 뜬다.
    */
   const [balance, setBalance] = useState(target.balance);
+  const isOffline = useConnectivity((state) => state.isOffline);
   const [matchText, setMatchText] = useState(target.matchText ?? '');
   const [error, setError] = useState('');
 
@@ -393,6 +401,13 @@ export function EditAccountModal({
             keyboardType="numeric"
             className={INPUT}
           />
+          {/*
+           * 오프라인이면 저장하기 전에 말한다. 누른 뒤에야 알면 다른 칸까지 안 된 줄 안다.
+           * 칸을 잠그지는 않는다 -- 연결이 돌아왔는지는 요청을 보내 봐야 안다.
+           */}
+          {isOffline ? (
+            <Text className="mt-2 text-xs text-gray-500">{t('online.onlyOnline')}</Text>
+          ) : null}
           {/* 실제로 바꿨을 때만 알린다. 다른 칸만 고치는 사람에게는 뜨지 않는다. */}
           {balanceChanged ? (
             <View className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-3">

@@ -191,10 +191,11 @@ runSmoke('balance-history', async (ctx) => {
   ctx.check('최근 N일: 366일로 자른다', cappedDays.length, 366);
 
   // ── 알 수 없는 granularity는 월로 본다 (기존 동작) ──
+  // 'week' 는 이제 정식 단위라(주 단위 추이) 정말로 없는 이름을 쓴다.
   const fallback = await reports.getBalanceHistory(uid, {
     projectId: pid,
     accountId: bank.id,
-    granularity: 'week' as any,
+    granularity: 'fortnight' as any,
     endMonth: '2026-08',
     months: 2,
   });

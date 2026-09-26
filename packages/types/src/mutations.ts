@@ -26,6 +26,7 @@ export type MutationKind =
   | 'entry.replace'
   | 'entry.delete'
   | 'entry.tags'
+  | 'entry.restate'
   | 'person.create'
   | 'person.update'
   | 'account.create'
@@ -183,6 +184,30 @@ export interface EntryTagsPayload {
   targets: TagTarget[];
   addTagIds: string[];
   removeTagIds: string[];
+}
+
+/**
+ * 외화 결제의 추정 청구액을 명세서의 실제 청구액으로 확정하는 명령의 짐.
+ *
+ * `entry.replace` 로 표현하지 않는다. 확정은 **다리 금액만** 다시 쓰는 조작이라
+ * 줄 키·태그·차감·할부 계획이 그대로 남아야 하는데, 통째 교체는 그것을 전부 다시 만든다.
+ * 화면이 들고 있는 것도 목록 한 줄(원금·추정액)뿐이라 전표를 온전히 다시 적을 수 없다.
+ *
+ * 범위 질의가 아니라는 점이 D12 와 갈린다. 대상 전표와 금액을 이름으로 다 적어 보내므로
+ * 며칠 뒤에 재생해도 같은 전표가 같은 금액이 된다. 적용 환율 하나로 채운 경우에도
+ * 기기가 건마다 금액을 정해 싣는다(`billedAmountFromRate`) -- 서버가 다시 곱하지 않는다.
+ *
+ * 한 명령에 여러 건을 담는다. 명세서 한 장을 한 번에 맞추는 일이라, 절반만 확정되면
+ * 남은 대금이 어중간해져 무엇을 더 맞춰야 하는지 알 수 없다.
+ */
+export interface EntryRestatePayload {
+  /** 그 거래들이 걸린 신용카드. 서버가 이 카드의 거래인지 다시 본다. */
+  cardId: string;
+  items: Array<{
+    entryId: string;
+    /** 실제 청구액 (카드 통화, 양수). */
+    billedAmount: string;
+  }>;
 }
 
 /**

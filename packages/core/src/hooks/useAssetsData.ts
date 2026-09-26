@@ -118,7 +118,12 @@ export function useAssetsData(projectId: string | null) {
    * 실패를 던지지 않고 돌려준다. 폼은 창을 닫지 않고 그 자리에 이유를 적어야 한다.
    */
   const submit = useCallback(
-    async (run: () => Promise<unknown>, fallbackKey: MessageKey): Promise<AssetSaveResult> => {
+    async (
+      run: () => Promise<unknown>,
+      fallbackKey: MessageKey,
+      /** 서버에 닿지 못했을 때의 문구. 실패한 뒤에 정해지는 경우가 있어 함수로도 받는다. */
+      offlineKey?: () => MessageKey,
+    ): Promise<AssetSaveResult> => {
       try {
         setIsSubmitting(true);
         await run();
@@ -126,7 +131,12 @@ export function useAssetsData(projectId: string | null) {
         return { ok: true };
       } catch (error) {
         // 코드도 함께 준다. 화면이 "삭제는 안 되지만 숨기기는 된다"를 가려야 한다.
-        return { ok: false, message: messageOf(error, fallbackKey), code: apiErrorCode(error) };
+        return {
+          ok: false,
+          message: messageOf(error, fallbackKey, offlineKey?.()),
+          code: apiErrorCode(error),
+          offline: isOfflineError(error),
+        };
       } finally {
         setIsSubmitting(false);
       }
@@ -203,12 +213,25 @@ export function useAssetsData(projectId: string | null) {
    * 이유를 적는다 -- 이름·계좌번호는 이미 사본에 적힌 뒤다.
    */
   const updateAccount = useCallback(
-    (id: string, patch: AccountPatch) =>
-      submit(async () => {
-        const { balance, ...rest } = patch;
-        if (Object.keys(rest).length > 0) await settingsWritePort().updateAccount(id, rest);
-        if (balance !== undefined) await settingsWritePort().setAccountBalance(id, balance);
-      }, 'account.addFailed'),
+    (id: string, patch: AccountPatch) => {
+      const { balance, ...rest } = patch;
+      const hasRest = Object.keys(rest).length > 0;
+      let restSaved = false;
+
+      return submit(
+        async () => {
+          if (hasRest) await settingsWritePort().updateAccount(id, rest);
+          restSaved = true;
+          if (balance !== undefined) await settingsWritePort().setAccountBalance(id, balance);
+        },
+        'account.addFailed',
+        /*
+         * 잔액만 닿지 못했으면 나머지는 이미 적혔다. 그때 "할 수 없습니다"만 적으면
+         * 사용자는 전부 안 된 줄 알고 다시 적는다.
+         */
+        () => (hasRest && restSaved ? 'account.balanceOnlyOnline' : 'online.onlyOnline'),
+      );
+    },
     [submit],
   );
 
@@ -362,4 +385,6 @@ export interface AssetSaveResult {
   message?: string;
   /** 서버가 붙인 오류 코드. 문구를 뒤지지 않고 이것으로 가른다. */
   code?: string;
+  /** 서버에 닿지 못했다. 앱은 삭제 대신 숨기기(사본으로 된다)를 내준다. */
+  offline?: boolean;
 }

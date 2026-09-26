@@ -43,6 +43,18 @@ export interface EntryWritePort {
     /** 서버 창구가 쓴다. 사본 창구는 만들어질 때 정해진 프로젝트를 그대로 쓴다. */
     projectId?: string | null;
   }): Promise<{ entries: number; skipped: TagTarget[] }>;
+
+  /**
+   * 외화 결제의 추정 청구액을 명세서의 실제 청구액으로 확정한다.
+   *
+   * 건마다 금액을 받는다. 적용 환율 한 줄로 채웠더라도 화면이 건마다 금액을 정해 넘긴다
+   * (`billedAmountFromRate`) -- 서버가 며칠 뒤에 다시 곱하지 않게 하려는 것이다.
+   * 사본 창구는 사본에 먼저 적고 `entry.restate` 명령을 쌓는다.
+   */
+  settleForeignRates(
+    cardId: string,
+    items: Array<{ entryId: string; billedAmount: string }>,
+  ): Promise<{ settled: number }>;
 }
 
 /** 서버에 곧바로 쓰는 창구. 웹은 이것을 쓴다. */
@@ -63,6 +75,7 @@ export const httpEntryWritePort: EntryWritePort = {
     );
     return { entries: result.entries, skipped: result.skipped ?? [] };
   },
+  settleForeignRates: (cardId, items) => apiClient.settleCardRates(cardId, { items }),
 };
 
 let current: EntryWritePort = httpEntryWritePort;

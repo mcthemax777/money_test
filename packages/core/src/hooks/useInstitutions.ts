@@ -4,6 +4,7 @@ import { useMirrorVersion } from './useMirrorVersion';
 import { useProject } from '../store/project';
 import type { FinancialInstitutionType, Institution } from '../lib/types';
 import { activeLocale, translate } from '../lib/i18n';
+import { isOfflineError } from '../lib/offline-error';
 
 /**
  * 은행/카드사 목록을 불러온다. 웹과 앱이 함께 쓴다.
@@ -44,11 +45,16 @@ export function useInstitutions(type: FinancialInstitutionType) {
         setError('');
         const data = await fetchInstitutions(type, selectedProjectId);
         if (!cancelled) setInstitutions(data);
-      } catch {
+      } catch (error) {
         // 목록을 못 불러와도 폼 자체는 열려 있어야 한다. 빈 목록 + 안내로 둔다.
         if (!cancelled) {
           setInstitutions([]);
-          setError(translate(activeLocale(), 'institutions.loadFailed'));
+          setError(
+            translate(
+              activeLocale(),
+              isOfflineError(error) ? 'online.viewOnlyOnline' : 'institutions.loadFailed',
+            ),
+          );
         }
       } finally {
         if (!cancelled) setIsLoading(false);

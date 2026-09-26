@@ -26,6 +26,7 @@ import type { EntryDraftDto, EntryDraftSource, RecurringRuleDto } from '@money/t
 import { formatDateTime } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency } from '@money/core/lib/money';
+import { isOfflineError } from '@money/core/lib/offline-error';
 import { useEntryDrafts } from '@money/core/hooks/useEntryDrafts';
 import { useRecurringRules } from '@money/core/hooks/useRecurringRules';
 import { useCanEdit, useProject, useProjectTimeZone } from '@money/core/store/project';
@@ -183,8 +184,9 @@ export default function InboxScreen() {
         } else if (!options.quiet) {
           setNotice(t('inbox.scanNone'));
         }
-      } catch {
-        setNotice(t('inbox.actionFailed'));
+      } catch (error) {
+        // 알림은 네이티브 버퍼에 남아 다음에 다시 담긴다. 오프라인이면 그 사실을 말한다.
+        setNotice(t(isOfflineError(error) ? 'inbox.scanOffline' : 'inbox.actionFailed'));
       } finally {
         setIsWorking(false);
       }
@@ -224,8 +226,12 @@ export default function InboxScreen() {
       setNotice(t('inbox.scanned', { count: result.added }));
       setSource('capture');
       await inbox.reload();
-    } catch {
-      setNotice(t('inbox.readFailed'));
+    } catch (error) {
+      /*
+       * 글자는 기기 안에서 읽으므로 오프라인이어도 읽힌다. 막히는 것은 서버에 담는 일이다.
+       * 그것을 "읽지 못했다"로 말하면 사진을 바꿔 가며 다시 해 본다.
+       */
+      setNotice(t(isOfflineError(error) ? 'inbox.captureOffline' : 'inbox.readFailed'));
     } finally {
       setIsWorking(false);
     }

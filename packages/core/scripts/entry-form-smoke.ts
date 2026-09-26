@@ -647,8 +647,14 @@ const codeOf = (values: Partial<EntryFormValues>) =>
    * 위의 왕복 대조는 목록 한 줄의 필드만 본다. 분할은 그 줄에 대표 분류 하나만 실려서,
    * **나머지 줄이 사라져도 그 대조는 통과한다.** 그래서 줄 수와 줄마다의 금액을 따로 본다.
    */
-  const split = dump.server.entries.find((row) => row.splitCount > 1);
+  const split = dump.server.entries.find((row) => row.splitCount > 1 && !row.originalCurrency);
   eq('덤프에 분할 거래가 있다', Boolean(split), true);
+
+  // 외화 분할은 열지 않는다. 줄 금액이 환산액이라 폼에 펴면 줄 합이 전체와 어긋난다.
+  const foreignSplit = dump.server.entries.find((row) => row.splitCount > 1 && row.originalCurrency);
+  eq('덤프에 외화 분할 거래가 있다', Boolean(foreignSplit), true);
+  eq('외화 분할은 폼으로 열지 않는다',
+    foreignSplit ? entryFormFromItem(foreignSplit, KST) : 'no-sample', null);
 
   const splitBack = split ? entryFormFromItem(split, KST) : null;
   eq('분할도 폼으로 열린다', Boolean(splitBack), true);
@@ -669,7 +675,8 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('줄이 여럿인데 줄 목록이 비면 열지 않는다',
     split ? entryFormFromItem({ ...split, lines: [] }, KST) : 'no-sample', null);
 
-  eq('건너뛴 거래는 없다 (넷 다 다룬다)', skipped, 0);
+  // 건너뛰는 것은 외화 분할 하나뿐이다(위에서 열지 않는 것을 확인했다). 넷 갈래는 다 다룬다.
+  eq('건너뛴 거래는 외화 분할뿐이다', skipped, foreignSplit ? 1 : 0);
 
   driver.close();
   console.log(fail === 0 ? '\n전부 통과' : `\n실패 ${fail}건`);

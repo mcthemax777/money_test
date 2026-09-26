@@ -1221,6 +1221,9 @@ const entry = (
       dump.server.methodEntries.join(','));
     eq('거래 화면: 그 통장으로 들어온 수입이 든다',
       methodEntries.some((row) => row.kind === 'income'), true);
+    // 덤프의 통장은 기초잔액을 들고 만들어진다. 들어온 돈 전부를 보더라도 그 자본 전표는 빠진다.
+    eq('거래 화면: 기초잔액 전표는 빠진다',
+      methodEntries.some((row) => row.kind === 'adjustment'), false);
 
     /*
      * 카드 하나로 좁힌 목록.

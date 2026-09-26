@@ -139,7 +139,13 @@ runSmoke('edge-cases', async (ctx) => {
     description: '거래', amount: '1000',
     categoryId: dining.body.id, accountId: account.body.id,
   });
-  ctx.check('거래 기록이 있어도 구성원을 숨길 수 있다', (await call('DELETE', `/people/${spender.body.id}`)).status, 204);
+  // 삭제와 숨기기는 문이 다르다: 그냥 DELETE 는 기록이 있으면 거절하고, hide=true 가 숨긴다.
+  ctx.check('거래 기록이 있으면 그냥 지우지는 않는다', (await call('DELETE', `/people/${spender.body.id}`)).status, 400);
+  ctx.check(
+    '거래 기록이 있어도 구성원을 숨길 수 있다',
+    (await call('DELETE', `/people/${spender.body.id}?hide=true`)).status,
+    204,
+  );
   ctx.check(
     '숨긴 구성원은 기본 목록에서 빠진다',
     (await call('GET', `/people${q}`)).body.some((p: any) => p.id === spender.body.id),

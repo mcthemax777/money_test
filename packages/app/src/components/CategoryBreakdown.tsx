@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import type { EntryScopeQuery } from '@money/types';
 
-import { apiClient, type ReportPeriod } from '@money/core/lib/api-client';
+import { homeDataPort } from '@money/core/data/home-port';
+import type { ReportPeriod } from '@money/core/lib/api-client';
 import { totalIdOf } from '@money/core/hooks/useCategoryDetail';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
@@ -82,8 +83,8 @@ export default function CategoryBreakdown({
     // 두 벌을 함께 받는다. 대분류 합계는 서버의 rollup 을 그대로 쓰고(화면에서
     // 더하면 서버와 어긋날 여지가 생긴다), 소분류 줄은 쪼개지 않은 쪽에서 만든다.
     Promise.all([
-      apiClient.getCategoryBreakdown(period, type, projectId, filter),
-      apiClient.getCategoryBreakdown(period, type, projectId, { rollup: false, ...filter }),
+      homeDataPort().getCategoryBreakdown(period, type, projectId, filter),
+      homeDataPort().getCategoryBreakdown(period, type, projectId, { rollup: false, ...filter }),
     ])
       .then(([rollupRows, flat]) => {
         if (cancelled) return;

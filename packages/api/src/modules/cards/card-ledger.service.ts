@@ -13,7 +13,8 @@ import {
   closingMonthOf,
   creditUsagePeriods,
   periodForClosingMonth,
-  currencyDecimals,
+  pendingRateItems,
+  billedAmountFromRate,
   debitUsagePeriods,
   performanceOf,
   shiftClosingMonth,
@@ -919,30 +920,23 @@ export class CardLedgerService {
       orderBy: { entry: { date: 'asc' } },
     });
 
-    const items = postings.map(({ amount, entry }) => {
-      // 할부는 첫 회차가 청구되는 주기로 묶는다. 확정은 원금 전체에 걸리므로
-      // 주기를 하나만 고를 수 있고, 그 거래가 처음 청구서에 오르는 주기가 맞다.
-      const closing = closingMonthOf(entry.date, card.statementClosingDay!, timeZone);
-      const period = periodForClosingMonth(
-        closing.year,
-        closing.month,
-        card.statementClosingDay!,
-        card.paymentDueDay!,
-      );
-
-      return {
+    /*
+     * 주기를 매기는 일은 기기와 같은 함수다 (`pendingRateItems`). 오프라인에서는 기기가
+     * 사본으로 같은 목록을 만든다.
+     */
+    const items = pendingRateItems(
+      postings.map(({ amount, entry }) => ({
         entryId: entry.id,
-        date: entry.date.toISOString(),
+        date: entry.date,
         description: entry.description,
         merchant: entry.merchant,
         originalCurrency: entry.originalCurrency!,
         originalAmount: entry.originalAmount!.toString(),
-        // 부채는 음수로 쌓인다. 화면이 쓰는 청구액으로 부호를 뒤집는다.
-        estimatedAmount: amount.neg().toString(),
-        closingMonth: closingMonthKey(closing),
-        dueDate: period.dueDate.toISOString(),
-      };
-    });
+        liabilityAmount: amount.toString(),
+      })),
+      { statementClosingDay: card.statementClosingDay!, paymentDueDay: card.paymentDueDay! },
+      timeZone,
+    );
 
     return { cardId: card.id, currency: liability.currency, items };
   }
@@ -961,6 +955,14 @@ export class CardLedgerService {
     cardId: string,
     userId: string,
     dto: CardDto.SettleRatesRequest,
+    /**
+     * 오프라인 명령의 재생. 시계는 명령의 것을 쓰고, **이미 확정된 거래도 다시 쓴다.**
+     *
+     * 온라인 요청은 미확정 목록에서만 오므로 확정된 거래를 막는다. 재생은 다르다 -- 두
+     * 기기가 같은 명세서를 따로 확정했을 수 있고, 누가 이기는지는 시계가 정한다(늦은
+     * 편집이 이긴다). 그 판정은 재생 서비스가 여기 오기 전에 한다.
+     */
+    replay?: { hlc: string },
   ): Promise<CardDto.SettleRatesResponse> {
     const card = await this.loadCreditCard(cardId, userId, ProjectRole.editor);
     const liability = await this.prisma.account.findUniqueOrThrow({
@@ -998,24 +1000,35 @@ export class CardLedgerService {
       if (!entry) {
         throw new NotFoundException('이 카드의 거래가 아닙니다.');
       }
-      if (!entry.rateProvisional || !entry.originalAmount) {
+      if (!entry.originalAmount || (!replay && !entry.rateProvisional)) {
         throw new BadRequestException('이미 확정된 거래입니다.');
       }
 
       const billed =
         rate === null
           ? toMoney(item.billedAmount, '청구액')
-          : // 환율로 줬으면 카드 통화 자릿수로 반올림한다. 원화면 원 단위다.
-            entry.originalAmount
-              .mul(rate)
-              .toDecimalPlaces(currencyDecimals(liability.currency), Prisma.Decimal.ROUND_HALF_UP);
+          : // 환율로 줬으면 카드 통화 자릿수로 반올림한다. 원화면 원 단위다. 기기가 칸을
+            // 채울 때와 같은 함수다.
+            new Prisma.Decimal(
+              billedAmountFromRate(
+                entry.originalAmount.toString(),
+                rate.toString(),
+                liability.currency,
+              ).toString(),
+            );
 
       return { entryId: item.entryId, billed };
     });
 
     await this.prisma.$transaction(async (tx) => {
       for (const target of targets) {
-        await this.ledger.restateForeignEntry(target.entryId, card.projectId, target.billed, tx);
+        await this.ledger.restateForeignEntry(
+          target.entryId,
+          card.projectId,
+          target.billed,
+          tx,
+          replay?.hlc,
+        );
       }
     });
 

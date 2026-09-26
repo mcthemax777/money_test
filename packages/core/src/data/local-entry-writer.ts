@@ -17,6 +17,7 @@
 import {
   type EntryDto,
   type EntryMutationPayload,
+  type EntryRestatePayload,
   type EntryTagsPayload,
   type Mutation,
   buildEntry,
@@ -177,6 +178,33 @@ export function createLocalEntryWriter({
       notifyMirrorChanged();
       onQueued?.(mutation);
       return result;
+    },
+
+    /**
+     * 청구액 확정. 사본에서 먼저 셈하고, 규칙에 맞을 때만 명령을 쌓는다.
+     *
+     * 셈을 먼저 하는 이유는 전표 조립과 같다 -- 외화 다리가 있는 거래처럼 서버도 영영
+     * 거절할 확정을 큐에 넣지 않는다. 시계는 고른 전표들의 가장 늦은 것 뒤로 받는다.
+     */
+    async settleForeignRates(cardId, items) {
+      if (items.length === 0) return { settled: 0 };
+
+      const plan = await store.planRestate(projectId, items);
+      const entryIds = items.map((item) => item.entryId);
+      const payload: EntryRestatePayload = { cardId, items };
+      const mutation = await store.enqueue({
+        projectId,
+        mutationId: newId(),
+        kind: 'entry.restate',
+        targets: entryIds,
+        payload,
+        observed: await store.latestEntryHlc(entryIds),
+      });
+
+      await store.applyRestate(plan, mutation.hlc);
+      notifyMirrorChanged();
+      onQueued?.(mutation);
+      return { settled: items.length };
     },
 
     async deleteEntry(id) {
