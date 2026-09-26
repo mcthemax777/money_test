@@ -1037,6 +1037,21 @@ export namespace CategoryDto {
  * (`EntryDto.CreateRequest` 와 오프라인 명령), 화면은 그 길로 거래를 만든 뒤
  * `markRegistered` 로 후보에 표시만 남긴다.
  */
+/** 푸시를 받을 기기. 앱이 로그인하면 적고 로그아웃하면 지운다. */
+export namespace PushDeviceDto {
+  export type Platform = 'android' | 'ios';
+
+  export interface RegisterRequest {
+    /** FCM 이 이 앱 설치에 준 토큰. */
+    token: string;
+    platform: Platform;
+  }
+
+  export interface UnregisterRequest {
+    token: string;
+  }
+}
+
 export namespace EntryDraftDto {
   export interface ListQuery {
     projectId?: string;

@@ -18,6 +18,7 @@ import type {
   CategoryDto,
   TagDto,
   EntryDraftDto,
+  PushDeviceDto,
   RecurringRuleDto,
   EntryDto,
   EntryFilterQuery,
@@ -708,6 +709,18 @@ class ApiClient {
 
   async deleteEntryDraft(id: string): Promise<void> {
     await this.client.delete(`/entry-drafts/${id}`);
+  }
+
+  // 푸시 기기 API Methods
+
+  /** 이 기기의 푸시 토큰을 적는다. 로그인한 뒤에 부른다. */
+  async registerPushDevice(dto: PushDeviceDto.RegisterRequest): Promise<void> {
+    await this.client.put('/push/devices', dto);
+  }
+
+  /** 이 기기의 푸시 토큰을 지운다. 로그아웃 **전에** 불러야 토큰이 아직 살아 있다. */
+  async unregisterPushDevice(token: string): Promise<void> {
+    await this.client.delete('/push/devices', { data: { token } });
   }
 
   // 반복 등록 API Methods

@@ -72,6 +72,17 @@ class InboxNotificationService : NotificationListenerService() {
     }
 
     NotificationBuffer.add(applicationContext, item)
+
+    /*
+     * 돈 이야기로 보이는 알림에서만 자바스크립트를 깨운다.
+     *
+     * 채팅·뉴스마다 깨우면 앱이 꺼져 있을 때 리액트 네이티브 전체를 매번 띄워 배터리를
+     * 쓴다. 여기서는 숫자와 통화 표기가 함께 있는가만 느슨하게 본다 -- 진짜 가리기는
+     * 자바스크립트의 규칙(looksFinancial)이 한다. 여기서 놓친 알림도 버퍼에는 있다.
+     */
+    if (MONEY_HINT.containsMatchIn("${title ?: ""}\n$text")) {
+      InboxCollectTaskService.start(applicationContext)
+    }
   }
 
   /**
@@ -80,5 +91,13 @@ class InboxNotificationService : NotificationListenerService() {
    * 사용자가 알림을 스와이프해 지웠다는 것이 "그 결제가 없던 일이 되었다"는 뜻은
    * 아니다. 담아 둔 후보는 그대로 남고, 필요 없으면 보관함에서 무시하면 된다.
    */
+  private companion object {
+    /** 숫자 하나와 통화 표기 하나. draft-parse 의 CURRENCY_MARKS 와 "원"을 느슨하게 합친 것. */
+    val MONEY_HINT = Regex(
+      "[0-9].*(원|₩|KRW|USD|\\$|달러|JPY|¥|EUR|€|유로|CNY|위안)|(₩|\\$|¥|€|USD|KRW|JPY|EUR|CNY)\\s*[0-9]",
+      RegexOption.IGNORE_CASE,
+    )
+  }
+
   override fun onNotificationRemoved(sbn: StatusBarNotification?) = Unit
 }

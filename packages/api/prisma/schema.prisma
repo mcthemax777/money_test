@@ -100,11 +100,29 @@ model User {
   projectInvitations  ProjectInvitation[]
   projectJoinRequests ProjectJoinRequest[]
   createdEntries      JournalEntry[] // 입력자 추적용 (조회 필터로는 쓰지 않는다)
+  pushDevices         PushDevice[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([defaultProjectId])
+}
+
+// 푸시를 받을 기기. 앱이 로그인할 때 FCM 토큰을 적고, 로그아웃할 때 지운다.
+// 토큰이 유일하다 -- 한 기기에서 다른 계정으로 들어오면 그 행의 주인이 바뀐다.
+// 앞 계정의 알림이 그 기기에 계속 가면 남의 가계부 내용이 잠금 화면에 뜬다.
+model PushDevice {
+  id       String @id @default(cuid())
+  userId   String
+  token    String @unique
+  platform String // 'android' | 'ios'
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
 }
 
 // 프로젝트 (가계부 단위). 프로젝트 안의 데이터는 모든 멤버가 공유한다.

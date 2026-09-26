@@ -18,7 +18,8 @@
       },
       "allowBackup": false,
       "predictiveBackGestureEnabled": false,
-      "package": "online.bboyong.app"
+      "package": "online.bboyong.app",
+      "googleServicesFile": "./credentials/google-services.json"
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -39,7 +40,13 @@
       ],
       "@react-native-google-signin/google-signin",
       "./plugins/with-signing",
-      "@react-native-community/datetimepicker"
+      "@react-native-community/datetimepicker",
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "drafts"
+        }
+      ]
     ],
     "scheme": "money"
   }

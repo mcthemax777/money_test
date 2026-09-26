@@ -23,6 +23,7 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { ExchangeRatesModule } from './modules/exchange-rates/exchange-rates.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { SyncModule } from './modules/sync/sync.module';
+import { PushModule } from './modules/push/push.module';
 
 @Module({
   imports: [
@@ -62,6 +63,7 @@ import { SyncModule } from './modules/sync/sync.module';
     LedgerModule,
     EntriesModule,
     EntryDraftsModule,
+    PushModule,
     BudgetsModule,
     ReportsModule,
     ExchangeRatesModule,

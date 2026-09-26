@@ -104,6 +104,17 @@ export class ConfigService {
   }
 
 
+  /**
+   * FCM 으로 푸시를 보낼 서비스 계정 키 파일의 경로.
+   *
+   * Firebase 콘솔 > 프로젝트 설정 > 서비스 계정에서 받은 JSON 이다. 비워 두면 푸시를
+   * 보내지 않고 나머지는 그대로 돈다 -- 푸시는 곁들이는 알림이라, 키 하나가 빠졌다고
+   * 서버가 뜨지 못하면 가계부 전체가 멈춘다.
+   */
+  get fcmServiceAccountFile(): string | null {
+    return this.env.FCM_SERVICE_ACCOUNT_FILE?.trim() || null;
+  }
+
   get corsOrigin(): string[] {
     return this.env.CORS_ORIGIN?.split(',') || ['http://localhost:3000'];
   }

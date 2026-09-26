@@ -58,3 +58,6 @@ backups/*.sql
 # 테스트용 거래내역 캡처
 # 실제 결제 내역이라 커밋하지 않는다.
 *거래내역*.jpeg
+
+# Firebase 서비스 계정 키. 서버가 FCM 푸시를 보낼 때 쓰는 **비밀 키**다 (FCM_SERVICE_ACCOUNT_FILE).
+*firebase-adminsdk*.json

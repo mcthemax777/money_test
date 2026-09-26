@@ -25,6 +25,7 @@ import { ProjectAccessService } from '@/common/project-access.guard';
 import { badRequest } from '@/common/app-error';
 import { clientId } from '@/common/client-id';
 import { toOptionalMoney } from '@/common/money';
+import { PushService } from '../push/push.service';
 
 /** 한 번에 담을 수 있는 후보. 캡처 한 장에서 이보다 많이 나오면 사람이 볼 수 없다. */
 const MAX_BATCH = 100;
@@ -51,6 +52,7 @@ export class EntryDraftsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly projectAccess: ProjectAccessService,
+    private readonly push: PushService,
   ) {}
 
   async list(
@@ -188,7 +190,24 @@ export class EntryDraftsService {
       }
     }
 
-    return { created: created.length, skipped, drafts: created.map(toResponse) };
+    const drafts = created.map(toResponse);
+
+    /*
+     * 알림에서 온 후보가 새로 담겼으면 구성원 기기 전부에 알린다.
+     *
+     * 알림 후보만이다. 캡처는 사람이 앱에서 방금 사진을 고른 것이라 이미 화면을 보고
+     * 있고, 반복 회차는 앱을 열 때 밀린 날짜만큼 한꺼번에 만들어져 알림이 쏟아진다.
+     * 겹쳐서 건너뛴 것(skipped)은 이미 알린 결제다.
+     *
+     * 기다리지 않는다 -- FCM 이 느려도 기기의 담기가 늦어지면 안 되고, 실패해도 후보는
+     * 이미 담겼다.
+     */
+    const fromNotifications = drafts.filter((draft) => draft.source === 'notification');
+    if (fromNotifications.length > 0) {
+      void this.push.notifyDrafts(projectId, fromNotifications);
+    }
+
+    return { created: created.length, skipped, drafts };
   }
 
   /**

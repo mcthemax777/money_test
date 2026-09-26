@@ -15,10 +15,9 @@ import { useProjectBootstrap } from '@money/core/hooks/useProjectBootstrap';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useAuth } from '@money/core/store/auth';
 
-import { setupApi } from './src/api';
-import { setupOffline } from './src/offline';
-import { hydrateStores } from './src/persistence';
+import { boot } from './src/boot';
 import OfflineSync from './src/shell/OfflineSync';
+import PushSetup from './src/shell/PushSetup';
 import ProjectAccessLostAlert from './src/shell/ProjectAccessLostAlert';
 import AssetsScreen from './src/screens/AssetsScreen';
 import CategoriesScreen from './src/screens/CategoriesScreen';
@@ -45,10 +44,7 @@ export default function App() {
   useEffect(() => {
     const start = async () => {
       try {
-        await setupApi(() => useAuth.setState({ user: null, isAuthenticated: false }));
-        await hydrateStores();
-        // 사본을 먼저 열어 둔다. 첫 화면이 서버를 기다리지 않고 사본에서 그려진다.
-        await setupOffline();
+        await boot();
         await loadUser();
       } catch (error) {
         // 준비가 실패해도 화면은 떠야 한다. 그대로 두면 도는 표시만 남는다.
@@ -112,6 +108,7 @@ function Authenticated() {
       ) : (
         <NavigationProvider>
           <OfflineSync />
+          <PushSetup />
           <AppShell>
             <Screen />
           </AppShell>

@@ -30,6 +30,7 @@ import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { signOutGoogle } from '../api';
+import { unregisterPushDevice } from '../push';
 import { useProjectStart } from '@money/core/hooks/useProjectStart';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useAuth } from '@money/core/store/auth';
@@ -73,6 +74,8 @@ export default function StartScreen() {
 
   /** 로그아웃. 구글 쪽 세션도 함께 끊는다 (`signOutGoogle` 의 주석 참고). */
   const signOut = async () => {
+    // 토큰이 살아 있을 때 지워야 서버가 누구의 기기인지 안다 (`unregisterPushDevice`).
+    await unregisterPushDevice();
     await signOutGoogle();
     await logout();
   };

@@ -1,4 +1,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+  <!-- 알림을 받자마자 후보를 올리는 백그라운드 작업이 도는 동안 기기가 잠들지 않게 한다. -->
+  <uses-permission android:name="android.permission.WAKE_LOCK" />
+
   <application>
     <!--
       알림을 듣는 서비스.
@@ -21,5 +24,13 @@
         <action android:name="android.service.notification.NotificationListenerService" />
       </intent-filter>
     </service>
+
+    <!--
+      알림이 오면 자바스크립트를 깨워 곧바로 후보를 올리는 작업 (InboxCollectTaskService).
+      이 앱 안에서만 띄우므로 닫아 둔다.
+    -->
+    <service
+      android:name="expo.modules.inboxnative.InboxCollectTaskService"
+      android:exported="false" />
   </application>
 </manifest>

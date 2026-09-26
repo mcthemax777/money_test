@@ -7,6 +7,7 @@ import { activeLocaleTag, useTranslation } from '@money/core/lib/i18n';
 import { useAuth } from '@money/core/store/auth';
 
 import { signOutGoogle } from '../api';
+import { unregisterPushDevice } from '../push';
 import PageHeader from '../components/PageHeader';
 import { UserAvatar } from '../components/UserAvatar';
 
@@ -62,6 +63,8 @@ export default function ProfileScreen() {
   const signOut = async () => {
     setIsLoggingOut(true);
     try {
+      // 토큰이 살아 있을 때 지워야 서버가 누구의 기기인지 안다 (`unregisterPushDevice`).
+      await unregisterPushDevice();
       await signOutGoogle();
     } finally {
       await logout();

@@ -22,6 +22,12 @@ android {
 
 dependencies {
   /*
+   * 알림이 오면 자바스크립트를 깨우는 백그라운드 작업(HeadlessJsTaskService)이 여기 있다.
+   * 판은 앱이 쓰는 리액트 네이티브를 따른다 (expo 자신도 이렇게 적는다).
+   */
+  implementation 'com.facebook.react:react-android'
+
+  /*
    * 글자 읽기(OCR)를 기기에서 한다. 한국어 모델을 함께 넣는다.
    *
    * `text-recognition-korean` 은 한글과 라틴 문자를 함께 읽는다. 라틴 전용 모델보다
