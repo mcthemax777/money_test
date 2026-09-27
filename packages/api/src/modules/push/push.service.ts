@@ -65,7 +65,7 @@ const DRAFT_NOTICE_POLL_MS = 10 * 1000;
 /** 알림 문구에 쓰는 후보의 값. */
 type NoticeDraft = Pick<
   EntryDraftDto.Response,
-  'merchant' | 'appTitle' | 'description' | 'amount' | 'currency'
+  'merchant' | 'appTitle' | 'description' | 'amount' | 'currency' | 'createdByName'
 >;
 
 /** 차지한 후보 한 줄. */
@@ -78,16 +78,22 @@ const TEXT = {
   ko: {
     one: '보관함에 거래 후보가 담겼습니다',
     many: (count: number) => `거래 후보 ${count}건이 담겼습니다`,
+    oneBy: (name: string) => `${name}님이 거래 후보를 담았습니다`,
+    manyBy: (name: string, count: number) => `${name}님이 거래 후보 ${count}건을 담았습니다`,
     more: (count: number) => ` 외 ${count}건`,
   },
   en: {
     one: 'New transaction in your inbox',
     many: (count: number) => `${count} new transactions in your inbox`,
+    oneBy: (name: string) => `${name} added a transaction to the inbox`,
+    manyBy: (name: string, count: number) => `${name} added ${count} transactions to the inbox`,
     more: (count: number) => ` and ${count} more`,
   },
   ja: {
     one: '受信箱に取引候補が届きました',
     many: (count: number) => `取引候補が${count}件届きました`,
+    oneBy: (name: string) => `${name}さんが取引候補を追加しました`,
+    manyBy: (name: string, count: number) => `${name}さんが取引候補を${count}件追加しました`,
     more: (count: number) => ` ほか${count}件`,
   },
 } as const;
@@ -195,7 +201,7 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
             HAVING max("createdAt") <= now() - make_interval(secs => ${DRAFT_NOTICE_QUIET_SECONDS})
                 OR min("createdAt") <= now() - make_interval(secs => ${DRAFT_NOTICE_MAX_WAIT_SECONDS})
           )
-        RETURNING "projectId", "merchant", "appTitle", "description",
+        RETURNING "projectId", "merchant", "appTitle", "description", "createdByName",
                   "amount"::text AS "amount", "currency", "occurredAt", "createdAt"
       `);
       if (claimed.length === 0) return;
@@ -207,9 +213,9 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
           b.createdAt.getTime() - a.createdAt.getTime(),
       );
       const byProject = new Map<string, NoticeDraft[]>();
-      for (const { projectId, merchant, appTitle, description, amount, currency } of claimed) {
+      for (const { projectId, createdAt: _at, occurredAt: _on, ...draft } of claimed) {
         const drafts = byProject.get(projectId) ?? [];
-        drafts.push({ merchant, appTitle, description, amount, currency });
+        drafts.push(draft);
         byProject.set(projectId, drafts);
       }
 
@@ -308,6 +314,9 @@ function localeOf(value: string | null | undefined): Locale {
  *
  * 본문은 첫 후보의 가맹점과 금액이다 -- 잠금 화면에서 그것만 보고도 무슨 결제인지 안다.
  * 여러 건이면 "외 n건"을 붙인다.
+ *
+ * 제목에는 담은 사람을 적는다("홍길동님이 거래 후보를 담았습니다"). 한 번에 모인 후보를
+ * 담은 사람이 여럿이거나 모르면(반복, "나"를 고르지 않은 구성원) 이름 없이 적는다.
  */
 function messageFor(locale: Locale, drafts: NoticeDraft[]): { title: string; body: string } {
   const text = TEXT[locale];
@@ -318,9 +327,17 @@ function messageFor(locale: Locale, drafts: NoticeDraft[]): { title: string; bod
     .filter(Boolean)
     .join(' ');
   const rest = drafts.length - 1;
+  const names = new Set(drafts.map((draft) => draft.createdByName ?? ''));
+  const name = names.size === 1 ? [...names][0] : '';
 
   return {
-    title: rest > 0 ? text.many(drafts.length) : text.one,
+    title: name
+      ? rest > 0
+        ? text.manyBy(name, drafts.length)
+        : text.oneBy(name)
+      : rest > 0
+        ? text.many(drafts.length)
+        : text.one,
     body: `${summary}${rest > 0 ? text.more(rest) : ''}`.trim(),
   };
 }

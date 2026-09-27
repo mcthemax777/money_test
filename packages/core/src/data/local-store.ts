@@ -873,6 +873,8 @@ export class LocalStore {
           dedupeKey: asText(row.dedupeKey) ?? '',
           registeredEntryId: asText(row.registeredEntryId),
           recurringRuleId: asText(row.recurringRuleId),
+          createdByName: asText(row.createdByName),
+          deviceName: asText(row.deviceName),
           createdAt: asIso(row.createdAt),
           updatedAt: asIso(row.updatedAt),
           updatedVersion: asInt(row.updatedVersion),
@@ -1557,6 +1559,8 @@ export class LocalStore {
       dedupeKey: draft.dedupeKey,
       registeredEntryId: draft.registeredEntryId,
       recurringRuleId: draft.recurringRuleId,
+      createdByName: draft.createdByName,
+      deviceName: draft.deviceName,
       createdAt: draft.createdAt,
       updatedAt: draft.updatedAt,
       updatedVersion: 0,
@@ -3508,6 +3512,8 @@ function toDraftResponse(row: Row): EntryDraftDto.Response {
     dedupeKey: String(row.dedupeKey ?? ''),
     registeredEntryId: asText(row.registeredEntryId),
     recurringRuleId: asText(row.recurringRuleId),
+    createdByName: asText(row.createdByName),
+    deviceName: asText(row.deviceName),
     /*
      * 태그는 다리 표에 있다. 이 함수는 한 줄만 보므로 비워 두고, 부르는 쪽이 한 번에
      * 읽어 붙인다(`draftRows`). 여기서 그때그때 물으면 줄마다 질의가 하나씩 늘어난다.

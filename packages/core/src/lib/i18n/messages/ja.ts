@@ -1247,6 +1247,7 @@ export const ja: Record<MessageKey, string> = {
   'inbox.remove': '削除',
   'inbox.raw': '読み取った原文',
   'inbox.confidence': '確度 {value}%',
+  'inbox.addedBy': '追加: {who}',
   'inbox.needsFix': '空の項目があります。保存する前に入力してください。',
   'inbox.registered': '取引として記録しました。',
   'inbox.amountUnknown': '金額を読み取れませんでした',

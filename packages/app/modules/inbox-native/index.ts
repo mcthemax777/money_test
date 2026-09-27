@@ -28,6 +28,8 @@ interface InboxNativeModule {
   readNotifications(): CapturedNotification[];
   clearNotifications(keys: string[]): void;
   recognizeText(uri: string): Promise<string>;
+  /** 이 함수를 넣기 전에 만든 빌드에는 없다. */
+  getDeviceName?(): string;
 }
 
 const native: InboxNativeModule | null = (() => {
@@ -61,4 +63,17 @@ export function clearNotifications(keys: string[]): void {
 export async function recognizeText(uri: string): Promise<string> {
   if (!native) return '';
   return native.recognizeText(uri);
+}
+
+/**
+ * 이 기기의 이름 (사용자가 정한 이름, 없으면 제조사·모델). 모르면 null.
+ *
+ * 보관함 후보에 담은 기기로 남긴다. 옛 네이티브 빌드에는 함수가 없어 null 이다.
+ */
+export function getDeviceName(): string | null {
+  try {
+    return native?.getDeviceName?.()?.trim() || null;
+  } catch {
+    return null;
+  }
 }

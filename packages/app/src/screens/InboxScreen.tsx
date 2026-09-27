@@ -33,7 +33,7 @@ import { useEntryDrafts } from '@money/core/hooks/useEntryDrafts';
 import { useRecurringRules } from '@money/core/hooks/useRecurringRules';
 import { useCanEdit, useProject, useProjectTimeZone } from '@money/core/store/project';
 import { homeDataPort } from '@money/core/data/home-port';
-import { draftNeedsFix } from '@money/core/lib/draft-collect';
+import { draftAddedBy, draftNeedsFix } from '@money/core/lib/draft-collect';
 import type { Account, Card, Category, Person, Tag } from '@money/core/lib/types';
 
 import EntryEditor from '../components/EntryEditor';
@@ -615,6 +615,7 @@ function DraftRow({
 
   /** 사람이 채워야 하는 칸이 남았는가. 금액·결제수단·대분류 셋을 본다. */
   const needsFix = draftNeedsFix(draft);
+  const addedBy = draftAddedBy(draft);
 
   return (
     <Pressable
@@ -645,6 +646,10 @@ function DraftRow({
               .filter(Boolean)
               .join(' · ')}
           </Text>
+          {/* 누가·어느 기기에서 담았는가. 가계부를 함께 쓰면 누구의 결제인지 여기서 안다. */}
+          {addedBy ? (
+            <Text className="mt-0.5 text-xs text-gray-500">{t('inbox.addedBy', { who: addedBy })}</Text>
+          ) : null}
         </View>
 
         {canEdit ? (

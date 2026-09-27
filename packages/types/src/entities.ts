@@ -609,6 +609,13 @@ export interface EntryDraft {
 
   /** 등록해서 만들어진 거래. 등록 전에는 null 이다. */
   registeredEntryId: string | null;
+  /** 담은 기기의 이름 (알림 후보). 모르면 null. */
+  deviceName: string | null;
+  /**
+   * 담은 사람. 그 사용자가 이 가계부에서 "나"로 고른 구성원의 이름을 **담을 때** 적어 둔다.
+   * 고르지 않았거나 서버가 만든 후보(반복)는 null 이다.
+   */
+  createdByName: string | null;
   /** 이 후보를 만든 반복 등록. 알림·캡처에서 온 것은 null 이다. */
   recurringRuleId: string | null;
   createdAt: IsoDateString;

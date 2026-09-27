@@ -96,6 +96,8 @@ async function collectNotificationsNow(projectId: string): Promise<CollectResult
   if (captured.length === 0) return EMPTY;
 
   const hints = await loadHints(projectId);
+  // 담은 기기. 보관함과 다른 구성원의 화면에 "어느 기기에서 담았는지"로 보인다.
+  const deviceName = InboxNative.getDeviceName();
   const candidates: Array<{ item: EntryDraftDto.CreateItem; key: string }> = [];
   /** 금융 알림이 아니어서 후보가 되지 못한 것. 이쪽도 버퍼에서 지운다. */
   const droppedKeys: string[] = [];
@@ -115,14 +117,17 @@ async function collectNotificationsNow(projectId: string): Promise<CollectResult
     }
 
     candidates.push({
-      item: draftItemFrom(parsed, hints, {
-        source: 'notification',
-        dedupeKey: notificationDedupeKey(notification),
-        appPackage: notification.packageName,
-        appTitle: notification.title,
-        // 문구에서 시각을 못 읽으면 알림이 온 시각이 그 거래의 시각이다.
-        occurredAt: new Date(notification.postedAt).toISOString(),
-      }),
+      item: {
+        ...draftItemFrom(parsed, hints, {
+          source: 'notification',
+          dedupeKey: notificationDedupeKey(notification),
+          appPackage: notification.packageName,
+          appTitle: notification.title,
+          // 문구에서 시각을 못 읽으면 알림이 온 시각이 그 거래의 시각이다.
+          occurredAt: new Date(notification.postedAt).toISOString(),
+        }),
+        deviceName,
+      },
       key: notification.key,
     });
   }

@@ -56,6 +56,18 @@ function needsCategory(kind: EntryDraftDto.Response['kind']): boolean {
  *
  * 웹과 앱이 함께 쓴다. 두 곳에 따로 두면 같은 후보가 한쪽에서만 경고를 단다.
  */
+/**
+ * 누가, 어느 기기에서 담았는가. "홍길동 · Galaxy S21". 둘 다 모르면 null.
+ *
+ * 이름은 담은 사용자가 그 가계부에서 "나"로 고른 구성원이다. 고르지 않았으면 기기만 보인다.
+ */
+export function draftAddedBy(
+  draft: Pick<EntryDraftDto.Response, 'createdByName' | 'deviceName'>,
+): string | null {
+  const parts = [draft.createdByName, draft.deviceName].filter((part): part is string => !!part);
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
 export function draftNeedsFix(draft: EntryDraftDto.Response): boolean {
   if (!draft.amount) return true;
   if (!draft.cardId && !draft.accountId) return true;

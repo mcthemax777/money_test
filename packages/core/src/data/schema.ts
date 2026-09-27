@@ -43,8 +43,11 @@
  *
  * 24 는 통장·카드에 `matchText` 가 생긴 판이다. 알림에서 그 수단을 알아보는 말이라,
  * 옛 사본에 그 칸이 없으면 알림 후보의 수단이 늘 비어 온다.
+ *
+ * 25 는 후보에 `createdByName`·`deviceName`(누가, 어느 기기에서 담았는가)이 생긴 판이다.
+ * 옛 사본의 표에는 그 칸이 없어 새 행을 적을 자리가 없다.
  */
-export const SCHEMA_VERSION = 24;
+export const SCHEMA_VERSION = 25;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -404,6 +407,9 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      registeredEntryId TEXT,
      /* 이 후보를 만든 반복 등록. 알림·캡처에서 온 것은 비어 있다. */
      recurringRuleId   TEXT,
+     /* 담은 사람("나"로 고른 구성원의 이름)과 기기. 서버가 담을 때 적는다. */
+     createdByName     TEXT,
+     deviceName        TEXT,
      createdAt         TEXT NOT NULL DEFAULT '',
      updatedAt         TEXT NOT NULL DEFAULT '',
      updatedVersion    INTEGER NOT NULL DEFAULT 0

@@ -48,6 +48,7 @@ import { homeDataPort } from '@money/core/data/home-port';
 import { draftPort } from '@money/core/data/draft-port';
 import {
   captureItems,
+  draftAddedBy,
   draftNeedsFix,
   historyFromEntries,
   NO_HINTS,
@@ -639,6 +640,7 @@ function DraftRow({
 
   /** 사람이 채워야 하는 칸이 남았는가. 금액·결제수단·대분류 셋을 본다. */
   const needsFix = draftNeedsFix(draft);
+  const addedBy = draftAddedBy(draft);
 
   return (
     <div
@@ -681,6 +683,10 @@ function DraftRow({
             {methodName ? <span className="font-medium text-gray-700">{methodName}</span> : null}
             <span>{t('inbox.confidence', { value: draft.confidence })}</span>
           </p>
+          {/* 누가·어느 기기에서 담았는가. 가계부를 함께 쓰면 누구의 결제인지 여기서 안다. */}
+          {addedBy ? (
+            <p className="mt-0.5 text-xs text-gray-500">{t('inbox.addedBy', { who: addedBy })}</p>
+          ) : null}
         </div>
 
         {canEdit ? (

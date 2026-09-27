@@ -1254,6 +1254,7 @@ export const en: Record<MessageKey, string> = {
   'inbox.remove': 'Delete',
   'inbox.raw': 'Original text',
   'inbox.confidence': '{value}% confident',
+  'inbox.addedBy': 'Added by {who}',
   'inbox.needsFix': 'Some fields are empty. Fill them in before saving.',
   'inbox.registered': 'Recorded as an entry.',
   'inbox.amountUnknown': 'Amount could not be read',

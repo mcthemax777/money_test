@@ -1061,6 +1061,10 @@ model EntryDraft {
 
   /// 누가 담았는가. 알림은 그 기기의 사용자다.
   createdByUserId String?
+  /// 담은 사람이 이 가계부에서 "나"로 고른 구성원의 이름. 담을 때 적어 둔다.
+  createdByName   String?
+  /// 담은 기기의 이름 (알림 후보).
+  deviceName      String?
 
   /// 알림 후보·서버가 만든 반복 회차의 푸시를 보낸(보내기로 차지한) 시각. 비어 있으면 아직 알리지 않았다.
   /// 서버 여럿 가운데 먼저 채운 쪽이 보낸다 (`PushService`).

@@ -1096,6 +1096,8 @@ export namespace EntryDraftDto {
      * 날짜가 규칙에 맞는지 본다.
      */
     recurringRuleId?: string | null;
+    /** 담은 기기의 이름. 알림 후보가 싣는다. 담은 사람의 이름은 서버가 채운다. */
+    deviceName?: string | null;
   }
 
   /**

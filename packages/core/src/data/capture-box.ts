@@ -195,6 +195,9 @@ function toDraft(
     tagIds: item.tagIds ?? [],
     registeredEntryId: null,
     recurringRuleId: null,
+    // 이 기기에만 있는 후보라 누가·어느 기기에서 담았는지 보일 까닭이 없다.
+    createdByName: null,
+    deviceName: null,
     createdAt: now,
     updatedAt: now,
   };

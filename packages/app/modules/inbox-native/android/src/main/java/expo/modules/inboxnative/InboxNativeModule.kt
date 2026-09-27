@@ -7,6 +7,7 @@ import android.graphics.BitmapRegionDecoder
 import android.graphics.Rect
 import android.media.ExifInterface
 import android.net.Uri
+import android.os.Build
 import android.provider.Settings
 import com.google.mlkit.vision.common.InputImage
 import com.google.mlkit.vision.text.Text
@@ -233,6 +234,17 @@ class InboxNativeModule : Module() {
         "enabled_notification_listeners",
       ) ?: return@Function false
       enabled.split(":").any { it.contains(context.packageName) }
+    }
+
+    /**
+     * 이 기기의 이름. 보관함 후보에 "어느 기기가 담았는지"로 남긴다.
+     *
+     * 사용자가 설정 > 휴대전화 정보에서 정한 이름(Settings.Global "device_name")을 먼저 보고,
+     * 없으면 제조사·모델명이다.
+     */
+    Function("getDeviceName") {
+      Settings.Global.getString(context.contentResolver, "device_name")?.takeIf { it.isNotBlank() }
+        ?: "${Build.MANUFACTURER} ${Build.MODEL}".trim()
     }
 
     /** 알림 접근 설정을 연다. 우리 앱을 켜는 자리다. */

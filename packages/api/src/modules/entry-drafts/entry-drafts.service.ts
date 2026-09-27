@@ -29,6 +29,9 @@ import { toOptionalMoney } from '@/common/money';
 /** 한 번에 담을 수 있는 후보. 캡처 한 장에서 이보다 많이 나오면 사람이 볼 수 없다. */
 const MAX_BATCH = 100;
 
+/** 기기 이름의 상한. 사용자가 정한 이름이라 길이를 믿지 않는다. */
+const MAX_DEVICE_NAME = 100;
+
 /** 목록의 기본 상한. 보관함이 이보다 길면 정리가 먼저 필요하다. */
 const DEFAULT_LIMIT = 200;
 
@@ -152,6 +155,21 @@ export class EntryDraftsService {
   }
 
   /**
+   * 그 사용자가 이 가계부에서 "나"로 고른 구성원의 이름. 고르지 않았으면 null.
+   *
+   * 후보에 **담을 때** 적어 둔다. 보관함과 푸시가 "누가 담았는지"로 보인다 -- 나중에 구성원
+   * 이름을 바꿔도 이미 담긴 후보의 이름은 그대로다.
+   */
+  private async memberName(projectId: string, userId: string | null): Promise<string | null> {
+    if (!userId) return null;
+    const member = await this.prisma.projectMember.findUnique({
+      where: { projectId_userId: { projectId, userId } },
+      select: { person: { select: { name: true } } },
+    });
+    return member?.person?.name ?? null;
+  }
+
+  /**
    * 후보를 한 건씩 넣는다. 겹치는 열쇠는 건너뛴다.
    *
    * @param userId 올린 사람. 서버가 만든 회차는 null 이다.
@@ -163,6 +181,7 @@ export class EntryDraftsService {
   ): Promise<{ created: DraftRow[]; skipped: number }> {
     const created: DraftRow[] = [];
     let skipped = 0;
+    const createdByName = await this.memberName(projectId, userId);
 
     for (const item of items) {
       const dedupeKey = String(item.dedupeKey ?? '').trim();
@@ -215,6 +234,8 @@ export class EntryDraftsService {
         // 위 검사를 지난 값이다. 반복이 아닌 후보에는 오지 않는다.
         recurringRuleId: item.source === 'recurring' ? (item.recurringRuleId ?? null) : null,
         createdByUserId: userId,
+        createdByName,
+        deviceName: String(item.deviceName ?? '').trim().slice(0, MAX_DEVICE_NAME) || null,
         /*
          * 푸시를 보낼지. 비워 두면 `PushService` 가 알린다.
          *
@@ -509,6 +530,8 @@ function toResponse(row: DraftRow): EntryDraftDto.Response {
     dedupeKey: row.dedupeKey,
     registeredEntryId: row.registeredEntryId,
     recurringRuleId: row.recurringRuleId,
+    deviceName: row.deviceName,
+    createdByName: row.createdByName,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

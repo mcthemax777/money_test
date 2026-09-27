@@ -1286,6 +1286,7 @@ export const ko = {
   'inbox.remove': '지우기',
   'inbox.raw': '읽은 원문',
   'inbox.confidence': '확신 {value}%',
+  'inbox.addedBy': '담음: {who}',
   'inbox.needsFix': '빈 칸이 있습니다. 저장하기 전에 채워 주세요.',
   'inbox.registered': '거래로 적었습니다.',
   'inbox.amountUnknown': '금액을 읽지 못했습니다',
