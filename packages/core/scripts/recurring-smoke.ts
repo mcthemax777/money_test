@@ -158,6 +158,8 @@ console.log('\n── 후보로 옮기기 ──');
     projectId: 'p1',
     isActive: true,
     frequency: 'daily',
+    weekdays: [],
+    holidayRule: 'none',
     everyDays: 1,
     dayOfMonth: null,
     month: null,
@@ -372,6 +374,101 @@ console.log('\n── 태그 물려주기 ──');
     { timeZone: 'Asia/Seoul', ledgerCurrency: 'KRW', personId: '' },
   );
   eq('폼의 태그 칸이 채워진다', form.tagIds.join(','), 't1,t2');
+}
+
+console.log('\n── 휴일 (2026년 추석 9/24~26, 개천절 대체 10/5, 한글날 10/9) ──');
+{
+  // 서버가 DB 에서 읽어 넘기는 것과 같은 모양. 검사에 필요한 날만 적는다.
+  const KR = new Set([
+    '2026-09-24', '2026-09-25', '2026-09-26', '2026-10-03', '2026-10-05', '2026-10-09',
+  ]);
+  const JP = new Set(['2027-01-01']);
+  const monthly25 = (holidayRule: RecurringSchedule['holidayRule']): RecurringSchedule => ({
+    frequency: 'monthly',
+    dayOfMonth: 25,
+    startDate: '2026-01-01',
+    holidayRule,
+    publicHolidays: KR,
+  });
+  eq('월별 그대로: 추석이어도 25일', nextOccurrence(monthly25('none'), '2026-09-20'), '2026-09-25');
+  eq('월별 앞 평일: 24일도 추석이라 23일', nextOccurrence(monthly25('before'), '2026-09-20'), '2026-09-23');
+  eq('월별 뒷 평일: 토·일 지나 28일', nextOccurrence(monthly25('after'), '2026-09-20'), '2026-09-28');
+  eq(
+    '월별 앞 평일: 23일에 셈하면 그 회차가 나온다',
+    dueOccurrences({ ...monthly25('before'), lastMadeOn: '2026-08-25' }, '2026-09-23').join(','),
+    '2026-09-23',
+  );
+  eq(
+    '월별 뒷 평일: 25일에는 아직 없다',
+    dueOccurrences({ ...monthly25('after'), lastMadeOn: '2026-08-25' }, '2026-09-25').length,
+    0,
+  );
+
+  const monthly1Before: RecurringSchedule = {
+    frequency: 'monthly',
+    dayOfMonth: 1,
+    startDate: '2026-01-01',
+    holidayRule: 'before',
+    publicHolidays: KR,
+    lastMadeOn: '2026-10-01',
+  };
+  eq('11/1(일) 앞 평일은 10/30 -- 달을 넘어 당긴다', dueOccurrences(monthly1Before, '2026-10-30').join(','), '2026-10-30');
+  eq('10/29 에는 아직 없다', dueOccurrences(monthly1Before, '2026-10-29').length, 0);
+  eq(
+    '만든 뒤에는 같은 회차를 다시 내지 않는다',
+    dueOccurrences({ ...monthly1Before, lastMadeOn: '2026-10-30' }, '2026-11-02').length,
+    0,
+  );
+
+  eq(
+    '일별 휴일 제외: 토·일·추석을 건너뛴다',
+    dueOccurrences(
+      { frequency: 'daily', everyDays: 1, startDate: '2026-09-21', holidayRule: 'skip', publicHolidays: KR },
+      '2026-09-28',
+    ).join(','),
+    '2026-09-21,2026-09-22,2026-09-23,2026-09-28',
+  );
+  eq(
+    '주별 월·금 + 공휴일 제외: 9/25·10/5·10/9 빠짐',
+    dueOccurrences(
+      { frequency: 'weekly', weekdays: [1, 5], startDate: '2026-09-21', holidayRule: 'skip', publicHolidays: KR },
+      '2026-10-12',
+      { catchUpDays: 60 },
+    ).join(','),
+    '2026-09-21,2026-09-28,2026-10-02,2026-10-12',
+  );
+  eq(
+    '주별 공휴일 제외: 토요일은 남고 공휴일인 토요일(9/26 추석, 10/3 개천절)만 빠진다',
+    dueOccurrences(
+      { frequency: 'weekly', weekdays: [6], startDate: '2026-09-21', holidayRule: 'skip', publicHolidays: KR },
+      '2026-10-10',
+    ).join(','),
+    '2026-10-10',
+  );
+  eq(
+    '주별 그대로: 요일마다',
+    dueOccurrences({ frequency: 'weekly', weekdays: [2], startDate: '2026-09-01' }, '2026-09-16').join(','),
+    '2026-09-01,2026-09-08,2026-09-15',
+  );
+  eq(
+    '일본: 2027-01-01(금) 뒷 평일은 01-04',
+    nextOccurrence(
+      { frequency: 'yearly', month: 1, dayOfMonth: 1, startDate: '2026-01-01', holidayRule: 'after', publicHolidays: JP },
+      '2026-12-31',
+    ),
+    '2027-01-04',
+  );
+  eq('주별 요일 없음은 거절', checkRecurring({ frequency: 'weekly', weekdays: [], startDate: '2026-09-01' })?.code, 'WEEKDAYS_INVALID');
+  eq(
+    '일별에 앞 평일은 거절',
+    checkRecurring({ frequency: 'daily', everyDays: 1, startDate: '2026-09-01', holidayRule: 'before' })?.code,
+    'HOLIDAY_RULE_INVALID',
+  );
+  eq(
+    '월별 뒷 평일은 통과',
+    checkRecurring({ frequency: 'monthly', dayOfMonth: 25, startDate: '2026-09-01', holidayRule: 'after' }),
+    null,
+  );
 }
 
 console.log(fail === 0 ? '\n전부 통과' : `\n${fail}건 실패`);

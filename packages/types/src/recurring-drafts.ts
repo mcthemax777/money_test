@@ -54,11 +54,13 @@ export function manualDedupeKey(ruleId: string, dateKey: string): string {
  * @param rules 서버에서 읽은 반복 목록. **꺼 둔 것은 건너뛴다.**
  * @param todayKey 프로젝트 타임존의 오늘 ("YYYY-MM-DD")
  * @param timeZone 프로젝트 타임존. 후보의 거래 시각을 만드는 데 쓴다
+ * @param publicHolidays 그 가계부 나라의 공휴일. 없으면 토·일만 휴일로 셈한다
  */
 export function recurringDraftItems(
   rules: RecurringRuleDto.Response[],
   todayKey: string,
   timeZone: string,
+  publicHolidays: ReadonlySet<string> | null = null,
 ): EntryDraftDto.CreateItem[] {
   const items: EntryDraftDto.CreateItem[] = [];
 
@@ -75,6 +77,10 @@ export function recurringDraftItems(
     const schedule: RecurringSchedule = {
       frequency: rule.frequency,
       everyDays: rule.everyDays,
+      // 옛 서버는 이 둘을 싣지 않는다. 없으면 지금까지처럼 셈한다.
+      weekdays: rule.weekdays ?? [],
+      holidayRule: rule.holidayRule ?? 'none',
+      publicHolidays,
       dayOfMonth: rule.dayOfMonth,
       month: rule.month,
       startDate: rule.startDate,

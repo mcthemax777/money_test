@@ -26,6 +26,7 @@ export * from './field-merge';
 export * from './hlc';
 export * from './mutations';
 export * from './rank';
+export * from './holidays';
 export * from './recurring';
 export * from './recurring-drafts';
 export * from './reorder-rank';

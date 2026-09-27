@@ -343,7 +343,7 @@ model Account {
   /// 화면 표시 순서 (분수 색인). 이웃 사이에 값을 끼워 넣어 한 줄만 고친다.
   /// 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
   /// 비교는 바이트 순서다. 컬럼에 `COLLATE "C"` 를 박아 두었다 (20260907100000).
-  sortRank      String      @default("V")
+  sortRank String @default("V")
 
   project          Project               @relation(fields: [projectId], references: [id], onDelete: Cascade)
   owner            Person?               @relation(fields: [ownerId], references: [id])
@@ -568,7 +568,7 @@ model Card {
   /// 화면 표시 순서 (분수 색인). 이웃 사이에 값을 끼워 넣어 한 줄만 고친다.
   /// 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).
   /// 비교는 바이트 순서다. 컬럼에 `COLLATE "C"` 를 박아 두었다 (20260907100000).
-  sortRank            String    @default("V")
+  sortRank String @default("V")
 
   project          Project              @relation(fields: [projectId], references: [id], onDelete: Cascade)
   issuer           FinancialInstitution @relation(fields: [issuerId], references: [id])
@@ -740,13 +740,13 @@ model JournalEntry {
 
   createdByUserId String? // 입력자 추적용. 조회 필터로 쓰지 않는다 (프로젝트 멤버는 모두 같은 데이터를 본다)
 
-  project   Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  person    Person    @relation(fields: [personId], references: [id])
-  createdBy User?     @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
+  project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  person    Person       @relation(fields: [personId], references: [id])
+  createdBy User?        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   postings  Posting[]
   tags      EntryTag[]
   /// 이 전표를 만들어 낸 보관함 후보. 대개 없다 (손으로 적은 거래).
-  drafts          EntryDraft[]
+  drafts    EntryDraft[]
 
   /// 변경 피드가 보는 번호. Project.syncVersion 에서 발급된다.
   updatedVersion Int @default(0)
@@ -1104,14 +1104,18 @@ model RecurringRule {
   projectId String
   isActive  Boolean @default(true)
 
-  /// daily | monthly | yearly
-  frequency  String
+  /// none | daily | weekly | monthly | yearly
+  frequency   String
   /// daily: 며칠마다 (1 이면 매일)
-  everyDays  Int?
+  everyDays   Int?
+  /// weekly: 요일들 (0 일요일 ~ 6 토요일)
+  weekdays    Int[]  @default([])
+  /// none | skip | before | after -- 휴일에 걸린 회차 (`RecurringHolidayRule`)
+  holidayRule String @default("none")
   /// monthly·yearly: 며칟날. 그 달에 없는 날은 마지막 날로 당긴다.
-  dayOfMonth Int?
+  dayOfMonth  Int?
   /// yearly: 몇 월
-  month      Int?
+  month       Int?
 
   /// "YYYY-MM-DD". 프로젝트 타임존의 달력 날짜다.
   startDate String
@@ -1170,4 +1174,24 @@ model RecurringRuleTag {
 
   @@id([ruleId, tagId])
   @@index([tagId])
+}
+
+/// 공휴일. 반복 등록의 "휴일 제외"·"휴일이면 앞/뒤 평일"이 쓴다.
+///
+/// 관리 도구의 "공휴일 갱신"이 채운다(`HolidaysService.sync`). 한국은 관보 기준 공개 데이터,
+/// 나머지 나라는 date-holidays 에서 온다. 임시공휴일처럼 급히 정해진 날은 관리 도구에서 직접
+/// 더한다(source "manual") -- 갱신이 그 줄은 지우지 않는다.
+model PublicHoliday {
+  /// HOLIDAY_COUNTRIES (KR, JP, CN, SG, GB, US)
+  country String
+  /// "YYYY-MM-DD"
+  date    String
+  name    String
+  /// gazette | library | manual
+  source  String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([country, date])
 }

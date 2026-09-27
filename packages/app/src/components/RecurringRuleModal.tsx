@@ -11,13 +11,18 @@
 import { useEffect, useState } from 'react';
 import { Alert, Pressable, Text, TextInput, View } from 'react-native';
 import {
+  HOLIDAY_RULES,
   checkRecurring,
+  weekdayOf,
   type EntryKind,
   type RecurringFrequency,
+  type RecurringHolidayRule,
   type RecurringRuleDto,
 } from '@money/types';
 
-import { todayKey } from '@money/core/lib/datetime';
+import { todayKey, weekdayNames } from '@money/core/lib/datetime';
+import { HOLIDAY_RULE_LABEL } from '@money/core/lib/recurring-text';
+import { useWeekStart } from '@money/core/store/week-start';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useProjectTimeZone } from '@money/core/store/project';
 import type { Account, Card, Category, Person, Tag } from '@money/core/lib/types';
@@ -29,6 +34,7 @@ import Modal from './Modal';
 const FREQUENCIES: Array<{ id: RecurringFrequency; labelKey: MessageKey }> = [
   { id: 'none', labelKey: 'inbox.freq.none' },
   { id: 'daily', labelKey: 'inbox.freq.daily' },
+  { id: 'weekly', labelKey: 'inbox.freq.weekly' },
   { id: 'monthly', labelKey: 'inbox.freq.monthly' },
   { id: 'yearly', labelKey: 'inbox.freq.yearly' },
 ];
@@ -56,6 +62,9 @@ interface FormValues {
   amount: string;
   frequency: RecurringFrequency;
   everyDays: string;
+  /** 주별의 요일들 (0 일요일 ~ 6 토요일) */
+  weekdays: number[];
+  holidayRule: RecurringHolidayRule;
   dayOfMonth: string;
   month: string;
   startDate: string;
@@ -77,6 +86,9 @@ function emptyForm(timeZone: string): FormValues {
     amount: '',
     frequency: 'monthly',
     everyDays: '1',
+    // 주별로 바꾸면 오늘의 요일이 먼저 골라져 있다. 대개 "오늘부터 매주 이 요일"이다.
+    weekdays: [weekdayOf(today)],
+    holidayRule: 'none',
     // 오늘 날짜의 일(日)을 기본으로. 대개 "오늘부터 매달 이 날"이다.
     dayOfMonth: String(Number(today.slice(8, 10))),
     month: String(Number(today.slice(5, 7))),
@@ -98,6 +110,9 @@ function formOf(rule: RecurringRuleDto.Response, timeZone: string): FormValues {
     amount: rule.amount ?? '',
     frequency: rule.frequency,
     everyDays: String(rule.everyDays ?? 1),
+    // 옛 서버는 이 둘을 싣지 않는다. 없으면 빈 폼의 값을 쓴다.
+    weekdays: rule.weekdays?.length ? rule.weekdays : emptyForm(timeZone).weekdays,
+    holidayRule: rule.holidayRule ?? 'none',
     dayOfMonth: String(rule.dayOfMonth ?? 1),
     month: String(rule.month ?? 1),
     startDate: rule.startDate,
@@ -135,6 +150,7 @@ export default function RecurringRuleModal({
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
+  const weekStart = useWeekStart();
   const [values, setValues] = useState<FormValues>(() => emptyForm(timeZone));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -154,6 +170,24 @@ export default function RecurringRuleModal({
 
   const set = <K extends keyof FormValues>(field: K, value: FormValues[K]) =>
     setValues((previous) => ({ ...previous, [field]: value }));
+
+  /**
+   * 주기를 바꾼다. 그 주기에서 고를 수 없는 휴일 처리는 그 주기의 기본으로 되돌린다.
+   *
+   * 월별의 "앞 평일"을 고른 채 일별로 바꾸면 일별에는 없는 값이 남아 저장이 거절된다.
+   */
+  const setFrequency = (frequency: RecurringFrequency) =>
+    setValues((previous) => ({
+      ...previous,
+      frequency,
+      holidayRule: HOLIDAY_RULES[frequency].includes(previous.holidayRule)
+        ? previous.holidayRule
+        : HOLIDAY_RULES[frequency][0],
+    }));
+
+  /** 요일 이름을 주의 시작 요일부터. 알약의 차례이고, 값은 요일 번호 그대로다. */
+  const weekdayOrder = Array.from({ length: 7 }, (_, index) => (weekStart + index) % 7);
+  const weekdayLabels = weekdayNames(0);
 
   /** 그 갈래의 분류만 고른다. 이체·카드대금에는 분류가 없다. */
   const categories = lists.categories.filter(
@@ -201,13 +235,17 @@ export default function RecurringRuleModal({
     const violation = checkRecurring({
       frequency: body.frequency,
       everyDays: body.everyDays,
+      weekdays: body.weekdays,
+      holidayRule: body.holidayRule,
       dayOfMonth: body.dayOfMonth,
       month: body.month,
       startDate: body.startDate,
       endDate: body.endDate,
     });
     if (violation) {
-      setError(t('error.RECURRING_INVALID'));
+      setError(
+        t(violation.code === 'WEEKDAYS_INVALID' ? 'inbox.weekdaysRequired' : 'error.RECURRING_INVALID'),
+      );
       return;
     }
     if (!body.description.trim()) {
@@ -301,7 +339,7 @@ export default function RecurringRuleModal({
               label: t(frequency.labelKey),
             }))}
             selected={values.frequency}
-            onSelect={(value) => set('frequency', value as RecurringFrequency)}
+            onSelect={(value) => setFrequency(value as RecurringFrequency)}
           />
         </Field>
 
@@ -316,6 +354,26 @@ export default function RecurringRuleModal({
           <View className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
             <Text className="text-xs text-gray-600">{t('inbox.ruleNoneNote')}</Text>
           </View>
+        ) : values.frequency === 'weekly' ? (
+          <Field label={t('inbox.weekdays')}>
+            <View className="flex-row flex-wrap items-center gap-2">
+              {weekdayOrder.map((day) => (
+                <Chip
+                  key={day}
+                  label={weekdayLabels[day]}
+                  selected={values.weekdays.includes(day)}
+                  onPress={() =>
+                    set(
+                      'weekdays',
+                      values.weekdays.includes(day)
+                        ? values.weekdays.filter((d) => d !== day)
+                        : [...values.weekdays, day],
+                    )
+                  }
+                />
+              ))}
+            </View>
+          </Field>
         ) : values.frequency === 'daily' ? (
           <Field label={t('inbox.everyDays')}>
             <View className="flex-row items-center gap-2">
@@ -361,6 +419,24 @@ export default function RecurringRuleModal({
               <Text className="text-xs text-gray-500">{t('inbox.ruleEndOfMonth')}</Text>
             ) : null}
           </>
+        )}
+
+        {/*
+          휴일에 걸린 회차. 주기마다 고를 것이 다르다(`HOLIDAY_RULES`): 일별은 휴일 제외,
+          주별은 공휴일 제외, 월별·년별은 앞/뒤 평일로 옮기기.
+        */}
+        {isManual ? null : (
+          <Field label={t('inbox.holiday')}>
+            <Chips
+              options={HOLIDAY_RULES[values.frequency].flatMap((holidayRule) => {
+                const labelKey = HOLIDAY_RULE_LABEL[values.frequency][holidayRule];
+                return labelKey ? [{ value: holidayRule, label: t(labelKey) }] : [];
+              })}
+              selected={values.holidayRule}
+              onSelect={(value) => set('holidayRule', value as RecurringHolidayRule)}
+            />
+            <Text className="mt-1 text-xs text-gray-500">{t('inbox.holidayNote')}</Text>
+          </Field>
         )}
 
         {/*
@@ -566,8 +642,13 @@ function toBody(values: FormValues): RecurringRuleDto.Body {
   return {
     frequency: values.frequency,
     everyDays: values.frequency === 'daily' ? Number(values.everyDays) || 1 : null,
-    // 주기가 없으면 셋 다 비운다. 저절로 오는 날이 없어 정할 것이 없다.
-    dayOfMonth: scheduled && values.frequency !== 'daily' ? Number(values.dayOfMonth) || 1 : null,
+    weekdays: values.frequency === 'weekly' ? [...values.weekdays].sort((a, b) => a - b) : [],
+    holidayRule: values.holidayRule,
+    // 며칟날은 월별·년별에만 있다. 주기가 없으면 저절로 오는 날이 없어 정할 것이 없다.
+    dayOfMonth:
+      values.frequency === 'monthly' || values.frequency === 'yearly'
+        ? Number(values.dayOfMonth) || 1
+        : null,
     month: values.frequency === 'yearly' ? Number(values.month) || 1 : null,
     startDate: values.startDate,
     // 끝나는 날도 저절로 오는 날에 걸리는 값이다. 주기가 없으면 가지고 있지 않는다.

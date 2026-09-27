@@ -25,6 +25,8 @@ import type { EntryDraftDto, EntryDraftSource, RecurringRuleDto } from '@money/t
 
 import { formatDateTime } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { recurringScheduleText } from '@money/core/lib/recurring-text';
+import { useWeekStart } from '@money/core/store/week-start';
 import { formatCurrency } from '@money/core/lib/money';
 import { isOfflineError } from '@money/core/lib/offline-error';
 import { useEntryDrafts } from '@money/core/hooks/useEntryDrafts';
@@ -66,26 +68,6 @@ const EMPTY_KEY: Record<EntryDraftSource, MessageKey> = {
   capture: 'inbox.empty.capture',
   recurring: 'inbox.empty.recurring',
 };
-
-/**
- * 주기를 한 줄로. "매월 25일", "3일마다".
- *
- * 규칙이 들고 있는 숫자를 그대로 보이면(everyDays=3, dayOfMonth=25) 무슨 뜻인지
- * 읽는 사람이 다시 옮겨야 한다.
- */
-function scheduleText(rule: RecurringRuleDto.Response, t: (key: MessageKey) => string): string {
-  if (rule.frequency === 'none') return t('inbox.freq.none');
-  if (rule.frequency === 'daily') {
-    const days = rule.everyDays ?? 1;
-    return days <= 1 ? t('inbox.freq.daily') : `${days}${t('inbox.everyDaysUnit')}`;
-  }
-
-  const day = `${rule.dayOfMonth ?? 1}${t('inbox.dayOfMonthUnit')}`;
-  if (rule.frequency === 'yearly') {
-    return `${t('inbox.freq.yearly')} ${rule.month ?? 1}${t('inbox.monthUnit')} ${day}`;
-  }
-  return `${t('inbox.freq.monthly')} ${day}`;
-}
 
 export default function InboxScreen() {
   const { t } = useTranslation();
@@ -528,6 +510,7 @@ function RuleRow({
     자리에서 지금 하나를 만든다.
   */
   const isManual = rule.frequency === 'none';
+  const weekStart = useWeekStart();
 
   /*
     상자 전체가 "고치기" 다.
@@ -555,7 +538,7 @@ function RuleRow({
         </Text>
         <Text className="mt-0.5 text-xs text-gray-500">
           {[
-            scheduleText(rule, t),
+            recurringScheduleText(rule, t, weekStart),
             rule.amount ? formatCurrency(rule.amount, rule.currency ?? 'KRW') : null,
             // 주기가 없으면 예정일 자리를 비운다. 주기 칸이 이미 "수동생성"을 말한다.
             isManual

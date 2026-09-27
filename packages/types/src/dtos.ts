@@ -20,7 +20,7 @@ import type {
 } from './entities';
 import type { EntryPeriodUnit } from './entry-period';
 import type { EntryBasis, EntrySearchQuery } from './entry-search';
-import type { RecurringFrequency } from './recurring';
+import type { RecurringFrequency, RecurringHolidayRule } from './recurring';
 
 // ===== Auth =====
 
@@ -1152,6 +1152,10 @@ export namespace RecurringRuleDto {
     frequency: RecurringFrequency;
     /** daily: 며칠마다. 생략하면 1 (매일) */
     everyDays?: number | null;
+    /** weekly: 요일들 (0 일요일 ~ 6 토요일) */
+    weekdays?: number[] | null;
+    /** 휴일에 걸린 회차를 어떻게 할지. 생략하면 `none` */
+    holidayRule?: RecurringHolidayRule | null;
     /** monthly·yearly: 며칟날 */
     dayOfMonth?: number | null;
     /** yearly: 몇 월 */
@@ -1202,11 +1206,9 @@ export namespace RecurringRuleDto {
      * 이 반복으로 후보를 만든 마지막 날. 만든 것이 없으면 null 이다.
      *
      * **저장된 값이 아니라 후보에서 셈한 값이다** (`r:<규칙>:<날짜>` 열쇠의 최댓값).
-     * 회차를 만드는 쪽이 기기라, 서버가 따로 표를 들고 있으면 그 표와 실제 후보가
-     * 어긋날 수 있다 -- 올리다 끊긴 회차가 "만들었다"로 남으면 아무도 그 날을 다시
-     * 만들지 않는다. 후보 자신을 세면 그런 자리가 없다.
-     *
-     * 기기는 이 날 다음부터 셈해 올린다.
+     * 따로 표를 들고 있으면 그 표와 실제 후보가 어긋날 수 있다 -- 넣다 끊긴 회차가
+     * "만들었다"로 남으면 아무도 그 날을 다시 만들지 않는다. 후보 자신을 세면 그런
+     * 자리가 없다. 서버는 이 날 다음부터 셈해 만든다.
      */
     lastMadeOn: string | null;
   }

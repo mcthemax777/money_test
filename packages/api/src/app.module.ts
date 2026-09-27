@@ -23,6 +23,7 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { ExchangeRatesModule } from './modules/exchange-rates/exchange-rates.module';
 import { RealtimeModule } from './modules/realtime/realtime.module';
 import { SyncModule } from './modules/sync/sync.module';
+import { AdminModule } from './modules/admin/admin.module';
 import { PushModule } from './modules/push/push.module';
 
 @Module({
@@ -68,6 +69,7 @@ import { PushModule } from './modules/push/push.module';
     ReportsModule,
     ExchangeRatesModule,
     SyncModule,
+    AdminModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

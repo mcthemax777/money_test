@@ -2,7 +2,7 @@
 
 import type { Locale } from './locale';
 import type { WeekStart } from './week-start';
-import type { RecurringFrequency } from './recurring';
+import type { RecurringFrequency, RecurringHolidayRule } from './recurring';
 
 /**
  * JSON으로 오갈 때 날짜는 ISO 8601 문자열이다. Date 객체가 아니다.
@@ -648,6 +648,10 @@ export interface RecurringRule {
 
   frequency: RecurringFrequency;
   everyDays: number | null;
+  /** weekly: 요일들 (0 일요일 ~ 6 토요일). 다른 주기는 빈 배열이다. */
+  weekdays: number[];
+  /** 휴일에 걸린 회차를 어떻게 할지 (`RecurringHolidayRule`). */
+  holidayRule: RecurringHolidayRule;
   dayOfMonth: number | null;
   month: number | null;
   startDate: string;

@@ -12,6 +12,8 @@
  * 하루 밀리지 않는다.
  */
 
+import { isWeekend, weekdayOf } from './holidays';
+
 /**
  * 얼마나 자주.
  *
@@ -22,8 +24,33 @@
  *
  * 셈하는 함수들(`dueOccurrences`·`nextOccurrence`)은 이 주기에 아무 날도 돌려주지
  * 않는다. 그 자리에 하루라도 돌려주면 보관함을 열 때마다 후보가 저절로 생긴다.
+ *
+ * `weekly` 는 매주 고른 요일들(`weekdays`)이다.
  */
-export type RecurringFrequency = 'none' | 'daily' | 'monthly' | 'yearly';
+export type RecurringFrequency = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly';
+
+/**
+ * 휴일에 걸린 회차를 어떻게 할지. 주기마다 고를 수 있는 것이 다르다(`HOLIDAY_RULES`).
+ *
+ *   - `none`   그날 그대로 만든다.
+ *   - `skip`   만들지 않는다. 일별은 토·일·공휴일을, 주별은 공휴일만 건너뛴다 -- 주별은
+ *              요일을 사람이 고르므로 토·일을 고른 것은 그 뜻이다.
+ *   - `before` 휴일이면 휴일이 아닌 앞날로 당긴다 (월별·년별). 휴일은 토·일·공휴일이다.
+ *   - `after`  휴일이면 휴일이 아닌 뒷날로 민다 (월별·년별).
+ *
+ * 당기거나 민 날이 **그 회차의 날짜**다. 후보의 열쇠(`r:<규칙>:<날짜>`)와 거래 시각,
+ * 다음 예정일이 모두 그 날을 쓴다. 시작일·끝나는 날은 옮기기 전의 날로 본다.
+ */
+export type RecurringHolidayRule = 'none' | 'skip' | 'before' | 'after';
+
+/** 주기마다 고를 수 있는 휴일 처리. 첫 것이 기본이다. */
+export const HOLIDAY_RULES: Record<RecurringFrequency, RecurringHolidayRule[]> = {
+  none: ['none'],
+  daily: ['none', 'skip'],
+  weekly: ['none', 'skip'],
+  monthly: ['none', 'before', 'after'],
+  yearly: ['none', 'before', 'after'],
+};
 
 /**
  * 반복의 일정 부분. 무엇을 적을지(금액·분류)는 여기 없다.
@@ -34,6 +61,15 @@ export interface RecurringSchedule {
   frequency: RecurringFrequency;
   /** daily: 며칠마다. 1 이면 매일이다. */
   everyDays?: number | null;
+  /** weekly: 요일들. 0 이 일요일, 6 이 토요일이다. */
+  weekdays?: number[] | null;
+  /** 휴일에 걸린 회차를 어떻게 할지. 없으면 `none` 이다. */
+  holidayRule?: RecurringHolidayRule | null;
+  /**
+   * 공휴일 ("YYYY-MM-DD"). 부르는 쪽(서버)이 가계부 시간대의 나라 것을 DB 에서 읽어 채운다
+   * (`holidayCountryOf`). 없으면 토·일만 휴일로 셈한다.
+   */
+  publicHolidays?: ReadonlySet<string> | null;
   /** monthly·yearly: 며칠. 그 달에 없는 날(2월 31일)은 그 달의 마지막 날로 당긴다. */
   dayOfMonth?: number | null;
   /** yearly: 몇 월 (1~12) */
@@ -76,9 +112,21 @@ export const RECURRING_MAX_PER_RUN = 31;
 const MAX_WINDOW_STEPS = 400;
 
 /**
+ * 당기거나 미는 회차를 찾으려고 창 앞뒤로 더 보는 날 수.
+ *
+ * 10월 1일이 일요일이고 "앞 평일"이면 그 회차는 9월 29일이다. 9월 29일에 셈할 때 창
+ * (오늘까지) 밖의 10월 1일도 봐야 그 회차를 찾는다. 가장 긴 연휴(설·추석과 주말,
+ * 대체공휴일이 붙은 것)보다 넉넉히 둔다.
+ */
+const SHIFT_PAD_DAYS = 14;
+
+/** 휴일을 피해 옮길 때 넘지 않는 날 수. 공휴일 표가 잘못되어도 무한히 돌지 않게 한다. */
+const MAX_SHIFT_DAYS = 30;
+
+/**
  * 오늘까지 밀린 회차의 날짜들. 이른 날이 앞이다.
  *
- * 기기가 후보를 만들 때 부른다(core 의 `recurring-drafts`). 이미 만든 날을
+ * 서버가 밀린 회차를 만들 때 부른다(`recurring-drafts`). 이미 만든 날을
  * `lastMadeOn` 에 주면 그 뒤부터 이어진다.
  */
 export function dueOccurrences(
@@ -98,21 +146,15 @@ export function dueOccurrences(
   /*
    * 어디부터 셀지.
    *
-   * 시작일과 "이미 만든 날 다음날", 그리고 따라잡기 한계 중 가장 늦은 날이다.
-   * 마지막 것이 없으면 오래된 반복을 켜는 순간 지난 회차가 쏟아진다.
+   * "이미 만든 날 다음날"과 따라잡기 한계 중 늦은 날이다. 마지막 것이 없으면 오래된
+   * 반복을 켜는 순간 지난 회차가 쏟아진다. 시작일은 옮기기 전의 날에 거는 값이라
+   * 회차를 셀 때 본다(`occurrencesBetween`).
    */
   const floor = latest([
-    schedule.startDate,
     schedule.lastMadeOn ? addDays(schedule.lastMadeOn, 1) : null,
     addDays(todayKey, -catchUpDays),
   ]);
-  if (!floor) return [];
-
-  const ceiling = schedule.endDate ? earliest([todayKey, schedule.endDate]) : todayKey;
-  if (!ceiling || ceiling < floor) return [];
-
-  const dates: string[] = [];
-  let cursor: string | null = firstOnOrAfter(schedule, floor);
+  if (!floor || todayKey < floor) return [];
 
   /*
    * 창 안의 회차를 모두 세고 **마지막 것부터** 상한만큼 남긴다.
@@ -120,10 +162,10 @@ export function dueOccurrences(
    * 앞에서 자르면 오늘 것이 잘려 나간다 -- 32일치가 밀렸는데 31개만 만들면 오늘 것이
    * 빠지고, 사용자는 "오늘 것이 왜 없지"를 먼저 본다. 오래된 회차를 버리는 편이 낫다.
    */
-  while (cursor && cursor <= ceiling && dates.length < MAX_WINDOW_STEPS) {
-    dates.push(cursor);
-    cursor = stepAfter(schedule, cursor);
-  }
+  const pad = movesOnHoliday(schedule) ? SHIFT_PAD_DAYS : 0;
+  const dates = occurrencesBetween(schedule, addDays(floor, -pad), addDays(todayKey, pad)).filter(
+    (date) => date >= floor && date <= todayKey,
+  );
 
   return dates.length > limit ? dates.slice(dates.length - limit) : dates;
 }
@@ -139,17 +181,18 @@ export function nextOccurrence(schedule: RecurringSchedule, todayKey: string): s
   // 주기가 없으면 다음 예정일도 없다. 화면은 그 자리에 "주기 없음"을 적는다.
   if (schedule.frequency === 'none') return null;
 
-  const floor = latest([
-    schedule.startDate,
-    schedule.lastMadeOn ? addDays(schedule.lastMadeOn, 1) : null,
-    todayKey,
-  ]);
+  const floor = latest([schedule.lastMadeOn ? addDays(schedule.lastMadeOn, 1) : null, todayKey]);
   if (!floor) return null;
 
-  const next = firstOnOrAfter(schedule, floor);
-  if (!next) return null;
-  if (schedule.endDate && next > schedule.endDate) return null;
-  return next;
+  // 옮기기 전의 날이 조금 앞이어도 옮긴 날이 floor 뒤일 수 있다(휴일이면 뒷날).
+  const pad = movesOnHoliday(schedule) ? SHIFT_PAD_DAYS : 0;
+  let steps = 0;
+  for (const nominal of nominalDates(schedule, addDays(floor, -pad))) {
+    if (steps++ > MAX_WINDOW_STEPS) return null;
+    const date = actualDate(schedule, nominal);
+    if (date && date >= floor) return date;
+  }
+  return null;
 }
 
 /** 일정이 어긋난 자리. 화면이 그 칸에 표시를 켠다. */
@@ -157,6 +200,8 @@ export interface RecurringViolation {
   code:
     | 'FREQUENCY_INVALID'
     | 'EVERY_DAYS_INVALID'
+    | 'WEEKDAYS_INVALID'
+    | 'HOLIDAY_RULE_INVALID'
     | 'DAY_OF_MONTH_INVALID'
     | 'MONTH_INVALID'
     | 'START_DATE_INVALID'
@@ -171,7 +216,7 @@ export interface RecurringViolation {
  * 서버만 검사하면 사용자가 무엇이 틀렸는지 폼에서 알 수 없다.
  */
 export function checkRecurring(schedule: RecurringSchedule): RecurringViolation | null {
-  if (!['none', 'daily', 'monthly', 'yearly'].includes(schedule.frequency)) {
+  if (!(schedule.frequency in HOLIDAY_RULES)) {
     return { code: 'FREQUENCY_INVALID' };
   }
   if (!parseKey(schedule.startDate)) return { code: 'START_DATE_INVALID' };
@@ -187,7 +232,20 @@ export function checkRecurring(schedule: RecurringSchedule): RecurringViolation 
    * 뜻이 없다. 시작일과 끝나는 날만 모양을 본다 -- 표에 반드시 있어야 하는 칸이라
    * 폼이 오늘 날짜로 채워 보낸다.
    */
+  if (!HOLIDAY_RULES[schedule.frequency].includes(schedule.holidayRule ?? 'none')) {
+    return { code: 'HOLIDAY_RULE_INVALID' };
+  }
+
   if (schedule.frequency === 'none') return null;
+
+  if (schedule.frequency === 'weekly') {
+    const days = schedule.weekdays ?? [];
+    const valid =
+      days.length > 0 &&
+      days.every((day) => Number.isInteger(day) && day >= 0 && day <= 6) &&
+      new Set(days).size === days.length;
+    return valid ? null : { code: 'WEEKDAYS_INVALID' };
+  }
 
   if (schedule.frequency === 'daily') {
     const days = Number(schedule.everyDays ?? 1);
@@ -205,8 +263,82 @@ export function checkRecurring(schedule: RecurringSchedule): RecurringViolation 
   return null;
 }
 
-/** `floor` 이후(그 날 포함)의 첫 회차. */
+/** 휴일이면 날짜를 옮기는 일정인가. 그런 일정만 창 앞뒤를 더 본다. */
+function movesOnHoliday(schedule: RecurringSchedule): boolean {
+  return (
+    (schedule.frequency === 'monthly' || schedule.frequency === 'yearly') &&
+    (schedule.holidayRule === 'before' || schedule.holidayRule === 'after')
+  );
+}
+
+/**
+ * `from` 부터의 옮기기 전 회차들. 시작일 전과 끝나는 날 뒤는 내지 않는다.
+ *
+ * 부르는 쪽이 필요한 만큼만 꺼낸다. 끝이 없는 반복이면 끝없이 나온다.
+ */
+function* nominalDates(schedule: RecurringSchedule, from: string): Generator<string> {
+  let cursor = firstOnOrAfter(schedule, latest([schedule.startDate, from]) ?? from);
+  while (cursor && (!schedule.endDate || cursor <= schedule.endDate)) {
+    yield cursor;
+    cursor = stepAfter(schedule, cursor);
+  }
+}
+
+/**
+ * 옮기기 전 회차의 실제 날짜. 건너뛰는 회차는 null 이다 (`RecurringHolidayRule`).
+ */
+function actualDate(schedule: RecurringSchedule, nominal: string): string | null {
+  const rule = schedule.holidayRule ?? 'none';
+  if (rule === 'none') return nominal;
+
+  const holidays = schedule.publicHolidays;
+  const isPublic = (date: string) => holidays?.has(date) ?? false;
+  const isOff = (date: string) => isWeekend(date) || isPublic(date);
+  if (rule === 'skip') {
+    if (schedule.frequency === 'daily') return isOff(nominal) ? null : nominal;
+    if (schedule.frequency === 'weekly') return isPublic(nominal) ? null : nominal;
+    return nominal;
+  }
+
+  if (!movesOnHoliday(schedule)) return nominal;
+  const step = rule === 'before' ? -1 : 1;
+  let date = nominal;
+  for (let moved = 0; isOff(date); moved += 1) {
+    // 표가 잘못되어 한 달 내내 휴일로 나와도 멈춘다. 그때는 원래 날로 만든다.
+    if (moved >= MAX_SHIFT_DAYS) return nominal;
+    date = addDays(date, step);
+  }
+  return date;
+}
+
+/**
+ * `from`~`to` 사이 회차의 실제 날짜들. 이른 날이 앞이고 겹치지 않는다.
+ *
+ * 옮긴 날로 거르지 않는다 -- 창 앞뒤로 더 본 것을 부르는 쪽이 자기 창으로 자른다.
+ */
+function occurrencesBetween(schedule: RecurringSchedule, from: string, to: string): string[] {
+  const found = new Set<string>();
+  let steps = 0;
+  for (const nominal of nominalDates(schedule, from)) {
+    if (nominal > to || steps++ >= MAX_WINDOW_STEPS) break;
+    const date = actualDate(schedule, nominal);
+    if (date) found.add(date);
+  }
+  return [...found].sort();
+}
+
+/** `floor` 이후(그 날 포함)의 첫 회차. 옮기기 전의 날이다. */
 function firstOnOrAfter(schedule: RecurringSchedule, floor: string): string | null {
+  if (schedule.frequency === 'weekly') {
+    const days = new Set(schedule.weekdays ?? []);
+    if (days.size === 0) return null;
+    for (let offset = 0; offset < 7; offset += 1) {
+      const date = addDays(floor, offset);
+      if (days.has(weekdayOf(date))) return date;
+    }
+    return null;
+  }
+
   if (schedule.frequency === 'daily') {
     const step = Math.max(1, Number(schedule.everyDays ?? 1));
     const start = parseKey(schedule.startDate);

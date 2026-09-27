@@ -1,0 +1,110 @@
+/**
+ * 관리 도구 API. 웹의 `/admin` 이 부른다.
+ *
+ * 도구가 늘면 여기에 길을 더한다(지금은 공휴일 하나). 로그인 외에는 전부 `AdminGuard` 뒤에 있다.
+ */
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
+import { ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
+import { HOLIDAY_COUNTRIES, type HolidayCountry } from '@money/types';
+
+import { HolidaysService } from '../holidays/holidays.service';
+import { AdminAuthService, type AdminTokenPayload } from './admin-auth.service';
+import { AdminGuard } from './admin.guard';
+
+/** 비밀번호 대입을 막는다. 사람이 틀려 가며 넣는 속도면 충분하다. */
+const LOGIN_LIMIT = { default: { ttl: 60_000, limit: 5 } };
+
+@ApiTags('Admin')
+@Controller('admin')
+export class AdminController {
+  constructor(
+    private readonly auth: AdminAuthService,
+    private readonly holidays: HolidaysService,
+  ) {}
+
+  @Post('login')
+  @Throttle(LOGIN_LIMIT)
+  @HttpCode(HttpStatus.OK)
+  login(@Body() body: { username?: string; password?: string }) {
+    return this.auth.login(String(body?.username ?? ''), String(body?.password ?? ''));
+  }
+
+  @Get('me')
+  @UseGuards(AdminGuard)
+  me(@Req() request: { admin: AdminTokenPayload }) {
+    return { username: request.admin.sub };
+  }
+
+  @Get('holidays')
+  @UseGuards(AdminGuard)
+  listHolidays(@Query('country') country: string, @Query('year') year: string) {
+    return this.holidays.list(checkCountry(country), checkYear(year));
+  }
+
+  /** 공휴일 갱신. 나라를 주지 않으면 모든 나라를 갱신한다. */
+  @Post('holidays/sync')
+  @UseGuards(AdminGuard)
+  @HttpCode(HttpStatus.OK)
+  syncHolidays(@Body() body: { country?: string }) {
+    return body?.country
+      ? this.holidays.sync(checkCountry(body.country)).then((result) => [result])
+      : this.holidays.syncAll();
+  }
+
+  @Post('holidays')
+  @UseGuards(AdminGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async addHoliday(@Body() body: { country?: string; date?: string; name?: string }) {
+    const name = String(body?.name ?? '').trim();
+    if (!name || name.length > 100) {
+      throw new BadRequestException('공휴일 이름을 100자 안으로 적어 주세요.');
+    }
+    await this.holidays.add(checkCountry(body?.country), checkDate(body?.date), name);
+  }
+
+  @Delete('holidays/:country/:date')
+  @UseGuards(AdminGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeHoliday(@Param('country') country: string, @Param('date') date: string) {
+    await this.holidays.remove(checkCountry(country), checkDate(date));
+  }
+}
+
+function checkCountry(value: unknown): HolidayCountry {
+  if (!HOLIDAY_COUNTRIES.includes(value as HolidayCountry)) {
+    throw new BadRequestException(`나라는 ${HOLIDAY_COUNTRIES.join(', ')} 중 하나입니다.`);
+  }
+  return value as HolidayCountry;
+}
+
+function checkYear(value: unknown): number {
+  const year = Number(value);
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+    throw new BadRequestException('연도가 올바르지 않습니다.');
+  }
+  return year;
+}
+
+/** "YYYY-MM-DD" 이고 달력에 있는 날인가. */
+function checkDate(value: unknown): string {
+  const text = String(value ?? '');
+  const parsed = new Date(`${text}T00:00:00Z`);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || parsed.toISOString().slice(0, 10) !== text) {
+    throw new BadRequestException('날짜는 2026-10-09 처럼 적어 주세요.');
+  }
+  return text;
+}

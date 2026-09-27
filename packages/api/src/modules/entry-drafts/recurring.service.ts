@@ -29,9 +29,11 @@ import { Prisma } from '@prisma/client';
 import {
   RecurringRuleDto,
   checkRecurring,
+  holidayCountryOf,
   nextOccurrence,
   recurringDraftItems,
   zonedDateKey,
+  type RecurringHolidayRule,
   type RecurringSchedule,
 } from '@money/types';
 
@@ -41,6 +43,7 @@ import { badRequest } from '@/common/app-error';
 import { clientId } from '@/common/client-id';
 import { toOptionalMoney } from '@/common/money';
 import { EntryDraftsService } from './entry-drafts.service';
+import { HolidaysService } from '../holidays/holidays.service';
 
 /** 태그까지 함께 읽은 규칙 한 줄. 화면에 나갈 때 그 id 만 배열로 펴 준다. */
 type RuleRow = Prisma.RecurringRuleGetPayload<{
@@ -76,7 +79,13 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
     private readonly prisma: PrismaService,
     private readonly projectAccess: ProjectAccessService,
     private readonly drafts: EntryDraftsService,
+    private readonly holidays: HolidaysService,
   ) {}
+
+  /** 그 시간대 나라의 공휴일. 휴일 처리가 있는 반복의 회차와 다음 예정일을 셈할 때 쓴다. */
+  private holidaysOf(timeZone: string): Promise<Set<string>> {
+    return this.holidays.publicHolidays(holidayCountryOf(timeZone));
+  }
 
   onModuleInit(): void {
     this.schedule(GENERATE_BOOT_DELAY_MS);
@@ -142,11 +151,14 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
       for (const [projectId, projectRows] of byProject) {
         const timeZone = projectRows[0].project.timezone;
         const today = zonedDateKey(new Date(now), timeZone);
-        const rules = projectRows.map((row) => toResponse(row, today, made.get(row.id) ?? null));
+        const holidays = await this.holidaysOf(timeZone);
+        const rules = projectRows.map((row) =>
+          toResponse(row, today, made.get(row.id) ?? null, holidays),
+        );
         const startsToday = new Set(
           rules.filter((rule) => rule.startDate === today).map((rule) => rule.id),
         );
-        const items = recurringDraftItems(rules, today, timeZone).filter(
+        const items = recurringDraftItems(rules, today, timeZone, holidays).filter(
           (item) =>
             !item.occurredAt ||
             Date.parse(item.occurredAt) <= now ||
@@ -181,7 +193,8 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
 
     const today = zonedDateKey(new Date(), project.timezone);
     const made = await this.lastMadeOn(rows.map((row) => row.id));
-    return rows.map((row) => toResponse(row, today, made.get(row.id) ?? null));
+    const holidays = await this.holidaysOf(project.timezone);
+    return rows.map((row) => toResponse(row, today, made.get(row.id) ?? null, holidays));
   }
 
   /**
@@ -285,7 +298,14 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
 
     const data: Prisma.RecurringRuleUncheckedUpdateInput = {};
     if ('isActive' in dto) data.isActive = Boolean(dto.isActive);
-    if ('frequency' in dto || 'everyDays' in dto || 'dayOfMonth' in dto || 'month' in dto) {
+    if (
+      'frequency' in dto ||
+      'everyDays' in dto ||
+      'weekdays' in dto ||
+      'holidayRule' in dto ||
+      'dayOfMonth' in dto ||
+      'month' in dto
+    ) {
       Object.assign(data, this.scheduleData(merged));
     }
     if ('startDate' in dto) data.startDate = merged.startDate;
@@ -359,7 +379,7 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
     }
     const today = zonedDateKey(new Date(), timeZone);
     const made = await this.lastMadeOn([rule.id]);
-    return toResponse(rule, today, made.get(rule.id) ?? null);
+    return toResponse(rule, today, made.get(rule.id) ?? null, await this.holidaysOf(timeZone));
   }
 
   /**
@@ -411,6 +431,10 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
     return {
       frequency,
       everyDays: frequency === 'daily' ? Math.max(1, Number(schedule.everyDays ?? 1)) : null,
+      // 주별이 아니면 요일은 뜻이 없다. 남겨 두면 주기를 바꾼 뒤에도 표에 남는다.
+      weekdays:
+        frequency === 'weekly' ? [...new Set(schedule.weekdays ?? [])].sort((a, b) => a - b) : [],
+      holidayRule: schedule.holidayRule ?? 'none',
       // 주기가 없으면 셋 다 비운다. 저절로 오는 날이 없어 정할 것이 없다.
       dayOfMonth:
         frequency === 'monthly' || frequency === 'yearly' ? Number(schedule.dayOfMonth) : null,
@@ -470,10 +494,17 @@ function untilNextHour(now: number = Date.now()): number {
  *
  * `lastMadeOn` 은 행에 없다(후보에서 센다). 다음 예정일을 셈할 때만 밖에서 받는다.
  */
-function toSchedule(rule: RuleRow, lastMadeOn: string | null = null): RecurringSchedule {
+function toSchedule(
+  rule: RuleRow,
+  lastMadeOn: string | null = null,
+  publicHolidays: ReadonlySet<string> | null = null,
+): RecurringSchedule {
   return {
     frequency: rule.frequency as RecurringSchedule['frequency'],
     everyDays: rule.everyDays,
+    weekdays: rule.weekdays,
+    holidayRule: rule.holidayRule as RecurringHolidayRule,
+    publicHolidays,
     dayOfMonth: rule.dayOfMonth,
     month: rule.month,
     startDate: rule.startDate,
@@ -493,6 +524,8 @@ function schedulePatch(dto: RecurringRuleDto.UpdateRequest): Partial<ScheduleWit
   if ('timeOfDay' in dto) patch.timeOfDay = dto.timeOfDay ?? null;
   if ('frequency' in dto && dto.frequency) patch.frequency = dto.frequency;
   if ('everyDays' in dto) patch.everyDays = dto.everyDays ?? null;
+  if ('weekdays' in dto) patch.weekdays = dto.weekdays ?? [];
+  if ('holidayRule' in dto) patch.holidayRule = dto.holidayRule ?? 'none';
   if ('dayOfMonth' in dto) patch.dayOfMonth = dto.dayOfMonth ?? null;
   if ('month' in dto) patch.month = dto.month ?? null;
   if ('startDate' in dto && dto.startDate) patch.startDate = dto.startDate;
@@ -505,6 +538,7 @@ function toResponse(
   rule: RuleRow,
   todayKey: string,
   lastMadeOn: string | null,
+  publicHolidays: ReadonlySet<string>,
 ): RecurringRuleDto.Response {
   return {
     id: rule.id,
@@ -512,6 +546,8 @@ function toResponse(
     isActive: rule.isActive,
     frequency: rule.frequency as RecurringRuleDto.Response['frequency'],
     everyDays: rule.everyDays,
+    weekdays: rule.weekdays,
+    holidayRule: rule.holidayRule as RecurringHolidayRule,
     dayOfMonth: rule.dayOfMonth,
     month: rule.month,
     startDate: rule.startDate,
@@ -531,7 +567,9 @@ function toResponse(
     createdAt: rule.createdAt.toISOString(),
     updatedAt: rule.updatedAt.toISOString(),
     // 꺼 둔 반복은 아무 날도 오지 않는다.
-    nextRunOn: rule.isActive ? nextOccurrence(toSchedule(rule, lastMadeOn), todayKey) : null,
+    nextRunOn: rule.isActive
+      ? nextOccurrence(toSchedule(rule, lastMadeOn, publicHolidays), todayKey)
+      : null,
     lastMadeOn,
   };
 }

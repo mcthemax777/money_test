@@ -1,3 +1,4 @@
+import { createHmac } from 'node:crypto';
 import { Injectable } from '@nestjs/common';
 import * as dotenv from 'dotenv';
 
@@ -111,6 +112,30 @@ export class ConfigService {
    * 보내지 않고 나머지는 그대로 돈다 -- 푸시는 곁들이는 알림이라, 키 하나가 빠졌다고
    * 서버가 뜨지 못하면 가계부 전체가 멈춘다.
    */
+  /**
+   * 관리 도구의 아이디. 비어 있으면 관리 도구에 들어갈 수 없다.
+   *
+   * 비밀번호는 평문으로 두지 않는다 -- `ADMIN_PASSWORD_HASH` 에 해시만 둔다
+   * (`scripts/hash-admin-password.ts` 로 만든다).
+   */
+  get adminUsername(): string | null {
+    return this.env.ADMIN_USERNAME?.trim() || null;
+  }
+
+  get adminPasswordHash(): string | null {
+    return this.env.ADMIN_PASSWORD_HASH?.trim() || null;
+  }
+
+  /**
+   * 관리자 토큰의 서명 키. 사용자 토큰의 키에서 갈라 만든다.
+   *
+   * 같은 키로 서명하면 관리자 토큰이 사용자 인증을, 사용자 토큰이 관리 도구를 통과할
+   * 자리가 생긴다(두 쪽 다 종류를 보지만 키부터 다르게 둔다).
+   */
+  get adminJwtSecret(): string {
+    return createHmac('sha256', this.jwtSecret).update('money-admin').digest('hex');
+  }
+
   get fcmServiceAccountFile(): string | null {
     return this.env.FCM_SERVICE_ACCOUNT_FILE?.trim() || null;
   }
