@@ -5,22 +5,32 @@
  * 눌러야 전표가 된다. 자동으로 장부에 적히면 그 달의 합계가 사람 모르게 움직인다 --
  * 반복은 "적는 것을 잊지 않게" 하는 장치이지 "대신 적는" 장치가 아니다.
  *
- * **회차를 만드는 일은 이 서비스가 하지 않는다.** 기기가 목록을 읽어 밀린 날을 셈하고
- * (core 의 `recurring-drafts`) 알림·캡처 후보와 **같은 길**(`POST /entry-drafts`)로
- * 올린다. 서버가 하는 일은 그것을 받아 겹침을 막고(프로젝트, dedupeKey 유일 제약),
- * 올라온 날이 규칙과 오늘에 맞는지 보는 것이다(`entry-drafts.service` 의 구간 검사).
+ * **밀린 회차는 이 서비스가 만든다** (`generateDue`). 정각마다 켜진 규칙을 모두 훑고,
+ * 규칙을 저장하는 요청 안에서도 그 규칙의 것을 곧바로 만든다. 누가 보관함을 열지
+ * 않아도, 보기 권한만 있는 구성원뿐이어도 회차가 생기고 푸시가 나간다. 기기는 주기 없는
+ * 반복의 "만들기"만 올린다.
+ *
+ * 몇 번을 돌아도, 서버가 여러 대여도 후보는 늘지 않는다 -- 열쇠(`r:<규칙>:<날짜>`)가
+ * (프로젝트, dedupeKey) 유일 제약에 걸린다.
  *
  * 그래서 이 표에는 "어디까지 만들었는가"를 적는 칸이 없다. 그 답은 후보 자신의 열쇠
  * (`r:<규칙>:<날짜>`)에 있고, 목록을 줄 때 그 최댓값을 세어 `lastMadeOn` 으로 싣는다.
  * 표를 따로 들고 있으면 올리다 끊긴 회차가 "만들었다"로 남아 아무도 그 날을 다시
  * 만들지 않는다.
  */
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  NotFoundException,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   RecurringRuleDto,
   checkRecurring,
   nextOccurrence,
+  recurringDraftItems,
   zonedDateKey,
   type RecurringSchedule,
 } from '@money/types';
@@ -30,6 +40,7 @@ import { ProjectAccessService } from '@/common/project-access.guard';
 import { badRequest } from '@/common/app-error';
 import { clientId } from '@/common/client-id';
 import { toOptionalMoney } from '@/common/money';
+import { EntryDraftsService } from './entry-drafts.service';
 
 /** 태그까지 함께 읽은 규칙 한 줄. 화면에 나갈 때 그 id 만 배열로 펴 준다. */
 type RuleRow = Prisma.RecurringRuleGetPayload<{
@@ -48,12 +59,113 @@ const KINDS = ['expense', 'income', 'transfer', 'card_payment'] as const;
  */
 type ScheduleWithTime = RecurringSchedule & { timeOfDay?: string | null };
 
+/** 정각에서 이만큼 지나 돈다. 정각 시각(09:00)으로 적어 둔 회차가 그 차례에 들어온다. */
+const GENERATE_OFFSET_MS = 5 * 1000;
+
+/** 서버가 뜬 뒤 첫 차례까지. 멈춰 있던 동안 밀린 회차를 곧바로 따라잡는다. */
+const GENERATE_BOOT_DELAY_MS = 30 * 1000;
+
 @Injectable()
-export class RecurringService {
+export class RecurringService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(RecurringService.name);
+  private timer: NodeJS.Timeout | null = null;
+  /** 한 서버 안에서 차례가 겹치지 않게 한다. */
+  private generating = false;
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly projectAccess: ProjectAccessService,
+    private readonly drafts: EntryDraftsService,
   ) {}
+
+  onModuleInit(): void {
+    this.schedule(GENERATE_BOOT_DELAY_MS);
+  }
+
+  onModuleDestroy(): void {
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = null;
+  }
+
+  /** 다음 차례를 건다. 돌고 나면 다음 정각(+5초)에 다시 건다. */
+  private schedule(delay: number): void {
+    this.timer = setTimeout(() => {
+      void this.generateDue()
+        .catch((error) => this.logger.warn(`반복 회차를 만들지 못했습니다: ${String(error)}`))
+        .finally(() => this.schedule(untilNextHour()));
+    }, delay);
+    // 기다리는 차례 때문에 프로세스가 끝나지 못하면 안 된다.
+    this.timer.unref();
+  }
+
+  /**
+   * 켜진 규칙의 밀린 회차를 만든다. 만든 수를 돌려준다.
+   *
+   * **오늘 회차는 정해 둔 시각이 지나야 만든다** (시각이 없으면 정오). 날짜만 보면 자정
+   * 직후에 "월세" 푸시가 울린다. 시각 전이면 이번에 건너뛰고, 만든 것이 없으니
+   * `lastMadeOn` 이 그대로라 다음 차례에 들어온다.
+   *
+   * **다만 규칙을 저장하는 자리에서는 오늘 시작하는 규칙의 오늘 회차를 시각과 상관없이
+   * 만든다** (`onSave`). 오늘부터 쓰려고 방금 만든 규칙인데 보관함이 비어 있으면 안 된다.
+   * 정각 작업에는 이 예외가 없다 -- 며칠 전에 "오늘부터"로 만들어 둔 규칙이 자정에 울린다.
+   *
+   * @param ruleIds 이 규칙들만. 저장 직후에 그 규칙만 돌릴 때 준다.
+   */
+  async generateDue(ruleIds?: string[], options: { onSave?: boolean } = {}): Promise<number> {
+    if (!ruleIds && this.generating) return 0;
+    if (!ruleIds) this.generating = true;
+    try {
+      const rows = await this.prisma.recurringRule.findMany({
+        where: {
+          isActive: true,
+          // 주기 없는 반복은 저절로 오는 날이 없다. 사람이 "만들기"로만 만든다.
+          frequency: { not: 'none' },
+          ...(ruleIds ? { id: { in: ruleIds } } : {}),
+        },
+        include: {
+          tags: { select: { tagId: true } },
+          project: { select: { timezone: true } },
+        },
+      });
+      if (rows.length === 0) return 0;
+
+      const made = await this.lastMadeOn(rows.map((row) => row.id));
+      const now = Date.now();
+
+      // 가계부마다 오늘이 다르다(시간대). 가계부 단위로 셈해 담는다.
+      const byProject = new Map<string, typeof rows>();
+      for (const row of rows) {
+        byProject.set(row.projectId, [...(byProject.get(row.projectId) ?? []), row]);
+      }
+
+      let created = 0;
+      for (const [projectId, projectRows] of byProject) {
+        const timeZone = projectRows[0].project.timezone;
+        const today = zonedDateKey(new Date(now), timeZone);
+        const rules = projectRows.map((row) => toResponse(row, today, made.get(row.id) ?? null));
+        const startsToday = new Set(
+          rules.filter((rule) => rule.startDate === today).map((rule) => rule.id),
+        );
+        const items = recurringDraftItems(rules, today, timeZone).filter(
+          (item) =>
+            !item.occurredAt ||
+            Date.parse(item.occurredAt) <= now ||
+            (options.onSave && !!item.recurringRuleId && startsToday.has(item.recurringRuleId)),
+        );
+        if (items.length === 0) continue;
+
+        try {
+          created += await this.drafts.createFromServer(projectId, items);
+        } catch (error) {
+          // 한 가계부의 실패(지워진 태그 등)가 다른 가계부의 회차를 막지 않게 한다.
+          this.logger.warn(`반복 회차를 담지 못했습니다 (${projectId}): ${String(error)}`);
+        }
+      }
+      return created;
+    } finally {
+      if (!ruleIds) this.generating = false;
+    }
+  }
 
   async list(userId: string, projectIdParam?: string): Promise<RecurringRuleDto.Response[]> {
     const projectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectIdParam);
@@ -68,10 +180,7 @@ export class RecurringService {
     });
 
     const today = zonedDateKey(new Date(), project.timezone);
-    const made = await this.lastMadeOn(
-      projectId,
-      rows.map((row) => row.id),
-    );
+    const made = await this.lastMadeOn(rows.map((row) => row.id));
     return rows.map((row) => toResponse(row, today, made.get(row.id) ?? null));
   }
 
@@ -86,13 +195,13 @@ export class RecurringService {
    * **지운** 회차만 다시 만들어지는데, 그것은 알림 후보의 지우기와 같은 뜻이다
    * ("표시까지 없앤다").
    */
-  private async lastMadeOn(projectId: string, ruleIds: string[]): Promise<Map<string, string>> {
+  private async lastMadeOn(ruleIds: string[]): Promise<Map<string, string>> {
     const made = new Map<string, string>();
     if (ruleIds.length === 0) return made;
 
     const rows = await this.prisma.entryDraft.groupBy({
       by: ['recurringRuleId'],
-      where: { projectId, recurringRuleId: { in: ruleIds } },
+      where: { recurringRuleId: { in: ruleIds } },
       _max: { dedupeKey: true },
     });
 
@@ -147,14 +256,12 @@ export class RecurringService {
     });
 
     /*
-     * 밀린 회차는 여기서 만들지 않는다.
+     * 밀린 회차를 곧바로 만든다.
      *
-     * 시작일을 지난 날짜로 두고 만드는 일이 흔한데("지난 25일부터 월세"), 그 회차는
-     * 저장 직후 화면이 목록을 다시 읽으면서 올린다. 만든 것이 아직 없으므로
-     * `lastMadeOn` 은 null 이다.
+     * 시작일을 지난 날짜로 두고 만드는 일이 흔하다("지난 25일부터 월세"). 다음 정각을
+     * 기다리게 하면 저장하고 보관함을 봐도 비어 있다.
      */
-    const today = zonedDateKey(new Date(), project.timezone);
-    return toResponse(rule, today, null);
+    return this.respondAfterGenerating(rule, project.timezone);
   }
 
   async update(
@@ -231,10 +338,28 @@ export class RecurringService {
       },
     });
 
-    // 껐다 켜거나 일정을 앞당겨 밀린 회차가 생겼으면, 화면이 목록을 다시 읽을 때 올린다.
-    const today = zonedDateKey(new Date(), project.timezone);
-    const made = await this.lastMadeOn(updated.projectId, [updated.id]);
-    return toResponse(updated, today, made.get(updated.id) ?? null);
+    // 껐다 켜거나 일정을 앞당겨 밀린 회차가 생겼으면 곧바로 만든다.
+    return this.respondAfterGenerating(updated, project.timezone);
+  }
+
+  /**
+   * 그 규칙의 밀린 회차를 만들고, 만든 뒤의 모습(`lastMadeOn`·다음 예정일)으로 답한다.
+   *
+   * 회차를 만들다 실패해도 규칙 저장은 이미 끝났다. 실패를 기록하고 저장 결과로 답한다
+   * -- 다음 정각에 다시 만든다.
+   */
+  private async respondAfterGenerating(
+    rule: RuleRow,
+    timeZone: string,
+  ): Promise<RecurringRuleDto.Response> {
+    try {
+      await this.generateDue([rule.id], { onSave: true });
+    } catch (error) {
+      this.logger.warn(`반복 회차를 만들지 못했습니다 (${rule.id}): ${String(error)}`);
+    }
+    const today = zonedDateKey(new Date(), timeZone);
+    const made = await this.lastMadeOn([rule.id]);
+    return toResponse(rule, today, made.get(rule.id) ?? null);
   }
 
   /**
@@ -332,6 +457,12 @@ export class RecurringService {
     }
     return value as (typeof KINDS)[number];
   }
+}
+
+/** 다음 정각(+5초)까지 남은 시간. */
+function untilNextHour(now: number = Date.now()): number {
+  const hour = 60 * 60 * 1000;
+  return hour - (now % hour) + GENERATE_OFFSET_MS;
 }
 
 /**

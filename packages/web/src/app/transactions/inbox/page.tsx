@@ -210,12 +210,7 @@ export default function InboxPage() {
 
   const [source, setSource] = useState<EntryDraftSource>('notification');
   const inbox = useEntryDrafts(selectedProjectId, source);
-  /*
-   * 반복은 탭을 보고 있지 않아도 읽는다.
-   *
-   * 읽는 김에 밀린 회차를 만들기 때문이다(훅의 머리말). 반복 탭에 들어가야 후보가
-   * 생긴다면, 그 탭에 들어가지 않는 사람에게는 반복이 없는 것과 같다.
-   */
+  // 반복 규칙. 밀린 회차는 서버가 만들고, 여기서는 목록과 손질만 한다.
   const recurring = useRecurringRules(selectedProjectId);
   /** 고칠 반복. null 이면서 팝업이 열려 있으면 새로 만드는 중이다. */
   const [editingRule, setEditingRule] = useState<RecurringRuleDto.Response | null>(null);
@@ -252,7 +247,7 @@ export default function InboxPage() {
    * 올린 사진을 후보로.
    *
    * 브라우저에서 글자를 읽고(`recognizeCapture`), core 의 규칙으로 후보를 만들고
-   * (`captureItems`), 서버에 담는다. 사진은 이 자리를 벗어나지 않는다.
+   * (`captureItems`), 이 브라우저에 담는다(`capture-box`). 사진도 후보도 서버로 가지 않는다.
    *
    * 여러 장을 놓으면 한 장씩 읽는다. 동시에 읽으면 WASM 일꾼 하나를 서로 기다리게
    * 되고, 진행 표시도 어느 사진의 것인지 알 수 없게 된다.
@@ -301,28 +296,6 @@ export default function InboxPage() {
   const lead = t(LEAD_KEY[source]);
   const empty = t(EMPTY_KEY[source]);
 
-  /*
-   * 방금 만들어진 반복 후보를 목록에 들인다.
-   *
-   * 두 훅이 따로 읽으므로 후보 목록은 반복이 돌기 **전**의 것일 수 있다. 그러면
-   * "3건을 만들었습니다"라고 적어 놓고 목록은 비어 있는 화면이 된다.
-   *
-   * 같은 수를 두 번 처리하지 않으려고 마지막으로 처리한 값을 들고 있는다. 목록을
-   * 다시 읽는 함수는 그릴 때마다 새로 만들어지므로 의존성에 넣으면 그 자리에서
-   * 무한히 돈다 -- 그래서 최신 것을 상자에 담아 둔다.
-   */
-  const reloadDrafts = useRef(inbox.reload);
-  useEffect(() => {
-    reloadDrafts.current = inbox.reload;
-  });
-  const handledMade = useRef(0);
-  useEffect(() => {
-    if (recurring.created === 0 || recurring.created === handledMade.current) return;
-    handledMade.current = recurring.created;
-    setNotice(t('inbox.ruleMade', { count: recurring.created }));
-    void reloadDrafts.current();
-  }, [recurring.created, t]);
-
   /** 반복을 만들거나 고친다. 저장되면 목록과 후보가 함께 새로 읽힌다. */
   const saveRule = async (body: RecurringRuleDto.Body): Promise<boolean> => {
     const ok = await recurring.save(editingRule ? { ...body, id: editingRule.id } : body);
@@ -335,11 +308,6 @@ export default function InboxPage() {
 
   /**
    * 주기 없는 반복의 "만들기". 오늘 날짜로 후보 하나를 담고 목록을 다시 읽는다.
-   *
-   * 알림 문구를 **여기서** 적는다. 밀린 회차를 세는 효과(아래 `handledMade`)에 맡기면
-   * 두 번째 누름에서 말이 뜨지 않는다 -- 그 효과는 담긴 수가 **바뀔 때만** 도는데,
-   * 한 건씩 만들면 그 수가 1 에 머무른다. 첫 누름에서는 둘이 같은 말을 적으므로
-   * 겹쳐 보이지 않는다.
    */
   const makeNow = async (rule: RecurringRuleDto.Response) => {
     if (!(await recurring.makeNow(rule))) return;

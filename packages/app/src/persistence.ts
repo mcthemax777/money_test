@@ -16,6 +16,7 @@ import { useHistoryGranularity } from '@money/core/store/history-granularity';
 import { useLedgerBasis } from '@money/core/store/ledger-basis';
 import { useLedgerKindFilter } from '@money/core/store/ledger-kind-filter';
 import { useWeekStartStore } from '@money/core/store/week-start';
+import { captureBoxStore } from '@money/core/data/capture-box';
 
 const PERSISTED = [
   useAuth,
@@ -27,6 +28,8 @@ const PERSISTED = [
   useWeekStartStore,
   useLedgerBasis,
   useLedgerKindFilter,
+  // 이 기기에만 두는 캡처 후보 (서버에 없다).
+  captureBoxStore,
 ];
 
 export async function hydrateStores(): Promise<void> {

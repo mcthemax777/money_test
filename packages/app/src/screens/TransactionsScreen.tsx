@@ -398,7 +398,8 @@ export default function TransactionsScreen() {
    * 보지 않고는 볼 것이 있는지 알 수 없다.
    */
   const inbox = useEntryDrafts(selectedProjectId, 'notification');
-  const inboxCount = inbox.counts.notification + inbox.counts.capture;
+  const inboxCount =
+    inbox.counts.notification + inbox.counts.capture + inbox.counts.recurring;
   /*
    * 사람 목록과 선택을 이 프로젝트에 맞춘다.
    *

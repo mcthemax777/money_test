@@ -9,6 +9,10 @@
  * 후보를 **읽어 내는** 일은 여기 없다. 알림을 읽고 캡처에서 글자를 뽑고 반복의 회차를
  * 셈하는 일은 기기의 몫이다(앱의 `inbox.ts`, core 의 `recurring-drafts`).
  *
+ * **캡처 후보는 서버로 가지 않는다.** `draftPort()` 가 돌려주는 창구는 캡처를 이 기기의
+ * 캡처 보관함(`capture-box`)에 담고 읽고 처리하며, 나머지(알림·반복)만 아래 창구로 넘긴다.
+ * 화면과 훅은 그 갈림을 모른다.
+ *
  * 그 결과를 **담는** 길은 여기 있다(`add`). 담기는 어느 쪽이든 서버로 곧바로 나가지만,
  * 화면이 읽는 자리는 웹과 앱이 다르다 -- 앱은 사본이라 서버에 담기는 것만으로는 목록이
  * 비어 있다. 그 뒤처리를 부르는 쪽마다 두면 한 곳이 빠지고, 그 화면만 "담았습니다"라는
@@ -18,6 +22,13 @@
 import type { EntryDraftDto } from '@money/types';
 
 import { apiClient } from '../lib/api-client';
+import {
+  addCaptureDrafts,
+  captureDrafts,
+  isCaptureDraft,
+  markCaptureDraft,
+  patchCaptureDraft,
+} from './capture-box';
 
 /** 후보에 대해 할 수 있는 일. */
 export type DraftAction = 'registered' | 'dismissed' | 'deleted';
@@ -87,13 +98,77 @@ export const httpDraftPort: DraftPort = {
   },
 };
 
-let current: DraftPort = httpDraftPort;
+let current: DraftPort = withDeviceCaptures(httpDraftPort);
 
 /** 창구를 갈아 끼운다. 앱이 시작할 때 사본 창구를 넣는다. */
 export function setDraftPort(port: DraftPort | null): void {
-  current = port ?? httpDraftPort;
+  current = withDeviceCaptures(port ?? httpDraftPort);
 }
 
 export function draftPort(): DraftPort {
   return current;
+}
+
+/**
+ * 캡처는 기기의 보관함으로, 나머지는 받은 창구로 보내는 창구.
+ *
+ * 서버에 옛 캡처 후보가 남아 있어도(마이그레이션 전, 앱 사본이 아직 지우지 못한 것)
+ * 목록에는 섞지 않는다. 캡처 탭에는 이 기기의 것만 보인다.
+ */
+function withDeviceCaptures(port: DraftPort): DraftPort {
+  return {
+    add: async (projectId, items) => {
+      const local = addCaptureDrafts(
+        projectId,
+        items.filter((item) => item.source === 'capture'),
+      );
+      const others = items.filter((item) => item.source !== 'capture');
+      if (others.length === 0) return local;
+
+      const remote = await port.add(projectId, others);
+      return {
+        created: local.created + remote.created,
+        skipped: local.skipped + remote.skipped,
+        drafts: [...local.drafts, ...remote.drafts],
+      };
+    },
+
+    list: async (projectId, filter) => {
+      // 기기의 캡처 후보는 대기 중인 것뿐이다. 처리하면 목록에서 빠지고 열쇠만 남는다.
+      const wantsCaptures =
+        (!filter?.source || filter.source === 'capture') &&
+        (filter?.status ?? 'pending') === 'pending';
+      const captures = wantsCaptures ? captureDrafts(projectId) : [];
+      if (filter?.source === 'capture') return captures;
+
+      const remote = (await port.list(projectId, filter)).filter(
+        (draft) => draft.source !== 'capture',
+      );
+      if (captures.length === 0) return remote;
+
+      // 두 목록을 합쳐 사본 목록과 같은 차례로 세운다 (`LocalStore.draftRows`).
+      return [...captures, ...remote].sort(
+        (a, b) =>
+          sortTime(b).localeCompare(sortTime(a)) || b.createdAt.localeCompare(a.createdAt),
+      );
+    },
+
+    mark: async (projectId, draftId, action, entryId) => {
+      if (isCaptureDraft(projectId, draftId)) {
+        markCaptureDraft(projectId, draftId, action);
+        return;
+      }
+      await port.mark(projectId, draftId, action, entryId);
+    },
+
+    patch: async (draftId, patch) => {
+      if (patchCaptureDraft(draftId, patch)) return;
+      await port.patch(draftId, patch);
+    },
+  };
+}
+
+/** 줄을 세우는 시각. 거래 시각이 없으면 담은 시각이다. */
+function sortTime(draft: EntryDraftDto.Response): string {
+  return draft.occurredAt ?? draft.createdAt;
 }

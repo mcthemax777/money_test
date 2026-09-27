@@ -1062,6 +1062,10 @@ model EntryDraft {
   /// 누가 담았는가. 알림은 그 기기의 사용자다.
   createdByUserId String?
 
+  /// 알림 후보·서버가 만든 반복 회차의 푸시를 보낸(보내기로 차지한) 시각. 비어 있으면 아직 알리지 않았다.
+  /// 서버 여럿 가운데 먼저 채운 쪽이 보낸다 (`PushService`).
+  notifiedAt DateTime?
+
   /// 필드별 병합의 시계 지도를 두지 않는 대신, 변경 피드의 번호는 다른 표와 같다.
   updatedVersion Int @default(0)
 
@@ -1079,6 +1083,7 @@ model EntryDraft {
   @@index([projectId, status, source])
   @@index([projectId, updatedVersion])
   @@index([registeredEntryId])
+  @@index([source, notifiedAt])
 }
 
 /// 반복 등록. 정해 둔 날마다 보관함에 후보를 만든다.

@@ -25,7 +25,6 @@ import { ProjectAccessService } from '@/common/project-access.guard';
 import { badRequest } from '@/common/app-error';
 import { clientId } from '@/common/client-id';
 import { toOptionalMoney } from '@/common/money';
-import { PushService } from '../push/push.service';
 
 /** 한 번에 담을 수 있는 후보. 캡처 한 장에서 이보다 많이 나오면 사람이 볼 수 없다. */
 const MAX_BATCH = 100;
@@ -52,7 +51,6 @@ export class EntryDraftsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly projectAccess: ProjectAccessService,
-    private readonly push: PushService,
   ) {}
 
   async list(
@@ -118,13 +116,51 @@ export class EntryDraftsService {
     /*
      * 반복에서 온 후보는 한 번 더 본다.
      *
-     * 회차를 만드는 일이 기기에 있으므로, 기기의 시계가 틀렸거나 규칙이 남의 것이면
-     * 엉뚱한 날의 후보가 들어온다. 서버가 아는 것으로 가려낸다 -- 이 프로젝트의
+     * 기기가 올리는 반복 후보는 "만들기"를 누른 회차다(옛 앱은 밀린 회차도 올린다).
+     * 기기의 시계가 틀렸거나 규칙이 남의 것이면 엉뚱한 날의 후보가 들어온다. 서버가 아는 것으로 가려낸다 -- 이 프로젝트의
      * 규칙인가, 열쇠가 `r:<규칙>:<날짜>` 모양인가, 그 날이 따라잡을 수 있는 구간
      * (오늘부터 31일 전까지) 안인가.
      */
     await this.checkRecurringItems(projectId, items);
 
+    const { created, skipped } = await this.insert(projectId, items, userId);
+    const drafts = created.map(toResponse);
+
+    /*
+     * 푸시는 여기서 보내지 않는다. 알림 후보는 `notifiedAt` 이 빈 채로 담기고,
+     * `PushService` 가 그 가계부가 조용해진 뒤 남은 것만 한 번 알린다 -- 1분 안에 같은
+     * 결제의 더 자세한 알림이 오면 기기가 이 후보를 지우고 새 것을 담는다.
+     *
+     * 기기가 올린 반복 후보("만들기"를 누른 회차)는 알리지 않는다(`insert` 가 보낸 것으로
+     * 적는다). 누른 사람이 이미 화면을 보고 있다. 캡처는 애초에 여기 오지 않는다.
+     */
+    return { created: created.length, skipped, drafts };
+  }
+
+  /**
+   * 서버가 만든 반복 회차를 담는다 (`RecurringService.generateDue`).
+   *
+   * 권한 검사와 구간 검사를 건너뛴다 -- 서버가 규칙과 오늘로 셈한 것이다. 담긴 회차는
+   * 푸시로 알린다(`notifiedAt` 을 비워 둔다).
+   */
+  async createFromServer(
+    projectId: string,
+    items: EntryDraftDto.CreateItem[],
+  ): Promise<number> {
+    const { created } = await this.insert(projectId, items, null);
+    return created.length;
+  }
+
+  /**
+   * 후보를 한 건씩 넣는다. 겹치는 열쇠는 건너뛴다.
+   *
+   * @param userId 올린 사람. 서버가 만든 회차는 null 이다.
+   */
+  private async insert(
+    projectId: string,
+    items: EntryDraftDto.CreateItem[],
+    userId: string | null,
+  ): Promise<{ created: DraftRow[]; skipped: number }> {
     const created: DraftRow[] = [];
     let skipped = 0;
 
@@ -146,10 +182,19 @@ export class EntryDraftsService {
        */
       const tagIds = await this.checkTags(projectId, item.tagIds);
 
+      /*
+       * 캡처 후보는 받지 않는다. 사진을 고른 그 기기에만 두는 것이고(core 의
+       * `capture-box`), 등록할 때 거래로만 서버에 온다. 옛 앱이 올리면 여기서 거절된다.
+       */
+      const source = this.checkSource(item.source);
+      if (source === 'capture') {
+        throw badRequest('DRAFT_CAPTURE_DEVICE_ONLY', '캡처 후보는 기기에만 담습니다.');
+      }
+
       const data: Prisma.EntryDraftUncheckedCreateInput = {
         id: clientId(item.id, '후보 식별자'),
         projectId,
-        source: this.checkSource(item.source),
+        source,
         dedupeKey,
         rawText,
         appPackage: item.appPackage ?? null,
@@ -170,6 +215,13 @@ export class EntryDraftsService {
         // 위 검사를 지난 값이다. 반복이 아닌 후보에는 오지 않는다.
         recurringRuleId: item.source === 'recurring' ? (item.recurringRuleId ?? null) : null,
         createdByUserId: userId,
+        /*
+         * 푸시를 보낼지. 비워 두면 `PushService` 가 알린다.
+         *
+         * 기기가 올린 반복 회차는 사람이 "만들기"를 누른 것이라 보낸 것으로 적는다.
+         * 알림 후보와 서버가 만든 회차는 비워 둔다.
+         */
+        notifiedAt: item.source === 'recurring' && userId ? new Date() : null,
         ...(tagIds ? { tags: { create: tagIds.map((tagId) => ({ tagId })) } } : {}),
       };
 
@@ -190,24 +242,7 @@ export class EntryDraftsService {
       }
     }
 
-    const drafts = created.map(toResponse);
-
-    /*
-     * 알림에서 온 후보가 새로 담겼으면 구성원 기기 전부에 알린다.
-     *
-     * 알림 후보만이다. 캡처는 사람이 앱에서 방금 사진을 고른 것이라 이미 화면을 보고
-     * 있고, 반복 회차는 앱을 열 때 밀린 날짜만큼 한꺼번에 만들어져 알림이 쏟아진다.
-     * 겹쳐서 건너뛴 것(skipped)은 이미 알린 결제다.
-     *
-     * 기다리지 않는다 -- FCM 이 느려도 기기의 담기가 늦어지면 안 되고, 실패해도 후보는
-     * 이미 담겼다.
-     */
-    const fromNotifications = drafts.filter((draft) => draft.source === 'notification');
-    if (fromNotifications.length > 0) {
-      void this.push.notifyDrafts(projectId, fromNotifications);
-    }
-
-    return { created: created.length, skipped, drafts };
+    return { created, skipped };
   }
 
   /**

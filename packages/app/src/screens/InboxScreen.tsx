@@ -17,7 +17,7 @@
  * 읽는 일과 담는 일은 이 화면이 하지 않는다. 알림 버퍼를 비우고 사진에서 글자를 뽑는
  * 것은 `src/inbox.ts` 가, 문구를 값으로 바꾸는 것은 core 의 `draft-parse` 가 한다.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Archive, Camera, ChevronDown, Plus, X } from 'lucide-react-native';
@@ -95,12 +95,7 @@ export default function InboxScreen() {
 
   const [source, setSource] = useState<EntryDraftSource>('notification');
   const inbox = useEntryDrafts(projectId, source);
-  /*
-   * 반복은 탭을 보고 있지 않아도 읽는다.
-   *
-   * 읽는 김에 밀린 회차를 만들기 때문이다(훅의 머리말). 반복 탭에 들어가야 후보가
-   * 생긴다면, 그 탭에 들어가지 않는 사람에게는 반복이 없는 것과 같다.
-   */
+  // 반복 규칙. 밀린 회차는 서버가 만들고, 여기서는 목록과 손질만 한다.
   const recurring = useRecurringRules(projectId);
   /** 고칠 반복. null 이면서 팝업이 열려 있으면 새로 만드는 중이다. */
   const [editingRule, setEditingRule] = useState<RecurringRuleDto.Response | null>(null);
@@ -226,12 +221,9 @@ export default function InboxScreen() {
       setNotice(t('inbox.scanned', { count: result.added }));
       setSource('capture');
       await inbox.reload();
-    } catch (error) {
-      /*
-       * 글자는 기기 안에서 읽으므로 오프라인이어도 읽힌다. 막히는 것은 서버에 담는 일이다.
-       * 그것을 "읽지 못했다"로 말하면 사진을 바꿔 가며 다시 해 본다.
-       */
-      setNotice(t(isOfflineError(error) ? 'inbox.captureOffline' : 'inbox.readFailed'));
+    } catch {
+      // 읽기도 담기도 이 기기 안에서 하므로 연결과 무관하다. 남는 실패는 읽기다.
+      setNotice(t('inbox.readFailed'));
     } finally {
       setIsWorking(false);
     }
@@ -239,11 +231,6 @@ export default function InboxScreen() {
 
   /**
    * 주기 없는 반복의 "만들기". 오늘 날짜로 후보 하나를 담고 목록을 다시 읽는다.
-   *
-   * 알림 문구를 **여기서** 적는다. 밀린 회차를 세는 효과(아래 `handledMade`)에 맡기면
-   * 두 번째 누름에서 말이 뜨지 않는다 -- 그 효과는 담긴 수가 **바뀔 때만** 도는데,
-   * 한 건씩 만들면 그 수가 1 에 머무른다. 첫 누름에서는 둘이 같은 말을 적으므로
-   * 겹쳐 보이지 않는다.
    */
   const makeNow = async (rule: RecurringRuleDto.Response) => {
     if (!(await recurring.makeNow(rule))) return;
@@ -262,27 +249,6 @@ export default function InboxScreen() {
     setNotice('');
     setRegistering(draft);
   };
-
-  /*
-   * 방금 만들어진 반복 후보를 목록에 들인다.
-   *
-   * 두 훅이 따로 읽으므로 후보 목록은 반복이 돌기 **전**의 것일 수 있다. 그러면
-   * "3건을 만들었습니다"라고 적어 놓고 목록은 비어 있는 화면이 된다.
-   *
-   * 목록을 다시 읽는 함수는 그릴 때마다 새로 만들어지므로 의존성에 넣으면 그 자리에서
-   * 무한히 돈다 -- 그래서 최신 것을 상자에 담고, 처리한 수를 기억해 한 번만 돈다.
-   */
-  const reloadDrafts = useRef(inbox.reload);
-  useEffect(() => {
-    reloadDrafts.current = inbox.reload;
-  });
-  const handledMade = useRef(0);
-  useEffect(() => {
-    if (recurring.created === 0 || recurring.created === handledMade.current) return;
-    handledMade.current = recurring.created;
-    setNotice(t('inbox.ruleMade', { count: recurring.created }));
-    void reloadDrafts.current();
-  }, [recurring.created, t]);
 
   /** 반복을 만들거나 고친다. 저장되면 목록과 후보가 함께 새로 읽힌다. */
   const saveRule = async (body: RecurringRuleDto.Body): Promise<boolean> => {

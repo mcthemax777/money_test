@@ -385,11 +385,12 @@ export default function TransactionsView({
    * 보관함에 몇 건이 기다리는가.
    *
    * 목록을 여기서 그리지는 않지만 숫자는 이 화면에 있어야 한다 -- 아이콘만 있으면
-   * 눌러 보지 않고는 볼 것이 있는지 알 수 없다. 훅이 두 출처를 함께 세므로 탭 하나를
+   * 눌러 보지 않고는 볼 것이 있는지 알 수 없다. 훅이 세 출처를 함께 세므로 탭 하나를
    * 골라 두어도 합계를 낼 수 있다.
    */
   const inbox = useEntryDrafts(selectedProjectId, 'notification');
-  const inboxCount = inbox.counts.notification + inbox.counts.capture;
+  const inboxCount =
+    inbox.counts.notification + inbox.counts.capture + inbox.counts.recurring;
   // 사람 목록과 선택을 프로젝트에 맞춘다. 다른 화면과 같은 훅을 쓴다.
   usePersonFilterSync(selectedProjectId, tx.people);
   const [isSearchOpen, setIsSearchOpen] = useState(false);

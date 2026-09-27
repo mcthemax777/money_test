@@ -103,6 +103,9 @@ export const useAuth = create<AuthStore>()(
        */
       if (previousUserId && previousUserId !== response.user?.id) {
         await clearLocalMirror();
+        // 이 기기에만 둔 캡처 후보도 앞 사람의 것이다.
+        const { clearCaptureBox } = await import('../data/capture-box');
+        clearCaptureBox();
       }
       // 이 사본은 이제 이 사람의 것이다. 다음 로그인이 이 값을 보고 가른다.
       if (response.user?.id) await claimMirrorFor(response.user.id);
@@ -172,6 +175,10 @@ export const useAuth = create<AuthStore>()(
        * 거래가 그대로 남는다. 다음에 앱을 여는 사람이 그것을 읽는다.
        */
       await clearLocalMirror();
+
+      // 이 기기에만 둔 캡처 후보. 사진에서 읽은 가맹점과 금액이 다음 사람에게 남으면 안 된다.
+      const { clearCaptureBox } = await import('../data/capture-box');
+      clearCaptureBox();
     }
   },
 
