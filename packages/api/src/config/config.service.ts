@@ -115,8 +115,8 @@ export class ConfigService {
   /**
    * 관리 도구의 아이디. 비어 있으면 관리 도구에 들어갈 수 없다.
    *
-   * 비밀번호는 평문으로 두지 않는다 -- `ADMIN_PASSWORD_HASH` 에 해시만 둔다
-   * (`scripts/hash-admin-password.ts` 로 만든다).
+   * 비밀번호는 `ADMIN_PASSWORD_HASH`(scrypt 해시, `scripts/hash-admin-password.ts`) 나
+   * `ADMIN_PASSWORD`(평문) 중 하나에 둔다. 둘 다 있으면 해시를 본다.
    */
   get adminUsername(): string | null {
     return this.env.ADMIN_USERNAME?.trim() || null;
@@ -124,6 +124,10 @@ export class ConfigService {
 
   get adminPasswordHash(): string | null {
     return this.env.ADMIN_PASSWORD_HASH?.trim() || null;
+  }
+
+  get adminPassword(): string | null {
+    return this.env.ADMIN_PASSWORD?.trim() || null;
   }
 
   /**

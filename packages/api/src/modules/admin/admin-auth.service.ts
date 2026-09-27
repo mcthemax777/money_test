@@ -1,5 +1,6 @@
 /**
  * 관리 도구의 로그인. 아이디·비밀번호는 서버 환경 변수에만 있다(한 사람, 한 계정).
+ * 비밀번호는 해시(ADMIN_PASSWORD_HASH)나 평문(ADMIN_PASSWORD)으로 둔다.
  *
  * 사용자 로그인(구글)과 섞지 않는다. 토큰의 키도 종류도 다르다(`ConfigService.adminJwtSecret`,
  * `type: 'admin'`). 관리자 토큰은 12시간이면 끝난다 -- 새로 고칠 길을 두지 않는다.
@@ -28,13 +29,17 @@ export class AdminAuthService {
   async login(username: string, password: string): Promise<{ token: string; expiresAt: string }> {
     const expectedUser = this.config.adminUsername;
     const hash = this.config.adminPasswordHash;
-    if (!expectedUser || !hash) {
+    const plain = this.config.adminPassword;
+    if (!expectedUser || (!hash && !plain)) {
       throw new ServiceUnavailableException('관리자 계정이 설정되지 않았습니다.');
     }
 
     // 아이디가 틀려도 비밀번호 검사를 건너뛰지 않는다. 걸리는 시간으로 아이디를 알아내지 못하게.
+    // 해시가 있으면 해시를, 없으면 평문(ADMIN_PASSWORD)을 본다.
     const userOk = sameText(String(username ?? ''), expectedUser);
-    const passwordOk = verifyAdminPassword(String(password ?? ''), hash);
+    const passwordOk = hash
+      ? verifyAdminPassword(String(password ?? ''), hash)
+      : sameText(String(password ?? ''), plain ?? '');
     if (!userOk || !passwordOk) {
       throw new UnauthorizedException('아이디 또는 비밀번호가 맞지 않습니다.');
     }
