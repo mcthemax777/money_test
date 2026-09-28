@@ -15,6 +15,7 @@ export * from './budget-usage';
 export * from './locale';
 export * from './week-start';
 export * from './errors';
+export * from './app-version';
 export * from './card-color';
 export * from './statement-period';
 export * from './card-usage';

@@ -23,6 +23,7 @@ import {
 
 import { manualDraftItem, recurringDraftItems } from '../src/lib/recurring-drafts';
 import { entryFormFromDraft } from '../src/data/entry-form';
+import { recurringMissingText } from '../src/lib/recurring-text';
 
 let fail = 0;
 function eq(label: string, actual: unknown, expected: unknown) {
@@ -174,6 +175,7 @@ console.log('\n── 후보로 옮기기 ──');
     personId: null,
     categoryId: null,
     accountId: null,
+    toAccountId: null,
     cardId: null,
     installmentMonths: null,
     tagIds: [],
@@ -374,6 +376,82 @@ console.log('\n── 태그 물려주기 ──');
     { timeZone: 'Asia/Seoul', ledgerCurrency: 'KRW', personId: '' },
   );
   eq('폼의 태그 칸이 채워진다', form.tagIds.join(','), 't1,t2');
+}
+
+/*
+ * 이체 반복. 받는 통장이 규칙에서 후보를 지나 폼까지 가야 한다.
+ *
+ * 끊기면 "매달 적금 이체"를 등록할 때마다 받는 통장을 다시 골라야 한다.
+ */
+console.log('\n── 이체 반복 ──');
+{
+  const transfer = {
+    id: 'rule6',
+    isActive: true,
+    frequency: 'monthly',
+    everyDays: null,
+    dayOfMonth: 3,
+    month: null,
+    startDate: '2026-09-01',
+    endDate: null,
+    timeOfDay: null,
+    kind: 'transfer',
+    amount: '300000',
+    currency: null,
+    description: '적금',
+    merchant: '적금',
+    personId: null,
+    categoryId: null,
+    accountId: 'from1',
+    toAccountId: 'to1',
+    cardId: null,
+    installmentMonths: null,
+    tagIds: [],
+    lastMadeOn: null,
+    nextRunOn: null,
+  } as unknown as RecurringRuleDto.Response;
+
+  const [item] = recurringDraftItems([transfer], '2026-09-03', 'Asia/Seoul');
+  eq('후보에 받는 통장이 실린다', `${item?.accountId}->${item?.toAccountId}`, 'from1->to1');
+
+  const form = entryFormFromDraft(
+    { ...item, kind: 'transfer', amount: '300000', currency: null, occurredAt: item.occurredAt ?? null,
+      merchant: '적금', description: '적금', installmentMonths: null, personId: null,
+      categoryId: null, accountId: 'from1', toAccountId: 'to1', cardId: null },
+    { timeZone: 'Asia/Seoul', ledgerCurrency: 'KRW', personId: '' },
+  );
+  eq('폼이 이체로 열린다', form.kind, 'transfer');
+  eq('보내는 통장', form.method, 'account:from1');
+  eq('받는 통장', form.toAccountId, 'to1');
+
+  const expense = entryFormFromDraft(
+    { kind: 'expense', amount: '1', currency: null, occurredAt: null, merchant: null,
+      description: 'x', installmentMonths: null, personId: null, categoryId: null,
+      accountId: 'from1', toAccountId: 'to1', cardId: null },
+    { timeZone: 'Asia/Seoul', ledgerCurrency: 'KRW', personId: '' },
+  );
+  eq('지출에는 받는 통장을 채우지 않는다', expense.toAccountId, '');
+}
+
+console.log('\n── 저장 전에 묻는 빈 칸 ──');
+{
+  // 이름 대신 열쇠를 그대로 돌려주는 t. 어느 칸이 뽑혔는지만 본다.
+  const t = (key: string) => key;
+  const body = (extra: object) =>
+    ({ frequency: 'monthly', startDate: '2026-09-01', description: '관리비', kind: 'expense', ...extra }) as never;
+
+  eq('지출: 셋 다 비었다', recurringMissingText(body({}), t as never), 'editor.amount, editor.method, entryForm.category');
+  eq(
+    '지출: 다 채우면 묻지 않는다',
+    recurringMissingText(body({ amount: '1', cardId: 'c1', categoryId: 'k1' }), t as never),
+    'null',
+  );
+  eq('수입: 분류만 비었다', recurringMissingText(body({ kind: 'income', amount: '1', accountId: 'a1' }), t as never), 'entryForm.category');
+  eq(
+    '이체: 분류는 묻지 않고 받는 통장을 묻는다',
+    recurringMissingText(body({ kind: 'transfer' }), t as never),
+    'editor.amount, editor.fromAccount, editor.toAccount',
+  );
 }
 
 console.log('\n── 휴일 (2026년 추석 9/24~26, 개천절 대체 10/5, 한글날 10/9) ──');

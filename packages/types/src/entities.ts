@@ -579,6 +579,8 @@ export interface EntryDraft {
   personId: string | null;
   categoryId: string | null;
   accountId: string | null;
+  /** 이체의 받는 통장. 반복에서 온 이체 후보만 채워 온다. */
+  toAccountId: string | null;
   cardId: string | null;
 
   /**
@@ -674,7 +676,10 @@ export interface RecurringRule {
   merchant: string | null;
   personId: string | null;
   categoryId: string | null;
+  /** 결제수단 통장. 이체에서는 보내는 통장이다. */
   accountId: string | null;
+  /** 이체의 받는 통장. 이체가 아니면 null. */
+  toAccountId: string | null;
   cardId: string | null;
   installmentMonths: number | null;
   /** 이 반복이 만드는 후보에 붙일 태그. */

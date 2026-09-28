@@ -43,13 +43,15 @@ import { useWeekStart } from '@money/core/store/week-start';
 import { formatCurrency } from '@money/core/lib/money';
 import { useEntryDrafts } from '@money/core/hooks/useEntryDrafts';
 import { useRecurringRules } from '@money/core/hooks/useRecurringRules';
-import { useCanEdit, useProjectTimeZone } from '@money/core/store/project';
+import { myPersonIdOf, useCanEdit, useProjectTimeZone } from '@money/core/store/project';
 import { homeDataPort } from '@money/core/data/home-port';
 import { draftPort } from '@money/core/data/draft-port';
 import {
   captureItems,
   draftAddedBy,
+  draftMethodName,
   draftNeedsFix,
+  hintsOwnedBy,
   historyFromEntries,
   NO_HINTS,
   type CollectHints,
@@ -146,18 +148,6 @@ async function loadHints(
   }
 }
 
-/** 후보에 붙은 카드·통장의 이름. 못 찾았으면 null 이고 화면이 "빈 칸"이라고 적는다. */
-function methodNameOf(
-  draft: EntryDraftDto.Response,
-  lists: { accounts: Account[]; cards: Card[] },
-): string | null {
-  if (draft.cardId) return lists.cards.find((card) => card.id === draft.cardId)?.name ?? null;
-  if (draft.accountId) {
-    return lists.accounts.find((account) => account.id === draft.accountId)?.name ?? null;
-  }
-  return null;
-}
-
 const TABS: Array<{ id: EntryDraftSource; labelKey: MessageKey; icon: typeof Bell }> = [
   { id: 'notification', labelKey: 'inbox.tab.notification', icon: Bell },
   { id: 'capture', labelKey: 'inbox.tab.capture', icon: Camera },
@@ -243,7 +233,11 @@ export default function InboxPage() {
     let found = 0;
 
     try {
-      const hints = await loadHints(selectedProjectId, reference);
+      // 캡처한 사람("나")의 자산에서만 결제수단을 찾는다. 앱의 알림·캡처와 같다.
+      const hints = hintsOwnedBy(
+        await loadHints(selectedProjectId, reference),
+        myPersonIdOf(selectedProjectId),
+      );
 
       for (const file of files) {
         setReading({ name: file.name, progress: { percent: 0, status: '' } });
@@ -468,7 +462,7 @@ export default function InboxPage() {
               <DraftRow
                 draft={draft}
                 timeZone={timeZone}
-                methodName={methodNameOf(draft, reference)}
+                methodName={draftMethodName(draft, reference)}
                 canEdit={canEdit}
                 onAdd={() => openDraft(draft)}
                 onDismiss={() => void inbox.dismiss(draft.id)}

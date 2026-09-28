@@ -228,6 +228,8 @@ export class EntryDraftsService {
         personId: item.personId ?? null,
         categoryId: item.categoryId ?? null,
         accountId: item.accountId ?? null,
+        // 받는 통장은 이체에만 있다. 반복에서 온 이체 후보가 싣는다.
+        toAccountId: item.kind === 'transfer' ? (item.toAccountId ?? null) : null,
         cardId: item.cardId ?? null,
         confidence: clampConfidence(item.confidence),
         parser: item.parser ?? null,
@@ -372,6 +374,7 @@ export class EntryDraftsService {
     if ('personId' in dto) data.personId = dto.personId ?? null;
     if ('categoryId' in dto) data.categoryId = dto.categoryId ?? null;
     if ('accountId' in dto) data.accountId = dto.accountId ?? null;
+    if ('toAccountId' in dto) data.toAccountId = dto.toAccountId ?? null;
     if ('cardId' in dto) data.cardId = dto.cardId ?? null;
     if ('status' in dto && dto.status) data.status = this.checkStatus(dto.status);
     if ('registeredEntryId' in dto) {
@@ -523,6 +526,7 @@ function toResponse(row: DraftRow): EntryDraftDto.Response {
     personId: row.personId,
     categoryId: row.categoryId,
     accountId: row.accountId,
+    toAccountId: row.toAccountId,
     cardId: row.cardId,
     tagIds: row.tags.map((tag) => tag.tagId),
     confidence: row.confidence,

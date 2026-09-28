@@ -16,4 +16,10 @@ export const ADMIN_TOOLS: AdminTool[] = [
     description:
       '반복 등록의 휴일 제외·앞뒤 평일 옮기기가 쓰는 공휴일. 새 연도가 발표되면 갱신을 누르고, 임시공휴일은 직접 더합니다.',
   },
+  {
+    href: '/admin/app-versions',
+    title: '앱 버전',
+    description:
+      '강제 업데이트(이보다 낮으면 쓸 수 없음)와 권유(새 버전 안내)를 안드로이드·iOS·웹마다 정합니다. 저장하면 30초 안에 모든 서버에 먹습니다.',
+  },
 ];

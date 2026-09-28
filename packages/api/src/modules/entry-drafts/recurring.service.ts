@@ -245,6 +245,14 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
     this.checkSchedule(dto);
 
     const tagIds = await this.checkTags(projectId, dto.tagIds);
+    const kind = this.checkKind(dto.kind);
+    const payment = paymentOf(kind, {
+      accountId: dto.accountId ?? null,
+      toAccountId: dto.toAccountId ?? null,
+      cardId: dto.cardId ?? null,
+      categoryId: dto.categoryId ?? null,
+      installmentMonths: toOptionalMonths(dto.installmentMonths),
+    });
 
     const rule = await this.prisma.recurringRule.create({
       include: { tags: { select: { tagId: true } } },
@@ -253,16 +261,13 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
         projectId,
         isActive: dto.isActive ?? true,
         ...this.scheduleData(dto),
-        kind: this.checkKind(dto.kind),
+        kind,
         amount: toOptionalMoney(dto.amount ?? null, '반복 금액'),
         currency: dto.currency ?? null,
         description,
         merchant: dto.merchant ?? null,
         personId: dto.personId ?? null,
-        categoryId: dto.categoryId ?? null,
-        accountId: dto.accountId ?? null,
-        cardId: dto.cardId ?? null,
-        installmentMonths: toOptionalMonths(dto.installmentMonths),
+        ...payment,
         ...(tagIds ? { tags: { create: tagIds.map((tagId) => ({ tagId })) } } : {}),
         createdByUserId: userId,
       },
@@ -332,11 +337,27 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
     }
     if ('merchant' in dto) data.merchant = dto.merchant ?? null;
     if ('personId' in dto) data.personId = dto.personId ?? null;
-    if ('categoryId' in dto) data.categoryId = dto.categoryId ?? null;
-    if ('accountId' in dto) data.accountId = dto.accountId ?? null;
-    if ('cardId' in dto) data.cardId = dto.cardId ?? null;
-    if ('installmentMonths' in dto) {
-      data.installmentMonths = toOptionalMonths(dto.installmentMonths);
+    /*
+     * 결제수단·분류·할부는 갈래에 따라 뜻이 달라져 함께 합쳐 본다.
+     *
+     * 갈래만 이체로 바꾸고 다른 칸을 주지 않아도, 남아 있던 카드·분류·할부가 비워져야
+     * 한다. 이체 규칙에 카드가 남으면 회차 후보가 "카드로 이체"라는 없는 거래가 된다.
+     */
+    const paymentKeys = ['kind', 'categoryId', 'accountId', 'toAccountId', 'cardId', 'installmentMonths'];
+    if (paymentKeys.some((key) => key in dto)) {
+      Object.assign(
+        data,
+        paymentOf(data.kind ? (data.kind as string) : rule.kind, {
+          accountId: 'accountId' in dto ? (dto.accountId ?? null) : rule.accountId,
+          toAccountId: 'toAccountId' in dto ? (dto.toAccountId ?? null) : rule.toAccountId,
+          cardId: 'cardId' in dto ? (dto.cardId ?? null) : rule.cardId,
+          categoryId: 'categoryId' in dto ? (dto.categoryId ?? null) : rule.categoryId,
+          installmentMonths:
+            'installmentMonths' in dto
+              ? toOptionalMonths(dto.installmentMonths)
+              : rule.installmentMonths,
+        }),
+      );
     }
 
     /*
@@ -483,6 +504,40 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
   }
 }
 
+/** 결제수단·분류·할부. 갈래에 맞게 고른 저장 모양이다. */
+interface PaymentFields {
+  accountId: string | null;
+  toAccountId: string | null;
+  cardId: string | null;
+  categoryId: string | null;
+  installmentMonths: number | null;
+}
+
+/**
+ * 갈래에 맞지 않는 칸을 비운다. 이체면 받는 통장을 확인한다.
+ *
+ * **이체는 통장에서 통장으로다.** 카드로는 이체를 만들 수 없고(거래 폼과 같은 규칙),
+ * 분류와 할부도 없다. 받는 통장은 이체에만 있다 -- 지출 규칙에 남아 있으면 회차 후보를
+ * 열 때 쓸모없는 값이 따라온다.
+ *
+ * 받는 통장을 비워 두는 것은 받는다. 다른 칸처럼 후보를 등록할 때 사람이 고른다.
+ * 보내는 통장과 같으면 거절한다 -- 그 회차는 등록할 때마다 폼에서 막힌다.
+ */
+function paymentOf(kind: string, fields: PaymentFields): PaymentFields {
+  if (kind !== 'transfer') return { ...fields, toAccountId: null };
+
+  if (fields.accountId && fields.accountId === fields.toAccountId) {
+    throw badRequest('TRANSFER_SAME_ACCOUNT', '보내는 계좌와 받는 계좌가 같습니다.');
+  }
+  return {
+    accountId: fields.accountId,
+    toAccountId: fields.toAccountId,
+    cardId: null,
+    categoryId: null,
+    installmentMonths: null,
+  };
+}
+
 /** 다음 정각(+5초)까지 남은 시간. */
 function untilNextHour(now: number = Date.now()): number {
   const hour = 60 * 60 * 1000;
@@ -561,6 +616,7 @@ function toResponse(
     personId: rule.personId,
     categoryId: rule.categoryId,
     accountId: rule.accountId,
+    toAccountId: rule.toAccountId,
     cardId: rule.cardId,
     installmentMonths: rule.installmentMonths,
     tagIds: rule.tags.map((row) => row.tagId),

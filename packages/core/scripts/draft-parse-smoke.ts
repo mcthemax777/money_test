@@ -21,7 +21,13 @@ import {
   type NotificationInput,
 } from '../src/lib/draft-parse';
 import { guessCategoryId, matchPaymentMethod } from '../src/lib/draft-match';
-import { captureItems, dedupeNotificationItems } from '../src/lib/draft-collect';
+import {
+  captureItems,
+  dedupeNotificationItems,
+  draftMethodName,
+  draftNeedsFix,
+  hintsOwnedBy,
+} from '../src/lib/draft-collect';
 
 let fail = 0;
 function eq(label: string, actual: unknown, expected: unknown) {
@@ -868,6 +874,48 @@ console.log('\n── 이 가계부의 것과 맞추기 ──');
     [existing('pending', { cardId: 'c2' })],
   );
   eq('덜 자세한 새 알림은 버린다', `${poorer.keep.length}/${poorer.replace.length}`, '0/0');
+}
+
+console.log('\n── 알림 받은 사람의 자산에서만 ──');
+{
+  const accounts = [
+    { id: 'mine', name: '내 통장', ownerId: 'p-me', isActive: true },
+    { id: 'theirs', name: '배우자 통장', ownerId: 'p-other', isActive: true },
+  ] as never;
+  const cards = [
+    { id: 'c-mine', name: '국민 체크', paymentAccountId: 'mine', cardNumberMasked: null, isActive: true },
+    { id: 'c-theirs', name: '신한 체크', paymentAccountId: 'theirs', cardNumberMasked: null, isActive: true },
+  ] as never;
+  const hints = { accounts, cards, history: [] };
+
+  const owned = hintsOwnedBy(hints, 'p-me');
+  eq('내 통장만 남는다', owned.accounts.map((a) => a.id), 'mine');
+  eq('결제 통장이 내 것인 카드만 남는다', owned.cards.map((c) => c.id), 'c-mine');
+
+  const shinhan = notify('신한카드 승인 5,000원 09/08 카페');
+  eq('남의 카드사 알림에는 채우지 않는다', matchPaymentMethod(shinhan!, owned).cardId, 'null');
+  eq('거르지 않으면 남의 카드가 붙는다', matchPaymentMethod(shinhan!, hints).cardId, 'c-theirs');
+
+  const none = hintsOwnedBy(hints, null);
+  eq('"나"가 없으면 아무 자산도 남기지 않는다', `${none.accounts.length}/${none.cards.length}`, '0/0');
+}
+
+console.log('\n── 이체 후보의 받는 통장 ──');
+{
+  const accounts = [
+    { id: 'from1', name: '월급 통장' },
+    { id: 'to1', name: '적금 통장' },
+  ] as never;
+  const cards = [{ id: 'c1', name: '신한 신용', liabilityAccountId: 'liab1' }] as never;
+  const lists = { accounts, cards };
+  const draft = (extra: object) =>
+    ({ kind: 'transfer', amount: '300000', categoryId: null, cardId: null, accountId: 'from1', toAccountId: null, ...extra }) as never;
+
+  eq('받는 통장이 없으면 빈 칸이 있다', draftNeedsFix(draft({})), true);
+  eq('받는 통장이 있으면 빈 칸이 없다', draftNeedsFix(draft({ toAccountId: 'to1' })), false);
+  eq('이체는 양쪽 이름', draftMethodName(draft({ toAccountId: 'to1' }), lists), '월급 통장 → 적금 통장');
+  eq('카드 대금은 카드 이름', draftMethodName(draft({ toAccountId: 'liab1' }), lists), '월급 통장 → 신한 신용');
+  eq('받는 쪽을 모르면 보내는 쪽만', draftMethodName(draft({}), lists), '월급 통장');
 }
 
 console.log(fail === 0 ? '\n전부 통과' : `\n${fail}건 실패`);

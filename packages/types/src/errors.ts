@@ -107,6 +107,10 @@ export const ERROR_CODES = [
   'RECURRING_INVALID',
   'RECURRING_NOT_FOUND',
   'RECURRING_DESCRIPTION_REQUIRED',
+
+  // 앱·웹 버전
+  'APP_UPDATE_REQUIRED',
+  'APP_VERSION_INVALID',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

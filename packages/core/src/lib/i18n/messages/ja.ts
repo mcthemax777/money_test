@@ -1087,6 +1087,8 @@ export const ja: Record<MessageKey, string> = {
   'error.RECURRING_INVALID': '繰り返しの予定が正しくありません。周期と日付をご確認ください。',
   'error.RECURRING_NOT_FOUND': 'その繰り返し登録が見つかりません。',
   'error.RECURRING_DESCRIPTION_REQUIRED': '何を記録するのか名前を入れてください。',
+  'error.APP_UPDATE_REQUIRED': 'このバージョンは利用できなくなりました。アップデートしてください。',
+  'error.APP_VERSION_INVALID': 'バージョン設定の値が正しくありません。',
   'carousel.prev': '前へ',
   'carousel.next': '次へ',
 
@@ -1249,6 +1251,7 @@ export const ja: Record<MessageKey, string> = {
   'inbox.confidence': '確度 {value}%',
   'inbox.addedBy': '追加: {who}',
   'inbox.needsFix': '空の項目があります。保存する前に入力してください。',
+  'inbox.ruleMissingConfirm': '{fields}が未入力です。回ごとに受信箱で入力する必要があります。このまま保存しますか？',
   'inbox.registered': '取引として記録しました。',
   'inbox.amountUnknown': '金額を読み取れませんでした',
   'inbox.permissionTitle': '通知の読み取りを許可してください',
@@ -1272,4 +1275,15 @@ export const ja: Record<MessageKey, string> = {
   'inbox.readingFile': '{name} を読み取っています。',
   'inbox.notificationAppOnly': '通知からの取り込みは Android アプリで有効にします。集めた候補はここでそのまま整理できます。',
 
+  // 앱·웹 업데이트 안내
+  'update.forceTitle': 'アップデートが必要です',
+  'update.forceBody': 'このバージョンは利用できなくなりました。最新バージョンにアップデートしてください。記録した内容はアップデート後にそのまま送信されます。',
+  'update.recommendTitle': '新しいバージョンがあります',
+  'update.recommendBody': 'このままでも使えますが、アップデートすると新機能と修正が届きます。',
+  'update.now': 'アップデート',
+  'update.later': '後で',
+  'update.current': '現在のバージョン {version}',
+  'update.webNew': '新しいバージョンがあります。',
+  'update.webReload': '再読み込み',
+  'update.webForceBody': 'サイトが更新されました。再読み込みしてから続けてください。',
 };

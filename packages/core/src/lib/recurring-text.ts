@@ -7,9 +7,28 @@
 import type { RecurringFrequency, RecurringHolidayRule, RecurringRuleDto } from '@money/types';
 
 import type { MessageKey } from './i18n';
+import { missingFields } from './draft-collect';
 import { weekdayNames } from './datetime';
 
 type Translate = (key: MessageKey) => string;
+
+/**
+ * 저장하려는 반복에서 비어 있는 칸의 이름. "금액, 결제수단". 다 채웠으면 null.
+ *
+ * 비워 둔 칸은 회차 후보마다 보관함에서 채워야 한다. 달마다 금액이 바뀌는 관리비처럼
+ * 일부러 비우는 일이 있어 막지는 않고, 저장 전에 한 번 묻는 데 쓴다.
+ */
+export function recurringMissingText(body: RecurringRuleDto.Body, t: Translate): string | null {
+  const labels: Record<ReturnType<typeof missingFields>[number], MessageKey> = {
+    amount: 'editor.amount',
+    // 이체에서 결제수단 칸은 보내는 통장이다. 폼의 칸 이름과 같게 적는다.
+    method: body.kind === 'transfer' ? 'editor.fromAccount' : 'editor.method',
+    toAccount: 'editor.toAccount',
+    category: 'entryForm.category',
+  };
+  const missing = missingFields(body);
+  return missing.length > 0 ? missing.map((field) => t(labels[field])).join(', ') : null;
+}
 
 /** 주기마다 고를 수 있는 휴일 처리의 이름. 고르는 칸과 목록의 꼬리말이 같은 말을 쓴다. */
 export const HOLIDAY_RULE_LABEL: Record<

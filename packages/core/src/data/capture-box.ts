@@ -188,6 +188,7 @@ function toDraft(
     personId: item.personId ?? null,
     categoryId: item.categoryId ?? null,
     accountId: item.accountId ?? null,
+    toAccountId: item.toAccountId ?? null,
     cardId: item.cardId ?? null,
     confidence: item.confidence ?? 0,
     parser: item.parser ?? null,

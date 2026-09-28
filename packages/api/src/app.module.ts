@@ -25,6 +25,8 @@ import { RealtimeModule } from './modules/realtime/realtime.module';
 import { SyncModule } from './modules/sync/sync.module';
 import { AdminModule } from './modules/admin/admin.module';
 import { PushModule } from './modules/push/push.module';
+import { AppVersionModule } from './modules/app-version/app-version.module';
+import { AppVersionGuard } from './modules/app-version/app-version.guard';
 
 @Module({
   imports: [
@@ -70,8 +72,13 @@ import { PushModule } from './modules/push/push.module';
     ExchangeRatesModule,
     SyncModule,
     AdminModule,
+    AppVersionModule,
   ],
-  providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
+  providers: [
+    { provide: APP_GUARD, useClass: ThrottlerGuard },
+    // 최소 버전보다 낮은 앱·웹의 요청을 426 으로 거절한다 (`AppVersionGuard`).
+    { provide: APP_GUARD, useExisting: AppVersionGuard },
+  ],
 })
 export class AppModule implements NestModule {
   /**

@@ -144,8 +144,12 @@ export default function RevealTop({
      *
      * `zIndex` 는 바깥에 준다. 형제 중에서 누가 위에 그려질지를 정하는 값이라, 움직이는
      * 안쪽에 주면 목록이 막대 위에 그려진다.
+     *
+     * **위 여백만큼 바깥을 끌어올린다.** 그 여백은 붙어 있는 동안 줄이 막대에 닿기 전에
+     * 회색이 오게 하는 몫이라, 제자리에서까지 두면 제목이 다른 탭보다 8px 내려와 탭을
+     * 옮길 때 흔들린다(실제로 그랬다). 웹은 같은 몫을 -mt 로 되돌린다.
      */
-    <View ref={box} onLayout={measure} style={{ zIndex: 10 }}>
+    <View ref={box} onLayout={measure} style={{ zIndex: 10, marginTop: -PADDING }}>
       <Animated.View
         onLayout={(event) => {
           height.value = event.nativeEvent.layout.height;

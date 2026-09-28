@@ -33,7 +33,7 @@ import { useEntryDrafts } from '@money/core/hooks/useEntryDrafts';
 import { useRecurringRules } from '@money/core/hooks/useRecurringRules';
 import { useCanEdit, useProject, useProjectTimeZone } from '@money/core/store/project';
 import { homeDataPort } from '@money/core/data/home-port';
-import { draftAddedBy, draftNeedsFix } from '@money/core/lib/draft-collect';
+import { draftAddedBy, draftMethodName, draftNeedsFix } from '@money/core/lib/draft-collect';
 import type { Account, Card, Category, Person, Tag } from '@money/core/lib/types';
 
 import EntryEditor from '../components/EntryEditor';
@@ -438,11 +438,7 @@ export default function InboxScreen() {
               <DraftRow
                 draft={draft}
                 timeZone={timeZone}
-                methodName={
-                  [...lists.cards, ...lists.accounts].find(
-                    (row) => row.id === (draft.cardId ?? draft.accountId),
-                  )?.name ?? null
-                }
+                methodName={draftMethodName(draft, lists)}
                 canEdit={canEdit}
                 onAdd={() => openDraft(draft)}
                 onDismiss={() => void inbox.dismiss(draft.id)}

@@ -5,10 +5,13 @@
  * 서버 주소와 토큰 저장소, 세션이 끊겼을 때 할 일을 넣어 준다.
  */
 import { GoogleSignin } from '@react-native-google-signin/google-signin';
+import * as Application from 'expo-application';
 import * as Crypto from 'expo-crypto';
+import { Platform } from 'react-native';
 
 import { apiClient } from '@money/core/lib/api-client';
 import { setTokenStorage } from '@money/core/lib/auth-tokens';
+import { installUpdateHandler } from '@money/core/store/app-update';
 import { setRandomBytes } from '@money/types';
 import { hydrateTokens, secureTokenStorage } from './token-storage';
 
@@ -84,6 +87,17 @@ export async function setupApi(onUnauthorized: () => void): Promise<void> {
   setRandomBytes((byteCount) => Crypto.getRandomBytes(byteCount));
   apiClient.setBaseUrl(API_URL);
   apiClient.setUnauthorizedHandler(onUnauthorized);
+
+  /*
+   * 이 판의 버전을 요청마다 싣고, 서버의 426(강제 업데이트)을 받을 곳을 건다.
+   *
+   * 첫 요청보다 먼저 한다. 백그라운드 작업(알림 담기)도 이 준비를 지나므로 같이 막힌다.
+   * 버전을 읽지 못하면(있을 수 없지만) 싣지 않는다 -- 서버는 머리글 없는 요청을 통과시킨다.
+   */
+  const version = Application.nativeApplicationVersion;
+  if (version && (Platform.OS === 'android' || Platform.OS === 'ios')) {
+    installUpdateHandler(Platform.OS, version);
+  }
 
   // 로그인 화면이 뜨기 전에 해 둔다. configure 는 그 자리에서 끝나는 설정이다.
   GoogleSignin.configure({ webClientId: GOOGLE_WEB_CLIENT_ID });

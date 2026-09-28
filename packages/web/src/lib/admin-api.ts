@@ -6,7 +6,12 @@
  *
  * 토큰은 sessionStorage 에 둔다 -- 탭을 닫으면 사라진다. 관리 도구는 잠깐 열어 쓰는 곳이다.
  */
-import type { HolidayCountry } from '@money/types';
+import type {
+  AppPlatform,
+  AppVersionPolicy,
+  AppVersionPolicyUpdate,
+  HolidayCountry,
+} from '@money/types';
 import { apiClient } from '@money/core/lib/api-client';
 
 const TOKEN_KEY = 'money-admin-token';
@@ -89,3 +94,8 @@ export const addHoliday = (country: HolidayCountry, date: string, name: string) 
 
 export const removeHoliday = (country: HolidayCountry, date: string) =>
   call<void>('DELETE', `/admin/holidays/${country}/${date}`);
+
+export const listAppVersions = () => call<AppVersionPolicy[]>('GET', '/admin/app-versions');
+
+export const updateAppVersion = (platform: AppPlatform, body: AppVersionPolicyUpdate) =>
+  call<AppVersionPolicy>('PUT', `/admin/app-versions/${platform}`, body);

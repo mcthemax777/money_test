@@ -13,14 +13,21 @@ import {
   HttpStatus,
   Param,
   Post,
+  Put,
   Query,
   Req,
   UseGuards,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
-import { HOLIDAY_COUNTRIES, type HolidayCountry } from '@money/types';
+import {
+  HOLIDAY_COUNTRIES,
+  type AppVersionPolicyUpdate,
+  type HolidayCountry,
+} from '@money/types';
 
+import { AppVersionService, isPlatform } from '../app-version/app-version.service';
+import { SkipVersionCheck } from '../app-version/skip-version-check.decorator';
 import { HolidaysService } from '../holidays/holidays.service';
 import { AdminAuthService, type AdminTokenPayload } from './admin-auth.service';
 import { AdminGuard } from './admin.guard';
@@ -29,11 +36,14 @@ import { AdminGuard } from './admin.guard';
 const LOGIN_LIMIT = { default: { ttl: 60_000, limit: 5 } };
 
 @ApiTags('Admin')
+// 관리 도구는 웹에서 연다. 웹의 강제 새로고침에 걸린 탭에서도 정책을 되돌릴 수 있어야 한다.
 @Controller('admin')
+@SkipVersionCheck()
 export class AdminController {
   constructor(
     private readonly auth: AdminAuthService,
     private readonly holidays: HolidaysService,
+    private readonly versions: AppVersionService,
   ) {}
 
   @Post('login')
@@ -74,6 +84,21 @@ export class AdminController {
       throw new BadRequestException('공휴일 이름을 100자 안으로 적어 주세요.');
     }
     await this.holidays.add(checkCountry(body?.country), checkDate(body?.date), name);
+  }
+
+  @Get('app-versions')
+  @UseGuards(AdminGuard)
+  listAppVersions() {
+    return this.versions.list();
+  }
+
+  @Put('app-versions/:platform')
+  @UseGuards(AdminGuard)
+  updateAppVersion(@Param('platform') platform: string, @Body() body: Partial<AppVersionPolicyUpdate>) {
+    if (!isPlatform(platform)) {
+      throw new BadRequestException('플랫폼은 android, ios, web 중 하나입니다.');
+    }
+    return this.versions.update(platform, body ?? {});
   }
 
   @Delete('holidays/:country/:date')

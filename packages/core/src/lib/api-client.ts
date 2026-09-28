@@ -5,7 +5,15 @@ import {
   getRefreshToken,
   saveAuthTokens,
 } from './auth-tokens';
-import { hasRandomSource, newId, withNewId } from '@money/types';
+import {
+  APP_PLATFORM_HEADER,
+  APP_VERSION_HEADER,
+  hasRandomSource,
+  newId,
+  withNewId,
+  type AppPlatform,
+  type AppVersionPolicy,
+} from '@money/types';
 import { markOffline } from '../store/connectivity';
 import { isOfflineError } from './offline-error';
 import type {
@@ -63,6 +71,17 @@ export interface ExchangeRatesResponse {
   displayRate: ExchangeRateInfo;
 }
 
+/**
+ * 서버가 강제 업데이트로 거절했는가 (426 · APP_UPDATE_REQUIRED).
+ *
+ * 다시 보내도 같은 답이다. 부르는 쪽은 재시도하지 말고, 세션도 끊지 않는다.
+ */
+export function isUpdateRequiredError(error: unknown): boolean {
+  const response = (error as AxiosError | undefined)?.response;
+  const code = (response?.data as { error?: { code?: string } } | undefined)?.error?.code;
+  return response?.status === 426 && code === 'APP_UPDATE_REQUIRED';
+}
+
 class ApiClient {
   private client: AxiosInstance;
   /**
@@ -111,6 +130,12 @@ class ApiClient {
   /** 내보내졌다는 소식을 받을 곳. 등록하지 않으면 아무 일도 하지 않는다. */
   private onProjectAccessLost: (() => void) | null = null;
 
+  /** 이 판의 플랫폼과 버전. 요청마다 머리글로 싣는다. 넣지 않으면 싣지 않는다. */
+  private clientVersion: { platform: AppPlatform; version: string } | null = null;
+
+  /** 서버가 "이 판은 더 쓸 수 없다"(426)고 답했을 때 부를 곳. */
+  private onUpdateRequired: (() => void) | null = null;
+
   private setupInterceptors() {
     this.client.interceptors.request.use(async (config) => {
       /*
@@ -130,6 +155,11 @@ class ApiClient {
       const token = getAccessToken();
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
+      }
+      // 서버가 최소 버전보다 낮은 판을 426 으로 거절한다 (`AppVersionGuard`).
+      if (this.clientVersion) {
+        config.headers[APP_PLATFORM_HEADER] = this.clientVersion.platform;
+        config.headers[APP_VERSION_HEADER] = this.clientVersion.version;
       }
       return config;
     });
@@ -173,6 +203,8 @@ class ApiClient {
         if (code === 'PROJECT_FORBIDDEN' || code === 'NOT_PROJECT_MEMBER') {
           this.onProjectAccessLost?.();
         }
+        // 강제 업데이트. 화면이 닫을 수 없는 창을 띄운다. 세션은 그대로 둔다.
+        if (isUpdateRequiredError(error)) this.onUpdateRequired?.();
 
         if (error.response?.status !== 401 || !originalRequest || isSessionRequest) {
           if (error.response?.status === 401) this.clearSession();
@@ -202,7 +234,13 @@ class ApiClient {
            *
            * 놓아 두어도 잃는 것은 없다. 다음 요청이 다시 401 을 받으면 그때 정리된다.
            */
-          if (!isOfflineError(refreshError)) this.clearSession();
+          /*
+           * 강제 업데이트로 갱신이 막힌 것도 세션이 끝난 것이 아니다. 여기서 로그아웃하면
+           * 업데이트한 뒤에 다시 로그인해야 하고, 아직 올리지 못한 입력이 그 사이에 버려진다.
+           */
+          if (!isOfflineError(refreshError) && !isUpdateRequiredError(refreshError)) {
+            this.clearSession();
+          }
           return Promise.reject(refreshError);
         }
       },
@@ -317,6 +355,26 @@ class ApiClient {
    */
   setProjectAccessLostHandler(handler: (() => void) | null) {
     this.onProjectAccessLost = handler;
+  }
+
+  /**
+   * 이 판의 플랫폼과 버전을 넣는다. 앱은 설치된 버전, 웹은 빌드 번호다.
+   *
+   * 넣은 뒤의 요청부터 머리글이 실린다. 시작할 때 첫 요청보다 먼저 부른다.
+   */
+  setClientVersion(platform: AppPlatform, version: string) {
+    this.clientVersion = { platform, version };
+  }
+
+  /** 서버가 강제 업데이트(426)로 거절했을 때 부를 곳. */
+  setUpdateRequiredHandler(handler: (() => void) | null) {
+    this.onUpdateRequired = handler;
+  }
+
+  /** 그 플랫폼의 버전 정책. 로그인 없이 부른다. */
+  async getAppVersionPolicy(platform: AppPlatform): Promise<AppVersionPolicy> {
+    const response = await this.client.get<AppVersionPolicy>(`/app-version/${platform}`);
+    return response.data;
   }
 
   private clearSession() {

@@ -21,7 +21,8 @@ import {
 } from '@money/types';
 
 import { todayKey, weekdayNames } from '@money/core/lib/datetime';
-import { HOLIDAY_RULE_LABEL } from '@money/core/lib/recurring-text';
+import { HOLIDAY_RULE_LABEL, recurringMissingText } from '@money/core/lib/recurring-text';
+import { transferFromOptions, transferToOptions } from '@money/core/lib/transfer-accounts';
 import { useWeekStart } from '@money/core/store/week-start';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useProjectTimeZone } from '@money/core/store/project';
@@ -74,8 +75,10 @@ interface FormValues {
   categoryId: string;
   /** 붙일 태그. 여러 개를 고른다 (다른 칸과 달리 하나가 아니다). */
   tagIds: string[];
-  /** "account:id" 또는 "card:id". 거래 폼과 같은 규칙이다. */
+  /** "account:id" 또는 "card:id". 거래 폼과 같은 규칙이다. 이체에서는 보내는 통장이다. */
   method: string;
+  /** 이체의 받는 통장(카드면 그 부채 계정). 이체가 아니면 쓰지 않는다. */
+  toAccountId: string;
 }
 
 function emptyForm(timeZone: string): FormValues {
@@ -99,6 +102,7 @@ function emptyForm(timeZone: string): FormValues {
     categoryId: '',
     tagIds: [],
     method: '',
+    toAccountId: '',
   };
 }
 
@@ -129,6 +133,8 @@ function formOf(rule: RecurringRuleDto.Response, timeZone: string): FormValues {
      */
     tagIds: rule.tagIds ?? [],
     method: rule.cardId ? `card:${rule.cardId}` : rule.accountId ? `account:${rule.accountId}` : '',
+    // 옛 서버는 이 칸을 싣지 않는다.
+    toAccountId: rule.toAccountId ?? '',
   };
 }
 
@@ -184,6 +190,25 @@ export default function RecurringRuleModal({
         ? previous.holidayRule
         : HOLIDAY_RULES[frequency][0],
     }));
+
+  /** 갈래를 바꾼다. 이체로 바꾸면 카드는 비운다 -- 카드로는 이체를 만들 수 없다. */
+  const setKind = (kind: EntryKind) =>
+    setValues((previous) => ({
+      ...previous,
+      kind,
+      method: kind === 'transfer' && previous.method.startsWith('card:') ? '' : previous.method,
+    }));
+
+  /** 이체의 보내는 통장. 받는 통장과 같아지면 받는 쪽을 비운다. */
+  const setFromAccount = (accountId: string) =>
+    setValues((previous) => ({
+      ...previous,
+      method: accountId ? `account:${accountId}` : '',
+      toAccountId: previous.toAccountId === accountId ? '' : previous.toAccountId,
+    }));
+
+  const isTransfer = values.kind === 'transfer';
+  const fromAccountId = values.method.startsWith('account:') ? values.method.slice(8) : '';
 
   /** 요일 이름을 주의 시작 요일부터. 알약의 차례이고, 값은 요일 번호 그대로다. */
   const weekdayOrder = Array.from({ length: 7 }, (_, index) => (weekStart + index) % 7);
@@ -252,6 +277,22 @@ export default function RecurringRuleModal({
       setError(t('error.RECURRING_DESCRIPTION_REQUIRED'));
       return;
     }
+    /*
+     * 비워 둔 칸이 있으면 한 번 묻는다. 막지는 않는다. 웹과 같은 규칙이다.
+     *
+     * 관리비처럼 금액이 달마다 바뀌어 일부러 비우는 반복이 있다. 묻지 않으면 회차가
+     * 쌓인 뒤에야 보관함에서 "빈 칸이 있습니다"로 알게 된다.
+     */
+    const missing = recurringMissingText(body, t);
+    if (
+      missing &&
+      !(await confirmSave(t('inbox.ruleMissingConfirm', { fields: missing }), {
+        cancel: t('common.cancel'),
+        save: t('common.save'),
+      }))
+    ) {
+      return;
+    }
 
     setIsSubmitting(true);
     const ok = await onSave(body);
@@ -317,9 +358,10 @@ export default function RecurringRuleModal({
             options={[
               { value: 'expense', label: t('editor.kind.expense') },
               { value: 'income', label: t('editor.kind.income') },
+              { value: 'transfer', label: t('editor.kind.transfer') },
             ]}
             selected={values.kind}
-            onSelect={(value) => set('kind', value as EntryKind)}
+            onSelect={(value) => setKind(value as EntryKind)}
           />
         </Field>
 
@@ -514,14 +556,49 @@ export default function RecurringRuleModal({
           분류 스무 개가 화면을 채워, 답한 칸이 아직 답하지 않은 칸을 밀어낸다.
           같은 것을 고르는 자리가 팝업마다 다르게 움직이면 그 둘이 다른 것으로 읽힌다.
         */}
-        <Field label={t('editor.method')}>
-          <Chips
-            options={methodOptions}
-            selected={values.method}
-            onSelect={(value) => set('method', value)}
-            collapse
-          />
-        </Field>
+        {/*
+          이체는 보내는 통장과 받는 통장을 따로 받는다. 받는 쪽에는 신용카드도 있다 --
+          카드대금 자동이체가 그 모양이다. 이체에는 분류가 없어 분류 칸을 두지 않는다.
+        */}
+        {isTransfer ? (
+          <>
+            <Field label={t('editor.fromAccount')}>
+              <Chips
+                options={transferFromOptions(lists.accounts).map((option) => ({
+                  value: option.id,
+                  label: option.name,
+                }))}
+                selected={fromAccountId}
+                onSelect={setFromAccount}
+                collapse
+              />
+            </Field>
+            <Field label={t('editor.toAccount')}>
+              <Chips
+                options={transferToOptions(lists.accounts, lists.cards, fromAccountId || null).map(
+                  (option) => ({
+                    value: option.id,
+                    label: option.isCard
+                      ? t('editor.cardOption', { name: option.name })
+                      : option.name,
+                  }),
+                )}
+                selected={values.toAccountId}
+                onSelect={(value) => set('toAccountId', value)}
+                collapse
+              />
+            </Field>
+          </>
+        ) : (
+          <Field label={t('editor.method')}>
+            <Chips
+              options={methodOptions}
+              selected={values.method}
+              onSelect={(value) => set('method', value)}
+              collapse
+            />
+          </Field>
+        )}
 
         {/*
           분류는 **대분류와 소분류를 갈라** 그린다. 거래 추가 팝업과 같은 것을 쓴다
@@ -531,13 +608,15 @@ export default function RecurringRuleModal({
           알 수 없고, 같은 대분류의 소분류가 여기저기 흩어져 보인다. 고르면 그것만
           남기고 접는 일과 다시 눌러 푸는 일도 그 컴포넌트가 함께 한다.
         */}
-        <Field label={t('entryForm.category')}>
-          <CategoryChips
-            categories={categories}
-            selected={values.categoryId}
-            onSelect={(value) => set('categoryId', value)}
-          />
-        </Field>
+        {isTransfer ? null : (
+          <Field label={t('entryForm.category')}>
+            <CategoryChips
+              categories={categories}
+              selected={values.categoryId}
+              onSelect={(value) => set('categoryId', value)}
+            />
+          </Field>
+        )}
 
         <Field label={t('editor.person')}>
           <Chips
@@ -633,9 +712,33 @@ function DateButton({
   );
 }
 
+/**
+ * 저장할지 묻는다. 취소하거나 창을 닫으면 false.
+ *
+ * `Alert` 는 누른 단추를 콜백으로만 알려 준다. 저장 흐름이 이어서 읽을 수 있게 약속으로 바꾼다.
+ */
+function confirmSave(
+  message: string,
+  labels: { cancel: string; save: string },
+): Promise<boolean> {
+  return new Promise((resolve) => {
+    Alert.alert(
+      '',
+      message,
+      [
+        { text: labels.cancel, style: 'cancel', onPress: () => resolve(false) },
+        { text: labels.save, onPress: () => resolve(true) },
+      ],
+      // 안드로이드는 바깥을 눌러 닫을 수 있다. 그때도 저장하지 않는다.
+      { cancelable: true, onDismiss: () => resolve(false) },
+    );
+  });
+}
+
 /** 폼 값을 창구가 받는 모양으로. 결제수단은 종류와 id 로 나눈다. */
 function toBody(values: FormValues): RecurringRuleDto.Body {
   const [methodKind, methodId] = values.method.split(':');
+  const isTransfer = values.kind === 'transfer';
 
   const scheduled = values.frequency !== 'none';
 
@@ -665,9 +768,11 @@ function toBody(values: FormValues): RecurringRuleDto.Body {
     // 가맹점은 따로 받지 않는다. 반복은 대개 이름이 곧 가맹점이다(월세, 넷플릭스).
     merchant: values.description.trim() || null,
     personId: values.personId || null,
-    categoryId: values.categoryId || null,
+    // 이체에는 분류·카드가 없다. 서버도 비우지만 보내는 값부터 맞춘다.
+    categoryId: isTransfer ? null : values.categoryId || null,
     tagIds: values.tagIds,
     accountId: methodKind === 'account' ? methodId : null,
-    cardId: methodKind === 'card' ? methodId : null,
+    toAccountId: isTransfer ? values.toAccountId || null : null,
+    cardId: !isTransfer && methodKind === 'card' ? methodId : null,
   };
 }

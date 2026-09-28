@@ -18,6 +18,7 @@ import { useAuth } from '@money/core/store/auth';
 import { boot } from './src/boot';
 import OfflineSync from './src/shell/OfflineSync';
 import PushSetup from './src/shell/PushSetup';
+import UpdateGate from './src/shell/UpdateGate';
 import ProjectAccessLostAlert from './src/shell/ProjectAccessLostAlert';
 import AssetsScreen from './src/screens/AssetsScreen';
 import CategoriesScreen from './src/screens/CategoriesScreen';
@@ -69,6 +70,8 @@ export default function App() {
       ) : (
         <LoginScreen startupError={startupError} />
       )}
+      {/* 로그인 여부와 상관없이 뜬다. 준비(boot)가 끝나야 이 판의 버전이 실린다. */}
+      {isReady ? <UpdateGate /> : null}
     </SafeAreaProvider>
   );
 }

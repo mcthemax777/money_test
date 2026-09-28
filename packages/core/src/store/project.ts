@@ -118,6 +118,16 @@ export function useMyPersonId(): string | null {
   });
 }
 
+/**
+ * 그 가계부에서 "나"로 지정한 구성원 id. 지정하지 않았으면 null.
+ *
+ * 훅이 아니라 화면 밖(앱의 백그라운드 작업, 이벤트 처리)에서 부른다. 아래 저장소를
+ * 부를 때 읽으므로 선언 순서는 상관없다.
+ */
+export function myPersonIdOf(projectId: string): string | null {
+  return useProject.getState().projects.find((project) => project.id === projectId)?.myPersonId ?? null;
+}
+
 export const useProject = create<ProjectStore>()(
   persist(
     (set) => ({

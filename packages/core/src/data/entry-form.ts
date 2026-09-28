@@ -583,6 +583,8 @@ export function entryFormFromDraft(
     personId: string | null;
     categoryId: string | null;
     accountId: string | null;
+    /** 이체의 받는 통장. 반복에서 온 이체 후보만 채워 온다. 옛 사본에는 없다. */
+    toAccountId?: string | null;
     cardId: string | null;
     /** 붙일 태그. 반복에서 온 후보만 채워 온다. */
     tagIds?: string[];
@@ -597,8 +599,8 @@ export function entryFormFromDraft(
   /*
    * 결제수단. 카드가 있으면 카드, 없으면 통장이다.
    *
-   * 이체는 이 값이 **보내는 쪽**이 된다. 받는 쪽은 문구에서 알 수 없어 비워 두고,
-   * 사람이 고른다 (검증이 그 칸을 요구한다).
+   * 이체는 이 값이 **보내는 쪽**이 된다. 받는 쪽은 반복에 적어 둔 것이 있으면 그것이고,
+   * 알림·캡처는 문구에서 알 수 없어 비워 두고 사람이 고른다 (검증이 그 칸을 요구한다).
    */
   const method = draft.cardId
     ? cardValue(draft.cardId)
@@ -613,6 +615,7 @@ export function entryFormFromDraft(
     ...base,
     kind,
     method,
+    toAccountId: kind === 'transfer' ? (draft.toAccountId ?? '') : '',
     amount: draft.amount ?? '',
     /*
      * 통화. 장부 통화면 비워 둔다.

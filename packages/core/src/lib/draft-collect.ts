@@ -36,6 +36,30 @@ export interface MerchantHistoryRow {
 export const NO_HINTS: CollectHints = { accounts: [], cards: [], history: [] };
 
 /**
+ * 그 사람의 통장·카드만 남긴다. 알림을 받은 사람, 캡처를 올린 사람의 자산에서만
+ * 결제수단을 찾게 한다.
+ *
+ * 알림은 그 폰 주인의 카드·통장에서 나고, 캡처도 대개 자기 카드 앱 화면이다. 가계부의 모든 자산과 견주면 같은 카드사
+ * 카드를 가진 다른 구성원의 카드가 붙는다 -- 남편 폰에 온 신한카드 알림이 아내의
+ * 신한카드로 적힌다. 카드는 주인 칸이 없어 **결제 통장의 주인**으로 가린다.
+ *
+ * "나"를 정하지 않았으면(null) 누구의 것인지 알 수 없으니 아무것도 남기지 않는다.
+ * 결제수단이 빈 후보가 되고, 사람이 고른다. 분류 짐작(history)은 그대로 둔다.
+ */
+export function hintsOwnedBy(hints: CollectHints, personId: string | null): CollectHints {
+  if (!personId) return { ...hints, accounts: [], cards: [] };
+
+  const owned = new Set(
+    hints.accounts.filter((account) => account.ownerId === personId).map((account) => account.id),
+  );
+  return {
+    ...hints,
+    accounts: hints.accounts.filter((account) => owned.has(account.id)),
+    cards: hints.cards.filter((card) => owned.has(card.paymentAccountId)),
+  };
+}
+
+/**
  * 이체·카드대금에는 분류가 없다.
  *
  * 돈이 통장 사이를 옮겨 다닌 것뿐이라 "무엇에 썼는가"가 없다. 후보를 만들 때
@@ -50,7 +74,7 @@ function needsCategory(kind: EntryDraftDto.Response['kind']): boolean {
 /**
  * 사람이 채워야 할 칸이 남았는가. 보관함의 "빈 칸이 있습니다" 가 이것을 본다.
  *
- * 셋을 본다. **금액**·**결제수단**·**대분류**. 알림이나 캡처에서 못 읽거나 짐작이
+ * 셋을 본다. **금액**·**결제수단**(이체는 받는 통장까지)·**대분류**. 알림이나 캡처에서 못 읽거나 짐작이
  * 빗나가면 비는 칸들이고, 비어 있으면 폼을 열었을 때 사람이 고르지 않고 지나칠 수
  * 있다.
  *
@@ -68,10 +92,60 @@ export function draftAddedBy(
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
+/**
+ * 후보에 붙은 결제수단의 이름. 못 찾았으면 null 이고 화면이 적지 않는다.
+ *
+ * 이체는 "보내는 통장 → 받는 통장" 이다. 받는 쪽이 카드 부채 계정이면 그 카드 이름을
+ * 적는다 -- 부채 계정은 통장 목록에 없어 이름을 찾을 수 없다. 받는 쪽을 모르면 보내는
+ * 쪽만 적는다.
+ */
+export function draftMethodName(
+  draft: Pick<EntryDraftDto.Response, 'kind' | 'cardId' | 'accountId' | 'toAccountId'>,
+  lists: { accounts: Account[]; cards: Card[] },
+): string | null {
+  const accountName = (id: string | null) =>
+    id
+      ? (lists.accounts.find((account) => account.id === id)?.name ??
+        lists.cards.find((card) => card.liabilityAccountId === id)?.name ??
+        null)
+      : null;
+
+  if (draft.cardId) return lists.cards.find((card) => card.id === draft.cardId)?.name ?? null;
+
+  const from = accountName(draft.accountId);
+  const to = draft.kind === 'transfer' ? accountName(draft.toAccountId ?? null) : null;
+  if (from && to) return `${from} → ${to}`;
+  return from ?? to;
+}
+
 export function draftNeedsFix(draft: EntryDraftDto.Response): boolean {
-  if (!draft.amount) return true;
-  if (!draft.cardId && !draft.accountId) return true;
-  return needsCategory(draft.kind) && !draft.categoryId;
+  return missingFields(draft).length > 0;
+}
+
+/** 거래로 적기 전에 사람이 채워야 할 칸. 화면이 이 차례대로 이름을 적는다. */
+export type MissingField = 'amount' | 'method' | 'toAccount' | 'category';
+
+/**
+ * 비어 있는 칸들. 후보의 "빈 칸이 있습니다"와 반복 저장 때의 확인이 함께 쓴다.
+ *
+ * 반복이 비워 둔 칸은 그대로 회차 후보의 빈 칸이 된다. 두 곳이 다른 규칙을 쓰면 저장할
+ * 때는 묻지 않았는데 후보에는 경고가 붙는다.
+ */
+export function missingFields(values: {
+  kind: EntryDraftDto.Response['kind'];
+  amount?: string | null;
+  accountId?: string | null;
+  toAccountId?: string | null;
+  cardId?: string | null;
+  categoryId?: string | null;
+}): MissingField[] {
+  const missing: MissingField[] = [];
+  if (!values.amount) missing.push('amount');
+  if (!values.cardId && !values.accountId) missing.push('method');
+  // 이체는 받는 통장도 있어야 적힌다. 알림 이체는 문구에서 알 수 없어 늘 비어 온다.
+  if (values.kind === 'transfer' && !values.toAccountId) missing.push('toAccount');
+  if (needsCategory(values.kind) && !values.categoryId) missing.push('category');
+  return missing;
 }
 
 /**

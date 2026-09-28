@@ -24,7 +24,8 @@ import {
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { todayKey, weekdayNames } from '@money/core/lib/datetime';
-import { HOLIDAY_RULE_LABEL } from '@money/core/lib/recurring-text';
+import { HOLIDAY_RULE_LABEL, recurringMissingText } from '@money/core/lib/recurring-text';
+import { transferFromOptions, transferToOptions } from '@money/core/lib/transfer-accounts';
 import { useWeekStart } from '@money/core/store/week-start';
 import { useProjectTimeZone } from '@money/core/store/project';
 import type { Account, Card, Category, Person, Tag } from '@money/core/lib/types';
@@ -74,8 +75,10 @@ interface FormValues {
   categoryId: string;
   /** 붙일 태그. 여러 개를 고른다 (다른 칸과 달리 하나가 아니다). */
   tagIds: string[];
-  /** "account:id" 또는 "card:id". 거래 폼과 같은 규칙이다. */
+  /** "account:id" 또는 "card:id". 거래 폼과 같은 규칙이다. 이체에서는 보내는 통장이다. */
   method: string;
+  /** 이체의 받는 통장(카드면 그 부채 계정). 이체가 아니면 쓰지 않는다. */
+  toAccountId: string;
 }
 
 function emptyForm(timeZone: string): FormValues {
@@ -99,6 +102,7 @@ function emptyForm(timeZone: string): FormValues {
     categoryId: '',
     tagIds: [],
     method: '',
+    toAccountId: '',
   };
 }
 
@@ -129,6 +133,8 @@ function formOf(rule: RecurringRuleDto.Response, timeZone: string): FormValues {
      */
     tagIds: rule.tagIds ?? [],
     method: rule.cardId ? `card:${rule.cardId}` : rule.accountId ? `account:${rule.accountId}` : '',
+    // 옛 서버는 이 칸을 싣지 않는다.
+    toAccountId: rule.toAccountId ?? '',
   };
 }
 
@@ -179,6 +185,29 @@ export default function RecurringRuleModal({
         : HOLIDAY_RULES[frequency][0],
     }));
 
+  /**
+   * 갈래를 바꾼다. 이체로 바꾸면 카드는 비운다 -- 카드로는 이체를 만들 수 없다.
+   */
+  const setKind = (kind: EntryKind) =>
+    setValues((previous) => ({
+      ...previous,
+      kind,
+      method: kind === 'transfer' && previous.method.startsWith('card:') ? '' : previous.method,
+    }));
+
+  /** 이체의 보내는 통장. 받는 통장과 같아지면 받는 쪽을 비운다. */
+  const setFromAccount = (accountId: string) =>
+    setValues((previous) => ({
+      ...previous,
+      method: accountId ? `account:${accountId}` : '',
+      toAccountId: previous.toAccountId === accountId ? '' : previous.toAccountId,
+    }));
+
+  const isTransfer = values.kind === 'transfer';
+  const fromAccountId = values.method.startsWith('account:') ? values.method.slice(8) : '';
+  const fromOptions = transferFromOptions(lists.accounts);
+  const toOptions = transferToOptions(lists.accounts, lists.cards, fromAccountId || null);
+
   /** 요일 이름을 주의 시작 요일부터. 알약의 차례이고, 값은 요일 번호 그대로다. */
   const weekdayOrder = Array.from({ length: 7 }, (_, index) => (weekStart + index) % 7);
   const weekdayLabels = weekdayNames(0);
@@ -218,6 +247,14 @@ export default function RecurringRuleModal({
       setError(t('error.RECURRING_DESCRIPTION_REQUIRED'));
       return;
     }
+    /*
+     * 비워 둔 칸이 있으면 한 번 묻는다. 막지는 않는다.
+     *
+     * 관리비처럼 금액이 달마다 바뀌어 일부러 비우는 반복이 있다. 묻지 않으면 회차가
+     * 쌓인 뒤에야 보관함에서 "빈 칸이 있습니다"로 알게 된다.
+     */
+    const missing = recurringMissingText(body, t);
+    if (missing && !window.confirm(t('inbox.ruleMissingConfirm', { fields: missing }))) return;
 
     setIsSubmitting(true);
     const ok = await onSave(body);
@@ -270,11 +307,12 @@ export default function RecurringRuleModal({
           <Field label={t('editor.kindLabel')}>
             <select
               value={values.kind}
-              onChange={(event) => set('kind', event.target.value as EntryKind)}
+              onChange={(event) => setKind(event.target.value as EntryKind)}
               className="w-full rounded-lg border border-gray-300 px-3 py-2"
             >
               <option value="expense">{t('editor.kind.expense')}</option>
               <option value="income">{t('editor.kind.income')}</option>
+              <option value="transfer">{t('editor.kind.transfer')}</option>
             </select>
           </Field>
           <Field label={t('editor.amount')}>
@@ -463,45 +501,85 @@ export default function RecurringRuleModal({
           </Field>
         )}
 
-        <Field label={t('editor.method')}>
-          <select
-            value={values.method}
-            onChange={(event) => set('method', event.target.value)}
-            className="w-full rounded-lg border border-gray-300 px-3 py-2"
-          >
-            <option value="">{t('inbox.ruleNotChosen')}</option>
-            {lists.accounts
-              .filter((account) => account.isActive)
-              .map((account) => (
-                <option key={account.id} value={`account:${account.id}`}>
-                  {t('editor.accountOption', { name: account.name })}
-                </option>
-              ))}
-            {lists.cards
-              .filter((card) => card.isActive)
-              .map((card) => (
-                <option key={card.id} value={`card:${card.id}`}>
-                  {t('editor.cardOption', { name: card.name })}
-                </option>
-              ))}
-          </select>
-        </Field>
-
-        <div className="grid grid-cols-2 gap-3">
-          <Field label={t('entryForm.category')}>
+        {/*
+          이체는 보내는 통장과 받는 통장을 따로 받는다. 받는 쪽에는 신용카드도 있다 --
+          카드대금 자동이체가 그 모양이다.
+        */}
+        {isTransfer ? (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label={t('editor.fromAccount')}>
+              <select
+                value={fromAccountId}
+                onChange={(event) => setFromAccount(event.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              >
+                <option value="">{t('inbox.ruleNotChosen')}</option>
+                {fromOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+            <Field label={t('editor.toAccount')}>
+              <select
+                value={values.toAccountId}
+                onChange={(event) => set('toAccountId', event.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              >
+                <option value="">{t('inbox.ruleNotChosen')}</option>
+                {toOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.isCard ? t('editor.cardOption', { name: option.name }) : option.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          </div>
+        ) : (
+          <Field label={t('editor.method')}>
             <select
-              value={values.categoryId}
-              onChange={(event) => set('categoryId', event.target.value)}
+              value={values.method}
+              onChange={(event) => set('method', event.target.value)}
               className="w-full rounded-lg border border-gray-300 px-3 py-2"
             >
               <option value="">{t('inbox.ruleNotChosen')}</option>
-              {categories.map((category) => (
-                <option key={category.id} value={category.id}>
-                  {category.name}
-                </option>
-              ))}
+              {lists.accounts
+                .filter((account) => account.isActive)
+                .map((account) => (
+                  <option key={account.id} value={`account:${account.id}`}>
+                    {t('editor.accountOption', { name: account.name })}
+                  </option>
+                ))}
+              {lists.cards
+                .filter((card) => card.isActive)
+                .map((card) => (
+                  <option key={card.id} value={`card:${card.id}`}>
+                    {t('editor.cardOption', { name: card.name })}
+                  </option>
+                ))}
             </select>
           </Field>
+        )}
+
+        {/* 이체에는 분류가 없다. 그 자리는 비우고 사람만 받는다. */}
+        <div className="grid grid-cols-2 gap-3">
+          {isTransfer ? null : (
+            <Field label={t('entryForm.category')}>
+              <select
+                value={values.categoryId}
+                onChange={(event) => set('categoryId', event.target.value)}
+                className="w-full rounded-lg border border-gray-300 px-3 py-2"
+              >
+                <option value="">{t('inbox.ruleNotChosen')}</option>
+                {categories.map((category) => (
+                  <option key={category.id} value={category.id}>
+                    {category.name}
+                  </option>
+                ))}
+              </select>
+            </Field>
+          )}
           <Field label={t('editor.person')}>
             <select
               value={values.personId}
@@ -591,6 +669,7 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 /** 폼 값을 창구가 받는 모양으로. 결제수단은 종류와 id 로 나눈다. */
 function toBody(values: FormValues): RecurringRuleDto.Body {
   const [methodKind, methodId] = values.method.split(':');
+  const isTransfer = values.kind === 'transfer';
 
   const scheduled = values.frequency !== 'none';
 
@@ -620,9 +699,11 @@ function toBody(values: FormValues): RecurringRuleDto.Body {
     // 가맹점은 따로 받지 않는다. 반복은 대개 이름이 곧 가맹점이다(월세, 넷플릭스).
     merchant: values.description.trim() || null,
     personId: values.personId || null,
-    categoryId: values.categoryId || null,
+    // 이체에는 분류·카드가 없다. 서버도 비우지만 보내는 값부터 맞춘다.
+    categoryId: isTransfer ? null : values.categoryId || null,
     tagIds: values.tagIds,
     accountId: methodKind === 'account' ? methodId : null,
-    cardId: methodKind === 'card' ? methodId : null,
+    toAccountId: isTransfer ? values.toAccountId || null : null,
+    cardId: !isTransfer && methodKind === 'card' ? methodId : null,
   };
 }

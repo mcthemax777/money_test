@@ -17,6 +17,7 @@ import { useLedgerBasis } from '@money/core/store/ledger-basis';
 import { useLedgerKindFilter } from '@money/core/store/ledger-kind-filter';
 import { useWeekStartStore } from '@money/core/store/week-start';
 import { captureBoxStore } from '@money/core/data/capture-box';
+import { useAppUpdate } from '@money/core/store/app-update';
 
 const PERSISTED = [
   useAuth,
@@ -30,6 +31,8 @@ const PERSISTED = [
   useLedgerKindFilter,
   // 이 기기에만 두는 캡처 후보 (서버에 없다).
   captureBoxStore,
+  // "나중에"를 누른 권유 버전.
+  useAppUpdate,
 ];
 
 export async function hydrateStores(): Promise<void> {

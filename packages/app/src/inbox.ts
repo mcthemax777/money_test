@@ -21,9 +21,11 @@ import {
   captureItems,
   dedupeNotificationItems,
   draftItemFrom,
+  hintsOwnedBy,
   NO_HINTS,
   type CollectHints,
 } from '@money/core/lib/draft-collect';
+import { myPersonIdOf } from '@money/core/store/project';
 import type { EntryDraftDto } from '@money/types';
 
 import * as InboxNative from '../modules/inbox-native';
@@ -246,7 +248,8 @@ async function loadHints(projectId: string): Promise<CollectHints> {
       port.getCards(projectId),
       merchantHistory(projectId),
     ]);
-    return { accounts, cards, history };
+    // 알림을 받은 사람, 캡처를 올린 사람("나")의 통장·카드에서만 찾는다.
+    return hintsOwnedBy({ accounts, cards, history }, myPersonIdOf(projectId));
   } catch {
     return NO_HINTS;
   }

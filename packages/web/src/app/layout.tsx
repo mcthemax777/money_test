@@ -3,6 +3,7 @@ import './globals.css';
 import { AuthInitializer } from '@/components/AuthInitializer';
 import { LiveSync } from '@/components/LiveSync';
 import { LocaleSync } from '@/components/LocaleSync';
+import { WebUpdate } from '@/components/WebUpdate';
 
 /*
  * 서버가 만드는 값이라 사용자가 고른 언어를 알 수 없다. 어느 말로도 읽히는 앱
@@ -26,6 +27,7 @@ export default function RootLayout({
         <LocaleSync />
         <LiveSync />
         {children}
+        <WebUpdate />
       </body>
     </html>
   );

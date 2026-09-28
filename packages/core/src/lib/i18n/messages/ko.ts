@@ -1123,6 +1123,8 @@ export const ko = {
   'error.RECURRING_INVALID': '반복 일정이 올바르지 않습니다. 주기와 날짜를 확인해 주세요.',
   'error.RECURRING_NOT_FOUND': '그 반복 등록을 찾을 수 없습니다.',
   'error.RECURRING_DESCRIPTION_REQUIRED': '무엇을 적을지 이름을 넣어 주세요.',
+  'error.APP_UPDATE_REQUIRED': '이 버전은 더 이상 쓸 수 없습니다. 업데이트해 주세요.',
+  'error.APP_VERSION_INVALID': '버전 정책 값이 올바르지 않습니다.',
   'carousel.prev': '이전으로',
   'carousel.next': '다음으로',
 
@@ -1288,6 +1290,7 @@ export const ko = {
   'inbox.confidence': '확신 {value}%',
   'inbox.addedBy': '담음: {who}',
   'inbox.needsFix': '빈 칸이 있습니다. 저장하기 전에 채워 주세요.',
+  'inbox.ruleMissingConfirm': '{fields} 칸이 비어 있습니다. 회차마다 보관함에서 채워야 합니다. 이대로 저장할까요?',
   'inbox.registered': '거래로 적었습니다.',
   'inbox.amountUnknown': '금액을 읽지 못했습니다',
   'inbox.permissionTitle': '알림 읽기를 허용해 주세요',
@@ -1311,6 +1314,17 @@ export const ko = {
   'inbox.readingFile': '{name} 을 읽는 중입니다.',
   'inbox.notificationAppOnly': '알림 등록은 안드로이드 앱에서 켭니다. 담긴 후보는 여기서 그대로 정리할 수 있습니다.',
 
+  // 앱·웹 업데이트 안내
+  'update.forceTitle': '업데이트가 필요합니다',
+  'update.forceBody': '이 버전은 더 이상 쓸 수 없습니다. 최신 버전으로 업데이트해 주세요. 적어 둔 내용은 업데이트 뒤에 그대로 올라갑니다.',
+  'update.recommendTitle': '새 버전이 있습니다',
+  'update.recommendBody': '지금 버전도 쓸 수 있지만, 업데이트하면 새 기능과 고친 점을 받을 수 있습니다.',
+  'update.now': '업데이트',
+  'update.later': '나중에',
+  'update.current': '지금 버전 {version}',
+  'update.webNew': '새 버전이 있습니다.',
+  'update.webReload': '새로고침',
+  'update.webForceBody': '새 버전으로 바뀌었습니다. 새로고침한 뒤에 이어서 써 주세요.',
 } as const;
 
 /** 사전이 가진 열쇠. 영어·일본어 사전이 이 목록을 다 채워야 한다. */

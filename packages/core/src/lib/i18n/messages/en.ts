@@ -1094,6 +1094,8 @@ export const en: Record<MessageKey, string> = {
   'error.RECURRING_INVALID': 'That schedule is not valid. Check the frequency and the dates.',
   'error.RECURRING_NOT_FOUND': 'That recurring entry no longer exists.',
   'error.RECURRING_DESCRIPTION_REQUIRED': 'Give it a name so you know what it records.',
+  'error.APP_UPDATE_REQUIRED': 'This version is no longer supported. Please update.',
+  'error.APP_VERSION_INVALID': 'The version policy is not valid.',
   'carousel.prev': 'Previous',
   'carousel.next': 'Next',
 
@@ -1256,6 +1258,7 @@ export const en: Record<MessageKey, string> = {
   'inbox.confidence': '{value}% confident',
   'inbox.addedBy': 'Added by {who}',
   'inbox.needsFix': 'Some fields are empty. Fill them in before saving.',
+  'inbox.ruleMissingConfirm': '{fields} left empty. You will need to fill it in the inbox for each occurrence. Save anyway?',
   'inbox.registered': 'Recorded as an entry.',
   'inbox.amountUnknown': 'Amount could not be read',
   'inbox.permissionTitle': 'Allow notification access',
@@ -1279,4 +1282,15 @@ export const en: Record<MessageKey, string> = {
   'inbox.readingFile': 'Reading {name}.',
   'inbox.notificationAppOnly': 'Notification capture is switched on in the Android app. Whatever it collects can be sorted out right here.',
 
+  // 앱·웹 업데이트 안내
+  'update.forceTitle': 'Update required',
+  'update.forceBody': 'This version is no longer supported. Please update to the latest version. Anything you recorded will be uploaded after the update.',
+  'update.recommendTitle': 'A new version is available',
+  'update.recommendBody': 'You can keep using this version, but updating brings new features and fixes.',
+  'update.now': 'Update',
+  'update.later': 'Later',
+  'update.current': 'Current version {version}',
+  'update.webNew': 'A new version is available.',
+  'update.webReload': 'Reload',
+  'update.webForceBody': 'The site has been updated. Reload the page to continue.',
 };
