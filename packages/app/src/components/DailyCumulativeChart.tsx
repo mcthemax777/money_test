@@ -9,7 +9,7 @@
  * 썼다"는 것을 말일에야 알게 되는데, 같은 날짜끼리 누적을 견주면 달 중간에도
  * 앞서 가는지 알 수 있다.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Pressable, Text, View, type LayoutChangeEvent } from 'react-native';
 import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 
@@ -22,6 +22,8 @@ import {
 import { monotonePath } from '@money/core/lib/chart-path';
 import {
   buildCumulativeRows,
+  cumulativeChangeOf,
+  defaultCumulativeIndex,
   type CumulativeSeries,
   type DailyCumulativePoint,
 } from '@money/core/lib/entries';
@@ -69,10 +71,18 @@ export default function DailyCumulativeChart({
   const [width, setWidth] = useState(0);
   const measure = (event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width);
 
-  /** 눌러 둔 날. null 이면 아무것도 읽지 않는다. */
-  const [picked, setPicked] = useState<number | null>(null);
-
   const rows = buildCumulativeRows(current, comparisons, throughDay);
+
+  /** 눌러 둔 날. null 이면 아무것도 읽지 않는다. 처음에는 오늘을 읽고 있다. */
+  const [picked, setPicked] = useState<number | null>(() =>
+    defaultCumulativeIndex(rows, throughDay),
+  );
+  // 다른 달로 넘어가면 그 달의 오늘(지난 달이면 말일)로 다시 맞춘다.
+  useEffect(() => {
+    setPicked(defaultCumulativeIndex(rows, throughDay));
+    // rows 는 그릴 때마다 새로 만들어지므로 달을 가르는 값만 본다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [throughDay, currentName, rows.length]);
   const [earlier, previous] = comparisons;
 
   const plotWidth = Math.max(width - AXIS_WIDTH - RIGHT_PAD, 1);
@@ -157,10 +167,12 @@ export default function DailyCumulativeChart({
             {lines.map((line) => {
               const value = pickedRow[line.key];
               if (value === null) return null;
+              const change = cumulativeChangeOf(pickedRow, line.key);
 
               return (
                 <Text key={line.key} className="text-xs" style={{ color: line.color }}>
                   {line.name} {formatCurrency(value, displayCurrency)}
+                  {change ? <Text className="text-gray-500"> ({change})</Text> : null}
                 </Text>
               );
             })}

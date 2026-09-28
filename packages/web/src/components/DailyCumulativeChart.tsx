@@ -27,6 +27,9 @@ import {
 } from '@money/core/lib/chart';
 import {
   buildCumulativeRows,
+  cumulativeChangeOf,
+  defaultCumulativeIndex,
+  type CumulativeRow,
   type CumulativeSeries,
   type DailyCumulativePoint,
 } from '@money/core/lib/entries';
@@ -86,6 +89,8 @@ export default function DailyCumulativeChart({
     [current, comparisons, throughDay],
   );
 
+  const defaultIndex = defaultCumulativeIndex(rows, throughDay);
+
   const axis = lineAxis(
     rows
       .flatMap((row) => [row.current, row.previous, row.earlier])
@@ -106,9 +111,22 @@ export default function DailyCumulativeChart({
           tick={CHART_TICK}
           width={CHART_Y_AXIS_WIDTH}
         />
+        {/*
+          처음부터 오늘(지난 달이면 말일)을 읽고 있다. 달이 바뀌면 key 로 새로 붙여
+          그 달의 오늘로 다시 맞춘다. 금액 옆에는 앞선 달 같은 날보다 늘고 준 비율을 적는다.
+        */}
         <Tooltip
+          key={`${currentName ?? ''}-${defaultIndex ?? ''}`}
+          defaultIndex={defaultIndex ?? undefined}
           contentStyle={CHART_TOOLTIP_STYLE}
-          formatter={(value, name) => formatTooltipAmount(value, name as string, displayCurrency)}
+          formatter={(value, name, item) => {
+            const [amount, label] = formatTooltipAmount(value, name as string, displayCurrency);
+            const change = cumulativeChangeOf(
+              item.payload as CumulativeRow,
+              item.dataKey as 'current' | 'previous' | 'earlier',
+            );
+            return [change ? `${amount} (${change})` : amount, label];
+          }}
         />
         {/* 선이 하나뿐이면 범례를 지운다. 툴팁이 같은 이름을 보여 준다. */}
         {comparisons.length > 0 && <Legend />}

@@ -272,6 +272,46 @@ export function buildCumulativeRows(
   }));
 }
 
+/**
+ * 누적 그래프에서 처음부터 읽고 있을 칸. 그 달의 오늘(지난 달이면 말일)이다.
+ *
+ * 그래프를 열자마자 "오늘까지 얼마, 지난달 같은 날보다 얼마" 를 읽게 한다. 기간을
+ * 직접 정했거나(throughDay 없음) 아직 오지 않은 달(0)이면 고를 날이 없다.
+ */
+export function defaultCumulativeIndex(
+  rows: CumulativeRow[],
+  throughDay?: number,
+): number | null {
+  if (!throughDay || throughDay <= 0 || rows.length === 0) return null;
+  return Math.min(throughDay, rows.length) - 1;
+}
+
+/**
+ * 같은 날짜의 누적을 앞선 달과 견준 증감. "▲12%", "▼5%", "0%".
+ *
+ * 앞선 달 값이 없거나 0 이면 나눌 수 없으므로 null 이다. 0 에서 늘어난 것을
+ * 퍼센트로 적으면 끝없이 커져 읽을 수 없다.
+ */
+export function formatCumulativeChange(value: number | null, base: number | null): string | null {
+  if (value === null || base === null || base <= 0) return null;
+  const percent = Math.round(((value - base) / base) * 100);
+  if (percent === 0) return '0%';
+  return `${percent > 0 ? '▲' : '▼'}${Math.abs(percent)}%`;
+}
+
+/**
+ * 누적 그래프 한 줄에서 그 선이 견줄 앞선 선. 이번 달은 지난달과, 지난달은
+ * 전전달과 견준다. 가장 오래된 선은 견줄 것이 없다.
+ */
+export function cumulativeChangeOf(
+  row: CumulativeRow,
+  key: 'current' | 'previous' | 'earlier',
+): string | null {
+  if (key === 'current') return formatCumulativeChange(row.current, row.previous);
+  if (key === 'previous') return formatCumulativeChange(row.previous, row.earlier);
+  return null;
+}
+
 /** 그 달의 첫날과 말일 ("YYYY-MM-DD"). 달 단위 화면이 위 함수에 넘길 값이다. */
 export function monthDateKeys(year: number, month: number): { startKey: string; endKey: string } {
   const pad = (n: number) => String(n).padStart(2, '0');
