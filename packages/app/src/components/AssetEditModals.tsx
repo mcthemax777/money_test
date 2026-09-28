@@ -554,8 +554,9 @@ export function EditCardModal({
                 ...(cardNumber.trim() ? { cardNumber: cardNumber.trim() } : {}),
                 // 비우면 null 을 보내 지운다 (키를 빼면 있던 값이 남는다).
                 expiryDate: monthInputToIso(expiryMonth),
-                // 빈 값은 "종류의 기본색으로 되돌리기"다.
-                color: color || null,
+                // 빈 값은 "종류의 기본색으로 되돌리기"다. 웹과 같이 빈 문자열로 보낸다 --
+                // 서버는 null 을 "그대로 두기"로 읽는다.
+                color,
                 // 체크카드에는 청구 주기도 한도도 없다. 보내면 서버가 거부한다.
                 ...(isCredit
                   ? {

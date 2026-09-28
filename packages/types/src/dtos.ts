@@ -272,8 +272,12 @@ export namespace CardDto {
     performanceAmount?: string;
     statementClosingDay?: number;
     paymentDueDay?: number;
-    /** 카드 앞면 색 (CardColor) */
-    color?: string;
+    /**
+     * 카드 앞면 색 (CardColor).
+     *
+     * 생략과 null 은 "그대로 두기", 빈 문자열은 "기본색으로 되돌리기"다.
+     */
+    color?: string | null;
     /**
      * 알림·캡처 글에서 이 수단을 알아보는 말. 한 줄에 하나씩이다.
      *

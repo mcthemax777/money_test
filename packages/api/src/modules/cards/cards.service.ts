@@ -252,7 +252,9 @@ export class CardsService {
     if (dto.statementClosingDay !== undefined) data.statementClosingDay = dto.statementClosingDay;
     if (dto.paymentDueDay !== undefined) data.paymentDueDay = dto.paymentDueDay;
     // 빈 문자열은 "기본색으로 되돌리기"다. 색 선택은 비울 수 있어야 한다.
-    if (dto.color !== undefined) data.color = dto.color || null;
+    // null 은 생략과 같다 -- 있던 색을 그대로 둔다. 예전 앱이 색을 고르지 않은 카드를
+    // 고칠 때 null 을 보냈고, 그 명령이 기기의 큐에 남아 있다.
+    if (dto.color != null) data.color = dto.color || null;
     // 알림에서 이 카드를 알아보는 말. 빈 문자열은 "지우기"다.
     if (dto.matchText !== undefined) data.matchText = dto.matchText || null;
     if (dto.creditLimit !== undefined) data.creditLimit = toOptionalMoney(dto.creditLimit, '카드 한도');
@@ -450,10 +452,11 @@ export class CardsService {
    * 아는 색 열쇠말인지 본다.
    *
    * 화면은 이 값으로 tailwind 클래스를 고르므로, 모르는 값이 저장되면 그 카드는
-   * 색 없이 그려진다. 저장 전에 막는다. 생략과 빈 문자열은 "기본색"이라 통과시킨다.
+   * 색 없이 그려진다. 저장 전에 막는다. 생략·null·빈 문자열은 통과시킨다 (만들 때는
+   * 기본색, 고칠 때는 생략·null 이 "그대로 두기"이고 빈 문자열이 "기본색으로 되돌리기"다).
    */
-  private assertCardColor(color: string | undefined) {
-    if (color === undefined || color === '') return;
+  private assertCardColor(color: string | null | undefined) {
+    if (color == null || color === '') return;
     if (!isCardColor(color)) {
       throw new BadRequestException('카드 색을 알 수 없습니다.');
     }
