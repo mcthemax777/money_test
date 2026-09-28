@@ -16,9 +16,11 @@
  * 그 둘을 조용히 지우지 않고 여기 모아 보여 준다. 돈은 말없이 사라지면 안 된다.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { LayoutAnimation, Pressable, Share, Text, View } from 'react-native';
+import * as Application from 'expo-application';
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { formatDate, formatTime } from '@money/core/lib/datetime';
 import type { HeldMutation } from '@money/core/data/local-store';
 import type { Mutation } from '@money/types';
 import { useProject, useProjectTimeZone } from '@money/core/store/project';
@@ -248,6 +250,47 @@ function QueuedCard({ mutation }: { mutation: Mutation }) {
   );
 }
 
+/** 명령을 적은 시각. 이 기기의 시각이 아니라 가계부의 시간대로 적는다 (다른 화면과 같다). */
+function createdAtLabel(createdAt: string, timeZone: string): string {
+  return `${formatDate(createdAt, timeZone)} ${formatTime(createdAt, timeZone)}`.trim();
+}
+
+/**
+ * 짐을 사람이 읽을 모양으로 편다.
+ *
+ * 필드 이름을 그대로 둔다. 이 칸은 "무엇이 서버의 규칙에 걸렸는가"를 찾는 자리라, 화면의
+ * 말로 옮기면 서버 코드에서 같은 필드를 찾을 수 없다. null 은 null 로 적는다 -- 빈 값과
+ * null 의 차이가 곧 원인이었던 적이 있다(카드 색, 2026-09-29).
+ */
+function payloadText(payload: unknown): string {
+  try {
+    return JSON.stringify(payload, null, 2) ?? String(payload);
+  } catch {
+    return String(payload);
+  }
+}
+
+/**
+ * 공유할 글. 다른 사람(또는 개발자)이 이 글만 보고 원인을 찾을 수 있어야 한다.
+ *
+ * 앱 버전을 함께 싣는다. 같은 명령이라도 어느 판이 만들었는지에 따라 짐의 모양이 다르다.
+ */
+function shareTextOf(mutation: HeldMutation, heading: string, kind: string, status: string): string {
+  return [
+    `[${heading}] ${kind}`,
+    `status: ${mutation.status} (${status})`,
+    `error: ${mutation.error ?? '-'}`,
+    `kind: ${mutation.kind}`,
+    `targets: ${mutation.targets.join(', ')}`,
+    `mutationId: ${mutation.mutationId}`,
+    `clientSeq: ${mutation.clientSeq}`,
+    `createdAt: ${mutation.createdAt}`,
+    `app: ${Application.nativeApplicationVersion ?? '-'} (${Application.nativeBuildVersion ?? '-'})`,
+    'payload:',
+    payloadText(mutation.payload),
+  ].join('\n');
+}
+
 function HeldCard({
   mutation,
   isBusy,
@@ -262,6 +305,25 @@ function HeldCard({
   onDiscard: () => void;
 }) {
   const { t } = useTranslation();
+  const timeZone = useProjectTimeZone();
+  /** 자세히 펼쳤는가. 목록이 길어지므로 처음에는 접어 둔다. */
+  const [isOpen, setIsOpen] = useState(false);
+
+  const heading = headingOf(mutation, t);
+  const kindLabel = t(KIND_KEY[mutation.kind] ?? 'outbox.kind.create');
+  const statusLabel = t(STATUS_KEY[mutation.status]);
+
+  const toggle = () => {
+    LayoutAnimation.configureNext(LayoutAnimation.create(180, 'easeInEaseOut', 'opacity'));
+    setIsOpen((open) => !open);
+  };
+
+  /** 공유 창을 연다. 사용자가 닫거나 실패해도 이 화면에서 할 일은 없다. */
+  const share = () => {
+    Share.share({ message: shareTextOf(mutation, heading, kindLabel, statusLabel) }).catch(
+      (error) => console.warn('보내지 못한 거래를 공유하지 못했습니다:', error),
+    );
+  };
 
   /*
    * 짐에서 사람이 알아볼 값을 꺼낸다.
@@ -275,16 +337,14 @@ function HeldCard({
     <View className="rounded-lg bg-white p-4 shadow-sm">
       <View className="flex-row items-start justify-between gap-3">
         <View className="shrink">
-          <Text className="text-base font-medium text-gray-900">
-            {headingOf(mutation, t)}
-          </Text>
+          <Text className="text-base font-medium text-gray-900">{heading}</Text>
           {/*
             충돌은 이유를 덧붙이지 않는다. 서버가 주는 말("다른 기기에서 더 늦게
             고쳤습니다")이 상태 문구와 같은 뜻이라 같은 문장이 두 번 이어진다.
             거절과 보류는 이유가 저마다 달라(권한·규칙·앞 명령) 반드시 함께 적는다.
           */}
           <Text className="mt-1 text-sm text-gray-600">
-            {t(STATUS_KEY[mutation.status])}
+            {statusLabel}
             {mutation.error && mutation.status !== 'conflict' ? ` · ${mutation.error}` : ''}
           </Text>
         </View>
@@ -301,7 +361,28 @@ function HeldCard({
         <Text className="mt-2 text-xs text-gray-500">{t('outbox.reissueHint')}</Text>
       ) : null}
 
-      <View className="mt-3 flex-row gap-2">
+      {/*
+        자세히. 무엇을 하려던 명령이고 서버가 왜 받지 않았는지를 빠짐없이 적는다.
+        같은 일이 다시 났을 때 이 칸(또는 공유한 글)만 보고 원인을 찾을 수 있어야 한다.
+      */}
+      {isOpen ? (
+        <View className="mt-3 gap-2 rounded-md bg-gray-50 p-3">
+          <DetailRow label={t('outbox.detail.kind')} value={`${kindLabel} (${mutation.kind})`} />
+          <DetailRow label={t('outbox.detail.target')} value={mutation.targets.join('\n') || '-'} mono />
+          <DetailRow
+            label={t('outbox.detail.createdAt')}
+            value={createdAtLabel(mutation.createdAt, timeZone)}
+          />
+          <DetailRow
+            label={t('outbox.detail.reason')}
+            value={`${statusLabel}\n${mutation.error ?? t('outbox.detail.noReason')}`}
+          />
+          <DetailRow label={t('outbox.detail.payload')} value={payloadText(mutation.payload)} mono />
+          <DetailRow label={t('outbox.detail.id')} value={mutation.mutationId} mono />
+        </View>
+      ) : null}
+
+      <View className="mt-3 flex-row flex-wrap gap-2">
         {mutation.targetMissing ? (
           <Pressable
             disabled={isBusy}
@@ -326,7 +407,33 @@ function HeldCard({
         >
           <Text className="text-sm text-gray-700">{t('outbox.discard')}</Text>
         </Pressable>
+        <Pressable onPress={toggle} className="rounded-lg px-3 py-2">
+          <Text className="text-sm text-gray-600">
+            {t(isOpen ? 'outbox.hideDetails' : 'outbox.showDetails')}
+          </Text>
+        </Pressable>
+        {isOpen ? (
+          <Pressable onPress={share} className="rounded-lg px-3 py-2">
+            <Text className="text-sm text-blue-600">{t('outbox.share')}</Text>
+          </Pressable>
+        ) : null}
       </View>
+    </View>
+  );
+}
+
+/** 자세히 칸의 한 줄. 긴 값(짐, id)은 고정폭 글꼴로 적어 필드와 괄호가 줄을 맞춘다. */
+function DetailRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <View>
+      <Text className="text-xs font-medium text-gray-500">{label}</Text>
+      <Text
+        selectable
+        className="mt-0.5 text-sm text-gray-800"
+        style={mono ? { fontFamily: 'monospace', fontSize: 12 } : undefined}
+      >
+        {value}
+      </Text>
     </View>
   );
 }

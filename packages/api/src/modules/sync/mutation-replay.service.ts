@@ -265,7 +265,14 @@ export class MutationReplayService {
         ...(typeof code === 'string' ? { code } : {}),
       };
       await this.settle(mutation, result);
-      this.logger.warn(`명령 거절 ${mutation.kind} ${mutation.mutationId}: ${message}`);
+      /*
+       * 보낸 값을 함께 남긴다. 기기의 "보내지 못한 거래"에도 같은 값이 보이지만, 그 기기를
+       * 손에 쥘 수 없을 때 무엇이 규칙에 걸렸는지 찾을 곳이 여기뿐이다. 길면 자른다.
+       */
+      this.logger.warn(
+        `명령 거절 ${mutation.kind} ${mutation.mutationId} (clientSeq ${mutation.clientSeq}): ${message} ` +
+          `payload=${payloadForLog(mutation.payload)}`,
+      );
       return result;
     }
   }
@@ -1218,4 +1225,17 @@ export class MutationReplayService {
       );
     }
   }
+}
+
+/** 로그 한 줄에 싣는 짐의 최대 길이. 청구액 확정처럼 여러 건을 담는 명령이 로그를 덮지 않게 한다. */
+const PAYLOAD_LOG_LIMIT = 2000;
+
+function payloadForLog(payload: unknown): string {
+  let text: string;
+  try {
+    text = JSON.stringify(payload) ?? String(payload);
+  } catch {
+    text = String(payload);
+  }
+  return text.length > PAYLOAD_LOG_LIMIT ? `${text.slice(0, PAYLOAD_LOG_LIMIT)}…(${text.length}자)` : text;
 }
