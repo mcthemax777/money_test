@@ -13,6 +13,7 @@ import { useWeekStartStore } from '@money/core/store/week-start';
 import CountBadge from '../components/CountBadge';
 import ExchangeRateSettings from '../components/ExchangeRateSettings';
 import PageHeader from '../components/PageHeader';
+import { OptionModal, SettingRow } from '../components/SettingPicker';
 import { useNavigation } from '../shell/navigation';
 import { heldMutations, queuedMutations } from '../offline';
 
@@ -143,58 +144,52 @@ function SettingsCard({
 }
 
 /**
- * 화면 언어를 고르는 자리. 웹의 LanguageSettings 와 같다.
+ * 화면 언어를 고르는 자리. 웹의 LanguageSettings 와 같은 값을 바꾼다.
  *
- * 목록이 아니라 세 칸을 한 줄에 늘어놓는다. 셋뿐이라 접어 둘 까닭이 없고, 지금
- * 무엇으로 보고 있는지가 열지 않고도 보인다.
+ * 줄에는 지금 언어만 적고, 누르면 팝업에서 고른다.
  */
 function LanguageSettings() {
   const { t, locale } = useTranslation();
   const { setLocale, isSaving } = useLocaleStore();
   const { messageOf } = useApiError();
   const [error, setError] = useState('');
+  const [isOpen, setIsOpen] = useState(false);
 
   return (
-    <View className="rounded-lg bg-white p-6 shadow-sm">
-      <Text className="text-lg font-semibold text-gray-900">{t('settings.language.title')}</Text>
-      <Text className="mt-1 text-sm text-gray-600">{t('settings.language.description')}</Text>
+    <>
+      <SettingRow
+        title={t('settings.language.title')}
+        description={t('settings.language.description')}
+        value={t(NAME_KEY[locale])}
+        disabled={isSaving}
+        onPress={() => setIsOpen(true)}
+      >
+        {error ? <Text className="text-sm text-red-600">{error}</Text> : null}
+      </SettingRow>
 
-      <View className="mt-4 flex-row flex-wrap gap-2">
-        {SUPPORTED_LOCALES.map((code: Locale) => {
-          const selected = code === locale;
-
-          return (
-            <Pressable
-              key={code}
-              disabled={isSaving}
-              onPress={() => {
-                // 저장이 실패하면 스토어가 이전 언어로 되돌린다. 말없이 되돌아가면 눌러도
-                // 안 되는 것으로 보이므로 이유를 적는다 (웹의 LanguageSettings 와 같다).
-                setError('');
-                setLocale(code).catch((err) =>
-                  setError(messageOf(err, 'settings.language.saveFailed')),
-                );
-              }}
-              /* 고른 칸 표시는 사이드바 메뉴·분류 목록과 같은 값을 쓴다. */
-              className={`min-w-24 items-center rounded-lg border px-4 py-2 ${
-                selected ? 'border-blue-600 bg-blue-50' : 'border-gray-300'
-              } ${isSaving ? 'opacity-50' : ''}`}
-            >
-              <Text className={`text-sm ${selected ? 'font-medium text-blue-600' : 'text-gray-700'}`}>
-                {t(NAME_KEY[code])}
-              </Text>
-            </Pressable>
-          );
-        })}
-      </View>
-
-      {error ? <Text className="mt-3 text-sm text-red-600">{error}</Text> : null}
-    </View>
+      <OptionModal
+        isOpen={isOpen}
+        onClose={() => setIsOpen(false)}
+        title={t('settings.language.title')}
+        description={t('settings.language.description')}
+        options={SUPPORTED_LOCALES.map((code: Locale) => ({
+          value: code,
+          label: t(NAME_KEY[code]),
+        }))}
+        value={locale}
+        onSelect={(code) => {
+          // 저장이 실패하면 스토어가 이전 언어로 되돌린다. 말없이 되돌아가면 눌러도
+          // 안 되는 것으로 보이므로 이유를 적는다 (웹의 LanguageSettings 와 같다).
+          setError('');
+          setLocale(code).catch((err) => setError(messageOf(err, 'settings.language.saveFailed')));
+        }}
+      />
+    </>
   );
 }
 
 /**
- * 한 주를 어느 요일에서 시작할지 고르는 자리. 웹의 WeekStartSettings 와 같다.
+ * 한 주를 어느 요일에서 시작할지 고르는 자리. 웹의 WeekStartSettings 와 같은 값을 바꾼다.
  *
  * 요일 이름은 사전이 아니라 Intl 이 만든다 (`weekdayNames`). 일요일 차례로 받아
  * 번호를 그대로 자리로 쓴다 -- 0 이 일요일이다.
@@ -204,43 +199,40 @@ function WeekStartSettings() {
   const { weekStart, setWeekStart, isSaving } = useWeekStartStore();
   const { messageOf } = useApiError();
   const [error, setError] = useState('');
+  const [isOpen, setIsOpen] = useState(false);
   // useTranslation 이 언어 스토어를 구독하므로, 언어를 바꾸면 이름도 다시 만들어진다.
-  const names = weekdayNames();
+  const names = weekdayNames(0, 'long');
 
   return (
-    <View className="rounded-lg bg-white p-6 shadow-sm">
-      <Text className="text-lg font-semibold text-gray-900">{t('settings.weekStart.title')}</Text>
-      <Text className="mt-1 text-sm text-gray-600">{t('settings.weekStart.description')}</Text>
+    <>
+      <SettingRow
+        title={t('settings.weekStart.title')}
+        description={t('settings.weekStart.description')}
+        value={names[weekStart]}
+        disabled={isSaving}
+        onPress={() => setIsOpen(true)}
+      >
+        {error ? <Text className="text-sm text-red-600">{error}</Text> : null}
+      </SettingRow>
 
-      <View className="mt-4 flex-row flex-wrap gap-2">
-        {WEEK_START_DAYS.map((day: WeekStart) => {
-          const selected = day === weekStart;
-
-          return (
-            <Pressable
-              key={day}
-              disabled={isSaving}
-              onPress={() => {
-                // 저장이 실패하면 스토어가 이전 요일로 되돌린다. 이유는 아래에 적는다.
-                setError('');
-                setWeekStart(day).catch((err) =>
-                  setError(messageOf(err, 'settings.weekStart.saveFailed')),
-                );
-              }}
-              /* 고른 칸 표시는 언어 칸과 같은 값을 쓴다. */
-              className={`min-w-14 items-center rounded-lg border px-4 py-2 ${
-                selected ? 'border-blue-600 bg-blue-50' : 'border-gray-300'
-              } ${isSaving ? 'opacity-50' : ''}`}
-            >
-              <Text className={`text-sm ${selected ? 'font-medium text-blue-600' : 'text-gray-700'}`}>
-                {names[day]}
-              </Text>
-            </Pressable>
+      <OptionModal
+        isOpen={isOpen}
+        onClose={() => setIsOpen(false)}
+        title={t('settings.weekStart.title')}
+        description={t('settings.weekStart.description')}
+        options={WEEK_START_DAYS.map((day: WeekStart) => ({
+          value: day,
+          label: names[day],
+        }))}
+        value={weekStart}
+        onSelect={(day) => {
+          // 저장이 실패하면 스토어가 이전 요일로 되돌린다. 이유는 줄 아래에 적는다.
+          setError('');
+          setWeekStart(day).catch((err) =>
+            setError(messageOf(err, 'settings.weekStart.saveFailed')),
           );
-        })}
-      </View>
-
-      {error ? <Text className="mt-3 text-sm text-red-600">{error}</Text> : null}
-    </View>
+        }}
+      />
+    </>
   );
 }

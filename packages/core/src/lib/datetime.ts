@@ -330,8 +330,12 @@ export function formatYearOnly(year: number): string {
  * 머리글의 차례와 칸을 메우는 셈이 같은 값을 보아야 한다 (`weekdayOffset`). 한쪽만
  * 옮기면 이름은 월요일인데 그 칸에 일요일이 앉는다.
  */
-export function weekdayNames(weekStart: WeekStart = DEFAULT_WEEK_START): string[] {
-  const format = dateFormatter('weekday', 'UTC', { weekday: 'short' });
+export function weekdayNames(
+  weekStart: WeekStart = DEFAULT_WEEK_START,
+  /** 달력 머리글은 짧게("일"), 설정의 고르기 목록처럼 이름만 한 줄에 서는 자리는 길게("일요일"). */
+  width: 'short' | 'long' = 'short',
+): string[] {
+  const format = dateFormatter(`weekday-${width}`, 'UTC', { weekday: width });
 
   return Array.from({ length: 7 }, (_, index) =>
     format.format(new Date(Date.UTC(2024, 0, 7 + weekStart + index))),

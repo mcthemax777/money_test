@@ -17,8 +17,8 @@ const NAME_KEY: Record<Locale, MessageKey> = {
 /**
  * 화면 언어를 고르는 자리.
  *
- * 목록(select)이 아니라 세 칸을 한 줄에 늘어놓는다. 셋뿐이라 접어 둘 까닭이 없고,
- * 지금 무엇으로 보고 있는지가 열지 않고도 보인다.
+ * 프로젝트 관리의 타임존·표시 통화 칸과 같은 모양이다 -- 왼쪽에 이름과 설명, 오른쪽에
+ * 선택 상자. 접힌 상자에도 지금 값이 적혀 있어 열지 않고도 보인다.
  */
 export default function LanguageSettings() {
   const { t, locale } = useTranslation();
@@ -41,31 +41,24 @@ export default function LanguageSettings() {
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <h2 className="text-lg font-semibold text-gray-900">{t('settings.language.title')}</h2>
-      <p className="mt-1 text-sm text-gray-600">{t('settings.language.description')}</p>
-
-      <div className="mt-4 flex flex-wrap gap-2">
-        {SUPPORTED_LOCALES.map((code) => {
-          const selected = code === locale;
-
-          return (
-            <button
-              key={code}
-              type="button"
-              onClick={() => choose(code)}
-              disabled={isSaving}
-              aria-pressed={selected}
-              /* 고른 칸 표시는 사이드바 메뉴·분류 목록과 같은 값을 쓴다. */
-              className={`min-w-24 rounded-lg border px-4 py-2 text-sm transition disabled:opacity-50 ${
-                selected
-                  ? 'border-blue-600 bg-blue-50 font-medium text-blue-600'
-                  : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-              }`}
-            >
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h2 className="text-lg font-semibold text-gray-900">{t('settings.language.title')}</h2>
+          <p className="mt-1 text-sm text-gray-600">{t('settings.language.description')}</p>
+        </div>
+        <select
+          value={locale}
+          onChange={(e) => choose(e.target.value as Locale)}
+          disabled={isSaving}
+          aria-label={t('settings.language.title')}
+          className="px-3 py-2 text-sm border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+        >
+          {SUPPORTED_LOCALES.map((code) => (
+            <option key={code} value={code}>
               {t(NAME_KEY[code])}
-            </button>
-          );
-        })}
+            </option>
+          ))}
+        </select>
       </div>
 
       {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
