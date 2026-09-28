@@ -1047,6 +1047,9 @@ model EntryDraft {
   accountId  String?
   /// 이체의 받는 통장. 반복에서 온 이체 후보만 채워 온다(알림·캡처는 문구에서 알 수 없다).
   toAccountId String?
+  /// 이체 수수료와 그 분류. 반복에서 온 이체 후보만 채워 온다.
+  feeAmount     Decimal? @db.Decimal(18, 4)
+  feeCategoryId String?
   cardId     String?
 
   confidence Int     @default(0)
@@ -1140,6 +1143,9 @@ model RecurringRule {
   accountId         String?
   /// 이체의 받는 통장. 이체에만 있다(보내는 통장은 accountId).
   toAccountId       String?
+  /// 이체 수수료와 그 분류(지출 분류). 이체에만 있다.
+  feeAmount         Decimal? @db.Decimal(18, 4)
+  feeCategoryId     String?
   cardId            String?
   installmentMonths Int?
 

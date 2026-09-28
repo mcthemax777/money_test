@@ -1123,6 +1123,7 @@ export const ko = {
   'error.RECURRING_INVALID': '반복 일정이 올바르지 않습니다. 주기와 날짜를 확인해 주세요.',
   'error.RECURRING_NOT_FOUND': '그 반복 등록을 찾을 수 없습니다.',
   'error.RECURRING_DESCRIPTION_REQUIRED': '무엇을 적을지 이름을 넣어 주세요.',
+  'error.RECURRING_FEE_INVALID': '수수료는 0 이상의 금액으로 적어 주세요.',
   'error.APP_UPDATE_REQUIRED': '이 버전은 더 이상 쓸 수 없습니다. 업데이트해 주세요.',
   'error.APP_VERSION_INVALID': '버전 정책 값이 올바르지 않습니다.',
   'carousel.prev': '이전으로',

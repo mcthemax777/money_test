@@ -585,6 +585,9 @@ export function entryFormFromDraft(
     accountId: string | null;
     /** 이체의 받는 통장. 반복에서 온 이체 후보만 채워 온다. 옛 사본에는 없다. */
     toAccountId?: string | null;
+    /** 이체 수수료와 그 분류. 반복에서 온 이체 후보만 채워 온다. */
+    feeAmount?: string | null;
+    feeCategoryId?: string | null;
     cardId: string | null;
     /** 붙일 태그. 반복에서 온 후보만 채워 온다. */
     tagIds?: string[];
@@ -616,6 +619,10 @@ export function entryFormFromDraft(
     kind,
     method,
     toAccountId: kind === 'transfer' ? (draft.toAccountId ?? '') : '',
+    // 수수료는 이체에만 있고, 0 이면 없는 것이다(폼의 빈 칸과 같은 뜻).
+    ...(kind === 'transfer' && draft.feeAmount && Number(draft.feeAmount) > 0
+      ? { transferFee: draft.feeAmount, transferFeeCategoryId: draft.feeCategoryId ?? '' }
+      : {}),
     amount: draft.amount ?? '',
     /*
      * 통화. 장부 통화면 비워 둔다.

@@ -79,6 +79,9 @@ interface FormValues {
   method: string;
   /** 이체의 받는 통장(카드면 그 부채 계정). 이체가 아니면 쓰지 않는다. */
   toAccountId: string;
+  /** 이체 수수료와 그 분류(지출 분류). 이체가 아니면 쓰지 않는다. */
+  feeAmount: string;
+  feeCategoryId: string;
 }
 
 function emptyForm(timeZone: string): FormValues {
@@ -103,6 +106,8 @@ function emptyForm(timeZone: string): FormValues {
     tagIds: [],
     method: '',
     toAccountId: '',
+    feeAmount: '',
+    feeCategoryId: '',
   };
 }
 
@@ -135,6 +140,8 @@ function formOf(rule: RecurringRuleDto.Response, timeZone: string): FormValues {
     method: rule.cardId ? `card:${rule.cardId}` : rule.accountId ? `account:${rule.accountId}` : '',
     // 옛 서버는 이 칸을 싣지 않는다.
     toAccountId: rule.toAccountId ?? '',
+    feeAmount: rule.feeAmount ?? '',
+    feeCategoryId: rule.feeCategoryId ?? '',
   };
 }
 
@@ -209,6 +216,9 @@ export default function RecurringRuleModal({
 
   const isTransfer = values.kind === 'transfer';
   const fromAccountId = values.method.startsWith('account:') ? values.method.slice(8) : '';
+  /** 수수료 분류. 수수료는 나간 돈이라 지출 분류에서 고른다(거래 폼과 같다). */
+  const feeCategories = lists.categories.filter((category) => category.type === 'expense');
+  const hasFee = Number(values.feeAmount) > 0;
 
   /** 요일 이름을 주의 시작 요일부터. 알약의 차례이고, 값은 요일 번호 그대로다. */
   const weekdayOrder = Array.from({ length: 7 }, (_, index) => (weekStart + index) % 7);
@@ -588,6 +598,25 @@ export default function RecurringRuleModal({
                 collapse
               />
             </Field>
+            {/* 수수료. 있으면 그 분류도 받는다 -- 수수료는 지출로 적힌다. */}
+            <Field label={t('editor.transferFee')}>
+              <TextInput
+                value={values.feeAmount}
+                onChangeText={(text) => set('feeAmount', text)}
+                keyboardType="numeric"
+                placeholder="0"
+                className="rounded-lg border border-gray-300 px-3 py-3 text-base"
+              />
+            </Field>
+            {hasFee ? (
+              <Field label={t('editor.feeCategory')}>
+                <CategoryChips
+                  categories={feeCategories}
+                  selected={values.feeCategoryId}
+                  onSelect={(value) => set('feeCategoryId', value)}
+                />
+              </Field>
+            ) : null}
           </>
         ) : (
           <Field label={t('editor.method')}>
@@ -773,6 +802,12 @@ function toBody(values: FormValues): RecurringRuleDto.Body {
     tagIds: values.tagIds,
     accountId: methodKind === 'account' ? methodId : null,
     toAccountId: isTransfer ? values.toAccountId || null : null,
+    /*
+     * 수수료는 적은 그대로 보낸다. 틀린 값(음수·글자)은 서버가 거절해 알려 준다 -- 여기서
+     * 버리면 적은 수수료가 조용히 사라진다. 0 이면 서버가 분류와 함께 비운다. 웹과 같다.
+     */
+    feeAmount: isTransfer ? values.feeAmount.trim() || null : null,
+    feeCategoryId: isTransfer ? values.feeCategoryId || null : null,
     cardId: !isTransfer && methodKind === 'card' ? methodId : null,
   };
 }

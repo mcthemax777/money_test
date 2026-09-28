@@ -1086,6 +1086,9 @@ export namespace EntryDraftDto {
     accountId?: string | null;
     /** 이체의 받는 통장. 보내는 통장은 accountId 다. */
     toAccountId?: string | null;
+    /** 이체 수수료와 그 분류(지출 분류). 이체에만 있다. */
+    feeAmount?: string | null;
+    feeCategoryId?: string | null;
     cardId?: string | null;
     /** 붙일 태그. 반복에서 온 후보만 채운다 (그 규칙의 태그다). */
     tagIds?: string[];
@@ -1134,6 +1137,9 @@ export namespace EntryDraftDto {
     accountId?: string | null;
     /** 이체의 받는 통장. 보내는 통장은 accountId 다. */
     toAccountId?: string | null;
+    /** 이체 수수료와 그 분류(지출 분류). 이체에만 있다. */
+    feeAmount?: string | null;
+    feeCategoryId?: string | null;
     cardId?: string | null;
     /** 준 배열로 통째로 갈아 끼운다. 생략하면 건드리지 않는다. */
     tagIds?: string[];
@@ -1182,6 +1188,9 @@ export namespace RecurringRuleDto {
     accountId?: string | null;
     /** 이체의 받는 통장. 보내는 통장은 accountId 다. */
     toAccountId?: string | null;
+    /** 이체 수수료와 그 분류(지출 분류). 이체에만 있다. */
+    feeAmount?: string | null;
+    feeCategoryId?: string | null;
     cardId?: string | null;
     installmentMonths?: number | null;
     /**

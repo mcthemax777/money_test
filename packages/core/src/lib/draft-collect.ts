@@ -123,7 +123,7 @@ export function draftNeedsFix(draft: EntryDraftDto.Response): boolean {
 }
 
 /** 거래로 적기 전에 사람이 채워야 할 칸. 화면이 이 차례대로 이름을 적는다. */
-export type MissingField = 'amount' | 'method' | 'toAccount' | 'category';
+export type MissingField = 'amount' | 'method' | 'toAccount' | 'category' | 'feeCategory';
 
 /**
  * 비어 있는 칸들. 후보의 "빈 칸이 있습니다"와 반복 저장 때의 확인이 함께 쓴다.
@@ -138,6 +138,8 @@ export function missingFields(values: {
   toAccountId?: string | null;
   cardId?: string | null;
   categoryId?: string | null;
+  feeAmount?: string | null;
+  feeCategoryId?: string | null;
 }): MissingField[] {
   const missing: MissingField[] = [];
   if (!values.amount) missing.push('amount');
@@ -145,6 +147,15 @@ export function missingFields(values: {
   // 이체는 받는 통장도 있어야 적힌다. 알림 이체는 문구에서 알 수 없어 늘 비어 온다.
   if (values.kind === 'transfer' && !values.toAccountId) missing.push('toAccount');
   if (needsCategory(values.kind) && !values.categoryId) missing.push('category');
+  // 이체 수수료는 지출이라 분류가 있어야 적힌다(거래 폼의 FEE_CATEGORY_REQUIRED).
+  if (
+    values.kind === 'transfer' &&
+    values.feeAmount &&
+    Number(values.feeAmount) > 0 &&
+    !values.feeCategoryId
+  ) {
+    missing.push('feeCategory');
+  }
   return missing;
 }
 

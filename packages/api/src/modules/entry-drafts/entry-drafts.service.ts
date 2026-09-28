@@ -230,6 +230,9 @@ export class EntryDraftsService {
         accountId: item.accountId ?? null,
         // 받는 통장은 이체에만 있다. 반복에서 온 이체 후보가 싣는다.
         toAccountId: item.kind === 'transfer' ? (item.toAccountId ?? null) : null,
+        feeAmount:
+          item.kind === 'transfer' ? toOptionalMoney(item.feeAmount ?? null, '수수료') : null,
+        feeCategoryId: item.kind === 'transfer' ? (item.feeCategoryId ?? null) : null,
         cardId: item.cardId ?? null,
         confidence: clampConfidence(item.confidence),
         parser: item.parser ?? null,
@@ -375,6 +378,8 @@ export class EntryDraftsService {
     if ('categoryId' in dto) data.categoryId = dto.categoryId ?? null;
     if ('accountId' in dto) data.accountId = dto.accountId ?? null;
     if ('toAccountId' in dto) data.toAccountId = dto.toAccountId ?? null;
+    if ('feeAmount' in dto) data.feeAmount = toOptionalMoney(dto.feeAmount ?? null, '수수료');
+    if ('feeCategoryId' in dto) data.feeCategoryId = dto.feeCategoryId ?? null;
     if ('cardId' in dto) data.cardId = dto.cardId ?? null;
     if ('status' in dto && dto.status) data.status = this.checkStatus(dto.status);
     if ('registeredEntryId' in dto) {
@@ -527,6 +532,8 @@ function toResponse(row: DraftRow): EntryDraftDto.Response {
     categoryId: row.categoryId,
     accountId: row.accountId,
     toAccountId: row.toAccountId,
+    feeAmount: row.feeAmount ? row.feeAmount.toString() : null,
+    feeCategoryId: row.feeCategoryId,
     cardId: row.cardId,
     tagIds: row.tags.map((tag) => tag.tagId),
     confidence: row.confidence,

@@ -48,8 +48,10 @@
  * 옛 사본의 표에는 그 칸이 없어 새 행을 적을 자리가 없다.
  *
  * 26 은 후보에 `toAccountId`(이체의 받는 통장)가 생긴 판이다. 반복 등록이 이체를 담는다.
+ *
+ * 27 은 후보에 `feeAmount`·`feeCategoryId`(이체 수수료와 그 분류)가 생긴 판이다.
  */
-export const SCHEMA_VERSION = 26;
+export const SCHEMA_VERSION = 27;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -403,6 +405,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      categoryId        TEXT,
      accountId         TEXT,
      toAccountId       TEXT,
+     feeAmount         TEXT,
+     feeCategoryId     TEXT,
      cardId            TEXT,
      confidence        INTEGER NOT NULL DEFAULT 0,
      parser            TEXT,

@@ -252,6 +252,8 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
       cardId: dto.cardId ?? null,
       categoryId: dto.categoryId ?? null,
       installmentMonths: toOptionalMonths(dto.installmentMonths),
+      feeAmount: toOptionalMoney(dto.feeAmount ?? null, '수수료'),
+      feeCategoryId: dto.feeCategoryId ?? null,
     });
 
     const rule = await this.prisma.recurringRule.create({
@@ -343,7 +345,16 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
      * 갈래만 이체로 바꾸고 다른 칸을 주지 않아도, 남아 있던 카드·분류·할부가 비워져야
      * 한다. 이체 규칙에 카드가 남으면 회차 후보가 "카드로 이체"라는 없는 거래가 된다.
      */
-    const paymentKeys = ['kind', 'categoryId', 'accountId', 'toAccountId', 'cardId', 'installmentMonths'];
+    const paymentKeys = [
+      'kind',
+      'categoryId',
+      'accountId',
+      'toAccountId',
+      'cardId',
+      'installmentMonths',
+      'feeAmount',
+      'feeCategoryId',
+    ];
     if (paymentKeys.some((key) => key in dto)) {
       Object.assign(
         data,
@@ -356,6 +367,9 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
             'installmentMonths' in dto
               ? toOptionalMonths(dto.installmentMonths)
               : rule.installmentMonths,
+          feeAmount:
+            'feeAmount' in dto ? toOptionalMoney(dto.feeAmount ?? null, '수수료') : rule.feeAmount,
+          feeCategoryId: 'feeCategoryId' in dto ? (dto.feeCategoryId ?? null) : rule.feeCategoryId,
         }),
       );
     }
@@ -511,10 +525,12 @@ interface PaymentFields {
   cardId: string | null;
   categoryId: string | null;
   installmentMonths: number | null;
+  feeAmount: Prisma.Decimal | null;
+  feeCategoryId: string | null;
 }
 
 /**
- * 갈래에 맞지 않는 칸을 비운다. 이체면 받는 통장을 확인한다.
+ * 갈래에 맞지 않는 칸을 비운다. 이체면 받는 통장과 수수료를 확인한다.
  *
  * **이체는 통장에서 통장으로다.** 카드로는 이체를 만들 수 없고(거래 폼과 같은 규칙),
  * 분류와 할부도 없다. 받는 통장은 이체에만 있다 -- 지출 규칙에 남아 있으면 회차 후보를
@@ -524,17 +540,32 @@ interface PaymentFields {
  * 보내는 통장과 같으면 거절한다 -- 그 회차는 등록할 때마다 폼에서 막힌다.
  */
 function paymentOf(kind: string, fields: PaymentFields): PaymentFields {
-  if (kind !== 'transfer') return { ...fields, toAccountId: null };
+  if (kind !== 'transfer') {
+    return { ...fields, toAccountId: null, feeAmount: null, feeCategoryId: null };
+  }
 
   if (fields.accountId && fields.accountId === fields.toAccountId) {
     throw badRequest('TRANSFER_SAME_ACCOUNT', '보내는 계좌와 받는 계좌가 같습니다.');
   }
+  if (fields.feeAmount?.isNegative()) {
+    throw badRequest('RECURRING_FEE_INVALID', '수수료는 0 이상의 금액으로 적어 주세요.');
+  }
+  /*
+   * 수수료가 없으면(0 도) 분류도 두지 않는다. 거래 폼은 수수료가 있을 때만 분류를 묻는다 --
+   * 분류만 남아 있으면 회차 후보를 열 때 금액 없는 수수료 분류가 따라온다.
+   *
+   * 수수료는 있는데 분류가 없는 것은 받는다. 다른 빈 칸처럼 후보를 등록할 때 고른다.
+   */
+  // `isPositive()` 는 0 에도 참이다(decimal.js 는 +0 을 양수로 본다). 그래서 gt(0) 로 본다.
+  const hasFee = Boolean(fields.feeAmount && fields.feeAmount.gt(0));
   return {
     accountId: fields.accountId,
     toAccountId: fields.toAccountId,
     cardId: null,
     categoryId: null,
     installmentMonths: null,
+    feeAmount: hasFee ? fields.feeAmount : null,
+    feeCategoryId: hasFee ? fields.feeCategoryId : null,
   };
 }
 
@@ -617,6 +648,8 @@ function toResponse(
     categoryId: rule.categoryId,
     accountId: rule.accountId,
     toAccountId: rule.toAccountId,
+    feeAmount: rule.feeAmount ? rule.feeAmount.toString() : null,
+    feeCategoryId: rule.feeCategoryId,
     cardId: rule.cardId,
     installmentMonths: rule.installmentMonths,
     tagIds: rule.tags.map((row) => row.tagId),

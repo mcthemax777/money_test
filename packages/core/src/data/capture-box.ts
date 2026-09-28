@@ -189,6 +189,8 @@ function toDraft(
     categoryId: item.categoryId ?? null,
     accountId: item.accountId ?? null,
     toAccountId: item.toAccountId ?? null,
+    feeAmount: item.feeAmount ?? null,
+    feeCategoryId: item.feeCategoryId ?? null,
     cardId: item.cardId ?? null,
     confidence: item.confidence ?? 0,
     parser: item.parser ?? null,

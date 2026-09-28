@@ -161,6 +161,8 @@ function draftItem(
     accountId: rule.accountId,
     // 옛 서버는 이 칸을 싣지 않는다(undefined). 그때는 받는 통장을 사람이 고른다.
     toAccountId: rule.toAccountId ?? null,
+    feeAmount: rule.feeAmount ?? null,
+    feeCategoryId: rule.feeCategoryId ?? null,
     cardId: rule.cardId,
     /*
      * 태그를 그대로 물려준다.

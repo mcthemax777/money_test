@@ -1094,6 +1094,7 @@ export const en: Record<MessageKey, string> = {
   'error.RECURRING_INVALID': 'That schedule is not valid. Check the frequency and the dates.',
   'error.RECURRING_NOT_FOUND': 'That recurring entry no longer exists.',
   'error.RECURRING_DESCRIPTION_REQUIRED': 'Give it a name so you know what it records.',
+  'error.RECURRING_FEE_INVALID': 'Enter a fee of zero or more.',
   'error.APP_UPDATE_REQUIRED': 'This version is no longer supported. Please update.',
   'error.APP_VERSION_INVALID': 'The version policy is not valid.',
   'carousel.prev': 'Previous',

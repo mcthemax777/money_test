@@ -1690,6 +1690,27 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       mainCategoryId: type === 'transfer' ? '' : category.mainCategoryId,
       subCategoryId: type === 'transfer' ? '' : category.subCategoryId,
       /*
+       * 이체의 받는 통장과 수수료. 반복에 적어 둔 것이 후보를 지나 여기까지 온다.
+       *
+       * 알림 이체에는 비어 있다(문구에서 받는 쪽을 알 수 없다). 앱은 core 의
+       * `entryFormFromDraft` 가 같은 일을 한다.
+       */
+      ...(type === 'transfer'
+        ? {
+            toAccountId: draft.toAccountId ?? '',
+            ...(toNumber(draft.feeAmount) > 0
+              ? (() => {
+                  const fee = splitCategory(draft.feeCategoryId ?? null);
+                  return {
+                    transferFee: draft.feeAmount ?? '',
+                    transferFeeMainCategoryId: fee.mainCategoryId,
+                    transferFeeSubCategoryId: fee.subCategoryId,
+                  };
+                })()
+              : {}),
+          }
+        : {}),
+      /*
        * 태그. 반복에 붙여 둔 것이 후보를 지나 여기까지 온다.
        *
        * 알림·캡처 후보에는 비어 있다 -- 문구에서 태그를 읽어 낼 방법이 없다. 지운

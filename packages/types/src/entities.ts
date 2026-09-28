@@ -581,6 +581,9 @@ export interface EntryDraft {
   accountId: string | null;
   /** 이체의 받는 통장. 반복에서 온 이체 후보만 채워 온다. */
   toAccountId: string | null;
+  /** 이체 수수료와 그 분류(지출 분류). 반복에서 온 이체 후보만 채워 온다. */
+  feeAmount: string | null;
+  feeCategoryId: string | null;
   cardId: string | null;
 
   /**
@@ -680,6 +683,9 @@ export interface RecurringRule {
   accountId: string | null;
   /** 이체의 받는 통장. 이체가 아니면 null. */
   toAccountId: string | null;
+  /** 이체 수수료와 그 분류(지출 분류). 이체가 아니거나 수수료가 없으면 null. */
+  feeAmount: string | null;
+  feeCategoryId: string | null;
   cardId: string | null;
   installmentMonths: number | null;
   /** 이 반복이 만드는 후보에 붙일 태그. */

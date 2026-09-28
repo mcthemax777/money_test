@@ -404,6 +404,8 @@ console.log('\n── 이체 반복 ──');
     categoryId: null,
     accountId: 'from1',
     toAccountId: 'to1',
+    feeAmount: '500',
+    feeCategoryId: 'feecat',
     cardId: null,
     installmentMonths: null,
     tagIds: [],
@@ -413,16 +415,19 @@ console.log('\n── 이체 반복 ──');
 
   const [item] = recurringDraftItems([transfer], '2026-09-03', 'Asia/Seoul');
   eq('후보에 받는 통장이 실린다', `${item?.accountId}->${item?.toAccountId}`, 'from1->to1');
+  eq('후보에 수수료가 실린다', `${item?.feeAmount}/${item?.feeCategoryId}`, '500/feecat');
 
   const form = entryFormFromDraft(
     { ...item, kind: 'transfer', amount: '300000', currency: null, occurredAt: item.occurredAt ?? null,
       merchant: '적금', description: '적금', installmentMonths: null, personId: null,
-      categoryId: null, accountId: 'from1', toAccountId: 'to1', cardId: null },
+      categoryId: null, accountId: 'from1', toAccountId: 'to1', cardId: null,
+      feeAmount: '500', feeCategoryId: 'feecat' },
     { timeZone: 'Asia/Seoul', ledgerCurrency: 'KRW', personId: '' },
   );
   eq('폼이 이체로 열린다', form.kind, 'transfer');
   eq('보내는 통장', form.method, 'account:from1');
   eq('받는 통장', form.toAccountId, 'to1');
+  eq('수수료', `${form.transferFee}/${form.transferFeeCategoryId}`, '500/feecat');
 
   const expense = entryFormFromDraft(
     { kind: 'expense', amount: '1', currency: null, occurredAt: null, merchant: null,
@@ -431,6 +436,7 @@ console.log('\n── 이체 반복 ──');
     { timeZone: 'Asia/Seoul', ledgerCurrency: 'KRW', personId: '' },
   );
   eq('지출에는 받는 통장을 채우지 않는다', expense.toAccountId, '');
+  eq('지출에는 수수료를 채우지 않는다', expense.transferFee, '');
 }
 
 console.log('\n── 저장 전에 묻는 빈 칸 ──');
@@ -451,6 +457,16 @@ console.log('\n── 저장 전에 묻는 빈 칸 ──');
     '이체: 분류는 묻지 않고 받는 통장을 묻는다',
     recurringMissingText(body({ kind: 'transfer' }), t as never),
     'editor.amount, editor.fromAccount, editor.toAccount',
+  );
+  eq(
+    '이체: 수수료가 있는데 분류가 없으면 묻는다',
+    recurringMissingText(body({ kind: 'transfer', amount: '1', accountId: 'a', toAccountId: 'b', feeAmount: '500' }), t as never),
+    'editor.feeCategory',
+  );
+  eq(
+    '이체: 수수료가 0 이면 분류를 묻지 않는다',
+    recurringMissingText(body({ kind: 'transfer', amount: '1', accountId: 'a', toAccountId: 'b', feeAmount: '0' }), t as never),
+    'null',
   );
 }
 

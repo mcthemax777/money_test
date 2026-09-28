@@ -25,6 +25,7 @@ export function recurringMissingText(body: RecurringRuleDto.Body, t: Translate):
     method: body.kind === 'transfer' ? 'editor.fromAccount' : 'editor.method',
     toAccount: 'editor.toAccount',
     category: 'entryForm.category',
+    feeCategory: 'editor.feeCategory',
   };
   const missing = missingFields(body);
   return missing.length > 0 ? missing.map((field) => t(labels[field])).join(', ') : null;

@@ -1087,6 +1087,7 @@ export const ja: Record<MessageKey, string> = {
   'error.RECURRING_INVALID': '繰り返しの予定が正しくありません。周期と日付をご確認ください。',
   'error.RECURRING_NOT_FOUND': 'その繰り返し登録が見つかりません。',
   'error.RECURRING_DESCRIPTION_REQUIRED': '何を記録するのか名前を入れてください。',
+  'error.RECURRING_FEE_INVALID': '手数料は0以上の金額で入力してください。',
   'error.APP_UPDATE_REQUIRED': 'このバージョンは利用できなくなりました。アップデートしてください。',
   'error.APP_VERSION_INVALID': 'バージョン設定の値が正しくありません。',
   'carousel.prev': '前へ',
