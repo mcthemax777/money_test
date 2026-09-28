@@ -87,6 +87,7 @@ import EntryEditor, {
   type ReferenceDataPatch,
 } from '@/components/EntryEditor';
 import BasisPicker from '@/components/BasisPicker';
+import CountBadge from '@/components/CountBadge';
 import Modal from '@/components/Modal';
 import TransactionCalendarView from '@/components/TransactionCalendarView';
 import PageHeader from '@/components/PageHeader';
@@ -992,19 +993,19 @@ export default function TransactionsView({
                   보관함. 검색 왼쪽에 둔다.
 
                   아직 거래가 아닌 후보가 쌓이는 자리라 거래 화면에서 들어가는 것이
-                  맞다 -- 그 후보가 되려는 것이 이 화면의 줄이다. 대기 건수를 옆에
-                  숫자로 붙인다(검색이 걸린 개수를 적는 것과 같은 모양이다).
+                  맞다 -- 그 후보가 되려는 것이 이 화면의 줄이다. 대기 건수는 아이콘
+                  오른쪽 위에 빨간 배지로 얹는다.
                 */}
                 <Link
                   href="/transactions/inbox"
                   aria-label={t('inbox.open')}
                   title={t('inbox.title')}
-                  className={`flex items-center gap-1.5 px-2 py-2 text-sm font-medium ${
-                    inboxCount > 0 ? 'text-blue-600' : 'text-gray-600'
-                  }`}
+                  className="flex items-center px-2 py-2 text-gray-600"
                 >
-                  <Archive className="h-4 w-4" aria-hidden />
-                  {inboxCount > 0 ? <span className="font-semibold">{inboxCount}</span> : null}
+                  <span className="relative">
+                    <Archive className="h-4 w-4" aria-hidden />
+                    <CountBadge count={inboxCount} />
+                  </span>
                 </Link>
                 {/*
                   보기를 바꾸는 단추. 지금 무엇을 보고 있는지가 아니라 **누르면 무엇이

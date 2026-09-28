@@ -69,6 +69,7 @@ import { useCloseOnBack, useNavigation } from '../shell/navigation';
 import RevealTop from '../shell/RevealTop';
 import { StickySection, StickySections } from '../shell/StickySection';
 import BasisPicker from '../components/BasisPicker';
+import CountBadge from '../components/CountBadge';
 import EntryDetailModal from '../components/EntryDetailModal';
 import EntryEditor from '../components/EntryEditor';
 import Modal from '../components/Modal';
@@ -905,18 +906,18 @@ export default function TransactionsScreen() {
                     보관함. 검색 왼쪽에 둔다.
 
                     아직 거래가 아닌 후보가 쌓이는 자리라 거래 화면에서 들어가는 것이
-                    맞다 -- 그 후보가 되려는 것이 이 화면의 줄이다. 대기 건수는 옆에
-                    숫자로 붙인다(검색 개수와 같은 모양이다).
+                    맞다 -- 그 후보가 되려는 것이 이 화면의 줄이다. 대기 건수는 아이콘
+                    오른쪽 위에 빨간 배지로 얹는다.
                   */}
                   <Pressable
                     onPress={() => go('/transactions/inbox')}
                     accessibilityLabel={t('inbox.open')}
-                    className="flex-row items-center gap-1.5 px-2 py-2"
+                    className="items-center justify-center px-2 py-2"
                   >
-                    <Archive size={18} color={inboxCount > 0 ? '#2563eb' : '#4b5563'} />
-                    {inboxCount > 0 ? (
-                      <Text className="text-sm font-semibold text-blue-600">{inboxCount}</Text>
-                    ) : null}
+                    <View className="relative">
+                      <Archive size={18} color="#4b5563" />
+                      <CountBadge count={inboxCount} />
+                    </View>
                   </Pressable>
                   {/*
                     보기를 바꾸는 단추. 지금 무엇을 보고 있는지가 아니라 **누르면 무엇이
