@@ -6,11 +6,15 @@
  * 답을 기다리는 것(마지막 글이 사용자 것)이 위에 오고, 그 안에서는 오래 기다린 것이 위다.
  * 답하면 서버가 그 사용자의 기기 전부에 푸시를 보내고, 사용자의 설정에 읽지 않은 답의 수가
  * 선다. 푸시가 실패해도 답은 담긴다.
+ *
+ * 탭이 보이는 동안 `INQUIRY_POLL_MS` 마다 목록과 연 문의를 다시 묻는다. 사용자가 새로 묻거나
+ * 덧붙이면 새로고침하지 않아도 몇 초 안에 선다.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { INQUIRY_BODY_MAX, type InquiryDto, type InquiryStatus } from '@money/types';
+import { INQUIRY_BODY_MAX, INQUIRY_POLL_MS, type InquiryDto, type InquiryStatus } from '@money/types';
 
+import { useIsTabVisible } from '@/hooks/useIsTabVisible';
 import { AdminAuthError, getInquiry, listInquiries, replyInquiry } from '@/lib/admin-api';
 import { errorText } from '../notification-view';
 
@@ -51,6 +55,49 @@ export default function AdminInquiriesPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const isVisible = useIsTabVisible();
+  const latestSelected = useRef(selected);
+  latestSelected.current = selected;
+
+  /*
+   * 보이는 동안 몇 초마다 다시 묻는다.
+   *
+   * 조용히 묻는다. "불러오는 중"을 띄우지 않고, 로그인이 풀린 것 말고는 실패를 적지 않는다 --
+   * 잠깐 끊긴 망 때문에 답을 쓰던 자리 위에 빨간 줄이 서면 안 된다. 다음 조회가 다시 해 본다.
+   * 적던 답장은 따로 들고 있어 새로 받아도 지워지지 않는다. 연 문의는 글 수가 바뀌었을 때만
+   * 갈아 끼운다(같은 대화를 3초마다 다시 그리지 않게).
+   */
+  useEffect(() => {
+    if (!isVisible) return;
+    let cancelled = false;
+
+    const poll = async () => {
+      try {
+        const opened = latestSelected.current;
+        const [nextRows, nextSelected] = await Promise.all([
+          listInquiries(filter || undefined),
+          opened ? getInquiry(opened.id) : Promise.resolve(null),
+        ]);
+        if (cancelled) return;
+        setRows(nextRows);
+        setSelected((current) =>
+          // 묻는 사이에 다른 문의를 열었으면 그것을 덮지 않는다.
+          nextSelected && current?.id === nextSelected.id && current.messages.length !== nextSelected.messages.length
+            ? nextSelected
+            : current,
+        );
+      } catch (reason) {
+        if (reason instanceof AdminAuthError) router.replace('/admin/login');
+      }
+    };
+
+    const timer = setInterval(() => void poll(), INQUIRY_POLL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, [isVisible, filter, router]);
 
   const open = async (id: string) => {
     setMessage(null);
@@ -124,10 +171,14 @@ export default function AdminInquiriesPage() {
           ) : null}
           {rows.map((row) => (
             <button
-              key={row.id}
+              /*
+                마지막 글의 시각을 열쇠에 넣는다. 사용자가 덧붙여 그 줄이 바뀌면 새로 서며
+                `unfold` 로 떠오르므로, 몇 초마다 새로 받는 목록에서 무엇이 바뀌었는지 눈에 띈다.
+              */
+              key={`${row.id}:${row.lastMessageAt}`}
               type="button"
               onClick={() => void open(row.id)}
-              className={`block w-full space-y-1 rounded-xl border bg-white p-3 text-left transition-colors hover:bg-gray-50 ${
+              className={`unfold block w-full space-y-1 rounded-xl border bg-white p-3 text-left transition-colors hover:bg-gray-50 ${
                 selected?.id === row.id ? 'border-blue-400' : 'border-gray-200'
               }`}
             >
@@ -166,7 +217,7 @@ export default function AdminInquiriesPage() {
               {selected.messages.map((item) => {
                 const mine = item.author === 'admin';
                 return (
-                  <div key={item.id} className={`max-w-[85%] space-y-1 ${mine ? 'self-end' : 'self-start'}`}>
+                  <div key={item.id} className={`unfold max-w-[85%] space-y-1 ${mine ? 'self-end' : 'self-start'}`}>
                     <p className={`text-xs text-gray-500 ${mine ? 'text-right' : ''}`}>
                       {mine ? '관리자' : selected.userName} · {new Date(item.createdAt).toLocaleString()}
                     </p>

@@ -7,7 +7,7 @@
  * 있는 문의에는 빨간 수가 서고, 열면 읽은 것이 되어 설정의 배지도 줄어든다. 웹은 푸시를 받지
  * 않으므로 답은 이 화면이나 설정을 열 때 보인다.
  */
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { INQUIRY_BODY_MAX, type InquiryDto } from '@money/types';
 import { useInquiries, useInquiryThread } from '@money/core/hooks/useInquiries';
 import { formatDateTime } from '@money/core/lib/datetime';
@@ -16,6 +16,7 @@ import { useProjectTimeZone } from '@money/core/store/project';
 
 import CountBadge from '@/components/CountBadge';
 import PageHeader from '@/components/PageHeader';
+import { useIsTabVisible } from '@/hooks/useIsTabVisible';
 
 type Mode = { kind: 'list' } | { kind: 'new' } | { kind: 'thread'; id: string };
 
@@ -250,20 +251,4 @@ function Thread({ id, onBack }: { id: string; onBack: () => void }) {
       ) : null}
     </div>
   );
-}
-
-/**
- * 이 탭이 보이는가. 다른 탭으로 가거나 창을 내리면 false 다.
- *
- * 보이지 않는 동안 답을 물으면 서버가 보고 있는 것으로 읽어 푸시를 보내지 않는다.
- */
-function useIsTabVisible(): boolean {
-  const [isVisible, setIsVisible] = useState(true);
-  useEffect(() => {
-    const update = () => setIsVisible(document.visibilityState === 'visible');
-    update();
-    document.addEventListener('visibilitychange', update);
-    return () => document.removeEventListener('visibilitychange', update);
-  }, []);
-  return isVisible;
 }
