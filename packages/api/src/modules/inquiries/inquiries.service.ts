@@ -36,6 +36,16 @@ const REPLY_TITLE: Record<PushLocale, string> = {
   ja: 'お問い合わせに返信が届きました',
 };
 
+/** 관리자가 먼저 보낸 글의 푸시 문구. */
+const START_TITLE: Record<PushLocale, string> = {
+  ko: '관리자가 메시지를 보냈습니다',
+  en: 'You have a message from the admin',
+  ja: '管理者からメッセージが届きました',
+};
+
+/** 사람 찾기가 한 번에 돌려주는 수. */
+const USER_SEARCH_LIMIT = 20;
+
 type InquiryRow = Prisma.InquiryGetPayload<{ include: { messages: true } }>;
 
 @Injectable()
@@ -155,6 +165,60 @@ export class InquiriesService {
       messageCount: row.messages.length,
       messages: row.messages.map(messageOf),
     };
+  }
+
+  /**
+   * 먼저 보낼 사람 찾기. 이름이나 이메일의 일부로 찾고, 비었으면 최근에 가입한 사람부터 준다.
+   */
+  async adminSearchUsers(query: string | undefined): Promise<InquiryDto.AdminUser[]> {
+    const text = query?.trim();
+    return this.prisma.user.findMany({
+      where: text
+        ? {
+            OR: [
+              { name: { contains: text, mode: 'insensitive' } },
+              { email: { contains: text, mode: 'insensitive' } },
+            ],
+          }
+        : {},
+      select: { id: true, name: true, email: true },
+      orderBy: { createdAt: 'desc' },
+      take: USER_SEARCH_LIMIT,
+    });
+  }
+
+  /**
+   * 관리자가 먼저 여는 대화. 사용자가 묻지 않았어도 보낸다.
+   *
+   * 첫 글이 관리자의 것이라 상태는 처음부터 "답변 완료"(공이 사용자에게 있다)다. 읽은 시각을
+   * 그 글보다 앞에 두어 사용자의 배지에 하나로 세어지게 한다 -- 기본값(now())으로 두면 글과
+   * 같은 시각이 되어 읽지 않은 글로 잡히지 않는다. 보고 있을 수 없는 새 대화라 푸시는 늘 보낸다.
+   */
+  async adminStart(dto: InquiryDto.AdminStartRequest): Promise<InquiryDto.AdminDetail> {
+    const body = checkBody(dto?.body);
+    const userId = typeof dto?.userId === 'string' ? dto.userId : '';
+    const user = userId ? await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true } }) : null;
+    if (!user) throw notFound('INQUIRY_USER_NOT_FOUND', '사용자를 찾을 수 없습니다.');
+
+    const now = new Date();
+    const row = await this.prisma.inquiry.create({
+      data: {
+        userId,
+        lastAuthor: 'admin',
+        lastMessageAt: now,
+        userReadAt: new Date(now.getTime() - 1),
+        messages: { create: { author: 'admin', body, createdAt: now } },
+      },
+      select: { id: true },
+    });
+
+    void this.push.notifyUser(
+      userId,
+      (locale) => ({ title: START_TITLE[locale], body: body.replace(/\s+/g, ' ').slice(0, 100) }),
+      { type: 'inquiry-reply', inquiryId: row.id },
+      INQUIRY_CHANNEL_ID,
+    );
+    return this.adminGet(row.id);
   }
 
   /**

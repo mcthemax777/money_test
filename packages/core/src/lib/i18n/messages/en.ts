@@ -99,6 +99,7 @@ export const en: Record<MessageKey, string> = {
   'error.INQUIRY_BODY_REQUIRED': 'Please enter your message.',
   'error.INQUIRY_BODY_TOO_LONG': 'Messages can be up to 5000 characters.',
   'error.INQUIRY_NOT_FOUND': 'The inquiry was not found.',
+  'error.INQUIRY_USER_NOT_FOUND': 'The user was not found.',
   'error.ENTRY_SHEET_INVALID': 'The spreadsheet rows are not valid.',
   'online.onlyOnline': 'Available once you are back online.',
   'online.offlineNotice': 'The server is unreachable right now. What you write is sent when the connection returns.',

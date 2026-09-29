@@ -79,6 +79,22 @@ export namespace InquiryDto {
     messages: Message[];
   }
 
+  /** 관리자가 먼저 보낼 사람을 찾을 때 한 줄. */
+  export interface AdminUser {
+    id: string;
+    name: string;
+    email: string;
+  }
+
+  /**
+   * 관리자가 먼저 여는 대화. 사용자가 묻지 않았어도 보낼 수 있다 (공지·확인 요청).
+   * 사용자의 문의하기 목록에 새 대화로 서고, 읽지 않은 글 하나로 세어진다.
+   */
+  export interface AdminStartRequest {
+    userId: string;
+    body: string;
+  }
+
   export interface AdminListQuery {
     /** 'waiting' 답을 기다리는 것만, 없으면 전부. */
     status?: InquiryStatus;

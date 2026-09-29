@@ -9,13 +9,23 @@
  *
  * 탭이 보이는 동안 `INQUIRY_POLL_MS` 마다 목록과 연 문의를 다시 묻는다. 사용자가 새로 묻거나
  * 덧붙이면 새로고침하지 않아도 몇 초 안에 선다.
+ *
+ * 사용자가 묻지 않았어도 먼저 보낼 수 있다("새 메시지"). 이름·이메일로 사람을 찾아 보내면 그
+ * 사람의 문의하기에 새 대화로 서고, 기기로 푸시가 간다. 그 뒤로는 보통 문의와 같다.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { INQUIRY_BODY_MAX, INQUIRY_POLL_MS, type InquiryDto, type InquiryStatus } from '@money/types';
 
 import { useIsTabVisible } from '@/hooks/useIsTabVisible';
-import { AdminAuthError, getInquiry, listInquiries, replyInquiry } from '@/lib/admin-api';
+import {
+  AdminAuthError,
+  getInquiry,
+  listInquiries,
+  replyInquiry,
+  searchUsers,
+  startInquiry,
+} from '@/lib/admin-api';
 import { errorText } from '../notification-view';
 
 const STATUS_NAME: Record<InquiryStatus, string> = {
@@ -32,6 +42,8 @@ export default function AdminInquiriesPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+  /** 먼저 보내는 글을 쓰는 중인가. 그동안 오른쪽 칸이 쓰기 칸이 된다. */
+  const [isComposing, setIsComposing] = useState(false);
 
   const fail = useCallback(
     (reason: unknown) => {
@@ -100,6 +112,7 @@ export default function AdminInquiriesPage() {
   }, [isVisible, filter, router]);
 
   const open = async (id: string) => {
+    setIsComposing(false);
     setMessage(null);
     setReply('');
     try {
@@ -126,14 +139,37 @@ export default function AdminInquiriesPage() {
     }
   };
 
+  /** 먼저 보낸 뒤. 그 대화를 열고, 답변 완료 상태라 "답변 대기" 목록에는 없으므로 전체로 옮긴다. */
+  const started = (saved: InquiryDto.AdminDetail) => {
+    setIsComposing(false);
+    setSelected(saved);
+    setReply('');
+    setMessage({ kind: 'ok', text: `${saved.userName}님에게 보냈습니다. 기기로 푸시를 보냅니다.` });
+    if (filter === 'waiting') setFilter('');
+    else void load();
+  };
+
   return (
     <div className="space-y-5">
-      <div>
-        <h1 className="text-xl font-semibold text-gray-900">문의</h1>
-        <p className="mt-1 text-sm text-gray-600">
-          사용자가 설정의 문의하기로 보낸 글입니다. 답하면 그 사람의 기기로 푸시가 가고, 설정의 문의하기에 읽지
-          않은 답의 수가 뜹니다.
-        </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-xl font-semibold text-gray-900">문의</h1>
+          <p className="mt-1 text-sm text-gray-600">
+            사용자가 설정의 문의하기로 보낸 글입니다. 답하면 그 사람의 기기로 푸시가 가고, 설정의 문의하기에 읽지
+            않은 답의 수가 뜹니다. 묻지 않은 사람에게도 먼저 보낼 수 있습니다.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            setIsComposing(true);
+            setSelected(null);
+            setMessage(null);
+          }}
+          className="shrink-0 rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+        >
+          새 메시지
+        </button>
       </div>
 
       <div className="flex gap-1">
@@ -200,7 +236,9 @@ export default function AdminInquiriesPage() {
           ))}
         </div>
 
-        {selected ? (
+        {isComposing ? (
+          <ComposePanel onSent={started} onCancel={() => setIsComposing(false)} onError={fail} />
+        ) : selected ? (
           <section key={selected.id} className="unfold space-y-4 rounded-xl border border-gray-200 bg-white p-4">
             <div className="space-y-1 text-xs text-gray-500">
               <p className="text-sm font-medium text-gray-900">
@@ -269,5 +307,141 @@ export default function AdminInquiriesPage() {
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * 먼저 보내는 칸. 이름이나 이메일로 사람을 찾고, 고른 사람에게 첫 글을 보낸다.
+ *
+ * 찾기는 치는 동안 잠깐 멈췄을 때 묻는다(`SEARCH_DELAY_MS`). 늦게 온 답이 새 답을 덮지 않도록
+ * 물을 때마다 번호를 매겨 마지막 것만 받는다.
+ */
+const SEARCH_DELAY_MS = 250;
+
+function ComposePanel({
+  onSent,
+  onCancel,
+  onError,
+}: {
+  onSent: (saved: InquiryDto.AdminDetail) => void;
+  onCancel: () => void;
+  onError: (reason: unknown) => void;
+}) {
+  const [query, setQuery] = useState('');
+  const [users, setUsers] = useState<InquiryDto.AdminUser[]>([]);
+  const [isSearching, setIsSearching] = useState(true);
+  const [target, setTarget] = useState<InquiryDto.AdminUser | null>(null);
+  const [body, setBody] = useState('');
+  const [isSending, setIsSending] = useState(false);
+  const searchRun = useRef(0);
+
+  useEffect(() => {
+    if (target) return;
+    const run = ++searchRun.current;
+    setIsSearching(true);
+    const timer = setTimeout(() => {
+      searchUsers(query)
+        .then((rows) => {
+          if (run === searchRun.current) setUsers(rows);
+        })
+        .catch(onError)
+        .finally(() => {
+          if (run === searchRun.current) setIsSearching(false);
+        });
+    }, SEARCH_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [query, target, onError]);
+
+  const send = async () => {
+    if (!target || !body.trim()) return;
+    setIsSending(true);
+    try {
+      onSent(await startInquiry(target.id, body.trim()));
+    } catch (reason) {
+      onError(reason);
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  return (
+    <section className="unfold space-y-4 rounded-xl border border-gray-200 bg-white p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-medium text-gray-900">새 메시지</h2>
+        <button type="button" onClick={onCancel} className="text-sm text-gray-500 hover:text-gray-700">
+          그만두기
+        </button>
+      </div>
+
+      {target ? (
+        <div className="unfold flex items-center justify-between gap-2 rounded-lg bg-blue-50 px-3 py-2 text-sm">
+          <span className="min-w-0 truncate text-gray-900">
+            {target.name} <span className="text-gray-500">{target.email}</span>
+          </span>
+          <button
+            type="button"
+            onClick={() => setTarget(null)}
+            className="shrink-0 text-xs text-blue-700 hover:underline"
+          >
+            다른 사람
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          <input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="이름이나 이메일로 찾기"
+            autoFocus
+            className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+          />
+          <div className="max-h-64 space-y-1 overflow-y-auto">
+            {!isSearching && users.length === 0 ? (
+              <p className="p-3 text-center text-sm text-gray-500">찾는 사람이 없습니다.</p>
+            ) : null}
+            {users.map((user) => (
+              <button
+                key={user.id}
+                type="button"
+                onClick={() => setTarget(user)}
+                className="unfold block w-full rounded-lg px-3 py-2 text-left text-sm transition-colors hover:bg-gray-50"
+              >
+                <span className="text-gray-900">{user.name}</span>{' '}
+                <span className="text-gray-500">{user.email}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <form
+        className="space-y-2"
+        onSubmit={(event) => {
+          event.preventDefault();
+          void send();
+        }}
+      >
+        <textarea
+          value={body}
+          onChange={(event) => setBody(event.target.value)}
+          placeholder="보낼 내용을 적어 주세요"
+          maxLength={INQUIRY_BODY_MAX}
+          rows={6}
+          className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm"
+        />
+        <div className="flex items-center justify-between">
+          <span className="text-xs text-gray-400">
+            {body.length}/{INQUIRY_BODY_MAX}
+          </span>
+          <button
+            type="submit"
+            disabled={!target || !body.trim() || isSending}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+          >
+            {isSending ? '보내는 중…' : '보내기'}
+          </button>
+        </div>
+      </form>
+    </section>
   );
 }

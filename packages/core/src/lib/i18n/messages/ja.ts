@@ -100,6 +100,7 @@ export const ja: Record<MessageKey, string> = {
   'error.INQUIRY_BODY_REQUIRED': '内容を入力してください。',
   'error.INQUIRY_BODY_TOO_LONG': 'お問い合わせは5000文字までです。',
   'error.INQUIRY_NOT_FOUND': 'お問い合わせが見つかりません。',
+  'error.INQUIRY_USER_NOT_FOUND': 'ユーザーが見つかりません。',
   'error.ENTRY_SHEET_INVALID': 'Excelの行の形式が正しくありません。',
   'online.onlyOnline': 'インターネットに接続すると使えます。',
   'online.offlineNotice': '今はサーバーに接続できません。書いたものは接続が戻ると送信します。',

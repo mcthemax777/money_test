@@ -109,6 +109,7 @@ export const ko = {
   'error.INQUIRY_BODY_REQUIRED': '문의 내용을 적어 주세요.',
   'error.INQUIRY_BODY_TOO_LONG': '문의는 5000자까지 적을 수 있습니다.',
   'error.INQUIRY_NOT_FOUND': '문의를 찾을 수 없습니다.',
+  'error.INQUIRY_USER_NOT_FOUND': '사용자를 찾을 수 없습니다.',
   'error.ENTRY_SHEET_INVALID': '엑셀 행의 모양이 올바르지 않습니다.',
   'online.onlyOnline': '인터넷에 연결되면 할 수 있습니다.',
   'online.offlineNotice': '지금은 서버에 닿지 않습니다. 적어 둔 것은 연결되면 보냅니다.',

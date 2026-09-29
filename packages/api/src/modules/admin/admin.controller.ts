@@ -170,6 +170,21 @@ export class AdminController {
     return this.inquiries.adminGet(id);
   }
 
+  /** 먼저 보낼 사람 찾기. 이름·이메일의 일부. */
+  @Get('users')
+  @UseGuards(AdminGuard)
+  searchUsers(@Query('q') q?: string) {
+    return this.inquiries.adminSearchUsers(q);
+  }
+
+  /** 사용자가 묻지 않았어도 관리자가 먼저 대화를 연다. 그 사용자의 기기로 푸시가 간다. */
+  @Post('inquiries')
+  @UseGuards(AdminGuard)
+  @HttpCode(HttpStatus.CREATED)
+  startInquiry(@Body() body: InquiryDto.AdminStartRequest) {
+    return this.inquiries.adminStart(body);
+  }
+
   /** 답장. 그 사용자의 기기로 푸시가 간다. */
   @Post('inquiries/:id/replies')
   @UseGuards(AdminGuard)

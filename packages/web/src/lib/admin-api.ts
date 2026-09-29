@@ -141,5 +141,12 @@ export const getInquiry = (id: string) =>
   call<InquiryDto.AdminDetail>('GET', `/admin/inquiries/${encodeURIComponent(id)}`);
 
 /** 답장. 그 사용자의 기기로 푸시가 간다. */
+export const searchUsers = (query: string) =>
+  call<InquiryDto.AdminUser[]>('GET', `/admin/users?q=${encodeURIComponent(query)}`);
+
+/** 사용자가 묻지 않았어도 먼저 보낸다. */
+export const startInquiry = (userId: string, body: string) =>
+  call<InquiryDto.AdminDetail>('POST', '/admin/inquiries', { userId, body });
+
 export const replyInquiry = (id: string, body: string) =>
   call<InquiryDto.AdminDetail>('POST', `/admin/inquiries/${encodeURIComponent(id)}/replies`, { body });
