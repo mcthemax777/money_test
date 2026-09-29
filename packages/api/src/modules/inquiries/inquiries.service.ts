@@ -9,7 +9,8 @@
  *
  * 문의 목록이나 대화를 띄워 둔 화면은 `INQUIRY_POLL_MS` 마다 `listMine`·`getMine` 을 부르고,
  * 그때마다 `userWatchedAt` 이 당겨진다. 그 값이 막 당겨졌으면 사용자가 지금 문의하기를 보고
- * 있는 것이라 답장 푸시를 보내지 않는다 -- 답은 다음 조회에 화면에 곧바로 선다.
+ * 있는 것이라 답장 푸시를 보내지 않는다 -- 답은 다음 조회에 화면에 곧바로 선다. 떠날 때는
+ * 화면이 `unwatch` 를 불러 표시를 지우므로 그 뒤의 답은 곧바로 푸시된다.
  */
 import { Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
@@ -64,6 +65,11 @@ export class InquiriesService {
     let count = 0;
     for (const value of unread.values()) count += value;
     return { count };
+  }
+
+  /** 문의하기를 떠났다. 보고 있다는 표시를 지워, 다음 답부터 곧바로 푸시가 가게 한다. */
+  async unwatch(userId: string): Promise<void> {
+    await this.prisma.inquiry.updateMany({ where: { userId }, data: { userWatchedAt: null } });
   }
 
   /** 문의 하나. 여는 것이 곧 읽는 것이라 `userReadAt` 을, 보고 있으니 `userWatchedAt` 을 당긴다. */

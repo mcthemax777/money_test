@@ -9,7 +9,7 @@
  */
 import { useState } from 'react';
 import { INQUIRY_BODY_MAX, type InquiryDto } from '@money/types';
-import { useInquiries, useInquiryThread } from '@money/core/hooks/useInquiries';
+import { useInquiries, useInquiryPresence, useInquiryThread } from '@money/core/hooks/useInquiries';
 import { formatDateTime } from '@money/core/lib/datetime';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useProjectTimeZone } from '@money/core/store/project';
@@ -28,6 +28,8 @@ export default function InquiriesPage() {
    * "보고 있다"가 아니다 -- 그때 온 답은 푸시로 알린다. 대화 화면은 제 것을 따로 묻는다.
    */
   const list = useInquiries({ active: isVisible && mode.kind === 'list' });
+  // 목록·대화를 떠나거나(새 문의 쓰기 포함) 탭을 가리면 곧바로 푸시가 다시 오게 한다.
+  useInquiryPresence(isVisible && mode.kind !== 'new');
 
   const go = (next: Mode) => {
     setMode(next);

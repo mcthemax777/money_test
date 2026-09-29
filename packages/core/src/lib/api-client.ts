@@ -838,6 +838,11 @@ class ApiClient {
     return response.data;
   }
 
+  /** 문의하기를 떠났다. 서버가 보고 있다는 표시를 지워 다음 답을 곧바로 푸시한다. */
+  async unwatchInquiries(): Promise<void> {
+    await this.client.post('/inquiries/unwatch');
+  }
+
   async createInquiry(body: string): Promise<InquiryDto.Detail> {
     const response = await this.client.post<InquiryDto.Detail>('/inquiries', { body });
     return response.data;

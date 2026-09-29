@@ -53,6 +53,19 @@ export class InquiriesController {
     });
   }
 
+  /*
+   * 문의하기를 떠났다. 목록·대화에서 나가거나 앱을 뒤로 보낼 때 웹·앱이 부른다.
+   *
+   * 몇 초마다 오던 조회가 끊기기만 해서는 서버가 떠난 것을 `INQUIRY_WATCH_MS` 가 지나서야
+   * 안다. 그 사이에 온 답은 푸시 없이 묻힌다. 떠나는 순간 알려 곧바로 푸시가 가게 한다.
+   */
+  @Post('unwatch')
+  @HttpCode(HttpStatus.NO_CONTENT)
+  @ApiOperation({ summary: '문의하기를 떠났다 (답장 푸시를 곧바로 다시 보낸다)' })
+  async unwatch(@Request() req: AuthenticatedRequest): Promise<void> {
+    await this.inquiries.unwatch(req.user.id);
+  }
+
   @Post(':id/messages')
   @Throttle(WRITE_LIMIT)
   @HttpCode(HttpStatus.CREATED)

@@ -64,6 +64,28 @@ function useWatchPoll(
   }, [enabled]);
 }
 
+/**
+ * 문의하기를 보고 있는 동안을 서버에 알린다. `watching` 이 꺼지거나 화면이 사라지면 곧바로
+ * "떠났다"를 보낸다(`unwatchInquiries`).
+ *
+ * 보내지 않으면 서버는 마지막 조회에서 `INQUIRY_WATCH_MS` 가 지나야 떠난 줄 안다. 그 사이에
+ * 온 답은 목록에도 대화에도 없는 사람에게 푸시 없이 묻힌다.
+ *
+ * 화면 하나에 한 번만 둔다(목록·대화를 오가는 것은 떠나는 것이 아니다). 실패는 넘긴다 --
+ * 그때는 서버가 위의 시간이 지나 스스로 푼다. 떠나는 순간 이미 나간 조회가 이 알림보다 늦게
+ * 서버에 닿으면 표시가 다시 서는데, 그것도 같은 시간 안에 풀린다.
+ */
+export function useInquiryPresence(watching: boolean) {
+  useEffect(() => {
+    if (!watching) return;
+    return () => {
+      void apiClient.unwatchInquiries().catch(() => {
+        // 서버가 시간이 지나 스스로 푼다.
+      });
+    };
+  }, [watching]);
+}
+
 /** 목록이 바뀌었는가. 줄의 차례·마지막 글·읽지 않은 수·상태만 본다. */
 function listSignature(inquiries: InquiryDto.Summary[]): string {
   return inquiries
