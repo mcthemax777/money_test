@@ -11,6 +11,9 @@ import type {
   AppVersionPolicy,
   AppVersionPolicyUpdate,
   HolidayCountry,
+  NotificationRule,
+  NotificationRuleDto,
+  NotificationSampleDto,
 } from '@money/types';
 import { apiClient } from '@money/core/lib/api-client';
 
@@ -99,3 +102,32 @@ export const listAppVersions = () => call<AppVersionPolicy[]>('GET', '/admin/app
 
 export const updateAppVersion = (platform: AppPlatform, body: AppVersionPolicyUpdate) =>
   call<AppVersionPolicy>('PUT', `/admin/app-versions/${platform}`, body);
+
+export function listNotificationSamples(query: NotificationSampleDto.ListQuery) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(query)) {
+    if (value !== undefined && value !== null && value !== '') params.set(key, String(value));
+  }
+  return call<NotificationSampleDto.ListResponse>('GET', `/admin/notification-samples?${params.toString()}`);
+}
+
+export const listNotificationSamplePackages = () =>
+  call<NotificationSampleDto.PackageSummary[]>('GET', '/admin/notification-samples/packages');
+
+export const removeNotificationSample = (id: string) =>
+  call<void>('DELETE', `/admin/notification-samples/${encodeURIComponent(id)}`);
+
+export const listNotificationRules = (packageName?: string) =>
+  call<NotificationRule[]>(
+    'GET',
+    `/admin/notification-rules${packageName ? `?packageName=${encodeURIComponent(packageName)}` : ''}`,
+  );
+
+export const createNotificationRule = (body: NotificationRuleDto.SaveRequest) =>
+  call<NotificationRule>('POST', '/admin/notification-rules', body);
+
+export const updateNotificationRule = (id: string, body: Partial<NotificationRuleDto.SaveRequest>) =>
+  call<NotificationRule>('PUT', `/admin/notification-rules/${encodeURIComponent(id)}`, body);
+
+export const removeNotificationRule = (id: string) =>
+  call<void>('DELETE', `/admin/notification-rules/${encodeURIComponent(id)}`);

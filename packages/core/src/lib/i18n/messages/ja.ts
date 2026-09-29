@@ -1100,6 +1100,9 @@ export const ja: Record<MessageKey, string> = {
   'error.RECURRING_FEE_INVALID': '手数料は0以上の金額で入力してください。',
   'error.APP_UPDATE_REQUIRED': 'このバージョンは利用できなくなりました。アップデートしてください。',
   'error.APP_VERSION_INVALID': 'バージョン設定の値が正しくありません。',
+  'error.NOTIFICATION_SAMPLE_INVALID': '通知の原文の形式が正しくありません。',
+  'error.NOTIFICATION_RULE_INVALID': '通知ルールが正しくありません。',
+  'error.NOTIFICATION_RULE_NOT_FOUND': '通知ルールが見つかりません。',
   'carousel.prev': '前へ',
   'carousel.next': '次へ',
 

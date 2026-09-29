@@ -1136,6 +1136,9 @@ export const ko = {
   'error.RECURRING_FEE_INVALID': '수수료는 0 이상의 금액으로 적어 주세요.',
   'error.APP_UPDATE_REQUIRED': '이 버전은 더 이상 쓸 수 없습니다. 업데이트해 주세요.',
   'error.APP_VERSION_INVALID': '버전 정책 값이 올바르지 않습니다.',
+  'error.NOTIFICATION_SAMPLE_INVALID': '알림 원문 모양이 올바르지 않습니다.',
+  'error.NOTIFICATION_RULE_INVALID': '알림 규칙이 올바르지 않습니다.',
+  'error.NOTIFICATION_RULE_NOT_FOUND': '알림 규칙을 찾을 수 없습니다.',
   'carousel.prev': '이전으로',
   'carousel.next': '다음으로',
 

@@ -112,6 +112,11 @@ export const ERROR_CODES = [
   // 앱·웹 버전
   'APP_UPDATE_REQUIRED',
   'APP_VERSION_INVALID',
+
+  // 알림 표본·앱별 문구 규칙
+  'NOTIFICATION_SAMPLE_INVALID',
+  'NOTIFICATION_RULE_INVALID',
+  'NOTIFICATION_RULE_NOT_FOUND',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

@@ -5,9 +5,10 @@
  * 캡처에서 뽑은 글자가 **같은 규칙**을 지나고, 규칙을 고칠 때 검사(scripts 의
  * `draft-parse-smoke`)만으로 확인할 수 있다.
  *
- * 해석을 기기에서 하는 까닭이 있다. 알림 문구는 카드 번호 끝자리와 가맹점이 담긴
- * 사적인 글이고, 캡처는 화면 사진이다. 서버로 보내 읽게 하면 그 사진과 문구가
- * 남의 컴퓨터를 거친다. 규칙 파서는 그것을 기기 안에서 끝낸다.
+ * 해석을 기기에서 하는 까닭이 있다. 캡처는 화면 사진이라 서버로 보내 읽게 하면 그 사진이
+ * 남의 컴퓨터를 거친다. 규칙 파서는 그것을 기기 안에서 끝낸다. 알림 원문은 앱별 규칙을
+ * 배우려고 서버에 표본으로 모으지만(2026-09-29), 읽기는 여전히 기기에서 한다 --
+ * 규칙을 먼저 대 보는 자리는 `notification-rule` 의 `parseNotificationWithRules` 다.
  *
  * 읽지 못한 칸은 비워 둔다. 억지로 채우는 것보다 사람이 한 칸 채우는 편이 낫다 --
  * 틀린 값이 채워져 있으면 사람은 그것을 검사하지 않고 저장한다.
@@ -61,7 +62,7 @@ export interface NotificationInput {
  * 걸러내지 않으면 한 달 사용액이 커피 한 잔 값으로 들어온다 -- 이 파서에서 가장
  * 자주 틀리는 자리다.
  */
-const NOT_AMOUNT = [
+export const NOT_AMOUNT = [
   '누적',
   '누계',
   '합계',
@@ -193,6 +194,30 @@ const CURRENCY_MARKS: Array<{ pattern: RegExp; code: string; symbol?: boolean }>
  * 있어야 한다. 하나만 보면 배달 알림("3,900원 할인")과 채팅("입금했어요")이 줄줄이
  * 후보로 들어온다.
  */
+/**
+ * 알림에서 읽는 글. 제목과 본문을 한 줄 띄워 붙인다.
+ *
+ * 앱별 규칙(`notification-rule`)도 이 글에 대고 배우고 읽는다. 둘이 다른 글을 보면
+ * 관리 도구에서 맞던 규칙이 기기에서 어긋난다.
+ */
+export function notificationText(input: Pick<NotificationInput, 'title' | 'text'>): string {
+  return `${(input.title ?? '').trim()}\n${input.text.trim()}`.trim();
+}
+
+/**
+ * 숫자와 통화 표기가 함께 있는가. 알림 표본을 서버에 올릴지 정한다.
+ *
+ * `looksFinancial` 보다 느슨하다 -- 무엇을 했는지 아는 낱말을 묻지 않는다. 파서가 모르는
+ * 낱말로 온 결제("사용하셨어요")를 표본에 남겨야 규칙을 고칠 수 있다. 네이티브 리스너가
+ * 자바스크립트를 깨우는 조건(`InboxNotificationService.MONEY_HINT`)과 같은 식이다.
+ */
+const MONEY_MARK =
+  /[0-9].*(원|₩|KRW|USD|\$|달러|JPY|¥|EUR|€|유로|CNY|위안)|(₩|\$|¥|€|USD|KRW|JPY|EUR|CNY)\s*[0-9]/i;
+
+export function hasMoneyMark(input: Pick<NotificationInput, 'title' | 'text'>): boolean {
+  return MONEY_MARK.test(notificationText(input));
+}
+
 export function looksFinancial(input: NotificationInput): boolean {
   const text = `${input.title ?? ''}\n${input.text}`;
   return amountOf(text) !== null && kindOf(text) !== null;
@@ -205,9 +230,7 @@ export function looksFinancial(input: NotificationInput): boolean {
  * 그 시각이 거래 시각과 사실상 같다.
  */
 export function parseNotification(input: NotificationInput): ParsedDraft | null {
-  const title = (input.title ?? '').trim();
-  const body = input.text.trim();
-  const text = `${title}\n${body}`.trim();
+  const text = notificationText(input);
   if (!looksFinancial(input)) return null;
 
   const app = KNOWN_APPS.find((row) => input.packageName.toLowerCase().includes(row.match));
@@ -488,18 +511,14 @@ function parseText(
   const issuer = issuerOf(text) ?? options.issuerFallback ?? null;
   const cardTail = cardTailOf(text);
 
-  /*
-   * 얼마나 믿을 수 있는가.
-   *
-   * 금액과 갈래는 이것이 거래라는 근거이고, 나머지는 사람이 손볼 칸이 몇 개인지를
-   * 말한다. 값을 순서에 쓰지 않는다 -- 화면에서 "손봐야 한다"는 표시로만 쓴다.
-   */
-  let confidence = 0;
-  if (money) confidence += 35;
-  if (kind) confidence += 25;
-  if (occurredAt) confidence += 10;
-  if (merchant) confidence += 15;
-  if (issuer || cardTail) confidence += 15;
+  const confidence = confidenceOf({
+    amount: money?.amount ?? null,
+    kind,
+    occurredAt,
+    merchant,
+    issuer,
+    cardTail,
+  });
 
   return {
     kind,
@@ -520,10 +539,29 @@ function parseText(
      * 카드가 된다(앞뒤 줄을 함께 넘기기 때문이다).
      */
     cardText: options.cardText !== undefined ? options.cardText : text,
-    confidence: Math.min(100, confidence),
+    confidence,
     parser: options.parser,
     rawText: text,
   };
+}
+
+/**
+ * 얼마나 믿을 수 있는가 (0~100).
+ *
+ * 금액과 갈래는 이것이 거래라는 근거이고, 나머지는 사람이 손볼 칸이 몇 개인지를
+ * 말한다. 값을 순서에 쓰지 않는다 -- 화면에서 "손봐야 한다"는 표시로만 쓴다.
+ * 앱별 규칙으로 읽은 후보도 같은 셈을 한다(`notification-rule`).
+ */
+export function confidenceOf(
+  draft: Pick<ParsedDraft, 'amount' | 'kind' | 'occurredAt' | 'merchant' | 'issuer' | 'cardTail'>,
+): number {
+  let confidence = 0;
+  if (draft.amount) confidence += 35;
+  if (draft.kind) confidence += 25;
+  if (draft.occurredAt) confidence += 10;
+  if (draft.merchant) confidence += 15;
+  if (draft.issuer || draft.cardTail) confidence += 15;
+  return Math.min(100, confidence);
 }
 
 /**
@@ -533,7 +571,7 @@ function parseText(
  * ("12,000원"이 "12,000" 이나 "12,000l" 로 온다) 단위를 요구하면 목록 캡처에서
  * 금액이 하나도 걸리지 않는다. 그때는 자릿점이 단위 구실을 한다 -- 아래를 볼 것.
  */
-function amountOf(
+export function amountOf(
   text: string,
   options: { bare?: boolean } = {},
 ): { amount: string; currency: string } | null {
@@ -607,7 +645,7 @@ function isNotAmount(text: string, index: number): boolean {
 }
 
 /** "12,000" -> "12000". 자릿점만 떼고 소수점은 남긴다. */
-function normalizeAmount(raw: string | undefined): string | null {
+export function normalizeAmount(raw: string | undefined): string | null {
   if (!raw) return null;
   const cleaned = raw.replace(/,/g, '').replace(/\.$/, '');
   if (!/^[0-9]+(\.[0-9]+)?$/.test(cleaned)) return null;
@@ -624,7 +662,7 @@ function normalizeAmount(raw: string | undefined): string | null {
  * 취소를 수입으로 둔다. 돈이 돌아온 것은 맞고, 이 파서는 어느 거래를 되돌린 것인지
  * 알 수 없다. 원래 지출을 찾아 지우는 일은 사람이 보관함에서 판단한다.
  */
-function kindOf(text: string): EntryKind | null {
+export function kindOf(text: string): EntryKind | null {
   if (CANCEL_WORDS.some((word) => text.includes(word))) return 'income';
   if (TRANSFER_WORDS.some((word) => text.includes(word))) return 'transfer';
   if (INCOME_WORDS.some((word) => text.includes(word))) return 'income';
@@ -642,7 +680,7 @@ function kindOf(text: string): EntryKind | null {
  * **자리 표기(로컬 시각)로 만든다.** 문구의 시각은 그 나라의 벽시계이고, 기기의
  * 시간대가 곧 그 벽시계다.
  */
-function dateOf(text: string, now: number): string | null {
+export function dateOf(text: string, now: number): string | null {
   const reference = new Date(now);
   const time = timeOf(text);
   const hour = time?.hour ?? null;
@@ -910,7 +948,7 @@ function cleanMerchantLine(line: string): string | null {
 }
 
 /** 할부 개월수. 일시불이거나 1개월이면 null 이다. */
-function installmentOf(text: string): number | null {
+export function installmentOf(text: string): number | null {
   if (text.includes('일시불')) return null;
   const match = text.match(/(\d{1,2})\s*개월/);
   if (!match) return null;
@@ -938,7 +976,7 @@ function isCardLine(line: string): boolean {
 }
 
 /** 문구에 적힌 카드사·은행. 긴 이름을 먼저 보아 "국민카드"가 "국민"에 먹히지 않게 한다. */
-function issuerOf(text: string): string | null {
+export function issuerOf(text: string): string | null {
   const found = ISSUER_WORDS.filter((word) => text.includes(word)).sort(
     (a, b) => b.length - a.length,
   );
@@ -946,7 +984,7 @@ function issuerOf(text: string): string | null {
 }
 
 /** 카드 번호 끝 네 자리. "(1234)", "*1234", "카드1234" 를 읽는다. */
-function cardTailOf(text: string): string | null {
+export function cardTailOf(text: string): string | null {
   const paren = text.match(/\(\s*(\d{4})\s*\)/);
   if (paren) return paren[1];
   const masked = text.match(/[*·•]\s*(\d{4})/);

@@ -101,6 +101,7 @@ model User {
   projectJoinRequests ProjectJoinRequest[]
   createdEntries      JournalEntry[] // 입력자 추적용 (조회 필터로는 쓰지 않는다)
   pushDevices         PushDevice[]
+  notificationSamples NotificationSample[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1224,4 +1225,61 @@ model AppVersionPolicy {
   /// 업데이트 창에 덧붙일 말.
   message       String?
   updatedAt     DateTime @updatedAt
+}
+
+/// 다른 금융 앱이 보낸 알림의 원문(표본). 기기가 알림을 모을 때 돈 표기가 있는 것을 올린다.
+///
+/// **후보가 되지 못한 알림도 담는다.** 파서가 놓친 문구를 찾아 앱별 규칙(NotificationRule)을
+/// 배우는 재료다. 관리 도구(`/admin/notifications`)에서만 읽는다 -- 가계부 화면에는 나오지
+/// 않고 변경 피드에도 싣지 않는다. 지우는 기한은 없다(2026-09-29, 사용자 결정: 무기한).
+///
+/// 가계부(projectId)는 외래 키로 묶지 않는다. 표본은 그 앱의 문구이지 가계부의 자료가 아니라,
+/// 가계부를 지워도 규칙을 배울 재료로 남긴다. 계정을 지우면 함께 지운다.
+model NotificationSample {
+  id          String   @id @default(cuid())
+  userId      String
+  /// 모을 때 열려 있던 가계부. 기록일 뿐이다.
+  projectId   String?
+  packageName String
+  title       String?
+  text        String
+  /// 알림이 온 시각.
+  postedAt    DateTime
+  /// 같은 알림을 두 번 담지 않는 열쇠(후보의 dedupeKey 와 같은 값). (사용자, 열쇠) 가 유일하다.
+  sampleKey   String
+  /// 기기가 그때 읽은 결과(`NotificationSampleParsed`). 거래로 읽히지 않았으면 null.
+  parsed      Json?
+  deviceName  String?
+  appVersion  String?
+
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, sampleKey])
+  @@index([packageName, postedAt])
+  @@index([postedAt])
+}
+
+/// 앱별 알림 문구 규칙. 관리 도구에서 표본으로 배우고 사람이 칸 이름을 확인해 저장한다.
+///
+/// 기기가 `GET /notification-rules` 로 내려받아 알림을 읽을 때 기존 규칙보다 먼저 대 본다
+/// (`@money/core` 의 `notification-rule`). 가계부와 무관하게 모두에게 같다.
+model NotificationRule {
+  id          String  @id @default(cuid())
+  packageName String
+  name        String
+  /// `NotificationRuleSegment[]`. 정규식이 아니라 글 토막과 칸의 차례다.
+  segments    Json
+  /// expense | income | transfer. null 이면 문구의 낱말로 정한다.
+  kind        String?
+  currency    String?
+  enabled     Boolean @default(true)
+  note        String?
+  learnedFrom Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([packageName])
 }

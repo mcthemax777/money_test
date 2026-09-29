@@ -1107,6 +1107,9 @@ export const en: Record<MessageKey, string> = {
   'error.RECURRING_FEE_INVALID': 'Enter a fee of zero or more.',
   'error.APP_UPDATE_REQUIRED': 'This version is no longer supported. Please update.',
   'error.APP_VERSION_INVALID': 'The version policy is not valid.',
+  'error.NOTIFICATION_SAMPLE_INVALID': 'The notification sample is not valid.',
+  'error.NOTIFICATION_RULE_INVALID': 'The notification rule is not valid.',
+  'error.NOTIFICATION_RULE_NOT_FOUND': 'The notification rule was not found.',
   'carousel.prev': 'Previous',
   'carousel.next': 'Next',
 

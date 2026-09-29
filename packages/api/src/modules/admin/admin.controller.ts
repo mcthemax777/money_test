@@ -1,7 +1,7 @@
 /**
  * 관리 도구 API. 웹의 `/admin` 이 부른다.
  *
- * 도구가 늘면 여기에 길을 더한다(지금은 공휴일 하나). 로그인 외에는 전부 `AdminGuard` 뒤에 있다.
+ * 도구가 늘면 여기에 길을 더한다(공휴일, 앱 버전, 알림 원문·규칙). 로그인 외에는 전부 `AdminGuard` 뒤에 있다.
  */
 import {
   BadRequestException,
@@ -24,11 +24,14 @@ import {
   HOLIDAY_COUNTRIES,
   type AppVersionPolicyUpdate,
   type HolidayCountry,
+  type NotificationRuleDto,
+  type NotificationSampleDto,
 } from '@money/types';
 
 import { AppVersionService, isPlatform } from '../app-version/app-version.service';
 import { SkipVersionCheck } from '../app-version/skip-version-check.decorator';
 import { HolidaysService } from '../holidays/holidays.service';
+import { NotificationSamplesService } from '../notification-samples/notification-samples.service';
 import { AdminAuthService, type AdminTokenPayload } from './admin-auth.service';
 import { AdminGuard } from './admin.guard';
 
@@ -44,6 +47,7 @@ export class AdminController {
     private readonly auth: AdminAuthService,
     private readonly holidays: HolidaysService,
     private readonly versions: AppVersionService,
+    private readonly samples: NotificationSamplesService,
   ) {}
 
   @Post('login')
@@ -99,6 +103,54 @@ export class AdminController {
       throw new BadRequestException('플랫폼은 android, ios, web 중 하나입니다.');
     }
     return this.versions.update(platform, body ?? {});
+  }
+
+  // 알림 원문(표본) ---------------------------------------------------------
+
+  @Get('notification-samples')
+  @UseGuards(AdminGuard)
+  listNotificationSamples(@Query() query: NotificationSampleDto.ListQuery) {
+    return this.samples.list(query);
+  }
+
+  @Get('notification-samples/packages')
+  @UseGuards(AdminGuard)
+  notificationSamplePackages() {
+    return this.samples.packages();
+  }
+
+  @Delete('notification-samples/:id')
+  @UseGuards(AdminGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeNotificationSample(@Param('id') id: string) {
+    await this.samples.removeSample(id);
+  }
+
+  // 앱별 알림 문구 규칙 -------------------------------------------------------
+
+  @Get('notification-rules')
+  @UseGuards(AdminGuard)
+  listNotificationRules(@Query('packageName') packageName?: string) {
+    return this.samples.listRules(packageName || undefined);
+  }
+
+  @Post('notification-rules')
+  @UseGuards(AdminGuard)
+  createNotificationRule(@Body() body: NotificationRuleDto.SaveRequest) {
+    return this.samples.createRule(body);
+  }
+
+  @Put('notification-rules/:id')
+  @UseGuards(AdminGuard)
+  updateNotificationRule(@Param('id') id: string, @Body() body: Partial<NotificationRuleDto.SaveRequest>) {
+    return this.samples.updateRule(id, body ?? {});
+  }
+
+  @Delete('notification-rules/:id')
+  @UseGuards(AdminGuard)
+  @HttpCode(HttpStatus.NO_CONTENT)
+  async removeNotificationRule(@Param('id') id: string) {
+    await this.samples.removeRule(id);
   }
 
   @Delete('holidays/:country/:date')

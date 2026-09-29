@@ -26,6 +26,8 @@ import type {
   CategoryDto,
   TagDto,
   EntryDraftDto,
+  NotificationRule,
+  NotificationSampleDto,
   PushDeviceDto,
   RecurringRuleDto,
   EntryDto,
@@ -767,6 +769,31 @@ class ApiClient {
 
   async deleteEntryDraft(id: string): Promise<void> {
     await this.client.delete(`/entry-drafts/${id}`);
+  }
+
+  // 알림 원문(표본)·앱별 문구 규칙 API Methods
+
+  /**
+   * 기기가 모은 알림 원문을 올린다 (돈 표기가 있는 것, 후보가 못 된 것 포함).
+   *
+   * 같은 열쇠(sampleKey)는 서버가 한 번만 담으므로 다시 보내도 늘지 않는다.
+   */
+  async addNotificationSamples(
+    samples: NotificationSampleDto.CreateItem[],
+    projectId?: string | null,
+  ): Promise<NotificationSampleDto.CreateResponse> {
+    const response = await this.client.post<NotificationSampleDto.CreateResponse>(
+      '/notification-samples',
+      { samples },
+      { params: projectId ? { projectId } : {} },
+    );
+    return response.data;
+  }
+
+  /** 켜 둔 앱별 규칙. 기기가 알림을 읽을 때 기존 규칙보다 먼저 대 본다. */
+  async getNotificationRules(): Promise<NotificationRule[]> {
+    const response = await this.client.get<NotificationRule[]>('/notification-rules');
+    return response.data;
   }
 
   // 푸시 기기 API Methods

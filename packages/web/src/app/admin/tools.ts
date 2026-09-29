@@ -22,4 +22,16 @@ export const ADMIN_TOOLS: AdminTool[] = [
     description:
       '강제 업데이트(이보다 낮으면 쓸 수 없음)와 권유(새 버전 안내)를 안드로이드·iOS·웹마다 정합니다. 저장하면 30초 안에 모든 서버에 먹습니다.',
   },
+  {
+    href: '/admin/notifications',
+    title: '알림 원문',
+    description:
+      '기기가 모은 다른 금융 앱의 알림 원문. 그때 읽은 결과와 지금 규칙으로 다시 읽은 결과를 나란히 봅니다.',
+  },
+  {
+    href: '/admin/notification-rules',
+    title: '알림 규칙',
+    description:
+      '같은 앱의 알림 원문을 맞대어 앱별 문구 규칙을 배우고, 칸 이름을 확인해 기기로 내려보냅니다. 배우는 방법은 문서로 볼 수 있습니다.',
+  },
 ];

@@ -10,13 +10,19 @@
  * 해석은 core 의 규칙(`draft-parse`)이 하고, 이 파일은 그 앞뒤를 잇는다 -- 목록을
  * 읽어 자산을 맞추고(`draft-match`), 이미 담은 것을 걸러내고, 서버에 올린다.
  *
- * **사진과 알림 문구는 서버로 가지 않는다.** 서버에 담기는 것은 읽어 낸 값과 그
- * 근거가 된 원문 한 줄이고, 그것도 사용자가 보관함에서 보고 지울 수 있다. 사진 자체는
- * 기기를 떠나지 않는다.
+ * **사진은 기기를 떠나지 않는다.** 캡처로 서버에 담기는 것은 없다(캡처 후보는 기기에만 둔다).
+ *
+ * **돈 표기가 있는 알림은 원문을 서버에 올린다** (2026-09-29, 사용자 결정). 후보가 되지
+ * 못한 것도 올린다 -- 관리 도구가 그 원문으로 앱별 문구 규칙을 배우고, 기기는 그 규칙을
+ * 내려받아 기존 규칙보다 먼저 대 본다(`notification-rule`). 돈 표기가 없는 알림(채팅·뉴스)은
+ * 올리지 않는다.
  */
 import { draftPort } from '@money/core/data/draft-port';
 import { homeDataPort } from '@money/core/data/home-port';
-import { notificationDedupeKey, parseNotification } from '@money/core/lib/draft-parse';
+import { apiClient } from '@money/core/lib/api-client';
+import { hasMoneyMark, notificationDedupeKey, type ParsedDraft } from '@money/core/lib/draft-parse';
+import { parseNotificationWithRules, sampleParsedOf } from '@money/core/lib/notification-rule';
+import { persistStorage } from '@money/core/lib/persist-storage';
 import {
   captureItems,
   dedupeNotificationItems,
@@ -26,7 +32,8 @@ import {
   type CollectHints,
 } from '@money/core/lib/draft-collect';
 import { myPersonIdOf } from '@money/core/store/project';
-import type { EntryDraftDto } from '@money/types';
+import type { EntryDraftDto, NotificationRule, NotificationSampleDto } from '@money/types';
+import * as Application from 'expo-application';
 
 import * as InboxNative from '../modules/inbox-native';
 import { merchantHistory } from './offline';
@@ -97,15 +104,18 @@ async function collectNotificationsNow(projectId: string): Promise<CollectResult
   const captured = InboxNative.readNotifications();
   if (captured.length === 0) return EMPTY;
 
-  const hints = await loadHints(projectId);
+  const [hints, rules] = await Promise.all([loadHints(projectId), loadNotificationRules()]);
   // 담은 기기. 보관함과 다른 구성원의 화면에 "어느 기기에서 담았는지"로 보인다.
   const deviceName = InboxNative.getDeviceName();
+  /** 알림마다 읽은 결과. 표본에 "그때 읽은 것"으로 함께 올린다. */
+  const parsedByKey = new Map<string, ParsedDraft | null>();
   const candidates: Array<{ item: EntryDraftDto.CreateItem; key: string }> = [];
   /** 금융 알림이 아니어서 후보가 되지 못한 것. 이쪽도 버퍼에서 지운다. */
   const droppedKeys: string[] = [];
 
   for (const notification of captured) {
-    const parsed = parseNotification(notification);
+    const parsed = parseNotificationWithRules(notification, rules);
+    parsedByKey.set(notification.key, parsed);
     if (!parsed) {
       /*
        * 거래로 읽히지 않는 알림은 버린다.
@@ -147,8 +157,17 @@ async function collectNotificationsNow(projectId: string): Promise<CollectResult
   );
   const usedKeys = candidates.map((candidate) => candidate.key);
 
+  /*
+   * 원문 표본을 올린다. 후보를 담기 **전에** 하고, 실패해도 후보 담기는 그대로 간다.
+   * 못 올린 알림은 버퍼에서 지우지 않는다 -- 다음 차례에 다시 읽혀 표본이 올라가고,
+   * 후보는 서버의 열쇠(dedupeKey)가 두 번 담기지 않게 막는다.
+   */
+  const unsent = await sendSamples(projectId, captured, parsedByKey, deviceName);
+  const clearBuffer = (keys: string[]) =>
+    InboxNative.clearNotifications(keys.filter((key) => !unsent.has(key)));
+
   if (keep.length === 0) {
-    InboxNative.clearNotifications([...usedKeys, ...droppedKeys]);
+    clearBuffer([...usedKeys, ...droppedKeys]);
     return { added: 0, skipped: candidates.length };
   }
 
@@ -158,7 +177,7 @@ async function collectNotificationsNow(projectId: string): Promise<CollectResult
     keep.map((candidate) => candidate.item),
   );
   // 서버가 받아들인 뒤에 지운다. 여기까지 오지 못하면 알림은 버퍼에 그대로 남는다.
-  InboxNative.clearNotifications([...usedKeys, ...droppedKeys]);
+  clearBuffer([...usedKeys, ...droppedKeys]);
 
   /*
    * 새 것이 더 자세해서 밀려난 대기 중 후보를 지운다. **담은 뒤에** 한다 -- 먼저 지우고
@@ -177,6 +196,77 @@ async function collectNotificationsNow(projectId: string): Promise<CollectResult
     added: result.created,
     skipped: result.skipped + (candidates.length - keep.length),
   };
+}
+
+/** 규칙을 기기에 남겨 두는 자리. 서버에 닿지 못할 때 마지막으로 받은 규칙을 쓴다. */
+const RULES_KEY = 'money-notification-rules';
+/** 받은 규칙을 믿는 시간. 관리 도구에서 규칙을 고치면 기기마다 이만큼 뒤에 먹는다. */
+const RULES_TTL_MS = 10 * 60_000;
+let rulesCache: { at: number; rules: NotificationRule[] } | null = null;
+
+/**
+ * 앱별 알림 문구 규칙. 관리 도구에서 만든 것을 서버에서 받는다.
+ *
+ * 받지 못하면 기기에 남겨 둔 것을, 그것도 없으면 빈 목록을 쓴다 -- 규칙이 없으면 기존
+ * 규칙으로 읽을 뿐이라 알림 모으기를 멈출 까닭이 없다. 받지 못한 것은 기억하지 않는다
+ * (다음 차례에 다시 묻는다).
+ */
+async function loadNotificationRules(): Promise<NotificationRule[]> {
+  if (rulesCache && Date.now() - rulesCache.at < RULES_TTL_MS) return rulesCache.rules;
+  try {
+    const rules = await apiClient.getNotificationRules();
+    rulesCache = { at: Date.now(), rules };
+    try {
+      await persistStorage.setItem(RULES_KEY, JSON.stringify(rules));
+    } catch {
+      // 남기지 못해도 이번 차례는 받은 규칙으로 읽는다.
+    }
+    return rules;
+  } catch {
+    try {
+      const saved = await persistStorage.getItem(RULES_KEY);
+      const rules: unknown = saved ? JSON.parse(saved) : [];
+      return Array.isArray(rules) ? (rules as NotificationRule[]) : [];
+    } catch {
+      return [];
+    }
+  }
+}
+
+/**
+ * 돈 표기가 있는 알림의 원문을 서버에 올린다. 못 올려 버퍼에 남겨 둘 열쇠를 돌려준다.
+ *
+ * 서버가 4xx 로 답하면(옛 서버의 404 등) 다시 보내도 같은 답이므로 남기지 않는다 --
+ * 남기면 그 알림들이 버퍼를 차지한 채 매번 다시 읽힌다. 연결이 끊겼거나 5xx 면 남긴다.
+ */
+async function sendSamples(
+  projectId: string,
+  captured: InboxNative.CapturedNotification[],
+  parsedByKey: Map<string, ParsedDraft | null>,
+  deviceName: string | null,
+): Promise<Set<string>> {
+  const money = captured.filter((notification) => hasMoneyMark(notification));
+  if (money.length === 0) return new Set();
+
+  const samples: NotificationSampleDto.CreateItem[] = money.map((notification) => ({
+    packageName: notification.packageName,
+    title: notification.title,
+    text: notification.text,
+    postedAt: notification.postedAt,
+    sampleKey: notificationDedupeKey(notification),
+    parsed: sampleParsedOf(parsedByKey.get(notification.key) ?? null),
+    deviceName,
+    appVersion: Application.nativeApplicationVersion,
+  }));
+
+  try {
+    await apiClient.addNotificationSamples(samples, projectId);
+    return new Set();
+  } catch (error) {
+    const status = (error as { response?: { status?: number } })?.response?.status;
+    if (status !== undefined && status >= 400 && status < 500) return new Set();
+    return new Set(money.map((notification) => notification.key));
+  }
 }
 
 /**
