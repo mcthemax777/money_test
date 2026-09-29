@@ -64,6 +64,15 @@ export function prismaLedgerLookup(
       return card && card.projectId === projectId ? card.id : null;
     },
 
+    async unassignedAccount(projectId): Promise<LookupAccount | null> {
+      // 프로젝트마다 하나다 (부분 고유 색인 Account_unassigned_per_project).
+      const account = await prisma.account.findFirst({
+        where: { projectId, type: 'unassigned' },
+        select: { id: true, projectId: true, type: true, currency: true },
+      });
+      return account;
+    },
+
     async categories(projectId, ids): Promise<LookupCategory[]> {
       const rows = await prisma.category.findMany({
         where: { id: { in: [...ids] }, projectId },

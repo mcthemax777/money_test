@@ -1563,8 +1563,12 @@ export namespace ReportDto {
   /** 결제수단별 지출 (PaymentMethodTab) */
   export interface PaymentMethodItem {
     kind: 'account' | 'debit_card' | 'credit_card';
+    /** 미지정 칸이면 `NO_ACCOUNT` 다. 검색의 계좌 자리에 그대로 넘길 수 있다. */
     id: string;
+    /** 미지정 칸은 빈 문자열이다. 화면이 사전으로 이름을 붙인다. */
     name: string;
+    /** 결제수단을 고르지 않은 지출·수입을 모은 칸. 그 밖에는 키가 없다. */
+    unassigned?: true;
     ownerId: string | null;
     ownerName: string | null;
     /** 이 수단으로 나간 지출 */

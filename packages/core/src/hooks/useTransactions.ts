@@ -29,6 +29,7 @@ import type {
 import {
   DEFAULT_ENTRY_PERIOD,
   HIDDEN_ACCOUNT_TYPES,
+  NO_ACCOUNT,
   NO_TAG,
   parseCategoryPick,
   parseSelectionKey,
@@ -265,6 +266,11 @@ export function searchChipsOf(
 
   const accountName = new Map(accounts.map((row) => [row.id, row.name]));
   for (const id of search.paymentAccountIds) {
+    // "자산 미선택"은 계좌 무리의 한 갈래다. 이름은 사전에서 온다.
+    if (id === NO_ACCOUNT) {
+      chips.push({ id: `account:${NO_ACCOUNT}`, label: t('tx.search.noAccount') });
+      continue;
+    }
     const name = accountName.get(id);
     chips.push({
       id: `account:${id}`,
@@ -1300,7 +1306,8 @@ export function useTransactions(projectId: string | null) {
         .filter((row) => !keepMethodIds || keepMethodIds.has(row.id))
         .map((row) => ({
           key: row.id,
-          label: row.name,
+          // 미지정 칸은 이름이 비어 온다. 사전으로 붙인다.
+          label: row.unassigned ? t('method.unassigned') : row.name,
           sub: row.ownerName ?? undefined,
           expense: Number(row.amount),
           income: Number(row.income),
@@ -1311,7 +1318,7 @@ export function useTransactions(projectId: string | null) {
     const rows = new Map<string, TransactionRow[]>();
     for (const yearMonth of Object.keys(monthData)) rows.set(yearMonth, build(yearMonth));
     return rows;
-  }, [monthData, groupedByMonth, tab, keepCategoryIds, keepMethodIds]);
+  }, [monthData, groupedByMonth, tab, keepCategoryIds, keepMethodIds, t]);
 
   const rowsOf = useCallback(
     (yearMonth: string): TransactionRow[] => rowsByMonth.get(yearMonth) ?? EMPTY_ROWS,

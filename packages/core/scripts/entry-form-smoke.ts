@@ -120,7 +120,9 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('금액 음수', codeOf({ amount: '-100' }), 'AMOUNT_INVALID');
   eq('금액이 숫자가 아니다', codeOf({ amount: '천원' }), 'AMOUNT_INVALID');
   eq('분류 없음', codeOf({ categoryId: '' }), 'CATEGORY_REQUIRED');
-  eq('수단 없음', codeOf({ method: '' }), 'METHOD_REQUIRED');
+  // 지출·수입은 결제수단을 비워도 된다. 조립이 미지정 계정에 붙인다.
+  eq('지출은 수단 없이 통과', codeOf({ method: '' }), null);
+  eq('수입도 수단 없이 통과', codeOf({ kind: 'income', method: '' }), null);
   /*
    * 수입에도 카드를 고른다. 카드사가 되돌려 주는 돈은 통장을 거치지 않고 다음 청구에서
    * 빠지므로, 들어오는 자리가 통장이 아니라 그 카드의 빚이다.

@@ -282,6 +282,16 @@ export function toListItem(
   const outgoing =
     accountPostings.find((posting) => base(posting).isNegative()) ?? accountPostings[0] ?? null;
   const incoming = accountPostings.find((posting) => base(posting).isPositive()) ?? null;
+
+  /*
+   * 미지정 계정은 "결제수단을 고르지 않았다"로 내보낸다 (id 도 이름도 null).
+   *
+   * 사용자가 만든 자산이 아니라 목록에도 없다. id 를 실어 보내면 편집 화면이 고를 수 없는
+   * 값을 들고 열리고, 이름을 실어 보내면 저장된 한 언어의 이름이 그대로 선다.
+   */
+  const shownAccount = (posting: ViewPosting | null) =>
+    posting?.account && posting.account.type !== 'unassigned' ? posting.account : null;
+  const mainAccount = shownAccount(kind === 'income' ? incoming : outgoing);
   const cardPosting = entry.postings.find((posting) => posting.card) ?? null;
 
   const isTwoSided = kind === 'transfer' || kind === 'card_payment' || kind === 'adjustment';
@@ -325,9 +335,8 @@ export function toListItem(
     categoryName: primaryCategory?.category?.name ?? null,
     parentCategoryId: primaryCategory?.category?.parent?.id ?? null,
     parentCategoryName: primaryCategory?.category?.parent?.name ?? null,
-    accountId: kind === 'income' ? incoming?.account?.id ?? null : outgoing?.account?.id ?? null,
-    accountName:
-      kind === 'income' ? incoming?.account?.name ?? null : outgoing?.account?.name ?? null,
+    accountId: mainAccount?.id ?? null,
+    accountName: mainAccount?.name ?? null,
     toAccountId: isTwoSided ? incoming?.account?.id ?? null : null,
     toAccountName: isTwoSided ? incoming?.account?.name ?? null : null,
     cardId: cardPosting?.card?.id ?? null,

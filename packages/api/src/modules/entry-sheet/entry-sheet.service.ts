@@ -23,6 +23,7 @@ import {
   Dec,
   ENTRY_SHEET_KINDS,
   EntrySheetDto,
+  HIDDEN_ACCOUNT_TYPES,
   entrySheetAssetTypeOf,
   entrySheetKindOf,
   guessEntrySheetAsset,
@@ -52,8 +53,6 @@ import { TagsService } from '../tags/tags.service';
 const FALLBACK_CATEGORY: Record<'expense' | 'income', string> = { expense: '기타', income: '기타수입' };
 /** 이체 수수료의 분류. */
 const FEE_CATEGORY = '수수료';
-/** 결제수단이 비었을 때 쓰는 자산. */
-const FALLBACK_PAYMENT = '현금';
 /** 카드사를 이름에서 못 찾았을 때 만드는 카드사. */
 const FALLBACK_ISSUER = '기타 카드사';
 /**
@@ -183,7 +182,8 @@ export class EntrySheetService {
       }),
       this.prisma.person.findMany({ where: { projectId }, select: { id: true, name: true }, orderBy: { sortRank: 'asc' } }),
       this.prisma.account.findMany({
-        where: { projectId, type: { notIn: [AccountType.credit_card, AccountType.opening_balance] } },
+        // 사람이 만든 자산만 이름으로 맞춘다. "미지정"이라 적은 결제수단이 숨은 계정에 붙지 않게 한다.
+        where: { projectId, type: { notIn: [...HIDDEN_ACCOUNT_TYPES] as AccountType[] } },
         select: { id: true, name: true, type: true, ownerId: true },
         orderBy: { sortRank: 'asc' },
       }),
@@ -314,10 +314,14 @@ export class EntrySheetService {
       if (discount && Dec.of(discount).gt(Dec.of(amount))) throw new RowError(`${row.row}행: 할인이 금액보다 큽니다.`);
       return { row, amount, discount: discount && Dec.of(discount).isPositive() ? discount : undefined };
     });
+    /*
+     * 결제수단이 비었으면 고르지 않은 것으로 넣는다. 조립이 미지정 계정에 붙이고, 내보낼 때도
+     * 그 거래는 결제수단 칸이 비어 나가므로 그대로 되돌아온다.
+     */
     const paymentName = clean(head.payment);
-    const paymentPlan = planAsset(context, paymentName ?? FALLBACK_PAYMENT, paymentName ? head.paymentType : 'cash', '결제수단');
+    const paymentPlan = paymentName ? planAsset(context, paymentName, head.paymentType, '결제수단') : null;
     const months = head.installmentMonths ? Number(String(head.installmentMonths).replace(/[^\d]/g, '')) : 0;
-    if (months >= 2 && (kind !== 'expense' || paymentPlan.kind !== 'card' || paymentPlan.type !== CardType.credit)) {
+    if (months >= 2 && (kind !== 'expense' || paymentPlan?.kind !== 'card' || paymentPlan.type !== CardType.credit)) {
       throw new RowError('할부는 신용카드 지출에만 적을 수 있습니다.');
     }
     const currency = clean(head.currency)?.toUpperCase();
@@ -326,7 +330,7 @@ export class EntrySheetService {
 
     // 여기부터 만든다.
     const personId = await this.personOf(context, head.person);
-    const payment = await this.assetOf(context, paymentPlan, personId);
+    const payment = paymentPlan ? await this.assetOf(context, paymentPlan, personId) : null;
     const lines = [];
     for (const line of parsedLines) {
       lines.push({
@@ -346,7 +350,7 @@ export class EntrySheetService {
       description,
       merchant: text.merchant ?? undefined,
       detailedNote: text.detailedNote ?? undefined,
-      ...(payment.kind === 'card' ? { cardId: payment.id } : { accountId: payment.id }),
+      ...(payment ? (payment.kind === 'card' ? { cardId: payment.id } : { accountId: payment.id }) : {}),
       ...(currency ? { currency } : {}),
       ...(billedAmount ? { billedAmount } : {}),
       ...(months >= 2 ? { installmentMonths: months, installmentInterest: false } : {}),

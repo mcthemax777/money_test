@@ -14,7 +14,13 @@ import { Pressable, Text, TextInput, View } from 'react-native';
 import { CalendarDays } from 'lucide-react-native';
 import type { AccountDto, CardDto, CategoryDto, PersonDto, TagDto } from '@money/types';
 
-import { ENTRY_FEATURES, NO_TAG, SEARCHABLE_ENTRY_KINDS, selfCategoryPick } from '@money/types';
+import {
+  ENTRY_FEATURES,
+  NO_ACCOUNT,
+  NO_TAG,
+  SEARCHABLE_ENTRY_KINDS,
+  selfCategoryPick,
+} from '@money/types';
 
 import {
   assetOwnerNames,
@@ -64,6 +70,7 @@ function AssetGroup<T extends { id: string }>({
   ownerOrder,
   showOwner,
   render,
+  footer,
 }: {
   title: string;
   items: T[];
@@ -72,8 +79,17 @@ function AssetGroup<T extends { id: string }>({
   ownerOrder: string[];
   showOwner: boolean;
   render: (item: T) => React.ReactNode;
+  /** 묶음 뒤에 붙이는 알약. 주인이 없는 선택지("자산 미선택")가 선다. */
+  footer?: React.ReactNode;
 }) {
-  if (!showOwner) return <Group title={title}>{items.map(render)}</Group>;
+  if (!showOwner) {
+    return (
+      <Group title={title}>
+        {items.map(render)}
+        {footer}
+      </Group>
+    );
+  }
 
   return (
     <View className="mb-5">
@@ -86,6 +102,7 @@ function AssetGroup<T extends { id: string }>({
           <View className="flex-row flex-wrap gap-2">{group.items.map(render)}</View>
         </View>
       ))}
+      {footer ? <View className="flex-row flex-wrap gap-2">{footer}</View> : null}
     </View>
   );
 }
@@ -527,28 +544,42 @@ export default function TransactionSearchModal({
               </View>
             ) : null}
 
-            {accounts.length > 0 ? (
-              <AssetGroup
-                title={t('tx.search.accounts')}
-                items={accounts}
-                owners={assetOwners}
-                ownerOrder={ownerOrder}
-                showOwner={showAssetOwner}
-                render={(account) => (
-                  <Chip
-                    key={account.id}
-                    label={account.name}
-                    selected={draft.paymentAccountIds.includes(account.id)}
-                    onPress={() =>
-                      setDraft((prev) => ({
-                        ...prev,
-                        paymentAccountIds: toggle(prev.paymentAccountIds, account.id),
-                      }))
-                    }
-                  />
-                )}
-              />
-            ) : null}
+            {/*
+              계좌 칸은 늘 선다. 통장이 없어도 "자산 미선택"은 고를 수 있다 -- 결제수단을
+              비워 둔 지출·수입을 찾는 자리다. 고른 계좌·카드와 OR 로 이어진다.
+            */}
+            <AssetGroup
+              title={t('tx.search.accounts')}
+              items={accounts}
+              owners={assetOwners}
+              ownerOrder={ownerOrder}
+              showOwner={showAssetOwner}
+              render={(account) => (
+                <Chip
+                  key={account.id}
+                  label={account.name}
+                  selected={draft.paymentAccountIds.includes(account.id)}
+                  onPress={() =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      paymentAccountIds: toggle(prev.paymentAccountIds, account.id),
+                    }))
+                  }
+                />
+              )}
+              footer={
+                <Chip
+                  label={t('tx.search.noAccount')}
+                  selected={draft.paymentAccountIds.includes(NO_ACCOUNT)}
+                  onPress={() =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      paymentAccountIds: toggle(prev.paymentAccountIds, NO_ACCOUNT),
+                    }))
+                  }
+                />
+              }
+            />
 
             {cards.length > 0 ? (
               /* 카드는 결제 통장의 주인을 따른다 (core 의 asset-owner). */

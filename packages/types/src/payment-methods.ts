@@ -21,6 +21,7 @@ import { Dec } from './decimal';
 import type { ReportDto } from './dtos';
 import type { AccountType, EntryListItem } from './entities';
 import { matchedAmountOf } from './entry-rows';
+import { NO_ACCOUNT } from './entry-search';
 
 /**
  * 사용자가 "통장"으로 인식하지 않는 내부 계정.
@@ -28,7 +29,11 @@ import { matchedAmountOf } from './entry-rows';
  * credit_card 는 카드 화면의 사용액이고, opening_balance 는 기초잔액의 상대편이라
  * 결제수단 목록에 노출하면 안 된다.
  */
-export const HIDDEN_ACCOUNT_TYPES: readonly AccountType[] = ['credit_card', 'opening_balance'];
+export const HIDDEN_ACCOUNT_TYPES: readonly AccountType[] = [
+  'credit_card',
+  'opening_balance',
+  'unassigned',
+];
 
 /** 집계가 보는 계좌. 조회용이라 비활성과 숨김 유형까지 담아 보낸다. */
 export interface PaymentMethodAccount {
@@ -127,6 +132,28 @@ export function paymentMethods(
       : {}),
   });
 
+  /*
+   * 결제수단을 고르지 않은 지출·수입의 칸.
+   *
+   * 목록이 계좌 id 를 null 로 주므로(entry-view) 카드도 계좌도 없는 지출·수입이 여기 온다.
+   * id 는 검색이 쓰는 표(`NO_ACCOUNT`)라, 이 칸을 눌러 거래를 펼칠 때 그대로 넘기면 된다.
+   * 이름은 화면이 사전으로 붙인다 (`unassigned`). 주인이 없으므로 주인 필터로 가리지 않는다 --
+   * 여기 온 거래는 이미 사람 조건을 지나 왔다.
+   *
+   * 쓴 달에만 선다. 0원으로 늘 남겨 두면 모든 가계부에 쓰지도 않는 줄이 하나 생긴다.
+   */
+  const unassignedBucket = (amount: string, count: number, income = '0'): ReportDto.PaymentMethodItem => ({
+    kind: 'account',
+    id: NO_ACCOUNT,
+    name: '',
+    ownerId: null,
+    ownerName: null,
+    amount,
+    count,
+    income,
+    unassigned: true,
+  });
+
   const addTo = (item: ReportDto.PaymentMethodItem) => {
     const key = `${item.kind}:${item.id}`;
     const existing = buckets.get(key);
@@ -201,7 +228,10 @@ export function paymentMethods(
         addTo(cardBucket(card, '0', 0, amount.toString()));
         continue;
       }
-      if (!item.accountId) continue;
+      if (!item.accountId) {
+        addTo(unassignedBucket('0', 0, amount.toString()));
+        continue;
+      }
       const account = accountById.get(item.accountId);
       if (!account || !isVisibleOwner(account.ownerId)) continue;
       addTo(accountBucket(account, '0', 0, amount.toString()));
@@ -218,6 +248,8 @@ export function paymentMethods(
       const account = accountById.get(item.accountId);
       if (!account || !isVisibleOwner(account.ownerId)) continue;
       addTo(accountBucket(account, amount.toString(), 1));
+    } else {
+      addTo(unassignedBucket(amount.toString(), 1));
     }
   }
 

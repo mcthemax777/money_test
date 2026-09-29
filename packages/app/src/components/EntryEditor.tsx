@@ -72,7 +72,6 @@ const VIOLATION_KEY: Record<string, MessageKey> = {
   DATE_INVALID: 'entryForm.dateInvalid',
   TIME_INVALID: 'entryForm.timeInvalid',
   CATEGORY_REQUIRED: 'entryForm.categoryRequired',
-  METHOD_REQUIRED: 'entryForm.methodRequired',
   ACCOUNT_REQUIRED: 'entryForm.accountRequired',
   FROM_ACCOUNT_REQUIRED: 'entryForm.accountRequired',
   TO_ACCOUNT_REQUIRED: 'entryForm.toAccountRequired',

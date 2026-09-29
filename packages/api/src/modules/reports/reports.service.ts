@@ -49,6 +49,7 @@ import {
   isEntryPeriodUnit,
   DEFAULT_ENTRY_PERIOD,
   monthlyTotals,
+  NO_ACCOUNT,
   parseEntrySearch,
   netWorth,
   type NetWorthAccountRow,
@@ -898,10 +899,18 @@ export class ReportsService {
     start: Date,
     end: Date,
   ): Prisma.PostingWhereInput {
+    /*
+     * 수단별의 미지정 칸은 id 자리에 `NO_ACCOUNT` 를 들고 온다. 화면은 미지정 계정의 id 를
+     * 모르므로(목록에 내려가지 않는다) 여기서 유형으로 바꿔 읽는다.
+     */
+    const accountTarget: Prisma.PostingWhereInput =
+      query.targetId === NO_ACCOUNT
+        ? { account: { type: AccountType.unassigned } }
+        : { accountId: query.targetId };
     const method: Prisma.PostingWhereInput =
       query.target === 'card'
         ? { cardId: query.targetId, amount: { lt: 0 } }
-        : { accountId: query.targetId, cardId: null, amount: { lt: 0 } };
+        : { ...accountTarget, cardId: null, amount: { lt: 0 } };
 
     return {
       category: { type: CategoryType.expense },

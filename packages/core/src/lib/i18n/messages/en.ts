@@ -334,6 +334,7 @@ export const en: Record<MessageKey, string> = {
   'accountType.loan': 'Loan',
   'accountType.credit_card': 'Credit card',
   'accountType.opening_balance': 'Opening balance',
+  'accountType.unassigned': 'No payment method',
   'accountType.depositOption': 'Deposit / Checking',
 
   // ===== Card colors =====
@@ -636,6 +637,7 @@ export const en: Record<MessageKey, string> = {
 
   // ===== Method tab =====
   'method.accountTitle': 'Paid from account',
+  'method.unassigned': 'No payment method',
   'method.creditEmpty': 'No credit cards.',
   'method.debitEmpty': 'No debit cards.',
   'method.accountEmpty': 'No accounts.',
@@ -988,6 +990,7 @@ export const en: Record<MessageKey, string> = {
   'editor.time': 'Time',
   'editor.fromAccount': 'From account',
   'editor.method': 'Payment method',
+  'editor.noMethod': 'None',
   'editor.addMethod': 'Add a payment method',
   'editor.needPerson': 'Add a member first.',
   'editor.person': 'Transacted by',
@@ -1072,7 +1075,6 @@ export const en: Record<MessageKey, string> = {
   'entryForm.dateInvalid': 'Enter the date as YYYY-MM-DD.',
   'entryForm.timeInvalid': 'Enter the time as HH:MM.',
   'entryForm.categoryRequired': 'Choose a category.',
-  'entryForm.methodRequired': 'Choose a payment method.',
   'entryForm.accountRequired': 'Choose an account.',
   'entryForm.toAccountRequired': 'Choose the destination account.',
   'entryForm.feeInvalid': 'Enter a fee of zero or more.',
@@ -1188,6 +1190,7 @@ export const en: Record<MessageKey, string> = {
   'tx.search.assetOwner': '{name} · {owner}',
   'tx.search.people': 'Transacted by',
   'tx.search.noTag': 'No tag',
+  'tx.search.noAccount': 'No payment method',
   'tx.search.cards': 'Cards',
   'tx.search.apply': 'Apply',
   'tx.search.clear': 'Clear all',

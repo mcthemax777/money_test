@@ -878,25 +878,17 @@ export function checkEntryForm(
     if (!total.eq(amount)) return { field: 'splits', code: 'SPLIT_SUM_MISMATCH' };
 
     // 분할이 있으면 대표 분류는 쓰이지 않는다. 줄마다 따로 있기 때문이다.
-    if (!parseMethod(values.method).accountId && !parseMethod(values.method).cardId) {
-      return { field: 'method', code: 'METHOD_REQUIRED' };
-    }
     return null;
   }
 
   if (!values.categoryId) return { field: 'categoryId', code: 'CATEGORY_REQUIRED' };
 
   /*
-   * 지출도 수입도 통장과 카드 중 하나를 고른다.
+   * 지출·수입의 결제수단은 고르지 않아도 된다.
    *
-   * 수입에 카드를 여는 것은 카드사가 되돌려 주는 돈이 통장을 거치지 않고 다음 청구에서
-   * 빠지는 일이 있어서다. 그때 돈이 들어오는 자리는 통장이 아니라 그 카드의 빚이다.
+   * 비워 두면 조립이 미지정 계정에 붙인다(entry-build 의 resolvePaymentSource). 현금을
+   * 따로 관리하지 않거나 어느 통장인지 기억나지 않는 거래를 적는 자리다.
    */
-  const method = parseMethod(values.method);
-  if (!method.accountId && !method.cardId) {
-    return { field: 'method', code: 'METHOD_REQUIRED' };
-  }
-
   return null;
 }
 

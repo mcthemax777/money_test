@@ -35,6 +35,16 @@ export function splitIdList(value: string): string[] {
 export const NO_TAG = 'none';
 
 /**
+ * "자산 미선택"을 가리키는 값. 자산 무리 안에서 계좌 id 자리에 함께 온다
+ * (`paymentAccountIds`). `NO_TAG` 와 같은 방식이다.
+ *
+ * 결제수단을 고르지 않은 지출·수입은 프로젝트마다 하나 있는 미지정 계정(unassigned)에
+ * 붙는다. 그 계정은 목록에 내려가지 않아 화면이 id 를 모르므로 이 값으로 가리킨다.
+ * 수단별 집계의 미지정 칸도 이 값을 id 로 쓴다 (`paymentMethods`).
+ */
+export const NO_ACCOUNT = 'none';
+
+/**
  * 거래를 적은 **모양**. 분류·태그처럼 고르는 한 무리다.
  *
  *   split        분류 줄이 둘 이상인 거래 (한 결제를 나눠 적은 것)
@@ -167,8 +177,11 @@ export interface ParsedEntrySearch {
    * 그러면 분류마다 다르게 정할 수가 없었다.
    */
   categorySelfIds?: string[];
+  /** 고른 계좌. `NO_ACCOUNT` 는 여기 담기지 않는다. */
   paymentAccountIds?: string[];
   paymentCardIds?: string[];
+  /** "자산 미선택"을 함께 골랐는가. 고른 계좌·카드와 OR 로 이어진다. */
+  noAccount: boolean;
   /**
    * 고른 유형. undefined 면 유형으로 거르지 않는다.
    *
@@ -214,6 +227,7 @@ export function hasEntrySearch(search: ParsedEntrySearch): boolean {
   return (
     search.text !== undefined ||
     search.noTag ||
+    search.noAccount ||
     (search.entryPersonIds?.length ?? 0) > 0 ||
     (search.categoryIds?.length ?? 0) > 0 ||
     (search.categorySelfIds?.length ?? 0) > 0 ||
@@ -253,7 +267,10 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
   const categorySelfIds = rawCategoryIds
     ?.filter(isSelfCategoryPick)
     .map((id) => id.slice(SELF_CATEGORY_PREFIX.length));
-  const paymentAccountIds = idsOf(query.paymentAccountIds);
+  // "자산 미선택"은 계좌 id 자리에 함께 온다. 태그 무리의 NO_TAG 와 같이 빼내어 따로 든다.
+  const rawAccountIds = idsOf(query.paymentAccountIds);
+  const noAccount = rawAccountIds?.includes(NO_ACCOUNT) ?? false;
+  const paymentAccountIds = rawAccountIds?.filter((id) => id !== NO_ACCOUNT);
   const paymentCardIds = idsOf(query.paymentCardIds);
   const entryPersonIds = idsOf(query.entryPersonIds);
 
@@ -295,7 +312,8 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
   if (rawCategoryIds !== undefined && rawCategoryIds.length === 0) matchNothing = true;
 
   const methodsGiven = paymentAccountIds !== undefined || paymentCardIds !== undefined;
-  const methodCount = (paymentAccountIds?.length ?? 0) + (paymentCardIds?.length ?? 0);
+  const methodCount =
+    (paymentAccountIds?.length ?? 0) + (paymentCardIds?.length ?? 0) + (noAccount ? 1 : 0);
   if (methodsGiven && methodCount === 0) matchNothing = true;
 
   if (kinds !== undefined && kinds.length === 0) matchNothing = true;
@@ -319,6 +337,7 @@ export function parseEntrySearch(query: EntrySearchQuery): ParsedEntrySearch {
     categorySelfIds,
     paymentAccountIds,
     paymentCardIds,
+    noAccount,
     kinds: everyKind ? undefined : kinds,
     tagIds,
     noTag,

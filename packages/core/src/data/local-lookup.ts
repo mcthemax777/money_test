@@ -67,6 +67,11 @@ export function localLedgerLookup(store: LocalStore): LedgerLookup {
 
     cardIdForLiability: (projectId, accountId) => store.cardIdForLiability(projectId, accountId),
 
+    async unassignedAccount(projectId): Promise<LookupAccount | null> {
+      const row = await store.unassignedAccount(projectId);
+      return row && { id: row.id, projectId, type: 'unassigned', currency: row.currency };
+    },
+
     async categories(projectId, ids): Promise<LookupCategory[]> {
       const rows = await store.categoriesByIds(projectId, ids);
       return rows.map((row) => ({

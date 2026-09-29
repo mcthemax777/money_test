@@ -36,6 +36,20 @@ export class ProjectsService {
       },
     });
 
+    /*
+     * 미지정 계정. 결제수단을 고르지 않은 지출·수입이 붙는 자리다 (entry-build).
+     * 기기가 오프라인에서도 그 전표를 만들 수 있도록 처음부터 만들어 동기화로 내려보낸다.
+     */
+    await this.prisma.account.create({
+      data: {
+        projectId: project.id,
+        type: 'unassigned',
+        name: '미지정',
+        ownerId: null,
+        currency: project.ledgerCurrency,
+      },
+    });
+
     await this.prisma.projectMember.create({
       data: {
         projectId: project.id,

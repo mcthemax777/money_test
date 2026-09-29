@@ -22,7 +22,12 @@ import type { AccountType } from './entities';
  * 계좌를 만들 때의 잔액을 전표화할 때 상대편으로 쓰는 계정이라, 합계에 넣으면
  * 기초잔액이 두 번 세어진다.
  */
-export const EQUITY_ACCOUNT_TYPES: readonly AccountType[] = ['opening_balance'];
+/*
+ * 미지정(unassigned)도 여기 든다. 결제수단을 고르지 않은 지출·수입이 쌓이는 자리라
+ * 잔액이 계속 음수로 커지는데, 그 돈이 실제로 어느 자산에서 나갔는지는 모른다.
+ * 순자산에 넣으면 자산 탭에 보이는 자산의 합과 순자산이 어긋난다.
+ */
+export const EQUITY_ACCOUNT_TYPES: readonly AccountType[] = ['opening_balance', 'unassigned'];
 
 /** 시가로 평가하는 계정. 장부 잔액 대신 최신 평가액을 쓴다. */
 export const VALUED_ACCOUNT_TYPES: readonly AccountType[] = ['investment', 'real_estate'];

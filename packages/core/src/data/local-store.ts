@@ -2721,6 +2721,16 @@ export class LocalStore {
   }
 
   /** 이 계좌를 부채 계정으로 쓰는 카드의 id. */
+  /** 프로젝트의 미지정 계정. 결제수단을 고르지 않은 지출·수입이 붙는다. */
+  async unassignedAccount(projectId: string): Promise<{ id: string; currency: string } | null> {
+    const rows = await this.db.all<Row>(
+      `SELECT id, currency FROM account WHERE projectId = ? AND type = 'unassigned' LIMIT 1`,
+      [projectId],
+    );
+    const row = rows[0];
+    return row ? { id: String(row.id), currency: String(row.currency) } : null;
+  }
+
   async cardIdForLiability(projectId: string, accountId: string): Promise<string | null> {
     const rows = await this.db.all<Row>(
       `SELECT id FROM card WHERE liabilityAccountId = ? AND projectId = ?`,
@@ -3855,7 +3865,7 @@ function searchFilter(search?: ParsedEntrySearch): { sql: string; params: string
 
   const accountIds = search.paymentAccountIds ?? [];
   const cardIds = search.paymentCardIds ?? [];
-  if (accountIds.length > 0 || cardIds.length > 0) {
+  if (accountIds.length > 0 || cardIds.length > 0 || search.noAccount) {
     const branches: string[] = [];
 
     if (accountIds.length > 0) {
@@ -3888,6 +3898,15 @@ function searchFilter(search?: ParsedEntrySearch): { sql: string; params: string
        */
       branches.push(`(mp.cardId IN (${cardIds.map(() => '?').join(', ')}))`);
       params.push(...cardIds);
+    }
+    /*
+     * 결제수단을 고르지 않은 지출·수입. 미지정 계정에 붙어 있어 유형으로 찾는다.
+     * 서버의 `entrySearchConditions` 와 같은 규칙이다.
+     */
+    if (search.noAccount) {
+      branches.push(
+        `EXISTS (SELECT 1 FROM account ma WHERE ma.id = mp.accountId AND ma.type = 'unassigned')`,
+      );
     }
 
     sql += `
@@ -3989,7 +4008,18 @@ function ownerFilter(ownerIds?: string[]): { sql: string; params: string[] } {
                WHERE op.entryId = e.id AND ${positive} AND oa.ownerId IN (${list})
             )
           )
+          OR (
+            NOT EXISTS (
+              SELECT 1 FROM posting op JOIN account oa ON oa.id = op.accountId
+               WHERE op.entryId = e.id AND oa.ownerId IS NOT NULL
+            )
+            AND e.personId IN (${list})
+          )
         )`;
 
-  return { sql, params: [...ownerIds, ...ownerIds] };
+  /*
+   * 셋째 가지: 주인 있는 계좌 다리가 하나도 없으면 거래를 낸 사람으로 본다. 결제수단을
+   * 고르지 않은 지출·수입이 그렇다. 서버의 `assetOwnerCondition` 과 같은 판단이다.
+   */
+  return { sql, params: [...ownerIds, ...ownerIds, ...ownerIds] };
 }

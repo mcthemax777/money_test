@@ -29,7 +29,7 @@ import {
   formatAxisAmount,
   formatTooltipAmount,
 } from '@money/core/lib/chart';
-import type { EntryScopeQuery } from '@money/types';
+import { NO_ACCOUNT, type EntryScopeQuery } from '@money/types';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 import type { Account, Card } from '@money/core/lib/types';
 import Modal from './Modal';
@@ -46,6 +46,8 @@ interface PaymentMethodItem {
   count: number;
   /** 이 통장으로 들어온 수입. 카드는 언제나 "0"이다. */
   income: string;
+  /** 결제수단을 고르지 않은 지출·수입의 칸. id 는 `NO_ACCOUNT` 이고 이름은 비어 온다. */
+  unassigned?: true;
 }
 
 interface Props {
@@ -216,9 +218,12 @@ export default function PaymentMethodTab({
      */
     const expenseQuery = {
       // 왼쪽 집계와 같은 기준으로 뽑는다 (payment* 파라미터가 그 규칙을 담고 있다).
-      ...(selected.kind === 'account'
-        ? { paymentAccountId: selected.id }
-        : { paymentCardId: selected.id }),
+      // 미지정 칸은 검색의 "자산 미선택"으로 뽑는다. 그 계정의 id 를 화면이 모른다.
+      ...(selected.unassigned
+        ? { paymentAccountIds: NO_ACCOUNT }
+        : selected.kind === 'account'
+          ? { paymentAccountId: selected.id }
+          : { paymentCardId: selected.id }),
       // kind='expense'로 걸면 수수료가 붙은 이체가 빠진다. 집계에는 들어 있으므로 어긋난다.
       categoryType: 'expense' as const,
       ...filter,
@@ -235,7 +240,9 @@ export default function PaymentMethodTab({
       selected.kind === 'account'
         ? apiClient.getAllEntries(
             {
-              accountId: selected.id,
+              ...(selected.unassigned
+                ? { paymentAccountIds: NO_ACCOUNT }
+                : { accountId: selected.id }),
               categoryType: 'income' as const,
               startDate,
               endDate,
@@ -363,7 +370,7 @@ export default function PaymentMethodTab({
                 }`}
               >
                 <div className="flex flex-col">
-                  <span className="text-gray-700 font-medium">{item.name}</span>
+                  <span className="text-gray-700 font-medium">{item.unassigned ? t('method.unassigned') : item.name}</span>
                   <span className="text-xs text-gray-500">{item.ownerName ?? t('method.unknownOwner')}</span>
                 </div>
                 {/*
@@ -393,7 +400,7 @@ export default function PaymentMethodTab({
           <div className="bg-white rounded-lg shadow p-6 space-y-8">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-2">{selected.name}</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-2">{selected.unassigned ? t('method.unassigned') : selected.name}</h3>
                 <p className="text-sm text-gray-500">{selected.ownerName ?? t('method.unknownOwner')}</p>
               </div>
               {/*

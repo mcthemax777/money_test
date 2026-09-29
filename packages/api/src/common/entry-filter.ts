@@ -85,6 +85,11 @@ export const MATCH_NOTHING: Prisma.JournalEntryWhereInput = { id: { in: [] } };
  *
  * 둘째 가지의 문지기도 같은 기준이어야 한다. 한쪽만 0 을 받으면 0원 다리를 가진 전표가
  * 두 가지에 함께 걸려, 나간 쪽 주인과 들어온 쪽 주인 양쪽 목록에 나온다.
+ *
+ * **주인이 있는 계좌 다리가 하나도 없으면 거래를 낸 사람으로 본다.** 결제수단을 고르지
+ * 않은 지출·수입이 그렇다 (미지정 계정은 주인이 없다). 빼면 사람을 고른 거래 화면에서
+ * 그 거래가 통째로 사라진다. 셋째 가지의 문지기는 앞 두 가지와 겹치지 않는다 -- 주인
+ * 있는 다리가 있는 전표는 여기 오지 않는다.
  */
 export function assetOwnerCondition(
   filter: ParsedEntryFilter,
@@ -99,6 +104,12 @@ export function assetOwnerCondition(
         AND: [
           { postings: { none: { amount: { lte: 0 }, account: { ownerId: { not: null } } } } },
           { postings: { some: { amount: { gt: 0 }, account: { ownerId: { in: ids } } } } },
+        ],
+      },
+      {
+        AND: [
+          { postings: { none: { account: { ownerId: { not: null } } } } },
+          { personId: { in: ids } },
         ],
       },
     ],
@@ -173,6 +184,15 @@ export function entrySearchConditions(search: ParsedEntrySearch): Prisma.Posting
       cardId: null,
       entry: { postings: { none: { account: { type: AccountType.opening_balance } } } },
     });
+  }
+  if (search.noAccount) {
+    /*
+     * 결제수단을 고르지 않은 지출·수입. 미지정 계정에 붙어 있다.
+     *
+     * 화면은 그 계정의 id 를 모르므로(목록에 내려가지 않는다) 유형으로 찾는다. 프로젝트마다
+     * 하나뿐이라 id 로 찾는 것과 같은 답이다. 이체·기초잔액은 그 계정에 닿지 않는다.
+     */
+    methods.push({ account: { type: AccountType.unassigned } });
   }
   if (search.paymentCardIds && search.paymentCardIds.length > 0) {
     /*

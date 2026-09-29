@@ -16,6 +16,7 @@ export const ACCOUNT_TYPE_KEY: Record<string, MessageKey> = {
   loan: 'accountType.loan',
   credit_card: 'accountType.credit_card',
   opening_balance: 'accountType.opening_balance',
+  unassigned: 'accountType.unassigned',
 };
 
 /**

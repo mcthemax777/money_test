@@ -18,6 +18,8 @@ interface PaymentMethodItem {
   count: number;
   /** 이 통장으로 들어온 수입. 카드는 언제나 "0"이다. */
   income: string;
+  /** 결제수단을 고르지 않은 지출·수입의 칸. 이름은 비어 온다. */
+  unassigned?: true;
 }
 
 /**
@@ -134,7 +136,9 @@ export default function PaymentMethodBreakdown({
         <View className="gap-2">
           {visibleItems.map((item) => (
             <View key={item.id} className={`rounded-lg p-3 ${section.face}`}>
-              <Text className="font-medium text-gray-700">{item.name}</Text>
+              <Text className="font-medium text-gray-700">
+                {item.unassigned ? t('method.unassigned') : item.name}
+              </Text>
               <Text className="text-xs text-gray-500">
                 {item.ownerName ?? t('method.unknownOwner')}
               </Text>

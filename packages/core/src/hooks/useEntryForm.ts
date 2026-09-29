@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { fallbackRate } from '@money/types';
+import { HIDDEN_ACCOUNT_TYPES, fallbackRate } from '@money/types';
 import type {
   AccountDto,
   CardDto,
@@ -83,10 +83,10 @@ const EMPTY_LISTS: EntryFormLists = {
 /**
  * 결제수단 목록에서 빼는 계정.
  *
- * 카드 부채 계정은 카드로 고르는 것이고, 자본 계정은 기초잔액의 상대편이다. 둘 다 사용자가
- * "통장"으로 인식하지 않는다 (payment-methods 의 HIDDEN_ACCOUNT_TYPES 와 같은 뜻이다).
+ * 카드 부채 계정은 카드로 고르는 것이고, 자본 계정은 기초잔액의 상대편이며, 미지정 계정은
+ * 결제수단을 비워 두면 조립이 알아서 붙인다. 모두 사용자가 "통장"으로 인식하지 않는다.
  */
-const HIDDEN_TYPES = ['credit_card', 'opening_balance'];
+const HIDDEN_TYPES: readonly string[] = HIDDEN_ACCOUNT_TYPES;
 
 /** 빈 분할 줄. 줄 키는 `newSplitLine` 이 붙인다. */
 const blankSplit = (): EntryFormSplit => newSplitLine();

@@ -22,7 +22,8 @@ export type AccountType =
   | 'credit_card'    // 카드 사용액을 담는 부채 계정. 통장 목록에 노출하지 않는다
   | 'loan'
   | 'real_estate'
-  | 'opening_balance'; // 기초잔액 자본 계정. 순자산 합계에서 제외한다
+  | 'opening_balance' // 기초잔액 자본 계정. 순자산 합계에서 제외한다
+  | 'unassigned'; // 결제수단을 고르지 않은 지출·수입의 상대편. 프로젝트마다 하나, 순자산에서 제외한다
 
 export type CardType = 'debit' | 'credit';
 

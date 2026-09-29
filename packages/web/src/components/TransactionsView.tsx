@@ -36,6 +36,7 @@ import {
 } from 'lucide-react';
 import {
   ENTRY_FEATURES,
+  NO_ACCOUNT,
   NO_TAG,
   originalEntry,
   SEARCHABLE_ENTRY_KINDS,
@@ -1795,15 +1796,19 @@ export default function TransactionsView({
               </div>
             ) : null}
 
-            {tx.pickerAccounts.length > 0 ? (
-              <div>
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
-                  {t('tx.search.accounts')}
-                </p>
-                {/*
-                  주인별로 묶는다. "국민은행 통장"이 집에 셋 있으면 이름만으로는 어느
-                  것을 고르는지 알 수 없다. 주인이 하나뿐이면 묶지 않는다.
-                */}
+            {/*
+              계좌 칸은 늘 선다. 통장이 없어도 "자산 미선택"은 고를 수 있다 -- 결제수단을
+              비워 둔 지출·수입을 찾는 자리다. 고른 계좌·카드와 OR 로 이어진다.
+            */}
+            <div>
+              <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
+                {t('tx.search.accounts')}
+              </p>
+              {/*
+                주인별로 묶는다. "국민은행 통장"이 집에 셋 있으면 이름만으로는 어느
+                것을 고르는지 알 수 없다. 주인이 하나뿐이면 묶지 않는다.
+              */}
+              {tx.pickerAccounts.length > 0 ? (
                 <OwnerGroups items={tx.pickerAccounts}>
                   {(account) => (
                     <Chip
@@ -1819,8 +1824,20 @@ export default function TransactionsView({
                     />
                   )}
                 </OwnerGroups>
+              ) : null}
+              <div className={`flex flex-wrap gap-2 ${tx.pickerAccounts.length > 0 ? 'mt-3' : ''}`}>
+                <Chip
+                  label={t('tx.search.noAccount')}
+                  selected={draft.paymentAccountIds.includes(NO_ACCOUNT)}
+                  onClick={() =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      paymentAccountIds: toggleId(prev.paymentAccountIds, NO_ACCOUNT),
+                    }))
+                  }
+                />
               </div>
-            ) : null}
+            </div>
 
             {tx.pickerCards.length > 0 ? (
               <div>

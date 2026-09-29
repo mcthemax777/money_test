@@ -96,6 +96,13 @@ export interface LedgerLookup {
   card(projectId: string, cardId: string): Promise<LookupCard | null>;
   /** 이 계좌를 부채 계정으로 쓰는 신용카드의 id. 없으면 null. */
   cardIdForLiability(projectId: string, accountId: string): Promise<string | null>;
+  /**
+   * 프로젝트의 미지정 계정(unassigned). 결제수단을 고르지 않은 지출·수입이 붙는다.
+   *
+   * 프로젝트를 만들 때 함께 생기고(옛 프로젝트는 마이그레이션이 채웠다) 기기에는 동기화로
+   * 내려온다. 없으면 null 이고, 조립이 거절한다.
+   */
+  unassignedAccount(projectId: string): Promise<LookupAccount | null>;
   categories(projectId: string, ids: readonly string[]): Promise<LookupCategory[]>;
 }
 
@@ -604,6 +611,10 @@ export async function buildTransfer(
 
   const from = await requireAccount(input.projectId, input.fromAccountId, lookup);
   const to = await requireAccount(input.projectId, input.toAccountId, lookup);
+  // 미지정은 "어디서 나갔는지 모른다"는 표시라 이체의 한쪽이 될 수 없다.
+  if (from.type === 'unassigned' || to.type === 'unassigned') {
+    fail('TRANSFER_UNASSIGNED', '이체에는 결제수단을 골라야 합니다.');
+  }
 
   // 카드가 끼면 그 다리에 cardId 를 채운다. 비워 두면 카드별 거래 조회에서 빠진다.
   const fromCardId = await cardIdForLiability(input.projectId, from, lookup);
@@ -721,6 +732,9 @@ export async function buildCardTransfer(
   }
 
   const account = await requireAccount(input.projectId, input.accountId, lookup);
+  if (account.type === 'unassigned') {
+    fail('TRANSFER_UNASSIGNED', '카드 대금은 통장을 골라야 합니다.');
+  }
   const liability = await requireAccount(input.projectId, card.liabilityAccountId!, lookup);
 
   // 부채 계정은 결제 통장과 같은 통화로 만들어진다(createCard). 어긋나 있으면 환산
@@ -1361,8 +1375,20 @@ async function resolvePaymentSource(
   source: { accountId?: string; cardId?: string },
   lookup: LedgerLookup,
 ): Promise<{ accountId: string; cardId?: string; isCreditCard: boolean }> {
-  if (Boolean(source.accountId) === Boolean(source.cardId)) {
+  if (source.accountId && source.cardId) {
     fail('PAYMENT_SOURCE_AMBIGUOUS', '결제수단으로 계좌와 카드 중 하나만 지정해야 합니다.');
+  }
+
+  /*
+   * 결제수단을 고르지 않았다. 미지정 계정에 붙인다.
+   *
+   * 복식부기라 상대편 다리 없이는 전표가 맞지 않는다. 다리를 비워 두는 대신 숨은 계정
+   * 하나를 두면 잔액·검색·수단별이 모두 "계좌 하나"로 읽혀 규칙이 갈리지 않는다.
+   */
+  if (!source.accountId && !source.cardId) {
+    const unassigned = await lookup.unassignedAccount(projectId);
+    if (!unassigned) fail('UNASSIGNED_ACCOUNT_MISSING', '미지정 계정을 찾을 수 없습니다.', true);
+    return { accountId: unassigned!.id, isCreditCard: false };
   }
 
   if (source.accountId) {

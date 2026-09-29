@@ -363,6 +363,7 @@ export const ko = {
   'accountType.loan': '대출',
   'accountType.credit_card': '신용카드',
   'accountType.opening_balance': '기초잔액',
+  'accountType.unassigned': '자산 미선택',
   'accountType.depositOption': '예금 / 입출금',
 
   // ===== 카드 색 이름 =====
@@ -660,6 +661,7 @@ export const ko = {
 
   // ===== 수단별 탭 =====
   'method.accountTitle': '계좌 결제',
+  'method.unassigned': '자산 미선택',
   'method.creditEmpty': '신용카드가 없습니다.',
   'method.debitEmpty': '체크카드가 없습니다.',
   'method.accountEmpty': '통장이 없습니다.',
@@ -1012,6 +1014,7 @@ export const ko = {
   'editor.time': '시간',
   'editor.fromAccount': '보내는 계좌',
   'editor.method': '결제수단',
+  'editor.noMethod': '선택 안 함',
   'editor.addMethod': '결제수단 추가',
   /** 통장을 만들려면 그 주인이 있어야 한다. 결제수단 추가 창에서 길이 막힐 때의 한 줄. */
   'editor.needPerson': '구성원을 먼저 만들어 주세요.',
@@ -1098,7 +1101,6 @@ export const ko = {
   'entryForm.dateInvalid': '날짜를 YYYY-MM-DD 로 입력해주세요.',
   'entryForm.timeInvalid': '시간을 HH:MM 으로 입력해주세요.',
   'entryForm.categoryRequired': '분류를 선택해주세요.',
-  'entryForm.methodRequired': '결제수단을 선택해주세요.',
   'entryForm.accountRequired': '통장을 선택해주세요.',
   'entryForm.toAccountRequired': '받는 계좌를 선택해주세요.',
   'entryForm.feeInvalid': '수수료를 0 이상으로 입력해주세요.',
@@ -1218,6 +1220,7 @@ export const ko = {
   'tx.search.assetOwner': '{name} · {owner}',
   'tx.search.people': '거래한 사람',
   'tx.search.noTag': '태그 없음',
+  'tx.search.noAccount': '자산 미선택',
   'tx.search.cards': '카드',
   'tx.search.apply': '확인',
   'tx.search.clear': '전체 해제',

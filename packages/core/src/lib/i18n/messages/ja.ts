@@ -335,6 +335,7 @@ export const ja: Record<MessageKey, string> = {
   'accountType.loan': 'ローン',
   'accountType.credit_card': 'クレジットカード',
   'accountType.opening_balance': '期首残高',
+  'accountType.unassigned': '支払手段なし',
   'accountType.depositOption': '預金・普通',
 
   // ===== カードの色 =====
@@ -634,6 +635,7 @@ export const ja: Record<MessageKey, string> = {
 
   // ===== 支払方法別タブ =====
   'method.accountTitle': '口座からの支払い',
+  'method.unassigned': '支払手段なし',
   'method.creditEmpty': 'クレジットカードがありません。',
   'method.debitEmpty': 'デビットカードがありません。',
   'method.accountEmpty': '口座がありません。',
@@ -986,6 +988,7 @@ export const ja: Record<MessageKey, string> = {
   'editor.time': '時刻',
   'editor.fromAccount': '送る口座',
   'editor.method': '支払方法',
+  'editor.noMethod': '選択しない',
   'editor.addMethod': '支払方法を追加',
   'editor.needPerson': 'まずメンバーを追加してください。',
   'editor.person': '取引した人',
@@ -1069,7 +1072,6 @@ export const ja: Record<MessageKey, string> = {
   'entryForm.dateInvalid': '日付をYYYY-MM-DDで入力してください。',
   'entryForm.timeInvalid': '時刻をHH:MMで入力してください。',
   'entryForm.categoryRequired': '分類を選択してください。',
-  'entryForm.methodRequired': '支払い手段を選択してください。',
   'entryForm.accountRequired': '口座を選択してください。',
   'entryForm.toAccountRequired': '受け取る口座を選択してください。',
   'entryForm.feeInvalid': '手数料を0以上で入力してください。',
@@ -1181,6 +1183,7 @@ export const ja: Record<MessageKey, string> = {
   'tx.search.assetOwner': '{name}・{owner}',
   'tx.search.people': '取引した人',
   'tx.search.noTag': 'タグなし',
+  'tx.search.noAccount': '支払手段なし',
   'tx.search.cards': 'カード',
   'tx.search.apply': '確認',
   'tx.search.clear': 'すべて解除',

@@ -8,6 +8,8 @@
  * 카드 부채·기초잔액 계정은 통장 목록에 두지 않는다. 사람이 만든 통장이 아니다.
  */
 
+import { HIDDEN_ACCOUNT_TYPES } from '@money/types';
+
 import type { Account, Card } from './types';
 
 export interface TransferOption {
@@ -21,10 +23,7 @@ export interface TransferOption {
 /** 보내는 쪽. 쓰고 있는 통장만. */
 export function transferFromOptions(accounts: Account[]): TransferOption[] {
   return accounts
-    .filter(
-      (account) =>
-        account.isActive && account.type !== 'credit_card' && account.type !== 'opening_balance',
-    )
+    .filter((account) => account.isActive && !HIDDEN_ACCOUNT_TYPES.includes(account.type))
     .map((account) => ({ id: account.id, name: account.name, isCard: false }));
 }
 

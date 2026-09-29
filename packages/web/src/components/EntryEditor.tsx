@@ -513,7 +513,13 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         name: `${card.name}${card.issuer?.name ? ` · ${card.issuer.name}` : ''}`,
       });
 
-    const options: Array<{ id: string; name: string; group: string }> = [];
+    /*
+     * 맨 위는 "선택 안 함"이다. 지출·수입은 결제수단 없이 적을 수 있고, 그러면 서버가
+     * 미지정 계정에 붙인다. 한 번 고른 뒤 되돌릴 길이 있어야 해서 목록에 둔다.
+     */
+    const options: Array<{ id: string; name: string; group: string }> = [
+      { id: '', name: t('editor.noMethod'), group: '' },
+    ];
     const listed = new Set<string>();
 
     const pushOwner = (group: string, owned: typeof accounts) => {
@@ -774,7 +780,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
    * 유형이 남아 있으면 카테고리 목록이 어긋난다.
    */
   const handlePaymentMethodChange = (value: string) => {
-    const [kind, id] = value.split(':');
+    // "선택 안 함"은 빈 값이다. 아래 계좌 갈래로 가서 계좌와 카드를 함께 비운다.
+    const [kind, id = ''] = value.split(':');
 
     const methodCurrency =
       kind === 'card' ? currencyOfMethod(null, id) : currencyOfMethod(id, null);
@@ -1175,8 +1182,9 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         }
       } else {
         // 결제수단은 계좌와 카드 중 하나만 보낸다. 둘 다 보내면 서버가 거부한다.
+        // 둘 다 비었으면 싣지 않는다. 서버가 미지정 계정에 붙인다.
         if (useCard) payload.cardId = formData.cardId;
-        else payload.accountId = formData.accountId;
+        else if (formData.accountId) payload.accountId = formData.accountId;
         // posting은 가장 구체적인 카테고리 하나만 가리킨다
         /** 그 줄에서 깎인 금액. 지출에만 싣는다. */
         const lineDiscount = (discountAmount: string) =>
@@ -3471,21 +3479,28 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 {t('editor.methodLabel')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {t(selectedTransaction.cardId ? 'editor.methodCard' : 'editor.methodAccount')}
+                {selectedTransaction.cardId
+                  ? t('editor.methodCard')
+                  : selectedTransaction.accountId
+                    ? t('editor.methodAccount')
+                    : t('editor.noMethod')}
               </p>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">
-                {t(selectedTransaction.cardId ? 'editor.methodCard' : 'editor.methodAccount')}
-              </label>
-              <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {selectedTransaction.cardId
-                  ? cards.find(c => c.id === selectedTransaction.cardId)?.name || '-'
-                  : accounts.find(a => a.id === selectedTransaction.accountId)?.name || '-'
-                }
-              </p>
-            </div>
+            {/* 결제수단을 고르지 않은 거래는 이름을 적을 칸이 없다. */}
+            {(selectedTransaction.cardId || selectedTransaction.accountId) && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t(selectedTransaction.cardId ? 'editor.methodCard' : 'editor.methodAccount')}
+                </label>
+                <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
+                  {selectedTransaction.cardId
+                    ? cards.find(c => c.id === selectedTransaction.cardId)?.name || '-'
+                    : accounts.find(a => a.id === selectedTransaction.accountId)?.name || '-'
+                  }
+                </p>
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">
