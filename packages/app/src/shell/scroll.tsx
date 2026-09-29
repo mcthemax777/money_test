@@ -24,7 +24,8 @@ import { useSharedValue, type SharedValue } from 'react-native-reanimated';
 type Handler = () => void;
 
 interface NearBottom {
-  register: (handler: Handler) => () => void;
+  /** `threshold` 는 바닥에서 얼마나 남았을 때 부를지(px)다. 빼면 `THRESHOLD` 다. */
+  register: (handler: Handler, threshold?: number) => () => void;
   onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
   /** 껍데기가 스크롤 영역의 높이를 알려 준다(`onLayout`). */
   noteViewport: (height: number) => void;
@@ -35,17 +36,27 @@ interface NearBottom {
 /** 바닥에서 이만큼 남았을 때 미리 부른다. 다 닿은 뒤에 부르면 빈 자리가 한 번 보인다. */
 const THRESHOLD = 240;
 
+/**
+ * 등록된 하나. 문턱이 저마다 달라 "바닥 언저리에 있었는가"도 저마다 든다 -- 하나로 두면
+ * 먼 문턱에 들어선 것을 가까운 문턱도 들어선 것으로 읽어, 가까운 쪽이 불리지 않는다.
+ */
+interface Watcher {
+  handler: Handler;
+  threshold: number;
+  /** 바닥 언저리에 머무는 동안 계속 부르지 않도록, 한 번 벗어났다 들어올 때만 부른다. */
+  wasNear: boolean;
+}
+
 const NearBottomContext = createContext<NearBottom | null>(null);
 
 export function NearBottomProvider({ children }: { children: ReactNode }) {
-  const handlers = useRef(new Set<Handler>());
-  /** 바닥 언저리에 머무는 동안 계속 부르지 않도록, 한 번 벗어났다 들어올 때만 부른다. */
-  const wasNearBottom = useRef(false);
+  const watchers = useRef(new Set<Watcher>());
 
-  const register = useCallback((handler: Handler) => {
-    handlers.current.add(handler);
+  const register = useCallback((handler: Handler, threshold = THRESHOLD) => {
+    const watcher: Watcher = { handler, threshold, wasNear: false };
+    watchers.current.add(watcher);
     return () => {
-      handlers.current.delete(handler);
+      watchers.current.delete(watcher);
     };
   }, []);
 
@@ -65,11 +76,12 @@ export function NearBottomProvider({ children }: { children: ReactNode }) {
     // 아직 재지 못했다. 0 으로 재면 빈 화면을 "바닥"으로 읽는다.
     if (viewport <= 0 || content <= 0) return;
 
-    const isNear = content - offset - viewport <= THRESHOLD;
-    if (isNear && (fromSizeChange || !wasNearBottom.current)) {
-      handlers.current.forEach((handler) => handler());
-    }
-    wasNearBottom.current = isNear;
+    const left = content - offset - viewport;
+    watchers.current.forEach((watcher) => {
+      const isNear = left <= watcher.threshold;
+      if (isNear && (fromSizeChange || !watcher.wasNear)) watcher.handler();
+      watcher.wasNear = isNear;
+    });
   }, []);
 
   const onScroll = useCallback(
@@ -374,7 +386,7 @@ export function useNearBottomScroll() {
 }
 
 /** 바닥에 닿으면 부를 것을 등록한다. 화면을 떠나면 저절로 풀린다. */
-export function useNearBottom(handler: Handler) {
+export function useNearBottom(handler: Handler, threshold?: number) {
   const context = useContext(NearBottomContext);
   const latest = useRef(handler);
   latest.current = handler;
@@ -382,6 +394,91 @@ export function useNearBottom(handler: Handler) {
   useEffect(() => {
     if (!context) return;
     // 늘 최신 handler 를 부른다. 등록을 다시 하면 그 사이 스크롤 사건을 놓친다.
-    return context.register(() => latest.current());
-  }, [context]);
+    return context.register(() => latest.current(), threshold);
+  }, [context, threshold]);
+}
+
+/** 처음에 세울 줄 수와, 바닥이 가까워질 때마다 더 세울 만큼. */
+const FIRST_ROWS = 12;
+const MORE_ROWS = 24;
+
+/**
+ * 더 세우기 시작하는 거리. 바닥까지 화면 하나쯤 남았을 때다.
+ *
+ * `THRESHOLD`(240)로는 늦다. 줄 스물넷을 세우는 데 100ms 가까이 걸려, 빠르게 튕겨
+ * 내리면 세우는 동안 내용 끝에 닿아 스크롤이 멈춘다.
+ */
+const LOOKAHEAD = 800;
+
+/**
+ * 긴 목록을 **내려가 볼 때만** 세운다.
+ *
+ * 줄 하나를 화면 요소로 세우는 값이 크다(대부분이 NativeWind 의 className 변환이다).
+ * 한 달을 펴면 백 건이 넘는데, 그것을 다 세우면 보지도 않을 줄에 0.5초를 쓴다. 그래서
+ * 첫 화면을 채울 만큼만 세우고, 바닥이 가까워지면 그만큼 더 세운다. 내려가지 않으면
+ * 그 아래는 끝내 세우지 않는다.
+ *
+ * 앱은 화면 전체가 껍데기의 스크롤 하나라(`AppShell`) `FlatList` 로 창을 둘 수 없다 --
+ * 스크롤 안에 넣은 FlatList 는 제 창을 모르고 모든 줄을 세운다. 그래서 껍데기의 바닥
+ * 소식(`useNearBottom`)으로 몫을 늘린다.
+ *
+ * 쓰는 법: 그릴 때 줄 묶음마다 `take(개수)` 를 불러, 돌려받은 수만큼만 앞에서부터 세운다.
+ * 차례는 그리는 차례(곧 위에서 아래)다. 몫이 남지 않았어도 **부르기는 한다** -- 세지
+ * 않으면 남은 것이 없다고 보고 몫이 더 늘지 않는다.
+ *
+ * `resetKey` 가 바뀌면(탭·검색·보는 달이 바뀌면) 처음 몫으로 돌아간다. 앞 목록에서
+ * 늘려 둔 몫이 그대로 남으면 새 목록을 한 번에 다 세운다.
+ */
+export function useRenderBudget(resetKey: string) {
+  const [state, setState] = useState({ key: resetKey, budget: FIRST_ROWS });
+  /*
+   * 열쇠가 바뀐 그 그림에서 바로 처음 몫을 쓴다. 효과로 되돌리면 한 번은 옛 몫으로
+   * 새 목록을 다 세운 뒤에야 줄어든다.
+   */
+  const budget = state.key === resetKey ? state.budget : FIRST_ROWS;
+
+  const latestKey = useRef(resetKey);
+  latestKey.current = resetKey;
+  const latestBudget = useRef(budget);
+  latestBudget.current = budget;
+
+  /** 이번 그림에서 세우려던 줄의 수. 그릴 때마다 처음부터 센다. */
+  const wanted = useRef(0);
+  wanted.current = 0;
+
+  const take = (count: number) => {
+    const taken = wanted.current;
+    wanted.current = taken + count;
+    return Math.max(0, Math.min(count, budget - taken));
+  };
+
+  const grow = useCallback((room: (current: number) => number) => {
+    setState((previous) => {
+      const current = previous.key === latestKey.current ? previous.budget : FIRST_ROWS;
+      return { key: latestKey.current, budget: room(current) };
+    });
+  }, []);
+
+  /** 남은 줄이 있을 때만 늘린다. 다 세웠는데 늘리면 다음에 편 것을 한 번에 세운다. */
+  useNearBottom(() => {
+    if (wanted.current > latestBudget.current) grow((current) => current + MORE_ROWS);
+  }, LOOKAHEAD);
+
+  /**
+   * 몫을 **지금 세워 둔 만큼**에 첫 몫을 더한 것으로 되돌린다. 펴고 접을 때 부른다.
+   *
+   * 되돌리지 않으면 큰 달을 폈다 접은 뒤 다른 달을 펼 때 늘어난 몫으로 한 번에 다 세운다.
+   * 그렇다고 첫 몫으로 깎으면 안 된다. 세워 둔 줄이 열두 개로 줄어드는 순간 내용이
+   * 화면보다 짧아지고, ScrollView 는 갈 곳 없는 스크롤을 맨 위로 자른다 -- 아래쪽에서
+   * 줄을 눌렀을 뿐인데 화면이 첫 달로 튀어 오른다.
+   */
+  const restart = useCallback(
+    () => grow((current) => Math.min(wanted.current, current) + FIRST_ROWS),
+    [grow],
+  );
+
+  /** 아직 세우지 않은 줄이 남았는가. 그림이 끝난 뒤(사건 처리기 안)에서 읽는다. */
+  const hasHidden = useCallback(() => wanted.current > latestBudget.current, []);
+
+  return { take, restart, hasHidden };
 }

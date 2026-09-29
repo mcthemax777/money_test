@@ -12,7 +12,7 @@
  * 값은 `useTransactions` 가 창구에서 받는다. 그래서 서버에서 왔는지 기기 사본에서
  * 왔는지 이 화면은 모르고, 오프라인에서도 같은 코드로 그려진다.
  */
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -64,7 +64,7 @@ import { useUserFilter } from '@money/core/store/user-filter';
 import { useEntryFocus, type EntryFocusOrigin } from '@money/core/store/entry-focus';
 
 import { useFloatingActionSlot } from '../shell/floating-action';
-import { useNearBottom } from '../shell/scroll';
+import { useNearBottom, useRenderBudget } from '../shell/scroll';
 import { useCloseOnBack, useNavigation } from '../shell/navigation';
 import RevealTop from '../shell/RevealTop';
 import { StickySection, StickySections } from '../shell/StickySection';
@@ -99,20 +99,6 @@ const TABS: Array<{ id: TransactionTab; labelKey: MessageKey }> = [
   { id: 'category', labelKey: 'tx.tab.category' },
   { id: 'method', labelKey: 'tx.tab.method' },
 ];
-
-/**
- * 펼칠 때 한 번에 그릴 거래 수와, 다음 프레임마다 이어 그릴 만큼.
- *
- * **한 달을 통째로 펼치면 거래가 백 건을 넘는다.** 그것을 한 번에 그리면 그리는 일이
- * 0.5초 가까이 걸리고, 그동안 화면은 누른 것에 아무 반응을 못 한다 -- 누른 사람에게는
- * 앱이 멈춘 것으로 보인다. 값이 비싼 것은 글자를 만드는 일이 아니라 줄 하나하나를
- * 화면 요소로 세우는 일이라, 덜 만드는 것 말고는 줄일 방법이 없다.
- *
- * 그래서 첫 화면에 들어갈 만큼만 먼저 세우고 나머지는 프레임마다 잇는다. 누름은 곧바로
- * 반응하고, 이어지는 줄은 눈에 차오르는 것으로 보인다.
- */
-const FIRST_CHUNK = 12;
-const NEXT_CHUNK = 24;
 
 /** 펼치고 접을 때의 움직임. 새로 선 줄은 옅은 데서 떠오르고 아래는 밀려 내려간다. */
 const UNFOLD = LayoutAnimation.create(180, 'easeInEaseOut', 'opacity');
@@ -474,13 +460,26 @@ export default function TransactionsScreen() {
    */
   const [isCalendar, setIsCalendar] = useState(false);
   /*
+   * 목록의 줄은 **내려가 볼 때만** 세운다(`useRenderBudget`). 한 달을 펴면 백 건이 넘어,
+   * 다 세우면 보지도 않을 줄에 0.5초를 쓰고 그동안 누름에 반응하지 못한다. 검색으로
+   * 여러 기간을 한꺼번에 펴도 같다.
+   *
+   * 보는 목록 자체가 바뀌면(탭·단위·기준·검색·가계부) 처음 몫으로 돌아간다.
+   */
+  const lazy = useRenderBudget(
+    `${selectedProjectId}|${tx.tab}|${tx.unit}|${tx.basis}|${JSON.stringify(tx.search)}`,
+  );
+  /*
    * 검색 중에는 바닥에 닿을 때마다 다음 기간 줄들을 끝까지 편다(`revealMore`).
    *
    * 펼친 곳을 아직 받는 중이면 기다린다. 받는 중인 줄은 짧아 바닥이 가까워 보이는데,
    * 그때 또 펴면 받기도 전에 다음 묶음이 나가 결국 한꺼번에 편 것과 같아진다. 달력
    * 보기에서는 목록이 없으니 펴지 않는다 -- 펴면 보이지 않는 줄의 조회가 나간다.
+   *
+   * 편 것을 아직 다 세우지 않았어도 기다린다. 바닥이 가까운 것은 세우다 만 자리라서다.
    */
   useNearBottom(() => {
+    if (lazy.hasHidden()) return;
     if (tx.canRevealMore && !tx.isLoadingOpen && !isCalendar) tx.revealMore();
   });
 
@@ -535,56 +534,22 @@ export default function TransactionsScreen() {
    * 글자 길이가 언어마다 달라 미리 적어 둘 수 없다(날짜/Date/日付). 그려진 뒤 재고,
    * 화면을 돌리면 다시 잰다.
    */
-  /*
-   * 지금까지 그리기로 한 거래 수. 프레임마다 늘어난다.
-   *
-   * `wantedEntries` 는 이번에 그리려던 전부다. 그것이 예산을 넘으면 아래 효과가 다음
-   * 프레임에 예산을 늘려, 남은 줄이 이어 선다.
-   */
-  const [budget, setBudget] = useState(FIRST_CHUNK);
-  const wantedEntries = useRef(0);
-  wantedEntries.current = 0;
-
-  useEffect(() => {
-    if (wantedEntries.current <= budget) return;
-
-    const frame = requestAnimationFrame(() => setBudget((room) => room + NEXT_CHUNK));
-    return () => cancelAnimationFrame(frame);
-  });
-
-  /*
-   * 예산을 **지금 그려 둔 만큼**으로 되돌린다. 펼치고 접을 때마다 부른다.
-   *
-   * 되돌리지 않으면 한 달을 펼쳤다 접고 다른 달을 펼칠 때 예산이 이미 커져 있어, 그
-   * 달도 한 번에 다 그린다 -- 곧 처음의 멈춤이 그대로 돌아온다.
-   *
-   * 그렇다고 `FIRST_CHUNK` 로 깎으면 안 된다. 앱은 화면 전체가 껍데기의 스크롤 하나라
-   * (`shell/AppShell`) 이미 그려 둔 줄이 열두 개로 줄어드는 순간 내용이 화면보다
-   * 짧아지고, ScrollView 는 갈 곳 없는 스크롤을 맨 위로 자른다 -- 아래쪽에서 년월 줄을
-   * 눌렀을 뿐인데 화면이 첫 달로 튀어 오른다. 그려 둔 것은 그대로 두고 새로 필 것만
-   * 차례로 세우면, 내용은 늘기만 하므로 보던 자리가 그대로 남는다.
-   */
-  const restartBudget = useCallback(
-    () => setBudget((room) => Math.min(wantedEntries.current, room) + FIRST_CHUNK),
-    [],
-  );
-
   /** 펼치고 접는 누름. 움직임을 걸고 예산을 다시 잡는다. */
   const unfoldMonth = useCallback(
     (yearMonth: string) => {
       LayoutAnimation.configureNext(UNFOLD);
-      restartBudget();
+      lazy.restart();
       tx.cycleMonth(yearMonth);
     },
-    [restartBudget, tx.cycleMonth],
+    [lazy.restart, tx.cycleMonth],
   );
   const unfoldRow = useCallback(
     (yearMonth: string, key: string) => {
       LayoutAnimation.configureNext(UNFOLD);
-      restartBudget();
+      lazy.restart();
       tx.toggleRow(yearMonth, key);
     },
-    [restartBudget, tx.toggleRow],
+    [lazy.restart, tx.toggleRow],
   );
 
   /*
@@ -687,11 +652,8 @@ export default function TransactionsScreen() {
      */
     const rows = tx.entryRowsOf(yearMonth, key);
 
-    // 예산에서 이 줄의 몫을 떼어 온다. 모자라면 앞에서부터 그만큼만 세운다.
-    const taken = wantedEntries.current;
-    wantedEntries.current = taken + rows.length;
-    const shown =
-      taken + rows.length <= budget ? rows : rows.slice(0, Math.max(0, budget - taken));
+    // 몫에서 이 줄의 것을 떼어 온다. 모자라면 앞에서부터 그만큼만 세운다.
+    const shown = rows.slice(0, lazy.take(rows.length));
 
     return (
       <View className="bg-white">
@@ -763,19 +725,15 @@ export default function TransactionsScreen() {
       const open = tx.isRowOpen(yearMonth, row.key);
 
       /*
-       * 줄도 예산에서 한 자리를 떼어 간다.
+       * 줄도 몫에서 한 자리를 떼어 간다.
        *
-       * 거래만 나눠 그리면 줄 서른 개는 여전히 한 번에 선다. 그것만으로 100ms 가 넘어,
-       * 누른 뒤 첫 화면이 그만큼 늦는다. 줄까지 차례로 세우면 위에서 아래로 펼쳐지는
-       * 것이 그대로 보인다.
+       * 거래만 나눠 세우면 줄 서른 개는 여전히 한 번에 선다. 그것만으로 100ms 가 넘는다.
        *
-       * 차례가 아닌 줄도 **세기는 한다.** 세지 않으면 남은 것이 없다고 보고 예산이 더
+       * 차례가 아닌 줄도 **세기는 한다.** 세지 않으면 남은 것이 없다고 보고 몫이 더
        * 늘지 않아, 그 아래가 영영 서지 않는다.
        */
-      const taken = wantedEntries.current;
-      wantedEntries.current = taken + 1;
-      if (taken >= budget) {
-        if (open) wantedEntries.current += tx.entriesOf(yearMonth, row.key).length;
+      if (lazy.take(1) === 0) {
+        if (open) lazy.take(tx.entryRowsOf(yearMonth, row.key).length);
         return null;
       }
 

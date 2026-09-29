@@ -23,6 +23,8 @@ import { sumEntries } from '@money/core/lib/entries';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useProjectTimeZone } from '@money/core/store/project';
 
+import { useRenderBudget } from '../shell/scroll';
+
 import MonthHeader from './MonthHeader';
 import TransactionCalendar from './TransactionCalendar';
 import TransactionItem from './TransactionItem';
@@ -69,6 +71,16 @@ export default function TransactionCalendarView({
   }, [searchKey]);
   const totals = sumEntries(ledger.entries);
 
+  /*
+   * 달력 아래 거래도 **내려가 볼 때만** 세운다. 한 달을 통째로 보면 백 건이 넘는다.
+   * 달·고른 날·검색이 바뀌면 처음 몫으로 돌아간다.
+   */
+  const lazy = useRenderBudget(
+    `${projectId}|${view.year}-${view.month}|${selectedDate?.getTime() ?? ''}|${searchKey}`,
+  );
+  const rows = entryRows(selectedDate ? dayEntries : ledger.entries);
+  const shownRows = rows.slice(0, lazy.take(rows.length));
+
   return (
     <View className="gap-4">
       <MonthHeader
@@ -114,7 +126,7 @@ export default function TransactionCalendarView({
               식비 5,000 + 여행경비 5,000으로 나눴다면 여기서도 두 줄이 선다.
             */
             <View className="overflow-hidden rounded-lg bg-white">
-              {entryRows(selectedDate ? dayEntries : ledger.entries).map((row) => (
+              {shownRows.map((row) => (
                 <TransactionItem
                   key={row.key}
                   entry={row.entry}

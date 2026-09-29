@@ -26,6 +26,7 @@ import { useTranslation } from '@money/core/lib/i18n';
 import { useProjectTimeZone } from '@money/core/store/project';
 
 import MonthHeader from '@/components/MonthHeader';
+import { useRenderBudget } from '@/hooks/useRenderBudget';
 import TransactionCalendar from '@/components/TransactionCalendar';
 import TransactionItem from '@/components/TransactionItem';
 
@@ -70,6 +71,16 @@ export default function TransactionCalendarView({
     setDayEntries([]);
   }, [searchKey]);
   const totals = sumEntries(ledger.entries);
+
+  /*
+   * 달력 아래 거래도 **내려가 볼 때만** 세운다. 한 달을 통째로 보면 백 건이 넘는다.
+   * 달·고른 날·검색이 바뀌면 처음 몫으로 돌아간다. 앱과 같은 규칙이다.
+   */
+  const lazy = useRenderBudget(
+    `${projectId}|${view.year}-${view.month}|${selectedDate?.getTime() ?? ''}|${searchKey}`,
+  );
+  const rows = entryRows(selectedDate ? dayEntries : ledger.entries);
+  const shownRows = rows.slice(0, lazy.take(rows.length));
 
   const changeMonth = (year: number, month: number) => {
     setView({ year, month });
@@ -120,9 +131,14 @@ export default function TransactionCalendarView({
               한 화면 안에서 달력으로 보든 목록으로 보든 거래 한 건은 같은 모양이어야
               한다. 나눈 거래를 줄로 펴는 것(`entryRows`)도 그 규칙의 일부다 -- 10,000원을
               식비 5,000 + 여행경비 5,000으로 나눴다면 여기서도 두 줄이 선다.
+
+              이 상자의 아래 끝이 화면 아래에 가까워지면 다음 줄을 세운다(`useRenderBudget`).
             */
-            <div className="divide-y divide-gray-100 overflow-hidden rounded-lg bg-white">
-              {entryRows(selectedDate ? dayEntries : ledger.entries).map((row) => (
+            <div
+              ref={lazy.sentinel}
+              className="divide-y divide-gray-100 overflow-hidden rounded-lg bg-white"
+            >
+              {shownRows.map((row) => (
                 <TransactionItem
                   key={row.key}
                   entry={row.entry}

@@ -94,6 +94,7 @@ import PageHeader from '@/components/PageHeader';
 import PullFooter from '@/components/PullFooter';
 import { useBottomPull } from '@/hooks/useBottomPull';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
+import { useRenderBudget } from '@/hooks/useRenderBudget';
 import { useTopReveal } from '@/hooks/useTopReveal';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import TransactionItem from '@/components/TransactionItem';
@@ -411,6 +412,15 @@ export default function TransactionsView({
    * 펼친 곳을 받는 중이면 기다린다(`isLoadingOpen`). 첫 묶음이 화면을 못 채우면 스스로
    * 잇는데, 받기도 전에 이으면 결국 한꺼번에 편 것과 같아진다. 달력에서는 목록이 없다.
    */
+  /*
+   * 목록의 줄은 **내려가 볼 때만** 세운다(`useRenderBudget`). 한 달을 펴거나 검색으로
+   * 여러 기간을 펴면 수백 건이라, 다 세우면 보지도 않을 줄에 시간을 쓴다. 앱과 같은 규칙이다.
+   *
+   * 보는 목록 자체가 바뀌면(탭·단위·기준·검색·가계부) 처음 몫으로 돌아간다.
+   */
+  const lazy = useRenderBudget(
+    `${selectedProjectId}|${tx.tab}|${tx.unit}|${tx.basis}|${JSON.stringify(tx.search)}`,
+  );
   const revealPull = useBottomPull({
     hasMore: tx.canRevealMore && !isCalendar,
     isLoading: tx.isLoadingOpen,
@@ -523,6 +533,9 @@ export default function TransactionsView({
      * divide-y 는 자식 사이에만 선을 긋는다. 고르는 중에 체크박스와 함께 감싸는 칸도
      * 자식 하나라 그대로 듣는다.
      */
+    // 몫에서 이 줄의 것을 떼어 온다. 모자라면 앞에서부터 그만큼만 세운다.
+    const shown = rows.slice(0, lazy.take(rows.length));
+
     return (
       <div className="unfold divide-y divide-gray-100 bg-white">
         {tx.isLoadingRow(yearMonth, key) ? (
@@ -530,7 +543,7 @@ export default function TransactionsView({
         ) : entries.length === 0 ? (
           <p className="px-3 py-3 text-sm text-gray-500">{t('feed.empty')}</p>
         ) : (
-          rows.map((row) => {
+          shown.map((row) => {
             // 그 줄의 태그를 고른다. 나눈 줄마다 따로 표시할 수 있어야 한다.
             const toggle = () =>
               tx.toggleEntrySelected(
@@ -609,6 +622,15 @@ export default function TransactionsView({
        */
       const divided = open && index < rows.length - 1;
 
+      /*
+       * 줄도 몫에서 한 자리를 떼어 간다. 차례가 아닌 줄도 **세기는 한다** -- 세지 않으면
+       * 남은 것이 없다고 보고 몫이 더 늘지 않아, 그 아래가 영영 서지 않는다.
+       */
+      if (lazy.take(1) === 0) {
+        if (open) lazy.take(tx.entryRowsOf(yearMonth, row.key).length);
+        return null;
+      }
+
       return (
         <div
           key={`${tx.tab}-${row.key}`}
@@ -633,7 +655,10 @@ export default function TransactionsView({
                   }
                 : undefined
             }
-            onClick={() => tx.toggleRow(yearMonth, row.key)}
+            onClick={() => {
+              lazy.restart();
+              tx.toggleRow(yearMonth, row.key);
+            }}
           />
           {open ? entryList(yearMonth, row.key) : null}
         </div>
@@ -1251,7 +1276,10 @@ export default function TransactionsView({
                           }
                         : undefined
                     }
-                    onClick={() => tx.cycleMonth(month.yearMonth)}
+                    onClick={() => {
+                      lazy.restart();
+                      tx.cycleMonth(month.yearMonth);
+                    }}
                   />
                 </div>
                 {/*
@@ -1284,6 +1312,8 @@ export default function TransactionsView({
             );
           })
         )}
+        {/* 세운 줄의 끝. 화면 아래에 가까워지면 다음 줄을 세운다(`useRenderBudget`). */}
+        <div ref={lazy.sentinel} aria-hidden />
         {/* 검색 중에 아직 펴지 않은 기간 줄이 남았을 때만 선다. 당기면 다음 묶음을 편다. */}
         {tx.canRevealMore ? (
           <PullFooter pull={revealPull} isLoading={tx.isLoadingOpen} hasMore isEmpty={false} />
