@@ -5,7 +5,9 @@ import { useAnimatedRef, useScrollOffset } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTranslation } from '@money/core/lib/i18n';
+import { useInboxCountSync } from '@money/core/hooks/useEntryDrafts';
 import { useAuth } from '@money/core/store/auth';
+import { useProject } from '@money/core/store/project';
 
 import {
   NearBottomProvider,
@@ -43,6 +45,8 @@ function Shell({ children }: { children: ReactNode }) {
   const { t, locale } = useTranslation();
   const { isAuthenticated, isInitializing } = useAuth();
   const insets = useSafeAreaInsets();
+  // 아래 탭의 거래 칸에 띄울 보관함 수. 탭·사이드바가 함께 읽으므로 여기서 한 번만 센다.
+  useInboxCountSync(useProject((state) => state.selectedProjectId));
   /* 바닥에 닿으면 목록이 다음 쪽을 잇는다 (shell/scroll 참고). */
   const nearBottom = useNearBottomScroll();
   const isScrollLocked = useScrollLocked();

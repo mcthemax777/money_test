@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
 import { AppBrand } from '@/components/AppLogo';
+import CountBadge from '@/components/CountBadge';
 import ProjectSwitchModal from '@/components/ProjectSwitchModal';
 import { UserAvatar } from '@/components/UserAvatar';
 import { useNavPending } from '@/hooks/useNavPending';
@@ -11,6 +12,8 @@ import { useProjectSwitch } from '@/hooks/useProjectSwitch';
 import { useTranslation } from '@money/core/lib/i18n';
 import { isActiveNav, navItemsOf } from '@money/core/lib/nav';
 import { useAuth } from '@money/core/store/auth';
+import { useInboxCount } from '@money/core/store/inbox-count';
+import { useInquiryUnread } from '@money/core/store/inquiry-unread';
 import { useProject } from '@money/core/store/project';
 
 /**
@@ -22,6 +25,10 @@ import { useProject } from '@money/core/store/project';
  * 프로젝트를 고르는 일과 내 정보는 설정 화면에 있다.
  */
 export default function DashboardSidebar() {
+  // 아래 탭과 같은 수. 거래는 보관함, 설정은 읽지 않은 문의 답이다.
+  const inboxBadge = useInboxCount(useProject((state) => state.selectedProjectId));
+  const inquiryBadge = useInquiryUnread((state) => state.count);
+  const badges: Record<string, number> = { '/transactions': inboxBadge, '/settings': inquiryBadge };
   const { t } = useTranslation();
   const pathname = usePathname();
   const { projects, selectedProjectId } = useProject();
@@ -96,6 +103,8 @@ export default function DashboardSidebar() {
                     }`}
                   >
                     {t(item.labelKey)}
+                    {/* 넓은 화면에서는 아래 탭 대신 여기에 선다. 받는 중에는 도는 원에 자리를 준다. */}
+                    {!pending ? <CountBadge count={badges[item.href] ?? 0} inline /> : null}
                     {pending && (
                       <span
                         className="h-4 w-4 animate-spin rounded-full border-2 border-blue-200 border-t-blue-600"

@@ -18,13 +18,10 @@ export default function SettingsPage() {
   const refreshInquiryUnread = useInquiryUnread((state) => state.refresh);
 
   /*
-   * 읽지 않은 문의 답을 센다. 웹은 푸시를 받지 않으므로 설정을 열 때와 탭으로 돌아올 때 센다.
+   * 설정을 열 때도 한 번 더 센다. 창으로 돌아올 때 세는 것은 껍데기(`AppShell`)가 한다.
    */
   useEffect(() => {
     void refreshInquiryUnread();
-    const onFocus = () => void refreshInquiryUnread();
-    window.addEventListener('focus', onFocus);
-    return () => window.removeEventListener('focus', onFocus);
   }, [refreshInquiryUnread]);
 
   return (

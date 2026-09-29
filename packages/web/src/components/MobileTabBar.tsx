@@ -3,10 +3,13 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 
+import CountBadge from '@/components/CountBadge';
 import NavIcon from '@/components/NavIcon';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useNavPending } from '@/hooks/useNavPending';
 import { isActiveNav, navItemsOf } from '@money/core/lib/nav';
+import { useInboxCount } from '@money/core/store/inbox-count';
+import { useInquiryUnread } from '@money/core/store/inquiry-unread';
 import { useProject } from '@money/core/store/project';
 
 /**
@@ -22,6 +25,13 @@ export default function MobileTabBar() {
   const { projects } = useProject();
   const { pendingHref, start } = useNavPending();
   const items = navItemsOf(projects.length > 0);
+  /*
+   * 칸의 빨간 수. 거래는 보관함에 기다리는 후보, 설정은 읽지 않은 문의 답이다. (앱의 설정 칸은
+   * 보내지 못한 거래도 더한다 -- 웹은 기기 사본이 없어 보내지 못한 거래가 생기지 않는다.)
+   */
+  const inboxBadge = useInboxCount(useProject((state) => state.selectedProjectId));
+  const inquiryBadge = useInquiryUnread((state) => state.count);
+  const badges: Record<string, number> = { '/transactions': inboxBadge, '/settings': inquiryBadge };
 
   return (
     /*
@@ -61,7 +71,10 @@ export default function MobileTabBar() {
                     aria-hidden
                   />
                 ) : (
-                  <NavIcon name={item.icon} className="h-5 w-5" strokeWidth={active ? 2.25 : 1.75} />
+                  <span className="relative">
+                    <NavIcon name={item.icon} className="h-5 w-5" strokeWidth={active ? 2.25 : 1.75} />
+                    <CountBadge count={badges[item.href] ?? 0} />
+                  </span>
                 )}
                 <span className="text-[11px] leading-none">{t(item.labelKey)}</span>
               </Link>

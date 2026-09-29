@@ -5,6 +5,7 @@
  * 있어야 하고, 눌린 알림을 보관함으로 보내려면 화면 이동(`useNavigation`)이 있어야 한다.
  */
 import { useEffect, useRef } from 'react';
+import { AppState } from 'react-native';
 import * as Notifications from 'expo-notifications';
 
 import { useProject } from '@money/core/store/project';
@@ -60,6 +61,18 @@ export default function PushSetup() {
     }
     go('/transactions/inbox');
   }, [response, go]);
+
+  /*
+   * 켤 때와 다시 앞으로 올 때 읽지 않은 문의 답을 센다. 아래 탭의 설정 칸이 이 수를 띄우므로
+   * 설정 화면을 열기 전에도 맞아야 한다. 뒤에 있는 동안 온 답은 푸시로만 알고 세지 않았다.
+   */
+  useEffect(() => {
+    void refreshInquiryUnread();
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') void refreshInquiryUnread();
+    });
+    return () => subscription.remove();
+  }, []);
 
   /*
    * 앱을 보는 중에 문의 답장 푸시가 오면 배지를 곧바로 다시 센다. 누르지 않아도 설정의

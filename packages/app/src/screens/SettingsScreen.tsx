@@ -7,7 +7,6 @@ import { weekdayNames } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useLocaleStore } from '@money/core/store/locale';
 import { useProject } from '@money/core/store/project';
-import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { useWeekStartStore } from '@money/core/store/week-start';
 import { useInquiryUnread } from '@money/core/store/inquiry-unread';
 
@@ -16,7 +15,7 @@ import ExchangeRateSettings from '../components/ExchangeRateSettings';
 import PageHeader from '../components/PageHeader';
 import { OptionModal, SettingRow } from '../components/SettingPicker';
 import { useNavigation } from '../shell/navigation';
-import { heldMutations, queuedMutations } from '../offline';
+import { useOutboxCount } from '../shell/nav-badges';
 
 /** 언어 이름을 담은 열쇠. 사전이 세 언어 모두에서 같은 값(그 나라 말)을 갖는다. */
 const NAME_KEY: Record<Locale, MessageKey> = {
@@ -103,36 +102,6 @@ export default function SettingsScreen() {
       </View>
     </View>
   );
-}
-
-/**
- * 아직 서버에 가지 못한 명령의 수. 보내지 못한 거래 화면의 두 칸(보내는 중·골라야 하는 것)을 합친다.
- *
- * 평소에는 0 이어야 한다. 0 이 아니면 설정 줄에 배지가 서서, 그 화면을 열지 않고도 무엇이
- * 막혀 있는지 알 수 있다. 동기화가 사본을 바꿀 때마다 다시 센다.
- */
-function useOutboxCount(): number {
-  const projectId = useProject((state) => state.selectedProjectId);
-  const mirrorVersion = useMirrorVersion();
-  const [count, setCount] = useState(0);
-
-  useEffect(() => {
-    if (!projectId) {
-      setCount(0);
-      return;
-    }
-    let cancelled = false;
-    Promise.all([heldMutations(projectId), queuedMutations(projectId)])
-      .then(([held, queued]) => {
-        if (!cancelled) setCount(held.length + queued.length);
-      })
-      .catch((error) => console.warn('보내지 못한 거래를 세지 못했습니다:', error));
-    return () => {
-      cancelled = true;
-    };
-  }, [projectId, mirrorVersion]);
-
-  return count;
 }
 
 function SettingsCard({

@@ -5,8 +5,10 @@ import { useTranslation } from '@money/core/lib/i18n';
 import { isActiveNav, navItemsOf } from '@money/core/lib/nav';
 import { useProject } from '@money/core/store/project';
 
+import CountBadge from '../components/CountBadge';
 import NavIcon from '../components/NavIcon';
 import { useNavigation } from './navigation';
+import { useNavBadges } from './nav-badges';
 
 /**
  * 좁은 화면의 아래쪽 탭. 웹의 MobileTabBar 와 같다.
@@ -20,6 +22,8 @@ export default function TabBar() {
   const projects = useProject((state) => state.projects);
   const insets = useSafeAreaInsets();
   const items = navItemsOf(projects.length > 0);
+  // 칸의 빨간 수. 거래는 보관함, 설정은 보내지 못한 거래와 읽지 않은 문의 답이다.
+  const badges = useNavBadges();
 
   return (
     /* 아래 여백은 홈 표시줄 자리다. 그만큼 띄우지 않으면 마지막 칸이 깔려 눌리지 않는다. */
@@ -43,12 +47,15 @@ export default function TabBar() {
                 active ? 'bg-blue-50' : ''
               }`}
             >
-              {/* 그림은 글자 색을 따른다. 고른 칸이 한 덩이로 보여야 한다. */}
-              <NavIcon
-                name={item.icon}
-                color={active ? '#2563eb' : '#4b5563'}
-                strokeWidth={active ? 2.25 : 1.75}
-              />
+              {/* 그림은 글자 색을 따른다. 고른 칸이 한 덩이로 보여야 한다. 배지는 그림 오른쪽 위다. */}
+              <View className="relative">
+                <NavIcon
+                  name={item.icon}
+                  color={active ? '#2563eb' : '#4b5563'}
+                  strokeWidth={active ? 2.25 : 1.75}
+                />
+                <CountBadge count={badges[item.href] ?? 0} />
+              </View>
               <Text
                 className={`text-[11px] leading-none ${
                   active ? 'font-medium text-blue-600' : 'text-gray-600'

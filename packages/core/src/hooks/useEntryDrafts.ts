@@ -12,6 +12,7 @@ import type { EntryDraftDto, EntryDraftSource } from '@money/types';
 
 import { useApiError } from '../lib/api-error';
 import { draftPort, type DraftAction } from '../data/draft-port';
+import { refreshInboxCount, useInboxCountStore } from '../store/inbox-count';
 import { useMirrorVersion } from './useMirrorVersion';
 
 export interface UseEntryDraftsResult {
@@ -81,6 +82,16 @@ export function useEntryDrafts(
     void reload();
   }, [reload, mirrorVersion]);
 
+  /*
+   * 읽은 목록의 수를 탭 배지에 적는다. 후보를 처리해 목록에서 뺄 때도 여기로 와서, 탭의 수가
+   * 다시 세지 않고 곧바로 준다. 받는 중이거나 못 읽었을 때는 적지 않는다(빈 목록을 0 으로 적으면
+   * 오프라인에서 배지가 사라진다).
+   */
+  useEffect(() => {
+    if (!projectId || isLoading || error) return;
+    useInboxCountStore.getState().set(projectId, all.length);
+  }, [projectId, all, isLoading, error]);
+
   const act = useCallback(
     async (draftId: string, action: DraftAction, entryId?: string | null): Promise<boolean> => {
       if (!projectId) return false;
@@ -125,4 +136,17 @@ export function useEntryDrafts(
     dismiss: (draftId) => act(draftId, 'dismissed'),
     remove: (draftId) => act(draftId, 'deleted'),
   };
+}
+
+/**
+ * 보관함 대기 건수를 센다(`store/inbox-count`). 껍데기에 한 번만 둔다.
+ *
+ * 가계부를 바꿀 때와 사본이 바뀔 때(앱에서 알림 후보가 동기화로 들어올 때) 다시 센다. 웹은
+ * 사본이 없어 뒤엣것이 오지 않으므로, 창으로 돌아올 때 `refreshInboxCount` 를 따로 부른다.
+ */
+export function useInboxCountSync(projectId: string | null): void {
+  const mirrorVersion = useMirrorVersion();
+  useEffect(() => {
+    void refreshInboxCount(projectId);
+  }, [projectId, mirrorVersion]);
 }

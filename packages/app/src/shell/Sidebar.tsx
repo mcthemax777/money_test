@@ -6,8 +6,10 @@ import { useAuth } from '@money/core/store/auth';
 import { useProject } from '@money/core/store/project';
 
 import { AppBrand } from '../components/AppLogo';
+import CountBadge from '../components/CountBadge';
 import { UserAvatar } from '../components/UserAvatar';
 import { useNavigation } from './navigation';
+import { useNavBadges } from './nav-badges';
 
 /**
  * 넓은 화면(태블릿·가로)의 왼쪽 사이드바. 웹의 DashboardSidebar 와 같다.
@@ -15,6 +17,7 @@ import { useNavigation } from './navigation';
  * 좁은 화면에서는 아예 그리지 않는다. 그쪽은 위쪽 막대와 아래쪽 탭이 맡는다.
  */
 export default function Sidebar() {
+  const badges = useNavBadges();
   const { t } = useTranslation();
   const { path, go } = useNavigation();
   const { projects, selectedProjectId, setSelectedProjectId } = useProject();
@@ -90,6 +93,8 @@ export default function Sidebar() {
                   <Text className={active ? 'font-medium text-blue-600' : 'text-gray-700'}>
                     {t(item.labelKey)}
                   </Text>
+                  {/* 아래 탭과 같은 수. 넓은 화면에서는 탭 대신 여기에 선다. */}
+                  <CountBadge count={badges[item.href] ?? 0} inline />
                 </Pressable>
               );
             })}

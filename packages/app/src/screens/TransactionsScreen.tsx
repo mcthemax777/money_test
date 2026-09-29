@@ -59,7 +59,7 @@ import {
   useProjectDisplayCurrency,
 } from '@money/core/store/project';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
-import { useEntryDrafts } from '@money/core/hooks/useEntryDrafts';
+import { useInboxCount } from '@money/core/store/inbox-count';
 import { useUserFilter } from '@money/core/store/user-filter';
 import { useEntryFocus, type EntryFocusOrigin } from '@money/core/store/entry-focus';
 
@@ -384,9 +384,7 @@ export default function TransactionsScreen() {
    * 목록은 보관함 화면이 그리지만 숫자는 여기 있어야 한다 -- 아이콘만 있으면 눌러
    * 보지 않고는 볼 것이 있는지 알 수 없다.
    */
-  const inbox = useEntryDrafts(selectedProjectId, 'notification');
-  const inboxCount =
-    inbox.counts.notification + inbox.counts.capture + inbox.counts.recurring;
+  const inboxCount = useInboxCount(selectedProjectId);
   /*
    * 사람 목록과 선택을 이 프로젝트에 맞춘다.
    *
