@@ -2,6 +2,7 @@
  * 푸시 알림의 기기 쪽.
  *
  * 서버는 보관함에 알림 후보가 담기면 그 가계부 구성원의 기기 전부에 FCM 으로 알린다.
+ * 관리자가 문의에 답하면 그 사람의 기기 전부에 알린다.
  * 이 파일은 그 알림을 받을 준비를 한다 -- 알림 채널을 만들고, 권한을 묻고, 이 기기의
  * FCM 토큰을 서버에 적고, 로그아웃할 때 지운다.
  *
@@ -17,6 +18,8 @@ import { useLocaleStore } from '@money/core/store/locale';
 
 /** 보관함 알림의 채널. 서버의 `DRAFT_CHANNEL_ID`, app.json 의 `defaultChannel` 과 같아야 한다. */
 const DRAFT_CHANNEL_ID = 'drafts';
+/** 문의 답장의 채널. 서버의 `INQUIRY_CHANNEL_ID` 와 같아야 한다. */
+const INQUIRY_CHANNEL_ID = 'inquiries';
 
 /** 서버에 적은 토큰. 로그아웃할 때 이것을 지운다. */
 let registeredToken: string | null = null;
@@ -50,6 +53,11 @@ export async function registerPushDevice(): Promise<() => void> {
     await Notifications.setNotificationChannelAsync(DRAFT_CHANNEL_ID, {
       // 안드로이드 설정 > 알림에 보이는 이름. 채널을 만들 때의 화면 언어로 적힌다.
       name: translate(useLocaleStore.getState().locale, 'inbox.title'),
+      importance: Notifications.AndroidImportance.HIGH,
+    });
+    // 보관함과 따로 둔다. 사람이 안드로이드 설정에서 둘 중 하나만 끌 수 있게.
+    await Notifications.setNotificationChannelAsync(INQUIRY_CHANNEL_ID, {
+      name: translate(useLocaleStore.getState().locale, 'inquiries.channel'),
       importance: Notifications.AndroidImportance.HIGH,
     });
 

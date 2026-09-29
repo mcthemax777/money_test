@@ -117,6 +117,11 @@ export const ERROR_CODES = [
   'NOTIFICATION_SAMPLE_INVALID',
   'NOTIFICATION_RULE_INVALID',
   'NOTIFICATION_RULE_NOT_FOUND',
+
+  // 문의하기
+  'INQUIRY_BODY_REQUIRED',
+  'INQUIRY_BODY_TOO_LONG',
+  'INQUIRY_NOT_FOUND',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

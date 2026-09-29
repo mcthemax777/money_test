@@ -27,6 +27,7 @@ import { AdminModule } from './modules/admin/admin.module';
 import { PushModule } from './modules/push/push.module';
 import { AppVersionModule } from './modules/app-version/app-version.module';
 import { NotificationSamplesModule } from './modules/notification-samples/notification-samples.module';
+import { InquiriesModule } from './modules/inquiries/inquiries.module';
 import { AppVersionGuard } from './modules/app-version/app-version.guard';
 
 @Module({
@@ -75,6 +76,7 @@ import { AppVersionGuard } from './modules/app-version/app-version.guard';
     AdminModule,
     AppVersionModule,
     NotificationSamplesModule,
+    InquiriesModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

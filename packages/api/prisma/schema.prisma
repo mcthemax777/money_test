@@ -102,6 +102,7 @@ model User {
   createdEntries      JournalEntry[] // 입력자 추적용 (조회 필터로는 쓰지 않는다)
   pushDevices         PushDevice[]
   notificationSamples NotificationSample[]
+  inquiries           Inquiry[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1282,4 +1283,45 @@ model NotificationRule {
   updatedAt DateTime @updatedAt
 
   @@index([packageName])
+}
+
+/// 문의하기. 사용자가 설정에서 보내고 관리자가 관리 도구(`/admin/inquiries`)에서 답한다.
+///
+/// 한 줄이 한 줄기 대화다. 목록의 차례와 상태를 글을 셀 때마다 모으지 않도록 마지막 글의
+/// 시각과 쓴 사람을 여기 적어 둔다(글을 담는 트랜잭션에서 함께 고친다).
+///
+/// **읽지 않은 답**은 `userReadAt` 보다 늦게 온 관리자의 글이다. 사용자가 그 문의를 열면
+/// 지금으로 당긴다. 설정의 "문의하기" 배지가 이 수를 센다.
+model Inquiry {
+  id            String   @id @default(cuid())
+  userId        String
+  /// 보낼 때의 판. 요청 머리글(x-app-platform, x-app-version)에서 적는다. 관리자가 답할 때 본다.
+  platform      String?
+  appVersion    String?
+  /// user | admin -- 마지막 글을 쓴 사람. user 면 답을 기다리는 중이다.
+  lastAuthor    String   @default("user")
+  lastMessageAt DateTime @default(now())
+  userReadAt    DateTime @default(now())
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages InquiryMessage[]
+
+  @@index([userId, lastMessageAt])
+  @@index([lastAuthor, lastMessageAt])
+}
+
+model InquiryMessage {
+  id        String   @id @default(cuid())
+  inquiryId String
+  /// user | admin
+  author    String
+  body      String
+  createdAt DateTime @default(now())
+
+  inquiry Inquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+
+  @@index([inquiryId, createdAt])
 }

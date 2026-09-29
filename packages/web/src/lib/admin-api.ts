@@ -11,6 +11,8 @@ import type {
   AppVersionPolicy,
   AppVersionPolicyUpdate,
   HolidayCountry,
+  InquiryDto,
+  InquiryStatus,
   NotificationRule,
   NotificationRuleDto,
   NotificationSampleDto,
@@ -131,3 +133,13 @@ export const updateNotificationRule = (id: string, body: Partial<NotificationRul
 
 export const removeNotificationRule = (id: string) =>
   call<void>('DELETE', `/admin/notification-rules/${encodeURIComponent(id)}`);
+
+export const listInquiries = (status?: InquiryStatus) =>
+  call<InquiryDto.AdminSummary[]>('GET', `/admin/inquiries${status ? `?status=${status}` : ''}`);
+
+export const getInquiry = (id: string) =>
+  call<InquiryDto.AdminDetail>('GET', `/admin/inquiries/${encodeURIComponent(id)}`);
+
+/** 답장. 그 사용자의 기기로 푸시가 간다. */
+export const replyInquiry = (id: string, body: string) =>
+  call<InquiryDto.AdminDetail>('POST', `/admin/inquiries/${encodeURIComponent(id)}/replies`, { body });

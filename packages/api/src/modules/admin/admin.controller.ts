@@ -1,7 +1,7 @@
 /**
  * 관리 도구 API. 웹의 `/admin` 이 부른다.
  *
- * 도구가 늘면 여기에 길을 더한다(공휴일, 앱 버전, 알림 원문·규칙). 로그인 외에는 전부 `AdminGuard` 뒤에 있다.
+ * 도구가 늘면 여기에 길을 더한다(공휴일, 앱 버전, 알림 원문·규칙, 문의). 로그인 외에는 전부 `AdminGuard` 뒤에 있다.
  */
 import {
   BadRequestException,
@@ -24,6 +24,7 @@ import {
   HOLIDAY_COUNTRIES,
   type AppVersionPolicyUpdate,
   type HolidayCountry,
+  type InquiryDto,
   type NotificationRuleDto,
   type NotificationSampleDto,
 } from '@money/types';
@@ -31,6 +32,7 @@ import {
 import { AppVersionService, isPlatform } from '../app-version/app-version.service';
 import { SkipVersionCheck } from '../app-version/skip-version-check.decorator';
 import { HolidaysService } from '../holidays/holidays.service';
+import { InquiriesService } from '../inquiries/inquiries.service';
 import { NotificationSamplesService } from '../notification-samples/notification-samples.service';
 import { AdminAuthService, type AdminTokenPayload } from './admin-auth.service';
 import { AdminGuard } from './admin.guard';
@@ -48,6 +50,7 @@ export class AdminController {
     private readonly holidays: HolidaysService,
     private readonly versions: AppVersionService,
     private readonly samples: NotificationSamplesService,
+    private readonly inquiries: InquiriesService,
   ) {}
 
   @Post('login')
@@ -151,6 +154,28 @@ export class AdminController {
   @HttpCode(HttpStatus.NO_CONTENT)
   async removeNotificationRule(@Param('id') id: string) {
     await this.samples.removeRule(id);
+  }
+
+  // 문의하기 ---------------------------------------------------------------
+
+  @Get('inquiries')
+  @UseGuards(AdminGuard)
+  listInquiries(@Query() query: InquiryDto.AdminListQuery) {
+    return this.inquiries.adminList(query);
+  }
+
+  @Get('inquiries/:id')
+  @UseGuards(AdminGuard)
+  getInquiry(@Param('id') id: string) {
+    return this.inquiries.adminGet(id);
+  }
+
+  /** 답장. 그 사용자의 기기로 푸시가 간다. */
+  @Post('inquiries/:id/replies')
+  @UseGuards(AdminGuard)
+  @HttpCode(HttpStatus.CREATED)
+  replyInquiry(@Param('id') id: string, @Body() body: InquiryDto.MessageRequest) {
+    return this.inquiries.reply(id, body);
   }
 
   @Delete('holidays/:country/:date')

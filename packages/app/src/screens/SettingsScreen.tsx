@@ -9,6 +9,7 @@ import { useLocaleStore } from '@money/core/store/locale';
 import { useProject } from '@money/core/store/project';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { useWeekStartStore } from '@money/core/store/week-start';
+import { useInquiryUnread } from '@money/core/store/inquiry-unread';
 
 import CountBadge from '../components/CountBadge';
 import ExchangeRateSettings from '../components/ExchangeRateSettings';
@@ -29,6 +30,13 @@ export default function SettingsScreen() {
   const { t } = useTranslation();
   const { go } = useNavigation();
   const outboxCount = useOutboxCount();
+  const inquiryUnread = useInquiryUnread((state) => state.count);
+  const refreshInquiryUnread = useInquiryUnread((state) => state.refresh);
+
+  // 설정을 열 때마다 읽지 않은 답을 센다. 앱을 보는 중에 온 답은 푸시를 받을 때 센다(PushSetup).
+  useEffect(() => {
+    void refreshInquiryUnread();
+  }, [refreshInquiryUnread]);
 
   return (
     <View className="gap-6">
@@ -62,6 +70,15 @@ export default function SettingsScreen() {
           description={t('settings.outbox.description')}
           badge={outboxCount}
           onPress={() => go('/settings/outbox')}
+        />
+        {/*
+          관리자에게 문의. 답이 오면 읽지 않은 답의 수가 보내지 못한 거래와 같은 배지로 선다.
+        */}
+        <SettingsCard
+          title={t('settings.inquiries.title')}
+          description={t('settings.inquiries.description')}
+          badge={inquiryUnread}
+          onPress={() => go('/settings/inquiries')}
         />
       </View>
 

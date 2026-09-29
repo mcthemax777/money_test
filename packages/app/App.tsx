@@ -27,6 +27,7 @@ import InboxScreen from './src/screens/InboxScreen';
 import LedgerScreen from './src/screens/LedgerScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import OutboxScreen from './src/screens/OutboxScreen';
+import InquiriesScreen from './src/screens/InquiriesScreen';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ProjectsScreen from './src/screens/ProjectsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
@@ -153,6 +154,9 @@ function Screen() {
       return <ProjectsScreen />;
     case '/settings/outbox':
       return <OutboxScreen />;
+    // 관리자에게 문의. 답장 푸시를 누르면 여기로 온다.
+    case '/settings/inquiries':
+      return <InquiriesScreen />;
     default:
       return <ComingSoon />;
   }

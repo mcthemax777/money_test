@@ -1,5 +1,5 @@
 /*
- * 푸시를 받을 준비와, 푸시를 눌렀을 때 갈 곳.
+ * 푸시를 받을 준비와, 푸시를 눌렀을 때 갈 곳(보관함 후보 → 보관함, 문의 답장 → 문의하기).
  *
  * 화면을 그리지 않는다. 로그인한 껍데기 안에 한 번 둔다 -- 토큰을 적으려면 로그인해
  * 있어야 하고, 눌린 알림을 보관함으로 보내려면 화면 이동(`useNavigation`)이 있어야 한다.
@@ -8,6 +8,7 @@ import { useEffect, useRef } from 'react';
 import * as Notifications from 'expo-notifications';
 
 import { useProject } from '@money/core/store/project';
+import { refreshInquiryUnread } from '@money/core/store/inquiry-unread';
 
 import { registerPushDevice } from '../push';
 import { useNavigation } from './navigation';
@@ -45,6 +46,11 @@ export default function PushSetup() {
     handledRef.current = id;
 
     const data = response.notification.request.content.data as { type?: unknown; projectId?: unknown };
+    // 문의 답장은 문의하기 화면으로. 그 화면이 목록을 새로 읽고 배지를 다시 센다.
+    if (data?.type === 'inquiry-reply') {
+      go('/settings/inquiries');
+      return;
+    }
     if (data?.type !== 'entry-draft') return;
 
     const project = useProject.getState();
@@ -54,6 +60,18 @@ export default function PushSetup() {
     }
     go('/transactions/inbox');
   }, [response, go]);
+
+  /*
+   * 앱을 보는 중에 문의 답장 푸시가 오면 배지를 곧바로 다시 센다. 누르지 않아도 설정의
+   * "문의하기" 칸에 숫자가 선다.
+   */
+  useEffect(() => {
+    const subscription = Notifications.addNotificationReceivedListener((notification) => {
+      const data = notification.request.content.data as { type?: unknown };
+      if (data?.type === 'inquiry-reply') void refreshInquiryUnread();
+    });
+    return () => subscription.remove();
+  }, []);
 
   return null;
 }

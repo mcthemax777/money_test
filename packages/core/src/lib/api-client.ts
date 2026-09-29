@@ -26,6 +26,7 @@ import type {
   CategoryDto,
   TagDto,
   EntryDraftDto,
+  InquiryDto,
   NotificationRule,
   NotificationSampleDto,
   PushDeviceDto,
@@ -793,6 +794,38 @@ class ApiClient {
   /** 켜 둔 앱별 규칙. 기기가 알림을 읽을 때 기존 규칙보다 먼저 대 본다. */
   async getNotificationRules(): Promise<NotificationRule[]> {
     const response = await this.client.get<NotificationRule[]>('/notification-rules');
+    return response.data;
+  }
+
+  // 문의하기 API Methods
+
+  async getInquiries(): Promise<InquiryDto.Summary[]> {
+    const response = await this.client.get<InquiryDto.Summary[]>('/inquiries');
+    return response.data;
+  }
+
+  /** 설정의 "문의하기" 배지. 읽지 않은 관리자의 답 수. */
+  async getInquiryUnreadCount(): Promise<number> {
+    const response = await this.client.get<InquiryDto.UnreadResponse>('/inquiries/unread-count');
+    return response.data.count;
+  }
+
+  /** 문의 하나. 서버가 연 것을 읽은 것으로 적는다. */
+  async getInquiry(id: string): Promise<InquiryDto.Detail> {
+    const response = await this.client.get<InquiryDto.Detail>(`/inquiries/${encodeURIComponent(id)}`);
+    return response.data;
+  }
+
+  async createInquiry(body: string): Promise<InquiryDto.Detail> {
+    const response = await this.client.post<InquiryDto.Detail>('/inquiries', { body });
+    return response.data;
+  }
+
+  async addInquiryMessage(id: string, body: string): Promise<InquiryDto.Detail> {
+    const response = await this.client.post<InquiryDto.Detail>(
+      `/inquiries/${encodeURIComponent(id)}/messages`,
+      { body },
+    );
     return response.data;
   }
 

@@ -37,6 +37,20 @@ const FCM_SCOPE = 'https://www.googleapis.com/auth/firebase.messaging';
 /** 앱이 만드는 알림 채널. 앱의 `app.json` 의 expo-notifications `defaultChannel` 과 같아야 한다. */
 const DRAFT_CHANNEL_ID = 'drafts';
 
+/**
+ * 문의 답장의 채널. 앱의 `push.ts` 가 만든다. 채널이 없는 옛 앱에서는 안드로이드가 기본 채널로
+ * 띄운다(알림은 온다).
+ */
+export const INQUIRY_CHANNEL_ID = 'inquiries';
+
+/** 한 기기에 보낼 알림. `data` 는 앱이 눌렸을 때 갈 곳을 가리는 값이고, FCM 은 문자열만 받는다. */
+interface PushMessage {
+  title: string;
+  body: string;
+  data: Record<string, string>;
+  channelId: string;
+}
+
 /** FCM 토큰의 상한. 실제로는 200자 남짓이다. 이보다 길면 토큰이 아니다. */
 const MAX_TOKEN_LENGTH = 4096;
 
@@ -99,6 +113,8 @@ const TEXT = {
 } as const;
 
 type Locale = keyof typeof TEXT;
+/** 푸시 문구의 언어. `notifyUser` 를 부르는 쪽이 문구를 고를 때 쓴다. */
+export type PushLocale = Locale;
 
 @Injectable()
 export class PushService implements OnModuleInit, OnModuleDestroy {
@@ -256,10 +272,54 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
       devices.map((device) =>
         this.sendToDevice(firebaseProjectId, accessToken, device.token, {
           ...messageFor(localeOf(device.user.locale), drafts),
-          projectId,
+          data: { type: 'entry-draft', projectId },
+          channelId: DRAFT_CHANNEL_ID,
         }),
       ),
     );
+  }
+
+  /**
+   * 한 사람의 기기 전부에 보낸다. 문구는 기기 주인의 화면 언어로 고른다.
+   *
+   * **실패를 던지지 않는다.** 푸시는 곁들이는 것이라, 부르는 쪽(문의 답장 등)이 이것 때문에
+   * 실패하면 안 된다. 키가 없으면 조용히 건너뛴다.
+   */
+  async notifyUser(
+    userId: string,
+    textFor: (locale: Locale) => { title: string; body: string },
+    data: Record<string, string>,
+    channelId: string,
+  ): Promise<void> {
+    if (!this.auth) return;
+    try {
+      const devices = await this.prisma.pushDevice.findMany({
+        where: { userId },
+        select: { token: true, user: { select: { locale: true } } },
+      });
+      if (devices.length === 0) return;
+
+      const [accessToken, firebaseProjectId] = await Promise.all([
+        this.auth.getAccessToken(),
+        this.auth.getProjectId(),
+      ]);
+      if (!accessToken) {
+        this.logger.warn('FCM 접근 토큰을 받지 못해 푸시를 건너뜁니다.');
+        return;
+      }
+
+      await Promise.all(
+        devices.map((device) =>
+          this.sendToDevice(firebaseProjectId, accessToken, device.token, {
+            ...textFor(localeOf(device.user.locale)),
+            data,
+            channelId,
+          }),
+        ),
+      );
+    } catch (error) {
+      this.logger.warn(`푸시를 보내지 못했습니다 (user=${userId}): ${String(error)}`);
+    }
   }
 
   /**
@@ -272,7 +332,7 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
     firebaseProjectId: string,
     accessToken: string,
     token: string,
-    message: { title: string; body: string; projectId: string },
+    message: PushMessage,
   ): Promise<void> {
     const response = await fetch(
       `https://fcm.googleapis.com/v1/projects/${firebaseProjectId}/messages:send`,
@@ -287,8 +347,8 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
             token,
             notification: { title: message.title, body: message.body },
             // 앱이 눌렸을 때 어디로 갈지 가리는 값. FCM 의 data 는 문자열만 받는다.
-            data: { type: 'entry-draft', projectId: message.projectId },
-            android: { priority: 'high', notification: { channel_id: DRAFT_CHANNEL_ID } },
+            data: message.data,
+            android: { priority: 'high', notification: { channel_id: message.channelId } },
           },
         }),
       },

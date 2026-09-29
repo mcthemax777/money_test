@@ -1,16 +1,31 @@
 'use client';
 
+import { useEffect } from 'react';
 import Link from 'next/link';
+import CountBadge from '@/components/CountBadge';
 import PageHeader from '@/components/PageHeader';
 import ExchangeRateSettings from '@/components/ExchangeRateSettings';
 import LanguageSettings from '@/components/LanguageSettings';
 import WeekStartSettings from '@/components/WeekStartSettings';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useProject } from '@money/core/store/project';
+import { useInquiryUnread } from '@money/core/store/inquiry-unread';
 
 export default function SettingsPage() {
   const { t } = useTranslation();
   const projects = useProject((state) => state.projects);
+  const inquiryUnread = useInquiryUnread((state) => state.count);
+  const refreshInquiryUnread = useInquiryUnread((state) => state.refresh);
+
+  /*
+   * 읽지 않은 문의 답을 센다. 웹은 푸시를 받지 않으므로 설정을 열 때와 탭으로 돌아올 때 센다.
+   */
+  useEffect(() => {
+    void refreshInquiryUnread();
+    const onFocus = () => void refreshInquiryUnread();
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [refreshInquiryUnread]);
 
   return (
     <div className="space-y-6">
@@ -40,6 +55,14 @@ export default function SettingsPage() {
             description={t('settings.categories.description')}
           />
         ) : null}
+
+        {/* 관리자에게 문의. 답이 오면 읽지 않은 답의 수가 배지로 선다(앱과 같다). */}
+        <SettingsCard
+          href="/settings/inquiries"
+          title={t('settings.inquiries.title')}
+          description={t('settings.inquiries.description')}
+          badge={inquiryUnread}
+        />
       </div>
 
       <div className="space-y-4">
@@ -65,17 +88,23 @@ function SettingsCard({
   href,
   title,
   description,
+  badge = 0,
 }: {
   href: string;
   title: string;
   description: string;
+  /** 제목 옆의 빨간 건수. 0 이면 그리지 않는다. */
+  badge?: number;
 }) {
   return (
     <Link href={href}>
       <div className="bg-white rounded-lg shadow p-6 hover:shadow-md transition cursor-pointer">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">{title}</h2>
+            <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
+              {title}
+              <CountBadge count={badge} inline />
+            </h2>
             <p className="mt-1 text-sm text-gray-600">{description}</p>
           </div>
           <div className="text-2xl">→</div>

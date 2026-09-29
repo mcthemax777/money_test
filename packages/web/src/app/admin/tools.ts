@@ -23,6 +23,12 @@ export const ADMIN_TOOLS: AdminTool[] = [
       '강제 업데이트(이보다 낮으면 쓸 수 없음)와 권유(새 버전 안내)를 안드로이드·iOS·웹마다 정합니다. 저장하면 30초 안에 모든 서버에 먹습니다.',
   },
   {
+    href: '/admin/inquiries',
+    title: '문의',
+    description:
+      '사용자가 설정의 문의하기로 보낸 글. 답을 기다리는 것이 위에 옵니다. 답하면 그 사람의 기기로 푸시가 가고 설정에 읽지 않은 답의 수가 뜹니다.',
+  },
+  {
     href: '/admin/notifications',
     title: '알림 원문',
     description:
