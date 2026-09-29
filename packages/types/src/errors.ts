@@ -122,6 +122,9 @@ export const ERROR_CODES = [
   'INQUIRY_BODY_REQUIRED',
   'INQUIRY_BODY_TOO_LONG',
   'INQUIRY_NOT_FOUND',
+
+  // 거래내역 엑셀
+  'ENTRY_SHEET_INVALID',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

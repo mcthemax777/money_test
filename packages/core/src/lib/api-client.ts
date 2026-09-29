@@ -27,6 +27,8 @@ import type {
   TagDto,
   EntryDraftDto,
   InquiryDto,
+  EntrySheetDto,
+  EntrySheetRow,
   NotificationRule,
   NotificationSampleDto,
   PushDeviceDto,
@@ -794,6 +796,26 @@ class ApiClient {
   /** 켜 둔 앱별 규칙. 기기가 알림을 읽을 때 기존 규칙보다 먼저 대 본다. */
   async getNotificationRules(): Promise<NotificationRule[]> {
     const response = await this.client.get<NotificationRule[]>('/notification-rules');
+    return response.data;
+  }
+
+  // 거래내역 엑셀 API Methods
+
+  /** 엑셀 행을 거래로. 한 번에 `EntrySheetDto.MAX_ROWS` 행까지(화면이 나눠 보낸다). */
+  async importEntrySheet(rows: EntrySheetRow[], projectId?: string | null): Promise<EntrySheetDto.ImportResponse> {
+    const response = await this.client.post<EntrySheetDto.ImportResponse>(
+      '/entry-sheet/import',
+      { rows },
+      { params: projectId ? { projectId } : {} },
+    );
+    return response.data;
+  }
+
+  /** 거래를 엑셀 행으로. 기간을 주지 않으면 전부다. */
+  async exportEntrySheet(query: EntrySheetDto.ExportQuery, projectId?: string | null): Promise<EntrySheetRow[]> {
+    const response = await this.client.get<EntrySheetRow[]>('/entry-sheet/export', {
+      params: { ...query, ...(projectId ? { projectId } : {}) },
+    });
     return response.data;
   }
 

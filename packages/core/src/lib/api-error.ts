@@ -104,6 +104,7 @@ const MESSAGE_KEY: Record<ErrorCode, MessageKey> = {
   INQUIRY_BODY_REQUIRED: 'error.INQUIRY_BODY_REQUIRED',
   INQUIRY_BODY_TOO_LONG: 'error.INQUIRY_BODY_TOO_LONG',
   INQUIRY_NOT_FOUND: 'error.INQUIRY_NOT_FOUND',
+  ENTRY_SHEET_INVALID: 'error.ENTRY_SHEET_INVALID',
 };
 
 /** 서버 오류 응답에서 꺼낸 값. 코드가 없으면 코드가 붙지 않은 오류다. */

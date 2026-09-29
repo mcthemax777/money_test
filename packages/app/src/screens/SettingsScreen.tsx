@@ -71,6 +71,12 @@ export default function SettingsScreen() {
           badge={outboxCount}
           onPress={() => go('/settings/outbox')}
         />
+        {/* 거래내역을 엑셀로 내보내고, 엑셀의 거래를 한꺼번에 넣는다. */}
+        <SettingsCard
+          title={t('settings.sheet.title')}
+          description={t('settings.sheet.description')}
+          onPress={() => go('/settings/sheet')}
+        />
         {/*
           관리자에게 문의. 답이 오면 읽지 않은 답의 수가 보내지 못한 거래와 같은 배지로 선다.
         */}

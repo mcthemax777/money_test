@@ -46,7 +46,8 @@
         {
           "defaultChannel": "drafts"
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "scheme": "money"
   }

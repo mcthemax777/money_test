@@ -56,6 +56,15 @@ export default function SettingsPage() {
           />
         ) : null}
 
+        {/* 거래내역을 엑셀로 내보내고, 엑셀의 거래를 한꺼번에 넣는다. 가계부가 있어야 뜻이 있다. */}
+        {projects.length > 0 ? (
+          <SettingsCard
+            href="/settings/sheet"
+            title={t('settings.sheet.title')}
+            description={t('settings.sheet.description')}
+          />
+        ) : null}
+
         {/* 관리자에게 문의. 답이 오면 읽지 않은 답의 수가 배지로 선다(앱과 같다). */}
         <SettingsCard
           href="/settings/inquiries"
