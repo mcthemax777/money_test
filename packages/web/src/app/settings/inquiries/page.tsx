@@ -7,7 +7,7 @@
  * 있는 문의에는 빨간 수가 서고, 열면 읽은 것이 되어 설정의 배지도 줄어든다. 웹은 푸시를 받지
  * 않으므로 답은 이 화면이나 설정을 열 때 보인다.
  */
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { INQUIRY_BODY_MAX, type InquiryDto } from '@money/types';
 import { useInquiries, useInquiryThread } from '@money/core/hooks/useInquiries';
 import { formatDateTime } from '@money/core/lib/datetime';
@@ -21,7 +21,12 @@ type Mode = { kind: 'list' } | { kind: 'new' } | { kind: 'thread'; id: string };
 
 export default function InquiriesPage() {
   const [mode, setMode] = useState<Mode>({ kind: 'list' });
-  const list = useInquiries();
+  const isVisible = useIsTabVisible();
+  /*
+   * 목록은 목록을 보는 동안만 묻는다. 새 문의를 쓰는 중에는 답이 와도 화면에 보이지 않으니
+   * "보고 있다"가 아니다 -- 그때 온 답은 푸시로 알린다. 대화 화면은 제 것을 따로 묻는다.
+   */
+  const list = useInquiries({ active: isVisible && mode.kind === 'list' });
 
   const go = (next: Mode) => {
     setMode(next);
@@ -90,10 +95,14 @@ function List({
       <div className="space-y-3">
         {list.inquiries.map((inquiry) => (
           <button
-            key={inquiry.id}
+            /*
+              마지막 글의 시각을 열쇠에 넣는다. 답이 와서 그 줄이 바뀌면 새로 서며 `unfold` 로
+              떠오르므로, 몇 초마다 새로 받는 목록에서 어느 줄이 바뀌었는지 눈에 띈다.
+            */
+            key={`${inquiry.id}:${inquiry.lastMessageAt}`}
             type="button"
             onClick={() => onOpen(inquiry.id)}
-            className="block w-full space-y-2 rounded-lg bg-white p-4 text-left shadow transition hover:shadow-md"
+            className="unfold block w-full space-y-2 rounded-lg bg-white p-4 text-left shadow transition hover:shadow-md"
           >
             <div className="flex items-center justify-between gap-2">
               <span className="flex items-center gap-2">
@@ -203,7 +212,9 @@ function Compose({
 function Thread({ id, onBack }: { id: string; onBack: () => void }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
-  const { thread, isLoading, error, send } = useInquiryThread(id);
+  const isVisible = useIsTabVisible();
+  // 새 답은 그 글의 `unfold` 가 떠오르게 한다. 따로 걸 움직임이 없다.
+  const { thread, isLoading, error, send } = useInquiryThread(id, { active: isVisible });
 
   return (
     <div className="unfold space-y-4">
@@ -239,4 +250,20 @@ function Thread({ id, onBack }: { id: string; onBack: () => void }) {
       ) : null}
     </div>
   );
+}
+
+/**
+ * 이 탭이 보이는가. 다른 탭으로 가거나 창을 내리면 false 다.
+ *
+ * 보이지 않는 동안 답을 물으면 서버가 보고 있는 것으로 읽어 푸시를 보내지 않는다.
+ */
+function useIsTabVisible(): boolean {
+  const [isVisible, setIsVisible] = useState(true);
+  useEffect(() => {
+    const update = () => setIsVisible(document.visibilityState === 'visible');
+    update();
+    document.addEventListener('visibilitychange', update);
+    return () => document.removeEventListener('visibilitychange', update);
+  }, []);
+  return isVisible;
 }

@@ -10,6 +10,21 @@
 /** 한 글의 글자 수 상한. */
 export const INQUIRY_BODY_MAX = 5000;
 
+/**
+ * 문의 목록이나 대화를 띄워 둔 동안 새 답을 묻는 간격(ms). 웹과 앱이 같은 값을 쓴다.
+ *
+ * 서버는 이 간격으로 오는 조회를 "사용자가 지금 보고 있다"는 표시로 읽고, 그동안에는
+ * 답장 푸시를 보내지 않는다(`INQUIRY_WATCH_MS`). 보는 화면에 답이 곧바로 서는데 같은
+ * 답이 알림으로 또 울리면 안 되어서다.
+ */
+export const INQUIRY_POLL_MS = 3000;
+
+/**
+ * 마지막 조회가 이만큼 안이면 보고 있는 것으로 친다. 조회 세 번 몫이다 -- 한두 번은
+ * 느린 망에서 늦을 수 있어, 한 번 늦었다고 보는 사람에게 푸시가 가지 않게 한다.
+ */
+export const INQUIRY_WATCH_MS = INQUIRY_POLL_MS * 3 + 1000;
+
 /** 누가 쓴 글인가. */
 export type InquiryAuthor = 'user' | 'admin';
 

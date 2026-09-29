@@ -4,12 +4,14 @@
  * 한 화면이 세 모양을 오간다 -- 보낸 문의 목록, 새 문의 쓰기, 문의 하나의 대화. 주소를
  * 따로 두지 않는 것은 대화가 목록의 하위이고 뒤로가기가 목록으로 돌아와야 해서다.
  *
- * 관리자가 답하면 푸시가 오고, 눌러 들어오면 이 화면의 목록이 열린다. 읽지 않은 답이 있는
+ * 대화를 열어 두고 기다리면 관리자의 답이 몇 초 안에 그 자리에 서고, 그때는 푸시가 오지
+ * 않는다(`useInquiryThread` 의 `active`, 서버의 `isWatching`). 대화를 보지 않을 때 답이 오면
+ * 푸시가 오고, 눌러 들어오면 이 화면의 목록이 열린다. 읽지 않은 답이 있는
  * 문의에는 빨간 수가 서고, 열면 읽은 것이 되어 설정의 배지도 줄어든다(`useInquiryThread`).
  * 연결이 없으면 읽지도 보내지도 못하고 그 이유를 적는다.
  */
-import { useState } from 'react';
-import { LayoutAnimation, Pressable, Text, TextInput, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { AppState, LayoutAnimation, Pressable, Text, TextInput, View } from 'react-native';
 import { INQUIRY_BODY_MAX, type InquiryDto } from '@money/types';
 
 import { useInquiries, useInquiryThread } from '@money/core/hooks/useInquiries';
@@ -29,7 +31,12 @@ function animate() {
 
 export default function InquiriesScreen() {
   const [mode, setMode] = useState<Mode>({ kind: 'list' });
-  const list = useInquiries();
+  const isActive = useIsAppActive();
+  /*
+   * 목록은 목록을 보는 동안만 묻는다. 새 문의를 쓰는 중에는 답이 와도 화면에 보이지 않으니
+   * "보고 있다"가 아니다 -- 그때 온 답은 푸시로 알린다. 대화 화면은 제 것을 따로 묻는다.
+   */
+  const list = useInquiries({ active: isActive && mode.kind === 'list', onArrive: animate });
 
   const go = (next: Mode) => {
     animate();
@@ -201,7 +208,9 @@ function Compose({
 function Thread({ id, onBack }: { id: string; onBack: () => void }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
-  const { thread, isLoading, error, send } = useInquiryThread(id);
+  const isActive = useIsAppActive();
+  // 새 답은 옅은 데서 떠오르고 보내기 칸은 그만큼 밀려 내려간다.
+  const { thread, isLoading, error, send } = useInquiryThread(id, { active: isActive, onArrive: animate });
 
   return (
     <View className="gap-4">
@@ -244,4 +253,18 @@ function Thread({ id, onBack }: { id: string; onBack: () => void }) {
       ) : null}
     </View>
   );
+}
+
+/**
+ * 앱이 앞에 떠 있는가. 화면을 끄거나 다른 앱으로 가면 false 다.
+ *
+ * 뒤로 가 있는 동안 답을 물으면 서버가 보고 있는 것으로 읽어 푸시를 보내지 않는다.
+ */
+function useIsAppActive(): boolean {
+  const [isActive, setIsActive] = useState(AppState.currentState === 'active');
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (state) => setIsActive(state === 'active'));
+    return () => subscription.remove();
+  }, []);
+  return isActive;
 }

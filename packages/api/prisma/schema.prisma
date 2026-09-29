@@ -1292,6 +1292,11 @@ model NotificationRule {
 ///
 /// **읽지 않은 답**은 `userReadAt` 보다 늦게 온 관리자의 글이다. 사용자가 그 문의를 열면
 /// 지금으로 당긴다. 설정의 "문의하기" 배지가 이 수를 센다.
+///
+/// **`userWatchedAt`** 은 사용자가 문의 목록이나 이 대화를 화면에 띄워 두고 마지막으로 물은
+/// 시각이다. 그 화면들은 눈앞에 있는 동안 몇 초마다 묻는다. 이 값이 막 당겨졌으면 관리자의
+/// 답은 화면에 곧바로 서므로 푸시를 보내지 않는다. 읽음(`userReadAt`)과 따로 둔 것은 목록을
+/// 보는 것이 곧 그 답을 읽은 것은 아니어서다 -- 목록에는 읽지 않은 수가 남아야 한다.
 model Inquiry {
   id            String   @id @default(cuid())
   userId        String
@@ -1302,6 +1307,7 @@ model Inquiry {
   lastAuthor    String   @default("user")
   lastMessageAt DateTime @default(now())
   userReadAt    DateTime @default(now())
+  userWatchedAt DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
