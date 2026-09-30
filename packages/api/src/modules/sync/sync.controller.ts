@@ -17,7 +17,9 @@ import { type PushRequest, SyncDto } from '@money/types';
 import { AuthenticatedRequest } from '@/common/authenticated-request';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { SyncEventsService } from '@/modules/realtime/sync-events.service';
+import { holidayCountryOf } from '@money/types';
 import { SyncService } from './sync.service';
+import { HolidaysService } from '../holidays/holidays.service';
 import { MutationReplayService } from './mutation-replay.service';
 
 /**
@@ -39,16 +41,25 @@ export class SyncController {
     private readonly replay: MutationReplayService,
     private readonly syncEvents: SyncEventsService,
     private readonly projectAccess: ProjectAccessService,
+    private readonly holidays: HolidaysService,
   ) {}
 
   @Get('pull')
   @ApiOperation({ summary: '마지막으로 받은 번호 뒤의 변경분' })
-  pull(
+  async pull(
     @Request() req: AuthenticatedRequest,
     @Query() query: SyncDto.PullQuery,
     @Query('projectId') projectId?: string,
-  ) {
-    return this.syncService.pull(req.user.id, query, projectId);
+  ): Promise<SyncDto.PullResponse> {
+    const response = await this.syncService.pull(req.user.id, query, projectId);
+    /*
+     * 가계부 나라의 공휴일을 덧붙인다 (PullResponse.publicHolidays). 반복 등록의 "휴일이면
+     * 앞·뒤로" 를 기기가 끊긴 동안에도 서버와 같게 셈한다. 서비스가 캐시해 두어 가볍다.
+     * 권한은 위 pull 이 이미 보았다.
+     */
+    const timeZone = await this.projectAccess.getProjectTimeZone(response.projectId);
+    const holidays = await this.holidays.publicHolidays(holidayCountryOf(timeZone));
+    return { ...response, publicHolidays: [...holidays].sort() };
   }
 
   @Post('push')

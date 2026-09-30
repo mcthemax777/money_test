@@ -53,8 +53,14 @@
  *
  * 28 은 예산에 `tagId`(태그 예산)가 생긴 판이다. 옛 사본의 예산 행에는 그 칸이 없어,
  * 태그 예산이 분류 없는 줄 -- 곧 전체 예산으로 읽힌다.
+ *
+ * 29 는 반복 등록(`recurring_rule`)과 공휴일(`public_holiday`) 표가 생긴 판이다. 옛 사본은
+ * 반복 등록을 한 번도 받지 않아 커서만 이어 가면 기존 규칙이 영영 오지 않는다.
+ *
+ * 30 은 공휴일을 가계부마다 담게 된 판이다(`public_holiday.projectId`). 가계부마다 타임존의
+ * 나라가 다를 수 있고, 다시 받기가 가계부 단위로 사본을 비울 때 그 칸으로 지운다.
  */
-export const SCHEMA_VERSION = 28;
+export const SCHEMA_VERSION = 30;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -428,6 +434,53 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
    )`,
 
   /*
+   * 반복 등록. 서버 `RecurringRule` 과 같은 칸이다 (태그는 id 배열을 JSON 으로 담는다 --
+   * 동기화가 규칙에 펴서 싣는다). 다음 예정일·마지막으로 만든 날은 담지 않는다: 읽을 때
+   * 공휴일(`public_holiday`)과 후보의 열쇠로 서버와 같은 함수가 셈한다.
+   */
+  `CREATE TABLE IF NOT EXISTS recurring_rule (
+     id                TEXT PRIMARY KEY,
+     projectId         TEXT NOT NULL,
+     isActive          INTEGER NOT NULL DEFAULT 1,
+     frequency         TEXT NOT NULL,
+     everyDays         INTEGER,
+     weekdays          TEXT NOT NULL DEFAULT '[]',
+     holidayRule       TEXT NOT NULL DEFAULT 'none',
+     dayOfMonth        INTEGER,
+     month             INTEGER,
+     startDate         TEXT NOT NULL,
+     endDate           TEXT,
+     timeOfDay         TEXT,
+     kind              TEXT NOT NULL,
+     amount            TEXT,
+     currency          TEXT,
+     description       TEXT NOT NULL,
+     merchant          TEXT,
+     personId          TEXT,
+     categoryId        TEXT,
+     accountId         TEXT,
+     toAccountId       TEXT,
+     feeAmount         TEXT,
+     feeCategoryId     TEXT,
+     cardId            TEXT,
+     installmentMonths INTEGER,
+     tagIds            TEXT NOT NULL DEFAULT '[]',
+     createdAt         TEXT NOT NULL DEFAULT '',
+     updatedAt         TEXT NOT NULL DEFAULT '',
+     updatedVersion    INTEGER NOT NULL DEFAULT 0
+   )`,
+
+  /*
+   * 가계부 나라(타임존)의 공휴일 "YYYY-MM-DD". 동기화가 가계부마다 통째로 갈아 끼운다
+   * (PullResponse.publicHolidays).
+   */
+  `CREATE TABLE IF NOT EXISTS public_holiday (
+     projectId TEXT NOT NULL,
+     date      TEXT NOT NULL,
+     PRIMARY KEY (projectId, date)
+   )`,
+
+  /*
    * 후보에 대해 아직 서버에 알리지 못한 일.
    *
    * 후보는 전표가 아니라 아웃박스(명령 재생)를 쓰지 않는다. 대신 이 표에 "무엇을
@@ -523,6 +576,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
 export const ALL_TABLES: readonly string[] = [
   'entry_draft',
   'entry_draft_tag',
+  'recurring_rule',
+  'public_holiday',
   'installment_plan',
   'asset_valuation',
   'posting',

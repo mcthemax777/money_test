@@ -26,6 +26,7 @@ import {
   Copy,
   Loader2,
   Minus,
+  ChartPie,
   MoreVertical,
   Pencil,
   Plus,
@@ -92,6 +93,7 @@ import CountBadge from '@/components/CountBadge';
 import Modal from '@/components/Modal';
 import TransactionCalendarView from '@/components/TransactionCalendarView';
 import PageHeader from '@/components/PageHeader';
+import TransactionAnalysisModal from '@/components/TransactionAnalysisModal';
 import PullFooter from '@/components/PullFooter';
 import { useBottomPull } from '@/hooks/useBottomPull';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
@@ -398,6 +400,8 @@ export default function TransactionsView({
   // 사람 목록과 선택을 프로젝트에 맞춘다. 다른 화면과 같은 훅을 쓴다.
   usePersonFilterSync(selectedProjectId, tx.people);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  /** 분석 창. 열 때만 세운다 -- 다시 열면 그때의 검색으로 달과 지출·수입을 새로 정한다. */
+  const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
   /** 더보기 선택창. 지금은 삭제 하나뿐이다. */
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   /**
@@ -1053,6 +1057,19 @@ export default function TransactionsView({
                   ) : (
                     <CalendarDays className="h-4 w-4" aria-hidden />
                   )}
+                </button>
+                {/*
+                  분석. 지금 걸린 조건(사람·검색)에 맞는 거래로 그래프를 그린다. 검색 바로
+                  앞에 둔다 -- 둘이 같은 조건을 쓴다는 것이 자리로 보인다.
+                */}
+                <button
+                  type="button"
+                  onClick={() => setIsAnalysisOpen(true)}
+                  aria-label={t('tx.analysis')}
+                  title={t('tx.analysis')}
+                  className="flex items-center justify-center p-2 text-gray-600"
+                >
+                  <ChartPie className="h-4 w-4" aria-hidden />
                 </button>
                 {/*
                   검색. 달력 보기에서도 둔다 -- 걸어 둔 조건이 달력에도 그대로 걸린다.
@@ -1866,6 +1883,22 @@ export default function TransactionsView({
           )}
         </div>
       </Modal>
+
+      {/*
+        분석 창. 거래 상세보다 앞에 둔다 -- 분석의 거래를 눌러 연 상세가 그 위에 떠야 한다.
+      */}
+      {isAnalysisOpen && (
+        <TransactionAnalysisModal
+          onClose={() => setIsAnalysisOpen(false)}
+          search={tx.search}
+          searchCount={tx.searchCount}
+          range={tx.range}
+          scope={tx.scope}
+          categories={tx.pickerCategories}
+          projectId={selectedProjectId}
+          onEntryClick={(entry) => setDetail(originalEntry(entry))}
+        />
+      )}
 
       <Modal
         isOpen={detail !== null}

@@ -340,6 +340,7 @@ export function countChanges(response: SyncDto.PullResponse): number {
     changes.exchangeRates.length +
     (changes.assetValuations?.length ?? 0) +
     (changes.installmentPlans?.length ?? 0) +
+    (changes.recurringRules?.length ?? 0) +
     tombstones.length
   );
 }

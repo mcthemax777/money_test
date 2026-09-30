@@ -45,6 +45,8 @@ import {
   dailyTotals,
   entryMonths,
   asWeekStart,
+  balanceBuckets,
+  stackBalanceHistory,
   DEFAULT_WEEK_START,
   isEntryPeriodUnit,
   DEFAULT_ENTRY_PERIOD,
@@ -543,25 +545,24 @@ export class ReportsService {
      * 길이라 창이 그 달에 딱 맞아야 한다. 없으면 오늘까지 최근 days일을 그린다.
      * 단위를 직접 고르는 쪽은 "요즘 어떤가"를 보는 것이라 달 경계가 의미 없다.
      */
-    const buckets =
-      granularity === 'day'
-        ? query.yearMonth
-          ? dayBuckets(assertYearMonth(query.yearMonth, '조회 월'), timeZone)
-          : recentDayBuckets(
-              clampCount(query.days, 30, 366),
-              timeZone,
-              query.endDate ? assertDateKey(query.endDate, '기준일') : undefined,
-            )
-        : granularity === 'week'
-          ? weekBuckets(
-              clampCount(query.weeks, 13, 260),
-              timeZone,
-              query.endDate ? assertDateKey(query.endDate, '기준일') : undefined,
-              weekStart,
-            )
-          : granularity === 'year'
-            ? yearBuckets(Number(endMonth.slice(0, 4)), clampCount(query.years, 5, 30), timeZone)
-            : monthBuckets(endMonth, clampCount(query.months, 12, 60), timeZone);
+    /*
+     * 칸 나누기는 공용 함수다 (`@money/types` 의 balance-history). 기기 사본도 같은 칸을 쓴다.
+     * 여기서는 쿼리스트링의 모양만 먼저 검사한다.
+     */
+    const buckets = balanceBuckets(
+      {
+        granularity,
+        endMonth,
+        yearMonth: query.yearMonth ? assertYearMonth(query.yearMonth, '조회 월') : undefined,
+        endDate: query.endDate ? assertDateKey(query.endDate, '기준일') : undefined,
+        days: query.days,
+        weeks: query.weeks,
+        months: query.months,
+        years: query.years,
+        weekStart,
+      },
+      timeZone,
+    );
     const windowStart = buckets[0].start;
     const windowEnd = buckets[buckets.length - 1].end;
 
@@ -618,9 +619,6 @@ export class ReportsService {
       GROUP BY 1, 2
     `;
 
-    const book = new Map<string, Prisma.Decimal>(accountIds.map((id) => [id, ZERO]));
-    for (const row of baseRows) book.set(row.accountId, row.delta);
-
     const stepsByPeriod = new Map<number, Array<{ accountId: string; delta: Prisma.Decimal }>>();
     for (const row of stepRows) {
       const key = row.period.getTime();
@@ -639,34 +637,18 @@ export class ReportsService {
           })
         : [];
 
+    // 칸마다 쌓는 규칙도 공용 함수다 -- 평가 계좌는 그때까지의 마지막 평가액, 없으면 장부가.
     const show = await this.displayConverter(projectId);
-    const points: ReportDto.BalanceHistoryPoint[] = [];
-    for (const bucket of buckets) {
-      for (const step of stepsByPeriod.get(bucket.start.getTime()) ?? []) {
-        book.set(step.accountId, (book.get(step.accountId) ?? ZERO).add(step.delta));
-      }
-
-      let total = ZERO;
-      for (const account of accounts) {
-        const bookValue = book.get(account.id) ?? ZERO;
-        if (!VALUED_ACCOUNT_TYPES.includes(account.type)) {
-          total = total.add(bookValue);
-          continue;
-        }
-        // 그 시점까지의 마지막 평가액. 아직 평가 기록이 없으면 장부가를 쓴다.
-        let asOf: Prisma.Decimal | null = null;
-        for (const v of valuations) {
-          if (v.accountId !== account.id) continue;
-          if (v.date >= bucket.end) break;
-          asOf = v.marketValue;
-        }
-        total = total.add(asOf ?? bookValue);
-      }
-
-      points.push({ date: bucket.label, balance: show.toString(total) });
-    }
-
-    return points;
+    return stackBalanceHistory({
+      accounts,
+      base: new Map(baseRows.map((row) => [row.accountId, row.delta])),
+      steps: stepsByPeriod,
+      valuations,
+      buckets,
+    }).map((point) => ({
+      date: point.label,
+      balance: show.toString(this.toDecimal(point.total)),
+    }));
   }
 
   /**
@@ -815,8 +797,20 @@ export class ReportsService {
       ? assertYearMonth(query.endMonth, '기준 월')
       : zonedCurrentYearMonth(timeZone);
     const [endYear, endMonthNumber] = endMonth.split('-').map(Number);
-    const end = zonedMonthStart(endYear, endMonthNumber + 1, timeZone);
-    const start = zonedMonthStart(endYear, endMonthNumber - months + 1, timeZone);
+    /*
+     * 막대가 덮는 12개월. 검색 기간을 주면(clip) 그 안으로 자른다 -- 달 이름은 그대로 두고
+     * 세는 돈만 줄인다. 잘못 적은 시각은 버린다(자르지 않는 쪽이 조용히 비는 쪽보다 낫다).
+     */
+    const clip = (value: string | undefined) => {
+      const at = value ? new Date(value) : null;
+      return at && !Number.isNaN(at.getTime()) ? at : null;
+    };
+    const fullEnd = zonedMonthStart(endYear, endMonthNumber + 1, timeZone);
+    const fullStart = zonedMonthStart(endYear, endMonthNumber - months + 1, timeZone);
+    const clipFrom = clip(query.clipFrom);
+    const clipTo = clip(query.clipTo);
+    const start = clipFrom && clipFrom > fullStart ? clipFrom : fullStart;
+    const end = clipTo && clipTo < fullEnd ? clipTo : fullEnd;
 
     /*
      * 대상에 따라 무엇을 고르는지가 다르다.
@@ -834,8 +828,8 @@ export class ReportsService {
       query.target === 'account' || query.target === 'card'
         ? this.trendByPaymentMethodWhere(projectId, query, start, end)
         : query.target === 'tag'
-          ? this.trendByTagWhere(projectId, query, start, end)
-          : this.trendByCategoryWhere(projectId, query, start, end);
+          ? await this.trendByTagWhere(projectId, query, start, end)
+          : await this.trendByCategoryWhere(projectId, query, start, end);
     const rows = await this.aggregatePostings({
       basis,
       postingWhere: { categoryId: { not: null }, ...postingWhere },
@@ -847,11 +841,16 @@ export class ReportsService {
      * 분류·수단 추이는 판정기가 필요 없다. 조건이 이미 다리 자신에 걸려 있다
      * (`trendByCategoryWhere` 의 categoryId, `trendByPaymentMethodWhere` 의 결제수단).
      *
-     * 태그만 다르다. 태그는 전표에 달린 표(EntryTag)라 질의는 "그 태그가 붙은 전표"까지만
-     * 고르고, 분할의 다른 줄은 판정기가 걸러 낸다 (리포트의 태그 검색과 같은 판정이다).
+     * 태그와 검색은 다르다. 둘 다 전표 수준으로 걸려(`entryScope`) 분할의 다른 줄까지 데려오므로
+     * 판정기가 걸린 줄만 남긴다 (리포트의 합계·구성비와 같은 판정이다). 결제수단 추이는
+     * 검색을 받지 않는다.
      */
     const matchLine =
-      query.target === 'tag' ? lineMatcherOf(parseEntrySearch({ tagIds: query.targetId })) : undefined;
+      query.target === 'tag'
+        ? lineMatcherOf(parseEntrySearch({ ...query, tagIds: query.targetId }))
+        : query.target === 'account' || query.target === 'card'
+          ? undefined
+          : lineMatcherOf(parseEntrySearch(query));
     const points = monthlyTotals(
       this.toAggregateRows(rows, matchLine, spreadOf(basis, timeZone, { gte: start, lt: end })),
       { timeZone, endYearMonth: endMonth, months },
@@ -864,13 +863,13 @@ export class ReportsService {
     }));
   }
 
-  /** 카테고리(또는 전체) 기준. 대분류를 지정하면 소분류까지 포함한다. */
-  private trendByCategoryWhere(
+  /** 카테고리(또는 전체) 기준. 대분류를 지정하면 소분류까지 포함한다. 검색 조건도 건다. */
+  private async trendByCategoryWhere(
     projectId: string,
     query: ReportDto.TrendQuery,
     start: Date,
     end: Date,
-  ): Prisma.PostingWhereInput {
+  ): Promise<Prisma.PostingWhereInput> {
     // 쿼리스트링 값은 문자열로 도착한다 (DTO가 인터페이스라 암묵 변환이 없다).
     const exact = query.exact === true || (query.exact as unknown) === 'true';
 
@@ -887,23 +886,21 @@ export class ReportsService {
             }
         : { category: { type: (query.type ?? 'expense') as CategoryType } };
 
-    return { ...target, entry: this.trendEntryScope(projectId, query, start, end) };
+    // 사람 필터에 거래 화면의 검색이 얹힌 범위. 합계·구성비가 쓰는 것과 같다.
+    return { ...target, entry: await this.entryScope(projectId, { start, end }, query) };
   }
 
   /** 태그 기준. 그 태그가 붙은 전표의 분류 다리를 고른다 -- 줄은 판정기가 가른다. */
-  private trendByTagWhere(
+  private async trendByTagWhere(
     projectId: string,
     query: ReportDto.TrendQuery,
     start: Date,
     end: Date,
-  ): Prisma.PostingWhereInput {
+  ): Promise<Prisma.PostingWhereInput> {
     if (!query.targetId) throw new BadRequestException('태그를 골라 주세요.');
     return {
       category: { type: (query.type ?? 'expense') as CategoryType },
-      entry: {
-        ...this.trendEntryScope(projectId, query, start, end),
-        tags: { some: { tagId: query.targetId } },
-      },
+      entry: await this.entryScope(projectId, { start, end }, { ...query, tagIds: query.targetId }),
     };
   }
 
@@ -1308,122 +1305,6 @@ export class ReportsService {
   }
 }
 
-
-/** 잔액 추이의 한 구간. 값은 end 직전까지 쌓인 잔액이다. */
-type BalanceBucket = { label: string; start: Date; end: Date };
-
-/** 월 단위 구간. endMonth를 포함해 뒤로 months개. 경계는 프로젝트 타임존 기준이다. */
-function monthBuckets(endMonth: string, months: number, timeZone: string): BalanceBucket[] {
-  const [year, month] = endMonth.split('-').map(Number);
-  const buckets: BalanceBucket[] = [];
-  for (let i = months - 1; i >= 0; i--) {
-    buckets.push({
-      label: shiftYearMonth(year, month, -i),
-      start: zonedMonthStart(year, month - i, timeZone),
-      end: zonedMonthStart(year, month - i + 1, timeZone),
-    });
-  }
-  return buckets;
-}
-
-/** 구간 개수. 쿼리스트링으로 오는 값이라 숫자가 아닐 수 있다. */
-function clampCount(value: unknown, fallback: number, max: number): number {
-  return Math.min(Math.max(Number(value) || fallback, 1), max);
-}
-
-/** 연 단위 구간. endYear를 포함해 뒤로 years개. 경계는 프로젝트 타임존 기준이다. */
-function yearBuckets(endYear: number, years: number, timeZone: string): BalanceBucket[] {
-  const buckets: BalanceBucket[] = [];
-  for (let i = years - 1; i >= 0; i--) {
-    const year = endYear - i;
-    buckets.push({
-      label: String(year),
-      start: zonedMonthStart(year, 1, timeZone),
-      end: zonedMonthStart(year + 1, 1, timeZone),
-    });
-  }
-  return buckets;
-}
-
-/**
- * 일 단위 구간. endDate(없으면 오늘)를 포함해 뒤로 days개.
- *
- * zonedDayStart는 day가 1보다 작아도 앞 달로 넘어간다(Date.UTC의 규칙).
- * 달 경계를 따로 다루지 않아도 되는 이유다.
- *
- * endDate는 달력 날짜다. 그래프를 끌어 지난 날짜를 볼 때 화면이 보내며, 타임존
- * 변환 없이 그대로 읽는다 -- 어느 날인지는 이미 프로젝트 타임존으로 정해진 값이다.
- */
-function recentDayBuckets(days: number, timeZone: string, endDate?: string): BalanceBucket[] {
-  const { year, month, day } = endDate
-    ? {
-        year: Number(endDate.slice(0, 4)),
-        month: Number(endDate.slice(5, 7)),
-        day: Number(endDate.slice(8, 10)),
-      }
-    : zonedParts(new Date(), timeZone);
-  const buckets: BalanceBucket[] = [];
-  for (let i = days - 1; i >= 0; i--) {
-    const start = zonedDayStart(year, month, day - i, timeZone);
-    buckets.push({
-      label: zonedDateKey(start, timeZone),
-      start,
-      end: zonedDayStart(year, month, day - i + 1, timeZone),
-    });
-  }
-  return buckets;
-}
-
-/**
- * 주 단위 구간. endDate(없으면 오늘)가 든 주를 포함해 뒤로 weeks개.
- *
- * 주는 사용자가 고른 요일에 시작한다 (`weekStartKey`, 기본은 일요일). 끝나는 주를 날짜
- * 하나로 받는 것은 부르는 쪽이 그 주의 첫날을 따로 셈하지 않게 하려는 것이다 -- 두
- * 곳에서 세면 한쪽만 고친 날부터 화면과 서버가 다른 주를 가리킨다.
- *
- * 이름표는 그 주의 첫날 날짜다. 일 단위와 생김새가 같고, 무엇을 물었는지는 부르는
- * 쪽이 안다 (`BalanceHistoryPoint.date`).
- */
-function weekBuckets(
-  weeks: number,
-  timeZone: string,
-  endDate?: string,
-  weekStart: WeekStart = DEFAULT_WEEK_START,
-): BalanceBucket[] {
-  const endKey = endDate ?? zonedDateKey(new Date(), timeZone);
-  const [year, month, day] = weekStartKey(endKey, weekStart).split('-').map(Number);
-
-  const buckets: BalanceBucket[] = [];
-  for (let i = weeks - 1; i >= 0; i--) {
-    // zonedDayStart 는 day 가 1보다 작아도 앞 달로 넘어간다 (recentDayBuckets 와 같다).
-    const start = zonedDayStart(year, month, day - i * 7, timeZone);
-    buckets.push({
-      label: zonedDateKey(start, timeZone),
-      start,
-      end: zonedDayStart(year, month, day - i * 7 + 7, timeZone),
-    });
-  }
-  return buckets;
-}
-
-/** 일 단위 구간. 그 달 1일부터 말일까지. 경계는 프로젝트 타임존 기준이다. */
-function dayBuckets(yearMonth: string, timeZone: string): BalanceBucket[] {
-  const [year, month] = yearMonth.split('-').map(Number);
-  const monthEnd = zonedMonthStart(year, month + 1, timeZone);
-  const buckets: BalanceBucket[] = [];
-
-  for (let day = 1; ; day++) {
-    const start = zonedDayStart(year, month, day, timeZone);
-    if (start.getTime() >= monthEnd.getTime()) break;
-    const next = zonedDayStart(year, month, day + 1, timeZone);
-    buckets.push({
-      label: `${year}-${pad(month)}-${pad(day)}`,
-      start,
-      end: next,
-    });
-  }
-  return buckets;
-}
 
 /**
  * date_trunc 결과가 속한 "YYYY-MM".

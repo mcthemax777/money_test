@@ -90,17 +90,13 @@ export default function ExchangeRateSettings() {
       <Modal isOpen={isOpen} onClose={close} title={t('exchangeRate.title')}>
         <Text className="text-sm text-gray-600">{t('exchangeRate.description')}</Text>
 
-        {/* 왜 눌리지 않는지 말한다. 흐릿한 버튼만 두면 고장으로 읽힌다. */}
-        {isOffline ? (
-          <Text className="mt-2 text-sm text-gray-500">{t('online.onlyOnline')}</Text>
-        ) : null}
-
         <View className="mt-4 gap-2">
           {rates.map((info: ExchangeRateInfo) => {
             const draft = drafts[info.from] ?? '';
             const isManual = info.source === 'manual';
             const isSaving = savingPair === info.from;
-            const canSave = toNumber(draft) > 0 && !isSaving && !isOffline;
+            // 끊겨 있어도 저장된다 -- 사본에 곧바로 적고 명령으로 쌓는다 (환율 명령).
+            const canSave = toNumber(draft) > 0 && !isSaving;
 
             return (
               <View
@@ -138,9 +134,9 @@ export default function ExchangeRateSettings() {
                     {isManual ? (
                       <Pressable
                         onPress={() => reset(info)}
-                        disabled={isSaving || isOffline}
+                        disabled={isSaving}
                         className={`rounded border border-gray-300 px-3 py-1 ${
-                          isSaving || isOffline ? 'opacity-40' : ''
+                          isSaving ? 'opacity-40' : ''
                         }`}
                       >
                         <Text className="text-sm text-gray-700">{t('exchangeRate.reset')}</Text>

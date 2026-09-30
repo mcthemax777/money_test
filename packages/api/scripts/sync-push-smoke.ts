@@ -21,6 +21,11 @@
  *   8. **태그는 더한 것과 뗀 것만 적용한다.** 통째 교체가 아니라, 두 기기가 서로 다른
  *      태그를 붙이면 둘 다 남는다. 그 사이 지워진 거래는 건너뛰고 나머지는 적용된다.
  */
+import { RecurringService } from '@/modules/entry-drafts/recurring.service';
+import { EntryDraftsService } from '@/modules/entry-drafts/entry-drafts.service';
+import { HolidaysService } from '@/modules/holidays/holidays.service';
+import { ExchangeRatesService } from '@/modules/exchange-rates/exchange-rates.service';
+import { ProjectsService } from '@/modules/projects/projects.service';
 import { Prisma } from '@prisma/client';
 import { CategoriesService } from '@/modules/categories/categories.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
@@ -76,6 +81,13 @@ runSmoke('sync-push', async (ctx) => {
   const budgets = makeBudgets(ctx.prisma, access);
   const entries = makeEntries(ctx.prisma, access, ledger);
   const cardLedger = makeCardLedger(ctx.prisma, access, ledger);
+  // 반복 등록 재생. 후보를 곧바로 만드는 일까지 온라인과 같은 서비스다.
+  const recurringReplay = new RecurringService(
+    ctx.prisma as any,
+    access as any,
+    new EntryDraftsService(ctx.prisma as any, access as any) as any,
+    new HolidaysService(ctx.prisma as any),
+  );
   const replay = new MutationReplayService(
     ctx.prisma as any,
     access as any,
@@ -88,6 +100,9 @@ runSmoke('sync-push', async (ctx) => {
     categories as any,
     tags as any,
     budgets as any,
+    new ExchangeRatesService(ctx.prisma as any) as any,
+    new ProjectsService(ctx.prisma as any, access as any, new ExchangeRatesService(ctx.prisma as any)) as any,
+    recurringReplay as any,
   );
 
   const person = await people.createPerson(uid, { name: '김철수' }, pid);
@@ -328,6 +343,9 @@ runSmoke('sync-push', async (ctx) => {
     categories as any,
     tags as any,
     budgets as any,
+    new ExchangeRatesService(ctx.prisma as any) as any,
+    new ProjectsService(ctx.prisma as any, viewerAccess as any, new ExchangeRatesService(ctx.prisma as any)) as any,
+    recurringReplay as any,
   );
   await ctx.expectReject('viewer 로 바뀐 뒤 도착한 명령은 거절된다', () =>
     viewerReplay.push(uid, {

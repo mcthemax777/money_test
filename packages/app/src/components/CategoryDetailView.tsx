@@ -54,6 +54,9 @@ export default function CategoryDetailView({
   reloadToken,
   onClose,
   onEntryClick,
+  trendClip,
+  controls,
+  title,
 }: {
   /** 실제 분류 id, 'total-expense'/'total-income', 또는 태그(`tag:<id>`) */
   categoryId: string;
@@ -69,6 +72,15 @@ export default function CategoryDetailView({
   onClose: () => void;
   /** 거래를 누르면 부른다. 가계 화면의 고치기 팝업으로 잇는 통로다. */
   onEntryClick?: (entry: EntryListItem) => void;
+  /** 12개월 추이를 자를 구간. 거래 분석이 검색 기간을 걸었을 때 준다 (useCategoryDetail). */
+  trendClip?: { from?: string; to?: string };
+  /**
+   * 머리글 아래에 세울 조작 (거래 분석의 달·지출수입 탭). 없으면 아무것도 서지 않는다.
+   * 보기 안에 두어야 머리글 ← 와 한 화면으로 읽힌다.
+   */
+  controls?: ReactNode;
+  /** 머리글 제목. 없으면 "{분류} 상세 분석"이다. 거래 분석처럼 분류 하나가 아닌 보기가 준다. */
+  title?: string;
 }) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
@@ -81,6 +93,7 @@ export default function CategoryDetailView({
     projectId,
     filter,
     reloadToken,
+    trendClip,
   });
 
   /** 원형차트 제목. 대분류별인지 소분류별인지는 훅이 정한다 (웹과 같은 값). */
@@ -91,7 +104,12 @@ export default function CategoryDetailView({
 
   return (
     <View className="gap-6">
-      <PageHeader title={t('category.detailTitle', { name: categoryName })} onBack={onClose} />
+      <PageHeader
+        title={title ?? t('category.detailTitle', { name: categoryName })}
+        onBack={onClose}
+      />
+
+      {controls}
 
       {detail.isLoading ? (
         <Text className="py-12 text-center text-gray-500">{t('detail.loading')}</Text>

@@ -73,7 +73,7 @@ export class CardsService {
 
     if (dto.cardType === CardType.credit) {
       if (!dto.statementClosingDay || !dto.paymentDueDay) {
-        throw new BadRequestException('신용카드는 마감일과 결제일을 설정해야 합니다.');
+        throw badRequest('CREDIT_CARD_DAYS_REQUIRED', '신용카드는 마감일과 결제일을 설정해야 합니다.');
       }
       this.assertDayOfMonth(dto.statementClosingDay, '마감일');
       this.assertDayOfMonth(dto.paymentDueDay, '결제일');
@@ -226,6 +226,16 @@ export class CardsService {
     if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId, 'editor');
 
+    /*
+     * 신용카드의 마감일·결제일은 비울 수 없다. 둘이 없으면 청구 주기를 셀 수 없어 실적·청구가
+     * 멈춘다 (기기 사본도 그때는 계산하지 못한다). 기기의 오프라인 창구도 같은 코드로 막는다.
+     */
+    if (
+      card.cardType === CardType.credit &&
+      (dto.statementClosingDay === null || dto.paymentDueDay === null)
+    ) {
+      throw badRequest('CREDIT_CARD_DAYS_REQUIRED', '신용카드는 마감일과 결제일을 설정해야 합니다.');
+    }
     if (dto.statementClosingDay !== undefined) {
       this.assertDayOfMonth(dto.statementClosingDay, '마감일');
     }

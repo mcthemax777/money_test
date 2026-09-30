@@ -22,10 +22,11 @@ import type {
   TagDto,
   EntryScopeQuery,
   PersonDto,
+  RecurringRuleDto,
   ReportDto,
 } from '@money/types';
 
-import { apiClient, type ReportPeriod } from '../lib/api-client';
+import { apiClient, type ExchangeRatesResponse, type ReportPeriod } from '../lib/api-client';
 
 /** 기간 조회가 함께 받는 조건. 정의는 `@money/types` 에 있다. */
 export type { EntryScopeQuery };
@@ -45,12 +46,41 @@ export interface HomeDataPort {
   getTags(projectId?: string | null): Promise<TagDto.Response[]>;
 
   getNetWorth(projectId?: string | null): Promise<ReportDto.NetWorth>;
+  /** 자산 추이 그래프. 사본은 공용 칸 나누기·쌓기(balance-history)로 서버와 같은 선을 그린다. */
+  getBalanceHistory(
+    options: Omit<ReportDto.BalanceHistoryQuery, 'projectId'>,
+    projectId?: string | null,
+  ): Promise<ReportDto.BalanceHistoryPoint[]>;
+  /** 투자·저축 계좌마다 수입·지출로 기록한 금액의 합 (계좌 통화). */
+  getAccountProfit(projectId?: string | null): Promise<ReportDto.AccountProfit[]>;
   getBudgetForMonth(
     year: number,
     month: number,
     projectId?: string | null,
     filter?: EntryScopeQuery,
   ): Promise<BudgetDto.MonthlyBudget[]>;
+  /**
+   * 한 대상(분류·전체·태그 예산)의 월별 금액. 예산 팝업의 월별 목록이 쓴다.
+   * 사본은 규칙과 달별 조정을 모두 들고 있어 스스로 푼다 (budgetScheduleMonths).
+   */
+  /**
+   * 저장 통화 기준 환율과 표시 환율. 환율 설정 화면과 거래 입력 폼이 쓴다.
+   * 사본은 환율 표를 들고 있어 서버와 같은 차례(직접 정한 값 → 역수 → 고정값)로 푼다.
+   */
+  getExchangeRates(projectId?: string | null): Promise<ExchangeRatesResponse>;
+  /**
+   * 반복 등록 목록. 다음 예정일·마지막으로 만든 날까지 서버 응답과 같은 모양이다. 사본은
+   * 공휴일과 후보의 열쇠로 서버와 같은 함수(`nextOccurrence`)를 써서 셈한다.
+   */
+  getRecurringRules(projectId?: string | null): Promise<RecurringRuleDto.Response[]>;
+  /**
+   * 태그가 붙은 자리의 수 (거래 줄·보관함 후보·반복 등록).
+   */
+  getTagUsage(id: string, projectId?: string | null): Promise<TagDto.UsageResponse>;
+  getBudgetSchedule(
+    query: Omit<BudgetDto.ScheduleQuery, 'projectId'>,
+    projectId?: string | null,
+  ): Promise<BudgetDto.ScheduleMonth[]>;
   /** 그 달의 태그 예산. 분류 예산과 따로 받는다 (BudgetDto.MonthlyTagBudget 주석). */
   getTagBudgetsForMonth(
     year: number,
@@ -106,6 +136,17 @@ export interface HomeDataPort {
    * 분류별 구성비. 거래 화면의 분류별 목록, 가계 화면의 분류별 탭, 분류 상세의
    * 원형차트가 쓴다. 모두 창구를 거치므로 오프라인에서도 사본으로 그려진다.
    */
+  /**
+   * 달별 추이 (마지막 달부터 거꾸로 months 개). 분석 창의 12개월 막대가 쓴다.
+   *
+   * 사본은 분류·전체·태그 추이를 스스로 답한다. 결제수단 추이는 수단을 가르는 규칙이
+   * 사본에 없어 서버로 넘긴다 (끊겨 있으면 그 막대만 빈다).
+   */
+  getTrend(
+    target: ReportDto.TrendQuery['target'],
+    options: Omit<ReportDto.TrendQuery, 'target' | 'projectId'>,
+    projectId?: string | null,
+  ): Promise<ReportDto.TrendPoint[]>;
   getCategoryBreakdown(
     period: ReportPeriod,
     type: 'income' | 'expense',
@@ -177,8 +218,14 @@ export const httpHomePort: HomeDataPort = {
   getCategories: (projectId) => apiClient.getCategories(projectId),
   getTags: (projectId) => apiClient.getTags(projectId),
   getNetWorth: (projectId) => apiClient.getNetWorth(projectId),
+  getBalanceHistory: (options, projectId) => apiClient.getBalanceHistory(options, projectId),
+  getAccountProfit: (projectId) => apiClient.getAccountProfit(projectId),
   getBudgetForMonth: (year, month, projectId, filter) =>
     apiClient.getBudgetForMonth(year, month, projectId, filter),
+  getExchangeRates: (projectId) => apiClient.getExchangeRates(projectId),
+  getTagUsage: (id) => apiClient.getTagUsage(id),
+  getRecurringRules: (projectId) => apiClient.getRecurringRules(projectId),
+  getBudgetSchedule: (query, projectId) => apiClient.getBudgetSchedule(query, projectId),
   getTagBudgetsForMonth: (year, month, projectId, filter) =>
     apiClient.getTagBudgetsForMonth(year, month, projectId, filter),
   getSummary: (period, projectId, filter) => apiClient.getSummary(period, projectId, filter),
@@ -191,6 +238,7 @@ export const httpHomePort: HomeDataPort = {
     apiClient.getCardPerformanceLedger(cardId, params),
   getCardBilledLedger: (cardId, params) => apiClient.getCardBilledLedger(cardId, params),
   getAccountPostings: (accountId, params) => apiClient.getAccountPostings(accountId, params),
+  getTrend: (target, options, projectId) => apiClient.getTrend(target, options, projectId),
   getCategoryBreakdown: (period, type, projectId, options) =>
     apiClient.getCategoryBreakdown(period, type, projectId, options),
   getEntryMonths: (projectId, filter) => apiClient.getEntryMonths(projectId, filter),

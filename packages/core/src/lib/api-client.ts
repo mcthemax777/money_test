@@ -35,6 +35,7 @@ import type {
   RecurringRuleDto,
   EntryDto,
   EntryFilterQuery,
+  EntrySearchQuery,
   ExchangeRateInfo,
   FinancialInstitutionType,
   InstitutionDto,
@@ -477,6 +478,17 @@ class ApiClient {
   ): Promise<InstitutionDto.Response[]> {
     const response = await this.client.get<InstitutionDto.Response[]>('/institutions', {
       params: { ...(type ? { type } : {}), ...(projectId ? { projectId } : {}) }
+    });
+    return response.data;
+  }
+
+  /** 이 프로젝트 전용 은행/카드사를 더한다. 엑셀 가져오기가 "기타 카드사"를 만들 때 쓴다. */
+  async createInstitution(
+    data: { type: FinancialInstitutionType; name: string },
+    projectId?: string | null,
+  ): Promise<InstitutionDto.Response> {
+    const response = await this.client.post<InstitutionDto.Response>('/institutions', data, {
+      params: projectId ? { projectId } : {},
     });
     return response.data;
   }
@@ -1475,7 +1487,11 @@ class ApiClient {
       type?: 'income' | 'expense';
       /** target=category일 때 소분류를 빼고 그 분류만 본다 ("미분류" 보기) */
       exact?: boolean;
-    } & EntryFilterQuery,
+      /** 추이를 이 구간 안으로 자른다 (ISO). ReportDto.TrendQuery 주석 참고 */
+      clipFrom?: string;
+      clipTo?: string;
+    } & EntryFilterQuery &
+      EntrySearchQuery,
     projectId?: string | null,
   ) {
     const response = await this.client.get<any>('/reports/trend', {

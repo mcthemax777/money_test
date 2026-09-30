@@ -11,6 +11,7 @@ import { randomUUID } from 'node:crypto';
  */
 
 import { JwtService } from '@nestjs/jwt';
+import { zonedCurrentYearMonth } from '@money/types';
 import { runSmoke } from './smoke-harness';
 
 const BASE = 'http://localhost:3999';
@@ -195,7 +196,8 @@ runSmoke('currency', async (ctx) => {
   ctx.check('잔액 드리프트', drift.length, 0);
 
   // ── 리포트가 통화를 섞지 않는다 ────────────────────────────
-  const yearMonth = new Date().toISOString().slice(0, 7);
+  // 가계부 타임존(기본 Asia/Seoul)의 이번 달이다. UTC 로 자르면 한국 자정 직후 전 달을 본다.
+  const yearMonth = zonedCurrentYearMonth('Asia/Seoul');
   const summary = await call('GET', `/reports/summary${q}&yearMonth=${yearMonth}`);
   // 지출: 달러 $50(69,000) + 해외결제 $50(69,000) + 환율지정 $100(140,000)
   ctx.check('월 지출 합계 (환산액)', summary.body.expense, String(69000 + 69000 + 140000));

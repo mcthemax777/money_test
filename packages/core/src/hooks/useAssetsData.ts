@@ -7,7 +7,6 @@ import {
   type ReportDto,
 } from '@money/types';
 
-import { apiClient } from '../lib/api-client';
 import {
   settingsWritePort,
   type AccountPatch,
@@ -65,8 +64,8 @@ export function useAssetsData(projectId: string | null) {
       /*
        * 읽기도 창구를 거친다. 앱에서는 사본이 답하므로 오프라인에서도 자산 화면이 그려진다.
        *
-       * 계좌별 누적 수익만 서버에서 온다. 누적합이라 사본에 옮기지 않았고(설계 문서의
-       * 이식 목록), 없으면 그 줄만 비운다 -- 나머지를 못 그릴 이유가 없다.
+       * 계좌별 누적 수익도 창구로 받는다 (사본이 서버와 같은 규칙으로 센다). 그래도 받지
+       * 못하면(웹이 끊겼을 때) 그 줄만 비운다 -- 나머지를 못 그릴 이유가 없다.
        */
       const port = homeDataPort();
       const [peopleData, accountsData, cardsData, netWorthData, profitData] = await Promise.all([
@@ -74,7 +73,7 @@ export function useAssetsData(projectId: string | null) {
         port.getAccountsV2(projectId),
         port.getCards(projectId),
         port.getNetWorth(projectId),
-        apiClient.getAccountProfit(projectId).catch((error) => {
+        port.getAccountProfit(projectId).catch((error) => {
           if (isOfflineError(error)) return [];
           throw error;
         }),

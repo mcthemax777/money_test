@@ -958,6 +958,11 @@ export class LedgerService {
     /** 외화 계좌의 환산에 쓸 환율. 생략하면 서버 환율. */
     exchangeRate?: Prisma.Decimal;
     createdByUserId?: string | null;
+    /**
+     * 기초잔액 전표를 **새로 만들 때** 쓸 id. 기기의 오프라인 잔액 맞추기가 준다 -- 사본에 먼저
+     * 세운 전표와 같은 줄이 되게. 이미 있는 전표를 고칠 때는 쓰지 않는다.
+     */
+    openingEntryId?: string;
   }) {
     const account = await this.getAccount(input.projectId, input.accountId);
     if (account.type === AccountType.opening_balance) {
@@ -1014,6 +1019,7 @@ export class LedgerService {
       const openingBase = this.toBase(openingAmount, rate, base);
 
       const entry: EntryInput = {
+        ...(!existing && input.openingEntryId ? { id: input.openingEntryId } : {}),
         projectId: input.projectId,
         personId: account.ownerId!,
         date: OPENING_BALANCE_DATE,

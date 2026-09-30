@@ -1171,7 +1171,11 @@ model RecurringRule {
   /// 이 반복이 만드는 후보에 붙일 태그.
   tags    RecurringRuleTag[]
 
+  /// 변경 피드가 보는 번호. Project.syncVersion 에서 발급된다 (기기 사본이 반복을 받는다).
+  updatedVersion Int @default(0)
+
   @@index([projectId, isActive])
+  @@index([projectId, updatedVersion])
 }
 
 /// 후보에 붙은 태그. 전표의 EntryTag 와 같은 짜임이다.

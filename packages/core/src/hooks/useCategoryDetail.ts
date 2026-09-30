@@ -14,7 +14,7 @@ import type { EntryDto, EntryFilterQuery, EntryListItem } from '@money/types';
 
 import { useMirrorVersion } from './useMirrorVersion';
 import { homeDataPort } from '../data/home-port';
-import { apiClient, type ReportPeriod } from '../lib/api-client';
+import { type ReportPeriod } from '../lib/api-client';
 import { dayRangeQuery, formatMonthShort, throughDayOf, todayKey } from '../lib/datetime';
 import {
   buildDailyCumulative,
@@ -183,6 +183,13 @@ export interface CategoryDetailInput {
   reloadToken?: number;
   /** 꺼져 있으면 받지 않는다. 닫힌 팝업이 쓴다. */
   enabled?: boolean;
+  /**
+   * 12개월 추이를 이 구간 안으로 자른다 (ISO 시각, [from, to)).
+   *
+   * 거래 화면의 분석이 검색 기간을 걸었을 때 준다. 가계의 기간 보기는 주지 않는다 --
+   * 그쪽 추이는 구간 밖의 달을 함께 보여 견주게 하는 것이 뜻이다.
+   */
+  trendClip?: { from?: string; to?: string };
 }
 
 export interface CategoryDetail {
@@ -225,8 +232,8 @@ export interface CategoryDetail {
   /** 이 달이나 앞선 달에 쌓인 것이 있는지. */
   hasDailyAmount: boolean;
   /**
-   * 서버에서만 오는 값(12개월 추이·일별 누적·앞선 달·거래)을 받지 못했는가.
-   * 원형차트는 사본에서도 나오므로 그것만 그려지고, 나머지 자리에 안내를 적는다.
+   * 끊긴 동안 받지 못한 값이 있는가. 앱은 모든 값을 사본에서 세지만, 창구가 서버로 넘기는
+   * 것(결제수단 추이)이나 사본이 없는 기기(웹)에서는 닿지 못한다. 그 자리에 안내를 적는다.
    */
   isOffline: boolean;
 }
@@ -240,6 +247,7 @@ export function useCategoryDetail({
   filter,
   reloadToken,
   enabled = true,
+  trendClip,
 }: CategoryDetailInput): CategoryDetail {
   // 구간 경계와 "오늘까지"는 프로젝트 타임존 기준이다 (서버의 합계와 같은 규칙).
   const timeZone = useProjectTimeZone();
@@ -261,6 +269,12 @@ export function useCategoryDetail({
   const periodKey = `${dayKeys.startKey}~${dayKeys.endKey}`;
   /* 객체는 렌더마다 새로 만들어진다. 의존성에는 값을 쓴다. */
   const filterKey = JSON.stringify(filter ?? {});
+  const clipKey = JSON.stringify(trendClip ?? {});
+  /* 추이 조회에 싣는 자르기. 없으면 싣지 않는다. */
+  const clipQuery = {
+    ...(trendClip?.from ? { clipFrom: trendClip.from } : {}),
+    ...(trendClip?.to ? { clipTo: trendClip.to } : {}),
+  };
 
   const target = resolveTarget(categoryId, categories, exactCategory);
   /*
@@ -292,9 +306,9 @@ export function useCategoryDetail({
 
     const load = async () => {
       /*
-       * 서버에서만 오는 값은 닿지 못하면 비우고 표시만 남긴다.
+       * 닿지 못한 값은 비우고 표시만 남긴다 (isOffline 주석).
        *
-       * 하나가 실패했다고 전부 버리면 사본으로 그릴 수 있는 원형차트까지 사라진다.
+       * 하나가 실패했다고 전부 버리면 그릴 수 있는 나머지 그래프까지 사라진다.
        * 0원 그래프로 두면 "이 분류에 쓴 것이 없다"로 읽히므로 화면이 안내를 적는다.
        */
       let offline = false;
@@ -309,23 +323,41 @@ export function useCategoryDetail({
         // 구간 경계는 프로젝트 타임존 기준이다 (서버의 합계와 같은 규칙).
         const { startDate, endDate } = dayRangeQuery(dayKeys.startKey, dayKeys.endKey, timeZone);
 
-        // 12개월 시계열은 서버가 계산한다.
+        /*
+         * 12개월 추이. 창구를 거친다 -- 앱에서는 사본이 서버와 같은 규칙으로 센다
+         * (`getTrend`). 결제수단 추이만 사본에 없어 서버로 넘어간다.
+         */
+        const port = homeDataPort();
         const trendPromise = serverOnly<unknown>(
           target.scope === 'total'
-            ? apiClient.getTrend(
+            ? port.getTrend(
                 'total',
-                { type: target.type, endMonth, months: 12, ...filter },
+                { type: target.type, endMonth, months: 12, ...filter, ...clipQuery },
                 projectId,
               )
             : target.scope === 'tag'
-              ? apiClient.getTrend(
+              ? port.getTrend(
                   'tag',
-                  { targetId: target.tagId, type: target.type, endMonth, months: 12, ...filter },
+                  {
+                    targetId: target.tagId,
+                    type: target.type,
+                    endMonth,
+                    months: 12,
+                    ...filter,
+                    ...clipQuery,
+                  },
                   projectId,
                 )
-              : apiClient.getTrend(
+              : port.getTrend(
                 'category',
-                { targetId: categoryId, endMonth, months: 12, exact: exactCategory, ...filter },
+                {
+                  targetId: categoryId,
+                  endMonth,
+                  months: 12,
+                  exact: exactCategory,
+                  ...filter,
+                  ...clipQuery,
+                },
                 projectId,
               ),
           [],
@@ -351,7 +383,7 @@ export function useCategoryDetail({
         // 커서를 끝까지 따라간다. 한 페이지만 받으면 일별 누적이 12개월 그래프
         // (서버 집계, 전량)와 어긋난다.
         const entriesPromise = serverOnly<unknown>(
-          apiClient.getAllEntries({ ...entryQuery, startDate, endDate }, projectId),
+          port.getAllEntries({ ...entryQuery, startDate, endDate }, projectId),
           [],
         );
 
@@ -368,7 +400,6 @@ export function useCategoryDetail({
         // 원형차트: 전체면 대분류별, 대분류를 보고 있으면 소분류별.
         // 파고들기(대분류 -> 소분류)에도 같은 평면 집계를 쓴다.
         // 창구를 거친다 -- 앱에서는 사본이 답하므로 오프라인에서도 그려진다.
-        const port = homeDataPort();
         const flatPromise = target.isLeaf
           ? Promise.resolve([] as BreakdownRow[])
           : port.getCategoryBreakdown(period, target.type, projectId, {
@@ -450,6 +481,7 @@ export function useCategoryDetail({
     projectId,
     timeZone,
     filterKey,
+    clipKey,
     reloadToken,
     mirrorVersion,
     // categories 배열 자체를 넣으면 부모가 새로 만들 때마다 다시 받는다. 판별 결과만 본다.

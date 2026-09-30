@@ -219,6 +219,26 @@ runSmoke('tag-budget', async (ctx) => {
     breakdown.map((row) => `${row.categoryName}:${Number(row.amount)}`).sort().join(','),
     '교통:2000,식비:7000');
 
+  // ── 6. 거래 분석: 전체 추이가 검색 조건과 기간 자르기를 지킨다 ──
+  const totalTrend = async (extra: Record<string, unknown>) =>
+    (
+      await reports.getTrend(uid, {
+        projectId: pid,
+        target: 'total',
+        type: 'expense',
+        endMonth: '2026-09',
+        months: 1,
+        ...extra,
+      } as never)
+    ).map((point) => Number(point.amount)).join(',');
+  ctx.check('검색 없음: 9월 지출 전부 (7,000 + 3,000 + 2,000)', await totalTrend({}), '12000');
+  ctx.check('태그로 검색: 태그 줄만', await totalTrend({ tagIds: trip.id }), '9000');
+  ctx.check('분류로 검색: 교통 줄만 (분할의 식비 줄은 빠진다)', await totalTrend({ categoryIds: ride.id }), '5000');
+  ctx.check('기간으로 자르면 밖의 돈은 세지 않는다',
+    await totalTrend({ clipFrom: '2026-09-06T00:00:00.000Z' }), '0');
+  ctx.check('기간 안이면 그대로',
+    await totalTrend({ clipFrom: '2026-09-01T00:00:00.000Z', clipTo: '2026-09-06T00:00:00.000Z' }), '12000');
+
   // ── 4. 태그를 지우면 예산도 사라진다 ──
   await tags.deleteTag(trip.id, uid);
   ctx.check('태그를 지우면 태그 예산이 사라진다',

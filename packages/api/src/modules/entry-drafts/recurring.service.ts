@@ -27,11 +27,14 @@ import {
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
+  RECURRING_KINDS,
   RecurringRuleDto,
   checkRecurring,
   holidayCountryOf,
   nextOccurrence,
   recurringDraftItems,
+  recurringScheduleFields,
+  recurringSchedulePatch,
   zonedDateKey,
   type RecurringHolidayRule,
   type RecurringSchedule,
@@ -50,17 +53,8 @@ type RuleRow = Prisma.RecurringRuleGetPayload<{
   include: { tags: { select: { tagId: true } } };
 }>;
 
-/** 후보가 담을 수 있는 갈래. 잔액 조정은 사람이 적는 것이 아니라 여기 없다. */
-const KINDS = ['expense', 'income', 'transfer', 'card_payment'] as const;
-
-/**
- * 일정에 시각을 붙인 모양. 표에 저장하는 칸이 이만큼이다.
- *
- * 셈하는 함수(`dueOccurrences`·`nextOccurrence`)는 날짜만 보므로 `RecurringSchedule`
- * 에는 시각이 없다. 하지만 저장은 둘을 함께 쓰므로, 저장 모양을 만드는 자리에서는
- * 시각이 빠지지 않게 타입으로 못을 박는다.
- */
-type ScheduleWithTime = RecurringSchedule & { timeOfDay?: string | null };
+/** 후보가 담을 수 있는 갈래. */
+const KINDS = RECURRING_KINDS;
 
 /** 정각에서 이만큼 지나 돈다. 정각 시각(09:00)으로 적어 둔 회차가 그 차례에 들어온다. */
 const GENERATE_OFFSET_MS = 5 * 1000;
@@ -262,7 +256,7 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
         id: clientId(dto.id, '반복 식별자'),
         projectId,
         isActive: dto.isActive ?? true,
-        ...this.scheduleData(dto),
+        ...recurringScheduleFields(dto),
         kind,
         amount: toOptionalMoney(dto.amount ?? null, '반복 금액'),
         currency: dto.currency ?? null,
@@ -295,12 +289,12 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
     /*
      * 일정 칸을 하나라도 건드리면 바뀐 뒤의 모습으로 검사한다.
      *
-     * **시각도 함께 들고 온다.** `scheduleData` 가 일정 칸과 한 덩어리로 시각을
+     * **시각도 함께 들고 온다.** `recurringScheduleFields` 가 일정 칸과 한 덩어리로 시각을
      * 내놓으므로, 합치는 값에 시각이 없으면 "며칠마다"만 고쳐도 적어 둔 시각이 null 로
      * 지워진다. 그러면 그 뒤의 회차가 조용히 정오로 담긴다 -- 9:30 으로 적어 둔 반복이
      * 12:00 짜리 후보를 만든다.
      */
-    const merged = { ...toSchedule(rule), timeOfDay: rule.timeOfDay, ...schedulePatch(dto) };
+    const merged = { ...toSchedule(rule), timeOfDay: rule.timeOfDay, ...recurringSchedulePatch(dto) };
     this.checkSchedule(merged);
 
     const data: Prisma.RecurringRuleUncheckedUpdateInput = {};
@@ -313,14 +307,14 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
       'dayOfMonth' in dto ||
       'month' in dto
     ) {
-      Object.assign(data, this.scheduleData(merged));
+      Object.assign(data, recurringScheduleFields(merged));
     }
     if ('startDate' in dto) data.startDate = merged.startDate;
     if ('endDate' in dto) data.endDate = merged.endDate ?? null;
     /*
      * 시각만 고칠 때는 위의 일정 저장이 돌지 않으므로 여기서 넣는다.
      *
-     * 주기 없는 반복에는 정해진 날이 없어 비운다 -- `scheduleData` 와 같은 규칙이라야
+     * 주기 없는 반복에는 정해진 날이 없어 비운다 -- `recurringScheduleFields` 와 같은 규칙이라야
      * "며칠마다와 함께 고칠 때"와 "시각만 고칠 때"의 결과가 같다.
      */
     if ('timeOfDay' in dto) {
@@ -456,36 +450,6 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * 일정 칸만 골라 저장 모양으로. 갈래에 뜻이 없는 칸은 비운다.
-   *
-   * **시각까지 함께 내놓는다.** 부르는 쪽은 그것을 빠뜨린 채로 주면 안 된다 -- 여기서
-   * `?? null` 로 읽히므로 적어 둔 시각이 조용히 지워진다.
-   */
-  private scheduleData(schedule: ScheduleWithTime) {
-    const frequency = schedule.frequency;
-    return {
-      frequency,
-      everyDays: frequency === 'daily' ? Math.max(1, Number(schedule.everyDays ?? 1)) : null,
-      // 주별이 아니면 요일은 뜻이 없다. 남겨 두면 주기를 바꾼 뒤에도 표에 남는다.
-      weekdays:
-        frequency === 'weekly' ? [...new Set(schedule.weekdays ?? [])].sort((a, b) => a - b) : [],
-      holidayRule: schedule.holidayRule ?? 'none',
-      // 주기가 없으면 셋 다 비운다. 저절로 오는 날이 없어 정할 것이 없다.
-      dayOfMonth:
-        frequency === 'monthly' || frequency === 'yearly' ? Number(schedule.dayOfMonth) : null,
-      month: frequency === 'yearly' ? Number(schedule.month) : null,
-      startDate: schedule.startDate,
-      endDate: schedule.endDate ?? null,
-      /*
-       * 시각은 정해진 날의 몇 시로 담을지다. 주기가 없으면 그 날이 없다 -- 사람이
-       * 누르는 그 순간의 시각으로 담기므로(core 의 `manualDraftItem`) 적어 둔 값을
-       * 아무도 보지 않는다. 남겨 두면 표에 쓰이지 않는 값이 남는다.
-       */
-      timeOfDay: frequency === 'none' ? null : (schedule.timeOfDay ?? null),
-    };
-  }
-
-  /**
    * 이 프로젝트의 태그인가. 아니면 거절한다.
    *
    * 남의 프로젝트 태그를 그대로 심으면 다리 표의 외래 키는 통과한다 -- 그 태그가
@@ -597,26 +561,6 @@ function toSchedule(
     endDate: rule.endDate,
     lastMadeOn,
   };
-}
-
-/**
- * 수정 요청에서 일정 칸만. 준 것만 담아 합칠 수 있게 한다.
- *
- * 시각도 여기 담는다. 셈하는 함수는 그 값을 보지 않지만(`RecurringSchedule` 에 없다)
- * 저장 모양을 만드는 `scheduleData` 는 본다.
- */
-function schedulePatch(dto: RecurringRuleDto.UpdateRequest): Partial<ScheduleWithTime> {
-  const patch: Partial<ScheduleWithTime> = {};
-  if ('timeOfDay' in dto) patch.timeOfDay = dto.timeOfDay ?? null;
-  if ('frequency' in dto && dto.frequency) patch.frequency = dto.frequency;
-  if ('everyDays' in dto) patch.everyDays = dto.everyDays ?? null;
-  if ('weekdays' in dto) patch.weekdays = dto.weekdays ?? [];
-  if ('holidayRule' in dto) patch.holidayRule = dto.holidayRule ?? 'none';
-  if ('dayOfMonth' in dto) patch.dayOfMonth = dto.dayOfMonth ?? null;
-  if ('month' in dto) patch.month = dto.month ?? null;
-  if ('startDate' in dto && dto.startDate) patch.startDate = dto.startDate;
-  if ('endDate' in dto) patch.endDate = dto.endDate ?? null;
-  return patch;
 }
 
 /** 와이어로 나가는 모양. 다음 예정일과 마지막으로 만든 날을 함께 싣는다. */

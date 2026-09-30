@@ -4,7 +4,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import { persistStorage } from '../lib/persist-storage';
 import { DEFAULT_WEEK_START, isWeekStart, type WeekStart } from '@money/types';
 
-import { apiClient } from '../lib/api-client';
+import { saveProfile } from './pending-profile';
 
 /**
  * 한 주를 어느 요일에서 끊는가.
@@ -44,7 +44,8 @@ export const useWeekStartStore = create<WeekStartStore>()(
         set({ weekStart, isSaving: true });
 
         try {
-          await apiClient.updateProfile({ weekStart });
+          // 끊겨 있으면 들고 있다가 연결되면 보낸다 (pending-profile). 그때는 되돌리지 않는다.
+          await saveProfile({ weekStart });
         } catch (error) {
           set({ weekStart: previous });
           throw error;

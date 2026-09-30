@@ -8,18 +8,19 @@ import {
   DisplayConverter,
   ExchangeRatesService,
 } from '../exchange-rates/exchange-rates.service';
-import { assertYearMonth, shiftYearMonth } from '@/common/year-month';
+import { assertYearMonth } from '@/common/year-month';
 import { stampFieldClocks } from '@/common/field-clock';
 import { ServerClockService } from '@/common/server-clock';
 import {
-  BUDGET_MONTH_CEILING as BUDGET_MONTH_CEILING_SHARED,
-  BUDGET_MONTH_FLOOR as BUDGET_MONTH_FLOOR_SHARED,
   type BudgetPeriod,
   BudgetDto,
   Dec,
   EntryFilterQuery,
   categoryUsage,
+  budgetScheduleMonths,
+  planBudgetFrom,
   isBudgetApplicable,
+  resolveBudgetTarget,
   tagUsage,
   totalUsage,
   zonedCurrentYearMonth,
@@ -39,31 +40,6 @@ import {
 
 const ZERO = new Prisma.Decimal(0);
 
-/**
- * effectiveFrom/effectiveTo가 비어 있을 때 쓰는 양끝.
- *
- * 적용 기간 비교를 "YYYY-MM" 문자열로 하므로 열린 끝도 같은 형식의 값이어야
- * 한다. 기간을 끊는 쪽과 걸리는 달을 따지는 쪽이 다른 값을 쓰면, 규칙을 끊었는데
- * 여전히 걸리거나 그 반대가 된다.
- */
-const BUDGET_MONTH_FLOOR = BUDGET_MONTH_FLOOR_SHARED;
-const BUDGET_MONTH_CEILING = BUDGET_MONTH_CEILING_SHARED;
-
-/**
- * 전체 예산의 센티널 categoryId를 푼다.
- *
- * 전체 예산은 분류가 없는 예산이라 categoryId로 가리킬 수 없다. 화면은 대신
- * 약속된 문자열을 보내고, 서버는 그것을 "분류 없음 + type"으로 바꾼다.
- * 예산을 만드는 쪽과 조회하는 쪽이 같은 규칙을 써야 하므로 한 곳에 둔다.
- */
-function resolveBudgetTarget(
-  categoryId?: string,
-  type?: 'income' | 'expense',
-): { categoryId?: string; type?: 'income' | 'expense' } {
-  if (categoryId === 'BUDGET_TOTAL_INCOME') return { categoryId: undefined, type: 'income' };
-  if (categoryId === 'BUDGET_TOTAL_EXPENSE') return { categoryId: undefined, type: 'expense' };
-  return { categoryId, type };
-}
 
 /** 내부 계산용. 응답으로 나갈 때 금액을 문자열로 바꾼다. */
 type InternalBudgetRow = Omit<
@@ -388,18 +364,73 @@ export class BudgetsService {
     siblings: Array<{ id: string; effectiveFrom: string | null; effectiveTo: string | null }>,
     applyFrom: string,
   ): Promise<void> {
-    const beforeMonth = this.getPreviousMonth(applyFrom);
-
-    for (const rule of siblings) {
-      if ((rule.effectiveFrom || BUDGET_MONTH_FLOOR) >= applyFrom) {
-        await tx.budget.delete({ where: { id: rule.id } });
-        continue;
-      }
-
-      if ((rule.effectiveTo || BUDGET_MONTH_CEILING) >= applyFrom) {
-        await tx.budget.update({ where: { id: rule.id }, data: { effectiveTo: beforeMonth } });
-      }
+    // 무엇을 지우고 끊을지는 공용 함수가 정한다. 기기 사본도 오프라인에서 같은 계산을 한다.
+    const plan = planBudgetFrom(siblings, applyFrom);
+    for (const id of plan.remove) await tx.budget.delete({ where: { id } });
+    for (const rule of plan.cut) {
+      await tx.budget.update({ where: { id: rule.id }, data: { effectiveTo: rule.effectiveTo } });
     }
+  }
+
+  /**
+   * "고른 달부터" 바꾸기·지우기를 **대상으로** 한다 (오프라인 명령 `budget.setFrom` 의 재생).
+   *
+   * 규칙 id 가 아니라 대상(분류·전체·태그)과 달로 받는다. 그 사이 끊기거나 사라진 규칙을
+   * 가리키지 않고, 지금 그 대상의 규칙들 위에서 다시 계산한다 -- 결과는 늘 "그 달부터 이
+   * 금액(null 이면 예산 없음)"이다. 온라인의 `updateBudget(applyMode='from')`·`deleteBudget
+   * (fromMonth)` 와 같은 끊기(`clearOverridesFrom`·`clearFromMonth`)를 쓴다.
+   *
+   * 새 규칙의 id 는 기기가 만든다 (사본에 먼저 세운 줄과 같은 줄이 되게).
+   */
+  async setBudgetFrom(
+    userId: string,
+    projectIdParam: string,
+    input: {
+      categoryId?: string | null;
+      tagId?: string | null;
+      type?: string | null;
+      fromMonth: string;
+      amount: string | null;
+      ruleId?: string;
+    },
+  ): Promise<void> {
+    const projectId = await this.projectAccess.resolveAndVerifyProjectId(
+      userId,
+      projectIdParam,
+      'editor',
+    );
+    const applyFrom = assertYearMonth(input.fromMonth, '적용 시작 월');
+    const tagId = input.tagId || undefined;
+    const resolved = resolveBudgetTarget(input.categoryId, input.type);
+    const categoryId = resolved.categoryId;
+    // 태그 예산은 유형을 두지 않는다 (createBudget 과 같은 규칙).
+    const type = tagId ? undefined : resolved.type;
+    if (!categoryId && !tagId && !type) {
+      throw new BadRequestException('예산 대상을 알 수 없습니다.');
+    }
+
+    const { store } = await this.currencyView(projectId);
+    const monthlyAmount =
+      input.amount === null ? null : store.convert(toMoney(input.amount, '월 예산'));
+
+    await this.prisma.$transaction(async (tx) => {
+      const siblings = await this.findSiblingBudgets(tx, { projectId, categoryId, tagId, type });
+      await this.clearOverridesFrom(tx, siblings, applyFrom);
+      await this.clearFromMonth(tx, siblings, applyFrom);
+      if (monthlyAmount === null) return;
+
+      await tx.budget.create({
+        data: {
+          id: clientId(input.ruleId, '예산 식별자'),
+          projectId,
+          categoryId: categoryId ?? null,
+          tagId: tagId ?? null,
+          type: type ?? null,
+          monthlyAmount,
+          effectiveFrom: applyFrom,
+        },
+      });
+    });
   }
 
   /**
@@ -795,45 +826,28 @@ export class BudgetsService {
           })
         : [];
 
-    const overrideKey = (budgetId: string, year: number, month: number) =>
-      `${budgetId}:${year}-${String(month).padStart(2, '0')}`;
-    const overrideMap = new Map(
-      overrides.map((override) => [
-        overrideKey(override.budgetId, override.year, override.month),
-        override,
-      ]),
-    );
-
     const { show } = await this.currencyView(projectId);
-    const schedule: BudgetDto.ScheduleMonth[] = [];
-
-    for (let offset = 0; offset < months; offset++) {
-      const yearMonth = shiftYearMonth(startMonth, offset);
-      const rule = rules.find((candidate) => this.isBudgetApplicable(candidate, yearMonth));
-
-      // 규칙이 안 걸치는 달이 있을 수 있다. applyMode='from'으로 나눈 규칙의
-      // 시작 달보다 앞이면 그렇다. 0원이 아니라 "예산 없음"이므로 금액을 비워 둔다.
-      if (!rule) {
-        schedule.push({ yearMonth, isOverridden: false });
-        continue;
-      }
-
-      const [year, month] = yearMonth.split('-').map(Number);
-      const override = overrideMap.get(overrideKey(rule.id, year, month));
-
-      schedule.push({
-        yearMonth,
-        amount: show.toString(override?.amount ?? rule.monthlyAmount),
-        ruleAmount: show.toString(rule.monthlyAmount),
-        budgetId: rule.id,
-        overrideId: override?.id,
-        isOverridden: Boolean(override),
-        effectiveFrom: rule.effectiveFrom ?? undefined,
-        effectiveTo: rule.effectiveTo ?? undefined,
-      });
-    }
-
-    return schedule;
+    /*
+     * 달마다 푸는 일은 공용 함수가 한다. 기기 사본도 오프라인에서 같은 목록을 낸다.
+     *
+     * 규칙이 안 걸치는 달이 있을 수 있다. applyMode='from'으로 나눈 규칙의 시작 달보다
+     * 앞이면 그렇다. 0원이 아니라 "예산 없음"이므로 금액을 비워 둔다.
+     */
+    return budgetScheduleMonths(rules, overrides, startMonth, months).map(
+      ({ yearMonth, rule, override }): BudgetDto.ScheduleMonth =>
+        rule
+          ? {
+              yearMonth,
+              amount: show.toString(override?.amount ?? rule.monthlyAmount),
+              ruleAmount: show.toString(rule.monthlyAmount),
+              budgetId: rule.id,
+              overrideId: override?.id,
+              isOverridden: Boolean(override),
+              effectiveFrom: rule.effectiveFrom ?? undefined,
+              effectiveTo: rule.effectiveTo ?? undefined,
+            }
+          : { yearMonth, isOverridden: false },
+    );
   }
 
   async createOverride(
@@ -946,18 +960,5 @@ export class BudgetsService {
    */
   private isBudgetApplicable(budget: BudgetPeriod, yearMonth: string): boolean {
     return isBudgetApplicable(budget, yearMonth);
-  }
-
-  private getPreviousMonth(yearMonth: string): string {
-    const [year, month] = yearMonth.split('-');
-    let prevMonth = parseInt(month) - 1;
-    let prevYear = parseInt(year);
-
-    if (prevMonth < 1) {
-      prevMonth = 12;
-      prevYear--;
-    }
-
-    return `${prevYear}-${String(prevMonth).padStart(2, '0')}`;
   }
 }

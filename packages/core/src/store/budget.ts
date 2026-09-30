@@ -109,10 +109,10 @@ export const useBudget = create<BudgetStore>((set) => ({
   },
 
   /*
-   * 아래 넷 중 **둘만 창구를 거친다.**
+   * 창구를 거치는 것은 **행 하나를 고치는 일**뿐이다.
    *
-   * 예산 한 줄을 정하는 일(만들기, 금액 바꾸기, 그 달만 조정하기)은 행 하나를 고치는
-   * 조작이라 명령으로 실어 보낼 수 있다. 반대로 구간 편집('고른 달부터')과 초기화는
+   * 예산 한 줄을 정하는 일(만들기, 금액 바꾸기, 그 달만 조정하기)과 규칙 하나를 지우는 일은
+   * 명령으로 실어 보낼 수 있다. 반대로 구간 편집('고른 달부터')과 초기화는
    * 범위를 질의해 여러 행을 다시 쓰므로, 며칠 뒤에 재생하면 그 사이 달라진 규칙들 위에서
    * 다른 결과가 나온다. 그런 것은 서버를 곧바로 부른다 (설계 문서의 D12).
    */
@@ -143,7 +143,8 @@ export const useBudget = create<BudgetStore>((set) => ({
     set({ isLoading: true });
     try {
       /*
-       * 구간 편집은 창구에 없다. 여러 행을 다시 쓰는 조작이라 온라인에서만 한다 (D12).
+       * 구간 편집('고른 달부터')은 예산 팝업이 창구의 setBudgetFrom 으로 뜻을 보낸다 (오프라인도
+       * 된다). 여기로 'from' 이 오면 규칙 id 만 알아 서버로 곧바로 간다.
        *
        * 금액이 없는 요청도 그쪽으로 보낸다. 창구는 "이 금액으로 정한다"는 뜻이라
        * 금액이 반드시 있어야 하고, 없는 것을 빈 문자열로 채우면 0원으로 적힌다.
@@ -164,7 +165,12 @@ export const useBudget = create<BudgetStore>((set) => ({
   deleteBudget: async (id, fromMonth) => {
     set({ isLoading: true });
     try {
-      await apiClient.deleteBudget(id, fromMonth);
+      /*
+       * 모든 달을 지우는 것(규칙 하나)은 창구를 거친다 -- 오프라인에서도 된다. "고른 달부터"는
+       * 규칙을 끊는 일이라 서버를 곧바로 부른다 (D12, 위 머리말).
+       */
+      if (fromMonth) await apiClient.deleteBudget(id, fromMonth);
+      else await settingsWritePort().deleteBudget(id);
     } catch (error) {
       console.error('Failed to delete budget:', error);
       throw error;
@@ -176,7 +182,8 @@ export const useBudget = create<BudgetStore>((set) => ({
   resetBudgets: async (projectId) => {
     set({ isLoading: true });
     try {
-      const { deleted } = await apiClient.resetBudgets(projectId);
+      // 창구를 거친다. 앱은 지금 보이는 규칙을 하나씩 지우는 명령으로 쌓아 끊겨 있어도 된다.
+      const deleted = await settingsWritePort().resetBudgets(projectId);
       set({ budgets: [], monthlyBudgets: [] });
       return deleted;
     } catch (error) {

@@ -43,6 +43,11 @@ interface ModalProps {
    * 밀려 보이지 않고, 하단 버튼 자리는 그 팝업의 본론(수정·삭제)이 쓴다.
    */
   headerAction?: ReactNode;
+  /**
+   * 넓은 화면에서 폭을 넓힌다 (max-w-3xl). 그래프를 담는 분석 창이 쓴다 -- 기본 폭(max-w-md)에서는
+   * 원형과 12개월 막대가 눌려 금액을 읽을 수 없다. 좁은 화면은 어차피 폭을 다 쓴다.
+   */
+  wide?: boolean;
 }
 
 export default function Modal({
@@ -52,6 +57,7 @@ export default function Modal({
   children,
   footer,
   headerAction,
+  wide = false,
 }: ModalProps) {
   const { t } = useTranslation();
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -100,7 +106,9 @@ export default function Modal({
       */}
       <div
         ref={sheetRef}
-        className="dialog-enter w-full max-h-[90vh] overflow-y-auto rounded-t-2xl bg-white shadow-lg md:mx-4 md:max-w-md md:rounded-lg"
+        className={`dialog-enter w-full max-h-[90vh] overflow-y-auto rounded-t-2xl bg-white shadow-lg md:mx-4 md:rounded-lg ${
+          wide ? 'md:max-w-3xl' : 'md:max-w-md'
+        }`}
       >
         {/*
           잡아 내리는 자리. 손잡이 막대와 머리글이 한 덩어리다.

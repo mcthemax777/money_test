@@ -1,6 +1,6 @@
 import type { EntryDto, EntryListItem } from '@money/types';
 
-import { apiClient } from '../lib/api-client';
+import { homeDataPort } from '../data/home-port';
 import { dayRangeQuery, formatMonthShort, shiftYearMonth } from '../lib/datetime';
 import {
   buildDailyCumulative,
@@ -45,7 +45,8 @@ export async function loadPreviousMonths(
         Number(month.slice(5, 7)),
       );
       const { startDate, endDate } = dayRangeQuery(startKey, endKey, timeZone);
-      const rows = (await apiClient.getAllEntries(
+      // 창구를 거친다. 앱에서는 사본이 답하므로 오프라인에서도 겹쳐 그린다.
+      const rows = (await homeDataPort().getAllEntries(
         { ...query, startDate, endDate },
         projectId,
       )) as EntryListItem[];

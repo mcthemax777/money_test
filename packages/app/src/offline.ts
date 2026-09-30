@@ -17,6 +17,8 @@ import { apiClient } from '@money/core/lib/api-client';
 import { getAccessToken } from '@money/core/lib/auth-tokens';
 import { apiErrorCode } from '@money/core/lib/api-error';
 import { setSettingsWritePort } from '@money/core/data/settings-write-port';
+import { setEntrySheetPort } from '@money/core/data/entry-sheet-port';
+import { createLocalEntrySheet } from '@money/core/data/local-entry-sheet';
 import { entryWritePort, setEntryWritePort } from '@money/core/data/entry-write-port';
 import { httpHomePort, setHomeDataPort } from '@money/core/data/home-port';
 import { createLocalSettingsWriter } from '@money/core/data/local-settings-writer';
@@ -118,6 +120,8 @@ export function useLocalWrites(projectId: string, timeZone: string): void {
   setSettingsWritePort(
     createLocalSettingsWriter({ store, projectId, onQueued, onServerWrite: onQueued }),
   );
+  // 엑셀 가져오기·내보내기도 사본에서. 가져온 것은 위의 두 쓰기 창구를 지나 명령으로 쌓인다.
+  setEntrySheetPort(createLocalEntrySheet(store, () => timeZone));
 }
 
 /**
@@ -298,6 +302,7 @@ export async function clearOffline(): Promise<void> {
   setHomeDataPort(null);
   setEntryWritePort(null);
   setSettingsWritePort(null);
+  setEntrySheetPort(null);
   // 보관함도 서버 창구로 되돌린다. 사본이 없으면 읽을 자리가 없다.
   setDraftPort(null);
 

@@ -35,7 +35,10 @@ import {
   asWeekStart,
   isEntryPeriodUnit,
   DEFAULT_ENTRY_PERIOD,
+  budgetScheduleMonths,
   isBudgetApplicable,
+  resolveBudgetTarget,
+  monthlyTotals,
   tagUsage,
   netWorth,
   closingMonthKey,
@@ -58,6 +61,18 @@ import {
   zonedParts,
   zonedYearMonth,
   fallbackRate,
+  nextOccurrence,
+  type RecurringRuleDto,
+  balanceBuckets,
+  stackBalanceHistory,
+  classifyEntry,
+  EQUITY_ACCOUNT_TYPES,
+  VALUED_ACCOUNT_TYPES,
+  zonedCurrentYearMonth,
+  type AccountType,
+  SUPPORTED_CURRENCIES,
+  type CurrencyCode,
+  type ExchangeRateInfo,
 } from '@money/types';
 
 import type { ReportPeriod } from '../lib/api-client';
@@ -91,7 +106,14 @@ export function createLocalHomePort(
       return { display, ledger, toString: (value: Dec) => value.toString(), rate: Dec.of(1) };
     }
 
-    const rate = Dec.of((await store.latestRate(projectId, ledger, display)) ?? '1');
+    /*
+     * 서버의 getDisplayConverter 와 같은 환율이다 (rateInfoOf: 직접 정한 값 → 역수 → 고정값).
+     * 예전에는 저장된 값이 없으면 1 을 써, 표시 통화를 바꾼 가계부의 오프라인 금액이 서버와 갈렸다.
+     */
+    const rate = Dec.of(
+      (await rateInfoOf(store, projectId, ledger as CurrencyCode, display as CurrencyCode))?.rate ??
+        '1',
+    );
     const decimals = currencyDecimals(display);
     return {
       display,
@@ -300,6 +322,295 @@ export function createLocalHomePort(
       return result;
     },
 
+    /**
+     * 자산 추이. 서버의 getBalanceHistory 와 같은 계좌 고르기·칸·쌓기다.
+     *
+     * 칸 나누기와 쌓기는 공용 함수(`balanceBuckets`·`stackBalanceHistory`)이고, 다리의 합만
+     * 여기서 낸다 -- 창 시작 전은 기준선, 창 안은 그 다리가 든 칸의 증감이다.
+     */
+    async getBalanceHistory(options, projectId) {
+      const id = requireProject(projectId);
+      note('balanceHistory');
+
+      const ownerIds =
+        options.ownerIds === undefined
+          ? undefined
+          : String(options.ownerIds).split(',').filter(Boolean);
+      // 빈 문자열은 아무도 고르지 않은 것이다 (목록 필터와 같은 세 상태 규칙).
+      if (ownerIds && ownerIds.length === 0) return [];
+
+      const accounts = (await store.accounts(id))
+        .filter((account) => !EQUITY_ACCOUNT_TYPES.includes(account.type as AccountType))
+        .filter((account) =>
+          // 계좌를 지정하면 숨긴 계좌도 보인다. 그 밖에는 활성 계좌만 모은다 (서버와 같다).
+          options.accountId
+            ? account.id === options.accountId
+            : account.isActive &&
+              (options.ownerId
+                ? account.ownerId === options.ownerId
+                : ownerIds
+                  ? account.ownerId !== null && ownerIds.includes(account.ownerId)
+                  : true),
+        )
+        .map((account) => ({ id: account.id, type: account.type as AccountType }));
+      if (accounts.length === 0) return [];
+
+      const timeZone = await timeZoneOf(store, id);
+      const granularity =
+        options.granularity === 'day' || options.granularity === 'week' || options.granularity === 'year'
+          ? options.granularity
+          : 'month';
+      const buckets = balanceBuckets(
+        {
+          granularity,
+          endMonth: options.endMonth ?? zonedCurrentYearMonth(timeZone),
+          yearMonth: options.yearMonth,
+          endDate: options.endDate,
+          days: options.days,
+          weeks: options.weeks,
+          months: options.months,
+          years: options.years,
+          weekStart: asWeekStart(options.weekStart),
+        },
+        timeZone,
+      );
+      const windowStart = buckets[0].start.getTime();
+      const windowEnd = buckets[buckets.length - 1].end.getTime();
+
+      const accountIds = accounts.map((account) => account.id);
+      const base = new Map<string, Dec>();
+      const steps = new Map<number, Array<{ accountId: string; delta: string }>>();
+      for (const row of await store.accountPostingRows(id, accountIds)) {
+        const at = new Date(row.date).getTime();
+        if (at < windowStart) {
+          base.set(row.accountId, (base.get(row.accountId) ?? Dec.of(0)).plus(row.baseAmount));
+          continue;
+        }
+        if (at >= windowEnd) continue;
+        const bucket = buckets.find((candidate) => at < candidate.end.getTime());
+        if (!bucket) continue;
+        const list = steps.get(bucket.start.getTime()) ?? [];
+        list.push({ accountId: row.accountId, delta: row.baseAmount });
+        steps.set(bucket.start.getTime(), list);
+      }
+
+      const valuedIds = accounts
+        .filter((account) => VALUED_ACCOUNT_TYPES.includes(account.type))
+        .map((account) => account.id);
+      // 평가 날짜는 달력 날짜로 담겨 있다. 서버(@db.Date)와 같이 그날 UTC 0시로 읽는다.
+      const valuations = (await store.valuationRows(valuedIds)).map((row) => ({
+        accountId: row.accountId,
+        date: new Date(`${row.date}T00:00:00.000Z`),
+        marketValue: row.marketValue,
+      }));
+
+      const show = await converter(id);
+      return stackBalanceHistory({ accounts, base, steps, valuations, buckets }).map((point) => ({
+        date: point.label,
+        balance: show.toString(point.total),
+      }));
+    },
+
+    /**
+     * 계좌별 누적 수익. 서버의 getAccountProfit 과 같은 규칙이다 -- 투자·저축 계좌마다, 수입·지출
+     * 전표의 그 계좌 다리를 그대로 더한다 (계좌 통화, 환산 없음). 거래 종류는 공용 `classifyEntry`
+     * 가 가른다. 기초잔액·이체·잔액조정은 빠진다.
+     */
+    async getAccountProfit(projectId) {
+      const id = requireProject(projectId);
+      note('accountProfit');
+
+      const accountIds = (await store.accounts(id))
+        .filter((account) => PROFIT_ACCOUNT_TYPES.includes(account.type))
+        .map((account) => account.id);
+      if (accountIds.length === 0) return [];
+
+      const profit = new Map<string, Dec>(accountIds.map((accountId) => [accountId, Dec.of(0)]));
+      for (const entry of await store.entriesTouchingAccounts(id, accountIds)) {
+        const kind = classifyEntry(entry.postings);
+        if (kind !== 'income' && kind !== 'expense') continue;
+        for (const posting of entry.postings) {
+          const current = posting.accountId ? profit.get(posting.accountId) : undefined;
+          if (!current) continue;
+          profit.set(posting.accountId!, current.plus(posting.amount));
+        }
+      }
+      return accountIds.map((accountId) => ({
+        accountId,
+        profit: profit.get(accountId)!.toString(),
+      }));
+    },
+
+    /** 태그가 붙은 자리의 수 (거래 줄·보관함 후보·반복 등록). 사본에서 센다. */
+    async getTagUsage(tagId) {
+      note('tagUsage');
+      return store.tagUsageCounts(tagId);
+    },
+
+    /**
+     * 반복 등록 목록. 서버 `RecurringService.list` 와 같은 모양이다 -- 다음 예정일은 꺼 둔
+     * 반복이면 없고, 켜진 것은 공휴일(사본)과 마지막으로 만든 날(후보 열쇠)로 `nextOccurrence`
+     * 가 셈한다. "오늘"은 가계부 타임존의 날이다.
+     */
+    async getRecurringRules(projectId) {
+      const id = requireProject(projectId);
+      note('recurringRules');
+
+      const timeZone = await timeZoneOf(store, id);
+      const today = zonedDateKey(new Date(), timeZone);
+      const [rows, made, holidays] = await Promise.all([
+        store.recurringRuleRows(id),
+        store.recurringLastMadeOn(id),
+        store.publicHolidays(id),
+      ]);
+      const list = (value: unknown): number[] | string[] => {
+        try {
+          const parsed = JSON.parse(String(value ?? '[]'));
+          return Array.isArray(parsed) ? parsed : [];
+        } catch {
+          return [];
+        }
+      };
+      const intOrNull = (value: unknown) => (value == null ? null : Number(value));
+
+      return rows.map((row): RecurringRuleDto.Response => {
+        const lastMadeOn = made.get(String(row.id)) ?? null;
+        const base = {
+          id: String(row.id),
+          projectId: id,
+          isActive: Boolean(row.isActive),
+          frequency: String(row.frequency) as RecurringRuleDto.Response['frequency'],
+          everyDays: intOrNull(row.everyDays),
+          weekdays: list(row.weekdays) as number[],
+          holidayRule: String(row.holidayRule ?? 'none') as RecurringRuleDto.Response['holidayRule'],
+          dayOfMonth: intOrNull(row.dayOfMonth),
+          month: intOrNull(row.month),
+          startDate: String(row.startDate),
+          endDate: row.endDate == null ? null : String(row.endDate),
+          timeOfDay: row.timeOfDay == null ? null : String(row.timeOfDay),
+          kind: String(row.kind) as RecurringRuleDto.Response['kind'],
+          amount: row.amount == null ? null : String(row.amount),
+          currency: row.currency == null ? null : String(row.currency),
+          description: String(row.description),
+          merchant: row.merchant == null ? null : String(row.merchant),
+          personId: row.personId == null ? null : String(row.personId),
+          categoryId: row.categoryId == null ? null : String(row.categoryId),
+          accountId: row.accountId == null ? null : String(row.accountId),
+          toAccountId: row.toAccountId == null ? null : String(row.toAccountId),
+          feeAmount: row.feeAmount == null ? null : String(row.feeAmount),
+          feeCategoryId: row.feeCategoryId == null ? null : String(row.feeCategoryId),
+          cardId: row.cardId == null ? null : String(row.cardId),
+          installmentMonths: intOrNull(row.installmentMonths),
+          tagIds: list(row.tagIds) as string[],
+          createdAt: String(row.createdAt),
+          updatedAt: String(row.updatedAt),
+        };
+        return {
+          ...base,
+          // 꺼 둔 반복은 아무 날도 오지 않는다 (서버와 같다).
+          nextRunOn: base.isActive
+            ? nextOccurrence(
+                {
+                  frequency: base.frequency,
+                  everyDays: base.everyDays,
+                  weekdays: base.weekdays,
+                  holidayRule: base.holidayRule,
+                  publicHolidays: holidays,
+                  dayOfMonth: base.dayOfMonth,
+                  month: base.month,
+                  startDate: base.startDate,
+                  endDate: base.endDate,
+                  lastMadeOn,
+                },
+                today,
+              )
+            : null,
+          lastMadeOn,
+        };
+      });
+    },
+
+    /**
+     * 환율 목록. 서버의 `GET /exchange-rates` 와 같은 답이다 -- 저장 통화 기준으로 다른 지원
+     * 통화마다 한 줄, 그리고 저장 → 표시 통화 한 줄. 환율 설정 화면과 거래 입력 폼이 쓴다.
+     */
+    async getExchangeRates(projectId) {
+      const id = requireProject(projectId);
+      note('exchangeRates');
+
+      const project = await store.projectRow(id);
+      const ledger = (project?.ledgerCurrency ?? 'KRW') as CurrencyCode;
+      const display = (project?.displayCurrency ?? ledger) as CurrencyCode;
+
+      const rates = (
+        await Promise.all(
+          SUPPORTED_CURRENCIES.filter((code) => code !== ledger).map((code) =>
+            rateInfoOf(store, id, code, ledger),
+          ),
+        )
+      ).filter((info): info is ExchangeRateInfo => info !== null);
+
+      return {
+        ledgerCurrency: ledger,
+        displayCurrency: display,
+        rates,
+        displayRate: (await rateInfoOf(store, id, ledger, display)) ?? {
+          from: ledger,
+          to: display,
+          rate: '1',
+          source: 'fallback',
+        },
+      };
+    },
+
+    /**
+     * 한 대상의 월별 예산. 서버의 getBudgetSchedule 과 같은 규칙이다 -- 대상 고르기는
+     * resolveBudgetTarget, 달마다 푸는 일은 budgetScheduleMonths 로 두 곳이 같은 함수를 쓴다.
+     */
+    async getBudgetSchedule(query, projectId) {
+      const id = requireProject(projectId);
+      note('budgets');
+
+      const timeZone = await timeZoneOf(store, id);
+      const now = zonedParts(new Date(), timeZone);
+      const startMonth =
+        query.startMonth ?? `${now.year}-${String(now.month).padStart(2, '0')}`;
+      const months = Math.min(Math.max(Number(query.months) || 12, 1), 60);
+
+      const tagId = query.tagId || null;
+      const target = resolveBudgetTarget(query.categoryId, query.type);
+      const { rules, overrides } = await store.budgetRules(id);
+      const picked = rules.filter(
+        (rule) =>
+          rule.categoryId === (target.categoryId ?? null) &&
+          rule.tagId === tagId &&
+          // 태그 예산은 유형을 보지 않는다 (서버와 같은 규칙).
+          (tagId || !target.type || rule.type === target.type),
+      );
+      const ids = new Set(picked.map((rule) => rule.id));
+
+      const show = await converter(id);
+      return budgetScheduleMonths(
+        picked,
+        overrides.filter((override) => ids.has(override.budgetId)),
+        startMonth,
+        months,
+      ).map(({ yearMonth, rule, override }): BudgetDto.ScheduleMonth =>
+        rule
+          ? {
+              yearMonth,
+              amount: show.toString(Dec.of(override?.amount ?? rule.monthlyAmount)),
+              ruleAmount: show.toString(Dec.of(rule.monthlyAmount)),
+              budgetId: rule.id,
+              overrideId: override?.id,
+              isOverridden: Boolean(override),
+              effectiveFrom: rule.effectiveFrom ?? undefined,
+              effectiveTo: rule.effectiveTo ?? undefined,
+            }
+          : { yearMonth, isOverridden: false },
+      );
+    },
+
     /** 태그 예산. 서버의 getTagBudgetsForMonth 와 같은 규칙이다 (그 주석을 볼 것). */
     async getTagBudgetsForMonth(year, month, projectId, filter) {
       const id = requireProject(projectId);
@@ -346,6 +657,74 @@ export function createLocalHomePort(
      * 세는 규칙은 서버와 같은 함수를 쓴다. 여기서 하는 일은 사본에서 재료를 고르는
      * 것과 실적 기준액을 표시 통화로 옮기는 것뿐이다.
      */
+    /**
+     * 달별 추이. 서버의 `getTrend` 와 같은 규칙이다 (분류·전체·태그).
+     *
+     * 막대가 덮는 달을 한 번에 읽어(검색·사람 필터·세는 방식은 `monthPostings` 가 서버와 같게
+     * 건다) 대상으로 거른 뒤 공용 `monthlyTotals` 로 달마다 더한다. 서버와 같은 함수라
+     * 같은 달의 막대가 웹과 기기에서 갈리지 않는다.
+     *
+     * 결제수단 추이는 "그 수단으로 돈이 나간 지출"을 가르는 규칙(entry-view)이 사본에 없어
+     * 서버로 넘긴다.
+     */
+    async getTrend(target, options, projectId) {
+      if (target === 'account' || target === 'card') {
+        return fallback.getTrend(target, options, projectId);
+      }
+      const id = requireProject(projectId);
+      note('trend');
+
+      const timeZone = await timeZoneOf(store, id);
+      const months = Math.min(Math.max(Number(options.months) || 12, 1), 60);
+      const now = zonedParts(new Date(), timeZone);
+      const endMonth =
+        options.endMonth ?? `${now.year}-${String(now.month).padStart(2, '0')}`;
+      const [endYear, endMonthNumber] = endMonth.split('-').map(Number);
+      const startMonth = shiftYearMonth(endYear, endMonthNumber, -(months - 1));
+
+      /*
+       * 덮는 날. 검색 기간으로 자르면(clip) 그 안으로 줄인다 -- 서버는 [from, to) 로 읽으므로
+       * 끝은 1밀리초 앞의 날이다. 겹치는 날이 없으면 모든 달이 0 이다.
+       */
+      let fromDateKey = `${startMonth}-01`;
+      let toDateKey = `${endMonth}-31`;
+      if (options.clipFrom) {
+        const key = zonedDateKey(new Date(options.clipFrom), timeZone);
+        if (key > fromDateKey) fromDateKey = key;
+      }
+      if (options.clipTo) {
+        const key = zonedDateKey(new Date(Date.parse(options.clipTo) - 1), timeZone);
+        if (key < toDateKey) toDateKey = key;
+      }
+
+      const rows =
+        fromDateKey > toDateKey
+          ? []
+          : await monthPostings(
+              id,
+              { startDate: fromDateKey, endDate: toDateKey },
+              // 태그 추이는 그 태그로 좁힌 검색과 같다 (서버도 tagIds 를 대상으로 덮어쓴다).
+              target === 'tag' ? { ...options, tagIds: options.targetId } : options,
+            );
+
+      const exact = options.exact === true || (options.exact as unknown) === 'true';
+      const picked = rows.filter((row) => {
+        if (target === 'category') {
+          return exact
+            ? row.categoryId === options.targetId
+            : row.categoryId === options.targetId || row.parentCategoryId === options.targetId;
+        }
+        // 전체와 태그는 유형으로 가른다.
+        return row.categoryType === (options.type ?? 'expense');
+      });
+
+      const show = await converter(id);
+      return monthlyTotals(picked, { timeZone, endYearMonth: endMonth, months }).map((point) => ({
+        yearMonth: point.yearMonth,
+        amount: show.toString(point.amount),
+      }));
+    },
+
     /**
      * 분류별 구성비. 거래 화면의 분류별 목록이 쓴다.
      *
@@ -853,6 +1232,19 @@ export function createLocalHomePort(
         yearMonth: query.yearMonth,
         ownerIds: ownerIdsOf(query),
         search,
+        // 분석 창이 싣는 분류 하나·유형 조건. 서버 목록과 같은 규칙이다 (categoryLegFilter).
+        ...(query.categoryId
+          ? {
+              category: {
+                id: query.categoryId,
+                exact:
+                  query.categoryExact === true || (query.categoryExact as unknown) === 'true',
+              },
+            }
+          : {}),
+        ...(query.categoryType === 'income' || query.categoryType === 'expense'
+          ? { categoryType: query.categoryType }
+          : {}),
       });
 
       // 서버와 같은 판정기로 걸린 줄만 남긴다. 규칙이 두 벌이면 목록이 갈린다.
@@ -1205,6 +1597,47 @@ function periodKeys(period: ReportPeriod): { fromDateKey: string; toDateKey: str
     return { fromDateKey: `${period.yearMonth}-01`, toDateKey: `${period.yearMonth}-31` };
   }
   return { fromDateKey: String(period.startDate), toDateKey: String(period.endDate) };
+}
+
+/**
+ * 수익을 따로 세는 계좌. 서버 `reports.service` 의 PROFIT_TYPES 와 같다 -- 원금은 이체로 넣고
+ * 불어난 몫은 수입으로 붙는 계좌들이다 (투자는 배당·매매 차익, 저축은 이자).
+ */
+const PROFIT_ACCOUNT_TYPES: readonly string[] = ['investment', 'savings'];
+
+/**
+ * 통화쌍 하나의 환율. 서버 `ExchangeRatesService.getRate` 와 같은 차례다.
+ *
+ *   1. 그 쌍을 직접 정한 최신 값
+ *   2. 반대 방향만 정해 두었으면 그 역수 (소수 여덟째 자리, 출처에 "(역수)")
+ *   3. 고정값 표 (`fallbackRate`, 출처 'fallback')
+ *
+ * 고정값도 없으면 null 이다 -- 서버는 그때 오류를 준다. 지원하는 통화는 모두 고정값이 있다.
+ */
+async function rateInfoOf(
+  store: LocalStore,
+  projectId: string,
+  from: CurrencyCode,
+  to: CurrencyCode,
+): Promise<ExchangeRateInfo | null> {
+  if (from === to) return { from, to, rate: '1', source: 'identity' };
+
+  const direct = await store.latestRateRow(projectId, from, to);
+  if (direct) return { from, to, rate: direct.rate, date: direct.date, source: direct.source };
+
+  const inverse = await store.latestRateRow(projectId, to, from);
+  if (inverse && !Dec.of(inverse.rate).isZero()) {
+    return {
+      from,
+      to,
+      rate: Dec.of(1).dividedBy(inverse.rate, 8).toString(),
+      date: inverse.date,
+      source: `${inverse.source} (역수)`,
+    };
+  }
+
+  const fallback = fallbackRate(from, to);
+  return fallback ? { from, to, rate: fallback, source: 'fallback' } : null;
 }
 
 /** 계좌 통화 -> 표시 통화 환율. 사본에 있는 것만 모은다. */

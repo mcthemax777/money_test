@@ -1,20 +1,21 @@
 /**
  * 반복 등록. 정해 둔 날마다 보관함에 후보를 만드는 규칙의 목록과 손질.
  *
- * **서버에서 곧바로 읽고 쓴다.** 다른 목록과 달리 기기 사본에 두지 않는데, 반복은 한 번
- * 만들어 두고 몇 달을 그대로 쓰는 설정이라 오프라인에서 고칠 일이 드물기 때문이다.
- * 그렇게 만들어진 **후보는** 여느 후보와 같이 사본으로 내려오므로, 연결이 없어도
- * 보관함의 목록과 등록은 그대로 된다.
+ * **읽기는 `homeDataPort`, 쓰기는 `settingsWritePort` 를 거친다.** 앱은 기기 사본에서
+ * 읽고 쓰므로 끊긴 동안에도 만들고 고치고 지운다 (명령은 연결이 돌아오면 간다).
  *
- * **밀린 회차는 서버가 만든다** (정각마다, 그리고 규칙을 저장할 때). 여기서는 목록만
- * 읽는다. 기기가 만드는 것은 주기 없는 반복의 "만들기"(`makeNow`) 하나다.
+ * **밀린 회차는 서버가 만든다** (정각마다, 그리고 규칙을 저장할 때). 끊긴 동안 저장한
+ * 반복의 후보는 명령이 닿은 뒤 pull 로 내려온다. 기기가 만드는 것은 주기 없는 반복의
+ * "만들기"(`makeNow`) 하나다.
  */
 import { useCallback, useEffect, useState } from 'react';
 import type { RecurringRuleDto } from '@money/types';
 
-import { apiClient } from '../lib/api-client';
 import { useApiError } from '../lib/api-error';
 import { draftPort } from '../data/draft-port';
+import { homeDataPort } from '../data/home-port';
+import { settingsWritePort } from '../data/settings-write-port';
+import { useMirrorVersion } from './useMirrorVersion';
 import { manualDraftItem } from '../lib/recurring-drafts';
 import { useProjectTimeZone } from '../store/project';
 
@@ -44,6 +45,8 @@ export function useRecurringRules(projectId: string | null): UseRecurringRulesRe
   const [rules, setRules] = useState<RecurringRuleDto.Response[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState('');
+  // 사본이 바뀌면(pull·다른 화면의 저장) 다시 읽는다. 다음 예정일이 옮겨 갔을 수 있다.
+  const mirrorVersion = useMirrorVersion();
 
   const reload = useCallback(async () => {
     if (!projectId) {
@@ -54,7 +57,7 @@ export function useRecurringRules(projectId: string | null): UseRecurringRulesRe
 
     try {
       setIsLoading(true);
-      const rows = await apiClient.getRecurringRules(projectId);
+      const rows = await homeDataPort().getRecurringRules(projectId);
       setRules(rows);
       setError('');
     } catch (caught) {
@@ -63,7 +66,8 @@ export function useRecurringRules(projectId: string | null): UseRecurringRulesRe
     } finally {
       setIsLoading(false);
     }
-  }, [projectId, messageOf]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mirrorVersion 은 다시 읽는 신호다
+  }, [projectId, messageOf, mirrorVersion]);
 
   useEffect(() => {
     void reload();
@@ -79,11 +83,14 @@ export function useRecurringRules(projectId: string | null): UseRecurringRulesRe
       try {
         if ('id' in rule && rule.id) {
           const { id, ...patch } = rule;
-          await apiClient.updateRecurringRule(id, patch);
+          await settingsWritePort().updateRecurringRule(id, patch);
         } else {
-          await apiClient.createRecurringRule(rule as RecurringRuleDto.CreateRequest, projectId);
+          await settingsWritePort().createRecurringRule(
+            rule as RecurringRuleDto.CreateRequest,
+            projectId,
+          );
         }
-        // 밀린 회차는 서버가 저장하면서 만들었다. 다음 예정일이 옮겨 갔으니 다시 읽는다.
+        // 다음 예정일이 옮겨 갔으니 다시 읽는다 (온라인이면 밀린 회차도 서버가 만들었다).
         await reload();
         return true;
       } catch (caught) {
@@ -97,7 +104,7 @@ export function useRecurringRules(projectId: string | null): UseRecurringRulesRe
   const toggle = useCallback(
     async (id: string, isActive: boolean): Promise<boolean> => {
       try {
-        await apiClient.updateRecurringRule(id, { isActive });
+        await settingsWritePort().updateRecurringRule(id, { isActive });
         await reload();
         return true;
       } catch (caught) {
@@ -133,7 +140,7 @@ export function useRecurringRules(projectId: string | null): UseRecurringRulesRe
   const remove = useCallback(
     async (id: string): Promise<boolean> => {
       try {
-        await apiClient.deleteRecurringRule(id);
+        await settingsWritePort().removeRecurringRule(id);
         setRules((previous) => previous.filter((rule) => rule.id !== id));
         setError('');
         return true;

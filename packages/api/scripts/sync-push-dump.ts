@@ -11,6 +11,11 @@
  * 밑바탕 상태와 명령 묶음, 그리고 재생 뒤 서버가 낸 목록을 함께 떠 주고,
  * `packages/core/scripts/outbox-smoke.ts` 가 같은 명령을 사본에 돌려 한 줄씩 견준다.
  */
+import { RecurringService } from '@/modules/entry-drafts/recurring.service';
+import { EntryDraftsService } from '@/modules/entry-drafts/entry-drafts.service';
+import { HolidaysService } from '@/modules/holidays/holidays.service';
+import { ExchangeRatesService } from '@/modules/exchange-rates/exchange-rates.service';
+import { ProjectsService } from '@/modules/projects/projects.service';
 import { writeFileSync } from 'fs';
 import { CardsService } from '@/modules/cards/cards.service';
 import { CategoriesService } from '@/modules/categories/categories.service';
@@ -65,6 +70,13 @@ runSmoke('sync-push-dump', async (ctx) => {
   const entries = makeEntries(ctx.prisma, access, ledger);
   const sync = new SyncService(ctx.prisma as any, access as any);
   const cardLedger = makeCardLedger(ctx.prisma, access, ledger);
+  // 반복 등록 재생. 후보를 곧바로 만드는 일까지 온라인과 같은 서비스다.
+  const recurringReplay = new RecurringService(
+    ctx.prisma as any,
+    access as any,
+    new EntryDraftsService(ctx.prisma as any, access as any) as any,
+    new HolidaysService(ctx.prisma as any),
+  );
   const replay = new MutationReplayService(
     ctx.prisma as any,
     access as any,
@@ -77,6 +89,9 @@ runSmoke('sync-push-dump', async (ctx) => {
     categories as any,
     tags as any,
     budgets as any,
+    new ExchangeRatesService(ctx.prisma as any) as any,
+    new ProjectsService(ctx.prisma as any, access as any, new ExchangeRatesService(ctx.prisma as any)) as any,
+    recurringReplay as any,
   );
 
   const person = await people.createPerson(uid, { name: '김철수' }, pid);

@@ -115,17 +115,27 @@ export function useTagManager(projectId: string | null) {
    * "어떻게 할까요"를 내준다 -- 다른 태그로 옮길지, 거래내역을 열어 손볼지, 전부
    * 떼고 없앨지.
    *
-   * **서버에서 곧바로 읽는다.** 사본에서 세면 아직 올라가지 않은 편집이 빠진 수가
-   * 나오는데, 그 수를 보고 "붙은 데가 없다"로 판단하면 조용히 뗄 것을 뗀다.
-   * 연결이 끊겨 셀 수 없으면 null 이고, 화면은 그때 옮기기를 내주지 않는다.
+   * **닿으면 서버에서 읽는다.** 사본에는 다른 기기가 아직 올리지 않은 편집이 빠져 있어,
+   * 그 수를 보고 "붙은 데가 없다"로 판단하면 조용히 뗄 것을 뗀다.
+   *
+   * 끊겨 있으면 사본에서 센다 (창구 -- 거래 줄·보관함 후보·반복 등록). 사본도 없어(웹)
+   * 셀 수 없으면 null 이다.
    */
-  const usageOf = useCallback(async (id: string): Promise<TagDto.UsageResponse | null> => {
-    try {
-      return await apiClient.getTagUsage(id);
-    } catch {
-      return null;
-    }
-  }, []);
+  const usageOf = useCallback(
+    async (id: string): Promise<TagDto.UsageResponse | null> => {
+      try {
+        return await apiClient.getTagUsage(id);
+      } catch (error) {
+        if (!isOfflineError(error)) return null;
+        try {
+          return await homeDataPort().getTagUsage(id, projectId);
+        } catch {
+          return null;
+        }
+      }
+    },
+    [projectId],
+  );
 
   /**
    * 태그를 지운다. **붙어 있던 자리는 전부 뗀다.**
@@ -156,14 +166,14 @@ export function useTagManager(projectId: string | null) {
   /**
    * 태그를 없애면서 붙어 있던 자리를 다른 태그로 옮긴다.
    *
-   * 분류의 통합과 같이 **서버로 곧바로 간다.** 거래 수백 줄의 태그가 한꺼번에 바뀌는
-   * 일이라 오프라인 명령 하나로 담을 수 없다. 끊겨 있으면 그 사실을 문장으로 돌려준다.
+   * 분류의 통합과 같이 창구를 거친다. 앱은 사본의 연결을 곧바로 옮기고 명령 하나로 쌓는다
+   * (`tag.merge`) -- 끊겨 있어도 된다. 사본도 없는 웹이 끊겨 있으면 그 사실을 문장으로 돌려준다.
    */
   const merge = useCallback(
     async (fromId: string, toId: string): Promise<TagResult> => {
       try {
         setIsSubmitting(true);
-        await apiClient.mergeTags(fromId, toId, projectId);
+        await settingsWritePort().mergeTags(fromId, toId, projectId);
         await reload();
         return { ok: true };
       } catch (error) {

@@ -2230,6 +2230,13 @@ export function useTransactions(projectId: string | null) {
     // 검색
     search,
     setSearch,
+    /**
+     * 조회에 실어 보내는 조건 (사람 필터 + 검색 + 세는 방식). 기간은 들지 않는다 -- `range` 가 따로 든다.
+     * 거래 분석 창이 목록과 같은 조건으로 그래프를 그리려고 받는다.
+     */
+    scope,
+    /** 검색이 고른 기간. 온전하지 않거나 없으면 null. */
+    range,
     searchCount,
     searchChips,
     removeSearchChip,

@@ -4,12 +4,20 @@
  * 거래 창구(`entry-write-port`)와 같은 자리다. 화면은 `settingsWritePort()` 만 부르고 그
  * 뒤에 서버가 있는지 기기 사본이 있는지 모른다. 웹은 서버 창구를, 앱은 사본 창구를 꽂는다.
  *
- * 여기 없는 것이 있다. **잔액 맞추기(setBalanceTo)는 이 창구에 두지 않았다.** 범위를
- * 질의해 여러 행을 고치는 조작이라, 며칠 뒤에 재생하면 그 사이 달라진 거래 위에서 다른
- * 결과가 나온다. 그런 것은 온라인에서만 하고 화면이 이유를 말한다 (설계 문서의 D12).
+ * 범위를 질의해 여러 행을 고치는 조작(잔액 맞추기·통합·"고른 달부터" 예산)은 행의 필드가
+ * 아니라 **뜻**으로 쌓는다 -- 목표 잔액, 옮길 대상, 대상과 달. 며칠 뒤에 재생해도 서버가
+ * 그때의 행 위에서 같은 뜻을 이룬다 (설계 문서의 D12 를 푼 방식). 온라인에서만 하는 것은
+ * 가계부 만들기·지우기·나가기, 멤버·초대, 기준 타임존이다.
  */
 
-import type { AccountDto, CardDto, CategoryDto, PersonDto, TagDto } from '@money/types';
+import type {
+  AccountDto,
+  CardDto,
+  CategoryDto,
+  PersonDto,
+  RecurringRuleDto,
+  TagDto,
+} from '@money/types';
 
 import { apiClient } from '../lib/api-client';
 
@@ -85,12 +93,9 @@ export interface SettingsWritePort {
   updateAccount(id: string, patch: AccountPatch): Promise<void>;
 
   /**
-   * 현재 잔액을 이 값으로 맞춘다. **아웃박스를 거치지 않고 곧바로 서버에 묻는다.**
-   *
-   * 이 파일 머리글의 D12 그대로다 -- 기초잔액 전표를 "목표 잔액 - 나머지 거래 합계"로
-   * 다시 계산하는 조작이라, 며칠 뒤에 재생하면 그 사이 달라진 거래 위에서 다른 값이
-   * 나온다. 그래서 다른 고치기와 갈라 두고 온라인에서만 되게 한다. 오프라인이면 실패하고
-   * 화면이 그 자리에 이유를 적는다 (삭제와 같은 규칙이다).
+   * 현재 잔액을 이 값으로 맞춘다. 사본 창구는 **목표 잔액**을 명령으로 쌓는다
+   * (`account.balance`) -- 재생할 때 서버가 그때의 거래 위에서 기초잔액 전표를 다시 셈하므로
+   * 끊긴 동안 다른 기기가 적은 거래가 있어도 잔액은 적은 값이 된다.
    */
   setAccountBalance(id: string, balance: string): Promise<void>;
 
@@ -98,11 +103,11 @@ export interface SettingsWritePort {
   updateCard(id: string, patch: CardPatch): Promise<void>;
 
   /**
-   * 구성원·통장·카드 **삭제**. 거래내역이 있으면 서버가 거절한다 (그때는 숨기기만 된다).
+   * 구성원·통장·카드 **삭제**. 거래내역이 있으면 거절한다 (그때는 숨기기만 된다).
    *
-   * `update...(id, { isActive: false })` 와 갈라 둔다. 그쪽은 숨기기이고 오프라인에서도
-   * 되지만, 삭제는 붙은 것을 서버가 세어 판단하므로 연결이 있어야 한다. 화면은 삭제를
-   * 먼저 시도하고, 거절 코드를 받으면 사용자에게 물어 숨기기로 넘어간다.
+   * 사본 창구는 서버와 같은 검사를 사본에서 먼저 하고(같은 오류 코드) 명령으로 쌓는다.
+   * 재생할 때 서버가 다시 센다 -- 끊긴 동안 다른 기기가 거래를 붙였으면 그때 거절되어
+   * 보류 칸에 남는다. 화면은 삭제를 먼저 시도하고, 거절 코드를 받으면 숨기기로 넘어간다.
    */
   removePerson(id: string): Promise<void>;
   removeAccount(id: string): Promise<void>;
@@ -117,8 +122,8 @@ export interface SettingsWritePort {
   /**
    * 예산 한 줄을 정한다. 없으면 만들고 있으면 금액을 바꾼다.
    *
-   * 구간 편집("8월부터 20만원")과 초기화는 여기 없다. 범위를 질의해 여러 행을 고치는
-   * 조작이라 재생하면 그 사이 달라진 집합 위에서 다른 결과가 나온다 (D12).
+   * 구간 편집("8월부터 20만원")은 `setBudgetFrom`, 초기화는 `resetBudgets` 다 -- 범위를
+   * 질의해 여러 행을 고치는 조작이라 뜻(대상과 달, 보이는 규칙 하나하나)으로 쌓는다.
    */
   setBudget(input: {
     id?: string;
@@ -143,6 +148,78 @@ export interface SettingsWritePort {
      */
     projectId?: string | null;
   }): Promise<{ id: string }>;
+
+  /**
+   * 예산 규칙 하나를 지운다 (모든 달에 0원). 달별 조정도 함께 간다.
+   * "고른 달부터" 지우기는 `setBudgetFrom({ amount: null })` 이다.
+   */
+  deleteBudget(id: string): Promise<void>;
+
+  /**
+   * 분류 통합 / 태그 통합. 사본 창구는 서버와 같은 검사를 먼저 하고(같은 오류 코드), 사본을
+   * 곧바로 고친 뒤 명령으로 쌓는다. 재생할 때 서버가 같은 검사를 다시 한다 -- 끊긴 동안 다른
+   * 기기가 옮겨 받을 분류·태그를 지웠으면 그때 거절되어 보류 칸으로 간다.
+   */
+  mergeCategories(
+    moves: CategoryDto.MergeMove[],
+    projectId?: string | null,
+  ): Promise<{ movedPostings: number }>;
+  mergeTags(fromId: string, toId: string, projectId?: string | null): Promise<void>;
+
+  /**
+   * 반복 등록 만들기·고치기·지우기. 사본 창구는 서버와 같은 검사(이름·일정·갈래·태그·이체)를
+   * 먼저 하고 사본을 곧바로 고친 뒤 명령으로 쌓는다. **밀린 회차 후보는 서버가 만든다** --
+   * 끊긴 동안 만든 반복의 후보는 명령이 닿고 다음 pull 에 내려온다.
+   */
+  createRecurringRule(input: RecurringRuleDto.CreateRequest, projectId?: string | null): Promise<void>;
+  updateRecurringRule(id: string, patch: RecurringRuleDto.UpdateRequest): Promise<void>;
+  removeRecurringRule(id: string): Promise<void>;
+
+  /**
+   * "고른 달부터" 예산 바꾸기(amount)·지우기(null). 대상과 달로 보낸다 (BudgetSetFromPayload).
+   * `budgetId` 는 화면이 보고 있던 규칙이다 -- 서버 창구가 지금의 REST 경로로 쓴다.
+   */
+  setBudgetFrom(input: {
+    budgetId: string;
+    categoryId?: string | null;
+    tagId?: string | null;
+    type?: 'income' | 'expense' | null;
+    fromMonth: string;
+    amount: string | null;
+  }): Promise<void>;
+
+  /**
+   * 예산을 모두 지운다. 사본 창구는 **지금 사본에 보이는 규칙을 하나씩** 지우는 명령으로 쌓는다
+   * -- 끊긴 동안 다른 사람이 새로 만든 예산까지 나중에 지우지 않게. 지운 규칙 수를 돌려준다.
+   */
+  resetBudgets(projectId: string): Promise<number>;
+
+  /**
+   * 가계부 이름·설명·표시 통화 (주인만). 기준 타임존은 늘 서버로 곧바로 간다 -- 온라인 전용으로
+   * 남긴 값이다. 사본 창구도 자기 가계부가 아니면 서버로 곧바로 보낸다 (큐가 가계부마다라서).
+   * 돌려주는 값은 명령으로 쌓였는지다 -- 쌓였으면 화면이 들고 있는 가계부 목록을 직접 고친다.
+   */
+  updateProject(
+    projectId: string,
+    patch: {
+      name?: string;
+      description?: string | null;
+      timezone?: string;
+      displayCurrency?: string;
+    },
+  ): Promise<{ queued: boolean }>;
+
+  /**
+   * 환율 한 쌍을 직접 정한다 / 지워 기본값으로 되돌린다. 사본에도 곧바로 적어 폼·환산이
+   * 새 값을 쓴다. `projectId` 는 서버 창구가 쓴다 (사본 창구는 만들어질 때 정해진 것을 쓴다).
+   */
+  setExchangeRate(input: {
+    from: string;
+    to: string;
+    rate: string;
+    projectId?: string | null;
+  }): Promise<void>;
+  clearExchangeRate(input: { from: string; to: string; projectId?: string | null }): Promise<void>;
 
   /** 그 달만 다른 금액으로. 금액을 비우면 그 달의 조정을 지운다. */
   setBudgetOverride(input: {
@@ -248,6 +325,59 @@ export const httpSettingsWritePort: SettingsWritePort = {
       projectId: input.projectId ?? undefined,
     });
     return { id: created.id };
+  },
+
+  async deleteBudget(id) {
+    await apiClient.deleteBudget(id);
+  },
+
+  async mergeCategories(moves, projectId) {
+    const result = await apiClient.mergeCategories(moves, projectId);
+    return { movedPostings: result.movedPostings };
+  },
+
+  async mergeTags(fromId, toId, projectId) {
+    await apiClient.mergeTags(fromId, toId, projectId);
+  },
+
+  async createRecurringRule(input, projectId) {
+    await apiClient.createRecurringRule(input, projectId);
+  },
+
+  async updateRecurringRule(id, patch) {
+    await apiClient.updateRecurringRule(id, patch);
+  },
+
+  async removeRecurringRule(id) {
+    await apiClient.deleteRecurringRule(id);
+  },
+
+  async setBudgetFrom({ budgetId, fromMonth, amount }) {
+    if (amount === null) await apiClient.deleteBudget(budgetId, fromMonth);
+    else {
+      await apiClient.updateBudget(budgetId, {
+        monthlyAmount: amount,
+        applyMode: 'from',
+        applyFromMonth: fromMonth,
+      });
+    }
+  },
+
+  async resetBudgets(projectId) {
+    return (await apiClient.resetBudgets(projectId)).deleted;
+  },
+
+  async updateProject(projectId, patch) {
+    await apiClient.updateProject(projectId, patch as never);
+    return { queued: false };
+  },
+
+  async setExchangeRate({ projectId, ...input }) {
+    await apiClient.setExchangeRate(input, projectId);
+  },
+
+  async clearExchangeRate({ from, to, projectId }) {
+    await apiClient.clearExchangeRate(from, to, projectId);
   },
 
   async setBudgetOverride(input) {

@@ -99,6 +99,7 @@ export class SyncService {
         assetValuations,
         installmentPlans,
         entryDrafts,
+        recurringRules,
         tombstones,
       ] = await Promise.all([
         tx.project.findFirst({ where: { id: projectId, updatedVersion: window } }),
@@ -153,6 +154,12 @@ export class SyncService {
           include: { tags: { select: { tagId: true } } },
           ...page,
         }),
+        // 반복 등록. 태그 연결은 후보처럼 실어 보낸다 (다리 표에는 번호가 없다).
+        tx.recurringRule.findMany({
+          where: { projectId, updatedVersion: window },
+          include: { tags: { select: { tagId: true } } },
+          ...page,
+        }),
         tx.tombstone.findMany({
           where: { projectId, deletedVersion: window },
           orderBy: { deletedVersion: 'asc' },
@@ -174,6 +181,7 @@ export class SyncService {
         assetValuations,
         installmentPlans,
         entryDrafts,
+        recurringRules,
       ];
 
       /*
@@ -228,6 +236,12 @@ export class SyncService {
           entryDrafts: within(entryDrafts).map(({ tags, ...row }) => ({
             ...row,
             amount: row.amount ? row.amount.toString() : null,
+            tagIds: tags.map((tag) => tag.tagId),
+          })),
+          recurringRules: within(recurringRules).map(({ tags, ...row }) => ({
+            ...row,
+            amount: row.amount ? row.amount.toString() : null,
+            feeAmount: row.feeAmount ? row.feeAmount.toString() : null,
             tagIds: tags.map((tag) => tag.tagId),
           })),
         },
@@ -355,6 +369,7 @@ export class SyncService {
         assetValuations: [],
         installmentPlans: [],
         entryDrafts: [],
+        recurringRules: [],
       },
       tombstones: [],
       tombstoneFloor,

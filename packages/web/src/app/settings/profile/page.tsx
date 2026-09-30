@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@money/core/store/auth';
+import { saveProfile } from '@money/core/store/pending-profile';
 import { apiClient } from '@money/core/lib/api-client';
 import { UserAvatar } from '@/components/UserAvatar';
 import PageHeader from '@/components/PageHeader';
@@ -48,9 +49,16 @@ export default function ProfilePage() {
 
     try {
       setIsSaving(true);
-      await apiClient.updateProfile({ name });
-      // 스토어의 사용자 정보를 서버 값으로 다시 맞춘다.
-      await loadUser();
+      /*
+       * 끊겨 있으면 들고 있다가 연결되면 보낸다 (pending-profile). 그때는 화면의 이름만 고쳐
+       * 두고, 닿았으면 스토어의 사용자 정보를 서버 값으로 다시 맞춘다.
+       */
+      if ((await saveProfile({ name })) === 'queued') {
+        const current = useAuth.getState().user;
+        if (current) useAuth.setState({ user: { ...current, name } });
+      } else {
+        await loadUser();
+      }
       setIsEditingName(false);
       setError('');
       setSavedMessage(t('profile.nameSaved'));

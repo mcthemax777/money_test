@@ -18,9 +18,22 @@
  *      전표를 만든 명령이 거절되었는데 그것을 고치는 명령이 뒤따라 적용되면, 없는
  *      전표를 고치려다 실패하거나 더 나쁘게는 다른 전표에 적용된다.
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { HttpException, Injectable, Logger } from '@nestjs/common';
 import {
   type AccountCreatePayload,
+  type BudgetDeletePayload,
+  type BudgetSetFromPayload,
+  type AccountBalancePayload,
+  type AssetDeletePayload,
+  type CategoryMergePayload,
+  type TagMergePayload,
+  type ExchangeRateClearPayload,
+  type ExchangeRateSetPayload,
+  type ProjectUpdatePayload,
+  type RecurringCreatePayload,
+  type RecurringDeletePayload,
+  type RecurringUpdatePayload,
+  zonedParts,
   type BudgetOverridePayload,
   type BudgetSetPayload,
   type CategoryCreatePayload,
@@ -59,6 +72,11 @@ import { CardLedgerService } from '../cards/card-ledger.service';
 import { CategoriesService } from '../categories/categories.service';
 import { TagsService } from '../tags/tags.service';
 import { BudgetsService } from '../budgets/budgets.service';
+import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
+import { ProjectsService } from '../projects/projects.service';
+import { RecurringService } from '../entry-drafts/recurring.service';
+import { toMoney } from '@/common/money';
+import { clientId } from '@/common/client-id';
 
 /** 한 번에 받는 명령 수. 일주일치를 한 요청에 밀면 끊긴다. */
 const MAX_MUTATIONS = 200;
@@ -100,6 +118,9 @@ export class MutationReplayService {
     private readonly categories: CategoriesService,
     private readonly tags: TagsService,
     private readonly budgets: BudgetsService,
+    private readonly exchangeRates: ExchangeRatesService,
+    private readonly projects: ProjectsService,
+    private readonly recurring: RecurringService,
   ) {}
 
   async push(
@@ -256,7 +277,15 @@ export class MutationReplayService {
       return result;
     } catch (error) {
       const message = error instanceof Error ? error.message : '알 수 없는 오류';
-      const code = (error as { code?: unknown })?.code;
+      /*
+       * 코드는 두 군데에 산다. 원장 조립의 오류(LedgerBuildError)는 객체에, 서비스가 던지는
+       * `badRequest(code, ...)` 는 HTTP 응답 본문에 있다. 뒤쪽을 읽지 않으면 기기가 코드를 받지
+       * 못해 보류 칸에 사람이 고른 언어 대신 서버의 원문이 선다.
+       */
+      const body = error instanceof HttpException ? error.getResponse() : undefined;
+      const code =
+        (error as { code?: unknown })?.code ??
+        (body && typeof body === 'object' ? (body as { code?: unknown }).code : undefined);
 
       const result: MutationResult = {
         mutationId: mutation.mutationId,
@@ -393,8 +422,36 @@ export class MutationReplayService {
         return this.updateTag(userId, projectId, mutation);
       case 'budget.set':
         return this.setBudget(userId, projectId, mutation);
+      case 'budget.delete':
+        return this.deleteBudget(userId, projectId, mutation);
+      case 'budget.setFrom':
+        return this.setBudgetFrom(userId, projectId, mutation);
       case 'budget.override':
         return this.setOverride(userId, projectId, mutation);
+      case 'exchangeRate.set':
+        return this.setExchangeRate(projectId, mutation);
+      case 'exchangeRate.clear':
+        return this.clearExchangeRate(projectId, mutation);
+      case 'category.merge':
+        return this.mergeCategories(userId, projectId, mutation);
+      case 'tag.merge':
+        return this.mergeTags(userId, projectId, mutation);
+      case 'person.delete':
+        return this.deleteAsset('person', userId, projectId, mutation);
+      case 'account.delete':
+        return this.deleteAsset('account', userId, projectId, mutation);
+      case 'card.delete':
+        return this.deleteAsset('card', userId, projectId, mutation);
+      case 'account.balance':
+        return this.setAccountBalance(userId, projectId, mutation);
+      case 'project.update':
+        return this.updateProject(userId, projectId, mutation);
+      case 'recurring.create':
+        return this.createRecurring(userId, projectId, mutation);
+      case 'recurring.update':
+        return this.updateRecurring(userId, projectId, mutation);
+      case 'recurring.delete':
+        return this.deleteRecurring(userId, projectId, mutation);
       default:
         return {
           mutationId: mutation.mutationId,
@@ -1020,6 +1077,218 @@ export class MutationReplayService {
       { monthlyAmount: payload.monthlyAmount, applyMode: 'all' } as never,
       mutation.hlc,
     );
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  /**
+   * "고른 달부터"를 대상으로 다시 계산한다 (`BudgetsService.setBudgetFrom`). 끊긴 동안 다른 기기가
+   * 그 달 이후를 고쳤다면 이 명령이 덮는다 -- 받아들인 규칙이다 (BudgetSetFromPayload 머리말).
+   * 새 규칙 id 가 이미 있으면(재전송) 다시 만들지 않는다.
+   */
+  private async setBudgetFrom(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as BudgetSetFromPayload;
+    const existing = await this.prisma.budget.findUnique({ where: { id: payload.ruleId } });
+    if (existing) return this.sameOrForeign(mutation, existing.projectId, projectId, '예산');
+    await this.budgets.setBudgetFrom(userId, projectId, payload);
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  /**
+   * 환율 한 쌍을 직접 정한다. 온라인 설정 화면(`PUT /exchange-rates`)과 같은 규칙으로 **재생하는
+   * 날의** 줄에 적는다 -- 같은 날 다시 넣으면 덮고, 목록은 날짜가 늦은 줄을 쓴다.
+   * 권한(editor)은 push 입구에서 이미 보았다.
+   */
+  private async setExchangeRate(projectId: string, mutation: Mutation): Promise<MutationResult> {
+    const payload = mutation.payload as ExchangeRateSetPayload;
+    const timeZone = await this.projectAccess.getProjectTimeZone(projectId);
+    const today = zonedParts(new Date(), timeZone);
+    await this.exchangeRates.setRate(
+      projectId,
+      this.exchangeRates.assertCurrency(payload.from, '기준 통화'),
+      this.exchangeRates.assertCurrency(payload.to, '대상 통화'),
+      toMoney(payload.rate, '환율'),
+      new Date(Date.UTC(today.year, today.month - 1, today.day)),
+    );
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  /**
+   * 잔액 맞추기. 그때의 나머지 거래로 기초잔액을 다시 계산한다 -- 결과는 늘 목표 잔액이다.
+   * 온라인의 잔액 수정(`updateAccount` 의 balance)과 같은 원장 함수를 쓴다.
+   */
+  private async setAccountBalance(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as AccountBalancePayload;
+    const account = await this.prisma.account.findUnique({ where: { id: payload.id } });
+    if (!account || account.projectId !== projectId) return this.notFound(mutation, '통장');
+    await this.projectAccess.verifyUserHasAccessToProject(userId, projectId, 'editor');
+    await this.ledger.setBalanceTo({
+      projectId,
+      accountId: payload.id,
+      targetBalance: toMoney(payload.balance, '잔액'),
+      createdByUserId: userId,
+      openingEntryId: clientId(payload.openingEntryId, '기초잔액 전표 식별자'),
+    });
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  /**
+   * 구성원·통장·카드 삭제. 온라인과 같은 서비스라 붙은 것이 있으면 같은 코드로 거절한다
+   * (보류 칸으로 가고, 다음 동기화에서 그 줄이 사본에 되살아난다). 이미 없으면 끝난 것이다.
+   */
+  private async deleteAsset(
+    kind: 'person' | 'account' | 'card',
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const { id } = mutation.payload as AssetDeletePayload;
+    const row =
+      kind === 'person'
+        ? await this.prisma.person.findUnique({ where: { id }, select: { projectId: true } })
+        : kind === 'account'
+          ? await this.prisma.account.findUnique({ where: { id }, select: { projectId: true } })
+          : await this.prisma.card.findUnique({ where: { id }, select: { projectId: true } });
+    if (!row) return this.applied(mutation, projectId, id);
+    if (row.projectId !== projectId) return this.notFound(mutation, '자산');
+
+    if (kind === 'person') await this.people.deletePerson(id, userId, mutation.hlc);
+    else if (kind === 'account') await this.accounts.deleteAccount(id, userId, mutation.hlc);
+    else await this.cards.deleteCard(id, userId, mutation.hlc);
+    return this.applied(mutation, projectId, id);
+  }
+
+  /**
+   * 분류 통합. 온라인과 같은 서비스라 같은 검사를 재생 시점에 다시 한다 -- 끊긴 동안 옮겨 받을
+   * 분류가 사라졌으면 거절되어 보류 칸으로 간다. 이미 없앤 분류만 남은 재전송이면(모두 사라짐)
+   * 서비스가 찾지 못해 거절하므로, 없앨 분류가 하나도 없으면 끝난 것으로 본다.
+   */
+  private async mergeCategories(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as CategoryMergePayload;
+    const fromIds = payload.moves.map((move) => move.fromId);
+    const alive = await this.prisma.category.count({ where: { id: { in: fromIds }, projectId } });
+    if (alive === 0) return this.applied(mutation, projectId, payload.id);
+    await this.categories.mergeCategories(
+      userId,
+      { moves: payload.moves.map((move) => ({ fromId: move.fromId, ...(move.toId ? { toId: move.toId } : {}) })) },
+      projectId,
+    );
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  /** 태그 통합. 없앨 태그가 이미 없으면 끝난 것으로 본다 (분류 통합과 같은 까닭). */
+  private async mergeTags(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as TagMergePayload;
+    const from = await this.prisma.tag.findUnique({ where: { id: payload.id } });
+    if (!from) return this.applied(mutation, projectId, payload.id);
+    if (from.projectId !== projectId) return this.notFound(mutation, '태그');
+    await this.tags.mergeTags(userId, { fromId: payload.id, toId: payload.toId }, projectId);
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  /**
+   * 반복 등록 만들기. 온라인과 같은 서비스다 -- 같은 검사를 하고, 밀린 회차의 후보를 곧바로
+   * 만든다(그 후보는 다음 pull 로 기기에 간다). 같은 id 가 이미 있으면 재전송이다.
+   */
+  private async createRecurring(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as RecurringCreatePayload;
+    const existing = await this.prisma.recurringRule.findUnique({ where: { id: payload.id } });
+    if (existing) return this.sameOrForeign(mutation, existing.projectId, projectId, '반복 등록');
+    await this.recurring.create(userId, payload as never, projectId);
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  /** 반복 등록 고치기. 바꾼 칸만 온다 -- 서버가 지금 규칙에 합쳐 검사한다. 없으면 거절이다. */
+  private async updateRecurring(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const { id, ...patch } = mutation.payload as RecurringUpdatePayload;
+    const existing = await this.prisma.recurringRule.findUnique({ where: { id } });
+    if (!existing || existing.projectId !== projectId) return this.notFound(mutation, '반복 등록');
+    await this.recurring.update(id, userId, patch as never);
+    return this.applied(mutation, projectId, id);
+  }
+
+  /** 반복 등록 지우기. 이미 없으면 끝난 것이다. 만들어진 후보는 남는다(서비스 규칙). */
+  private async deleteRecurring(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const { id } = mutation.payload as RecurringDeletePayload;
+    const existing = await this.prisma.recurringRule.findUnique({ where: { id } });
+    if (!existing) return this.applied(mutation, projectId, id);
+    if (existing.projectId !== projectId) return this.notFound(mutation, '반복 등록');
+    await this.recurring.remove(id, userId);
+    return this.applied(mutation, projectId, id);
+  }
+
+  /**
+   * 가계부 이름·설명·표시 통화. 온라인과 같은 서비스라 **주인만** 된다(주인이 아니면 거절).
+   * 기준 타임존은 싣지 않는다 -- 온라인 전용으로 남긴 값이다. 명령은 push 한 가계부의 것만
+   * 고친다(짐의 id 가 다르면 남의 가계부를 고칠 뻔한 것이라 거절).
+   */
+  private async updateProject(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as ProjectUpdatePayload;
+    if (payload.id !== projectId) return this.notFound(mutation, '가계부');
+    await this.projects.updateProject(projectId, userId, {
+      ...(payload.name !== undefined ? { name: payload.name } : {}),
+      ...(payload.description !== undefined ? { description: payload.description } : {}),
+      ...(payload.displayCurrency !== undefined ? { displayCurrency: payload.displayCurrency } : {}),
+    } as never);
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  /** 직접 정한 환율을 지운다 (그 쌍의 줄 전부). 이미 없으면 그대로 끝난다. */
+  private async clearExchangeRate(projectId: string, mutation: Mutation): Promise<MutationResult> {
+    const payload = mutation.payload as ExchangeRateClearPayload;
+    await this.exchangeRates.clearRate(
+      projectId,
+      this.exchangeRates.assertCurrency(payload.from, '기준 통화'),
+      this.exchangeRates.assertCurrency(payload.to, '대상 통화'),
+    );
+    return this.applied(mutation, projectId, payload.id);
+  }
+
+  /**
+   * 예산 규칙 하나를 지운다. 이미 없으면 할 일이 없다 -- 다른 기기가 먼저 지웠거나 구간
+   * 편집으로 사라진 것이다. 그것을 실패로 돌리면 기기가 없는 줄을 두고 계속 다시 보낸다.
+   */
+  private async deleteBudget(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as BudgetDeletePayload;
+
+    const existing = await this.prisma.budget.findUnique({ where: { id: payload.id } });
+    if (existing && existing.projectId !== projectId) return this.notFound(mutation, '예산');
+    if (existing) await this.budgets.deleteBudget(payload.id, userId);
     return this.applied(mutation, projectId, payload.id);
   }
 

@@ -38,7 +38,45 @@ export type MutationKind =
   | 'tag.create'
   | 'tag.update'
   | 'budget.set'
-  | 'budget.override';
+  | 'budget.delete'
+  | 'budget.override'
+  /*
+   * 아래는 **표 한 줄에 붙지 않는 설정 명령**이다. 필드별 시계가 없고(서버가 받은 차례대로
+   * 적용한다), 사본에 적는 일도 명령마다 다르다 (`TABLE_BACKED_KINDS` 밖의 것들).
+   */
+  | 'budget.setFrom'
+  | 'exchangeRate.set'
+  | 'exchangeRate.clear'
+  | 'category.merge'
+  | 'tag.merge'
+  | 'person.delete'
+  | 'account.delete'
+  | 'card.delete'
+  | 'account.balance'
+  | 'project.update'
+  | 'recurring.create'
+  | 'recurring.update'
+  | 'recurring.delete';
+
+/**
+ * 사본의 표 한 줄(그 id)을 필드별 시계로 고치는 설정 명령. 기기는 이 명령들의 "본 값의 시계"를
+ * 그 줄의 `fieldHlc` 에서 읽는다. 나머지 설정 명령은 시계 없이 차례대로 적용된다.
+ */
+export const TABLE_BACKED_KINDS: ReadonlySet<MutationKind> = new Set<MutationKind>([
+  'person.create',
+  'person.update',
+  'account.create',
+  'account.update',
+  'card.create',
+  'card.update',
+  'category.create',
+  'category.update',
+  'tag.create',
+  'tag.update',
+  'budget.set',
+  'budget.delete',
+  'budget.override',
+]);
 
 /**
  * 설정 엔티티 명령인가. 재생과 병합 규칙이 전표와 다르다.
@@ -448,6 +486,17 @@ export interface BudgetSetPayload {
 }
 
 /**
+ * 예산 규칙 하나를 지운다 (모든 달에 0원을 넣은 것). 그 규칙의 달별 조정도 함께 간다.
+ *
+ * 규칙 하나를 id 로 지우는 일이라 며칠 뒤에 재생해도 결과가 같다 -- 이미 없으면 할 일이
+ * 없다. "고른 달부터" 지우기(규칙을 끊는 일)는 여기 오지 않는다. 그 사이 달라진 규칙들
+ * 위에서 다시 계산되므로 온라인에서만 한다 (D12).
+ */
+export interface BudgetDeletePayload {
+  id: string;
+}
+
+/**
  * 그 달만 다른 금액으로.
  *
  * (예산, 년, 월)이 키다. 다른 달을 고친 두 편집은 서로 다른 행이라 다툴 일이 없다.
@@ -460,6 +509,105 @@ export interface BudgetOverridePayload {
   year: number;
   month: number;
   amount?: string | null;
+}
+
+/**
+ * "고른 달부터" 예산 바꾸기·지우기 (구간 편집). **뜻으로 보낸다** -- 규칙 id 가 아니라 대상과 달.
+ *
+ * 예전에는 온라인 전용이었다(D12): 규칙 id 로 보내면 며칠 뒤 그 사이 끊기거나 사라진 규칙을
+ * 가리킨다. 대상(분류·전체·태그)과 시작 달로 보내면 재생할 때 그 대상의 규칙들 위에서 다시
+ * 계산되고 결과는 늘 "그 달부터 이 금액(또는 예산 없음)"이다. 끊긴 동안 다른 기기가 그 달
+ * 이후를 고쳤다면 나중에 도착한 쪽이 덮는다 -- 사용자가 받아들인 규칙이다 (2026-10-01).
+ */
+export interface BudgetSetFromPayload {
+  /** 대상의 이름 (`${categoryId ?? ''}|${tagId ?? ''}|${type ?? ''}`). 막힘 판정에 쓴다. */
+  id: string;
+  /** 분류 예산이면 그 분류, 전체 예산이면 센티널 (`BUDGET_TOTAL_EXPENSE` 등) */
+  categoryId?: string | null;
+  tagId?: string | null;
+  type?: 'income' | 'expense' | null;
+  /** "YYYY-MM" */
+  fromMonth: string;
+  /** 새 금액 (표시 통화). null 이면 그 달부터 예산을 없앤다. */
+  amount: string | null;
+  /** 그 달부터 새로 서는 규칙의 id. 기기가 만든다 -- 사본과 서버가 같은 줄을 가리키게. */
+  ruleId: string;
+}
+
+/** 환율 한 쌍을 직접 정한다. 서버는 재생하는 날짜의 줄로 적는다 (그날 다시 넣으면 덮는다). */
+export interface ExchangeRateSetPayload {
+  /** 쌍의 이름 (`${from}:${to}`). 같은 쌍의 명령끼리 막힘을 나눈다. */
+  id: string;
+  from: string;
+  to: string;
+  rate: string;
+}
+
+/** 직접 정한 환율을 지워 기본값으로 되돌린다. */
+export interface ExchangeRateClearPayload {
+  id: string;
+  from: string;
+  to: string;
+}
+
+/** 분류 통합 (`CategoryDto.MergeRequest` 그대로). 재생할 때 서버가 같은 검사를 다시 한다. */
+export interface CategoryMergePayload {
+  /** 첫 번째로 없앨 분류. 대상 목록에는 오가는 분류가 모두 든다. */
+  id: string;
+  moves: Array<{ fromId: string; toId?: string | null }>;
+}
+
+/** 태그 통합. fromId 를 없애고 붙어 있던 자리를 toId 로 옮긴다. */
+export interface TagMergePayload {
+  /** 없앨 태그 */
+  id: string;
+  toId: string;
+}
+
+/**
+ * 구성원·통장·카드 삭제. 기기가 먼저 "붙은 것 없음"을 확인하고 보낸다. 끊긴 동안 다른 기기가
+ * 거래를 붙였으면 서버가 거절하고(보류 칸), 다음 동기화에서 그 줄이 사본에 되살아난다.
+ */
+export interface AssetDeletePayload {
+  id: string;
+}
+
+/**
+ * 잔액 맞추기. **뜻으로 보낸다** -- "이 계좌의 잔액을 X 로". 서버가 재생할 때 그때의 나머지
+ * 거래로 기초잔액을 다시 계산하므로 결과는 늘 X 다.
+ */
+export interface AccountBalancePayload {
+  id: string;
+  /** 계좌 통화의 목표 잔액 */
+  balance: string;
+  /**
+   * 기초잔액 전표를 새로 만들어야 할 때 쓸 id. 기기가 만든다 -- 사본에 먼저 세운 전표와 서버의
+   * 전표가 같은 줄이 되게. 이미 있으면(서버가 찾으면) 그 전표를 고치고 이 값은 쓰지 않는다.
+   */
+  openingEntryId: string;
+}
+
+/** 가계부 이름·설명·표시 통화. 기준 타임존은 여기 없다 (온라인 전용으로 남긴다). */
+export interface ProjectUpdatePayload {
+  /** 가계부 id */
+  id: string;
+  name?: string;
+  description?: string | null;
+  displayCurrency?: string;
+}
+
+/**
+ * 반복 등록 만들기·고치기·지우기. 짐은 온라인 요청과 같은 모양이다 (`RecurringRuleDto`).
+ * 고치기는 바꾼 칸만 싣는다 -- 서버가 지금 규칙에 합쳐 같은 검사를 한다.
+ */
+export interface RecurringCreatePayload extends Record<string, unknown> {
+  id: string;
+}
+export interface RecurringUpdatePayload extends Record<string, unknown> {
+  id: string;
+}
+export interface RecurringDeletePayload {
+  id: string;
 }
 
 /** 설정 엔티티 명령의 짐. 모두 대상 id 를 갖는다. */
@@ -475,7 +623,19 @@ export type SettingMutationPayload =
   | TagCreatePayload
   | TagUpdatePayload
   | BudgetSetPayload
-  | BudgetOverridePayload;
+  | BudgetDeletePayload
+  | BudgetOverridePayload
+  | BudgetSetFromPayload
+  | ExchangeRateSetPayload
+  | ExchangeRateClearPayload
+  | CategoryMergePayload
+  | TagMergePayload
+  | AssetDeletePayload
+  | AccountBalancePayload
+  | ProjectUpdatePayload
+  | RecurringCreatePayload
+  | RecurringUpdatePayload
+  | RecurringDeletePayload;
 
 /**
  * 이 명령이 서버까지 갈 필요가 없는가.

@@ -37,6 +37,9 @@ export const ERROR_CODES = [
   'CARD_HAS_UNPAID',
   'PERSON_HAS_ACCOUNTS',
 
+  // 카드 입력
+  'CREDIT_CARD_DAYS_REQUIRED',
+
   // 삭제를 막는 사정들 (숨기기는 된다)
   'ACCOUNT_HAS_ENTRIES',
   'ACCOUNT_HAS_RECORDS',

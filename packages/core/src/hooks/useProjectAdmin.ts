@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react';
 import type { CurrencyCode } from '@money/types';
 
+import { settingsWritePort } from '../data/settings-write-port';
 import { apiClient } from '../lib/api-client';
 import { useApiError } from '../lib/api-error';
 import { translate, type MessageKey } from '../lib/i18n';
@@ -95,8 +96,35 @@ export function useProjectAdmin(): {
     ): Promise<ProjectResult> => {
       try {
         setIsSubmitting(true);
-        await apiClient.updateProject(projectId, body);
-        await reload();
+        /*
+         * 창구를 거친다. 앱은 고른 가계부의 이름·설명·표시 통화를 명령으로 쌓아 끊겨 있어도
+         * 된다 (타임존은 서버로 곧바로). 쌓였으면 목록(온라인 전용)을 다시 받지 않고 들고
+         * 있는 줄을 고친다 -- 받으려 들면 끊긴 동안 실패로 보인다.
+         */
+        const { queued } = await settingsWritePort().updateProject(projectId, body);
+        if (queued) {
+          setProjects(
+            useProject
+              .getState()
+              .projects.map((project) =>
+                project.id === projectId
+                  ? {
+                      ...project,
+                      ...(body.name !== undefined ? { name: body.name } : {}),
+                      // 목록의 설명은 "없음"을 비워서 적는다 (null 이 아니라).
+                      ...(body.description !== undefined
+                        ? { description: body.description ?? undefined }
+                        : {}),
+                      ...(body.displayCurrency !== undefined
+                        ? { displayCurrency: body.displayCurrency }
+                        : {}),
+                    }
+                  : project,
+              ),
+          );
+        } else {
+          await reload();
+        }
         return { ok: true };
       } catch (error) {
         return { ok: false, message: messageOf(error, fallbackKey) };
@@ -104,7 +132,7 @@ export function useProjectAdmin(): {
         setIsSubmitting(false);
       }
     },
-    [messageOf, reload],
+    [messageOf, reload, setProjects],
   );
 
   /**

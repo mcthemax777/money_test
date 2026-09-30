@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { pendingProfileFields } from './pending-profile';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { persistStorage } from '../lib/persist-storage';
@@ -56,12 +57,30 @@ interface AuthStore {
  * 스토어가 화면 스토어를 붙들면 서로를 부르는 고리가 생기기 쉽다.
  */
 async function applyUserDisplay(user: { locale?: unknown; weekStart?: unknown } | null | undefined) {
-  const [{ useLocaleStore }, { useWeekStartStore }] = await Promise.all([
+  const [{ useLocaleStore }, { useWeekStartStore }, pendingProfile] = await Promise.all([
     import('./locale'),
     import('./week-start'),
+    import('./pending-profile'),
   ]);
-  useLocaleStore.getState().applyServerLocale(user?.locale);
-  useWeekStartStore.getState().applyServerWeekStart(user?.weekStart);
+  /*
+   * 끊긴 동안 바꿔 두고 아직 보내지 못한 칸은 서버 값으로 덮지 않는다. 덮으면 방금 고른 언어가
+   * 로그인 한 번에 옛 값으로 돌아간다. 그 칸은 곧 보낸다.
+   */
+  const pending = pendingProfile.pendingProfileFields();
+  if (pending.locale === undefined) useLocaleStore.getState().applyServerLocale(user?.locale);
+  if (pending.weekStart === undefined) {
+    useWeekStartStore.getState().applyServerWeekStart(user?.weekStart);
+  }
+  void pendingProfile.flushPendingProfile();
+}
+
+/**
+ * 끊긴 동안 바꿔 두고 아직 보내지 못한 이름이 있으면 그것으로 보인다 (pending-profile).
+ * 서버 값으로 덮으면 방금 고친 이름이 로그인 한 번에 옛 이름으로 돌아간다.
+ */
+function withPendingName<T extends { name?: string } | null | undefined>(user: T): T {
+  const name = pendingProfileFields().name;
+  return user && name !== undefined ? { ...user, name } : user;
 }
 
 export const useAuth = create<AuthStore>()(
@@ -112,7 +131,7 @@ export const useAuth = create<AuthStore>()(
       // 이 계정이 고른 말과 요일로 화면을 맞춘다. 앞 사용자가 남긴 값이 이어지면 안 된다.
       applyUserDisplay(response.user);
       set({
-        user: response.user,
+        user: withPendingName(response.user),
         defaultProjectData: response.defaultProjectData,
         isAuthenticated: true,
         isInitializing: false,
@@ -131,7 +150,7 @@ export const useAuth = create<AuthStore>()(
       const response = await apiClient.setDefaultProject(projectId);
       console.log('[Auth] Set default project response:', response);
       set({
-        user: response.user,
+        user: withPendingName(response.user),
         defaultProjectData: response.defaultProjectData,
       });
       return response.defaultProjectData;
@@ -205,7 +224,7 @@ export const useAuth = create<AuthStore>()(
        * 지나가는 이 자리에서 채워 두면 그 틈이 한 번의 실행으로 메워진다.
        */
       if (user?.id) await claimMirrorFor(user.id);
-      set({ user, isAuthenticated: true, isInitializing: false });
+      set({ user: withPendingName(user), isAuthenticated: true, isInitializing: false });
     } catch (error) {
       /*
        * 서버에 닿지 못한 것은 로그아웃이 아니다.

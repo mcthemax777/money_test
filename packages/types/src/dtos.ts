@@ -1403,8 +1403,18 @@ export namespace ReportDto {
     }>;
   }
 
-  export interface TrendQuery extends EntryFilterQuery {
+  /**
+   * 거래 화면의 검색 조건(EntrySearchQuery)도 함께 받는다. 분류·전체·태그 추이는 그 조건에
+   * 맞는 줄만 센다 (리포트의 합계·구성비와 같은 규칙). 결제수단 추이는 보지 않는다.
+   */
+  export interface TrendQuery extends EntryFilterQuery, EntrySearchQuery {
     projectId?: string;
+    /**
+     * 추이를 이 구간 안으로 자른다 (ISO 시각, 양끝 [from, to)). 검색에 기간을 걸고 분석을
+     * 열었을 때 쓴다 -- 12개월 막대가 고른 기간 밖의 돈까지 세면 조건에 맞지 않는다.
+     */
+    clipFrom?: string;
+    clipTo?: string;
     /**
      * tag 는 그 태그가 붙은 **줄**의 합이다 (예산 화면의 태그 분석). type 으로 지출·수입을 고른다.
      */
@@ -1928,6 +1938,11 @@ export namespace SyncDto {
      * 보관함이 자리마다 다르게 보인다.
      */
     entryDrafts: unknown[];
+    /**
+     * 반복 등록. 행마다 그 규칙의 태그 id 를 `tagIds` 로 펴서 싣는다 (다리 표는 번호가 없다).
+     * 기기가 목록을 보고 만들고 고치고 지우는 일을 끊긴 동안에도 하려고 받는다.
+     */
+    recurringRules: unknown[];
   }
 
   export interface PullResponse {
@@ -1954,5 +1969,10 @@ export namespace SyncDto {
      * 아직 한 번도 지우지 않았으면 0 이고, 그때는 어떤 커서든 따라잡을 수 있다.
      */
     tombstoneFloor: number;
+    /**
+     * 가계부 나라의 공휴일 ("YYYY-MM-DD", 오름차순). 반복 등록의 "휴일이면 앞·뒤로" 를 기기가
+     * 끊긴 동안에도 서버와 같게 셈하려고 싣는다. 관리자가 갱신하면 다음 pull 부터 새 목록이다.
+     */
+    publicHolidays?: string[];
   }
 }

@@ -233,8 +233,8 @@ export function useCategoryManager(projectId: string | null) {
    * 없애기가 막힌 자리를 푸는 길이다(`remove` 의 `inUse`). 짝은 부르는 쪽이 정한다 --
    * 대분류를 없애면 소분류도 함께 사라지는데, 소분류마다 갈 곳이 다르다.
    *
-   * 창구를 거치지 않고 서버로 곧바로 간다. 원장의 다리 수백 개가 한꺼번에 바뀌는 일이라
-   * 오프라인 명령 하나로 담을 수 없다 -- 끊겨 있으면 그대로 실패하고 화면이 이유를 적는다.
+   * 창구를 거친다. 앱은 서버와 같은 검사를 한 뒤 사본의 다리를 곧바로 옮기고 명령 하나로
+   * 쌓는다(`category.merge`) -- 끊겨 있어도 된다. 재생할 때 서버가 같은 검사를 다시 한다.
    */
   const merge = useCallback(
     async (moves: CategoryDto.MergeMove[]): Promise<CategoryResult> => {
@@ -242,7 +242,7 @@ export function useCategoryManager(projectId: string | null) {
 
       try {
         setIsSubmitting(true);
-        const result = await apiClient.mergeCategories(moves, projectId);
+        const result = await settingsWritePort().mergeCategories(moves, projectId);
         await reload();
         return { ok: true, movedPostings: result.movedPostings };
       } catch (error) {

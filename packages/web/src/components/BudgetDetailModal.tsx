@@ -67,6 +67,8 @@ interface BudgetDetailModalProps {
   onEntryClick?: (entry: EntryListItem) => void;
   /** 값이 바뀌면 데이터를 다시 받는다. 부모 화면에서 거래를 고쳤을 때 쓴다. */
   reloadToken?: number;
+  /** 12개월 추이를 자를 구간. 거래 분석이 검색 기간을 걸었을 때 준다 (useCategoryDetail). */
+  trendClip?: { from?: string; to?: string };
 }
 
 /**
@@ -173,6 +175,7 @@ export function BudgetDetailModal({
   filter,
   onEntryClick,
   reloadToken,
+  trendClip,
 }: BudgetDetailModalProps) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
@@ -187,6 +190,7 @@ export function BudgetDetailModal({
     reloadToken,
     // 닫혀 있는 팝업은 받지 않는다. 인라인으로 쓸 때는 늘 보이는 자리다.
     enabled: isOpen,
+    trendClip,
   });
 
   /** 거래내역에서 세는 세 그래프가 비었을 때의 안내. 일별 누적과 같은 말을 쓴다. */
@@ -330,7 +334,12 @@ export function BudgetDetailModal({
   }
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={t('category.detailTitle', { name: categoryName })}>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={t('category.detailTitle', { name: categoryName })}
+      wide
+    >
       {content}
     </Modal>
   );

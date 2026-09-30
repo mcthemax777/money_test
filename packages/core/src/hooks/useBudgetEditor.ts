@@ -10,6 +10,7 @@ import {
 import type { Category } from '../lib/types';
 import { toAmountString, toNumber } from '../lib/money';
 import { useBudget } from '../store/budget';
+import { settingsWritePort } from '../data/settings-write-port';
 
 /** 여러 달을 한꺼번에 바꾸는 두 가지 방법. 'all' 은 규칙의 금액을, 'from' 은 고른 달부터를 바꾼다. */
 export type BudgetScope = 'all' | 'from';
@@ -125,19 +126,24 @@ export function useBudgetEditor({
           // 예산이 기간별로 나뉘어 있을 때 서버가 어느 규칙을 고칠지 이 값으로 정한다.
           yearMonth,
         });
-      } else if (amount === 0) {
-        // '모든 달'이면 규칙을 지우고, '고른 달부터'면 앞 달까지로 끊는다.
-        await deleteBudget(existing.budgetId, scope === 'from' ? fromMonth : undefined);
       } else if (scope === 'from') {
         /*
-         * 이미 그 달부터 시작하는 규칙이어도 그대로 보낸다. 뒤에 나뉜 규칙까지 걷어내는
-         * 것은 서버만 할 수 있다. 'all' 경로로 새면 그 뒤는 옛 금액이 남는다.
+         * '고른 달부터' -- 0원이면 그 달부터 예산을 없애고, 아니면 그 금액으로 만든다.
+         * 대상과 달로 보낸다(창구의 setBudgetFrom): 규칙 id 로 보내면 끊긴 동안 쪼개지거나
+         * 사라진 규칙을 가리킨다. 이미 그 달부터 시작하는 규칙이어도 그대로 보낸다 -- 뒤에
+         * 나뉜 규칙까지 걷어내야 한다. 'all' 경로로 새면 그 뒤는 옛 금액이 남는다.
          */
-        await updateBudget(existing.budgetId, {
-          monthlyAmount,
-          applyMode: 'from',
-          applyFromMonth: fromMonth,
+        await settingsWritePort().setBudgetFrom({
+          budgetId: existing.budgetId,
+          categoryId: target.apiCategoryId ?? null,
+          tagId: target.tagId ?? null,
+          type: target.type ?? null,
+          fromMonth,
+          amount: amount === 0 ? null : monthlyAmount,
         });
+      } else if (amount === 0) {
+        // '모든 달'의 0원은 규칙을 지운다.
+        await deleteBudget(existing.budgetId);
       } else {
         await updateBudget(existing.budgetId, { monthlyAmount });
       }

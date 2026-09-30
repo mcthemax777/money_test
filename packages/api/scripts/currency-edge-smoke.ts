@@ -12,6 +12,7 @@ import { randomUUID } from 'node:crypto';
 import { createHash } from 'crypto';
 import { Prisma } from '@prisma/client';
 import { JwtService } from '@nestjs/jwt';
+import { zonedCurrentYearMonth } from '@money/types';
 import { runSmoke } from './smoke-harness';
 
 const BASE = 'http://localhost:3999';
@@ -329,7 +330,8 @@ runSmoke('currency-edge', async (ctx) => {
   ctx.check('남은 대금은 달러', usdUsage.body.outstanding, '40');
 
   // ── 11. 예산은 기준통화, 사용액도 환산액 ───────────────────
-  const yearMonth = new Date().toISOString().slice(0, 7);
+  // 가계부 타임존(기본 Asia/Seoul)의 이번 달이다. UTC 로 자르면 한국 자정 직후 전 달을 본다.
+  const yearMonth = zonedCurrentYearMonth('Asia/Seoul');
   await call('POST', `/budgets${q}`, {
     categoryId: dining.body.id, monthlyAmount: '1000000', yearMonth,
   });

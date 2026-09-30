@@ -187,9 +187,10 @@ export default function ProjectsScreen() {
         }
       />
 
+      {/* 끊겨 있을 때 무엇이 안 되는지 적는다. 이름·설명·표시 통화는 명령으로 쌓여 된다. */}
       {isOffline ? (
         <View className="rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
-          <Text className="text-gray-600">{t('online.onlyOnline')}</Text>
+          <Text className="text-gray-600">{t('projects.offlineNotice')}</Text>
         </View>
       ) : null}
 

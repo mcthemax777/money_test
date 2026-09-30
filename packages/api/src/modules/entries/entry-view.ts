@@ -101,7 +101,7 @@ const IDENTITY: AmountConverter = {
 };
 
 /** Prisma 행을 공용 규칙이 보는 모양으로. 금액은 DecInput 이라 그대로 넘어간다. */
-function toViewEntry(entry: EntryWithPostings): ViewEntry {
+export function toViewEntry(entry: EntryWithPostings): ViewEntry {
   return {
     ...entry,
     postings: entry.postings as unknown as ViewPosting[],

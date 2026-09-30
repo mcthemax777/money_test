@@ -12,7 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { weekStartKey } from '@money/types';
 
-import { apiClient } from '../lib/api-client';
+import { homeDataPort } from '../data/home-port';
 import { lineAxis, type LineAxis } from '../lib/chart';
 import {
   currentYearMonth,
@@ -437,7 +437,8 @@ export function useAssetHistory({
           ? { endMonth: shiftYearMonth(baseMonth, -endOffset * 12) }
           : { endMonth: shiftYearMonth(baseMonth, -endOffset) };
 
-      const rows = await apiClient.getBalanceHistory(
+      // 창구를 거친다. 앱에서는 사본이 같은 칸·같은 쌓기로 그려 오프라인에서도 선이 선다.
+      const rows = await homeDataPort().getBalanceHistory(
         granularity === 'day'
           ? {
               ...target,

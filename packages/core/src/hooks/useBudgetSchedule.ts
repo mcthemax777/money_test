@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { BudgetDto } from '@money/types';
 
-import { apiClient } from '../lib/api-client';
+import { homeDataPort } from '../data/home-port';
 import { useApiError } from '../lib/api-error';
 import { shiftYearMonth } from '../lib/datetime';
 import { useTranslation } from '../lib/i18n';
@@ -65,7 +65,8 @@ export function useBudgetSchedule({
       setIsLoading(true);
       setError('');
       setMonths(
-        await apiClient.getBudgetSchedule(
+        // 창구를 거친다. 앱에서는 사본이 풀어 오프라인에서도 목록이 선다.
+        await homeDataPort().getBudgetSchedule(
           { categoryId, tagId, type, startMonth: windowStart, months: BUDGET_SCHEDULE_MONTHS },
           projectId,
         ),

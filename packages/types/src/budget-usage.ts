@@ -148,3 +148,105 @@ export function tagUsage(rows: readonly TaggedPostingRow[]): Map<string, Categor
   }
   return usage;
 }
+
+/**
+ * 전체 예산의 센티널 categoryId 를 푼다.
+ *
+ * 전체 예산은 분류가 없는 예산이라 categoryId 로 가리킬 수 없다. 화면은 대신 약속된
+ * 문자열을 보내고, 받는 쪽이 그것을 "분류 없음 + type" 으로 바꾼다. 서버와 기기 사본이
+ * 같은 규칙으로 풀어야 해서 여기 둔다 -- 사본이 풀지 않으면 오프라인에서 만든 전체 예산이
+ * 분류 id 자리에 센티널을 단 채 적혀, 동기화 전까지 어디에도 보이지 않는다.
+ */
+export function resolveBudgetTarget(
+  categoryId?: string | null,
+  type?: string | null,
+): { categoryId?: string; type?: 'income' | 'expense' } {
+  if (categoryId === 'BUDGET_TOTAL_INCOME') return { categoryId: undefined, type: 'income' };
+  if (categoryId === 'BUDGET_TOTAL_EXPENSE') return { categoryId: undefined, type: 'expense' };
+  return {
+    categoryId: categoryId ?? undefined,
+    type: type === 'income' || type === 'expense' ? type : undefined,
+  };
+}
+
+/** 월별 예산 목록이 보는 규칙 한 줄. */
+export interface ScheduleRule extends BudgetPeriod {
+  id: string;
+  monthlyAmount: DecInput;
+}
+
+/** 그 달만 다른 금액. (규칙, 년, 월)이 키다. */
+export interface ScheduleOverride {
+  id: string;
+  budgetId: string;
+  year: number;
+  month: number;
+  amount: DecInput;
+}
+
+/**
+ * 한 대상(분류·전체·태그 예산 하나)의 규칙들을 달마다 푼다. 예산 팝업의 월별 목록이 쓴다.
+ *
+ * 예산은 규칙 하나가 여러 달을 덮고 거기에 달별 조정이 얹힌다. 그 달에 걸리는 규칙이
+ * 없으면 rule 이 없다 -- 0원이 아니라 "예산 없음"이다. 서버와 기기 사본이 같은 판정으로
+ * 풀어야 해서 여기 둔다 (적용 기간 판정은 isBudgetApplicable).
+ */
+export function budgetScheduleMonths<R extends ScheduleRule, O extends ScheduleOverride>(
+  rules: readonly R[],
+  overrides: readonly O[],
+  startMonth: string,
+  months: number,
+): Array<{ yearMonth: string; rule?: R; override?: O }> {
+  const keyOf = (budgetId: string, year: number, month: number) => `${budgetId}:${year}-${month}`;
+  const overrideOf = new Map(
+    overrides.map((override) => [keyOf(override.budgetId, override.year, override.month), override]),
+  );
+  const [startYear, startMonthNumber] = startMonth.split('-').map(Number);
+
+  return Array.from({ length: months }, (_, offset) => {
+    const index = startMonthNumber - 1 + offset;
+    const year = startYear + Math.floor(index / 12);
+    const month = (index % 12) + 1;
+    const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
+    const rule = rules.find((candidate) => isBudgetApplicable(candidate, yearMonth));
+    if (!rule) return { yearMonth };
+    return { yearMonth, rule, override: overrideOf.get(keyOf(rule.id, year, month)) };
+  });
+}
+
+/**
+ * "고른 달부터"가 그 대상의 규칙들에 하는 일. 서버(`BudgetsService`)와 기기 사본이 같이 쓴다.
+ *
+ *   remove  그 달 이후에 시작하는 규칙 -- 통째로 없앤다
+ *   cut     그 달에 걸쳐 있는 규칙 -- 앞 달까지로 끊는다 (effectiveTo)
+ *
+ * 그 달 앞에서 이미 끝난 규칙은 건드리지 않는다 (effectiveTo 를 뒤로 밀면 없애려던 규칙이
+ * 오히려 늘어난다). 그 달부터의 달별 조정은 부르는 쪽이 따로 지운다 -- 끊기는 규칙의 조정이
+ * 남아 있다가 나중에 그 규칙을 다시 늘리면 되살아난다.
+ */
+export function planBudgetFrom(
+  rules: ReadonlyArray<{ id: string; effectiveFrom?: string | null; effectiveTo?: string | null }>,
+  applyFrom: string,
+): { remove: string[]; cut: Array<{ id: string; effectiveTo: string }> } {
+  const [year, month] = applyFrom.split('-').map(Number);
+  const before = month === 1 ? `${year - 1}-12` : `${year}-${String(month - 1).padStart(2, '0')}`;
+
+  const remove: string[] = [];
+  const cut: Array<{ id: string; effectiveTo: string }> = [];
+  for (const rule of rules) {
+    if ((rule.effectiveFrom || BUDGET_MONTH_FLOOR) >= applyFrom) {
+      remove.push(rule.id);
+      continue;
+    }
+    if ((rule.effectiveTo || BUDGET_MONTH_CEILING) >= applyFrom) {
+      cut.push({ id: rule.id, effectiveTo: before });
+    }
+  }
+  return { remove, cut };
+}
+
+/** 그 달부터의 조정인가. (규칙, 년, 월)의 년·월을 "YYYY-MM" 과 견준다. */
+export function isOverrideFrom(override: { year: number; month: number }, applyFrom: string): boolean {
+  const [year, month] = applyFrom.split('-').map(Number);
+  return override.year > year || (override.year === year && override.month >= month);
+}

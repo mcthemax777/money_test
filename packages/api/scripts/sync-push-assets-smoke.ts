@@ -18,8 +18,15 @@
  *   6. **같은 이름은 별칭으로 잇는다.** 두 사람이 오프라인에서 같은 분류를 만들면 서버가
  *      이미 있는 행을 채택하고 그 id 를 알려 준다. 오류로 두면 그 명령이 영영 막힌다.
  */
+import { randomUUID } from 'node:crypto';
+import { RecurringService } from '@/modules/entry-drafts/recurring.service';
+import { EntryDraftsService } from '@/modules/entry-drafts/entry-drafts.service';
+import { HolidaysService } from '@/modules/holidays/holidays.service';
+import { ExchangeRatesService } from '@/modules/exchange-rates/exchange-rates.service';
+import { ProjectsService } from '@/modules/projects/projects.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
 import { MutationReplayService } from '@/modules/sync/mutation-replay.service';
+import { SyncService } from '@/modules/sync/sync.service';
 import { encodeHlc, rankBetween, type Mutation, type MutationResult } from '@money/types';
 import {
   makeAccounts,
@@ -59,6 +66,13 @@ runSmoke('sync-push-assets', async (ctx) => {
   const categories = makeCategories(ctx.prisma, access);
   const budgets = makeBudgets(ctx.prisma, access);
   const entries = makeEntries(ctx.prisma, access, ledger);
+  // 반복 등록 재생. 후보를 곧바로 만드는 일까지 온라인과 같은 서비스다.
+  const recurringReplay = new RecurringService(
+    ctx.prisma as any,
+    access as any,
+    new EntryDraftsService(ctx.prisma as any, access as any) as any,
+    new HolidaysService(ctx.prisma as any),
+  );
   const replay = new MutationReplayService(
     ctx.prisma as any,
     access as any,
@@ -71,6 +85,9 @@ runSmoke('sync-push-assets', async (ctx) => {
     categories as any,
     tags as any,
     budgets as any,
+    new ExchangeRatesService(ctx.prisma as any) as any,
+    new ProjectsService(ctx.prisma as any, access as any, new ExchangeRatesService(ctx.prisma as any)) as any,
+    recurringReplay as any,
   );
 
   let seq = 0;
@@ -435,6 +452,226 @@ runSmoke('sync-push-assets', async (ctx) => {
   ctx.check('금액을 비우면 그 달의 조정을 지운다', cleared.results[0]?.status, 'applied');
   ctx.check('그 달만 사라진다',
     await ctx.prisma.budgetOverride.count({ where: { budgetId } }), 1);
+
+  // 규칙 지우기 (모든 달 0원). 달별 조정도 함께 가고, 다시 보내도 그대로 끝난다.
+  const deleted = await push([
+    command('budget.delete', budgetId, { id: budgetId }, T0 + 1_000_400, 'deleteBudget'),
+  ]);
+  ctx.check('예산 지우기', deleted.results[0]?.status, 'applied');
+  ctx.check('규칙이 사라진다', await ctx.prisma.budget.count({ where: { id: budgetId } }), 0);
+  ctx.check('달별 조정도 함께 사라진다',
+    await ctx.prisma.budgetOverride.count({ where: { budgetId } }), 0);
+  const deletedAgain = await push([
+    command('budget.delete', budgetId, { id: budgetId }, T0 + 1_000_500, 'deleteAgain'),
+  ]);
+  ctx.check('이미 없는 예산을 지우는 명령도 끝난 것으로 본다', deletedAgain.results[0]?.status, 'applied');
+
+  // ── 예산 "고른 달부터": 대상과 달로 보낸다 (규칙 id 가 아니라) ──
+  const ruleA = '019273cc-0000-7000-8000-000000000040';
+  await push([command('budget.set', ruleA, { id: ruleA, categoryId, type: 'expense', monthlyAmount: '200000' }, T0 + 1_000_410, 'ruleA')]);
+  const monthsOf = async () =>
+    (await budgets.getBudgetSchedule(uid, { projectId: pid, categoryId, type: 'expense', startMonth: '2026-09', months: 4 }))
+      .map((row) => (row.amount === undefined ? '-' : String(Number(row.amount)))).join(',');
+  ctx.check('준비: 모든 달 20만', await monthsOf(), '200000,200000,200000,200000');
+  const ruleB = '019273cc-0000-7000-8000-000000000041';
+  const fromOct = await push([
+    command('budget.setFrom', `${categoryId}||expense`, {
+      id: `${categoryId}||expense`, categoryId, tagId: null, type: 'expense', fromMonth: '2026-10', amount: '100000', ruleId: ruleB,
+    }, T0 + 1_000_420, 'fromOct'),
+  ]);
+  ctx.check('고른 달부터 바꾸기', fromOct.results[0]?.status, 'applied');
+  ctx.check('9월은 그대로, 10월부터 10만', await monthsOf(), '200000,100000,100000,100000');
+  ctx.check('새 규칙은 기기가 정한 id', (await ctx.prisma.budget.findUnique({ where: { id: ruleB } }))?.effectiveFrom, '2026-10');
+  const noneFromNov = await push([
+    command('budget.setFrom', `${categoryId}||expense`, {
+      id: `${categoryId}||expense`, categoryId, tagId: null, type: 'expense', fromMonth: '2026-11', amount: null, ruleId: '019273cc-0000-7000-8000-000000000042',
+    }, T0 + 1_000_430, 'noneFromNov'),
+  ]);
+  ctx.check('고른 달부터 지우기', noneFromNov.results[0]?.status, 'applied');
+  ctx.check('11월부터 예산 없음', await monthsOf(), '200000,100000,-,-');
+  await ctx.prisma.budget.deleteMany({ where: { projectId: pid, categoryId } });
+
+  // ── 환율: 표에 붙지 않는 설정 명령. 재생하는 날의 줄로 적는다 ──
+  const rateSet = await push([
+    command('exchangeRate.set', 'USD:KRW', { id: 'USD:KRW', from: 'USD', to: 'KRW', rate: '1400' }, T0 + 1_000_600, 'rate'),
+  ]);
+  ctx.check('환율 정하기', rateSet.results[0]?.status, 'applied');
+  ctx.check('환율이 적힌다',
+    (await ctx.prisma.exchangeRate.findFirstOrThrow({ where: { projectId: pid, baseCurrency: 'USD', quoteCurrency: 'KRW' } })).rate.toString(),
+    '1400');
+  const rateAgain = await push([
+    command('exchangeRate.set', 'USD:KRW', { id: 'USD:KRW', from: 'USD', to: 'KRW', rate: '1450' }, T0 + 1_000_700, 'rate2'),
+  ]);
+  ctx.check('같은 날 다시 정하면 덮는다', rateAgain.results[0]?.status, 'applied');
+  ctx.check('줄은 하나',
+    await ctx.prisma.exchangeRate.count({ where: { projectId: pid, baseCurrency: 'USD', quoteCurrency: 'KRW' } }), 1);
+  const rateBad = await push([
+    command('exchangeRate.set', 'XXX:KRW', { id: 'XXX:KRW', from: 'XXX', to: 'KRW', rate: '1' }, T0 + 1_000_800, 'badRate'),
+  ]);
+  ctx.check('모르는 통화는 거절', rateBad.results[0]?.status, 'rejected');
+  const rateCleared = await push([
+    command('exchangeRate.clear', 'USD:KRW', { id: 'USD:KRW', from: 'USD', to: 'KRW' }, T0 + 1_000_900, 'clearRate'),
+  ]);
+  ctx.check('환율 되돌리기', rateCleared.results[0]?.status, 'applied');
+  ctx.check('그 쌍의 줄이 사라진다',
+    await ctx.prisma.exchangeRate.count({ where: { projectId: pid, baseCurrency: 'USD', quoteCurrency: 'KRW' } }), 0);
+
+  // ── 가계부 이름·표시 통화: 주인만 (이 스모크의 사용자는 구성원 표에 없다 → 거절) ──
+  const projectRenamed = await push([
+    command('project.update', pid, { id: pid, name: '새 이름' }, T0 + 1_001_000, 'rename'),
+  ]);
+  ctx.check('주인이 아니면 가계부 수정은 거절', projectRenamed.results[0]?.status, 'rejected');
+  await ctx.prisma.projectMember.create({ data: { projectId: pid, userId: uid, role: 'owner' } });
+  const projectRenamed2 = await push([
+    command('project.update', pid, { id: pid, name: '새 이름', displayCurrency: 'USD' }, T0 + 1_001_100, 'rename2'),
+  ]);
+  ctx.check('주인이면 가계부 수정', projectRenamed2.results[0]?.status, 'applied');
+  const projectAfter = await ctx.prisma.project.findUniqueOrThrow({ where: { id: pid } });
+  ctx.check('이름과 표시 통화가 바뀐다', `${projectAfter.name} ${projectAfter.displayCurrency}`, '새 이름 USD');
+  ctx.check('타임존은 그대로', projectAfter.timezone, 'Asia/Seoul');
+  const foreignProject = await push([
+    command('project.update', 'someone-else', { id: 'someone-else', name: 'x' }, T0 + 1_001_200, 'foreign'),
+  ]);
+  ctx.check('다른 가계부를 가리키는 명령은 거절', foreignProject.results[0]?.status, 'rejected');
+  await ctx.prisma.project.update({ where: { id: pid }, data: { displayCurrency: 'KRW' } });
+
+  // ── 2단계: 통합·삭제·잔액 맞추기 (표에 붙지 않는 명령) ──
+  const s2Id2 = (n: number) => `019273cc-0000-7000-8000-0000000002${String(n).padStart(2, '0')}`;
+  await push([
+    command('person.create', s2Id2(1), { id: s2Id2(1), name: '정리용' }, T0 + 2_000_000, 'p2'),
+    command('account.create', s2Id2(2), { id: s2Id2(2), name: '정리 통장', type: 'deposit', ownerId: s2Id2(1), currency: 'KRW' }, T0 + 2_000_001, 'a2'),
+    command('category.create', s2Id2(3), { id: s2Id2(3), name: '없앨 분류', type: 'expense' }, T0 + 2_000_002, 'c3'),
+    command('category.create', s2Id2(4), { id: s2Id2(4), name: '받을 분류', type: 'expense' }, T0 + 2_000_003, 'c4'),
+    command('category.create', s2Id2(5), { id: s2Id2(5), name: '수입 분류', type: 'income' }, T0 + 2_000_004, 'c5'),
+    command('tag.create', s2Id2(6), { id: s2Id2(6), name: '없앨 태그' }, T0 + 2_000_005, 't6'),
+    command('tag.create', s2Id2(7), { id: s2Id2(7), name: '받을 태그' }, T0 + 2_000_006, 't7'),
+  ]);
+  const s2Spend = await entries.createEntry(uid, {
+    kind: 'expense', personId: s2Id2(1), date: '2026-09-10T03:00:00.000Z', description: '정리할 지출',
+    splits: [{ categoryId: s2Id2(3), amount: '3000', lineKey: randomUUID(), tagIds: [s2Id2(6)] }],
+    accountId: s2Id2(2),
+  } as never, pid);
+
+  const s2TypeMismatch = await push([
+    command('category.merge', s2Id2(3), { id: s2Id2(3), moves: [{ fromId: s2Id2(3), toId: s2Id2(5) }] }, T0 + 2_000_010, 'mergeBad'),
+  ]);
+  ctx.check('유형이 다른 분류로 통합은 거절', s2TypeMismatch.results[0]?.code ?? s2TypeMismatch.results[0]?.status, 'CATEGORY_MERGE_TYPE_MISMATCH');
+  const s2Merged = await push([
+    command('category.merge', s2Id2(3), { id: s2Id2(3), moves: [{ fromId: s2Id2(3), toId: s2Id2(4) }] }, T0 + 2_000_011, 'merge'),
+  ]);
+  ctx.check('분류 통합', s2Merged.results[0]?.status, 'applied');
+  ctx.check('다리가 옮겨 간다',
+    (await ctx.prisma.posting.findFirstOrThrow({ where: { entryId: s2Spend.id, categoryId: { not: null } } })).categoryId, s2Id2(4));
+  ctx.check('없앤 분류는 사라진다', await ctx.prisma.category.count({ where: { id: s2Id2(3) } }), 0);
+  const s2MergedAgain = await push([
+    command('category.merge', s2Id2(3), { id: s2Id2(3), moves: [{ fromId: s2Id2(3), toId: s2Id2(4) }] }, T0 + 2_000_012, 'mergeAgain'),
+  ]);
+  ctx.check('이미 끝난 통합을 다시 보내도 끝난 것', s2MergedAgain.results[0]?.status, 'applied');
+
+  const s2TagMerged = await push([
+    command('tag.merge', s2Id2(6), { id: s2Id2(6), toId: s2Id2(7) }, T0 + 2_000_020, 'tagMerge'),
+  ]);
+  ctx.check('태그 통합', s2TagMerged.results[0]?.status, 'applied');
+  ctx.check('태그가 옮겨 간다',
+    (await ctx.prisma.entryTag.findFirstOrThrow({ where: { entryId: s2Spend.id } })).tagId, s2Id2(7));
+  ctx.check('없앤 태그는 사라진다', await ctx.prisma.tag.count({ where: { id: s2Id2(6) } }), 0);
+
+  // 잔액 맞추기: 기초잔액 전표가 없으면 기기가 정한 id 로 세운다
+  const s2OpeningEntryId = s2Id2(8);
+  const s2Balanced = await push([
+    command('account.balance', s2Id2(2), { id: s2Id2(2), balance: '100000', openingEntryId: s2OpeningEntryId }, T0 + 2_000_030, 'balance'),
+  ]);
+  ctx.check('잔액 맞추기', s2Balanced.results[0]?.status, 'applied');
+  ctx.check('잔액이 목표값', (await ctx.prisma.account.findUniqueOrThrow({ where: { id: s2Id2(2) } })).balance.toString(), '100000');
+  ctx.check('기초잔액 전표는 기기가 정한 id', await ctx.prisma.journalEntry.count({ where: { id: s2OpeningEntryId } }), 1);
+  const s2Rebalanced = await push([
+    command('account.balance', s2Id2(2), { id: s2Id2(2), balance: '50000', openingEntryId: s2Id2(9) }, T0 + 2_000_031, 'balance2'),
+  ]);
+  ctx.check('다시 맞추면 그 전표를 고친다', s2Rebalanced.results[0]?.status, 'applied');
+  ctx.check('잔액이 새 목표값', (await ctx.prisma.account.findUniqueOrThrow({ where: { id: s2Id2(2) } })).balance.toString(), '50000');
+  ctx.check('새 id 로 전표를 더 만들지 않는다', await ctx.prisma.journalEntry.count({ where: { id: s2Id2(9) } }), 0);
+
+  // 삭제: 붙은 것이 있으면 같은 코드로 거절, 없으면 지운다
+  const s2PersonBlocked = await push([command('person.delete', s2Id2(1), { id: s2Id2(1) }, T0 + 2_000_040, 'delP')]);
+  ctx.check('거래가 있는 구성원은 거절', s2PersonBlocked.results[0]?.code ?? s2PersonBlocked.results[0]?.status, 'PERSON_HAS_ACCOUNTS');
+  await push([command('category.create', s2Id2(10), { id: s2Id2(10), name: '빈 분류', type: 'expense' }, T0 + 2_000_041, 'c10')]);
+  await push([
+    command('person.create', s2Id2(11), { id: s2Id2(11), name: '빈 사람' }, T0 + 2_000_042, 'p11'),
+    command('account.create', s2Id2(12), { id: s2Id2(12), name: '빈 통장', type: 'deposit', ownerId: s2Id2(11), currency: 'KRW' }, T0 + 2_000_043, 'a12'),
+  ]);
+  const s2AccountDeleted = await push([command('account.delete', s2Id2(12), { id: s2Id2(12) }, T0 + 2_000_044, 'delA')]);
+  ctx.check('빈 통장 지우기', s2AccountDeleted.results[0]?.status, 'applied');
+  const s2PersonDeleted = await push([command('person.delete', s2Id2(11), { id: s2Id2(11) }, T0 + 2_000_045, 'delP2')]);
+  ctx.check('빈 구성원 지우기', s2PersonDeleted.results[0]?.status, 'applied');
+  ctx.check('구성원이 사라진다', await ctx.prisma.person.count({ where: { id: s2Id2(11) } }), 0);
+  const s2PersonAgain = await push([command('person.delete', s2Id2(11), { id: s2Id2(11) }, T0 + 2_000_046, 'delP3')]);
+  ctx.check('이미 없는 구성원 지우기도 끝난 것', s2PersonAgain.results[0]?.status, 'applied');
+  const s2BlockedAccount = await push([command('account.delete', s2Id2(2), { id: s2Id2(2) }, T0 + 2_000_047, 'delA2')]);
+  ctx.check('잔액이 남은 통장은 거절', s2BlockedAccount.results[0]?.code ?? s2BlockedAccount.results[0]?.status, 'ACCOUNT_HAS_BALANCE');
+
+  // ── 3단계: 반복 등록 (짐은 온라인 요청 그대로, 서버가 같은 검사를 다시 한다) ──
+  const s3Id = (n: number) => `019273cc-0000-7000-8000-0000000003${String(n).padStart(2, '0')}`;
+  const sync = new SyncService(ctx.prisma as any, access as any);
+  const s3Tag = await tags.createTag(uid, { name: '월세 태그' } as never, pid);
+  const s3Before = (await sync.pull(uid, { projectId: pid, since: 0 })).version;
+  const s3Created = await push([
+    command('recurring.create', s3Id(1), {
+      id: s3Id(1),
+      frequency: 'monthly',
+      dayOfMonth: 25,
+      // 월별에 요일은 뜻이 없어 버린다
+      weekdays: [1],
+      startDate: '2099-01-01',
+      kind: 'expense',
+      amount: '500000',
+      description: '  월세  ',
+      tagIds: [s3Tag.id],
+    }, T0 + 3_000_001, 'rc1'),
+  ]);
+  ctx.check('반복 만들기', s3Created.results[0]?.status, 'applied');
+  const s3Row = await ctx.prisma.recurringRule.findUniqueOrThrow({ where: { id: s3Id(1) }, include: { tags: true } });
+  ctx.check('이름은 다듬어 적는다', s3Row.description, '월세');
+  ctx.check('월별의 요일은 비운다', s3Row.weekdays.length, 0);
+  ctx.check('태그가 붙는다', s3Row.tags.map((row) => row.tagId).join(','), s3Tag.id);
+
+  const s3Again = await push([
+    command('recurring.create', s3Id(1), { id: s3Id(1), frequency: 'none', startDate: '2099-01-01', kind: 'expense', description: 'x' }, T0 + 3_000_002, 'rc1b'),
+  ]);
+  ctx.check('같은 id 로 다시 오면 겹친 것', s3Again.results[0]?.status, 'duplicate');
+  ctx.check('다시 온 것은 덮지 않는다',
+    (await ctx.prisma.recurringRule.findUniqueOrThrow({ where: { id: s3Id(1) } })).description, '월세');
+
+  const s3Pulled = await sync.pull(uid, { projectId: pid, since: s3Before });
+  const s3Wire = (s3Pulled.changes.recurringRules as Array<{ id: string; tagIds: string[]; amount: string }>)
+    .find((row) => row.id === s3Id(1));
+  ctx.check('pull 에 반복이 내려온다', Boolean(s3Wire), true);
+  ctx.check('pull 의 태그 id', s3Wire?.tagIds.join(','), s3Tag.id);
+  ctx.check('pull 의 금액은 글자', s3Wire?.amount, '500000');
+
+  const s3Updated = await push([
+    command('recurring.update', s3Id(1), { id: s3Id(1), kind: 'transfer', accountId: s2Id2(2) }, T0 + 3_000_003, 'ru1'),
+  ]);
+  ctx.check('반복 고치기', s3Updated.results[0]?.status, 'applied');
+  const s3Transfer = await ctx.prisma.recurringRule.findUniqueOrThrow({ where: { id: s3Id(1) } });
+  ctx.check('준 칸만 바뀐다 (일정은 그대로)', `${s3Transfer.kind} ${s3Transfer.dayOfMonth}`, 'transfer 25');
+
+  const s3Invalid = await push([
+    command('recurring.update', s3Id(1), { id: s3Id(1), frequency: 'weekly', weekdays: [] }, T0 + 3_000_004, 'ru2'),
+  ]);
+  ctx.check('틀린 일정은 같은 코드로 거절', s3Invalid.results[0]?.code ?? s3Invalid.results[0]?.status, 'RECURRING_INVALID');
+  const s3Missing = await push([
+    command('recurring.update', s3Id(9), { id: s3Id(9), isActive: false }, T0 + 3_000_005, 'ru3'),
+  ]);
+  ctx.check('없는 반복 고치기는 거절', s3Missing.results[0]?.status, 'rejected');
+
+  const s3Deleted = await push([command('recurring.delete', s3Id(1), { id: s3Id(1) }, T0 + 3_000_006, 'rd1')]);
+  ctx.check('반복 지우기', s3Deleted.results[0]?.status, 'applied');
+  ctx.check('표에서 사라진다', await ctx.prisma.recurringRule.count({ where: { id: s3Id(1) } }), 0);
+  const s3DeletedAgain = await push([command('recurring.delete', s3Id(1), { id: s3Id(1) }, T0 + 3_000_007, 'rd2')]);
+  ctx.check('이미 없는 반복 지우기도 끝난 것', s3DeletedAgain.results[0]?.status, 'applied');
+  const s3Tomb = await sync.pull(uid, { projectId: pid, since: s3Pulled.version });
+  ctx.check('지운 반복은 자리표로 내려온다',
+    s3Tomb.tombstones.some((row) => row.entity === 'RecurringRule' && row.entityId === s3Id(1)), true);
 
   // ── 6. 온라인 편집도 시계를 남긴다 ──
   //

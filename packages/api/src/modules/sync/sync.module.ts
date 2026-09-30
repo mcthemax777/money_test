@@ -9,6 +9,10 @@ import { CategoriesModule } from '../categories/categories.module';
 import { TagsModule } from '../tags/tags.module';
 import { BudgetsModule } from '../budgets/budgets.module';
 import { LedgerModule } from '../ledger/ledger.module';
+import { ExchangeRatesModule } from '../exchange-rates/exchange-rates.module';
+import { ProjectsModule } from '../projects/projects.module';
+import { HolidaysModule } from '../holidays/holidays.module';
+import { EntryDraftsModule } from '../entry-drafts/entry-drafts.module';
 import { SyncController } from './sync.controller';
 import { SyncService } from './sync.service';
 import { MutationReplayService } from './mutation-replay.service';
@@ -32,6 +36,10 @@ import { MutationReplayService } from './mutation-replay.service';
     CategoriesModule,
     TagsModule,
     BudgetsModule,
+    ExchangeRatesModule,
+    ProjectsModule,
+    HolidaysModule,
+    EntryDraftsModule,
   ],
   controllers: [SyncController],
   providers: [SyncService, MutationReplayService, ProjectAccessService],

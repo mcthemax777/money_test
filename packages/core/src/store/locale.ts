@@ -4,7 +4,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import { persistStorage } from '../lib/persist-storage';
 import { DEFAULT_LOCALE, isLocale, type Locale } from '@money/types';
 
-import { apiClient } from '../lib/api-client';
+import { saveProfile } from './pending-profile';
 
 /**
  * 지금 화면에 쓰는 말.
@@ -46,7 +46,8 @@ export const useLocaleStore = create<LocaleStore>()(
         set({ locale, isSaving: true });
 
         try {
-          await apiClient.updateProfile({ locale });
+          // 끊겨 있으면 들고 있다가 연결되면 보낸다 (pending-profile). 그때는 되돌리지 않는다.
+          await saveProfile({ locale });
         } catch (error) {
           set({ locale: previous });
           throw error;

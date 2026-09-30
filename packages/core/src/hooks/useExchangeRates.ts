@@ -3,6 +3,8 @@ import type { CurrencyCode, ExchangeRateInfo } from '@money/types';
 
 import { toAmountString, toNumber } from '../lib/money';
 import { apiClient } from '../lib/api-client';
+import { homeDataPort } from '../data/home-port';
+import { settingsWritePort } from '../data/settings-write-port';
 import { useProject } from '../store/project';
 import { useMirrorVersion } from './useMirrorVersion';
 
@@ -47,7 +49,8 @@ export function useExchangeRates() {
       return;
     }
 
-    apiClient
+    // 창구를 거친다. 앱에서는 사본이 답하므로 오프라인에서도 폼의 환율이 찬다.
+    homeDataPort()
       .getExchangeRates(selectedProjectId)
       .then((res) => {
         cache.set(key, { version: mirrorVersion, rates: res.rates ?? [] });
@@ -90,7 +93,8 @@ export function useExchangeRateSettings() {
   const load = useCallback(async () => {
     try {
       setFailure(null);
-      const data = await apiClient.getExchangeRates(selectedProjectId);
+      // 보기는 창구를 거친다 (앱은 오프라인에서도 목록이 선다). 고치기·되돌리기는 서버로 간다.
+      const data = await homeDataPort().getExchangeRates(selectedProjectId);
       setLedgerCurrency(data.ledgerCurrency);
       setRates(data.rates ?? []);
     } catch (error) {
@@ -111,10 +115,13 @@ export function useExchangeRateSettings() {
       try {
         setSavingPair(info.from);
         setFailure(null);
-        await apiClient.setExchangeRate(
-          { from: info.from, to: info.to, rate: toAmountString(value) },
-          selectedProjectId,
-        );
+        // 창구를 거친다. 앱에서는 사본에 곧바로 적고 명령으로 쌓아, 끊겨 있어도 된다.
+        await settingsWritePort().setExchangeRate({
+          from: info.from,
+          to: info.to,
+          rate: toAmountString(value),
+          projectId: selectedProjectId,
+        });
         // 거래 입력 폼이 들고 있는 캐시를 버린다. 안 버리면 폼에 옛 환율이 남는다.
         clearExchangeRateCache();
         await load();
@@ -133,7 +140,11 @@ export function useExchangeRateSettings() {
       try {
         setSavingPair(info.from);
         setFailure(null);
-        await apiClient.clearExchangeRate(info.from, info.to, selectedProjectId);
+        await settingsWritePort().clearExchangeRate({
+          from: info.from,
+          to: info.to,
+          projectId: selectedProjectId,
+        });
         clearExchangeRateCache();
         await load();
       } catch (error) {
