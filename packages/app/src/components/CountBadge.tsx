@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Animated, Text } from 'react-native';
+import { Animated, Text, View } from 'react-native';
 
 /**
  * 아이콘 오른쪽 위에 얹는 빨간 건수 배지.
@@ -31,15 +31,29 @@ export default function CountBadge({ count, inline }: { count: number; inline?: 
 
   if (count <= 0) return null;
 
-  return (
+  const badge = (
     <Animated.View
       pointerEvents="none"
-      className={`${inline ? '' : 'absolute -right-2 -top-1.5 '}h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-white bg-red-500 px-1`}
+      className="h-[18px] min-w-[18px] items-center justify-center rounded-full border-2 border-white bg-red-500 px-1"
       style={{ transform: [{ scale }] }}
     >
-      <Text className="text-[10px] font-bold leading-[12px] text-white">
+      <Text numberOfLines={1} className="text-[10px] font-bold leading-[12px] text-white">
         {count > 99 ? '99+' : count}
       </Text>
     </Animated.View>
+  );
+  if (inline) return badge;
+
+  /*
+   * 아이콘 위에 얹을 때는 넉넉한 투명 틀에 오른쪽으로 붙여 둔다.
+   *
+   * 절대 위치인 배지는 부모(18px 아이콘) 너비 안에서 재어져, 틀 없이 두면 두 자리부터
+   * 글자가 줄바꿈되거나 잘린다. 틀의 오른쪽 끝이 예전 배지 자리(-right-2)라 한 자리일 때의
+   * 모양은 그대로다.
+   */
+  return (
+    <View pointerEvents="none" className="absolute -right-2 -top-1.5 w-10 items-end">
+      {badge}
+    </View>
   );
 }
