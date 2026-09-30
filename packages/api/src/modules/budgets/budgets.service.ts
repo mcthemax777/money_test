@@ -21,7 +21,6 @@ import {
   categoryUsage,
   isBudgetApplicable,
   tagUsage,
-  tagUsageKey,
   totalUsage,
   zonedCurrentYearMonth,
   zonedMonthRange,
@@ -98,20 +97,19 @@ export class BudgetsService {
       'editor',
     );
 
-    const { categoryId, type } = resolveBudgetTarget(dto.categoryId, dto.type);
     const tagId = dto.tagId || undefined;
-
+    const resolved = resolveBudgetTarget(dto.categoryId, dto.type);
+    const categoryId = resolved.categoryId;
     /*
-     * 태그 예산. 분류와 함께 설 수 없고, 지출·수입을 type 으로 받아야 한다.
-     *
-     * type 이 없으면 조회 쪽이 어느 탭의 태그 예산인지 모른다. 둘 다 주면 그 예산이
-     * 분류의 것인지 태그의 것인지가 정해지지 않는다.
+     * 태그 예산은 태그마다 하나라 type 을 버린다. 사용액이 "지출 − 수입"이라 한 금액으로
+     * 견준다. 받아 두면 같은 태그에 규칙이 둘 서서 어느 것이 그 태그의 예산인지 갈린다.
+     * (지출·수입을 가르던 판의 기기가 type 을 실어 보내도 여기서 걸러진다.)
      */
+    const type = tagId ? undefined : resolved.type;
+
+    // 태그 예산은 분류와 함께 설 수 없다. 둘 다 주면 어느 쪽의 예산인지 정해지지 않는다.
     if (tagId) {
       if (categoryId) throw new BadRequestException('분류와 태그를 함께 가리킬 수 없습니다.');
-      if (type !== 'income' && type !== 'expense') {
-        throw new BadRequestException('태그 예산은 지출·수입을 골라야 합니다.');
-      }
       const tag = await this.prisma.tag.findUnique({ where: { id: tagId } });
       if (!tag || tag.projectId !== projectId) {
         throw new NotFoundException('유효한 태그가 아닙니다.');
@@ -148,7 +146,8 @@ export class BudgetsService {
         categoryId: categoryId ?? null,
         // 태그 예산과 전체 예산은 둘 다 분류가 없다. 태그로 가르지 않으면 서로를 고친다.
         tagId: tagId ?? null,
-        type: type || undefined,
+        // 태그 예산은 type 을 보지 않는다 (옛 판이 남긴 type 이 붙은 줄도 같은 규칙이다).
+        type: tagId ? undefined : type || undefined,
       },
     });
     const existingBudget = candidates.find((budget) =>
@@ -299,7 +298,7 @@ export class BudgetsService {
             projectId: budget.projectId,
             categoryId: budget.categoryId ?? null,
             tagId: budget.tagId ?? null,
-            // type을 빠뜨리면 안 된다. 전체 예산(categoryId = null)은 type이
+            // type을 빠뜨리면 안 된다 (태그 예산은 원래 없다). 전체 예산(categoryId = null)은 type이
             // 유일한 구분자라, 없이 만들면 조회 맵의 키가 `__total__undefined`가
             // 되어 그 달부터 전체 예산 칸이 빈 값으로 보인다.
             type: budget.type,
@@ -319,7 +318,7 @@ export class BudgetsService {
    * 한 대상(분류 하나, 또는 전체 예산 하나)의 규칙 전부.
    *
    * 분류 예산은 categoryId로 갈린다. 전체 예산은 categoryId가 없으므로 type이
-   * 유일한 구분자다(스키마 주석과 같은 규칙). 태그 예산은 (tagId, type) 이다. 이 둘을 한 곳에서 뽑아야 "그 달부터"가
+   * 유일한 구분자다(스키마 주석과 같은 규칙). 태그 예산은 tagId 하나다. 이 둘을 한 곳에서 뽑아야 "그 달부터"가
    * 어디까지 덮을지 판단하는 쪽과 조회하는 쪽이 같은 묶음을 본다.
    */
   private async findSiblingBudgets(
@@ -339,8 +338,10 @@ export class BudgetsService {
       },
     });
 
-    // 전체 예산과 태그 예산은 type 으로 갈린다 (한 태그에 지출·수입 예산이 따로 선다).
-    return budget.categoryId ? rows : rows.filter((row) => row.type === budget.type);
+    // 전체 예산만 type 으로 갈린다. 분류 예산과 태그 예산은 id 하나로 정해진다.
+    return budget.categoryId || budget.tagId
+      ? rows
+      : rows.filter((row) => row.type === budget.type);
   }
 
   /**
@@ -653,9 +654,9 @@ export class BudgetsService {
   }
 
   /**
-   * 한 달의 태그 예산과 사용액. 태그마다 지출·수입 두 줄이다.
+   * 한 달의 태그 예산과 사용액. 태그마다 한 줄이다.
    *
-   * 사용액은 **그 태그가 붙은 줄**의 합이다. 분할 거래는 줄마다 태그가 달라, 전표의 태그를
+   * 사용액은 **그 태그가 붙은 줄**의 지출 − 수입이다 (`tagUsage`). 분할 거래는 줄마다 태그가 달라, 전표의 태그를
    * 통째로 보면 태그를 붙이지 않은 줄까지 든다 (리포트의 태그 검색과 같은 판정이다).
    * 분류 예산과 같이 회차 기준으로 세고 같은 자산주인 필터를 건다.
    */
@@ -681,7 +682,7 @@ export class BudgetsService {
     const applicable = new Map(
       budgets
         .filter((budget) => this.isBudgetApplicable(budget, yearMonth))
-        .map((budget) => [tagUsageKey(budget.tagId!, budget.type ?? 'expense'), budget]),
+        .map((budget) => [budget.tagId!, budget]),
     );
     const overrideOf = new Map(overrides.map((override) => [override.budgetId, override]));
 
@@ -732,30 +733,26 @@ export class BudgetsService {
     );
 
     const { show } = await this.currencyView(projectId);
-    return tags.flatMap((tag) =>
-      (['expense', 'income'] as const).map((type): BudgetDto.MonthlyTagBudget => {
-        const key = tagUsageKey(tag.id, type);
-        const budget = applicable.get(key);
-        const override = budget ? overrideOf.get(budget.id) : undefined;
-        const rule = budget?.monthlyAmount ?? ZERO;
-        return {
-          budgetId: budget?.id ?? `placeholder-tag-${type}-${tag.id}`,
-          tagId: tag.id,
-          tagName: tag.name,
-          tagColor: tag.color ?? undefined,
-          type,
-          monthlyAmount: show.toString(override?.amount ?? rule),
-          ruleAmount: show.toString(rule),
-          usedAmount: show.toString(
-            new Prisma.Decimal((usage.get(key)?.amount ?? Dec.of(0)).toString()),
-          ),
-          isOverridden: Boolean(override),
-          overrideId: override?.id,
-          effectiveFrom: budget?.effectiveFrom ?? undefined,
-          effectiveTo: budget?.effectiveTo ?? undefined,
-        };
-      }),
-    );
+    return tags.map((tag): BudgetDto.MonthlyTagBudget => {
+      const budget = applicable.get(tag.id);
+      const override = budget ? overrideOf.get(budget.id) : undefined;
+      const rule = budget?.monthlyAmount ?? ZERO;
+      return {
+        budgetId: budget?.id ?? `placeholder-tag-${tag.id}`,
+        tagId: tag.id,
+        tagName: tag.name,
+        tagColor: tag.color ?? undefined,
+        monthlyAmount: show.toString(override?.amount ?? rule),
+        ruleAmount: show.toString(rule),
+        usedAmount: show.toString(
+          new Prisma.Decimal((usage.get(tag.id)?.amount ?? Dec.of(0)).toString()),
+        ),
+        isOverridden: Boolean(override),
+        overrideId: override?.id,
+        effectiveFrom: budget?.effectiveFrom ?? undefined,
+        effectiveTo: budget?.effectiveTo ?? undefined,
+      };
+    });
   }
 
   /**
@@ -787,7 +784,8 @@ export class BudgetsService {
         projectId,
         categoryId: categoryId ?? null,
         tagId: tagId ?? null,
-        type: type || undefined,
+        // 태그 예산은 type 을 보지 않는다. 화면이 탭의 유형을 실어 보내도 걸리지 않게 한다.
+        type: tagId ? undefined : type || undefined,
       },
     });
     const overrides =

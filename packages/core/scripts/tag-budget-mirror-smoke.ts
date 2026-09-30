@@ -6,7 +6,7 @@
  *   node -r ../api/node_modules/ts-node/register/transpile-only scripts/tag-budget-mirror-smoke.ts
  *
  * 오프라인에서도 서버와 같은 값이어야 한다.
- *   - 사용액은 태그가 붙은 줄만 (분할의 다른 줄은 빠진다), 할부는 회차 몫이다.
+ *   - 사용액은 태그가 붙은 줄의 지출 − 수입 (분할의 다른 줄은 빠진다), 할부는 회차 몫이다.
  *   - 태그 예산은 분류가 없는 줄이지만 전체 예산으로 읽히지 않는다.
  */
 import { zonedDayStart, zonedParts, type SyncDto } from '@money/types';
@@ -67,7 +67,7 @@ const entry = (
       })),
       {
         id: `${id}-acc`, entryId: id, accountId: 'a2', categoryId: null,
-        amount: `-${total}`, quantity: null, currency: 'KRW', baseAmount: `-${total}`,
+        amount: String(-total), quantity: null, currency: 'KRW', baseAmount: String(-total),
         exchangeRate: '1', cardId: 'card-1',
       },
     ],
@@ -101,6 +101,7 @@ const entry = (
       categories: [
         { id: 'c-food', projectId: PID, name: '식비', parentId: null, type: 'expense', icon: null, isDefault: false, sortOrder: 0, updatedVersion: 1 },
         { id: 'c-ride', projectId: PID, name: '교통', parentId: null, type: 'expense', icon: null, isDefault: false, sortOrder: 1, updatedVersion: 1 },
+        { id: 'c-refund', projectId: PID, name: '환불', parentId: null, type: 'income', icon: null, isDefault: false, sortOrder: 2, updatedVersion: 1 },
       ],
       tags: [
         { id: 't-trip', projectId: PID, name: '여행', color: '#3b82f6', sortRank: 'V', updatedVersion: 1 },
@@ -115,6 +116,10 @@ const entry = (
           { categoryId: 'c-food', amount: '7000', tagIds: ['t-trip'] },
           { categoryId: 'c-ride', amount: '3000', tagIds: [] },
         ]),
+        // 여행 경비 정산으로 돌려받은 5,000 (수입). 여행 사용액에서 빠진다.
+        entry('e-back', '정산', monthsAgo(0), [
+          { categoryId: 'c-refund', amount: '-5000', tagIds: ['t-trip'] },
+        ]),
         // 두 달 전 3개월 무이자 할부 30만원(여행). 이번 달에는 3회차 10만원이 선다.
         entry('e-bag', '여행 가방', monthsAgo(2), [
           { categoryId: 'c-food', amount: '300000', tagIds: ['t-trip', 't-team'] },
@@ -123,7 +128,7 @@ const entry = (
       budgets: [
         { id: 'b-total', projectId: PID, categoryId: null, tagId: null, type: 'expense',
           monthlyAmount: '500000', effectiveFrom: null, effectiveTo: null, updatedVersion: 1 },
-        { id: 'b-trip', projectId: PID, categoryId: null, tagId: 't-trip', type: 'expense',
+        { id: 'b-trip', projectId: PID, categoryId: null, tagId: 't-trip', type: null,
           monthlyAmount: '150000', effectiveFrom: null, effectiveTo: null, updatedVersion: 1 },
       ],
       budgetOverrides: [],
@@ -155,18 +160,17 @@ const entry = (
 
   const [year, month] = thisMonth.split('-').map(Number);
   const tagRows = await port.getTagBudgetsForMonth(year, month, PID);
-  const row = (tagId: string, type: 'income' | 'expense') =>
-    tagRows.find((candidate) => candidate.tagId === tagId && candidate.type === type);
+  const row = (tagId: string) => tagRows.find((candidate) => candidate.tagId === tagId);
 
   console.log('\n== 태그 예산 ==');
-  eq('태그마다 지출·수입 두 줄', tagRows.length, 4);
-  eq('여행 지출 예산', row('t-trip', 'expense')?.monthlyAmount, '150000');
-  eq('여행 지출 id', row('t-trip', 'expense')?.budgetId, 'b-trip');
-  // 7,000 (점심의 식비 줄) + 100,000 (가방 3회차). 교통 3,000 은 태그가 없어 빠진다.
-  eq('사용액은 태그 줄만, 할부는 회차 몫', row('t-trip', 'expense')?.usedAmount, '107000');
-  eq('한 줄에 태그 둘이면 둘 다 든다', row('t-team', 'expense')?.usedAmount, '100000');
-  eq('예산이 없는 줄은 자리표', row('t-team', 'expense')?.budgetId.startsWith('placeholder-'), true);
-  eq('태그 색이 실린다', row('t-trip', 'expense')?.tagColor, '#3b82f6');
+  eq('태그마다 한 줄', tagRows.length, 2);
+  eq('여행 예산', row('t-trip')?.monthlyAmount, '150000');
+  eq('여행 예산 id', row('t-trip')?.budgetId, 'b-trip');
+  // 7,000 (점심의 식비 줄) + 100,000 (가방 3회차) − 5,000 (정산). 교통 3,000 은 태그가 없어 빠진다.
+  eq('사용액은 태그 줄의 지출 − 수입, 할부는 회차 몫', row('t-trip')?.usedAmount, '102000');
+  eq('한 줄에 태그 둘이면 둘 다 든다', row('t-team')?.usedAmount, '100000');
+  eq('예산이 없는 줄은 자리표', row('t-team')?.budgetId.startsWith('placeholder-'), true);
+  eq('태그 색이 실린다', row('t-trip')?.tagColor, '#3b82f6');
 
   console.log('\n== 분류 예산과 섞이지 않는다 ==');
   const budgetRows = await port.getBudgetForMonth(year, month, PID);

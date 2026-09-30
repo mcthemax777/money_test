@@ -17,6 +17,11 @@ export function budgetPercentage(monthlyAmount: number, usedAmount: number): num
   const used = Number(usedAmount) || 0;
 
   if (budget <= 0) return 0;
+  /*
+   * 태그 예산은 쓴 돈에서 돌려받은 돈을 빼 음수가 될 수 있다. 음수 비율을 막대 폭에 넣으면
+   * 브라우저가 그 값을 버려 막대가 꽉 찬 것처럼 그려진다.
+   */
+  if (used <= 0) return 0;
 
   const ratio = Math.floor((used / budget) * 100);
   return used > budget ? Math.max(101, ratio) : ratio;
@@ -44,20 +49,18 @@ export const BUDGET_TOTAL_TARGET = {
 export type BudgetTargetId = string;
 
 /**
- * 태그 예산을 가리키는 화면 쪽 이름. 태그 하나에 지출·수입 예산이 따로 서므로 유형을 함께 싣는다.
+ * 태그 예산을 가리키는 화면 쪽 이름. 태그 예산은 태그마다 하나다(지출·수입으로 가르지 않는다).
  *
  * 분류 id 와 부딪히지 않게 앞에 `tag:` 를 붙인다 (분류 id 는 cuid·UUID 라 콜론이 없다).
  */
-export function tagBudgetTargetId(tagId: string, type: 'income' | 'expense'): BudgetTargetId {
-  return `tag:${type}:${tagId}`;
+export function tagBudgetTargetId(tagId: string): BudgetTargetId {
+  return `tag:${tagId}`;
 }
 
-/** 태그 예산 이름이면 그 태그와 유형. 아니면 null. */
-export function parseTagBudgetTarget(
-  targetId: BudgetTargetId,
-): { tagId: string; type: 'income' | 'expense' } | null {
-  const match = /^tag:(income|expense):(.+)$/.exec(targetId);
-  return match ? { type: match[1] as 'income' | 'expense', tagId: match[2] } : null;
+/** 태그 예산 이름이면 그 태그. 아니면 null. */
+export function parseTagBudgetTarget(targetId: BudgetTargetId): { tagId: string } | null {
+  const match = /^tag:(.+)$/.exec(targetId);
+  return match ? { tagId: match[1] } : null;
 }
 
 /**
@@ -100,7 +103,8 @@ export function budgetTargetOf(
   budgets: readonly EditableBudgetRow[],
   categories: readonly { id: string; type: 'income' | 'expense' }[],
 ): {
-  type: 'income' | 'expense';
+  /** 지출·수입. 태그 예산은 가르지 않아 없다. */
+  type?: 'income' | 'expense';
   /** 분류 예산·합계의 서버 쪽 이름. 태그 예산이면 없다. */
   apiCategoryId?: string;
   /** 태그 예산이면 그 태그 */
@@ -109,13 +113,8 @@ export function budgetTargetOf(
 } {
   const tagTarget = parseTagBudgetTarget(targetId);
   if (tagTarget) {
-    const found = budgets.find(
-      (row) =>
-        row.tagId === tagTarget.tagId &&
-        (row.type === tagTarget.type || row.categoryType === tagTarget.type),
-    );
+    const found = budgets.find((row) => row.tagId === tagTarget.tagId);
     return {
-      type: tagTarget.type,
       tagId: tagTarget.tagId,
       existing: found && !isPlaceholderBudget(found) ? found : undefined,
     };
@@ -201,17 +200,14 @@ export function budgetSettingRows(
 }
 
 /**
- * 예산 설정 화면의 태그 줄들. 태그 화면에서 정한 차례이고, 예산이 없는 태그도 모두 적는다.
- *
- * 태그에는 유형이 없어 같은 태그가 지출 탭과 수입 탭에 모두 선다. 두 탭의 예산은 따로다.
+ * 태그 예산 설정 화면의 줄들. 태그 화면에서 정한 차례이고, 예산이 없는 태그도 모두 적는다.
  */
 export function tagBudgetSettingRows(
   tagBudgets: readonly EditableBudgetRow[],
   tags: readonly { id: string; name: string; color?: string | null }[],
-  type: 'income' | 'expense',
 ): BudgetSettingRow[] {
   return tags.map((tag) => {
-    const id = tagBudgetTargetId(tag.id, type);
+    const id = tagBudgetTargetId(tag.id);
     const { existing } = budgetTargetOf(id, tagBudgets, []);
     return {
       id,
@@ -238,16 +234,26 @@ export function budgetSettingsHref(yearMonth: string, type: 'income' | 'expense'
 }
 
 /**
- * 주소에 실린 달과 유형. 없거나 모양이 틀리면 기본값(이번 달, 지출)이다.
+ * 태그 예산 설정으로 넘어가는 주소. 홈의 태그 예산 상자 톱니가 쓴다.
+ *
+ * 같은 화면을 태그만 보이게 연다. 태그 예산은 지출·수입으로 가르지 않아 type 이 없다.
+ */
+export function tagBudgetSettingsHref(yearMonth: string): string {
+  return `${BUDGET_SETTINGS_PATH}?kind=tag&month=${yearMonth}`;
+}
+
+/**
+ * 주소에 실린 갈래(분류·태그)와 달과 유형. 없거나 모양이 틀리면 기본값(분류, 이번 달, 지출)이다.
  *
  * `get` 은 웹의 URLSearchParams.get 과 같은 모양이다.
  */
 export function parseBudgetSettingsQuery(
   get: (key: string) => string | null,
   fallbackYearMonth: string,
-): { yearMonth: string; type: 'income' | 'expense' } {
+): { kind: 'category' | 'tag'; yearMonth: string; type: 'income' | 'expense' } {
   const month = get('month');
   return {
+    kind: get('kind') === 'tag' ? 'tag' : 'category',
     yearMonth: month && /^\d{4}-(0[1-9]|1[0-2])$/.test(month) ? month : fallbackYearMonth,
     type: get('type') === 'income' ? 'income' : 'expense',
   };

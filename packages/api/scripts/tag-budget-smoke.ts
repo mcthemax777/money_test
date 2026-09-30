@@ -1,8 +1,8 @@
 /**
  * 태그 예산.
  *
- *   1. 사용액은 **태그가 붙은 줄**의 합이다. 분할 거래의 다른 줄은 들지 않는다.
- *   2. 한 태그의 지출 예산과 수입 목표는 따로다 (type 으로 갈린다).
+ *   1. 사용액은 **태그가 붙은 줄**의 지출 − 수입이다. 분할 거래의 다른 줄은 들지 않는다.
+ *   2. 태그 예산은 태그마다 하나다. type 을 실어 보내도 버리고 같은 규칙을 고친다.
  *   3. 태그 예산은 분류 없는 줄이지만 **전체 예산으로 읽히지 않는다.** 만들고, 구간으로
  *      나누고, 지워도 전체 예산은 그대로다.
  *   4. 태그를 지우면 그 예산도 사라진다.
@@ -20,6 +20,7 @@ import {
   makeEntries,
   makeLedger,
   makePeople,
+  makeReports,
   makeTags,
   projectAccessStub,
   runSmoke,
@@ -40,6 +41,7 @@ runSmoke('tag-budget', async (ctx) => {
   const people = makePeople(ctx.prisma, access);
   const tags = makeTags(ctx.prisma, access);
   const budgets = makeBudgets(ctx.prisma, access);
+  const reports = makeReports(ctx.prisma, access);
 
   const person = await people.createPerson(uid, { name: '나' } as never, pid);
   const bankIssuer = await institutions.createInstitution(
@@ -113,9 +115,9 @@ runSmoke('tag-budget', async (ctx) => {
     pid,
   );
 
-  const tagRow = async (tagId: string, type: 'income' | 'expense', month = 9) =>
+  const tagRow = async (tagId: string, month = 9) =>
     (await budgets.getTagBudgetsForMonth(uid, pid, 2026, month)).find(
-      (row) => row.tagId === tagId && row.type === type,
+      (row) => row.tagId === tagId,
     )!;
   const totalExpense = async (month = 9) =>
     (await budgets.getBudgetForMonth(uid, pid, 2026, month)).find(
@@ -123,11 +125,11 @@ runSmoke('tag-budget', async (ctx) => {
     )!;
 
   // ── 1·2. 사용액 ──
-  ctx.check('태그마다 지출·수입 두 줄', (await budgets.getTagBudgetsForMonth(uid, pid, 2026, 9)).length, 4);
-  ctx.check('여행 지출: 태그 붙은 줄만 (7,000 + 2,000)', Number((await tagRow(trip.id, 'expense')).usedAmount), 9000);
-  ctx.check('여행 수입은 따로', Number((await tagRow(trip.id, 'income')).usedAmount), 50000);
-  ctx.check('한 줄에 태그 둘이면 둘 다 든다', Number((await tagRow(other.id, 'expense')).usedAmount), 2000);
-  ctx.check('예산이 없으면 자리표', (await tagRow(trip.id, 'expense')).budgetId.startsWith('placeholder-'), true);
+  ctx.check('태그마다 한 줄', (await budgets.getTagBudgetsForMonth(uid, pid, 2026, 9)).length, 2);
+  // 지출 7,000 + 2,000 에서 수입 50,000 을 뺀다
+  ctx.check('여행: 태그 줄의 지출 − 수입', Number((await tagRow(trip.id)).usedAmount), -41000);
+  ctx.check('한 줄에 태그 둘이면 둘 다 든다', Number((await tagRow(other.id)).usedAmount), 2000);
+  ctx.check('예산이 없으면 자리표', (await tagRow(trip.id)).budgetId.startsWith('placeholder-'), true);
 
   // ── 3. 전체 예산과 섞이지 않는다 ──
   const total = await budgets.createBudget(
@@ -137,35 +139,35 @@ runSmoke('tag-budget', async (ctx) => {
   );
   const tagBudget = await budgets.createBudget(
     uid,
-    { tagId: trip.id, type: 'expense', monthlyAmount: '100000', yearMonth: '2026-09' },
+    { tagId: trip.id, monthlyAmount: '100000', yearMonth: '2026-09' },
     pid,
   );
   ctx.check('태그 예산이 새 줄로 선다', tagBudget.id !== total.id, true);
-  ctx.check('태그 예산 금액', Number((await tagRow(trip.id, 'expense')).monthlyAmount), 100000);
-  ctx.check('수입 목표는 그대로 없다', Number((await tagRow(trip.id, 'income')).monthlyAmount), 0);
+  ctx.check('태그 예산에는 type 이 없다', tagBudget.type ?? null, null);
+  ctx.check('태그 예산 금액', Number((await tagRow(trip.id)).monthlyAmount), 100000);
   ctx.check('전체 예산은 그대로', Number((await totalExpense()).monthlyAmount), 500000);
   ctx.check('전체 예산 id 도 그대로', (await totalExpense()).budgetId, total.id);
 
   const again = await budgets.createBudget(
     uid,
-    { tagId: trip.id, type: 'expense', monthlyAmount: '120000', yearMonth: '2026-09' },
+    { tagId: trip.id, type: 'income', monthlyAmount: '120000', yearMonth: '2026-09' },
     pid,
   );
-  ctx.check('같은 태그·유형으로 다시 만들면 그 줄을 고친다', again.id, tagBudget.id);
+  ctx.check('type 을 실어 보내도 같은 태그의 그 줄을 고친다', again.id, tagBudget.id);
+  ctx.check('실어 보낸 type 은 버린다', again.type ?? null, null);
 
   await budgets.updateBudget(tagBudget.id, uid, {
     monthlyAmount: '80000',
     applyMode: 'from',
     applyFromMonth: '2026-10',
   });
-  ctx.check('구간: 9월은 옛 금액', Number((await tagRow(trip.id, 'expense', 9)).monthlyAmount), 120000);
-  ctx.check('구간: 10월은 새 금액', Number((await tagRow(trip.id, 'expense', 10)).monthlyAmount), 80000);
+  ctx.check('구간: 9월은 옛 금액', Number((await tagRow(trip.id, 9)).monthlyAmount), 120000);
+  ctx.check('구간: 10월은 새 금액', Number((await tagRow(trip.id, 10)).monthlyAmount), 80000);
   ctx.check('구간을 나눠도 전체 예산은 그대로', Number((await totalExpense(10)).monthlyAmount), 500000);
 
   const schedule = await budgets.getBudgetSchedule(uid, {
     projectId: pid,
     tagId: trip.id,
-    type: 'expense',
     startMonth: '2026-09',
     months: 2,
   });
@@ -181,13 +183,41 @@ runSmoke('tag-budget', async (ctx) => {
   ctx.check('전체 예산의 월별 목록에 태그 예산이 끼지 않는다',
     totalSchedule.map((row) => Number(row.amount)).join(','), '500000,500000');
 
-  // 태그 예산에는 type 이 있어야 하고, 분류와 함께 설 수 없다
+  // 태그 예산은 분류와 함께 설 수 없다
   let rejected = 0;
-  await budgets.createBudget(uid, { tagId: trip.id, monthlyAmount: '1' } as never, pid).catch(() => rejected++);
   await budgets
     .createBudget(uid, { tagId: trip.id, categoryId: food.id, type: 'expense', monthlyAmount: '1' }, pid)
     .catch(() => rejected++);
-  ctx.check('유형 없음·분류와 함께는 거절', rejected, 2);
+  ctx.check('분류와 함께는 거절', rejected, 1);
+
+  // 한 태그에 같은 달부터 시작하는 규칙은 하나 (부분 유일 색인)
+  let duplicate = false;
+  await ctx.prisma.budget
+    .create({ data: { projectId: pid, tagId: trip.id, monthlyAmount: '1', effectiveFrom: '2026-10' } })
+    .catch(() => (duplicate = true));
+  ctx.check('같은 태그·같은 시작 달의 규칙은 DB 가 막는다', duplicate, true);
+
+  // ── 5. 태그 분석 (예산 화면에서 태그 줄을 누르면 여는 창) ──
+  const trend = await reports.getTrend(uid, {
+    projectId: pid,
+    target: 'tag',
+    targetId: trip.id,
+    type: 'expense',
+    endMonth: '2026-09',
+    months: 2,
+  });
+  ctx.check('태그 추이: 태그 줄의 지출만 (7,000 + 2,000)',
+    trend.map((point) => Number(point.amount)).join(','), '0,9000');
+  const breakdown = await reports.getCategoryBreakdown(uid, {
+    projectId: pid,
+    yearMonth: '2026-09',
+    type: 'expense',
+    rollup: false,
+    tagIds: trip.id,
+  } as never);
+  ctx.check('태그로 좁힌 분류별: 교통 3,000 줄은 빠진다',
+    breakdown.map((row) => `${row.categoryName}:${Number(row.amount)}`).sort().join(','),
+    '교통:2000,식비:7000');
 
   // ── 4. 태그를 지우면 예산도 사라진다 ──
   await tags.deleteTag(trip.id, uid);

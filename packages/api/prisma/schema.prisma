@@ -879,10 +879,11 @@ model Budget {
   id            String        @id @default(cuid())
   projectId     String
   categoryId    String? // null = 전체 예산 (tagId 도 null 일 때)
-  /// 태그 예산이면 그 태그. categoryId 와 함께 서지 않고, type 이 지출·수입을 가른다.
+  /// 태그 예산이면 그 태그. categoryId 와 함께 서지 않고 type 도 없다(태그마다 하나, 사용액은
+  /// 지출 − 수입). 한 태그의 같은 시작 달 규칙은 부분 유일 색인 Budget_tag_rule_key 가 막는다.
   /// 태그를 지우면 그 예산도 사라진다(Cascade) -- SetNull 이면 조용히 전체 예산이 된다.
   tagId         String?
-  type          CategoryType? // categoryId가 null일 때만 사용
+  type          CategoryType? // 전체 예산(categoryId·tagId 가 null)일 때만 사용
   monthlyAmount Decimal       @db.Decimal(19, 4)
 
   // 적용 기간: null이면 무기한. "YYYY-MM" 형식

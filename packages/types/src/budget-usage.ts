@@ -127,26 +127,24 @@ export interface TaggedPostingRow extends CategoryPostingRow {
 }
 
 /**
- * 태그별 사용액. 열쇠는 `${tagId}:${type}` 이다 (`tagUsageKey`).
+ * 태그별 사용액. 열쇠는 태그 id 이고 값은 **지출 − 수입**이다.
  *
- * 한 줄에 태그가 둘이면 두 태그에 모두 든다. 태그는 겹쳐 붙이는 표지라 분류처럼 하나로
- * 나뉘지 않는다. 금액을 고르는 규칙은 분류 사용액과 같다(`selectedAmount`).
+ * 태그 예산은 지출·수입으로 가르지 않는다. "여행"에 30만원을 쓰고 5만원을 정산받았으면
+ * 그 여행에 든 돈은 25만원이다. 한 줄에 태그가 둘이면 두 태그에 모두 든다 -- 태그는
+ * 겹쳐 붙이는 표지라 분류처럼 하나로 나뉘지 않는다. 금액을 고르는 규칙은 분류 사용액과
+ * 같다(`selectedAmount`).
  */
 export function tagUsage(rows: readonly TaggedPostingRow[]): Map<string, CategoryUsage> {
   const usage = new Map<string, CategoryUsage>();
   for (const row of rows) {
     const amount = selectedAmount(row);
+    const signed = row.categoryType === 'income' ? amount.negated() : amount;
     for (const tagId of new Set(row.tagIds)) {
-      const key = tagUsageKey(tagId, row.categoryType);
-      const bucket = usage.get(key) ?? { amount: Dec.of(0), count: 0 };
-      bucket.amount = bucket.amount.plus(amount);
+      const bucket = usage.get(tagId) ?? { amount: Dec.of(0), count: 0 };
+      bucket.amount = bucket.amount.plus(signed);
       bucket.count += 1;
-      usage.set(key, bucket);
+      usage.set(tagId, bucket);
     }
   }
   return usage;
-}
-
-export function tagUsageKey(tagId: string, type: CategoryType): string {
-  return `${tagId}:${type}`;
 }

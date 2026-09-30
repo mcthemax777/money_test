@@ -13,11 +13,7 @@ import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import type { EntryScopeQuery, EntryListItem } from '@money/types';
 
-import {
-  TOTAL_EXPENSE_ID,
-  TOTAL_INCOME_ID,
-  useCategoryDetail,
-} from '@money/core/hooks/useCategoryDetail';
+import { useCategoryDetail } from '@money/core/hooks/useCategoryDetail';
 import { type ReportPeriod } from '@money/core/lib/api-client';
 import { useTranslation } from '@money/core/lib/i18n';
 import type { Category } from '@money/core/lib/types';
@@ -59,7 +55,7 @@ export default function CategoryDetailView({
   onClose,
   onEntryClick,
 }: {
-  /** 실제 분류 id, 또는 'total-expense'/'total-income' */
+  /** 실제 분류 id, 'total-expense'/'total-income', 또는 태그(`tag:<id>`) */
   categoryId: string;
   /** 머리글에 적을 이름. 목록이 쓰던 이름을 그대로 받는다. */
   categoryName: string;
@@ -87,16 +83,8 @@ export default function CategoryDetailView({
     reloadToken,
   });
 
-  /** 원형차트 제목. 지금이 대분류별인지 소분류별인지를 말한다. */
-  const pieTitle = (() => {
-    if (categoryId === TOTAL_EXPENSE_ID) {
-      return t(detail.drilledId ? 'detail.pieExpenseChild' : 'detail.pieExpenseParent');
-    }
-    if (categoryId === TOTAL_INCOME_ID) {
-      return t(detail.drilledId ? 'detail.pieIncomeChild' : 'detail.pieIncomeParent');
-    }
-    return t('detail.pieExpenseChild');
-  })();
+  /** 원형차트 제목. 대분류별인지 소분류별인지는 훅이 정한다 (웹과 같은 값). */
+  const pieTitle = t(detail.pieTitle);
 
   /** 거래 목록에서 세는 세 그래프가 비었을 때의 안내. 일별 누적과 같은 말을 쓴다. */
   const emptyPattern = t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noPeriod);

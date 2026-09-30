@@ -31,8 +31,8 @@ const LEVEL_CLASS: Record<BudgetSettingRow['level'], string> = {
 /**
  * 예산 설정. 홈의 예산 상자 오른쪽 위 톱니로 들어온다. 웹의 /home/budgets 와 같다.
  *
- * 합계·대분류·소분류를 분류 화면의 차례로, 그 아래 태그를 태그 화면의 차례로 모두
- * 늘어놓고, 줄을 누르면 예산 팝업이 열린다.
+ * 분류 예산 상자의 톱니로 오면 합계·대분류·소분류를, 태그 예산 상자의 톱니로 오면(`kind=tag`)
+ * 태그를 늘어놓는다. 줄을 누르면 예산 팝업이 열린다.
  */
 export default function BudgetSettingsScreen() {
   const { t } = useTranslation();
@@ -42,7 +42,7 @@ export default function BudgetSettingsScreen() {
   const displayCurrency = useProjectDisplayCurrency();
   const canEdit = useCanEdit();
 
-  /* 홈에서 보던 달과 지출·수입으로 연다. 주소에 없으면 이번 달 지출이다. */
+  /* 홈에서 보던 갈래·달·지출수입으로 연다. 주소에 없으면 이번 달 분류 지출이다. */
   const [initial] = useState(() => {
     const today = currentYearMonth(timeZone);
     const params = new URLSearchParams(path.split('?')[1] ?? '');
@@ -54,6 +54,7 @@ export default function BudgetSettingsScreen() {
   const [yearMonth, setYearMonth] = useState(initial.yearMonth);
   const [type, setType] = useState(initial.type);
   const [year, month] = yearMonth.split('-').map(Number);
+  const isTag = initial.kind === 'tag';
 
   const { rows, tagRows, isLoading, hasError, editor, nameOf } = useBudgetSettings({
     projectId,
@@ -63,7 +64,7 @@ export default function BudgetSettingsScreen() {
 
   return (
     <View className="gap-4">
-      <PageHeader title={t('budget.settings')} showBack />
+      <PageHeader title={isTag ? t('budget.tagSettings') : t('budget.settings')} showBack />
 
       <MonthHeader
         year={year}
@@ -76,10 +77,15 @@ export default function BudgetSettingsScreen() {
         }
       />
 
-      {/* 홈의 탭과 같은 것이다. 합계는 이 화면이 다루지 않아 적지 않는다. */}
-      <TypeTabs type={type} onChange={setType} />
+      {/*
+        홈의 탭과 같은 것이다. 합계는 이 화면이 다루지 않아 적지 않는다.
+        태그 예산은 지출·수입으로 가르지 않아 탭이 없다.
+      */}
+      {!isTag ? <TypeTabs type={type} onChange={setType} /> : null}
 
-      <Text className="text-sm text-gray-500">{t('budget.settingsHint')}</Text>
+      <Text className="text-sm text-gray-500">
+        {isTag ? t('budget.tagSettingsHint') : t('budget.settingsHint')}
+      </Text>
 
       {hasError ? (
         <View className="rounded-lg bg-red-50 p-3">
@@ -87,29 +93,19 @@ export default function BudgetSettingsScreen() {
         </View>
       ) : null}
 
-      {isLoading && rows.length <= 1 ? (
+      {isLoading && (isTag ? tagRows.length === 0 : rows.length <= 1) ? (
         <View className="rounded-lg bg-white p-4 shadow-sm">
           <Text className="text-sm text-gray-600">{t('common.loading')}</Text>
         </View>
+      ) : isTag && tagRows.length === 0 ? (
+        <Text className="text-sm text-gray-500">{t('budget.noTags')}</Text>
       ) : (
-        <>
-          <BudgetRows rows={rows} canEdit={canEdit} onOpen={editor.open} currency={displayCurrency} />
-
-          {/* 태그. 분류와 칸을 나눈다 (웹과 같은 까닭). */}
-          <View className="gap-2">
-            <Text className="font-semibold text-gray-900">{t('budget.tagSection')}</Text>
-            {tagRows.length === 0 ? (
-              <Text className="text-sm text-gray-500">{t('budget.noTags')}</Text>
-            ) : (
-              <BudgetRows
-                rows={tagRows}
-                canEdit={canEdit}
-                onOpen={editor.open}
-                currency={displayCurrency}
-              />
-            )}
-          </View>
-        </>
+        <BudgetRows
+          rows={isTag ? tagRows : rows}
+          canEdit={canEdit}
+          onOpen={editor.open}
+          currency={displayCurrency}
+        />
       )}
 
       <BudgetEditModal

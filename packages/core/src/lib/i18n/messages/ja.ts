@@ -14,7 +14,7 @@ export const ja: Record<MessageKey, string> = {
   'common.changing': '変更中...',
 
   // ===== ナビゲーション =====
-  'nav.home': 'ホーム',
+  'nav.home': '予算',
   'nav.transactions': '取引',
   'nav.ledger': '家計簿',
   'nav.assets': '資産',
@@ -197,17 +197,11 @@ export const ja: Record<MessageKey, string> = {
 
   // ===== ホーム =====
   'home.loadFailed': 'データを取得できませんでした。',
-  'home.chartFailed': 'グラフを読み込めませんでした。',
-  'home.chartComingSoon': 'グラフは今のところウェブのみで見られます。',
   'home.noPeople': 'メンバーがいません。資産画面で資産の持ち主を先に作成してください。',
   'home.assetsNoun': '資産',
   'home.performanceTitle': '実績期間の利用額',
   'home.tab.expense': '支出',
   'home.tab.income': '収入',
-  'home.chart.expense.total': '支出全体',
-  'home.chart.income.total': '収入全体',
-  'home.categoryChart.expense': 'カテゴリ別の支出',
-  'home.categoryChart.income': 'カテゴリ別の収入',
   'home.settlementTitle': '{card}の精算',
   'home.entriesTitle': '{month}の取引',
 
@@ -254,13 +248,6 @@ export const ja: Record<MessageKey, string> = {
   'method.empty': '表示するカードがありません。',
   'method.remaining': '残り{amount}',
 
-  // ===== カテゴリ別グラフ =====
-  'donut.rest': 'その他',
-  'donut.empty.expense': '今月の支出がありません。',
-  'donut.empty.income': '今月の収入がありません。',
-  'donut.loadFailed.expense': 'カテゴリ別の支出を読み込めませんでした。',
-  'donut.loadFailed.income': 'カテゴリ別の収入を読み込めませんでした。',
-
   // ===== 予算 =====
   'budget.title.expense': '予算',
   'budget.title.income': '目標',
@@ -273,8 +260,6 @@ export const ja: Record<MessageKey, string> = {
   // ===== 累計グラフ =====
   'chart.dayTick': '{day}日',
   'chart.hourTick': '{hour}時',
-  'chart.monthStart': '月初',
-  'chart.comparePrevious': '先月の同じ期間',
 
   'currencyUnit.KRW': 'ウォン',
   'currencyUnit.USD': 'ドル',
@@ -496,7 +481,7 @@ export const ja: Record<MessageKey, string> = {
   'card.expiryYear': '年',
   'card.expiryMonth': '月',
   'card.color': 'カードの色 (任意)',
-  'card.colorHint': 'ホーム画面のカード表面の色です。選ばないと{default}で表示されます。',
+  'card.colorHint': '予算画面のカード表面の色です。選ばないと{default}で表示されます。',
   'card.colorDefaultCredit': 'クレジットカードの既定色(青)',
   'card.colorDefaultDebit': 'デビットカードの既定色(緑)',
   'card.closingDay': '締め日',
@@ -623,7 +608,11 @@ export const ja: Record<MessageKey, string> = {
     '新しく作る予算はすべての月に適用されます。保存すると下に月別の一覧が出て、特定の月だけ変えられます。',
   'budget.settings': '予算の設定',
   'budget.tagTarget': '{name}タグ',
-  'budget.tagSection': 'タグ',
+  'budget.thisMonth': '今月の予算',
+  'budget.tagTitle': 'タグ予算',
+  'budget.tagSettings': 'タグ予算の設定',
+  'budget.tagSettingsHint': 'タグを押すと、その月予算を決められます。使った金額から戻ってきた金額（返金・精算）を引いて比べます。',
+  'budget.none.tag': '予算を決めたタグがありません。右上の歯車から決められます。',
   'budget.noTags': 'タグがありません。カテゴリ画面のタグで作成できます。',
   'budget.settingsHint': 'カテゴリを押すと、その月予算を決められます。',
   'budget.monthAdjusted': '今月のみ調整',

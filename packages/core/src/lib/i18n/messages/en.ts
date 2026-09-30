@@ -14,7 +14,7 @@ export const en: Record<MessageKey, string> = {
   'common.changing': 'Changing...',
 
   // ===== Navigation =====
-  'nav.home': 'Home',
+  'nav.home': 'Budget',
   'nav.transactions': 'Entries',
   'nav.ledger': 'Ledger',
   'nav.assets': 'Assets',
@@ -196,17 +196,11 @@ export const en: Record<MessageKey, string> = {
 
   // ===== Home =====
   'home.loadFailed': 'Could not load the data.',
-  'home.chartFailed': 'Could not load the chart.',
-  'home.chartComingSoon': 'Charts are available on the web for now.',
   'home.noPeople': 'No members yet. Create an owner on the Assets screen first.',
   'home.assetsNoun': 'assets',
   'home.performanceTitle': 'Spending in the reward period',
   'home.tab.expense': 'Expense',
   'home.tab.income': 'Income',
-  'home.chart.expense.total': 'All spending',
-  'home.chart.income.total': 'All income',
-  'home.categoryChart.expense': 'Spending by category',
-  'home.categoryChart.income': 'Income by category',
   'home.settlementTitle': '{card} settlement',
   'home.entriesTitle': 'Entries in {month}',
 
@@ -253,13 +247,6 @@ export const en: Record<MessageKey, string> = {
   'method.empty': 'No cards to show.',
   'method.remaining': '{amount} to go',
 
-  // ===== Category chart =====
-  'donut.rest': 'Other',
-  'donut.empty.expense': 'No spending this month.',
-  'donut.empty.income': 'No income this month.',
-  'donut.loadFailed.expense': 'Could not load spending by category.',
-  'donut.loadFailed.income': 'Could not load income by category.',
-
   // ===== Budget summary =====
   'budget.title.expense': 'Budget',
   'budget.title.income': 'Target',
@@ -272,8 +259,6 @@ export const en: Record<MessageKey, string> = {
   // ===== Cumulative chart =====
   'chart.dayTick': '{day}',
   'chart.hourTick': '{hour}:00',
-  'chart.monthStart': 'Start',
-  'chart.comparePrevious': 'same days last month',
 
   'currencyUnit.KRW': 'won',
   'currencyUnit.USD': 'dollars',
@@ -497,7 +482,7 @@ export const en: Record<MessageKey, string> = {
   'card.expiryYear': 'Year',
   'card.expiryMonth': 'Month',
   'card.color': 'Card color (optional)',
-  'card.colorHint': 'This is the card face color on the home screen. Without a choice it shows in {default}.',
+  'card.colorHint': 'This is the card face color on the Budget screen. Without a choice it shows in {default}.',
   'card.colorDefaultCredit': 'the credit card default (blue)',
   'card.colorDefaultDebit': 'the debit card default (green)',
   'card.closingDay': 'Closing day',
@@ -625,7 +610,11 @@ export const en: Record<MessageKey, string> = {
     'A new budget applies to every month. Once saved, a month-by-month list appears below where you can change a single month.',
   'budget.settings': 'Budget settings',
   'budget.tagTarget': '{name} tag',
-  'budget.tagSection': 'Tags',
+  'budget.thisMonth': 'Budget this month',
+  'budget.tagTitle': 'Tag budgets',
+  'budget.tagSettings': 'Tag budget settings',
+  'budget.tagSettingsHint': 'Tap a tag to set its monthly budget. It is measured as spending minus money received back (refunds, settlements).',
+  'budget.none.tag': 'No tag has a budget yet. Tap the gear at the top right to set one.',
   'budget.noTags': 'No tags yet. Create them under Tags on the Categories screen.',
   'budget.settingsHint': 'Tap a category to set its monthly budget.',
   'budget.monthAdjusted': 'Adjusted this month',

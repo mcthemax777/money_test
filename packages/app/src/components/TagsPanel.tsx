@@ -18,10 +18,15 @@ import type { TagDto } from '@money/types';
 import { EMPTY_TAG_FORM, useTagManager, type TagFormValues } from '@money/core/hooks/useTagManager';
 import { EMPTY_SEARCH } from '@money/core/hooks/useTransactions';
 import { useTranslation } from '@money/core/lib/i18n';
+import { useThisMonthBudget } from '@money/core/hooks/useBudgetSettings';
+import { tagBudgetTargetId } from '@money/core/lib/budget';
+import { useCanEdit } from '@money/core/store/project';
 import { useEntryFocus } from '@money/core/store/entry-focus';
 
 import { useNavigation } from '../shell/navigation';
 import Modal from './Modal';
+import BudgetEditModal from './BudgetEditModal';
+import BudgetField from './BudgetField';
 import TagDeleteModal from './TagDeleteModal';
 import AddButton from './AddButton';
 import MoveRow from './MoveRow';
@@ -34,6 +39,9 @@ const SHIFT = LayoutAnimation.create(180, 'easeInEaseOut', 'opacity');
 export default function TagsPanel({ projectId }: { projectId: string | null }) {
   const { t } = useTranslation();
   const manager = useTagManager(projectId);
+  /* 태그 창의 "이번 달 예산". 홈의 태그 예산 설정과 같은 훅과 팝업이다 (웹과 같다). */
+  const budget = useThisMonthBudget(projectId);
+  const canEdit = useCanEdit();
   const nav = useNavigation();
   /** 거래 화면과 주고받는 쪽지. 분류 화면의 것과 같은 자리를 쓴다. */
   const focusEntries = useEntryFocus((state) => state.focusEntries);
@@ -279,8 +287,33 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
               }}
             />
           ) : null}
+
+          {/*
+            이 태그의 이번 달 예산. 새로 만드는 중에는 예산을 걸 태그가 아직 없다. 누르면 이
+            창은 닫는다 (적던 이름·색은 저장하지 않는다. 두 창이 겹치면 어느 쪽이 닫히는지 헷갈린다).
+          */}
+          {editingId ? (
+            <BudgetField
+              row={budget.settingOf(tagBudgetTargetId(editingId))}
+              onEdit={
+                canEdit
+                  ? () => {
+                      setIsFormOpen(false);
+                      budget.editor.open(tagBudgetTargetId(editingId));
+                    }
+                  : undefined
+              }
+            />
+          ) : null}
         </View>
       </Modal>
+
+      <BudgetEditModal
+        editor={budget.editor}
+        projectId={projectId}
+        name={budget.editor.targetId ? budget.nameOf(budget.editor.targetId) : ''}
+        yearMonth={budget.yearMonth}
+      />
     </View>
   );
 }

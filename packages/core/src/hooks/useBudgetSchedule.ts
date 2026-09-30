@@ -32,9 +32,10 @@ export function useBudgetSchedule({
   projectId: string | null;
   /** 분류 예산이면 분류 id, 합계면 'BUDGET_TOTAL_INCOME' / 'BUDGET_TOTAL_EXPENSE'. */
   categoryId?: string;
-  /** 태그 예산이면 그 태그. 이때 categoryId 는 없고 type 이 지출·수입을 가른다. */
+  /** 태그 예산이면 그 태그. 이때 categoryId 는 없다. */
   tagId?: string;
-  type: 'income' | 'expense';
+  /** 합계·분류 예산의 지출·수입. 태그 예산은 가르지 않아 없다. */
+  type?: 'income' | 'expense';
   /** 목록이 시작하는 달 "YYYY-MM". 보통 화면이 보고 있는 달이다. */
   startMonth: string;
   /** 바깥 폼이 규칙을 바꾸면 올라온다. 여러 달이 한꺼번에 달라지므로 다시 읽는다. */

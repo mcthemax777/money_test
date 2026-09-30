@@ -12,6 +12,9 @@ import {
   type CategoryFormValues,
 } from '@money/core/hooks/useCategoryManager';
 import Modal from '@/components/Modal';
+import BudgetEditModal from '@/components/BudgetEditModal';
+import BudgetField from '@/components/BudgetField';
+import { useThisMonthBudget } from '@money/core/hooks/useBudgetSettings';
 import CategoryFormFields from '@/components/CategoryFormFields';
 import CategoryMergeModal from '@/components/CategoryMergeModal';
 import ChoiceModal from '@/components/ChoiceModal';
@@ -63,6 +66,8 @@ export default function CategoriesPage() {
   const { loadUser } = useAuth();
   const { selectedProjectId } = useProject();
   const manager = useCategoryManager(selectedProjectId);
+  /* 분류 상세의 "이번 달 예산". 홈의 예산 설정과 같은 훅과 팝업이다. */
+  const budget = useThisMonthBudget(selectedProjectId);
   const { categories, isLoading, isSubmitting } = manager;
   /**
    * 지금 이 자리에 펼쳐 둔 거래내역. null 이면 평소의 분류·태그 화면이다.
@@ -501,6 +506,22 @@ export default function CategoriesPage() {
             </p>
           </div>
 
+          {/*
+            이 분류의 이번 달 예산. 홈의 예산 설정과 같은 팝업을 연다. 상세 창은 닫는다 --
+            두 창이 겹치면 닫기를 누를 때 어느 쪽이 닫히는지 헷갈린다.
+          */}
+          <BudgetField
+            row={budget.settingOf(selectedCategory.id)}
+            onEdit={
+              canEdit
+                ? () => {
+                    setIsDetailModalOpen(false);
+                    budget.editor.open(selectedCategory.id);
+                  }
+                : undefined
+            }
+          />
+
           {!selectedCategory.parentId && (
             <>
               {categories.filter((c) => c.parentId === selectedCategory.id).length > 0 && (
@@ -528,6 +549,13 @@ export default function CategoriesPage() {
         </div>
       )}
       </Modal>
+
+      <BudgetEditModal
+        editor={budget.editor}
+        projectId={selectedProjectId}
+        name={budget.editor.targetId ? budget.nameOf(budget.editor.targetId) : ''}
+        yearMonth={budget.yearMonth}
+      />
 
       <Modal
         isOpen={isModalOpen}

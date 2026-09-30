@@ -1,20 +1,17 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import type { BudgetDto, CardDto, EntryFilterQuery, ReportDto } from '@money/types';
+import type { BudgetDto, CardDto, EntryFilterQuery } from '@money/types';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
 
-import { apiClient } from '@money/core/lib/api-client';
 import {
   currentYearMonth,
   dateMarkerKey,
   formatMonthShort,
   monthQueryRange,
-  shiftYearMonth,
-  throughDayOf,
 } from '@money/core/lib/datetime';
-import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { useHomeData } from '@money/core/hooks/useHomeData';
 import { useProjectGuard } from '@/hooks/useProjectGuard';
@@ -23,10 +20,8 @@ import {
   useProjectDisplayCurrency,
   useProjectTimeZone,
 } from '@money/core/store/project';
-import { budgetSettingsHref } from '@money/core/lib/budget';
+import { budgetSettingsHref, tagBudgetSettingsHref } from '@money/core/lib/budget';
 import { useUserFilter } from '@money/core/store/user-filter';
-import CategoryDonutChart from '@/components/CategoryDonutChart';
-import CumulativeExpenseChart from '@/components/CumulativeExpenseChart';
 import EntryFeed from '@/components/EntryFeed';
 import CardSettlementPanel from '@/components/CardSettlementPanel';
 import EntryEditor, {
@@ -34,19 +29,14 @@ import EntryEditor, {
   type ReferenceDataPatch,
 } from '@/components/EntryEditor';
 import Modal from '@/components/Modal';
+import { BudgetDetailModal } from '@/components/BudgetDetailModal';
+import { useLedgerBasis } from '@money/core/store/ledger-basis';
 import MonthHeader from '@/components/MonthHeader';
-import MonthlyBudgetSummary from '@/components/MonthlyBudgetSummary';
+import MonthlyBudgetSummary, { TagBudgetSummary } from '@/components/MonthlyBudgetSummary';
 import PageHeader from '@/components/PageHeader';
-import ScrollRow from '@/components/ScrollRow';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import SpendingMethodCarousel from '@/components/SpendingMethodCarousel';
-import TypeTabs, { type EntryType } from '@/components/TypeTabs';
-
-/** 누적 그래프의 제목. 지출과 수입이 한 장씩이다. */
-const CUMULATIVE_CHART_TITLE: Record<EntryType, MessageKey> = {
-  expense: 'home.chart.expense.total',
-  income: 'home.chart.income.total',
-};
+import type { EntryType } from '@/components/TypeTabs';
 
 /**
  * 로그인하면 처음 보는 화면.
@@ -71,7 +61,7 @@ export default function HomePage() {
   const canEdit = useCanEdit();
 
   /*
-   * 보고 있는 달. 아래 예산·그래프·거래 목록이 모두 이 달을 따른다.
+   * 보고 있는 달. 아래 예산·거래 목록이 모두 이 달을 따른다.
    *
    * 위쪽 실적 구간 카드는 따라가지 않는다. 카드사가 지금 세고 있는 구간이라
    * 지난 달을 펴 보는 것과 뜻이 다르다.
@@ -81,16 +71,9 @@ export default function HomePage() {
   const { year, month } = view;
   const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
   const thisYearMonth = `${thisYear}-${String(thisMonth).padStart(2, '0')}`;
-  const previousYearMonth = shiftYearMonth(yearMonth, -1);
-  const earlierYearMonth = shiftYearMonth(yearMonth, -2);
   const monthRange = monthQueryRange(year, month, timeZone);
 
-  /*
-   * 화면이 보는 값 전부. 앱의 홈 화면도 같은 훅을 쓴다.
-   *
-   * 그래프만 여기 남는다. 앱에는 아직 그래프가 없고, 탭을 옮길 때마다 카드 실적까지
-   * 다시 받지 않도록 조회도 따로 두어야 한다.
-   */
+  /* 화면이 보는 값 전부. 앱의 홈 화면도 같은 훅을 쓴다. */
   const home = useHomeData({ projectId: selectedProjectId, year, month, thisYearMonth });
   const {
     people,
@@ -110,87 +93,25 @@ export default function HomePage() {
   } = home;
 
   /*
-   * 아래 예산과 그래프가 지출을 볼지 수입을 볼지.
+   * 분류 예산 상자가 지출을 볼지 수입을 볼지. 탭은 그 상자 안에 있다.
    *
    * 지출부터 본다. 홈을 여는 까닭은 대개 "이 달에 얼마나 썼나"이고, 수입은 달마다
-   * 크게 흔들리지 않는다.
+   * 크게 흔들리지 않는다. 태그 예산 상자는 이 값을 따르지 않는다.
    */
   const [type, setType] = useState<EntryType>('expense');
-  /* 아래 셋은 모두 지금 고른 탭(type)의 값이다. */
-  const [dailyPoints, setDailyPoints] = useState<ReportDto.DailyExpensePoint[]>([]);
-  const [previousDailyPoints, setPreviousDailyPoints] = useState<ReportDto.DailyExpensePoint[]>([]);
-  /** 전전달. 지난달 하나만으로는 그 달이 유난했던 것인지 알 수 없다. */
-  const [earlierDailyPoints, setEarlierDailyPoints] = useState<ReportDto.DailyExpensePoint[]>([]);
-  /** 그래프를 받는 중. 탭을 옮기면 다시 받는다. */
-  const [isChartLoading, setIsChartLoading] = useState(true);
   /*
-   * 그래프만 못 받았을 때.
+   * 예산 줄을 눌러 연 상세 분석. 가계 분류별에서 분류를 누를 때와 같은 패널을 팝업으로 띄운다.
    *
-   * 위쪽 오류와 나눠 둔다. 그쪽은 화면 맨 위 띠라, 그래프 하나가 실패했을 때
-   * 띄우면 예산과 실적 구간까지 못 받은 것처럼 보인다.
+   * 세는 기준(회차·발생)도 가계와 같은 값을 싣는다. 같은 분류를 두 화면에서 열었는데
+   * 금액이 다르면 어느 쪽이 맞는지 따지게 된다.
    */
-  const [chartError, setChartError] = useState('');
+  const [detailTarget, setDetailTarget] = useState<{ id: string; name: string } | null>(null);
+  const basis = useLedgerBasis((state) => state.basis);
+  const detailFilter = useMemo(() => ({ ...appliedFilter, basis }), [appliedFilter, basis]);
   /** 정산 팝업을 띄울 카드. */
   const [settlementCardId, setSettlementCardId] = useState<string | null>(null);
   /** 거래 상세·수정 팝업. 가계·자산 화면과 같은 컴포넌트다. */
   const entryEditorRef = useRef<EntryEditorHandle>(null);
-
-  /** 이번 달 선을 어디까지 그을지 (throughDayOf 주석 참고) */
-  const throughDay = throughDayOf(yearMonth, timeZone);
-
-
-  /*
-   * 누적 그래프의 재료. 고른 탭의 세 달치를 받는다.
-   *
-   * 위 조회와 나누어 둔다. 탭을 옮길 때마다 카드 실적까지 다시 받으면 카드 수만큼
-   * 요청이 더 나간다. 그것은 탭과 상관없는 값이다.
-   */
-  useEffect(() => {
-    if (!selectedProjectId || !peopleLoaded || people.length === 0) return;
-
-    let cancelled = false;
-    setIsChartLoading(true);
-    setChartError('');
-
-    Promise.all(
-      [yearMonth, previousYearMonth, earlierYearMonth].map((month) =>
-        apiClient.getDailyExpense({ yearMonth: month }, type, selectedProjectId, appliedFilter),
-      ),
-    )
-      .then(([currentRows, previousRows, earlierRows]) => {
-        if (cancelled) return;
-        setDailyPoints(currentRows ?? []);
-        setPreviousDailyPoints(previousRows ?? []);
-        setEarlierDailyPoints(earlierRows ?? []);
-      })
-      .catch((err) => {
-        console.error('날짜별 합계 조회 실패:', err);
-        if (cancelled) return;
-        // 이전 탭의 선이 남으면 지출을 수입으로 읽게 된다. 비우고 안내를 띄운다.
-        setDailyPoints([]);
-        setPreviousDailyPoints([]);
-        setEarlierDailyPoints([]);
-        setChartError(t('home.chartFailed'));
-      })
-      .finally(() => {
-        if (!cancelled) setIsChartLoading(false);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [
-    selectedProjectId,
-    peopleLoaded,
-    people.length,
-    appliedFilter,
-    type,
-    yearMonth,
-    previousYearMonth,
-    earlierYearMonth,
-    entryVersion,
-    t,
-  ]);
 
   /** 정산 팝업을 띄울 카드. 목록에 없으면(숨긴 카드 등) 팝업을 열지 않는다. */
   const settlementCard = cards.find((card) => card.id === settlementCardId);
@@ -239,7 +160,7 @@ export default function HomePage() {
       <section className="space-y-3">
         {/*
           아래 칸들은 모두 이 달 기준이다. 어느 달인지 한 번만 적고, 여기서 달을 옮긴다.
-          합계는 넘기지 않는다. 바로 아래 탭이 지출·수입을 각각 적는다.
+          합계는 넘기지 않는다. 예산 상자의 지출·수입 탭이 각각 적는다.
         */}
         <MonthHeader
           year={year}
@@ -250,84 +171,48 @@ export default function HomePage() {
         />
 
         {/*
-          지출/수입 탭.
-
-          두 합계를 탭에 함께 적는다. 고르지 않은 쪽도 숫자는 보여야 "이 달에 얼마
-          벌어 얼마 썼나"를 탭을 눌러 보지 않고도 알 수 있다. 아래 예산 요약과
-          그래프가 고른 쪽을 따른다.
-        */}
-        <TypeTabs
-          type={type}
-          onChange={setType}
-          expenseTotal={formatCurrency(toNumber(summary?.expense), displayCurrency)}
-          incomeTotal={formatCurrency(toNumber(summary?.income), displayCurrency)}
-        />
-
-        {/*
-          셋을 한 줄에 늘어놓고 옆으로 넘겨 본다. 실적 구간 카드와 같은 방식이다.
-          좁은 화면에서 세로로 쌓으면 비필수 지출이 한참 아래로 밀려, 세 그래프를
-          견주려고 스크롤을 오르내리게 된다.
-        */}
-        <ScrollRow className="gap-3 pb-2">
-          {/* 맨 앞은 "어디에 썼나". 그다음 셋이 "얼마나 빨리 쓰고 있나"다. */}
-          <div className="snap-start shrink-0 w-[min(100%,30rem)]">
-            <CategoryDonutChart
-              title={
-                type === 'income'
-                  ? t('home.categoryChart.income')
-                  : t('home.categoryChart.expense')
-              }
-              type={type}
-              period={{ yearMonth }}
-              projectId={selectedProjectId}
-              filter={appliedFilter}
-            />
-          </div>
-
-          {/*
-            받는 동안에는 세 장 대신 한 자리만 둔다. 빈 값으로 그리면 0에 붙은
-            평평한 선이 나와, 아직 못 받은 것이 아니라 쓴 적이 없는 것으로 읽힌다.
-          */}
-          {isChartLoading || chartError ? (
-            <div className="snap-start shrink-0 w-[min(100%,30rem)] rounded-lg border border-gray-200 bg-white p-4">
-              {chartError ? (
-                <p className="text-sm text-red-600">{chartError}</p>
-              ) : (
-                <p className="text-sm text-gray-600">{t('common.loading')}</p>
-              )}
-            </div>
-          ) : (
-            [CUMULATIVE_CHART_TITLE[type]].map((titleKey) => (
-              <div key={titleKey} className="snap-start shrink-0 w-[min(100%,30rem)]">
-                <CumulativeExpenseChart
-                  title={t(titleKey)}
-                  type={type}
-                  yearMonth={yearMonth}
-                  points={dailyPoints}
-                  previousYearMonth={previousYearMonth}
-                  previousPoints={previousDailyPoints}
-                  earlierYearMonth={earlierYearMonth}
-                  earlierPoints={earlierDailyPoints}
-                  throughDay={throughDay}
-                />
-              </div>
-            ))
-          )}
-        </ScrollRow>
-
-        {/*
-          예산은 그래프 뒤에 둔다. 홈을 여는 까닭은 "이 달이 어떻게 흘러가고
-          있나"라, 그림이 먼저 오고 분류별 진행률은 그다음에 들여다보는 것이다.
+          분류 예산. 지출·수입 탭이 이 상자 안에 있다 -- 밖에 두면 아래 태그 예산까지
+          그 탭을 따르는 것처럼 읽힌다. 탭에는 이 달의 두 합계를 함께 적는다.
         */}
         <MonthlyBudgetSummary
           budgets={budgets}
-          tagBudgets={home.tagBudgets}
           type={type}
+          onTypeChange={setType}
+          onSelect={setDetailTarget}
+          expenseTotal={formatCurrency(toNumber(summary?.expense), displayCurrency)}
+          incomeTotal={formatCurrency(toNumber(summary?.income), displayCurrency)}
           onOpenSettings={
             canEdit ? () => router.push(budgetSettingsHref(yearMonth, type)) : undefined
           }
         />
+
+        {/*
+          태그 예산. 분류 예산과 상자를 나눈다. 지출·수입 탭을 따르지 않는다 -- 태그 예산은
+          쓴 돈에서 돌려받은 돈을 뺀 한 금액이다.
+        */}
+        <TagBudgetSummary
+          tagBudgets={home.tagBudgets}
+          onSelect={setDetailTarget}
+          onOpenSettings={
+            canEdit ? () => router.push(tagBudgetSettingsHref(yearMonth)) : undefined
+          }
+        />
       </section>
+
+      {detailTarget && (
+        <BudgetDetailModal
+          isOpen
+          onClose={() => setDetailTarget(null)}
+          categoryId={detailTarget.id}
+          categoryName={detailTarget.name}
+          categories={categories}
+          period={{ yearMonth }}
+          projectId={selectedProjectId}
+          filter={detailFilter}
+          onEntryClick={(entry) => entryEditorRef.current?.openDetail(entry)}
+          reloadToken={entryVersion}
+        />
+      )}
 
       {/*
         카드를 누르면 정산 팝업. 가계 화면의 수단별 탭과 같은 컴포넌트를 쓴다.

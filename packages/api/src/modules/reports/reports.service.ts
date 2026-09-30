@@ -833,7 +833,9 @@ export class ReportsService {
     const { entry: trendScope, ...postingWhere } =
       query.target === 'account' || query.target === 'card'
         ? this.trendByPaymentMethodWhere(projectId, query, start, end)
-        : this.trendByCategoryWhere(projectId, query, start, end);
+        : query.target === 'tag'
+          ? this.trendByTagWhere(projectId, query, start, end)
+          : this.trendByCategoryWhere(projectId, query, start, end);
     const rows = await this.aggregatePostings({
       basis,
       postingWhere: { categoryId: { not: null }, ...postingWhere },
@@ -842,11 +844,16 @@ export class ReportsService {
     });
 
     /*
-     * 추이는 판정기가 필요 없다. 조건이 이미 다리 자신에 걸려 있다
+     * 분류·수단 추이는 판정기가 필요 없다. 조건이 이미 다리 자신에 걸려 있다
      * (`trendByCategoryWhere` 의 categoryId, `trendByPaymentMethodWhere` 의 결제수단).
+     *
+     * 태그만 다르다. 태그는 전표에 달린 표(EntryTag)라 질의는 "그 태그가 붙은 전표"까지만
+     * 고르고, 분할의 다른 줄은 판정기가 걸러 낸다 (리포트의 태그 검색과 같은 판정이다).
      */
+    const matchLine =
+      query.target === 'tag' ? lineMatcherOf(parseEntrySearch({ tagIds: query.targetId })) : undefined;
     const points = monthlyTotals(
-      this.toAggregateRows(rows, undefined, spreadOf(basis, timeZone, { gte: start, lt: end })),
+      this.toAggregateRows(rows, matchLine, spreadOf(basis, timeZone, { gte: start, lt: end })),
       { timeZone, endYearMonth: endMonth, months },
     );
 
@@ -881,6 +888,23 @@ export class ReportsService {
         : { category: { type: (query.type ?? 'expense') as CategoryType } };
 
     return { ...target, entry: this.trendEntryScope(projectId, query, start, end) };
+  }
+
+  /** 태그 기준. 그 태그가 붙은 전표의 분류 다리를 고른다 -- 줄은 판정기가 가른다. */
+  private trendByTagWhere(
+    projectId: string,
+    query: ReportDto.TrendQuery,
+    start: Date,
+    end: Date,
+  ): Prisma.PostingWhereInput {
+    if (!query.targetId) throw new BadRequestException('태그를 골라 주세요.');
+    return {
+      category: { type: (query.type ?? 'expense') as CategoryType },
+      entry: {
+        ...this.trendEntryScope(projectId, query, start, end),
+        tags: { some: { tagId: query.targetId } },
+      },
+    };
   }
 
   /**

@@ -1405,14 +1405,17 @@ export namespace ReportDto {
 
   export interface TrendQuery extends EntryFilterQuery {
     projectId?: string;
-    target: 'category' | 'account' | 'card' | 'total';
+    /**
+     * tag 는 그 태그가 붙은 **줄**의 합이다 (예산 화면의 태그 분석). type 으로 지출·수입을 고른다.
+     */
+    target: 'category' | 'account' | 'card' | 'total' | 'tag';
     /** target=total이면 생략 */
     targetId?: string;
     /** 마지막 달 "YYYY-MM". 생략하면 이번 달 */
     endMonth?: string;
     /** 기본 12 */
     months?: number;
-    /** target=total일 때 지출/수입 선택 */
+    /** target=total·tag 일 때 지출/수입 선택 */
     type?: 'income' | 'expense';
     /**
      * target=category일 때 소분류를 포함하지 않는다.
@@ -1651,10 +1654,10 @@ export namespace BudgetDto {
     categoryId?: string;    // null=전체, 값=대분류/소분류
     type?: 'income' | 'expense';  // 카테고리 타입 (전체 지출/수입 구분용)
     /**
-     * 태그 예산이면 그 태그. categoryId 와 함께 줄 수 없고 type 이 반드시 있어야 한다.
+     * 태그 예산이면 그 태그. categoryId 와 함께 줄 수 없다.
      *
-     * 태그에는 지출·수입의 갈래가 없다. 같은 태그("여행")에 지출 예산과 수입 목표를
-     * 따로 둘 수 있게 type 으로 가른다.
+     * 태그 예산은 태그마다 하나다. 지출·수입으로 가르지 않으므로 type 은 보내도 버린다
+     * (사용액이 "지출 − 수입"이라 한 금액으로 견준다).
      */
     tagId?: string;
     monthlyAmount: string;
@@ -1730,7 +1733,7 @@ export namespace BudgetDto {
   /**
    * 한 태그의 한 달 예산 (GET /budgets/tags/:year/:month).
    *
-   * 태그마다 지출·수입 두 줄이 온다. 예산이 없는 줄은 budgetId 가 `placeholder-` 로
+   * 태그마다 한 줄이 온다. 예산이 없는 줄은 budgetId 가 `placeholder-` 로
    * 시작한다 (분류 예산과 같은 규칙). 분류 예산과 한 목록에 섞지 않는다 -- 분류가 없는
    * 줄을 "전체 예산"으로 읽는 화면이 이미 여럿이다.
    */
@@ -1739,12 +1742,15 @@ export namespace BudgetDto {
     tagId: string;
     tagName: string;
     tagColor?: string;
-    type: 'income' | 'expense';
     /** 이 달에 적용되는 금액. 조정이 있으면 조정값이다. */
     monthlyAmount: string;
     /** 조정을 걷어냈을 때 돌아갈 규칙 금액 */
     ruleAmount: string;
-    /** 이 달에 이 태그가 붙은 그 유형 줄의 합 (회차 기준) */
+    /**
+     * 이 달에 이 태그가 붙은 줄의 **지출 − 수입** (회차 기준).
+     *
+     * 환불·정산으로 돌려받은 돈은 그만큼 예산을 되살린다. 받은 돈이 더 많으면 음수다.
+     */
     usedAmount: string;
     isOverridden: boolean;
     overrideId?: string;
@@ -1760,7 +1766,7 @@ export namespace BudgetDto {
      * 'BUDGET_TOTAL_EXPENSE' 센티널을 쓴다 (CreateRequest와 같은 규칙).
      */
     categoryId?: string;
-    /** 태그 예산이면 그 태그. 이때 type 이 지출·수입을 가른다. */
+    /** 태그 예산이면 그 태그. 태그 예산은 지출·수입으로 가르지 않아 type 을 보지 않는다. */
     tagId?: string;
     type?: 'income' | 'expense';
     /** 첫 달 "YYYY-MM". 생략하면 이번 달 */

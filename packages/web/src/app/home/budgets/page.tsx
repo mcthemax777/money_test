@@ -40,9 +40,10 @@ export default function BudgetSettingsPage() {
 /**
  * 예산 설정. 홈의 예산 상자 오른쪽 위 톱니로 들어온다.
  *
- * 합계·대분류·소분류를 분류 화면의 차례로, 그 아래 태그를 태그 화면의 차례로 모두
- * 늘어놓는다 (예산이 없는 것도). 줄을 누르면 가계 화면의 분류별 상세와 같은 예산 팝업이
- * 열린다. 앱의 같은 화면과 같은 훅을 쓴다.
+ * 두 갈래로 열린다. 분류 예산 상자의 톱니로 오면 합계·대분류·소분류를 분류 화면의 차례로,
+ * 태그 예산 상자의 톱니로 오면(`kind=tag`) 태그를 태그 화면의 차례로 모두 늘어놓는다 (예산이
+ * 없는 것도). 줄을 누르면 가계 화면의 분류별 상세와 같은 예산 팝업이 열린다. 앱의 같은 화면과
+ * 같은 훅을 쓴다.
  */
 function BudgetSettings() {
   const { t } = useTranslation();
@@ -53,7 +54,7 @@ function BudgetSettings() {
   const displayCurrency = useProjectDisplayCurrency();
   const canEdit = useCanEdit();
 
-  /* 홈에서 보던 달과 지출·수입으로 연다. 주소에 없으면 이번 달 지출이다. */
+  /* 홈에서 보던 갈래·달·지출수입으로 연다. 주소에 없으면 이번 달 분류 지출이다. */
   const today = currentYearMonth(timeZone);
   const initial = parseBudgetSettingsQuery(
     (key) => searchParams.get(key),
@@ -62,6 +63,7 @@ function BudgetSettings() {
   const [yearMonth, setYearMonth] = useState(initial.yearMonth);
   const [type, setType] = useState(initial.type);
   const [year, month] = yearMonth.split('-').map(Number);
+  const isTag = initial.kind === 'tag';
 
   const { rows, tagRows, isLoading, hasError, editor, nameOf } = useBudgetSettings({
     projectId,
@@ -72,7 +74,10 @@ function BudgetSettings() {
   return (
     <div className="space-y-4">
       {/* 돌아가기는 히스토리를 되짚는다. 들어온 자리가 홈이 아닐 수도 있다. */}
-      <PageHeader title={t('budget.settings')} onBack={() => router.back()} />
+      <PageHeader
+        title={isTag ? t('budget.tagSettings') : t('budget.settings')}
+        onBack={() => router.back()}
+      />
 
       {/*
         예산은 달마다 다를 수 있어(고른 달부터 바꾸기, 이 달만 조정) 어느 달의 금액인지
@@ -89,10 +94,15 @@ function BudgetSettings() {
         }
       />
 
-      {/* 지출·수입. 홈의 탭과 같은 것이다. 합계는 이 화면이 다루지 않아 적지 않는다. */}
-      <TypeTabs type={type} onChange={setType} />
+      {/*
+        지출·수입. 홈의 탭과 같은 것이다. 합계는 이 화면이 다루지 않아 적지 않는다.
+        태그 예산은 지출·수입으로 가르지 않아 탭이 없다.
+      */}
+      {!isTag && <TypeTabs type={type} onChange={setType} />}
 
-      <p className="text-sm text-gray-500">{t('budget.settingsHint')}</p>
+      <p className="text-sm text-gray-500">
+        {isTag ? t('budget.tagSettingsHint') : t('budget.settingsHint')}
+      </p>
 
       {hasError && (
         <div className="p-3 bg-red-50 text-red-800 text-sm rounded-lg">
@@ -100,32 +110,19 @@ function BudgetSettings() {
         </div>
       )}
 
-      {isLoading && rows.length <= 1 ? (
+      {isLoading && (isTag ? tagRows.length === 0 : rows.length <= 1) ? (
         <div className="bg-white rounded-lg shadow p-4">
           <p className="text-sm text-gray-600">{t('common.loading')}</p>
         </div>
+      ) : isTag && tagRows.length === 0 ? (
+        <p className="text-sm text-gray-500">{t('budget.noTags')}</p>
       ) : (
-        <>
-          <BudgetRows rows={rows} canEdit={canEdit} onOpen={editor.open} currency={displayCurrency} />
-
-          {/*
-            태그. 분류와 칸을 나눈다 -- 한 목록에 이어 붙이면 태그가 마지막 대분류의
-            소분류처럼 읽힌다. 태그는 분류와 겹쳐 붙는 표지라 합계에도 들지 않는다.
-          */}
-          <section className="space-y-2">
-            <h2 className="font-semibold text-gray-900">{t('budget.tagSection')}</h2>
-            {tagRows.length === 0 ? (
-              <p className="text-sm text-gray-500">{t('budget.noTags')}</p>
-            ) : (
-              <BudgetRows
-                rows={tagRows}
-                canEdit={canEdit}
-                onOpen={editor.open}
-                currency={displayCurrency}
-              />
-            )}
-          </section>
-        </>
+        <BudgetRows
+          rows={isTag ? tagRows : rows}
+          canEdit={canEdit}
+          onOpen={editor.open}
+          currency={displayCurrency}
+        />
       )}
 
       <BudgetEditModal

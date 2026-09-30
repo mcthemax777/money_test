@@ -23,6 +23,7 @@ import {
   type DailyCumulativePoint,
 } from '../lib/entries';
 import { activeLocale, translate, type MessageKey } from '../lib/i18n';
+import { parseTagBudgetTarget } from '../lib/budget';
 import { toNumber } from '../lib/money';
 import { loadPreviousMonths } from '../lib/month-compare';
 import { isOfflineError } from '../lib/offline-error';
@@ -132,27 +133,42 @@ export function buildSubcategoryStats(rows: BreakdownRow[], parentId: string): C
 /**
  * categoryId 가 무엇을 가리키는지.
  *
- * 'total-expense'/'total-income' 은 그 유형 전체, 그 외는 실제 분류다. 소분류와
- * "미분류"는 더 쪼갤 것이 없어 원형차트를 그리지 않는다(isLeaf).
+ * 'total-expense'/'total-income' 은 그 유형 전체, `tag:<id>` 는 그 태그가 붙은 줄(예산 화면의
+ * 태그 예산), 그 외는 실제 분류다. 소분류와 "미분류"는 더 쪼갤 것이 없어 원형차트를 그리지
+ * 않는다(isLeaf).
+ *
+ * 태그는 지출로 본다. 태그 예산은 "그 태그에 얼마를 썼나"를 재는 자리라, 그래프는 쓴 돈을
+ * 분류별·달별로 보인다. 돌려받은 돈(수입)은 거래 목록에는 함께 나온다.
  */
-function resolveTarget(categoryId: string, categories: Category[], exactCategory: boolean) {
-  if (categoryId === TOTAL_EXPENSE_ID) {
-    return { scope: 'total' as const, type: 'expense' as const, isLeaf: false };
-  }
-  if (categoryId === TOTAL_INCOME_ID) {
-    return { scope: 'total' as const, type: 'income' as const, isLeaf: false };
-  }
+function resolveTarget(
+  categoryId: string,
+  categories: Category[],
+  exactCategory: boolean,
+): {
+  scope: 'total' | 'category' | 'tag';
+  type: 'income' | 'expense';
+  isLeaf: boolean;
+  tagId?: string;
+} {
+  if (categoryId === TOTAL_EXPENSE_ID) return { scope: 'total', type: 'expense', isLeaf: false };
+  if (categoryId === TOTAL_INCOME_ID) return { scope: 'total', type: 'income', isLeaf: false };
+
+  const tag = parseTagBudgetTarget(categoryId);
+  if (tag) return { scope: 'tag', type: 'expense', isLeaf: false, tagId: tag.tagId };
 
   const category = categories.find((item) => item.id === categoryId);
   return {
-    scope: 'category' as const,
+    scope: 'category',
     type: (category?.type ?? 'expense') as 'income' | 'expense',
     isLeaf: Boolean(category?.parentId) || exactCategory,
   };
 }
 
 export interface CategoryDetailInput {
-  /** 실제 분류 id, 또는 'total-expense'/'total-income'. 비우면 아무것도 받지 않는다. */
+  /**
+   * 실제 분류 id, 'total-expense'/'total-income', 또는 태그(`tagBudgetTargetId`).
+   * 비우면 아무것도 받지 않는다.
+   */
   categoryId: string;
   /** 대분류·소분류 판별에 쓴다. */
   categories: Category[];
@@ -189,6 +205,13 @@ export interface CategoryDetail {
   slices: CategorySlice[];
   /** 조각을 눌러 파고든 대분류. null 이면 첫 단계다. */
   drilledId: string | null;
+  /**
+   * 원형차트 제목. 지금이 대분류별인지 소분류별인지를 말한다.
+   *
+   * 전체와 태그는 대분류별에서 시작해 파고들면 소분류별이고, 분류는 처음부터 소분류별이다.
+   * 웹과 앱이 각자 id 를 보고 고르면 새 대상(태그)이 생길 때 한쪽만 틀린다.
+   */
+  pieTitle: MessageKey;
   /** 조각을 눌러 한 단 내려간다. 소분류가 없는 조각은 아무 일도 하지 않는다. */
   drill: (categoryId: string) => void;
   /** 첫 단계로 되돌린다. */
@@ -240,6 +263,11 @@ export function useCategoryDetail({
   const filterKey = JSON.stringify(filter ?? {});
 
   const target = resolveTarget(categoryId, categories, exactCategory);
+  /*
+   * 태그로 좁히는 조건. 목록·구성비는 이 값을 싣고 받는다 -- 서버와 사본 모두 걸린 줄만
+   * 센다(`lineMatcherOf`). 태그가 아니면 비어 있다.
+   */
+  const tagScope = target.tagId ? { tagIds: target.tagId } : {};
 
   const [isLoading, setIsLoading] = useState(false);
   const [monthly, setMonthly] = useState<MonthlyPoint[]>([]);
@@ -289,7 +317,13 @@ export function useCategoryDetail({
                 { type: target.type, endMonth, months: 12, ...filter },
                 projectId,
               )
-            : apiClient.getTrend(
+            : target.scope === 'tag'
+              ? apiClient.getTrend(
+                  'tag',
+                  { targetId: target.tagId, type: target.type, endMonth, months: 12, ...filter },
+                  projectId,
+                )
+              : apiClient.getTrend(
                 'category',
                 { targetId: categoryId, endMonth, months: 12, exact: exactCategory, ...filter },
                 projectId,
@@ -308,7 +342,10 @@ export function useCategoryDetail({
           ...filter,
           ...(target.scope === 'category'
             ? { categoryId, ...(exactCategory ? { categoryExact: true } : {}) }
-            : { categoryType: target.type }),
+            : target.scope === 'tag'
+              ? /* 유형으로 거르지 않는다. 그 태그로 돌려받은 돈도 목록에서 보여야 한다. */
+                tagScope
+              : { categoryType: target.type }),
         };
 
         // 커서를 끝까지 따라간다. 한 페이지만 받으면 일별 누적이 12개월 그래프
@@ -337,11 +374,13 @@ export function useCategoryDetail({
           : port.getCategoryBreakdown(period, target.type, projectId, {
               rollup: false,
               ...filter,
+              ...tagScope,
             });
+        // 전체와 태그는 대분류별, 분류는 그 소분류별이다.
         const breakdownPromise =
-          target.scope === 'total'
-            ? port.getCategoryBreakdown(period, target.type, projectId, { ...filter })
-            : flatPromise;
+          target.scope === 'category'
+            ? flatPromise
+            : port.getCategoryBreakdown(period, target.type, projectId, { ...filter, ...tagScope });
 
         const [trendRes, entriesRes, breakdownRes, flatRes, comparisonRes] = await Promise.all([
           trendPromise,
@@ -464,6 +503,16 @@ export function useCategoryDetail({
     hasPatternAmount: pattern.methods.length > 0,
     slices: drilledId ? drilledSlices : slices,
     drilledId,
+    pieTitle:
+      target.scope === 'category'
+        ? 'detail.pieExpenseChild'
+        : target.type === 'income'
+          ? drilledId
+            ? 'detail.pieIncomeChild'
+            : 'detail.pieIncomeParent'
+          : drilledId
+            ? 'detail.pieExpenseChild'
+            : 'detail.pieExpenseParent',
     drill,
     resetDrill,
     /*

@@ -202,17 +202,7 @@ export function BudgetDetailModal({
           {detail.slices.length > 0 && (
             <div>
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold">
-                  {(() => {
-                    if (categoryId === 'total-expense') {
-                      return t(detail.drilledId ? 'detail.pieExpenseChild' : 'detail.pieExpenseParent');
-                    } else if (categoryId === 'total-income') {
-                      return t(detail.drilledId ? 'detail.pieIncomeChild' : 'detail.pieIncomeParent');
-                    } else {
-                      return t('detail.pieExpenseChild');
-                    }
-                  })()}
-                </h3>
+                <h3 className="text-lg font-semibold">{t(detail.pieTitle)}</h3>
                 {detail.drilledId && (
                   <button
                     onClick={detail.resetDrill}

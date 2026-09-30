@@ -24,7 +24,7 @@ export const ko = {
   'common.changing': '변경 중...',
 
   // ===== 화면 이동 =====
-  'nav.home': '홈',
+  'nav.home': '예산',
   'nav.transactions': '거래',
   'nav.ledger': '가계',
   'nav.assets': '자산',
@@ -211,17 +211,11 @@ export const ko = {
 
   // ===== 홈 =====
   'home.loadFailed': '데이터 조회에 실패했습니다.',
-  'home.chartFailed': '그래프를 불러오지 못했습니다.',
-  'home.chartComingSoon': '그래프는 아직 웹에서만 볼 수 있습니다.',
   'home.noPeople': '구성원이 없습니다. 자산 화면에서 자산주인을 먼저 만들어 주세요.',
   'home.assetsNoun': '자산',
   'home.performanceTitle': '실적 구간 사용액',
   'home.tab.expense': '지출',
   'home.tab.income': '수입',
-  'home.chart.expense.total': '전체 지출',
-  'home.chart.income.total': '전체 수입',
-  'home.categoryChart.expense': '분류별 지출',
-  'home.categoryChart.income': '분류별 수입',
   'home.settlementTitle': '{card} 정산',
   'home.entriesTitle': '{month} 거래 내역',
 
@@ -275,13 +269,6 @@ export const ko = {
   'method.empty': '보여줄 카드가 없습니다.',
   'method.remaining': '남은 {amount}',
 
-  // ===== 분류별 그래프 =====
-  'donut.rest': '기타',
-  'donut.empty.expense': '이 달 지출이 없습니다.',
-  'donut.empty.income': '이 달 수입이 없습니다.',
-  'donut.loadFailed.expense': '분류별 지출을 불러오지 못했습니다.',
-  'donut.loadFailed.income': '분류별 수입을 불러오지 못했습니다.',
-
   // ===== 예산 요약 =====
   'budget.title.expense': '예산',
   'budget.title.income': '목표',
@@ -294,8 +281,6 @@ export const ko = {
   // ===== 누적 그래프 =====
   'chart.dayTick': '{day}일',
   'chart.hourTick': '{hour}시',
-  'chart.monthStart': '월초',
-  'chart.comparePrevious': '지난달 같은 기간',
 
   /*
    * 금액 뒤에 붙여 읽는 통화 이름.
@@ -525,7 +510,7 @@ export const ko = {
   'card.expiryYear': '연도',
   'card.expiryMonth': '월',
   'card.color': '카드 색 (선택)',
-  'card.colorHint': '홈 화면의 카드 앞면 색입니다. 고르지 않으면 {default}으로 보입니다.',
+  'card.colorHint': '예산 화면의 카드 앞면 색입니다. 고르지 않으면 {default}으로 보입니다.',
   'card.colorDefaultCredit': '신용카드 기본색(파랑)',
   'card.colorDefaultDebit': '체크카드 기본색(초록)',
   'card.closingDay': '마감일',
@@ -649,7 +634,11 @@ export const ko = {
     '새로 만드는 예산은 모든 달에 적용됩니다. 저장하면 아래에 월별 목록이 나오고, 거기서 특정 달만 따로 고칠 수 있습니다.',
   'budget.settings': '예산 설정',
   'budget.tagTarget': '{name} 태그',
-  'budget.tagSection': '태그',
+  'budget.thisMonth': '이번 달 예산',
+  'budget.tagTitle': '태그 예산',
+  'budget.tagSettings': '태그 예산 설정',
+  'budget.tagSettingsHint': '태그를 누르면 그 태그의 월 예산을 정합니다. 쓴 돈에서 돌려받은 돈(환불·정산)을 뺀 금액으로 견줍니다.',
+  'budget.none.tag': '예산을 잡은 태그가 없습니다. 오른쪽 위 톱니를 눌러 정할 수 있습니다.',
   'budget.noTags': '태그가 없습니다. 분류 화면의 태그에서 만들 수 있습니다.',
   'budget.settingsHint': '분류를 누르면 그 분류의 월 예산을 정합니다.',
   'budget.monthAdjusted': '이 달 조정',

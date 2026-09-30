@@ -12,11 +12,14 @@ import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import type { Category } from '@money/core/lib/types';
 import type { CategoryDto } from '@money/types';
 import { useEntryFocus } from '@money/core/store/entry-focus';
-import { useProject } from '@money/core/store/project';
+import { useCanEdit, useProject } from '@money/core/store/project';
+import { useThisMonthBudget } from '@money/core/hooks/useBudgetSettings';
 
 import { useNavigation } from '../shell/navigation';
 
 import Modal from '../components/Modal';
+import BudgetEditModal from '../components/BudgetEditModal';
+import BudgetField from '../components/BudgetField';
 import AddButton from '../components/AddButton';
 import CategoryFormFields from '../components/CategoryFormFields';
 import CategoryMergeModal from '../components/CategoryMergeModal';
@@ -62,6 +65,9 @@ export default function CategoriesScreen() {
   const { t } = useTranslation();
   const selectedProjectId = useProject((state) => state.selectedProjectId);
   const manager = useCategoryManager(selectedProjectId);
+  /* 분류 상세의 "이번 달 예산". 홈의 예산 설정과 같은 훅과 팝업이다 (웹과 같다). */
+  const budget = useThisMonthBudget(selectedProjectId);
+  const canEdit = useCanEdit();
   const { categories, isLoading, isSubmitting } = manager;
   const nav = useNavigation();
   /** 거래 화면과 주고받는 쪽지. 건너갈 때 걸 검색과 돌아와서 다시 펼 상세가 담긴다. */
@@ -446,6 +452,19 @@ export default function CategoriesScreen() {
               </Text>
             </View>
 
+            {/* 이 분류의 이번 달 예산. 상세 창은 닫고 예산 팝업을 연다 (두 창이 겹치지 않게). */}
+            <BudgetField
+              row={budget.settingOf(selectedCategory.id)}
+              onEdit={
+                canEdit
+                  ? () => {
+                      setIsDetailModalOpen(false);
+                      budget.editor.open(selectedCategory.id);
+                    }
+                  : undefined
+              }
+            />
+
             <MoveRow
               disabled={isSubmitting}
               onMove={(step) => void move(selectedCategory.id, step)}
@@ -490,6 +509,13 @@ export default function CategoriesScreen() {
           </View>
         ) : null}
       </Modal>
+
+      <BudgetEditModal
+        editor={budget.editor}
+        projectId={selectedProjectId}
+        name={budget.editor.targetId ? budget.nameOf(budget.editor.targetId) : ''}
+        yearMonth={budget.yearMonth}
+      />
 
       {/* 추가·수정 폼. 대분류 이름과 소분류 줄들을 받는다. */}
       <Modal

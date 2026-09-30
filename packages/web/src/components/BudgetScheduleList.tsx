@@ -16,7 +16,8 @@ interface BudgetScheduleListProps {
   categoryId?: string;
   /** 태그 예산이면 그 태그. 이때 categoryId 는 없다. */
   tagId?: string;
-  type: 'income' | 'expense';
+  /** 합계·분류 예산의 지출·수입. 태그 예산은 가르지 않아 없다. */
+  type?: 'income' | 'expense';
   /** 목록이 시작하는 달 "YYYY-MM". 보통 화면이 보고 있는 달이다. */
   startMonth: string;
   /** 바깥에서 예산을 저장했을 때 올라오는 값. 목록을 다시 읽는다. */

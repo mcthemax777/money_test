@@ -21,7 +21,8 @@ export default function BudgetScheduleList(props: {
   categoryId?: string;
   /** 태그 예산이면 그 태그. 이때 categoryId 는 없다. */
   tagId?: string;
-  type: 'income' | 'expense';
+  /** 합계·분류 예산의 지출·수입. 태그 예산은 가르지 않아 없다. */
+  type?: 'income' | 'expense';
   startMonth: string;
   reloadToken: number;
   onChange: () => void | Promise<void>;

@@ -37,7 +37,6 @@ import {
   DEFAULT_ENTRY_PERIOD,
   isBudgetApplicable,
   tagUsage,
-  tagUsageKey,
   netWorth,
   closingMonthKey,
   closingMonthOf,
@@ -316,33 +315,29 @@ export function createLocalHomePort(
       ]);
 
       const usage = tagUsage(rows.map((row) => ({ ...row, tagIds: row.tagIds ?? [] })));
-      const byKey = new Map(
+      const byTag = new Map(
         budgets
           .filter((budget) => budget.tagId && isBudgetApplicable(budget, yearMonth))
-          .map((budget) => [tagUsageKey(budget.tagId!, (budget.type ?? 'expense') as 'income' | 'expense'), budget]),
+          .map((budget) => [budget.tagId!, budget]),
       );
 
-      return tags.flatMap((tag) =>
-        (['expense', 'income'] as const).map((type): BudgetDto.MonthlyTagBudget => {
-          const key = tagUsageKey(tag.id, type);
-          const budget = byKey.get(key);
-          const amount = budget?.overrideAmount ?? budget?.monthlyAmount ?? '0';
-          return {
-            budgetId: budget?.id ?? `placeholder-tag-${type}-${tag.id}`,
-            tagId: tag.id,
-            tagName: tag.name,
-            tagColor: tag.color ?? undefined,
-            type,
-            monthlyAmount: show.toString(Dec.of(amount)),
-            ruleAmount: show.toString(Dec.of(budget?.monthlyAmount ?? '0')),
-            usedAmount: show.toString(usage.get(key)?.amount ?? Dec.of(0)),
-            isOverridden: Boolean(budget?.overrideAmount),
-            overrideId: budget?.overrideId ?? undefined,
-            effectiveFrom: budget?.effectiveFrom ?? undefined,
-            effectiveTo: budget?.effectiveTo ?? undefined,
-          };
-        }),
-      );
+      return tags.map((tag): BudgetDto.MonthlyTagBudget => {
+        const budget = byTag.get(tag.id);
+        const amount = budget?.overrideAmount ?? budget?.monthlyAmount ?? '0';
+        return {
+          budgetId: budget?.id ?? `placeholder-tag-${tag.id}`,
+          tagId: tag.id,
+          tagName: tag.name,
+          tagColor: tag.color ?? undefined,
+          monthlyAmount: show.toString(Dec.of(amount)),
+          ruleAmount: show.toString(Dec.of(budget?.monthlyAmount ?? '0')),
+          usedAmount: show.toString(usage.get(tag.id)?.amount ?? Dec.of(0)),
+          isOverridden: Boolean(budget?.overrideAmount),
+          overrideId: budget?.overrideId ?? undefined,
+          effectiveFrom: budget?.effectiveFrom ?? undefined,
+          effectiveTo: budget?.effectiveTo ?? undefined,
+        };
+      });
     },
 
     /**

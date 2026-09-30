@@ -1467,7 +1467,7 @@ class ApiClient {
   }
 
   async getTrend(
-    target: 'category' | 'account' | 'card' | 'total',
+    target: ReportDto.TrendQuery['target'],
     options: {
       targetId?: string;
       endMonth?: string;

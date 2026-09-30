@@ -21,6 +21,10 @@ import { useTranslation } from '@money/core/lib/i18n';
 import { useCanEdit } from '@money/core/store/project';
 
 import Modal from '@/components/Modal';
+import BudgetEditModal from '@/components/BudgetEditModal';
+import BudgetField from '@/components/BudgetField';
+import { useThisMonthBudget } from '@money/core/hooks/useBudgetSettings';
+import { tagBudgetTargetId } from '@money/core/lib/budget';
 import TagDeleteModal from '@/components/TagDeleteModal';
 import AddButton from '@/components/AddButton';
 import { useDragReorder } from '@/hooks/useDragReorder';
@@ -53,6 +57,8 @@ export default function TagsPanel({
   /** 읽기 전용 구성원에게는 쓰기 단추를 그리지 않는다. */
   const canEdit = useCanEdit();
   const manager = useTagManager(projectId);
+  /* 태그 창의 "이번 달 예산". 홈의 태그 예산 설정과 같은 훅과 팝업이다. */
+  const budget = useThisMonthBudget(projectId);
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -273,7 +279,31 @@ export default function TagsPanel({
         <form id={FORM_ID} onSubmit={submit} className="space-y-5">
           <TagFields values={values} onChange={setValues} />
         </form>
+
+        {/*
+          이 태그의 이번 달 예산. 새로 만드는 중에는 예산을 걸 태그가 아직 없다.
+          form 밖에 둔다 -- 안에 두면 단추가 태그 저장을 함께 보낸다. 누르면 이 창은 닫는다
+          (적던 이름·색은 저장하지 않는다. 두 창이 겹치면 어느 쪽이 닫히는지 헷갈린다).
+        */}
+        {editingId && (
+          <div className="mt-5">
+            <BudgetField
+              row={budget.settingOf(tagBudgetTargetId(editingId))}
+              onEdit={() => {
+                setIsFormOpen(false);
+                budget.editor.open(tagBudgetTargetId(editingId));
+              }}
+            />
+          </div>
+        )}
       </Modal>
+
+      <BudgetEditModal
+        editor={budget.editor}
+        projectId={projectId}
+        name={budget.editor.targetId ? budget.nameOf(budget.editor.targetId) : ''}
+        yearMonth={budget.yearMonth}
+      />
     </div>
   );
 }
