@@ -286,8 +286,8 @@ export const ko = {
   'budget.title.expense': '예산',
   'budget.title.income': '목표',
   'budget.total': '합계',
-  'budget.none.expense': '예산을 잡은 분류가 없습니다. 가계 화면의 분류별에서 정할 수 있습니다.',
-  'budget.none.income': '목표를 잡은 분류가 없습니다. 가계 화면의 분류별에서 정할 수 있습니다.',
+  'budget.none.expense': '예산을 잡은 분류가 없습니다. 오른쪽 위 톱니를 눌러 정할 수 있습니다.',
+  'budget.none.income': '목표를 잡은 분류가 없습니다. 오른쪽 위 톱니를 눌러 정할 수 있습니다.',
   'budget.over': '{amount} 초과',
   'budget.left': '{amount} 남음',
 
@@ -648,6 +648,12 @@ export const ko = {
   'budget.newHint':
     '새로 만드는 예산은 모든 달에 적용됩니다. 저장하면 아래에 월별 목록이 나오고, 거기서 특정 달만 따로 고칠 수 있습니다.',
   'budget.settings': '예산 설정',
+  'budget.tagTarget': '{name} 태그',
+  'budget.tagSection': '태그',
+  'budget.noTags': '태그가 없습니다. 분류 화면의 태그에서 만들 수 있습니다.',
+  'budget.settingsHint': '분류를 누르면 그 분류의 월 예산을 정합니다.',
+  'budget.monthAdjusted': '이 달 조정',
+  'budget.settingsLoadFailed': '예산을 불러오지 못했습니다.',
   'budget.progressMonthOnly':
     '예산 진행률은 월 단위에서만 보입니다. 예산은 달마다 정하는 값이라 기간에 맞춰 나눌 수 없습니다.',
   'budget.line': '예산 {amount} · {percent}%',

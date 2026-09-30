@@ -94,6 +94,8 @@ export interface StoredAccount {
 export interface StoredBudget {
   id: string;
   categoryId: string | null;
+  /** 태그 예산이면 그 태그 */
+  tagId: string | null;
   type: string | null;
   monthlyAmount: string;
   effectiveFrom: string | null;
@@ -784,6 +786,7 @@ export class LocalStore {
           id: String(row.id),
           projectId,
           categoryId: asText(row.categoryId),
+          tagId: asText(row.tagId),
           type: asText(row.type),
           monthlyAmount: asMoney(row.monthlyAmount),
           effectiveFrom: asText(row.effectiveFrom),
@@ -1240,6 +1243,10 @@ export class LocalStore {
       parentCategoryName: asText(row.parentCategoryName),
       baseAmount: asMoney(row.baseAmount),
       date: String(row.date),
+      // 이 줄의 태그. 태그 예산이 센다 (전표의 태그가 아니라 줄 키가 같은 것만).
+      tagIds: String(row.lineTagIds ?? '')
+        .split(',')
+        .filter(Boolean),
       ...(range.withInstallment ? { installment: installmentOf(row) } : {}),
     }));
   }
@@ -1303,7 +1310,7 @@ export class LocalStore {
   /** 그 달에 적용되는 예산 규칙과 조정값. 적용 여부 판단은 부르는 쪽이 한다. */
   async budgets(projectId: string, year: number, month: number): Promise<StoredBudget[]> {
     const rows = await this.db.all<Row>(
-      `SELECT b.id, b.categoryId, b.type, b.monthlyAmount, b.effectiveFrom, b.effectiveTo,
+      `SELECT b.id, b.categoryId, b.tagId, b.type, b.monthlyAmount, b.effectiveFrom, b.effectiveTo,
               o.amount AS overrideAmount, o.id AS overrideId
          FROM budget b
          LEFT JOIN budget_override o
@@ -1315,6 +1322,7 @@ export class LocalStore {
     return rows.map((row) => ({
       id: String(row.id),
       categoryId: asText(row.categoryId),
+      tagId: asText(row.tagId),
       type: asText(row.type),
       monthlyAmount: asMoney(row.monthlyAmount),
       effectiveFrom: asText(row.effectiveFrom),
@@ -3001,6 +3009,8 @@ export class LocalStore {
       ['budget', 'categoryId'],
       ['category', 'parentId'],
       ['entry_tag', 'tagId'],
+      // 태그 예산도 그 태그를 가리킨다. 빠뜨리면 합쳐진 태그의 예산이 사라진 태그에 남는다.
+      ['budget', 'tagId'],
     ] as const) {
       await this.db.run(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`, [
         serverId,

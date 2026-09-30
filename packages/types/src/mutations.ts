@@ -428,7 +428,9 @@ export interface BudgetSetPayload {
   id: string;
   /** 분류별 예산이면 그 분류. 전체 예산이면 없다. */
   categoryId?: string | null;
-  /** 전체 예산일 때의 갈래(지출·수입). 분류별이면 없다. */
+  /** 태그 예산이면 그 태그. 이때 type 이 지출·수입을 가른다. */
+  tagId?: string | null;
+  /** 전체 예산·태그 예산일 때의 갈래(지출·수입). 분류별이면 없다. */
   type?: string | null;
   monthlyAmount: string;
   /**

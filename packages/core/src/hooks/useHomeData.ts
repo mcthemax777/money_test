@@ -112,6 +112,8 @@ export function useHomeData({
   const [categories, setCategories] = useState<Category[]>([]);
 
   const [budgets, setBudgets] = useState<BudgetDto.MonthlyBudget[]>([]);
+  /** 태그 예산. 예산 상자가 분류 아래에 적는다. */
+  const [tagBudgets, setTagBudgets] = useState<BudgetDto.MonthlyTagBudget[]>([]);
   const [summary, setSummary] = useState<ReportDto.Summary | null>(null);
   const [methods, setMethods] = useState<SpendingMethod[]>([]);
 
@@ -205,14 +207,16 @@ export function useHomeData({
         setHasError(false);
 
         const port = homeDataPort();
-        const [budgetRows, summaryRow, currentMethods] = await Promise.all([
+        const [budgetRows, tagBudgetRows, summaryRow, currentMethods] = await Promise.all([
           port.getBudgetForMonth(year, month, projectId, filter),
+          port.getTagBudgetsForMonth(year, month, projectId, filter),
           port.getSummary({ yearMonth }, projectId, filter),
           port.getPaymentMethods({ yearMonth: thisYearMonth }, projectId, filter),
         ]);
         if (cancelled) return;
 
         setBudgets(budgetRows ?? []);
+        setTagBudgets(tagBudgetRows ?? []);
         setSummary(summaryRow ?? null);
 
         const items: ReportDto.PaymentMethodItem[] = currentMethods ?? [];
@@ -294,6 +298,7 @@ export function useHomeData({
     selectedPersonIds,
 
     budgets,
+    tagBudgets,
     summary,
     methods,
 

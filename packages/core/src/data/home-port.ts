@@ -51,6 +51,13 @@ export interface HomeDataPort {
     projectId?: string | null,
     filter?: EntryScopeQuery,
   ): Promise<BudgetDto.MonthlyBudget[]>;
+  /** 그 달의 태그 예산. 분류 예산과 따로 받는다 (BudgetDto.MonthlyTagBudget 주석). */
+  getTagBudgetsForMonth(
+    year: number,
+    month: number,
+    projectId?: string | null,
+    filter?: EntryScopeQuery,
+  ): Promise<BudgetDto.MonthlyTagBudget[]>;
   getSummary(
     period: ReportPeriod,
     projectId?: string | null,
@@ -172,6 +179,8 @@ export const httpHomePort: HomeDataPort = {
   getNetWorth: (projectId) => apiClient.getNetWorth(projectId),
   getBudgetForMonth: (year, month, projectId, filter) =>
     apiClient.getBudgetForMonth(year, month, projectId, filter),
+  getTagBudgetsForMonth: (year, month, projectId, filter) =>
+    apiClient.getTagBudgetsForMonth(year, month, projectId, filter),
   getSummary: (period, projectId, filter) => apiClient.getSummary(period, projectId, filter),
   getPaymentMethods: (period, projectId, filter) =>
     apiClient.getPaymentMethods(period, projectId, filter),

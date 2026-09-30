@@ -50,8 +50,11 @@
  * 26 은 후보에 `toAccountId`(이체의 받는 통장)가 생긴 판이다. 반복 등록이 이체를 담는다.
  *
  * 27 은 후보에 `feeAmount`·`feeCategoryId`(이체 수수료와 그 분류)가 생긴 판이다.
+ *
+ * 28 은 예산에 `tagId`(태그 예산)가 생긴 판이다. 옛 사본의 예산 행에는 그 칸이 없어,
+ * 태그 예산이 분류 없는 줄 -- 곧 전체 예산으로 읽힌다.
  */
-export const SCHEMA_VERSION = 27;
+export const SCHEMA_VERSION = 28;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -272,6 +275,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      id             TEXT PRIMARY KEY,
      projectId      TEXT NOT NULL,
      categoryId     TEXT,
+     /* 태그 예산이면 그 태그. 이때 type 이 지출·수입을 가른다. */
+     tagId          TEXT,
      type           TEXT,
      monthlyAmount  TEXT NOT NULL,
      effectiveFrom  TEXT,

@@ -990,6 +990,7 @@ export class MutationReplayService {
         {
           id: payload.id,
           categoryId: payload.categoryId ?? undefined,
+          tagId: payload.tagId ?? undefined,
           type: payload.type ?? undefined,
           monthlyAmount: payload.monthlyAmount,
           /*

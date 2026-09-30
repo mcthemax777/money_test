@@ -64,6 +64,10 @@ export function isActiveNav(pathname: string, href: string): boolean {
   if (href === '/settings') {
     return pathname.startsWith('/settings') && !pathname.startsWith('/settings/profile');
   }
+  // 홈의 하위 화면(예산 설정)에서도 홈이 켜져 있다. 설정의 하위 화면과 같은 규칙이다.
+  if (href === '/home') {
+    return pathname === '/home' || pathname.startsWith('/home/');
+  }
   if (href === '/assets') {
     return pathname === '/assets' || pathname === '/assets/';
   }

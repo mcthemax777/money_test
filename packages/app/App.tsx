@@ -29,6 +29,8 @@ import LoginScreen from './src/screens/LoginScreen';
 import OutboxScreen from './src/screens/OutboxScreen';
 import InquiriesScreen from './src/screens/InquiriesScreen';
 import EntrySheetScreen from './src/screens/EntrySheetScreen';
+import BudgetSettingsScreen from './src/screens/BudgetSettingsScreen';
+import { BUDGET_SETTINGS_PATH } from '@money/core/lib/budget';
 import ProfileScreen from './src/screens/ProfileScreen';
 import ProjectsScreen from './src/screens/ProjectsScreen';
 import SettingsScreen from './src/screens/SettingsScreen';
@@ -131,6 +133,12 @@ function Authenticated() {
  */
 function Screen() {
   const { path } = useNavigation();
+
+  /*
+   * 예산 설정. 주소에 보던 달과 유형이 실려 오므로(`?month=…&type=…`) 앞부분으로 가른다.
+   * 홈의 예산 상자에서 들어가는 하위 화면이라 뒤로가기로 돌아온다.
+   */
+  if (path.split('?')[0] === BUDGET_SETTINGS_PATH) return <BudgetSettingsScreen />;
 
   switch (path) {
     case '/home':

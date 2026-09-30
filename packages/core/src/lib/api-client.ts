@@ -1194,7 +1194,21 @@ class ApiClient {
     return response.data;
   }
 
-  /** 한 분류(또는 전체 예산)가 달마다 얼마인지. 예산 팝업의 월별 목록이 쓴다. */
+  /** 그 달의 태그 예산. 태그마다 지출·수입 두 줄이다. */
+  async getTagBudgetsForMonth(
+    year: number,
+    month: number,
+    projectId?: string | null,
+    filter?: EntryFilterQuery,
+  ): Promise<BudgetDto.MonthlyTagBudget[]> {
+    const response = await this.client.get<BudgetDto.MonthlyTagBudget[]>(
+      `/budgets/tags/${year}/${month}`,
+      { params: { ...(projectId ? { projectId } : {}), ...filter } },
+    );
+    return response.data;
+  }
+
+  /** 한 분류(또는 전체 예산·태그 예산)가 달마다 얼마인지. 예산 팝업의 월별 목록이 쓴다. */
   async getBudgetSchedule(
     query: Omit<BudgetDto.ScheduleQuery, 'projectId'>,
     projectId?: string | null,

@@ -121,6 +121,7 @@ export const useBudget = create<BudgetStore>((set) => ({
     try {
       await settingsWritePort().setBudget({
         categoryId: data.categoryId ?? null,
+        tagId: data.tagId ?? null,
         type: data.type ?? null,
         monthlyAmount: data.monthlyAmount,
         // 보고 있는 달. 구간으로 나뉜 규칙 중 어느 것을 고칠지 이 값이 정한다.

@@ -56,6 +56,25 @@ export class BudgetsController {
     return this.budgetsService.getBudgetSchedule(req.user.id, query);
   }
 
+  /* 세 토막이라 ':year/:month'(두 토막)와 부딪히지 않지만, 읽기 쉽게 그 앞에 둔다. */
+  @Get('tags/:year/:month')
+  @ApiOperation({ summary: '특정 월의 태그 예산 (태그마다 지출·수입 두 줄)' })
+  getTagsForMonth(
+    @Request() req: AuthenticatedRequest,
+    @Param('year') year: string,
+    @Param('month') month: string,
+    @Query() query: EntryFilterQuery & { projectId?: string },
+  ) {
+    const parsed = assertYearMonthParts(year, month);
+    return this.budgetsService.getTagBudgetsForMonth(
+      req.user.id,
+      query.projectId!,
+      parsed.year,
+      parsed.month,
+      query,
+    );
+  }
+
   @Get(':year/:month')
   @ApiOperation({ summary: '특정 월의 예산 (오버라이드 포함)' })
   getForMonth(

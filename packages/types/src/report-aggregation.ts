@@ -120,6 +120,8 @@ export interface NamedCategoryPostingRow extends CategoryPostingRow {
   categoryName: string;
   parentCategoryId: string | null;
   parentCategoryName: string | null;
+  /** 이 줄에 붙은 태그. 기기 사본이 싣는다 -- 태그 예산의 사용액이 읽는다. */
+  tagIds?: readonly string[];
 }
 
 /** 이 다리가 내놓는 금액. 수입 다리는 음수로 실려 오므로 크기만 본다. */

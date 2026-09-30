@@ -486,6 +486,8 @@ model Tag {
   /// 후보와 반복 등록에 붙은 자리. 태그를 지우면 그 연결도 함께 사라진다(Cascade).
   drafts  EntryDraftTag[]
   rules   RecurringRuleTag[]
+  /// 이 태그의 예산. 태그를 지우면 함께 사라진다.
+  budgets Budget[]
 
   /// 필드별 병합의 시계. 필드 이름 -> HLC 지도다 (@money/types 의 field-merge).
   fieldHlc Json?
@@ -876,7 +878,10 @@ model ExchangeRate {
 model Budget {
   id            String        @id @default(cuid())
   projectId     String
-  categoryId    String? // null = 전체 예산
+  categoryId    String? // null = 전체 예산 (tagId 도 null 일 때)
+  /// 태그 예산이면 그 태그. categoryId 와 함께 서지 않고, type 이 지출·수입을 가른다.
+  /// 태그를 지우면 그 예산도 사라진다(Cascade) -- SetNull 이면 조용히 전체 예산이 된다.
+  tagId         String?
   type          CategoryType? // categoryId가 null일 때만 사용
   monthlyAmount Decimal       @db.Decimal(19, 4)
 
@@ -886,6 +891,7 @@ model Budget {
 
   project   Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
   category  Category?        @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  tag       Tag?             @relation(fields: [tagId], references: [id], onDelete: Cascade)
   overrides BudgetOverride[]
 
   /// 필드별 병합의 시계. 필드 이름 -> HLC 지도다 (@money/types 의 field-merge).
@@ -897,8 +903,9 @@ model Budget {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([projectId, categoryId, type, effectiveFrom])
+  @@unique([projectId, categoryId, tagId, type, effectiveFrom])
   @@index([projectId, categoryId])
+  @@index([tagId])
   @@index([projectId, updatedVersion])
 }
 

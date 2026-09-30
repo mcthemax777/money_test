@@ -20,6 +20,8 @@ import {
   EntryFilterQuery,
   categoryUsage,
   isBudgetApplicable,
+  tagUsage,
+  tagUsageKey,
   totalUsage,
   zonedCurrentYearMonth,
   zonedMonthRange,
@@ -97,6 +99,24 @@ export class BudgetsService {
     );
 
     const { categoryId, type } = resolveBudgetTarget(dto.categoryId, dto.type);
+    const tagId = dto.tagId || undefined;
+
+    /*
+     * 태그 예산. 분류와 함께 설 수 없고, 지출·수입을 type 으로 받아야 한다.
+     *
+     * type 이 없으면 조회 쪽이 어느 탭의 태그 예산인지 모른다. 둘 다 주면 그 예산이
+     * 분류의 것인지 태그의 것인지가 정해지지 않는다.
+     */
+    if (tagId) {
+      if (categoryId) throw new BadRequestException('분류와 태그를 함께 가리킬 수 없습니다.');
+      if (type !== 'income' && type !== 'expense') {
+        throw new BadRequestException('태그 예산은 지출·수입을 골라야 합니다.');
+      }
+      const tag = await this.prisma.tag.findUnique({ where: { id: tagId } });
+      if (!tag || tag.projectId !== projectId) {
+        throw new NotFoundException('유효한 태그가 아닙니다.');
+      }
+    }
 
     // 카테고리 확인
     if (categoryId) {
@@ -126,6 +146,8 @@ export class BudgetsService {
       where: {
         projectId,
         categoryId: categoryId ?? null,
+        // 태그 예산과 전체 예산은 둘 다 분류가 없다. 태그로 가르지 않으면 서로를 고친다.
+        tagId: tagId ?? null,
         type: type || undefined,
       },
     });
@@ -154,6 +176,7 @@ export class BudgetsService {
           id: clientId(dto.id, '예산 식별자'),
           projectId,
           categoryId: categoryId ?? null,
+          tagId: tagId ?? null,
           type: type || undefined,
           monthlyAmount,
         },
@@ -275,6 +298,7 @@ export class BudgetsService {
           data: {
             projectId: budget.projectId,
             categoryId: budget.categoryId ?? null,
+            tagId: budget.tagId ?? null,
             // type을 빠뜨리면 안 된다. 전체 예산(categoryId = null)은 type이
             // 유일한 구분자라, 없이 만들면 조회 맵의 키가 `__total__undefined`가
             // 되어 그 달부터 전체 예산 칸이 빈 값으로 보인다.
@@ -295,17 +319,27 @@ export class BudgetsService {
    * 한 대상(분류 하나, 또는 전체 예산 하나)의 규칙 전부.
    *
    * 분류 예산은 categoryId로 갈린다. 전체 예산은 categoryId가 없으므로 type이
-   * 유일한 구분자다(스키마 주석과 같은 규칙). 이 둘을 한 곳에서 뽑아야 "그 달부터"가
+   * 유일한 구분자다(스키마 주석과 같은 규칙). 태그 예산은 (tagId, type) 이다. 이 둘을 한 곳에서 뽑아야 "그 달부터"가
    * 어디까지 덮을지 판단하는 쪽과 조회하는 쪽이 같은 묶음을 본다.
    */
   private async findSiblingBudgets(
     tx: Prisma.TransactionClient,
-    budget: { projectId: string; categoryId?: string; type?: 'income' | 'expense' },
+    budget: {
+      projectId: string;
+      categoryId?: string;
+      tagId?: string;
+      type?: 'income' | 'expense';
+    },
   ) {
     const rows = await tx.budget.findMany({
-      where: { projectId: budget.projectId, categoryId: budget.categoryId ?? null },
+      where: {
+        projectId: budget.projectId,
+        categoryId: budget.categoryId ?? null,
+        tagId: budget.tagId ?? null,
+      },
     });
 
+    // 전체 예산과 태그 예산은 type 으로 갈린다 (한 태그에 지출·수입 예산이 따로 선다).
     return budget.categoryId ? rows : rows.filter((row) => row.type === budget.type);
   }
 
@@ -436,7 +470,8 @@ export class BudgetsService {
 
     const [categories, budgets, overrides] = await Promise.all([
       this.prisma.category.findMany({ where: { projectId } }),
-      this.prisma.budget.findMany({ where: { projectId }, include: { category: true } }),
+      // 태그 예산은 따로 읽는다(getTagBudgetsForMonth). 섞이면 분류 없는 줄이라 전체 예산을 덮는다.
+      this.prisma.budget.findMany({ where: { projectId, tagId: null } }),
       this.prisma.budgetOverride.findMany({
         where: { budget: { projectId }, year, month },
         include: { budget: true },
@@ -464,24 +499,8 @@ export class BudgetsService {
       childrenByParent.set(category.parentId, list);
     }
 
-    // 사용금액: groupBy 한 번으로 끝난다.
-    //
-    // 예전에는 (대분류/소분류) x (지출/수입) 4개의 groupBy를 돌리고 credit_usage를
-    // 포함할지 매번 판단해야 했다. 이제 "지출 = 지출 카테고리 posting의 합"이므로
-    // 결제수단과 무관하게 한 번에 집계된다.
-    // 월 경계는 프로젝트 타임존 기준이다 (reports의 월 합계와 같은 규칙).
-    const { start: startDate, end: endDate } = zonedMonthRange(yearMonth, timeZone);
-
-    // 사용금액에도 화면의 필터를 그대로 건다 (reports.summary 와 같은 규칙).
-    const parsed = parseEntryFilter(filter);
-    const owner = assetOwnerCondition(parsed);
-    const entryScope: Prisma.JournalEntryWhereInput = parsed.matchNothing
-      ? { projectId, ...MATCH_NOTHING }
-      : {
-          projectId,
-          date: { gte: startDate, lt: endDate },
-          ...(owner ? { AND: [owner] } : {}),
-        };
+    // 사용금액: "지출 = 지출 카테고리 posting의 합"이라 결제수단과 무관하게 한 번에 집계된다.
+    const { entryScope, spread } = this.monthUsageScope(projectId, yearMonth, timeZone, filter);
 
     /*
      * 사용액은 다리를 읽어 와 공용 함수가 더한다.
@@ -496,7 +515,6 @@ export class BudgetsService {
      * 24개월 할부를 산 달에 전액으로 세면 그 달 하나가 통째로 터지고 남은 스물세 달은
      * 실제로 나가는 돈이 진행률에 잡히지 않는다. 가계·거래 화면과도 같은 기준이다.
      */
-    const spread = { timeZone, window: { gte: startDate, lt: endDate } };
     const postings = await this.prisma.posting.findMany({
       where: {
         categoryId: { in: categories.map((c) => c.id) },
@@ -610,6 +628,137 @@ export class BudgetsService {
   }
 
   /**
+   * 사용액을 셀 전표의 범위와 할부를 펴는 창. 분류 예산과 태그 예산이 같은 것을 쓴다.
+   *
+   * 월 경계는 프로젝트 타임존 기준이고(reports 의 월 합계와 같은 규칙), 화면의 자산주인
+   * 필터를 그대로 건다. 두 예산이 다른 범위를 보면 같은 거래가 한쪽에만 잡힌다.
+   */
+  private monthUsageScope(
+    projectId: string,
+    yearMonth: string,
+    timeZone: string,
+    filter: EntryFilterQuery,
+  ) {
+    const { start: startDate, end: endDate } = zonedMonthRange(yearMonth, timeZone);
+    const parsed = parseEntryFilter(filter);
+    const owner = assetOwnerCondition(parsed);
+    const entryScope: Prisma.JournalEntryWhereInput = parsed.matchNothing
+      ? { projectId, ...MATCH_NOTHING }
+      : {
+          projectId,
+          date: { gte: startDate, lt: endDate },
+          ...(owner ? { AND: [owner] } : {}),
+        };
+    return { entryScope, spread: { timeZone, window: { gte: startDate, lt: endDate } } };
+  }
+
+  /**
+   * 한 달의 태그 예산과 사용액. 태그마다 지출·수입 두 줄이다.
+   *
+   * 사용액은 **그 태그가 붙은 줄**의 합이다. 분할 거래는 줄마다 태그가 달라, 전표의 태그를
+   * 통째로 보면 태그를 붙이지 않은 줄까지 든다 (리포트의 태그 검색과 같은 판정이다).
+   * 분류 예산과 같이 회차 기준으로 세고 같은 자산주인 필터를 건다.
+   */
+  async getTagBudgetsForMonth(
+    userId: string,
+    projectId: string,
+    year: number,
+    month: number,
+    filter: EntryFilterQuery = {},
+  ): Promise<BudgetDto.MonthlyTagBudget[]> {
+    await this.projectAccess.verifyUserHasAccessToProject(userId, projectId);
+    const timeZone = await this.projectAccess.getProjectTimeZone(projectId);
+    const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
+
+    const [tags, budgets, overrides] = await Promise.all([
+      this.prisma.tag.findMany({ where: { projectId }, orderBy: { sortRank: 'asc' } }),
+      this.prisma.budget.findMany({ where: { projectId, tagId: { not: null } } }),
+      this.prisma.budgetOverride.findMany({
+        where: { budget: { projectId, tagId: { not: null } }, year, month },
+      }),
+    ]);
+
+    const applicable = new Map(
+      budgets
+        .filter((budget) => this.isBudgetApplicable(budget, yearMonth))
+        .map((budget) => [tagUsageKey(budget.tagId!, budget.type ?? 'expense'), budget]),
+    );
+    const overrideOf = new Map(overrides.map((override) => [override.budgetId, override]));
+
+    const { entryScope, spread } = this.monthUsageScope(projectId, yearMonth, timeZone, filter);
+    const postings =
+      tags.length === 0
+        ? []
+        : await this.prisma.posting.findMany({
+            where: {
+              categoryId: { not: null },
+              lineKey: { not: null },
+              // 태그가 하나라도 붙은 전표만. 줄 단위 판정은 아래에서 한다.
+              entry: { AND: [installmentScope(entryScope), { tags: { some: {} } }] },
+            },
+            select: {
+              categoryId: true,
+              lineKey: true,
+              baseAmount: true,
+              category: { select: { type: true } },
+              entry: {
+                select: {
+                  date: true,
+                  tags: { select: { lineKey: true, tagId: true } },
+                  postings: INSTALLMENT_LEG_SELECT,
+                },
+              },
+            },
+          });
+
+    const usage = tagUsage(
+      spreadRows(
+        postings.flatMap((row) =>
+          row.categoryId && row.category
+            ? [{
+                categoryId: row.categoryId,
+                categoryType: row.category.type,
+                baseAmount: row.baseAmount,
+                date: row.entry.date,
+                installment: installmentPlanOf(row.entry.postings),
+                tagIds: row.entry.tags
+                  .filter((tag) => tag.lineKey !== null && tag.lineKey === row.lineKey)
+                  .map((tag) => tag.tagId),
+              }]
+            : [],
+        ),
+        spread,
+      ),
+    );
+
+    const { show } = await this.currencyView(projectId);
+    return tags.flatMap((tag) =>
+      (['expense', 'income'] as const).map((type): BudgetDto.MonthlyTagBudget => {
+        const key = tagUsageKey(tag.id, type);
+        const budget = applicable.get(key);
+        const override = budget ? overrideOf.get(budget.id) : undefined;
+        const rule = budget?.monthlyAmount ?? ZERO;
+        return {
+          budgetId: budget?.id ?? `placeholder-tag-${type}-${tag.id}`,
+          tagId: tag.id,
+          tagName: tag.name,
+          tagColor: tag.color ?? undefined,
+          type,
+          monthlyAmount: show.toString(override?.amount ?? rule),
+          ruleAmount: show.toString(rule),
+          usedAmount: show.toString(
+            new Prisma.Decimal((usage.get(key)?.amount ?? Dec.of(0)).toString()),
+          ),
+          isOverridden: Boolean(override),
+          overrideId: override?.id,
+          effectiveFrom: budget?.effectiveFrom ?? undefined,
+          effectiveTo: budget?.effectiveTo ?? undefined,
+        };
+      }),
+    );
+  }
+
+  /**
    * 한 분류(또는 전체 예산)가 달마다 얼마인지.
    *
    * 예산은 규칙 하나가 여러 달을 덮고, 거기에 달별 조정이 얹힌다. 그래서 "지금
@@ -626,6 +775,7 @@ export class BudgetsService {
     );
     const timeZone = await this.projectAccess.getProjectTimeZone(projectId);
     const { categoryId, type } = resolveBudgetTarget(query.categoryId, query.type);
+    const tagId = query.tagId || undefined;
 
     const startMonth = query.startMonth
       ? assertYearMonth(query.startMonth, '시작 월')
@@ -633,7 +783,12 @@ export class BudgetsService {
     const months = Math.min(Math.max(Number(query.months) || 12, 1), 60);
 
     const rules = await this.prisma.budget.findMany({
-      where: { projectId, categoryId: categoryId ?? null, type: type || undefined },
+      where: {
+        projectId,
+        categoryId: categoryId ?? null,
+        tagId: tagId ?? null,
+        type: type || undefined,
+      },
     });
     const overrides =
       rules.length > 0
@@ -758,6 +913,7 @@ export class BudgetsService {
       id: budget.id,
       projectId: budget.projectId,
       categoryId: budget.categoryId || undefined,
+      tagId: budget.tagId || undefined,
       type: budget.type || undefined,
       // 금액은 문자열로 내보낸다 (정밀도 손실 방지). 저장 통화 -> 표시 통화.
       monthlyAmount: show

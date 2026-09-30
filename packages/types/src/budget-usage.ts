@@ -114,3 +114,39 @@ export function totalUsage(
       .map((category) => usage.get(category.id)?.amount ?? Dec.of(0)),
   );
 }
+
+/** 태그 사용액을 셀 때 다리가 더 실어 오는 것. */
+export interface TaggedPostingRow extends CategoryPostingRow {
+  /**
+   * 이 줄에 붙은 태그. 전표의 태그 중 줄 키가 이 다리와 같은 것만이다.
+   *
+   * 분할 거래는 줄마다 태그가 다르다. 전표의 태그를 통째로 보면 "여행" 태그를 붙인 식비
+   * 줄 하나 때문에 같은 거래의 교통 줄까지 여행 예산에 들어간다.
+   */
+  tagIds: readonly string[];
+}
+
+/**
+ * 태그별 사용액. 열쇠는 `${tagId}:${type}` 이다 (`tagUsageKey`).
+ *
+ * 한 줄에 태그가 둘이면 두 태그에 모두 든다. 태그는 겹쳐 붙이는 표지라 분류처럼 하나로
+ * 나뉘지 않는다. 금액을 고르는 규칙은 분류 사용액과 같다(`selectedAmount`).
+ */
+export function tagUsage(rows: readonly TaggedPostingRow[]): Map<string, CategoryUsage> {
+  const usage = new Map<string, CategoryUsage>();
+  for (const row of rows) {
+    const amount = selectedAmount(row);
+    for (const tagId of new Set(row.tagIds)) {
+      const key = tagUsageKey(tagId, row.categoryType);
+      const bucket = usage.get(key) ?? { amount: Dec.of(0), count: 0 };
+      bucket.amount = bucket.amount.plus(amount);
+      bucket.count += 1;
+      usage.set(key, bucket);
+    }
+  }
+  return usage;
+}
+
+export function tagUsageKey(tagId: string, type: CategoryType): string {
+  return `${tagId}:${type}`;
+}

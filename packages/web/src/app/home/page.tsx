@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import type { BudgetDto, CardDto, EntryFilterQuery, ReportDto } from '@money/types';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
 
@@ -17,7 +18,12 @@ import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { useHomeData } from '@money/core/hooks/useHomeData';
 import { useProjectGuard } from '@/hooks/useProjectGuard';
-import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
+import {
+  useCanEdit,
+  useProjectDisplayCurrency,
+  useProjectTimeZone,
+} from '@money/core/store/project';
+import { budgetSettingsHref } from '@money/core/lib/budget';
 import { useUserFilter } from '@money/core/store/user-filter';
 import CategoryDonutChart from '@/components/CategoryDonutChart';
 import CumulativeExpenseChart from '@/components/CumulativeExpenseChart';
@@ -34,26 +40,7 @@ import PageHeader from '@/components/PageHeader';
 import ScrollRow from '@/components/ScrollRow';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import SpendingMethodCarousel from '@/components/SpendingMethodCarousel';
-
-/** 보고 있는 것. 달 아래 탭이 이 둘을 오간다. */
-type EntryType = 'income' | 'expense';
-
-/**
- * 지출은 빨강, 수입은 초록.
- *
- * 금액 색과 고른 탭의 색을 같은 값에서 뽑는다. 탭 밑줄만 파랑으로 두면 빨간
- * 금액 아래에 파란 줄이 그어져 두 색이 무엇을 뜻하는지 흐려진다. 가계 화면
- * 머리글의 수입 초록·지출 빨강과도 같은 색이다.
- */
-const TYPE_TABS: Array<{ type: EntryType; labelKey: MessageKey; text: string; border: string }> = [
-  { type: 'expense', labelKey: 'home.tab.expense', text: 'text-red-600', border: 'border-red-600' },
-  {
-    type: 'income',
-    labelKey: 'home.tab.income',
-    text: 'text-green-600',
-    border: 'border-green-600',
-  },
-];
+import TypeTabs, { type EntryType } from '@/components/TypeTabs';
 
 /** 누적 그래프의 제목. 지출과 수입이 한 장씩이다. */
 const CUMULATIVE_CHART_TITLE: Record<EntryType, MessageKey> = {
@@ -79,6 +66,9 @@ export default function HomePage() {
   const { selectedPersonIds, togglePersonId } = useUserFilter();
   const timeZone = useProjectTimeZone();
   const displayCurrency = useProjectDisplayCurrency();
+  const router = useRouter();
+  /* 예산 설정의 톱니는 고칠 수 있는 사람에게만 선다. */
+  const canEdit = useCanEdit();
 
   /*
    * 보고 있는 달. 아래 예산·그래프·거래 목록이 모두 이 달을 따른다.
@@ -266,37 +256,12 @@ export default function HomePage() {
           벌어 얼마 썼나"를 탭을 눌러 보지 않고도 알 수 있다. 아래 예산 요약과
           그래프가 고른 쪽을 따른다.
         */}
-        <div className="flex border-b border-gray-200">
-          {TYPE_TABS.map((tab) => (
-            <button
-              key={tab.type}
-              type="button"
-              onClick={() => setType(tab.type)}
-              aria-pressed={type === tab.type}
-              /*
-                둘이 화면을 반씩 나눈다. 글자 길이대로 두면 금액 자리수에 따라
-                누르는 자리가 달마다 움직인다.
-
-                글자와 금액 모두 그 유형의 색이다. 고르지 않은 쪽을 회색으로
-                내리면 색이 "고른 것"을 뜻하게 되어, 빨강·초록이 지출·수입을
-                가리킨다는 것이 흐려진다. 무엇을 골랐는지는 밑줄과 굵기가 말한다.
-              */
-              className={`flex flex-1 items-baseline justify-center gap-2 px-4 py-2 transition ${tab.text} ${
-                type === tab.type
-                  ? `border-b-2 ${tab.border} font-semibold`
-                  : 'font-medium hover:bg-gray-50'
-              }`}
-            >
-              <span>{t(tab.labelKey)}</span>
-              <span className="text-sm font-semibold tabular-nums">
-                {formatCurrency(
-                  toNumber(tab.type === 'income' ? summary?.income : summary?.expense),
-                  displayCurrency,
-                )}
-              </span>
-            </button>
-          ))}
-        </div>
+        <TypeTabs
+          type={type}
+          onChange={setType}
+          expenseTotal={formatCurrency(toNumber(summary?.expense), displayCurrency)}
+          incomeTotal={formatCurrency(toNumber(summary?.income), displayCurrency)}
+        />
 
         {/*
           셋을 한 줄에 늘어놓고 옆으로 넘겨 본다. 실적 구간 카드와 같은 방식이다.
@@ -354,7 +319,14 @@ export default function HomePage() {
           예산은 그래프 뒤에 둔다. 홈을 여는 까닭은 "이 달이 어떻게 흘러가고
           있나"라, 그림이 먼저 오고 분류별 진행률은 그다음에 들여다보는 것이다.
         */}
-        <MonthlyBudgetSummary budgets={budgets} type={type} />
+        <MonthlyBudgetSummary
+          budgets={budgets}
+          tagBudgets={home.tagBudgets}
+          type={type}
+          onOpenSettings={
+            canEdit ? () => router.push(budgetSettingsHref(yearMonth, type)) : undefined
+          }
+        />
       </section>
 
       {/*

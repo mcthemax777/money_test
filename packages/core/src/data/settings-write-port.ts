@@ -123,6 +123,8 @@ export interface SettingsWritePort {
   setBudget(input: {
     id?: string;
     categoryId?: string | null;
+    /** 태그 예산이면 그 태그. 이때 type 이 지출·수입을 가른다. */
+    tagId?: string | null;
     type?: string | null;
     monthlyAmount: string;
     /**
@@ -239,6 +241,7 @@ export const httpSettingsWritePort: SettingsWritePort = {
     }
     const created = await apiClient.createBudget({
       categoryId: input.categoryId ?? undefined,
+      tagId: input.tagId ?? undefined,
       type: (input.type ?? undefined) as never,
       monthlyAmount: input.monthlyAmount,
       yearMonth: input.yearMonth,

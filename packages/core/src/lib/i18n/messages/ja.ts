@@ -265,8 +265,8 @@ export const ja: Record<MessageKey, string> = {
   'budget.title.expense': '予算',
   'budget.title.income': '目標',
   'budget.total': '合計',
-  'budget.none.expense': '予算を決めたカテゴリがありません。家計簿画面のカテゴリ別で決められます。',
-  'budget.none.income': '目標を決めたカテゴリがありません。家計簿画面のカテゴリ別で決められます。',
+  'budget.none.expense': '予算を決めたカテゴリがありません。右上の歯車から決められます。',
+  'budget.none.income': '目標を決めたカテゴリがありません。右上の歯車から決められます。',
   'budget.over': '{amount}超過',
   'budget.left': '残り{amount}',
 
@@ -622,6 +622,12 @@ export const ja: Record<MessageKey, string> = {
   'budget.newHint':
     '新しく作る予算はすべての月に適用されます。保存すると下に月別の一覧が出て、特定の月だけ変えられます。',
   'budget.settings': '予算の設定',
+  'budget.tagTarget': '{name}タグ',
+  'budget.tagSection': 'タグ',
+  'budget.noTags': 'タグがありません。カテゴリ画面のタグで作成できます。',
+  'budget.settingsHint': 'カテゴリを押すと、その月予算を決められます。',
+  'budget.monthAdjusted': '今月のみ調整',
+  'budget.settingsLoadFailed': '予算を読み込めませんでした。',
   'budget.progressMonthOnly':
     '予算の進捗は月単位でのみ表示します。予算は月ごとに決める値なので、任意の期間に割り振れません。',
   'budget.line': '予算 {amount}・{percent}%',

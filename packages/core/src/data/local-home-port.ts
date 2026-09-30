@@ -36,6 +36,8 @@ import {
   isEntryPeriodUnit,
   DEFAULT_ENTRY_PERIOD,
   isBudgetApplicable,
+  tagUsage,
+  tagUsageKey,
   netWorth,
   closingMonthKey,
   closingMonthOf,
@@ -246,7 +248,10 @@ export function createLocalHomePort(
       ]);
 
       const usage = categoryUsage(rows, categories);
-      const applicable = budgets.filter((budget) => isBudgetApplicable(budget, yearMonth));
+      // 태그 예산은 따로 센다(getTagBudgetsForMonth). 섞이면 분류 없는 줄이라 전체 예산을 덮는다.
+      const applicable = budgets.filter(
+        (budget) => !budget.tagId && isBudgetApplicable(budget, yearMonth),
+      );
       const byCategory = new Map(applicable.filter((b) => b.categoryId).map((b) => [b.categoryId!, b]));
       const byType = new Map(applicable.filter((b) => !b.categoryId && b.type).map((b) => [b.type!, b]));
       const names = await store.categoryRows(id);
@@ -294,6 +299,50 @@ export function createLocalHomePort(
         );
       }
       return result;
+    },
+
+    /** 태그 예산. 서버의 getTagBudgetsForMonth 와 같은 규칙이다 (그 주석을 볼 것). */
+    async getTagBudgetsForMonth(year, month, projectId, filter) {
+      const id = requireProject(projectId);
+      note('budgets');
+
+      const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
+      const [rows, tags, budgets, show] = await Promise.all([
+        // 분류 예산과 같이 회차 기준으로 센다.
+        monthPostings(id, { yearMonth }, { ...filter, basis: 'installment' }),
+        store.tagRows(id),
+        store.budgets(id, year, month),
+        converter(id),
+      ]);
+
+      const usage = tagUsage(rows.map((row) => ({ ...row, tagIds: row.tagIds ?? [] })));
+      const byKey = new Map(
+        budgets
+          .filter((budget) => budget.tagId && isBudgetApplicable(budget, yearMonth))
+          .map((budget) => [tagUsageKey(budget.tagId!, (budget.type ?? 'expense') as 'income' | 'expense'), budget]),
+      );
+
+      return tags.flatMap((tag) =>
+        (['expense', 'income'] as const).map((type): BudgetDto.MonthlyTagBudget => {
+          const key = tagUsageKey(tag.id, type);
+          const budget = byKey.get(key);
+          const amount = budget?.overrideAmount ?? budget?.monthlyAmount ?? '0';
+          return {
+            budgetId: budget?.id ?? `placeholder-tag-${type}-${tag.id}`,
+            tagId: tag.id,
+            tagName: tag.name,
+            tagColor: tag.color ?? undefined,
+            type,
+            monthlyAmount: show.toString(Dec.of(amount)),
+            ruleAmount: show.toString(Dec.of(budget?.monthlyAmount ?? '0')),
+            usedAmount: show.toString(usage.get(key)?.amount ?? Dec.of(0)),
+            isOverridden: Boolean(budget?.overrideAmount),
+            overrideId: budget?.overrideId ?? undefined,
+            effectiveFrom: budget?.effectiveFrom ?? undefined,
+            effectiveTo: budget?.effectiveTo ?? undefined,
+          };
+        }),
+      );
     },
 
     /**

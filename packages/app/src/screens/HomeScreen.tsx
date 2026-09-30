@@ -7,7 +7,8 @@ import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
-import { useProject } from '@money/core/store/project';
+import { useCanEdit, useProject } from '@money/core/store/project';
+import { budgetSettingsHref } from '@money/core/lib/budget';
 
 import EntryFeed from '../components/EntryFeed';
 import MonthHeader from '../components/MonthHeader';
@@ -16,6 +17,7 @@ import PageHeader from '../components/PageHeader';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import SpendingMethodCarousel from '../components/SpendingMethodCarousel';
 import TypeTabs, { type EntryType } from '../components/TypeTabs';
+import { useNavigation } from '../shell/navigation';
 
 /**
  * 로그인하면 처음 보는 화면. 웹의 홈과 같은 차례로 늘어놓는다.
@@ -29,6 +31,9 @@ export default function HomeScreen() {
   const displayCurrency = useProjectDisplayCurrency();
   const selectedProjectId = useProject((state) => state.selectedProjectId);
   const togglePersonId = useUserFilter((state) => state.togglePersonId);
+  const { go } = useNavigation();
+  /* 예산 설정의 톱니는 고칠 수 있는 사람에게만 선다. */
+  const canEdit = useCanEdit();
 
   /*
    * 보고 있는 달. 아래 예산과 거래 목록이 이 달을 따른다.
@@ -39,6 +44,7 @@ export default function HomeScreen() {
   const { year: thisYear, month: thisMonth } = currentYearMonth(timeZone);
   const [view, setView] = useState({ year: thisYear, month: thisMonth });
   const { year, month } = view;
+  const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
   const thisYearMonth = `${thisYear}-${String(thisMonth).padStart(2, '0')}`;
   const monthRange = monthQueryRange(year, month, timeZone);
 
@@ -116,7 +122,12 @@ export default function HomeScreen() {
           <Text className="text-sm text-gray-600">{t('home.chartComingSoon')}</Text>
         </View>
 
-        <MonthlyBudgetSummary budgets={home.budgets} type={type} />
+        <MonthlyBudgetSummary
+          budgets={home.budgets}
+          tagBudgets={home.tagBudgets}
+          type={type}
+          onOpenSettings={canEdit ? () => go(budgetSettingsHref(yearMonth, type)) : undefined}
+        />
       </View>
 
       <View className="gap-2">

@@ -393,6 +393,7 @@ export function createLocalSettingsWriter({
         id,
         {
           categoryId: input.categoryId ?? null,
+          tagId: input.tagId ?? null,
           type: input.type ?? null,
           monthlyAmount: input.monthlyAmount,
           // 어느 달의 규칙을 고치는지. 사본의 행에는 담지 않는다(예산 행의 칸이 아니다).
@@ -400,6 +401,7 @@ export function createLocalSettingsWriter({
         },
         {
           categoryId: input.categoryId ?? null,
+          tagId: input.tagId ?? null,
           type: input.type ?? null,
           monthlyAmount: input.monthlyAmount,
         },

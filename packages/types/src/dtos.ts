@@ -1650,6 +1650,13 @@ export namespace BudgetDto {
     id?: string;
     categoryId?: string;    // null=전체, 값=대분류/소분류
     type?: 'income' | 'expense';  // 카테고리 타입 (전체 지출/수입 구분용)
+    /**
+     * 태그 예산이면 그 태그. categoryId 와 함께 줄 수 없고 type 이 반드시 있어야 한다.
+     *
+     * 태그에는 지출·수입의 갈래가 없다. 같은 태그("여행")에 지출 예산과 수입 목표를
+     * 따로 둘 수 있게 type 으로 가른다.
+     */
+    tagId?: string;
     monthlyAmount: string;
     projectId?: string;
     /**
@@ -1681,6 +1688,8 @@ export namespace BudgetDto {
     id: string;
     projectId: string;
     categoryId?: string;
+    /** 태그 예산이면 그 태그 */
+    tagId?: string;
     type?: 'income' | 'expense';
     /** 금액은 문자열 */
     monthlyAmount: string;
@@ -1718,6 +1727,31 @@ export namespace BudgetDto {
     isVirtualBudget?: boolean;  // 소분류 합으로 만든 가상 예산인지
   }
 
+  /**
+   * 한 태그의 한 달 예산 (GET /budgets/tags/:year/:month).
+   *
+   * 태그마다 지출·수입 두 줄이 온다. 예산이 없는 줄은 budgetId 가 `placeholder-` 로
+   * 시작한다 (분류 예산과 같은 규칙). 분류 예산과 한 목록에 섞지 않는다 -- 분류가 없는
+   * 줄을 "전체 예산"으로 읽는 화면이 이미 여럿이다.
+   */
+  export interface MonthlyTagBudget {
+    budgetId: string;
+    tagId: string;
+    tagName: string;
+    tagColor?: string;
+    type: 'income' | 'expense';
+    /** 이 달에 적용되는 금액. 조정이 있으면 조정값이다. */
+    monthlyAmount: string;
+    /** 조정을 걷어냈을 때 돌아갈 규칙 금액 */
+    ruleAmount: string;
+    /** 이 달에 이 태그가 붙은 그 유형 줄의 합 (회차 기준) */
+    usedAmount: string;
+    isOverridden: boolean;
+    overrideId?: string;
+    effectiveFrom?: string;
+    effectiveTo?: string;
+  }
+
   /** 월별 예산 목록 조회. 한 분류(또는 전체 예산)가 달마다 얼마인지 본다. */
   export interface ScheduleQuery {
     projectId?: string;
@@ -1726,6 +1760,8 @@ export namespace BudgetDto {
      * 'BUDGET_TOTAL_EXPENSE' 센티널을 쓴다 (CreateRequest와 같은 규칙).
      */
     categoryId?: string;
+    /** 태그 예산이면 그 태그. 이때 type 이 지출·수입을 가른다. */
+    tagId?: string;
     type?: 'income' | 'expense';
     /** 첫 달 "YYYY-MM". 생략하면 이번 달 */
     startMonth?: string;

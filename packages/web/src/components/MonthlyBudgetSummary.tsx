@@ -1,6 +1,7 @@
 'use client';
 
 import type { BudgetDto } from '@money/types';
+import { Settings } from 'lucide-react';
 
 import { budgetPercentage } from '@money/core/lib/budget';
 import { useTranslation } from '@money/core/lib/i18n';
@@ -21,11 +22,17 @@ import { useProjectDisplayCurrency } from '@money/core/store/project';
  */
 export default function MonthlyBudgetSummary({
   budgets,
+  tagBudgets = [],
   type,
+  onOpenSettings,
 }: {
   budgets: BudgetDto.MonthlyBudget[];
+  /** 태그 예산. 분류 아래에 같은 모양으로 적는다. 예산을 잡은 태그만 선다. */
+  tagBudgets?: BudgetDto.MonthlyTagBudget[];
   /** 지출 예산을 볼지 수입 목표를 볼지 */
   type: 'income' | 'expense';
+  /** 예산 설정 화면으로. 넘기면 제목 줄 오른쪽 끝에 톱니가 선다 (보기 권한은 넘기지 않는다). */
+  onOpenSettings?: () => void;
 }) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
@@ -43,6 +50,11 @@ export default function MonthlyBudgetSummary({
       (budget) =>
         budget.categoryId && budget.categoryType === type && toNumber(budget.monthlyAmount) > 0,
     )
+    .sort((a, b) => toNumber(b.usedAmount) - toNumber(a.usedAmount));
+
+  /* 예산을 잡은 태그. 분류와 같이 많이 쓴(번) 순이다. */
+  const tagRows = tagBudgets
+    .filter((budget) => budget.type === type && toNumber(budget.monthlyAmount) > 0)
     .sort((a, b) => toNumber(b.usedAmount) - toNumber(a.usedAmount));
 
   /*
@@ -74,9 +86,26 @@ export default function MonthlyBudgetSummary({
     */
     <div className="bg-white rounded-lg shadow p-4">
       {/* 옆의 통계 그래프들과 같은 자리에 같은 모양으로 제목을 단다. */}
-      <h3 className="mb-3 font-semibold text-gray-900">
-        {type === 'income' ? t('budget.title.income') : t('budget.title.expense')}
-      </h3>
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <h3 className="font-semibold text-gray-900">
+          {type === 'income' ? t('budget.title.income') : t('budget.title.expense')}
+        </h3>
+        {/*
+          누를 자리는 32px 로 두되 음수 여백으로 상자의 오른쪽 위 선에 붙인다. 여백을 그대로
+          두면 톱니가 제목보다 안쪽에 떠 모서리에 달린 것으로 읽히지 않는다.
+        */}
+        {onOpenSettings && (
+          <button
+            type="button"
+            onClick={onOpenSettings}
+            aria-label={t('budget.settings')}
+            title={t('budget.settings')}
+            className="-my-1 -mr-2 flex h-8 w-8 items-center justify-center rounded-lg text-gray-500 transition hover:bg-gray-100 hover:text-gray-900"
+          >
+            <Settings className="h-4 w-4" aria-hidden />
+          </button>
+        )}
+      </div>
 
       {/*
         합계는 전체 예산을 잡아 두었을 때만 적는다.
@@ -106,29 +135,81 @@ export default function MonthlyBudgetSummary({
         </p>
       ) : (
         <div className="space-y-1">
-          {rows.map((budget) => {
-            const used = toNumber(budget.usedAmount);
-            return (
-              <div key={budget.budgetId} className="py-2">
-                <div className="flex justify-between items-baseline gap-2">
-                  <span className="text-sm text-gray-800 truncate">{nameOf(budget)}</span>
-                  <UsedOfBudget
-                    used={used}
-                    budget={toNumber(budget.monthlyAmount)}
-                    currency={displayCurrency}
-                  />
-                </div>
-                <BudgetLine
-                  budget={toNumber(budget.monthlyAmount)}
-                  used={used}
-                  currency={displayCurrency}
-                  type={type}
-                />
-              </div>
-            );
-          })}
+          {rows.map((budget) => (
+            <BudgetRow
+              key={budget.budgetId}
+              name={nameOf(budget)}
+              used={toNumber(budget.usedAmount)}
+              budget={toNumber(budget.monthlyAmount)}
+              currency={displayCurrency}
+              type={type}
+            />
+          ))}
         </div>
       )}
+
+      {/*
+        태그 예산. 분류 아래에 칸을 나눠 적는다 -- 태그는 분류와 겹쳐 붙는 표지라, 한
+        목록에 섞으면 같은 돈이 두 줄에 든 것이 분류끼리 겹친 것처럼 읽힌다.
+        잡은 태그가 없으면 칸째 두지 않는다. 비었다는 안내는 위의 분류 문구로 충분하다.
+      */}
+      {tagRows.length > 0 && (
+        <div className="mt-3 border-t border-gray-100 pt-3">
+          <h4 className="mb-1 text-xs font-medium text-gray-500">{t('budget.tagSection')}</h4>
+          <div className="space-y-1">
+            {tagRows.map((budget) => (
+              <BudgetRow
+                key={budget.budgetId}
+                name={budget.tagName}
+                color={budget.tagColor}
+                isTag
+                used={toNumber(budget.usedAmount)}
+                budget={toNumber(budget.monthlyAmount)}
+                currency={displayCurrency}
+                type={type}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** 예산 한 줄. 분류와 태그가 같은 모양을 쓴다. 태그는 이름 앞에 색 점이 선다. */
+function BudgetRow({
+  name,
+  color,
+  isTag = false,
+  used,
+  budget,
+  currency,
+  type,
+}: {
+  name: string;
+  color?: string;
+  isTag?: boolean;
+  used: number;
+  budget: number;
+  currency: string;
+  type: 'income' | 'expense';
+}) {
+  return (
+    <div className="py-2">
+      <div className="flex justify-between items-baseline gap-2">
+        <span className="flex min-w-0 items-center gap-1.5">
+          {isTag && (
+            <span
+              className="h-2 w-2 shrink-0 rounded-full bg-gray-300"
+              style={color ? { backgroundColor: color } : undefined}
+              aria-hidden
+            />
+          )}
+          <span className="text-sm text-gray-800 truncate">{name}</span>
+        </span>
+        <UsedOfBudget used={used} budget={budget} currency={currency} />
+      </div>
+      <BudgetLine budget={budget} used={used} currency={currency} type={type} />
     </div>
   );
 }

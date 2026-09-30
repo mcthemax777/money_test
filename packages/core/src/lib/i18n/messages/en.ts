@@ -264,8 +264,8 @@ export const en: Record<MessageKey, string> = {
   'budget.title.expense': 'Budget',
   'budget.title.income': 'Target',
   'budget.total': 'Total',
-  'budget.none.expense': 'No category has a budget yet. Set one under By category on the Ledger screen.',
-  'budget.none.income': 'No category has a target yet. Set one under By category on the Ledger screen.',
+  'budget.none.expense': 'No category has a budget yet. Tap the gear at the top right to set one.',
+  'budget.none.income': 'No category has a target yet. Tap the gear at the top right to set one.',
   'budget.over': '{amount} over',
   'budget.left': '{amount} left',
 
@@ -624,6 +624,12 @@ export const en: Record<MessageKey, string> = {
   'budget.newHint':
     'A new budget applies to every month. Once saved, a month-by-month list appears below where you can change a single month.',
   'budget.settings': 'Budget settings',
+  'budget.tagTarget': '{name} tag',
+  'budget.tagSection': 'Tags',
+  'budget.noTags': 'No tags yet. Create them under Tags on the Categories screen.',
+  'budget.settingsHint': 'Tap a category to set its monthly budget.',
+  'budget.monthAdjusted': 'Adjusted this month',
+  'budget.settingsLoadFailed': 'Could not load budgets.',
   'budget.progressMonthOnly':
     'Budget progress shows only for whole months. A budget is set per month, so it cannot be split across an arbitrary range.',
   'budget.line': 'Budget {amount} · {percent}%',
