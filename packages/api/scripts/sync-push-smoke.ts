@@ -21,6 +21,7 @@
  *   8. **태그는 더한 것과 뗀 것만 적용한다.** 통째 교체가 아니라, 두 기기가 서로 다른
  *      태그를 붙이면 둘 다 남는다. 그 사이 지워진 거래는 건너뛰고 나머지는 적용된다.
  */
+import { ServerClockService } from '@/common/server-clock';
 import { RecurringService } from '@/modules/entry-drafts/recurring.service';
 import { EntryDraftsService } from '@/modules/entry-drafts/entry-drafts.service';
 import { HolidaysService } from '@/modules/holidays/holidays.service';
@@ -87,6 +88,7 @@ runSmoke('sync-push', async (ctx) => {
     access as any,
     new EntryDraftsService(ctx.prisma as any, access as any) as any,
     new HolidaysService(ctx.prisma as any),
+    new ServerClockService(),
   );
   const replay = new MutationReplayService(
     ctx.prisma as any,

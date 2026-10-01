@@ -69,6 +69,7 @@ function emptyPull(version: number): SyncDto.PullResponse {
       assetValuations: [],
       installmentPlans: [],
       entryDrafts: [],
+      recurringRules: [],
     },
   };
 }

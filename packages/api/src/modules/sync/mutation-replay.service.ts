@@ -58,6 +58,7 @@ import {
   isAfterHlc,
   isBlockedBy,
   mergeFields,
+  recurringClockOf,
 } from '@money/types';
 
 import { PrismaService } from '@/config/prisma.service';
@@ -1041,43 +1042,60 @@ export class MutationReplayService {
       return this.sameOrForeign(mutation, existing.projectId, projectId, '예산');
     }
 
-    if (!existing) {
-      await this.budgets.createBudget(
+    const target = {
+      categoryId: payload.categoryId ?? undefined,
+      tagId: payload.tagId ?? undefined,
+      type: payload.type ?? undefined,
+      /*
+       * 어느 달의 규칙을 고칠지. 없으면 서버가 재생하는 오늘이 속한 달이다.
+       *
+       * 예산은 구간으로 나뉠 수 있어 한 분류에 규칙이 여럿일 수 있다. 이 값이 없으면
+       * 8월 화면에서 고친 금액이 9월 규칙에 적힌다.
+       */
+      yearMonth: payload.yearMonth,
+    };
+
+    /*
+     * 이 id 가 아직 없으면 같은 자리의 규칙부터 찾는다.
+     *
+     * 두 기기가 끊긴 채 같은 예산을 각자 새로 정하면 id 가 다르다. 찾지 않고 만들기로
+     * 넘기면 서비스가 내용으로 찾아 시계 없이 덮는다 -- 늦게 도착한 옛 값이 이긴다.
+     * 찾았으면 그 규칙과 시계를 견주고, 기기에는 별칭으로 그 id 를 알려 준다. 알리지
+     * 않으면 기기 사본에 서버에 없는 규칙이 하나 더 남는다.
+     */
+    const rule = existing ?? (await this.budgets.findRuleFor(projectId, target as never));
+    const alias = rule && rule.id !== payload.id ? { from: payload.id, to: rule.id } : undefined;
+
+    if (!rule) {
+      const made = await this.budgets.createBudget(
         userId,
-        {
-          id: payload.id,
-          categoryId: payload.categoryId ?? undefined,
-          tagId: payload.tagId ?? undefined,
-          type: payload.type ?? undefined,
-          monthlyAmount: payload.monthlyAmount,
-          /*
-           * 어느 달의 규칙을 고칠지. 없으면 서버가 재생하는 오늘이 속한 달이다.
-           *
-           * 예산은 구간으로 나뉠 수 있어 한 분류에 규칙이 여럿일 수 있다. 이 값이 없으면
-           * 8월 화면에서 고친 금액이 9월 규칙에 적힌다.
-           */
-          yearMonth: payload.yearMonth,
-        } as never,
+        { id: payload.id, monthlyAmount: payload.monthlyAmount, ...target } as never,
         projectId,
         mutation.hlc,
       );
-      return this.applied(mutation, projectId, payload.id);
+      // 찾은 뒤 다른 요청이 먼저 만들었으면 서비스가 그 규칙을 고친다. 그 id 를 알린다.
+      return {
+        ...(await this.applied(mutation, projectId, made.id)),
+        ...(made.id !== payload.id ? { alias: { from: payload.id, to: made.id } } : {}),
+      };
     }
 
     const merged = mergeFields(
       { monthlyAmount: payload.monthlyAmount },
       mutation.hlc,
-      readFieldClocks(existing.fieldHlc),
+      readFieldClocks(rule.fieldHlc),
     );
-    if (Object.keys(merged.apply).length === 0) return this.allFieldsLost(mutation, merged.lost);
+    if (Object.keys(merged.apply).length === 0) {
+      return { ...this.allFieldsLost(mutation, merged.lost), ...(alias ? { alias } : {}) };
+    }
 
     await this.budgets.updateBudget(
-      payload.id,
+      rule.id,
       userId,
       { monthlyAmount: payload.monthlyAmount, applyMode: 'all' } as never,
       mutation.hlc,
     );
-    return this.applied(mutation, projectId, payload.id);
+    return { ...(await this.applied(mutation, projectId, rule.id)), ...(alias ? { alias } : {}) };
   }
 
   /**
@@ -1213,11 +1231,16 @@ export class MutationReplayService {
     const payload = mutation.payload as RecurringCreatePayload;
     const existing = await this.prisma.recurringRule.findUnique({ where: { id: payload.id } });
     if (existing) return this.sameOrForeign(mutation, existing.projectId, projectId, '반복 등록');
-    await this.recurring.create(userId, payload as never, projectId);
+    await this.recurring.create(userId, payload as never, projectId, mutation.hlc);
     return this.applied(mutation, projectId, payload.id);
   }
 
-  /** 반복 등록 고치기. 바꾼 칸만 온다 -- 서버가 지금 규칙에 합쳐 검사한다. 없으면 거절이다. */
+  /**
+   * 반복 등록 고치기. 바꾼 칸만 온다 -- 서버가 지금 규칙에 합쳐 검사한다. 없으면 거절이다.
+   *
+   * 다른 설정처럼 이긴 칸만 적는다. 일정 칸들과 결제 칸들은 시계 하나를 나눠 써서 함께
+   * 이기고 함께 진다 (`recurringClockOf`). 전부 지면 충돌이다 (D6).
+   */
   private async updateRecurring(
     userId: string,
     projectId: string,
@@ -1226,7 +1249,16 @@ export class MutationReplayService {
     const { id, ...patch } = mutation.payload as RecurringUpdatePayload;
     const existing = await this.prisma.recurringRule.findUnique({ where: { id } });
     if (!existing || existing.projectId !== projectId) return this.notFound(mutation, '반복 등록');
-    await this.recurring.update(id, userId, patch as never);
+
+    const merged = mergeFields(
+      patch,
+      mutation.hlc,
+      readFieldClocks(existing.fieldHlc),
+      recurringClockOf,
+    );
+    if (Object.keys(merged.apply).length === 0) return this.allFieldsLost(mutation, merged.lost);
+
+    await this.recurring.update(id, userId, merged.apply as never, mutation.hlc);
     return this.applied(mutation, projectId, id);
   }
 

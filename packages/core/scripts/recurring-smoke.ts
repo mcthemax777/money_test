@@ -176,6 +176,8 @@ console.log('\n── 후보로 옮기기 ──');
     categoryId: null,
     accountId: null,
     toAccountId: null,
+    feeAmount: null,
+    feeCategoryId: null,
     cardId: null,
     installmentMonths: null,
     tagIds: [],

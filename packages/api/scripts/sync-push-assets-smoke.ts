@@ -19,6 +19,7 @@
  *      이미 있는 행을 채택하고 그 id 를 알려 준다. 오류로 두면 그 명령이 영영 막힌다.
  */
 import { randomUUID } from 'node:crypto';
+import { ServerClockService } from '@/common/server-clock';
 import { RecurringService } from '@/modules/entry-drafts/recurring.service';
 import { EntryDraftsService } from '@/modules/entry-drafts/entry-drafts.service';
 import { HolidaysService } from '@/modules/holidays/holidays.service';
@@ -72,6 +73,7 @@ runSmoke('sync-push-assets', async (ctx) => {
     access as any,
     new EntryDraftsService(ctx.prisma as any, access as any) as any,
     new HolidaysService(ctx.prisma as any),
+    new ServerClockService(),
   );
   const replay = new MutationReplayService(
     ctx.prisma as any,
@@ -406,6 +408,35 @@ runSmoke('sync-push-assets', async (ctx) => {
     (await ctx.prisma.budget.findUniqueOrThrow({ where: { id: budgetId } })).monthlyAmount.toString(),
     '300000');
 
+  // 다른 기기가 끊긴 채 같은 분류의 예산을 제 id 로 정했다. 서버는 있는 규칙과 시계를 견준다.
+  const otherBudgetId = '019273cc-0000-7000-8000-000000000032';
+  const staleOther = await push([
+    command('budget.set', otherBudgetId, {
+      id: otherBudgetId,
+      categoryId,
+      monthlyAmount: '111',
+    }, T0 + 50, 'staleOther'),
+  ]);
+  ctx.check('다른 id 로 온 옛 금액도 충돌', staleOther.results[0]?.status, 'conflict');
+  ctx.check('충돌에도 있는 규칙을 별칭으로 알린다', staleOther.results[0]?.alias?.to, budgetId);
+  ctx.check('다른 id 로 규칙을 하나 더 만들지 않는다',
+    await ctx.prisma.budget.count({ where: { id: otherBudgetId } }), 0);
+  ctx.check('나중 금액이 그대로',
+    (await ctx.prisma.budget.findUniqueOrThrow({ where: { id: budgetId } })).monthlyAmount.toString(),
+    '300000');
+  const newerOther = await push([
+    command('budget.set', otherBudgetId, {
+      id: otherBudgetId,
+      categoryId,
+      monthlyAmount: '400000',
+    }, T0 + 1_000_150, 'newerOther'),
+  ]);
+  ctx.check('다른 id 로 온 새 금액은 적용', newerOther.results[0]?.status, 'applied');
+  ctx.check('적용도 별칭을 알린다', newerOther.results[0]?.alias?.to, budgetId);
+  ctx.check('있는 규칙의 금액이 바뀐다',
+    (await ctx.prisma.budget.findUniqueOrThrow({ where: { id: budgetId } })).monthlyAmount.toString(),
+    '400000');
+
   const overrideId = '019273cc-0000-7000-8000-000000000031';
   const madeOverride = await push([
     command('budget.override', overrideId, {
@@ -552,6 +583,11 @@ runSmoke('sync-push-assets', async (ctx) => {
     accountId: s2Id2(2),
   } as never, pid);
 
+  // 통합은 다리·태그 연결만 옮긴다. 그 전표의 번호가 올라야 다른 기기가 받아 간다.
+  const versionOf = async (id: string) =>
+    (await ctx.prisma.journalEntry.findUniqueOrThrow({ where: { id } })).updatedVersion;
+  const s2VersionBefore = await versionOf(s2Spend.id);
+
   const s2TypeMismatch = await push([
     command('category.merge', s2Id2(3), { id: s2Id2(3), moves: [{ fromId: s2Id2(3), toId: s2Id2(5) }] }, T0 + 2_000_010, 'mergeBad'),
   ]);
@@ -563,6 +599,8 @@ runSmoke('sync-push-assets', async (ctx) => {
   ctx.check('다리가 옮겨 간다',
     (await ctx.prisma.posting.findFirstOrThrow({ where: { entryId: s2Spend.id, categoryId: { not: null } } })).categoryId, s2Id2(4));
   ctx.check('없앤 분류는 사라진다', await ctx.prisma.category.count({ where: { id: s2Id2(3) } }), 0);
+  const s2VersionMerged = await versionOf(s2Spend.id);
+  ctx.check('분류 통합이 전표 번호를 올린다', s2VersionMerged > s2VersionBefore, true);
   const s2MergedAgain = await push([
     command('category.merge', s2Id2(3), { id: s2Id2(3), moves: [{ fromId: s2Id2(3), toId: s2Id2(4) }] }, T0 + 2_000_012, 'mergeAgain'),
   ]);
@@ -575,6 +613,7 @@ runSmoke('sync-push-assets', async (ctx) => {
   ctx.check('태그가 옮겨 간다',
     (await ctx.prisma.entryTag.findFirstOrThrow({ where: { entryId: s2Spend.id } })).tagId, s2Id2(7));
   ctx.check('없앤 태그는 사라진다', await ctx.prisma.tag.count({ where: { id: s2Id2(6) } }), 0);
+  ctx.check('태그 통합이 전표 번호를 올린다', (await versionOf(s2Spend.id)) > s2VersionMerged, true);
 
   // 잔액 맞추기: 기초잔액 전표가 없으면 기기가 정한 id 로 세운다
   const s2OpeningEntryId = s2Id2(8);
@@ -663,6 +702,38 @@ runSmoke('sync-push-assets', async (ctx) => {
     command('recurring.update', s3Id(9), { id: s3Id(9), isActive: false }, T0 + 3_000_005, 'ru3'),
   ]);
   ctx.check('없는 반복 고치기는 거절', s3Missing.results[0]?.status, 'rejected');
+
+  // 필드별 시계: 늦은 편집이 이기고, 일정 칸들은 한 덩어리로 이기고 진다.
+  const s3Rule = () => ctx.prisma.recurringRule.findUniqueOrThrow({ where: { id: s3Id(1) } });
+  const s3Stale = await push([
+    command('recurring.update', s3Id(1), { id: s3Id(1), amount: '1' }, T0 + 3_000_000, 'ruStale'),
+  ]);
+  ctx.check('만들기보다 옛 반복 편집은 충돌', s3Stale.results[0]?.status, 'conflict');
+  ctx.check('금액은 그대로', (await s3Rule()).amount?.toString(), '500000');
+  await push([
+    command('recurring.update', s3Id(1), { id: s3Id(1), amount: '600000' }, T0 + 3_000_010, 'ruAmount'),
+    command('recurring.update', s3Id(1), { id: s3Id(1), timeOfDay: '09:30' }, T0 + 3_000_020, 'ruTime'),
+  ]);
+  const s3OldDay = await push([
+    command('recurring.update', s3Id(1), { id: s3Id(1), dayOfMonth: 10 }, T0 + 3_000_015, 'ruDay'),
+  ]);
+  ctx.check('시각보다 옛 날짜 편집은 같은 일정이라 충돌', s3OldDay.results[0]?.status, 'conflict');
+  const s3Mixed = await push([
+    command('recurring.update', s3Id(1), { id: s3Id(1), amount: '700000', dayOfMonth: 5 }, T0 + 3_000_015, 'ruMixed'),
+  ]);
+  ctx.check('이긴 칸이 있으면 적용', s3Mixed.results[0]?.status, 'applied');
+  const s3AfterMixed = await s3Rule();
+  ctx.check('금액은 이기고 날짜는 진다',
+    `${s3AfterMixed.amount?.toString()} ${s3AfterMixed.dayOfMonth} ${s3AfterMixed.timeOfDay}`, '700000 25 09:30');
+  const s3WireClock = (await sync.pull(uid, { projectId: pid, since: 0 })).changes.recurringRules
+    .find((row) => (row as { id: string }).id === s3Id(1)) as { fieldHlc?: Record<string, string> } | undefined;
+  ctx.check('pull 에 시계가 실린다', s3WireClock?.fieldHlc?.schedule, hlcAt(T0 + 3_000_020));
+
+  // 태그를 옮기면 그 태그가 붙은 반복도 다시 내려간다 (연결 표에는 번호가 없다).
+  const s3OtherTag = await tags.createTag(uid, { name: '옮겨 받을 태그' } as never, pid);
+  const s3VersionBefore = (await s3Rule()).updatedVersion;
+  await tags.mergeTags(uid, { fromId: s3Tag.id, toId: s3OtherTag.id } as never, pid);
+  ctx.check('태그 통합이 반복의 번호를 올린다', (await s3Rule()).updatedVersion > s3VersionBefore, true);
 
   const s3Deleted = await push([command('recurring.delete', s3Id(1), { id: s3Id(1) }, T0 + 3_000_006, 'rd1')]);
   ctx.check('반복 지우기', s3Deleted.results[0]?.status, 'applied');

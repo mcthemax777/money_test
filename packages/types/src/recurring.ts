@@ -497,6 +497,53 @@ export function recurringScheduleFields(schedule: RecurringScheduleWithTime) {
 }
 
 /**
+ * 반복 등록의 필드가 쓰는 시계 (`mergeFields` 의 `clockOf`).
+ *
+ * 함께 검사하는 칸은 시계 하나를 나눠 쓴다.
+ *
+ *   - **일정**(주기·요일·날짜·시각·시작과 끝). 셈하는 함수가 한 덩어리로 본다. 한 기기가
+ *     월별 25일로, 다른 기기가 주별 월요일로 고쳤는데 칸마다 이기고 지면 "주별, 요일 없음"
+ *     같은 어느 쪽도 적지 않은 일정이 되고 재생이 거절된다.
+ *   - **갈래와 결제수단**(갈래·통장·받는 통장·카드·분류·할부·수수료). 갈래에 따라 어느
+ *     칸이 뜻이 있는지가 바뀐다 (이체면 카드·분류가 없다).
+ *
+ * 나머지(켜기·금액·통화·이름·가맹점·사람·태그)는 칸마다 따로다.
+ */
+const RECURRING_CLOCK_GROUPS: Readonly<Record<string, string>> = {
+  frequency: 'schedule',
+  everyDays: 'schedule',
+  weekdays: 'schedule',
+  holidayRule: 'schedule',
+  dayOfMonth: 'schedule',
+  month: 'schedule',
+  startDate: 'schedule',
+  endDate: 'schedule',
+  timeOfDay: 'schedule',
+  kind: 'payment',
+  accountId: 'payment',
+  toAccountId: 'payment',
+  cardId: 'payment',
+  categoryId: 'payment',
+  installmentMonths: 'payment',
+  feeAmount: 'payment',
+  feeCategoryId: 'payment',
+};
+
+export function recurringClockOf(field: string): string {
+  return RECURRING_CLOCK_GROUPS[field] ?? field;
+}
+
+/** 이 필드들을 쓰면 시계를 찍어야 할 자리. 줄을 가리키는 값(id·projectId)은 뺀다. */
+export function recurringClockKeys(fields: Iterable<string>): string[] {
+  const keys = new Set<string>();
+  for (const field of fields) {
+    if (field === 'id' || field === 'projectId') continue;
+    keys.add(recurringClockOf(field));
+  }
+  return [...keys];
+}
+
+/**
  * 수정 요청에서 일정 칸만. 준 것만 담아 지금 규칙에 합칠 수 있게 한다.
  *
  * 시각도 여기 담는다. 셈하는 함수는 그 값을 보지 않지만 저장 모양을 만드는

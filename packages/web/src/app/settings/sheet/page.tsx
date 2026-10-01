@@ -17,7 +17,7 @@ import {
   type EntrySheetReadResult,
 } from '@money/core/lib/entry-sheet';
 import { useTranslation } from '@money/core/lib/i18n';
-import { useProject } from '@money/core/store/project';
+import { useCanEdit, useProject } from '@money/core/store/project';
 
 import PageHeader from '@/components/PageHeader';
 
@@ -30,13 +30,15 @@ export default function EntrySheetPage() {
     (state) => state.projects.find((project) => project.id === state.selectedProjectId)?.name ?? '',
   );
   const sheet = useEntrySheet(projectId);
+  // 가져오기는 거래를 만든다. 조회자에게는 칸을 두지 않는다 (서버도 editor 만 받는다).
+  const canEdit = useCanEdit();
 
   return (
     <div className="space-y-6">
       <PageHeader title={t('sheet.title')} backHref="/settings" />
       {sheet.error ? <p className="unfold rounded-lg bg-red-50 p-3 text-sm text-red-700">{sheet.error}</p> : null}
       <ExportSection sheet={sheet} projectName={projectName} />
-      <ImportSection sheet={sheet} />
+      {canEdit ? <ImportSection sheet={sheet} /> : null}
     </div>
   );
 }

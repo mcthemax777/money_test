@@ -1118,9 +1118,10 @@ model EntryDraft {
 /// 타임존의 달력 날짜다. DateTime 으로 두면 UTC 로 저장되면서 시간대에 따라 하루씩
 /// 밀리고, "매월 25일"이 24일이나 26일이 되는 자리가 생긴다.
 ///
-/// 변경 피드(updatedVersion)에 싣지 않는다. 반복은 드물게 손대는 설정이라 서버에서
-/// 곧바로 읽고 쓰며(REST), 기기 사본에 두지 않는다. 만들어진 후보는 여느 후보와 같이
-/// 피드를 타고 내려간다.
+/// 변경 피드(updatedVersion)를 타고 기기 사본으로 내려간다. 끊긴 기기도 목록을 보고
+/// 만들고 고친다 (마이그레이션 20261001120000_recurring_rule_sync). 고치기는 다른 설정처럼
+/// 필드별 시계(fieldHlc)로 늦은 쪽이 이긴다 -- 일정 칸들과 결제 칸들은 시계 하나를 나눠
+/// 쓴다(`recurringClockOf`).
 model RecurringRule {
   id        String  @id @default(cuid())
   projectId String
@@ -1173,6 +1174,8 @@ model RecurringRule {
 
   /// 변경 피드가 보는 번호. Project.syncVersion 에서 발급된다 (기기 사본이 반복을 받는다).
   updatedVersion Int @default(0)
+  /// 시계 자리 -> 마지막으로 바꾼 시계. 자리는 필드 이름이거나 묶음 이름(schedule·payment)이다.
+  fieldHlc Json?
 
   @@index([projectId, isActive])
   @@index([projectId, updatedVersion])

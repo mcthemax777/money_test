@@ -11,6 +11,7 @@ import { assertReorderIds } from '@/common/reorder';
 import { badRequest } from '@/common/app-error';
 import { clientId } from '@/common/client-id';
 import { stampFieldClocks } from '@/common/field-clock';
+import { touchEntries } from '@/common/entry-stamp';
 import { lockLedgerWrites } from '@/common/ledger-lock';
 import { ServerClockService } from '@/common/server-clock';
 
@@ -263,10 +264,17 @@ export class CategoriesService {
       await lockLedgerWrites(tx, finalProjectId);
 
       let movedPostings = 0;
+      const touched: string[] = [];
 
       for (const move of moves) {
         const toId = move.toId;
         if (!toId) continue;
+
+        const owners = await tx.posting.findMany({
+          where: { categoryId: move.fromId },
+          select: { entryId: true },
+        });
+        touched.push(...owners.map((row) => row.entryId));
 
         const moved = await tx.posting.updateMany({
           where: { categoryId: move.fromId },
@@ -284,6 +292,13 @@ export class CategoriesService {
           data: { categoryId: toId },
         });
       }
+
+      /*
+       * 다리만 옮겼으니 그 전표에 도장을 다시 찍는다. 찍지 않으면 다른 기기는 옮긴 것을
+       * 받지 못하고, 뒤이어 오는 분류의 자리표만 받아 지난 거래가 없는 분류를 가리킨 채
+       * 남는다 (`touchEntries`).
+       */
+      await touchEntries(tx, touched);
 
       /*
        * 옮기고 나면 가리키는 거래가 없다. 그때 지운다.

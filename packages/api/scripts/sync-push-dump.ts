@@ -11,6 +11,7 @@
  * 밑바탕 상태와 명령 묶음, 그리고 재생 뒤 서버가 낸 목록을 함께 떠 주고,
  * `packages/core/scripts/outbox-smoke.ts` 가 같은 명령을 사본에 돌려 한 줄씩 견준다.
  */
+import { ServerClockService } from '@/common/server-clock';
 import { RecurringService } from '@/modules/entry-drafts/recurring.service';
 import { EntryDraftsService } from '@/modules/entry-drafts/entry-drafts.service';
 import { HolidaysService } from '@/modules/holidays/holidays.service';
@@ -76,6 +77,7 @@ runSmoke('sync-push-dump', async (ctx) => {
     access as any,
     new EntryDraftsService(ctx.prisma as any, access as any) as any,
     new HolidaysService(ctx.prisma as any),
+    new ServerClockService(),
   );
   const replay = new MutationReplayService(
     ctx.prisma as any,

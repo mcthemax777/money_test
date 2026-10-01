@@ -33,11 +33,16 @@ export interface FieldMergeResult<T> {
  * 지도에서도 그대로 둔다.
  *
  * `undefined` 값은 "안 보냈다"는 뜻이라 건너뛴다. 값을 비우는 것은 `null` 이다.
+ *
+ * `clockOf` 는 필드가 어느 시계를 쓰는지다. 기본은 필드마다 하나다. 함께 검사해야 뜻이
+ * 맞는 필드들(반복 등록의 일정 칸들)은 시계 하나를 나눠 써야 한다 -- 따로 이기고 지면
+ * 서로 다른 편집의 반쪽이 섞여 어느 쪽도 적지 않은 일정이 된다.
  */
 export function mergeFields<T extends object>(
   patch: Partial<T>,
   hlc: string,
   clocks: FieldClocks | null | undefined,
+  clockOf: (field: string) => string = (field) => field,
 ): FieldMergeResult<T> {
   const before: FieldClocks = { ...(clocks ?? {}) };
   const apply: Partial<T> = {};
@@ -53,13 +58,14 @@ export function mergeFields<T extends object>(
      * 같은 값이 두 번 오는 경우(재전송)라 적용하지 않아도 결과가 같고, 두 기기가 정말로
      * 같은 밀리초·같은 순번을 냈다면 기기 이름까지 견주는 `compareHlc` 가 이미 갈랐다.
      */
-    if (!isAfterHlc(hlc, before[field] ?? null)) {
+    const clock = clockOf(field);
+    if (!isAfterHlc(hlc, before[clock] ?? null)) {
       lost.push(field);
       continue;
     }
 
     (apply as Record<string, unknown>)[field] = value;
-    next[field] = hlc;
+    next[clock] = hlc;
   }
 
   return { apply, clocks: next, lost };

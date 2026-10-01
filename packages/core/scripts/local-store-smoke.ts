@@ -90,6 +90,7 @@ function emptyChanges(): SyncDto.Changes {
     assetValuations: [],
     installmentPlans: [],
     entryDrafts: [],
+    recurringRules: [],
   };
 }
 

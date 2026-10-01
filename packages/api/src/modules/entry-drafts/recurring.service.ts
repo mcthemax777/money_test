@@ -26,12 +26,15 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
+import { stampFieldClocks } from '@/common/field-clock';
+import { ServerClockService } from '@/common/server-clock';
 import {
   RECURRING_KINDS,
   RecurringRuleDto,
   checkRecurring,
   holidayCountryOf,
   nextOccurrence,
+  recurringClockKeys,
   recurringDraftItems,
   recurringScheduleFields,
   recurringSchedulePatch,
@@ -74,6 +77,7 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
     private readonly projectAccess: ProjectAccessService,
     private readonly drafts: EntryDraftsService,
     private readonly holidays: HolidaysService,
+    private readonly clock: ServerClockService,
   ) {}
 
   /** 그 시간대 나라의 공휴일. 휴일 처리가 있는 반복의 회차와 다음 예정일을 셈할 때 쓴다. */
@@ -220,10 +224,12 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
     return made;
   }
 
+  /** `hlc` 는 기기의 오프라인 명령을 재생할 때만 온다 (people.createPerson 과 같은 규칙). */
   async create(
     userId: string,
     dto: RecurringRuleDto.CreateRequest,
     projectIdParam?: string,
+    hlc?: string,
   ): Promise<RecurringRuleDto.Response> {
     const projectId = await this.projectAccess.resolveAndVerifyProjectId(
       userId,
@@ -266,6 +272,7 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
         ...payment,
         ...(tagIds ? { tags: { create: tagIds.map((tagId) => ({ tagId })) } } : {}),
         createdByUserId: userId,
+        fieldHlc: stampFieldClocks(null, recurringClockKeys(Object.keys(dto)), hlc ?? this.clock.now()),
       },
     });
 
@@ -278,10 +285,15 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
     return this.respondAfterGenerating(rule, project.timezone);
   }
 
+  /**
+   * 준 칸만 고친다. `hlc` 는 기기의 오프라인 명령을 재생할 때만 온다 -- 이긴 칸만 골라
+   * 오는 것은 재생하는 쪽의 일이다 (`mergeFields` + `recurringClockOf`).
+   */
   async update(
     id: string,
     userId: string,
     dto: RecurringRuleDto.UpdateRequest,
+    hlc?: string,
   ): Promise<RecurringRuleDto.Response> {
     const rule = await this.find(id, userId, 'editor');
     const project = await this.projectOf(rule.projectId);
@@ -384,6 +396,11 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
         ...(tagIds
           ? { tags: { deleteMany: {}, create: tagIds.map((tagId) => ({ tagId })) } }
           : {}),
+        fieldHlc: stampFieldClocks(
+          rule.fieldHlc,
+          recurringClockKeys(Object.keys(dto)),
+          hlc ?? this.clock.now(),
+        ),
       },
     });
 

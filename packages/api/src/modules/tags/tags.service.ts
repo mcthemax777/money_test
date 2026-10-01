@@ -26,6 +26,7 @@ import { assertReorderIds } from '@/common/reorder';
 import { badRequest } from '@/common/app-error';
 import { clientId } from '@/common/client-id';
 import { stampFieldClocks } from '@/common/field-clock';
+import { touchEntries } from '@/common/entry-stamp';
 import { lockLedgerWrites } from '@/common/ledger-lock';
 import { ServerClockService } from '@/common/server-clock';
 
@@ -302,6 +303,7 @@ export class TagsService {
       tx,
       mine.map((row) => row.entryId),
       draftLinks.map((row) => row.draftId),
+      ruleLinks.map((row) => row.ruleId),
     );
 
     return {
@@ -321,6 +323,10 @@ export class TagsService {
       where: { tagId },
       select: { draftId: true },
     });
+    const ruleLinks = await tx.recurringRuleTag.findMany({
+      where: { tagId },
+      select: { ruleId: true },
+    });
 
     await tx.entryTag.deleteMany({ where: { tagId } });
     await tx.entryDraftTag.deleteMany({ where: { tagId } });
@@ -330,35 +336,33 @@ export class TagsService {
       tx,
       entryLinks.map((row) => row.entryId),
       draftLinks.map((row) => row.draftId),
+      ruleLinks.map((row) => row.ruleId),
     );
   }
 
   /**
-   * 태그가 바뀐 전표와 후보에 도장을 찍는다.
+   * 태그가 바뀐 전표·후보·반복 등록에 도장을 찍는다.
    *
-   * **이것이 없으면 기기가 영영 모른다.** 연결 표(EntryTag·EntryDraftTag)에는 변경
-   * 번호가 없다 -- 태그 연결은 주인에 실려 움직이고, 연결이 바뀌는 자리에서 주인에
-   * 도장이 찍히기 때문이다(스키마의 EntryTag 주석). 여기서는 연결만 건드리므로 그
-   * 도장을 손으로 찍는다.
-   *
-   * 반복 등록은 세지 않는다. 그 표는 기기 사본에 두지 않고 서버에서 곧바로 읽는다.
-   *
-   * `updatedAt` 만 건드린다. 번호는 그 행의 도장 트리거(sync_stamp)가 발급기를 거쳐
-   * 찍는다 -- 손으로 넣으면 다른 쓰기와 순서가 어긋난다.
+   * **이것이 없으면 기기가 영영 모른다.** 연결 표(EntryTag·EntryDraftTag·
+   * RecurringRuleTag)에는 변경 번호가 없다 -- 태그 연결은 주인에 실려 움직이고, 연결이
+   * 바뀌는 자리에서 주인에 도장이 찍히기 때문이다(스키마의 EntryTag 주석). 여기서는
+   * 연결만 건드리므로 그 도장을 손으로 찍는다 (전표는 `touchEntries`).
    */
-  private async stampOwners(tx: Tx, entryIds: string[], draftIds: string[]): Promise<void> {
-    const entries = [...new Set(entryIds)];
-    const drafts = [...new Set(draftIds)];
+  private async stampOwners(
+    tx: Tx,
+    entryIds: string[],
+    draftIds: string[],
+    ruleIds: string[],
+  ): Promise<void> {
+    await touchEntries(tx, entryIds);
     const now = new Date();
-
-    if (entries.length > 0) {
-      await tx.journalEntry.updateMany({
-        where: { id: { in: entries } },
-        data: { updatedAt: now },
-      });
-    }
+    const drafts = [...new Set(draftIds)];
     if (drafts.length > 0) {
       await tx.entryDraft.updateMany({ where: { id: { in: drafts } }, data: { updatedAt: now } });
+    }
+    const rules = [...new Set(ruleIds)];
+    if (rules.length > 0) {
+      await tx.recurringRule.updateMany({ where: { id: { in: rules } }, data: { updatedAt: now } });
     }
   }
 

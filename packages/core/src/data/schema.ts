@@ -59,8 +59,12 @@
  *
  * 30 은 공휴일을 가계부마다 담게 된 판이다(`public_holiday.projectId`). 가계부마다 타임존의
  * 나라가 다를 수 있고, 다시 받기가 가계부 단위로 사본을 비울 때 그 칸으로 지운다.
+ *
+ * 31 은 반복 등록에 필드별 시계(`recurring_rule.fieldHlc`)가 생긴 판이다. 옛 사본에는 그
+ * 칸이 없어 끊긴 채 고친 반복이 "본 값의 시계" 없이 나가고, 다른 기기의 편집에 밀린 뒤
+ * 다시 내도 계속 밀린다.
  */
-export const SCHEMA_VERSION = 30;
+export const SCHEMA_VERSION = 31;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -467,7 +471,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      tagIds            TEXT NOT NULL DEFAULT '[]',
      createdAt         TEXT NOT NULL DEFAULT '',
      updatedAt         TEXT NOT NULL DEFAULT '',
-     updatedVersion    INTEGER NOT NULL DEFAULT 0
+     updatedVersion    INTEGER NOT NULL DEFAULT 0,
+     fieldHlc          TEXT
    )`,
 
   /*

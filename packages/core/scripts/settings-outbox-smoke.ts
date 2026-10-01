@@ -18,7 +18,7 @@ import { Dec, newId, rankForMove, setRandomBytes, type Mutation } from '@money/t
 
 import { createLocalHomePort } from '../src/data/local-home-port';
 import { createLocalSettingsWriter } from '../src/data/local-settings-writer';
-import { LocalStore } from '../src/data/local-store';
+import { LocalStore, settingTableOf } from '../src/data/local-store';
 import { nodeSqliteDriver } from './node-sqlite-driver';
 
 let fail = 0;
@@ -188,6 +188,25 @@ const PROJECT = 'p-assets';
   eq('큐에 남은 짐도 함께 옮겨진다',
     JSON.stringify(await store.pendingMutations(PROJECT)).includes(parentId), false);
   eq('별칭을 기억한다', await store.aliasOf(parentId), 'server-category-1');
+
+  // 같은 자리의 예산을 두 기기가 각자 만들었다. 서버가 먼저 선 규칙을 채택하면 내 줄은
+  // 사본에서 사라지고, 그 달 조정은 채택된 규칙으로 옮겨 간다.
+  await driver.run(
+    `INSERT INTO budget (id, projectId, monthlyAmount) VALUES ('local-budget', ?, '1000')`,
+    [PROJECT],
+  );
+  await driver.run(
+    `INSERT INTO budget_override (id, budgetId, year, month, amount) VALUES ('local-ov', 'local-budget', 2026, 9, '500')`,
+    [],
+  );
+  await store.settleMutations([
+    { mutationId: 'budget-set-elsewhere', status: 'applied', alias: { from: 'local-budget', to: 'server-budget' } },
+  ], newId);
+  eq('채택되지 않은 예산 줄은 사라진다',
+    (await driver.all(`SELECT id FROM budget WHERE id = 'local-budget'`, [])).length, 0);
+  eq('그 달 조정은 채택된 규칙으로',
+    (await driver.all(`SELECT budgetId FROM budget_override WHERE id = 'local-ov'`, []))[0]?.budgetId,
+    'server-budget');
 
   const pending = await store.pendingMutations(PROJECT);
   // 번호는 기기 안에서 1씩 오른다. 서버는 (기기, 번호)로 같은 명령을 두 번 적지 않는다.
@@ -472,6 +491,13 @@ const PROJECT = 'p-assets';
   const updated = queued[queued.length - 1];
   eq('고치기 명령', updated.kind, 'recurring.update');
   eq('바꾼 칸만 싣는다', Object.keys(updated.payload as object).sort().join(','), 'accountId,id,kind,toAccountId');
+  // 사본에도 시계를 찍는다. 결제 칸들은 한 자리(payment)를, 손대지 않은 일정은 만들 때의 것을.
+  const ruleClocks = JSON.parse(String(
+    (await driver.all(`SELECT fieldHlc FROM recurring_rule WHERE id = ?`, [ruleId]))[0]?.fieldHlc,
+  )) as Record<string, string>;
+  eq('결제 칸들은 한 시계', ruleClocks.payment, updated.hlc);
+  eq('일정은 만들 때의 시계', ruleClocks.schedule, created.hlc);
+  eq('고치기는 본 값의 시계로 표에 붙는다', settingTableOf('recurring.update'), 'recurring_rule');
   const transferRule = await ruleOf();
   eq('이체로 바꾸면 카드가 빠진다', transferRule?.cardId ?? null, null);
   eq('이체로 바꾸면 분류가 빠진다', transferRule?.categoryId ?? null, null);

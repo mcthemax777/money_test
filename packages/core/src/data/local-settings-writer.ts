@@ -131,6 +131,7 @@ export function createLocalSettingsWriter({
     targets: string[],
     payload: Readonly<Record<string, unknown>>,
     apply?: (mutation: Mutation) => Promise<void>,
+    observed: string | null = null,
   ): Promise<void> => {
     const mutation = await store.enqueue({
       projectId,
@@ -138,7 +139,7 @@ export function createLocalSettingsWriter({
       kind,
       targets,
       payload,
-      observed: null,
+      observed,
     });
     await apply?.(mutation);
     notifyMirrorChanged();
@@ -634,17 +635,34 @@ export function createLocalSettingsWriter({
       const now = new Date().toISOString();
       const row = await recurringRowOf(null, { ...input, id });
       // 짐은 온라인 요청 그대로다 -- 서버가 재생하며 같은 검사와 다듬기를 다시 한다.
-      await queue('recurring.create', [id], { ...input, id }, () =>
-        store.putRecurringRule(projectId, { ...row, createdAt: now, updatedAt: now }),
+      await queue('recurring.create', [id], { ...input, id }, (mutation) =>
+        store.putRecurringRule(
+          projectId,
+          { ...row, createdAt: now, updatedAt: now },
+          { hlc: mutation.hlc, fields: Object.keys(input) },
+        ),
       );
     },
 
+    /*
+     * 고치기는 필드별 시계로 판정된다 (서버 `updateRecurring`). 사본에 있는 그 규칙의 가장 늦은
+     * 시계를 "본 값"으로 실어, 이 편집이 지금 보이는 어느 칸보다 뒤가 되게 한다.
+     */
     async updateRecurringRule(id, patch) {
       const current = (await store.recurringRuleRows(projectId)).find((row) => row.id === id);
       if (!current) throw codedError('RECURRING_NOT_FOUND');
       const row = await recurringRowOf(current, patch);
-      await queue('recurring.update', [id], { ...patch, id }, () =>
-        store.putRecurringRule(projectId, { ...row, updatedAt: new Date().toISOString() }),
+      await queue(
+        'recurring.update',
+        [id],
+        { ...patch, id },
+        (mutation) =>
+          store.putRecurringRule(
+            projectId,
+            { ...row, updatedAt: new Date().toISOString() },
+            { hlc: mutation.hlc, fields: Object.keys(patch) },
+          ),
+        await store.assetClock('recurring_rule', id),
       );
     },
 

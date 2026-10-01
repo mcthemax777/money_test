@@ -76,6 +76,9 @@ export const TABLE_BACKED_KINDS: ReadonlySet<MutationKind> = new Set<MutationKin
   'budget.set',
   'budget.delete',
   'budget.override',
+  // 반복 등록. 일정 칸들과 결제 칸들은 시계 하나를 나눠 쓴다 (`recurringClockOf`).
+  'recurring.create',
+  'recurring.update',
 ]);
 
 /**

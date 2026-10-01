@@ -54,6 +54,7 @@ import {
   TABLE_BACKED_KINDS,
   isSettled,
   latestFieldClock,
+  recurringClockKeys,
   rankAfter,
   zonedDateKey,
   zonedYearMonth,
@@ -338,6 +339,7 @@ export function recurringRow(projectId: string, row: Row): Record<string, SqlVal
     createdAt: row.createdAt ? asIso(row.createdAt) : '',
     updatedAt: row.updatedAt ? asIso(row.updatedAt) : '',
     updatedVersion: row.updatedVersion == null ? 0 : asInt(row.updatedVersion),
+    fieldHlc: asJson(row.fieldHlc),
   };
 }
 
@@ -405,7 +407,8 @@ export type SettingTable =
   | 'category'
   | 'tag'
   | 'budget'
-  | 'budget_override';
+  | 'budget_override'
+  | 'recurring_rule';
 
 /**
  * 이 명령이 건드리는 사본의 표. 전표 명령이면 null 이다.
@@ -419,8 +422,10 @@ export function settingTableOf(kind: MutationKind): SettingTable | null {
   // 표 한 줄에 붙는 설정 명령만 표가 있다. 통합·삭제·환율 같은 것은 시계 없이 차례대로 간다.
   if (!isSettingMutation(kind) || !TABLE_BACKED_KINDS.has(kind)) return null;
 
-  // 명령 이름이 곧 표 이름이다. 예산 조정만 (예산, 년, 월) 키라 표가 따로 있다.
+  // 명령 이름이 곧 표 이름이다. 예산 조정만 (예산, 년, 월) 키라 표가 따로 있고, 반복 등록은
+  // 표 이름이 길다.
   if (kind === 'budget.override') return 'budget_override';
+  if (kind === 'recurring.create' || kind === 'recurring.update') return 'recurring_rule';
   return kind.split('.')[0] as SettingTable;
 }
 
@@ -2300,9 +2305,26 @@ export class LocalStore {
     );
   }
 
-  /** 반복 등록 한 줄을 적는다 (새 줄이거나 통째로 갈아 끼우기). */
-  async putRecurringRule(projectId: string, row: Row): Promise<void> {
-    await this.upsert('recurring_rule', recurringRow(projectId, row));
+  /**
+   * 반복 등록 한 줄을 적는다 (새 줄이거나 통째로 갈아 끼우기).
+   *
+   * `stamp` 는 이 기기가 고친 칸과 그 명령의 시계다. 그 칸의 시계 자리(`recurringClockOf`)에
+   * 찍어 두어야 다음 편집이 이 값보다 뒤가 된다 (`writeAsset` 과 같은 까닭).
+   */
+  async putRecurringRule(
+    projectId: string,
+    row: Row,
+    stamp?: { hlc: string; fields: readonly string[] },
+  ): Promise<void> {
+    const values = recurringRow(projectId, row);
+    if (stamp) {
+      values.fieldHlc = mergeClocks(
+        asText(values.fieldHlc),
+        recurringClockKeys(stamp.fields),
+        stamp.hlc,
+      );
+    }
+    await this.upsert('recurring_rule', values);
   }
 
   /** 반복 등록을 지운다. 만들어진 후보는 남는다 (서버와 같다 -- 연결만 비운다). */
@@ -3606,7 +3628,8 @@ export class LocalStore {
   /**
    * 기기가 만든 id 를 서버가 채택한 id 로 갈아 끼운다.
    *
-   * 두 사람이 오프라인에서 같은 이름의 분류를 만들었을 때다. 옮길 곳이 셋이다.
+   * 두 사람이 오프라인에서 같은 이름의 분류를 만들었을 때, 같은 자리(분류·태그·전체와
+   * 그 달)의 예산을 각자 정했을 때다. 옮길 곳이 셋이다.
    *
    *   1. **사본의 참조** -- 다리와 예산이 그 분류를 가리키고, 소분류는 부모를 가리킨다.
    *   2. **큐에 남은 명령** -- 아직 보내지 않은 짐이 옛 id 를 들고 있다.
@@ -3629,6 +3652,8 @@ export class LocalStore {
       ['entry_tag', 'tagId'],
       // 태그 예산도 그 태그를 가리킨다. 빠뜨리면 합쳐진 태그의 예산이 사라진 태그에 남는다.
       ['budget', 'tagId'],
+      // 같은 자리의 예산을 두 기기가 각자 만들면 서버는 먼저 선 규칙을 채택한다.
+      ['budget_override', 'budgetId'],
     ] as const) {
       await this.db.run(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`, [
         serverId,
@@ -3647,7 +3672,7 @@ export class LocalStore {
       [localId, serverId, localId, serverId],
     );
 
-    for (const table of ['category', 'tag'] as const) {
+    for (const table of ['category', 'tag', 'budget'] as const) {
       await this.db.run(`DELETE FROM ${table} WHERE id = ?`, [localId]);
     }
   }

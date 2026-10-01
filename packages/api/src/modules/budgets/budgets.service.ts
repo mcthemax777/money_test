@@ -60,7 +60,64 @@ export class BudgetsService {
     private readonly clock: ServerClockService,
   ) {}
 
-  /** `hlc` 는 기기의 오프라인 명령을 재생할 때만 온다 (people.createPerson 과 같은 규칙). */
+  /**
+   * 이 대상(분류·태그·전체)의 그 달에 적용되는 규칙. 없으면 null.
+   *
+   * 적용 기간을 함께 봐야 한다. 예산은 applyMode='from'으로 기간이 나뉠 수 있어
+   * 한 카테고리에 규칙이 여러 개 있을 수 있다. 예전에는 정렬도 기간 조건도 없이
+   * findFirst로 아무거나 집어서, 8월 화면에서 금액을 바꿨는데 9월 규칙이
+   * 바뀌는 일이 있었다. 화면상으로는 저장이 안 된 것처럼 보였다.
+   *
+   * 오프라인 명령의 재생도 이것으로 찾는다. 두 기기가 같은 예산을 각자 새로 만들면 id 가
+   * 달라, id 로만 찾으면 늦은 쪽이 시계를 견주지 못한 채 앞의 것을 덮는다.
+   */
+  async findRuleFor(
+    projectId: string,
+    target: Pick<BudgetDto.CreateRequest, 'categoryId' | 'tagId' | 'type' | 'yearMonth'>,
+  ) {
+    const { categoryId, tagId, type } = this.ruleTarget(target);
+    const timeZone = await this.projectAccess.getProjectTimeZone(projectId);
+    const targetMonth = target.yearMonth
+      ? assertYearMonth(target.yearMonth, '적용 월')
+      : zonedCurrentYearMonth(timeZone);
+
+    const candidates = await this.prisma.budget.findMany({
+      where: {
+        projectId,
+        categoryId: categoryId ?? null,
+        // 태그 예산과 전체 예산은 둘 다 분류가 없다. 태그로 가르지 않으면 서로를 고친다.
+        tagId: tagId ?? null,
+        // 태그 예산은 type 을 보지 않는다 (옛 판이 남긴 type 이 붙은 줄도 같은 규칙이다).
+        type: tagId ? undefined : type || undefined,
+      },
+    });
+    return candidates.find((budget) => this.isBudgetApplicable(budget, targetMonth)) ?? null;
+  }
+
+  /**
+   * 받은 값이 가리키는 규칙의 자리. 전체 예산의 센티널을 풀고, 태그 예산이면 type 을 버린다.
+   *
+   * 태그 예산은 태그마다 하나라 type 을 버린다. 사용액이 "지출 − 수입"이라 한 금액으로
+   * 견준다. 받아 두면 같은 태그에 규칙이 둘 서서 어느 것이 그 태그의 예산인지 갈린다.
+   * (지출·수입을 가르던 판의 기기가 type 을 실어 보내도 여기서 걸러진다.)
+   */
+  private ruleTarget(target: Pick<BudgetDto.CreateRequest, 'categoryId' | 'tagId' | 'type'>) {
+    const tagId = target.tagId || undefined;
+    const resolved = resolveBudgetTarget(target.categoryId, target.type);
+    return {
+      categoryId: resolved.categoryId,
+      tagId,
+      type: tagId ? undefined : resolved.type,
+    };
+  }
+
+  /**
+   * 그 달에 적용되는 규칙이 있으면 금액을 고치고, 없으면 만든다.
+   *
+   * `hlc` 는 기기의 오프라인 명령을 재생할 때만 온다 (people.createPerson 과 같은 규칙).
+   * 재생은 이미 있는 규칙을 먼저 `findRuleFor` 로 찾아 시계를 견주므로, 여기서 고치는 길에
+   * 드는 것은 온라인 요청과 그 사이에 끼어든 동시 생성뿐이다.
+   */
   async createBudget(
     userId: string,
     dto: BudgetDto.CreateRequest,
@@ -73,15 +130,7 @@ export class BudgetsService {
       'editor',
     );
 
-    const tagId = dto.tagId || undefined;
-    const resolved = resolveBudgetTarget(dto.categoryId, dto.type);
-    const categoryId = resolved.categoryId;
-    /*
-     * 태그 예산은 태그마다 하나라 type 을 버린다. 사용액이 "지출 − 수입"이라 한 금액으로
-     * 견준다. 받아 두면 같은 태그에 규칙이 둘 서서 어느 것이 그 태그의 예산인지 갈린다.
-     * (지출·수입을 가르던 판의 기기가 type 을 실어 보내도 여기서 걸러진다.)
-     */
-    const type = tagId ? undefined : resolved.type;
+    const { categoryId, tagId, type } = this.ruleTarget(dto);
 
     // 태그 예산은 분류와 함께 설 수 없다. 둘 다 주면 어느 쪽의 예산인지 정해지지 않는다.
     if (tagId) {
@@ -103,62 +152,56 @@ export class BudgetsService {
       }
     }
 
-    /*
-     * 같은 카테고리의 기존 예산 확인.
-     *
-     * 적용 기간을 함께 봐야 한다. 예산은 applyMode='from'으로 기간이 나뉠 수 있어
-     * 한 카테고리에 규칙이 여러 개 있을 수 있다. 예전에는 정렬도 기간 조건도 없이
-     * findFirst로 아무거나 집어서, 8월 화면에서 금액을 바꿨는데 9월 규칙이
-     * 바뀌는 일이 있었다. 화면상으로는 저장이 안 된 것처럼 보였다.
-     */
-    const timeZone = await this.projectAccess.getProjectTimeZone(projectId);
-    const targetMonth = dto.yearMonth
-      ? assertYearMonth(dto.yearMonth, '적용 월')
-      : zonedCurrentYearMonth(timeZone);
-
-    const candidates = await this.prisma.budget.findMany({
-      where: {
-        projectId,
-        categoryId: categoryId ?? null,
-        // 태그 예산과 전체 예산은 둘 다 분류가 없다. 태그로 가르지 않으면 서로를 고친다.
-        tagId: tagId ?? null,
-        // 태그 예산은 type 을 보지 않는다 (옛 판이 남긴 type 이 붙은 줄도 같은 규칙이다).
-        type: tagId ? undefined : type || undefined,
-      },
-    });
-    const existingBudget = candidates.find((budget) =>
-      this.isBudgetApplicable(budget, targetMonth),
-    );
-
     // 입력은 표시 통화다. 저장은 저장 통화로 한다.
     const { show, store } = await this.currencyView(projectId);
     const monthlyAmount = store.convert(toMoney(dto.monthlyAmount, '월 예산'));
+    const stamp = hlc ?? this.clock.now();
 
     // 그 달에 적용되는 규칙이 있으면 그것을 고친다
-    if (existingBudget) {
-      return this.toBudgetResponse(
+    const updateRule = async (rule: { id: string; fieldHlc: Prisma.JsonValue }) =>
+      this.toBudgetResponse(
         await this.prisma.budget.update({
-          where: { id: existingBudget.id },
-          data: { monthlyAmount },
+          where: { id: rule.id },
+          data: {
+            monthlyAmount,
+            fieldHlc: stampFieldClocks(rule.fieldHlc, ['monthlyAmount'], stamp),
+          },
         }),
         show,
       );
+
+    const existingBudget = await this.findRuleFor(projectId, dto);
+    if (existingBudget) return updateRule(existingBudget);
+
+    try {
+      const budget = await rejectDuplicateId('예산', () =>
+        this.prisma.budget.create({
+          data: {
+            id: clientId(dto.id, '예산 식별자'),
+            projectId,
+            categoryId: categoryId ?? null,
+            tagId: tagId ?? null,
+            type: type || undefined,
+            monthlyAmount,
+            fieldHlc: stampFieldClocks(null, ['monthlyAmount'], stamp),
+          },
+        }),
+      );
+      return this.toBudgetResponse(budget, show);
+    } catch (error) {
+      /*
+       * 찾은 뒤 만들기 전에 다른 요청이 같은 규칙을 먼저 만들었다 (규칙의 유일 조건).
+       *
+       * 그대로 두면 500 이 나간다. 사람에게는 "같은 예산을 정했다"일 뿐이라, 방금 생긴
+       * 규칙을 다시 찾아 그것을 고친다 -- 찾기를 먼저 했을 때와 같은 결과다.
+       */
+      if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== 'P2002') {
+        throw error;
+      }
+      const raced = await this.findRuleFor(projectId, dto);
+      if (!raced) throw error;
+      return updateRule(raced);
     }
-
-    const budget = await rejectDuplicateId('예산', () =>
-      this.prisma.budget.create({
-        data: {
-          id: clientId(dto.id, '예산 식별자'),
-          projectId,
-          categoryId: categoryId ?? null,
-          tagId: tagId ?? null,
-          type: type || undefined,
-          monthlyAmount,
-        },
-      }),
-    );
-
-    return this.toBudgetResponse(budget, show);
   }
 
   async getBudgets(
