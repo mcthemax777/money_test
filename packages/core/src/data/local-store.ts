@@ -62,6 +62,10 @@ import {
   RestateError,
   pendingRateItems,
   restateAmounts,
+  installmentRefundRow,
+  lineCutsOf,
+  parseInstallmentAdjust,
+  adjustTotals,
 } from '@money/types';
 
 import { ALL_TABLES, SCHEMA_STATEMENTS, SCHEMA_VERSION } from './schema';
@@ -205,6 +209,10 @@ export interface StoredCardPosting {
   discountAmount: string | null;
   /** 차감액을 실적에서도 뺄지. 분할해도 하나다. */
   discountCountsPerformance: boolean;
+  /** 할부 원거래면 걸린 할부 환불이 회차마다 줄인 것 (원금 + 이자). 청구 회차에서 뺀다. */
+  installmentCuts: string[] | null;
+  /** 할부 환불이면 그 환불이 줄인 것의 합. */
+  refundCut: { total: string; interest: string } | null;
 }
 
 type Row = Record<string, SqlValue>;
@@ -251,6 +259,9 @@ const asText = (value: unknown): string | null =>
   value === undefined || value === null ? null : String(value);
 
 const asMoney = (value: unknown): string => asText(value) ?? '0';
+/** 서버가 JSON 으로 보낸 칸을 사본의 글자로. 비었으면 null. */
+const jsonText = (value: unknown): string | null =>
+  value === null || value === undefined ? null : typeof value === 'string' ? value : JSON.stringify(value);
 
 const asFlag = (value: unknown): number => (value ? 1 : 0);
 
@@ -382,8 +393,34 @@ const toCardPosting = (row: Row, legs: readonly Row[]): StoredCardPosting => {
     countsPerformance: Boolean(row.countsPerformance),
     discountAmount: discount && !discount.isZero() ? discount.toString() : null,
     discountCountsPerformance: Boolean(row.discountCountsPerformance ?? 1),
+    ...cardRefundFields(row),
   };
 };
+
+/**
+ * 할부 환불이 청구와 실적에 주는 것 (installment-refund, 서버 card-ledger 의 refundCutFields 와 같다).
+ *   - 할부 원거래의 카드 다리: 걸린 환불이 회차마다 줄인 것. 청구 회차에서 뺀다.
+ *   - 할부 환불의 카드 다리: 그 환불이 줄인 것의 합. 청구는 남은 몫만, 실적은 돌려받은 돈만.
+ */
+function cardRefundFields(row: Row): Pick<StoredCardPosting, 'installmentCuts' | 'refundCut'> {
+  const months = row.totalMonths == null ? 0 : asInt(row.totalMonths);
+  const adjust = parseInstallmentAdjust(asText(row.refundAdjust));
+  const totals = adjust ? adjustTotals(adjust) : null;
+  return {
+    installmentCuts:
+      months >= 2
+        ? lineCutsOf(
+            String(row.installmentCuts ?? '')
+              .split(String.fromCharCode(30))
+              .filter(Boolean)
+              .map((json) => ({ lineKey: null, adjust: parseInstallmentAdjust(json) })),
+            null,
+            months,
+          )
+        : null,
+    refundCut: totals ? { total: totals.total.toString(), interest: totals.interest.toString() } : null,
+  };
+}
 
 const asInt = (value: unknown): number => {
   const parsed = Number(value);
@@ -790,6 +827,8 @@ export class LocalStore {
           paybackOfEntryId: asText(row.paybackOfEntryId),
           paybackOfLineKey: asText(row.paybackOfLineKey),
           paybackType: asText(row.paybackType),
+          // 할부 환불이 줄인 회차. 서버는 JSON 으로 보내고 사본은 글자로 든다.
+          installmentAdjust: jsonText(row.installmentAdjust),
         });
 
         /*
@@ -1271,7 +1310,15 @@ export class LocalStore {
                 WHERE cp.entryId = e.id LIMIT 1) AS installmentBase,
               (SELECT cp.amount FROM posting cp
                  JOIN installment_plan ip ON ip.postingId = cp.id
-                WHERE cp.entryId = e.id LIMIT 1) AS installmentAmount`
+                WHERE cp.entryId = e.id LIMIT 1) AS installmentAmount,
+              /*
+               * 할부 환불 (installment-refund). 이 전표가 할부 환불이면 줄인 금액과 자기 날짜,
+               * 할부 원거래면 걸린 할부 환불들(줄 키 · JSON 을 한 칸에 이어 붙인다).
+               */
+              p.lineKey AS lineKey, e.date AS ownDate, e.installmentAdjust AS refundAdjust,
+              (SELECT group_concat(COALESCE(r.paybackOfLineKey, '') || char(31) || r.installmentAdjust, char(30))
+                 FROM entry r
+                WHERE r.paybackOfEntryId = e.id AND r.installmentAdjust IS NOT NULL) AS installmentCuts`
       : '';
     /*
      * 분석은 연결된 페이백을 원거래의 날짜로 고르고 그 날짜로 센다 (서버 common/payback-scope).
@@ -1322,20 +1369,23 @@ export class LocalStore {
               .filter(Boolean),
           }),
       )
-      .map((row) => ({
-      categoryId: String(row.categoryId),
-      categoryType: String(row.categoryType) as NamedCategoryPostingRow['categoryType'],
-      categoryName: String(row.categoryName),
-      parentCategoryId: asText(row.parentCategoryId),
-      parentCategoryName: asText(row.parentCategoryName),
-      baseAmount: asMoney(row.baseAmount),
-      date: String(row.date),
-      // 이 줄의 태그. 태그 예산이 센다 (전표의 태그가 아니라 줄 키가 같은 것만).
-      tagIds: String(row.lineTagIds ?? '')
-        .split(',')
-        .filter(Boolean),
-      ...(range.withInstallment ? { installment: installmentOf(row) } : {}),
-    }));
+      .map((row) => {
+        const named: NamedCategoryPostingRow = {
+          categoryId: String(row.categoryId),
+          categoryType: String(row.categoryType) as NamedCategoryPostingRow['categoryType'],
+          categoryName: String(row.categoryName),
+          parentCategoryId: asText(row.parentCategoryId),
+          parentCategoryName: asText(row.parentCategoryName),
+          baseAmount: asMoney(row.baseAmount),
+          date: String(row.date),
+          // 이 줄의 태그. 태그 예산이 센다 (전표의 태그가 아니라 줄 키가 같은 것만).
+          tagIds: String(row.lineTagIds ?? '')
+            .split(',')
+            .filter(Boolean),
+        };
+        // 회차 기준이면 할부 계획(과 줄인 회차)을 싣고, 할부 환불은 남은 몫만 환불한 날에 센다.
+        return range.withInstallment ? spreadRowOf(named, row) : named;
+      });
   }
 
   /**
@@ -2519,6 +2569,32 @@ export class LocalStore {
           ).map((row) => [String(row.id), String(row.date)] as const),
     );
 
+    /*
+     * 할부 원거래에 걸린 할부 환불. 회차 기준의 목록이 회차 몫에서 뺀다 (installment-refund).
+     * 서버의 ENTRY_INCLUDE.paybacks 와 같은 값이다.
+     */
+    const entryIds = entries.map((entry) => String(entry.id));
+    const cutsByOrigin = new Map<string, Array<{ id: string; paybackOfLineKey: string | null; installmentAdjust: unknown }>>();
+    for (let index = 0; index < entryIds.length; index += 500) {
+      const chunk = entryIds.slice(index, index + 500);
+      const rows = await this.db.all<Row>(
+        `SELECT id, paybackOfEntryId, paybackOfLineKey, installmentAdjust FROM entry
+          WHERE installmentAdjust IS NOT NULL
+            AND paybackOfEntryId IN (${chunk.map(() => '?').join(', ')})`,
+        chunk,
+      );
+      for (const row of rows) {
+        const origin = String(row.paybackOfEntryId);
+        const list = cutsByOrigin.get(origin) ?? [];
+        list.push({
+          id: String(row.id),
+          paybackOfLineKey: asText(row.paybackOfLineKey),
+          installmentAdjust: asText(row.installmentAdjust),
+        });
+        cutsByOrigin.set(origin, list);
+      }
+    }
+
     return entries.map((entry) => ({
       id: String(entry.id),
       date: String(entry.date),
@@ -2542,6 +2618,8 @@ export class LocalStore {
         const date = origin ? originDates.get(origin) : undefined;
         return date ? { date } : null;
       })(),
+      installmentAdjust: asText(entry.installmentAdjust),
+      paybackCuts: cutsByOrigin.get(String(entry.id)) ?? [],
       postings: byEntry.get(String(entry.id)) ?? [],
       tags: tagsByEntry.get(String(entry.id)) ?? [],
     }));
@@ -2771,6 +2849,7 @@ export class LocalStore {
         paybackOfEntryId: built.paybackOfEntryId ?? null,
         paybackOfLineKey: built.paybackOfLineKey ?? null,
         paybackType: built.paybackType ?? null,
+        installmentAdjust: built.installmentAdjust ? JSON.stringify(built.installmentAdjust) : null,
       });
 
       await this.db.run(
@@ -3482,6 +3561,53 @@ export class LocalStore {
   }
 
   /**
+   * 원거래의 할부 계획과 걸린 할부 환불 (installment-refund). 할부가 아니면 null.
+   *
+   * 할부 환불의 회차를 검사하고(`LookupPaybackTarget.installment`), 원거래를 고칠 때 어긋나지
+   * 않는지 본다(`checkInstallmentRefunds`). 서버의 prisma-lookup 과 같은 값이다.
+   */
+  async installmentTargetOf(entryId: string): Promise<{
+    months: number;
+    cardId: string;
+    sameCurrency: boolean;
+    entryAmount: string;
+    principals: string[] | null;
+    interests: string[] | null;
+    refunds: Array<{ id: string; lineKey: string | null; cardId: string | null; adjust: string | null }>;
+  } | null> {
+    const plan = await this.db.all<Row>(
+      `SELECT p.cardId, p.amount, p.baseAmount, ip.totalMonths, ip.principalShares, ip.interestShares
+         FROM posting p JOIN installment_plan ip ON ip.postingId = p.id
+        WHERE p.entryId = ? LIMIT 1`,
+      [entryId],
+    );
+    const row = plan[0];
+    if (!row || !row.cardId || asInt(row.totalMonths) < 2) return null;
+    const refunds = await this.db.all<Row>(
+      `SELECT e.id, e.paybackOfLineKey, e.installmentAdjust,
+              (SELECT cp.cardId FROM posting cp
+                WHERE cp.entryId = e.id AND cp.cardId IS NOT NULL AND cp.categoryId IS NULL LIMIT 1) AS cardId
+         FROM entry e
+        WHERE e.paybackOfEntryId = ? AND e.installmentAdjust IS NOT NULL`,
+      [entryId],
+    );
+    return {
+      months: asInt(row.totalMonths),
+      cardId: String(row.cardId),
+      sameCurrency: String(row.amount) === String(row.baseAmount),
+      entryAmount: Dec.of(String(row.baseAmount)).abs().toString(),
+      principals: parseShares(row.principalShares),
+      interests: parseShares(row.interestShares),
+      refunds: refunds.map((refund) => ({
+        id: String(refund.id),
+        lineKey: asText(refund.paybackOfLineKey),
+        cardId: asText(refund.cardId),
+        adjust: asText(refund.installmentAdjust),
+      })),
+    };
+  }
+
+  /**
    * 원거래에 걸린 환불·페이백과 그 분류 다리. 원거래를 고칠 때 맞추고(`planPaybackRebind`),
    * 새로 적을 때 상한을 보는 데 쓴다 (서버 원장과 같은 규칙).
    */
@@ -4058,6 +4184,9 @@ export class LocalStore {
        */
       `SELECT p.amount, p.entryId, e.date, e.originalCurrency,
               e.countsPerformance, e.discountCountsPerformance,
+              e.installmentAdjust AS refundAdjust,
+              (SELECT group_concat(r.installmentAdjust, char(30)) FROM entry r
+                WHERE r.paybackOfEntryId = e.id AND r.installmentAdjust IS NOT NULL) AS installmentCuts,
               ip.totalMonths, ip.principalShares, ip.interestShares
          FROM posting p
          JOIN entry e ON e.id = p.entryId
@@ -4080,6 +4209,9 @@ export class LocalStore {
     const rows = await this.db.all<Row>(
       `SELECT p.amount, p.entryId, e.date, e.originalCurrency,
               e.countsPerformance, e.discountCountsPerformance,
+              e.installmentAdjust AS refundAdjust,
+              (SELECT group_concat(r.installmentAdjust, char(30)) FROM entry r
+                WHERE r.paybackOfEntryId = e.id AND r.installmentAdjust IS NOT NULL) AS installmentCuts,
               NULL AS totalMonths, NULL AS principalShares, NULL AS interestShares
          FROM posting p
          JOIN entry e ON e.id = p.entryId
@@ -4105,6 +4237,9 @@ export class LocalStore {
     const rows = await this.db.all<Row>(
       `SELECT p.id AS postingId, p.amount, e.id AS entryId, e.date, e.description, e.merchant,
               e.countsPerformance, e.discountCountsPerformance, e.originalCurrency,
+              e.installmentAdjust AS refundAdjust,
+              (SELECT group_concat(r.installmentAdjust, char(30)) FROM entry r
+                WHERE r.paybackOfEntryId = e.id AND r.installmentAdjust IS NOT NULL) AS installmentCuts,
               ${
                 credit
                   ? 'ip.totalMonths, ip.principalShares, ip.interestShares'
@@ -4452,6 +4587,31 @@ function maskCardNumber(value: string | null): string {
  * 회차 금액은 **비율로만** 쓰이므로 카드 통화가 기준통화와 달라도 원금은 제대로 나뉜다.
  * 이자는 금액 그대로 더하는 값이라 통화가 갈리면 싣지 않는다 (서버와 같은 판단이다).
  */
+/**
+ * 회차 기준의 집계 행 하나 (서버 common/installment-scope 의 spreadRowOf 와 같다).
+ *
+ *   - 할부 환불이면 남은 회차로 다 줄이지 못한 몫만, 환불한 날에 센다.
+ *   - 할부 원거래의 줄이면 할부 계획과 그 줄에 걸린 환불이 줄인 회차를 싣는다.
+ */
+function spreadRowOf(named: NamedCategoryPostingRow, row: Row): NamedCategoryPostingRow {
+  const adjust = parseInstallmentAdjust(asText(row.refundAdjust));
+  if (adjust) return installmentRefundRow(named, adjust, String(row.ownDate));
+  const plan = installmentOf(row);
+  if (!plan) return named;
+  const cuts = lineCutsOf(
+    String(row.installmentCuts ?? '')
+      .split(String.fromCharCode(30))
+      .filter(Boolean)
+      .map((pair) => {
+        const [lineKey, json] = pair.split(String.fromCharCode(31));
+        return { lineKey: lineKey || null, adjust: parseInstallmentAdjust(json) };
+      }),
+    asText(row.lineKey),
+    plan.months,
+  );
+  return { ...named, installment: cuts ? { ...plan, cuts } : plan };
+}
+
 function installmentOf(row: Row): InstallmentRowPlan | undefined {
   const months = row.installmentMonths == null ? 0 : asInt(row.installmentMonths);
   if (months < 2) return undefined;

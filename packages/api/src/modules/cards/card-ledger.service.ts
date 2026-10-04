@@ -22,7 +22,11 @@ import {
   zonedCurrentYearMonth,
   zonedMonthRange,
   zonedParts,
+  adjustTotals,
+  lineCutsOf,
+  parseInstallmentAdjust,
 } from '@money/types';
+import { INSTALLMENT_REFUND_SELECT, type InstallmentRefundCuts } from '@/common/installment-scope';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { toMoney } from '@/common/money';
@@ -57,6 +61,34 @@ function performanceDiscount(entry: {
   return {
     discountAmount: total.isZero() ? null : total,
     discountCountsPerformance: entry.discountCountsPerformance,
+  };
+}
+
+/**
+ * 할부 환불이 청구와 실적에 주는 것 (installment-refund).
+ *
+ *   - 할부 원거래의 카드 다리: 걸린 환불이 회차마다 줄인 것. 청구 회차에서 뺀다.
+ *   - 할부 환불의 카드 다리: 그 환불이 줄인 것의 합. 청구는 남은 몫만, 실적은 돌려받은 돈만.
+ */
+function refundCutFields(
+  entry: { installmentAdjust?: unknown; paybacks?: InstallmentRefundCuts },
+  months: number | null | undefined,
+): Pick<CardUsagePosting, 'installmentCuts' | 'refundCut'> {
+  const adjust = parseInstallmentAdjust(entry.installmentAdjust);
+  const totals = adjust ? adjustTotals(adjust) : null;
+  return {
+    installmentCuts:
+      months && months >= 2
+        ? lineCutsOf(
+            (entry.paybacks ?? []).map((cut) => ({
+              lineKey: cut.paybackOfLineKey,
+              adjust: parseInstallmentAdjust(cut.installmentAdjust),
+            })),
+            null,
+            months,
+          )
+        : null,
+    refundCut: totals ? { total: totals.total.toString(), interest: totals.interest.toString() } : null,
   };
 }
 
@@ -180,6 +212,7 @@ export class CardLedgerService {
             originalCurrency: true,
             // 깎인 금액은 줄마다 적힌다. 그 합을 쓰려고 분류 다리를 함께 읽는다.
             postings: { select: USAGE_LEG_SELECT },
+            ...INSTALLMENT_REFUND_SELECT,
           },
         },
         installmentPlan: {
@@ -197,6 +230,7 @@ export class CardLedgerService {
         installmentInterestShares: toShares(usage.installmentPlan?.interestShares),
         countsPerformance: usage.entry.countsPerformance,
         ...performanceDiscount(usage.entry),
+        ...refundCutFields(usage.entry, usage.installmentPlan?.totalMonths),
       })),
       statementClosingDay: card.statementClosingDay!,
       paymentDueDay: card.paymentDueDay!,
@@ -496,6 +530,7 @@ export class CardLedgerService {
               installmentInterestShares: toShares(usage.installmentPlan?.interestShares),
               countsPerformance: usage.entry.countsPerformance,
               ...performanceDiscount(usage.entry),
+              ...refundCutFields(usage.entry, usage.installmentPlan?.totalMonths),
             },
             closingDay,
             timeZone,
@@ -626,6 +661,8 @@ export class CardLedgerService {
               installmentShares: toShares(usage.installmentPlan?.principalShares),
               // 회차 청구액은 원금에 그 회차의 이자를 더한 값이다.
               installmentInterestShares: toShares(usage.installmentPlan?.interestShares),
+              // 할부 환불이 줄인 회차와, 환불이 돌려받는 남은 몫 (installment-refund).
+              ...refundCutFields(usage.entry, usage.installmentPlan?.totalMonths),
             },
             closingDay,
             timeZone,
@@ -1071,6 +1108,7 @@ const periodLedgerEntrySelect = {
     },
     orderBy: { id: 'asc' },
   },
+  ...INSTALLMENT_REFUND_SELECT,
 } satisfies Prisma.JournalEntrySelect;
 
 type PeriodLedgerEntry = Prisma.JournalEntryGetPayload<{

@@ -70,8 +70,11 @@
  *
  * 33 은 전표에 돌아온 돈의 종류(`entry.paybackType`, 환불·페이백)가 생긴 판이다. 옛 사본은 그
  * 칸이 없어 환불이 페이백으로 보인다.
+ *
+ * 34 는 할부 환불이 회차마다 줄인 금액(`entry.installmentAdjust`)이 생긴 판이다. 옛 사본은
+ * 그 칸을 받은 적이 없어 줄인 회차가 회차 기준의 합계와 카드 청구에서 빠지지 않는다.
  */
-export const SCHEMA_VERSION = 33;
+export const SCHEMA_VERSION = 34;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -271,7 +274,12 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      paybackOfEntryId TEXT,
      paybackOfLineKey TEXT,
      /* 돌아온 돈의 종류 ('payback' | 'refund'). 비면 페이백이다. 화면의 이름과 실적 기본값만 본다. */
-     paybackType      TEXT
+     paybackType      TEXT,
+     /*
+      * 할부 환불이 회차마다 줄인 금액 (JSON {principal, interest}, installment-refund). 회차를
+      * 펴는 자리가 원거래의 회차 몫에서 뺀다. 할부 환불이 아니면 비어 있다.
+      */
+     installmentAdjust TEXT
    )`,
 
   /*

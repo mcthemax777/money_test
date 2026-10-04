@@ -154,7 +154,7 @@ export class EntriesService {
     if (!existing) throw notFound('ENTRY_NOT_FOUND', '거래를 찾을 수 없습니다.');
     await this.projectAccess.verifyUserHasAccessToProject(userId, existing.projectId, 'editor');
 
-    const input = await this.buildInput(existing.projectId, userId, dto);
+    const input = await this.buildInput(existing.projectId, userId, dto, id);
 
     /*
      * 화면이 본 판을 그대로 넘긴다. 견주는 일은 원장이 잠근 뒤에 한다.
@@ -761,6 +761,8 @@ export class EntriesService {
     projectId: string,
     userId: string,
     dto: EntryDto.CreateRequest | EntryDto.UpdateRequest,
+    /** 고치는 전표의 id. 할부 환불이 자기가 이미 줄인 것을 빼고 보는 데 쓴다. */
+    entryId?: string,
   ): Promise<EntryInput> {
     const optional = (value: unknown, label: string) =>
       value === undefined || value === null || value === ''
@@ -816,6 +818,9 @@ export class EntriesService {
       paybackOfEntryId: dto.paybackOfEntryId,
       paybackOfLineKey: dto.paybackOfLineKey,
       paybackType: dto.paybackType,
+      // 할부 환불의 회차별 줄일 원금 (installment-refund). 검사는 조립이 한다.
+      installmentCut: dto.installmentCut?.map((value) => toMoney(value, '회차 금액').toString()),
+      id: entryId ?? ('id' in dto ? dto.id : undefined),
       /*
        * 태그는 조립이 줄에 실어 준다.
        *

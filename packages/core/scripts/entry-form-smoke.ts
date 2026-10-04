@@ -19,6 +19,10 @@ import {
   type EntryDto,
   type EntryListItem,
   type SyncDto,
+  defaultInstallmentCut,
+  effectiveLineSchedule,
+  installmentCutStart,
+  installmentLineSchedule,
   setRandomBytes,
 } from '@money/types';
 
@@ -30,6 +34,7 @@ import {
   emptyEntryForm,
   entryFormFromItem,
   entryFormToRequest,
+  installmentBaseAmount,
   newSplitLine,
   parseMethod,
   paybackFormFrom,
@@ -102,6 +107,8 @@ const validExpense: EntryFormValues = {
   paybackOfEntryId: '',
   paybackOfLineKey: '',
   paybackType: 'payback',
+  installmentCut: [],
+  installmentCutTouched: false,
 };
 
 /** 신용카드 부채 계정. 이체 양쪽이 다 카드인지 가리는 검사가 이 목록을 본다. */
@@ -336,6 +343,48 @@ const codeOf = (values: Partial<EntryFormValues>) =>
       withInterest({ installmentInterestMode: 'fixed', installmentMonthlyPayment: '3000' }),
     )?.code,
     'INSTALLMENT_PAYMENT_TOO_SMALL');
+  /*
+   * 차감이 있는 할부. 카드에 청구되는 것은 차감 뒤 금액이라 회차와 이자도 그 금액을 딛는다
+   * (`installmentBaseAmount`). 서버의 installmentSharesOf 가 카드 다리(순액)와 견주는 값이다.
+   */
+  eq('할부 기준 금액은 금액 − 차감', installmentBaseAmount('120000', '12000'), '108000');
+  eq('차감이 없으면 금액 그대로', installmentBaseAmount('120000', ''), '120000');
+  eq('차감이 금액보다 크면 금액 그대로 (차감 검사가 막는다)', installmentBaseAmount('1000', '2000'), '1000');
+  const discountedShares = (shares: string[]) => ({
+    ...withShares(shares),
+    amount: '120000',
+    discountAmount: '12000',
+  });
+  eq('차감 할부: 순액으로 나눈 회차는 통과', checkEntryForm(discountedShares(['36000', '36000', '36000'])), null);
+  eq('차감 할부: 정가로 나눈 회차는 막는다',
+    checkEntryForm(discountedShares(['40000', '40000', '40000']))?.code, 'INSTALLMENT_SHARES_SUM');
+  const splitDiscounted = {
+    ...withShares(['36000', '36000', '36000']),
+    amount: '120000',
+    splits: [
+      { ...newSplitLine(), categoryId: 'c-a', amount: '70000', discountAmount: '7000' },
+      { ...newSplitLine(), categoryId: 'c-b', amount: '50000', discountAmount: '5000' },
+    ],
+  };
+  eq('나눈 차감 할부: 줄 차감의 합을 뺀 금액으로 견준다', checkEntryForm(splitDiscounted), null);
+  eq('차감 할부의 고정형: 순액보다 적게 내면 막는다',
+    checkEntryForm(withInterest({
+      amount: '120000', discountAmount: '12000',
+      installmentInterestMode: 'fixed', installmentMonthlyPayment: '35000',
+    } as Partial<EntryFormValues>))?.code,
+    'INSTALLMENT_PAYMENT_TOO_SMALL');
+  eq('차감 할부의 고정형: 순액 이상이면 통과 (정가 12만보다 적어도)',
+    checkEntryForm(withInterest({
+      amount: '120000', discountAmount: '12000',
+      installmentInterestMode: 'fixed', installmentMonthlyPayment: '38000',
+    })),
+    null);
+  eq('차감 할부의 이자는 순액에 매긴다 (연 12%)',
+    entryFormToRequest(withInterest({
+      amount: '120000', discountAmount: '12000',
+      installmentInterestMode: 'rate', installmentAnnualRate: '12',
+    }), KST).installmentInterestShares?.join(','),
+    '1080,720,360');
   eq('외화 결제의 유이자 할부는 막는다',
     checkEntryForm(withInterest({ currency: 'USD', exchangeRate: '1380' }))?.code,
     'INSTALLMENT_INTEREST_CURRENCY');
@@ -591,6 +640,34 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('줄을 고르지 않으면 막는다', checkEntryForm({ ...fromSplit, amount: '1000' })?.code, 'PAYBACK_LINE_REQUIRED');
   eq('줄을 고르면 통과', checkEntryForm({ ...fromSplit, amount: '1000', paybackOfLineKey: 'l-b', categoryId: 'c-b' }), null);
   eq('카드로 낸 원거래면 카드가 기본', fromSplit.method, cardValue('card1'));
+
+  // ── 3-6. 할부 환불 (7-9): 폼이 줄일 회차를 싣고, 고칠 때 이자를 덜어 연다 ──
+  const refundItem = installmentItem({
+    id: 'e-refund', kind: 'payback', paybackType: 'refund', amount: '120400', installmentMonths: null,
+    installmentInterest: null, installmentInterestShares: null, paybackOfEntryId: 'e-inst', paybackOfLineKey: 'l-i',
+    installmentAdjust: { principal: ['0', '0', '40000'], interest: ['0', '0', '400'] },
+    lines: [
+      { lineKey: 'l-r', categoryId: 'c-food', categoryName: '식비', parentCategoryId: null,
+        parentCategoryName: null, amount: '120400', discountAmount: null, tags: [], matched: true },
+    ] as never,
+  });
+  const installmentRefundForm = entryFormFromItem(refundItem, KST)!;
+  eq('할부 환불을 열면 사라진 이자를 덜어 낸 금액', installmentRefundForm.amount, '120000');
+  eq('줄인 회차를 그대로 연다 (손댄 것으로)', `${installmentRefundForm.installmentCut.join(',')} ${installmentRefundForm.installmentCutTouched}`, '0,0,40000 true');
+  eq('짐에 줄일 회차가 실린다', entryFormToRequest(installmentRefundForm, KST).installmentCut?.join(','), '0,0,40000');
+  eq('비운 칸은 0 으로 실린다',
+    entryFormToRequest({ ...installmentRefundForm, installmentCut: ['', '', '30000'] }, KST).installmentCut?.join(','), '0,0,30000');
+  eq('줄일 회차가 없으면 싣지 않는다', 'installmentCut' in entryFormToRequest({ ...installmentRefundForm, installmentCut: [] }, KST), false);
+  // 기본값: 10월에 산 3개월(4만씩)을 11월에 환불하면 3회차(12월)부터 줄인다.
+  const lineSchedule = installmentLineSchedule({ entryAmount: '120000', lineAmount: '120000', months: 3 });
+  const start = installmentCutStart('2026-10', '2026-11');
+  eq('환불한 다음 달 회차부터', start, 2);
+  eq('부분 환불 3만은 3회차에서', defaultInstallmentCut(lineSchedule, start, '30000').join(','), '0,0,30000');
+  eq('남은 회차보다 큰 환불은 남은 회차까지만', defaultInstallmentCut(lineSchedule, start, '120000').join(','), '0,0,40000');
+  eq('10월에 환불하면 2·3회차를 고르게', defaultInstallmentCut(lineSchedule, installmentCutStart('2026-10', '2026-10'), '50000').join(','), '0,25000,25000');
+  eq('다른 환불이 줄인 회차는 덜 줄인다',
+    defaultInstallmentCut(effectiveLineSchedule(lineSchedule, [{ principal: ['0', '30000', '0'], interest: ['0', '0', '0'] }]), 1, '20000').join(','),
+    '0,4000,16000');
 
   // 고칠 때는 목록 한 줄에서 되돌린다. 링크를 그대로 들고 있어야 저장해도 비지 않는다.
   const storedPayback = installmentItem({

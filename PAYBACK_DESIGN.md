@@ -411,6 +411,31 @@ SELECT count(*) FROM "Posting" p JOIN "Category" c ON c.id = p."categoryId"
      - 추가·수정 폼의 차감 칸은 따로 둔다 (2026-10-04, 사용자 결정). 폼 안으로 옮기는 것(7-7 폼)과
        환불·페이백과 같은 행으로 그리는 것(7-8)을 해 보았다가 되돌렸다. 상세 화면의 묶음만 남는다.
      - 남은 논의: 할부 원거래의 환불은 남은 회차를 줄이고, 페이백은 회차를 유지한다(제안, 미정).
+   - **7-9 할부 거래의 환불 (2026-10-04, 사용자 결정)**: 카드사처럼 남은 회차를 줄인다.
+     - 규칙: 이미 지난 회차는 그대로. 환불한 다음 달 회차부터 줄이고, 부분 환불은 남은 회차에 고르게
+       (회차마다 남은 원금 비율). 다 못 줄인 몫(이미 낸 회차분)은 환불한 달에 한꺼번에 돌아온 돈이다.
+       줄인 회차의 이자도 같은 비율로 줄이고(원금을 다 없앤 회차는 이자도 다), 사라진 이자는 카드
+       빚에서도 빠지도록 환불 다리 = 돌려받은 돈 + 사라진 이자. 캐시백은 할부를 건드리지 않는다.
+     - 저장: 환불 전표의 `installmentAdjust {principal[], interest[]}` (마이그레이션
+       `20261005090000_entry_installment_adjust`, 사본 SCHEMA_VERSION 34). 원거래의 할부 계획은
+       건드리지 않는다 -- 환불을 지우면 원래 일정으로 돌아오고, 두 기기의 환불이 서로 덮지 않는다.
+       할부 원거래의 환불이면 줄일 회차를 받지 않아도 0 으로 둔다(엑셀·옛 기기·지출 폼의 함께 적기)
+       -- 그래야 회차 기준에서 환불한 달에 센다.
+     - 읽는 자리: 목록(`installmentEntryViews`, 원거래 회차 몫에서 빼고 환불은 `refundLump` 만),
+       가계·예산·추이(서버 `spreadRowOf`·`analysisScopes`, 사본 `categoryPostings`), 카드
+       청구·실적(`billedShares`·`performanceAmount` 의 `installmentCuts`·`refundCut`). 발생 기준은
+       그대로(산 달에 순액).
+     - 막는 것: 회차를 줄일 수 있는 것은 할부 원거래의 **환불**이 **원거래 카드**로 들어올 때뿐
+       (`INSTALLMENT_CUT_NOT_ALLOWED`). 회차마다 남은 원금 초과(`..._TOO_LARGE`), 줄인 합이 환불
+       금액 초과(`..._OVER_AMOUNT`). 회차를 줄인 환불이 있으면 원거래의 개월수·카드를 바꾸거나 남는
+       회차가 음수가 되게 줄일 수 없다(`INSTALLMENT_REFUND_LOCKED`). 외화 할부·표시 통화가 장부
+       통화와 다른 가계부는 회차를 줄이지 않는다.
+     - 화면(웹·앱 PaybackEditor): "할부 처리" 상자 -- 회차·원래·바뀐 뒤(고칠 수 있다), "{달}에
+       돌려받는 돈", "남은 할부 N회 · 합", [전액 취소]. 규칙은 core `useInstallmentRefund`, 계산은
+       types `installment-refund`.
+     - 검사: api `payback-smoke` 14절, core `payback-mirror-smoke` 8절, `entry-form-smoke` 3-6절.
+     - 남은 것: 지출 폼에서 함께 적는 환불은 회차를 줄이지 않는다(환불한 달에 한꺼번에). 회차를
+       줄이려면 환불 편집기에서 고친다.
 8. **오프라인**: 끝났다.
    - 사본 `entry` 에 `paybackOfEntryId`·`paybackOfLineKey`(+색인), `SCHEMA_VERSION` 32. pull 이
      두 칸을 받고(서버 응답에 실리는 것은 `payback-smoke` 가 본다), 앱 창구의 `writeEntry` 가 조립

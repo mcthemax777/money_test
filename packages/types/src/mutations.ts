@@ -162,6 +162,8 @@ export interface EntryMutationPayload {
   paybackOfLineKey?: string;
   /** 돌아온 돈의 종류. `EntryDto.CreateRequest` 와 같은 규칙이다. */
   paybackType?: string;
+  /** 할부 환불의 회차별 줄일 원금. `EntryDto.CreateRequest` 와 같은 규칙이다. */
+  installmentCut?: string[];
   cardTransferDirection?: CardTransferDirection;
   /** 분류 줄 하나뿐인 거래에서 그 줄이 깎인 금액. 분할이면 `splits[].discountAmount`. */
   discountAmount?: string;

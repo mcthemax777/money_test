@@ -11,6 +11,9 @@ import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { PAYBACK_TYPES, type EntryListItem } from '@money/types';
 import { parseMethod } from '@money/core/data/entry-form';
 import { useEntryForm } from '@money/core/hooks/useEntryForm';
+import { useInstallmentRefund } from '@money/core/hooks/useInstallmentRefund';
+import { usePaybackOrigin } from '@money/core/hooks/usePaybackOrigin';
+import { formatYearMonth } from '@money/core/lib/datetime';
 import { ENTRY_FORM_VIOLATION_KEY } from '@money/core/lib/entry-form-messages';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency } from '@money/core/lib/money';
@@ -18,6 +21,7 @@ import {
   useMyPersonId,
   useProject,
   useProjectDisplayCurrency,
+  useProjectLedgerCurrency,
   useProjectTimeZone,
 } from '@money/core/store/project';
 
@@ -48,6 +52,7 @@ export default function PaybackEditor({
   const projectId = useProject((state) => state.selectedProjectId);
   const myPersonId = useMyPersonId();
   const displayCurrency = useProjectDisplayCurrency();
+  const ledgerCurrency = useProjectLedgerCurrency();
   const [isCalendarOpen, setIsCalendarOpen] = useState(false);
 
   const form = useEntryForm({
@@ -84,6 +89,25 @@ export default function PaybackEditor({
     : original?.lines.length === 1
       ? labelOf(original.lines[0])
       : null;
+
+  /*
+   * 할부 원거래면 "할부 처리" 상자 (PAYBACK_DESIGN.md 7-9, 웹과 같다). 고칠 때는 원거래를
+   * 읽어 온다 -- 목록 한 줄은 페이백 자신이라 원거래의 회차를 들고 있지 않다.
+   */
+  const origin = usePaybackOrigin(target?.editing ?? null, projectId);
+  const installment = useInstallmentRefund({
+    original: original ?? origin.original,
+    editingId: target?.editing?.id ?? null,
+    values,
+    setField,
+    timeZone,
+    sameCurrency: displayCurrency === ledgerCurrency,
+  });
+  const money = (amount: string) => formatCurrency(amount, displayCurrency);
+  const monthLabel = (yearMonth: string) => {
+    const [year, month] = yearMonth.split('-').map(Number);
+    return year && month ? formatYearMonth(year, month) : yearMonth;
+  };
 
   const violationKey = violation ? ENTRY_FORM_VIOLATION_KEY[violation.code] : undefined;
   const message =
@@ -254,6 +278,88 @@ export default function PaybackEditor({
             />
           )}
         </Field>
+
+        {/*
+          할부 처리 (7-9, 웹과 같다). 환불한 다음 달 회차부터 남은 할부를 줄이고, 다 못 줄인 몫은
+          환불한 달에 한꺼번에 돌아온 돈이 된다. 줄일 수 없으면 까닭만 적는다.
+        */}
+        {installment.isInstallment ? (
+          <View className="gap-2 rounded-lg border border-gray-200 p-3">
+            <View className="flex-row items-center justify-between">
+              <Text className="text-sm font-medium text-gray-700">{t('payback.installment.title')}</Text>
+              {installment.applies ? (
+                <Pressable
+                  onPress={installment.cancelAll}
+                  accessibilityRole="button"
+                  className="rounded-lg px-2 py-1 active:bg-blue-50"
+                >
+                  <Text className="text-sm text-blue-600">{t('payback.installment.cancelAll')}</Text>
+                </Pressable>
+              ) : null}
+            </View>
+            {installment.applies ? (
+              <>
+                {installment.rows.map((row) => (
+                  <View key={row.index} className="flex-row items-center gap-2">
+                    <View className="flex-1">
+                      <Text className={`text-sm ${row.past ? 'text-gray-400' : 'text-gray-900'}`}>
+                        {t('payback.installment.round', { index: row.index })} · {money(row.before)}
+                      </Text>
+                      <Text className="text-xs text-gray-400">
+                        {monthLabel(row.yearMonth)}
+                        {row.past ? ` · ${t('payback.installment.past')}` : ''}
+                      </Text>
+                    </View>
+                    <TextInput
+                      value={row.after}
+                      onChangeText={(text) => installment.setAfter(row.index, text)}
+                      keyboardType="numeric"
+                      accessibilityLabel={`${t('payback.installment.round', { index: row.index })} ${t('payback.installment.after')}`}
+                      className={`w-32 rounded-lg border px-3 py-2 text-right text-base text-gray-900 ${
+                        Number(row.after) < 0 ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                      }`}
+                    />
+                  </View>
+                ))}
+                <View className="border-t border-gray-100 pt-2">
+                  <Text className="text-sm text-gray-900">
+                    {t('payback.installment.lump', {
+                      month: monthLabel(installment.refundYearMonth),
+                      amount: money(installment.lump),
+                    })}
+                  </Text>
+                  <Text className="text-sm text-gray-600">
+                    {installment.remaining.length > 0
+                      ? t('payback.installment.remaining', {
+                          count: installment.remaining.length,
+                          amount: money(
+                            String(installment.remaining.reduce((sum, row) => sum + Number(row.after), 0)),
+                          ),
+                        })
+                      : t('payback.installment.none')}
+                  </Text>
+                </View>
+                {installment.overAmount ? (
+                  <Text className="text-xs text-red-600">{t('payback.installment.overAmount')}</Text>
+                ) : null}
+                {installment.overShare ? (
+                  <Text className="text-xs text-red-600">{t('payback.installment.overShare')}</Text>
+                ) : null}
+                <Text className="text-xs text-gray-500">{t('payback.installment.hint')}</Text>
+              </>
+            ) : (
+              <Text className="text-xs text-gray-500">
+                {t(
+                  installment.blockedBy === 'not-refund'
+                    ? 'payback.installment.cashback'
+                    : installment.blockedBy === 'currency'
+                      ? 'payback.installment.currency'
+                      : 'payback.installment.otherMethod',
+                )}
+              </Text>
+            )}
+          </View>
+        ) : null}
 
         {/* 카드 실적에서도 뺄지. 카드로 받았을 때만 뜬다 (웹과 같다). */}
         {parseMethod(values.method).cardId ? (

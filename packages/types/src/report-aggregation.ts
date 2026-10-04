@@ -60,6 +60,11 @@ export interface InstallmentRowPlan {
   principals?: readonly DecInput[] | null;
   /** 적어 둔 회차 이자. 없으면 이자를 세지 않는다. */
   interests?: readonly DecInput[] | null;
+  /**
+   * 이 줄에 걸린 환불이 회차마다 줄인 금액 (원금 + 이자, 양수). 개월수만큼이다.
+   * 회차 몫에서 뺀다 (installment-refund). 없으면 줄인 것이 없다.
+   */
+  cuts?: readonly DecInput[] | null;
 }
 
 /**
@@ -103,11 +108,14 @@ export function expandInstallmentRows<T extends CategoryPostingRow>(
     );
 
     const negative = Dec.of(row.baseAmount).isNegative();
+    // 걸린 환불이 줄인 회차를 뺀다. 개수가 맞지 않으면 뜻을 잃은 옛 값이라 보지 않는다.
+    const cuts = plan.cuts && plan.cuts.length === shares.length ? plan.cuts : null;
+    const kept = lineShares.map((value, index) => (cuts ? value.minus(Dec.of(cuts[index])) : value));
     return shares.map((share, index) => ({
       ...row,
       installment: undefined,
       // 수입 다리는 음수로 온다. 부호를 지켜야 합계가 갈래를 가린다.
-      baseAmount: negative ? lineShares[index].negated() : lineShares[index],
+      baseAmount: negative ? kept[index].negated() : kept[index],
       date: installmentRowDate(row.date, index, timeZone),
     }));
   });

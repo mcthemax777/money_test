@@ -29,6 +29,14 @@ import type {
   PaybackType,
 } from './entities';
 import { PAYBACK_TYPES, paybackCountsPerformance } from './entities';
+import {
+  checkInstallmentCut,
+  effectiveLineSchedule,
+  installmentInterestCut,
+  installmentLineSchedule,
+  installmentRefundLegAmount,
+  type InstallmentAdjust,
+} from './installment-refund';
 
 const ZERO = Dec.of(0);
 const ONE = Dec.of(1);
@@ -94,6 +102,25 @@ export interface LookupPaybackTarget {
   isPayback: boolean;
   /** 가리킨 줄의 분류. 원거래를 고치다 그 줄이 사라졌으면 null 이다. */
   lineCategoryId: string | null;
+  /**
+   * 원거래가 할부면 그 계획과 가리킨 줄 (installment-refund). 할부가 아니면 없다.
+   * 할부 환불의 회차별 줄일 금액을 검사하는 데 쓴다.
+   */
+  installment?: {
+    months: number;
+    /** 할부가 걸린 카드. 환불이 이 카드로 들어와야 회차를 줄일 수 있다. */
+    cardId: string;
+    /** 카드 다리의 통화가 저장 통화와 같은가. 다르면 회차를 줄이지 않는다. */
+    sameCurrency: boolean;
+    /** 카드에 청구된 총액 (양수, 이자 포함). */
+    entryAmount: string;
+    /** 가리킨 줄의 금액 (양수). 줄이 사라졌으면 null. */
+    lineAmount: string | null;
+    principals: string[] | null;
+    interests: string[] | null;
+    /** 이 줄에 걸린 다른 환불이 줄인 것. 환불 id 와 함께. */
+    cuts: Array<{ entryId: string; adjust: InstallmentAdjust }>;
+  };
 }
 
 /**
@@ -213,6 +240,8 @@ export interface BuiltEntry {
   paybackOfLineKey?: string | null;
   /** 돌아온 돈의 종류. 페이백이 아니면 null 이다. */
   paybackType?: PaybackType | null;
+  /** 할부 원거래의 환불이 회차마다 줄인 금액. 그 밖에는 null 이다 (installment-refund). */
+  installmentAdjust?: InstallmentAdjust | null;
 }
 
 /**
@@ -643,6 +672,10 @@ export interface PaybackBuildInput extends CommonBuildInput {
   paybackOfEntryId?: string;
   paybackOfLineKey?: string;
   tagIds?: string[];
+  /** 할부 환불의 회차별 줄일 원금 (installment-refund). */
+  installmentCut?: DecInput[];
+  /** 이 전표 자신의 id. 고칠 때 자기가 이미 줄인 것을 빼고 보려고 받는다. */
+  id?: string;
 }
 
 /**
@@ -675,13 +708,16 @@ export async function buildPayback(
     fail('PAYBACK_TARGET_INVALID', '페이백에는 페이백을 걸 수 없습니다.');
   }
 
+  const adjust = installmentAdjustOf(input, type, target);
+
   const built = await buildInflow(
     {
       ...input,
       lines: [
         {
           categoryId: target?.lineCategoryId ?? input.categoryId,
-          amount: input.amount,
+          // 할부 환불이면 사라진 이자도 함께 되돌린다 -- 카드 빚에서도 빠져야 한다.
+          amount: installmentRefundLegAmount(input.amount, adjust),
           lineKey: input.lineKey,
           ...(input.tagIds ? { tagIds: input.tagIds } : {}),
         },
@@ -698,6 +734,62 @@ export async function buildPayback(
     paybackType: type,
     paybackOfEntryId: target ? target.id : null,
     paybackOfLineKey: target ? input.paybackOfLineKey! : null,
+    installmentAdjust: target ? adjust : null,
+  };
+}
+
+/**
+ * 할부 환불의 회차별 줄일 금액을 검사해 정한다 (installment-refund).
+ *
+ * **할부 원거래의 환불이면 언제나 값을 둔다.** 줄일 회차를 받지 않았으면(엑셀·옛 기기) 모두
+ * 0 이다 -- 그래도 이 값이 있어야 회차 기준에서 환불을 환불한 달에 한꺼번에 센다. 값이 없으면
+ * 여느 페이백처럼 원거래의 달(산 달)에 센다.
+ *
+ * 페이백(캐시백)·할부가 아닌 원거래·외화 카드·원거래가 지워진 것(target 이 null)은 null 이다.
+ */
+function installmentAdjustOf(
+  input: PaybackBuildInput,
+  type: PaybackType,
+  target: LookupPaybackTarget | null,
+): InstallmentAdjust | null {
+  const plan = target?.installment;
+  const cut = input.installmentCut ?? [];
+  const asked = cut.some((value) => !Dec.of(value).isZero());
+
+  const allowed = type === 'refund' && plan && plan.sameCurrency && plan.lineAmount !== null;
+  if (!allowed) {
+    if (asked) fail('INSTALLMENT_CUT_NOT_ALLOWED', '할부 거래의 환불에만 회차를 줄일 수 있습니다.');
+    return null;
+  }
+  if (asked && input.cardId !== plan!.cardId) {
+    fail('INSTALLMENT_CUT_NOT_ALLOWED', '회차를 줄이려면 들어온 곳이 원거래 카드여야 합니다.');
+  }
+
+  const schedule = installmentLineSchedule({
+    entryAmount: plan!.entryAmount,
+    lineAmount: plan!.lineAmount!,
+    months: plan!.months,
+    principals: plan!.principals,
+    interests: plan!.interests,
+  });
+  const effective = effectiveLineSchedule(
+    schedule,
+    plan!.cuts.filter((other) => other.entryId !== input.id).map((other) => other.adjust),
+  );
+  const principalCut = asked ? cut : schedule.map(() => '0');
+  const error = checkInstallmentCut(effective, principalCut, input.amount);
+  if (error === 'INSTALLMENT_CUT_TOO_LARGE') {
+    fail(error, '줄일 금액이 그 회차에 남은 원금보다 큽니다.');
+  }
+  if (error === 'INSTALLMENT_CUT_OVER_AMOUNT') {
+    fail(error, '줄일 회차의 합이 환불 금액보다 큽니다.');
+  }
+  if (error) fail(error, '회차별 줄일 금액이 올바르지 않습니다.');
+
+  const principal = principalCut.map((value) => Dec.of(value));
+  return {
+    principal: principal.map((value) => value.toString()),
+    interest: installmentInterestCut(effective, principal).map((value) => value.toString()),
   };
 }
 
@@ -965,6 +1057,10 @@ export interface EntryBuildRequest extends CommonBuildInput {
   paybackOfLineKey?: string;
   /** 돌아온 돈의 종류. `kind: 'payback'` 에만 뜻이 있다. */
   paybackType?: string;
+  /** 할부 환불의 회차별 줄일 원금. `kind: 'payback'` 의 환불에만 뜻이 있다. */
+  installmentCut?: DecInput[];
+  /** 이 전표 자신의 id (고칠 때). 할부 환불이 자기가 이미 줄인 것을 빼고 보는 데 쓴다. */
+  id?: string;
   /**
    * 붙일 태그.
    *
@@ -1032,6 +1128,8 @@ export async function buildEntry(
           paybackOfLineKey: request.paybackOfLineKey,
           paybackType: request.paybackType,
           tagIds: request.tagIds,
+          installmentCut: request.installmentCut,
+          id: request.id,
         },
         lookup,
       );

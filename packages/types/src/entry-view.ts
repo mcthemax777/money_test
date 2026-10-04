@@ -11,6 +11,7 @@
 
 import { Dec, type DecInput } from './decimal';
 import type { ParsedEntrySearch } from './entry-search';
+import { parseInstallmentAdjust, type InstallmentAdjust } from './installment-refund';
 import type {
   AccountType,
   CategoryType,
@@ -97,6 +98,13 @@ export interface ViewEntry {
   paybackOf?: { date: Date | string } | null;
   /** 돌아온 돈의 종류. 비어 있으면 페이백이다 (이 칸이 생기기 전의 행). */
   paybackType?: string | null;
+  /** 할부 환불이면 회차마다 줄인 금액 (저장된 JSON 그대로). 읽지 않은 자리는 비워 둔다. */
+  installmentAdjust?: unknown;
+  /**
+   * 할부 원거래면 걸린 환불과 그 줄인 금액. 회차 기준의 목록이 회차 몫에서 뺀다.
+   * 읽지 않은 자리는 비워 둔다.
+   */
+  paybackCuts?: Array<{ id: string; paybackOfLineKey: string | null; installmentAdjust: unknown }>;
   postings: ViewPosting[];
   /**
    * 이 전표에 달린 태그 연결. 서버는 조인 표를 펴서, 기기는 사본의 `entry_tag` 를 읽어 넣는다.
@@ -407,7 +415,26 @@ export function toListItem(
           ? entry.paybackOf.date.toISOString()
           : String(entry.paybackOf.date)
         : null,
+    /*
+     * 할부 환불 (installment-refund). 저장 통화의 값이라 목록 금액처럼 표시 통화로 옮긴다 --
+     * 회차 몫(표시 통화)에서 빼는 값이다.
+     */
+    installmentAdjust:
+      kind === 'payback' ? convertAdjust(parseInstallmentAdjust(entry.installmentAdjust), show) : null,
+    installmentCuts: (entry.paybackCuts ?? []).flatMap((cut) => {
+      const adjust = convertAdjust(parseInstallmentAdjust(cut.installmentAdjust), show);
+      return adjust ? [{ entryId: cut.id, lineKey: cut.paybackOfLineKey, ...adjust }] : [];
+    }),
   };
+}
+
+function convertAdjust(
+  adjust: InstallmentAdjust | null,
+  show: ViewConverter,
+): InstallmentAdjust | null {
+  if (!adjust) return null;
+  const convert = (values: string[]) => values.map((value) => show.convert(Dec.of(value)).toString());
+  return { principal: convert(adjust.principal), interest: convert(adjust.interest) };
 }
 
 /**

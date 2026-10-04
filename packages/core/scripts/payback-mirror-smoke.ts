@@ -13,6 +13,7 @@
  *   5. **끊긴 채 적은 페이백.** 앱 창구가 사본에 링크를 적는다.
  *   6. **원거래의 자리표만 오면 링크만 빈다.** 7-6 전의 서버가 지운 것. 페이백은 자기 달로 옮겨 간다.
  *   7. **앱에서 원거래를 지우면 걸린 환불·페이백도 함께 지운다** (7-6). 명령은 원거래 하나다.
+ *   8. **할부 환불 (7-9).** 끊긴 채 적어도 남은 회차가 줄고, 다 못 줄인 몫은 환불한 달에 선다.
  */
 import { type SyncDto } from '@money/types';
 
@@ -107,6 +108,10 @@ const pull = (
       ] as never,
       accounts: [
         { id: 'a1', projectId: PID, ownerId: 'p1', type: 'deposit', name: '월급통장', institutionId: null, accountNumber: null, currency: 'KRW', balance: '0', isActive: true, sortOrder: 0, updatedVersion: 1 },
+        { id: 'a-card', projectId: PID, ownerId: 'p1', type: 'credit_card', name: '할부카드', institutionId: null, accountNumber: null, currency: 'KRW', balance: '0', isActive: true, sortOrder: 1, updatedVersion: 1 },
+      ] as never,
+      cards: [
+        { id: 'card-1', projectId: PID, paymentAccountId: 'a1', liabilityAccountId: 'a-card', name: '할부카드', cardType: 'credit', issuerId: 'fi_card', statementClosingDay: 15, paymentDueDay: 25, isActive: true, updatedVersion: 1 },
       ] as never,
       categories: [
         { id: 'c-food', projectId: PID, name: '식비', parentId: null, type: 'expense', icon: null, isDefault: false, sortOrder: 0, updatedVersion: 1 },
@@ -254,6 +259,59 @@ const pull = (
   eq('명령은 원거래 지우기 하나 (서버가 걸린 것을 함께 지운다)',
     queued.map((row) => `${row.kind}:${row.targets.join('+')}`).join(','), 'entry.delete:e-shop');
   eq('다른 원거래에 걸린 것은 그대로', (await port.getAllEntries({}, PID)).some((item) => item.id === 'e-back'), true);
+
+  console.log('\n== 8. 할부 환불 (7-9) ==');
+  {
+    await writer.createEntry({
+      id: 'e-inst', kind: 'expense', personId: 'p1', date: '2026-10-05T03:00:00.000Z', description: '가전',
+      cardId: 'card-1', categoryId: 'c-life', amount: '120000', lineKey: 'e-inst-line', installmentMonths: 3,
+    } as never);
+    const monthly = async () =>
+      (await Promise.all(['2026-10', '2026-11', '2026-12'].map(async (yearMonth) => {
+        const all = await port.getSummary({ yearMonth }, PID, { basis: 'installment' } as never);
+        return all.expense;
+      }))).join(' / ');
+    const before = await monthly();
+    await writer.createEntry({
+      id: 'e-inst-refund', kind: 'payback', paybackType: 'refund', personId: 'p1', date: '2026-11-10T03:00:00.000Z',
+      description: '환불', cardId: 'card-1', categoryId: 'c-life', amount: '120000', lineKey: 'e-inst-refund-line',
+      paybackOfEntryId: 'e-inst', paybackOfLineKey: 'e-inst-line', installmentCut: ['0', '0', '40000'],
+    } as never);
+    const after = await monthly();
+    const diff = before.split(' / ').map((value, index) => Number(after.split(' / ')[index]) - Number(value)).join(' / ');
+    // 환불 전과 견준다 (앞 절의 거래가 같은 달에 있어서). 11월 −12만 + 4만, 12월 −4만.
+    eq('회차 기준: 11월에 8만이 돌아오고 12월 회차가 사라진다', diff, '0 / -80000 / -40000');
+    const usage = await port.getCardUsage('card-1', 6);
+    const billed = ['2026-10', '2026-11', '2026-12']
+      .map((key) => usage.periods.find((period) => period.closingKey === key)?.billed ?? '-')
+      .join(' / ');
+    eq('카드 청구: 12월 회차가 사라지고 11월에 8만을 돌려받는다', billed, '40000 / -40000 / 0');
+    const listed = await port.getAllEntries({}, PID);
+    eq('원거래 목록 한 줄에 줄인 회차가 실린다',
+      listed.find((item) => item.id === 'e-inst')?.installmentCuts?.map((cut) => cut.principal.join(',')).join('|'), '0,0,40000');
+    eq('명령에 줄일 회차가 실린다',
+      JSON.stringify(((await store.pendingMutations(PID)).find((row) => row.targets[0] === 'e-inst-refund')?.payload as { installmentCut?: string[] } | undefined)?.installmentCut),
+      '["0","0","40000"]');
+    const codeOf8 = async (fn: () => Promise<unknown>) => {
+      try {
+        await fn();
+        return '통과';
+      } catch (error) {
+        return (error as { code?: string }).code ?? String(error);
+      }
+    };
+    eq('회차를 줄인 환불이 있으면 개월수를 바꿀 수 없다', await codeOf8(() => writer.updateEntry('e-inst', {
+      kind: 'expense', personId: 'p1', date: '2026-10-05T03:00:00.000Z', description: '가전',
+      cardId: 'card-1', categoryId: 'c-life', amount: '120000', lineKey: 'e-inst-line', installmentMonths: 6,
+    } as never)), 'INSTALLMENT_REFUND_LOCKED');
+    eq('남은 회차보다 많이 줄이면 거부', await codeOf8(() => writer.createEntry({
+      id: 'e-inst-over', kind: 'payback', paybackType: 'refund', personId: 'p1', date: '2026-11-11T03:00:00.000Z',
+      description: '추가', cardId: 'card-1', categoryId: 'c-life', amount: '10000', lineKey: 'e-inst-over-line',
+      paybackOfEntryId: 'e-inst', paybackOfLineKey: 'e-inst-line', installmentCut: ['0', '0', '1'],
+    } as never)), 'INSTALLMENT_CUT_TOO_LARGE');
+    await writer.deleteEntry('e-inst-refund');
+    eq('환불을 지우면 원래 일정으로 돌아온다', await monthly(), before);
+  }
 
   console.log(fail === 0 ? '\n전부 통과' : `\n${fail}개 실패`);
   process.exit(fail === 0 ? 0 : 1);

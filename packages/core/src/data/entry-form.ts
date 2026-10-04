@@ -18,6 +18,7 @@ import {
   type EntryListItem,
   type PaybackType,
   newLineKey,
+  adjustTotals,
   paybackCountsPerformance,
   zonedFormValueToUtc,
 } from '@money/types';
@@ -229,6 +230,14 @@ export interface EntryFormValues {
   paybackOfLineKey: string;
   /** 돌아온 돈의 종류. 페이백 갈래에만 뜻이 있다. 바꾸면 실적 칸이 그 종류의 기본값으로 돌아간다. */
   paybackType: PaybackType;
+  /**
+   * 할부 원거래의 환불이면 회차마다 줄일 원금 (PAYBACK_DESIGN.md 7-9). 그 밖에는 빈 배열이다.
+   *
+   * 화면이 `useInstallmentRefund` 로 채운다 -- 고르지 않았으면 환불 금액을 남은 회차에 고르게
+   * 나눈 기본값이 따라가고, 회차를 손대면(`installmentCutTouched`) 그 값이 남는다.
+   */
+  installmentCut: string[];
+  installmentCutTouched: boolean;
 }
 
 export interface EntryFormDefaults {
@@ -279,6 +288,8 @@ export function emptyEntryForm({ personId = '', timeZone, now }: EntryFormDefaul
     paybackOfEntryId: '',
     paybackOfLineKey: '',
     paybackType: 'payback',
+    installmentCut: [],
+    installmentCutTouched: false,
     ...(now ? { dateKey: dateKeyOf(now, timeZone), timeKey: timeInputOf(now, timeZone) } : {}),
   };
 }
@@ -383,7 +394,17 @@ export function entryFormFromItem(
      *
      * 외화 거래에는 차감이 붙을 수 없어(조립이 막는다) 두 보정이 겹치지 않는다.
      */
-    amount: item.originalAmount ?? withoutInterest(grossOf(item), interest.total, interest.total),
+    amount:
+      item.originalAmount ??
+      (item.installmentAdjust
+        ? /*
+           * 할부 환불의 다리는 `돌려받은 돈 + 사라진 이자` 다. 폼의 금액 칸은 돌려받은 돈이라
+           * 이자를 덜어 낸다 (조립이 저장할 때 다시 얹는다).
+           */
+          Dec.of(grossOf(item))
+            .minus(adjustTotals(item.installmentAdjust).interest)
+            .toString()
+        : withoutInterest(grossOf(item), interest.total, interest.total)),
     /*
      * 줄에 달린 값들. 분류 하나짜리 거래는 그 줄의 것을 그대로 든다.
      *
@@ -472,6 +493,9 @@ export function entryFormFromItem(
     paybackOfEntryId: item.paybackOfEntryId ?? '',
     paybackOfLineKey: item.paybackOfLineKey ?? '',
     paybackType: item.paybackType ?? 'payback',
+    // 할부 환불이 줄인 회차. 고칠 때는 적어 둔 값을 그대로 연다 (기본값으로 덮지 않는다).
+    installmentCut: item.installmentAdjust?.principal ?? [],
+    installmentCutTouched: Boolean(item.installmentAdjust),
   };
 }
 
@@ -832,7 +856,8 @@ export function checkEntryForm(
       return { field: 'installmentShares', code: 'INSTALLMENT_SHARE_NEGATIVE' };
     }
     const total = shares.reduce<Dec>((acc, share) => acc.plus(share), Dec.of(0));
-    if (!total.eq(amount)) {
+    // 회차는 차감 뒤 금액을 나눈다. 서버(installmentSharesOf)가 카드 다리와 견주는 값이다.
+    if (!total.eq(installmentBaseOf(values) ?? amount)) {
       return { field: 'installmentShares', code: 'INSTALLMENT_SHARES_SUM' };
     }
   }
@@ -864,7 +889,7 @@ export function checkEntryForm(
         return { field: 'installmentMonthlyPayment', code: 'INSTALLMENT_PAYMENT_INVALID' };
       }
       // 외화 결제는 청구액이 환산 뒤에 정해져 폼의 금액과 견줄 수 없다.
-      if (!values.currency && payment.times(months).lt(amount)) {
+      if (!values.currency && payment.times(months).lt(installmentBaseOf(values) ?? amount)) {
         return { field: 'installmentMonthlyPayment', code: 'INSTALLMENT_PAYMENT_TOO_SMALL' };
       }
     }
@@ -1025,10 +1050,11 @@ function installmentInterestPayload(values: EntryFormValues): {
 
   const months = Number(values.installmentMonths);
   // 화면이 채워 보여 주는 값과 같은 함수다 (`EntryEditor` 의 interestInputs).
+  const base = installmentBaseAmount(values.amount, totalDiscountOf(values));
   const shown = installmentInterestInputs({
-    total: values.amount,
+    total: base,
     months,
-    principals: installmentShareInputs(values.amount, months, values.installmentShares),
+    principals: installmentShareInputs(base, months, values.installmentShares),
     mode: values.installmentInterestMode,
     monthlyPayment: values.installmentMonthlyPayment,
     annualRate: values.installmentAnnualRate,
@@ -1201,7 +1227,34 @@ export function entryFormToRequest(
       : {}),
     // 돌아온 돈의 종류. 조립이 이것으로 실적의 기본값을 정한다.
     ...(values.kind === 'payback' ? { paybackType: values.paybackType } : {}),
+    // 할부 환불의 회차별 줄일 원금. 비운 칸은 0 이다 (installment-refund).
+    ...(values.kind === 'payback' && values.installmentCut.length > 0
+      ? { installmentCut: values.installmentCut.map((value) => value.trim() || '0') }
+      : {}),
   };
+}
+
+/**
+ * 할부가 나누는 금액 = 금액 칸 − 차감 (분할이면 줄 차감의 합).
+ *
+ * 차감은 결제 순간에 깎인 몫이라 카드에 청구되는 것은 그 뒤의 금액이다. 서버도 카드 다리
+ * (이미 순액)를 나눠 회차 원금의 합과 견준다(`installmentSharesOf`). 폼이 금액 칸을 그대로
+ * 나누면 회차가 차감만큼 크게 보이고, 고친 회차는 폼과 서버 어느 한쪽에서 반드시 거절된다.
+ * 이자 기본값(고정형·연이율)도 같은 금액을 딛는다.
+ *
+ * 차감이 비었거나 읽을 수 없으면 금액 칸 그대로다. 차감이 금액보다 크면 그대로 둔다 --
+ * 그 값은 차감 검사(DISCOUNT_TOO_LARGE)가 따로 막는다.
+ */
+export function installmentBaseAmount(amount: string, discount: string): string {
+  const gross = toDec(amount);
+  const cut = toDec(discount);
+  if (!gross || !cut || !cut.isPositive() || cut.gt(gross)) return amount;
+  return gross.minus(cut).toString();
+}
+
+/** 폼 값의 할부 기준 금액. 금액 칸을 읽을 수 없으면 null. */
+function installmentBaseOf(values: EntryFormValues): Dec | null {
+  return toDec(installmentBaseAmount(values.amount, totalDiscountOf(values)));
 }
 
 /**

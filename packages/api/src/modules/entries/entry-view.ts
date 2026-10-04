@@ -81,6 +81,10 @@ export type EntryWithPostings = {
    * 다리만 보는 자리). 그때 목록 한 줄은 태그가 없는 것으로 그려진다.
    */
   tags?: Array<{ lineKey: string | null; tag: { id: string; name: string; color: string | null } }>;
+  /** 할부 환불이면 회차마다 줄인 금액 (JSON 그대로). */
+  installmentAdjust?: unknown;
+  /** 할부 원거래면 걸린 할부 환불. `ENTRY_INCLUDE` 가 싣는다. */
+  paybacks?: Array<{ id: string; paybackOfLineKey: string | null; installmentAdjust: unknown }>;
 };
 
 /**
@@ -107,6 +111,7 @@ export function toViewEntry(entry: EntryWithPostings): ViewEntry {
     postings: entry.postings as unknown as ViewPosting[],
     // 조인 행을 벗겨 태그만 남긴다. 어느 줄의 것인지는 함께 남겨야 한다.
     tags: entry.tags?.map((row) => ({ ...row.tag, lineKey: row.lineKey })),
+    paybackCuts: entry.paybacks,
   } as unknown as ViewEntry;
 }
 
@@ -170,4 +175,12 @@ export const ENTRY_INCLUDE = {
   },
   // 페이백이면 원거래의 날짜. 분석 화면이 그 날짜로 센다 (`EntryListItem.paybackOfDate`).
   paybackOf: { select: { date: true } },
+  /*
+   * 할부 원거래면 걸린 할부 환불이 줄인 회차. 회차 기준의 목록이 회차 몫에서 뺀다
+   * (`EntryListItem.installmentCuts`). 할부가 아니면 걸린 것이 없어 빈 배열이다.
+   */
+  paybacks: {
+    where: { installmentAdjust: { not: Prisma.AnyNull } },
+    select: { id: true, paybackOfLineKey: true, installmentAdjust: true },
+  },
 } satisfies Prisma.JournalEntryInclude;

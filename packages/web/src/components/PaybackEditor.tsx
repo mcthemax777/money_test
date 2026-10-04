@@ -12,6 +12,9 @@ import type { EntryListItem } from '@money/types';
 import { LEDGER_MIN_ENTRY_DATE_KEY, PAYBACK_TYPES, ledgerMaxEntryDateKey } from '@money/types';
 import { parseMethod } from '@money/core/data/entry-form';
 import { useEntryForm } from '@money/core/hooks/useEntryForm';
+import { useInstallmentRefund } from '@money/core/hooks/useInstallmentRefund';
+import { usePaybackOrigin } from '@money/core/hooks/usePaybackOrigin';
+import { formatYearMonth } from '@money/core/lib/datetime';
 import { ENTRY_FORM_VIOLATION_KEY } from '@money/core/lib/entry-form-messages';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency } from '@money/core/lib/money';
@@ -19,6 +22,7 @@ import {
   useMyPersonId,
   useProject,
   useProjectDisplayCurrency,
+  useProjectLedgerCurrency,
   useProjectTimeZone,
 } from '@money/core/store/project';
 import Modal from '@/components/Modal';
@@ -49,6 +53,7 @@ export default function PaybackEditor({
   const projectId = useProject((state) => state.selectedProjectId);
   const myPersonId = useMyPersonId();
   const displayCurrency = useProjectDisplayCurrency();
+  const ledgerCurrency = useProjectLedgerCurrency();
 
   const form = useEntryForm({
     projectId,
@@ -88,6 +93,25 @@ export default function PaybackEditor({
         ? `${target.editing.parentCategoryName} > ${target.editing.categoryName}`
         : target.editing.categoryName
       : null;
+
+  /*
+   * 할부 원거래면 "할부 처리" 상자 (PAYBACK_DESIGN.md 7-9). 고칠 때는 원거래를 읽어 온다 --
+   * 목록 한 줄은 페이백 자신이라 원거래의 회차를 들고 있지 않다.
+   */
+  const origin = usePaybackOrigin(target?.editing ?? null, projectId);
+  const installment = useInstallmentRefund({
+    original: original ?? origin.original,
+    editingId: target?.editing?.id ?? null,
+    values,
+    setField,
+    timeZone,
+    sameCurrency: displayCurrency === ledgerCurrency,
+  });
+  const money = (amount: string) => formatCurrency(amount, displayCurrency);
+  const monthLabel = (yearMonth: string) => {
+    const [year, month] = yearMonth.split('-').map(Number);
+    return year && month ? formatYearMonth(year, month) : yearMonth;
+  };
 
   const violationKey = form.violation ? ENTRY_FORM_VIOLATION_KEY[form.violation.code] : undefined;
   const message =
@@ -236,6 +260,101 @@ export default function PaybackEditor({
             ))}
           </select>
         </div>
+
+        {/*
+          할부 처리 (7-9). 환불한 다음 달 회차부터 남은 할부를 줄이고, 다 못 줄인 몫은 환불한 달에
+          한꺼번에 돌아온 돈이 된다. 들어온 곳이 원거래 카드가 아니거나 캐시백이면 까닭만 적는다.
+        */}
+        {installment.isInstallment ? (
+          <div className="rounded-lg border border-gray-200 p-3">
+            <div className="mb-2 flex items-center justify-between">
+              <span className="text-sm font-medium text-gray-700">{t('payback.installment.title')}</span>
+              {installment.applies ? (
+                <button
+                  type="button"
+                  onClick={installment.cancelAll}
+                  className="rounded-lg px-2 py-1 text-sm text-blue-600 hover:bg-blue-50"
+                >
+                  {t('payback.installment.cancelAll')}
+                </button>
+              ) : null}
+            </div>
+            {installment.applies ? (
+              <>
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-xs text-gray-500">
+                      <th className="py-1 text-left font-normal" />
+                      <th className="py-1 text-right font-normal">{t('payback.installment.before')}</th>
+                      <th className="py-1 pl-2 text-right font-normal">{t('payback.installment.after')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {installment.rows.map((row) => (
+                      <tr key={row.index} className={row.past ? 'text-gray-400' : 'text-gray-900'}>
+                        <td className="py-1">
+                          {t('payback.installment.round', { index: row.index })}{' '}
+                          <span className="text-xs text-gray-400">
+                            {monthLabel(row.yearMonth)}
+                            {row.past ? ` · ${t('payback.installment.past')}` : ''}
+                          </span>
+                        </td>
+                        <td className="py-1 text-right tabular-nums">{money(row.before)}</td>
+                        <td className="py-1 pl-2 text-right">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            aria-label={`${t('payback.installment.round', { index: row.index })} ${t('payback.installment.after')}`}
+                            value={row.after}
+                            onChange={(event) => installment.setAfter(row.index, event.target.value)}
+                            className={`w-28 rounded border px-2 py-1 text-right tabular-nums ${
+                              Number(row.after) < 0 ? 'border-red-300 bg-red-50' : 'border-gray-300'
+                            }`}
+                          />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                <div className="mt-2 border-t border-gray-100 pt-2 text-sm text-gray-900">
+                  <p>
+                    {t('payback.installment.lump', {
+                      month: monthLabel(installment.refundYearMonth),
+                      amount: money(installment.lump),
+                    })}
+                  </p>
+                  <p className="text-gray-600">
+                    {installment.remaining.length > 0
+                      ? t('payback.installment.remaining', {
+                          count: installment.remaining.length,
+                          amount: money(
+                            String(installment.remaining.reduce((sum, row) => sum + Number(row.after), 0)),
+                          ),
+                        })
+                      : t('payback.installment.none')}
+                  </p>
+                </div>
+                {installment.overAmount ? (
+                  <p className="mt-1 text-xs text-red-600">{t('payback.installment.overAmount')}</p>
+                ) : null}
+                {installment.overShare ? (
+                  <p className="mt-1 text-xs text-red-600">{t('payback.installment.overShare')}</p>
+                ) : null}
+                <p className="mt-1 text-xs text-gray-500">{t('payback.installment.hint')}</p>
+              </>
+            ) : (
+              <p className="text-xs text-gray-500">
+                {t(
+                  installment.blockedBy === 'not-refund'
+                    ? 'payback.installment.cashback'
+                    : installment.blockedBy === 'currency'
+                      ? 'payback.installment.currency'
+                      : 'payback.installment.otherMethod',
+                )}
+              </p>
+            )}
+          </div>
+        ) : null}
 
         {/*
           카드 실적에서도 뺄지. 카드로 받았을 때만 뜻이 있다. 기본은 종류가 정하고(환불은 빼고

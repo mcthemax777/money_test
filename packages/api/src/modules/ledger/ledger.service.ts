@@ -19,6 +19,9 @@ import {
   ledgerOpeningDate,
   planPaybackRebind,
   rebindErrorMessage,
+  checkInstallmentRefunds,
+  parseInstallmentAdjust,
+  type InstallmentAdjust,
 } from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
 import { prismaLedgerLookup } from './prisma-lookup';
@@ -185,6 +188,8 @@ export interface EntryInput {
   paybackOfLineKey?: string | null;
   /** 돌아온 돈의 종류 ('payback' | 'refund'). 페이백이 아니면 null 이다. */
   paybackType?: string | null;
+  /** 할부 환불이 회차마다 줄인 금액 (installment-refund). 그 밖에는 null 이다. */
+  installmentAdjust?: InstallmentAdjust | null;
   /**
    * 한 줄에 돌려받은 합이 그 줄 금액을 넘어도 받는다. **기기 명령의 재생에서만** 켠다.
    *
@@ -369,6 +374,7 @@ export class LedgerService {
           discountCountsPerformance: input.discountCountsPerformance ?? true,
           ...payback,
           paybackType: input.paybackType ?? null,
+          installmentAdjust: input.installmentAdjust ? (input.installmentAdjust as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
           updatedHlc: input.updatedHlc ?? this.clock.now(),
           postings: { create: input.postings.map((p) => this.toPostingData(p)) },
         },
@@ -463,6 +469,7 @@ export class LedgerService {
           discountCountsPerformance: input.discountCountsPerformance ?? true,
           ...payback,
           paybackType: input.paybackType ?? null,
+          installmentAdjust: input.installmentAdjust ? (input.installmentAdjust as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
           updatedHlc: input.updatedHlc ?? this.clock.now(),
           postings: { create: input.postings.map((p) => this.toPostingData(p)) },
         },
@@ -472,7 +479,7 @@ export class LedgerService {
       await this.saveTags(tx, entryId, input.projectId, input.postings, input.tagIds);
 
       // 이 전표에 걸린 환불·페이백을 새 줄에 맞춘다. 맞출 수 없으면 여기서 던지고 통째로 되돌린다.
-      await this.rebindPaybacks(tx, entryId, input.postings);
+      await this.rebindPaybacks(tx, entryId, input);
 
       // 3) 새 posting의 잔액을 적용한다
       await this.applyBalanceDeltas(tx, input.postings);
@@ -703,16 +710,19 @@ export class LedgerService {
    *
    * 옮긴 환불·페이백은 전표를 고쳐(`paybackOfLineKey`·`updatedAt`) 번호를 올린다. 기기가 받아 간다.
    */
-  private async rebindPaybacks(tx: Tx, entryId: string, postings: EntryInput['postings']): Promise<void> {
+  private async rebindPaybacks(tx: Tx, entryId: string, input: EntryInput): Promise<void> {
+    const postings = input.postings;
     const paybacks = await tx.journalEntry.findMany({
       where: { paybackOfEntryId: entryId },
       select: {
         id: true,
         paybackOfLineKey: true,
-        postings: { where: { categoryId: { not: null } }, select: { id: true, categoryId: true, baseAmount: true } },
+        installmentAdjust: true,
+        postings: { select: { id: true, categoryId: true, cardId: true, baseAmount: true } },
       },
     });
     if (paybacks.length === 0) return;
+    const categoryLegOf = (row: (typeof paybacks)[number]) => row.postings.find((leg) => leg.categoryId);
 
     const legs = postings.filter((posting) => posting.categoryId && posting.lineKey);
     const types = new Map(
@@ -733,11 +743,42 @@ export class LedgerService {
       paybacks.map((row) => ({
         id: row.id,
         lineKey: row.paybackOfLineKey,
-        categoryId: row.postings[0]?.categoryId ?? null,
-        baseAmount: (row.postings[0]?.baseAmount ?? new Prisma.Decimal(0)).toString(),
+        categoryId: categoryLegOf(row)?.categoryId ?? null,
+        baseAmount: (categoryLegOf(row)?.baseAmount ?? new Prisma.Decimal(0)).toString(),
       })),
     );
     if (plan.error) throw badRequest(plan.error.code, rebindErrorMessage(plan.error));
+
+    /*
+     * 회차를 줄인 할부 환불과 어긋나지 않는지 (installment-refund). 개월수·카드를 바꾸거나
+     * 남는 회차가 음수가 되게 줄이면 거절한다 -- 줄인 금액이 가리키던 회차가 뜻을 잃는다.
+     */
+    const movedLine = new Map(plan.moves.map((move) => [move.paybackId, move.lineKey]));
+    const cardLeg = postings.find((posting) => posting.cardId && posting.accountId);
+    const locked = checkInstallmentRefunds({
+      plan:
+        input.installmentMonths && input.installmentMonths >= 2 && cardLeg
+          ? {
+              months: input.installmentMonths,
+              cardId: cardLeg.cardId ?? null,
+              entryAmount: cardLeg.baseAmount.abs().toString(),
+              principals: input.installmentShares ?? null,
+              interests: input.installmentInterestShares ?? null,
+            }
+          : null,
+      lines: legs.map((leg) => ({ lineKey: leg.lineKey!, amount: leg.baseAmount.abs().toString() })),
+      refunds: paybacks.map((row) => ({
+        lineKey: movedLine.get(row.id) ?? row.paybackOfLineKey,
+        cardId: row.postings.find((leg) => leg.cardId && !leg.categoryId)?.cardId ?? null,
+        adjust: parseInstallmentAdjust(row.installmentAdjust),
+      })),
+    });
+    if (locked) {
+      throw badRequest(
+        locked,
+        '회차를 줄인 환불이 걸려 있어 할부 개월수·카드·금액을 이렇게 바꿀 수 없습니다. 환불을 먼저 고쳐 주세요.',
+      );
+    }
 
     for (const move of plan.moves) {
       await tx.posting.updateMany({
@@ -969,6 +1010,7 @@ export class LedgerService {
       paybackOfEntryId: built.paybackOfEntryId ?? null,
       paybackOfLineKey: built.paybackOfLineKey ?? null,
       paybackType: built.paybackType ?? null,
+      installmentAdjust: built.installmentAdjust ?? null,
       postings: built.postings.map((posting) => ({
         accountId: posting.accountId,
         categoryId: posting.categoryId,

@@ -15,6 +15,9 @@ import {
   type EntryBasis,
   type InstallmentRowPlan,
   expandInstallmentRows,
+  installmentRefundRow,
+  lineCutsOf,
+  parseInstallmentAdjust,
 } from '@money/types';
 
 /** 할부가 걸린 전표만. 카드 다리에 계획이 붙어 있다. */
@@ -149,17 +152,79 @@ export function spreadRows<T extends CategoryPostingRow>(
  * 나뉜다 -- 줄 금액(기준통화)을 그 비율로 자르기 때문이다. 이자는 금액 그대로 더하는
  * 값이라 통화가 갈리면 싣지 않는다. 환산할 그때의 환율이 계획에 없다.
  */
-export function installmentPlanOf(legs?: InstallmentLeg[]): InstallmentRowPlan | undefined {
+export function installmentPlanOf(
+  legs?: InstallmentLeg[],
+  /** 걸린 할부 환불과 이 줄의 키 (installment-refund). 주면 그 줄이 줄인 회차를 싣는다. */
+  refunds?: { lineKey: string | null; cuts: InstallmentRefundCuts },
+): InstallmentRowPlan | undefined {
   const leg = legs?.find((posting) => posting.installmentPlan);
   const plan = leg?.installmentPlan;
   if (!leg || !plan || plan.totalMonths < 2) return undefined;
 
   const sameCurrency = leg.amount.equals(leg.baseAmount);
+  const cuts = refunds
+    ? lineCutsOf(
+        refunds.cuts.map((cut) => ({
+          lineKey: cut.paybackOfLineKey,
+          adjust: parseInstallmentAdjust(cut.installmentAdjust),
+        })),
+        refunds.lineKey,
+        plan.totalMonths,
+      )
+    : null;
   return {
     months: plan.totalMonths,
     total: leg.baseAmount.abs().toString(),
     principals: toShareList(plan.principalShares),
     interests: sameCurrency ? toShareList(plan.interestShares) : null,
+    ...(cuts ? { cuts } : {}),
+  };
+}
+
+/** 할부 원거래에 걸린 할부 환불 (`INSTALLMENT_REFUND_SELECT.paybacks`). */
+export type InstallmentRefundCuts = Array<{ paybackOfLineKey: string | null; installmentAdjust: unknown }>;
+
+/**
+ * 할부 환불을 회차로 펼 때 함께 읽을 것 (installment-refund). 집계 select 의 `entry.select` 에
+ * 펼쳐 넣는다.
+ *   - `installmentAdjust`: 이 전표가 할부 환불이면 회차마다 줄인 금액.
+ *   - `paybacks`: 이 전표가 할부 원거래면 걸린 할부 환불들.
+ */
+export const INSTALLMENT_REFUND_SELECT = {
+  installmentAdjust: true,
+  paybacks: {
+    where: { installmentAdjust: { not: Prisma.AnyNull } },
+    select: { paybackOfLineKey: true, installmentAdjust: true },
+  },
+} as const;
+
+/**
+ * 회차 기준의 집계 행 하나 (리포트·예산이 함께 쓴다).
+ *
+ *   - 할부 원거래의 줄이면 할부 계획과 그 줄이 줄인 회차를 싣는다 -- 편 뒤 회차에서 빠진다.
+ *   - 할부 환불이면 남은 회차로 다 줄이지 못한 몫만, 환불한 날에 센다.
+ *   - 그 밖에는 그대로다.
+ */
+export function spreadRowOf<T extends CategoryPostingRow>(
+  row: T,
+  source: {
+    lineKey: string | null;
+    entry: {
+      date: Date;
+      postings?: InstallmentLeg[];
+      installmentAdjust?: unknown;
+      paybacks?: InstallmentRefundCuts;
+    };
+  },
+): T {
+  const adjust = parseInstallmentAdjust(source.entry.installmentAdjust);
+  if (adjust) return installmentRefundRow(row, adjust, source.entry.date);
+  return {
+    ...row,
+    installment: installmentPlanOf(source.entry.postings, {
+      lineKey: source.lineKey,
+      cuts: source.entry.paybacks ?? [],
+    }),
   };
 }
 

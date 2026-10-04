@@ -20,6 +20,7 @@ import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
 import {
   defaultCountsPerformance,
+  installmentBaseAmount,
   interestInAmount,
   showDiscountPerformance,
   withoutInterest,
@@ -747,8 +748,21 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
    * 빈 칸으로 두지 않는 까닭은 고칠 자리가 한두 회차뿐이기 때문이다 -- 기본값을 보여
    * 주고 다른 회차만 고치게 한다.
    */
-  const shareInputs = installmentShareInputs(
+  /*
+   * 할부가 나누는 금액 = 금액 − 차감 (core `installmentBaseAmount`). 카드에 청구되는 것이 차감 뒤
+   * 금액이라 서버도 그 값을 나눈다. 금액 칸을 그대로 나누면 회차가 차감만큼 크게 보이고, 고친
+   * 회차는 서버가 "합이 다르다"로 거절한다.
+   */
+  const installmentBase = installmentBaseAmount(
     formData.amount,
+    String(
+      formData.type !== 'transfer' && formData.splits.length > 0
+        ? formData.splits.reduce((sum, split) => sum + toNumber(split.discountAmount), 0)
+        : toNumber(formData.discountAmount),
+    ),
+  );
+  const shareInputs = installmentShareInputs(
+    installmentBase,
     Number(formData.installmentMonths),
     formData.installmentShares,
   );
@@ -759,7 +773,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
    * 방식을 고르지 않았으면 빈 칸이다 -- 0 으로 채우면 "이자 없음"과 구별되지 않는다.
    */
   const interestInputs = installmentInterestInputs({
-    total: formData.amount,
+    total: installmentBase,
     months: Number(formData.installmentMonths),
     principals: shareInputs,
     mode: formData.installmentInterestMode,
@@ -1019,7 +1033,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         (acc, share) => acc + toNumber(share),
         0,
       );
-      if (shareSum !== toNumber(formData.amount)) {
+      // 차감 뒤 금액과 견준다. 서버가 견주는 값이다 (installmentBase).
+      if (shareSum !== toNumber(installmentBase)) {
         setError(t('entryForm.installmentSharesSum'));
         return;
       }
@@ -1056,7 +1071,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
           return;
         }
         // 외화 결제는 청구액이 환산 뒤에 정해져 폼의 금액과 견줄 수 없다 (위와 같은 판단).
-        if (formData.currency === ledgerCurrency && payment * months < toNumber(formData.amount)) {
+        if (formData.currency === ledgerCurrency && payment * months < toNumber(installmentBase)) {
           setError(t('entryForm.installmentPaymentTooSmall'));
           return;
         }
@@ -3012,7 +3027,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                         <p className="text-right text-xs text-gray-500">
                           {t('editor.installmentSharesSum', {
                             total: installmentShareTotal(shareInputs),
-                            amount: formData.amount || '0',
+                            amount: installmentBase || '0',
                           })}
                         </p>
                         <p className="text-xs text-gray-500">{t('editor.installmentSharesHint')}</p>
@@ -3158,10 +3173,10 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                           <p className="text-right text-xs font-medium text-gray-700">
                             {t('editor.installmentTotalDue', {
                               total: installmentShareTotal([
-                                formData.amount || '0',
+                                installmentBase || '0',
                                 installmentShareTotal(interestInputs),
                               ]),
-                              amount: formData.amount || '0',
+                              amount: installmentBase || '0',
                             })}
                           </p>
                           <p className="text-xs text-gray-500">

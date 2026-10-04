@@ -5,7 +5,7 @@
  * 전표를 만들어야 하기 때문이다. 여기 남는 것은 "무엇을 읽을지"뿐이고, 기기 쪽 짝은
  * `@money/core` 의 사본 창구다.
  */
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import {
   Dec,
   type LedgerLookup,
@@ -13,6 +13,7 @@ import {
   type LookupCard,
   type LookupCategory,
   type LookupPaybackTarget,
+  parseInstallmentAdjust,
 } from '@money/types';
 
 import type { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
@@ -102,19 +103,63 @@ export function prismaLedgerLookup(
           id: true,
           projectId: true,
           postings: {
-            where: { categoryId: { not: null } },
-            select: { lineKey: true, categoryId: true, baseAmount: true, category: { select: { type: true } } },
+            select: {
+              lineKey: true,
+              categoryId: true,
+              cardId: true,
+              amount: true,
+              baseAmount: true,
+              category: { select: { type: true } },
+              installmentPlan: {
+                select: { totalMonths: true, principalShares: true, interestShares: true },
+              },
+            },
+          },
+          // 이 원거래에 걸린 할부 환불. 회차를 줄일 때 다른 환불이 이미 줄인 것을 뺀다.
+          paybacks: {
+            where: { installmentAdjust: { not: Prisma.AnyNull } },
+            select: { id: true, paybackOfLineKey: true, installmentAdjust: true },
           },
         },
       });
       if (!entry || entry.projectId !== projectId) return null;
+
+      const categoryLegs = entry.postings.filter((leg) => leg.categoryId);
+      const line = categoryLegs.find((leg) => leg.lineKey === lineKey);
+      const cardLeg = entry.postings.find((leg) => leg.installmentPlan);
+      const plan = cardLeg?.installmentPlan;
       return {
         id: entry.id,
-        isPayback: entry.postings.some(
+        isPayback: categoryLegs.some(
           (leg) => leg.category?.type === 'expense' && leg.baseAmount.isNegative(),
         ),
-        lineCategoryId: entry.postings.find((leg) => leg.lineKey === lineKey)?.categoryId ?? null,
+        lineCategoryId: line?.categoryId ?? null,
+        ...(cardLeg && plan && plan.totalMonths >= 2 && cardLeg.cardId
+          ? {
+              installment: {
+                months: plan.totalMonths,
+                cardId: cardLeg.cardId,
+                sameCurrency: cardLeg.amount.equals(cardLeg.baseAmount),
+                entryAmount: cardLeg.baseAmount.abs().toString(),
+                lineAmount: line ? line.baseAmount.abs().toString() : null,
+                principals: shareList(plan.principalShares),
+                interests: shareList(plan.interestShares),
+                cuts: entry.paybacks
+                  .filter((payback) => payback.paybackOfLineKey === lineKey)
+                  .flatMap((payback) => {
+                    const adjust = parseInstallmentAdjust(payback.installmentAdjust);
+                    return adjust ? [{ entryId: payback.id, adjust }] : [];
+                  }),
+              },
+            }
+          : {}),
       };
     },
   };
+}
+
+/** JSON 칸을 문자열 배열로. 모양이 아니면 없는 것으로 본다. */
+function shareList(value: Prisma.JsonValue): string[] | null {
+  if (!Array.isArray(value) || value.length === 0) return null;
+  return value.map((share) => String(share));
 }

@@ -26,6 +26,8 @@ import {
   newId,
   planPaybackRebind,
   rebindErrorMessage,
+  checkInstallmentRefunds,
+  parseInstallmentAdjust,
 } from '@money/types';
 
 import type { EntryWritePort } from './entry-write-port';
@@ -100,6 +102,8 @@ export function createLocalEntryWriter({
     paybackOfEntryId: data.paybackOfEntryId,
     paybackOfLineKey: data.paybackOfLineKey,
     paybackType: data.paybackType,
+    // 할부 환불의 회차별 줄일 원금 (installment-refund). 빈 배열은 싣지 않는다.
+    ...(data.installmentCut && data.installmentCut.length > 0 ? { installmentCut: data.installmentCut.map(String) } : {}),
     currency: data.currency,
     exchangeRate: text(data.exchangeRate),
     billedAmount: text(data.billedAmount),
@@ -168,6 +172,42 @@ export function createLocalEntryWriter({
       paybacks,
     );
     if (plan.error) fail(plan.error);
+
+    /*
+     * 회차를 줄인 할부 환불과 어긋나지 않는지 (서버 원장의 rebindPaybacks 와 같은 검사).
+     * 개월수·카드를 바꾸거나 남는 회차가 음수가 되게 줄이면 거절한다.
+     */
+    const target = await store.installmentTargetOf(entryId);
+    if (target && target.refunds.length > 0) {
+      const movedLine = new Map(plan.moves.map((move) => [move.paybackId, move.lineKey]));
+      const cardLeg = built.postings.find((leg) => leg.cardId && leg.accountId);
+      const locked = checkInstallmentRefunds({
+        plan:
+          built.installmentMonths && built.installmentMonths >= 2 && cardLeg
+            ? {
+                months: built.installmentMonths,
+                cardId: cardLeg.cardId ?? null,
+                entryAmount: cardLeg.baseAmount.abs().toString(),
+                principals: built.installmentShares ?? null,
+                interests: built.installmentInterestShares ?? null,
+              }
+            : null,
+        lines: built.postings
+          .filter((leg) => leg.categoryId && leg.lineKey)
+          .map((leg) => ({ lineKey: leg.lineKey!, amount: leg.baseAmount.abs().toString() })),
+        refunds: target.refunds.map((refund) => ({
+          lineKey: movedLine.get(refund.id) ?? refund.lineKey,
+          cardId: refund.cardId,
+          adjust: parseInstallmentAdjust(refund.adjust),
+        })),
+      });
+      if (locked) {
+        throw new LedgerBuildError(
+          locked,
+          '회차를 줄인 환불이 걸려 있어 할부 개월수·카드·금액을 이렇게 바꿀 수 없습니다. 환불을 먼저 고쳐 주세요.',
+        );
+      }
+    }
     return plan.moves;
   };
 
@@ -177,7 +217,8 @@ export function createLocalEntryWriter({
     kind: 'entry.create' | 'entry.replace',
   ): Promise<{ id: string }> => {
     const built = await buildEntry(
-      { ...payload, projectId, date: new Date(payload.date) },
+      // 자기 id 를 함께 준다. 할부 환불이 자기가 이미 줄인 것을 빼고 본다.
+      { ...payload, projectId, date: new Date(payload.date), id: entryId },
       lookup,
     );
     // 환불·페이백과 원거래가 어긋나지 않는지. 서버 원장과 같은 규칙이다 (planPaybackRebind).

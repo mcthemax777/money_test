@@ -488,6 +488,32 @@ export interface EntryListItem {
   paybackOfDate: IsoDateString | null;
   /** 돌아온 돈의 종류 (환불·페이백). 페이백 갈래에만 있고, 그 밖에는 null 이다. */
   paybackType: PaybackType | null;
+  /**
+   * 할부 원거래의 환불이면 회차마다 줄인 금액 (PAYBACK_DESIGN.md 7-9). 그 밖에는 없다.
+   *
+   * 이 환불의 다리는 `돌려받은 돈 + 사라진 이자` 라 `amount` 도 그 값이다. 폼은 이자를
+   * 덜어 낸 값을 금액 칸에 둔다.
+   */
+  installmentAdjust?: InstallmentAdjustValue | null;
+  /**
+   * 할부 원거래면 걸린 환불이 줄인 회차. 환불마다 하나이고 그 환불이 걸린 줄을 든다.
+   * 회차 기준의 목록이 회차 몫에서 뺀다 (`installmentEntryViews`).
+   */
+  installmentCuts?: InstallmentCutValue[];
+}
+
+/** 환불 하나가 회차마다 줄인 금액 (installment-refund 의 `InstallmentAdjust` 와 같은 모양). */
+export interface InstallmentAdjustValue {
+  principal: string[];
+  interest: string[];
+}
+
+/** 원거래의 한 줄에 걸린 환불이 줄인 회차. */
+export interface InstallmentCutValue extends InstallmentAdjustValue {
+  /** 그 환불. */
+  entryId: string;
+  /** 환불이 걸린 원거래의 줄. */
+  lineKey: string | null;
 }
 
 // 카테고리 (대분류/소분류)

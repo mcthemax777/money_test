@@ -753,8 +753,8 @@ model JournalEntry {
   // 보고 맞는다 -- **이 링크는 분석에서 날짜를 원거래 것으로 옮기는 데만 쓴다.** 걷어낸
   // 되돌림 전표(20260916140000_drop_entry_reversal)처럼 다른 로직이 링크에 기대면 안 된다.
   //
-  // 원거래를 지우면 링크만 빈다(SetNull). 이미 들어온 돈의 기록은 남고, 그때부터는 자기
-  // 날짜의 음수 지출로 셈된다.
+  // 원거래를 지우면 원장이 걸린 환불·페이백도 함께 지운다(PAYBACK_DESIGN.md 7-6). 외래 키의
+  // SetNull 은 그 뒤의 안전망이다 -- 링크가 빈 것은 자기 날짜의 음수 지출로 셈된다.
   //
   // 줄은 `(paybackOfEntryId, paybackOfLineKey)` 로 가리킨다. 다리에 외래 키를 걸지 않는
   // 까닭: 원거래를 고치면 다리가 새로 만들어져 링크가 매번 끊긴다(Posting.lineKey 참고).
@@ -768,6 +768,11 @@ model JournalEntry {
   // 기본값(환불은 실적도 깎고, 캐시백은 깎지 않는다)과 화면의 이름뿐이다. 비어 있으면
   // 페이백이다 (이 칸이 생기기 전의 행).
   paybackType String?
+  // 할부 원거래의 환불이 회차마다 줄인 금액 {principal: string[], interest: string[]}
+  // (PAYBACK_DESIGN.md 7-9, @money/types 의 installment-refund). 원거래의 할부 계획은 그대로
+  // 두고 회차를 펴는 자리가 이 값을 뺀다. 환불을 지우면 원래 일정으로 돌아온다. 할부 환불이
+  // 아니면 null 이다.
+  installmentAdjust Json?
 
   project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   person    Person       @relation(fields: [personId], references: [id])

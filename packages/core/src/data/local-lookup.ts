@@ -17,6 +17,7 @@ import {
   type LookupCategory,
   type LookupPaybackTarget,
   fallbackRate,
+  parseInstallmentAdjust,
 } from '@money/types';
 
 import type { LocalStore } from './local-store';
@@ -86,10 +87,32 @@ export function localLedgerLookup(store: LocalStore): LedgerLookup {
     async paybackTarget(projectId, entryId, lineKey): Promise<LookupPaybackTarget | null> {
       const legs = await store.paybackTargetLegs(projectId, entryId);
       if (!legs) return null;
+      const line = legs.find((leg) => leg.lineKey === lineKey);
+      // 할부 원거래면 그 계획과 이 줄에 걸린 할부 환불 (installment-refund, 서버와 같은 값).
+      const plan = await store.installmentTargetOf(entryId);
       return {
         id: entryId,
         isPayback: legs.some((leg) => leg.categoryType === 'expense' && Dec.of(leg.baseAmount).isNegative()),
-        lineCategoryId: legs.find((leg) => leg.lineKey === lineKey)?.categoryId ?? null,
+        lineCategoryId: line?.categoryId ?? null,
+        ...(plan
+          ? {
+              installment: {
+                months: plan.months,
+                cardId: plan.cardId,
+                sameCurrency: plan.sameCurrency,
+                entryAmount: plan.entryAmount,
+                lineAmount: line ? Dec.of(line.baseAmount).abs().toString() : null,
+                principals: plan.principals,
+                interests: plan.interests,
+                cuts: plan.refunds
+                  .filter((refund) => refund.lineKey === lineKey)
+                  .flatMap((refund) => {
+                    const adjust = parseInstallmentAdjust(refund.adjust);
+                    return adjust ? [{ entryId: refund.id, adjust }] : [];
+                  }),
+              },
+            }
+          : {}),
       };
     },
   };

@@ -15,7 +15,7 @@
  * 자산 관점(결제수단 집계·결제수단 추이·잔액)은 이것을 쓰지 않는다. 돈이 실제로 들어온
  * 날짜가 그쪽의 사실이다.
  */
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { HAS_INSTALLMENT, andScope, widenScope } from './installment-scope';
 
 /** 행에 함께 실어 올 원거래 날짜. 집계 select 의 `entry.select` 에 펼쳐 넣는다. */
@@ -65,7 +65,12 @@ export function analysisScopes(
 ): Prisma.JournalEntryWhereInput[] {
   if (!installmentBasis) return [paybackScope(scope)];
   return [
-    paybackScope(andScope(scope, { NOT: HAS_INSTALLMENT })),
+    paybackScope(andScope(scope, { NOT: HAS_INSTALLMENT, installmentAdjust: { equals: Prisma.AnyNull } })),
     { ...widenScope(scope), ...HAS_INSTALLMENT },
+    /*
+     * 할부 환불은 회차 기준에서 환불한 날에 센다 (installment-refund). 줄인 회차는 원거래의
+     * 회차 몫에서 빠지고, 이 전표는 그러고 남은 몫만 들고 온다 (`spreadRowOf`).
+     */
+    andScope(scope, { installmentAdjust: { not: Prisma.AnyNull } }),
   ];
 }

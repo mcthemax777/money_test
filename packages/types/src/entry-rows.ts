@@ -11,6 +11,7 @@
  */
 
 import { Dec } from './decimal';
+import { refundLump, sumInstallmentAdjusts } from './installment-refund';
 import type { EntryLine, EntryListItem, EntryTag, InstallmentRowShare } from './entities';
 import {
   installmentLineShares,
@@ -144,7 +145,10 @@ function installmentShareIn(
   | {
       index: number;
       months: number;
-      amountsOf: (lineAmount: string) => { total: string; principal: string; interest: string };
+      amountsOf: (
+        lineAmount: string,
+        lineKey?: string | null,
+      ) => { total: string; principal: string; interest: string };
     } {
   const months = entry.installmentMonths ?? 1;
   if (months < 2) return 'not-installment';
@@ -175,10 +179,23 @@ function installmentShareIn(
   const totals = shares.map((share) => share.amount);
   const interests = shares.map((share) => share.interest);
 
+  /*
+   * 걸린 환불이 이 회차에서 줄인 것 (installment-refund). 줄 키를 주면 그 줄의 것만,
+   * 주지 않으면(거래 전체) 모두 더한다.
+   */
+  const cutOf = (lineKey: string | null) => {
+    const cuts = (entry.installmentCuts ?? []).filter(
+      (cut) => lineKey === null || cut.lineKey === lineKey,
+    );
+    const sum = sumInstallmentAdjusts(cuts, months);
+    return { total: sum.total[at], interest: sum.interest[at] };
+  };
+
   return {
     index: shares[at].index,
     months,
-    amountsOf: (lineAmount: string) => {
+    amountsOf: (lineAmount: string, lineKey: string | null = null) => {
+      const cut = cutOf(lineKey);
       /*
        * 줄 금액을 회차 몫(원금 + 이자)의 비율로 나눈다. 합은 언제나 줄 금액과 같다 --
        * 전표 금액이 이미 이자를 품고 있어, 회차를 다 더하면 산 날의 금액으로 돌아온다.
@@ -192,10 +209,12 @@ function installmentShareIn(
         interestShareOf(lineAmount, entry.amount, interests),
         interests,
       )[at];
+      const keptTotal = total.minus(cut.total);
+      const keptInterest = interest.minus(cut.interest);
       return {
-        total: total.toString(),
-        principal: total.minus(interest).toString(),
-        interest: interest.toString(),
+        total: keptTotal.toString(),
+        principal: keptTotal.minus(keptInterest).toString(),
+        interest: keptInterest.toString(),
       };
     },
   };
@@ -217,6 +236,21 @@ export function installmentEntryViews(
   const views: EntryListItem[] = [];
 
   for (const entry of entries) {
+    /*
+     * 할부 원거래의 환불. 줄인 회차는 원거래의 회차 몫에서 빠지므로, 여기서는 남은 회차로
+     * 다 줄이지 못한 몫(이미 낸 회차분)만 환불한 날에 선다 (installment-refund).
+     */
+    if (entry.installmentAdjust) {
+      const lump = refundLump(entry.amount, entry.installmentAdjust).toString();
+      views.push({
+        ...entry,
+        origin: entry,
+        amount: lump,
+        lines: entry.lines.map((line) => ({ ...line, amount: lump })),
+      });
+      continue;
+    }
+
     const share = installmentShareIn(entry, basis);
     if (share === 'not-installment') {
       views.push(entry);
@@ -233,7 +267,7 @@ export function installmentEntryViews(
       amount: whole.total,
       installment: shareOf(whole, share),
       lines: entry.lines.map((line) => {
-        const amounts = share.amountsOf(line.amount);
+        const amounts = share.amountsOf(line.amount, line.lineKey);
         return {
           ...line,
           amount: amounts.total,

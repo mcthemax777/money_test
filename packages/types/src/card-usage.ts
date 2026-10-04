@@ -84,6 +84,16 @@ export interface CardUsagePosting {
    * 어느 쪽이든 달라지지 않는다.
    */
   discountCountsPerformance?: boolean;
+  /**
+   * 이 할부 다리에 걸린 환불이 회차마다 줄인 금액 (원금 + 이자, 양수). 개월수만큼이다.
+   * 청구 회차에서 뺀다 (installment-refund). 없으면 줄인 것이 없다.
+   */
+  installmentCuts?: readonly DecInput[] | null;
+  /**
+   * 이 다리가 할부 환불이면 그 환불이 줄인 것의 합. 청구는 남은 회차로 다 줄이지 못한
+   * 몫만, 실적은 돌려받은 돈(사라진 이자를 뺀 값)만 센다.
+   */
+  refundCut?: { total: DecInput; interest: DecInput } | null;
 }
 
 /**
@@ -98,9 +108,10 @@ function performanceAmount(billed: Dec, posting: CardUsagePosting): Dec {
    * 카드사가 혜택을 정할 때 세는 것은 승인된 결제액이다. 할부 수수료를 얼마나 냈는지는
    * 그 셈에 들어가지 않으므로, 전표가 이자까지 담게 된 뒤에도 실적은 구매가 그대로다.
    */
-  const amount = billed.minus(
-    installmentInterestTotal(posting.installmentInterestShares, installmentMonthsOf(posting)),
-  );
+  const amount = billed
+    .minus(installmentInterestTotal(posting.installmentInterestShares, installmentMonthsOf(posting)))
+    // 할부 환불의 다리에는 사라진 이자가 함께 들어 있다. 실적에서 깎는 것은 돌려받은 돈뿐이다.
+    .plus(posting.refundCut ? Dec.of(posting.refundCut.interest) : Dec.of(0));
 
   if (posting.discountCountsPerformance ?? true) return amount;
 
@@ -226,7 +237,15 @@ export function billedShares(
   timeZone: string,
 ): BilledShare[] {
   const months = Math.max(posting.installmentMonths ?? 1, 1);
-  const charged = Dec.of(posting.amount).negated();
+  /*
+   * 할부 환불의 다리는 줄인 회차만큼이 원거래의 회차에서 빠지므로, 여기서는 그 나머지만
+   * 청구에서 돌려받는다 (installment-refund 의 refundLump). 사용이 양수라 환불은 음수다.
+   */
+  const charged = Dec.of(posting.amount)
+    .negated()
+    .plus(posting.refundCut ? Dec.of(posting.refundCut.total) : Dec.of(0));
+  const cuts =
+    posting.installmentCuts && posting.installmentCuts.length === months ? posting.installmentCuts : null;
   const interests = installmentInterests(posting.installmentInterestShares, months);
   const principalTotal = charged.minus(
     installmentInterestTotal(posting.installmentInterestShares, months),
@@ -236,7 +255,11 @@ export function billedShares(
   return installmentPrincipals(principalTotal, months, posting.installmentShares).map(
     (share, offset) => ({
       closingKey: closingMonthKey(shiftClosingMonth(purchase, offset)),
-      amount: share.plus(interests?.[offset] ?? Dec.of(0)).toString(),
+      amount: share
+        .plus(interests?.[offset] ?? Dec.of(0))
+        // 걸린 환불이 줄인 회차. 카드사가 남은 회차를 줄여 청구하는 것과 같다.
+        .minus(cuts ? Dec.of(cuts[offset]) : Dec.of(0))
+        .toString(),
       index: offset + 1,
       months,
     }),

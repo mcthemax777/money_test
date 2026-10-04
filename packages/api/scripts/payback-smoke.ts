@@ -16,6 +16,7 @@
  *   7. **갈래를 바꾸면 링크가 빈다.** 수정은 전체 교체다.
  *   8. **목록과 필터** (4단계). 갈래는 다리로 정하고, 지출 필터에 페이백이 섞이지 않는다.
  *   9. **엑셀 왕복.** 페이백으로 나가고 페이백으로 돌아온다 (링크는 건너가지 않는다).
+ *  14. **할부 환불 (7-9).** 남은 회차를 줄이고, 다 못 줄인 몫은 환불한 달에. 이자도 같은 비율로.
  */
 import { randomUUID } from 'node:crypto';
 import { encodeHlc, type Mutation } from '@money/types';
@@ -549,4 +550,112 @@ runSmoke('payback', async (ctx) => {
     }],
   });
   ctx.check('끊긴 기기가 따로 적은 것은 넘어도 받는다', replayed3.results[0]?.status, 'applied');
+
+  {
+  // ── 14. 할부 환불 (7-9): 남은 회차를 줄이고, 다 못 줄인 몫은 환불한 달에 ──
+  //
+  // 10월 5일 신용카드 12만 3개월(4만씩). 결제일 15일이라 청구 주기 = 달력 월과 같다.
+  const p4 = await ctx.createProject({ ledgerCurrency: 'KRW', timezone: 'Asia/Seoul' });
+  const a4 = projectAccessStub(ctx.prisma, p4.id);
+  const l4 = makeLedger(ctx.prisma, a4);
+  const e4 = makeEntries(ctx.prisma, a4, l4);
+  const i4 = new InstitutionsService(ctx.prisma as any, a4);
+  const r4 = makeReports(ctx.prisma, a4);
+  const cl4 = makeCardLedger(ctx.prisma, a4, l4);
+  const me4 = await makePeople(ctx.prisma, a4).createPerson(uid, { name: '나' } as never, p4.id);
+  const bank4 = await makeAccounts(ctx.prisma, a4, l4, i4).createAccount(
+    uid,
+    { name: '통장', type: 'deposit', ownerId: me4.id, institutionId: (await i4.createInstitution(uid, { name: '은행', type: 'bank' } as never, p4.id)).id, initialBalance: '1000000' } as never,
+    p4.id,
+  );
+  const card4 = await makeCards(ctx.prisma, a4, i4).createCard(
+    uid,
+    { name: '할부카드', cardType: 'credit', issuerId: (await i4.createInstitution(uid, { name: '카드사', type: 'card_issuer' } as never, p4.id)).id, paymentAccountId: bank4.id, statementClosingDay: 15, paymentDueDay: 25 } as never,
+    p4.id,
+  );
+  const food4 = await makeCategories(ctx.prisma, a4).createCategory(uid, { name: '식비', type: 'expense' } as never, p4.id);
+  const buyLine = randomUUID();
+  const buy = (extra: object = {}) => e4.createEntry(uid, {
+    kind: 'expense', personId: me4.id, date: '2026-10-05T03:00:00.000Z', description: '가전',
+    cardId: card4.id, amount: '120000', categoryId: food4.id, lineKey: buyLine, installmentMonths: 3, ...extra,
+  } as never, p4.id);
+  const refundOf = (original: { id: string }, lineKey: string, amount: string, cut: string[] | undefined, extra: object = {}) =>
+    e4.createEntry(uid, {
+      kind: 'payback', paybackType: 'refund', personId: me4.id, date: '2026-11-10T03:00:00.000Z', description: '환불',
+      cardId: card4.id, categoryId: food4.id, amount, lineKey: randomUUID(),
+      paybackOfEntryId: original.id, paybackOfLineKey: lineKey, ...(cut ? { installmentCut: cut } : {}), ...extra,
+    } as never, p4.id);
+  const monthly = async () =>
+    (await Promise.all(['2026-10', '2026-11', '2026-12'].map(async (yearMonth) =>
+      (await r4.getSummary(uid, { yearMonth, projectId: p4.id, basis: 'installment' } as never)).expense))).join(' / ');
+  const billed = async () => {
+    const usage = await cl4.getUsage(card4.id, uid, 6);
+    return ['2026-10', '2026-11', '2026-12']
+      .map((key) => usage.periods.find((period) => period.closingKey === key)?.billed ?? '-')
+      .join(' / ');
+  };
+  const codeOf4 = async (fn: () => Promise<unknown>) => {
+    try { await fn(); return '통과'; } catch (error) {
+      const body = (error as { getResponse?: () => unknown }).getResponse?.() as { code?: string } | undefined;
+      return body?.code ?? (error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const full = await buy();
+  ctx.check('기본 할부: 회차 기준 10·11·12월', await monthly(), '40000 / 40000 / 40000');
+  // 11월 환불 → 12월(3회차)부터 줄인다 (installmentCutStart). 전액 12만 중 4만은 3회차에서, 8만은 한꺼번에.
+  const fullRefund = await refundOf(full, buyLine, '120000', ['0', '0', '40000']);
+  const fullRow = await row(fullRefund.id);
+  ctx.check('줄인 회차가 환불 전표에 남는다', JSON.stringify((fullRow.installmentAdjust as { principal: string[] }).principal), '["0","0","40000"]');
+  ctx.check('회차 기준: 12월은 0, 이미 낸 8만은 11월에 돌아온다', await monthly(), '40000 / -40000 / 0');
+  ctx.check('발생 기준: 산 달에 순액 0', (await r4.getSummary(uid, { yearMonth: '2026-10', projectId: p4.id } as never)).expense, '0');
+  ctx.check('카드 청구: 12월 회차가 사라지고 11월에 8만을 돌려받는다', await billed(), '40000 / -40000 / 0');
+  const listed = (await e4.getEntries(uid, { startDate: '2026-10-01', endDate: '2026-12-31', limit: 50 } as never, p4.id)).data;
+  ctx.check('원거래 목록 한 줄에 줄인 회차가 실린다',
+    JSON.stringify(listed.find((item) => item.id === full.id)?.installmentCuts?.map((cut) => cut.principal)), '[["0","0","40000"]]');
+  ctx.check('환불 목록 한 줄에 자기가 줄인 것이 실린다', listed.find((item) => item.id === fullRefund.id)?.installmentAdjust?.principal.join(','), '0,0,40000');
+
+  ctx.check('남은 회차보다 많이 줄이면 거부',
+    await codeOf4(() => refundOf(full, buyLine, '50000', ['0', '0', '10000'])), 'INSTALLMENT_CUT_TOO_LARGE');
+  await e4.deleteEntry(fullRefund.id, uid);
+  ctx.check('환불을 지우면 원래 일정으로 돌아온다', await monthly(), '40000 / 40000 / 40000');
+
+  // 부분 환불 3만: 3회차만 3만 줄인다. 다 줄였으니 한꺼번에 돌아오는 몫은 없다.
+  const part = await refundOf(full, buyLine, '30000', ['0', '0', '30000']);
+  ctx.check('부분 환불: 12월 회차만 1만으로', await monthly(), '40000 / 40000 / 10000');
+  ctx.check('부분 환불의 카드 청구', await billed(), '40000 / 40000 / 10000');
+  ctx.check('줄인 합이 환불보다 크면 거부',
+    await codeOf4(() => refundOf(full, buyLine, '5000', ['0', '0', '6000'])), 'INSTALLMENT_CUT_OVER_AMOUNT');
+  ctx.check('통장으로 받은 환불은 회차를 줄일 수 없다',
+    await codeOf4(() => refundOf(full, buyLine, '5000', ['0', '0', '5000'], { cardId: undefined, accountId: bank4.id })), 'INSTALLMENT_CUT_NOT_ALLOWED');
+  ctx.check('캐시백은 회차를 줄일 수 없다',
+    await codeOf4(() => refundOf(full, buyLine, '5000', ['0', '0', '5000'], { paybackType: 'payback' })), 'INSTALLMENT_CUT_NOT_ALLOWED');
+  const plain = await refundOf(full, buyLine, '5000', undefined);
+  ctx.check('줄일 회차를 주지 않은 할부 환불은 0 으로 남는다 (환불한 달에 센다)',
+    JSON.stringify((await row(plain.id)).installmentAdjust), '{"interest":["0","0","0"],"principal":["0","0","0"]}');
+  ctx.check('줄이지 않은 환불은 환불한 달에 한꺼번에', await monthly(), '40000 / 35000 / 10000');
+
+  const editBuy = (extra: object) => e4.updateEntry(full.id, uid, {
+    kind: 'expense', personId: me4.id, date: '2026-10-05T03:00:00.000Z', description: '가전',
+    cardId: card4.id, amount: '120000', categoryId: food4.id, lineKey: buyLine, installmentMonths: 3, ...extra,
+  } as never);
+  ctx.check('회차를 줄인 환불이 있으면 개월수를 바꿀 수 없다', await codeOf4(() => editBuy({ installmentMonths: 6 })), 'INSTALLMENT_REFUND_LOCKED');
+  ctx.check('회차가 음수가 되게 줄이면 거부', await codeOf4(() => editBuy({ amount: '60000' })), 'INSTALLMENT_REFUND_LOCKED');
+  ctx.check('설명만 고치면 통과', await codeOf4(() => editBuy({ description: '가전 (고침)' })), '통과');
+
+  // 유이자: 회차 이자 1,200 / 800 / 400 (전표 12만 2,400). 11월 전액 환불 → 3회차 원금 4만과 이자 400 이 사라진다.
+  const interestLine = randomUUID();
+  const withInterest = await e4.createEntry(uid, {
+    kind: 'expense', personId: me4.id, date: '2026-10-06T03:00:00.000Z', description: '유이자',
+    cardId: card4.id, amount: '120000', categoryId: food4.id, lineKey: interestLine, installmentMonths: 3,
+    installmentInterest: true, installmentInterestShares: ['1200', '800', '400'],
+  } as never, p4.id);
+  const debtBefore = await balanceOf((await ctx.prisma.card.findUniqueOrThrow({ where: { id: card4.id } })).liabilityAccountId!);
+  const interestRefund = await refundOf(withInterest, interestLine, '120000', ['0', '0', '40000']);
+  const interestRow = await row(interestRefund.id);
+  ctx.check('사라진 이자도 줄인다', JSON.stringify((interestRow.installmentAdjust as { interest: string[] }).interest), '["0","0","400"]');
+  ctx.check('환불 다리 = 돌려받은 돈 + 사라진 이자', interestRow.postings.find((leg) => leg.categoryId)?.baseAmount.toString(), '-120400');
+  const debtAfter = await balanceOf((await ctx.prisma.card.findUniqueOrThrow({ where: { id: card4.id } })).liabilityAccountId!);
+  ctx.check('카드 빚은 낸 이자(1,200 + 800)만 남는다', Number(debtAfter) - Number(debtBefore), 120400);
+  }
 });

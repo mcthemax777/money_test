@@ -708,6 +708,11 @@ export namespace EntryDto {
     paybackOfLineKey?: string;
     /** 돌아온 돈의 종류 ('payback' | 'refund'). 생략하면 페이백이다. 카드 실적의 기본값이 갈린다. */
     paybackType?: PaybackType;
+    /**
+     * 할부 원거래의 환불이면 회차마다 줄일 원금 (개월수만큼). 이자는 같은 비율로 조립이 정한다.
+     * 주면 들어온 곳이 원거래 카드여야 한다 (PAYBACK_DESIGN.md 7-9).
+     */
+    installmentCut?: string[];
 
     /**
      * 붙일 태그.

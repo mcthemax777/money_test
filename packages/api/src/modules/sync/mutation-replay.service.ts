@@ -1477,6 +1477,8 @@ export class MutationReplayService {
       paybackOfEntryId: payload.paybackOfEntryId,
       paybackOfLineKey: payload.paybackOfLineKey,
       paybackType: payload.paybackType,
+      installmentCut: payload.installmentCut,
+      id: payload.id,
       countsPerformance: payload.countsPerformance,
       discountCountsPerformance: payload.discountCountsPerformance,
       // 태그도 조립이 줄에 실어 준다. 짐에서 그대로 옮긴다.

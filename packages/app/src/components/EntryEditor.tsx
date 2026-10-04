@@ -36,6 +36,7 @@ import {
   cardValue,
   parseMethod,
   showDiscountPerformance,
+  installmentBaseAmount,
   totalDiscountOf,
   type EntryFormKind,
   type EntryFormValues,
@@ -402,8 +403,13 @@ export default function EntryEditor({
    * 빈 칸으로 두지 않는 까닭은 고칠 자리가 한두 회차뿐이기 때문이다 -- 기본값을 보여
    * 주고 다른 회차만 고치게 한다.
    */
+  /*
+   * 할부가 나누는 금액 = 금액 − 차감 (core `installmentBaseAmount`, 웹과 같다). 카드에 청구되는
+   * 것이 차감 뒤 금액이라 서버도 그 값을 나눈다.
+   */
+  const installmentBase = installmentBaseAmount(values.amount, totalDiscountOf(values));
   const shareInputs = installmentShareInputs(
-    values.amount,
+    installmentBase,
     Number(values.installmentMonths),
     values.installmentShares,
   );
@@ -414,7 +420,7 @@ export default function EntryEditor({
    * 방식을 고르지 않았으면 빈 칸이다 -- 0 으로 채우면 "이자 없음"과 구별되지 않는다.
    */
   const interestInputs = installmentInterestInputs({
-    total: values.amount,
+    total: installmentBase,
     months: Number(values.installmentMonths),
     principals: shareInputs,
     mode: values.installmentInterestMode,
@@ -999,7 +1005,7 @@ export default function EntryEditor({
                     >
                       {t('editor.installmentSharesSum', {
                         total: installmentShareTotal(shareInputs),
-                        amount: values.amount || '0',
+                        amount: installmentBase || '0',
                       })}
                     </Text>
                   </View>
@@ -1124,10 +1130,10 @@ export default function EntryEditor({
                       <Text className="text-right text-xs font-medium text-gray-700">
                         {t('editor.installmentTotalDue', {
                           total: installmentShareTotal([
-                            values.amount || '0',
+                            installmentBase || '0',
                             installmentShareTotal(interestInputs),
                           ]),
-                          amount: values.amount || '0',
+                          amount: installmentBase || '0',
                         })}
                       </Text>
                       <Text className="text-xs text-gray-500">

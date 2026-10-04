@@ -34,7 +34,8 @@ import {
 } from '@/common/entry-filter';
 import {
   INSTALLMENT_LEG_SELECT,
-  installmentPlanOf,
+  INSTALLMENT_REFUND_SELECT,
+  spreadRowOf,
   spreadRows,
 } from '@/common/installment-scope';
 
@@ -603,7 +604,15 @@ export class BudgetsService {
         categoryId: true,
         baseAmount: true,
         category: { select: { type: true } },
-        entry: { select: { date: true, postings: INSTALLMENT_LEG_SELECT, ...PAYBACK_DATE_SELECT } },
+        entry: {
+          select: {
+            date: true,
+            postings: INSTALLMENT_LEG_SELECT,
+            ...PAYBACK_DATE_SELECT,
+            ...INSTALLMENT_REFUND_SELECT,
+          },
+        },
+        lineKey: true,
       },
     });
 
@@ -611,13 +620,18 @@ export class BudgetsService {
       spreadRows(
         postings.flatMap((row) =>
           row.categoryId && row.category
-            ? [{
-                categoryId: row.categoryId,
-                categoryType: row.category.type,
-                baseAmount: row.baseAmount,
-                date: analysisDateOf(row.entry),
-                installment: installmentPlanOf(row.entry.postings),
-              }]
+            ? [
+                // 회차 기준: 할부를 펴고, 할부 환불은 남은 몫만 환불한 날에 센다 (spreadRowOf).
+                spreadRowOf(
+                  {
+                    categoryId: row.categoryId,
+                    categoryType: row.category.type,
+                    baseAmount: row.baseAmount,
+                    date: analysisDateOf(row.entry),
+                  },
+                  row,
+                ),
+              ]
             : [],
         ),
         spread,
@@ -785,6 +799,7 @@ export class BudgetsService {
                   tags: { select: { lineKey: true, tagId: true } },
                   postings: INSTALLMENT_LEG_SELECT,
                   ...PAYBACK_DATE_SELECT,
+                  ...INSTALLMENT_REFUND_SELECT,
                 },
               },
             },
@@ -794,16 +809,15 @@ export class BudgetsService {
       spreadRows(
         postings.flatMap((row) =>
           row.categoryId && row.category
-            ? [{
+            ? [spreadRowOf({
                 categoryId: row.categoryId,
                 categoryType: row.category.type,
                 baseAmount: row.baseAmount,
                 date: analysisDateOf(row.entry),
-                installment: installmentPlanOf(row.entry.postings),
                 tagIds: row.entry.tags
                   .filter((tag) => tag.lineKey !== null && tag.lineKey === row.lineKey)
                   .map((tag) => tag.tagId),
-              }]
+              }, row)]
             : [],
         ),
         spread,

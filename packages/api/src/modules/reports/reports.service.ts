@@ -23,7 +23,9 @@ import {
   INSTALLMENT_LEG_SELECT,
   type InstallmentLeg,
   type InstallmentSpread,
-  installmentPlanOf,
+  INSTALLMENT_REFUND_SELECT,
+  type InstallmentRefundCuts,
+  spreadRowOf,
   installmentScope,
   spreadOf,
   spreadRows,
@@ -126,6 +128,8 @@ export class ReportsService {
         postings: INSTALLMENT_LEG_SELECT,
         // 페이백이면 원거래의 날짜. 분석은 그 달에 센다 (common/payback-scope).
         ...PAYBACK_DATE_SELECT,
+        // 할부 환불과 할부 원거래가 줄인 회차 (installment-refund). 회차 기준에서만 읽힌다.
+        ...INSTALLMENT_REFUND_SELECT,
       },
     },
   } as const;
@@ -141,6 +145,8 @@ export class ReportsService {
         tags: Array<{ lineKey: string | null; tagId: string }>;
         postings?: InstallmentLeg[];
         paybackOf?: { date: Date } | null;
+        installmentAdjust?: unknown;
+        paybacks?: InstallmentRefundCuts;
       };
     }>,
     matchLine?: LineMatcher,
@@ -150,17 +156,17 @@ export class ReportsService {
     ownDate = false,
   ): CategoryPostingRow[] {
     // 계좌 다리는 오지 않지만(질의가 카테고리 다리만 고른다) 타입이 null 을 허용하므로 걸러 둔다.
-    const mapped = rows.flatMap((row) =>
-      row.categoryId && row.category && this.lineMatches(row, matchLine)
-        ? [{
-            categoryId: row.categoryId,
-            categoryType: row.category.type,
-            baseAmount: row.baseAmount as CategoryPostingRow['baseAmount'],
-            date: (ownDate ? row.entry.date : analysisDateOf(row.entry)) as CategoryPostingRow['date'],
-            ...(spread ? { installment: installmentPlanOf(row.entry.postings) } : {}),
-          }]
-        : [],
-    );
+    const mapped = rows.flatMap((row) => {
+      if (!(row.categoryId && row.category && this.lineMatches(row, matchLine))) return [];
+      const base: CategoryPostingRow = {
+        categoryId: row.categoryId,
+        categoryType: row.category.type,
+        baseAmount: row.baseAmount as CategoryPostingRow['baseAmount'],
+        date: (ownDate ? row.entry.date : analysisDateOf(row.entry)) as CategoryPostingRow['date'],
+      };
+      // 회차 기준이면 할부를 펴고, 할부 환불은 남은 몫만 환불한 날에 센다 (spreadRowOf).
+      return [spread ? spreadRowOf(base, row) : base];
+    });
     return spread ? spreadRows(mapped, spread) : mapped;
   }
 
@@ -371,21 +377,21 @@ export class ReportsService {
 
     const matchLine = lineMatcherOf(parseEntrySearch(query));
     const spread = spreadOf(basis, timeZone, { gte: range.start, lt: range.end });
-    const named: NamedCategoryPostingRow[] = rows.flatMap((row) =>
-      row.categoryId && row.category && this.lineMatches(row, matchLine)
-        ? [{
-            categoryId: row.categoryId,
-            categoryType: row.category.type,
-            categoryName: row.category.name,
-            parentCategoryId: row.category.parent?.id ?? null,
-            parentCategoryName: row.category.parent?.name ?? null,
-            baseAmount: row.baseAmount as NamedCategoryPostingRow['baseAmount'],
-            // 페이백이면 원거래의 날짜 (toAggregateRows 와 같다).
-            date: analysisDateOf(row.entry) as NamedCategoryPostingRow['date'],
-            ...(spread ? { installment: installmentPlanOf(row.entry.postings) } : {}),
-          }]
-        : [],
-    );
+    const named: NamedCategoryPostingRow[] = rows.flatMap((row) => {
+      if (!(row.categoryId && row.category && this.lineMatches(row, matchLine))) return [];
+      const base: NamedCategoryPostingRow = {
+        categoryId: row.categoryId,
+        categoryType: row.category.type,
+        categoryName: row.category.name,
+        parentCategoryId: row.category.parent?.id ?? null,
+        parentCategoryName: row.category.parent?.name ?? null,
+        baseAmount: row.baseAmount as NamedCategoryPostingRow['baseAmount'],
+        // 페이백이면 원거래의 날짜 (toAggregateRows 와 같다).
+        date: analysisDateOf(row.entry) as NamedCategoryPostingRow['date'],
+      };
+      // 회차 기준이면 할부를 펴고, 할부 환불은 남은 몫만 환불한 날에 센다 (spreadRowOf).
+      return [spread ? spreadRowOf(base, row) : base];
+    });
     // 회차 기준이면 줄마다 회차로 펴고 창 밖은 버린다. 이름은 그대로 따라간다.
     const counted = spread ? spreadRows(named, spread) : named;
 
