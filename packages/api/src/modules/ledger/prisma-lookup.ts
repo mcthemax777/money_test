@@ -6,12 +6,19 @@
  * `@money/core` 의 사본 창구다.
  */
 import { PrismaClient } from '@prisma/client';
-import { Dec, type LedgerLookup, type LookupAccount, type LookupCard, type LookupCategory } from '@money/types';
+import {
+  Dec,
+  type LedgerLookup,
+  type LookupAccount,
+  type LookupCard,
+  type LookupCategory,
+  type LookupPaybackTarget,
+} from '@money/types';
 
 import type { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import type { ProjectAccessService } from '@/common/project-access.guard';
 
-type PrismaLike = Pick<PrismaClient, 'account' | 'card' | 'category'>;
+type PrismaLike = Pick<PrismaClient, 'account' | 'card' | 'category' | 'journalEntry'>;
 
 export function prismaLedgerLookup(
   prisma: PrismaLike,
@@ -83,6 +90,31 @@ export function prismaLedgerLookup(
         name: row.name,
         type: row.type,
       }));
+    },
+    /*
+     * 페이백인지는 링크가 아니라 다리로 본다 -- 지출 분류 다리가 음수다. 원거래가 지워져
+     * 링크가 빈 페이백도 페이백이다 (종류 판정 classifyEntry 와 같은 기준).
+     */
+    async paybackTarget(projectId, entryId, lineKey): Promise<LookupPaybackTarget | null> {
+      const entry = await prisma.journalEntry.findUnique({
+        where: { id: entryId },
+        select: {
+          id: true,
+          projectId: true,
+          postings: {
+            where: { categoryId: { not: null } },
+            select: { lineKey: true, categoryId: true, baseAmount: true, category: { select: { type: true } } },
+          },
+        },
+      });
+      if (!entry || entry.projectId !== projectId) return null;
+      return {
+        id: entry.id,
+        isPayback: entry.postings.some(
+          (leg) => leg.category?.type === 'expense' && leg.baseAmount.isNegative(),
+        ),
+        lineCategoryId: entry.postings.find((leg) => leg.lineKey === lineKey)?.categoryId ?? null,
+      };
     },
   };
 }

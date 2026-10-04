@@ -90,6 +90,13 @@ export interface ViewEntry {
    * 아직 시계가 없는 옛 전표와, 시계를 읽지 않는 가벼운 조회는 비워 둔다.
    */
   updatedHlc?: string | null;
+  /** 페이백의 원거래와 줄. 서버와 기기 사본이 함께 싣는다. 읽지 않은 자리는 비워 둔다. */
+  paybackOfEntryId?: string | null;
+  paybackOfLineKey?: string | null;
+  /** 연결된 원거래의 날짜. 읽지 않은 자리는 비워 둔다. */
+  paybackOf?: { date: Date | string } | null;
+  /** 돌아온 돈의 종류. 비어 있으면 페이백이다 (이 칸이 생기기 전의 행). */
+  paybackType?: string | null;
   postings: ViewPosting[];
   /**
    * 이 전표에 달린 태그 연결. 서버는 조인 표를 펴서, 기기는 사본의 `entry_tag` 를 읽어 넣는다.
@@ -125,6 +132,12 @@ export const IDENTITY_CONVERTER: ViewConverter = {
  *
  * 계좌 다리가 2개 이상이면 돈이 계좌 사이를 움직인 것이므로 이체 계열이다.
  * (이체에 수수료가 붙어 지출 카테고리 다리가 함께 있어도 이 규칙이 먼저 적용된다.)
+ *
+ * 지출 분류 다리가 음수이면 페이백이다. 지출을 되돌려 받은 돈이라 분류는 지출인데 방향이
+ * 반대다. **링크(`paybackOfEntryId`)는 보지 않는다** -- 원거래가 지워져 링크가 빈 페이백도
+ * 페이백이고, 링크에 다른 로직이 기대지 않게 하는 경계이기도 하다 (PAYBACK_DESIGN.md).
+ * 조립이 지출 줄을 0보다 크게 강제하므로(entry-build) 지출에서 음수 다리가 나오는 길은
+ * 페이백뿐이다.
  */
 export function classifyEntry(postings: readonly ViewPosting[]): EntryKind {
   const accountPostings = postings.filter((posting) => posting.account);
@@ -142,6 +155,13 @@ export function classifyEntry(postings: readonly ViewPosting[]): EntryKind {
   const categoryPostings = postings.filter((posting) => posting.category);
   if (categoryPostings.some((posting) => posting.category!.type === 'income')) {
     return 'income';
+  }
+  if (
+    categoryPostings.some(
+      (posting) => posting.category!.type === 'expense' && Dec.of(posting.baseAmount).isNegative(),
+    )
+  ) {
+    return 'payback';
   }
   return 'expense';
 }
@@ -258,7 +278,8 @@ export function toListItem(
   if (kind === 'expense') {
     // 차감을 뺀 뒤의 값, 곧 실제로 계좌에서 빠진 금액이다. 전액을 깎았으면 0 이다.
     amount = Dec.sum(categoryPostings.map(base));
-  } else if (kind === 'income') {
+  } else if (kind === 'income' || kind === 'payback') {
+    // 들어온 돈이다. 분류 다리가 음수로 실려 있어 크기만 쓴다.
     amount = Dec.sum(categoryPostings.map(base)).abs();
   } else {
     // 이체/카드결제/조정은 "받는 쪽"의 금액을 쓴다.
@@ -266,9 +287,11 @@ export function toListItem(
     amount = incoming ? base(incoming) : Dec.sum(accountPostings.map(base)).abs();
   }
 
-  // 지출/수입은 카테고리 다리가 주인공이다. 이체 수수료 다리는 대표 카테고리로 쓰지 않는다.
+  // 지출/수입/페이백은 카테고리 다리가 주인공이다. 이체 수수료 다리는 대표 카테고리로 쓰지 않는다.
   const primaryCategory =
-    kind === 'expense' || kind === 'income' ? categoryPostings[0] ?? null : null;
+    kind === 'expense' || kind === 'income' || kind === 'payback'
+      ? categoryPostings[0] ?? null
+      : null;
 
   // 이체에 붙은 수수료. 이체 자체는 소비가 아니지만 수수료는 지출이므로 따로 보여준다.
   // 수수료가 없어도 0으로 내려보내 화면이 분기하지 않게 한다.
@@ -291,7 +314,9 @@ export function toListItem(
    */
   const shownAccount = (posting: ViewPosting | null) =>
     posting?.account && posting.account.type !== 'unassigned' ? posting.account : null;
-  const mainAccount = shownAccount(kind === 'income' ? incoming : outgoing);
+  // 들어온 돈(수입·페이백)은 받은 쪽이 그 거래의 계좌다.
+  const inflow = kind === 'income' || kind === 'payback';
+  const mainAccount = shownAccount(inflow ? incoming : outgoing);
   const cardPosting = entry.postings.find((posting) => posting.card) ?? null;
 
   const isTwoSided = kind === 'transfer' || kind === 'card_payment' || kind === 'adjustment';
@@ -373,6 +398,15 @@ export function toListItem(
     toCurrency: kind === 'transfer' && incoming ? incoming.currency : null,
     // 수정 폼이 들고 있다가 저장할 때 되돌려 주는 값. 그 사이의 편집을 서버가 알아챈다.
     updatedHlc: entry.updatedHlc ?? null,
+    paybackOfEntryId: entry.paybackOfEntryId ?? null,
+    paybackOfLineKey: entry.paybackOfEntryId ? entry.paybackOfLineKey ?? null : null,
+    paybackType: kind === 'payback' ? (entry.paybackType === 'refund' ? 'refund' : 'payback') : null,
+    paybackOfDate:
+      entry.paybackOfEntryId && entry.paybackOf
+        ? entry.paybackOf.date instanceof Date
+          ? entry.paybackOf.date.toISOString()
+          : String(entry.paybackOf.date)
+        : null,
   };
 }
 
@@ -405,8 +439,8 @@ function foreignDisplay(
     };
   }
 
-  // 외화 계좌 다리. 수입은 들어온 쪽, 그 밖에는 나간 쪽이 그 거래의 계좌다.
-  const leg = kind === 'income' ? incoming : outgoing;
+  // 외화 계좌 다리. 수입·페이백은 들어온 쪽, 그 밖에는 나간 쪽이 그 거래의 계좌다.
+  const leg = kind === 'income' || kind === 'payback' ? incoming : outgoing;
   if (leg) {
     const rate = Dec.of(leg.exchangeRate).times(show.rate);
     if (!rate.eq(1)) {

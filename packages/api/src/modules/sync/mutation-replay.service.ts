@@ -1473,6 +1473,10 @@ export class MutationReplayService {
       lineKey: payload.lineKey,
       transferFeeLineKey: payload.transferFeeLineKey,
       discountAmount: payload.discountAmount,
+      // 페이백의 링크. 그 사이 원거래가 지워졌으면 조립이 비우고 독립 페이백으로 들인다.
+      paybackOfEntryId: payload.paybackOfEntryId,
+      paybackOfLineKey: payload.paybackOfLineKey,
+      paybackType: payload.paybackType,
       countsPerformance: payload.countsPerformance,
       discountCountsPerformance: payload.discountCountsPerformance,
       // 태그도 조립이 줄에 실어 준다. 짐에서 그대로 옮긴다.
@@ -1482,6 +1486,8 @@ export class MutationReplayService {
     return {
       ...input,
       updatedHlc: hlc || encodeHlc(hlcNext(null, 'server')),
+      // 끊긴 기기들이 따로 적은 환불·페이백은 합이 넘어도 받는다 (EntryInput.allowOverPayback).
+      allowOverPayback: true,
     };
   }
 

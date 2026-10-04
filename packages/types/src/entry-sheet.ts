@@ -60,6 +60,9 @@ export function entrySheetColumnOf(header: string): EntrySheetColumn | null {
 export const ENTRY_SHEET_KINDS = {
   expense: ['지출', 'expense', '출금', '사용', '결제'],
   income: ['수입', 'income', '입금'],
+  payback: ['페이백', 'payback', '캐시백'],
+  // 환불도 장부에서는 페이백과 같은 모양이다. 종류만 다르다 (카드 실적의 기본값이 갈린다).
+  refund: ['환불', 'refund', '결제취소', '결제 취소'],
   transfer: ['이체', 'transfer', '송금'],
   card_payment: ['카드대금', 'card_payment', '카드 대금', '카드결제'],
   card_refund: ['카드환불', 'card_refund', '카드 환불'],

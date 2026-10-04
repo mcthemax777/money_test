@@ -21,11 +21,13 @@ import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store
 import { installmentLabel } from '@money/core/lib/period-ledger';
 
 import Modal from './Modal';
+import PaybackSection from './PaybackSection';
 
 /** 갈래 이름. 목록의 금액 색과 같은 뜻을 글자로 적는다. */
 const KIND_KEY: Record<EntryListItem['kind'], MessageKey> = {
   income: 'editor.kind.income',
   expense: 'editor.kind.expense',
+  payback: 'editor.kind.payback',
   transfer: 'editor.kind.transfer',
   card_payment: 'entry.cardPayment',
   adjustment: 'entry.adjustment',
@@ -63,6 +65,8 @@ export default function EntryDetailModal({
   onCopy,
   onEdit,
   onDelete,
+  onAddPayback,
+  onOpenPayback,
 }: {
   /** null 이면 닫힌 상태다. 여는 쪽이 고른 거래를 그대로 넘긴다. */
   entry: EntryListItem | null;
@@ -86,6 +90,14 @@ export default function EntryDetailModal({
    * 묻는 일도 화면이 한다. 이 컴포넌트는 읽기만 하는 자리라 지우는 길을 직접 갖지 않는다.
    */
   onDelete?: (entry: EntryListItem) => void;
+  /**
+   * 지출에 페이백을 적을 때. 없으면 "페이백 추가" 단추를 그리지 않는다.
+   *
+   * 고치기와 같이 여는 일은 화면이 한다 (PaybackEditor).
+   */
+  onAddPayback?: (original: EntryListItem) => void;
+  /** 받은 페이백 한 줄이나 페이백의 원거래를 눌렀을 때. 화면이 그 거래의 상세로 바꿔 연다. */
+  onOpenPayback?: (payback: EntryListItem) => void;
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
@@ -114,9 +126,12 @@ export default function EntryDetailModal({
    * 잔액 맞추기가 만든 조정은 입력 폼이 만드는 것이 아니다(계좌 잔액에서 역산된다).
    * 눌러도 "웹에서 고쳐 주세요"만 뜨는 단추라면 그리지 않는 편이 낫다. 두 단추가 같은
    * 조건인 것은 폼이 다룰 수 있는 갈래가 하나로 정해져 있기 때문이다.
+   *
+   * 페이백은 고칠 수 있고(화면이 PaybackEditor 로 연다) 베낄 수는 없다. 웹의
+   * isEditableEntry·isCopyableEntry 와 같은 규칙이다.
    */
   const canUseForm = entry !== null && entry.kind !== 'adjustment';
-  const copyTarget = onCopy && canUseForm ? entry : null;
+  const copyTarget = onCopy && canUseForm && entry.kind !== 'payback' ? entry : null;
   const editTarget = onEdit && canUseForm ? entry : null;
   /*
    * 지우기는 갈래를 가리지 않는다. 폼이 못 다루는 것과 없앨 수 없는 것은 다른
@@ -186,14 +201,20 @@ export default function EntryDetailModal({
             {entry.description || categoryLabel || t('entry.noTitle')}
           </Text>
 
-          <Row label={t('tx.detail.kind')} value={t(KIND_KEY[entry.kind])} />
+          {/* 환불도 갈래는 페이백이다. 종류로 이름을 고른다 (웹의 상세와 같다). */}
+          <Row
+            label={t('tx.detail.kind')}
+            value={t(
+              entry.kind === 'payback' && entry.paybackType === 'refund' ? 'editor.kind.refund' : KIND_KEY[entry.kind],
+            )}
+          />
           <Row label={t('tx.detail.date')} value={formatDateTime(entry.date, timeZone)} />
           <Row label={t('tx.detail.person')} value={entry.personName} />
           {/*
             나눈 거래는 줄을 그대로 풀어서 보여 준다.
 
             목록이 줄로 펴 보여 주는데 상세에서 다시 뭉치면, 눌러서 연 화면이 눌렀던
-            줄보다 적게 말한다. 태그와 차감도 줄마다 다를 수 있어 함께 적는다.
+            줄보다 적게 말한다. 태그도 줄마다 다를 수 있어 함께 적는다. 차감은 아래 "차감·환불·페이백" 칸에 있다.
           */}
           {entry.lines.length > 1 ? (
             entry.lines.map((line) => (
@@ -202,9 +223,6 @@ export default function EntryDetailModal({
                 label={line.categoryName || t('tx.detail.category')}
                 value={[
                   money(line.amount),
-                  line.discountAmount
-                    ? t('entry.discount', { amount: money(line.discountAmount) ?? '' })
-                    : null,
                   line.tags.map((tag) => tag.name).join(', ') || null,
                 ]
                   .filter(Boolean)
@@ -225,14 +243,7 @@ export default function EntryDetailModal({
             value={installmentLabel(t, entry, (amount) => formatCurrency(amount, currency))}
           />
           <Row label={t('tx.detail.fee')} value={fee > 0 ? money(entry.feeAmount) : null} />
-          {/*
-            결제 자리에서 깎인 금액 (포인트 사용·자동할인). 위 금액은 이미 깎인 뒤라
-            이것이 없으면 정가를 알 수 없다.
-          */}
-          <Row
-            label={t('editor.discount')}
-            value={entry.discountAmount ? money(entry.discountAmount) : null}
-          />
+          {/* 결제 자리에서 깎인 금액은 아래 "차감·환불·페이백" 칸에 줄별로 함께 적는다 (7-7). */}
           {/* 실적에서 뺀 카드 거래만 적는다. 센 것은 굳이 말할 것이 없다. */}
           <Row
             label={t('tx.detail.performance')}
@@ -284,6 +295,9 @@ export default function EntryDetailModal({
               </View>
             </View>
           ) : null}
+
+          {/* 지출이면 받은 페이백과 "페이백 추가", 페이백이면 원거래의 날짜. */}
+          <PaybackSection entry={entry} onAdd={onAddPayback} onOpen={onOpenPayback} />
         </View>
       ) : null}
     </Modal>

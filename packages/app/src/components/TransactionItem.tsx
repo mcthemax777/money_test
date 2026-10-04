@@ -5,7 +5,7 @@
  */
 import { memo } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { Split } from 'lucide-react-native';
+import { Split, Undo2 } from 'lucide-react-native';
 import type { EntryListItem, EntryRow } from '@money/types';
 
 import { formatDate, formatTime } from '@money/core/lib/datetime';
@@ -169,6 +169,14 @@ function TransactionItemView({
           */}
           {isSplitLine ? (
             <Split size={12} color="#9ca3af" accessibilityLabel={t('entry.split')} />
+          ) : null}
+          {/* 페이백. 금액 색만으로는 수입과 갈리지 않아 아이콘으로 말한다 (웹의 한 줄과 같다). */}
+          {entry.kind === 'payback' ? (
+            <Undo2
+              size={12}
+              color="#16a34a"
+              accessibilityLabel={t(entry.paybackType === 'refund' ? 'payback.type.refund' : 'payback.type.payback')}
+            />
           ) : null}
           <Text numberOfLines={1} className="shrink text-[15px] font-medium text-gray-900">
             {title}

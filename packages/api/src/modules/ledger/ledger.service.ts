@@ -17,6 +17,8 @@ import {
   currencyDecimals,
   isErrorCode,
   ledgerOpeningDate,
+  planPaybackRebind,
+  rebindErrorMessage,
 } from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
 import { prismaLedgerLookup } from './prisma-lookup';
@@ -173,6 +175,23 @@ export interface EntryInput {
    * 만드는 전표가 그 자리다.
    */
   tagIds?: string[];
+  /**
+   * 페이백의 원거래와 그 줄. 조립이 정해서 넘긴다(`BuiltEntry.paybackOfEntryId`).
+   *
+   * 저장할 때 잠근 뒤 원거래를 다시 본다 (`paybackLink`). 조립과 저장 사이에 원거래가
+   * 지워졌으면 외래 키가 500 으로 튀는 대신 링크를 비운다.
+   */
+  paybackOfEntryId?: string | null;
+  paybackOfLineKey?: string | null;
+  /** 돌아온 돈의 종류 ('payback' | 'refund'). 페이백이 아니면 null 이다. */
+  paybackType?: string | null;
+  /**
+   * 한 줄에 돌려받은 합이 그 줄 금액을 넘어도 받는다. **기기 명령의 재생에서만** 켠다.
+   *
+   * 끊긴 두 기기가 같은 원거래에 따로 적은 환불·페이백은 서버에 닿아서야 합이 넘는 것을
+   * 안다. 그때 거절하면 이미 들어온 돈의 기록이 사라진다 -- 기기가 저마다 상한을 이미 보았다.
+   */
+  allowOverPayback?: boolean;
 }
 
 /** 지출/수입에서 카테고리별로 금액을 쪼갤 때 쓰는 항목 */
@@ -330,6 +349,8 @@ export class LedgerService {
        * 남은 통장이 목록에서 사라진다.
        */
       await this.lockLedger(tx, input.projectId);
+      const payback = await this.paybackLink(tx, input);
+      await this.checkPaybackCap(tx, input, payback);
 
       const entry = await tx.journalEntry.create({
         data: {
@@ -346,6 +367,8 @@ export class LedgerService {
           rateProvisional: input.rateProvisional ?? false,
           countsPerformance: input.countsPerformance ?? true,
           discountCountsPerformance: input.discountCountsPerformance ?? true,
+          ...payback,
+          paybackType: input.paybackType ?? null,
           updatedHlc: input.updatedHlc ?? this.clock.now(),
           postings: { create: input.postings.map((p) => this.toPostingData(p)) },
         },
@@ -409,6 +432,8 @@ export class LedgerService {
       if (input.baseHlc != null && (existing.updatedHlc ?? null) !== input.baseHlc) {
         throw conflict('ENTRY_MODIFIED', '다른 사람이 이 거래를 먼저 고쳤습니다.');
       }
+      const payback = await this.paybackLink(tx, input, entryId);
+      await this.checkPaybackCap(tx, input, payback, entryId);
 
       // 1) 옛 posting의 잔액 영향을 되돌린다
       await this.applyBalanceDeltas(
@@ -436,6 +461,8 @@ export class LedgerService {
           rateProvisional: input.rateProvisional ?? false,
           countsPerformance: input.countsPerformance ?? true,
           discountCountsPerformance: input.discountCountsPerformance ?? true,
+          ...payback,
+          paybackType: input.paybackType ?? null,
           updatedHlc: input.updatedHlc ?? this.clock.now(),
           postings: { create: input.postings.map((p) => this.toPostingData(p)) },
         },
@@ -443,6 +470,9 @@ export class LedgerService {
       });
 
       await this.saveTags(tx, entryId, input.projectId, input.postings, input.tagIds);
+
+      // 이 전표에 걸린 환불·페이백을 새 줄에 맞춘다. 맞출 수 없으면 여기서 던지고 통째로 되돌린다.
+      await this.rebindPaybacks(tx, entryId, input.postings);
 
       // 3) 새 posting의 잔액을 적용한다
       await this.applyBalanceDeltas(tx, input.postings);
@@ -462,6 +492,11 @@ export class LedgerService {
   /**
    * 전표를 지운다. 잔액을 역방향으로 되돌린 뒤 삭제한다.
    * Posting은 onDelete: Cascade로 함께 사라진다.
+   *
+   * **걸린 환불·페이백도 함께 지운다** (PAYBACK_DESIGN.md 7-6). 원거래가 없으면 돌려받은 돈도
+   * 뜻을 잃는다 -- 사용자가 그렇게 정했다. 외래 키의 SET NULL 로는 다리와 잔액이 남으므로
+   * 여기서 하나씩 잔액을 되돌려 지운다. 잠금 안이라 그 사이에 새로 걸리는 것은 없다.
+   * 환불·페이백에는 환불·페이백이 걸리지 않으므로(PAYBACK_TARGET_INVALID) 한 겹이면 된다.
    */
   async deleteEntry(entryId: string, projectId: string, outerTx?: Tx) {
     return this.runInTransaction(outerTx, async (tx) => {
@@ -477,12 +512,22 @@ export class LedgerService {
         throw notFound('ENTRY_NOT_FOUND', '거래를 찾을 수 없습니다.');
       }
 
-      const reversed = entry.postings.map((p) => ({
-        accountId: p.accountId ?? undefined,
-        amount: p.amount.neg(),
-        quantity: p.quantity ? p.quantity.neg() : undefined,
-      }));
+      const paybacks = await tx.journalEntry.findMany({
+        where: { paybackOfEntryId: entryId, projectId },
+        include: { postings: true },
+      });
+
+      const reversed = [entry, ...paybacks].flatMap((row) =>
+        row.postings.map((p) => ({
+          accountId: p.accountId ?? undefined,
+          amount: p.amount.neg(),
+          quantity: p.quantity ? p.quantity.neg() : undefined,
+        })),
+      );
       await this.applyBalanceDeltas(tx, reversed);
+      if (paybacks.length > 0) {
+        await tx.journalEntry.deleteMany({ where: { id: { in: paybacks.map((row) => row.id) } } });
+      }
       return tx.journalEntry.delete({ where: { id: entryId } });
     });
   }
@@ -618,6 +663,144 @@ export class LedgerService {
    * (`createEntry`)도 잡는다. 스스로 읽고 고칠 것은 없지만, 그 쓰기가 남의 선행조건을
    * 깨기 때문이다.
    */
+  /**
+   * 저장할 페이백 링크. 원장 잠금 뒤에 부른다.
+   *
+   * 조립은 잠그기 전에 원거래를 읽었다. 그 사이 원거래가 지워졌으면 링크를 비운다 --
+   * 조립이 원거래를 못 찾았을 때와 같은 결과다(D). 그대로 넣으면 외래 키가 500 으로 튄다.
+   * 원거래 지우기도 같은 잠금을 잡으므로 여기서 본 것은 커밋까지 그대로다.
+   *
+   * 페이백이 걸린 거래를 페이백으로 바꾸는 것은 막는다. 링크가 사슬이 되면 분석이 날짜를
+   * 어디까지 따라가야 하는지가 정해지지 않는다.
+   */
+  private async paybackLink(
+    tx: Tx,
+    input: EntryInput,
+    selfId?: string,
+  ): Promise<{ paybackOfEntryId: string | null; paybackOfLineKey: string | null }> {
+    const none = { paybackOfEntryId: null, paybackOfLineKey: null };
+    if (!input.paybackOfEntryId) return none;
+    if (input.paybackOfEntryId === selfId) {
+      throw new BadRequestException('거래 자신에게 페이백을 걸 수 없습니다.');
+    }
+    if (selfId && (await tx.journalEntry.count({ where: { paybackOfEntryId: selfId } })) > 0) {
+      throw new BadRequestException('페이백이 걸린 거래는 페이백이 될 수 없습니다.');
+    }
+    const target = await tx.journalEntry.findUnique({
+      where: { id: input.paybackOfEntryId },
+      select: { projectId: true },
+    });
+    if (!target || target.projectId !== input.projectId) return none;
+    return { paybackOfEntryId: input.paybackOfEntryId, paybackOfLineKey: input.paybackOfLineKey ?? null };
+  }
+
+  /**
+   * 원거래를 고친 뒤, 걸린 환불·페이백을 새 줄에 맞춘다 (types 의 planPaybackRebind).
+   *
+   * 줄의 분류가 바뀌었으면 환불·페이백의 분류 다리도 따라 바꾸고, 사라진 줄에 걸려 있었는데
+   * 남은 줄이 하나면 그 줄로 옮긴다. 줄을 지우거나(옮길 곳이 없다), 지출이 아니게 바꾸거나,
+   * 돌려받은 합보다 줄 금액을 작게 하면 거절한다 -- 그대로 두면 그 분류의 지출이 음수가 된다.
+   *
+   * 옮긴 환불·페이백은 전표를 고쳐(`paybackOfLineKey`·`updatedAt`) 번호를 올린다. 기기가 받아 간다.
+   */
+  private async rebindPaybacks(tx: Tx, entryId: string, postings: EntryInput['postings']): Promise<void> {
+    const paybacks = await tx.journalEntry.findMany({
+      where: { paybackOfEntryId: entryId },
+      select: {
+        id: true,
+        paybackOfLineKey: true,
+        postings: { where: { categoryId: { not: null } }, select: { id: true, categoryId: true, baseAmount: true } },
+      },
+    });
+    if (paybacks.length === 0) return;
+
+    const legs = postings.filter((posting) => posting.categoryId && posting.lineKey);
+    const types = new Map(
+      (
+        await tx.category.findMany({
+          where: { id: { in: legs.map((leg) => leg.categoryId!) } },
+          select: { id: true, type: true },
+        })
+      ).map((row) => [row.id, row.type as string]),
+    );
+    const plan = planPaybackRebind(
+      legs.map((leg) => ({
+        lineKey: leg.lineKey!,
+        categoryId: leg.categoryId!,
+        categoryType: types.get(leg.categoryId!) ?? '',
+        baseAmount: leg.baseAmount.toString(),
+      })),
+      paybacks.map((row) => ({
+        id: row.id,
+        lineKey: row.paybackOfLineKey,
+        categoryId: row.postings[0]?.categoryId ?? null,
+        baseAmount: (row.postings[0]?.baseAmount ?? new Prisma.Decimal(0)).toString(),
+      })),
+    );
+    if (plan.error) throw badRequest(plan.error.code, rebindErrorMessage(plan.error));
+
+    for (const move of plan.moves) {
+      await tx.posting.updateMany({
+        where: { entryId: move.paybackId, categoryId: { not: null } },
+        data: { categoryId: move.categoryId },
+      });
+      await tx.journalEntry.update({
+        where: { id: move.paybackId },
+        data: { paybackOfLineKey: move.lineKey, updatedAt: new Date() },
+      });
+    }
+  }
+
+  /**
+   * 환불·페이백을 적을 때, 그 줄에 돌려받은 합이 줄 금액을 넘지 않는지 본다.
+   *
+   * 기기 명령의 재생은 건너뛴다(`allowOverPayback`) -- 그 까닭은 그 칸의 주석에 있다.
+   */
+  private async checkPaybackCap(
+    tx: Tx,
+    input: EntryInput,
+    link: { paybackOfEntryId: string | null; paybackOfLineKey: string | null },
+    selfId?: string,
+  ): Promise<void> {
+    if (!link.paybackOfEntryId || input.allowOverPayback) return;
+    const self = input.postings.find((posting) => posting.categoryId);
+    if (!self) return;
+
+    const lines = await tx.posting.findMany({
+      where: { entryId: link.paybackOfEntryId, categoryId: { not: null } },
+      select: { lineKey: true, categoryId: true, baseAmount: true, category: { select: { type: true } } },
+    });
+    const others = await tx.journalEntry.findMany({
+      where: { paybackOfEntryId: link.paybackOfEntryId, ...(selfId ? { id: { not: selfId } } : {}) },
+      select: {
+        id: true,
+        paybackOfLineKey: true,
+        postings: { where: { categoryId: { not: null } }, select: { categoryId: true, baseAmount: true } },
+      },
+    });
+    const plan = planPaybackRebind(
+      lines.map((line) => ({
+        lineKey: line.lineKey ?? '',
+        categoryId: line.categoryId!,
+        categoryType: line.category?.type ?? '',
+        baseAmount: line.baseAmount.toString(),
+      })),
+      [
+        ...others.map((row) => ({
+          id: row.id,
+          lineKey: row.paybackOfLineKey,
+          categoryId: row.postings[0]?.categoryId ?? null,
+          baseAmount: (row.postings[0]?.baseAmount ?? new Prisma.Decimal(0)).toString(),
+        })),
+        { id: selfId ?? 'new', lineKey: link.paybackOfLineKey, categoryId: self.categoryId!, baseAmount: self.baseAmount.toString() },
+      ],
+    );
+    // 줄이 사라진 옛 링크 같은 것은 조립이 이미 다뤘다. 여기서는 넘는 것만 막는다.
+    if (plan.error?.code === 'PAYBACK_EXCEEDS_LINE') {
+      throw badRequest(plan.error.code, rebindErrorMessage(plan.error));
+    }
+  }
+
   private async lockLedger(tx: Tx, projectId: string): Promise<void> {
     await lockLedgerWrites(tx, projectId);
   }
@@ -783,6 +966,9 @@ export class LedgerService {
       countsPerformance: built.countsPerformance ?? true,
       discountCountsPerformance: built.discountCountsPerformance ?? true,
       ...(built.tagIds ? { tagIds: built.tagIds } : {}),
+      paybackOfEntryId: built.paybackOfEntryId ?? null,
+      paybackOfLineKey: built.paybackOfLineKey ?? null,
+      paybackType: built.paybackType ?? null,
       postings: built.postings.map((posting) => ({
         accountId: posting.accountId,
         categoryId: posting.categoryId,

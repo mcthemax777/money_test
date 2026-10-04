@@ -168,4 +168,6 @@ export const ENTRY_INCLUDE = {
   tags: {
     select: { lineKey: true, tag: { select: { id: true, name: true, color: true } } },
   },
+  // 페이백이면 원거래의 날짜. 분석 화면이 그 날짜로 센다 (`EntryListItem.paybackOfDate`).
+  paybackOf: { select: { date: true } },
 } satisfies Prisma.JournalEntryInclude;

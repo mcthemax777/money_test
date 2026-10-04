@@ -71,6 +71,7 @@ import {
   type TransactionSearch,
   type TransactionTab,
 } from '@money/core/hooks/useTransactions';
+import { paybackCountOf, paybackDeleteNote } from '@money/core/hooks/usePaybacks';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import { refreshInboxCount, useInboxCount } from '@money/core/store/inbox-count';
 import {
@@ -100,6 +101,7 @@ import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useRenderBudget } from '@/hooks/useRenderBudget';
 import { useTopReveal } from '@/hooks/useTopReveal';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
+import PaybackSection from '@/components/PaybackSection';
 import TransactionItem from '@/components/TransactionItem';
 
 const TABS: Array<{ id: TransactionTab; labelKey: MessageKey }> = [
@@ -243,7 +245,11 @@ function Line({
    * "순수입 0" 을 적어 봐야 위 줄의 "-" 를 되풀이할 뿐이다.
    */
   const net = income - expense;
-  const showsNet = Boolean(showNet) && (income > 0 || expense > 0);
+  /*
+   * 지출은 음수일 수 있다. 그 기간에 쓴 돈보다 되돌려 받은 페이백이 많으면 그렇다
+   * (PAYBACK_DESIGN.md). 0 만 "오간 돈이 없다"로 본다.
+   */
+  const showsNet = Boolean(showNet) && (income > 0 || expense !== 0);
 
   return (
     <button
@@ -303,6 +309,9 @@ function Line({
         >
           {expense > 0 ? (
             <span className="truncate text-red-600">-{formatCurrency(expense, currency)}</span>
+          ) : expense < 0 ? (
+            // 페이백이 쓴 돈보다 많았다. 지출 칸에 돌아온 돈으로 적는다.
+            <span className="truncate text-green-600">+{formatCurrency(-expense, currency)}</span>
           ) : income === 0 ? (
             <span className="font-normal text-gray-400">-</span>
           ) : null}
@@ -486,7 +495,9 @@ export default function TransactionsView({
    */
   const askDeleteDetail = async () => {
     if (!detail) return;
-    if (!window.confirm(t('tx.detail.deleteConfirm'))) return;
+    // 원거래면 걸린 환불·페이백도 함께 지워진다. 그 수를 함께 묻는다 (7-6).
+    const note = paybackDeleteNote(await paybackCountOf(detail, selectedProjectId), t);
+    if (!window.confirm([t('tx.detail.deleteConfirm'), note].filter(Boolean).join('\n'))) return;
 
     setDetail(null);
     const deleted = await tx.deleteEntry(detail.id);
@@ -884,6 +895,14 @@ export default function TransactionsView({
     ? [
         { label: t('tx.detail.date'), value: formatDateTime(detail.date, timeZone) },
         { label: t('tx.detail.person'), value: detail.personName },
+        // 돌려받은 돈은 종류를 적는다. 목록에는 아이콘만 서서 환불인지 캐시백인지 여기서 안다.
+        {
+          label: t('tx.detail.kind'),
+          value:
+            detail.kind === 'payback'
+              ? t(detail.paybackType === 'refund' ? 'editor.kind.refund' : 'editor.kind.payback')
+              : null,
+        },
         {
           label: t('tx.detail.category'),
           value: detail.parentCategoryName
@@ -918,7 +937,9 @@ export default function TransactionsView({
               : null,
         },
         {
-          label: t('tx.detail.split'),
+          // 이름표에는 값의 문구(`분할 {count}건`)를 쓰지 않는다. 줄의 이름표가 React 키라 위의
+          // "분류" 줄과도 달라야 한다.
+          label: t('editor.split'),
           value: detail.splitCount > 1 ? t('tx.detail.split', { count: detail.splitCount }) : null,
         },
         { label: t('tx.detail.note'), value: detail.detailedNote },
@@ -2013,6 +2034,20 @@ export default function TransactionsView({
                 </div>
               </div>
             ) : null}
+
+            {/* 지출이면 받은 페이백과 "페이백 추가", 페이백이면 원거래의 날짜. */}
+            <div className="pt-3">
+              <PaybackSection
+                entry={detail}
+                layout="rows"
+                canEdit={canEdit}
+                onAdd={(original) => {
+                  entryEditorRef.current?.openPayback(original);
+                  setDetail(null);
+                }}
+                onOpen={(payback) => setDetail(payback)}
+              />
+            </div>
           </div>
         ) : null}
       </Modal>

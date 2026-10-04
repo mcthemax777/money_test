@@ -28,6 +28,7 @@ import {
   emptyEntryForm,
   entryFormFromDraft,
   entryFormFromItem,
+  paybackFormFrom,
   entryFormToRequest,
   parseMethod,
   type EntryFormSplit,
@@ -245,6 +246,39 @@ export function useEntryForm({
   );
 
   /**
+   * 원거래에서 새 페이백을 적기. 저장하면 새 거래(페이백)가 된다.
+   *
+   * 지출만 받는다. 수입·이체에는 되돌려 받을 지출 줄이 없다 -- 조립도 지출 줄이 아니면
+   * 거절한다(CATEGORY_TYPE_MISMATCH). 못 여는 거래면 false 를 돌려준다.
+   */
+  const startPayback = useCallback(
+    (original: EntryListItem): boolean => {
+      if (original.kind !== 'expense') return false;
+      setValues(paybackFormFrom(original, timeZone));
+      setEditingId(null);
+      setViolation(null);
+      setError('');
+      return true;
+    },
+    [timeZone],
+  );
+
+  /**
+   * 분할된 원거래에서 페이백을 받은 줄을 고른다. 그 줄의 분류가 페이백의 분류가 된다.
+   *
+   * 두 칸을 한 번에 바꾼다. 줄만 바꾸고 분류를 두면 조립이 원거래 줄의 분류로 덮어써
+   * (entry-build 의 buildPayback) 화면에 보인 분류와 저장된 분류가 갈린다.
+   */
+  const choosePaybackLine = useCallback((line: { lineKey: string; categoryId: string }) => {
+    setValues((previous) => ({
+      ...previous,
+      paybackOfLineKey: line.lineKey,
+      categoryId: line.categoryId,
+    }));
+    setViolation(null);
+  }, []);
+
+  /**
    * 보관함의 후보로 폼을 채운다. 저장하면 새 거래가 된다.
    *
    * 베끼기(`startCopy`)와 하는 일이 같고 값의 출처만 다르다. 후보에는 빈 칸이 있는
@@ -322,6 +356,14 @@ export function useEntryForm({
             ...next,
             exchangeRate: fallbackRate(next.currency, ledgerCurrency) ?? '',
           };
+        }
+
+        /*
+         * 돌아온 돈의 종류를 바꾸면 실적 칸을 그 종류의 기본값으로 되돌린다 (갈래를 바꿀 때와
+         * 같은 규칙이다). 환불은 실적도 깎고, 캐시백은 깎지 않는다.
+         */
+        if (field === 'paybackType') {
+          return { ...next, countsPerformance: defaultCountsPerformance(next.kind, next.paybackType) };
         }
 
         // 결제수단을 통장으로 바꾸면 할부는 뜻이 없다.
@@ -543,11 +585,18 @@ export function useEntryForm({
     [lists.cards],
   );
 
-  const save = useCallback(async (): Promise<boolean> => {
+  /**
+   * 저장한다. 저장한 거래의 id 를, 저장하지 못했으면 null 을 돌려준다.
+   *
+   * 새로 만들었으면 그 뒤로는 **그 거래를 고치는 폼**이 된다. 지출과 함께 적은 페이백을
+   * 저장하다 실패하면 창이 열린 채 남는데(`usePaybackDrafts`), 그때 다시 누르면 같은 지출을
+   * 한 번 더 만드는 대신 그 지출을 고치고 남은 페이백만 저장해야 하기 때문이다.
+   */
+  const save = useCallback(async (): Promise<string | null> => {
     const found = checkEntryForm(values, cardLiabilityIds);
     if (found) {
       setViolation(found);
-      return false;
+      return null;
     }
 
     setIsSubmitting(true);
@@ -574,9 +623,10 @@ export function useEntryForm({
           projectId: projectId ?? undefined,
         });
         savedId = created.id;
+        setEditingId(created.id);
       }
       onSaved?.({ entryId: savedId });
-      return true;
+      return savedId;
     } catch (caught) {
       /*
        * 조립이 거절한 이유를 그대로 보여 준다.
@@ -594,7 +644,7 @@ export function useEntryForm({
             ? caught.message
             : String(caught),
       );
-      return false;
+      return null;
     } finally {
       setIsSubmitting(false);
     }
@@ -729,6 +779,8 @@ export function useEntryForm({
     startEdit,
     startCopy,
     startDraft,
+    startPayback,
+    choosePaybackLine,
     save,
     remove,
   };

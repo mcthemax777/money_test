@@ -170,6 +170,7 @@ export const EMPTY_SEARCH: TransactionSearch = {
 export const ENTRY_KIND_LABEL: Record<EntryKind, MessageKey> = {
   expense: 'tx.kind.expense',
   income: 'tx.kind.income',
+  payback: 'tx.kind.payback',
   transfer: 'tx.kind.transfer',
   card_payment: 'tx.kind.card_payment',
   adjustment: 'entry.adjustment',

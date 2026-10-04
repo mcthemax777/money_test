@@ -280,7 +280,8 @@ export function makeEntries(prisma: PrismaClient, access: unknown, ledger: unkno
     if (!dto) return dto;
     // 이체 수수료도 분류 줄이라 키를 갖는다.
     const fee = dto.transferFee ? { transferFeeLineKey: dto.transferFeeLineKey ?? lineKey() } : {};
-    if (dto.kind !== 'expense' && dto.kind !== 'income') return { ...dto, ...fee };
+    // 페이백도 분류 줄 하나를 갖는다.
+    if (dto.kind !== 'expense' && dto.kind !== 'income' && dto.kind !== 'payback') return { ...dto, ...fee };
     return {
       ...dto,
       ...fee,

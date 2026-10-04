@@ -786,6 +786,10 @@ export class LocalStore {
           createdByUserId: asText(row.createdByUserId),
           updatedHlc: asText(row.updatedHlc),
           updatedVersion: asInt(row.updatedVersion),
+          // 페이백의 원거래. 서버가 원거래를 지우면 비워서 다시 보낸다(SET NULL 이 번호를 올린다).
+          paybackOfEntryId: asText(row.paybackOfEntryId),
+          paybackOfLineKey: asText(row.paybackOfLineKey),
+          paybackType: asText(row.paybackType),
         });
 
         /*
@@ -1269,10 +1273,19 @@ export class LocalStore {
                  JOIN installment_plan ip ON ip.postingId = cp.id
                 WHERE cp.entryId = e.id LIMIT 1) AS installmentAmount`
       : '';
+    /*
+     * 분석은 연결된 페이백을 원거래의 날짜로 고르고 그 날짜로 센다 (서버 common/payback-scope).
+     * 거래 탭의 달 목록처럼 들어온 날짜로 셀 자리는 `dateBasis: 'own'` 을 넘긴다.
+     */
+    const analysis = (range.dateBasis ?? 'analysis') === 'analysis';
+    const period = periodFilter({ ...range, yearMonth: undefined, dateBasis: analysis ? 'analysis' : 'own' });
+    const dateColumn = analysis
+      ? `COALESCE((SELECT o.date FROM entry o WHERE o.id = e.paybackOfEntryId), e.date) AS date`
+      : 'e.date';
     const rows = await this.db.all<Row>(
       `SELECT p.categoryId, c.type AS categoryType, c.name AS categoryName,
               c.parentId AS parentCategoryId, parent.name AS parentCategoryName,
-              p.baseAmount, e.date${plan},
+              p.baseAmount, ${dateColumn}${plan},
               /*
                * 이 줄에 붙은 태그. 걸린 줄만 남기는 판정기가 읽는다.
                *
@@ -1285,8 +1298,8 @@ export class LocalStore {
          JOIN entry e ON e.id = p.entryId
          JOIN category c ON c.id = p.categoryId
          LEFT JOIN category parent ON parent.id = c.parentId
-        WHERE e.projectId = ? AND e.dateKey >= ? AND e.dateKey <= ?${owner.sql}${search.sql}`,
-      [projectId, range.fromDateKey, range.toDateKey, ...owner.params, ...search.params],
+        WHERE e.projectId = ?${period.sql}${owner.sql}${search.sql}`,
+      [projectId, ...period.params, ...owner.params, ...search.params],
     );
 
     /*
@@ -1834,13 +1847,21 @@ export class LocalStore {
     const search = searchFilter(range.search);
     const period = periodFilter(range);
     const category = categoryLegFilter(range.category, range.categoryType);
+    const paybackOf = paybackOfFilter(range.paybackOf);
     const entries = await this.db.all<Row>(
       `SELECT e.*, p.name AS personName
          FROM entry e
          LEFT JOIN person p ON p.id = e.personId
-        WHERE e.projectId = ?${period.sql}${owner.sql}${search.sql}${category.sql}
+        WHERE e.projectId = ?${period.sql}${owner.sql}${search.sql}${category.sql}${paybackOf.sql}
         ORDER BY e.date DESC, e.id DESC`,
-      [projectId, ...period.params, ...owner.params, ...search.params, ...category.params],
+      [
+        projectId,
+        ...period.params,
+        ...owner.params,
+        ...search.params,
+        ...category.params,
+        ...paybackOf.params,
+      ],
     );
     if (entries.length === 0) return [];
 
@@ -2480,6 +2501,24 @@ export class LocalStore {
       byEntry.set(String(row.entryId), list);
     }
 
+    /*
+     * 페이백이 가리키는 원거래의 날짜. 분석 화면이 그 날짜로 센다 (`EntryListItem.paybackOfDate`).
+     * 원거래가 사본에 없으면 비운다 -- 링크가 빈 페이백과 같게 읽힌다.
+     */
+    const originIds = [
+      ...new Set(entries.map((entry) => asText(entry.paybackOfEntryId)).filter((id): id is string => !!id)),
+    ];
+    const originDates = new Map(
+      originIds.length === 0
+        ? []
+        : (
+            await this.db.all<Row>(
+              `SELECT id, date FROM entry WHERE id IN (${originIds.map(() => '?').join(', ')})`,
+              originIds,
+            )
+          ).map((row) => [String(row.id), String(row.date)] as const),
+    );
+
     return entries.map((entry) => ({
       id: String(entry.id),
       date: String(entry.date),
@@ -2495,6 +2534,14 @@ export class LocalStore {
       discountCountsPerformance: Boolean(entry.discountCountsPerformance),
       // 목록 한 줄에 실린다. 서버 창구를 쓰는 화면이 수정할 때 이 값을 되돌려 준다.
       updatedHlc: asText(entry.updatedHlc),
+      paybackOfEntryId: asText(entry.paybackOfEntryId),
+      paybackOfLineKey: asText(entry.paybackOfLineKey),
+      paybackType: asText(entry.paybackType),
+      paybackOf: (() => {
+        const origin = asText(entry.paybackOfEntryId);
+        const date = origin ? originDates.get(origin) : undefined;
+        return date ? { date } : null;
+      })(),
       postings: byEntry.get(String(entry.id)) ?? [],
       tags: tagsByEntry.get(String(entry.id)) ?? [],
     }));
@@ -2523,6 +2570,7 @@ export class LocalStore {
     const search = searchFilter(options.search);
     const period = periodFilter(options);
     const card = cardFilter(options.cardId);
+    const paybackOf = paybackOfFilter(options.paybackOf);
     const cursor = options.cursor;
     // 튜플 비교. (date, id) < (커서의 date, 커서의 id)
     const keyset = cursor ? ` AND (e.date < ? OR (e.date = ? AND e.id < ?))` : '';
@@ -2530,7 +2578,7 @@ export class LocalStore {
 
     const rows = await this.db.all<Row>(
       `SELECT e.id FROM entry e
-        WHERE e.projectId = ?${period.sql}${owner.sql}${search.sql}${card.sql}${keyset}
+        WHERE e.projectId = ?${period.sql}${owner.sql}${search.sql}${card.sql}${paybackOf.sql}${keyset}
         ORDER BY e.date DESC, e.id DESC
         LIMIT ?`,
       [
@@ -2539,6 +2587,7 @@ export class LocalStore {
         ...owner.params,
         ...search.params,
         ...card.params,
+        ...paybackOf.params,
         ...keysetParams,
         options.limit + 1,
       ],
@@ -2718,6 +2767,10 @@ export class LocalStore {
          * "아직 서버에 없다"가 값으로 남는다.
          */
         updatedVersion: 0,
+        // 페이백의 원거래. 조립이 사본에서 원거래를 찾지 못했으면 이미 비워 왔다.
+        paybackOfEntryId: built.paybackOfEntryId ?? null,
+        paybackOfLineKey: built.paybackOfLineKey ?? null,
+        paybackType: built.paybackType ?? null,
       });
 
       await this.db.run(
@@ -3249,6 +3302,11 @@ export class LocalStore {
         [id],
       );
       await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [id]);
+      /*
+       * 걸린 환불·페이백의 링크를 비운다. 서버는 원거래와 함께 그것들도 지워 자리표를 따로
+       * 보내므로(7-6) 보통은 곧 사라진다. 그 전의 서버가 지운 것(링크만 빈 것)도 받아 둔다.
+       */
+      await this.db.run(`UPDATE entry SET paybackOfEntryId = NULL WHERE paybackOfEntryId = ?`, [id]);
     }
     if (table === 'budget') {
       // 부모가 사라지면 그 달 조정도 함께 사라진다 (서버도 cascade 로 지운다).
@@ -3304,16 +3362,24 @@ export class LocalStore {
     });
   }
 
-  /** 전표를 사본에서 지운다. 딸린 다리와 할부 계획도 함께 간다. */
+  /**
+   * 전표를 사본에서 지운다. 딸린 다리와 할부 계획도 함께 간다.
+   *
+   * 걸린 환불·페이백도 함께 지운다. 서버 원장의 `deleteEntry` 와 같다 (PAYBACK_DESIGN.md 7-6) --
+   * 명령은 원거래 하나만 올라가고, 서버가 같은 것을 지워 자리표로 돌려준다.
+   */
   async removeEntry(entryId: string): Promise<void> {
     await this.db.transaction(async () => {
-      await this.db.run(
-        `DELETE FROM installment_plan
-          WHERE postingId IN (SELECT id FROM posting WHERE entryId = ?)`,
-        [entryId],
-      );
-      await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [entryId]);
-      await this.db.run(`DELETE FROM entry WHERE id = ?`, [entryId]);
+      const paybacks = await this.db.all<Row>(`SELECT id FROM entry WHERE paybackOfEntryId = ?`, [entryId]);
+      for (const id of [entryId, ...paybacks.map((row) => String(row.id))]) {
+        await this.db.run(
+          `DELETE FROM installment_plan
+            WHERE postingId IN (SELECT id FROM posting WHERE entryId = ?)`,
+          [id],
+        );
+        await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [id]);
+        await this.db.run(`DELETE FROM entry WHERE id = ?`, [id]);
+      }
     });
   }
 
@@ -3385,6 +3451,70 @@ export class LocalStore {
       [accountId, projectId],
     );
     return asText(rows[0]?.id);
+  }
+
+  /**
+   * 페이백이 가리키는 원거래의 분류 다리. 원거래가 사본에 없으면 null.
+   *
+   * 조립(`LedgerLookup.paybackTarget`)이 원거래가 페이백인지와 줄의 분류를 정하는 데 쓴다.
+   */
+  async paybackTargetLegs(
+    projectId: string,
+    entryId: string,
+  ): Promise<Array<{ lineKey: string | null; categoryId: string; categoryType: string; baseAmount: string }> | null> {
+    const entry = await this.db.all<Row>(`SELECT id FROM entry WHERE id = ? AND projectId = ?`, [
+      entryId,
+      projectId,
+    ]);
+    if (entry.length === 0) return null;
+    const rows = await this.db.all<Row>(
+      `SELECT p.lineKey, p.categoryId, c.type AS categoryType, p.baseAmount
+         FROM posting p JOIN category c ON c.id = p.categoryId
+        WHERE p.entryId = ?`,
+      [entryId],
+    );
+    return rows.map((row) => ({
+      lineKey: asText(row.lineKey),
+      categoryId: String(row.categoryId),
+      categoryType: String(row.categoryType),
+      baseAmount: String(row.baseAmount),
+    }));
+  }
+
+  /**
+   * 원거래에 걸린 환불·페이백과 그 분류 다리. 원거래를 고칠 때 맞추고(`planPaybackRebind`),
+   * 새로 적을 때 상한을 보는 데 쓴다 (서버 원장과 같은 규칙).
+   */
+  async paybacksOf(
+    entryId: string,
+  ): Promise<Array<{ id: string; lineKey: string | null; categoryId: string | null; baseAmount: string }>> {
+    const rows = await this.db.all<Row>(
+      `SELECT e.id, e.paybackOfLineKey AS lineKey, p.categoryId, p.baseAmount
+         FROM entry e
+         JOIN posting p ON p.entryId = e.id AND p.categoryId IS NOT NULL
+        WHERE e.paybackOfEntryId = ?`,
+      [entryId],
+    );
+    return rows.map((row) => ({
+      id: String(row.id),
+      lineKey: asText(row.lineKey),
+      categoryId: asText(row.categoryId),
+      baseAmount: String(row.baseAmount),
+    }));
+  }
+
+  /**
+   * 환불·페이백을 원거래의 다른 줄·분류로 옮긴다. 원거래를 고친 뒤 사본에서 곧바로 맞춘다 --
+   * 서버도 같은 일을 하고 다음 pull 이 그 결과로 덮는다.
+   */
+  async movePayback(paybackId: string, lineKey: string, categoryId: string): Promise<void> {
+    await this.db.transaction(async () => {
+      await this.db.run(`UPDATE posting SET categoryId = ? WHERE entryId = ? AND categoryId IS NOT NULL`, [
+        categoryId,
+        paybackId,
+      ]);
+      await this.db.run(`UPDATE entry SET paybackOfLineKey = ? WHERE id = ?`, [lineKey, paybackId]);
+    });
   }
 
   async categoriesByIds(
@@ -4368,6 +4498,25 @@ export interface MirrorEntryScope {
    * 읽히지 않는 값이라 켤 때만 붙인다.
    */
   withInstallment?: boolean;
+  /**
+   * 기간을 어느 날짜로 볼지 (PAYBACK_DESIGN.md).
+   *
+   *   own       전표 날짜. 목록(`viewEntries`·`viewEntriesPage`)의 기본이다.
+   *   analysis  연결된 페이백은 원거래 날짜. 분석 행(`categoryPostings`)의 기본이다.
+   *
+   * 서버의 `dateBasis`·`ownDate` 와 같은 갈림이다.
+   */
+  dateBasis?: 'own' | 'analysis';
+  /** 이 원거래에 걸린 페이백만 (서버 목록의 `paybackOf`). */
+  paybackOf?: string;
+}
+
+/**
+ * 원거래 조건. 그 원거래에 걸린 페이백만.
+ */
+function paybackOfFilter(paybackOf?: string): { sql: string; params: string[] } {
+  if (!paybackOf) return { sql: '', params: [] };
+  return { sql: ' AND e.paybackOfEntryId = ?', params: [paybackOf] };
 }
 
 /**
@@ -4411,14 +4560,26 @@ function cardFilter(cardId?: string): { sql: string; params: string[] } {
   };
 }
 
-/** 기간 조건. 달 이름이 있으면 그것이 앞선다. */
+/**
+ * 기간 조건. 달 이름이 있으면 그것이 앞선다.
+ *
+ * 분석 기준(`dateBasis: 'analysis'`)이면 연결된 페이백을 원거래의 날짜로 고른다. 원거래가
+ * 사본에 없으면(지워졌는데 비운 링크가 아직 오지 않았다) 자기 날짜로 본다 -- 서버가 링크를
+ * 비운 뒤와 같은 결과다. 서버 `analysisDateCondition` 의 짝이다.
+ */
 function periodFilter(range: MirrorEntryScope): { sql: string; params: string[] } {
-  if (range.yearMonth) {
-    return { sql: ' AND e.yearMonth = ?', params: [range.yearMonth] };
-  }
+  const own = range.yearMonth
+    ? { sql: 'e.yearMonth = ?', params: [range.yearMonth] }
+    : { sql: 'e.dateKey >= ? AND e.dateKey <= ?', params: [range.fromDateKey, range.toDateKey] };
+  if (range.dateBasis !== 'analysis') return { sql: ` AND ${own.sql}`, params: own.params };
+
+  const original = range.yearMonth
+    ? { sql: 'o.yearMonth = ?', params: [range.yearMonth] }
+    : { sql: 'o.dateKey >= ? AND o.dateKey <= ?', params: [range.fromDateKey, range.toDateKey] };
   return {
-    sql: ' AND e.dateKey >= ? AND e.dateKey <= ?',
-    params: [range.fromDateKey, range.toDateKey],
+    sql: ` AND ((${own.sql} AND NOT EXISTS (SELECT 1 FROM entry o WHERE o.id = e.paybackOfEntryId))
+           OR EXISTS (SELECT 1 FROM entry o WHERE o.id = e.paybackOfEntryId AND ${original.sql}))`,
+    params: [...own.params, ...original.params],
   };
 }
 
@@ -4437,8 +4598,9 @@ function periodFilter(range: MirrorEntryScope): { sql: string; params: string[] 
  *
  * **지출·수입은 카테고리 기준, 이체·카드정산은 자금 이동 기준이다.**
  *
- *   지출     지출 카테고리 다리가 있는 전표
+ *   지출     지출 카테고리 다리(0 이상)가 있는 전표
  *   수입     수입 카테고리 다리가 있는 전표
+ *   페이백   지출 카테고리 다리가 음수인 전표 (지출을 되돌려 받은 돈)
  *   이체     계좌 사이를 옮긴 돈 (신용카드·기초잔액이 끼지 않은)
  *   카드정산 계좌 사이를 옮긴 돈 중 신용카드 부채 계정이 끼는 것
  *   조정     기초잔액 계정이 끼는 것
@@ -4466,11 +4628,14 @@ function kindFilter(kinds?: readonly string[]): string {
        SELECT 1 FROM posting kp JOIN account ka ON ka.id = kp.accountId
         WHERE kp.entryId = e.id AND ka.type = '${type}'
      )`;
-  const categoryType = (type: string) =>
+  const categoryType = (type: string, extra = '') =>
     `EXISTS (
        SELECT 1 FROM posting kp JOIN category kc ON kc.id = kp.categoryId
-        WHERE kp.entryId = e.id AND kc.type = '${type}'
+        WHERE kp.entryId = e.id AND kc.type = '${type}'${extra}
      )`;
+  // 지출과 페이백은 같은 지출 분류를 쓰고 부호로 갈린다 (서버 entryKindCondition 과 같다).
+  const paybackLeg = ` AND substr(kp.baseAmount, 1, 1) = '-'`;
+  const expenseLeg = ` AND substr(kp.baseAmount, 1, 1) != '-'`;
 
   const of = (kind: string): string => {
     switch (kind) {
@@ -4482,8 +4647,10 @@ function kindFilter(kinds?: readonly string[]): string {
         return `(${moves} AND NOT ${accountType('credit_card')} AND NOT ${accountType('opening_balance')})`;
       case 'income':
         return categoryType('income');
+      case 'payback':
+        return categoryType('expense', paybackLeg);
       default:
-        return categoryType('expense');
+        return categoryType('expense', expenseLeg);
     }
   };
 

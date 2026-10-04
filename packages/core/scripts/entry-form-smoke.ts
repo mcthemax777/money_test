@@ -26,14 +26,22 @@ import {
   accountValue,
   cardValue,
   checkEntryForm,
+  defaultCountsPerformance,
   emptyEntryForm,
   entryFormFromItem,
   entryFormToRequest,
   newSplitLine,
   parseMethod,
+  paybackFormFrom,
   type EntryFormValues,
 } from '../src/data/entry-form';
 import { createLocalEntryWriter } from '../src/data/local-entry-writer';
+import {
+  checkPaybackDrafts,
+  newPaybackDraft,
+  paybackDraftRequest,
+  type PaybackDraft,
+} from '../src/lib/payback-drafts';
 import { httpHomePort } from '../src/data/home-port';
 import {
   installmentInterestInputs,
@@ -91,6 +99,9 @@ const validExpense: EntryFormValues = {
   tagIds: [],
   // 새로 적는 폼과 같다. 딛고 선 판이 없다는 뜻이라, 저장은 수정이 아니라 생성으로 간다.
   baseHlc: null,
+  paybackOfEntryId: '',
+  paybackOfLineKey: '',
+  paybackType: 'payback',
 };
 
 /** 신용카드 부채 계정. 이체 양쪽이 다 카드인지 가리는 검사가 이 목록을 본다. */
@@ -543,6 +554,104 @@ const codeOf = (values: Partial<EntryFormValues>) =>
       entryFormToRequest({ ...discounted, currency: 'USD', exchangeRate: '1385.2' }, KST),
     false);
 
+  // ── 3-4. 페이백 (PAYBACK_DESIGN.md 7단계) ──
+  //
+  // 원거래에서 새 페이백을 채우고, 분할이면 줄을 고르게 하고, 짐에 링크를 싣는다.
+  const lunch = installmentItem({
+    id: 'e-lunch', description: '회식', amount: '100000', installmentMonths: null,
+    installmentInterest: null, installmentInterestShares: null, cardId: null, cardName: null,
+    accountId: 'a1', accountName: '월급통장',
+    lines: [
+      { lineKey: 'l-food', categoryId: 'c-food', categoryName: '식비', parentCategoryId: null,
+        parentCategoryName: null, amount: '100000', discountAmount: null, tags: [], matched: true },
+    ] as never,
+  });
+  const fromLunch = paybackFormFrom(lunch, KST);
+  eq('페이백 폼의 갈래', fromLunch.kind, 'payback');
+  eq('줄이 하나면 그 줄과 그 분류', `${fromLunch.paybackOfLineKey} ${fromLunch.categoryId}`, 'l-food c-food');
+  eq('들어온 곳의 기본은 원거래의 수단', fromLunch.method, accountValue('a1'));
+  eq('금액은 비워 둔다', fromLunch.amount, '');
+  eq('카드 실적 기본은 제외', fromLunch.countsPerformance, false);
+  const paybackRequest = entryFormToRequest({ ...fromLunch, amount: '90000' }, KST);
+  eq('짐에 링크가 실린다', `${paybackRequest.kind} ${paybackRequest.paybackOfEntryId} ${paybackRequest.paybackOfLineKey}`, 'payback e-lunch l-food');
+  eq('짐의 분류와 계좌', `${paybackRequest.categoryId} ${paybackRequest.accountId}`, 'c-food a1');
+
+  const martSplit = installmentItem({
+    id: 'e-mart', installmentMonths: null, installmentInterest: null, installmentInterestShares: null,
+    splitCount: 2,
+    lines: [
+      { lineKey: 'l-a', categoryId: 'c-a', categoryName: '식비', parentCategoryId: null,
+        parentCategoryName: null, amount: '5000', discountAmount: null, tags: [], matched: true },
+      { lineKey: 'l-b', categoryId: 'c-b', categoryName: '생활', parentCategoryId: null,
+        parentCategoryName: null, amount: '5000', discountAmount: null, tags: [], matched: true },
+    ] as never,
+  });
+  const fromSplit = paybackFormFrom(martSplit, KST);
+  eq('분할이면 줄을 비워 둔다', fromSplit.paybackOfLineKey, '');
+  eq('줄을 고르지 않으면 막는다', checkEntryForm({ ...fromSplit, amount: '1000' })?.code, 'PAYBACK_LINE_REQUIRED');
+  eq('줄을 고르면 통과', checkEntryForm({ ...fromSplit, amount: '1000', paybackOfLineKey: 'l-b', categoryId: 'c-b' }), null);
+  eq('카드로 낸 원거래면 카드가 기본', fromSplit.method, cardValue('card1'));
+
+  // 고칠 때는 목록 한 줄에서 되돌린다. 링크를 그대로 들고 있어야 저장해도 비지 않는다.
+  const storedPayback = installmentItem({
+    id: 'e-back', kind: 'payback', amount: '90000', installmentMonths: null, installmentInterest: null,
+    installmentInterestShares: null, cardId: null, cardName: null, accountId: 'a1',
+    paybackOfEntryId: 'e-lunch', paybackOfLineKey: 'l-food', paybackOfDate: '2026-03-01T03:00:00.000Z',
+    lines: [
+      { lineKey: 'l-back', categoryId: 'c-food', categoryName: '식비', parentCategoryId: null,
+        parentCategoryName: null, amount: '90000', discountAmount: null, tags: [], matched: true },
+    ] as never,
+  } as never);
+  const reopened = entryFormFromItem(storedPayback, KST);
+  eq('페이백을 고치려고 열 수 있다', reopened?.kind, 'payback');
+  eq('금액과 자기 줄 키', `${reopened?.amount} ${reopened?.lineKey}`, '90000 l-back');
+  eq('링크가 그대로', `${reopened?.paybackOfEntryId} ${reopened?.paybackOfLineKey}`, 'e-lunch l-food');
+  eq('갈래를 수입으로 바꾸면 짐에 링크가 없다',
+    entryFormToRequest({ ...reopened!, kind: 'income' }, KST).paybackOfEntryId, undefined);
+
+  // ── 3-4-2. 환불과 페이백 (7-3) ──
+  //
+  // 종류가 카드 실적의 기본값을 정한다. 기본값과 같으면 짐에 싣지 않고 조립이 같은 값으로 채운다.
+  eq('환불의 실적 기본은 뺀다', defaultCountsPerformance('payback', 'refund'), true);
+  eq('페이백의 실적 기본은 그대로', defaultCountsPerformance('payback', 'payback'), false);
+  const refundForm = { ...fromLunch, amount: '1000', method: cardValue('card1'), paybackType: 'refund' as const, countsPerformance: true };
+  const refundRequest = entryFormToRequest(refundForm, KST);
+  eq('짐에 종류가 실린다', refundRequest.paybackType, 'refund');
+  eq('기본값과 같은 실적은 싣지 않는다', refundRequest.countsPerformance, undefined);
+  eq('기본값과 다른 실적은 싣는다', entryFormToRequest({ ...refundForm, countsPerformance: false }, KST).countsPerformance, false);
+  eq('고칠 때 종류가 되살아난다',
+    entryFormFromItem({ ...storedPayback, paybackType: 'refund' } as never, KST)?.paybackType, 'refund');
+
+  // ── 3-5. 거래 폼에서 함께 적는 페이백 ──
+  //
+  // 지출을 저장하기 전에 막을 것은 막고, 저장한 뒤에는 그 지출의 줄에 걸린 요청을 만든다.
+  const formLines = [
+    { lineKey: 'l-a', categoryId: 'c-a' },
+    { lineKey: 'l-b', categoryId: 'c-b' },
+  ];
+  const draftOf = (over: Partial<PaybackDraft> = {}): PaybackDraft => ({
+    ...newPaybackDraft(KST, { method: accountValue('a1') }),
+    amount: '3000',
+    ...over,
+  });
+  eq('금액이 빈 줄은 건너뛴다', checkPaybackDrafts([draftOf({ amount: '' })], formLines), null);
+  eq('금액 0 은 막는다', checkPaybackDrafts([draftOf({ amount: '0' })], formLines)?.code, 'AMOUNT_INVALID');
+  eq('분할이면 줄을 골라야 한다', checkPaybackDrafts([draftOf()], formLines)?.code, 'PAYBACK_LINE_REQUIRED');
+  eq('없는 날은 막는다', checkPaybackDrafts([draftOf({ lineKey: 'l-a', dateKey: '2026-02-31' })], formLines)?.code, 'DATE_INVALID');
+  eq('줄이 하나면 고르지 않아도 된다', checkPaybackDrafts([draftOf()], [formLines[0]]), null);
+  eq('분류를 아직 고르지 않은 줄', checkPaybackDrafts([draftOf()], [{ lineKey: 'l-a', categoryId: '' }])?.code, 'CATEGORY_REQUIRED');
+  const draftRequest = paybackDraftRequest(
+    draftOf({ lineKey: 'l-b', dateKey: '2026-10-01', timeKey: '12:00', method: cardValue('card1') }),
+    { id: 'e-new', personId: 'p1', description: '마트', lines: formLines },
+    KST,
+  );
+  eq('요청은 그 지출의 그 줄에 걸린 페이백',
+    `${draftRequest.kind} ${draftRequest.paybackOfEntryId} ${draftRequest.paybackOfLineKey} ${draftRequest.categoryId}`,
+    'payback e-new l-b c-b');
+  eq('들어온 곳과 날짜', `${draftRequest.cardId} ${draftRequest.date}`, 'card1 2026-10-01T03:00:00.000Z');
+  eq('설명과 사람은 원거래의 것', `${draftRequest.description} ${draftRequest.personId}`, '마트 p1');
+  eq('페이백 자신의 줄 키는 새로 만든다', Boolean(draftRequest.lineKey) && draftRequest.lineKey !== 'l-b', true);
+
   // ── 4. 왕복이 거래를 바꾸지 않는가 ──
   const dumpPath = process.argv[2] ?? '/tmp/sync-push-dump.json';
   if (!existsSync(dumpPath)) {
@@ -679,6 +788,29 @@ const codeOf = (values: Partial<EntryFormValues>) =>
 
   // 건너뛰는 것은 외화 분할 하나뿐이다(위에서 열지 않는 것을 확인했다). 넷 갈래는 다 다룬다.
   eq('건너뛴 거래는 외화 분할뿐이다', skipped, foreignSplit ? 1 : 0);
+
+  /*
+   * 앱 창구(사본)가 페이백의 링크를 명령 짐에 싣는가.
+   *
+   * 빠뜨리면 서버가 링크 없는 페이백으로 들여, 분석이 원거래의 달로 옮겨 세지 못한다.
+   * 타입이 막지 않는 자리다 (전부 선택 필드다).
+   */
+  const plainExpense = dump.server.entries.find(
+    (row) => row.kind === 'expense' && row.lines.length === 1 && !row.originalCurrency,
+  );
+  if (plainExpense) {
+    const paybackForm = { ...paybackFormFrom(plainExpense, KST), amount: '1' };
+    await writer.createEntry({ ...entryFormToRequest(paybackForm, KST), id: 'payback-from-device' });
+    const queued = (await store.pendingMutations(projectId)).find((row) =>
+      row.targets.includes('payback-from-device'),
+    );
+    const payload = queued?.payload as { paybackOfEntryId?: string; paybackOfLineKey?: string } | undefined;
+    eq('앱 창구가 짐에 링크를 싣는다',
+      `${payload?.paybackOfEntryId} ${payload?.paybackOfLineKey}`,
+      `${plainExpense.id} ${plainExpense.lines[0].lineKey}`);
+  } else {
+    eq('앱 창구가 짐에 링크를 싣는다', 'no-sample', 'sample');
+  }
 
   driver.close();
   console.log(fail === 0 ? '\n전부 통과' : `\n실패 ${fail}건`);

@@ -747,6 +747,28 @@ model JournalEntry {
 
   createdByUserId String? // 입력자 추적용. 조회 필터로 쓰지 않는다 (프로젝트 멤버는 모두 같은 데이터를 본다)
 
+  // 이 전표가 페이백이면 그 원거래와 그 줄 (PAYBACK_DESIGN.md).
+  //
+  // 페이백은 계좌 +X 와 원거래 줄의 분류 −X 두 다리로 선다. 잔액·원장·종류 판정은 다리만
+  // 보고 맞는다 -- **이 링크는 분석에서 날짜를 원거래 것으로 옮기는 데만 쓴다.** 걷어낸
+  // 되돌림 전표(20260916140000_drop_entry_reversal)처럼 다른 로직이 링크에 기대면 안 된다.
+  //
+  // 원거래를 지우면 링크만 빈다(SetNull). 이미 들어온 돈의 기록은 남고, 그때부터는 자기
+  // 날짜의 음수 지출로 셈된다.
+  //
+  // 줄은 `(paybackOfEntryId, paybackOfLineKey)` 로 가리킨다. 다리에 외래 키를 걸지 않는
+  // 까닭: 원거래를 고치면 다리가 새로 만들어져 링크가 매번 끊긴다(Posting.lineKey 참고).
+  // 그래서 원거래 편집으로 그 줄이 사라질 수 있고, 링크가 빈 뒤에도 이 값은 남는다 --
+  // 읽는 쪽은 `paybackOfEntryId` 가 있을 때만 이 값을 본다.
+  paybackOfEntryId String?
+  paybackOfLineKey String?
+  // 돌아온 돈의 종류. 'payback'(캐시백) | 'refund'(환불·결제 취소). 페이백 전표에만 있다.
+  //
+  // 장부와 분석은 둘을 같게 다룬다 -- 원거래의 줄을 되돌린 돈이다. 다른 것은 카드 실적의
+  // 기본값(환불은 실적도 깎고, 캐시백은 깎지 않는다)과 화면의 이름뿐이다. 비어 있으면
+  // 페이백이다 (이 칸이 생기기 전의 행).
+  paybackType String?
+
   project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
   person    Person       @relation(fields: [personId], references: [id])
   createdBy User?        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
@@ -754,6 +776,9 @@ model JournalEntry {
   tags      EntryTag[]
   /// 이 전표를 만들어 낸 보관함 후보. 대개 없다 (손으로 적은 거래).
   drafts    EntryDraft[]
+  /// 이 전표가 페이백이면 그 원거래, 원거래면 걸린 페이백들.
+  paybackOf JournalEntry?  @relation("EntryPayback", fields: [paybackOfEntryId], references: [id], onDelete: SetNull)
+  paybacks  JournalEntry[] @relation("EntryPayback")
 
   /// 변경 피드가 보는 번호. Project.syncVersion 에서 발급된다.
   updatedVersion Int @default(0)
@@ -773,6 +798,8 @@ model JournalEntry {
   @@index([projectId, updatedVersion])
   @@index([projectId, personId, date])
   @@index([createdByUserId])
+  // 원거래 상세의 페이백 목록과, 분석이 "원거래 날짜가 창 안인 페이백"으로 범위를 넓힐 때.
+  @@index([paybackOfEntryId])
 }
 
 // 전표의 개별 다리(leg). accountId 와 categoryId 중 정확히 하나만 채운다.

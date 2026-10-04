@@ -96,6 +96,15 @@ runSmoke('sync-pull-dump', async (ctx) => {
     kind: 'expense', personId: other.id, date: '2026-08-06T18:00:00.000Z',
     description: '영희 점심', amount: '9000', categoryId: lunch.id, accountId: bank.id,
   }, pid);
+  /*
+   * 링크 없는 페이백 하나 (지출 분류 -, 통장 +). 유형 필터가 지출과 페이백을 부호로 가르는지
+   * 사본에서 견주려고 둔다. 7월에 둔다 -- 아래 검사들이 8월부터를 보므로 손으로 적어 둔
+   * 합계가 함께 움직이지 않는다.
+   */
+  await entries.createEntry(uid, {
+    kind: 'payback', personId: person.id, date: '2026-07-20T03:00:00.000Z',
+    description: '캐시백', amount: '2000', categoryId: dining.id, accountId: bank.id,
+  } as never, pid);
   await budgets.createBudget(uid, { categoryId: dining.id, monthlyAmount: '300000' }, pid);
 
   /*
@@ -334,7 +343,7 @@ runSmoke('sync-pull-dump', async (ctx) => {
      */
     kindEntries: Object.fromEntries(
       await Promise.all(
-        ['expense', 'income', 'transfer', 'card_payment', 'adjustment'].map(async (kind) => [
+        ['expense', 'income', 'payback', 'transfer', 'card_payment', 'adjustment'].map(async (kind) => [
           kind,
           (await entries.getEntries(uid, { kinds: kind, limit: 200 }, pid)).data.map((row) => row.id),
         ]),

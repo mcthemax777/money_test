@@ -63,8 +63,15 @@
  * 31 은 반복 등록에 필드별 시계(`recurring_rule.fieldHlc`)가 생긴 판이다. 옛 사본에는 그
  * 칸이 없어 끊긴 채 고친 반복이 "본 값의 시계" 없이 나가고, 다른 기기의 편집에 밀린 뒤
  * 다시 내도 계속 밀린다.
+ *
+ * 32 는 전표에 페이백 링크(`entry.paybackOfEntryId`·`paybackOfLineKey`)가 생긴 판이다. 옛
+ * 사본은 그 칸을 받은 적이 없어 커서만 이어 가면 지난 페이백이 영영 원거래의 달로 옮겨
+ * 세지지 않는다.
+ *
+ * 33 은 전표에 돌아온 돈의 종류(`entry.paybackType`, 환불·페이백)가 생긴 판이다. 옛 사본은 그
+ * 칸이 없어 환불이 페이백으로 보인다.
  */
-export const SCHEMA_VERSION = 31;
+export const SCHEMA_VERSION = 33;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -256,7 +263,15 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
       * 명령을 만들 때 이 값보다 뒤인 시계를 발급한다 (hlcReceive).
       */
      updatedHlc      TEXT,
-     updatedVersion  INTEGER NOT NULL DEFAULT 0
+     updatedVersion  INTEGER NOT NULL DEFAULT 0,
+     /*
+      * 페이백의 원거래와 그 줄 (PAYBACK_DESIGN.md). 분석이 이 전표를 원거래의 달로 옮겨 센다.
+      * 원거래를 지우면 서버처럼 비운다 (forgetRow·removeEntry).
+      */
+     paybackOfEntryId TEXT,
+     paybackOfLineKey TEXT,
+     /* 돌아온 돈의 종류 ('payback' | 'refund'). 비면 페이백이다. 화면의 이름과 실적 기본값만 본다. */
+     paybackType      TEXT
    )`,
 
   /*
@@ -540,6 +555,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
   // 목록과 월 집계가 쓰는 색인. 전표는 (프로젝트, 달) 과 (프로젝트, 날짜) 로 고른다.
   `CREATE INDEX IF NOT EXISTS entry_month_idx ON entry (projectId, yearMonth)`,
   `CREATE INDEX IF NOT EXISTS entry_date_idx ON entry (projectId, dateKey)`,
+  // 원거래에 걸린 페이백 찾기와, 분석이 원거래 날짜로 범위를 고칠 때.
+  `CREATE INDEX IF NOT EXISTS entry_payback_idx ON entry (paybackOfEntryId)`,
   `CREATE INDEX IF NOT EXISTS posting_entry_idx ON posting (entryId)`,
   `CREATE INDEX IF NOT EXISTS posting_category_idx ON posting (categoryId)`,
   `CREATE INDEX IF NOT EXISTS posting_account_idx ON posting (accountId)`,

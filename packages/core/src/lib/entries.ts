@@ -73,6 +73,12 @@ export function groupEntriesByBucket<T extends { date: string | Date }>(
  */
 export function expenseAmountOf(entry: EntryListItem): number {
   if (entry.kind === 'expense') return toNumber(matchedAmountOf(entry));
+  /*
+   * 페이백은 그 분류의 지출을 되돌린다. 들어온 날짜에 음수로 센다 -- 목록에 그날 한 줄로
+   * 서 있으니 소계가 그 줄과 맞아야 한다 (PAYBACK_DESIGN.md 결정 G). 원거래의 달로 옮겨
+   * 세는 것은 분석의 일이다.
+   */
+  if (entry.kind === 'payback') return -toNumber(matchedAmountOf(entry));
   // 이체 금액은 소비가 아니다. 붙은 수수료만 지출이다.
   if (entry.kind === 'transfer') return toNumber(entry.feeAmount);
   return 0;
@@ -149,7 +155,8 @@ export function entryAmountLook(
    */
   if (amount === 0) return { sign: '', amount: 0, tone: 'neutral' };
 
-  if (entry.kind === 'income') return { sign: '+', amount, tone: 'income' };
+  // 페이백은 들어온 돈이다. 수입과 같은 부호와 색으로 적는다.
+  if (entry.kind === 'income' || entry.kind === 'payback') return { sign: '+', amount, tone: 'income' };
   if (entry.kind === 'expense') return { sign: '-', amount, tone: 'expense' };
   if (entry.kind === 'adjustment') return { sign: '', amount, tone: 'adjustment' };
   return { sign: '', amount, tone: 'neutral' };
@@ -158,6 +165,17 @@ export function entryAmountLook(
 /** 전표 하나가 "수입"에 보태는 금액. 지출과 같이 걸린 줄만 센다. */
 export function incomeAmountOf(entry: EntryListItem): number {
   return entry.kind === 'income' ? toNumber(matchedAmountOf(entry)) : 0;
+}
+
+/**
+ * 분석의 날짜로 옮긴 목록. 연결된 페이백은 원거래 날짜에 선다.
+ *
+ * 분석 화면(분류 상세)의 일별 누적과 사용 패턴이 쓴다. 그 화면의 머리 합계가 리포트
+ * (원거래의 달)에서 오므로 누적의 끝값이 그것과 맞아야 한다 (PAYBACK_DESIGN.md 결정 G).
+ * 목록을 그대로 그리는 자리(거래 탭·가계·달력)는 쓰지 않는다 -- 그쪽은 들어온 날짜다.
+ */
+export function analysisDated(entries: EntryListItem[]): EntryListItem[] {
+  return entries.map((entry) => (entry.paybackOfDate ? { ...entry, date: entry.paybackOfDate } : entry));
 }
 
 /** 날짜별 수입/지출 소계 */

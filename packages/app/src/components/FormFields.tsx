@@ -472,3 +472,39 @@ export function PickerButton({
     </Pressable>
   );
 }
+
+/**
+ * 체크 한 줄. 줄 전체가 누를 자리다.
+ *
+ * 앱에는 체크박스가 없어 네모와 글자를 직접 그린다. 거래 편집기와 페이백 편집기가 함께 쓴다.
+ */
+export function CheckRow({
+  checked,
+  onToggle,
+  label,
+  hint,
+}: {
+  checked: boolean;
+  onToggle: () => void;
+  label: string;
+  hint: string;
+}) {
+  return (
+    <Pressable
+      onPress={onToggle}
+      className="flex-row items-start gap-2 rounded-lg border border-gray-200 p-3"
+    >
+      <View
+        className={`mt-0.5 h-5 w-5 items-center justify-center rounded border ${
+          checked ? 'border-blue-600 bg-blue-600' : 'border-gray-300 bg-white'
+        }`}
+      >
+        {checked ? <Text className="text-xs font-bold text-white">✓</Text> : null}
+      </View>
+      <View className="flex-1">
+        <Text className="text-sm text-gray-900">{label}</Text>
+        <Text className="mt-0.5 text-xs text-gray-500">{hint}</Text>
+      </View>
+    </Pressable>
+  );
+}

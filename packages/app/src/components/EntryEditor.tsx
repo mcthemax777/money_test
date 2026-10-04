@@ -19,6 +19,8 @@ import type { EntryDraftDto, EntryListItem, TagDto } from '@money/types';
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useEntryForm } from '@money/core/hooks/useEntryForm';
+import { usePaybackDrafts } from '@money/core/hooks/usePaybackDrafts';
+import { ENTRY_FORM_VIOLATION_KEY } from '@money/core/lib/entry-form-messages';
 import {
   installmentInterestInputs,
   installmentShareInputs,
@@ -39,12 +41,15 @@ import {
   type EntryFormValues,
 } from '@money/core/data/entry-form';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
+import { paybackCountOf, paybackDeleteNote } from '@money/core/hooks/usePaybacks';
 import { useMyPersonId, useProject, useProjectTimeZone } from '@money/core/store/project';
 
 import { AddAccountModal, AddCardModal, AddPersonModal } from './AssetAddModals';
 import DatePickerPanel from './DatePickerPanel';
-import { CategoryChips, Chip, Chips, Field, PickerButton } from './FormFields';
+import { CategoryChips, CheckRow, Chip, Chips, Field, PickerButton } from './FormFields';
 import Modal from './Modal';
+import PaybackEditor, { type PaybackTarget } from './PaybackEditor';
+import PaybackFormSection from './PaybackFormSection';
 import { AddCategoryModal, AddTagModal } from './QuickAddModals';
 
 /** 갈래 넷. 조정(잔액 맞추기)은 이 폼이 만드는 것이 아니라 여기 없다. */
@@ -65,39 +70,6 @@ const CURRENCIES = ['USD', 'JPY', 'EUR', 'CNY'];
 /** 카드사가 흔히 주는 할부 개월수. 빈 값이 일시불이다. */
 const INSTALLMENT_MONTHS = ['', '2', '3', '6', '12'];
 
-/** 검증이 짚은 자리를 화면의 문구로. 코드 이름은 규칙 쪽 이름 그대로다. */
-const VIOLATION_KEY: Record<string, MessageKey> = {
-  PERSON_REQUIRED: 'editor.personRequired',
-  AMOUNT_INVALID: 'entryForm.amountRequired',
-  DATE_INVALID: 'entryForm.dateInvalid',
-  TIME_INVALID: 'entryForm.timeInvalid',
-  CATEGORY_REQUIRED: 'entryForm.categoryRequired',
-  ACCOUNT_REQUIRED: 'entryForm.accountRequired',
-  FROM_ACCOUNT_REQUIRED: 'entryForm.accountRequired',
-  TO_ACCOUNT_REQUIRED: 'entryForm.toAccountRequired',
-  TRANSFER_SAME_ACCOUNT: 'error.TRANSFER_SAME_ACCOUNT',
-  FEE_INVALID: 'entryForm.feeInvalid',
-  FEE_CATEGORY_REQUIRED: 'editor.feeCategoryRequired',
-  SPLIT_SUM_MISMATCH: 'editor.splitSumMismatch',
-  SPLIT_CATEGORY_REQUIRED: 'editor.splitCategoryRequired',
-  SPLIT_AMOUNT_INVALID: 'editor.splitAmountInvalid',
-  RATE_INVALID: 'editor.rateInvalid',
-  CARD_REQUIRED: 'editor.cardRequired',
-  DISCOUNT_INVALID: 'entryForm.discountInvalid',
-  DISCOUNT_TOO_LARGE: 'entryForm.discountTooLarge',
-  DISCOUNT_AMOUNT_REQUIRED: 'entryForm.discountAmountRequired',
-  INSTALLMENT_INTEREST_REQUIRED: 'entryForm.installmentInterestRequired',
-  INSTALLMENT_INTEREST_CURRENCY: 'entryForm.installmentInterestCurrency',
-  INSTALLMENT_SHARES_COUNT: 'entryForm.installmentSharesCount',
-  INSTALLMENT_SHARE_NEGATIVE: 'entryForm.installmentShareNegative',
-  INSTALLMENT_SHARES_SUM: 'entryForm.installmentSharesSum',
-  INSTALLMENT_PAYMENT_INVALID: 'entryForm.installmentPaymentInvalid',
-  INSTALLMENT_PAYMENT_TOO_SMALL: 'entryForm.installmentPaymentTooSmall',
-  INSTALLMENT_RATE_INVALID: 'entryForm.installmentRateInvalid',
-  INSTALLMENT_INTEREST_SHARES_COUNT: 'entryForm.installmentInterestSharesCount',
-  INSTALLMENT_INTEREST_NEGATIVE: 'entryForm.installmentInterestNegative',
-  TRANSFER_BOTH_CARDS: 'entryForm.bothCards',
-};
 
 export interface EntryEditorProps {
   isOpen: boolean;
@@ -151,6 +123,32 @@ export default function EntryEditor({
     onSaved,
   });
   const { values, setField, violation } = form;
+
+  /** 폼에서 함께 적는 페이백 (지출에만). 지출을 저장한 직후 그 지출에 걸어 저장한다. */
+  const paybackDrafts = usePaybackDrafts(timeZone);
+  /** 함께 적은 페이백을 저장하다 난 오류. 폼 검사의 문구보다 앞에 선다. */
+  const [paybackError, setPaybackError] = useState('');
+  /** 받은 페이백을 눌러 연 페이백 편집기. */
+  const [paybackTarget, setPaybackTarget] = useState<PaybackTarget | null>(null);
+  const [paybackReload, setPaybackReload] = useState(0);
+
+  /**
+   * 함께 적는 페이백이 고를 원거래의 줄. 지출에만 있다. 줄 키는 폼이 들고 있는 그대로라
+   * 저장한 직후 그 줄에 걸 수 있다.
+   */
+  const categoryNameOf = (categoryId: string) =>
+    form.lists.categories.find((category) => category.id === categoryId)?.name ?? '';
+  const paybackLines =
+    values.kind !== 'expense'
+      ? []
+      : values.splits.length > 0
+        ? values.splits.map((split) => ({
+            lineKey: split.lineKey,
+            categoryId: split.categoryId,
+            // 금액을 붙인다. 같은 분류를 두 줄로 나눴어도 가릴 수 있게.
+            label: `${categoryNameOf(split.categoryId) || '-'}${split.amount.trim() ? ` · ${split.amount.trim()}` : ''}`,
+          }))
+        : [{ lineKey: values.lineKey, categoryId: values.categoryId, label: categoryNameOf(values.categoryId) }];
 
   const quickAdd = useQuickAdd(projectId);
 
@@ -294,6 +292,9 @@ export default function EntryEditor({
    */
   useEffect(() => {
     if (!isOpen) return;
+    // 남은 초안은 앞서 연 거래의 것이다.
+    paybackDrafts.reset();
+    setPaybackError('');
 
     if (editing) {
       if (!form.startEdit(editing)) {
@@ -330,8 +331,36 @@ export default function EntryEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, editing, copying, draft]);
 
+  /*
+   * 저장. 지출과 함께 적은 페이백은 지출이 저장된 뒤에 건다.
+   *
+   * 페이백을 저장하다 실패하면 창을 닫지 않는다. 지출은 이미 저장되었고 폼은 그 지출을
+   * 고치는 폼이 되어 있다(useEntryForm.save) -- 다시 누르면 남은 페이백만 저장한다.
+   */
   const save = async () => {
-    if (await form.save()) onClose();
+    setPaybackError('');
+    if (values.kind === 'expense') {
+      const found = paybackDrafts.check(paybackLines);
+      if (found) {
+        setPaybackError(found);
+        return;
+      }
+    }
+    const savedId = await form.save();
+    if (!savedId) return;
+    if (values.kind === 'expense' && paybackDrafts.drafts.length > 0) {
+      const result = await paybackDrafts.saveFor({
+        id: savedId,
+        personId: values.personId,
+        description: values.description.trim(),
+        lines: paybackLines,
+      });
+      if (result.error) {
+        setPaybackError(result.error);
+        return;
+      }
+    }
+    onClose();
   };
 
   /**
@@ -341,8 +370,10 @@ export default function EntryEditor({
    * 닿는 버튼이고, 되돌리는 길이 없으며, 오프라인이면 툼스톤이 먼저 나가 다음 동기화
    * 에서 서버의 거래까지 지운다. 문구는 계좌·카드가 쓰는 것을 함께 쓴다.
    */
-  const remove = () => {
-    Alert.alert(t('account.deleteConfirm'), '', [
+  const remove = async () => {
+    // 원거래면 걸린 환불·페이백도 함께 지워진다. 그 수를 함께 묻는다 (7-6).
+    const note = editing ? paybackDeleteNote(await paybackCountOf(editing, projectId), t) : '';
+    Alert.alert(t('account.deleteConfirm'), note, [
       { text: t('common.cancel'), style: 'cancel' },
       {
         text: t('entryForm.delete'),
@@ -359,11 +390,11 @@ export default function EntryEditor({
   const messageOf = (): string => {
     if (form.error) return form.error;
     if (!violation) return '';
-    const key = VIOLATION_KEY[violation.code];
+    const key = ENTRY_FORM_VIOLATION_KEY[violation.code];
     return key ? t(key) : violation.code;
   };
 
-  const message = messageOf();
+  const message = paybackError || messageOf();
 
   /*
    * 회차 금액 칸에 보일 값. 적어 둔 것이 없으면 개월수로 나눈 기본값이다.
@@ -736,6 +767,7 @@ export default function EntryEditor({
                       />
                     )}
 
+
                     {/*
                       이 줄에서 깎인 금액.
 
@@ -783,7 +815,6 @@ export default function EntryEditor({
                         ) : null}
                       </>
                     ) : null}
-
                     {/*
                       이 줄의 태그.
 
@@ -1172,6 +1203,20 @@ export default function EntryEditor({
             />
           ) : null}
 
+          {/* 페이백. 지출에만 선다 -- 받은 것은 보이고, 여기서 적은 것은 지출과 함께 저장된다. */}
+          {values.kind === 'expense' ? (
+            <PaybackFormSection
+              original={editing ?? null}
+              drafts={paybackDrafts}
+              lines={paybackLines}
+              methodChoices={form.methodChoices}
+              showAssetOwner={form.showAssetOwner}
+              defaultMethod={values.method}
+              reloadToken={paybackReload}
+              onOpenPayback={(payback) => setPaybackTarget({ editing: payback })}
+            />
+          ) : null}
+
           {/*
           태그. 갈래를 가리지 않으므로 이체에도 뜬다.
 
@@ -1301,47 +1346,22 @@ export default function EntryEditor({
         isSubmitting={quickAdd.isSubmitting}
         onSubmit={(input) => addThenPick(quickAdd.addTag(input), form.toggleTag)}
       />
+
+      {/* 받은 페이백을 눌러 연 페이백 편집기. 저장하면 폼의 "받은 페이백"을 다시 읽는다. */}
+      <PaybackEditor
+        target={paybackTarget}
+        onClose={() => setPaybackTarget(null)}
+        /*
+          폼의 "받은 페이백"만 다시 읽는다. 화면의 목록은 사본이 바뀌면 스스로 다시 읽는다 --
+          여기서 편집기의 onSaved 를 부르면 보관함이 그 값을 "만든 거래"로 받는다.
+        */
+        onSaved={() => setPaybackReload((count) => count + 1)}
+      />
     </>
   );
 }
 
 /** 무엇을 만들지 고르는 줄. 통장과 카드 둘뿐이라 목록 대신 큰 단추 둘이다. */
-/**
- * 체크 한 줄. 줄 전체가 누를 자리다.
- *
- * 앱에는 체크박스가 없어 네모와 글자를 직접 그린다. 실적 관련 칸이 둘이라 한 곳에 둔다.
- */
-function CheckRow({
-  checked,
-  onToggle,
-  label,
-  hint,
-}: {
-  checked: boolean;
-  onToggle: () => void;
-  label: string;
-  hint: string;
-}) {
-  return (
-    <Pressable
-      onPress={onToggle}
-      className="flex-row items-start gap-2 rounded-lg border border-gray-200 p-3"
-    >
-      <View
-        className={`mt-0.5 h-5 w-5 items-center justify-center rounded border ${
-          checked ? 'border-blue-600 bg-blue-600' : 'border-gray-300 bg-white'
-        }`}
-      >
-        {checked ? <Text className="text-xs font-bold text-white">✓</Text> : null}
-      </View>
-      <View className="flex-1">
-        <Text className="text-sm text-gray-900">{label}</Text>
-        <Text className="mt-0.5 text-xs text-gray-500">{hint}</Text>
-      </View>
-    </Pressable>
-  );
-}
-
 function MethodChoice({
   label,
   description,

@@ -15,7 +15,7 @@
  */
 import { Dec } from './decimal';
 import type { EntryDto } from './dtos';
-import type { AccountType } from './entities';
+import type { AccountType, PaybackType } from './entities';
 import {
   ENTRY_SHEET_KINDS,
   entrySheetAssetTypeOf,
@@ -277,7 +277,20 @@ class EntryBuilder {
       };
     }
 
-    // 지출·수입 -- 먼저 읽는다.
+    /*
+     * 페이백은 한 행이다. 원거래의 한 줄을 되돌린 돈이라 나눌 것도 깎을 것도 없다.
+     *
+     * 원거래와의 링크는 표에 싣지 않는다 -- 거래ID 는 그 표 안에서만 뜻이 있어, 다른 가계부로
+     * 가져가면 가리킬 곳이 없다. 가져온 페이백은 링크 없이 서고 자기 날짜의 음수 지출로 셈된다.
+     */
+    // 환불도 페이백 전표다. 다른 것은 종류뿐이다.
+    const paybackType: PaybackType | undefined =
+      kind === 'refund' ? 'refund' : kind === 'payback' ? 'payback' : undefined;
+    if (paybackType) {
+      if (group.length > 1) throw new EntrySheetRowError('환불·페이백은 한 행이어야 합니다. 거래ID 가 겹치지 않는지 보세요.');
+      if (clean(head.discount)) throw new EntrySheetRowError('환불·페이백에는 할인을 적을 수 없습니다.');
+    }
+    // 지출·수입·페이백 -- 먼저 읽는다.
     const parsedLines = group.map((row) => {
       const amount = amountOf(row.amount, '금액');
       const discount = optionalAmount(row.discount, '할인');
@@ -304,7 +317,8 @@ class EntryBuilder {
     const lines = [];
     for (const line of parsedLines) {
       lines.push({
-        categoryId: await this.categoryOf(kind, line.row.parentCategory, line.row.category),
+        // 페이백은 지출 분류를 되돌린다.
+        categoryId: await this.categoryOf(paybackType ? 'expense' : (kind as 'income' | 'expense'), line.row.parentCategory, line.row.category),
         amount: line.amount,
         lineKey: newId(),
         discountAmount: line.discount,
@@ -314,7 +328,9 @@ class EntryBuilder {
 
     const description = text.description ?? text.merchant ?? this.categoryNameOf(lines[0].categoryId);
     const base = {
-      kind,
+      // 환불은 페이백 갈래로 들인다. 여기 오는 갈래는 지출·수입·페이백·환불뿐이다.
+      kind: (paybackType ? 'payback' : kind) as 'expense' | 'income' | 'payback',
+      ...(paybackType ? { paybackType } : {}),
       personId,
       date,
       description,
@@ -575,7 +591,7 @@ function kindOf(head: EntrySheetRow): EntrySheetKind {
   const written = clean(head.kind);
   if (written) {
     const kind = entrySheetKindOf(written);
-    if (!kind) throw new EntrySheetRowError(`구분 "${written}"을 모릅니다. 지출·수입·이체·카드대금·카드환불 가운데 하나로 적어 주세요.`);
+    if (!kind) throw new EntrySheetRowError(`구분 "${written}"을 모릅니다. 지출·수입·환불·페이백·이체·카드대금·카드환불 가운데 하나로 적어 주세요.`);
     return kind;
   }
   if (clean(head.toAsset)) return 'transfer';
@@ -716,8 +732,15 @@ export function entrySheetRowsOf(
     ];
   }
 
-  // 지출·수입: 줄마다 한 행.
-  const kindLabel = item.kind === 'income' ? ENTRY_SHEET_KINDS.income[0] : ENTRY_SHEET_KINDS.expense[0];
+  // 지출·수입·페이백: 줄마다 한 행. 페이백을 지출로 적으면 다시 가져올 때 들어온 돈이 나간 돈이 된다.
+  const kindLabel =
+    item.kind === 'income'
+      ? ENTRY_SHEET_KINDS.income[0]
+      : item.kind === 'payback'
+        ? item.paybackType === 'refund'
+          ? ENTRY_SHEET_KINDS.refund[0]
+          : ENTRY_SHEET_KINDS.payback[0]
+        : ENTRY_SHEET_KINDS.expense[0];
   const payment = item.cardId
     ? { payment: item.cardName ?? undefined, paymentType: typeLabel('card', item.cardId) }
     : { payment: item.accountName ?? undefined, paymentType: typeLabel('account', item.accountId) };

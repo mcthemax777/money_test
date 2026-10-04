@@ -92,6 +92,13 @@ export const ERROR_CODES = [
   'CARD_NOT_FOUND',
   'INSTALLMENT_CREDIT_ONLY',
   'TRANSFER_SAME_ACCOUNT',
+  /**
+   * 원거래와 걸린 환불·페이백이 어긋난다 (payback-rebind). 걸린 줄을 지우려 했거나, 원거래를
+   * 지출이 아닌 것으로 바꾸려 했거나, 한 줄에 돌려받은 합이 그 줄 금액을 넘는다.
+   */
+  'PAYBACK_LINE_GONE',
+  'PAYBACK_ORIGIN_NOT_EXPENSE',
+  'PAYBACK_EXCEEDS_LINE',
 
   // 보관함 (아직 거래가 아닌 후보)
   'DRAFTS_REQUIRED',

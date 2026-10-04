@@ -220,8 +220,10 @@ export function paymentMethods(
      * **카드로도 들어온다.** 카드사가 되돌려 주는 돈이 통장을 거치지 않고 다음 청구에서
      * 빠지면, 그 돈이 들어온 자리는 그 카드의 빚이다. 그때는 카드 칸에 붙인다 --
      * 계좌로 붙이면 목록에서 감춰 둔 카드 부채 계정이 결제수단으로 튀어나온다.
+     *
+     * 페이백도 그 수단으로 들어온 돈이다. 자산 관점이라 들어온 날짜 그대로 센다.
      */
-    if (item.kind === 'income') {
+    if (item.kind === 'income' || item.kind === 'payback') {
       if (item.cardId) {
         const card = cardById.get(item.cardId);
         if (!card || !isVisibleOwner(card.ownerId)) continue;

@@ -428,7 +428,8 @@ export function createLocalHomePort(
       const profit = new Map<string, Dec>(accountIds.map((accountId) => [accountId, Dec.of(0)]));
       for (const entry of await store.entriesTouchingAccounts(id, accountIds)) {
         const kind = classifyEntry(entry.postings);
-        if (kind !== 'income' && kind !== 'expense') continue;
+        // 서버 getAccountProfit 과 같다. 되돌려 받은 수수료(페이백)도 수익이다.
+        if (kind !== 'income' && kind !== 'expense' && kind !== 'payback') continue;
         for (const posting of entry.postings) {
           const current = posting.accountId ? profit.get(posting.accountId) : undefined;
           if (!current) continue;
@@ -785,6 +786,8 @@ export function createLocalHomePort(
       const [read, dates, show] = await Promise.all([
         store.categoryPostings(id, {
           ...scope,
+          // 거래 탭의 달 목록이다. 들어온 날짜로 센다 (서버 getEntryMonths 와 같다, 결정 G).
+          dateBasis: 'own',
           // 회차 기준이면 앞에서 산 할부까지 읽는다. 그 회차가 이 구간에 선다.
           ...(spread
             ? {
@@ -1232,6 +1235,10 @@ export function createLocalHomePort(
         yearMonth: query.yearMonth,
         ownerIds: ownerIdsOf(query),
         search,
+        // 분석 기준이면 연결된 페이백을 원거래의 날짜로 고른다 (서버 목록의 `dateBasis`).
+        dateBasis: query.dateBasis === 'analysis' ? 'analysis' : 'own',
+        // 원거래 상세의 "받은 페이백" (서버 목록의 `paybackOf`).
+        paybackOf: query.paybackOf,
         // 분석 창이 싣는 분류 하나·유형 조건. 서버 목록과 같은 규칙이다 (categoryLegFilter).
         ...(query.categoryId
           ? {
@@ -1377,6 +1384,8 @@ export function createLocalHomePort(
         search,
         // 카드 상세의 결제 내역이 이 조건으로 그 카드의 거래만 받는다.
         cardId: query.cardId,
+        dateBasis: query.dateBasis === 'analysis' ? 'analysis' : 'own',
+        paybackOf: query.paybackOf,
         limit,
         cursor: decodeCursor(query.cursor),
       });

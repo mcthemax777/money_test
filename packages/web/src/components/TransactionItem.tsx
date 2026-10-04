@@ -1,6 +1,6 @@
 'use client';
 
-import { Split } from 'lucide-react';
+import { Split, Undo2 } from 'lucide-react';
 import type { EntryListItem, EntryRow } from '@money/types';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency, formatOriginal, toNumber } from '@money/core/lib/money';
@@ -206,6 +206,13 @@ export default function TransactionItem({
             <Split
               className="w-3 h-3 shrink-0 self-center text-gray-400"
               aria-label={t('entry.split')}
+            />
+          )}
+          {/* 페이백. 금액 색만으로는 수입과 갈리지 않아 아이콘으로 말한다. */}
+          {entry.kind === 'payback' && (
+            <Undo2
+              className="w-3 h-3 shrink-0 self-center text-green-600"
+              aria-label={t(entry.paybackType === 'refund' ? 'payback.type.refund' : 'payback.type.payback')}
             />
           )}
           <p className="min-w-0 truncate text-[15px] font-medium text-gray-900">{title}</p>

@@ -17,6 +17,7 @@ import { homeDataPort } from '../data/home-port';
 import { type ReportPeriod } from '../lib/api-client';
 import { dayRangeQuery, formatMonthShort, throughDayOf, todayKey } from '../lib/datetime';
 import {
+  analysisDated,
   buildDailyCumulative,
   monthDateKeys,
   type CumulativeSeries,
@@ -372,6 +373,12 @@ export function useCategoryDetail({
          */
         const entryQuery: EntryDto.ListQuery = {
           ...filter,
+          /*
+           * 분석 화면이다. 연결된 페이백은 원거래 날짜로 고르고 그 날짜에 쌓는다 -- 머리 합계와
+           * 12개월 그래프(리포트)가 그렇게 센다 (PAYBACK_DESIGN.md 결정 G). 목록에는 들어온
+           * 날짜 그대로 선다.
+           */
+          dateBasis: 'analysis',
           ...(target.scope === 'category'
             ? { categoryId, ...(exactCategory ? { categoryExact: true } : {}) }
             : target.scope === 'tag'
@@ -437,7 +444,7 @@ export function useCategoryDetail({
         setEntries(rows);
         // 일별 누적. 수입 분류는 수입을, 지출은 지출을 쌓는다 (이체는 수수료만).
         setDaily(
-          buildDailyCumulative(rows, dayKeys.startKey, dayKeys.endKey, timeZone, target.type),
+          buildDailyCumulative(analysisDated(rows), dayKeys.startKey, dayKeys.endKey, timeZone, target.type),
         );
         setComparisons(comparisonRes);
 
@@ -498,7 +505,8 @@ export function useCategoryDetail({
   const pattern = useMemo(
     () =>
       buildUsagePattern({
-        entries,
+        // 누적과 같이 분석의 날짜로 센다.
+        entries: analysisDated(entries),
         type: target.type,
         startKey: dayKeys.startKey,
         endKey: dayKeys.endKey,

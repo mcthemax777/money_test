@@ -18,6 +18,7 @@ import {
   splitList,
 } from '@/common/entry-filter';
 import { assertDateKey, assertYearMonth } from '@/common/year-month';
+import { PAYBACK_DATE_SELECT, analysisDateOf, analysisScopes } from '@/common/payback-scope';
 import {
   INSTALLMENT_LEG_SELECT,
   type InstallmentLeg,
@@ -123,6 +124,8 @@ export class ReportsService {
          * 조건을 나누면 select 가 두 벌이 되어, 늘 싣고 읽는 쪽에서 가린다.
          */
         postings: INSTALLMENT_LEG_SELECT,
+        // 페이백이면 원거래의 날짜. 분석은 그 달에 센다 (common/payback-scope).
+        ...PAYBACK_DATE_SELECT,
       },
     },
   } as const;
@@ -137,11 +140,14 @@ export class ReportsService {
         date: Date;
         tags: Array<{ lineKey: string | null; tagId: string }>;
         postings?: InstallmentLeg[];
+        paybackOf?: { date: Date } | null;
       };
     }>,
     matchLine?: LineMatcher,
     /** 회차 기준으로 셀 때만 준다. 없으면 발생 기준이다. */
     spread?: InstallmentSpread,
+    /** 자산 관점(결제수단 추이)이면 참. 페이백을 들어온 날짜 그대로 센다. */
+    ownDate = false,
   ): CategoryPostingRow[] {
     // 계좌 다리는 오지 않지만(질의가 카테고리 다리만 고른다) 타입이 null 을 허용하므로 걸러 둔다.
     const mapped = rows.flatMap((row) =>
@@ -150,7 +156,7 @@ export class ReportsService {
             categoryId: row.categoryId,
             categoryType: row.category.type,
             baseAmount: row.baseAmount as CategoryPostingRow['baseAmount'],
-            date: row.entry.date as CategoryPostingRow['date'],
+            date: (ownDate ? row.entry.date : analysisDateOf(row.entry)) as CategoryPostingRow['date'],
             ...(spread ? { installment: installmentPlanOf(row.entry.postings) } : {}),
           }]
         : [],
@@ -170,10 +176,21 @@ export class ReportsService {
     postingWhere: Prisma.PostingWhereInput;
     scope: Prisma.JournalEntryWhereInput;
     select: S;
+    /**
+     * 자산 관점이면 참. 페이백을 들어온 날짜로 고른다 (`toAggregateRows` 의 같은 이름과 짝).
+     *
+     * 거짓(분석)이면 연결된 페이백을 원거래 날짜로 고른다 (common/payback-scope).
+     */
+    ownDate?: boolean;
   }) {
-    const { basis, postingWhere, scope, select } = args;
+    const { basis, postingWhere, scope, select, ownDate = false } = args;
     const find = (entry: Prisma.JournalEntryWhereInput) =>
       this.prisma.posting.findMany({ where: { ...postingWhere, entry }, select });
+
+    if (!ownDate) {
+      const parts = await Promise.all(analysisScopes(scope, basis === 'installment').map(find));
+      return parts.flat();
+    }
 
     if (basis !== 'installment') return find(scope);
 
@@ -363,7 +380,8 @@ export class ReportsService {
             parentCategoryId: row.category.parent?.id ?? null,
             parentCategoryName: row.category.parent?.name ?? null,
             baseAmount: row.baseAmount as NamedCategoryPostingRow['baseAmount'],
-            date: row.entry.date as NamedCategoryPostingRow['date'],
+            // 페이백이면 원거래의 날짜 (toAggregateRows 와 같다).
+            date: analysisDateOf(row.entry) as NamedCategoryPostingRow['date'],
             ...(spread ? { installment: installmentPlanOf(row.entry.postings) } : {}),
           }]
         : [],
@@ -717,12 +735,18 @@ export class ReportsService {
       ...(conditions.length > 0 ? { AND: conditions } : {}),
     };
     const basis = parseEntryBasis(query.basis);
+    /*
+     * 거래 탭의 달 목록이다. 달을 펼치면 그 달에 들어온 거래가 서므로, 머리의 합계도 들어온
+     * 날짜로 센다 -- 페이백을 원거래의 달로 옮기면 펼친 줄과 머리 합계가 갈린다
+     * (PAYBACK_DESIGN.md 결정 G).
+     */
     const [rows, dates] = await Promise.all([
       this.aggregatePostings({
         basis,
         postingWhere: { categoryId: { not: null } },
         scope,
         select: ReportsService.AGGREGATE_SELECT,
+        ownDate: true,
       }),
       /*
        * 달을 만들 전표의 시각.
@@ -765,7 +789,7 @@ export class ReportsService {
      * 회차에는 전표가 없다. 편 줄의 날짜를 함께 넘겨야 그 달이 목록에 선다.
      */
     const spread = spreadOf(basis, timeZone, window);
-    const counted = this.toAggregateRows(rows, lineMatcherOf(search), spread);
+    const counted = this.toAggregateRows(rows, lineMatcherOf(search), spread, true);
     const monthDates = [
       ...dates.map((row) => row.date),
       ...(spread
@@ -830,11 +854,14 @@ export class ReportsService {
         : query.target === 'tag'
           ? await this.trendByTagWhere(projectId, query, start, end)
           : await this.trendByCategoryWhere(projectId, query, start, end);
+    // 결제수단 추이는 자산 관점이다. 페이백은 그 수단에 들어온 날짜에 선다.
+    const byPaymentMethod = query.target === 'account' || query.target === 'card';
     const rows = await this.aggregatePostings({
       basis,
       postingWhere: { categoryId: { not: null }, ...postingWhere },
       scope: (trendScope ?? {}) as Prisma.JournalEntryWhereInput,
       select: ReportsService.AGGREGATE_SELECT,
+      ownDate: byPaymentMethod,
     });
 
     /*
@@ -848,11 +875,16 @@ export class ReportsService {
     const matchLine =
       query.target === 'tag'
         ? lineMatcherOf(parseEntrySearch({ ...query, tagIds: query.targetId }))
-        : query.target === 'account' || query.target === 'card'
+        : byPaymentMethod
           ? undefined
           : lineMatcherOf(parseEntrySearch(query));
     const points = monthlyTotals(
-      this.toAggregateRows(rows, matchLine, spreadOf(basis, timeZone, { gte: start, lt: end })),
+      this.toAggregateRows(
+        rows,
+        matchLine,
+        spreadOf(basis, timeZone, { gte: start, lt: end }),
+        byPaymentMethod,
+      ),
       { timeZone, endYearMonth: endMonth, months },
     );
 
@@ -1107,10 +1139,10 @@ export class ReportsService {
 
     for (const entry of entries) {
       const kind = classifyEntry(entry.postings);
-      if (kind !== 'income' && kind !== 'expense') continue;
+      if (kind !== 'income' && kind !== 'expense' && kind !== 'payback') continue;
 
-      // 계좌 다리의 금액을 그대로 더한다. 수입은 +, 지출은 -로 저장되어 있어
-      // 합이 곧 순수익이다. 계좌 통화이므로 환산하지 않는다.
+      // 계좌 다리의 금액을 그대로 더한다. 수입·페이백은 +, 지출은 -로 저장되어 있어
+      // 합이 곧 순수익이다(되돌려 받은 수수료도 수익이다). 계좌 통화이므로 환산하지 않는다.
       for (const posting of entry.postings) {
         const current = posting.accountId ? profit.get(posting.accountId) : undefined;
         if (!current) continue;

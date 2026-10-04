@@ -32,6 +32,7 @@ import {
 } from '@/common/entry-filter';
 import { badRequest, notFound } from '@/common/app-error';
 import { assertYearMonth } from '@/common/year-month';
+import { analysisDateCondition } from '@/common/payback-scope';
 import { clientId, rejectDuplicateId } from '@/common/client-id';
 
 /** 달력 날짜만 적힌 값인가. "2026-07-31" 이면 참, 시각이 붙어 있으면 거짓이다. */
@@ -529,6 +530,15 @@ export class EntriesService {
       if (query.endDate) where.date.lt = dayAfterOf(query.endDate, timeZone);
     }
 
+    /*
+     * 분석 기준이면 연결된 페이백을 원거래 날짜로 고른다 (common/payback-scope).
+     *
+     * 기간을 `where.date` 에서 떼어 전표 조건(AND)으로 옮긴다. 아래 커서가 최상위 OR 을 쓰므로
+     * 거기 두면 서로 덮는다. 차례는 그대로 전표 날짜다 -- 커서도 그 날짜로 넘긴다.
+     */
+    const analysisWindow = query.dateBasis === 'analysis' && where.date ? where.date : null;
+    if (analysisWindow) delete where.date;
+
     // posting 조건은 "이 전표에 그런 다리가 하나라도 있는가"로 건다.
     const postingFilters: Prisma.PostingWhereInput[] = [];
     // 자산 주인 조건은 다리 하나로 표현되지 않아(부호에 따라 보는 다리가 다르다)
@@ -537,6 +547,9 @@ export class EntriesService {
 
     const owner = assetOwnerCondition(filter);
     if (owner) entryFilters.push(owner);
+    if (analysisWindow) entryFilters.push(analysisDateCondition(analysisWindow));
+    // 원거래 상세의 "받은 페이백". 링크로 고른다.
+    if (query.paybackOf) entryFilters.push({ paybackOfEntryId: query.paybackOf });
 
     // 원장 관점: 이 계좌/카드가 얽힌 전표 전부
     if (query.accountId) postingFilters.push({ accountId: query.accountId });
@@ -612,7 +625,7 @@ export class EntriesService {
       search.features?.includes('split')
         ? await splitEntryIds(this.prisma, {
             projectId: finalProjectId,
-            ...(where.date ? { date: where.date } : {}),
+            ...(where.date ?? analysisWindow ? { date: where.date ?? analysisWindow! } : {}),
           })
         : undefined,
     );
@@ -799,6 +812,10 @@ export class EntriesService {
       transferFeeCategoryId: dto.transferFeeCategoryId,
       transferFeeLineKey: dto.transferFeeLineKey,
       cardTransferDirection: dto.cardTransferDirection,
+      // 페이백의 원거래와 그 줄. 원거래가 없으면 조립이 링크를 비운다.
+      paybackOfEntryId: dto.paybackOfEntryId,
+      paybackOfLineKey: dto.paybackOfLineKey,
+      paybackType: dto.paybackType,
       /*
        * 태그는 조립이 줄에 실어 준다.
        *

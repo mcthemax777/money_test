@@ -124,9 +124,16 @@ export interface NamedCategoryPostingRow extends CategoryPostingRow {
   tagIds?: readonly string[];
 }
 
-/** 이 다리가 내놓는 금액. 수입 다리는 음수로 실려 오므로 크기만 본다. */
+/**
+ * 이 다리가 그 갈래(지출·수입)의 합계에 보태는 금액.
+ *
+ * 수입 다리는 음수로 실려 오므로 뒤집는다. 지출 다리는 **그대로** 쓴다 -- 페이백은 지출
+ * 분류를 음수로 쓰는 다리라 그 분류의 지출을 줄여야 한다 (PAYBACK_DESIGN.md). 예전처럼
+ * 크기만 보면 되돌려 받은 돈이 지출을 늘린다.
+ */
 export function selectedAmount(row: CategoryPostingRow): Dec {
-  return Dec.of(row.baseAmount).abs();
+  const amount = Dec.of(row.baseAmount);
+  return row.categoryType === 'income' ? amount.negated() : amount;
 }
 
 export interface SummaryTotals {
@@ -239,12 +246,23 @@ export function categoryBreakdown(
     buckets.set(key, bucket);
   }
 
-  const total = Dec.sum([...buckets.values()].map((bucket) => bucket.amount));
+  /*
+   * 구성비는 양수 칸끼리만 나눈다.
+   *
+   * 페이백이 원거래보다 많으면(나눠 받은 합이 넘는 경우) 그 분류의 순액이 음수가 된다. 그 칸을
+   * 분모에 넣으면 나머지 칸의 비율 합이 100% 를 넘는다. 음수 칸은 금액 그대로 두고 비율만 0 이다.
+   */
+  const total = Dec.sum(
+    [...buckets.values()].map((bucket) => bucket.amount).filter((amount) => amount.isPositive()),
+  );
 
   return [...buckets.values()]
     .map((bucket) => ({
       ...bucket,
-      ratio: total.isZero() ? 0 : bucket.amount.dividedBy(total, 10).times(100).toNumber(),
+      ratio:
+        total.isZero() || !bucket.amount.isPositive()
+          ? 0
+          : bucket.amount.dividedBy(total, 10).times(100).toNumber(),
     }))
     .sort((a, b) => b.amount.cmp(a.amount) || a.categoryName.localeCompare(b.categoryName));
 }

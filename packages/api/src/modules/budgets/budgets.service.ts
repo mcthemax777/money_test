@@ -9,6 +9,7 @@ import {
   ExchangeRatesService,
 } from '../exchange-rates/exchange-rates.service';
 import { assertYearMonth } from '@/common/year-month';
+import { PAYBACK_DATE_SELECT, analysisDateOf, analysisScopes } from '@/common/payback-scope';
 import { stampFieldClocks } from '@/common/field-clock';
 import { ServerClockService } from '@/common/server-clock';
 import {
@@ -34,7 +35,6 @@ import {
 import {
   INSTALLMENT_LEG_SELECT,
   installmentPlanOf,
-  installmentScope,
   spreadRows,
 } from '@/common/installment-scope';
 
@@ -593,14 +593,17 @@ export class BudgetsService {
     const postings = await this.prisma.posting.findMany({
       where: {
         categoryId: { in: categories.map((c) => c.id) },
-        // 앞에서 산 할부의 회차가 이 달에 선다. 할부만 창을 앞으로 넓혀 읽는다.
-        entry: installmentScope(entryScope),
+        /*
+         * 앞에서 산 할부의 회차가 이 달에 선다. 할부만 창을 앞으로 넓혀 읽는다.
+         * 페이백은 원거래의 달에 센다 -- 리포트와 같은 범위다 (common/payback-scope).
+         */
+        entry: { OR: analysisScopes(entryScope, true) },
       },
       select: {
         categoryId: true,
         baseAmount: true,
         category: { select: { type: true } },
-        entry: { select: { date: true, postings: INSTALLMENT_LEG_SELECT } },
+        entry: { select: { date: true, postings: INSTALLMENT_LEG_SELECT, ...PAYBACK_DATE_SELECT } },
       },
     });
 
@@ -612,7 +615,7 @@ export class BudgetsService {
                 categoryId: row.categoryId,
                 categoryType: row.category.type,
                 baseAmount: row.baseAmount,
-                date: row.entry.date,
+                date: analysisDateOf(row.entry),
                 installment: installmentPlanOf(row.entry.postings),
               }]
             : [],
@@ -769,7 +772,7 @@ export class BudgetsService {
               categoryId: { not: null },
               lineKey: { not: null },
               // 태그가 하나라도 붙은 전표만. 줄 단위 판정은 아래에서 한다.
-              entry: { AND: [installmentScope(entryScope), { tags: { some: {} } }] },
+              entry: { AND: [{ OR: analysisScopes(entryScope, true) }, { tags: { some: {} } }] },
             },
             select: {
               categoryId: true,
@@ -781,6 +784,7 @@ export class BudgetsService {
                   date: true,
                   tags: { select: { lineKey: true, tagId: true } },
                   postings: INSTALLMENT_LEG_SELECT,
+                  ...PAYBACK_DATE_SELECT,
                 },
               },
             },
@@ -794,7 +798,7 @@ export class BudgetsService {
                 categoryId: row.categoryId,
                 categoryType: row.category.type,
                 baseAmount: row.baseAmount,
-                date: row.entry.date,
+                date: analysisDateOf(row.entry),
                 installment: installmentPlanOf(row.entry.postings),
                 tagIds: row.entry.tags
                   .filter((tag) => tag.lineKey !== null && tag.lineKey === row.lineKey)

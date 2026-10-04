@@ -243,6 +243,7 @@ export function hasEntrySearch(search: ParsedEntrySearch): boolean {
 export const SEARCHABLE_ENTRY_KINDS: readonly EntryKind[] = [
   'expense',
   'income',
+  'payback',
   'transfer',
   'card_payment',
 ];

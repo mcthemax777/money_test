@@ -231,7 +231,26 @@ export type EntryKind =
   | 'income'
   | 'transfer'
   | 'card_payment' // 카드대금 결제 (부채 상환)
-  | 'adjustment';  // 기초잔액/잔액 조정
+  | 'adjustment'   // 기초잔액/잔액 조정
+  | 'payback';     // 지출의 페이백 (지출 분류 -, 들어온 계좌 +). PAYBACK_DESIGN.md
+
+/**
+ * 돌아온 돈의 종류. 갈래(`EntryKind`)는 둘 다 `payback` 이다 (PAYBACK_DESIGN.md 7-3).
+ *
+ *   payback  캐시백·적립 환급. 카드 실적을 깎지 않는 것이 기본이다.
+ *   refund   환불·결제 취소. 산 것을 되돌린 것이라 카드 실적도 함께 깎는 것이 기본이다.
+ */
+export type PaybackType = 'payback' | 'refund';
+
+export const PAYBACK_TYPES: readonly PaybackType[] = ['payback', 'refund'];
+
+/**
+ * 그 종류의 카드 실적 기본값. 조립과 폼이 함께 쓴다 -- 둘이 갈리면 폼이 "기본값과 같으니
+ * 싣지 않는다"고 뺀 값을 조립이 다른 기본값으로 채운다.
+ */
+export function paybackCountsPerformance(type: PaybackType | null | undefined): boolean {
+  return type === 'refund';
+}
 
 /** 카드사와 통장 사이 자금 이동의 방향 */
 export type CardTransferDirection = 'payment' | 'refund';
@@ -458,6 +477,17 @@ export interface EntryListItem {
    * 명령의 시계를 그 뒤로 발급받는다.
    */
   updatedHlc: string | null;
+  /**
+   * 페이백이면 그 원거래와 줄. 페이백이 아니거나 링크가 빈 페이백이면 null 이다.
+   *
+   * 링크가 비어도 `kind` 는 `payback` 그대로다 -- 갈래는 다리로 정한다.
+   */
+  paybackOfEntryId: string | null;
+  paybackOfLineKey: string | null;
+  /** 연결된 페이백이면 원거래의 날짜. 분석 화면이 이 날짜로 센다 (결정 G). */
+  paybackOfDate: IsoDateString | null;
+  /** 돌아온 돈의 종류 (환불·페이백). 페이백 갈래에만 있고, 그 밖에는 null 이다. */
+  paybackType: PaybackType | null;
 }
 
 // 카테고리 (대분류/소분류)

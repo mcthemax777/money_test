@@ -20,8 +20,12 @@ import {
   type EntryRestatePayload,
   type EntryTagsPayload,
   type Mutation,
+  type BuiltEntry,
+  LedgerBuildError,
   buildEntry,
   newId,
+  planPaybackRebind,
+  rebindErrorMessage,
 } from '@money/types';
 
 import type { EntryWritePort } from './entry-write-port';
@@ -89,6 +93,13 @@ export function createLocalEntryWriter({
     countsPerformance: data.countsPerformance,
     discountCountsPerformance: data.discountCountsPerformance,
     tagIds: data.tagIds,
+    /*
+     * 페이백의 원거래와 그 줄. 빠뜨리면 서버가 링크 없는 페이백으로 들여, 분석이 원거래의
+     * 달로 옮겨 세지 못한다. 사본 행에는 조립 결과로 따로 적힌다(`writeEntry`).
+     */
+    paybackOfEntryId: data.paybackOfEntryId,
+    paybackOfLineKey: data.paybackOfLineKey,
+    paybackType: data.paybackType,
     currency: data.currency,
     exchangeRate: text(data.exchangeRate),
     billedAmount: text(data.billedAmount),
@@ -99,6 +110,67 @@ export function createLocalEntryWriter({
    *
    * 조립을 먼저 한다. 규칙에 어긋나면 여기서 던지고 큐에는 아무것도 남지 않는다.
    */
+  /**
+   * 원거래와 걸린 환불·페이백이 어긋나는지 본다. 어긋나면 던지고, 맞출 것(옮길 환불·페이백)을 준다.
+   *
+   * 끊겨 있어도 서버와 같은 말로 막아야 한다. 그러지 않으면 사본에는 음수 지출이 서고, 명령은
+   * 서버에서 거절되어 보류 칸에 쌓인다.
+   */
+  const checkPaybacks = async (
+    entryId: string,
+    built: BuiltEntry,
+    kind: 'entry.create' | 'entry.replace',
+  ): Promise<Array<{ paybackId: string; lineKey: string; categoryId: string }>> => {
+    const fail = (error: Parameters<typeof rebindErrorMessage>[0]): never => {
+      throw new LedgerBuildError(error.code, rebindErrorMessage(error));
+    };
+    const linesOf = async (postings: Array<{ categoryId: string | null; lineKey: string | null; baseAmount: string }>) => {
+      const legs = postings.filter((leg) => leg.categoryId && leg.lineKey);
+      const types = new Map(
+        (await store.categoriesByIds(projectId, legs.map((leg) => leg.categoryId!))).map((row) => [row.id, row.type]),
+      );
+      return legs.map((leg) => ({
+        lineKey: leg.lineKey!,
+        categoryId: leg.categoryId!,
+        categoryType: types.get(leg.categoryId!) ?? '',
+        baseAmount: leg.baseAmount,
+      }));
+    };
+
+    // 환불·페이백을 적는 중: 원거래 줄의 상한을 넘지 않는지.
+    if (built.paybackOfEntryId) {
+      const self = built.postings.find((leg) => leg.categoryId);
+      const original = await store.paybackTargetLegs(projectId, built.paybackOfEntryId);
+      if (!self || !original) return [];
+      const plan = planPaybackRebind(
+        original.map((leg) => ({ ...leg, lineKey: leg.lineKey ?? '' })),
+        [
+          ...(await store.paybacksOf(built.paybackOfEntryId)).filter((row) => row.id !== entryId),
+          { id: entryId, lineKey: built.paybackOfLineKey ?? null, categoryId: self.categoryId!, baseAmount: self.baseAmount.toString() },
+        ],
+      );
+      if (plan.error?.code === 'PAYBACK_EXCEEDS_LINE') fail(plan.error);
+      return [];
+    }
+
+    // 원거래를 고치는 중: 걸린 환불·페이백을 새 줄에 맞춘다.
+    if (kind !== 'entry.replace') return [];
+    const paybacks = await store.paybacksOf(entryId);
+    if (paybacks.length === 0) return [];
+    const plan = planPaybackRebind(
+      await linesOf(
+        built.postings.map((leg) => ({
+          categoryId: leg.categoryId ?? null,
+          lineKey: leg.lineKey ?? null,
+          baseAmount: leg.baseAmount.toString(),
+        })),
+      ),
+      paybacks,
+    );
+    if (plan.error) fail(plan.error);
+    return plan.moves;
+  };
+
   const commit = async (
     entryId: string,
     payload: EntryMutationPayload,
@@ -108,6 +180,8 @@ export function createLocalEntryWriter({
       { ...payload, projectId, date: new Date(payload.date) },
       lookup,
     );
+    // 환불·페이백과 원거래가 어긋나지 않는지. 서버 원장과 같은 규칙이다 (planPaybackRebind).
+    const moves = await checkPaybacks(entryId, built, kind);
 
     // 수정이면 사본이 아는 시계보다 뒤에 놓는다. "그 편집을 보고 고쳤다"가 순서에 남는다.
     const observed = kind === 'entry.replace' ? await store.entryHlc(entryId) : null;
@@ -128,6 +202,8 @@ export function createLocalEntryWriter({
       // 태그는 조립 규칙이 다루지 않는다(다리를 바꾸지 않는다). 짐에서 그대로 가져온다.
       tagIds: payload.tagIds ?? [],
     });
+    // 원거래의 줄을 따라 환불·페이백을 옮긴다. 서버도 같은 일을 하고 다음 pull 이 덮는다.
+    for (const move of moves) await store.movePayback(move.paybackId, move.lineKey, move.categoryId);
 
     notifyMirrorChanged();
     onQueued?.(mutation);

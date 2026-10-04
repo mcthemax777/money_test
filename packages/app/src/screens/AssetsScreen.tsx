@@ -31,6 +31,7 @@ import AssetHistoryChart from '../components/AssetHistoryChart';
 import AssetTypeSummary from '../components/AssetTypeSummary';
 import EntryDetailModal from '../components/EntryDetailModal';
 import EntryEditor from '../components/EntryEditor';
+import PaybackEditor, { type PaybackTarget } from '../components/PaybackEditor';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import { AddAccountModal, AddCardModal, AddPersonModal } from '../components/AssetAddModals';
 import DragList from '../components/DragList';
@@ -86,6 +87,8 @@ export default function AssetsScreen() {
    */
   const [entryDetail, setEntryDetail] = useState<EntryListItem | null>(null);
   const [entryEditing, setEntryEditing] = useState<EntryListItem | null>(null);
+  /** 열려 있는 페이백 편집기. null 이면 닫혔다. */
+  const [paybackTarget, setPaybackTarget] = useState<PaybackTarget | null>(null);
 
   const openEntry = useCallback(
     (entryId: string) => {
@@ -564,10 +567,28 @@ export default function AssetsScreen() {
           canEdit
             ? (entry) => {
                 setEntryDetail(null);
-                setEntryEditing(entry);
+                // 페이백은 따로 고친다 (거래 화면과 같다).
+                if (entry.kind === 'payback') setPaybackTarget({ editing: entry });
+                else setEntryEditing(entry);
               }
             : undefined
         }
+        onAddPayback={
+          canEdit
+            ? (original) => {
+                setEntryDetail(null);
+                setPaybackTarget({ original });
+              }
+            : undefined
+        }
+        onOpenPayback={(payback) => setEntryDetail(payback)}
+      />
+
+      {/* 페이백도 잔액을 바꾼다. 저장하면 목록과 총자산을 다시 읽는다. */}
+      <PaybackEditor
+        target={paybackTarget}
+        onClose={() => setPaybackTarget(null)}
+        onSaved={assets.reload}
       />
 
       {entryEditing ? (

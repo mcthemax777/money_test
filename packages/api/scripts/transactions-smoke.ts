@@ -367,7 +367,8 @@ runSmoke('transactions', async (ctx) => {
    */
   for (const type of ['expense', 'income'] as const) {
     const rows = await ctx.prisma.posting.findMany({
-      where: { entry: { projectId: pid }, category: { type } },
+      // 지출은 0 이상인 다리만이다. 음수 지출 다리는 페이백이라 따로 고른다.
+      where: { entry: { projectId: pid }, category: { type }, ...(type === 'expense' ? { baseAmount: { gte: 0 } } : {}) },
       select: { entryId: true },
     });
     const expected = [...new Set(rows.map((row) => row.entryId))].sort();

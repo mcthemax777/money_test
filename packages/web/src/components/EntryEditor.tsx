@@ -12,6 +12,7 @@ import {
 } from '@money/core/store/project';
 import { useExchangeRates } from '@money/core/hooks/useExchangeRates';
 import { useTagManager, type TagFormValues } from '@money/core/hooks/useTagManager';
+import { paybackCountOf, paybackDeleteNote } from '@money/core/hooks/usePaybacks';
 import { useQuickAdd } from '@money/core/hooks/useQuickAdd';
 import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import { apiClient } from '@money/core/lib/api-client';
@@ -59,6 +60,10 @@ import CategoryFormFields, {
 } from '@/components/CategoryFormFields';
 import ChoiceModal from '@/components/ChoiceModal';
 import Modal from '@/components/Modal';
+import PaybackEditor, { type PaybackTarget } from '@/components/PaybackEditor';
+import PaybackSection from '@/components/PaybackSection';
+import PaybackFormSection from '@/components/PaybackFormSection';
+import { usePaybackDrafts } from '@money/core/hooks/usePaybackDrafts';
 import AddAccountModal from '@/components/AddAccountModal';
 import PersonModal from '@/components/PersonModal';
 import { AddTagModal } from '@/components/TagFields';
@@ -277,6 +282,7 @@ const ENTRY_TYPE_TABS = [
 const ENTRY_KIND_KEY: Record<string, MessageKey> = {
   expense: 'editor.kind.expense',
   income: 'editor.kind.income',
+  payback: 'editor.kind.payback',
   transfer: 'editor.kind.transfer',
   card_payment: 'editor.kind.card_payment',
   adjustment: 'editor.kind.adjustment',
@@ -293,7 +299,7 @@ const ENTRY_KIND_KEY: Record<string, MessageKey> = {
  * 또 적으면 여기가 막는 거래에 단추가 남는다.
  */
 export function isCopyableEntry(entry: EntryListItem): boolean {
-  return entry.kind !== 'adjustment' && entry.splitCount <= 1;
+  return entry.kind !== 'adjustment' && entry.kind !== 'payback' && entry.splitCount <= 1;
 }
 
 /**
@@ -307,6 +313,9 @@ export function isCopyableEntry(entry: EntryListItem): boolean {
  * 카드와 통장은 폼이 잠근다 (바꿀 일이면 삭제가 낫다).
  *
  * 분할 거래도 연다. 베끼기와 달리 원본이 그 자리에 있어 줄이 합쳐진 것을 알아챌 수 있다.
+ *
+ * 페이백도 연다. 다만 이 폼이 아니라 페이백 편집기(`PaybackEditor`)로 간다 -- 고르는 칸이
+ * 달라서다 (`handleEditClick`). 베끼기는 두지 않는다(`isCopyableEntry`).
  *
  * 상세를 이 컴포넌트 밖에서 그리는 화면(거래)도 이것으로 단추를 그린다. 규칙을 그쪽에
  * 또 적으면 여기가 막는 거래에 단추가 남는다.
@@ -334,6 +343,12 @@ export interface EntryEditorHandle {
    * 베끼기(`openCopy`)와 달리 새 거래가 생기지 않는다.
    */
   openEdit: (entry: EntryListItem) => void;
+  /**
+   * 원거래에 페이백을 적는 팝업을 연다 (PAYBACK_DESIGN.md 7단계).
+   *
+   * 거래 화면의 상세처럼 이 컴포넌트 밖에서 상세를 그리는 화면이 "페이백 추가"를 누를 때 쓴다.
+   */
+  openPayback: (original: EntryListItem) => void;
   /**
    * 보관함의 후보로 거래 추가 팝업을 연다.
    *
@@ -439,6 +454,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [selectedTransaction, setSelectedTransaction] = useState<EntryListItem | null>(null);
+  /** 열려 있는 페이백 편집기. null 이면 닫혔다. */
+  const [paybackTarget, setPaybackTarget] = useState<PaybackTarget | null>(null);
+  /** 페이백을 저장한 횟수. 상세의 "받은 페이백"을 다시 읽게 한다. */
+  const [paybackReload, setPaybackReload] = useState(0);
+  /** 폼에서 함께 적는 페이백 (지출에만). 지출을 저장한 직후 그 지출에 걸어 저장한다. */
+  const paybackDrafts = usePaybackDrafts(timeZone);
+  /** 고치는 중인 거래. 폼의 "받은 페이백"이 이것으로 읽는다. 새로 적는 중이면 null 이다. */
+  const [editingEntry, setEditingEntry] = useState<EntryListItem | null>(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
 
   /** 결제수단 드롭다운이 계좌·카드를 합쳤으므로 "무엇을 추가할지"는 이 팝업에서 고른다. */
@@ -1110,6 +1133,17 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     }
 
     try {
+      /*
+       * 함께 적은 페이백도 지출을 저장하기 **전에** 본다. 지출만 저장되고 페이백이 거절되면
+       * 반쯤 저장된 상태가 남는다 (core 의 usePaybackDrafts).
+       */
+      if (formData.type === 'expense') {
+        const paybackError = paybackDrafts.check(paybackLines);
+        if (paybackError) {
+          setError(paybackError);
+          return;
+        }
+      }
       setIsSubmitting(true);
       // 입력한 날짜/시각은 프로젝트 타임존의 벽시계다. 그 기준으로 UTC 인스턴트를 만든다.
       // 시간을 비우면 그 지역의 하루 시작이 된다.
@@ -1299,6 +1333,29 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         savedId = created.id;
       }
 
+      /*
+       * 함께 적은 페이백. 지출이 저장된 뒤라야 걸 곳이 있다.
+       *
+       * 실패하면 창을 닫지 않는다. 지출은 이미 저장되었으므로 이 폼은 이제 그 지출을 고치는
+       * 폼이다 -- 다시 누르면 같은 지출을 또 만드는 대신 그것을 고치고 남은 페이백만 저장한다.
+       */
+      if (kind === 'expense' && savedId && paybackDrafts.drafts.length > 0) {
+        const result = await paybackDrafts.saveFor({
+          id: savedId,
+          personId: formData.personId,
+          description: payload.description,
+          lines: paybackLines,
+        });
+        if (result.error) {
+          await onEntryChange({ entryId: savedId });
+          setEditingId(savedId);
+          setBaseHlc(null);
+          setError(result.error);
+          return;
+        }
+        setPaybackReload((count) => count + 1);
+      }
+
       await onEntryChange({ entryId: savedId });
       setFormData(emptyEntryForm(timeZone, ledgerCurrency));
       setEditingId(null);
@@ -1329,6 +1386,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
    * 남기려면 기본값이 있어야 한다.
    */
   const handleAddClick = () => {
+    paybackDrafts.reset();
+    setEditingEntry(null);
     setEditingId(null);
     setBaseHlc(null);
     setError('');
@@ -1377,6 +1436,43 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
    */
   const hasSplits =
     formData.type !== 'transfer' && formData.splits.length > 0;
+
+  /**
+   * 함께 적는 페이백이 고를 원거래의 줄. 지출에만 있다.
+   *
+   * 줄 키는 폼이 들고 있는 그대로다 -- 지출을 저장해도 바뀌지 않아, 저장 직후 페이백을 그
+   * 줄에 걸 수 있다.
+   */
+  const categoryNameOf = (categoryId: string) =>
+    categories.find((category) => category.id === categoryId)?.name ?? '';
+  /*
+   * 나눈 줄은 분류 이름에 적은 금액을 붙인다. 같은 분류를 두 줄로 나눴어도 가릴 수 있게.
+   * 외화로 적는 중일 수 있어 통화 기호 없이 적은 그대로 붙인다.
+   */
+  const paybackLineLabel = (name: string, amount: string) =>
+    `${name || '-'}${amount.trim() ? ` · ${amount.trim()}` : ''}`;
+  const paybackLines =
+    formData.type !== 'expense'
+      ? []
+      : hasSplits
+        ? formData.splits.map((split) => {
+            const categoryId = split.subCategoryId || split.mainCategoryId;
+            return { lineKey: split.lineKey, categoryId, label: paybackLineLabel(categoryNameOf(categoryId), split.amount) };
+          })
+        : [
+            {
+              lineKey: formData.lineKey,
+              categoryId: formData.subCategoryId || formData.mainCategoryId,
+              label: categoryNameOf(formData.subCategoryId || formData.mainCategoryId),
+            },
+          ];
+  /** 새 페이백 줄의 들어온 곳. 지금 고른 결제수단이다. */
+  const paybackDefaultMethod =
+    formData.method === 'card' && formData.cardId
+      ? `card:${formData.cardId}`
+      : formData.accountId
+        ? `account:${formData.accountId}`
+        : '';
 
   /**
    * 이 거래에서 깎인 금액의 합.
@@ -1616,6 +1712,11 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       setError(t('editor.notEditable'));
       return;
     }
+    // 페이백은 따로 고친다. 이 폼에는 원거래의 줄을 고르는 칸이 없다.
+    if (entry.kind === 'payback') {
+      setPaybackTarget({ editing: entry });
+      return;
+    }
 
     /*
      * 줄이 실려 오지 않은 분할은 열지 않는다 (옛 서버가 그렇다).
@@ -1630,6 +1731,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     }
 
     setEditingId(entry.id);
+    paybackDrafts.reset();
+    setEditingEntry(entry);
     // 이 줄을 본 시점의 판. 저장할 때 되돌려 주어 그 사이의 편집을 알아채게 한다.
     setBaseHlc(entry.updatedHlc);
     setFormData(formValuesOf(entry));
@@ -1651,6 +1754,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       return;
     }
 
+    paybackDrafts.reset();
+    setEditingEntry(null);
     setEditingId(null);
     setBaseHlc(null);
     setFormData(formValuesOf(entry));
@@ -1672,6 +1777,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     const type =
       draft.kind === 'income' || draft.kind === 'transfer' ? draft.kind : 'expense';
 
+    paybackDrafts.reset();
+    setEditingEntry(null);
     setEditingId(null);
     setBaseHlc(null);
     setFormData({
@@ -1745,11 +1852,13 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     setError('');
   };
 
-  const handleDeleteClick = async (id: string) => {
-    if (!window.confirm(t('account.deleteConfirm'))) return;
+  const handleDeleteClick = async (entry: EntryListItem) => {
+    // 원거래면 걸린 환불·페이백도 함께 지워진다. 그 수를 함께 묻는다 (7-6).
+    const note = paybackDeleteNote(await paybackCountOf(entry, projectId), t);
+    if (!window.confirm([t('account.deleteConfirm'), note].filter(Boolean).join('\n'))) return;
     try {
       setIsSubmitting(true);
-      await apiClient.deleteEntry(id);
+      await apiClient.deleteEntry(entry.id);
       await onEntryChange();
     } catch (err: any) {
       const errorMsg = messageOf(err, 'editor.deleteFailed');
@@ -1936,6 +2045,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     openCopy: handleCopyClick,
     openEdit: handleEditClick,
     openDraft: handleDraftClick,
+    openPayback: (original: EntryListItem) => setPaybackTarget({ original }),
   }));
 
   return (
@@ -2665,6 +2775,19 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   placeholder={t('editor.memoPlaceholder')}
                 />
               </div>
+
+              {/* 페이백. 지출에만 선다 -- 받은 것은 보이고, 여기서 적은 것은 지출과 함께 저장된다. */}
+              {formData.type === 'expense' ? (
+                <PaybackFormSection
+                  original={editingId && editingEntry?.id === editingId ? editingEntry : null}
+                  drafts={paybackDrafts}
+                  lines={paybackLines}
+                  methodOptions={paymentMethodOptions}
+                  defaultMethod={paybackDefaultMethod}
+                  reloadToken={paybackReload}
+                  onOpenPayback={(payback) => setPaybackTarget({ editing: payback })}
+                />
+              ) : null}
 
               {/*
                 태그. 갈래를 가리지 않으므로 이체에도 뜬다.
@@ -3413,6 +3536,15 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         </form>
       </Modal>
 
+      <PaybackEditor
+        target={paybackTarget}
+        onClose={() => setPaybackTarget(null)}
+        onSaved={async () => {
+          setPaybackReload((count) => count + 1);
+          await onEntryChange();
+        }}
+      />
+
       <Modal
         isOpen={isDetailModalOpen}
         onClose={() => setIsDetailModalOpen(false)}
@@ -3461,7 +3593,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               <button
                 onClick={async () => {
                   setIsDetailModalOpen(false);
-                  await handleDeleteClick(selectedTransaction.id);
+                  await handleDeleteClick(selectedTransaction);
                 }}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
                 disabled={isSubmitting}
@@ -3544,18 +3676,33 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 {t('editor.kindLabel')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {ENTRY_KIND_KEY[selectedTransaction.kind]
-                  ? t(ENTRY_KIND_KEY[selectedTransaction.kind])
-                  : selectedTransaction.kind}
+                {/* 환불도 갈래는 페이백이다. 종류로 이름을 고른다. */}
+                {selectedTransaction.kind === 'payback' && selectedTransaction.paybackType === 'refund'
+                  ? t('editor.kind.refund')
+                  : ENTRY_KIND_KEY[selectedTransaction.kind]
+                    ? t(ENTRY_KIND_KEY[selectedTransaction.kind])
+                    : selectedTransaction.kind}
               </p>
             </div>
+
+            {/* 지출이면 받은 페이백과 "페이백 추가", 페이백이면 원거래의 날짜. */}
+            <PaybackSection
+              entry={selectedTransaction}
+              canEdit={canEdit}
+              reloadToken={paybackReload}
+              onAdd={(original) => {
+                setIsDetailModalOpen(false);
+                setPaybackTarget({ original });
+              }}
+              onOpen={(payback) => setSelectedTransaction(payback)}
+            />
 
             {/*
               나눈 거래는 줄을 그대로 풀어서 보여 준다.
 
               예전에는 "분할 N건"으로 뭉쳐 대표 분류 하나만 적었다. 목록이 줄로 펴 보여
               주는데 상세에서 다시 뭉치면, 눌러서 연 화면이 눌렀던 줄보다 적게 말한다.
-              태그와 차감도 줄마다 다를 수 있어 여기서 함께 적는다.
+              태그도 줄마다 다를 수 있어 여기서 함께 적는다. 차감은 아래 "차감·환불·페이백" 칸에 있다.
             */}
             {isSplitEntry(selectedTransaction) ? (
               <div>
@@ -3575,7 +3722,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                           {formatCurrency(toNumber(line.amount), displayCurrency)}
                         </span>
                       </div>
-                      {(line.tags.length > 0 || line.discountAmount) && (
+                      {line.tags.length > 0 && (
                         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-xs">
                           {line.tags.map((tag) => (
                             <span
@@ -3591,16 +3738,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                               {tag.name}
                             </span>
                           ))}
-                          {line.discountAmount && (
-                            <span className="font-medium tabular-nums text-green-600">
-                              {t('entry.discount', {
-                                amount: formatCurrency(
-                                  toNumber(line.discountAmount),
-                                  displayCurrency,
-                                ),
-                              })}
-                            </span>
-                          )}
                         </div>
                       )}
                     </div>
@@ -3655,14 +3792,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   </p>
                 );
               })()}
-              {/* 결제 자리에서 깎인 금액. 위 금액은 이미 깎인 뒤라 이것이 없으면 정가를 알 수 없다. */}
-              {selectedTransaction.discountAmount && (
-                <p className="mt-1 text-xs text-green-600">
-                  {t('entry.discount', {
-                    amount: formatCurrency(selectedTransaction.discountAmount, displayCurrency),
-                  })}
-                </p>
-              )}
+              {/* 결제 자리에서 깎인 금액은 아래 "차감·환불·페이백" 칸에 줄별로 함께 적는다 (7-7). */}
               {/* 실적에서 뺀 카드 거래만 적는다. 센 것은 굳이 말할 것이 없다. */}
               {selectedTransaction.cardId && !selectedTransaction.countsPerformance && (
                 <p className="mt-1 text-xs text-gray-500">

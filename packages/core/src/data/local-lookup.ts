@@ -15,6 +15,7 @@ import {
   type LookupAccount,
   type LookupCard,
   type LookupCategory,
+  type LookupPaybackTarget,
   fallbackRate,
 } from '@money/types';
 
@@ -80,6 +81,16 @@ export function localLedgerLookup(store: LocalStore): LedgerLookup {
         name: row.name,
         type: row.type as LookupCategory['type'],
       }));
+    },
+    // 서버 짝(prisma-lookup)과 같은 판정이다. 페이백인지는 링크가 아니라 다리로 본다.
+    async paybackTarget(projectId, entryId, lineKey): Promise<LookupPaybackTarget | null> {
+      const legs = await store.paybackTargetLegs(projectId, entryId);
+      if (!legs) return null;
+      return {
+        id: entryId,
+        isPayback: legs.some((leg) => leg.categoryType === 'expense' && Dec.of(leg.baseAmount).isNegative()),
+        lineCategoryId: legs.find((leg) => leg.lineKey === lineKey)?.categoryId ?? null,
+      };
     },
   };
 }

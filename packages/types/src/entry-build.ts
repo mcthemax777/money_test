@@ -26,7 +26,9 @@ import type {
   CardType,
   CategoryType,
   EntryKind,
+  PaybackType,
 } from './entities';
+import { PAYBACK_TYPES, paybackCountsPerformance } from './entities';
 
 const ZERO = Dec.of(0);
 const ONE = Dec.of(1);
@@ -82,6 +84,19 @@ export interface LookupCategory {
 }
 
 /**
+ * 페이백이 가리키는 원거래.
+ *
+ * 링크를 걸어도 되는지와 페이백 다리의 분류를 정하는 데 필요한 만큼만 읽는다.
+ */
+export interface LookupPaybackTarget {
+  id: string;
+  /** 원거래 자신이 페이백인가. 페이백의 페이백은 받지 않는다. */
+  isPayback: boolean;
+  /** 가리킨 줄의 분류. 원거래를 고치다 그 줄이 사라졌으면 null 이다. */
+  lineCategoryId: string | null;
+}
+
+/**
  * 조립에 필요한 읽기 창구.
  *
  * 없는 것은 null 로 돌려준다. "없다"를 오류로 바꾸는 일은 조립이 한다 — 자리마다
@@ -104,6 +119,8 @@ export interface LedgerLookup {
    */
   unassignedAccount(projectId: string): Promise<LookupAccount | null>;
   categories(projectId: string, ids: readonly string[]): Promise<LookupCategory[]>;
+  /** 페이백의 원거래. 없거나 다른 프로젝트의 것이면 null. */
+  paybackTarget(projectId: string, entryId: string, lineKey: string): Promise<LookupPaybackTarget | null>;
 }
 
 // ───────────────────────────────────────────
@@ -187,6 +204,15 @@ export interface BuiltEntry {
    * 나눴을 때 "여행"이 두 줄에 함께 뜨지 않게 하는 것이 이 갈림의 전부다.
    */
   tagIds?: string[];
+  /**
+   * 페이백의 원거래와 그 줄. 페이백이 아니거나 링크를 비운 페이백이면 null 이다.
+   *
+   * 고칠 때도 이 값으로 덮으므로, 갈래를 페이백에서 다른 것으로 바꾸면 링크가 빈다.
+   */
+  paybackOfEntryId?: string | null;
+  paybackOfLineKey?: string | null;
+  /** 돌아온 돈의 종류. 페이백이 아니면 null 이다. */
+  paybackType?: PaybackType | null;
 }
 
 /**
@@ -527,7 +553,21 @@ export async function buildIncome(
   input: IncomeBuildInput,
   lookup: LedgerLookup,
 ): Promise<BuiltEntry> {
-  const lines = await resolveLines(input.projectId, input.lines, 'income', lookup);
+  return buildInflow(input, 'income', lookup);
+}
+
+/**
+ * 돈이 들어오는 전표. 분류 다리는 -, 들어온 계좌는 +.
+ *
+ * 수입과 페이백이 함께 쓴다. 다리 모양이 같고 다른 것은 분류의 갈래뿐이다 -- 페이백은
+ * 지출 분류를 반대 방향으로 쓴다 (PAYBACK_DESIGN.md).
+ */
+async function buildInflow(
+  input: IncomeBuildInput,
+  categoryType: 'income' | 'expense',
+  lookup: LedgerLookup,
+): Promise<BuiltEntry> {
+  const lines = await resolveLines(input.projectId, input.lines, categoryType, lookup);
   // 결제수단을 자금 계좌로 옮기는 규칙은 지출과 한 벌이다 (체크카드는 통장, 신용카드는 부채).
   const source = await resolvePaymentSource(input.projectId, input, lookup);
   const account = await requireAccount(input.projectId, source.accountId, lookup);
@@ -580,6 +620,84 @@ export async function buildIncome(
       ...baseLines.map((line) => categoryLeg(line, line.baseAmount.negated(), base)),
       { ...outgoing, amount: outgoing.amount.negated(), baseAmount: outgoing.baseAmount.negated() },
     ],
+  };
+}
+
+export interface PaybackBuildInput extends CommonBuildInput {
+  /** 페이백 다리의 분류. 원거래 줄을 찾으면 그 줄의 분류가 대신 쓰인다. */
+  categoryId: string;
+  amount: DecInput;
+  /** 페이백 전표 자신의 줄 키. 화면이 만든다. */
+  lineKey: string;
+  /** 들어온 자리. accountId 와 cardId 중 정확히 하나 (수입과 같다). */
+  accountId?: string;
+  cardId?: string;
+  /**
+   * 카드 실적에 셀지. 기본은 종류가 정한다(`paybackCountsPerformance`) -- 환불은 실적도 깎고,
+   * 캐시백은 깎지 않는다.
+   */
+  countsPerformance?: boolean;
+  /** 돌아온 돈의 종류. 생략하면 페이백이다. */
+  paybackType?: string;
+  /** 원거래와 그 줄. 둘 다 없으면 링크 없는 페이백이다. */
+  paybackOfEntryId?: string;
+  paybackOfLineKey?: string;
+  tagIds?: string[];
+}
+
+/**
+ * 페이백. 지출 분류 -, 들어온 계좌 +. 원거래를 가리키는 링크를 함께 싣는다.
+ *
+ * **원거래가 없으면 링크를 비우고 들인다.** 끊긴 기기가 적은 페이백이 닿기 전에 원거래가
+ * 지워진 경우다. 거절하면 이미 들어온 돈의 기록이 사라지고, 원거래를 지운 뒤(SetNull)와
+ * 같은 모양으로 두면 온라인·오프라인이 갈리지 않는다.
+ *
+ * **분류는 원거래 줄의 것이 이긴다.** 그 사이 분류 통합으로 원거래 줄이 옮겨 갔으면 받은
+ * 분류는 이미 없을 수 있다. 줄을 못 찾으면(원거래를 고치다 그 줄이 사라졌다) 받은 분류를
+ * 쓰고 링크는 원거래까지만 남긴다 -- 분석은 원거래의 날짜만 빌려 간다.
+ */
+export async function buildPayback(
+  input: PaybackBuildInput,
+  lookup: LedgerLookup,
+): Promise<BuiltEntry> {
+  if (input.paybackOfEntryId && !input.paybackOfLineKey) {
+    fail('PAYBACK_LINE_REQUIRED', '페이백이 원거래의 어느 줄인지 알려 주세요.');
+  }
+  const type = (input.paybackType ?? 'payback') as PaybackType;
+  if (!PAYBACK_TYPES.includes(type)) {
+    fail('PAYBACK_TYPE_INVALID', `알 수 없는 종류입니다: ${input.paybackType}`);
+  }
+
+  const target = input.paybackOfEntryId
+    ? await lookup.paybackTarget(input.projectId, input.paybackOfEntryId, input.paybackOfLineKey!)
+    : null;
+  if (target?.isPayback) {
+    fail('PAYBACK_TARGET_INVALID', '페이백에는 페이백을 걸 수 없습니다.');
+  }
+
+  const built = await buildInflow(
+    {
+      ...input,
+      lines: [
+        {
+          categoryId: target?.lineCategoryId ?? input.categoryId,
+          amount: input.amount,
+          lineKey: input.lineKey,
+          ...(input.tagIds ? { tagIds: input.tagIds } : {}),
+        },
+      ],
+      // 실적 기본값은 종류가 정한다. 카드가 아니면 buildInflow 가 어차피 true 로 둔다.
+      countsPerformance: input.countsPerformance ?? paybackCountsPerformance(type),
+    },
+    'expense',
+    lookup,
+  );
+
+  return {
+    ...built,
+    paybackType: type,
+    paybackOfEntryId: target ? target.id : null,
+    paybackOfLineKey: target ? input.paybackOfLineKey! : null,
   };
 }
 
@@ -842,6 +960,11 @@ export interface EntryBuildRequest extends CommonBuildInput {
   discountCountsPerformance?: boolean;
   /** 이체 수수료 줄의 키. 수수료를 적었으면 함께 보낸다. */
   transferFeeLineKey?: string;
+  /** 페이백의 원거래와 그 줄. `kind: 'payback'` 에만 뜻이 있다. */
+  paybackOfEntryId?: string;
+  paybackOfLineKey?: string;
+  /** 돌아온 돈의 종류. `kind: 'payback'` 에만 뜻이 있다. */
+  paybackType?: string;
   /**
    * 붙일 태그.
    *
@@ -883,6 +1006,32 @@ export async function buildEntry(
           accountId: request.accountId,
           cardId: request.cardId,
           countsPerformance: request.countsPerformance,
+        },
+        lookup,
+      );
+
+    /*
+     * 페이백. 분류 줄은 하나다 -- 원거래의 한 줄을 되돌리는 것이라 나눌 것이 없다.
+     * 차감·할부도 뜻이 없어 받지 않는다.
+     */
+    case 'payback':
+      if (request.splits?.length) {
+        fail('PAYBACK_SPLIT_UNSUPPORTED', '페이백은 나눠 적을 수 없습니다.');
+      }
+      if (!request.categoryId) fail('CATEGORY_REQUIRED', '카테고리를 지정해야 합니다.');
+      return buildPayback(
+        {
+          ...request,
+          categoryId: request.categoryId!,
+          amount: requireAmount(request.amount, '페이백 금액'),
+          lineKey: request.lineKey!,
+          accountId: request.accountId,
+          cardId: request.cardId,
+          countsPerformance: request.countsPerformance,
+          paybackOfEntryId: request.paybackOfEntryId,
+          paybackOfLineKey: request.paybackOfLineKey,
+          paybackType: request.paybackType,
+          tagIds: request.tagIds,
         },
         lookup,
       );

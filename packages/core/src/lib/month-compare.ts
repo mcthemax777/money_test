@@ -3,6 +3,7 @@ import type { EntryDto, EntryListItem } from '@money/types';
 import { homeDataPort } from '../data/home-port';
 import { dayRangeQuery, formatMonthShort, shiftYearMonth } from '../lib/datetime';
 import {
+  analysisDated,
   buildDailyCumulative,
   monthDateKeys,
   type CumulativeSeries,
@@ -51,10 +52,12 @@ export async function loadPreviousMonths(
         projectId,
       )) as EntryListItem[];
 
+      // 분석 기준으로 받았으면 페이백도 원거래 날짜로 쌓는다. 이번 달 선과 같은 규칙이다.
+      const counted = query.dateBasis === 'analysis' ? analysisDated(rows ?? []) : rows ?? [];
       return {
         name: formatMonthShort(Number(month.slice(5))),
         // 앞선 달도 이번 달과 같은 몫을 세야 선끼리 견줄 수 있다.
-        points: buildDailyCumulative(rows ?? [], startKey, endKey, timeZone, type),
+        points: buildDailyCumulative(counted, startKey, endKey, timeZone, type),
       };
     }),
   );

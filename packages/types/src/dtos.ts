@@ -9,6 +9,7 @@ import type {
   FinancialInstitution,
   FinancialInstitutionType,
   EntryKind,
+  PaybackType,
   EntryListItem,
   EntryDraft,
   EntryDraftSource,
@@ -629,7 +630,7 @@ export namespace EntryDto {
      * 있어야 한다. 형식 검사는 `isClientId` 가 한다.
      */
     id?: string;
-    kind: 'expense' | 'income' | 'transfer' | 'card_payment';
+    kind: 'expense' | 'income' | 'transfer' | 'card_payment' | 'payback';
     personId: string;
     date: IsoDateString;
     description: string;
@@ -696,6 +697,17 @@ export namespace EntryDto {
     }>;
     /** 이체 수수료 줄의 키. 수수료를 적었으면 함께 보낸다. */
     transferFeeLineKey?: string;
+
+    /**
+     * 페이백의 원거래와 그 줄 (`kind: 'payback'` 에만 뜻이 있다, PAYBACK_DESIGN.md).
+     *
+     * 분할이 아니어도 원거래 줄의 키를 함께 보낸다. 원거래가 이미 지워졌으면 조립이 링크를
+     * 비우고 독립 페이백으로 들인다 -- 원거래 삭제(SetNull)와 같은 결과다.
+     */
+    paybackOfEntryId?: string;
+    paybackOfLineKey?: string;
+    /** 돌아온 돈의 종류 ('payback' | 'refund'). 생략하면 페이백이다. 카드 실적의 기본값이 갈린다. */
+    paybackType?: PaybackType;
 
     /**
      * 붙일 태그.
@@ -908,6 +920,20 @@ export namespace EntryDto {
      */
     categoryType?: 'income' | 'expense';
     kind?: EntryKind;
+    /**
+     * 기간을 어느 날짜로 볼지. 생략하면 전표 날짜다.
+     *
+     * `'analysis'` 면 연결된 페이백을 **원거래 날짜**로 고른다 -- 다음 달에 들어온 페이백도
+     * 쓴 달의 목록에 든다. 분석 화면(분류 상세)의 일별 누적이 리포트 합계와 맞으려면 이
+     * 기준으로 받아야 한다 (PAYBACK_DESIGN.md 결정 G). 기기 사본도 같은 규칙이다.
+     */
+    dateBasis?: 'analysis';
+    /**
+     * 이 거래에 걸린 페이백만 (원거래 id). 원거래 상세가 "받은 페이백"을 그린다.
+     *
+     * 기기 사본도 같은 조건으로 고른다 (`entry.paybackOfEntryId`).
+     */
+    paybackOf?: string;
     /**
      * 한 달을 본다 ("YYYY-MM"). `startDate`/`endDate` 보다 앞선다.
      *

@@ -230,27 +230,32 @@ export default function PaymentMethodTab({
     };
 
     /*
-     * 통장으로 들어온 수입.
+     * 이 수단으로 들어온 돈 (수입과 페이백).
      *
-     * paymentAccountId는 "이 통장에서 돈이 나간 전표"라 음수 다리만 본다. 수입은
-     * 들어오는 쪽이라 그 조건에 걸리지 않으므로 따로 받아 합친다. 원장 관점의
-     * accountId + 수입 카테고리로 거르면 이 통장에 들어온 수입만 남는다.
+     * paymentAccountId·paymentCardId는 "이 수단에서 돈이 나간 전표"라 음수 다리만 본다.
+     * 들어온 돈은 그 조건에 걸리지 않으므로 따로 받아 합친다. 원장 관점(accountId·cardId)
+     * + 유형으로 거르면 이 수단에 들어온 것만 남는다.
+     *
+     * **카드도 받는다.** 카드사가 되돌려 준 돈과 카드로 받은 페이백은 카드 다리에 선다.
+     * 예전에는 통장만 물어 카드 상세에서 그 돈이 보이지 않았다.
+     *
+     * 수입 분류로 거르지 않고 유형으로 거른다. 페이백은 지출 분류를 반대로 쓰는 전표라
+     * 수입 분류 조건에는 걸리지 않는다 (PAYBACK_DESIGN.md).
      */
-    const incomeQuery =
-      selected.kind === 'account'
-        ? apiClient.getAllEntries(
-            {
-              ...(selected.unassigned
-                ? { paymentAccountIds: NO_ACCOUNT }
-                : { accountId: selected.id }),
-              categoryType: 'income' as const,
-              startDate,
-              endDate,
-              ...filter,
-            },
-            projectId,
-          )
-        : Promise.resolve([] as EntryListItem[]);
+    const incomeQuery = apiClient.getAllEntries(
+      {
+        ...(selected.unassigned
+          ? { paymentAccountIds: NO_ACCOUNT }
+          : selected.kind === 'account'
+            ? { accountId: selected.id }
+            : { cardId: selected.id }),
+        kinds: 'income,payback',
+        startDate,
+        endDate,
+        ...filter,
+      },
+      projectId,
+    );
 
     Promise.all([
       apiClient.getTrend(

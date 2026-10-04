@@ -16,7 +16,9 @@ import {
   Dec,
   type EntryDto,
   type EntryListItem,
+  type PaybackType,
   newLineKey,
+  paybackCountsPerformance,
   zonedFormValueToUtc,
 } from '@money/types';
 
@@ -35,8 +37,11 @@ import {
  * `classifyEntry` 가 `card_payment` 로 되읽으므로 목록과 집계는 그대로다.
  *
  * 조정(adjustment)은 잔액 맞추기가 만드는 것이라 여기 없다.
+ *
+ * 페이백(payback)은 갈래 고르기에 서지 않는다. 원거래의 상세에서 "페이백 추가"로만 열리고
+ * (`paybackFormFrom`), 화면은 이 갈래일 때 페이백 칸만 그린다 (PAYBACK_DESIGN.md).
  */
-export type EntryFormKind = 'expense' | 'income' | 'transfer';
+export type EntryFormKind = 'expense' | 'income' | 'transfer' | 'payback';
 
 /**
  * 분할의 한 줄.
@@ -213,6 +218,17 @@ export interface EntryFormValues {
    * 그러지 않으면 그 사람의 편집이 아무 말 없이 사라진다 (설계 문서의 D6).
    */
   baseHlc: string | null;
+  /**
+   * 페이백의 원거래와 그 줄. 페이백이 아니면 빈 글자다.
+   *
+   * 분할된 원거래면 줄을 골라야 하고, 고른 줄의 분류가 `categoryId` 가 된다
+   * (`useEntryForm` 의 `choosePaybackLine`). 고칠 때는 줄을 바꾸지 않는다 -- 화면이 원거래의
+   * 줄을 들고 있지 않다.
+   */
+  paybackOfEntryId: string;
+  paybackOfLineKey: string;
+  /** 돌아온 돈의 종류. 페이백 갈래에만 뜻이 있다. 바꾸면 실적 칸이 그 종류의 기본값으로 돌아간다. */
+  paybackType: PaybackType;
 }
 
 export interface EntryFormDefaults {
@@ -260,6 +276,9 @@ export function emptyEntryForm({ personId = '', timeZone, now }: EntryFormDefaul
     tagIds: [],
     // 새로 적는 중이라 딛고 설 판이 없다. 만들기는 겹칠 대상 자체가 없다.
     baseHlc: null,
+    paybackOfEntryId: '',
+    paybackOfLineKey: '',
+    paybackType: 'payback',
     ...(now ? { dateKey: dateKeyOf(now, timeZone), timeKey: timeInputOf(now, timeZone) } : {}),
   };
 }
@@ -300,7 +319,8 @@ export function entryFormFromItem(
     item.kind !== 'expense' &&
     item.kind !== 'income' &&
     item.kind !== 'transfer' &&
-    item.kind !== 'card_payment'
+    item.kind !== 'card_payment' &&
+    item.kind !== 'payback'
   ) {
     return null;
   }
@@ -448,6 +468,36 @@ export function entryFormFromItem(
      * 분할이면 줄마다 다를 수 있어 여기 담지 않는다 (`splits[].tagIds`).
      */
     tagIds: isSplit ? [] : (only?.tags ?? item.tags).map((tag) => tag.id),
+    // 페이백의 링크. 고쳐 저장할 때 그대로 되돌려 보내야 링크가 비지 않는다 (수정은 전체 교체다).
+    paybackOfEntryId: item.paybackOfEntryId ?? '',
+    paybackOfLineKey: item.paybackOfLineKey ?? '',
+    paybackType: item.paybackType ?? 'payback',
+  };
+}
+
+/**
+ * 원거래에서 새 페이백 폼을 채운다.
+ *
+ * 들어온 날짜는 오늘이다(페이백은 대개 나중에 들어온다). 사람과 설명은 원거래의 것을,
+ * 들어온 수단은 원거래가 쓴 수단을 기본으로 둔다 -- 카드로 낸 것의 캐시백은 대개 그 카드로
+ * 돌아온다. 원거래 줄이 하나면 그 줄을 고르고, 분할이면 비워 두어 화면이 고르게 한다.
+ */
+export function paybackFormFrom(original: EntryListItem, timeZone: string): EntryFormValues {
+  const only = original.lines.length === 1 ? original.lines[0] : null;
+  return {
+    ...emptyEntryForm({ personId: original.personId, timeZone }),
+    kind: 'payback',
+    description: original.description,
+    method: original.cardId
+      ? cardValue(original.cardId)
+      : original.accountId
+        ? accountValue(original.accountId)
+        : '',
+    categoryId: only?.categoryId ?? '',
+    // 카드로 들어온 돈은 실적에서 빼는 것이 기본이다 (`defaultCountsPerformance`).
+    countsPerformance: defaultCountsPerformance('payback', 'payback'),
+    paybackOfEntryId: original.id,
+    paybackOfLineKey: only?.lineKey ?? '',
   };
 }
 
@@ -526,7 +576,13 @@ function grossOfLine(line: { amount: string; discountAmount: string | null }): s
  *
  * 화면과 조립이 같은 답을 내야 해서 여기 한 곳에 둔다.
  */
-export function defaultCountsPerformance(kind: EntryFormKind): boolean {
+export function defaultCountsPerformance(kind: EntryFormKind, paybackType?: PaybackType | ''): boolean {
+  /*
+   * 돌아온 돈은 종류가 정한다 -- 환불은 산 것을 되돌린 것이라 실적도 깎고, 캐시백은 쓴 돈이
+   * 아니라 깎지 않는다 (`paybackCountsPerformance`, 조립과 같은 함수다).
+   */
+  if (kind === 'payback') return paybackCountsPerformance(paybackType || 'payback');
+  // 수입은 쓴 돈이 아니다. 조립의 기본값과 같다 (entry-build).
   return kind !== 'income';
 }
 
@@ -881,6 +937,11 @@ export function checkEntryForm(
     return null;
   }
 
+  // 페이백은 원거래의 어느 줄인지가 있어야 한다. 분할이면 화면이 고르게 한다.
+  if (values.kind === 'payback' && values.paybackOfEntryId && !values.paybackOfLineKey) {
+    return { field: 'paybackOfLineKey', code: 'PAYBACK_LINE_REQUIRED' };
+  }
+
   if (!values.categoryId) return { field: 'categoryId', code: 'CATEGORY_REQUIRED' };
 
   /*
@@ -1061,7 +1122,7 @@ export function entryFormToRequest(
    * 보내지 않는다 -- 짐만 보고도 사용자가 손댄 자리가 드러난다.
    */
   const performanceExtra = {
-    ...(method.cardId && values.countsPerformance !== defaultCountsPerformance(values.kind)
+    ...(method.cardId && values.countsPerformance !== defaultCountsPerformance(values.kind, values.paybackType)
       ? { countsPerformance: values.countsPerformance }
       : {}),
     /*
@@ -1134,6 +1195,12 @@ export function entryFormToRequest(
       : {}),
     ...lineDiscount(values.discountAmount),
     ...performanceExtra,
+    // 페이백의 원거래와 그 줄. 원거래가 없으면 조립이 링크를 비운다.
+    ...(values.kind === 'payback' && values.paybackOfEntryId
+      ? { paybackOfEntryId: values.paybackOfEntryId, paybackOfLineKey: values.paybackOfLineKey }
+      : {}),
+    // 돌아온 돈의 종류. 조립이 이것으로 실적의 기본값을 정한다.
+    ...(values.kind === 'payback' ? { paybackType: values.paybackType } : {}),
   };
 }
 
@@ -1156,7 +1223,7 @@ export function totalDiscountOf(values: EntryFormValues): string {
 
 /** 'YYYY-MM-DD' 이고 실제로 있는 날인가. 2026-02-31 은 모양은 맞지만 없는 날이다. */
 /** 'HH:mm' 인가. */
-function isTimeKey(value: string): boolean {
+export function isTimeKey(value: string): boolean {
   if (!/^\d{2}:\d{2}$/.test(value)) return false;
 
   const [hour, minute] = value.split(':').map(Number);

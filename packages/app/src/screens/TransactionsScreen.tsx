@@ -59,6 +59,7 @@ import {
   useProject,
   useProjectDisplayCurrency,
 } from '@money/core/store/project';
+import { paybackCountOf, paybackDeleteNote } from '@money/core/hooks/usePaybacks';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import { useInboxCount } from '@money/core/store/inbox-count';
 import { useUserFilter } from '@money/core/store/user-filter';
@@ -79,6 +80,7 @@ import BasisPicker from '../components/BasisPicker';
 import CountBadge from '../components/CountBadge';
 import EntryDetailModal from '../components/EntryDetailModal';
 import EntryEditor from '../components/EntryEditor';
+import PaybackEditor, { type PaybackTarget } from '../components/PaybackEditor';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import SegmentedTabs from '../components/SegmentedTabs';
@@ -246,7 +248,8 @@ function LineView({
    * "순수입 0" 을 적어 봐야 위 줄의 "-" 를 되풀이할 뿐이다.
    */
   const net = income - expense;
-  const showsNet = Boolean(showNet) && (income > 0 || expense > 0);
+  // 지출은 음수일 수 있다 -- 페이백이 쓴 돈보다 많은 기간이다 (웹의 같은 줄과 같다).
+  const showsNet = Boolean(showNet) && (income > 0 || expense !== 0);
 
   return (
     <Pressable
@@ -318,6 +321,15 @@ function LineView({
               className={`font-semibold text-red-600 ${AMOUNT_SIZE[depth]}`}
             >
               -{formatCurrency(expense, currency)}
+            </Text>
+          ) : expense < 0 ? (
+            // 페이백이 쓴 돈보다 많았다. 지출 칸에 돌아온 돈으로 적는다.
+            <Text
+              numberOfLines={1}
+              style={TABULAR}
+              className={`font-semibold text-green-600 ${AMOUNT_SIZE[depth]}`}
+            >
+              +{formatCurrency(-expense, currency)}
             </Text>
           ) : income === 0 ? (
             <Text className={`text-gray-400 ${AMOUNT_SIZE[depth]}`}>-</Text>
@@ -523,6 +535,8 @@ export default function TransactionsScreen() {
   const [copying, setCopying] = useState<EntryListItem | null>(null);
   /** 고치는 중인 거래. 베끼기와 따로 든다 -- 편집기에 둘이 함께 가면 안 된다. */
   const [editing, setEditing] = useState<EntryListItem | null>(null);
+  /** 열려 있는 페이백 편집기. null 이면 닫혔다. */
+  const [paybackTarget, setPaybackTarget] = useState<PaybackTarget | null>(null);
   /** 새로 적는 중인가. 베끼기·고치기와 달리 바탕이 되는 거래가 없다. */
   const [isAdding, setIsAdding] = useState(false);
   /** 지우다 남은 것 같은 알림. 빈 글자면 아무것도 그리지 않는다. */
@@ -647,8 +661,10 @@ export default function TransactionsScreen() {
    * 고르기를 거치지 않는 길이라 건수를 적지 않고 한 번만 묻는다. 묻기 전에 상세를
    * 닫지 않는다 -- 취소했을 때 읽고 있던 거래가 사라지면 안 된다.
    */
-  const askDeleteDetail = (entry: EntryListItem) => {
-    Alert.alert(t('tx.detail.deleteConfirm'), t('tx.deleteConfirmBody'), [
+  const askDeleteDetail = async (entry: EntryListItem) => {
+    // 원거래면 걸린 환불·페이백도 함께 지워진다. 그 수를 함께 묻는다 (7-6).
+    const note = paybackDeleteNote(await paybackCountOf(entry, selectedProjectId), t);
+    Alert.alert(t('tx.detail.deleteConfirm'), [note, t('tx.deleteConfirmBody')].filter(Boolean).join(' '), [
       { text: t('common.cancel'), style: 'cancel' },
       {
         text: t('entryForm.delete'),
@@ -1302,11 +1318,30 @@ export default function TransactionsScreen() {
             ? (entry) => {
                 setDetail(null);
                 setNotice('');
-                setEditing(entry);
+                // 페이백은 따로 고친다. 거래 편집기에는 원거래의 줄을 고르는 칸이 없다.
+                if (entry.kind === 'payback') setPaybackTarget({ editing: entry });
+                else setEditing(entry);
               }
             : undefined
         }
         onDelete={canEdit ? askDeleteDetail : undefined}
+        onAddPayback={
+          canEdit
+            ? (original) => {
+                setDetail(null);
+                setNotice('');
+                setPaybackTarget({ original });
+              }
+            : undefined
+        }
+        onOpenPayback={(payback) => setDetail(payback)}
+      />
+
+      {/* 페이백을 적고 고치는 팝업. 저장하면 달·줄·목록을 다시 읽는다. */}
+      <PaybackEditor
+        target={paybackTarget}
+        onClose={() => setPaybackTarget(null)}
+        onSaved={tx.reload}
       />
 
       {/*

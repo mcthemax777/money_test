@@ -327,8 +327,9 @@ export function entryPersonCondition(
  * **지출·수입은 카테고리 기준, 이체·카드정산은 자금 이동 기준이다.** 둘을 갈라 두는
  * 것이 이 함수의 요점이다.
  *
- *   지출     지출 카테고리 다리가 있는 전표
+ *   지출     지출 카테고리 다리(0 이상)가 있는 전표
  *   수입     수입 카테고리 다리가 있는 전표
+ *   페이백   지출 카테고리 다리가 음수인 전표 (지출을 되돌려 받은 돈)
  *   이체     계좌 사이를 옮긴 돈 (신용카드·기초잔액이 끼지 않은)
  *   카드정산 계좌 사이를 옮긴 돈 중 신용카드 부채 계정이 끼는 것
  *   조정     기초잔액 계정이 끼는 것
@@ -365,6 +366,13 @@ export function entryKindCondition(
   const hasCategoryType = (type: CategoryType): Prisma.JournalEntryWhereInput => ({
     postings: { some: { category: { type } } },
   });
+  /*
+   * 지출과 페이백은 같은 지출 분류를 쓰고 부호로 갈린다 (`classifyEntry`). 지출 다리는 0 이상이고
+   * (전액 취소한 지출이 0원으로 남는다) 페이백 다리는 음수다.
+   */
+  const hasExpenseLeg = (sign: 'gte' | 'lt'): Prisma.JournalEntryWhereInput => ({
+    postings: { some: { category: { type: CategoryType.expense }, baseAmount: { [sign]: 0 } } },
+  });
 
   const of = (kind: EntryKind): Prisma.JournalEntryWhereInput => {
     switch (kind) {
@@ -388,8 +396,10 @@ export function entryKindCondition(
         };
       case 'income':
         return hasCategoryType(CategoryType.income);
+      case 'payback':
+        return hasExpenseLeg('lt');
       default:
-        return hasCategoryType(CategoryType.expense);
+        return hasExpenseLeg('gte');
     }
   };
 

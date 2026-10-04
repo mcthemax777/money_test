@@ -157,6 +157,11 @@ export interface EntryMutationPayload {
   transferFeeCategoryId?: string;
   /** 이체 수수료 줄의 키. */
   transferFeeLineKey?: string;
+  /** 페이백의 원거래와 그 줄. `EntryDto.CreateRequest` 와 같은 규칙이다. */
+  paybackOfEntryId?: string;
+  paybackOfLineKey?: string;
+  /** 돌아온 돈의 종류. `EntryDto.CreateRequest` 와 같은 규칙이다. */
+  paybackType?: string;
   cardTransferDirection?: CardTransferDirection;
   /** 분류 줄 하나뿐인 거래에서 그 줄이 깎인 금액. 분할이면 `splits[].discountAmount`. */
   discountAmount?: string;
