@@ -26,7 +26,7 @@ import {
   Copy,
   Loader2,
   Minus,
-  ChartPie,
+  ChartColumn,
   MoreVertical,
   Pencil,
   Plus,
@@ -263,104 +263,116 @@ function Line({
       type="button"
       onClick={onClick}
       aria-expanded={Boolean(open)}
-      className="block w-full px-3 py-2 text-left"
+      /*
+        가로로 이름과 금액 묶음이 서고, 둘을 세로 가운데에 맞춘다. 금액 묶음은 금액 줄과
+        순수입 줄을 쌓은 것이라, 이름이 한 줄이든 두 줄이든 위아래 여백이 고르다 (앱과 같다).
+      */
+      className="flex w-full items-center gap-2 px-3 py-2 text-left"
     >
-      <span className="flex items-center gap-2">
-        {check ? (
-          <CheckBox checked={check.checked} pending={check.pending} onToggle={check.onToggle} />
-        ) : null}
-        {/*
-          펼침 표시(▸▾)는 두지 않는다. 누르면 바로 아래가 열리고 닫히는 것이 보이므로
-          화살표는 한 줄에서 자리만 차지한다. 열린 상태는 aria-expanded 로만 알린다.
-        */}
-        <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-          {/*
-            긴 기간 이름(주차, 직접 정한 기간, 시작일을 옮긴 달)은 한 단 작게, 두 줄까지 쓴다.
-            "…"로 잘리면 그 줄이 어느 기간인지 읽을 수 없다 (`isLongPeriodLabel`).
-          */}
-          {depth === 0 && isLongPeriodLabel(label) ? (
-            <span className="flex min-w-0 flex-col text-[13px] font-semibold leading-snug text-gray-900">
-              {periodLabelLines(label).map((line, index) => (
-                <span key={index} className="truncate">
-                  {line}
-                </span>
-              ))}
-            </span>
-          ) : (
-            <span
-              className={`truncate text-gray-900 ${
-                depth === 0 ? 'text-[15px] font-semibold' : 'text-sm font-medium'
-              }`}
-            >
-              {label}
-            </span>
-          )}
-          {/*
-            요일. 일자 바로 옆에 붙여 "9 (토)" 로 읽히게 한다. 잔글씨(건수)보다 앞에
-            두는 것은 요일이 날짜의 일부이기 때문이다.
-          */}
-          {weekday ? (
-            <span className={`shrink-0 text-sm ${WEEKDAY_COLOR[weekday.day] ?? 'text-gray-900'}`}>
-              ({weekday.label})
-            </span>
-          ) : null}
-          {meta ? <span className="shrink-0 text-xs text-gray-500">{meta}</span> : null}
-        </span>
-        {/*
-          들어온 돈과 나간 돈에 각자의 칸을 주고, 칸 안에서는 둘 다 오른쪽 끝에 붙인다.
-
-          한 덩어리로 두면 두 숫자가 서로 옆에 붙어 어느 쪽이 들어온 돈인지 색으로만
-          갈린다. 한쪽이 없는 달에는 남은 숫자가 오른쪽으로 미끄러져, 줄을 훑을 때
-          같은 자리에서 같은 뜻을 읽을 수 없다. 칸을 고정하면 없는 쪽은 빈 자리로
-          남고 있는 쪽은 늘 제 자리에 선다.
-
-          칸 안에서 가운데에 두지 않는 것은 자릿수 때문이다. 1,110 과 222,110 이 위아래로
-          서면 일의 자리가 서로 어긋나, 어느 쪽이 큰 금액인지 길이로 읽을 수 없다.
-          오른쪽에 붙이면 일의 자리가 한 줄로 서서 자릿수가 그대로 보인다.
-        */}
-        <span
-          className={`flex w-[30%] shrink-0 justify-end overflow-hidden font-semibold tabular-nums ${AMOUNT_SIZE[depth]}`}
-        >
-          {income > 0 ? (
-            <span className="truncate text-green-600">+{formatCurrency(income, currency)}</span>
-          ) : null}
-        </span>
-        <span
-          className={`flex w-[30%] shrink-0 justify-end overflow-hidden font-semibold tabular-nums ${AMOUNT_SIZE[depth]}`}
-        >
-          {expense > 0 ? (
-            <span className="truncate text-red-600">-{formatCurrency(expense, currency)}</span>
-          ) : expense < 0 ? (
-            // 페이백이 쓴 돈보다 많았다. 지출 칸에 돌아온 돈으로 적는다.
-            <span className="truncate text-green-600">+{formatCurrency(-expense, currency)}</span>
-          ) : income === 0 ? (
-            <span className="font-normal text-gray-400">-</span>
-          ) : null}
-        </span>
-      </span>
-
+      {check ? (
+        <CheckBox checked={check.checked} pending={check.pending} onToggle={check.onToggle} />
+      ) : null}
       {/*
-        순수입. 수입·지출 칸 바로 아래, 같은 오른쪽 끝에 세운다.
-
-        위 두 숫자를 세로로 더한 결과라 같은 세로선에 서야 눈이 옆으로 새지 않는다.
-        낱말을 앞에 붙이는 것은 색만으로는 "적게 쓴 달"과 "수입이 컸던 달"이 갈리지
-        않아서다 -- 초록 숫자가 둘이 되면 위의 것이 수입인지 남은 돈인지 모른다.
-
-        글자는 한 단 작게 둔다. 이 줄은 위의 두 숫자에서 나온 값이라, 같은 크기로
-        두면 달마다 굵은 금액이 셋이 되어 무엇을 먼저 읽을지 알 수 없다.
+        펼침 표시(▸▾)는 두지 않는다. 누르면 바로 아래가 열리고 닫히는 것이 보이므로
+        화살표는 한 줄에서 자리만 차지한다. 열린 상태는 aria-expanded 로만 알린다.
       */}
-      {showsNet ? (
-        <span className="flex justify-end pt-0.5">
+      <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+        {/*
+          긴 기간 이름(주차, 직접 정한 기간, 시작일을 옮긴 달)은 한 단 작게, 두 줄까지 쓴다.
+          "…"로 잘리면 그 줄이 어느 기간인지 읽을 수 없다 (`isLongPeriodLabel`).
+        */}
+        {depth === 0 && isLongPeriodLabel(label) ? (
+          <span className="flex min-w-0 flex-col text-[13px] font-semibold leading-snug text-gray-900">
+            {periodLabelLines(label).map((line, index) => (
+              <span key={index} className="truncate">
+                {line}
+              </span>
+            ))}
+          </span>
+        ) : (
           <span
-            className={`text-xs font-semibold tabular-nums ${
-              net >= 0 ? 'text-green-600' : 'text-red-600'
+            className={`truncate text-gray-900 ${
+              depth === 0 ? 'text-[15px] font-semibold' : 'text-sm font-medium'
             }`}
           >
-            {t('ledgerSummary.net')} {net >= 0 ? '+' : '-'}
-            {formatCurrency(Math.abs(net), currency)}
+            {label}
+          </span>
+        )}
+        {/*
+          요일. 일자 바로 옆에 붙여 "9 (토)" 로 읽히게 한다. 잔글씨(건수)보다 앞에
+          두는 것은 요일이 날짜의 일부이기 때문이다.
+        */}
+        {weekday ? (
+          <span className={`shrink-0 text-sm ${WEEKDAY_COLOR[weekday.day] ?? 'text-gray-900'}`}>
+            ({weekday.label})
+          </span>
+        ) : null}
+        {meta ? <span className="shrink-0 text-xs text-gray-500">{meta}</span> : null}
+      </span>
+      {/*
+        들어온 돈과 나간 돈에 각자의 칸을 주고, 칸 안에서는 둘 다 오른쪽 끝에 붙인다.
+
+        한 덩어리로 두면 두 숫자가 서로 옆에 붙어 어느 쪽이 들어온 돈인지 색으로만
+        갈린다. 한쪽이 없는 달에는 남은 숫자가 오른쪽으로 미끄러져, 줄을 훑을 때
+        같은 자리에서 같은 뜻을 읽을 수 없다. 칸을 고정하면 없는 쪽은 빈 자리로
+        남고 있는 쪽은 늘 제 자리에 선다.
+
+        칸 안에서 가운데에 두지 않는 것은 자릿수 때문이다. 1,110 과 222,110 이 위아래로
+        서면 일의 자리가 서로 어긋나, 어느 쪽이 큰 금액인지 길이로 읽을 수 없다.
+        오른쪽에 붙이면 일의 자리가 한 줄로 서서 자릿수가 그대로 보인다.
+      */}
+      {/*
+        금액 묶음. 수입·지출 칸과 그 아래 순수입 줄을 한 덩어리로 쌓아, 왼쪽 이름과 세로
+        가운데를 맞춘다. 이름이 두 줄(긴 기간 이름)일 때 금액 줄만 이름 첫 줄에 붙이고
+        순수입을 그 아래로 늘어뜨리면, 줄 아래쪽 여백만 크게 남는다.
+      */}
+      {/* 폭은 예전의 30% 칸 둘과 그 사이 여백(gap-2)을 합친 것이다. 칸이 좁아지면 큰 금액이 잘린다. */}
+      <span className="flex w-[calc(60%+0.5rem)] shrink-0 flex-col">
+        <span className="flex items-center gap-2">
+          <span
+            className={`flex min-w-0 flex-1 justify-end overflow-hidden font-semibold tabular-nums ${AMOUNT_SIZE[depth]}`}
+          >
+            {income > 0 ? (
+              <span className="truncate text-green-600">+{formatCurrency(income, currency)}</span>
+            ) : null}
+          </span>
+          <span
+            className={`flex min-w-0 flex-1 justify-end overflow-hidden font-semibold tabular-nums ${AMOUNT_SIZE[depth]}`}
+          >
+            {expense > 0 ? (
+              <span className="truncate text-red-600">-{formatCurrency(expense, currency)}</span>
+            ) : expense < 0 ? (
+              // 페이백이 쓴 돈보다 많았다. 지출 칸에 돌아온 돈으로 적는다.
+              <span className="truncate text-green-600">+{formatCurrency(-expense, currency)}</span>
+            ) : income === 0 ? (
+              <span className="font-normal text-gray-400">-</span>
+            ) : null}
           </span>
         </span>
-      ) : null}
+
+        {/*
+          순수입. 수입·지출 칸 바로 아래, 같은 오른쪽 끝에 세운다.
+
+          위 두 숫자를 세로로 더한 결과라 같은 세로선에 서야 눈이 옆으로 새지 않는다.
+          낱말을 앞에 붙이는 것은 색만으로는 "적게 쓴 달"과 "수입이 컸던 달"이 갈리지
+          않아서다 -- 초록 숫자가 둘이 되면 위의 것이 수입인지 남은 돈인지 모른다.
+
+          글자는 한 단 작게 둔다. 이 줄은 위의 두 숫자에서 나온 값이라, 같은 크기로
+          두면 달마다 굵은 금액이 셋이 되어 무엇을 먼저 읽을지 알 수 없다.
+        */}
+        {showsNet ? (
+          <span className="flex justify-end pt-0.5">
+            <span
+              className={`text-xs font-semibold tabular-nums ${
+                net >= 0 ? 'text-green-600' : 'text-red-600'
+              }`}
+            >
+              {t('ledgerSummary.net')} {net >= 0 ? '+' : '-'}
+              {formatCurrency(Math.abs(net), currency)}
+            </span>
+          </span>
+        ) : null}
+      </span>
     </button>
   );
 }
@@ -430,12 +442,11 @@ export default function TransactionsView({
   // 사람 목록과 선택을 프로젝트에 맞춘다. 다른 화면과 같은 훅을 쓴다.
   usePersonFilterSync(selectedProjectId, tx.people);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  /** 분석 창. 열 때만 세운다 -- 다시 열면 그때의 검색으로 달과 지출·수입을 새로 정한다. */
   /**
-   * 분석 창. null 이면 닫혀 있다. 년월 줄의 단추로 열었으면 그 줄의 기간 열쇠를 들고,
-   * 머리글의 단추로 열었으면 열쇠 없이 지금 단위의 오늘을 연다.
+   * 분석 창. null 이면 닫혀 있다. 년월 줄의 분석 아이콘이 그 줄의 기간 열쇠를 들고 연다.
+   * 열 때만 세운다 -- 다시 열면 그때의 검색으로 지출·수입을 새로 정한다.
    */
-  const [analysisFrom, setAnalysisFrom] = useState<{ key?: string } | null>(null);
+  const [analysisFrom, setAnalysisFrom] = useState<{ key: string } | null>(null);
   /** 더보기 선택창. 지금은 삭제 하나뿐이다. */
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   /**
@@ -1111,19 +1122,6 @@ export default function TransactionsView({
                   )}
                 </button>
                 {/*
-                  분석. 지금 걸린 조건(사람·검색)에 맞는 거래로 그래프를 그린다. 검색 바로
-                  앞에 둔다 -- 둘이 같은 조건을 쓴다는 것이 자리로 보인다.
-                */}
-                <button
-                  type="button"
-                  onClick={() => setAnalysisFrom({})}
-                  aria-label={t('tx.analysis')}
-                  title={t('tx.analysis')}
-                  className="flex items-center justify-center p-2 text-gray-600"
-                >
-                  <ChartPie className="h-4 w-4" aria-hidden />
-                </button>
-                {/*
                   검색. 달력 보기에서도 둔다 -- 걸어 둔 조건이 달력에도 그대로 걸린다.
                 */}
                 <button
@@ -1367,7 +1365,7 @@ export default function TransactionsView({
                       title={t('tx.analysisOfPeriod', { period: periodLabel(month.yearMonth) })}
                       className="flex shrink-0 items-center justify-center self-stretch pl-1 pr-2 text-gray-400 hover:text-gray-700"
                     >
-                      <ChartPie className="h-4 w-4" aria-hidden />
+                      <ChartColumn className="h-4 w-4" aria-hidden />
                     </button>
                   )}
                 </div>
@@ -2023,7 +2021,6 @@ export default function TransactionsView({
       {analysisFrom && (
         <TransactionAnalysisModal
           onClose={() => setAnalysisFrom(null)}
-          grouping={tx.grouping}
           initialKey={analysisFrom.key}
           search={tx.search}
           searchCount={tx.searchCount}

@@ -2,7 +2,6 @@ import { useMemo, useState } from 'react';
 import {
   isCalendarMonthKey,
   periodDayRange,
-  periodKeyOf,
   shiftPeriodKey,
   unitOfKey,
   type EntryScopeQuery,
@@ -12,7 +11,7 @@ import type { ReportPeriod } from '../lib/api-client';
 import { dayRangeQuery, periodLabel } from '../lib/datetime';
 import { useProjectTimeZone } from '../store/project';
 import { totalIdOf } from './useCategoryDetail';
-import type { PeriodGrouping, SearchRange, TransactionSearch } from './useTransactions';
+import type { SearchRange, TransactionSearch } from './useTransactions';
 
 /**
  * 거래 화면의 분석 창. 목록과 **같은 조건**(사람 필터 + 검색 + 세는 방식)으로 그래프를 그린다.
@@ -22,8 +21,7 @@ import type { PeriodGrouping, SearchRange, TransactionSearch } from './useTransa
  *
  *   1. **보는 기간.** 해·달·주 중 하나이고, 창 안에서 같은 단위로 옮긴다. 거래 목록은 모든
  *      기간을 늘어놓지만, 일별 누적과 요일·시간대 그래프는 한 구간이어야 뜻이 있다. 년월 줄의
- *      분석 단추로 열면 그 줄의 기간에서, 머리글의 단추로 열면 지금 묶는 단위의 오늘에서 연다.
- *      추이 막대도 그 단위로 선다 (`trendPeriod`).
+ *      분석 아이콘이 그 줄의 기간으로 연다. 추이 막대도 그 단위로 선다 (`trendPeriod`).
  *   2. **지출·수입.** 검색이 수입만 골랐으면 수입부터 연다.
  *   3. **검색 기간으로 자르기.** 기간을 걸었으면 보는 달을 그 기간과 겹치는 날로만 줄이고,
  *      12개월 추이도 그 기간 밖의 돈은 세지 않는다. 겹치는 날이 없는 달은 비어 있다고 알린다.
@@ -34,38 +32,18 @@ export function useTransactionAnalysis({
   search,
   range,
   scope,
-  grouping,
   initialKey,
 }: {
   search: TransactionSearch;
   range: SearchRange | null;
   scope: EntryScopeQuery;
-  /**
-   * 거래 목록이 기간을 나누는 규칙 (`useTransactions` 의 `grouping`). 머리글의 단추로 열면
-   * 이 규칙으로 오늘이 든 기간을 연다 -- 목록의 줄과 같은 날에서 끊어야 한다.
-   */
-  grouping: PeriodGrouping;
-  /** 년월 줄의 분석 단추로 열었으면 그 줄의 기간 열쇠. */
-  initialKey?: string;
+  /** 처음 여는 기간. 분석은 년월 줄의 아이콘으로만 열리고, 그 줄의 기간 열쇠가 온다. */
+  initialKey: string;
 }) {
   const timeZone = useProjectTimeZone();
 
-  /*
-   * 처음 여는 기간. 줄에서 열었으면 그 줄이고, 검색 기간을 정해 목록이 한 줄이면 그 줄이다.
-   * 아니면 오늘이 든 기간을 검색 기간 안으로 당긴다 -- 기간이 지난 일이면 그 끝, 앞날이면
-   * 그 처음이다. 기간 밖으로 열면 빈 창부터 보게 된다.
-   */
-  const [periodKey, setPeriodKey] = useState(() => {
-    if (initialKey) return initialKey;
-    if (grouping.rangeKey) return grouping.rangeKey;
-    const { unit, weekStart, anchor } = grouping;
-    const keyOf = (dateKey: string) =>
-      periodKeyOf(`${dateKey}T12:00:00Z`, 'UTC', unit, weekStart, anchor);
-    let key = periodKeyOf(new Date(), timeZone, unit, weekStart, anchor);
-    if (range?.endKey && key > keyOf(range.endKey)) key = keyOf(range.endKey);
-    if (range?.startKey && key < keyOf(range.startKey)) key = keyOf(range.startKey);
-    return key;
-  });
+  /* 보는 기간. 창 안의 앞뒤 단추가 같은 단위로 옮긴다. */
+  const [periodKey, setPeriodKey] = useState(initialKey);
 
   /* 수입만 골랐으면 수입부터. 그 밖(지출을 골랐거나 유형을 거르지 않았으면)은 지출이다. */
   const [type, setType] = useState<'income' | 'expense'>(() =>

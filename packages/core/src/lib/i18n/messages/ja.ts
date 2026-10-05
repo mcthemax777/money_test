@@ -1264,7 +1264,6 @@ export const ja: Record<MessageKey, string> = {
   'tx.noMethods': 'この月に使った支払方法がありません。',
   'tx.entryCount': '{count}件',
   'tx.loadFailed': '取引を読み込めませんでした。',
-  'tx.analysis': '分析',
   'tx.analysisTitle': '取引の分析',
   'tx.analysisFiltered': '検索条件{count}件に合う取引で描いています。',
   'tx.analysisAll': '検索条件なしで、すべての取引で描いています。',

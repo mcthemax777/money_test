@@ -183,18 +183,6 @@ export function periodCutOf(
   return null;
 }
 
-/**
- * 목록이 기간을 나누는 규칙. 분석 창이 같은 규칙으로 오늘이 든 기간을 연다.
- *
- * `rangeKey` 는 검색에서 기간을 정해 목록이 그 한 줄일 때의 열쇠다.
- */
-export interface PeriodGrouping {
-  unit: EntryPeriodUnit;
-  weekStart: WeekStart;
-  anchor: PeriodAnchor;
-  rangeKey: string | null;
-}
-
 export const EMPTY_SEARCH: TransactionSearch = {
   text: '',
   categoryIds: [],
@@ -2364,16 +2352,6 @@ export function useTransactions(projectId: string | null) {
     revealMore,
     /** 펼친 모양으로만 서고 아직 받지 않은 기간 줄이 남았는가. */
     canRevealMore: shownMonths.some(isMonthWaiting),
-    /**
-     * 기간 줄을 나누는 규칙 (`PeriodGrouping`). 분석 창이 같은 규칙으로 오늘이 든 기간을
-     * 연다. 기간을 정했으면 그 한 줄의 열쇠가 `rangeKey` 다.
-     */
-    grouping: {
-      unit,
-      weekStart: groupWeekStart,
-      anchor,
-      rangeKey: range ? months[0]?.yearMonth ?? null : null,
-    } satisfies PeriodGrouping,
     isMonthWaiting,
     isLoadingOpen,
     // 2단

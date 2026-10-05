@@ -26,7 +26,7 @@ import {
   Archive,
   ArrowLeft,
   CalendarDays,
-  ChartPie,
+  ChartColumn,
   Check,
   ChevronDown,
   ChevronUp,
@@ -265,76 +265,80 @@ function LineView({
       accessibilityRole="button"
       accessibilityState={{ expanded: Boolean(open) }}
       /*
-        두 덩어리다 -- 왼쪽은 금액 줄과 순수입 줄을 위아래로 쌓고, 오른쪽에 분석 아이콘이
-        그 두 줄의 세로 가운데에 선다. 아이콘을 금액 줄 안에 두면 위로 붙어 보이고, 순수입
-        줄이 그 아래로 넘어간다.
+        가로로 이름 · 금액 묶음 · 분석 아이콘이 서고, 셋 다 세로 가운데에 맞춘다. 금액 묶음은
+        금액 줄과 순수입 줄을 쌓은 것이라, 이름이 한 줄이든 두 줄이든 위아래 여백이 고르다.
       */
       className="flex-row items-center gap-2 px-3 py-2"
     >
-      <View className="min-w-0 flex-1">
-        <View className="flex-row items-center gap-2">
-          {checkable && onToggle ? (
-            <CheckBox
-              checked={Boolean(checked)}
-              pending={checkPending}
-              onPress={() => onToggle(yearMonth, rowKey)}
-            />
-          ) : null}
-          {/*
-            펼침 표시(▸▾)는 두지 않는다. 누르면 바로 아래가 열리고 닫히는 것이 보이므로
-            화살표는 한 줄에서 자리만 차지한다.
-          */}
-          <View className="min-w-0 flex-1 flex-row items-baseline gap-1.5">
-            {/*
-              긴 기간 이름(주차, 직접 정한 기간, 시작일을 옮긴 달)은 한 단 작게, 두 줄까지 쓴다
-              (웹과 같다). "…"로 잘리면 그 줄이 어느 기간인지 읽을 수 없다.
-            */}
-            {depth === 0 && isLongPeriodLabel(label) ? (
-              <View className="shrink">
-                {periodLabelLines(label).map((line, index) => (
-                  <Text
-                    key={index}
-                    numberOfLines={1}
-                    className="text-[13px] font-semibold leading-[18px] text-gray-900"
-                  >
-                    {line}
-                  </Text>
-                ))}
-              </View>
-            ) : (
+      {checkable && onToggle ? (
+        <CheckBox
+          checked={Boolean(checked)}
+          pending={checkPending}
+          onPress={() => onToggle(yearMonth, rowKey)}
+        />
+      ) : null}
+      {/*
+        펼침 표시(▸▾)는 두지 않는다. 누르면 바로 아래가 열리고 닫히는 것이 보이므로
+        화살표는 한 줄에서 자리만 차지한다.
+      */}
+      <View className="min-w-0 flex-1 flex-row items-baseline gap-1.5">
+        {/*
+          긴 기간 이름(주차, 직접 정한 기간, 시작일을 옮긴 달)은 한 단 작게, 두 줄까지 쓴다
+          (웹과 같다). "…"로 잘리면 그 줄이 어느 기간인지 읽을 수 없다.
+        */}
+        {depth === 0 && isLongPeriodLabel(label) ? (
+          <View className="shrink">
+            {periodLabelLines(label).map((line, index) => (
               <Text
+                key={index}
                 numberOfLines={1}
-                className={`shrink text-gray-900 ${
-                  depth === 0 ? 'text-[15px] font-semibold' : 'text-sm font-medium'
-                }`}
+                className="text-[13px] font-semibold leading-[18px] text-gray-900"
               >
-                {label}
+                {line}
               </Text>
-            )}
-            {/*
-              요일. 일자 바로 옆에 붙여 "9 (토)" 로 읽히게 한다. 잔글씨(건수)보다 앞에
-              두는 것은 요일이 날짜의 일부이기 때문이다.
-            */}
-            {weekday ? (
-              <Text className={`text-sm ${WEEKDAY_COLOR[weekday.day] ?? 'text-gray-900'}`}>
-                ({weekday.label})
-              </Text>
-            ) : null}
-            {meta ? <Text className="text-xs text-gray-500">{meta}</Text> : null}
+            ))}
           </View>
-          {/*
-            들어온 돈과 나간 돈에 각자의 칸을 주고, 칸 안에서는 둘 다 오른쪽 끝에 붙인다.
+        ) : (
+          <Text
+            numberOfLines={1}
+            className={`shrink text-gray-900 ${
+              depth === 0 ? 'text-[15px] font-semibold' : 'text-sm font-medium'
+            }`}
+          >
+            {label}
+          </Text>
+        )}
+        {/*
+          요일. 일자 바로 옆에 붙여 "9 (토)" 로 읽히게 한다. 잔글씨(건수)보다 앞에
+          두는 것은 요일이 날짜의 일부이기 때문이다.
+        */}
+        {weekday ? (
+          <Text className={`text-sm ${WEEKDAY_COLOR[weekday.day] ?? 'text-gray-900'}`}>
+            ({weekday.label})
+          </Text>
+        ) : null}
+        {meta ? <Text className="text-xs text-gray-500">{meta}</Text> : null}
+      </View>
+      {/*
+        들어온 돈과 나간 돈에 각자의 칸을 주고, 칸 안에서는 둘 다 오른쪽 끝에 붙인다.
 
-            한 덩어리로 두면 두 숫자가 서로 옆에 붙어 어느 쪽이 들어온 돈인지 색으로만
-            갈린다. 한쪽이 없는 달에는 남은 숫자가 오른쪽으로 미끄러져, 줄을 훑을 때
-            같은 자리에서 같은 뜻을 읽을 수 없다. 칸을 고정하면 없는 쪽은 빈 자리로
-            남고 있는 쪽은 늘 제 자리에 선다.
+        한 덩어리로 두면 두 숫자가 서로 옆에 붙어 어느 쪽이 들어온 돈인지 색으로만
+        갈린다. 한쪽이 없는 달에는 남은 숫자가 오른쪽으로 미끄러져, 줄을 훑을 때
+        같은 자리에서 같은 뜻을 읽을 수 없다. 칸을 고정하면 없는 쪽은 빈 자리로
+        남고 있는 쪽은 늘 제 자리에 선다.
 
-            칸 안에서 가운데에 두지 않는 것은 자릿수 때문이다. 1,110 과 222,110 이 위아래로
-            서면 일의 자리가 서로 어긋나, 어느 쪽이 큰 금액인지 길이로 읽을 수 없다.
-            오른쪽에 붙이면 일의 자리가 한 줄로 서서 자릿수가 그대로 보인다.
-          */}
-          <View className="w-[30%] shrink-0 flex-row justify-end">
+        칸 안에서 가운데에 두지 않는 것은 자릿수 때문이다. 1,110 과 222,110 이 위아래로
+        서면 일의 자리가 서로 어긋나, 어느 쪽이 큰 금액인지 길이로 읽을 수 없다.
+        오른쪽에 붙이면 일의 자리가 한 줄로 서서 자릿수가 그대로 보인다.
+      */}
+      {/*
+        금액 묶음. 수입·지출 칸과 그 아래 순수입 줄을 한 덩어리로 쌓아, 왼쪽 이름과 세로
+        가운데를 맞춘다. 이름이 두 줄(긴 기간 이름)일 때 금액 줄만 이름 첫 줄에 붙이고
+        순수입을 그 아래로 늘어뜨리면, 줄 아래쪽 여백만 크게 남는다.
+      */}
+      <View className="w-[60%] shrink-0">
+        <View className="flex-row items-center gap-2">
+          <View className="flex-1 flex-row justify-end">
             {income > 0 ? (
               <Text
                 numberOfLines={1}
@@ -345,7 +349,7 @@ function LineView({
               </Text>
             ) : null}
           </View>
-          <View className="w-[30%] shrink-0 flex-row justify-end">
+          <View className="flex-1 flex-row justify-end">
             {expense > 0 ? (
               <Text
                 numberOfLines={1}
@@ -404,7 +408,7 @@ function LineView({
           accessibilityLabel={t('tx.analysisOfPeriod', { period: label })}
           className="shrink-0"
         >
-          <ChartPie size={16} color="#9ca3af" />
+          <ChartColumn size={16} color="#9ca3af" />
         </Pressable>
       ) : null}
     </Pressable>
@@ -518,14 +522,13 @@ export default function TransactionsScreen() {
    * 기기의 뒤로가기는 머리글의 ← 와 같이 목록으로 돌아간다.
    */
   /**
-   * null 이면 닫혀 있다. 년월 줄의 아이콘으로 폈으면 그 줄의 기간 열쇠를 들고, 머리글의
-   * 단추로 폈으면 열쇠 없이 지금 단위의 오늘을 연다.
+   * null 이면 닫혀 있다. 년월 줄의 분석 아이콘이 그 줄의 기간 열쇠를 들고 편다.
    */
-  const [analysisFrom, setAnalysisFrom] = useState<{ key?: string } | null>(null);
+  const [analysisFrom, setAnalysisFrom] = useState<{ key: string } | null>(null);
   const scrollToTop = useScrollToTop();
   const { offsetOf, restoreTo } = useScrollRestore();
   const listOffset = useRef(0);
-  const openAnalysis = (from: { key?: string } | null) => {
+  const openAnalysis = (from: { key: string } | null) => {
     if (from) listOffset.current = offsetOf();
     setAnalysisFrom(from);
     if (from) scrollToTop();
@@ -895,7 +898,6 @@ export default function TransactionsScreen() {
       {analysisFrom ? (
         <TransactionAnalysisView
           onClose={() => openAnalysis(null)}
-          grouping={tx.grouping}
           initialKey={analysisFrom.key}
           search={tx.search}
           searchCount={tx.searchCount}
@@ -1019,17 +1021,6 @@ export default function TransactionsScreen() {
                       ) : (
                         <CalendarDays size={18} color="#4b5563" />
                       )}
-                    </Pressable>
-                    {/*
-                      분석. 지금 걸린 조건(사람·검색)에 맞는 거래로 그래프를 그린다. 검색 바로
-                      앞에 둔다 -- 둘이 같은 조건을 쓴다는 것이 자리로 보인다 (웹과 같다).
-                    */}
-                    <Pressable
-                      onPress={() => openAnalysis({})}
-                      accessibilityLabel={t('tx.analysis')}
-                      className="items-center justify-center p-2"
-                    >
-                      <ChartPie size={18} color="#4b5563" />
                     </Pressable>
                     {/*
                       검색. 달력 보기에서도 둔다 -- 걸어 둔 조건이 달력에도 그대로 걸린다.
