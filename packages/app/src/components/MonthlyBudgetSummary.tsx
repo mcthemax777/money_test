@@ -19,8 +19,6 @@ export default function MonthlyBudgetSummary({
   budgets,
   type,
   onTypeChange,
-  expenseTotal,
-  incomeTotal,
   onSelect,
   onOpenSettings,
 }: {
@@ -28,9 +26,6 @@ export default function MonthlyBudgetSummary({
   type: 'income' | 'expense';
   /** 넘기면 제목 아래에 지출·수입 탭이 선다 (웹과 같은 까닭으로 상자 안에 둔다). */
   onTypeChange?: (type: 'income' | 'expense') => void;
-  /** 탭에 함께 적을 이 달의 합계 (서식을 입힌 글자) */
-  expenseTotal?: string;
-  incomeTotal?: string;
   /**
    * 줄을 누르면 부른다. 가계 분류별에서 그 분류를 누를 때와 같은 상세 분석을 연다 (웹과 같다).
    * 합계 줄은 'total-expense' / 'total-income' 을 넘긴다.
@@ -84,8 +79,8 @@ export default function MonthlyBudgetSummary({
           <TypeTabs
             type={type}
             onChange={onTypeChange}
-            expenseTotal={expenseTotal}
-            incomeTotal={incomeTotal}
+            /* 고른 탭만 파랑이다. 금액은 아래 합계 줄이 말한다. */
+            tone="selection"
           />
         </View>
       ) : null}

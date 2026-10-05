@@ -23,52 +23,47 @@ const TABS: Array<{ type: EntryType; labelKey: MessageKey; text: string; border:
 ];
 
 /**
- * 지출·수입 탭. 홈과 예산 설정이 쓴다 (앱의 TypeTabs 와 같다).
- *
- * 합계를 넘기면 글자 옆에 함께 적는다. 고르지 않은 쪽도 숫자는 보여야 "이 달에 얼마
- * 벌어 얼마 썼나"를 탭을 눌러 보지 않고도 알 수 있다.
+ * 지출·수입 탭. 예산 상자·예산 설정·거래 분석이 쓴다 (앱의 TypeTabs 와 같다).
  */
 export default function TypeTabs({
   type,
   onChange,
-  expenseTotal,
-  incomeTotal,
+  tone = 'type',
 }: {
   type: EntryType;
   onChange: (type: EntryType) => void;
-  expenseTotal?: string;
-  incomeTotal?: string;
+  /**
+   * 탭의 색.
+   *
+   *   type       지출 빨강·수입 초록. 고르지 않은 쪽도 제 색이다.
+   *   selection  고른 탭만 파랑, 나머지는 회색. 예산 상자와 예산 설정이 쓴다 (2026-10-05 사용자 요청) --
+   *              탭 아래 줄들이 이미 금액을 말하므로 탭은 "무엇을 골랐나"만 알리면 된다.
+   */
+  tone?: 'type' | 'selection';
 }) {
   const { t } = useTranslation();
 
   return (
     <div className="flex border-b border-gray-200">
       {TABS.map((tab) => {
-        const total = tab.type === 'income' ? incomeTotal : expenseTotal;
+        const isSelected = type === tab.type;
+        const text = tone === 'selection' ? (isSelected ? 'text-blue-600' : 'text-gray-500') : tab.text;
+        const border = tone === 'selection' ? 'border-blue-600' : tab.border;
         return (
           <button
             key={tab.type}
             type="button"
             onClick={() => onChange(tab.type)}
-            aria-pressed={type === tab.type}
+            aria-pressed={isSelected}
             /*
-              둘이 화면을 반씩 나눈다. 글자 길이대로 두면 금액 자리수에 따라
-              누르는 자리가 달마다 움직인다.
-
-              글자와 금액 모두 그 유형의 색이다. 고르지 않은 쪽을 회색으로
-              내리면 색이 "고른 것"을 뜻하게 되어, 빨강·초록이 지출·수입을
-              가리킨다는 것이 흐려진다. 무엇을 골랐는지는 밑줄과 굵기가 말한다.
+              둘이 화면을 반씩 나눈다. 글자 길이대로 두면 누르는 자리가 움직인다.
+              무엇을 골랐는지는 밑줄과 굵기가 말한다 (selection 이면 색도).
             */
-            className={`flex flex-1 items-baseline justify-center gap-2 px-4 py-2 transition ${tab.text} ${
-              type === tab.type
-                ? `border-b-2 ${tab.border} font-semibold`
-                : 'font-medium hover:bg-gray-50'
+            className={`flex flex-1 items-baseline justify-center gap-2 px-4 py-2 transition ${text} ${
+              isSelected ? `border-b-2 ${border} font-semibold` : 'font-medium hover:bg-gray-50'
             }`}
           >
             <span>{t(tab.labelKey)}</span>
-            {total !== undefined && (
-              <span className="text-sm font-semibold tabular-nums">{total}</span>
-            )}
           </button>
         );
       })}

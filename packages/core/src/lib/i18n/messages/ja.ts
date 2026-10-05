@@ -218,7 +218,6 @@ export const ja: Record<MessageKey, string> = {
   'home.tab.expense': '支出',
   'home.tab.income': '収入',
   'home.settlementTitle': '{card}の精算',
-  'home.entriesTitle': '{month}の取引',
 
   // ===== 資産の持ち主 =====
   'scopeTitle.none': '{noun}・持ち主なし',

@@ -114,7 +114,6 @@ export function useHomeData({
   const [budgets, setBudgets] = useState<BudgetDto.MonthlyBudget[]>([]);
   /** 태그 예산. 예산 상자가 분류 아래에 적는다. */
   const [tagBudgets, setTagBudgets] = useState<BudgetDto.MonthlyTagBudget[]>([]);
-  const [summary, setSummary] = useState<ReportDto.Summary | null>(null);
   const [methods, setMethods] = useState<SpendingMethod[]>([]);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -128,8 +127,6 @@ export function useHomeData({
   const mirrorVersion = useMirrorVersion();
   /** 거래를 고친 뒤 목록과 합계를 다시 받게 하는 표. */
   const [entryVersion, setEntryVersion] = useState(0);
-  /** 대금을 기록한 뒤 카드 사용 현황을 다시 읽게 하는 표. */
-  const [cardVersion, setCardVersion] = useState(0);
 
   const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
 
@@ -207,17 +204,15 @@ export function useHomeData({
         setHasError(false);
 
         const port = homeDataPort();
-        const [budgetRows, tagBudgetRows, summaryRow, currentMethods] = await Promise.all([
+        const [budgetRows, tagBudgetRows, currentMethods] = await Promise.all([
           port.getBudgetForMonth(year, month, projectId, filter),
           port.getTagBudgetsForMonth(year, month, projectId, filter),
-          port.getSummary({ yearMonth }, projectId, filter),
           port.getPaymentMethods({ yearMonth: thisYearMonth }, projectId, filter),
         ]);
         if (cancelled) return;
 
         setBudgets(budgetRows ?? []);
         setTagBudgets(tagBudgetRows ?? []);
-        setSummary(summaryRow ?? null);
 
         const items: ReportDto.PaymentMethodItem[] = currentMethods ?? [];
 
@@ -299,7 +294,6 @@ export function useHomeData({
 
     budgets,
     tagBudgets,
-    summary,
     methods,
 
     /** 서버로 보낼 필터. 조회가 겹치지 않게 잠잠해진 뒤의 값이다. */
@@ -310,11 +304,8 @@ export function useHomeData({
     hasError,
 
     entryVersion,
-    cardVersion,
     /** 거래를 고치거나 지운 뒤. 목록과 합계를 함께 다시 읽는다. */
     reloadEntries: useCallback(() => setEntryVersion((version) => version + 1), []),
-    /** 카드 대금을 기록한 뒤. */
-    reloadCards: useCallback(() => setCardVersion((version) => version + 1), []),
     applyReferencePatch,
   };
 }

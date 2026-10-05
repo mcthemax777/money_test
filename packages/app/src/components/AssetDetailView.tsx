@@ -77,10 +77,13 @@ export default function AssetDetailView({
   paymentAccountOwnerId?: string | null;
   /** 목록으로 돌아간다. 머리글의 ← 가 부른다. */
   onClose: () => void;
-  /** 기본 정보를 고치는 창을 연다. 읽기 전용 구성원에게는 이 단추를 그리지 않는다. */
-  onEdit: () => void;
-  /** 이 항목으로 걸린 거래내역을 본다. 거래 화면으로 건너간다. */
-  onShowEntries: () => void;
+  /**
+   * 기본 정보를 고치는 창을 연다. 읽기 전용 구성원에게는 이 단추를 그리지 않는다.
+   * 주지 않으면 단추가 없다 -- 예산 화면에서 연 카드 상세가 그렇다(웹 팝업과 같다).
+   */
+  onEdit?: () => void;
+  /** 이 항목으로 걸린 거래내역을 본다. 거래 화면으로 건너간다. 주지 않으면 단추가 없다. */
+  onShowEntries?: () => void;
   /**
    * 원장 한 줄을 눌렀을 때. 그 거래의 상세를 연다.
    *
@@ -127,17 +130,19 @@ export default function AssetDetailView({
             그쪽이 무게를 가져가, 정작 보러 온 금액과 추이보다 단추가 먼저 읽힌다.
           */
           <View className="flex-row items-center gap-1">
-            <Pressable
-              onPress={onShowEntries}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel={t('assets.viewEntries')}
-              className="h-10 w-10 items-center justify-center rounded-lg active:bg-gray-100"
-            >
-              <Receipt size={20} color="#4b5563" />
-            </Pressable>
+            {onShowEntries ? (
+              <Pressable
+                onPress={onShowEntries}
+                hitSlop={8}
+                accessibilityRole="button"
+                accessibilityLabel={t('assets.viewEntries')}
+                className="h-10 w-10 items-center justify-center rounded-lg active:bg-gray-100"
+              >
+                <Receipt size={20} color="#4b5563" />
+              </Pressable>
+            ) : null}
             {/* 묶음에는 고칠 기본 정보가 없다. */}
-            {canEdit && target.kind !== 'group' ? (
+            {onEdit && canEdit && target.kind !== 'group' ? (
               <Pressable
                 onPress={onEdit}
                 hitSlop={8}

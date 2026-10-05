@@ -22,29 +22,30 @@ const TABS: Array<{ type: EntryType; labelKey: MessageKey; text: string; border:
 ];
 
 /**
- * 지출·수입 탭. 웹 홈 화면의 것과 같다.
- *
- * 합계를 넘기면 글자 옆에 함께 적는다. 고르지 않은 쪽도 색을 그대로 두어, 빨강·초록이
- * 지출·수입을 가리킨다는 것이 흐려지지 않게 한다. 무엇을 골랐는지는 밑줄과 굵기가 말한다.
+ * 지출·수입 탭. 웹의 TypeTabs 와 같다. 무엇을 골랐는지는 밑줄과 굵기가 말한다.
  */
 export default function TypeTabs({
   type,
   onChange,
-  expenseTotal,
-  incomeTotal,
+  tone = 'type',
 }: {
   type: EntryType;
   onChange: (type: EntryType) => void;
-  expenseTotal?: string;
-  incomeTotal?: string;
+  /**
+   * 탭의 색. type 은 지출 빨강·수입 초록, selection 은 고른 탭만 파랑이고 나머지는 회색이다
+   * (예산 상자와 예산 설정이 쓴다, 2026-10-05 사용자 요청. 웹과 같다).
+   */
+  tone?: 'type' | 'selection';
 }) {
   const { t } = useTranslation();
 
   return (
     <View className="flex-row border-b border-gray-200">
       {TABS.map((tab) => {
-        const total = tab.type === 'income' ? incomeTotal : expenseTotal;
         const isSelected = type === tab.type;
+        const text =
+          tone === 'selection' ? (isSelected ? 'text-blue-600' : 'text-gray-500') : tab.text;
+        const border = tone === 'selection' ? 'border-blue-600' : tab.border;
 
         return (
           <Pressable
@@ -52,15 +53,12 @@ export default function TypeTabs({
             onPress={() => onChange(tab.type)}
             /* 둘이 화면을 반씩 나눈다. 글자 길이대로 두면 누르는 자리가 달마다 움직인다. */
             className={`flex-1 flex-row items-baseline justify-center gap-2 px-4 py-2 ${
-              isSelected ? `border-b-2 ${tab.border}` : ''
+              isSelected ? `border-b-2 ${border}` : ''
             }`}
           >
-            <Text className={`${tab.text} ${isSelected ? 'font-semibold' : 'font-medium'}`}>
+            <Text className={`${text} ${isSelected ? 'font-semibold' : 'font-medium'}`}>
               {t(tab.labelKey)}
             </Text>
-            {total ? (
-              <Text className={`text-sm font-semibold ${tab.text}`}>{total}</Text>
-            ) : null}
           </Pressable>
         );
       })}

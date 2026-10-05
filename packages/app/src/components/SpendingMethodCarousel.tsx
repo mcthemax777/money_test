@@ -14,6 +14,15 @@ import { formatCurrency, toNumber } from '@money/core/lib/money';
  */
 cssInterop(LinearGradient, { className: 'style' });
 
+/**
+ * 카드 한 장의 너비와 카드 사이 간격 (웹의 w-80·gap-4 와 같은 값).
+ *
+ * 넘길 때 멈출 자리(snapToInterval)를 이 둘의 합으로 잡으므로, 클래스로 따로 적지 않고
+ * 이 값 하나로 그린다 -- 한쪽만 바뀌면 카드가 칸 사이에 걸려 멈춘다.
+ */
+const CARD_WIDTH = 320;
+const CARD_GAP = 16;
+
 /** 종류 이름. 카드 앞면 왼쪽 위에 적는다. */
 const KIND_KEY: Record<SpendingMethod['kind'], MessageKey> = {
   credit_card: 'method.credit_card',
@@ -42,7 +51,17 @@ export default function SpendingMethodCarousel({
     <ScrollView
       horizontal
       showsHorizontalScrollIndicator={false}
-      contentContainerClassName="gap-4 pb-2"
+      /*
+        카드 단위로 멈춘다 (웹의 snap-x snap-mandatory + snap-start 와 같다). 손을 떼면
+        가장 가까운 카드의 왼쪽 끝에 붙고, 두 카드 사이에 어정쩡하게 서지 않는다.
+        fast 감속은 한 번 튕겨도 카드 몇 장을 미끄러지듯 지나치지 않게 한다.
+      */
+      snapToInterval={CARD_WIDTH + CARD_GAP}
+      snapToAlignment="start"
+      decelerationRate="fast"
+      /* 위아래 여백은 카드 그림자가 줄 끝에서 잘리지 않을 자리다. */
+      contentContainerClassName="pb-2 pt-0.5"
+      contentContainerStyle={{ gap: CARD_GAP }}
     >
       {methods.map((method) => (
         <MethodCard
@@ -79,8 +98,12 @@ function MethodCard({ method, onSelect }: { method: SpendingMethod; onSelect?: (
        * 실제 카드(ISO/IEC 7810 ID-1, 85.6 × 53.98mm) 비율을 그대로 쓴다.
        * 높이를 직접 적지 않고 너비에서 비율로 잡는다. 웹과 같은 값이라 두 화면의
        * 카드 모양이 어긋나지 않는다.
+       *
+       * 가장자리는 웹과 같은 shadow-sm 이다. 바탕색을 함께 두는 까닭은 안드로이드가
+       * 바탕이 없는 상자에는 그림자를 그리지 않기 때문이다 -- 앞면 그라데이션의 첫 색을 쓴다.
        */
-      className="aspect-[85.6/53.98] w-80 overflow-hidden rounded-2xl"
+      className="aspect-[85.6/53.98] overflow-hidden rounded-2xl shadow-sm"
+      style={{ width: CARD_WIDTH, backgroundColor: palette.faceColors[0] }}
     >
       {/*
         앞면 그라데이션. 웹은 tailwind 클래스로 그리지만 앱에는 CSS 그라데이션이 없어

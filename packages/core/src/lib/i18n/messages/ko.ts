@@ -232,7 +232,6 @@ export const ko = {
   'home.tab.expense': '지출',
   'home.tab.income': '수입',
   'home.settlementTitle': '{card} 정산',
-  'home.entriesTitle': '{month} 거래 내역',
 
   // ===== 자산주인 고르기 (화면 제목을 겸한다) =====
   'scopeTitle.none': '{noun} · 자산주인 없음',

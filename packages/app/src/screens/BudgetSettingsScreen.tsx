@@ -78,10 +78,10 @@ export default function BudgetSettingsScreen() {
       />
 
       {/*
-        홈의 탭과 같은 것이다. 합계는 이 화면이 다루지 않아 적지 않는다.
+        예산 화면의 탭과 같은 모양이다 (고른 탭만 파랑). 합계는 이 화면이 다루지 않아 적지 않는다.
         태그 예산은 지출·수입으로 가르지 않아 탭이 없다.
       */}
-      {!isTag ? <TypeTabs type={type} onChange={setType} /> : null}
+      {!isTag ? <TypeTabs type={type} onChange={setType} tone="selection" /> : null}
 
       <Text className="text-sm text-gray-500">
         {isTag ? t('budget.tagSettingsHint') : t('budget.settingsHint')}

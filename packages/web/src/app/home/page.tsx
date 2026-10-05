@@ -5,32 +5,25 @@ import { useRouter } from 'next/navigation';
 import type { BudgetDto, CardDto, EntryFilterQuery } from '@money/types';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
 
-import {
-  currentYearMonth,
-  dateMarkerKey,
-  formatMonthShort,
-  monthQueryRange,
-} from '@money/core/lib/datetime';
+import { currentYearMonth } from '@money/core/lib/datetime';
 import { useTranslation } from '@money/core/lib/i18n';
-import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { useHomeData } from '@money/core/hooks/useHomeData';
 import { useProjectGuard } from '@/hooks/useProjectGuard';
 import {
   useCanEdit,
-  useProjectDisplayCurrency,
   useProjectTimeZone,
 } from '@money/core/store/project';
 import { budgetSettingsHref, tagBudgetSettingsHref } from '@money/core/lib/budget';
 import { useUserFilter } from '@money/core/store/user-filter';
-import EntryFeed from '@/components/EntryFeed';
-import CardSettlementPanel from '@/components/CardSettlementPanel';
 import EntryEditor, {
   type EntryEditorHandle,
   type ReferenceDataPatch,
 } from '@/components/EntryEditor';
-import Modal from '@/components/Modal';
 import { BudgetDetailModal } from '@/components/BudgetDetailModal';
 import { useLedgerBasis } from '@money/core/store/ledger-basis';
+import { apiClient } from '@money/core/lib/api-client';
+import CardDetailBody from '@/components/CardDetailBody';
+import Modal from '@/components/Modal';
 import MonthHeader from '@/components/MonthHeader';
 import MonthlyBudgetSummary, { TagBudgetSummary } from '@/components/MonthlyBudgetSummary';
 import PageHeader from '@/components/PageHeader';
@@ -42,7 +35,8 @@ import type { EntryType } from '@/components/TypeTabs';
  * 로그인하면 처음 보는 화면.
  *
  * 다른 화면에 들어가 봐야 알 수 있던 것들을 한 자리에 모은다. 실적 구간에 카드를
- * 얼마나 썼는지, 이 달 예산을 얼마나 썼는지, 이 달에 무엇을 샀는지.
+ * 얼마나 썼는지, 이 달 예산을 얼마나 썼는지. 그 달의 거래 목록은 두지 않는다 -- 거래
+ * 화면이 같은 것을 더 넓게 보여 준다 (2026-10-05 사용자 요청).
  *
  * 자산이 얼마인지는 자산 화면이 답한다. 두 화면이 같은 금액을 그리면 어느 쪽이
  * 제자리인지 흐려지고, 홈은 달을 옮기며 보는 자리라 "지금 얼마인가"와 섞인다.
@@ -55,7 +49,6 @@ export default function HomePage() {
   const selectedProjectId = useProjectGuard();
   const { selectedPersonIds, togglePersonId } = useUserFilter();
   const timeZone = useProjectTimeZone();
-  const displayCurrency = useProjectDisplayCurrency();
   const router = useRouter();
   /* 예산 설정의 톱니는 고칠 수 있는 사람에게만 선다. */
   const canEdit = useCanEdit();
@@ -71,7 +64,6 @@ export default function HomePage() {
   const { year, month } = view;
   const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
   const thisYearMonth = `${thisYear}-${String(thisMonth).padStart(2, '0')}`;
-  const monthRange = monthQueryRange(year, month, timeZone);
 
   /* 화면이 보는 값 전부. 앱의 홈 화면도 같은 훅을 쓴다. */
   const home = useHomeData({ projectId: selectedProjectId, year, month, thisYearMonth });
@@ -83,12 +75,10 @@ export default function HomePage() {
     categories,
     myPersonId,
     budgets,
-    summary,
     methods,
     filter: appliedFilter,
     isLoading,
     hasError,
-    cardVersion,
     entryVersion,
   } = home;
 
@@ -108,13 +98,29 @@ export default function HomePage() {
   const [detailTarget, setDetailTarget] = useState<{ id: string; name: string } | null>(null);
   const basis = useLedgerBasis((state) => state.basis);
   const detailFilter = useMemo(() => ({ ...appliedFilter, basis }), [appliedFilter, basis]);
-  /** 정산 팝업을 띄울 카드. */
-  const [settlementCardId, setSettlementCardId] = useState<string | null>(null);
   /** 거래 상세·수정 팝업. 가계·자산 화면과 같은 컴포넌트다. */
   const entryEditorRef = useRef<EntryEditorHandle>(null);
 
-  /** 정산 팝업을 띄울 카드. 목록에 없으면(숨긴 카드 등) 팝업을 열지 않는다. */
-  const settlementCard = cards.find((card) => card.id === settlementCardId);
+  /*
+   * 실적 구간 카드를 눌러 연 카드 상세. 자산 화면에서 카드를 누를 때 나오는 상자를 팝업으로
+   * 띄운다(2026-10-05 사용자 요청) -- 화면을 옮기지 않으므로 닫으면 예산 화면 그대로다.
+   *
+   * id 만 들고 목록에서 다시 찾는다. 대금을 기록해 목록을 다시 읽으면 새 값으로 그린다.
+   * 못 찾으면(숨긴 카드 등) 팝업을 열지 않는다.
+   */
+  const [detailCardId, setDetailCardId] = useState<string | null>(null);
+  const detailCard = cards.find((card) => card.id === detailCardId);
+
+  /**
+   * 카드 원장 줄을 눌렀을 때. 원장 줄은 전표 id 만 들고 있어 그 거래를 읽어 상세를 연다
+   * (자산 화면과 같다). 못 읽으면 아무것도 열지 않는다.
+   */
+  const openLedgerEntry = useCallback((entryId: string) => {
+    void apiClient
+      .getEntry(entryId)
+      .then((entry) => entryEditorRef.current?.openDetail(entry))
+      .catch(() => {});
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -152,7 +158,7 @@ export default function HomePage() {
         ) : (
           <SpendingMethodCarousel
             methods={methods}
-            onSelect={(method) => setSettlementCardId(method.id)}
+            onSelect={(method) => setDetailCardId(method.id)}
           />
         )}
       </section>
@@ -160,7 +166,7 @@ export default function HomePage() {
       <section className="space-y-3">
         {/*
           아래 칸들은 모두 이 달 기준이다. 어느 달인지 한 번만 적고, 여기서 달을 옮긴다.
-          합계는 넘기지 않는다. 예산 상자의 지출·수입 탭이 각각 적는다.
+          합계는 넘기지 않는다. 예산 상자의 합계 줄이 말한다.
         */}
         <MonthHeader
           year={year}
@@ -172,15 +178,13 @@ export default function HomePage() {
 
         {/*
           분류 예산. 지출·수입 탭이 이 상자 안에 있다 -- 밖에 두면 아래 태그 예산까지
-          그 탭을 따르는 것처럼 읽힌다. 탭에는 이 달의 두 합계를 함께 적는다.
+          그 탭을 따르는 것처럼 읽힌다. 탭에는 금액을 적지 않는다.
         */}
         <MonthlyBudgetSummary
           budgets={budgets}
           type={type}
           onTypeChange={setType}
           onSelect={setDetailTarget}
-          expenseTotal={formatCurrency(toNumber(summary?.expense), displayCurrency)}
-          incomeTotal={formatCurrency(toNumber(summary?.income), displayCurrency)}
           onOpenSettings={
             canEdit ? () => router.push(budgetSettingsHref(yearMonth, type)) : undefined
           }
@@ -214,44 +218,29 @@ export default function HomePage() {
         />
       )}
 
-      {/*
-        카드를 누르면 정산 팝업. 가계 화면의 수단별 탭과 같은 컴포넌트를 쓴다.
-        체크카드는 갚을 대금이 없어 그 사실만 적힌 팝업이 뜬다.
-      */}
-      {settlementCard && (
+      {detailCard && (
         <Modal
           isOpen
-          onClose={() => setSettlementCardId(null)}
-          title={t('home.settlementTitle', { card: settlementCard.name })}
+          onClose={() => setDetailCardId(null)}
+          title={detailCard.name}
+          /* 실적·청구 막대 그래프가 들어 있어 넓은 창을 쓴다. */
+          wide
         >
-          <CardSettlementPanel
-            card={settlementCard}
-            paymentAccountOwnerId={
-              accounts.find((account) => account.id === settlementCard.paymentAccountId)?.ownerId
-            }
-            reloadToken={cardVersion}
-            onChange={home.reloadCards}
-          />
+          <div className="space-y-4">
+            {detailCard.issuer?.name && (
+              <p className="text-sm text-gray-600">{detailCard.issuer.name}</p>
+            )}
+            <CardDetailBody
+              card={detailCard}
+              accounts={accounts}
+              reloadToken={entryVersion}
+              /* 대금을 기록하면 거래가 생긴다. 위 카드 사용액과 예산도 함께 다시 읽는다. */
+              onChange={home.reloadEntries}
+              onOpenEntry={openLedgerEntry}
+            />
+          </div>
         </Modal>
       )}
-
-      <section className="space-y-2">
-        {/*
-          맨 아래 거래 목록. 서버가 날짜 내림차순으로 주므로 앞날에 걸어 둔 거래가
-          먼저 온다. 누르면 가계·자산 화면과 같은 상세 팝업이 열린다.
-        */}
-        <h2 className="font-semibold text-gray-900">
-          {t('home.entriesTitle', { month: formatMonthShort(month) })}
-        </h2>
-        <EntryFeed
-          projectId={selectedProjectId}
-          filter={appliedFilter}
-          startDate={monthRange.startDate}
-          endDate={monthRange.endDate}
-          onEntryClick={(entry) => entryEditorRef.current?.openDetail(entry)}
-          reloadToken={entryVersion}
-        />
-      </section>
 
       {/* 거래 상세·수정 팝업. 가계·자산 화면이 쓰는 것과 같은 컴포넌트다. */}
       <EntryEditor

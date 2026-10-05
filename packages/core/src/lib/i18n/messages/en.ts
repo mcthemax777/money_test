@@ -217,7 +217,6 @@ export const en: Record<MessageKey, string> = {
   'home.tab.expense': 'Expense',
   'home.tab.income': 'Income',
   'home.settlementTitle': '{card} settlement',
-  'home.entriesTitle': 'Entries in {month}',
 
   // ===== Owner scope (doubles as the page title) =====
   'scopeTitle.none': '{noun} · no owner',
