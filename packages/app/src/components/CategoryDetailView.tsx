@@ -55,6 +55,7 @@ export default function CategoryDetailView({
   onClose,
   onEntryClick,
   trendClip,
+  trendPeriod,
   controls,
   title,
 }: {
@@ -74,6 +75,8 @@ export default function CategoryDetailView({
   onEntryClick?: (entry: EntryListItem) => void;
   /** 12개월 추이를 자를 구간. 거래 분석이 검색 기간을 걸었을 때 준다 (useCategoryDetail). */
   trendClip?: { from?: string; to?: string };
+  /** 추이 막대의 마지막 기간. 주·해면 그 단위로 선다 (useCategoryDetail). */
+  trendPeriod?: string;
   /**
    * 머리글 아래에 세울 조작 (거래 분석의 달·지출수입 탭). 없으면 아무것도 서지 않는다.
    * 보기 안에 두어야 머리글 ← 와 한 화면으로 읽힌다.
@@ -94,6 +97,7 @@ export default function CategoryDetailView({
     filter,
     reloadToken,
     trendClip,
+    trendPeriod,
   });
 
   /** 거래 목록에서 세는 세 그래프가 비었을 때의 안내. 일별 누적과 같은 말을 쓴다. */
@@ -139,19 +143,20 @@ export default function CategoryDetailView({
             </View>
           ))}
 
-          <View className="gap-3 rounded-lg bg-white p-4 shadow-sm">
-            <Text className="text-base font-semibold text-gray-900">
-              {t(detail.labels.monthly)}
-            </Text>
-            {detail.hasMonthlyAmount ? (
-              <MonthlyAmountChart points={detail.monthly} currency={displayCurrency} />
+          {/*
+            수단별. 분류별 구성비 바로 아래에 둔다 (웹과 같은 차례) -- 두 원형이 "어디에 썼나"와
+            "무엇으로 냈나"를 나란히 말한다. 아래 거래 목록에서 센다.
+          */}
+          <ChartCard title={t(detail.labels.method)}>
+            {detail.hasPatternAmount ? (
+              /* 수단은 분류가 아니라 더 내려갈 곳이 없다. onDrill 을 주지 않는다. */
+              <CategoryPieChart slices={detail.pattern.methods} currency={displayCurrency} />
             ) : (
-              <Text className="py-12 text-center text-sm text-gray-500">
-                {t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noYear)}
-              </Text>
+              <Text className="py-12 text-center text-sm text-gray-500">{emptyPattern}</Text>
             )}
-          </View>
+          </ChartCard>
 
+          {/* 일별 누적. 구성비 둘 다음에 이 구간의 흐름을 본다. */}
           <View className="gap-3 rounded-lg bg-white p-4 shadow-sm">
             <Text className="text-base font-semibold text-gray-900">
               {t(detail.labels.daily)}
@@ -171,7 +176,20 @@ export default function CategoryDetailView({
             )}
           </View>
 
-          {/* 요일·시간대·수단. 셋 다 아래 거래 목록에서 센다. */}
+          <View className="gap-3 rounded-lg bg-white p-4 shadow-sm">
+            <Text className="text-base font-semibold text-gray-900">
+              {t(detail.labels.monthly)}
+            </Text>
+            {detail.hasMonthlyAmount ? (
+              <MonthlyAmountChart points={detail.monthly} currency={displayCurrency} />
+            ) : (
+              <Text className="py-12 text-center text-sm text-gray-500">
+                {t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noYear)}
+              </Text>
+            )}
+          </View>
+
+          {/* 요일·시간대. 둘 다 아래 거래 목록에서 센다. */}
           <ChartCard title={t(detail.labels.weekday)} note={t('detail.weekdayNote')}>
             {detail.hasPatternAmount ? (
               <MonthlyAmountChart
@@ -205,15 +223,6 @@ export default function CategoryDetailView({
               <Text className="py-12 text-center text-sm text-gray-500">
                 {detail.hasPatternAmount ? t('detail.noHourUsage') : emptyPattern}
               </Text>
-            )}
-          </ChartCard>
-
-          <ChartCard title={t(detail.labels.method)}>
-            {detail.hasPatternAmount ? (
-              /* 수단은 분류가 아니라 더 내려갈 곳이 없다. onDrill 을 주지 않는다. */
-              <CategoryPieChart slices={detail.pattern.methods} currency={displayCurrency} />
-            ) : (
-              <Text className="py-12 text-center text-sm text-gray-500">{emptyPattern}</Text>
             )}
           </ChartCard>
 

@@ -280,6 +280,32 @@ const entry = (
   eq('지난 할부: 차감이면 없다', await pastIds('discount'), '');
   eq('지난 할부: 빈 무리면 없다', await pastIds(''), '');
 
+  /*
+   * ── 5. 기간 단위 추이 (endPeriod) ──
+   *
+   * 거래 화면의 분석을 주·해로 열면 막대가 그 단위로 선다. 서버의 `reports-smoke` 와 같은
+   * 규칙이다. 8월 2일(일)에 시작하는 주에 5~8일의 네 건, 다음 주에 9·10일의 두 건이 든다.
+   *   10,000 + 20,000 + 90,000 + 60,000 = 180,000   /   7,000 + 5,000 = 12,000
+   */
+  const weeks = await port.getTrend(
+    'total',
+    { type: 'expense', endPeriod: '2026-08-09', months: 2 },
+    PID,
+  );
+  eq('주 추이 열쇠', weeks.map((p) => p.yearMonth).join(','), '2026-08-02,2026-08-09');
+  eq('주 추이 금액', weeks.map((p) => p.amount).join(','), '180000,12000');
+  const years = await port.getTrend('total', { type: 'expense', endPeriod: '2026', months: 2 }, PID);
+  eq('해 추이', years.map((p) => `${p.yearMonth}:${p.amount}`).join(','), '2025:0,2026:192000');
+
+  /*
+   * ── 6. 기간 줄을 끊는 자리 ──
+   *
+   * 7일에 시작하는 달이면 5·6일 거래는 7월 7일 ~ 8월 6일 줄에, 7~10일 거래는 8월 7일 줄에 든다.
+   *   10,000 + 20,000 = 30,000   /   90,000 + 60,000 + 7,000 + 5,000 = 162,000
+   */
+  const cut = await port.getEntryMonths(PID, { monthStartDay: 7 });
+  eq('7일 시작 줄', cut.map((r) => `${r.yearMonth}:${r.expense}`).join(','), '2026-08@07:162000,2026-07@07:30000');
+
   driver.close();
   console.log(fail === 0 ? '\n전체 통과' : `\n실패 ${fail}건`);
   process.exit(fail === 0 ? 0 : 1);

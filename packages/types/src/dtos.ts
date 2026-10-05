@@ -1471,7 +1471,14 @@ export namespace ReportDto {
     targetId?: string;
     /** 마지막 달 "YYYY-MM". 생략하면 이번 달 */
     endMonth?: string;
-    /** 기본 12 */
+    /**
+     * 마지막 기간의 열쇠. 해 "2026", 달 "2026-09", 주 "2026-09-13"(그 주의 첫날).
+     *
+     * 주면 막대가 그 단위로 선다 -- 거래 화면의 분석을 주·해로 열었을 때다. `endMonth` 보다
+     * 앞선다. 응답의 `yearMonth` 에는 같은 모양의 열쇠가 실린다.
+     */
+    endPeriod?: string;
+    /** 막대 수. 기본 12, 최대 60 */
     months?: number;
     /** target=total·tag 일 때 지출/수입 선택 */
     type?: 'income' | 'expense';
@@ -1528,6 +1535,15 @@ export namespace ReportDto {
      * 아무 일도 하지 않는다.
      */
     weekStart?: number;
+    /**
+     * 달을 며칠에 시작할지 (1~31). 보내지 않거나 1 이면 달력의 달이다.
+     *
+     * 거래 화면의 검색이 고른다. 14 면 8월 14일 ~ 9월 13일이 한 줄이고 열쇠는 "2026-08@14"
+     * 다(`periodKeyOf`). `unit` 이 'month' 일 때만 쓴다.
+     */
+    monthStartDay?: number;
+    /** 해를 몇 월에 시작할지 (1~12). 열쇠는 "2026@03" 이다. `unit` 이 'year' 일 때만 쓴다. */
+    yearStartMonth?: number;
   }
 
   /** 최신 묶음이 먼저 온다. */

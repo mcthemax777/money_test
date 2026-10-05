@@ -14,6 +14,7 @@
 import { activeLocale, activeLocaleTag, translate } from '../lib/i18n';
 import {
   DEFAULT_WEEK_START,
+  periodDayRange,
   unitOfKey,
   zonedDateKey,
   zonedDateStringToUtc,
@@ -293,6 +294,20 @@ function trimTrailingMark(value: string): string {
  */
 export function periodLabel(key: string): string {
   const unit = unitOfKey(key);
+  /*
+   * 달력과 어긋나게 끊은 기간("2026-08@14", "2026@03")과 직접 정한 기간은 이름이 없다.
+   * 어디부터 어디까지인지로 적는다. 끝은 같은 해면 해를 빼서 줄을 짧게 둔다.
+   */
+  if (unit === 'range' || key.includes('@')) {
+    const { startKey, endKey } = periodDayRange(key);
+    if (unit === 'year') {
+      const [startYear, startMonth] = startKey.split('-').map(Number);
+      const [endYear, endMonth] = endKey.split('-').map(Number);
+      return `${formatYearMonth(startYear, startMonth)} ~ ${formatYearMonth(endYear, endMonth)}`;
+    }
+    const sameYear = startKey.slice(0, 4) === endKey.slice(0, 4);
+    return `${formatDateKey(startKey)} ~ ${sameYear ? formatMonthDayKey(endKey) : formatDateKey(endKey)}`;
+  }
   if (unit === 'year') return formatYearOnly(Number(key));
   if (unit === 'month') {
     const [year, month] = key.split('-').map(Number);
@@ -305,6 +320,16 @@ export function periodLabel(key: string): string {
     month: formatYearMonth(year, month),
     week: Math.floor((day - 1) / 7) + 1,
   });
+}
+
+/** 해를 뺀 달력 날짜. "9. 13" / "9/13" / "9/13". 기간 이름의 끝처럼 해가 앞에 이미 적힌 자리에 쓴다. */
+export function formatMonthDayKey(dateKey: string): string {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return trimTrailingMark(
+    dateFormatter('monthDayKey', 'UTC', { month: 'numeric', day: 'numeric' }).format(
+      new Date(Date.UTC(year, month - 1, day)),
+    ),
+  );
 }
 
 /** 달 하나. 달 고르는 표와 그래프 범례처럼 좁은 자리에 쓴다. "8월" / "Aug" / "8月" */

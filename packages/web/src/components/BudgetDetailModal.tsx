@@ -69,6 +69,8 @@ interface BudgetDetailModalProps {
   reloadToken?: number;
   /** 12개월 추이를 자를 구간. 거래 분석이 검색 기간을 걸었을 때 준다 (useCategoryDetail). */
   trendClip?: { from?: string; to?: string };
+  /** 추이 막대의 마지막 기간. 주·해면 그 단위로 선다 (useCategoryDetail). */
+  trendPeriod?: string;
 }
 
 /**
@@ -176,6 +178,7 @@ export function BudgetDetailModal({
   onEntryClick,
   reloadToken,
   trendClip,
+  trendPeriod,
 }: BudgetDetailModalProps) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
@@ -191,6 +194,7 @@ export function BudgetDetailModal({
     // 닫혀 있는 팝업은 받지 않는다. 인라인으로 쓸 때는 늘 보이는 자리다.
     enabled: isOpen,
     trendClip,
+    trendPeriod,
   });
 
   /** 거래내역에서 세는 세 그래프가 비었을 때의 안내. 일별 누적과 같은 말을 쓴다. */
@@ -225,23 +229,23 @@ export function BudgetDetailModal({
             </div>
           ))}
 
-          {/* 12개월 바차트 */}
+          {/*
+            수단별. 분류별 구성비 바로 아래에 둔다 -- 두 원형이 "어디에 썼나"와 "무엇으로
+            냈나"를 나란히 말한다. 아래 거래내역에서 센다.
+          */}
           <div>
-            <h3 className="text-lg font-semibold mb-4">{t(detail.labels.monthly)}</h3>
-            {detail.hasMonthlyAmount ? (
-              <AmountBarChart
-                data={detail.monthly}
-                currency={displayCurrency}
-                tooltipName={t(detail.labels.amount)}
-              />
+            <h3 className="text-lg font-semibold mb-4">{t(detail.labels.method)}</h3>
+            {detail.hasPatternAmount ? (
+              /* 수단은 분류가 아니라 더 내려갈 곳이 없다. 누를 수 없는 그림이다. */
+              <SlicePieChart slices={detail.pattern.methods} currency={displayCurrency} />
             ) : (
               <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
-                {t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noYear)}
+                {emptyPattern}
               </p>
             )}
           </div>
 
-          {/* 일별 라인차트 */}
+          {/* 일별 누적. 구성비 둘 다음에 이 구간의 흐름을 본다. */}
           <div>
             <h3 className="text-lg font-semibold mb-4">{t(detail.labels.daily)}</h3>
             {detail.hasDailyAmount ? (
@@ -260,7 +264,23 @@ export function BudgetDetailModal({
             )}
           </div>
 
-          {/* 요일·시간대·수단. 셋 다 아래 거래내역에서 센다. */}
+          {/* 12개월 바차트 */}
+          <div>
+            <h3 className="text-lg font-semibold mb-4">{t(detail.labels.monthly)}</h3>
+            {detail.hasMonthlyAmount ? (
+              <AmountBarChart
+                data={detail.monthly}
+                currency={displayCurrency}
+                tooltipName={t(detail.labels.amount)}
+              />
+            ) : (
+              <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
+                {t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noYear)}
+              </p>
+            )}
+          </div>
+
+          {/* 요일·시간대. 둘 다 아래 거래내역에서 센다. */}
           <div>
             <h3 className="text-lg font-semibold">{t(detail.labels.weekday)}</h3>
             <p className="mb-4 text-xs text-gray-500">{t('detail.weekdayNote')}</p>
@@ -296,18 +316,6 @@ export function BudgetDetailModal({
             ) : (
               <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
                 {detail.hasPatternAmount ? t('detail.noHourUsage') : emptyPattern}
-              </p>
-            )}
-          </div>
-
-          <div>
-            <h3 className="text-lg font-semibold mb-4">{t(detail.labels.method)}</h3>
-            {detail.hasPatternAmount ? (
-              /* 수단은 분류가 아니라 더 내려갈 곳이 없다. 누를 수 없는 그림이다. */
-              <SlicePieChart slices={detail.pattern.methods} currency={displayCurrency} />
-            ) : (
-              <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
-                {emptyPattern}
               </p>
             )}
           </div>

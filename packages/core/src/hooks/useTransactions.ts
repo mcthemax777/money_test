@@ -38,12 +38,16 @@ import {
   periodDayRange,
   selectionKey,
   zonedMonthRange,
-  unitOfKey,
+  isCalendarMonthKey,
+  rangePeriodKey,
+  Dec,
   toEntrySearchQuery,
   type EntryBasis,
   type EntryFeature,
   type EntryPeriodUnit,
   type EntryRow,
+  type PeriodAnchor,
+  type WeekStart,
 } from '@money/types';
 
 import { assetOwnerNames, hasSeveralOwners } from '../lib/asset-owner';
@@ -51,8 +55,10 @@ import { assetOwnerNames, hasSeveralOwners } from '../lib/asset-owner';
 import {
   dayRangeQuery,
   formatDateKey,
+  formatMonthShort,
   isDateKey,
   periodLabel,
+  weekdayNames,
   weekdayOf,
 } from '../lib/datetime';
 import { useTranslation, type MessageKey } from '../lib/i18n';
@@ -143,6 +149,50 @@ export interface TransactionSearch {
    */
   startDate: string;
   endDate: string;
+  /**
+   * 기간 줄을 어디서 끊을지. **거르는 조건이 아니라 묶는 규칙이다** -- 걸리는 거래는 그대로이고
+   * 줄의 경계만 옮긴다. 지금 묶는 단위의 것 하나만 쓰인다.
+   *
+   *   monthStartDay   달로 묶을 때 그 달이 며칠에 시작하는가 (1~31, 1 이면 달력대로)
+   *   weekStartDay    주로 묶을 때 시작 요일 (0=일 … 6=토, null 이면 설정의 요일)
+   *   yearStartMonth  해로 묶을 때 시작 월 (1~12, 1 이면 달력대로)
+   *
+   * 기간(startDate·endDate)을 정하면 이 값들은 쓰이지 않는다. 그때 목록은 그 기간 한 줄이다.
+   */
+  monthStartDay: number;
+  weekStartDay: WeekStart | null;
+  yearStartMonth: number;
+}
+
+/** 끊는 자리의 처음 값. 달력대로 끊는다. */
+const DEFAULT_PERIOD_CUT = { monthStartDay: 1, weekStartDay: null, yearStartMonth: 1 } as const;
+
+/**
+ * 지금 단위에서 끊는 자리를 바꿔 두었는가. 알약과 조건 수가 이것을 본다.
+ *
+ * 다른 단위의 값은 세지 않는다 -- 달 시작일을 정해 두고 주로 묶어 보면 그 값은 아무 일도
+ * 하지 않으므로, 걸린 조건으로 세면 알약이 거르지도 않는 것을 말한다.
+ */
+export function periodCutOf(
+  search: TransactionSearch,
+  unit: EntryPeriodUnit,
+): { kind: 'month'; day: number } | { kind: 'week'; weekday: WeekStart } | { kind: 'year'; month: number } | null {
+  if (unit === 'month' && search.monthStartDay > 1) return { kind: 'month', day: search.monthStartDay };
+  if (unit === 'week' && search.weekStartDay !== null) return { kind: 'week', weekday: search.weekStartDay };
+  if (unit === 'year' && search.yearStartMonth > 1) return { kind: 'year', month: search.yearStartMonth };
+  return null;
+}
+
+/**
+ * 목록이 기간을 나누는 규칙. 분석 창이 같은 규칙으로 오늘이 든 기간을 연다.
+ *
+ * `rangeKey` 는 검색에서 기간을 정해 목록이 그 한 줄일 때의 열쇠다.
+ */
+export interface PeriodGrouping {
+  unit: EntryPeriodUnit;
+  weekStart: WeekStart;
+  anchor: PeriodAnchor;
+  rangeKey: string | null;
 }
 
 export const EMPTY_SEARCH: TransactionSearch = {
@@ -156,6 +206,7 @@ export const EMPTY_SEARCH: TransactionSearch = {
   features: [],
   startDate: '',
   endDate: '',
+  ...DEFAULT_PERIOD_CUT,
 };
 
 /**
@@ -220,15 +271,31 @@ export function searchChipsOf(
     tags: TagDto.Response[];
     /** 통장·카드의 주인을 적을 때 쓴다. 계좌에 주인이 실려 오지 않는 경우의 대비다. */
     people?: Array<{ id: string; name: string }>;
+    /** 지금 묶는 단위. 끊는 자리의 알약이 이 단위의 것만 선다 (`periodCutOf`). */
+    unit?: EntryPeriodUnit;
   },
 ): SearchChip[] {
-  const { t, categories, accounts, cards, tags, people = [] } = labels;
+  const { t, categories, accounts, cards, tags, people = [], unit = 'month' } = labels;
   const chips: SearchChip[] = [];
 
   const range = searchRange(search);
   if (range) {
     // 열린 쪽은 비워 둔다. "2026-03-01 ~" 하나로 "그날 이후"가 읽힌다.
     chips.push({ id: 'period', label: `${range.startKey ?? ''} ~ ${range.endKey ?? ''}`.trim() });
+  }
+
+  // 끊는 자리. 기간을 정했으면 쓰이지 않으므로 알약도 세우지 않는다.
+  const cut = range ? null : periodCutOf(search, unit);
+  if (cut) {
+    chips.push({
+      id: 'periodCut',
+      label:
+        cut.kind === 'month'
+          ? t('tx.search.cutMonthChip', { day: cut.day })
+          : cut.kind === 'week'
+            ? t('tx.search.cutWeekChip', { weekday: weekdayNames(cut.weekday, 'long')[0] })
+            : t('tx.search.cutYearChip', { month: formatMonthShort(cut.month) }),
+    });
   }
 
   // 적은 글자를 그대로 보여 준다. 무엇으로 좁혔는지는 그 글자가 곧 이름이다.
@@ -312,6 +379,7 @@ export function searchChipsOf(
 export function withoutChip(search: TransactionSearch, chipId: string): TransactionSearch {
   if (chipId === 'period') return { ...search, startDate: '', endDate: '' };
   if (chipId === 'text') return { ...search, text: '' };
+  if (chipId === 'periodCut') return { ...search, ...DEFAULT_PERIOD_CUT };
 
   const divider = chipId.indexOf(':');
   if (divider < 0) return search;
@@ -433,7 +501,7 @@ const monthRange = (yearMonth: string) => ({ yearMonth });
  * 서버·사본과 같은 함수이기 때문이다.
  */
 function wholePeriod(key: string) {
-  if (unitOfKey(key) === 'month') return monthRange(key);
+  if (isCalendarMonthKey(key)) return monthRange(key);
   const { startKey, endKey } = periodDayRange(key);
   return { startDate: startKey, endDate: endKey };
 }
@@ -491,6 +559,34 @@ const EMPTY_ENTRIES: EntryListItem[] = [];
 const EMPTY_ROWS: TransactionRow[] = [];
 const EMPTY_MONTHS: ReportDto.EntryMonth[] = [];
 const EMPTY_GROUP = new Map<string, EntryListItem[]>();
+
+/**
+ * 받은 기간 줄들을 검색 기간 한 줄로 합친다.
+ *
+ * 서버는 단위대로 나눠 주지만 각 줄은 이미 검색 기간으로 잘라 센 값이라, 더하면 기간
+ * 전체의 합이다. 열린 쪽(시작일만, 종료일만)은 받은 줄의 처음·끝으로 채운다. 그 너머에는
+ * 걸린 거래가 없다.
+ */
+function collapseToRange(
+  rows: ReportDto.EntryMonth[],
+  range: SearchRange,
+): ReportDto.EntryMonth[] {
+  if (rows.length === 0) return rows;
+  const spans = rows.map((row) => periodDayRange(row.yearMonth));
+  const startKey =
+    range.startKey ?? spans.reduce((min, span) => (span.startKey < min ? span.startKey : min), spans[0].startKey);
+  const endKey =
+    range.endKey ?? spans.reduce((max, span) => (span.endKey > max ? span.endKey : max), spans[0].endKey);
+  const sum = (pick: (row: ReportDto.EntryMonth) => string) =>
+    rows.reduce((total, row) => total.plus(pick(row)), Dec.of(0)).toString();
+  return [
+    {
+      yearMonth: rangePeriodKey(startKey, endKey),
+      income: sum((row) => row.income),
+      expense: sum((row) => row.expense),
+    },
+  ];
+}
 
 export function useTransactions(projectId: string | null) {
   const { t } = useTranslation();
@@ -674,6 +770,18 @@ export function useTransactions(projectId: string | null) {
    * 어느 달을 펴도 같은 목록이 나온다.
    */
   const range = useMemo(() => searchRange(search), [search]);
+  /*
+   * 기간 줄을 끊는 규칙. 검색이 고른 시작 요일이 설정의 요일보다 앞선다. 달·해의 시작은
+   * 1 이 아닐 때만 싣는다 -- 늘 실으면 그 칸을 모르는 옛 서버에까지 뜻 없는 조건이 붙는다.
+   */
+  const groupWeekStart = search.weekStartDay ?? weekStart;
+  const anchor = useMemo<PeriodAnchor>(
+    () => ({
+      ...(unit === 'month' && search.monthStartDay > 1 ? { monthStartDay: search.monthStartDay } : {}),
+      ...(unit === 'year' && search.yearStartMonth > 1 ? { yearStartMonth: search.yearStartMonth } : {}),
+    }),
+    [unit, search.monthStartDay, search.yearStartMonth],
+  );
   /** 년월 목록에 실어 보내는 기간. 그 구간에 걸친 달만, 걸친 만큼만 세어 온다. */
   const monthsQuery = useMemo(
     () => ({
@@ -682,7 +790,8 @@ export function useTransactions(projectId: string | null) {
        * 시작 요일은 주로 묶을 때만 싣는다. 달·해의 경계는 이 값과 무관하고, 늘 실으면
        * 그 칸을 모르는 옛 서버에까지 뜻 없는 조건이 하나 붙는다.
        */
-      ...(unit === 'week' ? { weekStart } : {}),
+      ...(unit === 'week' ? { weekStart: groupWeekStart } : {}),
+      ...anchor,
       ...(range
         ? {
             ...(range.startKey ? { startDate: range.startKey } : {}),
@@ -690,7 +799,7 @@ export function useTransactions(projectId: string | null) {
           }
         : {}),
     }),
-    [range, unit, weekStart],
+    [range, unit, groupWeekStart, anchor],
   );
 
   /*
@@ -698,7 +807,7 @@ export function useTransactions(projectId: string | null) {
    * 프로젝트 타임존을 바꾸면 받아 둔 목록이 옛 경계의 것이 된다. 시작 요일도 같다 --
    * 설정에서 요일을 바꾸면 받아 둔 주 줄은 옛 요일에서 끊은 것이라 통째로 버려야 한다.
    */
-  const scopeKey = JSON.stringify([scope, range, timeZone, unit, weekStart]);
+  const scopeKey = JSON.stringify([scope, range, timeZone, monthsQuery]);
   /*
    * 지금 조건. 도착한 값이 아직 쓸 것인지 판단한다.
    *
@@ -738,8 +847,9 @@ export function useTransactions(projectId: string | null) {
         cards: pickerCards,
         tags: pickerTags,
         people,
+        unit,
       }),
-    [search, t, pickerCategories, pickerAccounts, pickerCards, pickerTags, people],
+    [search, t, pickerCategories, pickerAccounts, pickerCards, pickerTags, people, unit],
   );
 
   /** 알약 하나를 뺀다. 나머지 조건은 그대로 둔다. */
@@ -757,7 +867,9 @@ export function useTransactions(projectId: string | null) {
     search.entryPersonIds.length +
     search.features.length +
     // 기간은 두 칸이지만 조건 하나다. 사용자가 고른 것은 구간 하나다.
-    (range ? 1 : 0);
+    (range ? 1 : 0) +
+    // 끊는 자리. 기간을 정했으면 쓰이지 않아 세지 않는다 (알약과 같다).
+    (!range && periodCutOf(search, unit) ? 1 : 0);
 
   const isSearching = searchCount > 0;
   /** 기간 줄이 목록의 몇 번째인가. 검색 중에 어디까지 폈는지 이것으로 가른다. */
@@ -822,8 +934,11 @@ export function useTransactions(projectId: string | null) {
     (yearMonth: string) => {
       const clipped = clipMonth(yearMonth, range);
       if (clipped) return dayRangeQuery(clipped.startKey, clipped.endKey, timeZone);
-      // 달은 이름 하나로 끝난다. 해와 주는 그 이름이 없어 인스턴트 구간으로 적는다.
-      if (unitOfKey(yearMonth) === 'month') return monthRange(yearMonth);
+      /*
+       * 달력의 달은 이름 하나로 끝난다. 해·주와 시작일을 옮긴 달, 직접 정한 기간은 그
+       * 이름이 없어 인스턴트 구간으로 적는다.
+       */
+      if (isCalendarMonthKey(yearMonth)) return monthRange(yearMonth);
       const { startKey, endKey } = periodDayRange(yearMonth);
       return dayRangeQuery(startKey, endKey, timeZone);
     },
@@ -843,7 +958,7 @@ export function useTransactions(projectId: string | null) {
         const query = dayRangeQuery(clipped.startKey, clipped.endKey, timeZone);
         return { start: new Date(query.startDate), end: new Date(query.endDate) };
       }
-      if (unitOfKey(yearMonth) === 'month') return zonedMonthRange(yearMonth, timeZone);
+      if (isCalendarMonthKey(yearMonth)) return zonedMonthRange(yearMonth, timeZone);
       const { startKey, endKey } = periodDayRange(yearMonth);
       const query = dayRangeQuery(startKey, endKey, timeZone);
       return { start: new Date(query.startDate), end: new Date(query.endDate) };
@@ -994,7 +1109,11 @@ export function useTransactions(projectId: string | null) {
       .getEntryMonths(projectId, { ...scope, ...monthsQuery })
       .then((rows) => {
         if (!alive) return;
-        setMonthsState({ scopeKey: askedScope, rows });
+        /*
+         * 기간을 정했으면 그 기간이 줄 하나다. 받은 줄들은 이미 그 기간으로 잘라 센 값이라
+         * 더하면 기간 전체의 합이다 (`collapseToRange`).
+         */
+        setMonthsState({ scopeKey: askedScope, rows: range ? collapseToRange(rows, range) : rows });
         monthsLoadedRef.current = true;
       })
       .catch((error) => {
@@ -2245,6 +2364,16 @@ export function useTransactions(projectId: string | null) {
     revealMore,
     /** 펼친 모양으로만 서고 아직 받지 않은 기간 줄이 남았는가. */
     canRevealMore: shownMonths.some(isMonthWaiting),
+    /**
+     * 기간 줄을 나누는 규칙 (`PeriodGrouping`). 분석 창이 같은 규칙으로 오늘이 든 기간을
+     * 연다. 기간을 정했으면 그 한 줄의 열쇠가 `rangeKey` 다.
+     */
+    grouping: {
+      unit,
+      weekStart: groupWeekStart,
+      anchor,
+      rangeKey: range ? months[0]?.yearMonth ?? null : null,
+    } satisfies PeriodGrouping,
     isMonthWaiting,
     isLoadingOpen,
     // 2단

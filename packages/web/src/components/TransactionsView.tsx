@@ -44,9 +44,15 @@ import {
   selfCategoryPick,
   type EntryListItem as EntryListItemDto,
   type EntryPeriodUnit,
+  type WeekStart,
 } from '@money/types';
 
-import { formatDateTime, periodLabel } from '@money/core/lib/datetime';
+import {
+  formatDateTime,
+  formatMonthShort,
+  periodLabel,
+  weekdayNames,
+} from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { tagPickResult, tagPickState, toggleTagPick } from '@money/core/lib/tag-pick';
 import {
@@ -66,6 +72,7 @@ import {
   ENTRY_FEATURE_LABEL,
   ENTRY_KIND_LABEL,
   searchRange,
+  periodCutOf,
   useTransactions,
   type TransactionRow,
   type TransactionSearch,
@@ -408,7 +415,11 @@ export default function TransactionsView({
   usePersonFilterSync(selectedProjectId, tx.people);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   /** 분석 창. 열 때만 세운다 -- 다시 열면 그때의 검색으로 달과 지출·수입을 새로 정한다. */
-  const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
+  /**
+   * 분석 창. null 이면 닫혀 있다. 년월 줄의 단추로 열었으면 그 줄의 기간 열쇠를 들고,
+   * 머리글의 단추로 열었으면 열쇠 없이 지금 단위의 오늘을 연다.
+   */
+  const [analysisFrom, setAnalysisFrom] = useState<{ key?: string } | null>(null);
   /** 더보기 선택창. 지금은 삭제 하나뿐이다. */
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   /**
@@ -865,7 +876,9 @@ export default function TransactionsView({
     draft.features.length +
     draft.tagIds.length +
     draft.entryPersonIds.length +
-    (draftRange ? 1 : 0);
+    (draftRange ? 1 : 0) +
+    // 끊는 자리. 기간을 정했으면 쓰이지 않아 세지 않는다 (훅의 searchCount 와 같다).
+    (!draftRange && periodCutOf(draft, tx.unit) ? 1 : 0);
 
   /**
    * 상세에 베끼기·고치기 단추를 그릴지.
@@ -1087,7 +1100,7 @@ export default function TransactionsView({
                 */}
                 <button
                   type="button"
-                  onClick={() => setIsAnalysisOpen(true)}
+                  onClick={() => setAnalysisFrom({})}
                   aria-label={t('tx.analysis')}
                   title={t('tx.analysis')}
                   className="flex items-center justify-center p-2 text-gray-600"
@@ -1292,9 +1305,10 @@ export default function TransactionsView({
                   달 이름과 겹쳐 읽힌다.
                 */}
                 <div
-                  className="sticky z-10 bg-gray-50 transition-[top] duration-200 ease-out motion-reduce:transition-none"
+                  className="sticky z-10 flex items-center bg-gray-50 transition-[top] duration-200 ease-out motion-reduce:transition-none"
                   style={{ top: stickyTop }}
                 >
+                  <div className="min-w-0 flex-1">
                   <Line
                     depth={0}
                     label={periodLabel(month.yearMonth)}
@@ -1323,6 +1337,23 @@ export default function TransactionsView({
                       tx.cycleMonth(month.yearMonth);
                     }}
                   />
+                  </div>
+                  {/*
+                    이 기간의 분석. 줄의 오른쪽 끝, 금액 바로 뒤에 둔다. 줄 자체가 펼치는
+                    단추라 그 안에 넣지 않고 옆에 세운다. 고르는 중에는 체크와 헷갈리지
+                    않게 감춘다.
+                  */}
+                  {tx.isSelecting ? null : (
+                    <button
+                      type="button"
+                      onClick={() => setAnalysisFrom({ key: month.yearMonth })}
+                      aria-label={t('tx.analysisOfPeriod', { period: periodLabel(month.yearMonth) })}
+                      title={t('tx.analysisOfPeriod', { period: periodLabel(month.yearMonth) })}
+                      className="flex shrink-0 items-center justify-center self-stretch pl-1 pr-2 text-gray-400 hover:text-gray-700"
+                    >
+                      <ChartPie className="h-4 w-4" aria-hidden />
+                    </button>
+                  )}
                 </div>
                 {/*
                     펼친 것을 테두리로 두른다. "여기서 여기까지가 그 달의 것" 을
@@ -1607,6 +1638,73 @@ export default function TransactionsView({
                 {t('tx.search.periodInvalid')}
               </p>
             ) : null}
+
+            {/*
+              기간 줄을 어디서 끊을지. 지금 묶는 단위의 것 하나만 선다 -- 달이면 시작일,
+              주면 시작 요일, 해면 시작 월이다. 거르는 조건이 아니라 줄의 경계를 옮긴다.
+
+              위에서 기간을 정하면 그 기간이 한 줄이라 이 값은 쓰이지 않는다. 칸은 그대로
+              두고 한 줄로 알린다 -- 감추면 기간을 지운 뒤 왜 줄이 바뀌는지 모른다.
+            */}
+            <div className="mt-4">
+              <p className="mb-2 text-xs text-gray-500">
+                {t(
+                  tx.unit === 'month'
+                    ? 'tx.search.cutMonth'
+                    : tx.unit === 'week'
+                      ? 'tx.search.cutWeek'
+                      : 'tx.search.cutYear',
+                )}
+              </p>
+              {tx.unit === 'month' ? (
+                // 서른한 개를 알약으로 늘어놓으면 칸 하나가 화면을 차지한다. 고르는 상자로 둔다.
+                <select
+                  value={draft.monthStartDay}
+                  onChange={(e) =>
+                    setDraft((prev) => ({ ...prev, monthStartDay: Number(e.target.value) }))
+                  }
+                  className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  {Array.from({ length: 31 }, (_, index) => index + 1).map((day) => (
+                    <option key={day} value={day}>
+                      {t('tx.search.cutDay', { day })}
+                    </option>
+                  ))}
+                </select>
+              ) : tx.unit === 'week' ? (
+                <div className="flex flex-wrap gap-2">
+                  <Chip
+                    label={t('tx.search.cutDefault')}
+                    selected={draft.weekStartDay === null}
+                    onClick={() => setDraft((prev) => ({ ...prev, weekStartDay: null }))}
+                  />
+                  {weekdayNames(0).map((name, weekday) => (
+                    <Chip
+                      key={name}
+                      label={name}
+                      selected={draft.weekStartDay === weekday}
+                      onClick={() =>
+                        setDraft((prev) => ({ ...prev, weekStartDay: weekday as WeekStart }))
+                      }
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="flex flex-wrap gap-2">
+                  {Array.from({ length: 12 }, (_, index) => index + 1).map((month) => (
+                    <Chip
+                      key={month}
+                      label={formatMonthShort(month)}
+                      selected={draft.yearStartMonth === month}
+                      onClick={() => setDraft((prev) => ({ ...prev, yearStartMonth: month }))}
+                    />
+                  ))}
+                </div>
+              )}
+              {draftRange ? (
+                <p className="mt-2 text-xs leading-5 text-gray-500">{t('tx.search.cutIgnored')}</p>
+              ) : null}
+            </div>
           </div>
 
           {tx.pickerCategories.length === 0 &&
@@ -1906,9 +2004,11 @@ export default function TransactionsView({
       {/*
         분석 창. 거래 상세보다 앞에 둔다 -- 분석의 거래를 눌러 연 상세가 그 위에 떠야 한다.
       */}
-      {isAnalysisOpen && (
+      {analysisFrom && (
         <TransactionAnalysisModal
-          onClose={() => setIsAnalysisOpen(false)}
+          onClose={() => setAnalysisFrom(null)}
+          grouping={tx.grouping}
+          initialKey={analysisFrom.key}
           search={tx.search}
           searchCount={tx.searchCount}
           range={tx.range}

@@ -10,12 +10,18 @@
  * 각자 맡는다 -- 웹은 recharts, 앱은 react-native-svg 라 컴포넌트를 나눌 수 없다.
  */
 import { useEffect, useMemo, useState } from 'react';
-import type { EntryDto, EntryFilterQuery, EntryListItem } from '@money/types';
+import { isCalendarMonthKey, periodDayRange, unitOfKey, type EntryDto, type EntryFilterQuery, type EntryListItem, type EntryPeriodUnit } from '@money/types';
 
 import { useMirrorVersion } from './useMirrorVersion';
 import { homeDataPort } from '../data/home-port';
 import { type ReportPeriod } from '../lib/api-client';
-import { dayRangeQuery, formatMonthShort, throughDayOf, todayKey } from '../lib/datetime';
+import {
+  dayRangeQuery,
+  formatMonthShort,
+  formatYearOnly,
+  throughDayOf,
+  todayKey,
+} from '../lib/datetime';
 import {
   analysisDated,
   buildDailyCumulative,
@@ -85,6 +91,52 @@ const DETAIL_LABELS: Record<'income' | 'expense', DetailLabels> = {
     method: 'detail.methodIncome',
   },
 };
+
+/**
+ * 추이 막대의 단위별 제목과 빈 안내, 막대 수. 달은 위 표(`DETAIL_LABELS`)의 것을 쓴다.
+ *
+ * 거래 화면의 분석을 주·해로 열면 막대도 그 단위로 선다. 주는 석 달쯤, 해는 다섯 해를
+ * 덮는다 -- 해를 열두 개 세우면 가계부 대부분에서 앞의 일곱 막대가 빈다.
+ */
+const TREND_BY_UNIT: Record<
+  Exclude<EntryPeriodUnit, 'month'>,
+  { count: number; labels: Record<'income' | 'expense', { monthly: MessageKey; noYear: MessageKey }> }
+> = {
+  week: {
+    count: 12,
+    labels: {
+      expense: { monthly: 'detail.weeklyUsage', noYear: 'detail.noWeeksUsage' },
+      income: { monthly: 'detail.weeklyIncome', noYear: 'detail.noWeeksIncome' },
+    },
+  },
+  year: {
+    count: 5,
+    labels: {
+      expense: { monthly: 'detail.yearlyUsage', noYear: 'detail.noYearsUsage' },
+      income: { monthly: 'detail.yearlyIncome', noYear: 'detail.noYearsIncome' },
+    },
+  },
+};
+
+/**
+ * 추이 막대 하나의 이름. 달 "8월", 주 "9/13"(그 주의 첫날), 해 "2026년".
+ *
+ * 시작일을 붙인 달("2026-08@14")은 시작하는 날 "8/14" 로, 시작 월을 붙인 해("2026@03")는
+ * 시작하는 해로 적는다. 막대 밑은 좁아 구간 전체를 적을 자리가 없다.
+ */
+function trendLabel(key: string): string {
+  const unit = unitOfKey(key);
+  const [base, anchor] = key.split('@');
+  if (unit === 'year') return formatYearOnly(Number(base));
+  const [, month, day] = base.split('-').map(Number);
+  if (unit === 'month' && anchor) {
+    // 그 달에 시작일이 없으면 말일에 시작한다. 실제로 시작하는 날을 적는다.
+    const [, startMonth, startDay] = periodDayRange(key).startKey.split('-').map(Number);
+    return `${startMonth}/${startDay}`;
+  }
+  if (unit === 'month') return formatMonthShort(month);
+  return `${month}/${day}`;
+}
 
 /** 원형차트 조각 하나 */
 export interface CategorySlice {
@@ -192,6 +244,13 @@ export interface CategoryDetailInput {
    * 그쪽 추이는 구간 밖의 달을 함께 보여 견주게 하는 것이 뜻이다.
    */
   trendClip?: { from?: string; to?: string };
+  /**
+   * 추이 막대의 마지막 기간 열쇠(해 "2026", 달 "2026-09", 주 "2026-09-13").
+   *
+   * 거래 화면의 분석이 주·해로 열렸을 때 준다 -- 막대가 그 단위로 선다. 주지 않으면
+   * 구간의 마지막 달까지 12개월이다.
+   */
+  trendPeriod?: string;
 }
 
 export interface CategoryDetail {
@@ -275,6 +334,7 @@ export function useCategoryDetail({
   reloadToken,
   enabled = true,
   trendClip,
+  trendPeriod,
 }: CategoryDetailInput): CategoryDetail {
   // 구간 경계와 "오늘까지"는 프로젝트 타임존 기준이다 (서버의 합계와 같은 규칙).
   const timeZone = useProjectTimeZone();
@@ -302,6 +362,20 @@ export function useCategoryDetail({
     ...(trendClip?.from ? { clipFrom: trendClip.from } : {}),
     ...(trendClip?.to ? { clipTo: trendClip.to } : {}),
   };
+  /*
+   * 추이 막대의 단위. 달력의 달이거나 직접 정한 기간이면 지금까지처럼 그 끝 달로 12개월을
+   * 묻는다 -- 직접 정한 기간은 앞뒤로 옮길 차례가 없어 견줄 막대를 세울 수 없다. 시작일을
+   * 붙인 달("2026-08@14")은 그 달 단위로 12개다.
+   */
+  const trendUnit =
+    trendPeriod && unitOfKey(trendPeriod) !== 'range' ? unitOfKey(trendPeriod) : 'month';
+  const trendByUnit = trendUnit === 'week' || trendUnit === 'year' ? TREND_BY_UNIT[trendUnit] : null;
+  const trendRange =
+    !trendPeriod || unitOfKey(trendPeriod) === 'range'
+      ? { endMonth, months: 12 }
+      : isCalendarMonthKey(trendPeriod)
+        ? { endMonth: trendPeriod, months: 12 }
+        : { endPeriod: trendPeriod, months: trendByUnit?.count ?? 12 };
 
   const target = resolveTarget(categoryId, categories, exactCategory);
   /*
@@ -358,7 +432,7 @@ export function useCategoryDetail({
           target.scope === 'total'
             ? port.getTrend(
                 'total',
-                { type: target.type, endMonth, months: 12, ...filter, ...clipQuery },
+                { type: target.type, ...trendRange, ...filter, ...clipQuery },
                 projectId,
               )
             : target.scope === 'tag'
@@ -367,8 +441,7 @@ export function useCategoryDetail({
                   {
                     targetId: target.tagId,
                     type: target.type,
-                    endMonth,
-                    months: 12,
+                    ...trendRange,
                     ...filter,
                     ...clipQuery,
                   },
@@ -378,8 +451,7 @@ export function useCategoryDetail({
                 'category',
                 {
                   targetId: categoryId,
-                  endMonth,
-                  months: 12,
+                  ...trendRange,
                   exact: exactCategory,
                   ...filter,
                   ...clipQuery,
@@ -480,7 +552,7 @@ export function useCategoryDetail({
         const trend = (trendRes ?? []) as Array<{ yearMonth: string; amount: string }>;
         setMonthly(
           trend.map((point) => ({
-            label: formatMonthShort(Number(point.yearMonth.split('-')[1])),
+            label: trendLabel(point.yearMonth),
             amount: toNumber(point.amount),
           })),
         );
@@ -523,6 +595,7 @@ export function useCategoryDetail({
     timeZone,
     filterKey,
     clipKey,
+    trendPeriod,
     reloadToken,
     mirrorVersion,
     // categories 배열 자체를 넣으면 부모가 새로 만들 때마다 다시 받는다. 판별 결과만 본다.
@@ -581,7 +654,9 @@ export function useCategoryDetail({
 
   return {
     isLoading,
-    labels: DETAIL_LABELS[target.type],
+    labels: trendByUnit
+      ? { ...DETAIL_LABELS[target.type], ...trendByUnit.labels[target.type] }
+      : DETAIL_LABELS[target.type],
     monthly,
     daily,
     comparisons,

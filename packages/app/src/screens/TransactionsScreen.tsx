@@ -204,6 +204,7 @@ function LineView({
   checkPending,
   onToggle,
   onPress,
+  onAnalyze,
 }: {
   label: string;
   /** 날짜별 줄에서 일자 옆에 붙는 요일. 다른 탭에는 없다. */
@@ -240,6 +241,12 @@ function LineView({
   checkPending?: boolean;
   onToggle?: (yearMonth: string, rowKey: string) => void;
   onPress: (yearMonth: string, rowKey: string) => void;
+  /**
+   * 이 기간의 분석을 연다. 년월 줄만 준다 -- 금액 뒤에 아이콘이 선다.
+   *
+   * 기간 열쇠를 되돌려 주는 고정된 함수여야 `memo` 가 걸린다 (`onPress` 와 같다).
+   */
+  onAnalyze?: (yearMonth: string) => void;
 }) {
   const { t } = useTranslation();
   const currency = useProjectDisplayCurrency();
@@ -336,6 +343,21 @@ function LineView({
             <Text className={`text-gray-400 ${AMOUNT_SIZE[depth]}`}>-</Text>
           ) : null}
         </View>
+        {/*
+          이 기간의 분석. 줄의 오른쪽 끝, 금액 바로 뒤다. 줄을 누르는 것(펼치기)과 갈리도록
+          누를 자리를 아이콘 둘레로 넓혀 둔다.
+        */}
+        {onAnalyze ? (
+          <Pressable
+            onPress={() => onAnalyze(yearMonth)}
+            hitSlop={10}
+            accessibilityRole="button"
+            accessibilityLabel={t('tx.analysisOfPeriod', { period: label })}
+            className="shrink-0 pl-1"
+          >
+            <ChartPie size={16} color="#9ca3af" />
+          </Pressable>
+        ) : null}
       </View>
 
       {/*
@@ -470,17 +492,28 @@ export default function TransactionsScreen() {
    * 펴면 맨 위로 올리고, 접으면 목록에서 보던 자리로 되돌린다 (가계 분류 상세와 같은 규칙).
    * 기기의 뒤로가기는 머리글의 ← 와 같이 목록으로 돌아간다.
    */
-  const [isAnalysisOpen, setIsAnalysisOpen] = useState(false);
+  /**
+   * null 이면 닫혀 있다. 년월 줄의 아이콘으로 폈으면 그 줄의 기간 열쇠를 들고, 머리글의
+   * 단추로 폈으면 열쇠 없이 지금 단위의 오늘을 연다.
+   */
+  const [analysisFrom, setAnalysisFrom] = useState<{ key?: string } | null>(null);
   const scrollToTop = useScrollToTop();
   const { offsetOf, restoreTo } = useScrollRestore();
   const listOffset = useRef(0);
-  const openAnalysis = (open: boolean) => {
-    if (open) listOffset.current = offsetOf();
-    setIsAnalysisOpen(open);
-    if (open) scrollToTop();
+  const openAnalysis = (from: { key?: string } | null) => {
+    if (from) listOffset.current = offsetOf();
+    setAnalysisFrom(from);
+    if (from) scrollToTop();
     else restoreTo(listOffset.current);
   };
-  useCloseOnBack(isAnalysisOpen, () => openAnalysis(false));
+  useCloseOnBack(analysisFrom !== null, () => openAnalysis(null));
+  /*
+   * 년월 줄의 분석 아이콘. 줄이 `memo` 라 고정된 함수로 넘긴다. 그리는 때마다 바뀌는
+   * `openAnalysis` 는 최신 것을 ref 로 부른다.
+   */
+  const openAnalysisRef = useRef(openAnalysis);
+  openAnalysisRef.current = openAnalysis;
+  const analyzePeriod = useCallback((key: string) => openAnalysisRef.current({ key }), []);
   /** 더보기 선택창. 태그와 삭제 둘이다. */
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   /** 고른 거래에 붙일 태그를 정하는 창. */
@@ -834,9 +867,11 @@ export default function TransactionsScreen() {
         그래프가 한참 밀린다. 닫으면 목록이 보던 자리로 돌아온다. 아래 팝업들(거래 상세 등)은
         그대로 남아, 분석의 거래를 누르면 상세가 뜬다.
       */}
-      {isAnalysisOpen ? (
+      {analysisFrom ? (
         <TransactionAnalysisView
-          onClose={() => openAnalysis(false)}
+          onClose={() => openAnalysis(null)}
+          grouping={tx.grouping}
+          initialKey={analysisFrom.key}
           search={tx.search}
           searchCount={tx.searchCount}
           range={tx.range}
@@ -965,7 +1000,7 @@ export default function TransactionsScreen() {
                       앞에 둔다 -- 둘이 같은 조건을 쓴다는 것이 자리로 보인다 (웹과 같다).
                     */}
                     <Pressable
-                      onPress={() => openAnalysis(true)}
+                      onPress={() => openAnalysis({})}
                       accessibilityLabel={t('tx.analysis')}
                       className="items-center justify-center p-2"
                     >
@@ -1160,6 +1195,8 @@ export default function TransactionsScreen() {
                       checkPending={tx.isSelecting ? tx.isRangePending(month.yearMonth) : false}
                       onToggle={toggleMonthRange}
                       onPress={unfoldMonth}
+                      // 고르는 중에는 체크와 헷갈리지 않게 감춘다 (웹과 같다).
+                      onAnalyze={tx.isSelecting ? undefined : analyzePeriod}
                     />
                   }
                 >
@@ -1234,6 +1271,7 @@ export default function TransactionsScreen() {
         cards={tx.pickerCards}
         tags={tx.pickerTags}
         people={tx.people}
+        unit={tx.unit}
       />
 
       {/*

@@ -228,6 +228,49 @@ runSmoke('reports', async (ctx) => {
   ctx.check('7월 외식 (점심 40000)', trend[1].amount, '40000');
   ctx.check('6월 (거래 없음, 0으로 채움)', trend[0].amount, '0');
 
+  /*
+   * ── 기간 단위 추이 (endPeriod) ──
+   *
+   * 거래 화면의 분석을 해·주로 열면 막대가 그 단위로 선다. 해 막대는 그 해 열두 달의 합,
+   * 주 막대는 그 주가 덮는 일곱 날의 합이어야 한다 -- 단위만 바뀌고 세는 규칙은 같다.
+   */
+  const yearTrend = await reports.getTrend(uid, {
+    projectId: pid, target: 'category', targetId: dining.id, endPeriod: '2026', months: 2,
+  });
+  ctx.check('해 추이 열쇠', yearTrend.map((p) => p.yearMonth).join(','), '2025,2026');
+  const wholeYear = await reports.getTrend(uid, {
+    projectId: pid, target: 'category', targetId: dining.id, endMonth: '2026-12', months: 12,
+  });
+  ctx.check('해 막대 = 열두 달의 합',
+    Number(yearTrend[1].amount), wholeYear.reduce((s, p) => s + Number(p.amount), 0));
+
+  const weekTrend = await reports.getTrend(uid, {
+    projectId: pid, target: 'category', targetId: dining.id, endPeriod: '2026-08-30', months: 5,
+  });
+  ctx.check('주 추이 열쇠 (7일씩)', weekTrend.map((p) => p.yearMonth).join(','),
+    '2026-08-02,2026-08-09,2026-08-16,2026-08-23,2026-08-30');
+  const weekSpan = await reports.getCategoryBreakdown(uid, {
+    projectId: pid, startDate: '2026-08-02', endDate: '2026-09-05', type: 'expense',
+  } as any);
+  ctx.check('다섯 주 = 그 35일의 외식 (소분류 포함)',
+    weekTrend.reduce((s, p) => s + Number(p.amount), 0),
+    Number(weekSpan.find((row) => row.categoryId === dining.id)?.amount ?? 0));
+
+  /*
+   * ── 기간 줄을 끊는 자리 (monthStartDay · yearStartMonth) ──
+   *
+   * 거래 화면의 검색이 고른다. 줄의 경계만 옮기므로 줄을 다 더한 값은 달력대로 끊은 것과
+   * 같아야 하고, 열쇠에 끊는 자리가 붙어야 한다.
+   */
+  const calendarMonths = await reports.getEntryMonths(uid, { projectId: pid });
+  const cutMonths = await reports.getEntryMonths(uid, { projectId: pid, monthStartDay: '14' } as any);
+  const total = (rows: Array<{ expense: string }>) => rows.reduce((s, r) => s + Number(r.expense), 0);
+  ctx.check('14일 시작 열쇠', cutMonths.every((r) => /^\d{4}-\d{2}@14$/.test(r.yearMonth)), true);
+  ctx.check('끊는 자리를 옮겨도 지출 합은 같다', total(cutMonths), total(calendarMonths));
+  const cutYears = await reports.getEntryMonths(uid, { projectId: pid, unit: 'year', yearStartMonth: '8' } as any);
+  ctx.check('8월 시작 해: 7월 거래는 앞 해다', cutYears.map((r) => r.yearMonth).join(','), '2026@08,2025@08');
+  ctx.check('해로 끊어도 지출 합은 같다', total(cutYears), total(calendarMonths));
+
   // ── payment-methods ──
   const methods = await reports.getPaymentMethods(uid, { projectId: pid, yearMonth: '2026-08' });
   // 거래가 없는 수단도 0원으로 내려온다: 보통예금·이영희 통장·삼성전자(투자) + 신용/체크카드

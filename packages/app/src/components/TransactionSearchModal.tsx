@@ -10,9 +10,17 @@
  * 왕복하고, 그중 두 번은 사용자가 보려던 것이 아니다.
  */
 import { Fragment, useEffect, useState } from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { CalendarDays } from 'lucide-react-native';
-import type { AccountDto, CardDto, CategoryDto, PersonDto, TagDto } from '@money/types';
+import type {
+  AccountDto,
+  CardDto,
+  CategoryDto,
+  EntryPeriodUnit,
+  PersonDto,
+  TagDto,
+  WeekStart,
+} from '@money/types';
 
 import {
   ENTRY_FEATURES,
@@ -38,9 +46,11 @@ import {
   EMPTY_SEARCH,
   ENTRY_FEATURE_LABEL,
   ENTRY_KIND_LABEL,
+  periodCutOf,
   searchRange,
   type TransactionSearch,
 } from '@money/core/hooks/useTransactions';
+import { formatMonthShort, weekdayNames } from '@money/core/lib/datetime';
 
 import DatePickerPanel from './DatePickerPanel';
 import { Chip, Divider } from './FormFields';
@@ -153,8 +163,11 @@ export default function TransactionSearchModal({
   cards,
   tags,
   people,
+  unit,
 }: {
   isOpen: boolean;
+  /** 지금 묶는 단위. 기간을 어디서 끊을지 고르는 칸이 이 단위의 것 하나만 선다. */
+  unit: EntryPeriodUnit;
   onClose: () => void;
   onApply: (search: TransactionSearch) => void;
   /** 지금 적용된 검색. 다시 열면 이 상태에서 이어 고른다. */
@@ -206,7 +219,9 @@ export default function TransactionSearchModal({
     draft.features.length +
     draft.tagIds.length +
     draft.entryPersonIds.length +
-    (range ? 1 : 0);
+    (range ? 1 : 0) +
+    // 끊는 자리. 기간을 정했으면 쓰이지 않아 세지 않는다 (훅의 searchCount 와 같다).
+    (!range && periodCutOf(draft, unit) ? 1 : 0);
   const isEmpty =
     categories.length === 0 && accounts.length === 0 && cards.length === 0 && tags.length === 0;
 
@@ -347,6 +362,71 @@ export default function TransactionSearchModal({
               {t('tx.search.periodInvalid')}
             </Text>
           ) : null}
+
+          {/*
+            기간 줄을 어디서 끊을지. 지금 묶는 단위의 것 하나만 선다 (웹과 같다) -- 달이면
+            시작일, 주면 시작 요일, 해면 시작 월이다. 거르는 조건이 아니라 줄의 경계를 옮긴다.
+
+            시작일 서른하나는 가로로 넘기는 한 줄에 둔다. 감싸면 칸 하나가 화면을 다 쓴다.
+            기간을 정했으면 쓰이지 않는다는 것을 한 줄로 알린다.
+          */}
+          <View className="mt-4">
+            <Text className="mb-2 text-xs text-gray-500">
+              {t(
+                unit === 'month'
+                  ? 'tx.search.cutMonth'
+                  : unit === 'week'
+                    ? 'tx.search.cutWeek'
+                    : 'tx.search.cutYear',
+              )}
+            </Text>
+            {unit === 'month' ? (
+              <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+                <View className="flex-row gap-2">
+                  {Array.from({ length: 31 }, (_, index) => index + 1).map((day) => (
+                    <Chip
+                      key={day}
+                      label={t('tx.search.cutDay', { day })}
+                      selected={draft.monthStartDay === day}
+                      onPress={() => setDraft((prev) => ({ ...prev, monthStartDay: day }))}
+                    />
+                  ))}
+                </View>
+              </ScrollView>
+            ) : unit === 'week' ? (
+              <View className="flex-row flex-wrap gap-2">
+                <Chip
+                  label={t('tx.search.cutDefault')}
+                  selected={draft.weekStartDay === null}
+                  onPress={() => setDraft((prev) => ({ ...prev, weekStartDay: null }))}
+                />
+                {weekdayNames(0).map((name, weekday) => (
+                  <Chip
+                    key={name}
+                    label={name}
+                    selected={draft.weekStartDay === weekday}
+                    onPress={() =>
+                      setDraft((prev) => ({ ...prev, weekStartDay: weekday as WeekStart }))
+                    }
+                  />
+                ))}
+              </View>
+            ) : (
+              <View className="flex-row flex-wrap gap-2">
+                {Array.from({ length: 12 }, (_, index) => index + 1).map((month) => (
+                  <Chip
+                    key={month}
+                    label={formatMonthShort(month)}
+                    selected={draft.yearStartMonth === month}
+                    onPress={() => setDraft((prev) => ({ ...prev, yearStartMonth: month }))}
+                  />
+                ))}
+              </View>
+            )}
+            {range ? (
+              <Text className="mt-2 text-xs leading-5 text-gray-500">{t('tx.search.cutIgnored')}</Text>
+            ) : null}
+          </View>
         </View>
 
         {isEmpty ? (

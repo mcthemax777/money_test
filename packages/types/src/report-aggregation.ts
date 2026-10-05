@@ -21,14 +21,21 @@
 
 import { Dec, type DecInput } from './decimal';
 import type { CategoryType } from './entities';
-import { DEFAULT_ENTRY_PERIOD, periodKeyOf, type EntryPeriodUnit } from './entry-period';
+import {
+  DEFAULT_ENTRY_PERIOD,
+  periodDayRange,
+  periodKeyOf,
+  shiftPeriodKey,
+  type EntryPeriodUnit,
+  type PeriodAnchor,
+} from './entry-period';
 import { DEFAULT_WEEK_START, type WeekStart } from './week-start';
 import {
   installmentLineShares,
   installmentMonthShares,
   installmentRowDate,
 } from './installment-schedule';
-import { zonedDateKey, zonedYearMonth } from './tz';
+import { zonedDateKey } from './tz';
 
 /**
  * 집계가 보는 카테고리 다리 하나.
@@ -296,21 +303,51 @@ export function monthlyTotals(
     months: number;
   },
 ): MonthlyTotal[] {
-  const { timeZone, endYearMonth, months } = options;
+  return periodTotals(rows, {
+    timeZone: options.timeZone,
+    endKey: options.endYearMonth,
+    count: options.months,
+  });
+}
 
-  const byMonth = new Map<string, Dec>();
+/**
+ * 기간별 합계. `monthlyTotals` 를 해·달·주로 넓힌 것이다. 빈 기간도 0으로 채운다.
+ *
+ * 단위는 마지막 열쇠의 생김새가 정한다(`unitOfKey`). 주 열쇠는 그 주의 첫날이라, 줄의
+ * 날짜가 몇 번째 7일 칸에 드는지로 묶는다 -- 시작 요일을 따로 받지 않아도 열쇠와 같은
+ * 요일에서 끊긴다. 돌려주는 칸 이름이 `yearMonth` 인 것은 와이어의 이름을 따른 것이다
+ * (`ReportDto.TrendPoint`).
+ */
+export function periodTotals(
+  rows: readonly CategoryPostingRow[],
+  options: {
+    timeZone: string;
+    /** 마지막 기간의 열쇠. 이 기간을 포함해 뒤로 count 개를 만든다. */
+    endKey: string;
+    count: number;
+  },
+): MonthlyTotal[] {
+  const { timeZone, endKey, count } = options;
+  const keys: string[] = [];
+  for (let i = count - 1; i >= 0; i -= 1) keys.push(shiftPeriodKey(endKey, -i));
+
+  /*
+   * 칸마다 덮는 날(양끝 포함)을 펴 두고, 줄의 날짜가 든 칸을 찾는다. 시작일이 붙은 달
+   * ("2026-08@14")처럼 달력과 어긋나는 칸도 같은 길로 묶인다 -- 열쇠의 모양을 다시 읽지
+   * 않고 그 칸이 덮는 날만 본다. 칸은 많아야 예순이다.
+   */
+  const spans = keys.map((key) => ({ key, ...periodDayRange(key) }));
+  const bucketOf = (dateKey: string): string | undefined =>
+    spans.find((span) => dateKey >= span.startKey && dateKey <= span.endKey)?.key;
+
+  const byKey = new Map<string, Dec>();
   for (const row of rows) {
-    const key = zonedYearMonth(new Date(row.date), timeZone);
-    byMonth.set(key, (byMonth.get(key) ?? Dec.of(0)).plus(selectedAmount(row)));
+    const key = bucketOf(zonedDateKey(new Date(row.date), timeZone));
+    if (key === undefined) continue;
+    byKey.set(key, (byKey.get(key) ?? Dec.of(0)).plus(selectedAmount(row)));
   }
 
-  const [endYear, endMonth] = endYearMonth.split('-').map(Number);
-  const points: MonthlyTotal[] = [];
-  for (let i = months - 1; i >= 0; i -= 1) {
-    const key = shiftYearMonth(endYear, endMonth, -i);
-    points.push({ yearMonth: key, amount: byMonth.get(key) ?? Dec.of(0) });
-  }
-  return points;
+  return keys.map((key) => ({ yearMonth: key, amount: byKey.get(key) ?? Dec.of(0) }));
 }
 
 /** (year, month)에서 delta개월 옮긴 "YYYY-MM". month는 1~12지만 범위를 벗어나도 된다. */
@@ -376,6 +413,10 @@ export function entryMonths(
      * 않는다 -- 달의 경계는 시작 요일과 무관하다.
      */
     weekStart?: WeekStart;
+    /**
+     * 달·해를 어디서 끊을지 (`PeriodAnchor`). 거래 화면의 검색이 고른다. 없으면 달력대로다.
+     */
+    anchor?: PeriodAnchor;
   },
 ): EntryMonthTotal[] {
   const {
@@ -383,18 +424,19 @@ export function entryMonths(
     entryDates,
     unit = DEFAULT_ENTRY_PERIOD,
     weekStart = DEFAULT_WEEK_START,
+    anchor,
   } = options;
 
   const byPeriod = new Map<string, { income: Dec; expense: Dec }>();
 
   for (const date of entryDates ?? []) {
-    const key = periodKeyOf(date, timeZone, unit, weekStart);
+    const key = periodKeyOf(date, timeZone, unit, weekStart, anchor);
     if (!byPeriod.has(key)) byPeriod.set(key, { income: Dec.of(0), expense: Dec.of(0) });
   }
   for (const row of rows) {
     const selected = selectedAmount(row);
 
-    const key = periodKeyOf(row.date, timeZone, unit, weekStart);
+    const key = periodKeyOf(row.date, timeZone, unit, weekStart, anchor);
     const bucket = byPeriod.get(key) ?? { income: Dec.of(0), expense: Dec.of(0) };
     if (row.categoryType === 'expense') bucket.expense = bucket.expense.plus(selected);
     else bucket.income = bucket.income.plus(selected);

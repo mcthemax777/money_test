@@ -54,7 +54,12 @@ import {
   DEFAULT_WEEK_START,
   isEntryPeriodUnit,
   DEFAULT_ENTRY_PERIOD,
-  monthlyTotals,
+  isPeriodKey,
+  asPeriodAnchor,
+  nextDateKey,
+  periodDayRange,
+  periodTotals,
+  shiftPeriodKey,
   NO_ACCOUNT,
   parseEntrySearch,
   netWorth,
@@ -74,7 +79,6 @@ import {
   zonedDateStringToUtc,
   zonedDayStart,
   zonedMonthRange,
-  zonedMonthStart,
   zonedParts,
 } from '@money/types';
 
@@ -847,6 +851,8 @@ export class ReportsService {
       entryDates: monthDates,
       unit,
       weekStart,
+      // 달·해를 어디서 끊을지. 거래 화면의 검색이 고른다 (`PeriodAnchor`).
+      anchor: asPeriodAnchor(query),
     }).map(
       (month) => ({
         yearMonth: month.yearMonth,
@@ -862,20 +868,29 @@ export class ReportsService {
       query.projectId,
     );
     const months = Math.min(Math.max(Number(query.months) || 12, 1), 60);
-    const endMonth = query.endMonth
-      ? assertYearMonth(query.endMonth, '기준 월')
-      : zonedCurrentYearMonth(timeZone);
-    const [endYear, endMonthNumber] = endMonth.split('-').map(Number);
     /*
-     * 막대가 덮는 12개월. 검색 기간을 주면(clip) 그 안으로 자른다 -- 달 이름은 그대로 두고
+     * 마지막 막대의 열쇠. 기간 열쇠(해·달·주)를 주면 그 단위로 서고, 아니면 달이다.
+     */
+    if (query.endPeriod !== undefined && !isPeriodKey(query.endPeriod)) {
+      throw new BadRequestException('기준 기간: YYYY, YYYY-MM, YYYY-MM-DD 중 하나여야 합니다.');
+    }
+    const endKey =
+      query.endPeriod ??
+      (query.endMonth ? assertYearMonth(query.endMonth, '기준 월') : zonedCurrentYearMonth(timeZone));
+    /*
+     * 막대가 덮는 기간. 검색 기간을 주면(clip) 그 안으로 자른다 -- 기간 이름은 그대로 두고
      * 세는 돈만 줄인다. 잘못 적은 시각은 버린다(자르지 않는 쪽이 조용히 비는 쪽보다 낫다).
      */
     const clip = (value: string | undefined) => {
       const at = value ? new Date(value) : null;
       return at && !Number.isNaN(at.getTime()) ? at : null;
     };
-    const fullEnd = zonedMonthStart(endYear, endMonthNumber + 1, timeZone);
-    const fullStart = zonedMonthStart(endYear, endMonthNumber - months + 1, timeZone);
+    const dayStart = (dateKey: string) => {
+      const [year, month, day] = dateKey.split('-').map(Number);
+      return zonedDayStart(year, month, day, timeZone);
+    };
+    const fullEnd = dayStart(nextDateKey(periodDayRange(endKey).endKey));
+    const fullStart = dayStart(periodDayRange(shiftPeriodKey(endKey, -(months - 1))).startKey);
     const clipFrom = clip(query.clipFrom);
     const clipTo = clip(query.clipTo);
     const start = clipFrom && clipFrom > fullStart ? clipFrom : fullStart;
@@ -923,14 +938,14 @@ export class ReportsService {
         : byPaymentMethod
           ? undefined
           : lineMatcherOf(parseEntrySearch(query));
-    const points = monthlyTotals(
+    const points = periodTotals(
       this.toAggregateRows(
         rows,
         matchLine,
         spreadOf(basis, timeZone, { gte: start, lt: end }),
         byPaymentMethod,
       ),
-      { timeZone, endYearMonth: endMonth, months },
+      { timeZone, endKey, count: months },
     );
 
     const show = await this.displayConverter(projectId);

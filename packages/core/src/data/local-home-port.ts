@@ -38,7 +38,11 @@ import {
   budgetScheduleMonths,
   isBudgetApplicable,
   resolveBudgetTarget,
-  monthlyTotals,
+  isPeriodKey,
+  asPeriodAnchor,
+  periodDayRange,
+  periodTotals,
+  shiftPeriodKey,
   tagUsage,
   netWorth,
   closingMonthKey,
@@ -671,7 +675,7 @@ export function createLocalHomePort(
      * 달별 추이. 서버의 `getTrend` 와 같은 규칙이다 (분류·전체·태그).
      *
      * 막대가 덮는 달을 한 번에 읽어(검색·사람 필터·세는 방식은 `monthPostings` 가 서버와 같게
-     * 건다) 대상으로 거른 뒤 공용 `monthlyTotals` 로 달마다 더한다. 서버와 같은 함수라
+     * 건다) 대상으로 거른 뒤 공용 `periodTotals` 로 기간마다 더한다. 서버와 같은 함수라
      * 같은 달의 막대가 웹과 기기에서 갈리지 않는다.
      *
      * 결제수단 추이는 "그 수단으로 돈이 나간 지출"을 가르는 규칙(entry-view)이 사본에 없어
@@ -687,17 +691,21 @@ export function createLocalHomePort(
       const timeZone = await timeZoneOf(store, id);
       const months = Math.min(Math.max(Number(options.months) || 12, 1), 60);
       const now = zonedParts(new Date(), timeZone);
-      const endMonth =
-        options.endMonth ?? `${now.year}-${String(now.month).padStart(2, '0')}`;
-      const [endYear, endMonthNumber] = endMonth.split('-').map(Number);
-      const startMonth = shiftYearMonth(endYear, endMonthNumber, -(months - 1));
+      /*
+       * 마지막 막대의 열쇠. 기간 열쇠(해·달·주)를 주면 그 단위로 선다 (서버와 같은 규칙).
+       * 모양이 틀린 열쇠는 서버가 400 으로 거절하는 값이라 여기서는 달로 물러선다.
+       */
+      const endKey =
+        options.endPeriod && isPeriodKey(options.endPeriod)
+          ? options.endPeriod
+          : options.endMonth ?? `${now.year}-${String(now.month).padStart(2, '0')}`;
 
       /*
        * 덮는 날. 검색 기간으로 자르면(clip) 그 안으로 줄인다 -- 서버는 [from, to) 로 읽으므로
-       * 끝은 1밀리초 앞의 날이다. 겹치는 날이 없으면 모든 달이 0 이다.
+       * 끝은 1밀리초 앞의 날이다. 겹치는 날이 없으면 모든 기간이 0 이다.
        */
-      let fromDateKey = `${startMonth}-01`;
-      let toDateKey = `${endMonth}-31`;
+      let fromDateKey = periodDayRange(shiftPeriodKey(endKey, -(months - 1))).startKey;
+      let toDateKey = periodDayRange(endKey).endKey;
       if (options.clipFrom) {
         const key = zonedDateKey(new Date(options.clipFrom), timeZone);
         if (key > fromDateKey) fromDateKey = key;
@@ -729,7 +737,7 @@ export function createLocalHomePort(
       });
 
       const show = await converter(id);
-      return monthlyTotals(picked, { timeZone, endYearMonth: endMonth, months }).map((point) => ({
+      return periodTotals(picked, { timeZone, endKey, count: months }).map((point) => ({
         yearMonth: point.yearMonth,
         amount: show.toString(point.amount),
       }));
@@ -829,7 +837,10 @@ export function createLocalHomePort(
       // 주를 끊는 요일도 화면이 실어 보낸다. 없으면 일요일이다.
       const weekStart = asWeekStart(filter?.weekStart);
 
-      return entryMonths(rows, { timeZone, entryDates: monthDates, unit, weekStart }).map(
+      // 달·해를 어디서 끊을지도 화면이 정한다 (서버와 같은 함수로 읽는다).
+      const anchor = asPeriodAnchor(filter ?? {});
+
+      return entryMonths(rows, { timeZone, entryDates: monthDates, unit, weekStart, anchor }).map(
         (month) => ({
           yearMonth: month.yearMonth,
           income: show.toString(month.income),
