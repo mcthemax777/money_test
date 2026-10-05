@@ -49,7 +49,10 @@ import { draftPort } from '@money/core/data/draft-port';
 import {
   captureItems,
   draftAddedBy,
+  draftAdderGroups,
   draftMethodName,
+  draftsAddedBy,
+  DRAFT_ADDER_UNKNOWN,
   draftNeedsFix,
   hintsOwnedBy,
   historyFromEntries,
@@ -183,6 +186,16 @@ export default function InboxPage() {
 
   const [source, setSource] = useState<EntryDraftSource>('notification');
   const inbox = useEntryDrafts(selectedProjectId, source);
+  /**
+   * 알림 탭에서 고른 사람(`createdByName`). null 이면 전체다.
+   *
+   * 고른 사람의 후보를 다 처리해 묶음이 사라지면 전체로 돌아간다 -- 그대로 두면
+   * 탭 줄에 없는 사람이 골라진 채 빈 목록만 남는다.
+   */
+  const [adder, setAdder] = useState<string | null>(null);
+  const adderGroups = source === 'notification' ? draftAdderGroups(inbox.drafts) : [];
+  const activeAdder = adderGroups.some((group) => group.key === adder) ? adder : null;
+  const drafts = draftsAddedBy(inbox.drafts, activeAdder);
   // 반복 규칙. 밀린 회차는 서버가 만들고, 여기서는 목록과 손질만 한다.
   const recurring = useRecurringRules(selectedProjectId);
   /** 고칠 반복. null 이면서 팝업이 열려 있으면 새로 만드는 중이다. */
@@ -448,16 +461,50 @@ export default function InboxPage() {
         </div>
       ) : null}
 
+      {/*
+        담은 사람 탭. 알림 탭에만 둔다 -- 캡처는 이 기기에만 있어 늘 "나"이고, 반복은
+        서버가 만들어 담은 사람이 없다. 사람이 늘면 가로로 굴린다.
+      */}
+      {adderGroups.length > 0 ? (
+        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 no-scrollbar">
+          {[{ key: null, count: inbox.drafts.length }, ...adderGroups].map((group) => {
+            const selected = group.key === activeAdder;
+            const label =
+              group.key === null
+                ? t('inbox.adderAll')
+                : group.key === DRAFT_ADDER_UNKNOWN
+                  ? t('inbox.adderUnknown')
+                  : group.key;
+            return (
+              <button
+                key={group.key ?? '*'}
+                type="button"
+                onClick={() => setAdder(group.key)}
+                aria-pressed={selected}
+                className={`flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1.5 text-sm transition-colors ${
+                  selected
+                    ? 'border-blue-600 bg-blue-50 text-blue-600'
+                    : 'border-gray-300 bg-white text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                {label}
+                <span className="font-semibold">{group.count}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
       {inbox.isLoading ? (
         <p className="text-sm text-gray-500">{t('common.loading')}</p>
-      ) : inbox.drafts.length === 0 ? (
+      ) : drafts.length === 0 ? (
         <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-gray-300 py-12">
           <Archive className="h-6 w-6 text-gray-400" aria-hidden />
           <p className="text-sm text-gray-500">{empty}</p>
         </div>
       ) : (
         <ul className="divide-y divide-gray-100 rounded-lg border border-gray-200 bg-white">
-          {inbox.drafts.map((draft) => (
+          {drafts.map((draft) => (
             <li key={draft.id}>
               <DraftRow
                 draft={draft}

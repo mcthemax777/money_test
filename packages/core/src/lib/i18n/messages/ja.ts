@@ -1409,6 +1409,8 @@ export const ja: Record<MessageKey, string> = {
   'inbox.raw': '読み取った原文',
   'inbox.confidence': '確度 {value}%',
   'inbox.addedBy': '追加: {who}',
+  'inbox.adderAll': 'すべて',
+  'inbox.adderUnknown': '不明',
   'inbox.needsFix': '空の項目があります。保存する前に入力してください。',
   'inbox.ruleMissingConfirm': '{fields}が未入力です。回ごとに受信箱で入力する必要があります。このまま保存しますか？',
   'inbox.registered': '取引として記録しました。',

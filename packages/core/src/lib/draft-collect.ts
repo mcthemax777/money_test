@@ -92,6 +92,42 @@ export function draftAddedBy(
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
+/** 담은 사람을 모르는 후보의 묶음 열쇠. 이름은 빈 글자일 수 없으므로 겹치지 않는다. */
+export const DRAFT_ADDER_UNKNOWN = '';
+
+/**
+ * 후보를 담은 사람별로 센다. 보관함의 사용자 탭이 쓴다.
+ *
+ * 열쇠는 `createdByName` 이다. 후보에는 담은 사용자의 id 가 없고 이름만 담을 때 적혀 있어,
+ * 같은 이름의 두 구성원은 한 묶음이 된다. 이름을 모르는 후보는 `DRAFT_ADDER_UNKNOWN`
+ * 묶음으로 맨 뒤에 둔다. 이름 차례로 세워 후보가 늘고 줄어도 탭 자리가 바뀌지 않는다.
+ */
+export function draftAdderGroups(
+  drafts: ReadonlyArray<Pick<EntryDraftDto.Response, 'createdByName'>>,
+): Array<{ key: string; count: number }> {
+  const counts = new Map<string, number>();
+  for (const draft of drafts) {
+    const key = draft.createdByName || DRAFT_ADDER_UNKNOWN;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return [...counts.entries()]
+    .map(([key, count]) => ({ key, count }))
+    .sort((a, b) => {
+      if (a.key === DRAFT_ADDER_UNKNOWN) return 1;
+      if (b.key === DRAFT_ADDER_UNKNOWN) return -1;
+      return a.key.localeCompare(b.key);
+    });
+}
+
+/** 한 사람이 담은 후보만. `key` 가 null 이면 전체다. */
+export function draftsAddedBy<T extends Pick<EntryDraftDto.Response, 'createdByName'>>(
+  drafts: T[],
+  key: string | null,
+): T[] {
+  if (key === null) return drafts;
+  return drafts.filter((draft) => (draft.createdByName || DRAFT_ADDER_UNKNOWN) === key);
+}
+
 /**
  * 후보에 붙은 결제수단의 이름. 못 찾았으면 null 이고 화면이 적지 않는다.
  *

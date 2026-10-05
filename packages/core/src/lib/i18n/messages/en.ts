@@ -1416,6 +1416,8 @@ export const en: Record<MessageKey, string> = {
   'inbox.raw': 'Original text',
   'inbox.confidence': '{value}% confident',
   'inbox.addedBy': 'Added by {who}',
+  'inbox.adderAll': 'All',
+  'inbox.adderUnknown': 'Unknown',
   'inbox.needsFix': 'Some fields are empty. Fill them in before saving.',
   'inbox.ruleMissingConfirm': '{fields} left empty. You will need to fill it in the inbox for each occurrence. Save anyway?',
   'inbox.registered': 'Recorded as an entry.',

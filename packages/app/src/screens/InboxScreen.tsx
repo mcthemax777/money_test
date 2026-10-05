@@ -33,10 +33,18 @@ import { useEntryDrafts } from '@money/core/hooks/useEntryDrafts';
 import { useRecurringRules } from '@money/core/hooks/useRecurringRules';
 import { useCanEdit, useProject, useProjectTimeZone } from '@money/core/store/project';
 import { homeDataPort } from '@money/core/data/home-port';
-import { draftAddedBy, draftMethodName, draftNeedsFix } from '@money/core/lib/draft-collect';
+import {
+  draftAddedBy,
+  draftAdderGroups,
+  draftMethodName,
+  draftNeedsFix,
+  draftsAddedBy,
+  DRAFT_ADDER_UNKNOWN,
+} from '@money/core/lib/draft-collect';
 import type { Account, Card, Category, Person, Tag } from '@money/core/lib/types';
 
 import EntryEditor from '../components/EntryEditor';
+import { Chip } from '../components/FormFields';
 import PageHeader from '../components/PageHeader';
 import RecurringRuleModal from '../components/RecurringRuleModal';
 import SegmentedTabs from '../components/SegmentedTabs';
@@ -77,6 +85,16 @@ export default function InboxScreen() {
 
   const [source, setSource] = useState<EntryDraftSource>('notification');
   const inbox = useEntryDrafts(projectId, source);
+  /**
+   * 알림 탭에서 고른 사람(`createdByName`). null 이면 전체다.
+   *
+   * 고른 사람의 후보를 다 처리해 묶음이 사라지면 전체로 돌아간다 -- 그대로 두면
+   * 탭 줄에 없는 사람이 골라진 채 빈 목록만 남는다.
+   */
+  const [adder, setAdder] = useState<string | null>(null);
+  const adderGroups = source === 'notification' ? draftAdderGroups(inbox.drafts) : [];
+  const activeAdder = adderGroups.some((group) => group.key === adder) ? adder : null;
+  const drafts = draftsAddedBy(inbox.drafts, activeAdder);
   // 반복 규칙. 밀린 회차는 서버가 만들고, 여기서는 목록과 손질만 한다.
   const recurring = useRecurringRules(projectId);
   /** 고칠 반복. null 이면서 팝업이 열려 있으면 새로 만드는 중이다. */
@@ -421,16 +439,45 @@ export default function InboxScreen() {
 
       {isWorking ? <ActivityIndicator /> : null}
 
+      {/*
+        담은 사람 탭. 알림 탭에만 둔다 -- 캡처는 이 기기에만 있어 늘 "나"이고, 반복은
+        서버가 만들어 담은 사람이 없다. 사람이 늘면 가로로 굴린다.
+      */}
+      {adderGroups.length > 0 ? (
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerClassName="gap-2"
+        >
+          {[{ key: null, count: inbox.drafts.length }, ...adderGroups].map((group) => {
+            const name =
+              group.key === null
+                ? t('inbox.adderAll')
+                : group.key === DRAFT_ADDER_UNKNOWN
+                  ? t('inbox.adderUnknown')
+                  : group.key;
+            return (
+              <Chip
+                key={group.key ?? '*'}
+                label={`${name} ${group.count}`}
+                selected={group.key === activeAdder}
+                onPress={() => setAdder(group.key)}
+              />
+            );
+          })}
+        </ScrollView>
+      ) : null}
+
       {inbox.isLoading ? (
         <Text className="text-sm text-gray-600">{t('common.loading')}</Text>
-      ) : inbox.drafts.length === 0 ? (
+      ) : drafts.length === 0 ? (
         <View className="items-center gap-2 rounded-lg border border-dashed border-gray-300 py-12">
           <Archive size={24} color="#9ca3af" />
           <Text className="text-sm text-gray-500">{empty}</Text>
         </View>
       ) : (
         <View className="overflow-hidden rounded-lg border border-gray-200 bg-white">
-          {inbox.drafts.map((draft, index) => (
+          {drafts.map((draft, index) => (
             <View
               key={draft.id}
               className={index > 0 ? 'border-t border-gray-100' : undefined}

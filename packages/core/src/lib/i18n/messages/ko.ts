@@ -1448,6 +1448,8 @@ export const ko = {
   'inbox.raw': '읽은 원문',
   'inbox.confidence': '확신 {value}%',
   'inbox.addedBy': '담음: {who}',
+  'inbox.adderAll': '전체',
+  'inbox.adderUnknown': '알 수 없음',
   'inbox.needsFix': '빈 칸이 있습니다. 저장하기 전에 채워 주세요.',
   'inbox.ruleMissingConfirm': '{fields} 칸이 비어 있습니다. 회차마다 보관함에서 채워야 합니다. 이대로 저장할까요?',
   'inbox.registered': '거래로 적었습니다.',
