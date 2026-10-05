@@ -322,6 +322,34 @@ export function periodLabel(key: string): string {
   });
 }
 
+/**
+ * 기간 줄 이름을 줄여 두 줄로 세울지. 달력의 해·달("2026년 9월")은 한 줄에 들어가고,
+ * 주차("2027년 3월 5주차")나 어디부터 어디까지로 적은 이름("2026. 8. 14 ~ 9. 13")은 좁은
+ * 화면에서 잘린다. 잘려 "…"로 남으면 그 줄이 어느 기간인지 읽을 수 없다.
+ *
+ * 글자 수로 가른다. 실제로 잘리는지 재려면 그린 뒤에 다시 그려야 하고, 그 사이 줄이
+ * 한 번 출렁인다. 웹과 앱이 같은 값을 써야 두 화면의 줄 높이가 같다.
+ */
+export function isLongPeriodLabel(label: string): boolean {
+  return label.length > 10;
+}
+
+/**
+ * 긴 기간 이름을 두 줄로 나눈다. 줄바꿈을 화면에 맡기지 않고 **정한 자리에서** 끊는다.
+ *
+ *   "2026. 8. 14 ~ 9. 13"   -> "2026. 8. 14 ~" / "9. 13"
+ *   "2027년 4월 1주차"       -> "2027년 4월" / "1주차"
+ *
+ * 맡기면 한글이 글자마다 끊길 수 있어 "1주" / "차" 나 "2026. 8." / "14 ~ 9. 13" 처럼 낱말·날짜
+ * 한가운데서 갈린다. 웹과 앱이 같은 자리에서 끊어야 두 화면이 같은 모양이다.
+ */
+export function periodLabelLines(label: string): [string, string] {
+  const tilde = label.indexOf(' ~ ');
+  if (tilde >= 0) return [label.slice(0, tilde + 2), label.slice(tilde + 3)];
+  const space = label.lastIndexOf(' ');
+  return space > 0 ? [label.slice(0, space), label.slice(space + 1)] : [label, ''];
+}
+
 /** 해를 뺀 달력 날짜. "9. 13" / "9/13" / "9/13". 기간 이름의 끝처럼 해가 앞에 이미 적힌 자리에 쓴다. */
 export function formatMonthDayKey(dateKey: string): string {
   const [year, month, day] = dateKey.split('-').map(Number);

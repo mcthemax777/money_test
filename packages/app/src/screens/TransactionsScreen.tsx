@@ -47,7 +47,7 @@ import {
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
-import { periodLabel } from '@money/core/lib/datetime';
+import { isLongPeriodLabel, periodLabel, periodLabelLines } from '@money/core/lib/datetime';
 import {
   useTransactions,
   type TransactionRow,
@@ -285,14 +285,32 @@ function LineView({
             화살표는 한 줄에서 자리만 차지한다.
           */}
           <View className="min-w-0 flex-1 flex-row items-baseline gap-1.5">
-            <Text
-              numberOfLines={1}
-              className={`shrink text-gray-900 ${
-                depth === 0 ? 'text-[15px] font-semibold' : 'text-sm font-medium'
-              }`}
-            >
-              {label}
-            </Text>
+            {/*
+              긴 기간 이름(주차, 직접 정한 기간, 시작일을 옮긴 달)은 한 단 작게, 두 줄까지 쓴다
+              (웹과 같다). "…"로 잘리면 그 줄이 어느 기간인지 읽을 수 없다.
+            */}
+            {depth === 0 && isLongPeriodLabel(label) ? (
+              <View className="shrink">
+                {periodLabelLines(label).map((line, index) => (
+                  <Text
+                    key={index}
+                    numberOfLines={1}
+                    className="text-[13px] font-semibold leading-[18px] text-gray-900"
+                  >
+                    {line}
+                  </Text>
+                ))}
+              </View>
+            ) : (
+              <Text
+                numberOfLines={1}
+                className={`shrink text-gray-900 ${
+                  depth === 0 ? 'text-[15px] font-semibold' : 'text-sm font-medium'
+                }`}
+              >
+                {label}
+              </Text>
+            )}
             {/*
               요일. 일자 바로 옆에 붙여 "9 (토)" 로 읽히게 한다. 잔글씨(건수)보다 앞에
               두는 것은 요일이 날짜의 일부이기 때문이다.

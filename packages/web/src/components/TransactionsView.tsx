@@ -50,8 +50,10 @@ import {
 import {
   formatDateTime,
   formatMonthShort,
+  isLongPeriodLabel,
   periodLabel,
   weekdayNames,
+  periodLabelLines,
 } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { tagPickResult, tagPickState, toggleTagPick } from '@money/core/lib/tag-pick';
@@ -272,13 +274,27 @@ function Line({
           화살표는 한 줄에서 자리만 차지한다. 열린 상태는 aria-expanded 로만 알린다.
         */}
         <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-          <span
-            className={`truncate text-gray-900 ${
-              depth === 0 ? 'text-[15px] font-semibold' : 'text-sm font-medium'
-            }`}
-          >
-            {label}
-          </span>
+          {/*
+            긴 기간 이름(주차, 직접 정한 기간, 시작일을 옮긴 달)은 한 단 작게, 두 줄까지 쓴다.
+            "…"로 잘리면 그 줄이 어느 기간인지 읽을 수 없다 (`isLongPeriodLabel`).
+          */}
+          {depth === 0 && isLongPeriodLabel(label) ? (
+            <span className="flex min-w-0 flex-col text-[13px] font-semibold leading-snug text-gray-900">
+              {periodLabelLines(label).map((line, index) => (
+                <span key={index} className="truncate">
+                  {line}
+                </span>
+              ))}
+            </span>
+          ) : (
+            <span
+              className={`truncate text-gray-900 ${
+                depth === 0 ? 'text-[15px] font-semibold' : 'text-sm font-medium'
+              }`}
+            >
+              {label}
+            </span>
+          )}
           {/*
             요일. 일자 바로 옆에 붙여 "9 (토)" 로 읽히게 한다. 잔글씨(건수)보다 앞에
             두는 것은 요일이 날짜의 일부이기 때문이다.
