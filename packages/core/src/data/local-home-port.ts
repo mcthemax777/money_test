@@ -69,6 +69,8 @@ import {
   EQUITY_ACCOUNT_TYPES,
   VALUED_ACCOUNT_TYPES,
   nonZeroAmounts,
+  groupOfRow,
+  isAssetGroupKey,
   zonedCurrentYearMonth,
   type AccountType,
   SUPPORTED_CURRENCIES,
@@ -333,6 +335,9 @@ export function createLocalHomePort(
           : String(options.ownerIds).split(',').filter(Boolean);
       // 빈 문자열은 아무도 고르지 않은 것이다 (목록 필터와 같은 세 상태 규칙).
       if (ownerIds && ownerIds.length === 0) return [];
+      // 묶음 하나만 볼 때. 카드 대금은 결제 통장의 묶음을 따른다 (서버와 같다).
+      const group = isAssetGroupKey(options.group) ? options.group : null;
+      const paymentTypeOf = group ? await store.cardPaymentTypes(id) : null;
 
       const accounts = (await store.accounts(id))
         .filter((account) => !EQUITY_ACCOUNT_TYPES.includes(account.type as AccountType))
@@ -346,6 +351,14 @@ export function createLocalHomePort(
                 : ownerIds
                   ? account.ownerId !== null && ownerIds.includes(account.ownerId)
                   : true),
+        )
+        .filter(
+          (account) =>
+            !group ||
+            groupOfRow({
+              type: account.type as AccountType,
+              paymentAccountType: paymentTypeOf?.get(account.id) ?? null,
+            }) === group,
         )
         .map((account) => ({ id: account.id, type: account.type as AccountType }));
       if (accounts.length === 0) return [];

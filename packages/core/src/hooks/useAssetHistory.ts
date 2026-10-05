@@ -10,7 +10,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-import { weekStartKey } from '@money/types';
+import { weekStartKey, type AssetGroupKey } from '@money/types';
 
 import { homeDataPort } from '../data/home-port';
 import { lineAxis, type LineAxis } from '../lib/chart';
@@ -160,6 +160,8 @@ export interface AssetHistoryInput {
    * 화면의 자산주인 선택과 같은 세 상태 규칙이다.
    */
   ownerIds?: string[];
+  /** 자산 묶음 하나의 합계. ownerIds 와 함께 쓴다 (고른 사람들의 그 묶음). */
+  group?: AssetGroupKey;
   projectId?: string | null;
   /** 처음 보여줄 12개월 구간의 마지막 달. 생략하면 이번 달 */
   endMonth?: string;
@@ -201,6 +203,7 @@ export function useAssetHistory({
   accountId,
   ownerId,
   ownerIds,
+  group,
   projectId,
   endMonth,
 }: AssetHistoryInput): AssetHistory {
@@ -281,7 +284,7 @@ export function useAssetHistory({
   // 보는 대상이 바뀌면 옛 자리에 머물러 있을 이유가 없다. 창을 지금으로 되돌린다.
   useEffect(() => {
     resetWindow();
-  }, [accountId, ownerId, ownerKey, projectId, resetWindow]);
+  }, [accountId, ownerId, ownerKey, group, projectId, resetWindow]);
 
   /** 단위를 직접 고르면 그 단위의 가장 최근 창으로 나간다. */
   const selectGranularity = useCallback(
@@ -414,13 +417,14 @@ export function useAssetHistory({
       setIsLoading(true);
       setError('');
 
-      const target = accountId
+      const owners = accountId
         ? { accountId }
         : ownerId
           ? { ownerId }
           : ownerKey === null
             ? {}
             : { ownerIds: ownerKey };
+      const target = group ? { ...owners, group } : owners;
 
       /*
        * 창이 놓인 자리를 서버가 읽는 말로 바꾼다.
@@ -498,6 +502,7 @@ export function useAssetHistory({
     accountId,
     ownerId,
     ownerKey,
+    group,
     projectId,
     baseMonth,
     granularity,

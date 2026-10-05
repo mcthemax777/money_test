@@ -135,4 +135,17 @@ runSmoke('account-type', async (ctx) => {
     '-1030000',
   );
   ctx.check('유형별 소계는 그대로 카드 전부다', worth.byType.credit_card, '-40000');
+
+  // ── 묶음 추이 ────────────────────────────────────────────
+  const lastOf = async (group?: string) => {
+    const points = await reports.getBalanceHistory(uid, { projectId: pid, months: 1, group } as any);
+    return points[points.length - 1]?.balance;
+  };
+  ctx.check('대출 묶음 추이의 끝은 대출 소계다 (마이너스통장 카드 포함)', await lastOf('debt'), '-1030000');
+  /*
+   * 입출금·현금은 견주지 않는다. 생활비 통장에 다음 주 날짜의 지출이 있는데, 추이의 이번 달
+   * 칸은 그 달 끝까지의 거래를 세므로 지금 잔액(소계)과 그만큼 갈린다. 달 끝 무렵에 돌리면
+   * 그 지출이 다음 달로 넘어가 값이 또 바뀐다.
+   */
+  await ctx.expectReject('모르는 묶음은 거절한다', () => lastOf('bogus'));
 });

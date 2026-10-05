@@ -19,9 +19,9 @@ import { toAmountString, toNumber } from './money';
 
 /*
  * 유형이 드는 묶음은 서버와 기기가 함께 쓰는 순자산 집계(@money/types 의
- * net-worth-aggregation)가 정한다. 화면은 여기서 이름만 다시 받는다.
+ * net-worth-aggregation)가 정한다. 여기서는 그 규칙으로 화면의 네 칸을 만든다.
  */
-export { assetGroupOf, type AssetGroupKey };
+export type { AssetGroupKey };
 
 /** 총자산을 이루는 세 값과 유형별·묶음별 소계 */
 export type NetWorthParts = Pick<
@@ -101,7 +101,7 @@ export const ASSET_TYPE_GROUPS: Array<{
 
 /**
  * 계좌들을 네 묶음으로 나눈다. 빈 묶음은 빼고, 묶음 안의 차례는 받은 그대로다.
- * 자산 탭의 사람 상자 안 목록이 쓴다.
+ * 자산 탭의 "자산유형별" 목록이 쓴다.
  */
 export function groupAccountsByAsset<T extends { type: string }>(
   accounts: readonly T[],
@@ -110,6 +110,21 @@ export function groupAccountsByAsset<T extends { type: string }>(
     group,
     accounts: accounts.filter((account) => assetGroupOf(account.type) === group.key),
   })).filter((row) => row.accounts.length > 0);
+}
+
+/**
+ * 고른 사람들의 계좌를 네 묶음으로 나눈다. 자산 탭의 "자산유형별" 목록과 묶음 상세가 쓴다.
+ *
+ * 사람 차례 → 그 사람 안의 차례로 늘어놓은 뒤 나눈다. 그래서 한 묶음 안에서도 같은
+ * 사람의 계좌가 이웃하고, 각자 정한 차례가 남는다.
+ */
+export function groupAccountsOfPeople<T extends { type: string; ownerId?: string | null }>(
+  people: readonly { id: string }[],
+  accounts: readonly T[],
+): ReturnType<typeof groupAccountsByAsset<T>> {
+  return groupAccountsByAsset(
+    people.flatMap((person) => accounts.filter((account) => account.ownerId === person.id)),
+  );
 }
 
 /**

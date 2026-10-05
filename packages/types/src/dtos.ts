@@ -1565,6 +1565,12 @@ export namespace ReportDto {
      * 목록 필터(personIds)와 같은 세 상태 규칙이다.
      */
     ownerIds?: string;
+    /**
+     * 자산 묶음 하나(cash | savings | investment | debt)의 계좌만 모은다. ownerIds 와
+     * 함께 쓴다(고른 사람들의 그 묶음). 카드 대금은 결제 통장의 묶음을 따른다 --
+     * 순자산의 byGroup 과 같은 규칙이다 (`groupOfRow`).
+     */
+    group?: string;
     /** 기본 month */
     granularity?: 'year' | 'month' | 'week' | 'day';
     /**

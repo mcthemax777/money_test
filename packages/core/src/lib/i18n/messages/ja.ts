@@ -513,6 +513,7 @@ export const ja: Record<MessageKey, string> = {
   'assets.recentEntries': '最近の取引',
   'assets.personEntriesNote':
     '最近の{count}件まで表示します。それ以上は家計簿画面の人フィルターをお使いください。',
+  'assets.groupEntriesNote': '最新{count}件まで表示します。もっと見るには上の「取引を見る」を押してください。',
   'assets.emptyHint': 'メンバー・口座・カードを押すと、推移と取引がここに表示されます。',
   'assets.addTo': '{name}に項目を追加',
   'assets.addTitle': '追加する',
@@ -520,6 +521,8 @@ export const ja: Record<MessageKey, string> = {
   'assets.addNeedsAccount': '先に口座を追加してください。',
   'assets.balanceLine': '残高 {balance}',
   'assets.noAccounts': '登録された口座がありません。',
+  'assets.view.person': 'メンバー別',
+  'assets.view.type': '資産タイプ別',
   'account.detail': '口座の詳細',
   'account.bank': '銀行',
   'account.balance': '残高',

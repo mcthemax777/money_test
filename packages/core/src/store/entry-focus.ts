@@ -23,7 +23,7 @@ import { useUserFilter } from './user-filter';
 
 /** 건너온 자리. 돌아갈 자리이기도 하다. */
 export interface EntryFocusOrigin {
-  kind: 'category' | 'tag' | 'person' | 'account' | 'card';
+  kind: 'category' | 'tag' | 'person' | 'account' | 'card' | 'group';
   id: string;
 }
 

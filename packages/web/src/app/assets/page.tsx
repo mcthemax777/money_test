@@ -17,7 +17,8 @@ import { formatCurrency, toAmountString, toNumber } from '@money/core/lib/money'
 import {
   ASSET_TYPE_GROUPS,
   assetGroupAmount,
-  groupAccountsByAsset,
+  groupAccountsOfPeople,
+  type AssetGroupKey,
   sumNetWorth,
   type NetWorthParts,
 } from '@money/core/lib/net-worth';
@@ -99,6 +100,7 @@ import { accountTypeLabel } from '@money/core/lib/account-type';
 import { useTranslation } from '@money/core/lib/i18n';
 import { apiErrorCode, useApiError } from '@money/core/lib/api-error';
 import { useAccountLedger } from '@money/core/hooks/useAccountLedger';
+import { useAssetListView } from '@money/core/store/asset-list-view';
 import { useCardEntries } from '@money/core/hooks/useCardEntries';
 import { useCardPeriodLedger } from '@money/core/hooks/useCardPeriodLedger';
 import { installmentBadge } from '@money/core/lib/period-ledger';
@@ -616,7 +618,11 @@ export default function DashboardPage() {
   const [selectedPerson, setSelectedPerson] = useState<Person | null>(null);
   const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [selectedCard, setSelectedCard] = useState<Card | null>(null);
-  const [detailType, setDetailType] = useState<'person' | 'account' | 'card' | null>(null);
+  const [detailType, setDetailType] = useState<'person' | 'account' | 'card' | 'group' | null>(
+    null,
+  );
+  /** 자산유형별 목록에서 누른 묶음. 그 묶음 계좌들의 합계 추이와 최근 거래를 펼친다. */
+  const [selectedGroup, setSelectedGroup] = useState<AssetGroupKey | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const { options: issuerOptions } = useInstitutions('card_issuer');
 
@@ -805,6 +811,9 @@ export default function DashboardPage() {
   useEffect(() => {
     if (!detailType) return;
 
+    // 묶음은 한 사람의 것이 아니다. 고른 사람이 바뀌면 그 사람들의 묶음으로 따라간다.
+    if (detailType === 'group') return;
+
     const ownerId =
       detailType === 'person'
         ? selectedPerson?.id ?? null
@@ -988,15 +997,45 @@ export default function DashboardPage() {
    * 계좌 원장(posting)과 달리 전표 단위로 본다. 한 사람이 여러 계좌를 쓰므로
    * 계좌별 잔액 흐름보다 "이 사람이 무엇을 썼는가"가 알고 싶은 것이다.
    */
+  /*
+   * 묶음 상세도 같은 자리를 쓴다. 그 묶음 통장으로 오간 것과 그 통장에 딸린 카드로 쓰고
+   * 갚은 것이다 (거래 검색의 결제수단 조건, 두 조건은 "또는"이다).
+   */
+  const groupMethods = useMemo(() => {
+    if (detailType !== 'group' || !selectedGroup) return null;
+    const visible = people.filter((person) => selectedPersonIds.includes(person.id));
+    const grouped =
+      groupAccountsOfPeople(visible, accounts).find((row) => row.group.key === selectedGroup)
+        ?.accounts ?? [];
+    const accountIds = grouped.map((account) => account.id);
+    return {
+      accountIds,
+      cardIds: cards
+        .filter((card) => accountIds.includes(card.paymentAccountId))
+        .map((card) => card.id),
+    };
+  }, [detailType, selectedGroup, people, selectedPersonIds, accounts, cards]);
+
   useEffect(() => {
-    if (!selectedPerson || detailType !== 'person') {
+    const query =
+      detailType === 'person' && selectedPerson
+        ? { personId: selectedPerson.id }
+        : groupMethods && groupMethods.accountIds.length > 0
+          ? {
+              paymentAccountIds: groupMethods.accountIds.join(','),
+              ...(groupMethods.cardIds.length > 0
+                ? { paymentCardIds: groupMethods.cardIds.join(',') }
+                : {}),
+            }
+          : null;
+    if (!query) {
       setPersonEntries([]);
       return;
     }
 
     let cancelled = false;
     apiClient
-      .getEntries({ personId: selectedPerson.id, limit: PERSON_ENTRY_LIMIT }, selectedProjectId)
+      .getEntries({ ...query, limit: PERSON_ENTRY_LIMIT }, selectedProjectId)
       .then((res) => {
         if (!cancelled) setPersonEntries((res?.data ?? []) as EntryListItem[]);
       })
@@ -1008,7 +1047,7 @@ export default function DashboardPage() {
     return () => {
       cancelled = true;
     };
-  }, [selectedPerson, detailType, selectedProjectId, entryVersion, mirrorVersion]);
+  }, [selectedPerson, detailType, groupMethods, selectedProjectId, entryVersion, mirrorVersion]);
 
   // 계좌 선택 시 거래 내역 로드
   useEffect(() => {
@@ -1423,7 +1462,9 @@ export default function DashboardPage() {
         ? selectedAccount?.id
         : detailType === 'card'
           ? selectedCard?.id
-          : undefined;
+          : detailType === 'group'
+            ? (selectedGroup ?? undefined)
+            : undefined;
 
   type PersonNetWorth = ReportDto.NetWorth['byPerson'][number];
   const netWorthByPerson = new Map<string, PersonNetWorth>(
@@ -1442,6 +1483,8 @@ export default function DashboardPage() {
    * 그만큼 금액이 빠진다. 목록 필터(personIds)가 전체일 때 조건을 빼는 것과 같은 규칙이다.
    */
   const allPeopleSelected = people.length > 0 && selectedPersonIds.length === people.length;
+  /** 펼쳐 둔 묶음의 이름과 유형. 묶음 상세의 머리글과 소계가 쓴다. */
+  const groupInfo = ASSET_TYPE_GROUPS.find((group) => group.key === selectedGroup);
   const scopedNetWorth = allPeopleSelected
     ? netWorth
     : sumNetWorth(selectedPersonIds.map((id) => netWorthByPerson.get(id)));
@@ -1576,6 +1619,12 @@ export default function DashboardPage() {
             onReorderPeople={handleReorderPeople}
             onReorderAccounts={handleReorderAccounts}
             onReorderCards={handleReorderCards}
+            groupTotals={scopedNetWorth ?? undefined}
+            onGroupClick={(group) => {
+              rememberListScroll();
+              setSelectedGroup(group);
+              setDetailType('group');
+            }}
           />
           )}
           </div>
@@ -1704,6 +1753,64 @@ export default function DashboardPage() {
                     {personEntries.length >= PERSON_ENTRY_LIMIT && (
                       <p className="mt-2 text-xs text-gray-500">
                         {t('assets.personEntriesNote', { count: PERSON_ENTRY_LIMIT })}
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          ) : detailType === 'group' && selectedGroup && groupInfo ? (
+            /*
+              자산 묶음: 고른 사람들의 그 묶음 계좌를 하나로 본다. 구성원 상세와 같은 짜임이다
+              -- 합계, 합계 추이, 최근 거래. 카드 대금은 결제 통장의 묶음에 든다 (byGroup).
+            */
+            <div className="space-y-4 lg:rounded-lg lg:bg-white lg:p-6 lg:shadow">
+              <AssetDetailHeader
+                title={t(groupInfo.labelKey)}
+                onClose={closeDetail}
+                actions={
+                  <DetailIconButton
+                    label={t('assets.viewEntries')}
+                    onClick={() =>
+                      setEntriesSearch({
+                        ...EMPTY_SEARCH,
+                        paymentAccountIds: groupMethods?.accountIds ?? [],
+                        paymentCardIds: groupMethods?.cardIds ?? [],
+                      })
+                    }
+                  >
+                    <Receipt className="h-5 w-5" aria-hidden />
+                  </DetailIconButton>
+                }
+              >
+                <p className="text-xl font-bold text-blue-600 mt-1">
+                  {formatCurrency(
+                    assetGroupAmount(scopedNetWorth ?? undefined, groupInfo),
+                    displayCurrency,
+                  )}
+                </p>
+              </AssetDetailHeader>
+
+              {/* 고른 사람들의 이 묶음 계좌 합계 추이. 위의 총자산 그래프와 같은 사람 범위다. */}
+              <AssetHistoryChart
+                projectId={selectedProjectId}
+                ownerIds={allPeopleSelected ? undefined : selectedPersonIds}
+                group={selectedGroup}
+              />
+
+              <div>
+                <h3 className="text-sm font-medium text-gray-700 mb-2">{t('assets.recentEntries')}</h3>
+                {personEntries.length === 0 ? (
+                  <p className="text-gray-600 text-center py-8">{t('assets.noEntries')}</p>
+                ) : (
+                  <>
+                    <TransactionListView
+                      entries={personEntries}
+                      onEntryClick={(entry) => entryEditorRef.current?.openDetail(entry)}
+                    />
+                    {personEntries.length >= PERSON_ENTRY_LIMIT && (
+                      <p className="mt-2 text-xs text-gray-500">
+                        {t('assets.groupEntriesNote', { count: PERSON_ENTRY_LIMIT })}
                       </p>
                     )}
                   </>
@@ -2500,7 +2607,7 @@ export default function DashboardPage() {
 }
 
 /** 오른쪽 패널이 보고 있는 항목. 두 목록이 이것을 보고 저마다 한 줄을 강조한다. */
-type SelectedItem = { type: 'person' | 'account' | 'card'; id: string } | null;
+type SelectedItem = { type: 'person' | 'account' | 'card' | 'group'; id: string } | null;
 
 /**
  * 통장과 카드 목록. **사람마다 한 상자다.**
@@ -2529,11 +2636,17 @@ function AssetList({
   onReorderPeople,
   onReorderAccounts,
   onReorderCards,
+  groupTotals,
+  onGroupClick,
 }: {
   people: Person[];
   accounts: Account[];
   cardsOf: (accountId: string) => Card[];
-  netWorthByPerson: Map<string, Pick<NetWorthParts, 'byType' | 'byGroup'> & { total: string }>;
+  netWorthByPerson: Map<string, { total: string }>;
+  /** 고른 사람들의 묶음별 소계. "자산유형별" 상자의 머리글 금액이다 (맨 위 유형 카드와 같은 값). */
+  groupTotals: Pick<NetWorthParts, 'byType' | 'byGroup'> | undefined;
+  /** 자산유형별 상자의 머리글을 누르면 그 묶음의 상세를 펼친다 (사람 머리글과 같은 자리). */
+  onGroupClick: (group: AssetGroupKey) => void;
   /** 투자·저축 계좌별 누적 수익. 계좌 id -> 금액 */
   accountProfit: Map<string, string>;
   selected: SelectedItem;
@@ -2552,11 +2665,80 @@ function AssetList({
    * 손짓의 전파를 끊어 **안쪽이 이긴다** (계좌를 잡으면 계좌만 움직인다).
    */
   const { items, dragProps, draggingId } = useDragReorder(people, onReorderPeople);
+  const { view, setView } = useAssetListView();
+
+  /* 자산유형별 상자. 사람 차례 → 그 사람 안의 차례로 늘어놓은 뒤 네 묶음으로 나눈다. */
+  const nameOf = new Map(people.map((person) => [person.id, person.name]));
+  const byType = groupAccountsOfPeople(items, accounts);
 
   return (
     <div>
+      {/*
+        사용자별 · 자산유형별. 같은 계좌를 다르게 묶을 뿐이라 금액은 바뀌지 않는다.
+        고른 것은 기기에 남는다 (`useAssetListView`).
+      */}
+      <div className="mb-3 flex gap-1 rounded-lg bg-gray-100 p-1">
+        {(['person', 'type'] as const).map((id) => (
+          <button
+            key={id}
+            type="button"
+            onClick={() => setView(id)}
+            aria-pressed={view === id}
+            className={`flex-1 rounded-md px-3 py-1.5 text-sm font-medium transition ${
+              view === id ? 'bg-white text-blue-600 shadow-sm' : 'text-gray-600 hover:bg-gray-200'
+            }`}
+          >
+            {t(id === 'person' ? 'assets.view.person' : 'assets.view.type')}
+          </button>
+        ))}
+      </div>
+
       {people.length === 0 ? (
         <p className="text-sm text-gray-600">{t('assets.noSelection')}</p>
+      ) : view === 'type' ? (
+        byType.length === 0 ? (
+          <p className="text-sm text-gray-600">{t('assets.noAccounts')}</p>
+        ) : (
+          <div className="space-y-3">
+            {byType.map(({ group, accounts: grouped }) => (
+              <div key={group.key} className="overflow-hidden rounded-lg bg-white shadow">
+                {/*
+                  머리글은 묶음 이름과 소계. 사용자별 상자의 머리글과 같은 짜임이고, 누르면
+                  그 묶음의 상세(합계 추이와 최근 거래)가 열린다.
+                */}
+                <button
+                  onClick={() => onGroupClick(group.key)}
+                  className={`flex w-full items-center justify-between gap-3 border-b border-gray-200 px-4 py-2 text-left transition ${
+                    selected?.type === 'group' && selected.id === group.key
+                      ? 'bg-blue-50 active:bg-blue-100'
+                      : 'bg-gray-50 hover:bg-gray-100 active:bg-gray-200'
+                  }`}
+                >
+                  <h2 className="min-w-0 truncate text-sm font-bold text-gray-900">
+                    {t(group.labelKey)}
+                  </h2>
+                  <p className="shrink-0 text-sm font-bold tabular-nums text-gray-900">
+                    {formatCurrency(assetGroupAmount(groupTotals, group), displayCurrency)}
+                  </p>
+                </button>
+                {/*
+                  여기서는 끌어 옮기지 않는다. 계좌의 차례는 주인 안에서의 차례라, 여러
+                  사람이 섞인 이 목록에서 옮긴 자리는 뜻이 없다. 차례는 사용자별에서 정한다.
+                */}
+                <AccountList
+                  accounts={grouped}
+                  cardsOf={cardsOf}
+                  accountProfit={accountProfit}
+                  selected={selected}
+                  onAccountClick={onAccountClick}
+                  onCardClick={onCardClick}
+                  onReorderCards={onReorderCards}
+                  ownerNameOf={(account) => nameOf.get(account.ownerId ?? '')}
+                />
+              </div>
+            ))}
+          </div>
+        )
       ) : (
         <div className="space-y-3">
           {items.map((person) => {
@@ -2595,34 +2777,20 @@ function AssetList({
                   <p className="px-4 py-3 text-sm text-gray-600">{t('assets.noAccounts')}</p>
                 ) : (
                   /*
-                    상자 안을 네 묶음(입출금·현금 · 예적금·연금 · 투자 · 대출)으로 나눈다.
-                    묶음 이름 옆의 금액은 맨 위 유형 카드와 같은 셈이라, 바로 쓸 돈에는
-                    카드 대금이 빠져 있다. 끌어 옮기기는 묶음 안에서만 된다 -- 유형을
-                    바꾸는 일이 아니라 차례를 바꾸는 일이기 때문이다.
+                    사용자가 끌어 정한 차례 그대로다. 묶음(입출금·현금 · 예적금·연금 …)으로
+                    나누지 않는다 -- 그 나눔은 맨 위 유형 카드가 보여 주고, 여기서는 각자가
+                    정한 차례가 앞선다 (2026-10-05, 사용자 결정).
                   */
-                  groupAccountsByAsset(owned).map(({ group, accounts: grouped }) => (
-                    <div key={group.key}>
-                      <div className="flex items-center justify-between gap-3 border-t border-gray-100 px-4 pb-1 pt-2 text-xs font-medium text-gray-500">
-                        <span>{t(group.labelKey)}</span>
-                        <span className="tabular-nums">
-                          {formatCurrency(
-                            assetGroupAmount(netWorthByPerson.get(person.id), group),
-                            displayCurrency,
-                          )}
-                        </span>
-                      </div>
-                      <AccountList
-                        accounts={grouped}
-                        cardsOf={cardsOf}
-                        accountProfit={accountProfit}
-                        selected={selected}
-                        onAccountClick={onAccountClick}
-                        onCardClick={onCardClick}
-                        onReorder={onReorderAccounts}
-                        onReorderCards={onReorderCards}
-                      />
-                    </div>
-                  ))
+                  <AccountList
+                    accounts={owned}
+                    cardsOf={cardsOf}
+                    accountProfit={accountProfit}
+                    selected={selected}
+                    onAccountClick={onAccountClick}
+                    onCardClick={onCardClick}
+                    onReorder={onReorderAccounts}
+                    onReorderCards={onReorderCards}
+                  />
                 )}
               </div>
             );
@@ -2648,6 +2816,7 @@ function AccountList({
   onCardClick,
   onReorder,
   onReorderCards,
+  ownerNameOf,
 }: {
   accounts: Account[];
   cardsOf: (accountId: string) => Card[];
@@ -2655,11 +2824,14 @@ function AccountList({
   selected: SelectedItem;
   onAccountClick: (account: Account) => void;
   onCardClick: (card: Card) => void;
-  onReorder: (ids: string[]) => void;
+  /** 없으면 끌어 옮기지 않는다 (자산유형별 목록). */
+  onReorder?: (ids: string[]) => void;
   onReorderCards: (ids: string[]) => void;
+  /** 있으면 계좌명 옆에 주인 이름을 적는다 (여러 사람이 섞인 자산유형별 목록). */
+  ownerNameOf?: (account: Account) => string | undefined;
 }) {
   const { t } = useTranslation();
-  const { items, dragProps, draggingId } = useDragReorder(accounts, onReorder);
+  const { items, dragProps, draggingId } = useDragReorder(accounts, onReorder ?? (() => {}));
 
   // 빈 상자는 부르는 쪽이 이미 가려냈다. 그래도 그리는 동안 비는 순간은 있다.
   if (items.length === 0) return null;
@@ -2679,7 +2851,7 @@ function AccountList({
         return (
           <div
             key={account.id}
-            {...dragProps(account.id)}
+            {...(onReorder ? dragProps(account.id) : {})}
             /* 오른쪽 패널에 펼쳐 둔 계좌를 목록에서도 알 수 있게 표시한다 */
             className={`px-4 py-2 transition ${
               selected?.type === 'account' && selected.id === account.id
@@ -2707,6 +2879,9 @@ function AccountList({
                     {account.name}
                   </span>
                   <AccountTypeBadge type={account.type} />
+                  {ownerNameOf?.(account) && (
+                    <span className="shrink-0 text-xs text-gray-500">{ownerNameOf(account)}</span>
+                  )}
                 </span>
                 {/*
                   잔액이 아니라 카드 대금을 뺀 남은 금액이다. 통장에 찍힌 돈에는 카드사가

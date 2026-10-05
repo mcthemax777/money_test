@@ -514,6 +514,7 @@ export const en: Record<MessageKey, string> = {
   'assets.recentEntries': 'Recent entries',
   'assets.personEntriesNote':
     'Up to {count} recent entries are shown. For more, use the person filter on the Ledger screen.',
+  'assets.groupEntriesNote': 'Up to {count} recent entries are shown. For more, use See entries above.',
   'assets.emptyHint': 'Choose a member, account or card to see its trend and entries here.',
   'assets.addTo': 'Add to {name}',
   'assets.addTitle': 'Add',
@@ -521,6 +522,8 @@ export const en: Record<MessageKey, string> = {
   'assets.addNeedsAccount': 'Add an account first.',
   'assets.balanceLine': 'Balance {balance}',
   'assets.noAccounts': 'No accounts yet.',
+  'assets.view.person': 'By member',
+  'assets.view.type': 'By asset type',
   'account.detail': 'Account details',
   'account.bank': 'Bank',
   'account.balance': 'Balance',

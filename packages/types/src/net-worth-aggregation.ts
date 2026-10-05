@@ -84,6 +84,11 @@ export const ASSET_GROUP_OF: Readonly<
   loan: 'debt',
 };
 
+/** 묶음 키인지. 조회 문자열로 들어온 값을 거를 때 쓴다. */
+export function isAssetGroupKey(value: unknown): value is AssetGroupKey {
+  return typeof value === 'string' && (ASSET_GROUP_KEYS as readonly string[]).includes(value);
+}
+
 /** 그 유형이 드는 묶음. 모르는 유형(새 서버와 옛 앱)은 바로 쓸 돈으로 본다. */
 export function assetGroupOf(type: string): AssetGroupKey {
   return ASSET_GROUP_OF[type as keyof typeof ASSET_GROUP_OF] ?? 'cash';

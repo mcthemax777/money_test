@@ -63,6 +63,8 @@ import {
   EQUITY_ACCOUNT_TYPES,
   VALUED_ACCOUNT_TYPES,
   nonZeroAmounts,
+  groupOfRow,
+  isAssetGroupKey,
   shiftYearMonth,
   summarize,
   weekStartKey,
@@ -552,8 +554,11 @@ export class ReportsService {
      */
     const ownerIds = query.ownerIds === undefined ? undefined : splitList(query.ownerIds);
     if (ownerIds && ownerIds.length === 0) return [];
+    if (query.group !== undefined && !isAssetGroupKey(query.group)) {
+      throw new BadRequestException('알 수 없는 자산 묶음입니다.');
+    }
 
-    const accounts = await this.prisma.account.findMany({
+    const found = await this.prisma.account.findMany({
       where: {
         projectId,
         // 기초잔액 상대편은 자산이 아니다. getNetWorth 와 같은 기준으로 뺀다.
@@ -573,8 +578,22 @@ export class ReportsService {
               ? { ownerId: { in: ownerIds }, isActive: true }
               : { isActive: true }),
       },
-      select: { id: true, type: true },
+      select: {
+        id: true,
+        type: true,
+        // 묶음으로 고를 때 카드 대금은 결제 통장의 묶음을 따른다 (getNetWorth 와 같다).
+        cardAsLiability: { select: { paymentAccount: { select: { type: true } } } },
+      },
     });
+    const accounts = query.group
+      ? found.filter(
+          (a) =>
+            groupOfRow({
+              type: a.type,
+              paymentAccountType: a.cardAsLiability?.paymentAccount.type ?? null,
+            }) === query.group,
+        )
+      : found;
     if (accounts.length === 0) return [];
     const accountIds = accounts.map((a) => a.id);
 

@@ -16,6 +16,7 @@ import { installmentBadge } from '@money/core/lib/period-ledger';
 import type { CardUsageMeasure } from '@money/core/lib/card-usage-chart';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { accountTypeLabel } from '@money/core/lib/account-type';
+import type { ASSET_TYPE_GROUPS } from '@money/core/lib/net-worth';
 import { formatDate, formatDateMarker } from '@money/core/lib/datetime';
 import { categoryTitleOf } from '@money/core/lib/entries';
 import { homeDataPort } from '@money/core/data/home-port';
@@ -39,11 +40,22 @@ import SegmentedTabs from './SegmentedTabs';
 import PageHeader from './PageHeader';
 import PendingRatePanel from './PendingRatePanel';
 
-/** 무엇을 펼쳐 두었는가. 세 갈래가 같은 머리글과 같은 그래프 자리를 쓴다. */
+/** 무엇을 펼쳐 두었는가. 네 갈래가 같은 머리글과 같은 그래프 자리를 쓴다. */
 export type AssetDetailTarget =
   | { kind: 'person'; person: Person }
   | { kind: 'account'; account: Account }
-  | { kind: 'card'; card: Card };
+  | { kind: 'card'; card: Card }
+  /**
+   * 자산유형별 목록에서 누른 묶음. 고른 사람들의 그 묶음 계좌를 하나로 본다 (웹과 같다).
+   * 소계와 사람 범위는 화면이 정해 넘긴다 -- 맨 위 유형 카드와 같은 값이어야 한다.
+   */
+  | {
+      kind: 'group';
+      group: (typeof ASSET_TYPE_GROUPS)[number];
+      amount: number;
+      /** 생략하면 전원이다 (주인 없는 계좌까지). 화면의 자산주인 선택과 같은 규칙이다. */
+      ownerIds?: string[];
+    };
 
 export default function AssetDetailView({
   target,
@@ -90,7 +102,9 @@ export default function AssetDetailView({
       ? target.person.name
       : target.kind === 'account'
         ? target.account.name
-        : target.card.name;
+        : target.kind === 'group'
+          ? t(target.group.labelKey)
+          : target.card.name;
 
   return (
     /*
@@ -122,7 +136,8 @@ export default function AssetDetailView({
             >
               <Receipt size={20} color="#4b5563" />
             </Pressable>
-            {canEdit ? (
+            {/* 묶음에는 고칠 기본 정보가 없다. */}
+            {canEdit && target.kind !== 'group' ? (
               <Pressable
                 onPress={onEdit}
                 hitSlop={8}
@@ -152,6 +167,10 @@ export default function AssetDetailView({
         <Text className="text-xl font-bold text-blue-600">
           {formatCurrency(netWorthByPerson.get(target.person.id)?.total ?? 0, displayCurrency)}
         </Text>
+      ) : target.kind === 'group' ? (
+        <Text className="text-xl font-bold text-blue-600">
+          {formatCurrency(target.amount, displayCurrency)}
+        </Text>
       ) : target.kind === 'account' ? (
         <View>
           <Text className="text-xl font-bold text-blue-600">
@@ -172,6 +191,13 @@ export default function AssetDetailView({
 
       {target.kind === 'person' ? (
         <AssetHistoryChart ownerId={target.person.id} projectId={selectedProjectId} />
+      ) : target.kind === 'group' ? (
+        /* 고른 사람들의 이 묶음 계좌 합계 추이. 카드 대금은 결제 통장의 묶음을 따른다. */
+        <AssetHistoryChart
+          ownerIds={target.ownerIds}
+          group={target.group.key}
+          projectId={selectedProjectId}
+        />
       ) : target.kind === 'account' ? (
         <>
           <AssetHistoryChart accountId={target.account.id} projectId={selectedProjectId} />

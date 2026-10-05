@@ -541,6 +541,7 @@ export const ko = {
   'assets.viewEntries': '거래내역 보기',
   'assets.recentEntries': '최근 거래',
   'assets.personEntriesNote': '최근 {count}건까지 보여 줍니다. 더 보려면 가계 화면에서 사람 필터를 쓰세요.',
+  'assets.groupEntriesNote': '최근 {count}건까지 보여 줍니다. 더 보려면 위의 "거래내역 보기"를 누르세요.',
   'assets.emptyHint': '구성원·계좌·카드를 누르면 추이와 내역이 여기에 나옵니다.',
   'assets.addTo': '{name} 항목 추가',
   'assets.addTitle': '추가하기',
@@ -549,6 +550,8 @@ export const ko = {
   /** 큰 금액(카드 대금을 뺀 남은 금액) 아래에 통장에 실제로 찍힌 돈을 적는 줄. */
   'assets.balanceLine': '잔액 {balance}',
   'assets.noAccounts': '등록된 계좌가 없습니다.',
+  'assets.view.person': '사용자별',
+  'assets.view.type': '자산유형별',
   'account.detail': '계좌 상세정보',
   'account.bank': '은행',
   'account.balance': '잔액',

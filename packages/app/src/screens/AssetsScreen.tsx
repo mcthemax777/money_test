@@ -7,8 +7,13 @@ import { homeDataPort } from '@money/core/data/home-port';
 import { EMPTY_SEARCH } from '@money/core/hooks/useTransactions';
 import { accountTypeLabel } from '@money/core/lib/account-type';
 import { accountDueOf } from '@money/core/lib/card-settlement';
-import { assetGroupAmount, groupAccountsByAsset } from '@money/core/lib/net-worth';
+import {
+  ASSET_TYPE_GROUPS,
+  assetGroupAmount,
+  groupAccountsOfPeople,
+} from '@money/core/lib/net-worth';
 import { mergeOrder } from '@money/core/lib/reorder';
+import { useAssetListView } from '@money/core/store/asset-list-view';
 import {
   accountBalanceLine,
   accountMetaParts,
@@ -30,6 +35,7 @@ import AssetAddChooser, { AssetAddIcon, type AssetAddKind } from '../components/
 import AssetDetailView, { type AssetDetailTarget } from '../components/AssetDetailView';
 import AssetHistoryChart from '../components/AssetHistoryChart';
 import AssetTypeSummary from '../components/AssetTypeSummary';
+import SegmentedTabs from '../components/SegmentedTabs';
 import EntryDetailModal from '../components/EntryDetailModal';
 import EntryEditor from '../components/EntryEditor';
 import PaybackEditor, { type PaybackTarget } from '../components/PaybackEditor';
@@ -58,6 +64,13 @@ export default function AssetsScreen() {
   const togglePersonId = useUserFilter((state) => state.togglePersonId);
 
   const assets = useAssetsData(selectedProjectId);
+  const { view: listView, setView: setListView } = useAssetListView();
+  /*
+   * 자산유형별 상자. 사람 차례 → 그 사람 안의 차례로 늘어놓은 뒤 네 묶음으로 나눈다
+   * (웹과 같다). 한 묶음 안에서도 같은 사람의 계좌가 이웃하고, 각자 정한 차례가 남는다.
+   */
+  const personNameOf = new Map(assets.people.map((person) => [person.id, person.name]));
+  const byAssetType = groupAccountsOfPeople(assets.visiblePeople, assets.accounts);
   const nav = useNavigation();
   const focusEntries = useEntryFocus((state) => state.focusEntries);
   const narrowPersonScope = useEntryFocus((state) => state.narrowPersonScope);
@@ -162,6 +175,18 @@ export default function AssetsScreen() {
       const account = assets.accounts.find((item) => item.id === detail.id);
       if (!account || !visibleIds.has(account.ownerId ?? '')) return null;
       return { kind: 'account', account };
+    }
+
+    if (detail.kind === 'group') {
+      const group = ASSET_TYPE_GROUPS.find((item) => item.key === detail.id);
+      if (!group) return null;
+      return {
+        kind: 'group',
+        group,
+        // 맨 위 유형 카드와 같은 값이다 (고른 사람들의 묶음별 소계).
+        amount: assetGroupAmount(assets.netWorth ?? undefined, group),
+        ownerIds: assets.allPeopleSelected ? undefined : assets.selectedPersonIds,
+      };
     }
 
     const card = assets.cards.find((item) => item.id === detail.id);
@@ -294,6 +319,22 @@ export default function AssetsScreen() {
         ...EMPTY_SEARCH,
         paymentAccountIds: [detailTarget.account.id],
       });
+    } else if (detailTarget.kind === 'group') {
+      /*
+        그 묶음 통장으로 오간 것과, 그 통장에 딸린 카드로 쓰고 갚은 것 (웹과 같다).
+        목록에 선 계좌만이다 -- 자산주인 선택 밖의 계좌는 묶음 소계에도 없다.
+      */
+      const accountIds =
+        byAssetType.find((row) => row.group.key === detailTarget.group.key)?.accounts.map(
+          (account) => account.id,
+        ) ?? [];
+      focusEntries({ kind: 'group', id: detailTarget.group.key }, {
+        ...EMPTY_SEARCH,
+        paymentAccountIds: accountIds,
+        paymentCardIds: assets.cards
+          .filter((card) => accountIds.includes(card.paymentAccountId))
+          .map((card) => card.id),
+      });
     } else {
       focusEntries({ kind: 'card', id: detailTarget.card.id }, {
         ...EMPTY_SEARCH,
@@ -309,7 +350,7 @@ export default function AssetsScreen() {
     if (!detailTarget) return;
     if (detailTarget.kind === 'person') setPersonEdit(detailTarget.person);
     else if (detailTarget.kind === 'account') setAccountEdit(detailTarget.account);
-    else setCardEdit(detailTarget.card);
+    else if (detailTarget.kind === 'card') setCardEdit(detailTarget.card);
   };
 
   return (
@@ -402,6 +443,74 @@ export default function AssetsScreen() {
         */
         <View>
           {/*
+            사용자별 · 자산유형별 (웹과 같다). 같은 계좌를 다르게 묶을 뿐이라 금액은
+            바뀌지 않는다. 고른 것은 기기에 남는다 (`useAssetListView`).
+          */}
+          <View className="mb-3">
+            <SegmentedTabs
+              tabs={[
+                { id: 'person' as const, label: t('assets.view.person') },
+                { id: 'type' as const, label: t('assets.view.type') },
+              ]}
+              selected={listView}
+              onSelect={setListView}
+            />
+          </View>
+
+          {listView === 'type' ? (
+            assets.visiblePeople.length === 0 ? (
+              <Text className="text-sm text-gray-600">{t('assets.noSelection')}</Text>
+            ) : byAssetType.length === 0 ? (
+              <Text className="text-sm text-gray-600">{t('assets.noAccounts')}</Text>
+            ) : (
+              /*
+                네 묶음마다 상자 하나. 머리글은 묶음 이름과 소계(맨 위 유형 카드와 같은 값)다.
+                계좌 옆에 주인 이름을 적는다 -- 여러 사람이 한 상자에 섞이기 때문이다.
+
+                여기서는 끌어 옮기지 않는다. 계좌의 차례는 주인 안에서의 차례라, 섞인
+                목록에서 옮긴 자리는 뜻이 없다. 차례는 사용자별에서 정한다.
+              */
+              <View className="gap-3">
+                {byAssetType.map(({ group, accounts: grouped }) => (
+                  <View key={group.key} className="overflow-hidden rounded-lg bg-white shadow-sm">
+                    {/* 머리글을 누르면 그 묶음의 상세(합계와 합계 추이)가 열린다 (사람 머리글과 같다). */}
+                    <Pressable
+                      onPress={() => openDetail({ kind: 'group', id: group.key })}
+                      accessibilityRole="button"
+                      className="flex-row items-center justify-between gap-3 border-b border-gray-200 bg-gray-50 px-4 py-2 active:bg-gray-200"
+                    >
+                      <Text numberOfLines={1} className="shrink text-sm font-bold text-gray-900">
+                        {t(group.labelKey)}
+                      </Text>
+                      <Text className="text-sm font-bold text-gray-900">
+                        {formatCurrency(
+                          assetGroupAmount(assets.netWorth ?? undefined, group),
+                          displayCurrency,
+                        )}
+                      </Text>
+                    </Pressable>
+                    {grouped.map((account) => (
+                      <View key={account.id} className="border-t border-gray-100 px-4 py-2">
+                        <AccountRow
+                          account={account}
+                          ownerName={personNameOf.get(account.ownerId ?? '')}
+                          profit={assets.accountProfit.get(account.id)}
+                          cards={assets.cardsOf(account.id)}
+                          onOpen={() => openDetail({ kind: 'account', id: account.id })}
+                          onOpenCard={(card) => openDetail({ kind: 'card', id: card.id })}
+                          onReorderCards={(id, toIndex) =>
+                            void assets.moveCardTo(id, account.id, toIndex)
+                          }
+                        />
+                      </View>
+                    ))}
+                  </View>
+                ))}
+              </View>
+            )
+          ) : (
+          <>
+          {/*
             상자 끌기. 안쪽 목록(계좌·카드)도 같은 것을 쓰지만 서로 밟지 않는다 --
             줄이 제 손짓의 전파를 끊어 **안쪽이 이긴다** (`DragList` 의 onTouchStart).
           */}
@@ -437,46 +546,29 @@ export default function AssetsScreen() {
                     <Text className="px-4 py-3 text-sm text-gray-600">{t('assets.noAccounts')}</Text>
                   ) : (
                     /*
-                      상자 안을 네 묶음(입출금·현금 · 예적금·연금 · 투자 · 대출)으로 나눈다 (웹과
-                      같다). 묶음 이름 옆의 금액은 맨 위 유형 카드와 같은 셈이라, 바로 쓸 돈에는
-                      카드 대금이 빠져 있다. 끌어 옮기기는 묶음 안에서만 된다 -- 놓은 자리
-                      (toIndex)도 그 묶음 안의 차례다 (`moveAccountTo` 가 같은 묶음에서 이웃을 고른다).
+                      사용자가 끌어 정한 차례 그대로다 (웹과 같다). 묶음으로 나누지 않는다 --
+                      그 나눔은 맨 위 유형 카드가 보여 준다 (2026-10-05, 사용자 결정).
                     */
-                    groupAccountsByAsset(owned).map(({ group, accounts: grouped }) => (
-                      <View key={group.key}>
-                        <View className="flex-row items-center justify-between gap-3 border-t border-gray-100 px-4 pb-1 pt-2">
-                          <Text className="text-xs font-medium text-gray-500">
-                            {t(group.labelKey)}
-                          </Text>
-                          <Text className="text-xs font-medium text-gray-500">
-                            {formatCurrency(
-                              assetGroupAmount(assets.netWorthByPerson.get(person.id), group),
-                              displayCurrency,
-                            )}
-                          </Text>
-                        </View>
-                        <DragList
-                          items={grouped}
-                          gap={0}
-                          itemClassName="border-t border-gray-100 px-4 py-2"
-                          onReorder={(id, toIndex) =>
-                            void assets.moveAccountTo(id, person.id, toIndex)
+                    <DragList
+                      items={owned}
+                      gap={0}
+                      itemClassName="border-t border-gray-100 px-4 py-2"
+                      onReorder={(id, toIndex) =>
+                        void assets.moveAccountTo(id, person.id, toIndex)
+                      }
+                      renderItem={(account) => (
+                        <AccountRow
+                          account={account}
+                          profit={assets.accountProfit.get(account.id)}
+                          cards={assets.cardsOf(account.id)}
+                          onOpen={() => openDetail({ kind: 'account', id: account.id })}
+                          onOpenCard={(card) => openDetail({ kind: 'card', id: card.id })}
+                          onReorderCards={(id, toIndex) =>
+                            void assets.moveCardTo(id, account.id, toIndex)
                           }
-                          renderItem={(account) => (
-                            <AccountRow
-                              account={account}
-                              profit={assets.accountProfit.get(account.id)}
-                              cards={assets.cardsOf(account.id)}
-                              onOpen={() => openDetail({ kind: 'account', id: account.id })}
-                              onOpenCard={(card) => openDetail({ kind: 'card', id: card.id })}
-                              onReorderCards={(id, toIndex) =>
-                                void assets.moveCardTo(id, account.id, toIndex)
-                              }
-                            />
-                          )}
                         />
-                      </View>
-                    ))
+                      )}
+                    />
                   )}
                 </>
               );
@@ -486,6 +578,8 @@ export default function AssetsScreen() {
           {assets.visiblePeople.length === 0 ? (
             <Text className="text-sm text-gray-600">{t('assets.noSelection')}</Text>
           ) : null}
+          </>
+          )}
         </View>
       )}
       </View>
@@ -706,6 +800,7 @@ function CardOutstanding({ card, currency }: { card: Card; currency: string }) {
  */
 function AccountRow({
   account,
+  ownerName,
   profit,
   cards,
   onOpen,
@@ -713,6 +808,8 @@ function AccountRow({
   onReorderCards,
 }: {
   account: Account;
+  /** 있으면 계좌명 옆에 적는다. 여러 사람이 섞인 자산유형별 목록이 넘긴다. */
+  ownerName?: string;
   profit?: string;
   cards: Card[];
   /** 이 계좌의 상세(잔액 추이)를 펼친다 */
@@ -759,6 +856,7 @@ function AccountRow({
             <Text className="rounded bg-gray-100 px-1.5 py-px text-[11px] text-gray-600">
               {accountTypeLabel(account.type)}
             </Text>
+            {ownerName ? <Text className="text-xs text-gray-500">{ownerName}</Text> : null}
           </View>
           {/*
             잔액이 아니라 카드 대금을 뺀 남은 금액이다. 통장에 찍힌 돈에는 카드사가

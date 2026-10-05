@@ -1222,24 +1222,11 @@ export class LocalStore {
     const rows = (await this.accounts(projectId)).filter((row) => row.isActive);
     if (rows.length === 0) return [];
 
-    const [marketValues, bookValues, paymentTypes] = await Promise.all([
+    const [marketValues, bookValues, paymentTypeOf] = await Promise.all([
       this.latestMarketValues(projectId),
       this.bookValues(projectId),
-      /*
-       * 카드 부채 계정마다 결제 통장의 유형. 카드 대금을 그 통장의 묶음에 넣는다
-       * (`groupOfRow`, 서버의 getNetWorth 와 같다).
-       */
-      this.db.all<Row>(
-        `SELECT c.liabilityAccountId AS id, pay.type AS type
-           FROM card c
-           JOIN account pay ON pay.id = c.paymentAccountId
-          WHERE c.projectId = ? AND c.liabilityAccountId IS NOT NULL`,
-        [projectId],
-      ),
+      this.cardPaymentTypes(projectId),
     ]);
-    const paymentTypeOf = new Map(
-      paymentTypes.map((row) => [String(row.id), String(row.type) as NetWorthAccountRow['type']]),
-    );
 
     return rows.map((row) => ({
       id: row.id,
@@ -1252,6 +1239,23 @@ export class LocalStore {
       marketValue: marketValues.get(row.id) ?? null,
       bookValue: bookValues.get(row.id) ?? null,
     }));
+  }
+
+  /**
+   * 카드 부채 계정마다 결제 통장의 유형. 카드 대금을 그 통장의 묶음에 넣는다
+   * (`groupOfRow`, 서버의 getNetWorth·getBalanceHistory 와 같다).
+   */
+  async cardPaymentTypes(projectId: string): Promise<Map<string, NetWorthAccountRow['type']>> {
+    const rows = await this.db.all<Row>(
+      `SELECT c.liabilityAccountId AS id, pay.type AS type
+         FROM card c
+         JOIN account pay ON pay.id = c.paymentAccountId
+        WHERE c.projectId = ? AND c.liabilityAccountId IS NOT NULL`,
+      [projectId],
+    );
+    return new Map(
+      rows.map((row) => [String(row.id), String(row.type) as NetWorthAccountRow['type']]),
+    );
   }
 
   /**

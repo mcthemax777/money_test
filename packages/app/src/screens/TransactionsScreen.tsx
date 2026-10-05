@@ -101,6 +101,7 @@ const ORIGIN_SCREEN: Record<EntryFocusOrigin['kind'], string> = {
   person: '/assets',
   account: '/assets',
   card: '/assets',
+  group: '/assets',
 };
 
 const TABS: Array<{ id: TransactionTab; labelKey: MessageKey }> = [
