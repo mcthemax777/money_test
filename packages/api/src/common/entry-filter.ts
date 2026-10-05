@@ -284,7 +284,8 @@ export async function splitEntryIds(
  * 모양 조건. 고른 모양끼리 OR 로 잇는다. 고르지 않았으면 undefined.
  *
  * **다리가 아니라 전표를 본다** -- 유형·태그와 같은 자리다. 할부는 "할부 계획이 붙은
- * 카드 다리를 가진 전표"이고, 분할은 세어 온 id 목록(`splitEntryIds`)이다.
+ * 카드 다리를 가진 전표"이고, 분할은 세어 온 id 목록(`splitEntryIds`)이다. 차감은 깎인
+ * 금액이 적힌 분류 다리를 가진 전표다 -- 깎인 금액은 줄마다 적히기 때문이다.
  *
  * 분할을 골랐는데 `splitIds` 를 주지 않으면 분할 가지를 빼지 않고 **아무것도 걸리지
  * 않게** 한다. 세는 질의를 빠뜨린 자리에서 조건이 조용히 사라지면, 걸러지지 않은 목록이
@@ -302,6 +303,9 @@ export function entryFeatureCondition(
   }
   if (features.includes('split')) {
     branches.push({ id: { in: splitIds ? [...splitIds] : [] } });
+  }
+  if (features.includes('discount')) {
+    branches.push({ postings: { some: { discountAmount: { gt: 0 } } } });
   }
 
   return branches.length === 1 ? branches[0] : { OR: branches };

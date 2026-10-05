@@ -4876,6 +4876,7 @@ function kindFilter(kinds?: readonly string[]): string {
  *
  *   분할  분류 다리가 둘 이상인 전표
  *   할부  할부 계획이 붙은 다리를 가진 전표
+ *   차감  깎인 금액이 0 보다 큰 다리를 가진 전표 (금액은 TEXT 라 수로 바꿔 견준다)
  *
  * 서버는 분할을 셀 수 없어 id 목록을 따로 받아 오지만(Prisma 의 관계 조건은 some/every/
  * none 뿐이다), 여기서는 하위 질의가 그 자리에서 센다. 세는 규칙은 같다.
@@ -4895,6 +4896,12 @@ function featureFilter(features?: readonly string[]): string {
           SELECT COUNT(*) FROM posting fp
            WHERE fp.entryId = e.id AND fp.categoryId IS NOT NULL
         ) > 1`);
+  }
+  if (features.includes('discount')) {
+    branches.push(`EXISTS (
+          SELECT 1 FROM posting fp
+           WHERE fp.entryId = e.id AND CAST(fp.discountAmount AS REAL) > 0
+        )`);
   }
 
   return `

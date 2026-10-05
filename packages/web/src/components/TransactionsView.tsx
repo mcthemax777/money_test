@@ -95,8 +95,6 @@ import Modal from '@/components/Modal';
 import TransactionCalendarView from '@/components/TransactionCalendarView';
 import PageHeader from '@/components/PageHeader';
 import TransactionAnalysisModal from '@/components/TransactionAnalysisModal';
-import PullFooter from '@/components/PullFooter';
-import { useBottomPull } from '@/hooks/useBottomPull';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useRenderBudget } from '@/hooks/useRenderBudget';
 import { useTopReveal } from '@/hooks/useTopReveal';
@@ -421,27 +419,22 @@ export default function TransactionsView({
    */
   const [isCalendar, setIsCalendar] = useState(false);
   /*
-   * 검색 중에는 바닥에서 한 번 더 당길 때마다 다음 기간 줄들을 끝까지 편다
-   * (`revealMore`). 홈의 거래 목록과 같은 손짓이다.
-   *
-   * 펼친 곳을 받는 중이면 기다린다(`isLoadingOpen`). 첫 묶음이 화면을 못 채우면 스스로
-   * 잇는데, 받기도 전에 이으면 결국 한꺼번에 편 것과 같아진다. 달력에서는 목록이 없다.
-   */
-  /*
    * 목록의 줄은 **내려가 볼 때만** 세운다(`useRenderBudget`). 한 달을 펴거나 검색으로
    * 여러 기간을 펴면 수백 건이라, 다 세우면 보지도 않을 줄에 시간을 쓴다. 앱과 같은 규칙이다.
    *
-   * 보는 목록 자체가 바뀌면(탭·단위·기준·검색·가계부) 처음 몫으로 돌아간다.
+   * 보는 목록 자체가 바뀌면(탭·탭 다시 누르기·단위·기준·검색·가계부) 처음 몫으로 돌아간다.
+   *
+   * 다 세운 끝이 화면 아래에 가까우면 펼친 모양으로만 선 다음 기간 줄들을 받는다
+   * (`revealMore`). 앱과 같이 스크롤만으로 잇는다 -- 기간 줄은 이미 펼친 모양이라, 당겨야
+   * 안이 채워지면 "불러오는 중"에서 멈춘 것으로 보인다. 받는 중이면 기다린다(`isLoadingOpen`).
+   * 받기도 전에 이으면 결국 한꺼번에 받은 것과 같아진다. 달력에서는 목록이 없다.
    */
   const lazy = useRenderBudget(
-    `${selectedProjectId}|${tx.tab}|${tx.unit}|${tx.basis}|${JSON.stringify(tx.search)}`,
+    `${selectedProjectId}|${tx.tab}|${tx.tabLevel}|${tx.unit}|${tx.basis}|${JSON.stringify(tx.search)}`,
+    () => {
+      if (tx.canRevealMore && !tx.isLoadingOpen && !isCalendar) tx.revealMore();
+    },
   );
-  const revealPull = useBottomPull({
-    hasMore: tx.canRevealMore && !isCalendar,
-    isLoading: tx.isLoadingOpen,
-    count: tx.months.length,
-    loadMore: tx.revealMore,
-  });
   /** 고른 거래에 붙일 태그를 정하는 창. */
   const [isTagPickOpen, setIsTagPickOpen] = useState(false);
   /**
@@ -946,6 +939,15 @@ export default function TransactionsView({
       ]
     : [];
 
+  /*
+   * 그릴 기간 줄. 아직 받을 차례가 아닌 첫 달(`isMonthWaiting`)까지다.
+   *
+   * 그 달은 "불러오는 중"으로 서고, 그 아래는 그리지 않는다. 그려 봐야 같은 문구의 빈
+   * 상자들이고, 세운 끝이 화면에서 멀어져 다음 몫을 부르지 못한다.
+   */
+  const firstWaiting = tx.months.findIndex((month) => tx.isMonthWaiting(month.yearMonth));
+  const drawnMonths = firstWaiting < 0 ? tx.months : tx.months.slice(0, firstWaiting + 1);
+
   return (
     <div className="space-y-4">
       {/*
@@ -1207,8 +1209,8 @@ export default function TransactionsView({
                 >
                   {t(item.labelKey)}
                   {/*
-                    고른 탭에만 꺾쇠를 둔다. 다음 누름이 무엇을 할지 미리 말한다 -- 한
-                    달도 펴져 있지 않으면 아래(편다), 한 달이라도 펴져 있으면 위(접는다)다.
+                    고른 탭에만 꺾쇠를 둔다. 다음 누름이 무엇을 할지 미리 말한다 -- 거래가
+                    하나라도 보이면 위(전부 접는다), 아니면 아래(한 단 더 편다)다.
                     이것이 없으면 이미 고른 탭을 다시 누를 까닭을 아무도 모른다.
                   */}
                   {tx.tab === item.id ? (
@@ -1252,7 +1254,7 @@ export default function TransactionsView({
         ) : tx.months.length === 0 ? (
           <p className="p-3 text-sm text-gray-500">{t('tx.noMonths')}</p>
         ) : (
-          tx.months.map((month, index) => {
+          drawnMonths.map((month, index) => {
             const level = tx.levelOf(month.yearMonth);
             /*
              * 년월 줄끼리 맞붙는 자리에 선을 긋는다.
@@ -1354,10 +1356,6 @@ export default function TransactionsView({
         )}
         {/* 세운 줄의 끝. 화면 아래에 가까워지면 다음 줄을 세운다(`useRenderBudget`). */}
         <div ref={lazy.sentinel} aria-hidden />
-        {/* 검색 중에 아직 펴지 않은 기간 줄이 남았을 때만 선다. 당기면 다음 묶음을 편다. */}
-        {tx.canRevealMore ? (
-          <PullFooter pull={revealPull} isLoading={tx.isLoadingOpen} hasMore isEmpty={false} />
-        ) : null}
       </div>
       )}
 

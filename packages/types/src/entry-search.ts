@@ -49,14 +49,38 @@ export const NO_ACCOUNT = 'none';
  *
  *   split        분류 줄이 둘 이상인 거래 (한 결제를 나눠 적은 것)
  *   installment  할부로 낸 거래 (카드 다리에 할부 계획이 붙어 있다)
+ *   discount     결제 자리에서 깎인 금액(포인트·자동할인·취소)이 있는 거래
  *
  * 왜 유형(EntryKind) 무리에 섞지 않는가. 유형은 한 거래가 하나만 갖는 갈래이고, 모양은
  * 그 위에 겹쳐 붙는 표시다 -- 할부로 낸 지출을 둘로 나눠 적으면 둘 다 붙는다. 한 무리로
  * 두면 "지출 또는 할부"처럼 층이 다른 것이 나란히 놓인다.
  */
-export const ENTRY_FEATURES = ['split', 'installment'] as const;
+export const ENTRY_FEATURES = ['split', 'installment', 'discount'] as const;
 
 export type EntryFeature = (typeof ENTRY_FEATURES)[number];
+
+/**
+ * 이미 할부로 걸러 읽은 거래가 사용자가 고른 형태에도 드는가.
+ *
+ * 회차 기준 목록은 앞 달에 산 할부를 `installment` 하나로 따로 읽어 덧붙인다. 그 조회가
+ * 고른 형태를 덮어쓰므로, 읽은 뒤에 이것으로 다시 거른다. 거르지 않으면 차감만 골라도
+ * 지난 할부의 회차가 함께 선다.
+ *
+ * 형태 무리 안은 OR 다. 할부를 골랐으면 할부는 모두 든다. 고르지 않았으면(undefined)
+ * 모두 들고, 빈 무리면 아무것도 들지 않는다. 분할·차감의 판정은 서버의
+ * `entryFeatureCondition`, 사본의 `featureFilter` 와 같아야 한다.
+ */
+export function installmentMatchesFeatures(
+  entry: { splitCount: number; discountAmount: string | null },
+  features: readonly EntryFeature[] | undefined,
+): boolean {
+  if (features === undefined || features.includes('installment')) return true;
+  return features.some((feature) => {
+    if (feature === 'split') return entry.splitCount > 1;
+    if (feature === 'discount') return Number(entry.discountAmount ?? 0) > 0;
+    return false;
+  });
+}
 
 /**
  * "이 분류에 직접 적은 것만"을 가리키는 표. 분류 id 앞에 붙는다 (`self:식비`).

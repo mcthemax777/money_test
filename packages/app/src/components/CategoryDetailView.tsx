@@ -96,9 +96,6 @@ export default function CategoryDetailView({
     trendClip,
   });
 
-  /** 원형차트 제목. 대분류별인지 소분류별인지는 훅이 정한다 (웹과 같은 값). */
-  const pieTitle = t(detail.pieTitle);
-
   /** 거래 목록에서 세는 세 그래프가 비었을 때의 안내. 일별 누적과 같은 말을 쓴다. */
   const emptyPattern = t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noPeriod);
 
@@ -115,14 +112,17 @@ export default function CategoryDetailView({
         <Text className="py-12 text-center text-gray-500">{t('detail.loading')}</Text>
       ) : (
         <>
-          {/* 구성비. 소분류나 "미분류"를 보고 있으면 쪼갤 것이 없어 조각이 없다. */}
-          {detail.slices.length > 0 ? (
-            <View className="gap-3 rounded-lg bg-white p-4 shadow-sm">
+          {/*
+            구성비. 조각이 있는 것만 온다 -- 소분류나 "미분류"를 보고 있으면 쪼갤 것이 없다.
+            태그는 지출과 수입이 하나씩이다. 제목은 훅이 정한다 (웹과 같은 값).
+          */}
+          {detail.pies.map((pie) => (
+            <View key={pie.type} className="gap-3 rounded-lg bg-white p-4 shadow-sm">
               <View className="flex-row items-center justify-between gap-2">
-                <Text className="text-base font-semibold text-gray-900">{pieTitle}</Text>
-                {detail.drilledId ? (
+                <Text className="text-base font-semibold text-gray-900">{t(pie.title)}</Text>
+                {pie.drilledId ? (
                   <Pressable
-                    onPress={detail.resetDrill}
+                    onPress={pie.resetDrill}
                     className="rounded bg-gray-200 px-3 py-1 active:bg-gray-300"
                   >
                     <Text className="text-sm text-gray-700">{t('detail.back')}</Text>
@@ -131,13 +131,13 @@ export default function CategoryDetailView({
               </View>
 
               <CategoryPieChart
-                slices={detail.slices}
+                slices={pie.slices}
                 currency={displayCurrency}
                 /* 한 단 더 내려간 뒤에는 쪼갤 것이 없다. 그때는 누를 수 없는 그림이다. */
-                onDrill={detail.drilledId ? undefined : detail.drill}
+                onDrill={pie.drilledId ? undefined : pie.drill}
               />
             </View>
-          ) : null}
+          ))}
 
           <View className="gap-3 rounded-lg bg-white p-4 shadow-sm">
             <Text className="text-base font-semibold text-gray-900">

@@ -499,13 +499,14 @@ export default function TransactionsScreen() {
    * 다 세우면 보지도 않을 줄에 0.5초를 쓰고 그동안 누름에 반응하지 못한다. 검색으로
    * 여러 기간을 한꺼번에 펴도 같다.
    *
-   * 보는 목록 자체가 바뀌면(탭·단위·기준·검색·가계부) 처음 몫으로 돌아간다.
+   * 보는 목록 자체가 바뀌면(탭·탭 다시 누르기·단위·기준·검색·가계부) 처음 몫으로 돌아간다.
    */
   const lazy = useRenderBudget(
-    `${selectedProjectId}|${tx.tab}|${tx.unit}|${tx.basis}|${JSON.stringify(tx.search)}`,
+    `${selectedProjectId}|${tx.tab}|${tx.tabLevel}|${tx.unit}|${tx.basis}|${JSON.stringify(tx.search)}`,
   );
   /*
-   * 검색 중에는 바닥에 닿을 때마다 다음 기간 줄들을 끝까지 편다(`revealMore`).
+   * 바닥에 닿을 때마다 펼친 모양으로만 선 다음 기간 줄들의 안을 받는다(`revealMore`).
+   * 검색을 켜거나 탭을 다시 눌러 모든 기간이 펼쳐진 모양일 때다.
    *
    * 펼친 곳을 아직 받는 중이면 기다린다. 받는 중인 줄은 짧아 바닥이 가까워 보이는데,
    * 그때 또 펴면 받기도 전에 다음 묶음이 나가 결국 한꺼번에 편 것과 같아진다. 달력
@@ -817,6 +818,15 @@ export default function TransactionsScreen() {
     });
   };
 
+  /*
+   * 그릴 기간 줄. 아직 받을 차례가 아닌 첫 달(`isMonthWaiting`)까지다. 웹과 같은 규칙이다.
+   *
+   * 그 달은 "불러오는 중"으로 서고, 그 아래는 그리지 않는다. 그려 봐야 같은 문구의 빈
+   * 상자들이고, 바닥이 멀어져 다음 몫을 부르지 못한다.
+   */
+  const firstWaiting = tx.months.findIndex((month) => tx.isMonthWaiting(month.yearMonth));
+  const drawnMonths = firstWaiting < 0 ? tx.months : tx.months.slice(0, firstWaiting + 1);
+
   return (
     <View className="gap-4">
       {/*
@@ -1055,9 +1065,9 @@ export default function TransactionsScreen() {
                   selected={tx.tab}
                   onSelect={tx.changeTab}
                   /*
-                    고른 탭의 꺾쇠. 다음 누름이 무엇을 할지 미리 말한다 -- 한 달도 펴져
-                    있지 않으면 아래(편다), 한 달이라도 펴져 있으면 위(접는다)다. 이것이
-                    없으면 이미 고른 탭을 다시 누를 까닭을 아무도 모른다.
+                    고른 탭의 꺾쇠. 다음 누름이 무엇을 할지 미리 말한다 -- 거래가 하나라도
+                    보이면 위(전부 접는다), 아니면 아래(한 단 더 편다)다. 이것이 없으면
+                    이미 고른 탭을 다시 누를 까닭을 아무도 모른다.
                   */
                   selectedTrailing={
                     tx.tabOpen ? (
@@ -1100,7 +1110,7 @@ export default function TransactionsScreen() {
           ) : tx.months.length === 0 ? (
             <Text className="p-3 text-sm text-gray-500">{t('tx.noMonths')}</Text>
           ) : (
-            tx.months.map((month, index) => {
+            drawnMonths.map((month, index) => {
               const level = tx.levelOf(month.yearMonth);
               /*
                * 년월 줄끼리 맞붙는 자리에 선을 긋는다. (웹의 같은 자리와 같은 규칙이다.)

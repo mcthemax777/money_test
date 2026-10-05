@@ -1345,6 +1345,7 @@ export const ko = {
   'tx.search.features': '형태',
   'tx.search.feature.split': '분할',
   'tx.search.feature.installment': '할부',
+  'tx.search.feature.discount': '차감',
   'tx.kind.expense': '지출',
   'tx.kind.income': '수입',
   'tx.kind.payback': '환불·페이백',

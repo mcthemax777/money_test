@@ -23,7 +23,14 @@ const LOOKAHEAD = 800;
  * `resetKey` 가 바뀌면 처음 몫으로 돌아간다. 앞 목록에서 늘려 둔 몫이 그대로 남으면 새
  * 목록을 한 번에 다 세운다.
  */
-export function useRenderBudget(resetKey: string) {
+export function useRenderBudget(
+  resetKey: string,
+  /**
+   * 다 세웠는데 세운 끝이 화면 아래에 가까울 때 부른다. 받아 올 것이 더 있는 목록이
+   * 다음 몫을 받는 자리다. 그릴 때마다 불릴 수 있으므로 부르는 쪽이 받는 중인지 가린다.
+   */
+  onDrained?: () => void,
+) {
   const [state, setState] = useState({ key: resetKey, budget: FIRST_ROWS });
   // 열쇠가 바뀐 그 그림에서 바로 처음 몫을 쓴다. 효과로 되돌리면 한 번은 다 세운다.
   const budget = state.key === resetKey ? state.budget : FIRST_ROWS;
@@ -38,6 +45,8 @@ export function useRenderBudget(resetKey: string) {
   wanted.current = 0;
 
   const sentinel = useRef<HTMLDivElement>(null);
+  const latestDrained = useRef(onDrained);
+  latestDrained.current = onDrained;
 
   const take = (count: number) => {
     const taken = wanted.current;
@@ -52,16 +61,18 @@ export function useRenderBudget(resetKey: string) {
     });
   }, []);
 
-  /** 남은 줄이 있고 세운 끝이 화면 아래에 가까우면 늘린다. */
+  /** 세운 끝이 화면 아래에 가까우면 늘린다. 남은 줄이 없으면 `onDrained` 를 부른다. */
   const check = useCallback(() => {
-    if (wanted.current <= latestBudget.current || !sentinel.current) return;
+    const hidden = wanted.current > latestBudget.current;
+    if ((!hidden && !latestDrained.current) || !sentinel.current) return;
     if (sentinel.current.getBoundingClientRect().bottom > window.innerHeight + LOOKAHEAD) return;
-    grow((current) => current + MORE_ROWS);
+    if (hidden) grow((current) => current + MORE_ROWS);
+    else latestDrained.current?.();
   }, [grow]);
 
   /*
    * 그릴 때마다 한 번 잰다. 늘린 줄이 아직 화면을 못 채웠으면 스크롤 없이도 이어야 하고,
-   * 스크롤 사건만 들으면 그 자리에서 멈춘다. 남은 줄이 없으면 재지 않고 돌아간다.
+   * 스크롤 사건만 들으면 그 자리에서 멈춘다. 남은 줄도 `onDrained` 도 없으면 재지 않는다.
    */
   useEffect(check);
 

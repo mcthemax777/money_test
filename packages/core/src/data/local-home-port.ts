@@ -44,6 +44,7 @@ import {
   closingMonthKey,
   closingMonthOf,
   parseEntryBasis,
+  installmentMatchesFeatures,
   parseEntrySearch,
   paymentMethods,
   shiftYearMonth,
@@ -1333,8 +1334,12 @@ export function createLocalHomePort(
         ),
       );
 
+      const features = parseEntrySearch(query).features;
+
       // 회차가 이 구간에 서는 것만 남긴다. 다 갚은 할부는 여기서 빠진다.
       return items.filter((entry) => {
+        // 위 조회가 덮어쓴 형태를 여기서 다시 본다 (`installmentMatchesFeatures`).
+        if (!installmentMatchesFeatures(entry, features)) return false;
         const months = entry.installmentMonths ?? 1;
         if (months < 2) return false;
         for (let index = 1; index < months; index += 1) {

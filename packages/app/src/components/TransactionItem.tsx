@@ -5,7 +5,7 @@
  */
 import { memo } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { Split, Undo2 } from 'lucide-react-native';
+import { Layers, Split, Undo2 } from 'lucide-react-native';
 import type { EntryListItem, EntryRow } from '@money/types';
 
 import { formatDate, formatTime } from '@money/core/lib/datetime';
@@ -86,6 +86,8 @@ function TransactionItemView({
    */
   const isSplitLine = Boolean(row?.line) && entry.splitCount > 1;
   const line = row?.line ?? null;
+  // 할부 개월수가 2 이상인 거래. 1개월은 일시불과 다르지 않다.
+  const isInstallment = (entry.installmentMonths ?? 0) > 1;
 
   const title = (() => {
     if (entry.kind === 'card_payment') {
@@ -169,6 +171,14 @@ function TransactionItemView({
           */}
           {isSplitLine ? (
             <Split size={12} color="#9ca3af" accessibilityLabel={t('entry.split')} />
+          ) : null}
+          {/* 할부 거래. 회차 기준이든 전체 금액 기준이든 같은 아이콘이다 (웹의 한 줄과 같다). */}
+          {isInstallment ? (
+            <Layers
+              size={12}
+              color="#9ca3af"
+              accessibilityLabel={t('assets.performanceInstallment', { months: entry.installmentMonths ?? 0 })}
+            />
           ) : null}
           {/* 페이백. 금액 색만으로는 수입과 갈리지 않아 아이콘으로 말한다 (웹의 한 줄과 같다). */}
           {entry.kind === 'payback' ? (

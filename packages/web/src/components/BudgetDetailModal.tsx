@@ -202,14 +202,14 @@ export function BudgetDetailModal({
         <div className="text-center text-gray-500">{t('detail.loading')}</div>
       ) : (
         <>
-          {/* 원형차트: 조각이 있을 때 표시 */}
-          {detail.slices.length > 0 && (
-            <div>
+          {/* 원형차트: 조각이 있는 것만 온다. 태그는 지출과 수입이 하나씩이다. */}
+          {detail.pies.map((pie) => (
+            <div key={pie.type}>
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-semibold">{t(detail.pieTitle)}</h3>
-                {detail.drilledId && (
+                <h3 className="text-lg font-semibold">{t(pie.title)}</h3>
+                {pie.drilledId && (
                   <button
-                    onClick={detail.resetDrill}
+                    onClick={pie.resetDrill}
                     className="px-3 py-1 text-sm bg-gray-200 text-gray-700 rounded hover:bg-gray-300"
                   >
                     {t('detail.back')}
@@ -217,13 +217,13 @@ export function BudgetDetailModal({
                 )}
               </div>
               <SlicePieChart
-                slices={detail.slices}
+                slices={pie.slices}
                 currency={displayCurrency}
                 /* 한 단 더 내려간 뒤에는 쪼갤 것이 없다. 그때는 누를 수 없는 그림이다. */
-                onDrill={detail.drilledId ? undefined : detail.drill}
+                onDrill={pie.drilledId ? undefined : pie.drill}
               />
             </div>
-          )}
+          ))}
 
           {/* 12개월 바차트 */}
           <div>

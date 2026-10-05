@@ -1,6 +1,6 @@
 'use client';
 
-import { Split, Undo2 } from 'lucide-react';
+import { Layers, Split, Undo2 } from 'lucide-react';
 import type { EntryListItem, EntryRow } from '@money/types';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatCurrency, formatOriginal, toNumber } from '@money/core/lib/money';
@@ -124,6 +124,8 @@ export default function TransactionItem({
    */
   const isSplitLine = Boolean(row?.line) && entry.splitCount > 1;
   const line = row?.line ?? null;
+  // 할부 개월수가 2 이상인 거래. 1개월은 일시불과 다르지 않다.
+  const isInstallment = (entry.installmentMonths ?? 0) > 1;
 
   // 부호와 색. 되돌린 결제는 갈래가 지출이어도 돈이 돌아온 쪽이라 규칙이 core 에 있다.
   const look = entryAmountLook(entry, row?.amount ?? entry.amount);
@@ -206,6 +208,16 @@ export default function TransactionItem({
             <Split
               className="w-3 h-3 shrink-0 self-center text-gray-400"
               aria-label={t('entry.split')}
+            />
+          )}
+          {/*
+            할부 거래. 회차 기준이든 전체 금액 기준이든 같은 아이콘을 세운다. 전체 금액
+            기준에서는 2줄에 회차 표기가 없어 이것이 없으면 일시불과 갈리지 않는다.
+          */}
+          {isInstallment && (
+            <Layers
+              className="w-3 h-3 shrink-0 self-center text-gray-400"
+              aria-label={t('assets.performanceInstallment', { months: entry.installmentMonths ?? 0 })}
             />
           )}
           {/* 페이백. 금액 색만으로는 수입과 갈리지 않아 아이콘으로 말한다. */}

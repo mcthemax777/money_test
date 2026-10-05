@@ -1313,6 +1313,7 @@ export const en: Record<MessageKey, string> = {
   'tx.search.features': 'Form',
   'tx.search.feature.split': 'Split',
   'tx.search.feature.installment': 'Installment',
+  'tx.search.feature.discount': 'Discount',
   'tx.kind.expense': 'Expense',
   'tx.kind.income': 'Income',
   'tx.kind.payback': 'Refund / payback',

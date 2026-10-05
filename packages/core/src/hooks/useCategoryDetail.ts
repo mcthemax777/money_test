@@ -138,8 +138,9 @@ export function buildSubcategoryStats(rows: BreakdownRow[], parentId: string): C
  * 태그 예산), 그 외는 실제 분류다. 소분류와 "미분류"는 더 쪼갤 것이 없어 원형차트를 그리지
  * 않는다(isLeaf).
  *
- * 태그는 지출로 본다. 태그 예산은 "그 태그에 얼마를 썼나"를 재는 자리라, 그래프는 쓴 돈을
- * 분류별·달별로 보인다. 돌려받은 돈(수입)은 거래 목록에는 함께 나온다.
+ * 태그의 그래프는 지출로 본다. 태그 예산은 "그 태그에 얼마를 썼나"를 재는 자리라, 추이와
+ * 누적은 쓴 돈을 보인다. 분류별 구성비만은 지출과 수입을 따로 하나씩 그린다(`pies`) -- 그
+ * 태그로 돌려받은 돈이 어느 분류였는지도 보여야 한다. 거래 목록에는 둘 다 나온다.
  */
 function resolveTarget(
   categoryId: string,
@@ -209,21 +210,13 @@ export interface CategoryDetail {
   pattern: UsagePattern;
   /** 이 구간에 센 금액이 있는지. 없으면 세 그래프 자리에 안내를 적는다. */
   hasPatternAmount: boolean;
-  /** 지금 그릴 원형차트 조각. 파고든 상태면 그 대분류의 소분류들이다. */
-  slices: CategorySlice[];
-  /** 조각을 눌러 파고든 대분류. null 이면 첫 단계다. */
-  drilledId: string | null;
   /**
-   * 원형차트 제목. 지금이 대분류별인지 소분류별인지를 말한다.
+   * 그릴 구성비 원형들. 조각이 있는 것만 담긴다 -- 비었으면 그 원형을 그리지 않는다.
    *
-   * 전체와 태그는 대분류별에서 시작해 파고들면 소분류별이고, 분류는 처음부터 소분류별이다.
-   * 웹과 앱이 각자 id 를 보고 고르면 새 대상(태그)이 생길 때 한쪽만 틀린다.
+   * 분류와 전체는 그 유형 하나, 태그는 지출과 수입을 차례로 하나씩이다. 소분류나
+   * "미분류"를 보고 있으면 쪼갤 것이 없어 비어 있다.
    */
-  pieTitle: MessageKey;
-  /** 조각을 눌러 한 단 내려간다. 소분류가 없는 조각은 아무 일도 하지 않는다. */
-  drill: (categoryId: string) => void;
-  /** 첫 단계로 되돌린다. */
-  resetDrill: () => void;
+  pies: CategoryPie[];
   /** 이번 달 선에 붙일 이름("8월"). 달 단위로 볼 때만 있다. */
   currentMonthName?: string;
   /** 이번 달 선을 그 달의 며칠까지 그을지. 달 단위로 볼 때만 있다. */
@@ -237,6 +230,39 @@ export interface CategoryDetail {
    * 것(결제수단 추이)이나 사본이 없는 기기(웹)에서는 닿지 못한다. 그 자리에 안내를 적는다.
    */
   isOffline: boolean;
+}
+
+/** 구성비 원형 하나. 파고드는 상태를 원형마다 따로 든다. */
+export interface CategoryPie {
+  type: 'income' | 'expense';
+  /** 지금 그릴 조각. 파고든 상태면 그 대분류의 소분류들이다. */
+  slices: CategorySlice[];
+  /** 조각을 눌러 파고든 대분류. null 이면 첫 단계다. */
+  drilledId: string | null;
+  /**
+   * 제목. 지금이 대분류별인지 소분류별인지, 지출인지 수입인지를 말한다.
+   *
+   * 전체와 태그는 대분류별에서 시작해 파고들면 소분류별이고, 분류는 처음부터 소분류별이다.
+   * 웹과 앱이 각자 id 를 보고 고르면 새 대상(태그)이 생길 때 한쪽만 틀린다.
+   */
+  title: MessageKey;
+  /** 조각을 눌러 한 단 내려간다. 소분류가 없는 조각은 아무 일도 하지 않는다. */
+  drill: (categoryId: string) => void;
+  /** 첫 단계로 되돌린다. */
+  resetDrill: () => void;
+}
+
+const PIE_TITLE: Record<'income' | 'expense', { parent: MessageKey; child: MessageKey }> = {
+  expense: { parent: 'detail.pieExpenseParent', child: 'detail.pieExpenseChild' },
+  income: { parent: 'detail.pieIncomeParent', child: 'detail.pieIncomeChild' },
+};
+
+/** 받아 둔 원형 하나의 재료. 첫 단계 조각과, 파고들 때 쓰는 평면 집계다. */
+interface PieSource {
+  type: 'income' | 'expense';
+  slices: CategorySlice[];
+  /** 대분류를 눌러 소분류로 내려갈 때 쓰는 평면 집계 (rollup=false) */
+  flat: BreakdownRow[];
 }
 
 export function useCategoryDetail({
@@ -289,11 +315,11 @@ export function useCategoryDetail({
   const [daily, setDaily] = useState<DailyCumulativePoint[]>([]);
   const [comparisons, setComparisons] = useState<CumulativeSeries[]>([]);
   const [entries, setEntries] = useState<EntryListItem[]>([]);
-  const [slices, setSlices] = useState<CategorySlice[]>([]);
-  /** 대분류를 눌러 소분류로 내려갈 때 쓰는 평면 집계 (rollup=false) */
-  const [flatBreakdown, setFlatBreakdown] = useState<BreakdownRow[]>([]);
-  const [drilledId, setDrilledId] = useState<string | null>(null);
-  const [drilledSlices, setDrilledSlices] = useState<CategorySlice[]>([]);
+  const [pieSources, setPieSources] = useState<PieSource[]>([]);
+  /** 원형마다 파고든 대분류와 그 소분류 조각. 없는 유형은 첫 단계다. */
+  const [drilled, setDrilled] = useState<
+    Partial<Record<'income' | 'expense', { id: string; slices: CategorySlice[] }>>
+  >({});
   const [isOffline, setIsOffline] = useState(false);
 
   useEffect(() => {
@@ -301,8 +327,7 @@ export function useCategoryDetail({
 
     let cancelled = false;
     // 대상이 바뀌면 파고든 자리는 의미가 없다. 남겨 두면 남의 소분류가 그려진다.
-    setDrilledId(null);
-    setDrilledSlices([]);
+    setDrilled({});
     setIsLoading(true);
 
     const load = async () => {
@@ -404,33 +429,53 @@ export function useCategoryDetail({
           ? serverOnly(loadPreviousMonths(period.yearMonth, entryQuery, projectId, timeZone, target.type), [])
           : Promise.resolve([] as CumulativeSeries[]);
 
-        // 원형차트: 전체면 대분류별, 대분류를 보고 있으면 소분류별.
-        // 파고들기(대분류 -> 소분류)에도 같은 평면 집계를 쓴다.
-        // 창구를 거친다 -- 앱에서는 사본이 답하므로 오프라인에서도 그려진다.
-        const flatPromise = target.isLeaf
-          ? Promise.resolve([] as BreakdownRow[])
-          : port.getCategoryBreakdown(period, target.type, projectId, {
+        /*
+         * 원형차트: 전체면 대분류별, 대분류를 보고 있으면 소분류별. 태그는 지출과 수입을
+         * 하나씩 받는다. 파고들기(대분류 -> 소분류)에도 같은 평면 집계를 쓴다.
+         * 창구를 거친다 -- 앱에서는 사본이 답하므로 오프라인에서도 그려진다.
+         */
+        const pieTypes: Array<'income' | 'expense'> =
+          target.scope === 'tag' ? ['expense', 'income'] : [target.type];
+        const piePromise = Promise.all(
+          pieTypes.map(async (type): Promise<PieSource> => {
+            if (target.isLeaf) return { type, slices: [], flat: [] };
+            const flatPromise = port.getCategoryBreakdown(period, type, projectId, {
               rollup: false,
               ...filter,
               ...tagScope,
             });
-        // 전체와 태그는 대분류별, 분류는 그 소분류별이다.
-        const breakdownPromise =
-          target.scope === 'category'
-            ? flatPromise
-            : port.getCategoryBreakdown(period, target.type, projectId, { ...filter, ...tagScope });
+            // 전체와 태그는 대분류별, 분류는 그 소분류별이다.
+            const [breakdownRes, flatRes] = await Promise.all([
+              target.scope === 'category'
+                ? flatPromise
+                : port.getCategoryBreakdown(period, type, projectId, { ...filter, ...tagScope }),
+              flatPromise,
+            ]);
+            const breakdown = (breakdownRes ?? []) as BreakdownRow[];
+            return {
+              type,
+              flat: (flatRes ?? []) as BreakdownRow[],
+              slices:
+                target.scope === 'category'
+                  ? buildSubcategoryStats(breakdown, categoryId)
+                  : breakdown.map((item) => ({
+                      id: item.categoryId,
+                      name: item.categoryName,
+                      value: toNumber(item.amount),
+                    })),
+            };
+          }),
+        );
 
-        const [trendRes, entriesRes, breakdownRes, flatRes, comparisonRes] = await Promise.all([
+        const [trendRes, entriesRes, pieRes, comparisonRes] = await Promise.all([
           trendPromise,
           entriesPromise,
-          breakdownPromise,
-          flatPromise,
+          piePromise,
           comparisonPromise,
         ]);
         if (cancelled) return;
 
         setIsOffline(offline);
-        setFlatBreakdown((flatRes ?? []) as BreakdownRow[]);
 
         const trend = (trendRes ?? []) as Array<{ yearMonth: string; amount: string }>;
         setMonthly(
@@ -447,17 +492,7 @@ export function useCategoryDetail({
           buildDailyCumulative(analysisDated(rows), dayKeys.startKey, dayKeys.endKey, timeZone, target.type),
         );
         setComparisons(comparisonRes);
-
-        const breakdown = (breakdownRes ?? []) as BreakdownRow[];
-        setSlices(
-          target.scope === 'category'
-            ? buildSubcategoryStats(breakdown, categoryId)
-            : breakdown.map((item) => ({
-                id: item.categoryId,
-                name: item.categoryName,
-                value: toNumber(item.amount),
-              })),
-        );
+        setPieSources(pieRes);
       } catch (error) {
         console.error('분류별 상세 데이터를 불러오지 못했습니다:', error);
         if (cancelled) return;
@@ -467,8 +502,7 @@ export function useCategoryDetail({
         setDaily([]);
         setComparisons([]);
         setEntries([]);
-        setSlices([]);
-        setFlatBreakdown([]);
+        setPieSources([]);
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -518,19 +552,32 @@ export function useCategoryDetail({
     [entries, target.type, periodKey, timeZone, weekStart],
   );
 
-  const drill = (id: string) => {
-    // 서버가 이미 계산한 평면 집계를 쓴다. 대분류를 직접 볼 때와 같은 규칙이어야 한다.
-    const next = buildSubcategoryStats(flatBreakdown, id);
-    if (next.length === 0) return;
-
-    setDrilledSlices(next);
-    setDrilledId(id);
-  };
-
-  const resetDrill = () => {
-    setDrilledId(null);
-    setDrilledSlices([]);
-  };
+  const pies: CategoryPie[] = pieSources
+    // 조각이 없는 원형은 그리지 않는다. 그 태그로 들어온 돈이 없으면 수입 원형은 없다.
+    .filter((source) => source.slices.length > 0)
+    .map((source) => {
+      const down = drilled[source.type];
+      return {
+        type: source.type,
+        slices: down ? down.slices : source.slices,
+        drilledId: down?.id ?? null,
+        title:
+          target.scope === 'category' || down
+            ? PIE_TITLE[source.type].child
+            : PIE_TITLE[source.type].parent,
+        drill: (id: string) => {
+          // 서버가 이미 계산한 평면 집계를 쓴다. 대분류를 직접 볼 때와 같은 규칙이어야 한다.
+          const next = buildSubcategoryStats(source.flat, id);
+          if (next.length === 0) return;
+          setDrilled((prev) => ({ ...prev, [source.type]: { id, slices: next } }));
+        },
+        resetDrill: () =>
+          setDrilled((prev) => {
+            const { [source.type]: _dropped, ...rest } = prev;
+            return rest;
+          }),
+      };
+    });
 
   return {
     isLoading,
@@ -541,20 +588,7 @@ export function useCategoryDetail({
     entries,
     pattern,
     hasPatternAmount: pattern.methods.length > 0,
-    slices: drilledId ? drilledSlices : slices,
-    drilledId,
-    pieTitle:
-      target.scope === 'category'
-        ? 'detail.pieExpenseChild'
-        : target.type === 'income'
-          ? drilledId
-            ? 'detail.pieIncomeChild'
-            : 'detail.pieIncomeParent'
-          : drilledId
-            ? 'detail.pieExpenseChild'
-            : 'detail.pieExpenseParent',
-    drill,
-    resetDrill,
+    pies,
     /*
      * 달 단위로 볼 때만 쓰는 값. 이번 달 선의 이름과, 그 선을 며칠까지 그을지다.
      * 기간 보기에서는 견줄 달이 없어 둘 다 필요 없다.

@@ -242,6 +242,24 @@ runSmoke('reports', async (ctx) => {
   ctx.check('결제수단 총합 = summary 지출',
     methods.reduce((s, m) => s + Number(m.amount), 0), Number(summary.expense));
 
+  /*
+   * ── 거래가 지나간 수단 (`hasEntries`) ──
+   *
+   * 거래 탭은 이것으로 빈 줄을 숨기므로, 그 줄을 펴서 나오는 목록과 늘 같은 답이어야
+   * 한다. 펴는 조건 그대로(통장은 paymentAccountIds, 카드는 paymentCardIds) 받아 견준다.
+   */
+  ctx.check('거래 없는 투자 계좌는 거래가 없다',
+    methods.find((m) => m.name === '삼성전자')?.hasEntries, false);
+  for (const method of methods) {
+    const listed = await entries.getEntries(uid, {
+      ...(method.kind === 'account'
+        ? { paymentAccountIds: method.id }
+        : { paymentCardIds: method.id }),
+      startDate: aug(1), endDate: aug(31), limit: 200,
+    }, pid);
+    ctx.check(`${method.name}: 펴서 나오는 거래와 같다`, method.hasEntries, listed.data.length > 0);
+  }
+
   // ── 결제수단 상세: 계좌를 고르면 체크카드 사용이 섞이면 안 된다 ──
   //
   // 체크카드 결제는 연결 통장에서 바로 빠지므로 posting 하나에 accountId와 cardId가 함께 있다.

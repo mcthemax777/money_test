@@ -255,5 +255,35 @@ export function paymentMethods(
     }
   }
 
-  return [...buckets.values()].sort((a, b) => Number(b.amount) - Number(a.amount));
+  /*
+   * 거래가 지나간 수단을 표시한다. 거래 탭이 이것으로 빈 줄을 숨긴다.
+   *
+   * 기준은 **그 줄을 펴면 나오는 거래가 있는가**다. 펴는 조건(서버 `entrySearchConditions`
+   * 의 결제수단 무리)과 같게 맞춘다:
+   *   카드  그 카드 다리가 있는 거래. 쓴 것, 갚은 것, 환불 모두.
+   *   통장  카드가 붙지 않은 그 통장 다리가 있는 거래. 이체는 보낸 쪽과 받은 쪽 모두,
+   *         대금 결제는 낸 통장. 체크카드 결제는 카드 줄에만 나오므로 통장에 세지 않는다.
+   *         잔액 조정은 기초잔액 전표라 펴도 나오지 않는다.
+   * 금액은 보지 않는다. 전액을 깎은 0원 결제도 펴면 나온다.
+   */
+  const touched = new Set<string>();
+  for (const item of matchNothing ? [] : items) {
+    if (item.kind === 'adjustment') continue;
+    if (item.cardId) touched.add(`card:${item.cardId}`);
+    const moves = item.kind === 'transfer' || item.kind === 'card_payment';
+    if (moves || !item.cardId) {
+      if (item.accountId) touched.add(`account:${item.accountId}`);
+      if (moves && item.toAccountId) touched.add(`account:${item.toAccountId}`);
+    }
+  }
+
+  return [...buckets.values()]
+    .map((bucket) => ({
+      ...bucket,
+      // 미지정 칸은 그리로 간 거래가 있을 때만 생긴다.
+      hasEntries:
+        bucket.unassigned === true ||
+        touched.has(`${bucket.kind === 'account' ? 'account' : 'card'}:${bucket.id}`),
+    }))
+    .sort((a, b) => Number(b.amount) - Number(a.amount));
 }

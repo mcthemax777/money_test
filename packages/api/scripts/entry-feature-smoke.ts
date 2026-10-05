@@ -13,7 +13,7 @@ import {
 } from './smoke-harness';
 
 /**
- * 거래 화면 검색의 **형태** 무리 (분할·할부).
+ * 거래 화면 검색의 **형태** 무리 (분할·할부·차감).
  *
  * 둘은 저장된 값이 아니라 다리에서 유도된다. 분할은 **분류 다리가 둘 이상**인 것이고,
  * 할부는 **카드 다리에 할부 계획이 붙은** 것이다. 그래서 조건을 손으로 옮긴 자리마다
@@ -143,6 +143,22 @@ runSmoke('entry-feature', async (ctx) => {
     pid,
   );
 
+  // 포인트로 3,000원을 깎은 결제. 깎인 금액은 분류 줄에 적힌다.
+  const discounted = await entries.createEntry(
+    uid,
+    {
+      kind: 'expense',
+      personId: me.id,
+      date: at(9),
+      description: '포인트 쓴 결제',
+      amount: '10000',
+      discountAmount: '3000',
+      categoryId: dining.id,
+      accountId: bank.id,
+    },
+    pid,
+  );
+
   const idsOf = async (features?: string) =>
     (await entries.getEntries(uid, { features, limit: 200 }, pid)).data
       .map((row) => row.id)
@@ -153,6 +169,8 @@ runSmoke('entry-feature', async (ctx) => {
   // ── 1. 무리 하나씩 ──
   ctx.check('분할만', await idsOf('split'), sorted(split.id, both.id));
   ctx.check('할부만', await idsOf('installment'), sorted(installment.id, both.id));
+  ctx.check('차감만', await idsOf('discount'), sorted(discounted.id));
+  ctx.check('분할 또는 차감', await idsOf('split,discount'), sorted(split.id, both.id, discounted.id));
 
   /*
    * 일시불에 한 줄짜리인 거래는 어느 쪽에도 걸리지 않는다.
@@ -226,6 +244,27 @@ runSmoke('entry-feature', async (ctx) => {
    * 카드 대금 결제는 아직 없고, 할부 거래의 통장 다리도 없다.
    */
   ctx.check('할부 그리고 통장 (0건)', impossible.data.length, 0);
+
+  /*
+   * ── 회차 기준의 지난 할부도 고른 형태를 본다 ──
+   *
+   * 9월에는 8월에 산 두 할부의 회차가 선다. 이 조회는 할부만 따로 읽으므로, 고른 형태를
+   * 다시 보지 않으면 차감만 골라도 두 할부가 함께 선다.
+   */
+  const pastIds = async (features?: string) =>
+    (await entries.getInstallmentRows(uid, { yearMonth: '2026-09', features }, pid))
+      .map((row) => row.id)
+      .sort()
+      .join(',');
+  ctx.check('지난 할부: 고르지 않으면 둘 다', await pastIds(), sorted(installment.id, both.id));
+  ctx.check(
+    '지난 할부: 할부를 고르면 둘 다',
+    await pastIds('installment,discount'),
+    sorted(installment.id, both.id),
+  );
+  ctx.check('지난 할부: 분할이면 나눠 적은 할부만', await pastIds('split'), sorted(both.id));
+  ctx.check('지난 할부: 차감이면 없다', await pastIds('discount'), '');
+  ctx.check('지난 할부: 빈 무리면 없다', await pastIds(''), '');
 
   /*
    * ── 4. 목록과 합계가 같은 조건을 본다 ──

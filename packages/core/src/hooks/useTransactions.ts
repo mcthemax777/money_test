@@ -180,6 +180,7 @@ export const ENTRY_KIND_LABEL: Record<EntryKind, MessageKey> = {
 export const ENTRY_FEATURE_LABEL: Record<EntryFeature, MessageKey> = {
   split: 'tx.search.feature.split',
   installment: 'tx.search.feature.installment',
+  discount: 'tx.search.feature.discount',
 };
 
 /**
@@ -471,13 +472,14 @@ function clipMonth(
 const ROW_BATCH = 6;
 
 /**
- * 검색을 켰을 때 한 번에 끝까지 펴는 기간 줄의 수.
+ * 펼친 모양의 기간 줄 가운데 한 번에 받아 오는 수.
  *
- * 검색 결과는 끝까지 펴서 보여 주되, 한꺼번에 펴지 않는다. 분류별·수단별은 펼친 기간의
- * 줄마다 조회가 둘씩 나가서, 주로 묶은 몇 년 치를 통째로 펴면 수천 건이 된다. 위에서부터
- * 이만큼 펴고, 바닥에 닿을 때마다(`revealMore`) 이만큼 더 편다.
+ * 검색을 켜거나 탭을 다시 눌러 모든 기간이 펼쳐진 모양이 되어도, 그 안을 한꺼번에 받지
+ * 않는다. 분류별·수단별은 펼친 기간의 줄마다 조회가 둘씩 나가서, 주로 묶은 몇 년 치를
+ * 통째로 받으면 수천 건이 된다. 위에서부터 이만큼 받고, 화면이 받은 곳의 바닥에 가까워질
+ * 때마다(`revealMore`) 이만큼 더 받는다. 손으로 편 기간 줄은 이 수와 무관하게 곧바로 받는다.
  */
-const SEARCH_REVEAL_STEP = 3;
+const REVEAL_STEP = 3;
 
 /*
  * 빈 값은 하나를 나눠 쓴다.
@@ -537,8 +539,8 @@ export function useTransactions(projectId: string | null) {
    * 때 한 줄씩 눌러 펴는 것 말고는 길이 없던 자리다.
    */
   const [tabLevels, setTabLevels] = useState<Partial<Record<TransactionTab, MonthLevel>>>({});
-  /** 검색을 켰을 때 위에서부터 끝까지 편 기간 줄의 수 (`SEARCH_REVEAL_STEP`). */
-  const [searchReveal, setSearchReveal] = useState(SEARCH_REVEAL_STEP);
+  /** 펼친 모양의 기간 줄 가운데 위에서부터 받아 온 수 (`REVEAL_STEP`). */
+  const [reveal, setReveal] = useState(REVEAL_STEP);
   /** 1단에서 손으로 편 줄. 2단에서는 이것과 무관하게 전부 펼친다. */
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
 
@@ -766,38 +768,33 @@ export function useTransactions(projectId: string | null) {
   /** 펼침을 적어 두는 열쇠. 탭이 다르면 다른 자리다. */
   const levelKey = useCallback((yearMonth: string) => `${tab}|${yearMonth}`, [tab]);
   /*
-   * 기간 줄의 단계. 손으로 정한 것이 먼저다.
+   * 기간 줄의 단계. 손으로 정한 것, 탭의 바닥, 검색의 기본값 차례다.
    *
-   * 손대지 않은 줄은 검색을 켜면 끝까지 편다 -- 걸러 낸 것을 보러 온 사람에게 접힌
-   * 목록을 내주면 무엇이 걸렸는지 한 줄도 보이지 않는다. 다만 위에서부터
-   * `searchReveal` 개까지만이고, 그 아래는 바닥에 닿을 때 차례로 편다. 아직 펴지 않은
-   * 줄도 기간 줄의 합계는 검색 조건으로 센 것이라 무엇이 걸렸는지는 보인다.
+   * 검색을 켜면 손대지 않은 줄은 **모두** 거래까지 펼친 모양이다 -- 걸러 낸 것을 보러 온
+   * 사람에게 접힌 목록을 내주면 무엇이 걸렸는지 한 줄도 보이지 않는다. 모양만 그렇고,
+   * 안을 받는 것은 위에서부터 차례로다(`reveal`, `isMonthWaiting`).
    *
-   * 검색이 없으면 탭의 바닥을 따른다.
+   * 탭의 바닥이 검색의 기본값보다 앞선다. 검색 중에 탭을 눌러 접은 것이 다시 펴지면 안
+   * 된다. 탭의 바닥은 검색을 바꾸면 지워지므로(아래 조건 효과), 새 검색은 다시 펼쳐 선다.
    */
   const levelOf = useCallback(
     (yearMonth: string): MonthLevel => {
       const chosen = levels[levelKey(yearMonth)];
       if (chosen !== undefined) return chosen;
-      if (!isSearching) return tabLevels[tab] ?? 0;
-      const order = monthOrder.get(yearMonth);
-      return order !== undefined && order < searchReveal ? 2 : 0;
+      return tabLevels[tab] ?? (isSearching ? 2 : 0);
     },
-    [levels, levelKey, isSearching, tabLevels, tab, monthOrder, searchReveal],
+    [levels, levelKey, isSearching, tabLevels, tab],
   );
 
   /**
-   * 검색 중에 다음 기간 줄들을 편다. 화면이 바닥에 닿을 때 부른다.
+   * 펼친 모양으로만 선 다음 기간 줄들의 안을 받는다. 화면이 받은 곳의 바닥에 가까워질 때 부른다.
    *
-   * 검색이 없거나 이미 다 폈으면 아무 일도 없다 -- 바닥 감지는 내용이 짧으면 길이가
-   * 바뀔 때마다 부르므로, 그때 값을 올리면 뜻 없이 다시 그린다.
+   * 이미 다 받았으면 아무 일도 없다 -- 바닥 감지는 내용이 짧으면 길이가 바뀔 때마다
+   * 부르므로, 그때 값을 올리면 뜻 없이 다시 그린다.
    */
   const revealMore = useCallback(() => {
-    if (!isSearching) return;
-    setSearchReveal((count) =>
-      count < months.length ? count + SEARCH_REVEAL_STEP : count,
-    );
-  }, [isSearching, months.length]);
+    setReveal((count) => (count < months.length ? count + REVEAL_STEP : count));
+  }, [months.length]);
 
   /**
    * 구간 조회가 볼 기간. 달력 날짜다 (ReportDto.PeriodQuery 의 규칙).
@@ -918,8 +915,8 @@ export function useTransactions(projectId: string | null) {
      * 그만큼의 조회가 한꺼번에 나간다. 펼치는 것은 사용자가 그 목록을 보고 고르는 일이다.
      */
     setTabLevels({});
-    // 검색 중에 편 곳도 처음으로 돌린다. 새 목록은 위에서부터 다시 편다.
-    setSearchReveal(SEARCH_REVEAL_STEP);
+    // 받아 온 곳도 처음으로 돌린다. 새 목록은 위에서부터 다시 받는다.
+    setReveal(REVEAL_STEP);
     /*
      * 고른 것도 버린다.
      *
@@ -1014,12 +1011,47 @@ export function useTransactions(projectId: string | null) {
     };
   }, [projectId, scopeKey, mirrorVersion, reloadToken, fail]);
 
-  /** 지금 펼쳐진 달. 목록에 있는 것만 본다 (검색으로 사라진 달은 세지 않는다). */
-  const openMonths = useMemo(
+  /** 펼친 모양인 달. 목록에 있는 것만 본다 (검색으로 사라진 달은 세지 않는다). */
+  const shownMonths = useMemo(
     () => months.map((month) => month.yearMonth).filter((yearMonth) => levelOf(yearMonth) >= 1),
     [months, levelOf],
   );
+  /**
+   * 펼친 모양으로만 서고 아직 안을 받지 않는 달인가.
+   *
+   * 손으로 편 달은 곧바로 받는다. 검색이나 탭이 한꺼번에 편 달만 위에서부터 `reveal` 개를
+   * 받는다. 화면은 이런 달을 "불러오는 중"으로 세우고 그 아래는 그리지 않는다 -- 아래를
+   * 그려 봐야 빈 상자들이고, 받은 곳의 바닥이 멀어져 다음 몫을 부르지 못한다.
+   */
+  const isMonthWaiting = useCallback(
+    (yearMonth: string) => {
+      if (levelOf(yearMonth) === 0) return false;
+      if (levels[levelKey(yearMonth)] !== undefined) return false;
+      const order = monthOrder.get(yearMonth);
+      return order === undefined || order >= reveal;
+    },
+    [levelOf, levels, levelKey, monthOrder, reveal],
+  );
+  /** 지금 안을 받는 달. 조회는 모두 이것을 본다. */
+  const openMonths = useMemo(
+    () => shownMonths.filter((yearMonth) => !isMonthWaiting(yearMonth)),
+    [shownMonths, isMonthWaiting],
+  );
   const openMonthsKey = openMonths.join(',');
+  /**
+   * 거래까지 보이는 곳이 하나라도 있는가. 2단으로 편 달이나, 1단에서 손으로 편 줄이다.
+   *
+   * 줄의 열쇠는 `달|탭|줄` 이다. 접힌 달에 남은 자국은 접을 때 지우지만, 달의 단계도 함께
+   * 본다 -- 2단에서 1단으로 내려온 달에는 옮겨 적은 줄이 남아 있다(`toggleRow`).
+   */
+  const entriesShown = useMemo(() => {
+    if (shownMonths.some((yearMonth) => levelOf(yearMonth) === 2)) return true;
+    return Object.entries(openRows).some(([id, open]) => {
+      if (!open) return false;
+      const [yearMonth, rowTab] = id.split('|');
+      return rowTab === tab && levelOf(yearMonth) === 1;
+    });
+  }, [shownMonths, levelOf, openRows, tab]);
 
   // ── 2단. 펼친 달의 안쪽 값 ──
   useEffect(() => {
@@ -1301,9 +1333,13 @@ export function useTransactions(projectId: string | null) {
 
       /*
        * 수단별 목록은 그 달에 쓰지 않은 계좌·카드까지 0원으로 담아 온다(가계 화면이
-       * 그것을 쓴다). 검색을 켠 화면에서는 고르지 않은 카드가 0원 줄로 남으면 안 된다.
+       * 그것을 쓴다). 여기서는 펴도 아무것도 나오지 않는 줄이라 숨긴다(`hasEntries`).
+       * 값이 없으면 그 칸을 모르는 옛 서버의 답이라 그대로 둔다.
+       *
+       * 검색을 켠 화면에서는 고르지 않은 카드가 0원 줄로 남으면 안 된다.
        */
       return (data?.methods ?? [])
+        .filter((row) => row.hasEntries !== false)
         .filter((row) => !keepMethodIds || keepMethodIds.has(row.id))
         .map((row) => ({
           key: row.id,
@@ -2076,22 +2112,24 @@ export function useTransactions(projectId: string | null) {
   const changeTab = useCallback(
     (next: TransactionTab) => {
       /*
-       * 이미 고른 탭을 또 누르면 **켜고 끈다.** 접힘 ↔ 안쪽 줄, 둘 사이만 오간다.
+       * 이미 고른 탭을 또 누르면 **화면에 보이는 것을 보고 한 단씩 돈다.**
        *
-       * 기간 줄처럼 세 단으로 돌지 않는다. 탭은 모든 달에 한꺼번에 걸리는 손잡이라,
-       * 가운데 단(거래까지 펼침)을 지나가게 두면 한 번 더 누를 때마다 수백 줄이
-       * 섰다 사라진다 -- 접으려고 누른 사람에게는 앱이 멎은 것으로 보인다. 달 하나를
-       * 거래까지 펴는 일은 그 달의 년월 줄이 맡는다(`cycleMonth`).
+       *   거래가 하나라도 보인다        → 전부 접는다
+       *   안쪽 줄만 펴져 있다          → 거래까지 전부 편다
+       *   전부 접혀 있다              → 안쪽 줄만 편다
        *
-       * **한 달이라도 펴져 있으면 접는 차례다.** 탭의 바닥이 아니라 화면에 보이는
-       * 것을 따른다 -- 9월 하나를 손으로 펴 둔 사람이 탭을 누르는 것은 "그만 보겠다"는
-       * 뜻이지 나머지 달까지 마저 펴 달라는 뜻이 아니다 (`cycleMonth` 와 같은 규칙이다).
+       * 탭의 바닥이 아니라 화면에 보이는 것을 따른다 -- 9월 하나를 거래까지 펴 둔 사람이
+       * 탭을 누르는 것은 "그만 보겠다"는 뜻이다 (`cycleMonth` 와 같은 규칙이다).
+       *
+       * 거래까지 전부 펴도 한꺼번에 받지 않는다. 위에서부터 `REVEAL_STEP` 개의 달만 받고,
+       * 아래는 화면이 내려갈 때 받는다(`isMonthWaiting`). 예전에는 수백 줄이 섰다 사라지는
+       * 것을 걱정해 이 단을 건너뛰었는데, 그리기와 받기를 모두 나눠 하면서 그 걱정이 없어졌다.
        *
        * 손으로 정해 둔 줄은 지운다. 남겨 두면 "전부 펴라"고 눌렀는데 접어 둔 줄이
        * 그대로 접혀 있어, 눌러도 아무 일이 없는 것처럼 보인다.
        */
       if (next === tab) {
-        const level: MonthLevel = openMonths.length > 0 ? 0 : 1;
+        const level: MonthLevel = entriesShown ? 0 : shownMonths.length > 0 ? 2 : 1;
         setTabLevels((prev) => ({ ...prev, [next]: level }));
         setLevels((prev) => {
           const kept: Record<string, MonthLevel> = {};
@@ -2101,27 +2139,28 @@ export function useTransactions(projectId: string | null) {
           return kept;
         });
         /*
-         * 접으면 이 탭에서 손으로 편 줄도 함께 정리한다 (`cycleMonth` 와 같다).
+         * 이 탭에서 손으로 편 줄도 정리한다. 접을 때는 남길 까닭이 없고, 전부 펼 때는
+         * 2단이 줄마다의 값을 보지 않는다. 안쪽 줄만 펼 때는 이미 다 접혀 있다.
          *
          * 줄의 열쇠는 `달|탭|줄` 이라 탭 이름이 가운데에 있다. 그 조각으로 가른다 --
          * 다른 탭에서 펴 둔 줄은 그대로 남는다.
          */
-        if (level === 0) {
-          setOpenRows((prev) => {
-            const kept: Record<string, boolean> = {};
-            for (const [id, open] of Object.entries(prev)) {
-              if (!id.includes(`|${next}|`)) kept[id] = open;
-            }
-            return kept;
-          });
-        }
+        setOpenRows((prev) => {
+          const kept: Record<string, boolean> = {};
+          for (const [id, open] of Object.entries(prev)) {
+            if (!id.includes(`|${next}|`)) kept[id] = open;
+          }
+          return kept;
+        });
+        // 받는 곳도 위에서부터 다시 센다. 앞서 내려가며 늘려 둔 수만큼 한꺼번에 받으면 안 된다.
+        setReveal(REVEAL_STEP);
         return;
       }
 
       setTab(next);
       setSelected({});
     },
-    [tab, openMonths],
+    [tab, entriesShown, shownMonths],
   );
 
   /**
@@ -2145,13 +2184,15 @@ export function useTransactions(projectId: string | null) {
    */
   const isLoadingMonth = useCallback(
     (yearMonth: string) => {
+      // 아직 받을 차례가 아닌 달도 화면에는 "불러오는 중"이다.
+      if (isMonthWaiting(yearMonth)) return true;
       if (loadingMonths[yearMonth] !== true) return false;
       const have = monthData[yearMonth];
       if (tab === 'date') return !have?.entries;
       if (tab === 'category') return !have?.categories;
       return !have?.methods;
     },
-    [loadingMonths, monthData, tab],
+    [isMonthWaiting, loadingMonths, monthData, tab],
   );
   /** 그 줄의 거래를 아직 그릴 수 없는가. 달과 같은 규칙이다. */
   const isLoadingRow = useCallback(
@@ -2202,19 +2243,28 @@ export function useTransactions(projectId: string | null) {
     levelOf,
     cycleMonth,
     revealMore,
-    /** 검색 중이고 아직 펴지 않은 기간 줄이 남았는가. */
-    canRevealMore: isSearching && searchReveal < months.length,
+    /** 펼친 모양으로만 서고 아직 받지 않은 기간 줄이 남았는가. */
+    canRevealMore: shownMonths.some(isMonthWaiting),
+    isMonthWaiting,
     isLoadingOpen,
     // 2단
     tab,
     changeTab,
     /**
-     * 한 달이라도 펴져 있는가. 곧 **고른 탭을 다시 누르면 접힌다**는 뜻이다.
+     * 거래가 하나라도 보이는가. 곧 **고른 탭을 다시 누르면 전부 접힌다**는 뜻이다.
      *
      * 화면이 이 값으로 탭의 꺾쇠 방향을 정한다 -- 다음 누름이 펴는 것인지 접는 것인지를
      * 미리 말해 주지 않으면, 이미 고른 탭을 다시 누를 까닭을 아무도 모른다.
      */
-    tabOpen: openMonths.length > 0,
+    tabOpen: entriesShown,
+    /**
+     * 고른 탭을 다시 눌러 정한 바닥. 손대지 않았으면 null.
+     *
+     * 화면이 그리기 몫(`useRenderBudget`)의 열쇠에 넣는다. 탭을 눌러 모두 펴거나 접는 것은
+     * 보는 목록을 통째로 바꾸는 일이라, 앞에서 늘려 둔 몫이 남으면 받은 줄을 한꺼번에 다
+     * 그리고 그 아래 달까지 줄줄이 받는다.
+     */
+    tabLevel: tabLevels[tab] ?? null,
     /** 바깥 묶음 -- 해·달·주. 화면의 더보기 메뉴가 바꾼다. */
     unit,
     changeUnit,
