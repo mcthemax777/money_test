@@ -99,10 +99,13 @@ function MethodCard({ method, onSelect }: { method: SpendingMethod; onSelect?: (
        * 높이를 직접 적지 않고 너비에서 비율로 잡는다. 웹과 같은 값이라 두 화면의
        * 카드 모양이 어긋나지 않는다.
        *
-       * 가장자리는 웹과 같은 shadow-sm 이다. 바탕색을 함께 두는 까닭은 안드로이드가
-       * 바탕이 없는 상자에는 그림자를 그리지 않기 때문이다 -- 앞면 그라데이션의 첫 색을 쓴다.
+       * 가장자리는 연한 회색 선(border-gray-200)과 웹과 같은 shadow-sm 이다. 안드로이드의
+       * shadow-sm 은 거의 보이지 않아 그것만으로는 웹의 가장자리가 나오지 않는다 -- 밝은 앞면
+       * (흰·은색)이 바탕에 묻히지 않게 선을 함께 둔다 (2026-10-05 사용자 요청).
+       * 바탕색을 함께 두는 까닭은 안드로이드가 바탕이 없는 상자에는 그림자를 그리지 않기
+       * 때문이다 -- 앞면 그라데이션의 첫 색을 쓴다.
        */
-      className="aspect-[85.6/53.98] overflow-hidden rounded-2xl shadow-sm"
+      className="aspect-[85.6/53.98] overflow-hidden rounded-2xl border border-gray-200 shadow-sm"
       style={{ width: CARD_WIDTH, backgroundColor: palette.faceColors[0] }}
     >
       {/*
