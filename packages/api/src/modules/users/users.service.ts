@@ -6,6 +6,7 @@ import { ProjectAccessService } from '../../common/project-access.guard';
 import { HIDDEN_ACCOUNT_TYPES } from '../accounts/accounts.service';
 import { toCardResponse } from '../cards/card-view';
 import { badRequest, notFound } from '@/common/app-error';
+import { withBalancesAsOf, withCardBalancesAsOf } from '@/common/balance-as-of';
 
 @Injectable()
 export class UsersService {
@@ -206,8 +207,9 @@ export class UsersService {
       project,
       // 카드 행을 그대로 내보내면 cardNumber 원문이 로그인 응답에 실린다.
       // /cards 목록과 같은 규칙으로 마스킹해서 내보낸다.
-      cards: cards.map((card) => toCardResponse(card)),
-      accounts,
+      // 잔액과 남은 대금은 지금까지의 것이다 (미래 날짜의 거래를 뺀다).
+      cards: (await withCardBalancesAsOf(this.prisma, cards)).map((card) => toCardResponse(card)),
+      accounts: await withBalancesAsOf(this.prisma, accounts),
       categories,
       people,
       recentEntries,

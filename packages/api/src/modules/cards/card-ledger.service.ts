@@ -32,6 +32,7 @@ import { ProjectAccessService } from '@/common/project-access.guard';
 import { toMoney } from '@/common/money';
 import { LedgerService } from '../ledger/ledger.service';
 import { notFound } from '@/common/app-error';
+import { withBalancesAsOf } from '@/common/balance-as-of';
 
 const ZERO = new Prisma.Decimal(0);
 
@@ -158,10 +159,13 @@ export class CardLedgerService {
     const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
     const span = usageSpan(months);
 
-    const liability = await this.prisma.account.findUniqueOrThrow({
-      where: { id: card.liabilityAccountId! },
-      select: { balance: true, currency: true },
-    });
+    // 남은 대금은 지금까지의 것이다. 미래 날짜로 적어 둔 사용·결제는 빼고 센다.
+    const [liability] = await withBalancesAsOf(this.prisma, [
+      await this.prisma.account.findUniqueOrThrow({
+        where: { id: card.liabilityAccountId! },
+        select: { id: true, balance: true, currency: true },
+      }),
+    ]);
 
     /*
      * 표시 구간에 걸릴 수 있는 사용만 읽는다.

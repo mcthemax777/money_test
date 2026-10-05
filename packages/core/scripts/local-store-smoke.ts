@@ -447,6 +447,50 @@ const entry = (
    */
   eq('미실현손익 (시가 - 장부가)', worth.unrealizedGain.toString(), '300000');
 
+  /*
+   * 카드 대금은 결제 통장의 묶음에 든다 (`groupOfRow`, 서버의 getNetWorth 와 같다).
+   *
+   * 따로 세운 사본에서 본다. 위 표본에 카드를 더하면 뒤의 개수 검사가 움직인다.
+   * 신용카드(a2)의 결제 통장이 마이너스통장(대출)이면 그 대금은 대출 묶음이다.
+   */
+  {
+    const groupDriver = nodeSqliteDriver();
+    const groupStore = new LocalStore(groupDriver);
+    const account = (id: string, type: string, version: number) => ({
+      id, projectId: PID, ownerId: 'p1', type, name: id, institutionId: null,
+      accountNumber: null, currency: 'KRW', balance: '0', isActive: true, sortOrder: 0,
+      updatedVersion: version,
+    });
+    await syncProject(groupStore, async () => pullResponse(9, {
+      people: [{ id: 'p1', projectId: PID, name: '김철수', relationship: null, isActive: true, sortOrder: 0, updatedVersion: 1 }],
+      accounts: [
+        account('a1', 'deposit', 2),
+        account('a2', 'credit_card', 3),
+        account('a4', 'loan', 4),
+        account('a-open', 'opening_balance', 5),
+      ],
+      cards: [{
+        id: 'card-minus', projectId: PID, paymentAccountId: 'a4', liabilityAccountId: 'a2',
+        name: '마이너스 카드', cardType: 'credit', issuerId: null, cardNumber: null,
+        statementClosingDay: 15, paymentDueDay: 25, color: null, performanceAmount: null,
+        isActive: true, sortOrder: 0, updatedVersion: 6,
+      }] as never,
+      entries: [
+        opening('g1', 'a1', '1000000', 7),
+        opening('g2', 'a2', '-50000', 8),
+        opening('g3', 'a4', '-300000', 9),
+      ],
+    }), PID, KST);
+
+    const grouped = netWorth(await groupStore.netWorthRows(PID), {
+      ledgerCurrency: 'KRW', displayCurrency: 'KRW', toDisplay: { KRW: '1' }, ledgerToDisplay: '1',
+    });
+    eq('묶음: 마이너스통장 카드 대금은 대출이다', grouped.byGroup.get('debt')?.toString(), '-350000');
+    eq('묶음: 입출금·현금은 카드 대금을 빼지 않는다', grouped.byGroup.get('cash')?.toString(), '1000000');
+    eq('묶음: 유형별로는 그대로 카드다', grouped.byType.get('credit_card')?.toString(), '-50000');
+    groupDriver.close();
+  }
+
   eq('최신 환율을 고른다 (날짜 내림차순 첫 줄)', await store.latestRate(PID, 'USD', 'KRW'), '1400');
 
   // ── 4. 델타: 전표 수정, 다리 수가 줄어든다 ──

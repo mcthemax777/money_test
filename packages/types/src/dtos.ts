@@ -20,6 +20,7 @@ import type {
   Posting,
 } from './entities';
 import type { EntryPeriodUnit } from './entry-period';
+import type { AssetGroupKey } from './net-worth-aggregation';
 import type { EntryBasis, EntrySearchQuery } from './entry-search';
 import type { RecurringFrequency, RecurringHolidayRule } from './recurring';
 
@@ -137,6 +138,11 @@ export namespace AccountDto {
 
   export interface UpdateRequest {
     name?: string;
+    /**
+     * 유형 바꾸기. 자산 탭의 묶음이 이것으로 정해진다 (입출금이던 통장을 예금으로 등).
+     * 카드 부채·자본·미지정 계정으로 바꾸거나 그것에서 바꿀 수는 없다.
+     */
+    type?: AccountType;
     /** null을 주면 기관 연결을 끊는다 */
     institutionId?: string | null;
     accountNumber?: string;
@@ -1412,6 +1418,15 @@ export namespace ReportDto {
    */
   export type NetWorthByType = Partial<Record<AccountType, string>>;
 
+  /**
+   * 네 묶음(입출금·현금 · 예적금·연금 · 투자 · 대출)별 소계. 금액이 0인 묶음은 키가 없다.
+   *
+   * byType 을 묶어서는 낼 수 없다 -- 카드 사용액은 결제 통장의 묶음에 들기 때문이다
+   * (net-worth-aggregation 의 `groupOfRow`). 이것이 없는 옛 응답이면 화면이 byType 으로
+   * 되돌아간다.
+   */
+  export type NetWorthByGroup = Partial<Record<AssetGroupKey, string>>;
+
   /** 자산 화면의 총자산 / 사람별 소계 */
   export interface NetWorth {
     /** 현금성 + 투자성 평가액 - 부채 */
@@ -1423,6 +1438,7 @@ export namespace ReportDto {
     /** 투자성 계좌 평가액 - 장부가 */
     unrealizedGain: string;
     byType: NetWorthByType;
+    byGroup?: NetWorthByGroup;
     byPerson: Array<{
       personId: string;
       personName: string;
@@ -1431,6 +1447,7 @@ export namespace ReportDto {
       investment: string;
       liability: string;
       byType: NetWorthByType;
+      byGroup?: NetWorthByGroup;
     }>;
   }
 

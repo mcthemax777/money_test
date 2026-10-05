@@ -1173,6 +1173,10 @@ export class LedgerService {
    *   기초잔액 = 목표 잔액 - (기초잔액을 뺀 나머지 거래 합계)
    * 그래서 잔액을 몇 번 고쳐도 거래내역은 기초잔액 1건뿐이고, 그 뒤의 거래는 그대로 남는다.
    *
+   * 목표는 **지금** 잔액이다. 화면이 미래 날짜의 거래를 뺀 잔액을 보여 주므로
+   * (common/balance-as-of), 나머지 합계도 지금까지의 거래만 센다. 미래의 거래는 맞춘
+   * 잔액 위에 그 날짜에 얹힌다.
+   *
    * balance 컬럼을 직접 쓰지 않는 이유는 그대로다. 자본 계정을 상대편으로 하는
    * 2-leg 전표로 남겨 "잔액 = posting 합계" 불변식을 지킨다.
    *
@@ -1225,6 +1229,7 @@ export class LedgerService {
         where: {
           accountId: input.accountId,
           ...(existing ? { entryId: { not: existing.id } } : {}),
+          entry: { date: { lte: new Date() } },
         },
       });
       const openingAmount = input.targetBalance.sub(others._sum.amount ?? ZERO);

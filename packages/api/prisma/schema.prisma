@@ -26,14 +26,24 @@ generator client {
 // Enum
 // ─────────────────────────────────────────────
 
+// 자산 탭은 이것을 넷으로 묶는다 (@money/core lib/net-worth 의 ASSET_TYPE_GROUPS).
+//   바로 쓸 돈: cash, deposit, cma, point_pay (+ credit_card 대금을 뺀다)
+//   모으는 돈: time_deposit, savings, pension
+//   투자: investment, crypto, real_estate
+//   대출: loan (마이너스통장 포함)
 enum AccountType {
-  deposit // 예금/입출금
-  savings // 저축
+  deposit // 입출금 통장
+  savings // 적금
   investment // 투자 (주식, 펀드 등)
   cash // 현금
   credit_card // 신용카드 부채
-  loan // 대출
+  loan // 대출 (마이너스통장 포함)
   real_estate // 부동산
+  time_deposit // 정기예금
+  cma // CMA
+  point_pay // 포인트·페이 (선불 충전금)
+  pension // 연금 (연금저축, IRP)
+  crypto // 암호화폐
   // 자본 계정. 계좌 개설 시점의 잔액을 전표화할 때 상대편으로 쓴다.
   // 자산이 아니므로 순자산 합계에서 반드시 제외한다.
   opening_balance

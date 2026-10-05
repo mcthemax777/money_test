@@ -68,6 +68,7 @@ import {
   classifyEntry,
   EQUITY_ACCOUNT_TYPES,
   VALUED_ACCOUNT_TYPES,
+  nonZeroAmounts,
   zonedCurrentYearMonth,
   type AccountType,
   SUPPORTED_CURRENCIES,
@@ -204,19 +205,14 @@ export function createLocalHomePort(
         ledgerToDisplay: show.rate,
       });
 
-      const byType: ReportDto.NetWorthByType = {};
-      for (const [type, amount] of result.byType) {
-        if (amount.isZero()) continue;
-        byType[type] = amount.toString();
-      }
-
       return {
         total: result.total.toString(),
         cash: result.cash.toString(),
         investment: result.investment.toString(),
         liability: result.liability.toString(),
         unrealizedGain: result.unrealizedGain.toString(),
-        byType,
+        byType: nonZeroAmounts(result.byType),
+        byGroup: nonZeroAmounts(result.byGroup),
         byPerson: result.byPerson.map((bucket) => ({
           personId: bucket.personId,
           personName: bucket.personName,
@@ -224,9 +220,8 @@ export function createLocalHomePort(
           cash: bucket.cash.toString(),
           investment: bucket.investment.toString(),
           liability: bucket.liability.toString(),
-          byType: Object.fromEntries(
-            [...bucket.byType].filter(([, v]) => !v.isZero()).map(([k, v]) => [k, v.toString()]),
-          ) as ReportDto.NetWorthByType,
+          byType: nonZeroAmounts(bucket.byType),
+          byGroup: nonZeroAmounts(bucket.byGroup),
         })),
       };
     },
@@ -1610,9 +1605,15 @@ function periodKeys(period: ReportPeriod): { fromDateKey: string; toDateKey: str
 
 /**
  * 수익을 따로 세는 계좌. 서버 `reports.service` 의 PROFIT_TYPES 와 같다 -- 원금은 이체로 넣고
- * 불어난 몫은 수입으로 붙는 계좌들이다 (투자는 배당·매매 차익, 저축은 이자).
+ * 불어난 몫은 수입으로 붙는 계좌들이다 (투자는 배당·매매 차익, 예적금·연금은 이자·운용 수익).
  */
-const PROFIT_ACCOUNT_TYPES: readonly string[] = ['investment', 'savings'];
+const PROFIT_ACCOUNT_TYPES: readonly string[] = [
+  'investment',
+  'crypto',
+  'savings',
+  'time_deposit',
+  'pension',
+];
 
 /**
  * 통화쌍 하나의 환율. 서버 `ExchangeRatesService.getRate` 와 같은 차례다.

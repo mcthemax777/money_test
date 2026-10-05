@@ -1,10 +1,9 @@
 import { useMemo, type ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import type { ReportDto } from '@money/types';
 
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatAmountWithUnit, formatCurrency } from '@money/core/lib/money';
-import { ASSET_TYPE_GROUPS, assetGroupAmount } from '@money/core/lib/net-worth';
+import { ASSET_TYPE_GROUPS, assetGroupAmount, type NetWorthParts } from '@money/core/lib/net-worth';
 import { useAssetTypeFilter } from '@money/core/store/asset-type-filter';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 
@@ -15,11 +14,12 @@ import { useProjectDisplayCurrency } from '@money/core/store/project';
  * 금액이 문장에 나온다. 어느 것을 켜 뒀는지는 기기에 남는다.
  */
 export default function AssetTypeSummary({
-  byType,
+  parts,
   scopeTitle,
   hasNoScope,
 }: {
-  byType: ReportDto.NetWorthByType | undefined;
+  /** 총자산 응답(또는 고른 사람들의 합). 묶음별 소계를 여기서 읽는다. */
+  parts: Pick<NetWorthParts, 'byType' | 'byGroup'> | undefined;
   /** 문장 앞머리에 들어가는 자산주인 제목. 이 화면의 제목을 겸한다. */
   scopeTitle: ReactNode;
   /** 자산주인을 하나도 고르지 않았는지. 그때는 금액 대신 그 사실을 적는다. */
@@ -33,10 +33,10 @@ export default function AssetTypeSummary({
   const { total, label } = useMemo(() => {
     const selected = ASSET_TYPE_GROUPS.filter((group) => selectedKeys.includes(group.key));
     return {
-      total: selected.reduce((acc, group) => acc + assetGroupAmount(byType, group.types), 0),
+      total: selected.reduce((acc, group) => acc + assetGroupAmount(parts, group), 0),
       label: selected.map((group) => t(group.labelKey)).join(', '),
     };
-  }, [byType, selectedKeys, t]);
+  }, [parts, selectedKeys, t]);
 
   return (
     <View className="gap-4">
@@ -83,7 +83,7 @@ export default function AssetTypeSummary({
       */}
       <View className="flex-row flex-wrap">
         {ASSET_TYPE_GROUPS.map((group) => {
-          const amount = assetGroupAmount(byType, group.types);
+          const amount = assetGroupAmount(parts, group);
           const isSelected = selectedKeys.includes(group.key);
 
           return (

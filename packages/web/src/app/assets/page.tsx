@@ -14,7 +14,13 @@ import { useRouter } from 'next/navigation';
 import { apiClient } from '@money/core/lib/api-client';
 import type { Account, Card, Category, LedgerLikeRow, Person } from '@money/core/lib/types';
 import { formatCurrency, toAmountString, toNumber } from '@money/core/lib/money';
-import { sumNetWorth, type NetWorthParts } from '@money/core/lib/net-worth';
+import {
+  ASSET_TYPE_GROUPS,
+  assetGroupAmount,
+  groupAccountsByAsset,
+  sumNetWorth,
+  type NetWorthParts,
+} from '@money/core/lib/net-worth';
 import { accountDueOf } from '@money/core/lib/card-settlement';
 import { mergeOrder } from '@money/core/lib/reorder';
 import {
@@ -143,6 +149,7 @@ function AssetMetaLine({ parts }: { parts: AssetMetaPart[] }) {
  * 아직 정산하지 않은 것이 있을 때만 적는다. 0원을 적어 두면 다 갚은 카드가 밀린
  * 카드와 같은 무게로 보인다. 체크카드는 결제 즉시 통장에서 빠져 갚을 것이 남지 않는다.
  *
+ * 금액만 두면 이번 달 사용액인지 남은 대금인지 알 수 없어 앞에 이름을 붙인다.
  * 음수는 카드사가 갚을 돈이다(사용을 취소했거나 대금을 더 가져간 뒤). 부호만 바꿔
  * 적으면 빚으로 읽히므로 이름과 색을 함께 바꾼다 -- 정산 판과 같은 규칙이다.
  */
@@ -163,9 +170,9 @@ function CardOutstanding({ card, currency }: { card: Card; currency: string }) {
         refundPending ? 'text-emerald-700' : 'text-red-600'
       }`}
     >
-      {refundPending && (
-        <span className="mr-1 text-xs font-medium">{t('settlement.refundPending')}</span>
-      )}
+      <span className="mr-1 text-xs font-medium">
+        {t(refundPending ? 'settlement.refundPending' : 'settlement.remaining')}
+      </span>
       {formatCurrency(Math.abs(outstanding), currency)}
     </p>
   );
@@ -556,11 +563,10 @@ function AssetDetailHeader({
 }
 
 /**
- * "현금성 · 투자 · 부채" 한 줄.
+ * 네 묶음(입출금·현금 · 예적금·연금 · 투자 · 대출)의 금액 한 줄.
  *
- * 전체 총자산 상자와 구성원 패널이 같은 형식을 쓴다.
- *
- * 부채도 투자도 없으면 총자산이 곧 현금성이라 쪼갤 것이 없어 아무것도 그리지 않는다.
+ * 구성원 패널이 쓴다. 나누는 규칙은 맨 위 유형 카드와 같다 (`ASSET_TYPE_GROUPS`).
+ * 금액이 있는 묶음이 하나뿐이면 총자산이 곧 그것이라 쪼갤 것이 없어 그리지 않는다.
  */
 function NetWorthBreakdown({
   parts,
@@ -573,15 +579,17 @@ function NetWorthBreakdown({
   const displayCurrency = useProjectDisplayCurrency();
 
   if (!parts) return null;
-  if (toNumber(parts.liability) === 0 && toNumber(parts.investment) === 0) return null;
+  const amounts = ASSET_TYPE_GROUPS.map((group) => ({
+    group,
+    amount: assetGroupAmount(parts, group),
+  })).filter((row) => row.amount !== 0);
+  if (amounts.length < 2) return null;
 
   return (
     <p className={className}>
-      {t('assets.parts', {
-        cash: formatCurrency(parts.cash, displayCurrency),
-        investment: formatCurrency(parts.investment, displayCurrency),
-        liability: formatCurrency(parts.liability, displayCurrency),
-      })}
+      {amounts
+        .map(({ group, amount }) => `${t(group.labelKey)} ${formatCurrency(amount, displayCurrency)}`)
+        .join(' · ')}
     </p>
   );
 }
@@ -1481,7 +1489,7 @@ export default function DashboardPage() {
       */}
       <div className={hideOnNarrow}>
         <AssetTypeSummary
-          byType={scopedNetWorth?.byType}
+          parts={scopedNetWorth ?? undefined}
           hasNoScope={people.length > 0 && selectedPersonIds.length === 0}
           scopeTitle={
             <PersonScopeTitle
@@ -2525,7 +2533,7 @@ function AssetList({
   people: Person[];
   accounts: Account[];
   cardsOf: (accountId: string) => Card[];
-  netWorthByPerson: Map<string, { total: string }>;
+  netWorthByPerson: Map<string, Pick<NetWorthParts, 'byType' | 'byGroup'> & { total: string }>;
   /** 투자·저축 계좌별 누적 수익. 계좌 id -> 금액 */
   accountProfit: Map<string, string>;
   selected: SelectedItem;
@@ -2586,16 +2594,35 @@ function AssetList({
                 {owned.length === 0 ? (
                   <p className="px-4 py-3 text-sm text-gray-600">{t('assets.noAccounts')}</p>
                 ) : (
-                  <AccountList
-                    accounts={owned}
-                    cardsOf={cardsOf}
-                    accountProfit={accountProfit}
-                    selected={selected}
-                    onAccountClick={onAccountClick}
-                    onCardClick={onCardClick}
-                    onReorder={onReorderAccounts}
-                    onReorderCards={onReorderCards}
-                  />
+                  /*
+                    상자 안을 네 묶음(입출금·현금 · 예적금·연금 · 투자 · 대출)으로 나눈다.
+                    묶음 이름 옆의 금액은 맨 위 유형 카드와 같은 셈이라, 바로 쓸 돈에는
+                    카드 대금이 빠져 있다. 끌어 옮기기는 묶음 안에서만 된다 -- 유형을
+                    바꾸는 일이 아니라 차례를 바꾸는 일이기 때문이다.
+                  */
+                  groupAccountsByAsset(owned).map(({ group, accounts: grouped }) => (
+                    <div key={group.key}>
+                      <div className="flex items-center justify-between gap-3 border-t border-gray-100 px-4 pb-1 pt-2 text-xs font-medium text-gray-500">
+                        <span>{t(group.labelKey)}</span>
+                        <span className="tabular-nums">
+                          {formatCurrency(
+                            assetGroupAmount(netWorthByPerson.get(person.id), group),
+                            displayCurrency,
+                          )}
+                        </span>
+                      </div>
+                      <AccountList
+                        accounts={grouped}
+                        cardsOf={cardsOf}
+                        accountProfit={accountProfit}
+                        selected={selected}
+                        onAccountClick={onAccountClick}
+                        onCardClick={onCardClick}
+                        onReorder={onReorderAccounts}
+                        onReorderCards={onReorderCards}
+                      />
+                    </div>
+                  ))
                 )}
               </div>
             );
@@ -2671,8 +2698,8 @@ function AccountList({
                 왼쪽에 계좌명, 오른쪽 끝에 남은 금액이다. 어느 계좌인지 먼저 알아야 하고,
                 금액은 오른쪽 끝에 모여 있어야 위아래로 훑으며 견줄 수 있다.
 
-                유형은 총자산을 현금성·투자·부채로 나누는 기준이라 목록에서 바로 보여야
-                하므로 계좌명 옆에 붙인다.
+                유형은 묶음보다 잘게 나눈 이름이라(같은 예적금·연금 안의 예금과 적금)
+                계좌명 옆에 붙인다.
               */}
               <div className="flex items-center justify-between gap-3">
                 <span className="flex min-w-0 items-center gap-1.5">
@@ -2685,8 +2712,15 @@ function AccountList({
                   잔액이 아니라 카드 대금을 뺀 남은 금액이다. 통장에 찍힌 돈에는 카드사가
                   이미 가져가기로 된 몫이 섞여 있어, 잔액만 보면 쓸 수 있는 돈을 그만큼
                   부풀려 읽는다.
+
+                  마이너스면 빨강이다 (아래 잔액도 같다). 대출·마이너스통장처럼 갚을 돈이
+                  남은 계좌를 훑어보며 바로 가려낼 수 있어야 한다.
                 */}
-                <span className="shrink-0 text-base font-bold tabular-nums text-gray-900">
+                <span
+                  className={`shrink-0 text-base font-bold tabular-nums ${
+                    remaining < 0 ? 'text-red-600' : 'text-gray-900'
+                  }`}
+                >
                   {formatCurrency(remaining, account.currency)}
                 </span>
               </div>
@@ -2709,7 +2743,11 @@ function AccountList({
                     <AssetMetaLine parts={metaParts} />
                   </div>
                   {balanceLine && (
-                    <span className="shrink-0 text-xs font-medium tabular-nums text-gray-700">
+                    <span
+                      className={`shrink-0 text-xs font-medium tabular-nums ${
+                        toNumber(account.balance) < 0 ? 'text-red-600' : 'text-gray-700'
+                      }`}
+                    >
                       {balanceLine}
                     </span>
                   )}

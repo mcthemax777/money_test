@@ -87,11 +87,16 @@ export function entrySheetKindOf(value: string | undefined): EntrySheetKind | nu
  * "현금"이면 현금, 그 밖에는 통장이다 (2026-09-30, 사용자 결정).
  */
 export const ENTRY_SHEET_ASSET_TYPES = {
-  deposit: ['통장', 'deposit', '입출금', '예금', '계좌', '은행'],
+  deposit: ['통장', 'deposit', '입출금', '계좌', '은행'],
+  time_deposit: ['예금', '정기예금', 'time_deposit'],
   savings: ['적금', 'savings', '저축'],
+  cma: ['CMA'],
+  point_pay: ['포인트·페이', '포인트', '페이', 'point_pay'],
+  pension: ['연금', 'IRP', 'pension'],
   investment: ['투자', 'investment', '증권'],
+  crypto: ['암호화폐', '코인', '가상자산', 'crypto'],
   cash: ['현금', 'cash'],
-  loan: ['대출', 'loan'],
+  loan: ['대출', '마이너스통장', 'loan'],
   debit_card: ['체크카드', 'debit', '체크'],
   credit_card: ['신용카드', 'credit', '신용'],
 } as const;

@@ -432,6 +432,15 @@ const asIso = (value: unknown): string =>
   value instanceof Date ? value.toISOString() : String(value ?? '');
 
 /**
+ * 잔액을 셀 때 `asOf` 뒤 날짜의 전표를 빼는 조건. 별칭 `e` 의 entry 와 함께 쓴다.
+ *
+ * entry.date 는 늘 `toISOString()` 꼴로 담기므로(`asIso`, `local-entry-writer`) 문자열
+ * 견주기가 곧 시각 견주기다. null 이면 자르지 않는다.
+ */
+const asOfClause = (asOf: Date | null): { sql: string; params: string[] } =>
+  asOf ? { sql: ' AND e.date <= ?', params: [asOf.toISOString()] } : { sql: '', params: [] };
+
+/**
  * 설정 엔티티가 사는 표. 필드별 병합과 순서 값을 갖는다.
  *
  * 예산 조정(budget_override)은 순서가 없지만 같은 길로 쓴다 -- 키가 (예산, 년, 월)이라
@@ -1147,8 +1156,16 @@ export class LocalStore {
    *
    * 더하는 일은 SQL 이 아니라 Dec 가 한다 (`bookValues` 와 같은 까닭이다 -- SQLite 의
    * SUM 은 REAL 로 되돌려 원 단위가 어긋난다).
+   *
+   * `asOf` 뒤 날짜의 전표는 세지 않는다 (서버의 `balancesAsOf` 와 같은 규칙). 미리 적어 둔
+   * 다음 주 월급이 오늘 통장에 있는 것처럼 보이면 안 된다. null 이면 전부 센다 -- 지울 수
+   * 있는지 볼 때는 미래의 거래도 잔액이다.
    */
-  async accountBalances(projectId: string): Promise<Map<string, string>> {
+  async accountBalances(
+    projectId: string,
+    asOf: Date | null = new Date(),
+  ): Promise<Map<string, string>> {
+    const cut = asOfClause(asOf);
     const [seeds, rows] = await Promise.all([
       this.db.all<Row>(
         `SELECT a.id, a.balance, a.updatedVersion FROM account a WHERE a.projectId = ?`,
@@ -1158,8 +1175,9 @@ export class LocalStore {
         `SELECT p.accountId, p.amount
            FROM posting p
            JOIN account a ON a.id = p.accountId
-          WHERE a.projectId = ?`,
-        [projectId],
+           JOIN entry e ON e.id = p.entryId
+          WHERE a.projectId = ?${cut.sql}`,
+        [projectId, ...cut.params],
       ),
     ]);
 
@@ -1173,14 +1191,19 @@ export class LocalStore {
     return new Map([...totals].map(([id, total]) => [id, total.toString()]));
   }
 
-  /** 계좌 하나의 잔액. 카드 상세처럼 한 계좌만 볼 때 쓴다. */
+  /** 계좌 하나의 지금 잔액. 카드 상세처럼 한 계좌만 볼 때 쓴다. */
   async accountBalance(accountId: string): Promise<string> {
+    const cut = asOfClause(new Date());
     const [seeds, rows] = await Promise.all([
       this.db.all<Row>(
         `SELECT a.id, a.balance, a.updatedVersion FROM account a WHERE a.id = ?`,
         [accountId],
       ),
-      this.db.all<Row>(`SELECT p.amount FROM posting p WHERE p.accountId = ?`, [accountId]),
+      this.db.all<Row>(
+        `SELECT p.amount FROM posting p JOIN entry e ON e.id = p.entryId
+          WHERE p.accountId = ?${cut.sql}`,
+        [accountId, ...cut.params],
+      ),
     ]);
 
     let total = seeds[0] ? openingSeed(seeds[0]) : Dec.of(0);
@@ -1199,14 +1222,29 @@ export class LocalStore {
     const rows = (await this.accounts(projectId)).filter((row) => row.isActive);
     if (rows.length === 0) return [];
 
-    const [marketValues, bookValues] = await Promise.all([
+    const [marketValues, bookValues, paymentTypes] = await Promise.all([
       this.latestMarketValues(projectId),
       this.bookValues(projectId),
+      /*
+       * 카드 부채 계정마다 결제 통장의 유형. 카드 대금을 그 통장의 묶음에 넣는다
+       * (`groupOfRow`, 서버의 getNetWorth 와 같다).
+       */
+      this.db.all<Row>(
+        `SELECT c.liabilityAccountId AS id, pay.type AS type
+           FROM card c
+           JOIN account pay ON pay.id = c.paymentAccountId
+          WHERE c.projectId = ? AND c.liabilityAccountId IS NOT NULL`,
+        [projectId],
+      ),
     ]);
+    const paymentTypeOf = new Map(
+      paymentTypes.map((row) => [String(row.id), String(row.type) as NetWorthAccountRow['type']]),
+    );
 
     return rows.map((row) => ({
       id: row.id,
       type: row.type as NetWorthAccountRow['type'],
+      paymentAccountType: paymentTypeOf.get(row.id) ?? null,
       currency: row.currency,
       balance: row.balance,
       ownerId: row.ownerId,
@@ -1240,9 +1278,11 @@ export class LocalStore {
    * 계좌마다 장부가. 그 계좌 다리의 저장 통화 합계다.
    *
    * 구간을 두지 않는 것은 서버와 같다. 장부가는 "이 계좌에 그동안 얼마가 들어갔나"라서
-   * 전 기간 합계여야 시가와 나란히 놓고 미실현손익을 낼 수 있다.
+   * 전 기간 합계여야 시가와 나란히 놓고 미실현손익을 낼 수 있다. 다만 잔액처럼 지금 뒤의
+   * 전표는 빼야 잔액과 같은 다리를 센다.
    */
   private async bookValues(projectId: string): Promise<Map<string, string>> {
+    const cut = asOfClause(new Date());
     /*
      * 더하는 일은 SQL 이 아니라 Dec 가 한다.
      *
@@ -1254,8 +1294,9 @@ export class LocalStore {
       `SELECT p.accountId, p.baseAmount
          FROM posting p
          JOIN account a ON a.id = p.accountId
-        WHERE a.projectId = ?`,
-      [projectId],
+         JOIN entry e ON e.id = p.entryId
+        WHERE a.projectId = ?${cut.sql}`,
+      [projectId, ...cut.params],
     );
 
     const totals = new Map<string, Dec>();
@@ -2194,6 +2235,8 @@ export class LocalStore {
     projectId: string,
     input: { accountId: string; balance: string; openingEntryId: string; hlc: string },
   ): Promise<void> {
+    // 맞추는 것은 지금 잔액이다 (`accountBalances`). 미래 날짜의 거래는 그 위에 얹힌다.
+    const cut = asOfClause(new Date());
     const project = await this.projectRow(projectId);
     const timeZone = project?.timeZone ?? 'Asia/Seoul';
     const ledgerCurrency = project?.ledgerCurrency ?? 'KRW';
@@ -2209,7 +2252,11 @@ export class LocalStore {
      * 명령을 재생한 뒤 이 명령으로 기초잔액 전표를 다시 계산한다.
      */
     if (account && asInt(account.updatedVersion) === 0) {
-      const legs = await this.db.all<Row>(`SELECT amount FROM posting WHERE accountId = ?`, [input.accountId]);
+      const legs = await this.db.all<Row>(
+        `SELECT p.amount FROM posting p JOIN entry e ON e.id = p.entryId
+          WHERE p.accountId = ?${cut.sql}`,
+        [input.accountId, ...cut.params],
+      );
       const seed = Dec.of(input.balance).minus(Dec.sum(legs.map((row) => Dec.of(asMoney(row.amount)))));
       await this.db.run(`UPDATE account SET balance = ? WHERE id = ?`, [seed.toString(), input.accountId]);
       return;
@@ -2231,8 +2278,9 @@ export class LocalStore {
     const openingId = opening ? String(opening.id) : null;
 
     const others = await this.db.all<Row>(
-      `SELECT amount FROM posting WHERE accountId = ?${openingId ? ' AND entryId <> ?' : ''}`,
-      openingId ? [input.accountId, openingId] : [input.accountId],
+      `SELECT p.amount FROM posting p JOIN entry e ON e.id = p.entryId
+        WHERE p.accountId = ?${openingId ? ' AND p.entryId <> ?' : ''}${cut.sql}`,
+      [input.accountId, ...(openingId ? [openingId] : []), ...cut.params],
     );
     const openingAmount = Dec.of(input.balance).minus(
       Dec.sum(others.map((row) => Dec.of(asMoney(row.amount)))),
@@ -2308,7 +2356,8 @@ export class LocalStore {
       return records > 0 ? 'PERSON_HAS_RECORDS' : null;
     }
 
-    const balances = await this.accountBalances(projectId);
+    // 미래 날짜의 거래도 잔액이다. 그것이 남은 계좌를 지우면 그 거래가 갈 곳이 없다.
+    const balances = await this.accountBalances(projectId, null);
     if (kind === 'account') {
       if ((await count(`SELECT count(*) AS n FROM card WHERE paymentAccountId = ? AND isActive = 1`, [id])) > 0) {
         return 'ACCOUNT_HAS_CARDS';

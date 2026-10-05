@@ -19,6 +19,7 @@ import {
 } from '@/common/entry-filter';
 import { assertDateKey, assertYearMonth } from '@/common/year-month';
 import { PAYBACK_DATE_SELECT, analysisDateOf, analysisScopes } from '@/common/payback-scope';
+import { withBalancesAsOf } from '@/common/balance-as-of';
 import {
   INSTALLMENT_LEG_SELECT,
   type InstallmentLeg,
@@ -61,6 +62,7 @@ import {
   paymentMethods,
   EQUITY_ACCOUNT_TYPES,
   VALUED_ACCOUNT_TYPES,
+  nonZeroAmounts,
   shiftYearMonth,
   summarize,
   weekStartKey,
@@ -84,9 +86,16 @@ const ZERO = new Prisma.Decimal(0);
  * 수익을 따로 계산해 보여 주는 계정.
  *
  * 원금은 이체로 넣고 불어난 몫은 수입으로 붙는 계좌들이다(투자는 배당·매매 차익,
- * 저축은 이자). 잔액만 보면 원금인지 수익인지 구별되지 않는다.
+ * 예적금·연금은 이자·운용 수익). 잔액만 보면 원금인지 수익인지 구별되지 않는다.
+ * 기기의 `PROFIT_ACCOUNT_TYPES`(local-home-port)와 같은 목록이다.
  */
-const PROFIT_TYPES: AccountType[] = [AccountType.investment, AccountType.savings];
+const PROFIT_TYPES: AccountType[] = [
+  AccountType.investment,
+  AccountType.crypto,
+  AccountType.savings,
+  AccountType.time_deposit,
+  AccountType.pension,
+];
 
 @Injectable()
 export class ReportsService {
@@ -418,14 +427,22 @@ export class ReportsService {
   async getNetWorth(userId: string, projectId?: string): Promise<ReportDto.NetWorth> {
     const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
 
-    const accounts = await this.prisma.account.findMany({
-      where: {
-        projectId: finalProjectId,
-        isActive: true,
-        type: { notIn: [...EQUITY_ACCOUNT_TYPES] as AccountType[] },
-      },
-      include: { owner: { select: { id: true, name: true } } },
-    });
+    // 잔액은 지금까지의 것이다. 미래 날짜로 적어 둔 거래는 아직 자산이 아니다.
+    const accounts = await withBalancesAsOf(
+      this.prisma,
+      await this.prisma.account.findMany({
+        where: {
+          projectId: finalProjectId,
+          isActive: true,
+          type: { notIn: [...EQUITY_ACCOUNT_TYPES] as AccountType[] },
+        },
+        include: {
+          owner: { select: { id: true, name: true } },
+          // 카드 대금을 결제 통장의 묶음에 넣으려고 그 통장의 유형을 함께 읽는다 (groupOfRow).
+          cardAsLiability: { select: { paymentAccount: { select: { type: true } } } },
+        },
+      }),
+    );
     if (accounts.length === 0) return emptyNetWorth();
 
     // 투자성 계좌의 최신 평가액
@@ -461,6 +478,7 @@ export class ReportsService {
     const rows: NetWorthAccountRow[] = accounts.map((account) => ({
       id: account.id,
       type: account.type,
+      paymentAccountType: account.cardAsLiability?.paymentAccount.type ?? null,
       currency: account.currency,
       balance: account.balance,
       ownerId: account.owner?.id ?? null,
@@ -483,7 +501,8 @@ export class ReportsService {
       investment: result.investment.toString(),
       liability: result.liability.toString(),
       unrealizedGain: result.unrealizedGain.toString(),
-      byType: serializeByType(result.byType),
+      byType: nonZeroAmounts(result.byType),
+      byGroup: nonZeroAmounts(result.byGroup),
       byPerson: result.byPerson.map((bucket) => ({
         personId: bucket.personId,
         personName: bucket.personName,
@@ -491,7 +510,8 @@ export class ReportsService {
         cash: bucket.cash.toString(),
         investment: bucket.investment.toString(),
         liability: bucket.liability.toString(),
-        byType: serializeByType(bucket.byType),
+        byType: nonZeroAmounts(bucket.byType),
+        byGroup: nonZeroAmounts(bucket.byGroup),
       })),
     };
   }
@@ -1312,7 +1332,7 @@ export class ReportsService {
    *
    * 외화 계좌의 balance는 그 통화라서 순자산에 바로 못 넣는다. 장부가는 거래마다
    * 그때의 환율로 쌓인 baseAmount 합계이고, 최신 환율로 환산한 값과의 차이가
-   * 미실현 환차손익이 된다.
+   * 미실현 환차손익이 된다. 잔액과 같은 다리를 세도록 지금 뒤의 전표는 뺀다.
    */
   private async bookValuesOf(accountIds: string[]) {
     if (accountIds.length === 0) return new Map<string, Prisma.Decimal>();
@@ -1320,7 +1340,7 @@ export class ReportsService {
     const rows = await this.prisma.posting.groupBy({
       by: ['accountId'],
       _sum: { baseAmount: true },
-      where: { accountId: { in: accountIds } },
+      where: { accountId: { in: accountIds }, entry: { date: { lte: new Date() } } },
     });
     return new Map(
       rows.map((row) => [row.accountId!, row._sum.baseAmount ?? ZERO] as const),
@@ -1363,18 +1383,9 @@ function emptyNetWorth(): ReportDto.NetWorth {
     liability: '0',
     unrealizedGain: '0',
     byType: {},
+    byGroup: {},
     byPerson: [],
   };
-}
-
-/** 유형별 소계를 응답 형태로. 0인 유형은 넣지 않는다 (없는 것과 뜻이 같다). */
-function serializeByType(byType: Map<AccountType, Dec>): ReportDto.NetWorthByType {
-  const result: ReportDto.NetWorthByType = {};
-  for (const [type, amount] of byType) {
-    if (amount.isZero()) continue;
-    result[type] = amount.toString();
-  }
-  return result;
 }
 
 

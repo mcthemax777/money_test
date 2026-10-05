@@ -18,7 +18,7 @@ import { isOfflineError } from '../lib/offline-error';
 import { useMirrorVersion } from './useMirrorVersion';
 import { apiErrorCode, useApiError } from '../lib/api-error';
 import type { MessageKey } from '../lib/i18n';
-import { sumNetWorth } from '../lib/net-worth';
+import { assetGroupOf, sumNetWorth } from '../lib/net-worth';
 import type { Account, Card, Person } from '../lib/types';
 import { useProject } from '../store/project';
 import { useUserFilter } from '../store/user-filter';
@@ -288,6 +288,20 @@ export function useAssetsData(projectId: string | null) {
     [],
   );
 
+  /**
+   * 통장이 자리를 옮기는 묶음. 같은 주인의 **같은 자산 묶음**(입출금·현금 · 예적금·연금 ·
+   * 투자 · 대출)이다. 화면이 사람 상자 안을 그 넷으로 나눠 그리므로, 이웃도 그 안에서
+   * 골라야 끌어 놓은 자리와 한 칸 옮기기가 보이는 대로 움직인다.
+   */
+  const siblingAccounts = (id: string, ownerId: string | null) => {
+    const moved = accounts.find((account) => account.id === id);
+    const group = moved ? assetGroupOf(moved.type) : null;
+    return accounts.filter(
+      (account) =>
+        account.ownerId === ownerId && (group === null || assetGroupOf(account.type) === group),
+    );
+  };
+
   const allPeopleSelected = people.length > 0 && selectedPersonIds.length === people.length;
 
   /**
@@ -341,12 +355,7 @@ export function useAssetsData(projectId: string | null) {
     /** 한 칸 위로(-1) 또는 아래로(+1). 같은 묶음 안에서만 움직인다. */
     movePerson: (id: string, step: 1 | -1) => moveWithin(people, id, { step }, updatePerson),
     moveAccount: (id: string, ownerId: string | null, step: 1 | -1) =>
-      moveWithin(
-        accounts.filter((account) => account.ownerId === ownerId),
-        id,
-        { step },
-        updateAccount,
-      ),
+      moveWithin(siblingAccounts(id, ownerId), id, { step }, updateAccount),
     /*
      * 끌어다 놓은 자리로. `index` 는 그 묶음 안에서 놓은 뒤의 자리다.
      *
@@ -355,12 +364,7 @@ export function useAssetsData(projectId: string | null) {
      */
     movePersonTo: (id: string, index: number) => moveWithin(people, id, { index }, updatePerson),
     moveAccountTo: (id: string, ownerId: string | null, index: number) =>
-      moveWithin(
-        accounts.filter((account) => account.ownerId === ownerId),
-        id,
-        { index },
-        updateAccount,
-      ),
+      moveWithin(siblingAccounts(id, ownerId), id, { index }, updateAccount),
     moveCardTo: (id: string, paymentAccountId: string, index: number) =>
       moveWithin(
         cards.filter((card) => card.paymentAccountId === paymentAccountId),

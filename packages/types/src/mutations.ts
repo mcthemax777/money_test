@@ -13,7 +13,7 @@
  * 다르다 -- 전표는 통째로, 설정은 **필드별로** 늦은 값이 이긴다 (설계 문서의 D5).
  */
 
-import type { CardTransferDirection, EntryKind, IsoDateString } from './entities';
+import type { AccountType, CardTransferDirection, EntryKind, IsoDateString } from './entities';
 
 /**
  * 다룰 수 있는 명령. 화면의 개념 그대로다.
@@ -382,6 +382,8 @@ export interface AccountCreatePayload {
 export interface AccountUpdatePayload {
   id: string;
   name?: string;
+  /** 유형. 자산 탭의 묶음이 이것으로 정해진다. */
+  type?: AccountType;
   ownerId?: string | null;
   institutionId?: string | null;
   accountNumber?: string | null;

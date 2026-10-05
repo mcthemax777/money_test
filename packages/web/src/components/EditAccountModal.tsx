@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { apiClient } from '@money/core/lib/api-client';
-import type { Account, Person } from '@money/core/lib/types';
-import { NO_BANK_TYPES } from '@money/core/lib/account-type';
+import type { Account, AccountType, Person } from '@money/core/lib/types';
+import { ACCOUNT_TYPE_OPTIONS, NO_BANK_TYPES } from '@money/core/lib/account-type';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toAmountString } from '@money/core/lib/money';
 import MatchTextField from '@/components/MatchTextField';
@@ -20,6 +20,8 @@ const FORM_ID = 'edit-account-form';
 const EMPTY_FORM = {
   ownerId: '',
   name: '',
+  /** 유형. 자산 탭의 묶음이 이것으로 정해진다. */
+  type: '' as AccountType | '',
   institutionId: '',
   accountNumber: '',
   /** 알림에서 이 통장을 알아보는 말. 여러 줄이다. */
@@ -56,7 +58,9 @@ export default function EditAccountModal({
   const [error, setError] = useState('');
   const { options: bankOptions, error: bankError } = useInstitutions('bank');
 
-  const needsBankName = !!account && !NO_BANK_TYPES.includes(account.type);
+  // 고르는 중인 유형을 따른다. 기관이 없는 유형으로 바꾸면 그 칸이 사라지고 연결도 끊는다.
+  const editingType = formData.type || account?.type || '';
+  const needsBankName = !!account && !NO_BANK_TYPES.includes(editingType);
 
   // isOpen을 의존성에 넣는 이유: 닫을 때 폼을 비우므로, 같은 계좌 객체(참조 동일)로
   // 다시 열면 account만 볼 때는 effect가 재실행되지 않아 빈 폼이 보였다.
@@ -65,6 +69,7 @@ export default function EditAccountModal({
       setFormData({
         ownerId: account.ownerId ?? '',
         name: account.name,
+        type: account.type,
         institutionId: account.institutionId ?? '',
         accountNumber: account.accountNumber || '',
         matchText: account.matchText ?? '',
@@ -84,9 +89,14 @@ export default function EditAccountModal({
       // 계좌 주인은 원장에 이미 반영돼 있어 바꾸지 않는다.
       await apiClient.updateAccountV2(account.id, {
         name: formData.name,
+        ...(formData.type && formData.type !== account.type ? { type: formData.type } : {}),
         balance: toAmountString(formData.balance),
         // 기관을 비우면 null을 보내 연결을 끊는다. ''를 그대로 보내면 서버가 없는 id로 본다.
-        ...(needsBankName ? { institutionId: formData.institutionId || null } : {}),
+        ...(needsBankName
+          ? { institutionId: formData.institutionId || null }
+          : account.institutionId
+            ? { institutionId: null }
+            : {}),
         ...(formData.accountNumber && { accountNumber: formData.accountNumber }),
         // 비우면 빈 문자열을 보내 지운다. 적어 둔 말을 지울 길이 있어야 한다.
         matchText: formData.matchText,
@@ -178,6 +188,24 @@ export default function EditAccountModal({
             onChange={(e) => setFormData({ ...formData, name: e.target.value })}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             placeholder={t('account.namePlaceholder')}
+          />
+        </div>
+
+        {/*
+          유형을 바꾸면 자산 탭에서 다른 묶음으로 옮겨 간다 (입출금으로 만든 정기예금,
+          대출로 옮길 마이너스통장). 고를 수 있는 목록은 만들 때와 같다.
+        */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-1">
+            {t('account.type')}
+          </label>
+          <CustomSelect
+            options={ACCOUNT_TYPE_OPTIONS.map((option) => ({
+              id: option.id,
+              name: t(option.nameKey),
+            }))}
+            value={editingType}
+            onChange={(value) => setFormData({ ...formData, type: value as AccountType })}
           />
         </div>
 

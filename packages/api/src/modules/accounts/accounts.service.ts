@@ -18,6 +18,7 @@ import { assertReorderIds } from '@/common/reorder';
 import { toMoney, toOptionalMoney } from '@/common/money';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { badRequest } from '@/common/app-error';
+import { withBalancesAsOf } from '@/common/balance-as-of';
 
 /*
  * 사용자가 "통장"으로 인식하지 않는 내부 계정.
@@ -31,6 +32,8 @@ export { HIDDEN_ACCOUNT_TYPES };
 const NO_INSTITUTION_TYPES: AccountType[] = [
   AccountType.cash,
   AccountType.real_estate,
+  AccountType.point_pay,
+  AccountType.crypto,
   AccountType.opening_balance,
 ];
 
@@ -165,7 +168,7 @@ export class AccountsService {
   async getAccounts(userId: string, projectId?: string, includeInactive = false) {
     const finalProjectId = await this.projectAccess.resolveAndVerifyProjectId(userId, projectId);
 
-    return this.prisma.account.findMany({
+    const accounts = await this.prisma.account.findMany({
       where: {
         projectId: finalProjectId,
         ...(includeInactive ? {} : { isActive: true }),
@@ -175,6 +178,8 @@ export class AccountsService {
       // 사용자가 드래그로 정한 순서. 같으면 최근에 만든 것부터.
       orderBy: [{ sortRank: 'asc' }, { createdAt: 'desc' }],
     });
+    // 잔액은 지금까지의 것이다. 미래 날짜로 적어 둔 거래는 빼고 내보낸다.
+    return withBalancesAsOf(this.prisma, accounts);
   }
 
   /** 드래그로 바꾼 표시 순서 저장 */
@@ -214,13 +219,31 @@ export class AccountsService {
     if (!account) throw new NotFoundException('통장을 찾을 수 없습니다.');
 
     await this.projectAccess.verifyUserHasAccessToProject(userId, account.projectId, requiredRole);
-    return account;
+    const [current] = await withBalancesAsOf(this.prisma, [account]);
+    return current;
   }
 
   async updateAccount(id: string, userId: string, dto: AccountDto.UpdateRequest, hlc?: string) {
     const account = await this.getAccountById(id, userId, 'editor');
 
     const { balance, institutionId } = dto;
+
+    /*
+     * 유형 바꾸기. 카드 부채·자본·미지정 계정은 서버가 관리하는 내부 계정이라 그리로도,
+     * 그것에서도 바꿀 수 없다 (만들기와 같은 규칙).
+     */
+    const nextType = dto.type ?? account.type;
+    if (dto.type !== undefined && dto.type !== account.type) {
+      if (
+        HIDDEN_ACCOUNT_TYPES.includes(dto.type as AccountType) ||
+        HIDDEN_ACCOUNT_TYPES.includes(account.type)
+      ) {
+        throw new BadRequestException('이 유형으로는 바꿀 수 없습니다.');
+      }
+      if (!Object.values(AccountType).includes(dto.type as AccountType)) {
+        throw new BadRequestException('알 수 없는 계좌 유형입니다.');
+      }
+    }
 
     // 요청 본문을 스프레드로 Prisma에 넘기면 안 된다.
     // DTO가 인터페이스라 ValidationPipe(whitelist: false)가 낯선 키를 지우지 않으므로
@@ -233,6 +256,7 @@ export class AccountsService {
     // 빈 문자열은 "지우기"다. 적어 둔 말을 지울 길이 있어야 한다 (카드의 색과 같다).
     if (dto.matchText !== undefined) data.matchText = dto.matchText || null;
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    if (dto.type !== undefined && dto.type !== account.type) data.type = dto.type as AccountType;
     // 순서 바꾸기는 이 필드 하나다 (분수 색인).
     if (dto.sortRank !== undefined) data.sortRank = dto.sortRank;
 
@@ -240,10 +264,13 @@ export class AccountsService {
     if ('institutionId' in dto) {
       const resolved = await this.resolveInstitutionId(
         institutionId,
-        account.type,
+        nextType,
         account.projectId,
       );
       data.institution = resolved ? { connect: { id: resolved } } : { disconnect: true };
+    } else if (data.type && account.institutionId && NO_INSTITUTION_TYPES.includes(nextType)) {
+      // 기관이 없는 유형(현금·포인트 등)으로 바꾸면 남은 기관 연결을 함께 끊는다.
+      data.institution = { disconnect: true };
     }
 
     if (Object.keys(data).length > 0) {

@@ -30,7 +30,7 @@ import type { AccountType } from './entities';
 export const EQUITY_ACCOUNT_TYPES: readonly AccountType[] = ['opening_balance', 'unassigned'];
 
 /** 시가로 평가하는 계정. 장부 잔액 대신 최신 평가액을 쓴다. */
-export const VALUED_ACCOUNT_TYPES: readonly AccountType[] = ['investment', 'real_estate'];
+export const VALUED_ACCOUNT_TYPES: readonly AccountType[] = ['investment', 'crypto', 'real_estate'];
 
 /** 부채 계정. 잔액이 음수로 저장된다. */
 export const LIABILITY_ACCOUNT_TYPES: readonly AccountType[] = ['credit_card', 'loan'];
@@ -44,9 +44,76 @@ export function slotOf(type: AccountType): NetWorthSlot {
   return 'cash';
 }
 
+/** 자산 탭과 홈이 계좌를 나누는 네 묶음 */
+export type AssetGroupKey = 'cash' | 'savings' | 'investment' | 'debt';
+
+/** 네 묶음이 화면에 늘어서는 차례 */
+export const ASSET_GROUP_KEYS: readonly AssetGroupKey[] = ['cash', 'savings', 'investment', 'debt'];
+
+/**
+ * 계좌 유형마다 드는 묶음 (2026-10-05, 사용자 결정).
+ *
+ *   cash        바로 쓸 돈. 현금·입출금·CMA·포인트·페이
+ *   savings     만기까지 모으는 돈. 예금·적금·연금
+ *   investment  투자. 주식·펀드·암호화폐·부동산
+ *   debt        대출. 마이너스통장도 대출로 만든다
+ *
+ * 카드 사용액(credit_card)은 여기 적힌 묶음이 아니라 **결제 통장의 묶음**에 든다
+ * (`groupOfRow`). 카드는 결제 통장 아래에 서고 그 대금은 그 통장에서 빠져나갈 돈이라,
+ * 마이너스통장(대출) 카드의 대금이 입출금·현금 합계를 줄이면 안 된다. 결제 통장을 모를
+ * 때만 이 표의 값(바로 쓸 돈)으로 되돌아간다.
+ *
+ * `Record` 로 적어 두어 유형이 새로 생기면 여기서 타입 검사가 깨진다. 하나라도 빠지면
+ * 묶음 넷을 더한 값이 총자산과 달라진다. 자본 계정(opening_balance)과 미지정(unassigned)은
+ * 순자산에서 빠지므로 묶음이 없다.
+ */
+export const ASSET_GROUP_OF: Readonly<
+  Record<Exclude<AccountType, 'opening_balance' | 'unassigned'>, AssetGroupKey>
+> = {
+  cash: 'cash',
+  deposit: 'cash',
+  cma: 'cash',
+  point_pay: 'cash',
+  credit_card: 'cash',
+  time_deposit: 'savings',
+  savings: 'savings',
+  pension: 'savings',
+  investment: 'investment',
+  crypto: 'investment',
+  real_estate: 'investment',
+  loan: 'debt',
+};
+
+/** 그 유형이 드는 묶음. 모르는 유형(새 서버와 옛 앱)은 바로 쓸 돈으로 본다. */
+export function assetGroupOf(type: string): AssetGroupKey {
+  return ASSET_GROUP_OF[type as keyof typeof ASSET_GROUP_OF] ?? 'cash';
+}
+
+/** 순자산 행이 드는 묶음. 카드 사용액은 결제 통장을 따른다. */
+export function groupOfRow(row: Pick<NetWorthAccountRow, 'type' | 'paymentAccountType'>): AssetGroupKey {
+  if (row.type === 'credit_card' && row.paymentAccountType) {
+    return assetGroupOf(row.paymentAccountType);
+  }
+  return assetGroupOf(row.type);
+}
+
+/** 금액 표를 응답 모양으로. 0인 키는 넣지 않는다 (없는 것과 뜻이 같다). */
+export function nonZeroAmounts<K extends string>(amounts: Map<K, Dec>): Partial<Record<K, string>> {
+  const result: Partial<Record<K, string>> = {};
+  for (const [key, amount] of amounts) {
+    if (!amount.isZero()) result[key] = amount.toString();
+  }
+  return result;
+}
+
 export interface NetWorthAccountRow {
   id: string;
   type: AccountType;
+  /**
+   * 카드 부채 계정(credit_card)이면 그 카드의 결제 통장 유형. 대금을 어느 묶음에
+   * 넣을지 이것으로 정한다 (`groupOfRow`). 다른 계정에는 없다.
+   */
+  paymentAccountType?: AccountType | null;
   /** 계좌 통화 */
   currency: string;
   /** 계좌 통화로 본 잔액 */
@@ -79,6 +146,8 @@ export interface NetWorthBucket {
   liability: Dec;
   /** 계좌 유형별 소계. 0인 유형은 담기지 않는다. */
   byType: Map<AccountType, Dec>;
+  /** 네 묶음별 소계. 카드 대금은 결제 통장의 묶음에 든다. */
+  byGroup: Map<AssetGroupKey, Dec>;
 }
 
 export interface NetWorthPersonBucket extends NetWorthBucket {
@@ -124,6 +193,7 @@ export function netWorth(
     investment: Dec.of(0),
     liability: Dec.of(0),
     byType: new Map(),
+    byGroup: new Map(),
   });
 
   const totals = newBucket();
@@ -151,9 +221,11 @@ export function netWorth(
     }
 
     const slot = slotOf(row.type);
+    const group = groupOfRow(row);
     const addTo = (bucket: NetWorthBucket) => {
       bucket[slot] = bucket[slot].plus(value);
       bucket.byType.set(row.type, (bucket.byType.get(row.type) ?? Dec.of(0)).plus(value));
+      bucket.byGroup.set(group, (bucket.byGroup.get(group) ?? Dec.of(0)).plus(value));
     };
 
     addTo(totals);

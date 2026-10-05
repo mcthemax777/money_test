@@ -67,7 +67,7 @@ export const ko = {
   'sheet.export.done': '{count}행을 내보냈습니다.',
   'sheet.import.title': '가져오기',
   'sheet.import.description': '첫 행에 열 이름, 둘째 행부터 거래를 적은 엑셀 파일을 고르세요. 가계부에 없는 구성원·결제수단·분류·태그는 새로 만듭니다. 같은 파일을 두 번 가져오면 거래가 두 번 들어갑니다.',
-  'sheet.import.guide': '날짜·금액 열은 꼭 있어야 합니다. 구분은 지출·수입·이체·카드대금·카드환불, 자산 종류는 통장·적금·투자·현금·대출·체크카드·신용카드로 적습니다(비우면 이름에 "카드"가 있으면 체크카드, 아니면 통장). 태그는 쉼표로 나누고, 거래ID가 같은 행은 한 분할 거래가 됩니다.',
+  'sheet.import.guide': '날짜·금액 열은 꼭 있어야 합니다. 구분은 지출·수입·이체·카드대금·카드환불, 자산 종류는 통장·예금·적금·CMA·포인트·페이·연금·투자·암호화폐·현금·대출·체크카드·신용카드로 적습니다(비우면 이름에 "카드"가 있으면 체크카드, 아니면 통장). 태그는 쉼표로 나누고, 거래ID가 같은 행은 한 분할 거래가 됩니다.',
   'sheet.import.pick': '파일 고르기',
   'sheet.import.columns': '읽을 열: {columns}',
   'sheet.import.ignored': '무시할 열: {columns}',
@@ -264,8 +264,8 @@ export const ko = {
   'ledgerSummary.net': '순수입',
   'ledgerSummary.particle': '은',
   'ledgerSummary.suffix': '입니다',
-  'assetGroup.cash': '예금/현금',
-  'assetGroup.savings': '적금/연금',
+  'assetGroup.cash': '입출금·현금',
+  'assetGroup.savings': '예적금·연금',
   'assetGroup.investment': '투자',
   'assetGroup.debt': '대출',
 
@@ -407,8 +407,8 @@ export const ko = {
   'google.notConfigured': '로그인 설정이 완료되지 않았습니다. 관리자에게 알려 주세요.',
 
   // ===== 계좌 유형 =====
-  'accountType.deposit': '예금',
-  'accountType.savings': '저축',
+  'accountType.deposit': '입출금',
+  'accountType.savings': '적금',
   'accountType.cash': '현금',
   'accountType.investment': '투자',
   'accountType.real_estate': '부동산',
@@ -416,7 +416,11 @@ export const ko = {
   'accountType.credit_card': '신용카드',
   'accountType.opening_balance': '기초잔액',
   'accountType.unassigned': '자산 미선택',
-  'accountType.depositOption': '예금 / 입출금',
+  'accountType.time_deposit': '예금',
+  'accountType.cma': 'CMA',
+  'accountType.point_pay': '포인트·페이',
+  'accountType.pension': '연금',
+  'accountType.crypto': '암호화폐',
 
   // ===== 카드 색 이름 =====
   'cardColor.blue': '파랑',
@@ -510,7 +514,6 @@ export const ko = {
   // ===== 자산 화면 =====
   'assets.profit': '수익 +',
   'assets.loss': '손실 -',
-  'assets.parts': '현금성 {cash} · 투자 {investment} · 부채 {liability}',
   'assets.noSelection': '선택된 자산주인이 없습니다.',
   'assets.removeFailed': '없애지 못했습니다.',
   'assets.remove': '없애기',

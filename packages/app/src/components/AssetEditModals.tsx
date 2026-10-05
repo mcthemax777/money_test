@@ -13,7 +13,7 @@ import { useEffect, useState } from 'react';
 import { Alert, Pressable, Text, TextInput, View } from 'react-native';
 
 import { useInstitutions } from '@money/core/hooks/useInstitutions';
-import { NO_BANK_TYPES } from '@money/core/lib/account-type';
+import { ACCOUNT_TYPE_OPTIONS, NO_BANK_TYPES } from '@money/core/lib/account-type';
 import { monthInputOf, monthInputToIso } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import {
@@ -290,6 +290,8 @@ export function EditAccountModal({
   const { t } = useTranslation();
   const { options: bankOptions, error: bankError } = useInstitutions('bank');
   const [name, setName] = useState(target.name);
+  /** 유형. 자산 탭의 묶음이 이것으로 정해진다 (입출금으로 만든 정기예금을 예금으로 등). */
+  const [type, setType] = useState<AccountType>(target.type);
   /** 개설 기관. 현금·부동산에는 없다 (보내면 서버가 거부한다). */
   const [institutionId, setInstitutionId] = useState(target.institutionId ?? '');
   const [accountNumber, setAccountNumber] = useState(target.accountNumber ?? '');
@@ -307,6 +309,7 @@ export function EditAccountModal({
 
   useEffect(() => {
     setName(target.name);
+    setType(target.type);
     setInstitutionId(target.institutionId ?? '');
     setAccountNumber(target.accountNumber ?? '');
     setBalance(target.balance);
@@ -315,14 +318,15 @@ export function EditAccountModal({
   }, [
     target.id,
     target.name,
+    target.type,
     target.institutionId,
     target.accountNumber,
     target.balance,
     target.matchText,
   ]);
 
-  // 현금과 부동산은 개설 기관이 없다 (만들기 창과 같은 규칙이다).
-  const needsBank = !NO_BANK_TYPES.includes(target.type);
+  // 현금과 부동산은 개설 기관이 없다 (만들기 창과 같은 규칙이다). 고르는 중인 유형을 따른다.
+  const needsBank = !NO_BANK_TYPES.includes(type);
   /* "10000" 과 "10000.00" 은 글자로는 다르고 값으로는 같다. 숫자로 견준다. */
   const balanceChanged = balance !== '' && Number(balance) !== Number(target.balance);
 
@@ -348,9 +352,15 @@ export function EditAccountModal({
             run(
               onSave({
                 name: name.trim(),
+                ...(type !== target.type ? { type } : {}),
                 accountNumber: accountNumber.trim() || null,
                 // 기관을 비우면 null 을 보내 연결을 끊는다. '' 는 없는 id 로 읽힌다.
-                ...(needsBank ? { institutionId: institutionId || null } : {}),
+                // 기관이 없는 유형으로 바꿨으면 남은 연결도 끊는다.
+                ...(needsBank
+                  ? { institutionId: institutionId || null }
+                  : target.institutionId
+                    ? { institutionId: null }
+                    : {}),
                 // 실제로 바꿨을 때만 보낸다. 잔액 맞추기는 온라인에서만 되므로,
                 // 이름만 고치는 사람이 오프라인에서 막히지 않아야 한다.
                 ...(balanceChanged ? { balance: toAmountString(balance) } : {}),
@@ -380,6 +390,18 @@ export function EditAccountModal({
 
         <Field label={t('account.name')}>
           <TextInput value={name} onChangeText={setName} className={INPUT} />
+        </Field>
+
+        {/* 유형을 바꾸면 자산 탭에서 다른 묶음으로 옮겨 간다. 목록은 만들 때와 같다. */}
+        <Field label={t('account.type')}>
+          <PickRow
+            options={ACCOUNT_TYPE_OPTIONS.map((option) => ({
+              id: option.id,
+              name: t(option.nameKey),
+            }))}
+            value={type}
+            onPick={(id) => setType(id as AccountType)}
+          />
         </Field>
 
         {needsBank ? (

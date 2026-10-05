@@ -12,6 +12,7 @@
 
 import type {
   AccountDto,
+  AccountType,
   CardDto,
   CategoryDto,
   PersonDto,
@@ -32,6 +33,8 @@ export interface PersonPatch {
 
 export interface AccountPatch {
   name?: string;
+  /** 유형. 자산 탭의 묶음이 이것으로 정해진다. */
+  type?: AccountType;
   /**
    * 현재 잔액을 이 값으로 맞춘다. **이 필드만 아웃박스를 거치지 않는다** (D12).
    *

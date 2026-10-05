@@ -57,7 +57,7 @@ export const en: Record<MessageKey, string> = {
   'sheet.export.done': 'Exported {count} rows.',
   'sheet.import.title': 'Import',
   'sheet.import.description': 'Choose an Excel file with column names in the first row and transactions from the second. Members, payment methods, categories and tags that do not exist are created. Importing the same file twice adds the transactions twice.',
-  'sheet.import.guide': 'Date and amount columns are required. Kind is 지출/수입/이체/카드대금/카드환불 (expense, income, transfer, card payment, card refund); asset type is 통장/적금/투자/현금/대출/체크카드/신용카드 (blank: names with "카드" become debit cards, others bank accounts). Separate tags with commas; rows sharing a transaction ID become one split transaction.',
+  'sheet.import.guide': 'Date and amount columns are required. Kind is 지출/수입/이체/카드대금/카드환불 (expense, income, transfer, card payment, card refund); asset type is 통장/예금/적금/CMA/포인트·페이/연금/투자/암호화폐/현금/대출/체크카드/신용카드 (blank: names with "카드" become debit cards, others bank accounts). Separate tags with commas; rows sharing a transaction ID become one split transaction.',
   'sheet.import.pick': 'Choose file',
   'sheet.import.columns': 'Columns read: {columns}',
   'sheet.import.ignored': 'Ignored columns: {columns}',
@@ -242,10 +242,10 @@ export const en: Record<MessageKey, string> = {
   'ledgerSummary.net': 'Net income',
   'ledgerSummary.particle': '',
   'ledgerSummary.suffix': '',
-  'assetGroup.cash': 'Deposits/Cash',
-  'assetGroup.savings': 'Savings/Pension',
+  'assetGroup.cash': 'Cash & checking',
+  'assetGroup.savings': 'Savings & pension',
   'assetGroup.investment': 'Investments',
-  'assetGroup.debt': 'Debt',
+  'assetGroup.debt': 'Loans',
 
   // ===== Month picker =====
   'month.prev': 'Previous month',
@@ -378,8 +378,8 @@ export const en: Record<MessageKey, string> = {
   'google.notConfigured': 'Sign-in is not fully configured. Please tell your administrator.',
 
   // ===== Account types =====
-  'accountType.deposit': 'Deposit',
-  'accountType.savings': 'Savings',
+  'accountType.deposit': 'Checking',
+  'accountType.savings': 'Installment savings',
   'accountType.cash': 'Cash',
   'accountType.investment': 'Investment',
   'accountType.real_estate': 'Real estate',
@@ -387,7 +387,11 @@ export const en: Record<MessageKey, string> = {
   'accountType.credit_card': 'Credit card',
   'accountType.opening_balance': 'Opening balance',
   'accountType.unassigned': 'No payment method',
-  'accountType.depositOption': 'Deposit / Checking',
+  'accountType.time_deposit': 'Time deposit',
+  'accountType.cma': 'CMA',
+  'accountType.point_pay': 'Points & pay',
+  'accountType.pension': 'Pension',
+  'accountType.crypto': 'Crypto',
 
   // ===== Card colors =====
   'cardColor.blue': 'Blue',
@@ -481,7 +485,6 @@ export const en: Record<MessageKey, string> = {
   // ===== Assets screen =====
   'assets.profit': 'Gain +',
   'assets.loss': 'Loss -',
-  'assets.parts': 'Cash {cash} · Investments {investment} · Debt {liability}',
   'assets.noSelection': 'No owner is selected.',
   'assets.removeFailed': 'Could not remove it.',
   'assets.remove': 'Remove',

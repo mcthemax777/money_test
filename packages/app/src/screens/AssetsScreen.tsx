@@ -7,6 +7,7 @@ import { homeDataPort } from '@money/core/data/home-port';
 import { EMPTY_SEARCH } from '@money/core/hooks/useTransactions';
 import { accountTypeLabel } from '@money/core/lib/account-type';
 import { accountDueOf } from '@money/core/lib/card-settlement';
+import { assetGroupAmount, groupAccountsByAsset } from '@money/core/lib/net-worth';
 import { mergeOrder } from '@money/core/lib/reorder';
 import {
   accountBalanceLine,
@@ -347,7 +348,7 @@ export default function AssetsScreen() {
         그대로고, 유형 넷을 다 켜면 예전의 총자산과 같은 금액이 나온다.
       */}
       <AssetTypeSummary
-        byType={assets.netWorth?.byType}
+        parts={assets.netWorth ?? undefined}
         hasNoScope={assets.people.length > 0 && assets.selectedPersonIds.length === 0}
         scopeTitle={
           <PersonScopeTitle
@@ -435,26 +436,47 @@ export default function AssetsScreen() {
                   {owned.length === 0 ? (
                     <Text className="px-4 py-3 text-sm text-gray-600">{t('assets.noAccounts')}</Text>
                   ) : (
-                    <DragList
-                      items={owned}
-                      gap={0}
-                      itemClassName="border-t border-gray-100 px-4 py-2"
-                      onReorder={(id, toIndex) =>
-                        void assets.moveAccountTo(id, person.id, toIndex)
-                      }
-                      renderItem={(account) => (
-                        <AccountRow
-                          account={account}
-                          profit={assets.accountProfit.get(account.id)}
-                          cards={assets.cardsOf(account.id)}
-                          onOpen={() => openDetail({ kind: 'account', id: account.id })}
-                          onOpenCard={(card) => openDetail({ kind: 'card', id: card.id })}
-                          onReorderCards={(id, toIndex) =>
-                            void assets.moveCardTo(id, account.id, toIndex)
+                    /*
+                      상자 안을 네 묶음(입출금·현금 · 예적금·연금 · 투자 · 대출)으로 나눈다 (웹과
+                      같다). 묶음 이름 옆의 금액은 맨 위 유형 카드와 같은 셈이라, 바로 쓸 돈에는
+                      카드 대금이 빠져 있다. 끌어 옮기기는 묶음 안에서만 된다 -- 놓은 자리
+                      (toIndex)도 그 묶음 안의 차례다 (`moveAccountTo` 가 같은 묶음에서 이웃을 고른다).
+                    */
+                    groupAccountsByAsset(owned).map(({ group, accounts: grouped }) => (
+                      <View key={group.key}>
+                        <View className="flex-row items-center justify-between gap-3 border-t border-gray-100 px-4 pb-1 pt-2">
+                          <Text className="text-xs font-medium text-gray-500">
+                            {t(group.labelKey)}
+                          </Text>
+                          <Text className="text-xs font-medium text-gray-500">
+                            {formatCurrency(
+                              assetGroupAmount(assets.netWorthByPerson.get(person.id), group),
+                              displayCurrency,
+                            )}
+                          </Text>
+                        </View>
+                        <DragList
+                          items={grouped}
+                          gap={0}
+                          itemClassName="border-t border-gray-100 px-4 py-2"
+                          onReorder={(id, toIndex) =>
+                            void assets.moveAccountTo(id, person.id, toIndex)
                           }
+                          renderItem={(account) => (
+                            <AccountRow
+                              account={account}
+                              profit={assets.accountProfit.get(account.id)}
+                              cards={assets.cardsOf(account.id)}
+                              onOpen={() => openDetail({ kind: 'account', id: account.id })}
+                              onOpenCard={(card) => openDetail({ kind: 'card', id: card.id })}
+                              onReorderCards={(id, toIndex) =>
+                                void assets.moveCardTo(id, account.id, toIndex)
+                              }
+                            />
+                          )}
                         />
-                      )}
-                    />
+                      </View>
+                    ))
                   )}
                 </>
               );
@@ -648,6 +670,7 @@ function AssetMetaLine({ parts }: { parts: AssetMetaPart[] }) {
  * 아직 정산하지 않은 것이 있을 때만 적는다. 0원을 적어 두면 다 갚은 카드가 밀린
  * 카드와 같은 무게로 보인다. 체크카드는 결제 즉시 통장에서 빠져 갚을 것이 남지 않는다.
  *
+ * 금액만 두면 이번 달 사용액인지 남은 대금인지 알 수 없어 앞에 이름을 붙인다.
  * 음수는 카드사가 갚을 돈이다(사용을 취소했거나 대금을 더 가져간 뒤). 부호만 바꿔
  * 적으면 빚으로 읽히므로 이름과 색을 함께 바꾼다 -- 정산 판과 같은 규칙이다.
  */
@@ -666,9 +689,9 @@ function CardOutstanding({ card, currency }: { card: Card; currency: string }) {
     <Text
       className={`text-sm font-bold ${refundPending ? 'text-emerald-700' : 'text-red-600'}`}
     >
-      {refundPending ? (
-        <Text className="text-xs font-medium">{t('settlement.refundPending')} </Text>
-      ) : null}
+      <Text className="text-xs font-medium">
+        {t(refundPending ? 'settlement.refundPending' : 'settlement.remaining')}{' '}
+      </Text>
       {formatCurrency(Math.abs(outstanding), currency)}
     </Text>
   );
@@ -741,8 +764,13 @@ function AccountRow({
             잔액이 아니라 카드 대금을 뺀 남은 금액이다. 통장에 찍힌 돈에는 카드사가
             이미 가져가기로 된 몫이 섞여 있어, 잔액만 보면 쓸 수 있는 돈을 그만큼
             부풀려 읽는다.
+
+            마이너스면 빨강이다 (아래 잔액도 같다, 웹과 같다). 대출·마이너스통장처럼 갚을
+            돈이 남은 계좌를 훑어보며 바로 가려낼 수 있어야 한다.
           */}
-          <Text className="text-base font-bold text-gray-900">
+          <Text
+            className={`text-base font-bold ${remaining < 0 ? 'text-red-600' : 'text-gray-900'}`}
+          >
             {formatCurrency(remaining, account.currency)}
           </Text>
         </View>
@@ -765,7 +793,13 @@ function AccountRow({
               <AssetMetaLine parts={metaParts} />
             </View>
             {balanceLine ? (
-              <Text className="text-xs font-medium text-gray-700">{balanceLine}</Text>
+              <Text
+                className={`text-xs font-medium ${
+                  toNumber(account.balance) < 0 ? 'text-red-600' : 'text-gray-700'
+                }`}
+              >
+                {balanceLine}
+              </Text>
             ) : null}
           </View>
         ) : null}

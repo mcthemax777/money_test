@@ -46,15 +46,26 @@ const DEFAULT_DUE_DAY = 14;
 
 const ACCOUNT_TYPE_OF: Partial<Record<EntrySheetAssetType, AccountType>> = {
   deposit: 'deposit',
+  time_deposit: 'time_deposit',
   savings: 'savings',
+  cma: 'cma',
+  point_pay: 'point_pay',
+  pension: 'pension',
   investment: 'investment',
+  crypto: 'crypto',
   cash: 'cash',
   loan: 'loan',
 };
+/** 내보낼 때 적는 자산 종류. 가져올 때 같은 말로 다시 읽힌다 (ENTRY_SHEET_ASSET_TYPES). */
 const ASSET_LABEL: Record<string, string> = {
   deposit: '통장',
+  time_deposit: '예금',
   savings: '적금',
+  cma: 'CMA',
+  point_pay: '포인트·페이',
+  pension: '연금',
   investment: '투자',
+  crypto: '암호화폐',
   cash: '현금',
   loan: '대출',
   real_estate: '통장',

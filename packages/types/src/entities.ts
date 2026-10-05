@@ -15,13 +15,18 @@ export type IsoDateString = string;
 // ===== Enum =====
 
 export type AccountType =
-  | 'deposit'
-  | 'savings'
+  | 'deposit'        // 입출금 통장
+  | 'savings'        // 적금
   | 'investment'
   | 'cash'
   | 'credit_card'    // 카드 사용액을 담는 부채 계정. 통장 목록에 노출하지 않는다
-  | 'loan'
+  | 'loan'           // 대출. 마이너스통장도 여기 든다
   | 'real_estate'
+  | 'time_deposit'   // 정기예금
+  | 'cma'
+  | 'point_pay'      // 포인트·페이 (선불 충전금)
+  | 'pension'        // 연금저축·IRP
+  | 'crypto'         // 암호화폐
   | 'opening_balance' // 기초잔액 자본 계정. 순자산 합계에서 제외한다
   | 'unassigned'; // 결제수단을 고르지 않은 지출·수입의 상대편. 프로젝트마다 하나, 순자산에서 제외한다
 

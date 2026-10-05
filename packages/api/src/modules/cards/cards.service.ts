@@ -23,6 +23,7 @@ import { assertReorderIds } from '@/common/reorder';
 import { toCardResponse } from './card-view';
 import { toOptionalMoney } from '@/common/money';
 import { badRequest, notFound } from '@/common/app-error';
+import { withCardBalancesAsOf } from '@/common/balance-as-of';
 
 /** 카드 응답에 함께 실어 주는 관계. 응답 모양을 한곳에서 정한다. */
 const CARD_INCLUDE = {
@@ -182,7 +183,8 @@ export class CardsService {
       orderBy: [{ sortRank: 'asc' }, { createdAt: 'desc' }],
     });
 
-    return cards.map((card) => toCardResponse(card));
+    // 남은 대금은 지금까지의 것이다. 미래 날짜로 적어 둔 사용·결제는 빼고 센다.
+    return (await withCardBalancesAsOf(this.prisma, cards)).map((card) => toCardResponse(card));
   }
 
   /** 드래그로 바꾼 표시 순서 저장 */
@@ -218,7 +220,8 @@ export class CardsService {
     if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
 
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId);
-    return toCardResponse(card);
+    const [current] = await withCardBalancesAsOf(this.prisma, [card]);
+    return toCardResponse(current);
   }
 
   async updateCard(id: string, userId: string, dto: CardDto.UpdateRequest, hlc?: string) {
@@ -311,7 +314,8 @@ export class CardsService {
         });
       }
 
-      return toCardResponse(updated);
+      const [current] = await withCardBalancesAsOf(tx, [updated]);
+      return toCardResponse(current);
     });
   }
 

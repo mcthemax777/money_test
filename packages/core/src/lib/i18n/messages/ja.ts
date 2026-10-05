@@ -58,7 +58,7 @@ export const ja: Record<MessageKey, string> = {
   'sheet.export.done': '{count}行を書き出しました。',
   'sheet.import.title': '読み込み',
   'sheet.import.description': '1行目に列名、2行目から取引を書いたExcelファイルを選んでください。家計簿にないメンバー・決済手段・分類・タグは新しく作ります。同じファイルを2回読み込むと取引も2回入ります。',
-  'sheet.import.guide': '日付・金額の列は必須です。区分は 지출・수입・이체・카드대금・카드환불、資産の種類は 통장・적금・투자・현금・대출・체크카드・신용카드 と書きます(空欄なら名前に「카드」があればデビットカード、なければ口座)。タグはカンマ区切り、取引IDが同じ行は1つの分割取引になります。',
+  'sheet.import.guide': '日付・金額の列は必須です。区分は 지출・수입・이체・카드대금・카드환불、資産の種類は 통장・예금・적금・CMA・포인트·페이・연금・투자・암호화폐・현금・대출・체크카드・신용카드 と書きます(空欄なら名前に「카드」があればデビットカード、なければ口座)。タグはカンマ区切り、取引IDが同じ行は1つの分割取引になります。',
   'sheet.import.pick': 'ファイルを選ぶ',
   'sheet.import.columns': '読む列: {columns}',
   'sheet.import.ignored': '無視する列: {columns}',
@@ -243,10 +243,10 @@ export const ja: Record<MessageKey, string> = {
   'ledgerSummary.net': '純収入',
   'ledgerSummary.particle': 'は',
   'ledgerSummary.suffix': 'です',
-  'assetGroup.cash': '預金/現金',
-  'assetGroup.savings': '積立/年金',
+  'assetGroup.cash': '普通預金・現金',
+  'assetGroup.savings': '預金・積立・年金',
   'assetGroup.investment': '投資',
-  'assetGroup.debt': '負債',
+  'assetGroup.debt': 'ローン',
 
   // ===== 月の選択 =====
   'month.prev': '前の月',
@@ -379,8 +379,8 @@ export const ja: Record<MessageKey, string> = {
   'google.notConfigured': 'ログインの設定が完了していません。管理者にお知らせください。',
 
   // ===== 口座の種類 =====
-  'accountType.deposit': '預金',
-  'accountType.savings': '貯蓄',
+  'accountType.deposit': '普通預金',
+  'accountType.savings': '積立預金',
   'accountType.cash': '現金',
   'accountType.investment': '投資',
   'accountType.real_estate': '不動産',
@@ -388,7 +388,11 @@ export const ja: Record<MessageKey, string> = {
   'accountType.credit_card': 'クレジットカード',
   'accountType.opening_balance': '期首残高',
   'accountType.unassigned': '支払手段なし',
-  'accountType.depositOption': '預金・普通',
+  'accountType.time_deposit': '定期預金',
+  'accountType.cma': 'CMA',
+  'accountType.point_pay': 'ポイント・ペイ',
+  'accountType.pension': '年金',
+  'accountType.crypto': '暗号資産',
 
   // ===== カードの色 =====
   'cardColor.blue': '青',
@@ -481,7 +485,6 @@ export const ja: Record<MessageKey, string> = {
   // ===== 資産画面 =====
   'assets.profit': '利益 +',
   'assets.loss': '損失 -',
-  'assets.parts': '現金性 {cash}・投資 {investment}・負債 {liability}',
   'assets.noSelection': '選択された持ち主がいません。',
   'assets.removeFailed': '取り除けませんでした。',
   'assets.remove': '取り除く',
