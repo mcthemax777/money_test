@@ -27,6 +27,13 @@ export interface CardPalette {
    * 색이 갈라지므로 언제나 짝으로 고친다.
    */
   faceColors: string[];
+  /**
+   * 앞면 안쪽의 1px 테두리 색. 없으면 테두리가 없다.
+   *
+   * 웹은 face 의 ring 클래스로 그리고, 앱은 클래스를 읽지 못해 이 값으로 그린다. faceColors 와
+   * 같은 까닭으로 언제나 face 와 짝으로 고친다.
+   */
+  faceBorderColor?: string;
   /** 앞면 위 기본 글씨 색. 밝은 앞면은 검은 글씨여야 읽힌다. */
   ink: string;
   /** 실적 막대의 빈 부분과 아래 구분선. 앞면 밝기에 따라 흰 쪽/검은 쪽으로 깐다. */
@@ -229,6 +236,8 @@ export const CARD_PALETTE: Record<CardColor, CardPalette> = {
     labelKey: 'cardColor.white',
     face: 'bg-gradient-to-br from-white to-slate-200 ring-1 ring-inset ring-slate-300',
     faceColors: ['#ffffff', '#e2e8f0'],
+    /* ring-slate-300 */
+    faceBorderColor: '#cbd5e1',
     ...ON_LIGHT,
     positive: { text: 'text-emerald-600', bar: 'bg-emerald-600' },
     negative: { text: 'text-red-600', bar: 'bg-red-600' },

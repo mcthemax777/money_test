@@ -99,14 +99,23 @@ function MethodCard({ method, onSelect }: { method: SpendingMethod; onSelect?: (
        * 높이를 직접 적지 않고 너비에서 비율로 잡는다. 웹과 같은 값이라 두 화면의
        * 카드 모양이 어긋나지 않는다.
        *
-       * 가장자리는 연한 회색 선(border-gray-200)과 웹과 같은 shadow-sm 이다. 안드로이드의
-       * shadow-sm 은 거의 보이지 않아 그것만으로는 웹의 가장자리가 나오지 않는다 -- 밝은 앞면
-       * (흰·은색)이 바탕에 묻히지 않게 선을 함께 둔다 (2026-10-05 사용자 요청).
-       * 바탕색을 함께 두는 까닭은 안드로이드가 바탕이 없는 상자에는 그림자를 그리지 않기
-       * 때문이다 -- 앞면 그라데이션의 첫 색을 쓴다.
+       * 가장자리는 웹과 같게 그린다. 그림자는 웹의 shadow-sm 그대로이고, 테두리는 웹이 face 의
+       * ring 클래스로 그리는 색에만 둔다(지금은 흰색 카드, ring-1 ring-inset ring-slate-300).
+       * 앱은 그 클래스를 읽지 못해 core 의 faceBorderColor 로 그린다 -- RN 의 테두리는 상자
+       * 안쪽에 그려져 웹의 ring-inset 과 같은 자리다.
+       *
+       * 바탕색은 안드로이드가 바탕이 없는 상자에는 그림자를 그리지 않아서 둔다 -- 앞면
+       * 그라데이션의 첫 색이다.
        */
-      className="aspect-[85.6/53.98] overflow-hidden rounded-2xl border border-gray-200 shadow-sm"
-      style={{ width: CARD_WIDTH, backgroundColor: palette.faceColors[0] }}
+      className="aspect-[85.6/53.98] overflow-hidden rounded-2xl"
+      style={{
+        width: CARD_WIDTH,
+        backgroundColor: palette.faceColors[0],
+        boxShadow: '0 1px 2px 0 rgba(0, 0, 0, 0.05)',
+        ...(palette.faceBorderColor
+          ? { borderWidth: 1, borderColor: palette.faceBorderColor }
+          : null),
+      }}
     >
       {/*
         앞면 그라데이션. 웹은 tailwind 클래스로 그리지만 앱에는 CSS 그라데이션이 없어
