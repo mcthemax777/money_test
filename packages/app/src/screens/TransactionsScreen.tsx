@@ -264,123 +264,130 @@ function LineView({
       onPress={() => onPress(yearMonth, rowKey)}
       accessibilityRole="button"
       accessibilityState={{ expanded: Boolean(open) }}
-      className="px-3 py-2"
+      /*
+        두 덩어리다 -- 왼쪽은 금액 줄과 순수입 줄을 위아래로 쌓고, 오른쪽에 분석 아이콘이
+        그 두 줄의 세로 가운데에 선다. 아이콘을 금액 줄 안에 두면 위로 붙어 보이고, 순수입
+        줄이 그 아래로 넘어간다.
+      */
+      className="flex-row items-center gap-2 px-3 py-2"
     >
-      <View className="flex-row items-center gap-2">
-        {checkable && onToggle ? (
-          <CheckBox
-            checked={Boolean(checked)}
-            pending={checkPending}
-            onPress={() => onToggle(yearMonth, rowKey)}
-          />
-        ) : null}
-        {/*
-          펼침 표시(▸▾)는 두지 않는다. 누르면 바로 아래가 열리고 닫히는 것이 보이므로
-          화살표는 한 줄에서 자리만 차지한다.
-        */}
-        <View className="min-w-0 flex-1 flex-row items-baseline gap-1.5">
-          <Text
-            numberOfLines={1}
-            className={`shrink text-gray-900 ${
-              depth === 0 ? 'text-[15px] font-semibold' : 'text-sm font-medium'
-            }`}
-          >
-            {label}
-          </Text>
+      <View className="min-w-0 flex-1">
+        <View className="flex-row items-center gap-2">
+          {checkable && onToggle ? (
+            <CheckBox
+              checked={Boolean(checked)}
+              pending={checkPending}
+              onPress={() => onToggle(yearMonth, rowKey)}
+            />
+          ) : null}
           {/*
-            요일. 일자 바로 옆에 붙여 "9 (토)" 로 읽히게 한다. 잔글씨(건수)보다 앞에
-            두는 것은 요일이 날짜의 일부이기 때문이다.
+            펼침 표시(▸▾)는 두지 않는다. 누르면 바로 아래가 열리고 닫히는 것이 보이므로
+            화살표는 한 줄에서 자리만 차지한다.
           */}
-          {weekday ? (
-            <Text className={`text-sm ${WEEKDAY_COLOR[weekday.day] ?? 'text-gray-900'}`}>
-              ({weekday.label})
+          <View className="min-w-0 flex-1 flex-row items-baseline gap-1.5">
+            <Text
+              numberOfLines={1}
+              className={`shrink text-gray-900 ${
+                depth === 0 ? 'text-[15px] font-semibold' : 'text-sm font-medium'
+              }`}
+            >
+              {label}
             </Text>
-          ) : null}
-          {meta ? <Text className="text-xs text-gray-500">{meta}</Text> : null}
-        </View>
-        {/*
-          들어온 돈과 나간 돈에 각자의 칸을 주고, 칸 안에서는 둘 다 오른쪽 끝에 붙인다.
+            {/*
+              요일. 일자 바로 옆에 붙여 "9 (토)" 로 읽히게 한다. 잔글씨(건수)보다 앞에
+              두는 것은 요일이 날짜의 일부이기 때문이다.
+            */}
+            {weekday ? (
+              <Text className={`text-sm ${WEEKDAY_COLOR[weekday.day] ?? 'text-gray-900'}`}>
+                ({weekday.label})
+              </Text>
+            ) : null}
+            {meta ? <Text className="text-xs text-gray-500">{meta}</Text> : null}
+          </View>
+          {/*
+            들어온 돈과 나간 돈에 각자의 칸을 주고, 칸 안에서는 둘 다 오른쪽 끝에 붙인다.
 
-          한 덩어리로 두면 두 숫자가 서로 옆에 붙어 어느 쪽이 들어온 돈인지 색으로만
-          갈린다. 한쪽이 없는 달에는 남은 숫자가 오른쪽으로 미끄러져, 줄을 훑을 때
-          같은 자리에서 같은 뜻을 읽을 수 없다. 칸을 고정하면 없는 쪽은 빈 자리로
-          남고 있는 쪽은 늘 제 자리에 선다.
+            한 덩어리로 두면 두 숫자가 서로 옆에 붙어 어느 쪽이 들어온 돈인지 색으로만
+            갈린다. 한쪽이 없는 달에는 남은 숫자가 오른쪽으로 미끄러져, 줄을 훑을 때
+            같은 자리에서 같은 뜻을 읽을 수 없다. 칸을 고정하면 없는 쪽은 빈 자리로
+            남고 있는 쪽은 늘 제 자리에 선다.
 
-          칸 안에서 가운데에 두지 않는 것은 자릿수 때문이다. 1,110 과 222,110 이 위아래로
-          서면 일의 자리가 서로 어긋나, 어느 쪽이 큰 금액인지 길이로 읽을 수 없다.
-          오른쪽에 붙이면 일의 자리가 한 줄로 서서 자릿수가 그대로 보인다.
-        */}
-        <View className="w-[30%] shrink-0 flex-row justify-end">
-          {income > 0 ? (
-            <Text
-              numberOfLines={1}
-              style={TABULAR}
-              className={`font-semibold text-green-600 ${AMOUNT_SIZE[depth]}`}
-            >
-              +{formatCurrency(income, currency)}
-            </Text>
-          ) : null}
+            칸 안에서 가운데에 두지 않는 것은 자릿수 때문이다. 1,110 과 222,110 이 위아래로
+            서면 일의 자리가 서로 어긋나, 어느 쪽이 큰 금액인지 길이로 읽을 수 없다.
+            오른쪽에 붙이면 일의 자리가 한 줄로 서서 자릿수가 그대로 보인다.
+          */}
+          <View className="w-[30%] shrink-0 flex-row justify-end">
+            {income > 0 ? (
+              <Text
+                numberOfLines={1}
+                style={TABULAR}
+                className={`font-semibold text-green-600 ${AMOUNT_SIZE[depth]}`}
+              >
+                +{formatCurrency(income, currency)}
+              </Text>
+            ) : null}
+          </View>
+          <View className="w-[30%] shrink-0 flex-row justify-end">
+            {expense > 0 ? (
+              <Text
+                numberOfLines={1}
+                style={TABULAR}
+                className={`font-semibold text-red-600 ${AMOUNT_SIZE[depth]}`}
+              >
+                -{formatCurrency(expense, currency)}
+              </Text>
+            ) : expense < 0 ? (
+              // 페이백이 쓴 돈보다 많았다. 지출 칸에 돌아온 돈으로 적는다.
+              <Text
+                numberOfLines={1}
+                style={TABULAR}
+                className={`font-semibold text-green-600 ${AMOUNT_SIZE[depth]}`}
+              >
+                +{formatCurrency(-expense, currency)}
+              </Text>
+            ) : income === 0 ? (
+              <Text className={`text-gray-400 ${AMOUNT_SIZE[depth]}`}>-</Text>
+            ) : null}
+          </View>
         </View>
-        <View className="w-[30%] shrink-0 flex-row justify-end">
-          {expense > 0 ? (
-            <Text
-              numberOfLines={1}
-              style={TABULAR}
-              className={`font-semibold text-red-600 ${AMOUNT_SIZE[depth]}`}
-            >
-              -{formatCurrency(expense, currency)}
-            </Text>
-          ) : expense < 0 ? (
-            // 페이백이 쓴 돈보다 많았다. 지출 칸에 돌아온 돈으로 적는다.
-            <Text
-              numberOfLines={1}
-              style={TABULAR}
-              className={`font-semibold text-green-600 ${AMOUNT_SIZE[depth]}`}
-            >
-              +{formatCurrency(-expense, currency)}
-            </Text>
-          ) : income === 0 ? (
-            <Text className={`text-gray-400 ${AMOUNT_SIZE[depth]}`}>-</Text>
-          ) : null}
-        </View>
+
         {/*
-          이 기간의 분석. 줄의 오른쪽 끝, 금액 바로 뒤다. 줄을 누르는 것(펼치기)과 갈리도록
-          누를 자리를 아이콘 둘레로 넓혀 둔다.
+          순수입. 수입·지출 칸 바로 아래, 같은 오른쪽 끝에 세운다.
+
+          위 두 숫자를 세로로 더한 결과라 같은 세로선에 서야 눈이 옆으로 새지 않는다.
+          낱말을 앞에 붙이는 것은 색만으로는 "적게 쓴 달"과 "수입이 컸던 달"이 갈리지
+          않아서다 -- 초록 숫자가 둘이 되면 위의 것이 수입인지 남은 돈인지 모른다.
+
+          글자는 한 단 작게 둔다. 이 줄은 위의 두 숫자에서 나온 값이라, 같은 크기로
+          두면 달마다 굵은 금액이 셋이 되어 무엇을 먼저 읽을지 알 수 없다.
         */}
-        {onAnalyze ? (
-          <Pressable
-            onPress={() => onAnalyze(yearMonth)}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel={t('tx.analysisOfPeriod', { period: label })}
-            className="shrink-0 pl-1"
-          >
-            <ChartPie size={16} color="#9ca3af" />
-          </Pressable>
+        {showsNet ? (
+          <View className="flex-row justify-end pt-0.5">
+            <Text
+              numberOfLines={1}
+              style={TABULAR}
+              className={`text-xs font-semibold ${net >= 0 ? 'text-green-600' : 'text-red-600'}`}
+            >
+              {t('ledgerSummary.net')} {net >= 0 ? '+' : '-'}
+              {formatCurrency(Math.abs(net), currency)}
+            </Text>
+          </View>
         ) : null}
       </View>
-
       {/*
-        순수입. 수입·지출 칸 바로 아래, 같은 오른쪽 끝에 세운다.
-
-        위 두 숫자를 세로로 더한 결과라 같은 세로선에 서야 눈이 옆으로 새지 않는다.
-        낱말을 앞에 붙이는 것은 색만으로는 "적게 쓴 달"과 "수입이 컸던 달"이 갈리지
-        않아서다 -- 초록 숫자가 둘이 되면 위의 것이 수입인지 남은 돈인지 모른다.
-
-        글자는 한 단 작게 둔다. 이 줄은 위의 두 숫자에서 나온 값이라, 같은 크기로
-        두면 달마다 굵은 금액이 셋이 되어 무엇을 먼저 읽을지 알 수 없다.
+        이 기간의 분석. 줄의 오른쪽 끝, 금액 줄과 순수입 줄의 세로 가운데다. 줄을 누르는 것
+        (펼치기)과 갈리도록 누를 자리를 아이콘 둘레로 넓혀 둔다.
       */}
-      {showsNet ? (
-        <View className="flex-row justify-end pt-0.5">
-          <Text
-            numberOfLines={1}
-            style={TABULAR}
-            className={`text-xs font-semibold ${net >= 0 ? 'text-green-600' : 'text-red-600'}`}
-          >
-            {t('ledgerSummary.net')} {net >= 0 ? '+' : '-'}
-            {formatCurrency(Math.abs(net), currency)}
-          </Text>
-        </View>
+      {onAnalyze ? (
+        <Pressable
+          onPress={() => onAnalyze(yearMonth)}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={t('tx.analysisOfPeriod', { period: label })}
+          className="shrink-0"
+        >
+          <ChartPie size={16} color="#9ca3af" />
+        </Pressable>
       ) : null}
     </Pressable>
   );
