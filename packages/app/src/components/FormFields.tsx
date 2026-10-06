@@ -10,6 +10,7 @@
 import { Fragment, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { CalendarDays, ChevronDown, Clock } from 'lucide-react-native';
+import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import type { CategoryDto } from '@money/types';
 
 import { groupCategories } from '@money/core/lib/category-tree';
@@ -507,4 +508,27 @@ export function CheckRow({
       </View>
     </Pressable>
   );
+}
+
+/**
+ * 시각을 고르는 안드로이드 시계 대화상자를 연다. 값은 폼이 다루는 'HH:MM' 이다.
+ *
+ * 24시간제로 둔다. 목록·달력도 그 표기다. 이 앱은 안드로이드로만 나가므로 그쪽 명령형
+ * API 를 그대로 쓴다(`@react-native-community/datetimepicker`). 비었거나 읽을 수 없는
+ * 값이면 0시 0분에서 연다.
+ */
+export function openTimeKeyPicker(timeKey: string, onPick: (timeKey: string) => void) {
+  const [hour, minute] = timeKey.split(':');
+  const base = new Date();
+  base.setHours(Number(hour) || 0, Number(minute) || 0, 0, 0);
+
+  DateTimePickerAndroid.open({
+    value: base,
+    mode: 'time',
+    is24Hour: true,
+    onValueChange: (_event, date) => {
+      const pad = (value: number) => String(value).padStart(2, '0');
+      onPick(`${pad(date.getHours())}:${pad(date.getMinutes())}`);
+    },
+  });
 }

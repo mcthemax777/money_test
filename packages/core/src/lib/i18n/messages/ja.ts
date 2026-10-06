@@ -16,7 +16,7 @@ export const ja: Record<MessageKey, string> = {
   // ===== ナビゲーション =====
   'nav.home': '予算',
   'nav.transactions': '取引',
-  'nav.ledger': '家計簿',
+  'nav.analysis': '分析',
   'nav.assets': '資産',
   'nav.settings': '設定',
 
@@ -217,7 +217,6 @@ export const ja: Record<MessageKey, string> = {
   'home.performanceTitle': '実績期間の利用額',
   'home.tab.expense': '支出',
   'home.tab.income': '収入',
-  'home.settlementTitle': '{card}の精算',
 
   // ===== 資産の持ち主 =====
   'scopeTitle.none': '{noun}・持ち主なし',
@@ -240,8 +239,6 @@ export const ja: Record<MessageKey, string> = {
   'assetSummary.noScope': '選んだ持ち主がいません。',
   'assetSummary.noType': '選んだ種類なし',
   'ledgerSummary.net': '純収入',
-  'ledgerSummary.particle': 'は',
-  'ledgerSummary.suffix': 'です',
   'assetGroup.cash': '普通預金・現金',
   'assetGroup.savings': '預金・積立・年金',
   'assetGroup.investment': '投資',
@@ -255,8 +252,6 @@ export const ja: Record<MessageKey, string> = {
   'month.pick': '年月を選ぶ',
   'month.prevYear': '前の年',
   'month.nextYear': '次の年',
-  'month.byMonth': '月別',
-  'month.byRange': '期間',
 
   // ===== カード =====
   'method.credit_card': 'クレジットカード',
@@ -651,8 +646,6 @@ export const ja: Record<MessageKey, string> = {
 
   // ===== 家計簿画面 =====
   'ledger.noun': '家計簿',
-  'ledger.tab.category': 'カテゴリ別',
-  'ledger.tab.method': '支払方法別',
   'ledger.noFiltered': 'フィルターに合う取引がありません。',
   'ledger.entryCount': '{count}件',
   'ledger.totalExpense': '支出全体',
@@ -663,10 +656,6 @@ export const ja: Record<MessageKey, string> = {
   'budget.scopeAllHint': 'この予算が適用されるすべての月の金額を変えます。',
   'budget.scopeFrom': '選んだ月から',
   'budget.scopeFromHint': '選んだ月より前は今の金額のまま残ります。',
-  'budget.nothingToDelete': '削除する予算がありません。',
-  'budget.deleteAllConfirm': '予算{count}件と月別の調整値をすべて削除します。元に戻せません。',
-  'budget.deleted': '予算{count}件を削除しました。',
-  'budget.deleteFailed': '予算を削除できませんでした。',
   'budget.negative': '予算の金額は0未満にできません。',
   'budget.noneToDelete': '削除する予算がありません。',
   'budget.pickMonth': '適用を始める年月を選んでください。',
@@ -690,34 +679,15 @@ export const ja: Record<MessageKey, string> = {
   'budget.settingsHint': 'カテゴリを押すと、その月予算を決められます。',
   'budget.monthAdjusted': '今月のみ調整',
   'budget.settingsLoadFailed': '予算を読み込めませんでした。',
-  'budget.progressMonthOnly':
-    '予算の進捗は月単位でのみ表示します。予算は月ごとに決める値なので、任意の期間に割り振れません。',
-  'budget.line': '予算 {amount}・{percent}%',
 
   // ===== カテゴリ別タブ =====
-  'category.totalExpense': '支出全体',
-  'category.totalIncome': '収入全体',
   'category.uncategorized': '未分類',
   'category.exact': '{name}・未分類',
-  'category.none': 'カテゴリがありません。',
   'category.detailTitle': '{name}の詳細',
 
   // ===== 支払方法別タブ =====
-  'method.accountTitle': '口座からの支払い',
   'method.unassigned': '支払手段なし',
-  'method.creditEmpty': 'クレジットカードがありません。',
-  'method.debitEmpty': 'デビットカードがありません。',
-  'method.accountEmpty': '口座がありません。',
-  'method.unknownOwner': '未定',
-  'method.expensePrefix': '支出 ',
-  'method.incomeLine': '収入 {amount}',
-  'method.settle': '精算する',
-  'method.monthlyUsage': '月別の利用額',
   'method.usage': '利用額',
-  'method.dailyCumulative': '日別の累計利用額',
-  'method.cumulativeUsage': '累計利用額',
-  'method.entries': '取引の記録',
-  'method.pickHint': '項目を選ぶと詳細が表示されます',
 
   // ===== カテゴリ詳細 =====
   'detail.loading': 'データを読み込み中...',
@@ -968,7 +938,7 @@ export const ja: Record<MessageKey, string> = {
   'invite.title': 'プロジェクトへの招待',
   'invite.checking': '確認中...',
   'invite.noCode': '招待コードのないアドレスです。',
-  'invite.toDashboard': 'ダッシュボードへ',
+  'invite.toDashboard': '予算へ',
   'invite.signInFirst': '招待を受けるには、先にログインしてください。',
   'invite.loading': '招待の情報を読み込み中...',
   'invite.loadFailed': '招待の情報を読み込めませんでした。',
@@ -1269,6 +1239,27 @@ export const ja: Record<MessageKey, string> = {
   'tx.analysisAll': '検索条件なしで、すべての取引で描いています。',
   'tx.analysisOfPeriod': '{period}の分析',
   'tx.analysisOutOfRange': 'この期間は検索期間の外です。期間を移動してください。',
+
+  // ===== 分析タブ =====
+  'analysis.noun': '分析',
+  'analysis.tab.net': '合計',
+  'analysis.tab.expense': '支出',
+  'analysis.tab.income': '収入',
+  'analysis.toTransactions': '取引履歴を見る',
+  'analysis.net.income': '収入',
+  'analysis.net.expense': '支出',
+  'analysis.net.net': '純収入',
+  'analysis.net.savingRate': '貯蓄率',
+  'analysis.net.summary': '収入と支出',
+  'analysis.net.monthlyTrend': '月別純収入',
+  'analysis.net.weeklyTrend': '週別純収入',
+  'analysis.net.yearlyTrend': '年別純収入',
+  'analysis.net.noMonths': '直近12か月の収入・支出がありません。',
+  'analysis.net.noWeeks': '直近12週の収入・支出がありません。',
+  'analysis.net.noYears': '直近5年の収入・支出がありません。',
+  'analysis.net.daily': '日別累計純収入',
+  'analysis.net.cumulative': '累計純収入',
+  'analysis.net.noPeriod': 'この期間の収入・支出がありません。',
   'tx.search': '検索',
   'tx.search.categories': 'カテゴリ',
   'tx.search.accounts': '口座',

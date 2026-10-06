@@ -295,7 +295,7 @@ export default function AssetsScreen() {
    */
   useEffect(() => {
     if (!reopen) return;
-    if (reopen.kind === 'category' || reopen.kind === 'tag') return;
+    if (reopen.kind === 'category' || reopen.kind === 'tag' || reopen.kind === 'analysis') return;
 
     setDetail({ kind: reopen.kind, id: reopen.id });
     clearReopen();

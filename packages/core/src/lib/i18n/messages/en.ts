@@ -16,7 +16,7 @@ export const en: Record<MessageKey, string> = {
   // ===== Navigation =====
   'nav.home': 'Budget',
   'nav.transactions': 'Entries',
-  'nav.ledger': 'Ledger',
+  'nav.analysis': 'Analysis',
   'nav.assets': 'Assets',
   'nav.settings': 'Settings',
 
@@ -216,7 +216,6 @@ export const en: Record<MessageKey, string> = {
   'home.performanceTitle': 'Spending in the reward period',
   'home.tab.expense': 'Expense',
   'home.tab.income': 'Income',
-  'home.settlementTitle': '{card} settlement',
 
   // ===== Owner scope (doubles as the page title) =====
   'scopeTitle.none': '{noun} · no owner',
@@ -239,8 +238,6 @@ export const en: Record<MessageKey, string> = {
   'assetSummary.noScope': 'No owner is selected.',
   'assetSummary.noType': 'No type selected',
   'ledgerSummary.net': 'Net income',
-  'ledgerSummary.particle': '',
-  'ledgerSummary.suffix': '',
   'assetGroup.cash': 'Cash & checking',
   'assetGroup.savings': 'Savings & pension',
   'assetGroup.investment': 'Investments',
@@ -254,8 +251,6 @@ export const en: Record<MessageKey, string> = {
   'month.pick': 'Pick a month',
   'month.prevYear': 'Previous year',
   'month.nextYear': 'Next year',
-  'month.byMonth': 'By month',
-  'month.byRange': 'Date range',
 
   // ===== Cards =====
   'method.credit_card': 'Credit card',
@@ -651,8 +646,6 @@ export const en: Record<MessageKey, string> = {
 
   // ===== Ledger screen =====
   'ledger.noun': 'ledger',
-  'ledger.tab.category': 'By category',
-  'ledger.tab.method': 'By method',
   'ledger.noFiltered': 'No entries match the filter.',
   'ledger.entryCount': '{count}',
   'ledger.totalExpense': 'All spending',
@@ -663,11 +656,6 @@ export const en: Record<MessageKey, string> = {
   'budget.scopeAllHint': 'This changes the amount in every month this budget applies to.',
   'budget.scopeFrom': 'From a month on',
   'budget.scopeFromHint': 'Months before the one you pick keep their current amount.',
-  'budget.nothingToDelete': 'There is no budget to delete.',
-  'budget.deleteAllConfirm':
-    'This deletes {count} budgets and every monthly adjustment. It cannot be undone.',
-  'budget.deleted': 'Deleted {count} budgets.',
-  'budget.deleteFailed': 'Could not delete the budgets.',
   'budget.negative': 'A budget cannot be less than zero.',
   'budget.noneToDelete': 'There is no budget to delete.',
   'budget.pickMonth': 'Choose the month this starts from.',
@@ -692,34 +680,15 @@ export const en: Record<MessageKey, string> = {
   'budget.settingsHint': 'Tap a category to set its monthly budget.',
   'budget.monthAdjusted': 'Adjusted this month',
   'budget.settingsLoadFailed': 'Could not load budgets.',
-  'budget.progressMonthOnly':
-    'Budget progress shows only for whole months. A budget is set per month, so it cannot be split across an arbitrary range.',
-  'budget.line': 'Budget {amount} · {percent}%',
 
   // ===== Category tab =====
-  'category.totalExpense': 'All spending',
-  'category.totalIncome': 'All income',
   'category.uncategorized': 'Uncategorized',
   'category.exact': '{name} · uncategorized',
-  'category.none': 'No categories yet.',
   'category.detailTitle': '{name} in detail',
 
   // ===== Method tab =====
-  'method.accountTitle': 'Paid from account',
   'method.unassigned': 'No payment method',
-  'method.creditEmpty': 'No credit cards.',
-  'method.debitEmpty': 'No debit cards.',
-  'method.accountEmpty': 'No accounts.',
-  'method.unknownOwner': 'Unassigned',
-  'method.expensePrefix': 'Spent ',
-  'method.incomeLine': 'Income {amount}',
-  'method.settle': 'Settle',
-  'method.monthlyUsage': 'Spending by month',
   'method.usage': 'Spent',
-  'method.dailyCumulative': 'Cumulative spending by day',
-  'method.cumulativeUsage': 'Cumulative spending',
-  'method.entries': 'Entries',
-  'method.pickHint': 'Choose an item to see its details',
 
   // ===== Category detail modal =====
   'detail.loading': 'Loading data...',
@@ -969,7 +938,7 @@ export const en: Record<MessageKey, string> = {
   'invite.title': 'Project invitation',
   'invite.checking': 'Checking...',
   'invite.noCode': 'This address has no invite code.',
-  'invite.toDashboard': 'Go to the dashboard',
+  'invite.toDashboard': 'Go to Budget',
   'invite.signInFirst': 'Sign in first to accept the invitation.',
   'invite.loading': 'Loading the invitation...',
   'invite.loadFailed': 'Could not load the invitation.',
@@ -1276,6 +1245,27 @@ export const en: Record<MessageKey, string> = {
   'tx.analysisAll': 'Drawn from all transactions (no search conditions).',
   'tx.analysisOfPeriod': 'Analyze {period}',
   'tx.analysisOutOfRange': 'This period is outside the search period. Move to another period.',
+
+  // ===== Analysis tab =====
+  'analysis.noun': 'analysis',
+  'analysis.tab.net': 'Total',
+  'analysis.tab.expense': 'Expense',
+  'analysis.tab.income': 'Income',
+  'analysis.toTransactions': 'View entries',
+  'analysis.net.income': 'Income',
+  'analysis.net.expense': 'Expense',
+  'analysis.net.net': 'Net income',
+  'analysis.net.savingRate': 'Savings rate',
+  'analysis.net.summary': 'Income and expense',
+  'analysis.net.monthlyTrend': 'Monthly net income',
+  'analysis.net.weeklyTrend': 'Weekly net income',
+  'analysis.net.yearlyTrend': 'Yearly net income',
+  'analysis.net.noMonths': 'No income or expense in the last 12 months.',
+  'analysis.net.noWeeks': 'No income or expense in the last 12 weeks.',
+  'analysis.net.noYears': 'No income or expense in the last 5 years.',
+  'analysis.net.daily': 'Daily cumulative net income',
+  'analysis.net.cumulative': 'Cumulative net income',
+  'analysis.net.noPeriod': 'No income or expense in this period.',
   'tx.search': 'Search',
   'tx.search.categories': 'Categories',
   'tx.search.accounts': 'Accounts',

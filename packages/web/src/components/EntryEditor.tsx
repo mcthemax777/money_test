@@ -24,6 +24,7 @@ import {
   interestInAmount,
   showDiscountPerformance,
   withoutInterest,
+  paybackMethodOf,
 } from '@money/core/data/entry-form';
 import { entryAmountLook } from '@money/core/lib/entries';
 import { formatCurrency, formatNumber, toAmountString, toNumber } from '@money/core/lib/money';
@@ -1481,13 +1482,16 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               label: categoryNameOf(formData.subCategoryId || formData.mainCategoryId),
             },
           ];
-  /** 새 페이백 줄의 들어온 곳. 지금 고른 결제수단이다. */
-  const paybackDefaultMethod =
+  /** 새 페이백 줄의 들어온 곳. 지금 고른 결제수단에 연결된 통장이다 (`paybackMethodOf`). */
+  const paybackDefaultMethod = paybackMethodOf(
     formData.method === 'card' && formData.cardId
       ? `card:${formData.cardId}`
       : formData.accountId
         ? `account:${formData.accountId}`
-        : '';
+        : '',
+    cards,
+    (value) => paymentMethodOptions.some((option) => option.id === value),
+  );
 
   /**
    * 이 거래에서 깎인 금액의 합.

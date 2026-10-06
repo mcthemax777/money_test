@@ -29,6 +29,7 @@ import {
   CHART_TOOLTIP_STYLE,
   CHART_Y_AXIS_WIDTH,
   barDomain,
+  barTicks,
   formatAxisAmount,
   formatTooltipAmount,
 } from '@money/core/lib/chart';
@@ -79,7 +80,7 @@ interface BudgetDetailModalProps {
  * onDrill 을 주면 id 가 있는 조각을 눌러 한 단 내려간다. id 가 없는 조각("미분류")이나
  * 수단 조각은 내려갈 곳이 없다.
  */
-function SlicePieChart({
+export function SlicePieChart({
   slices,
   currency,
   onDrill,
@@ -124,7 +125,7 @@ function SlicePieChart({
 }
 
 /** 금액 막대. 12개월 추이와 요일별·시간대별 평균이 함께 쓴다. */
-function AmountBarChart({
+export function AmountBarChart({
   data,
   currency,
   tooltipName,
@@ -136,13 +137,16 @@ function AmountBarChart({
   /** X축 이름을 몇 칸 걸러 적을지. 0 이면 다 적는다. 비우면 recharts 가 겹치지 않게 고른다. */
   interval?: number;
 }) {
+  const domain = barDomain(data.map((d) => d.amount));
   return (
     <ResponsiveContainer width="100%" height={300}>
       <BarChart data={data} margin={CHART_MARGIN}>
         <CartesianGrid {...CHART_GRID} />
         <XAxis dataKey="label" tick={CHART_TICK} interval={interval} />
         <YAxis
-          domain={barDomain(data.map((d) => d.amount))}
+          domain={domain}
+          /* 눈금은 앱 막대와 같은 간격으로 직접 준다. recharts 가 고르면 0 아래로 연 축에서 간격이 고르지 않다. */
+          ticks={barTicks(domain[0], domain[1])}
           tickFormatter={(value: number) => formatAxisAmount(value, currency)}
           tick={CHART_TICK}
           width={CHART_Y_AXIS_WIDTH}

@@ -22,48 +22,9 @@ interface MonthHeaderProps {
   /** 같은 줄 오른쪽 끝에 붙일 것 (탭, 추가 버튼 등) */
   right?: React.ReactNode;
   /**
-   * 합계를 이 줄에 함께 적을지.
-   *
-   * 가계 화면은 끄고 쓴다 -- 첫 문장이 그 금액을 문장으로 말하므로(LedgerKindSummary)
-   * 여기서 또 적으면 같은 숫자가 한 화면에 두 번 나온다.
+   * 합계를 이 줄에 함께 적을지. 같은 금액을 화면의 다른 자리에서 이미 적는 곳은 끈다.
    */
   showTotals?: boolean;
-  /**
-   * 화살표의 좌우 여백을 자리에서 뺄지 (누를 자리는 그대로 둔다).
-   *
-   * 가계의 첫 문장이 켜고 쓴다. 이 화살표는 문장 안에 섞여 있어 두 가지가 걸린다.
-   *
-   *   1. 왼쪽 선. 윗줄 제목은 `아이콘 w-5 + gap-1.5` 라 글자가 26px 에서 시작하는데,
-   *      화살표에 여백(p-2)이 붙어 있으면 년월 글자가 34px 로 밀려 "전"과 "2"가 어긋난다.
-   *   2. 오른쪽 여백. 여백이 그대로면 꺽쇠 양옆이 넓게 벌어져, 뒤에 오는 낱말이 한 문장으로
-   *      이어 읽히지 않는다.
-   *
-   * 음수 여백으로 상쇄하면 차지하는 자리는 아이콘 크기(20px)뿐이다.
-   */
-  tightArrows?: boolean;
-  /**
-   * 달 보기 <-> 기간 보기 전환 버튼을 이 안에 그릴지.
-   *
-   * 가계 화면은 끄고 쓴다 -- 그 버튼을 화면 **우측 상단**으로 옮겼기 때문이다. 날짜
-   * 고르는 자리는 첫 문장 안에 있고, 보기 방식을 바꾸는 것은 문장의 일부가 아니다.
-   * 전환은 부르는 쪽이 그린다 (`onPeriodModeChange` 는 그대로 쓴다).
-   */
-  showModeSwitch?: boolean;
-
-  /*
-   * 기간 보기.
-   *
-   * 달력의 달과 어긋나는 구간(카드 청구주기, 여행 기간)을 보려면 달 이동만으로는
-   * 안 된다. 아래 값들을 넘기면 "기간" 전환 버튼이 붙고, 켜면 달 이동 대신
-   * 날짜 두 개를 받는다. 넘기지 않으면 예전처럼 달 이동만 있다.
-   */
-  rangeStart?: string;
-  rangeEnd?: string;
-  isRangeMode?: boolean;
-  /** 시작일·종료일이 바뀔 때. 둘 다 채워져야 조회가 바뀐다. */
-  onRangeChange?: (start: string, end: string) => void;
-  /** 달 보기 <-> 기간 보기 전환 */
-  onPeriodModeChange?: (mode: 'month' | 'range') => void;
 }
 
 const MONTHS = Array.from({ length: 12 }, (_, i) => i + 1);
@@ -75,14 +36,7 @@ export default function MonthHeader({
   expenseTotal,
   onMonthChange,
   right,
-  rangeStart = '',
-  rangeEnd = '',
-  isRangeMode = false,
-  onRangeChange,
-  onPeriodModeChange,
   showTotals = true,
-  showModeSwitch = true,
-  tightArrows = false,
 }: MonthHeaderProps) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
@@ -130,56 +84,18 @@ export default function MonthHeader({
   return (
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div className="flex items-center gap-6">
-        {isRangeMode ? (
-          /* 기간 보기. 달을 넘어가는 구간을 직접 정한다. */
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={rangeStart}
-              max={rangeEnd || undefined}
-              onChange={(e) => onRangeChange?.(e.target.value, rangeEnd)}
-              className="px-2 py-1 border border-gray-300 rounded-lg text-sm"
-            />
-            <span className="text-gray-500">~</span>
-            <input
-              type="date"
-              value={rangeEnd}
-              min={rangeStart || undefined}
-              onChange={(e) => onRangeChange?.(rangeStart, e.target.value)}
-              className="px-2 py-1 border border-gray-300 rounded-lg text-sm"
-            />
-            {showModeSwitch && (
-              <button
-                type="button"
-                onClick={() => onPeriodModeChange?.('month')}
-                className="px-3 py-1 text-sm border rounded-lg text-gray-700 hover:bg-gray-100"
-              >
-                {t('month.byMonth')}
-              </button>
-            )}
-          </div>
-        ) : (
-        /*
+        {/*
           화살표와 년월 글자의 자리를 **윗줄 제목과 맞춘다** (PersonScopeTitle).
           제목은 `아이콘 w-5 + gap-1.5` 라 글자가 26px 에서 시작한다. 그래서 여기도 같은
           아이콘 크기와 같은 간격을 쓰고, 년월 버튼에 좌우 여백을 두지 않는다 -- px 를
           두면 그만큼 글자가 밀려, 세로로 봤을 때 "전"과 "2"가 어긋난다.
-        */
+        */}
         <div ref={ref} className="relative flex items-center gap-1.5">
           <button
             type="button"
             onClick={() => shift(-1)}
-            /*
-              색은 윗줄 제목의 아이콘과 같다 (PersonScopeTitle 의 ChevronDown).
-
-              `tightArrows` 일 때는 마우스를 올렸을 때의 **바탕을 칠하지 않는다.** 음수
-              여백으로 자리를 줄여 두었으므로 버튼의 바탕 상자가 아이콘보다 좌우로 8px씩
-              넓고, 그 바탕이 뒤에 오는 낱말의 첫 글자를 덮는다. 색이 진해지는 것만으로도
-              누를 수 있다는 것은 드러난다.
-            */
-            className={`p-2 text-gray-400 hover:text-gray-900 rounded-lg transition ${
-              tightArrows ? '-mx-2' : 'hover:bg-gray-100'
-            }`}
+            // 색은 윗줄 제목의 아이콘과 같다 (PersonScopeTitle 의 ChevronDown).
+            className="p-2 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
             aria-label={t('month.prev')}
             title={t('month.prev')}
           >
@@ -200,9 +116,7 @@ export default function MonthHeader({
           <button
             type="button"
             onClick={() => shift(1)}
-            className={`p-2 text-gray-400 hover:text-gray-900 rounded-lg transition ${
-              tightArrows ? '-mx-2' : 'hover:bg-gray-100'
-            }`}
+            className="p-2 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
             aria-label={t('month.next')}
             title={t('month.next')}
           >
@@ -259,19 +173,7 @@ export default function MonthHeader({
               </div>
             </div>
           )}
-
-          {/* 달을 넘어가는 구간을 보려면 여기서 전환한다. */}
-          {showModeSwitch && onPeriodModeChange && (
-            <button
-              type="button"
-              onClick={() => onPeriodModeChange('range')}
-              className="ml-2 px-3 py-1 text-sm border rounded-lg text-gray-700 hover:bg-gray-100"
-            >
-              {t('month.byRange')}
-            </button>
-          )}
         </div>
-        )}
 
         {showTotals && (
           <div className="flex gap-6 text-sm font-semibold">

@@ -182,17 +182,22 @@ function niceStep(span: number): number {
 }
 
 /**
- * 막대 그래프의 Y축 범위. 언제나 0에서 시작한다.
+ * 막대 그래프의 Y축 범위. 언제나 0을 품는다.
  *
  * 막대는 길이가 곧 값이다. 0이 아닌 값에서 시작하면 두 막대의 높이 비율이 실제
  * 금액의 비율과 달라져 눈으로 비교한 결과가 틀린다.
+ *
+ * 음수가 있으면(분석 탭 합계의 적자 달 순수입) 그만큼 0 아래로 연다. 음수가 없으면 지금처럼
+ * 0에서 시작한다.
  *
  * 값이 모두 0이면 domain이 [0, 0]이 되어 recharts가 축을 그리지 못하고 막대가
  * 최대 높이로 보인다. 그때는 기본 상한을 준다.
  */
 export function barDomain(values: number[]): [number, number] {
   const max = Math.max(0, ...values);
-  return [0, max > 0 ? Math.ceil((max * 1.2) / 100) * 100 : 1000];
+  const min = Math.min(0, ...values);
+  const bottom = min < 0 ? Math.floor((min * 1.2) / 100) * 100 : 0;
+  return [bottom, max > 0 ? Math.ceil((max * 1.2) / 100) * 100 : min < 0 ? 0 : 1000];
 }
 
 /**

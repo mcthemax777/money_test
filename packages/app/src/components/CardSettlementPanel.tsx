@@ -10,7 +10,6 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, Text, TextInput, View } from 'react-native';
-import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { entryWritePort } from '@money/core/data/entry-write-port';
@@ -25,7 +24,7 @@ import { useProject, useProjectTimeZone } from '@money/core/store/project';
 import { zonedFormValueToUtc, type CardTransferDirection } from '@money/types';
 
 import DatePickerPanel from './DatePickerPanel';
-import { Chips, Field, PickerButton } from './FormFields';
+import { Chips, Field, PickerButton, openTimeKeyPicker } from './FormFields';
 import Modal from './Modal';
 
 /** 카드사와 통장 사이 자금이 오가는 방향 */
@@ -103,21 +102,7 @@ export default function CardSettlementPanel({
   };
 
   /** 시각을 고른다. 안드로이드가 그리는 시계 대화상자다 (거래 추가 폼과 같다). */
-  const openTimePicker = () => {
-    const [hour, minute] = form.time.split(':');
-    const base = new Date();
-    base.setHours(Number(hour) || 0, Number(minute) || 0, 0, 0);
-
-    DateTimePickerAndroid.open({
-      value: base,
-      mode: 'time',
-      is24Hour: true,
-      onValueChange: (_event, date) => {
-        const pad = (value: number) => String(value).padStart(2, '0');
-        setForm((prev) => ({ ...prev, time: `${pad(date.getHours())}:${pad(date.getMinutes())}` }));
-      },
-    });
-  };
+  const openTimePicker = () => openTimeKeyPicker(form.time, (time) => setForm((prev) => ({ ...prev, time })));
 
   /**
    * 카드사와 통장 사이 자금 이동 기록.

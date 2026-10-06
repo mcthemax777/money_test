@@ -96,8 +96,6 @@ export default function TransactionCalendarView({
         incomeTotal={totals.incomeTotal}
         expenseTotal={totals.expenseTotal}
         onMonthChange={changeMonth}
-        /* 기간 보기는 가계 화면의 것이다. 여기서는 달만 오간다. */
-        showModeSwitch={false}
       />
 
       {ledger.isLoading && ledger.entries.length === 0 ? (

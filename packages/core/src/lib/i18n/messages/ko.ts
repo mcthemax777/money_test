@@ -26,7 +26,7 @@ export const ko = {
   // ===== 화면 이동 =====
   'nav.home': '예산',
   'nav.transactions': '거래',
-  'nav.ledger': '가계',
+  'nav.analysis': '분석',
   'nav.assets': '자산',
   'nav.settings': '설정',
 
@@ -231,7 +231,6 @@ export const ko = {
   'home.performanceTitle': '실적 구간 사용액',
   'home.tab.expense': '지출',
   'home.tab.income': '수입',
-  'home.settlementTitle': '{card} 정산',
 
   // ===== 자산주인 고르기 (화면 제목을 겸한다) =====
   'scopeTitle.none': '{noun} · 자산주인 없음',
@@ -261,8 +260,6 @@ export const ko = {
   'assetSummary.noScope': '고른 자산주인이 없습니다.',
   'assetSummary.noType': '고른 유형 없음',
   'ledgerSummary.net': '순수입',
-  'ledgerSummary.particle': '은',
-  'ledgerSummary.suffix': '입니다',
   'assetGroup.cash': '입출금·현금',
   'assetGroup.savings': '예적금·연금',
   'assetGroup.investment': '투자',
@@ -276,8 +273,6 @@ export const ko = {
   'month.pick': '년월 선택',
   'month.prevYear': '이전 해',
   'month.nextYear': '다음 해',
-  'month.byMonth': '월별로',
-  'month.byRange': '기간',
 
   // ===== 카드 줄 =====
   'method.credit_card': '신용카드',
@@ -677,8 +672,6 @@ export const ko = {
 
   // ===== 가계 화면 =====
   'ledger.noun': '가계',
-  'ledger.tab.category': '분류별',
-  'ledger.tab.method': '수단별',
   'ledger.noFiltered': '필터에 맞는 거래가 없습니다.',
   'ledger.entryCount': '{count}건',
   'ledger.totalExpense': '전체지출',
@@ -689,10 +682,6 @@ export const ko = {
   'budget.scopeAllHint': '이 예산이 적용되는 모든 달의 금액을 바꿉니다.',
   'budget.scopeFrom': '고른 달부터',
   'budget.scopeFromHint': '고른 달 이전은 지금 금액 그대로 남습니다.',
-  'budget.nothingToDelete': '지울 예산이 없습니다.',
-  'budget.deleteAllConfirm': '예산 {count}개와 월별 조정값을 모두 지웁니다. 되돌릴 수 없습니다.',
-  'budget.deleted': '예산 {count}개를 지웠습니다.',
-  'budget.deleteFailed': '예산을 지우지 못했습니다.',
   'budget.negative': '예산 금액은 0보다 작을 수 없습니다.',
   'budget.noneToDelete': '삭제할 예산이 없습니다.',
   'budget.pickMonth': '적용을 시작할 연월을 골라 주세요.',
@@ -716,34 +705,15 @@ export const ko = {
   'budget.settingsHint': '분류를 누르면 그 분류의 월 예산을 정합니다.',
   'budget.monthAdjusted': '이 달 조정',
   'budget.settingsLoadFailed': '예산을 불러오지 못했습니다.',
-  'budget.progressMonthOnly':
-    '예산 진행률은 월 단위에서만 보입니다. 예산은 달마다 정하는 값이라 기간에 맞춰 나눌 수 없습니다.',
-  'budget.line': '예산 {amount} · {percent}%',
 
   // ===== 분류별 탭 =====
-  'category.totalExpense': '전체 지출',
-  'category.totalIncome': '전체 수입',
   'category.uncategorized': '미분류',
   'category.exact': '{name} · 미분류',
-  'category.none': '분류가 없습니다.',
   'category.detailTitle': '{name} 상세 분석',
 
   // ===== 수단별 탭 =====
-  'method.accountTitle': '계좌 결제',
   'method.unassigned': '자산 미선택',
-  'method.creditEmpty': '신용카드가 없습니다.',
-  'method.debitEmpty': '체크카드가 없습니다.',
-  'method.accountEmpty': '통장이 없습니다.',
-  'method.unknownOwner': '미정',
-  'method.expensePrefix': '지출 ',
-  'method.incomeLine': '수입 {amount}',
-  'method.settle': '정산하기',
-  'method.monthlyUsage': '월별 사용 금액',
   'method.usage': '사용액',
-  'method.dailyCumulative': '일별 누적 사용금액',
-  'method.cumulativeUsage': '누적 사용액',
-  'method.entries': '거래 기록',
-  'method.pickHint': '항목을 선택하여 상세 정보를 확인하세요',
 
   // ===== 분류 상세 팝업 =====
   'detail.loading': '데이터 로드 중...',
@@ -994,7 +964,7 @@ export const ko = {
   'invite.title': '프로젝트 초대',
   'invite.checking': '확인 중...',
   'invite.noCode': '초대 코드가 없는 주소입니다.',
-  'invite.toDashboard': '대시보드로 이동',
+  'invite.toDashboard': '예산으로 이동',
   'invite.signInFirst': '초대를 수락하려면 먼저 로그인해 주세요.',
   'invite.loading': '초대 정보를 불러오는 중...',
   'invite.loadFailed': '초대 정보를 불러올 수 없습니다.',
@@ -1305,6 +1275,27 @@ export const ko = {
   'tx.analysisAll': '검색 조건 없이 모든 거래로 그렸습니다.',
   'tx.analysisOfPeriod': '{period} 분석',
   'tx.analysisOutOfRange': '이 기간은 검색 기간 밖입니다. 기간을 옮겨 보세요.',
+
+  // ===== 분석 탭 =====
+  'analysis.noun': '분석',
+  'analysis.tab.net': '합계',
+  'analysis.tab.expense': '지출',
+  'analysis.tab.income': '수입',
+  'analysis.toTransactions': '거래내역 보기',
+  'analysis.net.income': '수입',
+  'analysis.net.expense': '지출',
+  'analysis.net.net': '순수입',
+  'analysis.net.savingRate': '저축률',
+  'analysis.net.summary': '수입과 지출',
+  'analysis.net.monthlyTrend': '월별 순수입',
+  'analysis.net.weeklyTrend': '주별 순수입',
+  'analysis.net.yearlyTrend': '연도별 순수입',
+  'analysis.net.noMonths': '최근 12개월 수입·지출 내역이 없습니다.',
+  'analysis.net.noWeeks': '최근 12주 수입·지출 내역이 없습니다.',
+  'analysis.net.noYears': '최근 5년 수입·지출 내역이 없습니다.',
+  'analysis.net.daily': '일별 누적 순수입',
+  'analysis.net.cumulative': '누적 순수입',
+  'analysis.net.noPeriod': '이 기간에 수입·지출 내역이 없습니다.',
   'tx.search': '검색',
   'tx.search.categories': '분류',
   'tx.search.accounts': '계좌',

@@ -1,5 +1,4 @@
-import { Pressable, Text, View } from 'react-native';
-import { ChevronLeft, ChevronRight } from 'lucide-react-native';
+import { Text, View } from 'react-native';
 import type { EntryListItem, EntryScopeQuery } from '@money/types';
 
 import { useTransactionAnalysis } from '@money/core/hooks/useTransactionAnalysis';
@@ -8,8 +7,8 @@ import { useTranslation } from '@money/core/lib/i18n';
 import type { Category } from '@money/core/lib/types';
 
 import CategoryDetailView from './CategoryDetailView';
-import MonthHeader from './MonthHeader';
 import PageHeader from './PageHeader';
+import PeriodNavigator from './PeriodNavigator';
 import TypeTabs from './TypeTabs';
 
 /**
@@ -19,8 +18,7 @@ import TypeTabs from './TypeTabs';
  * 부르는 쪽은 펼 때만 이 컴포넌트를 세운다 -- 다시 펴면 그때의 검색으로 기간과 지출·수입을
  * 새로 정한다.
  *
- * 기간은 해·달·주 중 하나다. 달은 가계 화면과 같은 머리(달 고르기 포함)로, 해와 주는 앞뒤
- * 단추와 이름만으로 옮긴다 (웹과 같다).
+ * 기간은 해·달·주 중 하나다. 옮기는 머리는 분석 탭과 같은 것이다 (`PeriodNavigator`).
  */
 export default function TransactionAnalysisView({
   onClose,
@@ -47,57 +45,13 @@ export default function TransactionAnalysisView({
 }) {
   const { t } = useTranslation();
   const analysis = useTransactionAnalysis({ search, range, scope, initialKey });
-  const [year, month] = analysis.periodKey.split('-').map(Number);
-  /* 앞뒤 단추의 이름. 시작일을 옮긴 달도 달 단위로 옮긴다 (웹과 같다). */
-  const stepLabel = {
-    prev: analysis.unit === 'week' ? 'week.prev' : analysis.unit === 'year' ? 'month.prevYear' : 'month.prev',
-    next: analysis.unit === 'week' ? 'week.next' : analysis.unit === 'year' ? 'month.nextYear' : 'month.next',
-  } as const;
 
   const controls = (
     <View className="gap-3">
       <Text className="text-sm text-gray-500">
         {searchCount > 0 ? t('tx.analysisFiltered', { count: searchCount }) : t('tx.analysisAll')}
       </Text>
-      {analysis.isCalendarMonth ? (
-        <MonthHeader
-          year={year}
-          month={month}
-          incomeTotal={0}
-          expenseTotal={0}
-          showTotals={false}
-          onMonthChange={(nextYear, nextMonth) =>
-            analysis.setPeriodKey(`${nextYear}-${String(nextMonth).padStart(2, '0')}`)
-          }
-        />
-      ) : (
-        /* 직접 정한 기간은 옮길 앞뒤가 없어 이름만 선다 (웹과 같다). */
-        <View className="flex-row items-center gap-1">
-          {analysis.unit !== 'range' ? (
-            <Pressable
-              onPress={() => analysis.shift(-1)}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel={t(stepLabel.prev)}
-              className="rounded-lg p-2 active:bg-gray-100"
-            >
-              <ChevronLeft size={20} color="#9ca3af" />
-            </Pressable>
-          ) : null}
-          <Text className="shrink py-1 text-xl font-bold text-gray-900">{analysis.label}</Text>
-          {analysis.unit !== 'range' ? (
-            <Pressable
-              onPress={() => analysis.shift(1)}
-              hitSlop={8}
-              accessibilityRole="button"
-              accessibilityLabel={t(stepLabel.next)}
-              className="rounded-lg p-2 active:bg-gray-100"
-            >
-              <ChevronRight size={20} color="#9ca3af" />
-            </Pressable>
-          ) : null}
-        </View>
-      )}
+      <PeriodNavigator periodKey={analysis.periodKey} onChange={analysis.setPeriodKey} />
       <TypeTabs type={analysis.type} onChange={analysis.setType} />
     </View>
   );

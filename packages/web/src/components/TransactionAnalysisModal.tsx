@@ -1,6 +1,5 @@
 'use client';
 
-import { ChevronLeft, ChevronRight } from 'lucide-react';
 import type { EntryListItem, EntryScopeQuery } from '@money/types';
 
 import { useTransactionAnalysis } from '@money/core/hooks/useTransactionAnalysis';
@@ -10,7 +9,7 @@ import type { Category } from '@money/core/lib/types';
 
 import { BudgetDetailModal } from './BudgetDetailModal';
 import Modal from './Modal';
-import MonthHeader from './MonthHeader';
+import PeriodNavigator from './PeriodNavigator';
 import TypeTabs from './TypeTabs';
 
 /**
@@ -20,8 +19,7 @@ import TypeTabs from './TypeTabs';
  * 그린다. 검색을 걸지 않았으면 모든 거래다. 부르는 쪽은 열 때만 이 컴포넌트를 세운다 --
  * 닫았다 다시 열면 보는 기간과 지출·수입이 그때의 검색에 맞춰 새로 정해져야 한다.
  *
- * 기간은 해·달·주 중 하나다. 달은 가계 화면과 같은 머리(달 고르기 포함)로, 해와 주는 앞뒤
- * 단추와 이름만으로 옮긴다.
+ * 기간은 해·달·주 중 하나다. 옮기는 머리는 분석 탭과 같은 것이다 (`PeriodNavigator`).
  */
 export default function TransactionAnalysisModal({
   onClose,
@@ -48,12 +46,6 @@ export default function TransactionAnalysisModal({
 }) {
   const { t } = useTranslation();
   const analysis = useTransactionAnalysis({ search, range, scope, initialKey });
-  const [year, month] = analysis.periodKey.split('-').map(Number);
-  /* 앞뒤 단추의 이름. 시작일을 옮긴 달도 달 단위로 옮긴다. */
-  const stepLabel = {
-    prev: analysis.unit === 'week' ? 'week.prev' : analysis.unit === 'year' ? 'month.prevYear' : 'month.prev',
-    next: analysis.unit === 'week' ? 'week.next' : analysis.unit === 'year' ? 'month.nextYear' : 'month.next',
-  } as const;
 
   return (
     <Modal isOpen onClose={onClose} title={t('tx.analysisTitle')} wide>
@@ -64,48 +56,7 @@ export default function TransactionAnalysisModal({
             : t('tx.analysisAll')}
         </p>
 
-        {analysis.isCalendarMonth ? (
-          <MonthHeader
-            year={year}
-            month={month}
-            incomeTotal={0}
-            expenseTotal={0}
-            showTotals={false}
-            onMonthChange={(nextYear, nextMonth) =>
-              analysis.setPeriodKey(`${nextYear}-${String(nextMonth).padStart(2, '0')}`)
-            }
-          />
-        ) : (
-          /*
-            해·주와 시작일을 옮긴 달은 앞뒤 단추와 이름만 둔다. 직접 정한 기간은 옮길 앞뒤가
-            없어 이름만 선다.
-          */
-          <div className="flex items-center gap-1">
-            {analysis.unit !== 'range' ? (
-              <button
-                type="button"
-                onClick={() => analysis.shift(-1)}
-                className="p-2 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
-                aria-label={t(stepLabel.prev)}
-                title={t(stepLabel.prev)}
-              >
-                <ChevronLeft className="w-5 h-5" />
-              </button>
-            ) : null}
-            <span className="py-1 text-2xl font-bold text-gray-900">{analysis.label}</span>
-            {analysis.unit !== 'range' ? (
-              <button
-                type="button"
-                onClick={() => analysis.shift(1)}
-                className="p-2 text-gray-400 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition"
-                aria-label={t(stepLabel.next)}
-                title={t(stepLabel.next)}
-              >
-                <ChevronRight className="w-5 h-5" />
-              </button>
-            ) : null}
-          </div>
-        )}
+        <PeriodNavigator periodKey={analysis.periodKey} onChange={analysis.setPeriodKey} />
 
         <TypeTabs type={analysis.type} onChange={analysis.setType} />
 

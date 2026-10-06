@@ -64,10 +64,9 @@ export default function HomeScreen() {
   const home = useHomeData({ projectId: selectedProjectId, year, month, thisYearMonth });
 
   /*
-   * 펼쳐 둔 상세. null 이면 예산 화면을 본다. 펴고 접을 때 자리를 다루는 규칙은 가계 화면과
-   * 같다 (LedgerScreen 의 openDetail).
+   * 펼쳐 둔 상세. null 이면 예산 화면을 본다.
    *
-   *   category  예산 줄을 눌러 편 상세 분석. 가계 분류별에서 분류를 누를 때와 같은 보기다.
+   *   category  예산 줄을 눌러 편 상세 분석. 거래 분석에서 분류를 누를 때와 같은 보기다.
    *   card      실적 구간 카드를 눌러 편 카드 상세. 자산 화면에서 카드를 누를 때와 같은 상자를
    *             화면을 옮기지 않고 여기서 그린다 -- ← 를 누르면 예산 화면 그대로다
    *             (2026-10-05 사용자 요청). 카드는 id 만 들고 목록에서 다시 찾는다.

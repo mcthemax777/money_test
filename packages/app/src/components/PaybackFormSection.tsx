@@ -18,7 +18,7 @@ import { formatCurrency } from '@money/core/lib/money';
 import { useProject, useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 
 import DatePickerPanel from './DatePickerPanel';
-import { Chips, Field, PickerButton } from './FormFields';
+import { Chips, Field, PickerButton, openTimeKeyPicker } from './FormFields';
 
 export default function PaybackFormSection({
   original,
@@ -38,7 +38,7 @@ export default function PaybackFormSection({
   /** 들어온 곳으로 고를 것. 거래 폼의 결제수단 목록 그대로다. */
   methodChoices: PaymentChoice[];
   showAssetOwner: boolean;
-  /** 새 줄의 들어온 곳. 지금 폼에서 고른 결제수단이다. */
+  /** 새 줄의 들어온 곳. 지금 고른 결제수단에 연결된 통장이다 (core `paybackMethodOf`). */
   defaultMethod: string;
   reloadToken?: number;
   onOpenPayback: (payback: EntryListItem) => void;
@@ -100,15 +100,6 @@ export default function PaybackFormSection({
                 accessibilityLabel={t('editor.amount')}
                 className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-900"
               />
-              <View className="flex-1">
-                <PickerButton
-                  icon="date"
-                  value={draft.dateKey}
-                  placeholder="YYYY-MM-DD"
-                  isOpen={calendarKey === draft.key}
-                  onPress={() => setCalendarKey(calendarKey === draft.key ? null : draft.key)}
-                />
-              </View>
               <Pressable
                 onPress={() => drafts.remove(draft.key)}
                 accessibilityRole="button"
@@ -118,6 +109,27 @@ export default function PaybackFormSection({
               >
                 <X size={18} color="#6b7280" />
               </Pressable>
+            </View>
+            {/* 들어온 날과 시각. 시각은 안드로이드 시계 대화상자로 고른다 (거래 폼과 같다). */}
+            <View className="flex-row items-center gap-2">
+              <View className="flex-1">
+                <PickerButton
+                  icon="date"
+                  value={draft.dateKey}
+                  placeholder="YYYY-MM-DD"
+                  isOpen={calendarKey === draft.key}
+                  onPress={() => setCalendarKey(calendarKey === draft.key ? null : draft.key)}
+                />
+              </View>
+              <View className="flex-1">
+                <PickerButton
+                  icon="time"
+                  value={draft.timeKey}
+                  placeholder="HH:MM"
+                  isOpen={false}
+                  onPress={() => openTimeKeyPicker(draft.timeKey, (timeKey) => drafts.update(draft.key, { timeKey }))}
+                />
+              </View>
             </View>
             {calendarKey === draft.key ? (
               <DatePickerPanel

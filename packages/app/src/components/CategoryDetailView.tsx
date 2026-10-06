@@ -70,7 +70,11 @@ export default function CategoryDetailView({
   projectId?: string | null;
   filter?: EntryScopeQuery;
   reloadToken?: number;
-  onClose: () => void;
+  /**
+   * 머리글 ← 가 부른다. 주지 않으면 머리글을 세우지 않는다 -- 분석 탭처럼 제 머리글을 가진
+   * 화면 안에 끼워 그릴 때다.
+   */
+  onClose?: () => void;
   /** 거래를 누르면 부른다. 가계 화면의 고치기 팝업으로 잇는 통로다. */
   onEntryClick?: (entry: EntryListItem) => void;
   /** 12개월 추이를 자를 구간. 거래 분석이 검색 기간을 걸었을 때 준다 (useCategoryDetail). */
@@ -105,10 +109,12 @@ export default function CategoryDetailView({
 
   return (
     <View className="gap-6">
-      <PageHeader
-        title={title ?? t('category.detailTitle', { name: categoryName })}
-        onBack={onClose}
-      />
+      {onClose ? (
+        <PageHeader
+          title={title ?? t('category.detailTitle', { name: categoryName })}
+          onBack={onClose}
+        />
+      ) : null}
 
       {controls}
 

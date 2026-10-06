@@ -20,11 +20,11 @@ import OfflineSync from './src/shell/OfflineSync';
 import PushSetup from './src/shell/PushSetup';
 import UpdateGate from './src/shell/UpdateGate';
 import ProjectAccessLostAlert from './src/shell/ProjectAccessLostAlert';
+import AnalysisScreen from './src/screens/AnalysisScreen';
 import AssetsScreen from './src/screens/AssetsScreen';
 import CategoriesScreen from './src/screens/CategoriesScreen';
 import HomeScreen from './src/screens/HomeScreen';
 import InboxScreen from './src/screens/InboxScreen';
-import LedgerScreen from './src/screens/LedgerScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import OutboxScreen from './src/screens/OutboxScreen';
 import InquiriesScreen from './src/screens/InquiriesScreen';
@@ -148,8 +148,8 @@ function Screen() {
     // 거래 화면의 머리글에서 들어간다. 하위 화면이라 뒤로가기로 돌아온다.
     case '/transactions/inbox':
       return <InboxScreen />;
-    case '/dashboard':
-      return <LedgerScreen />;
+    case '/analysis':
+      return <AnalysisScreen />;
     case '/assets':
       return <AssetsScreen />;
     case '/settings':

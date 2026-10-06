@@ -29,12 +29,14 @@ import {
   entryFormFromDraft,
   entryFormFromItem,
   paybackFormFrom,
+  paybackMethodOf,
   entryFormToRequest,
   parseMethod,
   type EntryFormSplit,
   newSplitLine,
   type EntryFormValues,
   type EntryFormViolation,
+  type PaymentMethodValue,
 } from '../data/entry-form';
 import { entryWritePort } from '../data/entry-write-port';
 import { homeDataPort } from '../data/home-port';
@@ -88,6 +90,15 @@ const EMPTY_LISTS: EntryFormLists = {
  * 결제수단을 비워 두면 조립이 알아서 붙인다. 모두 사용자가 "통장"으로 인식하지 않는다.
  */
 const HIDDEN_TYPES: readonly string[] = HIDDEN_ACCOUNT_TYPES;
+
+/** 이 목록에서 결제수단으로 고를 수 있는 통장인지. `methodChoices` 의 통장과 같은 거름이다. */
+function selectableAccountIn(accounts: EntryFormLists['accounts']) {
+  return (value: PaymentMethodValue) =>
+    accounts.some(
+      (account) =>
+        accountValue(account.id) === value && account.isActive && !HIDDEN_TYPES.includes(account.type),
+    );
+}
 
 /** 빈 분할 줄. 줄 키는 `newSplitLine` 이 붙인다. */
 const blankSplit = (): EntryFormSplit => newSplitLine();
@@ -254,13 +265,31 @@ export function useEntryForm({
   const startPayback = useCallback(
     (original: EntryListItem): boolean => {
       if (original.kind !== 'expense') return false;
-      setValues(paybackFormFrom(original, timeZone));
+      setValues(paybackFormFrom(original, timeZone, lists.cards, selectableAccountIn(lists.accounts)));
       setEditingId(null);
       setViolation(null);
       setError('');
+      /*
+       * 카드 목록을 아직 읽지 못했으면 카드가 기본값으로 남는다. 목록이 오면 연결된 통장으로
+       * 바꾼다 -- 그 사이 사용자가 들어온 곳을 바꿨거나 다른 폼을 열었으면 두고.
+       */
+      if (original.cardId && !lists.cards.some((card) => card.id === original.cardId)) {
+        const cardMethod = cardValue(original.cardId);
+        void reloadLists().then((next) => {
+          const method = paybackMethodOf(cardMethod, next.cards, selectableAccountIn(next.accounts));
+          if (method === cardMethod) return;
+          setValues((previous) =>
+            previous.kind === 'payback' &&
+            previous.paybackOfEntryId === original.id &&
+            previous.method === cardMethod
+              ? { ...previous, method }
+              : previous,
+          );
+        });
+      }
       return true;
     },
-    [timeZone],
+    [timeZone, lists.cards, lists.accounts, reloadLists],
   );
 
   /**

@@ -41,7 +41,6 @@ import { useSharedValue } from 'react-native-reanimated';
 import {
   originalEntry,
   type EntryListItem,
-  type EntryPeriodUnit,
   type EntryRow,
 } from '@money/types';
 
@@ -83,6 +82,7 @@ import EntryEditor from '../components/EntryEditor';
 import PaybackEditor, { type PaybackTarget } from '../components/PaybackEditor';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
+import PeriodUnitPicker from '../components/PeriodUnitPicker';
 import SegmentedTabs from '../components/SegmentedTabs';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import TransactionItem from '../components/TransactionItem';
@@ -102,6 +102,8 @@ const ORIGIN_SCREEN: Record<EntryFocusOrigin['kind'], string> = {
   account: '/assets',
   card: '/assets',
   group: '/assets',
+  // 분석 탭의 거래내역 단추. 돌아가면 분석 탭이 떠날 때의 보기를 되살린다.
+  analysis: '/analysis',
 };
 
 const TABS: Array<{ id: TransactionTab; labelKey: MessageKey }> = [
@@ -481,8 +483,13 @@ export default function TransactionsScreen() {
     if (!focus) return;
     setOrigin(focus.origin);
     tx.setSearch(focus.search);
+    // 분석 탭에서 왔으면 그 묶는 단위와 세는 방식도 맞춘다.
+    if (focus.view) {
+      tx.changeUnit(focus.view.unit);
+      tx.setBasis(focus.view.basis);
+    }
     takeFocus();
-  }, [focus, takeFocus, tx.setSearch]);
+  }, [focus, takeFocus, tx.setSearch, tx.changeUnit, tx.setBasis]);
 
   /**
    * 떠나온 상세로 되돌아간다.
@@ -1300,28 +1307,7 @@ export default function TransactionsScreen() {
           누를 때마다 닫히면 다시 열어야 한다. 아래 둘은 그 자리에서 일이 시작되므로
           닫는다.
         */}
-        <View className="px-2 pb-3 pt-1">
-          <Text className="mb-2 text-sm font-medium text-gray-700">{t('tx.unit')}</Text>
-          <View className="flex-row gap-2 rounded-lg bg-gray-100 p-1">
-            {UNITS.map((item) => (
-              <Pressable
-                key={item.id}
-                onPress={() => tx.changeUnit(item.id)}
-                className={`flex-1 items-center rounded-md px-3 py-2 ${
-                  tx.unit === item.id ? 'bg-white' : ''
-                }`}
-              >
-                <Text
-                  className={`text-sm font-medium ${
-                    tx.unit === item.id ? 'text-blue-600' : 'text-gray-600'
-                  }`}
-                >
-                  {t(item.labelKey)}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        </View>
+        <PeriodUnitPicker value={tx.unit} onChange={tx.changeUnit} />
         {/*
           무엇을 "그 달에 쓴 돈"으로 셀지. 묶음 단위와 같은 자리에 둔다 -- 둘 다 목록의
           숫자가 무엇인지 정하는 값이고, 자주 바꾸는 것이 아니다.
@@ -1434,9 +1420,3 @@ export default function TransactionsScreen() {
   );
 }
 
-/** 묶는 단위를 고르는 알약의 차례. 좁은 것에서 넓은 것으로 간다. */
-const UNITS: Array<{ id: EntryPeriodUnit; labelKey: MessageKey }> = [
-  { id: 'week', labelKey: 'tx.unit.week' },
-  { id: 'month', labelKey: 'tx.unit.month' },
-  { id: 'year', labelKey: 'tx.unit.year' },
-];

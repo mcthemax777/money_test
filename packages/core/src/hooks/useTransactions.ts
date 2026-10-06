@@ -183,6 +183,18 @@ export function periodCutOf(
   return null;
 }
 
+/**
+ * 목록이 기간을 나누는 규칙. 분석 화면이 같은 규칙으로 오늘이 든 기간을 연다.
+ *
+ * `rangeKey` 는 검색에서 기간을 정해 목록이 그 한 줄일 때의 열쇠다.
+ */
+export interface PeriodGrouping {
+  unit: EntryPeriodUnit;
+  weekStart: WeekStart;
+  anchor: PeriodAnchor;
+  rangeKey: string | null;
+}
+
 export const EMPTY_SEARCH: TransactionSearch = {
   text: '',
   categoryIds: [],
@@ -576,7 +588,20 @@ function collapseToRange(
   ];
 }
 
-export function useTransactions(projectId: string | null) {
+export function useTransactions(
+  projectId: string | null,
+  {
+    periodsOnly = false,
+  }: {
+    /**
+     * 기간 줄(과 그 수입·지출)만 쓴다. 분석 화면이 켠다 -- 검색·단위·세는 방식은 거래
+     * 화면과 같은 것을 쓰지만, 기간 줄을 펴서 안을 받을 일은 없다. 켜면 어느 줄도 펴지지
+     * 않아(`levelOf` 가 늘 0) 안쪽 조회가 한 건도 나가지 않는다. 검색을 걸면 모든 줄이
+     * 펼친 모양이 되는 규칙도 여기서는 걸리지 않는다.
+     */
+    periodsOnly?: boolean;
+  } = {},
+) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
   /** 주로 묶을 때 한 주를 어디서 끊을지. 설정에서 고른 값이다. */
@@ -879,11 +904,12 @@ export function useTransactions(projectId: string | null) {
    */
   const levelOf = useCallback(
     (yearMonth: string): MonthLevel => {
+      if (periodsOnly) return 0;
       const chosen = levels[levelKey(yearMonth)];
       if (chosen !== undefined) return chosen;
       return tabLevels[tab] ?? (isSearching ? 2 : 0);
     },
-    [levels, levelKey, isSearching, tabLevels, tab],
+    [periodsOnly, levels, levelKey, isSearching, tabLevels, tab],
   );
 
   /**
@@ -2352,6 +2378,19 @@ export function useTransactions(projectId: string | null) {
     revealMore,
     /** 펼친 모양으로만 서고 아직 받지 않은 기간 줄이 남았는가. */
     canRevealMore: shownMonths.some(isMonthWaiting),
+    /**
+     * 기간 줄을 나누는 규칙 (`PeriodGrouping`). 분석 화면이 같은 규칙으로 오늘이 든 기간을
+     * 연다. 기간을 정했으면 그 한 줄의 열쇠가 `rangeKey` 다.
+     */
+    grouping: useMemo<PeriodGrouping>(
+      () => ({
+        unit,
+        weekStart: groupWeekStart,
+        anchor,
+        rangeKey: range ? (months[0]?.yearMonth ?? null) : null,
+      }),
+      [unit, groupWeekStart, anchor, range, months],
+    ),
     isMonthWaiting,
     isLoadingOpen,
     // 2단

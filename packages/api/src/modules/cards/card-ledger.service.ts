@@ -20,6 +20,7 @@ import {
   shiftClosingMonth,
   usageSpan,
   zonedCurrentYearMonth,
+  zonedDayStart,
   zonedMonthRange,
   zonedParts,
   adjustTotals,
@@ -506,7 +507,8 @@ export class CardLedgerService {
           where: {
             accountId: liabilityAccountId,
             entry: {
-              date: { gte: since, lte: period.end },
+              // 마감일 하루를 통째로 넣는다 (`afterClosingDay`).
+              date: { gte: since, lt: afterClosingDay(period.end, timeZone) },
               // 사용만 센다. 대금 결제는 분류 다리가 없어 여기서 빠진다.
               postings: { some: { categoryId: { not: null } } },
             },
@@ -634,7 +636,8 @@ export class CardLedgerService {
           where: {
             accountId: liabilityAccountId,
             entry: {
-              date: { gte: since, lte: period.end },
+              // 마감일 하루를 통째로 넣는다 (`afterClosingDay`).
+              date: { gte: since, lt: afterClosingDay(period.end, timeZone) },
               // 사용만 싣는다. 대금 결제와 환불 입금은 분류 다리가 없어 여기서 빠진다.
               postings: { some: { categoryId: { not: null } } },
             },
@@ -1135,6 +1138,22 @@ function toShares(value: unknown): string[] | null {
   return value.map((share) => String(share));
 }
 
+
+/**
+ * 주기의 마감일 다음 날이 시작하는 인스턴트. 거래를 읽는 질의의 끝(포함하지 않음)이다.
+ *
+ * `periodForClosingMonth` 의 `periodEnd` 는 마감일의 **UTC 자정 표시자**라 그대로 `lte` 로
+ * 쓰면 마감일 거래가 대부분 빠진다 -- 서울이면 마감일 오전 9시 이후 것이 전부 빠졌다.
+ * 프로젝트 타임존에서 마감일 다음 날 0시를 구해 그 앞까지 읽는다.
+ */
+function afterClosingDay(periodEnd: Date, timeZone: string): Date {
+  return zonedDayStart(
+    periodEnd.getUTCFullYear(),
+    periodEnd.getUTCMonth() + 1,
+    periodEnd.getUTCDate() + 1,
+    timeZone,
+  );
+}
 /** 오늘을 달력 날짜로 찍은 표시자. 주기가 닫혔는지 보는 데 쓴다. */
 function todayUtcMarker(timeZone: string): number {
   const today = zonedParts(new Date(), timeZone);

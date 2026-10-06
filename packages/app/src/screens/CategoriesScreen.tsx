@@ -132,7 +132,7 @@ export default function CategoriesScreen() {
    * 화면에 서게만 해 준다.
    */
   useEffect(() => {
-    if (!reopen) return;
+    if (!reopen || reopen.kind === 'analysis') return;
     if (reopen.kind === 'tag') {
       setSection('tags');
       return;

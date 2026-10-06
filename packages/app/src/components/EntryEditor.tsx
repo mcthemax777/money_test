@@ -14,7 +14,6 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Animated, Pressable, Text, TextInput, View } from 'react-native';
-import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import type { EntryDraftDto, EntryListItem, TagDto } from '@money/types';
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -40,6 +39,7 @@ import {
   totalDiscountOf,
   type EntryFormKind,
   type EntryFormValues,
+  paybackMethodOf,
 } from '@money/core/data/entry-form';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { paybackCountOf, paybackDeleteNote } from '@money/core/hooks/usePaybacks';
@@ -47,7 +47,7 @@ import { useMyPersonId, useProject, useProjectTimeZone } from '@money/core/store
 
 import { AddAccountModal, AddCardModal, AddPersonModal } from './AssetAddModals';
 import DatePickerPanel from './DatePickerPanel';
-import { CategoryChips, CheckRow, Chip, Chips, Field, PickerButton } from './FormFields';
+import { CategoryChips, CheckRow, Chip, Chips, Field, PickerButton, openTimeKeyPicker } from './FormFields';
 import Modal from './Modal';
 import PaybackEditor, { type PaybackTarget } from './PaybackEditor';
 import PaybackFormSection from './PaybackFormSection';
@@ -269,22 +269,7 @@ export default function EntryEditor({
    * 이 대화상자라 그것을 쓰는 편이 익다(`@react-native-community/datetimepicker`).
    * 이 앱은 안드로이드로만 나가므로 그쪽 명령형 API 를 그대로 쓴다.
    */
-  const openTimePicker = () => {
-    const [hour, minute] = values.timeKey.split(':');
-    const base = new Date();
-    base.setHours(Number(hour) || 0, Number(minute) || 0, 0, 0);
-
-    DateTimePickerAndroid.open({
-      value: base,
-      mode: 'time',
-      // 24시간제로 둔다. 폼이 다루는 값이 "HH:MM" 이고 목록·달력도 그 표기다.
-      is24Hour: true,
-      onValueChange: (_event, date) => {
-        const pad = (value: number) => String(value).padStart(2, '0');
-        setField('timeKey', `${pad(date.getHours())}:${pad(date.getMinutes())}`);
-      },
-    });
-  };
+  const openTimePicker = () => openTimeKeyPicker(values.timeKey, (timeKey) => setField('timeKey', timeKey));
 
   /*
    * 팝업이 열릴 때 폼을 채운다.
@@ -1217,7 +1202,9 @@ export default function EntryEditor({
               lines={paybackLines}
               methodChoices={form.methodChoices}
               showAssetOwner={form.showAssetOwner}
-              defaultMethod={values.method}
+              defaultMethod={paybackMethodOf(values.method, form.lists.cards, (value) =>
+                form.methodChoices.some((choice) => choice.value === value),
+              )}
               reloadToken={paybackReload}
               onOpenPayback={(payback) => setPaybackTarget({ editing: payback })}
             />

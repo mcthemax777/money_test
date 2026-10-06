@@ -9,7 +9,13 @@
  *     (core 의 `usePaybackDrafts`). 새 지출에도 적을 수 있다.
  */
 import { Plus, X } from 'lucide-react';
-import { PAYBACK_TYPES, type EntryListItem, type PaybackType } from '@money/types';
+import {
+  LEDGER_MIN_ENTRY_DATE_KEY,
+  PAYBACK_TYPES,
+  ledgerMaxEntryDateKey,
+  type EntryListItem,
+  type PaybackType,
+} from '@money/types';
 import { usePaybackDrafts } from '@money/core/hooks/usePaybackDrafts';
 import { usePaybacks } from '@money/core/hooks/usePaybacks';
 import { formatDate } from '@money/core/lib/datetime';
@@ -36,7 +42,7 @@ export default function PaybackFormSection({
   lines: Array<{ lineKey: string; categoryId: string; label: string }>;
   /** 들어온 곳으로 고를 것. 거래 폼의 결제수단 목록과 같은 값이다('account:id' / 'card:id'). */
   methodOptions: Array<{ id: string; name: string }>;
-  /** 새 줄의 들어온 곳. 지금 폼에서 고른 결제수단이다. */
+  /** 새 줄의 들어온 곳. 지금 고른 결제수단에 연결된 통장이다 (core `paybackMethodOf`). */
   defaultMethod: string;
   reloadToken?: number;
   onOpenPayback: (payback: EntryListItem) => void;
@@ -111,13 +117,18 @@ export default function PaybackFormSection({
                   className={INPUT}
                 />
                 <div className="flex gap-2">
-                  <input
-                    type="date"
-                    aria-label={t('editor.date')}
-                    value={draft.dateKey}
-                    onChange={(event) => drafts.update(draft.key, { dateKey: event.target.value })}
-                    className={INPUT}
-                  />
+                  <select
+                    aria-label={t('payback.type')}
+                    value={draft.paybackType}
+                    onChange={(event) => drafts.update(draft.key, { paybackType: event.target.value as PaybackType })}
+                    className={`${INPUT} min-w-0`}
+                  >
+                    {PAYBACK_TYPES.map((type) => (
+                      <option key={type} value={type}>
+                        {t(`payback.type.${type}`)}
+                      </option>
+                    ))}
+                  </select>
                   <button
                     type="button"
                     onClick={() => drafts.remove(draft.key)}
@@ -128,18 +139,23 @@ export default function PaybackFormSection({
                     <X className="h-4 w-4" aria-hidden />
                   </button>
                 </div>
-                <select
-                  aria-label={t('payback.type')}
-                  value={draft.paybackType}
-                  onChange={(event) => drafts.update(draft.key, { paybackType: event.target.value as PaybackType })}
+                {/* 들어온 날과 시각. 시각이 비면 정오로 저장된다 (`zonedFormValueToUtc`). */}
+                <input
+                  type="date"
+                  aria-label={t('editor.date')}
+                  value={draft.dateKey}
+                  min={LEDGER_MIN_ENTRY_DATE_KEY}
+                  max={ledgerMaxEntryDateKey()}
+                  onChange={(event) => drafts.update(draft.key, { dateKey: event.target.value })}
                   className={INPUT}
-                >
-                  {PAYBACK_TYPES.map((type) => (
-                    <option key={type} value={type}>
-                      {t(`payback.type.${type}`)}
-                    </option>
-                  ))}
-                </select>
+                />
+                <input
+                  type="time"
+                  aria-label={t('editor.time')}
+                  value={draft.timeKey}
+                  onChange={(event) => drafts.update(draft.key, { timeKey: event.target.value })}
+                  className={INPUT}
+                />
                 <select
                   aria-label={t('payback.method')}
                   value={draft.method}

@@ -499,24 +499,62 @@ export function entryFormFromItem(
   };
 }
 
+/** 페이백의 들어온 곳을 정하는 데 필요한 카드의 모양. */
+export interface PaybackCard {
+  id: string;
+  paymentAccountId: string;
+}
+
+/**
+ * 새 환불·페이백의 기본 들어온 곳.
+ *
+ * 카드로 낸 것이면 그 카드에 연결된 통장(`paymentAccountId`)이다 -- 돌려받은 돈은 대개 통장에
+ * 찍힌다. 통장이나 빈 값은 그대로다. 사용자는 폼에서 카드로 바꿀 수 있다.
+ *
+ * 카드를 그대로 두는 때: 카드를 목록에서 찾지 못했을 때(목록을 아직 읽지 못했거나 지운 카드),
+ * 그리고 연결된 통장을 폼에서 고를 수 없을 때(`isSelectable` 이 거절 -- 쓰지 않는 통장).
+ * 고를 수 없는 값을 기본으로 두면 화면에 보이는 것과 저장되는 것이 갈린다.
+ */
+export function paybackMethodOf(
+  method: PaymentMethodValue,
+  cards: readonly PaybackCard[],
+  isSelectable: (value: PaymentMethodValue) => boolean,
+): PaymentMethodValue {
+  const { cardId } = parseMethod(method);
+  if (!cardId) return method;
+  const card = cards.find((item) => item.id === cardId);
+  if (!card?.paymentAccountId) return method;
+  const account = accountValue(card.paymentAccountId);
+  return isSelectable(account) ? account : method;
+}
+
 /**
  * 원거래에서 새 페이백 폼을 채운다.
  *
  * 들어온 날짜는 오늘이다(페이백은 대개 나중에 들어온다). 사람과 설명은 원거래의 것을,
- * 들어온 수단은 원거래가 쓴 수단을 기본으로 둔다 -- 카드로 낸 것의 캐시백은 대개 그 카드로
- * 돌아온다. 원거래 줄이 하나면 그 줄을 고르고, 분할이면 비워 두어 화면이 고르게 한다.
+ * 들어온 수단은 원거래가 쓴 수단에 연결된 통장을 기본으로 둔다(`paybackMethodOf`).
+ * 원거래 줄이 하나면 그 줄을 고르고, 분할이면 비워 두어 화면이 고르게 한다.
  */
-export function paybackFormFrom(original: EntryListItem, timeZone: string): EntryFormValues {
+export function paybackFormFrom(
+  original: EntryListItem,
+  timeZone: string,
+  cards: readonly PaybackCard[],
+  isSelectable: (value: PaymentMethodValue) => boolean,
+): EntryFormValues {
   const only = original.lines.length === 1 ? original.lines[0] : null;
   return {
     ...emptyEntryForm({ personId: original.personId, timeZone }),
     kind: 'payback',
     description: original.description,
-    method: original.cardId
-      ? cardValue(original.cardId)
-      : original.accountId
-        ? accountValue(original.accountId)
-        : '',
+    method: paybackMethodOf(
+      original.cardId
+        ? cardValue(original.cardId)
+        : original.accountId
+          ? accountValue(original.accountId)
+          : '',
+      cards,
+      isSelectable,
+    ),
     categoryId: only?.categoryId ?? '',
     // 카드로 들어온 돈은 실적에서 빼는 것이 기본이다 (`defaultCountsPerformance`).
     countsPerformance: defaultCountsPerformance('payback', 'payback'),

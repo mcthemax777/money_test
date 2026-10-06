@@ -7,7 +7,6 @@
  */
 import { useEffect, useState } from 'react';
 import { Alert, Pressable, Text, TextInput, View } from 'react-native';
-import { DateTimePickerAndroid } from '@react-native-community/datetimepicker';
 import { PAYBACK_TYPES, type EntryListItem } from '@money/types';
 import { parseMethod } from '@money/core/data/entry-form';
 import { useEntryForm } from '@money/core/hooks/useEntryForm';
@@ -26,7 +25,7 @@ import {
 } from '@money/core/store/project';
 
 import DatePickerPanel from './DatePickerPanel';
-import { CheckRow, Chips, Field, PickerButton } from './FormFields';
+import { CheckRow, Chips, Field, PickerButton, openTimeKeyPicker } from './FormFields';
 import Modal from './Modal';
 
 export interface PaybackTarget {
@@ -113,20 +112,7 @@ export default function PaybackEditor({
   const message =
     form.error || (violation ? (violationKey ? t(violationKey) : violation.code) : '');
 
-  const openTimePicker = () => {
-    const [hour, minute] = values.timeKey.split(':');
-    const base = new Date();
-    base.setHours(Number(hour) || 0, Number(minute) || 0, 0, 0);
-    DateTimePickerAndroid.open({
-      value: base,
-      mode: 'time',
-      is24Hour: true,
-      onValueChange: (_event, date) => {
-        const pad = (value: number) => String(value).padStart(2, '0');
-        setField('timeKey', `${pad(date.getHours())}:${pad(date.getMinutes())}`);
-      },
-    });
-  };
+  const openTimePicker = () => openTimeKeyPicker(values.timeKey, (timeKey) => setField('timeKey', timeKey));
 
   const save = async () => {
     if (await form.save()) onClose();

@@ -33,6 +33,13 @@ const nextConfig = {
   },
   // 빌드 id 도 같은 번호로. 배포마다 바뀌는 값이라 둘을 따로 둘 까닭이 없다.
   generateBuildId: async () => WEB_VERSION,
+  /*
+   * 가계(/dashboard)는 2026-10-06에 뺐다. 즐겨찾기나 열려 있던 탭이 404 를 보지 않도록
+   * 그 일을 넘겨받은 거래 화면으로 보낸다.
+   */
+  async redirects() {
+    return [{ source: '/dashboard', destination: '/transactions', permanent: false }];
+  },
 };
 
 module.exports = nextConfig;

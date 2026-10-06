@@ -18,7 +18,6 @@ const MONTHS = Array.from({ length: 12 }, (_, index) => index + 1);
  * 달 머리글. 웹의 MonthHeader 와 같다.
  *
  * 화살표는 년월 글자 양옆에 붙고, 글자를 누르면 연·월을 고르는 판이 열린다.
- * 기간 보기(날짜 두 개)는 가계 화면의 것이라 여기 넣지 않았다.
  */
 export default function MonthHeader({
   year,
@@ -28,7 +27,6 @@ export default function MonthHeader({
   onMonthChange,
   right,
   showTotals = true,
-  tightArrows = false,
 }: {
   year: number;
   month: number;
@@ -37,26 +35,8 @@ export default function MonthHeader({
   onMonthChange: (year: number, month: number) => void;
   /** 같은 줄 오른쪽 끝에 붙일 것 */
   right?: ReactNode;
-  /**
-   * 합계를 이 줄에 함께 적을지.
-   *
-   * 가계 화면은 끄고 쓴다 -- 첫 문장이 그 금액을 문장으로 말하므로(LedgerKindSummary)
-   * 여기서 또 적으면 같은 숫자가 한 화면에 두 번 나온다.
-   */
+  /** 합계를 이 줄에 함께 적을지. 같은 금액을 화면의 다른 자리에서 이미 적는 곳은 끈다. */
   showTotals?: boolean;
-  /**
-   * 화살표의 좌우 여백을 레이아웃에서 뺄지 (누를 자리는 그대로 둔다).
-   *
-   * 가계의 첫 문장이 켜고 쓴다. 이 화살표는 문장 안에 섞여 있어 두 가지가 걸린다.
-   *
-   *   1. 왼쪽 선. 윗줄 제목은 `아이콘 20 + gap-1.5` 라 글자가 26 에서 시작하는데,
-   *      화살표에 여백(p-2)이 붙어 있으면 년월 글자가 34 로 밀려 "전"과 "2"가 어긋난다.
-   *   2. 오른쪽 여백. 여백이 그대로면 꺽쇠 양옆이 넓게 벌어져, 뒤에 오는 낱말이
-   *      한 문장으로 이어 읽히지 않는다.
-   *
-   * 음수 여백으로 상쇄하면 차지하는 자리는 아이콘 크기(20)뿐이고 누를 자리는 36 이다.
-   */
-  tightArrows?: boolean;
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
@@ -87,7 +67,7 @@ export default function MonthHeader({
           <View className="flex-row items-center gap-1.5">
             <Pressable
               onPress={() => shift(-1)}
-              className={`rounded-lg p-2 active:bg-gray-100 ${tightArrows ? '-mx-2' : ''}`}
+              className="rounded-lg p-2 active:bg-gray-100"
             >
               {/* 색은 윗줄 제목의 아이콘과 같다 (PersonScopeTitle 의 ChevronDown). */}
               <ChevronLeft size={20} color="#9ca3af" />
@@ -106,7 +86,7 @@ export default function MonthHeader({
 
             <Pressable
               onPress={() => shift(1)}
-              className={`rounded-lg p-2 active:bg-gray-100 ${tightArrows ? '-mx-2' : ''}`}
+              className="rounded-lg p-2 active:bg-gray-100"
             >
               <ChevronRight size={20} color="#9ca3af" />
             </Pressable>

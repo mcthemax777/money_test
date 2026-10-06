@@ -13,7 +13,7 @@ import type { MessageKey } from '../lib/i18n';
  * 그림 자체는 여기 두지 않는다. 웹은 lucide-react, 앱은 lucide-react-native 로
  * 서로 다른 컴포넌트를 쓰기 때문이다. 무엇을 그릴지만 정하고 고르는 일은 화면에 맡긴다.
  */
-export type NavIconName = 'budget' | 'transactions' | 'ledger' | 'assets' | 'settings';
+export type NavIconName = 'budget' | 'transactions' | 'analysis' | 'assets' | 'settings';
 
 export interface NavItem {
   /**
@@ -37,16 +37,19 @@ const PROJECT_ITEMS: NavItem[] = [
   /*
    * 거래는 훑어보는 자리다. 년월 -> 날짜·분류·수단 -> 거래로 파고든다.
    *
-   * 가계 바로 앞에 둔다. 둘이 나란히 서 있는 것은 지금뿐이고, 가계가 들고 있는
-   * 몇 가지를 거래로 옮긴 뒤에는 가계가 빠진다.
+   * 가계 탭이 있던 자리다. 가계가 들고 있던 것(기간별 금액·분류·수단 보기)을 거래와 그 분석으로
+   * 옮겨 2026-10-06에 가계를 뺐다.
    */
   { labelKey: 'nav.transactions', href: '/transactions', icon: 'transactions' },
-  // 가계는 장부다. 자산(Landmark)과 갈라 보이도록 펼친 책으로 둔다.
-  { labelKey: 'nav.ledger', href: '/dashboard', icon: 'ledger' },
+  /*
+   * 분석. 거래 바로 옆이다 -- 같은 검색·묶는 단위로 거래 탭은 "무엇이 오갔나"를, 분석 탭은
+   * "그래서 얼마가 남았나"를 보인다 (2026-10-06).
+   */
+  { labelKey: 'nav.analysis', href: '/analysis', icon: 'analysis' },
   /*
    * 예산. 주소는 로그인하면 처음 여는 `/home` 그대로다 (2026-09-30에 이름을 "홈"에서 바꿨다).
    *
-   * 가계와 자산 사이에 둔다. 가계가 "이 달 어디에 썼나"를 보이면 예산이 "그게 계획 안이었나"를
+   * 거래와 자산 사이에 둔다. 거래가 "어디에 썼나"를 보이면 예산이 "그게 계획 안이었나"를
    * 잇는다. 그림은 저금통 -- 집 모양이면 여전히 첫 화면으로 읽힌다.
    */
   { labelKey: 'nav.home', href: '/home', icon: 'budget' },
