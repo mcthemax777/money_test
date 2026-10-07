@@ -28,6 +28,7 @@ import {
   CHART_TICK,
   CHART_TOOLTIP_STYLE,
   CHART_Y_AXIS_WIDTH,
+  signedBarColor,
   barDomain,
   barTicks,
   formatAxisAmount,
@@ -130,12 +131,15 @@ export function AmountBarChart({
   currency,
   tooltipName,
   interval,
+  signed = false,
 }: {
   data: BarPoint[];
   currency: string;
   tooltipName: string;
   /** X축 이름을 몇 칸 걸러 적을지. 0 이면 다 적는다. 비우면 recharts 가 겹치지 않게 고른다. */
   interval?: number;
+  /** 부호로 색을 가른다 -- 0 이상은 초록, 음수는 빨강 (순수입). 비우면 모두 기본 파랑. */
+  signed?: boolean;
 }) {
   const domain = barDomain(data.map((d) => d.amount));
   return (
@@ -155,7 +159,11 @@ export function AmountBarChart({
           formatter={(value: any) => formatTooltipAmount(value, tooltipName, currency)}
           contentStyle={CHART_TOOLTIP_STYLE}
         />
-        <Bar dataKey="amount" fill={CHART_COLOR} radius={CHART_BAR_RADIUS} />
+        <Bar dataKey="amount" fill={CHART_COLOR} radius={CHART_BAR_RADIUS}>
+          {signed
+            ? data.map((point, index) => <Cell key={`bar-${index}`} fill={signedBarColor(point.amount)} />)
+            : null}
+        </Bar>
       </BarChart>
     </ResponsiveContainer>
   );

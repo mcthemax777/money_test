@@ -6,7 +6,7 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { Info, Receipt } from 'lucide-react-native';
+import { Info } from 'lucide-react-native';
 import { MAX_USAGE_PERIODS, type CardDto } from '@money/types';
 
 import { useAccountLedger } from '@money/core/hooks/useAccountLedger';
@@ -33,6 +33,7 @@ import {
 import { useNearBottom } from '../shell/scroll';
 
 import AssetHistoryChart from './AssetHistoryChart';
+import NavIcon from './NavIcon';
 import CardPerformancePanel from './CardPerformancePanel';
 import CardSettlementPanel from './CardSettlementPanel';
 import CardUsageChart from './CardUsageChart';
@@ -138,7 +139,7 @@ export default function AssetDetailView({
                 accessibilityLabel={t('assets.viewEntries')}
                 className="h-10 w-10 items-center justify-center rounded-lg active:bg-gray-100"
               >
-                <Receipt size={20} color="#4b5563" />
+                <NavIcon name="transactions" size={20} color="#4b5563" />
               </Pressable>
             ) : null}
             {/* 묶음에는 고칠 기본 정보가 없다. */}

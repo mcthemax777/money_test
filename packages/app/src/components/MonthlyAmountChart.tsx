@@ -10,7 +10,7 @@ import { useState } from 'react';
 import { Pressable, Text, View, type LayoutChangeEvent } from 'react-native';
 import Svg, { Line, Rect, Text as SvgText } from 'react-native-svg';
 
-import { CHART_COLOR, barDomain, barTicks, formatAxisAmount } from '@money/core/lib/chart';
+import { CHART_COLOR, barDomain, barTicks, formatAxisAmount, signedBarColor } from '@money/core/lib/chart';
 import type { BarPoint } from '@money/core/lib/usage-pattern';
 import { formatCurrency } from '@money/core/lib/money';
 
@@ -40,12 +40,15 @@ export default function MonthlyAmountChart({
   points,
   currency,
   showAxisLabel = everyOtherFromEnd,
+  signed = false,
 }: {
   points: BarPoint[];
   /** 금액의 통화. 축과 읽는 줄이 함께 쓴다. */
   currency: string;
   /** 몇 번째 막대 밑에 이름을 적을지. 적지 않은 막대도 눌러서 이름을 읽는다. */
   showAxisLabel?: (index: number, count: number) => boolean;
+  /** 부호로 색을 가른다 -- 0 이상은 초록, 음수는 빨강 (순수입). 비우면 모두 기본 파랑. */
+  signed?: boolean;
 }) {
   /** 그리는 자리의 폭. 화면 크기에 따라 달라 그려진 뒤 잰다. */
   const [width, setWidth] = useState(0);
@@ -138,7 +141,7 @@ export default function MonthlyAmountChart({
                   width={barWidth}
                   height={Math.abs(valueY - baseY)}
                   rx={3}
-                  fill={CHART_COLOR}
+                  fill={signed ? signedBarColor(point.amount) : CHART_COLOR}
                   /* 눌러 둔 막대만 진하게. 어느 달을 읽고 있는지 그림에도 표가 나야 한다. */
                   fillOpacity={picked === null || picked === index ? 1 : 0.45}
                 />

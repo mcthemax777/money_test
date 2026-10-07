@@ -1,6 +1,6 @@
 'use client';
 
-import { ChartPie, Landmark, PiggyBank, ReceiptText, Settings } from 'lucide-react';
+import { ChartColumn, Landmark, PiggyBank, ReceiptText, Settings } from 'lucide-react';
 
 import type { NavIconName } from '@money/core/lib/nav';
 
@@ -14,11 +14,14 @@ const ICONS = {
   budget: PiggyBank,
   /*
    * 거래는 적어 둔 내역을 훑는 자리다. 종이에 줄이 적힌 그림으로 둔다 (2026-10-07 사용자 요청,
-   * 그 전엔 오가는 화살표). 분석 탭의 거래내역 단추도 이 그림을 쓴다 -- 같은 곳으로 가는 길이다.
+   * 그 전엔 오가는 화살표). 분석 탭과 자산 상세의 거래내역 단추도 이 그림을 쓴다 -- 같은 곳으로 가는 길이다.
    */
   transactions: ReceiptText,
-  // 분석은 원형 그래프로 둔다. 거래 탭 기간 줄의 분석 아이콘(막대)과 갈라 보인다.
-  analysis: ChartPie,
+  /*
+   * 분석은 막대 그래프로 둔다. 거래 탭 기간 줄의 분석 아이콘도 이 그림을 쓴다 -- 같은 화면을
+   * 여는 길이다 (2026-10-07 사용자 요청, 그 전엔 원형 그래프로 기간 줄과 갈라 두었다).
+   */
+  analysis: ChartColumn,
   assets: Landmark,
   settings: Settings,
 } as const;

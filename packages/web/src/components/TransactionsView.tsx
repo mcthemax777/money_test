@@ -25,7 +25,6 @@ import {
   List,
   Copy,
   Loader2,
-  ChartColumn,
   MoreVertical,
   Pencil,
   Plus,
@@ -77,6 +76,7 @@ import CountBadge from '@/components/CountBadge';
 import Modal from '@/components/Modal';
 import TransactionCalendarView from '@/components/TransactionCalendarView';
 import AnalysisView from '@/components/AnalysisView';
+import NavIcon from '@/components/NavIcon';
 import PageHeader from '@/components/PageHeader';
 import RevealTop from '@/components/RevealTop';
 import SearchChips from '@/components/SearchChips';
@@ -236,8 +236,13 @@ function Line({
       /*
         가로로 이름과 금액 묶음이 서고, 둘을 세로 가운데에 맞춘다. 금액 묶음은 금액 줄과
         순수입 줄을 쌓은 것이라, 이름이 한 줄이든 두 줄이든 위아래 여백이 고르다 (앱과 같다).
+
+        년월 줄의 왼쪽 여백은 오른쪽 분석 아이콘과 화면 끝 사이만큼으로 줄인다 (2026-10-07
+        사용자 요청). 고르는 중에는 체크가 안쪽 줄의 체크와 같은 세로선에 서야 해서 그대로 둔다.
       */
-      className="flex w-full items-center gap-2 px-3 py-2 text-left"
+      className={`flex w-full items-center gap-2 py-2 text-left ${
+        depth === 0 && !check ? 'pl-1 pr-3' : 'px-3'
+      }`}
     >
       {check ? (
         <CheckBox checked={check.checked} pending={check.pending} onToggle={check.onToggle} />
@@ -1209,9 +1214,9 @@ export default function TransactionsView({
                       onClick={() => openAnalysis(month.yearMonth)}
                       aria-label={t('tx.analysisOfPeriod', { period: periodLabel(month.yearMonth) })}
                       title={t('tx.analysisOfPeriod', { period: periodLabel(month.yearMonth) })}
-                      className="flex shrink-0 items-center justify-center self-stretch pl-1 pr-2 text-gray-400 hover:text-gray-700"
+                      className="flex shrink-0 items-center justify-center self-stretch pl-2 pr-1 text-gray-400 hover:text-gray-700"
                     >
-                      <ChartColumn className="h-4 w-4" aria-hidden />
+                      <NavIcon name="analysis" className="h-4 w-4" />
                     </button>
                   )}
                 </div>

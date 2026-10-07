@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
-import { Receipt } from 'lucide-react-native';
+import NavIcon from '../components/NavIcon';
 
 import {
   NO_SUB_CATEGORIES,
@@ -402,7 +402,7 @@ export default function CategoriesScreen() {
               accessibilityLabel={t('categories.viewEntries')}
               className="h-8 w-8 items-center justify-center rounded-lg active:bg-gray-100"
             >
-              <Receipt size={18} color="#111827" />
+              <NavIcon name="transactions" size={18} color="#111827" />
             </Pressable>
           ) : null
         }

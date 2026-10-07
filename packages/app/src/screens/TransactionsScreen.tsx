@@ -26,7 +26,6 @@ import {
   Archive,
   ArrowLeft,
   CalendarDays,
-  ChartColumn,
   Check,
   ChevronDown,
   ChevronUp,
@@ -76,6 +75,7 @@ import { useCloseOnBack, useNavigation } from '../shell/navigation';
 import RevealTop, { RevealKeep } from '../shell/RevealTop';
 import { StickySection, StickySections } from '../shell/StickySection';
 import CountBadge from '../components/CountBadge';
+import NavIcon from '../components/NavIcon';
 import EntryDetailModal from '../components/EntryDetailModal';
 import EntryEditor from '../components/EntryEditor';
 import PaybackEditor, { type PaybackTarget } from '../components/PaybackEditor';
@@ -267,8 +267,12 @@ function LineView({
       /*
         가로로 이름 · 금액 묶음 · 분석 아이콘이 서고, 셋 다 세로 가운데에 맞춘다. 금액 묶음은
         금액 줄과 순수입 줄을 쌓은 것이라, 이름이 한 줄이든 두 줄이든 위아래 여백이 고르다.
+
+        분석 아이콘이 서는 년월 줄은 양 끝 여백을 아이콘과 화면 끝 사이만큼으로 줄인다
+        (2026-10-07 사용자 요청). 고르는 중에는 아이콘이 없고, 체크가 안쪽 줄의 체크와 같은
+        세로선에 서야 해서 그대로 둔다.
       */
-      className="flex-row items-center gap-2 px-3 py-2"
+      className={`flex-row items-center gap-2 py-2 ${onAnalyze ? 'pl-1 pr-1' : 'px-3'}`}
     >
       {checkable && onToggle ? (
         <CheckBox
@@ -406,9 +410,9 @@ function LineView({
           hitSlop={10}
           accessibilityRole="button"
           accessibilityLabel={t('tx.analysisOfPeriod', { period: label })}
-          className="shrink-0"
+          className="ml-3 shrink-0"
         >
-          <ChartColumn size={16} color="#9ca3af" />
+          <NavIcon name="analysis" size={16} color="#9ca3af" />
         </Pressable>
       ) : null}
     </Pressable>

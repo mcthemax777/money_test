@@ -33,9 +33,10 @@ import {
 import { useUserFilter } from '@money/core/store/user-filter';
 import { monthInputToIso } from '@money/core/lib/datetime';
 import { type AccountDto, type ReportDto } from '@money/types';
-import { ArrowLeft, Info, Receipt, X } from 'lucide-react';
+import { ArrowLeft, Info, X } from 'lucide-react';
 import { EMPTY_SEARCH, type TransactionSearch } from '@money/core/hooks/useTransactions';
 import { useDragReorder } from '@/hooks/useDragReorder';
+import NavIcon from '@/components/NavIcon';
 import AssetAddChooser, { AssetAddIcon, type AssetAddKind } from '@/components/AssetAddChooser';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import {
@@ -1291,7 +1292,7 @@ export default function DashboardPage() {
                           })
                         }
                       >
-                        <Receipt className="h-5 w-5" aria-hidden />
+                        <NavIcon name="transactions" className="h-5 w-5" />
                       </DetailIconButton>
                       <DetailIconButton
                         label={t('account.detail')}
@@ -1354,7 +1355,7 @@ export default function DashboardPage() {
                       label={t('assets.viewEntries')}
                       onClick={() => showPersonEntries(selectedPerson.id)}
                     >
-                      <Receipt className="h-5 w-5" aria-hidden />
+                      <NavIcon name="transactions" className="h-5 w-5" />
                     </DetailIconButton>
                     <DetailIconButton
                       label={t('assets.detail')}
@@ -1417,7 +1418,7 @@ export default function DashboardPage() {
                       })
                     }
                   >
-                    <Receipt className="h-5 w-5" aria-hidden />
+                    <NavIcon name="transactions" className="h-5 w-5" />
                   </DetailIconButton>
                 }
               >
@@ -1473,7 +1474,7 @@ export default function DashboardPage() {
                         setEntriesSearch({ ...EMPTY_SEARCH, paymentCardIds: [selectedCard.id] })
                       }
                     >
-                      <Receipt className="h-5 w-5" aria-hidden />
+                      <NavIcon name="transactions" className="h-5 w-5" />
                     </DetailIconButton>
                     <DetailIconButton
                       label={t('card.detail')}

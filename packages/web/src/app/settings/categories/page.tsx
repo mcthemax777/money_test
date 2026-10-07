@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Receipt } from 'lucide-react';
+import NavIcon from '@/components/NavIcon';
 import { useAuth } from '@money/core/store/auth';
 import { useCanEdit, useProject } from '@money/core/store/project';
 import { EMPTY_SEARCH, type TransactionSearch } from '@money/core/hooks/useTransactions';
@@ -457,7 +457,7 @@ export default function CategoriesPage() {
               title={t('categories.viewEntries')}
               className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-900 transition-colors hover:bg-gray-100"
             >
-              <Receipt className="h-4 w-4" aria-hidden />
+              <NavIcon name="transactions" className="h-4 w-4" />
             </button>
           ) : null
         }

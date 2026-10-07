@@ -13,7 +13,7 @@
  * 지금까지처럼 한 번 물어보고 지운다 -- 고를 것이 하나뿐인 물음은 물음이 아니다.
  */
 import { useEffect, useState } from 'react';
-import { Receipt } from 'lucide-react';
+import NavIcon from '@/components/NavIcon';
 import type { TagDto } from '@money/types';
 
 import { EMPTY_TAG_FORM, useTagManager, type TagFormValues } from '@money/core/hooks/useTagManager';
@@ -261,7 +261,7 @@ export default function TagsPanel({
               title={t('tags.viewEntries')}
               className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-900 transition-colors hover:bg-gray-100"
             >
-              <Receipt className="h-4 w-4" aria-hidden />
+              <NavIcon name="transactions" className="h-4 w-4" />
             </button>
           ) : null
         }

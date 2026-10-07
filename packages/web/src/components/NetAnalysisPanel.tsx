@@ -154,6 +154,7 @@ export default function NetAnalysisPanel({
                 data={net.trend}
                 currency={currency}
                 tooltipName={t('analysis.net.net')}
+                signed
               />
             ) : (
               <p className="flex h-[300px] items-center justify-center text-sm text-gray-500">

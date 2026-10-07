@@ -134,7 +134,7 @@ export default function NetAnalysisPanel({
           {/* 기간별 순수입. 지출 탭의 월별 사용금액과 같은 막대다. 적자인 기간은 0 아래로 내려간다. */}
           <Card title={t(net.trendTitle)}>
             {net.hasTrend ? (
-              <MonthlyAmountChart points={net.trend} currency={currency} />
+              <MonthlyAmountChart points={net.trend} currency={currency} signed />
             ) : (
               <Text className="py-12 text-center text-sm text-gray-500">
                 {emptyText(net.trendEmpty)}

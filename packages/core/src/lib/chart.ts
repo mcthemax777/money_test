@@ -52,6 +52,16 @@ export const CHART_PREVIOUS_COLOR = '#eb6834';
 export const CHART_EARLIER_COLOR = '#9ca3af';
 
 /**
+ * 부호로 색을 가르는 막대 (순수입처럼 남은 달과 모자란 달이 섞이는 값).
+ *
+ * 남으면 초록, 모자라면 빨강이다 (tailwind green-500 / red-500). 같은 화면 요약의 수입·지출
+ * 막대와 같은 색이라, 그래프만 봐도 어느 달이 적자였는지 한눈에 갈린다 (2026-10-07 사용자 요청).
+ */
+export const CHART_GAIN_COLOR = '#22c55e';
+export const CHART_LOSS_COLOR = '#ef4444';
+export const signedBarColor = (amount: number) => (amount < 0 ? CHART_LOSS_COLOR : CHART_GAIN_COLOR);
+
+/**
  * 여러 갈래를 한 그림에 그릴 때 쓰는 색. 정해진 차례대로 쓰고 돌려 쓰지 않는다.
  *
  * 색맹 상태에서도 이웃한 두 색이 갈라지는지 검사를 거친 조합이다. 밝은 바탕과의

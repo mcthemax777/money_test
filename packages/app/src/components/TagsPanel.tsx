@@ -12,7 +12,8 @@
  */
 import { useEffect, useState } from 'react';
 import { Alert, LayoutAnimation, Pressable, Text, View } from 'react-native';
-import { Receipt, X } from 'lucide-react-native';
+import { X } from 'lucide-react-native';
+import NavIcon from './NavIcon';
 import type { TagDto } from '@money/types';
 
 import { EMPTY_TAG_FORM, useTagManager, type TagFormValues } from '@money/core/hooks/useTagManager';
@@ -242,7 +243,7 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
               accessibilityLabel={t('tags.viewEntries')}
               className="h-8 w-8 items-center justify-center rounded-lg active:bg-gray-100"
             >
-              <Receipt size={18} color="#111827" />
+              <NavIcon name="transactions" size={18} color="#111827" />
             </Pressable>
           ) : null
         }
