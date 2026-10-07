@@ -1240,9 +1240,6 @@ export const en: Record<MessageKey, string> = {
   'tx.noMethods': 'No payment methods used this month.',
   'tx.entryCount': '{count}',
   'tx.loadFailed': 'Could not load entries.',
-  'tx.analysisTitle': 'Transaction analysis',
-  'tx.analysisFiltered': 'Drawn from transactions matching {count} search conditions.',
-  'tx.analysisAll': 'Drawn from all transactions (no search conditions).',
   'tx.analysisOfPeriod': 'Analyze {period}',
   'tx.analysisOutOfRange': 'This period is outside the search period. Move to another period.',
 

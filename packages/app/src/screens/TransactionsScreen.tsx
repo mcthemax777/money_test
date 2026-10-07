@@ -71,7 +71,6 @@ import {
   useScrollRestore,
   useScrollToTop,
 } from '../shell/scroll';
-import TransactionAnalysisView from '../components/TransactionAnalysisView';
 import { useCloseOnBack, useNavigation } from '../shell/navigation';
 import RevealTop from '../shell/RevealTop';
 import { StickySection, StickySections } from '../shell/StickySection';
@@ -89,6 +88,7 @@ import TransactionItem from '../components/TransactionItem';
 import TagPickModal from '../components/TagPickModal';
 import TransactionCalendarView from '../components/TransactionCalendarView';
 import TransactionSearchModal from '../components/TransactionSearchModal';
+import AnalysisScreen from './AnalysisScreen';
 
 /**
  * 건너온 자리가 어느 화면에 있는가. ←가 그 화면으로 돌려보낸다.
@@ -523,7 +523,10 @@ export default function TransactionsScreen() {
 
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   /*
-   * 분석 보기. 펼 때만 세운다 -- 다시 펴면 그때의 검색으로 달과 지출·수입을 새로 정한다.
+   * 분석 보기. 분석 탭과 같은 화면(AnalysisScreen)을 이 자리에 그리고 머리글에는 ← 만 선다 --
+   * 분석 탭의 거래내역 단추가 거래 화면을 여는 것과 방향만 반대인 같은 길이다. 화면을 옮기지
+   * 않고 제자리에 그리므로 돌아오면 이 화면의 펼침·검색이 떠날 때 그대로다. 펼 때만 세운다 --
+   * 다시 펴면 그때의 검색·단위·기간으로 연다.
    *
    * 펴면 맨 위로 올리고, 접으면 목록에서 보던 자리로 되돌린다 (가계 분류 상세와 같은 규칙).
    * 기기의 뒤로가기는 머리글의 ← 와 같이 목록으로 돌아간다.
@@ -899,20 +902,18 @@ export default function TransactionsScreen() {
     <View className="gap-4">
       {/*
         분석을 펴 두면 그것만 그린다. 가계 분류 상세와 같은 짜임이다 -- 목록 위에 겹치면
-        그래프가 한참 밀린다. 닫으면 목록이 보던 자리로 돌아온다. 아래 팝업들(거래 상세 등)은
-        그대로 남아, 분석의 거래를 누르면 상세가 뜬다.
+        그래프가 한참 밀린다. 닫으면 목록이 보던 자리로 돌아온다. 분석의 거래를 누르면 분석
+        화면이 제 고치기 창을 연다 (분석 탭과 같다).
       */}
       {analysisFrom ? (
-        <TransactionAnalysisView
-          onClose={() => openAnalysis(null)}
-          initialKey={analysisFrom.key}
-          search={tx.search}
-          searchCount={tx.searchCount}
-          range={tx.range}
-          scope={tx.scope}
-          categories={tx.pickerCategories}
-          projectId={selectedProjectId}
-          onEntryClick={openDetail}
+        <AnalysisScreen
+          initial={{
+            search: tx.search,
+            unit: tx.unit,
+            basis: tx.basis,
+            periodKey: analysisFrom.key,
+          }}
+          onBack={() => openAnalysis(null)}
         />
       ) : (
         <>

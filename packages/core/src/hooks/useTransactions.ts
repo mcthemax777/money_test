@@ -592,6 +592,7 @@ export function useTransactions(
   projectId: string | null,
   {
     periodsOnly = false,
+    initial,
   }: {
     /**
      * 기간 줄(과 그 수입·지출)만 쓴다. 분석 화면이 켠다 -- 검색·단위·세는 방식은 거래
@@ -600,6 +601,11 @@ export function useTransactions(
      * 펼친 모양이 되는 규칙도 여기서는 걸리지 않는다.
      */
     periodsOnly?: boolean;
+    /**
+     * 처음 걸어 둘 검색·묶는 단위·세는 방식. 거래 탭의 분석 아이콘이 연 분석 보기가 거래
+     * 탭의 것 그대로 연다. 첫 그림부터 이 값이라 빈 검색으로 한 번 받았다가 다시 받지 않는다.
+     */
+    initial?: { search: TransactionSearch; unit: EntryPeriodUnit; basis: EntryBasis };
   } = {},
 ) {
   const { t } = useTranslation();
@@ -611,7 +617,7 @@ export function useTransactions(
   /** 동기화가 사본을 채우면 올라간다. 이 값이 바뀌면 화면이 다시 읽는다. */
   const mirrorVersion = useMirrorVersion();
 
-  const [search, setSearch] = useState<TransactionSearch>(EMPTY_SEARCH);
+  const [search, setSearch] = useState<TransactionSearch>(initial?.search ?? EMPTY_SEARCH);
   /**
    * 무엇을 "그 달에 쓴 돈"으로 셀지.
    *
@@ -623,7 +629,7 @@ export function useTransactions(
    * 발생 기준(산 달에 전액)은 더보기에서 고를 수 있다. 언제 샀는지를 묻는 화면 --
    * 이를테면 그 달의 카드값을 명세서와 대조할 때 -- 이 그쪽이다.
    */
-  const [basis, setBasis] = useState<EntryBasis>('installment');
+  const [basis, setBasis] = useState<EntryBasis>(initial?.basis ?? 'installment');
   const [tab, setTab] = useState<TransactionTab>('date');
   /**
    * 바깥 묶음 -- 해·달·주. 안쪽 탭(날짜별·분류별·수단별)과는 다른 축이다.
@@ -631,7 +637,7 @@ export function useTransactions(
    * 오래 쓴 가계부에서는 달이 예순 줄이 되어 한 해를 한눈에 볼 수 없고, 반대로 이번
    * 달만 촘촘히 보려는 사람에게는 달이 너무 성기다. 기본은 지금까지의 달이다.
    */
-  const [unit, setUnit] = useState<EntryPeriodUnit>(DEFAULT_ENTRY_PERIOD);
+  const [unit, setUnit] = useState<EntryPeriodUnit>(initial?.unit ?? DEFAULT_ENTRY_PERIOD);
   /**
    * 사용자가 직접 정한 펼침 정도. 손대지 않은 달은 아래 기본값을 따른다.
    *

@@ -8,11 +8,19 @@
  * 기간 줄과 거래내역 대신 **한 기간의 분석**이 선다.
  *
  * 값과 상태는 core 의 `useAnalysis` 가 갖는다.
+ *
+ * 거래 탭 년월 줄의 분석 아이콘도 이 화면을 연다(`initial`·`onBack`). 그때는 거래 탭의 검색·
+ * 단위·세는 방식과 그 줄의 기간으로 서고, 머리글에는 ← 하나만 선다 -- 분석 탭의 거래내역
+ * 단추가 거래 화면을 여는 것과 방향만 반대인 같은 길이다.
  */
 import { useRef, useState } from 'react';
 import { List, MoreVertical, Search, X } from 'lucide-react';
 
-import { useAnalysis, type AnalysisKind } from '@money/core/hooks/useAnalysis';
+import {
+  useAnalysis,
+  type AnalysisInitial,
+  type AnalysisKind,
+} from '@money/core/hooks/useAnalysis';
 import { totalIdOf } from '@money/core/hooks/useCategoryDetail';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -38,13 +46,23 @@ const TABS: Array<{ id: AnalysisKind; labelKey: MessageKey }> = [
   { id: 'income', labelKey: 'analysis.tab.income' },
 ];
 
-export default function AnalysisView({ projectId }: { projectId: string | null }) {
+export default function AnalysisView({
+  projectId,
+  initial,
+  onBack,
+}: {
+  projectId: string | null;
+  /** 거래 탭에서 열 때의 검색·단위·세는 방식·기간. 없으면 분석 탭이다. */
+  initial?: AnalysisInitial;
+  /** 주면 머리글에 ← 만 선다. 부르는 쪽이 돌아가는 일을 맡는다. */
+  onBack?: () => void;
+}) {
   const { t } = useTranslation();
   const myPersonId = useMyPersonId();
   const selectedPersonIds = useUserFilter((state) => state.selectedPersonIds);
   const togglePersonId = useUserFilter((state) => state.togglePersonId);
 
-  const analysis = useAnalysis(projectId);
+  const analysis = useAnalysis(projectId, { initial });
   const { tx } = analysis;
   // 사람 목록과 선택을 프로젝트에 맞춘다. 다른 화면과 같은 훅을 쓴다.
   usePersonFilterSync(projectId, tx.people);
@@ -88,6 +106,7 @@ export default function AnalysisView({ projectId }: { projectId: string | null }
   return (
     <div className="space-y-4">
       <PageHeader
+        onBack={onBack}
         title={
           <PersonScopeTitle
             noun={t('analysis.noun')}
@@ -97,44 +116,50 @@ export default function AnalysisView({ projectId }: { projectId: string | null }
             onTogglePerson={togglePersonId}
           />
         }
+        /*
+          거래 탭에서 건너왔으면 ← 만 둔다. 조건은 거래 탭에서 걸고 오는 것이고, 여기서
+          거래내역을 다시 열면 거래 화면과 분석이 서로를 겹겹이 연다.
+        */
         action={
-          <div className="flex gap-2">
-            {/*
-              거래내역. 거래 탭의 보관함·달력 자리다 -- 분석에서 본 것을 같은 검색으로 낱낱의
-              거래로 확인하러 가는 길이다 (isEntriesOpen).
-            */}
-            <button
-              type="button"
-              onClick={() => setIsEntriesOpen(true)}
-              aria-label={t('analysis.toTransactions')}
-              title={t('analysis.toTransactions')}
-              className="flex items-center justify-center p-2 text-gray-600"
-            >
-              <List className="h-4 w-4" aria-hidden />
-            </button>
-            {/* 검색. 거래 탭과 같은 창이고 같은 규칙으로 걸린다. */}
-            <button
-              type="button"
-              onClick={() => setIsSearchOpen(true)}
-              aria-label={t('tx.search')}
-              title={t('tx.search')}
-              className={`flex items-center gap-1.5 px-2 py-2 text-sm font-medium ${
-                tx.searchCount > 0 ? 'text-blue-600' : 'text-gray-600'
-              }`}
-            >
-              <Search className="h-4 w-4" aria-hidden />
-              {tx.searchCount > 0 ? <span className="font-semibold">{tx.searchCount}</span> : null}
-            </button>
-            <button
-              type="button"
-              onClick={() => setIsMoreOpen(true)}
-              aria-label={t('tx.more')}
-              title={t('tx.more')}
-              className="flex items-center justify-center p-2 text-gray-600"
-            >
-              <MoreVertical className="h-4 w-4" aria-hidden />
-            </button>
-          </div>
+          onBack ? undefined : (
+            <div className="flex gap-2">
+              {/*
+                거래내역. 거래 탭의 보관함·달력 자리다 -- 분석에서 본 것을 같은 검색으로 낱낱의
+                거래로 확인하러 가는 길이다 (isEntriesOpen).
+              */}
+              <button
+                type="button"
+                onClick={() => setIsEntriesOpen(true)}
+                aria-label={t('analysis.toTransactions')}
+                title={t('analysis.toTransactions')}
+                className="flex items-center justify-center p-2 text-gray-600"
+              >
+                <List className="h-4 w-4" aria-hidden />
+              </button>
+              {/* 검색. 거래 탭과 같은 창이고 같은 규칙으로 걸린다. */}
+              <button
+                type="button"
+                onClick={() => setIsSearchOpen(true)}
+                aria-label={t('tx.search')}
+                title={t('tx.search')}
+                className={`flex items-center gap-1.5 px-2 py-2 text-sm font-medium ${
+                  tx.searchCount > 0 ? 'text-blue-600' : 'text-gray-600'
+                }`}
+              >
+                <Search className="h-4 w-4" aria-hidden />
+                {tx.searchCount > 0 ? <span className="font-semibold">{tx.searchCount}</span> : null}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsMoreOpen(true)}
+                aria-label={t('tx.more')}
+                title={t('tx.more')}
+                className="flex items-center justify-center p-2 text-gray-600"
+              >
+                <MoreVertical className="h-4 w-4" aria-hidden />
+              </button>
+            </div>
+          )
         }
       />
 
@@ -142,22 +167,34 @@ export default function AnalysisView({ projectId }: { projectId: string | null }
         <div className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{t('tx.loadFailed')}</div>
       ) : null}
 
-      {/* 걸려 있는 조건. 거래 탭과 같이 탭 위에 두고, 누르면 그 조건만 빠진다. */}
+      {/*
+        걸려 있는 조건. 거래 탭과 같이 탭 위에 두고, 누르면 그 조건만 빠진다. 거래 탭에서
+        건너왔으면 무엇으로 그렸는지 알리기만 한다 -- 뺀 조건을 되걸 검색 단추가 없다.
+      */}
       {tx.searchChips.length > 0 ? (
         <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-          {tx.searchChips.map((chip) => (
-            <button
-              key={chip.id}
-              type="button"
-              onClick={() => tx.removeSearchChip(chip.id)}
-              aria-label={`${chip.label} ${t('tx.search.chipRemove')}`}
-              title={t('tx.search.chipRemove')}
-              className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
-            >
-              {chip.label}
-              <X className="h-3.5 w-3.5" aria-hidden />
-            </button>
-          ))}
+          {tx.searchChips.map((chip) =>
+            onBack ? (
+              <span
+                key={chip.id}
+                className="flex shrink-0 items-center whitespace-nowrap rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700"
+              >
+                {chip.label}
+              </span>
+            ) : (
+              <button
+                key={chip.id}
+                type="button"
+                onClick={() => tx.removeSearchChip(chip.id)}
+                aria-label={`${chip.label} ${t('tx.search.chipRemove')}`}
+                title={t('tx.search.chipRemove')}
+                className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+              >
+                {chip.label}
+                <X className="h-3.5 w-3.5" aria-hidden />
+              </button>
+            ),
+          )}
         </div>
       ) : null}
 

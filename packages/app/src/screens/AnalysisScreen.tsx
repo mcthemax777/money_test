@@ -6,13 +6,21 @@
  * 기간 줄과 거래내역 대신 **한 기간의 분석**이 선다.
  *
  * 값과 상태는 core 의 `useAnalysis` 가 갖는다.
+ *
+ * 거래 탭 년월 줄의 분석 아이콘도 이 화면을 제자리에 그린다(`initial`·`onBack`). 그때는 거래
+ * 탭의 검색·단위·세는 방식과 그 줄의 기간으로 서고, 머리글에는 ← 하나만 선다 -- 분석 탭의
+ * 거래내역 단추가 거래 화면을 여는 것과 방향만 반대인 같은 길이다.
  */
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, ScrollView, Text, View } from 'react-native';
 import { List, MoreVertical, Search, X } from 'lucide-react-native';
 import type { EntryListItem } from '@money/types';
 
-import { useAnalysis, type AnalysisKind } from '@money/core/hooks/useAnalysis';
+import {
+  useAnalysis,
+  type AnalysisInitial,
+  type AnalysisKind,
+} from '@money/core/hooks/useAnalysis';
 import { totalIdOf } from '@money/core/hooks/useCategoryDetail';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -52,7 +60,15 @@ function FadeIn({ children }: { children: React.ReactNode }) {
   return <Animated.View style={{ opacity }}>{children}</Animated.View>;
 }
 
-export default function AnalysisScreen() {
+export default function AnalysisScreen({
+  initial,
+  onBack,
+}: {
+  /** 거래 탭에서 열 때의 검색·단위·세는 방식·기간. 없으면 분석 탭이다. */
+  initial?: AnalysisInitial;
+  /** 주면 머리글에 ← 만 선다. 부르는 쪽이 돌아가는 일을 맡는다. */
+  onBack?: () => void;
+} = {}) {
   const { t } = useTranslation();
   const { go } = useNavigation();
   const projectId = useProject((state) => state.selectedProjectId);
@@ -61,7 +77,7 @@ export default function AnalysisScreen() {
   const selectedPersonIds = useUserFilter((state) => state.selectedPersonIds);
   const togglePersonId = useUserFilter((state) => state.togglePersonId);
 
-  const analysis = useAnalysis(projectId);
+  const analysis = useAnalysis(projectId, { initial });
   const { tx } = analysis;
   // 사람 목록과 선택을 이 프로젝트에 맞춘다 (거래 화면과 같은 훅).
   usePersonFilterSync(projectId, tx.people);
@@ -83,10 +99,11 @@ export default function AnalysisScreen() {
   };
   const { restore } = analysis;
   useEffect(() => {
-    if (reopen?.kind !== 'analysis') return;
+    // 거래 탭에 얹힌 보기는 분석 탭이 아니다. 거래 화면의 ← 가 남긴 쪽지는 분석 탭의 것이다.
+    if (onBack || reopen?.kind !== 'analysis') return;
     if (reopen.snapshot) restore(reopen.snapshot);
     clearReopen();
-  }, [reopen, restore, clearReopen]);
+  }, [onBack, reopen, restore, clearReopen]);
 
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   /** 더보기. 묶는 단위와 세는 방식을 고른다 (거래 탭의 더보기 위쪽 둘과 같다). */
@@ -101,6 +118,7 @@ export default function AnalysisScreen() {
   return (
     <View className="gap-4">
       <PageHeader
+        onBack={onBack}
         title={
           <PersonScopeTitle
             noun={t('analysis.noun')}
@@ -110,38 +128,44 @@ export default function AnalysisScreen() {
             onTogglePerson={togglePersonId}
           />
         }
+        /*
+          거래 탭에서 건너왔으면 ← 만 둔다. 조건은 거래 탭에서 걸고 오는 것이고, 여기서
+          거래내역을 다시 열면 거래 화면과 분석이 서로를 겹겹이 연다.
+        */
         action={
-          <View className="flex-row gap-2">
-            {/*
-              거래내역. 거래 탭의 보관함·달력 자리다 -- 분석에서 본 것을 같은 검색으로 낱낱의
-              거래로 확인하러 가는 길이다 (openEntries).
-            */}
-            <Pressable
-              onPress={openEntries}
-              accessibilityLabel={t('analysis.toTransactions')}
-              className="items-center justify-center p-2"
-            >
-              <List size={18} color="#4b5563" />
-            </Pressable>
-            {/* 검색. 거래 탭과 같은 창이고 같은 규칙으로 걸린다. */}
-            <Pressable
-              onPress={() => setIsSearchOpen(true)}
-              accessibilityLabel={t('tx.search')}
-              className="flex-row items-center gap-1.5 px-2 py-2"
-            >
-              <Search size={18} color={tx.searchCount > 0 ? '#2563eb' : '#4b5563'} />
-              {tx.searchCount > 0 ? (
-                <Text className="text-sm font-semibold text-blue-600">{tx.searchCount}</Text>
-              ) : null}
-            </Pressable>
-            <Pressable
-              onPress={() => setIsMoreOpen(true)}
-              accessibilityLabel={t('tx.more')}
-              className="items-center justify-center p-2"
-            >
-              <MoreVertical size={18} color="#4b5563" />
-            </Pressable>
-          </View>
+          onBack ? undefined : (
+            <View className="flex-row gap-2">
+              {/*
+                거래내역. 거래 탭의 보관함·달력 자리다 -- 분석에서 본 것을 같은 검색으로 낱낱의
+                거래로 확인하러 가는 길이다 (openEntries).
+              */}
+              <Pressable
+                onPress={openEntries}
+                accessibilityLabel={t('analysis.toTransactions')}
+                className="items-center justify-center p-2"
+              >
+                <List size={18} color="#4b5563" />
+              </Pressable>
+              {/* 검색. 거래 탭과 같은 창이고 같은 규칙으로 걸린다. */}
+              <Pressable
+                onPress={() => setIsSearchOpen(true)}
+                accessibilityLabel={t('tx.search')}
+                className="flex-row items-center gap-1.5 px-2 py-2"
+              >
+                <Search size={18} color={tx.searchCount > 0 ? '#2563eb' : '#4b5563'} />
+                {tx.searchCount > 0 ? (
+                  <Text className="text-sm font-semibold text-blue-600">{tx.searchCount}</Text>
+                ) : null}
+              </Pressable>
+              <Pressable
+                onPress={() => setIsMoreOpen(true)}
+                accessibilityLabel={t('tx.more')}
+                className="items-center justify-center p-2"
+              >
+                <MoreVertical size={18} color="#4b5563" />
+              </Pressable>
+            </View>
+          )
         }
       />
 
@@ -151,7 +175,10 @@ export default function AnalysisScreen() {
         </View>
       ) : null}
 
-      {/* 걸려 있는 조건. 거래 탭과 같이 탭 위에 두고, 누르면 그 조건만 빠진다. */}
+      {/*
+        걸려 있는 조건. 거래 탭과 같이 탭 위에 두고, 누르면 그 조건만 빠진다. 거래 탭에서
+        건너왔으면 무엇으로 그렸는지 알리기만 한다 -- 뺀 조건을 되걸 검색 단추가 없다.
+      */}
       {tx.searchChips.length > 0 ? (
         <ScrollView
           horizontal
@@ -159,17 +186,26 @@ export default function AnalysisScreen() {
           className="grow-0"
           contentContainerClassName="flex-row items-center gap-2 pr-4"
         >
-          {tx.searchChips.map((chip) => (
-            <Pressable
-              key={chip.id}
-              onPress={() => tx.removeSearchChip(chip.id)}
-              accessibilityLabel={`${chip.label} ${t('tx.search.chipRemove')}`}
-              className="flex-row items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 active:bg-blue-100"
-            >
-              <Text className="text-sm font-medium text-blue-700">{chip.label}</Text>
-              <X size={14} color="#1d4ed8" />
-            </Pressable>
-          ))}
+          {tx.searchChips.map((chip) =>
+            onBack ? (
+              <View
+                key={chip.id}
+                className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5"
+              >
+                <Text className="text-sm font-medium text-blue-700">{chip.label}</Text>
+              </View>
+            ) : (
+              <Pressable
+                key={chip.id}
+                onPress={() => tx.removeSearchChip(chip.id)}
+                accessibilityLabel={`${chip.label} ${t('tx.search.chipRemove')}`}
+                className="flex-row items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 active:bg-blue-100"
+              >
+                <Text className="text-sm font-medium text-blue-700">{chip.label}</Text>
+                <X size={14} color="#1d4ed8" />
+              </Pressable>
+            ),
+          )}
         </ScrollView>
       ) : null}
 

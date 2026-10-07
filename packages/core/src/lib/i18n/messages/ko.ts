@@ -1270,9 +1270,6 @@ export const ko = {
   'tx.noMethods': '이 달에 쓴 결제수단이 없습니다.',
   'tx.entryCount': '{count}건',
   'tx.loadFailed': '거래를 불러오지 못했습니다.',
-  'tx.analysisTitle': '거래 분석',
-  'tx.analysisFiltered': '검색 조건 {count}개에 맞는 거래로 그렸습니다.',
-  'tx.analysisAll': '검색 조건 없이 모든 거래로 그렸습니다.',
   'tx.analysisOfPeriod': '{period} 분석',
   'tx.analysisOutOfRange': '이 기간은 검색 기간 밖입니다. 기간을 옮겨 보세요.',
 

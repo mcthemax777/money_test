@@ -13,7 +13,7 @@
  * 값과 상태는 `useTransactions` 가 갖는다. 앱의 거래 화면과 같은 훅이라, 두 화면이
  * 서로 다른 규칙으로 파고들 일이 없다.
  */
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   Archive,
@@ -78,9 +78,9 @@ import BasisPicker from '@/components/BasisPicker';
 import CountBadge from '@/components/CountBadge';
 import Modal from '@/components/Modal';
 import TransactionCalendarView from '@/components/TransactionCalendarView';
+import AnalysisView from '@/components/AnalysisView';
 import PageHeader from '@/components/PageHeader';
 import PeriodUnitPicker from '@/components/PeriodUnitPicker';
-import TransactionAnalysisModal from '@/components/TransactionAnalysisModal';
 import TransactionSearchModal, { Chip } from '@/components/TransactionSearchModal';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useRenderBudget } from '@/hooks/useRenderBudget';
@@ -418,10 +418,53 @@ export default function TransactionsView({
   usePersonFilterSync(selectedProjectId, tx.people);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   /**
-   * 분석 창. null 이면 닫혀 있다. 년월 줄의 분석 아이콘이 그 줄의 기간 열쇠를 들고 연다.
-   * 열 때만 세운다 -- 다시 열면 그때의 검색으로 지출·수입을 새로 정한다.
+   * 분석 보기. null 이면 닫혀 있다. 년월 줄의 분석 아이콘이 그 줄의 기간 열쇠를 들고 연다.
+   *
+   * 분석 탭과 같은 화면(AnalysisView)을 이 자리에 그린다 -- 분석 탭의 거래내역 단추가 제
+   * 자리에서 거래 화면을 그리는 것과 방향만 반대인 같은 길이다. 머리글에는 ← 만 서고, 그것이나
+   * 브라우저 뒤로가기로 돌아오면 이 화면이 그대로 세워져 있어 펼침·검색이 떠날 때 그대로다.
+   * 열 때마다 새로 세운다 -- 그때의 검색·단위·기간으로 열어야 한다.
    */
   const [analysisFrom, setAnalysisFrom] = useState<{ key: string } | null>(null);
+  /** 분석에서 거래를 고쳤을 수 있어 돌아올 때 목록을 다시 받는다. 받아 둔 줄은 그대로 서 있다. */
+  const closeAnalysis = () => {
+    setAnalysisFrom(null);
+    tx.reload();
+  };
+  useCloseOnBack(analysisFrom !== null, closeAnalysis);
+  /*
+   * 펴면 맨 위로, 돌아오면 목록에서 보던 자리로. 자리는 아이콘을 누르는 손짓에서 적는다 --
+   * 분석으로 바꿔 그린 뒤에는 문서가 짧아져 이미 끌어올려져 있다 (자산 화면의 상세와 같다).
+   */
+  const listScrollY = useRef(0);
+  const openAnalysis = (key: string) => {
+    listScrollY.current = window.scrollY;
+    setAnalysisFrom({ key });
+  };
+  const wasAnalysisOpen = useRef(false);
+  useLayoutEffect(() => {
+    const isOpen = analysisFrom !== null;
+    if (isOpen === wasAnalysisOpen.current) return;
+    wasAnalysisOpen.current = isOpen;
+    const top = isOpen ? 0 : listScrollY.current;
+    window.scrollTo({ top });
+    if (isOpen) return;
+    /*
+     * 닫을 때는 브라우저가 히스토리 칸에 적힌 스크롤(분석을 펼 때의 0)을 되살려 위의 자리를
+     * 덮는다. 크롬은 그것을 popstate 를 보낸 **뒤에** 한다(실측). 그래서 그다음 프레임에 한 번 더
+     * 맞춘다 -- 브라우저 뒤로가기면 이 그림이 그 popstate 안에서 그려졌으니 지금 미루면 되고,
+     * ← 면 뒤로가기용으로 쌓아 둔 칸을 이 뒤에 되돌리므로(`useCloseOnBack`) 그 popstate 를
+     * 기다린다. 오지 않을 popstate 는 오래 기다리지 않는다.
+     */
+    const again = () => window.requestAnimationFrame(() => window.scrollTo({ top }));
+    again();
+    window.addEventListener('popstate', again, { once: true });
+    const timer = window.setTimeout(() => window.removeEventListener('popstate', again), 500);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('popstate', again);
+    };
+  }, [analysisFrom]);
   /** 더보기 선택창. 지금은 삭제 하나뿐이다. */
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   /**
@@ -786,6 +829,22 @@ export default function TransactionsView({
    */
   const firstWaiting = tx.months.findIndex((month) => tx.isMonthWaiting(month.yearMonth));
   const drawnMonths = firstWaiting < 0 ? tx.months : tx.months.slice(0, firstWaiting + 1);
+
+  /* 분석을 펴 둔 동안에는 그것만 그린다 (analysisFrom). */
+  if (analysisFrom) {
+    return (
+      <AnalysisView
+        projectId={selectedProjectId}
+        initial={{
+          search: tx.search,
+          unit: tx.unit,
+          basis: tx.basis,
+          periodKey: analysisFrom.key,
+        }}
+        onBack={closeAnalysis}
+      />
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -1156,7 +1215,7 @@ export default function TransactionsView({
                   {tx.isSelecting ? null : (
                     <button
                       type="button"
-                      onClick={() => setAnalysisFrom({ key: month.yearMonth })}
+                      onClick={() => openAnalysis(month.yearMonth)}
                       aria-label={t('tx.analysisOfPeriod', { period: periodLabel(month.yearMonth) })}
                       title={t('tx.analysisOfPeriod', { period: periodLabel(month.yearMonth) })}
                       className="flex shrink-0 items-center justify-center self-stretch pl-1 pr-2 text-gray-400 hover:text-gray-700"
@@ -1346,23 +1405,6 @@ export default function TransactionsView({
         people={tx.people}
         unit={tx.unit}
       />
-
-      {/*
-        분석 창. 거래 상세보다 앞에 둔다 -- 분석의 거래를 눌러 연 상세가 그 위에 떠야 한다.
-      */}
-      {analysisFrom && (
-        <TransactionAnalysisModal
-          onClose={() => setAnalysisFrom(null)}
-          initialKey={analysisFrom.key}
-          search={tx.search}
-          searchCount={tx.searchCount}
-          range={tx.range}
-          scope={tx.scope}
-          categories={tx.pickerCategories}
-          projectId={selectedProjectId}
-          onEntryClick={(entry) => setDetail(originalEntry(entry))}
-        />
-      )}
 
       <Modal
         isOpen={detail !== null}
