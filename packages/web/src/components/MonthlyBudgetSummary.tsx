@@ -1,9 +1,14 @@
 'use client';
 
-import type { BudgetDto } from '@money/types';
+import type { BudgetDto, CategoryDto } from '@money/types';
 import { Settings } from 'lucide-react';
 
-import { BUDGET_TOTAL_TARGET, budgetPercentage, tagBudgetTargetId } from '@money/core/lib/budget';
+import {
+  BUDGET_TOTAL_TARGET,
+  budgetPercentage,
+  inCategoryOrder,
+  tagBudgetTargetId,
+} from '@money/core/lib/budget';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
@@ -24,12 +29,15 @@ import TypeTabs from './TypeTabs';
  */
 export default function MonthlyBudgetSummary({
   budgets,
+  categories,
   type,
   onTypeChange,
   onSelect,
   onOpenSettings,
 }: {
   budgets: BudgetDto.MonthlyBudget[];
+  /** 줄의 차례를 정하는 분류 목록 (분류 화면에서 정한 차례). */
+  categories: readonly CategoryDto.Response[];
   /** 지출 예산을 볼지 수입 목표를 볼지 */
   type: 'income' | 'expense';
   /**
@@ -55,13 +63,14 @@ export default function MonthlyBudgetSummary({
   const totalUsed = toNumber(total?.usedAmount);
   const totalBudget = toNumber(total?.monthlyAmount);
 
-  // 예산을 잡아 둔 분류만. 많이 쓴(번) 순으로 본다.
-  const rows = budgets
-    .filter(
+  // 예산을 잡아 둔 분류만. 분류 화면에서 정한 차례로 본다 (inCategoryOrder).
+  const rows = inCategoryOrder(
+    budgets.filter(
       (budget) =>
         budget.categoryId && budget.categoryType === type && toNumber(budget.monthlyAmount) > 0,
-    )
-    .sort((a, b) => toNumber(b.usedAmount) - toNumber(a.usedAmount));
+    ),
+    categories,
+  );
 
   /*
    * 분류 이름. 소분류는 "대분류 > 소분류"로 적는다.
@@ -176,7 +185,7 @@ export default function MonthlyBudgetSummary({
  * 두 줄에 든 것이 분류끼리 겹친 것처럼 읽힌다. 지출·수입 탭을 따르지 않는다 -- 태그 예산은
  * 지출에서 돌려받은 돈(수입)을 뺀 한 금액으로 견준다 (`BudgetDto.MonthlyTagBudget`).
  *
- * 분류 상자처럼 예산을 잡은 태그만 적고, 많이 쓴 순으로 늘어놓는다.
+ * 분류 상자처럼 예산을 잡은 태그만 적고, 태그 화면에서 정한 차례로 늘어놓는다.
  */
 export function TagBudgetSummary({
   tagBudgets,
@@ -195,9 +204,8 @@ export function TagBudgetSummary({
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
 
-  const rows = tagBudgets
-    .filter((budget) => toNumber(budget.monthlyAmount) > 0)
-    .sort((a, b) => toNumber(b.usedAmount) - toNumber(a.usedAmount));
+  // 예산을 잡아 둔 태그만. 응답이 이미 태그 화면에서 정한 차례라 그대로 둔다 (2026-10-08 사용자 요청).
+  const rows = tagBudgets.filter((budget) => toNumber(budget.monthlyAmount) > 0);
 
   return (
     <div className="bg-white rounded-lg shadow p-4">

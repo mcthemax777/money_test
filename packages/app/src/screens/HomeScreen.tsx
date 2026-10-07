@@ -233,6 +233,7 @@ export default function HomeScreen() {
             */}
             <MonthlyBudgetSummary
               budgets={home.budgets}
+              categories={home.categories}
               type={type}
               onTypeChange={setType}
               onSelect={openCategory}

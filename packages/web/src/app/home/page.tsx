@@ -182,6 +182,7 @@ export default function HomePage() {
         */}
         <MonthlyBudgetSummary
           budgets={budgets}
+          categories={categories}
           type={type}
           onTypeChange={setType}
           onSelect={setDetailTarget}

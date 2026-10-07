@@ -145,6 +145,33 @@ export function budgetTargetOf(
   };
 }
 
+/**
+ * 분류 예산 줄을 **분류 화면에서 정한 차례**로 늘어놓는다. 대분류 다음에 그 소분류가 붙는다.
+ *
+ * 예산 응답은 그 달에 많이 쓴 순이라(서버) 달마다 줄이 뒤섞인다. 홈의 분류 예산 상자도
+ * 설정 화면(`budgetSettingRows`)과 같은 차례로 둔다 (2026-10-08 사용자 요청).
+ *
+ * 분류 목록에 없는 줄(분류를 아직 받지 못했거나 막 지운 분류)은 받은 차례 그대로 뒤에 붙인다.
+ */
+export function inCategoryOrder<T extends { categoryId?: string }>(
+  rows: readonly T[],
+  categories: readonly CategoryDto.Response[],
+): T[] {
+  const rank = new Map<string, number>();
+  for (const group of groupCategories([...categories])) {
+    if (group.parent) rank.set(group.parent.id, rank.size);
+    for (const child of group.children) rank.set(child.id, rank.size);
+  }
+  const rankOf = (row: T) =>
+    (row.categoryId !== undefined ? rank.get(row.categoryId) : undefined) ?? Number.POSITIVE_INFINITY;
+  // sort 는 안정 정렬이라 목록에 없는 줄끼리는 받은 차례가 남는다.
+  return [...rows].sort((a, b) => {
+    const ra = rankOf(a);
+    const rb = rankOf(b);
+    return ra === rb ? 0 : ra < rb ? -1 : 1;
+  });
+}
+
 /** 예산 설정 화면의 한 줄. */
 export interface BudgetSettingRow {
   id: BudgetTargetId;

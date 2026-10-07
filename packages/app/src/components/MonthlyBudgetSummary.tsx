@@ -1,9 +1,14 @@
 import type { ReactNode } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { Settings } from 'lucide-react-native';
-import type { BudgetDto } from '@money/types';
+import type { BudgetDto, CategoryDto } from '@money/types';
 
-import { BUDGET_TOTAL_TARGET, budgetPercentage, tagBudgetTargetId } from '@money/core/lib/budget';
+import {
+  BUDGET_TOTAL_TARGET,
+  budgetPercentage,
+  inCategoryOrder,
+  tagBudgetTargetId,
+} from '@money/core/lib/budget';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
@@ -13,16 +18,19 @@ import TypeTabs from './TypeTabs';
 /**
  * 이 달 예산 진행률. 웹의 MonthlyBudgetSummary 와 같다.
  *
- * 예산을 잡아 둔 분류만 많이 쓴(번) 순으로 늘어놓는다.
+ * 예산을 잡아 둔 분류만 분류 화면에서 정한 차례로 늘어놓는다.
  */
 export default function MonthlyBudgetSummary({
   budgets,
+  categories,
   type,
   onTypeChange,
   onSelect,
   onOpenSettings,
 }: {
   budgets: BudgetDto.MonthlyBudget[];
+  /** 줄의 차례를 정하는 분류 목록 (분류 화면에서 정한 차례). */
+  categories: readonly CategoryDto.Response[];
   type: 'income' | 'expense';
   /** 넘기면 제목 아래에 지출·수입 탭이 선다 (웹과 같은 까닭으로 상자 안에 둔다). */
   onTypeChange?: (type: 'income' | 'expense') => void;
@@ -42,12 +50,14 @@ export default function MonthlyBudgetSummary({
   const totalBudget = toNumber(totalRow?.monthlyAmount);
   const totalUsed = toNumber(totalRow?.usedAmount);
 
-  const rows = budgets
-    .filter(
+  // 예산을 잡아 둔 분류만. 분류 화면에서 정한 차례로 본다 (inCategoryOrder).
+  const rows = inCategoryOrder(
+    budgets.filter(
       (budget) =>
         budget.categoryId && budget.categoryType === type && toNumber(budget.monthlyAmount) > 0,
-    )
-    .sort((a, b) => toNumber(b.usedAmount) - toNumber(a.usedAmount));
+    ),
+    categories,
+  );
 
   /*
    * 분류 이름. 소분류는 "대분류 > 소분류"로 적는다. 소분류 이름은 대분류 밑에서만
@@ -141,7 +151,7 @@ export default function MonthlyBudgetSummary({
  * 이 달의 태그 예산. 분류 예산 상자와 같은 모양의 상자를 따로 둔다 (웹의 TagBudgetSummary 와 같다).
  *
  * 지출·수입 탭을 따르지 않는다. 태그 예산은 쓴 돈에서 돌려받은 돈을 뺀 한 금액으로 견준다.
- * 예산을 잡은 태그만 많이 쓴 순으로 적는다.
+ * 예산을 잡은 태그만 태그 화면에서 정한 차례로 적는다.
  */
 export function TagBudgetSummary({
   tagBudgets,
@@ -160,9 +170,8 @@ export function TagBudgetSummary({
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
 
-  const rows = tagBudgets
-    .filter((budget) => toNumber(budget.monthlyAmount) > 0)
-    .sort((a, b) => toNumber(b.usedAmount) - toNumber(a.usedAmount));
+  // 예산을 잡아 둔 태그만. 응답이 이미 태그 화면에서 정한 차례라 그대로 둔다 (2026-10-08 사용자 요청).
+  const rows = tagBudgets.filter((budget) => toNumber(budget.monthlyAmount) > 0);
 
   return (
     <View className="rounded-lg bg-white p-4 shadow-sm">
