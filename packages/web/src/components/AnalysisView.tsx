@@ -14,7 +14,7 @@
  * 단추가 거래 화면을 여는 것과 방향만 반대인 같은 길이다.
  */
 import { useRef, useState } from 'react';
-import { List, MoreVertical, Search, X } from 'lucide-react';
+import { List, MoreVertical, Search } from 'lucide-react';
 
 import {
   useAnalysis,
@@ -27,7 +27,6 @@ import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useMyPersonId } from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
 
-import BasisPicker from '@/components/BasisPicker';
 import { BudgetDetailModal } from '@/components/BudgetDetailModal';
 import EntryEditor, { type EntryEditorHandle, type ReferenceDataPatch } from '@/components/EntryEditor';
 import Modal from '@/components/Modal';
@@ -36,6 +35,7 @@ import PageHeader from '@/components/PageHeader';
 import PeriodNavigator from '@/components/PeriodNavigator';
 import PeriodUnitPicker from '@/components/PeriodUnitPicker';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
+import SearchChips from '@/components/SearchChips';
 import TransactionSearchModal from '@/components/TransactionSearchModal';
 import TransactionsView from '@/components/TransactionsView';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
@@ -78,9 +78,10 @@ export default function AnalysisView({
 
   /*
    * 거래내역을 펼쳐 둔 동안에는 그것만 그린다. 자산 상세의 "거래내역 보기"와 같은 규칙이다 --
-   * 걸어 둔 검색·묶는 단위·세는 방식 그대로 거래 화면이 서고, 그 머리글의 ← 나 브라우저 뒤로가기로 돌아온다.
-   * 이 화면이 그대로 세워져 있어(아래에서 그리기만 바꾼다) 돌아오면 검색·단위·기간·탭이
-   * 떠날 때 그대로다.
+   * 걸어 둔 검색·묶는 단위에 **보고 있는 날들을 기간으로 더한** 거래 화면이 서고(`entriesSearch`),
+   * 그 머리글의 ← 나 브라우저 뒤로가기로 돌아온다. 그 화면은 조건을 고칠 수 없다(locked) --
+   * 거래 탭의 분석 아이콘이 연 분석과 같은 규칙이다 (2026-10-07 사용자 요청). 이 화면이 그대로
+   * 세워져 있어(아래에서 그리기만 바꾼다) 돌아오면 기간·탭이 떠날 때 그대로다.
    */
   const [isEntriesOpen, setIsEntriesOpen] = useState(false);
   const closeEntries = () => setIsEntriesOpen(false);
@@ -95,9 +96,9 @@ export default function AnalysisView({
     return (
       <TransactionsView
         projectId={projectId}
-        search={tx.search}
+        search={analysis.entriesSearch}
         unit={tx.unit}
-        basis={tx.basis}
+        locked
         onBack={closeEntries}
       />
     );
@@ -171,32 +172,7 @@ export default function AnalysisView({
         걸려 있는 조건. 거래 탭과 같이 탭 위에 두고, 누르면 그 조건만 빠진다. 거래 탭에서
         건너왔으면 무엇으로 그렸는지 알리기만 한다 -- 뺀 조건을 되걸 검색 단추가 없다.
       */}
-      {tx.searchChips.length > 0 ? (
-        <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-          {tx.searchChips.map((chip) =>
-            onBack ? (
-              <span
-                key={chip.id}
-                className="flex shrink-0 items-center whitespace-nowrap rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5 text-sm font-medium text-blue-700"
-              >
-                {chip.label}
-              </span>
-            ) : (
-              <button
-                key={chip.id}
-                type="button"
-                onClick={() => tx.removeSearchChip(chip.id)}
-                aria-label={`${chip.label} ${t('tx.search.chipRemove')}`}
-                title={t('tx.search.chipRemove')}
-                className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
-              >
-                {chip.label}
-                <X className="h-3.5 w-3.5" aria-hidden />
-              </button>
-            ),
-          )}
-        </div>
-      ) : null}
+      <SearchChips chips={tx.searchChips} onRemove={onBack ? undefined : tx.removeSearchChip} />
 
       {/*
         합계·지출·수입. 거래 탭의 날짜별·분류별·수단별 자리와 모양이다 -- 흰 알약 하나가
@@ -279,10 +255,9 @@ export default function AnalysisView({
         unit={tx.unit}
       />
 
-      {/* 더보기. 묶는 단위와 세는 방식뿐이다 -- 고르고 지우는 일은 거래 탭의 것이다. */}
+      {/* 더보기. 묶는 단위뿐이다 -- 세는 기준은 검색 창에서, 고르고 지우는 일은 거래 탭에서 한다. */}
       <Modal isOpen={isMoreOpen} onClose={() => setIsMoreOpen(false)} title={t('tx.more')}>
         <PeriodUnitPicker value={tx.unit} onChange={tx.changeUnit} />
-        <BasisPicker value={tx.basis} onChange={tx.setBasis} />
       </Modal>
 
       <EntryEditor

@@ -12,8 +12,8 @@
  * 거래내역 단추가 거래 화면을 여는 것과 방향만 반대인 같은 길이다.
  */
 import { useEffect, useRef, useState } from 'react';
-import { Animated, Pressable, ScrollView, Text, View } from 'react-native';
-import { List, MoreVertical, Search, X } from 'lucide-react-native';
+import { Animated, Pressable, Text, View } from 'react-native';
+import { List, MoreVertical, Search } from 'lucide-react-native';
 import type { EntryListItem } from '@money/types';
 
 import {
@@ -29,10 +29,8 @@ import {
   useMyPersonId,
   useProject,
 } from '@money/core/store/project';
-import { useEntryFocus } from '@money/core/store/entry-focus';
 import { useUserFilter } from '@money/core/store/user-filter';
 
-import BasisPicker from '../components/BasisPicker';
 import CategoryDetailView from '../components/CategoryDetailView';
 import EntryEditor from '../components/EntryEditor';
 import Modal from '../components/Modal';
@@ -41,9 +39,12 @@ import PageHeader from '../components/PageHeader';
 import PeriodNavigator from '../components/PeriodNavigator';
 import PeriodUnitPicker from '../components/PeriodUnitPicker';
 import PersonScopeTitle from '../components/PersonScopeTitle';
+import SearchChips from '../components/SearchChips';
 import SegmentedTabs from '../components/SegmentedTabs';
 import TransactionSearchModal from '../components/TransactionSearchModal';
-import { useNavigation } from '../shell/navigation';
+import { useCloseOnBack } from '../shell/navigation';
+import { useScrollRestore, useScrollToTop } from '../shell/scroll';
+import TransactionsScreen from './TransactionsScreen';
 
 const TABS: Array<{ id: AnalysisKind; labelKey: MessageKey }> = [
   { id: 'net', labelKey: 'analysis.tab.net' },
@@ -70,7 +71,6 @@ export default function AnalysisScreen({
   onBack?: () => void;
 } = {}) {
   const { t } = useTranslation();
-  const { go } = useNavigation();
   const projectId = useProject((state) => state.selectedProjectId);
   const canEdit = useCanEdit();
   const myPersonId = useMyPersonId();
@@ -83,30 +83,28 @@ export default function AnalysisScreen({
   usePersonFilterSync(projectId, tx.people);
 
   /*
-   * 거래내역 단추. 자산 상세의 "거래내역 보기"와 같은 길이다 -- 걸어 둔 검색·묶는 단위·세는 방식을 쪽지에 실어
-   * 거래 화면으로 건너가고, 그 화면 머리글에 ← 가 선다. ← 로 돌아오면 떠날 때의 보기(검색·
-   * 단위·세는 방식·기간·탭)를 되살린다. 앱은 화면을 갈아 끼워 이 화면의 상태가 사라지기 때문이다.
+   * 거래내역 단추. 거래 화면을 **이 자리에** 그린다 -- 거래 탭의 분석 아이콘이 분석을 제자리에
+   * 그리는 것과 방향만 반대인 같은 길이고, 웹과 같다. 걸어 둔 조건에 보고 있는 날들을 기간으로
+   * 더해 열고(`entriesSearch`), 그 화면은 조건을 고칠 수 없다(locked, 2026-10-07 사용자 요청).
+   * 이 화면이 그대로 세워져 있어 ← 나 기기의 뒤로가기로 돌아오면 기간·탭과 보던 자리가 그대로다.
    */
-  const focusEntries = useEntryFocus((state) => state.focusEntries);
-  const reopen = useEntryFocus((state) => state.reopen);
-  const clearReopen = useEntryFocus((state) => state.clearReopen);
+  const [isEntriesOpen, setIsEntriesOpen] = useState(false);
+  const scrollToTop = useScrollToTop();
+  const { offsetOf, restoreTo } = useScrollRestore();
+  const analysisOffset = useRef(0);
   const openEntries = () => {
-    focusEntries({ kind: 'analysis', id: '', snapshot: analysis.snapshot() }, tx.search, {
-      unit: tx.unit,
-      basis: tx.basis,
-    });
-    go('/transactions');
+    analysisOffset.current = offsetOf();
+    setIsEntriesOpen(true);
+    scrollToTop();
   };
-  const { restore } = analysis;
-  useEffect(() => {
-    // 거래 탭에 얹힌 보기는 분석 탭이 아니다. 거래 화면의 ← 가 남긴 쪽지는 분석 탭의 것이다.
-    if (onBack || reopen?.kind !== 'analysis') return;
-    if (reopen.snapshot) restore(reopen.snapshot);
-    clearReopen();
-  }, [onBack, reopen, restore, clearReopen]);
+  const closeEntries = () => {
+    setIsEntriesOpen(false);
+    restoreTo(analysisOffset.current);
+  };
+  useCloseOnBack(isEntriesOpen, closeEntries);
 
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  /** 더보기. 묶는 단위와 세는 방식을 고른다 (거래 탭의 더보기 위쪽 둘과 같다). */
+  /** 더보기. 묶는 단위를 고른다 (거래 탭의 더보기 맨 위와 같다). 세는 기준은 검색 창에 있다. */
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   /**
    * 분석의 거래를 눌러 여는 고치기 창. 예산 화면의 분류 상세와 같은 길이다. 읽기 전용
@@ -114,6 +112,16 @@ export default function AnalysisScreen({
    */
   const [editing, setEditing] = useState<EntryListItem | null>(null);
   const openEntry = canEdit ? (entry: EntryListItem) => setEditing(entry) : undefined;
+
+  if (isEntriesOpen) {
+    return (
+      <TransactionsScreen
+        initial={{ search: analysis.entriesSearch, unit: tx.unit }}
+        locked
+        onBack={closeEntries}
+      />
+    );
+  }
 
   return (
     <View className="gap-4">
@@ -179,35 +187,7 @@ export default function AnalysisScreen({
         걸려 있는 조건. 거래 탭과 같이 탭 위에 두고, 누르면 그 조건만 빠진다. 거래 탭에서
         건너왔으면 무엇으로 그렸는지 알리기만 한다 -- 뺀 조건을 되걸 검색 단추가 없다.
       */}
-      {tx.searchChips.length > 0 ? (
-        <ScrollView
-          horizontal
-          showsHorizontalScrollIndicator={false}
-          className="grow-0"
-          contentContainerClassName="flex-row items-center gap-2 pr-4"
-        >
-          {tx.searchChips.map((chip) =>
-            onBack ? (
-              <View
-                key={chip.id}
-                className="rounded-full border border-blue-200 bg-blue-50 px-3 py-1.5"
-              >
-                <Text className="text-sm font-medium text-blue-700">{chip.label}</Text>
-              </View>
-            ) : (
-              <Pressable
-                key={chip.id}
-                onPress={() => tx.removeSearchChip(chip.id)}
-                accessibilityLabel={`${chip.label} ${t('tx.search.chipRemove')}`}
-                className="flex-row items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 active:bg-blue-100"
-              >
-                <Text className="text-sm font-medium text-blue-700">{chip.label}</Text>
-                <X size={14} color="#1d4ed8" />
-              </Pressable>
-            ),
-          )}
-        </ScrollView>
-      ) : null}
+      <SearchChips chips={tx.searchChips} onRemove={onBack ? undefined : tx.removeSearchChip} />
 
       {/*
         합계·지출·수입. 거래 탭의 날짜별·분류별·수단별 자리와 모양이다. 금액은 적지 않는다
@@ -266,10 +246,9 @@ export default function AnalysisScreen({
         unit={tx.unit}
       />
 
-      {/* 더보기. 묶는 단위와 세는 방식뿐이다 -- 고르고 지우는 일은 거래 탭의 것이다. */}
+      {/* 더보기. 묶는 단위뿐이다 -- 세는 기준은 검색 창에서, 고르고 지우는 일은 거래 탭에서 한다. */}
       <Modal isOpen={isMoreOpen} onClose={() => setIsMoreOpen(false)} title={t('tx.more')}>
         <PeriodUnitPicker value={tx.unit} onChange={tx.changeUnit} />
-        <BasisPicker value={tx.basis} onChange={tx.setBasis} />
       </Modal>
 
       <EntryEditor

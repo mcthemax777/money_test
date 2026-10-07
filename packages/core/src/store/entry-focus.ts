@@ -1,14 +1,6 @@
 import { create } from 'zustand';
 
-import type { AnalysisSnapshot } from '../hooks/useAnalysis';
 import type { TransactionSearch } from '../hooks/useTransactions';
-import type { EntryBasis, EntryPeriodUnit } from '@money/types';
-
-/** 거래 화면이 열면서 맞출 보기. 분석 탭이 넘긴다. 없으면 거래 화면의 지금 값 그대로다. */
-export interface EntryFocusView {
-  unit: EntryPeriodUnit;
-  basis: EntryBasis;
-}
 import { useUserFilter } from './user-filter';
 
 /**
@@ -32,13 +24,11 @@ import { useUserFilter } from './user-filter';
 /**
  * 건너온 자리. 돌아갈 자리이기도 하다.
  *
- * 분석 탭('analysis')은 펼 상세가 없다. 대신 돌아왔을 때 되살릴 보기(검색·단위·기간·탭)를
- * `snapshot` 에 들고 간다 -- 앱은 화면을 갈아 끼우므로 떠나는 순간 분석 탭의 상태가 사라진다.
+ * 분석 탭의 거래내역 단추는 여기를 쓰지 않는다 -- 분석 화면이 제자리에서 거래 화면을 그린다.
  */
 export interface EntryFocusOrigin {
-  kind: 'category' | 'tag' | 'person' | 'account' | 'card' | 'group' | 'analysis';
+  kind: 'category' | 'tag' | 'person' | 'account' | 'card' | 'group';
   id: string;
-  snapshot?: AnalysisSnapshot;
 }
 
 /**
@@ -64,7 +54,7 @@ interface EntryFocusStore {
    * 거래 화면이 집어 들고 곧바로 비운다(`takeFocus`). 남겨 두면 그 화면을 떠났다가
    * 탭으로 다시 들어올 때 사용자가 그 사이에 고친 검색이 처음 것으로 되돌아간다.
    */
-  focus: { origin: EntryFocusOrigin; search: TransactionSearch; view?: EntryFocusView } | null;
+  focus: { origin: EntryFocusOrigin; search: TransactionSearch } | null;
   /**
    * 돌아간 화면이 다시 펼 상세.
    *
@@ -74,7 +64,7 @@ interface EntryFocusStore {
   reopen: EntryFocusOrigin | null;
 
   /** 상세에서 거래 화면으로 건너간다. */
-  focusEntries: (origin: EntryFocusOrigin, search: TransactionSearch, view?: EntryFocusView) => void;
+  focusEntries: (origin: EntryFocusOrigin, search: TransactionSearch) => void;
   /** 거래 화면이 쪽지를 집어 든다. 한 번 집으면 비운다. */
   takeFocus: () => void;
   /** 거래 화면의 ←. 돌아간 화면이 다시 펼 상세를 남긴다. */
@@ -106,7 +96,7 @@ export const useEntryFocus = create<EntryFocusStore>()((set, get) => ({
   reopen: null,
   personScope: null,
 
-  focusEntries: (origin, search, view) => set({ focus: { origin, search, view }, reopen: null }),
+  focusEntries: (origin, search) => set({ focus: { origin, search }, reopen: null }),
   takeFocus: () => set({ focus: null }),
   requestReopen: (origin) => set({ reopen: origin }),
   clearReopen: () => set({ reopen: null }),

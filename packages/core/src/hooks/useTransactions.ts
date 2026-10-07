@@ -14,7 +14,14 @@
  * **여러 달을 함께 펼 수 있다.** 달마다 펼침 정도를 따로 들고 있어서, 8월을 보다가
  * 7월을 열어도 8월이 닫히지 않는다.
  */
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type SetStateAction,
+} from 'react';
 import type {
   AccountDto,
   CardDto,
@@ -71,6 +78,7 @@ import { isOfflineError } from '../lib/offline-error';
 import { useProject, useProjectTimeZone } from '../store/project';
 import { useWeekStart } from '../store/week-start';
 import { useUserFilter } from '../store/user-filter';
+import { useEntryConditions } from '../store/entry-conditions';
 
 /** 년월 아래에서 무엇으로 나눠 볼지. */
 export type TransactionTab = 'date' | 'category' | 'method';
@@ -162,6 +170,17 @@ export interface TransactionSearch {
   monthStartDay: number;
   weekStartDay: WeekStart | null;
   yearStartMonth: number;
+  /**
+   * 무엇을 "그 기간에 쓴 돈"으로 셀지. **거르는 조건이 아니라 세는 규칙이다** -- 끊는 자리와
+   * 같이 검색 창에서 고르고(2026-10-07 사용자 요청, 그 전엔 더보기), 조건과 함께 다닌다.
+   *
+   * 기본은 **회차 기준**이다. 할부는 회차가 서는 달마다 그 달 몫(원금 + 이자)으로 나뉘고,
+   * 할부가 아닌 거래는 달라지는 것이 없다. 24개월치를 산 달 하나에 몰아 두면 그 달만 혼자
+   * 튀고 나머지 스물세 달은 실제로 나가는 돈이 어디에도 보이지 않는다. 발생 기준(산 달에
+   * 전액)은 언제 샀는지를 묻는 때 -- 이를테면 그 달의 카드값을 명세서와 대조할 때 -- 의 것이다.
+   * 발생 기준일 때만 알약이 선다.
+   */
+  basis: EntryBasis;
 }
 
 /** 끊는 자리의 처음 값. 달력대로 끊는다. */
@@ -207,6 +226,7 @@ export const EMPTY_SEARCH: TransactionSearch = {
   startDate: '',
   endDate: '',
   ...DEFAULT_PERIOD_CUT,
+  basis: 'installment',
 };
 
 /**
@@ -298,6 +318,11 @@ export function searchChipsOf(
     });
   }
 
+  // 세는 기준. 기본(회차 기준)이 아닐 때만 -- 빼면 회차 기준으로 돌아간다.
+  if (search.basis !== 'installment') {
+    chips.push({ id: 'basis', label: t('tx.basis.accrual') });
+  }
+
   // 적은 글자를 그대로 보여 준다. 무엇으로 좁혔는지는 그 글자가 곧 이름이다.
   if (search.text.trim()) {
     chips.push({ id: 'text', label: `"${search.text.trim()}"` });
@@ -380,6 +405,7 @@ export function withoutChip(search: TransactionSearch, chipId: string): Transact
   if (chipId === 'period') return { ...search, startDate: '', endDate: '' };
   if (chipId === 'text') return { ...search, text: '' };
   if (chipId === 'periodCut') return { ...search, ...DEFAULT_PERIOD_CUT };
+  if (chipId === 'basis') return { ...search, basis: 'installment' };
 
   const divider = chipId.indexOf(':');
   if (divider < 0) return search;
@@ -593,6 +619,7 @@ export function useTransactions(
   {
     periodsOnly = false,
     initial,
+    shared = false,
   }: {
     /**
      * 기간 줄(과 그 수입·지출)만 쓴다. 분석 화면이 켠다 -- 검색·단위·세는 방식은 거래
@@ -602,10 +629,17 @@ export function useTransactions(
      */
     periodsOnly?: boolean;
     /**
-     * 처음 걸어 둘 검색·묶는 단위·세는 방식. 거래 탭의 분석 아이콘이 연 분석 보기가 거래
-     * 탭의 것 그대로 연다. 첫 그림부터 이 값이라 빈 검색으로 한 번 받았다가 다시 받지 않는다.
+     * 처음 걸어 둘 검색(세는 기준 포함)과 묶는 단위. 거래 탭의 분석 아이콘이 연 분석 보기와
+     * 분석 탭의 거래내역 단추가 연 거래 화면이 건너온 탭의 것으로 연다. 첫 그림부터 이
+     * 값이라 빈 검색으로 한 번 받았다가 다시 받지 않는다.
      */
-    initial?: { search: TransactionSearch; unit: EntryPeriodUnit; basis: EntryBasis };
+    initial?: { search: TransactionSearch; unit: EntryPeriodUnit };
+    /**
+     * 검색·묶는 단위·세는 방식을 거래 탭과 분석 탭이 함께 쓰는 자리(`useEntryConditions`)에서
+     * 읽고 쓴다. 두 탭 화면만 켠다 -- 상세에서 건너온 거래 화면이나 거래 탭 안의 분석은 제
+     * 조건을 따로 든다. 부르는 동안 바꾸지 않는다 (아래 상태를 고르는 갈래가 바뀐다).
+     */
+    shared?: boolean;
   } = {},
 ) {
   const { t } = useTranslation();
@@ -617,19 +651,30 @@ export function useTransactions(
   /** 동기화가 사본을 채우면 올라간다. 이 값이 바뀌면 화면이 다시 읽는다. */
   const mirrorVersion = useMirrorVersion();
 
-  const [search, setSearch] = useState<TransactionSearch>(initial?.search ?? EMPTY_SEARCH);
-  /**
-   * 무엇을 "그 달에 쓴 돈"으로 셀지.
-   *
-   * 기본은 **회차 기준**이다. 할부는 회차가 서는 달마다 그 달 몫(원금 + 이자)으로
-   * 나뉘고, 할부가 아닌 거래는 달라지는 것이 없다. 이 화면이 답하는 물음이 "이 달에
-   * 얼마가 나갔나"라서, 24개월치를 산 달 하나에 몰아 두면 그 달만 혼자 튀고 나머지
-   * 스물세 달은 실제로 나가는 돈이 어디에도 보이지 않는다.
-   *
-   * 발생 기준(산 달에 전액)은 더보기에서 고를 수 있다. 언제 샀는지를 묻는 화면 --
-   * 이를테면 그 달의 카드값을 명세서와 대조할 때 -- 이 그쪽이다.
+  /*
+   * 검색·묶는 단위·세는 방식. shared 면 탭끼리 함께 쓰는 자리의 것이고, 아니면 이 훅의 것이다.
+   * 두 갈래 다 늘 불러 두고 고르기만 한다 -- 훅을 부르는 차례가 그림마다 같아야 한다.
+   * 함께 쓰는 검색은 그 가계부의 것일 때만 쓴다. 다른 가계부의 분류·자산 id 로 거르면 빈 목록이다.
    */
-  const [basis, setBasis] = useState<EntryBasis>(initial?.basis ?? 'installment');
+  const sharedConditions = useEntryConditions();
+  const [localSearch, setLocalSearch] = useState<TransactionSearch>(
+    initial?.search ?? EMPTY_SEARCH,
+  );
+  const search = shared
+    ? sharedConditions.projectId === projectId && sharedConditions.search
+      ? sharedConditions.search
+      : EMPTY_SEARCH
+    : localSearch;
+  const setSharedSearch = sharedConditions.setSearch;
+  const setSearch = useCallback(
+    (update: SetStateAction<TransactionSearch>) => {
+      if (shared) setSharedSearch(projectId, update, EMPTY_SEARCH);
+      else setLocalSearch(update);
+    },
+    [shared, projectId, setSharedSearch],
+  );
+  /** 무엇을 "그 달에 쓴 돈"으로 셀지. 검색 창에서 고른다 (`TransactionSearch.basis`). */
+  const basis = search.basis;
   const [tab, setTab] = useState<TransactionTab>('date');
   /**
    * 바깥 묶음 -- 해·달·주. 안쪽 탭(날짜별·분류별·수단별)과는 다른 축이다.
@@ -637,7 +682,11 @@ export function useTransactions(
    * 오래 쓴 가계부에서는 달이 예순 줄이 되어 한 해를 한눈에 볼 수 없고, 반대로 이번
    * 달만 촘촘히 보려는 사람에게는 달이 너무 성기다. 기본은 지금까지의 달이다.
    */
-  const [unit, setUnit] = useState<EntryPeriodUnit>(initial?.unit ?? DEFAULT_ENTRY_PERIOD);
+  const [localUnit, setLocalUnit] = useState<EntryPeriodUnit>(
+    initial?.unit ?? DEFAULT_ENTRY_PERIOD,
+  );
+  const unit = shared ? sharedConditions.unit : localUnit;
+  const setUnit = shared ? sharedConditions.setUnit : setLocalUnit;
   /**
    * 사용자가 직접 정한 펼침 정도. 손대지 않은 달은 아래 기본값을 따른다.
    *
@@ -876,7 +925,11 @@ export function useTransactions(
     setSearch((prev) => withoutChip(prev, chipId));
   }, []);
 
-  const searchCount =
+  /*
+   * 거르는 조건의 수. 세는 기준은 넣지 않는다 -- 거래를 거르지 않으므로, 이것으로 정하는 일
+   * (검색 중이면 줄을 다 펴기, 기간 줄의 순수입 감추기)에 끼면 안 된다.
+   */
+  const filterCount =
     (search.text.trim() ? 1 : 0) +
     search.categoryIds.length +
     search.paymentAccountIds.length +
@@ -889,8 +942,10 @@ export function useTransactions(
     (range ? 1 : 0) +
     // 끊는 자리. 기간을 정했으면 쓰이지 않아 세지 않는다 (알약과 같다).
     (!range && periodCutOf(search, unit) ? 1 : 0);
+  /** 걸린 조건의 수. 알약 수와 같다 -- 검색 단추 옆 숫자다. */
+  const searchCount = filterCount + (search.basis !== 'installment' ? 1 : 0);
 
-  const isSearching = searchCount > 0;
+  const isSearching = filterCount > 0;
   /** 기간 줄이 목록의 몇 번째인가. 검색 중에 어디까지 폈는지 이것으로 가른다. */
   const monthOrder = useMemo(
     () => new Map(months.map((month, index) => [month.yearMonth, index])),
@@ -2312,7 +2367,7 @@ export function useTransactions(
   const changeUnit = useCallback((next: EntryPeriodUnit) => {
     setUnit(next);
     setSelected({});
-  }, []);
+  }, [setUnit]);
 
   /**
    * 그 달의 안쪽을 아직 그릴 수 없는가.
@@ -2428,7 +2483,6 @@ export function useTransactions(
     entriesOf,
     entryRowsOf,
     basis,
-    setBasis,
     isLoadingRow,
     // 검색
     search,
@@ -2441,6 +2495,8 @@ export function useTransactions(
     /** 검색이 고른 기간. 온전하지 않거나 없으면 null. */
     range,
     searchCount,
+    /** 거르는 조건이 걸려 있는가. 세는 기준만 바꿨으면 거르는 것이 없다. */
+    isFiltering: isSearching,
     searchChips,
     removeSearchChip,
     // 지울 것 고르기

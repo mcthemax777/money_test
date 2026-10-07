@@ -20,6 +20,7 @@ import {
   type AccountDto,
   type CardDto,
   type CategoryDto,
+  type EntryBasis,
   type EntryPeriodUnit,
   type PersonDto,
   type TagDto,
@@ -49,6 +50,9 @@ import {
 } from '@money/core/hooks/useTransactions';
 
 import Modal from './Modal';
+
+/** 세는 기준. 기본인 회차 기준을 앞에 둔다. */
+const BASES: EntryBasis[] = ['installment', 'accrual'];
 
 function toggleId<T extends string>(ids: T[], id: T): T[] {
   return ids.includes(id) ? ids.filter((value) => value !== id) : [...ids, id];
@@ -267,7 +271,9 @@ export default function TransactionSearchModal({
     draft.entryPersonIds.length +
     (draftRange ? 1 : 0) +
     // 끊는 자리. 기간을 정했으면 쓰이지 않아 세지 않는다 (훅의 searchCount 와 같다).
-    (!draftRange && periodCutOf(draft, unit) ? 1 : 0);
+    (!draftRange && periodCutOf(draft, unit) ? 1 : 0) +
+    // 세는 기준. 기본(회차 기준)이 아닐 때만 하나로 센다.
+    (draft.basis !== 'installment' ? 1 : 0);
 
   return (
     <Modal
@@ -433,6 +439,28 @@ export default function TransactionSearchModal({
               <p className="mt-2 text-xs leading-5 text-gray-500">{t('tx.search.cutIgnored')}</p>
             ) : null}
           </div>
+        </div>
+
+        {/*
+          세는 기준. 기간 다음에 둔다 -- 그 기간에 무엇을 쓴 돈으로 셀지라 기간과 한 물음이다.
+          거르는 조건이 아니라 세는 규칙이고, 기본은 회차 기준이다 (`TransactionSearch.basis`).
+          예전엔 더보기에 있었다 (2026-10-07 사용자 요청으로 옮김).
+        */}
+        <div>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
+            {t('tx.basis')}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {BASES.map((basis) => (
+              <Chip
+                key={basis}
+                label={t(basis === 'accrual' ? 'tx.basis.accrual' : 'tx.basis.installment')}
+                selected={draft.basis === basis}
+                onClick={() => setDraft((prev) => ({ ...prev, basis }))}
+              />
+            ))}
+          </div>
+          <p className="mt-2 text-xs leading-5 text-gray-500">{t('tx.basisHint')}</p>
         </div>
 
         {categories.length === 0 &&

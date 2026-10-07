@@ -35,12 +35,12 @@ import {
   Search,
   Tag,
   Trash2,
-  X,
 } from 'lucide-react-native';
 import { useSharedValue } from 'react-native-reanimated';
 import {
   originalEntry,
   type EntryListItem,
+  type EntryPeriodUnit,
   type EntryRow,
 } from '@money/types';
 
@@ -50,6 +50,7 @@ import { isLongPeriodLabel, periodLabel, periodLabelLines } from '@money/core/li
 import {
   useTransactions,
   type TransactionRow,
+  type TransactionSearch,
   type TransactionTab,
 } from '@money/core/hooks/useTransactions';
 import {
@@ -74,7 +75,6 @@ import {
 import { useCloseOnBack, useNavigation } from '../shell/navigation';
 import RevealTop from '../shell/RevealTop';
 import { StickySection, StickySections } from '../shell/StickySection';
-import BasisPicker from '../components/BasisPicker';
 import CountBadge from '../components/CountBadge';
 import EntryDetailModal from '../components/EntryDetailModal';
 import EntryEditor from '../components/EntryEditor';
@@ -88,6 +88,7 @@ import TransactionItem from '../components/TransactionItem';
 import TagPickModal from '../components/TagPickModal';
 import TransactionCalendarView from '../components/TransactionCalendarView';
 import TransactionSearchModal from '../components/TransactionSearchModal';
+import SearchChips from '../components/SearchChips';
 import AnalysisScreen from './AnalysisScreen';
 
 /**
@@ -102,8 +103,6 @@ const ORIGIN_SCREEN: Record<EntryFocusOrigin['kind'], string> = {
   account: '/assets',
   card: '/assets',
   group: '/assets',
-  // 분석 탭의 거래내역 단추. 돌아가면 분석 탭이 떠날 때의 보기를 되살린다.
-  analysis: '/analysis',
 };
 
 const TABS: Array<{ id: TransactionTab; labelKey: MessageKey }> = [
@@ -441,7 +440,25 @@ const WEEKDAY_COLOR: Record<number, string> = { 0: 'text-red-600', 6: 'text-blue
  */
 const Line = memo(LineView);
 
-export default function TransactionsScreen() {
+export default function TransactionsScreen({
+  initial,
+  locked = false,
+  onBack,
+}: {
+  /**
+   * 처음 걸 검색(세는 기준 포함)과 묶는 단위. 분석 탭의 거래내역 단추가 이 화면을 제자리에
+   * 그리며 넘긴다 -- 걸어 둔 조건에 보고 있던 날들을 기간으로 더한 것이다. 주면 이 조건은 이
+   * 화면만의 것이다(탭과 함께 쓰지 않는다).
+   */
+  initial?: { search: TransactionSearch; unit: EntryPeriodUnit };
+  /**
+   * 조건을 못 고치게 한다. 머리글에는 ← 만 서고 알약은 알리기만 한다 -- 거래 탭의 분석
+   * 아이콘이 연 분석과 같은 규칙이다 (2026-10-07 사용자 요청).
+   */
+  locked?: boolean;
+  /** 주면 머리글에 ← 가 선다. 부르는 쪽이 돌아가는 일을 맡는다. */
+  onBack?: () => void;
+} = {}) {
   const { t } = useTranslation();
   const selectedProjectId = useProject((state) => state.selectedProjectId);
   const canEdit = useCanEdit();
@@ -449,7 +466,14 @@ export default function TransactionsScreen() {
   const selectedPersonIds = useUserFilter((state) => state.selectedPersonIds);
   const myPersonId = useMyPersonId();
 
-  const tx = useTransactions(selectedProjectId);
+  /*
+   * 거래 탭이면 검색·묶는 단위·세는 기준을 분석 탭과 함께 쓴다(`useEntryConditions`). 분류·
+   * 태그·자산 상세가 쪽지로 검색을 실어 보냈거나 분석 탭이 넘긴 조건(initial)이면 그 조건은
+   * 이 화면만의 것이다 -- 탭으로 새어 나가면 한참 뒤에 연 거래·분석 탭에 고른 적 없는 분류가
+   * 걸려 있다. 쪽지는 이 화면이 서기 전에 놓이므로 처음 그림에서 한 번 정하고 바꾸지 않는다.
+   */
+  const [isShared] = useState(() => !initial && !useEntryFocus.getState().focus);
+  const tx = useTransactions(selectedProjectId, { shared: isShared, initial });
   const { go } = useNavigation();
   /*
    * 보관함에 몇 건이 기다리는가.
@@ -480,16 +504,12 @@ export default function TransactionsScreen() {
 
   /** 건너오면서 들고 온 검색을 건다. 한 번만 걸고 쪽지는 비운다. */
   useEffect(() => {
-    if (!focus) return;
+    // 분석 탭 안에 얹힌 화면은 상세가 보낸 쪽지의 몫이 아니다.
+    if (!focus || initial) return;
     setOrigin(focus.origin);
     tx.setSearch(focus.search);
-    // 분석 탭에서 왔으면 그 묶는 단위와 세는 방식도 맞춘다.
-    if (focus.view) {
-      tx.changeUnit(focus.view.unit);
-      tx.setBasis(focus.view.basis);
-    }
     takeFocus();
-  }, [focus, takeFocus, tx.setSearch, tx.changeUnit, tx.setBasis]);
+  }, [focus, initial, takeFocus, tx.setSearch]);
 
   /**
    * 떠나온 상세로 되돌아간다.
@@ -910,7 +930,6 @@ export default function TransactionsScreen() {
           initial={{
             search: tx.search,
             unit: tx.unit,
-            basis: tx.basis,
             periodKey: analysisFrom.key,
           }}
           onBack={() => openAnalysis(null)}
@@ -985,7 +1004,7 @@ export default function TransactionsScreen() {
                   분류·태그 상세에서 건너왔으면 ← 가 선다. 누르면 떠나온 상세가 다시 펴진다.
                   평소의 거래 화면은 아래 탭에 있는 자리라 돌아갈 곳이 없다.
                 */
-                onBack={origin ? goBackToOrigin : undefined}
+                onBack={onBack ?? (origin ? goBackToOrigin : undefined)}
                 title={
                   <PersonScopeTitle
                     noun={t('tx.noun')}
@@ -996,73 +1015,76 @@ export default function TransactionsScreen() {
                   />
                 }
                 action={
-                  <View className="flex-row gap-2">
-                    {/*
-                      보관함. 검색 왼쪽에 둔다.
+                  // 분석 탭에서 그 기간으로 건너왔으면 ← 만 둔다 (locked).
+                  locked ? undefined : (
+                    <View className="flex-row gap-2">
+                      {/*
+                        보관함. 검색 왼쪽에 둔다.
 
-                      아직 거래가 아닌 후보가 쌓이는 자리라 거래 화면에서 들어가는 것이
-                      맞다 -- 그 후보가 되려는 것이 이 화면의 줄이다. 대기 건수는 아이콘
-                      오른쪽 위에 빨간 배지로 얹는다.
-                    */}
-                    <Pressable
-                      onPress={() => go('/transactions/inbox')}
-                      accessibilityLabel={t('inbox.open')}
-                      className="items-center justify-center px-2 py-2"
-                    >
-                      <View className="relative">
-                        <Archive size={18} color="#4b5563" />
-                        <CountBadge count={inboxCount} />
-                      </View>
-                    </Pressable>
-                    {/*
-                      보기를 바꾸는 단추. 지금 무엇을 보고 있는지가 아니라 **누르면 무엇이
-                      되는지**를 그린다 -- 목록을 보는 중이면 달력, 달력을 보는 중이면 목록이다.
-                      누를 자리와 그 결과가 한 그림이라 설명이 필요 없다.
-                    */}
-                    <Pressable
-                      onPress={() => setIsCalendar((on) => !on)}
-                      accessibilityLabel={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
-                      className="items-center justify-center p-2"
-                    >
-                      {isCalendar ? (
-                        <List size={18} color="#2563eb" />
-                      ) : (
-                        <CalendarDays size={18} color="#4b5563" />
-                      )}
-                    </Pressable>
-                    {/*
-                      검색. 달력 보기에서도 둔다 -- 걸어 둔 조건이 달력에도 그대로 걸린다.
-                    */}
-                    <Pressable
-                      onPress={() => setIsSearchOpen(true)}
-                      accessibilityLabel={t('tx.search')}
-                      /*
-                        아이콘만 둔다. 테두리·바탕도, 누를 때의 바탕도 없다. 머리글에서
-                        이름 옆에 붙는 자리라 상자를 그리면 아이콘보다 상자가 먼저 보인다.
-                        걸어 둔 검색이 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
-                      */
-                      className="flex-row items-center gap-1.5 px-2 py-2"
-                    >
-                      {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
-                      <Search size={18} color={tx.searchCount > 0 ? '#2563eb' : '#4b5563'} />
-                      {tx.searchCount > 0 ? (
-                        <Text className="text-sm font-semibold text-blue-600">{tx.searchCount}</Text>
-                      ) : null}
-                    </Pressable>
-                    {/*
-                      더보기에는 쓰는 일만 들어 있다(태그 붙이기·지우기). 읽기 전용
-                      구성원에게는 열 것이 없으므로 버튼째 감춘다.
-                    */}
-                    {canEdit ? (
+                        아직 거래가 아닌 후보가 쌓이는 자리라 거래 화면에서 들어가는 것이
+                        맞다 -- 그 후보가 되려는 것이 이 화면의 줄이다. 대기 건수는 아이콘
+                        오른쪽 위에 빨간 배지로 얹는다.
+                      */}
                       <Pressable
-                        onPress={() => setIsMoreOpen(true)}
-                        accessibilityLabel={t('tx.more')}
+                        onPress={() => go('/transactions/inbox')}
+                        accessibilityLabel={t('inbox.open')}
+                        className="items-center justify-center px-2 py-2"
+                      >
+                        <View className="relative">
+                          <Archive size={18} color="#4b5563" />
+                          <CountBadge count={inboxCount} />
+                        </View>
+                      </Pressable>
+                      {/*
+                        보기를 바꾸는 단추. 지금 무엇을 보고 있는지가 아니라 **누르면 무엇이
+                        되는지**를 그린다 -- 목록을 보는 중이면 달력, 달력을 보는 중이면 목록이다.
+                        누를 자리와 그 결과가 한 그림이라 설명이 필요 없다.
+                      */}
+                      <Pressable
+                        onPress={() => setIsCalendar((on) => !on)}
+                        accessibilityLabel={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
                         className="items-center justify-center p-2"
                       >
-                        <MoreVertical size={18} color="#4b5563" />
+                        {isCalendar ? (
+                          <List size={18} color="#2563eb" />
+                        ) : (
+                          <CalendarDays size={18} color="#4b5563" />
+                        )}
                       </Pressable>
-                    ) : null}
-                  </View>
+                      {/*
+                        검색. 달력 보기에서도 둔다 -- 걸어 둔 조건이 달력에도 그대로 걸린다.
+                      */}
+                      <Pressable
+                        onPress={() => setIsSearchOpen(true)}
+                        accessibilityLabel={t('tx.search')}
+                        /*
+                          아이콘만 둔다. 테두리·바탕도, 누를 때의 바탕도 없다. 머리글에서
+                          이름 옆에 붙는 자리라 상자를 그리면 아이콘보다 상자가 먼저 보인다.
+                          걸어 둔 검색이 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
+                        */
+                        className="flex-row items-center gap-1.5 px-2 py-2"
+                      >
+                        {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
+                        <Search size={18} color={tx.searchCount > 0 ? '#2563eb' : '#4b5563'} />
+                        {tx.searchCount > 0 ? (
+                          <Text className="text-sm font-semibold text-blue-600">{tx.searchCount}</Text>
+                        ) : null}
+                      </Pressable>
+                      {/*
+                        더보기에는 쓰는 일만 들어 있다(태그 붙이기·지우기). 읽기 전용
+                        구성원에게는 열 것이 없으므로 버튼째 감춘다.
+                      */}
+                      {canEdit ? (
+                        <Pressable
+                          onPress={() => setIsMoreOpen(true)}
+                          accessibilityLabel={t('tx.more')}
+                          className="items-center justify-center p-2"
+                        >
+                          <MoreVertical size={18} color="#4b5563" />
+                        </Pressable>
+                      ) : null}
+                    </View>
+                  )
                 }
               />
             )}
@@ -1086,34 +1108,9 @@ export default function TransactionsScreen() {
               창을 다시 열게 된다. 여기 늘어놓으면 그 걸음이 사라지고, 하나만 빼는 일도
               창을 열지 않고 끝난다.
 
-              많아지면 가로로 굴린다. 줄바꿈으로 두면 조건이 열 개 넘을 때 목록이 화면 밖으로
-              밀린다.
+              분석 탭에서 그 기간으로 건너왔으면(locked) 알리기만 하고 뺄 수 없다.
             */}
-            {tx.searchChips.length > 0 ? (
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                /*
-                 * 늘어나지 않게 못 박는다. ScrollView 는 기본 스타일에 flexGrow:1 이 있어
-                 * 세로로 늘어선 칸 안에서 남는 높이를 먹는다. 알약 줄은 알약 높이면 된다.
-                 */
-                className="grow-0"
-                contentContainerClassName="flex-row items-center gap-2 pr-4"
-              >
-                {tx.searchChips.map((chip) => (
-                  <Pressable
-                    key={chip.id}
-                    onPress={() => tx.removeSearchChip(chip.id)}
-                    // 손가락이 닿는 자리라 알약 자체를 누르게 한다. x 만 누르게 하면 빗나간다.
-                    accessibilityLabel={`${chip.label} ${t('tx.search.chipRemove')}`}
-                    className="flex-row items-center gap-1.5 rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 active:bg-blue-100"
-                  >
-                    <Text className="text-sm font-medium text-blue-700">{chip.label}</Text>
-                    <X size={14} color="#1d4ed8" />
-                  </Pressable>
-                ))}
-              </ScrollView>
-            ) : null}
+            <SearchChips chips={tx.searchChips} onRemove={locked ? undefined : tx.removeSearchChip} />
 
             {/* 달력 보기에서는 목록 쪽 손잡이를 감춘다 (바로 아래 주석 참고). */}
             {!isCalendar ? (
@@ -1213,7 +1210,7 @@ export default function TransactionsScreen() {
                         그 달에 남은 돈이 아니라 "골라 낸 것들의 차액"이다. 같은 자리에
                         같은 낱말로 적히면 달의 순수입으로 읽힌다.
                       */
-                      showNet={tx.searchCount === 0}
+                      showNet={!tx.isFiltering}
                       checkable={tx.isSelecting}
                       checked={tx.isSelecting ? tx.monthChecked(month.yearMonth) : false}
                       checkPending={tx.isSelecting ? tx.isRangePending(month.yearMonth) : false}
@@ -1309,15 +1306,6 @@ export default function TransactionsScreen() {
           닫는다.
         */}
         <PeriodUnitPicker value={tx.unit} onChange={tx.changeUnit} />
-        {/*
-          무엇을 "그 달에 쓴 돈"으로 셀지. 묶음 단위와 같은 자리에 둔다 -- 둘 다 목록의
-          숫자가 무엇인지 정하는 값이고, 자주 바꾸는 것이 아니다.
-
-          기본은 회차 기준이다. 할부를 산 달 하나에 몰아 두면 그 달만 혼자 튀고, 매달
-          빠져나가는 돈은 어느 달에서도 보이지 않는다. 발생 기준은 "언제 샀나"를 묻는
-          화면을 위해 남겨 두었다.
-        */}
-        <BasisPicker value={tx.basis} onChange={tx.setBasis} />
         <View className="mb-1 border-t border-gray-200" />
 
         {/*

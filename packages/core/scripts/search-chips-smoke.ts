@@ -176,5 +176,14 @@ eq('글자만 빼면 나머지는 그대로',
 eq('글자를 빼도 다른 조건은 남는다',
   chipsOf(withoutChip({ ...full, text: '스타벅스' }, 'text')).length, 7);
 
+// ── 9. 세는 기준 (2026-10-07 더보기에서 검색 창으로) ──
+eq('기본(회차 기준)이면 알약이 없다', chipsOf(EMPTY_SEARCH).length, 0);
+const accrualChips = chipsOf({ ...EMPTY_SEARCH, basis: 'accrual' });
+eq('발생 기준이면 알약 하나', accrualChips.map((chip) => chip.id).join(','), 'basis');
+eq('그 이름은 사전에서', accrualChips[0].label, 'tx.basis.accrual');
+eq('빼면 회차 기준으로 돌아간다', withoutChip({ ...full, basis: 'accrual' }, 'basis').basis, 'installment');
+eq('빼도 다른 조건은 남는다',
+  chipsOf(withoutChip({ ...full, basis: 'accrual' }, 'basis')).length, 7);
+
 console.log(fail === 0 ? '\n전체 통과' : `\n실패 ${fail}건`);
 process.exit(fail === 0 ? 0 : 1);

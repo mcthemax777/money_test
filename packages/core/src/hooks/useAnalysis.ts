@@ -17,7 +17,7 @@
  *      어느 쪽도 믿을 수 없다.
  *   3. **분석 구간.** 보는 기간을 검색 기간과 겹치는 날로 자른다 (`analysisPeriodOf`).
  */
-import { useCallback, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   isCalendarMonthKey,
   periodDayRange,
@@ -37,26 +37,10 @@ import {
   type SearchRange,
   type TransactionSearch,
 } from './useTransactions';
-import type { EntryBasis, EntryPeriodUnit } from '@money/types';
+import type { EntryPeriodUnit } from '@money/types';
 
 /** 분석 탭. 합계는 순수입(수입 - 지출)이다. */
 export type AnalysisKind = 'net' | 'expense' | 'income';
-
-/**
- * 분석 탭의 보기 한 벌. 앱에서 거래내역으로 건너갔다가 ← 로 돌아올 때 되살린다
- * (`entry-focus` 의 쪽지에 실려 간다).
- *
- * `periodBasis` 는 그 기간을 고를 때의 끊는 규칙이다. 되살린 검색·단위가 같은 규칙을 다시
- * 만들면 고른 기간이 그대로 선다 (`useAnalysis` 의 chosen 주석).
- */
-export interface AnalysisSnapshot {
-  search: TransactionSearch;
-  unit: EntryPeriodUnit;
-  basis: EntryBasis;
-  kind: AnalysisKind;
-  periodKey: string;
-  periodBasis: string;
-}
 
 /** 그 기간의 수입·지출·순수입. 기간 줄 목록이 오기 전에는 null 이다. */
 export interface AnalysisTotals {
@@ -66,18 +50,31 @@ export interface AnalysisTotals {
 }
 
 /**
+ * 분석이 보는 날들. 그 기간을 검색 기간과 겹치는 날로 자른 것이고(양끝 포함), 겹치지 않으면
+ * null 이다.
+ */
+function analysisDaysOf(
+  periodKey: string,
+  range: SearchRange | null,
+): { startKey: string; endKey: string } | null {
+  const whole = periodDayRange(periodKey);
+  const startKey =
+    range?.startKey && range.startKey > whole.startKey ? range.startKey : whole.startKey;
+  const endKey = range?.endKey && range.endKey < whole.endKey ? range.endKey : whole.endKey;
+  return startKey > endKey ? null : { startKey, endKey };
+}
+
+/**
  * 분석이 보는 구간. 달이 통째로 기간 안이면 달 이름으로(앞선 두 달 겹쳐 그리기가 선다), 반만
  * 걸치면 겹치는 날로, 전혀 겹치지 않으면 null 이다.
  */
 export function analysisPeriodOf(periodKey: string, range: SearchRange | null): ReportPeriod | null {
+  const days = analysisDaysOf(periodKey, range);
+  if (!days) return null;
   const whole = periodDayRange(periodKey);
+  const { startKey, endKey } = days;
   // 달 이름으로 줄 수 있는 것은 달력의 달뿐이다. 시작일을 붙인 달은 날짜 구간으로 준다.
   const isMonth = isCalendarMonthKey(periodKey);
-
-  const startKey =
-    range?.startKey && range.startKey > whole.startKey ? range.startKey : whole.startKey;
-  const endKey = range?.endKey && range.endKey < whole.endKey ? range.endKey : whole.endKey;
-  if (startKey > endKey) return null;
   // 달을 통째로 보면 달 이름으로 준다. 앞선 두 달을 겹쳐 그리는 것은 달 이름일 때만 선다.
   if (isMonth && startKey === whole.startKey && endKey === whole.endKey) {
     return { yearMonth: periodKey };
@@ -138,13 +135,12 @@ function defaultPeriodKey(
 }
 
 /**
- * 거래 탭의 분석 아이콘이 여는 보기의 처음 값. 거래 탭의 검색·묶는 단위·세는 방식과 그 줄의
- * 기간 열쇠다. 없으면 분석 탭이다 -- 빈 검색으로 오늘이 든 기간에서 연다.
+ * 거래 탭의 분석 아이콘이 여는 보기의 처음 값. 거래 탭의 검색(세는 기준 포함)·묶는 단위와 그
+ * 줄의 기간 열쇠다. 없으면 분석 탭이다 -- 함께 쓰는 조건으로 오늘이 든 기간에서 연다.
  */
 export interface AnalysisInitial {
   search: TransactionSearch;
   unit: EntryPeriodUnit;
-  basis: EntryBasis;
   periodKey: string;
 }
 
@@ -153,7 +149,11 @@ export function useAnalysis(
   { initial }: { initial?: AnalysisInitial } = {},
 ) {
   const timeZone = useProjectTimeZone();
-  const tx = useTransactions(projectId, { periodsOnly: true, initial });
+  /*
+   * 분석 탭이면 검색·단위·세는 방식을 거래 탭과 함께 쓴다. 거래 탭에서 연 보기(initial)는 그
+   * 순간의 거래 탭 조건으로 열고 제 것으로 든다 -- 거기에는 조건을 고치는 단추가 없다.
+   */
+  const tx = useTransactions(projectId, { periodsOnly: true, initial, shared: !initial });
   const { grouping, range, months, isLoadingMonths } = tx;
 
   /*
@@ -192,30 +192,15 @@ export function useAnalysis(
     initial ? initialKindOf(initial.search) : 'net',
   );
 
-  const { search, unit, basis: countBasis, setSearch, changeUnit, setBasis } = tx;
-  /** 지금 보기를 한 벌로 뜬다. */
-  const snapshot = (): AnalysisSnapshot => ({
-    search,
-    unit,
-    basis: countBasis,
-    kind,
-    periodKey,
-    periodBasis: basis,
-  });
-  /**
-   * 뜬 보기를 되살린다. 기간은 그때의 끊는 규칙과 함께 적어 둔다 -- 검색·단위가 다음 그림에서
-   * 같은 규칙을 만들면 그 기간이 서고, 목록을 기다리는 동안 잠시 다르면 오늘이 섰다가 돌아온다.
+  /*
+   * 거래내역 단추가 여는 거래 화면의 검색. 걸어 둔 조건에 **보고 있는 날들**을 기간으로 더한다
+   * (2026-10-07 사용자 요청) -- 10월 2일~11월 1일을 보고 있었으면 그 날들의 거래만 선다. 검색
+   * 기간 밖을 보고 있으면 더할 날이 없어 조건 그대로다.
    */
-  const restore = useCallback(
-    (saved: AnalysisSnapshot) => {
-      setSearch(saved.search);
-      changeUnit(saved.unit);
-      setBasis(saved.basis);
-      setKind(saved.kind);
-      setChosen({ basis: saved.periodBasis, key: saved.periodKey });
-    },
-    [setSearch, changeUnit, setBasis],
-  );
+  const entriesSearch = useMemo<TransactionSearch>(() => {
+    const days = analysisDaysOf(periodKey, range);
+    return days ? { ...tx.search, startDate: days.startKey, endDate: days.endKey } : tx.search;
+  }, [periodKey, range, tx.search]);
 
   /*
    * 그 기간의 금액. 거래 탭의 기간 줄과 같은 값이다. 목록에 없는 기간은 걸린 거래가 없는 기간이라
@@ -237,8 +222,7 @@ export function useAnalysis(
     tx,
     kind,
     setKind,
-    snapshot,
-    restore,
+    entriesSearch,
     totals,
     /** 보는 기간의 열쇠. 해 "2026", 달 "2026-09", 주 "2026-09-13", 기간 "A~B". */
     periodKey,

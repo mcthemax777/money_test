@@ -32,11 +32,10 @@ import {
   Search,
   Tag,
   Trash2,
-  X,
 } from 'lucide-react';
 import {
+  DEFAULT_ENTRY_PERIOD,
   originalEntry,
-  type EntryBasis,
   type EntryListItem as EntryListItemDto,
   type EntryPeriodUnit,
 } from '@money/types';
@@ -74,13 +73,13 @@ import EntryEditor, {
   type EntryEditorHandle,
   type ReferenceDataPatch,
 } from '@/components/EntryEditor';
-import BasisPicker from '@/components/BasisPicker';
 import CountBadge from '@/components/CountBadge';
 import Modal from '@/components/Modal';
 import TransactionCalendarView from '@/components/TransactionCalendarView';
 import AnalysisView from '@/components/AnalysisView';
 import PageHeader from '@/components/PageHeader';
 import PeriodUnitPicker from '@/components/PeriodUnitPicker';
+import SearchChips from '@/components/SearchChips';
 import TransactionSearchModal, { Chip } from '@/components/TransactionSearchModal';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useRenderBudget } from '@/hooks/useRenderBudget';
@@ -363,7 +362,7 @@ export default function TransactionsView({
   projectId: selectedProjectId,
   search,
   unit,
-  basis,
+  locked = false,
   onBack,
 }: {
   /** 어느 프로젝트의 거래인가. 화면이 제 방식으로 정해 넘긴다. */
@@ -373,14 +372,19 @@ export default function TransactionsView({
    *
    * 한 번만 건다. 그 뒤로는 사용자가 검색 창에서 고치는 것이 이긴다 -- 다시 걸면
    * 조건 하나를 빼자마자 도로 채워진다.
+   *
+   * 주지 않으면 거래 탭의 조건이다 -- 검색·묶는 단위·세는 방식을 분석 탭과 함께 쓴다
+   * (`useEntryConditions`). 분석 탭의 거래내역 단추도 그래서 아무것도 넘기지 않는다. 주면 그
+   * 조건은 이 화면만의 것이라 탭으로 새어 나가지 않는다.
    */
   search?: TransactionSearch;
-  /**
-   * 열자마자 맞출 묶는 단위와 세는 방식. 분석 탭의 거래내역 단추가 그 보기 그대로 넘긴다.
-   * 검색과 같이 값이 바뀔 때만 한 번 건다.
-   */
+  /** search 와 함께 처음 맞출 묶는 단위. 분석 탭의 거래내역 단추가 그 단위 그대로 연다. */
   unit?: EntryPeriodUnit;
-  basis?: EntryBasis;
+  /**
+   * 조건을 못 고치게 한다. 머리글에는 ← 만 서고 알약은 알리기만 한다 -- 분석 탭의 거래내역
+   * 단추가 그 기간으로 연 화면이다. 거래 탭의 분석 아이콘이 연 분석과 같은 규칙이다.
+   */
+  locked?: boolean;
   /** 주면 머리글에 ← 가 선다. 부르는 쪽이 돌아가는 일을 맡는다. */
   onBack?: () => void;
 }) {
@@ -393,7 +397,11 @@ export default function TransactionsView({
   const selectedPersonIds = useUserFilter((state) => state.selectedPersonIds);
   const togglePersonId = useUserFilter((state) => state.togglePersonId);
 
-  const tx = useTransactions(selectedProjectId);
+  const tx = useTransactions(selectedProjectId, {
+    shared: search === undefined,
+    // 넘겨받은 조건이면 첫 그림부터 그것으로 받는다 (빈 검색으로 한 번 받지 않는다).
+    initial: search ? { search, unit: unit ?? DEFAULT_ENTRY_PERIOD } : undefined,
+  });
 
   /*
    * 뒤로가기는 머리글의 ← 를 누른 것과 같게 동작한다.
@@ -563,12 +571,6 @@ export default function TransactionsView({
     if (!searchKey) return;
     tx.setSearch(JSON.parse(searchKey) as TransactionSearch);
   }, [searchKey, tx.setSearch]);
-  useEffect(() => {
-    if (unit) tx.changeUnit(unit);
-  }, [unit, tx.changeUnit]);
-  useEffect(() => {
-    if (basis) tx.setBasis(basis);
-  }, [basis, tx.setBasis]);
 
   const activeTabIndex = Math.max(
     0,
@@ -838,7 +840,6 @@ export default function TransactionsView({
         initial={{
           search: tx.search,
           unit: tx.unit,
-          basis: tx.basis,
           periodKey: analysisFrom.key,
         }}
         onBack={closeAnalysis}
@@ -940,78 +941,81 @@ export default function TransactionsView({
               />
             }
             action={
-              <div className="flex gap-2">
-                {/*
-                  보관함. 검색 왼쪽에 둔다.
+              // 분석 탭에서 그 기간으로 건너왔으면 ← 만 둔다 (locked).
+              locked ? undefined : (
+                <div className="flex gap-2">
+                  {/*
+                    보관함. 검색 왼쪽에 둔다.
 
-                  아직 거래가 아닌 후보가 쌓이는 자리라 거래 화면에서 들어가는 것이
-                  맞다 -- 그 후보가 되려는 것이 이 화면의 줄이다. 대기 건수는 아이콘
-                  오른쪽 위에 빨간 배지로 얹는다.
-                */}
-                <Link
-                  href="/transactions/inbox"
-                  aria-label={t('inbox.open')}
-                  title={t('inbox.title')}
-                  className="flex items-center px-2 py-2 text-gray-600"
-                >
-                  <span className="relative">
-                    <Archive className="h-4 w-4" aria-hidden />
-                    <CountBadge count={inboxCount} />
-                  </span>
-                </Link>
-                {/*
-                  보기를 바꾸는 단추. 지금 무엇을 보고 있는지가 아니라 **누르면 무엇이
-                  되는지**를 그린다 -- 목록을 보는 중이면 달력, 달력을 보는 중이면 목록이다.
-                  누를 자리와 그 결과가 한 그림이라 설명이 필요 없다.
-                */}
-                <button
-                  type="button"
-                  onClick={() => setIsCalendar((on) => !on)}
-                  aria-label={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
-                  title={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
-                  className={`flex items-center justify-center p-2 ${
-                    isCalendar ? 'text-blue-600' : 'text-gray-600'
-                  }`}
-                >
-                  {isCalendar ? (
-                    <List className="h-4 w-4" aria-hidden />
-                  ) : (
-                    <CalendarDays className="h-4 w-4" aria-hidden />
-                  )}
-                </button>
-                {/*
-                  검색. 달력 보기에서도 둔다 -- 걸어 둔 조건이 달력에도 그대로 걸린다.
-                */}
-                <button
+                    아직 거래가 아닌 후보가 쌓이는 자리라 거래 화면에서 들어가는 것이
+                    맞다 -- 그 후보가 되려는 것이 이 화면의 줄이다. 대기 건수는 아이콘
+                    오른쪽 위에 빨간 배지로 얹는다.
+                  */}
+                  <Link
+                    href="/transactions/inbox"
+                    aria-label={t('inbox.open')}
+                    title={t('inbox.title')}
+                    className="flex items-center px-2 py-2 text-gray-600"
+                  >
+                    <span className="relative">
+                      <Archive className="h-4 w-4" aria-hidden />
+                      <CountBadge count={inboxCount} />
+                    </span>
+                  </Link>
+                  {/*
+                    보기를 바꾸는 단추. 지금 무엇을 보고 있는지가 아니라 **누르면 무엇이
+                    되는지**를 그린다 -- 목록을 보는 중이면 달력, 달력을 보는 중이면 목록이다.
+                    누를 자리와 그 결과가 한 그림이라 설명이 필요 없다.
+                  */}
+                  <button
                     type="button"
-                    onClick={() => setIsSearchOpen(true)}
-                    aria-label={t('tx.search')}
-                    title={t('tx.search')}
-                    /*
-                      아이콘만 둔다. 테두리·바탕도, 손을 올렸을 때의 바탕도 없다. 앱과
-                      같은 모양이다 -- 머리글에서는 상자보다 아이콘이 먼저 보여야 한다.
-                      검색이 걸려 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
-                    */
-                    className={`flex items-center gap-1.5 px-2 py-2 text-sm font-medium ${
-                      tx.searchCount > 0 ? 'text-blue-600' : 'text-gray-600'
+                    onClick={() => setIsCalendar((on) => !on)}
+                    aria-label={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
+                    title={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
+                    className={`flex items-center justify-center p-2 ${
+                      isCalendar ? 'text-blue-600' : 'text-gray-600'
                     }`}
                   >
-                    {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
-                    <Search className="h-4 w-4" aria-hidden />
-                    {tx.searchCount > 0 ? (
-                      <span className="font-semibold">{tx.searchCount}</span>
-                    ) : null}
+                    {isCalendar ? (
+                      <List className="h-4 w-4" aria-hidden />
+                    ) : (
+                      <CalendarDays className="h-4 w-4" aria-hidden />
+                    )}
                   </button>
-                <button
-                  type="button"
-                  onClick={() => setIsMoreOpen(true)}
-                  aria-label={t('tx.more')}
-                  title={t('tx.more')}
-                  className="flex items-center justify-center p-2 text-gray-600"
-                >
-                  <MoreVertical className="h-4 w-4" aria-hidden />
-                </button>
-              </div>
+                  {/*
+                    검색. 달력 보기에서도 둔다 -- 걸어 둔 조건이 달력에도 그대로 걸린다.
+                  */}
+                  <button
+                      type="button"
+                      onClick={() => setIsSearchOpen(true)}
+                      aria-label={t('tx.search')}
+                      title={t('tx.search')}
+                      /*
+                        아이콘만 둔다. 테두리·바탕도, 손을 올렸을 때의 바탕도 없다. 앱과
+                        같은 모양이다 -- 머리글에서는 상자보다 아이콘이 먼저 보여야 한다.
+                        검색이 걸려 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
+                      */
+                      className={`flex items-center gap-1.5 px-2 py-2 text-sm font-medium ${
+                        tx.searchCount > 0 ? 'text-blue-600' : 'text-gray-600'
+                      }`}
+                    >
+                      {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
+                      <Search className="h-4 w-4" aria-hidden />
+                      {tx.searchCount > 0 ? (
+                        <span className="font-semibold">{tx.searchCount}</span>
+                      ) : null}
+                    </button>
+                  <button
+                    type="button"
+                    onClick={() => setIsMoreOpen(true)}
+                    aria-label={t('tx.more')}
+                    title={t('tx.more')}
+                    className="flex items-center justify-center p-2 text-gray-600"
+                  >
+                    <MoreVertical className="h-4 w-4" aria-hidden />
+                  </button>
+                </div>
+              )
             }
           />
         )}
@@ -1036,24 +1040,7 @@ export default function TransactionsView({
           많아지면 가로로 굴린다. 줄바꿈으로 두면 조건이 열 개 넘을 때 목록이 화면 밖으로
           밀린다.
         */}
-        {tx.searchChips.length > 0 ? (
-          <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
-            {tx.searchChips.map((chip) => (
-              <button
-                key={chip.id}
-                type="button"
-                onClick={() => tx.removeSearchChip(chip.id)}
-                // 지우는 버튼이라 이름을 함께 읽어 준다. 알약만으로는 무엇이 빠지는지 모른다.
-                aria-label={`${chip.label} ${t('tx.search.chipRemove')}`}
-                title={t('tx.search.chipRemove')}
-                className="flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-blue-200 bg-blue-50 py-1.5 pl-3 pr-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
-              >
-                {chip.label}
-                <X className="h-3.5 w-3.5" aria-hidden />
-              </button>
-            ))}
-          </div>
-        ) : null}
+        <SearchChips chips={tx.searchChips} onRemove={locked ? undefined : tx.removeSearchChip} />
 
         {/* 달력 보기에서는 목록 쪽 손잡이를 감춘다 (바로 아래 주석 참고). */}
         {!isCalendar ? (
@@ -1191,7 +1178,7 @@ export default function TransactionsView({
                       그 달에 남은 돈이 아니라 "골라 낸 것들의 차액"이다. 같은 자리에
                       같은 낱말로 적히면 달의 순수입으로 읽힌다.
                     */
-                    showNet={tx.searchCount === 0}
+                    showNet={!tx.isFiltering}
                     check={
                       tx.isSelecting
                         ? {
@@ -1272,15 +1259,6 @@ export default function TransactionsView({
           닫는다.
         */}
         <PeriodUnitPicker value={tx.unit} onChange={tx.changeUnit} />
-        {/*
-          무엇을 "그 달에 쓴 돈"으로 셀지. 묶음 단위와 같은 자리에 둔다 -- 둘 다 목록의
-          숫자가 무엇인지 정하는 값이고, 자주 바꾸는 것이 아니다.
-
-          기본은 회차 기준이다. 할부를 산 달 하나에 몰아 두면 그 달만 혼자 튀고, 매달
-          빠져나가는 돈은 어느 달에서도 보이지 않는다. 발생 기준은 "언제 샀나"를 묻는
-          화면을 위해 남겨 두었다.
-        */}
-        <BasisPicker value={tx.basis} onChange={tx.setBasis} />
         <div className="mb-1 border-t border-gray-200" />
 
         <button
