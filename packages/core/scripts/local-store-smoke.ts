@@ -299,6 +299,30 @@ const entry = (
   eq('모양이 어긋나면 표를 다시 세운다', shapeColumns.includes('fieldHlc'), true);
   shapeDriver.close();
 
+  /*
+   * ── 0-4. 옛 표에 없는 컬럼으로 색인을 세우는 판이면 ──
+   *
+   * 판 32 가 `entry_payback_idx ON entry (paybackOfEntryId)` 를 더했다. 색인을 모양 검사보다
+   * 먼저 세우면 옛 entry 표에서 "no such column" 으로 넘어져 사본을 영영 열지 못한다 --
+   * 실기기가 그렇게 서버로만 읽게 되었다.
+   */
+  const indexDriver = nodeSqliteDriver();
+  await indexDriver.run(
+    `CREATE TABLE entry (id TEXT PRIMARY KEY, projectId TEXT NOT NULL, date TEXT NOT NULL,
+       dateKey TEXT NOT NULL, yearMonth TEXT NOT NULL, updatedVersion INTEGER NOT NULL DEFAULT 0)`,
+  );
+  const indexStore = new LocalStore(indexDriver);
+  await indexStore.ensureSchema();
+  const entryColumns = (
+    await indexDriver.all<{ name: string }>(`PRAGMA table_info(entry)`)
+  ).map((row) => row.name);
+  eq('색인보다 모양을 먼저 보고 표를 다시 세운다', entryColumns.includes('paybackOfEntryId'), true);
+  const entryIndexes = (
+    await indexDriver.all<{ name: string }>(`PRAGMA index_list(entry)`)
+  ).map((row) => row.name);
+  eq('다시 세운 표에 색인도 선다', entryIndexes.includes('entry_payback_idx'), true);
+  indexDriver.close();
+
   const driver = nodeSqliteDriver();
   const store = new LocalStore(driver);
 

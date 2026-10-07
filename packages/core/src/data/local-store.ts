@@ -490,7 +490,12 @@ export class LocalStore {
    * 문장은 전부 `IF NOT EXISTS` 라 여러 번 불러도 같다.
    */
   async ensureSchema(): Promise<void> {
-    await this.createTables();
+    /*
+     * 색인은 모양을 본 뒤에 세운다. 옛 표에 없는 컬럼으로 색인을 세우면 "no such column"
+     * 으로 넘어져 아래의 모양 검사에 닿지 못하고, 사본을 영영 열지 못한다 -- 판 32 이전의
+     * 사본이 `entry_payback_idx` 에서 실제로 그랬다.
+     */
+    await this.createTables(TABLE_STATEMENTS);
 
     /*
      * 표의 **모양**도 본다. 번호만 믿지 않는다.
@@ -505,12 +510,14 @@ export class LocalStore {
      */
     if (await this.hasStaleShape()) {
       await this.rebuild();
+      return;
     }
+    await this.createTables(INDEX_STATEMENTS);
   }
 
   /** 표를 만든다. 이미 있으면 그대로 둔다. */
-  private async createTables(): Promise<void> {
-    for (const statement of SCHEMA_STATEMENTS) {
+  private async createTables(statements: readonly string[] = SCHEMA_STATEMENTS): Promise<void> {
+    for (const statement of statements) {
       await this.db.run(statement);
     }
   }
@@ -4540,6 +4547,10 @@ const TOMBSTONE_TABLES: Record<string, string> = {
  * 기대 목록을 손으로 또 적지 않는다. 두 벌이 되면 한쪽만 고쳐 놓고 "모양이 맞다"고
  * 믿는 일이 생긴다. 문장에서 그대로 읽는다.
  */
+const isIndexStatement = (statement: string) => /^\s*CREATE\s+(UNIQUE\s+)?INDEX\b/i.test(statement);
+const TABLE_STATEMENTS = SCHEMA_STATEMENTS.filter((statement) => !isIndexStatement(statement));
+const INDEX_STATEMENTS = SCHEMA_STATEMENTS.filter(isIndexStatement);
+
 function expectedColumns(): Array<[string, string[]]> {
   const tables: Array<[string, string[]]> = [];
 
