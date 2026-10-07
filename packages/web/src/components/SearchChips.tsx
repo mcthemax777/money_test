@@ -16,18 +16,15 @@ import { useTranslation } from '@money/core/lib/i18n';
 export default function SearchChips({
   chips,
   onRemove,
-  boxRef,
 }: {
   chips: SearchChip[];
   onRemove?: (chipId: string) => void;
-  /** 알약 줄 상자에 걸 자리. 머리글이 비켜설 때 이 줄은 남긴다 (`useTopReveal` 의 keepRef). */
-  boxRef?: { current: HTMLDivElement | null };
 }) {
   const { t } = useTranslation();
   if (chips.length === 0) return null;
 
   return (
-    <div ref={boxRef} className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
+    <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1">
       {chips.map((chip) =>
         onRemove ? (
           <button

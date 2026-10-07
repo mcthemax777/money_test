@@ -51,7 +51,8 @@ function Shell({ children }: { children: ReactNode }) {
   const nearBottom = useNearBottomScroll();
   const isScrollLocked = useScrollLocked();
   /* 목록이 끌기 중에 이 스크롤을 빌려 쓴다 (shell/scroll 참고). */
-  const { attach, noteOffset, noteContentHeight, cancelRestore, scrollY } = useScrollRegistration();
+  const { attach, noteOffset, noteContentHeight, cancelRestore, scrollY, content, contentTop } =
+    useScrollRegistration();
   const scrollRef = useRef<ScrollView>(null);
   /*
    * 붙박이 머리글(년월 줄·`RevealTop`)이 읽는 스크롤 자리를 UI 실에서 적는다.
@@ -152,7 +153,19 @@ function Shell({ children }: { children: ReactNode }) {
              */
             scrollEventThrottle={16}
           >
-            {children}
+            {/*
+              화면을 담는 상자. 붙박이 머리글이 제 자리를 이 상자에 대고 잰다(scroll 의
+              `content`). 위 여백(pt-4/md:pt-8)만큼 떨어져 있어 그 거리도 함께 적는다.
+            */}
+            <View
+              ref={content}
+              collapsable={false}
+              onLayout={(event) => {
+                if (contentTop) contentTop.value = event.nativeEvent.layout.y;
+              }}
+            >
+              {children}
+            </View>
           </ScrollView>
 
           {/*

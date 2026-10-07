@@ -9,7 +9,7 @@ import {
   type ReactNode,
 } from 'react';
 import type { MutableRefObject } from 'react';
-import type { NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
+import type { NativeScrollEvent, NativeSyntheticEvent, View } from 'react-native';
 import { useSharedValue, type SharedValue } from 'react-native-reanimated';
 
 /**
@@ -151,6 +151,17 @@ interface ScrollControl {
   scrollY: SharedValue<number>;
   /** 화면에서 스크롤 영역이 차지하는 자리. 가장자리를 재는 기준이다. */
   area: MutableRefObject<{ top: number; height: number }>;
+  /**
+   * 스크롤 안에서 화면을 담은 상자와, 그 상자가 스크롤 내용의 맨 위에서 떨어진 거리(위 여백).
+   *
+   * 붙박이 머리글은 제 자리를 **이 상자에 대고** 잰다(`measureLayout`). 창 좌표로 재고
+   * 스크롤 위치(`offset`)를 더하면, 그 값이 JS 실을 거쳐 한두 프레임 늦은 때 -- 화면이
+   * 열리며 보던 자리로 되돌려지는 순간 같은 -- 잰 자리가 그만큼 어긋나 머리글과 년월 줄
+   * 사이에 틈이 났다(2026-10-07, 지나가는 거래가 그 틈으로 보였다). 이 상자에 대고 재면
+   * 스크롤 위치와도 화면 위쪽과도 상관이 없다.
+   */
+  content: MutableRefObject<View | null>;
+  contentTop: SharedValue<number>;
   /** 이만큼 더 굴린다. 끝에 닿으면 그 이상은 움직이지 않는다. */
   scrollBy: (dy: number) => void;
   /**
@@ -187,6 +198,8 @@ function ScrollLockProvider({ children }: { children: ReactNode }) {
   const offset = useRef(0);
   const scrollY = useSharedValue(0);
   const area = useRef({ top: 0, height: 0 });
+  const content = useRef<View | null>(null);
+  const contentTop = useSharedValue(0);
 
   const attach = useCallback((next: ScrollHandle | null, nextArea: { top: number; height: number }) => {
     view.current = next;
@@ -261,6 +274,8 @@ function ScrollLockProvider({ children }: { children: ReactNode }) {
       offset,
       scrollY,
       area,
+      content,
+      contentTop,
       scrollBy,
       scrollToTop,
       restoreTo,
@@ -276,6 +291,7 @@ function ScrollLockProvider({ children }: { children: ReactNode }) {
       scrollBy,
       scrollToTop,
       scrollY,
+      contentTop,
     ],
   );
 
@@ -336,6 +352,8 @@ export function useScrollRegistration() {
      * 년월 줄이 스크롤을 따라가려다 제자리로 튀는 것처럼 떨린다.
      */
     scrollY: context?.scrollY,
+    content: context?.content,
+    contentTop: context?.contentTop,
     noteOffset: useCallback(
       (y: number) => {
         if (!context) return;
@@ -356,6 +374,19 @@ export function useScrollY(): SharedValue<number> {
   const context = useContext(ScrollControlContext);
   const alone = useSharedValue(0);
   return context?.scrollY ?? alone;
+}
+
+/**
+ * 붙박이 머리글이 제 자리를 잴 기준 (`ScrollControl.content`). 껍데기 밖(모달·시험)에서는 잴
+ * 상자가 없어 머리글이 붙지 않는다 -- 굴러가지 않으니 붙을 일도 없다.
+ */
+export function useScrollContent(): {
+  content: MutableRefObject<View | null> | null;
+  contentTop: SharedValue<number>;
+} {
+  const context = useContext(ScrollControlContext);
+  const alone = useSharedValue(0);
+  return { content: context?.content ?? null, contentTop: context?.contentTop ?? alone };
 }
 
 /** 목록이 쥐는 손잡이. 껍데기 밖(모달 등)에서는 아무 일도 하지 않는다. */

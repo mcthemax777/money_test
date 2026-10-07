@@ -18,7 +18,7 @@ import { createContext, useCallback, useContext, useMemo, useRef, type ReactNode
 import { View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
 
-import { useScrollControl, useScrollY } from './scroll';
+import { useScrollContent, useScrollY } from './scroll';
 
 /**
  * 붙어 있는 동안의 바탕. 페이지와 같은 회색(gray-50)이다.
@@ -28,8 +28,10 @@ import { useScrollControl, useScrollY } from './scroll';
 const BACKGROUND = '#f9fafb';
 
 interface Sections {
-  /** 구역들을 담은 상자가 스크롤 내용 안에서 서 있는 자리. */
+  /** 구역들을 담은 상자가 화면 상자 안에서 서 있는 자리. 스크롤 내용 안의 자리는 + contentTop. */
   offset: SharedValue<number>;
+  /** 화면 상자의 위 여백 (scroll 의 `contentTop`). */
+  contentTop: SharedValue<number>;
   /** 화면 위에 이미 서 있는 것의 높이. 머리글은 0 이 아니라 그 아래에 선다. */
   inset?: SharedValue<number>;
 }
@@ -47,22 +49,25 @@ export function StickySections({
   className?: string;
   children: ReactNode;
 }) {
-  const { offsetOf, areaOf } = useScrollControl();
+  const { content: scrollContent, contentTop } = useScrollContent();
   const box = useRef<View>(null);
   /** 처음에는 무한대다 -- 아직 재지 못한 동안에는 어느 머리글도 붙지 말아야 한다. */
   const offset = useSharedValue(Number.POSITIVE_INFINITY);
 
   /*
-   * 창 좌표로 재고 스크롤 내용의 좌표로 옮긴다. 위쪽의 것(알림 줄·조건 알약)이 늘거나
-   * 줄면 이 자리도 따라 바뀌므로 `onLayout` 이 올 때마다 다시 잰다.
+   * 화면을 담은 상자에 대고 잰다 -- `RevealTop` 과 같은 기준이라야 둘이 맞닿는다(scroll 의
+   * `content` 주석). 위쪽의 것(알림 줄·조건 알약)이 늘거나 줄면 이 자리도 따라 바뀌므로
+   * `onLayout` 이 올 때마다 다시 잰다.
    */
   const measure = useCallback(() => {
-    box.current?.measureInWindow((_x, y) => {
-      offset.value = y - areaOf().top + offsetOf();
+    const target = scrollContent?.current;
+    if (!box.current || !target) return;
+    box.current.measureLayout(target, (_x, y) => {
+      offset.value = y;
     });
-  }, [offset, areaOf, offsetOf]);
+  }, [offset, scrollContent]);
 
-  const value = useMemo(() => ({ offset, inset }), [offset, inset]);
+  const value = useMemo(() => ({ offset, inset, contentTop }), [offset, inset, contentTop]);
 
   return (
     <SectionsContext.Provider value={value}>
@@ -94,7 +99,7 @@ export function StickySection({
     if (!sections) return { transform: [{ translateY: 0 }] };
 
     /** 이 구역이 스크롤 내용 안에서 서 있는 자리. */
-    const anchor = sections.offset.value + top.value;
+    const anchor = sections.contentTop.value + sections.offset.value + top.value;
     /** 머리글이 서야 할 자리. 위에 되돌아온 머리글이 있으면 그 아래다. */
     const line = scrollY.value + (sections.inset?.value ?? 0);
     /**

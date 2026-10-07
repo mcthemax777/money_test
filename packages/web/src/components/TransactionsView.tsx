@@ -1026,73 +1026,77 @@ export default function TransactionsView({
         ) : null}
 
         {/*
-          걸려 있는 조건. 탭 위에 둔다. 달력 보기에서도 남는다 -- 달력에도 같은 조건이 걸린다.
-
-          검색 창을 열어야 무엇을 골랐는지 알 수 있으면, 결과가 비었을 때 이유를 찾으려
-          창을 다시 열게 된다. 여기 늘어놓으면 그 걸음이 사라지고, 하나만 빼는 일도
-          창을 열지 않고 끝난다.
-
-          많아지면 가로로 굴린다. 줄바꿈으로 두면 조건이 열 개 넘을 때 목록이 화면 밖으로
-          밀린다.
+          탭과 걸어 둔 조건. 둘을 한 상자에 묶는다 -- 조건이 걸려 있으면 내려가는 동안에도 이
+          상자는 화면 위에 남고 그 위(제목 줄)만 비켜선다(useTopReveal 의 keepRef). 조건이 없으면
+          통째로 비켜선다. 달력 보기에서는 탭이 빠지고 조건만 남는다.
         */}
-        <SearchChips
-          chips={tx.searchChips}
-          onRemove={locked ? undefined : tx.removeSearchChip}
-          // 내려가는 동안에도 이 줄부터는 화면 위에 남는다 (useTopReveal).
-          boxRef={topReveal.keepRef}
-        />
+        {!isCalendar || tx.searchChips.length > 0 ? (
+          <div
+            ref={tx.searchChips.length > 0 ? topReveal.keepRef : undefined}
+            className="space-y-4"
+          >
+            {/* 달력 보기에서는 목록 쪽 손잡이를 감춘다 (바로 아래 주석 참고). */}
+            {!isCalendar ? (
+              <>
+                {/*
+                  보기 방식.
 
-        {/* 달력 보기에서는 목록 쪽 손잡이를 감춘다 (바로 아래 주석 참고). */}
-        {!isCalendar ? (
-          <>
+                  흰 알약을 눌린 칸에 그리지 않고 **하나를 두고 옮긴다.** 칸마다 바탕을 켜고
+                  끄면 탭이 순간이동해, 세 탭이 한 줄에 나란한 것인지 서로 다른 화면인지가
+                  흐려진다. 미끄러져 가면 "옆으로 옮겼다"가 그대로 보인다.
+
+                  폭과 걸음은 calc 로 센다 -- 글자 길이가 언어마다 달라(날짜/Date/日付) 미리
+                  적어 둘 수 없고, 재서 옮기려면 그리고 난 뒤를 기다려야 한다.
+                  `p-1`(0.25rem) 과 `gap-2`(0.5rem) 가 아래 숫자의 출처다.
+                */}
+                <div className="relative flex gap-2 rounded-lg bg-gray-200 p-1">
+                  <span
+                    aria-hidden
+                    className="pointer-events-none absolute inset-y-1 left-1 rounded-md bg-white transition-transform duration-200 ease-out motion-reduce:transition-none"
+                    style={{
+                      width: 'calc((100% - 1.5rem) / 3)',
+                      // 여기서의 100% 는 알약 자신의 폭, 곧 칸 하나다.
+                      transform: `translateX(calc(${activeTabIndex} * (100% + 0.5rem)))`,
+                    }}
+                  />
+                  {TABS.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => tx.changeTab(item.id)}
+                      /* 바탕은 위의 알약이 맡는다. 글자가 그 위에 오도록 자리를 잡아 준다. */
+                      className={`relative flex flex-1 items-center justify-center gap-1 rounded-md px-4 py-2 font-medium ${
+                        tx.tab === item.id ? 'text-blue-600' : 'text-gray-600'
+                      }`}
+                    >
+                      {t(item.labelKey)}
+                      {/*
+                        고른 탭에만 꺾쇠를 둔다. 다음 누름이 무엇을 할지 미리 말한다 -- 거래가
+                        하나라도 보이면 위(전부 접는다), 아니면 아래(한 단 더 편다)다.
+                        이것이 없으면 이미 고른 탭을 다시 누를 까닭을 아무도 모른다.
+                      */}
+                      {tx.tab === item.id ? (
+                        tx.tabOpen ? (
+                          <ChevronUp className="h-3.5 w-3.5" aria-hidden />
+                        ) : (
+                          <ChevronDown className="h-3.5 w-3.5" aria-hidden />
+                        )
+                      ) : null}
+                    </button>
+                  ))}
+                </div>
+              </>
+            ) : null}
             {/*
-              보기 방식.
+              걸려 있는 조건. 탭 **아래** 둔다(2026-10-07 사용자 요청). 달력 보기에서도 남는다 --
+              달력에도 같은 조건이 걸린다.
 
-              흰 알약을 눌린 칸에 그리지 않고 **하나를 두고 옮긴다.** 칸마다 바탕을 켜고
-              끄면 탭이 순간이동해, 세 탭이 한 줄에 나란한 것인지 서로 다른 화면인지가
-              흐려진다. 미끄러져 가면 "옆으로 옮겼다"가 그대로 보인다.
-
-              폭과 걸음은 calc 로 센다 -- 글자 길이가 언어마다 달라(날짜/Date/日付) 미리
-              적어 둘 수 없고, 재서 옮기려면 그리고 난 뒤를 기다려야 한다.
-              `p-1`(0.25rem) 과 `gap-2`(0.5rem) 가 아래 숫자의 출처다.
+              검색 창을 열어야 무엇을 골랐는지 알 수 있으면, 결과가 비었을 때 이유를 찾으려
+              창을 다시 열게 된다. 여기 늘어놓으면 그 걸음이 사라지고, 하나만 빼는 일도
+              창을 열지 않고 끝난다.
             */}
-            <div className="relative flex gap-2 rounded-lg bg-gray-200 p-1">
-              <span
-                aria-hidden
-                className="pointer-events-none absolute inset-y-1 left-1 rounded-md bg-white transition-transform duration-200 ease-out motion-reduce:transition-none"
-                style={{
-                  width: 'calc((100% - 1.5rem) / 3)',
-                  // 여기서의 100% 는 알약 자신의 폭, 곧 칸 하나다.
-                  transform: `translateX(calc(${activeTabIndex} * (100% + 0.5rem)))`,
-                }}
-              />
-              {TABS.map((item) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => tx.changeTab(item.id)}
-                  /* 바탕은 위의 알약이 맡는다. 글자가 그 위에 오도록 자리를 잡아 준다. */
-                  className={`relative flex flex-1 items-center justify-center gap-1 rounded-md px-4 py-2 font-medium ${
-                    tx.tab === item.id ? 'text-blue-600' : 'text-gray-600'
-                  }`}
-                >
-                  {t(item.labelKey)}
-                  {/*
-                    고른 탭에만 꺾쇠를 둔다. 다음 누름이 무엇을 할지 미리 말한다 -- 거래가
-                    하나라도 보이면 위(전부 접는다), 아니면 아래(한 단 더 편다)다.
-                    이것이 없으면 이미 고른 탭을 다시 누를 까닭을 아무도 모른다.
-                  */}
-                  {tx.tab === item.id ? (
-                    tx.tabOpen ? (
-                      <ChevronUp className="h-3.5 w-3.5" aria-hidden />
-                    ) : (
-                      <ChevronDown className="h-3.5 w-3.5" aria-hidden />
-                    )
-                  ) : null}
-                </button>
-              ))}
-            </div>
-          </>
+            <SearchChips chips={tx.searchChips} onRemove={locked ? undefined : tx.removeSearchChip} />
+          </div>
         ) : null}
       </RevealTop>
 

@@ -183,24 +183,27 @@ export default function AnalysisScreen({
           ) : null}
 
           {/*
-            걸려 있는 조건. 거래 탭과 같이 탭 위에 두고, 누르면 그 조건만 빠진다. 거래 탭에서
-            건너왔으면 무엇으로 그렸는지 알리기만 한다 -- 뺀 조건을 되걸 검색 단추가 없다.
+            탭과 걸어 둔 조건. 한 상자에 묶어, 조건이 걸려 있으면 내려가는 동안에도 이 상자는
+            화면 위에 남는다(RevealKeep). 조건이 없으면 통째로 비켜선다.
           */}
-          {tx.searchChips.length > 0 ? (
-            <RevealKeep>
+          <RevealKeep active={tx.searchChips.length > 0}>
+            <View className="gap-4">
+              {/*
+                합계·지출·수입. 거래 탭의 날짜별·분류별·수단별 자리와 모양이다. 금액은 적지 않는다
+                (2026-10-06 사용자 요청) -- 합계 탭의 요약이 말한다.
+              */}
+              <SegmentedTabs
+                tabs={TABS.map((item) => ({ id: item.id, label: t(item.labelKey) }))}
+                selected={analysis.kind}
+                onSelect={analysis.setKind}
+              />
+              {/*
+                걸려 있는 조건. 탭 **아래** 둔다(2026-10-07 사용자 요청). 누르면 그 조건만 빠진다. 거래
+                탭에서 건너왔으면 무엇으로 그렸는지 알리기만 한다 -- 뺀 조건을 되걸 검색 단추가 없다.
+              */}
               <SearchChips chips={tx.searchChips} onRemove={onBack ? undefined : tx.removeSearchChip} />
-            </RevealKeep>
-          ) : null}
-
-          {/*
-            합계·지출·수입. 거래 탭의 날짜별·분류별·수단별 자리와 모양이다. 금액은 적지 않는다
-            (2026-10-06 사용자 요청) -- 합계 탭의 요약이 말한다.
-          */}
-          <SegmentedTabs
-            tabs={TABS.map((item) => ({ id: item.id, label: t(item.labelKey) }))}
-            selected={analysis.kind}
-            onSelect={analysis.setKind}
-          />
+            </View>
+          </RevealKeep>
         </View>
       </RevealTop>
 

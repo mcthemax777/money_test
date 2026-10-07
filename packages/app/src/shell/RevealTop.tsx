@@ -16,9 +16,9 @@
  * 제자리에 남게 한다 -- 제자리를 지나기 전에는 0 이고, 지난 뒤에는 지난 만큼 따라
  * 내려온다.
  *
- * **걸어 둔 조건은 비켜서지 않는다**(2026-10-07 사용자 요청). `RevealKeep` 으로 감싼 것(조건
- * 알약 줄)부터 아래는 화면 위에 남고 그 위(제목 줄)만 비켜선다 -- 무엇으로 거른 목록인지는
- * 내려가는 내내 보여야 한다. 감싼 것이 없으면(조건이 없으면) 통째로 비켜선다. 웹도 같다.
+ * **걸어 둔 조건은 비켜서지 않는다**(2026-10-07 사용자 요청). `RevealKeep` 으로 감싼 것(탭과
+ * 그 아래 조건 알약 줄)부터 아래는 화면 위에 남고 그 위(제목 줄)만 비켜선다 -- 무엇으로 거른
+ * 목록인지는 내려가는 내내 보여야 한다. 꺼 두면(조건이 없으면) 통째로 비켜선다. 웹도 같다.
  *
  * 움직임은 UI 실에서 센다(worklet). 굴러간 값은 껍데기의 스크롤 사건이 날라 주므로
  * 목록을 그리느라 JS 가 붙잡히면 그 사이에는 따라오지 못한다 -- 거래 화면은 줄을
@@ -34,7 +34,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 
-import { useScrollControl, useScrollY } from './scroll';
+import { useScrollContent, useScrollY } from './scroll';
 
 /**
  * 붙어 있는 동안의 바탕. 페이지와 같은 회색(gray-50)이다.
@@ -61,19 +61,26 @@ const KeepContext = createContext<{
 } | null>(null);
 
 /**
- * 비켜설 때도 남길 것. `RevealTop` 안에 둔다. 조건이 없을 때는 세우지 않는다 -- 빈 상자도
- * 덩어리 안의 틈(gap)을 하나 먹는다.
+ * 비켜설 때도 남길 것. `RevealTop` 안에 둔다. `active` 가 꺼져 있으면 남기지 않는다 -- 덩어리가
+ * 통째로 비켜선다(조건이 없을 때). 끄고 켤 때 상자를 갈아 끼우지 않으려고 늘 그린다.
  */
-export function RevealKeep({ children }: { children: ReactNode }) {
+export function RevealKeep({ active = true, children }: { active?: boolean; children: ReactNode }) {
   const keep = useContext(KeepContext);
   const box = useRef<View>(null);
   useEffect(() => () => keep?.report(null), [keep]);
 
   const measure = useCallback(() => {
     const content = keep?.content.current;
+    if (!active) {
+      keep?.report(null);
+      return;
+    }
     if (!box.current || !content) return;
     box.current.measureLayout(content, (_x, y) => keep.report(y));
-  }, [keep]);
+  }, [keep, active]);
+
+  // 켜고 끄는 것만으로는 자리가 바뀌지 않아 onLayout 이 오지 않는다. 그때도 다시 잰다.
+  useEffect(measure, [measure]);
 
   return (
     <View ref={box} onLayout={measure}>
@@ -96,10 +103,11 @@ export default function RevealTop({
   children: ReactNode;
 }) {
   const scrollY = useScrollY();
-  const { offsetOf, areaOf } = useScrollControl();
+  const { content: scrollContent, contentTop } = useScrollContent();
   const box = useRef<View>(null);
   /**
-   * 굴리지 않았을 때 이 머리글이 서 있는 자리. 스크롤 내용 안에서의 y 다.
+   * 굴리지 않았을 때 이 머리글이 서 있는 자리. 화면을 담은 상자 안에서의 y 다 -- 스크롤
+   * 내용 안의 자리는 여기에 그 상자의 위 여백(`contentTop`)을 더한 것이다.
    *
    * 처음에는 무한대다 -- 아직 재지 못한 동안에는 어디에도 붙지 말아야 한다.
    */
@@ -124,14 +132,17 @@ export default function RevealTop({
   }).current;
 
   /*
-   * 창 좌표로 재고 스크롤 내용의 좌표로 옮긴다. 화면 위쪽의 것(알림 줄 등)이 늘거나
-   * 줄면 이 자리도 따라 바뀌므로 `onLayout` 이 올 때마다 다시 잰다.
+   * 화면을 담은 상자에 대고 잰다(scroll 의 `content` 주석). 창 좌표로 재면 그때의 스크롤
+   * 위치가 한두 프레임 늦어 틈이 났다. 상자의 위 여백은 worklet 에서 더한다(`contentTop`).
+   * 위쪽의 것이 늘거나 줄면 이 자리도 바뀌므로 `onLayout` 이 올 때마다 다시 잰다.
    */
   const measure = useCallback(() => {
-    box.current?.measureInWindow((_x, y) => {
-      anchor.value = y - areaOf().top + offsetOf();
+    const target = scrollContent?.current;
+    if (!box.current || !target) return;
+    box.current.measureLayout(target, (_x, y) => {
+      anchor.value = y;
     });
-  }, [anchor, areaOf, offsetOf]);
+  }, [anchor, scrollContent]);
 
   useAnimatedReaction(
     () => scrollY.value,
@@ -180,7 +191,7 @@ export default function RevealTop({
 
   const follow = useAnimatedStyle(() => {
     /** 제자리를 지나 굴러간 만큼. 이만큼 따라 내려와야 제자리에 남는다. */
-    const stuck = Math.max(0, scrollY.value - anchor.value);
+    const stuck = Math.max(0, scrollY.value - (contentTop.value + anchor.value));
     /**
      * 비켜선 만큼. 다 비켜서면 제 높이만큼 위로 올라가 화면 밖에 선다. 남길 상자가 있으면
      * 그 위까지만 올라간다.

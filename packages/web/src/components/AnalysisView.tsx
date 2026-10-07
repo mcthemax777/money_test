@@ -167,42 +167,44 @@ export default function AnalysisView({
           <div className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{t('tx.loadFailed')}</div>
         ) : null}
 
-        {/*
-          걸려 있는 조건. 거래 탭과 같이 탭 위에 두고, 누르면 그 조건만 빠진다. 거래 탭에서
-          건너왔으면 무엇으로 그렸는지 알리기만 한다 -- 뺀 조건을 되걸 검색 단추가 없다.
-        */}
-        <SearchChips
-          chips={tx.searchChips}
-          onRemove={onBack ? undefined : tx.removeSearchChip}
-          boxRef={topReveal.keepRef}
-        />
 
         {/*
-          합계·지출·수입. 거래 탭의 날짜별·분류별·수단별 자리와 모양이다 -- 흰 알약 하나가
-          미끄러져 옮긴다. 금액은 적지 않는다 (2026-10-06 사용자 요청) -- 합계 탭의 요약이 말한다.
+          탭과 걸어 둔 조건. 한 상자에 묶어, 조건이 걸려 있으면 내려가는 동안에도 이 상자는
+          화면 위에 남는다(useTopReveal 의 keepRef). 조건이 없으면 통째로 비켜선다.
         */}
-        <div className="relative flex gap-2 rounded-lg bg-gray-200 p-1">
-          <span
-            aria-hidden
-            className="pointer-events-none absolute inset-y-1 left-1 rounded-md bg-white transition-transform duration-200 ease-out motion-reduce:transition-none"
-            style={{
-              width: 'calc((100% - 1.5rem) / 3)',
-              transform: `translateX(calc(${activeTabIndex} * (100% + 0.5rem)))`,
-            }}
-          />
-          {TABS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => analysis.setKind(item.id)}
-              aria-pressed={analysis.kind === item.id}
-              className={`relative flex flex-1 items-center justify-center rounded-md px-4 py-2 font-medium ${
-                analysis.kind === item.id ? 'text-blue-600' : 'text-gray-600'
-              }`}
-            >
-              {t(item.labelKey)}
-            </button>
-          ))}
+        <div ref={tx.searchChips.length > 0 ? topReveal.keepRef : undefined} className="space-y-4">
+          {/*
+            합계·지출·수입. 거래 탭의 날짜별·분류별·수단별 자리와 모양이다 -- 흰 알약 하나가
+            미끄러져 옮긴다. 금액은 적지 않는다 (2026-10-06 사용자 요청) -- 합계 탭의 요약이 말한다.
+          */}
+          <div className="relative flex gap-2 rounded-lg bg-gray-200 p-1">
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-y-1 left-1 rounded-md bg-white transition-transform duration-200 ease-out motion-reduce:transition-none"
+              style={{
+                width: 'calc((100% - 1.5rem) / 3)',
+                transform: `translateX(calc(${activeTabIndex} * (100% + 0.5rem)))`,
+              }}
+            />
+            {TABS.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => analysis.setKind(item.id)}
+                aria-pressed={analysis.kind === item.id}
+                className={`relative flex flex-1 items-center justify-center rounded-md px-4 py-2 font-medium ${
+                  analysis.kind === item.id ? 'text-blue-600' : 'text-gray-600'
+                }`}
+              >
+                {t(item.labelKey)}
+              </button>
+            ))}
+          </div>
+          {/*
+            걸려 있는 조건. 탭 **아래** 둔다(2026-10-07 사용자 요청). 누르면 그 조건만 빠진다. 거래
+            탭에서 건너왔으면 무엇으로 그렸는지 알리기만 한다 -- 뺀 조건을 되걸 검색 단추가 없다.
+          */}
+          <SearchChips chips={tx.searchChips} onRemove={onBack ? undefined : tx.removeSearchChip} />
         </div>
       </RevealTop>
 

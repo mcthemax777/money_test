@@ -1101,46 +1101,44 @@ export default function TransactionsScreen({
             ) : null}
 
             {/*
-              걸려 있는 조건. 탭 위에 둔다. 달력 보기에서도 남는다 -- 달력에도 같은 조건이 걸린다.
-
-              검색 창을 열어야 무엇을 골랐는지 알 수 있으면, 결과가 비었을 때 이유를 찾으려
-              창을 다시 열게 된다. 여기 늘어놓으면 그 걸음이 사라지고, 하나만 빼는 일도
-              창을 열지 않고 끝난다.
-
-              분석 탭에서 그 기간으로 건너왔으면(locked) 알리기만 하고 뺄 수 없다.
+              탭과 걸어 둔 조건. 한 상자에 묶어, 조건이 걸려 있으면 내려가는 동안에도 이 상자는
+              화면 위에 남고 그 위(제목 줄)만 비켜선다(RevealKeep). 조건이 없으면 통째로 비켜선다.
+              달력 보기에서는 탭이 빠지고 조건만 남는다.
             */}
-            {/* 내려가는 동안에도 이 줄부터는 화면 위에 남는다 (RevealKeep). */}
-            {tx.searchChips.length > 0 ? (
-              <RevealKeep>
-                <SearchChips
-                  chips={tx.searchChips}
-                  onRemove={locked ? undefined : tx.removeSearchChip}
-                />
+            {!isCalendar || tx.searchChips.length > 0 ? (
+              <RevealKeep active={tx.searchChips.length > 0}>
+                <View className="gap-4">
+                  {/* 달력 보기에서는 목록 쪽 손잡이를 감춘다 (바로 아래 주석 참고). */}
+                  {!isCalendar ? (
+                    <>
+                      {/* 보기 방식. 년월 목록 위에 두어 어떤 기준으로 파고드는지 먼저 정한다. */}
+                      <SegmentedTabs
+                        tabs={TABS.map((item) => ({ id: item.id, label: t(item.labelKey) }))}
+                        selected={tx.tab}
+                        onSelect={tx.changeTab}
+                        /*
+                          고른 탭의 꺾쇠. 다음 누름이 무엇을 할지 미리 말한다 -- 거래가 하나라도
+                          보이면 위(전부 접는다), 아니면 아래(한 단 더 편다)다. 이것이 없으면
+                          이미 고른 탭을 다시 누를 까닭을 아무도 모른다.
+                        */
+                        selectedTrailing={
+                          tx.tabOpen ? (
+                            <ChevronUp size={14} color="#2563eb" />
+                          ) : (
+                            <ChevronDown size={14} color="#2563eb" />
+                          )
+                        }
+                      />
+                    </>
+                  ) : null}
+                  {/*
+                    걸려 있는 조건. 탭 **아래** 둔다(2026-10-07 사용자 요청). 달력 보기에서도 남는다 --
+                    달력에도 같은 조건이 걸린다. 분석 탭에서 그 기간으로 건너왔으면(locked) 알리기만 하고
+                    뺄 수 없다.
+                  */}
+                  <SearchChips chips={tx.searchChips} onRemove={locked ? undefined : tx.removeSearchChip} />
+                </View>
               </RevealKeep>
-            ) : null}
-
-            {/* 달력 보기에서는 목록 쪽 손잡이를 감춘다 (바로 아래 주석 참고). */}
-            {!isCalendar ? (
-              <>
-                {/* 보기 방식. 년월 목록 위에 두어 어떤 기준으로 파고드는지 먼저 정한다. */}
-                <SegmentedTabs
-                  tabs={TABS.map((item) => ({ id: item.id, label: t(item.labelKey) }))}
-                  selected={tx.tab}
-                  onSelect={tx.changeTab}
-                  /*
-                    고른 탭의 꺾쇠. 다음 누름이 무엇을 할지 미리 말한다 -- 거래가 하나라도
-                    보이면 위(전부 접는다), 아니면 아래(한 단 더 편다)다. 이것이 없으면
-                    이미 고른 탭을 다시 누를 까닭을 아무도 모른다.
-                  */
-                  selectedTrailing={
-                    tx.tabOpen ? (
-                      <ChevronUp size={14} color="#2563eb" />
-                    ) : (
-                      <ChevronDown size={14} color="#2563eb" />
-                    )
-                  }
-                />
-              </>
             ) : null}
           </View>
         </RevealTop>
