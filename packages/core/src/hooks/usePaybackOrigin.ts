@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 import type { EntryLine, EntryListItem } from '@money/types';
 import { homeDataPort } from '../data/home-port';
+import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 
 export interface PaybackOrigin {
@@ -27,25 +28,33 @@ export function usePaybackOrigin(
   const [isLoading, setIsLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const mirrorVersion = useMirrorVersion();
+  const loaded = useLoadedKey();
 
   const originId = payback?.kind === 'payback' ? payback.paybackOfEntryId : null;
 
   useEffect(() => {
     setFailed(false);
     if (!originId) {
+      loaded.mark(null);
       setOriginal(null);
       return;
     }
     let cancelled = false;
-    setIsLoading(true);
+    // 같은 원거래를 다시 받을 때는 가리지 않는다 (useLoadedKey 주석).
+    const queryKey = `${originId}|${projectId ?? ''}`;
+    const isRefresh = loaded.has(queryKey);
+    if (!isRefresh) setIsLoading(true);
     homeDataPort()
       .getEntry(originId, projectId)
       .then((row) => {
-        if (!cancelled) setOriginal(row);
+        if (cancelled) return;
+        setOriginal(row);
+        loaded.mark(queryKey);
       })
       .catch((error) => {
         console.error('원거래를 불러오지 못했습니다:', error);
-        if (cancelled) return;
+        // 다시 받다 실패했다면 그려 둔 원거래는 여전히 이 페이백의 것이다.
+        if (cancelled || isRefresh) return;
         setOriginal(null);
         setFailed(true);
       })
@@ -55,7 +64,7 @@ export function usePaybackOrigin(
     return () => {
       cancelled = true;
     };
-  }, [originId, projectId, mirrorVersion]);
+  }, [originId, projectId, mirrorVersion, loaded]);
 
   const line = original?.lines.find((row) => row.lineKey === payback?.paybackOfLineKey) ?? null;
   return { original, line, isLoading, failed };

@@ -6,6 +6,7 @@ import { apiErrorCode, useApiError } from '../lib/api-error';
 import { translate, type MessageKey } from '../lib/i18n';
 import type { Category } from '../lib/types';
 import { useLocaleStore } from '../store/locale';
+import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 import { homeDataPort } from '../data/home-port';
 import { settingsWritePort } from '../data/settings-write-port';
@@ -74,12 +75,16 @@ export function useCategoryManager(projectId: string | null) {
    */
   const mirrorVersion = useMirrorVersion();
 
+  // 같은 가계부를 다시 읽을 때는 목록을 가리지 않는다 (useLoadedKey 주석).
+  const loaded = useLoadedKey();
+
   const reload = useCallback(async (): Promise<CategoryResult> => {
     if (!projectId) return { ok: true };
 
     try {
-      setIsLoading(true);
+      if (!loaded.has(projectId)) setIsLoading(true);
       setCategories(((await homeDataPort().getCategories(projectId)) ?? []) as Category[]);
+      loaded.mark(projectId);
       return { ok: true };
     } catch (error) {
       console.error('카테고리 조회 실패:', error);
@@ -88,7 +93,7 @@ export function useCategoryManager(projectId: string | null) {
       setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, say, mirrorVersion]);
+  }, [projectId, say, mirrorVersion, loaded]);
 
   useEffect(() => {
     reload();

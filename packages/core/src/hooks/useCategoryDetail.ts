@@ -12,6 +12,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { isCalendarMonthKey, periodDayRange, unitOfKey, type EntryDto, type EntryFilterQuery, type EntryListItem, type EntryPeriodUnit } from '@money/types';
 
+import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 import { homeDataPort } from '../data/home-port';
 import { type ReportPeriod } from '../lib/api-client';
@@ -395,14 +396,35 @@ export function useCategoryDetail({
     Partial<Record<'income' | 'expense', { id: string; slices: CategorySlice[] }>>
   >({});
   const [isOffline, setIsOffline] = useState(false);
+  // 같은 조건을 다시 받을 때는 그래프를 가리지 않는다 (useLoadedKey 주석).
+  const loaded = useLoadedKey();
 
   useEffect(() => {
-    if (!enabled || !categoryId) return;
+    if (!enabled || !categoryId) {
+      loaded.mark(null);
+      return;
+    }
 
     let cancelled = false;
-    // 대상이 바뀌면 파고든 자리는 의미가 없다. 남겨 두면 남의 소분류가 그려진다.
-    setDrilled({});
-    setIsLoading(true);
+    const queryKey = JSON.stringify([
+      categoryId,
+      periodKey,
+      exactCategory,
+      projectId,
+      timeZone,
+      filterKey,
+      clipKey,
+      trendPeriod,
+      target.scope,
+      target.type,
+      target.isLeaf,
+    ]);
+    const isRefresh = loaded.has(queryKey);
+    if (!isRefresh) {
+      // 대상이 바뀌면 파고든 자리는 의미가 없다. 남겨 두면 남의 소분류가 그려진다.
+      setDrilled({});
+      setIsLoading(true);
+    }
 
     const load = async () => {
       /*
@@ -565,9 +587,12 @@ export function useCategoryDetail({
         );
         setComparisons(comparisonRes);
         setPieSources(pieRes);
+        loaded.mark(queryKey);
       } catch (error) {
         console.error('분류별 상세 데이터를 불러오지 못했습니다:', error);
         if (cancelled) return;
+        // 같은 조건을 다시 받다 실패했다면 그려 둔 값은 여전히 이 조건의 것이다. 그대로 둔다.
+        if (isRefresh) return;
         // 앞 구간의 값이 남아 있으면 틀린 숫자를 보게 되므로 비운다.
         setIsOffline(false);
         setMonthly([]);

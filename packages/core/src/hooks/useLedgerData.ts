@@ -11,6 +11,7 @@ import { useLedgerBasis } from '../store/ledger-basis';
 import { useProject } from '../store/project';
 import { useUserFilter } from '../store/user-filter';
 import { useDebouncedValue } from './useDebouncedValue';
+import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 import { usePersonFilterSync } from './usePersonFilterSync';
 import { searchRange, type TransactionSearch } from './useTransactions';
@@ -84,15 +85,23 @@ export function useLedgerData({
    * 그 탭들은 고치기 전 값을 계속 보여 준다.
    */
   const [dataVersion, setDataVersion] = useState(0);
+  /*
+   * 같은 조건을 신호나 내 편집으로 다시 받을 때는 가리지 않고, 실패해도 목록을 비우지 않는다
+   * (useLoadedKey 주석). 기준 목록과 그 구간의 거래를 따로 센다.
+   */
+  const referenceLoaded = useLoadedKey();
+  const periodLoaded = useLoadedKey();
 
   useEffect(() => {
     if (!projectId) return;
 
     let cancelled = false;
 
+    const isRefresh = referenceLoaded.has(projectId);
+
     const loadReference = async () => {
       try {
-        setIsLoading(true);
+        if (!isRefresh) setIsLoading(true);
         const port = homeDataPort();
         const [accountsData, peopleData, cardsData, categoriesData] = await Promise.all([
           port.getAccountsV2(projectId),
@@ -107,9 +116,10 @@ export function useLedgerData({
         setPeople(peopleData || []);
         setCards(cardsData || []);
         setCategories(categoriesData || []);
+        referenceLoaded.mark(projectId);
       } catch (error) {
         console.error('가계 기준 데이터 조회 실패:', error);
-        if (!cancelled) setHasError(true);
+        if (!cancelled && !isRefresh) setHasError(true);
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -120,7 +130,7 @@ export function useLedgerData({
     return () => {
       cancelled = true;
     };
-  }, [projectId, mirrorVersion]);
+  }, [projectId, mirrorVersion, referenceLoaded]);
 
   usePersonFilterSync(projectId, people);
 
@@ -173,6 +183,16 @@ export function useLedgerData({
   const reloadPeriod = useCallback(async () => {
     if (!projectId) return;
 
+    const queryKey = JSON.stringify([
+      projectId,
+      rangeKey,
+      filter,
+      basis,
+      timeZone,
+      searchQueryKey,
+      searchPeriodKey,
+    ]);
+    const isRefresh = periodLoaded.has(queryKey);
     try {
       setHasError(false);
       /*
@@ -223,13 +243,16 @@ export function useLedgerData({
           : viewed,
       );
       setSummary(summaryRow ?? null);
+      periodLoaded.mark(queryKey);
     } catch (error) {
       console.error('거래 조회 실패:', error);
+      // 다시 받다 실패했다면 그려 둔 거래는 여전히 이 구간의 것이다. 비우지 않는다.
+      if (isRefresh) return;
       setEntries([]);
       setHasError(true);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, rangeKey, filter, basis, timeZone, mirrorVersion, searchQueryKey, searchPeriodKey]);
+  }, [projectId, rangeKey, filter, basis, timeZone, mirrorVersion, searchQueryKey, searchPeriodKey, periodLoaded]);
 
   useEffect(() => {
     reloadPeriod();

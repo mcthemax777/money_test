@@ -19,6 +19,7 @@ import { useApiError } from '../lib/api-error';
 import { translate, type MessageKey } from '../lib/i18n';
 import { isOfflineError } from '../lib/offline-error';
 import { useLocaleStore } from '../store/locale';
+import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 import { homeDataPort } from '../data/home-port';
 import { settingsWritePort } from '../data/settings-write-port';
@@ -54,16 +55,21 @@ export function useTagManager(projectId: string | null) {
    */
   const mirrorVersion = useMirrorVersion();
 
+  // 같은 가계부를 다시 읽을 때는 목록을 가리지 않는다 (useLoadedKey 주석).
+  const loaded = useLoadedKey();
+
   const reload = useCallback(async (): Promise<TagResult> => {
     if (!projectId) {
+      loaded.mark(null);
       setTags([]);
       setIsLoading(false);
       return { ok: true };
     }
 
     try {
-      setIsLoading(true);
+      if (!loaded.has(projectId)) setIsLoading(true);
       setTags((await homeDataPort().getTags(projectId)) ?? []);
+      loaded.mark(projectId);
       return { ok: true };
     } catch (error) {
       // 사본이 아직 비었거나 서버를 못 부른 경우다. 빈 목록으로 두고 다음 동기화를 기다린다.
@@ -73,7 +79,7 @@ export function useTagManager(projectId: string | null) {
       setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, say, mirrorVersion]);
+  }, [projectId, say, mirrorVersion, loaded]);
 
   useEffect(() => {
     void reload();

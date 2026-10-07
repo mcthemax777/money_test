@@ -7,6 +7,7 @@ import type { Account, Card, Category, Person } from '../lib/types';
 import { useProject } from '../store/project';
 import { useUserFilter } from '../store/user-filter';
 import { useDebouncedValue } from './useDebouncedValue';
+import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 import { usePersonFilterSync } from './usePersonFilterSync';
 
@@ -127,6 +128,12 @@ export function useHomeData({
   const mirrorVersion = useMirrorVersion();
   /** 거래를 고친 뒤 목록과 합계를 다시 받게 하는 표. */
   const [entryVersion, setEntryVersion] = useState(0);
+  /*
+   * 같은 조건을 신호나 내 편집으로 다시 받을 때는 가리지 않고, 실패해도 오류로 덮지 않는다
+   * (useLoadedKey 주석). 기준 목록(구성원·카드·계좌·분류)과 그 달의 값을 따로 센다.
+   */
+  const referenceLoaded = useLoadedKey();
+  const periodLoaded = useLoadedKey();
 
   const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
 
@@ -152,9 +159,10 @@ export function useHomeData({
         setAccounts(accountsData || []);
         setCategories(categoryData || []);
         setPeopleLoaded(true);
+        referenceLoaded.mark(projectId);
       } catch (error) {
         console.error('구성원·카드 조회 실패:', error);
-        if (cancelled) return;
+        if (cancelled || referenceLoaded.has(projectId)) return;
         setHasError(true);
         setIsLoading(false);
       }
@@ -165,7 +173,7 @@ export function useHomeData({
     return () => {
       cancelled = true;
     };
-  }, [projectId, mirrorVersion]);
+  }, [projectId, mirrorVersion, referenceLoaded]);
 
   usePersonFilterSync(projectId, people);
 
@@ -197,11 +205,15 @@ export function useHomeData({
     }
 
     let cancelled = false;
+    const queryKey = JSON.stringify([projectId, filter, yearMonth, thisYearMonth]);
+    const isRefresh = periodLoaded.has(queryKey);
 
     const loadPeriod = async () => {
       try {
-        setIsLoading(true);
-        setHasError(false);
+        if (!isRefresh) {
+          setIsLoading(true);
+          setHasError(false);
+        }
 
         const port = homeDataPort();
         const [budgetRows, tagBudgetRows, currentMethods] = await Promise.all([
@@ -261,9 +273,10 @@ export function useHomeData({
               METHOD_ORDER[a.kind] - METHOD_ORDER[b.kind] || Number(b.usage) - Number(a.usage),
           ),
         );
+        periodLoaded.mark(queryKey);
       } catch (error) {
         console.error('홈 데이터 조회 실패:', error);
-        if (!cancelled) setHasError(true);
+        if (!cancelled && !isRefresh) setHasError(true);
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -274,7 +287,7 @@ export function useHomeData({
     return () => {
       cancelled = true;
     };
-  }, [projectId, peopleLoaded, people.length, filter, year, month, yearMonth, thisYearMonth, entryVersion, mirrorVersion]);
+  }, [projectId, peopleLoaded, people.length, filter, year, month, yearMonth, thisYearMonth, entryVersion, mirrorVersion, periodLoaded]);
 
   const applyReferencePatch = useCallback((patch: ReferencePatch) => {
     if (patch.accounts) setAccounts(patch.accounts);

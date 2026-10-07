@@ -14,6 +14,7 @@ import { originalEntry, type EntryLine, type EntryListItem } from '@money/types'
 import { homeDataPort } from '../data/home-port';
 import type { MessageKey } from '../lib/i18n';
 import { toNumber } from '../lib/money';
+import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 
 /** 원거래의 한 줄과 그 줄에서 깎이고 돌려받은 것. */
@@ -73,6 +74,7 @@ export function usePaybacks(
   const [isLoading, setIsLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const mirrorVersion = useMirrorVersion();
+  const loaded = useLoadedKey();
 
   /*
    * 할부는 회차 몫으로 옮긴 줄이 올 수 있다. 회차 줄은 금액이 한 달치이고 차감을 비워 두므로,
@@ -84,16 +86,21 @@ export function usePaybacks(
   useEffect(() => {
     setFailed(false);
     if (!originalId || !projectId) {
+      loaded.mark(null);
       setItems([]);
       return;
     }
 
     let cancelled = false;
-    setIsLoading(true);
+    // 같은 거래를 다시 받을 때는 목록을 가리지 않는다 (useLoadedKey 주석).
+    const queryKey = `${originalId}|${projectId}`;
+    const isRefresh = loaded.has(queryKey);
+    if (!isRefresh) setIsLoading(true);
     homeDataPort()
       .getAllEntries({ paybackOf: originalId }, projectId)
       .then((rows) => {
         if (cancelled) return;
+        loaded.mark(queryKey);
         // 먼저 들어온 것이 위다. 나눠 받은 차례를 따라 읽게 한다.
         setItems(
           [...(rows as EntryListItem[])].sort(
@@ -103,7 +110,8 @@ export function usePaybacks(
       })
       .catch((error) => {
         console.error('받은 페이백을 불러오지 못했습니다:', error);
-        if (cancelled) return;
+        // 다시 받다 실패했다면 그려 둔 목록은 여전히 이 거래의 것이다.
+        if (cancelled || isRefresh) return;
         setItems([]);
         setFailed(true);
       })
@@ -114,7 +122,7 @@ export function usePaybacks(
     return () => {
       cancelled = true;
     };
-  }, [originalId, projectId, mirrorVersion, reloadToken]);
+  }, [originalId, projectId, mirrorVersion, reloadToken, loaded]);
 
   const total = useMemo(
     () => items.reduce((sum, item) => sum + toNumber(item.amount), 0),

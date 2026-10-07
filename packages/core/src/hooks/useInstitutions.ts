@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { cachedInstitutions, fetchInstitutions, invalidateInstitutions } from '../lib/institutions';
+import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 import { useProject } from '../store/project';
 import type { FinancialInstitutionType, Institution } from '../lib/types';
@@ -29,6 +30,7 @@ export function useInstitutions(type: FinancialInstitutionType) {
    */
   const mirrorVersion = useMirrorVersion();
   const seenVersionRef = useRef(mirrorVersion);
+  const loaded = useLoadedKey();
 
   useEffect(() => {
     // 프로젝트를 바꾸면 그 프로젝트가 추가한 항목이 달라지므로 다시 불러온다.
@@ -39,13 +41,28 @@ export function useInstitutions(type: FinancialInstitutionType) {
       invalidateInstitutions(type);
     }
 
+    // 같은 목록을 신호로 다시 받을 때는 고르는 칸을 "불러오는 중"으로 바꾸지 않는다 (useLoadedKey 주석).
+    const queryKey = `${type}|${selectedProjectId ?? ''}`;
+    const isRefresh = loaded.has(queryKey);
+
     const load = async () => {
       try {
-        setIsLoading(true);
-        setError('');
+        if (!isRefresh) {
+          setIsLoading(true);
+          setError('');
+        }
         const data = await fetchInstitutions(type, selectedProjectId);
-        if (!cancelled) setInstitutions(data);
+        if (!cancelled) {
+          setInstitutions(data);
+          setError('');
+          loaded.mark(queryKey);
+        }
       } catch (error) {
+        if (!cancelled && isRefresh) {
+          // 그려 둔 목록은 여전히 이 가계부의 것이다. 다음 신호에 다시 받는다.
+          console.error('금융기관 다시 받기 실패:', error);
+          return;
+        }
         // 목록을 못 불러와도 폼 자체는 열려 있어야 한다. 빈 목록 + 안내로 둔다.
         if (!cancelled) {
           setInstitutions([]);
@@ -65,7 +82,7 @@ export function useInstitutions(type: FinancialInstitutionType) {
     return () => {
       cancelled = true;
     };
-  }, [type, selectedProjectId, mirrorVersion]);
+  }, [type, selectedProjectId, mirrorVersion, loaded]);
 
   return {
     institutions,

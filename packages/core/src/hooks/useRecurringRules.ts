@@ -15,6 +15,7 @@ import { useApiError } from '../lib/api-error';
 import { draftPort } from '../data/draft-port';
 import { homeDataPort } from '../data/home-port';
 import { settingsWritePort } from '../data/settings-write-port';
+import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 import { manualDraftItem } from '../lib/recurring-drafts';
 import { useProjectTimeZone } from '../store/project';
@@ -48,26 +49,37 @@ export function useRecurringRules(projectId: string | null): UseRecurringRulesRe
   // 사본이 바뀌면(pull·다른 화면의 저장) 다시 읽는다. 다음 예정일이 옮겨 갔을 수 있다.
   const mirrorVersion = useMirrorVersion();
 
+  // 같은 가계부를 다시 읽을 때는 목록을 가리지 않는다 (useLoadedKey 주석).
+  const loaded = useLoadedKey();
+
   const reload = useCallback(async () => {
     if (!projectId) {
+      loaded.mark(null);
       setRules([]);
       setIsLoading(false);
       return;
     }
 
+    const isRefresh = loaded.has(projectId);
     try {
-      setIsLoading(true);
+      if (!isRefresh) setIsLoading(true);
       const rows = await homeDataPort().getRecurringRules(projectId);
       setRules(rows);
       setError('');
+      loaded.mark(projectId);
     } catch (caught) {
+      if (isRefresh) {
+        // 그려 둔 규칙은 여전히 이 가계부의 것이다. 다음 신호에 다시 읽는다.
+        console.error('반복 규칙 다시 읽기 실패:', caught);
+        return;
+      }
       setRules([]);
       setError(messageOf(caught, 'inbox.loadFailed', 'online.viewOnlyOnline'));
     } finally {
       setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mirrorVersion 은 다시 읽는 신호다
-  }, [projectId, messageOf, mirrorVersion]);
+  }, [projectId, messageOf, mirrorVersion, loaded]);
 
   useEffect(() => {
     void reload();

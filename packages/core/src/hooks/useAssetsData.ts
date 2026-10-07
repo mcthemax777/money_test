@@ -15,6 +15,7 @@ import {
 } from '../data/settings-write-port';
 import { homeDataPort } from '../data/home-port';
 import { isOfflineError } from '../lib/offline-error';
+import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 import { apiErrorCode, useApiError } from '../lib/api-error';
 import type { MessageKey } from '../lib/i18n';
@@ -54,12 +55,18 @@ export function useAssetsData(projectId: string | null) {
    */
   const mirrorVersion = useMirrorVersion();
 
+  // 같은 가계부를 다시 읽을 때는 목록을 가리지 않는다 (useLoadedKey 주석).
+  const loaded = useLoadedKey();
+
   const reload = useCallback(async () => {
     if (!projectId) return;
 
+    const isRefresh = loaded.has(projectId);
     try {
-      setIsLoading(true);
-      setHasError(false);
+      if (!isRefresh) {
+        setIsLoading(true);
+        setHasError(false);
+      }
 
       /*
        * 읽기도 창구를 거친다. 앱에서는 사본이 답하므로 오프라인에서도 자산 화면이 그려진다.
@@ -84,14 +91,16 @@ export function useAssetsData(projectId: string | null) {
       setCards(cardsData || []);
       setNetWorth(netWorthData ?? null);
       setAccountProfit(new Map((profitData ?? []).map((row) => [row.accountId, row.profit])));
+      loaded.mark(projectId);
     } catch (error) {
       console.error('자산 조회 실패:', error);
-      setHasError(true);
+      // 다시 읽다 실패했다면 그려 둔 목록은 여전히 이 가계부의 것이다. 오류로 가리지 않는다.
+      if (!isRefresh) setHasError(true);
     } finally {
       setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, mirrorVersion]);
+  }, [projectId, mirrorVersion, loaded]);
 
   useEffect(() => {
     reload();

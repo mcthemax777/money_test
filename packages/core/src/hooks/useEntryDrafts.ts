@@ -13,6 +13,7 @@ import type { EntryDraftDto, EntryDraftSource } from '@money/types';
 import { useApiError } from '../lib/api-error';
 import { draftPort, type DraftAction } from '../data/draft-port';
 import { refreshInboxCount, useInboxCountStore } from '../store/inbox-count';
+import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 
 export interface UseEntryDraftsResult {
@@ -58,25 +59,36 @@ export function useEntryDrafts(
    * 탭마다 따로 읽으면 다른 탭의 배지 숫자를 알 수 없다. 보관함의 크기는 한 가정
    * 규모라 통째로 읽는 편이 요청 수와 코드 둘 다 적다.
    */
+  // 같은 가계부를 다시 읽을 때는 목록을 가리지 않는다 (useLoadedKey 주석).
+  const loaded = useLoadedKey();
+
   const reload = useCallback(async () => {
     if (!projectId) {
+      loaded.mark(null);
       setAll([]);
       setIsLoading(false);
       return;
     }
 
+    const isRefresh = loaded.has(projectId);
     try {
-      setIsLoading(true);
+      if (!isRefresh) setIsLoading(true);
       const rows = await draftPort().list(projectId, { status: 'pending' });
       setAll(rows);
       setError('');
+      loaded.mark(projectId);
     } catch (caught) {
+      if (isRefresh) {
+        // 그려 둔 목록은 여전히 이 가계부의 것이다. 다음 신호에 다시 읽는다.
+        console.error('보관함 다시 읽기 실패:', caught);
+        return;
+      }
       setAll([]);
       setError(messageOf(caught, 'inbox.loadFailed'));
     } finally {
       setIsLoading(false);
     }
-  }, [projectId, messageOf]);
+  }, [projectId, messageOf, loaded]);
 
   useEffect(() => {
     void reload();

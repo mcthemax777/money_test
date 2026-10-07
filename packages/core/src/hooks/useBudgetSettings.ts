@@ -15,6 +15,7 @@ import { useTranslation } from '../lib/i18n';
 import type { Category } from '../lib/types';
 import { useProjectTimeZone } from '../store/project';
 import { useBudgetEditor } from './useBudgetEditor';
+import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 
 /**
@@ -47,6 +48,7 @@ export function useBudgetSettings({
   const [tags, setTags] = useState<TagDto.Response[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
+  const loaded = useLoadedKey();
   /** 팝업에서 저장하면 올린다. */
   const [version, setVersion] = useState(0);
 
@@ -56,8 +58,13 @@ export function useBudgetSettings({
     if (!projectId) return;
     let cancelled = false;
 
-    setIsLoading(true);
-    setHasError(false);
+    // 같은 달을 다시 읽을 때는 표를 가리지 않는다 (useLoadedKey 주석).
+    const queryKey = `${projectId}|${year}-${month}`;
+    const isRefresh = loaded.has(queryKey);
+    if (!isRefresh) {
+      setIsLoading(true);
+      setHasError(false);
+    }
     const port = homeDataPort();
     Promise.all([
       port.getBudgetForMonth(year, month, projectId),
@@ -71,10 +78,12 @@ export function useBudgetSettings({
         setTagBudgets(tagBudgetRows ?? []);
         setCategories(categoryRows ?? []);
         setTags(tagRows ?? []);
+        loaded.mark(queryKey);
       })
       .catch((error: unknown) => {
         console.error('예산 설정 조회 실패:', error);
-        if (!cancelled) setHasError(true);
+        // 다시 읽다 실패했다면 그려 둔 표는 여전히 이 달의 것이다. 오류로 가리지 않는다.
+        if (!cancelled && !isRefresh) setHasError(true);
       })
       .finally(() => {
         if (!cancelled) setIsLoading(false);
@@ -83,7 +92,7 @@ export function useBudgetSettings({
     return () => {
       cancelled = true;
     };
-  }, [projectId, year, month, version, mirrorVersion]);
+  }, [projectId, year, month, version, mirrorVersion, loaded]);
 
   const reload = useCallback(() => setVersion((value) => value + 1), []);
 
