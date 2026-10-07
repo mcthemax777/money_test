@@ -16,11 +16,15 @@
  * 제자리에 남게 한다 -- 제자리를 지나기 전에는 0 이고, 지난 뒤에는 지난 만큼 따라
  * 내려온다.
  *
+ * **걸어 둔 조건은 비켜서지 않는다**(2026-10-07 사용자 요청). `RevealKeep` 으로 감싼 것(조건
+ * 알약 줄)부터 아래는 화면 위에 남고 그 위(제목 줄)만 비켜선다 -- 무엇으로 거른 목록인지는
+ * 내려가는 내내 보여야 한다. 감싼 것이 없으면(조건이 없으면) 통째로 비켜선다. 웹도 같다.
+ *
  * 움직임은 UI 실에서 센다(worklet). 굴러간 값은 껍데기의 스크롤 사건이 날라 주므로
  * 목록을 그리느라 JS 가 붙잡히면 그 사이에는 따라오지 못한다 -- 거래 화면은 줄을
  * 나눠 그려 그 멈춤을 짧게 두고 있다(TransactionsScreen 의 예산 참고).
  */
-import { useCallback, useRef, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useRef, type ReactNode } from 'react';
 import { View } from 'react-native';
 import Animated, {
   useAnimatedReaction,
@@ -46,6 +50,37 @@ const TURN = 16;
 
 /** 숨고 되돌아오는 데 드는 시간. 웹의 transition 과 같은 값이다. */
 const TIMING = { duration: 200 };
+
+/**
+ * 남길 상자가 제 자리를 알리는 길. 덩어리 안에서 잰 y 를 넘기고, 사라질 때는 null 이다.
+ * 덩어리의 내용 상자에 대고 재므로(`measureLayout`) 움직이는 중에 재도 값이 같다.
+ */
+const KeepContext = createContext<{
+  content: React.RefObject<View | null>;
+  report: (y: number | null) => void;
+} | null>(null);
+
+/**
+ * 비켜설 때도 남길 것. `RevealTop` 안에 둔다. 조건이 없을 때는 세우지 않는다 -- 빈 상자도
+ * 덩어리 안의 틈(gap)을 하나 먹는다.
+ */
+export function RevealKeep({ children }: { children: ReactNode }) {
+  const keep = useContext(KeepContext);
+  const box = useRef<View>(null);
+  useEffect(() => () => keep?.report(null), [keep]);
+
+  const measure = useCallback(() => {
+    const content = keep?.content.current;
+    if (!box.current || !content) return;
+    box.current.measureLayout(content, (_x, y) => keep.report(y));
+  }, [keep]);
+
+  return (
+    <View ref={box} onLayout={measure}>
+      {children}
+    </View>
+  );
+}
 
 export default function RevealTop({
   inset,
@@ -77,6 +112,16 @@ export default function RevealTop({
   const isHidden = useSharedValue(false);
   /** 같은 방향으로 이어서 구른 거리. 방향이 바뀌면 버린다. */
   const turned = useSharedValue(0);
+  /** 남길 상자의 자리(내용 상자 안의 y). 없으면 -1 -- 그때는 통째로 비켜선다. */
+  const keepAt = useSharedValue(-1);
+  /** 내용 상자. 남길 상자가 여기에 대고 제 자리를 잰다. */
+  const content = useRef<View>(null);
+  const keepContext = useRef({
+    content,
+    report: (y: number | null) => {
+      keepAt.value = y ?? -1;
+    },
+  }).current;
 
   /*
    * 창 좌표로 재고 스크롤 내용의 좌표로 옮긴다. 화면 위쪽의 것(알림 줄 등)이 늘거나
@@ -121,9 +166,13 @@ export default function RevealTop({
     },
   );
 
-  /* 되돌아와 있는 만큼을 밖으로 알린다. 아래의 붙박이 줄이 설 높이다. */
+  /*
+   * 되돌아와 있는 만큼을 밖으로 알린다. 아래의 붙박이 줄이 설 높이다. 비켜서는 거리는 남길
+   * 상자의 위까지다 -- 그 위에 덩어리의 위 여백(PADDING)이 그대로 남아 알약이 화면 끝에
+   * 닿지 않는다.
+   */
   useAnimatedReaction(
-    () => shown.value * height.value,
+    () => height.value - (1 - shown.value) * (keepAt.value >= 0 ? keepAt.value : height.value),
     (revealed) => {
       if (inset) inset.value = revealed;
     },
@@ -132,8 +181,11 @@ export default function RevealTop({
   const follow = useAnimatedStyle(() => {
     /** 제자리를 지나 굴러간 만큼. 이만큼 따라 내려와야 제자리에 남는다. */
     const stuck = Math.max(0, scrollY.value - anchor.value);
-    /** 비켜선 만큼. 다 비켜서면 제 높이만큼 위로 올라가 화면 밖에 선다. */
-    const away = (1 - shown.value) * height.value;
+    /**
+     * 비켜선 만큼. 다 비켜서면 제 높이만큼 위로 올라가 화면 밖에 선다. 남길 상자가 있으면
+     * 그 위까지만 올라간다.
+     */
+    const away = (1 - shown.value) * (keepAt.value >= 0 ? keepAt.value : height.value);
     return { transform: [{ translateY: Math.max(0, stuck - away) }] };
   });
 
@@ -156,7 +208,9 @@ export default function RevealTop({
         }}
         style={[{ backgroundColor: BACKGROUND, paddingVertical: PADDING }, follow]}
       >
-        {children}
+        <View ref={content}>
+          <KeepContext.Provider value={keepContext}>{children}</KeepContext.Provider>
+        </View>
       </Animated.View>
     </View>
   );

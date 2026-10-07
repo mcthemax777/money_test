@@ -73,7 +73,7 @@ import {
   useScrollToTop,
 } from '../shell/scroll';
 import { useCloseOnBack, useNavigation } from '../shell/navigation';
-import RevealTop from '../shell/RevealTop';
+import RevealTop, { RevealKeep } from '../shell/RevealTop';
 import { StickySection, StickySections } from '../shell/StickySection';
 import CountBadge from '../components/CountBadge';
 import EntryDetailModal from '../components/EntryDetailModal';
@@ -1109,7 +1109,15 @@ export default function TransactionsScreen({
 
               분석 탭에서 그 기간으로 건너왔으면(locked) 알리기만 하고 뺄 수 없다.
             */}
-            <SearchChips chips={tx.searchChips} onRemove={locked ? undefined : tx.removeSearchChip} />
+            {/* 내려가는 동안에도 이 줄부터는 화면 위에 남는다 (RevealKeep). */}
+            {tx.searchChips.length > 0 ? (
+              <RevealKeep>
+                <SearchChips
+                  chips={tx.searchChips}
+                  onRemove={locked ? undefined : tx.removeSearchChip}
+                />
+              </RevealKeep>
+            ) : null}
 
             {/* 달력 보기에서는 목록 쪽 손잡이를 감춘다 (바로 아래 주석 참고). */}
             {!isCalendar ? (

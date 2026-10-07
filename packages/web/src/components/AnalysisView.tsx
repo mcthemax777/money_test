@@ -34,10 +34,12 @@ import NetAnalysisPanel from '@/components/NetAnalysisPanel';
 import PageHeader from '@/components/PageHeader';
 import PeriodNavigator from '@/components/PeriodNavigator';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
+import RevealTop from '@/components/RevealTop';
 import SearchChips from '@/components/SearchChips';
 import TransactionSearchModal from '@/components/TransactionSearchModal';
 import TransactionsView from '@/components/TransactionsView';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
+import { useTopReveal } from '@/hooks/useTopReveal';
 
 const TABS: Array<{ id: AnalysisKind; labelKey: MessageKey }> = [
   { id: 'net', labelKey: 'analysis.tab.net' },
@@ -62,6 +64,8 @@ export default function AnalysisView({
   const togglePersonId = useUserFilter((state) => state.togglePersonId);
 
   const analysis = useAnalysis(projectId, { initial });
+  /** 위쪽 덩어리를 내릴 때 비켜서게 한다. 조건 알약 줄부터는 남는다. */
+  const topReveal = useTopReveal<HTMLDivElement>();
   const { tx } = analysis;
   // 사람 목록과 선택을 프로젝트에 맞춘다. 다른 화면과 같은 훅을 쓴다.
   usePersonFilterSync(projectId, tx.people);
@@ -103,93 +107,104 @@ export default function AnalysisView({
 
   return (
     <div className="space-y-4">
-      <PageHeader
-        onBack={onBack}
-        title={
-          <PersonScopeTitle
-            noun={t('analysis.noun')}
-            people={tx.people}
-            myPersonId={myPersonId}
-            selectedPersonIds={selectedPersonIds}
-            onTogglePerson={togglePersonId}
-          />
-        }
-        /*
-          거래 탭에서 건너왔으면 ← 만 둔다. 조건은 거래 탭에서 걸고 오는 것이고, 여기서
-          거래내역을 다시 열면 거래 화면과 분석이 서로를 겹겹이 연다.
-        */
-        action={
-          onBack ? undefined : (
-            <div className="flex gap-2">
-              {/*
-                거래내역. 거래 탭의 보관함·달력 자리다 -- 분석에서 본 것을 같은 검색으로 낱낱의
-                거래로 확인하러 가는 길이다 (isEntriesOpen).
-              */}
-              <button
-                type="button"
-                onClick={() => setIsEntriesOpen(true)}
-                aria-label={t('analysis.toTransactions')}
-                title={t('analysis.toTransactions')}
-                className="flex items-center justify-center p-2 text-gray-600"
-              >
-                {/* 아래 메뉴의 거래 탭과 같은 그림이다 -- 같은 곳으로 가는 길이다. */}
-                <NavIcon name="transactions" className="h-4 w-4" />
-              </button>
-              {/* 검색. 거래 탭과 같은 창이고 같은 규칙으로 걸린다. */}
-              <button
-                type="button"
-                onClick={() => setIsSearchOpen(true)}
-                aria-label={t('tx.search')}
-                title={t('tx.search')}
-                className={`flex items-center gap-1.5 px-2 py-2 text-sm font-medium ${
-                  tx.searchCount > 0 ? 'text-blue-600' : 'text-gray-600'
-                }`}
-              >
-                <Search className="h-4 w-4" aria-hidden />
-                {tx.searchCount > 0 ? <span className="font-semibold">{tx.searchCount}</span> : null}
-              </button>
-            </div>
-          )
-        }
-      />
-
-      {tx.hasError ? (
-        <div className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{t('tx.loadFailed')}</div>
-      ) : null}
-
       {/*
-        걸려 있는 조건. 거래 탭과 같이 탭 위에 두고, 누르면 그 조건만 빠진다. 거래 탭에서
-        건너왔으면 무엇으로 그렸는지 알리기만 한다 -- 뺀 조건을 되걸 검색 단추가 없다.
+        위쪽 한 덩어리 -- 제목, 걸어 둔 조건, 탭. 거래 화면과 같은 규칙이다(`useTopReveal`): 내리는
+        동안에는 비켜서고 조금이라도 올리면 되돌아오며, 걸어 둔 조건 알약 줄부터 아래(탭)는
+        비켜서지 않는다 -- 무엇으로 그린 그래프인지 내내 보여야 한다 (2026-10-07 사용자 요청).
       */}
-      <SearchChips chips={tx.searchChips} onRemove={onBack ? undefined : tx.removeSearchChip} />
-
-      {/*
-        합계·지출·수입. 거래 탭의 날짜별·분류별·수단별 자리와 모양이다 -- 흰 알약 하나가
-        미끄러져 옮긴다. 금액은 적지 않는다 (2026-10-06 사용자 요청) -- 합계 탭의 요약이 말한다.
-      */}
-      <div className="relative flex gap-2 rounded-lg bg-gray-200 p-1">
-        <span
-          aria-hidden
-          className="pointer-events-none absolute inset-y-1 left-1 rounded-md bg-white transition-transform duration-200 ease-out motion-reduce:transition-none"
-          style={{
-            width: 'calc((100% - 1.5rem) / 3)',
-            transform: `translateX(calc(${activeTabIndex} * (100% + 0.5rem)))`,
-          }}
+      <RevealTop reveal={topReveal}>
+        <PageHeader
+          onBack={onBack}
+          title={
+            <PersonScopeTitle
+              noun={t('analysis.noun')}
+              people={tx.people}
+              myPersonId={myPersonId}
+              selectedPersonIds={selectedPersonIds}
+              onTogglePerson={togglePersonId}
+            />
+          }
+          /*
+            거래 탭에서 건너왔으면 ← 만 둔다. 조건은 거래 탭에서 걸고 오는 것이고, 여기서
+            거래내역을 다시 열면 거래 화면과 분석이 서로를 겹겹이 연다.
+          */
+          action={
+            onBack ? undefined : (
+              <div className="flex gap-2">
+                {/*
+                  거래내역. 거래 탭의 보관함·달력 자리다 -- 분석에서 본 것을 같은 검색으로 낱낱의
+                  거래로 확인하러 가는 길이다 (isEntriesOpen).
+                */}
+                <button
+                  type="button"
+                  onClick={() => setIsEntriesOpen(true)}
+                  aria-label={t('analysis.toTransactions')}
+                  title={t('analysis.toTransactions')}
+                  className="flex items-center justify-center p-2 text-gray-600"
+                >
+                  {/* 아래 메뉴의 거래 탭과 같은 그림이다 -- 같은 곳으로 가는 길이다. */}
+                  <NavIcon name="transactions" className="h-4 w-4" />
+                </button>
+                {/* 검색. 거래 탭과 같은 창이고 같은 규칙으로 걸린다. */}
+                <button
+                  type="button"
+                  onClick={() => setIsSearchOpen(true)}
+                  aria-label={t('tx.search')}
+                  title={t('tx.search')}
+                  className={`flex items-center gap-1.5 px-2 py-2 text-sm font-medium ${
+                    tx.searchCount > 0 ? 'text-blue-600' : 'text-gray-600'
+                  }`}
+                >
+                  <Search className="h-4 w-4" aria-hidden />
+                  {tx.searchCount > 0 ? <span className="font-semibold">{tx.searchCount}</span> : null}
+                </button>
+              </div>
+            )
+          }
         />
-        {TABS.map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => analysis.setKind(item.id)}
-            aria-pressed={analysis.kind === item.id}
-            className={`relative flex flex-1 items-center justify-center rounded-md px-4 py-2 font-medium ${
-              analysis.kind === item.id ? 'text-blue-600' : 'text-gray-600'
-            }`}
-          >
-            {t(item.labelKey)}
-          </button>
-        ))}
-      </div>
+
+        {tx.hasError ? (
+          <div className="rounded-lg bg-red-50 p-3 text-sm text-red-800">{t('tx.loadFailed')}</div>
+        ) : null}
+
+        {/*
+          걸려 있는 조건. 거래 탭과 같이 탭 위에 두고, 누르면 그 조건만 빠진다. 거래 탭에서
+          건너왔으면 무엇으로 그렸는지 알리기만 한다 -- 뺀 조건을 되걸 검색 단추가 없다.
+        */}
+        <SearchChips
+          chips={tx.searchChips}
+          onRemove={onBack ? undefined : tx.removeSearchChip}
+          boxRef={topReveal.keepRef}
+        />
+
+        {/*
+          합계·지출·수입. 거래 탭의 날짜별·분류별·수단별 자리와 모양이다 -- 흰 알약 하나가
+          미끄러져 옮긴다. 금액은 적지 않는다 (2026-10-06 사용자 요청) -- 합계 탭의 요약이 말한다.
+        */}
+        <div className="relative flex gap-2 rounded-lg bg-gray-200 p-1">
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-y-1 left-1 rounded-md bg-white transition-transform duration-200 ease-out motion-reduce:transition-none"
+            style={{
+              width: 'calc((100% - 1.5rem) / 3)',
+              transform: `translateX(calc(${activeTabIndex} * (100% + 0.5rem)))`,
+            }}
+          />
+          {TABS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              onClick={() => analysis.setKind(item.id)}
+              aria-pressed={analysis.kind === item.id}
+              className={`relative flex flex-1 items-center justify-center rounded-md px-4 py-2 font-medium ${
+                analysis.kind === item.id ? 'text-blue-600' : 'text-gray-600'
+              }`}
+            >
+              {t(item.labelKey)}
+            </button>
+          ))}
+        </div>
+      </RevealTop>
 
       <PeriodNavigator periodKey={analysis.periodKey} onChange={analysis.setPeriodKey} />
 

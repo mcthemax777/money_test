@@ -469,28 +469,6 @@ export default function TransactionSearchModal({
           </View>
         </View>
 
-        {/*
-          세는 기준. 기간 다음에 둔다 -- 그 기간에 무엇을 쓴 돈으로 셀지라 기간과 한 물음이다.
-          거르는 조건이 아니라 세는 규칙이고, 기본은 회차 기준이다 (`TransactionSearch.basis`).
-          예전엔 더보기에 있었다 (2026-10-07 사용자 요청으로 옮김). 웹과 같은 자리다.
-        */}
-        <View className="mb-5">
-          <Text className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
-            {t('tx.basis')}
-          </Text>
-          <View className="flex-row flex-wrap gap-2">
-            {BASES.map((basis) => (
-              <Chip
-                key={basis}
-                label={t(basis === 'accrual' ? 'tx.basis.accrual' : 'tx.basis.installment')}
-                selected={draft.basis === basis}
-                onPress={() => setDraft((prev) => ({ ...prev, basis }))}
-              />
-            ))}
-          </View>
-          <Text className="mt-2 text-xs leading-5 text-gray-500">{t('tx.basisHint')}</Text>
-        </View>
-
         {isEmpty ? (
           <Text className="text-sm text-gray-600">{t('tx.search.empty')}</Text>
         ) : (
@@ -506,24 +484,6 @@ export default function TransactionSearchModal({
                   label={t(ENTRY_KIND_LABEL[kind])}
                   selected={draft.kinds.includes(kind)}
                   onPress={() => setDraft((prev) => ({ ...prev, kinds: toggle(prev.kinds, kind) }))}
-                />
-              ))}
-            </Group>
-
-            {/*
-              형태(분할·할부)를 유형 바로 아래 둔다. 유형과 같은 층으로 읽히지만 **다른
-              무리다** -- 한 거래가 유형은 하나지만 형태는 둘 다 가질 수 있다(할부로 낸
-              결제를 둘로 나눠 적은 것). 그래서 칸을 갈라 놓는다.
-            */}
-            <Group title={t('tx.search.features')}>
-              {ENTRY_FEATURES.map((feature) => (
-                <Chip
-                  key={feature}
-                  label={t(ENTRY_FEATURE_LABEL[feature])}
-                  selected={draft.features.includes(feature)}
-                  onPress={() =>
-                    setDraft((prev) => ({ ...prev, features: toggle(prev.features, feature) }))
-                  }
                 />
               ))}
             </Group>
@@ -748,6 +708,47 @@ export default function TransactionSearchModal({
               ) : null}
           </View>
         )}
+
+        {/*
+          형태(분할·할부·차감). 맨 아래 가까이 둔다(2026-10-07 사용자 요청) -- 자주 거르는 것이
+          아니다. 유형과 같은 층으로 읽히지만 **다른 무리다** -- 한 거래가 유형은 하나지만 형태는
+          둘 다 가질 수 있다(할부로 낸 결제를 둘로 나눠 적은 것). 고를 분류·자산이 없어도 선다.
+          웹과 같은 차례다.
+        */}
+        <Group title={t('tx.search.features')}>
+          {ENTRY_FEATURES.map((feature) => (
+            <Chip
+              key={feature}
+              label={t(ENTRY_FEATURE_LABEL[feature])}
+              selected={draft.features.includes(feature)}
+              onPress={() =>
+                setDraft((prev) => ({ ...prev, features: toggle(prev.features, feature) }))
+              }
+            />
+          ))}
+        </Group>
+
+        {/*
+          세는 기준. 맨 아래, 형태 다음에 둔다(2026-10-07 사용자 요청) -- 거르는 조건이 아니라
+          세는 규칙이라 고르는 조건들 뒤에 선다. 기본은 회차 기준이다 (`TransactionSearch.basis`).
+          예전엔 더보기에 있었다. 웹과 같은 자리다.
+        */}
+        <View className="mb-5">
+          <Text className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
+            {t('tx.basis')}
+          </Text>
+          <View className="flex-row flex-wrap gap-2">
+            {BASES.map((basis) => (
+              <Chip
+                key={basis}
+                label={t(basis === 'accrual' ? 'tx.basis.accrual' : 'tx.basis.installment')}
+                selected={draft.basis === basis}
+                onPress={() => setDraft((prev) => ({ ...prev, basis }))}
+              />
+            ))}
+          </View>
+          <Text className="mt-2 text-xs leading-5 text-gray-500">{t('tx.basisHint')}</Text>
+        </View>
       </View>
     </Modal>
   );

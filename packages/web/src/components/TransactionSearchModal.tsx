@@ -475,28 +475,6 @@ export default function TransactionSearchModal({
           </div>
         </div>
 
-        {/*
-          세는 기준. 기간 다음에 둔다 -- 그 기간에 무엇을 쓴 돈으로 셀지라 기간과 한 물음이다.
-          거르는 조건이 아니라 세는 규칙이고, 기본은 회차 기준이다 (`TransactionSearch.basis`).
-          예전엔 더보기에 있었다 (2026-10-07 사용자 요청으로 옮김).
-        */}
-        <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
-            {t('tx.basis')}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {BASES.map((basis) => (
-              <Chip
-                key={basis}
-                label={t(basis === 'accrual' ? 'tx.basis.accrual' : 'tx.basis.installment')}
-                selected={draft.basis === basis}
-                onClick={() => setDraft((prev) => ({ ...prev, basis }))}
-              />
-            ))}
-          </div>
-          <p className="mt-2 text-xs leading-5 text-gray-500">{t('tx.basisHint')}</p>
-        </div>
-
         {categories.length === 0 &&
         accounts.length === 0 &&
         cards.length === 0 ? (
@@ -519,29 +497,6 @@ export default function TransactionSearchModal({
                   selected={draft.kinds.includes(kind)}
                   onClick={() =>
                     setDraft((prev) => ({ ...prev, kinds: toggleId(prev.kinds, kind) }))
-                  }
-                />
-              ))}
-            </div>
-          </div>
-
-          {/*
-            형태(분할·할부)를 유형 바로 아래 둔다. 유형과 같은 층으로 읽히지만 **다른
-            무리다** -- 한 거래가 유형은 하나지만 형태는 둘 다 가질 수 있다(할부로 낸
-            결제를 둘로 나눠 적은 것). 그래서 칸을 갈라 놓는다.
-          */}
-          <div>
-            <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
-              {t('tx.search.features')}
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {ENTRY_FEATURES.map((feature) => (
-                <Chip
-                  key={feature}
-                  label={t(ENTRY_FEATURE_LABEL[feature])}
-                  selected={draft.features.includes(feature)}
-                  onClick={() =>
-                    setDraft((prev) => ({ ...prev, features: toggleId(prev.features, feature) }))
                   }
                 />
               ))}
@@ -788,6 +743,51 @@ export default function TransactionSearchModal({
             ) : null}
           </div>
         )}
+
+        {/*
+          형태(분할·할부·차감). 맨 아래 가까이 둔다(2026-10-07 사용자 요청) -- 자주 거르는 것이
+          아니다. 유형과 같은 층으로 읽히지만 **다른 무리다** -- 한 거래가 유형은 하나지만 형태는
+          둘 다 가질 수 있다(할부로 낸 결제를 둘로 나눠 적은 것). 고를 분류·자산이 없어도 선다.
+        */}
+        <div>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
+            {t('tx.search.features')}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {ENTRY_FEATURES.map((feature) => (
+              <Chip
+                key={feature}
+                label={t(ENTRY_FEATURE_LABEL[feature])}
+                selected={draft.features.includes(feature)}
+                onClick={() =>
+                  setDraft((prev) => ({ ...prev, features: toggleId(prev.features, feature) }))
+                }
+              />
+            ))}
+          </div>
+        </div>
+
+        {/*
+          세는 기준. 맨 아래, 형태 다음에 둔다(2026-10-07 사용자 요청) -- 거르는 조건이 아니라
+          세는 규칙이라 고르는 조건들 뒤에 선다. 기본은 회차 기준이다 (`TransactionSearch.basis`).
+          예전엔 더보기에 있었다.
+        */}
+        <div>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
+            {t('tx.basis')}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {BASES.map((basis) => (
+              <Chip
+                key={basis}
+                label={t(basis === 'accrual' ? 'tx.basis.accrual' : 'tx.basis.installment')}
+                selected={draft.basis === basis}
+                onClick={() => setDraft((prev) => ({ ...prev, basis }))}
+              />
+            ))}
+          </div>
+          <p className="mt-2 text-xs leading-5 text-gray-500">{t('tx.basisHint')}</p>
+        </div>
       </div>
     </Modal>
   );

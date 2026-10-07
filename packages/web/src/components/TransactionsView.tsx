@@ -78,6 +78,7 @@ import Modal from '@/components/Modal';
 import TransactionCalendarView from '@/components/TransactionCalendarView';
 import AnalysisView from '@/components/AnalysisView';
 import PageHeader from '@/components/PageHeader';
+import RevealTop from '@/components/RevealTop';
 import SearchChips from '@/components/SearchChips';
 import TransactionSearchModal, { Chip } from '@/components/TransactionSearchModal';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
@@ -582,8 +583,9 @@ export default function TransactionsView({
    * 년월 줄은 그 아래에 선다. 덩어리가 비켜서면 화면 맨 위(0), 되돌아오면 그 높이만큼
    * 내려온 자리다 -- 같은 길이의 시간을 들여 함께 움직여야 두 줄이 겹쳐 보이지 않는다.
    */
-  const { ref: topRef, height: topHeight, hidden: isTopHidden } = useTopReveal<HTMLDivElement>();
-  const stickyTop = isTopHidden ? 0 : topHeight;
+  const topReveal = useTopReveal<HTMLDivElement>();
+  /** 년월 줄이 붙을 높이. 머리글이 내려와 있는 만큼이다 (비켜서도 조건 알약 줄은 남는다). */
+  const stickyTop = topReveal.inset;
 
   const entryList = (yearMonth: string, key: string) => {
     // 한 번만 묻는다. 두 번 물으면 그 달을 날짜로 묶는 일이 줄마다 두 번씩 돈다.
@@ -854,21 +856,15 @@ export default function TransactionsView({
         **내리는 동안에는 비켜서고, 조금이라도 위로 올리면 되돌아온다**(`useTopReveal`).
         화면 위에 계속 붙여 두면 긴 목록에서 자리를 빼앗고, 그냥 흘려보내면 탭 하나를
         옮기거나 검색을 고치려고 맨 위까지 되돌아가야 한다. 올릴 때 한 덩어리로
-        내려오므로 제목과 탭 중 무엇이 필요했든 같은 손짓으로 닿는다.
+        내려오므로 제목과 탭 중 무엇이 필요했든 같은 손짓으로 닿는다. 단 **걸어 둔 조건
+        알약 줄부터 아래(탭)는 비켜서지 않는다** -- 무엇으로 거른 목록인지 내내 보여야 한다.
 
         굴러가는 동안 화면 맨 위에 남는 것은 이 덩어리가 아니라 **그 달의 년월 줄**이다
         (아래 목록의 sticky). 지금 보고 있는 것이 몇 월인지가 탭 이름보다 먼저 알고 싶은
-        것이라, 늘 붙어 있을 한 줄의 자리를 그쪽에 내주었다.
-
-        바탕은 페이지와 같은 회색이고 좌우 여백 바깥까지 늘린다(-mx-4). 그러지 않으면
-        아래를 지나가는 줄이 양옆 여백으로 비쳐 보인다. 위쪽 여백은 페이지의 것을
-        그대로 먹어(-mt-4 pt-4) 붙는 순간에 글자가 튀지 않게 한다.
+        것이라, 늘 붙어 있을 한 줄의 자리를 그쪽에 내주었다. 조건 알약 줄이 남아 있으면 그
+        아래에 선다 (`stickyTop`).
       */}
-      <div
-        ref={topRef}
-        className="sticky top-0 z-30 -mx-4 -mt-4 space-y-4 bg-gray-50 px-4 pb-2 pt-4 transition-transform duration-200 ease-out motion-reduce:transition-none md:-mt-8 md:pt-8"
-        style={{ transform: `translateY(${isTopHidden ? -topHeight : 0}px)` }}
-      >
+      <RevealTop reveal={topReveal}>
         {/*
           고르는 중에는 머리글이 통째로 바뀐다.
           뒤로가기 · 몇 개를 골랐는지 · 삭제. 제목과 검색은 그때 쓸 것이 아니다.
@@ -1039,7 +1035,12 @@ export default function TransactionsView({
           많아지면 가로로 굴린다. 줄바꿈으로 두면 조건이 열 개 넘을 때 목록이 화면 밖으로
           밀린다.
         */}
-        <SearchChips chips={tx.searchChips} onRemove={locked ? undefined : tx.removeSearchChip} />
+        <SearchChips
+          chips={tx.searchChips}
+          onRemove={locked ? undefined : tx.removeSearchChip}
+          // 내려가는 동안에도 이 줄부터는 화면 위에 남는다 (useTopReveal).
+          boxRef={topReveal.keepRef}
+        />
 
         {/* 달력 보기에서는 목록 쪽 손잡이를 감춘다 (바로 아래 주석 참고). */}
         {!isCalendar ? (
@@ -1093,7 +1094,7 @@ export default function TransactionsView({
             </div>
           </>
         ) : null}
-      </div>
+      </RevealTop>
 
       {/*
         달력 보기. 머리글의 단추가 고른다.

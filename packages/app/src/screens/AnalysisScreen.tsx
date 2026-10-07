@@ -42,6 +42,7 @@ import SearchChips from '../components/SearchChips';
 import SegmentedTabs from '../components/SegmentedTabs';
 import TransactionSearchModal from '../components/TransactionSearchModal';
 import { useCloseOnBack } from '../shell/navigation';
+import RevealTop, { RevealKeep } from '../shell/RevealTop';
 import { useScrollRestore, useScrollToTop } from '../shell/scroll';
 import TransactionsScreen from './TransactionsScreen';
 
@@ -122,73 +123,86 @@ export default function AnalysisScreen({
 
   return (
     <View className="gap-4">
-      <PageHeader
-        onBack={onBack}
-        title={
-          <PersonScopeTitle
-            noun={t('analysis.noun')}
-            people={tx.people}
-            myPersonId={myPersonId}
-            selectedPersonIds={selectedPersonIds}
-            onTogglePerson={togglePersonId}
+      {/*
+        위쪽 한 덩어리 -- 제목, 걸어 둔 조건, 탭. 거래 화면과 같은 규칙이다(`RevealTop`): 내리는
+        동안에는 비켜서고 조금이라도 올리면 되돌아오며, 걸어 둔 조건 알약 줄부터 아래(탭)는
+        비켜서지 않는다 -- 무엇으로 그린 그래프인지 내내 보여야 한다 (2026-10-07 사용자 요청).
+      */}
+      <RevealTop>
+        <View className="gap-4">
+          <PageHeader
+            onBack={onBack}
+            title={
+              <PersonScopeTitle
+                noun={t('analysis.noun')}
+                people={tx.people}
+                myPersonId={myPersonId}
+                selectedPersonIds={selectedPersonIds}
+                onTogglePerson={togglePersonId}
+              />
+            }
+            /*
+              거래 탭에서 건너왔으면 ← 만 둔다. 조건은 거래 탭에서 걸고 오는 것이고, 여기서
+              거래내역을 다시 열면 거래 화면과 분석이 서로를 겹겹이 연다.
+            */
+            action={
+              onBack ? undefined : (
+                <View className="flex-row gap-2">
+                  {/*
+                    거래내역. 거래 탭의 보관함·달력 자리다 -- 분석에서 본 것을 같은 검색으로 낱낱의
+                    거래로 확인하러 가는 길이다 (openEntries).
+                  */}
+                  <Pressable
+                    onPress={openEntries}
+                    accessibilityLabel={t('analysis.toTransactions')}
+                    className="items-center justify-center p-2"
+                  >
+                    {/* 아래 메뉴의 거래 탭과 같은 그림이다 -- 같은 곳으로 가는 길이다. */}
+                    <NavIcon name="transactions" size={18} color="#4b5563" />
+                  </Pressable>
+                  {/* 검색. 거래 탭과 같은 창이고 같은 규칙으로 걸린다. */}
+                  <Pressable
+                    onPress={() => setIsSearchOpen(true)}
+                    accessibilityLabel={t('tx.search')}
+                    className="flex-row items-center gap-1.5 px-2 py-2"
+                  >
+                    <Search size={18} color={tx.searchCount > 0 ? '#2563eb' : '#4b5563'} />
+                    {tx.searchCount > 0 ? (
+                      <Text className="text-sm font-semibold text-blue-600">{tx.searchCount}</Text>
+                    ) : null}
+                  </Pressable>
+                </View>
+              )
+            }
           />
-        }
-        /*
-          거래 탭에서 건너왔으면 ← 만 둔다. 조건은 거래 탭에서 걸고 오는 것이고, 여기서
-          거래내역을 다시 열면 거래 화면과 분석이 서로를 겹겹이 연다.
-        */
-        action={
-          onBack ? undefined : (
-            <View className="flex-row gap-2">
-              {/*
-                거래내역. 거래 탭의 보관함·달력 자리다 -- 분석에서 본 것을 같은 검색으로 낱낱의
-                거래로 확인하러 가는 길이다 (openEntries).
-              */}
-              <Pressable
-                onPress={openEntries}
-                accessibilityLabel={t('analysis.toTransactions')}
-                className="items-center justify-center p-2"
-              >
-                {/* 아래 메뉴의 거래 탭과 같은 그림이다 -- 같은 곳으로 가는 길이다. */}
-                <NavIcon name="transactions" size={18} color="#4b5563" />
-              </Pressable>
-              {/* 검색. 거래 탭과 같은 창이고 같은 규칙으로 걸린다. */}
-              <Pressable
-                onPress={() => setIsSearchOpen(true)}
-                accessibilityLabel={t('tx.search')}
-                className="flex-row items-center gap-1.5 px-2 py-2"
-              >
-                <Search size={18} color={tx.searchCount > 0 ? '#2563eb' : '#4b5563'} />
-                {tx.searchCount > 0 ? (
-                  <Text className="text-sm font-semibold text-blue-600">{tx.searchCount}</Text>
-                ) : null}
-              </Pressable>
+
+          {tx.hasError ? (
+            <View className="rounded-lg bg-red-50 p-3">
+              <Text className="text-sm text-red-800">{t('tx.loadFailed')}</Text>
             </View>
-          )
-        }
-      />
+          ) : null}
 
-      {tx.hasError ? (
-        <View className="rounded-lg bg-red-50 p-3">
-          <Text className="text-sm text-red-800">{t('tx.loadFailed')}</Text>
+          {/*
+            걸려 있는 조건. 거래 탭과 같이 탭 위에 두고, 누르면 그 조건만 빠진다. 거래 탭에서
+            건너왔으면 무엇으로 그렸는지 알리기만 한다 -- 뺀 조건을 되걸 검색 단추가 없다.
+          */}
+          {tx.searchChips.length > 0 ? (
+            <RevealKeep>
+              <SearchChips chips={tx.searchChips} onRemove={onBack ? undefined : tx.removeSearchChip} />
+            </RevealKeep>
+          ) : null}
+
+          {/*
+            합계·지출·수입. 거래 탭의 날짜별·분류별·수단별 자리와 모양이다. 금액은 적지 않는다
+            (2026-10-06 사용자 요청) -- 합계 탭의 요약이 말한다.
+          */}
+          <SegmentedTabs
+            tabs={TABS.map((item) => ({ id: item.id, label: t(item.labelKey) }))}
+            selected={analysis.kind}
+            onSelect={analysis.setKind}
+          />
         </View>
-      ) : null}
-
-      {/*
-        걸려 있는 조건. 거래 탭과 같이 탭 위에 두고, 누르면 그 조건만 빠진다. 거래 탭에서
-        건너왔으면 무엇으로 그렸는지 알리기만 한다 -- 뺀 조건을 되걸 검색 단추가 없다.
-      */}
-      <SearchChips chips={tx.searchChips} onRemove={onBack ? undefined : tx.removeSearchChip} />
-
-      {/*
-        합계·지출·수입. 거래 탭의 날짜별·분류별·수단별 자리와 모양이다. 금액은 적지 않는다
-        (2026-10-06 사용자 요청) -- 합계 탭의 요약이 말한다.
-      */}
-      <SegmentedTabs
-        tabs={TABS.map((item) => ({ id: item.id, label: t(item.labelKey) }))}
-        selected={analysis.kind}
-        onSelect={analysis.setKind}
-      />
+      </RevealTop>
 
       <PeriodNavigator periodKey={analysis.periodKey} onChange={analysis.setPeriodKey} />
 
