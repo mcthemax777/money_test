@@ -33,7 +33,7 @@ import {
 import { activeLocale, translate, type MessageKey } from '../lib/i18n';
 import { parseTagBudgetTarget } from '../lib/budget';
 import { toNumber } from '../lib/money';
-import { loadPreviousMonths } from '../lib/month-compare';
+import { loadEntriesByBasis, loadPreviousMonths } from '../lib/month-compare';
 import { isOfflineError } from '../lib/offline-error';
 import type { Category } from '../lib/types';
 import { buildUsagePattern, type BarPoint, type UsagePattern } from '../lib/usage-pattern';
@@ -507,9 +507,10 @@ export function useCategoryDetail({
         };
 
         // 커서를 끝까지 따라간다. 한 페이지만 받으면 일별 누적이 12개월 그래프
-        // (서버 집계, 전량)와 어긋난다.
+        // (서버 집계, 전량)와 어긋난다. 회차 기준이면 할부를 이 구간의 회차로 옮긴다
+        // -- 추이 막대·구성비와 같은 규칙이다.
         const entriesPromise = serverOnly<unknown>(
-          port.getAllEntries({ ...entryQuery, startDate, endDate }, projectId),
+          loadEntriesByBasis({ ...entryQuery, startDate, endDate }, projectId, timeZone),
           [],
         );
 
