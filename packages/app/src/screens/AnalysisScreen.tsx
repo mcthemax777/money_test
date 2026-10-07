@@ -1,7 +1,7 @@
 /*
  * 분석. 거래 탭과 같은 조건으로 한 기간의 돈을 그래프로 본다 (웹의 AnalysisView 와 같은 짝).
  *
- * 짜임은 거래 탭을 따른다. 머리글(자산주인·거래내역·검색·더보기), 걸어 둔 조건 알약, 그 아래
+ * 짜임은 거래 탭을 따른다. 머리글(자산주인·거래내역·검색), 걸어 둔 조건 알약, 그 아래
  * 탭이다. 다른 것은 둘이다 -- 탭이 날짜별·분류별·수단별 대신 **합계·지출·수입**이고, 그 아래에
  * 기간 줄과 거래내역 대신 **한 기간의 분석**이 선다.
  *
@@ -13,7 +13,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Animated, Pressable, Text, View } from 'react-native';
-import { List, MoreVertical, Search } from 'lucide-react-native';
+import { Search } from 'lucide-react-native';
 import type { EntryListItem } from '@money/types';
 
 import {
@@ -33,11 +33,10 @@ import { useUserFilter } from '@money/core/store/user-filter';
 
 import CategoryDetailView from '../components/CategoryDetailView';
 import EntryEditor from '../components/EntryEditor';
-import Modal from '../components/Modal';
+import NavIcon from '../components/NavIcon';
 import NetAnalysisPanel from '../components/NetAnalysisPanel';
 import PageHeader from '../components/PageHeader';
 import PeriodNavigator from '../components/PeriodNavigator';
-import PeriodUnitPicker from '../components/PeriodUnitPicker';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import SearchChips from '../components/SearchChips';
 import SegmentedTabs from '../components/SegmentedTabs';
@@ -104,8 +103,6 @@ export default function AnalysisScreen({
   useCloseOnBack(isEntriesOpen, closeEntries);
 
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  /** 더보기. 묶는 단위를 고른다 (거래 탭의 더보기 맨 위와 같다). 세는 기준은 검색 창에 있다. */
-  const [isMoreOpen, setIsMoreOpen] = useState(false);
   /**
    * 분석의 거래를 눌러 여는 고치기 창. 예산 화면의 분류 상세와 같은 길이다. 읽기 전용
    * 구성원에게는 열지 않는다. 고친 값은 사본이 바뀌어(`useMirrorVersion`) 그래프가 다시 읽는다.
@@ -152,7 +149,8 @@ export default function AnalysisScreen({
                 accessibilityLabel={t('analysis.toTransactions')}
                 className="items-center justify-center p-2"
               >
-                <List size={18} color="#4b5563" />
+                {/* 아래 메뉴의 거래 탭과 같은 그림이다 -- 같은 곳으로 가는 길이다. */}
+                <NavIcon name="transactions" size={18} color="#4b5563" />
               </Pressable>
               {/* 검색. 거래 탭과 같은 창이고 같은 규칙으로 걸린다. */}
               <Pressable
@@ -164,13 +162,6 @@ export default function AnalysisScreen({
                 {tx.searchCount > 0 ? (
                   <Text className="text-sm font-semibold text-blue-600">{tx.searchCount}</Text>
                 ) : null}
-              </Pressable>
-              <Pressable
-                onPress={() => setIsMoreOpen(true)}
-                accessibilityLabel={t('tx.more')}
-                className="items-center justify-center p-2"
-              >
-                <MoreVertical size={18} color="#4b5563" />
               </Pressable>
             </View>
           )
@@ -236,7 +227,7 @@ export default function AnalysisScreen({
       <TransactionSearchModal
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
-        onApply={tx.setSearch}
+        onApply={tx.applySearch}
         current={tx.search}
         categories={tx.pickerCategories}
         accounts={tx.pickerAccounts}
@@ -246,10 +237,6 @@ export default function AnalysisScreen({
         unit={tx.unit}
       />
 
-      {/* 더보기. 묶는 단위뿐이다 -- 세는 기준은 검색 창에서, 고르고 지우는 일은 거래 탭에서 한다. */}
-      <Modal isOpen={isMoreOpen} onClose={() => setIsMoreOpen(false)} title={t('tx.more')}>
-        <PeriodUnitPicker value={tx.unit} onChange={tx.changeUnit} />
-      </Modal>
 
       <EntryEditor
         isOpen={editing !== null}

@@ -3,7 +3,7 @@
 /*
  * 분석. 거래 탭과 같은 조건으로 한 기간의 돈을 그래프로 본다 (앱의 AnalysisScreen 과 같은 짝).
  *
- * 짜임은 거래 탭을 따른다. 머리글(자산주인·거래내역·검색·더보기), 걸어 둔 조건 알약, 그 아래
+ * 짜임은 거래 탭을 따른다. 머리글(자산주인·거래내역·검색), 걸어 둔 조건 알약, 그 아래
  * 탭이다. 다른 것은 둘이다 -- 탭이 날짜별·분류별·수단별 대신 **합계·지출·수입**이고, 그 아래에
  * 기간 줄과 거래내역 대신 **한 기간의 분석**이 선다.
  *
@@ -14,7 +14,7 @@
  * 단추가 거래 화면을 여는 것과 방향만 반대인 같은 길이다.
  */
 import { useRef, useState } from 'react';
-import { List, MoreVertical, Search } from 'lucide-react';
+import { Search } from 'lucide-react';
 
 import {
   useAnalysis,
@@ -29,11 +29,10 @@ import { useUserFilter } from '@money/core/store/user-filter';
 
 import { BudgetDetailModal } from '@/components/BudgetDetailModal';
 import EntryEditor, { type EntryEditorHandle, type ReferenceDataPatch } from '@/components/EntryEditor';
-import Modal from '@/components/Modal';
+import NavIcon from '@/components/NavIcon';
 import NetAnalysisPanel from '@/components/NetAnalysisPanel';
 import PageHeader from '@/components/PageHeader';
 import PeriodNavigator from '@/components/PeriodNavigator';
-import PeriodUnitPicker from '@/components/PeriodUnitPicker';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import SearchChips from '@/components/SearchChips';
 import TransactionSearchModal from '@/components/TransactionSearchModal';
@@ -68,8 +67,6 @@ export default function AnalysisView({
   usePersonFilterSync(projectId, tx.people);
 
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  /** 더보기. 묶는 단위와 세는 방식을 고른다 (거래 탭의 더보기 위쪽 둘과 같다). */
-  const [isMoreOpen, setIsMoreOpen] = useState(false);
   /** 분석의 거래를 눌러 연 상세·고치기 창. 예산 화면의 분류 상세와 같은 길이다. */
   const entryEditorRef = useRef<EntryEditorHandle>(null);
   const [refPatch, setRefPatch] = useState<ReferenceDataPatch>({});
@@ -135,7 +132,8 @@ export default function AnalysisView({
                 title={t('analysis.toTransactions')}
                 className="flex items-center justify-center p-2 text-gray-600"
               >
-                <List className="h-4 w-4" aria-hidden />
+                {/* 아래 메뉴의 거래 탭과 같은 그림이다 -- 같은 곳으로 가는 길이다. */}
+                <NavIcon name="transactions" className="h-4 w-4" />
               </button>
               {/* 검색. 거래 탭과 같은 창이고 같은 규칙으로 걸린다. */}
               <button
@@ -149,15 +147,6 @@ export default function AnalysisView({
               >
                 <Search className="h-4 w-4" aria-hidden />
                 {tx.searchCount > 0 ? <span className="font-semibold">{tx.searchCount}</span> : null}
-              </button>
-              <button
-                type="button"
-                onClick={() => setIsMoreOpen(true)}
-                aria-label={t('tx.more')}
-                title={t('tx.more')}
-                className="flex items-center justify-center p-2 text-gray-600"
-              >
-                <MoreVertical className="h-4 w-4" aria-hidden />
               </button>
             </div>
           )
@@ -245,7 +234,7 @@ export default function AnalysisView({
       <TransactionSearchModal
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
-        onApply={tx.setSearch}
+        onApply={tx.applySearch}
         current={tx.search}
         categories={tx.pickerCategories}
         accounts={tx.pickerAccounts}
@@ -254,11 +243,6 @@ export default function AnalysisView({
         people={tx.people}
         unit={tx.unit}
       />
-
-      {/* 더보기. 묶는 단위뿐이다 -- 세는 기준은 검색 창에서, 고르고 지우는 일은 거래 탭에서 한다. */}
-      <Modal isOpen={isMoreOpen} onClose={() => setIsMoreOpen(false)} title={t('tx.more')}>
-        <PeriodUnitPicker value={tx.unit} onChange={tx.changeUnit} />
-      </Modal>
 
       <EntryEditor
         ref={entryEditorRef}

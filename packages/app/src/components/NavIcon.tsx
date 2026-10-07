@@ -1,4 +1,4 @@
-import { ArrowLeftRight, ChartPie, Landmark, PiggyBank, Settings } from 'lucide-react-native';
+import { ChartPie, Landmark, PiggyBank, ReceiptText, Settings } from 'lucide-react-native';
 
 import type { NavIconName } from '@money/core/lib/nav';
 
@@ -10,8 +10,11 @@ import type { NavIconName } from '@money/core/lib/nav';
  */
 const ICONS = {
   budget: PiggyBank,
-  // 거래는 오간 돈을 훑는 자리다. 오가는 화살표로 둔다.
-  transactions: ArrowLeftRight,
+  /*
+   * 거래는 적어 둔 내역을 훑는 자리다. 종이에 줄이 적힌 그림으로 둔다 (2026-10-07 사용자 요청,
+   * 그 전엔 오가는 화살표). 분석 탭의 거래내역 단추도 이 그림을 쓴다 -- 같은 곳으로 가는 길이다.
+   */
+  transactions: ReceiptText,
   // 분석은 원형 그래프로 둔다. 거래 탭 기간 줄의 분석 아이콘(막대)과 갈라 보인다.
   analysis: ChartPie,
   assets: Landmark,

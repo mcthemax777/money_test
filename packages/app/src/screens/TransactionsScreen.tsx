@@ -81,7 +81,6 @@ import EntryEditor from '../components/EntryEditor';
 import PaybackEditor, { type PaybackTarget } from '../components/PaybackEditor';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
-import PeriodUnitPicker from '../components/PeriodUnitPicker';
 import SegmentedTabs from '../components/SegmentedTabs';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import TransactionItem from '../components/TransactionItem';
@@ -1285,7 +1284,7 @@ export default function TransactionsScreen({
       <TransactionSearchModal
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
-        onApply={tx.setSearch}
+        onApply={tx.applySearch}
         current={tx.search}
         categories={tx.pickerCategories}
         accounts={tx.pickerAccounts}
@@ -1300,14 +1299,6 @@ export default function TransactionsScreen({
         메뉴가 늘면 이 자리에 줄을 더한다.
       */}
       <Modal isOpen={isMoreOpen} onClose={() => setIsMoreOpen(false)} title={t('tx.more')}>
-        {/*
-          무엇으로 묶어 볼지. 창을 닫지 않는다 -- 셋을 눌러 보며 고르는 자리라,
-          누를 때마다 닫히면 다시 열어야 한다. 아래 둘은 그 자리에서 일이 시작되므로
-          닫는다.
-        */}
-        <PeriodUnitPicker value={tx.unit} onChange={tx.changeUnit} />
-        <View className="mb-1 border-t border-gray-200" />
-
         {/*
           태그가 위, 지우기가 아래다. 되돌릴 수 있는 일을 먼저 둔다 -- 손가락이
           닿는 목록에서 지우기가 위에 있으면 잘못 누를 때의 값이 크다.

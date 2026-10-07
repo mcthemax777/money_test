@@ -624,8 +624,7 @@ export function useTransactions(
     /**
      * 기간 줄(과 그 수입·지출)만 쓴다. 분석 화면이 켠다 -- 검색·단위·세는 방식은 거래
      * 화면과 같은 것을 쓰지만, 기간 줄을 펴서 안을 받을 일은 없다. 켜면 어느 줄도 펴지지
-     * 않아(`levelOf` 가 늘 0) 안쪽 조회가 한 건도 나가지 않는다. 검색을 걸면 모든 줄이
-     * 펼친 모양이 되는 규칙도 여기서는 걸리지 않는다.
+     * 않아(`levelOf` 가 늘 0) 안쪽 조회가 한 건도 나가지 않는다.
      */
     periodsOnly?: boolean;
     /**
@@ -956,21 +955,19 @@ export function useTransactions(
   /*
    * 기간 줄의 단계. 손으로 정한 것, 탭의 바닥, 검색의 기본값 차례다.
    *
-   * 검색을 켜면 손대지 않은 줄은 **모두** 거래까지 펼친 모양이다 -- 걸러 낸 것을 보러 온
-   * 사람에게 접힌 목록을 내주면 무엇이 걸렸는지 한 줄도 보이지 않는다. 모양만 그렇고,
-   * 안을 받는 것은 위에서부터 차례로다(`reveal`, `isMonthWaiting`).
-   *
-   * 탭의 바닥이 검색의 기본값보다 앞선다. 검색 중에 탭을 눌러 접은 것이 다시 펴지면 안
-   * 된다. 탭의 바닥은 검색을 바꾸면 지워지므로(아래 조건 효과), 새 검색은 다시 펼쳐 선다.
+   * 검색을 켜도 손대지 않은 줄은 **접힌 채로** 선다(2026-10-07 사용자 요청). 예전엔 걸러 낸 것을
+   * 보러 왔으니 거래까지 다 펴 두었는데, 조건 하나에 수백 건이 한꺼번에 펼쳐져 기간 줄을
+   * 훑어볼 수 없었다. 펴는 것은 줄이나 탭을 눌러서다. 탭의 바닥은 검색을 바꾸면 지워진다
+   * (아래 조건 효과).
    */
   const levelOf = useCallback(
     (yearMonth: string): MonthLevel => {
       if (periodsOnly) return 0;
       const chosen = levels[levelKey(yearMonth)];
       if (chosen !== undefined) return chosen;
-      return tabLevels[tab] ?? (isSearching ? 2 : 0);
+      return tabLevels[tab] ?? 0;
     },
-    [periodsOnly, levels, levelKey, isSearching, tabLevels, tab],
+    [periodsOnly, levels, levelKey, tabLevels, tab],
   );
 
   /**
@@ -2370,6 +2367,18 @@ export function useTransactions(
   }, [setUnit]);
 
   /**
+   * 검색 창의 적용. 묶는 단위도 검색 창에서 고르므로(2026-10-07 사용자 요청, 그 전엔 더보기)
+   * 검색과 함께 건다. 단위가 그대로면 고른 것을 지우지 않는다.
+   */
+  const applySearch = useCallback(
+    (next: TransactionSearch, nextUnit: EntryPeriodUnit) => {
+      setSearch(next);
+      if (nextUnit !== unit) changeUnit(nextUnit);
+    },
+    [setSearch, unit, changeUnit],
+  );
+
+  /**
    * 그 달의 안쪽을 아직 그릴 수 없는가.
    *
    * **받아 둔 것이 있으면 로딩이라고 말하지 않는다.** 거래 하나를 고쳐 다시 받는 중에도
@@ -2487,6 +2496,7 @@ export function useTransactions(
     // 검색
     search,
     setSearch,
+    applySearch,
     /**
      * 조회에 실어 보내는 조건 (사람 필터 + 검색 + 세는 방식). 기간은 들지 않는다 -- `range` 가 따로 든다.
      * 거래 분석 창이 목록과 같은 조건으로 그래프를 그리려고 받는다.

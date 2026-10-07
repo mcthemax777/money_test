@@ -78,7 +78,6 @@ import Modal from '@/components/Modal';
 import TransactionCalendarView from '@/components/TransactionCalendarView';
 import AnalysisView from '@/components/AnalysisView';
 import PageHeader from '@/components/PageHeader';
-import PeriodUnitPicker from '@/components/PeriodUnitPicker';
 import SearchChips from '@/components/SearchChips';
 import TransactionSearchModal, { Chip } from '@/components/TransactionSearchModal';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
@@ -1253,14 +1252,6 @@ export default function TransactionsView({
         값이 다르다.
       */}
       <Modal isOpen={isMoreOpen} onClose={() => setIsMoreOpen(false)} title={t('tx.more')}>
-        {/*
-          무엇으로 묶어 볼지. 창을 닫지 않는다 -- 셋을 눌러 보며 고르는 자리라,
-          누를 때마다 닫히면 다시 열어야 한다. 아래 두 개는 그 자리에서 일이 시작되므로
-          닫는다.
-        */}
-        <PeriodUnitPicker value={tx.unit} onChange={tx.changeUnit} />
-        <div className="mb-1 border-t border-gray-200" />
-
         <button
           type="button"
           onClick={() => {
@@ -1374,7 +1365,7 @@ export default function TransactionsView({
       <TransactionSearchModal
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
-        onApply={tx.setSearch}
+        onApply={tx.applySearch}
         current={tx.search}
         categories={tx.pickerCategories}
         accounts={tx.pickerAccounts}

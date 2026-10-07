@@ -28,7 +28,7 @@ import {
 } from '@money/types';
 
 import { formatMonthShort, weekdayNames } from '@money/core/lib/datetime';
-import { useTranslation } from '@money/core/lib/i18n';
+import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import {
   assetOwnerNames,
   groupByOwner,
@@ -50,6 +50,13 @@ import {
 } from '@money/core/hooks/useTransactions';
 
 import Modal from './Modal';
+
+/** 묶는 단위. 좁은 것에서 넓은 것으로 간다. */
+const UNITS: Array<{ id: EntryPeriodUnit; labelKey: MessageKey }> = [
+  { id: 'week', labelKey: 'tx.unit.week' },
+  { id: 'month', labelKey: 'tx.unit.month' },
+  { id: 'year', labelKey: 'tx.unit.year' },
+];
 
 /** 세는 기준. 기본인 회차 기준을 앞에 둔다. */
 const BASES: EntryBasis[] = ['installment', 'accrual'];
@@ -168,8 +175,8 @@ export default function TransactionSearchModal({
 }: {
   isOpen: boolean;
   onClose: () => void;
-  /** 적용을 누르면 고른 검색을 넘긴다. 창은 이 컴포넌트가 닫는다. */
-  onApply: (search: TransactionSearch) => void;
+  /** 적용을 누르면 고른 검색과 묶는 단위를 넘긴다. 창은 이 컴포넌트가 닫는다. */
+  onApply: (search: TransactionSearch, unit: EntryPeriodUnit) => void;
   /** 지금 걸린 검색. 열 때마다 여기서 시작한다. */
   current: TransactionSearch;
   categories: CategoryDto.Response[];
@@ -177,16 +184,23 @@ export default function TransactionSearchModal({
   cards: CardDto.Response[];
   tags: TagDto.Response[];
   people: PersonDto.Response[];
-  /** 지금 묶는 단위. 기간 줄을 끊는 자리는 이 단위의 것 하나만 고른다. */
+  /**
+   * 지금 묶는 단위. 이 창에서 고친다(2026-10-07 사용자 요청, 그 전엔 더보기). 기간 줄을
+   * 끊는 자리는 고른 단위의 것 하나만 고른다.
+   */
   unit: EntryPeriodUnit;
 }) {
   const { t } = useTranslation();
   const [draft, setDraft] = useState<TransactionSearch>(EMPTY_SEARCH);
+  /** 고르는 중인 묶는 단위. 끊는 자리 칸이 이 단위의 것으로 선다. */
+  const [draftUnit, setDraftUnit] = useState<EntryPeriodUnit>(unit);
 
   /* 열 때마다 지금 걸린 검색에서 시작한다. 고르다 닫은 것은 버린다. */
   useEffect(() => {
-    if (isOpen) setDraft(current);
-  }, [isOpen, current]);
+    if (!isOpen) return;
+    setDraft(current);
+    setDraftUnit(unit);
+  }, [isOpen, current, unit]);
 
   /**
    * 통장·카드를 주인별로 묶어 그린다.
@@ -245,7 +259,7 @@ export default function TransactionSearchModal({
 
   /** 검색 창에서 고른 것을 반영한다. */
   const applySearch = () => {
-    onApply(draft);
+    onApply(draft, draftUnit);
     onClose();
   };
 
@@ -271,7 +285,7 @@ export default function TransactionSearchModal({
     draft.entryPersonIds.length +
     (draftRange ? 1 : 0) +
     // 끊는 자리. 기간을 정했으면 쓰이지 않아 세지 않는다 (훅의 searchCount 와 같다).
-    (!draftRange && periodCutOf(draft, unit) ? 1 : 0) +
+    (!draftRange && periodCutOf(draft, draftUnit) ? 1 : 0) +
     // 세는 기준. 기본(회차 기준)이 아닐 때만 하나로 센다.
     (draft.basis !== 'installment' ? 1 : 0);
 
@@ -325,6 +339,26 @@ export default function TransactionSearchModal({
             placeholder={t('tx.search.textPlaceholder')}
             className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+        </div>
+
+        {/*
+          묶는 단위. 기간 바로 위에 둔다 -- 아래 끊는 자리(월 시작일 등)가 이 단위를 따른다.
+          거르는 조건이 아니라 목록을 무엇으로 묶을지라 알약도 세지도 않는다.
+        */}
+        <div>
+          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
+            {t('tx.unit')}
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {UNITS.map((item) => (
+              <Chip
+                key={item.id}
+                label={t(item.labelKey)}
+                selected={draftUnit === item.id}
+                onClick={() => setDraftUnit(item.id)}
+              />
+            ))}
+          </div>
         </div>
 
         {/*
@@ -383,14 +417,14 @@ export default function TransactionSearchModal({
           <div className="mt-4">
             <p className="mb-2 text-xs text-gray-500">
               {t(
-                unit === 'month'
+                draftUnit === 'month'
                   ? 'tx.search.cutMonth'
-                  : unit === 'week'
+                  : draftUnit === 'week'
                     ? 'tx.search.cutWeek'
                     : 'tx.search.cutYear',
               )}
             </p>
-            {unit === 'month' ? (
+            {draftUnit === 'month' ? (
               // 서른한 개를 알약으로 늘어놓으면 칸 하나가 화면을 차지한다. 고르는 상자로 둔다.
               <select
                 value={draft.monthStartDay}
@@ -405,7 +439,7 @@ export default function TransactionSearchModal({
                   </option>
                 ))}
               </select>
-            ) : unit === 'week' ? (
+            ) : draftUnit === 'week' ? (
               <div className="flex flex-wrap gap-2">
                 <Chip
                   label={t('tx.search.cutDefault')}
