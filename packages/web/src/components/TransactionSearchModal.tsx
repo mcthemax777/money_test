@@ -45,11 +45,16 @@ import {
   ENTRY_FEATURE_LABEL,
   ENTRY_KIND_LABEL,
   periodCutOf,
+  searchPeriodModeOf,
   searchRange,
+  withSearchPeriodMode,
+  type SearchPeriodMode,
   type TransactionSearch,
 } from '@money/core/hooks/useTransactions';
 
 import Modal from './Modal';
+import SearchTemplates from './SearchTemplates';
+import SegmentedTabs from './SegmentedTabs';
 
 /** 묶는 단위. 좁은 것에서 넓은 것으로 간다. */
 const UNITS: Array<{ id: EntryPeriodUnit; labelKey: MessageKey }> = [
@@ -194,12 +199,22 @@ export default function TransactionSearchModal({
   const [draft, setDraft] = useState<TransactionSearch>(EMPTY_SEARCH);
   /** 고르는 중인 묶는 단위. 끊는 자리 칸이 이 단위의 것으로 선다. */
   const [draftUnit, setDraftUnit] = useState<EntryPeriodUnit>(unit);
+  /**
+   * "언제"를 무엇으로 정하는가 -- 묶는 단위(+끊는 자리)와 직접 정한 기간 중 하나다 (2026-10-08
+   * 사용자 요청). 고른 쪽 칸만 선다. 다른 쪽 값은 고르는 동안엔 남겨 두고(오가도 잃지 않게)
+   * 적용할 때 비운다 (`withSearchPeriodMode`).
+   */
+  const [periodMode, setPeriodMode] = useState<SearchPeriodMode>('unit');
 
-  /* 열 때마다 지금 걸린 검색에서 시작한다. 고르다 닫은 것은 버린다. */
+  /*
+   * 열 때마다 지금 걸린 검색에서 시작한다. 고르다 닫은 것은 버린다. 기간이 적힌 검색이면
+   * 기간 쪽으로 연다 -- 둘 다 적힌 옛 검색도 실제로 걸던 것은 기간이다 (`searchPeriodModeOf`).
+   */
   useEffect(() => {
     if (!isOpen) return;
     setDraft(current);
     setDraftUnit(unit);
+    setPeriodMode(searchPeriodModeOf(current));
   }, [isOpen, current, unit]);
 
   /**
@@ -257,14 +272,17 @@ export default function TransactionSearchModal({
   /** 묶음의 차례. 자산 화면이 세우는 구성원 순서를 따른다. */
   const ownerOrder = useMemo(() => people.map((person) => person.name), [people]);
 
+  /** 적용할 검색. 고르지 않은 쪽("언제")의 값을 비운 것이다. */
+  const applied = withSearchPeriodMode(draft, periodMode);
+
   /** 검색 창에서 고른 것을 반영한다. */
   const applySearch = () => {
-    onApply(draft, draftUnit);
+    onApply(applied, draftUnit);
     onClose();
   };
 
-  /** 고른 기간. 한쪽만 적으면 그쪽이 열린 구간이다. */
-  const draftRange = searchRange(draft);
+  /** 고른 기간. 한쪽만 적으면 그쪽이 열린 구간이다. 단위 쪽을 고르면 비어 있다. */
+  const draftRange = searchRange(applied);
   /**
    * 잘못 적은 기간인가. 실재하지 않는 날짜이거나, 두 칸이 앞뒤로 뒤집힌 것.
    *
@@ -272,22 +290,22 @@ export default function TransactionSearchModal({
    * 이 상태에서는 적용을 막는다. 그냥 흘려보내면 기간을 적었는데 걸리지 않는 것이
    * 되어, 사용자는 검색이 고장 났다고 읽는다.
    */
-  const isRangeBroken = Boolean(draft.startDate || draft.endDate) && draftRange === null;
+  const isRangeBroken = Boolean(applied.startDate || applied.endDate) && draftRange === null;
 
   const draftCount =
-    (draft.text.trim() ? 1 : 0) +
-    draft.categoryIds.length +
-    draft.paymentAccountIds.length +
-    draft.paymentCardIds.length +
-    draft.kinds.length +
-    draft.features.length +
-    draft.tagIds.length +
-    draft.entryPersonIds.length +
+    (applied.text.trim() ? 1 : 0) +
+    applied.categoryIds.length +
+    applied.paymentAccountIds.length +
+    applied.paymentCardIds.length +
+    applied.kinds.length +
+    applied.features.length +
+    applied.tagIds.length +
+    applied.entryPersonIds.length +
     (draftRange ? 1 : 0) +
     // 끊는 자리. 기간을 정했으면 쓰이지 않아 세지 않는다 (훅의 searchCount 와 같다).
-    (!draftRange && periodCutOf(draft, draftUnit) ? 1 : 0) +
+    (!draftRange && periodCutOf(applied, draftUnit) ? 1 : 0) +
     // 세는 기준. 기본(회차 기준)이 아닐 때만 하나로 센다.
-    (draft.basis !== 'installment' ? 1 : 0);
+    (applied.basis !== 'installment' ? 1 : 0);
 
   return (
     <Modal
@@ -317,7 +335,22 @@ export default function TransactionSearchModal({
     >
       <div className="space-y-5">
         {/*
-          글자를 맨 위에 둔다.
+          템플릿을 맨 위에 둔다. 누르면 그 조건이 바로 걸리고 창이 닫힌다 -- 아래 칸을 하나씩
+          고르는 일을 한 번에 건너뛰는 자리라 가장 먼저 눈에 들어와야 한다.
+        */}
+        <SearchTemplates
+          draft={applied}
+          draftUnit={draftUnit}
+          canSaveDraft={!isRangeBroken}
+          applied={{ search: current, unit }}
+          onPick={(template) => {
+            onApply(template.search, template.unit);
+            onClose();
+          }}
+        />
+
+        {/*
+          글자를 그다음에 둔다.
 
           찾는 것이 이미 머리에 있는 사람에게는 이 한 칸이 검색의 전부다 -- "스타벅스"를
           적는 편이 분류와 카드를 골라 좁히는 것보다 빠르다. 알약을 고르는 칸들은
@@ -342,28 +375,9 @@ export default function TransactionSearchModal({
         </div>
 
         {/*
-          묶는 단위. 기간 바로 위에 둔다 -- 아래 끊는 자리(월 시작일 등)가 이 단위를 따른다.
-          거르는 조건이 아니라 목록을 무엇으로 묶을지라 알약도 세지도 않는다.
-        */}
-        <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
-            {t('tx.unit')}
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {UNITS.map((item) => (
-              <Chip
-                key={item.id}
-                label={t(item.labelKey)}
-                selected={draftUnit === item.id}
-                onClick={() => setDraftUnit(item.id)}
-              />
-            ))}
-          </div>
-        </div>
-
-        {/*
-          기간을 그다음에 둔다. 무엇으로 좁히든 "언제"를 정하는 일이 많고,
-          분류 알약이 수십 개라 아래에 두면 굴려서 찾아야 한다.
+          "언제". 묶는 단위(+끊는 자리)와 직접 정한 기간 중 하나를 고른다 (2026-10-08 사용자 요청).
+          둘을 함께 세워 두면 기간을 정했을 때 끊는 자리가 아무 일도 하지 않는데 칸은 그대로라,
+          무엇이 걸리는지 읽을 수 없었다. 고른 쪽 칸만 선다.
 
           고를 수 있는 분류·자산이 없어도 이 칸은 그린다. 기간은 그 목록과 무관하다.
         */}
@@ -371,107 +385,137 @@ export default function TransactionSearchModal({
           <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
             {t('tx.search.period')}
           </p>
-          <div className="flex flex-wrap items-center gap-2">
-            <label className="flex flex-1 flex-col gap-1 text-xs text-gray-500">
-              {t('tx.search.periodFrom')}
-              <input
-                type="date"
-                value={draft.startDate}
-                onChange={(e) => setDraft((prev) => ({ ...prev, startDate: e.target.value }))}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </label>
-            <label className="flex flex-1 flex-col gap-1 text-xs text-gray-500">
-              {t('tx.search.periodTo')}
-              <input
-                type="date"
-                value={draft.endDate}
-                onChange={(e) => setDraft((prev) => ({ ...prev, endDate: e.target.value }))}
-                className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              />
-            </label>
-          </div>
-          {draft.startDate || draft.endDate ? (
-            <button
-              type="button"
-              onClick={() => setDraft((prev) => ({ ...prev, startDate: '', endDate: '' }))}
-              className="mt-2 text-xs font-medium text-blue-600 hover:underline"
-            >
-              {t('tx.search.periodClear')}
-            </button>
-          ) : null}
-          {/* 잘못 적었을 때만 한 줄 뜬다. 규칙 설명은 두지 않는다. */}
-          {isRangeBroken ? (
-            <p className="mt-2 text-xs leading-5 text-red-600">
-              {t('tx.search.periodInvalid')}
-            </p>
-          ) : null}
+          <SegmentedTabs
+            tabs={[
+              { id: 'unit', label: t('tx.unit') },
+              { id: 'range', label: t('tx.search.periodRange') },
+            ]}
+            selected={periodMode}
+            onSelect={setPeriodMode}
+          />
 
-          {/*
-            기간 줄을 어디서 끊을지. 지금 묶는 단위의 것 하나만 선다 -- 달이면 시작일,
-            주면 시작 요일, 해면 시작 월이다. 거르는 조건이 아니라 줄의 경계를 옮긴다.
+          {/* 바뀐 칸이 옅은 데서 떠오른다(unfold). key 로 갈 때마다 새로 붙인다. */}
+          <div key={periodMode} className="unfold mt-3">
+            {periodMode === 'unit' ? (
+              <>
+                {/*
+                  묶는 단위. 거르는 조건이 아니라 목록을 무엇으로 묶을지라 알약도 세지도 않는다.
+                  아래 끊는 자리(월 시작일 등)가 이 단위를 따른다.
+                */}
+                <div className="flex flex-wrap gap-2">
+                  {UNITS.map((item) => (
+                    <Chip
+                      key={item.id}
+                      label={t(item.labelKey)}
+                      selected={draftUnit === item.id}
+                      onClick={() => setDraftUnit(item.id)}
+                    />
+                  ))}
+                </div>
 
-            위에서 기간을 정하면 그 기간이 한 줄이라 이 값은 쓰이지 않는다. 칸은 그대로
-            두고 한 줄로 알린다 -- 감추면 기간을 지운 뒤 왜 줄이 바뀌는지 모른다.
-          */}
-          <div className="mt-4">
-            <p className="mb-2 text-xs text-gray-500">
-              {t(
-                draftUnit === 'month'
-                  ? 'tx.search.cutMonth'
-                  : draftUnit === 'week'
-                    ? 'tx.search.cutWeek'
-                    : 'tx.search.cutYear',
-              )}
-            </p>
-            {draftUnit === 'month' ? (
-              // 서른한 개를 알약으로 늘어놓으면 칸 하나가 화면을 차지한다. 고르는 상자로 둔다.
-              <select
-                value={draft.monthStartDay}
-                onChange={(e) =>
-                  setDraft((prev) => ({ ...prev, monthStartDay: Number(e.target.value) }))
-                }
-                className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
-              >
-                {Array.from({ length: 31 }, (_, index) => index + 1).map((day) => (
-                  <option key={day} value={day}>
-                    {t('tx.search.cutDay', { day })}
-                  </option>
-                ))}
-              </select>
-            ) : draftUnit === 'week' ? (
-              <div className="flex flex-wrap gap-2">
-                <Chip
-                  label={t('tx.search.cutDefault')}
-                  selected={draft.weekStartDay === null}
-                  onClick={() => setDraft((prev) => ({ ...prev, weekStartDay: null }))}
-                />
-                {weekdayNames(0).map((name, weekday) => (
-                  <Chip
-                    key={name}
-                    label={name}
-                    selected={draft.weekStartDay === weekday}
-                    onClick={() =>
-                      setDraft((prev) => ({ ...prev, weekStartDay: weekday as WeekStart }))
-                    }
-                  />
-                ))}
-              </div>
+                {/*
+                  기간 줄을 어디서 끊을지. 지금 묶는 단위의 것 하나만 선다 -- 달이면 시작일,
+                  주면 시작 요일, 해면 시작 월이다. 거르는 조건이 아니라 줄의 경계를 옮긴다.
+                */}
+                <div className="mt-4">
+                  <p className="mb-2 text-xs text-gray-500">
+                    {t(
+                      draftUnit === 'month'
+                        ? 'tx.search.cutMonth'
+                        : draftUnit === 'week'
+                          ? 'tx.search.cutWeek'
+                          : 'tx.search.cutYear',
+                    )}
+                  </p>
+                  {draftUnit === 'month' ? (
+                    // 서른한 개를 알약으로 늘어놓으면 칸 하나가 화면을 차지한다. 고르는 상자로 둔다.
+                    <select
+                      value={draft.monthStartDay}
+                      onChange={(e) =>
+                        setDraft((prev) => ({ ...prev, monthStartDay: Number(e.target.value) }))
+                      }
+                      className="rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      {Array.from({ length: 31 }, (_, index) => index + 1).map((day) => (
+                        <option key={day} value={day}>
+                          {t('tx.search.cutDay', { day })}
+                        </option>
+                      ))}
+                    </select>
+                  ) : draftUnit === 'week' ? (
+                    <div className="flex flex-wrap gap-2">
+                      <Chip
+                        label={t('tx.search.cutDefault')}
+                        selected={draft.weekStartDay === null}
+                        onClick={() => setDraft((prev) => ({ ...prev, weekStartDay: null }))}
+                      />
+                      {weekdayNames(0).map((name, weekday) => (
+                        <Chip
+                          key={name}
+                          label={name}
+                          selected={draft.weekStartDay === weekday}
+                          onClick={() =>
+                            setDraft((prev) => ({ ...prev, weekStartDay: weekday as WeekStart }))
+                          }
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-wrap gap-2">
+                      {Array.from({ length: 12 }, (_, index) => index + 1).map((month) => (
+                        <Chip
+                          key={month}
+                          label={formatMonthShort(month)}
+                          selected={draft.yearStartMonth === month}
+                          onClick={() => setDraft((prev) => ({ ...prev, yearStartMonth: month }))}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
             ) : (
-              <div className="flex flex-wrap gap-2">
-                {Array.from({ length: 12 }, (_, index) => index + 1).map((month) => (
-                  <Chip
-                    key={month}
-                    label={formatMonthShort(month)}
-                    selected={draft.yearStartMonth === month}
-                    onClick={() => setDraft((prev) => ({ ...prev, yearStartMonth: month }))}
-                  />
-                ))}
-              </div>
+              <>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="flex flex-1 flex-col gap-1 text-xs text-gray-500">
+                    {t('tx.search.periodFrom')}
+                    <input
+                      type="date"
+                      value={draft.startDate}
+                      onChange={(e) => setDraft((prev) => ({ ...prev, startDate: e.target.value }))}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </label>
+                  <label className="flex flex-1 flex-col gap-1 text-xs text-gray-500">
+                    {t('tx.search.periodTo')}
+                    <input
+                      type="date"
+                      value={draft.endDate}
+                      onChange={(e) => setDraft((prev) => ({ ...prev, endDate: e.target.value }))}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </label>
+                </div>
+                {draft.startDate || draft.endDate ? (
+                  <button
+                    type="button"
+                    onClick={() => setDraft((prev) => ({ ...prev, startDate: '', endDate: '' }))}
+                    className="mt-2 text-xs font-medium text-blue-600 hover:underline"
+                  >
+                    {t('tx.search.periodClear')}
+                  </button>
+                ) : null}
+                {/* 잘못 적었을 때만 한 줄 뜬다. */}
+                {isRangeBroken ? (
+                  <p className="mt-2 text-xs leading-5 text-red-600">
+                    {t('tx.search.periodInvalid')}
+                  </p>
+                ) : (
+                  // 정한 기간이 목록의 한 줄이 된다는 것을 알린다. 단위 쪽이 감춰진 까닭이다.
+                  <p className="mt-2 text-xs leading-5 text-gray-500">{t('tx.search.cutIgnored')}</p>
+                )}
+              </>
             )}
-            {draftRange ? (
-              <p className="mt-2 text-xs leading-5 text-gray-500">{t('tx.search.cutIgnored')}</p>
-            ) : null}
           </div>
         </div>
 

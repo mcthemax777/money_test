@@ -105,6 +105,13 @@ const entry = (id: string, description: string, amount: string, date: string) =>
         entry('e-fridge', '냉장고', '306000', monthsAgo(2)),
         // 이번 달 일시불. 회차 기준에서도 그대로 이번 달이다.
         entry('e-lunch', '점심', '10000', monthsAgo(0)),
+        /*
+         * 할부를 사기 전 달의 일시불. 어느 달의 수단별에도 끼면 안 된다.
+         *
+         * 회차 기준은 할부를 찾으려고 앞으로 넓혀 읽는다. 그 넓힌 구간의 일시불까지 세면
+         * 수단별 줄이 앞 달들의 거래를 끌고 와, 어느 달을 펴도 비슷한 금액이 선다.
+         */
+        entry('e-snack', '간식', '7000', monthsAgo(3)),
       ],
       budgets: [
         { id: 'b1', projectId: PID, categoryId: 'c-food', type: null, monthlyAmount: '500000',
@@ -167,6 +174,14 @@ const entry = (id: string, description: string, amount: string, date: string) =>
     '카드 합계도 회차 몫',
     methods.find((row) => row.id === 'card-1')?.amount,
     '111000',
+  );
+  const methodsBefore = await port.getPaymentMethods({ yearMonth: lastMonth }, PID, {
+    basis: 'installment',
+  } as never);
+  eq(
+    '지난달 수단별은 2회차뿐 (넓혀 읽은 앞 달의 일시불을 세지 않는다)',
+    methodsBefore.find((row) => row.id === 'card-1')?.amount,
+    '102000',
   );
 
   console.log('\n== 달 목록 ==');

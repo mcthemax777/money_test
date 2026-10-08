@@ -435,6 +435,35 @@ export function withoutChip(search: TransactionSearch, chipId: string): Transact
 }
 
 /**
+ * 검색 창의 "언제" 칸이 무엇으로 정하는가. 둘 중 하나다 (2026-10-08 사용자 요청).
+ *
+ *   unit   묶는 단위와 끊는 자리(시작 요일·시작일·시작 월). 목록이 그 기간들로 나뉜다.
+ *   range  직접 정한 기간(startDate·endDate). 목록이 그 기간 한 줄이다.
+ *
+ * 기간을 정하면 끊는 자리는 원래 쓰이지 않았다(`searchChipsOf`·`searchCount` 가 세지 않는다).
+ * 그래서 둘 다 적힌 검색(예전에 저장한 것, 템플릿)이 들어오면 **기간 쪽**으로 연다 -- 그 검색이
+ * 실제로 걸던 것이 기간이다.
+ */
+export type SearchPeriodMode = 'unit' | 'range';
+
+export function searchPeriodModeOf(search: TransactionSearch): SearchPeriodMode {
+  return search.startDate || search.endDate ? 'range' : 'unit';
+}
+
+/**
+ * 고른 쪽만 남기고 다른 쪽 값을 비운다. 검색 창이 적용할 때 부른다 -- 감춘 칸에 남은 값이
+ * 조용히 걸려 있으면 알약도 칸도 없이 목록이 달라진다.
+ */
+export function withSearchPeriodMode(
+  search: TransactionSearch,
+  mode: SearchPeriodMode,
+): TransactionSearch {
+  return mode === 'range'
+    ? { ...search, ...DEFAULT_PERIOD_CUT }
+    : { ...search, startDate: '', endDate: '' };
+}
+
+/**
  * 검색이 고른 기간. 한쪽이 비어 있으면 그쪽이 열린 구간이다.
  *
  * 적은 칸이 실재하지 않는 날짜이거나(2월 31일) 두 칸이 뒤집혀 있으면 null 이다. 아무

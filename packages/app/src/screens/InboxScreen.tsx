@@ -55,6 +55,26 @@ import {
   isNotificationAccessGranted,
   openNotificationAccessSettings,
 } from '../inbox';
+import { useNavigation } from '../shell/navigation';
+
+/** 보관함의 주소. 거래 화면의 하위 화면이다. */
+export const INBOX_PATH = '/transactions/inbox';
+
+const SOURCES: EntryDraftSource[] = ['notification', 'capture', 'recurring'];
+
+/**
+ * 보관함을 이 탭으로 여는 주소. 푸시를 누르면 담긴 후보의 탭(알림·반복)으로 곧바로 간다.
+ * 탭은 `?tab=` 에 싣는다 -- 예산 설정이 보던 달을 주소에 싣는 것과 같은 모양이다.
+ */
+export function inboxHref(source: EntryDraftSource): string {
+  return `${INBOX_PATH}?tab=${source}`;
+}
+
+/** 주소에 실린 탭. 없거나 모르는 값이면 null 이다(그때는 보던 탭을 그대로 둔다). */
+function inboxTabOf(path: string): EntryDraftSource | null {
+  const tab = new URLSearchParams(path.split('?')[1] ?? '').get('tab');
+  return SOURCES.find((source) => source === tab) ?? null;
+}
 
 /** 갈래 이름. 후보의 금액 옆에 글자로 적는다. */
 const KIND_KEY: Record<string, MessageKey> = {
@@ -83,7 +103,16 @@ export default function InboxScreen() {
   const timeZone = useProjectTimeZone();
   const canEdit = useCanEdit();
 
-  const [source, setSource] = useState<EntryDraftSource>('notification');
+  const { path } = useNavigation();
+  const [source, setSource] = useState<EntryDraftSource>(() => inboxTabOf(path) ?? 'notification');
+  /*
+   * 보관함을 보는 중에 다른 탭의 푸시를 누르면 화면은 그대로 남고 주소만 바뀐다. 그 탭으로 옮긴다.
+   * 사람이 탭을 눌러 바꾼 것은 주소를 건드리지 않으므로 여기서 되돌리지 않는다.
+   */
+  useEffect(() => {
+    const tab = inboxTabOf(path);
+    if (tab) setSource(tab);
+  }, [path]);
   const inbox = useEntryDrafts(projectId, source);
   /**
    * 알림 탭에서 고른 사람(`createdByName`). null 이면 전체다.

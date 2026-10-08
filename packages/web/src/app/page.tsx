@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@money/core/store/auth';
 import { useTranslation } from '@money/core/lib/i18n';
+import { FIRST_PATH } from '@money/core/lib/nav';
 
 export default function Home() {
   const { t } = useTranslation();
@@ -14,7 +15,7 @@ export default function Home() {
     // isInitializing이 false가 될 때까지 기다렸다가 리다이렉트
     if (!isInitializing) {
       if (isAuthenticated) {
-        router.push('/home');
+        router.push(FIRST_PATH);
       } else {
         router.push('/login');
       }

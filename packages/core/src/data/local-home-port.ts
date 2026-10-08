@@ -904,9 +904,25 @@ export function createLocalHomePort(
           matchLine,
         ),
       );
-      // 회차 기준이면 금액을 그 회차 몫으로 바꾸고, 회차가 없는 할부는 뺀다.
+      /*
+       * 회차 기준이면 금액을 그 회차 몫으로 바꾸고, 회차가 없는 할부는 뺀다.
+       *
+       * **넓혀 읽은 앞 구간에서는 할부만 남긴다.** 넓힌 것은 앞에서 산 할부의 회차를 찾기
+       * 위해서다. `installmentEntryViews` 는 할부가 아닌 거래(일시불·할부 환불)를 그대로
+       * 흘려보내므로, 여기서 거르지 않으면 앞 60개월의 일시불이 이 구간의 수단 합계에 더해져
+       * 어느 달을 펴도 비슷한 금액이 선다. 서버 `installmentScope` 와 같은 규칙이다 --
+       * 할부가 아닌 것은 제 날짜가 구간 안일 때만, 할부는 넓힌 구간 전체에서.
+       */
       const counted = spread
-        ? installmentEntryViews(items, { timeZone, ...periodWindow(period, keys, timeZone) })
+        ? installmentEntryViews(
+            items.filter((item) => {
+              const isPurchase = (item.installmentMonths ?? 1) >= 2 && !item.installmentAdjust;
+              if (isPurchase) return true;
+              const key = dateKeyOfRow(item.date, timeZone);
+              return key >= keys.fromDateKey && key <= keys.toDateKey;
+            }),
+            { timeZone, ...periodWindow(period, keys, timeZone) },
+          )
         : items;
 
       return paymentMethods(

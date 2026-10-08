@@ -3,6 +3,7 @@
 import Link from 'next/link';
 
 import { useTranslation } from '@money/core/lib/i18n';
+import { FIRST_PATH } from '@money/core/lib/nav';
 
 /**
  * 앱 표시. 파란 모서리 둥근 바탕에 흰 지갑이다.
@@ -41,7 +42,7 @@ export function AppBrand({ size = 'sm' }: { size?: 'sm' | 'md' }) {
 
   return (
     <Link
-      href="/home"
+      href={FIRST_PATH}
       aria-label={t('common.goHome')}
       className="-mx-1 flex shrink-0 items-center gap-1.5 rounded-lg px-1 py-1 hover:bg-gray-100"
     >

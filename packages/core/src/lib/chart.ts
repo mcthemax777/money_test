@@ -294,6 +294,14 @@ function bounds(values: number[]): [number, number, number] {
 }
 
 /**
+ * 막대 위에 적는 금액. 축 눈금과 같이 줄여 적는다("12만") -- 막대 폭에 원 단위를 다 적을
+ * 자리가 없다. 0 원 막대에는 적지 않는다(빈 문자열). 웹·앱 막대가 함께 쓴다.
+ */
+export function barValueLabel(value: number, currency: string): string {
+  return value === 0 ? '' : formatAxisAmount(value, currency);
+}
+
+/**
  * 축 눈금은 큰 단위로 줄여 쓴다. 낱단위로 적으면 자리수가 길어 겹친다.
  *
  * 만/억은 보조 단위를 쓰지 않는 통화(원, 엔)의 자리 세는 법이다. 달러처럼

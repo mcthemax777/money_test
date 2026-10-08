@@ -243,6 +243,12 @@ export default function AnalysisView({
               trendPeriod={analysis.trendPeriod}
               reloadToken={reloadToken}
               onEntryClick={(entry) => entryEditorRef.current?.openDetail(entry)}
+              /*
+                원형 목록 줄을 누르면 그 분류·수단을 조건으로 건다. 거래 탭에서 건너온 보기는 조건을
+                고칠 수 없다(알약도 읽기 전용) -- 줄은 예전처럼 파고들기만 한다.
+              */
+              onPickCategory={onBack ? undefined : analysis.pickCategory}
+              onPickMethod={onBack ? undefined : analysis.pickMethod}
             />
           )}
         </div>

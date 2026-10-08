@@ -24,7 +24,7 @@ import AnalysisScreen from './src/screens/AnalysisScreen';
 import AssetsScreen from './src/screens/AssetsScreen';
 import CategoriesScreen from './src/screens/CategoriesScreen';
 import HomeScreen from './src/screens/HomeScreen';
-import InboxScreen from './src/screens/InboxScreen';
+import InboxScreen, { INBOX_PATH } from './src/screens/InboxScreen';
 import LoginScreen from './src/screens/LoginScreen';
 import OutboxScreen from './src/screens/OutboxScreen';
 import InquiriesScreen from './src/screens/InquiriesScreen';
@@ -139,15 +139,14 @@ function Screen() {
    * 홈의 예산 상자에서 들어가는 하위 화면이라 뒤로가기로 돌아온다.
    */
   if (path.split('?')[0] === BUDGET_SETTINGS_PATH) return <BudgetSettingsScreen />;
+  // 거래 화면의 머리글이나 보관함 푸시에서 들어간다. 푸시는 열 탭을 주소에 싣는다(`?tab=`).
+  if (path.split('?')[0] === INBOX_PATH) return <InboxScreen />;
 
   switch (path) {
     case '/home':
       return <HomeScreen />;
     case '/transactions':
       return <TransactionsScreen />;
-    // 거래 화면의 머리글에서 들어간다. 하위 화면이라 뒤로가기로 돌아온다.
-    case '/transactions/inbox':
-      return <InboxScreen />;
     case '/analysis':
       return <AnalysisScreen />;
     case '/assets':

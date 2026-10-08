@@ -1,5 +1,6 @@
 /*
- * 푸시를 받을 준비와, 푸시를 눌렀을 때 갈 곳(보관함 후보 → 보관함, 문의 답장 → 문의하기).
+ * 푸시를 받을 준비와, 푸시를 눌렀을 때 갈 곳(알림 후보 → 보관함의 알림 탭, 반복 회차 → 반복 탭,
+ * 문의 답장 → 문의하기).
  *
  * 화면을 그리지 않는다. 로그인한 껍데기 안에 한 번 둔다 -- 토큰을 적으려면 로그인해
  * 있어야 하고, 눌린 알림을 보관함으로 보내려면 화면 이동(`useNavigation`)이 있어야 한다.
@@ -12,6 +13,7 @@ import { useProject } from '@money/core/store/project';
 import { refreshInquiryUnread } from '@money/core/store/inquiry-unread';
 
 import { registerPushDevice } from '../push';
+import { INBOX_PATH, inboxHref } from '../screens/InboxScreen';
 import { useNavigation } from './navigation';
 
 export default function PushSetup() {
@@ -34,7 +36,9 @@ export default function PushSetup() {
   }, []);
 
   /*
-   * 보관함 알림을 누르면 보관함으로 간다.
+   * 보관함 알림을 누르면 보관함으로 간다. 서버가 실어 보낸 출처(`source`)의 탭을 연다 -- 알림
+   * 후보는 알림 탭, 반복 회차는 반복 탭이다. 출처가 없는 옛 서버의 푸시는 첫 탭(알림)으로 연다.
+   * 앱이 꺼져 있다가 눌려 켜져도 같은 응답이 들어온다(`useLastNotificationResponse`).
    *
    * 다른 가계부의 후보면 그 가계부로 바꾼 뒤 간다. 알림은 구성원 모두에게 가므로, 지금
    * 고른 가계부가 아닌 곳의 알림을 누르는 일이 있다. 내 목록에 없는 가계부(그 사이
@@ -46,7 +50,11 @@ export default function PushSetup() {
     if (handledRef.current === id) return;
     handledRef.current = id;
 
-    const data = response.notification.request.content.data as { type?: unknown; projectId?: unknown };
+    const data = response.notification.request.content.data as {
+      type?: unknown;
+      projectId?: unknown;
+      source?: unknown;
+    };
     // 문의 답장은 문의하기 화면으로. 그 화면이 목록을 새로 읽고 배지를 다시 센다.
     if (data?.type === 'inquiry-reply') {
       go('/settings/inquiries');
@@ -59,7 +67,7 @@ export default function PushSetup() {
     if (target && target !== project.selectedProjectId && project.projects.some((p) => p.id === target)) {
       project.setSelectedProjectId(target);
     }
-    go('/transactions/inbox');
+    go(data.source === 'notification' || data.source === 'recurring' ? inboxHref(data.source) : INBOX_PATH);
   }, [response, go]);
 
   /*

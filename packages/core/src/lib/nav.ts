@@ -32,6 +32,13 @@ export interface NavItem {
   icon: NavIconName;
 }
 
+/**
+ * 로그인하면(앱은 켜면) 처음 여는 화면. 거래 화면이다 (2026-10-08, 예산에서 바꿨다).
+ *
+ * 웹의 첫 주소·로그인 뒤 가는 곳·앱 표시와 앱의 첫 화면이 모두 이 값을 쓴다.
+ */
+export const FIRST_PATH = '/transactions';
+
 /** 프로젝트가 있어야 뜻이 있는 메뉴. 프로젝트가 없으면 감춘다. */
 const PROJECT_ITEMS: NavItem[] = [
   /*
@@ -47,7 +54,8 @@ const PROJECT_ITEMS: NavItem[] = [
    */
   { labelKey: 'nav.analysis', href: '/analysis', icon: 'analysis' },
   /*
-   * 예산. 주소는 로그인하면 처음 여는 `/home` 그대로다 (2026-09-30에 이름을 "홈"에서 바꿨다).
+   * 예산. 주소는 예전에 로그인하면 처음 열던 `/home` 그대로다 (2026-09-30에 이름을 "홈"에서
+   * 바꿨고, 2026-10-08에 첫 화면을 거래로 넘겼다 -- `FIRST_PATH`).
    *
    * 거래와 자산 사이에 둔다. 거래가 "어디에 썼나"를 보이면 예산이 "그게 계획 안이었나"를
    * 잇는다. 그림은 저금통 -- 집 모양이면 여전히 첫 화면으로 읽힌다.

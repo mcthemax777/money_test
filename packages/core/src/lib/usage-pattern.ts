@@ -10,7 +10,7 @@
  * 쓴 요일과 자주 조금씩 쓴 요일이 같은 값으로 보인다. 날 수는 **오늘까지**만 센다 --
  * 이번 달을 보는 중에 아직 오지 않은 날까지 넣으면 평균이 절반으로 깎인다.
  */
-import type { EntryListItem, WeekStart } from '@money/types';
+import { NO_ACCOUNT, type EntryListItem, type WeekStart } from '@money/types';
 
 import {
   dateKeyOf,
@@ -33,11 +33,29 @@ export interface BarPoint {
 export interface MethodSlice {
   name: string;
   value: number;
+  /**
+   * 검색에 걸 때의 값. 카드면 카드 id, 계좌면 계좌 id 이고, 수단 없이 적은 거래(미지정)는
+   * `NO_ACCOUNT` 다 -- 검색이 계좌 무리의 한 갈래로 받는다 (거래 탭 수단별 줄과 같은 규칙).
+   */
+  methodId: string;
+  methodKind: 'account' | 'card';
 }
 
+/**
+ * 요일·시간대 막대를 무엇으로 세울지. 평균은 하루 평균, 누적은 구간 안의 합계다.
+ * 두 화면의 전환 단추가 함께 쓴다.
+ */
+export type PatternMode = 'average' | 'total';
+
 export interface UsagePattern {
+  /** 요일별 하루 평균 */
   weekday: BarPoint[];
+  /** 시간대별 하루 평균 */
   hour: BarPoint[];
+  /** 요일별 합계. 평균과 같은 차례다. */
+  weekdayTotal: BarPoint[];
+  /** 시간대별 합계 */
+  hourTotal: BarPoint[];
   methods: MethodSlice[];
   /** 시간을 적지 않아(자정으로 저장) 시간대에서 뺀 거래 수. */
   untimedCount: number;
@@ -104,31 +122,48 @@ export function buildUsagePattern({
      * 수단. 카드로 냈으면 카드, 아니면 계좌다. 이체의 수수료는 보낸 계좌(accountId)에
      * 붙는다. 자산 탭의 결제수단 집계(`paymentMethods`)와 같은 규칙이다.
      */
-    const id = entry.cardId ?? entry.accountId ?? '';
+    const methodKind = entry.cardId ? 'card' : 'account';
+    // 미지정 계정은 목록에 accountId 가 비어 온다. 검색은 그것을 NO_ACCOUNT 로 받는다.
+    const methodId = entry.cardId ?? entry.accountId ?? NO_ACCOUNT;
     const name = (entry.cardId ? entry.cardName : entry.accountName) || noMethod;
-    const slice = methodSums.get(id);
+    const key = `${methodKind}:${methodId}`;
+    const slice = methodSums.get(key);
     if (slice) slice.value += amount;
-    else methodSums.set(id, { name, value: amount });
+    else methodSums.set(key, { name, value: amount, methodId, methodKind });
   }
 
   const averageOf = (sum: number, days: number) => (days > 0 ? Math.round(sum / days) : 0);
 
   // 요일은 사용자가 고른 시작 요일부터 늘어놓는다. 달력 머리글과 같은 차례다.
   const names = weekdayNames(weekStart);
-  const weekday = names.map((label, index) => {
-    const day = (weekStart + index) % 7;
-    return { label, amount: averageOf(weekdaySums[day], weekdayDays[day]) };
-  });
+  const weekdayOrder = names.map((label, index) => ({ label, day: (weekStart + index) % 7 }));
+  const weekday = weekdayOrder.map(({ label, day }) => ({
+    label,
+    amount: averageOf(weekdaySums[day], weekdayDays[day]),
+  }));
+  const weekdayTotal = weekdayOrder.map(({ label, day }) => ({ label, amount: weekdaySums[day] }));
 
+  const hourLabels = hourSums.map((_, value) =>
+    translate(activeLocale(), 'chart.hourTick', { hour: value }),
+  );
   const hour = hourSums.map((sum, value) => ({
-    label: translate(activeLocale(), 'chart.hourTick', { hour: value }),
+    label: hourLabels[value],
     amount: averageOf(sum, dayCount),
   }));
+  const hourTotal = hourSums.map((sum, value) => ({ label: hourLabels[value], amount: sum }));
 
   // 환불이 더 커서 합이 0 이하가 된 수단은 원형에 그릴 수 없다.
   const methods = [...methodSums.values()]
     .filter((slice) => slice.value > 0)
     .sort((a, b) => b.value - a.value);
 
-  return { weekday, hour, methods, untimedCount, hasTimedAmount: hourSums.some((sum) => sum > 0) };
+  return {
+    weekday,
+    hour,
+    weekdayTotal,
+    hourTotal,
+    methods,
+    untimedCount,
+    hasTimedAmount: hourSums.some((sum) => sum > 0),
+  };
 }

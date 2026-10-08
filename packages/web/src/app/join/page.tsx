@@ -8,6 +8,7 @@ import { useProject } from '@money/core/store/project';
 import { apiClient } from '@money/core/lib/api-client';
 import { GoogleSignInButton } from '@/components/GoogleSignInButton';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { FIRST_PATH } from '@money/core/lib/nav';
 import { useApiError } from '@money/core/lib/api-error';
 
 interface InvitationInfo {
@@ -103,11 +104,11 @@ function JoinContent() {
     try {
       setIsSubmitting(true);
       const result = await apiClient.acceptInvitation(code);
-      // 방금 합류한 프로젝트를 바로 선택해 예산 화면에서 보이게 한다.
+      // 방금 합류한 프로젝트를 바로 선택해 첫 화면(거래)에서 보이게 한다.
       if (result?.projectId) {
         setSelectedProjectId(result.projectId);
       }
-      router.push('/home');
+      router.push(FIRST_PATH);
     } catch (err: any) {
       setError(messageOf(err, 'invite.acceptFailed'));
       setIsSubmitting(false);
@@ -145,7 +146,7 @@ function JoinContent() {
         {!code ? (
           <div className="bg-white rounded-lg shadow p-6 text-center space-y-4">
             <p className="text-gray-700">{t('invite.noCode')}</p>
-            <Link href="/home" className="text-blue-600 hover:underline text-sm">
+            <Link href={FIRST_PATH} className="text-blue-600 hover:underline text-sm">
               {t('invite.toDashboard')}
             </Link>
           </div>
@@ -188,7 +189,7 @@ function JoinContent() {
               <div className="space-y-3">
                 <p className="text-sm text-green-700">{t('projects.alreadyMember')}</p>
                 <Link
-                  href="/home"
+                  href={FIRST_PATH}
                   className="block text-center px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
                 >
                   {t('invite.toDashboard')}
@@ -220,7 +221,7 @@ function JoinContent() {
                       ? t('invite.used')
                       : t('invite.declined')}
                 </p>
-                <Link href="/home" className="text-blue-600 hover:underline text-sm">
+                <Link href={FIRST_PATH} className="text-blue-600 hover:underline text-sm">
                   {t('invite.toDashboard')}
                 </Link>
               </div>

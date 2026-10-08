@@ -5,9 +5,10 @@ import { useRouter } from 'next/navigation';
 import type { BudgetDto, CardDto, EntryFilterQuery } from '@money/types';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
 
-import { currentYearMonth } from '@money/core/lib/datetime';
+import { currentYearMonth, shiftYearMonth } from '@money/core/lib/datetime';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useHomeData } from '@money/core/hooks/useHomeData';
+import { usePeriodSwipe } from '@/hooks/usePeriodSwipe';
 import { useProjectGuard } from '@/hooks/useProjectGuard';
 import {
   useCanEdit,
@@ -64,6 +65,18 @@ export default function HomePage() {
   const { year, month } = view;
   const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
   const thisYearMonth = `${thisYear}-${String(thisMonth).padStart(2, '0')}`;
+  /*
+   * 달 줄부터 아래(예산 상자들)를 가로로 끌면 달을 넘긴다 -- 달 줄의 ‹ › 와 같은 일이다
+   * (2026-10-08 사용자 요청, 앱과 같다). 위쪽 실적 구간 카드는 감싸지 않는다. 그 줄은
+   * 가로로 끌면 카드를 넘긴다. 앞 값에서 옮겨, 다시 그리기 전에 두 번 넘겨도 두 달이 간다.
+   */
+  const swipeRef = usePeriodSwipe<HTMLElement>((delta) =>
+    setView((prev) => {
+      const from = `${prev.year}-${String(prev.month).padStart(2, '0')}`;
+      const [nextYear, nextMonth] = shiftYearMonth(from, delta).split('-').map(Number);
+      return { year: nextYear, month: nextMonth };
+    }),
+  );
 
   /* 화면이 보는 값 전부. 앱의 홈 화면도 같은 훅을 쓴다. */
   const home = useHomeData({ projectId: selectedProjectId, year, month, thisYearMonth });
@@ -163,7 +176,7 @@ export default function HomePage() {
         )}
       </section>
 
-      <section className="space-y-3">
+      <section ref={swipeRef} className="space-y-3">
         {/*
           아래 칸들은 모두 이 달 기준이다. 어느 달인지 한 번만 적고, 여기서 달을 옮긴다.
           합계는 넘기지 않는다. 예산 상자의 합계 줄이 말한다.

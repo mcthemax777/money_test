@@ -4,7 +4,7 @@ import { Text, View } from 'react-native';
 import type { EntryListItem } from '@money/types';
 
 import { useHomeData } from '@money/core/hooks/useHomeData';
-import { currentYearMonth } from '@money/core/lib/datetime';
+import { currentYearMonth, shiftYearMonth } from '@money/core/lib/datetime';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
@@ -18,6 +18,7 @@ import EntryEditor from '../components/EntryEditor';
 import MonthHeader from '../components/MonthHeader';
 import MonthlyBudgetSummary, { TagBudgetSummary } from '../components/MonthlyBudgetSummary';
 import PageHeader from '../components/PageHeader';
+import PeriodSwipe from '../components/PeriodSwipe';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import SpendingMethodCarousel from '../components/SpendingMethodCarousel';
 import type { EntryType } from '../components/TypeTabs';
@@ -57,6 +58,16 @@ export default function HomeScreen() {
   const { year, month } = view;
   const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
   const thisYearMonth = `${thisYear}-${String(thisMonth).padStart(2, '0')}`;
+  /**
+   * 달 줄의 ‹ › 와 같은 일. 아래 예산 자리를 가로로 끌 때 쓴다.
+   * 앞 값에서 옮긴다 -- 다시 그리기 전에 두 번 넘겨도 두 달이 넘어가게.
+   */
+  const shiftMonth = (delta: number) =>
+    setView((prev) => {
+      const from = `${prev.year}-${String(prev.month).padStart(2, '0')}`;
+      const [nextYear, nextMonth] = shiftYearMonth(from, delta).split('-').map(Number);
+      return { year: nextYear, month: nextMonth };
+    });
 
   /* 아래 예산이 지출을 볼지 수입을 볼지. 지출부터 본다. */
   const [type, setType] = useState<EntryType>('expense');
@@ -214,39 +225,45 @@ export default function HomeScreen() {
             )}
           </View>
 
-          <View className="gap-3">
-            {/*
-              아래 칸들은 모두 이 달 기준이다. 어느 달인지 한 번만 적고, 여기서 달을 옮긴다.
-              합계는 넘기지 않는다. 예산 상자의 합계 줄이 말한다.
-            */}
-            <MonthHeader
-              year={year}
-              month={month}
-              incomeTotal={0}
-              expenseTotal={0}
-              onMonthChange={(nextYear, nextMonth) => setView({ year: nextYear, month: nextMonth })}
-            />
+          {/*
+            달 줄부터 아래를 가로로 끌면 달을 넘긴다 (2026-10-08 사용자 요청). 위쪽 실적 구간
+            카드는 감싸지 않는다 -- 그 줄은 가로로 끌면 카드를 넘긴다.
+          */}
+          <PeriodSwipe onShift={shiftMonth}>
+            <View className="gap-3">
+              {/*
+                아래 칸들은 모두 이 달 기준이다. 어느 달인지 한 번만 적고, 여기서 달을 옮긴다.
+                합계는 넘기지 않는다. 예산 상자의 합계 줄이 말한다.
+              */}
+              <MonthHeader
+                year={year}
+                month={month}
+                incomeTotal={0}
+                expenseTotal={0}
+                onMonthChange={(nextYear, nextMonth) => setView({ year: nextYear, month: nextMonth })}
+              />
 
-            {/*
-              분류 예산. 지출·수입 탭이 이 상자 안에 있다 -- 밖에 두면 아래 태그 예산까지
-              그 탭을 따르는 것처럼 읽힌다 (웹과 같다). 탭에는 금액을 적지 않는다.
-            */}
-            <MonthlyBudgetSummary
-              budgets={home.budgets}
-              categories={home.categories}
-              type={type}
-              onTypeChange={setType}
-              onSelect={openCategory}
-              onOpenSettings={canEdit ? () => go(budgetSettingsHref(yearMonth, type)) : undefined}
-            />
+              {/*
+                분류 예산. 지출·수입 탭이 이 상자 안에 있다 -- 밖에 두면 아래 태그 예산까지
+                그 탭을 따르는 것처럼 읽힌다 (웹과 같다). 탭에는 금액을 적지 않는다.
+              */}
+              <MonthlyBudgetSummary
+                budgets={home.budgets}
+                categories={home.categories}
+                type={type}
+                onTypeChange={setType}
+                onSelect={openCategory}
+                onOpenSettings={canEdit ? () => go(budgetSettingsHref(yearMonth, type)) : undefined}
+              />
 
-            {/* 태그 예산. 분류 예산과 상자를 나누고, 지출·수입 탭을 따르지 않는다 (웹과 같다). */}
-            <TagBudgetSummary
-              tagBudgets={home.tagBudgets}
-              onSelect={openCategory}
-              onOpenSettings={canEdit ? () => go(tagBudgetSettingsHref(yearMonth)) : undefined}
-            />
-          </View>
+              {/* 태그 예산. 분류 예산과 상자를 나누고, 지출·수입 탭을 따르지 않는다 (웹과 같다). */}
+              <TagBudgetSummary
+                tagBudgets={home.tagBudgets}
+                onSelect={openCategory}
+                onOpenSettings={canEdit ? () => go(tagBudgetSettingsHref(yearMonth)) : undefined}
+              />
+            </View>
+          </PeriodSwipe>
         </>
       )}
 

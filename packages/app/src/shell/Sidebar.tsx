@@ -1,7 +1,7 @@
 import { Pressable, ScrollView, Text, View } from 'react-native';
 
 import { useTranslation } from '@money/core/lib/i18n';
-import { isActiveNav, navItemsOf } from '@money/core/lib/nav';
+import { FIRST_PATH, isActiveNav, navItemsOf } from '@money/core/lib/nav';
 import { useAuth } from '@money/core/store/auth';
 import { useProject } from '@money/core/store/project';
 
@@ -29,9 +29,9 @@ export default function Sidebar() {
   return (
     <View className="hidden h-full w-64 border-r border-gray-200 bg-white md:flex">
       <ScrollView>
-        {/* 맨 위는 앱 표시. 좁은 화면의 위쪽 막대 가운데에 오는 것과 같고, 누르면 홈으로 간다. */}
+        {/* 맨 위는 앱 표시. 좁은 화면의 위쪽 막대 가운데에 오는 것과 같고, 누르면 첫 화면(거래)으로 간다. */}
         <View className="flex-row items-center border-b border-gray-200 p-4">
-          <AppBrand size="md" onPress={() => go('/home')} />
+          <AppBrand size="md" onPress={() => go(FIRST_PATH)} />
         </View>
 
         <Pressable

@@ -10,7 +10,14 @@ import { useState } from 'react';
 import { Pressable, Text, View, type LayoutChangeEvent } from 'react-native';
 import Svg, { Line, Rect, Text as SvgText } from 'react-native-svg';
 
-import { CHART_COLOR, barDomain, barTicks, formatAxisAmount, signedBarColor } from '@money/core/lib/chart';
+import {
+  CHART_COLOR,
+  barDomain,
+  barTicks,
+  barValueLabel,
+  formatAxisAmount,
+  signedBarColor,
+} from '@money/core/lib/chart';
 import type { BarPoint } from '@money/core/lib/usage-pattern';
 import { formatCurrency } from '@money/core/lib/money';
 
@@ -21,6 +28,13 @@ const PLOT_HEIGHT = 200;
 const AXIS_WIDTH = 48;
 const RIGHT_PAD = 10;
 const TOP_PAD = 16;
+/** 막대 위 금액을 세워 적을 때 가장 높은 막대 위로 더 띄우는 자리 */
+const VERTICAL_LABEL_PAD = 30;
+/**
+ * 칸이 이보다 좁으면 막대 위 금액을 세워 적는다. "123만"을 눕혀 적으면 이 폭쯤 먹는다 --
+ * 시간대 스물넷이나 열두 달은 폰 너비에서 세우고, 요일 일곱은 눕힌다.
+ */
+const HORIZONTAL_LABEL_MIN_SLOT = 34;
 /** X축 이름이 앉는 자리 */
 const BOTTOM_PAD = 20;
 
@@ -58,16 +72,19 @@ export default function MonthlyAmountChart({
   const [picked, setPicked] = useState<number | null>(null);
 
   const plotWidth = Math.max(width - AXIS_WIDTH - RIGHT_PAD, 1);
-  const plotHeight = PLOT_HEIGHT - TOP_PAD - BOTTOM_PAD;
   const slot = plotWidth / Math.max(points.length, 1);
   const barWidth = slot * BAR_RATIO;
+  /** 막대 위 금액을 세워 적는가. 세우면 위를 더 띄운다. */
+  const verticalLabel = slot < HORIZONTAL_LABEL_MIN_SLOT;
+  const topPad = TOP_PAD + (verticalLabel ? VERTICAL_LABEL_PAD : 0);
+  const plotHeight = PLOT_HEIGHT - topPad - BOTTOM_PAD;
 
   const [bottom, top] = barDomain(points.map((point) => point.amount));
   const ticks = barTicks(bottom, top);
 
   const yOf = (value: number) => {
     const ratio = top === bottom ? 0 : (value - bottom) / (top - bottom);
-    return TOP_PAD + (1 - ratio) * plotHeight;
+    return topPad + (1 - ratio) * plotHeight;
   };
   /** 막대가 서는 바닥. 금액이 음수인 달이 있으면 0선이 축 위로 올라온다. */
   const baseY = yOf(Math.max(bottom, 0));
@@ -147,6 +164,34 @@ export default function MonthlyAmountChart({
                 />
               );
             })}
+
+            {/*
+              막대 위 금액 (2026-10-08 사용자 요청). 축과 같이 줄여 적고, 0 원 막대는 비운다.
+              음수 막대도 0 선 바로 위에 적는다(웹과 같은 자리) -- 아래 끝 밑에 적으면 작은 음수가
+              X축 이름과 겹친다. 폭을 재기 전에는 칸을 몰라 그리지 않는다.
+            */}
+            {width > 0
+              ? points.map((point, index) => {
+                  const text = barValueLabel(point.amount, currency);
+                  if (!text) return null;
+                  const x = centerOf(index);
+                  const y = Math.min(yOf(point.amount), baseY) - 3;
+                  return (
+                    <SvgText
+                      key={`value-${point.label}-${index}`}
+                      x={x}
+                      y={y}
+                      fontSize={9}
+                      fill={AXIS_TEXT_COLOR}
+                      textAnchor={verticalLabel ? 'start' : 'middle'}
+                      alignmentBaseline={verticalLabel ? 'middle' : 'baseline'}
+                      transform={verticalLabel ? `rotate(-90 ${x} ${y})` : undefined}
+                    >
+                      {text}
+                    </SvgText>
+                  );
+                })
+              : null}
 
             {/* X축 이름. 어느 막대에 적을지는 showAxisLabel 이 정한다. */}
             {points.map((point, index) =>

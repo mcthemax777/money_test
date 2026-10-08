@@ -8,8 +8,8 @@
  *
  * 합치는 것은 둘이다 (2026-10-06 사용자 요청으로 수입·지출 막대와 구성비 원형은 뺐다).
  *
- *   1. **일별 누적 순수입.** 날마다 쌓인 수입에서 쌓인 지출을 뺀다. 달로 보면 앞선 두 달도
- *      같은 방법으로 겹친다.
+ *   1. **일별 누적 순수입.** 날마다 쌓인 수입에서 쌓인 지출을 뺀다. 달·주·해 한 칸을 보면 앞선
+ *      두 기간도 같은 방법으로 겹친다 (`comparablePeriodKey`).
  *   2. **기간별 순수입.** 같은 기간 칸의 수입에서 지출을 뺀 막대다. 지출 탭의 월별 사용금액과
  *      같은 막대 그래프로 그리고, 적자인 기간은 0 아래로 내려간다.
  */
@@ -60,7 +60,7 @@ export interface NetAnalysis {
   comparisons: CumulativeSeries[];
   currentMonthName?: string;
   throughDay?: number;
-  /** 이 기간(이나 겹쳐 그릴 앞선 달)에 수입·지출이 하나라도 있는가. */
+  /** 이 기간(이나 겹쳐 그릴 앞선 기간)에 수입·지출이 하나라도 있는가. */
   hasDaily: boolean;
 }
 
@@ -79,7 +79,7 @@ export function useNetAnalysis(input: Omit<CategoryDetailInput, 'categoryId'>): 
   }));
 
   const daily = netPoints(income.daily, expense.daily);
-  /* 앞선 달도 같은 차례(전전달, 지난달)로 온다. 이름은 두 쪽이 같다. */
+  /* 앞선 기간도 같은 차례(전전, 전)로 온다. 이름은 두 쪽이 같다. */
   const comparisons: CumulativeSeries[] = expense.comparisons.map((series, index) => ({
     name: series.name,
     points: netPoints(income.comparisons[index]?.points ?? [], series.points),

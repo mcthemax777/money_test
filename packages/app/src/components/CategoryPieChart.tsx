@@ -36,12 +36,13 @@ function arcPath(cx: number, cy: number, from: number, to: number): string {
   return `M ${cx} ${cy} L ${x1} ${y1} A ${RADIUS} ${RADIUS} 0 ${large} 1 ${x2} ${y2} Z`;
 }
 
-export default function CategoryPieChart({
+export default function CategoryPieChart<T extends CategorySlice>({
   slices,
   currency,
   onDrill,
+  onPick,
 }: {
-  slices: CategorySlice[];
+  slices: T[];
   currency: string;
   /**
    * 조각을 눌러 한 단 내려갈 때. 주지 않으면 누를 수 없는 그림이 된다.
@@ -50,6 +51,11 @@ export default function CategoryPieChart({
    * 눌러도 아무 일도 일어나지 않는다.
    */
   onDrill?: (categoryId: string) => void;
+  /**
+   * 목록 줄을 누를 때. 주면 줄은 이 일을 하고(분석의 조건 더하기, 2026-10-08 사용자 요청),
+   * 조각은 여전히 파고든다. 주지 않으면 줄도 조각처럼 파고든다.
+   */
+  onPick?: (slice: T) => void;
 }) {
   const [width, setWidth] = useState(0);
   const measure = (event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width);
@@ -130,13 +136,17 @@ export default function CategoryPieChart({
       */}
       <View className="mt-2">
         {wedges.map((wedge) => {
-          const canDrill = Boolean(onDrill && wedge.slice.id);
+          const action = onPick
+            ? () => onPick(wedge.slice)
+            : onDrill && wedge.slice.id
+              ? () => onDrill(wedge.slice.id!)
+              : undefined;
 
           return (
             <Pressable
               key={wedge.slice.id ?? wedge.slice.name}
-              onPress={canDrill ? () => onDrill!(wedge.slice.id!) : undefined}
-              disabled={!canDrill}
+              onPress={action}
+              disabled={!action}
               className="flex-row items-baseline gap-2 border-b border-gray-100 px-1 py-1.5 active:bg-gray-50"
             >
               <View

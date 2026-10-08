@@ -85,7 +85,11 @@ type NoticeDraft = Pick<
 /** 차지한 후보 한 줄. */
 interface ClaimedDraft extends NoticeDraft {
   projectId: string;
+  source: NoticeSource;
 }
+
+/** 알리는 후보의 출처. 앱이 눌렸을 때 보관함의 어느 탭을 열지 가른다. */
+type NoticeSource = 'notification' | 'recurring';
 
 /** 알림 문구. 받는 사람의 화면 언어로 보낸다 (`User.locale`). */
 const TEXT = {
@@ -184,7 +188,7 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
   }
 
   /**
-   * 조용해진 가계부의 알리지 않은 후보를 차지해 가계부마다 한 번씩 알린다.
+   * 조용해진 가계부의 알리지 않은 후보를 차지해 가계부·출처마다 한 번씩 알린다.
    *
    * 차지와 고르기가 한 문장이다. 서버 둘이 같은 순간에 돌면 Postgres 가 같은 행을 두 번
    * 고치지 못하게 뒤 문장을 기다리게 하고, 기다린 문장은 `notifiedAt` 이 채워진 것을 보고
@@ -217,7 +221,7 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
             HAVING max("createdAt") <= now() - make_interval(secs => ${DRAFT_NOTICE_QUIET_SECONDS})
                 OR min("createdAt") <= now() - make_interval(secs => ${DRAFT_NOTICE_MAX_WAIT_SECONDS})
           )
-        RETURNING "projectId", "merchant", "appTitle", "description", "createdByName",
+        RETURNING "projectId", "source", "merchant", "appTitle", "description", "createdByName",
                   "amount"::text AS "amount", "currency", "occurredAt", "createdAt"
       `);
       if (claimed.length === 0) return;
@@ -228,16 +232,21 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
           (b.occurredAt?.getTime() ?? 0) - (a.occurredAt?.getTime() ?? 0) ||
           b.createdAt.getTime() - a.createdAt.getTime(),
       );
-      const byProject = new Map<string, NoticeDraft[]>();
-      for (const { projectId, createdAt: _at, occurredAt: _on, ...draft } of claimed) {
-        const drafts = byProject.get(projectId) ?? [];
-        drafts.push(draft);
-        byProject.set(projectId, drafts);
+      /*
+       * 가계부와 출처마다 한 번씩 보낸다. 눌렀을 때 알림 후보는 보관함의 알림 탭, 반복 회차는
+       * 반복 탭이 열린다 -- 한 푸시에 둘이 섞이면 한 탭만 열려 나머지가 안 보인다.
+       */
+      const groups = new Map<string, { projectId: string; source: NoticeSource; drafts: NoticeDraft[] }>();
+      for (const { projectId, source, createdAt: _at, occurredAt: _on, ...draft } of claimed) {
+        const key = `${projectId}:${source}`;
+        const group = groups.get(key) ?? { projectId, source, drafts: [] };
+        group.drafts.push(draft);
+        groups.set(key, group);
       }
 
       await Promise.all(
-        [...byProject].map(([projectId, drafts]) =>
-          this.send(projectId, drafts).catch((error) =>
+        [...groups.values()].map(({ projectId, source, drafts }) =>
+          this.send(projectId, source, drafts).catch((error) =>
             this.logger.warn(`푸시를 보내지 못했습니다: ${String(error)}`),
           ),
         ),
@@ -250,7 +259,7 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
   }
 
   /** 구성원 기기 전부에 보낸다. */
-  private async send(projectId: string, drafts: NoticeDraft[]): Promise<void> {
+  private async send(projectId: string, source: NoticeSource, drafts: NoticeDraft[]): Promise<void> {
     if (!this.auth || drafts.length === 0) return;
 
     const devices = await this.prisma.pushDevice.findMany({
@@ -272,7 +281,8 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
       devices.map((device) =>
         this.sendToDevice(firebaseProjectId, accessToken, device.token, {
           ...messageFor(localeOf(device.user.locale), drafts),
-          data: { type: 'entry-draft', projectId },
+          // source 가 없는 옛 서버의 푸시는 앱이 보관함의 첫 탭(알림)으로 연다.
+          data: { type: 'entry-draft', projectId, source },
           channelId: DRAFT_CHANNEL_ID,
         }),
       ),

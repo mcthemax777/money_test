@@ -10,19 +10,13 @@
  * 각자 맡는다 -- 웹은 recharts, 앱은 react-native-svg 라 컴포넌트를 나눌 수 없다.
  */
 import { useEffect, useMemo, useState } from 'react';
-import { isCalendarMonthKey, periodDayRange, unitOfKey, type EntryDto, type EntryFilterQuery, type EntryListItem, type EntryPeriodUnit } from '@money/types';
+import { isCalendarMonthKey, selfCategoryPick, unitOfKey, type EntryDto, type EntryFilterQuery, type EntryListItem, type EntryPeriodUnit } from '@money/types';
 
 import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 import { homeDataPort } from '../data/home-port';
 import { type ReportPeriod } from '../lib/api-client';
-import {
-  dayRangeQuery,
-  formatMonthShort,
-  formatYearOnly,
-  throughDayOf,
-  todayKey,
-} from '../lib/datetime';
+import { dayRangeQuery, todayKey } from '../lib/datetime';
 import {
   analysisDated,
   buildDailyCumulative,
@@ -33,7 +27,13 @@ import {
 import { activeLocale, translate, type MessageKey } from '../lib/i18n';
 import { parseTagBudgetTarget } from '../lib/budget';
 import { toNumber } from '../lib/money';
-import { loadEntriesByBasis, loadPreviousMonths } from '../lib/month-compare';
+import {
+  comparablePeriodKey,
+  loadEntriesByBasis,
+  loadPreviousPeriods,
+  periodShortName,
+  throughDayOfPeriod,
+} from '../lib/month-compare';
 import { isOfflineError } from '../lib/offline-error';
 import type { Category } from '../lib/types';
 import { buildUsagePattern, type BarPoint, type UsagePattern } from '../lib/usage-pattern';
@@ -65,6 +65,9 @@ export interface DetailLabels {
   noPeriod: MessageKey;
   weekday: MessageKey;
   hour: MessageKey;
+  /** 요일·시간대를 누적(합계)으로 볼 때의 제목 */
+  weekdayTotal: MessageKey;
+  hourTotal: MessageKey;
   method: MessageKey;
 }
 
@@ -78,6 +81,8 @@ const DETAIL_LABELS: Record<'income' | 'expense', DetailLabels> = {
     noPeriod: 'detail.noMonthUsage',
     weekday: 'detail.weekdayAverage',
     hour: 'detail.hourAverage',
+    weekdayTotal: 'detail.weekdayTotal',
+    hourTotal: 'detail.hourTotal',
     method: 'detail.methodUsage',
   },
   income: {
@@ -89,6 +94,8 @@ const DETAIL_LABELS: Record<'income' | 'expense', DetailLabels> = {
     noPeriod: 'detail.noMonthIncome',
     weekday: 'detail.weekdayAverageIncome',
     hour: 'detail.hourAverageIncome',
+    weekdayTotal: 'detail.weekdayTotalIncome',
+    hourTotal: 'detail.hourTotalIncome',
     method: 'detail.methodIncome',
   },
 };
@@ -119,32 +126,17 @@ const TREND_BY_UNIT: Record<
   },
 };
 
-/**
- * 추이 막대 하나의 이름. 달 "8월", 주 "9/13"(그 주의 첫날), 해 "2026년".
- *
- * 시작일을 붙인 달("2026-08@14")은 시작하는 날 "8/14" 로, 시작 월을 붙인 해("2026@03")는
- * 시작하는 해로 적는다. 막대 밑은 좁아 구간 전체를 적을 자리가 없다.
- */
-function trendLabel(key: string): string {
-  const unit = unitOfKey(key);
-  const [base, anchor] = key.split('@');
-  if (unit === 'year') return formatYearOnly(Number(base));
-  const [, month, day] = base.split('-').map(Number);
-  if (unit === 'month' && anchor) {
-    // 그 달에 시작일이 없으면 말일에 시작한다. 실제로 시작하는 날을 적는다.
-    const [, startMonth, startDay] = periodDayRange(key).startKey.split('-').map(Number);
-    return `${startMonth}/${startDay}`;
-  }
-  if (unit === 'month') return formatMonthShort(month);
-  return `${month}/${day}`;
-}
-
 /** 원형차트 조각 하나 */
 export interface CategorySlice {
   name: string;
   value: number;
   /** 소분류를 가진 대분류만 갖는다. 이 값이 없으면 더 파고들 수 없는 조각이다. */
   id?: string;
+  /**
+   * 검색의 분류 칸에 담을 값. 비우면 id 다. "미분류" 조각은 id 가 없어도 그 대분류의
+   * 미분류 칸(`selfCategoryPick`)으로 걸 수 있다 -- 분석의 목록을 눌러 조건을 더할 때 쓴다.
+   */
+  pickId?: string;
 }
 
 /** 12개월 추이의 한 점. label 은 "8월"이다. 요일·시간대 막대와 같은 모양이다. */
@@ -178,10 +170,58 @@ export function buildSubcategoryStats(rows: BreakdownRow[], parentId: string): C
   const directAmount = direct ? toNumber(direct.amount) : 0;
   if (directAmount > 0) {
     // 훅 밖의 순수 함수라 지금 언어를 직접 읽는다.
-    stats.push({ name: translate(activeLocale(), 'category.uncategorized'), value: directAmount });
+    stats.push({
+      name: translate(activeLocale(), 'category.uncategorized'),
+      value: directAmount,
+      pickId: selfCategoryPick(parentId),
+    });
   }
 
   return stats.sort((a, b) => b.value - a.value);
+}
+
+/**
+ * 모든 대분류의 소분류를 한 원형에 펼친 조각. 대분류별 원형 아래에 선다 (2026-10-08 사용자 요청).
+ *
+ * 소분류가 있는 대분류에 바로 적은 금액은 "대분류 · 미분류" 한 조각이고, 소분류가 아예 없는
+ * 대분류는 그 이름 그대로 한 조각이다 -- 빼면 조각 합이 대분류별 원형의 합보다 적어진다.
+ * 소분류 이름이 다른 대분류의 것과 겹치면("기타") 대분류 이름을 앞에 붙여 가른다.
+ */
+export function buildFlatSubcategoryStats(rows: BreakdownRow[]): CategorySlice[] {
+  const parentName = new Map<string, string>();
+  const hasChildren = new Set<string>();
+  for (const row of rows) {
+    if (row.parentCategoryId) hasChildren.add(row.parentCategoryId);
+    else parentName.set(row.categoryId, row.categoryName);
+  }
+  const nameCount = new Map<string, number>();
+  for (const row of rows) {
+    if (row.parentCategoryId) nameCount.set(row.categoryName, (nameCount.get(row.categoryName) ?? 0) + 1);
+  }
+  const uncategorized = translate(activeLocale(), 'category.uncategorized');
+
+  return rows
+    .map((row): CategorySlice => {
+      const value = toNumber(row.amount);
+      if (row.parentCategoryId) {
+        const parent = parentName.get(row.parentCategoryId);
+        const isDuplicate = (nameCount.get(row.categoryName) ?? 0) > 1;
+        return {
+          id: row.categoryId,
+          name: isDuplicate && parent ? `${parent} · ${row.categoryName}` : row.categoryName,
+          value,
+        };
+      }
+      return hasChildren.has(row.categoryId)
+        ? {
+            name: `${row.categoryName} · ${uncategorized}`,
+            value,
+            pickId: selfCategoryPick(row.categoryId),
+          }
+        : { id: row.categoryId, name: row.categoryName, value };
+    })
+    .filter((slice) => slice.value > 0)
+    .sort((a, b) => b.value - a.value);
 }
 
 /**
@@ -262,7 +302,7 @@ export interface CategoryDetail {
   monthly: MonthlyPoint[];
   /** 이 구간의 일별 누적 */
   daily: DailyCumulativePoint[];
-  /** 겹쳐 그릴 앞선 두 달. 달 단위로 볼 때만 찬다. */
+  /** 겹쳐 그릴 앞선 두 기간(전전, 전). 달·주·해 한 칸을 통째로 볼 때만 찬다 (`comparablePeriodKey`). */
   comparisons: CumulativeSeries[];
   /** 이 구간의 거래. 일별 누적과 같은 조회에서 온다. */
   entries: EntryListItem[];
@@ -277,9 +317,9 @@ export interface CategoryDetail {
    * "미분류"를 보고 있으면 쪼갤 것이 없어 비어 있다.
    */
   pies: CategoryPie[];
-  /** 이번 달 선에 붙일 이름("8월"). 달 단위로 볼 때만 있다. */
+  /** 이번 기간 선에 붙일 이름("8월", 주 "9/13"). 앞선 기간과 견줄 때만 있다. */
   currentMonthName?: string;
-  /** 이번 달 선을 그 달의 며칠까지 그을지. 달 단위로 볼 때만 있다. */
+  /** 이번 기간 선을 첫날부터 며칠째까지 그을지. 앞선 기간과 견줄 때만 있다. */
   throughDay?: number;
   /** 12개월 중 한 달이라도 금액이 있는지. 없으면 그래프 대신 안내를 적는다. */
   hasMonthlyAmount: boolean;
@@ -294,7 +334,13 @@ export interface CategoryDetail {
 
 /** 구성비 원형 하나. 파고드는 상태를 원형마다 따로 든다. */
 export interface CategoryPie {
+  /** 화면이 원형마다 쓰는 열쇠. 같은 유형에 대분류별과 소분류별이 함께 선다. */
+  key: string;
   type: 'income' | 'expense';
+  /**
+   * 소분류를 한데 펼친 원형인가. 그 원형은 파고들 것이 없다 (drill 이 아무 일도 하지 않는다).
+   */
+  isFlat: boolean;
   /** 지금 그릴 조각. 파고든 상태면 그 대분류의 소분류들이다. */
   slices: CategorySlice[];
   /** 조각을 눌러 파고든 대분류. null 이면 첫 단계다. */
@@ -355,6 +401,11 @@ export function useCategoryDetail({
     : { startKey: period.startDate!, endKey: period.endDate! };
   const endMonth = dayKeys.endKey.slice(0, 7);
   const periodKey = `${dayKeys.startKey}~${dayKeys.endKey}`;
+  /*
+   * 앞선 두 기간을 겹쳐 그릴 기간 열쇠. 달력의 달, 또는 추이 막대 한 칸(주·해·시작일을 붙인
+   * 달)과 꼭 같은 구간일 때만 있다 (`comparablePeriodKey`). 직접 정한 기간은 null 이다.
+   */
+  const compareKey = comparablePeriodKey(period, trendPeriod);
   /* 객체는 렌더마다 새로 만들어진다. 의존성에는 값을 쓴다. */
   const filterKey = JSON.stringify(filter ?? {});
   const clipKey = JSON.stringify(trendClip ?? {});
@@ -515,13 +566,14 @@ export function useCategoryDetail({
         );
 
         /*
-         * 겹쳐 그릴 앞선 두 달.
+         * 겹쳐 그릴 앞선 두 기간. 달이면 앞선 두 달, 주·해·시작일을 붙인 달이면 같은 단위로
+         * 앞선 두 칸이다 (2026-10-08 사용자 요청).
          *
          * 기간을 직접 정했을 때는 받지 않는다. 열흘짜리 구간의 "지난달"이 한 달인지
          * 같은 열흘인지 정해지지 않아 견줄 대상이 없다.
          */
-        const comparisonPromise = period.yearMonth
-          ? serverOnly(loadPreviousMonths(period.yearMonth, entryQuery, projectId, timeZone, target.type), [])
+        const comparisonPromise = compareKey
+          ? serverOnly(loadPreviousPeriods(compareKey, entryQuery, projectId, timeZone, target.type), [])
           : Promise.resolve([] as CumulativeSeries[]);
 
         /*
@@ -575,7 +627,7 @@ export function useCategoryDetail({
         const trend = (trendRes ?? []) as Array<{ yearMonth: string; amount: string }>;
         setMonthly(
           trend.map((point) => ({
-            label: trendLabel(point.yearMonth),
+            label: periodShortName(point.yearMonth),
             amount: toNumber(point.amount),
           })),
         );
@@ -654,9 +706,32 @@ export function useCategoryDetail({
   const pies: CategoryPie[] = pieSources
     // 조각이 없는 원형은 그리지 않는다. 그 태그로 들어온 돈이 없으면 수입 원형은 없다.
     .filter((source) => source.slices.length > 0)
-    .map((source) => {
+    .flatMap((source): CategoryPie[] => {
       const down = drilled[source.type];
-      return {
+      /*
+       * 대분류별 원형(전체·태그) 아래에 소분류를 한데 펼친 원형을 하나 더 세운다. 분류 하나를
+       * 볼 때는 첫 원형이 이미 그 소분류별이라 세우지 않는다. 소분류가 하나도 없는 가계부면
+       * 대분류별과 같은 그림이라 걸러 낸다.
+       */
+      const flatSlices =
+        target.scope === 'category' ? [] : buildFlatSubcategoryStats(source.flat);
+      const flatPie: CategoryPie[] = source.flat.some((row) => row.parentCategoryId)
+        ? [
+            {
+              key: `${source.type}-flat`,
+              type: source.type,
+              isFlat: true,
+              slices: flatSlices,
+              drilledId: null,
+              title: PIE_TITLE[source.type].child,
+              drill: () => undefined,
+              resetDrill: () => undefined,
+            },
+          ]
+        : [];
+      return [{
+        key: source.type,
+        isFlat: false,
         type: source.type,
         slices: down ? down.slices : source.slices,
         drilledId: down?.id ?? null,
@@ -675,7 +750,7 @@ export function useCategoryDetail({
             const { [source.type]: _dropped, ...rest } = prev;
             return rest;
           }),
-      };
+      }, ...flatPie.filter((pie) => pie.slices.length > 0)];
     });
 
   return {
@@ -691,13 +766,11 @@ export function useCategoryDetail({
     hasPatternAmount: pattern.methods.length > 0,
     pies,
     /*
-     * 달 단위로 볼 때만 쓰는 값. 이번 달 선의 이름과, 그 선을 며칠까지 그을지다.
-     * 기간 보기에서는 견줄 달이 없어 둘 다 필요 없다.
+     * 앞선 기간과 견줄 때만 쓰는 값. 이번 기간 선의 이름("8월", 주 "9/13", 해 "2026년")과,
+     * 그 선을 첫날부터 며칠째까지 그을지다. 직접 정한 기간에서는 견줄 기간이 없어 둘 다 필요 없다.
      */
-    currentMonthName: period.yearMonth
-      ? formatMonthShort(Number(period.yearMonth.slice(5)))
-      : undefined,
-    throughDay: period.yearMonth ? throughDayOf(period.yearMonth, timeZone) : undefined,
+    currentMonthName: compareKey ? periodShortName(compareKey) : undefined,
+    throughDay: compareKey ? throughDayOfPeriod(compareKey, timeZone) : undefined,
     hasMonthlyAmount: monthly.some((point) => point.amount > 0),
     isOffline,
     /*

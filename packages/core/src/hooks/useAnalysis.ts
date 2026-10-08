@@ -30,6 +30,7 @@ import {
 import type { ReportPeriod } from '../lib/api-client';
 import { dayRangeQuery, periodLabel } from '../lib/datetime';
 import { toNumber } from '../lib/money';
+import type { MethodSlice } from '../lib/usage-pattern';
 import { useProjectTimeZone } from '../store/project';
 import {
   useTransactions,
@@ -214,6 +215,24 @@ export function useAnalysis(
     return { income, expense, net: income - expense };
   }, [isLoadingMonths, isPeriodPending, months, periodKey]);
 
+  /*
+   * 원형 목록 줄을 눌러 조건을 더한다 (2026-10-08 사용자 요청). 그 무리는 누른 것 하나로
+   * **바꾼다** -- 원형은 이미 걸린 조건 안의 조각이라, 더해서 OR 로 넓히면 "식비" 안의 "외식"을
+   * 눌러도 식비 전체가 그대로 남는다. 바꾸면 누른 조각으로 좁아진다. 다른 무리는 그대로다.
+   * 묶는 단위는 지금 것 그대로라 보던 기간도 남는다.
+   */
+  const pickCategory = (pickId: string) =>
+    tx.applySearch({ ...tx.search, categoryIds: [pickId] }, tx.unit);
+  const pickMethod = (method: MethodSlice) =>
+    tx.applySearch(
+      {
+        ...tx.search,
+        paymentAccountIds: method.methodKind === 'account' ? [method.methodId] : [],
+        paymentCardIds: method.methodKind === 'card' ? [method.methodId] : [],
+      },
+      tx.unit,
+    );
+
   const period = useMemo(() => analysisPeriodOf(periodKey, range), [periodKey, range]);
   const trendClip = useMemo(() => trendClipOf(range, timeZone), [range, timeZone]);
 
@@ -240,6 +259,8 @@ export function useAnalysis(
     trendClip,
     /** 추이 막대의 마지막 기간. 막대가 이 단위로 선다. */
     trendPeriod: periodKey,
+    pickCategory,
+    pickMethod,
     /** 분석 조회에 싣는 조건 (사람 + 검색 + 세는 방식). 거래 목록과 같은 것이다. */
     filter: tx.scope,
   };

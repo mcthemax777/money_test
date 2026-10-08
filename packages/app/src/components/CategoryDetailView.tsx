@@ -9,14 +9,15 @@
  * 무엇을 받아 무엇을 그릴지는 core 의 useCategoryDetail 이 정한다(웹의 상세와 같은
  * 훅이다). 같은 분류를 누르면 두 화면이 같은 값을 말한다.
  */
-import type { ReactNode } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Animated, Pressable, Text, View } from 'react-native';
 import type { EntryScopeQuery, EntryListItem } from '@money/types';
 
 import { useCategoryDetail } from '@money/core/hooks/useCategoryDetail';
 import { type ReportPeriod } from '@money/core/lib/api-client';
 import { useTranslation } from '@money/core/lib/i18n';
 import type { Category } from '@money/core/lib/types';
+import type { MethodSlice, PatternMode } from '@money/core/lib/usage-pattern';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 import DailyCumulativeChart from './DailyCumulativeChart';
@@ -30,12 +31,80 @@ const everyThirdHour = (index: number) => index % 3 === 0;
 /** 요일은 일곱뿐이라 다 적는다. */
 const everyWeekday = () => true;
 
+/** 전환 단추 한 칸의 폭(px). 알약이 이만큼씩 미끄러진다. */
+const MODE_SLOT_WIDTH = 48;
+
+/** 요일·시간대 막대의 평균/누적 전환. 제목 줄 오른쪽에 선다 (웹의 PatternModeToggle 과 같은 모양). */
+function PatternModeToggle({
+  mode,
+  onChange,
+}: {
+  mode: PatternMode;
+  onChange: (mode: PatternMode) => void;
+}) {
+  const { t } = useTranslation();
+  /*
+   * 흰 알약이 고른 쪽으로 미끄러진다. 누른 데서가 아니라 mode 를 보고 움직인다 -- 요일과 시간대
+   * 카드에 하나씩 서서, 한쪽을 누르면 다른 쪽 알약도 함께 옮겨 가야 한다.
+   */
+  const offset = useRef(new Animated.Value(mode === 'total' ? MODE_SLOT_WIDTH : 0)).current;
+  useEffect(() => {
+    Animated.timing(offset, {
+      toValue: mode === 'total' ? MODE_SLOT_WIDTH : 0,
+      duration: 180,
+      useNativeDriver: true,
+    }).start();
+  }, [mode, offset]);
+  const choose = onChange;
+  const options: Array<{ id: PatternMode; label: string }> = [
+    { id: 'average', label: t('detail.patternAverage') },
+    { id: 'total', label: t('detail.patternTotal') },
+  ];
+  return (
+    <View className="flex-row rounded-md bg-gray-200 p-0.5">
+      <Animated.View
+        pointerEvents="none"
+        className="absolute bottom-0.5 left-0.5 top-0.5 rounded bg-white"
+        style={{ width: MODE_SLOT_WIDTH, transform: [{ translateX: offset }] }}
+      />
+      {options.map((option) => (
+        <Pressable
+          key={option.id}
+          onPress={() => choose(option.id)}
+          style={{ width: MODE_SLOT_WIDTH }}
+          className="items-center py-1"
+        >
+          <Text
+            className={`text-xs font-medium ${mode === option.id ? 'text-blue-600' : 'text-gray-600'}`}
+          >
+            {option.label}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
+  );
+}
+
 /** 그래프 한 장의 카드. 제목 밑에 무엇의 평균인지 적는 한 줄을 둘 수 있다. */
-function ChartCard({ title, note, children }: { title: string; note?: string; children: ReactNode }) {
+function ChartCard({
+  title,
+  note,
+  action,
+  children,
+}: {
+  title: string;
+  note?: string;
+  /** 제목 줄 오른쪽에 세울 조작 (평균/누적 전환) */
+  action?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <View className="gap-3 rounded-lg bg-white p-4 shadow-sm">
       <View className="gap-1">
-        <Text className="text-base font-semibold text-gray-900">{title}</Text>
+        <View className="flex-row items-center justify-between gap-2">
+          <Text className="shrink text-base font-semibold text-gray-900">{title}</Text>
+          {action}
+        </View>
         {note ? <Text className="text-xs text-gray-500">{note}</Text> : null}
       </View>
       {children}
@@ -58,6 +127,8 @@ export default function CategoryDetailView({
   trendPeriod,
   controls,
   title,
+  onPickCategory,
+  onPickMethod,
 }: {
   /** 실제 분류 id, 'total-expense'/'total-income', 또는 태그(`tag:<id>`) */
   categoryId: string;
@@ -88,9 +159,20 @@ export default function CategoryDetailView({
   controls?: ReactNode;
   /** 머리글 제목. 없으면 "{분류} 상세 분석"이다. 거래 분석처럼 분류 하나가 아닌 보기가 준다. */
   title?: string;
+  /**
+   * 분류 원형의 목록 줄을 누르면 부른다. 값은 검색의 분류 칸에 담을 것이다 (`CategorySlice.pickId`).
+   * 분석 탭이 그 분류를 조건으로 더한다. 주지 않으면 줄은 원형 조각과 같이 파고든다.
+   */
+  onPickCategory?: (pickId: string) => void;
+  /** 수단 원형의 목록 줄을 누르면 부른다. 분석 탭이 그 수단을 조건으로 더한다. */
+  onPickMethod?: (method: MethodSlice) => void;
 }) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
+  /** 요일·시간대 막대를 평균으로 볼지 누적(합계)으로 볼지. 두 그래프가 함께 따른다. */
+  const [patternMode, setPatternMode] = useState<PatternMode>('average');
+  const isTotalPattern = patternMode === 'total';
+  const modeToggle = <PatternModeToggle mode={patternMode} onChange={setPatternMode} />;
 
   const detail = useCategoryDetail({
     categoryId,
@@ -127,7 +209,7 @@ export default function CategoryDetailView({
             태그는 지출과 수입이 하나씩이다. 제목은 훅이 정한다 (웹과 같은 값).
           */}
           {detail.pies.map((pie) => (
-            <View key={pie.type} className="gap-3 rounded-lg bg-white p-4 shadow-sm">
+            <View key={pie.key} className="gap-3 rounded-lg bg-white p-4 shadow-sm">
               <View className="flex-row items-center justify-between gap-2">
                 <Text className="text-base font-semibold text-gray-900">{t(pie.title)}</Text>
                 {pie.drilledId ? (
@@ -143,8 +225,16 @@ export default function CategoryDetailView({
               <CategoryPieChart
                 slices={pie.slices}
                 currency={displayCurrency}
-                /* 한 단 더 내려간 뒤에는 쪼갤 것이 없다. 그때는 누를 수 없는 그림이다. */
-                onDrill={pie.drilledId ? undefined : pie.drill}
+                /* 한 단 더 내려간 뒤나 소분류를 펼친 원형은 쪼갤 것이 없다. 그때는 누를 수 없는 그림이다. */
+                onDrill={pie.drilledId || pie.isFlat ? undefined : pie.drill}
+                onPick={
+                  onPickCategory
+                    ? (slice) => {
+                        const pickId = slice.pickId ?? slice.id;
+                        if (pickId) onPickCategory(pickId);
+                      }
+                    : undefined
+                }
               />
             </View>
           ))}
@@ -156,7 +246,11 @@ export default function CategoryDetailView({
           <ChartCard title={t(detail.labels.method)}>
             {detail.hasPatternAmount ? (
               /* 수단은 분류가 아니라 더 내려갈 곳이 없다. onDrill 을 주지 않는다. */
-              <CategoryPieChart slices={detail.pattern.methods} currency={displayCurrency} />
+              <CategoryPieChart
+                slices={detail.pattern.methods}
+                currency={displayCurrency}
+                onPick={onPickMethod}
+              />
             ) : (
               <Text className="py-12 text-center text-sm text-gray-500">{emptyPattern}</Text>
             )}
@@ -196,10 +290,14 @@ export default function CategoryDetailView({
           </View>
 
           {/* 요일·시간대. 둘 다 아래 거래 목록에서 센다. */}
-          <ChartCard title={t(detail.labels.weekday)} note={t('detail.weekdayNote')}>
+          <ChartCard
+            title={t(isTotalPattern ? detail.labels.weekdayTotal : detail.labels.weekday)}
+            note={t(isTotalPattern ? 'detail.weekdayTotalNote' : 'detail.weekdayNote')}
+            action={modeToggle}
+          >
             {detail.hasPatternAmount ? (
               <MonthlyAmountChart
-                points={detail.pattern.weekday}
+                points={isTotalPattern ? detail.pattern.weekdayTotal : detail.pattern.weekday}
                 currency={displayCurrency}
                 showAxisLabel={everyWeekday}
               />
@@ -209,9 +307,10 @@ export default function CategoryDetailView({
           </ChartCard>
 
           <ChartCard
-            title={t(detail.labels.hour)}
+            title={t(isTotalPattern ? detail.labels.hourTotal : detail.labels.hour)}
+            action={modeToggle}
             note={[
-              t('detail.hourNote'),
+              t(isTotalPattern ? 'detail.hourTotalNote' : 'detail.hourNote'),
               detail.pattern.untimedCount > 0
                 ? t('detail.hourUntimed', { count: detail.pattern.untimedCount })
                 : '',
@@ -221,7 +320,7 @@ export default function CategoryDetailView({
           >
             {detail.pattern.hasTimedAmount ? (
               <MonthlyAmountChart
-                points={detail.pattern.hour}
+                points={isTotalPattern ? detail.pattern.hourTotal : detail.pattern.hour}
                 currency={displayCurrency}
                 showAxisLabel={everyThirdHour}
               />

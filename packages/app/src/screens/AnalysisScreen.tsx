@@ -236,6 +236,12 @@ export default function AnalysisScreen({
               trendClip={analysis.trendClip}
               trendPeriod={analysis.trendPeriod}
               onEntryClick={openEntry}
+              /*
+                원형 목록 줄을 누르면 그 분류·수단을 조건으로 건다 (웹과 같은 규칙). 거래 탭에서 건너온
+                보기는 조건을 고칠 수 없어 줄은 예전처럼 파고들기만 한다.
+              */
+              onPickCategory={onBack ? undefined : analysis.pickCategory}
+              onPickMethod={onBack ? undefined : analysis.pickMethod}
             />
           )}
         </FadeIn>

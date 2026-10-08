@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import ProjectAccessLostDialog from '@/components/ProjectAccessLostDialog';
 import { useProjectStart } from '@money/core/hooks/useProjectStart';
 import { useTranslation } from '@money/core/lib/i18n';
+import { FIRST_PATH } from '@money/core/lib/nav';
 import { useAuth } from '@money/core/store/auth';
 import { useProject } from '@money/core/store/project';
 
@@ -51,12 +52,12 @@ export default function StartPage() {
   }, [isAuthenticated, isInitializing, router]);
 
   /*
-   * 가계부가 생기면 홈으로 보낸다.
+   * 가계부가 생기면 첫 화면(거래)으로 보낸다.
    *
    * 만들었을 때와 들어갔을 때가 같은 자리다. 목록은 껍데기가 다시 받으므로(useProjectBootstrap)
    * 여기서는 고른 값이 생겼는지만 본다.
    */
-  const goHome = () => router.push('/home');
+  const goHome = () => router.push(FIRST_PATH);
 
   /** 한 걸음 물러선다. 초대 카드 -> 고른 길 -> 단추 둘 의 차례다. */
   const goBack = () => {

@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import { useAuth } from '@money/core/store/auth';
 import { GoogleSignInButton } from '@/components/GoogleSignInButton';
 import { useTranslation } from '@money/core/lib/i18n';
+import { FIRST_PATH } from '@money/core/lib/nav';
 
 export default function LoginPage() {
   const router = useRouter();
@@ -14,7 +15,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     if (isAuthenticated) {
-      router.push('/home');
+      router.push(FIRST_PATH);
     }
   }, [isAuthenticated, router]);
 
@@ -24,7 +25,7 @@ export default function LoginPage() {
 
       try {
         await signInWithGoogle(idToken);
-        router.push('/home');
+        router.push(FIRST_PATH);
       } catch {
         setError(t('login.failed'));
       }

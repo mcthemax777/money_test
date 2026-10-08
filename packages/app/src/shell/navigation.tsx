@@ -11,6 +11,7 @@ import { BackHandler, Platform, ToastAndroid } from 'react-native';
 import { useEffect } from 'react';
 
 import { useTranslation } from '@money/core/lib/i18n';
+import { FIRST_PATH } from '@money/core/lib/nav';
 
 /**
  * 어느 화면을 보고 있는지.
@@ -68,8 +69,11 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   const { t } = useTranslation();
   /** 이 시각 전에 다시 누르면 앱을 닫는다. 지나면 처음부터다. */
   const exitAtRef = useRef(0);
-  /** 쌓인 화면. 마지막이 지금 보는 것이다. 웹의 히스토리와 같은 구실이다. */
-  const [stack, setStack] = useState<string[]>(['/home']);
+  /**
+   * 쌓인 화면. 마지막이 지금 보는 것이다. 웹의 히스토리와 같은 구실이다.
+   * 앱을 켜면 거래 화면부터 연다 (웹이 로그인 뒤 여는 자리와 같다, `FIRST_PATH`).
+   */
+  const [stack, setStack] = useState<string[]>([FIRST_PATH]);
   const path = stack[stack.length - 1];
 
   const go = useCallback((next: string) => {
