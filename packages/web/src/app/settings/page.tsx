@@ -3,7 +3,6 @@
 import { useEffect } from 'react';
 import Link from 'next/link';
 import CountBadge from '@/components/CountBadge';
-import HelpTitle from '@/components/HelpTitle';
 import PageHeader from '@/components/PageHeader';
 import ExchangeRateSettings from '@/components/ExchangeRateSettings';
 import LanguageSettings from '@/components/LanguageSettings';
@@ -31,19 +30,17 @@ export default function SettingsPage() {
 
       {/*
         차례 (2026-10-09 사용자 요청): 내 정보, 프로젝트 관리, 분류·태그, 시작 요일, 언어, 환율, 엑셀,
-        문의하기. 앱은 끝에 보내지 못한 거래가 하나 더 선다. 설명은 제목 옆 물음표를 누르면 펼쳐진다.
+        문의하기. 앱은 끝에 보내지 못한 거래가 하나 더 선다. 설명은 적지 않는다 -- 들어간 화면이 말한다.
       */}
       <div className="space-y-4">
         <SettingsCard
           href="/settings/profile"
           title={t('settings.profile.title')}
-          description={t('settings.profile.description')}
         />
 
         <SettingsCard
           href="/settings/projects"
           title={t('settings.projects.title')}
-          description={t('settings.projects.description')}
         />
 
         {/*
@@ -54,7 +51,6 @@ export default function SettingsPage() {
           <SettingsCard
             href="/settings/categories"
             title={t('settings.categories.title')}
-            description={t('settings.categories.description')}
           />
         ) : null}
 
@@ -75,7 +71,6 @@ export default function SettingsPage() {
           <SettingsCard
             href="/settings/sheet"
             title={t('settings.sheet.title')}
-            description={t('settings.sheet.description')}
           />
         ) : null}
 
@@ -83,7 +78,6 @@ export default function SettingsPage() {
         <SettingsCard
           href="/settings/inquiries"
           title={t('settings.inquiries.title')}
-          description={t('settings.inquiries.description')}
           badge={inquiryUnread}
         />
       </div>
@@ -95,24 +89,21 @@ export default function SettingsPage() {
 function SettingsCard({
   href,
   title,
-  description,
   badge = 0,
 }: {
   href: string;
   title: string;
-  description: string;
   /** 제목 옆의 빨간 건수. 0 이면 그리지 않는다. */
   badge?: number;
 }) {
   return (
-    <Link href={href}>
+    <Link href={href} className="block">
       <div className="bg-white rounded-lg shadow p-6 hover:shadow-md transition cursor-pointer">
         <div className="flex items-center justify-between">
-          <HelpTitle
-            title={title}
-            description={description}
-            trailing={<CountBadge count={badge} inline />}
-          />
+          <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
+            {title}
+            <CountBadge count={badge} inline />
+          </h2>
           <div className="text-2xl">→</div>
         </div>
       </div>

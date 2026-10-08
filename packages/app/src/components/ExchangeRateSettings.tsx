@@ -76,8 +76,6 @@ export default function ExchangeRateSettings() {
     <>
       <SettingRow
         title={t('exchangeRate.title')}
-        description={t('exchangeRate.description')}
-        helpToggle
         /* 줄에는 "1 USD = 1,350" 처럼 외화마다 한 토막씩 잇는다. 길면 줄이 자른다. */
         value={rates.map((info: ExchangeRateInfo) => `${info.from} ${info.rate}`).join(' · ')}
         onPress={() => setIsOpen(true)}

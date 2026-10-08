@@ -10,7 +10,6 @@ export const en: Record<MessageKey, string> = {
   'common.saving': 'Saving...',
   'common.cancel': 'Cancel',
   'common.close': 'Close',
-  'common.help': 'Show description',
   'common.change': 'Change',
   'common.changing': 'Changing...',
 
@@ -34,19 +33,13 @@ export const en: Record<MessageKey, string> = {
   // ===== Settings =====
   'settings.title': 'Settings',
   'settings.profile.title': 'My account',
-  'settings.profile.description': 'Review your account and change your display name',
   'settings.projects.title': 'Projects',
-  'settings.projects.description': 'Create projects, manage members, invite links and join requests',
   'settings.categories.title': 'Categories and tags',
-  'settings.categories.description': 'Create and organize expense and income categories and tags',
 
   // ===== 보내지 못한 거래 (아웃박스) =====
   'settings.outbox.title': 'Unsent entries',
-  'settings.outbox.description': 'Entries written offline that have not reached the server yet',
   'settings.inquiries.title': 'Contact us',
-  'settings.inquiries.description': 'Send a question or problem to the administrator and get a reply',
   'settings.sheet.title': 'Excel import & export',
-  'settings.sheet.description': 'Download your transactions as an Excel file, or add transactions from one',
   'sheet.title': 'Excel import & export',
   'sheet.export.title': 'Export',
   'sheet.export.description': 'Downloads the transactions of this household as an Excel file. Split transactions take one row per line, grouped by the same transaction ID. With no transactions you get an empty template.',

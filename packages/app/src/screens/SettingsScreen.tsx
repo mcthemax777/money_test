@@ -12,7 +12,6 @@ import { useInquiryUnread } from '@money/core/store/inquiry-unread';
 
 import CountBadge from '../components/CountBadge';
 import ExchangeRateSettings from '../components/ExchangeRateSettings';
-import HelpTitle from '../components/HelpTitle';
 import PageHeader from '../components/PageHeader';
 import { OptionModal, SettingRow } from '../components/SettingPicker';
 import { useNavigation } from '../shell/navigation';
@@ -44,23 +43,20 @@ export default function SettingsScreen() {
 
       {/*
         차례 (2026-10-09 사용자 요청): 내 정보, 프로젝트 관리, 분류·태그, 시작 요일, 언어, 환율, 엑셀,
-        문의하기, 보내지 못한 거래. 설명은 제목 옆 물음표를 누르면 펼쳐진다 (웹과 같다).
+        문의하기, 보내지 못한 거래. 설명은 적지 않는다 -- 들어간 화면·팝업이 말한다 (웹과 같다).
       */}
       <View className="gap-4">
         <SettingsCard
           title={t('settings.profile.title')}
-          description={t('settings.profile.description')}
           onPress={() => go('/settings/profile')}
         />
         <SettingsCard
           title={t('settings.projects.title')}
-          description={t('settings.projects.description')}
           onPress={() => go('/settings/projects')}
         />
         {/* 분류와 태그는 한 번 짜 두고 오래 쓰는 것이라 아래 탭에서 내려 여기에 둔다. */}
         <SettingsCard
           title={t('settings.categories.title')}
-          description={t('settings.categories.description')}
           onPress={() => go('/settings/categories')}
         />
 
@@ -79,13 +75,11 @@ export default function SettingsScreen() {
         {/* 거래내역을 엑셀로 내보내고, 엑셀의 거래를 한꺼번에 넣는다. */}
         <SettingsCard
           title={t('settings.sheet.title')}
-          description={t('settings.sheet.description')}
           onPress={() => go('/settings/sheet')}
         />
         {/* 관리자에게 문의. 답이 오면 읽지 않은 답의 수가 보내지 못한 거래와 같은 배지로 선다. */}
         <SettingsCard
           title={t('settings.inquiries.title')}
-          description={t('settings.inquiries.description')}
           badge={inquiryUnread}
           onPress={() => go('/settings/inquiries')}
         />
@@ -95,7 +89,6 @@ export default function SettingsScreen() {
         */}
         <SettingsCard
           title={t('settings.outbox.title')}
-          description={t('settings.outbox.description')}
           badge={outboxCount}
           onPress={() => go('/settings/outbox')}
         />
@@ -106,12 +99,10 @@ export default function SettingsScreen() {
 
 function SettingsCard({
   title,
-  description,
   badge = 0,
   onPress,
 }: {
   title: string;
-  description: string;
   /** 제목 옆의 빨간 건수. 0 이면 그리지 않는다. */
   badge?: number;
   onPress: () => void;
@@ -123,11 +114,10 @@ function SettingsCard({
     >
       <View className="flex-row items-center justify-between">
         <View className="shrink">
-          <HelpTitle
-            title={title}
-            description={description}
-            trailing={<CountBadge count={badge} inline />}
-          />
+          <View className="flex-row items-center gap-2">
+            <Text className="text-lg font-semibold text-gray-900">{title}</Text>
+            <CountBadge count={badge} inline />
+          </View>
         </View>
         <Text className="text-2xl text-gray-400">→</Text>
       </View>
@@ -151,8 +141,6 @@ function LanguageSettings() {
     <>
       <SettingRow
         title={t('settings.language.title')}
-        description={t('settings.language.description')}
-        helpToggle
         value={t(NAME_KEY[locale])}
         disabled={isSaving}
         onPress={() => setIsOpen(true)}
@@ -200,8 +188,6 @@ function WeekStartSettings() {
     <>
       <SettingRow
         title={t('settings.weekStart.title')}
-        description={t('settings.weekStart.description')}
-        helpToggle
         value={names[weekStart]}
         disabled={isSaving}
         onPress={() => setIsOpen(true)}

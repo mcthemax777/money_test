@@ -10,7 +10,6 @@ export const ja: Record<MessageKey, string> = {
   'common.saving': '保存中...',
   'common.cancel': 'キャンセル',
   'common.close': '閉じる',
-  'common.help': '説明を見る',
   'common.change': '変更',
   'common.changing': '変更中...',
 
@@ -35,19 +34,13 @@ export const ja: Record<MessageKey, string> = {
   // ===== 設定 =====
   'settings.title': '設定',
   'settings.profile.title': 'アカウント',
-  'settings.profile.description': 'アカウント情報を確認し、名前を変更します',
   'settings.projects.title': 'プロジェクト管理',
-  'settings.projects.description': 'プロジェクトの作成、メンバーと招待リンク、参加申請を管理します',
   'settings.categories.title': 'カテゴリ・タグ',
-  'settings.categories.description': '支出・収入のカテゴリとタグを作成し、整理します',
 
   // ===== 보내지 못한 거래 (아웃박스) =====
   'settings.outbox.title': '未送信の取引',
-  'settings.outbox.description': 'オフラインで記録し、まだサーバーに届いていない取引を確認します',
   'settings.inquiries.title': 'お問い合わせ',
-  'settings.inquiries.description': '質問や不具合を管理者に送り、返信を受け取ります',
   'settings.sheet.title': 'Excelの読み込み・書き出し',
-  'settings.sheet.description': '取引をExcelファイルで書き出したり、Excelの取引をまとめて入れたりします',
   'sheet.title': 'Excelの読み込み・書き出し',
   'sheet.export.title': '書き出し',
   'sheet.export.description': 'この家計簿の取引をExcelファイルで書き出します。分割取引は行ごとに1行で、同じ取引IDでまとまります。取引がなければ列名だけのひな形になります。',

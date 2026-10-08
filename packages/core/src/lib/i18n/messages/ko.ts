@@ -20,7 +20,6 @@ export const ko = {
   'common.saving': '저장 중...',
   'common.cancel': '취소',
   'common.close': '닫기',
-  'common.help': '설명 보기',
   'common.change': '변경',
   'common.changing': '변경 중...',
 
@@ -44,19 +43,13 @@ export const ko = {
   // ===== 설정 =====
   'settings.title': '설정',
   'settings.profile.title': '내 정보',
-  'settings.profile.description': '계정 정보를 확인하고 이름을 변경합니다',
   'settings.projects.title': '프로젝트 관리',
-  'settings.projects.description': '프로젝트 생성, 멤버와 초대 링크, 가입 요청을 관리합니다',
   'settings.categories.title': '분류/태그',
-  'settings.categories.description': '지출·수입 분류와 태그를 만들고 정리합니다',
 
   // ===== 보내지 못한 거래 (아웃박스) =====
   'settings.outbox.title': '보내지 못한 거래',
-  'settings.outbox.description': '오프라인에서 적었지만 아직 서버에 반영되지 않은 거래를 봅니다',
   'settings.inquiries.title': '문의하기',
-  'settings.inquiries.description': '궁금한 점이나 불편한 점을 관리자에게 보내고 답을 받습니다',
   'settings.sheet.title': '엑셀 가져오기·내보내기',
-  'settings.sheet.description': '거래내역을 엑셀 파일로 내려받거나, 엑셀의 거래를 한꺼번에 넣습니다',
   'sheet.title': '엑셀 가져오기·내보내기',
   'sheet.export.title': '내보내기',
   'sheet.export.description': '이 가계부의 거래를 엑셀 파일로 내려받습니다. 분할 거래는 줄마다 한 행이고 같은 거래ID로 묶입니다. 거래가 없으면 열 이름만 있는 양식이 됩니다.',

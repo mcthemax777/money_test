@@ -7,7 +7,6 @@ import { weekdayNames } from '@money/core/lib/datetime';
 import { useApiError } from '@money/core/lib/api-error';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useWeekStartStore } from '@money/core/store/week-start';
-import HelpTitle from '@/components/HelpTitle';
 
 /**
  * 한 주를 어느 요일에서 시작할지 고르는 자리.
@@ -43,10 +42,7 @@ export default function WeekStartSettings() {
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        {/* 설명을 펼쳐도 고르는 칸이 아래로 밀리지 않게 남은 너비만 쓴다. */}
-        <div className="min-w-0 flex-1">
-          <HelpTitle title={t('settings.weekStart.title')} description={t('settings.weekStart.description')} />
-        </div>
+        <h2 className="text-lg font-semibold text-gray-900">{t('settings.weekStart.title')}</h2>
         <select
           value={weekStart}
           onChange={(e) => choose(Number(e.target.value) as WeekStart)}
