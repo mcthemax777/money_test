@@ -10,6 +10,7 @@ export const en: Record<MessageKey, string> = {
   'common.saving': 'Saving...',
   'common.cancel': 'Cancel',
   'common.close': 'Close',
+  'common.help': 'Show description',
   'common.change': 'Change',
   'common.changing': 'Changing...',
 

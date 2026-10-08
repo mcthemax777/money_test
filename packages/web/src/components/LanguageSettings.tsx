@@ -6,6 +6,7 @@ import { SUPPORTED_LOCALES, type Locale } from '@money/types';
 import { useApiError } from '@money/core/lib/api-error';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useLocaleStore } from '@money/core/store/locale';
+import HelpTitle from '@/components/HelpTitle';
 
 /** 언어 이름을 담은 열쇠. 사전이 세 언어 모두에서 같은 값(그 나라 말)을 갖는다. */
 const NAME_KEY: Record<Locale, MessageKey> = {
@@ -42,9 +43,9 @@ export default function LanguageSettings() {
   return (
     <div className="bg-white rounded-lg shadow p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h2 className="text-lg font-semibold text-gray-900">{t('settings.language.title')}</h2>
-          <p className="mt-1 text-sm text-gray-600">{t('settings.language.description')}</p>
+        {/* 설명을 펼쳐도 고르는 칸이 아래로 밀리지 않게 남은 너비만 쓴다. */}
+        <div className="min-w-0 flex-1">
+          <HelpTitle title={t('settings.language.title')} description={t('settings.language.description')} />
         </div>
         <select
           value={locale}

@@ -29,10 +29,12 @@ import {
 
 import type { ReportPeriod } from '../lib/api-client';
 import { dayRangeQuery, periodLabel } from '../lib/datetime';
+import { BUDGET_TOTAL_TARGET, parseTagBudgetTarget, type BudgetTargetId } from '../lib/budget';
 import { toNumber } from '../lib/money';
 import type { MethodSlice } from '../lib/usage-pattern';
 import { useProjectTimeZone } from '../store/project';
 import {
+  EMPTY_SEARCH,
   useTransactions,
   type PeriodGrouping,
   type SearchRange,
@@ -143,6 +145,32 @@ export interface AnalysisInitial {
   search: TransactionSearch;
   unit: EntryPeriodUnit;
   periodKey: string;
+}
+
+/**
+ * 예산 화면의 줄을 눌러 여는 분석의 처음 값 (2026-10-09 사용자 요청). 거래 탭의 분석 아이콘이
+ * 여는 것과 같은 화면이고, 그 달을 달 단위로 연다.
+ *
+ *   합계 줄      그 유형(지출·수입)만 걸어 그 탭에서 연다.
+ *   분류 줄      그 유형과 그 분류를 걸어 그 탭에서 연다.
+ *   태그 줄      그 태그만 걸어 합계 탭에서 연다 -- 태그 예산은 지출에서 돌려받은 돈을 뺀 값이다.
+ *
+ * 처음 탭은 `initialKindOf` 가 걸린 유형으로 정한다.
+ */
+export function budgetAnalysisInitial(
+  targetId: BudgetTargetId,
+  type: 'income' | 'expense',
+  yearMonth: string,
+): AnalysisInitial {
+  const tag = parseTagBudgetTarget(targetId);
+  const search: TransactionSearch = tag
+    ? { ...EMPTY_SEARCH, tagIds: [tag.tagId] }
+    : {
+        ...EMPTY_SEARCH,
+        kinds: [type],
+        categoryIds: targetId === BUDGET_TOTAL_TARGET[type] ? [] : [targetId],
+      };
+  return { search, unit: 'month', periodKey: yearMonth };
 }
 
 export function useAnalysis(

@@ -6,6 +6,7 @@ import type { BudgetDto, CategoryDto } from '@money/types';
 import {
   BUDGET_TOTAL_TARGET,
   budgetPercentage,
+  budgetTone,
   inCategoryOrder,
   tagBudgetTargetId,
 } from '@money/core/lib/budget';
@@ -334,8 +335,8 @@ function UsedOfBudget({
 /**
  * 예산 진행률 한 줄.
  *
- * 넘긴 지출 예산은 빨강으로 바꿔 한눈에 갈라 보이게 한다. 수입은 목표를 넘긴 것이
- * 잘된 일이라 빨강을 쓰지 않는다.
+ * 넘긴 지출 예산은 빨강으로 바꿔 한눈에 갈라 보이게 한다. 수입은 목표를 채운 것이
+ * 잘된 일이라 채우면 초록이다 (2026-10-09 사용자 요청, 웹과 같다).
  */
 function BudgetLine({
   budget,
@@ -354,18 +355,24 @@ function BudgetLine({
 
   const percent = budgetPercentage(budget, used);
   const over = used > budget;
-  const warn = type === 'expense' && over;
+  const tone = budgetTone(type, used, budget);
 
   return (
     <View className="mt-1 flex-row items-center gap-2">
       <View className="h-1 flex-1 overflow-hidden rounded-full bg-gray-100">
         <View
-          className={`h-full ${warn ? 'bg-red-500' : 'bg-blue-400'}`}
+          className={`h-full ${
+            tone === 'over' ? 'bg-red-500' : tone === 'reached' ? 'bg-green-500' : 'bg-blue-400'
+          }`}
           style={{ width: `${Math.min(percent, 100)}%` }}
         />
       </View>
       {/* 예산액은 위 "쓴 금액 / 예산액"이 이미 적는다. 여기서는 진행만 말한다. */}
-      <Text className={`shrink-0 text-xs ${warn ? 'text-red-600' : 'text-gray-500'}`}>
+      <Text
+        className={`shrink-0 text-xs ${
+          tone === 'over' ? 'text-red-600' : tone === 'reached' ? 'text-green-600' : 'text-gray-500'
+        }`}
+      >
         {percent}%{' · '}
         {over
           ? t('budget.over', { amount: formatCurrency(used - budget, currency) })

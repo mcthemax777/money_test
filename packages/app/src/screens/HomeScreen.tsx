@@ -11,9 +11,9 @@ import { useUserFilter } from '@money/core/store/user-filter';
 import { homeDataPort } from '@money/core/data/home-port';
 import { useCanEdit, useProject } from '@money/core/store/project';
 import { budgetSettingsHref, tagBudgetSettingsHref } from '@money/core/lib/budget';
+import { budgetAnalysisInitial, type AnalysisInitial } from '@money/core/hooks/useAnalysis';
 
 import AssetDetailView from '../components/AssetDetailView';
-import CategoryDetailView from '../components/CategoryDetailView';
 import EntryEditor from '../components/EntryEditor';
 import MonthHeader from '../components/MonthHeader';
 import MonthlyBudgetSummary, { TagBudgetSummary } from '../components/MonthlyBudgetSummary';
@@ -22,11 +22,12 @@ import PeriodSwipe from '../components/PeriodSwipe';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import SpendingMethodCarousel from '../components/SpendingMethodCarousel';
 import type { EntryType } from '../components/TypeTabs';
+import AnalysisScreen from './AnalysisScreen';
 import { useCloseOnBack, useNavigation } from '../shell/navigation';
 import { useScrollRestore, useScrollToTop } from '../shell/scroll';
 
 /** 예산 화면에서 펼 수 있는 상세 둘. */
-type HomeDetail = { kind: 'category'; id: string; name: string } | { kind: 'card'; id: string };
+type HomeDetail = { kind: 'analysis'; initial: AnalysisInitial } | { kind: 'card'; id: string };
 
 /** 카드 상세는 구성원 소계를 쓰지 않는다. AssetDetailView 가 받는 자리만 채운다. */
 const EMPTY_NET_WORTH = new Map<string, { total: string }>();
@@ -77,7 +78,10 @@ export default function HomeScreen() {
   /*
    * 펼쳐 둔 상세. null 이면 예산 화면을 본다.
    *
-   *   category  예산 줄을 눌러 편 상세 분석. 거래 분석에서 분류를 누를 때와 같은 보기다.
+   *   analysis  예산 줄을 눌러 편 분석. 거래 탭 년월 줄의 분석 아이콘이 여는 것과 같은 화면
+   *             (AnalysisScreen)이다 (2026-10-09 사용자 요청) -- 지출 줄은 지출을 걸고 지출 탭,
+   *             수입 줄은 수입을 걸고 수입 탭, 태그 줄은 그 태그를 걸고 합계 탭이다
+   *             (`budgetAnalysisInitial`, 웹과 같다).
    *   card      실적 구간 카드를 눌러 편 카드 상세. 자산 화면에서 카드를 누를 때와 같은 상자를
    *             화면을 옮기지 않고 여기서 그린다 -- ← 를 누르면 예산 화면 그대로다
    *             (2026-10-05 사용자 요청). 카드는 id 만 들고 목록에서 다시 찾는다.
@@ -91,6 +95,8 @@ export default function HomeScreen() {
   const openDetail = (next: HomeDetail | null) => {
     if (next && !detail) listOffset.current = offsetOf();
     setNotice('');
+    // 분석에서 거래를 고쳤을 수 있어 돌아올 때 예산을 다시 받는다.
+    if (!next && detail?.kind === 'analysis') home.reloadEntries();
     setDetail(next);
     if (next) scrollToTop();
     else restoreTo(listOffset.current);
@@ -99,8 +105,8 @@ export default function HomeScreen() {
   /* 기기의 뒤로가기는 상세의 ← 와 같은 일을 한다. */
   useCloseOnBack(detail !== null, () => openDetail(null));
 
-  const openCategory = (target: { id: string; name: string }) =>
-    openDetail({ kind: 'category', ...target });
+  const openAnalysis = (target: { id: string }, targetType: EntryType) =>
+    openDetail({ kind: 'analysis', initial: budgetAnalysisInitial(target.id, targetType, yearMonth) });
 
   /** 펼친 카드. 목록에 없으면(숨겼거나 지운 카드) null 이고 예산 화면을 그린다. */
   const detailCard =
@@ -170,18 +176,8 @@ export default function HomeScreen() {
           onOpenEntry={openLedgerEntry}
           onChanged={home.reloadEntries}
         />
-      ) : detail?.kind === 'category' ? (
-        <CategoryDetailView
-          categoryId={detail.id}
-          categoryName={detail.name}
-          categories={home.categories}
-          period={{ yearMonth }}
-          projectId={selectedProjectId}
-          filter={home.filter}
-          reloadToken={home.entryVersion}
-          onClose={() => openDetail(null)}
-          onEntryClick={openEntry}
-        />
+      ) : detail?.kind === 'analysis' ? (
+        <AnalysisScreen initial={detail.initial} onBack={() => openDetail(null)} />
       ) : (
         <>
           {home.hasError ? (
@@ -252,14 +248,15 @@ export default function HomeScreen() {
                 categories={home.categories}
                 type={type}
                 onTypeChange={setType}
-                onSelect={openCategory}
+                onSelect={(target) => openAnalysis(target, type)}
                 onOpenSettings={canEdit ? () => go(budgetSettingsHref(yearMonth, type)) : undefined}
               />
 
               {/* 태그 예산. 분류 예산과 상자를 나누고, 지출·수입 탭을 따르지 않는다 (웹과 같다). */}
               <TagBudgetSummary
                 tagBudgets={home.tagBudgets}
-                onSelect={openCategory}
+                /* 태그 줄은 유형을 걸지 않는다. 넘기는 유형은 쓰이지 않는다. */
+                onSelect={(target) => openAnalysis(target, 'expense')}
                 onOpenSettings={canEdit ? () => go(tagBudgetSettingsHref(yearMonth)) : undefined}
               />
             </View>

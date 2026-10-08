@@ -13,7 +13,7 @@
  * 값과 상태는 `useTransactions` 가 갖는다. 앱의 거래 화면과 같은 훅이라, 두 화면이
  * 서로 다른 규칙으로 파고들 일이 없다.
  */
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   Archive,
@@ -84,7 +84,9 @@ import SearchChips from '@/components/SearchChips';
 import TransactionSearchModal, { Chip } from '@/components/TransactionSearchModal';
 import CategoryPickModal from '@/components/CategoryPickModal';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
+import { useSwapScroll } from '@/hooks/useSwapScroll';
 import { useRenderBudget } from '@/hooks/useRenderBudget';
+import { useLongPress } from '@/hooks/useLongPress';
 import { useTopReveal } from '@/hooks/useTopReveal';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import PaybackSection from '@/components/PaybackSection';
@@ -186,6 +188,7 @@ function Line({
   showNet,
   check,
   onClick,
+  onLongPress,
 }: {
   label: string;
   /** 날짜별 줄에서 일자 옆에 붙는 요일. 다른 탭에는 없다. */
@@ -215,8 +218,11 @@ function Line({
    */
   depth: 0 | 1;
   onClick: () => void;
+  /** 길게 누르면 삭제할 거래 고르기로 들어서며 이 줄을 골라 둔다. 고르는 중에는 주지 않는다. */
+  onLongPress?: () => void;
 }) {
   const { t } = useTranslation();
+  const longPress = useLongPress(onLongPress);
   const currency = useProjectDisplayCurrency();
 
   /*
@@ -234,6 +240,7 @@ function Line({
     <button
       type="button"
       onClick={onClick}
+      {...longPress}
       aria-expanded={Boolean(open)}
       /*
         가로로 이름과 금액 묶음이 서고, 둘을 세로 가운데에 맞춘다. 금액 묶음은 금액 줄과
@@ -411,6 +418,12 @@ export default function TransactionsView({
   });
 
   /*
+   * 길게 누르면 삭제할 거래 고르기로 들어서며 누른 것을 골라 둔다 (2026-10-09 사용자 요청, 앱과
+   * 같다). 고칠 수 없는 구성원과 이미 고르는 중에는 걸지 않는다.
+   */
+  const canLongPress = canEdit && !tx.isSelecting;
+
+  /*
    * 뒤로가기는 머리글의 ← 를 누른 것과 같게 동작한다.
    *
    * 고르는 중에는 머리글이 통째로 바뀌고 그 왼쪽에 서는 것이 ← 다. 그때의 뒤로가기는
@@ -447,39 +460,12 @@ export default function TransactionsView({
     tx.reload();
   };
   useCloseOnBack(analysisFrom !== null, closeAnalysis);
-  /*
-   * 펴면 맨 위로, 돌아오면 목록에서 보던 자리로. 자리는 아이콘을 누르는 손짓에서 적는다 --
-   * 분석으로 바꿔 그린 뒤에는 문서가 짧아져 이미 끌어올려져 있다 (자산 화면의 상세와 같다).
-   */
-  const listScrollY = useRef(0);
+  /* 펴면 맨 위로, 돌아오면 목록에서 보던 자리로 (자산 화면의 상세와 같다). */
+  const rememberListScroll = useSwapScroll(analysisFrom !== null);
   const openAnalysis = (key: string) => {
-    listScrollY.current = window.scrollY;
+    rememberListScroll();
     setAnalysisFrom({ key });
   };
-  const wasAnalysisOpen = useRef(false);
-  useLayoutEffect(() => {
-    const isOpen = analysisFrom !== null;
-    if (isOpen === wasAnalysisOpen.current) return;
-    wasAnalysisOpen.current = isOpen;
-    const top = isOpen ? 0 : listScrollY.current;
-    window.scrollTo({ top });
-    if (isOpen) return;
-    /*
-     * 닫을 때는 브라우저가 히스토리 칸에 적힌 스크롤(분석을 펼 때의 0)을 되살려 위의 자리를
-     * 덮는다. 크롬은 그것을 popstate 를 보낸 **뒤에** 한다(실측). 그래서 그다음 프레임에 한 번 더
-     * 맞춘다 -- 브라우저 뒤로가기면 이 그림이 그 popstate 안에서 그려졌으니 지금 미루면 되고,
-     * ← 면 뒤로가기용으로 쌓아 둔 칸을 이 뒤에 되돌리므로(`useCloseOnBack`) 그 popstate 를
-     * 기다린다. 오지 않을 popstate 는 오래 기다리지 않는다.
-     */
-    const again = () => window.requestAnimationFrame(() => window.scrollTo({ top }));
-    again();
-    window.addEventListener('popstate', again, { once: true });
-    const timer = window.setTimeout(() => window.removeEventListener('popstate', again), 500);
-    return () => {
-      window.clearTimeout(timer);
-      window.removeEventListener('popstate', again);
-    };
-  }, [analysisFrom]);
   /** 더보기 선택창. 지금은 삭제 하나뿐이다. */
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   /**
@@ -682,6 +668,9 @@ export default function TransactionsView({
                 row={row}
                 // 여는 것은 사용자가 적은 거래다. 목록에 선 것은 그 달의 회차 몫이다.
                 onClick={() => setDetail(originalEntry(row.entry))}
+                onLongPress={
+                  canEdit ? () => tx.startDeleteWith({ entryId: row.entry.id }) : undefined
+                }
               />
             );
           })
@@ -757,6 +746,7 @@ export default function TransactionsView({
               lazy.restart();
               tx.toggleRow(yearMonth, row.key);
             }}
+            onLongPress={canLongPress ? () => tx.startDeleteWith({ yearMonth, row }) : undefined}
           />
           {open ? entryList(yearMonth, row.key) : null}
         </div>
@@ -1233,6 +1223,11 @@ export default function TransactionsView({
                       lazy.restart();
                       tx.cycleMonth(month.yearMonth);
                     }}
+                    onLongPress={
+                      canLongPress
+                        ? () => tx.startDeleteWith({ yearMonth: month.yearMonth })
+                        : undefined
+                    }
                   />
                   </div>
                   {/*

@@ -205,6 +205,7 @@ function LineView({
   checkPending,
   onToggle,
   onPress,
+  onLongPress,
   onAnalyze,
 }: {
   label: string;
@@ -242,6 +243,8 @@ function LineView({
   checkPending?: boolean;
   onToggle?: (yearMonth: string, rowKey: string) => void;
   onPress: (yearMonth: string, rowKey: string) => void;
+  /** 길게 누르면 삭제할 거래 고르기로 들어서며 이 줄을 골라 둔다. 고르는 중에는 주지 않는다. */
+  onLongPress?: (yearMonth: string, rowKey: string) => void;
   /**
    * 이 기간의 분석을 연다. 년월 줄만 준다 -- 금액 뒤에 아이콘이 선다.
    *
@@ -263,6 +266,7 @@ function LineView({
   return (
     <Pressable
       onPress={() => onPress(yearMonth, rowKey)}
+      onLongPress={onLongPress && (() => onLongPress(yearMonth, rowKey))}
       accessibilityRole="button"
       accessibilityState={{ expanded: Boolean(open) }}
       /*
@@ -705,6 +709,27 @@ export default function TransactionsScreen({
   );
 
   /*
+   * 길게 누르면 삭제할 거래 고르기로 들어서며 누른 것을 골라 둔다 (2026-10-09 사용자 요청). 년월·
+   * 안쪽 줄은 그 범위, 거래는 그 거래다. 고칠 수 없는 구성원과 이미 고르는 중에는 걸지 않는다.
+   */
+  const canLongPress = canEdit && !tx.isSelecting;
+  const longPressMonth = useCallback(
+    (yearMonth: string) => tx.startDeleteWith({ yearMonth }),
+    [tx.startDeleteWith],
+  );
+  const longPressRow = useCallback(
+    (yearMonth: string, key: string) => {
+      const row = tx.rowsOf(yearMonth).find((candidate) => candidate.key === key);
+      if (row) tx.startDeleteWith({ yearMonth, row });
+    },
+    [tx.rowsOf, tx.startDeleteWith],
+  );
+  const longPressEntry = useCallback(
+    (entry: EntryListItem) => tx.startDeleteWith({ entryId: entry.id }),
+    [tx.startDeleteWith],
+  );
+
+  /*
    * 거래 한 줄의 누름. 그릴 때마다 새로 만들지 않는다.
    *
    * `TransactionItem` 은 값이 그대로면 다시 그리지 않는데(memo), 여기서 화살표 함수를
@@ -840,6 +865,7 @@ export default function TransactionsScreen({
                 entry={row.entry}
                 row={row}
                 onPress={openDetail}
+                onLongPress={canEdit ? longPressEntry : undefined}
               />
             ),
           )
@@ -911,6 +937,7 @@ export default function TransactionsScreen({
             checkPending={tx.isSelecting ? tx.isRangePending(yearMonth, row.key) : false}
             onToggle={toggleRowRange}
             onPress={unfoldRow}
+            onLongPress={canLongPress ? longPressRow : undefined}
           />
           {open ? entryList(yearMonth, row.key) : null}
         </View>
@@ -1244,6 +1271,7 @@ export default function TransactionsScreen({
                       checkPending={tx.isSelecting ? tx.isRangePending(month.yearMonth) : false}
                       onToggle={toggleMonthRange}
                       onPress={unfoldMonth}
+                      onLongPress={canLongPress ? longPressMonth : undefined}
                       // 고르는 중에는 체크와 헷갈리지 않게 감춘다 (웹과 같다).
                       onAnalyze={tx.isSelecting ? undefined : analyzePeriod}
                     />

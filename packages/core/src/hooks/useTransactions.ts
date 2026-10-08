@@ -2146,6 +2146,28 @@ export function useTransactions(
     fail,
   ]);
 
+  /**
+   * 줄을 길게 눌러 삭제할 거래 고르기로 들어선다. 누른 것을 골라 둔 채로 연다 (2026-10-09 사용자
+   * 요청). 년월·안쪽 줄은 그 범위 전부를, 거래 한 줄은 그 거래를 통째로 고른다 -- 지우는 것은
+   * 전표 단위다 (`toggleEntrySelected` 의 삭제 규칙과 같다).
+   *
+   * 이미 고르는 중이면 아무 일도 하지 않는다. 그때의 길게 누름은 무엇을 뜻하는지 정해지지 않았다.
+   */
+  const startDeleteWith = useCallback(
+    (target: { yearMonth: string; row?: TransactionRow } | { entryId: string }) => {
+      if (selectPurpose !== null) return;
+      setSelectPurpose('delete');
+      if ('entryId' in target) {
+        setSelected({ [target.entryId]: true });
+        return;
+      }
+      // 범위는 세어 봐야 무엇이 드는지 안다. 비운 다음 범위 체크와 같은 길로 고른다.
+      setSelected({});
+      void toggleRange(target.yearMonth, target.row);
+    },
+    [selectPurpose, toggleRange],
+  );
+
   const startSelecting = useCallback((purpose: SelectPurpose = 'delete') => {
     setSelectPurpose(purpose);
     setSelected({});
@@ -2718,6 +2740,7 @@ export function useTransactions(
     isDeleting,
     /** 지금 고르는 것이 무엇을 위한 것인가. 머리글의 버튼이 이 값으로 갈린다. */
     selectPurpose,
+    startDeleteWith,
     tagSelected,
     isTagging,
     recategorizeSelected,

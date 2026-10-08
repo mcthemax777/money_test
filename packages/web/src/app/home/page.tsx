@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import type { BudgetDto, CardDto, EntryFilterQuery } from '@money/types';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
@@ -20,8 +20,10 @@ import EntryEditor, {
   type EntryEditorHandle,
   type ReferenceDataPatch,
 } from '@/components/EntryEditor';
-import { BudgetDetailModal } from '@/components/BudgetDetailModal';
-import { useLedgerBasis } from '@money/core/store/ledger-basis';
+import AnalysisView from '@/components/AnalysisView';
+import { budgetAnalysisInitial, type AnalysisInitial } from '@money/core/hooks/useAnalysis';
+import { useCloseOnBack } from '@/hooks/useCloseOnBack';
+import { useSwapScroll } from '@/hooks/useSwapScroll';
 import { apiClient } from '@money/core/lib/api-client';
 import CardDetailBody from '@/components/CardDetailBody';
 import Modal from '@/components/Modal';
@@ -89,7 +91,6 @@ export default function HomePage() {
     myPersonId,
     budgets,
     methods,
-    filter: appliedFilter,
     isLoading,
     hasError,
     entryVersion,
@@ -103,14 +104,23 @@ export default function HomePage() {
    */
   const [type, setType] = useState<EntryType>('expense');
   /*
-   * 예산 줄을 눌러 연 상세 분석. 가계 분류별에서 분류를 누를 때와 같은 패널을 팝업으로 띄운다.
-   *
-   * 세는 기준(회차·발생)도 가계와 같은 값을 싣는다. 같은 분류를 두 화면에서 열었는데
-   * 금액이 다르면 어느 쪽이 맞는지 따지게 된다.
+   * 예산 줄을 눌러 연 분석. 거래 탭 년월 줄의 분석 아이콘이 여는 것과 같은 화면(AnalysisView)을
+   * 이 자리에 그린다 (2026-10-09 사용자 요청) -- 지출 줄은 지출을 걸고 지출 탭, 수입 줄은 수입을
+   * 걸고 수입 탭, 태그 줄은 그 태그를 걸고 합계 탭이다 (`budgetAnalysisInitial`). 머리글에는 ← 만
+   * 서고, 그것이나 브라우저 뒤로가기로 돌아오면 예산 화면이 떠날 때 그대로다.
    */
-  const [detailTarget, setDetailTarget] = useState<{ id: string; name: string } | null>(null);
-  const basis = useLedgerBasis((state) => state.basis);
-  const detailFilter = useMemo(() => ({ ...appliedFilter, basis }), [appliedFilter, basis]);
+  const [analysis, setAnalysis] = useState<AnalysisInitial | null>(null);
+  const rememberScroll = useSwapScroll(analysis !== null);
+  const openAnalysis = (target: { id: string }, targetType: EntryType) => {
+    rememberScroll();
+    setAnalysis(budgetAnalysisInitial(target.id, targetType, yearMonth));
+  };
+  /** 분석에서 거래를 고쳤을 수 있어 돌아올 때 예산을 다시 받는다. */
+  const closeAnalysis = () => {
+    setAnalysis(null);
+    home.reloadEntries();
+  };
+  useCloseOnBack(analysis !== null, closeAnalysis);
   /** 거래 상세·수정 팝업. 가계·자산 화면과 같은 컴포넌트다. */
   const entryEditorRef = useRef<EntryEditorHandle>(null);
 
@@ -134,6 +144,11 @@ export default function HomePage() {
       .then((entry) => entryEditorRef.current?.openDetail(entry))
       .catch(() => {});
   }, []);
+
+  /* 분석을 펴 둔 동안에는 그것만 그린다 (거래 화면의 분석과 같은 짜임). */
+  if (analysis) {
+    return <AnalysisView projectId={selectedProjectId} initial={analysis} onBack={closeAnalysis} />;
+  }
 
   return (
     <div className="space-y-6">
@@ -198,7 +213,7 @@ export default function HomePage() {
           categories={categories}
           type={type}
           onTypeChange={setType}
-          onSelect={setDetailTarget}
+          onSelect={(target) => openAnalysis(target, type)}
           onOpenSettings={
             canEdit ? () => router.push(budgetSettingsHref(yearMonth, type)) : undefined
           }
@@ -210,27 +225,13 @@ export default function HomePage() {
         */}
         <TagBudgetSummary
           tagBudgets={home.tagBudgets}
-          onSelect={setDetailTarget}
+          /* 태그 줄은 유형을 걸지 않는다. 넘기는 유형은 쓰이지 않는다. */
+          onSelect={(target) => openAnalysis(target, 'expense')}
           onOpenSettings={
             canEdit ? () => router.push(tagBudgetSettingsHref(yearMonth)) : undefined
           }
         />
       </section>
-
-      {detailTarget && (
-        <BudgetDetailModal
-          isOpen
-          onClose={() => setDetailTarget(null)}
-          categoryId={detailTarget.id}
-          categoryName={detailTarget.name}
-          categories={categories}
-          period={{ yearMonth }}
-          projectId={selectedProjectId}
-          filter={detailFilter}
-          onEntryClick={(entry) => entryEditorRef.current?.openDetail(entry)}
-          reloadToken={entryVersion}
-        />
-      )}
 
       {detailCard && (
         <Modal

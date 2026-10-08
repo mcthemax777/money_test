@@ -6,6 +6,7 @@ import { Settings } from 'lucide-react';
 import {
   BUDGET_TOTAL_TARGET,
   budgetPercentage,
+  budgetTone,
   inCategoryOrder,
   tagBudgetTargetId,
 } from '@money/core/lib/budget';
@@ -24,8 +25,8 @@ import TypeTabs from './TypeTabs';
  * 예산이 없는 분류는 적지 않는다. 홈은 훑어보는 화면이라 분류를 전부 늘어놓으면
  * 정작 넘긴 예산이 묻힌다. 분류 전체는 가계 화면의 분류별 탭에서 본다.
  *
- * 수입도 같은 모양으로 본다. 수입 예산은 "이만큼 벌자"는 목표라 넘긴 것이 좋은
- * 일이므로, 넘겼을 때 빨갛게 물들이지 않는다.
+ * 수입도 같은 모양으로 본다. 수입 예산은 "이만큼 벌자"는 목표라 채운 것이 좋은
+ * 일이므로, 채웠을 때 빨강 대신 초록으로 물들인다.
  */
 export default function MonthlyBudgetSummary({
   budgets,
@@ -376,7 +377,7 @@ function UsedOfBudget({
  * 예산 진행률 한 줄. 가계 분류별 목록의 것과 같은 모양이다.
  *
  * 예산이 없으면 그리지 않는다. 넘긴 지출 예산은 빨강으로 바꿔 한눈에 갈라 보이게
- * 한다. 수입은 목표를 넘긴 것이 잘된 일이라 빨강을 쓰지 않는다.
+ * 한다. 수입은 목표를 채운 것이 잘된 일이라 채우면 초록이다 (2026-10-09 사용자 요청).
  */
 function BudgetLine({
   budget,
@@ -396,18 +397,24 @@ function BudgetLine({
 
   const percent = budgetPercentage(budget, used);
   const over = used > budget;
-  const warn = type === 'expense' && over;
+  const tone = budgetTone(type, used, budget);
 
   return (
     <div className="mt-1 flex items-center gap-2">
       <div className="flex-1 h-1 bg-gray-100 rounded-full overflow-hidden">
         <div
-          className={`h-full ${warn ? 'bg-red-500' : 'bg-blue-400'}`}
+          className={`h-full ${
+            tone === 'over' ? 'bg-red-500' : tone === 'reached' ? 'bg-green-500' : 'bg-blue-400'
+          }`}
           style={{ width: `${Math.min(percent, 100)}%` }}
         />
       </div>
       {/* 예산액은 위 "쓴 금액 / 예산액"이 이미 적는다. 여기서는 진행만 말한다. */}
-      <span className={`text-xs shrink-0 ${warn ? 'text-red-600' : 'text-gray-500'}`}>
+      <span
+        className={`text-xs shrink-0 ${
+          tone === 'over' ? 'text-red-600' : tone === 'reached' ? 'text-green-600' : 'text-gray-500'
+        }`}
+      >
         {percent}%
         {' · '}
         {over

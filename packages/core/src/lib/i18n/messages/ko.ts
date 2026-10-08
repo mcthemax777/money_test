@@ -20,6 +20,7 @@ export const ko = {
   'common.saving': '저장 중...',
   'common.cancel': '취소',
   'common.close': '닫기',
+  'common.help': '설명 보기',
   'common.change': '변경',
   'common.changing': '변경 중...',
 

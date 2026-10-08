@@ -10,6 +10,7 @@ export const ja: Record<MessageKey, string> = {
   'common.saving': '保存中...',
   'common.cancel': 'キャンセル',
   'common.close': '閉じる',
+  'common.help': '説明を見る',
   'common.change': '変更',
   'common.changing': '変更中...',
 

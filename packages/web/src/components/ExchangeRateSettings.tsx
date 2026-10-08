@@ -6,6 +6,7 @@ import { useExchangeRateSettings } from '@money/core/hooks/useExchangeRates';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useConnectivity } from '@money/core/store/connectivity';
 import { toNumber } from '@money/core/lib/money';
+import HelpTitle from '@/components/HelpTitle';
 
 /** 무엇을 하다 실패했는지에 따른 문구. */
 const FAILURE_KEY = {
@@ -61,8 +62,7 @@ export default function ExchangeRateSettings() {
 
   return (
     <div className="bg-white rounded-lg shadow p-6">
-      <h2 className="text-lg font-semibold text-gray-900">{t('exchangeRate.title')}</h2>
-      <p className="mt-1 text-sm text-gray-600">{t('exchangeRate.description')}</p>
+      <HelpTitle title={t('exchangeRate.title')} description={t('exchangeRate.description')} />
 
       <div className="mt-4 space-y-2">
         {rates.map((info: ExchangeRateInfo) => {

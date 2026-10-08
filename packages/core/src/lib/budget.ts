@@ -35,6 +35,20 @@ export function budgetPercentage(monthlyAmount: number, usedAmount: number): num
  */
 
 /**
+ * 예산 진행 줄의 색 갈래. 지출은 넘기면 'over'(빨강), 수입은 목표에 닿으면 'reached'(초록),
+ * 그 밖은 'normal' 이다 (2026-10-09 사용자 요청, 웹·앱 같은 규칙).
+ */
+export function budgetTone(
+  type: 'income' | 'expense',
+  used: number,
+  budget: number,
+): 'normal' | 'over' | 'reached' {
+  if (budget <= 0) return 'normal';
+  if (type === 'expense') return used > budget ? 'over' : 'normal';
+  return used >= budget ? 'reached' : 'normal';
+}
+
+/**
  * 합계 예산을 가리키는 화면 쪽 이름. 분류 예산은 분류 id 를 그대로 쓴다.
  *
  * 합계는 분류가 없는 예산이라 id 가 없다. 서버에 만들 때는 따로 센티널 값을 보낸다

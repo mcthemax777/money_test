@@ -41,6 +41,7 @@ function TransactionItemView({
   entry,
   row,
   onPress,
+  onLongPress,
 }: {
   entry: EntryListItem;
   /**
@@ -50,6 +51,8 @@ function TransactionItemView({
    */
   row?: EntryRow;
   onPress?: (entry: EntryListItem, row?: EntryRow) => void;
+  /** 길게 누름. 거래를 되돌려 준다 (`onPress` 와 같은 까닭으로 고정된 함수를 받는다). */
+  onLongPress?: (entry: EntryListItem) => void;
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
@@ -150,6 +153,7 @@ function TransactionItemView({
   return (
     <Pressable
       onPress={onPress && (() => onPress(entry, row))}
+      onLongPress={onLongPress && (() => onLongPress(entry))}
       disabled={!onPress}
       className="border-b border-gray-100 px-3 py-2.5 active:bg-gray-50"
     >

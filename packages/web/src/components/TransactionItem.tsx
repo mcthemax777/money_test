@@ -12,6 +12,7 @@ import {
 } from '@money/core/lib/entries';
 import { formatDate, formatTime } from '@money/core/lib/datetime';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '@money/core/store/project';
+import { useLongPress } from '@/hooks/useLongPress';
 
 /**
  * 서버가 전표를 한 줄로 펴서 주는 형태.
@@ -32,6 +33,8 @@ interface TransactionItemProps {
    */
   row?: EntryRow;
   onClick?: () => void;
+  /** 길게 누름. 거래 화면이 삭제할 거래 고르기로 들어서는 데 쓴다. */
+  onLongPress?: () => void;
   isSelected?: boolean;
 }
 
@@ -97,9 +100,11 @@ export default function TransactionItem({
   entry,
   row,
   onClick,
+  onLongPress,
   isSelected,
 }: TransactionItemProps) {
   const { t } = useTranslation();
+  const longPress = useLongPress(onLongPress);
   const timeZone = useProjectTimeZone();
   const displayCurrency = useProjectDisplayCurrency();
 
@@ -182,6 +187,7 @@ export default function TransactionItem({
   return (
     <div
       onClick={onClick}
+      {...longPress}
       className={`px-3 py-2.5 transition-colors ${
         onClick ? 'cursor-pointer hover:bg-gray-50 active:bg-gray-100' : ''
       } ${isSelected ? 'bg-blue-50' : ''}`}

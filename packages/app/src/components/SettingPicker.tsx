@@ -10,6 +10,7 @@ import { Pressable, Text, View } from 'react-native';
 import { Check, ChevronRight } from 'lucide-react-native';
 
 import Modal from './Modal';
+import HelpTitle from './HelpTitle';
 
 /**
  * 설정 한 줄. 왼쪽에 이름과 설명, 오른쪽에 지금 값과 `›` 를 둔다.
@@ -24,10 +25,16 @@ export function SettingRow({
   onPress,
   disabled = false,
   compact = false,
+  helpToggle = false,
   children,
 }: {
   title: string;
   description?: string;
+  /**
+   * 설명을 접어 두고 제목 옆 물음표로 펼친다 (설정 탭의 상자들, 2026-10-09 사용자 요청).
+   * 다른 화면의 줄은 설명이 그 자리의 안내라 늘 펼쳐 둔다.
+   */
+  helpToggle?: boolean;
   /** 지금 값. 길면 한 줄에서 자른다. */
   value: string;
   onPress: () => void;
@@ -49,10 +56,14 @@ export function SettingRow({
         } ${disabled ? 'opacity-50' : ''}`}
       >
         <View className="flex-1">
-          <Text className={`${compact ? 'text-sm' : 'text-lg'} font-semibold text-gray-900`}>
-            {title}
-          </Text>
-          {description ? (
+          {helpToggle && description ? (
+            <HelpTitle title={title} description={description} compact={compact} />
+          ) : (
+            <Text className={`${compact ? 'text-sm' : 'text-lg'} font-semibold text-gray-900`}>
+              {title}
+            </Text>
+          )}
+          {description && !helpToggle ? (
             <Text className={`mt-1 ${compact ? 'text-xs text-gray-500' : 'text-sm text-gray-600'}`}>
               {description}
             </Text>

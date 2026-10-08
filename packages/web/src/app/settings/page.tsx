@@ -3,6 +3,7 @@
 import { useEffect } from 'react';
 import Link from 'next/link';
 import CountBadge from '@/components/CountBadge';
+import HelpTitle from '@/components/HelpTitle';
 import PageHeader from '@/components/PageHeader';
 import ExchangeRateSettings from '@/components/ExchangeRateSettings';
 import LanguageSettings from '@/components/LanguageSettings';
@@ -28,7 +29,11 @@ export default function SettingsPage() {
     <div className="space-y-6">
       <PageHeader title={t('settings.title')} />
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {/*
+        차례 (2026-10-09 사용자 요청): 내 정보, 프로젝트 관리, 분류·태그, 시작 요일, 언어, 환율, 엑셀,
+        문의하기. 앱은 끝에 보내지 못한 거래가 하나 더 선다. 설명은 제목 옆 물음표를 누르면 펼쳐진다.
+      */}
+      <div className="space-y-4">
         <SettingsCard
           href="/settings/profile"
           title={t('settings.profile.title')}
@@ -53,6 +58,18 @@ export default function SettingsPage() {
           />
         ) : null}
 
+        {/* 시작 요일은 이 계정의 값이다. 달력과 주 단위 보기가 함께 본다. */}
+        <WeekStartSettings />
+
+        {/* 언어는 이 계정의 값이고 환율은 프로젝트의 값이다. 자리는 같아도 뜻이 다르다. */}
+        <LanguageSettings />
+
+        {/*
+          환율을 손으로 정하는 유일한 자리.
+          거래 입력에서는 실제 금액만 받고 환율은 계산해 보여 준다.
+        */}
+        <ExchangeRateSettings />
+
         {/* 거래내역을 엑셀로 내보내고, 엑셀의 거래를 한꺼번에 넣는다. 가계부가 있어야 뜻이 있다. */}
         {projects.length > 0 ? (
           <SettingsCard
@@ -70,21 +87,6 @@ export default function SettingsPage() {
           badge={inquiryUnread}
         />
       </div>
-
-      <div className="space-y-4">
-        {/*
-          환율을 손으로 정하는 유일한 자리.
-          거래 입력에서는 실제 금액만 받고 환율은 계산해 보여 준다.
-        */}
-        <ExchangeRateSettings />
-
-        {/* 언어는 이 계정의 값이고 환율은 프로젝트의 값이다. 자리는 같아도 뜻이 다르다. */}
-        <LanguageSettings />
-
-        {/* 시작 요일도 이 계정의 값이다. 달력과 주 단위 보기가 함께 본다. */}
-        <WeekStartSettings />
-      </div>
-
     </div>
   );
 }
@@ -106,13 +108,11 @@ function SettingsCard({
     <Link href={href}>
       <div className="bg-white rounded-lg shadow p-6 hover:shadow-md transition cursor-pointer">
         <div className="flex items-center justify-between">
-          <div>
-            <h2 className="flex items-center gap-2 text-lg font-semibold text-gray-900">
-              {title}
-              <CountBadge count={badge} inline />
-            </h2>
-            <p className="mt-1 text-sm text-gray-600">{description}</p>
-          </div>
+          <HelpTitle
+            title={title}
+            description={description}
+            trailing={<CountBadge count={badge} inline />}
+          />
           <div className="text-2xl">→</div>
         </div>
       </div>
