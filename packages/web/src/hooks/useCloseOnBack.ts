@@ -22,9 +22,25 @@ const openModals: Array<() => void> = [];
 let selfBackCount = 0;
 let listening = false;
 
+/**
+ * 우리 back() 이 아직 도착하지 않은 동안 미뤄 둔 칸 쌓기.
+ *
+ * back() 은 비동기다. 한 팝업이 닫히면서 back() 을 부르고 **같은 그리기에서** 다른 팝업이
+ * 열려 곧바로 칸을 쌓으면, 늦게 도착한 back() 이 방금 쌓은 칸을 지나쳐 버린다. 그 팝업은
+ * 제 칸이 있다고 믿고 닫힐 때 back() 을 또 불러 화면이 한 칸 앞 페이지로 튕겨 나간다
+ * (2026-10-09: 더보기에서 태그 손보기를 고르고 적용하면 거래 화면에서 홈으로 나갔다).
+ * 그래서 우리 back() 이 모두 도착한 뒤에 쌓는다.
+ */
+let pendingPushes: Array<() => void> = [];
+
 function handlePopState() {
   if (selfBackCount > 0) {
     selfBackCount -= 1;
+    if (selfBackCount === 0) {
+      const run = pendingPushes;
+      pendingPushes = [];
+      for (const push of run) push();
+    }
     return;
   }
 
@@ -81,11 +97,25 @@ export function useCloseOnBack(isOpen: boolean, onClose: () => void) {
     };
 
     openModals.push(close);
-    window.history.pushState({ ...window.history.state, [MARK]: true }, '');
+
+    /** 이 팝업이 칸을 실제로 쌓았는지. 미뤄 둔 채 닫히면 되돌릴 칸이 없다. */
+    let pushed = false;
+    const push = () => {
+      pushed = true;
+      window.history.pushState({ ...window.history.state, [MARK]: true }, '');
+    };
+    if (selfBackCount > 0) pendingPushes.push(push);
+    else push();
 
     return () => {
       const index = openModals.lastIndexOf(close);
       if (index >= 0) openModals.splice(index, 1);
+
+      // 아직 쌓지 못하고 닫혔으면 미뤄 둔 것만 거둔다.
+      if (!pushed) {
+        pendingPushes = pendingPushes.filter((pending) => pending !== push);
+        return;
+      }
 
       /*
        * 화면에서 닫았으면(닫기 버튼, 저장, 취소) 우리가 쌓은 칸을 되돌린다.
