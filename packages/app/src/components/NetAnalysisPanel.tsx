@@ -121,6 +121,7 @@ export default function NetAnalysisPanel({
                 current={net.daily}
                 comparisons={net.comparisons}
                 currentName={net.currentMonthName}
+                currentPeriodKey={net.currentPeriodKey}
                 throughDay={net.throughDay}
                 tooltipName={t('analysis.net.cumulative')}
               />

@@ -16,6 +16,11 @@ export interface CumulativeSeries {
   /** 범례에 적을 이름. "7월" */
   name: string;
   points: DailyCumulativePoint[];
+  /**
+   * 그 선의 기간 열쇠 ("2026-09", "2026-09-21", "2026"). 있으면 그래프 아래 줄이 n 일째가
+   * 그 기간의 어느 날인지 적는다 (`periodDayName`).
+   */
+  periodKey?: string;
 }
 
 /**

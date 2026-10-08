@@ -615,6 +615,11 @@ const EMPTY_ROWS: TransactionRow[] = [];
 const EMPTY_MONTHS: ReportDto.EntryMonth[] = [];
 const EMPTY_GROUP = new Map<string, EntryListItem[]>();
 
+/** 거래 id 를 한 번씩만. 분할은 줄마다, 회차는 기간마다 같은 거래가 여러 번 설 수 있다. */
+const uniqueIds = (rows: readonly EntryListItem[]): string[] => [
+  ...new Set(rows.map((row) => row.id)),
+];
+
 /**
  * 받은 기간 줄들을 검색 기간 한 줄로 합친다.
  *
@@ -1786,28 +1791,32 @@ export function useTransactions(
    */
   const knownMonthIds = useCallback(
     (yearMonth: string): string[] | null => {
-      const cached = rangeIds[monthKeyOf(yearMonth)];
-      if (cached) return cached;
+      /*
+       * 받아 둔 그 달의 목록이 있으면 그것이 먼저다. 화면에 선 줄과 같은 것이고(회차 기준이면
+       * 회차로 옮긴 것), 세어 둔 값은 그 목록이 오기 전의 것일 수 있다.
+       */
       const entries = monthData[yearMonth]?.entries;
-      return entries ? entries.map((row) => row.id) : null;
+      if (entries) return uniqueIds(viewsOf(yearMonth, entries));
+      return rangeIds[monthKeyOf(yearMonth)] ?? null;
     },
-    [rangeIds, monthKeyOf, monthData],
+    [rangeIds, monthKeyOf, monthData, viewsOf],
   );
 
   /** 이미 알고 있는 그 줄의 거래 id. */
   const knownRowIds = useCallback(
     (yearMonth: string, key: string): string[] | null => {
-      const cached = rangeIds[rowKeyOf(yearMonth, key)];
-      if (cached) return cached;
+      // 받아 둔 줄의 거래가 먼저다. 그 달 목록과 같은 까닭이다 (`knownMonthIds`).
       if (tab === 'date') {
-        const grouped = groupedByMonth.get(yearMonth) ?? EMPTY_GROUP;
-        const rows = grouped.get(key);
-        return rows ? rows.map((row) => row.id) : null;
+        const rows = groupedByMonth.get(yearMonth)?.get(key);
+        if (rows) return uniqueIds(rows);
+      } else {
+        // 회차 기준이면 회차로 옮긴 줄이다. 화면에 선 거래와 같은 것을 센다.
+        const rows = rowEntryViews[rowId(yearMonth, key)];
+        if (rows) return uniqueIds(rows);
       }
-      const rows = rowEntries[rowId(yearMonth, key)];
-      return rows ? rows.map((row) => row.id) : null;
+      return rangeIds[rowKeyOf(yearMonth, key)] ?? null;
     },
-    [rangeIds, rowKeyOf, tab, monthData, timeZone, rowEntries, rowId],
+    [rangeIds, rowKeyOf, tab, groupedByMonth, rowEntryViews, rowId],
   );
 
   /**
@@ -1834,13 +1843,26 @@ export function useTransactions(
       if (!projectId) return [];
 
       const query = row
-        ? { personIds: scope.personIds, ...listRangeOf(yearMonth), ...narrowOf(row), limit: 200 }
-        : { ...scope, ...listRangeOf(yearMonth), limit: 200 };
+        ? { personIds: scope.personIds, ...listRangeOf(yearMonth), ...narrowOf(row) }
+        : { ...scope, ...listRangeOf(yearMonth) };
 
       if (!options?.quiet) setRangePending((prev) => ({ ...prev, [cacheKey]: true }));
       try {
-        const rows = await homeDataPort().getAllEntries(query, projectId);
-        const ids = rows.map((item) => item.id);
+        /*
+         * 목록을 그릴 때와 같은 거래를 센다. 회차 기준이면 **지난달에 산 할부의 회차**도 이
+         * 범위의 줄이다 -- 목록 질의는 전표 날짜로 잘라 그 거래가 오지 않으므로 따로 받고,
+         * 구간 밖 회차는 `viewsOf` 가 버린다. 빼고 세면 회차만 있는 달(12월)이 "0건"으로
+         * 적혀 년월 체크가 아무것도 고르지 못한다 (2026-10-08 실기기에서 겪었다).
+         */
+        const port = homeDataPort();
+        const [own, past] = await Promise.all([
+          port.getAllEntries({ ...query, limit: 200 }, projectId),
+          basis === 'installment'
+            ? port.getInstallmentRows(query, projectId)
+            : Promise.resolve([] as EntryListItem[]),
+        ]);
+        const rows = viewsOf(yearMonth, past.length > 0 ? [...own, ...past] : own);
+        const ids = uniqueIds(rows);
         setRangeIds((prev) => ({ ...prev, [cacheKey]: ids }));
         // 태그도 함께 적어 둔다. 이 줄들은 화면에 없을 수 있다.
         setRangeTags((prev) => {
@@ -1853,7 +1875,18 @@ export function useTransactions(
         if (!options?.quiet) setRangePending((prev) => ({ ...prev, [cacheKey]: false }));
       }
     },
-    [rowKeyOf, monthKeyOf, knownRowIds, knownMonthIds, projectId, scope, narrowOf, listRangeOf],
+    [
+      rowKeyOf,
+      monthKeyOf,
+      knownRowIds,
+      knownMonthIds,
+      projectId,
+      scope,
+      narrowOf,
+      listRangeOf,
+      basis,
+      viewsOf,
+    ],
   );
 
   /**
@@ -1928,7 +1961,13 @@ export function useTransactions(
    * 편 뒤 그 하나만 뺀다. 그러지 않으면 누른 줄이 풀리지 않는다.
    */
   const toggleEntrySelected = useCallback(
-    (id: string, lineKey?: string | null, siblingKeys?: readonly string[]) => {
+    (id: string, requestedLineKey?: string | null, siblingKeys?: readonly string[]) => {
+      /*
+       * 지울 것을 고를 때는 분할의 줄 하나도 그 거래 전부다 (2026-10-08 사용자 결정). 줄
+       * 하나만 지우는 길은 없다 -- 줄만 체크해 두면 "그 줄만 지워진다"로 읽히는데 실제로는
+       * 거래가 통째로 지워진다. 거래 열쇠로 고르면 그 거래의 모든 줄이 함께 켜진다.
+       */
+      const lineKey = selectPurpose === 'delete' ? undefined : requestedLineKey;
       const key = selectionKey(id, lineKey);
       setSelected((prev) => {
         if (prev[key]) {
@@ -1946,8 +1985,54 @@ export function useTransactions(
         return { ...prev, [key]: true };
       });
     },
-    [],
+    [selectPurpose],
   );
+
+  /** 받아 둔 거래의 모양. 할부·분할인지, 어느 원거래에 걸린 환불·페이백인지. */
+  const knownShapes = useMemo(() => {
+    const shapeOf = new Map<
+      string,
+      { installment: boolean; split: boolean; paybackOf: string | null }
+    >();
+    const put = (rows: readonly EntryListItem[]) => {
+      for (const row of rows) {
+        shapeOf.set(row.id, {
+          installment: (row.installmentMonths ?? 1) > 1,
+          split: row.lines.length > 1,
+          paybackOf: row.paybackOfEntryId ?? null,
+        });
+      }
+    };
+    for (const data of Object.values(monthData)) if (data?.entries) put(data.entries);
+    for (const rows of Object.values(rowEntries)) put(rows);
+    return shapeOf;
+  }, [monthData, rowEntries]);
+
+  /**
+   * 고른 것 가운데 할부·분할 거래의 수. 확인 창이 "모든 회차·모든 줄에 함께"를 알린다
+   * (2026-10-08 사용자 결정) -- 회차 하나를 눌러도 원거래 전체가, 분할 줄 하나를 지워도
+   * 거래 전체가 대상이라 그 까닭이 보여야 한다. 받아 둔 목록에 없는 거래는 세지 않는다.
+   */
+  const selectedShapes = useMemo(() => {
+    const ids = new Set(Object.keys(selected).map((key) => parseSelectionKey(key).entryId));
+    let installment = 0;
+    let split = 0;
+    for (const id of ids) {
+      const shape = knownShapes.get(id);
+      if (shape?.installment) installment += 1;
+      if (shape?.split) split += 1;
+    }
+    /*
+     * 원거래를 지우면 걸린 환불·페이백도 함께 지워진다 (PAYBACK_DESIGN 7-6). 고르지 않았는데
+     * 함께 사라지는 것을 센다. 받아 둔 목록에 선 것만 알 수 있다 -- 다른 달에 들어온 환불은
+     * 그 달을 펴 보기 전에는 모른다.
+     */
+    let paybacks = 0;
+    for (const [id, shape] of knownShapes) {
+      if (shape.paybackOf && ids.has(shape.paybackOf) && !ids.has(id)) paybacks += 1;
+    }
+    return { installment, split, paybacks };
+  }, [knownShapes, selected]);
 
   /** 범위를 한꺼번에 고르거나 푼다. 전부 골라져 있으면 푸는 것이 뜻에 맞는다. */
   const toggleRange = useCallback(
@@ -2061,7 +2146,16 @@ export function useTransactions(
    */
   const deleteSelected = useCallback(async (): Promise<{ deleted: number; failed: number }> => {
     // 지우는 것은 거래다. 줄 하나만 지울 수는 없다 -- 그것은 분할을 고치는 일이다.
-    const ids = [...new Set(Object.keys(selected).map((key) => parseSelectionKey(key).entryId))];
+    const picked = new Set(Object.keys(selected).map((key) => parseSelectionKey(key).entryId));
+    /*
+     * 원거래가 함께 골라진 환불·페이백은 보내지 않는다. 원거래를 지우면 함께 지워지므로
+     * (PAYBACK_DESIGN 7-6) 따로 보내면 늦게 닿은 쪽이 "없는 거래"로 실패해 지우지 못했다고
+     * 잘못 알린다 (2026-10-08 확인, api payback-smoke 15절).
+     */
+    const ids = [...picked].filter((id) => {
+      const paybackOf = knownShapes.get(id)?.paybackOf;
+      return !(paybackOf && picked.has(paybackOf));
+    });
     if (ids.length === 0) return { deleted: 0, failed: 0 };
 
     setIsDeleting(true);
@@ -2088,7 +2182,7 @@ export function useTransactions(
     }
 
     return { deleted, failed };
-  }, [selected]);
+  }, [selected, knownShapes]);
 
   /**
    * 한 건을 지운다. 상세에서 지우기를 눌렀을 때.
@@ -2543,6 +2637,7 @@ export function useTransactions(
     startSelecting,
     stopSelecting,
     selectedCount: Object.keys(selected).length,
+    selectedShapes,
     isEntrySelected,
     toggleEntrySelected,
     monthChecked,

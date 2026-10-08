@@ -349,9 +349,14 @@ export function BudgetDetailModal({
 }: BudgetDetailModalProps) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
-  /** 요일·시간대 막대를 평균으로 볼지 누적(합계)으로 볼지. 두 그래프가 함께 따른다. */
-  const [patternMode, setPatternMode] = useState<PatternMode>('average');
-  const isTotalPattern = patternMode === 'total';
+  /**
+   * 요일·시간대 막대를 평균으로 볼지 누적(합계)으로 볼지. 그래프마다 따로 고른다
+   * (2026-10-08 사용자 요청 -- 한쪽을 바꾸면 다른 쪽까지 바뀌어 헷갈렸다).
+   */
+  const [weekdayMode, setWeekdayMode] = useState<PatternMode>('average');
+  const [hourMode, setHourMode] = useState<PatternMode>('average');
+  const isTotalWeekday = weekdayMode === 'total';
+  const isTotalHour = hourMode === 'total';
 
   const detail = useCategoryDetail({
     categoryId,
@@ -435,6 +440,7 @@ export function BudgetDetailModal({
                 current={detail.daily}
                 comparisons={detail.comparisons}
                 currentName={detail.currentMonthName}
+                currentPeriodKey={detail.currentPeriodKey}
                 throughDay={detail.throughDay}
                 tooltipName={t(detail.labels.cumulative)}
                 height={300}
@@ -466,18 +472,18 @@ export function BudgetDetailModal({
           <div>
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-lg font-semibold">
-                {t(isTotalPattern ? detail.labels.weekdayTotal : detail.labels.weekday)}
+                {t(isTotalWeekday ? detail.labels.weekdayTotal : detail.labels.weekday)}
               </h3>
-              <PatternModeToggle mode={patternMode} onChange={setPatternMode} />
+              <PatternModeToggle mode={weekdayMode} onChange={setWeekdayMode} />
             </div>
             <p className="mb-4 text-xs text-gray-500">
-              {t(isTotalPattern ? 'detail.weekdayTotalNote' : 'detail.weekdayNote')}
+              {t(isTotalWeekday ? 'detail.weekdayTotalNote' : 'detail.weekdayNote')}
             </p>
             {detail.hasPatternAmount ? (
               <AmountBarChart
-                data={isTotalPattern ? detail.pattern.weekdayTotal : detail.pattern.weekday}
+                data={isTotalWeekday ? detail.pattern.weekdayTotal : detail.pattern.weekday}
                 currency={displayCurrency}
-                tooltipName={t(isTotalPattern ? 'detail.patternTotal' : 'detail.dailyAverage')}
+                tooltipName={t(isTotalWeekday ? 'detail.patternTotal' : 'detail.dailyAverage')}
                 interval={0}
               />
             ) : (
@@ -490,20 +496,20 @@ export function BudgetDetailModal({
           <div>
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-lg font-semibold">
-                {t(isTotalPattern ? detail.labels.hourTotal : detail.labels.hour)}
+                {t(isTotalHour ? detail.labels.hourTotal : detail.labels.hour)}
               </h3>
-              <PatternModeToggle mode={patternMode} onChange={setPatternMode} />
+              <PatternModeToggle mode={hourMode} onChange={setHourMode} />
             </div>
             <p className="mb-4 text-xs text-gray-500">
-              {t(isTotalPattern ? 'detail.hourTotalNote' : 'detail.hourNote')}
+              {t(isTotalHour ? 'detail.hourTotalNote' : 'detail.hourNote')}
               {detail.pattern.untimedCount > 0 &&
                 ` ${t('detail.hourUntimed', { count: detail.pattern.untimedCount })}`}
             </p>
             {detail.pattern.hasTimedAmount ? (
               <AmountBarChart
-                data={isTotalPattern ? detail.pattern.hourTotal : detail.pattern.hour}
+                data={isTotalHour ? detail.pattern.hourTotal : detail.pattern.hour}
                 currency={displayCurrency}
-                tooltipName={t(isTotalPattern ? 'detail.patternTotal' : 'detail.dailyAverage')}
+                tooltipName={t(isTotalHour ? 'detail.patternTotal' : 'detail.dailyAverage')}
                 /* 스물넷을 다 적으면 좁은 패널에서 겹친다. 0·3·6…시만 적는다. */
                 interval={2}
               />

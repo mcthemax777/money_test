@@ -22,12 +22,12 @@ import {
 import { monotonePath } from '@money/core/lib/chart-path';
 import {
   buildCumulativeRows,
-  cumulativeChangeOf,
   defaultCumulativeIndex,
   type CumulativeSeries,
   type DailyCumulativePoint,
 } from '@money/core/lib/entries';
 import { formatCurrency } from '@money/core/lib/money';
+import { cumulativeReadoutLines } from '@money/core/lib/month-compare';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 /** 그리는 자리의 높이(px). 웹은 300 이지만 앱에서는 그만큼이 화면 절반을 먹는다. */
@@ -52,6 +52,7 @@ export default function DailyCumulativeChart({
   current,
   comparisons = [],
   currentName,
+  currentPeriodKey,
   throughDay,
   tooltipName,
 }: {
@@ -61,6 +62,8 @@ export default function DailyCumulativeChart({
   comparisons?: CumulativeSeries[];
   /** 견줄 달이 있을 때 이번 달 선에 붙일 이름. "8월" */
   currentName?: string;
+  /** 이번 기간 선의 열쇠. 주면 아래 줄이 선마다 그 날을 적는다 (웹과 같은 규칙). */
+  currentPeriodKey?: string;
   /** 이번 달 선을 그 달의 며칠까지 그을지. 넘기지 않으면 끝까지 그린다. */
   throughDay?: number;
   /** 견줄 달이 없을 때 읽는 줄에 적을 이름 */
@@ -156,30 +159,6 @@ export default function DailyCumulativeChart({
 
   return (
     <View>
-      {/*
-        눌러서 읽은 날과 값. 자리를 늘 비워 둔다(h-10) -- 눌렀을 때만 줄이 생기면
-        그래프가 아래로 밀려 손가락 밑에서 선이 움직인다.
-      */}
-      <View className="h-10 justify-center">
-        {pickedRow ? (
-          <View className="flex-row flex-wrap items-baseline gap-x-3 gap-y-0.5">
-            <Text className="text-xs font-semibold text-gray-700">{pickedRow.label}</Text>
-            {lines.map((line) => {
-              const value = pickedRow[line.key];
-              if (value === null) return null;
-              const change = cumulativeChangeOf(pickedRow, line.key);
-
-              return (
-                <Text key={line.key} className="text-xs" style={{ color: line.color }}>
-                  {line.name} {formatCurrency(value, displayCurrency)}
-                  {change ? <Text className="text-gray-500"> ({change})</Text> : null}
-                </Text>
-              );
-            })}
-          </View>
-        ) : null}
-      </View>
-
       <View onLayout={measure}>
         <Pressable
           onPress={(event) => {
@@ -272,19 +251,36 @@ export default function DailyCumulativeChart({
         </Pressable>
       </View>
 
-      {/* 범례. 선이 하나뿐이면 지운다 -- 읽는 줄이 같은 이름을 보여 준다. */}
-      {comparisons.length > 0 ? (
-        <View className="mt-1 flex-row flex-wrap justify-center gap-x-4 gap-y-1">
-          {lines.map((line) => (
-            <View key={`legend-${line.key}`} className="flex-row items-center gap-1.5">
-              <View
-                style={{ width: 10, height: 2, backgroundColor: line.color, borderRadius: 1 }}
-              />
-              <Text className="text-xs text-gray-600">{line.name}</Text>
+      {/*
+        눌러서 읽은 날과 값. 그래프 **아래에** 선마다 한 줄씩(전전, 전, 지금) 적는다 (2026-10-08
+        사용자 요청 -- 위에 한 줄로 다 적으니 답답했다). 범례 노릇도 한다. 줄 수는 고른 날과
+        상관없이 같아 그래프가 움직이지 않는다 -- 고르지 않았으면 값 자리만 비운다.
+      */}
+      <View className="mt-2 gap-1">
+        {/* 선마다 날짜가 붙으면 칸 이름 줄은 군더더기다. 날짜를 붙일 수 없는 보기에만 둔다. */}
+        {currentPeriodKey ? null : (
+          <Text className="text-xs font-semibold text-gray-700">{pickedRow?.label ?? ' '}</Text>
+        )}
+        {cumulativeReadoutLines(pickedRow, pickedRow ? picked : null, comparisons, {
+          name: lines[lines.length - 1].name,
+          periodKey: currentPeriodKey,
+        }).map((item) => {
+          const color = lines.find((line) => line.key === item.key)?.color ?? CHART_COLOR;
+          return (
+            <View key={item.key} className="flex-row items-center gap-2">
+              <View style={{ width: 10, height: 2, backgroundColor: color, borderRadius: 1 }} />
+              <Text className="shrink text-xs text-gray-600" numberOfLines={1}>
+                {item.name}
+              </Text>
+              <Text className="ml-auto text-xs font-semibold" style={{ color }}>
+                {item.value === null ? '-' : formatCurrency(item.value, displayCurrency)}
+              </Text>
+              {/* 증감 자리는 늘 둔다. 줄마다 금액의 오른쪽 끝이 맞아야 위아래로 견주기 쉽다. */}
+              <Text className="text-right text-xs text-gray-500" style={{ minWidth: 48 }}>{item.change ?? ''}</Text>
             </View>
-          ))}
-        </View>
-      ) : null}
+          );
+        })}
+      </View>
     </View>
   );
 }

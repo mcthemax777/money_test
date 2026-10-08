@@ -59,6 +59,7 @@ export interface NetAnalysis {
   daily: DailyCumulativePoint[];
   comparisons: CumulativeSeries[];
   currentMonthName?: string;
+  currentPeriodKey?: string;
   throughDay?: number;
   /** 이 기간(이나 겹쳐 그릴 앞선 기간)에 수입·지출이 하나라도 있는가. */
   hasDaily: boolean;
@@ -82,6 +83,7 @@ export function useNetAnalysis(input: Omit<CategoryDetailInput, 'categoryId'>): 
   /* 앞선 기간도 같은 차례(전전, 전)로 온다. 이름은 두 쪽이 같다. */
   const comparisons: CumulativeSeries[] = expense.comparisons.map((series, index) => ({
     name: series.name,
+    periodKey: series.periodKey,
     points: netPoints(income.comparisons[index]?.points ?? [], series.points),
   }));
 
@@ -98,6 +100,7 @@ export function useNetAnalysis(input: Omit<CategoryDetailInput, 'categoryId'>): 
     daily,
     comparisons,
     currentMonthName: expense.currentMonthName,
+    currentPeriodKey: expense.currentPeriodKey,
     throughDay: expense.throughDay,
     hasDaily: expense.hasDailyAmount || income.hasDailyAmount,
   };

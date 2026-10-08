@@ -241,6 +241,18 @@ export function formatYearMonthDay(dateKey: string): string {
 }
 
 /**
+ * 해를 뺀 날짜를 말로. "10월 8일" / "October 8" / "10月8日"
+ *
+ * 누적 그래프 아래 줄처럼 앞에 이미 기간 이름이 서 있어 해가 군더더기인 자리에 쓴다.
+ */
+export function formatMonthDayLong(dateKey: string): string {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return dateFormatter('monthDayLong', 'UTC', { month: 'long', day: 'numeric' }).format(
+    new Date(Date.UTC(year, month - 1, day)),
+  );
+}
+
+/**
  * 달력 날짜 하나를 숫자로. "2026. 9. 19." / "9/19/2026" / "2026/9/19"
  *
  * `formatYearMonthDay` 의 짧은 짝이다. 그쪽은 달 이름을 말로 적어("2026년 9월 19일")

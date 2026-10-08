@@ -851,15 +851,21 @@ export class LocalStore {
          * 전표가 오면 그 다리를 통째로 갈아 끼운다. 다리 수가 바뀌는 수정도 이 한
          * 경로로 처리된다.
          *
-         * 옛 다리에 걸린 할부 계획도 함께 지운다. 서버의 replaceEntry 가 다리를 지우고
-         * 다시 만들면서 계획을 cascade 로 지우고 새로 만들기 때문에, 새 계획은 새 번호를
-         * 달고 이 응답에 함께 실려 온다. 그래서 아래 installmentPlans 를 전표보다 뒤에
-         * 적용해야 한다. 순서를 뒤집으면 방금 받은 계획이 여기서 지워진다.
+         * 옛 다리에 걸린 할부 계획은 **새로 온 다리에 없는 것만** 지운다. 서버의 replaceEntry
+         * 는 다리를 지우고 다시 만들면서 계획을 cascade 로 지우고 새로 만들어, 새 계획이 새
+         * 다리 id 를 달고 이 응답에 함께 실려 온다(그래서 아래 installmentPlans 를 전표보다
+         * 뒤에 적용한다). 반대로 태그 손보기·페이백 링크·할부 환불처럼 **다리는 그대로 두고
+         * 전표의 번호만 올리는** 변경에서는 계획이 다시 오지 않는다. 그때 통째로 지우면 사본의
+         * 할부가 일시불로 남는다 (2026-10-08 실기기에서 태그를 바꾼 할부가 원거래만 남았다).
          */
+        const incomingPostingIds = ((entry.postings ?? []) as Row[]).map((posting) =>
+          String(posting.id),
+        );
         await this.db.run(
           `DELETE FROM installment_plan
-            WHERE postingId IN (SELECT id FROM posting WHERE entryId = ?)`,
-          [String(row.id)],
+            WHERE postingId IN (SELECT id FROM posting WHERE entryId = ?)
+              AND postingId NOT IN (${incomingPostingIds.length > 0 ? placeholders(incomingPostingIds.length) : "''"})`,
+          [String(row.id), ...incomingPostingIds],
         );
         await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [String(row.id)]);
 
@@ -1035,6 +1041,15 @@ export class LocalStore {
       }
 
       for (const row of (changes.installmentPlans ?? []) as Row[]) {
+        /*
+         * 같은 다리에 남아 있던 옛 계획을 먼저 치운다. 위에서 살아남은 다리의 계획은 남겨
+         * 두므로, 서버가 그 다리에 계획을 새 id 로 다시 만들었으면 다리당 하나라는 색인
+         * (`plan_posting_idx`)에 걸린다.
+         */
+        await this.db.run(`DELETE FROM installment_plan WHERE postingId = ? AND id <> ?`, [
+          String(row.postingId),
+          String(row.id),
+        ]);
         await this.upsert('installment_plan', {
           id: String(row.id),
           postingId: String(row.postingId),
@@ -3517,6 +3532,11 @@ export class LocalStore {
           [id],
         );
         await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [id]);
+        /*
+         * 태그 연결도 치운다. 남기면 태그를 지울 때 세는 "이 태그가 붙은 거래 수"
+         * (`tagUsageCounts`)에 지운 거래와 함께 지운 환불·페이백까지 들어간다.
+         */
+        await this.db.run(`DELETE FROM entry_tag WHERE entryId = ?`, [id]);
         await this.db.run(`DELETE FROM entry WHERE id = ?`, [id]);
       }
     });

@@ -733,9 +733,21 @@ export default function TransactionsScreen({
       return;
     }
 
+    /*
+     * 할부·분할이 섞였으면 무엇이 함께 지워지는지 적는다 (웹과 같은 규칙, 2026-10-08 사용자 결정).
+     * 회차 하나나 분할 줄 하나를 골라도 거래가 통째로 지워진다.
+     */
+    const { installment, split, paybacks } = tx.selectedShapes;
     Alert.alert(
       t('tx.deleteConfirm', { count: tx.selectedCount }),
-      t('tx.deleteConfirmBody'),
+      [
+        installment > 0 ? t('tx.deleteInstallmentNote', { count: installment }) : '',
+        split > 0 ? t('tx.deleteSplitNote', { count: split }) : '',
+        paybacks > 0 ? t('tx.deletePaybackNote', { count: paybacks }) : '',
+        t('tx.deleteConfirmBody'),
+      ]
+        .filter(Boolean)
+        .join('\n'),
       [
         { text: t('common.cancel'), style: 'cancel' },
         {
@@ -1270,6 +1282,7 @@ export default function TransactionsScreen({
         onClose={() => setIsTagPickOpen(false)}
         tags={tx.pickerTags}
         count={tx.selectedCount}
+        installmentCount={tx.selectedShapes.installment}
         isSubmitting={tx.isTagging}
         commonTagIds={tx.commonTagIds}
         partialTagIds={tx.partialTagIds}

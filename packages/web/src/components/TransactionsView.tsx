@@ -542,7 +542,18 @@ export default function TransactionsView({
       setNotice(t('tx.deleteNone'));
       return;
     }
-    if (!window.confirm(t('tx.deleteConfirm', { count: tx.selectedCount }))) return;
+    /*
+     * 할부·분할·환불이 걸린 거래가 섞였으면 무엇이 함께 지워지는지 적는다 (2026-10-08 사용자 결정). 회차 하나나
+     * 분할 줄 하나를 골라도 거래가 통째로 지워진다.
+     */
+    const { installment, split, paybacks } = tx.selectedShapes;
+    const notes = [
+      installment > 0 ? t('tx.deleteInstallmentNote', { count: installment }) : '',
+      split > 0 ? t('tx.deleteSplitNote', { count: split }) : '',
+      paybacks > 0 ? t('tx.deletePaybackNote', { count: paybacks }) : '',
+    ].filter(Boolean);
+    const question = [t('tx.deleteConfirm', { count: tx.selectedCount }), ...notes].join('\n');
+    if (!window.confirm(question)) return;
 
     const { failed } = await tx.deleteSelected();
     setNotice(failed > 0 ? t('tx.deleteFailed', { count: failed }) : '');
@@ -1333,6 +1344,12 @@ export default function TransactionsView({
           <p className="text-sm text-gray-600">
             {t('tx.tagTargets', { count: tx.selectedCount })}
           </p>
+          {/* 회차 하나를 골라도 태그는 원거래에 붙는다. 함께 켜진 까닭을 적는다. */}
+          {tx.selectedShapes.installment > 0 ? (
+            <p className="text-xs text-amber-700">
+              {t('tx.tagInstallmentNote', { count: tx.selectedShapes.installment })}
+            </p>
+          ) : null}
 
           {tx.pickerTags.length === 0 ? (
             <p className="text-sm text-gray-500">{t('tags.empty')}</p>

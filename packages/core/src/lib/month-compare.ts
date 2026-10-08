@@ -9,8 +9,25 @@ import {
 } from '@money/types';
 
 import { homeDataPort } from '../data/home-port';
-import { dayRangeQuery, formatMonthShort, formatYearOnly, todayKey } from '../lib/datetime';
-import { analysisDated, buildDailyCumulative, type CumulativeSeries } from './entries';
+import {
+  dayRangeQuery,
+  formatMonthDayLong,
+  formatMonthShort,
+  formatYearMonthDay,
+  formatYearOnly,
+  shiftDateKey,
+  todayKey,
+  weekdayNames,
+  weekdayOf,
+} from '../lib/datetime';
+import {
+  analysisDated,
+  buildDailyCumulative,
+  cumulativeChangeOf,
+  type CumulativeRow,
+  type CumulativeSeries,
+} from './entries';
+import { activeLocale, translate } from './i18n';
 
 /**
  * 앞선 기간을 몇 개나 겹쳐 그릴지.
@@ -68,6 +85,82 @@ export function periodShortName(key: string): string {
   }
   if (unit === 'month') return formatMonthShort(month);
   return `${month}/${day}`;
+}
+
+/**
+ * 일별 누적 선의 이름. 주는 "9월 3주차"로 적는다 (2026-10-08 사용자 요청) -- 막대 밑과 달리
+ * 범례·읽는 줄에는 자리가 있고, "9/21" 은 날짜 하루로 읽힌다. 몇째 주인지는 그 주가 시작하는
+ * 날로 센다(1~7일에 시작하면 1주차, 기간 줄 이름과 같은 규칙). 그 밖의 단위는 막대 이름과 같다.
+ */
+export function periodSeriesName(key: string): string {
+  if (unitOfKey(key) !== 'week') return periodShortName(key);
+  const [, month, day] = key.split('@')[0].split('-').map(Number);
+  // 기간 줄 이름(`periodLabel`)과 같은 말과 같은 셈이다. 해는 빼서 범례를 짧게 둔다.
+  return translate(activeLocale(), 'date.weekOfMonth', {
+    month: formatMonthShort(month),
+    week: Math.floor((day - 1) / 7) + 1,
+  });
+}
+
+/**
+ * 그 기간의 n 일째(0 부터)가 어느 날인지. 누적 그래프 아래 줄에 선마다 적는다 (2026-10-08 사용자
+ * 요청) -- 같은 칸이라도 선마다 다른 날이다.
+ *
+ *   주  "10월 1주차 목요일"   (요일은 길게)
+ *   해  "2025년 3월 5일"
+ *   달  "9월 8일"            (시작일을 붙인 달도 실제 날짜)
+ */
+export function periodDayName(key: string, index: number): string {
+  const dateKey = shiftDateKey(periodDayRange(key).startKey, index);
+  const unit = unitOfKey(key);
+  if (unit === 'week') {
+    const weekday = weekdayNames(0, 'long')[weekdayOf(dateKey).day];
+    return `${periodSeriesName(key)} ${weekday}`;
+  }
+  if (unit === 'year') return formatYearMonthDay(dateKey);
+  return formatMonthDayLong(dateKey);
+}
+
+/** 누적 그래프 아래에 읽는 줄 하나. */
+export interface CumulativeReadoutLine {
+  key: 'current' | 'previous' | 'earlier';
+  /** 그 선의 그 날 ("10월 1주차 목요일"). 기간 열쇠가 없는 선은 선 이름이다. */
+  name: string;
+  /** 그 날의 누적. 그 선이 그 날까지 닿지 않았으면 null 이다. */
+  value: number | null;
+  /** 앞선 선보다 늘고 준 비율 ("▲12%") */
+  change: string | null;
+}
+
+/**
+ * 고른 날의 값을 그래프 **아래에 한 선씩** 적을 줄들 (2026-10-08 사용자 요청 -- 한 줄에 다
+ * 적으면 답답하다). 오래된 것부터(전전, 전, 지금) 범례와 같은 차례다. 견줄 선이 없으면 지금
+ * 한 줄이다. 웹과 앱이 같은 줄을 적도록 여기서 정한다.
+ *
+ * 고른 날이 없으면 값과 날짜 없이 선 이름만 선다.
+ */
+export function cumulativeReadoutLines(
+  row: CumulativeRow | null,
+  index: number | null,
+  comparisons: CumulativeSeries[],
+  current: { name: string; periodKey?: string },
+): CumulativeReadoutLine[] {
+  const [earlier, previous] = comparisons;
+  const line = (
+    key: CumulativeReadoutLine['key'],
+    series: { name: string; periodKey?: string },
+  ): CumulativeReadoutLine => ({
+    key,
+    name:
+      series.periodKey && index !== null ? periodDayName(series.periodKey, index) : series.name,
+    value: row ? row[key] : null,
+    change: row ? cumulativeChangeOf(row, key) : null,
+  });
+  return [
+    ...(earlier ? [line('earlier', earlier)] : []),
+    ...(previous ? [line('previous', previous)] : []),
+    line('current', current),
+  ];
 }
 
 /**
@@ -143,7 +236,8 @@ export async function loadPreviousPeriods(
       // 분석 기준으로 받았으면 페이백도 원거래 날짜로 쌓는다. 이번 기간 선과 같은 규칙이다.
       const counted = query.dateBasis === 'analysis' ? analysisDated(rows) : rows;
       return {
-        name: periodShortName(key),
+        name: periodSeriesName(key),
+        periodKey: key,
         // 앞선 기간도 이번 기간과 같은 몫을 세야 선끼리 견줄 수 있다.
         points: buildDailyCumulative(counted, startKey, endKey, timeZone, type),
       };

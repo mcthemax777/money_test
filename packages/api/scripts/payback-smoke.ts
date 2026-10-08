@@ -657,5 +657,39 @@ runSmoke('payback', async (ctx) => {
   ctx.check('환불 다리 = 돌려받은 돈 + 사라진 이자', interestRow.postings.find((leg) => leg.categoryId)?.baseAmount.toString(), '-120400');
   const debtAfter = await balanceOf((await ctx.prisma.card.findUniqueOrThrow({ where: { id: card4.id } })).liabilityAccountId!);
   ctx.check('카드 빚은 낸 이자(1,200 + 800)만 남는다', Number(debtAfter) - Number(debtBefore), 120400);
+
+  // ── 15. 태그 손보기와 고른 것 지우기 (2026-10-08): 환불·페이백·할부가 흐트러지지 않는다 ──
+  const tags4 = makeTags(ctx.prisma, a4);
+  const fixed = await tags4.createTag(uid, { name: '고정비' } as never, p4.id);
+  const before15 = await monthly();
+  const plansOf = async (entryId: string) =>
+    ctx.prisma.installmentPlan.count({ where: { posting: { entryId } } });
+  const plansBefore = await plansOf(full.id);
+  // 화면이 범위를 고를 때처럼 줄을 가리지 않고 보낸다 -- 서버가 그 전표의 분류 줄로 편다.
+  await e4.changeTags(uid, { targets: [{ entryId: part.id }, { entryId: full.id }], addTagIds: [fixed.id] } as never, p4.id);
+  const partRow = await ctx.prisma.journalEntry.findUniqueOrThrow({
+    where: { id: part.id },
+    include: { postings: true, tags: true },
+  });
+  ctx.check('환불의 분류 줄에 태그가 붙는다',
+    partRow.tags.map((tag) => tag.lineKey).join(','), partRow.postings.find((leg) => leg.categoryId)?.lineKey);
+  ctx.check('환불의 원거래 링크와 줄인 회차는 그대로',
+    `${partRow.paybackOfEntryId === full.id} ${JSON.stringify((partRow.installmentAdjust as { principal: string[] }).principal)}`,
+    'true ["0","0","30000"]');
+  ctx.check('할부 원거래의 일정은 그대로', await plansOf(full.id), plansBefore);
+  ctx.check('회차 기준 합계도 그대로', await monthly(), before15);
+  await e4.changeTags(uid, { targets: [{ entryId: part.id }, { entryId: full.id }], removeTagIds: [fixed.id] } as never, p4.id);
+  ctx.check('떼면 둘 다 빈다', await ctx.prisma.entryTag.count({ where: { entryId: { in: [part.id, full.id] } } }), 0);
+
+  /*
+   * 원거래와 걸린 환불을 함께 골라 지운다. 원거래를 지우면 환불도 함께 지워지므로(7-6), 화면이
+   * 둘 다 보내면 늦게 닿은 쪽이 "없는 거래"가 된다. 화면(`deleteSelected`)은 원거래가 함께
+   * 골라진 환불·페이백을 보내지 않는다 -- 여기서는 그 까닭을 못 박는다.
+   */
+  const attached15 = await ctx.prisma.journalEntry.findMany({ where: { paybackOfEntryId: full.id }, select: { id: true } });
+  await e4.deleteEntry(full.id, uid);
+  ctx.check('원거래를 지우면 걸린 환불이 모두 사라진다',
+    await ctx.prisma.journalEntry.count({ where: { id: { in: attached15.map((entry) => entry.id) } } }), 0);
+  ctx.check('그 뒤 환불을 또 지우면 없는 거래', await codeOf4(() => e4.deleteEntry(part.id, uid)), 'ENTRY_NOT_FOUND');
   }
 });

@@ -44,8 +44,8 @@ function PatternModeToggle({
 }) {
   const { t } = useTranslation();
   /*
-   * 흰 알약이 고른 쪽으로 미끄러진다. 누른 데서가 아니라 mode 를 보고 움직인다 -- 요일과 시간대
-   * 카드에 하나씩 서서, 한쪽을 누르면 다른 쪽 알약도 함께 옮겨 가야 한다.
+   * 흰 알약이 고른 쪽으로 미끄러진다. 누른 데서가 아니라 mode 를 보고 움직인다 -- 부모가 값을
+   * 되돌려도(다시 그릴 때 등) 알약이 값과 어긋나지 않는다.
    */
   const offset = useRef(new Animated.Value(mode === 'total' ? MODE_SLOT_WIDTH : 0)).current;
   useEffect(() => {
@@ -169,10 +169,14 @@ export default function CategoryDetailView({
 }) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
-  /** 요일·시간대 막대를 평균으로 볼지 누적(합계)으로 볼지. 두 그래프가 함께 따른다. */
-  const [patternMode, setPatternMode] = useState<PatternMode>('average');
-  const isTotalPattern = patternMode === 'total';
-  const modeToggle = <PatternModeToggle mode={patternMode} onChange={setPatternMode} />;
+  /**
+   * 요일·시간대 막대를 평균으로 볼지 누적(합계)으로 볼지. 그래프마다 따로 고른다
+   * (2026-10-08 사용자 요청 -- 한쪽을 바꾸면 다른 쪽까지 바뀌어 헷갈렸다).
+   */
+  const [weekdayMode, setWeekdayMode] = useState<PatternMode>('average');
+  const [hourMode, setHourMode] = useState<PatternMode>('average');
+  const isTotalWeekday = weekdayMode === 'total';
+  const isTotalHour = hourMode === 'total';
 
   const detail = useCategoryDetail({
     categoryId,
@@ -266,6 +270,7 @@ export default function CategoryDetailView({
                 current={detail.daily}
                 comparisons={detail.comparisons}
                 currentName={detail.currentMonthName}
+                currentPeriodKey={detail.currentPeriodKey}
                 throughDay={detail.throughDay}
                 tooltipName={t(detail.labels.cumulative)}
               />
@@ -291,13 +296,13 @@ export default function CategoryDetailView({
 
           {/* 요일·시간대. 둘 다 아래 거래 목록에서 센다. */}
           <ChartCard
-            title={t(isTotalPattern ? detail.labels.weekdayTotal : detail.labels.weekday)}
-            note={t(isTotalPattern ? 'detail.weekdayTotalNote' : 'detail.weekdayNote')}
-            action={modeToggle}
+            title={t(isTotalWeekday ? detail.labels.weekdayTotal : detail.labels.weekday)}
+            note={t(isTotalWeekday ? 'detail.weekdayTotalNote' : 'detail.weekdayNote')}
+            action={<PatternModeToggle mode={weekdayMode} onChange={setWeekdayMode} />}
           >
             {detail.hasPatternAmount ? (
               <MonthlyAmountChart
-                points={isTotalPattern ? detail.pattern.weekdayTotal : detail.pattern.weekday}
+                points={isTotalWeekday ? detail.pattern.weekdayTotal : detail.pattern.weekday}
                 currency={displayCurrency}
                 showAxisLabel={everyWeekday}
               />
@@ -307,10 +312,10 @@ export default function CategoryDetailView({
           </ChartCard>
 
           <ChartCard
-            title={t(isTotalPattern ? detail.labels.hourTotal : detail.labels.hour)}
-            action={modeToggle}
+            title={t(isTotalHour ? detail.labels.hourTotal : detail.labels.hour)}
+            action={<PatternModeToggle mode={hourMode} onChange={setHourMode} />}
             note={[
-              t(isTotalPattern ? 'detail.hourTotalNote' : 'detail.hourNote'),
+              t(isTotalHour ? 'detail.hourTotalNote' : 'detail.hourNote'),
               detail.pattern.untimedCount > 0
                 ? t('detail.hourUntimed', { count: detail.pattern.untimedCount })
                 : '',
@@ -320,7 +325,7 @@ export default function CategoryDetailView({
           >
             {detail.pattern.hasTimedAmount ? (
               <MonthlyAmountChart
-                points={isTotalPattern ? detail.pattern.hourTotal : detail.pattern.hour}
+                points={isTotalHour ? detail.pattern.hourTotal : detail.pattern.hour}
                 currency={displayCurrency}
                 showAxisLabel={everyThirdHour}
               />

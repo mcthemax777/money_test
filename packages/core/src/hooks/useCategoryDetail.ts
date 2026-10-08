@@ -16,7 +16,7 @@ import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 import { homeDataPort } from '../data/home-port';
 import { type ReportPeriod } from '../lib/api-client';
-import { dayRangeQuery, todayKey } from '../lib/datetime';
+import { dayRangeQuery, shiftDateKey, todayKey, weekdayOf } from '../lib/datetime';
 import {
   analysisDated,
   buildDailyCumulative,
@@ -31,6 +31,7 @@ import {
   comparablePeriodKey,
   loadEntriesByBasis,
   loadPreviousPeriods,
+  periodSeriesName,
   periodShortName,
   throughDayOfPeriod,
 } from '../lib/month-compare';
@@ -319,6 +320,8 @@ export interface CategoryDetail {
   pies: CategoryPie[];
   /** 이번 기간 선에 붙일 이름("8월", 주 "9/13"). 앞선 기간과 견줄 때만 있다. */
   currentMonthName?: string;
+  /** 이번 기간 선의 열쇠. 그래프 아래 줄이 n 일째의 날짜를 적는다. 견줄 기간이 있을 때만 있다. */
+  currentPeriodKey?: string;
   /** 이번 기간 선을 첫날부터 며칠째까지 그을지. 앞선 기간과 견줄 때만 있다. */
   throughDay?: number;
   /** 12개월 중 한 달이라도 금액이 있는지. 없으면 그래프 대신 안내를 적는다. */
@@ -635,8 +638,24 @@ export function useCategoryDetail({
         const rows = (entriesRes ?? []) as EntryListItem[];
         setEntries(rows);
         // 일별 누적. 수입 분류는 수입을, 지출은 지출을 쌓는다 (이체는 수수료만).
+        const dailyPoints = buildDailyCumulative(
+          analysisDated(rows),
+          dayKeys.startKey,
+          dayKeys.endKey,
+          timeZone,
+          target.type,
+        );
+        /*
+         * 주로 볼 때는 x 축을 요일로 적는다 (2026-10-08 사용자 요청). 앞선 주 선도 같은 칸에
+         * 겹치므로(첫날부터 n 일째) 요일이 그대로 맞는다.
+         */
         setDaily(
-          buildDailyCumulative(analysisDated(rows), dayKeys.startKey, dayKeys.endKey, timeZone, target.type),
+          trendPeriod && unitOfKey(trendPeriod) === 'week'
+            ? dailyPoints.map((point, index) => ({
+                ...point,
+                label: weekdayOf(shiftDateKey(dayKeys.startKey, index)).label,
+              }))
+            : dailyPoints,
         );
         setComparisons(comparisonRes);
         setPieSources(pieRes);
@@ -769,7 +788,8 @@ export function useCategoryDetail({
      * 앞선 기간과 견줄 때만 쓰는 값. 이번 기간 선의 이름("8월", 주 "9/13", 해 "2026년")과,
      * 그 선을 첫날부터 며칠째까지 그을지다. 직접 정한 기간에서는 견줄 기간이 없어 둘 다 필요 없다.
      */
-    currentMonthName: compareKey ? periodShortName(compareKey) : undefined,
+    currentMonthName: compareKey ? periodSeriesName(compareKey) : undefined,
+    currentPeriodKey: compareKey ?? undefined,
     throughDay: compareKey ? throughDayOfPeriod(compareKey, timeZone) : undefined,
     hasMonthlyAmount: monthly.some((point) => point.amount > 0),
     isOffline,

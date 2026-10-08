@@ -35,6 +35,7 @@ export default function TagPickModal({
   onApply,
   tags,
   count,
+  installmentCount = 0,
   isSubmitting,
   commonTagIds,
   partialTagIds,
@@ -46,6 +47,8 @@ export default function TagPickModal({
   tags: TagDto.Response[];
   /** 손볼 거래 수. 무엇에 걸리는지 숫자로 보여 준다. */
   count: number;
+  /** 고른 것 가운데 할부 거래의 수. 회차 하나를 골라도 원거래에 붙는다고 알린다. */
+  installmentCount?: number;
   isSubmitting: boolean;
   /** 고른 거래가 모두 가진 태그. 켜진 채로 연다. */
   commonTagIds: string[];
@@ -96,6 +99,11 @@ export default function TagPickModal({
     >
       <View className="gap-4">
         <Text className="text-sm text-gray-600">{t('tx.tagTargets', { count })}</Text>
+        {installmentCount > 0 ? (
+          <Text className="text-xs text-amber-700">
+            {t('tx.tagInstallmentNote', { count: installmentCount })}
+          </Text>
+        ) : null}
 
         {tags.length === 0 ? (
           <Text className="text-sm text-gray-500">{t('tags.empty')}</Text>

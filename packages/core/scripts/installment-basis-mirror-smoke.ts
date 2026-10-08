@@ -237,6 +237,74 @@ const entry = (id: string, description: string, amount: string, date: string) =>
   eq('그 거래가 냉장고', past[0]?.description, '냉장고');
   eq('회차 이자도 함께 온다', past[0]?.installmentInterestShares?.join(','), '3000,2000,1000');
 
+  console.log('\n== 다리를 그대로 둔 전표 변경 ==');
+  /*
+   * 태그 손보기처럼 다리는 그대로 두고 전표의 번호만 올리는 변경. 서버는 전표만 다시 보내고
+   * 할부 계획은 보내지 않는다. 사본이 그때 계획을 지우면 할부가 일시불로 남는다
+   * (2026-10-08 실기기에서 겪었다).
+   */
+  const tagged = entry('e-fridge', '냉장고', '306000', monthsAgo(2));
+  await store.applyPull(
+    {
+      ...response,
+      since: 1,
+      version: 2,
+      changes: {
+        ...response.changes,
+        project: null,
+        people: [],
+        accounts: [],
+        categories: [],
+        cards: [],
+        budgets: [],
+        installmentPlans: [],
+        entries: [{ ...tagged, updatedVersion: 2, tagLinks: [{ lineKey: 'e-fridge-line1', tagId: 't1' }] }],
+      } as unknown as SyncDto.Changes,
+    },
+    KST,
+  );
+  const afterTag = await port.getSummary({ yearMonth: thisMonth }, PID, {
+    basis: 'installment',
+  } as never);
+  eq('태그만 바뀐 뒤에도 회차 기준은 3회차 + 일시불', afterTag.expense, '111000');
+
+  /*
+   * 다리를 새로 만든 수정. 서버는 새 다리 id 와 새 계획을 함께 보낸다. 옛 계획은 사라지고
+   * 새 계획(2개월)으로 서야 한다.
+   */
+  const rebuilt = entry('e-fridge', '냉장고', '306000', monthsAgo(2));
+  rebuilt.postings = rebuilt.postings.map((posting) => ({ ...posting, id: `${posting.id}-v3` }));
+  await store.applyPull(
+    {
+      ...response,
+      since: 2,
+      version: 3,
+      changes: {
+        ...response.changes,
+        project: null,
+        people: [],
+        accounts: [],
+        categories: [],
+        cards: [],
+        budgets: [],
+        entries: [{ ...rebuilt, updatedVersion: 3 }],
+        installmentPlans: [
+          {
+            id: 'plan-2', postingId: 'e-fridge-acc-v3', totalMonths: 2, interestBearing: false,
+            principalShares: null, interestShares: null,
+            monthlyPayment: null, annualRate: null, updatedVersion: 3,
+          },
+        ],
+      } as unknown as SyncDto.Changes,
+    },
+    KST,
+  );
+  const afterRebuild = await port.getSummary({ yearMonth: lastMonth }, PID, {
+    basis: 'installment',
+  } as never);
+  // 두 달 전에 산 2개월 무이자: 두 달 전·지난달 153,000 씩
+  eq('다리를 새로 만들면 새 계획으로 선다 (지난달 2회차)', afterRebuild.expense, '153000');
+
   console.log(fail === 0 ? '\n전부 통과' : `\n${fail}개 실패`);
   process.exit(fail === 0 ? 0 : 1);
 })();
