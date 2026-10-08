@@ -147,7 +147,15 @@ export default function HomePage() {
 
   /* 분석을 펴 둔 동안에는 그것만 그린다 (거래 화면의 분석과 같은 짜임). */
   if (analysis) {
-    return <AnalysisView projectId={selectedProjectId} initial={analysis} onBack={closeAnalysis} />;
+    return (
+      <AnalysisView
+        projectId={selectedProjectId}
+        initial={analysis}
+        onBack={closeAnalysis}
+        /* 오른쪽 위 단추로 거래내역과 분석을 오간다 (2026-10-09 사용자 요청). */
+        canOpenEntries
+      />
+    );
   }
 
   return (

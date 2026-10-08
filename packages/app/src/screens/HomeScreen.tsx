@@ -177,7 +177,12 @@ export default function HomeScreen() {
           onChanged={home.reloadEntries}
         />
       ) : detail?.kind === 'analysis' ? (
-        <AnalysisScreen initial={detail.initial} onBack={() => openDetail(null)} />
+        <AnalysisScreen
+          initial={detail.initial}
+          onBack={() => openDetail(null)}
+          /* 오른쪽 위 단추로 거래내역과 분석을 오간다 (2026-10-09 사용자 요청). */
+          canOpenEntries
+        />
       ) : (
         <>
           {home.hasError ? (

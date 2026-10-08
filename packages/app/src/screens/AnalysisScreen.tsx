@@ -65,11 +65,17 @@ function FadeIn({ children }: { children: React.ReactNode }) {
 export default function AnalysisScreen({
   initial,
   onBack,
+  canOpenEntries = false,
 }: {
   /** 거래 탭에서 열 때의 검색·단위·세는 방식·기간. 없으면 분석 탭이다. */
   initial?: AnalysisInitial;
   /** 주면 머리글에 ← 만 선다. 부르는 쪽이 돌아가는 일을 맡는다. */
   onBack?: () => void;
+  /**
+   * ← 와 함께 오른쪽 위에 거래내역 단추를 세운다 -- 예산 화면이 연 분석이다 (2026-10-09 사용자
+   * 요청, 웹과 같다). 거래 탭이 연 분석은 주지 않는다. 거기서 거래내역을 열면 두 화면이 서로를 겹겹이 연다.
+   */
+  canOpenEntries?: boolean;
 } = {}) {
   const { t } = useTranslation();
   const projectId = useProject((state) => state.selectedProjectId);
@@ -118,6 +124,8 @@ export default function AnalysisScreen({
         initial={{ search: analysis.entriesSearch, unit: tx.unit }}
         locked
         onBack={closeEntries}
+        /* 오른쪽 위의 분석 단추도 ← 와 같이 이 분석으로 돌아온다 -- 두 화면을 오가는 길이다. */
+        onOpenAnalysis={closeEntries}
       />
     );
   }
@@ -147,7 +155,17 @@ export default function AnalysisScreen({
               거래내역을 다시 열면 거래 화면과 분석이 서로를 겹겹이 연다.
             */
             action={
-              onBack ? undefined : (
+              onBack ? (
+                canOpenEntries ? (
+                  <Pressable
+                    onPress={openEntries}
+                    accessibilityLabel={t('analysis.toTransactions')}
+                    className="items-center justify-center p-2"
+                  >
+                    <NavIcon name="transactions" size={18} color="#4b5563" />
+                  </Pressable>
+                ) : undefined
+              ) : (
                 <View className="flex-row gap-2">
                   {/*
                     거래내역. 거래 탭의 보관함·달력 자리다 -- 분석에서 본 것을 같은 검색으로 낱낱의

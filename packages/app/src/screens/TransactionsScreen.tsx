@@ -452,6 +452,7 @@ export default function TransactionsScreen({
   initial,
   locked = false,
   onBack,
+  onOpenAnalysis,
 }: {
   /**
    * 처음 걸 검색(세는 기준 포함)과 묶는 단위. 분석 탭의 거래내역 단추가 이 화면을 제자리에
@@ -466,6 +467,11 @@ export default function TransactionsScreen({
   locked?: boolean;
   /** 주면 머리글에 ← 가 선다. 부르는 쪽이 돌아가는 일을 맡는다. */
   onBack?: () => void;
+  /**
+   * 잠긴 화면의 오른쪽 위 분석 단추. 이 화면을 연 분석으로 돌아간다 -- 분석의 거래내역 단추와
+   * 짝이라 두 화면을 오간다 (2026-10-09 사용자 요청, 웹과 같다).
+   */
+  onOpenAnalysis?: () => void;
 } = {}) {
   const { t } = useTranslation();
   const selectedProjectId = useProject((state) => state.selectedProjectId);
@@ -1064,8 +1070,18 @@ export default function TransactionsScreen({
                   />
                 }
                 action={
-                  // 분석 탭에서 그 기간으로 건너왔으면 ← 만 둔다 (locked).
-                  locked ? undefined : (
+                  // 분석에서 그 기간으로 건너왔으면 ← 와 분석으로 돌아가는 단추만 둔다 (locked).
+                  locked ? (
+                    onOpenAnalysis ? (
+                      <Pressable
+                        onPress={onOpenAnalysis}
+                        accessibilityLabel={t('nav.analysis')}
+                        className="items-center justify-center p-2"
+                      >
+                        <NavIcon name="analysis" size={18} color="#4b5563" />
+                      </Pressable>
+                    ) : undefined
+                  ) : (
                     <View className="flex-row gap-2">
                       {/*
                         보관함. 검색 왼쪽에 둔다.
