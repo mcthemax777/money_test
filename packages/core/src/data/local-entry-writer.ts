@@ -19,6 +19,7 @@ import {
   type EntryMutationPayload,
   type EntryRestatePayload,
   type EntryTagsPayload,
+  type EntryCategoryPayload,
   type Mutation,
   type BuiltEntry,
   LedgerBuildError,
@@ -292,6 +293,36 @@ export function createLocalEntryWriter({
 
       const result = await store.changeEntryTags(targets, addTagIds, removeTagIds, mutation.hlc);
 
+      notifyMirrorChanged();
+      onQueued?.(mutation);
+      return result;
+    },
+
+    /**
+     * 여러 줄의 분류를 바꾼다. 사본에 먼저 적고 그 사실을 명령으로 쌓는다 (태그 바꾸기와 같은 길).
+     *
+     * 사본에서 먼저 셈해 바뀌는 줄이 하나도 없으면 명령을 쌓지 않는다 -- 유형이 다른 줄만
+     * 골랐거나 이미 그 분류였던 경우다. 서버가 재생해도 아무 일이 없는 명령이 큐에 남지 않는다.
+     */
+    async changeEntryCategory({ targets, categoryId }) {
+      if (targets.length === 0) return { entries: 0, skipped: [], excluded: 0 };
+
+      const entryIds = [...new Set(targets.map((one) => one.entryId))];
+      const preview = await store.previewEntryCategory(targets, categoryId);
+      if (preview.entries === 0) return preview;
+
+      const payload: EntryCategoryPayload = { targets, categoryId };
+      const mutation = await store.enqueue({
+        projectId,
+        mutationId: newId(),
+        kind: 'entry.category',
+        // 전표를 앞에 둔다. 되돌려 보낼 때 `targets[0]` 을 전표로 보는 자리가 있다.
+        targets: [...entryIds, categoryId],
+        payload,
+        observed: await store.latestEntryHlc(entryIds),
+      });
+
+      const result = await store.changeEntryCategory(targets, categoryId, mutation.hlc);
       notifyMirrorChanged();
       onQueued?.(mutation);
       return result;

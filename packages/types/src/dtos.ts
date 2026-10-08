@@ -890,6 +890,29 @@ export namespace EntryDto {
     skipped: Array<{ entryId: string; lineKey?: string | null }>;
   }
 
+  /**
+   * 여러 **줄**의 분류를 한 분류로 바꾼다 (규칙은 `planCategoryChange`).
+   *
+   * 수정(전체 교체)과 갈라 둔 까닭은 태그 바꾸기와 같다 -- 목록 한 줄로는 분할을 온전히 다시
+   * 만들 수 없다. 다리의 분류 칸만 고치므로 금액·분할·할부 일정이 그대로 남는다.
+   */
+  export interface ChangeCategoryRequest {
+    /** 손댈 줄. 태그 바꾸기와 같은 모양, 같은 상한이다. */
+    targets: Array<{ entryId: string; lineKey?: string | null }>;
+    /** 바꿀 분류. 줄의 지금 분류와 유형(지출·수입)이 같은 줄에만 걸린다. */
+    categoryId: string;
+    projectId?: string;
+  }
+
+  export interface ChangeCategoryResponse {
+    /** 분류가 하나라도 바뀐 거래의 수. 줄 수가 아니다. */
+    entries: number;
+    /** 사라져 적용하지 못한 대상 (태그 바꾸기의 skipped 와 같다). */
+    skipped: Array<{ entryId: string; lineKey?: string | null }>;
+    /** 유형이 달라서, 또는 분류 줄이 없는 거래라서 건드리지 않은 수. */
+    excluded: number;
+  }
+
   export interface ListQuery extends EntryFilterQuery, EntrySearchQuery {
     /** 원장 관점: 이 계좌가 얽힌 전표 전부 (체크카드 사용, 이체 받은 건 포함) */
     accountId?: string;

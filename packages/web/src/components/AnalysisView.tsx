@@ -33,6 +33,7 @@ import NavIcon from '@/components/NavIcon';
 import NetAnalysisPanel from '@/components/NetAnalysisPanel';
 import PageHeader from '@/components/PageHeader';
 import PeriodNavigator from '@/components/PeriodNavigator';
+import { usePeriodSwipe } from '@/hooks/usePeriodSwipe';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import RevealTop from '@/components/RevealTop';
 import SearchChips from '@/components/SearchChips';
@@ -87,6 +88,16 @@ export default function AnalysisView({
   const [isEntriesOpen, setIsEntriesOpen] = useState(false);
   const closeEntries = () => setIsEntriesOpen(false);
   useCloseOnBack(isEntriesOpen, closeEntries);
+
+  /*
+   * 기간 줄부터 아래(그래프)를 가로로 끌면 기간을 넘긴다 -- 기간 줄의 ‹ › 와 같은 일이다 (2026-10-09
+   * 사용자 요청, 예산 화면과 같은 손짓, 앱과 같다). 위쪽 탭 줄은 감싸지 않는다. 직접 정한 기간은 옮길
+   * 앞뒤가 없어 손을 가져오지 않는다.
+   */
+  const swipeRef = usePeriodSwipe<HTMLDivElement>(
+    (delta) => analysis.shift(delta),
+    analysis.unit !== 'range',
+  );
 
   const activeTabIndex = Math.max(
     0,
@@ -208,51 +219,53 @@ export default function AnalysisView({
         </div>
       </RevealTop>
 
-      <PeriodNavigator periodKey={analysis.periodKey} onChange={analysis.setPeriodKey} />
+      <div ref={swipeRef} className="space-y-4">
+        <PeriodNavigator periodKey={analysis.periodKey} onChange={analysis.setPeriodKey} />
 
-      {analysis.isPeriodPending ? (
-        <p className="py-8 text-center text-sm text-gray-500">{t('common.loading')}</p>
-      ) : !analysis.period ? (
-        <p className="py-8 text-center text-sm text-gray-500">{t('tx.analysisOutOfRange')}</p>
-      ) : (
-        /* 탭을 옮기면 새 내용이 옅은 데서 떠오른다 (`unfold`). */
-        <div key={analysis.kind} className="unfold">
-          {analysis.kind === 'net' ? (
-            <NetAnalysisPanel
-              totals={analysis.totals}
-              categories={tx.pickerCategories}
-              period={analysis.period}
-              projectId={projectId}
-              filter={analysis.filter}
-              trendClip={analysis.trendClip}
-              trendPeriod={analysis.trendPeriod}
-              reloadToken={reloadToken}
-            />
-          ) : (
-            <BudgetDetailModal
-              isOpen
-              onClose={() => undefined}
-              isInline
-              categoryId={totalIdOf(analysis.kind)}
-              categoryName=""
-              categories={tx.pickerCategories}
-              period={analysis.period}
-              projectId={projectId}
-              filter={analysis.filter}
-              trendClip={analysis.trendClip}
-              trendPeriod={analysis.trendPeriod}
-              reloadToken={reloadToken}
-              onEntryClick={(entry) => entryEditorRef.current?.openDetail(entry)}
-              /*
-                원형 목록 줄을 누르면 그 분류·수단을 조건으로 건다. 거래 탭에서 건너온 보기는 조건을
-                고칠 수 없다(알약도 읽기 전용) -- 줄은 예전처럼 파고들기만 한다.
-              */
-              onPickCategory={onBack ? undefined : analysis.pickCategory}
-              onPickMethod={onBack ? undefined : analysis.pickMethod}
-            />
-          )}
-        </div>
-      )}
+        {analysis.isPeriodPending ? (
+          <p className="py-8 text-center text-sm text-gray-500">{t('common.loading')}</p>
+        ) : !analysis.period ? (
+          <p className="py-8 text-center text-sm text-gray-500">{t('tx.analysisOutOfRange')}</p>
+        ) : (
+          /* 탭을 옮기면 새 내용이 옅은 데서 떠오른다 (`unfold`). */
+          <div key={analysis.kind} className="unfold">
+            {analysis.kind === 'net' ? (
+              <NetAnalysisPanel
+                totals={analysis.totals}
+                categories={tx.pickerCategories}
+                period={analysis.period}
+                projectId={projectId}
+                filter={analysis.filter}
+                trendClip={analysis.trendClip}
+                trendPeriod={analysis.trendPeriod}
+                reloadToken={reloadToken}
+              />
+            ) : (
+              <BudgetDetailModal
+                isOpen
+                onClose={() => undefined}
+                isInline
+                categoryId={totalIdOf(analysis.kind)}
+                categoryName=""
+                categories={tx.pickerCategories}
+                period={analysis.period}
+                projectId={projectId}
+                filter={analysis.filter}
+                trendClip={analysis.trendClip}
+                trendPeriod={analysis.trendPeriod}
+                reloadToken={reloadToken}
+                onEntryClick={(entry) => entryEditorRef.current?.openDetail(entry)}
+                /*
+                  원형 목록 줄을 누르면 그 분류·수단을 조건으로 건다. 거래 탭에서 건너온 보기는 조건을
+                  고칠 수 없다(알약도 읽기 전용) -- 줄은 예전처럼 파고들기만 한다.
+                */
+                onPickCategory={onBack ? undefined : analysis.pickCategory}
+                onPickMethod={onBack ? undefined : analysis.pickMethod}
+              />
+            )}
+          </div>
+        )}
+      </div>
 
       <TransactionSearchModal
         isOpen={isSearchOpen}

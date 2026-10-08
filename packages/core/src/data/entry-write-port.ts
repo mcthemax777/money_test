@@ -45,6 +45,18 @@ export interface EntryWritePort {
   }): Promise<{ entries: number; skipped: TagTarget[] }>;
 
   /**
+   * 여러 **줄**의 분류를 한 분류로 바꾼다 (2026-10-09 사용자 요청). 대상은 태그와 같은 줄 단위다.
+   *
+   * 같은 유형(지출·수입)의 줄만 바뀐다. 돌려주는 `excluded` 는 유형이 달라서, 또는 분류 줄이
+   * 없는 거래라서 건드리지 않은 수다. 화면이 한 번 알린다.
+   */
+  changeEntryCategory(input: {
+    targets: TagTarget[];
+    categoryId: string;
+    projectId?: string | null;
+  }): Promise<{ entries: number; skipped: TagTarget[]; excluded: number }>;
+
+  /**
    * 외화 결제의 추정 청구액을 명세서의 실제 청구액으로 확정한다.
    *
    * 건마다 금액을 받는다. 적용 환율 한 줄로 채웠더라도 화면이 건마다 금액을 정해 넘긴다
@@ -74,6 +86,13 @@ export const httpEntryWritePort: EntryWritePort = {
       projectId ?? undefined,
     );
     return { entries: result.entries, skipped: result.skipped ?? [] };
+  },
+  async changeEntryCategory({ targets, categoryId, projectId }) {
+    const result = await apiClient.changeEntryCategory(
+      { targets, categoryId },
+      projectId ?? undefined,
+    );
+    return { entries: result.entries, skipped: result.skipped ?? [], excluded: result.excluded };
   },
   settleForeignRates: (cardId, items) => apiClient.settleCardRates(cardId, { items }),
 };

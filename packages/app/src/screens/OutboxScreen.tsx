@@ -46,6 +46,7 @@ const KIND_KEY: Record<string, MessageKey> = {
   'entry.replace': 'outbox.kind.replace',
   'entry.delete': 'outbox.kind.delete',
   'entry.tags': 'outbox.kind.entryTags',
+  'entry.category': 'outbox.kind.entryCategory',
   'entry.restate': 'outbox.kind.entryRestate',
   'person.create': 'outbox.kind.personCreate',
   'person.update': 'outbox.kind.personUpdate',

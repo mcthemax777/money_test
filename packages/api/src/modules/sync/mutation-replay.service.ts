@@ -47,6 +47,7 @@ import {
   type EntryMutationPayload,
   type EntryRestatePayload,
   type EntryTagsPayload,
+  type EntryCategoryPayload,
   type Mutation,
   type MutationResult,
   type PersonCreatePayload,
@@ -399,6 +400,8 @@ export class MutationReplayService {
         return this.deleteEntry(userId, projectId, mutation);
       case 'entry.tags':
         return this.changeEntryTags(userId, projectId, mutation);
+      case 'entry.category':
+        return this.changeEntryCategory(userId, projectId, mutation);
       case 'entry.restate':
         return this.restateEntries(userId, projectId, mutation);
       case 'person.create':
@@ -618,6 +621,40 @@ export class MutationReplayService {
     const result = await this.applied(mutation, projectId, payload.targets?.[0]?.entryId ?? '');
     // 사라진 줄이 있었으면 함께 돌려준다. 기기가 그 사실을 한 번 알린다.
     return skipped.length > 0 ? { ...result, skippedTagTargets: skipped } : result;
+  }
+
+  /**
+   * 여러 줄의 분류를 바꾼다. 온라인과 같은 서비스를 재생 모드로 부른다.
+   *
+   * 병합은 서비스가 정한다 -- 그 사이 다른 기기가 고친 전표는 건너뛰고(새 편집이 이긴다), 지워진
+   * 전표와 사라진 줄도 건너뛴다. 건너뛴 전표는 번호가 올라 기기가 서버의 값을 다시 받는다.
+   * 분류가 없어졌으면 거절이다. 조용히 넘기면 사용자는
+   * 바뀐 줄 알고, 다음 동기화가 옛 분류로 덮을 때에야 알게 된다 (태그 바꾸기와 같은 까닭).
+   */
+  private async changeEntryCategory(
+    userId: string,
+    projectId: string,
+    mutation: Mutation,
+  ): Promise<MutationResult> {
+    const payload = mutation.payload as EntryCategoryPayload;
+
+    try {
+      await this.entries.changeCategory(
+        userId,
+        { targets: payload.targets ?? [], categoryId: payload.categoryId },
+        projectId,
+        { hlc: mutation.hlc },
+      );
+    } catch (error) {
+      return {
+        mutationId: mutation.mutationId,
+        status: 'rejected',
+        code: 'CATEGORY_CHANGE_FAILED',
+        error: error instanceof Error ? error.message : '분류를 바꾸지 못했습니다.',
+      };
+    }
+
+    return this.applied(mutation, projectId, payload.targets?.[0]?.entryId ?? '');
   }
 
   /**

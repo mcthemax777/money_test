@@ -29,6 +29,7 @@ import {
   Pencil,
   Plus,
   Search,
+  Shapes,
   Tag,
   Trash2,
 } from 'lucide-react';
@@ -81,6 +82,7 @@ import PageHeader from '@/components/PageHeader';
 import RevealTop from '@/components/RevealTop';
 import SearchChips from '@/components/SearchChips';
 import TransactionSearchModal, { Chip } from '@/components/TransactionSearchModal';
+import CategoryPickModal from '@/components/CategoryPickModal';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useRenderBudget } from '@/hooks/useRenderBudget';
 import { useTopReveal } from '@/hooks/useTopReveal';
@@ -506,6 +508,7 @@ export default function TransactionsView({
   );
   /** 고른 거래에 붙일 태그를 정하는 창. */
   const [isTagPickOpen, setIsTagPickOpen] = useState(false);
+  const [isCategoryPickOpen, setIsCategoryPickOpen] = useState(false);
   /**
    * 태그 창에서 사용자가 켜고 끈 것. 여기 없는 태그는 처음 상태 그대로다.
    *
@@ -643,10 +646,11 @@ export default function TransactionsView({
               );
 
             /*
-             * 고르는 중에는 누름의 뜻이 바뀐다. 상세를 띄우는 대신 체크한다.
+             * 고르는 중에는 옆에 체크박스를 세운다. 고르는 것은 체크박스뿐이고, 줄을
+             * 누르면 평소처럼 상세가 뜬다 (2026-10-09 사용자 요청) -- 고르기 전에 무슨
+             * 거래인지 들여다볼 수 있어야 한다.
              *
-             * TransactionItem 은 가계 화면도 쓰는 컴포넌트라 손대지 않고, 체크박스를
-             * 옆에 세우고 누름만 갈아 끼운다.
+             * TransactionItem 은 가계 화면도 쓰는 컴포넌트라 손대지 않고 체크박스를 옆에 세운다.
              */
             return tx.isSelecting ? (
               /*
@@ -664,7 +668,11 @@ export default function TransactionsView({
                   onToggle={toggle}
                 />
                 <div className="-ml-3 min-w-0 flex-1">
-                  <TransactionItem entry={row.entry} row={row} onClick={toggle} />
+                  <TransactionItem
+                    entry={row.entry}
+                    row={row}
+                    onClick={() => setDetail(originalEntry(row.entry))}
+                  />
                 </div>
               </div>
             ) : (
@@ -915,6 +923,19 @@ export default function TransactionsView({
                 className="flex h-9 w-9 items-center justify-center rounded-lg border border-blue-300 bg-white hover:bg-blue-50 disabled:opacity-50"
               >
                 <Tag className="h-4 w-4 text-blue-600" aria-hidden />
+              </button>
+            ) : null}
+            {/* 분류를 바꾸러 왔으면 태그 단추 자리에 분류 단추가 선다. */}
+            {tx.selectPurpose === 'category' ? (
+              <button
+                type="button"
+                onClick={() => setIsCategoryPickOpen(true)}
+                disabled={tx.isRecategorizing}
+                aria-label={t('tx.categorySelected')}
+                title={t('tx.categorySelected')}
+                className="flex h-9 w-9 items-center justify-center rounded-lg border border-blue-300 bg-white hover:bg-blue-50 disabled:opacity-50"
+              >
+                <Shapes className="h-4 w-4 text-blue-600" aria-hidden />
               </button>
             ) : null}
 
@@ -1290,6 +1311,18 @@ export default function TransactionsView({
           onClick={() => {
             setIsMoreOpen(false);
             setNotice('');
+            tx.startSelecting('category');
+          }}
+          className="flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left hover:bg-gray-50"
+        >
+          <Shapes className="h-4 w-4 text-blue-600" aria-hidden />
+          <span className="text-base text-gray-900">{t('tx.categorySelect')}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setIsMoreOpen(false);
+            setNotice('');
             tx.startSelecting('delete');
           }}
           className="flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left hover:bg-gray-50"
@@ -1298,6 +1331,37 @@ export default function TransactionsView({
           <span className="text-base text-gray-900">{t('tx.select')}</span>
         </button>
       </Modal>
+
+      <CategoryPickModal
+        isOpen={isCategoryPickOpen}
+        onClose={() => setIsCategoryPickOpen(false)}
+        categories={tx.pickerCategories}
+        count={tx.selectedCount}
+        installmentCount={tx.selectedShapes.installment}
+        isSubmitting={tx.isRecategorizing}
+        onApply={(categoryId) => {
+          void tx.recategorizeSelected(categoryId).then(({ changed, failed, skipped, excluded }) => {
+            setIsCategoryPickOpen(false);
+            /*
+             * 결과를 글자로 알린다. 유형이 달라 그대로 둔 것과 사라진 줄은 덧붙인다 -- 조용히
+             * 넘기면 고른 것이 전부 바뀐 줄 안다.
+             */
+            if (failed) {
+              setNotice(t('tx.categoryFailed'));
+              return;
+            }
+            setNotice(
+              [
+                changed > 0 ? t('tx.categoryDone', { count: changed }) : t('tx.tagNothingNew'),
+                excluded > 0 ? t('tx.categoryExcluded', { count: excluded }) : '',
+                skipped > 0 ? t('tx.categorySkipped', { count: skipped }) : '',
+              ]
+                .filter(Boolean)
+                .join(' '),
+            );
+          });
+        }}
+      />
 
       {/*
         고른 거래에 붙일 태그를 정하는 창.

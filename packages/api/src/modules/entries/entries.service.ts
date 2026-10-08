@@ -9,6 +9,7 @@ import {
   EntryDto,
   EntryListItem,
   applyTagChange,
+  planCategoryChange,
   installmentRowDate,
   installmentMatchesFeatures,
   parseEntrySearch,
@@ -385,6 +386,147 @@ export class EntriesService {
       });
 
       return { added: rows.length, removed, entries: touched.size, skipped };
+    });
+  }
+
+  /**
+   * 여러 **줄**의 분류를 한 분류로 바꾼다 (2026-10-09 사용자 요청 -- 태그 손보기처럼).
+   *
+   * 무엇을 바꿀지는 기기 사본과 **같은 함수**가 정한다 (`planCategoryChange`). 같은 유형의 줄만
+   * 바꾸고, 분류 줄이 없는 거래와 유형이 다른 줄은 건드리지 않고 센다.
+   *
+   * 다리의 분류 칸만 고친다. 다리를 지우고 다시 만들지 않으므로 금액·분할·할부 일정(다리에
+   * 붙어 있다)·환불 링크(줄 키를 가리킨다)가 그대로 남는다.
+   *
+   * 재생일 때는 **그 뒤에 고쳐진 전표를 건너뛴다.** 분류는 태그와 달리 하나뿐이라 더하고 빼는
+   * 병합이 없다. 며칠 전 오프라인에서 바꾼 분류가 그 사이 다른 기기가 고친 분류를 덮으면 새
+   * 편집이 없던 일이 된다. 건너뛴 전표도 번호는 올린다 -- 보낸 기기의 사본은 이미 바꾼
+   * 모습이라, 다시 받아야 서버의 값으로 돌아온다.
+   */
+  async changeCategory(
+    userId: string,
+    dto: EntryDto.ChangeCategoryRequest,
+    projectIdParam?: string,
+    replay?: ReplayOptions,
+  ): Promise<EntryDto.ChangeCategoryResponse> {
+    const keyOf = (target: { entryId: string; lineKey?: string | null }) =>
+      `${target.entryId}\u0000${target.lineKey === undefined ? '*' : target.lineKey ?? ''}`;
+    const targets = [...new Map((dto.targets ?? []).map((t) => [keyOf(t), t])).values()];
+
+    if (targets.length === 0 || !dto.categoryId) {
+      throw badRequest('CATEGORY_TARGETS_REQUIRED', '거래와 분류를 함께 골라주세요.');
+    }
+    if (targets.length > MAX_TAG_TARGETS) {
+      throw badRequest('TAG_TARGETS_TOO_MANY', '한 번에 바꿀 수 있는 거래 수를 넘었습니다.');
+    }
+
+    const projectId = await this.projectAccess.resolveAndVerifyProjectId(
+      userId,
+      projectIdParam || dto.projectId,
+      'editor',
+    );
+
+    return this.prisma.$transaction(async (tx) => {
+      const category = await tx.category.findFirst({
+        where: { id: dto.categoryId, projectId },
+        select: { id: true, type: true },
+      });
+      if (!category) throw notFound('CATEGORY_NOT_FOUND', '카테고리를 찾을 수 없습니다.');
+
+      const entryIds = [...new Set(targets.map((target) => target.entryId))];
+      const entries = await tx.journalEntry.findMany({
+        where: { id: { in: entryIds }, projectId },
+        select: {
+          id: true,
+          updatedHlc: true,
+          paybackOfEntryId: true,
+          postings: {
+            where: { categoryId: { not: null } },
+            select: { lineKey: true, categoryId: true, category: { select: { type: true } } },
+          },
+        },
+      });
+      // 지금 누른 요청이면 하나라도 없을 때 통째로 거절한다 (태그 바꾸기와 같은 까닭).
+      if (!replay && entries.length !== entryIds.length) {
+        throw notFound('ENTRY_NOT_FOUND', '거래를 찾을 수 없습니다.');
+      }
+
+      const stamp = replay?.hlc || this.clock.now();
+      // 재생이 늦게 도착했으면 그 뒤에 고쳐진 전표는 손대지 않는다 (위 설명).
+      const newer = new Set(
+        replay?.hlc
+          ? entries.filter((entry) => entry.updatedHlc && entry.updatedHlc > stamp).map((e) => e.id)
+          : [],
+      );
+      const live = entries.filter((entry) => !newer.has(entry.id));
+
+      const plan = planCategoryChange(
+        targets.filter((target) => !newer.has(target.entryId)),
+        live.flatMap((entry) =>
+          entry.postings.map((posting) => ({
+            entryId: entry.id,
+            lineKey: posting.lineKey,
+            categoryId: posting.categoryId!,
+            categoryType: posting.category!.type,
+            linkedPayback: entry.paybackOfEntryId !== null,
+          })),
+        ),
+        new Set(live.map((entry) => entry.id)),
+        category,
+        // 고른 원거래에 걸린 환불·페이백. 원거래 줄이 바뀌면 함께 옮긴다.
+        (
+          await tx.journalEntry.findMany({
+            where: { paybackOfEntryId: { in: live.map((entry) => entry.id) } },
+            select: { id: true, paybackOfEntryId: true, paybackOfLineKey: true },
+          })
+        ).map((row) => ({
+          id: row.id,
+          paybackOfEntryId: row.paybackOfEntryId!,
+          paybackOfLineKey: row.paybackOfLineKey,
+        })),
+      );
+      const skipped = [
+        ...plan.skipped,
+        ...targets.filter((target) => newer.has(target.entryId)),
+      ];
+
+      for (const line of plan.lines) {
+        await tx.posting.updateMany({
+          where: { entryId: line.entryId, lineKey: line.lineKey, categoryId: { not: null } },
+          data: { categoryId: category.id },
+        });
+      }
+
+      // 원거래 줄을 따라 환불·페이백도 옮긴다. 원거래를 고칠 때(`rebindPaybacks`)와 같이 번호만 올린다.
+      if (plan.followerIds.length > 0) {
+        await tx.posting.updateMany({
+          where: { entryId: { in: plan.followerIds }, categoryId: { not: null } },
+          data: { categoryId: category.id },
+        });
+        await tx.journalEntry.updateMany({
+          where: { id: { in: plan.followerIds } },
+          data: { updatedAt: new Date() },
+        });
+      }
+
+      // 바뀐 전표에 번호와 시계를 찍는다. 찍는 방식은 태그 바꾸기와 같다.
+      if (plan.entryIds.length > 0) {
+        await tx.journalEntry.updateMany({
+          where: {
+            id: { in: plan.entryIds },
+            OR: [{ updatedHlc: null }, { updatedHlc: { lt: stamp } }],
+          },
+          data: { updatedAt: new Date(), updatedHlc: stamp },
+        });
+      }
+      if (newer.size > 0) {
+        await tx.journalEntry.updateMany({
+          where: { id: { in: [...newer] } },
+          data: { updatedAt: new Date() },
+        });
+      }
+
+      return { entries: plan.entryIds.length, skipped, excluded: plan.excluded };
     });
   }
 

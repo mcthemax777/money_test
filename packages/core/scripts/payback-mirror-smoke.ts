@@ -14,10 +14,12 @@
  *   6. **원거래의 자리표만 오면 링크만 빈다.** 7-6 전의 서버가 지운 것. 페이백은 자기 달로 옮겨 간다.
  *   7. **앱에서 원거래를 지우면 걸린 환불·페이백도 함께 지운다** (7-6). 명령은 원거래 하나다.
  *   8. **할부 환불 (7-9).** 끊긴 채 적어도 남은 회차가 줄고, 다 못 줄인 몫은 환불한 달에 선다.
+ *   9. **분류 손보기.** 할부 일정이 남고, 걸린 환불은 원거래를 따르며 혼자서는 바뀌지 않는다.
  */
 import { type SyncDto } from '@money/types';
 
 import { httpHomePort } from '../src/data/home-port';
+import { apiErrorCode } from '../src/lib/api-error';
 import { createLocalEntryWriter } from '../src/data/local-entry-writer';
 import { createLocalHomePort } from '../src/data/local-home-port';
 import { LocalStore } from '../src/data/local-store';
@@ -311,6 +313,34 @@ const pull = (
     } as never)), 'INSTALLMENT_CUT_TOO_LARGE');
     await writer.deleteEntry('e-inst-refund');
     eq('환불을 지우면 원래 일정으로 돌아온다', await monthly(), before);
+
+    console.log('\n== 9. 분류 손보기 (2026-10-09): 할부 일정은 그대로, 걸린 환불은 원거래를 따른다 ==');
+    await writer.createEntry({
+      id: 'e-inst-refund2', kind: 'payback', paybackType: 'refund', personId: 'p1', date: '2026-11-10T03:00:00.000Z',
+      description: '부분 환불', cardId: 'card-1', categoryId: 'c-life', amount: '30000', lineKey: 'e-inst-refund2-line',
+      paybackOfEntryId: 'e-inst', paybackOfLineKey: 'e-inst-line', installmentCut: ['0', '0', '30000'],
+    } as never);
+    const totals9 = await monthly();
+    const categoryOf = async (id: string) =>
+      (await port.getAllEntries({}, PID)).find((item) => item.id === id)?.categoryId;
+    const queued9 = (await store.pendingMutations(PID)).length;
+
+    const alone = await writer.changeEntryCategory({ targets: [{ entryId: 'e-inst-refund2' }], categoryId: 'c-food' });
+    eq('걸린 환불만 고르면 바꾸지 않고 센다', `${alone.entries} ${alone.excluded}`, '0 1');
+    eq('바뀌는 것이 없으면 명령을 쌓지 않는다', (await store.pendingMutations(PID)).length, queued9);
+
+    const moved9 = await writer.changeEntryCategory({ targets: [{ entryId: 'e-inst' }], categoryId: 'c-food' });
+    eq('할부 원거래가 바뀐다', moved9.entries, 1);
+    eq('원거래는 식비로', await categoryOf('e-inst'), 'c-food');
+    eq('걸린 환불도 따라 식비로', await categoryOf('e-inst-refund2'), 'c-food');
+    eq('회차 기준 합계는 그대로 (일정이 남는다)', await monthly(), totals9);
+    const command = (await store.pendingMutations(PID)).find((row) => row.kind === 'entry.category');
+    eq('명령이 쌓인다', command?.targets.join('+'), 'e-inst+c-food');
+    eq('사본의 전표가 그 시계를 단다', await store.entryHlc('e-inst'), command?.hlc);
+    // 화면과 같은 길로 코드를 읽는다 (사본이 서버 응답 모양으로 싸서 던진다).
+    eq('없는 분류는 거절', await writer
+      .changeEntryCategory({ targets: [{ entryId: 'e-inst' }], categoryId: 'c-none' })
+      .then(() => '통과', (error) => apiErrorCode(error)), 'CATEGORY_NOT_FOUND');
   }
 
   console.log(fail === 0 ? '\n전부 통과' : `\n${fail}개 실패`);

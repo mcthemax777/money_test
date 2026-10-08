@@ -183,11 +183,18 @@ export function useAnalysis(
   const [chosen, setChosen] = useState<{ basis: string; key: string } | null>(() =>
     initial ? { basis, key: initial.periodKey } : null,
   );
-  const periodKey =
-    chosen && chosen.basis === basis
-      ? chosen.key
-      : defaultPeriodKey(grouping, rangeKey, range, timeZone);
+  const fallbackKey = defaultPeriodKey(grouping, rangeKey, range, timeZone);
+  const periodKey = chosen && chosen.basis === basis ? chosen.key : fallbackKey;
   const setPeriodKey = (key: string) => setChosen({ basis, key });
+  /*
+   * 앞 값에서 옮긴다. 가로 끌기로 넘길 때 다시 그리기 전에 두 번 넘겨도 두 칸이 간다 (예산 화면의
+   * 끌기와 같은 까닭).
+   */
+  const shift = (delta: number) =>
+    setChosen((prev) => ({
+      basis,
+      key: shiftPeriodKey(prev && prev.basis === basis ? prev.key : fallbackKey, delta),
+    }));
 
   const [kind, setKind] = useState<AnalysisKind>(() =>
     initial ? initialKindOf(initial.search) : 'net',
@@ -247,7 +254,7 @@ export function useAnalysis(
     periodKey,
     setPeriodKey,
     /** 같은 단위로 delta 칸 옮긴다. */
-    shift: (delta: number) => setPeriodKey(shiftPeriodKey(periodKey, delta)),
+    shift,
     /** 보는 기간의 갈래. 직접 정한 기간('range')은 옮길 앞뒤가 없다. */
     unit: unitOfKey(periodKey),
     /** 달 고르기가 있는 머리를 쓸 수 있는가. 달력의 달일 때만이다. */

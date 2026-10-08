@@ -16,9 +16,11 @@ import {
   type AccountDto,
   type CardDto,
   type CategoryDto,
+  type CategoryType,
   type EntryDraftDto,
   type EntryTag,
   type EntryTagsPayload,
+  type EntryCategoryPayload,
   type TagTarget,
   type TagDto,
   Dec,
@@ -35,6 +37,7 @@ import {
   type FieldClocks,
   HIDDEN_ACCOUNT_TYPES,
   applyTagChange,
+  planCategoryChange,
   type NetWorthAccountRow,
   lineMatcherOf,
   type ParsedEntrySearch,
@@ -68,6 +71,7 @@ import {
   adjustTotals,
 } from '@money/types';
 
+import { codedError } from '../lib/api-error';
 import { ALL_TABLES, SCHEMA_STATEMENTS, SCHEMA_VERSION } from './schema';
 import type { SqlDriver, SqlValue } from './sql-driver';
 
@@ -3152,6 +3156,114 @@ export class LocalStore {
   }
 
   /**
+   * 여러 줄의 분류를 사본에서 한 분류로 바꾼다. 서버 `changeCategory` 와 **같은 함수**가 무엇을
+   * 바꿀지 정한다 (`planCategoryChange`) -- 같은 유형의 줄만, 분류 줄이 없는 거래는 건너뛴다.
+   *
+   * 다리의 분류 칸만 고친다. 다리를 지우고 다시 만들면 그 다리에 걸린 할부 일정이 함께 사라진다.
+   * 바뀐 전표의 시계는 올린다(태그 바꾸기와 같은 까닭). 부르는 쪽이 고른 전표들의 가장 늦은
+   * 시계 뒤로 발급받아 오므로 뒤로 가지 않는다.
+   */
+  async changeEntryCategory(
+    targets: readonly TagTarget[],
+    categoryId: string,
+    hlc: string,
+  ): Promise<{ entries: number; skipped: TagTarget[]; excluded: number }> {
+    if (targets.length === 0) return { entries: 0, skipped: [], excluded: 0 };
+
+    let result = { entries: 0, skipped: [] as TagTarget[], excluded: 0 };
+    await this.db.transaction(async () => {
+      const plan = await this.planEntryCategory(targets, categoryId);
+      for (const line of plan.lines) {
+        await this.db.run(
+          line.lineKey === null
+            ? `UPDATE posting SET categoryId = ?
+                WHERE entryId = ? AND lineKey IS NULL AND categoryId IS NOT NULL`
+            : `UPDATE posting SET categoryId = ?
+                WHERE entryId = ? AND lineKey = ? AND categoryId IS NOT NULL`,
+          line.lineKey === null
+            ? [categoryId, line.entryId]
+            : [categoryId, line.entryId, line.lineKey],
+        );
+      }
+      // 원거래 줄을 따라 환불·페이백도 옮긴다 (`movePayback` 처럼 다리의 분류만).
+      if (plan.followerIds.length > 0) {
+        await this.db.run(
+          `UPDATE posting SET categoryId = ?
+            WHERE entryId IN (${placeholders(plan.followerIds.length)}) AND categoryId IS NOT NULL`,
+          [categoryId, ...plan.followerIds],
+        );
+      }
+      if (plan.entryIds.length > 0) {
+        await this.db.run(
+          `UPDATE entry SET updatedHlc = ? WHERE id IN (${placeholders(plan.entryIds.length)})`,
+          [hlc, ...plan.entryIds],
+        );
+      }
+      result = { entries: plan.entryIds.length, skipped: plan.skipped, excluded: plan.excluded };
+    });
+    return result;
+  }
+
+  /**
+   * 바꾸면 무엇이 바뀌는지만 센다. 명령을 쌓기 전에 본다 -- 바뀌는 줄이 없으면 쌓지 않는다.
+   * 분류가 없으면 `CATEGORY_NOT_FOUND` 로 던진다.
+   */
+  async previewEntryCategory(
+    targets: readonly TagTarget[],
+    categoryId: string,
+  ): Promise<{ entries: number; skipped: TagTarget[]; excluded: number }> {
+    const plan = await this.planEntryCategory(targets, categoryId);
+    return { entries: plan.entryIds.length, skipped: plan.skipped, excluded: plan.excluded };
+  }
+
+  private async planEntryCategory(targets: readonly TagTarget[], categoryId: string) {
+    const categories = await this.db.all<Row>(`SELECT id, type FROM category WHERE id = ?`, [
+      categoryId,
+    ]);
+    const category = categories[0];
+    if (!category) throw codedError('CATEGORY_NOT_FOUND');
+
+    const entryIds = [...new Set(targets.map((target) => target.entryId))];
+    const known = await this.db.all<Row>(
+      `SELECT id FROM entry WHERE id IN (${placeholders(entryIds.length)})`,
+      entryIds,
+    );
+    const lines = await this.db.all<Row>(
+      `SELECT p.entryId, p.lineKey, p.categoryId, c.type AS categoryType,
+              e.paybackOfEntryId IS NOT NULL AS linkedPayback
+         FROM posting p
+         JOIN category c ON c.id = p.categoryId
+         JOIN entry e ON e.id = p.entryId
+        WHERE p.entryId IN (${placeholders(entryIds.length)})`,
+      entryIds,
+    );
+    const followers = await this.db.all<Row>(
+      `SELECT id, paybackOfEntryId, paybackOfLineKey FROM entry
+        WHERE paybackOfEntryId IN (${placeholders(entryIds.length)})`,
+      entryIds,
+    );
+    const typeOf = (value: unknown): CategoryType => (String(value) === 'income' ? 'income' : 'expense');
+
+    return planCategoryChange(
+      targets,
+      lines.map((row) => ({
+        entryId: String(row.entryId),
+        lineKey: asText(row.lineKey),
+        categoryId: String(row.categoryId),
+        categoryType: typeOf(row.categoryType),
+        linkedPayback: asInt(row.linkedPayback) === 1,
+      })),
+      new Set(known.map((row) => String(row.id))),
+      { id: categoryId, type: typeOf(category.type) },
+      followers.map((row) => ({
+        id: String(row.id),
+        paybackOfEntryId: String(row.paybackOfEntryId),
+        paybackOfLineKey: asText(row.paybackOfLineKey),
+      })),
+    );
+  }
+
+  /**
    * 여러 전표의 태그를 사본에서 바꾼다. 더할 것과 뗄 것을 따로 받는다.
    *
    * 전표 자체는 건드리지 않는다 -- 연결만 넣고 빼므로 금액·다리·분할이 그대로 남는다.
@@ -4143,6 +4255,11 @@ export class LocalStore {
      */
     if (kind === 'entry.tags') {
       const targetsOf = (payload as EntryTagsPayload | null)?.targets ?? [];
+      return this.latestEntryHlc(targetsOf.map((one) => one.entryId));
+    }
+    // 분류 바꾸기도 같다. 대상 목록에 분류 id 가 섞여 있어 짐에서 읽는다.
+    if (kind === 'entry.category') {
+      const targetsOf = (payload as EntryCategoryPayload | null)?.targets ?? [];
       return this.latestEntryHlc(targetsOf.map((one) => one.entryId));
     }
     // 청구액 확정도 여러 전표를 한 번에 건드린다. 대상이 전부 전표다.

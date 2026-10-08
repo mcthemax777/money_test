@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   PERIOD_SWIPE_FOLLOW,
@@ -31,14 +31,24 @@ const EASE = 'cubic-bezier(0.33, 1, 0.68, 1)';
 export function usePeriodSwipe<T extends HTMLElement = HTMLDivElement>(
   /** 옮길 칸 수. 왼쪽으로 밀면 1(다음), 오른쪽으로 밀면 -1(지난)이다. */
   onShift: (delta: 1 | -1) => void,
+  /**
+   * 넘길 앞뒤가 있는가. 거짓이면 손을 가져오지 않는다 -- 직접 정한 기간처럼 옮길 칸이 없는데
+   * 내용이 미끄러지면 넘어간 것처럼 보인다.
+   */
+  enabled = true,
 ) {
-  const ref = useRef<T>(null);
-  /* 효과는 한 번만 건다. 그때그때의 onShift 는 ref 로 들여보낸다. */
+  /*
+   * 붙일 상자는 콜백 ref 로 받는다. 화면이 잠깐 다른 것을 그렸다 돌아오면(분석의 거래내역) 상자가
+   * 새로 생기는데, 처음 한 번만 붙이면 그 뒤로 끌기가 듣지 않는다. 상자가 바뀔 때마다 다시 붙인다.
+   */
+  const [el, setEl] = useState<T | null>(null);
+  /* 효과는 상자마다 한 번 건다. 그때그때의 onShift·enabled 는 ref 로 들여보낸다. */
   const latest = useRef(onShift);
   latest.current = onShift;
+  const isEnabled = useRef(enabled);
+  isEnabled.current = enabled;
 
   useEffect(() => {
-    const el = ref.current;
     if (!el) return;
 
     el.style.touchAction = 'pan-y pinch-zoom';
@@ -92,6 +102,7 @@ export function usePeriodSwipe<T extends HTMLElement = HTMLDivElement>(
     const onPointerDown = (event: PointerEvent) => {
       swallowClick = false;
       if (event.pointerType === 'mouse' && event.button !== 0) return;
+      if (!isEnabled.current) return;
       pointerId = event.pointerId;
       dragging = false;
       startX = event.clientX;
@@ -183,7 +194,7 @@ export function usePeriodSwipe<T extends HTMLElement = HTMLDivElement>(
       el.removeEventListener('pointercancel', onPointerCancel);
       el.removeEventListener('click', onClickCapture, true);
     };
-  }, []);
+  }, [el]);
 
-  return ref;
+  return setEl;
 }

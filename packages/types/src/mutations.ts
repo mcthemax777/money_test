@@ -26,6 +26,7 @@ export type MutationKind =
   | 'entry.replace'
   | 'entry.delete'
   | 'entry.tags'
+  | 'entry.category'
   | 'entry.restate'
   | 'person.create'
   | 'person.update'
@@ -232,6 +233,18 @@ export interface EntryTagsPayload {
   targets: TagTarget[];
   addTagIds: string[];
   removeTagIds: string[];
+}
+
+/**
+ * 여러 줄의 분류를 한 분류로 바꾸는 명령의 짐 (`planCategoryChange`).
+ *
+ * `entry.replace` 로 표현하지 않는다. 목록 한 줄에는 분할의 나머지 줄이 없어 전표를 통째로
+ * 다시 만들면 분할이 뭉개지고, 다리를 지우고 다시 만들면 할부 일정이 그 다리와 함께 사라진다.
+ * 이 명령은 다리의 분류 칸만 고친다. 대상은 태그와 같은 줄 단위다.
+ */
+export interface EntryCategoryPayload {
+  targets: TagTarget[];
+  categoryId: string;
 }
 
 /**

@@ -22,10 +22,16 @@ import {
  */
 export default function PeriodSwipe({
   onShift,
+  enabled = true,
   children,
 }: {
   /** 옮길 칸 수. 왼쪽으로 밀면 1(다음), 오른쪽으로 밀면 -1(지난)이다. */
   onShift: (delta: 1 | -1) => void;
+  /**
+   * 넘길 앞뒤가 있는가. 거짓이면 손을 가져오지 않는다 -- 직접 정한 기간처럼 옮길 칸이 없는데
+   * 내용이 미끄러지면 넘어간 것처럼 보인다.
+   */
+  enabled?: boolean;
   children: ReactNode;
 }) {
   const translateX = useRef(new Animated.Value(0)).current;
@@ -37,6 +43,8 @@ export default function PeriodSwipe({
    */
   const latest = useRef(onShift);
   latest.current = onShift;
+  const isEnabled = useRef(enabled);
+  isEnabled.current = enabled;
 
   const pan = useRef<PanResponderInstance | null>(null);
   if (!pan.current) {
@@ -75,7 +83,7 @@ export default function PeriodSwipe({
 
     pan.current = PanResponder.create({
       onMoveShouldSetPanResponderCapture: (_event, gesture) =>
-        claimsPeriodSwipe(gesture.dx, gesture.dy),
+        isEnabled.current && claimsPeriodSwipe(gesture.dx, gesture.dy),
       onPanResponderGrant: () => {
         // 들어오던 애니메이션 중에 다시 잡았으면 그 자리에서 멈춘다.
         translateX.stopAnimation();

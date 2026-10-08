@@ -34,6 +34,7 @@ export * from './installment-refund';
 export * from './recurring-drafts';
 export * from './reorder-rank';
 export * from './tag-change';
+export * from './category-change';
 export * from './foreign-restate';
 export * from './notification-samples';
 export * from './inquiries';

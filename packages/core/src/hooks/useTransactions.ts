@@ -99,11 +99,12 @@ export type MonthLevel = 0 | 1 | 2;
  * 여러 건을 고르는 이유.
  *
  *   delete 골라서 지운다
- *   tag    골라서 태그를 붙인다
+ *   tag      골라서 태그를 붙인다
+ *   category 골라서 분류를 바꾼다 (2026-10-09 사용자 요청). 태그처럼 줄 단위로 고른다.
  *
  * 고르는 절차는 같다. 머리글의 버튼과 끝에 하는 일만 다르다.
  */
-export type SelectPurpose = 'delete' | 'tag';
+export type SelectPurpose = 'delete' | 'tag' | 'category';
 
 /** 검색이 고른 것. 무리 안은 OR, 무리끼리는 AND (types 의 parseEntrySearch). */
 export interface TransactionSearch {
@@ -818,6 +819,7 @@ export function useTransactions(
   const [rangePending, setRangePending] = useState<Record<string, boolean>>({});
   const [isDeleting, setIsDeleting] = useState(false);
   const [isTagging, setIsTagging] = useState(false);
+  const [isRecategorizing, setIsRecategorizing] = useState(false);
 
   /**
    * 지금 나가 있는 조회.
@@ -2363,6 +2365,51 @@ export function useTransactions(
   );
 
   /**
+   * 고른 줄의 분류를 한 분류로 바꾼다. 태그 바꾸기와 같은 길이다 -- 창구를 거쳐 사본에 먼저 적고
+   * `entry.category` 명령을 쌓으므로 오프라인에서도 된다.
+   *
+   * 같은 유형(지출·수입)의 줄만 바뀐다. `excluded` 는 유형이 달라서, 또는 분류 줄이 없는 거래라서
+   * 건드리지 않은 수다. 화면이 한 번 알린다.
+   */
+  const recategorizeSelected = useCallback(
+    async (
+      categoryId: string,
+    ): Promise<{ changed: number; failed: boolean; skipped: number; excluded: number }> => {
+      const targets = Object.keys(selected).map(parseSelectionKey);
+      if (targets.length === 0 || !categoryId) {
+        return { changed: 0, failed: false, skipped: 0, excluded: 0 };
+      }
+
+      setIsRecategorizing(true);
+      try {
+        const result = await entryWritePort().changeEntryCategory({
+          targets,
+          categoryId,
+          projectId,
+        });
+        return {
+          changed: result.entries,
+          failed: false,
+          skipped: result.skipped.length,
+          excluded: result.excluded,
+        };
+      } catch (error) {
+        fail(error);
+        return { changed: 0, failed: true, skipped: 0, excluded: 0 };
+      } finally {
+        setIsRecategorizing(false);
+        setSelectPurpose(null);
+        setSelected({});
+        setRangeIds({});
+        setRangeTags({});
+        // 목록 한 줄에 분류가 실려 있어 그 줄을 다시 받아야 새 분류가 보인다 (태그와 같다).
+        setReloadToken((token) => token + 1);
+      }
+    },
+    [selected, projectId, fail],
+  );
+
+  /**
    * 년월 줄을 누른다. 접힘 -> 목록 -> 거래까지 -> 접힘 으로 돈다.
    *
    * **안쪽 줄을 하나라도 펴 두었으면 그 다음 누름은 곧바로 접는다.** 한 줄을 열어
@@ -2673,6 +2720,8 @@ export function useTransactions(
     selectPurpose,
     tagSelected,
     isTagging,
+    recategorizeSelected,
+    isRecategorizing,
     /** 고른 거래가 **모두** 가진 태그. 창이 체크된 채로 연다. */
     commonTagIds,
     /** 고른 거래 중 **일부만** 가진 태그. 창이 "일부"로 표시한다. */

@@ -49,6 +49,17 @@ export class EntriesController {
     return this.entriesService.changeTags(req.user.id, dto, projectId);
   }
 
+  /* 'tags' 와 같은 까닭으로 ':id' 보다 먼저 선언한다. */
+  @Post('category')
+  @ApiOperation({ summary: '여러 거래의 분류 바꾸기 (같은 유형의 줄만)' })
+  changeCategory(
+    @Request() req: AuthenticatedRequest,
+    @Body() dto: EntryDto.ChangeCategoryRequest,
+    @Query('projectId') projectId?: string,
+  ) {
+    return this.entriesService.changeCategory(req.user.id, dto, projectId);
+  }
+
   @Get()
   @ApiOperation({ summary: '거래 목록 (커서 페이지네이션)' })
   list(

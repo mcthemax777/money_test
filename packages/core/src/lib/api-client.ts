@@ -987,6 +987,19 @@ class ApiClient {
     return response.data;
   }
 
+  /** 여러 거래 줄의 분류를 한 분류로 바꾼다. 같은 유형의 줄에만 걸린다 (`planCategoryChange`). */
+  async changeEntryCategory(
+    data: { targets: Array<{ entryId: string; lineKey?: string | null }>; categoryId: string },
+    projectId?: string | null,
+  ): Promise<EntryDto.ChangeCategoryResponse> {
+    const response = await this.client.post<EntryDto.ChangeCategoryResponse>(
+      '/entries/category',
+      data,
+      { params: projectId ? { projectId } : {} },
+    );
+    return response.data;
+  }
+
   async reorderTags(ids: string[], projectId?: string | null) {
     const response = await this.client.patch<TagDto.Response[]>(
       '/tags/reorder',

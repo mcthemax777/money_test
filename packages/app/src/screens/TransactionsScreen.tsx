@@ -32,6 +32,7 @@ import {
   List,
   MoreVertical,
   Search,
+  Shapes,
   Tag,
   Trash2,
 } from 'lucide-react-native';
@@ -40,7 +41,6 @@ import {
   originalEntry,
   type EntryListItem,
   type EntryPeriodUnit,
-  type EntryRow,
 } from '@money/types';
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -85,6 +85,7 @@ import SegmentedTabs from '../components/SegmentedTabs';
 import PersonScopeTitle from '../components/PersonScopeTitle';
 import TransactionItem from '../components/TransactionItem';
 import TagPickModal from '../components/TagPickModal';
+import CategoryPickModal from '../components/CategoryPickModal';
 import TransactionCalendarView from '../components/TransactionCalendarView';
 import TransactionSearchModal from '../components/TransactionSearchModal';
 import SearchChips from '../components/SearchChips';
@@ -579,6 +580,7 @@ export default function TransactionsScreen({
   const [isMoreOpen, setIsMoreOpen] = useState(false);
   /** 고른 거래에 붙일 태그를 정하는 창. */
   const [isTagPickOpen, setIsTagPickOpen] = useState(false);
+  const [isCategoryPickOpen, setIsCategoryPickOpen] = useState(false);
   /** 상세를 띄운 거래. null 이면 닫힌 상태다. */
   const [detail, setDetail] = useState<EntryListItem | null>(null);
   /**
@@ -711,15 +713,6 @@ export default function TransactionsScreen({
    */
   /** 여는 것은 사용자가 적은 거래다. 목록에 선 것은 그 달의 회차 몫이다. */
   const openDetail = useCallback((entry: EntryListItem) => setDetail(originalEntry(entry)), []);
-  const toggleEntry = useCallback(
-    (entry: EntryListItem, row?: EntryRow) =>
-      tx.toggleEntrySelected(
-        entry.id,
-        row?.line?.lineKey ?? null,
-        entry.lines.map((line) => line.lineKey),
-      ),
-    [tx.toggleEntrySelected],
-  );
 
   /**
    * 지우기 전에 묻는다. 몇 건인지 함께 적는다.
@@ -810,10 +803,11 @@ export default function TransactionsScreen({
         ) : (
           shown.map((row) =>
             /*
-             * 고르는 중에는 누름의 뜻이 바뀐다. 상세를 띄우는 대신 체크한다.
+             * 고르는 중에는 옆에 체크박스를 세운다. 고르는 것은 체크박스뿐이고, 줄을
+             * 누르면 평소처럼 상세가 뜬다 (2026-10-09 사용자 요청) -- 고르기 전에 무슨
+             * 거래인지 들여다볼 수 있어야 한다.
              *
-             * TransactionItem 은 가계 화면도 쓰는 컴포넌트라 손대지 않고, 체크박스를
-             * 옆에 세우고 누름만 갈아 끼운다.
+             * TransactionItem 은 가계 화면도 쓰는 컴포넌트라 손대지 않고 체크박스를 옆에 세운다.
              */
             tx.isSelecting ? (
               /*
@@ -837,7 +831,7 @@ export default function TransactionsScreen({
                   }
                 />
                 <View className="-ml-3 flex-1">
-                  <TransactionItem entry={row.entry} row={row} onPress={toggleEntry} />
+                  <TransactionItem entry={row.entry} row={row} onPress={openDetail} />
                 </View>
               </View>
             ) : (
@@ -993,6 +987,19 @@ export default function TransactionsScreen({
                     }`}
                   >
                     <Tag size={18} color="#2563eb" />
+                  </Pressable>
+                ) : null}
+                {/* 분류를 바꾸러 왔으면 태그 단추 자리에 분류 단추가 선다. */}
+                {tx.selectPurpose === 'category' ? (
+                  <Pressable
+                    onPress={() => setIsCategoryPickOpen(true)}
+                    disabled={tx.isRecategorizing}
+                    accessibilityLabel={t('tx.categorySelected')}
+                    className={`h-9 w-9 items-center justify-center rounded-lg border border-blue-300 bg-white active:bg-blue-50 ${
+                      tx.isRecategorizing ? 'opacity-50' : ''
+                    }`}
+                  >
+                    <Shapes size={18} color="#2563eb" />
                   </Pressable>
                 ) : null}
 
@@ -1304,6 +1311,37 @@ export default function TransactionsScreen({
         }}
       />
 
+      <CategoryPickModal
+        isOpen={isCategoryPickOpen}
+        onClose={() => setIsCategoryPickOpen(false)}
+        categories={tx.pickerCategories}
+        count={tx.selectedCount}
+        installmentCount={tx.selectedShapes.installment}
+        isSubmitting={tx.isRecategorizing}
+        onApply={(categoryId) => {
+          void tx.recategorizeSelected(categoryId).then(({ changed, failed, skipped, excluded }) => {
+            setIsCategoryPickOpen(false);
+            /*
+             * 결과를 글자로 알린다. 유형이 달라 그대로 둔 것과 사라진 줄은 덧붙인다 -- 조용히
+             * 넘기면 고른 것이 전부 바뀐 줄 안다.
+             */
+            if (failed) {
+              setNotice(t('tx.categoryFailed'));
+              return;
+            }
+            setNotice(
+              [
+                changed > 0 ? t('tx.categoryDone', { count: changed }) : t('tx.tagNothingNew'),
+                excluded > 0 ? t('tx.categoryExcluded', { count: excluded }) : '',
+                skipped > 0 ? t('tx.categorySkipped', { count: skipped }) : '',
+              ]
+                .filter(Boolean)
+                .join(' '),
+            );
+          });
+        }}
+      />
+
       <TransactionSearchModal
         isOpen={isSearchOpen}
         onClose={() => setIsSearchOpen(false)}
@@ -1336,6 +1374,17 @@ export default function TransactionsScreen({
         >
           <Tag size={18} color="#2563eb" />
           <Text className="text-base text-gray-900">{t('tx.tagSelect')}</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => {
+            setIsMoreOpen(false);
+            setNotice('');
+            tx.startSelecting('category');
+          }}
+          className="flex-row items-center gap-3 rounded-lg px-2 py-3 active:bg-gray-50"
+        >
+          <Shapes size={18} color="#2563eb" />
+          <Text className="text-base text-gray-900">{t('tx.categorySelect')}</Text>
         </Pressable>
         <Pressable
           onPress={() => {
