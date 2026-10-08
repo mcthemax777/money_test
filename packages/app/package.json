@@ -48,7 +48,7 @@
     "ios": "expo run:ios",
     "web": "expo start --web",
     "type-check": "tsc --noEmit",
-    "apk": "cd android && ./gradlew assembleRelease",
+    "apk": "cd android && ./gradlew app:createBundleReleaseJsAndAssets --rerun assembleRelease",
     "native:android": "expo prebuild --platform android"
   },
   "private": true

@@ -2089,6 +2089,20 @@ export function useTransactions(
       }
     }
 
+    /*
+     * 회차 기준이면 **접힌 달도** 센다(보이는 달 다음에). 한 할부가 여러 달에 회차로 서서,
+     * 12월을 고르면 같은 할부만 든 11월도 다 골라진 것이다. 접힌 달은 받은 목록도 세어 둔
+     * 값도 없어 체크가 빈 칸으로 남았다 -- 그 달을 한 번 눌러 세어 둔 뒤에야 함께 움직였다
+     * (2026-10-09 실기기). 발생 기준은 한 거래가 한 달에만 서므로 접힌 달을 세지 않는다.
+     */
+    if (basis === 'installment') {
+      for (const { yearMonth } of months) {
+        if (!openMonths.includes(yearMonth) && !knownMonthIds(yearMonth)) {
+          needed.push({ yearMonth });
+        }
+      }
+    }
+
     const fresh = needed.filter(({ yearMonth, row }) => {
       const flightId = `count|${row ? rowKeyOf(yearMonth, row.key) : monthKeyOf(yearMonth)}`;
       return !inFlightRef.current.has(flightId);
@@ -2118,6 +2132,8 @@ export function useTransactions(
     isSelecting,
     projectId,
     tab,
+    basis,
+    months,
     openMonthsKey,
     rowsOf,
     knownMonthIds,
