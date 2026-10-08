@@ -11,6 +11,7 @@ import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { useProjectAdmin } from '@money/core/hooks/useProjectAdmin';
 import {
   useProjectMembership,
+  type MemberRow,
   type ProjectSearchResult,
 } from '@money/core/hooks/useProjectMembership';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -23,6 +24,7 @@ import { inviteUrlOf } from '@money/core/lib/invite';
 import PageHeader from '../components/PageHeader';
 import QrCode from '../components/QrCode';
 import { OptionModal, SettingRow } from '../components/SettingPicker';
+import TypedConfirmModal from '../components/TypedConfirmModal';
 import { useConnectivity } from '@money/core/store/connectivity';
 
 /**
@@ -64,8 +66,15 @@ export default function ProjectsScreen() {
   const [searchResult, setSearchResult] = useState<ProjectSearchResult | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ name: '', description: '' });
-  /** 지우기 전에 한 번 더 묻는다. 같은 버튼을 두 번 눌러야 지워진다. */
-  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  /**
+   * 글자로 한 번 더 확인하는 창에 띄운 일. 프로젝트 삭제와 소유자 넘기기는 되돌리기 어려워
+   * 확인 단추 한 번으로 끝내지 않는다 (2026-10-09 사용자 요청).
+   */
+  const [typedAction, setTypedAction] = useState<
+    | { kind: 'delete'; project: Project }
+    | { kind: 'transfer'; project: Project; member: MemberRow }
+    | null
+  >(null);
   /** 초대 링크를 만들 때 줄 권한. 프로젝트마다 따로 고른다. */
   const [inviteRole, setInviteRole] = useState<Record<string, 'editor' | 'viewer'>>({});
   /** 지금 떠 있는 고르기 팝업. 프로젝트마다 같은 칸이 있어 어느 프로젝트의 것인지도 담는다. */
@@ -696,24 +705,7 @@ export default function ProjectsScreen() {
                           {isOwner && member.role !== 'owner' ? (
                             <View className="flex-row gap-2">
                               <Pressable
-                                disabled={membership.isSubmitting}
-                                onPress={() =>
-                                  confirm(
-                                    t('projects.transferOwnerConfirm', { name: member.name }),
-                                    () => {
-                                      // 내 권한이 편집자로 바뀌므로 프로젝트 목록까지 다시 받는다.
-                                      run(
-                                        membership.transferOwnership(project.id, member.id),
-                                        async () => {
-                                          await admin.reload();
-                                          setNotice(
-                                            t('projects.transferOwnerDone', { name: member.name }),
-                                          );
-                                        },
-                                      );
-                                    },
-                                  )
-                                }
+                                onPress={() => setTypedAction({ kind: 'transfer', project, member })}
                                 className="rounded border border-gray-300 bg-white px-3 py-1 active:bg-gray-50"
                               >
                                 <Text className="text-xs text-gray-700">
@@ -797,21 +789,10 @@ export default function ProjectsScreen() {
                 <View className="mt-4 flex-row justify-end">
                   {isOwner ? (
                     <Pressable
-                      onPress={() => {
-                        if (deleteConfirmId !== project.id) {
-                          setDeleteConfirmId(project.id);
-                          return;
-                        }
-                        setDeleteConfirmId(null);
-                        run(admin.removeOrLeave(project.id, 'delete'), reloadSide);
-                      }}
+                      onPress={() => setTypedAction({ kind: 'delete', project })}
                       className="rounded bg-red-600 px-3 py-1 active:bg-red-700"
                     >
-                      <Text className="text-sm text-white">
-                        {deleteConfirmId === project.id
-                          ? t('common.confirm')
-                          : t('projects.deleteAction')}
-                      </Text>
+                      <Text className="text-sm text-white">{t('projects.deleteAction')}</Text>
                     </Pressable>
                   ) : (
                     <Pressable
@@ -827,17 +808,49 @@ export default function ProjectsScreen() {
                   )}
                 </View>
 
-                {deleteConfirmId === project.id ? (
-                  <View className="mt-4 rounded border border-red-200 bg-red-50 p-3">
-                    <Text className="text-sm text-red-700">{t('projects.deleteQuestion')}</Text>
-                    <Text className="mt-1 text-xs text-red-600">{t('projects.deleteWarning')}</Text>
-                  </View>
-                ) : null}
               </View>
             );
           })}
         </View>
       )}
+
+      <TypedConfirmModal
+        isOpen={typedAction !== null}
+        onClose={() => setTypedAction(null)}
+        title={
+          typedAction?.kind === 'transfer'
+            ? t('projects.transferOwnerTitle', { project: typedAction.project.name })
+            : t('projects.deleteTitle', { name: typedAction?.project.name ?? '' })
+        }
+        body={
+          typedAction?.kind === 'transfer'
+            ? [t('projects.transferOwnerConfirm', { name: typedAction.member.name })]
+            : [t('projects.deleteWarning')]
+        }
+        phrase={t(
+          typedAction?.kind === 'transfer' ? 'projects.transferPhrase' : 'projects.deletePhrase',
+        )}
+        actionLabel={t(
+          typedAction?.kind === 'transfer' ? 'projects.transferOwner' : 'projects.deleteAction',
+        )}
+        isSubmitting={admin.isSubmitting || membership.isSubmitting}
+        onConfirm={async () => {
+          if (!typedAction) return { ok: false };
+          if (typedAction.kind === 'delete') {
+            const result = await admin.removeOrLeave(typedAction.project.id, 'delete');
+            if (result.ok) await reloadSide();
+            return result;
+          }
+          const { project, member } = typedAction;
+          const result = await membership.transferOwnership(project.id, member.id);
+          if (result.ok) {
+            // 내 권한이 편집자로 바뀌므로 프로젝트 목록까지 다시 받는다.
+            await admin.reload();
+            setNotice(t('projects.transferOwnerDone', { name: member.name }));
+          }
+          return result;
+        }}
+      />
     </View>
   );
 }

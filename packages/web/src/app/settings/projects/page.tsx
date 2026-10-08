@@ -17,6 +17,7 @@ import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { currencyLabel } from '@money/core/lib/money';
 import { TIME_ZONE_OPTIONS } from '@money/core/lib/time-zones';
 import PageHeader from '@/components/PageHeader';
+import TypedConfirmModal from '@/components/TypedConfirmModal';
 
 /**
  * 프로젝트 관리 화면.
@@ -40,7 +41,15 @@ export default function ProjectsPage() {
   const [error, setError] = useState('');
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [createForm, setCreateForm] = useState({ name: '', description: '' });
-  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  /**
+   * 글자로 한 번 더 확인하는 창에 띄운 일. 프로젝트 삭제와 소유자 넘기기는 되돌리기 어려워
+   * 확인 단추 한 번으로 끝내지 않는다 (2026-10-09 사용자 요청).
+   */
+  const [typedAction, setTypedAction] = useState<
+    | { kind: 'delete'; project: Project }
+    | { kind: 'transfer'; project: Project; member: MemberRow }
+    | null
+  >(null);
   /** 이름·설명을 고치는 중인 프로젝트와 입력값. 한 번에 하나만 고친다. */
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ name: '', description: '' });
@@ -149,47 +158,25 @@ export default function ProjectsPage() {
     if (!isFirstProject) alert(t('projects.created'));
   };
 
-  /**
-   * 떠난 프로젝트를 보고 있었으면 남은 것 하나를 대신 고른다.
-   *
-   * 훅은 고른 것을 비우기만 한다 (없는 프로젝트를 계속 조회하지 않으려고). 웹은 왼쪽 메뉴가
-   * 늘 한 프로젝트를 가리키므로, 비워 두면 다음 화면이 통째로 빈 채 남는다.
-   *
-   * 지우기 **전에** 불러 다음 것을 정해 둔다. 지운 뒤에는 이 목록이 낡는다.
-   */
-  const pickNextProject = (goneProjectId: string) => {
-    const wasSelected = admin.selectedProjectId === goneProjectId;
-    const next = admin.projects.find((project) => project.id !== goneProjectId);
-
-    return () => {
-      if (wasSelected && next) admin.select(next.id);
-    };
-  };
-
   const handleLeaveProject = async (projectId: string) => {
     if (!confirm(t('projects.leaveConfirm'))) {
       return;
     }
 
-    const selectNext = pickNextProject(projectId);
+    // 보고 있던 프로젝트면 훅이 남은 것 하나를 대신 고른다.
     if (!(await run(admin.removeOrLeave(projectId, 'leave')))) return;
 
-    setDeleteConfirm(null);
-    selectNext();
     alert(t('projects.left'));
   };
 
+  /** 글자 확인 창이 부른다. 실패하면 창이 이유를 적는다. */
   const handleDeleteProject = async (projectId: string) => {
-    if (!confirm(t('projects.deleteConfirm'))) {
-      return;
-    }
+    // 보고 있던 프로젝트면 훅이 남은 것 하나를 대신 고른다.
+    const result = await admin.removeOrLeave(projectId, 'delete');
+    if (!result.ok) return result;
 
-    const selectNext = pickNextProject(projectId);
-    if (!(await run(admin.removeOrLeave(projectId, 'delete')))) return;
-
-    setDeleteConfirm(null);
-    selectNext();
     alert(t('projects.deleted'));
+    return result;
   };
 
   /** "나"는 프로젝트 목록에 붙어 오는 값이라, 바꾼 뒤 목록을 다시 받아야 화면이 따라온다. */
@@ -238,11 +225,12 @@ export default function ProjectsPage() {
     if (await run(membership.removeMember(projectId, member.id))) await reloadMembership();
   };
 
+  /** 글자 확인 창이 부른다. 실패하면 창이 이유를 적는다. */
   const handleTransferOwnership = async (projectId: string, member: MemberRow) => {
-    if (!confirm(t('projects.transferOwnerConfirm', { name: member.name }))) return;
-
+    const result = await membership.transferOwnership(projectId, member.id);
     // 내 권한이 편집자로 바뀌므로 멤버뿐 아니라 프로젝트 목록도 다시 받는다.
-    if (await run(membership.transferOwnership(projectId, member.id))) await admin.reload();
+    if (result.ok) await admin.reload();
+    return result;
   };
 
   const handleSearchProject = async () => {
@@ -636,10 +624,10 @@ export default function ProjectsPage() {
                   {project.role === 'owner' ? (
                     <>
                       <button
-                        onClick={() => setDeleteConfirm(project.id === deleteConfirm ? null : project.id)}
+                        onClick={() => setTypedAction({ kind: 'delete', project })}
                         className="px-3 py-1 text-sm bg-red-600 text-white rounded hover:bg-red-700 transition"
                       >
-                        {deleteConfirm === project.id ? t('common.confirm') : t('projects.deleteAction')}
+                        {t('projects.deleteAction')}
                       </button>
                     </>
                   ) : (
@@ -831,7 +819,7 @@ export default function ProjectsPage() {
                         {project.role === 'owner' && member.role !== 'owner' && (
                           <div className="flex shrink-0 gap-2">
                             <button
-                              onClick={() => handleTransferOwnership(project.id, member)}
+                              onClick={() => setTypedAction({ kind: 'transfer', project, member })}
                               disabled={membership.isSubmitting}
                               className="px-3 py-1 text-xs bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-50 transition disabled:opacity-50"
                             >
@@ -899,30 +887,36 @@ export default function ProjectsPage() {
                 </div>
               )}
 
-              {deleteConfirm === project.id && (
-                <div className="mt-4 p-3 bg-red-50 border border-red-200 rounded text-sm text-red-700">
-                  <p className="mb-2">{t('projects.deleteQuestion')}</p>
-                  <p className="text-xs mb-3">{t('projects.deleteWarning')}</p>
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => handleDeleteProject(project.id)}
-                      className="flex-1 px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700 text-sm"
-                    >
-                      {t('projects.deleteAction')}
-                    </button>
-                    <button
-                      onClick={() => setDeleteConfirm(null)}
-                      className="flex-1 px-3 py-1 bg-gray-300 text-gray-700 rounded hover:bg-gray-400 text-sm"
-                    >
-                      {t('common.cancel')}
-                    </button>
-                  </div>
-                </div>
-              )}
             </div>
           ))
         )}
       </div>
+
+      <TypedConfirmModal
+        isOpen={typedAction !== null}
+        onClose={() => setTypedAction(null)}
+        title={
+          typedAction?.kind === 'transfer'
+            ? t('projects.transferOwnerTitle', { project: typedAction.project.name })
+            : t('projects.deleteTitle', { name: typedAction?.project.name ?? '' })
+        }
+        body={
+          typedAction?.kind === 'transfer'
+            ? [t('projects.transferOwnerConfirm', { name: typedAction.member.name })]
+            : [t('projects.deleteWarning')]
+        }
+        phrase={t(typedAction?.kind === 'transfer' ? 'projects.transferPhrase' : 'projects.deletePhrase')}
+        actionLabel={t(
+          typedAction?.kind === 'transfer' ? 'projects.transferOwner' : 'projects.deleteAction',
+        )}
+        isSubmitting={admin.isSubmitting || membership.isSubmitting}
+        onConfirm={async () => {
+          if (!typedAction) return { ok: false };
+          return typedAction.kind === 'transfer'
+            ? handleTransferOwnership(typedAction.project.id, typedAction.member)
+            : handleDeleteProject(typedAction.project.id);
+        }}
+      />
     </div>
   );
 }

@@ -138,8 +138,9 @@ export function useProjectAdmin(): {
   /**
    * 프로젝트에서 나가거나(구성원) 지운다(소유자).
    *
-   * 보고 있던 프로젝트가 사라졌으면 고른 것을 비운다. 없는 프로젝트 id 로 조회가
-   * 나가면 화면이 통째로 빈다.
+   * 보고 있던 프로젝트가 사라졌으면 남은 프로젝트 중 첫 번째를 고른다 (2026-10-09 사용자
+   * 요청). 없는 프로젝트 id 로 조회가 나가면 화면이 통째로 비고, 비워만 두면 메뉴가 계속
+   * "프로젝트 없음"으로 남는다. 남은 것이 없을 때만 비운다.
    */
   const removeOrLeave = useCallback(
     async (projectId: string, action: 'delete' | 'leave'): Promise<ProjectResult> => {
@@ -149,7 +150,14 @@ export function useProjectAdmin(): {
         else await apiClient.leaveProject(projectId);
 
         if (selectedProjectId === projectId) setSelectedProjectId(null);
-        await reload();
+        const reloaded = await reload();
+        if (selectedProjectId === projectId) {
+          // 다시 받은 목록에서 고른다. 다시 받지 못했으면 들고 있던 목록에서 지운 것만 뺀다.
+          const remaining = reloaded.ok
+            ? useProject.getState().projects
+            : projects.filter((project) => project.id !== projectId);
+          setSelectedProjectId(remaining.find((project) => project.id !== projectId)?.id ?? null);
+        }
         return { ok: true };
       } catch (error) {
         return {
@@ -163,7 +171,7 @@ export function useProjectAdmin(): {
         setIsSubmitting(false);
       }
     },
-    [messageOf, reload, selectedProjectId, setSelectedProjectId],
+    [messageOf, projects, reload, selectedProjectId, setSelectedProjectId],
   );
 
   return {
