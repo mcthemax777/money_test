@@ -108,7 +108,12 @@ export default function AnalysisScreen({
     setIsEntriesOpen(false);
     restoreTo(analysisOffset.current);
   };
-  useCloseOnBack(isEntriesOpen, closeEntries);
+  /*
+   * 예산 화면이 연 분석(canOpenEntries)에서는 거래내역과 분석이 오른쪽 위 단추로 오가는 한 자리다 --
+   * 거래내역의 ← 와 뒤로가기는 분석이 아니라 예산 화면으로 돌아간다 (2026-10-09 사용자 요청). 그래서
+   * 뒤로가기 칸을 따로 쌓지 않고, 부르는 쪽(예산 화면)의 칸이 통째로 닫는다.
+   */
+  useCloseOnBack(isEntriesOpen && !canOpenEntries, closeEntries);
 
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   /**
@@ -123,7 +128,7 @@ export default function AnalysisScreen({
       <TransactionsScreen
         initial={{ search: analysis.entriesSearch, unit: tx.unit }}
         locked
-        onBack={closeEntries}
+        onBack={canOpenEntries && onBack ? onBack : closeEntries}
         /* 오른쪽 위의 분석 단추도 ← 와 같이 이 분석으로 돌아온다 -- 두 화면을 오가는 길이다. */
         onOpenAnalysis={closeEntries}
       />

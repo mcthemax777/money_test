@@ -93,7 +93,12 @@ export default function AnalysisView({
    */
   const [isEntriesOpen, setIsEntriesOpen] = useState(false);
   const closeEntries = () => setIsEntriesOpen(false);
-  useCloseOnBack(isEntriesOpen, closeEntries);
+  /*
+   * 예산 화면이 연 분석(canOpenEntries)에서는 거래내역과 분석이 오른쪽 위 단추로 오가는 한 자리다 --
+   * 거래내역의 ← 와 뒤로가기는 분석이 아니라 예산 화면으로 돌아간다 (2026-10-09 사용자 요청). 그래서
+   * 뒤로가기 칸을 따로 쌓지 않고, 부르는 쪽(예산 화면)의 칸이 통째로 닫는다.
+   */
+  useCloseOnBack(isEntriesOpen && !canOpenEntries, closeEntries);
 
   /*
    * 기간 줄부터 아래(그래프)를 가로로 끌면 기간을 넘긴다 -- 기간 줄의 ‹ › 와 같은 일이다 (2026-10-09
@@ -117,7 +122,7 @@ export default function AnalysisView({
         search={analysis.entriesSearch}
         unit={tx.unit}
         locked
-        onBack={closeEntries}
+        onBack={canOpenEntries && onBack ? onBack : closeEntries}
         /* 오른쪽 위의 분석 단추도 ← 와 같이 이 분석으로 돌아온다 -- 두 화면을 오가는 길이다. */
         onOpenAnalysis={closeEntries}
       />
