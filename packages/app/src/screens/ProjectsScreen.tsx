@@ -79,7 +79,12 @@ export default function ProjectsScreen() {
    */
   const projectIds = admin.projects.map((project) => project.id).join(',');
   useEffect(() => {
-    if (admin.projects.length > 0) membership.load(admin.projects);
+    if (admin.projects.length > 0) {
+      // 남이 소유자를 넘겨주는 등 내 권한이 바뀌었으면 프로젝트 목록도 다시 받는다.
+      membership.load(admin.projects).then((roleChanged) => {
+        if (roleChanged) void admin.reload();
+      });
+    }
     // 남이 멤버를 넣고 빼거나 가입 요청을 보낸 것도 이 자리에서 따라온다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectIds, mirrorVersion]);
@@ -669,7 +674,7 @@ export default function ProjectsScreen() {
                   </View>
                 ) : null}
 
-                {/* 멤버. 소유자는 소유자 자신을 뺀 나머지를 내보낼 수 있다. */}
+                {/* 멤버. 소유자는 소유자 자신을 뺀 나머지에게 소유자를 넘기거나 내보낼 수 있다. */}
                 {members.length > 0 ? (
                   <View className="mt-4 border-t border-gray-100 pt-4">
                     <Text className="mb-3 text-sm font-semibold text-gray-900">
@@ -689,16 +694,43 @@ export default function ProjectsScreen() {
                             <Text className="text-xs text-gray-500">{member.email}</Text>
                           </View>
                           {isOwner && member.role !== 'owner' ? (
-                            <Pressable
-                              onPress={() =>
-                                confirm(t('projects.kickConfirm', { name: member.name }), () => {
-                                  run(membership.removeMember(project.id, member.id), reloadSide);
-                                })
-                              }
-                              className="rounded border border-red-300 bg-white px-3 py-1 active:bg-red-50"
-                            >
-                              <Text className="text-xs text-red-600">{t('projects.kick')}</Text>
-                            </Pressable>
+                            <View className="flex-row gap-2">
+                              <Pressable
+                                disabled={membership.isSubmitting}
+                                onPress={() =>
+                                  confirm(
+                                    t('projects.transferOwnerConfirm', { name: member.name }),
+                                    () => {
+                                      // 내 권한이 편집자로 바뀌므로 프로젝트 목록까지 다시 받는다.
+                                      run(
+                                        membership.transferOwnership(project.id, member.id),
+                                        async () => {
+                                          await admin.reload();
+                                          setNotice(
+                                            t('projects.transferOwnerDone', { name: member.name }),
+                                          );
+                                        },
+                                      );
+                                    },
+                                  )
+                                }
+                                className="rounded border border-gray-300 bg-white px-3 py-1 active:bg-gray-50"
+                              >
+                                <Text className="text-xs text-gray-700">
+                                  {t('projects.transferOwner')}
+                                </Text>
+                              </Pressable>
+                              <Pressable
+                                onPress={() =>
+                                  confirm(t('projects.kickConfirm', { name: member.name }), () => {
+                                    run(membership.removeMember(project.id, member.id), reloadSide);
+                                  })
+                                }
+                                className="rounded border border-red-300 bg-white px-3 py-1 active:bg-red-50"
+                              >
+                                <Text className="text-xs text-red-600">{t('projects.kick')}</Text>
+                              </Pressable>
+                            </View>
                           ) : null}
                         </View>
                       ))}

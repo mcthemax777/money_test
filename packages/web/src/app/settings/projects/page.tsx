@@ -73,7 +73,12 @@ export default function ProjectsPage() {
    */
   const projectIds = admin.projects.map((project) => project.id).join(',');
   useEffect(() => {
-    if (admin.projects.length > 0) membership.load(admin.projects);
+    if (admin.projects.length > 0) {
+      // 남이 소유자를 넘겨주는 등 내 권한이 바뀌었으면 프로젝트 목록도 다시 받는다.
+      membership.load(admin.projects).then((roleChanged) => {
+        if (roleChanged) void admin.reload();
+      });
+    }
     // 남이 멤버를 넣고 빼거나 가입 요청을 보낸 것도 이 자리에서 따라온다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectIds, mirrorVersion]);
@@ -231,6 +236,13 @@ export default function ProjectsPage() {
     if (!confirm(t('projects.kickConfirm', { name: member.name }))) return;
 
     if (await run(membership.removeMember(projectId, member.id))) await reloadMembership();
+  };
+
+  const handleTransferOwnership = async (projectId: string, member: MemberRow) => {
+    if (!confirm(t('projects.transferOwnerConfirm', { name: member.name }))) return;
+
+    // 내 권한이 편집자로 바뀌므로 멤버뿐 아니라 프로젝트 목록도 다시 받는다.
+    if (await run(membership.transferOwnership(projectId, member.id))) await admin.reload();
   };
 
   const handleSearchProject = async () => {
@@ -817,12 +829,21 @@ export default function ProjectsPage() {
                           <p className="text-xs text-gray-500">{member.email}</p>
                         </div>
                         {project.role === 'owner' && member.role !== 'owner' && (
-                          <button
-                            onClick={() => handleRemoveMember(project.id, member)}
-                            className="px-3 py-1 text-xs bg-white border border-red-300 text-red-600 rounded hover:bg-red-50 transition shrink-0"
-                          >
-                            {t('projects.kick')}
-                          </button>
+                          <div className="flex shrink-0 gap-2">
+                            <button
+                              onClick={() => handleTransferOwnership(project.id, member)}
+                              disabled={membership.isSubmitting}
+                              className="px-3 py-1 text-xs bg-white border border-gray-300 text-gray-700 rounded hover:bg-gray-50 transition disabled:opacity-50"
+                            >
+                              {t('projects.transferOwner')}
+                            </button>
+                            <button
+                              onClick={() => handleRemoveMember(project.id, member)}
+                              className="px-3 py-1 text-xs bg-white border border-red-300 text-red-600 rounded hover:bg-red-50 transition"
+                            >
+                              {t('projects.kick')}
+                            </button>
+                          </div>
                         )}
                       </div>
                     ))}

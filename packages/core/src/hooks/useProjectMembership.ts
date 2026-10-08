@@ -16,6 +16,7 @@ import { useCallback, useState } from 'react';
 import { apiClient } from '../lib/api-client';
 import { useApiError } from '../lib/api-error';
 import { translate, type MessageKey } from '../lib/i18n';
+import { useAuth } from '../store/auth';
 import { useLocaleStore } from '../store/locale';
 import type { Project } from '../store/project';
 
@@ -115,8 +116,11 @@ export function useProjectMembership() {
    *
    * 하나가 실패해도 나머지는 그린다. 한 프로젝트의 초대 목록을 못 받았다고 화면 전체가
    * 비면, 정작 볼 수 있는 다른 프로젝트까지 손댈 수 없게 된다.
+   *
+   * 멤버 목록의 내 권한이 들고 있는 프로젝트 목록과 다르면 true 를 돌려준다. 남이 소유자를
+   * 넘겨준 것처럼 내 권한이 밖에서 바뀌었다 -- 부르는 쪽이 프로젝트 목록을 다시 받는다.
    */
-  const load = useCallback(async (projects: Project[]) => {
+  const load = useCallback(async (projects: Project[]): Promise<boolean> => {
     const owned = projects.filter((project) => project.role === 'owner');
 
     const gather = async <T,>(
@@ -149,6 +153,14 @@ export function useProjectMembership() {
     setJoinRequests(requestRows);
     setPeople(personRows);
     setMyRequests((mine ?? []) as MyJoinRequestRow[]);
+
+    const myId = useAuth.getState().user?.id;
+    if (!myId) return false;
+    return projects.some((project) => {
+      const me = memberRows[project.id]?.find((member) => member.id === myId);
+      // 목록을 못 받은 프로젝트는 견줄 것이 없다.
+      return me !== undefined && me.role !== project.role;
+    });
   }, []);
 
   /** 손질 하나. 실패는 던지지 않고 화면이 적을 문장으로 돌려준다. */
@@ -191,6 +203,13 @@ export function useProjectMembership() {
     /** 강퇴. 소유자는 강퇴할 수 없다(서버가 막는다). */
     removeMember: (projectId: string, userId: string) =>
       submit(() => apiClient.removeProjectMember(projectId, userId), 'projects.kickFailed'),
+
+    /** 소유자 넘기기. 넘긴 사람은 편집자가 된다(서버가 한 번에 바꾼다). */
+    transferOwnership: (projectId: string, userId: string) =>
+      submit(
+        () => apiClient.transferProjectOwnership(projectId, userId),
+        'projects.transferOwnerFailed',
+      ),
 
     approveRequest: (requestId: string, role: 'editor' | 'viewer') =>
       submit(

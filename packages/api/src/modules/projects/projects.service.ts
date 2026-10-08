@@ -4,6 +4,7 @@ import { randomInt } from 'crypto';
 import { ProjectAccessService } from '../../common/project-access.guard';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { badRequest, forbidden, notFound } from '@/common/app-error';
+import { recordProjectWrite } from '@/common/project-write-context';
 import { rankAfter } from '@money/types';
 
 interface CreateProjectDto {
@@ -574,6 +575,53 @@ export class ProjectsService {
 
     // 강퇴당한 사용자의 기본 프로젝트가 이 프로젝트였다면 정리한다.
     await this.clearStaleDefaultProject(targetUserId, projectId);
+
+    return { success: true, userId: targetUserId, userName: target.user.name };
+  }
+
+  /**
+   * owner가 소유자 자리를 다른 멤버에게 넘긴다.
+   *
+   * 소유자는 한 명으로 둔다. 넘긴 사람은 편집자로 남는다 -- 넘기자마자 내보내지면 실수로
+   * 넘겼을 때 되돌릴 길이 없다. 되돌리려면 새 소유자가 다시 넘긴다.
+   *
+   * 두 줄을 한 트랜잭션에서 바꾼다. 사이에 끊기면 소유자가 없거나 둘인 프로젝트가 남는다.
+   */
+  async transferOwnership(projectId: string, targetUserId: string, requesterId: string) {
+    if (!targetUserId) {
+      throw notFound('NOT_PROJECT_MEMBER', '프로젝트 멤버가 아닙니다.');
+    }
+    if (targetUserId === requesterId) {
+      throw badRequest('CANNOT_TRANSFER_TO_SELF', '이미 소유자입니다.');
+    }
+
+    const target = await this.prisma.$transaction(async (tx) => {
+      // 확인과 변경을 같은 트랜잭션에 둔다. 두 기기에서 동시에 넘기면 나중 것이 소유자 아님으로 막힌다.
+      const requester = await tx.projectMember.findUnique({
+        where: { projectId_userId: { projectId, userId: requesterId } },
+      });
+      if (!requester) {
+        throw new ForbiddenException('이 프로젝트에 접근할 권한이 없습니다');
+      }
+      if (requester.role !== 'owner') {
+        throw forbidden('PROJECT_OWNER_ONLY', '프로젝트 소유자만 이 작업을 수행할 수 있습니다');
+      }
+
+      const member = await tx.projectMember.findUnique({
+        where: { projectId_userId: { projectId, userId: targetUserId } },
+        include: { user: { select: { name: true } } },
+      });
+      if (!member) {
+        throw notFound('NOT_PROJECT_MEMBER', '프로젝트 멤버가 아닙니다.');
+      }
+
+      await tx.projectMember.update({ where: { id: member.id }, data: { role: 'owner' } });
+      await tx.projectMember.update({ where: { id: requester.id }, data: { role: 'editor' } });
+      return member;
+    });
+
+    // 다른 구성원의 화면이 바뀐 권한을 따라오도록 실시간 신호를 낸다.
+    recordProjectWrite(projectId);
 
     return { success: true, userId: targetUserId, userName: target.user.name };
   }

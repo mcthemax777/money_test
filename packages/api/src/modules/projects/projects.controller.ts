@@ -97,6 +97,17 @@ export class ProjectsController {
     return this.projectsService.removeMember(projectId, userId, req.user.id);
   }
 
+  /** 소유자 자리를 다른 멤버에게 넘긴다. 넘긴 사람은 편집자가 된다. */
+  @Post(':projectId/owner')
+  @HttpCode(HttpStatus.OK)
+  async transferOwnership(
+    @Param('projectId') projectId: string,
+    @Body() body: { userId: string },
+    @Request() req: any,
+  ) {
+    return this.projectsService.transferOwnership(projectId, body?.userId, req.user.id);
+  }
+
   @Post(':projectId/invitations/link')
   async generateInvitationLink(
     @Param('projectId') projectId: string,

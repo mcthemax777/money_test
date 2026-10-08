@@ -1080,6 +1080,12 @@ class ApiClient {
     return response.data;
   }
 
+  /** 소유자 자리를 다른 멤버에게 넘긴다. 넘긴 사람은 편집자가 된다. */
+  async transferProjectOwnership(projectId: string, userId: string) {
+    const response = await this.client.post<any>(`/projects/${projectId}/owner`, { userId });
+    return response.data;
+  }
+
   async generateInvitationLink(projectId: string, role: 'editor' | 'viewer') {
     const response = await this.client.post<any>(`/projects/${projectId}/invitations/link`, {
       role,
