@@ -12,14 +12,9 @@ import {
   type ProjectSearchResult,
 } from '@money/core/hooks/useProjectMembership';
 import type { Project } from '@money/core/store/project';
-import { DEFAULT_TIME_ZONE, SUPPORTED_CURRENCIES, type CurrencyCode } from '@money/types';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
-import { currencyLabel } from '@money/core/lib/money';
-import { planStatusLabel } from '@money/core/lib/plans';
-import { TIME_ZONE_OPTIONS } from '@money/core/lib/time-zones';
 import PageHeader from '@/components/PageHeader';
 import TypedConfirmModal from '@/components/TypedConfirmModal';
-import PlanModal from '@/components/PlanModal';
 
 /**
  * 프로젝트 관리 화면.
@@ -55,10 +50,6 @@ export default function ProjectsPage() {
   /** 이름·설명을 고치는 중인 프로젝트와 입력값. 한 번에 하나만 고친다. */
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ name: '', description: '' });
-  /** 이용권 팝업을 띄운 프로젝트. */
-  const [planProject, setPlanProject] = useState<Project | null>(null);
-  /** 기준통화 환산이 도는 동안 그 프로젝트의 선택을 잠근다. */
-  const [rebasingId, setRebasingId] = useState<string | null>(null);
 
   // 가입 요청 관련 상태
   const [showJoinForm, setShowJoinForm] = useState(false);
@@ -130,24 +121,6 @@ export default function ProjectsPage() {
     }
   };
 
-  const handleChangeTimeZone = (projectId: string, timezone: string) =>
-    run(admin.update(projectId, { timezone }, 'projects.timezoneFailed'));
-
-  /**
-   * 표시 통화 변경.
-   *
-   * 저장된 값은 하나도 바뀌지 않는다. 서버가 읽을 때만 환율을 곱해 보여 주므로
-   * 몇 번을 오가도 원본이 그대로다. 확인 창을 띄우지 않는 이유도 그래서다.
-   */
-  const handleChangeDisplayCurrency = async (project: Project, next: string) => {
-    if (next === (project.displayCurrency || project.ledgerCurrency || 'KRW')) return;
-
-    setRebasingId(project.id);
-    await run(
-      admin.update(project.id, { displayCurrency: next as CurrencyCode }, 'projects.currencyFailed'),
-    );
-    setRebasingId(null);
-  };
 
   const handleCreateProject = async () => {
     /*
@@ -183,10 +156,6 @@ export default function ProjectsPage() {
     return result;
   };
 
-  /** "나"는 프로젝트 목록에 붙어 오는 값이라, 바꾼 뒤 목록을 다시 받아야 화면이 따라온다. */
-  const handleChangeMyPerson = async (projectId: string, personId: string) => {
-    if (await run(membership.setMyPerson(projectId, personId || null))) await loadProjects();
-  };
 
   const buildInviteUrl = (invitationCode: string) =>
     `${window.location.origin}/join?code=${invitationCode}`;
@@ -645,93 +614,10 @@ export default function ProjectsPage() {
                 </div>
               </div>
 
-              {project.role === 'owner' && (
-                <div className="mt-4 border-t border-gray-100 pt-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h4 className="text-sm font-semibold text-gray-900">{t('projects.timezone')}</h4>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {t('projects.timezoneHint')}
-                      </p>
-                    </div>
-                    <select
-                      value={project.timezone || DEFAULT_TIME_ZONE}
-                      onChange={(e) => handleChangeTimeZone(project.id, e.target.value)}
-                      className="px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    >
-                      {TIME_ZONE_OPTIONS.map((option) => (
-                        <option key={option.id} value={option.id}>
-                          {/* UTC처럼 옮길 이름이 없는 항목은 id를 그대로 적는다. */}
-                          {option.nameKey ? t(option.nameKey) : option.id}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <h4 className="text-sm font-semibold text-gray-900">{t('projects.displayCurrency')}</h4>
-                      <p className="text-xs text-gray-500 mt-1">
-                        {t('projects.displayCurrencyHint')}
-                      </p>
-                    </div>
-                    <select
-                      value={project.displayCurrency || project.ledgerCurrency || 'KRW'}
-                      disabled={rebasingId === project.id}
-                      onChange={(e) => handleChangeDisplayCurrency(project, e.target.value)}
-                      className="px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
-                    >
-                      {SUPPORTED_CURRENCIES.map((code) => (
-                        <option key={code} value={code}>
-                          {currencyLabel(code)}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
-                  <p className="mt-2 text-xs text-gray-400">
-                    {t('projects.ledgerCurrencyNote', { currency: project.ledgerCurrency || 'KRW' })}
-                  </p>
-                </div>
-              )}
-
               {/*
-                이용권. 프로젝트에 붙으므로 멤버 모두에게 보이고, 결제는 팝업에서 소유자만 한다.
+                기준 타임존·표시 통화·이용권·구성원 중 나는 설정 탭으로 옮겼다 (2026-10-10 사용자 요청).
+                지금 보는 가계부의 값으로 그곳에 선다.
               */}
-              <div className="mt-4 border-t border-gray-100 pt-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <h4 className="text-sm font-semibold text-gray-900">{t('projects.plan')}</h4>
-                  <button
-                    onClick={() => setPlanProject(project)}
-                    className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-700 transition hover:bg-gray-100"
-                  >
-                    {planStatusLabel(project.plan, t, tag)}
-                    <span aria-hidden>→</span>
-                  </button>
-                </div>
-              </div>
-
-              <div className="mt-4 border-t border-gray-100 pt-4">
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <h4 className="text-sm font-semibold text-gray-900">{t('projects.myPerson')}</h4>
-                    <p className="text-xs text-gray-500 mt-1">
-                      {t('projects.myPersonHint')}
-                    </p>
-                  </div>
-                  <select
-                    value={project.myPersonId ?? ''}
-                    onChange={(e) => handleChangeMyPerson(project.id, e.target.value)}
-                    className="px-2 py-1 text-xs border border-gray-300 rounded focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">{t('projects.myPersonNone')}</option>
-                    {(membership.people[project.id] ?? []).map((person) => (
-                      <option key={person.id} value={person.id}>
-                        {person.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
 
               {project.role === 'owner' && (
                 <div className="mt-4 border-t border-gray-100 pt-4">
@@ -911,8 +797,6 @@ export default function ProjectsPage() {
           ))
         )}
       </div>
-
-      <PlanModal project={planProject} onClose={() => setPlanProject(null)} />
 
       <TypedConfirmModal
         isOpen={typedAction !== null}

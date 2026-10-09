@@ -1,11 +1,5 @@
 import { useEffect, useState } from 'react';
 import { Alert, Pressable, Text, TextInput, View } from 'react-native';
-import {
-  DEFAULT_TIME_ZONE,
-  isCurrencyCode,
-  SUPPORTED_CURRENCIES,
-  type CurrencyCode,
-} from '@money/types';
 
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { useProjectAdmin } from '@money/core/hooks/useProjectAdmin';
@@ -15,18 +9,13 @@ import {
   type ProjectSearchResult,
 } from '@money/core/hooks/useProjectMembership';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
-import { currencyLabel } from '@money/core/lib/money';
-import { planStatusLabel } from '@money/core/lib/plans';
-import { TIME_ZONE_OPTIONS } from '@money/core/lib/time-zones';
 import type { Project } from '@money/core/store/project';
 
 import { WEB_ORIGIN } from '../api';
 import { inviteUrlOf } from '@money/core/lib/invite';
 import PageHeader from '../components/PageHeader';
 import QrCode from '../components/QrCode';
-import { OptionModal, SettingRow } from '../components/SettingPicker';
 import TypedConfirmModal from '../components/TypedConfirmModal';
-import PlanModal from '../components/PlanModal';
 import { useConnectivity } from '@money/core/store/connectivity';
 
 /**
@@ -39,8 +28,6 @@ import { useConnectivity } from '@money/core/store/connectivity';
  * 복사 버튼은 없다. 앱에는 클립보드를 만지는 자리가 없어(네이티브 모듈을 더 넣어야 한다)
  * 참여 키와 초대 코드를 고를 수 있는 글자로 두고 길게 눌러 복사하게 했다.
  */
-/** 프로젝트 카드 안에서 팝업으로 고르는 칸. */
-type PickerKind = 'timezone' | 'currency' | 'person';
 
 export default function ProjectsScreen() {
   const { t, tag } = useTranslation();
@@ -77,13 +64,8 @@ export default function ProjectsScreen() {
     | { kind: 'transfer'; project: Project; member: MemberRow }
     | null
   >(null);
-  /** 이용권 팝업을 띄운 프로젝트. */
-  const [planProject, setPlanProject] = useState<Project | null>(null);
   /** 초대 링크를 만들 때 줄 권한. 프로젝트마다 따로 고른다. */
   const [inviteRole, setInviteRole] = useState<Record<string, 'editor' | 'viewer'>>({});
-  /** 지금 떠 있는 고르기 팝업. 프로젝트마다 같은 칸이 있어 어느 프로젝트의 것인지도 담는다. */
-  const [picker, setPicker] = useState<{ projectId: string; kind: PickerKind } | null>(null);
-  const closePicker = () => setPicker(null);
 
   /*
    * 곁가지(멤버·초대·요청·구성원)는 프로젝트 목록이 정해진 뒤에 받는다. id 를 이어 붙인
@@ -103,12 +85,6 @@ export default function ProjectsScreen() {
   }, [projectIds, mirrorVersion]);
 
   const roleLabel = (role: 'owner' | 'editor' | 'viewer') => t(`role.${role}` as MessageKey);
-  const timeZoneLabel = (id: string) => {
-    const option = TIME_ZONE_OPTIONS.find((candidate) => candidate.id === id);
-    // 목록에 없는 값(웹에서 예전에 고른 것 따위)도 비워 두지 않고 id 를 그대로 적는다.
-    return option?.nameKey ? t(option.nameKey) : id;
-  };
-  const currencyOptionLabel = (code: CurrencyCode) => `${code} · ${currencyLabel(code)}`;
 
   /** 손질 하나. 실패하면 이유를 적고, 성공하면 곁가지를 다시 받는다. */
   const run = async (
@@ -406,17 +382,6 @@ export default function ProjectsScreen() {
             const members = membership.members[project.id] ?? [];
             const invitations = membership.invitations[project.id] ?? [];
             const requests = membership.joinRequests[project.id] ?? [];
-            const people = membership.people[project.id] ?? [];
-            /* 모르는 통화 글자가 오면 고른 것이 없는 것으로 둔다. 원래 칸도 아무것도 칠하지 않았다. */
-            const rawCurrency = project.displayCurrency ?? project.ledgerCurrency;
-            const displayCurrency = isCurrencyCode(rawCurrency) ? rawCurrency : null;
-            /* 빈 id 가 "지정 안 함"이다. 서버에는 null 로 보낸다. */
-            const personOptions = [
-              { value: '', label: t('projects.myPersonNone') },
-              ...people.map((person) => ({ value: person.id, label: person.name })),
-            ];
-            const isPickerOpen = (kind: PickerKind) =>
-              picker?.projectId === project.id && picker.kind === kind;
 
             return (
               <View
@@ -514,93 +479,10 @@ export default function ProjectsScreen() {
                   ) : null}
                 </View>
 
-                {/* 집계의 기준이 되는 타임존. 구성원 모두에게 함께 적용된다. */}
-                {isOwner ? (
-                  <>
-                    <SettingRow
-                      compact
-                      title={t('projects.timezone')}
-                      description={t('projects.timezoneHint')}
-                      value={timeZoneLabel(project.timezone ?? DEFAULT_TIME_ZONE)}
-                      onPress={() => setPicker({ projectId: project.id, kind: 'timezone' })}
-                    />
-                    <OptionModal
-                      isOpen={isPickerOpen('timezone')}
-                      onClose={closePicker}
-                      title={t('projects.timezone')}
-                      description={t('projects.timezoneHint')}
-                      options={TIME_ZONE_OPTIONS.map((option) => ({
-                        value: option.id,
-                        label: timeZoneLabel(option.id),
-                      }))}
-                      value={project.timezone ?? DEFAULT_TIME_ZONE}
-                      onSelect={(timezone) => run(admin.update(project.id, { timezone }))}
-                    />
-                  </>
-                ) : null}
-
-                {/* 표시 통화. 저장값은 그대로 두고 읽을 때만 환산한다. */}
-                {isOwner ? (
-                  <>
-                    <SettingRow
-                      compact
-                      title={t('projects.displayCurrency')}
-                      description={t('projects.displayCurrencyHint')}
-                      value={displayCurrency ? currencyOptionLabel(displayCurrency) : ''}
-                      onPress={() => setPicker({ projectId: project.id, kind: 'currency' })}
-                    />
-                    <OptionModal
-                      isOpen={isPickerOpen('currency')}
-                      onClose={closePicker}
-                      title={t('projects.displayCurrency')}
-                      description={t('projects.displayCurrencyHint')}
-                      options={SUPPORTED_CURRENCIES.map((code: CurrencyCode) => ({
-                        value: code,
-                        label: currencyOptionLabel(code),
-                      }))}
-                      value={displayCurrency}
-                      onSelect={(code) => run(admin.update(project.id, { displayCurrency: code }))}
-                      footnote={t('projects.ledgerCurrencyNote', {
-                        currency: project.ledgerCurrency ?? 'KRW',
-                      })}
-                    />
-                  </>
-                ) : null}
-
                 {/*
-                  이용권. 프로젝트에 붙으므로 멤버 모두에게 보이고, 결제는 팝업에서 소유자만 한다.
+                  기준 타임존·표시 통화·이용권·구성원 중 나는 설정 탭으로 옮겼다 (2026-10-10 사용자 요청).
+                  지금 보는 가계부의 값으로 그곳에 선다.
                 */}
-                <SettingRow
-                  compact
-                  title={t('projects.plan')}
-                  value={planStatusLabel(project.plan, t, tag)}
-                  onPress={() => setPlanProject(project)}
-                />
-
-                {/* 구성원 중 나. 프로젝트가 아니라 내 멤버십에 붙는 값이라 사람마다 다르다. */}
-                <SettingRow
-                  compact
-                  title={t('projects.myPerson')}
-                  description={t('projects.myPersonHint')}
-                  value={
-                    personOptions.find((person) => person.value === (project.myPersonId ?? ''))
-                      ?.label ?? t('projects.myPersonNone')
-                  }
-                  onPress={() => setPicker({ projectId: project.id, kind: 'person' })}
-                />
-                <OptionModal
-                  isOpen={isPickerOpen('person')}
-                  onClose={closePicker}
-                  title={t('projects.myPerson')}
-                  description={t('projects.myPersonHint')}
-                  options={personOptions}
-                  value={project.myPersonId ?? ''}
-                  onSelect={(personId) =>
-                    run(membership.setMyPerson(project.id, personId || null), () =>
-                      admin.reload(),
-                    )
-                  }
-                />
 
                 {/* 초대 링크. 소유자만 만들고 볼 수 있다. */}
                 {isOwner ? (
@@ -827,8 +709,6 @@ export default function ProjectsScreen() {
           })}
         </View>
       )}
-
-      <PlanModal project={planProject} onClose={() => setPlanProject(null)} onReload={admin.reload} />
 
       <TypedConfirmModal
         isOpen={typedAction !== null}

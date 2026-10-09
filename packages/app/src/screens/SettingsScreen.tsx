@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import { SUPPORTED_LOCALES, WEEK_START_DAYS, type Locale, type WeekStart } from '@money/types';
 
 import { useAnalyticsPrefs } from '@money/core/lib/analytics';
+import { useSelectedProjectSettings } from '@money/core/hooks/useSelectedProjectSettings';
 import { useApiError } from '@money/core/lib/api-error';
 import { weekdayNames } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -14,6 +15,12 @@ import { useInquiryUnread } from '@money/core/store/inquiry-unread';
 import CountBadge from '../components/CountBadge';
 import ExchangeRateSettings from '../components/ExchangeRateSettings';
 import PageHeader from '../components/PageHeader';
+import {
+  DisplayCurrencyRow,
+  MyPersonRow,
+  PremiumPlanRow,
+  TimezoneRow,
+} from '../components/ProjectSettingRows';
 import { OptionModal, SettingRow } from '../components/SettingPicker';
 import { useNavigation } from '../shell/navigation';
 import { useOutboxCount } from '../shell/nav-badges';
@@ -33,6 +40,8 @@ export default function SettingsScreen() {
   const outboxCount = useOutboxCount();
   const inquiryUnread = useInquiryUnread((state) => state.count);
   const refreshInquiryUnread = useInquiryUnread((state) => state.refresh);
+  /** 지금 보는 가계부의 값들. 칸 넷이 이 하나를 나눠 쓴다. */
+  const projectSettings = useSelectedProjectSettings();
 
   // 설정을 열 때마다 읽지 않은 답을 센다. 앱을 보는 중에 온 답은 푸시를 받을 때 센다(PushSetup).
   useEffect(() => {
@@ -44,7 +53,8 @@ export default function SettingsScreen() {
       <PageHeader title={t('settings.title')} />
 
       {/*
-        차례 (2026-10-09 사용자 요청): 내 정보, 프로젝트 관리, 분류·태그, 시작 요일, 언어, 환율, 엑셀,
+        차례 (2026-10-09 사용자 요청, 2026-10-10 가계부 칸 넷을 프로젝트 관리에서 꺼냄): 내 정보,
+        프로젝트 관리, 프리미엄 이용권, 구성원 중 나, 분류·태그, 시작 요일, 기준 타임존, 언어, 표시 통화, 환율, 엑셀,
         문의하기, (광고 개인정보 옵션,) 사용 통계(2026-10-10 추가), 보내지 못한 거래. 설명은 적지 않는다 -- 들어간 화면·팝업이 말한다 (웹과 같다).
       */}
       <View className="gap-4">
@@ -56,6 +66,9 @@ export default function SettingsScreen() {
           title={t('settings.projects.title')}
           onPress={() => go('/settings/projects')}
         />
+        {/* 지금 보는 가계부의 이용권과, 그 가계부에서 내가 누구인지. */}
+        <PremiumPlanRow settings={projectSettings} />
+        <MyPersonRow settings={projectSettings} />
         {/* 분류와 태그는 한 번 짜 두고 오래 쓰는 것이라 아래 탭에서 내려 여기에 둔다. */}
         <SettingsCard
           title={t('settings.categories.title')}
@@ -65,8 +78,13 @@ export default function SettingsScreen() {
         {/* 시작 요일은 이 계정의 값이다. 달력과 주 단위 보기가 함께 본다. */}
         <WeekStartSettings />
 
-        {/* 언어는 이 계정의 값이고 환율은 프로젝트의 값이다. 자리는 같아도 뜻이 다르다. */}
+        {/*
+          언어는 이 계정의 값이고 타임존·표시 통화·환율은 가계부의 값이다. 자리는 같아도 뜻이 다르다.
+          타임존과 표시 통화는 소유자에게만 선다.
+        */}
+        <TimezoneRow settings={projectSettings} />
         <LanguageSettings />
+        <DisplayCurrencyRow settings={projectSettings} />
 
         {/*
           환율을 손으로 정하는 유일한 자리.

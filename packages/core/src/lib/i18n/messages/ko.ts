@@ -51,6 +51,7 @@ export const ko = {
   'settings.inquiries.title': '문의하기',
   'settings.adPrivacy.title': '광고 개인정보 옵션',
   'settings.adPrivacy.failed': '창을 열지 못했습니다. 연결을 확인하고 다시 시도해 주세요.',
+  'settings.plan.title': '프리미엄 이용권',
   'settings.analytics.title': '사용 통계 보내기',
   'settings.analytics.description':
     '어느 화면을 열고 어떤 기능을 썼는지와 앱 오류를 보내 서비스를 고치는 데 씁니다. 금액·메모·자산 이름 같은 가계부 내용은 보내지 않습니다. 이 기기에만 적용됩니다.',

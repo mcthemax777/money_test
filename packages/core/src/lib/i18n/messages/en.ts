@@ -41,6 +41,7 @@ export const en: Record<MessageKey, string> = {
   'settings.inquiries.title': 'Contact us',
   'settings.adPrivacy.title': 'Ad privacy options',
   'settings.adPrivacy.failed': 'Could not open the form. Check your connection and try again.',
+  'settings.plan.title': 'Premium plan',
   'settings.analytics.title': 'Send usage statistics',
   'settings.analytics.description':
     'Sends which screens you open, which features you use, and app errors so we can improve the service. Ledger contents such as amounts, memos, and asset names are never sent. Applies to this device only.',
