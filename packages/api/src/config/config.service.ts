@@ -140,6 +140,30 @@ export class ConfigService {
     return createHmac('sha256', this.jwtSecret).update('money-admin').digest('hex');
   }
 
+  /**
+   * RevenueCat 웹훅이 Authorization 머리글에 실어 보내는 값. RevenueCat 대시보드에 같은 값을
+   * 적는다. 비어 있으면 웹훅을 받지 않는다(503) -- 아무나 이용권을 만들 수 있게 열어 두지 않는다.
+   */
+  get revenueCatWebhookAuth(): string | null {
+    return this.env.REVENUECAT_WEBHOOK_AUTH?.trim() || null;
+  }
+
+  /**
+   * 시험 결제(라이선스 테스터, environment=SANDBOX)도 이용권으로 칠지. 결제를 시험하는 동안만
+   * true 로 둔다. 기본은 false -- 운영 서버에서 시험 결제가 진짜 이용권이 되면 안 된다.
+   */
+  get revenueCatAcceptSandbox(): boolean {
+    return this.env.REVENUECAT_ACCEPT_SANDBOX?.trim() === 'true';
+  }
+
+  /**
+   * RevenueCat 비밀 API 키(v1, sk_ 로 시작). 관리자 지급 때 Play 구독의 다음 결제일을 미루는 데
+   * 쓴다. 비어 있으면 구독 중인 프로젝트에는 결제일을 미루지 않고는 주지 못한다(관리 도구가 알린다).
+   */
+  get revenueCatSecretKey(): string | null {
+    return this.env.REVENUECAT_SECRET_KEY?.trim() || null;
+  }
+
   get fcmServiceAccountFile(): string | null {
     return this.env.FCM_SERVICE_ACCOUNT_FILE?.trim() || null;
   }

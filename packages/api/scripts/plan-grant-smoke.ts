@@ -6,7 +6,7 @@
  *
  * 서비스를 바로 부르므로 서버를 띄우지 않아도 돈다.
  */
-import { addPlanMonths } from '@money/types';
+import { addPlanMonths, DAY_MS } from '@money/types';
 
 import { PlansService } from '../src/modules/plans/plans.service';
 import { runSmoke } from './smoke-harness';
@@ -84,6 +84,97 @@ runSmoke('plan-grant', async (ctx) => {
   ctx.check('목록: 평생', map.get(project.id)?.kind, 'lifetime');
   ctx.check('목록: 끝난 기간제는 무료', map.get(other.id)?.kind, 'free');
   ctx.check('목록: 줄 없는 id 는 무료', map.get('no-such-project')?.kind, 'free');
+
+  // 날 수 지급 (관리자). Play 구독이 없으면 결제일을 미루지 않는다.
+  const daysProject = await ctx.createProject();
+  const dayGrant = await plans.adminGrant({ projectId: daysProject.id, plan: 'days', days: 3 }, t0);
+  ctx.check('날 수: 지금부터', dayGrant.grant.startsAt, t0.toISOString());
+  ctx.check('날 수: 3일 뒤 끝', dayGrant.grant.endsAt, new Date(t0.getTime() + 3 * DAY_MS).toISOString());
+  ctx.check('날 수: 구독이 없으면 미루지 않는다', dayGrant.storeDeferredTo, null);
+  ctx.check('날 수: 기간제', (await plans.statusOf(daysProject.id, t0)).kind, 'period');
+  for (const [label, days] of [['0일', 0], ['366일', 366], ['1.5일', 1.5], ['날 수 없음', undefined]] as const) {
+    await ctx.expectReject(`날 수 검사: ${label}`, () =>
+      plans.adminGrant({ projectId: daysProject.id, plan: 'days', days }, t0),
+    );
+  }
+  await ctx.expectReject('개월 이용권에 날 수', () =>
+    plans.adminGrant({ projectId: daysProject.id, plan: 'month1', days: 3 }, t0),
+  );
+
+  // 날 수 줄도 거두면 당겨지고, 날 수는 그대로다.
+  const pullProject = await ctx.createProject();
+  const month = await plans.adminGrant({ projectId: pullProject.id, plan: 'month1' }, t0);
+  const later = new Date('2026-02-05T00:00:00Z');
+  const tail = await plans.adminGrant({ projectId: pullProject.id, plan: 'days', days: 5 }, later);
+  ctx.check('날 수 줄은 이어 붙는다', day(tail.grant.startsAt), '2026-02-28');
+  await plans.revoke(month.grant.id, '시험', later);
+  const pulledDays = (await plans.listGrants(pullProject.id)).find((grant) => grant.id === tail.grant.id)!;
+  ctx.check('거둔 뒤 날 수 줄은 준 날로', pulledDays.startsAt, later.toISOString());
+  ctx.check('거둔 뒤에도 5일', pulledDays.endsAt, new Date(later.getTime() + 5 * DAY_MS).toISOString());
+
+  // Play 구독이 이어지는 중이면 결제일을 지급한 끝으로 미룬다.
+  const deferred: Array<{ projectId: string; expiresAt: string }> = [];
+  let storeFails = false;
+  const store = {
+    async deferPlaySubscription(projectId: string, expiresAt: Date) {
+      if (storeFails) throw new Error('RevenueCat 거절(시험)');
+      deferred.push({ projectId, expiresAt: expiresAt.toISOString() });
+    },
+  };
+  const withStore = new PlansService(ctx.prisma as any, store as any);
+  const playProject = await ctx.createProject();
+  const playNow = new Date('2026-03-10T00:00:00Z');
+  const playEnd = new Date('2026-03-20T00:00:00Z');
+  await withStore.grant({
+    projectId: playProject.id,
+    plan: 'month1',
+    source: 'google_play',
+    userId: null,
+    externalId: 'gp-smoke@1',
+    amount: 2900,
+    window: { startsAt: new Date('2026-02-20T00:00:00Z'), endsAt: playEnd },
+  });
+  const extra = await withStore.adminGrant({ projectId: playProject.id, plan: 'days', days: 7, note: '보상' }, playNow);
+  const expectedEnd = new Date(playEnd.getTime() + 7 * DAY_MS).toISOString();
+  ctx.check('Play: 지급은 구독 끝에서 시작', extra.grant.startsAt, playEnd.toISOString());
+  ctx.check(
+    'Play: 결제일을 지급 끝으로 미룬다',
+    JSON.stringify(deferred),
+    JSON.stringify([{ projectId: playProject.id, expiresAt: expectedEnd }]),
+  );
+  ctx.check('Play: 미룬 날을 알린다', extra.storeDeferredTo, expectedEnd);
+  ctx.check('Play: 메모에 미룬 것을 남긴다', extra.grant.note, '보상 · Play 결제일 2026-03-27(UTC)로 미룸');
+
+  const monthExtra = await withStore.adminGrant({ projectId: playProject.id, plan: 'month1' }, playNow);
+  ctx.check('Play: 개월 지급도 미룬다', deferred[1]?.expiresAt, monthExtra.grant.endsAt);
+
+  storeFails = true;
+  const before = (await plans.listGrants(playProject.id)).length;
+  await ctx.expectReject('Play: 미루지 못하면 주지 않는다', () =>
+    withStore.adminGrant({ projectId: playProject.id, plan: 'days', days: 1 }, playNow),
+  );
+  ctx.check('Play: 실패하면 줄이 없다', (await plans.listGrants(playProject.id)).length, before);
+  const noDefer = await withStore.adminGrant(
+    { projectId: playProject.id, plan: 'days', days: 1, deferStoreBilling: false },
+    playNow,
+  );
+  ctx.check('Play: 미루기를 끄면 그냥 준다', noDefer.storeDeferredTo, null);
+  storeFails = false;
+
+  await ctx.expectReject('Play: 구독 중에 평생은 막는다', () =>
+    withStore.adminGrant({ projectId: playProject.id, plan: 'lifetime' }, playNow),
+  );
+  await ctx.expectReject('Play: 미룰 수단이 없으면 막는다', () =>
+    plans.adminGrant({ projectId: playProject.id, plan: 'days', days: 1 }, playNow),
+  );
+  const afterPlay = await plans.adminGrant(
+    { projectId: playProject.id, plan: 'days', days: 1 },
+    new Date('2026-03-21T00:00:00Z'),
+  );
+  ctx.check('Play: 구독이 끝난 뒤에는 미루지 않는다', afterPlay.storeDeferredTo, null);
+  await ctx.expectReject('평생 프로젝트에는 주지 않는다', () =>
+    plans.adminGrant({ projectId: project.id, plan: 'days', days: 1 }, mid),
+  );
 
   // 프로젝트를 지워도 결제 기록은 남는다.
   const doomed = await ctx.prisma.project.create({ data: { name: 'plan-grant 지울 것' } });

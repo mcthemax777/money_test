@@ -75,13 +75,14 @@ enum ProjectRole {
   viewer
 }
 
-// 이용권 종류. @money/types 의 PLAN_IDS 와 같은 목록이다.
+// 이용권 종류. @money/types 의 PLAN_IDS 에 관리자가 날 수로 주는 days(PLAN_GRANT_DAYS)를 더한 목록이다.
 enum PlanId {
   lifetime
   month1
   month3
   month6
   month12
+  days
 }
 
 // 이용권 권한이 어디서 왔는가. @money/types 의 PLAN_GRANT_SOURCES 와 같은 목록이다.

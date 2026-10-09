@@ -7,6 +7,8 @@
  * 토큰은 sessionStorage 에 둔다 -- 탭을 닫으면 사라진다. 관리 도구는 잠깐 열어 쓰는 곳이다.
  */
 import type {
+  AdminPlanGrantRequest,
+  AdminPlanGrantResult,
   AdminPlanProjectDto,
   AdminProjectPlanDto,
   AppPlatform,
@@ -19,7 +21,6 @@ import type {
   NotificationRuleDto,
   NotificationSampleDto,
   PlanGrantDto,
-  PlanId,
 } from '@money/types';
 import { apiClient } from '@money/core/lib/api-client';
 
@@ -162,9 +163,12 @@ export const searchPlanProjects = (query: string) =>
 export const getProjectPlan = (projectId: string) =>
   call<AdminProjectPlanDto>('GET', `/admin/projects/${encodeURIComponent(projectId)}/plan`);
 
-/** 관리자 지급. 금액은 0 으로 적힌다. 평생 이용권이 있는 프로젝트는 서버가 막는다. */
-export const grantPlan = (projectId: string, plan: PlanId, note: string) =>
-  call<PlanGrantDto>('POST', `/admin/projects/${encodeURIComponent(projectId)}/plan-grants`, { plan, note });
+/**
+ * 관리자 지급(개월 또는 날 수). 금액은 0 으로 적힌다. 평생 이용권이 있는 프로젝트는 서버가 막는다.
+ * Play 구독이 이어지는 중이면 서버가 결제일을 함께 미루고, 미룬 날을 돌려준다.
+ */
+export const grantPlan = (projectId: string, request: AdminPlanGrantRequest) =>
+  call<AdminPlanGrantResult>('POST', `/admin/projects/${encodeURIComponent(projectId)}/plan-grants`, request);
 
 /** 권한 거두기. 뒤에 이어 붙어 있던 기간제는 서버가 앞으로 당긴다. */
 export const revokePlanGrant = (grantId: string, reason: string) =>

@@ -828,7 +828,7 @@ export default function ProjectsScreen() {
         </View>
       )}
 
-      <PlanModal project={planProject} onClose={() => setPlanProject(null)} />
+      <PlanModal project={planProject} onClose={() => setPlanProject(null)} onReload={admin.reload} />
 
       <TypedConfirmModal
         isOpen={typedAction !== null}

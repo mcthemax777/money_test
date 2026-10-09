@@ -47,6 +47,45 @@ export function planOf(id: PlanId): PlanDef {
 }
 
 /**
+ * Play 스토어 상품 id. 앱의 결제와 서버의 웹훅이 같은 표를 본다.
+ *
+ * 기간제는 구독 하나(`premium`)에 자동 갱신 기본 요금제(base plan) 넷을 둔다. RevenueCat 이
+ * 웹훅과 SDK 에서 `구독id:기본요금제id` 로 부른다. 평생은 한 번 사는 상품이다.
+ * Play Console 에서 이 id 그대로 만들어야 한다 (만든 뒤에는 바꿀 수 없다).
+ */
+export const PLAY_SUBSCRIPTION_ID = 'premium';
+export const PLAN_STORE_PRODUCT_IDS: Record<PlanId, string> = {
+  month1: `${PLAY_SUBSCRIPTION_ID}:month1`,
+  month3: `${PLAY_SUBSCRIPTION_ID}:month3`,
+  month6: `${PLAY_SUBSCRIPTION_ID}:month6`,
+  month12: `${PLAY_SUBSCRIPTION_ID}:month12`,
+  lifetime: 'premium_lifetime',
+};
+
+/** 스토어 상품 id 로 이용권을 찾는다. 모르는 상품이면 null. */
+export function planIdOfStoreProduct(productId: string): PlanId | null {
+  const found = (Object.keys(PLAN_STORE_PRODUCT_IDS) as PlanId[]).find(
+    (id) => PLAN_STORE_PRODUCT_IDS[id] === productId,
+  );
+  return found ?? null;
+}
+
+/**
+ * 관리자가 날 수로 준 권한 줄의 이용권 칸. 파는 이용권(PLAN_IDS)이 아니어서 따로 둔다 --
+ * PLAN_IDS 에 넣으면 가격표와 결제 화면에 함께 선다. 날 수는 줄의 기간(endsAt - startsAt)이다.
+ */
+export const PLAN_GRANT_DAYS = 'days';
+export type PlanGrantPlan = PlanId | typeof PLAN_GRANT_DAYS;
+
+/**
+ * 관리자가 한 번에 주는 날 수의 끝. Google Play 가 결제일을 한 번에 1년(365일)까지만
+ * 미룬다(RevenueCat defer 의 extend_by_days 1~365).
+ */
+export const MAX_ADMIN_GRANT_DAYS = 365;
+
+export const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
  * 권한이 어디서 왔는가.
  *
  * - `admin`: 관리 도구에서 손으로 준 것 (보상·시험)
@@ -141,7 +180,7 @@ export interface PlanGrantDto {
   id: string;
   projectId: string | null;
   userId: string | null;
-  plan: PlanId;
+  plan: PlanGrantPlan;
   source: PlanGrantSource;
   externalId: string | null;
   amount: number;
@@ -163,6 +202,25 @@ export interface AdminPlanProjectDto {
   /** 소유자 이메일. 소유자가 없는 프로젝트(정상 경로는 아니다)면 null. */
   ownerEmail: string | null;
   plan: ProjectPlanStatus;
+}
+
+/**
+ * 관리자 지급 요청. `plan` 이 `days` 면 `days`(1~MAX_ADMIN_GRANT_DAYS)가 있어야 한다.
+ *
+ * `deferStoreBilling` 이 false 면 Play 구독이 이어지는 중이어도 결제일을 미루지 않는다. 사용자가
+ * 이미 구독을 해지해 미룰 결제가 없을 때 쓴다. 기본은 미룬다.
+ */
+export interface AdminPlanGrantRequest {
+  plan: PlanGrantPlan;
+  days?: number;
+  note?: string;
+  deferStoreBilling?: boolean;
+}
+
+/** 관리자 지급 결과. Play 결제일을 미뤘으면 그 새 결제일(ISO), 아니면 null. */
+export interface AdminPlanGrantResult {
+  grant: PlanGrantDto;
+  storeDeferredTo: string | null;
 }
 
 /** 관리 도구의 한 프로젝트 이용권: 지금 상태와 권한 줄 전부(거둔 줄 포함). */

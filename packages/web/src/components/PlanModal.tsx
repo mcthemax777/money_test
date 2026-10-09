@@ -13,7 +13,7 @@ import Modal from '@/components/Modal';
 /**
  * 프로젝트 이용권 고르기. 앱의 PlanModal 과 같은 모양이다.
  *
- * 아직 결제가 붙지 않아 결제 단추는 "준비 중"을 알리기만 한다. 이용권은 프로젝트에 붙으므로
+ * 결제는 앱(Google Play)에만 있다. 웹의 결제 단추는 앱에서 하라고 알린다. 이용권은 프로젝트에 붙으므로
  * 결제는 소유자만 한다 -- 다른 멤버는 값을 볼 수 있지만 단추가 잠긴다. 평생 이용권이 있는
  * 프로젝트도 잠근다(더 살 것이 없다). 기간제를 쓰는 중이면 이어 붙는다는 것을 알린다.
  */
@@ -58,12 +58,13 @@ export default function PlanModal({
           ) : null}
           {notice ? <p className="text-xs text-orange-600">{notice}</p> : null}
           <button
-            onClick={() => setNotice(t('plan.notReady'))}
+            onClick={() => setNotice(t('plan.appOnly'))}
             disabled={!canBuy}
             className="w-full rounded-lg bg-blue-600 px-4 py-3 font-semibold text-white transition hover:bg-blue-700 disabled:opacity-50"
           >
             {t('plan.buy', { price: formatCurrency(plan.price, PLAN_CURRENCY) })}
           </button>
+          <p className="text-[11px] leading-4 text-gray-400">{t('plan.autoRenewNote')}</p>
         </div>
       }
     >

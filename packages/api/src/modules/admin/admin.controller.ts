@@ -23,6 +23,9 @@ import { Throttle } from '@nestjs/throttler';
 import {
   HOLIDAY_COUNTRIES,
   isPlanId,
+  PLAN_GRANT_DAYS,
+  type AdminPlanGrantRequest,
+  type AdminPlanGrantResult,
   type AdminProjectPlanDto,
   type AppVersionPolicyUpdate,
   type HolidayCountry,
@@ -214,31 +217,29 @@ export class AdminController {
   }
 
   /**
-   * 관리자 지급 (보상·시험). 금액은 0 으로 적는다.
-   *
-   * 평생 이용권이 있는 프로젝트에는 주지 않는다. 결제와 달리 돈을 받은 것이 아니라
-   * 적어 둘 까닭이 없고, 실수로 누른 것일 가능성이 크다.
+   * 관리자 지급 (보상·시험, 금액 0). 이용권 종류(개월)나 날 수(`plan: 'days'`)로 준다.
+   * Play 구독이 이어지는 중이면 결제일을 함께 미룬다(PlansService.adminGrant).
    */
   @Post('projects/:projectId/plan-grants')
   @UseGuards(AdminGuard)
   @HttpCode(HttpStatus.CREATED)
-  async grantPlan(
+  grantPlan(
     @Param('projectId') projectId: string,
-    @Body() body: { plan?: string; note?: string },
-  ) {
-    if (!isPlanId(body?.plan)) throw new BadRequestException('이용권 종류가 올바르지 않습니다.');
-    const status = await this.plans.statusOf(projectId);
-    if (status.kind === 'lifetime') {
-      throw new BadRequestException('이미 평생 이용권이 있는 프로젝트입니다.');
+    @Body() body: Partial<AdminPlanGrantRequest>,
+  ): Promise<AdminPlanGrantResult> {
+    const plan = body?.plan;
+    if (plan !== PLAN_GRANT_DAYS && !isPlanId(plan)) {
+      throw new BadRequestException('이용권 종류가 올바르지 않습니다.');
     }
-    return this.plans.grant({
+    if (body.deferStoreBilling !== undefined && typeof body.deferStoreBilling !== 'boolean') {
+      throw new BadRequestException('deferStoreBilling 은 true/false 여야 합니다.');
+    }
+    return this.plans.adminGrant({
       projectId,
-      plan: body.plan,
-      source: 'admin',
-      userId: null,
-      externalId: null,
-      amount: 0,
-      note: body.note?.trim() || null,
+      plan,
+      days: plan === PLAN_GRANT_DAYS ? body.days : undefined,
+      note: typeof body.note === 'string' ? body.note : null,
+      deferStoreBilling: body.deferStoreBilling,
     });
   }
 
