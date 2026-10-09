@@ -18,6 +18,7 @@ import { useLedgerKindFilter } from '@money/core/store/ledger-kind-filter';
 import { useWeekStartStore } from '@money/core/store/week-start';
 import { captureBoxStore } from '@money/core/data/capture-box';
 import { useAppUpdate } from '@money/core/store/app-update';
+import { useAdCounter } from '@money/core/lib/ads';
 
 const PERSISTED = [
   useAuth,
@@ -33,6 +34,8 @@ const PERSISTED = [
   captureBoxStore,
   // "나중에"를 누른 권유 버전.
   useAppUpdate,
+  // 전면광고까지 남은 거래 저장 횟수. 빠지면 앱을 켤 때마다 0 에서 센다.
+  useAdCounter,
 ];
 
 export async function hydrateStores(): Promise<void> {

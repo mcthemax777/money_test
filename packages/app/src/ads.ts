@@ -1,5 +1,5 @@
 /**
- * AdMob. 하단 배너와, 거래 저장 열 번에 한 번 뜨는 전면광고.
+ * AdMob. 하단 배너와, 거래 저장 몇 번(core 의 INTERSTITIAL_EVERY)에 한 번 뜨는 전면광고.
  *
  * 띄울지는 core 의 `lib/ads` 가 정한다(지금 보는 가계부의 이용권이 무료일 때만). 여기는
  * SDK 를 깨우고 광고를 받아 두는 일만 한다.
@@ -42,6 +42,9 @@ const RETRY_MS = 60_000;
 
 /** 저장한 편집 창이 닫히는 것을 기다린다. 닫히는 도중에 광고를 덮으면 창이 남아 보인다. */
 const SHOW_DELAY_MS = 400;
+
+/** 띄우라고 한 뒤 이만큼 지나도 광고가 뜨지 않으면 뜨지 않은 것으로 본다. */
+const OPEN_TIMEOUT_MS = 10_000;
 
 interface AdConsentState {
   /** 동의 절차를 한 번 거쳤는가. 거치기 전에는 광고를 받지 않는다. */
@@ -121,7 +124,7 @@ export function initAds(): Promise<void> {
 /**
  * 전면광고를 받아 두고 core 에 꽂는다. 돌려주는 함수로 뺀다.
  *
- * 띄운 뒤에는 다음 것을 곧바로 받아 둔다. 열 번째 저장에서 그제야 받기 시작하면 그
+ * 띄운 뒤에는 다음 것을 곧바로 받아 둔다. 그 횟수째 저장에서 그제야 받기 시작하면 그
  * 자리에서는 띄울 것이 없다.
  */
 export function startInterstitials(unitId: string): () => void {
@@ -154,18 +157,41 @@ export function startInterstitials(unitId: string): () => void {
       new Promise<boolean>((resolve) => {
         // 같은 광고를 두 번 띄우지 않게 지금 막아 둔다. 닫히면 CLOSED 가 다음 것을 받는다.
         ready = false;
+
+        /*
+         * 떴는지는 OPENED 이벤트로 판단한다. show() 의 약속이 풀리는 것은 "띄우라는 요청을
+         * 넘겼다"일 뿐 화면에 떴다는 뜻이 아니다. 끝내 OPENED 가 오지 않으면(ERROR, 시간 초과)
+         * 뜨지 않은 것으로 보고 횟수를 남긴다 -- 다음 저장에서 다시 띄운다.
+         */
+        let settled = false;
+        const finish = (shown: boolean) => {
+          if (settled) return;
+          settled = true;
+          /*
+           * 뜨지 않았는데 광고가 아직 받아진 채면 다시 띄울 수 있다고 적어 둔다. 라이브러리는
+           * 받아 둔 광고가 있으면 load() 를 무시해 LOADED 가 다시 오지 않으므로, 여기서 적지
+           * 않으면 이 세션에서는 다시는 띄우지 못한다.
+           */
+          if (!shown) ready = ad.loaded && !stopped;
+          removeOpened();
+          removeError();
+          clearTimeout(giveUp);
+          resolve(shown);
+        };
+        const removeOpened = ad.addAdEventListener(AdEventType.OPENED, () => finish(true));
+        const removeError = ad.addAdEventListener(AdEventType.ERROR, () => finish(false));
+        const giveUp = setTimeout(() => finish(false), SHOW_DELAY_MS + OPEN_TIMEOUT_MS);
+
         setTimeout(() => {
           if (stopped) {
-            resolve(false);
+            finish(false);
             return;
           }
-          ad.show().then(
-            () => resolve(true),
-            () => {
-              load();
-              resolve(false);
-            },
-          );
+          ad.show().catch(() => {
+            // 받아 둔 광고가 없었거나 이미 띄우는 중이었다. 새로 받아 두고 다음 저장을 기다린다.
+            load();
+            finish(false);
+          });
         }, SHOW_DELAY_MS);
       }),
   });

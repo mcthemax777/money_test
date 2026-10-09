@@ -656,7 +656,7 @@ export function useEntryForm({
         setEditingId(created.id);
       }
       onSaved?.({ entryId: savedId });
-      // 등록·수정 열 번에 전면광고 한 번. 광고를 꽂지 않은 플랫폼에서는 아무 일도 없다.
+      // 등록·수정 몇 번(INTERSTITIAL_EVERY)에 전면광고 한 번. 광고를 꽂지 않은 플랫폼에서는 아무 일도 없다.
       noteEntrySaved();
       return savedId;
     } catch (caught) {

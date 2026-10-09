@@ -5,7 +5,7 @@
  * 평생 이용권이 있으면 띄우지 않는다. 이용권이 프로젝트에 붙으므로 같은 사람이라도 유료
  * 가계부를 볼 때는 광고가 없다.
  *
- * 전면광고는 거래를 저장(등록·수정)할 때 세어 10번에 한 번 띄운다. 세는 일은 여기서 하고,
+ * 전면광고는 거래를 저장(등록·수정)할 때 세어 `INTERSTITIAL_EVERY` 번에 한 번 띄운다. 세는 일은 여기서 하고,
  * 실제로 띄우는 일은 플랫폼이 꽂는 `InterstitialPresenter` 가 한다. 꽂지 않은 플랫폼(웹)은
  * 세지도 않는다.
  */
@@ -15,8 +15,8 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 import { useProject, type Project } from '../store/project';
 import { persistStorage } from './persist-storage';
 
-/** 거래 저장 몇 번에 전면광고를 한 번 띄우는가. */
-export const INTERSTITIAL_EVERY = 10;
+/** 거래 저장 몇 번에 전면광고를 한 번 띄우는가. 10 에서 5 로 줄였다 (2026-10-09 사용자 요청). */
+export const INTERSTITIAL_EVERY = 5;
 
 /**
  * 이 프로젝트에 광고를 띄우는가.
@@ -40,7 +40,10 @@ export function useShowAds(): boolean {
 export interface InterstitialPresenter {
   /** 지금 바로 띄울 광고를 받아 두었는가. */
   isReady(): boolean;
-  /** 띄운다. 실제로 떴으면 true. */
+  /**
+   * 띄운다. 광고가 **실제로 화면에 떴으면** true. 띄우라는 요청이 받아들여진 것만으로는 true 가
+   * 아니다 -- 그렇게 세면 뜨지 않은 광고로 횟수가 0 이 되어 다음 광고가 그만큼 밀린다.
+   */
   show(): Promise<boolean>;
 }
 
@@ -56,8 +59,13 @@ interface AdCounterStore {
   savesSinceAd: number;
 }
 
-/** 기기에 남긴다. 앱을 껐다 켰다고 처음부터 다시 세면 광고가 영영 안 뜰 수 있다. */
-const useAdCounter = create<AdCounterStore>()(
+/**
+ * 기기에 남긴다. 앱을 껐다 켰다고 처음부터 다시 세면 광고가 영영 안 뜰 수 있다.
+ *
+ * 앱은 저장소(AsyncStorage)를 이 스토어가 만들어진 뒤에 넣으므로, 앱의 persistence 가 이것을
+ * 다시 읽어야(rehydrate) 남긴 값이 붙는다. 그 목록에서 빠지면 켤 때마다 0 에서 센다.
+ */
+export const useAdCounter = create<AdCounterStore>()(
   persist(() => ({ savesSinceAd: 0 }), {
     name: 'ad-counter',
     storage: createJSONStorage(() => persistStorage),
@@ -67,8 +75,8 @@ const useAdCounter = create<AdCounterStore>()(
 /**
  * 거래를 저장했다. 등록과 수정이 부른다(지우기는 세지 않는다).
  *
- * 열 번째가 되었는데 광고를 아직 받지 못했으면(끊겨 있다, 받는 중이다) 세는 값을 그대로
- * 두고 다음 저장에서 다시 본다. 0 으로 돌리면 그 열 번은 광고 없이 지나간다.
+ * 정한 횟수가 되었는데 광고를 아직 받지 못했으면(끊겨 있다, 받는 중이다) 세는 값을 그대로
+ * 두고 다음 저장에서 다시 본다. 0 으로 돌리면 그만큼의 저장이 광고 없이 지나간다.
  * 광고가 실제로 뜬 뒤에만 0 으로 돌린다.
  */
 export function noteEntrySaved(): void {

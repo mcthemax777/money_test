@@ -1,5 +1,5 @@
 /**
- * 거래 저장 열 번에 전면광고 한 번 (2026-10-09).
+ * 거래 저장 INTERSTITIAL_EVERY 번에 전면광고 한 번 (2026-10-09, 지금은 5번).
  *
  * 무료 가계부에서만 세고, 광고를 받아 두지 못했으면 다음 저장으로 미루며, 실제로 뜬 뒤에만
  * 처음부터 다시 센다. 광고를 꽂지 않은 플랫폼(웹)은 세지 않는다.
@@ -50,13 +50,13 @@ async function save(times: number) {
   await save(INTERSTITIAL_EVERY * 2);
   setInterstitialPresenter(presenter);
   await save(INTERSTITIAL_EVERY - 1);
-  eq('꽂기 전 저장은 세지 않는다 (아홉 번째까지 안 뜬다)', shows, 0);
+  eq('꽂기 전 저장은 세지 않는다 (정한 횟수 직전까지 안 뜬다)', shows, 0);
   await save(1);
-  eq('열 번째에 뜬다', shows, 1);
+  eq(`${INTERSTITIAL_EVERY}번째에 뜬다`, shows, 1);
   await save(INTERSTITIAL_EVERY - 1);
   eq('뜬 뒤로는 처음부터 센다', shows, 1);
   await save(1);
-  eq('다시 열 번째에 뜬다', shows, 2);
+  eq(`다시 ${INTERSTITIAL_EVERY}번째에 뜬다`, shows, 2);
 
   // 받아 두지 못했으면 미룬다.
   ready = false;
