@@ -2,7 +2,12 @@ import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { persistStorage } from '../lib/persist-storage';
-import { DEFAULT_TIME_ZONE, isCurrencyCode, type CurrencyCode } from '@money/types';
+import {
+  DEFAULT_TIME_ZONE,
+  isCurrencyCode,
+  type CurrencyCode,
+  type ProjectPlanStatus,
+} from '@money/types';
 
 export interface Project {
   id: string;
@@ -18,6 +23,8 @@ export interface Project {
   displayCurrency?: string;
   /** 로그인한 사용자가 이 프로젝트에서 "나"로 지정한 구성원 */
   myPersonId?: string | null;
+  /** 지금 이용권. 옛 서버나 저장해 둔 목록에는 없을 수 있다 -- 그때는 무료로 본다. */
+  plan?: ProjectPlanStatus;
 }
 
 interface ProjectStore {

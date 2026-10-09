@@ -15,9 +15,11 @@ import type { Project } from '@money/core/store/project';
 import { DEFAULT_TIME_ZONE, SUPPORTED_CURRENCIES, type CurrencyCode } from '@money/types';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { currencyLabel } from '@money/core/lib/money';
+import { planStatusLabel } from '@money/core/lib/plans';
 import { TIME_ZONE_OPTIONS } from '@money/core/lib/time-zones';
 import PageHeader from '@/components/PageHeader';
 import TypedConfirmModal from '@/components/TypedConfirmModal';
+import PlanModal from '@/components/PlanModal';
 
 /**
  * 프로젝트 관리 화면.
@@ -53,6 +55,8 @@ export default function ProjectsPage() {
   /** 이름·설명을 고치는 중인 프로젝트와 입력값. 한 번에 하나만 고친다. */
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState({ name: '', description: '' });
+  /** 이용권 팝업을 띄운 프로젝트. */
+  const [planProject, setPlanProject] = useState<Project | null>(null);
   /** 기준통화 환산이 도는 동안 그 프로젝트의 선택을 잠근다. */
   const [rebasingId, setRebasingId] = useState<string | null>(null);
 
@@ -690,6 +694,22 @@ export default function ProjectsPage() {
                 </div>
               )}
 
+              {/*
+                이용권. 프로젝트에 붙으므로 멤버 모두에게 보이고, 결제는 팝업에서 소유자만 한다.
+              */}
+              <div className="mt-4 border-t border-gray-100 pt-4">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h4 className="text-sm font-semibold text-gray-900">{t('projects.plan')}</h4>
+                  <button
+                    onClick={() => setPlanProject(project)}
+                    className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-gray-700 transition hover:bg-gray-100"
+                  >
+                    {planStatusLabel(project.plan, t, tag)}
+                    <span aria-hidden>→</span>
+                  </button>
+                </div>
+              </div>
+
               <div className="mt-4 border-t border-gray-100 pt-4">
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -891,6 +911,8 @@ export default function ProjectsPage() {
           ))
         )}
       </div>
+
+      <PlanModal project={planProject} onClose={() => setPlanProject(null)} />
 
       <TypedConfirmModal
         isOpen={typedAction !== null}

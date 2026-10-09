@@ -17,6 +17,7 @@ import { EntryDraftsService } from '@/modules/entry-drafts/entry-drafts.service'
 import { HolidaysService } from '@/modules/holidays/holidays.service';
 import { ExchangeRatesService } from '@/modules/exchange-rates/exchange-rates.service';
 import { ProjectsService } from '@/modules/projects/projects.service';
+import { PlansService } from '@/modules/plans/plans.service';
 import { writeFileSync } from 'fs';
 import { CardsService } from '@/modules/cards/cards.service';
 import { CategoriesService } from '@/modules/categories/categories.service';
@@ -92,7 +93,7 @@ runSmoke('sync-push-dump', async (ctx) => {
     tags as any,
     budgets as any,
     new ExchangeRatesService(ctx.prisma as any) as any,
-    new ProjectsService(ctx.prisma as any, access as any, new ExchangeRatesService(ctx.prisma as any)) as any,
+    new ProjectsService(ctx.prisma as any, access as any, new ExchangeRatesService(ctx.prisma as any), new PlansService(ctx.prisma as any)) as any,
     recurringReplay as any,
   );
 

@@ -27,6 +27,7 @@ import { EntryDraftsService } from '@/modules/entry-drafts/entry-drafts.service'
 import { HolidaysService } from '@/modules/holidays/holidays.service';
 import { ExchangeRatesService } from '@/modules/exchange-rates/exchange-rates.service';
 import { ProjectsService } from '@/modules/projects/projects.service';
+import { PlansService } from '@/modules/plans/plans.service';
 import { Prisma } from '@prisma/client';
 import { CategoriesService } from '@/modules/categories/categories.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
@@ -103,7 +104,7 @@ runSmoke('sync-push', async (ctx) => {
     tags as any,
     budgets as any,
     new ExchangeRatesService(ctx.prisma as any) as any,
-    new ProjectsService(ctx.prisma as any, access as any, new ExchangeRatesService(ctx.prisma as any)) as any,
+    new ProjectsService(ctx.prisma as any, access as any, new ExchangeRatesService(ctx.prisma as any), new PlansService(ctx.prisma as any)) as any,
     recurringReplay as any,
   );
 
@@ -346,7 +347,7 @@ runSmoke('sync-push', async (ctx) => {
     tags as any,
     budgets as any,
     new ExchangeRatesService(ctx.prisma as any) as any,
-    new ProjectsService(ctx.prisma as any, viewerAccess as any, new ExchangeRatesService(ctx.prisma as any)) as any,
+    new ProjectsService(ctx.prisma as any, viewerAccess as any, new ExchangeRatesService(ctx.prisma as any), new PlansService(ctx.prisma as any)) as any,
     recurringReplay as any,
   );
   await ctx.expectReject('viewer 로 바뀐 뒤 도착한 명령은 거절된다', () =>

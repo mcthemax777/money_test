@@ -16,6 +16,7 @@ import PageHeader from '../components/PageHeader';
 import { OptionModal, SettingRow } from '../components/SettingPicker';
 import { useNavigation } from '../shell/navigation';
 import { useOutboxCount } from '../shell/nav-badges';
+import { showAdPrivacyOptions, useAdConsent } from '../ads';
 
 /** 언어 이름을 담은 열쇠. 사전이 세 언어 모두에서 같은 값(그 나라 말)을 갖는다. */
 const NAME_KEY: Record<Locale, MessageKey> = {
@@ -84,6 +85,11 @@ export default function SettingsScreen() {
           onPress={() => go('/settings/inquiries')}
         />
         {/*
+          광고 동의를 바꾸는 자리. 동의 창이 뜬 지역(EEA·영국 등)에서만 선다 -- Google 정책상
+          그 지역에서는 언제든 다시 열 수 있어야 한다.
+        */}
+        <AdPrivacySettings />
+        {/*
           오프라인에서 적었지만 아직 서버로 가지 못한 거래.
           대개는 조용히 나가므로 평소에는 빈 화면이고, 충돌과 거절만 여기 남는다.
         */}
@@ -101,16 +107,23 @@ function SettingsCard({
   title,
   badge = 0,
   onPress,
+  disabled = false,
+  error = '',
 }: {
   title: string;
   /** 제목 옆의 빨간 건수. 0 이면 그리지 않는다. */
   badge?: number;
   onPress: () => void;
+  /** 누른 일이 도는 동안 잠근다. */
+  disabled?: boolean;
+  /** 카드 아래에 적는 실패 이유. */
+  error?: string;
 }) {
   return (
     <Pressable
       onPress={onPress}
-      className="rounded-lg bg-white p-6 shadow-sm active:bg-gray-50"
+      disabled={disabled}
+      className={`rounded-lg bg-white p-6 shadow-sm active:bg-gray-50 ${disabled ? 'opacity-50' : ''}`}
     >
       <View className="flex-row items-center justify-between">
         <View className="shrink">
@@ -121,6 +134,7 @@ function SettingsCard({
         </View>
         <Text className="text-2xl text-gray-400">→</Text>
       </View>
+      {error ? <Text className="mt-2 text-sm text-red-600">{error}</Text> : null}
     </Pressable>
   );
 }
@@ -214,5 +228,30 @@ function WeekStartSettings() {
         }}
       />
     </>
+  );
+}
+
+/** 광고 개인정보 옵션. 누르면 UMP 의 동의 창이 다시 뜬다. */
+function AdPrivacySettings() {
+  const { t } = useTranslation();
+  const required = useAdConsent((state) => state.privacyOptionsRequired);
+  const [isOpening, setIsOpening] = useState(false);
+  const [error, setError] = useState('');
+
+  if (!required) return null;
+
+  return (
+    <SettingsCard
+      title={t('settings.adPrivacy.title')}
+      disabled={isOpening}
+      error={error}
+      onPress={() => {
+        setError('');
+        setIsOpening(true);
+        showAdPrivacyOptions()
+          .catch(() => setError(t('settings.adPrivacy.failed')))
+          .finally(() => setIsOpening(false));
+      }}
+    />
   );
 }

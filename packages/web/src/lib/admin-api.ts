@@ -7,6 +7,8 @@
  * 토큰은 sessionStorage 에 둔다 -- 탭을 닫으면 사라진다. 관리 도구는 잠깐 열어 쓰는 곳이다.
  */
 import type {
+  AdminPlanProjectDto,
+  AdminProjectPlanDto,
   AppPlatform,
   AppVersionPolicy,
   AppVersionPolicyUpdate,
@@ -16,6 +18,8 @@ import type {
   NotificationRule,
   NotificationRuleDto,
   NotificationSampleDto,
+  PlanGrantDto,
+  PlanId,
 } from '@money/types';
 import { apiClient } from '@money/core/lib/api-client';
 
@@ -150,3 +154,18 @@ export const startInquiry = (userId: string, body: string) =>
 
 export const replyInquiry = (id: string, body: string) =>
   call<InquiryDto.AdminDetail>('POST', `/admin/inquiries/${encodeURIComponent(id)}/replies`, { body });
+
+/** 이용권을 줄 프로젝트 찾기. 이름·참여 키·id·소유자 이메일. 빈 말이면 최근 것부터. */
+export const searchPlanProjects = (query: string) =>
+  call<AdminPlanProjectDto[]>('GET', `/admin/projects?q=${encodeURIComponent(query)}`);
+
+export const getProjectPlan = (projectId: string) =>
+  call<AdminProjectPlanDto>('GET', `/admin/projects/${encodeURIComponent(projectId)}/plan`);
+
+/** 관리자 지급. 금액은 0 으로 적힌다. 평생 이용권이 있는 프로젝트는 서버가 막는다. */
+export const grantPlan = (projectId: string, plan: PlanId, note: string) =>
+  call<PlanGrantDto>('POST', `/admin/projects/${encodeURIComponent(projectId)}/plan-grants`, { plan, note });
+
+/** 권한 거두기. 뒤에 이어 붙어 있던 기간제는 서버가 앞으로 당긴다. */
+export const revokePlanGrant = (grantId: string, reason: string) =>
+  call<PlanGrantDto>('POST', `/admin/plan-grants/${encodeURIComponent(grantId)}/revoke`, { reason });

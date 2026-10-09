@@ -12,6 +12,7 @@ import { useInboxCountSync } from '@money/core/hooks/useEntryDrafts';
 import { useProject } from '@money/core/store/project';
 import DashboardSidebar from '@/components/DashboardSidebar';
 import MobileTabBar from '@/components/MobileTabBar';
+import AdBanner, { AdBannerSpacer } from './AdBanner';
 import ProjectAccessLostDialog from '@/components/ProjectAccessLostDialog';
 
 /**
@@ -85,8 +86,11 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <div key={locale} className="max-w-7xl mx-auto px-4 pb-8 pt-4 md:pt-8">
           {children}
         </div>
+        {/* 무료 가계부의 하단 배너가 마지막 줄을 가리지 않게 그만큼 비켜 준다. */}
+        <AdBannerSpacer />
       </main>
 
+      <AdBanner />
       <MobileTabBar />
 
       {/*

@@ -114,6 +114,8 @@ async function cleanup(prisma: PrismaClient, projectIds: string[], userIds: stri
        * 그래서 검사가 만든 것만 골라 여기서 치운다.
        */
       await prisma.mutationLog.deleteMany({ where: { projectId: { in: projectIds } } });
+      // 이용권 권한도 프로젝트를 지우면 남는다(결제 기록이라 SET NULL). 검사가 만든 것은 먼저 치운다.
+      await prisma.projectPlanGrant.deleteMany({ where: { projectId: { in: projectIds } } });
       await prisma.project.deleteMany({ where: { id: { in: projectIds } } });
     }
     if (userIds.length > 0) {

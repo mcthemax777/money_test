@@ -22,6 +22,8 @@ import { ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import {
   HOLIDAY_COUNTRIES,
+  isPlanId,
+  type AdminProjectPlanDto,
   type AppVersionPolicyUpdate,
   type HolidayCountry,
   type InquiryDto,
@@ -34,6 +36,7 @@ import { SkipVersionCheck } from '../app-version/skip-version-check.decorator';
 import { HolidaysService } from '../holidays/holidays.service';
 import { InquiriesService } from '../inquiries/inquiries.service';
 import { NotificationSamplesService } from '../notification-samples/notification-samples.service';
+import { PlansService } from '../plans/plans.service';
 import { AdminAuthService, type AdminTokenPayload } from './admin-auth.service';
 import { AdminGuard } from './admin.guard';
 
@@ -51,6 +54,7 @@ export class AdminController {
     private readonly versions: AppVersionService,
     private readonly samples: NotificationSamplesService,
     private readonly inquiries: InquiriesService,
+    private readonly plans: PlansService,
   ) {}
 
   @Post('login')
@@ -191,6 +195,59 @@ export class AdminController {
   @HttpCode(HttpStatus.CREATED)
   replyInquiry(@Param('id') id: string, @Body() body: InquiryDto.MessageRequest) {
     return this.inquiries.reply(id, body);
+  }
+
+  // 이용권 -----------------------------------------------------------------
+
+  /** 이용권을 줄 프로젝트 찾기. 이름·참여 키·id·소유자 이메일. */
+  @Get('projects')
+  @UseGuards(AdminGuard)
+  searchProjects(@Query('q') q?: string) {
+    return this.plans.adminSearchProjects(q);
+  }
+
+  /** 한 프로젝트의 지금 이용권과 권한 줄 전부(거둔 줄 포함). */
+  @Get('projects/:projectId/plan')
+  @UseGuards(AdminGuard)
+  async getProjectPlan(@Param('projectId') projectId: string): Promise<AdminProjectPlanDto> {
+    return this.plans.adminProjectPlan(projectId);
+  }
+
+  /**
+   * 관리자 지급 (보상·시험). 금액은 0 으로 적는다.
+   *
+   * 평생 이용권이 있는 프로젝트에는 주지 않는다. 결제와 달리 돈을 받은 것이 아니라
+   * 적어 둘 까닭이 없고, 실수로 누른 것일 가능성이 크다.
+   */
+  @Post('projects/:projectId/plan-grants')
+  @UseGuards(AdminGuard)
+  @HttpCode(HttpStatus.CREATED)
+  async grantPlan(
+    @Param('projectId') projectId: string,
+    @Body() body: { plan?: string; note?: string },
+  ) {
+    if (!isPlanId(body?.plan)) throw new BadRequestException('이용권 종류가 올바르지 않습니다.');
+    const status = await this.plans.statusOf(projectId);
+    if (status.kind === 'lifetime') {
+      throw new BadRequestException('이미 평생 이용권이 있는 프로젝트입니다.');
+    }
+    return this.plans.grant({
+      projectId,
+      plan: body.plan,
+      source: 'admin',
+      userId: null,
+      externalId: null,
+      amount: 0,
+      note: body.note?.trim() || null,
+    });
+  }
+
+  /** 권한 거두기. 뒤에 이어 붙어 있던 기간제는 앞으로 당겨진다. */
+  @Post('plan-grants/:id/revoke')
+  @UseGuards(AdminGuard)
+  @HttpCode(HttpStatus.OK)
+  revokePlan(@Param('id') id: string, @Body() body: { reason?: string }) {
+    return this.plans.revoke(id, body?.reason?.trim() ?? '');
   }
 
   @Delete('holidays/:country/:date')

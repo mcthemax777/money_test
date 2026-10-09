@@ -47,7 +47,15 @@
           "defaultChannel": "drafts"
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "react-native-google-mobile-ads",
+        {
+          "androidSdk": "classic",
+          "androidAppId": "ca-app-pub-3855040710986128~9425202447",
+          "iosAppId": "ca-app-pub-3940256099942544~1458002511"
+        }
+      ]
     ],
     "scheme": "money"
   }

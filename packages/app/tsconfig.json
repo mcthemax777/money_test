@@ -2,7 +2,15 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
-    "jsxImportSource": "nativewind"
+    "jsxImportSource": "nativewind",
+    // expo 같은 꾸러미는 @types/react 를 제 의존성으로 두지 않아, pnpm 이 숨김 자리
+    // (node_modules/.pnpm/node_modules)에 끌어올린 것을 본다. 거기에는 web 의 React 18
+    // 타입이 올라갈 때가 있고(설치 차례에 따라 바뀐다), 그러면 앱 전체가 JSX 타입 오류로
+    // 깨진다. 앱이 쓰는 React 19 타입으로 못 박는다.
+    "paths": {
+      "react": ["./node_modules/@types/react"],
+      "react/*": ["./node_modules/@types/react/*"]
+    }
   },
   "include": [
     "**/*.ts",

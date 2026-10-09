@@ -18,6 +18,7 @@ import {
 import { FloatingActionProvider, useFloatingAction } from './floating-action';
 import Sidebar from './Sidebar';
 import TabBar from './TabBar';
+import AdBanner from '../components/AdBanner';
 
 /**
  * 로그인 뒤 화면들의 공통 껍데기. 웹의 AppShell 과 같은 규칙이다.
@@ -175,6 +176,8 @@ function Shell({ children }: { children: ReactNode }) {
           <FloatingButton />
         </View>
 
+        {/* 무료 가계부의 하단 배너. 본문이 그만큼 줄어든다 -- 본문 위에 겹치면 마지막 줄을 가린다. */}
+        <AdBanner />
         <TabBar />
       </View>
     </View>

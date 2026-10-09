@@ -49,6 +49,8 @@ export const ko = {
   // ===== 보내지 못한 거래 (아웃박스) =====
   'settings.outbox.title': '보내지 못한 거래',
   'settings.inquiries.title': '문의하기',
+  'settings.adPrivacy.title': '광고 개인정보 옵션',
+  'settings.adPrivacy.failed': '창을 열지 못했습니다. 연결을 확인하고 다시 시도해 주세요.',
   'settings.sheet.title': '엑셀 가져오기·내보내기',
   'sheet.title': '엑셀 가져오기·내보내기',
   'sheet.export.title': '내보내기',
@@ -969,6 +971,28 @@ export const ko = {
   'projects.approveViewer': '조회자로 승인',
   'projects.reject': '거절',
   'projects.deleteWarning': '모든 데이터가 영구적으로 삭제됩니다.',
+
+  // ===== 이용권 =====
+  'projects.plan': '이용권',
+  'projects.planFree': '무료',
+  'projects.planLifetime': '평생',
+  'projects.planUntil': '{date}까지',
+  'plan.alreadyLifetime': '이미 평생 이용권을 쓰고 있습니다.',
+  'plan.extendHint': '지금 이용권이 끝나는 날부터 이어서 시작합니다.',
+  'plan.title': "'{project}' 이용권",
+  'plan.lead': '이용권은 가계부마다 따로 붙고, 함께 쓰는 멤버 모두가 누립니다.',
+  'plan.lifetime': '평생 이용권',
+  'plan.month1': '1개월',
+  'plan.month3': '3개월',
+  'plan.month6': '6개월',
+  'plan.month12': '1년',
+  'plan.launchBadge': '오픈 기념',
+  'plan.lifetimeHint': '한 번 결제로 계속 씁니다. 오픈 기간에만 팝니다.',
+  'plan.perMonth': '월 {price}',
+  'plan.discount': '{percent}% 할인',
+  'plan.buy': '{price} 결제하기',
+  'plan.notReady': '결제는 아직 준비 중입니다.',
+  'plan.ownerOnly': '이용권은 프로젝트 소유자만 결제할 수 있습니다.',
 
   // ===== 초대 수락 화면 =====
   'invite.title': '프로젝트 초대',

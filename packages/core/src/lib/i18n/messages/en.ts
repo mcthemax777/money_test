@@ -39,6 +39,8 @@ export const en: Record<MessageKey, string> = {
   // ===== 보내지 못한 거래 (아웃박스) =====
   'settings.outbox.title': 'Unsent entries',
   'settings.inquiries.title': 'Contact us',
+  'settings.adPrivacy.title': 'Ad privacy options',
+  'settings.adPrivacy.failed': 'Could not open the form. Check your connection and try again.',
   'settings.sheet.title': 'Excel import & export',
   'sheet.title': 'Excel import & export',
   'sheet.export.title': 'Export',
@@ -943,6 +945,28 @@ export const en: Record<MessageKey, string> = {
   'projects.approveViewer': 'Approve as viewer',
   'projects.reject': 'Reject',
   'projects.deleteWarning': 'All of its data will be permanently deleted.',
+
+  // ===== Plans =====
+  'projects.plan': 'Plan',
+  'projects.planFree': 'Free',
+  'projects.planLifetime': 'Lifetime',
+  'projects.planUntil': 'Until {date}',
+  'plan.alreadyLifetime': 'This project already has a lifetime plan.',
+  'plan.extendHint': 'A new plan starts when the current one ends.',
+  'plan.title': "'{project}' plan",
+  'plan.lead': 'A plan belongs to one ledger, and every member who shares it gets the benefits.',
+  'plan.lifetime': 'Lifetime',
+  'plan.month1': '1 month',
+  'plan.month3': '3 months',
+  'plan.month6': '6 months',
+  'plan.month12': '1 year',
+  'plan.launchBadge': 'Launch offer',
+  'plan.lifetimeHint': 'Pay once and keep it. Available only during launch.',
+  'plan.perMonth': '{price}/mo',
+  'plan.discount': '{percent}% off',
+  'plan.buy': 'Pay {price}',
+  'plan.notReady': 'Payment is not available yet.',
+  'plan.ownerOnly': 'Only the project owner can purchase a plan.',
 
   // ===== Invitation screen =====
   'invite.title': 'Project invitation',

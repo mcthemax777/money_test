@@ -16,6 +16,7 @@ import {
 } from '@money/core/hooks/useProjectMembership';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { currencyLabel } from '@money/core/lib/money';
+import { planStatusLabel } from '@money/core/lib/plans';
 import { TIME_ZONE_OPTIONS } from '@money/core/lib/time-zones';
 import type { Project } from '@money/core/store/project';
 
@@ -25,6 +26,7 @@ import PageHeader from '../components/PageHeader';
 import QrCode from '../components/QrCode';
 import { OptionModal, SettingRow } from '../components/SettingPicker';
 import TypedConfirmModal from '../components/TypedConfirmModal';
+import PlanModal from '../components/PlanModal';
 import { useConnectivity } from '@money/core/store/connectivity';
 
 /**
@@ -75,6 +77,8 @@ export default function ProjectsScreen() {
     | { kind: 'transfer'; project: Project; member: MemberRow }
     | null
   >(null);
+  /** 이용권 팝업을 띄운 프로젝트. */
+  const [planProject, setPlanProject] = useState<Project | null>(null);
   /** 초대 링크를 만들 때 줄 권한. 프로젝트마다 따로 고른다. */
   const [inviteRole, setInviteRole] = useState<Record<string, 'editor' | 'viewer'>>({});
   /** 지금 떠 있는 고르기 팝업. 프로젝트마다 같은 칸이 있어 어느 프로젝트의 것인지도 담는다. */
@@ -563,6 +567,16 @@ export default function ProjectsScreen() {
                   </>
                 ) : null}
 
+                {/*
+                  이용권. 프로젝트에 붙으므로 멤버 모두에게 보이고, 결제는 팝업에서 소유자만 한다.
+                */}
+                <SettingRow
+                  compact
+                  title={t('projects.plan')}
+                  value={planStatusLabel(project.plan, t, tag)}
+                  onPress={() => setPlanProject(project)}
+                />
+
                 {/* 구성원 중 나. 프로젝트가 아니라 내 멤버십에 붙는 값이라 사람마다 다르다. */}
                 <SettingRow
                   compact
@@ -813,6 +827,8 @@ export default function ProjectsScreen() {
           })}
         </View>
       )}
+
+      <PlanModal project={planProject} onClose={() => setPlanProject(null)} />
 
       <TypedConfirmModal
         isOpen={typedAction !== null}

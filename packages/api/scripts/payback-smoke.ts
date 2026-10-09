@@ -28,6 +28,7 @@ import { ExchangeRatesService } from '@/modules/exchange-rates/exchange-rates.se
 import { HolidaysService } from '@/modules/holidays/holidays.service';
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
 import { ProjectsService } from '@/modules/projects/projects.service';
+import { PlansService } from '@/modules/plans/plans.service';
 import { MutationReplayService } from '@/modules/sync/mutation-replay.service';
 import { SyncService } from '@/modules/sync/sync.service';
 import {
@@ -76,7 +77,7 @@ runSmoke('payback', async (ctx) => {
     tags as any,
     makeBudgets(ctx.prisma, access) as any,
     new ExchangeRatesService(ctx.prisma as any) as any,
-    new ProjectsService(ctx.prisma as any, access as any, new ExchangeRatesService(ctx.prisma as any)) as any,
+    new ProjectsService(ctx.prisma as any, access as any, new ExchangeRatesService(ctx.prisma as any), new PlansService(ctx.prisma as any)) as any,
     new RecurringService(
       ctx.prisma as any,
       access as any,
@@ -537,7 +538,7 @@ runSmoke('payback', async (ctx) => {
     makeAccounts(ctx.prisma, a3, l3, i3) as any, makeCards(ctx.prisma, a3, i3) as any,
     makeCardLedger(ctx.prisma, a3, l3) as any, c3 as any, makeTags(ctx.prisma, a3) as any,
     makeBudgets(ctx.prisma, a3) as any, new ExchangeRatesService(ctx.prisma as any) as any,
-    new ProjectsService(ctx.prisma as any, a3 as any, new ExchangeRatesService(ctx.prisma as any)) as any,
+    new ProjectsService(ctx.prisma as any, a3 as any, new ExchangeRatesService(ctx.prisma as any), new PlansService(ctx.prisma as any)) as any,
     new RecurringService(ctx.prisma as any, a3 as any, new EntryDraftsService(ctx.prisma as any, a3 as any) as any, new HolidaysService(ctx.prisma as any), new ServerClockService()) as any,
   ).push(uid, {
     projectId: p3.id,

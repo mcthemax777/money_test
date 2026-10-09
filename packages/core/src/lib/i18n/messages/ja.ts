@@ -40,6 +40,8 @@ export const ja: Record<MessageKey, string> = {
   // ===== 보내지 못한 거래 (아웃박스) =====
   'settings.outbox.title': '未送信の取引',
   'settings.inquiries.title': 'お問い合わせ',
+  'settings.adPrivacy.title': '広告のプライバシー設定',
+  'settings.adPrivacy.failed': '画面を開けませんでした。接続を確認してもう一度お試しください。',
   'settings.sheet.title': 'Excelの読み込み・書き出し',
   'sheet.title': 'Excelの読み込み・書き出し',
   'sheet.export.title': '書き出し',
@@ -943,6 +945,28 @@ export const ja: Record<MessageKey, string> = {
   'projects.approveViewer': '閲覧者として承認',
   'projects.reject': '却下',
   'projects.deleteWarning': 'すべてのデータが完全に削除されます。',
+
+  // ===== 利用券 =====
+  'projects.plan': '利用券',
+  'projects.planFree': '無料',
+  'projects.planLifetime': '永久',
+  'projects.planUntil': '{date}まで',
+  'plan.alreadyLifetime': 'すでに永久利用券を使っています。',
+  'plan.extendHint': '今の利用券が終わる日から続けて始まります。',
+  'plan.title': '「{project}」の利用券',
+  'plan.lead': '利用券は家計簿ごとに適用され、共有しているメンバー全員が使えます。',
+  'plan.lifetime': '永久利用券',
+  'plan.month1': '1か月',
+  'plan.month3': '3か月',
+  'plan.month6': '6か月',
+  'plan.month12': '1年',
+  'plan.launchBadge': 'オープン記念',
+  'plan.lifetimeHint': '一度の支払いでずっと使えます。オープン期間のみ販売します。',
+  'plan.perMonth': '月 {price}',
+  'plan.discount': '{percent}%割引',
+  'plan.buy': '{price} を支払う',
+  'plan.notReady': '決済はまだ準備中です。',
+  'plan.ownerOnly': '利用券はプロジェクトのオーナーのみ購入できます。',
 
   // ===== 招待画面 =====
   'invite.title': 'プロジェクトへの招待',

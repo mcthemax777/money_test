@@ -40,6 +40,7 @@ import {
 } from '../data/entry-form';
 import { entryWritePort } from '../data/entry-write-port';
 import { homeDataPort } from '../data/home-port';
+import { noteEntrySaved } from '../lib/ads';
 import { assetOwnerNames, hasSeveralOwners } from '../lib/asset-owner';
 import { apiErrorCode, useApiError } from '../lib/api-error';
 import { useProjectLedgerCurrency } from '../store/project';
@@ -655,6 +656,8 @@ export function useEntryForm({
         setEditingId(created.id);
       }
       onSaved?.({ entryId: savedId });
+      // 등록·수정 열 번에 전면광고 한 번. 광고를 꽂지 않은 플랫폼에서는 아무 일도 없다.
+      noteEntrySaved();
       return savedId;
     } catch (caught) {
       /*

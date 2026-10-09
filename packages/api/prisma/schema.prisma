@@ -75,6 +75,22 @@ enum ProjectRole {
   viewer
 }
 
+// 이용권 종류. @money/types 의 PLAN_IDS 와 같은 목록이다.
+enum PlanId {
+  lifetime
+  month1
+  month3
+  month6
+  month12
+}
+
+// 이용권 권한이 어디서 왔는가. @money/types 의 PLAN_GRANT_SOURCES 와 같은 목록이다.
+enum PlanGrantSource {
+  admin
+  google_play
+  web
+}
+
 enum InvitationStatus {
   pending
   accepted
@@ -116,6 +132,8 @@ model User {
   pushDevices         PushDevice[]
   notificationSamples NotificationSample[]
   inquiries           Inquiry[]
+  /// 이 사용자가 결제한 이용권. 계정을 지워도 결제 기록은 남긴다 (SetNull).
+  planGrants          ProjectPlanGrant[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -195,6 +213,7 @@ model Project {
   entryDrafts    EntryDraft[]
   /// 반복 등록. 정해 둔 날마다 보관함에 후보를 만든다.
   recurringRules RecurringRule[]
+  planGrants     ProjectPlanGrant[]
   /// 자리표를 어디까지 지웠는가. 없으면 아직 한 번도 지우지 않은 것이다(0과 같다).
   tombstoneFloor TombstoneFloor?
 
@@ -1390,4 +1409,45 @@ model InquiryMessage {
   inquiry Inquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
 
   @@index([inquiryId, createdAt])
+}
+
+/// 프로젝트 이용권 권한. 결제(또는 관리자 지급) 한 건이 한 줄이다.
+///
+/// 지금 상태는 줄에 적지 않고 줄들에서 계산한다(@money/types planStatusOf). 상태 칸을
+/// 따로 두면 기간이 끝나는 순간 누군가 그 칸을 고쳐야 하고, 고치는 일을 놓치면 끝난
+/// 이용권이 계속 살아 있다.
+///
+/// 기간제를 이어 사면 새 줄은 지금 이어지는 기간의 끝에서 시작한다(startsAt 이 미래).
+/// 환불·취소는 줄을 지우지 않고 revokedAt 을 적는다 -- 결제 기록은 남아야 한다.
+///
+/// 프로젝트나 사용자를 지워도 줄은 남는다(SetNull). 결제 기록을 함께 지우면 환불 문의에
+/// 답할 근거가 사라진다.
+model ProjectPlanGrant {
+  id        String          @id @default(cuid())
+  projectId String?
+  /// 결제한 사람. 관리자 지급이면 null 이다.
+  userId    String?
+  plan      PlanId
+  source    PlanGrantSource
+  /// 스토어 주문 번호·PG 결제 번호. 같은 웹훅이 두 번 와도 한 줄만 생기게 하는 열쇠다.
+  /// 관리자 지급은 null 이다.
+  externalId String?
+  /// 실제로 낸 금액(원). 오픈 기념처럼 값이 바뀌어도 그때 낸 값을 남긴다. 관리자 지급은 0 이다.
+  amount    Int
+  currency  String          @default("KRW")
+  startsAt  DateTime
+  /// null 이면 평생이다.
+  endsAt    DateTime?
+  revokedAt DateTime?
+  /// 취소한 까닭 (환불, 관리자 회수 따위). 사람이 읽는 글이다.
+  revokeReason String?
+  /// 관리자 메모. 왜 주었는가.
+  note      String?
+  createdAt DateTime        @default(now())
+
+  project Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  user    User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@unique([source, externalId])
+  @@index([projectId, startsAt])
 }

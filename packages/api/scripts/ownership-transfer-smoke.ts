@@ -8,6 +8,7 @@
  */
 import { ExchangeRatesService } from '../src/modules/exchange-rates/exchange-rates.service';
 import { ProjectsService } from '../src/modules/projects/projects.service';
+import { PlansService } from '../src/modules/plans/plans.service';
 import { runSmoke } from './smoke-harness';
 
 runSmoke('ownership-transfer', async (ctx) => {
@@ -15,6 +16,7 @@ runSmoke('ownership-transfer', async (ctx) => {
     ctx.prisma as any,
     {} as any,
     new ExchangeRatesService(ctx.prisma as any),
+    new PlansService(ctx.prisma as any),
   );
   const project = await ctx.createProject();
 

@@ -18,6 +18,7 @@ import { useAuth } from '@money/core/store/auth';
 import { boot } from './src/boot';
 import OfflineSync from './src/shell/OfflineSync';
 import PushSetup from './src/shell/PushSetup';
+import AdsSetup from './src/shell/AdsSetup';
 import UpdateGate from './src/shell/UpdateGate';
 import ProjectAccessLostAlert from './src/shell/ProjectAccessLostAlert';
 import AnalysisScreen from './src/screens/AnalysisScreen';
@@ -116,6 +117,7 @@ function Authenticated() {
         <NavigationProvider>
           <OfflineSync />
           <PushSetup />
+          <AdsSetup />
           <AppShell>
             <Screen />
           </AppShell>

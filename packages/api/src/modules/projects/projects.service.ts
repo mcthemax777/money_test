@@ -3,6 +3,7 @@ import { PrismaService } from '../../config/prisma.service';
 import { randomInt } from 'crypto';
 import { ProjectAccessService } from '../../common/project-access.guard';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
+import { PlansService } from '../plans/plans.service';
 import { badRequest, forbidden, notFound } from '@/common/app-error';
 import { recordProjectWrite } from '@/common/project-write-context';
 import { rankAfter } from '@money/types';
@@ -26,6 +27,7 @@ export class ProjectsService {
     private readonly prisma: PrismaService,
     private readonly projectAccess: ProjectAccessService,
     private readonly exchangeRates: ExchangeRatesService,
+    private readonly plans: PlansService,
   ) {}
 
   async createProject(userId: string, dto: CreateProjectDto) {
@@ -150,11 +152,15 @@ export class ProjectsService {
       },
     });
 
+    const plans = await this.plans.statusMap(projects.map((pm) => pm.projectId));
+
     return projects.map((pm) => ({
       ...pm.project,
       role: pm.role,
       /** 이 사용자가 이 프로젝트에서 "나"로 지정한 구성원 */
       myPersonId: pm.personId,
+      /** 지금 이용권. 멤버 모두에게 같다. */
+      plan: plans.get(pm.projectId)!,
     }));
   }
 
