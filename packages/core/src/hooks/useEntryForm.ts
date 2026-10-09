@@ -41,6 +41,7 @@ import {
 import { entryWritePort } from '../data/entry-write-port';
 import { homeDataPort } from '../data/home-port';
 import { noteEntrySaved } from '../lib/ads';
+import { track } from '../lib/analytics';
 import { assetOwnerNames, hasSeveralOwners } from '../lib/asset-owner';
 import { apiErrorCode, useApiError } from '../lib/api-error';
 import { useProjectLedgerCurrency } from '../store/project';
@@ -146,6 +147,8 @@ export function useEntryForm({
   );
   /** 고치고 있는 거래. null 이면 새로 만드는 중이다. */
   const [editingId, setEditingId] = useState<string | null>(null);
+  /** 폼을 무엇으로 채웠는가. 통계(entry_save)가 직접 적은 것과 보관함 후보를 가른다. */
+  const originRef = useRef<'manual' | 'draft'>('manual');
   const [violation, setViolation] = useState<EntryFormViolation | null>(null);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -207,6 +210,7 @@ export function useEntryForm({
     setValues(emptyEntryForm({ personId: defaultPersonId, timeZone }));
     setEditingId(null);
     setViolation(null);
+    originRef.current = 'manual';
     setError('');
   }, [defaultPersonId, timeZone]);
 
@@ -225,6 +229,7 @@ export function useEntryForm({
       setValues(form);
       setEditingId(item.id);
       setViolation(null);
+      originRef.current = 'manual';
       setError('');
       return true;
     },
@@ -251,6 +256,7 @@ export function useEntryForm({
       setValues({ ...form, baseHlc: null });
       setEditingId(null);
       setViolation(null);
+      originRef.current = 'manual';
       setError('');
       return true;
     },
@@ -269,6 +275,7 @@ export function useEntryForm({
       setValues(paybackFormFrom(original, timeZone, lists.cards, selectableAccountIn(lists.accounts)));
       setEditingId(null);
       setViolation(null);
+      originRef.current = 'manual';
       setError('');
       /*
        * 카드 목록을 아직 읽지 못했으면 카드가 기본값으로 남는다. 목록이 오면 연결된 통장으로
@@ -325,6 +332,7 @@ export function useEntryForm({
       );
       setEditingId(null);
       setViolation(null);
+      originRef.current = 'draft';
       setError('');
     },
     [defaultPersonId, timeZone, ledgerCurrency],
@@ -655,6 +663,10 @@ export function useEntryForm({
         savedId = created.id;
         setEditingId(created.id);
       }
+      track({
+        name: 'entry_save',
+        params: { mode: editingId ? 'edit' : 'create', kind: values.kind, origin: originRef.current },
+      });
       onSaved?.({ entryId: savedId });
       // 등록·수정 몇 번(INTERSTITIAL_EVERY)에 전면광고 한 번. 광고를 꽂지 않은 플랫폼에서는 아무 일도 없다.
       noteEntrySaved();

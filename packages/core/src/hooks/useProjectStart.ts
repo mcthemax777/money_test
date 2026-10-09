@@ -15,6 +15,7 @@
 import { useCallback, useState } from 'react';
 
 import { apiClient } from '../lib/api-client';
+import { track } from '../lib/analytics';
 import { useApiError } from '../lib/api-error';
 import { inviteCodeOf } from '../lib/invite';
 import { useProject } from '../store/project';
@@ -85,6 +86,7 @@ export function useProjectStart(): ProjectStart {
          * 만든 것을 곧바로 고른다. 여기서 고르지 않으면 목록을 다시 받을 때까지 화면이
          * 고른 가계부 없이 서 있고, 그 사이의 조회가 전부 빈손으로 돌아온다.
          */
+        track({ name: 'project_create' });
         if (created?.id) setSelectedProjectId(created.id);
         await refreshProjects();
         return { ok: true };
@@ -136,7 +138,10 @@ export function useProjectStart(): ProjectStart {
        * 프로젝트의 멤버입니다") 여기서 그 오류를 화면에 띄우는 것보다 그 가계부를
        * 골라 주고 들여보내는 편이 사람이 하려던 일에 가깝다.
        */
-      if (!invite.isMember) await apiClient.acceptInvitation(invite.code);
+      if (!invite.isMember) {
+        await apiClient.acceptInvitation(invite.code);
+        track({ name: 'project_join' });
+      }
       setSelectedProjectId(invite.projectId);
       await refreshProjects();
       return { ok: true };

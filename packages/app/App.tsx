@@ -14,6 +14,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { useProjectBootstrap } from '@money/core/hooks/useProjectBootstrap';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useAuth } from '@money/core/store/auth';
+import { trackScreen } from '@money/core/lib/analytics';
 
 import { boot } from './src/boot';
 import OfflineSync from './src/shell/OfflineSync';
@@ -135,6 +136,11 @@ function Authenticated() {
  */
 function Screen() {
   const { path } = useNavigation();
+
+  // 화면 보기 통계. 주소에 실린 값(?month= 따위)은 core 가 떼고 보낸다.
+  useEffect(() => {
+    trackScreen(path);
+  }, [path]);
 
   /*
    * 예산 설정. 주소에 보던 달과 유형이 실려 오므로(`?month=…&type=…`) 앞부분으로 가른다.

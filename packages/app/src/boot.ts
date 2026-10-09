@@ -8,6 +8,7 @@
  */
 import { useAuth } from '@money/core/store/auth';
 
+import { setupAnalytics } from './analytics';
 import { setupApi } from './api';
 import { setupOffline } from './offline';
 import { hydrateStores } from './persistence';
@@ -18,6 +19,8 @@ export function boot(): Promise<void> {
   booting ??= (async () => {
     await setupApi(() => useAuth.setState({ user: null, isAuthenticated: false }));
     await hydrateStores();
+    // 통계 끄기를 다시 읽은 뒤에 꽂는다. 먼저 꽂으면 끈 사람의 기기에서 잠깐 켜진다.
+    setupAnalytics();
     // 사본을 먼저 열어 둔다. 첫 화면이 서버를 기다리지 않고 사본에서 그려진다.
     await setupOffline();
   })().catch((error) => {

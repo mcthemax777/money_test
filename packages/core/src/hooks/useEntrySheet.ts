@@ -9,6 +9,7 @@ import { useCallback, useState } from 'react';
 import type { EntrySheetDto, EntrySheetRow } from '@money/types';
 
 import { entrySheetPort } from '../data/entry-sheet-port';
+import { track } from '../lib/analytics';
 import { useApiError } from '../lib/api-error';
 import { chunkEntrySheetRows } from '../lib/entry-sheet';
 
@@ -58,6 +59,10 @@ export function useEntrySheet(projectId: string | null): UseEntrySheetResult {
           done += chunk.length;
           setProgress({ done, total: rows.length });
         }
+        track({
+          name: 'entry_sheet_import',
+          params: { created: merged.created, skipped: merged.skipped.length },
+        });
         return merged;
       } catch (caught) {
         setError(messageOf(caught, 'sheet.importFailed', 'online.onlyOnline'));

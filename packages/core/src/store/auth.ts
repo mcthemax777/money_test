@@ -6,6 +6,7 @@ import { persistStorage } from '../lib/persist-storage';
 import { apiClient } from '../lib/api-client';
 import { clearAuthTokens, getAccessToken, getRefreshToken, saveAuthTokens } from '../lib/auth-tokens';
 import { isOfflineError } from '../lib/offline-error';
+import { setAnalyticsUser, track } from '../lib/analytics';
 import {
   claimMirrorFor,
   clearLocalMirror,
@@ -136,6 +137,7 @@ export const useAuth = create<AuthStore>()(
         isAuthenticated: true,
         isInitializing: false,
       });
+      track({ name: 'login', params: { method: 'google' } });
     } catch (error) {
       set({ isLoading: false });
       throw error;
@@ -261,3 +263,10 @@ export const useAuth = create<AuthStore>()(
     }
   )
 );
+
+/*
+ * 통계의 사용자. 로그인·로그아웃·401·저장해 둔 값 다시 읽기가 모두 이 스토어의 user 를
+ * 바꾸므로, 자리마다 부르지 않고 바뀌는 것을 본다. 서버의 내부 id 만 넘긴다(이메일·이름 아님).
+ */
+setAnalyticsUser(useAuth.getState().user?.id ?? null);
+useAuth.subscribe((state) => setAnalyticsUser(state.user?.id ?? null));

@@ -19,6 +19,7 @@ import { useWeekStartStore } from '@money/core/store/week-start';
 import { captureBoxStore } from '@money/core/data/capture-box';
 import { useAppUpdate } from '@money/core/store/app-update';
 import { useAdCounter } from '@money/core/lib/ads';
+import { useAnalyticsPrefs } from '@money/core/lib/analytics';
 
 const PERSISTED = [
   useAuth,
@@ -36,6 +37,8 @@ const PERSISTED = [
   useAppUpdate,
   // 전면광고까지 남은 거래 저장 횟수. 빠지면 앱을 켤 때마다 0 에서 센다.
   useAdCounter,
+  // 사용 통계 끄기. 빠지면 앱을 켤 때마다 켬으로 돌아간다.
+  useAnalyticsPrefs,
 ];
 
 export async function hydrateStores(): Promise<void> {

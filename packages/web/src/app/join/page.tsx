@@ -10,6 +10,7 @@ import { GoogleSignInButton } from '@/components/GoogleSignInButton';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { FIRST_PATH } from '@money/core/lib/nav';
 import { useApiError } from '@money/core/lib/api-error';
+import { track } from '@money/core/lib/analytics';
 
 interface InvitationInfo {
   invitationCode: string;
@@ -104,6 +105,7 @@ function JoinContent() {
     try {
       setIsSubmitting(true);
       const result = await apiClient.acceptInvitation(code);
+      track({ name: 'project_join' });
       // 방금 합류한 프로젝트를 바로 선택해 첫 화면(거래)에서 보이게 한다.
       if (result?.projectId) {
         setSelectedProjectId(result.projectId);

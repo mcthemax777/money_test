@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { Check } from 'lucide-react';
+import { track } from '@money/core/lib/analytics';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency } from '@money/core/lib/money';
 import { discountPercent, perMonthPrice, PLAN_LABEL_KEY } from '@money/core/lib/plans';
@@ -35,6 +36,9 @@ export default function PlanModal({
     if (projectId === null) return;
     setSelected(PLANS[0].id);
     setNotice('');
+    track({ name: 'paywall_view', params: { plan_status: planStatusAt(project?.plan).kind } });
+    // 연 순간에 한 번만 센다 (앱과 같다).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   const isOwner = project?.role === 'owner';

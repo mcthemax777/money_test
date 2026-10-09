@@ -3,6 +3,7 @@ import type { CurrencyCode } from '@money/types';
 
 import { settingsWritePort } from '../data/settings-write-port';
 import { apiClient } from '../lib/api-client';
+import { track } from '../lib/analytics';
 import { useApiError } from '../lib/api-error';
 import { translate, type MessageKey } from '../lib/i18n';
 import { useLocaleStore } from '../store/locale';
@@ -70,6 +71,7 @@ export function useProjectAdmin(): {
       try {
         setIsSubmitting(true);
         const created = await apiClient.createProject(name, description);
+        track({ name: 'project_create' });
         if (!selectedProjectId && created?.id) setSelectedProjectId(created.id);
         await reload();
         return { ok: true };

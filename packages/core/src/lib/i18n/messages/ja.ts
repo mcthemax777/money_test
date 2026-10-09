@@ -42,6 +42,11 @@ export const ja: Record<MessageKey, string> = {
   'settings.inquiries.title': 'お問い合わせ',
   'settings.adPrivacy.title': '広告のプライバシー設定',
   'settings.adPrivacy.failed': '画面を開けませんでした。接続を確認してもう一度お試しください。',
+  'settings.analytics.title': '利用統計の送信',
+  'settings.analytics.description':
+    '開いた画面や使った機能、アプリのエラーを送信し、サービスの改善に使います。金額・メモ・資産名などの家計簿の内容は送信しません。この端末にのみ適用されます。',
+  'settings.analytics.on': '送信する',
+  'settings.analytics.off': '送信しない',
   'settings.sheet.title': 'Excelの読み込み・書き出し',
   'sheet.title': 'Excelの読み込み・書き出し',
   'sheet.export.title': '書き出し',

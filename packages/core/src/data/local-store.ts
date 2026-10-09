@@ -72,6 +72,7 @@ import {
 } from '@money/types';
 
 import { codedError } from '../lib/api-error';
+import { track } from '../lib/analytics';
 import { ALL_TABLES, SCHEMA_STATEMENTS, SCHEMA_VERSION } from './schema';
 import type { SqlDriver, SqlValue } from './sql-driver';
 
@@ -4008,6 +4009,8 @@ export class LocalStore {
     makeId: () => string,
   ): Promise<{ requeued: number }> {
     let requeued = 0;
+    /** 보류 칸에 올린 것. 통계는 묶음이 실제로 적힌 뒤에 보낸다. */
+    const held: MutationResult[] = [];
 
     await this.db.transaction(async () => {
       /*
@@ -4067,8 +4070,19 @@ export class LocalStore {
           result.error ?? null,
           result.mutationId,
         ]);
+        held.push(result);
       }
     });
+
+    for (const result of held) {
+      track({
+        name: 'sync_held',
+        params: {
+          status: result.status as 'conflict' | 'rejected' | 'blocked',
+          code: result.code ?? 'none',
+        },
+      });
+    }
 
     return { requeued };
   }

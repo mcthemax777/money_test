@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { Check } from 'lucide-react-native';
 
+import { track } from '@money/core/lib/analytics';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency } from '@money/core/lib/money';
 import { discountPercent, perMonthPrice, PLAN_LABEL_KEY } from '@money/core/lib/plans';
@@ -57,6 +58,9 @@ export default function PlanModal({
     if (projectId === null) return;
     setSelected(PLANS[0].id);
     setNotice(null);
+    track({ name: 'paywall_view', params: { plan_status: planStatusAt(project?.plan).kind } });
+    // 연 순간에 한 번만 센다. 결제 뒤 이용권이 바뀌어도 다시 세지 않는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
 
   const isOwner = current?.role === 'owner';
@@ -89,8 +93,14 @@ export default function PlanModal({
     setIsBuying(true);
     setNotice(null);
     const before = JSON.stringify(current.plan ?? null);
+    // 결제 창이 떠 있는 동안 고른 것이 바뀌어도 결과는 시작한 이용권으로 센다.
+    const planId = selected;
+    track({ name: 'plan_purchase_start', params: { plan: planId } });
     try {
-      const outcome = await purchasePlan({ projectId: current.id, plan: selected, userId });
+      const outcome = await purchasePlan({ projectId: current.id, plan: planId, userId });
+      if (outcome !== 'purchased') {
+        track({ name: 'plan_purchase_result', params: { plan: planId, outcome, applied: 0 } });
+      }
       if (outcome === 'cancelled') return;
       if (outcome === 'product-missing') {
         setNotice({ tone: 'error', text: t('plan.productMissing') });
@@ -101,8 +111,10 @@ export default function PlanModal({
         return;
       }
       const applied = await waitForServer(current.id, before);
+      track({ name: 'plan_purchase_result', params: { plan: planId, outcome, applied: applied ? 1 : 0 } });
       setNotice({ tone: 'ok', text: t(applied ? 'plan.purchased' : 'plan.purchasedPending') });
     } catch {
+      track({ name: 'plan_purchase_result', params: { plan: planId, outcome: 'failed', applied: 0 } });
       setNotice({ tone: 'error', text: t('plan.purchaseFailed') });
     } finally {
       setIsBuying(false);

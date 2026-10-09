@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { SUPPORTED_LOCALES, WEEK_START_DAYS, type Locale, type WeekStart } from '@money/types';
 
+import { useAnalyticsPrefs } from '@money/core/lib/analytics';
 import { useApiError } from '@money/core/lib/api-error';
 import { weekdayNames } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -44,7 +45,7 @@ export default function SettingsScreen() {
 
       {/*
         차례 (2026-10-09 사용자 요청): 내 정보, 프로젝트 관리, 분류·태그, 시작 요일, 언어, 환율, 엑셀,
-        문의하기, 보내지 못한 거래. 설명은 적지 않는다 -- 들어간 화면·팝업이 말한다 (웹과 같다).
+        문의하기, (광고 개인정보 옵션,) 사용 통계(2026-10-10 추가), 보내지 못한 거래. 설명은 적지 않는다 -- 들어간 화면·팝업이 말한다 (웹과 같다).
       */}
       <View className="gap-4">
         <SettingsCard
@@ -89,6 +90,8 @@ export default function SettingsScreen() {
           그 지역에서는 언제든 다시 열 수 있어야 한다.
         */}
         <AdPrivacySettings />
+        {/* 사용 통계와 오류 보고를 이 기기에서 끄는 자리. 웹의 AnalyticsSettings 와 같은 값이다. */}
+        <AnalyticsSettings />
         {/*
           오프라인에서 적었지만 아직 서버로 가지 못한 거래.
           대개는 조용히 나가므로 평소에는 빈 화면이고, 충돌과 거절만 여기 남는다.
@@ -226,6 +229,40 @@ function WeekStartSettings() {
             setError(messageOf(err, 'settings.weekStart.saveFailed')),
           );
         }}
+      />
+    </>
+  );
+}
+
+/**
+ * 사용 통계(Firebase Analytics·Crashlytics)를 보낼지. 이 기기에만 남는 값이다.
+ *
+ * 줄에는 지금 값만 적고, 무엇을 보내는지는 팝업이 말한다 (언어·시작 요일과 같은 모양).
+ */
+function AnalyticsSettings() {
+  const { t } = useTranslation();
+  const { enabled, setEnabled } = useAnalyticsPrefs();
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <>
+      <SettingRow
+        title={t('settings.analytics.title')}
+        value={t(enabled ? 'settings.analytics.on' : 'settings.analytics.off')}
+        onPress={() => setIsOpen(true)}
+      />
+
+      <OptionModal
+        isOpen={isOpen}
+        onClose={() => setIsOpen(false)}
+        title={t('settings.analytics.title')}
+        description={t('settings.analytics.description')}
+        options={[
+          { value: 'on', label: t('settings.analytics.on') },
+          { value: 'off', label: t('settings.analytics.off') },
+        ]}
+        value={enabled ? 'on' : 'off'}
+        onSelect={(choice) => setEnabled(choice === 'on')}
       />
     </>
   );

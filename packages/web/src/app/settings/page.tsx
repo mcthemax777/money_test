@@ -7,6 +7,7 @@ import PageHeader from '@/components/PageHeader';
 import ExchangeRateSettings from '@/components/ExchangeRateSettings';
 import LanguageSettings from '@/components/LanguageSettings';
 import WeekStartSettings from '@/components/WeekStartSettings';
+import AnalyticsSettings from '@/components/AnalyticsSettings';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useProject } from '@money/core/store/project';
 import { useInquiryUnread } from '@money/core/store/inquiry-unread';
@@ -30,7 +31,7 @@ export default function SettingsPage() {
 
       {/*
         차례 (2026-10-09 사용자 요청): 내 정보, 프로젝트 관리, 분류·태그, 시작 요일, 언어, 환율, 엑셀,
-        문의하기. 앱은 끝에 보내지 못한 거래가 하나 더 선다. 설명은 적지 않는다 -- 들어간 화면이 말한다.
+        문의하기, 사용 통계(2026-10-10 추가). 앱은 끝에 보내지 못한 거래가 하나 더 선다. 설명은 적지 않는다 -- 들어간 화면이 말한다.
       */}
       <div className="space-y-4">
         <SettingsCard
@@ -80,6 +81,9 @@ export default function SettingsPage() {
           title={t('settings.inquiries.title')}
           badge={inquiryUnread}
         />
+
+        {/* 사용 통계를 이 브라우저에서 끄는 자리. 앱의 AnalyticsSettings 와 같은 값이다. */}
+        <AnalyticsSettings />
       </div>
     </div>
   );

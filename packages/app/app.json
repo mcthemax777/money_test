@@ -40,6 +40,7 @@
       ],
       "@react-native-google-signin/google-signin",
       "./plugins/with-signing",
+      "./plugins/with-gradle-memory",
       "@react-native-community/datetimepicker",
       [
         "expo-notifications",
@@ -55,7 +56,9 @@
           "androidAppId": "ca-app-pub-3855040710986128~9425202447",
           "iosAppId": "ca-app-pub-3940256099942544~1458002511"
         }
-      ]
+      ],
+      "@react-native-firebase/app",
+      "@react-native-firebase/crashlytics"
     ],
     "scheme": "money"
   }

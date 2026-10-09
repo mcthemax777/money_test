@@ -14,6 +14,7 @@
 import { useCallback, useState } from 'react';
 
 import { apiClient } from '../lib/api-client';
+import { track } from '../lib/analytics';
 import { useApiError } from '../lib/api-error';
 import { translate, type MessageKey } from '../lib/i18n';
 import { useAuth } from '../store/auth';
@@ -194,7 +195,11 @@ export function useProjectMembership() {
     /** 초대 링크를 새로 낸다. 돌려준 코드로 링크를 만든다(주소는 화면이 정한다). */
     createInvitation: (projectId: string, role: 'editor' | 'viewer') =>
       submit(
-        async () => (await apiClient.generateInvitationLink(projectId, role)) as CreatedInvite,
+        async () => {
+          const created = (await apiClient.generateInvitationLink(projectId, role)) as CreatedInvite;
+          track({ name: 'invite_create', params: { role } });
+          return created;
+        },
         'projects.inviteFailed',
       ),
     revokeInvitation: (invitationId: string) =>
@@ -213,7 +218,11 @@ export function useProjectMembership() {
 
     approveRequest: (requestId: string, role: 'editor' | 'viewer') =>
       submit(
-        async () => (await apiClient.approveJoinRequest(requestId, role)) as ApprovedMember,
+        async () => {
+          const approved = (await apiClient.approveJoinRequest(requestId, role)) as ApprovedMember;
+          track({ name: 'join_request_approve', params: { role } });
+          return approved;
+        },
         'projects.approveFailed',
       ),
     rejectRequest: (requestId: string) =>
