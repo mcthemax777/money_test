@@ -8,7 +8,7 @@ import { discountPercent, perMonthPrice, PLAN_LABEL_KEY } from '@money/core/lib/
 import { useAuth } from '@money/core/store/auth';
 import { useConnectivity } from '@money/core/store/connectivity';
 import { useProject, type Project } from '@money/core/store/project';
-import { PLAN_CURRENCY, PLANS, type PlanId } from '@money/types';
+import { PLAN_CURRENCY, PLANS, planStatusAt, type PlanId } from '@money/types';
 
 import { isBillingConfigured, openSubscriptionManagement, purchasePlan } from '../billing';
 import Modal from './Modal';
@@ -60,7 +60,7 @@ export default function PlanModal({
   }, [projectId]);
 
   const isOwner = current?.role === 'owner';
-  const planKind = current?.plan?.kind ?? 'free';
+  const planKind = planStatusAt(current?.plan).kind;
   const canBuy = isOwner && planKind !== 'lifetime' && !isBuying;
   const plan = PLANS.find((candidate) => candidate.id === selected) ?? PLANS[0];
 

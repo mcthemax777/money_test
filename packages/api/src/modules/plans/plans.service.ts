@@ -13,7 +13,7 @@ import {
   Optional,
   ServiceUnavailableException,
 } from '@nestjs/common';
-import type { Prisma, ProjectPlanGrant } from '@prisma/client';
+import { Prisma, type ProjectPlanGrant } from '@prisma/client';
 import {
   addPlanMonths,
   chainEndOf,
@@ -32,6 +32,7 @@ import {
   type ProjectPlanStatus,
 } from '@money/types';
 
+import { recordProjectWrite } from '@/common/project-write-context';
 import { PrismaService } from '@/config/prisma.service';
 import { StoreBillingService } from './store-billing.service';
 
@@ -197,7 +198,9 @@ export class PlansService {
 
       await requireProject(tx, input.projectId);
       const window = input.window ?? nextWindow(input, await liveGrantsOf(tx, input.projectId), now);
-      return toDto(await createGrant(tx, input, window, now));
+      const created = await createGrant(tx, input, window, now);
+      await signalPlanChanged(tx, input.projectId);
+      return toDto(created);
     });
   }
 
@@ -260,6 +263,7 @@ export class PlansService {
           .filter(Boolean)
           .join(' · ');
         const created = await createGrant(tx, { ...base, note: note || null }, window, now);
+        await signalPlanChanged(tx, input.projectId);
         return { grant: toDto(created), storeDeferredTo: deferredTo?.toISOString() ?? null };
       },
       { timeout: ADMIN_GRANT_TX_TIMEOUT_MS },
@@ -294,9 +298,12 @@ export class PlansService {
         data: { revokedAt: now, revokeReason: reason || null },
       });
 
-      // 프로젝트가 지워졌거나 평생 이용권이면 뒤에 당길 것이 없다.
-      if (!target.projectId || target.endsAt === null) return toDto(revoked);
+      // 프로젝트가 지워졌으면 알릴 곳도 당길 것도 없다.
+      if (!target.projectId) return toDto(revoked);
+      await signalPlanChanged(tx, target.projectId);
 
+      // 평생 이용권이면 뒤에 당길 것이 없다.
+      if (target.endsAt === null) return toDto(revoked);
       await this.rechain(tx, target.projectId, target.startsAt);
       return toDto(revoked);
     });
@@ -319,17 +326,25 @@ export class PlansService {
    * 평생 줄(endsAt null)은 고치지 않는다.
    */
   async setEndsAt(grantId: string, endsAt: Date): Promise<void> {
-    await this.prisma.projectPlanGrant.updateMany({
-      where: { id: grantId, endsAt: { not: null } },
-      data: { endsAt },
+    await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.projectPlanGrant.update({
+        where: { id: grantId, endsAt: { not: null } },
+        data: { endsAt },
+        select: { projectId: true },
+      }).catch(ignoreNotFound);
+      if (updated?.projectId) await signalPlanChanged(tx, updated.projectId);
     });
   }
 
   /** 환불이 되돌려졌다. 거둔 줄을 다시 살린다. 스토어 결제 줄만 쓴다(당길 기간이 없다). */
   async unrevoke(grantId: string): Promise<void> {
-    await this.prisma.projectPlanGrant.updateMany({
-      where: { id: grantId, revokedAt: { not: null } },
-      data: { revokedAt: null, revokeReason: null },
+    await this.prisma.$transaction(async (tx) => {
+      const updated = await tx.projectPlanGrant.update({
+        where: { id: grantId, revokedAt: { not: null } },
+        data: { revokedAt: null, revokeReason: null },
+        select: { projectId: true },
+      }).catch(ignoreNotFound);
+      if (updated?.projectId) await signalPlanChanged(tx, updated.projectId);
     });
   }
 
@@ -385,6 +400,26 @@ function liveGrantsOf(tx: Prisma.TransactionClient, projectId: string) {
     where: { projectId, revokedAt: null },
     select: { source: true, startsAt: true, endsAt: true, revokedAt: true },
   });
+}
+
+/**
+ * 이용권이 바뀌었다고 그 프로젝트의 기기들에 알린다.
+ *
+ * 이용권은 사본으로 내려가지 않고 프로젝트 목록(GET /projects)에 붙어 온다. 기기는 그 목록을
+ * 앱을 켤 때와 동기화 신호가 올 때만 다시 받으므로, 신호가 없으면 관리자 지급·결제가 앱을
+ * 다시 켜야 보인다. 그래서 프로젝트 행을 건드려 번호 도장(sync_stamp)을 올리고, 이번 요청이
+ * 이 프로젝트를 고쳤다고 적어 응답 뒤에 신호가 나가게 한다(SyncNotifyMiddleware). 금융기관을
+ * 더할 때와 같은 수법이다(InstitutionsService).
+ */
+async function signalPlanChanged(tx: Prisma.TransactionClient, projectId: string): Promise<void> {
+  await tx.project.update({ where: { id: projectId }, data: { updatedAt: new Date() } });
+  recordProjectWrite(projectId);
+}
+
+/** 조건에 맞는 줄이 없어 고치지 않았다(P2025). 고칠 것이 없던 것으로 본다. */
+function ignoreNotFound(error: unknown): null {
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') return null;
+  throw error;
 }
 
 /** 넣은 값 검사. 잠그기 전에 한다. */

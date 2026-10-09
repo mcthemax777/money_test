@@ -6,7 +6,7 @@ import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency } from '@money/core/lib/money';
 import { discountPercent, perMonthPrice, PLAN_LABEL_KEY } from '@money/core/lib/plans';
 import type { Project } from '@money/core/store/project';
-import { PLAN_CURRENCY, PLANS, type PlanId } from '@money/types';
+import { PLAN_CURRENCY, PLANS, planStatusAt, type PlanId } from '@money/types';
 
 import Modal from '@/components/Modal';
 
@@ -38,7 +38,7 @@ export default function PlanModal({
   }, [projectId]);
 
   const isOwner = project?.role === 'owner';
-  const planKind = project?.plan?.kind ?? 'free';
+  const planKind = planStatusAt(project?.plan).kind;
   const canBuy = isOwner && planKind !== 'lifetime';
   const plan = PLANS.find((candidate) => candidate.id === selected) ?? PLANS[0];
 

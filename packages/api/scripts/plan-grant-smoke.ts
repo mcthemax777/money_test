@@ -101,6 +101,22 @@ runSmoke('plan-grant', async (ctx) => {
     plans.adminGrant({ projectId: daysProject.id, plan: 'month1', days: 3 }, t0),
   );
 
+  // 이용권이 바뀌면 프로젝트 번호가 올라 기기가 목록을 다시 받는다.
+  const versionOf = async (id: string) =>
+    (await ctx.prisma.project.findUniqueOrThrow({ where: { id }, select: { syncVersion: true } })).syncVersion;
+  const v0 = await versionOf(daysProject.id);
+  const signalled = await plans.adminGrant({ projectId: daysProject.id, plan: 'days', days: 1 }, t0);
+  const v1 = await versionOf(daysProject.id);
+  ctx.check('지급하면 번호가 오른다', v1 > v0, true);
+  await plans.revoke(signalled.grant.id, '시험', t0);
+  ctx.check('거두면 번호가 오른다', (await versionOf(daysProject.id)) > v1, true);
+  const v2 = await versionOf(daysProject.id);
+  await plans.setEndsAt(dayGrant.grant.id, new Date(t0.getTime() + 4 * DAY_MS));
+  ctx.check('끝을 고치면 번호가 오른다', (await versionOf(daysProject.id)) > v2, true);
+  const v3 = await versionOf(daysProject.id);
+  await plans.unrevoke(dayGrant.grant.id);
+  ctx.check('살릴 것이 없으면 번호는 그대로', await versionOf(daysProject.id), v3);
+
   // 날 수 줄도 거두면 당겨지고, 날 수는 그대로다.
   const pullProject = await ctx.createProject();
   const month = await plans.adminGrant({ projectId: pullProject.id, plan: 'month1' }, t0);

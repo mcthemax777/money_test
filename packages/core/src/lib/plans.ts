@@ -3,6 +3,7 @@
  */
 import {
   MONTHLY_PLAN_PRICE,
+  planStatusAt,
   type PlanDef,
   type PlanId,
   type ProjectPlanStatus,
@@ -40,14 +41,15 @@ export function discountPercent(plan: PlanDef): number | null {
 /**
  * 프로젝트 카드에 적는 지금 이용권. "무료" / "평생" / "2027. 1. 9.까지".
  *
- * `plan` 이 없으면(옛 서버, 저장해 둔 목록) 무료로 적는다.
+ * `plan` 이 없거나(옛 서버, 저장해 둔 목록) 기간이 지났으면 무료로 적는다.
  */
 export function planStatusLabel(
   status: ProjectPlanStatus | undefined,
   t: (key: MessageKey, params?: Record<string, string | number>) => string,
   localeTag: string,
 ): string {
-  if (!status || status.kind === 'free') return t('projects.planFree');
-  if (status.kind === 'lifetime') return t('projects.planLifetime');
-  return t('projects.planUntil', { date: new Date(status.endsAt).toLocaleDateString(localeTag) });
+  const current = planStatusAt(status);
+  if (current.kind === 'free') return t('projects.planFree');
+  if (current.kind === 'lifetime') return t('projects.planLifetime');
+  return t('projects.planUntil', { date: new Date(current.endsAt).toLocaleDateString(localeTag) });
 }

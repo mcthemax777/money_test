@@ -9,6 +9,7 @@
  * 실제로 띄우는 일은 플랫폼이 꽂는 `InterstitialPresenter` 가 한다. 꽂지 않은 플랫폼(웹)은
  * 세지도 않는다.
  */
+import { planStatusAt } from '@money/types';
 import { create } from 'zustand';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
@@ -21,12 +22,12 @@ export const INTERSTITIAL_EVERY = 5;
 /**
  * 이 프로젝트에 광고를 띄우는가.
  *
- * 이용권을 모르면(옛 서버, 받기 전에 저장해 둔 목록) 무료로 본다. 프로젝트가 없으면(시작
- * 화면) 띄우지 않는다.
+ * 이용권을 모르면(옛 서버, 받기 전에 저장해 둔 목록) 무료로 본다. 받아 둔 기간이 지났어도
+ * 무료다(planStatusAt). 프로젝트가 없으면(시작 화면) 띄우지 않는다.
  */
 export function projectShowsAds(project: Pick<Project, 'plan'> | null | undefined): boolean {
   if (!project) return false;
-  return (project.plan?.kind ?? 'free') === 'free';
+  return planStatusAt(project.plan).kind === 'free';
 }
 
 /** 지금 보는 프로젝트에 광고를 띄우는가. 배너가 쓴다. */

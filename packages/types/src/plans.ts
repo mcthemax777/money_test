@@ -113,6 +113,19 @@ export type ProjectPlanStatus =
 
 export const FREE_PLAN_STATUS: ProjectPlanStatus = { kind: 'free', endsAt: null };
 
+/**
+ * 받아 둔 이용권 상태를 지금 시각으로 다시 본다. 기간이 지났으면 무료다.
+ *
+ * 화면은 프로젝트 목록을 받은 그때의 상태를 들고 있다. 목록은 앱을 켤 때와 동기화 신호가 올
+ * 때만 다시 받으므로, 기간이 끝나도 받아 둔 값은 "기간제"로 남는다. 없으면(옛 서버, 받기 전에
+ * 저장해 둔 목록) 무료다.
+ */
+export function planStatusAt(status: ProjectPlanStatus | undefined, now = new Date()): ProjectPlanStatus {
+  if (!status) return FREE_PLAN_STATUS;
+  if (status.kind === 'period' && Date.parse(status.endsAt) <= now.getTime()) return FREE_PLAN_STATUS;
+  return status;
+}
+
 /** 지금 상태를 계산하는 데 필요한 권한 한 줄의 모양. */
 export interface PlanGrantWindow {
   startsAt: Date;
