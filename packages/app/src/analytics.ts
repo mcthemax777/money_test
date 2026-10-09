@@ -9,6 +9,10 @@
  * Firebase 가 기기에 남기므로, 개발 빌드를 깐 기기에 출시 빌드를 덮어 깔면 출시 빌드가
  * 켜질 때 다시 켠다.
  *
+ * **화면 이름은 JS 가 보낸다.** Firebase 의 자동 화면 보고는 `firebase.json` 에서 껐다 -- 켜 두면
+ * 앱을 켤 때마다 액티비티 이름(`MainActivity`)으로 screen_view 가 하나 섞인다(2026-10-10 기기에서 봄).
+ * 빌드할 때 읽는 값이라 바꾸면 APK 를 다시 만들어야 한다.
+ *
  * 시험할 때는 `adb shell setprop debug.firebase.analytics.app online.bboyong.app` 를 걸고
  * Firebase 콘솔의 DebugView 를 본다(출시 빌드여야 이벤트가 나간다).
  */
