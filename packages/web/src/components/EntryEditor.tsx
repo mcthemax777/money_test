@@ -1,6 +1,6 @@
 'use client';
 
-import { forwardRef, useImperativeHandle, useMemo, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { Copy, X } from 'lucide-react';
 import { useUserFilter } from '@money/core/store/user-filter';
 import {
@@ -45,6 +45,7 @@ import {
 import {
   CURRENCY_LABEL,
   Dec,
+  INSTALLMENT_MAX_MONTHS,
   LEDGER_MIN_ENTRY_DATE_KEY,
   SUPPORTED_CURRENCIES,
   isCurrencyCode,
@@ -85,25 +86,6 @@ import {
 const ENTRY_FORM_ID = 'entry-form';
 const CARD_FORM_ID = 'card-form';
 const CATEGORY_FORM_ID = 'category-form';
-
-/** 카드사가 흔히 제공하는 할부 개월수. 빈 값이 일시불이다. */
-const INSTALLMENT_MONTHS = [2, 3, 4, 5, 6, 9, 10, 12, 18, 24, 36];
-
-/**
- * 할부 개월 목록.
- *
- * 상수가 아니라 함수다. 모듈을 처음 읽을 때의 언어로 굳으면 언어를 바꿔도
- * "일시불"만 옛 말로 남는다.
- */
-function installmentOptions(t: ReturnType<typeof useTranslation>['t']) {
-  return [
-    { id: '', name: t('editor.installmentOnce') },
-    ...INSTALLMENT_MONTHS.map((months) => ({
-      id: String(months),
-      name: t('editor.installmentMonths', { months }),
-    })),
-  ];
-}
 
 /**
  * 분류를 나눈 한 줄.
@@ -979,11 +961,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!formData.personId) {
-      setError(t('editor.personRequired'));
-      return;
-    }
-
     if (transferBothCards) {
       setError(t('entryForm.bothCards'));
       return;
@@ -1008,6 +985,15 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
      * 지나가고, 유이자로 두면 무이자 결제마다 "수수료 미입력"이 쌓인다. 앱도 같은
      * 규칙으로 막는다 (core 의 checkEntryForm).
      */
+    /* 할부 개월수는 2~50 이다. 비우거나 1 이면 일시불이다 (core checkEntryForm 과 같은 규칙). */
+    if (canInstall && formData.installmentMonths.trim() !== '') {
+      const months = Number(formData.installmentMonths);
+      if (months !== 1 && (!Number.isInteger(months) || months < 2 || months > INSTALLMENT_MAX_MONTHS)) {
+        setError(t('error.INSTALLMENT_MONTHS_RANGE'));
+        return;
+      }
+    }
+
     if (canInstall && Number(formData.installmentMonths) >= 2 && !formData.installmentInterest) {
       setError(t('entryForm.installmentInterestRequired'));
       return;
@@ -1185,7 +1171,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
       const payload: any = {
         kind,
-        personId: formData.personId,
+        // 비워 두면 사람 없이(미지정) 저장한다 (2026-10-10 사용자 요청).
+        personId: formData.personId || null,
         // 금액은 문자열로 보낸다 (정밀도 손실 방지)
         amount: toAmountString(formData.amount),
         description: formData.description,
@@ -1358,7 +1345,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       if (kind === 'expense' && savedId && paybackDrafts.drafts.length > 0) {
         const result = await paybackDrafts.saveFor({
           id: savedId,
-          personId: formData.personId,
+          personId: formData.personId || null,
           description: payload.description,
           lines: paybackLines,
         });
@@ -1452,6 +1439,17 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
    */
   const hasSplits =
     formData.type !== 'transfer' && formData.splits.length > 0;
+
+  /*
+   * 차감·취소 칸을 폈는가. 금액 아래 "할인·차감 추가" 단추가 편다 (2026-10-10 사용자 요청). 적어 둔
+   * 값이 있으면 단추 없이 펴 둔다 -- 고치려고 연 거래의 차감이 숨으면 있는 줄도 모른다. 팝업을
+   * 열 때마다 접는다.
+   */
+  const [isDiscountOpen, setIsDiscountOpen] = useState(false);
+  useEffect(() => {
+    if (isModalOpen) setIsDiscountOpen(false);
+  }, [isModalOpen]);
+  const isDiscountShown = isDiscountOpen || formData.discountAmount !== '';
 
   /**
    * 함께 적는 페이백이 고를 원거래의 줄. 지출에만 있다.
@@ -2088,7 +2086,39 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         }
       >
         <form id={ENTRY_FORM_ID} onSubmit={handleSubmit} className="space-y-4">
-              {/* 유형을 맨 위에서 탭으로 고른다. 아래 입력이 유형에 따라 달라지므로 먼저 정한다. */}
+              {/* 날짜와 시각은 맨 위에 둔다 (2026-10-10 사용자 요청). 자주 고치는 값이다. */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {t('editor.date')}
+                  </label>
+                  <input
+                    type="date"
+                    required
+                    value={formData.date}
+                    /* 원장 하한(기초잔액 전표 날짜)까지만 거슬러 올라간다 */
+                    min={LEDGER_MIN_ENTRY_DATE_KEY}
+                    // 연도 오타(2026 -> 2926)를 서버 400 전에 브라우저가 막는다
+                    max={ledgerMaxEntryDateKey()}
+                    onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {t('editor.time')}
+                  </label>
+                  <input
+                    type="time"
+                    value={formData.time}
+                    onChange={(e) => setFormData({ ...formData, time: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              {/* 유형을 날짜 아래에서 탭으로 고른다. 아래 입력이 유형에 따라 달라지므로 먼저 정한다. */}
               <div role="tablist" aria-label={t('editor.kindTablist')} className="flex gap-1 p-1 bg-gray-100 rounded-lg">
                 {ENTRY_TYPE_TABS.map((tab) => {
                   // 카드는 지출만 만들 수 있고, 결제된 청구서에 속한 내역은 유형을 못 바꾼다.
@@ -2142,7 +2172,12 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   아래쪽에 있으면 본문이 스크롤돼 유형 탭이 가려진다. */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">{t('editor.amount')}</label>
-                <div className="flex gap-2">
+                {/*
+                  통화는 금액 칸 오른쪽 안에 지금 통화로 선다. 누르면 통화를 고른다 (2026-10-10 사용자
+                  요청). 결제수단을 고르면 그 계좌 통화로 맞춰지고, 원화 카드를 둔 채 달러로 바꾸면
+                  "원화 카드로 한 외화 결제"가 된다.
+                */}
+                <div className="flex items-stretch rounded-lg border border-gray-300 focus-within:ring-2 focus-within:ring-blue-500">
                   <input
                     type="number"
                     required
@@ -2150,15 +2185,12 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                     data-autofocus
                     value={formData.amount}
                     onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
-                    className="flex-1 min-w-0 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="flex-1 min-w-0 rounded-l-lg px-3 py-2 focus:outline-none"
                     placeholder="50000"
                   />
-                  {/*
-                    통화. 결제수단을 고르면 그 계좌 통화로 맞춰지고, 원화 카드를 둔 채
-                    달러로 바꾸면 "원화 카드로 한 외화 결제"가 된다.
-                  */}
                   <select
                     value={formData.currency}
+                    aria-label={t('editor.currency')}
                     onChange={(e) => {
                       const currency = e.target.value as CurrencyCode;
                       setFormData({
@@ -2169,7 +2201,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                         currencyTouched: true,
                       });
                     }}
-                    className="w-28 shrink-0 px-2 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    className="shrink-0 cursor-pointer rounded-r-lg bg-transparent pl-2 pr-1 text-sm font-medium text-blue-600 focus:outline-none"
                   >
                     {SUPPORTED_CURRENCIES.map((code) => (
                       <option key={code} value={code}>
@@ -2247,129 +2279,110 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 )}
               </div>
 
-              {/* 그다음 날짜와 시각을 받는다. 자주 고치는 값이라 위쪽에 둔다. */}
-              <div className="grid grid-cols-2 gap-3">
-                <div>
+              {/*
+                차감·취소. 포인트 사용, 자동할인, 그리고 취소가 이 칸 하나로 들어간다.
+
+                금액 바로 아래에 "할인·차감 추가" 단추로 접어 둔다 (2026-10-10 사용자 요청) -- 자주 쓰지
+                않는 칸이다. 적어 둔 값이 있으면(고치기) 처음부터 펴 둔다.
+
+                셋은 전표에서 같은 모양이다 -- 정가는 위 금액 칸에 그대로 두고, 여기에는
+                덜 나간 몫을 적는다. 전액을 적으면 0원 거래로 남는다. 지우지 않는 것은
+                있었던 일이기 때문이다.
+
+                **나눈 거래에서는 감춘다.** 그때는 깎인 금액을 줄마다 적으므로(위의 줄
+                칸) 여기 한 칸을 더 두면 어느 쪽이 저장되는지 알 수 없다.
+              */}
+              {formData.type === 'expense' && !hasSplits && !isDiscountShown && (
+                <button
+                  type="button"
+                  onClick={() => setIsDiscountOpen(true)}
+                  className="w-full rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
+                >
+                  + {t('editor.discountAdd')}
+                </button>
+              )}
+              {formData.type === 'expense' && !hasSplits && isDiscountShown && (
+                <div className="unfold">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t('editor.date')}
+                    {t('editor.discount')}
                   </label>
                   <input
-                    type="date"
-                    required
-                    value={formData.date}
-                    /* 원장 하한(기초잔액 전표 날짜)까지만 거슬러 올라간다 */
-                    min={LEDGER_MIN_ENTRY_DATE_KEY}
-                    // 연도 오타(2026 -> 2926)를 서버 400 전에 브라우저가 막는다
-                    max={ledgerMaxEntryDateKey()}
-                    onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t('editor.time')}
-                  </label>
-                  <input
-                    type="time"
-                    value={formData.time}
-                    onChange={(e) => setFormData({ ...formData, time: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  />
-                </div>
-              </div>
-
-              {formData.type === 'transfer' ? (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t('editor.fromAccount')}
-                  </label>
-                  {/* 신용카드를 고르면 카드사에 대금을 갚는 것이 아니라 환불을 받는 쪽이 된다 */}
-                  <CustomSelect
-                    options={transferOptionsFor(formData.toAccountId)}
-                    value={formData.accountId}
-                    onChange={(value) =>
-                      setFormData({ ...formData, method: 'account', accountId: value, cardId: '' })
+                    type="number"
+                    value={formData.discountAmount}
+                    onChange={(e) =>
+                      setFormData({ ...formData, discountAmount: e.target.value })
                     }
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder="0"
                   />
-                </div>
-              ) : (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t('editor.method')}
-                  </label>
-                  {/* 계좌와 카드를 한 목록에서 고른다. 접두사로 종류를 구분한다. */}
-                  <CustomSelect
-                    options={paymentMethodOptions}
-                    value={selectedPaymentMethodId}
-                    onChange={handlePaymentMethodChange}
-                    onAddClick={() => setIsMethodChooserOpen(true)}
-                    addButtonLabel={t('editor.addMethod')}
-                  />
+                  <p className="mt-1 text-xs text-gray-500">{t('editor.discountHint')}</p>
 
-                  {/*
-                    카드 실적에 셀지. 카드를 골랐을 때만 뜬다.
-
-                    청구액과는 다른 값이다 -- 꺼도 갚을 대금은 그대로다. 지출은 켜짐이
-                    기본이고(쓴 돈이다) 카드로 들어온 돈은 꺼짐이 기본이다(캐시백은
-                    실적을 깎지 않는다).
-                  */}
-                  {formData.method === 'card' && formData.cardId && (
-                    <label className="mt-2 flex items-start gap-2 rounded-lg border border-gray-200 p-3 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        checked={formData.countsPerformance}
-                        onChange={(e) =>
-                          setFormData({ ...formData, countsPerformance: e.target.checked })
-                        }
-                        className="mt-0.5 h-4 w-4"
-                      />
-                      <span className="flex-1">
-                        <span className="block text-sm text-gray-900">
-                          {t('editor.countsPerformance')}
-                        </span>
-                        <span className="mt-0.5 block text-xs text-gray-500">
-                          {t('editor.countsPerformanceHint')}
-                        </span>
-                      </span>
-                    </label>
-                  )}
-
-                  {/*
-                    수입을 카드로 받는 자리.
-
-                    신용카드면 통장으로 들어오는 돈이 아니라 그 카드의 빚이 줄고,
-                    체크카드면 연결 통장으로 들어온다. 둘이 전혀 다른 일이라 고른
-                    뒤에야 알게 하지 않는다.
-                  */}
-                  {formData.type === 'income' && formData.method === 'card' && formData.cardId && (
-                    <p className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
-                      {isCreditCardSelected
-                        ? t('editor.cardIncomeNote')
-                        : t('editor.cardIncomeDebitNote', {
-                            account:
-                              accounts.find(
-                                (account) =>
-                                  account.id ===
-                                  cards.find((card) => card.id === formData.cardId)
-                                    ?.paymentAccountId,
-                              )?.name ?? t('editor.methodAccount'),
-                          })}
+                  {/* 실제로 빠지는 금액. 저장하고 목록에서 보고서야 알게 하지 않는다. */}
+                  {toNumber(formData.discountAmount) > 0 && (
+                    <p className="mt-2 text-xs font-medium text-gray-700">
+                      {t('editor.netAmount', {
+                        amount: formatCurrency(
+                          toNumber(formData.amount) - toNumber(formData.discountAmount),
+                          formData.currency,
+                        ),
+                      })}
                     </p>
                   )}
                 </div>
               )}
 
+              {/*
+                깎인 만큼 실적도 줄일지. 기본은 줄인다 -- 다리가 이미 순액이라 그것이
+                지금까지의 동작이다. 카드사가 환불을 실적에서 빼지 않는 경우가 있어,
+                끄면 실적만 정가로 센다.
+
+                **나눈 거래에서는 감춘다.** 그때는 환불액을 적는 줄마다 같은 체크가
+                바로 아래에 서 있다. 값은 어느 쪽이든 하나라 함께 움직인다.
+
+                거래 자체를 실적에서 뺐으면 뜨지 않는다. 그때는 어느 쪽이든 실적이
+                움직이지 않아 물을 것이 없다.
+              */}
+              {!hasSplits &&
+                showDiscountPerformance({
+                  kind: formData.type === 'income' ? 'income' : 'expense',
+                  discountAmount: totalDiscount,
+                  countsPerformance: formData.countsPerformance,
+                  isCard: formData.method === 'card' && Boolean(formData.cardId),
+                  isLedgerCurrency: formData.currency === ledgerCurrency,
+                }) && (
+                <label className="flex items-start gap-2 rounded-lg border border-gray-200 p-3 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.discountCountsPerformance}
+                    onChange={(e) =>
+                      setFormData({
+                        ...formData,
+                        discountCountsPerformance: e.target.checked,
+                      })
+                    }
+                    className="mt-0.5 h-4 w-4"
+                  />
+                  <span className="flex-1">
+                    <span className="block text-sm text-gray-900">
+                      {t('editor.discountCountsPerformance')}
+                    </span>
+                    <span className="mt-0.5 block text-xs text-gray-500">
+                      {t('editor.discountCountsPerformanceHint')}
+                    </span>
+                  </span>
+                </label>
+              )}
+
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t('editor.person')}
+                  {t('editor.descriptionOptional')}
                 </label>
-                <CustomSelect
-                  options={people.map((p) => ({ id: p.id, name: p.name }))}
-                  value={formData.personId}
-                  onChange={(value) => setFormData({ ...formData, personId: value })}
-                  onAddClick={() => setIsPersonModalOpen(true)}
-                  addButtonLabel={t('editor.addPerson')}
+                <input
+                  type="text"
+                  value={formData.description}
+                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder={t('editor.descriptionPlaceholder')}
                 />
               </div>
 
@@ -2636,6 +2649,166 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 )
               )}
 
+              {/*
+                태그. 갈래를 가리지 않으므로 이체에도 뜬다.
+
+                카테고리와 달리 **여럿을 고른다.** 그래서 select 가 아니라 알약 줄이다 --
+                여러 개 고르는 select 는 무엇이 골라졌는지 열어 봐야 알 수 있다.
+              */}
+              {/*
+                태그가 하나도 없어도 이 자리는 선다. 만드는 길이 여기뿐이라, 비었다고
+                접으면 첫 태그를 만들 곳이 없다.
+
+                **나눈 거래에서는 감춘다.** 그때는 태그가 줄마다 붙으므로 위의 줄 칸에서
+                고른다. 둘이 함께 보이면 어느 쪽이 저장되는지 알 수 없다.
+              */}
+              {!hasSplits && (
+              <div>
+                <div className="mb-1 flex items-center justify-between gap-2">
+                  <span className="block text-sm font-medium text-gray-700">{t('tags.pick')}</span>
+                  <button
+                    type="button"
+                    onClick={() => setIsTagModalOpen(true)}
+                    aria-label={t('tags.add')}
+                    className="rounded px-2 py-0.5 text-sm font-medium text-blue-600 transition hover:bg-blue-50"
+                  >
+                    + {t('common.add')}
+                  </button>
+                </div>
+                {tags.length === 0 ? (
+                  <p className="text-sm text-gray-500">{t('tags.empty')}</p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {tags.map((tag) => {
+                      const isSelected = formData.tagIds.includes(tag.id);
+
+                      return (
+                        <button
+                          key={tag.id}
+                          type="button"
+                          aria-pressed={isSelected}
+                          /*
+                           * 앞선 값에서 뒤집는다. 이 폼의 다른 칸과 달리 함수형으로 넘긴다.
+                           *
+                           * `{...formData}` 로 두면 그릴 때 잡힌 값을 쓰므로, 한 번 그리기 전에
+                           * 두 개를 잇달아 누르면 뒤엣것이 앞엣것을 덮어써 하나만 남는다
+                           * (실제로 그랬다). 다른 칸은 값을 갈아 끼우기만 해서 드러나지 않지만
+                           * 여기는 앞선 목록에 더하고 빼는 자리다.
+                           */
+                          onClick={() =>
+                            setFormData((previous) => ({
+                              ...previous,
+                              tagIds: previous.tagIds.includes(tag.id)
+                                ? previous.tagIds.filter((id) => id !== tag.id)
+                                : [...previous.tagIds, tag.id],
+                            }))
+                          }
+                          /* 눌린 것이 살짝 커졌다 돌아온다. 색만으로는 방금 무엇이 바뀌었는지 잘 안 보인다. */
+                          className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition active:scale-95 motion-reduce:transition-none motion-reduce:active:scale-100 ${
+                            isSelected
+                              ? 'border-blue-600 bg-blue-50 font-medium text-blue-600'
+                              : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                          }`}
+                        >
+                          {tag.color && (
+                            <span
+                              className="h-2 w-2 rounded-full"
+                              style={{ backgroundColor: tag.color }}
+                            />
+                          )}
+                          {tag.name}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                {tags.length > 0 ? (
+                  <p className="mt-1 text-xs text-gray-500">{t('tags.pickHint')}</p>
+                ) : null}
+              </div>
+              )}
+
+              {formData.type === 'transfer' ? (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {t('editor.fromAccount')}
+                  </label>
+                  {/* 신용카드를 고르면 카드사에 대금을 갚는 것이 아니라 환불을 받는 쪽이 된다 */}
+                  <CustomSelect
+                    options={transferOptionsFor(formData.toAccountId)}
+                    value={formData.accountId}
+                    onChange={(value) =>
+                      setFormData({ ...formData, method: 'account', accountId: value, cardId: '' })
+                    }
+                  />
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    {t('editor.method')}
+                  </label>
+                  {/* 계좌와 카드를 한 목록에서 고른다. 접두사로 종류를 구분한다. */}
+                  <CustomSelect
+                    options={paymentMethodOptions}
+                    value={selectedPaymentMethodId}
+                    onChange={handlePaymentMethodChange}
+                    onAddClick={() => setIsMethodChooserOpen(true)}
+                    addButtonLabel={t('editor.addMethod')}
+                  />
+
+                  {/*
+                    카드 실적에 셀지. 카드를 골랐을 때만 뜬다.
+
+                    청구액과는 다른 값이다 -- 꺼도 갚을 대금은 그대로다. 지출은 켜짐이
+                    기본이고(쓴 돈이다) 카드로 들어온 돈은 꺼짐이 기본이다(캐시백은
+                    실적을 깎지 않는다).
+                  */}
+                  {formData.method === 'card' && formData.cardId && (
+                    <label className="mt-2 flex items-start gap-2 rounded-lg border border-gray-200 p-3 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.countsPerformance}
+                        onChange={(e) =>
+                          setFormData({ ...formData, countsPerformance: e.target.checked })
+                        }
+                        className="mt-0.5 h-4 w-4"
+                      />
+                      <span className="flex-1">
+                        <span className="block text-sm text-gray-900">
+                          {t('editor.countsPerformance')}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-gray-500">
+                          {t('editor.countsPerformanceHint')}
+                        </span>
+                      </span>
+                    </label>
+                  )}
+
+                  {/*
+                    수입을 카드로 받는 자리.
+
+                    신용카드면 통장으로 들어오는 돈이 아니라 그 카드의 빚이 줄고,
+                    체크카드면 연결 통장으로 들어온다. 둘이 전혀 다른 일이라 고른
+                    뒤에야 알게 하지 않는다.
+                  */}
+                  {formData.type === 'income' && formData.method === 'card' && formData.cardId && (
+                    <p className="mt-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-sm text-blue-800">
+                      {isCreditCardSelected
+                        ? t('editor.cardIncomeNote')
+                        : t('editor.cardIncomeDebitNote', {
+                            account:
+                              accounts.find(
+                                (account) =>
+                                  account.id ===
+                                  cards.find((card) => card.id === formData.cardId)
+                                    ?.paymentAccountId,
+                              )?.name ?? t('editor.methodAccount'),
+                          })}
+                    </p>
+                  )}
+                </div>
+              )}
+
               {formData.type === 'transfer' && (
                 <>
                   <div>
@@ -2756,42 +2929,22 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 </>
               )}
 
+              {/*
+                거래한 사람. 지정하지 않아도 된다 (2026-10-10 사용자 요청) -- 비우면 "미지정"으로 남는다.
+              */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t('editor.descriptionOptional')}
+                  {t('editor.person')}
                 </label>
-                <input
-                  type="text"
-                  value={formData.description}
-                  onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder={t('editor.descriptionPlaceholder')}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t('editor.merchant')}
-                </label>
-                <input
-                  type="text"
-                  value={formData.merchant}
-                  onChange={(e) => setFormData({ ...formData, merchant: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder={t('editor.merchantPlaceholder')}
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t('editor.memo')}
-                </label>
-                <input
-                  type="text"
-                  value={formData.detailedNote}
-                  onChange={(e) => setFormData({ ...formData, detailedNote: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  placeholder={t('editor.memoPlaceholder')}
+                <CustomSelect
+                  options={[
+                    { id: '', name: t('editor.personNone') },
+                    ...people.map((p) => ({ id: p.id, name: p.name })),
+                  ]}
+                  value={formData.personId}
+                  onChange={(value) => setFormData({ ...formData, personId: value })}
+                  onAddClick={() => setIsPersonModalOpen(true)}
+                  addButtonLabel={t('editor.addPerson')}
                 />
               </div>
 
@@ -2809,85 +2962,6 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               ) : null}
 
               {/*
-                태그. 갈래를 가리지 않으므로 이체에도 뜬다.
-
-                카테고리와 달리 **여럿을 고른다.** 그래서 select 가 아니라 알약 줄이다 --
-                여러 개 고르는 select 는 무엇이 골라졌는지 열어 봐야 알 수 있다.
-              */}
-              {/*
-                태그가 하나도 없어도 이 자리는 선다. 만드는 길이 여기뿐이라, 비었다고
-                접으면 첫 태그를 만들 곳이 없다.
-
-                **나눈 거래에서는 감춘다.** 그때는 태그가 줄마다 붙으므로 위의 줄 칸에서
-                고른다. 둘이 함께 보이면 어느 쪽이 저장되는지 알 수 없다.
-              */}
-              {!hasSplits && (
-              <div>
-                <div className="mb-1 flex items-center justify-between gap-2">
-                  <span className="block text-sm font-medium text-gray-700">{t('tags.pick')}</span>
-                  <button
-                    type="button"
-                    onClick={() => setIsTagModalOpen(true)}
-                    aria-label={t('tags.add')}
-                    className="rounded px-2 py-0.5 text-sm font-medium text-blue-600 transition hover:bg-blue-50"
-                  >
-                    + {t('common.add')}
-                  </button>
-                </div>
-                {tags.length === 0 ? (
-                  <p className="text-sm text-gray-500">{t('tags.empty')}</p>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {tags.map((tag) => {
-                      const isSelected = formData.tagIds.includes(tag.id);
-
-                      return (
-                        <button
-                          key={tag.id}
-                          type="button"
-                          aria-pressed={isSelected}
-                          /*
-                           * 앞선 값에서 뒤집는다. 이 폼의 다른 칸과 달리 함수형으로 넘긴다.
-                           *
-                           * `{...formData}` 로 두면 그릴 때 잡힌 값을 쓰므로, 한 번 그리기 전에
-                           * 두 개를 잇달아 누르면 뒤엣것이 앞엣것을 덮어써 하나만 남는다
-                           * (실제로 그랬다). 다른 칸은 값을 갈아 끼우기만 해서 드러나지 않지만
-                           * 여기는 앞선 목록에 더하고 빼는 자리다.
-                           */
-                          onClick={() =>
-                            setFormData((previous) => ({
-                              ...previous,
-                              tagIds: previous.tagIds.includes(tag.id)
-                                ? previous.tagIds.filter((id) => id !== tag.id)
-                                : [...previous.tagIds, tag.id],
-                            }))
-                          }
-                          /* 눌린 것이 살짝 커졌다 돌아온다. 색만으로는 방금 무엇이 바뀌었는지 잘 안 보인다. */
-                          className={`flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-sm transition active:scale-95 motion-reduce:transition-none motion-reduce:active:scale-100 ${
-                            isSelected
-                              ? 'border-blue-600 bg-blue-50 font-medium text-blue-600'
-                              : 'border-gray-300 text-gray-700 hover:bg-gray-50'
-                          }`}
-                        >
-                          {tag.color && (
-                            <span
-                              className="h-2 w-2 rounded-full"
-                              style={{ backgroundColor: tag.color }}
-                            />
-                          )}
-                          {tag.name}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-                {tags.length > 0 ? (
-                  <p className="mt-1 text-xs text-gray-500">{t('tags.pickHint')}</p>
-                ) : null}
-              </div>
-              )}
-
-              {/*
                 할부. 자주 쓰는 값이 아니라 폼 맨 아래에 둔다.
 
                 신용카드 지출에만 뜬다. 체크카드는 결제 즉시 통장에서 빠지고 통장에는
@@ -2899,10 +2973,18 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     {t('editor.installment')}
                   </label>
-                  <CustomSelect
-                    options={installmentOptions(t)}
+                  {/*
+                    개월수는 직접 적는다 -- 2개월부터 50개월까지 (2026-10-10 사용자 요청). 비우면 일시불이다.
+                  */}
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={2}
+                    max={INSTALLMENT_MAX_MONTHS}
+                    step={1}
                     value={formData.installmentMonths}
-                    onChange={(value) =>
+                    onChange={(e) => {
+                      const value = e.target.value;
                       setFormData({
                         ...formData,
                         installmentMonths: value,
@@ -2921,9 +3003,10 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                          * 연이율은 개월수와 무관해 그대로 둔다.
                          */
                         installmentMonthlyPayment: '',
-                      })
-                    }
-                    placeholder={t('editor.installmentOnce')}
+                      });
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    placeholder={t('editor.installmentMonthsInput')}
                   />
                   <p className="mt-1 text-xs text-gray-500">
                     {t('editor.installmentHint')}
@@ -3193,87 +3276,31 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 </div>
               )}
 
-              {/*
-                차감·취소. 포인트 사용, 자동할인, 그리고 취소가 이 칸 하나로 들어간다.
-
-                셋은 전표에서 같은 모양이다 -- 정가는 위 금액 칸에 그대로 두고, 여기에는
-                덜 나간 몫을 적는다. 전액을 적으면 0원 거래로 남는다. 지우지 않는 것은
-                있었던 일이기 때문이다.
-
-                **나눈 거래에서는 감춘다.** 그때는 깎인 금액을 줄마다 적으므로(위의 줄
-                칸) 여기 한 칸을 더 두면 어느 쪽이 저장되는지 알 수 없다.
-              */}
-              {formData.type === 'expense' && !hasSplits && (
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t('editor.discount')}
-                  </label>
-                  <input
-                    type="number"
-                    value={formData.discountAmount}
-                    onChange={(e) =>
-                      setFormData({ ...formData, discountAmount: e.target.value })
-                    }
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                    placeholder="0"
-                  />
-                  <p className="mt-1 text-xs text-gray-500">{t('editor.discountHint')}</p>
-
-                  {/* 실제로 빠지는 금액. 저장하고 목록에서 보고서야 알게 하지 않는다. */}
-                  {toNumber(formData.discountAmount) > 0 && (
-                    <p className="mt-2 text-xs font-medium text-gray-700">
-                      {t('editor.netAmount', {
-                        amount: formatCurrency(
-                          toNumber(formData.amount) - toNumber(formData.discountAmount),
-                          formData.currency,
-                        ),
-                      })}
-                    </p>
-                  )}
-                </div>
-              )}
-
-              {/*
-                깎인 만큼 실적도 줄일지. 기본은 줄인다 -- 다리가 이미 순액이라 그것이
-                지금까지의 동작이다. 카드사가 환불을 실적에서 빼지 않는 경우가 있어,
-                끄면 실적만 정가로 센다.
-
-                **나눈 거래에서는 감춘다.** 그때는 환불액을 적는 줄마다 같은 체크가
-                바로 아래에 서 있다. 값은 어느 쪽이든 하나라 함께 움직인다.
-
-                거래 자체를 실적에서 뺐으면 뜨지 않는다. 그때는 어느 쪽이든 실적이
-                움직이지 않아 물을 것이 없다.
-              */}
-              {!hasSplits &&
-                showDiscountPerformance({
-                  kind: formData.type === 'income' ? 'income' : 'expense',
-                  discountAmount: totalDiscount,
-                  countsPerformance: formData.countsPerformance,
-                  isCard: formData.method === 'card' && Boolean(formData.cardId),
-                  isLedgerCurrency: formData.currency === ledgerCurrency,
-                }) && (
-                <label className="flex items-start gap-2 rounded-lg border border-gray-200 p-3 cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={formData.discountCountsPerformance}
-                    onChange={(e) =>
-                      setFormData({
-                        ...formData,
-                        discountCountsPerformance: e.target.checked,
-                      })
-                    }
-                    className="mt-0.5 h-4 w-4"
-                  />
-                  <span className="flex-1">
-                    <span className="block text-sm text-gray-900">
-                      {t('editor.discountCountsPerformance')}
-                    </span>
-                    <span className="mt-0.5 block text-xs text-gray-500">
-                      {t('editor.discountCountsPerformanceHint')}
-                    </span>
-                  </span>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t('editor.merchant')}
                 </label>
-              )}
+                <input
+                  type="text"
+                  value={formData.merchant}
+                  onChange={(e) => setFormData({ ...formData, merchant: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder={t('editor.merchantPlaceholder')}
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  {t('editor.memo')}
+                </label>
+                <input
+                  type="text"
+                  value={formData.detailedNote}
+                  onChange={(e) => setFormData({ ...formData, detailedNote: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder={t('editor.memoPlaceholder')}
+                />
+              </div>
 
               {error && (
                 <div className="p-3 bg-red-50 text-red-800 text-sm rounded">
@@ -3658,7 +3685,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 {t('editor.person')}
               </label>
               <p className="px-3 py-2 bg-gray-50 rounded-lg text-gray-900">
-                {selectedTransaction.personName || '-'}
+                {selectedTransaction.personName || t('editor.personNone')}
               </p>
             </div>
 

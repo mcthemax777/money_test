@@ -57,6 +57,7 @@ import {
 } from '@money/core/hooks/useTransactions';
 import { paybackCountOf, paybackDeleteNote } from '@money/core/hooks/usePaybacks';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
+import { useScreenReturn } from '@money/core/hooks/useScreenReturn';
 import { refreshInboxCount, useInboxCount } from '@money/core/store/inbox-count';
 import {
   useCanEdit,
@@ -378,7 +379,6 @@ export default function TransactionsView({
   unit,
   locked = false,
   onBack,
-  onOpenAnalysis,
 }: {
   /** 어느 프로젝트의 거래인가. 화면이 제 방식으로 정해 넘긴다. */
   projectId: string | null;
@@ -397,16 +397,11 @@ export default function TransactionsView({
   unit?: EntryPeriodUnit;
   /**
    * 조건을 못 고치게 한다. 머리글에는 ← 만 서고 알약은 알리기만 한다 -- 분석 탭의 거래내역
-   * 단추가 그 기간으로 연 화면이다. 거래 탭의 분석 아이콘이 연 분석과 같은 규칙이다.
+   * 단추가 그 기간으로 덮어 연 화면이다. 분석으로 가는 단추(오른쪽 위·년월 줄)도 없다.
    */
   locked?: boolean;
   /** 주면 머리글에 ← 가 선다. 부르는 쪽이 돌아가는 일을 맡는다. */
   onBack?: () => void;
-  /**
-   * 잠긴 화면의 오른쪽 위 분석 단추. 이 화면을 연 분석으로 돌아간다 -- 분석의 거래내역 단추와
-   * 짝이라 두 화면을 오간다 (2026-10-09 사용자 요청).
-   */
-  onOpenAnalysis?: () => void;
 }) {
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
@@ -468,6 +463,8 @@ export default function TransactionsView({
   useCloseOnBack(analysisFrom !== null, closeAnalysis);
   /* 펴면 맨 위로, 돌아오면 목록에서 보던 자리로 (자산 화면의 상세와 같다). */
   const rememberListScroll = useSwapScroll(analysisFrom !== null);
+  /* 분석은 위에 덮이듯 밀려 들어오고, 닫으면 목록이 제자리로 돌아온다 (2026-10-10 사용자 요청). */
+  const returnClass = useScreenReturn(analysisFrom !== null) ? 'screen-return' : '';
   const openAnalysis = (key: string) => {
     rememberListScroll();
     setAnalysisFrom({ key });
@@ -792,7 +789,8 @@ export default function TransactionsView({
   const detailRows: Array<{ label: string; value: string | null }> = detail
     ? [
         { label: t('tx.detail.date'), value: formatDateTime(detail.date, timeZone) },
-        { label: t('tx.detail.person'), value: detail.personName },
+        // 사람을 비운 거래는 이름이 빈 글자로 온다.
+        { label: t('tx.detail.person'), value: detail.personName || t('tx.noPerson') },
         // 돌려받은 돈은 종류를 적는다. 목록에는 아이콘만 서서 환불인지 캐시백인지 여기서 안다.
         {
           label: t('tx.detail.kind'),
@@ -856,20 +854,22 @@ export default function TransactionsView({
   /* 분석을 펴 둔 동안에는 그것만 그린다 (analysisFrom). */
   if (analysisFrom) {
     return (
-      <AnalysisView
-        projectId={selectedProjectId}
-        initial={{
-          search: tx.search,
-          unit: tx.unit,
-          periodKey: analysisFrom.key,
-        }}
-        onBack={closeAnalysis}
-      />
+      <div className="screen-push">
+        <AnalysisView
+          projectId={selectedProjectId}
+          initial={{
+            search: tx.search,
+            unit: tx.unit,
+            periodKey: analysisFrom.key,
+          }}
+          onBack={closeAnalysis}
+        />
+      </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div className={`space-y-4 ${returnClass}`}>
       {/*
         위쪽 한 덩어리 -- 제목, 알림, 탭, 걸어 둔 조건.
 
@@ -969,20 +969,11 @@ export default function TransactionsView({
               />
             }
             action={
-              // 분석에서 그 기간으로 건너왔으면 ← 와 분석으로 돌아가는 단추만 둔다 (locked).
-              locked ? (
-                onOpenAnalysis ? (
-                  <button
-                    type="button"
-                    onClick={onOpenAnalysis}
-                    aria-label={t('nav.analysis')}
-                    title={t('nav.analysis')}
-                    className="flex items-center justify-center p-2 text-gray-600"
-                  >
-                    <NavIcon name="analysis" className="h-4 w-4" />
-                  </button>
-                ) : undefined
-              ) : (
+              /*
+                분석에서 그 기간으로 덮어 열었으면 ← 만 둔다 (locked). 분석 단추도 두지 않는다 -- 그
+                아래에 이 화면을 연 분석이 있다 (2026-10-10 사용자 요청).
+              */
+              locked ? undefined : (
                 <div className="flex gap-2">
                   {/*
                     보관함. 검색 왼쪽에 둔다.
@@ -1251,9 +1242,9 @@ export default function TransactionsView({
                   {/*
                     이 기간의 분석. 줄의 오른쪽 끝, 금액 바로 뒤에 둔다. 줄 자체가 펼치는
                     단추라 그 안에 넣지 않고 옆에 세운다. 고르는 중에는 체크와 헷갈리지
-                    않게 감춘다.
+                    않게 감춘다. 분석이 덮어 연 화면(locked)에도 두지 않는다 -- 그 아래가 분석이다.
                   */}
-                  {tx.isSelecting ? null : (
+                  {tx.isSelecting || locked ? null : (
                     <button
                       type="button"
                       onClick={() => openAnalysis(month.yearMonth)}

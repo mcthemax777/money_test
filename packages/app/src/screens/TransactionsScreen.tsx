@@ -60,6 +60,7 @@ import {
 } from '@money/core/store/project';
 import { paybackCountOf, paybackDeleteNote } from '@money/core/hooks/usePaybacks';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
+import { useScreenReturn } from '@money/core/hooks/useScreenReturn';
 import { useInboxCount } from '@money/core/store/inbox-count';
 import { useUserFilter } from '@money/core/store/user-filter';
 import { useEntryFocus, type EntryFocusOrigin } from '@money/core/store/entry-focus';
@@ -73,6 +74,7 @@ import {
 } from '../shell/scroll';
 import { useCloseOnBack, useNavigation } from '../shell/navigation';
 import RevealTop, { RevealKeep } from '../shell/RevealTop';
+import { ScreenPush, ScreenReturn } from '../shell/ScreenSlide';
 import { StickySection, StickySections } from '../shell/StickySection';
 import CountBadge from '../components/CountBadge';
 import NavIcon from '../components/NavIcon';
@@ -452,7 +454,6 @@ export default function TransactionsScreen({
   initial,
   locked = false,
   onBack,
-  onOpenAnalysis,
 }: {
   /**
    * 처음 걸 검색(세는 기준 포함)과 묶는 단위. 분석 탭의 거래내역 단추가 이 화면을 제자리에
@@ -461,17 +462,12 @@ export default function TransactionsScreen({
    */
   initial?: { search: TransactionSearch; unit: EntryPeriodUnit };
   /**
-   * 조건을 못 고치게 한다. 머리글에는 ← 만 서고 알약은 알리기만 한다 -- 거래 탭의 분석
-   * 아이콘이 연 분석과 같은 규칙이다 (2026-10-07 사용자 요청).
+   * 조건을 못 고치게 한다. 머리글에는 ← 만 서고 알약은 알리기만 한다 (2026-10-07 사용자 요청).
+   * 분석이 덮어 연 화면이라 분석으로 가는 단추(오른쪽 위·년월 줄)도 없다 (2026-10-10 사용자 요청).
    */
   locked?: boolean;
   /** 주면 머리글에 ← 가 선다. 부르는 쪽이 돌아가는 일을 맡는다. */
   onBack?: () => void;
-  /**
-   * 잠긴 화면의 오른쪽 위 분석 단추. 이 화면을 연 분석으로 돌아간다 -- 분석의 거래내역 단추와
-   * 짝이라 두 화면을 오간다 (2026-10-09 사용자 요청, 웹과 같다).
-   */
-  onOpenAnalysis?: () => void;
 } = {}) {
   const { t } = useTranslation();
   const selectedProjectId = useProject((state) => state.selectedProjectId);
@@ -579,6 +575,7 @@ export default function TransactionsScreen({
     else restoreTo(listOffset.current);
   };
   useCloseOnBack(analysisFrom !== null, () => openAnalysis(null));
+  const hasReturned = useScreenReturn(analysisFrom !== null);
   /*
    * 년월 줄의 분석 아이콘. 줄이 `memo` 라 고정된 함수로 넘긴다. 그리는 때마다 바뀌는
    * `openAnalysis` 는 최신 것을 ref 로 부른다.
@@ -968,16 +965,19 @@ export default function TransactionsScreen({
         화면이 제 고치기 창을 연다 (분석 탭과 같다).
       */}
       {analysisFrom ? (
-        <AnalysisScreen
-          initial={{
-            search: tx.search,
-            unit: tx.unit,
-            periodKey: analysisFrom.key,
-          }}
-          onBack={() => openAnalysis(null)}
-        />
+        /* 분석은 위에 덮이듯 밀려 들어오고, 닫으면 목록이 제자리로 돌아온다 (2026-10-10 사용자 요청). */
+        <ScreenPush>
+          <AnalysisScreen
+            initial={{
+              search: tx.search,
+              unit: tx.unit,
+              periodKey: analysisFrom.key,
+            }}
+            onBack={() => openAnalysis(null)}
+          />
+        </ScreenPush>
       ) : (
-        <>
+        <ScreenReturn returned={hasReturned} style={{ gap: 16 }}>
         {/*
           위쪽 한 덩어리 -- 제목, 알림, 탭, 걸어 둔 조건.
 
@@ -1070,18 +1070,11 @@ export default function TransactionsScreen({
                   />
                 }
                 action={
-                  // 분석에서 그 기간으로 건너왔으면 ← 와 분석으로 돌아가는 단추만 둔다 (locked).
-                  locked ? (
-                    onOpenAnalysis ? (
-                      <Pressable
-                        onPress={onOpenAnalysis}
-                        accessibilityLabel={t('nav.analysis')}
-                        className="items-center justify-center p-2"
-                      >
-                        <NavIcon name="analysis" size={18} color="#4b5563" />
-                      </Pressable>
-                    ) : undefined
-                  ) : (
+                  /*
+                    분석에서 그 기간으로 덮어 열었으면 ← 만 둔다 (locked). 분석 단추도 두지 않는다 --
+                    그 아래에 이 화면을 연 분석이 있다 (2026-10-10 사용자 요청, 웹과 같다).
+                  */
+                  locked ? undefined : (
                     <View className="flex-row gap-2">
                       {/*
                         보관함. 검색 왼쪽에 둔다.
@@ -1288,8 +1281,8 @@ export default function TransactionsScreen({
                       onToggle={toggleMonthRange}
                       onPress={unfoldMonth}
                       onLongPress={canLongPress ? longPressMonth : undefined}
-                      // 고르는 중에는 체크와 헷갈리지 않게 감춘다 (웹과 같다).
-                      onAnalyze={tx.isSelecting ? undefined : analyzePeriod}
+                      // 고르는 중에는 체크와 헷갈리지 않게 감춘다. 분석이 덮어 연 화면(locked)에도 두지 않는다 (웹과 같다).
+                      onAnalyze={tx.isSelecting || locked ? undefined : analyzePeriod}
                     />
                   }
                 >
@@ -1325,7 +1318,7 @@ export default function TransactionsScreen({
           )}
         </StickySections>
         )}
-        </>
+        </ScreenReturn>
       )}
 
       <TagPickModal

@@ -12,6 +12,7 @@ import { homeDataPort } from '@money/core/data/home-port';
 import { useCanEdit, useProject } from '@money/core/store/project';
 import { budgetSettingsHref, tagBudgetSettingsHref } from '@money/core/lib/budget';
 import { budgetAnalysisInitial, type AnalysisInitial } from '@money/core/hooks/useAnalysis';
+import { useScreenReturn } from '@money/core/hooks/useScreenReturn';
 
 import AssetDetailView from '../components/AssetDetailView';
 import EntryEditor from '../components/EntryEditor';
@@ -24,6 +25,7 @@ import SpendingMethodCarousel from '../components/SpendingMethodCarousel';
 import type { EntryType } from '../components/TypeTabs';
 import AnalysisScreen from './AnalysisScreen';
 import { useCloseOnBack, useNavigation } from '../shell/navigation';
+import { ScreenPush, ScreenReturn } from '../shell/ScreenSlide';
 import { useScrollRestore, useScrollToTop } from '../shell/scroll';
 
 /** 예산 화면에서 펼 수 있는 상세 둘. */
@@ -104,6 +106,8 @@ export default function HomeScreen() {
 
   /* 기기의 뒤로가기는 상세의 ← 와 같은 일을 한다. */
   useCloseOnBack(detail !== null, () => openDetail(null));
+  /* 분석은 위에 덮이듯 밀려 들어오고, 닫으면 예산 화면이 제자리로 돌아온다 (2026-10-10 사용자 요청). */
+  const hasReturned = useScreenReturn(detail?.kind === 'analysis');
 
   const openAnalysis = (target: { id: string }, targetType: EntryType) =>
     openDetail({ kind: 'analysis', initial: budgetAnalysisInitial(target.id, targetType, yearMonth) });
@@ -177,14 +181,16 @@ export default function HomeScreen() {
           onChanged={home.reloadEntries}
         />
       ) : detail?.kind === 'analysis' ? (
-        <AnalysisScreen
-          initial={detail.initial}
-          onBack={() => openDetail(null)}
-          /* 오른쪽 위 단추로 거래내역과 분석을 오간다 (2026-10-09 사용자 요청). */
-          canOpenEntries
-        />
+        <ScreenPush>
+          <AnalysisScreen
+            initial={detail.initial}
+            onBack={() => openDetail(null)}
+            /* 오른쪽 위 단추로 거래내역을 위에 덮어 연다 (2026-10-09·10-10 사용자 요청). */
+            canOpenEntries
+          />
+        </ScreenPush>
       ) : (
-        <>
+        <ScreenReturn returned={hasReturned} style={{ gap: 24 }}>
           {home.hasError ? (
             <View className="rounded-lg bg-red-50 p-3">
               <Text className="text-sm text-red-800">{t('home.loadFailed')}</Text>
@@ -266,7 +272,7 @@ export default function HomeScreen() {
               />
             </View>
           </PeriodSwipe>
-        </>
+        </ScreenReturn>
       )}
 
       {/* 상세의 거래를 누르면 여는 고치기 창. 가계 화면과 같은 것이다. */}

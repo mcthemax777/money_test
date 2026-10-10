@@ -22,6 +22,7 @@ import EntryEditor, {
 } from '@/components/EntryEditor';
 import AnalysisView from '@/components/AnalysisView';
 import { budgetAnalysisInitial, type AnalysisInitial } from '@money/core/hooks/useAnalysis';
+import { useScreenReturn } from '@money/core/hooks/useScreenReturn';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useSwapScroll } from '@/hooks/useSwapScroll';
 import { apiClient } from '@money/core/lib/api-client';
@@ -111,6 +112,8 @@ export default function HomePage() {
    */
   const [analysis, setAnalysis] = useState<AnalysisInitial | null>(null);
   const rememberScroll = useSwapScroll(analysis !== null);
+  /* 분석은 위에 덮이듯 밀려 들어오고, 닫으면 예산 화면이 제자리로 돌아온다 (2026-10-10 사용자 요청). */
+  const returnClass = useScreenReturn(analysis !== null) ? 'screen-return' : '';
   const openAnalysis = (target: { id: string }, targetType: EntryType) => {
     rememberScroll();
     setAnalysis(budgetAnalysisInitial(target.id, targetType, yearMonth));
@@ -148,18 +151,20 @@ export default function HomePage() {
   /* 분석을 펴 둔 동안에는 그것만 그린다 (거래 화면의 분석과 같은 짜임). */
   if (analysis) {
     return (
-      <AnalysisView
-        projectId={selectedProjectId}
-        initial={analysis}
-        onBack={closeAnalysis}
-        /* 오른쪽 위 단추로 거래내역과 분석을 오간다 (2026-10-09 사용자 요청). */
-        canOpenEntries
-      />
+      <div className="screen-push">
+        <AnalysisView
+          projectId={selectedProjectId}
+          initial={analysis}
+          onBack={closeAnalysis}
+          /* 오른쪽 위 단추로 거래내역을 위에 덮어 연다 (2026-10-09·10-10 사용자 요청). */
+          canOpenEntries
+        />
+      </div>
     );
   }
 
   return (
-    <div className="space-y-6">
+    <div className={`space-y-6 ${returnClass}`}>
       {hasError && (
         <div className="p-3 bg-red-50 text-red-800 text-sm rounded-lg">{t('home.loadFailed')}</div>
       )}

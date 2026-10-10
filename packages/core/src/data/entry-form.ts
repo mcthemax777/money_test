@@ -14,6 +14,7 @@
 
 import {
   Dec,
+  INSTALLMENT_MAX_MONTHS,
   type EntryDto,
   type EntryListItem,
   type PaybackType,
@@ -106,6 +107,7 @@ export function parseMethod(value: PaymentMethodValue): {
 
 export interface EntryFormValues {
   kind: EntryFormKind;
+  /** 거래한 사람. 빈 글자면 미지정이다. */
   personId: string;
   /** 프로젝트 타임존의 달력 날짜 'YYYY-MM-DD' */
   dateKey: string;
@@ -377,7 +379,8 @@ export function entryFormFromItem(
 
   return {
     kind,
-    personId: item.personId,
+    // 미지정 거래는 빈 칸으로 연다.
+    personId: item.personId ?? '',
     // 이 줄을 본 시점의 판. 저장할 때 그대로 되돌려 주어 그 사이의 편집을 알아채게 한다.
     baseHlc: item.updatedHlc,
     dateKey: dateKeyOf(item.date, timeZone),
@@ -543,7 +546,7 @@ export function paybackFormFrom(
 ): EntryFormValues {
   const only = original.lines.length === 1 ? original.lines[0] : null;
   return {
-    ...emptyEntryForm({ personId: original.personId, timeZone }),
+    ...emptyEntryForm({ personId: original.personId ?? '', timeZone }),
     kind: 'payback',
     description: original.description,
     method: paybackMethodOf(
@@ -792,7 +795,7 @@ export function checkEntryForm(
    */
   cardLiabilityIds: ReadonlySet<string> = new Set(),
 ): EntryFormViolation | null {
-  if (!values.personId) return { field: 'personId', code: 'PERSON_REQUIRED' };
+  // 거래한 사람은 묻지 않는다. 비우면 미지정으로 저장된다 (2026-10-10 사용자 요청).
 
   /*
    * 설명은 묻지 않는다.
@@ -851,6 +854,21 @@ export function checkEntryForm(
     for (const line of lines) {
       const violation = checkExpenseExtras(line.discountAmount, line.amount);
       if (violation) return violation;
+    }
+  }
+
+  /*
+   * 할부 개월수. 비우거나 1 이면 일시불이고, 나누면 2~50개월이다 (2026-10-10 사용자 요청, 조립의
+   * assertCanInstall 과 같은 규칙). 칸에 아무 숫자나 적을 수 있어 여기서 먼저 막는다.
+   */
+  if (values.kind === 'expense' && parseMethod(values.method).cardId) {
+    const months = Number(values.installmentMonths);
+    if (
+      values.installmentMonths.trim() !== '' &&
+      months !== 1 &&
+      (!Number.isInteger(months) || months < 2 || months > INSTALLMENT_MAX_MONTHS)
+    ) {
+      return { field: 'installmentMonths', code: 'INSTALLMENT_MONTHS_RANGE' };
     }
   }
 
@@ -1125,7 +1143,8 @@ export function entryFormToRequest(
   const method = parseMethod(values.method);
   const base = {
     kind: values.kind,
-    personId: values.personId,
+    // 빈 칸은 미지정이다. 고치기도 통째로 바꾸므로 null 을 보내면 사람이 지워진다.
+    personId: values.personId || null,
     date: zonedFormValueToUtc(values.dateKey, values.timeKey, timeZone).toISOString(),
     description: values.description.trim(),
     amount: values.amount,

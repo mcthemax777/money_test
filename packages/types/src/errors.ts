@@ -94,6 +94,7 @@ export const ERROR_CODES = [
   'ENTRY_MODIFIED',
   'CARD_NOT_FOUND',
   'INSTALLMENT_CREDIT_ONLY',
+  'INSTALLMENT_MONTHS_RANGE',
   'TRANSFER_SAME_ACCOUNT',
   /**
    * 원거래와 걸린 환불·페이백이 어긋난다 (payback-rebind). 걸린 줄을 지우려 했거나, 원거래를

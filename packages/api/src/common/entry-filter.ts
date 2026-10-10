@@ -5,6 +5,7 @@ import {
   type EntryKind,
   type ParsedEntrySearch,
   lineMatcherOf,
+  NO_PERSON,
 } from '@money/types';
 
 /*
@@ -322,7 +323,12 @@ export function entryPersonCondition(
   personIds: readonly string[] | undefined,
 ): Prisma.JournalEntryWhereInput | undefined {
   if (!personIds || personIds.length === 0) return undefined;
-  return { personId: { in: [...personIds] } };
+  // 미지정(`NO_PERSON`)은 사람을 비운 전표다. 고른 사람들과 OR 로 잇는다.
+  const ids = personIds.filter((id) => id !== NO_PERSON);
+  const branches: Prisma.JournalEntryWhereInput[] = [];
+  if (ids.length > 0) branches.push({ personId: { in: ids } });
+  if (ids.length < personIds.length) branches.push({ personId: null });
+  return branches.length === 1 ? branches[0] : { OR: branches };
 }
 
 /**

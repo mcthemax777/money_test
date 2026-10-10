@@ -97,7 +97,7 @@ export function filledDrafts(drafts: readonly PaybackDraft[]): PaybackDraft[] {
  */
 export function paybackDraftRequest(
   draft: PaybackDraft,
-  original: { id: string; personId: string; description: string; lines: readonly PaybackLine[] },
+  original: { id: string; personId: string | null; description: string; lines: readonly PaybackLine[] },
   timeZone: string,
 ): EntryDto.CreateRequest {
   const line = lineOf(draft, original.lines);

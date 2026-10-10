@@ -74,7 +74,8 @@ export interface ViewEntry {
   description: string;
   merchant: string | null;
   detailedNote: string | null;
-  personId: string;
+  /** 거래한 사람. 미지정이면 null 이고 이름도 빈 글자다. */
+  personId: string | null;
   person: { name: string } | null;
   originalCurrency: string | null;
   originalAmount: DecInput | null;

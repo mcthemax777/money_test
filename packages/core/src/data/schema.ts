@@ -77,8 +77,11 @@
  * 35 는 칸이 늘지 않은 판이다. 34 까지의 사본은 다리를 그대로 둔 전표 변경(태그 손보기 등)을
  * 받을 때마다 그 전표의 할부 계획을 지웠고, 서버는 계획을 다시 보내지 않아 그 할부가 일시불로
  * 남아 있다. 다시 받아야 잃은 계획이 돌아온다.
+ *
+ * 36 은 전표의 사람(`entry.personId`)을 비울 수 있게 된 판이다 (거래한 사람 미지정). 옛 표는
+ * 그 칸이 NOT NULL 이라 미지정 전표를 받거나 적을 자리가 없다.
  */
-export const SCHEMA_VERSION = 35;
+export const SCHEMA_VERSION = 36;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -246,7 +249,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE TABLE IF NOT EXISTS entry (
      id              TEXT PRIMARY KEY,
      projectId       TEXT NOT NULL,
-     personId        TEXT NOT NULL,
+     /* 거래한 사람. 미지정이면 NULL 이다. */
+     personId        TEXT,
      date            TEXT NOT NULL,
      /* 프로젝트 타임존으로 미리 계산한 달력 키. SQLite 는 타임존을 모른다. */
      dateKey         TEXT NOT NULL,

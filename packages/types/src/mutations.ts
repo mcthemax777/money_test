@@ -124,7 +124,8 @@ export interface EntryMutationPayload {
   /** 기기가 만든 전표 id. 만들 때도 고칠 때도 이 값이 대상이다. */
   id: string;
   kind: EntryKind | string;
-  personId: string;
+  /** 거래한 사람. 비우면 미지정이다. */
+  personId?: string | null;
   /** ISO 문자열. 명령은 JSON 으로 오가므로 Date 를 담지 않는다. */
   date: string;
   description: string;

@@ -209,7 +209,8 @@ export default function EntryDetailModal({
             )}
           />
           <Row label={t('tx.detail.date')} value={formatDateTime(entry.date, timeZone)} />
-          <Row label={t('tx.detail.person')} value={entry.personName} />
+          {/* 사람을 비운 거래는 이름이 빈 글자로 온다. */}
+          <Row label={t('tx.detail.person')} value={entry.personName || t('tx.noPerson')} />
           {/*
             나눈 거래는 줄을 그대로 풀어서 보여 준다.
 

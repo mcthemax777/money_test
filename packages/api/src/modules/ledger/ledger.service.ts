@@ -98,7 +98,8 @@ export interface EntryInput {
    */
   id?: string;
   projectId: string;
-  personId: string;
+  /** 거래한 사람. 미지정이면 null 이다 (2026-10-10 사용자 요청). */
+  personId: string | null;
   date: Date;
   description: string;
   merchant?: string | null;
@@ -209,7 +210,8 @@ export interface CategoryLine {
 
 interface CommonInput {
   projectId: string;
-  personId: string;
+  /** 거래한 사람. 비우면(null·빈 글자·생략) 미지정이다. */
+  personId?: string | null;
   date: Date;
   description: string;
   merchant?: string | null;
@@ -1383,15 +1385,14 @@ export class LedgerService {
     const accountIds = [...new Set(postings.map((p) => p.accountId).filter(Boolean))] as string[];
     const categoryIds = [...new Set(postings.map((p) => p.categoryId).filter(Boolean))] as string[];
 
-    if (!input.personId) {
-      throw new BadRequestException('거래 주체를 지정해야 합니다.');
-    }
-
-    const person = await db.person.count({
-      where: { id: input.personId, projectId },
-    });
-    if (person === 0) {
-      throw notFound('NOT_PROJECT_MEMBER', '이 프로젝트의 구성원이 아닙니다.');
+    // 거래한 사람은 비워도 된다(미지정). 골랐으면 이 프로젝트 사람이어야 한다.
+    if (input.personId) {
+      const person = await db.person.count({
+        where: { id: input.personId, projectId },
+      });
+      if (person === 0) {
+        throw notFound('NOT_PROJECT_MEMBER', '이 프로젝트의 구성원이 아닙니다.');
+      }
     }
 
     if (accountIds.length > 0) {

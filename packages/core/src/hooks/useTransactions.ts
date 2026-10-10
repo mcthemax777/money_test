@@ -37,6 +37,7 @@ import {
   DEFAULT_ENTRY_PERIOD,
   HIDDEN_ACCOUNT_TYPES,
   NO_ACCOUNT,
+  NO_PERSON,
   NO_TAG,
   parseCategoryPick,
   parseSelectionKey,
@@ -391,6 +392,10 @@ export function searchChipsOf(
 
   const personName = new Map(people.map((row) => [row.id, row.name]));
   for (const id of search.entryPersonIds) {
+    if (id === NO_PERSON) {
+      chips.push({ id: `person:${NO_PERSON}`, label: t('tx.noPerson') });
+      continue;
+    }
     chips.push({ id: `person:${id}`, label: personName.get(id) ?? t('tx.search.people') });
   }
 

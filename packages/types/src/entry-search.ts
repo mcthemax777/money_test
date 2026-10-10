@@ -45,6 +45,13 @@ export const NO_TAG = 'none';
 export const NO_ACCOUNT = 'none';
 
 /**
+ * "거래한 사람 미지정"을 가리키는 값 (2026-10-10 사용자 요청). 거래를 낸 사람 무리
+ * (`entryPersonIds`)의 id 자리에 함께 온다 -- 무리 안은 OR 이라 "나 또는 미지정"이 그대로
+ * 표현된다. 사람 id 는 cuid 라 이 글자와 겹치지 않는다.
+ */
+export const NO_PERSON = 'none';
+
+/**
  * 거래를 적은 **모양**. 분류·태그처럼 고르는 한 무리다.
  *
  *   split        분류 줄이 둘 이상인 거래 (한 결제를 나눠 적은 것)
@@ -226,7 +233,8 @@ export interface ParsedEntrySearch {
   /**
    * 거래를 낸 사람. undefined 면 사람으로 거르지 않는다.
    *
-   * 자산주인 필터와 다른 자리다. 이쪽은 전표의 personId 를 그대로 본다.
+   * 자산주인 필터와 다른 자리다. 이쪽은 전표의 personId 를 그대로 본다. `NO_PERSON` 은 사람을
+   * 비운 전표를 가리키며 여기 함께 담긴다 (저장소마다 그 표를 personId IS NULL 로 바꾼다).
    */
   entryPersonIds?: string[];
   /**

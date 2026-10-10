@@ -23,6 +23,7 @@ import {
 } from '@money/core/hooks/useAnalysis';
 import { totalIdOf } from '@money/core/hooks/useCategoryDetail';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
+import { useScreenReturn } from '@money/core/hooks/useScreenReturn';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useMyPersonId } from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
@@ -40,6 +41,7 @@ import SearchChips from '@/components/SearchChips';
 import TransactionSearchModal from '@/components/TransactionSearchModal';
 import TransactionsView from '@/components/TransactionsView';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
+import { useSwapScroll } from '@/hooks/useSwapScroll';
 import { useTopReveal } from '@/hooks/useTopReveal';
 
 const TABS: Array<{ id: AnalysisKind; labelKey: MessageKey }> = [
@@ -61,7 +63,7 @@ export default function AnalysisView({
   onBack?: () => void;
   /**
    * ← 와 함께 오른쪽 위에 거래내역 단추를 세운다 -- 예산 화면이 연 분석이다 (2026-10-09 사용자
-   * 요청). 거래 탭이 연 분석은 주지 않는다. 거기서 거래내역을 열면 두 화면이 서로를 겹겹이 연다.
+   * 요청). 거래 탭이 연 분석은 주지 않는다 -- 그 아래에 이미 거래 화면이 있다.
    */
   canOpenEntries?: boolean;
 }) {
@@ -85,20 +87,35 @@ export default function AnalysisView({
   const [reloadToken, setReloadToken] = useState(0);
 
   /*
-   * 거래내역을 펼쳐 둔 동안에는 그것만 그린다. 자산 상세의 "거래내역 보기"와 같은 규칙이다 --
-   * 걸어 둔 검색·묶는 단위에 **보고 있는 날들을 기간으로 더한** 거래 화면이 서고(`entriesSearch`),
-   * 그 머리글의 ← 나 브라우저 뒤로가기로 돌아온다. 그 화면은 조건을 고칠 수 없다(locked) --
-   * 거래 탭의 분석 아이콘이 연 분석과 같은 규칙이다 (2026-10-07 사용자 요청). 이 화면이 그대로
-   * 세워져 있어(아래에서 그리기만 바꾼다) 돌아오면 기간·탭이 떠날 때 그대로다.
+   * 위에 덮어 여는 화면 둘 (2026-10-10 사용자 요청). 덮은 동안에는 그것만 그리고, 그 머리글의 ← 나
+   * 브라우저 뒤로가기로 닫으면 이 화면이 떠날 때 그대로 돌아온다(아래에서 그리기만 바꾼다).
+   *
+   *   거래내역   걸어 둔 검색·묶는 단위에 **보고 있는 날들을 기간으로 더한** 거래 화면이다
+   *              (`entriesSearch`). 조건을 고칠 수 없고(locked) 분석으로 가는 단추도 없다 --
+   *              그 아래에 이 분석이 있다.
+   *   원형 목록 줄  그 분류·수단으로 좁힌 새 분석이다 (`pickCategory`·`pickMethod`).
    */
   const [isEntriesOpen, setIsEntriesOpen] = useState(false);
-  const closeEntries = () => setIsEntriesOpen(false);
-  /*
-   * 예산 화면이 연 분석(canOpenEntries)에서는 거래내역과 분석이 오른쪽 위 단추로 오가는 한 자리다 --
-   * 거래내역의 ← 와 뒤로가기는 분석이 아니라 예산 화면으로 돌아간다 (2026-10-09 사용자 요청). 그래서
-   * 뒤로가기 칸을 따로 쌓지 않고, 부르는 쪽(예산 화면)의 칸이 통째로 닫는다.
-   */
-  useCloseOnBack(isEntriesOpen && !canOpenEntries, closeEntries);
+  const [picked, setPicked] = useState<AnalysisInitial | null>(null);
+  const isCovered = isEntriesOpen || picked !== null;
+  /* 펴면 맨 위로, 돌아오면 보던 자리로 (거래 화면의 분석과 같다). */
+  const rememberScroll = useSwapScroll(isCovered);
+  const returnClass = useScreenReturn(isCovered) ? 'screen-return' : '';
+  const openEntries = () => {
+    rememberScroll();
+    setIsEntriesOpen(true);
+  };
+  const openPicked = (next: AnalysisInitial) => {
+    rememberScroll();
+    setPicked(next);
+  };
+  /** 덮은 화면에서 거래를 고쳤을 수 있어 돌아올 때 기간 줄 금액을 다시 받는다. */
+  const closeCover = () => {
+    setIsEntriesOpen(false);
+    setPicked(null);
+    tx.reload();
+  };
+  useCloseOnBack(isCovered, closeCover);
 
   /*
    * 기간 줄부터 아래(그래프)를 가로로 끌면 기간을 넘긴다 -- 기간 줄의 ‹ › 와 같은 일이다 (2026-10-09
@@ -117,20 +134,28 @@ export default function AnalysisView({
 
   if (isEntriesOpen) {
     return (
-      <TransactionsView
-        projectId={projectId}
-        search={analysis.entriesSearch}
-        unit={tx.unit}
-        locked
-        onBack={canOpenEntries && onBack ? onBack : closeEntries}
-        /* 오른쪽 위의 분석 단추도 ← 와 같이 이 분석으로 돌아온다 -- 두 화면을 오가는 길이다. */
-        onOpenAnalysis={closeEntries}
-      />
+      <div className="screen-push">
+        <TransactionsView
+          projectId={projectId}
+          search={analysis.entriesSearch}
+          unit={tx.unit}
+          locked
+          onBack={closeCover}
+        />
+      </div>
+    );
+  }
+
+  if (picked) {
+    return (
+      <div className="screen-push">
+        <AnalysisView projectId={projectId} initial={picked} onBack={closeCover} />
+      </div>
     );
   }
 
   return (
-    <div className="space-y-4">
+    <div className={`space-y-4 ${returnClass}`}>
       {/*
         위쪽 한 덩어리 -- 제목, 걸어 둔 조건, 탭. 거래 화면과 같은 규칙이다(`useTopReveal`): 내리는
         동안에는 비켜서고 조금이라도 올리면 되돌아오며, 걸어 둔 조건 알약 줄부터 아래(탭)는
@@ -149,15 +174,15 @@ export default function AnalysisView({
             />
           }
           /*
-            거래 탭에서 건너왔으면 ← 만 둔다. 조건은 거래 탭에서 걸고 오는 것이고, 여기서
-            거래내역을 다시 열면 거래 화면과 분석이 서로를 겹겹이 연다.
+            다른 화면에서 덮어 열었으면 ← 만 둔다. 조건은 연 쪽에서 걸고 오는 것이고, 거래 탭에서
+            열었으면 그 아래에 이미 거래 화면이 있다.
           */
           action={
             onBack ? (
               canOpenEntries ? (
                 <button
                   type="button"
-                  onClick={() => setIsEntriesOpen(true)}
+                  onClick={openEntries}
                   aria-label={t('analysis.toTransactions')}
                   title={t('analysis.toTransactions')}
                   className="flex items-center justify-center p-2 text-gray-600"
@@ -173,7 +198,7 @@ export default function AnalysisView({
                 */}
                 <button
                   type="button"
-                  onClick={() => setIsEntriesOpen(true)}
+                  onClick={openEntries}
                   aria-label={t('analysis.toTransactions')}
                   title={t('analysis.toTransactions')}
                   className="flex items-center justify-center p-2 text-gray-600"
@@ -238,8 +263,8 @@ export default function AnalysisView({
           </div>
           {/*
             걸려 있는 조건. 탭 **아래** 둔다(2026-10-07 사용자 요청). 누르면 그 조건만 빠진다. 거래
-            탭에서 건너온 보기도 같다(2026-10-10 사용자 요청) -- 원형 목록 줄로 바꾼 조건을 되돌릴
-            길이 이것이다. 그 보기의 조건은 제 것이라 빼도 거래 탭에는 번지지 않는다.
+            탭·원형 목록 줄이 덮어 연 보기도 같다(2026-10-10 사용자 요청). 그 보기의 조건은 제 것이라
+            빼도 아래의 화면에는 번지지 않는다.
           */}
           <SearchChips chips={tx.searchChips} onRemove={tx.removeSearchChip} />
         </div>
@@ -282,11 +307,11 @@ export default function AnalysisView({
                 reloadToken={reloadToken}
                 onEntryClick={(entry) => entryEditorRef.current?.openDetail(entry)}
                 /*
-                  원형 목록 줄을 누르면 그 분류·수단을 조건으로 건다. 거래 탭·예산 화면에서 건너온 보기도
-                  분석 탭과 같다 (2026-10-10 사용자 요청).
+                  원형 목록 줄을 누르면 그 분류·수단으로 좁힌 분석을 위에 덮어 연다. 분석 탭이든 거래
+                  탭·예산 화면에서 건너온 보기든 같다 (2026-10-10 사용자 요청).
                 */
-                onPickCategory={analysis.pickCategory}
-                onPickMethod={analysis.pickMethod}
+                onPickCategory={(pickId) => openPicked(analysis.pickCategory(pickId))}
+                onPickMethod={(method) => openPicked(analysis.pickMethod(method))}
               />
             )}
           </div>

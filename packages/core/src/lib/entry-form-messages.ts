@@ -7,7 +7,6 @@
 import type { MessageKey } from './i18n';
 
 export const ENTRY_FORM_VIOLATION_KEY: Record<string, MessageKey> = {
-  PERSON_REQUIRED: 'editor.personRequired',
   AMOUNT_INVALID: 'entryForm.amountRequired',
   DATE_INVALID: 'entryForm.dateInvalid',
   TIME_INVALID: 'entryForm.timeInvalid',
@@ -27,6 +26,7 @@ export const ENTRY_FORM_VIOLATION_KEY: Record<string, MessageKey> = {
   DISCOUNT_TOO_LARGE: 'entryForm.discountTooLarge',
   DISCOUNT_AMOUNT_REQUIRED: 'entryForm.discountAmountRequired',
   INSTALLMENT_INTEREST_REQUIRED: 'entryForm.installmentInterestRequired',
+  INSTALLMENT_MONTHS_RANGE: 'error.INSTALLMENT_MONTHS_RANGE',
   INSTALLMENT_INTEREST_CURRENCY: 'entryForm.installmentInterestCurrency',
   INSTALLMENT_SHARES_COUNT: 'entryForm.installmentSharesCount',
   INSTALLMENT_SHARE_NEGATIVE: 'entryForm.installmentShareNegative',

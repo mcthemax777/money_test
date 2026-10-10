@@ -637,7 +637,11 @@ export namespace EntryDto {
      */
     id?: string;
     kind: 'expense' | 'income' | 'transfer' | 'card_payment' | 'payback';
-    personId: string;
+    /**
+     * 거래한 사람. 빼거나 null·빈 글자면 미지정이다 (2026-10-10 사용자 요청). 고치기(통째로
+     * 바꾸기)도 같아서 빼고 보내면 사람이 지워진다.
+     */
+    personId?: string | null;
     date: IsoDateString;
     description: string;
     merchant?: string;

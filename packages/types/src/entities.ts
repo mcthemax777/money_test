@@ -200,7 +200,8 @@ export interface Card {
 export interface JournalEntry {
   id: string;
   projectId: string;
-  personId: string;
+  /** 거래한 사람. 미지정이면 null 이다. */
+  personId: string | null;
   date: IsoDateString;
   description: string;
   merchant: string | null;     // 거래처 (가맹점, 송금 계좌주 등)
@@ -319,7 +320,8 @@ export interface EntryListItem {
   description: string;
   merchant: string | null;
   detailedNote: string | null;
-  personId: string;
+  /** 거래한 사람. 미지정이면 null 이고 personName 은 빈 글자다. */
+  personId: string | null;
   personName: string;
   /**
    * 표시용 금액. 기준통화(또는 표시 통화) 환산액이다.

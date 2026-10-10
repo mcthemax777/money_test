@@ -180,7 +180,8 @@ export interface BuiltPosting {
 
 export interface BuiltEntry {
   projectId: string;
-  personId: string;
+  /** 거래한 사람. 비우면 미지정이다 (null). */
+  personId: string | null;
   date: Date;
   description: string;
   merchant?: string | null;
@@ -287,7 +288,8 @@ interface ResolvedLine {
 
 interface CommonBuildInput {
   projectId: string;
-  personId: string;
+  /** 거래한 사람. 비우면(null·빈 글자) 미지정이다 (2026-10-10 사용자 요청). */
+  personId?: string | null;
   date: Date;
   description: string;
   merchant?: string | null;
@@ -1226,10 +1228,10 @@ function requireAmount(value: DecInput | undefined, label: string): Dec {
 // 조립 헬퍼
 // ───────────────────────────────────────────
 
-function common(input: CommonBuildInput & { personId: string }) {
+function common(input: CommonBuildInput) {
   return {
     projectId: input.projectId,
-    personId: input.personId,
+    personId: input.personId || null,
     date: input.date,
     description: input.description,
     merchant: input.merchant ?? null,
@@ -1498,8 +1500,15 @@ function assertInterestCurrency(
  * 신용카드만 된다. 나눌 수 있는 것은 카드사에 갚을 빚이고, 체크카드와 통장은 결제하는
  * 자리에서 돈이 빠져 나눌 청구가 없다.
  */
+/** 할부로 나눌 수 있는 가장 긴 개월수 (2026-10-10 사용자 요청). 2개월부터 이 값까지 고른다. */
+export const INSTALLMENT_MAX_MONTHS = 50;
+
 function assertCanInstall(months: number | undefined, isCreditCard: boolean) {
-  if (!months || months < 2 || isCreditCard) return;
+  if (!months || months < 2) return;
+  if (!Number.isInteger(months) || months > INSTALLMENT_MAX_MONTHS) {
+    fail('INSTALLMENT_MONTHS_RANGE', `할부는 2~${INSTALLMENT_MAX_MONTHS}개월로 설정할 수 있습니다.`);
+  }
+  if (isCreditCard) return;
   fail('INSTALLMENT_CREDIT_ONLY', '할부는 신용카드 지출에만 설정할 수 있습니다.');
 }
 

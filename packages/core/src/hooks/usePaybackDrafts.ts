@@ -71,7 +71,7 @@ export function usePaybackDrafts(timeZone: string) {
   const saveFor = useCallback(
     async (original: {
       id: string;
-      personId: string;
+      personId: string | null;
       description: string;
       lines: readonly PaybackLine[];
     }): Promise<{ saved: number; error: string }> => {

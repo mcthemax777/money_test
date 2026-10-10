@@ -69,6 +69,7 @@ import {
   lineCutsOf,
   parseInstallmentAdjust,
   adjustTotals,
+  NO_PERSON,
 } from '@money/types';
 
 import { codedError } from '../lib/api-error';
@@ -820,7 +821,8 @@ export class LocalStore {
         await this.upsert('entry', {
           id: String(row.id),
           projectId,
-          personId: String(row.personId),
+          // 미지정 거래는 사람이 null 로 온다.
+          personId: asText(row.personId),
           date,
           // 프로젝트 타임존의 달력 키를 여기서 박아 둔다.
           dateKey: zonedDateKey(instant, timeZone),
@@ -2681,7 +2683,7 @@ export class LocalStore {
       description: String(entry.description),
       merchant: asText(entry.merchant),
       detailedNote: asText(entry.detailedNote),
-      personId: String(entry.personId),
+      personId: asText(entry.personId),
       person: entry.personName ? { name: String(entry.personName) } : null,
       originalCurrency: asText(entry.originalCurrency),
       originalAmount: asText(entry.originalAmount),
@@ -5192,8 +5194,15 @@ function searchFilter(search?: ParsedEntrySearch): { sql: string; params: string
    */
   const entryPersonIds = search.entryPersonIds ?? [];
   if (entryPersonIds.length > 0) {
-    sql += ` AND e.personId IN (${entryPersonIds.map(() => '?').join(', ')})`;
-    params.push(...entryPersonIds);
+    // 미지정(`NO_PERSON`)은 사람을 비운 전표다. 고른 사람들과 OR 로 잇는다 (서버와 같다).
+    const ids = entryPersonIds.filter((id) => id !== NO_PERSON);
+    const branches: string[] = [];
+    if (ids.length > 0) {
+      branches.push(`e.personId IN (${ids.map(() => '?').join(', ')})`);
+      params.push(...ids);
+    }
+    if (ids.length < entryPersonIds.length) branches.push('e.personId IS NULL');
+    sql += ` AND (${branches.join(' OR ')})`;
   }
 
   /*

@@ -724,7 +724,7 @@ model InstallmentPlan {
 model JournalEntry {
   id           String   @id @default(cuid())
   projectId    String
-  personId     String // 거래 주체
+  personId     String? // 거래 주체. 비우면 미지정이다 (2026-10-10 사용자 요청)
   date         DateTime
   description  String // 거래 설명
   merchant     String? // 거래처 (가맹점, 송금 계좌주 등)
@@ -805,7 +805,8 @@ model JournalEntry {
   installmentAdjust Json?
 
   project   Project      @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  person    Person       @relation(fields: [personId], references: [id])
+  // 사람을 지우는 일은 people.service 가 그 사람의 전표가 없을 때만 한다. 미지정으로 흘리지 않는다.
+  person    Person?      @relation(fields: [personId], references: [id], onDelete: Restrict)
   createdBy User?        @relation(fields: [createdByUserId], references: [id], onDelete: SetNull)
   postings  Posting[]
   tags      EntryTag[]

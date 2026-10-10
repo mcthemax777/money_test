@@ -14,6 +14,7 @@ import { Check, Minus } from 'lucide-react';
 import {
   ENTRY_FEATURES,
   NO_ACCOUNT,
+  NO_PERSON,
   NO_TAG,
   SEARCHABLE_ENTRY_KINDS,
   selfCategoryPick,
@@ -552,8 +553,10 @@ export default function TransactionSearchModal({
 
             제목은 돈이 오간 계좌의 주인으로 거르고, 이 칸은 거래를 적을 때 고른
             사람으로 거른다. 남의 카드로 내 몫을 쓴 거래에서 둘이 갈린다.
+
+            사람을 비운 거래(미지정)도 골라 볼 수 있어, 구성원이 하나뿐이어도 선다 (2026-10-10).
           */}
-          {people.length > 1 ? (
+          {people.length > 0 ? (
             <div>
               <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-gray-600">
                 {t('tx.search.people')}
@@ -572,6 +575,16 @@ export default function TransactionSearchModal({
                     }
                   />
                 ))}
+                <Chip
+                  label={t('tx.noPerson')}
+                  selected={draft.entryPersonIds.includes(NO_PERSON)}
+                  onClick={() =>
+                    setDraft((prev) => ({
+                      ...prev,
+                      entryPersonIds: toggleId(prev.entryPersonIds, NO_PERSON),
+                    }))
+                  }
+                />
               </div>
             </div>
           ) : null}

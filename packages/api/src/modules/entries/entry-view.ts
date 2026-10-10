@@ -57,7 +57,8 @@ export type EntryWithPostings = {
   description: string;
   merchant: string | null;
   detailedNote: string | null;
-  personId: string;
+  /** 거래한 사람. 미지정이면 null 이다. */
+  personId: string | null;
   person: { name: string } | null;
   originalCurrency: string | null;
   originalAmount: Prisma.Decimal | null;
