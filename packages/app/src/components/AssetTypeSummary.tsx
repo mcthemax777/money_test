@@ -135,11 +135,17 @@ export default function AssetTypeSummary({
             <View key={group.key} className="w-1/2 p-1 sm:w-1/4">
               <Pressable
                 onPress={() => setOpenGroup(group.key)}
+                /*
+                  테두리 모양은 style 로 매번 정해 준다. className 에서 border-dashed 를 빼기만
+                  하면 이미 그려진 칸의 점선이 실선으로 돌아오지 않아, 일부 → 전체로 바꿔도
+                  점선이 남았다 (2026-10-10).
+                */
+                style={{ borderStyle: selection === 'some' ? 'dashed' : 'solid' }}
                 className={`rounded-lg border p-3 ${
                   selection === 'all'
                     ? 'border-blue-300 bg-blue-50'
                     : selection === 'some'
-                      ? 'border-dashed border-blue-300 bg-blue-50/40'
+                      ? 'border-blue-300 bg-blue-50/40'
                       : 'border-gray-200 bg-white'
                 }`}
               >
