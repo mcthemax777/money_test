@@ -11,7 +11,7 @@ import { useAuth } from '@money/core/store/auth';
 import { useProject } from '@money/core/store/project';
 import { useLocaleStore } from '@money/core/store/locale';
 import { useUserFilter } from '@money/core/store/user-filter';
-import { useAssetTypeFilter } from '@money/core/store/asset-type-filter';
+import { useAssetExclusion } from '@money/core/store/asset-exclusion';
 import { useHistoryGranularity } from '@money/core/store/history-granularity';
 import { useLedgerBasis } from '@money/core/store/ledger-basis';
 import { useLedgerKindFilter } from '@money/core/store/ledger-kind-filter';
@@ -26,7 +26,7 @@ const PERSISTED = [
   useProject,
   useLocaleStore,
   useUserFilter,
-  useAssetTypeFilter,
+  useAssetExclusion,
   useHistoryGranularity,
   useWeekStartStore,
   useLedgerBasis,

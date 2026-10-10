@@ -162,6 +162,11 @@ export interface AssetHistoryInput {
   ownerIds?: string[];
   /** 자산 묶음 하나의 합계. ownerIds 와 함께 쓴다 (고른 사람들의 그 묶음). */
   group?: AssetGroupKey;
+  /**
+   * 합계에서 뺄 계정 (자산 탭의 합계 제외). 카드 대금 계정까지 담아 넘긴다
+   * (`useAccountExclusion` 의 excludeKey). accountId 와 함께 쓰면 무시된다.
+   */
+  excludeAccountIds?: string[];
   projectId?: string | null;
   /** 처음 보여줄 12개월 구간의 마지막 달. 생략하면 이번 달 */
   endMonth?: string;
@@ -204,6 +209,7 @@ export function useAssetHistory({
   ownerId,
   ownerIds,
   group,
+  excludeAccountIds,
   projectId,
   endMonth,
 }: AssetHistoryInput): AssetHistory {
@@ -256,6 +262,8 @@ export function useAssetHistory({
    * 서버로 넘길 모양과 같은 쉼표 문자열로 굳힌다. null이면 전체다.
    */
   const ownerKey = ownerIds === undefined ? null : ownerIds.join(',');
+  /** 합계 제외도 같은 까닭으로 문자열로 굳힌다. 빈 문자열이면 뺄 것이 없다. */
+  const excludeKey = excludeAccountIds?.join(',') ?? '';
 
   /**
    * 창의 자리를 세는 기준 달 "YYYY-MM". 부르는 쪽이 정해 주면 그 달, 아니면 이번 달이다.
@@ -281,7 +289,11 @@ export function useAssetHistory({
     setAnchor(0);
   }, []);
 
-  // 보는 대상이 바뀌면 옛 자리에 머물러 있을 이유가 없다. 창을 지금으로 되돌린다.
+  /*
+   * 보는 대상이 바뀌면 옛 자리에 머물러 있을 이유가 없다. 창을 지금으로 되돌린다.
+   * 합계 제외는 넣지 않는다 -- 같은 대상에서 계좌 하나를 덜어 낸 것이라, 보던 때를 그대로
+   * 두어야 무엇이 줄었는지 견줄 수 있다.
+   */
   useEffect(() => {
     resetWindow();
   }, [accountId, ownerId, ownerKey, group, projectId, resetWindow]);
@@ -424,7 +436,10 @@ export function useAssetHistory({
           : ownerKey === null
             ? {}
             : { ownerIds: ownerKey };
-      const target = group ? { ...owners, group } : owners;
+      const grouped = group ? { ...owners, group } : owners;
+      // 계좌 하나를 볼 때는 싣지 않는다. 그 계좌를 보려고 고른 것이다.
+      const target =
+        excludeKey && !accountId ? { ...grouped, excludeAccountIds: excludeKey } : grouped;
 
       /*
        * 창이 놓인 자리를 서버가 읽는 말로 바꾼다.
@@ -503,6 +518,7 @@ export function useAssetHistory({
     ownerId,
     ownerKey,
     group,
+    excludeKey,
     projectId,
     baseMonth,
     granularity,

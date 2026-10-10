@@ -1450,6 +1450,21 @@ export namespace ReportDto {
    */
   export type NetWorthByGroup = Partial<Record<AssetGroupKey, string>>;
 
+  /**
+   * 계좌 하나가 순자산에 더한 값 (표시 통화). 자산 탭에서 계좌를 합계에서 뺄 때 쓴다.
+   *
+   * 화면이 고른 계좌를 빼고 총자산·묶음·사람 소계를 다시 셈하려면, 그 계좌가 어느 칸에
+   * 얼마를 더했는지 알아야 한다. 묶음(`group`)은 카드 대금이면 결제 통장의 묶음이다.
+   * 0인 계좌도 담는다 -- 없는 계좌와 0원 계좌는 화면에서 다르게 그린다.
+   */
+  export interface NetWorthAccountPart {
+    accountId: string;
+    type: AccountType;
+    group: AssetGroupKey;
+    ownerId: string | null;
+    amount: string;
+  }
+
   /** 자산 화면의 총자산 / 사람별 소계 */
   export interface NetWorth {
     /** 현금성 + 투자성 평가액 - 부채 */
@@ -1462,6 +1477,8 @@ export namespace ReportDto {
     unrealizedGain: string;
     byType: NetWorthByType;
     byGroup?: NetWorthByGroup;
+    /** 계좌별 값. 없는 옛 응답이면 화면이 계좌를 합계에서 빼지 못한다. */
+    byAccount?: NetWorthAccountPart[];
     byPerson: Array<{
       personId: string;
       personName: string;
@@ -1610,6 +1627,13 @@ export namespace ReportDto {
      * 순자산의 byGroup 과 같은 규칙이다 (`groupOfRow`).
      */
     group?: string;
+    /**
+     * 합계에서 뺄 계좌들. 쉼표로 잇는다. 자산 탭에서 사용자가 합계 제외로 둔 계좌다.
+     *
+     * 카드 대금 계정도 id 로 받는다 -- 결제 통장을 빼면 그 카드의 대금도 함께 빼는 일은
+     * 부르는 쪽이 정한다. accountId 와 함께 쓰면 무시한다(그 계좌를 보려고 고른 것이다).
+     */
+    excludeAccountIds?: string;
     /** 기본 month */
     granularity?: 'year' | 'month' | 'week' | 'day';
     /**

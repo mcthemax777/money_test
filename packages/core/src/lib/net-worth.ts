@@ -9,6 +9,7 @@ import {
   ASSET_GROUP_KEYS,
   ASSET_GROUP_OF,
   assetGroupOf,
+  slotOf,
   type AccountType,
   type AssetGroupKey,
   type ReportDto,
@@ -140,4 +141,81 @@ export function assetGroupAmount(
 ): number {
   if (parts?.byGroup) return toNumber(parts.byGroup[group.key]);
   return group.types.reduce((acc, type) => acc + toNumber(parts?.byType?.[type]), 0);
+}
+
+/**
+ * 합계에서 뺄 계좌를 덜어 낸 총자산 (자산 탭의 합계 제외, 2026-10-10 사용자 요청).
+ *
+ * 총액·세 칸·유형별·묶음별·사람별 소계에서 그 계좌가 더한 값을 그대로 뺀다. 계좌가
+ * 어느 칸에 얼마를 더했는지는 응답의 `byAccount` 가 말한다 -- 시가·환율을 다시 셈하지
+ * 않아도 되고, 카드 대금이 결제 통장의 묶음에 든 것도 그대로 따라온다.
+ *
+ * `byAccount` 가 없는 옛 응답이면 뺄 수 없어 받은 그대로 돌려준다. 그때 목록의
+ * "합계 제외" 표시만 서고 금액은 그대로다.
+ */
+export function withoutAccounts(
+  netWorth: ReportDto.NetWorth | null,
+  excludedIds: ReadonlySet<string>,
+): ReportDto.NetWorth | null {
+  if (!netWorth?.byAccount || excludedIds.size === 0) return netWorth;
+  const removed = netWorth.byAccount.filter((part) => excludedIds.has(part.accountId));
+  if (removed.length === 0) return netWorth;
+
+  /* 한 바구니(전체 또는 한 사람)에서 덜어 낸다. 남은 값이 0이면 키를 뺀다 (응답과 같은 모양). */
+  const subtract = <B extends NetWorthParts & { total: string }>(
+    bucket: B,
+    parts: readonly ReportDto.NetWorthAccountPart[],
+  ): B => {
+    if (parts.length === 0) return bucket;
+    const minus = (table: Partial<Record<string, string>> | undefined, key: string, amount: number) => {
+      const left = toNumber(table?.[key]) - amount;
+      const { [key]: _drop, ...rest } = table ?? {};
+      return left === 0 ? rest : { ...rest, [key]: toAmountString(left) };
+    };
+
+    let next: B = { ...bucket };
+    for (const part of parts) {
+      const amount = toNumber(part.amount);
+      const slot = slotOf(part.type);
+      next = {
+        ...next,
+        total: toAmountString(toNumber(next.total) - amount),
+        [slot]: toAmountString(toNumber(next[slot]) - amount),
+        byType: minus(next.byType, part.type, amount),
+        ...(next.byGroup ? { byGroup: minus(next.byGroup, part.group, amount) } : {}),
+      };
+    }
+    return next;
+  };
+
+  return {
+    ...subtract(netWorth, removed),
+    byAccount: netWorth.byAccount.filter((part) => !excludedIds.has(part.accountId)),
+    byPerson: netWorth.byPerson.map((person) =>
+      subtract(
+        person,
+        removed.filter((part) => part.ownerId === person.personId),
+      ),
+    ),
+  };
+}
+
+/**
+ * 합계 제외로 실제로 빼야 하는 계정들.
+ *
+ * 고른 계좌에 더해, 그 계좌를 결제 통장으로 쓰는 카드의 대금 계정도 뺀다. 목록에서 카드는
+ * 결제 통장 밑에 달려 있고 통장 줄의 금액도 카드 대금을 뺀 값이라, 통장을 빼면서 그
+ * 대금만 남기면 합계가 빚만큼 엉뚱하게 줄어든다.
+ */
+export function excludedLedgerAccountIds(
+  excludedAccountIds: readonly string[],
+  cards: readonly { paymentAccountId?: string | null; liabilityAccountId?: string | null }[],
+): Set<string> {
+  const ids = new Set(excludedAccountIds);
+  for (const card of cards) {
+    if (card.liabilityAccountId && card.paymentAccountId && ids.has(card.paymentAccountId)) {
+      ids.add(card.liabilityAccountId);
+    }
+  }
+  return ids;
 }

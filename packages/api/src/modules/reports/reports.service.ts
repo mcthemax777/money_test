@@ -509,6 +509,7 @@ export class ReportsService {
       unrealizedGain: result.unrealizedGain.toString(),
       byType: nonZeroAmounts(result.byType),
       byGroup: nonZeroAmounts(result.byGroup),
+      byAccount: result.byAccount.map((part) => ({ ...part, amount: part.amount.toString() })),
       byPerson: result.byPerson.map((bucket) => ({
         personId: bucket.personId,
         personName: bucket.personName,
@@ -589,15 +590,20 @@ export class ReportsService {
         cardAsLiability: { select: { paymentAccount: { select: { type: true } } } },
       },
     });
-    const accounts = query.group
-      ? found.filter(
-          (a) =>
-            groupOfRow({
-              type: a.type,
-              paymentAccountType: a.cardAsLiability?.paymentAccount.type ?? null,
-            }) === query.group,
-        )
-      : found;
+    // 합계 제외로 둔 계좌. 계좌 하나를 보려고 고른 때는 그 계좌를 그대로 그린다.
+    const excluded = new Set(
+      query.excludeAccountIds && !query.accountId ? splitList(query.excludeAccountIds) : [],
+    );
+    const accounts = found
+      .filter((a) => !excluded.has(a.id))
+      .filter(
+        (a) =>
+          !query.group ||
+          groupOfRow({
+            type: a.type,
+            paymentAccountType: a.cardAsLiability?.paymentAccount.type ?? null,
+          }) === query.group,
+      );
     if (accounts.length === 0) return [];
     const accountIds = accounts.map((a) => a.id);
 
@@ -1418,6 +1424,7 @@ function emptyNetWorth(): ReportDto.NetWorth {
     unrealizedGain: '0',
     byType: {},
     byGroup: {},
+    byAccount: [],
     byPerson: [],
   };
 }

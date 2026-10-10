@@ -29,7 +29,7 @@ export * from './lib/persist-storage';
 export * from './lib/tag-pick';
 export * from './lib/time-zones';
 export * from './lib/types';
-export * from './store/asset-type-filter';
+export * from './store/asset-exclusion';
 export * from './store/ledger-kind-filter';
 export * from './store/connectivity';
 export * from './store/auth';

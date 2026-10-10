@@ -3,6 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import Animated from 'react-native-reanimated';
 
 import { useAssetsData } from '@money/core/hooks/useAssetsData';
+import { accountsOfGroup } from '@money/core/hooks/useAccountExclusion';
 import { homeDataPort } from '@money/core/data/home-port';
 import { EMPTY_SEARCH } from '@money/core/hooks/useTransactions';
 import { accountTypeLabel } from '@money/core/lib/account-type';
@@ -365,6 +366,7 @@ export default function AssetsScreen() {
         <AssetDetailView
           target={detailTarget}
           netWorthByPerson={assets.netWorthByPerson}
+          excludeAccountIds={assets.exclusion.excludeKey}
           cardCurrency={
             detailTarget.kind === 'card' ? currencyOfCard(detailTarget.card) : displayCurrency
           }
@@ -390,6 +392,12 @@ export default function AssetsScreen() {
       */}
       <AssetTypeSummary
         parts={assets.netWorth ?? undefined}
+        rawParts={assets.rawNetWorth ?? undefined}
+        accountsOf={(group) =>
+          accountsOfGroup(assets.accounts, group, assets.visiblePeople, assets.allPeopleSelected)
+        }
+        ownerNameOf={(account) => personNameOf.get(account.ownerId ?? '')}
+        exclusion={assets.exclusion}
         hasNoScope={assets.people.length > 0 && assets.selectedPersonIds.length === 0}
         scopeTitle={
           <PersonScopeTitle
@@ -415,6 +423,7 @@ export default function AssetsScreen() {
       <AssetHistoryChart
         projectId={selectedProjectId}
         ownerIds={assets.allPeopleSelected ? undefined : assets.selectedPersonIds}
+        excludeAccountIds={assets.exclusion.excludeKey}
       />
 
       {assets.hasError ? (
@@ -494,6 +503,7 @@ export default function AssetsScreen() {
                         <AccountRow
                           account={account}
                           ownerName={personNameOf.get(account.ownerId ?? '')}
+                          excluded={assets.exclusion.isExcluded(account.id)}
                           profit={assets.accountProfit.get(account.id)}
                           cards={assets.cardsOf(account.id)}
                           onOpen={() => openDetail({ kind: 'account', id: account.id })}
@@ -559,6 +569,7 @@ export default function AssetsScreen() {
                       renderItem={(account) => (
                         <AccountRow
                           account={account}
+                          excluded={assets.exclusion.isExcluded(account.id)}
                           profit={assets.accountProfit.get(account.id)}
                           cards={assets.cardsOf(account.id)}
                           onOpen={() => openDetail({ kind: 'account', id: account.id })}
@@ -801,6 +812,7 @@ function CardOutstanding({ card, currency }: { card: Card; currency: string }) {
 function AccountRow({
   account,
   ownerName,
+  excluded,
   profit,
   cards,
   onOpen,
@@ -810,6 +822,8 @@ function AccountRow({
   account: Account;
   /** 있으면 계좌명 옆에 적는다. 여러 사람이 섞인 자산유형별 목록이 넘긴다. */
   ownerName?: string;
+  /** 합계에서 뺀 계좌. 줄은 그대로 두고 "합계 제외"를 붙여 금액을 옅게 적는다 (웹과 같다). */
+  excluded: boolean;
   profit?: string;
   cards: Card[];
   /** 이 계좌의 상세(잔액 추이)를 펼친다 */
@@ -857,6 +871,12 @@ function AccountRow({
               {accountTypeLabel(account.type)}
             </Text>
             {ownerName ? <Text className="text-xs text-gray-500">{ownerName}</Text> : null}
+            {/* 유형 배지와 같은 자리·크기, 점선 테두리로 갈라 유형의 하나로 읽히지 않게 한다. */}
+            {excluded ? (
+              <Text className="rounded border border-dashed border-gray-400 px-1.5 py-px text-[11px] text-gray-500">
+                {t('assets.excludedFromTotal')}
+              </Text>
+            ) : null}
           </View>
           {/*
             잔액이 아니라 카드 대금을 뺀 남은 금액이다. 통장에 찍힌 돈에는 카드사가
@@ -867,7 +887,9 @@ function AccountRow({
             돈이 남은 계좌를 훑어보며 바로 가려낼 수 있어야 한다.
           */}
           <Text
-            className={`text-base font-bold ${remaining < 0 ? 'text-red-600' : 'text-gray-900'}`}
+            className={`text-base font-bold ${
+              excluded ? 'text-gray-400' : remaining < 0 ? 'text-red-600' : 'text-gray-900'
+            }`}
           >
             {formatCurrency(remaining, account.currency)}
           </Text>
@@ -912,7 +934,8 @@ function AccountRow({
         것처럼 보였다. 세로줄은 자리를 거의 쓰지 않으면서 층을 만든다 (웹과 같다).
       */}
       {cards.length > 0 ? (
-      <View className="ml-1 mt-1 border-l border-gray-200 pl-3">
+      /* 뺀 통장에 딸린 카드의 대금도 함께 빠진다. 옅게 그려 그것을 말한다 (웹과 같다). */
+      <View className={`ml-1 mt-1 border-l border-gray-200 pl-3 ${excluded ? 'opacity-60' : ''}`}>
           <DragList
             items={cards}
             gap={0}

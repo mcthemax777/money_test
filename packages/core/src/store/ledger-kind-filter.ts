@@ -17,7 +17,7 @@ interface LedgerKindFilterStore {
 /**
  * 가계 첫 문장에 더할 갈래.
  *
- * 자산의 `useAssetTypeFilter` 와 같은 규칙이다 -- 무엇을 켜 뒀는지는 기기에 남고,
+ * 자산의 합계 제외(`useAssetExclusion`)와 같은 규칙이다 -- 무엇을 켜 뒀는지는 기기에 남고,
  * 목록에 없는 키가 저장돼 있어도 화면이 LEDGER_KIND_GROUPS 를 훑으며 맞춰 보므로
  * 그냥 무시된다.
  *

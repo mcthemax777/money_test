@@ -24,6 +24,7 @@ import type { Account, Card, Person } from '../lib/types';
 import { useProject } from '../store/project';
 import { useUserFilter } from '../store/user-filter';
 import { usePersonFilterSync } from './usePersonFilterSync';
+import { useAccountExclusion } from './useAccountExclusion';
 
 /**
  * 자산 화면이 보는 값 전부.
@@ -299,18 +300,28 @@ export function useAssetsData(projectId: string | null) {
 
   const allPeopleSelected = people.length > 0 && selectedPersonIds.length === people.length;
 
+  /** 합계 제외. 아래의 총자산·사람별 소계는 모두 뺀 계좌를 덜어 낸 값이다. */
+  const exclusion = useAccountExclusion({ projectId, accounts, cards, netWorth });
+  const countedNetWorth = exclusion.netWorth;
+
   /**
    * 고른 자산주인의 총자산.
    *
    * 전원을 고른 때만 서버의 전체 값을 그대로 쓴다. 주인이 없는 계좌는 사람별 소계에
    * 들어가지 않아, 전체를 보면서 소계를 더하면 그만큼 빠진다.
    */
-  const scopedNetWorth = useMemo(() => {
-    if (allPeopleSelected) return netWorth;
+  const scopeOf = useCallback(
+    (source: ReportDto.NetWorth | null) => {
+      if (allPeopleSelected) return source;
 
-    const byPerson = new Map((netWorth?.byPerson ?? []).map((row) => [row.personId, row]));
-    return sumNetWorth(selectedPersonIds.map((id) => byPerson.get(id)));
-  }, [allPeopleSelected, netWorth, selectedPersonIds]);
+      const byPerson = new Map((source?.byPerson ?? []).map((row) => [row.personId, row]));
+      return sumNetWorth(selectedPersonIds.map((id) => byPerson.get(id)));
+    },
+    [allPeopleSelected, selectedPersonIds],
+  );
+  const scopedNetWorth = useMemo(() => scopeOf(countedNetWorth), [scopeOf, countedNetWorth]);
+  /** 덜어 내기 전의 값. 계좌를 모두 뺀 유형 칸이 원래 금액을 지워진 채로 보인다. */
+  const scopedRawNetWorth = useMemo(() => scopeOf(netWorth), [scopeOf, netWorth]);
 
   return {
     people,
@@ -323,7 +334,12 @@ export function useAssetsData(projectId: string | null) {
     allPeopleSelected,
 
     netWorth: scopedNetWorth,
-    netWorthByPerson: new Map((netWorth?.byPerson ?? []).map((row) => [row.personId, row])),
+    rawNetWorth: scopedRawNetWorth,
+    netWorthByPerson: new Map(
+      (countedNetWorth?.byPerson ?? []).map((row) => [row.personId, row]),
+    ),
+    /** 합계 제외 (`useAccountExclusion`). 순자산은 위의 값들이 이미 덜어 냈다. */
+    exclusion,
     accountProfit,
     /** 그 계좌에 딸린 카드. 숨긴 카드는 서버가 이미 빼고 준다. */
     cardsOf: useCallback(

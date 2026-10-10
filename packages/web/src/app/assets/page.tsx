@@ -35,6 +35,11 @@ import { monthInputToIso } from '@money/core/lib/datetime';
 import { type AccountDto, type ReportDto } from '@money/types';
 import { ArrowLeft, Info, X } from 'lucide-react';
 import { EMPTY_SEARCH, type TransactionSearch } from '@money/core/hooks/useTransactions';
+import {
+  accountsOfGroup,
+  useAccountExclusion,
+  type AccountExclusion,
+} from '@money/core/hooks/useAccountExclusion';
 import { useDragReorder } from '@/hooks/useDragReorder';
 import NavIcon from '@/components/NavIcon';
 import AssetAddChooser, { AssetAddIcon, type AssetAddKind } from '@/components/AssetAddChooser';
@@ -419,6 +424,17 @@ export default function DashboardPage() {
   const [ledgerCursor, setLedgerCursor] = useState<string | null>(null);
   const [isLoadingLedger, setIsLoadingLedger] = useState(false);
   const [netWorth, setNetWorth] = useState<ReportDto.NetWorth | null>(null);
+  /**
+   * 합계 제외. 맨 위 총액·추이와 목록의 소계는 뺀 계좌를 덜어 낸 값(`countedNetWorth`)을
+   * 쓴다. 계좌 상세는 그 계좌를 보려고 고른 것이라 덜어 내지 않는다.
+   */
+  const exclusion = useAccountExclusion({
+    projectId: selectedProjectId,
+    accounts,
+    cards,
+    netWorth,
+  });
+  const countedNetWorth = exclusion.netWorth;
   /** 투자·저축 계좌별 누적 수익. 계좌 id -> 금액 (계좌 통화) */
   const [accountProfit, setAccountProfit] = useState<Map<string, string>>(new Map());
   /*
@@ -1107,6 +1123,10 @@ export default function DashboardPage() {
 
   type PersonNetWorth = ReportDto.NetWorth['byPerson'][number];
   const netWorthByPerson = new Map<string, PersonNetWorth>(
+    (countedNetWorth?.byPerson ?? []).map((row) => [row.personId, row]),
+  );
+  /** 덜어 내기 전의 사람별 값. 계좌를 모두 뺀 유형 칸이 원래 금액을 보인다. */
+  const rawNetWorthByPerson = new Map<string, PersonNetWorth>(
     (netWorth?.byPerson ?? []).map((row) => [row.personId, row]),
   );
 
@@ -1125,8 +1145,15 @@ export default function DashboardPage() {
   /** 펼쳐 둔 묶음의 이름과 유형. 묶음 상세의 머리글과 소계가 쓴다. */
   const groupInfo = ASSET_TYPE_GROUPS.find((group) => group.key === selectedGroup);
   const scopedNetWorth = allPeopleSelected
-    ? netWorth
+    ? countedNetWorth
     : sumNetWorth(selectedPersonIds.map((id) => netWorthByPerson.get(id)));
+  const scopedRawNetWorth = allPeopleSelected
+    ? netWorth
+    : sumNetWorth(selectedPersonIds.map((id) => rawNetWorthByPerson.get(id)));
+  /** 유형 칸을 눌렀을 때 목록에 설 계좌. 전원을 고른 때는 주인 없는 계좌도 넣는다. */
+  const accountsOfScope = (group: AssetGroupKey) =>
+    accountsOfGroup(accounts, group, displayPeople, allPeopleSelected);
+  const personNameOf = new Map(people.map((person) => [person.id, person.name]));
 
   /*
    * 거래내역을 펼쳐 둔 동안에는 그것만 그린다 (분류·태그 화면과 같은 규칙).
@@ -1172,6 +1199,10 @@ export default function DashboardPage() {
       <div className={hideOnNarrow}>
         <AssetTypeSummary
           parts={scopedNetWorth ?? undefined}
+          rawParts={scopedRawNetWorth ?? undefined}
+          accountsOf={accountsOfScope}
+          ownerNameOf={(account) => personNameOf.get(account.ownerId ?? '')}
+          exclusion={exclusion}
           hasNoScope={people.length > 0 && selectedPersonIds.length === 0}
           scopeTitle={
             <PersonScopeTitle
@@ -1198,6 +1229,7 @@ export default function DashboardPage() {
         <AssetHistoryChart
           projectId={selectedProjectId}
           ownerIds={allPeopleSelected ? undefined : selectedPersonIds}
+          excludeAccountIds={exclusion.excludeKey}
         />
       </div>
 
@@ -1259,6 +1291,7 @@ export default function DashboardPage() {
             onReorderAccounts={handleReorderAccounts}
             onReorderCards={handleReorderCards}
             groupTotals={scopedNetWorth ?? undefined}
+            isExcluded={exclusion.isExcluded}
             onGroupClick={(group) => {
               rememberListScroll();
               setSelectedGroup(group);
@@ -1377,7 +1410,11 @@ export default function DashboardPage() {
               </AssetDetailHeader>
 
               {/* 이 사람이 가진 계좌들의 합계 추이 */}
-              <AssetHistoryChart ownerId={selectedPerson.id} projectId={selectedProjectId} />
+              <AssetHistoryChart
+                ownerId={selectedPerson.id}
+                projectId={selectedProjectId}
+                excludeAccountIds={exclusion.excludeKey}
+              />
 
               <div>
                 <h3 className="text-sm font-medium text-gray-700 mb-2">{t('assets.recentEntries')}</h3>
@@ -1435,6 +1472,7 @@ export default function DashboardPage() {
                 projectId={selectedProjectId}
                 ownerIds={allPeopleSelected ? undefined : selectedPersonIds}
                 group={selectedGroup}
+                excludeAccountIds={exclusion.excludeKey}
               />
 
               <div>
@@ -2158,6 +2196,7 @@ function AssetList({
   onReorderCards,
   groupTotals,
   onGroupClick,
+  isExcluded,
 }: {
   people: Person[];
   accounts: Account[];
@@ -2167,6 +2206,8 @@ function AssetList({
   groupTotals: Pick<NetWorthParts, 'byType' | 'byGroup'> | undefined;
   /** 자산유형별 상자의 머리글을 누르면 그 묶음의 상세를 펼친다 (사람 머리글과 같은 자리). */
   onGroupClick: (group: AssetGroupKey) => void;
+  /** 합계에서 뺀 계좌인지. 목록에는 그대로 서고 "합계 제외"가 붙는다. */
+  isExcluded: AccountExclusion['isExcluded'];
   /** 투자·저축 계좌별 누적 수익. 계좌 id -> 금액 */
   accountProfit: Map<string, string>;
   selected: SelectedItem;
@@ -2254,6 +2295,7 @@ function AssetList({
                   onCardClick={onCardClick}
                   onReorderCards={onReorderCards}
                   ownerNameOf={(account) => nameOf.get(account.ownerId ?? '')}
+                  isExcluded={isExcluded}
                 />
               </div>
             ))}
@@ -2310,6 +2352,7 @@ function AssetList({
                     onCardClick={onCardClick}
                     onReorder={onReorderAccounts}
                     onReorderCards={onReorderCards}
+                    isExcluded={isExcluded}
                   />
                 )}
               </div>
@@ -2337,6 +2380,7 @@ function AccountList({
   onReorder,
   onReorderCards,
   ownerNameOf,
+  isExcluded,
 }: {
   accounts: Account[];
   cardsOf: (accountId: string) => Card[];
@@ -2349,6 +2393,7 @@ function AccountList({
   onReorderCards: (ids: string[]) => void;
   /** 있으면 계좌명 옆에 주인 이름을 적는다 (여러 사람이 섞인 자산유형별 목록). */
   ownerNameOf?: (account: Account) => string | undefined;
+  isExcluded: AccountExclusion['isExcluded'];
 }) {
   const { t } = useTranslation();
   const { items, dragProps, draggingId } = useDragReorder(accounts, onReorder ?? (() => {}));
@@ -2367,6 +2412,8 @@ function AccountList({
           profit: accountProfit.get(account.id),
           t,
         });
+        /* 합계에서 뺀 계좌. 줄은 그대로 두고 표시를 붙여, 금액을 옅게 적는다 (딸린 카드도 함께 빠진다). */
+        const excluded = isExcluded(account.id);
 
         return (
           <div
@@ -2402,6 +2449,7 @@ function AccountList({
                   {ownerNameOf?.(account) && (
                     <span className="shrink-0 text-xs text-gray-500">{ownerNameOf(account)}</span>
                   )}
+                  {excluded && <ExcludedBadge />}
                 </span>
                 {/*
                   잔액이 아니라 카드 대금을 뺀 남은 금액이다. 통장에 찍힌 돈에는 카드사가
@@ -2412,8 +2460,8 @@ function AccountList({
                   남은 계좌를 훑어보며 바로 가려낼 수 있어야 한다.
                 */}
                 <span
-                  className={`shrink-0 text-base font-bold tabular-nums ${
-                    remaining < 0 ? 'text-red-600' : 'text-gray-900'
+                  className={`shrink-0 text-base font-bold tabular-nums transition-colors duration-150 ${
+                    excluded ? 'text-gray-400' : remaining < 0 ? 'text-red-600' : 'text-gray-900'
                   }`}
                 >
                   {formatCurrency(remaining, account.currency)}
@@ -2458,7 +2506,11 @@ function AccountList({
               같은 층에 선 것처럼 보였다. 세로줄은 자리를 거의 쓰지 않으면서 층을 만든다.
             */}
             {cards.length > 0 && (
-            <div className="ml-1 mt-1 border-l border-gray-200 pl-3">
+            <div
+              className={`ml-1 mt-1 border-l border-gray-200 pl-3 transition-opacity duration-150 ${
+                excluded ? 'opacity-60' : ''
+              }`}
+            >
               <CardList
                 cards={cards}
                 /* 사용액·남은 대금은 모두 결제 통장의 통화다 (기준통화 환산액이 아니다). */
@@ -2473,6 +2525,19 @@ function AccountList({
         );
       })}
     </div>
+  );
+}
+
+/**
+ * 합계에서 뺀 계좌의 표시. 계좌 유형 배지와 같은 자리·크기이되 점선 테두리로 갈라,
+ * 유형의 하나로 읽히지 않게 한다.
+ */
+function ExcludedBadge() {
+  const { t } = useTranslation();
+  return (
+    <span className="shrink-0 rounded border border-dashed border-gray-400 px-1.5 py-px text-[11px] text-gray-500">
+      {t('assets.excludedFromTotal')}
+    </span>
   );
 }
 

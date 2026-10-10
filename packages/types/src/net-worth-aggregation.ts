@@ -161,8 +161,19 @@ export interface NetWorthPersonBucket extends NetWorthBucket {
   total: Dec;
 }
 
+/** 계좌 하나가 순자산에 더한 값. 화면이 계좌를 합계에서 뺄 때 쓴다. */
+export interface NetWorthAccountPartResult {
+  accountId: string;
+  type: AccountType;
+  group: AssetGroupKey;
+  ownerId: string | null;
+  amount: Dec;
+}
+
 export interface NetWorthResult extends NetWorthBucket {
   total: Dec;
+  /** 계좌별 값. 자본 계정은 빠진다. */
+  byAccount: NetWorthAccountPartResult[];
   /** 투자 시가 + 외화 재평가액에서 각각의 장부가를 뺀 값 */
   unrealizedGain: Dec;
   byPerson: NetWorthPersonBucket[];
@@ -203,6 +214,7 @@ export function netWorth(
 
   const totals = newBucket();
   const people = new Map<string, NetWorthPersonBucket>();
+  const byAccount: NetWorthAccountPartResult[] = [];
   let revaluedNow = Dec.of(0);
   let revaluedBook = Dec.of(0);
 
@@ -234,6 +246,7 @@ export function netWorth(
     };
 
     addTo(totals);
+    byAccount.push({ accountId: row.id, type: row.type, group, ownerId: row.ownerId, amount: value });
 
     if (row.ownerId) {
       const bucket =
@@ -256,6 +269,7 @@ export function netWorth(
     ...totals,
     total: sumOf(totals),
     unrealizedGain: revaluedNow.minus(revaluedBook),
+    byAccount,
     byPerson: [...people.values()].map((bucket) => ({ ...bucket, total: sumOf(bucket) })),
   };
 }

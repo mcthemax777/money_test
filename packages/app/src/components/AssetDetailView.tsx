@@ -61,6 +61,7 @@ export type AssetDetailTarget =
 export default function AssetDetailView({
   target,
   netWorthByPerson,
+  excludeAccountIds,
   /** 카드의 통화. 결제 통장에 달려 있어 카드만 보고는 알 수 없다. */
   cardCurrency,
   paymentAccountOwnerId,
@@ -73,6 +74,11 @@ export default function AssetDetailView({
   target: AssetDetailTarget;
   /** 구성원별 소계. 사람 상세의 큰 숫자가 여기서 온다. */
   netWorthByPerson: Map<string, { total: string }>;
+  /**
+   * 합계 제외로 뺀 계정 (`useAccountExclusion` 의 excludeKey). 사람·묶음 추이가 소계와
+   * 같은 계좌를 세도록 넘긴다. 계좌 상세는 그 계좌를 보려고 고른 것이라 쓰지 않는다.
+   */
+  excludeAccountIds?: string[];
   cardCurrency: string;
   /** 카드의 결제 통장 주인. 대금 전표에 사람을 달아야 해서 필요하다. */
   paymentAccountOwnerId?: string | null;
@@ -196,12 +202,17 @@ export default function AssetDetailView({
       ) : null}
 
       {target.kind === 'person' ? (
-        <AssetHistoryChart ownerId={target.person.id} projectId={selectedProjectId} />
+        <AssetHistoryChart
+          ownerId={target.person.id}
+          excludeAccountIds={excludeAccountIds}
+          projectId={selectedProjectId}
+        />
       ) : target.kind === 'group' ? (
         /* 고른 사람들의 이 묶음 계좌 합계 추이. 카드 대금은 결제 통장의 묶음을 따른다. */
         <AssetHistoryChart
           ownerIds={target.ownerIds}
           group={target.group.key}
+          excludeAccountIds={excludeAccountIds}
           projectId={selectedProjectId}
         />
       ) : target.kind === 'account' ? (

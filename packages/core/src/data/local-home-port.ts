@@ -220,6 +220,7 @@ export function createLocalHomePort(
         unrealizedGain: result.unrealizedGain.toString(),
         byType: nonZeroAmounts(result.byType),
         byGroup: nonZeroAmounts(result.byGroup),
+        byAccount: result.byAccount.map((part) => ({ ...part, amount: part.amount.toString() })),
         byPerson: result.byPerson.map((bucket) => ({
           personId: bucket.personId,
           personName: bucket.personName,
@@ -343,9 +344,16 @@ export function createLocalHomePort(
       // 묶음 하나만 볼 때. 카드 대금은 결제 통장의 묶음을 따른다 (서버와 같다).
       const group = isAssetGroupKey(options.group) ? options.group : null;
       const paymentTypeOf = group ? await store.cardPaymentTypes(id) : null;
+      // 합계 제외로 둔 계좌 (서버와 같다). 계좌 하나를 보려고 고른 때는 무시한다.
+      const excluded = new Set(
+        options.excludeAccountIds && !options.accountId
+          ? String(options.excludeAccountIds).split(',').filter(Boolean)
+          : [],
+      );
 
       const accounts = (await store.accounts(id))
         .filter((account) => !EQUITY_ACCOUNT_TYPES.includes(account.type as AccountType))
+        .filter((account) => !excluded.has(account.id))
         .filter((account) =>
           // 계좌를 지정하면 숨긴 계좌도 보인다. 그 밖에는 활성 계좌만 모은다 (서버와 같다).
           options.accountId
