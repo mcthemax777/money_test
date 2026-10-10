@@ -223,9 +223,10 @@ export default function AnalysisScreen({
               />
               {/*
                 걸려 있는 조건. 탭 **아래** 둔다(2026-10-07 사용자 요청). 누르면 그 조건만 빠진다. 거래
-                탭에서 건너왔으면 무엇으로 그렸는지 알리기만 한다 -- 뺀 조건을 되걸 검색 단추가 없다.
+                탭에서 건너온 보기도 같다(2026-10-10 사용자 요청, 웹과 같다) -- 원형 목록 줄로 바꾼 조건을
+                되돌릴 길이 이것이다. 그 보기의 조건은 제 것이라 빼도 거래 탭에는 번지지 않는다.
               */}
-              <SearchChips chips={tx.searchChips} onRemove={onBack ? undefined : tx.removeSearchChip} />
+              <SearchChips chips={tx.searchChips} onRemove={tx.removeSearchChip} />
             </View>
           </RevealKeep>
         </View>
@@ -268,11 +269,11 @@ export default function AnalysisScreen({
                   trendPeriod={analysis.trendPeriod}
                   onEntryClick={openEntry}
                   /*
-                    원형 목록 줄을 누르면 그 분류·수단을 조건으로 건다 (웹과 같은 규칙). 거래 탭에서 건너온
-                    보기는 조건을 고칠 수 없어 줄은 예전처럼 파고들기만 한다.
+                    원형 목록 줄을 누르면 그 분류·수단을 조건으로 건다 (웹과 같은 규칙). 거래 탭·예산 화면에서
+                    건너온 보기도 분석 탭과 같다 (2026-10-10 사용자 요청).
                   */
-                  onPickCategory={onBack ? undefined : analysis.pickCategory}
-                  onPickMethod={onBack ? undefined : analysis.pickMethod}
+                  onPickCategory={analysis.pickCategory}
+                  onPickMethod={analysis.pickMethod}
                 />
               )}
             </FadeIn>
