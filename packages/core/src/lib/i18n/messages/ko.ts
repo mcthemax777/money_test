@@ -1125,6 +1125,9 @@ export const ko = {
   /** 통장을 만들려면 그 주인이 있어야 한다. 결제수단 추가 창에서 길이 막힐 때의 한 줄. */
   'editor.needPerson': '구성원을 먼저 만들어 주세요.',
   'editor.person': '거래한 사람',
+  'editor.personOptional': '거래한 사람 (선택)',
+  'editor.methodOptional': '결제수단 (선택)',
+  'editor.tagsOptional': '태그 (선택)',
   'editor.addPerson': '구성원 추가',
   'editor.parentCategory': '대분류',
   'editor.addParentCategory': '대분류 추가',

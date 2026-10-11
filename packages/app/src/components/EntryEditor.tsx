@@ -52,6 +52,7 @@ import { CategoryChips, CheckRow, Chip, Chips, Field, PickerButton, openTimeKeyP
 import Modal from './Modal';
 import PaybackEditor, { type PaybackTarget } from './PaybackEditor';
 import PaybackFormSection from './PaybackFormSection';
+import SegmentedTabs from './SegmentedTabs';
 import { OptionModal } from './SettingPicker';
 import { AddCategoryModal, AddTagModal } from './QuickAddModals';
 
@@ -263,12 +264,25 @@ export default function EntryEditor({
    */
   const [isDiscountOpen, setIsDiscountOpen] = useState(false);
   const isDiscountShown = isDiscountOpen || values.discountAmount !== '';
+  /** 나눈 줄마다의 차감 칸. 줄 키로 든다 -- 줄을 지우면 뒤의 번호가 당겨진다. */
+  const [openDiscountLines, setOpenDiscountLines] = useState<ReadonlySet<string>>(new Set());
+  const isSplitDiscountShown = (split: { lineKey: string; discountAmount: string }) =>
+    openDiscountLines.has(split.lineKey) || split.discountAmount !== '';
+  const openSplitDiscount = (lineKey: string) =>
+    setOpenDiscountLines((prev) => new Set(prev).add(lineKey));
+  const closeSplitDiscount = (lineKey: string) =>
+    setOpenDiscountLines((prev) => {
+      const next = new Set(prev);
+      next.delete(lineKey);
+      return next;
+    });
 
   useEffect(() => {
     if (!isOpen) {
       setIsCalendarOpen(false);
       setIsCurrencyOpen(false);
       setIsDiscountOpen(false);
+      setOpenDiscountLines(new Set());
     }
   }, [isOpen]);
 
@@ -512,17 +526,15 @@ export default function EntryEditor({
             />
           ) : null}
 
-          {/* 갈래. 바꾸면 그 갈래에서 뜻이 없는 칸은 훅이 비운다. */}
-          <Field label={t('editor.kindLabel')}>
-            <Chips
-              options={KINDS.map((kind) => ({
-                value: kind.id,
-                label: t(kind.labelKey),
-              }))}
-              selected={values.kind}
-              onSelect={(value) => setField('kind', value as EntryFormKind)}
-            />
-          </Field>
+          {/*
+            갈래. 거래·분석 탭 위쪽의 탭과 같은 부품이다 (2026-10-11 사용자 요청, 웹의 유형 탭과 같은 자리).
+            바꾸면 그 갈래에서 뜻이 없는 칸은 훅이 비운다.
+          */}
+          <SegmentedTabs
+            tabs={KINDS.map((kind) => ({ id: kind.id, label: t(kind.labelKey) }))}
+            selected={values.kind}
+            onSelect={(value) => setField('kind', value)}
+          />
 
           {/*
             금액과 통화. 통화는 금액 칸 오른쪽에 지금 통화로 서고, 누르면 고르는 창이 뜬다 (2026-10-10
@@ -592,16 +604,29 @@ export default function EntryEditor({
             한 칸을 더 두면 어느 쪽이 저장되는지 알 수 없다.
           */}
           {values.kind === 'expense' && values.splits.length === 0 && !isDiscountShown ? (
+            /* 글자만 둔다 (2026-10-11 사용자 요청) -- 상자로 두면 자주 쓰지 않는 칸이 금액만큼 자리를 먹는다. */
             <Pressable
               onPress={() => setIsDiscountOpen(true)}
               accessibilityRole="button"
-              className="items-center rounded-lg border border-dashed border-gray-300 px-3 py-2 active:bg-gray-50"
+              hitSlop={8}
+              className="-mt-2 self-start active:opacity-60"
             >
-              <Text className="text-sm text-gray-700">+ {t('editor.discountAdd')}</Text>
+              <Text className="text-sm font-medium text-blue-600">+ {t('editor.discountAdd')}</Text>
             </Pressable>
           ) : null}
           {values.kind === 'expense' && values.splits.length === 0 && isDiscountShown ? (
-            <Field label={t('editor.discount')} invalid={violation?.field === 'discountAmount'}>
+            <Field
+              label={t('editor.discount')}
+              invalid={violation?.field === 'discountAmount'}
+              /*
+                잘못 눌러 편 칸을 도로 접는다 (2026-10-11 사용자 요청). 적은 값도 함께 지운다 -- 접힌 채
+                값이 남으면 보이지 않는 차감이 저장된다.
+              */
+              onClose={() => {
+                setField('discountAmount', '');
+                setIsDiscountOpen(false);
+              }}
+            >
               <TextInput
                 value={values.discountAmount}
                 onChangeText={(text) => setField('discountAmount', text)}
@@ -695,28 +720,45 @@ export default function EntryEditor({
                       className="rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-900"
                     />
 
-                    {form.categoryChoices.length === 0 ? (
-                      <Text className="text-sm text-gray-500">{t('entryForm.noCategories')}</Text>
-                    ) : (
-                      <CategoryChips
-                        categories={form.categoryChoices}
-                        selected={split.categoryId}
-                        onSelect={(value) => form.setSplit(index, 'categoryId', value)}
-                      />
-                    )}
-
-
                     {/*
                       이 줄에서 깎인 금액.
 
                       줄마다 따로 받는다. 여행경비만 환불받았는데 비율로 나누면 식비
                       줄까지 함께 깎여, 분류별 분석이 사실과 어긋난다.
+
+                      나누지 않은 거래와 같이 그 줄 금액 바로 아래에 "할인·차감 추가" 글자로 접어
+                      두고, 펴면 "닫기"로 도로 접는다 (2026-10-11 사용자 요청, 웹과 같다).
                     */}
-                    {values.kind === 'expense' ? (
-                      <>
-                        <Text className="text-xs font-medium text-gray-500">
-                          {t('editor.discount')}
+                    {values.kind === 'expense' && !isSplitDiscountShown(split) ? (
+                      <Pressable
+                        onPress={() => openSplitDiscount(split.lineKey)}
+                        accessibilityRole="button"
+                        hitSlop={8}
+                        className="self-start active:opacity-60"
+                      >
+                        <Text className="text-sm font-medium text-blue-600">
+                          + {t('editor.discountAdd')}
                         </Text>
+                      </Pressable>
+                    ) : null}
+                    {values.kind === 'expense' && isSplitDiscountShown(split) ? (
+                      <>
+                        <View className="flex-row items-center justify-between gap-2">
+                          <Text className="text-xs font-medium text-gray-500">
+                            {t('editor.discount')}
+                          </Text>
+                          <Pressable
+                            onPress={() => {
+                              form.setSplit(index, 'discountAmount', '');
+                              closeSplitDiscount(split.lineKey);
+                            }}
+                            hitSlop={8}
+                            accessibilityRole="button"
+                            className="rounded px-2 py-0.5 active:bg-gray-100"
+                          >
+                            <Text className="text-xs font-medium text-gray-500">{t('common.close')}</Text>
+                          </Pressable>
+                        </View>
                         <TextInput
                           value={split.discountAmount}
                           onChangeText={(text) => form.setSplit(index, 'discountAmount', text)}
@@ -753,6 +795,17 @@ export default function EntryEditor({
                         ) : null}
                       </>
                     ) : null}
+
+                    {form.categoryChoices.length === 0 ? (
+                      <Text className="text-sm text-gray-500">{t('entryForm.noCategories')}</Text>
+                    ) : (
+                      <CategoryChips
+                        categories={form.categoryChoices}
+                        selected={split.categoryId}
+                        onSelect={(value) => form.setSplit(index, 'categoryId', value)}
+                      />
+                    )}
+
                     {/*
                       이 줄의 태그.
 
@@ -761,7 +814,7 @@ export default function EntryEditor({
                     */}
                     {form.lists.tags.length > 0 ? (
                       <>
-                        <Text className="text-xs font-medium text-gray-500">{t('tags.pick')}</Text>
+                        <Text className="text-xs font-medium text-gray-500">{t('editor.tagsOptional')}</Text>
                         <TagChips
                           tags={form.lists.tags}
                           selected={split.tagIds}
@@ -839,7 +892,7 @@ export default function EntryEditor({
             고른다. 둘이 함께 보이면 어느 쪽이 저장되는지 알 수 없다.
           */}
           {values.splits.length === 0 ? (
-          <Field label={t('tags.pick')} onAdd={() => setAdding('tag')} addLabel={t('tags.add')}>
+          <Field label={t('editor.tagsOptional')} onAdd={() => setAdding('tag')} addLabel={t('tags.add')}>
             {form.lists.tags.length === 0 ? (
               <Text className="text-sm text-gray-500">{t('tags.empty')}</Text>
             ) : (
@@ -856,7 +909,7 @@ export default function EntryEditor({
           ) : null}
 
           <Field
-            label={values.kind === 'transfer' ? t('editor.fromAccount') : t('editor.method')}
+            label={values.kind === 'transfer' ? t('editor.fromAccount') : t('editor.methodOptional')}
             invalid={violation?.field === 'method'}
             onAdd={() => setAdding('method')}
             addLabel={t('editor.addMethod')}
@@ -979,7 +1032,7 @@ export default function EntryEditor({
           ) : null}
 
           <Field
-            label={t('editor.person')}
+            label={t('editor.personOptional')}
             invalid={violation?.field === 'personId'}
             onAdd={() => setAdding('person')}
             addLabel={t('person.add')}

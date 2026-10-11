@@ -21,6 +21,7 @@ export function Field({
   invalid,
   onAdd,
   addLabel,
+  onClose,
   children,
 }: {
   label: string;
@@ -38,6 +39,8 @@ export function Field({
    * 옆에 "구성원 추가"까지 적으면 같은 말이 한 줄에 두 번 선다.
    */
   addLabel?: string;
+  /** 주면 이름표 오른쪽에 "닫기"가 선다. 단추로 펼친 칸을 도로 접는 자리다 (할인·차감). */
+  onClose?: () => void;
   children: React.ReactNode;
 }) {
   const { t } = useTranslation();
@@ -57,6 +60,16 @@ export function Field({
             className="rounded px-2 py-0.5 active:bg-blue-50"
           >
             <Text className="text-sm font-medium text-blue-600">+ {t('common.add')}</Text>
+          </Pressable>
+        ) : null}
+        {onClose ? (
+          <Pressable
+            onPress={onClose}
+            hitSlop={8}
+            accessibilityRole="button"
+            className="rounded px-2 py-0.5 active:bg-gray-100"
+          >
+            <Text className="text-sm font-medium text-gray-500">{t('common.close')}</Text>
           </Pressable>
         ) : null}
       </View>

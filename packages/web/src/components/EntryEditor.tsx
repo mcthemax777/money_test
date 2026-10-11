@@ -1450,6 +1450,21 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     if (isModalOpen) setIsDiscountOpen(false);
   }, [isModalOpen]);
   const isDiscountShown = isDiscountOpen || formData.discountAmount !== '';
+  /** 나눈 줄마다의 차감 칸. 줄 키로 든다 -- 줄을 지우면 뒤의 번호가 당겨진다. */
+  const [openDiscountLines, setOpenDiscountLines] = useState<ReadonlySet<string>>(new Set());
+  useEffect(() => {
+    if (isModalOpen) setOpenDiscountLines(new Set());
+  }, [isModalOpen]);
+  const isSplitDiscountShown = (split: EntryFormSplitRow) =>
+    openDiscountLines.has(split.lineKey) || split.discountAmount !== '';
+  const openSplitDiscount = (lineKey: string) =>
+    setOpenDiscountLines((prev) => new Set(prev).add(lineKey));
+  const closeSplitDiscount = (lineKey: string) =>
+    setOpenDiscountLines((prev) => {
+      const next = new Set(prev);
+      next.delete(lineKey);
+      return next;
+    });
 
   /**
    * 함께 적는 페이백이 고를 원거래의 줄. 지출에만 있다.
@@ -2293,19 +2308,36 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 칸) 여기 한 칸을 더 두면 어느 쪽이 저장되는지 알 수 없다.
               */}
               {formData.type === 'expense' && !hasSplits && !isDiscountShown && (
+                /* 글자만 둔다 (2026-10-11 사용자 요청, 앱과 같다). */
                 <button
                   type="button"
                   onClick={() => setIsDiscountOpen(true)}
-                  className="w-full rounded-lg border border-dashed border-gray-300 px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-50"
+                  className="-mt-2 rounded text-sm font-medium text-blue-600 transition-colors hover:text-blue-700"
                 >
                   + {t('editor.discountAdd')}
                 </button>
               )}
               {formData.type === 'expense' && !hasSplits && isDiscountShown && (
                 <div className="unfold">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t('editor.discount')}
-                  </label>
+                  <div className="mb-1 flex items-center justify-between gap-2">
+                    <label className="block text-sm font-medium text-gray-700">
+                      {t('editor.discount')}
+                    </label>
+                    {/*
+                      잘못 눌러 편 칸을 도로 접는다 (2026-10-11 사용자 요청, 앱과 같다). 적은 값도 함께
+                      지운다 -- 접힌 채 값이 남으면 보이지 않는 차감이 저장된다.
+                    */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFormData({ ...formData, discountAmount: '' });
+                        setIsDiscountOpen(false);
+                      }}
+                      className="rounded px-2 py-0.5 text-sm font-medium text-gray-500 transition hover:bg-gray-100"
+                    >
+                      {t('common.close')}
+                    </button>
+                  </div>
                   <input
                     type="number"
                     value={formData.discountAmount}
@@ -2427,42 +2459,41 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                             placeholder="0"
                           />
 
-                          <CustomSelect
-                            options={mainCategoryOptions}
-                            value={split.mainCategoryId}
-                            onChange={(value) =>
-                              updateSplitRow(index, { mainCategoryId: value, subCategoryId: '' })
-                            }
-                            placeholder={t('editor.parentCategory')}
-                            onAddClick={() => openCategoryModal()}
-                            addButtonLabel={t('editor.addParentCategory')}
-                          />
-
-                          <CustomSelect
-                            options={subCategoryOptions(split.mainCategoryId)}
-                            value={split.subCategoryId}
-                            onChange={(value) => updateSplitRow(index, { subCategoryId: value })}
-                            placeholder={t('editor.none')}
-                            /* 소분류는 대분류 아래에 붙는다. 고르기 전에는 붙일 곳이 없다. */
-                            onAddClick={
-                              split.mainCategoryId
-                                ? () => openCategoryModal(split.mainCategoryId)
-                                : undefined
-                            }
-                            addButtonLabel={t('editor.addChildCategory')}
-                          />
-
                           {/*
                             이 줄에서 깎인 금액.
 
                             줄마다 따로 받는다. 여행경비만 환불받았는데 비율로 나누면
                             식비 줄까지 함께 깎여, 분류별 분석이 사실과 어긋난다.
+
+                            나누지 않은 거래와 같이 그 줄 금액 바로 아래에 "할인·차감 추가" 글자로
+                            접어 두고, 펴면 "닫기"로 도로 접는다 (2026-10-11 사용자 요청).
                           */}
-                          {formData.type === 'expense' && (
-                            <div>
-                              <label className="mb-1 block text-xs font-medium text-gray-500">
-                                {t('editor.discount')}
-                              </label>
+                          {formData.type === 'expense' && !isSplitDiscountShown(split) && (
+                            <button
+                              type="button"
+                              onClick={() => openSplitDiscount(split.lineKey)}
+                              className="rounded text-sm font-medium text-blue-600 transition-colors hover:text-blue-700"
+                            >
+                              + {t('editor.discountAdd')}
+                            </button>
+                          )}
+                          {formData.type === 'expense' && isSplitDiscountShown(split) && (
+                            <div className="unfold">
+                              <div className="mb-1 flex items-center justify-between gap-2">
+                                <label className="block text-xs font-medium text-gray-500">
+                                  {t('editor.discount')}
+                                </label>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    updateSplitRow(index, { discountAmount: '' });
+                                    closeSplitDiscount(split.lineKey);
+                                  }}
+                                  className="rounded px-2 py-0.5 text-xs font-medium text-gray-500 transition hover:bg-gray-100"
+                                >
+                                  {t('common.close')}
+                                </button>
+                              </div>
                               <input
                                 type="number"
                                 value={split.discountAmount}
@@ -2517,6 +2548,32 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                             </div>
                           )}
 
+                          <CustomSelect
+                            options={mainCategoryOptions}
+                            value={split.mainCategoryId}
+                            onChange={(value) =>
+                              updateSplitRow(index, { mainCategoryId: value, subCategoryId: '' })
+                            }
+                            placeholder={t('editor.parentCategory')}
+                            onAddClick={() => openCategoryModal()}
+                            addButtonLabel={t('editor.addParentCategory')}
+                          />
+
+                          <CustomSelect
+                            options={subCategoryOptions(split.mainCategoryId)}
+                            value={split.subCategoryId}
+                            onChange={(value) => updateSplitRow(index, { subCategoryId: value })}
+                            placeholder={t('editor.none')}
+                            /* 소분류는 대분류 아래에 붙는다. 고르기 전에는 붙일 곳이 없다. */
+                            onAddClick={
+                              split.mainCategoryId
+                                ? () => openCategoryModal(split.mainCategoryId)
+                                : undefined
+                            }
+                            addButtonLabel={t('editor.addChildCategory')}
+                          />
+
+
                           {/*
                             이 줄의 태그.
 
@@ -2527,7 +2584,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                           {tags.length > 0 && (
                             <div>
                               <span className="mb-1 block text-xs font-medium text-gray-500">
-                                {t('tags.pick')}
+                                {t('editor.tagsOptional')}
                               </span>
                               <div className="flex flex-wrap gap-1.5">
                                 {tags.map((tag) => {
@@ -2665,7 +2722,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               {!hasSplits && (
               <div>
                 <div className="mb-1 flex items-center justify-between gap-2">
-                  <span className="block text-sm font-medium text-gray-700">{t('tags.pick')}</span>
+                  <span className="block text-sm font-medium text-gray-700">{t('editor.tagsOptional')}</span>
                   <button
                     type="button"
                     onClick={() => setIsTagModalOpen(true)}
@@ -2745,7 +2802,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               ) : (
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-1">
-                    {t('editor.method')}
+                    {t('editor.methodOptional')}
                   </label>
                   {/* 계좌와 카드를 한 목록에서 고른다. 접두사로 종류를 구분한다. */}
                   <CustomSelect
@@ -2934,7 +2991,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
-                  {t('editor.person')}
+                  {t('editor.personOptional')}
                 </label>
                 <CustomSelect
                   options={[
