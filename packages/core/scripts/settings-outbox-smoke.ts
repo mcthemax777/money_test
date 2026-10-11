@@ -518,6 +518,23 @@ const PROJECT = 'p-assets';
   eq('만든 후보는 남고 연결만 풀린다',
     (await driver.all(`SELECT recurringRuleId FROM entry_draft WHERE id = 'd-r1'`, []))[0].recurringRuleId, null);
 
+  // ── 만기일: 사본에 적히고 명령에 실린다 ──
+  const { id: termId } = await writer.addAccount({
+    name: '1년 예금',
+    type: 'time_deposit',
+    ownerId: personId,
+    currency: 'KRW',
+    maturityDate: '2027-03-15',
+  } as never);
+  const termOf = async () => (await store.accountRows(PROJECT)).find((row) => row.id === termId);
+  eq('만기일이 사본에 선다', (await termOf())?.maturityDate, '2027-03-15');
+  eq('만들기 명령의 짐에 만기일',
+    (queued[queued.length - 1].payload as { maturityDate?: string }).maturityDate, '2027-03-15');
+  await writer.updateAccount(termId, { type: 'deposit', maturityDate: null });
+  eq('지우면 사본도 비운다', (await termOf())?.maturityDate ?? null, null);
+  eq('고치기 짐은 바꾼 칸만',
+    Object.keys(queued[queued.length - 1].payload as object).sort().join(','), 'id,maturityDate,type');
+
   driver.close();
   console.log(fail === 0 ? '\n전부 통과' : `\n실패 ${fail}건`);
   process.exit(fail === 0 ? 0 : 1);

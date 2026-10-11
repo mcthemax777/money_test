@@ -8,6 +8,7 @@ import { homeDataPort } from '@money/core/data/home-port';
 import { EMPTY_SEARCH } from '@money/core/hooks/useTransactions';
 import { accountTypeLabel } from '@money/core/lib/account-type';
 import { accountDueOf } from '@money/core/lib/card-settlement';
+import { todayKey } from '@money/core/lib/datetime';
 import {
   ASSET_TYPE_GROUPS,
   assetGroupAmount,
@@ -25,7 +26,12 @@ import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
 import type { Account, Card, Person } from '@money/core/lib/types';
 import type { EntryListItem } from '@money/types';
-import { useCanEdit, useProject, useProjectDisplayCurrency } from '@money/core/store/project';
+import {
+  useCanEdit,
+  useProject,
+  useProjectDisplayCurrency,
+  useProjectTimeZone,
+} from '@money/core/store/project';
 import { useEntryFocus } from '@money/core/store/entry-focus';
 import { useUserFilter } from '@money/core/store/user-filter';
 
@@ -750,6 +756,7 @@ export default function AssetsScreen() {
 const META_TONE_CLASS: Record<AssetMetaTone, string> = {
   profit: 'font-semibold text-green-600',
   loss: 'font-semibold text-red-600',
+  maturity: 'font-semibold text-blue-600',
   muted: 'text-gray-400',
 };
 
@@ -836,7 +843,9 @@ function AccountRow({
   /* 이 통장으로 빠져나갈 카드 대금과, 그것을 뺀 남은 금액. 셈은 core 가 한다(웹과 같은 값). */
   const { due, remaining } = accountDueOf(account.balance, cards);
   const balanceLine = accountBalanceLine(account, { due, t });
-  const metaParts = accountMetaParts(account, { profit, t });
+  // 만기 D-day 는 가계부 타임존의 오늘과 견준다 (웹과 같다).
+  const today = todayKey(useProjectTimeZone());
+  const metaParts = accountMetaParts(account, { profit, today, t });
   const fade = usePressFade();
 
   /* 겉 상자는 목록(DragList)이 씌운다. 여기서 또 씌우면 테두리가 두 겹이 된다. */

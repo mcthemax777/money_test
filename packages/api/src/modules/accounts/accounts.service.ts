@@ -11,7 +11,9 @@ import { InstitutionsService } from '../institutions/institutions.service';
 import {
   AccountDto,
   HIDDEN_ACCOUNT_TYPES,
+  hasMaturity,
   initialRanks,
+  isMaturityDateKey,
   rankAfter,
 } from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
@@ -36,6 +38,21 @@ const NO_INSTITUTION_TYPES: AccountType[] = [
   AccountType.crypto,
   AccountType.opening_balance,
 ];
+
+/**
+ * 저장할 만기일. 빈 값은 "없음"(null)이고, 만기가 없는 유형에 날짜가 오거나 실재하지 않는
+ * 날이면 조용히 버리지 않고 거부한다.
+ */
+function resolveMaturityDate(value: string | null | undefined, type: AccountType): string | null {
+  if (!value) return null;
+  if (!hasMaturity(type)) {
+    throw new BadRequestException('만기일은 정기예금·적금에만 적을 수 있습니다.');
+  }
+  if (!isMaturityDateKey(value)) {
+    throw new BadRequestException('만기일은 2027-03-15 처럼 보내 주세요.');
+  }
+  return value;
+}
 
 /** owner와 institution을 함께 주는 조회 형태. 응답 모양을 한곳에서 정한다. */
 const ACCOUNT_INCLUDE = { owner: true, institution: true } satisfies Prisma.AccountInclude;
@@ -130,11 +147,12 @@ export class AccountsService {
         accountNumber: dto.accountNumber ?? null,
         // 알림에서 이 통장을 알아보는 말. 빈 값이면 단서가 없는 것이라 null 이다.
         matchText: dto.matchText || null,
+        maturityDate: resolveMaturityDate(dto.maturityDate, dto.type as AccountType),
         currency,
         sortRank: rankAfter(lastRank._max.sortRank),
         fieldHlc: stampFieldClocks(
           null,
-          ['name', 'ownerId', 'institutionId', 'accountNumber', 'matchText'],
+          ['name', 'ownerId', 'institutionId', 'accountNumber', 'matchText', 'maturityDate'],
           hlc ?? this.clock.now(),
         ),
       },
@@ -255,6 +273,13 @@ export class AccountsService {
     if (dto.accountNumber !== undefined) data.accountNumber = dto.accountNumber;
     // 빈 문자열은 "지우기"다. 적어 둔 말을 지울 길이 있어야 한다 (카드의 색과 같다).
     if (dto.matchText !== undefined) data.matchText = dto.matchText || null;
+    // 만기일은 바꿀 유형을 기준으로 본다 (예금 → 적금처럼 함께 바꾸는 요청이 있다).
+    if (dto.maturityDate !== undefined) {
+      data.maturityDate = resolveMaturityDate(dto.maturityDate, nextType);
+    } else if (account.maturityDate && !hasMaturity(nextType)) {
+      // 만기가 없는 유형으로 바꾸면 남은 만기일도 지운다 (기관 연결을 끊는 것과 같다).
+      data.maturityDate = null;
+    }
     if (dto.isActive !== undefined) data.isActive = dto.isActive;
     if (dto.type !== undefined && dto.type !== account.type) data.type = dto.type as AccountType;
     // 순서 바꾸기는 이 필드 하나다 (분수 색인).

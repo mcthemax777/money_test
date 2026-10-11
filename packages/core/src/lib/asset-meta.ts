@@ -12,6 +12,8 @@
  * 무엇을 어떤 차례로 적는지는 웹과 앱이 같아야 해서 여기서 정한다. 색과 크기로 그리는
  * 일만 화면이 맡는다.
  */
+import { hasMaturity } from '@money/types';
+import { daysBetweenKeys } from './datetime';
 import type { MessageKey } from './i18n';
 import { formatCurrency, toNumber } from './money';
 import type { Account } from './types';
@@ -22,12 +24,13 @@ type Translate = (key: MessageKey, params?: Record<string, string | number>) => 
  * 한 조각을 어떤 무게로 그릴지.
  *
  * - `profit`/`loss` 누적 수익. 부호 대신 이름과 색이 갈린다.
- * - `muted` 계좌번호. 읽어야 할 때만 찾는 것이라 가장 흐리다.
+ * - `maturity` 정기예금·적금의 만기까지 남은 날. 날짜가 다가오는 것을 알아채야 해서 색을 준다.
+ * - `muted` 계좌번호와 이미 지난 만기. 읽어야 할 때만 찾는 것이라 가장 흐리다.
  *
  * 잔액은 여기 없다. 큰 금액 바로 밑에 붙는 줄이라 이 줄과 섞이지 않는다
  * (`accountBalanceLine`). 주인도 없다 -- 목록이 주인별로 묶여 머리글이 그 일을 한다.
  */
-export type AssetMetaTone = 'profit' | 'loss' | 'muted';
+export type AssetMetaTone = 'profit' | 'loss' | 'maturity' | 'muted';
 
 export interface AssetMetaPart {
   key: string;
@@ -61,12 +64,17 @@ export function accountBalanceLine(
  *
  * @param profit 누적 수익. 서버가 그 계좌를 수익 대상으로 보지 않으면 없다. 아직
  *   기록이 없어 0인 것과 "계산이 안 됐다"를 가르려고 0도 적지 않는다.
+ * @param today 가계부 타임존의 오늘 "YYYY-MM-DD" (`todayKey`). 만기 D-day 를 이 날과 견준다.
  */
 export function accountMetaParts(
   account: Account,
-  { profit, t }: { profit?: string; t: Translate },
+  { profit, today, t }: { profit?: string; today: string; t: Translate },
 ): AssetMetaPart[] {
   const parts: AssetMetaPart[] = [];
+
+  // 만기는 맨 앞에 둔다. 줄이 넘쳐 접힐 때 가장 먼저 보여야 할 것이 남은 날이다.
+  const maturity = maturityPart(account, today, t);
+  if (maturity) parts.push(maturity);
 
   const profitAmount = profit === undefined ? 0 : toNumber(profit);
   if (profitAmount !== 0) {
@@ -85,4 +93,25 @@ export function accountMetaParts(
   }
 
   return parts;
+}
+
+/**
+ * 만기까지 남은 날. 만기일이 없거나 만기가 없는 유형이면 null 이다.
+ *
+ * 유형을 바꾼 뒤 남은 옛 값(옛 서버는 지우지 않았다)이 다른 유형에 D-day 로 뜨지 않도록
+ * 유형도 함께 본다. 지난 만기는 "D+일"로 흐리게 남긴다 -- 찾아가지 않은 예금일 수 있다.
+ */
+function maturityPart(account: Account, today: string, t: Translate): AssetMetaPart | null {
+  if (!account.maturityDate || !hasMaturity(account.type)) return null;
+
+  const days = daysBetweenKeys(today, account.maturityDate);
+  if (!Number.isFinite(days)) return null;
+
+  if (days > 0) {
+    return { key: 'maturity', text: t('assets.maturityLeft', { days }), tone: 'maturity' };
+  }
+  if (days === 0) {
+    return { key: 'maturity', text: t('assets.maturityToday'), tone: 'maturity' };
+  }
+  return { key: 'maturity', text: t('assets.maturityPassed', { days: -days }), tone: 'muted' };
 }

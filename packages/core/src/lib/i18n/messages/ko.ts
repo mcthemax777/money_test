@@ -509,6 +509,9 @@ export const ko = {
   'match.hint': '알림이나 캡처에 늘 함께 오는 말을 한 줄에 하나씩 적습니다. 그 말이 보이면 보관함이 이 수단으로 채웁니다.',
   'match.placeholder': 'KB국민카드\n국민체크(1234)',
   'account.numberPlaceholder': '예: 123-456-7890',
+  'account.maturityDate': '만기일 (선택)',
+  'account.maturityDatePick': '날짜 고르기',
+  'account.maturityDateClear': '만기일 지우기',
 
   'person.add': '구성원 추가',
   'person.edit': '구성원 수정',
@@ -535,6 +538,9 @@ export const ko = {
   // ===== 자산 화면 =====
   'assets.profit': '수익 +',
   'assets.loss': '손실 -',
+  'assets.maturityLeft': '만기 D-{days}',
+  'assets.maturityToday': '만기 D-Day',
+  'assets.maturityPassed': '만기 D+{days}',
   'assets.noSelection': '선택된 자산주인이 없습니다.',
   'assets.removeFailed': '없애지 못했습니다.',
   'assets.remove': '없애기',

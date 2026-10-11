@@ -143,6 +143,11 @@ export interface Account {
    * 늘 함께 오는 말을 사람이 한 번 적어 두면 그 뒤로는 저절로 채워진다.
    */
   matchText: string | null;
+  /**
+   * 만기일 "YYYY-MM-DD". 정기예금·적금(`MATURITY_ACCOUNT_TYPES`)만 갖고 나머지는 null 이다.
+   * 옛 서버의 응답에는 칸이 없을 수 있다.
+   */
+  maturityDate?: string | null;
   /** 목록에서의 자리 (분수 색인). 사전순 비교가 곧 목록 순서다. */
   sortRank: string;
   createdAt: IsoDateString;

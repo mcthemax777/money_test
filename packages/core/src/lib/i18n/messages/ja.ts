@@ -480,6 +480,9 @@ export const ja: Record<MessageKey, string> = {
   'match.hint': '通知やキャプチャに必ず入る言葉を一行に一つずつ書きます。その言葉があれば受信箱がこの手段で埋めます。',
   'match.placeholder': 'KB国民カード\n国民チェック(1234)',
   'account.numberPlaceholder': '例: 123-456-7890',
+  'account.maturityDate': '満期日 (任意)',
+  'account.maturityDatePick': '日付を選択',
+  'account.maturityDateClear': '満期日を消す',
 
   'person.add': 'メンバーを追加',
   'person.edit': 'メンバーを編集',
@@ -506,6 +509,9 @@ export const ja: Record<MessageKey, string> = {
   // ===== 資産画面 =====
   'assets.profit': '利益 +',
   'assets.loss': '損失 -',
+  'assets.maturityLeft': '満期 D-{days}',
+  'assets.maturityToday': '満期 D-Day',
+  'assets.maturityPassed': '満期 D+{days}',
   'assets.noSelection': '選択された持ち主がいません。',
   'assets.removeFailed': '取り除けませんでした。',
   'assets.remove': '取り除く',

@@ -4,9 +4,11 @@ import { useState, useEffect } from 'react';
 import { apiClient } from '@money/core/lib/api-client';
 import type { Account, AccountType, Person } from '@money/core/lib/types';
 import { ACCOUNT_TYPE_OPTIONS, NO_BANK_TYPES } from '@money/core/lib/account-type';
+import { hasMaturity } from '@money/types';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, toAmountString } from '@money/core/lib/money';
 import MatchTextField from '@/components/MatchTextField';
+import MaturityDateField from '@/components/MaturityDateField';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@money/core/hooks/useInstitutions';
@@ -26,6 +28,8 @@ const EMPTY_FORM = {
   accountNumber: '',
   /** 알림에서 이 통장을 알아보는 말. 여러 줄이다. */
   matchText: '',
+  /** 만기일 "YYYY-MM-DD". 정기예금·적금만 갖는다. */
+  maturityDate: '',
   balance: '',
 };
 
@@ -61,6 +65,8 @@ export default function EditAccountModal({
   // 고르는 중인 유형을 따른다. 기관이 없는 유형으로 바꾸면 그 칸이 사라지고 연결도 끊는다.
   const editingType = formData.type || account?.type || '';
   const needsBankName = !!account && !NO_BANK_TYPES.includes(editingType);
+  // 만기가 없는 유형으로 바꾸면 칸이 사라지고, 서버가 남은 만기일을 함께 지운다.
+  const needsMaturity = hasMaturity(editingType);
 
   // isOpen을 의존성에 넣는 이유: 닫을 때 폼을 비우므로, 같은 계좌 객체(참조 동일)로
   // 다시 열면 account만 볼 때는 effect가 재실행되지 않아 빈 폼이 보였다.
@@ -73,6 +79,7 @@ export default function EditAccountModal({
         institutionId: account.institutionId ?? '',
         accountNumber: account.accountNumber || '',
         matchText: account.matchText ?? '',
+        maturityDate: account.maturityDate ?? '',
         balance: account.balance,
       });
     }
@@ -100,6 +107,8 @@ export default function EditAccountModal({
         ...(formData.accountNumber && { accountNumber: formData.accountNumber }),
         // 비우면 빈 문자열을 보내 지운다. 적어 둔 말을 지울 길이 있어야 한다.
         matchText: formData.matchText,
+        // 비우면 null 을 보내 지운다. 만기가 없는 유형이면 보내지 않는다 (서버가 지운다).
+        ...(needsMaturity ? { maturityDate: formData.maturityDate || null } : {}),
       });
       const data = await apiClient.getAccountsV2(projectId);
       onSuccess(data || []);
@@ -246,6 +255,13 @@ export default function EditAccountModal({
             </div>
           )}
         </div>
+
+        {needsMaturity && (
+          <MaturityDateField
+            value={formData.maturityDate}
+            onChange={(maturityDate) => setFormData({ ...formData, maturityDate })}
+          />
+        )}
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">

@@ -80,8 +80,11 @@
  *
  * 36 은 전표의 사람(`entry.personId`)을 비울 수 있게 된 판이다 (거래한 사람 미지정). 옛 표는
  * 그 칸이 NOT NULL 이라 미지정 전표를 받거나 적을 자리가 없다.
+ *
+ * 37 은 통장에 만기일(`account.maturityDate`)이 생긴 판이다. 옛 표에는 그 칸이 없어 받은 행을
+ * 적을 자리가 없고, 커서만 이어 가면 이미 적힌 만기일이 영영 오지 않는다.
  */
-export const SCHEMA_VERSION = 36;
+export const SCHEMA_VERSION = 37;
 
 /**
  * 표를 만든다. 이미 있으면 아무 일도 하지 않는다.
@@ -165,6 +168,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
      isActive       INTEGER NOT NULL DEFAULT 1,
      /* 알림·캡처에서 이 통장을 알아보는 말. 한 줄에 하나씩이다. */
      matchText      TEXT,
+     /* 만기일 "YYYY-MM-DD". 정기예금·적금만 갖는다. */
+     maturityDate   TEXT,
      sortRank       TEXT NOT NULL DEFAULT 'V',
      fieldHlc       TEXT,
      createdAt      TEXT NOT NULL DEFAULT '',

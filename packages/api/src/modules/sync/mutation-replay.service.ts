@@ -814,6 +814,7 @@ export class MutationReplayService {
         institutionId: payload.institutionId ?? undefined,
         accountNumber: payload.accountNumber ?? undefined,
         matchText: payload.matchText ?? undefined,
+        maturityDate: payload.maturityDate ?? undefined,
         currency: payload.currency,
         openingBalance: payload.initialBalance,
       } as never,

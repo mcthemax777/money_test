@@ -133,6 +133,8 @@ export namespace AccountDto {
      * 빈 문자열을 보내면 지운다 (`색`과 같은 규칙이다).
      */
     matchText?: string;
+    /** 만기일 "YYYY-MM-DD". 정기예금·적금만 받는다. */
+    maturityDate?: string;
     projectId?: string;
   }
 
@@ -152,6 +154,11 @@ export namespace AccountDto {
      * 빈 문자열을 보내면 지운다 (`색`과 같은 규칙이다).
      */
     matchText?: string;
+    /**
+     * 만기일 "YYYY-MM-DD". null 이나 빈 문자열이면 지운다. 정기예금·적금만 받고,
+     * 다른 유형으로 바꾸면 서버가 함께 지운다.
+     */
+    maturityDate?: string | null;
     /**
      * 현재 잔액을 이 값으로 맞춘다.
      *

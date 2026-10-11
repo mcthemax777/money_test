@@ -12,6 +12,8 @@
  *   4. 화면에 나가는 잔액은 지금까지의 거래만 센다. 미래 날짜의 거래는 빠진다.
  *   5. 잔액 맞추기의 목표도 지금 잔액이다. 칸(Account.balance)은 여전히 전부의 합이다.
  *   6. 카드 대금은 결제 통장의 묶음에 든다. 마이너스통장(대출) 카드는 대출 묶음이다.
+ *   7. 만기일은 정기예금·적금만 갖는다. 실재하지 않는 날은 거절하고, 만기가 없는 유형으로
+ *      바꾸면 함께 지운다.
  */
 import { InstitutionsService } from '@/modules/institutions/institutions.service';
 import {
@@ -70,6 +72,41 @@ runSmoke('account-type', async (ctx) => {
   ctx.check('포인트·페이로 바꾸면 기관 연결을 끊는다', pay.institutionId, null);
   await ctx.expectReject('포인트·페이에는 기관을 붙일 수 없다', () =>
     accounts.updateAccount(bank.id, uid, { institutionId: 'fi_bank_shinhan' }),
+  );
+
+  // ── 만기일 ──────────────────────────────────────────────
+  const term = await accounts.createAccount(uid, {
+    type: 'time_deposit', ownerId: person.id, name: '1년 예금', maturityDate: '2027-03-15',
+  } as any, pid);
+  ctx.check('예금은 만기일을 갖는다', term.maturityDate, '2027-03-15');
+  await ctx.expectReject('입출금에는 만기일을 적을 수 없다', () =>
+    accounts.createAccount(uid, {
+      type: 'deposit', ownerId: person.id, name: '입출금', maturityDate: '2027-03-15',
+    } as any, pid),
+  );
+  await ctx.expectReject('실재하지 않는 날은 거절한다', () =>
+    accounts.updateAccount(term.id, uid, { maturityDate: '2027-02-31' }),
+  );
+  ctx.check(
+    '적금으로 바꿔도 만기일은 남는다',
+    (await accounts.updateAccount(term.id, uid, { type: 'savings' })).maturityDate,
+    '2027-03-15',
+  );
+  ctx.check(
+    '입출금으로 바꾸면 만기일을 지운다',
+    (await accounts.updateAccount(term.id, uid, { type: 'deposit' })).maturityDate,
+    null,
+  );
+  ctx.check(
+    '유형과 만기일을 함께 바꾼다',
+    (await accounts.updateAccount(term.id, uid, { type: 'time_deposit', maturityDate: '2026-12-01' }))
+      .maturityDate,
+    '2026-12-01',
+  );
+  ctx.check(
+    'null 이면 만기일을 지운다',
+    (await accounts.updateAccount(term.id, uid, { maturityDate: null })).maturityDate,
+    null,
   );
 
   // ── 지금 잔액 ─────────────────────────────────────────────

@@ -374,6 +374,9 @@ model Account {
   /// 알림·캡처 글에서 이 수단을 알아보는 말. 한 줄에 하나씩이다.
   /// 보관함의 맞추기(@money/core 의 draft-match)가 가장 먼저 보는 단서다.
   matchText     String?
+  /// 만기일 "YYYY-MM-DD". 정기예금·적금(MATURITY_ACCOUNT_TYPES)만 갖는다.
+  /// 시각이 아니라 달력의 날이라 DateTime 대신 문자열로 둔다 -- 타임존에 따라 하루씩 밀리지 않는다.
+  maturityDate  String?
 
   /// 화면 표시 순서 (분수 색인). 이웃 사이에 값을 끼워 넣어 한 줄만 고친다.
   /// 사전순 비교가 곧 목록 순서다 (@money/types 의 rank).

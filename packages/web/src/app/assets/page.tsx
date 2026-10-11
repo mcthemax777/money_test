@@ -31,7 +31,7 @@ import {
   type AssetMetaTone,
 } from '@money/core/lib/asset-meta';
 import { useUserFilter } from '@money/core/store/user-filter';
-import { monthInputToIso } from '@money/core/lib/datetime';
+import { monthInputToIso, todayKey } from '@money/core/lib/datetime';
 import { type AccountDto, type ReportDto } from '@money/types';
 import { ArrowLeft, Info, X } from 'lucide-react';
 import { EMPTY_SEARCH, type TransactionSearch } from '@money/core/hooks/useTransactions';
@@ -124,6 +124,7 @@ import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 const META_TONE_CLASS: Record<AssetMetaTone, string> = {
   profit: 'font-semibold text-green-600',
   loss: 'font-semibold text-red-600',
+  maturity: 'font-semibold text-blue-600',
   muted: 'text-gray-400',
 };
 
@@ -2396,6 +2397,8 @@ function AccountList({
   isExcluded: AccountExclusion['isExcluded'];
 }) {
   const { t } = useTranslation();
+  // 만기 D-day 는 가계부 타임존의 오늘과 견준다.
+  const today = todayKey(useProjectTimeZone());
   const { items, dragProps, draggingId } = useDragReorder(accounts, onReorder ?? (() => {}));
 
   // 빈 상자는 부르는 쪽이 이미 가려냈다. 그래도 그리는 동안 비는 순간은 있다.
@@ -2410,6 +2413,7 @@ function AccountList({
         const balanceLine = accountBalanceLine(account, { due, t });
         const metaParts = accountMetaParts(account, {
           profit: accountProfit.get(account.id),
+          today,
           t,
         });
         /* 합계에서 뺀 계좌. 줄은 그대로 두고 표시를 붙여, 금액을 옅게 적는다 (딸린 카드도 함께 빠진다). */

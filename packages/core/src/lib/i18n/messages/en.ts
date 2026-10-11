@@ -480,6 +480,9 @@ export const en: Record<MessageKey, string> = {
   'match.hint': 'Enter one phrase per line that always appears in the alert or screenshot. When it shows up, the inbox fills in this card or account.',
   'match.placeholder': 'KB Kookmin Card\nCheck card (1234)',
   'account.numberPlaceholder': 'e.g. 123-456-7890',
+  'account.maturityDate': 'Maturity date (optional)',
+  'account.maturityDatePick': 'Pick a date',
+  'account.maturityDateClear': 'Clear maturity date',
 
   'person.add': 'Add member',
   'person.edit': 'Edit member',
@@ -506,6 +509,9 @@ export const en: Record<MessageKey, string> = {
   // ===== Assets screen =====
   'assets.profit': 'Gain +',
   'assets.loss': 'Loss -',
+  'assets.maturityLeft': 'Matures D-{days}',
+  'assets.maturityToday': 'Matures D-Day',
+  'assets.maturityPassed': 'Matured D+{days}',
   'assets.noSelection': 'No owner is selected.',
   'assets.removeFailed': 'Could not remove it.',
   'assets.remove': 'Remove',

@@ -48,6 +48,8 @@ export interface AccountPatch {
   accountNumber?: string | null;
   /** 알림·캡처에서 이 수단을 알아보는 말. 한 줄에 하나씩이다. */
   matchText?: string | null;
+  /** 만기일 "YYYY-MM-DD". 정기예금·적금만 갖는다. null 이면 지운다. */
+  maturityDate?: string | null;
   isActive?: boolean;
   /** 목록에서의 자리 (분수 색인). */
   sortRank?: string;

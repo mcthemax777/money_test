@@ -24,6 +24,7 @@ import {
 import { formatCurrency, toAmountString } from '@money/core/lib/money';
 import type { AssetSaveResult } from '@money/core/hooks/useAssetsData';
 import type { AccountType } from '@money/core/lib/types';
+import { hasMaturity } from '@money/types';
 
 // 알약 줄은 만들기 창의 것을 그대로 쓴다. 같은 칸이 두 창에서 다르게 보이지 않게.
 import { PickRow } from './AssetAddModals';
@@ -32,6 +33,7 @@ import CardPerformanceField from './CardPerformanceField';
 import DayOfMonthSelect from './DayOfMonthSelect';
 import ExpiryMonthSelect from './ExpiryMonthSelect';
 import MatchTextField from './MatchTextField';
+import MaturityDateField from './MaturityDateField';
 import Modal from './Modal';
 import MoveRow from './MoveRow';
 
@@ -286,6 +288,8 @@ export function EditAccountModal({
   currency: string;
   /** 알림에서 이 통장을 알아보는 말. 한 줄에 하나씩이다. */
   matchText?: string | null;
+  /** 만기일 "YYYY-MM-DD". 정기예금·적금만 갖는다. */
+  maturityDate?: string | null;
 }>) {
   const { t } = useTranslation();
   const { options: bankOptions, error: bankError } = useInstitutions('bank');
@@ -305,6 +309,7 @@ export function EditAccountModal({
    */
   const [balance, setBalance] = useState(target.balance);
   const [matchText, setMatchText] = useState(target.matchText ?? '');
+  const [maturityDate, setMaturityDate] = useState(target.maturityDate ?? '');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -314,6 +319,7 @@ export function EditAccountModal({
     setAccountNumber(target.accountNumber ?? '');
     setBalance(target.balance);
     setMatchText(target.matchText ?? '');
+    setMaturityDate(target.maturityDate ?? '');
     setError('');
   }, [
     target.id,
@@ -323,10 +329,12 @@ export function EditAccountModal({
     target.accountNumber,
     target.balance,
     target.matchText,
+    target.maturityDate,
   ]);
 
   // 현금과 부동산은 개설 기관이 없다 (만들기 창과 같은 규칙이다). 고르는 중인 유형을 따른다.
   const needsBank = !NO_BANK_TYPES.includes(type);
+  const needsMaturity = hasMaturity(type);
   /* "10000" 과 "10000.00" 은 글자로는 다르고 값으로는 같다. 숫자로 견준다. */
   const balanceChanged = balance !== '' && Number(balance) !== Number(target.balance);
 
@@ -366,6 +374,15 @@ export function EditAccountModal({
                 ...(balanceChanged ? { balance: toAmountString(balance) } : {}),
                 // 비우면 null 을 보내 지운다. 적어 둔 말을 지울 길이 있어야 한다.
                 matchText: matchText.trim() || null,
+                /*
+                 * 비우면 null 을 보내 지운다. 만기가 없는 유형으로 바꿨으면 남은 날짜도 지운다 --
+                 * 서버도 지우지만 사본은 명령을 그대로 적으므로 여기서 함께 보내야 같아진다.
+                 */
+                ...(needsMaturity
+                  ? { maturityDate: maturityDate || null }
+                  : target.maturityDate
+                    ? { maturityDate: null }
+                    : {}),
               }),
               true,
             )
@@ -433,6 +450,10 @@ export function EditAccountModal({
             </View>
           ) : null}
         </Field>
+
+        {needsMaturity ? (
+          <MaturityDateField value={maturityDate} onChange={setMaturityDate} />
+        ) : null}
 
         <Field label={t('account.number')}>
           <TextInput

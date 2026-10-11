@@ -19,7 +19,7 @@ import { monthInputToIso } from '@money/core/lib/datetime';
 import { useTranslation } from '@money/core/lib/i18n';
 import { dayOfMonthHint } from '@money/core/lib/day-of-month';
 import { currencyLabel, toAmountString } from '@money/core/lib/money';
-import { SUPPORTED_CURRENCIES, type CurrencyCode } from '@money/types';
+import { SUPPORTED_CURRENCIES, hasMaturity, type CurrencyCode } from '@money/types';
 import {
   DEFAULT_PAYMENT_DUE_DAY,
   DEFAULT_STATEMENT_CLOSING_DAY,
@@ -33,6 +33,7 @@ import CardPerformanceField from './CardPerformanceField';
 import DayOfMonthSelect from './DayOfMonthSelect';
 import ExpiryMonthSelect from './ExpiryMonthSelect';
 import MatchTextField from './MatchTextField';
+import MaturityDateField from './MaturityDateField';
 import Modal from './Modal';
 
 /** 폼 한 칸. 이름표와 입력이 늘 같은 간격으로 놓인다. */
@@ -207,6 +208,8 @@ export function AddAccountModal({
     accountNumber?: string;
     /** 알림에서 이 통장을 알아보는 말. 한 줄에 하나씩이다. */
     matchText?: string;
+    /** 만기일 "YYYY-MM-DD". 정기예금·적금만 보낸다. */
+    maturityDate?: string;
     currency?: string;
     openingBalance?: string;
   }) => Promise<AssetSaveResult>;
@@ -233,6 +236,8 @@ export function AddAccountModal({
   const [accountNumber, setAccountNumber] = useState('');
   /** 알림에서 이 통장을 알아보는 말. 여러 줄이다. */
   const [matchText, setMatchText] = useState('');
+  /** 만기일 "YYYY-MM-DD". 정기예금·적금일 때만 칸이 선다. */
+  const [maturityDate, setMaturityDate] = useState('');
   /** 이 통장의 통화. 만든 뒤에는 바꿀 수 없어 여기서만 고른다. */
   const [currency, setCurrency] = useState<CurrencyCode>(ledgerCurrency as CurrencyCode);
   const [error, setError] = useState('');
@@ -246,6 +251,7 @@ export function AddAccountModal({
       setOpeningBalance('');
       setAccountNumber('');
       setMatchText('');
+      setMaturityDate('');
       setCurrency(ledgerCurrency as CurrencyCode);
       setError('');
     }
@@ -253,6 +259,7 @@ export function AddAccountModal({
 
   // 현금과 부동산은 개설 기관이 없다. 보내면 서버가 거부한다.
   const needsBank = !NO_BANK_TYPES.includes(type);
+  const needsMaturity = hasMaturity(type);
 
   const save = async () => {
     const result = await onSubmit({
@@ -262,6 +269,8 @@ export function AddAccountModal({
       ...(needsBank && institutionId ? { institutionId } : {}),
       ...(accountNumber.trim() ? { accountNumber: accountNumber.trim() } : {}),
       ...(matchText.trim() ? { matchText: matchText.trim() } : {}),
+      // 예금으로 골라 날짜를 적은 뒤 다른 유형으로 바꿨으면 그 날짜는 보내지 않는다 (웹과 같다).
+      ...(needsMaturity && maturityDate ? { maturityDate } : {}),
       currency,
       openingBalance: toAmountString(openingBalance || '0'),
     });
@@ -350,6 +359,10 @@ export function AddAccountModal({
             className={INPUT}
           />
         </Field>
+
+        {needsMaturity ? (
+          <MaturityDateField value={maturityDate} onChange={setMaturityDate} />
+        ) : null}
 
         <Field label={t('account.number')}>
           <TextInput

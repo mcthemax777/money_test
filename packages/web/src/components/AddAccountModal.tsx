@@ -4,9 +4,11 @@ import { useEffect, useState } from 'react';
 import { apiClient } from '@money/core/lib/api-client';
 import {
   SUPPORTED_CURRENCIES,
+  hasMaturity,
   type CurrencyCode,
 } from '@money/types';
 import MatchTextField from '@/components/MatchTextField';
+import MaturityDateField from '@/components/MaturityDateField';
 import Modal from '@/components/Modal';
 import CustomSelect from '@/components/CustomSelect';
 import { useInstitutions } from '@money/core/hooks/useInstitutions';
@@ -48,6 +50,8 @@ const EMPTY_FORM = {
   accountNumber: '',
   /** 알림에서 이 통장을 알아보는 말. 여러 줄이다. */
   matchText: '',
+  /** 만기일 "YYYY-MM-DD". 정기예금·적금만 보낸다. */
+  maturityDate: '',
 };
 
 export default function AddAccountModal({
@@ -73,6 +77,7 @@ export default function AddAccountModal({
   }, [isOpen, defaultOwnerId]);
 
   const needsBankName = !NO_BANK_TYPES.includes(formData.type);
+  const needsMaturity = hasMaturity(formData.type);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -92,6 +97,8 @@ export default function AddAccountModal({
           : {}),
         ...(formData.accountNumber ? { accountNumber: formData.accountNumber } : {}),
         ...(formData.matchText ? { matchText: formData.matchText } : {}),
+        // 유형을 예금으로 골라 날짜를 적은 뒤 다른 유형으로 바꿨으면 그 날짜는 보내지 않는다.
+        ...(needsMaturity && formData.maturityDate ? { maturityDate: formData.maturityDate } : {}),
         ...(projectId ? { projectId } : {}),
       });
       const data = await apiClient.getAccountsV2(projectId);
@@ -217,6 +224,13 @@ export default function AddAccountModal({
             {t('account.openingBalanceHint')}
           </p>
         </div>
+
+        {needsMaturity && (
+          <MaturityDateField
+            value={formData.maturityDate}
+            onChange={(maturityDate) => setFormData({ ...formData, maturityDate })}
+          />
+        )}
 
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">
