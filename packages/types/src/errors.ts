@@ -83,6 +83,12 @@ export const ERROR_CODES = [
   'CANNOT_KICK_SELF',
   'CANNOT_TRANSFER_TO_SELF',
 
+  // 계정
+  /** 다른 구성원이 있는 가계부의 소유자다. 소유자를 넘기거나 구성원을 내보내야 계정을 지운다. details.projects 는 이름들. */
+  'ACCOUNT_OWNS_SHARED_PROJECTS',
+  /** 함께 지울 가계부의 Play 구독을 해지하지 못했다. 사용자가 Play 스토어에서 해지한 뒤 다시 한다. details.projects 는 이름들. */
+  'ACCOUNT_SUBSCRIPTION_CANCEL_FAILED',
+
   // 거래
   'ENTRY_NOT_FOUND',
   /**

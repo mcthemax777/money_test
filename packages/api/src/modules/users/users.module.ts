@@ -3,11 +3,13 @@ import { UsersService } from './users.service';
 import { UsersController } from './users.controller';
 import { DatabaseModule } from '../../config/database.module';
 import { ProjectAccessService } from '../../common/project-access.guard';
+import { PlansModule } from '../plans/plans.module';
+import { AccountDeletionService } from './account-deletion.service';
 
 @Module({
-  imports: [DatabaseModule],
+  imports: [DatabaseModule, PlansModule],
   controllers: [UsersController],
-  providers: [UsersService, ProjectAccessService],
+  providers: [UsersService, ProjectAccessService, AccountDeletionService],
   exports: [UsersService, ProjectAccessService],
 })
 export class UsersModule {}

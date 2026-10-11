@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 
-import { apiClient } from '@money/core/lib/api-client';
+import { useAccountDeletion } from '@money/core/hooks/useAccountDeletion';
 import { useApiError } from '@money/core/lib/api-error';
 import { activeLocaleTag, useTranslation } from '@money/core/lib/i18n';
 import { useAuth } from '@money/core/store/auth';
@@ -9,7 +9,9 @@ import { saveProfile } from '@money/core/store/pending-profile';
 
 import { signOutGoogle } from '../api';
 import { unregisterPushDevice } from '../push';
+import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
+import TypedConfirmModal from '../components/TypedConfirmModal';
 import { UserAvatar } from '../components/UserAvatar';
 
 /** 내 정보. 웹의 /settings/profile 과 같은 배치다. */
@@ -24,6 +26,7 @@ export default function ProfileScreen() {
   const [isLoggingOut, setIsLoggingOut] = useState(false);
   const [error, setError] = useState('');
   const [savedMessage, setSavedMessage] = useState('');
+  const deletion = useAccountDeletion();
 
   const startEditing = () => {
     setNameInput(user?.name ?? '');
@@ -78,6 +81,18 @@ export default function ProfileScreen() {
       await logout();
       setIsLoggingOut(false);
     }
+  };
+
+  /**
+   * 계정을 지운 뒤. 서버의 푸시 기기는 계정과 함께 지워졌으므로 지우러 가지 않는다 -- 토큰이
+   * 이미 죽어 401 만 받는다. 구글 세션과 이 기기의 사본은 로그아웃과 똑같이 끊는다.
+   */
+  const confirmDeletion = async () => {
+    const result = await deletion.remove();
+    if (!result.ok) return result;
+    await signOutGoogle();
+    await logout();
+    return result;
   };
 
   return (
@@ -174,6 +189,58 @@ export default function ProfileScreen() {
           </Text>
         </Pressable>
       </View>
+
+      <View className="rounded-lg bg-white p-6 shadow-sm">
+        <Text className="text-lg font-semibold text-gray-900">{t('profile.deleteAccount')}</Text>
+        <Text className="mt-1 text-sm text-gray-600">{t('profile.deleteAccountHint')}</Text>
+        {deletion.error ? <Text className="mt-2 text-sm text-red-600">{deletion.error}</Text> : null}
+        <Pressable
+          onPress={() => void deletion.check()}
+          disabled={deletion.isChecking}
+          className={`mt-4 self-start rounded-lg border border-red-300 px-4 py-2 ${
+            deletion.isChecking ? 'opacity-50' : 'active:bg-red-50'
+          }`}
+        >
+          <Text className="text-red-600">
+            {deletion.isChecking ? t('profile.deleteAccountChecking') : t('profile.deleteAccount')}
+          </Text>
+        </Pressable>
+      </View>
+
+      <Modal
+        isOpen={deletion.isBlockedOpen}
+        onClose={deletion.close}
+        title={t('profile.deleteAccountBlockedTitle')}
+        footer={
+          <Pressable
+            onPress={deletion.close}
+            className="items-center rounded-lg bg-gray-200 px-4 py-3 active:bg-gray-300"
+          >
+            <Text className="text-base font-semibold text-gray-700">{t('common.close')}</Text>
+          </Pressable>
+        }
+      >
+        <View className="gap-3">
+          <Text className="text-sm text-gray-700">{t('profile.deleteAccountBlocked')}</Text>
+          {deletion.blocked.map((project) => (
+            <Text key={project.id} className="text-sm font-medium text-gray-900">
+              {'• '}
+              {t('profile.deleteAccountBlockedItem', { name: project.name, count: project.memberCount })}
+            </Text>
+          ))}
+        </View>
+      </Modal>
+
+      <TypedConfirmModal
+        isOpen={deletion.isConfirmOpen}
+        onClose={deletion.close}
+        title={t('profile.deleteAccountTitle')}
+        body={deletion.confirmBody}
+        phrase={t('profile.deleteAccountPhrase')}
+        actionLabel={t('profile.deleteAccountAction')}
+        isSubmitting={deletion.isDeleting}
+        onConfirm={confirmDeletion}
+      />
     </View>
   );
 }

@@ -127,6 +127,29 @@ export class PlansService {
   }
 
   /**
+   * Play 구독이 이어지는 중인 프로젝트와 그 구독의 마지막 거래 번호(isRenewingStoreGrant).
+   * 계정 삭제가 알리고 해지한다. 거래 번호는 결제 번호 열쇠의 앞부분이다(`거래번호@산시각`).
+   */
+  async renewingStoreSubscriptions(
+    projectIds: string[],
+    now = new Date(),
+  ): Promise<Array<{ projectId: string; transactionId: string }>> {
+    if (projectIds.length === 0) return [];
+    const rows = await this.prisma.projectPlanGrant.findMany({
+      where: { projectId: { in: projectIds }, source: 'google_play', revokedAt: null, endsAt: { gt: now } },
+      orderBy: { startsAt: 'desc' },
+      select: { projectId: true, externalId: true },
+    });
+    const latest = new Map<string, string>();
+    for (const row of rows) {
+      // 늦게 시작한 것이 먼저 온다. 프로젝트마다 첫 줄이 마지막 갱신이다.
+      if (!row.projectId || !row.externalId || latest.has(row.projectId)) continue;
+      latest.set(row.projectId, row.externalId.split('@')[0]);
+    }
+    return [...latest].map(([projectId, transactionId]) => ({ projectId, transactionId }));
+  }
+
+  /**
    * 관리 도구의 프로젝트 찾기. 이름의 일부, 참여 키, id, 소유자 이메일의 일부로 찾는다.
    * 빈 말이면 최근에 만든 것부터 보인다.
    */
@@ -241,10 +264,7 @@ export class PlansService {
         }
         const window = nextWindow(base, live, now);
 
-        // 이어지는 Play 구독. 끝이 지났으면 갱신되지 않은(해지·결제 실패) 구독이라 미룰 결제가 없다.
-        const playRenewing = live.some(
-          (grant) => grant.source === 'google_play' && grant.endsAt !== null && grant.endsAt > now,
-        );
+        const playRenewing = live.some((grant) => isRenewingStoreGrant(grant, now));
         let deferredTo: Date | null = null;
         if (playRenewing && defer) {
           if (window.endsAt === null) {
@@ -420,6 +440,17 @@ async function signalPlanChanged(tx: Prisma.TransactionClient, projectId: string
 function ignoreNotFound(error: unknown): null {
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') return null;
   throw error;
+}
+
+/**
+ * 이어지는 Play 구독의 줄인가. 끝이 지나지 않은 Play 줄이 있으면 다음 결제가 남아 있다.
+ * 끝이 지났으면 갱신되지 않은(해지·결제 실패) 구독이다.
+ */
+function isRenewingStoreGrant(
+  grant: { source: PlanGrantSource; endsAt: Date | null; revokedAt: Date | null },
+  now: Date,
+): boolean {
+  return grant.source === 'google_play' && grant.revokedAt === null && grant.endsAt !== null && grant.endsAt > now;
 }
 
 /** 넣은 값 검사. 잠그기 전에 한다. */

@@ -11,6 +11,7 @@ import {
   hasRandomSource,
   newId,
   withNewId,
+  type AccountDeletionPreview,
   type AppPlatform,
   type AppVersionPolicy,
 } from '@money/types';
@@ -413,6 +414,17 @@ class ApiClient {
   async getProfile() {
     const response = await this.client.get<any>('/users/me');
     return response.data;
+  }
+
+  /** 계정을 지우면 함께 사라지는 가계부와 지우기를 막는 가계부. */
+  async getAccountDeletionPreview(): Promise<AccountDeletionPreview> {
+    const response = await this.client.get<AccountDeletionPreview>('/users/me/deletion');
+    return response.data;
+  }
+
+  /** 계정 삭제. 다른 구성원이 있는 가계부의 소유자면 409(ACCOUNT_OWNS_SHARED_PROJECTS). */
+  async deleteAccount(): Promise<void> {
+    await this.client.delete('/users/me');
   }
 
   /** 이름·사진·화면 언어. 서버는 준 값만 고친다. */

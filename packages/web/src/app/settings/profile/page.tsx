@@ -7,6 +7,9 @@ import { saveProfile } from '@money/core/store/pending-profile';
 import { apiClient } from '@money/core/lib/api-client';
 import { UserAvatar } from '@/components/UserAvatar';
 import PageHeader from '@/components/PageHeader';
+import Modal from '@/components/Modal';
+import TypedConfirmModal from '@/components/TypedConfirmModal';
+import { useAccountDeletion } from '@money/core/hooks/useAccountDeletion';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useApiError } from '@money/core/lib/api-error';
 
@@ -16,6 +19,7 @@ export default function ProfilePage() {
   const { messageOf } = useApiError();
   const { user, loadUser, logout } = useAuth();
   const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const deletion = useAccountDeletion();
 
   const [isEditingName, setIsEditingName] = useState(false);
   const [nameInput, setNameInput] = useState('');
@@ -82,6 +86,21 @@ export default function ProfilePage() {
     } finally {
       router.push('/login');
     }
+  };
+
+  /**
+   * 계정을 지운 뒤. 로그아웃과 같이 토큰·사본을 비우고 로그인 화면으로 보낸다. 앱 밖에서 지울
+   * 수 있는 자리이기도 하다 -- Play 는 계정 삭제를 요청할 웹 주소도 요구한다.
+   */
+  const confirmDeletion = async () => {
+    const result = await deletion.remove();
+    if (!result.ok) return result;
+    try {
+      await logout();
+    } finally {
+      router.push('/login');
+    }
+    return result;
   };
 
   return (
@@ -179,6 +198,53 @@ export default function ProfilePage() {
           {isLoggingOut ? t('profile.loggingOut') : t('profile.logout')}
         </button>
       </div>
+
+      <div className="bg-white rounded-lg shadow p-6">
+        <h2 className="text-lg font-semibold text-gray-900">{t('profile.deleteAccount')}</h2>
+        <p className="mt-1 text-sm text-gray-600">{t('profile.deleteAccountHint')}</p>
+        {deletion.error ? <p className="mt-2 text-sm text-red-600">{deletion.error}</p> : null}
+        <button
+          onClick={() => void deletion.check()}
+          disabled={deletion.isChecking}
+          className="mt-4 px-4 py-2 border border-red-300 text-red-600 rounded-lg hover:bg-red-50 active:bg-red-100 disabled:opacity-50 transition"
+        >
+          {deletion.isChecking ? t('profile.deleteAccountChecking') : t('profile.deleteAccount')}
+        </button>
+      </div>
+
+      <Modal
+        isOpen={deletion.isBlockedOpen}
+        onClose={deletion.close}
+        title={t('profile.deleteAccountBlockedTitle')}
+        footer={
+          <button
+            onClick={deletion.close}
+            className="w-full rounded-lg bg-gray-200 px-4 py-2.5 font-semibold text-gray-700 transition hover:bg-gray-300"
+          >
+            {t('common.close')}
+          </button>
+        }
+      >
+        <p className="text-sm text-gray-700">{t('profile.deleteAccountBlocked')}</p>
+        <ul className="mt-3 list-disc space-y-1 pl-5 text-sm font-medium text-gray-900">
+          {deletion.blocked.map((project) => (
+            <li key={project.id}>
+              {t('profile.deleteAccountBlockedItem', { name: project.name, count: project.memberCount })}
+            </li>
+          ))}
+        </ul>
+      </Modal>
+
+      <TypedConfirmModal
+        isOpen={deletion.isConfirmOpen}
+        onClose={deletion.close}
+        title={t('profile.deleteAccountTitle')}
+        body={deletion.confirmBody}
+        phrase={t('profile.deleteAccountPhrase')}
+        actionLabel={t('profile.deleteAccountAction')}
+        isSubmitting={deletion.isDeleting}
+        onConfirm={confirmDeletion}
+      />
     </div>
   );
 }

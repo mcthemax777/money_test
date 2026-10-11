@@ -1,4 +1,5 @@
 import {
+  BadGatewayException,
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -37,6 +38,11 @@ export function notFound(code: ErrorCode, message: string, details?: ErrorDetail
  */
 export function conflict(code: ErrorCode, message: string, details?: ErrorDetails) {
   return new ConflictException(payload(code, message, details));
+}
+
+/** 바깥 서비스(스토어 등)가 거절했거나 닿지 않았다. 사용자가 다른 길로 풀 수 있을 때 코드를 붙인다. */
+export function badGateway(code: ErrorCode, message: string, details?: ErrorDetails) {
+  return new BadGatewayException(payload(code, message, details));
 }
 
 export function forbidden(code: ErrorCode, message: string, details?: ErrorDetails) {

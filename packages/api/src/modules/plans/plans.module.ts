@@ -12,6 +12,6 @@ import { StoreBillingService } from './store-billing.service';
   imports: [DatabaseModule, ConfigModule],
   controllers: [BillingWebhookController],
   providers: [PlansService, BillingWebhookService, StoreBillingService],
-  exports: [PlansService],
+  exports: [PlansService, StoreBillingService],
 })
 export class PlansModule {}

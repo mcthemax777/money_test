@@ -42,3 +42,4 @@ export * from './entry-sheet';
 export * from './entry-sheet-io';
 export * from './balance-history';
 export * from './plans';
+export * from './account';
