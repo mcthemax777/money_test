@@ -39,6 +39,7 @@ import {
   parseMethod,
   paybackFormFrom,
   type EntryFormValues,
+  type PaybackCard,
 } from '../src/data/entry-form';
 import { createLocalEntryWriter } from '../src/data/local-entry-writer';
 import {
@@ -72,6 +73,13 @@ setRandomBytes((count) => {
 });
 
 const KST = 'Asia/Seoul';
+
+/*
+ * 페이백 폼의 들어온 곳 기본값은 카드의 연결 통장이다 (`paybackMethodOf`). 여기서는 그 바꾸기를
+ * 보지 않고 원거래 수단을 그대로 두는 경우만 본다 -- 카드를 모르면 수단을 그대로 둔다.
+ */
+const NO_CARDS: readonly PaybackCard[] = [];
+const ANY_METHOD = () => true;
 
 /** 검증만 보는 최소 폼. 갈래마다 필요한 칸을 채워 둔다. */
 const validExpense: EntryFormValues = {
@@ -127,7 +135,8 @@ const codeOf = (values: Partial<EntryFormValues>) =>
 
   // ── 2. 검증 ──
   eq('맞는 값은 통과', checkEntryForm(validExpense, CARD_LIABILITY), null);
-  eq('사람 없음', codeOf({ personId: '' }), 'PERSON_REQUIRED');
+  // 거래한 사람은 비울 수 있다 (미지정, 2026-10-10 558dfd0). 예전에는 PERSON_REQUIRED 로 막았다.
+  eq('사람은 비어도 통과', codeOf({ personId: '' }), null);
   /*
    * 설명은 묻지 않는다. 웹과 서버가 처음부터 빈 설명을 받아들였고 목록도 그때를
    * 대비해 그린다 (분류가 그 줄의 이름이 된다). 여기서만 막으면 같은 거래를 웹에서는
@@ -615,7 +624,7 @@ const codeOf = (values: Partial<EntryFormValues>) =>
         parentCategoryName: null, amount: '100000', discountAmount: null, tags: [], matched: true },
     ] as never,
   });
-  const fromLunch = paybackFormFrom(lunch, KST);
+  const fromLunch = paybackFormFrom(lunch, KST, NO_CARDS, ANY_METHOD);
   eq('페이백 폼의 갈래', fromLunch.kind, 'payback');
   eq('줄이 하나면 그 줄과 그 분류', `${fromLunch.paybackOfLineKey} ${fromLunch.categoryId}`, 'l-food c-food');
   eq('들어온 곳의 기본은 원거래의 수단', fromLunch.method, accountValue('a1'));
@@ -635,7 +644,7 @@ const codeOf = (values: Partial<EntryFormValues>) =>
         parentCategoryName: null, amount: '5000', discountAmount: null, tags: [], matched: true },
     ] as never,
   });
-  const fromSplit = paybackFormFrom(martSplit, KST);
+  const fromSplit = paybackFormFrom(martSplit, KST, NO_CARDS, ANY_METHOD);
   eq('분할이면 줄을 비워 둔다', fromSplit.paybackOfLineKey, '');
   eq('줄을 고르지 않으면 막는다', checkEntryForm({ ...fromSplit, amount: '1000' })?.code, 'PAYBACK_LINE_REQUIRED');
   eq('줄을 고르면 통과', checkEntryForm({ ...fromSplit, amount: '1000', paybackOfLineKey: 'l-b', categoryId: 'c-b' }), null);
@@ -876,7 +885,7 @@ const codeOf = (values: Partial<EntryFormValues>) =>
     (row) => row.kind === 'expense' && row.lines.length === 1 && !row.originalCurrency,
   );
   if (plainExpense) {
-    const paybackForm = { ...paybackFormFrom(plainExpense, KST), amount: '1' };
+    const paybackForm = { ...paybackFormFrom(plainExpense, KST, NO_CARDS, ANY_METHOD), amount: '1' };
     await writer.createEntry({ ...entryFormToRequest(paybackForm, KST), id: 'payback-from-device' });
     const queued = (await store.pendingMutations(projectId)).find((row) =>
       row.targets.includes('payback-from-device'),
