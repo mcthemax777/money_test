@@ -50,6 +50,8 @@ function netPoints(
 export interface NetAnalysis {
   isLoading: boolean;
   isOffline: boolean;
+  /** 지출·수입 한쪽이라도 받지 못했다 (useCategoryDetail 의 hasError). */
+  hasError: boolean;
   /** 기간별 순수입. 마지막 칸이 보고 있는 기간이다. */
   trend: BarPoint[];
   trendTitle: MessageKey;
@@ -95,6 +97,7 @@ export function useNetAnalysis(input: Omit<CategoryDetailInput, 'categoryId'>): 
   return {
     isLoading: expense.isLoading || income.isLoading,
     isOffline: expense.isOffline || income.isOffline,
+    hasError: expense.hasError || income.hasError,
     trend,
     trendTitle: labels.title,
     trendEmpty: labels.empty,

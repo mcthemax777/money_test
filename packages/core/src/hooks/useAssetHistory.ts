@@ -33,6 +33,7 @@ import { isOfflineError } from '../lib/offline-error';
 import { useHistoryGranularity, type HistoryGranularity } from '../store/history-granularity';
 import { useProjectDisplayCurrency, useProjectTimeZone } from '../store/project';
 import { useWeekStart } from '../store/week-start';
+import { useMirrorVersion } from './useMirrorVersion';
 
 /** 직접 고르는 구간 단위. 눌러서 한 단 내려가는 길(`drillInto`)도 같은 단위를 쓴다. */
 export type Granularity = HistoryGranularity;
@@ -240,6 +241,7 @@ export function useAssetHistory({
 }: AssetHistoryInput): AssetHistory {
   const displayCurrency = useProjectDisplayCurrency();
   const timeZone = useProjectTimeZone();
+  const mirrorVersion = useMirrorVersion();
   /** 주 단위에서 한 주를 어디서 끊을지. 거래 화면의 주 묶음과 같은 설정이다. */
   const weekStart = useWeekStart();
   /**
@@ -579,6 +581,9 @@ export function useAssetHistory({
     fetchSpan,
     timeZone,
     weekStart,
+    // 앱은 사본이 추이를 센다. 거래를 고치거나 동기화가 들어오면 다시 받는다 (2026-10-16 -- 탭을
+    // 숨겨 두게 된 뒤로 이 값이 없으면 고친 잔액이 그래프에 영영 오르지 않았다). 웹은 0 에 머문다.
+    mirrorVersion,
   ]);
 
   useEffect(() => {

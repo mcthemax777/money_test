@@ -322,9 +322,17 @@ export function formatCumulativeChange(
   currency: string,
 ): string | null {
   if (value === null || base === null) return null;
-  const diff = value - base;
+  const diff = cumulativeDiff(value, base);
   if (diff === 0) return '0';
   return `${diff > 0 ? '▲' : '▼'}${formatAxisAmount(Math.abs(diff), currency)}`;
+}
+
+/**
+ * 두 누적의 차. 센트(소수 둘째 자리)에서 반올림한다 -- 외화 금액을 실수로 쌓으면 같은 값의 차가
+ * 0.0000001 처럼 남아 "▲$0.00" 으로 적히고 색도 늘었다로 칠해졌다 (2026-10-16).
+ */
+function cumulativeDiff(value: number, base: number): number {
+  return Math.round((value - base) * 100) / 100;
 }
 
 /** 누적 그래프 한 줄이 견줄 두 값. 이번 달은 지난달과, 지난달은 전전달과. 가장 오래된 선은 없다. */
@@ -357,7 +365,7 @@ export function cumulativeTrendOf(
 ): 'up' | 'down' | 'flat' | null {
   const pair = cumulativePairOf(row, key);
   if (!pair || pair[0] === null || pair[1] === null) return null;
-  const diff = pair[0] - pair[1];
+  const diff = cumulativeDiff(pair[0], pair[1]);
   return diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat';
 }
 

@@ -34,6 +34,7 @@ import PageHeader from '@/components/PageHeader';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import SpendingMethodCarousel from '@/components/SpendingMethodCarousel';
 import type { EntryType } from '@/components/TypeTabs';
+import { ScreenVisibility } from '@/components/ScreenVisible';
 
 /**
  * 로그인하면 처음 보는 화면.
@@ -167,6 +168,7 @@ export default function HomePage() {
         </div>
       ) : null}
     <div className={`space-y-6 ${analysis ? 'hidden' : returnClass}`}>
+      <ScreenVisibility visible={!analysis}>
       {hasError && (
         <div className="p-3 bg-red-50 text-red-800 text-sm rounded-lg">{t('home.loadFailed')}</div>
       )}
@@ -283,6 +285,7 @@ export default function HomePage() {
         onReferenceDataChange={home.applyReferencePatch}
         onEntryChange={home.reloadEntries}
       />
+      </ScreenVisibility>
     </div>
     </>
   );

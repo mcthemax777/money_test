@@ -1,4 +1,5 @@
 import { NestFactory } from '@nestjs/core';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
@@ -6,7 +7,17 @@ import { GlobalExceptionFilter } from './filters/global-exception.filter';
 import { LoggingInterceptor } from './interceptors/logging.interceptor';
 
 async function bootstrap() {
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  /*
+   * 같은 기기의 nginx 가 넘겨준 사용자 주소(X-Forwarded-For)를 믿는다 (2026-10-16).
+   *
+   * 이것이 없으면 모든 요청의 주소가 nginx(127.0.0.1)라, 요청 제한(ThrottlerGuard 는 req.ip 로
+   * 센다)이 사용자 전체에 한 통으로 걸렸다 -- 한 사람이 많이 부르거나 관리자 로그인을 몇 번 틀리면
+   * 모두가 429 를 받았다. loopback 만 믿으므로 바깥에서 그 헤더를 지어 보내도 통하지 않는다.
+   * nginx 가 헤더를 싣지 않으면 지금과 같다(127.0.0.1).
+   */
+  app.set('trust proxy', 'loopback');
 
   app.enableCors({
     origin: process.env.CORS_ORIGIN?.split(',') || 'http://localhost:3000',

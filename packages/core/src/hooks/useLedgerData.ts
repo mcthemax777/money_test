@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { EntryFilterQuery, EntryListItem, EntrySearchQuery, ReportDto } from '@money/types';
 
 import { installmentEntryViews, toEntrySearchQuery } from '@money/types';
@@ -180,8 +180,12 @@ export function useLedgerData({
   // 객체는 렌더마다 새로 만들어지므로 의존성에는 값을 쓴다.
   const rangeKey = `${entryRange.startDate}~${entryRange.endDate}`;
 
+  /** 마지막으로 내보낸 받기의 번호. 늦게 온 앞 받기의 답이 새 구간을 덮지 않게 한다. */
+  const periodRequest = useRef(0);
+
   const reloadPeriod = useCallback(async () => {
     if (!projectId) return;
+    const requestId = ++periodRequest.current;
 
     const queryKey = JSON.stringify([
       projectId,
@@ -221,6 +225,8 @@ export function useLedgerData({
         port.getSummary(reportPeriod, projectId, { ...filter, basis }),
       ]);
 
+      // 달을 빨리 넘기면 앞 달의 답이 늦게 올 수 있다. 지금 보는 구간의 것이 아니면 버린다.
+      if (requestId !== periodRequest.current) return;
       const rows = [...((entryRows ?? []) as EntryListItem[]), ...(pastRows ?? [])];
       const viewed = spread
         ? installmentEntryViews(rows, {
@@ -246,6 +252,7 @@ export function useLedgerData({
       periodLoaded.mark(queryKey);
     } catch (error) {
       console.error('거래 조회 실패:', error);
+      if (requestId !== periodRequest.current) return;
       // 다시 받다 실패했다면 그려 둔 거래는 여전히 이 구간의 것이다. 비우지 않는다.
       if (isRefresh) return;
       setEntries([]);

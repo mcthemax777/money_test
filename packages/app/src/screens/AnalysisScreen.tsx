@@ -132,6 +132,11 @@ export default function AnalysisScreen({
     restoreTo(analysisOffset.current);
   };
   useCloseOnBack(isCovered, closeCover);
+  /* 가계부를 바꾸면 덮어 둔 화면은 앞 가계부의 조건이라 닫는다 (탭을 숨겨 두므로 저절로 닫히지 않는다). */
+  useEffect(() => {
+    setEntriesSearch(null);
+    setPicked(null);
+  }, [projectId]);
 
   /**
    * 한 번 연 탭(합계·지출·수입). 안 보이게 숨겨 두고 다시 누르면 곧바로 보인다(`FadeIn`).

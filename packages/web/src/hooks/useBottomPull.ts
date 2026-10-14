@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
+import { useScreenVisible } from '@/components/ScreenVisible';
 
 /** 다음 쪽을 부르기까지 바닥에서 더 당겨야 하는 거리(px) */
 const PULL_THRESHOLD = 72;
@@ -36,6 +37,8 @@ export function useBottomPull({
   loadMore: () => void;
 }): number {
   const [pull, setPull] = useState(0);
+  /* 숨은 화면은 당김을 받지 않는다 -- 덮개 아래의 장부가 보이는 화면의 스크롤로 다음 쪽을 받았다 (2026-10-16). */
+  const visible = useScreenVisible();
   const pullRef = useRef(0);
   const resetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -44,14 +47,14 @@ export function useBottomPull({
    * 스크롤이 생길 때까지만 스스로 잇는다.
    */
   useEffect(() => {
-    if (!hasMore || isLoading || count === 0) return;
+    if (!visible || !hasMore || isLoading || count === 0) return;
     if (document.documentElement.scrollHeight <= window.innerHeight + 8) {
       loadMore();
     }
-  }, [count, hasMore, isLoading, loadMore]);
+  }, [count, hasMore, isLoading, loadMore, visible]);
 
   useEffect(() => {
-    if (!hasMore) return;
+    if (!visible || !hasMore) return;
 
     const atBottom = () =>
       window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 2;
@@ -111,7 +114,7 @@ export function useBottomPull({
       window.removeEventListener('touchend', onTouchEnd);
       if (resetTimer.current) clearTimeout(resetTimer.current);
     };
-  }, [hasMore, isLoading, loadMore]);
+  }, [hasMore, isLoading, loadMore, visible]);
 
   return pull;
 }

@@ -1118,23 +1118,27 @@ class ApiClient {
     return response.data;
   }
 
+  /*
+   * 초대 코드는 주소창(`/join?code=`)에서 온다. 그대로 경로에 끼우면 `../` 를 실은 코드가 사용자의
+   * 토큰을 단 채 다른 API 로 가는 요청을 만든다 (2026-10-16). 경로 한 칸으로 감싼다.
+   */
   async getInvitationByCode(invitationCode: string) {
-    const response = await this.client.get<any>(`/projects/invitations/${invitationCode}`);
+    const response = await this.client.get<any>(`/projects/invitations/${encodeURIComponent(invitationCode)}`);
     return response.data;
   }
 
   async revokeInvitation(invitationId: string) {
-    const response = await this.client.delete<any>(`/projects/invitations/${invitationId}`);
+    const response = await this.client.delete<any>(`/projects/invitations/${encodeURIComponent(invitationId)}`);
     return response.data;
   }
 
   async acceptInvitation(invitationCode: string) {
-    const response = await this.client.post<any>(`/projects/invitations/${invitationCode}/accept`);
+    const response = await this.client.post<any>(`/projects/invitations/${encodeURIComponent(invitationCode)}/accept`);
     return response.data;
   }
 
   async declineInvitation(invitationCode: string) {
-    const response = await this.client.post<any>(`/projects/invitations/${invitationCode}/decline`);
+    const response = await this.client.post<any>(`/projects/invitations/${encodeURIComponent(invitationCode)}/decline`);
     return response.data;
   }
 

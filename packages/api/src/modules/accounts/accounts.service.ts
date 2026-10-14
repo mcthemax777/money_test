@@ -244,6 +244,15 @@ export class AccountsService {
   async updateAccount(id: string, userId: string, dto: AccountDto.UpdateRequest, hlc?: string) {
     const account = await this.getAccountById(id, userId, 'editor');
 
+    /*
+     * 숨기기는 이 길로 받지 않는다 (2026-10-16). 숨기기에는 선행조건이 있다(잔액 0, 연결된 카드 없음 --
+     * `retireAccount`). 여기서 받으면 그 검사를 건너뛰어 돈이 든 통장이 목록에서 사라지고 합계가 어긋난다.
+     * 웹·앱·동기화 재생은 모두 숨기기 길(DELETE ?hide=true, deactivateAccount)로 보낸다.
+     */
+    if (dto.isActive === false) {
+      throw new BadRequestException('숨기기는 DELETE /accounts/:id?hide=true 로 요청합니다.');
+    }
+
     const { balance, institutionId } = dto;
 
     /*

@@ -230,6 +230,14 @@ export class CardsService {
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId, 'editor');
 
     /*
+     * 숨기기는 이 길로 받지 않는다 (2026-10-16). 갚지 않은 사용액이 남은 카드는 숨길 수 없는데
+     * (`deactivateCard`), 여기서 받으면 그 검사를 건너뛴다. 클라이언트는 DELETE ?hide=true 로 보낸다.
+     */
+    if (dto.isActive === false) {
+      throw new BadRequestException('숨기기는 DELETE /cards/:id?hide=true 로 요청합니다.');
+    }
+
+    /*
      * 신용카드의 마감일·결제일은 비울 수 없다. 둘이 없으면 청구 주기를 셀 수 없어 실적·청구가
      * 멈춘다 (기기 사본도 그때는 계산하지 못한다). 기기의 오프라인 창구도 같은 코드로 막는다.
      */

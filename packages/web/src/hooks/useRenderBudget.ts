@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useScreenVisible } from '@/components/ScreenVisible';
 
 /** 처음에 세울 줄 수와, 바닥이 가까워질 때마다 더 세울 만큼. 앱과 같은 값이다. */
 const FIRST_ROWS = 12;
@@ -45,6 +46,9 @@ export function useRenderBudget(
   wanted.current = 0;
 
   const sentinel = useRef<HTMLDivElement>(null);
+  const visible = useScreenVisible();
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
   const latestDrained = useRef(onDrained);
   latestDrained.current = onDrained;
 
@@ -63,6 +67,9 @@ export function useRenderBudget(
 
   /** 세운 끝이 화면 아래에 가까우면 늘린다. 남은 줄이 없으면 `onDrained` 를 부른다. */
   const check = useCallback(() => {
+    // 숨은 화면은 재지 않는다. 숨은 표시는 위치가 0 이라 늘 "바닥 근처"로 읽혀, 덮개 아래의 목록이
+    // 줄을 끝까지 세우고 다음 기간을 다 받아 버렸다 (2026-10-16).
+    if (!visibleRef.current) return;
     const hidden = wanted.current > latestBudget.current;
     if ((!hidden && !latestDrained.current) || !sentinel.current) return;
     if (sentinel.current.getBoundingClientRect().bottom > window.innerHeight + LOOKAHEAD) return;

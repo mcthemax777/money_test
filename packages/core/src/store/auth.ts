@@ -193,6 +193,14 @@ export const useAuth = create<AuthStore>()(
       // 화면이 받아 둔 값도 같은 까닭으로 비운다 (lib/screen-cache).
       const { clearScreenCache } = await import('../lib/screen-cache');
       clearScreenCache();
+      // 기기에 남는 필터 템플릿도 앞사람의 것이다 (가계부별이라 같은 가계부의 다음 사람에게 보인다).
+      const { useFilterTemplateStore } = await import('./filter-templates');
+      useFilterTemplateStore.setState({ byProject: {} });
+      // 메모리에 든 예산·분류 목록도 비운다. 다음 사람이 들어오면 앞사람의 것이 잠깐 보인다.
+      const { useBudget } = await import('./budget');
+      const { useCategory } = await import('./category');
+      useBudget.setState({ budgets: [], monthlyBudgets: [] });
+      useCategory.setState({ categories: [] });
 
       /*
        * 기기 사본도 버린다. 스토어만 비우면 화면에서 사라질 뿐 파일 안에는 이 사람의

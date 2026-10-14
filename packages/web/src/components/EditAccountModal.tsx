@@ -239,6 +239,7 @@ export default function EditAccountModal({
           </label>
           <input
             type="number"
+            step="any"
             required
             value={formData.balance}
             onChange={(e) => setFormData({ ...formData, balance: e.target.value })}

@@ -27,6 +27,7 @@ import type { CategoryDto } from '@money/types';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useSwapScroll } from '@/hooks/useSwapScroll';
 import { useDragReorder } from '@/hooks/useDragReorder';
+import { ScreenVisibility } from '@/components/ScreenVisible';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const FORM_ID = 'category-form';
@@ -321,6 +322,7 @@ export default function CategoriesPage() {
         </div>
       ) : null}
     <div className={entries ? 'hidden' : 'space-y-6'}>
+      <ScreenVisibility visible={!entries}>
       {/*
         추가 버튼은 머리글이 아니라 **목록 바로 위**에 있다 (자산 화면과 같은 규칙).
         무엇에 더하는 것인지가 버튼 아래에 곧바로 이어져 보인다.
@@ -649,6 +651,7 @@ export default function CategoriesPage() {
         isSubmitting={isSubmitting}
         onSubmit={handleMerge}
       />
+      </ScreenVisibility>
     </div>
     </>
   );

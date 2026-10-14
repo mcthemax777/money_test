@@ -936,7 +936,11 @@ export function useTransactions(
    * 프로젝트 타임존을 바꾸면 받아 둔 목록이 옛 경계의 것이 된다. 시작 요일도 같다 --
    * 설정에서 요일을 바꾸면 받아 둔 주 줄은 옛 요일에서 끊은 것이라 통째로 버려야 한다.
    */
-  const scopeKey = JSON.stringify([scope, range, timeZone, monthsQuery]);
+  /*
+   * 가계부도 넣는다 (2026-10-16). 가계부를 바꾼 직후 사람 선택이 아직 앞 가계부의 것이면 조건이
+   * 같아 보여, 앞 가계부의 달 목록이 그대로 서거나 저장소(screen-cache)에서 꺼내졌다.
+   */
+  const scopeKey = JSON.stringify([projectId, scope, range, timeZone, monthsQuery]);
   /*
    * 지금 조건. 도착한 값이 아직 쓸 것인지 판단한다.
    *

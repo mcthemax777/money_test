@@ -111,6 +111,8 @@ export default function DragList<T extends { id: string }>({
   const activeId = useSharedValue<string | null>(null);
   /* 끄는 동안 껍데기의 스크롤을 빌린다 (shell/scroll 참고). */
   const scroll = useScrollControl();
+  /** 이 목록이 껍데기 스크롤을 잠가 두었는가. 끄는 중에 사라질 때 풀어 준다. */
+  const holdsScrollLock = useRef(false);
   /** 끌기 시작할 때 화면이 내려와 있던 만큼. 그 뒤로 굴러간 양을 여기서 뺀다. */
   const scrollStartRef = useRef(0);
   /** 손끝이 마지막으로 알려 준 세로 이동량. 화면만 굴러갈 때도 이 값을 다시 쓴다. */
@@ -150,6 +152,7 @@ export default function DragList<T extends { id: string }>({
       dragY.value = 0;
       lift.value = withTiming(1, { duration: 120 });
       scroll.lock(true);
+      holdsScrollLock.current = true;
       setDraggingId(id);
     },
     [activeId, dragY, lift, scroll],
@@ -267,6 +270,7 @@ export default function DragList<T extends { id: string }>({
     stopAutoScroll();
     setDraggingId(null);
     scroll.lock(false);
+    holdsScrollLock.current = false;
     lift.value = withTiming(0, { duration: 120 });
     dragY.value = withTiming(0, { duration: SHIFT_MS });
     activeId.value = null;
@@ -286,8 +290,17 @@ export default function DragList<T extends { id: string }>({
     if (to >= 0 && to !== from) onReorder(id, to);
   }, [activeId, dragY, lift, scroll, stopAutoScroll, onReorder]);
 
-  /* 화면을 떠나는 순간에도 시계가 남지 않게 한다. */
-  useEffect(() => stopAutoScroll, [stopAutoScroll]);
+  /*
+   * 화면을 떠나는 순간에도 시계가 남지 않게 한다. 끄는 중에 사라지면 잠근 스크롤도 푼다 --
+   * 그대로 두면 껍데기 스크롤이 잠긴 채라 어느 화면도 굴러가지 않는다 (2026-10-16).
+   */
+  useEffect(
+    () => () => {
+      stopAutoScroll();
+      if (holdsScrollLock.current) scroll.lock(false);
+    },
+    [stopAutoScroll, scroll],
+  );
 
   return (
     <View style={{ gap }}>

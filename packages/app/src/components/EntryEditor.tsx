@@ -698,7 +698,8 @@ export default function EntryEditor({
             <Field label={t('editor.split')} invalid={violation?.field === 'splits'}>
               <View className="gap-3">
                 {values.splits.map((split, index) => (
-                  <View key={index} className="gap-2 rounded-lg border border-gray-200 p-3">
+                  /* 줄 키로 든다. 차례 번호면 가운데 줄을 지울 때 입력 칸의 상태가 옆 줄로 옮겨 간다. */
+                  <View key={split.lineKey} className="gap-2 rounded-lg border border-gray-200 p-3">
                     <View className="flex-row items-center justify-between">
                       <Text className="text-xs font-medium text-gray-500">
                         {t('editor.splitRow', { index: index + 1 })}

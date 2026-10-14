@@ -15,7 +15,7 @@ import { Animated, Easing, useWindowDimensions, type StyleProp, type ViewStyle }
 import { RevealScope } from '../components/ChartReveal';
 import LoadingBlock from '../components/LoadingBlock';
 
-import { useAfterPaint } from './after-paint';
+import { ScreenVisibleContext, useAfterPaint, useScreenVisible } from './after-paint';
 
 /** 웹의 260ms cubic-bezier(0.32, 0.72, 0, 1) 와 같다. */
 const DURATION = 260;
@@ -64,6 +64,7 @@ export function ScreenReturn({
   children: ReactNode;
 }) {
   const { width } = useWindowDimensions();
+  const parentVisible = useScreenVisible();
   const progress = useRef(new Animated.Value(1)).current;
   const wasCovered = useRef(covered);
   useEffect(() => {
@@ -84,8 +85,13 @@ export function ScreenReturn({
     <Animated.View
       style={[style, { opacity, transform: [{ translateX }] }, covered ? HIDDEN : null]}
     >
-      {/* 덮개가 걷히면 안의 그래프도 다시 그려지듯 움직인다 (ChartReveal). */}
-      <RevealScope visible={!covered}>{children}</RevealScope>
+      {/*
+        덮개가 걷히면 안의 그래프도 다시 그려지듯 움직인다 (ChartReveal). 덮인 동안에는 안의 것이
+        스크롤 바닥 신호·붙박이 단추·뒤로가기를 받지 않는다 (ScreenVisibleContext).
+      */}
+      <ScreenVisibleContext.Provider value={parentVisible && !covered}>
+        <RevealScope visible={!covered}>{children}</RevealScope>
+      </ScreenVisibleContext.Provider>
     </Animated.View>
   );
 }

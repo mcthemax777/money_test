@@ -37,7 +37,10 @@ const NavigationContext = createContext<Navigation | null>(null);
  * 여기 쌓이는 것은 화면을 갈아 끼우지 않고 한 걸음 들어간 자리다 -- 자산 상세,
  * 거래의 선택 모드, 다른 화면에서 건너온 거래 목록처럼 **머리글에 ← 가 서는 자리**다.
  */
-const closers: Array<() => void> = [];
+const closers: Array<{ order: number; close: () => void }> = [];
+
+/** 연 차례 번호. 자리가 처음 열릴 때 받고, 닫힐 때까지 그대로 든다. */
+let nextCloserOrder = 1;
 
 /**
  * 기기의 뒤로가기로 이 자리를 닫는다.
@@ -51,16 +54,25 @@ export function useCloseOnBack(active: boolean, onClose: () => void) {
   closeRef.current = onClose;
   /* 숨은 탭 화면은 뒤로가기를 받지 않는다 (after-paint 의 ScreenVisibleContext). */
   const visible = useScreenVisible();
+  /*
+   * 이 자리를 연 차례. 탭을 숨겼다 다시 보일 때 걸기를 새로 하더라도 **처음 연 차례에 다시
+   * 끼운다** (2026-10-16). 그냥 뒤에 붙이면 리액트가 자식의 효과를 먼저 돌려 바깥 자리(예산의 분석)가
+   * 안쪽 자리(그 위의 거래내역)보다 위에 올라, 뒤로가기가 한 겹이 아니라 바깥부터 닫았다.
+   */
+  const orderRef = useRef<number | null>(null);
+  if (!active) orderRef.current = null;
 
   useEffect(() => {
     if (!active || !visible) return;
 
-    const close = () => closeRef.current();
-    closers.push(close);
+    if (orderRef.current === null) orderRef.current = nextCloserOrder++;
+    const entry = { order: orderRef.current, close: () => closeRef.current() };
+    const at = closers.findIndex((item) => item.order > entry.order);
+    closers.splice(at < 0 ? closers.length : at, 0, entry);
 
     return () => {
-      const at = closers.lastIndexOf(close);
-      if (at >= 0) closers.splice(at, 1);
+      const index = closers.indexOf(entry);
+      if (index >= 0) closers.splice(index, 1);
     };
   }, [active, visible]);
 }
@@ -113,9 +125,9 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
    */
   useEffect(() => {
     const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
-      const close = closers[closers.length - 1];
-      if (close) {
-        close();
+      const top = closers[closers.length - 1];
+      if (top) {
+        top.close();
         return true;
       }
 

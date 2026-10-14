@@ -21,6 +21,17 @@ interface UpdateProjectDto {
   displayCurrency?: string;
 }
 
+/**
+ * 초대·가입 승인으로 줄 수 있는 역할. 본문은 인터페이스라 검사 없이 들어온다 -- "owner" 를 실어 보내면
+ * 지울 수 없는 두 번째 소유자가 생기고, 엉뚱한 값은 DB 에서 500 이 났다 (2026-10-16).
+ * 소유자는 넘기기(transferOwnership)로만 바뀐다.
+ */
+function assertInvitableRole(role: unknown): asserts role is 'editor' | 'viewer' {
+  if (role !== 'editor' && role !== 'viewer') {
+    throw new BadRequestException('초대할 수 있는 역할은 editor 또는 viewer 입니다.');
+  }
+}
+
 @Injectable()
 export class ProjectsService {
   constructor(
@@ -280,6 +291,7 @@ export class ProjectsService {
     role: 'editor' | 'viewer',
     userId: string,
   ) {
+    assertInvitableRole(role);
     await this.verifyUserIsOwner(projectId, userId);
 
     const invitation = await this.prisma.projectInvitation.create({
@@ -383,27 +395,44 @@ export class ProjectsService {
       throw badRequest('ALREADY_MEMBER', '이미 이 프로젝트의 멤버입니다');
     }
 
-    // ProjectMember 생성
-    await this.prisma.projectMember.create({
-      data: {
-        projectId: invitation.projectId,
-        userId,
-        role: invitation.role,
-      },
-    });
+    /*
+     * 초대를 먼저 "받음"으로 바꾸고 멤버를 만든다. 한 트랜잭션이다 (2026-10-16).
+     *
+     * 예전에는 확인과 쓰기가 따로라, 한 코드로 두 사람이 같은 순간에 들어오거나 같은 사람이 두 번
+     * 누르면 둘 다 확인을 지나 멤버 만들기가 겹쳤다(겹친 쪽은 500). 상태가 pending 인 행만 바꾸게
+     * 걸어, 먼저 바꾼 요청만 지나간다.
+     */
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const claimed = await tx.projectInvitation.updateMany({
+          where: { id: invitation.id, status: 'pending' },
+          data: {
+            status: 'accepted',
+            acceptedAt: new Date(),
+            acceptedByUserId: userId,
+          },
+        });
+        if (claimed.count === 0) {
+          throw new BadRequestException('초대가 이미 사용되었습니다');
+        }
+        await tx.projectMember.create({
+          data: {
+            projectId: invitation.projectId,
+            userId,
+            role: invitation.role,
+          },
+        });
+      });
+    } catch (error) {
+      // 같은 사람의 겹친 요청: 앞 요청이 이미 멤버로 넣었다.
+      if ((error as { code?: unknown })?.code === 'P2002') {
+        throw badRequest('ALREADY_MEMBER', '이미 이 프로젝트의 멤버입니다');
+      }
+      throw error;
+    }
 
     // 들어온 사람을 구성원으로 세우고 "나"로 지정한다.
     await this.ensureMyPerson(invitation.projectId, userId);
-
-    // ProjectInvitation 상태 업데이트
-    await this.prisma.projectInvitation.update({
-      where: { id: invitation.id },
-      data: {
-        status: 'accepted',
-        acceptedAt: new Date(),
-        acceptedByUserId: userId,
-      },
-    });
 
     const project = await this.prisma.project.findUnique({
       where: { id: invitation.projectId },
@@ -816,6 +845,7 @@ export class ProjectsService {
     userId: string,
     role: 'editor' | 'viewer' = 'editor',
   ) {
+    assertInvitableRole(role);
     const request = await this.prisma.projectJoinRequest.findUnique({
       where: { id: requestId },
       include: { project: true, user: true },

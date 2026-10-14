@@ -264,18 +264,23 @@ export function syncNow(projectId: string, timeZone: string): Promise<SyncResult
        * 그냥 삼켜서, 기기에는 남의 가계부가 **최신인 것처럼** 남아 있었다. 오류가 나지
        * 않으니 사용자는 며칠 지난 사본을 그대로 믿는다.
        *
-       * 그래서 사본을 버리고 그 사실을 알린다. 아직 보내지 못한 명령도 함께 사라지는데,
-       * 어차피 그 프로젝트에는 쓸 수 없으므로 보낼 곳이 없다.
+       * 그래서 그 프로젝트의 사본을 버리고 그 사실을 알린다. 그 프로젝트의 못 보낸 명령도 함께
+       * 사라지는데, 어차피 그 프로젝트에는 쓸 수 없으므로 보낼 곳이 없다. **다른 프로젝트의 것은
+       * 남긴다** (2026-10-16) -- 예전에는 파일을 통째로 지워 다른 가계부에 적어 둔 것까지 잃었다.
        */
       if (isAccessLost(error)) {
-        console.warn('이 프로젝트에 더 접근할 수 없습니다. 기기 사본을 버립니다.');
+        console.warn('이 프로젝트에 더 접근할 수 없습니다. 이 프로젝트의 기기 사본을 버립니다.');
         /*
-         * 버리는 일은 이 동기화가 끝난 뒤에 한다. **여기서 기다리면 안 된다** --
-         * `clearOffline` 은 돌고 있는 동기화가 끝나기를 기다리는데, 지금 돌고 있는 것이
-         * 바로 이 동기화라 서로를 기다리며 멈춘다.
+         * 버리는 일은 이 동기화가 끝난 뒤에 한다. 지금 이 동기화의 트랜잭션·연결을 쓰는 중이라
+         * 그 안에서 지우면 서로를 기다린다.
          */
         void Promise.resolve().then(async () => {
-          await clearOffline();
+          try {
+            await mine.forgetProject(projectId);
+            notifyMirrorChanged();
+          } catch (forgetError) {
+            console.error('이 프로젝트의 기기 사본을 지우지 못했습니다:', forgetError);
+          }
           onAccessLost?.(projectId);
         });
         return null;

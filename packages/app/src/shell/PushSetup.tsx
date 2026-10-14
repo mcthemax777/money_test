@@ -5,7 +5,7 @@
  * 화면을 그리지 않는다. 로그인한 껍데기 안에 한 번 둔다 -- 토큰을 적으려면 로그인해
  * 있어야 하고, 눌린 알림을 보관함으로 보내려면 화면 이동(`useNavigation`)이 있어야 한다.
  */
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { AppState } from 'react-native';
 import * as Notifications from 'expo-notifications';
 
@@ -16,11 +16,18 @@ import { registerPushDevice } from '../push';
 import { INBOX_PATH, inboxHref } from '../screens/InboxScreen';
 import { useNavigation } from './navigation';
 
+/**
+ * 이미 따라간 알림. 같은 응답이 다시 그려질 때 보관함을 거듭 열지 않는다.
+ *
+ * 모듈에 둔다 (2026-10-16). `useLastNotificationResponse` 는 앱이 살아 있는 동안 마지막 응답을 계속
+ * 들고 있는데, 이 부품은 로그아웃·로그인이나 시작 화면을 거치면 새로 서서 ref 가 비고, 오래전에
+ * 누른 알림을 다시 따라가 보관함을 열었다.
+ */
+let handledNotificationId: string | null = null;
+
 export default function PushSetup() {
   const { go } = useNavigation();
   const response = Notifications.useLastNotificationResponse();
-  /** 이미 따라간 알림. 같은 응답이 다시 그려질 때 보관함을 거듭 열지 않는다. */
-  const handledRef = useRef<string | null>(null);
 
   useEffect(() => {
     let unsubscribe: (() => void) | null = null;
@@ -47,8 +54,8 @@ export default function PushSetup() {
   useEffect(() => {
     if (!response) return;
     const id = response.notification.request.identifier;
-    if (handledRef.current === id) return;
-    handledRef.current = id;
+    if (handledNotificationId === id) return;
+    handledNotificationId = id;
 
     const data = response.notification.request.content.data as {
       type?: unknown;

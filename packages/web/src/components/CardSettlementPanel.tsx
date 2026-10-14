@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   LEDGER_MIN_ENTRY_DATE_KEY,
   MAX_USAGE_PERIODS,
@@ -135,7 +135,13 @@ export default function CardSettlementPanel({
     return amount > 0 ? amount : null;
   })();
 
+  /** 받기의 번호. 카드를 바꾼 뒤 늦게 온 앞 카드의 답을 버린다 (2026-10-16). */
+  const usageRequest = useRef(0);
+  /** 받지 못했다. "불러오는 중"에 머물지 않고 그렇다고 알린다 (앱 CardCharts 와 같다). */
+  const [usageFailed, setUsageFailed] = useState(false);
+
   const loadUsage = useCallback(async () => {
+    const requestId = ++usageRequest.current;
     try {
       /*
        * 화면에 그리는 여섯 주기보다 훨씬 넉넉히 받아 둔다.
@@ -143,10 +149,15 @@ export default function CardSettlementPanel({
        * 그래프를 좌우로 끌어 앞뒤 주기를 보는데, 창만큼만 받으면 끌 때마다 서버를
        * 물어야 하고 답이 올 때까지 막대가 멈춰 있다 (useCardUsageWindow 참고).
        */
-      setUsage(await homeDataPort().getCardUsage(card.id, MAX_USAGE_PERIODS));
+      const next = await homeDataPort().getCardUsage(card.id, MAX_USAGE_PERIODS);
+      if (requestId !== usageRequest.current) return;
+      setUsage(next);
+      setUsageFailed(false);
     } catch (err) {
       console.error('카드 사용 현황 조회 실패:', err);
+      if (requestId !== usageRequest.current) return;
       setUsage(null);
+      setUsageFailed(true);
     }
   }, [card.id]);
 
@@ -226,7 +237,11 @@ export default function CardSettlementPanel({
   };
 
   if (!usage) {
-    return <p className="text-gray-600">{t('settlement.loading')}</p>;
+    return (
+      <p className={usageFailed ? 'text-red-600' : 'text-gray-600'}>
+        {t(usageFailed ? 'settlement.loadFailed' : 'settlement.loading')}
+      </p>
+    );
   }
 
   return (
@@ -430,6 +445,7 @@ export default function CardSettlementPanel({
               <label className="block text-sm font-medium text-gray-700 mb-1">{t('settlement.amount')}</label>
               <input
                 type="number"
+                step="any"
                 required
                 value={paymentForm.amount}
                 onChange={(e) => setPaymentForm({ ...paymentForm, amount: e.target.value })}

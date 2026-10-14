@@ -53,14 +53,18 @@ export default function AdminInquiriesPage() {
     [router],
   );
 
+  /** 목록 받기의 번호. 거르기를 바꾼 뒤 늦게 온 앞 목록이 새 목록을 덮지 않게 한다 (2026-10-16). */
+  const loadRequest = useRef(0);
   const load = useCallback(async () => {
+    const requestId = ++loadRequest.current;
     setIsLoading(true);
     try {
-      setRows(await listInquiries(filter || undefined));
+      const next = await listInquiries(filter || undefined);
+      if (requestId === loadRequest.current) setRows(next);
     } catch (reason) {
-      fail(reason);
+      if (requestId === loadRequest.current) fail(reason);
     } finally {
-      setIsLoading(false);
+      if (requestId === loadRequest.current) setIsLoading(false);
     }
   }, [filter, fail]);
 

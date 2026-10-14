@@ -47,6 +47,7 @@ export default function CardPerformanceField({
       </label>
       <input
         type="number"
+        step="any"
         min="0"
         value={value}
         onChange={(e) => onChange(e.target.value)}

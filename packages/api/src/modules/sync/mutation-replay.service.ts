@@ -54,6 +54,7 @@ import {
   type PersonUpdatePayload,
   type PushRequest,
   type PushResponse,
+  decodeHlc,
   encodeHlc,
   hlcNext,
   isAfterHlc,
@@ -103,6 +104,27 @@ type Claim =
   | { kind: 'settled'; result: MutationResult }
   /** 같은 (기기, 순번)을 다른 명령이 이미 썼다. */
   | { kind: 'seqTaken' };
+
+/** 기기 시계가 서버보다 앞서도 받아 주는 폭. 이보다 앞선 시계는 서버의 지금으로 끌어내린다. */
+const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
+
+/**
+ * 명령의 시계(HLC)를 믿을 만한 값으로 맞춘다 (2026-10-16).
+ *
+ * 기기가 보낸 시계를 그대로 믿으면, 시계가 한 해 앞선 휴대폰이 그 한 해 동안 모든 병합을 이기고
+ * 다른 기기의 편집은 충돌로 밀린다. 서버 시계는 그 값을 따라잡지 못한다. 그렇다고 거절하면 그
+ * 기기의 적은 것이 보류 칸에 쌓이므로, 너무 앞선(또는 모양이 틀린) 시계만 서버의 지금으로 바꾼다.
+ * 기기 이름(node)은 남겨 같은 시각의 승부를 가르는 데 그대로 쓴다.
+ */
+function withSaneClock(mutation: Mutation): Mutation {
+  const decoded = decodeHlc(mutation.hlc);
+  const now = Date.now();
+  if (decoded && decoded.wall <= now + MAX_CLOCK_SKEW_MS) return mutation;
+  return {
+    ...mutation,
+    hlc: encodeHlc({ wall: now, counter: 0, node: decoded?.node || mutation.clientId || 'server' }),
+  };
+}
 
 @Injectable()
 export class MutationReplayService {
@@ -220,6 +242,7 @@ export class MutationReplayService {
     clientId: string,
     mutation: Mutation,
   ): Promise<MutationResult> {
+    mutation = withSaneClock(mutation);
     const claim = await this.claim(projectId, clientId, mutation);
 
     if (claim.kind === 'settled') return claim.result;
@@ -289,10 +312,15 @@ export class MutationReplayService {
         (error as { code?: unknown })?.code ??
         (body && typeof body === 'object' ? (body as { code?: unknown }).code : undefined);
 
+      /*
+       * 기기에 돌려줄 문장. 규칙이 거절한 것(HTTP 예외·코드가 붙은 원장 오류)만 그 문장을 보낸다.
+       * 그 밖(DB 오류 따위)의 원문은 서버 내부가 드러나므로 로그에만 남긴다 (2026-10-16).
+       */
+      const isRuleError = error instanceof HttpException || typeof code === 'string';
       const result: MutationResult = {
         mutationId: mutation.mutationId,
         status: 'rejected',
-        error: message,
+        error: isRuleError ? message : '서버가 이 변경을 처리하지 못했습니다.',
         ...(typeof code === 'string' ? { code } : {}),
       };
       await this.settle(mutation, result);

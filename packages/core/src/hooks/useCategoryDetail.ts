@@ -338,6 +338,11 @@ export interface CategoryDetail {
    * 것(결제수단 추이)이나 사본이 없는 기기(웹)에서는 닿지 못한다. 그 자리에 안내를 적는다.
    */
   isOffline: boolean;
+  /**
+   * 받지 못했다(끊김이 아닌 오류). 그래프를 비우고 이 값을 세운다 -- 화면이 "이 기간에 쓴 것이
+   * 없다"로 그리면 0원으로 읽힌다 (2026-10-16). 다시 받다 실패한 것은 그려 둔 값을 두므로 세우지 않는다.
+   */
+  hasError: boolean;
 }
 
 /** 구성비 원형 하나. 파고드는 상태를 원형마다 따로 든다. */
@@ -486,6 +491,7 @@ export function useCategoryDetail({
     Partial<Record<'income' | 'expense', { id: string; slices: CategorySlice[] }>>
   >({});
   const [isOffline, setIsOffline] = useState(cached?.isOffline ?? false);
+  const [hasError, setHasError] = useState(false);
   // 같은 조건을 다시 받을 때는 그래프를 가리지 않는다 (useLoadedKey 주석).
   const loaded = useLoadedKey(cached ? queryKey : null);
   /** 마지막으로 받으러 나간 조건과 신호. 같으면 다시 받을 까닭이 없다. */
@@ -510,6 +516,7 @@ export function useCategoryDetail({
 
     let cancelled = false;
     const applySnapshot = (snapshot: DetailSnapshot) => {
+      setHasError(false);
       setIsOffline(snapshot.isOffline);
       setMonthly(snapshot.monthly);
       setEntries(snapshot.entries);
@@ -539,7 +546,6 @@ export function useCategoryDetail({
     }
 
     const load = async () => {
-      fetchedRef.current = fetchKey;
       /*
        * 닿지 못한 값은 비우고 표시만 남긴다 (isOffline 주석).
        *
@@ -719,14 +725,18 @@ export function useCategoryDetail({
         applySnapshot(snapshot);
         loaded.mark(queryKey);
         writeScreenCache(CACHE_SLOT, queryKey, snapshot);
+        /*
+         * 그려 낸 뒤에야 "이 조건·신호로 받았다"고 적는다. 받는 중에 탭을 옮겨 이 받기가 취소되면
+         * 적지 않으므로 다시 보일 때 다시 받는다 -- 시작할 때 적으면 그 새로 받기가 영영 사라졌다.
+         */
+        fetchedRef.current = fetchKey;
       } catch (error) {
         console.error('분류별 상세 데이터를 불러오지 못했습니다:', error);
-        // 못 받았으니 다음에 다시 보일 때 다시 받는다.
-        fetchedRef.current = null;
         if (cancelled) return;
         // 같은 조건을 다시 받다 실패했다면 그려 둔 값은 여전히 이 조건의 것이다. 그대로 둔다.
         if (isRefresh) return;
         // 앞 구간의 값이 남아 있으면 틀린 숫자를 보게 되므로 비운다.
+        setHasError(true);
         setIsOffline(false);
         setMonthly([]);
         setDaily([]);
@@ -856,6 +866,7 @@ export function useCategoryDetail({
     throughDay: compareKey ? throughDayOfPeriod(compareKey, timeZone) : undefined,
     hasMonthlyAmount: monthly.some((point) => point.amount > 0),
     isOffline,
+    hasError,
     /*
      * 이 달에 쓴 것이 없어도 앞선 달에 있으면 그린다. "지난달에는 여기에 이만큼
      * 썼는데 이번 달은 0"이 그림으로 보여야 한다.

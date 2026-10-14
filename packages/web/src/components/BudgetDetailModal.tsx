@@ -390,6 +390,9 @@ export function BudgetDetailModal({
     <div className="space-y-8 p-4">
       {detail.isLoading ? (
         <LoadingBlock label={t('detail.loading')} />
+      ) : detail.hasError ? (
+        /* 받지 못했다. 빈 그래프로 그리면 "쓴 것이 없다"(0원)로 읽힌다. */
+        <p className="py-12 text-center text-sm text-red-600">{t('home.loadFailed')}</p>
       ) : (
         <>
           {/* 일별 누적. 구성비보다 먼저 이 구간의 흐름을 본다 (2026-10-14 사용자 요청). */}

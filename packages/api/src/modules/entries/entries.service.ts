@@ -46,7 +46,19 @@ const DATE_KEY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
  * 달력 날짜가 오면 그 지역의 **하루 시작**이다. 인스턴트가 오면 그대로 쓴다.
  */
 function dayStartOf(value: string, timeZone: string): Date {
-  return DATE_KEY_ONLY.test(value) ? zonedDateStringToUtc(value, timeZone) : new Date(value);
+  return DATE_KEY_ONLY.test(value) ? zonedDateStringToUtc(value, timeZone) : instantOf(value);
+}
+
+/**
+ * 인스턴트 문자열을 읽는다. 읽을 수 없으면 400 이다 (2026-10-16) -- 그대로 두면 Invalid Date 가
+ * Prisma 까지 가서 500 이 났다.
+ */
+function instantOf(value: string): Date {
+  const instant = new Date(value);
+  if (Number.isNaN(instant.getTime())) {
+    throw new BadRequestException('날짜를 읽을 수 없습니다.');
+  }
+  return instant;
 }
 
 /**
@@ -57,7 +69,7 @@ function dayStartOf(value: string, timeZone: string): Date {
  * "23:59:59.999" 이고, 그것까지 담아야 말일 밤의 거래가 빠지지 않는다.
  */
 function dayAfterOf(value: string, timeZone: string): Date {
-  if (!DATE_KEY_ONLY.test(value)) return new Date(new Date(value).getTime() + 1);
+  if (!DATE_KEY_ONLY.test(value)) return new Date(instantOf(value).getTime() + 1);
 
   const [year, month, day] = value.split('-').map(Number);
   return zonedDayStart(year, month, day + 1, timeZone);

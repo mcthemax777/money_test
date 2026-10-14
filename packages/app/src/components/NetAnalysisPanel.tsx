@@ -134,6 +134,9 @@ function NetAnalysisPanel({
 
       {net.isLoading ? (
         <LoadingBlock label={t('detail.loading')} />
+      ) : net.hasError ? (
+        /* 받지 못했다. 빈 그래프로 그리면 "쓴 것이 없다"(0원)로 읽힌다. */
+        <Text className="py-12 text-center text-sm text-red-600">{t('home.loadFailed')}</Text>
       ) : (
         <>
           <Card title={t('analysis.net.daily')}>

@@ -29,6 +29,7 @@ import MonthHeader from '@/components/MonthHeader';
 import { useRenderBudget } from '@/hooks/useRenderBudget';
 import TransactionCalendar from '@/components/TransactionCalendar';
 import TransactionItem from '@/components/TransactionItem';
+import { dateKeyOf } from '@money/core/lib/datetime';
 
 export default function TransactionCalendarView({
   projectId,
@@ -57,7 +58,6 @@ export default function TransactionCalendarView({
    * 그것은 사용자가 고른 날이 아니다.
    */
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [dayEntries, setDayEntries] = useState<EntryListItem[]>([]);
 
   const ledger = useLedgerData({ projectId, year: view.year, month: view.month, search });
 
@@ -68,7 +68,6 @@ export default function TransactionCalendarView({
   const searchKey = search ? JSON.stringify(search) : '';
   useEffect(() => {
     setSelectedDate(null);
-    setDayEntries([]);
   }, [searchKey]);
   const totals = sumEntries(ledger.entries);
 
@@ -79,13 +78,25 @@ export default function TransactionCalendarView({
   const lazy = useRenderBudget(
     `${projectId}|${view.year}-${view.month}|${selectedDate?.getTime() ?? ''}|${searchKey}`,
   );
+  /*
+   * 고른 날의 거래. 누를 때 받아 둔 것이 아니라 **지금 목록에서** 그날 것을 고른다 (2026-10-16) --
+   * 받아 둔 것을 들고 있으면 고치거나 지운 거래, 다른 기기가 바꾼 거래가 아래 목록에 옛 모양으로 남았다.
+   * 날짜 키는 달력 칸과 같은 규칙이다(그 칸의 달력 날짜, 거래는 가계부 타임존의 날).
+   */
+  const selectedKey = selectedDate
+    ? `${selectedDate.getFullYear()}-${String(selectedDate.getMonth() + 1).padStart(2, '0')}-${String(
+        selectedDate.getDate(),
+      ).padStart(2, '0')}`
+    : null;
+  const dayEntries = selectedKey
+    ? ledger.entries.filter((entry) => dateKeyOf(entry.date, timeZone) === selectedKey)
+    : [];
   const rows = entryRows(selectedDate ? dayEntries : ledger.entries);
   const shownRows = rows.slice(0, lazy.take(rows.length));
 
   const changeMonth = (year: number, month: number) => {
     setView({ year, month });
     setSelectedDate(null);
-    setDayEntries([]);
   };
 
   return (
@@ -109,11 +120,10 @@ export default function TransactionCalendarView({
             startDate={selectedDate}
             endDate={selectedDate}
             onMonthChange={changeMonth}
-            onDateSelect={(date, entries) => {
+            onDateSelect={(date) => {
               // 같은 날을 다시 누르면 고르기를 푼다. 그 달 전체로 돌아간다.
               const isSame = selectedDate?.getTime() === date.getTime();
               setSelectedDate(isSame ? null : date);
-              setDayEntries(isSame ? [] : entries);
             }}
           />
 

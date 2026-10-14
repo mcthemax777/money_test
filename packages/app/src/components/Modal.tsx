@@ -89,7 +89,14 @@ export default function Modal({
 }) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const isReady = useAfterPaint(isOpen);
+  /*
+   * 내용을 그릴 때. 한 번 그리면 창이 닫혀 내려가는 동안에도 그대로 둔다 -- `useAfterPaint` 는 닫는
+   * 순간 거짓이 되어, 내려가는 창 안에서 내용이 돌림 표시로 바뀌며 높이가 출렁였다 (2026-10-16).
+   */
+  const afterPaint = useAfterPaint(isOpen);
+  const shownRef = useRef(false);
+  if (isOpen) shownRef.current = afterPaint;
+  const isReady = isOpen ? afterPaint : shownRef.current;
   const { width, height } = useWindowDimensions();
   /* 768 은 웹 Tailwind 의 md 다. 두 화면이 같은 폭에서 같은 모양으로 갈리게 둔다. */
   const isWide = width >= 768;

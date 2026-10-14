@@ -47,6 +47,7 @@ import LoadingBlock from '@/components/LoadingBlock';
 import { RevealScope } from '@/components/ChartReveal';
 import { useStableCallback } from '@money/core/hooks/useStableCallback';
 import type { MethodSlice } from '@money/core/lib/usage-pattern';
+import { ScreenVisibility } from '@/components/ScreenVisible';
 
 /*
  * 분석 탭의 지출·수입 그래프 묶음. 한 번 연 탭을 숨겨 두므로, 탭을 누를 때 숨은 탭까지 다시 그리지
@@ -152,10 +153,17 @@ export default function AnalysisView({
     setPicked(next);
   };
   /** 덮은 화면에서 거래를 고쳤을 수 있어 돌아올 때 기간 줄 금액을 다시 받는다. */
+  /**
+   * 덮은 화면에서 거래를 고쳤을 수 있다. 돌아올 때 올려 그래프도 다시 받게 한다 (2026-10-16) -- 웹은
+   * 사본 신호가 없고 그래프 묶음은 숨겨 둔 채 살아 있어, 올리지 않으면 요약만 새 값이고 그래프는
+   * 옛 숫자로 남았다.
+   */
+  const [reloadToken, setReloadToken] = useState(0);
   const closeCover = () => {
     setEntriesSearch(null);
     setPicked(null);
     tx.reload();
+    setReloadToken((token) => token + 1);
   };
   useCloseOnBack(isCovered, closeCover);
 
@@ -208,6 +216,7 @@ export default function AnalysisView({
         </div>
       ) : null}
     <div className={`space-y-4 ${isCovered ? 'hidden' : returnClass}`}>
+      <ScreenVisibility visible={!isCovered}>
       <RevealScope visible={!isCovered}>
       {/*
         위쪽 한 덩어리 -- 제목, 걸어 둔 조건, 탭. 거래 화면과 같은 규칙이다(`useTopReveal`): 내리는
@@ -349,6 +358,7 @@ export default function AnalysisView({
                 filter={analysis.filter}
                 trendClip={analysis.trendClip}
                 trendPeriod={analysis.trendPeriod}
+                reloadToken={reloadToken}
                 onOpenDay={openDay}
               />
             ) : (
@@ -365,6 +375,7 @@ export default function AnalysisView({
                 filter={analysis.filter}
                 trendClip={analysis.trendClip}
                 trendPeriod={analysis.trendPeriod}
+                reloadToken={reloadToken}
                 /*
                   원형 목록 줄을 누르면 그 분류·수단으로 좁힌 분석을 위에 덮어 연다. 분석 탭이든 거래
                   탭·예산 화면에서 건너온 보기든 같다 (2026-10-10 사용자 요청).
@@ -398,6 +409,7 @@ export default function AnalysisView({
         unit={tx.unit}
       />
       </RevealScope>
+      </ScreenVisibility>
     </div>
     </>
   );

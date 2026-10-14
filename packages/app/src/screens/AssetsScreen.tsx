@@ -58,6 +58,7 @@ import {
   EditCardModal,
   EditPersonModal,
 } from '../components/AssetEditModals';
+import { useScreenVisible } from '../shell/after-paint';
 
 /**
  * 자산. 웹의 /assets 를 옮긴 것이다.
@@ -175,10 +176,38 @@ export default function AssetsScreen() {
     scrollToTop();
   };
   const closeEntries = () => {
+    narrowedPerson.current = null;
     setEntriesSearch(null);
     restoreTo(entriesOffset.current);
   };
   useCloseOnBack(entriesSearch !== null, closeEntries);
+
+  /**
+   * 구성원의 거래내역을 덮을 때 좁힌 사람. 자산주인 선택은 모든 탭이 함께 쓰므로, 이 탭이 가려지면
+   * 되돌리고 다시 보이면 다시 좁힌다 (2026-10-16 -- 탭을 숨겨 두게 된 뒤로, 덮은 채 다른 탭으로 가면
+   * 모든 탭이 한 사람만 보였다). 덮개가 닫히면 거래 화면이 사라지며 되돌린다(TransactionsScreen).
+   */
+  const narrowedPerson = useRef<string | null>(null);
+  const restorePersonScope = useEntryFocus((state) => state.restorePersonScope);
+  const visible = useScreenVisible();
+  useEffect(() => {
+    const personId = narrowedPerson.current;
+    if (!personId || entriesSearch === null) return;
+    if (visible) narrowPersonScope(personId);
+    else restorePersonScope();
+    // 보임이 바뀔 때만 본다. 덮개를 열고 닫는 일은 위의 함수들이 맡는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  /*
+   * 가계부를 바꾸면 덮어 둔 거래내역은 앞 가계부의 조건이라 닫는다. 좁히기 전 선택도 앞 가계부의
+   * 사람들이라 되돌리지 않고 버린다 -- 되돌리면 새 가계부에 없는 사람 id 가 선택으로 들어간다.
+   */
+  useEffect(() => {
+    if (narrowedPerson.current) useEntryFocus.setState({ personScope: null });
+    narrowedPerson.current = null;
+    setEntriesSearch(null);
+  }, [selectedProjectId]);
 
   /*
    * 지금 그릴 상세. 목록에서 다시 찾아 온다.
@@ -271,7 +300,11 @@ export default function AssetsScreen() {
    */
   const openAddChooser = useCallback(() => setIsAddChooserOpen(true), []);
   useFloatingActionSlot(
-    canEdit ? { label: t('assets.addTitle'), onPress: openAddChooser, icon: AssetAddIcon } : null,
+    // 거래내역을 덮어 둔 동안에는 세우지 않는다 -- 덮은 거래 화면이 단추를 비우면(고르는 중)
+    // 이 화면의 자산 추가가 그 위로 비쳐 올라왔다 (2026-10-16).
+    canEdit && !entriesSearch
+      ? { label: t('assets.addTitle'), onPress: openAddChooser, icon: AssetAddIcon }
+      : null,
   );
 
   /*
@@ -362,6 +395,7 @@ export default function AssetsScreen() {
 
     if (detailTarget.kind === 'person') {
       narrowPersonScope(detailTarget.person.id);
+      narrowedPerson.current = detailTarget.person.id;
       openEntries({ ...EMPTY_SEARCH, ...period });
     } else if (detailTarget.kind === 'account') {
       openEntries({ ...EMPTY_SEARCH, ...period, paymentAccountIds: [detailTarget.account.id] });

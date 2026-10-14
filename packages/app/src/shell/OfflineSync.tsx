@@ -80,7 +80,16 @@ export default function OfflineSync() {
     /** 한 번 맞추고 결과를 남긴다. 어디서 시작했는지(`왜`)를 함께 적는다. */
     const run = async (why: string) => {
       const result = await syncNow(projectId, timeZone);
-      if (cancelled || !result) return;
+      if (cancelled) return;
+      /*
+       * 서버가 받지 못했다(5xx·시간 초과 따위). 못 보낸 것이 남았으면 간격을 늘려 다시 두드린다
+       * (2026-10-16) -- 예전에는 여기서 그만두어 다음 저장·복귀·연결 변화까지 큐가 서 있었다.
+       */
+      if (!result) {
+        const left = await unsentCount(projectId).catch(() => ({ pending: 0 }));
+        if (!cancelled && left.pending > 0) scheduleRetry();
+        return;
+      }
 
       if (result.offline) {
         console.log(`오프라인(${why}). 기기 사본으로 그린다.`);

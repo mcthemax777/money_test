@@ -196,7 +196,13 @@ function reasonOf(error: unknown): string {
     if (Array.isArray(message)) return message.join(', ');
     if (typeof message === 'string') return message;
   }
-  return error instanceof Error ? error.message : String(error);
+  // 원장 규칙의 오류(코드가 붙은 LedgerBuildError)는 사람이 읽을 문장이라 그대로 보낸다.
+  if (error instanceof Error && typeof (error as { code?: unknown }).code === 'string') {
+    return error.message;
+  }
+  // 규칙이 거절한 것이 아니면(DB 오류 따위) 원문을 보내지 않는다 -- 서버 내부가 드러난다 (2026-10-16).
+  console.error('엑셀 가져오기 줄 처리 실패:', error);
+  return '이 줄을 처리하지 못했습니다.';
 }
 
 function checkDay(value: string): string {

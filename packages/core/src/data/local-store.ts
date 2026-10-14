@@ -663,6 +663,22 @@ export class LocalStore {
     ]);
   }
 
+  /**
+   * 한 가계부를 기기에서 통째로 잊는다 -- 사본의 행, 커서, 그 가계부의 못 보낸 명령과 보관함 처리.
+   *
+   * 그 가계부에 더 갈 수 없게 되었을 때(내보내짐·탈퇴·삭제) 쓴다. 예전에는 사본 파일을 통째로
+   * 지워서, **다른 가계부에 적어 두고 아직 못 보낸 것까지** 함께 사라졌다 (2026-10-16). 그 가계부의
+   * 명령은 어차피 보낼 곳이 없다.
+   */
+  async forgetProject(projectId: string): Promise<void> {
+    await this.db.transaction(async () => {
+      await this.clearMirrorRows(projectId);
+      await this.db.run(`DELETE FROM sync_state WHERE projectId = ?`, [projectId]);
+      await this.db.run(`DELETE FROM outbox WHERE projectId = ?`, [projectId]);
+      await this.db.run(`DELETE FROM draft_op WHERE projectId = ?`, [projectId]);
+    });
+  }
+
   /** 사본의 행을 지운다. 트랜잭션은 부르는 쪽이 연다. */
   private async clearMirrorRows(projectId: string): Promise<void> {
     for (const table of ALL_TABLES) {

@@ -88,6 +88,8 @@ export async function syncProject(
   timeZone: string,
   push?: PushFn,
   flushDrafts?: FlushDraftsFn,
+  /** 받는 동안 쌓인 명령을 보내러 다시 들어온 걸음인가. 그때는 한 번 더 돌지 않는다. */
+  isFollowUp = false,
 ): Promise<SyncResult> {
   const cursor = await store.init(projectId, timeZone);
 
@@ -209,6 +211,27 @@ export async function syncProject(
     if (!response.hasMore) break;
     if (!advanced) break;
     if (rounds >= MAX_ROUNDS) break;
+  }
+
+  /*
+   * 보내기를 마친 뒤 받는 동안 사용자가 저장한 것이 있으면 한 번 더 보내고 받는다 (2026-10-16).
+   *
+   * 받기는 그 거래를 서버의 옛 값으로 덮어 쓴다 -- 그 명령은 아직 큐에 있어 서버가 모른다. 그대로
+   * 끝내면 다음 동기화가 보낼 때까지 고친 것이 옛 값으로 되돌아 보인다. 받아 온 행을 건너뛰면
+   * 그 명령이 충돌·거절로 끝났을 때 사본이 서버와 영영 어긋나므로, 덮이게 두고 곧바로 다시 맞춘다.
+   * 한 번만 더 한다 -- 사용자가 계속 저장해도 여기서 맴돌지 않는다.
+   */
+  if (push && !isFollowUp && (await store.pendingMutations(projectId, 1)).length > 0) {
+    const next = await syncProject(store, pull, projectId, timeZone, push, undefined, true);
+    return {
+      version: next.version,
+      rounds: rounds + next.rounds,
+      changed: changed || next.changed,
+      pushed: outbox.pushed + next.pushed,
+      held: outbox.held + next.held,
+      offline: next.offline,
+      rebuilt: rebuilt || next.rebuilt,
+    };
   }
 
   return {

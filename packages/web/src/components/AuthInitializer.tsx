@@ -26,12 +26,6 @@ export function AuthInitializer() {
         });
       }
 
-      const state = useAuth.getState();
-      console.log('[AuthInitializer] Auth state after load:', {
-        isAuthenticated: state.isAuthenticated,
-        isInitializing: state.isInitializing,
-        user: state.user?.email,
-      });
     };
     initAuth();
   }, []);

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   rankForMove, rankForStep,
   type AccountDto,
@@ -77,8 +77,12 @@ export function useAssetsData(projectId: string | null) {
   // 같은 가계부를 다시 읽을 때는 목록을 가리지 않는다 (useLoadedKey 주석).
   const loaded = useLoadedKey(cached ? projectId : null);
 
+  /** 마지막으로 내보낸 받기의 번호. 늦게 온 앞 받기(다른 가계부·옛 신호)의 답을 버린다. */
+  const request = useRef(0);
+
   const reload = useCallback(async () => {
     if (!projectId) return;
+    const requestId = ++request.current;
 
     const isRefresh = loaded.has(projectId);
     try {
@@ -105,6 +109,7 @@ export function useAssetsData(projectId: string | null) {
         }),
       ]);
 
+      if (requestId !== request.current) return;
       const snapshot: AssetsSnapshot = {
         people: peopleData || [],
         accounts: accountsData || [],
@@ -121,10 +126,11 @@ export function useAssetsData(projectId: string | null) {
       writeScreenCache(CACHE_SLOT, projectId, snapshot);
     } catch (error) {
       console.error('자산 조회 실패:', error);
+      if (requestId !== request.current) return;
       // 다시 읽다 실패했다면 그려 둔 목록은 여전히 이 가계부의 것이다. 오류로 가리지 않는다.
       if (!isRefresh) setHasError(true);
     } finally {
-      setIsLoading(false);
+      if (requestId === request.current) setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, mirrorVersion, loaded]);

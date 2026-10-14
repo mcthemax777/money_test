@@ -12,6 +12,8 @@ import type { MutableRefObject } from 'react';
 import type { NativeScrollEvent, NativeSyntheticEvent, View } from 'react-native';
 import { useSharedValue, type SharedValue } from 'react-native-reanimated';
 
+import { useScreenVisible } from './after-paint';
+
 /**
  * 화면 바닥에 닿았다는 소식.
  *
@@ -421,12 +423,17 @@ export function useNearBottom(handler: Handler, threshold?: number) {
   const context = useContext(NearBottomContext);
   const latest = useRef(handler);
   latest.current = handler;
+  /*
+   * 숨은 화면(숨겨 둔 탭, 덮인 화면)은 받지 않는다 (2026-10-16). 스크롤은 껍데기 하나를 함께 쓰므로,
+   * 받으면 보이는 화면을 내릴 때마다 숨은 목록이 줄을 더 세우고 다음 쪽을 받아 끝까지 가 버린다.
+   */
+  const visible = useScreenVisible();
 
   useEffect(() => {
-    if (!context) return;
+    if (!context || !visible) return;
     // 늘 최신 handler 를 부른다. 등록을 다시 하면 그 사이 스크롤 사건을 놓친다.
     return context.register(() => latest.current(), threshold);
-  }, [context, threshold]);
+  }, [context, threshold, visible]);
 }
 
 /** 처음에 세울 줄 수와, 바닥이 가까워질 때마다 더 세울 만큼. */

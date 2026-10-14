@@ -95,9 +95,12 @@ export default function BudgetEditModal({
           <input
             type="number"
             min="0"
+            step="any"
+            inputMode="decimal"
             autoFocus
             value={editor.amount}
-            onChange={(e) => editor.setAmount(parseInt(e.target.value) || 0)}
+            // 소수까지 읽는다. 정수로만 읽으면 외화 가계부의 0.5 가 0(=예산 지우기)이 된다 (2026-10-16).
+            onChange={(e) => editor.setAmount(parseFloat(e.target.value) || 0)}
             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>

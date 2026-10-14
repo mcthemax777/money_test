@@ -106,6 +106,7 @@ export default function BudgetScheduleList(props: BudgetScheduleListProps) {
                   <>
                     <input
                       type="number"
+                      step="any"
                       min="0"
                       autoFocus
                       value={editingValue}

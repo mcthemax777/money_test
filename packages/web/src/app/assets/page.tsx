@@ -110,6 +110,7 @@ import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useSwapScroll } from '@/hooks/useSwapScroll';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 import { RevealScope } from '@/components/ChartReveal';
+import { ScreenVisibility } from '@/components/ScreenVisible';
 
 
 
@@ -699,18 +700,27 @@ export default function DashboardPage() {
    */
   const LEDGER_PAGE_SIZE = 100;
 
+  /**
+   * 원장 받기의 번호. 첫 쪽을 새로 받을 때마다 오른다. 계좌를 빨리 바꾸면 앞 계좌의 답이 늦게 와
+   * 뒤 계좌 아래에 서거나, 나가 있던 다음 쪽이 새 목록 뒤에 붙었다 (2026-10-16). 번호가 바뀐 답은 버린다.
+   */
+  const ledgerRequest = useRef(0);
+
   const loadAccountTransactions = useCallback(async (accountId: string) => {
+    const requestId = ++ledgerRequest.current;
     try {
       setIsLoadingLedger(true);
       const response = await apiClient.getAccountPostings(accountId, { limit: LEDGER_PAGE_SIZE });
+      if (requestId !== ledgerRequest.current) return;
       setAccountTransactions(response?.data ?? []);
       setLedgerCursor(response?.nextCursor ?? null);
     } catch (err) {
       console.error('거래 내역 조회 실패:', err);
+      if (requestId !== ledgerRequest.current) return;
       setAccountTransactions([]);
       setLedgerCursor(null);
     } finally {
-      setIsLoadingLedger(false);
+      if (requestId === ledgerRequest.current) setIsLoadingLedger(false);
     }
   }, []);
 
@@ -722,18 +732,21 @@ export default function DashboardPage() {
    */
   const loadMoreAccountTransactions = useCallback(async () => {
     if (!selectedAccount || !ledgerCursor) return;
+    // 이 다음 쪽은 지금 목록의 것이다. 그 사이 첫 쪽을 새로 받았으면(계좌를 바꿈·동기화) 버린다.
+    const requestId = ledgerRequest.current;
     try {
       setIsLoadingLedger(true);
       const response = await apiClient.getAccountPostings(selectedAccount.id, {
         limit: LEDGER_PAGE_SIZE,
         cursor: ledgerCursor,
       });
+      if (requestId !== ledgerRequest.current) return;
       setAccountTransactions((prev) => [...prev, ...(response?.data ?? [])]);
       setLedgerCursor(response?.nextCursor ?? null);
     } catch (err) {
       console.error('거래 내역 조회 실패:', err);
     } finally {
-      setIsLoadingLedger(false);
+      if (requestId === ledgerRequest.current) setIsLoadingLedger(false);
     }
   }, [selectedAccount, ledgerCursor]);
 
@@ -1212,6 +1225,7 @@ export default function DashboardPage() {
       }
     >
       {/* 거래내역을 닫고 돌아오면 추이 그래프도 다시 그려진다 (ChartReveal). */}
+      <ScreenVisibility visible={!entriesSearch}>
       <RevealScope visible={!entriesSearch}>
       {/*
         화면의 첫 줄이자 제목이다. 이름을 누르면 자산주인을, 유형 카드를 누르면
@@ -2129,6 +2143,7 @@ export default function DashboardPage() {
                 </label>
                 <input
                   type="number"
+                  step="any"
                   value={cardForm.creditLimit}
                   onChange={(e) => setCardForm({ ...cardForm, creditLimit: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -2198,6 +2213,7 @@ export default function DashboardPage() {
         onEntryChange={handleEntryChange}
       />
       </RevealScope>
+      </ScreenVisibility>
     </div>
     </>
   );

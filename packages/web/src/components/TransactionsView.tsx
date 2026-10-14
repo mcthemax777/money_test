@@ -92,6 +92,7 @@ import { useTopReveal } from '@/hooks/useTopReveal';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
 import PaybackSection from '@/components/PaybackSection';
 import TransactionItem from '@/components/TransactionItem';
+import { ScreenVisibility } from '@/components/ScreenVisible';
 
 const TABS: Array<{ id: TransactionTab; labelKey: MessageKey }> = [
   { id: 'date', labelKey: 'tx.tab.date' },
@@ -872,6 +873,7 @@ export default function TransactionsView({
         </div>
       ) : null}
     <div className={`space-y-4 ${analysisFrom ? 'hidden' : returnClass}`}>
+      <ScreenVisibility visible={!analysisFrom}>
       {/*
         위쪽 한 덩어리 -- 제목, 알림, 탭, 걸어 둔 조건.
 
@@ -1641,6 +1643,7 @@ export default function TransactionsView({
         onReferenceDataChange={(patch) => setRefPatch((prev) => ({ ...prev, ...patch }))}
         onEntryChange={tx.reload}
       />
+      </ScreenVisibility>
     </div>
     </>
   );

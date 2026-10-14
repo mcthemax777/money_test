@@ -581,6 +581,8 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE INDEX IF NOT EXISTS posting_entry_idx ON posting (entryId)`,
   `CREATE INDEX IF NOT EXISTS posting_category_idx ON posting (categoryId)`,
   `CREATE INDEX IF NOT EXISTS posting_account_idx ON posting (accountId)`,
+  // 카드 실적·사용액이 카드의 다리를 고른다. 동기화마다 카드 수만큼 도는 질의라 색인이 없으면 다리 전체를 훑는다 (2026-10-16).
+  `CREATE INDEX IF NOT EXISTS posting_card_idx ON posting (cardId)`,
   `CREATE INDEX IF NOT EXISTS account_project_idx ON account (projectId, isActive)`,
   `CREATE INDEX IF NOT EXISTS category_project_idx ON category (projectId, type)`,
   `CREATE INDEX IF NOT EXISTS tag_project_idx ON tag (projectId, sortRank)`,

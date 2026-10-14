@@ -89,8 +89,9 @@ export default function BudgetEditModal({
           <Text className="mb-2 text-sm font-medium text-gray-700">{t('budget.monthlyAmount')}</Text>
           <TextInput
             value={String(editor.amount)}
-            onChangeText={(text) => editor.setAmount(parseInt(text, 10) || 0)}
-            keyboardType="number-pad"
+            // 소수까지 읽는다. 정수로만 읽으면 외화 가계부의 0.5 가 0(=예산 지우기)이 된다 (2026-10-16).
+            onChangeText={(text) => editor.setAmount(parseFloat(text) || 0)}
+            keyboardType="decimal-pad"
             autoFocus
             onSubmitEditing={editor.submit}
             className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-base text-gray-900"

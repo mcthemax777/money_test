@@ -82,6 +82,9 @@ import {
   type InstallmentInterestMode,
 } from '@money/core/lib/period-ledger';
 
+/** 금액을 센트(소수 둘째 자리) 정수로. 실수로 더한 금액을 견줄 때 쓴다 -- 0.1 + 0.2 가 0.3 이 아니다. */
+const toCents = (amount: number) => Math.round(amount * 100);
+
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const ENTRY_FORM_ID = 'entry-form';
 const CARD_FORM_ID = 'card-form';
@@ -740,7 +743,9 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     formData.amount,
     String(
       formData.type !== 'transfer' && formData.splits.length > 0
-        ? formData.splits.reduce((sum, split) => sum + toNumber(split.discountAmount), 0)
+        ? toCents(
+            formData.splits.reduce((sum, split) => sum + toNumber(split.discountAmount), 0),
+          ) / 100
         : toNumber(formData.discountAmount),
     ),
   );
@@ -1020,8 +1025,9 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         (acc, share) => acc + toNumber(share),
         0,
       );
-      // 차감 뒤 금액과 견준다. 서버가 견주는 값이다 (installmentBase).
-      if (shareSum !== toNumber(installmentBase)) {
+      // 차감 뒤 금액과 견준다. 서버가 견주는 값이다 (installmentBase). 센트에서 견준다 -- 실수로 더하면
+      // 10.1 + 10.1 + 10.1 이 30.299999… 가 되어 맞는 회차 금액을 거절했다 (2026-10-16).
+      if (toCents(shareSum) !== toCents(toNumber(installmentBase))) {
         setError(t('entryForm.installmentSharesSum'));
         return;
       }
@@ -1058,7 +1064,10 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
           return;
         }
         // 외화 결제는 청구액이 환산 뒤에 정해져 폼의 금액과 견줄 수 없다 (위와 같은 판단).
-        if (formData.currency === ledgerCurrency && payment * months < toNumber(installmentBase)) {
+        if (
+          formData.currency === ledgerCurrency &&
+          toCents(payment * months) < toCents(toNumber(installmentBase))
+        ) {
           setError(t('entryForm.installmentPaymentTooSmall'));
           return;
         }
@@ -2195,6 +2204,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 <div className="flex items-stretch rounded-lg border border-gray-300 focus-within:ring-2 focus-within:ring-blue-500">
                   <input
                     type="number"
+                    step="any"
                     required
                     /* 팝업이 열리면 여기부터 입력한다 (Modal이 이 표시를 찾아 포커스한다) */
                     data-autofocus
@@ -2340,6 +2350,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                   </div>
                   <input
                     type="number"
+                    step="any"
                     value={formData.discountAmount}
                     onChange={(e) =>
                       setFormData({ ...formData, discountAmount: e.target.value })
@@ -2453,6 +2464,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
                           <input
                             type="number"
+                            step="any"
                             value={split.amount}
                             onChange={(e) => updateSplitRow(index, { amount: e.target.value })}
                             className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -2496,6 +2508,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                               </div>
                               <input
                                 type="number"
+                                step="any"
                                 value={split.discountAmount}
                                 onChange={(e) =>
                                   updateSplitRow(index, { discountAmount: e.target.value })
@@ -2893,6 +2906,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                       </label>
                       <input
                         type="number"
+                        step="any"
                         value={formData.toAmount}
                         onChange={(e) => setFormData({ ...formData, toAmount: e.target.value })}
                         className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -2924,6 +2938,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                     </label>
                     <input
                       type="number"
+                      step="any"
                       value={formData.transferFee}
                       onChange={(e) => setFormData({ ...formData, transferFee: e.target.value })}
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
@@ -2931,7 +2946,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                     />
                   </div>
 
-                  {formData.transferFee && parseInt(formData.transferFee) > 0 && (
+                  {formData.transferFee && parseFloat(formData.transferFee) > 0 && (
                     <>
                       <div>
                         <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -3544,6 +3559,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                 </label>
                 <input
                   type="number"
+                  step="any"
                   value={cardFormData.creditLimit}
                   onChange={(e) => setCardFormData({ ...cardFormData, creditLimit: e.target.value })}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"

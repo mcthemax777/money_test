@@ -138,6 +138,9 @@ function NetAnalysisPanel({
 
       {net.isLoading ? (
         <LoadingBlock label={t('detail.loading')} />
+      ) : net.hasError ? (
+        /* 받지 못했다. 빈 그래프로 그리면 "쓴 것이 없다"(0원)로 읽힌다. */
+        <p className="py-12 text-center text-sm text-red-600">{t('home.loadFailed')}</p>
       ) : (
         <>
           {/* 일별 누적 순수입. 달로 보면 앞선 두 달을 겹친다 (지출·수입 탭과 같은 그래프). */}

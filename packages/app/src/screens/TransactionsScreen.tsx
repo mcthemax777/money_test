@@ -564,6 +564,10 @@ export default function TransactionsScreen({
    * null 이면 닫혀 있다. 년월 줄의 분석 아이콘이 그 줄의 기간 열쇠를 들고 편다.
    */
   const [analysisFrom, setAnalysisFrom] = useState<{ key: string } | null>(null);
+  /* 가계부를 바꾸면 덮어 둔 분석은 앞 가계부의 조건이라 닫는다 (탭을 숨겨 두므로 저절로 닫히지 않는다). */
+  useEffect(() => {
+    setAnalysisFrom(null);
+  }, [selectedProjectId]);
   const scrollToTop = useScrollToTop();
   const { offsetOf, restoreTo } = useScrollRestore();
   const listOffset = useRef(0);
