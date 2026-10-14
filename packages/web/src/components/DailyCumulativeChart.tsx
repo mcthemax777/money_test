@@ -29,7 +29,12 @@ import {
   type DailyCumulativePoint,
 } from '@money/core/lib/entries';
 import { formatCurrency } from '@money/core/lib/money';
-import { cumulativeLineDayKey, cumulativeReadoutLines } from '@money/core/lib/month-compare';
+import {
+  cumulativeLineDayKey,
+  cumulativeReadoutLines,
+  type ChangeTone,
+  type CumulativeKind,
+} from '@money/core/lib/month-compare';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 /** 선마다의 색. 오래된 기간일수록 옅어 눈이 지금 선을 먼저 잡는다. */
@@ -44,6 +49,13 @@ const LINE_COLOR = {
  * 거쳐 가져다 쓰던 곳이 많아 이름은 여기서도 그대로 내보낸다.
  */
 export type { CumulativeSeries, DailyCumulativePoint };
+
+/** 증감의 색. 나쁨 빨강, 좋음 초록, 그대로나 견줄 것이 없으면 회색 (2026-10-14 사용자 요청). */
+const TONE_CLASS: Record<ChangeTone, string> = {
+  bad: 'text-red-600',
+  good: 'text-green-600',
+  neutral: 'text-gray-500',
+};
 
 interface Props {
   /** 보고 있는 구간의 일별 누적. x축이 이 값의 label을 따른다. */
@@ -69,6 +81,8 @@ interface Props {
    * 그리면 앞선 달 선 아래에 붙어 "이번 달은 덜 썼다"로 잘못 읽힌다.
    */
   throughDay?: number;
+  /** 무엇을 쌓은 선인가. 아래 증감의 색이 갈린다 -- 지출은 늘면 빨강, 수입·순수입은 늘면 초록. */
+  kind?: CumulativeKind;
   /** 이번 기간의 첫날 "YYYY-MM-DD". 아래 줄을 눌러 그 날을 열 때 센다. */
   currentStartKey?: string;
   /**
@@ -98,6 +112,7 @@ export default function DailyCumulativeChart({
   height,
   currentStartKey,
   onOpenDay,
+  kind = 'expense',
 }: Props) {
   const displayCurrency = useProjectDisplayCurrency();
   const [earlier, previous] = comparisons;
@@ -208,7 +223,7 @@ export default function DailyCumulativeChart({
         {cumulativeReadoutLines(pickedRow, pickedRow ? picked : null, comparisons, {
           name: currentLineName,
           periodKey: currentPeriodKey,
-        }).map((item) => {
+        }, kind, displayCurrency).map((item) => {
           /* 그 선에 그 날의 값이 있을 때만 연다. 아직 오지 않은 날이나 짧은 달 끝은 열 날이 없다. */
           const dayKey =
             onOpenDay && currentStartKey && pickedRow && picked !== null && item.value !== null
@@ -228,11 +243,14 @@ export default function DailyCumulativeChart({
               style={{ backgroundColor: LINE_COLOR[item.key] }}
             />
             <span className="truncate text-gray-600">{item.name}</span>
-            <span className="ml-auto font-semibold" style={{ color: LINE_COLOR[item.key] }}>
+            {/* 금액은 검정으로 통일한다. 어느 선인지는 왼쪽 색 막대가 말한다 (2026-10-14 사용자 요청). */}
+            <span className="ml-auto font-semibold text-gray-900">
               {item.value === null ? '-' : formatCurrency(item.value, displayCurrency)}
             </span>
             {/* 증감 자리는 늘 둔다. 줄마다 금액의 오른쪽 끝이 맞아야 위아래로 견주기 쉽다. */}
-            <span className="min-w-16 text-right text-xs text-gray-500">{item.change ?? ''}</span>
+            <span className={`min-w-16 text-right text-xs ${TONE_CLASS[item.tone]}`}>
+              {item.change ?? ''}
+            </span>
           </button>
           );
         })}

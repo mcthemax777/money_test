@@ -399,6 +399,7 @@ export function BudgetDetailModal({
                 throughDay={detail.throughDay}
                 tooltipName={t(detail.labels.cumulative)}
                 currentStartKey={detail.dailyStartKey}
+                kind={detail.type}
                 onOpenDay={onOpenDay}
                 height={300}
               />

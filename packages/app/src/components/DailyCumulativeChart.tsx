@@ -27,7 +27,12 @@ import {
   type DailyCumulativePoint,
 } from '@money/core/lib/entries';
 import { formatCurrency } from '@money/core/lib/money';
-import { cumulativeLineDayKey, cumulativeReadoutLines } from '@money/core/lib/month-compare';
+import {
+  cumulativeLineDayKey,
+  cumulativeReadoutLines,
+  type ChangeTone,
+  type CumulativeKind,
+} from '@money/core/lib/month-compare';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 /** 그리는 자리의 높이(px). 웹은 300 이지만 앱에서는 그만큼이 화면 절반을 먹는다. */
@@ -45,6 +50,12 @@ const MAX_X_LABELS = 6;
 const GRID_COLOR = '#e5e7eb';
 const AXIS_TEXT_COLOR = '#6b7280';
 
+/** 증감의 색. 나쁨 빨강, 좋음 초록, 그대로나 견줄 것이 없으면 회색 (2026-10-14 사용자 요청). */
+const TONE_CLASS: Record<ChangeTone, string> = {
+  bad: 'text-red-600',
+  good: 'text-green-600',
+  neutral: 'text-gray-500',
+};
 /** 그릴 선. 오래된 달일수록 옅어 눈이 이번 달 선을 먼저 잡는다. */
 type SeriesKey = 'earlier' | 'previous' | 'current';
 
@@ -57,6 +68,7 @@ export default function DailyCumulativeChart({
   tooltipName,
   currentStartKey,
   onOpenDay,
+  kind = 'expense',
 }: {
   /** 보고 있는 구간의 일별 누적. x축이 이 값의 label 을 따른다. */
   current: DailyCumulativePoint[];
@@ -70,6 +82,8 @@ export default function DailyCumulativeChart({
   throughDay?: number;
   /** 견줄 달이 없을 때 읽는 줄에 적을 이름 */
   tooltipName: string;
+  /** 무엇을 쌓은 선인가. 아래 증감의 색이 갈린다 -- 지출은 늘면 빨강, 수입·순수입은 늘면 초록. */
+  kind?: CumulativeKind;
   /** 이번 기간의 첫날 "YYYY-MM-DD". 아래 줄을 눌러 그 날을 열 때 센다. */
   currentStartKey?: string;
   /**
@@ -276,7 +290,7 @@ export default function DailyCumulativeChart({
         {cumulativeReadoutLines(pickedRow, pickedRow ? picked : null, comparisons, {
           name: lines[lines.length - 1].name,
           periodKey: currentPeriodKey,
-        }).map((item) => {
+        }, kind, displayCurrency).map((item) => {
           const color = lines.find((line) => line.key === item.key)?.color ?? CHART_COLOR;
           /* 그 선에 그 날의 값이 있을 때만 연다. 아직 오지 않은 날이나 짧은 달 끝은 열 날이 없다. */
           const dayKey =
@@ -294,11 +308,14 @@ export default function DailyCumulativeChart({
               <Text className="shrink text-sm text-gray-600" numberOfLines={1}>
                 {item.name}
               </Text>
-              <Text className="ml-auto text-sm font-semibold" style={{ color }}>
+              {/* 금액은 검정으로 통일한다. 어느 선인지는 왼쪽 색 막대가 말한다 (2026-10-14 사용자 요청). */}
+              <Text className="ml-auto text-sm font-semibold text-gray-900">
                 {item.value === null ? '-' : formatCurrency(item.value, displayCurrency)}
               </Text>
               {/* 증감 자리는 늘 둔다. 줄마다 금액의 오른쪽 끝이 맞아야 위아래로 견주기 쉽다. */}
-              <Text className="text-right text-xs text-gray-500" style={{ minWidth: 48 }}>{item.change ?? ''}</Text>
+              <Text className={`text-right text-xs ${TONE_CLASS[item.tone]}`} style={{ minWidth: 48 }}>
+                {item.change ?? ''}
+              </Text>
             </Pressable>
           );
         })}

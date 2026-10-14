@@ -24,6 +24,7 @@ import {
   analysisDated,
   buildDailyCumulative,
   cumulativeChangeOf,
+  cumulativeTrendOf,
   type CumulativeRow,
   type CumulativeSeries,
 } from './entries';
@@ -145,8 +146,28 @@ export interface CumulativeReadoutLine {
   name: string;
   /** 그 날의 누적. 그 선이 그 날까지 닿지 않았으면 null 이다. */
   value: number | null;
-  /** 앞선 선보다 늘고 준 비율 ("▲12%") */
+  /** 앞선 선보다 늘고 준 금액 ("▲12만") */
   change: string | null;
+  /**
+   * 그 증감이 좋은 쪽인가 (`changeTone`). 지출은 늘면 나쁘고, 수입·순수입은 늘면 좋다
+   * (2026-10-14 사용자 요청 -- 나쁨 빨강, 좋음 초록). 증감이 없거나 0 이면 neutral 이다.
+   */
+  tone: ChangeTone;
+}
+
+export type ChangeTone = 'good' | 'bad' | 'neutral';
+
+/** 누적 그래프가 세는 것. 지출만 늘어나는 것이 나쁘다. */
+export type CumulativeKind = 'expense' | 'income' | 'net';
+
+/** 증감 방향을 좋고 나쁨으로. 지출은 늘면 나쁘고, 나머지는 반대다. */
+export function changeTone(
+  trend: 'up' | 'down' | 'flat' | null,
+  kind: CumulativeKind,
+): ChangeTone {
+  if (trend === null || trend === 'flat') return 'neutral';
+  const isIncrease = trend === 'up';
+  return isIncrease === (kind === 'expense') ? 'bad' : 'good';
 }
 
 /**
@@ -161,6 +182,8 @@ export function cumulativeReadoutLines(
   index: number | null,
   comparisons: CumulativeSeries[],
   current: { name: string; periodKey?: string },
+  kind: CumulativeKind,
+  currency: string,
 ): CumulativeReadoutLine[] {
   const [earlier, previous] = comparisons;
   const line = (
@@ -171,7 +194,8 @@ export function cumulativeReadoutLines(
     name:
       series.periodKey && index !== null ? periodDayName(series.periodKey, index) : series.name,
     value: row ? row[key] : null,
-    change: row ? cumulativeChangeOf(row, key) : null,
+    change: row ? cumulativeChangeOf(row, key, currency) : null,
+    tone: changeTone(row ? cumulativeTrendOf(row, key) : null, kind),
   });
   return [
     ...(earlier ? [line('earlier', earlier)] : []),

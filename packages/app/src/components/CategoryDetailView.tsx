@@ -228,6 +228,7 @@ export default function CategoryDetailView({
                 throughDay={detail.throughDay}
                 tooltipName={t(detail.labels.cumulative)}
                 currentStartKey={detail.dailyStartKey}
+                kind={detail.type}
                 onOpenDay={onOpenDay}
               />
             ) : (

@@ -143,6 +143,7 @@ export default function NetAnalysisPanel({
                 throughDay={net.throughDay}
                 tooltipName={t('analysis.net.cumulative')}
                 currentStartKey={net.dailyStartKey}
+                kind="net"
                 onOpenDay={onOpenDay}
                 height={300}
               />

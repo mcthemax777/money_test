@@ -1,6 +1,7 @@
 import { matchedAmountOf, type EntryListItem } from '@money/types';
 
 import { activeLocale, translate, type MessageKey } from '../lib/i18n';
+import { formatAxisAmount } from './chart';
 import { dateKeyOf } from './datetime';
 import { toNumber } from './money';
 
@@ -310,16 +311,30 @@ export function defaultCumulativeIndex(
 }
 
 /**
- * 같은 날짜의 누적을 앞선 달과 견준 증감. "▲12%", "▼5%", "0%".
+ * 같은 날짜의 누적을 앞선 달과 견준 증감. 금액 차이를 줄여 적는다: "▲12만", "▼5,300", "0".
  *
- * 앞선 달 값이 없거나 0 이면 나눌 수 없으므로 null 이다. 0 에서 늘어난 것을
- * 퍼센트로 적으면 끝없이 커져 읽을 수 없다.
+ * 비율은 적지 않는다 (2026-10-14 사용자 요청). 비율은 앞선 값이 0 이하이면 낼 수 없어, 순수입처럼
+ * 음수로 내려가는 누적에서는 비어 있는 줄이 많았다. 차이는 두 값만 있으면 늘 적힌다.
  */
-export function formatCumulativeChange(value: number | null, base: number | null): string | null {
-  if (value === null || base === null || base <= 0) return null;
-  const percent = Math.round(((value - base) / base) * 100);
-  if (percent === 0) return '0%';
-  return `${percent > 0 ? '▲' : '▼'}${Math.abs(percent)}%`;
+export function formatCumulativeChange(
+  value: number | null,
+  base: number | null,
+  currency: string,
+): string | null {
+  if (value === null || base === null) return null;
+  const diff = value - base;
+  if (diff === 0) return '0';
+  return `${diff > 0 ? '▲' : '▼'}${formatAxisAmount(Math.abs(diff), currency)}`;
+}
+
+/** 누적 그래프 한 줄이 견줄 두 값. 이번 달은 지난달과, 지난달은 전전달과. 가장 오래된 선은 없다. */
+function cumulativePairOf(
+  row: CumulativeRow,
+  key: 'current' | 'previous' | 'earlier',
+): [number | null, number | null] | null {
+  if (key === 'current') return [row.current, row.previous];
+  if (key === 'previous') return [row.previous, row.earlier];
+  return null;
 }
 
 /**
@@ -329,10 +344,21 @@ export function formatCumulativeChange(value: number | null, base: number | null
 export function cumulativeChangeOf(
   row: CumulativeRow,
   key: 'current' | 'previous' | 'earlier',
+  currency: string,
 ): string | null {
-  if (key === 'current') return formatCumulativeChange(row.current, row.previous);
-  if (key === 'previous') return formatCumulativeChange(row.previous, row.earlier);
-  return null;
+  const pair = cumulativePairOf(row, key);
+  return pair ? formatCumulativeChange(pair[0], pair[1], currency) : null;
+}
+
+/** 위 증감의 방향. 적을 증감이 없으면 null 이다. */
+export function cumulativeTrendOf(
+  row: CumulativeRow,
+  key: 'current' | 'previous' | 'earlier',
+): 'up' | 'down' | 'flat' | null {
+  const pair = cumulativePairOf(row, key);
+  if (!pair || pair[0] === null || pair[1] === null) return null;
+  const diff = pair[0] - pair[1];
+  return diff > 0 ? 'up' : diff < 0 ? 'down' : 'flat';
 }
 
 /** 그 달의 첫날과 말일 ("YYYY-MM-DD"). 달 단위 화면이 위 함수에 넘길 값이다. */

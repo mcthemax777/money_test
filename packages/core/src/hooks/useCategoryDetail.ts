@@ -301,6 +301,8 @@ export interface CategoryDetail {
   labels: DetailLabels;
   /** 12개월 추이 */
   monthly: MonthlyPoint[];
+  /** 이 보기가 세는 쪽. 일별 누적 아래 증감의 색이 이것으로 갈린다 (지출은 늘면 나쁘다). */
+  type: 'income' | 'expense';
   /** 이 구간의 일별 누적 */
   daily: DailyCumulativePoint[];
   /** 일별 누적의 첫 칸 날짜 "YYYY-MM-DD". n 번째 칸은 이 날에서 n 일 뒤다. */
@@ -780,6 +782,7 @@ export function useCategoryDetail({
       ? { ...DETAIL_LABELS[target.type], ...trendByUnit.labels[target.type] }
       : DETAIL_LABELS[target.type],
     monthly,
+    type: target.type,
     daily,
     dailyStartKey: dayKeys.startKey,
     comparisons,
