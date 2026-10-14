@@ -12,6 +12,11 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { Animated, Easing, useWindowDimensions, type StyleProp, type ViewStyle } from 'react-native';
 
+import { RevealScope } from '../components/ChartReveal';
+import LoadingBlock from '../components/LoadingBlock';
+
+import { useAfterPaint } from './after-paint';
+
 /** 웹의 260ms cubic-bezier(0.32, 0.72, 0, 1) 와 같다. */
 const DURATION = 260;
 const EASING = Easing.bezier(0.32, 0.72, 0, 1);
@@ -29,37 +34,61 @@ export function ScreenPush({ children }: { children: ReactNode }) {
     }).start();
   }, [progress]);
   const translateX = progress.interpolate({ inputRange: [0, 1], outputRange: [width, 0] });
-  return <Animated.View style={{ transform: [{ translateX }] }}>{children}</Animated.View>;
+  /*
+   * 안의 화면은 두 그림 뒤에 그린다 (after-paint). 누른 그림에서 그 화면의 그래프·목록까지 그리면
+   * 밀려 드는 움직임이 그만큼 늦게 시작해 손끝에서 멈춘 것처럼 느껴진다. 그동안 돌림 표시가 선다.
+   */
+  const ready = useAfterPaint();
+  return (
+    <Animated.View style={{ transform: [{ translateX }] }}>
+      {ready ? children : <LoadingBlock />}
+    </Animated.View>
+  );
 }
 
 /**
- * 덮였다가 돌아온 앞 화면. `returned` 이면(core `useScreenReturn`) 그려지는 순간 왼쪽에서 제자리로
- * 오고, 처음 열 때는 움직이지 않는다.
+ * 위에 다른 화면을 덮을 수 있는 앞 화면.
+ *
+ * 덮인 동안(`covered`)에는 **지우지 않고 숨겨 둔다** (2026-10-15 사용자 요청 -- 팝업처럼). 받아 둔
+ * 값·고른 탭·파고든 자리가 그대로 남아 돌아올 때 다시 받지 않고, 숨어 있는 동안에도 다른 기기의
+ * 변경을 받아 고쳐 둔다. 덮개가 걷히면 왼쪽에서 제자리로 온다. 처음 열 때는 움직이지 않는다.
  */
 export function ScreenReturn({
-  returned,
+  covered,
   style,
   children,
 }: {
-  returned: boolean;
+  covered: boolean;
   /** 감싼 것들 사이의 간격처럼, 감싸기 전 부모가 주던 모양을 잇는다. */
   style?: StyleProp<ViewStyle>;
   children: ReactNode;
 }) {
   const { width } = useWindowDimensions();
-  const progress = useRef(new Animated.Value(returned ? 0 : 1)).current;
+  const progress = useRef(new Animated.Value(1)).current;
+  const wasCovered = useRef(covered);
   useEffect(() => {
-    if (!returned) return;
+    const isBack = wasCovered.current && !covered;
+    wasCovered.current = covered;
+    if (!isBack) return;
+    progress.setValue(0);
     Animated.timing(progress, {
       toValue: 1,
       duration: DURATION,
       easing: EASING,
       useNativeDriver: true,
     }).start();
-  }, [progress, returned]);
+  }, [progress, covered]);
   const translateX = progress.interpolate({ inputRange: [0, 1], outputRange: [-width * 0.25, 0] });
   const opacity = progress.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1] });
   return (
-    <Animated.View style={[style, { opacity, transform: [{ translateX }] }]}>{children}</Animated.View>
+    <Animated.View
+      style={[style, { opacity, transform: [{ translateX }] }, covered ? HIDDEN : null]}
+    >
+      {/* 덮개가 걷히면 안의 그래프도 다시 그려지듯 움직인다 (ChartReveal). */}
+      <RevealScope visible={!covered}>{children}</RevealScope>
+    </Animated.View>
   );
 }
+
+/** 자리를 차지하지 않고 숨는다. 안의 것은 그대로 살아 있다. */
+const HIDDEN = { display: 'none' } as const;

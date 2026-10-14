@@ -5,7 +5,8 @@ import Animated from 'react-native-reanimated';
 import { useAssetsData } from '@money/core/hooks/useAssetsData';
 import { accountsOfGroup } from '@money/core/hooks/useAccountExclusion';
 import { homeDataPort } from '@money/core/data/home-port';
-import { EMPTY_SEARCH } from '@money/core/hooks/useTransactions';
+import { DEFAULT_ENTRY_PERIOD } from '@money/types';
+import { EMPTY_SEARCH, type TransactionSearch } from '@money/core/hooks/useTransactions';
 import { accountTypeLabel } from '@money/core/lib/account-type';
 import { accountDueOf } from '@money/core/lib/card-settlement';
 import { todayKey } from '@money/core/lib/datetime';
@@ -35,8 +36,10 @@ import {
 import { useEntryFocus } from '@money/core/store/entry-focus';
 import { useUserFilter } from '@money/core/store/user-filter';
 
-import { useCloseOnBack, useNavigation } from '../shell/navigation';
+import { useCloseOnBack } from '../shell/navigation';
 import { useScrollRestore, useScrollToTop } from '../shell/scroll';
+import { ScreenPush, ScreenReturn } from '../shell/ScreenSlide';
+import TransactionsScreen from './TransactionsScreen';
 import { useFloatingActionSlot } from '../shell/floating-action';
 import AssetAddChooser, { AssetAddIcon, type AssetAddKind } from '../components/AssetAddChooser';
 import AssetDetailView, { type AssetDetailTarget } from '../components/AssetDetailView';
@@ -78,8 +81,6 @@ export default function AssetsScreen() {
    */
   const personNameOf = new Map(assets.people.map((person) => [person.id, person.name]));
   const byAssetType = groupAccountsOfPeople(assets.visiblePeople, assets.accounts);
-  const nav = useNavigation();
-  const focusEntries = useEntryFocus((state) => state.focusEntries);
   const narrowPersonScope = useEntryFocus((state) => state.narrowPersonScope);
   const reopen = useEntryFocus((state) => state.reopen);
   const clearReopen = useEntryFocus((state) => state.clearReopen);
@@ -158,6 +159,26 @@ export default function AssetsScreen() {
 
   /* 기기의 뒤로가기는 머리글의 ← 와 같은 일을 한다 -- 목록으로 돌아간다. */
   useCloseOnBack(detail !== null, () => openDetail(null));
+
+  /**
+   * 위에 덮어 연 거래 화면의 검색. null 이면 덮지 않았다.
+   *
+   * 거래 탭으로 건너가지 않고 이 화면 위에 덮는다 (2026-10-15 사용자 요청 -- 팝업처럼). 아래의
+   * 상세·목록은 지우지 않고 숨겨 두어 닫으면 다시 받지 않고 보던 자리로 돌아온다.
+   */
+  const [entriesSearch, setEntriesSearch] = useState<TransactionSearch | null>(null);
+  /** 거래 화면을 덮기 전에 보던 자리. */
+  const entriesOffset = useRef(0);
+  const openEntries = (search: TransactionSearch) => {
+    entriesOffset.current = offsetOf();
+    setEntriesSearch(search);
+    scrollToTop();
+  };
+  const closeEntries = () => {
+    setEntriesSearch(null);
+    restoreTo(entriesOffset.current);
+  };
+  useCloseOnBack(entriesSearch !== null, closeEntries);
 
   /*
    * 지금 그릴 상세. 목록에서 다시 찾아 온다.
@@ -303,11 +324,6 @@ export default function AssetsScreen() {
   useEffect(() => {
     if (!reopen) return;
     if (reopen.kind === 'category' || reopen.kind === 'tag') return;
-    // 전체 추이에서 건너간 것은 다시 펼 상세가 없다. 목록 그대로다.
-    if (reopen.kind === 'assets') {
-      clearReopen();
-      return;
-    }
 
     setDetail({ kind: reopen.kind, id: reopen.id });
     clearReopen();
@@ -331,11 +347,11 @@ export default function AssetsScreen() {
   };
 
   /**
-   * 이 항목으로 걸린 거래내역을 본다. 거래 화면으로 건너간다.
+   * 이 항목으로 걸린 거래내역을 본다. 거래 화면을 위에 덮는다.
    *
    * 통장·카드는 검색 조건으로 걸리지만(결제수단), 구성원은 자산주인 선택을 그 사람만
    * 으로 좁힌다 -- 상세에 있던 최근 거래와 같은 기준이 그것이다. 좁힌 선택은 거래
-   * 화면을 벗어날 때 저절로 되돌아온다 (core 의 entry-focus).
+   * 화면이 닫힐 때 저절로 되돌아온다 (core 의 entry-focus, TransactionsScreen).
    *
    * 추이 그래프의 칸을 누르면 같은 화면을 그 칸의 기간으로 좁혀 연다(`range`, 2026-10-14
    * 사용자 요청).
@@ -346,45 +362,29 @@ export default function AssetsScreen() {
 
     if (detailTarget.kind === 'person') {
       narrowPersonScope(detailTarget.person.id);
-      focusEntries({ kind: 'person', id: detailTarget.person.id }, { ...EMPTY_SEARCH, ...period });
+      openEntries({ ...EMPTY_SEARCH, ...period });
     } else if (detailTarget.kind === 'account') {
-      focusEntries({ kind: 'account', id: detailTarget.account.id }, {
-        ...EMPTY_SEARCH,
-        ...period,
-        paymentAccountIds: [detailTarget.account.id],
-      });
+      openEntries({ ...EMPTY_SEARCH, ...period, paymentAccountIds: [detailTarget.account.id] });
     } else if (detailTarget.kind === 'group') {
       // 그 묶음 통장으로 오간 것과, 그 통장에 딸린 카드로 쓰고 갚은 것.
       const { accountIds, cardIds } = groupMethodsOf(detailTarget.group.key);
-      focusEntries({ kind: 'group', id: detailTarget.group.key }, {
+      openEntries({
         ...EMPTY_SEARCH,
         ...period,
         paymentAccountIds: accountIds,
         paymentCardIds: cardIds,
       });
     } else {
-      focusEntries({ kind: 'card', id: detailTarget.card.id }, {
-        ...EMPTY_SEARCH,
-        ...period,
-        paymentCardIds: [detailTarget.card.id],
-      });
+      openEntries({ ...EMPTY_SEARCH, ...period, paymentCardIds: [detailTarget.card.id] });
     }
-
-    nav.go('/transactions');
   };
 
   /**
-   * 전체 추이의 칸을 눌렀을 때. 그 기간의 거래 화면으로 건너간다. 자산주인 선택은 거래 화면도
+   * 전체 추이의 아래 줄을 눌렀을 때. 그 기간의 거래 화면을 덮는다. 자산주인 선택은 거래 화면도
    * 같은 것을 쓰므로 따로 좁히지 않는다 -- 그래프가 세는 사람과 같다.
    */
-  const showTotalEntries = (range: { from: string; to: string }) => {
-    focusEntries({ kind: 'assets', id: '' }, {
-      ...EMPTY_SEARCH,
-      startDate: range.from,
-      endDate: range.to,
-    });
-    nav.go('/transactions');
-  };
+  const showTotalEntries = (range: { from: string; to: string }) =>
+    openEntries({ ...EMPTY_SEARCH, startDate: range.from, endDate: range.to });
 
   /** 상세의 "고치기". 종류에 맞는 창을 연다. 상세는 그 아래 그대로 남는다. */
   const openEditOfDetail = () => {
@@ -396,13 +396,23 @@ export default function AssetsScreen() {
 
   return (
     <View className="gap-6">
+      {entriesSearch ? (
+        <ScreenPush>
+          <TransactionsScreen
+            initial={{ search: entriesSearch, unit: DEFAULT_ENTRY_PERIOD }}
+            onBack={closeEntries}
+          />
+        </ScreenPush>
+      ) : null}
       {/*
-        상세를 펼쳐 두면 그것만 그린다.
+        상세를 펼쳐 두면 그것만 보인다.
 
         총자산과 목록을 위에 남겨 두면 좁은 화면에서 그래프가 한참 아래로 밀리고,
-        무엇을 보고 있는지도 흐려진다. 닫으면 목록이 그 자리에 그대로 돌아온다.
+        무엇을 보고 있는지도 흐려진다. 목록은 지우지 않고 숨겨 두어(`ScreenReturn`) 닫으면
+        다시 받지 않고 그 자리에 그대로 돌아온다 (2026-10-15 사용자 요청).
       */}
       {detailTarget ? (
+        <ScreenReturn covered={entriesSearch !== null}>
         <AssetDetailView
           target={detailTarget}
           netWorthByPerson={assets.netWorthByPerson}
@@ -422,8 +432,9 @@ export default function AssetsScreen() {
           onOpenEntry={openEntry}
           onChanged={assets.reload}
         />
-      ) : (
-        <>
+        </ScreenReturn>
+      ) : null}
+      <ScreenReturn covered={detailTarget !== null || entriesSearch !== null} style={{ gap: 24 }}>
       {/*
         화면의 첫 줄이자 제목이다. 이름을 누르면 자산주인을, 유형 카드를 누르면
         무엇을 더한 금액인지 고른다. 홈에 있던 칸을 그대로 옮겨 왔다.
@@ -636,8 +647,7 @@ export default function AssetsScreen() {
         </View>
       )}
       </View>
-        </>
-      )}
+      </ScreenReturn>
 
       {/*
         열 때만 만든다. 세 창이 같은 규칙이다 -- 숨긴 채로 붙여 두면 열리지 않는 일이

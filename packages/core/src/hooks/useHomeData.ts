@@ -7,6 +7,7 @@ import type { Account, Card, Category, Person } from '../lib/types';
 import { useProject } from '../store/project';
 import { useUserFilter } from '../store/user-filter';
 import { useDebouncedValue } from './useDebouncedValue';
+import { readScreenCache, writeScreenCache } from '../lib/screen-cache';
 import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 import { usePersonFilterSync } from './usePersonFilterSync';
@@ -65,6 +66,24 @@ function periodLabelOf(performance: CardDto.PerformanceResponse, previous: boole
   return `${shortMarker(start)} ~ ${shortMarker(end)}`;
 }
 
+const REFERENCE_SLOT = 'home.reference';
+const PERIOD_SLOT = 'home.period';
+
+/** 화면이 다시 설 때 그릴 기준 목록 (lib/screen-cache). 열쇠는 가계부다. */
+interface HomeReference {
+  people: Person[];
+  cards: Card[];
+  accounts: Account[];
+  categories: Category[];
+}
+
+/** 화면이 다시 설 때 그릴 그 달의 값. 열쇠는 가계부·사람·달이다. */
+interface HomePeriod {
+  budgets: BudgetDto.MonthlyBudget[];
+  tagBudgets: BudgetDto.MonthlyTagBudget[];
+  methods: SpendingMethod[];
+}
+
 /** 팝업 안에서 새로 만든 것들. 화면이 들고 있는 목록에 반영한다. */
 export interface ReferencePatch {
   accounts?: Account[];
@@ -105,20 +124,16 @@ export function useHomeData({
     return selected?.myPersonId ?? null;
   });
 
-  const [people, setPeople] = useState<Person[]>([]);
+  /** 화면이 다시 설 때 그릴 기준 목록. 같은 가계부로 받아 둔 것이 있으면 곧바로 그린다 (lib/screen-cache). */
+  const [cachedReference] = useState(() =>
+    projectId ? readScreenCache<HomeReference>(REFERENCE_SLOT, projectId) : undefined,
+  );
+  const [people, setPeople] = useState<Person[]>(cachedReference?.people ?? []);
   /** 구성원 목록을 받아 봤는지. 아직이면 필터를 만들 수 없어 조회를 미룬다. */
-  const [peopleLoaded, setPeopleLoaded] = useState(false);
-  const [cards, setCards] = useState<Card[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [categories, setCategories] = useState<Category[]>([]);
-
-  const [budgets, setBudgets] = useState<BudgetDto.MonthlyBudget[]>([]);
-  /** 태그 예산. 예산 상자가 분류 아래에 적는다. */
-  const [tagBudgets, setTagBudgets] = useState<BudgetDto.MonthlyTagBudget[]>([]);
-  const [methods, setMethods] = useState<SpendingMethod[]>([]);
-
-  const [isLoading, setIsLoading] = useState(true);
-  const [hasError, setHasError] = useState(false);
+  const [peopleLoaded, setPeopleLoaded] = useState(cachedReference !== undefined);
+  const [cards, setCards] = useState<Card[]>(cachedReference?.cards ?? []);
+  const [accounts, setAccounts] = useState<Account[]>(cachedReference?.accounts ?? []);
+  const [categories, setCategories] = useState<Category[]>(cachedReference?.categories ?? []);
   /**
    * 사본이 채워질 때마다 올라간다.
    *
@@ -132,8 +147,7 @@ export function useHomeData({
    * 같은 조건을 신호나 내 편집으로 다시 받을 때는 가리지 않고, 실패해도 오류로 덮지 않는다
    * (useLoadedKey 주석). 기준 목록(구성원·카드·계좌·분류)과 그 달의 값을 따로 센다.
    */
-  const referenceLoaded = useLoadedKey();
-  const periodLoaded = useLoadedKey();
+  const referenceLoaded = useLoadedKey(cachedReference ? projectId : null);
 
   const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
 
@@ -154,12 +168,19 @@ export function useHomeData({
         if (cancelled) return;
 
         // 저장된 자산주인 선택은 usePersonFilterSync 가 이 목록에 맞춘다.
-        setPeople(peopleData || []);
-        setCards(cardsData || []);
-        setAccounts(accountsData || []);
-        setCategories(categoryData || []);
+        const reference: HomeReference = {
+          people: peopleData || [],
+          cards: cardsData || [],
+          accounts: accountsData || [],
+          categories: categoryData || [],
+        };
+        setPeople(reference.people);
+        setCards(reference.cards);
+        setAccounts(reference.accounts);
+        setCategories(reference.categories);
         setPeopleLoaded(true);
         referenceLoaded.mark(projectId);
+        writeScreenCache(REFERENCE_SLOT, projectId, reference);
       } catch (error) {
         console.error('구성원·카드 조회 실패:', error);
         if (cancelled || referenceLoaded.has(projectId)) return;
@@ -191,6 +212,22 @@ export function useHomeData({
   );
   const filter = useDebouncedValue(entryFilter, 250);
 
+  /** 그 달의 값을 가르는 조건. 받기와 저장소(lib/screen-cache)가 같은 열쇠를 쓴다. */
+  const periodKey = JSON.stringify([projectId, filter, yearMonth, thisYearMonth]);
+  /** 화면이 다시 설 때 그릴 그 달의 값. 같은 조건으로 받아 둔 것이 있으면 곧바로 그린다. */
+  const [cachedPeriod] = useState(() => readScreenCache<HomePeriod>(PERIOD_SLOT, periodKey));
+
+  const [budgets, setBudgets] = useState<BudgetDto.MonthlyBudget[]>(cachedPeriod?.budgets ?? []);
+  /** 태그 예산. 예산 상자가 분류 아래에 적는다. */
+  const [tagBudgets, setTagBudgets] = useState<BudgetDto.MonthlyTagBudget[]>(
+    cachedPeriod?.tagBudgets ?? [],
+  );
+  const [methods, setMethods] = useState<SpendingMethod[]>(cachedPeriod?.methods ?? []);
+
+  const [isLoading, setIsLoading] = useState(cachedPeriod === undefined);
+  const [hasError, setHasError] = useState(false);
+  const periodLoaded = useLoadedKey(cachedPeriod ? periodKey : null);
+
   useEffect(() => {
     if (!projectId || !peopleLoaded) return;
     /*
@@ -205,7 +242,7 @@ export function useHomeData({
     }
 
     let cancelled = false;
-    const queryKey = JSON.stringify([projectId, filter, yearMonth, thisYearMonth]);
+    const queryKey = periodKey;
     const isRefresh = periodLoaded.has(queryKey);
 
     const loadPeriod = async () => {
@@ -267,13 +304,17 @@ export function useHomeData({
           ];
         });
 
-        setMethods(
-          cardMethods.sort(
-            (a, b) =>
-              METHOD_ORDER[a.kind] - METHOD_ORDER[b.kind] || Number(b.usage) - Number(a.usage),
-          ),
+        const sortedMethods = cardMethods.sort(
+          (a, b) =>
+            METHOD_ORDER[a.kind] - METHOD_ORDER[b.kind] || Number(b.usage) - Number(a.usage),
         );
+        setMethods(sortedMethods);
         periodLoaded.mark(queryKey);
+        writeScreenCache<HomePeriod>(PERIOD_SLOT, queryKey, {
+          budgets: budgetRows ?? [],
+          tagBudgets: tagBudgetRows ?? [],
+          methods: sortedMethods,
+        });
       } catch (error) {
         console.error('홈 데이터 조회 실패:', error);
         if (!cancelled && !isRefresh) setHasError(true);
@@ -287,7 +328,7 @@ export function useHomeData({
     return () => {
       cancelled = true;
     };
-  }, [projectId, peopleLoaded, people.length, filter, year, month, yearMonth, thisYearMonth, entryVersion, mirrorVersion, periodLoaded]);
+  }, [projectId, peopleLoaded, people.length, filter, year, month, yearMonth, thisYearMonth, periodKey, entryVersion, mirrorVersion, periodLoaded]);
 
   const applyReferencePatch = useCallback((patch: ReferencePatch) => {
     if (patch.accounts) setAccounts(patch.accounts);

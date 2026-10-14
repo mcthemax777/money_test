@@ -20,6 +20,7 @@ import {
 } from '@money/core/lib/chart';
 import type { BarPoint } from '@money/core/lib/usage-pattern';
 import { formatCurrency } from '@money/core/lib/money';
+import { RevealCurtain, REVEAL_BOX } from './ChartReveal';
 
 /** 그리는 자리의 높이(px). 웹은 300 이지만 앱에서는 그만큼이 화면 절반을 먹는다. */
 const PLOT_HEIGHT = 200;
@@ -113,7 +114,7 @@ export default function MonthlyAmountChart({
         )}
       </View>
 
-      <View onLayout={measure}>
+      <View onLayout={measure} style={REVEAL_BOX}>
         <Pressable
           onPress={(event) => {
             const index = Math.floor((event.nativeEvent.locationX - AXIS_WIDTH) / slot);
@@ -210,6 +211,8 @@ export default function MonthlyAmountChart({
             )}
           </Svg>
         </Pressable>
+        {/* 막대가 바닥부터 솟는다 (ChartReveal). */}
+        <RevealCurtain direction="up" left={AXIS_WIDTH} right={RIGHT_PAD} bottom={BOTTOM_PAD} />
       </View>
     </View>
   );

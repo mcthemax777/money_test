@@ -14,6 +14,7 @@ import {
   type PersonPatch,
 } from '../data/settings-write-port';
 import { homeDataPort } from '../data/home-port';
+import { readScreenCache, writeScreenCache } from '../lib/screen-cache';
 import { isOfflineError } from '../lib/offline-error';
 import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
@@ -25,6 +26,17 @@ import { useProject } from '../store/project';
 import { useUserFilter } from '../store/user-filter';
 import { usePersonFilterSync } from './usePersonFilterSync';
 import { useAccountExclusion } from './useAccountExclusion';
+
+const CACHE_SLOT = 'assets';
+
+/** 화면이 다시 설 때 그릴 값 (lib/screen-cache). 열쇠는 가계부다. */
+interface AssetsSnapshot {
+  people: Person[];
+  accounts: Account[];
+  cards: Card[];
+  netWorth: ReportDto.NetWorth | null;
+  accountProfit: Map<string, string>;
+}
 
 /**
  * 자산 화면이 보는 값 전부.
@@ -39,13 +51,19 @@ export function useAssetsData(projectId: string | null) {
     return selected?.myPersonId ?? null;
   });
 
-  const [people, setPeople] = useState<Person[]>([]);
-  const [accounts, setAccounts] = useState<Account[]>([]);
-  const [cards, setCards] = useState<Card[]>([]);
-  const [netWorth, setNetWorth] = useState<ReportDto.NetWorth | null>(null);
+  /** 화면이 다시 설 때 그릴 값. 같은 가계부로 받아 둔 것이 있으면 곧바로 그린다 (lib/screen-cache). */
+  const [cached] = useState(() =>
+    projectId ? readScreenCache<AssetsSnapshot>(CACHE_SLOT, projectId) : undefined,
+  );
+  const [people, setPeople] = useState<Person[]>(cached?.people ?? []);
+  const [accounts, setAccounts] = useState<Account[]>(cached?.accounts ?? []);
+  const [cards, setCards] = useState<Card[]>(cached?.cards ?? []);
+  const [netWorth, setNetWorth] = useState<ReportDto.NetWorth | null>(cached?.netWorth ?? null);
   /** 투자·저축 계좌별 누적 수익. 계좌 id -> 금액 */
-  const [accountProfit, setAccountProfit] = useState<Map<string, string>>(new Map());
-  const [isLoading, setIsLoading] = useState(true);
+  const [accountProfit, setAccountProfit] = useState<Map<string, string>>(
+    cached?.accountProfit ?? new Map(),
+  );
+  const [isLoading, setIsLoading] = useState(!cached);
   const [hasError, setHasError] = useState(false);
 
   /**
@@ -57,7 +75,7 @@ export function useAssetsData(projectId: string | null) {
   const mirrorVersion = useMirrorVersion();
 
   // 같은 가계부를 다시 읽을 때는 목록을 가리지 않는다 (useLoadedKey 주석).
-  const loaded = useLoadedKey();
+  const loaded = useLoadedKey(cached ? projectId : null);
 
   const reload = useCallback(async () => {
     if (!projectId) return;
@@ -87,12 +105,20 @@ export function useAssetsData(projectId: string | null) {
         }),
       ]);
 
-      setPeople(peopleData || []);
-      setAccounts(accountsData || []);
-      setCards(cardsData || []);
-      setNetWorth(netWorthData ?? null);
-      setAccountProfit(new Map((profitData ?? []).map((row) => [row.accountId, row.profit])));
+      const snapshot: AssetsSnapshot = {
+        people: peopleData || [],
+        accounts: accountsData || [],
+        cards: cardsData || [],
+        netWorth: netWorthData ?? null,
+        accountProfit: new Map((profitData ?? []).map((row) => [row.accountId, row.profit])),
+      };
+      setPeople(snapshot.people);
+      setAccounts(snapshot.accounts);
+      setCards(snapshot.cards);
+      setNetWorth(snapshot.netWorth);
+      setAccountProfit(snapshot.accountProfit);
       loaded.mark(projectId);
+      writeScreenCache(CACHE_SLOT, projectId, snapshot);
     } catch (error) {
       console.error('자산 조회 실패:', error);
       // 다시 읽다 실패했다면 그려 둔 목록은 여전히 이 가계부의 것이다. 오류로 가리지 않는다.

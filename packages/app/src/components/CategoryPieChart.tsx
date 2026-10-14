@@ -15,6 +15,7 @@ import Svg, { Circle, G, Path } from 'react-native-svg';
 import type { CategorySlice } from '@money/core/hooks/useCategoryDetail';
 import { CHART_PIE_COLORS } from '@money/core/lib/chart';
 import { formatCurrency } from '@money/core/lib/money';
+import { PieReveal } from './ChartReveal';
 
 /** 원이 차지하는 자리의 높이(px) */
 const PLOT_HEIGHT = 220;
@@ -107,6 +108,8 @@ export default function CategoryPieChart<T extends CategorySlice>({
             if (wedge?.slice.id) onDrill(wedge.slice.id);
           }}
         >
+          {/* 원이 돌며 커진다 (ChartReveal). */}
+          <PieReveal>
           <Svg width="100%" height={PLOT_HEIGHT}>
             {/* 폭을 재기 전에는 가운데를 모른다. 첫 프레임에는 그리지 않는다. */}
             {width > 0 ? (
@@ -125,6 +128,7 @@ export default function CategoryPieChart<T extends CategorySlice>({
               </G>
             ) : null}
           </Svg>
+          </PieReveal>
         </Pressable>
       </View>
 

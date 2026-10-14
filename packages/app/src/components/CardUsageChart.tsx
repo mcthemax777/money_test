@@ -25,6 +25,7 @@ import { CHART_COLOR, barTicks, formatAxisAmount } from '@money/core/lib/chart';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency } from '@money/core/lib/money';
 import type { CardUsagePeriod } from '@money/core/lib/types';
+import { RevealCurtain, REVEAL_BOX } from './ChartReveal';
 
 const PLOT_HEIGHT = 200;
 const AXIS_WIDTH = 48;
@@ -166,7 +167,7 @@ export default function CardUsageChart({
         ) : null}
       </View>
 
-      <View onLayout={handleLayout} {...pan.current!.panHandlers}>
+      <View onLayout={handleLayout} style={REVEAL_BOX} {...pan.current!.panHandlers}>
         <Pressable
           onPress={(event) => {
             const index = Math.floor((event.nativeEvent.locationX - AXIS_WIDTH) / slot);
@@ -281,6 +282,8 @@ export default function CardUsageChart({
             ) : null}
           </Svg>
         </Pressable>
+        {/* 막대가 바닥부터 솟는다 (ChartReveal). */}
+        <RevealCurtain direction="up" left={AXIS_WIDTH} right={RIGHT_PAD} bottom={BOTTOM_PAD} />
       </View>
 
       {/*

@@ -107,7 +107,9 @@ import { useTranslation } from '@money/core/lib/i18n';
 import { apiErrorCode, useApiError } from '@money/core/lib/api-error';
 import { useAssetListView } from '@money/core/store/asset-list-view';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
+import { useSwapScroll } from '@/hooks/useSwapScroll';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
+import { RevealScope } from '@/components/ChartReveal';
 
 
 
@@ -369,7 +371,13 @@ export default function DashboardPage() {
    * 고른 항목(detailType·selected*)은 그대로 두므로 ←로 돌아오면 떠나온 상세가 그
    * 자리에 서 있다. 분류·태그 화면처럼 다시 펼 표시를 따로 들 필요가 없다.
    */
-  const [entriesSearch, setEntriesSearch] = useState<TransactionSearch | null>(null);
+  const [entriesSearch, setEntriesSearchState] = useState<TransactionSearch | null>(null);
+  /* 거래내역을 펴면 맨 위로, 닫으면 보던 자리로. 아래 화면을 숨겨 두므로 자리를 따로 맞춘다. */
+  const rememberScroll = useSwapScroll(entriesSearch !== null);
+  const setEntriesSearch = (next: TransactionSearch | null) => {
+    if (next) rememberScroll();
+    setEntriesSearchState(next);
+  };
   /**
    * 사용자 상세에서 거래내역으로 건너가기 전의 자산주인 선택.
    *
@@ -1163,21 +1171,6 @@ export default function DashboardPage() {
     accountsOfGroup(accounts, group, displayPeople, allPeopleSelected);
   const personNameOf = new Map(people.map((person) => [person.id, person.name]));
 
-  /*
-   * 거래내역을 펼쳐 둔 동안에는 그것만 그린다 (분류·태그 화면과 같은 규칙).
-   *
-   * 자산 목록을 아래에 남겨 두면 한 화면에 목록 둘이 서서 어느 것을 보고 있는지가
-   * 흐려진다. 거래 화면이 제 머리글을 그대로 들고 오므로 돌아가는 길인 ←만 얹는다.
-   */
-  if (entriesSearch) {
-    return (
-      <TransactionsView
-        projectId={selectedProjectId}
-        search={entriesSearch}
-        onBack={closeEntries}
-      />
-    );
-  }
 
   /*
    * 좁은 화면에서 상세를 펼쳐 두었을 때 접는 자리.
@@ -1198,7 +1191,28 @@ export default function DashboardPage() {
       위에서 시작하지 않는다. 그때는 간격을 넓은 화면에만 둔다 -- 좁은 화면에 남는
       칸은 상세 하나뿐이라 벌릴 사이가 없다.
     */
-    <div className={detailType ? 'space-y-0 lg:space-y-6' : 'space-y-6'}>
+    <>
+      {/*
+        거래내역을 펼쳐 둔 동안에는 그것만 보인다 (분류·태그 화면과 같은 규칙). 자산 화면은 지우지
+        않고 숨겨 두어 닫으면 다시 받지 않고 보던 그대로 돌아온다 (2026-10-15 사용자 요청).
+        거래 화면이 제 머리글을 그대로 들고 오므로 돌아가는 길인 ←만 얹는다.
+      */}
+      {entriesSearch ? (
+        <div className="screen-push">
+          <TransactionsView
+            projectId={selectedProjectId}
+            search={entriesSearch}
+            onBack={closeEntries}
+          />
+        </div>
+      ) : null}
+    <div
+      className={
+        entriesSearch ? 'hidden' : detailType ? 'space-y-0 lg:space-y-6' : 'space-y-6'
+      }
+    >
+      {/* 거래내역을 닫고 돌아오면 추이 그래프도 다시 그려진다 (ChartReveal). */}
+      <RevealScope visible={!entriesSearch}>
       {/*
         화면의 첫 줄이자 제목이다. 이름을 누르면 자산주인을, 유형 카드를 누르면
         무엇을 더한 금액인지 고른다. 홈에 있던 칸을 그대로 옮겨 왔다. 자산 금액은
@@ -2183,7 +2197,9 @@ export default function DashboardPage() {
         onReferenceDataChange={handleReferenceDataChange}
         onEntryChange={handleEntryChange}
       />
+      </RevealScope>
     </div>
+    </>
   );
 }
 

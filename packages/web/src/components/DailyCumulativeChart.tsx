@@ -36,6 +36,7 @@ import {
   type CumulativeKind,
 } from '@money/core/lib/month-compare';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
+import { useRevealKey } from './ChartReveal';
 
 /** 선마다의 색. 오래된 기간일수록 옅어 눈이 지금 선을 먼저 잡는다. */
 const LINE_COLOR = {
@@ -116,6 +117,8 @@ export default function DailyCumulativeChart({
   kind = 'expense',
 }: Props) {
   const displayCurrency = useProjectDisplayCurrency();
+  /** 다시 보일 때마다 새로 서며 선이 다시 그어진다 (ChartReveal). */
+  const revealKey = useRevealKey();
   const [earlier, previous] = comparisons;
 
   /* 줄을 만드는 규칙은 core 에 둔다. 앱의 같은 그래프가 그대로 쓴다. */
@@ -152,6 +155,7 @@ export default function DailyCumulativeChart({
     <div>
       <ResponsiveContainer width="100%" height={height}>
         <LineChart
+          key={revealKey}
           data={rows}
           margin={CHART_MARGIN}
           onMouseMove={pickFrom}

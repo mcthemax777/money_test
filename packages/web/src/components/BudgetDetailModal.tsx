@@ -15,8 +15,6 @@ import {
   LabelList,
 } from 'recharts';
 import Modal from './Modal';
-import type { EntryListItem } from './TransactionItem';
-import TransactionListView from './TransactionListView';
 import { useCategoryDetail, type CategorySlice } from '@money/core/hooks/useCategoryDetail';
 import type { BarPoint, MethodSlice, PatternMode } from '@money/core/lib/usage-pattern';
 import { type ReportPeriod } from '@money/core/lib/api-client';
@@ -42,6 +40,8 @@ import DailyCumulativeChart from './DailyCumulativeChart';
 import type { EntryScopeQuery } from '@money/types';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 import type { Category } from '@money/core/lib/types';
+import LoadingBlock from './LoadingBlock';
+import { useRevealKey } from './ChartReveal';
 
 interface BudgetDetailModalProps {
   isOpen: boolean;
@@ -68,8 +68,6 @@ interface BudgetDetailModalProps {
   projectId?: string | null;
   /** 가계 화면의 사람 필터. 상단 합계와 같은 조건을 써야 한다. */
   filter?: EntryScopeQuery;
-  /** 거래를 누르면 호출한다. 날짜별 보기와 같은 상세 팝업을 열기 위한 통로다. */
-  onEntryClick?: (entry: EntryListItem) => void;
   /** 값이 바뀌면 데이터를 다시 받는다. 부모 화면에서 거래를 고쳤을 때 쓴다. */
   reloadToken?: number;
   /** 12개월 추이를 자를 구간. 거래 분석이 검색 기간을 걸었을 때 준다 (useCategoryDetail). */
@@ -150,6 +148,8 @@ export function SlicePieChart<T extends CategorySlice>({
   onPick?: (slice: T) => void;
 }) {
   const total = slices.reduce((acc, slice) => acc + slice.value, 0);
+  /** 다시 보일 때마다 새로 서며 원이 다시 돈다 (ChartReveal). */
+  const revealKey = useRevealKey();
   /*
    * 이름표는 둘레가 아니라 아래 목록에 둔다 (앱의 CategoryPieChart 와 같은 모양, 2026-10-08).
    * 둘레 글자는 조각이 많으면 서로 겹치고, 목록 줄이어야 눌러 조건을 더할 자리가 생긴다.
@@ -157,7 +157,7 @@ export function SlicePieChart<T extends CategorySlice>({
   return (
     <div>
       <ResponsiveContainer width="100%" height={240}>
-        <PieChart>
+        <PieChart key={revealKey}>
           <Pie
             data={slices}
             cx="50%"
@@ -293,10 +293,16 @@ export function AmountBarChart({
 }) {
   const domain = barDomain(data.map((d) => d.amount));
   const vertical = data.length >= VERTICAL_LABEL_FROM;
+  /** 다시 보일 때마다 새로 서며 막대가 다시 솟는다 (ChartReveal). */
+  const revealKey = useRevealKey();
   return (
     <ResponsiveContainer width="100%" height={300}>
       {/* 세운 금액은 가장 높은 막대 위로 삐져나온다. 그만큼 위를 띄운다. */}
-      <BarChart data={data} margin={{ ...CHART_MARGIN, top: vertical ? 40 : 20 }}>
+      <BarChart
+        key={revealKey}
+        data={data}
+        margin={{ ...CHART_MARGIN, top: vertical ? 40 : 20 }}
+      >
         <CartesianGrid {...CHART_GRID} />
         <XAxis dataKey="label" tick={CHART_TICK} interval={interval} />
         <YAxis
@@ -345,7 +351,6 @@ export function BudgetDetailModal({
   exactCategory = false,
   projectId,
   filter,
-  onEntryClick,
   reloadToken,
   trendClip,
   trendPeriod,
@@ -384,7 +389,7 @@ export function BudgetDetailModal({
   const content = (
     <div className="space-y-8 p-4">
       {detail.isLoading ? (
-        <div className="text-center text-gray-500">{t('detail.loading')}</div>
+        <LoadingBlock label={t('detail.loading')} />
       ) : (
         <>
           {/* 일별 누적. 구성비보다 먼저 이 구간의 흐름을 본다 (2026-10-14 사용자 요청). */}
@@ -526,19 +531,6 @@ export function BudgetDetailModal({
               <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
                 {detail.hasPatternAmount ? t('detail.noHourUsage') : emptyPattern}
               </p>
-            )}
-          </div>
-
-          {/* 거래내역 */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4">{t('detail.entries')}</h3>
-            {detail.entries.length === 0 ? (
-              <p className="text-gray-500 text-sm">{t(detail.isOffline ? 'online.viewOnlyOnline' : 'detail.noEntries')}</p>
-            ) : (
-              <TransactionListView
-                entries={detail.entries}
-                onEntryClick={onEntryClick ?? (() => undefined)}
-              />
             )}
           </div>
         </>

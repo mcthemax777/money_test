@@ -58,6 +58,7 @@ import {
   type WeekStart,
 } from '@money/types';
 
+import { readScreenCache, writeScreenCache } from '../lib/screen-cache';
 import { assetOwnerNames, hasSeveralOwners } from '../lib/asset-owner';
 
 import {
@@ -626,6 +627,18 @@ const uniqueIds = (rows: readonly EntryListItem[]): string[] => [
   ...new Set(rows.map((row) => row.id)),
 ];
 
+const REFERENCE_SLOT = 'transactions.reference';
+const MONTHS_SLOT = 'transactions.months';
+
+/** 화면이 다시 설 때 쓸 기준 목록 (lib/screen-cache). 열쇠는 가계부다. */
+interface TxReference {
+  people: PersonDto.Response[];
+  categories: CategoryDto.Response[];
+  accounts: AccountDto.Response[];
+  cards: CardDto.Response[];
+  tags: TagDto.Response[];
+}
+
 /**
  * 받은 기간 줄들을 검색 기간 한 줄로 합친다.
  *
@@ -747,17 +760,25 @@ export function useTransactions(
   /** 1단에서 손으로 편 줄. 2단에서는 이것과 무관하게 전부 펼친다. */
   const [openRows, setOpenRows] = useState<Record<string, boolean>>({});
 
-  const [people, setPeople] = useState<PersonDto.Response[]>([]);
+  /** 화면이 다시 설 때 그릴 기준 목록. 같은 가계부로 받아 둔 것이 있으면 곧바로 쓴다 (lib/screen-cache). */
+  const [cachedReference] = useState(() =>
+    projectId ? readScreenCache<TxReference>(REFERENCE_SLOT, projectId) : undefined,
+  );
+  const [people, setPeople] = useState<PersonDto.Response[]>(cachedReference?.people ?? []);
   /*
    * 검색이 고를 목록. 프로젝트가 바뀔 때 한 번만 받는다.
    *
    * 검색 조건이 바뀔 때마다 다시 받지 않는다. 고를 수 있는 분류와 자산은 검색 결과와
    * 무관하고, 결과에 따라 목록이 줄어들면 방금 켠 조건을 되돌릴 수 없게 된다.
    */
-  const [pickerCategories, setPickerCategories] = useState<CategoryDto.Response[]>([]);
-  const [pickerAccounts, setPickerAccounts] = useState<AccountDto.Response[]>([]);
-  const [pickerCards, setPickerCards] = useState<CardDto.Response[]>([]);
-  const [pickerTags, setPickerTags] = useState<TagDto.Response[]>([]);
+  const [pickerCategories, setPickerCategories] = useState<CategoryDto.Response[]>(
+    cachedReference?.categories ?? [],
+  );
+  const [pickerAccounts, setPickerAccounts] = useState<AccountDto.Response[]>(
+    cachedReference?.accounts ?? [],
+  );
+  const [pickerCards, setPickerCards] = useState<CardDto.Response[]>(cachedReference?.cards ?? []);
+  const [pickerTags, setPickerTags] = useState<TagDto.Response[]>(cachedReference?.tags ?? []);
 
   /**
    * 거래가 있는 달과, 그 목록을 받은 조건(`scopeKey`).
@@ -937,7 +958,15 @@ export function useTransactions(
    * 목록이 사라지면 스크롤이 맨 위로 튄다(아래 1단의 "로딩 중" 설명).
    */
   const isMonthsStale = monthsState.scopeKey !== scopeKey;
-  const months = isMonthsStale ? EMPTY_MONTHS : monthsState.rows;
+  /*
+   * 옛 조건의 목록 대신, 이 조건으로 전에 받아 둔 목록이 있으면 그것을 곧바로 세운다
+   * (lib/screen-cache, 2026-10-15 사용자 요청 -- 탭을 옮겨 화면이 새로 서도 "로딩 중" 없이).
+   * 새 목록은 뒤에서 받아 그 자리에서 바뀐다.
+   */
+  const cachedMonths = isMonthsStale
+    ? readScreenCache<ReportDto.EntryMonth[]>(MONTHS_SLOT, scopeKey)
+    : undefined;
+  const months = isMonthsStale ? (cachedMonths ?? EMPTY_MONTHS) : monthsState.rows;
 
   /**
    * 걸려 있는 조건 알약. 목록 위에 늘어놓고, 하나를 누르면 그 조건만 빠진다.
@@ -1179,19 +1208,27 @@ export function useTransactions(
     ])
       .then(([personRows, categoryRows, accountRows, cardRows, tagRows]) => {
         if (!alive) return;
-        setPeople(personRows);
-        setPickerCategories(categoryRows);
-        /*
-         * 고를 수 없는 계좌를 목록에서 뺀다.
-         *
-         * 신용카드의 부채 계정과 기초잔액 계정은 사용자가 "결제수단"으로 인식하는
-         * 것이 아니다. 카드로 쓴 것은 카드 줄에서 고르고, 기초잔액은 결제가 아니다.
-         */
-        setPickerAccounts(
-          accountRows.filter((row) => row.isActive && !HIDDEN_ACCOUNT_TYPES.includes(row.type)),
-        );
-        setPickerCards(cardRows.filter((row) => row.isActive));
-        setPickerTags(tagRows);
+        const reference: TxReference = {
+          people: personRows,
+          categories: categoryRows,
+          /*
+           * 고를 수 없는 계좌를 목록에서 뺀다.
+           *
+           * 신용카드의 부채 계정과 기초잔액 계정은 사용자가 "결제수단"으로 인식하는
+           * 것이 아니다. 카드로 쓴 것은 카드 줄에서 고르고, 기초잔액은 결제가 아니다.
+           */
+          accounts: accountRows.filter(
+            (row) => row.isActive && !HIDDEN_ACCOUNT_TYPES.includes(row.type),
+          ),
+          cards: cardRows.filter((row) => row.isActive),
+          tags: tagRows,
+        };
+        setPeople(reference.people);
+        setPickerCategories(reference.categories);
+        setPickerAccounts(reference.accounts);
+        setPickerCards(reference.cards);
+        setPickerTags(reference.tags);
+        writeScreenCache(REFERENCE_SLOT, projectId, reference);
       })
       .catch(fail);
 
@@ -1215,7 +1252,9 @@ export function useTransactions(
      * 띄우면 화면이 목록 대신 한 줄짜리 문구로 바뀌고, 그만큼 짧아진 화면에서 스크롤이
      * 맨 위로 튄다. 거래 하나를 고쳤을 뿐인데 보던 자리를 잃는다.
      */
-    if (!monthsLoadedRef.current) setIsLoadingMonths(true);
+    if (!monthsLoadedRef.current && !readScreenCache(MONTHS_SLOT, askedScope)) {
+      setIsLoadingMonths(true);
+    }
     setHasError(false);
 
     homeDataPort()
@@ -1226,8 +1265,10 @@ export function useTransactions(
          * 기간을 정했으면 그 기간이 줄 하나다. 받은 줄들은 이미 그 기간으로 잘라 센 값이라
          * 더하면 기간 전체의 합이다 (`collapseToRange`).
          */
-        setMonthsState({ scopeKey: askedScope, rows: range ? collapseToRange(rows, range) : rows });
+        const shown = range ? collapseToRange(rows, range) : rows;
+        setMonthsState({ scopeKey: askedScope, rows: shown });
         monthsLoadedRef.current = true;
+        writeScreenCache(MONTHS_SLOT, askedScope, shown);
       })
       .catch((error) => {
         if (!alive) return;
@@ -2655,7 +2696,7 @@ export function useTransactions(
      * 조건을 바꾼 직후, 1단 효과가 돌기 전의 한 그림도 로딩으로 본다. 그 그림에서는
      * 목록이 비어 있어 "거래가 없습니다"가 한 번 스친다.
      */
-    isLoadingMonths: isLoadingMonths || isMonthsStale,
+    isLoadingMonths: isLoadingMonths || (isMonthsStale && cachedMonths === undefined),
     levelOf,
     cycleMonth,
     revealMore,

@@ -23,6 +23,9 @@ import { X } from 'lucide-react-native';
 
 import { useTranslation } from '@money/core/lib/i18n';
 
+import { useAfterPaint } from '../shell/after-paint';
+import LoadingBlock from './LoadingBlock';
+
 /** 뒤 막의 짙기. 끌어 내리는 동안 이 값에서 0 까지 옅어진다. */
 const DIM = 0.5;
 
@@ -86,6 +89,7 @@ export default function Modal({
 }) {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
+  const isReady = useAfterPaint(isOpen);
   const { width, height } = useWindowDimensions();
   /* 768 은 웹 Tailwind 의 md 다. 두 화면이 같은 폭에서 같은 모양으로 갈리게 둔다. */
   const isWide = width >= 768;
@@ -324,7 +328,11 @@ export default function Modal({
               /* 홈 표시줄 자리. 아래에 붙는 창이라 마지막 줄이 그 밑으로 들어가지 않게 한다. */
               contentContainerStyle={isWide ? undefined : { paddingBottom: 24 + insets.bottom }}
             >
-              {children}
+              {/*
+                내용은 두 그림 뒤에 그린다 (shell/after-paint, 2026-10-15 사용자 요청). 창이 먼저
+                올라오고 그동안 돌림 표시가 선다 -- 무거운 창(거래 입력 등)을 눌러도 멈춘 느낌이 없다.
+              */}
+              {isReady ? children : <LoadingBlock />}
             </ScrollView>
 
             {footer ? (

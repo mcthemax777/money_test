@@ -32,6 +32,10 @@ export default function MobileTabBar() {
   const inboxBadge = useInboxCount(useProject((state) => state.selectedProjectId));
   const inquiryBadge = useInquiryUnread((state) => state.count);
   const badges: Record<string, number> = { '/transactions': inboxBadge, '/settings': inquiryBadge };
+  /** 알약이 설 칸. 누르는 즉시 그 칸으로 미끄러진다 (2026-10-15 사용자 요청, 앱과 같다). */
+  const activeIndex = items.findIndex(
+    (item) => pendingHref === item.href || (!pendingHref && isActiveNav(pathname, item.href)),
+  );
 
   return (
     /*
@@ -40,13 +44,27 @@ export default function MobileTabBar() {
       높이도 같은 식으로 맞춰 두었다.
     */
     <nav className="md:hidden fixed inset-x-0 bottom-0 z-40 border-t border-gray-200 bg-white pb-[env(safe-area-inset-bottom)]">
-      <ul className="flex h-14 items-stretch gap-1 px-2 py-1.5">
+      <ul className="relative flex h-14 items-stretch gap-1 px-2 py-1.5">
+        {/*
+          고른 칸의 옅은 파란 알약. 칸마다 칠하지 않고 하나를 두어 칸 사이를 미끄러진다. 폭은 칸 하나
+          (gap-1·px-2 를 뺀 몫), 자리는 제 폭 + 간격씩 옮긴다.
+        */}
+        {activeIndex >= 0 && (
+          <li
+            aria-hidden
+            className="pointer-events-none absolute bottom-1.5 left-2 top-1.5 rounded-lg bg-blue-50 transition-transform duration-300 ease-out"
+            style={{
+              width: `calc((100% - 16px - ${4 * (items.length - 1)}px) / ${items.length})`,
+              transform: `translateX(calc(${activeIndex} * (100% + 4px)))`,
+            }}
+          />
+        )}
         {items.map((item) => {
           const pending = pendingHref === item.href;
           // 누르는 즉시 켠다. 다음 화면이 뜨기 전에는 이 표시가 유일한 대답이다.
           const active = pending || isActiveNav(pathname, item.href);
           return (
-            <li key={item.href} className="flex-1">
+            <li key={item.href} className="relative flex-1">
               {/*
                 고른 칸은 옅은 파란 알약이다. 사이드바 메뉴·분류 목록·예산 줄이
                 전부 같은 표시(bg-blue-50 + text-blue-600 + rounded-lg)를 쓴다.
@@ -56,8 +74,8 @@ export default function MobileTabBar() {
                 href={item.href}
                 onClick={() => start(item.href)}
                 aria-current={active ? 'page' : undefined}
-                className={`flex h-full flex-col items-center justify-center gap-1 rounded-lg transition ${
-                  active ? 'bg-blue-50 font-medium text-blue-600' : 'text-gray-600 hover:bg-gray-50'
+                className={`group flex h-full flex-col items-center justify-center gap-1 rounded-lg transition ${
+                  active ? 'font-medium text-blue-600' : 'text-gray-600 hover:bg-gray-50'
                 }`}
               >
                 {/*
@@ -71,7 +89,8 @@ export default function MobileTabBar() {
                     aria-hidden
                   />
                 ) : (
-                  <span className="relative">
+                  /* 누르는 동안 살짝 줄었다가 놓으면 돌아온다. */
+                  <span className="relative transition-transform duration-150 group-active:scale-90">
                     <NavIcon name={item.icon} className="h-5 w-5" strokeWidth={active ? 2.25 : 1.75} />
                     <CountBadge count={badges[item.href] ?? 0} />
                   </span>

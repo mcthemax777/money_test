@@ -12,14 +12,17 @@ import { useMemo, useRef } from 'react';
  *
  * 받아서 그린 뒤에 `mark` 한다. 요청할 때 적으면 조건을 바꾼 직후 받기가 끝나기 전에 온
  * 신호를 같은 조건으로 잘못 보고, 그 받기가 실패하면 앞 조건의 값이 남는다.
+ *
+ * `initial` 은 화면이 다시 설 때 저장소(lib/screen-cache)에서 꺼내 그린 값의 조건이다. 그 값이
+ * 이미 그려져 있으니 처음 받기도 가리지 않는 다시 받기다.
  */
-export function useLoadedKey(): {
+export function useLoadedKey(initial: string | null = null): {
   /** 이 조건의 값을 이미 그려 두었는가. */
   has: (key: string) => boolean;
   /** 이 조건의 값을 받아서 그렸다. 닫히거나 비울 때는 null. */
   mark: (key: string | null) => void;
 } {
-  const ref = useRef<string | null>(null);
+  const ref = useRef<string | null>(initial);
   // 늘 같은 객체를 돌려준다. useCallback·useEffect 의 의존성에 넣어도 다시 돌지 않는다.
   return useMemo(
     () => ({

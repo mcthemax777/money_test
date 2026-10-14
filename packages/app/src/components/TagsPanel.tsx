@@ -17,14 +17,13 @@ import NavIcon from './NavIcon';
 import type { TagDto } from '@money/types';
 
 import { EMPTY_TAG_FORM, useTagManager, type TagFormValues } from '@money/core/hooks/useTagManager';
-import { EMPTY_SEARCH } from '@money/core/hooks/useTransactions';
+import { EMPTY_SEARCH, type TransactionSearch } from '@money/core/hooks/useTransactions';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useThisMonthBudget } from '@money/core/hooks/useBudgetSettings';
 import { tagBudgetTargetId } from '@money/core/lib/budget';
 import { useCanEdit } from '@money/core/store/project';
 import { useEntryFocus } from '@money/core/store/entry-focus';
 
-import { useNavigation } from '../shell/navigation';
 import Modal from './Modal';
 import BudgetEditModal from './BudgetEditModal';
 import BudgetField from './BudgetField';
@@ -37,15 +36,23 @@ import { TagFields } from './TagFields';
 /** 목록이 늘고 줄 때의 움직임. 새 줄은 옅은 데서 떠오르고 아래는 밀려 내려간다. */
 const SHIFT = LayoutAnimation.create(180, 'easeInEaseOut', 'opacity');
 
-export default function TagsPanel({ projectId }: { projectId: string | null }) {
+export default function TagsPanel({
+  projectId,
+  onShowEntries,
+}: {
+  projectId: string | null;
+  /**
+   * 태그의 거래내역 보기. 화면이 그 위에 거래 화면을 덮는다 -- 닫으면 `reopen` 으로 이 태그의
+   * 고치기 창을 다시 연다 (떠나기 전 그대로).
+   */
+  onShowEntries: (search: TransactionSearch, reopen: () => void) => void;
+}) {
   const { t } = useTranslation();
   const manager = useTagManager(projectId);
   /* 태그 창의 "이번 달 예산". 홈의 태그 예산 설정과 같은 훅과 팝업이다 (웹과 같다). */
   const budget = useThisMonthBudget(projectId);
   const canEdit = useCanEdit();
-  const nav = useNavigation();
   /** 거래 화면과 주고받는 쪽지. 분류 화면의 것과 같은 자리를 쓴다. */
-  const focusEntries = useEntryFocus((state) => state.focusEntries);
   const reopen = useEntryFocus((state) => state.reopen);
   const clearReopen = useEntryFocus((state) => state.clearReopen);
 
@@ -89,9 +96,8 @@ export default function TagsPanel({ projectId }: { projectId: string | null }) {
 
   /** 이 태그가 붙은 거래내역을 본다. */
   const showEntriesOf = (tag: TagDto.Response) => {
-    focusEntries({ kind: 'tag', id: tag.id }, { ...EMPTY_SEARCH, tagIds: [tag.id] });
     setIsFormOpen(false);
-    nav.go('/transactions');
+    onShowEntries({ ...EMPTY_SEARCH, tagIds: [tag.id] }, () => openEdit(tag));
   };
 
   const submit = async () => {

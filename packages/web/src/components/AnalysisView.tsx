@@ -13,7 +13,7 @@
  * 단위·세는 방식과 그 줄의 기간으로 서고, 머리글에는 ← 하나만 선다 -- 분석 탭의 거래내역
  * 단추가 거래 화면을 여는 것과 방향만 반대인 같은 길이다.
  */
-import { useRef, useState } from 'react';
+import { memo, startTransition, useEffect, useState } from 'react';
 import { Search } from 'lucide-react';
 
 import {
@@ -30,7 +30,6 @@ import { useMyPersonId } from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
 
 import { BudgetDetailModal } from '@/components/BudgetDetailModal';
-import EntryEditor, { type EntryEditorHandle, type ReferenceDataPatch } from '@/components/EntryEditor';
 import NavIcon from '@/components/NavIcon';
 import NetAnalysisPanel from '@/components/NetAnalysisPanel';
 import PageHeader from '@/components/PageHeader';
@@ -44,6 +43,18 @@ import TransactionsView from '@/components/TransactionsView';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useSwapScroll } from '@/hooks/useSwapScroll';
 import { useTopReveal } from '@/hooks/useTopReveal';
+import LoadingBlock from '@/components/LoadingBlock';
+import { RevealScope } from '@/components/ChartReveal';
+import { useStableCallback } from '@money/core/hooks/useStableCallback';
+import type { MethodSlice } from '@money/core/lib/usage-pattern';
+
+/*
+ * 분석 탭의 지출·수입 그래프 묶음. 한 번 연 탭을 숨겨 두므로, 탭을 누를 때 숨은 탭까지 다시 그리지
+ * 않게 받은 값이 그대로면 다시 그리지 않는다 (2026-10-15 사용자 요청, 앱과 같다).
+ */
+const AnalysisDetail = memo(BudgetDetailModal);
+/** 끼워 그린 상세에는 닫을 것이 없다. 그래프 묶음이 memo 라 고정된 함수를 넘긴다. */
+const noop = () => undefined;
 
 const TABS: Array<{ id: AnalysisKind; labelKey: MessageKey }> = [
   { id: 'net', labelKey: 'analysis.tab.net' },
@@ -80,12 +91,29 @@ export default function AnalysisView({
   // 사람 목록과 선택을 프로젝트에 맞춘다. 다른 화면과 같은 훅을 쓴다.
   usePersonFilterSync(projectId, tx.people);
 
+  /**
+   * 한 번 연 탭(합계·지출·수입). 숨겨 두고 다시 누르면 곧바로 보인다 (2026-10-15 사용자 요청 --
+   * 탭을 누를 때마다 그래프 묶음을 새로 그려 반응이 늦었다, 앱과 같다). 처음 여는 탭은 다음 그림에
+   * 더해 탭 표시가 먼저 옮겨 간다.
+   */
+  const [openedKinds, setOpenedKinds] = useState<AnalysisKind[]>(() => [analysis.kind]);
+  useEffect(() => {
+    if (openedKinds.includes(analysis.kind)) return;
+    /*
+     * 두 그림 뒤에 더한다. 탭 표시와 돌림 표시가 화면에 먼저 그려진 뒤에 그래프 묶음을 그려야
+     * 기다리는 동안 돌림 표시가 보인다 -- 한 그림 뒤면 그 그림이 미처 칠해지기 전에 바빠진다.
+     */
+    let frame = requestAnimationFrame(() => {
+      frame = requestAnimationFrame(() =>
+        setOpenedKinds((prev) => (prev.includes(analysis.kind) ? prev : [...prev, analysis.kind])),
+      );
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [analysis.kind, openedKinds]);
+  /** 그릴 구간. 탭마다 그리는 자리(아래 map)까지 null 이 아님이 이어지게 따로 든다. */
+  const shownPeriod = analysis.period;
+
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  /** 분석의 거래를 눌러 연 상세·고치기 창. 예산 화면의 분류 상세와 같은 길이다. */
-  const entryEditorRef = useRef<EntryEditorHandle>(null);
-  const [refPatch, setRefPatch] = useState<ReferenceDataPatch>({});
-  /** 이 화면에서 거래를 고치면 올린다. 그래프가 다시 받는다. */
-  const [reloadToken, setReloadToken] = useState(0);
 
   /*
    * 위에 덮어 여는 화면 둘 (2026-10-10 사용자 요청). 덮은 동안에는 그것만 그리고, 그 머리글의 ← 나
@@ -109,8 +137,16 @@ export default function AnalysisView({
     setEntriesSearch(search);
   };
   /** 일별 누적 아래 줄의 구간(그 선의 첫날~그 날). 지출·수입 탭이면 그 유형도 건다. */
-  const openDay = (range: { from: string; to: string }) =>
-    openEntries(analysis.cumulativeEntriesSearch(range));
+  const openDay = useStableCallback((range: { from: string; to: string }) =>
+    openEntries(analysis.cumulativeEntriesSearch(range)),
+  );
+  /* 그래프 묶음이 memo 라 함수를 고정해 넘긴다 (useStableCallback). */
+  const pickCategory = useStableCallback((pickId: string) =>
+    openPicked(analysis.pickCategory(pickId)),
+  );
+  const pickMethod = useStableCallback((method: MethodSlice) =>
+    openPicked(analysis.pickMethod(method)),
+  );
   const openPicked = (next: AnalysisInitial) => {
     rememberScroll();
     setPicked(next);
@@ -133,35 +169,46 @@ export default function AnalysisView({
     analysis.unit !== 'range',
   );
 
+  /**
+   * 탭 표시. 누르면 이것부터 옮기고 내용 전환은 뒤로 미룬다(startTransition) -- 같은 그림에서
+   * 그래프 묶음까지 바꾸면 다 그릴 때까지 누른 표시가 늦게 바뀐다 (2026-10-15 사용자 요청, 앱과
+   * 같다). 다른 길로 탭이 바뀌면(덮어 연 분석의 처음 탭) 그쪽을 따른다.
+   */
+  const [selectedKind, setSelectedKind] = useState(analysis.kind);
+  useEffect(() => setSelectedKind(analysis.kind), [analysis.kind]);
+  const selectKind = (kind: AnalysisKind) => {
+    setSelectedKind(kind);
+    startTransition(() => analysis.setKind(kind));
+  };
   const activeTabIndex = Math.max(
     0,
-    TABS.findIndex((item) => item.id === analysis.kind),
+    TABS.findIndex((item) => item.id === selectedKind),
   );
 
-  if (entriesSearch) {
-    return (
-      <div className="screen-push">
-        <TransactionsView
-          projectId={projectId}
-          search={entriesSearch}
-          unit={tx.unit}
-          locked
-          onBack={closeCover}
-        />
-      </div>
-    );
-  }
-
-  if (picked) {
-    return (
-      <div className="screen-push">
-        <AnalysisView projectId={projectId} initial={picked} onBack={closeCover} />
-      </div>
-    );
-  }
-
+  /*
+    거래내역·좁힌 분석을 덮어도
+    아래 화면은 지우지 않고 숨겨 둔다 (2026-10-15 사용자 요청 -- 팝업처럼). 받아 둔 값·펼침·고른
+    탭이 그대로 남아 닫으면 다시 받지 않고, 숨어 있는 동안에도 다른 기기의 변경을 받는다.
+  */
   return (
-    <div className={`space-y-4 ${returnClass}`}>
+    <>
+      {entriesSearch ? (
+        <div className="screen-push">
+          <TransactionsView
+            projectId={projectId}
+            search={entriesSearch}
+            unit={tx.unit}
+            locked
+            onBack={closeCover}
+          />
+        </div>
+      ) : picked ? (
+        <div className="screen-push">
+          <AnalysisView projectId={projectId} initial={picked} onBack={closeCover} />
+        </div>
+      ) : null}
+    <div className={`space-y-4 ${isCovered ? 'hidden' : returnClass}`}>
+      <RevealScope visible={!isCovered}>
       {/*
         위쪽 한 덩어리 -- 제목, 걸어 둔 조건, 탭. 거래 화면과 같은 규칙이다(`useTopReveal`): 내리는
         동안에는 비켜서고 조금이라도 올리면 되돌아오며, 걸어 둔 조건 알약 줄부터 아래(탭)는
@@ -257,10 +304,10 @@ export default function AnalysisView({
               <button
                 key={item.id}
                 type="button"
-                onClick={() => analysis.setKind(item.id)}
-                aria-pressed={analysis.kind === item.id}
+                onClick={() => selectKind(item.id)}
+                aria-pressed={selectedKind === item.id}
                 className={`relative flex flex-1 items-center justify-center rounded-md px-4 py-2 font-medium ${
-                  analysis.kind === item.id ? 'text-blue-600' : 'text-gray-600'
+                  selectedKind === item.id ? 'text-blue-600' : 'text-gray-600'
                 }`}
               >
                 {t(item.labelKey)}
@@ -280,49 +327,61 @@ export default function AnalysisView({
         <PeriodNavigator periodKey={analysis.periodKey} onChange={analysis.setPeriodKey} />
 
         {analysis.isPeriodPending ? (
-          <p className="py-8 text-center text-sm text-gray-500">{t('common.loading')}</p>
-        ) : !analysis.period ? (
+          <LoadingBlock label={t('common.loading')} />
+        ) : !shownPeriod ? (
           <p className="py-8 text-center text-sm text-gray-500">{t('tx.analysisOutOfRange')}</p>
         ) : (
-          /* 탭을 옮기면 새 내용이 옅은 데서 떠오른다 (`unfold`). */
-          <div key={analysis.kind} className="unfold">
-            {analysis.kind === 'net' ? (
+          /*
+            탭을 옮기면 새 내용이 옅은 데서 떠오른다 (`unfold` -- display 가 돌아올 때마다 다시 돈다).
+            한 번 연 탭은 지우지 않고 숨겨 둔다(`openedKinds`).
+          */
+          TABS.filter((tab) => openedKinds.includes(tab.id)).map(({ id: kind }) => (
+          <div key={kind} className={kind === analysis.kind ? 'unfold' : 'hidden'}>
+            {/* 다시 보일 때 안의 그래프도 다시 그려진다 (ChartReveal). */}
+            <RevealScope visible={kind === analysis.kind}>
+            {kind === 'net' ? (
               <NetAnalysisPanel
+                active={kind === analysis.kind}
                 totals={analysis.totals}
                 categories={tx.pickerCategories}
-                period={analysis.period}
+                period={shownPeriod}
                 projectId={projectId}
                 filter={analysis.filter}
                 trendClip={analysis.trendClip}
                 trendPeriod={analysis.trendPeriod}
-                reloadToken={reloadToken}
                 onOpenDay={openDay}
               />
             ) : (
-              <BudgetDetailModal
-                isOpen
-                onClose={() => undefined}
+              <AnalysisDetail
+                /* 숨은 탭은 받지 않는다 (앱 CategoryDetailView 의 active 와 같다). */
+                isOpen={kind === analysis.kind}
+                onClose={noop}
                 isInline
-                categoryId={totalIdOf(analysis.kind)}
+                categoryId={totalIdOf(kind)}
                 categoryName=""
                 categories={tx.pickerCategories}
-                period={analysis.period}
+                period={shownPeriod}
                 projectId={projectId}
                 filter={analysis.filter}
                 trendClip={analysis.trendClip}
                 trendPeriod={analysis.trendPeriod}
-                reloadToken={reloadToken}
-                onEntryClick={(entry) => entryEditorRef.current?.openDetail(entry)}
                 /*
                   원형 목록 줄을 누르면 그 분류·수단으로 좁힌 분석을 위에 덮어 연다. 분석 탭이든 거래
                   탭·예산 화면에서 건너온 보기든 같다 (2026-10-10 사용자 요청).
                 */
-                onPickCategory={(pickId) => openPicked(analysis.pickCategory(pickId))}
-                onPickMethod={(method) => openPicked(analysis.pickMethod(method))}
+                onPickCategory={pickCategory}
+                onPickMethod={pickMethod}
                 onOpenDay={openDay}
               />
             )}
+            </RevealScope>
           </div>
+          )).concat(
+            /* 처음 여는 탭은 두 그림 뒤에 선다(`openedKinds`). 그동안 그 자리에서 돈다. */
+            openedKinds.includes(analysis.kind)
+              ? []
+              : [<LoadingBlock key="opening" label={t('detail.loading')} />],
+          )
         )}
       </div>
 
@@ -338,20 +397,8 @@ export default function AnalysisView({
         people={tx.people}
         unit={tx.unit}
       />
-
-      <EntryEditor
-        ref={entryEditorRef}
-        projectId={projectId}
-        accounts={refPatch.accounts ?? tx.pickerAccounts}
-        cards={refPatch.cards ?? tx.pickerCards}
-        categories={refPatch.categories ?? tx.pickerCategories}
-        people={refPatch.people ?? tx.people}
-        onReferenceDataChange={(patch) => setRefPatch((prev) => ({ ...prev, ...patch }))}
-        onEntryChange={() => {
-          tx.reload();
-          setReloadToken((token) => token + 1);
-        }}
-      />
+      </RevealScope>
     </div>
+    </>
   );
 }

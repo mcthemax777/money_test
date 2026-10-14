@@ -12,6 +12,7 @@ import { useEffect } from 'react';
 
 import { useTranslation } from '@money/core/lib/i18n';
 import { FIRST_PATH } from '@money/core/lib/nav';
+import { useScreenVisible } from './after-paint';
 
 /**
  * 어느 화면을 보고 있는지.
@@ -48,9 +49,11 @@ export function useCloseOnBack(active: boolean, onClose: () => void) {
   /* 부르는 쪽이 그릴 때마다 새 함수를 넘기므로 ref 로 든다 (의존성에 넣으면 매번 다시 건다). */
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  /* 숨은 탭 화면은 뒤로가기를 받지 않는다 (after-paint 의 ScreenVisibleContext). */
+  const visible = useScreenVisible();
 
   useEffect(() => {
-    if (!active) return;
+    if (!active || !visible) return;
 
     const close = () => closeRef.current();
     closers.push(close);
@@ -59,7 +62,7 @@ export function useCloseOnBack(active: boolean, onClose: () => void) {
       const at = closers.lastIndexOf(close);
       if (at >= 0) closers.splice(at, 1);
     };
-  }, [active]);
+  }, [active, visible]);
 }
 
 /** 한 번 더 눌러야 나가는 시간. 그 사이에 다시 누르면 앱이 닫힌다. */
@@ -136,6 +139,20 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
   const value = useMemo(() => ({ path, go, back }), [path, go, back]);
 
   return <NavigationContext.Provider value={value}>{children}</NavigationContext.Provider>;
+}
+
+/**
+ * 숨은 탭 화면에 내려 줄 이동 값. 숨은 동안에는 마지막으로 보이던 때의 값에 머문다.
+ *
+ * 주소가 바뀔 때마다 이 값을 읽는 화면이 모두 다시 그려지는데, 하단 탭 화면을 숨겨 두면서(App 의
+ * `Screen`) 안 보이는 화면까지 탭을 누를 때마다 통째로 다시 그려져 탭이 늦게 바뀌었다
+ * (2026-10-15 사용자 요청). 다시 보이면 그때의 값을 받아 한 번 그린다.
+ */
+export function FrozenNavigation({ active, children }: { active: boolean; children: ReactNode }) {
+  const live = useContext(NavigationContext);
+  const shown = useRef(live);
+  if (active) shown.current = live;
+  return <NavigationContext.Provider value={shown.current}>{children}</NavigationContext.Provider>;
 }
 
 export function useNavigation(): Navigation {

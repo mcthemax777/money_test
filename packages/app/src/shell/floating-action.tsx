@@ -6,21 +6,25 @@
  * 그래서 화면은 "이런 단추를 달아 달라"고 등록만 하고, 그리는 일은 굴러가지 않는
  * 껍데기가 맡는다 -- 바닥에 닿았다는 소식을 껍데기가 나르는 것과 같은 방식이다.
  *
- * 한 번에 하나만 선다. 두 화면이 동시에 떠 있지 않으므로 목록으로 둘 까닭이 없고,
- * 겹쳐 서면 어느 것을 누르는지 알 수 없다.
+ * 한 번에 하나만 선다. 겹쳐 서면 어느 것을 누르는지 알 수 없다.
+ *
+ * **등록은 쌓는다** (2026-10-15). 새 화면을 위에 덮을 때 아래 화면을 지우지 않고 숨겨 두므로
+ * (보던 그대로 돌아오게) 두 화면이 함께 살아 있다. 나중에 올라온 화면의 단추가 서고, 그 화면이
+ * 닫히면 아래 화면의 단추가 다시 선다. 하나만 기억하면 위 화면이 닫히며 아래 단추까지 지운다.
  */
 import {
   createContext,
   useCallback,
   useContext,
   useEffect,
+  useMemo,
   useRef,
   useState,
   type ComponentType,
-  type Dispatch,
   type ReactNode,
-  type SetStateAction,
 } from 'react';
+
+import { useScreenVisible } from './after-paint';
 
 /** 단추에 실리는 것. 무엇을 하는 단추인지는 부르는 화면이 정한다. */
 export interface FloatingAction {
@@ -36,58 +40,78 @@ export interface FloatingAction {
   icon?: ComponentType;
 }
 
-/*
- * 그릴 단추와 세우는 함수를 다른 컨텍스트에 둔다.
- *
- * 하나에 담으면 단추를 세우는 화면도 단추 값을 구독하게 된다. 세울 때마다 그 화면이
- * 다시 그려지고, 다시 그려지며 새로 만든 `onPress` 로 또 세우는 고리가 생긴다 -- 거래
- * 화면이 그렇게 초당 백 번 넘게 다시 그려져 JS 가 내내 100% 였다. 세우는 함수는
- * useState 의 것이라 바뀌지 않으므로, 이쪽만 구독하는 화면은 단추가 바뀌어도 그대로다.
- */
+/** 쌓인 등록 하나. 단추가 없는 화면도 자리를 갖는다 (그 화면이 다시 단추를 걸 수 있다). */
+type Slot = { id: number; action: FloatingAction | null };
+
+interface SlotRegistry {
+  /** 자리를 하나 얻는다. 먼저 얻은 것이 아래다. */
+  open: () => number;
+  update: (id: number, action: FloatingAction | null) => void;
+  close: (id: number) => void;
+}
+
 const FloatingActionContext = createContext<FloatingAction | null>(null);
-const FloatingActionSetterContext = createContext<Dispatch<
-  SetStateAction<FloatingAction | null>
-> | null>(null);
+const SlotRegistryContext = createContext<SlotRegistry | null>(null);
+
+let nextSlotId = 1;
 
 export function FloatingActionProvider({ children }: { children: ReactNode }) {
-  const [action, setAction] = useState<FloatingAction | null>(null);
+  const [slots, setSlots] = useState<Slot[]>([]);
+
+  const registry = useMemo<SlotRegistry>(
+    () => ({
+      open: () => {
+        const id = nextSlotId++;
+        setSlots((prev) => [...prev, { id, action: null }]);
+        return id;
+      },
+      update: (id, action) =>
+        setSlots((prev) => prev.map((slot) => (slot.id === id ? { id, action } : slot))),
+      close: (id) => setSlots((prev) => prev.filter((slot) => slot.id !== id)),
+    }),
+    [],
+  );
+
+  /** 맨 위 화면부터 내려가며 단추를 건 첫 화면의 것. */
+  const action = [...slots].reverse().find((slot) => slot.action)?.action ?? null;
 
   return (
-    <FloatingActionSetterContext.Provider value={setAction}>
+    <SlotRegistryContext.Provider value={registry}>
       <FloatingActionContext.Provider value={action}>{children}</FloatingActionContext.Provider>
-    </FloatingActionSetterContext.Provider>
+    </SlotRegistryContext.Provider>
   );
 }
 
-/** 껍데기가 지금 그릴 단추. 없으면 null. */
 export function useFloatingAction(): FloatingAction | null {
   return useContext(FloatingActionContext);
 }
 
-/**
- * 이 화면이 떠 있는 동안 단추를 세운다. `action` 이 null 이면 세우지 않는다.
- *
- * 화면을 떠날 때 거두는 일까지 여기서 한다 -- 거두지 않으면 다음 화면에 남의 단추가
- * 서고, 그것을 누르면 보이지 않는 화면의 팝업이 열린다.
- *
- * `onPress` 는 매번 새 함수여도 된다. 누를 때 가장 최근 것을 부르고, 그것이 바뀌었다고
- * 단추를 다시 세우지는 않는다 -- 다시 세우는 것은 이름·그림이 바뀌거나 단추가
- * 생기고 사라질 때뿐이다.
- */
 export function useFloatingActionSlot(action: FloatingAction | null) {
-  const setAction = useContext(FloatingActionSetterContext);
+  const registry = useContext(SlotRegistryContext);
   const onPressRef = useRef(action?.onPress);
   onPressRef.current = action?.onPress;
   const onPress = useCallback(() => onPressRef.current?.(), []);
 
   const label = action?.label;
   const icon = action?.icon;
-  const isShown = Boolean(label && action?.onPress);
+  /* 숨은 탭 화면의 단추는 세우지 않는다 (after-paint 의 ScreenVisibleContext). */
+  const visible = useScreenVisible();
+  const isShown = visible && Boolean(label && action?.onPress);
+
+  /** 이 화면의 자리. 화면이 사는 동안 하나다 -- 자리를 옮기면 겹 순서가 흐트러진다. */
+  const slotRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!registry) return;
+    const id = registry.open();
+    slotRef.current = id;
+    return () => {
+      registry.close(id);
+      slotRef.current = null;
+    };
+  }, [registry]);
 
   useEffect(() => {
-    if (!setAction) return;
-
-    setAction(isShown && label ? { label, onPress, icon } : null);
-    return () => setAction(null);
-  }, [setAction, isShown, label, icon, onPress]);
+    if (!registry || slotRef.current === null) return;
+    registry.update(slotRef.current, isShown && label ? { label, onPress, icon } : null);
+  }, [registry, isShown, label, icon, onPress]);
 }

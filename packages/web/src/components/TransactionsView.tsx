@@ -851,25 +851,27 @@ export default function TransactionsView({
   const firstWaiting = tx.months.findIndex((month) => tx.isMonthWaiting(month.yearMonth));
   const drawnMonths = firstWaiting < 0 ? tx.months : tx.months.slice(0, firstWaiting + 1);
 
-  /* 분석을 펴 둔 동안에는 그것만 그린다 (analysisFrom). */
-  if (analysisFrom) {
-    return (
-      <div className="screen-push">
-        <AnalysisView
-          projectId={selectedProjectId}
-          initial={{
-            search: tx.search,
-            unit: tx.unit,
-            periodKey: analysisFrom.key,
-          }}
-          onBack={closeAnalysis}
-        />
-      </div>
-    );
-  }
-
+  /*
+    분석을 펴 둔 동안에는 그것만 보인다(analysisFrom).
+    아래 화면은 지우지 않고 숨겨 둔다 (2026-10-15 사용자 요청 -- 팝업처럼). 받아 둔 값·펼침·고른
+    탭이 그대로 남아 닫으면 다시 받지 않고, 숨어 있는 동안에도 다른 기기의 변경을 받는다.
+  */
   return (
-    <div className={`space-y-4 ${returnClass}`}>
+    <>
+      {analysisFrom ? (
+        <div className="screen-push">
+          <AnalysisView
+            projectId={selectedProjectId}
+            initial={{
+              search: tx.search,
+              unit: tx.unit,
+              periodKey: analysisFrom.key,
+            }}
+            onBack={closeAnalysis}
+          />
+        </div>
+      ) : null}
+    <div className={`space-y-4 ${analysisFrom ? 'hidden' : returnClass}`}>
       {/*
         위쪽 한 덩어리 -- 제목, 알림, 탭, 걸어 둔 조건.
 
@@ -1640,5 +1642,6 @@ export default function TransactionsView({
         onEntryChange={tx.reload}
       />
     </div>
+    </>
   );
 }

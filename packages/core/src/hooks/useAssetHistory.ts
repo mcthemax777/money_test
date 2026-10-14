@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { weekStartKey, type AssetGroupKey } from '@money/types';
 
 import { homeDataPort } from '../data/home-port';
+import { readScreenCache, writeScreenCache } from '../lib/screen-cache';
 import { lineAxis, type LineAxis } from '../lib/chart';
 import {
   currentYearMonth,
@@ -164,6 +165,8 @@ const FETCH_MULTIPLE = 3;
  *
  * 그 너머는 양쪽 다 평평한 선뿐이라 돌아오는 길만 멀어진다.
  */
+const CACHE_SLOT = 'asset-history';
+
 const PAN_LIMIT: Record<Granularity, number> = { day: 3650, week: 520, month: 120, year: 10 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -255,28 +258,6 @@ export function useAssetHistory({
    * 앞날이다** -- 적어 둔 앞으로의 거래까지 보러 갈 수 있다.
    */
   const [offset, setOffset] = useState(0);
-  /**
-   * 받아 둔 구간과 그 **마지막 칸이 놓인 자리**(endOffset).
-   *
-   * 둘을 한 덩어리로 두는 것은 자리를 모르면 배열의 어디를 잘라야 할지 알 수 없기
-   * 때문이다. 따로 두면 다시 받는 동안 새 자리로 옛 배열을 자르게 되어, 한순간
-   * 엉뚱한 날짜가 그려진다.
-   */
-  const [series, setSeries] = useState<{ endOffset: number; points: AssetHistoryPoint[] }>({
-    endOffset: 0,
-    points: [],
-  });
-  /**
-   * 받아 둔 구간이 감싸는 한가운데. 창이 여기서 창 하나보다 멀어지면 다시 받는다.
-   *
-   * 창을 한가운데 두고 받으므로 받아 둔 구간은 앞뒤로 창 하나씩을 더 덮는다. 그래서
-   * 처음 그린 자리(0)에서 지난 날짜로도, 앞날로도 곧바로 끌 수 있다 -- 어느 쪽으로
-   * 끌든 첫 칸부터 서버를 기다리면 손이 멈춘 것처럼 보인다.
-   */
-  const [anchor, setAnchor] = useState(0);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState('');
-
   /*
    * 의존성으로 쓸 자산주인 키.
    *
@@ -298,6 +279,54 @@ export function useAssetHistory({
     const { year, month } = currentYearMonth(timeZone);
     return `${year}-${String(month).padStart(2, '0')}`;
   })();
+
+  /**
+   * 받아 둔 구간을 가르는 조건 -- 무엇을, 어느 단위로, 어디를 한가운데 삼아 받았나. 받기와
+   * 저장소(lib/screen-cache)가 같은 열쇠를 쓴다. 창 크기는 단위가 정하므로 따로 넣지 않는다.
+   */
+  const historyKey = (unit: Granularity, center: number) =>
+    JSON.stringify([
+      accountId,
+      ownerId,
+      ownerKey,
+      group,
+      excludeKey,
+      projectId,
+      baseMonth,
+      unit,
+      center,
+      timeZone,
+      weekStart,
+    ]);
+
+  /**
+   * 받아 둔 구간과 그 **마지막 칸이 놓인 자리**(endOffset).
+   *
+   * 둘을 한 덩어리로 두는 것은 자리를 모르면 배열의 어디를 잘라야 할지 알 수 없기
+   * 때문이다. 따로 두면 다시 받는 동안 새 자리로 옛 배열을 자르게 되어, 한순간
+   * 엉뚱한 날짜가 그려진다.
+   */
+  const [series, setSeries] = useState<{ endOffset: number; points: AssetHistoryPoint[] }>(
+    /*
+     * 화면이 다시 설 때는 처음 창(고른 단위, 지금 자리)으로 받아 둔 것을 곧바로 그린다
+     * (lib/screen-cache). 그동안 뒤에서 새로 받는다.
+     */
+    () =>
+      readScreenCache<{ endOffset: number; points: AssetHistoryPoint[] }>(
+        CACHE_SLOT,
+        historyKey(savedGranularity, 0),
+      ) ?? { endOffset: 0, points: [] },
+  );
+  /**
+   * 받아 둔 구간이 감싸는 한가운데. 창이 여기서 창 하나보다 멀어지면 다시 받는다.
+   *
+   * 창을 한가운데 두고 받으므로 받아 둔 구간은 앞뒤로 창 하나씩을 더 덮는다. 그래서
+   * 처음 그린 자리(0)에서 지난 날짜로도, 앞날로도 곧바로 끌 수 있다 -- 어느 쪽으로
+   * 끌든 첫 칸부터 서버를 기다리면 손이 멈춘 것처럼 보인다.
+   */
+  const [anchor, setAnchor] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState('');
 
   const span = WINDOW_SIZE[granularity];
   /** 한 번에 받아 두는 구간 수. 창의 세 배다. */
@@ -526,6 +555,7 @@ export function useAssetHistory({
         return { label, balance, date: row.date };
       });
       setSeries({ endOffset, points });
+      writeScreenCache(CACHE_SLOT, historyKey(granularity, anchor), { endOffset, points });
     } catch (error) {
       // 그래프를 못 불러와도 나머지 화면은 살아 있어야 한다.
       if (id !== requestId.current) return;

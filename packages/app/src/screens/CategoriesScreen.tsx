@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import NavIcon from '../components/NavIcon';
 
@@ -7,7 +7,8 @@ import {
   useCategoryManager,
   type CategoryFormValues,
 } from '@money/core/hooks/useCategoryManager';
-import { EMPTY_SEARCH } from '@money/core/hooks/useTransactions';
+import { DEFAULT_ENTRY_PERIOD } from '@money/types';
+import { EMPTY_SEARCH, type TransactionSearch } from '@money/core/hooks/useTransactions';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import type { Category } from '@money/core/lib/types';
 import type { CategoryDto } from '@money/types';
@@ -15,7 +16,10 @@ import { useEntryFocus } from '@money/core/store/entry-focus';
 import { useCanEdit, useProject } from '@money/core/store/project';
 import { useThisMonthBudget } from '@money/core/hooks/useBudgetSettings';
 
-import { useNavigation } from '../shell/navigation';
+import { useCloseOnBack } from '../shell/navigation';
+import { useScrollRestore, useScrollToTop } from '../shell/scroll';
+import { ScreenPush, ScreenReturn } from '../shell/ScreenSlide';
+import TransactionsScreen from './TransactionsScreen';
 
 import Modal from '../components/Modal';
 import BudgetEditModal from '../components/BudgetEditModal';
@@ -69,9 +73,7 @@ export default function CategoriesScreen() {
   const budget = useThisMonthBudget(selectedProjectId);
   const canEdit = useCanEdit();
   const { categories, isLoading, isSubmitting } = manager;
-  const nav = useNavigation();
   /** 거래 화면과 주고받는 쪽지. 건너갈 때 걸 검색과 돌아와서 다시 펼 상세가 담긴다. */
-  const focusEntries = useEntryFocus((state) => state.focusEntries);
   const reopen = useEntryFocus((state) => state.reopen);
   const clearReopen = useEntryFocus((state) => state.clearReopen);
 
@@ -148,18 +150,42 @@ export default function CategoriesScreen() {
   }, [reopen, categories, clearReopen]);
 
   /**
+   * 위에 덮어 연 거래 화면 (분류·태그의 거래내역 보기). null 이면 덮지 않았다.
+   *
+   * 거래 탭으로 건너가지 않고 이 화면 위에 덮는다 (2026-10-15 사용자 요청 -- 팝업처럼). 아래
+   * 화면은 지우지 않고 숨겨 두고, 닫으면 떠나기 전의 상세 창을 다시 연다(`reopen`).
+   */
+  const [entries, setEntries] = useState<{
+    search: TransactionSearch;
+    reopen: () => void;
+  } | null>(null);
+  const scrollToTop = useScrollToTop();
+  const { offsetOf, restoreTo } = useScrollRestore();
+  const entriesOffset = useRef(0);
+  const openEntries = (search: TransactionSearch, reopen: () => void) => {
+    entriesOffset.current = offsetOf();
+    setEntries({ search, reopen });
+    scrollToTop();
+  };
+  const closeEntries = () => {
+    entries?.reopen();
+    setEntries(null);
+    restoreTo(entriesOffset.current);
+  };
+  useCloseOnBack(entries !== null, closeEntries);
+
+  /**
    * 이 분류로 걸린 거래내역을 본다.
    *
    * 대분류를 고르면 그 아래 소분류와, 소분류 없이 대분류에 바로 적은 거래까지 걸린다
    * (서버의 검색 규칙). 상세에서 보고 있는 그 분류의 거래가 그대로 나오는 셈이다.
    */
   const showEntriesOf = (category: Category) => {
-    focusEntries(
-      { kind: 'category', id: category.id },
-      { ...EMPTY_SEARCH, categoryIds: [category.id] },
-    );
     setIsDetailModalOpen(false);
-    nav.go('/transactions');
+    openEntries({ ...EMPTY_SEARCH, categoryIds: [category.id] }, () => {
+      setSelectedCategory(category);
+      setIsDetailModalOpen(true);
+    });
   };
 
   const openEditor = (category: Category) => {
@@ -255,7 +281,16 @@ export default function CategoriesScreen() {
   };
 
   return (
-    <View className="gap-6">
+    <>
+      {entries ? (
+        <ScreenPush>
+          <TransactionsScreen
+            initial={{ search: entries.search, unit: DEFAULT_ENTRY_PERIOD }}
+            onBack={closeEntries}
+          />
+        </ScreenPush>
+      ) : null}
+    <ScreenReturn covered={entries !== null} style={{ gap: 24 }}>
       {/*
         추가 버튼은 머리글이 아니라 **목록 바로 위**에 있다 (자산 화면과 같은 규칙).
         무엇에 더하는 것인지가 버튼 아래에 곧바로 이어져 보인다.
@@ -279,7 +314,7 @@ export default function CategoriesScreen() {
       />
 
       {section === 'tags' ? (
-        <TagsPanel projectId={selectedProjectId} />
+        <TagsPanel projectId={selectedProjectId} onShowEntries={openEntries} />
       ) : isLoading && categories.length === 0 ? (
         <Text className="text-gray-600">{t('common.loading')}</Text>
       ) : categories.length === 0 ? (
@@ -603,7 +638,8 @@ export default function CategoriesScreen() {
         isSubmitting={manager.isSubmitting}
         onSubmit={merge}
       />
-    </View>
+    </ScreenReturn>
+    </>
   );
 }
 

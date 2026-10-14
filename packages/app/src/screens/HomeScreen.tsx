@@ -12,7 +12,6 @@ import { homeDataPort } from '@money/core/data/home-port';
 import { useCanEdit, useProject } from '@money/core/store/project';
 import { budgetSettingsHref, tagBudgetSettingsHref } from '@money/core/lib/budget';
 import { budgetAnalysisInitial, type AnalysisInitial } from '@money/core/hooks/useAnalysis';
-import { useScreenReturn } from '@money/core/hooks/useScreenReturn';
 
 import AssetDetailView from '../components/AssetDetailView';
 import EntryEditor from '../components/EntryEditor';
@@ -106,8 +105,6 @@ export default function HomeScreen() {
 
   /* 기기의 뒤로가기는 상세의 ← 와 같은 일을 한다. */
   useCloseOnBack(detail !== null, () => openDetail(null));
-  /* 분석은 위에 덮이듯 밀려 들어오고, 닫으면 예산 화면이 제자리로 돌아온다 (2026-10-10 사용자 요청). */
-  const hasReturned = useScreenReturn(detail?.kind === 'analysis');
 
   const openAnalysis = (target: { id: string }, targetType: EntryType) =>
     openDetail({ kind: 'analysis', initial: budgetAnalysisInitial(target.id, targetType, yearMonth) });
@@ -167,8 +164,9 @@ export default function HomeScreen() {
       ) : null}
 
       {/*
-        펼쳐 둔 상세만 그린다. 가계 화면과 같은 짜임이다 -- 위에 목록을 남기면 그래프가
-        한참 아래로 밀린다. 닫으면 보던 자리로 돌아온다.
+        펼쳐 둔 상세만 보인다. 가계 화면과 같은 짜임이다 -- 위에 목록을 남기면 그래프가
+        한참 아래로 밀린다. 예산 화면은 지우지 않고 숨겨 두어 닫으면 다시 받지 않고 보던 자리로
+        돌아온다 (2026-10-15 사용자 요청). 분석은 위에 덮이듯 밀려 들어온다.
       */}
       {detailCard ? (
         <AssetDetailView
@@ -189,8 +187,8 @@ export default function HomeScreen() {
             canOpenEntries
           />
         </ScreenPush>
-      ) : (
-        <ScreenReturn returned={hasReturned} style={{ gap: 24 }}>
+      ) : null}
+      <ScreenReturn covered={detailCard !== null || detail?.kind === 'analysis'} style={{ gap: 24 }}>
           {home.hasError ? (
             <View className="rounded-lg bg-red-50 p-3">
               <Text className="text-sm text-red-800">{t('home.loadFailed')}</Text>
@@ -272,8 +270,7 @@ export default function HomeScreen() {
               />
             </View>
           </PeriodSwipe>
-        </ScreenReturn>
-      )}
+      </ScreenReturn>
 
       {/* 상세의 거래를 누르면 여는 고치기 창. 가계 화면과 같은 것이다. */}
       <EntryEditor

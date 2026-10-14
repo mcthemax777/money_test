@@ -34,6 +34,7 @@ import {
   type CumulativeKind,
 } from '@money/core/lib/month-compare';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
+import { RevealCurtain, REVEAL_BOX } from './ChartReveal';
 
 /** 그리는 자리의 높이(px). 웹은 300 이지만 앱에서는 그만큼이 화면 절반을 먹는다. */
 const PLOT_HEIGHT = 220;
@@ -183,7 +184,7 @@ export default function DailyCumulativeChart({
 
   return (
     <View>
-      <View onLayout={measure}>
+      <View onLayout={measure} style={REVEAL_BOX}>
         <Pressable
           onPress={(event) => {
             /* 점이 아니라 빈 곳을 눌러도 가장 가까운 칸으로 본다. */
@@ -273,6 +274,8 @@ export default function DailyCumulativeChart({
             )}
           </Svg>
         </Pressable>
+        {/* 선이 왼쪽부터 그어진다 (ChartReveal). */}
+        <RevealCurtain direction="right" left={AXIS_WIDTH} right={RIGHT_PAD} bottom={BOTTOM_PAD} />
       </View>
 
       {/*

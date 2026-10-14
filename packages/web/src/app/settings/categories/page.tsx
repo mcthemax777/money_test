@@ -25,6 +25,7 @@ import TransactionsView from '@/components/TransactionsView';
 import type { Category } from '@money/core/lib/types';
 import type { CategoryDto } from '@money/types';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
+import { useSwapScroll } from '@/hooks/useSwapScroll';
 import { useDragReorder } from '@/hooks/useDragReorder';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
@@ -75,9 +76,16 @@ export default function CategoriesPage() {
    * 거래 탭으로 넘기지 않는다. 분류를 보다가 그 분류의 거래를 들여다보는 일은 분류
    * 화면 안에서 끝나는 한 걸음이라, 넘겨 두면 돌아오는 길이 탭을 되짚는 길이 된다.
    */
-  const [entries, setEntries] = useState<{ target: EntriesTarget; search: TransactionSearch } | null>(
-    null,
-  );
+  const [entries, setEntriesState] = useState<{
+    target: EntriesTarget;
+    search: TransactionSearch;
+  } | null>(null);
+  /* 거래내역을 펴면 맨 위로, 닫으면 보던 자리로. 아래 화면을 숨겨 두므로 자리를 따로 맞춘다. */
+  const rememberScroll = useSwapScroll(entries !== null);
+  const setEntries = (next: { target: EntriesTarget; search: TransactionSearch } | null) => {
+    if (next) rememberScroll();
+    setEntriesState(next);
+  };
   /** 거래내역에서 ← 로 돌아왔을 때 다시 펼 상세. 펴고 나면 비운다. */
   const [reopen, setReopen] = useState<EntriesTarget | null>(null);
 
@@ -294,24 +302,25 @@ export default function CategoriesPage() {
   const mainCategories = categories.filter((c) => !c.parentId);
 
   /*
-   * 거래내역을 펼쳐 둔 동안에는 그것만 그린다.
+   * 거래내역을 펼쳐 둔 동안에는 그것만 보인다.
    *
    * 분류 목록을 아래에 남겨 두면 한 화면에 목록 둘이 서서 어느 것을 보고 있는지가
    * 흐려진다. 거래 화면이 제 머리글(제목·검색·보기 방식)을 그대로 들고 오므로,
-   * 돌아가는 길인 ← 만 얹어 주면 된다.
+   * 돌아가는 길인 ← 만 얹어 주면 된다. 분류 화면은 지우지 않고 숨겨 두어 닫으면 다시
+   * 받지 않고 보던 그대로 돌아온다 (2026-10-15 사용자 요청 -- 팝업처럼).
    */
-  if (entries) {
-    return (
-      <TransactionsView
-        projectId={selectedProjectId}
-        search={entries.search}
-        onBack={closeEntries}
-      />
-    );
-  }
-
   return (
-    <div className="space-y-6">
+    <>
+      {entries ? (
+        <div className="screen-push">
+          <TransactionsView
+            projectId={selectedProjectId}
+            search={entries.search}
+            onBack={closeEntries}
+          />
+        </div>
+      ) : null}
+    <div className={entries ? 'hidden' : 'space-y-6'}>
       {/*
         추가 버튼은 머리글이 아니라 **목록 바로 위**에 있다 (자산 화면과 같은 규칙).
         무엇에 더하는 것인지가 버튼 아래에 곧바로 이어져 보인다.
@@ -641,6 +650,7 @@ export default function CategoriesPage() {
         onSubmit={handleMerge}
       />
     </div>
+    </>
   );
 }
 

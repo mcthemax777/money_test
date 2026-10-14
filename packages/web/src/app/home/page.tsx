@@ -148,23 +148,25 @@ export default function HomePage() {
       .catch(() => {});
   }, []);
 
-  /* 분석을 펴 둔 동안에는 그것만 그린다 (거래 화면의 분석과 같은 짜임). */
-  if (analysis) {
-    return (
-      <div className="screen-push">
-        <AnalysisView
-          projectId={selectedProjectId}
-          initial={analysis}
-          onBack={closeAnalysis}
-          /* 오른쪽 위 단추로 거래내역을 위에 덮어 연다 (2026-10-09·10-10 사용자 요청). */
-          canOpenEntries
-        />
-      </div>
-    );
-  }
-
+  /*
+    분석을 펴 둔 동안에는 그것만 보인다(거래 화면의 분석과 같은 짜임).
+    아래 화면은 지우지 않고 숨겨 둔다 (2026-10-15 사용자 요청 -- 팝업처럼). 받아 둔 값·펼침·고른
+    탭이 그대로 남아 닫으면 다시 받지 않고, 숨어 있는 동안에도 다른 기기의 변경을 받는다.
+  */
   return (
-    <div className={`space-y-6 ${returnClass}`}>
+    <>
+      {analysis ? (
+        <div className="screen-push">
+          <AnalysisView
+            projectId={selectedProjectId}
+            initial={analysis}
+            onBack={closeAnalysis}
+            /* 오른쪽 위 단추로 거래내역을 위에 덮어 연다 (2026-10-09·10-10 사용자 요청). */
+            canOpenEntries
+          />
+        </div>
+      ) : null}
+    <div className={`space-y-6 ${analysis ? 'hidden' : returnClass}`}>
       {hasError && (
         <div className="p-3 bg-red-50 text-red-800 text-sm rounded-lg">{t('home.loadFailed')}</div>
       )}
@@ -282,5 +284,6 @@ export default function HomePage() {
         onEntryChange={home.reloadEntries}
       />
     </div>
+    </>
   );
 }

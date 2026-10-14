@@ -29,6 +29,8 @@ import {
 } from '@money/core/hooks/useAssetHistory';
 import { formatCurrency } from '@money/core/lib/money';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
+import LoadingBlock from './LoadingBlock';
+import { useRevealAnimating, useRevealKey } from './ChartReveal';
 
 /**
  * Y축 눈금과 좌우 여백이 먹는 폭의 어림값(px).
@@ -65,6 +67,12 @@ export default function AssetHistoryChart({
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
   const history = useAssetHistory(props);
+  /*
+   * 나타날 때(그려질 때·다시 보일 때)만 선이 그어진다 (ChartReveal). 끄는 동안에는 점이 갈릴
+   * 때마다 다시 그으면 어지러우므로 그 뒤로는 끈다.
+   */
+  const revealKey = useRevealKey();
+  const revealing = useRevealAnimating();
   const { points, yAxis } = history;
 
   /**
@@ -152,7 +160,7 @@ export default function AssetHistoryChart({
 
       {/* 처음 한 번만 자리를 비운다. 끌면서 다시 받는 동안에는 그리던 선을 그대로 둔다. */}
       {history.isLoading && points.length === 0 ? (
-        <p className="text-gray-500 text-sm py-12 text-center">{t('feed.loadingMore')}</p>
+        <LoadingBlock label={t('feed.loadingMore')} />
       ) : history.error ? (
         <p className="text-red-600 text-sm py-12 text-center">{history.error}</p>
       ) : !history.hasAnyValue && history.offset === 0 ? (
@@ -198,6 +206,7 @@ export default function AssetHistoryChart({
         >
           <ResponsiveContainer width="100%" height={300}>
             <LineChart
+              key={revealKey}
               data={points}
               margin={CHART_MARGIN}
               onMouseMove={(state: any) => {
@@ -234,8 +243,8 @@ export default function AssetHistoryChart({
                 strokeWidth={2}
                 dot={false}
                 activeDot={CHART_ACTIVE_DOT}
-                // 끄는 동안 점이 하나씩 갈리므로 그때마다 선이 다시 자라면 어지럽다.
-                isAnimationActive={false}
+                // 나타날 때만 그어진다(revealing). 끄는 동안 점이 갈릴 때마다 다시 자라면 어지럽다.
+                isAnimationActive={revealing}
               />
               {/*
                 읽고 있는 점 (고르지 않았으면 선이 끝나는 점). 점만 찍고 금액은 적지 않는다.

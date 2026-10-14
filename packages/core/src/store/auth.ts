@@ -190,6 +190,9 @@ export const useAuth = create<AuthStore>()(
       // 다음 사용자가 같은 캐시 키를 써서 이전 사용자의 기관 이름을 보게 된다.
       const { invalidateInstitutions } = await import('../lib/institutions');
       invalidateInstitutions();
+      // 화면이 받아 둔 값도 같은 까닭으로 비운다 (lib/screen-cache).
+      const { clearScreenCache } = await import('../lib/screen-cache');
+      clearScreenCache();
 
       /*
        * 기기 사본도 버린다. 스토어만 비우면 화면에서 사라질 뿐 파일 안에는 이 사람의

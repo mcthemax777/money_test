@@ -9,9 +9,9 @@
  * 무엇을 받아 무엇을 그릴지는 core 의 useCategoryDetail 이 정한다(웹의 상세와 같은
  * 훅이다). 같은 분류를 누르면 두 화면이 같은 값을 말한다.
  */
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { memo, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Animated, Pressable, Text, View } from 'react-native';
-import type { EntryScopeQuery, EntryListItem } from '@money/types';
+import type { EntryScopeQuery } from '@money/types';
 
 import { useCategoryDetail } from '@money/core/hooks/useCategoryDetail';
 import { type ReportPeriod } from '@money/core/lib/api-client';
@@ -24,7 +24,7 @@ import DailyCumulativeChart from './DailyCumulativeChart';
 import MonthlyAmountChart from './MonthlyAmountChart';
 import CategoryPieChart from './CategoryPieChart';
 import PageHeader from './PageHeader';
-import TransactionListView from './TransactionListView';
+import LoadingBlock from './LoadingBlock';
 
 /** 시간대 막대 스물넷 중 이름을 적는 것. 0·3·6…시만 적어야 폰 너비에서 겹치지 않는다. */
 const everyThirdHour = (index: number) => index % 3 === 0;
@@ -112,7 +112,7 @@ function ChartCard({
   );
 }
 
-export default function CategoryDetailView({
+function CategoryDetailView({
   categoryId,
   categoryName,
   categories,
@@ -122,7 +122,6 @@ export default function CategoryDetailView({
   filter,
   reloadToken,
   onClose,
-  onEntryClick,
   trendClip,
   trendPeriod,
   controls,
@@ -130,6 +129,7 @@ export default function CategoryDetailView({
   onPickCategory,
   onPickMethod,
   onOpenDay,
+  active = true,
 }: {
   /** 실제 분류 id, 'total-expense'/'total-income', 또는 태그(`tag:<id>`) */
   categoryId: string;
@@ -147,8 +147,6 @@ export default function CategoryDetailView({
    * 화면 안에 끼워 그릴 때다.
    */
   onClose?: () => void;
-  /** 거래를 누르면 부른다. 가계 화면의 고치기 팝업으로 잇는 통로다. */
-  onEntryClick?: (entry: EntryListItem) => void;
   /** 12개월 추이를 자를 구간. 거래 분석이 검색 기간을 걸었을 때 준다 (useCategoryDetail). */
   trendClip?: { from?: string; to?: string };
   /** 추이 막대의 마지막 기간. 주·해면 그 단위로 선다 (useCategoryDetail). */
@@ -172,6 +170,11 @@ export default function CategoryDetailView({
    * 2026-10-15 사용자 요청). 주지 않으면 줄은 누를 수 없다.
    */
   onOpenDay?: (range: { from: string; to: string }) => void;
+  /**
+   * 보이는 탭인가. 분석 탭은 한 번 연 탭을 숨겨 두는데(누르면 곧바로 보이게), 숨은 동안에는
+   * 받지 않는다 -- 기간을 넘길 때마다 안 보이는 탭까지 받으면 넘기기가 느려진다 (2026-10-15).
+   */
+  active?: boolean;
 }) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
@@ -194,6 +197,7 @@ export default function CategoryDetailView({
     reloadToken,
     trendClip,
     trendPeriod,
+    enabled: active,
   });
 
   /** 거래 목록에서 세는 세 그래프가 비었을 때의 안내. 일별 누적과 같은 말을 쓴다. */
@@ -211,7 +215,7 @@ export default function CategoryDetailView({
       {controls}
 
       {detail.isLoading ? (
-        <Text className="py-12 text-center text-gray-500">{t('detail.loading')}</Text>
+        <LoadingBlock label={t('detail.loading')} />
       ) : (
         <>
           {/* 일별 누적. 구성비보다 먼저 이 구간의 흐름을 본다 (2026-10-14 사용자 요청). */}
@@ -344,17 +348,14 @@ export default function CategoryDetailView({
               </Text>
             )}
           </ChartCard>
-
-          <View className="gap-3">
-            <Text className="text-base font-semibold text-gray-900">{t('detail.entries')}</Text>
-            {detail.entries.length === 0 ? (
-              <Text className="text-sm text-gray-500">{t(detail.isOffline ? 'online.viewOnlyOnline' : 'detail.noEntries')}</Text>
-            ) : (
-              <TransactionListView entries={detail.entries} onEntryClick={onEntryClick} />
-            )}
-          </View>
         </>
       )}
     </View>
   );
 }
+
+/*
+ * 분석 탭은 한 번 연 탭을 숨겨 둔다. 탭을 누를 때 숨은 탭까지 다시 그리지 않도록, 받은 값이 그대로면
+ * 다시 그리지 않는다 (2026-10-15 사용자 요청 -- 탭 반응이 늦었다). 부르는 쪽은 함수를 고정해 넘긴다.
+ */
+export default memo(CategoryDetailView);

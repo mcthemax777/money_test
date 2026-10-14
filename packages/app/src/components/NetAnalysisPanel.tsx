@@ -3,7 +3,7 @@
  *
  * 차례는 요약 → 일별 누적 순수입 → 기간별 순수입이다 (웹과 같다). 값은 core 의 useNetAnalysis 가 정한다.
  */
-import type { ReactNode } from 'react';
+import { memo, type ReactNode } from 'react';
 import { Text, View } from 'react-native';
 import type { EntryScopeQuery } from '@money/types';
 
@@ -17,6 +17,7 @@ import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 import DailyCumulativeChart from './DailyCumulativeChart';
 import MonthlyAmountChart from './MonthlyAmountChart';
+import LoadingBlock from './LoadingBlock';
 
 /** 금액 색. 들어온 돈은 초록, 나간 돈은 빨강, 0 은 먹색이다 (거래 목록과 같은 규칙). */
 function toneOf(value: number): string {
@@ -83,7 +84,7 @@ function NetSummary({ totals, currency }: { totals: AnalysisTotals; currency: st
   );
 }
 
-export default function NetAnalysisPanel({
+function NetAnalysisPanel({
   totals,
   categories,
   period,
@@ -92,6 +93,7 @@ export default function NetAnalysisPanel({
   trendClip,
   trendPeriod,
   onOpenDay,
+  active = true,
 }: {
   /** 그 기간의 수입·지출·순수입 (거래 탭의 기간 줄과 같은 값). 목록이 오는 중이면 null 이다. */
   totals: AnalysisTotals | null;
@@ -106,10 +108,23 @@ export default function NetAnalysisPanel({
    * 2026-10-15 사용자 요청). 주지 않으면 줄은 누를 수 없다.
    */
   onOpenDay?: (range: { from: string; to: string }) => void;
+  /**
+   * 보이는 탭인가. 분석 탭은 한 번 연 탭을 숨겨 두는데(누르면 곧바로 보이게), 숨은 동안에는
+   * 받지 않는다 -- 기간을 넘길 때마다 안 보이는 탭까지 받으면 넘기기가 느려진다 (2026-10-15).
+   */
+  active?: boolean;
 }) {
   const { t } = useTranslation();
   const currency = useProjectDisplayCurrency();
-  const net = useNetAnalysis({ categories, period, projectId, filter, trendClip, trendPeriod });
+  const net = useNetAnalysis({
+    categories,
+    period,
+    projectId,
+    filter,
+    trendClip,
+    trendPeriod,
+    enabled: active,
+  });
 
   const emptyText = (key: MessageKey) => t(net.isOffline ? 'online.viewOnlyOnline' : key);
 
@@ -118,7 +133,7 @@ export default function NetAnalysisPanel({
       {totals ? <NetSummary totals={totals} currency={currency} /> : null}
 
       {net.isLoading ? (
-        <Text className="py-12 text-center text-gray-500">{t('detail.loading')}</Text>
+        <LoadingBlock label={t('detail.loading')} />
       ) : (
         <>
           <Card title={t('analysis.net.daily')}>
@@ -157,3 +172,9 @@ export default function NetAnalysisPanel({
     </View>
   );
 }
+
+/*
+ * 분석 탭은 한 번 연 탭을 숨겨 둔다. 탭을 누를 때 숨은 탭까지 다시 그리지 않도록, 받은 값이 그대로면
+ * 다시 그리지 않는다 (2026-10-15 사용자 요청 -- 탭 반응이 늦었다). 부르는 쪽은 함수를 고정해 넘긴다.
+ */
+export default memo(NetAnalysisPanel);

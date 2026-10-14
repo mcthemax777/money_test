@@ -30,6 +30,7 @@ import {
   type CardUsageMeasure,
 } from '@money/core/lib/card-usage-chart';
 import { useCardUsageWindow } from '@money/core/hooks/useCardUsageWindow';
+import { useRevealAnimating, useRevealKey } from './ChartReveal';
 
 /** 막대 위에 금액을 적는 최대 개수. 이보다 많으면 글자끼리 겹친다. */
 const LABEL_LIMIT = 8;
@@ -99,6 +100,12 @@ export default function CardUsageChart({
 }: CardUsageChartProps) {
   const { t } = useTranslation();
   const usage = useCardUsageWindow(periods, target, cardId, undefined, measure);
+  /*
+   * 나타날 때(그려질 때·다시 보일 때)만 막대가 솟는다 (ChartReveal). 끄는 동안에는 막대가 갈릴
+   * 때마다 다시 솟으면 어지러우므로 그 뒤로는 끈다.
+   */
+  const revealKey = useRevealKey();
+  const revealing = useRevealAnimating();
   const { bars } = usage;
 
   /*
@@ -182,6 +189,7 @@ export default function CardUsageChart({
       >
         <ResponsiveContainer width="100%" height={height}>
           <BarChart
+            key={revealKey}
             data={bars}
             margin={CHART_MARGIN}
             // 막대가 아니라 그 칸의 빈 곳을 눌러도 그 주기로 본다. 끈 뒤의 클릭은 흘려보낸다.
@@ -218,8 +226,8 @@ export default function CardUsageChart({
                 }}
               />
             )}
-            {/* 끄는 동안 막대가 하나씩 갈리므로 그때마다 다시 자라면 어지럽다. */}
-            <Bar dataKey="amount" radius={CHART_BAR_RADIUS} isAnimationActive={false}>
+            {/* 나타날 때만 솟는다(revealing). 끄는 동안 막대가 갈릴 때마다 다시 자라면 어지럽다. */}
+            <Bar dataKey="amount" radius={CHART_BAR_RADIUS} isAnimationActive={revealing}>
               {bars.map((bar) => (
                 <Cell
                   key={bar.key}

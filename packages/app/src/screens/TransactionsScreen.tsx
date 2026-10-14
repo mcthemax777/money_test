@@ -60,7 +60,6 @@ import {
 } from '@money/core/store/project';
 import { paybackCountOf, paybackDeleteNote } from '@money/core/hooks/usePaybacks';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
-import { useScreenReturn } from '@money/core/hooks/useScreenReturn';
 import { useInboxCount } from '@money/core/store/inbox-count';
 import { useUserFilter } from '@money/core/store/user-filter';
 import { useEntryFocus, type EntryFocusOrigin } from '@money/core/store/entry-focus';
@@ -105,7 +104,6 @@ const ORIGIN_SCREEN: Record<EntryFocusOrigin['kind'], string> = {
   account: '/assets',
   card: '/assets',
   group: '/assets',
-  assets: '/assets',
 };
 
 const TABS: Array<{ id: TransactionTab; labelKey: MessageKey }> = [
@@ -576,7 +574,6 @@ export default function TransactionsScreen({
     else restoreTo(listOffset.current);
   };
   useCloseOnBack(analysisFrom !== null, () => openAnalysis(null));
-  const hasReturned = useScreenReturn(analysisFrom !== null);
   /*
    * 년월 줄의 분석 아이콘. 줄이 `memo` 라 고정된 함수로 넘긴다. 그리는 때마다 바뀌는
    * `openAnalysis` 는 최신 것을 ref 로 부른다.
@@ -961,9 +958,9 @@ export default function TransactionsScreen({
   return (
     <View className="gap-4">
       {/*
-        분석을 펴 두면 그것만 그린다. 가계 분류 상세와 같은 짜임이다 -- 목록 위에 겹치면
-        그래프가 한참 밀린다. 닫으면 목록이 보던 자리로 돌아온다. 분석의 거래를 누르면 분석
-        화면이 제 고치기 창을 연다 (분석 탭과 같다).
+        분석을 펴 두면 그것만 보인다. 가계 분류 상세와 같은 짜임이다 -- 목록 위에 겹치면
+        그래프가 한참 밀린다. 목록은 지우지 않고 숨겨 두어 닫으면 다시 받지 않고 보던 자리로
+        돌아온다 (2026-10-15 사용자 요청). 분석의 거래를 누르면 분석 화면이 제 고치기 창을 연다.
       */}
       {analysisFrom ? (
         /* 분석은 위에 덮이듯 밀려 들어오고, 닫으면 목록이 제자리로 돌아온다 (2026-10-10 사용자 요청). */
@@ -977,8 +974,8 @@ export default function TransactionsScreen({
             onBack={() => openAnalysis(null)}
           />
         </ScreenPush>
-      ) : (
-        <ScreenReturn returned={hasReturned} style={{ gap: 16 }}>
+      ) : null}
+      <ScreenReturn covered={analysisFrom !== null} style={{ gap: 16 }}>
         {/*
           위쪽 한 덩어리 -- 제목, 알림, 탭, 걸어 둔 조건.
 
@@ -1319,8 +1316,7 @@ export default function TransactionsScreen({
           )}
         </StickySections>
         )}
-        </ScreenReturn>
-      )}
+      </ScreenReturn>
 
       <TagPickModal
         isOpen={isTagPickOpen}

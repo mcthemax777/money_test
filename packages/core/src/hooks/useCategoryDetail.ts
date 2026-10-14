@@ -9,12 +9,13 @@
  * 웹과 앱이 같은 분류를 눌렀는데 다른 금액을 말하게 된다. 그리는 일(원형·막대·선)만
  * 각자 맡는다 -- 웹은 recharts, 앱은 react-native-svg 라 컴포넌트를 나눌 수 없다.
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { isCalendarMonthKey, selfCategoryPick, unitOfKey, type EntryDto, type EntryFilterQuery, type EntryListItem, type EntryPeriodUnit } from '@money/types';
 
 import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 import { homeDataPort } from '../data/home-port';
+import { readScreenCache, writeScreenCache } from '../lib/screen-cache';
 import { type ReportPeriod } from '../lib/api-client';
 import { dayRangeQuery, shiftDateKey, todayKey, weekdayOf } from '../lib/datetime';
 import {
@@ -277,7 +278,7 @@ export interface CategoryDetailInput {
   filter?: EntryFilterQuery;
   /** 값이 바뀌면 다시 받는다. 부모 화면에서 거래를 고쳤을 때 쓴다. */
   reloadToken?: number;
-  /** 꺼져 있으면 받지 않는다. 닫힌 팝업이 쓴다. */
+  /** 꺼져 있으면 받지 않는다. 닫힌 팝업과 숨은 분석 탭이 쓴다. */
   enabled?: boolean;
   /**
    * 12개월 추이를 이 구간 안으로 자른다 (ISO 시각, [from, to)).
@@ -370,6 +371,18 @@ const PIE_TITLE: Record<'income' | 'expense', { parent: MessageKey; child: Messa
   income: { parent: 'detail.pieIncomeParent', child: 'detail.pieIncomeChild' },
 };
 
+const CACHE_SLOT = 'category-detail';
+
+/** 화면이 다시 설 때 그릴 값 (lib/screen-cache). 파고든 자리는 담지 않는다 -- 첫 단계로 선다. */
+interface DetailSnapshot {
+  isOffline: boolean;
+  monthly: MonthlyPoint[];
+  daily: DailyCumulativePoint[];
+  comparisons: CumulativeSeries[];
+  entries: EntryListItem[];
+  pieSources: PieSource[];
+}
+
 /** 받아 둔 원형 하나의 재료. 첫 단계 조각과, 파고들 때 쓰는 평면 집계다. */
 interface PieSource {
   type: 'income' | 'expense';
@@ -443,41 +456,82 @@ export function useCategoryDetail({
    */
   const tagScope = target.tagId ? { tagIds: target.tagId } : {};
 
+  /** 이 조건. 받기와 저장소(lib/screen-cache)가 같은 열쇠를 쓴다. */
+  const queryKey = JSON.stringify([
+    categoryId,
+    periodKey,
+    exactCategory,
+    projectId,
+    timeZone,
+    filterKey,
+    clipKey,
+    trendPeriod,
+    target.scope,
+    target.type,
+    target.isLeaf,
+  ]);
+  /** 화면이 다시 설 때 그릴 값. 같은 조건으로 받아 둔 것이 있으면 곧바로 그린다. */
+  const [cached] = useState(() =>
+    enabled && categoryId ? readScreenCache<DetailSnapshot>(CACHE_SLOT, queryKey) : undefined,
+  );
+
   const [isLoading, setIsLoading] = useState(false);
-  const [monthly, setMonthly] = useState<MonthlyPoint[]>([]);
-  const [daily, setDaily] = useState<DailyCumulativePoint[]>([]);
-  const [comparisons, setComparisons] = useState<CumulativeSeries[]>([]);
-  const [entries, setEntries] = useState<EntryListItem[]>([]);
-  const [pieSources, setPieSources] = useState<PieSource[]>([]);
+  const [monthly, setMonthly] = useState<MonthlyPoint[]>(cached?.monthly ?? []);
+  const [daily, setDaily] = useState<DailyCumulativePoint[]>(cached?.daily ?? []);
+  const [comparisons, setComparisons] = useState<CumulativeSeries[]>(cached?.comparisons ?? []);
+  const [entries, setEntries] = useState<EntryListItem[]>(cached?.entries ?? []);
+  const [pieSources, setPieSources] = useState<PieSource[]>(cached?.pieSources ?? []);
   /** 원형마다 파고든 대분류와 그 소분류 조각. 없는 유형은 첫 단계다. */
   const [drilled, setDrilled] = useState<
     Partial<Record<'income' | 'expense', { id: string; slices: CategorySlice[] }>>
   >({});
-  const [isOffline, setIsOffline] = useState(false);
+  const [isOffline, setIsOffline] = useState(cached?.isOffline ?? false);
   // 같은 조건을 다시 받을 때는 그래프를 가리지 않는다 (useLoadedKey 주석).
-  const loaded = useLoadedKey();
+  const loaded = useLoadedKey(cached ? queryKey : null);
+  /** 마지막으로 받으러 나간 조건과 신호. 같으면 다시 받을 까닭이 없다. */
+  const fetchedRef = useRef<string | null>(null);
 
   useEffect(() => {
-    if (!enabled || !categoryId) {
+    /*
+     * 꺼 두면(숨은 분석 탭) 받지 않는다. 그려 둔 값의 조건은 지우지 않는다 -- 다시 켜졌을 때 같은
+     * 조건이면 가리지 않고 새로 받기만 한다 (2026-10-15).
+     */
+    if (!enabled) return;
+    if (!categoryId) {
       loaded.mark(null);
       return;
     }
+    /*
+     * 숨었던 탭이 다시 보일 때(꺼졌다 켜짐), 그동안 바뀐 것이 없으면 다시 받지 않는다 -- 받은 값이
+     * 같아도 새 배열로 그래프 묶음을 다시 그리느라 탭이 늦게 바뀌었다 (2026-10-15 사용자 요청).
+     */
+    const fetchKey = `${queryKey}|${reloadToken ?? ''}|${mirrorVersion}`;
+    if (fetchedRef.current === fetchKey && loaded.has(queryKey)) return;
 
     let cancelled = false;
-    const queryKey = JSON.stringify([
-      categoryId,
-      periodKey,
-      exactCategory,
-      projectId,
-      timeZone,
-      filterKey,
-      clipKey,
-      trendPeriod,
-      target.scope,
-      target.type,
-      target.isLeaf,
-    ]);
-    const isRefresh = loaded.has(queryKey);
+    const applySnapshot = (snapshot: DetailSnapshot) => {
+      setIsOffline(snapshot.isOffline);
+      setMonthly(snapshot.monthly);
+      setEntries(snapshot.entries);
+      setDaily(snapshot.daily);
+      setComparisons(snapshot.comparisons);
+      setPieSources(snapshot.pieSources);
+    };
+    let isRefresh = loaded.has(queryKey);
+    /*
+     * 이 조건으로 전에 받아 둔 값이 있으면(다른 기간에 갔다 왔거나, 숨었던 탭이 다시 보일 때)
+     * 그것을 곧바로 그리고 뒤에서 새로 받는다 (lib/screen-cache).
+     */
+    const cachedSnapshot = isRefresh
+      ? undefined
+      : readScreenCache<DetailSnapshot>(CACHE_SLOT, queryKey);
+    if (cachedSnapshot) {
+      setDrilled({});
+      applySnapshot(cachedSnapshot);
+      setIsLoading(false);
+      loaded.mark(queryKey);
+      isRefresh = true;
+    }
     if (!isRefresh) {
       // 대상이 바뀌면 파고든 자리는 의미가 없다. 남겨 두면 남의 소분류가 그려진다.
       setDrilled({});
@@ -485,6 +539,7 @@ export function useCategoryDetail({
     }
 
     const load = async () => {
+      fetchedRef.current = fetchKey;
       /*
        * 닿지 못한 값은 비우고 표시만 남긴다 (isOffline 주석).
        *
@@ -629,18 +684,12 @@ export function useCategoryDetail({
         ]);
         if (cancelled) return;
 
-        setIsOffline(offline);
-
         const trend = (trendRes ?? []) as Array<{ yearMonth: string; amount: string }>;
-        setMonthly(
-          trend.map((point) => ({
-            label: periodShortName(point.yearMonth),
-            amount: toNumber(point.amount),
-          })),
-        );
-
+        const monthlyPoints = trend.map((point) => ({
+          label: periodShortName(point.yearMonth),
+          amount: toNumber(point.amount),
+        }));
         const rows = (entriesRes ?? []) as EntryListItem[];
-        setEntries(rows);
         // 일별 누적. 수입 분류는 수입을, 지출은 지출을 쌓는다 (이체는 수수료만).
         const dailyPoints = buildDailyCumulative(
           analysisDated(rows),
@@ -653,19 +702,27 @@ export function useCategoryDetail({
          * 주로 볼 때는 x 축을 요일로 적는다 (2026-10-08 사용자 요청). 앞선 주 선도 같은 칸에
          * 겹치므로(첫날부터 n 일째) 요일이 그대로 맞는다.
          */
-        setDaily(
-          trendPeriod && unitOfKey(trendPeriod) === 'week'
-            ? dailyPoints.map((point, index) => ({
-                ...point,
-                label: weekdayOf(shiftDateKey(dayKeys.startKey, index)).label,
-              }))
-            : dailyPoints,
-        );
-        setComparisons(comparisonRes);
-        setPieSources(pieRes);
+        const snapshot: DetailSnapshot = {
+          isOffline: offline,
+          monthly: monthlyPoints,
+          entries: rows,
+          daily:
+            trendPeriod && unitOfKey(trendPeriod) === 'week'
+              ? dailyPoints.map((point, index) => ({
+                  ...point,
+                  label: weekdayOf(shiftDateKey(dayKeys.startKey, index)).label,
+                }))
+              : dailyPoints,
+          comparisons: comparisonRes,
+          pieSources: pieRes,
+        };
+        applySnapshot(snapshot);
         loaded.mark(queryKey);
+        writeScreenCache(CACHE_SLOT, queryKey, snapshot);
       } catch (error) {
         console.error('분류별 상세 데이터를 불러오지 못했습니다:', error);
+        // 못 받았으니 다음에 다시 보일 때 다시 받는다.
+        fetchedRef.current = null;
         if (cancelled) return;
         // 같은 조건을 다시 받다 실패했다면 그려 둔 값은 여전히 이 조건의 것이다. 그대로 둔다.
         if (isRefresh) return;

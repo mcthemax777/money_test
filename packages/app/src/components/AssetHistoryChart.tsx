@@ -31,6 +31,8 @@ import { formatCurrency } from '@money/core/lib/money';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 import SegmentedTabs from './SegmentedTabs';
+import { RevealCurtain, REVEAL_BOX } from './ChartReveal';
+import LoadingBlock from './LoadingBlock';
 
 /** 그리는 자리의 높이(px). 웹은 300이지만 앱 화면에서는 그만큼이 화면 절반을 먹는다. */
 const PLOT_HEIGHT = 220;
@@ -194,14 +196,14 @@ export default function AssetHistoryChart({
 
       {/* 처음 한 번만 자리를 비운다. 끌면서 다시 받는 동안에는 그리던 선을 그대로 둔다. */}
       {history.isLoading && points.length === 0 ? (
-        <Text className="py-12 text-center text-sm text-gray-500">{t('feed.loadingMore')}</Text>
+        <LoadingBlock label={t('feed.loadingMore')} />
       ) : history.error ? (
         <Text className="py-12 text-center text-sm text-red-600">{history.error}</Text>
       ) : !history.hasAnyValue && history.offset === 0 ? (
         <Text className="py-12 text-center text-sm text-gray-500">{t('history.empty')}</Text>
       ) : (
         <>
-          <View onLayout={measure} {...pan.current!.panHandlers}>
+          <View onLayout={measure} style={REVEAL_BOX} {...pan.current!.panHandlers}>
             <Pressable onPress={(event) => handleTap(event.nativeEvent.locationX)}>
               <Svg width="100%" height={PLOT_HEIGHT}>
                 {/* 가로 격자선과 Y축 눈금. 세로선은 긋지 않는다(선과 겹쳐 데이터처럼 보인다). */}
@@ -298,6 +300,13 @@ export default function AssetHistoryChart({
                 ) : null}
               </Svg>
             </Pressable>
+            {/* 선이 왼쪽부터 그어진다 (ChartReveal). */}
+            <RevealCurtain
+              direction="right"
+              left={AXIS_WIDTH}
+              right={RIGHT_PAD}
+              bottom={BOTTOM_PAD}
+            />
           </View>
 
           {/*

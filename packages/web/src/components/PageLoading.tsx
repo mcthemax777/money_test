@@ -9,8 +9,11 @@
 
 import { useTranslation } from '@money/core/lib/i18n';
 
+import LoadingBlock from './LoadingBlock';
+
+/** 글자 대신 돌림 표시를 세운다 (2026-10-15 사용자 요청 -- 기다릴 때는 움직이는 표시). */
 export default function PageLoading() {
   const { t } = useTranslation();
 
-  return <p className="text-sm text-gray-600">{t('common.loading')}</p>;
+  return <LoadingBlock label={t('common.loading')} />;
 }
