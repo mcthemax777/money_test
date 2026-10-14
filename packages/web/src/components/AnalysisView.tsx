@@ -108,9 +108,9 @@ export default function AnalysisView({
     rememberScroll();
     setEntriesSearch(search);
   };
-  /** 일별 누적 아래 줄의 구간(그 선의 첫날~그 날). 걸어 둔 조건은 그대로 두고 기간만 바꾼다. */
+  /** 일별 누적 아래 줄의 구간(그 선의 첫날~그 날). 지출·수입 탭이면 그 유형도 건다. */
   const openDay = (range: { from: string; to: string }) =>
-    openEntries({ ...analysis.entriesSearch, startDate: range.from, endDate: range.to });
+    openEntries(analysis.cumulativeEntriesSearch(range));
   const openPicked = (next: AnalysisInitial) => {
     rememberScroll();
     setPicked(next);

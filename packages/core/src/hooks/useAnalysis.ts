@@ -240,6 +240,18 @@ export function useAnalysis(
     return days ? { ...tx.search, startDate: days.startKey, endDate: days.endKey } : tx.search;
   }, [periodKey, range, tx.search]);
 
+  /**
+   * 일별 누적 아래 줄이 여는 거래 화면의 검색 -- 그 선의 첫날부터 그 날까지. 지출·수입 탭이면
+   * 그 유형만 건다 (2026-10-15 사용자 요청 -- 그 누적을 이룬 거래가 그것이다). 합계 탭은 걸어
+   * 둔 유형 조건 그대로다.
+   */
+  const cumulativeEntriesSearch = (dayRange: { from: string; to: string }): TransactionSearch => ({
+    ...tx.search,
+    startDate: dayRange.from,
+    endDate: dayRange.to,
+    ...(kind === 'net' ? {} : { kinds: [kind] }),
+  });
+
   /*
    * 그 기간의 금액. 거래 탭의 기간 줄과 같은 값이다. 목록에 없는 기간은 걸린 거래가 없는 기간이라
    * 0 이다. 목록이 오는 중이면 null -- 0 을 적으면 "이 달은 쓴 것이 없다"로 읽힌다.
@@ -284,6 +296,7 @@ export function useAnalysis(
     kind,
     setKind,
     entriesSearch,
+    cumulativeEntriesSearch,
     totals,
     /** 보는 기간의 열쇠. 해 "2026", 달 "2026-09", 주 "2026-09-13", 기간 "A~B". */
     periodKey,

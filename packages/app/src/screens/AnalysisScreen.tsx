@@ -115,11 +115,9 @@ export default function AnalysisScreen({
     scrollToTop();
   };
   const openEntries = () => cover(() => setEntriesSearch(analysis.entriesSearch));
-  /** 일별 누적 아래 줄의 구간(그 선의 첫날~그 날). 걸어 둔 조건은 그대로 두고 기간만 바꾼다. */
+  /** 일별 누적 아래 줄의 구간(그 선의 첫날~그 날). 지출·수입 탭이면 그 유형도 건다. */
   const openDay = (range: { from: string; to: string }) =>
-    cover(() =>
-      setEntriesSearch({ ...analysis.entriesSearch, startDate: range.from, endDate: range.to }),
-    );
+    cover(() => setEntriesSearch(analysis.cumulativeEntriesSearch(range)));
   const openPicked = (next: AnalysisInitial) => cover(() => setPicked(next));
   const closeCover = () => {
     setEntriesSearch(null);
