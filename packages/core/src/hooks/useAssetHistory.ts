@@ -79,6 +79,28 @@ export function historyPointLabel(date: string, granularity: Granularity): strin
 }
 
 /**
+ * 칸의 날짜가 덮는 달력 날짜 구간(양끝 포함). 칸을 누르면 이 구간의 거래 화면을 연다
+ * (2026-10-14 사용자 요청).
+ *
+ * 단위는 값의 생김새로 읽는다(`historyPointLabel` 과 같은 까닭) -- 탭을 바꾼 직후 한 번은
+ * 옛 점을 새 단위로 읽는다. 열 자짜리만 주(그 주의 첫날)와 일이 갈리지 않아 단위를 본다.
+ */
+export function historyPointRange(
+  date: string,
+  granularity: Granularity,
+): { from: string; to: string } {
+  if (date.length === 4) return { from: `${date}-01-01`, to: `${date}-12-31` };
+  if (date.length === 7) {
+    return {
+      from: `${date}-01`,
+      to: `${date}-${String(lastDayOfMonth(date)).padStart(2, '0')}`,
+    };
+  }
+  if (granularity === 'week') return { from: date, to: shiftDateKey(date, 6) };
+  return { from: date, to: date };
+}
+
+/**
  * 그래프 제목. 단위 이름만 적는다.
  *
  * 창의 크기(며칠·몇 달)는 적지 않는다. 끌어서 자리를 옮기는 그래프라 "최근 31일"은

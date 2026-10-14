@@ -29,7 +29,7 @@ import {
   type DailyCumulativePoint,
 } from '@money/core/lib/entries';
 import { formatCurrency } from '@money/core/lib/money';
-import { cumulativeReadoutLines } from '@money/core/lib/month-compare';
+import { cumulativeLineDayKey, cumulativeReadoutLines } from '@money/core/lib/month-compare';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 /** 선마다의 색. 오래된 기간일수록 옅어 눈이 지금 선을 먼저 잡는다. */
@@ -69,6 +69,13 @@ interface Props {
    * 그리면 앞선 달 선 아래에 붙어 "이번 달은 덜 썼다"로 잘못 읽힌다.
    */
   throughDay?: number;
+  /** 이번 기간의 첫날 "YYYY-MM-DD". 아래 줄을 눌러 그 날을 열 때 센다. */
+  currentStartKey?: string;
+  /**
+   * 그래프 아래 줄(전전·전·지금)을 누르면 그 선의 그 날 거래 화면을 연다 (2026-10-14 사용자
+   * 요청). 그래프를 누르는 것은 여전히 날을 고르기만 한다. 주지 않으면 줄은 누를 수 없다.
+   */
+  onOpenDay?: (dateKey: string) => void;
   /** 견줄 달이 없을 때 툴팁에 적을 이름 */
   tooltipName: string;
   height: number;
@@ -89,6 +96,8 @@ export default function DailyCumulativeChart({
   throughDay,
   tooltipName,
   height,
+  currentStartKey,
+  onOpenDay,
 }: Props) {
   const displayCurrency = useProjectDisplayCurrency();
   const [earlier, previous] = comparisons;
@@ -187,17 +196,32 @@ export default function DailyCumulativeChart({
       {/*
         읽고 있는 날의 값. 선마다 한 줄씩(전전, 전, 지금) 아래에 적는다 (2026-10-08 사용자 요청,
         앱과 같은 모양). 범례 노릇도 한다. 줄 수가 늘 같아 고르는 동안 아래가 출렁이지 않는다.
+        줄의 여백·폭·구분선은 원형 아래 목록(SlicePieChart)과 같다 (2026-10-14 사용자 요청).
       */}
-      <div className="mt-2 space-y-1 px-4 text-sm">
+      <div className="mt-2 text-sm">
         {/* 선마다 날짜가 붙으면 칸 이름 줄은 군더더기다. 날짜를 붙일 수 없는 보기에만 둔다. */}
         {currentPeriodKey ? null : (
-          <p className="text-xs font-semibold text-gray-700">{pickedRow?.label ?? '\u00a0'}</p>
+          <p className="border-b border-gray-100 px-1 py-1.5 text-xs font-semibold text-gray-700">
+            {pickedRow?.label ?? '\u00a0'}
+          </p>
         )}
         {cumulativeReadoutLines(pickedRow, pickedRow ? picked : null, comparisons, {
           name: currentLineName,
           periodKey: currentPeriodKey,
-        }).map((item) => (
-          <div key={item.key} className="flex items-center gap-2">
+        }).map((item) => {
+          /* 그 선에 그 날의 값이 있을 때만 연다. 아직 오지 않은 날이나 짧은 달 끝은 열 날이 없다. */
+          const dayKey =
+            onOpenDay && currentStartKey && pickedRow && picked !== null && item.value !== null
+              ? cumulativeLineDayKey(item.key, picked, currentStartKey, comparisons)
+              : null;
+          return (
+          <button
+            key={item.key}
+            type="button"
+            onClick={dayKey ? () => onOpenDay!(dayKey) : undefined}
+            disabled={!dayKey}
+            className="flex w-full items-center gap-2 border-b border-gray-100 px-1 py-1.5 text-left enabled:hover:bg-gray-50"
+          >
             <span
               aria-hidden
               className="h-0.5 w-3 shrink-0 rounded"
@@ -209,8 +233,9 @@ export default function DailyCumulativeChart({
             </span>
             {/* 증감 자리는 늘 둔다. 줄마다 금액의 오른쪽 끝이 맞아야 위아래로 견주기 쉽다. */}
             <span className="min-w-16 text-right text-xs text-gray-500">{item.change ?? ''}</span>
-          </div>
-        ))}
+          </button>
+          );
+        })}
       </div>
     </div>
   );

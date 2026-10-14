@@ -70,6 +70,7 @@ export default function AssetDetailView({
   onShowEntries,
   onOpenEntry,
   onChanged,
+  onOpenPeriod,
 }: {
   target: AssetDetailTarget;
   /** 구성원별 소계. 사람 상세의 큰 숫자가 여기서 온다. */
@@ -100,6 +101,11 @@ export default function AssetDetailView({
   onOpenEntry?: (entryId: string) => void;
   /** 대금이 오간 뒤. 목록과 총자산을 다시 읽는 자리다. */
   onChanged?: () => void | Promise<void>;
+  /**
+   * 사람·묶음 추이의 칸을 눌렀을 때. 거래내역 보기와 같은 화면을 그 기간으로 연다.
+   * 계좌는 아래에 원장이 따로 있어 쓰지 않는다.
+   */
+  onOpenPeriod?: (range: { from: string; to: string }) => void;
 }) {
   const { t } = useTranslation();
   const canEdit = useCanEdit();
@@ -206,6 +212,7 @@ export default function AssetDetailView({
           ownerId={target.person.id}
           excludeAccountIds={excludeAccountIds}
           projectId={selectedProjectId}
+          onOpenPeriod={onOpenPeriod}
         />
       ) : target.kind === 'group' ? (
         /* 고른 사람들의 이 묶음 계좌 합계 추이. 카드 대금은 결제 통장의 묶음을 따른다. */
@@ -214,6 +221,7 @@ export default function AssetDetailView({
           group={target.group.key}
           excludeAccountIds={excludeAccountIds}
           projectId={selectedProjectId}
+          onOpenPeriod={onOpenPeriod}
         />
       ) : target.kind === 'account' ? (
         <>

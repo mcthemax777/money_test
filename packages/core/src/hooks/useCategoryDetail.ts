@@ -303,6 +303,8 @@ export interface CategoryDetail {
   monthly: MonthlyPoint[];
   /** 이 구간의 일별 누적 */
   daily: DailyCumulativePoint[];
+  /** 일별 누적의 첫 칸 날짜 "YYYY-MM-DD". n 번째 칸은 이 날에서 n 일 뒤다. */
+  dailyStartKey: string;
   /** 겹쳐 그릴 앞선 두 기간(전전, 전). 달·주·해 한 칸을 통째로 볼 때만 찬다 (`comparablePeriodKey`). */
   comparisons: CumulativeSeries[];
   /** 이 구간의 거래. 일별 누적과 같은 조회에서 온다. */
@@ -779,6 +781,7 @@ export function useCategoryDetail({
       : DETAIL_LABELS[target.type],
     monthly,
     daily,
+    dailyStartKey: dayKeys.startKey,
     comparisons,
     entries,
     pattern,

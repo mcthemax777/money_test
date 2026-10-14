@@ -22,10 +22,8 @@ import {
   CHART_GRID,
   CHART_MARGIN,
   CHART_TICK,
-  CHART_TOOLTIP_STYLE,
   CHART_Y_AXIS_WIDTH,
   formatAxisAmount,
-  formatTooltipAmount,
 } from '@money/core/lib/chart';
 import {
   CARD_USAGE_TARGET_COLOR,
@@ -123,6 +121,17 @@ export default function CardUsageChart({
 
   const [bottom, top] = usage.domain;
 
+  /**
+   * 주기를 고르거나 푼다. 막대를 누르든 아래 줄을 누르든 같은 일이다 (2026-10-14 사용자 요청 --
+   * 막대 위에 뜨던 값 상자는 거두었다. 정확한 구간과 금액은 아래 줄이 이미 적는다).
+   */
+  const togglePeriod = (bar: (typeof bars)[number]) =>
+    onSelectPeriod?.(
+      selectedKey === bar.closingKey
+        ? null
+        : { closingKey: bar.closingKey, periodStart: bar.periodStart, periodEnd: bar.periodEnd },
+    );
+
   return (
     <div>
       {/* 창이 제자리를 벗어나 있을 때만. 그만큼 다시 끌지 않아도 된다. */}
@@ -172,7 +181,18 @@ export default function CardUsageChart({
         }}
       >
         <ResponsiveContainer width="100%" height={height}>
-          <BarChart data={bars} margin={CHART_MARGIN}>
+          <BarChart
+            data={bars}
+            margin={CHART_MARGIN}
+            // 막대가 아니라 그 칸의 빈 곳을 눌러도 그 주기로 본다. 끈 뒤의 클릭은 흘려보낸다.
+            onClick={(state: any) => {
+              if (didDrag.current) return;
+              const index = Number(state?.activeTooltipIndex);
+              const bar = Number.isInteger(index) && index >= 0 ? bars[index] : undefined;
+              if (bar) togglePeriod(bar);
+            }}
+            style={onSelectPeriod ? { cursor: 'pointer' } : undefined}
+          >
             <CartesianGrid {...CHART_GRID} />
             <XAxis dataKey="label" tick={CHART_TICK} />
             <YAxis
@@ -181,13 +201,8 @@ export default function CardUsageChart({
               tick={CHART_TICK}
               width={CHART_Y_AXIS_WIDTH}
             />
-            <Tooltip
-              cursor={{ fill: 'rgba(0, 0, 0, 0.04)' }}
-              contentStyle={CHART_TOOLTIP_STYLE}
-              // 축에는 달 이름만 적으므로, 어느 구간인지는 툴팁 제목에 그대로 적는다.
-              labelFormatter={(_label: unknown, payload: any) => payload?.[0]?.payload?.range ?? ''}
-              formatter={(value: any) => formatTooltipAmount(value, t('method.usage'), currency)}
-            />
+            {/* 값 상자는 띄우지 않는다. 가리킨 칸만 옅게 짚는다 -- 구간과 금액은 아래 줄이 적는다. */}
+            <Tooltip cursor={{ fill: 'rgba(0, 0, 0, 0.04)' }} content={() => null} />
             {target !== null && target > 0 && (
               <ReferenceLine
                 y={target}
@@ -252,17 +267,7 @@ export default function CardUsageChart({
               <button
                 type="button"
                 aria-pressed={picked}
-                onClick={() =>
-                  onSelectPeriod?.(
-                    picked
-                      ? null
-                      : {
-                          closingKey: bar.closingKey,
-                          periodStart: bar.periodStart,
-                          periodEnd: bar.periodEnd,
-                        },
-                  )
-                }
+                onClick={() => togglePeriod(bar)}
                 disabled={!onSelectPeriod}
                 className={`flex w-full items-baseline justify-between gap-3 border-b border-gray-100 px-1 py-1.5 text-left transition-colors ${
                   picked ? 'bg-blue-50' : onSelectPeriod ? 'hover:bg-gray-50' : ''

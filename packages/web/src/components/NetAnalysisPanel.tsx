@@ -91,6 +91,7 @@ export default function NetAnalysisPanel({
   trendClip,
   trendPeriod,
   reloadToken,
+  onOpenDay,
 }: {
   /** 그 기간의 수입·지출·순수입 (거래 탭의 기간 줄과 같은 값). 목록이 오는 중이면 null 이다. */
   totals: AnalysisTotals | null;
@@ -101,6 +102,11 @@ export default function NetAnalysisPanel({
   trendClip?: { from?: string; to?: string };
   trendPeriod: string;
   reloadToken?: number;
+  /**
+   * 일별 누적 아래 줄을 누르면 그 선의 그 날("YYYY-MM-DD") 거래 화면을 연다 (분석 탭,
+   * 2026-10-14 사용자 요청). 주지 않으면 줄은 누를 수 없다.
+   */
+  onOpenDay?: (dateKey: string) => void;
 }) {
   const { t } = useTranslation();
   const currency = useProjectDisplayCurrency();
@@ -136,6 +142,8 @@ export default function NetAnalysisPanel({
                 currentPeriodKey={net.currentPeriodKey}
                 throughDay={net.throughDay}
                 tooltipName={t('analysis.net.cumulative')}
+                currentStartKey={net.dailyStartKey}
+                onOpenDay={onOpenDay}
                 height={300}
               />
             ) : (

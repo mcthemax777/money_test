@@ -57,6 +57,8 @@ export interface NetAnalysis {
   /** 추이에 수입이나 지출이 한 칸이라도 있는가. 없으면 그래프 대신 안내를 적는다. */
   hasTrend: boolean;
   daily: DailyCumulativePoint[];
+  /** 일별 누적의 첫 칸 날짜. 두 쪽이 같은 구간이라 지출 쪽 값을 쓴다. */
+  dailyStartKey: string;
   comparisons: CumulativeSeries[];
   currentMonthName?: string;
   currentPeriodKey?: string;
@@ -98,6 +100,7 @@ export function useNetAnalysis(input: Omit<CategoryDetailInput, 'categoryId'>): 
     trendEmpty: labels.empty,
     hasTrend: expense.hasMonthlyAmount || income.hasMonthlyAmount,
     daily,
+    dailyStartKey: expense.dailyStartKey,
     comparisons,
     currentMonthName: expense.currentMonthName,
     currentPeriodKey: expense.currentPeriodKey,

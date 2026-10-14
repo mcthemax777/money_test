@@ -83,6 +83,11 @@ interface BudgetDetailModalProps {
   onPickCategory?: (pickId: string) => void;
   /** 수단 원형의 목록 줄을 누르면 부른다. 분석 탭이 그 수단을 조건으로 더한다. */
   onPickMethod?: (method: MethodSlice) => void;
+  /**
+   * 일별 누적 아래 줄을 누르면 그 선의 그 날("YYYY-MM-DD") 거래 화면을 연다 (분석 탭,
+   * 2026-10-14 사용자 요청). 주지 않으면 줄은 누를 수 없다.
+   */
+  onOpenDay?: (dateKey: string) => void;
 }
 
 /** 요일·시간대 막대의 평균/누적 전환. 제목 줄 오른쪽에 선다 (앱의 같은 단추와 같은 모양). */
@@ -346,6 +351,7 @@ export function BudgetDetailModal({
   trendPeriod,
   onPickCategory,
   onPickMethod,
+  onOpenDay,
 }: BudgetDetailModalProps) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
@@ -381,6 +387,28 @@ export function BudgetDetailModal({
         <div className="text-center text-gray-500">{t('detail.loading')}</div>
       ) : (
         <>
+          {/* 일별 누적. 구성비보다 먼저 이 구간의 흐름을 본다 (2026-10-14 사용자 요청). */}
+          <div>
+            <h3 className="text-lg font-semibold mb-4">{t(detail.labels.daily)}</h3>
+            {detail.hasDailyAmount ? (
+              <DailyCumulativeChart
+                current={detail.daily}
+                comparisons={detail.comparisons}
+                currentName={detail.currentMonthName}
+                currentPeriodKey={detail.currentPeriodKey}
+                throughDay={detail.throughDay}
+                tooltipName={t(detail.labels.cumulative)}
+                currentStartKey={detail.dailyStartKey}
+                onOpenDay={onOpenDay}
+                height={300}
+              />
+            ) : (
+              <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
+                {t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noPeriod)}
+              </p>
+            )}
+          </div>
+
           {/* 원형차트: 조각이 있는 것만 온다. 태그는 지출과 수입이 하나씩이다. */}
           {detail.pies.map((pie) => (
             <div key={pie.key}>
@@ -428,26 +456,6 @@ export function BudgetDetailModal({
             ) : (
               <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
                 {emptyPattern}
-              </p>
-            )}
-          </div>
-
-          {/* 일별 누적. 구성비 둘 다음에 이 구간의 흐름을 본다. */}
-          <div>
-            <h3 className="text-lg font-semibold mb-4">{t(detail.labels.daily)}</h3>
-            {detail.hasDailyAmount ? (
-              <DailyCumulativeChart
-                current={detail.daily}
-                comparisons={detail.comparisons}
-                currentName={detail.currentMonthName}
-                currentPeriodKey={detail.currentPeriodKey}
-                throughDay={detail.throughDay}
-                tooltipName={t(detail.labels.cumulative)}
-                height={300}
-              />
-            ) : (
-              <p className="h-[300px] flex items-center justify-center text-gray-500 text-sm">
-                {t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noPeriod)}
               </p>
             )}
           </div>

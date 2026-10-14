@@ -303,10 +303,32 @@ export default function AssetsScreen() {
   useEffect(() => {
     if (!reopen) return;
     if (reopen.kind === 'category' || reopen.kind === 'tag') return;
+    // 전체 추이에서 건너간 것은 다시 펼 상세가 없다. 목록 그대로다.
+    if (reopen.kind === 'assets') {
+      clearReopen();
+      return;
+    }
 
     setDetail({ kind: reopen.kind, id: reopen.id });
     clearReopen();
   }, [reopen, clearReopen]);
+
+  /**
+   * 자산 묶음의 결제수단: 그 묶음 통장과, 그 통장에 딸린 카드 (웹과 같다).
+   * 목록에 선 계좌만이다 -- 자산주인 선택 밖의 계좌는 묶음 소계에도 없다.
+   */
+  const groupMethodsOf = (groupKey: string) => {
+    const accountIds =
+      byAssetType.find((row) => row.group.key === groupKey)?.accounts.map(
+        (account) => account.id,
+      ) ?? [];
+    return {
+      accountIds,
+      cardIds: assets.cards
+        .filter((card) => accountIds.includes(card.paymentAccountId))
+        .map((card) => card.id),
+    };
+  };
 
   /**
    * 이 항목으로 걸린 거래내역을 본다. 거래 화면으로 건너간다.
@@ -314,41 +336,53 @@ export default function AssetsScreen() {
    * 통장·카드는 검색 조건으로 걸리지만(결제수단), 구성원은 자산주인 선택을 그 사람만
    * 으로 좁힌다 -- 상세에 있던 최근 거래와 같은 기준이 그것이다. 좁힌 선택은 거래
    * 화면을 벗어날 때 저절로 되돌아온다 (core 의 entry-focus).
+   *
+   * 추이 그래프의 칸을 누르면 같은 화면을 그 칸의 기간으로 좁혀 연다(`range`, 2026-10-14
+   * 사용자 요청).
    */
-  const showEntries = () => {
+  const showEntries = (range?: { from: string; to: string }) => {
     if (!detailTarget) return;
+    const period = range ? { startDate: range.from, endDate: range.to } : {};
 
     if (detailTarget.kind === 'person') {
       narrowPersonScope(detailTarget.person.id);
-      focusEntries({ kind: 'person', id: detailTarget.person.id }, EMPTY_SEARCH);
+      focusEntries({ kind: 'person', id: detailTarget.person.id }, { ...EMPTY_SEARCH, ...period });
     } else if (detailTarget.kind === 'account') {
       focusEntries({ kind: 'account', id: detailTarget.account.id }, {
         ...EMPTY_SEARCH,
+        ...period,
         paymentAccountIds: [detailTarget.account.id],
       });
     } else if (detailTarget.kind === 'group') {
-      /*
-        그 묶음 통장으로 오간 것과, 그 통장에 딸린 카드로 쓰고 갚은 것 (웹과 같다).
-        목록에 선 계좌만이다 -- 자산주인 선택 밖의 계좌는 묶음 소계에도 없다.
-      */
-      const accountIds =
-        byAssetType.find((row) => row.group.key === detailTarget.group.key)?.accounts.map(
-          (account) => account.id,
-        ) ?? [];
+      // 그 묶음 통장으로 오간 것과, 그 통장에 딸린 카드로 쓰고 갚은 것.
+      const { accountIds, cardIds } = groupMethodsOf(detailTarget.group.key);
       focusEntries({ kind: 'group', id: detailTarget.group.key }, {
         ...EMPTY_SEARCH,
+        ...period,
         paymentAccountIds: accountIds,
-        paymentCardIds: assets.cards
-          .filter((card) => accountIds.includes(card.paymentAccountId))
-          .map((card) => card.id),
+        paymentCardIds: cardIds,
       });
     } else {
       focusEntries({ kind: 'card', id: detailTarget.card.id }, {
         ...EMPTY_SEARCH,
+        ...period,
         paymentCardIds: [detailTarget.card.id],
       });
     }
 
+    nav.go('/transactions');
+  };
+
+  /**
+   * 전체 추이의 칸을 눌렀을 때. 그 기간의 거래 화면으로 건너간다. 자산주인 선택은 거래 화면도
+   * 같은 것을 쓰므로 따로 좁히지 않는다 -- 그래프가 세는 사람과 같다.
+   */
+  const showTotalEntries = (range: { from: string; to: string }) => {
+    focusEntries({ kind: 'assets', id: '' }, {
+      ...EMPTY_SEARCH,
+      startDate: range.from,
+      endDate: range.to,
+    });
     nav.go('/transactions');
   };
 
@@ -383,7 +417,8 @@ export default function AssetsScreen() {
           }
           onClose={() => openDetail(null)}
           onEdit={openEditOfDetail}
-          onShowEntries={showEntries}
+          onShowEntries={() => showEntries()}
+          onOpenPeriod={showEntries}
           onOpenEntry={openEntry}
           onChanged={assets.reload}
         />
@@ -430,6 +465,7 @@ export default function AssetsScreen() {
         projectId={selectedProjectId}
         ownerIds={assets.allPeopleSelected ? undefined : assets.selectedPersonIds}
         excludeAccountIds={assets.exclusion.excludeKey}
+        onOpenPeriod={showTotalEntries}
       />
 
       {assets.hasError ? (

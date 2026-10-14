@@ -27,7 +27,8 @@ import { useUserFilter } from './user-filter';
  * 분석 탭의 거래내역 단추는 여기를 쓰지 않는다 -- 분석 화면이 제자리에서 거래 화면을 그린다.
  */
 export interface EntryFocusOrigin {
-  kind: 'category' | 'tag' | 'person' | 'account' | 'card' | 'group';
+  /** 'assets' 는 자산 탭의 전체 추이다. 다시 펼 상세가 없어 id 는 비운다. */
+  kind: 'category' | 'tag' | 'person' | 'account' | 'card' | 'group' | 'assets';
   id: string;
 }
 

@@ -129,6 +129,7 @@ export default function CategoryDetailView({
   title,
   onPickCategory,
   onPickMethod,
+  onOpenDay,
 }: {
   /** 실제 분류 id, 'total-expense'/'total-income', 또는 태그(`tag:<id>`) */
   categoryId: string;
@@ -166,6 +167,11 @@ export default function CategoryDetailView({
   onPickCategory?: (pickId: string) => void;
   /** 수단 원형의 목록 줄을 누르면 부른다. 분석 탭이 그 수단을 조건으로 더한다. */
   onPickMethod?: (method: MethodSlice) => void;
+  /**
+   * 일별 누적 아래 줄을 누르면 그 선의 그 날("YYYY-MM-DD") 거래 화면을 연다 (분석 탭,
+   * 2026-10-14 사용자 요청). 주지 않으면 줄은 누를 수 없다.
+   */
+  onOpenDay?: (dateKey: string) => void;
 }) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
@@ -208,6 +214,29 @@ export default function CategoryDetailView({
         <Text className="py-12 text-center text-gray-500">{t('detail.loading')}</Text>
       ) : (
         <>
+          {/* 일별 누적. 구성비보다 먼저 이 구간의 흐름을 본다 (2026-10-14 사용자 요청). */}
+          <View className="gap-3 rounded-lg bg-white p-4 shadow-sm">
+            <Text className="text-base font-semibold text-gray-900">
+              {t(detail.labels.daily)}
+            </Text>
+            {detail.hasDailyAmount ? (
+              <DailyCumulativeChart
+                current={detail.daily}
+                comparisons={detail.comparisons}
+                currentName={detail.currentMonthName}
+                currentPeriodKey={detail.currentPeriodKey}
+                throughDay={detail.throughDay}
+                tooltipName={t(detail.labels.cumulative)}
+                currentStartKey={detail.dailyStartKey}
+                onOpenDay={onOpenDay}
+              />
+            ) : (
+              <Text className="py-12 text-center text-sm text-gray-500">
+                {t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noPeriod)}
+              </Text>
+            )}
+          </View>
+
           {/*
             구성비. 조각이 있는 것만 온다 -- 소분류나 "미분류"를 보고 있으면 쪼갤 것이 없다.
             태그는 지출과 수입이 하나씩이다. 제목은 훅이 정한다 (웹과 같은 값).
@@ -259,27 +288,6 @@ export default function CategoryDetailView({
               <Text className="py-12 text-center text-sm text-gray-500">{emptyPattern}</Text>
             )}
           </ChartCard>
-
-          {/* 일별 누적. 구성비 둘 다음에 이 구간의 흐름을 본다. */}
-          <View className="gap-3 rounded-lg bg-white p-4 shadow-sm">
-            <Text className="text-base font-semibold text-gray-900">
-              {t(detail.labels.daily)}
-            </Text>
-            {detail.hasDailyAmount ? (
-              <DailyCumulativeChart
-                current={detail.daily}
-                comparisons={detail.comparisons}
-                currentName={detail.currentMonthName}
-                currentPeriodKey={detail.currentPeriodKey}
-                throughDay={detail.throughDay}
-                tooltipName={t(detail.labels.cumulative)}
-              />
-            ) : (
-              <Text className="py-12 text-center text-sm text-gray-500">
-                {t(detail.isOffline ? 'online.viewOnlyOnline' : detail.labels.noPeriod)}
-              </Text>
-            )}
-          </View>
 
           <View className="gap-3 rounded-lg bg-white p-4 shadow-sm">
             <Text className="text-base font-semibold text-gray-900">

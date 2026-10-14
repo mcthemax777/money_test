@@ -4,6 +4,7 @@
  * 무엇을 받아 어느 칸을 그릴지는 core 의 useAssetHistory 가 정한다 (웹과 같은 훅이다).
  * 여기 있는 것은 그리는 일과 손가락을 받는 일뿐이다 -- 선은 react-native-svg 로 긋고,
  * 좌우로 끌면 창이 시간 위를 미끄러지고, 칸을 누르면 그 자리의 잔액을 읽는다.
+ * `onOpenPeriod` 를 주면 아래 줄을 눌러 읽고 있는 칸의 기간으로 거래 화면을 연다.
  */
 import { useRef, useState } from 'react';
 import {
@@ -21,6 +22,7 @@ import { monotonePath } from '@money/core/lib/chart-path';
 import {
   GRANULARITY_OPTIONS,
   historyPointLabel,
+  historyPointRange,
   useAssetHistory,
   type AssetHistoryInput,
 } from '@money/core/hooks/useAssetHistory';
@@ -55,7 +57,17 @@ const MAX_X_LABELS = 6;
 const GRID_COLOR = '#e5e7eb';
 const AXIS_TEXT_COLOR = '#6b7280';
 
-export default function AssetHistoryChart(props: AssetHistoryInput) {
+export default function AssetHistoryChart({
+  onOpenPeriod,
+  ...props
+}: AssetHistoryInput & {
+  /**
+   * 그래프 아래 줄을 누르면 읽고 있는 칸의 기간(달력 날짜, 양끝 포함) 거래 화면을 연다
+   * (2026-10-14 사용자 요청). 여는 화면은 상세의 "거래내역 보기"와 같고 기간만 더한다.
+   * 그래프를 누르는 것은 칸을 고르기만 한다. 주지 않으면 줄은 누를 수 없다.
+   */
+  onOpenPeriod?: (range: { from: string; to: string }) => void;
+}) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
   const history = useAssetHistory(props);
@@ -189,29 +201,6 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
         <Text className="py-12 text-center text-sm text-gray-500">{t('history.empty')}</Text>
       ) : (
         <>
-          {/*
-            읽고 있는 칸의 때와 잔액. 그래프 오른쪽 위에 선다.
-
-            날짜는 **연도까지** 적는다(historyPointLabel). X축은 눈금이 겹치지 않게
-            "9/10"·"9월" 로 줄여 두는데, 창을 해가 바뀌는 자리로 끌면 그것만으로는
-            어느 해인지 알 수 없다. 읽는 자리는 한 칸뿐이라 길어도 된다.
-
-            자리를 늘 비워 둔다(h-5). 값이 있을 때만 한 줄이 생기면 그래프가 그만큼
-            아래로 밀려, 누른 손가락 밑에서 선이 움직인다.
-          */}
-          <View className="h-5 flex-row items-center justify-end gap-2">
-            {activePoint ? (
-              <>
-                <Text className="text-xs text-gray-500">
-                  {historyPointLabel(activePoint.date, history.granularity)}
-                </Text>
-                <Text className="text-xs font-semibold text-gray-900">
-                  {formatCurrency(activePoint.balance, displayCurrency)}
-                </Text>
-              </>
-            ) : null}
-          </View>
-
           <View onLayout={measure} {...pan.current!.panHandlers}>
             <Pressable onPress={(event) => handleTap(event.nativeEvent.locationX)}>
               <Svg width="100%" height={PLOT_HEIGHT}>
@@ -308,6 +297,36 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
                   </>
                 ) : null}
               </Svg>
+            </Pressable>
+          </View>
+
+          {/*
+            읽고 있는 칸의 때와 잔액. 분석 탭의 일별 누적처럼 그래프 **아래에** 한 줄로 적는다
+            (2026-10-14 사용자 요청). 줄 모양은 원형 아래 목록·일별 누적과 같다.
+
+            날짜는 **연도까지** 적는다(historyPointLabel). X축은 눈금이 겹치지 않게
+            "9/10"·"9월" 로 줄여 두는데, 창을 해가 바뀌는 자리로 끌면 그것만으로는
+            어느 해인지 알 수 없다.
+          */}
+          <View className="mt-2">
+            <Pressable
+              onPress={
+                onOpenPeriod && activePoint
+                  ? () => onOpenPeriod(historyPointRange(activePoint.date, history.granularity))
+                  : undefined
+              }
+              disabled={!onOpenPeriod || !activePoint}
+              className="flex-row items-center gap-2 border-b border-gray-100 px-1 py-1.5 active:bg-gray-50"
+            >
+              <View
+                style={{ width: 10, height: 2, backgroundColor: CHART_COLOR, borderRadius: 1 }}
+              />
+              <Text className="shrink text-sm text-gray-600" numberOfLines={1}>
+                {activePoint ? historyPointLabel(activePoint.date, history.granularity) : ' '}
+              </Text>
+              <Text className="ml-auto text-sm font-semibold" style={{ color: CHART_COLOR }}>
+                {activePoint ? formatCurrency(activePoint.balance, displayCurrency) : '-'}
+              </Text>
             </Pressable>
           </View>
         </>

@@ -559,12 +559,19 @@ export default function DashboardPage() {
   }, [detailType, selectedPersonIds, accounts, selectedPerson, selectedAccount, selectedCard]);
 
   /**
+   * 거래내역 검색에 추이 그래프에서 누른 칸의 기간을 더한다 (2026-10-14 사용자 요청). 칸을
+   * 누르면 거래내역 보기 단추와 같은 화면이 그 기간으로 좁혀 열린다.
+   */
+  const withPeriod = (search: TransactionSearch, range?: { from: string; to: string }) =>
+    range ? { ...search, startDate: range.from, endDate: range.to } : search;
+
+  /**
    * 한 사람의 거래내역으로 건너간다.
    *
    * 자산주인 선택을 그 사람만으로 좁힌다. 거래 화면은 이 선택으로 목록·합계를
    * 만들므로, 그렇게 해야 상세에 있던 최근 거래와 같은 기준이 된다.
    */
-  const showPersonEntries = (personId: string) => {
+  const showPersonEntries = (personId: string, range?: { from: string; to: string }) => {
     const state = useUserFilter.getState();
     personScope.current = {
       selectedPersonIds: state.selectedPersonIds,
@@ -573,7 +580,7 @@ export default function DashboardPage() {
     // 건드림 표시를 함께 켠다. 켜지 않으면 거래 화면의 usePersonFilterSync 가 이
     // 선택을 "한 번도 고르지 않은 상태"로 보고 전체 선택으로 되돌린다.
     setPersonFilter([personId], true);
-    setEntriesSearch(EMPTY_SEARCH);
+    setEntriesSearch(withPeriod(EMPTY_SEARCH, range));
   };
 
   /**
@@ -1231,6 +1238,8 @@ export default function DashboardPage() {
           projectId={selectedProjectId}
           ownerIds={allPeopleSelected ? undefined : selectedPersonIds}
           excludeAccountIds={exclusion.excludeKey}
+          // 자산주인 선택은 거래 화면도 같은 것을 쓴다 -- 그래프가 세는 사람과 같다.
+          onOpenPeriod={(range) => setEntriesSearch(withPeriod(EMPTY_SEARCH, range))}
         />
       </div>
 
@@ -1415,6 +1424,7 @@ export default function DashboardPage() {
                 ownerId={selectedPerson.id}
                 projectId={selectedProjectId}
                 excludeAccountIds={exclusion.excludeKey}
+                onOpenPeriod={(range) => showPersonEntries(selectedPerson.id, range)}
               />
 
               <div>
@@ -1474,6 +1484,18 @@ export default function DashboardPage() {
                 ownerIds={allPeopleSelected ? undefined : selectedPersonIds}
                 group={selectedGroup}
                 excludeAccountIds={exclusion.excludeKey}
+                onOpenPeriod={(range) =>
+                  setEntriesSearch(
+                    withPeriod(
+                      {
+                        ...EMPTY_SEARCH,
+                        paymentAccountIds: groupMethods?.accountIds ?? [],
+                        paymentCardIds: groupMethods?.cardIds ?? [],
+                      },
+                      range,
+                    ),
+                  )
+                }
               />
 
               <div>

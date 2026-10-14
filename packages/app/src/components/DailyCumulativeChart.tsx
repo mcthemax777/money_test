@@ -27,7 +27,7 @@ import {
   type DailyCumulativePoint,
 } from '@money/core/lib/entries';
 import { formatCurrency } from '@money/core/lib/money';
-import { cumulativeReadoutLines } from '@money/core/lib/month-compare';
+import { cumulativeLineDayKey, cumulativeReadoutLines } from '@money/core/lib/month-compare';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 /** 그리는 자리의 높이(px). 웹은 300 이지만 앱에서는 그만큼이 화면 절반을 먹는다. */
@@ -55,6 +55,8 @@ export default function DailyCumulativeChart({
   currentPeriodKey,
   throughDay,
   tooltipName,
+  currentStartKey,
+  onOpenDay,
 }: {
   /** 보고 있는 구간의 일별 누적. x축이 이 값의 label 을 따른다. */
   current: DailyCumulativePoint[];
@@ -68,6 +70,13 @@ export default function DailyCumulativeChart({
   throughDay?: number;
   /** 견줄 달이 없을 때 읽는 줄에 적을 이름 */
   tooltipName: string;
+  /** 이번 기간의 첫날 "YYYY-MM-DD". 아래 줄을 눌러 그 날을 열 때 센다. */
+  currentStartKey?: string;
+  /**
+   * 그래프 아래 줄(전전·전·지금)을 누르면 그 선의 그 날 거래 화면을 연다 (2026-10-14 사용자
+   * 요청). 그래프를 누르는 것은 여전히 날을 고르기만 한다. 주지 않으면 줄은 누를 수 없다.
+   */
+  onOpenDay?: (dateKey: string) => void;
 }) {
   const displayCurrency = useProjectDisplayCurrency();
 
@@ -255,29 +264,42 @@ export default function DailyCumulativeChart({
         눌러서 읽은 날과 값. 그래프 **아래에** 선마다 한 줄씩(전전, 전, 지금) 적는다 (2026-10-08
         사용자 요청 -- 위에 한 줄로 다 적으니 답답했다). 범례 노릇도 한다. 줄 수는 고른 날과
         상관없이 같아 그래프가 움직이지 않는다 -- 고르지 않았으면 값 자리만 비운다.
+        줄의 여백·폭·구분선·글자 크기는 원형 아래 목록(CategoryPieChart)과 같다 (2026-10-14 사용자 요청).
       */}
-      <View className="mt-2 gap-1">
+      <View className="mt-2">
         {/* 선마다 날짜가 붙으면 칸 이름 줄은 군더더기다. 날짜를 붙일 수 없는 보기에만 둔다. */}
         {currentPeriodKey ? null : (
-          <Text className="text-xs font-semibold text-gray-700">{pickedRow?.label ?? ' '}</Text>
+          <Text className="border-b border-gray-100 px-1 py-1.5 text-xs font-semibold text-gray-700">
+            {pickedRow?.label ?? ' '}
+          </Text>
         )}
         {cumulativeReadoutLines(pickedRow, pickedRow ? picked : null, comparisons, {
           name: lines[lines.length - 1].name,
           periodKey: currentPeriodKey,
         }).map((item) => {
           const color = lines.find((line) => line.key === item.key)?.color ?? CHART_COLOR;
+          /* 그 선에 그 날의 값이 있을 때만 연다. 아직 오지 않은 날이나 짧은 달 끝은 열 날이 없다. */
+          const dayKey =
+            onOpenDay && currentStartKey && picked !== null && item.value !== null
+              ? cumulativeLineDayKey(item.key, picked, currentStartKey, comparisons)
+              : null;
           return (
-            <View key={item.key} className="flex-row items-center gap-2">
+            <Pressable
+              key={item.key}
+              onPress={dayKey ? () => onOpenDay!(dayKey) : undefined}
+              disabled={!dayKey}
+              className="flex-row items-center gap-2 border-b border-gray-100 px-1 py-1.5 active:bg-gray-50"
+            >
               <View style={{ width: 10, height: 2, backgroundColor: color, borderRadius: 1 }} />
-              <Text className="shrink text-xs text-gray-600" numberOfLines={1}>
+              <Text className="shrink text-sm text-gray-600" numberOfLines={1}>
                 {item.name}
               </Text>
-              <Text className="ml-auto text-xs font-semibold" style={{ color }}>
+              <Text className="ml-auto text-sm font-semibold" style={{ color }}>
                 {item.value === null ? '-' : formatCurrency(item.value, displayCurrency)}
               </Text>
               {/* 증감 자리는 늘 둔다. 줄마다 금액의 오른쪽 끝이 맞아야 위아래로 견주기 쉽다. */}
               <Text className="text-right text-xs text-gray-500" style={{ minWidth: 48 }}>{item.change ?? ''}</Text>
-            </View>
+            </Pressable>
           );
         })}
       </View>

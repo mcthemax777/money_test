@@ -121,6 +121,23 @@ export function periodDayName(key: string, index: number): string {
   return formatMonthDayLong(dateKey);
 }
 
+/**
+ * 누적 그래프의 n 번째 칸이 그 선에서 어느 날("YYYY-MM-DD")인지. 아래 줄을 눌러 그 날의 거래를
+ * 열 때 쓴다 (2026-10-14 사용자 요청). 이번 기간은 그 첫날에서, 앞선 기간은 제 열쇠의 첫날에서
+ * 센다. 열쇠가 없는 앞선 선은 날을 알 수 없어 null 이다.
+ */
+export function cumulativeLineDayKey(
+  line: 'current' | 'previous' | 'earlier',
+  index: number,
+  currentStartKey: string,
+  comparisons: CumulativeSeries[],
+): string | null {
+  if (line === 'current') return shiftDateKey(currentStartKey, index);
+  const [earlier, previous] = comparisons;
+  const periodKey = (line === 'earlier' ? earlier : previous)?.periodKey;
+  return periodKey ? shiftDateKey(periodDayRange(periodKey).startKey, index) : null;
+}
+
 /** 누적 그래프 아래에 읽는 줄 하나. */
 export interface CumulativeReadoutLine {
   key: 'current' | 'previous' | 'earlier';

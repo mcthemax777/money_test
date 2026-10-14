@@ -24,6 +24,7 @@ import {
 import { totalIdOf } from '@money/core/hooks/useCategoryDetail';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import { useScreenReturn } from '@money/core/hooks/useScreenReturn';
+import type { TransactionSearch } from '@money/core/hooks/useTransactions';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useMyPersonId } from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
@@ -94,24 +95,29 @@ export default function AnalysisView({
    *              (`entriesSearch`). 조건을 고칠 수 없고(locked) 분석으로 가는 단추도 없다 --
    *              그 아래에 이 분석이 있다.
    *   원형 목록 줄  그 분류·수단으로 좁힌 새 분석이다 (`pickCategory`·`pickMethod`).
+   *   일별 누적 아래 줄  그 선의 그 하루로 좁힌 같은 거래 화면이다 (`openDay`, 2026-10-14 사용자 요청).
    */
-  const [isEntriesOpen, setIsEntriesOpen] = useState(false);
+  /** 덮어 연 거래 화면의 검색. null 이면 덮지 않았다. */
+  const [entriesSearch, setEntriesSearch] = useState<TransactionSearch | null>(null);
   const [picked, setPicked] = useState<AnalysisInitial | null>(null);
-  const isCovered = isEntriesOpen || picked !== null;
+  const isCovered = entriesSearch !== null || picked !== null;
   /* 펴면 맨 위로, 돌아오면 보던 자리로 (거래 화면의 분석과 같다). */
   const rememberScroll = useSwapScroll(isCovered);
   const returnClass = useScreenReturn(isCovered) ? 'screen-return' : '';
-  const openEntries = () => {
+  const openEntries = (search: TransactionSearch = analysis.entriesSearch) => {
     rememberScroll();
-    setIsEntriesOpen(true);
+    setEntriesSearch(search);
   };
+  /** 일별 누적에서 누른 하루. 걸어 둔 조건은 그대로 두고 기간만 그 날로 바꾼다. */
+  const openDay = (dateKey: string) =>
+    openEntries({ ...analysis.entriesSearch, startDate: dateKey, endDate: dateKey });
   const openPicked = (next: AnalysisInitial) => {
     rememberScroll();
     setPicked(next);
   };
   /** 덮은 화면에서 거래를 고쳤을 수 있어 돌아올 때 기간 줄 금액을 다시 받는다. */
   const closeCover = () => {
-    setIsEntriesOpen(false);
+    setEntriesSearch(null);
     setPicked(null);
     tx.reload();
   };
@@ -132,12 +138,12 @@ export default function AnalysisView({
     TABS.findIndex((item) => item.id === analysis.kind),
   );
 
-  if (isEntriesOpen) {
+  if (entriesSearch) {
     return (
       <div className="screen-push">
         <TransactionsView
           projectId={projectId}
-          search={analysis.entriesSearch}
+          search={entriesSearch}
           unit={tx.unit}
           locked
           onBack={closeCover}
@@ -182,7 +188,7 @@ export default function AnalysisView({
               canOpenEntries ? (
                 <button
                   type="button"
-                  onClick={openEntries}
+                  onClick={() => openEntries()}
                   aria-label={t('analysis.toTransactions')}
                   title={t('analysis.toTransactions')}
                   className="flex items-center justify-center p-2 text-gray-600"
@@ -194,11 +200,11 @@ export default function AnalysisView({
               <div className="flex gap-2">
                 {/*
                   거래내역. 거래 탭의 보관함·달력 자리다 -- 분석에서 본 것을 같은 검색으로 낱낱의
-                  거래로 확인하러 가는 길이다 (isEntriesOpen).
+                  거래로 확인하러 가는 길이다 (openEntries).
                 */}
                 <button
                   type="button"
-                  onClick={openEntries}
+                  onClick={() => openEntries()}
                   aria-label={t('analysis.toTransactions')}
                   title={t('analysis.toTransactions')}
                   className="flex items-center justify-center p-2 text-gray-600"
@@ -290,6 +296,7 @@ export default function AnalysisView({
                 trendClip={analysis.trendClip}
                 trendPeriod={analysis.trendPeriod}
                 reloadToken={reloadToken}
+                onOpenDay={openDay}
               />
             ) : (
               <BudgetDetailModal
@@ -312,6 +319,7 @@ export default function AnalysisView({
                 */
                 onPickCategory={(pickId) => openPicked(analysis.pickCategory(pickId))}
                 onPickMethod={(method) => openPicked(analysis.pickMethod(method))}
+                onOpenDay={openDay}
               />
             )}
           </div>

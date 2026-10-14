@@ -24,6 +24,7 @@ import {
 import { totalIdOf } from '@money/core/hooks/useCategoryDetail';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import { useScreenReturn } from '@money/core/hooks/useScreenReturn';
+import type { TransactionSearch } from '@money/core/hooks/useTransactions';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import {
   useCanEdit,
@@ -98,10 +99,12 @@ export default function AnalysisScreen({
    *   거래내역   걸어 둔 조건에 **보고 있는 날들을 기간으로 더한** 거래 화면이다(`entriesSearch`).
    *              조건을 고칠 수 없고(locked) 분석으로 가는 단추도 없다 -- 그 아래에 이 분석이 있다.
    *   원형 목록 줄  그 분류·수단으로 좁힌 새 분석이다 (`pickCategory`·`pickMethod`).
+   *   일별 누적 아래 줄  그 선의 그 하루로 좁힌 같은 거래 화면이다 (`openDay`, 2026-10-14 사용자 요청).
    */
-  const [isEntriesOpen, setIsEntriesOpen] = useState(false);
+  /** 덮어 연 거래 화면의 검색. null 이면 덮지 않았다. */
+  const [entriesSearch, setEntriesSearch] = useState<TransactionSearch | null>(null);
   const [picked, setPicked] = useState<AnalysisInitial | null>(null);
-  const isCovered = isEntriesOpen || picked !== null;
+  const isCovered = entriesSearch !== null || picked !== null;
   const hasReturned = useScreenReturn(isCovered);
   const scrollToTop = useScrollToTop();
   const { offsetOf, restoreTo } = useScrollRestore();
@@ -111,10 +114,13 @@ export default function AnalysisScreen({
     open();
     scrollToTop();
   };
-  const openEntries = () => cover(() => setIsEntriesOpen(true));
+  const openEntries = () => cover(() => setEntriesSearch(analysis.entriesSearch));
+  /** 일별 누적에서 누른 하루. 걸어 둔 조건은 그대로 두고 기간만 그 날로 바꾼다. */
+  const openDay = (dateKey: string) =>
+    cover(() => setEntriesSearch({ ...analysis.entriesSearch, startDate: dateKey, endDate: dateKey }));
   const openPicked = (next: AnalysisInitial) => cover(() => setPicked(next));
   const closeCover = () => {
-    setIsEntriesOpen(false);
+    setEntriesSearch(null);
     setPicked(null);
     restoreTo(analysisOffset.current);
   };
@@ -128,11 +134,11 @@ export default function AnalysisScreen({
   const [editing, setEditing] = useState<EntryListItem | null>(null);
   const openEntry = canEdit ? (entry: EntryListItem) => setEditing(entry) : undefined;
 
-  if (isEntriesOpen) {
+  if (entriesSearch) {
     return (
       <ScreenPush>
         <TransactionsScreen
-          initial={{ search: analysis.entriesSearch, unit: tx.unit }}
+          initial={{ search: entriesSearch, unit: tx.unit }}
           locked
           onBack={closeCover}
         />
@@ -269,6 +275,7 @@ export default function AnalysisScreen({
                   filter={analysis.filter}
                   trendClip={analysis.trendClip}
                   trendPeriod={analysis.trendPeriod}
+                  onOpenDay={openDay}
                 />
               ) : (
                 <CategoryDetailView
@@ -287,6 +294,7 @@ export default function AnalysisScreen({
                   */
                   onPickCategory={(pickId) => openPicked(analysis.pickCategory(pickId))}
                   onPickMethod={(method) => openPicked(analysis.pickMethod(method))}
+                  onOpenDay={openDay}
                 />
               )}
             </FadeIn>

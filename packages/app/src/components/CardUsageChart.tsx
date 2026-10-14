@@ -82,12 +82,6 @@ export default function CardUsageChart({
   const [width, setWidth] = useState(0);
   // 그래프 폭 재기. 이름이 measure 였는데 무엇을 그릴지 고르는 prop 과 겹쳤다.
   const handleLayout = (event: LayoutChangeEvent) => setWidth(event.nativeEvent.layout.width);
-  /**
-   * 눌러 둔 막대. 웹에서 마우스를 올리면 뜨는 툴팁이 하던 일이다.
-   *
-   * 축에는 구간을 짧게만 적으므로(8월, 8.9~9.8), 정확한 날짜와 금액은 눌러서 읽는다.
-   */
-  const [picked, setPicked] = useState<number | null>(null);
 
   const plotWidth = Math.max(width - AXIS_WIDTH - RIGHT_PAD, 1);
   const plotHeight = PLOT_HEIGHT - TOP_PAD - BOTTOM_PAD;
@@ -140,30 +134,26 @@ export default function CardUsageChart({
   const baseY = yOf(Math.max(bottom, 0));
   const centerOf = (index: number) => AXIS_WIDTH + slot * (index + 0.5);
 
-  const pickedBar = picked !== null && picked < bars.length ? bars[picked] : null;
+  /**
+   * 주기를 고르거나 푼다. 막대를 누르든 아래 줄을 누르든 같은 일이다 (2026-10-14 사용자 요청 --
+   * 막대를 누르면 위에 값을 띄우던 것을 거두었다. 정확한 구간과 금액은 아래 줄이 이미 적는다).
+   */
+  const togglePeriod = (bar: (typeof bars)[number]) =>
+    onSelectPeriod?.(
+      selectedKey === bar.closingKey
+        ? null
+        : { closingKey: bar.closingKey, periodStart: bar.periodStart, periodEnd: bar.periodEnd },
+    );
   /** 축 이름에 날짜 범위가 들어가면 글자가 길어진다. 그때만 한 호 줄인다. */
   const labelSize = bars.some((bar) => bar.label.includes('~')) ? 9 : 10;
 
   return (
     <View>
       {/*
-        눌러서 읽은 값과 창을 되돌리는 단추가 같은 줄에 선다. 자리를 늘 비워 둔다 --
-        눌렀을 때만 줄이 생기면 그래프가 아래로 밀려 손가락 밑에서 막대가 움직인다.
+        창을 되돌리는 단추의 자리. 자리를 늘 비워 둔다 -- 단추가 설 때만 줄이 생기면
+        그래프가 아래로 밀려 손가락 밑에서 막대가 움직인다.
       */}
-      <View className="h-6 flex-row items-center justify-between gap-2">
-        {pickedBar ? (
-          <>
-            <Text className="shrink text-xs text-gray-500" numberOfLines={1}>
-              {pickedBar.range}
-            </Text>
-            <Text className="text-xs font-semibold text-gray-900">
-              {formatCurrency(pickedBar.amount, currency)}
-            </Text>
-          </>
-        ) : (
-          <View className="flex-1" />
-        )}
-
+      <View className="h-6 flex-row items-center justify-end gap-2">
         {/* 창이 제자리를 벗어나 있을 때만. 그만큼 다시 끌지 않아도 된다. */}
         {usage.offset !== 0 ? (
           <Pressable
@@ -181,8 +171,7 @@ export default function CardUsageChart({
           onPress={(event) => {
             const index = Math.floor((event.nativeEvent.locationX - AXIS_WIDTH) / slot);
             if (index < 0 || index >= bars.length) return;
-            // 같은 막대를 다시 누르면 접는다. 읽고 나서 치우는 길이 있어야 한다.
-            setPicked((prev) => (prev === index ? null : index));
+            togglePeriod(bars[index]);
           }}
         >
           <Svg width="100%" height={PLOT_HEIGHT}>
@@ -230,6 +219,9 @@ export default function CardUsageChart({
                   rx={3}
                   fill={bar.fill ?? CHART_COLOR}
                   fillOpacity={bar.fillOpacity}
+                  /* 고른 주기는 테두리로 짚어 준다. 아래 목록의 눌린 줄과 짝이다 (웹과 같다). */
+                  stroke={selectedKey === bar.closingKey ? CARD_USAGE_TARGET_COLOR : undefined}
+                  strokeWidth={selectedKey === bar.closingKey ? 2 : 0}
                 />
               );
             })}
@@ -310,20 +302,7 @@ export default function CardUsageChart({
           return (
             <Pressable
               key={`row-${bar.key}`}
-              onPress={
-                onSelectPeriod
-                  ? () =>
-                      onSelectPeriod(
-                        chosen
-                          ? null
-                          : {
-                              closingKey: bar.closingKey,
-                              periodStart: bar.periodStart,
-                              periodEnd: bar.periodEnd,
-                            },
-                      )
-                  : undefined
-              }
+              onPress={onSelectPeriod ? () => togglePeriod(bar) : undefined}
               disabled={!onSelectPeriod}
               className={`flex-row items-center justify-between gap-3 border-b border-gray-100 px-1 py-1.5 ${
                 chosen ? 'bg-blue-50' : ''

@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef } from 'react';
+import { useRef, useState } from 'react';
 import {
   CartesianGrid,
   Line,
@@ -18,16 +18,16 @@ import {
   CHART_GRID,
   CHART_MARGIN,
   CHART_TICK,
-  CHART_TOOLTIP_STYLE,
   CHART_Y_AXIS_WIDTH,
-  formatTooltipAmount,
 } from '@money/core/lib/chart';
 import {
   GRANULARITY_OPTIONS,
   historyPointLabel,
+  historyPointRange,
   useAssetHistory,
   type AssetHistoryInput,
 } from '@money/core/hooks/useAssetHistory';
+import { formatCurrency } from '@money/core/lib/money';
 import { useProjectDisplayCurrency } from '@money/core/store/project';
 
 /**
@@ -45,14 +45,42 @@ const DRAG_THRESHOLD = 3;
  * 자산 추이. 무엇을 받아 어느 칸을 그릴지는 core 의 useAssetHistory 가 정한다.
  *
  * 여기 남은 것은 그리는 일뿐이다 -- recharts 로 선을 긋고, 손가락(마우스)을 받아
- * 창을 옮기고, 칸을 눌러 한 단 아래로 내려간다. 앱의 같은 그래프가 같은 훅 위에
- * 제 방식으로(react-native-svg) 그려진다.
+ * 창을 옮기고, 가리키거나 누른 칸을 아래 줄에 읽는다. 그 줄을 누르면 그 기간의 거래 화면을
+ * 연다. 앱의 같은 그래프가 같은 훅 위에 제 방식으로(react-native-svg) 그려진다.
+ *
+ * 칸을 눌러 한 단 아래 단위로 내려가던 길은 거두었다 (2026-10-14 사용자 요청 -- 누르면 칸을
+ * 고르고, 아래 줄로 그 기간의 거래내역을 본다). 단위는 위의 탭이 고른다. 앱과 같은 규칙이다.
  */
-export default function AssetHistoryChart(props: AssetHistoryInput) {
+export default function AssetHistoryChart({
+  onOpenPeriod,
+  ...props
+}: AssetHistoryInput & {
+  /**
+   * 그래프 아래 줄을 누르면 읽고 있는 칸의 기간(달력 날짜, 양끝 포함) 거래 화면을 연다
+   * (2026-10-14 사용자 요청). 여는 화면은 상세의 "거래내역 보기"와 같고 기간만 더한다.
+   * 주지 않으면 줄은 누를 수 없다.
+   */
+  onOpenPeriod?: (range: { from: string; to: string }) => void;
+}) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();
   const history = useAssetHistory(props);
-  const { points, lastPoint, yAxis, canDrill } = history;
+  const { points, yAxis } = history;
+
+  /**
+   * 가리키거나 누른 칸의 날짜. 아래 줄이 읽는다. null(이나 창 밖으로 밀려난 날)이면 끝 칸이다.
+   * 마우스가 그래프를 떠나도 남긴다 -- 아래 줄을 누르러 내려가는 동안 값이 바뀌면 안 된다
+   * (분석의 일별 누적과 같다).
+   */
+  const [picked, setPicked] = useState<string | null>(null);
+  const activePoint =
+    points.find((point) => point.date === picked) ??
+    (points.length > 0 ? points[points.length - 1] : null);
+  /** recharts 의 마우스 상태가 가리키는 칸. activeTooltipIndex 는 number 가 아닐 수 있다. */
+  const pointAt = (state: { activeTooltipIndex?: unknown } | null | undefined) => {
+    const index = Number(state?.activeTooltipIndex);
+    return Number.isInteger(index) && index >= 0 ? points[index] : undefined;
+  };
   /**
    * X축의 열쇠는 날짜, 눈금에 적는 것은 이름이다.
    *
@@ -74,7 +102,7 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
   /**
    * 이번 누름이 끌기였는지.
    *
-   * 월별 그래프는 눌러서 일별로 내려가는 자리이기도 하다. 끌고 나서 손을 떼면 클릭도
+   * 칸을 눌러 고르는 자리이기도 하다. 끌고 나서 손을 떼면 클릭도
    * 함께 오므로, 끈 것이면 그 클릭은 흘려보낸다. 누를 때마다 다시 false가 되어
    * 다음 클릭까지 남지 않는다.
    */
@@ -148,8 +176,8 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
             /*
              * 문턱을 넘은 뒤에야 손을 붙잡는다.
              *
-             * 누르자마자 붙잡으면 뒤따르는 클릭까지 이 칸으로 끌려와, 월별 그래프에서
-             * 달을 눌러 일별로 내려가는 길이 막힌다.
+             * 누르자마자 붙잡으면 뒤따르는 클릭까지 이 칸으로 끌려와, 칸을 눌러
+             * 고르는 길이 막힌다.
              */
             if (!didDrag.current) {
               didDrag.current = true;
@@ -172,17 +200,17 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
             <LineChart
               data={points}
               margin={CHART_MARGIN}
-              // 점이 아니라 빈 곳을 눌러도 한 단 아래로 내려가도록 차트 전체에서 받는다.
-              // recharts 3에서 activeTooltipIndex는 number가 아닐 수 있어 숫자로 확인하고 쓴다.
-              onClick={(state: any) => {
-                if (!canDrill || didDrag.current) return;
-                const index = Number(state?.activeTooltipIndex);
-                if (!Number.isInteger(index) || index < 0) return;
-                const clicked = points[index];
-                if (!clicked) return;
-                history.drillInto(clicked.date);
+              onMouseMove={(state: any) => {
+                const point = pointAt(state);
+                if (point) setPicked(point.date);
               }}
-              style={{ cursor: canDrill ? 'pointer' : 'grab' }}
+              // 터치 화면에는 마우스 움직임이 없다. 누른 칸을 읽는다. 점이 아니라 빈 곳을 눌러도 된다.
+              onClick={(state: any) => {
+                if (didDrag.current) return;
+                const point = pointAt(state);
+                if (point) setPicked(point.date);
+              }}
+              style={{ cursor: 'grab' }}
             >
               <CartesianGrid {...CHART_GRID} />
               <XAxis
@@ -197,25 +225,8 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
                 tick={CHART_TICK}
                 width={CHART_Y_AXIS_WIDTH}
               />
-              <Tooltip
-                formatter={(value: any) =>
-                  formatTooltipAmount(value, t('history.balance'), displayCurrency)
-                }
-                /*
-                 * 머리글은 **연도까지** 적는다. 기본값은 X축 이름(label)인데, 그쪽은
-                 * 눈금이 겹치지 않게 "9/10"·"9월" 로 줄여 둔 것이라 창을 해가 바뀌는
-                 * 자리로 끌면 어느 해의 9월인지 알 수 없다.
-                 *
-                 * 날짜는 점이 들고 있다. recharts 는 두 번째 인자로 그 칸의 원본
-                 * 데이터를 함께 주므로 거기서 꺼낸다 -- 첫 인자(label)로는 되읽을 수
-                 * 없다. 아직 아무 칸도 가리키지 않은 순간에는 빈 글자다.
-                 */
-                labelFormatter={(_label: any, payload: any) => {
-                  const date = payload?.[0]?.payload?.date;
-                  return date ? historyPointLabel(date, history.granularity) : '';
-                }}
-                contentStyle={CHART_TOOLTIP_STYLE}
-              />
+              {/* 값은 툴팁 상자 대신 아래 줄에 적는다 (일별 누적과 같다). 세로선과 점만 남긴다. */}
+              <Tooltip content={() => null} />
               <Line
                 type="monotone"
                 dataKey="balance"
@@ -227,7 +238,7 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
                 isAnimationActive={false}
               />
               {/*
-                선이 끝나는 점. 점만 찍고 금액은 적지 않는다.
+                읽고 있는 점 (고르지 않았으면 선이 끝나는 점). 점만 찍고 금액은 적지 않는다.
 
                 예전에는 이 점 왼쪽에 잔액을 적었다. 값을 읽는 길이 이미 둘 있는데
                 (마우스를 올리면 툴팁, 아래의 잔액 칸) 그래프 안에까지 적으면 같은
@@ -235,10 +246,10 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
                 이름과 겹치는 자리가 생긴다. 점은 남긴다 -- 선이 어디서 끝나는지는
                 그것 말고 말해 주는 것이 없다.
               */}
-              {lastPoint && (
+              {activePoint && (
                 <ReferenceDot
-                  x={lastPoint.date}
-                  y={lastPoint.balance}
+                  x={activePoint.date}
+                  y={activePoint.balance}
                   r={4}
                   fill={CHART_COLOR}
                   stroke="#fff"
@@ -247,6 +258,36 @@ export default function AssetHistoryChart(props: AssetHistoryInput) {
               )}
             </LineChart>
           </ResponsiveContainer>
+
+          {/*
+            읽고 있는 칸의 때와 잔액. 분석 탭의 일별 누적처럼 그래프 **아래에** 한 줄로 적는다
+            (2026-10-14 사용자 요청). 줄 모양은 원형 아래 목록·일별 누적과 같다. 날짜는
+            연도까지 적는다(historyPointLabel) -- X축 눈금은 "9월" 로 줄여 어느 해인지 모른다.
+          */}
+          <div className="mt-2 text-sm">
+            <button
+              type="button"
+              onClick={
+                onOpenPeriod && activePoint
+                  ? () => onOpenPeriod(historyPointRange(activePoint.date, history.granularity))
+                  : undefined
+              }
+              disabled={!onOpenPeriod || !activePoint}
+              className="flex w-full items-center gap-2 border-b border-gray-100 px-1 py-1.5 text-left enabled:hover:bg-gray-50"
+            >
+              <span
+                aria-hidden
+                className="h-0.5 w-3 shrink-0 rounded"
+                style={{ backgroundColor: CHART_COLOR }}
+              />
+              <span className="truncate text-gray-600">
+                {activePoint ? historyPointLabel(activePoint.date, history.granularity) : '\u00a0'}
+              </span>
+              <span className="ml-auto font-semibold" style={{ color: CHART_COLOR }}>
+                {activePoint ? formatCurrency(activePoint.balance, displayCurrency) : '-'}
+              </span>
+            </button>
+          </div>
         </div>
       )}
     </div>
