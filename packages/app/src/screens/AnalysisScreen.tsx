@@ -99,7 +99,7 @@ export default function AnalysisScreen({
    *   거래내역   걸어 둔 조건에 **보고 있는 날들을 기간으로 더한** 거래 화면이다(`entriesSearch`).
    *              조건을 고칠 수 없고(locked) 분석으로 가는 단추도 없다 -- 그 아래에 이 분석이 있다.
    *   원형 목록 줄  그 분류·수단으로 좁힌 새 분석이다 (`pickCategory`·`pickMethod`).
-   *   일별 누적 아래 줄  그 선의 그 하루로 좁힌 같은 거래 화면이다 (`openDay`, 2026-10-14 사용자 요청).
+   *   일별 누적 아래 줄  그 선의 첫날부터 그 날까지로 좁힌 같은 거래 화면이다 (`openDay`, 2026-10-14 사용자 요청).
    */
   /** 덮어 연 거래 화면의 검색. null 이면 덮지 않았다. */
   const [entriesSearch, setEntriesSearch] = useState<TransactionSearch | null>(null);
@@ -115,9 +115,11 @@ export default function AnalysisScreen({
     scrollToTop();
   };
   const openEntries = () => cover(() => setEntriesSearch(analysis.entriesSearch));
-  /** 일별 누적에서 누른 하루. 걸어 둔 조건은 그대로 두고 기간만 그 날로 바꾼다. */
-  const openDay = (dateKey: string) =>
-    cover(() => setEntriesSearch({ ...analysis.entriesSearch, startDate: dateKey, endDate: dateKey }));
+  /** 일별 누적 아래 줄의 구간(그 선의 첫날~그 날). 걸어 둔 조건은 그대로 두고 기간만 바꾼다. */
+  const openDay = (range: { from: string; to: string }) =>
+    cover(() =>
+      setEntriesSearch({ ...analysis.entriesSearch, startDate: range.from, endDate: range.to }),
+    );
   const openPicked = (next: AnalysisInitial) => cover(() => setPicked(next));
   const closeCover = () => {
     setEntriesSearch(null);

@@ -168,10 +168,10 @@ export default function CategoryDetailView({
   /** 수단 원형의 목록 줄을 누르면 부른다. 분석 탭이 그 수단을 조건으로 더한다. */
   onPickMethod?: (method: MethodSlice) => void;
   /**
-   * 일별 누적 아래 줄을 누르면 그 선의 그 날("YYYY-MM-DD") 거래 화면을 연다 (분석 탭,
-   * 2026-10-14 사용자 요청). 주지 않으면 줄은 누를 수 없다.
+   * 일별 누적 아래 줄을 누르면 그 선의 첫날부터 그 날까지의 거래 화면을 연다 (분석 탭,
+   * 2026-10-15 사용자 요청). 주지 않으면 줄은 누를 수 없다.
    */
-  onOpenDay?: (dateKey: string) => void;
+  onOpenDay?: (range: { from: string; to: string }) => void;
 }) {
   const { t } = useTranslation();
   const displayCurrency = useProjectDisplayCurrency();

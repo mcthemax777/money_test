@@ -30,7 +30,7 @@ import {
 } from '@money/core/lib/entries';
 import { formatCurrency } from '@money/core/lib/money';
 import {
-  cumulativeLineDayKey,
+  cumulativeLineRange,
   cumulativeReadoutLines,
   type ChangeTone,
   type CumulativeKind,
@@ -86,10 +86,11 @@ interface Props {
   /** 이번 기간의 첫날 "YYYY-MM-DD". 아래 줄을 눌러 그 날을 열 때 센다. */
   currentStartKey?: string;
   /**
-   * 그래프 아래 줄(전전·전·지금)을 누르면 그 선의 그 날 거래 화면을 연다 (2026-10-14 사용자
-   * 요청). 그래프를 누르는 것은 여전히 날을 고르기만 한다. 주지 않으면 줄은 누를 수 없다.
+   * 그래프 아래 줄(전전·전·지금)을 누르면 그 선의 첫날부터 그 날까지의 거래 화면을 연다
+   * (2026-10-15 사용자 요청 -- 누적이니 그 누적을 이룬 거래다). 그래프를 누르는 것은 날을
+   * 고르기만 한다. 주지 않으면 줄은 누를 수 없다.
    */
-  onOpenDay?: (dateKey: string) => void;
+  onOpenDay?: (range: { from: string; to: string }) => void;
   /** 견줄 달이 없을 때 툴팁에 적을 이름 */
   tooltipName: string;
   height: number;
@@ -225,16 +226,16 @@ export default function DailyCumulativeChart({
           periodKey: currentPeriodKey,
         }, kind, displayCurrency).map((item) => {
           /* 그 선에 그 날의 값이 있을 때만 연다. 아직 오지 않은 날이나 짧은 달 끝은 열 날이 없다. */
-          const dayKey =
+          const range =
             onOpenDay && currentStartKey && pickedRow && picked !== null && item.value !== null
-              ? cumulativeLineDayKey(item.key, picked, currentStartKey, comparisons)
+              ? cumulativeLineRange(item.key, picked, currentStartKey, comparisons)
               : null;
           return (
           <button
             key={item.key}
             type="button"
-            onClick={dayKey ? () => onOpenDay!(dayKey) : undefined}
-            disabled={!dayKey}
+            onClick={range ? () => onOpenDay!(range) : undefined}
+            disabled={!range}
             className="flex w-full items-center gap-2 border-b border-gray-100 px-1 py-1.5 text-left enabled:hover:bg-gray-50"
           >
             <span
