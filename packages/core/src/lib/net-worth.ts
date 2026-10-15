@@ -6,6 +6,7 @@
  * 세어질 수 있다.
  */
 import {
+  Dec,
   ASSET_GROUP_KEYS,
   ASSET_GROUP_OF,
   assetGroupOf,
@@ -16,7 +17,30 @@ import {
 } from '@money/types';
 
 import type { MessageKey } from '../lib/i18n';
-import { toAmountString, toNumber } from './money';
+import { toNumber } from './money';
+
+/*
+ * 금액은 십진으로 더한다 (2026-10-16). 예전에는 double 로 더해, 소수가 있는 외화·투자 금액이 여럿
+ * 모이면 끝자리가 어긋났다(0.1 + 0.2 = 0.30000000000000004). 서버 응답의 금액 문자열을 그대로 받아
+ * 정확히 더하고, 내보낼 때 뒤의 0 을 떼어 서버가 주는 모양과 맞춘다.
+ */
+
+/** 금액 문자열을 십진값으로. 비었거나 읽을 수 없으면 0 이다(예전 toNumber 와 같은 규칙). */
+function decOf(amount: string | null | undefined): Dec {
+  if (!amount) return Dec.of(0);
+  try {
+    return Dec.of(amount);
+  } catch {
+    return Dec.of(0);
+  }
+}
+
+/** 십진값을 금액 문자열로. 소수 끝의 0 을 뗀다 ("1200.5000" → "1200.5", "-0" 은 "0"). */
+function amountOf(value: Dec): string {
+  if (value.isZero()) return '0';
+  const text = value.toString();
+  return text.includes('.') ? text.replace(/\.?0+$/, '') : text;
+}
 
 /*
  * 유형이 드는 묶음은 서버와 기기가 함께 쓰는 순자산 집계(@money/types 의
@@ -34,14 +58,14 @@ export type NetWorthParts = Pick<
 function addAmounts<K extends string>(
   tables: Array<Partial<Record<K, string>> | undefined>,
 ): Partial<Record<K, string>> {
-  const sums = new Map<K, number>();
+  const sums = new Map<K, Dec>();
   for (const table of tables) {
     for (const [key, amount] of Object.entries(table ?? {}) as Array<[K, string]>) {
-      sums.set(key, (sums.get(key) ?? 0) + toNumber(amount));
+      sums.set(key, (sums.get(key) ?? Dec.of(0)).plus(decOf(amount)));
     }
   }
   return Object.fromEntries(
-    [...sums].map(([key, amount]) => [key, toAmountString(amount)]),
+    [...sums].map(([key, amount]) => [key, amountOf(amount)]),
   ) as Partial<Record<K, string>>;
 }
 
@@ -58,24 +82,19 @@ export function sumNetWorth(
   rows: Array<NetWorthParts | undefined>,
 ): NetWorthParts & { total: string } {
   const present = rows.filter((row): row is NetWorthParts => row !== undefined);
-  const sum = present.reduce(
-    (acc, row) => ({
-      cash: acc.cash + toNumber(row.cash),
-      investment: acc.investment + toNumber(row.investment),
-      liability: acc.liability + toNumber(row.liability),
-    }),
-    { cash: 0, investment: 0, liability: 0 },
-  );
+  const cash = Dec.sum(present.map((row) => decOf(row.cash)));
+  const investment = Dec.sum(present.map((row) => decOf(row.investment)));
+  const liability = Dec.sum(present.map((row) => decOf(row.liability)));
 
   return {
-    cash: toAmountString(sum.cash),
-    investment: toAmountString(sum.investment),
-    liability: toAmountString(sum.liability),
+    cash: amountOf(cash),
+    investment: amountOf(investment),
+    liability: amountOf(liability),
     byType: addAmounts<AccountType>(present.map((row) => row.byType)),
     ...(present.every((row) => row.byGroup)
       ? { byGroup: addAmounts<AssetGroupKey>(present.map((row) => row.byGroup)) }
       : {}),
-    total: toAmountString(sum.cash + sum.investment + sum.liability),
+    total: amountOf(cash.plus(investment).plus(liability)),
   };
 }
 
@@ -167,20 +186,20 @@ export function withoutAccounts(
     parts: readonly ReportDto.NetWorthAccountPart[],
   ): B => {
     if (parts.length === 0) return bucket;
-    const minus = (table: Partial<Record<string, string>> | undefined, key: string, amount: number) => {
-      const left = toNumber(table?.[key]) - amount;
+    const minus = (table: Partial<Record<string, string>> | undefined, key: string, amount: Dec) => {
+      const left = decOf(table?.[key]).minus(amount);
       const { [key]: _drop, ...rest } = table ?? {};
-      return left === 0 ? rest : { ...rest, [key]: toAmountString(left) };
+      return left.isZero() ? rest : { ...rest, [key]: amountOf(left) };
     };
 
     let next: B = { ...bucket };
     for (const part of parts) {
-      const amount = toNumber(part.amount);
+      const amount = decOf(part.amount);
       const slot = slotOf(part.type);
       next = {
         ...next,
-        total: toAmountString(toNumber(next.total) - amount),
-        [slot]: toAmountString(toNumber(next[slot]) - amount),
+        total: amountOf(decOf(next.total).minus(amount)),
+        [slot]: amountOf(decOf(next[slot]).minus(amount)),
         byType: minus(next.byType, part.type, amount),
         ...(next.byGroup ? { byGroup: minus(next.byGroup, part.group, amount) } : {}),
       };
