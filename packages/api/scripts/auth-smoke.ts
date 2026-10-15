@@ -79,6 +79,51 @@ runSmoke('auth', async (ctx) => {
   ctx.check('로그아웃 후 옛 토큰 (만료 전까지 동작)',
     (await call('/users/me', authed(access))).status, 200);
 
+  // ── 웹의 쿠키 세션 (2026-10-16) ──
+  // 웹은 X-Auth-Mode: cookie 로 묻고, 토큰은 HttpOnly 쿠키로만 받는다(본문은 빈 값).
+  const cookieRefresh = await fetch(`${BASE}/auth/refresh`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'X-Auth-Mode': 'cookie' },
+    body: JSON.stringify({ refreshToken: deviceB }),
+  });
+  ctx.check('쿠키 방식 갱신', cookieRefresh.status, 200);
+  const setCookies = cookieRefresh.headers.getSetCookie();
+  const cookieOf = (name: string) =>
+    setCookies.find((line) => line.startsWith(`${name}=`))?.split(';')[0] ?? '';
+  const cookieBody = (await cookieRefresh.json()) as { accessToken: string; refreshToken: string };
+  ctx.check('쿠키 방식은 본문에 토큰이 없다', cookieBody.accessToken + cookieBody.refreshToken, '');
+  ctx.check('액세스 쿠키는 HttpOnly',
+    setCookies.some((line) => line.startsWith('bb_at=') && /HttpOnly/i.test(line)), true);
+  ctx.check('갱신 쿠키는 HttpOnly',
+    setCookies.some((line) => line.startsWith('bb_rt=') && /HttpOnly/i.test(line)), true);
+  ctx.check('표시 쿠키는 스크립트가 읽는다',
+    setCookies.some((line) => line.startsWith('bb_session=') && !/HttpOnly/i.test(line)), true);
+  const jar = [cookieOf('bb_at'), cookieOf('bb_rt')].join('; ');
+  ctx.check('쿠키로 조회', (await call('/users/me', { headers: { Cookie: jar } })).status, 200);
+
+  // 쿠키로 인증한 쓰기는 X-Auth-Mode 머리글이 있어야 한다 (CSRF). 다른 사이트는 이 머리글을 붙이지 못한다.
+  const noHeader = await call('/auth/refresh', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: jar },
+    body: '{}',
+  });
+  ctx.check('머리글 없는 쿠키 쓰기 거부 (CSRF)', noHeader.status, 403);
+  const cookieOnly = await call('/auth/refresh', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: jar, 'X-Auth-Mode': 'cookie' },
+    body: '{}',
+  });
+  ctx.check('본문 없이 쿠키의 갱신 토큰으로 갱신', cookieOnly.status, 200);
+
+  const cookieLogout = await fetch(`${BASE}/auth/logout`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Cookie: jar, 'X-Auth-Mode': 'cookie' },
+    body: '{}',
+  });
+  ctx.check('쿠키 방식 로그아웃', cookieLogout.status, 200);
+  ctx.check('로그아웃이 쿠키를 지운다',
+    cookieLogout.headers.getSetCookie().some((line) => line.startsWith('bb_rt=;')), true);
+
   // ── 만료된 갱신 토큰 행 정리 (하루 한 번 도는 작업) ──
   await ctx.prisma.refreshToken.createMany({
     data: [

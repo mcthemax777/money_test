@@ -1,8 +1,11 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import {
   clearAuthTokens,
+  cookieSessionExpiry,
   getAccessToken,
   getRefreshToken,
+  hasSession,
+  isCookieSession,
   saveAuthTokens,
 } from './auth-tokens';
 import {
@@ -46,6 +49,9 @@ import type {
   EntryScopeQuery,
   WeekStart,
 } from '@money/types';
+
+/** 웹의 쿠키 세션임을 서버에 알리는 머리글 (서버 common/session-cookies 와 같은 이름). */
+const AUTH_MODE_HEADER = 'X-Auth-Mode';
 
 /**
  * 응답 타입은 서버와 같은 `@money/types` DTO를 쓴다.
@@ -163,6 +169,15 @@ class ApiClient {
       if (token) {
         config.headers.Authorization = `Bearer ${token}`;
       }
+      /*
+       * 웹의 쿠키 세션. 토큰은 브라우저가 HttpOnly 쿠키로 싣고(서버 주소가 다른 개발 환경에서도 실리게
+       * withCredentials), 이 머리글로 쿠키 방식임을 알린다 -- 서버가 쿠키로 인증한 쓰기는 이 머리글이
+       * 있어야 받는다(CSRF 문).
+       */
+      if (isCookieSession()) {
+        config.withCredentials = true;
+        config.headers[AUTH_MODE_HEADER] = 'cookie';
+      }
       // 서버가 최소 버전보다 낮은 판을 426 으로 거절한다 (`AppVersionGuard`).
       if (this.clientVersion) {
         config.headers[APP_PLATFORM_HEADER] = this.clientVersion.platform;
@@ -213,6 +228,15 @@ class ApiClient {
         // 강제 업데이트. 화면이 닫을 수 없는 창을 띄운다. 세션은 그대로 둔다.
         if (isUpdateRequiredError(error)) this.onUpdateRequired?.();
 
+        /*
+         * 웹의 쿠키 세션에서 로그인하지 않은 채(표시 쿠키 없음) 받은 401 은 갱신하지도 세션을 지우지도 않는다.
+         * 시작할 때 옛 토큰을 옮기는 사이에 먼저 나간 요청이 이 길로 오는데, 여기서 갱신·정리를 하면 막
+         * 옮겨 온 쿠키를 지운다.
+         */
+        if (error.response?.status === 401 && isCookieSession() && !hasSession()) {
+          return Promise.reject(error);
+        }
+
         if (error.response?.status !== 401 || !originalRequest || isSessionRequest) {
           if (error.response?.status === 401) this.clearSession();
           return Promise.reject(error);
@@ -228,7 +252,8 @@ class ApiClient {
           const accessToken = await this.refreshAccessToken();
           originalRequest._retried = true;
           originalRequest.headers = originalRequest.headers ?? {};
-          originalRequest.headers.Authorization = `Bearer ${accessToken}`;
+          // 쿠키 세션은 새 쿠키가 저절로 실린다. 머리글에 빈 토큰을 싣지 않는다.
+          if (accessToken) originalRequest.headers.Authorization = `Bearer ${accessToken}`;
           return await this.client(originalRequest);
         } catch (refreshError) {
           /*
@@ -289,10 +314,12 @@ class ApiClient {
    * 그물망을 두 겹으로 두는 편이 일시적인 네트워크 오류에 강하다.
    */
   private async refreshIfExpiring(): Promise<void> {
+    if (!hasSession()) return;
     const token = getAccessToken();
-    if (!token || !getRefreshToken()) return;
+    if (!isCookieSession() && (!token || !getRefreshToken())) return;
 
-    const expiresAt = this.expiresAt(token);
+    // 쿠키 세션은 토큰을 읽을 수 없어 서버가 함께 내린 만료 시각(표시 쿠키)을 본다.
+    const expiresAt = token ? this.expiresAt(token) : cookieSessionExpiry();
     if (expiresAt === null) return;
     if (expiresAt - Date.now() > ApiClient.REFRESH_LEEWAY_MS) return;
 
@@ -308,10 +335,14 @@ class ApiClient {
     if (this.refreshPromise) return this.refreshPromise;
 
     const refreshToken = getRefreshToken();
-    if (!refreshToken) return Promise.reject(new Error('No refresh token'));
+    // 쿠키 세션은 갱신 토큰을 HttpOnly 쿠키로 들어 본문에 싣지 않는다. 서버가 쿠키를 읽고 새 쿠키를 내린다.
+    if (!refreshToken && !isCookieSession()) return Promise.reject(new Error('No refresh token'));
 
     this.refreshPromise = this.client
-      .post<{ accessToken: string; refreshToken: string }>('/auth/refresh', { refreshToken })
+      .post<{ accessToken: string; refreshToken: string }>(
+        '/auth/refresh',
+        refreshToken ? { refreshToken } : {},
+      )
       .then((response) => {
         const { accessToken, refreshToken: newRefreshToken } = response.data;
         saveAuthTokens(accessToken, newRefreshToken);
@@ -400,6 +431,20 @@ class ApiClient {
   async signInWithGoogle(idToken: string) {
     const response = await this.client.post<any>('/auth/google', { idToken });
     return response.data;
+  }
+
+  /**
+   * 쿠키 세션 이전의 갱신 토큰으로 한 번 갱신해 HttpOnly 쿠키 세션으로 옮긴다(웹이 시작할 때). 실패하면
+   * 그 토큰이 이미 끝난 것이라 로그인 화면으로 간다(부르는 쪽이 정리한다).
+   */
+  async migrateLegacySession(refreshToken: string): Promise<'migrated' | 'rejected' | 'offline'> {
+    try {
+      await this.client.post('/auth/refresh', { refreshToken });
+      return 'migrated';
+    } catch (error) {
+      // 서버에 닿지 못했으면 토큰이 살았는지 모른다. 옛 쿠키를 남겨 다음에 다시 옮긴다.
+      return isOfflineError(error) ? 'offline' : 'rejected';
+    }
   }
 
   async logout(refreshToken?: string) {

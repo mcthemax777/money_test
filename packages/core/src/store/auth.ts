@@ -4,7 +4,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { persistStorage } from '../lib/persist-storage';
 import { apiClient } from '../lib/api-client';
-import { clearAuthTokens, getAccessToken, getRefreshToken, saveAuthTokens } from '../lib/auth-tokens';
+import { clearAuthTokens, getRefreshToken, hasSession, saveAuthTokens } from '../lib/auth-tokens';
 import { isOfflineError } from '../lib/offline-error';
 import { setAnalyticsUser, track } from '../lib/analytics';
 import {
@@ -216,8 +216,8 @@ export const useAuth = create<AuthStore>()(
 
   loadUser: async () => {
     try {
-      const token = getAccessToken();
-      if (!token) {
+      // 웹의 쿠키 세션은 토큰을 읽을 수 없어 서버가 내린 표시 쿠키로 본다 (lib/auth-tokens).
+      if (!hasSession()) {
         set({
           user: null,
           defaultProjectData: null,

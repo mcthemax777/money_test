@@ -16,7 +16,7 @@ import { isOfflineError } from '../lib/offline-error';
 /** 스트리밍을 지원하는 fetch. 웹의 것과 expo/fetch 가 이 모양을 함께 만족한다. */
 export type StreamingFetch = (
   url: string,
-  init: { headers: Record<string, string>; signal: AbortSignal },
+  init: { headers: Record<string, string>; signal: AbortSignal; credentials?: 'include' },
 ) => Promise<{
   ok: boolean;
   status: number;
@@ -29,6 +29,8 @@ export interface SyncEventsOptions {
   /** 붙을 때마다 부른다. 토큰이 갱신되었으면 새 값이 나온다. */
   getToken: () => string | undefined | Promise<string | undefined>;
   fetchFn: StreamingFetch;
+  /** 웹의 쿠키 세션은 'include' -- 토큰 대신 HttpOnly 쿠키가 실린다. */
+  credentials?: 'include';
   /** 서버가 알려 온 번호. 이것을 받으면 동기화를 한 번 돌린다. */
   onVersion: (version: number) => void;
   /** 진단용. 넣지 않으면 조용히 다시 붙는다. */
@@ -187,6 +189,8 @@ export function openSyncEvents(options: SyncEventsOptions): SyncEventsHandle {
         Accept: 'text/event-stream',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
+      // 웹의 쿠키 세션은 토큰을 HttpOnly 쿠키로 싣는다(서버 주소가 다른 개발 환경에서도 실리게).
+      ...(options.credentials ? { credentials: options.credentials } : {}),
       signal: mine.signal,
     });
 

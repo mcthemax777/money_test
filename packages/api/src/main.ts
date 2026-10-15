@@ -1,5 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
+import type { NextFunction, Request, Response } from 'express';
+import { ACCESS_COOKIE, REFRESH_COOKIE, isCookieMode, readCookie } from './common/session-cookies';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
@@ -18,6 +20,24 @@ async function bootstrap() {
    * nginx 가 헤더를 싣지 않으면 지금과 같다(127.0.0.1).
    */
   app.set('trust proxy', 'loopback');
+
+  /*
+   * CSRF 문 (2026-10-16). 웹은 토큰을 HttpOnly 쿠키로 들어(common/session-cookies), 브라우저가 쿠키를 저절로
+   * 싣는다. 그래서 쿠키로 인증하는 쓰기 요청은 웹이 붙이는 머리글(X-Auth-Mode: cookie)이 있어야 받는다 --
+   * 다른 사이트는 이 머리글을 붙여 보낼 수 없다(CORS 가 미리 묻기에서 막는다). 머리글 토큰(앱·관리 도구)은
+   * 쿠키에 기대지 않으므로 상관없다.
+   */
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const unsafe = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
+    const usesCookie =
+      !req.headers.authorization &&
+      (readCookie(req, ACCESS_COOKIE) !== undefined || readCookie(req, REFRESH_COOKIE) !== undefined);
+    if (unsafe && usesCookie && !isCookieMode(req)) {
+      res.status(403).json({ error: { code: 'CSRF_REJECTED', message: '요청 출처를 확인할 수 없습니다.' } });
+      return;
+    }
+    next();
+  });
 
   app.enableCors({
     origin: process.env.CORS_ORIGIN?.split(',') || 'http://localhost:3000',

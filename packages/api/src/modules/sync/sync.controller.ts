@@ -29,6 +29,7 @@ import {
 } from 'rxjs';
 import { type PushRequest, SyncDto } from '@money/types';
 import { AuthenticatedRequest } from '@/common/authenticated-request';
+import { ACCESS_COOKIE, readCookie } from '@/common/session-cookies';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { SyncEventsService } from '@/modules/realtime/sync-events.service';
 import { holidayCountryOf } from '@money/types';
@@ -130,7 +131,11 @@ export class SyncController {
      * 권한은 흐름 안에서 확인한다. @Sse 핸들러는 Observable 을 곧바로 돌려주어야 해서 여기서 await 할 수
      * 없다. 권한이 없으면 Nest 가 그 오류를 error 이벤트로 내보낸다.
      */
-    const expiresAt = accessTokenExpiry(req.headers.authorization);
+    // 웹은 토큰을 머리글이 아니라 HttpOnly 쿠키로 싣는다 (common/session-cookies).
+    const cookieToken = readCookie(req, ACCESS_COOKIE);
+    const expiresAt = accessTokenExpiry(
+      req.headers.authorization ?? (cookieToken ? `Bearer ${cookieToken}` : undefined),
+    );
     return defer(() => {
       const open = this.openStreams.get(userId) ?? 0;
       if (open >= MAX_STREAMS_PER_USER) {

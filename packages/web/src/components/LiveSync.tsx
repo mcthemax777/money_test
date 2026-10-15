@@ -5,7 +5,6 @@ import { useEffect } from 'react';
 import { notifyMirrorChanged } from '@money/core/data/mirror-events';
 import { openSyncEvents, type StreamingFetch } from '@money/core/data/sync-events';
 import { apiClient } from '@money/core/lib/api-client';
-import { getAccessToken } from '@money/core/lib/auth-tokens';
 import { useAuth } from '@money/core/store/auth';
 import { useProject } from '@money/core/store/project';
 
@@ -31,11 +30,13 @@ export function LiveSync() {
     const listener = openSyncEvents({
       baseUrl: apiClient.baseUrl,
       projectId,
-      // 붙을 때마다 부른다. 만료된 토큰으로 붙으면 401 로 끊기고 다시 붙기를 되풀이한다.
+      // 붙을 때마다 부른다. 만료된 토큰으로 붙으면 401 로 끊기고 다시 붙기를 되풀이한다. 토큰은
+      // HttpOnly 쿠키라 여기서 돌려줄 것이 없고, 미리 갱신만 해 둔다 -- 쿠키가 실린다(credentials).
       getToken: async () => {
         await apiClient.ensureFreshToken();
-        return getAccessToken();
+        return undefined;
       },
+      credentials: 'include',
       /*
        * 브라우저의 fetch 는 스트리밍을 지원한다. EventSource 를 쓰지 않는 이유는
        * 헤더를 붙일 수 없어 토큰을 주소에 실어야 하기 때문이다(접근 로그에 남는다).

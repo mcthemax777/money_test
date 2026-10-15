@@ -12,6 +12,7 @@ import type { EntryDraftDto, EntryDraftSource } from '@money/types';
 
 import { useApiError } from '../lib/api-error';
 import { draftPort, type DraftAction } from '../data/draft-port';
+import { useAuth } from '../store/auth';
 import { refreshInboxCount, useInboxCountStore } from '../store/inbox-count';
 import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
@@ -158,7 +159,9 @@ export function useEntryDrafts(
  */
 export function useInboxCountSync(projectId: string | null): void {
   const mirrorVersion = useMirrorVersion();
+  // 로그인을 확인한 뒤에 센다 (refreshInboxCount 가 그 전에는 세지 않는다).
+  const isAuthenticated = useAuth((state) => state.isAuthenticated);
   useEffect(() => {
     void refreshInboxCount(projectId);
-  }, [projectId, mirrorVersion]);
+  }, [projectId, mirrorVersion, isAuthenticated]);
 }

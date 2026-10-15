@@ -39,7 +39,8 @@ export function useInboxCount(projectId: string | null): number {
  * 후보를 잊는다.
  */
 export async function refreshInboxCount(projectId: string | null): Promise<void> {
-  if (!projectId) return;
+  // 로그인을 확인하기 전(저장해 둔 가계부 id 만 있을 때)에는 세지 않는다 -- 401 만 받는다.
+  if (!projectId || !useAuth.getState().isAuthenticated) return;
   try {
     const rows = await draftPort().list(projectId, { status: 'pending' });
     useInboxCountStore.getState().set(projectId, rows.length);
