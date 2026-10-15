@@ -91,6 +91,8 @@ const validExpense: EntryFormValues = {
   dateKey: '2026-08-20',
   timeKey: '12:00',
   description: '점심',
+  merchant: '',
+  detailedNote: '',
   amount: '9000',
   categoryId: 'c1',
   method: accountValue('a1'),
@@ -133,6 +135,13 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('기본 사람이 채워진다', empty.personId, 'p1');
   eq('프로젝트 타임존의 오늘', empty.dateKey, '2026-08-20');
   eq('그 타임존의 시각 (UTC 03시 = KST 12시)', empty.timeKey, '12:00');
+
+  // ── 1-0. 거래처·메모는 폼이 들고 저장에 싣는다 (2026-10-16 -- 앱이 고치면 웹에서 적은 값이 지워졌다) ──
+  const noted = entryFormToRequest({ ...validExpense, merchant: ' 스타벅스 ', detailedNote: '회의 ' }, KST);
+  eq('거래처를 싣는다 (앞뒤 공백 뗌)', noted.merchant, '스타벅스');
+  eq('메모를 싣는다', noted.detailedNote, '회의');
+  const cleared = entryFormToRequest(validExpense, KST);
+  eq('비우면 싣지 않는다 (고치기에서 지운다)', 'merchant' in cleared || 'detailedNote' in cleared, false);
 
   // ── 1-1. 결제수단 없는 후보를 거래로 (보관함·반복, 2026-10-16 확인) ──
   // 후보는 폼을 거쳐 보통 저장으로 간다. 수단이 비면 막지 않고 미지정 계정으로 들어가야 한다.

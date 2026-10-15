@@ -1321,6 +1321,27 @@ export default function EntryEditor({
             </Field>
           ) : null}
 
+          {/*
+            거래처·메모. 웹 폼과 같은 자리(맨 아래)다. 폼이 이 둘을 들지 않던 동안에는 앱에서 고치면
+            웹에서 적은 값이 지워졌다 (2026-10-16).
+          */}
+          <Field label={t('editor.merchant')}>
+            <TextInput
+              value={values.merchant}
+              onChangeText={(text) => setField('merchant', text)}
+              placeholder={t('editor.merchantPlaceholder')}
+              className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
+            />
+          </Field>
+          <Field label={t('editor.memo')}>
+            <TextInput
+              value={values.detailedNote}
+              onChangeText={(text) => setField('detailedNote', text)}
+              placeholder={t('editor.memoPlaceholder')}
+              className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
+            />
+          </Field>
+
           <Text className="text-xs text-gray-500">{t('entryForm.offlineNote')}</Text>
         </View>
       </Modal>

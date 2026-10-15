@@ -114,6 +114,12 @@ export interface EntryFormValues {
   /** 'HH:mm' */
   timeKey: string;
   description: string;
+  /**
+   * 거래처와 메모 (2026-10-16 -- 앱 폼에도 두었다). 폼이 이 둘을 들지 않으면 고치기가 전표를 통째로
+   * 갈아 끼우면서 웹에서 적어 둔 값을 지운다. 빈 글자면 없는 것이다.
+   */
+  merchant: string;
+  detailedNote: string;
   amount: string;
   categoryId: string;
   /** 지출의 결제수단. 수입은 계좌만 고를 수 있다. */
@@ -263,6 +269,8 @@ export function emptyEntryForm({ personId = '', timeZone, now }: EntryFormDefaul
     dateKey: todayKey(timeZone),
     timeKey: nowTimeKey(timeZone),
     description: '',
+    merchant: '',
+    detailedNote: '',
     amount: '',
     categoryId: '',
     method: '',
@@ -386,6 +394,8 @@ export function entryFormFromItem(
     dateKey: dateKeyOf(item.date, timeZone),
     timeKey: timeInputOf(item.date, timeZone),
     description: item.description,
+    merchant: item.merchant ?? '',
+    detailedNote: item.detailedNote ?? '',
     /*
      * 사용자가 적었던 금액으로 되돌린다.
      *
@@ -753,6 +763,7 @@ export function entryFormFromDraft(
      */
     currency: draft.currency && draft.currency !== options.ledgerCurrency ? draft.currency : '',
     description: draft.description ?? draft.merchant ?? '',
+    merchant: draft.merchant ?? '',
     categoryId: kind === 'expense' || kind === 'income' ? draft.categoryId ?? '' : '',
     personId: draft.personId ?? base.personId,
     /*
@@ -1147,6 +1158,9 @@ export function entryFormToRequest(
     personId: values.personId || null,
     date: zonedFormValueToUtc(values.dateKey, values.timeKey, timeZone).toISOString(),
     description: values.description.trim(),
+    // 비었으면 싣지 않는다 -- 고치기에서 생략은 "비운다"로 읽혀, 지운 칸은 지운 대로 남는다.
+    ...(values.merchant.trim() ? { merchant: values.merchant.trim() } : {}),
+    ...(values.detailedNote.trim() ? { detailedNote: values.detailedNote.trim() } : {}),
     amount: values.amount,
     /*
      * 태그는 언제나 싣는다. 비었어도 뺄 수 없다.
