@@ -16,6 +16,7 @@ import { paybackCountOf, paybackDeleteNote } from '@money/core/hooks/usePaybacks
 import { useQuickAdd } from '@money/core/hooks/useQuickAdd';
 import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import { apiClient } from '@money/core/lib/api-client';
+import { entryWritePort } from '@money/core/data/entry-write-port';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
 import {
@@ -1337,11 +1338,16 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
       let savedId: string | null = editingId;
 
+      /*
+       * 쓰기는 창구(`entryWritePort`)를 지난다 (2026-10-16). 웹의 창구는 서버에 곧바로 쓰므로 동작은
+       * 같고, 앱·목록·카드 정산과 쓰는 길이 하나로 모여 쓰기 규칙이 한곳에서 지켜진다.
+       */
+      const port = entryWritePort();
       if (editingId) {
         // 팝업을 열 때 본 판을 함께 보낸다. 그 사이의 편집을 서버가 알아채는 근거다.
-        await apiClient.updateEntry(editingId, { ...payload, baseHlc });
+        await port.updateEntry(editingId, { ...payload, baseHlc });
       } else {
-        const created = await apiClient.createEntry({ ...payload, projectId: projectId });
+        const created = await port.createEntry({ ...payload, projectId: projectId });
         savedId = created.id;
       }
 
@@ -1899,7 +1905,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     if (!window.confirm([t('account.deleteConfirm'), note].filter(Boolean).join('\n'))) return;
     try {
       setIsSubmitting(true);
-      await apiClient.deleteEntry(entry.id);
+      await entryWritePort().deleteEntry(entry.id);
       await onEntryChange();
     } catch (err: any) {
       const errorMsg = messageOf(err, 'editor.deleteFailed');
