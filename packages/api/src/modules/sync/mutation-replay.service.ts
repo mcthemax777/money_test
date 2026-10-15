@@ -375,6 +375,25 @@ export class MutationReplayService {
      */
     if (!seen) return { kind: 'seqTaken' };
 
+    /*
+     * 같은 명령 id 가 다른 가계부·다른 기기의 것이다 (2026-10-16). 명령 id 는 기기가 뽑는 값이라 정상
+     * 경로에는 없다 -- 남의 id 를 알아낸 요청이다. 그 명령의 결과를 돌려주지도, 넘겨받지도 않는다.
+     */
+    if (seen.projectId !== projectId || seen.clientId !== clientId) {
+      this.logger.warn(
+        `남의 명령 id ${mutation.mutationId} (가계부 ${projectId}, 기기 ${clientId}) -- 거절한다`,
+      );
+      return {
+        kind: 'settled',
+        result: {
+          mutationId: mutation.mutationId,
+          status: 'rejected',
+          code: 'MUTATION_ID_TAKEN',
+          error: '이 명령 id 는 이미 다른 기기가 썼습니다.',
+        },
+      };
+    }
+
     if (seen.status === 'running') {
       const stale = new Date(Date.now() - CLAIM_TIMEOUT_MS);
       if (seen.claimedAt > stale) return { kind: 'running' };

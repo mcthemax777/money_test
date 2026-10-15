@@ -31,6 +31,12 @@ const MAX_SHORT = 200;
 /** 기기가 읽은 결과의 크기 상한. 값 몇 개라 이 정도면 넉넉하다. */
 const MAX_PARSED_JSON = 2000;
 const KINDS: EntryKind[] = ['expense', 'income', 'transfer'];
+/**
+ * 한 사람이 하루(지난 24시간)에 담을 수 있는 표본 수 (2026-10-16). 돈 알림은 많아야 하루 수십 건이라
+ * 넉넉하다. 한도가 없으면 한 계정이 요청마다 200건 × 4,000자를 끝없이 밀어 넣어 디스크를 채울 수 있다.
+ * 보관 기한은 두지 않는다 -- 표본은 규칙을 배우려고 무기한 모은다(관리 도구의 결정).
+ */
+const DAILY_SAMPLE_LIMIT = 2000;
 
 type RuleRow = Prisma.NotificationRuleGetPayload<object>;
 
@@ -75,7 +81,23 @@ export class NotificationSamplesService {
     if (invalid > 0) this.logger.warn(`알림 표본 ${invalid}건의 모양이 어긋나 건너뛰었습니다 (user=${userId}).`);
     if (rows.length === 0) return { created: 0, skipped: items.length };
 
-    const { count } = await this.prisma.notificationSample.createMany({ data: rows, skipDuplicates: true });
+    /*
+     * 하루 한도. 넘친 몫은 버리고 요청은 받는다 -- 거절하면 기기가 같은 표본을 버퍼에 남긴 채 다시 보낸다.
+     */
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const recent = await this.prisma.notificationSample.count({
+      where: { userId, createdAt: { gte: since } },
+    });
+    const room = Math.max(DAILY_SAMPLE_LIMIT - recent, 0);
+    if (room < rows.length) {
+      this.logger.warn(`알림 표본 하루 한도를 넘어 ${rows.length - room}건을 버렸습니다 (user=${userId}).`);
+    }
+    if (room === 0) return { created: 0, skipped: items.length };
+
+    const { count } = await this.prisma.notificationSample.createMany({
+      data: rows.slice(0, room),
+      skipDuplicates: true,
+    });
     return { created: count, skipped: items.length - count };
   }
 

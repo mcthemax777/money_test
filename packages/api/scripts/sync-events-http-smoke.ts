@@ -157,6 +157,43 @@ runSmoke('sync-events-http', async (ctx) => {
    * 들어가는 상황이다. **레디스를 두는 이유가 이 검사 하나에 들어 있다** -- 없으면
    * A 의 신호가 A 안에서만 돌고 B 의 화면은 다음 동기화까지 모른다.
    */
+  /*
+   * ── 토큰이 끝나면 연결이 닫힌다 (2026-10-16) ──
+   *
+   * 붙을 때 쓴 액세스 토큰이 끝나는 순간 서버가 흐름을 닫는다. 기기는 곧바로 다시 붙으며 새 토큰을 받는다.
+   * 예전에는 만료된 토큰으로도 연결이 계속 이어졌다.
+   */
+  {
+    const shortToken = jwtService.sign(
+      { sub: user.id, email: user.email, type: 'access' },
+      { expiresIn: '3s' },
+    );
+    const controller = new AbortController();
+    const started = Date.now();
+    const guard = setTimeout(() => controller.abort(), 15_000);
+    let endedByServer = false;
+    try {
+      const res = await fetch(`${BASE}/sync/events${q}`, {
+        headers: { Authorization: `Bearer ${shortToken}` },
+        signal: controller.signal,
+      });
+      const reader = res.body!.getReader();
+      for (;;) {
+        const { done } = await reader.read();
+        if (done) {
+          endedByServer = true;
+          break;
+        }
+      }
+    } catch {
+      // 15초 안에 닫히지 않아 우리가 끊었다.
+    } finally {
+      clearTimeout(guard);
+    }
+    ctx.check('만료되는 토큰의 연결은 서버가 닫는다', endedByServer, true);
+    ctx.check('토큰이 끝날 무렵 닫힌다 (10초 안)', Date.now() - started < 10_000, true);
+  }
+
   const secondBase = process.env.SECOND_BASE?.trim();
   if (!secondBase) {
     console.log('\nSECOND_BASE 가 없어 인스턴스 사이 검사는 건너뜁니다.');

@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Header,
+  HttpException,
   MessageEvent,
   Post,
   Query,
@@ -12,7 +13,20 @@ import {
 } from '@nestjs/common';
 import { AuthGuard } from '@nestjs/passport';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
-import { Observable, from, interval, map, merge, switchMap } from 'rxjs';
+import {
+  Observable,
+  defer,
+  filter,
+  finalize,
+  from,
+  interval,
+  map,
+  merge,
+  switchMap,
+  takeUntil,
+  throwError,
+  timer,
+} from 'rxjs';
 import { type PushRequest, SyncDto } from '@money/types';
 import { AuthenticatedRequest } from '@/common/authenticated-request';
 import { ProjectAccessService } from '@/common/project-access.guard';
@@ -102,20 +116,77 @@ export class SyncController {
     @Request() req: AuthenticatedRequest,
     @Query('projectId') projectIdParam?: string,
   ): Observable<MessageEvent> {
+    const userId = req.user.id;
     /*
-     * 권한은 흐름 안에서 확인한다. @Sse 핸들러는 Observable 을 곧바로 돌려주어야 해서
-     * 여기서 await 할 수 없다. 권한이 없으면 Nest 가 그 오류를 error 이벤트로 내보내고,
-     * 기기는 그것을 보고 다시 붙기를 그만둔다.
+     * 붙어 있는 동안에도 지킬 것 셋 (2026-10-16). 예전에는 붙는 순간에만 확인해, 가계부에서 내보내진
+     * 사람도 연결을 쥔 채 변경 신호를 계속 받았고, 만료된 토큰으로도 연결이 이어졌다.
+     *
+     *   - 멤버 다시 확인: RECHECK_MS 마다. 빠졌으면 오류로 끝낸다.
+     *   - 토큰 만료: 붙을 때 쓴 액세스 토큰이 끝나는 순간 연결을 닫는다. 기기는 곧바로 다시 붙으며
+     *     토큰을 새로 받는다(core sync-events 의 getToken) -- 사람에게는 끊김이 보이지 않는다.
+     *   - 사람당 연결 수: MAX_STREAMS_PER_USER 를 넘으면 받지 않는다. 열기만 하고 닫지 않는 클라이언트가
+     *     서버의 연결을 다 쥐지 못하게.
+     *
+     * 권한은 흐름 안에서 확인한다. @Sse 핸들러는 Observable 을 곧바로 돌려주어야 해서 여기서 await 할 수
+     * 없다. 권한이 없으면 Nest 가 그 오류를 error 이벤트로 내보낸다.
      */
-    return from(this.projectAccess.resolveAndVerifyProjectId(req.user.id, projectIdParam)).pipe(
-      switchMap((projectId) =>
-        merge(
-          from(this.syncService.currentVersion(projectId)).pipe(map(toVersionMessage)),
-          this.syncEvents.watch(projectId).pipe(map((event) => toVersionMessage(event.version))),
-          interval(KEEPALIVE_MS).pipe(map(() => ({ type: 'ping', data: '' }) as MessageEvent)),
+    const expiresAt = accessTokenExpiry(req.headers.authorization);
+    return defer(() => {
+      const open = this.openStreams.get(userId) ?? 0;
+      if (open >= MAX_STREAMS_PER_USER) {
+        return throwError(() => new HttpException('실시간 연결이 너무 많습니다.', 429));
+      }
+      this.openStreams.set(userId, open + 1);
+      const verify = () => this.projectAccess.resolveAndVerifyProjectId(userId, projectIdParam);
+
+      return from(verify()).pipe(
+        switchMap((projectId) =>
+          merge(
+            from(this.syncService.currentVersion(projectId)).pipe(map(toVersionMessage)),
+            this.syncEvents.watch(projectId).pipe(map((event) => toVersionMessage(event.version))),
+            interval(KEEPALIVE_MS).pipe(map(() => ({ type: 'ping', data: '' }) as MessageEvent)),
+            // 내보낼 것은 없다. 다시 확인이 실패하면 그 오류가 흐름을 끝낸다.
+            interval(RECHECK_MS).pipe(
+              switchMap(() => from(verify())),
+              filter((): boolean => false),
+              map(() => ({ type: 'ping', data: '' }) as MessageEvent),
+            ),
+          ),
         ),
-      ),
-    );
+        takeUntil(timer(expiresAt ? Math.max(expiresAt - Date.now(), 0) : MAX_STREAM_MS)),
+        finalize(() => {
+          const left = (this.openStreams.get(userId) ?? 1) - 1;
+          if (left > 0) this.openStreams.set(userId, left);
+          else this.openStreams.delete(userId);
+        }),
+      );
+    });
+  }
+
+  /** 사람마다 지금 열린 실시간 연결 수. 한 서버 안에서만 센다. */
+  private readonly openStreams = new Map<string, number>();
+}
+
+/** 붙어 있는 동안 멤버인지 다시 확인하는 간격. */
+const RECHECK_MS = 5 * 60 * 1000;
+/** 한 사람이 한 서버에 동시에 열 수 있는 실시간 연결 수. 기기·탭 몇 개면 넉넉하다. */
+const MAX_STREAMS_PER_USER = 10;
+/** 토큰 만료를 읽지 못했을 때 연결을 닫는 상한. 다시 붙으면 그만이다. */
+const MAX_STREAM_MS = 60 * 60 * 1000;
+
+/**
+ * 붙을 때 쓴 액세스 토큰이 끝나는 때(ms). 가드가 이미 서명을 확인한 토큰이라 몸통만 읽는다.
+ * 읽을 수 없으면 null.
+ */
+function accessTokenExpiry(authorization: string | undefined): number | null {
+  const token = authorization?.startsWith('Bearer ') ? authorization.slice(7) : null;
+  const body = token?.split('.')[1];
+  if (!body) return null;
+  try {
+    const payload = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as { exp?: unknown };
+    return typeof payload.exp === 'number' ? payload.exp * 1000 : null;
+  } catch {
+    return null;
   }
 }
 
