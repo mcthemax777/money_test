@@ -157,7 +157,15 @@ runSmoke('card-usage', async (ctx) => {
   // 카드 화면의 "대금 기록하기"와 거래 추가의 이체는 같은 전표를 만든다.
   // 사용자가 어느 입구로 들어오든 결과가 하나로 모여야 한다.
   const liability = card.liabilityAccountId!;
-  const debtBeforeTransfer = Number(await outstanding());
+  /*
+   * 부채 계정에 쌓인 전부(미래 날짜 포함)로 본 남은 대금. `outstanding()` 은 지금 시각까지의 거래만
+   * 센다(730107d, common/balance-as-of) -- 아래 이체는 2026-11 날짜라 그 전에 돌리면 아직 오지 않은
+   * 거래로 빠져 차이가 0 이 된다. 여기서 보려는 것은 "이체가 대금 결제·환불로 부채를 줄이고 늘리는가"
+   * 이므로 날짜와 상관없는 전부의 합으로 견준다 (2026-10-16).
+   */
+  const debtInFull = async () =>
+    -Number((await ctx.prisma.account.findUniqueOrThrow({ where: { id: liability } })).balance);
+  const debtBeforeTransfer = await debtInFull();
 
   await entries.createEntry(uid, {
     personId: person.id, kind: 'transfer', description: '통장에서 카드로',
@@ -165,7 +173,7 @@ runSmoke('card-usage', async (ctx) => {
     accountId: bank.id, toAccountId: liability,
   } as any, pid);
   ctx.check('통장 -> 카드는 대금 결제',
-    Number(await outstanding()) - debtBeforeTransfer, -5000);
+    (await debtInFull()) - debtBeforeTransfer, -5000);
 
   const payRow = (await entries.getEntries(uid, { cardId: card.id }, pid)).data
     .find((e) => e.date.startsWith('2026-11-05'))!;
@@ -178,7 +186,7 @@ runSmoke('card-usage', async (ctx) => {
     accountId: liability, toAccountId: bank.id,
   } as any, pid);
   ctx.check('카드 -> 통장은 환불 입금',
-    Number(await outstanding()) - debtBeforeTransfer, -3000);
+    (await debtInFull()) - debtBeforeTransfer, -3000);
 
   const refundViaTransfer = (await entries.getEntries(uid, { cardId: card.id }, pid)).data
     .find((e) => e.date.startsWith('2026-11-06'))!;
