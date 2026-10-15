@@ -115,4 +115,21 @@ runSmoke('entry-sheet', async (ctx) => {
   // 기간으로 자르기
   const september10 = await sheet.export(uid, { startDate: '2026-09-10', endDate: '2026-09-14' }, first.id);
   ctx.check('기간으로 자른 내보내기', september10.map((row) => row.kind).join(','), '이체,카드대금');
+  // ── 4. 사람 칸이 비면 미지정 (2026-10-16 사용자 결정, 거래 폼과 같은 규칙) ──
+  const blank = await sheet.import(uid, {
+    rows: [
+      { row: 2, date: '2026-09-29', kind: '지출', amount: '7000', parentCategory: '식비', payment: '월급통장', description: '사람 없는 점심' },
+      { row: 3, date: '2026-09-29', kind: '지출', amount: '3000', parentCategory: '식비', payment: '새 지갑', paymentType: '현금', description: '사람 없는 새 수단' },
+    ],
+  }, first.id);
+  ctx.check('사람 없는 행도 들어간다', `${blank.created} ${blank.skipped.length}`, '2 0');
+  const noPerson = await ctx.prisma.journalEntry.findFirstOrThrow({
+    where: { projectId: first.id, description: '사람 없는 점심' },
+  });
+  ctx.check('비었으면 사람은 미지정', noPerson.personId, null);
+  const me = await ctx.prisma.person.findFirstOrThrow({ where: { projectId: first.id, name: '나' } });
+  const wallet = await ctx.prisma.account.findFirstOrThrow({ where: { projectId: first.id, name: '새 지갑' } });
+  ctx.check('새 수단의 주인은 기본 구성원', wallet.ownerId, me.id);
+  const blankExport = (await sheet.export(uid, { startDate: '2026-09-29', endDate: '2026-09-29' }, first.id));
+  ctx.check('내보낼 때 사람 칸이 빈다', blankExport.every((row) => !row.person), true);
 });

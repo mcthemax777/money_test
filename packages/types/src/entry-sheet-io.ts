@@ -371,15 +371,14 @@ class EntryBuilder {
     };
   }
 
-  private async personOf(name: string | undefined): Promise<string> {
+  /**
+   * 거래한 사람. 비었으면 미지정(null)이다 -- 거래 폼이 사람을 묻지 않고 비우면 미지정으로 저장하는 것과
+   * 같은 규칙이다(2026-10-16 사용자 결정, 예전에는 "나"로 채웠다). 내보낼 때도 빈 칸으로 나가 되돌아온다.
+   */
+  private async personOf(name: string | undefined): Promise<string | null> {
     const context = this.context;
     const wanted = clean(name);
-    if (!wanted) {
-      if (context.myPersonId) return context.myPersonId;
-      const first = context.people.values().next().value;
-      if (first) return first;
-      throw new EntrySheetRowError('구성원이 비었고 이 가계부에 "나"로 고른 구성원도 없습니다. 구성원 열을 채워 주세요.');
-    }
+    if (!wanted) return null;
     const found = context.people.get(nameKey(wanted));
     if (found) return found;
 
@@ -389,13 +388,26 @@ class EntryBuilder {
     return id;
   }
 
+  /**
+   * 새로 만드는 자산의 주인. 거래한 사람이 비었으면(미지정) "나", 없으면 첫 구성원이다 -- 계좌에는
+   * 주인이 있어야 한다.
+   */
+  private defaultOwner(): string {
+    const context = this.context;
+    if (context.myPersonId) return context.myPersonId;
+    const first = context.people.values().next().value;
+    if (first) return first;
+    throw new EntrySheetRowError('새 결제수단의 주인을 정할 수 없습니다. 이 가계부에 구성원이 없으니 구성원 열을 채워 주세요.');
+  }
+
   /** 결제수단·받는 자산. 있던 것이면 그대로, 없으면 계획(`planAsset`)대로 만든다. */
-  private async assetOf(plan: AssetPlan, ownerId: string): Promise<Asset> {
+  private async assetOf(plan: AssetPlan, personId: string | null): Promise<Asset> {
     const context = this.context;
     if (plan.existing) return plan.existing;
     // 같은 거래 안에서 방금 만든 것일 수 있다(한 행의 결제수단과 받는 자산이 같은 새 이름).
     const again = context.assets.get(nameKey(plan.name));
     if (again) return again;
+    const ownerId = personId ?? this.defaultOwner();
 
     let asset: Asset;
     if (plan.kind === 'card') {
