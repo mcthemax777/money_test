@@ -9,16 +9,11 @@ import { parseBudgetSettingsQuery, type BudgetSettingRow } from '@money/core/lib
 import { currentYearMonth } from '@money/core/lib/datetime';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency } from '@money/core/lib/money';
-import {
-  useCanEdit,
-  useProjectDisplayCurrency,
-  useProjectTimeZone,
-} from '@money/core/store/project';
+import { useCanEdit, useProjectDisplayCurrency, useProjectTimeZone, useProject } from '@money/core/store/project';
 import BudgetEditModal from '@/components/BudgetEditModal';
 import MonthHeader from '@/components/MonthHeader';
 import PageHeader from '@/components/PageHeader';
 import TypeTabs from '@/components/TypeTabs';
-import { useProjectGuard } from '@/hooks/useProjectGuard';
 
 /** 들여쓰기와 굵기. 합계가 가장 굵고 소분류는 한 칸 들어간다. */
 const LEVEL_CLASS: Record<BudgetSettingRow['level'], string> = {
@@ -49,7 +44,7 @@ function BudgetSettings() {
   const { t } = useTranslation();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const projectId = useProjectGuard();
+  const projectId = useProject((state) => state.selectedProjectId);
   const timeZone = useProjectTimeZone();
   const displayCurrency = useProjectDisplayCurrency();
   const canEdit = useCanEdit();

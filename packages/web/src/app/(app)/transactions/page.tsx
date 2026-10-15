@@ -1,7 +1,7 @@
 'use client';
 
 import TransactionsView from '@/components/TransactionsView';
-import { useProjectGuard } from '@/hooks/useProjectGuard';
+import { useProject } from '@money/core/store/project';
 
 /**
  * 거래 화면.
@@ -14,7 +14,7 @@ import { useProjectGuard } from '@/hooks/useProjectGuard';
  * 없다 -- 메뉴에 있는 화면이라 ← 를 세우지 않는다.
  */
 export default function TransactionsPage() {
-  const selectedProjectId = useProjectGuard();
+  const selectedProjectId = useProject((state) => state.selectedProjectId);
 
   return <TransactionsView projectId={selectedProjectId} />;
 }

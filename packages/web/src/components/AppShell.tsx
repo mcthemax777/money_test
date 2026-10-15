@@ -34,7 +34,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const { t, locale } = useTranslation();
   const { isAuthenticated, isInitializing } = useAuth();
   // 프로젝트 목록과 첫 선택. 앱의 껍데기도 같은 훅을 쓴다.
-  useProjectBootstrap();
+  const { hasNoProject } = useProjectBootstrap();
   const selectedProjectId = useProject((state) => state.selectedProjectId);
   // 아래 탭·사이드바의 거래 칸에 띄울 보관함 수. 둘이 함께 읽으므로 여기서 한 번만 센다.
   useInboxCountSync(selectedProjectId);
@@ -44,6 +44,15 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       router.push('/login');
     }
   }, [isInitializing, isAuthenticated, router]);
+
+  /*
+   * 참여 중인 가계부가 없으면 시작 화면으로 보낸다. 그러지 않으면 아무것도 불러올 수 없는 채로 로딩에
+   * 갇힌다. 예전에는 화면마다 useProjectGuard 가 이 일과 목록 받기를 따로 해, 탭을 옮길 때마다 목록과
+   * 사용자를 다시 받았다 (2026-10-16 -- 껍데기의 useProjectBootstrap 하나로 모았다).
+   */
+  useEffect(() => {
+    if (hasNoProject) router.push('/start');
+  }, [hasNoProject, router]);
 
   /*
    * 읽지 않은 문의 답과 보관함 수를 센다. 아래 탭·사이드바가 이 수를 띄우므로 어느 화면에서

@@ -43,7 +43,7 @@ import { useWeekStart } from '@money/core/store/week-start';
 import { formatCurrency } from '@money/core/lib/money';
 import { useEntryDrafts } from '@money/core/hooks/useEntryDrafts';
 import { useRecurringRules } from '@money/core/hooks/useRecurringRules';
-import { myPersonIdOf, useCanEdit, useProjectTimeZone } from '@money/core/store/project';
+import { myPersonIdOf, useCanEdit, useProjectTimeZone, useProject } from '@money/core/store/project';
 import { homeDataPort } from '@money/core/data/home-port';
 import { draftPort } from '@money/core/data/draft-port';
 import {
@@ -70,7 +70,6 @@ import EntryEditor, {
 import { recognizeCapture, releaseCaptureWorker, type OcrProgress } from '@/lib/capture-ocr';
 import PageHeader from '@/components/PageHeader';
 import PageLoading from '@/components/PageLoading';
-import { useProjectGuard } from '@/hooks/useProjectGuard';
 
 /**
  * 거래 추가 팝업이 고를 목록 (통장·카드·분류·구성원).
@@ -180,7 +179,7 @@ const KIND_KEY: Record<string, MessageKey> = {
 
 export default function InboxPage() {
   const { t } = useTranslation();
-  const selectedProjectId = useProjectGuard();
+  const selectedProjectId = useProject((state) => state.selectedProjectId);
   const timeZone = useProjectTimeZone();
   const canEdit = useCanEdit();
 

@@ -9,11 +9,7 @@ import { currentYearMonth, shiftYearMonth } from '@money/core/lib/datetime';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useHomeData } from '@money/core/hooks/useHomeData';
 import { usePeriodSwipe } from '@/hooks/usePeriodSwipe';
-import { useProjectGuard } from '@/hooks/useProjectGuard';
-import {
-  useCanEdit,
-  useProjectTimeZone,
-} from '@money/core/store/project';
+import { useCanEdit, useProjectTimeZone, useProject } from '@money/core/store/project';
 import { budgetSettingsHref, tagBudgetSettingsHref } from '@money/core/lib/budget';
 import { useUserFilter } from '@money/core/store/user-filter';
 import EntryEditor, {
@@ -51,7 +47,7 @@ import { ScreenVisibility } from '@/components/ScreenVisible';
  */
 export default function HomePage() {
   const { t } = useTranslation();
-  const selectedProjectId = useProjectGuard();
+  const selectedProjectId = useProject((state) => state.selectedProjectId);
   const { selectedPersonIds, togglePersonId } = useUserFilter();
   const timeZone = useProjectTimeZone();
   const router = useRouter();
