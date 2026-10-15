@@ -243,7 +243,7 @@ export class MutationReplayService {
     mutation: Mutation,
   ): Promise<MutationResult> {
     mutation = withSaneClock(mutation);
-    const claim = await this.claim(projectId, clientId, mutation);
+    const claim = await this.claim(userId, projectId, clientId, mutation);
 
     if (claim.kind === 'settled') return claim.result;
 
@@ -283,7 +283,7 @@ export class MutationReplayService {
        * 그 기기의 모든 변경이 조용히 서버에 닿지 않는다.
        */
       const last = await this.prisma.mutationLog.aggregate({
-        where: { clientId },
+        where: { userId, clientId },
         _max: { clientSeq: true },
       });
 
@@ -344,6 +344,7 @@ export class MutationReplayService {
    * 유일 제약이 한쪽만 통과시킨다 -- 판정은 데이터베이스가 하고, 진 쪽은 재생하지 않는다.
    */
   private async claim(
+    userId: string,
     projectId: string,
     clientId: string,
     mutation: Mutation,
@@ -354,6 +355,7 @@ export class MutationReplayService {
         {
           mutationId: mutation.mutationId,
           projectId,
+          userId,
           clientId,
           clientSeq: mutation.clientSeq,
           kind: mutation.kind,
@@ -370,8 +372,8 @@ export class MutationReplayService {
     });
 
     /*
-     * 행이 없는데 넣지도 못했다면 걸린 제약은 (clientId, clientSeq) 쪽이다.
-     * 같은 순번을 다른 명령 id 가 이미 썼다.
+     * 행이 없는데 넣지도 못했다면 걸린 제약은 (userId, clientId, clientSeq) 쪽이다.
+     * 이 사람의 이 기기에서 같은 순번을 다른 명령 id 가 이미 썼다.
      */
     if (!seen) return { kind: 'seqTaken' };
 
@@ -379,9 +381,11 @@ export class MutationReplayService {
      * 같은 명령 id 가 다른 가계부·다른 기기의 것이다 (2026-10-16). 명령 id 는 기기가 뽑는 값이라 정상
      * 경로에는 없다 -- 남의 id 를 알아낸 요청이다. 그 명령의 결과를 돌려주지도, 넘겨받지도 않는다.
      */
-    if (seen.projectId !== projectId || seen.clientId !== clientId) {
+    // 보낸 사람이 비어 있는 행은 사람별 순번 이전의 것이다(함께 쓰는 가계부). 가계부·기기만 맞으면 받는다.
+    const otherUser = seen.userId !== null && seen.userId !== userId;
+    if (seen.projectId !== projectId || seen.clientId !== clientId || otherUser) {
       this.logger.warn(
-        `남의 명령 id ${mutation.mutationId} (가계부 ${projectId}, 기기 ${clientId}) -- 거절한다`,
+        `남의 명령 id ${mutation.mutationId} (가계부 ${projectId}, 기기 ${clientId}, 사람 ${userId}) -- 거절한다`,
       );
       return {
         kind: 'settled',

@@ -1052,6 +1052,11 @@ model MutationLog {
   /// 기기가 만든 명령 id (UUIDv7). 재전송해도 같은 값이다.
   mutationId     String @id
   projectId      String
+  /// 명령을 보낸 사람. 순번은 이 사람의 기기 안에서만 겹치지 않으면 된다 (2026-10-16 -- 예전에는 순번
+  /// 제약이 전역이라 남의 기기 id 를 알면 그 기기의 순번을 먼저 차지할 수 있었다). 그 전의 행은 비어
+  /// 있을 수 있다: 혼자 쓰는 가계부의 행만 그 사람으로 채웠고, 함께 쓰는 가계부는 누가 보냈는지 몰라
+  /// 비워 두었다. 빈 행은 순번 제약에 걸리지 않는다(Postgres 는 NULL 을 서로 다르게 본다).
+  userId         String?
   clientId       String
   /// 그 기기 안에서 1씩 오르는 번호. 순서를 지켜 적용하는 근거다.
   clientSeq      Int
@@ -1071,7 +1076,7 @@ model MutationLog {
 
   createdAt DateTime @default(now())
 
-  @@unique([clientId, clientSeq])
+  @@unique([userId, clientId, clientSeq])
   @@index([projectId, createdAt])
   /// 죽은 요청이 잡아 둔 행을 골라 넘겨받을 때 쓴다.
   @@index([status, claimedAt])

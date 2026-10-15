@@ -390,6 +390,7 @@ runSmoke('sync-push', async (ctx) => {
     data: {
       mutationId: runningMutation.mutationId,
       projectId: pid,
+      userId: uid,
       clientId: CLIENT,
       clientSeq: runningMutation.clientSeq,
       kind: runningMutation.kind,
@@ -726,4 +727,31 @@ runSmoke('sync-push', async (ctx) => {
   ctx.check('확정: 없는 거래가 섞이면 거절', statusOf(restatedGhostResult.results, restatedGhost.mutationId), 'rejected');
   ctx.check('확정: 거절이면 나머지도 그대로다',
     (await cardLedger.listPendingRates(credit.id, uid)).items.length, 1);
+  // ── 순번은 사람마다 따로다 (2026-10-16) ──
+  // 예전에는 (기기, 순번)이 전역이라, 남의 기기 id 를 알면 그 기기의 순번을 먼저 차지할 수 있었다.
+  const other = await ctx.createUser();
+  const pushAs = (userId: string, mutations: Mutation[]) =>
+    replay.push(userId, { projectId: pid, clientId: CLIENT, mutations });
+  const usedSeq = seq;
+  const sameSeqOther = expenseMutation('019273aa-0000-7000-8000-0000000000c1', '1000', T0 + 9_200_000, {
+    clientSeq: usedSeq,
+  });
+  ctx.check('순번: 다른 사람은 같은 기기 id·순번을 써도 적용된다',
+    statusOf((await pushAs(other.id, [sameSeqOther])).results, sameSeqOther.mutationId), 'applied');
+
+  const sameSeqMine = expenseMutation('019273aa-0000-7000-8000-0000000000c2', '1000', T0 + 9_300_000, {
+    clientSeq: usedSeq,
+  });
+  const mineAgain = (await push([sameSeqMine])).results[0];
+  ctx.check('순번: 같은 사람이 순번을 다시 쓰면 거절', mineAgain?.code, 'CLIENT_SEQ_TAKEN');
+  ctx.check('순번: 마지막 순번은 그 사람 것만 센다', mineAgain?.lastClientSeq, usedSeq);
+
+  // 남의 명령 id 를 다시 보내면 그 결과를 돌려주지 않는다.
+  const stolen = (await pushAs(other.id, [{ ...restatedLater, clientSeq: usedSeq + 50 }])).results[0];
+  ctx.check('순번: 남의 명령 id 는 거절', stolen?.code, 'MUTATION_ID_TAKEN');
+
+  // 보낸 사람이 빈 옛 행(함께 쓰는 가계부)은 가계부·기기만 맞으면 재전송으로 받는다.
+  await ctx.prisma.mutationLog.update({ where: { mutationId: restatedLater.mutationId }, data: { userId: null } });
+  ctx.check('순번: 보낸 사람이 빈 옛 행은 재전송으로 받는다',
+    statusOf((await pushAs(other.id, [restatedLater])).results, restatedLater.mutationId), 'duplicate');
 });
