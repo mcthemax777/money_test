@@ -281,11 +281,12 @@ export default function CardUsageChart({
                   picked ? 'bg-blue-50' : onSelectPeriod ? 'hover:bg-gray-50' : ''
                 }`}
               >
-                <span className={`text-xs ${picked ? 'text-blue-700' : 'text-gray-500'}`}>
+                {/* 기간·금액 글자는 원형 아래 목록의 분류명·금액과 같다 (2026-10-16 사용자 요청). */}
+                <span className={`truncate text-sm ${picked ? 'text-blue-700' : 'text-gray-800'}`}>
                   {bar.range}
                 </span>
                 <span
-                  className={`text-sm font-medium tabular-nums ${
+                  className={`text-sm font-medium ${
                     picked ? 'text-blue-700' : 'text-gray-900'
                   }`}
                 >

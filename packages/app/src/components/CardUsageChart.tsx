@@ -311,8 +311,9 @@ export default function CardUsageChart({
                 chosen ? 'bg-blue-50' : ''
               }`}
             >
+              {/* 기간·금액 글자는 원형 아래 목록의 분류명·금액과 같다 (2026-10-16 사용자 요청). */}
               <Text
-                className={`shrink text-xs ${chosen ? 'text-blue-700' : 'text-gray-500'}`}
+                className={`shrink text-sm ${chosen ? 'text-blue-700' : 'text-gray-800'}`}
                 numberOfLines={1}
               >
                 {bar.range}
