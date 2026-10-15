@@ -44,8 +44,14 @@ export function isCookieMode(req: Pick<Request, 'headers'>): boolean {
   return req.headers?.[AUTH_MODE_HEADER] === 'cookie';
 }
 
-/** https 로 왔는가 (nginx 뒤라 넘겨준 머리글도 본다 -- main.ts 의 trust proxy). */
+/**
+ * 쿠키에 Secure 를 붙이는가. 운영(NODE_ENV=production)에서는 늘 붙인다 -- 배포 서버의 nginx 가
+ * X-Forwarded-Proto 를 넘기지 않아 요청만 보고는 https 인지 알 수 없었다(2026-10-16 배포에서 확인).
+ * 운영은 https 로만 열리므로 붙여도 잃는 것이 없다. 개발(http)에서는 붙이면 브라우저가 쿠키를 받지
+ * 않으므로 요청을 보고 정한다.
+ */
 function isSecure(req: Request): boolean {
+  if (process.env.NODE_ENV === 'production') return true;
   return req.secure || req.headers['x-forwarded-proto'] === 'https';
 }
 
