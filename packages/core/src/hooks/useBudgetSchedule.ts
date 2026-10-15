@@ -7,6 +7,7 @@ import { shiftYearMonth } from '../lib/datetime';
 import { useTranslation } from '../lib/i18n';
 import { toAmountString, toNumber } from '../lib/money';
 import { settingsWritePort } from '../data/settings-write-port';
+import { useMirrorVersion } from './useMirrorVersion';
 
 /** 한 번에 보여 주는 달 수. 1년이면 "지금 어떻게 세팅돼 있나"를 훑기에 충분하다. */
 export const BUDGET_SCHEDULE_MONTHS = 12;
@@ -79,9 +80,11 @@ export function useBudgetSchedule({
     }
   }, [projectId, categoryId, tagId, type, windowStart, t]);
 
+  // 다른 기기·사람이 예산을 고치면(실시간 신호, 앱은 동기화) 열어 둔 목록도 다시 받는다.
+  const mirrorVersion = useMirrorVersion();
   useEffect(() => {
     load();
-  }, [load, reloadToken]);
+  }, [load, reloadToken, mirrorVersion]);
 
   const startEdit = (row: BudgetDto.ScheduleMonth) => {
     setEditingMonth(row.yearMonth);
