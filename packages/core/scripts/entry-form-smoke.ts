@@ -32,6 +32,7 @@ import {
   checkEntryForm,
   defaultCountsPerformance,
   emptyEntryForm,
+  entryFormFromDraft,
   entryFormFromItem,
   entryFormToRequest,
   installmentBaseAmount,
@@ -132,6 +133,27 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('기본 사람이 채워진다', empty.personId, 'p1');
   eq('프로젝트 타임존의 오늘', empty.dateKey, '2026-08-20');
   eq('그 타임존의 시각 (UTC 03시 = KST 12시)', empty.timeKey, '12:00');
+
+  // ── 1-1. 결제수단 없는 후보를 거래로 (보관함·반복, 2026-10-16 확인) ──
+  // 후보는 폼을 거쳐 보통 저장으로 간다. 수단이 비면 막지 않고 미지정 계정으로 들어가야 한다.
+  for (const kind of ['expense', 'income'] as const) {
+    const fromDraft = {
+      ...entryFormFromDraft(
+        {
+          kind, amount: '12000', currency: null, occurredAt: '2026-08-20T03:00:00Z',
+          merchant: '편의점', description: null, installmentMonths: null, personId: null,
+          categoryId: 'c1', accountId: null, cardId: null,
+        },
+        { personId: 'p1', timeZone: KST, ledgerCurrency: 'KRW' },
+      ),
+      lineKey: 'line-draft',
+    };
+    eq(`후보(${kind}): 수단 칸이 빈다`, fromDraft.method, '');
+    eq(`후보(${kind}): 검증을 통과한다`, checkEntryForm(fromDraft, CARD_LIABILITY)?.code ?? null, null);
+    const request = entryFormToRequest(fromDraft, KST) as { accountId?: string | null; cardId?: string | null };
+    eq(`후보(${kind}): 요청에 수단이 없다 (서버·사본 조립이 미지정 계정에 붙인다)`,
+      Boolean(request.accountId) || Boolean(request.cardId), false);
+  }
 
   // ── 2. 검증 ──
   eq('맞는 값은 통과', checkEntryForm(validExpense, CARD_LIABILITY), null);
