@@ -1,5 +1,12 @@
 import { randomUUID } from 'crypto';
-import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/common';
+import {
+  Injectable,
+  BadRequestException,
+  Logger,
+  OnModuleDestroy,
+  OnModuleInit,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../config/prisma.service';
 import { ConfigService } from '../../config/config.service';
@@ -22,9 +29,17 @@ interface TokenPayload {
  */
 const ROTATION_GRACE_MS = 60_000;
 
+/** 만료된 갱신 토큰 행을 치우는 간격. 하루에 한 번이다. */
+const TOKEN_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/** 서버가 뜬 뒤 첫 정리까지 기다리는 시간. 뜨는 순간의 부하에 얹지 않는다. */
+const TOKEN_CLEANUP_FIRST_DELAY_MS = 60 * 1000;
+
 
 @Injectable()
-export class AuthService {
+export class AuthService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(AuthService.name);
+  private cleanupTimers: NodeJS.Timeout[] = [];
+
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
@@ -32,6 +47,41 @@ export class AuthService {
     private readonly usersService: UsersService,
     private readonly projectAccess: ProjectAccessService,
   ) {}
+
+  /*
+   * 만료된 갱신 토큰 행을 하루에 한 번 치운다 (2026-10-16). 토큰을 새로 받을 때 그 사람의 만료된 행을
+   * 치우지만(generateTokens), 다시 로그인하지 않는 사람의 행은 그 계기가 없어 쌓인다. 서버가 여럿 떠도
+   * 같은 삭제를 겹쳐 할 뿐이다. 기다리는 시계 때문에 프로세스가 끝나지 못하면 안 되므로 unref 한다.
+   */
+  onModuleInit(): void {
+    const first = setTimeout(() => void this.purgeExpiredRefreshTokens(), TOKEN_CLEANUP_FIRST_DELAY_MS);
+    const daily = setInterval(
+      () => void this.purgeExpiredRefreshTokens(),
+      TOKEN_CLEANUP_INTERVAL_MS,
+    );
+    first.unref();
+    daily.unref();
+    this.cleanupTimers = [first, daily];
+  }
+
+  onModuleDestroy(): void {
+    for (const timer of this.cleanupTimers) clearTimeout(timer);
+    this.cleanupTimers = [];
+  }
+
+  /** 만료된 갱신 토큰 행을 지운다. 지운 수를 돌려준다. 실패해도 서버를 멈추지 않는다. */
+  async purgeExpiredRefreshTokens(): Promise<number> {
+    try {
+      const { count } = await this.prisma.refreshToken.deleteMany({
+        where: { expiresAt: { lt: new Date() } },
+      });
+      if (count > 0) this.logger.log(`만료된 갱신 토큰 ${count}건을 지웠습니다.`);
+      return count;
+    } catch (error) {
+      this.logger.error('만료된 갱신 토큰을 지우지 못했습니다.', error as Error);
+      return 0;
+    }
+  }
 
   // ID 토큰 검증만 수행하므로 client secret은 필요하지 않다.
   private readonly googleClient = new OAuth2Client();

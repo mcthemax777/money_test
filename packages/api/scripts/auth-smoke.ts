@@ -1,4 +1,5 @@
 import { JwtService } from '@nestjs/jwt';
+import { AuthService } from '@/modules/auth/auth.service';
 import { runSmoke } from './smoke-harness';
 
 const BASE = 'http://localhost:3999';
@@ -77,6 +78,21 @@ runSmoke('auth', async (ctx) => {
   // 로그아웃은 갱신 토큰을 끊는다. 남은 액세스 토큰은 만료(짧은 수명) 전까지 동작한다.
   ctx.check('로그아웃 후 옛 토큰 (만료 전까지 동작)',
     (await call('/users/me', authed(access))).status, 200);
+
+  // ── 만료된 갱신 토큰 행 정리 (하루 한 번 도는 작업) ──
+  await ctx.prisma.refreshToken.createMany({
+    data: [
+      { id: `expired-${user.id}`, userId: user.id, familyId: 'f-old', expiresAt: new Date(Date.now() - 1000) },
+      { id: `live-${user.id}`, userId: user.id, familyId: 'f-new', expiresAt: new Date(Date.now() + 60_000) },
+    ],
+  });
+  // 정리는 DB 만 쓴다. 나머지 의존성은 쓰지 않으므로 비워 둔다.
+  const auth = new AuthService(ctx.prisma as any, jwt, null as any, null as any, null as any);
+  ctx.check('정리가 만료된 행을 지운다', (await auth.purgeExpiredRefreshTokens()) >= 1, true);
+  ctx.check('만료된 행은 사라진다',
+    await ctx.prisma.refreshToken.count({ where: { id: `expired-${user.id}` } }), 0);
+  ctx.check('살아 있는 행은 남는다',
+    await ctx.prisma.refreshToken.count({ where: { id: `live-${user.id}` } }), 1);
 
   // 만료된 토큰은 거부
   const expired = jwt.sign({ sub: user.id, type: 'access' }, { expiresIn: '-1s' });
