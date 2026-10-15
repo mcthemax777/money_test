@@ -464,6 +464,8 @@ model AssetValuation {
 
   @@unique([accountId, date])
   @@index([updatedVersion])
+  // 동기화가 "이 가계부의 계좌들 × 번호 구간"으로 고른다. 번호만의 색인은 모든 가계부를 훑는다 (2026-10-16).
+  @@index([accountId, updatedVersion])
 }
 
 // ─────────────────────────────────────────────
@@ -1021,6 +1023,8 @@ model BudgetOverride {
 
   @@unique([budgetId, year, month])
   @@index([updatedVersion])
+  // 동기화가 "이 가계부의 예산들 × 번호 구간"으로 고른다 (위 평가액과 같은 까닭, 2026-10-16).
+  @@index([budgetId, updatedVersion])
 }
 
 // ─────────────────────────────────────────────
@@ -1368,6 +1372,9 @@ model NotificationSample {
   @@unique([userId, sampleKey])
   @@index([packageName, postedAt])
   @@index([postedAt])
+  // 하루 한도(사람별 최근 24시간)와 90일 정리가 이 칸으로 고른다 (2026-10-16).
+  @@index([userId, createdAt])
+  @@index([createdAt])
 }
 
 /// 앱별 알림 문구 규칙. 관리 도구에서 표본으로 배우고 사람이 칸 이름을 확인해 저장한다.

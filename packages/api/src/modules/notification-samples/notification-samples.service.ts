@@ -6,7 +6,7 @@
  * 브라우저에서 `@money/core` 의 `notification-rule` 이 한다 -- 서버는 토막이 규칙으로 쓸
  * 만한지만 본다(`notificationRuleProblem`).
  */
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import {
   NOTIFICATION_RULE_LIMITS,
@@ -34,20 +34,59 @@ const KINDS: EntryKind[] = ['expense', 'income', 'transfer'];
 /**
  * 한 사람이 하루(지난 24시간)에 담을 수 있는 표본 수 (2026-10-16). 돈 알림은 많아야 하루 수십 건이라
  * 넉넉하다. 한도가 없으면 한 계정이 요청마다 200건 × 4,000자를 끝없이 밀어 넣어 디스크를 채울 수 있다.
- * 보관 기한은 두지 않는다 -- 표본은 규칙을 배우려고 무기한 모은다(관리 도구의 결정).
  */
 const DAILY_SAMPLE_LIMIT = 2000;
+
+/**
+ * 표본을 들고 있는 기간 (2026-10-16 사용자 결정 -- 무기한에서 90일로). 표본은 은행·카드 알림 원문이라
+ * 오래 들고 있을 까닭이 없고, 규칙을 배우는 데는 최근 것이면 된다(앱이 알림 모양을 바꾸면 옛 것은 쓸모가
+ * 없다). 하루에 한 번 지난 것을 지운다.
+ */
+const SAMPLE_RETENTION_DAYS = 90;
+const SAMPLE_CLEANUP_INTERVAL_MS = 24 * 60 * 60 * 1000;
+/** 서버가 뜬 뒤 첫 정리까지. 뜨는 순간의 부하에 얹지 않는다. */
+const SAMPLE_CLEANUP_FIRST_DELAY_MS = 2 * 60 * 1000;
 
 type RuleRow = Prisma.NotificationRuleGetPayload<object>;
 
 @Injectable()
-export class NotificationSamplesService {
+export class NotificationSamplesService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(NotificationSamplesService.name);
+  private cleanupTimers: NodeJS.Timeout[] = [];
 
   constructor(
     private readonly prisma: PrismaService,
     private readonly projectAccess: ProjectAccessService,
   ) {}
+
+  /* 하루에 한 번 보관 기간이 지난 표본을 지운다. 서버가 여럿 떠도 같은 삭제를 겹칠 뿐이다. */
+  onModuleInit(): void {
+    const first = setTimeout(() => void this.purgeOldSamples(), SAMPLE_CLEANUP_FIRST_DELAY_MS);
+    const daily = setInterval(() => void this.purgeOldSamples(), SAMPLE_CLEANUP_INTERVAL_MS);
+    first.unref();
+    daily.unref();
+    this.cleanupTimers = [first, daily];
+  }
+
+  onModuleDestroy(): void {
+    for (const timer of this.cleanupTimers) clearTimeout(timer);
+    this.cleanupTimers = [];
+  }
+
+  /** 보관 기간(SAMPLE_RETENTION_DAYS)이 지난 표본을 지운다. 지운 수. 실패해도 서버를 멈추지 않는다. */
+  async purgeOldSamples(): Promise<number> {
+    try {
+      const before = new Date(Date.now() - SAMPLE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+      const { count } = await this.prisma.notificationSample.deleteMany({
+        where: { createdAt: { lt: before } },
+      });
+      if (count > 0) this.logger.log(`보관 기간이 지난 알림 표본 ${count}건을 지웠습니다.`);
+      return count;
+    } catch (error) {
+      this.logger.error('보관 기간이 지난 알림 표본을 지우지 못했습니다.', error as Error);
+      return 0;
+    }
+  }
 
   /**
    * 기기가 모은 표본을 담는다.
