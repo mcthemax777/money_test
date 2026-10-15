@@ -309,11 +309,11 @@ export default function DailyCumulativeChart({
               className="flex-row items-center gap-2 border-b border-gray-100 px-1 py-1.5 active:bg-gray-50"
             >
               <View style={{ width: 10, height: 2, backgroundColor: color, borderRadius: 1 }} />
-              <Text className="shrink text-sm text-gray-600" numberOfLines={1}>
+              <Text className="shrink text-sm text-gray-800" numberOfLines={1}>
                 {item.name}
               </Text>
-              {/* 금액은 검정으로 통일한다. 어느 선인지는 왼쪽 색 막대가 말한다 (2026-10-14 사용자 요청). */}
-              <Text className="ml-auto text-sm font-semibold text-gray-900">
+              {/* 금액은 검정으로 통일한다(2026-10-14). 날짜·금액 글자는 원형 아래 목록의 분류명·금액과 같다(2026-10-16 사용자 요청). */}
+              <Text className="ml-auto text-sm font-medium text-gray-900">
                 {item.value === null ? '-' : formatCurrency(item.value, displayCurrency)}
               </Text>
               {/* 증감 자리는 늘 둔다. 줄마다 금액의 오른쪽 끝이 맞아야 위아래로 견주기 쉽다. */}

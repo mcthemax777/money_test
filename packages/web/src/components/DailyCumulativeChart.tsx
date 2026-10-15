@@ -247,9 +247,12 @@ export default function DailyCumulativeChart({
               className="h-0.5 w-3 shrink-0 rounded"
               style={{ backgroundColor: LINE_COLOR[item.key] }}
             />
-            <span className="truncate text-gray-600">{item.name}</span>
-            {/* 금액은 검정으로 통일한다. 어느 선인지는 왼쪽 색 막대가 말한다 (2026-10-14 사용자 요청). */}
-            <span className="ml-auto font-semibold text-gray-900">
+            <span className="truncate text-sm text-gray-800">{item.name}</span>
+            {/*
+              금액은 검정으로 통일한다. 어느 선인지는 왼쪽 색 막대가 말한다 (2026-10-14 사용자 요청).
+              날짜·금액의 글자는 원형 아래 목록의 분류명·금액과 같다 (2026-10-16 사용자 요청).
+            */}
+            <span className="ml-auto text-sm font-medium text-gray-900">
               {item.value === null ? '-' : formatCurrency(item.value, displayCurrency)}
             </span>
             {/* 증감 자리는 늘 둔다. 줄마다 금액의 오른쪽 끝이 맞아야 위아래로 견주기 쉽다. */}
