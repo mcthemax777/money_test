@@ -150,7 +150,28 @@ export function zonedDayStart(
   day: number,
   timeZone: string,
 ): Date {
-  return zonedTimeToUtc(year, month, day, 0, 0, timeZone);
+  const midnight = zonedTimeToUtc(year, month, day, 0, 0, timeZone);
+  /*
+   * 자정에 서머타임이 시작하는 곳(산티아고·하바나 등)은 그날 0시가 없다 -- 시계가 0시에서 1시로 뛴다.
+   * 그러면 위 값이 **전날 23시**가 되어 그날의 거래가 전날로 가고, 하루 구간이 한 시간 일찍 시작했다
+   * (2026-10-16). 그날의 첫 순간(시계가 뛴 때)까지 15분씩 앞당긴다. 0시가 있는 날은 그대로다.
+   * 날짜는 넘김(13월, 32일)을 Date.UTC 로 풀어 견준다.
+   */
+  const wanted = new Date(Date.UTC(year, month - 1, day));
+  const isWantedDay = (instant: Date) => {
+    const parts = zonedParts(instant, timeZone);
+    return (
+      parts.year === wanted.getUTCFullYear() &&
+      parts.month === wanted.getUTCMonth() + 1 &&
+      parts.day === wanted.getUTCDate()
+    );
+  };
+  if (isWantedDay(midnight)) return midnight;
+  for (let step = 1; step <= 16; step += 1) {
+    const candidate = new Date(midnight.getTime() + step * 15 * 60 * 1000);
+    if (isWantedDay(candidate)) return candidate;
+  }
+  return midnight;
 }
 
 /** 그 타임존에서 해당 월이 시작하는 인스턴트 */
