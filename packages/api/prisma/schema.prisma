@@ -131,6 +131,7 @@ model User {
   projectJoinRequests ProjectJoinRequest[]
   createdEntries      JournalEntry[] // 입력자 추적용 (조회 필터로는 쓰지 않는다)
   pushDevices         PushDevice[]
+  refreshTokens       RefreshToken[]
   notificationSamples NotificationSample[]
   inquiries           Inquiry[]
   /// 이 사용자가 결제한 이용권. 계정을 지워도 결제 기록은 남긴다 (SetNull).
@@ -157,6 +158,29 @@ model PushDevice {
   updatedAt DateTime @updatedAt
 
   @@index([userId])
+}
+
+// 발급한 갱신 토큰 (2026-10-16). 토큰 문자열은 담지 않고 그 안의 id(jti)만 적는다.
+//
+// 로그인 한 번이 묶음(familyId) 하나다 -- 기기마다 하나씩 생긴다. 갱신하면 옛 토큰은 교체됨(rotatedAt)이 되고
+// 같은 묶음의 새 토큰이 나간다. 교체된 토큰이 다시 오면 훔친 것으로 보고 묶음 전체를 끊는다(revokedAt).
+// 교체 직후 잠깐(웹 탭 둘이 함께 갱신)은 봐준다. 로그아웃은 그 기기의 묶음만 끊는다.
+model RefreshToken {
+  id        String    @id // 토큰의 jti
+  userId    String
+  familyId  String
+  expiresAt DateTime
+  // 갱신으로 새 토큰에 자리를 넘긴 때. 이 뒤에 다시 오면 재사용이다(잠깐은 봐준다).
+  rotatedAt DateTime?
+  // 끊은 때 (로그아웃·재사용 탐지). 이 토큰은 다시 받지 않는다.
+  revokedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([familyId])
 }
 
 // 프로젝트 (가계부 단위). 프로젝트 안의 데이터는 모든 멤버가 공유한다.

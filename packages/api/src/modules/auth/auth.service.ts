@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { Injectable, BadRequestException, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { PrismaService } from '../../config/prisma.service';
@@ -11,7 +12,15 @@ interface TokenPayload {
   sub: string;
   type: 'access' | 'refresh';
   exp?: number;
+  /** 갱신 토큰의 id. RefreshToken 행의 열쇠다. 이 칸이 생기기 전에 나간 토큰에는 없다. */
+  jti?: string;
 }
+
+/**
+ * 교체된 갱신 토큰을 다시 받아 주는 동안(ms). 웹 탭 둘이 같은 쿠키로 함께 갱신하면 늦게 온 쪽이
+ * 방금 교체된 토큰을 든다 -- 그것까지 훔친 것으로 보면 멀쩡한 사람이 로그아웃된다.
+ */
+const ROTATION_GRACE_MS = 60_000;
 
 
 @Injectable()
@@ -141,7 +150,7 @@ export class AuthService {
     weekStart: number;
     createdAt: Date;
     updatedAt: Date;
-  }): Promise<Auth.AuthResponse> {
+  }, familyId?: string): Promise<Auth.AuthResponse> {
     // user.defaultProjectId를 그대로 쓰지 않는다. 삭제된 프로젝트를 가리킬 수
     // 있어서다. 접근 가능한 프로젝트를 다시 해석한다.
     const projectId = await this.projectAccess.findDefaultProjectId(user.id);
@@ -153,7 +162,7 @@ export class AuthService {
       : null;
 
     return {
-      ...this.generateTokens(user.id),
+      ...(await this.generateTokens(user.id, familyId)),
       user: {
         ...this.toUserResponse(user),
         defaultProjectId: projectId ?? undefined,
@@ -162,6 +171,20 @@ export class AuthService {
     };
   }
 
+  /**
+   * 갱신. 갱신 토큰은 **한 번 쓰면 교체된다** (2026-10-16).
+   *
+   * 예전에는 서버가 토큰을 기억하지 않아, 한번 나간 갱신 토큰은 만료(7일) 전까지 끊을 길이 없었다 --
+   * 훔친 토큰이 일주일 동안 새 토큰을 찍어 냈다. 이제 토큰마다 행(RefreshToken)을 두고:
+   *
+   *   살아 있는 토큰      교체됨을 적고 같은 묶음의 새 토큰을 준다.
+   *   방금 교체된 토큰    (ROTATION_GRACE_MS 안) 같은 묶음의 새 토큰을 하나 더 준다 -- 탭 둘의 동시 갱신.
+   *   오래전 교체된 토큰  재사용이다. 훔친 쪽과 진짜 쪽 중 누가 먼저 썼는지 모르므로 묶음 전체를 끊는다.
+   *   끊긴·없는 토큰      401.
+   *
+   * 이 칸이 생기기 전에 나간 토큰(jti 없음)은 한 번 받아 주고 새 묶음으로 옮긴다 -- 배포하는 순간 모두가
+   * 로그아웃되지 않게. 그런 토큰은 길어야 7일 뒤 모두 사라진다.
+   */
   async refresh(dto: Auth.RefreshRequest): Promise<Auth.AuthResponse> {
     let payload: TokenPayload;
     try {
@@ -175,25 +198,56 @@ export class AuthService {
     }
 
     const user = await this.validateUser(payload.sub);
+    if (!payload.jti) return this.buildAuthResponse(user);
 
-    // 새 토큰 쌍을 발급한다. 서버가 토큰을 기억하지 않으므로 옛 refreshToken도
-    // 만료 전까지는 계속 동작한다. 회전 재사용 차단이 필요하면 발급 목록을
-    // DB에 두는 방식으로 바꿔야 한다.
-    return this.buildAuthResponse(user);
+    const issued = await this.prisma.refreshToken.findUnique({ where: { id: payload.jti } });
+    if (!issued || issued.userId !== user.id || issued.revokedAt) {
+      throw new UnauthorizedException('Invalid refresh token');
+    }
+
+    if (issued.rotatedAt) {
+      if (Date.now() - issued.rotatedAt.getTime() > ROTATION_GRACE_MS) {
+        await this.revokeFamily(issued.familyId);
+        throw new UnauthorizedException('Invalid refresh token');
+      }
+      return this.buildAuthResponse(user, issued.familyId);
+    }
+
+    // 먼저 교체됨을 적는다. 같은 토큰으로 겹친 두 요청 중 하나만 "살아 있는 토큰" 길로 간다.
+    await this.prisma.refreshToken.updateMany({
+      where: { id: issued.id, rotatedAt: null },
+      data: { rotatedAt: new Date() },
+    });
+    return this.buildAuthResponse(user, issued.familyId);
   }
 
   /**
-   * 로그아웃.
+   * 로그아웃. 그 기기의 갱신 토큰 묶음을 끊는다 -- 다른 기기의 로그인은 그대로다.
    *
-   * 서버는 발급한 토큰을 기억하지 않으므로 여기서 무효화할 대상이 없다.
-   * 클라이언트가 토큰을 지우는 것이 실질적인 로그아웃이고, 남은 액세스 토큰은
-   * 짧은 만료(JWT_EXPIRES_IN)로 곧 죽는다.
-   *
-   * 유출된 refreshToken을 즉시 끊어야 한다면 발급 목록을 DB에 두거나
-   * User에 tokenVersion을 두는 방식이 필요하다.
+   * 남은 액세스 토큰은 짧은 만료(JWT_EXPIRES_IN)로 곧 죽는다. 갱신 토큰을 싣지 않았거나 읽을 수 없으면
+   * 끊을 것이 없을 뿐 실패로 돌려주지 않는다 (클라이언트는 어차피 토큰을 지운다).
    */
-  async logout(): Promise<{ success: boolean }> {
+  async logout(userId: string, refreshToken?: string): Promise<{ success: boolean }> {
+    if (!refreshToken) return { success: true };
+    try {
+      const payload = this.jwtService.verify<TokenPayload>(refreshToken);
+      if (payload.type !== 'refresh' || payload.sub !== userId || !payload.jti) {
+        return { success: true };
+      }
+      const issued = await this.prisma.refreshToken.findUnique({ where: { id: payload.jti } });
+      if (issued && issued.userId === userId) await this.revokeFamily(issued.familyId);
+    } catch {
+      // 만료됐거나 읽을 수 없는 토큰은 끊을 것이 없다.
+    }
     return { success: true };
+  }
+
+  /** 한 로그인(묶음)의 갱신 토큰을 모두 끊는다. */
+  private async revokeFamily(familyId: string): Promise<void> {
+    await this.prisma.refreshToken.updateMany({
+      where: { familyId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
   }
 
   async validateUser(userId: string) {
@@ -208,15 +262,32 @@ export class AuthService {
     return user;
   }
 
-  private generateTokens(userId: string) {
+  /**
+   * 토큰 쌍을 만든다. 갱신 토큰은 행을 남긴다 (refresh 주석). 묶음을 주지 않으면 새 로그인이다.
+   *
+   * 만들 때마다 이 사람의 만료된 행을 치운다 -- 사람마다 기기 수만큼만 남는다.
+   */
+  private async generateTokens(userId: string, familyId?: string) {
     const accessToken = this.jwtService.sign(
       { sub: userId, type: 'access' },
       { expiresIn: this.configService.jwtExpiresIn },
     );
+    const jti = randomUUID();
     const refreshToken = this.jwtService.sign(
-      { sub: userId, type: 'refresh' },
+      { sub: userId, type: 'refresh', jti },
       { expiresIn: this.configService.refreshTokenExpiresIn },
     );
+    const { exp } = this.jwtService.decode(refreshToken) as { exp: number };
+
+    await this.prisma.refreshToken.deleteMany({ where: { userId, expiresAt: { lt: new Date() } } });
+    await this.prisma.refreshToken.create({
+      data: {
+        id: jti,
+        userId,
+        familyId: familyId ?? randomUUID(),
+        expiresAt: new Date(exp * 1000),
+      },
+    });
 
     return { accessToken, refreshToken };
   }

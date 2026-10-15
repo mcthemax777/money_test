@@ -1,4 +1,4 @@
-import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards } from '@nestjs/common';
+import { Controller, Post, Body, HttpCode, HttpStatus, UseGuards, Request } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import { AuthGuard } from '@nestjs/passport';
 import {
@@ -52,9 +52,10 @@ export class AuthController {
   @HttpCode(HttpStatus.OK)
   @UseGuards(AuthGuard('jwt'))
   @ApiBearerAuth()
-  @ApiOperation({ summary: '로그아웃 (클라이언트가 토큰을 폐기한다)' })
+  @ApiOperation({ summary: '로그아웃 (그 기기의 갱신 토큰 묶음을 끊는다)' })
   @ApiOkResponse({ description: '로그아웃 성공' })
-  logout() {
-    return this.authService.logout();
+  logout(@Request() req: { user: { id: string } }, @Body() body: { refreshToken?: string }) {
+    // 그 기기의 갱신 토큰 묶음을 끊는다. 싣지 않은 옛 클라이언트면 끊을 것이 없을 뿐이다.
+    return this.authService.logout(req.user.id, body?.refreshToken);
   }
 }
