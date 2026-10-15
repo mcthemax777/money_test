@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 
@@ -16,6 +16,10 @@ import { AD_UNITS, initAds, useAdConsent } from '../ads';
  *
  * 처음 받은 배너는 옅은 데서 떠오른다. 본문이 갑자기 밀려 올라가는 것보다 덜 거슬린다.
  */
+/** 배너를 받지 못했을 때 다시 받기까지의 간격. */
+const RETRY_START_MS = 60 * 1000;
+const RETRY_MAX_MS = 10 * 60 * 1000;
+
 export default function AdBanner() {
   const showAds = useShowAds();
   const isOffline = useConnectivity((state) => state.isOffline);
@@ -29,6 +33,19 @@ export default function AdBanner() {
   useEffect(() => {
     if (!isOffline) setFailed(false);
   }, [isOffline]);
+
+  /*
+   * 받지 못했으면(채울 광고가 없음 따위) 시간을 두고 다시 받는다 (2026-10-16). 예전에는 연결이 끊겼다
+   * 돌아올 때만 다시 받아, 한 번 비면 그 실행 동안 배너가 영영 비었다. 간격은 1분에서 시작해 실패할
+   * 때마다 두 배, 10분에서 멈춘다 -- 광고가 없는 자리를 쉬지 않고 두드리지 않는다.
+   */
+  const retryDelay = useRef(RETRY_START_MS);
+  useEffect(() => {
+    if (!failed) return;
+    const timer = setTimeout(() => setFailed(false), retryDelay.current);
+    retryDelay.current = Math.min(retryDelay.current * 2, RETRY_MAX_MS);
+    return () => clearTimeout(timer);
+  }, [failed]);
 
   useEffect(() => {
     if (!showAds || !canRequestAds) return;
@@ -59,7 +76,10 @@ export default function AdBanner() {
       <BannerAd
         unitId={unitId}
         size={BannerAdSize.LARGE_ANCHORED_ADAPTIVE_BANNER}
-        onAdLoaded={() => setLoaded(true)}
+        onAdLoaded={() => {
+          setLoaded(true);
+          retryDelay.current = RETRY_START_MS;
+        }}
         onAdFailedToLoad={() => {
           setLoaded(false);
           setFailed(true);

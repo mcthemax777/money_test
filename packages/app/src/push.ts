@@ -88,13 +88,31 @@ export async function registerPushDevice(): Promise<() => void> {
  * 다음 사람이 로그인하면 같은 토큰의 주인이 그 사람으로 바뀐다.
  */
 export async function unregisterPushDevice(): Promise<void> {
-  const token = registeredToken;
+  /*
+   * 적어 둔 토큰이 없으면 기기에서 지금 토큰을 다시 받는다 (2026-10-16). 앱을 다시 켠 뒤 시작 화면에서
+   * 로그아웃하면 등록하는 부품(PushSetup)이 그 화면에 없어 이 값이 비어, 해제를 건너뛰고 앞 사람의 문의
+   * 답장 알림이 이 기기에 계속 왔다. 같은 기기의 FCM 토큰이라 값이 같다. 권한이 없으면 적은 적도 없다.
+   */
+  const token = registeredToken ?? (await currentDeviceToken());
   if (!token) return;
   registeredToken = null;
   try {
     await apiClient.unregisterPushDevice(token);
   } catch (error) {
     console.warn('푸시 토큰을 지우지 못했습니다:', error);
+  }
+}
+
+/** 이 기기의 FCM 토큰. 안드로이드가 아니거나 알림 권한이 없거나 받지 못하면 null. */
+async function currentDeviceToken(): Promise<string | null> {
+  if (Platform.OS !== 'android') return null;
+  try {
+    const permission = await Notifications.getPermissionsAsync();
+    if (!permission.granted) return null;
+    const { data } = await Notifications.getDevicePushTokenAsync();
+    return data ? String(data) : null;
+  } catch {
+    return null;
   }
 }
 
