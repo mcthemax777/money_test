@@ -1133,6 +1133,8 @@ export function useTransactions(
    */
   const refreshToken = `${mirrorVersion}|${reloadToken}`;
   const monthRefreshRef = useRef(refreshToken);
+  /** 나가 있는 동안 값이 바뀌어, 끝나면 한 번 더 받을 달 (`month|탭|달`). */
+  const monthRefetchRef = useRef<Set<string>>(new Set());
   const rowRefreshRef = useRef(refreshToken);
   /** 이 조건으로 달 목록을 한 번이라도 받았는가. 처음 받을 때만 "로딩 중"을 띄운다. */
   const monthsLoadedRef = useRef(false);
@@ -1162,6 +1164,7 @@ export function useTransactions(
      * 영영 비어 있게 된다.
      */
     inFlightRef.current = new Set();
+    monthRefetchRef.current = new Set();
     setRangePending({});
   }, [scopeKey, projectId]);
 
@@ -1346,17 +1349,25 @@ export function useTransactions(
     const port = homeDataPort();
     const askedScope = scopeKey;
 
-    const load = async (yearMonth: string) => {
+    const load = async (yearMonth: string, force = refreshing) => {
       // 이미 받아 둔 탭은 다시 받지 않는다. ref 로 보는 것은 이 효과가 monthData 에
       // 의존하면 채울 때마다 다시 돌아 그치지 않기 때문이다.
-      const have = refreshing ? undefined : monthDataRef.current[yearMonth];
+      const have = force ? undefined : monthDataRef.current[yearMonth];
       if (tab === 'date' && have?.entries) return;
       if (tab === 'category' && have?.categories) return;
       if (tab === 'method' && have?.methods) return;
 
       // 나가 있는 것은 다시 부르지 않는다. 줄 조회와 같은 자리를 쓴다.
       const flightId = `month|${tab}|${yearMonth}`;
-      if (inFlightRef.current.has(flightId)) return;
+      if (inFlightRef.current.has(flightId)) {
+        /*
+         * 값이 바뀌어 다시 받아야 하는데 앞 받기가 나가 있다. 그 받기는 바뀌기 전에 나간 것이라
+         * 옛 값을 가져온다 -- 끝나면 한 번 더 받도록 적어 둔다 (2026-10-16). 예전에는 여기서 그냥
+         * 물러나, 동기화 신호가 그 사이에 오면 고친 거래가 그 달에 반영되지 않았다.
+         */
+        if (force) monthRefetchRef.current.add(flightId);
+        return;
+      }
       inFlightRef.current.add(flightId);
 
       setLoadingMonths((prev) => ({ ...prev, [yearMonth]: true }));
@@ -1420,6 +1431,10 @@ export function useTransactions(
         // 어떤 경우에도 지운다. 남으면 그 달이 "로딩 중"에서 멈춘다.
         inFlightRef.current.delete(flightId);
         setLoadingMonths((prev) => ({ ...prev, [yearMonth]: false }));
+        // 나가 있는 동안 값이 바뀌었으면 지금 값으로 한 번 더 받는다 (위 적어 둔 자리).
+        if (monthRefetchRef.current.delete(flightId) && scopeKeyRef.current === askedScope) {
+          void load(yearMonth, true);
+        }
       }
     };
 
@@ -1439,7 +1454,7 @@ export function useTransactions(
          * 거둔다. 이것이 없으면 단위를 바꿀 때마다 옛 조건의 조회가 끝까지 돌아 쌓인다.
          */
         if (scopeKeyRef.current !== askedScope) return;
-        await Promise.all(openMonths.slice(index, index + ROW_BATCH).map(load));
+        await Promise.all(openMonths.slice(index, index + ROW_BATCH).map((yearMonth) => load(yearMonth)));
       }
     })();
 
