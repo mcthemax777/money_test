@@ -2,7 +2,7 @@ import { Injectable, NotFoundException, BadRequestException } from '@nestjs/comm
 import { AccountType, FinancialInstitutionType, Prisma, ProjectRole } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
-import { stampFieldClocks } from '@/common/field-clock';
+import { mergeFieldClocks, stampFieldClocks } from '@/common/field-clock';
 import { lockLedgerWrites } from '@/common/ledger-lock';
 import { ServerClockService } from '@/common/server-clock';
 import { clientId, rejectDuplicateId } from '@/common/client-id';
@@ -164,12 +164,22 @@ export class AccountsService {
     // 날짜는 원장 맨 앞(1970-01-01)으로 고정된다. 기준일 입력은 없다.
     const opening = toOptionalMoney(dto.openingBalance, '기초 잔액');
     if (opening && !opening.isZero()) {
-      await this.ledger.setBalanceTo({
-        projectId,
-        accountId: account.id,
-        targetBalance: opening,
-        createdByUserId: userId,
-      });
+      try {
+        await this.ledger.setBalanceTo({
+          projectId,
+          accountId: account.id,
+          targetBalance: opening,
+          createdByUserId: userId,
+        });
+      } catch (error) {
+        /*
+         * 잔액을 세우지 못했으면 통장도 거둔다 (2026-10-16). 남기면 잔액 0 인 통장이 서고, 같은 id 로
+         * 다시 만들면 "이미 있는 계좌"(409)라 기기의 명령도 사람의 다시 시도도 영영 막힌다. 잔액 세우기는
+         * 한 트랜잭션이라 되돌아갔으므로 이 통장에는 아직 다리가 없다.
+         */
+        await this.prisma.account.delete({ where: { id: account.id } }).catch(() => undefined);
+        throw error;
+      }
       return this.getAccountById(account.id, userId);
     }
 
@@ -315,8 +325,11 @@ export class AccountsService {
       const fields = Object.keys(data).map((key) =>
         key === 'institution' ? 'institutionId' : key,
       );
-      data.fieldHlc = stampFieldClocks(account.fieldHlc, fields, hlc ?? this.clock.now());
-      await this.prisma.account.update({ where: { id }, data });
+      // 시계는 데이터베이스 안에서 합친다 (`mergeFieldClocks`). 겹친 편집이 서로의 시계를 지우지 않게.
+      await this.prisma.$transaction(async (tx) => {
+        await mergeFieldClocks(tx, 'Account', id, fields, hlc ?? this.clock.now());
+        await tx.account.update({ where: { id }, data });
+      });
     }
 
     // 잔액 수정은 조정 전표를 새로 쌓지 않는다. 기초잔액 전표를 다시 계산해

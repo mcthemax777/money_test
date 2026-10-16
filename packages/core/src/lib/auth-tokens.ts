@@ -114,8 +114,21 @@ export function getRefreshToken(): string | undefined {
   return cookieSession ? undefined : storage.get('refreshToken');
 }
 
+/**
+ * 세션이 바뀐 횟수. 담거나 지울 때마다 하나씩 오른다 (2026-10-16).
+ *
+ * 갱신 요청이 나가 있는 동안 로그아웃하거나 다른 계정으로 로그인하면, 늦게 돌아온 갱신 응답이
+ * 지운 토큰(또는 앞 사람의 토큰)을 다시 담는다. 갱신은 나갈 때의 값을 들고 있다가 그대로일 때만 담는다.
+ */
+let epoch = 0;
+
+export function authEpoch(): number {
+  return epoch;
+}
+
 /** 받은 토큰을 담는다. 쿠키 세션이면 서버가 이미 쿠키로 내렸으므로 할 일이 없다. */
 export function saveAuthTokens(accessToken: string, refreshToken: string): void {
+  epoch += 1;
   if (cookieSession) return;
   storage.set('accessToken', accessToken, ACCESS_TOKEN_DAYS);
   storage.set('refreshToken', refreshToken, REFRESH_TOKEN_DAYS);
@@ -126,6 +139,7 @@ export function saveAuthTokens(accessToken: string, refreshToken: string): void 
  * 있는 표시 쿠키를 지워 곧바로 로그아웃한 상태로 읽히게 한다.
  */
 export function clearAuthTokens(): void {
+  epoch += 1;
   if (cookieSession) {
     Cookie.remove(SESSION_MARKER);
     return;

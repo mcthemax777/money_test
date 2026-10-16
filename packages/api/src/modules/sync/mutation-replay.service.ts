@@ -18,7 +18,7 @@
  *      전표를 만든 명령이 거절되었는데 그것을 고치는 명령이 뒤따라 적용되면, 없는
  *      전표를 고치려다 실패하거나 더 나쁘게는 다른 전표에 적용된다.
  */
-import { HttpException, Injectable, Logger } from '@nestjs/common';
+import { ForbiddenException, HttpException, Injectable, Logger } from '@nestjs/common';
 import {
   type AccountCreatePayload,
   type BudgetDeletePayload,
@@ -155,19 +155,49 @@ export class MutationReplayService {
     /*
      * 권한은 재생 시점에 다시 본다 (D10).
      *
-     * editor 였을 때 큐에 넣은 명령이 viewer 로 바뀐 뒤 도착할 수 있다. 그때는 전부
-     * 거절되고, 기기가 그것을 보류 칸에 남겨 사용자에게 알린다.
+     * editor 였을 때 큐에 넣은 명령이 viewer 로 바뀐 뒤 도착할 수 있다. 그때는 명령마다
+     * 거절로 돌려주고, 기기가 그것을 보류 칸에 남겨 사용자에게 알린다.
+     *
+     * **요청 통째로 403 을 던지면 안 된다** (2026-10-16). 기기는 밀어 올리기가 실패하면
+     * 받기 전에 멈추므로, 강등된 기기는 큐가 비지 않는 한 영영 새 변경을 받지 못한다.
+     * 구성원이 아닌 경우만 그대로 던진다 -- 기기가 그 코드로 사본을 정리한다.
      */
     const projectId = await this.projectAccess.resolveAndVerifyProjectId(
       userId,
       projectIdParam || request.projectId,
-      'editor',
+      'viewer',
     );
 
     const mutations = [...(request.mutations ?? [])]
       .slice(0, MAX_MUTATIONS)
       // 한 기기가 보낸 명령은 언제나 이 순서로 적용한다.
       .sort((a, b) => a.clientSeq - b.clientSeq);
+
+    // 구성원인 것은 위에서 확인했다. 여기서 막히면 역할이 모자란 것이다.
+    const canWrite = await this.projectAccess
+      .verifyUserHasAccessToProject(userId, projectId, 'editor')
+      .then(
+        () => true,
+        (error: unknown) => {
+          if (error instanceof ForbiddenException) return false;
+          throw error;
+        },
+      );
+    if (!canWrite) {
+      const project = await this.prisma.project.findUniqueOrThrow({
+        where: { id: projectId },
+        select: { syncVersion: true },
+      });
+      return {
+        results: mutations.map((mutation) => ({
+          mutationId: mutation.mutationId,
+          status: 'rejected' as const,
+          code: 'PROJECT_ROLE_VIEWER',
+          error: '읽기 권한으로 바뀌어 이 변경을 올릴 수 없습니다.',
+        })),
+        version: project.syncVersion,
+      };
+    }
 
     const results: MutationResult[] = [];
     /** 앞에서 거절된 대상. 이것을 건드리는 뒤 명령은 서버까지 가지 않는다. */
@@ -557,37 +587,55 @@ export class MutationReplayService {
   ): Promise<MutationResult> {
     const payload = mutation.payload as EntryMutationPayload;
 
-    const existing = await this.prisma.journalEntry.findUnique({
-      where: { id: payload.id },
-      select: { id: true, projectId: true, updatedHlc: true },
-    });
-    if (!existing || existing.projectId !== projectId) {
-      return {
-        mutationId: mutation.mutationId,
-        status: 'rejected',
-        code: 'ENTRY_NOT_FOUND',
-        error: '거래를 찾을 수 없습니다.',
-      };
-    }
-
     /*
-     * 병합. 전표는 다리까지 통째로 한 단위이고, HLC 가 늦은 쪽이 통째로 이긴다 (D5).
+     * 시계를 견준 판 그대로일 때만 바꾼다 (2026-10-16).
      *
-     * 진 편집을 버리지 않는다. 기기가 이 결과를 충돌 목록에 남겨 "다른 기기에서 같은
-     * 거래를 고쳤습니다"로 알리고, 사용자가 자기 값으로 되돌릴 수 있다 (D6). 돈은
-     * 조용히 사라지면 안 된다.
+     * 견주기는 원장 잠금 밖이다. 그 사이 다른 기기의 재생이나 온라인 편집이 먼저 커밋하면, 늦게 커밋한
+     * 쪽이 시계와 상관없이 덮고 둘 다 "적용"이 된다. 그래서 견준 판(`baseHlc`)을 함께 넘겨 잠금 아래에서
+     * 다시 보게 하고, 그 사이 바뀌었으면 처음부터 다시 견준다 -- 이번에는 더 늦은 편집이 있으면 충돌이다.
      */
-    if (isAfterHlc(existing.updatedHlc, mutation.hlc)) {
-      return {
-        mutationId: mutation.mutationId,
-        status: 'conflict',
-        error: '다른 기기에서 이 거래를 더 늦게 고쳤습니다.',
-      };
-    }
+    for (let attempt = 0; ; attempt += 1) {
+      const existing = await this.prisma.journalEntry.findUnique({
+        where: { id: payload.id },
+        select: { id: true, projectId: true, updatedHlc: true },
+      });
+      if (!existing || existing.projectId !== projectId) {
+        return {
+          mutationId: mutation.mutationId,
+          status: 'rejected',
+          code: 'ENTRY_NOT_FOUND',
+          error: '거래를 찾을 수 없습니다.',
+        };
+      }
 
-    const input = await this.buildInput(userId, projectId, payload, mutation.hlc);
-    await this.ledger.replaceEntry(payload.id, input);
-    return this.applied(mutation, projectId, payload.id);
+      /*
+       * 병합. 전표는 다리까지 통째로 한 단위이고, HLC 가 늦은 쪽이 통째로 이긴다 (D5).
+       *
+       * 진 편집을 버리지 않는다. 기기가 이 결과를 충돌 목록에 남겨 "다른 기기에서 같은
+       * 거래를 고쳤습니다"로 알리고, 사용자가 자기 값으로 되돌릴 수 있다 (D6). 돈은
+       * 조용히 사라지면 안 된다.
+       */
+      if (isAfterHlc(existing.updatedHlc, mutation.hlc)) {
+        return {
+          mutationId: mutation.mutationId,
+          status: 'conflict',
+          error: '다른 기기에서 이 거래를 더 늦게 고쳤습니다.',
+        };
+      }
+
+      const input = await this.buildInput(userId, projectId, payload, mutation.hlc);
+      try {
+        // 시계가 없는 옛 전표(null)는 견줄 판이 없다. 지금처럼 그대로 바꾼다.
+        await this.ledger.replaceEntry(payload.id, {
+          ...input,
+          baseHlc: existing.updatedHlc ?? undefined,
+        });
+        return this.applied(mutation, projectId, payload.id);
+      } catch (error) {
+        if (attempt < 2 && isEntryModified(error)) continue;
+        throw error;
+      }
+    }
   }
 
   private async deleteEntry(
@@ -762,12 +810,24 @@ export class MutationReplayService {
       };
     }
 
-    await this.cardLedger.settleRates(
-      payload.cardId,
-      userId,
-      { items: items.map((item) => ({ entryId: item.entryId, billedAmount: item.billedAmount })) },
-      { hlc: mutation.hlc },
-    );
+    try {
+      await this.cardLedger.settleRates(
+        payload.cardId,
+        userId,
+        { items: items.map((item) => ({ entryId: item.entryId, billedAmount: item.billedAmount })) },
+        { hlc: mutation.hlc },
+      );
+    } catch (error) {
+      // 위의 견주기 뒤, 잠그기 전에 더 늦은 편집이 들어왔다 (`restateForeignEntry`). 위와 같은 충돌이다.
+      if (isEntryModified(error)) {
+        return {
+          mutationId: mutation.mutationId,
+          status: 'conflict',
+          error: '다른 기기에서 이 거래를 더 늦게 고쳤습니다.',
+        };
+      }
+      throw error;
+    }
     return this.applied(mutation, projectId, entryIds[0]);
   }
 
@@ -1637,4 +1697,11 @@ function payloadForLog(payload: unknown): string {
     text = String(payload);
   }
   return text.length > PAYLOAD_LOG_LIMIT ? `${text.slice(0, PAYLOAD_LOG_LIMIT)}…(${text.length}자)` : text;
+}
+
+/** 잠금 아래에서 본 판이 견준 판과 달랐는가 (`LedgerService.replaceEntry` 의 `ENTRY_MODIFIED`). */
+function isEntryModified(error: unknown): boolean {
+  if (!(error instanceof HttpException)) return false;
+  const body = error.getResponse() as { code?: string } | string;
+  return typeof body === 'object' && body?.code === 'ENTRY_MODIFIED';
 }

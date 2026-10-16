@@ -1256,6 +1256,8 @@ export const en: Record<MessageKey, string> = {
     'Linked records remain, so it cannot be deleted. You can only hide it.',
   'error.CREDIT_CARD_DAYS_REQUIRED': 'A credit card needs a statement closing day and a payment due day.',
   'error.CARD_HAS_UNPAID': 'The card still has an unpaid balance, so it cannot be hidden.',
+  'error.ACCOUNT_INACTIVE': 'This account is hidden. Unhide it before recording to it.',
+  'error.CARD_INACTIVE': 'This card is hidden. Unhide it before recording to it.',
   'error.PERSON_HAS_ACCOUNTS': 'This person still owns accounts, so they cannot be hidden.',
   'error.CATEGORY_NAME_REQUIRED': 'Enter a category name.',
   'error.CATEGORY_NAME_DUPLICATE': 'A category with that name already exists.',

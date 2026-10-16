@@ -22,10 +22,10 @@ export async function inboxCollectTask(): Promise<void> {
     await boot();
     if (!getAccessToken()) return;
 
-    const projectId = useProject.getState().selectedProjectId;
-    if (!projectId) return;
+    if (!useProject.getState().selectedProjectId) return;
 
-    await collectNotificationsSoon(projectId);
+    // 가계부와 세션은 기다린 뒤에 다시 본다 (`collectNotificationsSoon`).
+    await collectNotificationsSoon();
   } catch (error) {
     // 작업이 실패해도 알림은 버퍼에 남는다. 오류를 올리면 네이티브가 작업을 끝낼 뿐이다.
     console.warn('알림을 후보로 올리지 못했습니다:', error);

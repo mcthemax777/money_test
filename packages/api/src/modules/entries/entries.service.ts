@@ -33,6 +33,7 @@ import {
   splitEntryIds,
 } from '@/common/entry-filter';
 import { badRequest, notFound } from '@/common/app-error';
+import { lockLedgerWrites } from '@/common/ledger-lock';
 import { assertYearMonth } from '@/common/year-month';
 import { analysisDateCondition } from '@/common/payback-scope';
 import { clientId, rejectDuplicateId } from '@/common/client-id';
@@ -229,6 +230,14 @@ export class EntriesService {
     );
 
     return this.prisma.$transaction(async (tx) => {
+      /*
+       * 원장 쓰기와 줄을 세운다 (2026-10-16). **첫 문장이어야 한다** (`lockLedgerWrites`).
+       *
+       * 거래 고치기(`replaceEntry`)는 잠금 아래에서 시계를 확인한 뒤 태그를 통째로 지우고 다시
+       * 넣는다. 그 사이에 이 쪽이 끼어들면 방금 붙인 태그가 충돌 없이 사라진다. 잠그지 않으면
+       * 태그 행과 프로젝트 행을 잡는 차례도 그쪽과 엇갈려 교착이 난다.
+       */
+      await lockLedgerWrites(tx, projectId);
       const entryIds = [...new Set(targets.map((target) => target.entryId))];
       /*
        * 남의 프로젝트 것이 섞였는지 먼저 본다.
@@ -439,6 +448,14 @@ export class EntriesService {
     );
 
     return this.prisma.$transaction(async (tx) => {
+      /*
+       * 원장 쓰기와 줄을 세운다 (2026-10-16). **첫 문장이어야 한다** (`lockLedgerWrites`).
+       *
+       * 분류 지우기·합치기는 잠금 아래에서 "이 분류를 쓰는 거래가 없다"를 확인하고 지운다.
+       * 이 쪽이 잠금 없이 다리를 그 분류로 옮기면 그 확인을 지나쳐, 지우기의 cascade 가 방금
+       * 옮긴 다리를 함께 지운다.
+       */
+      await lockLedgerWrites(tx, projectId);
       const category = await tx.category.findFirst({
         where: { id: dto.categoryId, projectId },
         select: { id: true, type: true },

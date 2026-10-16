@@ -5,7 +5,8 @@ import { useRouter } from 'next/navigation';
 import type { BudgetDto, CardDto, EntryFilterQuery } from '@money/types';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
 
-import { currentYearMonth, shiftYearMonth } from '@money/core/lib/datetime';
+import { shiftYearMonth } from '@money/core/lib/datetime';
+import { useViewMonth } from '@money/core/hooks/useViewMonth';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useHomeData } from '@money/core/hooks/useHomeData';
 import { usePeriodSwipe } from '@/hooks/usePeriodSwipe';
@@ -60,8 +61,7 @@ export default function HomePage() {
    * 위쪽 실적 구간 카드는 따라가지 않는다. 카드사가 지금 세고 있는 구간이라
    * 지난 달을 펴 보는 것과 뜻이 다르다.
    */
-  const { year: thisYear, month: thisMonth } = currentYearMonth(timeZone);
-  const [view, setView] = useState({ year: thisYear, month: thisMonth });
+  const { view, setView, thisYear, thisMonth } = useViewMonth(timeZone);
   const { year, month } = view;
   const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
   const thisYearMonth = `${thisYear}-${String(thisMonth).padStart(2, '0')}`;

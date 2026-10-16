@@ -53,15 +53,36 @@ runSmoke('auth', async (ctx) => {
   // 웹 탭 둘이 함께 갱신하는 자리: 방금 교체된 토큰도 잠깐은 받아 준다.
   ctx.check('방금 교체된 토큰 (봐주는 동안)', (await refreshWith(first)).status, 200);
 
-  // 오래전에 교체된 토큰이 다시 오면 훔친 것으로 보고 그 로그인(묶음)을 통째로 끊는다.
-  const firstJti = (jwt.decode(first) as { jti: string }).jti;
-  await ctx.prisma.refreshToken.update({
-    where: { id: firstJti },
-    data: { rotatedAt: new Date(Date.now() - 10 * 60_000) },
-  });
-  ctx.check('오래전 교체된 토큰 재사용 거부', (await refreshWith(first)).status, 401);
-  ctx.check('재사용이 걸리면 같은 묶음의 최신 토큰도 끊긴다',
+  const jtiOf = (token: string) => (jwt.decode(token) as { jti: string }).jti;
+  const age = (token: string) =>
+    ctx.prisma.refreshToken.update({
+      where: { id: jtiOf(token) },
+      data: { rotatedAt: new Date(Date.now() - 10 * 60_000) },
+    });
+
+  /*
+   * 교체 응답을 잃은 기기 (2026-10-16). 오래전 교체된 토큰이지만 그 뒤에 나간 토큰이 한 번도 쓰이지
+   * 않았다 -- 응답이 기기에 닿지 않은 것이다. 새 토큰을 주고, 쓰이지 않은 후계는 교체된 것으로 적는다.
+   */
+  await age(first);
+  const adopted = await refreshWith(first);
+  ctx.check('응답을 잃은 기기의 옛 토큰은 받아 준다', adopted.status, 200);
+  ctx.check('받아 준 직후 같은 토큰은 유예 길로', (await refreshWith(first)).status, 200);
+
+  // 후계를 정말 받은 쪽이 유예 뒤에 그것을 내면 재사용으로 잡혀 묶음이 끊긴다 -- 탐지는 늦을 뿐 남는다.
+  await age(second.body.refreshToken);
+  ctx.check('거둬진 후계 토큰을 유예 뒤에 내면 거부',
     (await refreshWith(second.body.refreshToken)).status, 401);
+  ctx.check('재사용이 걸리면 같은 묶음의 최신 토큰도 끊긴다',
+    (await refreshWith(adopted.body.refreshToken)).status, 401);
+
+  // 후계가 이미 쓰인 뒤라면 옛 토큰은 훔친 것이다. 곧바로 묶음을 끊는다.
+  const chain0 = (await refreshWith(refresh)).body.refreshToken as string; // 새 묶음
+  const chain1 = (await refreshWith(chain0)).body.refreshToken as string;
+  const chain2 = (await refreshWith(chain1)).body.refreshToken as string; // chain1 이 쓰였다
+  await age(chain0);
+  ctx.check('후계가 쓰인 뒤의 옛 토큰 재사용 거부', (await refreshWith(chain0)).status, 401);
+  ctx.check('그 묶음의 최신 토큰도 끊긴다', (await refreshWith(chain2)).status, 401);
 
   // 로그아웃은 그 기기의 묶음만 끊는다. 다른 로그인(묶음)은 그대로다.
   const deviceA = (await refreshWith(refresh)).body.refreshToken as string; // 옛 토큰 → 새 묶음

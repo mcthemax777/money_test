@@ -5,6 +5,7 @@ import { toAmountString, toNumber } from '../lib/money';
 import { apiClient } from '../lib/api-client';
 import { homeDataPort } from '../data/home-port';
 import { settingsWritePort } from '../data/settings-write-port';
+import { mirrorChangeCount } from '../data/mirror-events';
 import { useProject } from '../store/project';
 import { useMirrorVersion } from './useMirrorVersion';
 
@@ -43,8 +44,14 @@ export function useExchangeRates() {
   useEffect(() => {
     let cancelled = false;
 
+    /*
+     * 캐시에는 모든 화면이 함께 보는 번호를 적는다 (`mirrorChangeCount`). 화면마다 세는 mirrorVersion 을
+     * 적으면, 나중에 열린 폼은 0 을 보고 남이 바꾸기 전의 환율을 지금 것으로 썼다. mirrorVersion 은 다시
+     * 견줄 때를 알리는 신호로만 쓴다.
+     */
+    const version = mirrorChangeCount();
     const cached = cache.get(key);
-    if (cached && cached.version === mirrorVersion) {
+    if (cached && cached.version === version) {
       setRates(cached.rates);
       return;
     }
@@ -53,7 +60,7 @@ export function useExchangeRates() {
     homeDataPort()
       .getExchangeRates(selectedProjectId)
       .then((res) => {
-        cache.set(key, { version: mirrorVersion, rates: res.rates ?? [] });
+        cache.set(key, { version, rates: res.rates ?? [] });
         if (!cancelled) setRates(res.rates ?? []);
       })
       .catch(() => {

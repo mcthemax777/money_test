@@ -36,3 +36,26 @@ export async function lockLedgerWrites(tx: LockableTx, projectId: string): Promi
   // $queryRaw 는 void 반환을 역직렬화하지 못한다. 결과가 필요 없으므로 $executeRaw 다.
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`ledger-write:${projectId}`}))`;
 }
+
+/**
+ * 한 프로젝트의 예산 규칙 쓰기를 줄 세운다 (2026-10-16).
+ *
+ * 예산은 "그 달에 적용되는 규칙을 찾아 없으면 만든다", "그 달부터 뒤 규칙을 걷어내고 새로 세운다"처럼
+ * 읽고-고쳐-쓰는 일뿐이다. 두 요청이 겹치면(저장 두 번, 두 사람이 같은 예산) 둘 다 "없다"를 보고 각자
+ * 만들어 같은 달에 규칙이 둘 선다. 유일 색인으로는 막을 수 없다 -- 끝난 규칙과 새 규칙이 같은 시작 달(null)
+ * 을 가질 수 있어서다. 그래서 원장 잠금과 같은 방식(트랜잭션의 첫 문장)으로 이름만 따로 둔다.
+ */
+export async function lockBudgetWrites(tx: LockableTx, projectId: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`budget-write:${projectId}`}))`;
+}
+
+/**
+ * 한 프로젝트의 구성원 바꾸기(나가기·내보내기·소유자 넘기기)를 줄 세운다 (2026-10-16).
+ *
+ * "마지막 소유자인가", "요청한 사람이 소유자인가"를 읽은 뒤 바꾸는 일이라, 두 요청이 겹치면 READ
+ * COMMITTED 에서 둘 다 옛 역할을 보고 통과한다 -- 소유자가 넘기는 사이 받을 사람이 나가면 소유자 없는
+ * 가계부가, 두 기기에서 서로 다른 사람에게 넘기면 소유자 둘이 남는다. 트랜잭션의 첫 문장이어야 한다.
+ */
+export async function lockMembershipWrites(tx: LockableTx, projectId: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`membership-write:${projectId}`}))`;
+}

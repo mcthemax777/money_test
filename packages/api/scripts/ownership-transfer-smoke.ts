@@ -73,4 +73,45 @@ runSmoke('ownership-transfer', async (ctx) => {
   ctx.check('넘긴 뒤 탈퇴', await codeOf(() => projects.leaveProject(project.id, owner)), 'ok');
   now = await roles();
   ctx.check('탈퇴 뒤에도 소유자가 남는다', now[editor], 'owner');
+
+  // ── 겹친 요청 (2026-10-16) ─────────────────────────────────
+  // 두 기기에서 서로 다른 사람에게 동시에 넘기면 하나만 된다. 잠금 없이는 둘 다 옛 역할을 읽고 통과해
+  // 소유자가 둘 남았다.
+  const second = await join('editor');
+  const third = await join('editor');
+  const overlapped = await Promise.all([
+    codeOf(() => projects.transferOwnership(project.id, second, editor)),
+    codeOf(() => projects.transferOwnership(project.id, third, editor)),
+  ]);
+  ctx.check('겹친 넘기기는 하나만 된다', overlapped.filter((code) => code === 'ok').length, 1);
+  now = await roles();
+  ctx.check('겹친 넘기기 뒤에도 소유자는 한 명', Object.values(now).filter((role) => role === 'owner').length, 1);
+
+  // 소유자가 넘기는 사이 받을 사람이 나가면, 둘 중 하나만 되고 소유자는 남는다.
+  const owners = Object.entries(now).filter(([, role]) => role === 'owner').map(([id]) => id);
+  const receiver = await join('editor');
+  await Promise.all([
+    codeOf(() => projects.transferOwnership(project.id, receiver, owners[0])),
+    codeOf(() => projects.leaveProject(project.id, receiver)),
+  ]);
+  now = await roles();
+  ctx.check('넘기기와 나가기가 겹쳐도 소유자가 있다', Object.values(now).filter((role) => role === 'owner').length, 1);
+
+  // 가입 승인을 두 번 누르면 하나만 되고 둘째는 "이미 처리됨"이다 (2026-10-16). 예전에는 둘째가 구성원
+  // 유일 조건에 걸려 500 이 났다.
+  const currentOwner = Object.entries(now).find(([, role]) => role === 'owner')![0];
+  const applicant = (await ctx.createUser()).id;
+  const request = await ctx.prisma.projectJoinRequest.create({
+    data: { projectId: project.id, userId: applicant },
+  });
+  const approvals = await Promise.all([
+    codeOf(() => projects.approveJoinRequest(request.id, currentOwner, 'editor')),
+    codeOf(() => projects.approveJoinRequest(request.id, currentOwner, 'editor')),
+  ]);
+  ctx.check('겹친 승인 결과', approvals.slice().sort().join(','), 'JOIN_REQUEST_HANDLED,ok');
+  ctx.check(
+    '승인된 사람은 한 번만 들어온다',
+    await ctx.prisma.projectMember.count({ where: { projectId: project.id, userId: applicant } }),
+    1,
+  );
 });

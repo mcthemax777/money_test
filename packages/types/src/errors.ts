@@ -37,6 +37,10 @@ export const ERROR_CODES = [
   'CARD_HAS_UNPAID',
   'PERSON_HAS_ACCOUNTS',
 
+  // 숨긴 것에 새로 적으려 할 때 (2026-10-16)
+  'ACCOUNT_INACTIVE',
+  'CARD_INACTIVE',
+
   // 카드 입력
   'CREDIT_CARD_DAYS_REQUIRED',
 

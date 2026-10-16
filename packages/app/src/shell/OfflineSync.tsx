@@ -19,6 +19,7 @@ import { useProject, useProjectTimeZone } from '@money/core/store/project';
 
 import {
   listenForChanges,
+  onSyncSettled,
   setAccessLostHandler,
   syncNow,
   unsentCount,
@@ -181,9 +182,26 @@ export default function OfflineSync() {
       void run('연결 복구');
     });
 
+    /*
+     * 저장 직후·서버 신호로 시작한 동기화의 결과도 본다 (2026-10-16).
+     *
+     * 그쪽은 이 화면이 시작한 것이 아니라 위의 `run` 을 지나지 않는다. 실패했는데 못 보낸 것이 남았으면
+     * 같은 시계로 다시 두드린다. 성공한 것은 여기서 건드리지 않는다 -- `run` 이 남은 것을 보고 정한다.
+     */
+    const unsubscribe = onSyncSettled((settledProjectId, result) => {
+      if (cancelled || settledProjectId !== projectId) return;
+      if (result && !result.offline) return;
+      void unsentCount(projectId)
+        .catch(() => ({ pending: 0 }))
+        .then((left) => {
+          if (!cancelled && left.pending > 0) scheduleRetry();
+        });
+    });
+
     return () => {
       cancelled = true;
       stopRetry();
+      unsubscribe();
       subscription.remove();
       network.remove();
       listener.close();

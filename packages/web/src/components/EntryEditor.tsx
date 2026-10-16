@@ -1,6 +1,6 @@
 'use client';
 
-import { forwardRef, useEffect, useImperativeHandle, useMemo, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react';
 import { Copy, X } from 'lucide-react';
 import { useUserFilter } from '@money/core/store/user-filter';
 import {
@@ -51,6 +51,8 @@ import {
   SUPPORTED_CURRENCIES,
   isCurrencyCode,
   ledgerMaxEntryDateKey,
+  hasRandomSource,
+  newId,
   newLineKey,
   zonedFormValueToUtc,
   type CardTransferDirection,
@@ -420,6 +422,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  /** 새 거래로 저장하려다 끝을 모르는 시도의 id. 성공하거나 폼을 새로 열면 비운다 (저장의 주석). */
+  const pendingCreateIdRef = useRef<string | null>(null);
   /**
    * 고칠 거래를 열 때 본 시계. 새로 적는 중이면 null 이다.
    *
@@ -1347,8 +1351,27 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         // 팝업을 열 때 본 판을 함께 보낸다. 그 사이의 편집을 서버가 알아채는 근거다.
         await port.updateEntry(editingId, { ...payload, baseHlc });
       } else {
-        const created = await port.createEntry({ ...payload, projectId: projectId });
-        savedId = created.id;
+        /*
+         * 새 거래의 id 는 첫 저장 시도에서 정해 두고, 성공할 때까지 같은 것을 쓴다 (2026-10-16).
+         *
+         * 저장 요청이 시간 초과(10초)로 끊겨도 서버는 이미 적었을 수 있다. 다시 누를 때마다 새 id 를 받으면
+         * 같은 거래가 둘 생겼다. 같은 id 로 다시 보내면 서버가 "이미 있다"(409)고 답하므로, 그때는 그 거래를
+         * 지금 폼 값으로 고친다 -- 다시 누르기 전에 고친 칸까지 반영된다.
+         */
+        // 난수원이 없는 브라우저면 id 를 서버에 맡긴다 (지금까지와 같다).
+        if (!pendingCreateIdRef.current && hasRandomSource()) pendingCreateIdRef.current = newId();
+        const id = pendingCreateIdRef.current;
+        try {
+          const created = await port.createEntry({ ...payload, ...(id ? { id } : {}), projectId: projectId });
+          savedId = created.id;
+        } catch (createError) {
+          if (!id || (createError as { response?: { status?: number } })?.response?.status !== 409) {
+            throw createError;
+          }
+          await port.updateEntry(id, payload);
+          savedId = id;
+        }
+        pendingCreateIdRef.current = null;
       }
 
       /*
@@ -1404,6 +1427,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
    * 남기려면 기본값이 있어야 한다.
    */
   const handleAddClick = () => {
+    pendingCreateIdRef.current = null;
     paybackDrafts.reset();
     setEditingEntry(null);
     setEditingId(null);
@@ -1419,6 +1443,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
   };
 
   const handleModalClose = () => {
+    pendingCreateIdRef.current = null;
     setIsModalOpen(false);
     setFormData(emptyEntryForm(timeZone, ledgerCurrency));
     setEditingId(null);
@@ -1801,6 +1826,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       return;
     }
 
+    pendingCreateIdRef.current = null;
     paybackDrafts.reset();
     setEditingEntry(null);
     setEditingId(null);
@@ -1824,6 +1850,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     const type =
       draft.kind === 'income' || draft.kind === 'transfer' ? draft.kind : 'expense';
 
+    pendingCreateIdRef.current = null;
     paybackDrafts.reset();
     setEditingEntry(null);
     setEditingId(null);
@@ -2044,6 +2071,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         : await apiClient.createCategory({
             name: categoryFormData.name,
             type: categoryFormData.type,
+            projectId: projectId ?? undefined,
           });
 
       const created: Category[] = [];
@@ -2053,11 +2081,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
             name: sub.name.trim(),
             type: parent.type,
             parentId: parent.id,
+            projectId: projectId ?? undefined,
           }),
         );
       }
 
-      const data = await apiClient.getCategories();
+      // 고른 가계부를 늘 싣는다. 빠지면 서버가 그 사람의 기본 가계부로 만들고 읽는다 -- 화면이
+      // 보고 있는 가계부와 다를 수 있다 (초대를 받아 옮겨 왔거나 다른 탭에서 바꿨을 때).
+      const data = await apiClient.getCategories(projectId);
       onReferenceDataChange({ categories: data || [] });
 
       /*
@@ -3432,6 +3463,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         onClose={() => setIsPersonModalOpen(false)}
         person={null}
         mode="add"
+        projectId={projectId}
         onSuccess={handlePersonModalSuccess}
         onDelete={async () => {}}
       />

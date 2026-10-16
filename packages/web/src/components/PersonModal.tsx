@@ -18,6 +18,8 @@ interface PersonModalProps {
   mode?: 'add' | 'view' | 'edit';
   onSuccess: (updatedPeople: Person[]) => void;
   onDelete?: (id: string) => Promise<void>;
+  /** 보고 있는 가계부. 넘기지 않으면 서버가 그 사람의 기본 가계부로 만들고 읽는다. */
+  projectId?: string | null;
 }
 
 export default function PersonModal({
@@ -27,6 +29,7 @@ export default function PersonModal({
   mode = 'edit',
   onSuccess,
   onDelete,
+  projectId,
 }: PersonModalProps) {
   const { t } = useTranslation();
   const { messageOf } = useApiError();
@@ -61,6 +64,7 @@ export default function PersonModal({
         await apiClient.createPerson({
           name: formData.name,
           relationship: formData.relationship || undefined,
+          projectId: projectId ?? undefined,
         });
       } else {
         await apiClient.updatePerson(person!.id, {
@@ -69,7 +73,7 @@ export default function PersonModal({
         });
       }
 
-      const data = await apiClient.getPeople();
+      const data = await apiClient.getPeople(projectId);
       onSuccess(data || []);
       handleClose();
     } catch (err: any) {

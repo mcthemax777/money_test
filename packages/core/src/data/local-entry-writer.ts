@@ -237,13 +237,19 @@ export function createLocalEntryWriter({
       observed,
     });
 
-    await store.writeEntry(entryId, built, {
-      timeZone,
-      hlc: mutation.hlc,
-      makeId: newId,
-      // 태그는 조립 규칙이 다루지 않는다(다리를 바꾸지 않는다). 짐에서 그대로 가져온다.
-      tagIds: payload.tagIds ?? [],
-    });
+    try {
+      await store.writeEntry(entryId, built, {
+        timeZone,
+        hlc: mutation.hlc,
+        makeId: newId,
+        // 태그는 조립 규칙이 다루지 않는다(다리를 바꾸지 않는다). 짐에서 그대로 가져온다.
+        tagIds: payload.tagIds ?? [],
+      });
+    } catch (error) {
+      // 사본에 적지 못했으면 명령도 거둔다. 화면은 실패를 말하는데 거래는 서버에 생기는 일을 막는다.
+      await store.withdrawMutation(mutation.mutationId).catch(() => undefined);
+      throw error;
+    }
     // 원거래의 줄을 따라 환불·페이백을 옮긴다. 서버도 같은 일을 하고 다음 pull 이 덮는다.
     for (const move of moves) await store.movePayback(move.paybackId, move.lineKey, move.categoryId);
 

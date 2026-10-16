@@ -8,7 +8,7 @@
  * 그것을 눌러야 전표가 된다. 그 사실을 폼 아래에 적어 둔다 -- 적어 두지 않으면
  * "자동으로 가계부에 적히는 것"으로 읽는다.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Pressable, Text, TextInput, View } from 'react-native';
 import {
   HOLIDAY_RULES,
@@ -249,7 +249,24 @@ export default function RecurringRuleModal({
       .map((card) => ({ value: `card:${card.id}`, label: card.name })),
   ];
 
+  /*
+   * 저장이 나가 있는가 (2026-10-16). isSubmitting 은 확인 창을 닫은 뒤에야 서서, 그 전에 두 번 누르면 확인
+   * 창이 둘 뜨고 규칙이 두 번 저장됐다. 곧바로 바뀌는 ref 로 처음부터 막는다.
+   */
+  const submittingRef = useRef(false);
+
   const submit = async () => {
+    if (submittingRef.current) return;
+    submittingRef.current = true;
+    try {
+      await submitOnce();
+    } finally {
+      submittingRef.current = false;
+      setIsSubmitting(false);
+    }
+  };
+
+  const submitOnce = async () => {
     /*
      * 시각은 글자로 받으므로 여기서 본다.
      *
@@ -306,7 +323,6 @@ export default function RecurringRuleModal({
 
     setIsSubmitting(true);
     const ok = await onSave(body);
-    setIsSubmitting(false);
     if (ok) onClose();
   };
 

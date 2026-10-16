@@ -25,7 +25,7 @@ import {
 import { assertReorderIds } from '@/common/reorder';
 import { badRequest } from '@/common/app-error';
 import { clientId } from '@/common/client-id';
-import { stampFieldClocks } from '@/common/field-clock';
+import { mergeFieldClocks, stampFieldClocks } from '@/common/field-clock';
 import { touchEntries } from '@/common/entry-stamp';
 import { lockLedgerWrites } from '@/common/ledger-lock';
 import { ServerClockService } from '@/common/server-clock';
@@ -110,10 +110,14 @@ export class TagsService {
     // 순서 바꾸기는 이 필드 하나다 (분수 색인).
     if (dto.sortRank !== undefined) data.sortRank = dto.sortRank;
 
-    data.fieldHlc = stampFieldClocks(tag.fieldHlc, Object.keys(data), hlc ?? this.clock.now());
+    const fields = Object.keys(data);
 
     try {
-      return await this.prisma.tag.update({ where: { id }, data });
+      // 시계는 데이터베이스 안에서 합친다 (`mergeFieldClocks`). 겹친 편집이 서로의 시계를 지우지 않게.
+      return await this.prisma.$transaction(async (tx) => {
+        await mergeFieldClocks(tx, 'Tag', id, fields, hlc ?? this.clock.now());
+        return tx.tag.update({ where: { id }, data });
+      });
     } catch (error) {
       throw this.translateDuplicate(error);
     }

@@ -1286,6 +1286,8 @@ export const ko = {
     '연결된 기록이 남아 있어 삭제할 수 없습니다. 숨기기만 할 수 있습니다.',
   'error.CREDIT_CARD_DAYS_REQUIRED': '신용카드는 마감일과 결제일을 정해야 합니다.',
   'error.CARD_HAS_UNPAID': '갚지 않은 카드 사용액이 남아 있어 숨길 수 없습니다.',
+  'error.ACCOUNT_INACTIVE': '숨긴 통장에는 새로 적을 수 없습니다. 먼저 숨기기를 풀어 주세요.',
+  'error.CARD_INACTIVE': '숨긴 카드에는 새로 적을 수 없습니다. 먼저 숨기기를 풀어 주세요.',
   'error.PERSON_HAS_ACCOUNTS': '이 사람이 주인인 통장이 있어서 숨길 수 없습니다.',
   'error.CATEGORY_NAME_REQUIRED': '분류명을 입력해주세요.',
   'error.CATEGORY_NAME_DUPLICATE': '같은 이름의 분류가 이미 있습니다.',

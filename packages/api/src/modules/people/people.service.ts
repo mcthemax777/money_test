@@ -6,7 +6,7 @@ import { PersonDto, initialRanks, rankAfter } from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
 import { clientId, rejectDuplicateId } from '@/common/client-id';
 import { badRequest } from '@/common/app-error';
-import { stampFieldClocks } from '@/common/field-clock';
+import { mergeFieldClocks, stampFieldClocks } from '@/common/field-clock';
 import { lockLedgerWrites } from '@/common/ledger-lock';
 import { ServerClockService } from '@/common/server-clock';
 
@@ -135,9 +135,12 @@ export class PeopleService {
     }
 
     // 바꾼 필드에만 시계를 찍는다. 건드리지 않은 필드는 남의 편집이 그대로 이긴다.
-    data.fieldHlc = stampFieldClocks(person.fieldHlc, Object.keys(data), hlc ?? this.clock.now());
-
-    return this.prisma.person.update({ where: { id }, data });
+    // 데이터베이스 안에서 합친다 (`mergeFieldClocks`) -- 겹친 편집이 서로의 시계를 지우지 않게.
+    const fields = Object.keys(data);
+    return this.prisma.$transaction(async (tx) => {
+      await mergeFieldClocks(tx, 'Person', id, fields, hlc ?? this.clock.now());
+      return tx.person.update({ where: { id }, data });
+    });
   }
 
   /**

@@ -92,7 +92,7 @@ export async function flushDraftOps(store: LocalStore, projectId: string): Promi
           registeredEntryId: op.op === 'registered' ? op.entryId ?? null : null,
         });
       }
-      await store.forgetDraftOp(op.draftId);
+      await store.forgetDraftOp(op.draftId, op);
     } catch (error) {
       // 연결이 없으면 큐를 그대로 두고 멈춘다. 다음 동기화가 이어서 한다.
       if (isOfflineError(error)) return;
@@ -104,11 +104,16 @@ export async function flushDraftOps(store: LocalStore, projectId: string): Promi
        * 막힌다. 사본의 행은 그대로 두어도 다음 델타가 정리한다.
        */
       if (isMissing(error)) {
-        await store.forgetDraftOp(op.draftId);
+        await store.forgetDraftOp(op.draftId, op);
         continue;
       }
-      // 그 밖의 오류(권한, 서버 오류)는 다음 기회에 다시 시도한다.
-      return;
+      /*
+       * 그 밖의 오류(권한, 서버 오류, 아직 서버에 없는 거래)는 다음 기회에 다시 시도한다.
+       *
+       * 멈추지 않고 다음 처리로 간다 (2026-10-16). 한 후보가 가리키는 거래가 보류 칸에 걸려
+       * 영영 서버에 가지 않으면, 여기서 멈추는 한 그 뒤의 처리가 모두 함께 막힌다.
+       */
+      continue;
     }
   }
 }

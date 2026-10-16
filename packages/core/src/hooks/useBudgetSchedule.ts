@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import type { BudgetDto } from '@money/types';
 
 import { homeDataPort } from '../data/home-port';
+import { useLatestCall } from './useLatestCall';
 import { useApiError } from '../lib/api-error';
 import { shiftYearMonth } from '../lib/datetime';
 import { useTranslation } from '../lib/i18n';
@@ -60,25 +61,29 @@ export function useBudgetSchedule({
     setWindowStart(startMonth);
   }, [startMonth]);
 
+  // 늦게 끝난 앞 받기는 버린다 (`useLatestCall`). ‹ › 를 빨리 누르면 달 머리와 다른 달의 줄이 섰다.
+  const latest = useLatestCall();
+
   const load = useCallback(async () => {
     if (!projectId) return;
+    const isLatest = latest.begin();
     try {
       setIsLoading(true);
       setError('');
-      setMonths(
-        // 창구를 거친다. 앱에서는 사본이 풀어 오프라인에서도 목록이 선다.
-        await homeDataPort().getBudgetSchedule(
-          { categoryId, tagId, type, startMonth: windowStart, months: BUDGET_SCHEDULE_MONTHS },
-          projectId,
-        ),
+      // 창구를 거친다. 앱에서는 사본이 풀어 오프라인에서도 목록이 선다.
+      const rows = await homeDataPort().getBudgetSchedule(
+        { categoryId, tagId, type, startMonth: windowStart, months: BUDGET_SCHEDULE_MONTHS },
+        projectId,
       );
+      if (isLatest()) setMonths(rows);
     } catch {
+      if (!isLatest()) return;
       setMonths([]);
       setError(t('schedule.loadFailed'));
     } finally {
-      setIsLoading(false);
+      if (isLatest()) setIsLoading(false);
     }
-  }, [projectId, categoryId, tagId, type, windowStart, t]);
+  }, [projectId, categoryId, tagId, type, windowStart, t, latest]);
 
   // 다른 기기·사람이 예산을 고치면(실시간 신호, 앱은 동기화) 열어 둔 목록도 다시 받는다.
   const mirrorVersion = useMirrorVersion();

@@ -8,7 +8,7 @@ import {
 } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
-import { stampFieldClocks } from '@/common/field-clock';
+import { mergeFieldClocks, stampFieldClocks } from '@/common/field-clock';
 import { lockLedgerWrites } from '@/common/ledger-lock';
 import { ServerClockService } from '@/common/server-clock';
 import { clientId, rejectDuplicateId } from '@/common/client-id';
@@ -296,9 +296,10 @@ export class CardsService {
 
     // 바꾼 필드에만 시계를 찍는다. `issuer` 는 관계 이름이라 기기가 쓰는 이름으로 맞춘다.
     const fields = Object.keys(data).map((key) => (key === 'issuer' ? 'issuerId' : key));
-    data.fieldHlc = stampFieldClocks(card.fieldHlc, fields, hlc ?? this.clock.now());
 
     return this.prisma.$transaction(async (tx) => {
+      // 시계는 데이터베이스 안에서 합친다 (`mergeFieldClocks`). 겹친 편집이 서로의 시계를 지우지 않게.
+      await mergeFieldClocks(tx, 'Card', id, fields, hlc ?? this.clock.now());
       const updated = await tx.card.update({
         where: { id },
         data,

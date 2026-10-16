@@ -51,6 +51,8 @@ interface EditCardModalProps {
   accounts: Account[];
   onSuccess: (updatedCards: Card[]) => void;
   onDelete: (id: string) => Promise<void>;
+  /** 보고 있는 가계부. 넘기지 않으면 서버가 그 사람의 기본 가계부의 카드를 읽는다. */
+  projectId?: string | null;
 }
 
 export default function EditCardModal({
@@ -60,6 +62,7 @@ export default function EditCardModal({
   accounts,
   onSuccess,
   onDelete,
+  projectId,
 }: EditCardModalProps) {
   const { t } = useTranslation();
   const { messageOf } = useApiError();
@@ -135,7 +138,7 @@ export default function EditCardModal({
             }
           : {}),
       });
-      const data = await apiClient.getCards();
+      const data = await apiClient.getCards(projectId);
       onSuccess(data || []);
       handleClose();
     } catch (err: any) {

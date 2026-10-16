@@ -127,4 +127,13 @@ runSmoke('billing-webhook', async (ctx) => {
   ctx.check('시험 결제 표시', sandbox?.note, '시험 결제(SANDBOX)');
   ctx.check('사라진 사용자는 비운다', (await webhook.handle(base({ type: 'INITIAL_PURCHASE', transaction_id: 'GPA.5', subscriber_attributes: { userId: { value: 'gone' } } }))), 'granted');
   ctx.check('비운 결제한 사람', (await grants()).find((grant) => grant.externalId?.startsWith('GPA.5@'))?.userId ?? null, null);
+
+  // 차례가 뒤바뀐 알림 (2026-10-16). 환불이 구매보다 먼저 오면 넘기지 않고 다시 보내게 한다 -- 넘기면
+  // 뒤늦게 온 구매가 권한을 주어 환불한 사람이 계속 유료다.
+  const late = (over: Partial<RevenueCatEvent>) => base({ transaction_id: 'GPA.6', ...over });
+  ctx.check('구매 전에 온 환불', await webhook.handle(late({ type: 'CANCELLATION', cancel_reason: 'CUSTOMER_SUPPORT' })), 'retry:refund-before-grant');
+  ctx.check('구매 전에 온 연장', await webhook.handle(late({ type: 'SUBSCRIPTION_EXTENDED' })), 'retry:extend-before-grant');
+  ctx.check('구매 전에 온 끝남은 넘긴다', await webhook.handle(late({ type: 'EXPIRATION' })), 'ignored:no-grant');
+  ctx.check('뒤늦은 구매', await webhook.handle(late({ type: 'INITIAL_PURCHASE' })), 'granted');
+  ctx.check('다시 온 환불이 거둔다', await webhook.handle(late({ type: 'CANCELLATION', cancel_reason: 'CUSTOMER_SUPPORT' })), 'revoked');
 });

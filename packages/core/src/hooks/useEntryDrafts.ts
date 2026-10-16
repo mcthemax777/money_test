@@ -15,6 +15,7 @@ import { draftPort, type DraftAction } from '../data/draft-port';
 import { useAuth } from '../store/auth';
 import { refreshInboxCount, useInboxCountStore } from '../store/inbox-count';
 import { useLoadedKey } from './useLoadedKey';
+import { useLatestCall } from './useLatestCall';
 import { useMirrorVersion } from './useMirrorVersion';
 
 export interface UseEntryDraftsResult {
@@ -62,8 +63,11 @@ export function useEntryDrafts(
    */
   // 같은 가계부를 다시 읽을 때는 목록을 가리지 않는다 (useLoadedKey 주석).
   const loaded = useLoadedKey();
+  // 늦게 끝난 앞 받기는 버린다 (`useLatestCall`). 앞 가계부의 수가 지금 가계부의 배지로 적히던 자리다.
+  const latest = useLatestCall();
 
   const reload = useCallback(async () => {
+    const isLatest = latest.begin();
     if (!projectId) {
       loaded.mark(null);
       setAll([]);
@@ -75,10 +79,12 @@ export function useEntryDrafts(
     try {
       if (!isRefresh) setIsLoading(true);
       const rows = await draftPort().list(projectId, { status: 'pending' });
+      if (!isLatest()) return;
       setAll(rows);
       setError('');
       loaded.mark(projectId);
     } catch (caught) {
+      if (!isLatest()) return;
       if (isRefresh) {
         // 그려 둔 목록은 여전히 이 가계부의 것이다. 다음 신호에 다시 읽는다.
         console.error('보관함 다시 읽기 실패:', caught);
@@ -87,9 +93,9 @@ export function useEntryDrafts(
       setAll([]);
       setError(messageOf(caught, 'inbox.loadFailed'));
     } finally {
-      setIsLoading(false);
+      if (isLatest()) setIsLoading(false);
     }
-  }, [projectId, messageOf, loaded]);
+  }, [projectId, messageOf, loaded, latest]);
 
   useEffect(() => {
     void reload();

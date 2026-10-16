@@ -31,7 +31,8 @@ import {
   NO_HINTS,
   type CollectHints,
 } from '@money/core/lib/draft-collect';
-import { myPersonIdOf } from '@money/core/store/project';
+import { myPersonIdOf, useProject } from '@money/core/store/project';
+import { getAccessToken } from '@money/core/lib/auth-tokens';
 import type { EntryDraftDto, NotificationRule, NotificationSampleDto } from '@money/types';
 import * as Application from 'expo-application';
 
@@ -69,10 +70,16 @@ let settling: Promise<CollectResult> | null = null;
  * 기다리는 동안 또 부르면 같은 차례를 돌려준다 -- 알림 셋이면 작업도 셋이 뜨지만
  * 올리기는 한 번이다.
  */
-export function collectNotificationsSoon(projectId: string): Promise<CollectResult> {
+export function collectNotificationsSoon(): Promise<CollectResult> {
   settling ??= new Promise<void>((resolve) => setTimeout(resolve, SETTLE_MS))
     .then(() => {
       settling = null;
+      /*
+       * 기다린 뒤에 다시 본다 (2026-10-16). 처음 부른 때의 가계부를 들고 있으면, 그 5초 사이 가계부를 바꾸거나
+       * 로그아웃한 경우 앞 가계부(또는 앞 사람)로 후보를 올렸다. 지금 세션이 없으면 버퍼에 남겨 둔다.
+       */
+      const projectId = useProject.getState().selectedProjectId;
+      if (!getAccessToken() || !projectId) return EMPTY;
       return collectNotifications(projectId);
     })
     .catch((error) => {

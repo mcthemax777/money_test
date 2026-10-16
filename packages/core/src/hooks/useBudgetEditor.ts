@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 
 import { useApiError } from '../lib/api-error';
 import { useTranslation } from '../lib/i18n';
@@ -49,6 +49,11 @@ export function useBudgetEditor({
   const [amount, setAmount] = useState(0);
   const [error, setError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  /**
+   * 저장이 나가 있는가. 상태(isSubmitting)는 다시 그린 뒤에야 단추를 막으므로, 키보드의 완료(Enter)를
+   * 두 번 누르면 그 사이 두 번 들어간다 -- 같은 달에 규칙이 둘 선다. 그래서 곧바로 바뀌는 ref 로 막는다.
+   */
+  const submittingRef = useRef(false);
   /*
    * 범위는 열 때마다 되돌리지 않는다. '고른 달부터'로 저장하고 확인하러 다시 연 사용자가
    * '모든 달'이 골라진 창을 보고 0을 넣으면 예산이 통째로 사라진다.
@@ -93,7 +98,7 @@ export function useBudgetEditor({
   };
 
   const submit = async () => {
-    if (!projectId || !target) return;
+    if (!projectId || !target || submittingRef.current) return;
     setError('');
 
     if (amount < 0) {
@@ -113,6 +118,7 @@ export function useBudgetEditor({
     }
 
     const monthlyAmount = toAmountString(amount);
+    submittingRef.current = true;
     try {
       setIsSubmitting(true);
 
@@ -153,6 +159,7 @@ export function useBudgetEditor({
     } catch (err) {
       setError(messageOf(err, 'budget.saveFailed'));
     } finally {
+      submittingRef.current = false;
       setIsSubmitting(false);
     }
   };

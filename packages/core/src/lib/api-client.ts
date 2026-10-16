@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import {
+  authEpoch,
   clearAuthTokens,
   cookieSessionExpiry,
   getAccessToken,
@@ -95,6 +96,35 @@ export function isUpdateRequiredError(error: unknown): boolean {
   return response?.status === 426 && code === 'APP_UPDATE_REQUIRED';
 }
 
+/** 갱신 응답이 돌아오기 전에 로그아웃·다른 로그인이 있었다. 돌아온 토큰은 버린다. */
+/** 엑셀 한 묶음을 가져오는 요청을 기다리는 시간 (`importEntrySheet`). */
+const ENTRY_SHEET_IMPORT_TIMEOUT_MS = 60_000;
+
+class SessionChangedError extends Error {
+  constructor() {
+    super('Session changed during refresh');
+    this.name = 'SessionChangedError';
+  }
+}
+
+/**
+ * 세션이 정말 끝났는가 -- 토큰을 지울 일인가 (2026-10-16).
+ *
+ * 서버가 **401 로 거절한 것만** 끝난 것이다. 5xx·429·426·404 는 서버가 잠시 앓거나 막은 것이지
+ * 토큰이 죽었다는 뜻이 아니다. 그것까지 로그아웃으로 다루면 DB 가 잠깐 흔들리거나, 같은 공인 IP
+ * 를 쓰는 가족이 함께 갱신해 상한(429)에 걸리거나, 강제 업데이트가 뜨는 순간 모두가 로그인 화면으로
+ * 밀려나고 올리지 못한 입력까지 버려진다.
+ *
+ * 응답이 없는 실패 중 오프라인이 아닌 것("No refresh token" 처럼 기기 안에서 난 것)은 끝난 것으로 본다.
+ */
+export function isSessionEnded(error: unknown): boolean {
+  // 갱신하는 사이 다른 세션이 들어섰다. 지우면 그 새 세션을 지운다.
+  if (error instanceof SessionChangedError) return false;
+  const status = (error as AxiosError | undefined)?.response?.status;
+  if (status !== undefined) return status === 401;
+  return !isOfflineError(error);
+}
+
 class ApiClient {
   private client: AxiosInstance;
   /**
@@ -149,8 +179,18 @@ class ApiClient {
   /** 서버가 "이 판은 더 쓸 수 없다"(426)고 답했을 때 부를 곳. */
   private onUpdateRequired: (() => void) | null = null;
 
+  /**
+   * 이 창에서 쿠키 세션(표시 쿠키)을 본 적이 있는가 (2026-10-16).
+   *
+   * 다른 탭이 로그아웃하면 표시 쿠키가 함께 사라진다. 그 뒤 이 탭의 401 은 아래 "표시 쿠키 없음" 길로
+   * 조용히 넘어가, 이 탭은 로그인한 척 모든 호출이 실패한 채로 남았다. 본 적이 있는데 지금 없으면 다른
+   * 곳에서 세션이 끝난 것이라 로그인 화면으로 보낸다. 본 적이 없으면(옛 토큰을 옮기는 중) 지금처럼 둔다.
+   */
+  private sawCookieSession = false;
+
   private setupInterceptors() {
     this.client.interceptors.request.use(async (config) => {
+      if (isCookieSession() && hasSession()) this.sawCookieSession = true;
       /*
        * 만료가 코앞이면 보내기 전에 먼저 갱신한다.
        *
@@ -234,6 +274,10 @@ class ApiClient {
          * 옮겨 온 쿠키를 지운다.
          */
         if (error.response?.status === 401 && isCookieSession() && !hasSession()) {
+          if (this.sawCookieSession) {
+            this.sawCookieSession = false;
+            this.clearSession();
+          }
           return Promise.reject(error);
         }
 
@@ -270,7 +314,7 @@ class ApiClient {
            * 강제 업데이트로 갱신이 막힌 것도 세션이 끝난 것이 아니다. 여기서 로그아웃하면
            * 업데이트한 뒤에 다시 로그인해야 하고, 아직 올리지 못한 입력이 그 사이에 버려진다.
            */
-          if (!isOfflineError(refreshError) && !isUpdateRequiredError(refreshError)) {
+          if (isSessionEnded(refreshError)) {
             this.clearSession();
           }
           return Promise.reject(refreshError);
@@ -338,6 +382,8 @@ class ApiClient {
     // 쿠키 세션은 갱신 토큰을 HttpOnly 쿠키로 들어 본문에 싣지 않는다. 서버가 쿠키를 읽고 새 쿠키를 내린다.
     if (!refreshToken && !isCookieSession()) return Promise.reject(new Error('No refresh token'));
 
+    // 나가 있는 동안 로그아웃·다른 로그인이 있었으면 돌아온 토큰을 담지 않는다 (`authEpoch`).
+    const startedAt = authEpoch();
     this.refreshPromise = this.client
       .post<{ accessToken: string; refreshToken: string }>(
         '/auth/refresh',
@@ -345,6 +391,7 @@ class ApiClient {
       )
       .then((response) => {
         const { accessToken, refreshToken: newRefreshToken } = response.data;
+        if (authEpoch() !== startedAt) throw new SessionChangedError();
         saveAuthTokens(accessToken, newRefreshToken);
         return accessToken;
       })
@@ -875,7 +922,15 @@ class ApiClient {
     const response = await this.client.post<EntrySheetDto.ImportResponse>(
       '/entry-sheet/import',
       { rows },
-      { params: projectId ? { projectId } : {} },
+      {
+        params: projectId ? { projectId } : {},
+        /*
+         * 한 묶음(최대 300행)을 서버가 한 줄씩 적는다. 기본 10초 안에 끝나지 않으면 화면은 실패로 보는데
+         * 서버는 계속 적어 커밋한다 -- 사용자가 다시 가져오면 그 묶음이 두 번 들어간다 (2026-10-16).
+         * 행에 멱등 열쇠가 없어 서버가 거를 수 없으므로 넉넉히 기다린다. nginx 의 기본 읽기 제한(60초)에 맞춘다.
+         */
+        timeout: ENTRY_SHEET_IMPORT_TIMEOUT_MS,
+      },
     );
     return response.data;
   }

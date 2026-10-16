@@ -83,6 +83,51 @@ async function bootstrap() {
   await app.listen(port);
   console.log(`✅ Server running on http://localhost:${port}`);
   console.log(`📚 API Docs: http://localhost:${port}/api/docs`);
+
+  drainOnShutdown(app);
+}
+
+/**
+ * 끝내라는 신호를 받으면 받던 요청을 마치고 나간다 (2026-10-16).
+ *
+ * 배포(`pm2 reload`)는 새 프로세스를 띄운 뒤 옛 프로세스에 SIGINT 를 보낸다. 아무것도 듣지 않으면 Node 는
+ * 그 자리에서 끝나, 처리 중이던 요청이 끊기고 커밋하지 못한 트랜잭션이 되돌아간다. `/sync/push` 가 재생은
+ * 커밋하고 결과 기록 전에 끊기면 그 명령이 "처리 중"으로 남았다가 60초 뒤 다시 재생된다.
+ *
+ * Nest 의 `enableShutdownHooks()` 만으로는 모자란다. 그쪽은 모듈 정리(onModuleDestroy -- DB 연결 끊기)를
+ * HTTP 서버를 닫기 **전에** 부르므로, 받던 요청이 DB 를 잃는다. 그래서 순서를 직접 세운다:
+ *
+ *   1. 새 연결을 받지 않는다 (`server.close`). 쉬는 keep-alive 연결도 닫는다.
+ *   2. 받던 요청이 끝나기를 기다린다. 실시간 신호(SSE)처럼 끝나지 않는 연결이 있으므로 오래 기다리지 않는다
+ *      -- pm2 의 `kill_timeout`(5초) 안이어야 한다.
+ *   3. 모듈을 정리하고(DB·레디스) 나간다.
+ */
+const DRAIN_TIMEOUT_MS = 3_500;
+
+function drainOnShutdown(app: NestExpressApplication): void {
+  let closing = false;
+
+  const shutdown = async (signal: string) => {
+    if (closing) return;
+    closing = true;
+    console.log(`🛑 ${signal} -- 받던 요청을 마치고 끝냅니다`);
+
+    const server = app.getHttpServer() as import('http').Server;
+    const drained = new Promise<void>((resolve) => server.close(() => resolve()));
+    server.closeIdleConnections?.();
+
+    await Promise.race([drained, new Promise((resolve) => setTimeout(resolve, DRAIN_TIMEOUT_MS))]);
+
+    try {
+      await app.close();
+    } catch (error) {
+      console.error('❌ Shutdown error:', error);
+    }
+    process.exit(0);
+  };
+
+  process.once('SIGINT', () => void shutdown('SIGINT'));
+  process.once('SIGTERM', () => void shutdown('SIGTERM'));
 }
 
 bootstrap().catch(err => {

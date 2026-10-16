@@ -16,7 +16,7 @@
  * 찍는 쪽은 폰이라, 카메라가 있는 이쪽에만 두면 된다. 번호를 손으로 치는 길은 양쪽에
  * 모두 있다.
  */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   BackHandler,
@@ -73,11 +73,22 @@ export default function StartScreen() {
   };
 
   /** 로그아웃. 구글 쪽 세션도 함께 끊는다 (`signOutGoogle` 의 주석 참고). */
+  /*
+   * 두 번 누르면 로그아웃이 겹쳐 돌아, 사본 지우기 둘이 서로 연 파일을 닫았다 (2026-10-16). 첫 걸음이 서버를
+   * 부르므로 느린 회선에서는 그 사이가 길다. 곧바로 바뀌는 ref 로 막는다.
+   */
+  const signingOutRef = useRef(false);
   const signOut = async () => {
-    // 토큰이 살아 있을 때 지워야 서버가 누구의 기기인지 안다 (`unregisterPushDevice`).
-    await unregisterPushDevice();
-    await signOutGoogle();
-    await logout();
+    if (signingOutRef.current) return;
+    signingOutRef.current = true;
+    try {
+      // 토큰이 살아 있을 때 지워야 서버가 누구의 기기인지 안다 (`unregisterPushDevice`).
+      await unregisterPushDevice();
+      await signOutGoogle();
+      await logout();
+    } finally {
+      signingOutRef.current = false;
+    }
   };
 
   const join = async () => {

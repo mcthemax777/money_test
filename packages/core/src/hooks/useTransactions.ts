@@ -1166,6 +1166,9 @@ export function useTransactions(
     inFlightRef.current = new Set();
     monthRefetchRef.current = new Set();
     setRangePending({});
+    // 옛 받기의 로딩 표시도 지운다. 그 받기는 끝나도 표시를 끄지 않는다(새 조건의 표시를 끄지 않게).
+    setLoadingMonths({});
+    setLoadingRows({});
   }, [scopeKey, projectId]);
 
   /** 조건이 바뀌면 손으로 정한 펼침도 지운다. 그 달이 목록에서 사라질 수 있다. */
@@ -1368,7 +1371,13 @@ export function useTransactions(
         if (force) monthRefetchRef.current.add(flightId);
         return;
       }
-      inFlightRef.current.add(flightId);
+      /*
+       * 이 받기가 적힌 자리. 조건이 바뀌면 `inFlightRef` 가 새 자리로 바뀌는데, 옛 받기가 끝날 때 새 자리에서
+       * 지우면 새 조건으로 나간 같은 달의 받기가 "끝났다"로 보여 한 번 더 나가고 로딩 표시가 먼저 꺼졌다
+       * (2026-10-16). 그래서 적은 자리에서 지우고, 표시는 같은 조건일 때만 끈다.
+       */
+      const flights = inFlightRef.current;
+      flights.add(flightId);
 
       setLoadingMonths((prev) => ({ ...prev, [yearMonth]: true }));
       try {
@@ -1429,8 +1438,10 @@ export function useTransactions(
         fail(error);
       } finally {
         // 어떤 경우에도 지운다. 남으면 그 달이 "로딩 중"에서 멈춘다.
-        inFlightRef.current.delete(flightId);
-        setLoadingMonths((prev) => ({ ...prev, [yearMonth]: false }));
+        flights.delete(flightId);
+        if (scopeKeyRef.current === askedScope) {
+          setLoadingMonths((prev) => ({ ...prev, [yearMonth]: false }));
+        }
         // 나가 있는 동안 값이 바뀌었으면 지금 값으로 한 번 더 받는다 (위 적어 둔 자리).
         if (monthRefetchRef.current.delete(flightId) && scopeKeyRef.current === askedScope) {
           void load(yearMonth, true);
@@ -1743,7 +1754,9 @@ export function useTransactions(
 
     const load = async ({ yearMonth, row }: { yearMonth: string; row: TransactionRow }) => {
       const id = rowId(yearMonth, row.key);
-      inFlightRef.current.add(id);
+      // 적은 자리에서 지운다 (달 받기의 `flights` 주석).
+      const flights = inFlightRef.current;
+      flights.add(id);
       setLoadingRows((prev) => ({ ...prev, [id]: true }));
       try {
         const narrow = {
@@ -1774,8 +1787,10 @@ export function useTransactions(
         fail(error);
       } finally {
         // 어떤 경우에도 지운다. 남으면 그 줄이 "로딩 중"에서 멈춘다.
-        inFlightRef.current.delete(id);
-        setLoadingRows((prev) => ({ ...prev, [id]: false }));
+        flights.delete(id);
+        if (scopeKeyRef.current === askedScope) {
+          setLoadingRows((prev) => ({ ...prev, [id]: false }));
+        }
       }
     };
 
@@ -1914,6 +1929,11 @@ export function useTransactions(
         : { ...scope, ...listRangeOf(yearMonth) };
 
       if (!options?.quiet) setRangePending((prev) => ({ ...prev, [cacheKey]: true }));
+      /*
+       * 묻는 사이 검색 조건이 바뀌면 이 답은 옛 범위의 것이다 (2026-10-16). 적어 두면 바뀐 조건의 같은
+       * 칸(`m|년월`)에 옛 id 가 남아, 년월 체크가 보이지 않는 거래를 고르고 그대로 지울 수 있었다.
+       */
+      const askedScope = scopeKeyRef.current;
       try {
         /*
          * 목록을 그릴 때와 같은 거래를 센다. 회차 기준이면 **지난달에 산 할부의 회차**도 이
@@ -1928,6 +1948,7 @@ export function useTransactions(
             ? port.getInstallmentRows(query, projectId)
             : Promise.resolve([] as EntryListItem[]),
         ]);
+        if (scopeKeyRef.current !== askedScope) return [];
         const rows = viewsOf(yearMonth, past.length > 0 ? [...own, ...past] : own);
         const ids = uniqueIds(rows);
         setRangeIds((prev) => ({ ...prev, [cacheKey]: ids }));

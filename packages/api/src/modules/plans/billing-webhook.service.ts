@@ -48,7 +48,14 @@ export type WebhookOutcome =
   | 'restored'
   | 'extended'
   | 'shortened'
-  | `ignored:${string}`;
+  | `ignored:${string}`
+  /**
+   * 아직 받을 줄이 없다 -- 구매 알림보다 먼저 왔다 (2026-10-16). 웹훅은 차례를 지키지 않고, 구매 알림이
+   * 실패해 다시 오는 사이 환불이 먼저 닿기도 한다. 200 으로 넘기면 그 환불은 영영 사라지고 뒤늦게 온
+   * 구매가 권한을 준다 -- 환불한 사람이 계속 유료다. controller 가 503 으로 돌려 RevenueCat 이 다시
+   * 보내게 하고, 그 사이 구매 줄이 선다.
+   */
+  | `retry:${string}`;
 
 const SOURCE = 'google_play' as const;
 
@@ -138,7 +145,10 @@ export class BillingWebhookService {
 
   /** 환불된 결제의 줄을 거둔다. 산 시각이 맞는 줄이 있으면 그것만, 없으면 그 거래의 살아 있는 줄 모두. */
   private async revokeRefund(event: RevenueCatEvent, transactionId: string): Promise<WebhookOutcome> {
-    const targets = (await this.matching(event, transactionId)).filter((grant) => !grant.revokedAt);
+    const grants = await this.matching(event, transactionId);
+    // 줄이 아예 없으면 구매 알림이 아직이다. 있는데 모두 거둬졌으면 같은 환불을 다시 받은 것이다.
+    if (grants.length === 0) return 'retry:refund-before-grant';
+    const targets = grants.filter((grant) => !grant.revokedAt);
     if (targets.length === 0) return 'ignored:refund-no-grant';
     for (const grant of targets) {
       await this.plans.revoke(grant.id, '스토어 환불');
@@ -147,7 +157,9 @@ export class BillingWebhookService {
   }
 
   private async restore(event: RevenueCatEvent, transactionId: string): Promise<WebhookOutcome> {
-    const targets = (await this.matching(event, transactionId)).filter((grant) => grant.revokedAt);
+    const grants = await this.matching(event, transactionId);
+    if (grants.length === 0) return 'retry:restore-before-grant';
+    const targets = grants.filter((grant) => grant.revokedAt);
     if (targets.length === 0) return 'ignored:restore-no-grant';
     for (const grant of targets) await this.plans.unrevoke(grant.id);
     return 'restored';
@@ -160,7 +172,12 @@ export class BillingWebhookService {
   private async moveEnd(event: RevenueCatEvent, transactionId: string, now: Date): Promise<WebhookOutcome> {
     if (!event.expiration_at_ms) return 'ignored:no-expiration';
     const target = new Date(event.expiration_at_ms);
-    const grants = (await this.matching(event, transactionId)).filter(
+    const all = await this.matching(event, transactionId);
+    // 기간을 미루는 알림이 구매보다 먼저 왔다. 끝남(EXPIRATION)은 줄이 없으면 당길 것도 없다.
+    if (all.length === 0 && event.type === 'SUBSCRIPTION_EXTENDED') {
+      return 'retry:extend-before-grant';
+    }
+    const grants = all.filter(
       (grant) => !grant.revokedAt && grant.endsAt !== null,
     );
     const latest = grants[grants.length - 1];

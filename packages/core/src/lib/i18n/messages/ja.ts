@@ -1250,6 +1250,8 @@ export const ja: Record<MessageKey, string> = {
   'error.PERSON_HAS_RECORDS': '紐づく記録が残っているため削除できません。非表示のみ可能です。',
   'error.CREDIT_CARD_DAYS_REQUIRED': 'クレジットカードは締め日と支払日を設定する必要があります。',
   'error.CARD_HAS_UNPAID': '未払いのカード利用額が残っているため隠せません。',
+  'error.ACCOUNT_INACTIVE': '非表示の口座には新しく記録できません。先に非表示を解除してください。',
+  'error.CARD_INACTIVE': '非表示のカードには新しく記録できません。先に非表示を解除してください。',
   'error.PERSON_HAS_ACCOUNTS': 'この人が持ち主の口座があるため隠せません。',
   'error.CATEGORY_NAME_REQUIRED': 'カテゴリ名を入力してください。',
   'error.CATEGORY_NAME_DUPLICATE': '同じ名前の分類がすでにあります。',

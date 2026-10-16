@@ -6,6 +6,7 @@ import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { PlansService } from '../plans/plans.service';
 import { badRequest, forbidden, notFound } from '@/common/app-error';
 import { recordProjectWrite } from '@/common/project-write-context';
+import { lockMembershipWrites } from '@/common/ledger-lock';
 import { rankAfter } from '@money/types';
 
 interface CreateProjectDto {
@@ -151,6 +152,11 @@ export class ProjectsService {
     }
 
     const project = await this.prisma.project.update({ where: { id: projectId }, data });
+    /*
+     * 다른 구성원의 화면이 바뀐 이름·시간대·표시 통화를 따라오게 신호를 낸다 (2026-10-16). 이 경로는 권한
+     * 확인을 ProjectAccessService 가 아니라 여기의 소유자 확인으로 해서, 저절로 적히지 않았다.
+     */
+    recordProjectWrite(projectId);
     const member = await this.verifyUserInProject(projectId, userId);
     return { ...project, role: member.role };
   }
@@ -197,6 +203,11 @@ export class ProjectsService {
    */
   async ensureMyPerson(projectId: string, userId: string): Promise<string | null> {
     return this.prisma.$transaction(async (tx) => {
+      /*
+       * 구성원 쓰기와 줄을 세운다 (2026-10-16). "아직 아무도 고르지 않은 같은 이름의 사람"을 찾아 잡는 일이라,
+       * 두 사람이 함께 들어오거나 같은 승인이 겹치면 둘이 같은 사람을 잡거나 같은 사람을 둘 만들었다.
+       */
+      await lockMembershipWrites(tx, projectId);
       const member = await tx.projectMember.findUnique({
         where: { projectId_userId: { projectId, userId } },
         include: { user: { select: { name: true, email: true } } },
@@ -433,6 +444,8 @@ export class ProjectsService {
 
     // 들어온 사람을 구성원으로 세우고 "나"로 지정한다.
     await this.ensureMyPerson(invitation.projectId, userId);
+    // 다른 구성원의 화면(구성원·사람 목록)이 따라오게 신호를 낸다 (updateProject 의 주석).
+    recordProjectWrite(invitation.projectId);
 
     const project = await this.prisma.project.findUnique({
       where: { id: invitation.projectId },
@@ -513,40 +526,46 @@ export class ProjectsService {
   }
 
   async leaveProject(projectId: string, userId: string) {
-    const member = await this.prisma.projectMember.findUnique({
-      where: {
-        projectId_userId: {
-          projectId,
-          userId,
+    // 확인과 지우기를 구성원 잠금 아래 한 단위로 (`lockMembershipWrites`).
+    await this.prisma.$transaction(async (tx) => {
+      await lockMembershipWrites(tx, projectId);
+      const member = await tx.projectMember.findUnique({
+        where: {
+          projectId_userId: {
+            projectId,
+            userId,
+          },
         },
-      },
-    });
-
-    if (!member) {
-      throw notFound('NOT_PROJECT_MEMBER', '프로젝트 멤버가 아닙니다.');
-    }
-
-    // 마지막 owner인 경우 탈퇴 불가
-    if (member.role === 'owner') {
-      const ownerCount = await this.prisma.projectMember.count({
-        where: { projectId, role: 'owner' },
       });
 
-      if (ownerCount === 1) {
-        throw badRequest('LAST_OWNER_CANNOT_LEAVE', '마지막 소유자는 프로젝트를 탈퇴할 수 없습니다.');
+      if (!member) {
+        throw notFound('NOT_PROJECT_MEMBER', '프로젝트 멤버가 아닙니다.');
       }
-    }
 
-    await this.prisma.projectMember.delete({
-      where: {
-        projectId_userId: {
-          projectId,
-          userId,
+      // 마지막 owner인 경우 탈퇴 불가
+      if (member.role === 'owner') {
+        const ownerCount = await tx.projectMember.count({
+          where: { projectId, role: 'owner' },
+        });
+
+        if (ownerCount === 1) {
+          throw badRequest('LAST_OWNER_CANNOT_LEAVE', '마지막 소유자는 프로젝트를 탈퇴할 수 없습니다.');
+        }
+      }
+
+      await tx.projectMember.delete({
+        where: {
+          projectId_userId: {
+            projectId,
+            userId,
+          },
         },
-      },
+      });
     });
 
     await this.clearStaleDefaultProject(userId, projectId);
+    // 남은 구성원의 화면이 따라오게 신호를 낸다 (updateProject 의 주석).
+    recordProjectWrite(projectId);
 
     return { success: true };
   }
@@ -578,38 +597,53 @@ export class ProjectsService {
    * owner가 멤버를 프로젝트에서 내보낸다.
    */
   async removeMember(projectId: string, targetUserId: string, requesterId: string) {
-    await this.verifyUserIsOwner(projectId, requesterId);
-
     if (targetUserId === requesterId) {
       throw badRequest('CANNOT_KICK_SELF', '본인은 강퇴할 수 없습니다. 프로젝트 탈퇴를 이용하세요.');
     }
 
-    const target = await this.prisma.projectMember.findUnique({
-      where: { projectId_userId: { projectId, userId: targetUserId } },
-      include: { user: { select: { name: true } } },
-    });
+    // 소유자 확인과 내보내기를 구성원 잠금 아래 한 단위로 (`lockMembershipWrites`).
+    const target = await this.prisma.$transaction(async (tx) => {
+      await lockMembershipWrites(tx, projectId);
+      const requester = await tx.projectMember.findUnique({
+        where: { projectId_userId: { projectId, userId: requesterId } },
+      });
+      if (!requester) {
+        throw new ForbiddenException('이 프로젝트에 접근할 권한이 없습니다');
+      }
+      if (requester.role !== 'owner') {
+        throw forbidden('PROJECT_OWNER_ONLY', '프로젝트 소유자만 이 작업을 수행할 수 있습니다');
+      }
 
-    if (!target) {
-      throw notFound('NOT_PROJECT_MEMBER', '프로젝트 멤버가 아닙니다.');
-    }
+      const found = await tx.projectMember.findUnique({
+        where: { projectId_userId: { projectId, userId: targetUserId } },
+        include: { user: { select: { name: true } } },
+      });
 
-    // 소유권 박탈은 강퇴로 처리하지 않는다.
-    if (target.role === 'owner') {
-      throw badRequest('CANNOT_KICK_OWNER', '소유자는 강퇴할 수 없습니다.');
-    }
+      if (!found) {
+        throw notFound('NOT_PROJECT_MEMBER', '프로젝트 멤버가 아닙니다.');
+      }
 
-    await this.prisma.projectMember.delete({
-      where: { projectId_userId: { projectId, userId: targetUserId } },
-    });
+      // 소유권 박탈은 강퇴로 처리하지 않는다.
+      if (found.role === 'owner') {
+        throw badRequest('CANNOT_KICK_OWNER', '소유자는 강퇴할 수 없습니다.');
+      }
 
-    // 승인 기록을 남겨두면 멤버가 아닌데 승인 상태인 행이 남는다.
-    // 지워야 나중에 다시 가입 요청을 보낼 수 있는 상태가 깔끔하다.
-    await this.prisma.projectJoinRequest.deleteMany({
-      where: { projectId, userId: targetUserId },
+      await tx.projectMember.delete({
+        where: { projectId_userId: { projectId, userId: targetUserId } },
+      });
+
+      // 승인 기록을 남겨두면 멤버가 아닌데 승인 상태인 행이 남는다.
+      // 지워야 나중에 다시 가입 요청을 보낼 수 있는 상태가 깔끔하다.
+      await tx.projectJoinRequest.deleteMany({
+        where: { projectId, userId: targetUserId },
+      });
+      return found;
     });
 
     // 강퇴당한 사용자의 기본 프로젝트가 이 프로젝트였다면 정리한다.
     await this.clearStaleDefaultProject(targetUserId, projectId);
+    // 내보낸 사람의 기기도 이 신호로 다시 받으며 접근이 끊긴 것을 안다. 남은 구성원의 화면도 따라온다.
+    recordProjectWrite(projectId);
 
     return { success: true, userId: targetUserId, userName: target.user.name };
   }
@@ -631,7 +665,11 @@ export class ProjectsService {
     }
 
     const target = await this.prisma.$transaction(async (tx) => {
-      // 확인과 변경을 같은 트랜잭션에 둔다. 두 기기에서 동시에 넘기면 나중 것이 소유자 아님으로 막힌다.
+      /*
+       * 확인과 변경을 같은 트랜잭션에, 구성원 잠금 아래 둔다. 두 기기에서 동시에 넘기면 나중 것이 소유자
+       * 아님으로 막힌다. 잠금 없이는 READ COMMITTED 라 둘 다 옛 역할을 읽고 통과해 소유자가 둘 남았다.
+       */
+      await lockMembershipWrites(tx, projectId);
       const requester = await tx.projectMember.findUnique({
         where: { projectId_userId: { projectId, userId: requesterId } },
       });
@@ -861,24 +899,38 @@ export class ProjectsService {
       throw badRequest('JOIN_REQUEST_HANDLED', '이미 처리된 요청입니다.');
     }
 
-    // 승인 사이에 요청자가 다른 경로로 멤버가 되었을 수 있으므로 중복 생성을 피한다.
-    const existingMember = await this.prisma.projectMember.findUnique({
-      where: { projectId_userId: { projectId: request.projectId, userId: request.userId } },
-    });
-
-    if (!existingMember) {
-      await this.prisma.projectMember.create({
-        data: { projectId: request.projectId, userId: request.userId, role },
+    /*
+     * 요청을 먼저 잡고(대기 중일 때만) 구성원을 세운다. 한 트랜잭션, 구성원 잠금 아래다 (2026-10-16).
+     *
+     * 예전에는 확인·만들기·표시가 따로 돌아, 승인을 두 번 누르면 둘째가 구성원 유일 조건에 걸려 500 이 났고,
+     * 요청자가 그 사이 요청을 거두면 구성원은 생겼는데 요청이 사라져 500 이 났다.
+     */
+    const existingMember = await this.prisma.$transaction(async (tx) => {
+      await lockMembershipWrites(tx, request.projectId);
+      const claimed = await tx.projectJoinRequest.updateMany({
+        where: { id: requestId, status: 'pending' },
+        data: { status: 'approved', decidedAt: new Date(), decidedByUserId: userId },
       });
-    }
+      if (claimed.count === 0) {
+        throw badRequest('JOIN_REQUEST_HANDLED', '이미 처리된 요청입니다.');
+      }
+
+      // 승인 사이에 요청자가 다른 경로로 멤버가 되었을 수 있으므로 중복 생성을 피한다.
+      const found = await tx.projectMember.findUnique({
+        where: { projectId_userId: { projectId: request.projectId, userId: request.userId } },
+      });
+      if (!found) {
+        await tx.projectMember.create({
+          data: { projectId: request.projectId, userId: request.userId, role },
+        });
+      }
+      return found;
+    });
 
     // 승인된 사람을 구성원으로 세우고 그 사람의 "나"로 지정한다.
     await this.ensureMyPerson(request.projectId, request.userId);
-
-    await this.prisma.projectJoinRequest.update({
-      where: { id: requestId },
-      data: { status: 'approved', decidedAt: new Date(), decidedByUserId: userId },
-    });
+    // 다른 구성원의 화면이 따라오게 신호를 낸다 (updateProject 의 주석).
+    recordProjectWrite(request.projectId);
 
     return {
       projectId: request.projectId,
@@ -904,10 +956,14 @@ export class ProjectsService {
       throw badRequest('JOIN_REQUEST_HANDLED', '이미 처리된 요청입니다.');
     }
 
-    await this.prisma.projectJoinRequest.update({
-      where: { id: requestId },
+    // 대기 중일 때만 거절한다 (승인과 같은 까닭). 겹친 승인이 먼저면 그것이 이긴다.
+    const decided = await this.prisma.projectJoinRequest.updateMany({
+      where: { id: requestId, status: 'pending' },
       data: { status: 'rejected', decidedAt: new Date(), decidedByUserId: userId },
     });
+    if (decided.count === 0) {
+      throw badRequest('JOIN_REQUEST_HANDLED', '이미 처리된 요청입니다.');
+    }
 
     return { success: true };
   }
@@ -930,7 +986,14 @@ export class ProjectsService {
       throw badRequest('JOIN_REQUEST_HANDLED', '이미 처리된 요청입니다.');
     }
 
-    await this.prisma.projectJoinRequest.delete({ where: { id: requestId } });
+    // 대기 중일 때만 지운다 (2026-10-16). 그 사이 소유자가 승인했으면 승인이 이긴다 -- 지우면 구성원은 섰는데
+    // 요청 기록만 사라졌다.
+    const removed = await this.prisma.projectJoinRequest.deleteMany({
+      where: { id: requestId, status: 'pending' },
+    });
+    if (removed.count === 0) {
+      throw badRequest('JOIN_REQUEST_HANDLED', '이미 처리된 요청입니다.');
+    }
 
     return { success: true };
   }

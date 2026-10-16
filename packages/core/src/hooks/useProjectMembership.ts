@@ -11,7 +11,7 @@
  * 조회는 **소유한 프로젝트만** 하는 것이 둘 있다. 초대 링크와 가입 요청은 소유자만 볼 수
  * 있어서, 참여자로 들어간 프로젝트까지 물으면 403 이 줄줄이 돌아온다.
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import { apiClient } from '../lib/api-client';
 import { track } from '../lib/analytics';
@@ -111,6 +111,11 @@ export function useProjectMembership() {
   const [people, setPeople] = useState<Record<string, PersonOption[]>>({});
   const [myRequests, setMyRequests] = useState<MyJoinRequestRow[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  /**
+   * 손질이 나가 있는가 (2026-10-16). 상태는 다시 그린 뒤에야 단추를 막아, 두 번 누르면 초대 링크가 둘
+   * 생기거나 가입 요청이 두 번 나갔다. 곧바로 바뀌는 ref 로 한 번에 하나만 보낸다.
+   */
+  const submittingRef = useRef(false);
 
   /**
    * 프로젝트별 곁가지를 한 번에 받는다.
@@ -170,6 +175,9 @@ export function useProjectMembership() {
       run: () => Promise<T>,
       fallbackKey: MessageKey,
     ): Promise<MembershipResult & { value?: T }> => {
+      // 앞의 손질이 아직이다. 그 결과가 곧 화면에 뜬다 -- 오류 문장을 남기지 않는다.
+      if (submittingRef.current) return { ok: false, message: '' };
+      submittingRef.current = true;
       try {
         setIsSubmitting(true);
         const value = await run();
@@ -177,6 +185,7 @@ export function useProjectMembership() {
       } catch (error) {
         return { ok: false, message: messageOf(error, fallbackKey) };
       } finally {
+        submittingRef.current = false;
         setIsSubmitting(false);
       }
     },

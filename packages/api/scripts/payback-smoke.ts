@@ -636,6 +636,19 @@ runSmoke('payback', async (ctx) => {
     JSON.stringify((await row(plain.id)).installmentAdjust), '{"interest":["0","0","0"],"principal":["0","0","0"]}');
   ctx.check('줄이지 않은 환불은 환불한 달에 한꺼번에', await monthly(), '40000 / 35000 / 10000');
 
+  // 겹친 할부 환불 (2026-10-16). 12월 회차에 남은 것은 1만이다. 8천씩 두 환불이 함께 오면 조립은 둘 다 옛
+  // 남은 원금을 보고 통과시키므로, 원장 잠금 아래의 다시 보기가 하나만 받아야 한다.
+  const racedRefunds = await Promise.allSettled([
+    refundOf(full, buyLine, '8000', ['0', '0', '8000']),
+    refundOf(full, buyLine, '8000', ['0', '0', '8000']),
+  ]);
+  ctx.check('겹친 할부 환불은 남은 회차만큼만 받는다',
+    racedRefunds.filter((one) => one.status === 'fulfilled').length, 1);
+  for (const one of racedRefunds) {
+    if (one.status === 'fulfilled') await e4.deleteEntry(one.value.id, uid);
+  }
+  ctx.check('겹친 환불을 지우면 그대로', await monthly(), '40000 / 35000 / 10000');
+
   const editBuy = (extra: object) => e4.updateEntry(full.id, uid, {
     kind: 'expense', personId: me4.id, date: '2026-10-05T03:00:00.000Z', description: '가전',
     cardId: card4.id, amount: '120000', categoryId: food4.id, lineKey: buyLine, installmentMonths: 3, ...extra,

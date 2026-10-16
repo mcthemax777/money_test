@@ -10,7 +10,7 @@ import {
 import { assertReorderIds } from '@/common/reorder';
 import { badRequest } from '@/common/app-error';
 import { clientId } from '@/common/client-id';
-import { stampFieldClocks } from '@/common/field-clock';
+import { mergeFieldClocks, stampFieldClocks } from '@/common/field-clock';
 import { touchEntries } from '@/common/entry-stamp';
 import { lockLedgerWrites } from '@/common/ledger-lock';
 import { ServerClockService } from '@/common/server-clock';
@@ -268,7 +268,23 @@ export class CategoriesService {
 
       for (const move of moves) {
         const toId = move.toId;
-        if (!toId) continue;
+        if (!toId) {
+          /*
+           * 갈 곳 없는 줄은 잠금 아래에서 다시 센다 (2026-10-16).
+           *
+           * 위의 세기는 트랜잭션 밖이라, 그 뒤 잠금을 잡기 전에 다른 사람이 이 분류로 거래를
+           * 적을 수 있다. 그대로 지우면 cascade 로 그 거래의 분류 다리만 사라지고 통장 잔액은
+           * 남아 전표가 맞지 않는다.
+           */
+          const used = await tx.posting.count({ where: { categoryId: move.fromId } });
+          if (used > 0) {
+            throw badRequest(
+              'CATEGORY_MERGE_TARGET_REQUIRED',
+              '거래가 있는 분류는 옮길 곳을 골라야 합니다.',
+            );
+          }
+          continue;
+        }
 
         const owners = await tx.posting.findMany({
           where: { categoryId: move.fromId },
@@ -307,6 +323,23 @@ export class CategoriesService {
        * 받았으므로(대분류와 그 소분류가 따로 온다) 받은 대로 지운다. 이미 사라진 줄은
        * `deleteMany` 가 조용히 건너뛴다.
        */
+      /*
+       * 받은 목록에 없는 소분류에 거래가 있으면 멈춘다 (2026-10-16).
+       *
+       * 화면이 목록을 만든 뒤 다른 사람이 그 대분류 밑에 소분류를 만들고 거래를 적었을 수
+       * 있다. 대분류를 지우면 그 소분류가 cascade 로 따라 사라지며 거래의 분류 다리도 함께
+       * 지워진다.
+       */
+      const orphaned = await tx.posting.count({
+        where: { category: { parentId: { in: fromIds }, id: { notIn: fromIds } } },
+      });
+      if (orphaned > 0) {
+        throw badRequest(
+          'CATEGORY_MERGE_TARGET_REQUIRED',
+          '거래가 있는 분류는 옮길 곳을 골라야 합니다.',
+        );
+      }
+
       await this.releaseCategories(tx, fromIds);
       const removed = await tx.category.deleteMany({ where: { id: { in: fromIds } } });
 
@@ -332,16 +365,16 @@ export class CategoriesService {
     // 순서 바꾸기는 이 필드 하나다 (분수 색인).
     if (dto.sortRank !== undefined) data.sortRank = dto.sortRank;
 
-    data.fieldHlc = stampFieldClocks(
-      category.fieldHlc,
-      Object.keys(data),
-      hlc ?? this.clock.now(),
-    );
+    const fields = Object.keys(data);
 
     // 이름 변경도 생성과 같은 중복 검사를 받아야 한다. 예전에는 여기만 빠져 있어
     // 이름 충돌이 Prisma 오류 그대로 500이 됐다.
     try {
-      return await this.prisma.category.update({ where: { id }, data });
+      // 시계는 데이터베이스 안에서 합친다 (`mergeFieldClocks`). 겹친 편집이 서로의 시계를 지우지 않게.
+      return await this.prisma.$transaction(async (tx) => {
+        await mergeFieldClocks(tx, 'Category', id, fields, hlc ?? this.clock.now());
+        return tx.category.update({ where: { id }, data });
+      });
     } catch (error) {
       throw this.translateDuplicate(error);
     }

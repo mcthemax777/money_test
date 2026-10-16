@@ -110,7 +110,13 @@ export function createLocalSettingsWriter({
       observed,
     });
 
-    await store.writeAsset(table, id, defined({ projectId, ...row }), mutation.hlc);
+    try {
+      await store.writeAsset(table, id, defined({ projectId, ...row }), mutation.hlc);
+    } catch (error) {
+      // 사본에 적지 못했으면 명령도 거둔다 (local-entry-writer 의 commit 과 같다).
+      await store.withdrawMutation(mutation.mutationId).catch(() => undefined);
+      throw error;
+    }
     if (extra) {
       await store.writeAsset(extra.table, extra.id, defined({ projectId, ...extra.row }), mutation.hlc);
     }

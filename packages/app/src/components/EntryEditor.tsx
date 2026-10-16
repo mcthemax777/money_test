@@ -347,7 +347,30 @@ export default function EntryEditor({
    * 페이백을 저장하다 실패하면 창을 닫지 않는다. 지출은 이미 저장되었고 폼은 그 지출을
    * 고치는 폼이 되어 있다(useEntryForm.save) -- 다시 누르면 남은 페이백만 저장한다.
    */
+  /*
+   * 저장·지우기가 나가 있는가 (2026-10-16).
+   *
+   * form.isSubmitting 은 지출 저장이 끝나면 풀리는데, 그 뒤에 페이백 저장이 이어진다. 그 사이 다시
+   * 누르면 같은 페이백을 또 만든다. 상태는 다시 그린 뒤에야 단추를 막으므로 곧바로 바뀌는 ref 로도
+   * 막는다. 지우기는 확인 창을 띄우기 전에 페이백 수를 세느라 기다리므로, 두 번 누르면 창이 둘 뜬다.
+   */
+  const busyRef = useRef(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const isBusy = form.isSubmitting || isSaving;
+
   const save = async () => {
+    if (busyRef.current) return;
+    busyRef.current = true;
+    setIsSaving(true);
+    try {
+      await saveAll();
+    } finally {
+      busyRef.current = false;
+      setIsSaving(false);
+    }
+  };
+
+  const saveAll = async () => {
     setPaybackError('');
     if (values.kind === 'expense') {
       const found = paybackDrafts.check(paybackLines);
@@ -381,8 +404,15 @@ export default function EntryEditor({
    * 에서 서버의 거래까지 지운다. 문구는 계좌·카드가 쓰는 것을 함께 쓴다.
    */
   const remove = async () => {
+    if (busyRef.current) return;
     // 원거래면 걸린 환불·페이백도 함께 지워진다. 그 수를 함께 묻는다 (7-6).
-    const note = editing ? paybackDeleteNote(await paybackCountOf(editing, projectId), t) : '';
+    busyRef.current = true;
+    let note = '';
+    try {
+      note = editing ? paybackDeleteNote(await paybackCountOf(editing, projectId), t) : '';
+    } finally {
+      busyRef.current = false;
+    }
     Alert.alert(t('account.deleteConfirm'), note, [
       { text: t('common.cancel'), style: 'cancel' },
       {
@@ -452,10 +482,10 @@ export default function EntryEditor({
           <View className="flex-row gap-2">
             {form.isEditing ? (
               <Pressable
-                disabled={form.isSubmitting}
+                disabled={isBusy}
                 onPress={remove}
                 className={`rounded-lg border border-red-300 px-4 py-3 ${
-                  form.isSubmitting ? 'opacity-50' : ''
+                  isBusy ? 'opacity-50' : ''
                 }`}
               >
                 <Text className="text-sm font-medium text-red-600">
@@ -464,14 +494,14 @@ export default function EntryEditor({
               </Pressable>
             ) : null}
             <Pressable
-              disabled={form.isSubmitting}
+              disabled={isBusy}
               onPress={save}
               className={`flex-1 items-center rounded-lg bg-blue-600 px-4 py-3 ${
-                form.isSubmitting ? 'opacity-50' : ''
+                isBusy ? 'opacity-50' : ''
               }`}
             >
               <Text className="text-base font-semibold text-white">
-                {t(form.isSubmitting ? 'common.saving' : 'common.save')}
+                {t(isBusy ? 'common.saving' : 'common.save')}
               </Text>
             </Pressable>
           </View>

@@ -1064,17 +1064,24 @@ export class CardLedgerService {
       return { entryId: item.entryId, billed };
     });
 
-    await this.prisma.$transaction(async (tx) => {
-      for (const target of targets) {
-        await this.ledger.restateForeignEntry(
-          target.entryId,
-          card.projectId,
-          target.billed,
-          tx,
-          replay?.hlc,
-        );
-      }
-    });
+    /*
+     * 명세서 한 장의 거래를 모두 한 트랜잭션에서 고치고, 원장 잠금을 기다리기도 한다. 기본 5초로는 건이 많은
+     * 명세서가 "transaction closed" 로 끝날 수 있어 원장의 긴 작업과 같은 15초를 둔다 (2026-10-16).
+     */
+    await this.prisma.$transaction(
+      async (tx) => {
+        for (const target of targets) {
+          await this.ledger.restateForeignEntry(
+            target.entryId,
+            card.projectId,
+            target.billed,
+            tx,
+            replay?.hlc,
+          );
+        }
+      },
+      { timeout: 15_000 },
+    );
 
     return { settled: targets.length };
   }

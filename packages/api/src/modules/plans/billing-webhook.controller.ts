@@ -4,7 +4,8 @@
  * 견준다.
  *
  * 응답: 처리했거나 일부러 넘긴 알림은 200(넘긴 알림을 실패로 돌려주면 RevenueCat 이 다섯 번
- * 다시 보낸다). 머리글이 틀리면 401, 서버에 값이 없으면 503. DB 오류 따위는 그대로 500 이 되어
+ * 다시 보낸다). 구매 알림보다 먼저 온 환불·되돌림·연장은 503 -- 다시 보내는 사이 구매 줄이 선다.
+ * 머리글이 틀리면 401, 서버에 값이 없으면 503. DB 오류 따위는 그대로 500 이 되어
  * RevenueCat 이 다시 보낸다 -- 같은 결제는 한 줄만 남으므로 다시 받아도 안전하다.
  */
 import {
@@ -48,6 +49,10 @@ export class BillingWebhookController {
     }
 
     const outcome = await this.webhook.handle(body?.event);
+    // 구매 알림보다 먼저 온 환불·되돌림·연장. 다시 보내게 한다 (WebhookOutcome 의 retry).
+    if (outcome.startsWith('retry:')) {
+      throw new ServiceUnavailableException(`구매 알림을 아직 받지 못했습니다 (${outcome}).`);
+    }
     return { ok: true, outcome };
   }
 }

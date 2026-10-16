@@ -7,6 +7,7 @@ import { translate, type MessageKey } from '../lib/i18n';
 import type { Category } from '../lib/types';
 import { useLocaleStore } from '../store/locale';
 import { useLoadedKey } from './useLoadedKey';
+import { useLatestCall } from './useLatestCall';
 import { useMirrorVersion } from './useMirrorVersion';
 import { homeDataPort } from '../data/home-port';
 import { settingsWritePort } from '../data/settings-write-port';
@@ -77,23 +78,29 @@ export function useCategoryManager(projectId: string | null) {
 
   // 같은 가계부를 다시 읽을 때는 목록을 가리지 않는다 (useLoadedKey 주석).
   const loaded = useLoadedKey();
+  // 늦게 끝난 앞 받기는 버린다 (`useLatestCall`).
+  const latest = useLatestCall();
 
   const reload = useCallback(async (): Promise<CategoryResult> => {
     if (!projectId) return { ok: true };
 
+    const isLatest = latest.begin();
     try {
       if (!loaded.has(projectId)) setIsLoading(true);
-      setCategories(((await homeDataPort().getCategories(projectId)) ?? []) as Category[]);
+      const rows = ((await homeDataPort().getCategories(projectId)) ?? []) as Category[];
+      if (!isLatest()) return { ok: true };
+      setCategories(rows);
       loaded.mark(projectId);
       return { ok: true };
     } catch (error) {
+      if (!isLatest()) return { ok: true };
       console.error('카테고리 조회 실패:', error);
       return { ok: false, message: say('categories.loadFailed') };
     } finally {
-      setIsLoading(false);
+      if (isLatest()) setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, say, mirrorVersion, loaded]);
+  }, [projectId, say, mirrorVersion, loaded, latest]);
 
   useEffect(() => {
     reload();

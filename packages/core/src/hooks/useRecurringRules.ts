@@ -16,6 +16,7 @@ import { draftPort } from '../data/draft-port';
 import { homeDataPort } from '../data/home-port';
 import { settingsWritePort } from '../data/settings-write-port';
 import { useLoadedKey } from './useLoadedKey';
+import { useLatestCall } from './useLatestCall';
 import { useMirrorVersion } from './useMirrorVersion';
 import { manualDraftItem } from '../lib/recurring-drafts';
 import { useProjectTimeZone } from '../store/project';
@@ -51,8 +52,11 @@ export function useRecurringRules(projectId: string | null): UseRecurringRulesRe
 
   // 같은 가계부를 다시 읽을 때는 목록을 가리지 않는다 (useLoadedKey 주석).
   const loaded = useLoadedKey();
+  // 늦게 끝난 앞 받기는 버린다 (`useLatestCall`).
+  const latest = useLatestCall();
 
   const reload = useCallback(async () => {
+    const isLatest = latest.begin();
     if (!projectId) {
       loaded.mark(null);
       setRules([]);
@@ -64,10 +68,12 @@ export function useRecurringRules(projectId: string | null): UseRecurringRulesRe
     try {
       if (!isRefresh) setIsLoading(true);
       const rows = await homeDataPort().getRecurringRules(projectId);
+      if (!isLatest()) return;
       setRules(rows);
       setError('');
       loaded.mark(projectId);
     } catch (caught) {
+      if (!isLatest()) return;
       if (isRefresh) {
         // 그려 둔 규칙은 여전히 이 가계부의 것이다. 다음 신호에 다시 읽는다.
         console.error('반복 규칙 다시 읽기 실패:', caught);
@@ -76,10 +82,10 @@ export function useRecurringRules(projectId: string | null): UseRecurringRulesRe
       setRules([]);
       setError(messageOf(caught, 'inbox.loadFailed', 'online.viewOnlyOnline'));
     } finally {
-      setIsLoading(false);
+      if (isLatest()) setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mirrorVersion 은 다시 읽는 신호다
-  }, [projectId, messageOf, mirrorVersion, loaded]);
+  }, [projectId, messageOf, mirrorVersion, loaded, latest]);
 
   useEffect(() => {
     void reload();

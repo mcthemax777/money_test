@@ -112,10 +112,19 @@ export function useAccountLedger(
     void load(accountId, null, run);
   }, [accountId, reloadToken, load]);
 
+  /**
+   * 다음 쪽을 받는 중인가. isLoading 은 다시 그린 뒤에야 바뀌어, 바닥에 닿는 신호가 그 전에 두 번 오면
+   * (스크롤과 크기 변화) 같은 쪽을 두 번 받아 줄이 겹쳤다 (2026-10-16). 곧바로 바뀌는 ref 로 막는다.
+   */
+  const pagingRef = useRef(false);
+
   /** 다음 쪽. 더 없거나 받는 중이면 아무 일도 하지 않는다. */
   const loadMore = useCallback(() => {
-    if (!accountId || !cursor || isLoading) return;
-    void load(accountId, cursor, runRef.current);
+    if (!accountId || !cursor || isLoading || pagingRef.current) return;
+    pagingRef.current = true;
+    void load(accountId, cursor, runRef.current).finally(() => {
+      pagingRef.current = false;
+    });
   }, [accountId, cursor, isLoading, load]);
 
   return { rows, hasMore: cursor !== null, isLoading, hasError, loadMore };

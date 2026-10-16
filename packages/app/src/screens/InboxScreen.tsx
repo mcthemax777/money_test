@@ -18,7 +18,7 @@
  * 것은 `src/inbox.ts` 가, 문구를 값으로 바꾸는 것은 core 의 `draft-parse` 가 한다.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Pressable, ScrollView, Text, View } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { Archive, Camera, ChevronDown, Plus, X } from 'lucide-react-native';
 import type { EntryDraftDto, EntryDraftSource, RecurringRuleDto } from '@money/types';
@@ -188,6 +188,17 @@ export default function InboxScreen() {
    * 요청으로 받을 수 없어 "확인 + 설정 열기" 두 걸음이다.
    */
   const [hasAccess, setHasAccess] = useState(() => isNotificationAccessGranted());
+
+  /*
+   * 앱으로 돌아올 때마다 다시 본다 (2026-10-16). 설정 화면에서 켜고 돌아오는 때가 사람마다 달라, 고정된
+   * 1.5초 뒤 한 번 보는 것으로는 아직 설정 화면에 있을 때 보고 끝나 "꺼짐" 안내가 남았다.
+   */
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (next) => {
+      if (next === 'active') setHasAccess(isNotificationAccessGranted());
+    });
+    return () => subscription.remove();
+  }, []);
 
   /**
    * 쌓인 알림을 후보로 담는다.
@@ -423,14 +434,8 @@ export default function InboxScreen() {
               <Text className="text-sm text-gray-600">{t('inbox.permissionBody')}</Text>
               <Pressable
                 onPress={() => {
+                  // 돌아오면 위의 AppState 가 다시 본다. 이 화면은 그동안 살아 있어 다시 그려질 까닭이 없다.
                   openNotificationAccessSettings();
-                  /*
-                   * 설정에서 돌아왔을 때를 대비해 잠시 뒤 다시 본다.
-                   *
-                   * 이 화면은 그동안 살아 있고 다시 그려질 까닭이 없어서, 켜고 돌아와도
-                   * 안내가 그대로 남아 "켰는데 왜 그대로냐"가 된다.
-                   */
-                  setTimeout(() => setHasAccess(isNotificationAccessGranted()), 1500);
                 }}
                 className="items-center rounded-lg bg-blue-600 px-4 py-3 active:bg-blue-700"
               >

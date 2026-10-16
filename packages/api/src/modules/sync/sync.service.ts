@@ -6,6 +6,14 @@ import { ProjectAccessService } from '@/common/project-access.guard';
 /** 표당 기본 상한. 한 가정의 하루 변경은 이 안에 넉넉히 들어온다. */
 const DEFAULT_LIMIT = 500;
 const MAX_LIMIT = 2000;
+/**
+ * 받기 트랜잭션이 열려 있을 수 있는 시간 (2026-10-16).
+ *
+ * Prisma 기본값은 5초다. 한 쪽은 표 열여섯 개를 최대 2000줄씩, 다리·태그를 붙여 읽는다. 큰 가계부의 첫
+ * 받기나 붐비는 DB 에서는 5초를 넘겨 "transaction closed" 로 끝나고, 기기는 같은 크기로 다시 청해 같은
+ * 자리에서 또 실패한다. 읽기만 하는 트랜잭션이라 길게 두어도 다른 쓰기를 막지 않는다.
+ */
+const PULL_TX_TIMEOUT_MS = 30_000;
 
 /**
  * 변경 피드를 읽어 주는 곳.
@@ -255,7 +263,7 @@ export class SyncService {
         })),
         tombstoneFloor,
       };
-    });
+    }, { timeout: PULL_TX_TIMEOUT_MS });
   }
 
   /**

@@ -94,10 +94,14 @@ export default function EditAccountModal({
       setError('');
       // 잔액을 고치면 서버가 기초잔액 전표를 다시 계산한다 (조정 전표가 새로 생기지 않는다).
       // 계좌 주인은 원장에 이미 반영돼 있어 바꾸지 않는다.
+      //
+      // 잔액은 **바꿨을 때만** 싣는다 (앱 AssetEditModals 와 같다). 창은 연 순간의 잔액으로
+      // 채워지므로, 그 사이 다른 구성원이 적은 거래가 있으면 이름만 고쳐도 옛 잔액으로 기초잔액이
+      // 다시 계산되어 그 거래가 잔액에서 빠진 것처럼 된다.
       await apiClient.updateAccountV2(account.id, {
         name: formData.name,
         ...(formData.type && formData.type !== account.type ? { type: formData.type } : {}),
-        balance: toAmountString(formData.balance),
+        ...(balanceChanged ? { balance: toAmountString(formData.balance) } : {}),
         // 기관을 비우면 null을 보내 연결을 끊는다. ''를 그대로 보내면 서버가 없는 id로 본다.
         ...(needsBankName
           ? { institutionId: formData.institutionId || null }

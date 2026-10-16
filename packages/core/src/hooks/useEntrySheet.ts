@@ -5,7 +5,7 @@
  * 앱은 끊겨 있어도 가져오고 내보낸다. 가져온 것(없어서 만든 구성원·자산·분류·태그와 거래)은
  * 손으로 적은 것과 같은 오프라인 명령으로 쌓였다가 연결되면 서버로 간다.
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { EntrySheetDto, EntrySheetRow } from '@money/types';
 
 import { entrySheetPort } from '../data/entry-sheet-port';
@@ -39,10 +39,13 @@ export function useEntrySheet(projectId: string | null): UseEntrySheetResult {
   const [isBusy, setIsBusy] = useState(false);
   const [progress, setProgress] = useState<EntrySheetProgress | null>(null);
   const [error, setError] = useState('');
+  const importingRef = useRef(false);
 
   const importRows = useCallback(
     async (rows: EntrySheetRow[]) => {
-      if (!projectId) return null;
+      // 가져오는 중에 다시 누르면 같은 행이 두 번 들어간다. 상태는 다시 그린 뒤에야 단추를 막는다.
+      if (!projectId || importingRef.current) return null;
+      importingRef.current = true;
       setIsBusy(true);
       setError('');
       const merged = EMPTY_RESULT();
@@ -69,6 +72,7 @@ export function useEntrySheet(projectId: string | null): UseEntrySheetResult {
         // 앞 묶음은 이미 들어갔다. 무엇이 들어갔는지 알려야 다시 가져올 때 겹치지 않게 한다.
         return merged.created > 0 ? merged : null;
       } finally {
+        importingRef.current = false;
         setIsBusy(false);
       }
     },

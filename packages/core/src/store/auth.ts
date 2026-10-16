@@ -3,9 +3,8 @@ import { pendingProfileFields } from './pending-profile';
 import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { persistStorage } from '../lib/persist-storage';
-import { apiClient } from '../lib/api-client';
+import { apiClient, isSessionEnded } from '../lib/api-client';
 import { clearAuthTokens, getRefreshToken, hasSession, saveAuthTokens } from '../lib/auth-tokens';
-import { isOfflineError } from '../lib/offline-error';
 import { setAnalyticsUser, track } from '../lib/analytics';
 import {
   claimMirrorFor,
@@ -246,9 +245,11 @@ export const useAuth = create<AuthStore>()(
        * 여기서 토큰까지 지우면 비행기 모드로 앱을 열 때마다 로그인 화면이 뜨고,
        * 다시 접속해도 리프레시 토큰이 없어 처음부터 로그인해야 한다.
        *
-       * 서버가 거절한 경우(401)는 그대로 정리한다. 그때는 정말로 세션이 끝났다.
+       * 서버가 거절한 경우(401)만 정리한다. 그때는 정말로 세션이 끝났다. 5xx·429 와 강제
+       * 업데이트(426)는 세션과 상관이 없다 -- 여기서 지우면 업데이트하고 나서 다시 로그인해야
+       * 한다 (`isSessionEnded`, 2026-10-16).
        */
-      if (isOfflineError(error)) {
+      if (!isSessionEnded(error)) {
         set({ isInitializing: false });
         return;
       }

@@ -657,10 +657,17 @@ export class LocalStore {
    * 다음 판단의 기준으로 그대로 쓸 수 있다.
    */
   async setMirrorFloor(projectId: string, tombstoneFloor: number): Promise<void> {
-    await this.db.run(`UPDATE sync_state SET mirrorFloor = ? WHERE projectId = ?`, [
-      tombstoneFloor,
-      projectId,
-    ]);
+    /*
+     * 혼자 쓰는 문장도 트랜잭션 줄에 세운다 (2026-10-16). expo-sqlite 의 트랜잭션은 배타가 아니라,
+     * 그 사이 들어온 문장이 남의 트랜잭션 안에서 돌고 그 트랜잭션이 되돌아가면 함께 사라진다.
+     * 아래 단독 쓰기들(putDraft·forgetDraftOp·discardMutation)도 같은 까닭으로 감싼다.
+     */
+    await this.db.transaction(() =>
+      this.db.run(`UPDATE sync_state SET mirrorFloor = ? WHERE projectId = ?`, [
+        tombstoneFloor,
+        projectId,
+      ]),
+    );
   }
 
   /**
@@ -1825,6 +1832,11 @@ export class LocalStore {
 
   /** 후보를 사본에 담는다. 서버에 올리는 일은 부르는 쪽이 한다. */
   async putDraft(draft: EntryDraftDto.Response): Promise<void> {
+    // 태그와 행을 한 단위로 (setMirrorFloor 의 주석). 헤드리스 알림 작업이 동기화와 겹쳐 부른다.
+    await this.db.transaction(() => this.writeDraft(draft));
+  }
+
+  private async writeDraft(draft: EntryDraftDto.Response): Promise<void> {
     await this.putDraftTags(draft.id, draft.tagIds);
     await this.upsert('entry_draft', {
       id: draft.id,
@@ -1888,8 +1900,22 @@ export class LocalStore {
   }
 
   /** 서버가 받아들인 처리를 큐에서 뺀다. */
-  async forgetDraftOp(draftId: string): Promise<void> {
-    await this.db.run(`DELETE FROM draft_op WHERE draftId = ?`, [draftId]);
+  async forgetDraftOp(draftId: string, sent?: { op: string; entryId: string | null }): Promise<void> {
+    /*
+     * 보낸 그 처리일 때만 뺀다 (2026-10-16).
+     *
+     * 보내는 사이 사용자가 처리를 바꿨으면(등록 → 지우기) 같은 줄이 새 값으로 덮여 있다. 후보 id 로만
+     * 지우면 그 새 처리가 서버에 한 번도 가지 않은 채 사라진다.
+     */
+    await this.db.transaction(() =>
+      sent
+        ? this.db.run(`DELETE FROM draft_op WHERE draftId = ? AND op = ? AND entryId IS ?`, [
+            draftId,
+            sent.op,
+            sent.entryId,
+          ])
+        : this.db.run(`DELETE FROM draft_op WHERE draftId = ?`, [draftId]),
+    );
   }
 
   /** 이 후보에 아직 못 보낸 처리가 있는가. 델타를 덮어쓸지 가리는 값이다. */
@@ -4206,7 +4232,22 @@ export class LocalStore {
 
   /** 큐에서 뺀다. 사용자가 "그만두겠다"를 고른 자리다. */
   async discardMutation(mutationId: string): Promise<void> {
-    await this.db.run(`DELETE FROM outbox WHERE mutationId = ?`, [mutationId]);
+    await this.db.transaction(() =>
+      this.db.run(`DELETE FROM outbox WHERE mutationId = ?`, [mutationId]),
+    );
+  }
+
+  /**
+   * 방금 쌓은 명령을 거둔다. 사본에 적다가 실패했을 때다 (2026-10-16).
+   *
+   * 큐에 넣고 사본에 적는 일은 두 트랜잭션이다. 적기가 실패하면 화면은 "저장하지 못했다"를 말하는데
+   * 명령은 남아 서버로 간다 -- 사용자가 다시 저장하면 새 id 로 하나 더 생긴다. 아직 보내지 않은
+   * 것만 거둔다. 이미 나가고 있으면 다음 받기가 사본을 맞춘다.
+   */
+  async withdrawMutation(mutationId: string): Promise<void> {
+    await this.db.transaction(() =>
+      this.db.run(`DELETE FROM outbox WHERE mutationId = ? AND status = 'pending'`, [mutationId]),
+    );
   }
 
   /**

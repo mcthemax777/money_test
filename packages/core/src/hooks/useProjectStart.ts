@@ -12,7 +12,7 @@
  * 일이라 승인을 한 번 더 받지 않는다. 승인을 받는 길(참여 키 + 가입 요청)은 설정 >
  * 프로젝트 관리에 그대로 있다.
  */
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import { apiClient } from '../lib/api-client';
 import { track } from '../lib/analytics';
@@ -61,6 +61,11 @@ export function useProjectStart(): ProjectStart {
   const setSelectedProjectId = useProject((state) => state.setSelectedProjectId);
   const [invite, setInvite] = useState<InvitePreview | null>(null);
   const [isBusy, setIsBusy] = useState(false);
+  /**
+   * 만들기가 나가 있는가 (2026-10-16). 상태(isBusy)는 다시 그린 뒤에야 단추를 막아, 두 번 누르면 가계부가
+   * 둘 생겼다. 곧바로 바뀌는 ref 로 막는다.
+   */
+  const creatingRef = useRef(false);
 
   /**
    * 목록을 다시 받아 스토어에 넣는다. 만들거나 들어간 **직후에** 부른다.
@@ -77,8 +82,9 @@ export function useProjectStart(): ProjectStart {
   const create = useCallback(
     async (name: string): Promise<StartResult> => {
       const trimmed = name.trim();
-      if (!trimmed) return { ok: false, message: '' };
+      if (!trimmed || creatingRef.current) return { ok: false, message: '' };
 
+      creatingRef.current = true;
       try {
         setIsBusy(true);
         const created = await apiClient.createProject(trimmed);
@@ -93,6 +99,7 @@ export function useProjectStart(): ProjectStart {
       } catch (error) {
         return { ok: false, message: messageOf(error, 'projects.createFailed') };
       } finally {
+        creatingRef.current = false;
         setIsBusy(false);
       }
     },

@@ -15,11 +15,15 @@ import {
   checkEntryDate,
   checkPostings,
   currencyDecimals,
+  isAfterHlc,
   isErrorCode,
   ledgerOpeningDate,
   planPaybackRebind,
   rebindErrorMessage,
   checkInstallmentRefunds,
+  adjustTotals,
+  effectiveLineSchedule,
+  installmentLineSchedule,
   parseInstallmentAdjust,
   type InstallmentAdjust,
 } from '@money/types';
@@ -356,8 +360,10 @@ export class LedgerService {
        * 남은 통장이 목록에서 사라진다.
        */
       await this.lockLedger(tx, input.projectId);
+      await this.assertTargetsActive(tx, input);
       const payback = await this.paybackLink(tx, input);
       await this.checkPaybackCap(tx, input, payback);
+      await this.checkInstallmentCutUnderLock(tx, input, payback);
 
       const entry = await tx.journalEntry.create({
         data: {
@@ -440,8 +446,10 @@ export class LedgerService {
       if (input.baseHlc != null && (existing.updatedHlc ?? null) !== input.baseHlc) {
         throw conflict('ENTRY_MODIFIED', '다른 사람이 이 거래를 먼저 고쳤습니다.');
       }
+      await this.assertTargetsActive(tx, input, existing.postings);
       const payback = await this.paybackLink(tx, input, entryId);
       await this.checkPaybackCap(tx, input, payback, entryId);
+      await this.checkInstallmentCutUnderLock(tx, input, payback, entryId);
 
       // 1) 옛 posting의 잔액 영향을 되돌린다
       await this.applyBalanceDeltas(
@@ -578,6 +586,16 @@ export class LedgerService {
       });
       if (!entry || entry.projectId !== projectId) {
         throw notFound('ENTRY_NOT_FOUND', '거래를 찾을 수 없습니다.');
+      }
+      /*
+       * 재생이면 잠근 뒤에 시계를 다시 본다 (2026-10-16).
+       *
+       * 재생 서비스가 먼저 견주지만 그것은 잠금 밖이다. 그 사이 다른 기기의 편집이 커밋하면 며칠 전의
+       * 확정이 그 편집을 덮었다. 더 늦은 편집이 있으면 거절해 트랜잭션 전체(같은 명세서의 다른 건까지)를
+       * 되돌리고, 재생 서비스가 충돌로 돌려준다.
+       */
+      if (hlc && isAfterHlc(entry.updatedHlc, hlc)) {
+        throw conflict('ENTRY_MODIFIED', '다른 기기에서 이 거래를 더 늦게 고쳤습니다.');
       }
       if (!entry.originalCurrency || !entry.originalAmount) {
         throw new BadRequestException('원 통화 금액이 없는 거래는 청구액을 확정할 수 없습니다.');
@@ -841,6 +859,89 @@ export class LedgerService {
     // 줄이 사라진 옛 링크 같은 것은 조립이 이미 다뤘다. 여기서는 넘는 것만 막는다.
     if (plan.error?.code === 'PAYBACK_EXCEEDS_LINE') {
       throw badRequest(plan.error.code, rebindErrorMessage(plan.error));
+    }
+  }
+
+  /**
+   * 숨긴 통장·카드에 **새로** 적지 못하게 한다 (2026-10-16). 원장 잠금 아래에서 부른다.
+   *
+   * 숨기기는 잠금 아래에서 "잔액 0", "갚지 않은 대금 없음"을 확인하고 숨긴다. 그런데 거래 쪽은 숨겼는지를 보지
+   * 않아, 숨기기가 먼저 커밋한 뒤 도착한 거래가 숨긴 통장에 잔액을 남겼다 -- 총자산에는 들어가는데 목록에는
+   * 없다. 잠금 덕에 숨기기와 이 확인은 차례로 돌므로, 여기서 보면 그 틈이 닫힌다.
+   *
+   * **이미 그 전표가 쓰던 통장·카드는 막지 않는다.** 숨긴 뒤에도 옛 거래의 메모·분류를 고칠 수 있어야 하고,
+   * 그런 고치기는 그 통장의 잔액을 새로 만들지 않는다(금액을 바꾸면 만들지만, 그것은 숨기기 전에도 같은
+   * 자리에 있던 거래다).
+   */
+  private async assertTargetsActive(
+    tx: Tx,
+    input: EntryInput,
+    before: ReadonlyArray<{ accountId: string | null; cardId: string | null }> = [],
+  ): Promise<void> {
+    const had = new Set(before.flatMap((posting) => [posting.accountId, posting.cardId]).filter(Boolean));
+    const accountIds = [
+      ...new Set(input.postings.map((posting) => posting.accountId).filter((id): id is string => !!id)),
+    ].filter((id) => !had.has(id));
+    const cardIds = [
+      ...new Set(input.postings.map((posting) => posting.cardId).filter((id): id is string => !!id)),
+    ].filter((id) => !had.has(id));
+
+    if (accountIds.length > 0) {
+      const hidden = await tx.account.count({ where: { id: { in: accountIds }, isActive: false } });
+      if (hidden > 0) {
+        throw badRequest('ACCOUNT_INACTIVE', '숨긴 통장에는 새로 적을 수 없습니다. 먼저 숨기기를 풀어 주세요.');
+      }
+    }
+    if (cardIds.length > 0) {
+      const hidden = await tx.card.count({ where: { id: { in: cardIds }, isActive: false } });
+      if (hidden > 0) {
+        throw badRequest('CARD_INACTIVE', '숨긴 카드에는 새로 적을 수 없습니다. 먼저 숨기기를 풀어 주세요.');
+      }
+    }
+  }
+
+  /**
+   * 할부 환불이 줄인 회차를 잠금 아래에서 다시 본다 (2026-10-16).
+   *
+   * 조립(`installmentAdjustOf`)이 "그 회차에 남은 원금"을 보고 줄일 금액을 허락하지만, 조립은 트랜잭션 밖에서
+   * 읽는다. 같은 원거래 줄에 두 환불이 동시에 들어오면 둘 다 옛 남은 원금을 보고 통과해 회차가 음수가 됐다.
+   * 여기서는 원장 잠금 아래에서 원거래의 계획과 걸린 환불을 같은 트랜잭션으로 다시 읽어, 이 환불까지 더한 뒤
+   * 음수가 되는 회차가 있으면 거절한다. 줄인 것이 없는(모두 0) 환불은 바꾸는 것이 없어 지나간다.
+   *
+   * 기기 명령의 재생은 건너뛴다(`allowOverPayback` 과 같은 까닭 -- 끊긴 두 기기가 따로 적은 돈의 기록을
+   * 서버에서 버리지 않는다). 서버만 고친 축소안이라 기기 사본은 그대로다.
+   */
+  private async checkInstallmentCutUnderLock(
+    tx: Tx,
+    input: EntryInput,
+    link: { paybackOfEntryId: string | null; paybackOfLineKey: string | null },
+    selfId?: string,
+  ): Promise<void> {
+    const mine = input.installmentAdjust;
+    if (!mine || !link.paybackOfEntryId || input.allowOverPayback) return;
+    if (adjustTotals(mine).total.isZero()) return;
+
+    const target = await prismaLedgerLookup(
+      tx as never,
+      this.projectAccess,
+      this.exchangeRates,
+    ).paybackTarget(input.projectId, link.paybackOfEntryId, link.paybackOfLineKey as string); // 조립과 같은 값을 넘긴다
+    const plan = target?.installment;
+    if (!plan || plan.lineAmount === null) return;
+
+    const schedule = installmentLineSchedule({
+      entryAmount: plan.entryAmount,
+      lineAmount: plan.lineAmount,
+      months: plan.months,
+      principals: plan.principals,
+      interests: plan.interests,
+    });
+    const others = plan.cuts
+      .filter((cut) => cut.entryId !== selfId && cut.entryId !== input.id)
+      .map((cut) => cut.adjust);
+    const effective = effectiveLineSchedule(schedule, [...others, mine]);
+    if (effective.some((share) => share.principal.isNegative() || share.interest.isNegative())) {
+      throw badRequest('INSTALLMENT_CUT_TOO_LARGE', '줄일 금액이 그 회차에 남은 원금보다 큽니다.');
     }
   }
 

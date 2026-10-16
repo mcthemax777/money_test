@@ -25,6 +25,7 @@ import {
   makeAccounts,
   makeCategories,
   makeEntries,
+  makeBudgets,
   makeLedger,
   makePeople,
   makeTags,
@@ -204,4 +205,151 @@ runSmoke('entry-concurrency', async (ctx) => {
   await ctx.expectReject('쓰이는 분류 지우기 거부', () =>
     categories.deleteCategory(dining.id, uid),
   );
+
+  // ── 8. 같은 예산을 동시에 정할 때 (2026-10-16) ──
+  //
+  // 둘 다 "그 달에 규칙이 없다"를 보고 각자 만들어 같은 달에 규칙이 둘 서던 자리다. 유일 조건은
+  // 분류 예산의 tagId(null) 때문에 걸리지 않는다. 예산 잠금으로 줄을 세운다.
+  const budgets = makeBudgets(ctx.prisma, access);
+  const budgetCat = cats.find((c) => c.name === '교통')!;
+  const budgetRuns = await Promise.allSettled(
+    ['100000', '200000', '300000', '400000'].map((amount) =>
+      budgets.createBudget(
+        uid,
+        { categoryId: budgetCat.id, monthlyAmount: amount, yearMonth: '2026-09' } as never,
+        pid,
+      ),
+    ),
+  );
+  ctx.check(
+    '동시에 정한 예산 모두 처리됨',
+    budgetRuns.map((one) => one.status).join(','),
+    'fulfilled,fulfilled,fulfilled,fulfilled',
+  );
+  ctx.check(
+    '같은 달의 규칙은 하나',
+    await ctx.prisma.budget.count({ where: { projectId: pid, categoryId: budgetCat.id } }),
+    1,
+  );
+
+  // ── 9. 태그·분류 바꾸기와 거래 고치기가 겹칠 때 (2026-10-16) ──
+  //
+  // 둘은 원장 잠금을 잡지 않아, 고치기가 시계를 확인한 뒤 태그를 갈아 끼우는 사이에 끼어들거나
+  // 잠그는 차례가 엇갈려 교착(500)이 났다. 겹쳐 던져도 모두 끝나고 잔액이 맞아야 한다.
+  const tag2 = await tags.createTag(uid, { name: '출장' } as never, pid);
+  const shopping = cats.find((c) => c.name === '쇼핑')!;
+  for (let round = 0; round < 5; round += 1) {
+    const lines = await lineTargets(ctx.prisma, [target.id]);
+    const overlapped = await Promise.allSettled([
+      entries.changeTags(uid, { targets: lines, addTagIds: [tag2.id] }, pid),
+      entries.changeCategory(
+        uid,
+        { targets: lines, categoryId: round % 2 ? dining.id : shopping.id } as never,
+        pid,
+      ),
+      entries.updateEntry(target.id, uid, write(String(13000 + round))),
+    ]);
+    const failed = overlapped.filter((one) => one.status === 'rejected') as PromiseRejectedResult[];
+    ctx.check(
+      `겹친 태그·분류·고치기가 모두 끝난다 (${round + 1})`,
+      failed.map((one) => String(one.reason?.message ?? one.reason)).join(' | '),
+      '',
+    );
+  }
+  await balanceMatchesPostings('태그·분류·고치기를 겹친 뒤');
+
+  // ── 10. 갈 곳 없는 분류 합치기와 그 분류로 적기가 겹칠 때 (2026-10-16) ──
+  //
+  // 합치기가 "거래 0건"을 잠금 밖에서 센 뒤 지우면, 그 사이 적힌 거래의 분류 다리가 cascade 로
+  // 사라지고 잔액만 남았다. 어느 쪽이 이기든 다리가 반쪽인 전표가 남으면 안 된다.
+  for (let round = 0; round < 5; round += 1) {
+    const doomedCat = await categories.createCategory(
+      uid,
+      { name: `곧 없어질 분류 ${round}`, type: 'expense' } as never,
+      pid,
+    );
+    // 적기를 먼저 던진다. 적기가 잠금을 쥔 사이 합치기의 바깥 세기가 0 을 보는 자리다.
+    const raced = await Promise.allSettled([
+      entries.createEntry(uid, { ...write('1500'), categoryId: doomedCat.id }, pid),
+      categories.mergeCategories(uid, { moves: [{ fromId: doomedCat.id }] } as never, pid),
+    ]);
+    const created = raced[0].status === "fulfilled" ? raced[0].value : null;
+    if (created) {
+      ctx.check(
+        `적힌 거래의 다리가 온전하다 (${round + 1})`,
+        await ctx.prisma.posting.count({ where: { entryId: created.id } }),
+        2,
+      );
+    }
+  }
+  await balanceMatchesPostings('합치기와 적기를 겹친 뒤');
+
+  // ── 12. 숨긴 통장에 새로 적기 (2026-10-16) ──
+  //
+  // 숨기기는 잔액 0 을 확인하고 숨기는데, 거래 쪽이 숨겼는지를 보지 않아 숨긴 뒤 도착한 거래가 숨긴 통장에
+  // 잔액을 남겼다. 새로 적는 것만 막고, 그 통장을 이미 쓰던 거래를 고치는 것은 막지 않는다.
+  const salary = cats.find((c) => c.name === '급여')!;
+  const makeWallet = (name: string) =>
+    accounts.createAccount(
+      uid,
+      { type: 'deposit', ownerId: person.id, name, institutionId: 'fi_bank_shinhan' } as never,
+      pid,
+    );
+  const sleepy = await makeWallet('숨길 통장');
+  const spent = await entries.createEntry(uid, { ...write('1000'), accountId: sleepy.id }, pid);
+  await entries.createEntry(
+    uid,
+    { kind: 'income', personId: person.id, date: '2026-09-03T00:00:00.000Z', description: '채움', amount: '1000', categoryId: salary.id, accountId: sleepy.id } as never,
+    pid,
+  );
+  await accounts.deactivateAccount(sleepy.id, uid);
+  let hiddenCode: unknown = '거절되지 않음';
+  try {
+    await entries.createEntry(uid, { ...write('500'), accountId: sleepy.id }, pid);
+  } catch (error) {
+    hiddenCode = (error as { response?: { code?: string } })?.response?.code;
+  }
+  ctx.check('숨긴 통장에 새로 적기는 거절', hiddenCode, 'ACCOUNT_INACTIVE');
+  await entries.updateEntry(spent.id, uid, { ...write('1000'), accountId: sleepy.id, description: '메모만 고침' });
+  ctx.check(
+    '숨긴 통장을 쓰던 거래는 고칠 수 있다',
+    (await ctx.prisma.journalEntry.findUniqueOrThrow({ where: { id: spent.id } })).description,
+    '메모만 고침',
+  );
+
+  // 숨기기와 그 통장에 적기가 겹쳐도, 숨긴 통장에 잔액이 남지 않는다.
+  for (let round = 0; round < 5; round += 1) {
+    const wallet = await makeWallet(`겹칠 통장 ${round}`);
+    await Promise.allSettled([
+      accounts.deactivateAccount(wallet.id, uid),
+      entries.createEntry(uid, { ...write('700'), accountId: wallet.id }, pid),
+    ]);
+    const after = await ctx.prisma.account.findUniqueOrThrow({ where: { id: wallet.id } });
+    ctx.check(
+      `숨긴 통장에 잔액이 남지 않는다 (${round + 1})`,
+      after.isActive || after.balance.isZero(),
+      true,
+    );
+  }
+
+  // ── 11. 같은 줄의 다른 필드를 겹쳐 고칠 때 (2026-10-16) ──
+  //
+  // 필드별 시계를 읽어 찍고 통째로 다시 쓰면 늦게 쓴 쪽이 앞 필드의 시계를 지웠다. 그러면 그 필드에
+  // 대한 더 오래된 오프라인 편집이 충돌 없이 이긴다. 겹쳐도 두 필드의 시계가 모두 남아야 한다.
+  for (let round = 0; round < 5; round += 1) {
+    const someone = await people.createPerson(uid, { name: `시계 ${round}` }, pid);
+    // 만들 때 두 필드에 시계가 찍힌다. 비워 두어야 겹친 편집이 남긴 것만 본다.
+    await ctx.prisma.person.update({ where: { id: someone.id }, data: { fieldHlc: {} } });
+    await Promise.all([
+      people.updatePerson(someone.id, uid, { name: `이름 ${round}` } as never),
+      people.updatePerson(someone.id, uid, { relationship: `관계 ${round}` } as never),
+    ]);
+    const row = await ctx.prisma.person.findUniqueOrThrow({ where: { id: someone.id } });
+    const clocks = (row.fieldHlc ?? {}) as Record<string, string>;
+    ctx.check(
+      `겹친 편집 뒤 두 필드의 시계가 남는다 (${round + 1})`,
+      ['name', 'relationship'].every((field) => typeof clocks[field] === 'string'),
+      true,
+    );
+  }
 });

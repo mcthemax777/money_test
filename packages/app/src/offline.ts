@@ -57,6 +57,30 @@ let store: LocalStore | null = null;
 let running: Promise<unknown> = Promise.resolve();
 
 /**
+ * 줄은 섰지만 아직 시작하지 않은 동기화. 프로젝트(와 타임존)마다 하나 (2026-10-16).
+ *
+ * 저장할 때마다, 서버 신호가 올 때마다 동기화를 부른다. 엑셀로 300줄을 가져오면 300번이다. 아직
+ * 시작하지 않은 것이 줄에 있으면 그것이 돌 때 지금까지 쌓인 것을 모두 보내고 받으므로, 새로 세우지 않고
+ * 그것을 함께 기다린다. 이미 시작한 것은 함께 쓰지 않는다 -- 그 뒤에 쌓인 명령을 놓칠 수 있다.
+ */
+const waiting = new Map<string, Promise<SyncResult | null>>();
+
+/** 동기화가 끝날 때마다 결과를 받는 곳. 다시 시도를 거는 쪽(OfflineSync)이 듣는다. */
+type SyncListener = (projectId: string, result: SyncResult | null) => void;
+const syncListeners = new Set<SyncListener>();
+
+/**
+ * 동기화 결과를 듣는다 (2026-10-16).
+ *
+ * 저장 직후·서버 신호로 시작한 동기화도 실패할 수 있다. 다시 시도는 OfflineSync 가 거는데, 예전에는 제가
+ * 시작한 것의 결과만 보아 저장 직후의 실패는 다음 복귀·연결 변화까지 큐가 서 있었다.
+ */
+export function onSyncSettled(listener: SyncListener): () => void {
+  syncListeners.add(listener);
+  return () => syncListeners.delete(listener);
+}
+
+/**
  * 사본을 열고 홈 창구를 그것으로 바꾼다. 앱이 시작할 때 한 번 부른다.
  *
  * 사본을 열지 못하면(기기 저장소 문제) 서버 창구를 그대로 둔다. 오프라인만 못 하고
@@ -230,7 +254,25 @@ export function setAccessLostHandler(handler: AccessLostHandler | null): void {
  * 사본이 비어 있으면 처음부터, 이미 있으면 그 뒤의 변경만 받는다.
  */
 export function syncNow(projectId: string, timeZone: string): Promise<SyncResult | null> {
+  const key = `${projectId}\u0000${timeZone}`;
+  const queued = waiting.get(key);
+  if (queued) return queued;
+
   const task = async (): Promise<SyncResult | null> => {
+    // 시작했으니 이 뒤에 부르는 쪽은 새로 줄을 선다 (`waiting`).
+    waiting.delete(key);
+    const result = await syncOnce();
+    for (const listener of syncListeners) {
+      try {
+        listener(projectId, result);
+      } catch (error) {
+        console.error('동기화 결과를 알리지 못했습니다:', error);
+      }
+    }
+    return result;
+  };
+
+  const syncOnce = async (): Promise<SyncResult | null> => {
     /*
      * 사본은 시작할 때가 아니라 **차례가 되었을 때** 본다.
      *
@@ -293,6 +335,7 @@ export function syncNow(projectId: string, timeZone: string): Promise<SyncResult
   };
 
   const started = running.then(task, task);
+  waiting.set(key, started);
   running = started.catch(() => undefined);
   return started;
 }
@@ -302,7 +345,22 @@ export function syncNow(projectId: string, timeZone: string): Promise<SyncResult
  *
  * 표를 비우는 것으로는 모자라다. 파일이 남으면 그 안에 지난 사용자의 거래가 그대로 있다.
  */
-export async function clearOffline(): Promise<void> {
+export function clearOffline(): Promise<void> {
+  /*
+   * 겹쳐 부르면 하나를 함께 기다린다 (2026-10-16). 로그아웃을 두 번 누르면 둘이 따로 돌며, 앞의 것이 다시 연
+   * 빈 사본을 뒤의 것이 닫고 지웠다(그 사이 시작한 동기화가 닫힌 연결을 썼다).
+   */
+  if (!clearing) {
+    clearing = clearOnce().finally(() => {
+      clearing = null;
+    });
+  }
+  return clearing;
+}
+
+let clearing: Promise<void> | null = null;
+
+async function clearOnce(): Promise<void> {
   store = null;
   setHomeDataPort(null);
   setEntryWritePort(null);

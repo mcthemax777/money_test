@@ -257,6 +257,9 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
 
     if (issued.rotatedAt) {
       if (Date.now() - issued.rotatedAt.getTime() > ROTATION_GRACE_MS) {
+        if (await this.adoptLostRotation(issued.id, issued.familyId, issued.rotatedAt)) {
+          return this.buildAuthResponse(user, issued.familyId);
+        }
         await this.revokeFamily(issued.familyId);
         throw new UnauthorizedException('Invalid refresh token');
       }
@@ -290,6 +293,44 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       // 만료됐거나 읽을 수 없는 토큰은 끊을 것이 없다.
     }
     return { success: true };
+  }
+
+  /**
+   * 교체 응답을 받지 못한 기기인가 (2026-10-16).
+   *
+   * 서버는 교체를 적은 뒤 응답을 만든다. 그 응답이 시간 초과·연결 끊김으로 사라지면 기기는 옛 토큰을
+   * 그대로 들고 있다가, 유예(ROTATION_GRACE_MS)가 지난 뒤 다시 낸다. 모바일에서는 흔하다 -- 그것을
+   * 재사용으로 보고 묶음을 끊으면 멀쩡한 사람이 로그아웃된다.
+   *
+   * 그래서 **그 뒤에 나간 토큰이 아직 한 번도 쓰이지 않았으면** 응답을 잃은 것으로 본다. 새 토큰을
+   * 주고, 쓰이지 않은 후계 토큰은 지금 교체된 것으로 적는다. 후계를 정말 받은 쪽(훔친 쪽이든 진짜
+   * 쪽이든)이 유예 뒤에 그것을 내면 그때 재사용으로 잡혀 묶음이 끊긴다 -- 탐지는 늦어질 뿐 사라지지
+   * 않는다. 후계 중 하나라도 이미 쓰였으면 지금처럼 재사용이다.
+   */
+  private async adoptLostRotation(
+    issuedId: string,
+    familyId: string,
+    rotatedAt: Date,
+  ): Promise<boolean> {
+    // 교체 시각은 이 서버의 시계, 후계의 createdAt 은 DB 의 시계다. 둘의 어긋남을 넉넉히 봐준다.
+    const since = new Date(rotatedAt.getTime() - 5_000);
+    const successors = await this.prisma.refreshToken.findMany({
+      where: { familyId, id: { not: issuedId }, createdAt: { gte: since } },
+      select: { id: true, rotatedAt: true, revokedAt: true },
+    });
+    if (successors.length === 0) return false;
+    if (successors.some((row) => row.rotatedAt || row.revokedAt)) return false;
+
+    // 조건부로 적는다. 그 사이 후계가 쓰였으면(rotatedAt 이 찼으면) 하나라도 빠지고, 그때는 재사용이다.
+    const marked = await this.prisma.refreshToken.updateMany({
+      where: { id: { in: successors.map((row) => row.id) }, rotatedAt: null, revokedAt: null },
+      data: { rotatedAt: new Date() },
+    });
+    if (marked.count !== successors.length) return false;
+
+    // 낸 토큰도 지금 교체된 것으로 다시 적는다. 같은 기기가 겹쳐 다시 내면(웹 탭 둘) 유예 길로 가게.
+    await this.prisma.refreshToken.update({ where: { id: issuedId }, data: { rotatedAt: new Date() } });
+    return true;
   }
 
   /** 한 로그인(묶음)의 갱신 토큰을 모두 끊는다. */

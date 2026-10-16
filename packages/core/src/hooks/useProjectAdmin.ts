@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 import type { CurrencyCode } from '@money/types';
 
 import { settingsWritePort } from '../data/settings-write-port';
@@ -44,6 +44,11 @@ export function useProjectAdmin(): {
 
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  /**
+   * 만들기가 나가 있는가 (2026-10-16). 상태는 다시 그린 뒤에야 단추를 막아, 두 번 누르면 가계부가 둘
+   * 생겼다(만들기는 멱등이 아니다). 곧바로 바뀌는 ref 로 막는다.
+   */
+  const creatingRef = useRef(false);
 
   const reload = useCallback(async (): Promise<ProjectResult> => {
     try {
@@ -67,7 +72,10 @@ export function useProjectAdmin(): {
   const create = useCallback(
     async (name: string, description?: string): Promise<ProjectResult> => {
       if (!name.trim()) return { ok: false, message: say('projects.nameRequired') };
+      // 이미 만드는 중이다. 화면에는 앞의 결과가 곧 뜬다 -- 오류 문장을 남기지 않는다.
+      if (creatingRef.current) return { ok: false, message: '' };
 
+      creatingRef.current = true;
       try {
         setIsSubmitting(true);
         const created = await apiClient.createProject(name, description);
@@ -78,6 +86,7 @@ export function useProjectAdmin(): {
       } catch (error) {
         return { ok: false, message: messageOf(error, 'projects.createFailed') };
       } finally {
+        creatingRef.current = false;
         setIsSubmitting(false);
       }
     },

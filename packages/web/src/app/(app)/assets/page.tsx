@@ -508,6 +508,11 @@ export default function DashboardPage() {
       return;
     }
 
+    /*
+     * 늦게 도착한 옛 응답은 버린다 (2026-10-16). 가계부를 바꾸거나 신호가 겹쳐 다시 받는 사이 앞 요청이
+     * 나중에 끝나면, 앞 가계부의 통장·카드가 지금 가계부 화면에 남았다.
+     */
+    let stale = false;
     const loadData = async () => {
       try {
         if (loadedProjectRef.current !== selectedProjectId) setIsLoading(true);
@@ -520,6 +525,7 @@ export default function DashboardPage() {
             apiClient.getNetWorth(selectedProjectId),
             apiClient.getAccountProfit(selectedProjectId),
           ]);
+        if (stale) return;
         setAccounts(accountsData || []);
         setPeople(peopleData || []);
         setCards(cardsData || []);
@@ -527,14 +533,19 @@ export default function DashboardPage() {
         setNetWorth(netWorthData ?? null);
         setAccountProfit(new Map((profitData ?? []).map((row) => [row.accountId, row.profit])));
       } catch (err) {
-        setError(t('home.loadFailed'));
+        if (!stale) setError(t('home.loadFailed'));
       } finally {
-        loadedProjectRef.current = selectedProjectId;
-        setIsLoading(false);
+        if (!stale) {
+          loadedProjectRef.current = selectedProjectId;
+          setIsLoading(false);
+        }
       }
     };
 
     loadData();
+    return () => {
+      stale = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProjectId, mirrorVersion]);
 
@@ -1042,6 +1053,7 @@ export default function DashboardPage() {
         statementClosingDay:
           cardForm.cardType === 'credit' ? cardForm.statementClosingDay : undefined,
         paymentDueDay: cardForm.cardType === 'credit' ? cardForm.paymentDueDay : undefined,
+        projectId: selectedProjectId ?? undefined,
       });
       const cardsData = await apiClient.getCards(selectedProjectId);
       setCards(cardsData || []);
@@ -1900,6 +1912,7 @@ export default function DashboardPage() {
         onClose={() => setPersonModalOpen(false)}
         person={selectedPerson}
         mode={personModalMode as 'view' | 'edit'}
+        projectId={selectedProjectId}
         onSuccess={(updatedPeople) => {
           setPeople(updatedPeople);
           setSelectedPerson(null);
@@ -1913,6 +1926,7 @@ export default function DashboardPage() {
         onClose={() => setIsEditAccountModalOpen(false)}
         account={selectedAccount as any}
         people={people}
+        projectId={selectedProjectId}
         onSuccess={(updatedAccounts) => {
           setAccounts(updatedAccounts as Account[]);
           setSelectedAccount(null);
@@ -1928,6 +1942,7 @@ export default function DashboardPage() {
         onClose={() => setIsEditCardModalOpen(false)}
         card={selectedCard}
         accounts={accounts}
+        projectId={selectedProjectId}
         onSuccess={(updatedCards) => {
           setCards(updatedCards || []);
           setSelectedCard(null);
@@ -1972,6 +1987,7 @@ export default function DashboardPage() {
         onClose={() => setIsPersonAddModalOpen(false)}
         person={null}
         mode="add"
+        projectId={selectedProjectId}
         onSuccess={(updatedPeople) => {
           setPeople(updatedPeople);
           setStorePeople(updatedPeople);

@@ -93,24 +93,6 @@ export async function syncProject(
 ): Promise<SyncResult> {
   const cursor = await store.init(projectId, timeZone);
 
-  /*
-   * 보관함 처리를 먼저 올린다. **받기보다 앞이어야 한다.**
-   *
-   * 오프라인에서 등록 표시를 남긴 후보는 사본에만 registered 로 적혀 있다. 받기가
-   * 먼저 돌면 서버의 pending 이 그 자리를 덮어써서(사본은 못 보낸 처리를 지키지만
-   * 커서는 이미 지나가 버린다) 같은 거래를 두 번 적을 자리가 생긴다.
-   *
-   * 실패는 삼킨다. 큐에 그대로 남아 다음 기회에 다시 나가고, 그 사이에도 사본은
-   * 사용자가 본 대로 남아 있다. 후보 하나 때문에 동기화 전체가 멈춰서는 안 된다.
-   */
-  if (flushDrafts) {
-    try {
-      await flushDrafts(projectId);
-    } catch {
-      // 다음 동기화가 다시 시도한다.
-    }
-  }
-
   let version = cursor.version;
   let mirrorFloor = cursor.mirrorFloor;
   let rounds = 0;
@@ -126,6 +108,28 @@ export async function syncProject(
     return { version, rounds, changed, offline: true, pushed: 0, held: outbox.held, rebuilt };
   }
   if (outbox.pushed > 0) changed = true;
+
+  /*
+   * 보관함 처리를 올린다. **밀어 올리기 뒤, 받기 앞이어야 한다.**
+   *
+   * 받기보다 앞인 까닭. 오프라인에서 등록 표시를 남긴 후보는 사본에만 registered 로 적혀 있다.
+   * 받기가 먼저 돌면 서버의 pending 이 그 자리를 덮어써서(사본은 못 보낸 처리를 지키지만
+   * 커서는 이미 지나가 버린다) 같은 거래를 두 번 적을 자리가 생긴다.
+   *
+   * 밀어 올리기 뒤인 까닭 (2026-10-16). "등록"은 그 후보로 만든 거래를 가리키는데, 그 거래는
+   * 아웃박스에 있다. 앞에서 보내면 서버가 거래를 몰라 거절하고(ENTRY_NOT_FOUND), 다른 구성원은
+   * 그동안 후보를 대기로 보고 또 등록할 수 있었다.
+   *
+   * 실패는 삼킨다. 큐에 그대로 남아 다음 기회에 다시 나가고, 그 사이에도 사본은
+   * 사용자가 본 대로 남아 있다. 후보 하나 때문에 동기화 전체가 멈춰서는 안 된다.
+   */
+  if (flushDrafts) {
+    try {
+      await flushDrafts(projectId);
+    } catch {
+      // 다음 동기화가 다시 시도한다.
+    }
+  }
 
   let pageSize = PULL_PAGE_START;
 
@@ -222,7 +226,8 @@ export async function syncProject(
    * 한 번만 더 한다 -- 사용자가 계속 저장해도 여기서 맴돌지 않는다.
    */
   if (push && !isFollowUp && (await store.pendingMutations(projectId, 1)).length > 0) {
-    const next = await syncProject(store, pull, projectId, timeZone, push, undefined, true);
+    // 보관함 처리도 함께 넘긴다. 이번 걸음에 올라간 거래를 가리키는 "등록"이 남아 있을 수 있다.
+    const next = await syncProject(store, pull, projectId, timeZone, push, flushDrafts, true);
     return {
       version: next.version,
       rounds: rounds + next.rounds,

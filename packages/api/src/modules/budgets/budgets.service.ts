@@ -11,6 +11,7 @@ import {
 import { assertYearMonth } from '@/common/year-month';
 import { PAYBACK_DATE_SELECT, analysisDateOf, analysisScopes } from '@/common/payback-scope';
 import { stampFieldClocks } from '@/common/field-clock';
+import { lockBudgetWrites } from '@/common/ledger-lock';
 import { ServerClockService } from '@/common/server-clock';
 import {
   type BudgetPeriod,
@@ -75,6 +76,7 @@ export class BudgetsService {
   async findRuleFor(
     projectId: string,
     target: Pick<BudgetDto.CreateRequest, 'categoryId' | 'tagId' | 'type' | 'yearMonth'>,
+    db: Pick<Prisma.TransactionClient, 'budget'> = this.prisma,
   ) {
     const { categoryId, tagId, type } = this.ruleTarget(target);
     const timeZone = await this.projectAccess.getProjectTimeZone(projectId);
@@ -82,7 +84,7 @@ export class BudgetsService {
       ? assertYearMonth(target.yearMonth, '적용 월')
       : zonedCurrentYearMonth(timeZone);
 
-    const candidates = await this.prisma.budget.findMany({
+    const candidates = await db.budget.findMany({
       where: {
         projectId,
         categoryId: categoryId ?? null,
@@ -159,9 +161,12 @@ export class BudgetsService {
     const stamp = hlc ?? this.clock.now();
 
     // 그 달에 적용되는 규칙이 있으면 그것을 고친다
-    const updateRule = async (rule: { id: string; fieldHlc: Prisma.JsonValue }) =>
+    const updateRule = async (
+      db: Pick<Prisma.TransactionClient, 'budget'>,
+      rule: { id: string; fieldHlc: Prisma.JsonValue },
+    ) =>
       this.toBudgetResponse(
-        await this.prisma.budget.update({
+        await db.budget.update({
           where: { id: rule.id },
           data: {
             monthlyAmount,
@@ -171,24 +176,33 @@ export class BudgetsService {
         show,
       );
 
-    const existingBudget = await this.findRuleFor(projectId, dto);
-    if (existingBudget) return updateRule(existingBudget);
-
     try {
-      const budget = await rejectDuplicateId('예산', () =>
-        this.prisma.budget.create({
-          data: {
-            id: clientId(dto.id, '예산 식별자'),
-            projectId,
-            categoryId: categoryId ?? null,
-            tagId: tagId ?? null,
-            type: type || undefined,
-            monthlyAmount,
-            fieldHlc: stampFieldClocks(null, ['monthlyAmount'], stamp),
-          },
-        }),
-      );
-      return this.toBudgetResponse(budget, show);
+      /*
+       * 찾기와 만들기를 한 줄로 세운다 (`lockBudgetWrites`, 2026-10-16).
+       *
+       * 저장을 두 번 누르거나 두 사람이 같은 예산을 정하면 둘 다 "없다"를 보고 각자 만들어 같은 달에
+       * 규칙이 둘 섰다. 유일 조건은 분류·전체 예산에서 null 때문에 걸리지 않는다.
+       */
+      return await this.prisma.$transaction(async (tx) => {
+        await lockBudgetWrites(tx, projectId);
+        const existingBudget = await this.findRuleFor(projectId, dto, tx);
+        if (existingBudget) return updateRule(tx, existingBudget);
+
+        const budget = await rejectDuplicateId('예산', () =>
+          tx.budget.create({
+            data: {
+              id: clientId(dto.id, '예산 식별자'),
+              projectId,
+              categoryId: categoryId ?? null,
+              tagId: tagId ?? null,
+              type: type || undefined,
+              monthlyAmount,
+              fieldHlc: stampFieldClocks(null, ['monthlyAmount'], stamp),
+            },
+          }),
+        );
+        return this.toBudgetResponse(budget, show);
+      });
     } catch (error) {
       /*
        * 찾은 뒤 만들기 전에 다른 요청이 같은 규칙을 먼저 만들었다 (규칙의 유일 조건).
@@ -201,7 +215,7 @@ export class BudgetsService {
       }
       const raced = await this.findRuleFor(projectId, dto);
       if (!raced) throw error;
-      return updateRule(raced);
+      return updateRule(this.prisma, raced);
     }
   }
 
@@ -307,6 +321,7 @@ export class BudgetsService {
       // 한 트랜잭션으로 묶는다. 걷어내기만 하고 새 규칙 생성이 실패하면
       // 그 달부터 예산이 통째로 사라진 상태로 남는다.
       const newBudget = await this.prisma.$transaction(async (tx) => {
+        await lockBudgetWrites(tx, budget.projectId);
         const siblings = await this.findSiblingBudgets(tx, budget);
 
         // 규칙을 걷어내기 전에 지운다. 걷어낸 뒤에는 어느 규칙의 것이었는지 알 수 없다.
@@ -458,6 +473,7 @@ export class BudgetsService {
       input.amount === null ? null : store.convert(toMoney(input.amount, '월 예산'));
 
     await this.prisma.$transaction(async (tx) => {
+      await lockBudgetWrites(tx, projectId);
       const siblings = await this.findSiblingBudgets(tx, { projectId, categoryId, tagId, type });
       await this.clearOverridesFrom(tx, siblings, applyFrom);
       await this.clearFromMonth(tx, siblings, applyFrom);
@@ -514,6 +530,7 @@ export class BudgetsService {
       const applyFrom = assertYearMonth(fromMonth, '적용 시작 월');
 
       await this.prisma.$transaction(async (tx) => {
+        await lockBudgetWrites(tx, budget.projectId);
         const siblings = await this.findSiblingBudgets(tx, budget);
         await this.clearFromMonth(tx, siblings, applyFrom);
       });

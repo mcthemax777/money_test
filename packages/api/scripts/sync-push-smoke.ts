@@ -350,13 +350,17 @@ runSmoke('sync-push', async (ctx) => {
     new ProjectsService(ctx.prisma as any, viewerAccess as any, new ExchangeRatesService(ctx.prisma as any), new PlansService(ctx.prisma as any)) as any,
     recurringReplay as any,
   );
-  await ctx.expectReject('viewer 로 바뀐 뒤 도착한 명령은 거절된다', () =>
-    viewerReplay.push(uid, {
-      projectId: pid,
-      clientId: CLIENT,
-      mutations: [expenseMutation('019273aa-0000-7000-8000-000000000005', '1000', T0 + 2_000_000)],
-    }),
-  );
+  /*
+   * 요청 통째로 403 이 아니라 명령마다 거절이다 (2026-10-16). 통째로 던지면 기기가 받기 전에 멈춰,
+   * 강등된 기기는 큐가 비지 않는 한 영영 새 변경을 받지 못했다.
+   */
+  const viewerPushed = await viewerReplay.push(uid, {
+    projectId: pid,
+    clientId: CLIENT,
+    mutations: [expenseMutation('019273aa-0000-7000-8000-000000000005', '1000', T0 + 2_000_000)],
+  });
+  ctx.check('viewer 로 바뀐 뒤 도착한 명령은 거절된다', viewerPushed.results[0]?.status, 'rejected');
+  ctx.check('거절에 역할 코드가 붙는다', viewerPushed.results[0]?.code, 'PROJECT_ROLE_VIEWER');
   ctx.check('전표가 늘지 않았다', await entryCount(), before);
   // ── 9. 선점: 같은 명령이 동시에 두 번 도착해도 재생은 한 번만 ──
   //

@@ -20,6 +20,7 @@ import { translate, type MessageKey } from '../lib/i18n';
 import { isOfflineError } from '../lib/offline-error';
 import { useLocaleStore } from '../store/locale';
 import { useLoadedKey } from './useLoadedKey';
+import { useLatestCall } from './useLatestCall';
 import { useMirrorVersion } from './useMirrorVersion';
 import { homeDataPort } from '../data/home-port';
 import { settingsWritePort } from '../data/settings-write-port';
@@ -57,8 +58,11 @@ export function useTagManager(projectId: string | null) {
 
   // 같은 가계부를 다시 읽을 때는 목록을 가리지 않는다 (useLoadedKey 주석).
   const loaded = useLoadedKey();
+  // 늦게 끝난 앞 받기는 버린다 (`useLatestCall`).
+  const latest = useLatestCall();
 
   const reload = useCallback(async (): Promise<TagResult> => {
+    const isLatest = latest.begin();
     if (!projectId) {
       loaded.mark(null);
       setTags([]);
@@ -68,18 +72,21 @@ export function useTagManager(projectId: string | null) {
 
     try {
       if (!loaded.has(projectId)) setIsLoading(true);
-      setTags((await homeDataPort().getTags(projectId)) ?? []);
+      const rows = (await homeDataPort().getTags(projectId)) ?? [];
+      if (!isLatest()) return { ok: true };
+      setTags(rows);
       loaded.mark(projectId);
       return { ok: true };
     } catch (error) {
+      if (!isLatest()) return { ok: true };
       // 사본이 아직 비었거나 서버를 못 부른 경우다. 빈 목록으로 두고 다음 동기화를 기다린다.
       if (isOfflineError(error)) return { ok: true };
       return { ok: false, message: say('tags.loadFailed') };
     } finally {
-      setIsLoading(false);
+      if (isLatest()) setIsLoading(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, say, mirrorVersion, loaded]);
+  }, [projectId, say, mirrorVersion, loaded, latest]);
 
   useEffect(() => {
     void reload();
