@@ -15,12 +15,10 @@
  *
  * 금액은 모두 저장 통화(기준통화)이고, 줄 하나(환불이 걸린 원거래의 줄)의 값이다.
  */
-import { Dec, type DecInput } from './decimal';
+import { Dec, type DecInput, amountScale } from './decimal';
 import { installmentInterests } from './card-usage';
 import { installmentLineShares, installmentMonthShares } from './installment-schedule';
 
-/** 회차를 나누는 끝수 자리. 할부 일정(installment-schedule)과 같다. */
-const MONEY_SCALE = 0;
 
 /** 환불 하나가 회차마다 줄인 금액. 둘 다 개월수만큼이고 0 이상이다. */
 export interface InstallmentAdjust {
@@ -186,13 +184,15 @@ export function defaultInstallmentCut(
   const room = sum(open.map((share) => share.principal));
   const want = minDec(maxDec(Dec.of(amount), Dec.of(0)), room);
   if (want.isZero() || room.isZero()) return cut;
+  // 나눠 자르는 자릿수. 환불 금액과 회차 원금에 적힌 자릿수를 따른다 (`amountScale`).
+  const scale = amountScale(want, ...open.map((share) => share.principal));
 
   let running = Dec.of(0);
   let given = Dec.of(0);
   open.forEach((share, at) => {
     running = running.plus(share.principal);
     const upto =
-      at === open.length - 1 ? want : want.times(running).dividedBy(room, MONEY_SCALE);
+      at === open.length - 1 ? want : want.times(running).dividedBy(room, scale);
     cut[share.index] = minDec(upto.minus(given), share.principal);
     given = given.plus(cut[share.index]);
   });
@@ -210,7 +210,7 @@ export function installmentInterestCut(
     const cut = Dec.of(principalCut[index] ?? 0);
     if (!cut.isPositive() || !share.interest.isPositive()) return Dec.of(0);
     if (cut.gte(share.principal)) return share.interest;
-    return share.interest.times(cut).dividedBy(share.principal, MONEY_SCALE);
+    return share.interest.times(cut).dividedBy(share.principal, amountScale(share.interest, share.principal, cut));
   });
 }
 

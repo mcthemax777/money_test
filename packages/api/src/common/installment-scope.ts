@@ -18,6 +18,7 @@ import {
   installmentRefundRow,
   lineCutsOf,
   parseInstallmentAdjust,
+  INSTALLMENT_LOOKBACK_MONTHS,
 } from '@money/types';
 
 /** 할부가 걸린 전표만. 카드 다리에 계획이 붙어 있다. */
@@ -25,13 +26,8 @@ export const HAS_INSTALLMENT = {
   postings: { some: { installmentPlan: { isNot: null } } },
 } satisfies Prisma.JournalEntryWhereInput;
 
-/**
- * 할부를 앞으로 넓혀 읽을 달 수.
- *
- * 창의 시작보다 이만큼 앞에서 산 할부까지 본다. 실제로 쓰이는 개월수는 길어야 서른여섯
- * 이라 넉넉하고, 창을 열어 두면(조건을 아예 지우면) 원장을 통째로 읽게 된다.
- */
-export const INSTALLMENT_LOOKBACK_MONTHS = 60;
+// 할부를 앞으로 넓혀 읽을 달 수. 기기 사본과 같은 값이라 공용 타입에 둔다.
+export { INSTALLMENT_LOOKBACK_MONTHS };
 
 /**
  * 전표에 실어 올 카드 다리. 할부가 걸린 것만 고른다.

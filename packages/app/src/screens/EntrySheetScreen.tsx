@@ -6,8 +6,8 @@
  * base64 로 읽고, 내보내기는 캐시에 파일을 써서 공유 창(expo-sharing)으로 넘긴다. 공유 창에서
  * 드라이브·메일·파일 앱 가운데 어디에 둘지 사람이 고른다.
  */
-import { useState } from 'react';
-import { LayoutAnimation, Pressable, ScrollView, Text, View } from 'react-native';
+import { useRef, useState } from 'react';
+import { Alert, LayoutAnimation, Pressable, ScrollView, Text, View } from 'react-native';
 import * as DocumentPicker from 'expo-document-picker';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
@@ -87,19 +87,33 @@ function ExportSection({ sheet, projectName }: { sheet: ReturnType<typeof useEnt
   const [openDate, setOpenDate] = useState<'start' | 'end' | null>(null);
   const [done, setDone] = useState<number | null>(null);
 
+  /*
+   * 한 번에 하나만 내보낸다. 두 번 누르면 공유 창이 겹쳤다. 파일 쓰기·공유가 실패해도 알린다 (2026-10-16 -- 그대로
+   * 던져 아무 반응이 없었다).
+   */
+  const exportingRef = useRef(false);
   const run = async () => {
+    if (exportingRef.current) return;
+    exportingRef.current = true;
     setDone(null);
-    const rows = await sheet.exportRows(
-      isRange ? { startDate: startDate || undefined, endDate: endDate || undefined } : {},
-    );
-    if (!rows) return;
-    // 같은 이름이 남아 있으면 지우고 새로 쓴다(같은 날 두 번 내보낼 때).
-    const file = new File(Paths.cache, entrySheetFileName(projectName));
-    if (file.exists) file.delete();
-    file.create();
-    file.write(new Uint8Array(writeEntrySheet(rows, 'array')));
-    await Sharing.shareAsync(file.uri, { mimeType: XLSX_MIME, dialogTitle: t('sheet.export.button') });
-    setDone(rows.length);
+    try {
+      const rows = await sheet.exportRows(
+        isRange ? { startDate: startDate || undefined, endDate: endDate || undefined } : {},
+      );
+      if (!rows) return;
+      // 같은 이름이 남아 있으면 지우고 새로 쓴다(같은 날 두 번 내보낼 때).
+      const file = new File(Paths.cache, entrySheetFileName(projectName));
+      if (file.exists) file.delete();
+      file.create();
+      file.write(new Uint8Array(writeEntrySheet(rows, 'array')));
+      await Sharing.shareAsync(file.uri, { mimeType: XLSX_MIME, dialogTitle: t('sheet.export.button') });
+      setDone(rows.length);
+    } catch (error) {
+      console.error('엑셀 내보내기 실패:', error);
+      Alert.alert(t('sheet.exportFailed'));
+    } finally {
+      exportingRef.current = false;
+    }
   };
 
   return (
@@ -175,10 +189,17 @@ function ImportSection({ sheet }: { sheet: ReturnType<typeof useEntrySheet> }) {
   const pick = async () => {
     setResult(null);
     setReadError('');
-    const picked = await DocumentPicker.getDocumentAsync({
-      type: [XLSX_MIME, 'application/vnd.ms-excel', 'text/csv', 'text/comma-separated-values'],
-      copyToCacheDirectory: true,
-    });
+    let picked: DocumentPicker.DocumentPickerResult;
+    try {
+      picked = await DocumentPicker.getDocumentAsync({
+        type: [XLSX_MIME, 'application/vnd.ms-excel', 'text/csv', 'text/comma-separated-values'],
+        copyToCacheDirectory: true,
+      });
+    } catch {
+      // 파일 고르기 창을 열지 못했다 (2026-10-16 -- 그대로 던져 아무 반응이 없었다).
+      setReadError(t('sheet.import.readFailed'));
+      return;
+    }
     if (picked.canceled || !picked.assets[0]) return;
     const asset = picked.assets[0];
     animate();

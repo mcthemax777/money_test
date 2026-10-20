@@ -24,7 +24,7 @@ import {
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { todayKey, weekdayNames } from '@money/core/lib/datetime';
-import { HOLIDAY_RULE_LABEL, recurringMissingText } from '@money/core/lib/recurring-text';
+import { HOLIDAY_RULE_LABEL, recurringMissingText, withRecurringKind } from '@money/core/lib/recurring-text';
 import { transferFromOptions, transferToOptions } from '@money/core/lib/transfer-accounts';
 import { useWeekStart } from '@money/core/store/week-start';
 import { useProjectTimeZone } from '@money/core/store/project';
@@ -195,12 +195,8 @@ export default function RecurringRuleModal({
   /**
    * 갈래를 바꾼다. 이체로 바꾸면 카드는 비운다 -- 카드로는 이체를 만들 수 없다.
    */
-  const setKind = (kind: EntryKind) =>
-    setValues((previous) => ({
-      ...previous,
-      kind,
-      method: kind === 'transfer' && previous.method.startsWith('card:') ? '' : previous.method,
-    }));
+  // 갈래를 바꾸면 그 갈래에 뜻이 없는 분류·카드를 비운다 (core 의 withRecurringKind).
+  const setKind = (kind: EntryKind) => setValues((previous) => withRecurringKind(previous, kind));
 
   /** 이체의 보내는 통장. 받는 통장과 같아지면 받는 쪽을 비운다. */
   const setFromAccount = (accountId: string) =>

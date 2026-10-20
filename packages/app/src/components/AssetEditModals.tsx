@@ -335,8 +335,12 @@ export function EditAccountModal({
   // 현금과 부동산은 개설 기관이 없다 (만들기 창과 같은 규칙이다). 고르는 중인 유형을 따른다.
   const needsBank = !NO_BANK_TYPES.includes(type);
   const needsMaturity = hasMaturity(type);
-  /* "10000" 과 "10000.00" 은 글자로는 다르고 값으로는 같다. 숫자로 견준다. */
-  const balanceChanged = balance !== '' && Number(balance) !== Number(target.balance);
+  /*
+   * "10000" 과 "10000.00" 은 글자로는 다르고 값으로는 같다. 숫자로 견준다. 쉼표("1,000")는 떼고 읽는다 (2026-10-16)
+   * -- Number 가 NaN 을 내어 잔액이 같아도 "바뀜"으로 보였고, 이름만 고쳐도 잔액 맞추기가 함께 나갔다.
+   */
+  const balanceChanged =
+    balance !== '' && Number(toAmountString(balance)) !== Number(target.balance);
 
   const run = async (task: Promise<AssetSaveResult>, close: boolean) => {
     const result = await task;

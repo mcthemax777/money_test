@@ -3,7 +3,7 @@
 import type { CardDto } from '@money/types';
 import type { LedgerLikeRow } from '@money/core/lib/types';
 import { formatCurrency, toNumber } from '@money/core/lib/money';
-import { formatDate } from '@money/core/lib/datetime';
+import { formatDate, formatDateMarker } from '@money/core/lib/datetime';
 import { useTranslation } from '@money/core/lib/i18n';
 import { categoryTitleOf } from '@money/core/lib/entries';
 import { installmentBadge } from '@money/core/lib/period-ledger';
@@ -165,8 +165,8 @@ export function PeriodLedgerList({
             {period && (
               <div className="mt-2 flex items-baseline justify-between gap-2 border-b border-gray-200 pb-1">
                 <p className="text-xs font-medium text-gray-700">
-                  {formatDate(period.periodStart, timeZone)} ~{' '}
-                  {formatDate(period.periodEnd, timeZone)}
+                  {/* 주기 끝값은 달력 날짜 표시자(UTC 자정)다. 시간대로 읽으면 서쪽 시간대에서 하루 앞서 보였다. */}
+                  {formatDateMarker(period.periodStart)} ~ {formatDateMarker(period.periodEnd)}
                 </p>
                 <p className="text-xs text-gray-500 whitespace-nowrap">
                   {t(isBilled ? 'assets.billedPeriodTotal' : 'assets.performancePeriodTotal', {

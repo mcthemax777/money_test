@@ -12,7 +12,7 @@
  * 금액은 표시 통화다. 저장 통화와 다르면 회차를 줄이지 않는다(`currencyMismatch`) -- 조립은
  * 저장 통화로 검사하므로 환산 끝수 때문에 거절될 수 있다.
  */
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 import {
   Dec,
   type EntryListItem,
@@ -20,10 +20,12 @@ import {
   effectiveLineSchedule,
   installmentCutStart,
   installmentLineSchedule,
+  isDateKey,
   shiftYearMonth,
   zonedYearMonth,
 } from '@money/types';
 import { parseMethod, type EntryFormValues } from '../data/entry-form';
+import { paybackLineOf } from '../lib/payback-drafts';
 
 export interface InstallmentRefundRow {
   /** 회차 번호 (1부터). */
@@ -78,9 +80,7 @@ export function useInstallmentRefund(input: {
     const months = original?.installmentMonths ?? 0;
     // 외화로 산 할부는 회차가 카드 통화라 줄이지 않는다 (조립의 sameCurrency 와 같다).
     if (!original || months < 2 || original.originalCurrency) return null;
-    const line =
-      original.lines.find((candidate) => candidate.lineKey === values.paybackOfLineKey) ??
-      (original.lines.length === 1 ? original.lines[0] : null);
+    const line = paybackLineOf(original, values.paybackOfLineKey);
     if (!line) return null;
     const schedule = installmentLineSchedule({
       entryAmount: original.amount,
@@ -101,7 +101,13 @@ export function useInstallmentRefund(input: {
     };
   }, [original, editingId, values.paybackOfLineKey, timeZone]);
 
-  const refundYearMonth = values.dateKey.slice(0, 7);
+  /*
+   * 환불한 달. 날짜 칸을 고치는 동안(비었거나 덜 적었을 때)은 마지막으로 읽은 달을 쓴다 (2026-10-16) -- 그 사이
+   * 시작 회차가 NaN 이 되어, 손으로 적어 둔 회차가 모두 0 으로 되돌아갔다.
+   */
+  const lastRefundMonth = useRef('');
+  if (isDateKey(values.dateKey)) lastRefundMonth.current = values.dateKey.slice(0, 7);
+  const refundYearMonth = lastRefundMonth.current || zonedYearMonth(new Date(), timeZone);
   const from = plan ? installmentCutStart(plan.purchaseYearMonth, refundYearMonth) : 0;
 
   const blockedBy: InstallmentRefund['blockedBy'] = !plan

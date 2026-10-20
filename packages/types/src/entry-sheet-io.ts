@@ -26,12 +26,13 @@ import {
   type EntrySheetKind,
   type EntrySheetRow,
 } from './entry-sheet';
+import { INSTALLMENT_MAX_MONTHS } from './entry-build';
 import { toListItem, type ViewEntry } from './entry-view';
 import { newId } from './id';
 import { HIDDEN_ACCOUNT_TYPES } from './payment-methods';
 import { zonedDateKey, zonedFormValueToUtc, zonedTimeKey } from './tz';
 
-/** 분류가 비었을 때 쓰는 분류. 지출·수입이 같은 이름이면 유일 제약(이름, 부모)에 걸린다. */
+/** 분류가 비었을 때 쓰는 분류. 갈래마다 다른 이름을 둔다 -- 화면에서 둘을 가려 읽게. */
 const FALLBACK_CATEGORY: Record<'expense' | 'income', string> = { expense: '기타', income: '기타수입' };
 /** 이체 수수료의 분류. */
 const FEE_CATEGORY = '수수료';
@@ -314,7 +315,7 @@ class EntryBuilder {
      */
     const paymentName = clean(head.payment);
     const paymentPlan = paymentName ? planAsset(context, paymentName, head.paymentType, '결제수단') : null;
-    const months = head.installmentMonths ? Number(String(head.installmentMonths).replace(/[^\d]/g, '')) : 0;
+    const months = installmentMonthsOf(head.installmentMonths);
     if (months >= 2 && (kind !== 'expense' || paymentPlan?.kind !== 'card' || paymentPlan.type !== 'credit')) {
       throw new EntrySheetRowError('할부는 신용카드 지출에만 적을 수 있습니다.');
     }
@@ -508,10 +509,17 @@ class EntryBuilder {
 
   private async createCategory(name: string, type: 'income' | 'expense', parentId: string | null): Promise<string> {
     const context = this.context;
-    // 같은 층에 다른 갈래의 같은 이름이 있으면 유일 제약에 걸린다. 알아볼 문장으로 먼저 막는다.
-    const clash = context.categories.find(
-      (row) => row.parentId === parentId && nameKey(row.name) === nameKey(name) && row.type !== type,
-    );
+    /*
+     * 같은 부모 밑에 다른 갈래의 같은 이름이 있으면 유일 제약(이름, 부모)에 걸린다. 알아볼 문장으로 먼저 막는다.
+     *
+     * **대분류는 막지 않는다** (2026-10-16). 대분류의 유일 조건은 갈래별(유형, 이름)이라 지출 "저축"과 수입 "저축"이
+     * 함께 설 수 있다 -- 기본 분류가 그렇다. 예전에는 대분류도 막아, 그런 이름의 수입 줄을 가져오지 못했다.
+     */
+    const clash =
+      parentId !== null &&
+      context.categories.find(
+        (row) => row.parentId === parentId && nameKey(row.name) === nameKey(name) && row.type !== type,
+      );
     if (clash) {
       throw new EntrySheetRowError(
         `분류 "${name}"이(가) 이미 ${clash.type === 'income' ? '수입' : '지출'} 분류로 있어 ${type === 'income' ? '수입' : '지출'} 분류로 만들 수 없습니다.`,
@@ -774,11 +782,29 @@ export function entrySheetRowsOf(
 
   return item.lines.map((line) => {
     const listPrice = line.discountAmount ? Dec.of(line.amount).plus(Dec.of(line.discountAmount)).toString() : line.amount;
+    /*
+     * 외화 계좌의 거래는 **그 계좌 통화**로 적는다 (2026-10-16). 줄 금액은 장부 통화로 바꾼 값이라, 그대로 적으면
+     * 달러 통장의 $50 가 70000 으로 나가고 다시 가져올 때 $70,000 이 됐다. 그 줄의 분류 다리가 든 입력 통화 금액과
+     * 통화를 적는다(환율이 1 이면 장부 통화라 지금과 같다). 차감도 입력 통화라 그대로 더한다.
+     */
+    const leg = foreign
+      ? undefined
+      : entry.postings.find((posting) => posting.categoryId && posting.lineKey === line.lineKey);
+    const entered =
+      leg && !Dec.of(leg.exchangeRate).eq(Dec.of(1))
+        ? {
+            amount: Dec.of(leg.amount)
+              .abs()
+              .plus(leg.discountAmount ? Dec.of(leg.discountAmount) : Dec.of(0))
+              .toString(),
+            currency: leg.currency,
+          }
+        : null;
     return {
       ...common,
       kind: kindLabel,
-      amount: foreign ? foreign.amount : listPrice,
-      currency: foreign ? foreign.currency : undefined,
+      amount: foreign ? foreign.amount : entered ? entered.amount : listPrice,
+      currency: foreign ? foreign.currency : entered?.currency,
       billedAmount: foreign ? listPrice : undefined,
       discount: line.discountAmount ?? undefined,
       parentCategory: line.parentCategoryName ?? line.categoryName,
@@ -794,4 +820,21 @@ export function entrySheetRowsOf(
 export function numberEntrySheetRows(rows: EntrySheetRow[]): EntrySheetRow[] {
   rows.forEach((row, index) => (row.row = index + 2));
   return rows;
+}
+
+/**
+ * 할부 칸. "3", "3개월", "3.0"(엑셀이 숫자로 적은 값) 을 받는다. 비었으면 0(일시불)이다.
+ *
+ * 숫자가 아닌 글자를 모두 지우던 때에는 "2.0" 이 20, "1.5" 가 15 개월이 됐다 (2026-10-16). 앞의 숫자만 읽고,
+ * 정수가 아니거나 범위를 벗어나면 그 줄을 알아볼 문장으로 거절한다.
+ */
+function installmentMonthsOf(value: unknown): number {
+  const text = value === undefined || value === null ? '' : String(value).trim();
+  if (!text) return 0;
+  const match = /^(\d+(?:\.\d+)?)\s*(?:개월|months?)?$/i.exec(text);
+  const months = match ? Number(match[1]) : NaN;
+  if (!Number.isInteger(months) || months < 0 || months > INSTALLMENT_MAX_MONTHS) {
+    throw new EntrySheetRowError(`할부 "${text}"는 2~${INSTALLMENT_MAX_MONTHS} 사이의 개월 수로 적어 주세요.`);
+  }
+  return months;
 }

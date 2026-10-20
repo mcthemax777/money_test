@@ -353,24 +353,16 @@ export function countChanges(response: SyncDto.PullResponse): number {
    * 않는다(app 의 syncNow). 사본에는 이미 적혀 있으므로 화면을 다시 열면 나오지만, 열어
    * 둔 화면은 그대로 멈춘다. 태그가 실제로 그랬다 -- 웹에서 만든 태그가 앱의 태그 화면에
    * 아무리 기다려도 나오지 않고, 다른 탭에 다녀오면 그제서야 보였다.
+   *
+   * 그래서 칸 이름을 하나씩 적지 않고 배열인 칸을 모두 센다. 보관함(entryDrafts)이 빠져
+   * 다른 기기에서 고친 후보가 열어 둔 보관함에 오지 않았다. 공휴일은 Changes 밖에 있고
+   * 받을 때마다 통째로 오므로 세지 않는다.
    */
-  return (
-    (changes.project ? 1 : 0) +
-    changes.members.length +
-    changes.people.length +
-    changes.accounts.length +
-    changes.categories.length +
-    (changes.tags?.length ?? 0) +
-    changes.cards.length +
-    changes.entries.length +
-    changes.budgets.length +
-    changes.budgetOverrides.length +
-    changes.exchangeRates.length +
-    (changes.assetValuations?.length ?? 0) +
-    (changes.installmentPlans?.length ?? 0) +
-    (changes.recurringRules?.length ?? 0) +
-    tombstones.length
-  );
+  let count = (changes.project ? 1 : 0) + tombstones.length;
+  for (const value of Object.values(changes)) {
+    if (Array.isArray(value)) count += value.length;
+  }
+  return count;
 }
 
 

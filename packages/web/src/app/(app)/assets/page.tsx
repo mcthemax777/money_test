@@ -30,7 +30,7 @@ import {
   type AssetMetaPart,
   type AssetMetaTone,
 } from '@money/core/lib/asset-meta';
-import { useUserFilter } from '@money/core/store/user-filter';
+import { isEveryPersonSelected, useUserFilter } from '@money/core/store/user-filter';
 import { monthInputToIso, todayKey } from '@money/core/lib/datetime';
 import { type AccountDto, type ReportDto } from '@money/types';
 import { ArrowLeft, Info, X } from 'lucide-react';
@@ -320,6 +320,26 @@ function NetWorthBreakdown({
   );
 }
 
+/** 카드 추가 폼의 빈 모양. 처음, 추가한 뒤, 닫을 때 같은 값으로 되돌린다. */
+const EMPTY_CARD_FORM = {
+  accountId: '',
+  name: '',
+  cardNumber: '',
+  cardType: 'debit' as 'debit' | 'credit',
+  issuerId: '',
+  expiryDate: '',
+  creditLimit: '',
+  /** 혜택 조건이 되는 사용액. 체크카드도 쓴다 (달력 월로 센다). */
+  performanceAmount: '',
+  /** 카드 앞면 색. 빈 값이면 카드 종류의 기본색으로 그린다. */
+  color: '',
+  /** 알림에서 이 카드를 알아보는 말. 여러 줄이다. */
+  matchText: '',
+  // 청구 주기는 마감일과 결제일 두 값으로 계산한다
+  statementClosingDay: DEFAULT_STATEMENT_CLOSING_DAY,
+  paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
+};
+
 export default function DashboardPage() {
   const { t } = useTranslation();
   /** 읽기 전용 구성원에게는 쓰기 단추를 그리지 않는다. */
@@ -409,24 +429,7 @@ export default function DashboardPage() {
   const [isPersonAddModalOpen, setIsPersonAddModalOpen] = useState(false);
   /** 붙박이 추가 단추가 연, 무엇을 만들지 고르는 팝업. */
   const [isAddChooserOpen, setIsAddChooserOpen] = useState(false);
-  const [cardForm, setCardForm] = useState({
-    accountId: '',
-    name: '',
-    cardNumber: '',
-    cardType: 'debit' as 'debit' | 'credit',
-    issuerId: '',
-    expiryDate: '',
-    creditLimit: '',
-    /** 혜택 조건이 되는 사용액. 체크카드도 쓴다 (달력 월로 센다). */
-    performanceAmount: '',
-    /** 카드 앞면 색. 빈 값이면 카드 종류의 기본색으로 그린다. */
-    color: '',
-    /** 알림에서 이 카드를 알아보는 말. 여러 줄이다. */
-    matchText: '',
-    // 청구 주기는 마감일과 결제일 두 값으로 계산한다
-    statementClosingDay: DEFAULT_STATEMENT_CLOSING_DAY,
-    paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
-  });
+  const [cardForm, setCardForm] = useState(EMPTY_CARD_FORM);
   const [addError, setAddError] = useState('');
 
   const [accountTransactions, setAccountTransactions] = useState<AccountDto.LedgerRow[]>([]);
@@ -684,16 +687,21 @@ export default function DashboardPage() {
     setEntryVersion((version) => version + 1);
     if (!selectedProjectId) return;
 
-    const [accountsData, cardsData] = await Promise.all([
-      apiClient.getAccountsV2(selectedProjectId),
-      apiClient.getCards(selectedProjectId),
-    ]);
-    setAccounts(accountsData || []);
-    setCards(cardsData || []);
-    setSelectedAccount((prev) => (prev ? accountsData?.find((a) => a.id === prev.id) ?? prev : prev));
-    setSelectedCard((prev) => (prev ? cardsData?.find((c) => c.id === prev.id) ?? prev : prev));
-    await loadNetWorth();
-  }, [selectedProjectId, loadNetWorth]);
+    // 다시 받기가 실패해도 거래는 이미 저장됐다. 처리되지 않은 거부로 두지 않고 화면 위에 알린다.
+    try {
+      const [accountsData, cardsData] = await Promise.all([
+        apiClient.getAccountsV2(selectedProjectId),
+        apiClient.getCards(selectedProjectId),
+      ]);
+      setAccounts(accountsData || []);
+      setCards(cardsData || []);
+      setSelectedAccount((prev) => (prev ? accountsData?.find((a) => a.id === prev.id) ?? prev : prev));
+      setSelectedCard((prev) => (prev ? cardsData?.find((c) => c.id === prev.id) ?? prev : prev));
+      await loadNetWorth();
+    } catch {
+      setError(t('home.loadFailed'));
+    }
+  }, [selectedProjectId, loadNetWorth, t]);
 
   /** 거래 팝업 안에서 계좌·카드·분류·사람을 새로 만들었을 때. */
   const handleReferenceDataChange = useCallback((patch: ReferenceDataPatch) => {
@@ -873,15 +881,16 @@ export default function DashboardPage() {
     }
   };
 
-  const handleDeletePerson = async () => {
-    if (!selectedPerson || !window.confirm(t('assets.deleteConfirm'))) return;
+  /** 지웠거나 숨겼으면 true. 묻는 창에서 그만두었거나 실패하면 false 라, 부른 창은 닫지 않는다. */
+  const handleDeletePerson = async (): Promise<boolean> => {
+    if (!selectedPerson || !window.confirm(t('assets.deleteConfirm'))) return false;
     try {
       setIsSubmitting(true);
       const done = await deleteOrAskToHide(
         () => apiClient.deletePerson(selectedPerson.id),
         () => apiClient.deletePerson(selectedPerson.id, { hide: true }),
       );
-      if (!done) return;
+      if (!done) return false;
       const peopleData = await apiClient.getPeople(selectedProjectId);
       setPeople(peopleData || []);
       setIsPersonDetailOpen(false);
@@ -889,22 +898,25 @@ export default function DashboardPage() {
       setSelectedPerson(null);
       setHiddenVersion((v) => v + 1);
       await loadNetWorth();
+      return true;
     } catch (err: any) {
       alert(messageOf(err, 'assets.removeFailed'));
+      return false;
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleDeleteAccount = async () => {
-    if (!selectedAccount || !window.confirm(t('assets.deleteConfirm'))) return;
+  /** 지웠거나 숨겼으면 true. 묻는 창에서 그만두었거나 실패하면 false 라, 부른 창은 닫지 않는다. */
+  const handleDeleteAccount = async (): Promise<boolean> => {
+    if (!selectedAccount || !window.confirm(t('assets.deleteConfirm'))) return false;
     try {
       setIsSubmitting(true);
       const done = await deleteOrAskToHide(
         () => apiClient.deleteAccountV2(selectedAccount.id),
         () => apiClient.deleteAccountV2(selectedAccount.id, { hide: true }),
       );
-      if (!done) return;
+      if (!done) return false;
       const accountsData = await apiClient.getAccountsV2(selectedProjectId);
       setAccounts(accountsData || []);
       setIsAccountDetailOpen(false);
@@ -912,22 +924,25 @@ export default function DashboardPage() {
       setSelectedAccount(null);
       setHiddenVersion((v) => v + 1);
       await loadNetWorth();
+      return true;
     } catch (err: any) {
       alert(messageOf(err, 'assets.removeFailed'));
+      return false;
     } finally {
       setIsSubmitting(false);
     }
   };
 
-  const handleDeleteCard = async () => {
-    if (!selectedCard || !window.confirm(t('assets.deleteConfirm'))) return;
+  /** 지웠거나 숨겼으면 true. 묻는 창에서 그만두었거나 실패하면 false 라, 부른 창은 닫지 않는다. */
+  const handleDeleteCard = async (): Promise<boolean> => {
+    if (!selectedCard || !window.confirm(t('assets.deleteConfirm'))) return false;
     try {
       setIsSubmitting(true);
       const done = await deleteOrAskToHide(
         () => apiClient.deleteCard(selectedCard.id),
         () => apiClient.deleteCard(selectedCard.id, { hide: true }),
       );
-      if (!done) return;
+      if (!done) return false;
       const cardsData = await apiClient.getCards(selectedProjectId);
       setCards(cardsData || []);
       setIsCardDetailOpen(false);
@@ -935,8 +950,10 @@ export default function DashboardPage() {
       setSelectedCard(null);
       setHiddenVersion((v) => v + 1);
       await loadNetWorth();
+      return true;
     } catch (err: any) {
       alert(messageOf(err, 'assets.removeFailed'));
+      return false;
     } finally {
       setIsSubmitting(false);
     }
@@ -1058,20 +1075,7 @@ export default function DashboardPage() {
       const cardsData = await apiClient.getCards(selectedProjectId);
       setCards(cardsData || []);
       await loadNetWorth();
-      setCardForm({
-        accountId: '',
-        name: '',
-        cardNumber: '',
-        cardType: 'debit',
-        issuerId: '',
-        expiryDate: '',
-        creditLimit: '',
-        performanceAmount: '',
-        color: '',
-        matchText: '',
-        statementClosingDay: DEFAULT_STATEMENT_CLOSING_DAY,
-        paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
-      });
+      setCardForm(EMPTY_CARD_FORM);
       setAddType(null);
     } catch (err: any) {
       setAddError(messageOf(err, 'card.addFailed'));
@@ -1182,7 +1186,7 @@ export default function DashboardPage() {
    * 계좌는 사람별 소계에 들어가지 않으므로, 전체를 보고 있는데 소계를 더해 쓰면
    * 그만큼 금액이 빠진다. 목록 필터(personIds)가 전체일 때 조건을 빼는 것과 같은 규칙이다.
    */
-  const allPeopleSelected = people.length > 0 && selectedPersonIds.length === people.length;
+  const allPeopleSelected = isEveryPersonSelected(people, selectedPersonIds);
   /** 펼쳐 둔 묶음의 이름과 유형. 묶음 상세의 머리글과 소계가 쓴다. */
   const groupInfo = ASSET_TYPE_GROUPS.find((group) => group.key === selectedGroup);
   const scopedNetWorth = allPeopleSelected
@@ -1628,15 +1632,19 @@ export default function DashboardPage() {
         projectId={selectedProjectId}
         reloadToken={hiddenVersion}
         onRestored={async () => {
-          const [accountsData, peopleData, cardsData] = await Promise.all([
-            apiClient.getAccountsV2(selectedProjectId),
-            apiClient.getPeople(selectedProjectId),
-            apiClient.getCards(selectedProjectId),
-          ]);
-          setAccounts(accountsData || []);
-          setPeople(peopleData || []);
-          setCards(cardsData || []);
-          await loadNetWorth();
+          try {
+            const [accountsData, peopleData, cardsData] = await Promise.all([
+              apiClient.getAccountsV2(selectedProjectId),
+              apiClient.getPeople(selectedProjectId),
+              apiClient.getCards(selectedProjectId),
+            ]);
+            setAccounts(accountsData || []);
+            setPeople(peopleData || []);
+            setCards(cardsData || []);
+            await loadNetWorth();
+          } catch {
+            setError(t('home.loadFailed'));
+          }
         }}
       />
       </div>
@@ -1915,7 +1923,11 @@ export default function DashboardPage() {
         projectId={selectedProjectId}
         onSuccess={(updatedPeople) => {
           setPeople(updatedPeople);
-          setSelectedPerson(null);
+          /*
+           * 고른 것은 비우지 않고 새로 받은 줄로 바꾼다 (2026-10-16). 비우면 상세가 열린 채 대상만 사라져, 좁은
+           * 화면에서는 뒤로 갈 길 없는 빈 화면이 남았다. 새 줄로 바꾸면 머리글도 고친 값으로 선다.
+           */
+          setSelectedPerson((prev) => updatedPeople.find((row) => row.id === prev?.id) ?? null);
           setPersonModalOpen(false);
         }}
         onDelete={handleDeletePerson}
@@ -1929,7 +1941,10 @@ export default function DashboardPage() {
         projectId={selectedProjectId}
         onSuccess={(updatedAccounts) => {
           setAccounts(updatedAccounts as Account[]);
-          setSelectedAccount(null);
+          // 비우지 않고 새로 받은 줄로 바꾼다 (위 구성원 저장의 주석).
+          setSelectedAccount(
+            (prev) => (updatedAccounts as Account[]).find((row) => row.id === prev?.id) ?? null,
+          );
           setIsEditAccountModalOpen(false);
           // 잔액을 고치면 총자산도 달라진다.
           loadNetWorth();
@@ -1945,7 +1960,8 @@ export default function DashboardPage() {
         projectId={selectedProjectId}
         onSuccess={(updatedCards) => {
           setCards(updatedCards || []);
-          setSelectedCard(null);
+          // 비우지 않고 새로 받은 줄로 바꾼다 (위 구성원 저장의 주석).
+          setSelectedCard((prev) => (updatedCards || []).find((row) => row.id === prev?.id) ?? null);
           setIsEditCardModalOpen(false);
           // 한도나 결제 통장을 바꾸면 부채가 걸리는 자리가 달라진다.
           loadNetWorth();
@@ -2015,20 +2031,7 @@ export default function DashboardPage() {
         isOpen={addType === 'card'}
         onClose={() => {
           setAddType(null);
-          setCardForm({
-            accountId: '',
-            name: '',
-            cardNumber: '',
-            cardType: 'debit',
-            issuerId: '',
-            expiryDate: '',
-            creditLimit: '',
-            performanceAmount: '',
-            color: '',
-            matchText: '',
-            statementClosingDay: DEFAULT_STATEMENT_CLOSING_DAY,
-            paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
-          });
+          setCardForm(EMPTY_CARD_FORM);
           setAddError('');
         }}
         title={t('card.add')}

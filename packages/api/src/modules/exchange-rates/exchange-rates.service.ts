@@ -38,6 +38,9 @@ export interface DisplayConverter {
  * 값의 뜻은 "1 <from> = rate <to>"다.
  */
 
+/** 받을 수 있는 환율의 상한(미만). 저장 칸 Decimal(19,8) 의 정수부가 11자리다. */
+const MAX_RATE = new Prisma.Decimal('1e11');
+
 @Injectable()
 export class ExchangeRatesService {
   private readonly logger = new Logger(ExchangeRatesService.name);
@@ -180,6 +183,13 @@ export class ExchangeRatesService {
     if (rate.lte(0)) {
       throw new BadRequestException('환율은 0보다 커야 합니다.');
     }
+    /*
+     * 저장 칸(Decimal(19,8))에 담기는 값인가 (2026-10-16). 너무 작으면 소수 8자리에서 0 으로 깎여 모든 환산이
+     * 0 이 되고, 너무 크면 쓰는 순간 500 이 났다.
+     */
+    if (rate.toDecimalPlaces(8).lte(0) || rate.gte(MAX_RATE)) {
+      throw new BadRequestException('환율이 너무 작거나 큽니다.');
+    }
 
     const saved = await this.prisma.exchangeRate.upsert({
       where: {
@@ -217,8 +227,15 @@ export class ExchangeRatesService {
    * 쓰이므로 "되돌렸는데 그대로"인 것처럼 보인다.
    */
   async clearRate(projectId: string, from: CurrencyCode, to: CurrencyCode): Promise<void> {
+    // 거꾸로 적힌 행도 같은 통화쌍이다 (2026-10-16). 그쪽만 있으면 되돌리기 단추가 아무 일도 하지 않았다.
     await this.prisma.exchangeRate.deleteMany({
-      where: { projectId, baseCurrency: from, quoteCurrency: to },
+      where: {
+        projectId,
+        OR: [
+          { baseCurrency: from, quoteCurrency: to },
+          { baseCurrency: to, quoteCurrency: from },
+        ],
+      },
     });
   }
 

@@ -56,7 +56,9 @@ interface AuthStore {
  * 스토어를 정적으로 import하지 않는 것은 다른 스토어들과 같은 이유다. 로그인
  * 스토어가 화면 스토어를 붙들면 서로를 부르는 고리가 생기기 쉽다.
  */
-async function applyUserDisplay(user: { locale?: unknown; weekStart?: unknown } | null | undefined) {
+async function applyUserDisplay(
+  user: { id?: string; locale?: unknown; weekStart?: unknown } | null | undefined,
+) {
   const [{ useLocaleStore }, { useWeekStartStore }, pendingProfile] = await Promise.all([
     import('./locale'),
     import('./week-start'),
@@ -66,7 +68,7 @@ async function applyUserDisplay(user: { locale?: unknown; weekStart?: unknown } 
    * 끊긴 동안 바꿔 두고 아직 보내지 못한 칸은 서버 값으로 덮지 않는다. 덮으면 방금 고른 언어가
    * 로그인 한 번에 옛 값으로 돌아간다. 그 칸은 곧 보낸다.
    */
-  const pending = pendingProfile.pendingProfileFields();
+  const pending = pendingProfile.pendingProfileFields(user?.id);
   if (pending.locale === undefined) useLocaleStore.getState().applyServerLocale(user?.locale);
   if (pending.weekStart === undefined) {
     useWeekStartStore.getState().applyServerWeekStart(user?.weekStart);
@@ -78,9 +80,46 @@ async function applyUserDisplay(user: { locale?: unknown; weekStart?: unknown } 
  * 끊긴 동안 바꿔 두고 아직 보내지 못한 이름이 있으면 그것으로 보인다 (pending-profile).
  * 서버 값으로 덮으면 방금 고친 이름이 로그인 한 번에 옛 이름으로 돌아간다.
  */
-function withPendingName<T extends { name?: string } | null | undefined>(user: T): T {
-  const name = pendingProfileFields().name;
+function withPendingName<T extends { id?: string; name?: string } | null | undefined>(user: T): T {
+  const name = pendingProfileFields(user?.id).name;
   return user && name !== undefined ? { ...user, name } : user;
+}
+
+/**
+ * 앞 사람의 화면 상태를 비운다. 로그아웃과, 다른 계정이 들어오는 로그인이 함께 부른다 (2026-10-16).
+ *
+ * 예전에는 두 자리가 따로 목록을 들고 있다가 어긋났다 -- 토큰이 만료(401)된 뒤 다른 계정으로 들어오면 로그아웃을
+ * 거치지 않아 필터 템플릿·화면 캐시·기관 목록·예산·검색 조건이 앞 사람의 것으로 남았다. 한 벌로 둔다.
+ * 기기 사본과 캡처 후보는 부르는 쪽이 정한다(로그아웃은 언제나, 로그인은 주인이 바뀔 때만 버린다).
+ */
+async function clearPreviousUserState(): Promise<void> {
+  const { useProject } = await import('./project');
+  const { useUserFilter } = await import('./user-filter');
+  useProject.getState().setSelectedProjectId(null);
+  useProject.getState().setProjects([]);
+  useUserFilter.getState().clearPersonFilter();
+
+  // 기관 목록 캐시도 비운다. 로그아웃은 페이지를 새로 읽지 않아
+  // 모듈 캐시가 그대로 남고, selectedProjectId가 null로 돌아가면
+  // 다음 사용자가 같은 캐시 키를 써서 이전 사용자의 기관 이름을 보게 된다.
+  const { invalidateInstitutions } = await import('../lib/institutions');
+  invalidateInstitutions();
+  // 화면이 받아 둔 값도 같은 까닭으로 비운다 (lib/screen-cache).
+  const { clearScreenCache } = await import('../lib/screen-cache');
+  clearScreenCache();
+  // 기기에 남는 필터 템플릿도 앞사람의 것이다 (가계부별이라 같은 가계부의 다음 사람에게 보인다).
+  const { useFilterTemplateStore } = await import('./filter-templates');
+  useFilterTemplateStore.setState({ byProject: {} });
+  // 메모리에 든 예산·분류 목록도 비운다. 다음 사람이 들어오면 앞사람의 것이 잠깐 보인다.
+  const { useBudget } = await import('./budget');
+  const { useCategory } = await import('./category');
+  useBudget.setState({ budgets: [], monthlyBudgets: [] });
+  useCategory.setState({ categories: [] });
+  // 거래·분석 탭이 함께 쓰는 검색 조건과, 다시 열 거래 표시도 앞 사람의 것이다.
+  const { useEntryConditions } = await import('./entry-conditions');
+  useEntryConditions.setState({ projectId: null, search: null });
+  const { useEntryFocus } = await import('./entry-focus');
+  useEntryFocus.getState().clearReopen();
 }
 
 export const useAuth = create<AuthStore>()(
@@ -95,12 +134,8 @@ export const useAuth = create<AuthStore>()(
   signInWithGoogle: async (idToken) => {
     set({ isLoading: true });
     try {
-      // 이전 사용자의 캐시 상태 초기화 (보안)
-      const { useProject } = await import('./project');
-      const { useUserFilter } = await import('./user-filter');
-      useProject.getState().setSelectedProjectId(null);
-      useProject.getState().setProjects([]);
-      useUserFilter.getState().clearPersonFilter();
+      // 이전 사용자의 화면 상태 초기화 (보안). 토큰 만료 뒤 다른 계정으로 들어오면 로그아웃을 거치지 않는다.
+      await clearPreviousUserState();
 
       /*
        * 앞 사람이 누구였는지.
@@ -178,28 +213,7 @@ export const useAuth = create<AuthStore>()(
       });
 
       // 모든 다른 스토어 초기화 (보안: 이전 사용자 데이터 제거)
-      const { useProject } = await import('./project');
-      const { useUserFilter } = await import('./user-filter');
-      useProject.getState().setSelectedProjectId(null);
-      useProject.getState().setProjects([]);
-      useUserFilter.getState().clearPersonFilter();
-
-      // 기관 목록 캐시도 비운다. 로그아웃은 페이지를 새로 읽지 않아
-      // 모듈 캐시가 그대로 남고, selectedProjectId가 null로 돌아가면
-      // 다음 사용자가 같은 캐시 키를 써서 이전 사용자의 기관 이름을 보게 된다.
-      const { invalidateInstitutions } = await import('../lib/institutions');
-      invalidateInstitutions();
-      // 화면이 받아 둔 값도 같은 까닭으로 비운다 (lib/screen-cache).
-      const { clearScreenCache } = await import('../lib/screen-cache');
-      clearScreenCache();
-      // 기기에 남는 필터 템플릿도 앞사람의 것이다 (가계부별이라 같은 가계부의 다음 사람에게 보인다).
-      const { useFilterTemplateStore } = await import('./filter-templates');
-      useFilterTemplateStore.setState({ byProject: {} });
-      // 메모리에 든 예산·분류 목록도 비운다. 다음 사람이 들어오면 앞사람의 것이 잠깐 보인다.
-      const { useBudget } = await import('./budget');
-      const { useCategory } = await import('./category');
-      useBudget.setState({ budgets: [], monthlyBudgets: [] });
-      useCategory.setState({ categories: [] });
+      await clearPreviousUserState();
 
       /*
        * 기기 사본도 버린다. 스토어만 비우면 화면에서 사라질 뿐 파일 안에는 이 사람의

@@ -470,6 +470,7 @@ export const ko = {
   'day.lastDay': '31일 (말일)',
   'day.hint': '그 달에 없는 날짜는 말일로 처리합니다.',
   'common.retry': '다시 시도',
+  'common.pageError': '화면을 그리다 문제가 생겼습니다. 다시 시도해 주세요.',
   'common.add': '추가',
   /** 고르지 않았음. 카드 색·만료 월처럼 비워 둘 수 있는 칸이 쓴다. */
   'common.none': '정하지 않음',

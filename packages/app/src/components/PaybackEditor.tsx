@@ -102,6 +102,15 @@ export default function PaybackEditor({
     timeZone,
     sameCurrency: displayCurrency === ledgerCurrency,
   });
+  /*
+   * 회차 "환불 뒤" 칸의 치는 중 글자 (2026-10-16). 훅은 줄인 금액으로 들고 그것으로 칸을 다시 그려, "100." 의 점이나
+   * 지운 빈 칸이 곧바로 되돌아갔다. 치는 동안은 친 글자를 보이고, 칸을 떠나면 훅의 값으로 돌아간다.
+   */
+  const [afterText, setAfterText] = useState<Record<number, string>>({});
+  // 다른 환불을 열면 앞 것의 치던 글자를 버린다.
+  useEffect(() => {
+    setAfterText({});
+  }, [target?.editing?.id, values.paybackOfLineKey]);
   const money = (amount: string) => formatCurrency(amount, displayCurrency);
   const monthLabel = (yearMonth: string) => {
     const [year, month] = yearMonth.split('-').map(Number);
@@ -297,8 +306,17 @@ export default function PaybackEditor({
                       </Text>
                     </View>
                     <TextInput
-                      value={row.after}
-                      onChangeText={(text) => installment.setAfter(row.index, text)}
+                      value={afterText[row.index] ?? row.after}
+                      onChangeText={(text) => {
+                        setAfterText((prev) => ({ ...prev, [row.index]: text }));
+                        installment.setAfter(row.index, text);
+                      }}
+                      onBlur={() =>
+                        setAfterText((prev) => {
+                          const { [row.index]: _typed, ...rest } = prev;
+                          return rest;
+                        })
+                      }
                       keyboardType="numeric"
                       accessibilityLabel={`${t('payback.installment.round', { index: row.index })} ${t('payback.installment.after')}`}
                       className={`w-32 rounded-lg border px-3 py-2 text-right text-base text-gray-900 ${

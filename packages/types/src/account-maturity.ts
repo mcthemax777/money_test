@@ -6,6 +6,7 @@
  * 견준다 (@money/core 의 asset-meta).
  */
 import type { AccountType } from './entities';
+import { isDateKey } from './tz';
 
 /** 만기일을 갖는 유형. 다른 유형으로 바꾸면 만기일을 지운다. */
 export const MATURITY_ACCOUNT_TYPES: readonly AccountType[] = ['time_deposit', 'savings'];
@@ -19,8 +20,5 @@ export function hasMaturity(type: string): boolean {
  * 그대로 두면 D-day 가 조용히 어긋난다.
  */
 export function isMaturityDateKey(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const [year, month, day] = value.split('-').map(Number);
-  if (month < 1 || month > 12 || day < 1) return false;
-  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
+  return isDateKey(value);
 }

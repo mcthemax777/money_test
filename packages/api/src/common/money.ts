@@ -12,6 +12,9 @@ import { Prisma } from '@prisma/client';
  * NaN/Infinity도 막는다. Decimal은 둘 다 받아 주지만 DB에 들어가면 그 계좌의
  * 잔액 합계가 통째로 망가진다.
  */
+/** 받을 수 있는 가장 큰 금액(미만). 저장 칸 Decimal(19,4) 의 정수부가 15자리다. */
+const MAX_MONEY = new Prisma.Decimal('1e15');
+
 export function toMoney(value: unknown, label = '금액'): Prisma.Decimal {
   if (typeof value !== 'string' && typeof value !== 'number') {
     throw new BadRequestException(`${label}: 금액을 입력해 주세요.`);
@@ -31,6 +34,13 @@ export function toMoney(value: unknown, label = '금액'): Prisma.Decimal {
 
   if (!amount.isFinite()) {
     throw new BadRequestException(`${label}: 올바른 숫자가 아닙니다.`);
+  }
+  /*
+   * 저장 칸(Decimal(19,4))에 들어가는 크기인가 (2026-10-16). 넘으면 쓰는 순간 500 이 나고, 지수가 아주 큰 값은
+   * 그 전에 십진 셈이 서버를 몇 분씩 붙들었다. 정수부 15자리까지 받는다.
+   */
+  if (amount.abs().gte(MAX_MONEY)) {
+    throw new BadRequestException(`${label}: 너무 큰 금액입니다.`);
   }
 
   return amount;

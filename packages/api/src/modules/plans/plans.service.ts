@@ -46,8 +46,10 @@ export interface GrantInput {
   userId: string | null;
   /** 스토어 주문 번호·PG 결제 번호. 관리자 지급이면 null. */
   externalId: string | null;
-  /** 실제로 낸 금액(원). */
+  /** 실제로 낸 금액. 통화의 큰 단위로 반올림한 정수다(원·달러). */
   amount: number;
+  /** 낸 통화 (세 글자). 주지 않으면 원화다. */
+  currency?: string;
   note?: string | null;
   /**
    * 스토어가 정한 기간. `google_play` 는 반드시 넘긴다 -- 갱신·유예 기간을 스토어가 정하므로
@@ -513,6 +515,7 @@ function createGrant(
       source: input.source,
       externalId: input.externalId,
       amount: input.amount,
+      ...(input.currency ? { currency: input.currency } : {}),
       note: input.note ?? null,
       startsAt: window.startsAt,
       endsAt: window.endsAt,

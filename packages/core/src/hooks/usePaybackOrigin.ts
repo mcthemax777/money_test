@@ -8,6 +8,7 @@
 import { useEffect, useState } from 'react';
 import type { EntryLine, EntryListItem } from '@money/types';
 import { homeDataPort } from '../data/home-port';
+import { paybackLineOf } from '../lib/payback-drafts';
 import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
 
@@ -66,6 +67,6 @@ export function usePaybackOrigin(
     };
   }, [originId, projectId, mirrorVersion, loaded]);
 
-  const line = original?.lines.find((row) => row.lineKey === payback?.paybackOfLineKey) ?? null;
+  const line = paybackLineOf(original, payback?.paybackOfLineKey);
   return { original, line, isLoading, failed };
 }

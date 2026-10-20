@@ -19,6 +19,7 @@
  */
 
 import { Dec, type DecInput } from './decimal';
+import { allocateByWeight } from './foreign-restate';
 import { currencyDecimals, isCurrencyCode, SUPPORTED_CURRENCIES } from './currency';
 import type {
   AccountType,
@@ -485,7 +486,7 @@ export async function buildExpense(
    * 분류는 거래의 분류를 따라간다 -- 한 결제에서 나온 돈이라 따로 세면 "그 달에
    * 식비로 얼마 나갔나"의 답이 갈린다. 분할이면 줄 금액의 비율로 나눈다.
    */
-  const interestByLine = allocate(
+  const interestByLine = allocateByWeight(
     interestTotal,
     baseLines.map((line) => line.baseAmount),
     currencyDecimals(base),
@@ -814,6 +815,12 @@ export async function buildTransfer(
   if (amount.lte(ZERO)) fail('TRANSFER_AMOUNT_INVALID', '이체 금액은 0보다 커야 합니다.');
 
   const fee = input.feeAmount === undefined ? ZERO : Dec.of(input.feeAmount);
+  /*
+   * 음수 수수료는 받지 않는다 (2026-10-16). 아래 검사가 모두 `fee.gt(0)` 이라 음수는 수수료 분류도 환산도 건너뛰고,
+   * 보내는 다리의 금액만 줄어 환산액과 어긋났다 -- 1,000 을 보내며 -100 을 실으면 받는 쪽에 1,000 이 생기고
+   * 보내는 쪽에서는 900 만 빠져 100 이 없던 데서 생겼다(전표 균형 검사는 환산액만 본다).
+   */
+  if (fee.lt(ZERO)) fail('TRANSFER_FEE_INVALID', '수수료는 0보다 작을 수 없습니다.');
   if (fee.gt(ZERO) && !input.feeCategoryId) {
     fail('TRANSFER_FEE_CATEGORY_REQUIRED', '수수료를 입력하려면 수수료 카테고리가 필요합니다.');
   }
@@ -826,6 +833,11 @@ export async function buildTransfer(
   // 미지정은 "어디서 나갔는지 모른다"는 표시라 이체의 한쪽이 될 수 없다.
   if (from.type === 'unassigned' || to.type === 'unassigned') {
     fail('TRANSFER_UNASSIGNED', '이체에는 결제수단을 골라야 합니다.');
+  }
+  // 자본(기초잔액) 계정은 원장이 잔액을 맞출 때만 쓰는 안쪽 계정이다 (2026-10-16). 이체로 돈을 옮기면 기초잔액
+  // 전표의 역산이 어긋난다. 화면은 고를 수 없지만 API 로는 들어올 수 있었다.
+  if (from.type === 'opening_balance' || to.type === 'opening_balance') {
+    fail('TRANSFER_INTERNAL_ACCOUNT', '이 계정으로는 이체할 수 없습니다.');
   }
 
   // 카드가 끼면 그 다리에 cardId 를 채운다. 비워 두면 카드별 거래 조회에서 빠진다.
@@ -853,10 +865,12 @@ export async function buildTransfer(
   }
 
   const base = await lookup.ledgerCurrency(input.projectId);
+  // 보내는 계좌가 저장 통화면 넘긴 환율을 쓰지 않는다 (`resolveConversion` 과 같은 까닭).
   const fromRate =
-    input.exchangeRate === undefined
+    input.exchangeRate === undefined || from.currency === base
       ? await lookup.rate(input.projectId, assertCurrency(from.currency, '보내는 계좌 통화'), base)
       : Dec.of(input.exchangeRate);
+  if (fromRate.lte(ZERO)) fail('RATE_INVALID', '환율은 0보다 커야 합니다.');
 
   const sentBase = toBase(amount, fromRate, base);
   const feeBase = fee.gt(ZERO) ? toBase(fee, fromRate, base) : ZERO;
@@ -1233,7 +1247,8 @@ function common(input: CommonBuildInput) {
     projectId: input.projectId,
     personId: input.personId || null,
     date: input.date,
-    description: input.description,
+    // 빠지거나 글자가 아니면 빈 설명이다 (2026-10-16). 그대로 두면 저장 칸(필수)에서 500 이 났다.
+    description: typeof input.description === 'string' ? input.description : '',
     merchant: input.merchant ?? null,
     detailedNote: input.detailedNote ?? null,
   };
@@ -1341,7 +1356,11 @@ async function resolveConversion(
   const base = await lookup.ledgerCurrency(projectId);
   const entered = assertCurrency(enteredCurrency ?? accountCurrency, '입력 통화');
 
-  if (explicitRate !== undefined) {
+  /*
+   * 입력 통화가 저장 통화와 같으면 넘긴 환율을 쓰지 않는다 (2026-10-16). 원화 가계부의 원화 지출에 환율 2 가
+   * 실려 오면 분류 다리만 두 배가 되어 보고서와 예산이 부풀었다. 같은 통화의 환율은 1 뿐이다.
+   */
+  if (explicitRate !== undefined && entered !== base) {
     const rate = Dec.of(explicitRate);
     if (rate.lte(ZERO)) fail('RATE_INVALID', '환율은 0보다 커야 합니다.');
     return { base, entered, rate, estimatedRate: false };
@@ -1503,11 +1522,24 @@ function assertInterestCurrency(
 /** 할부로 나눌 수 있는 가장 긴 개월수 (2026-10-10 사용자 요청). 2개월부터 이 값까지 고른다. */
 export const INSTALLMENT_MAX_MONTHS = 50;
 
+/**
+ * 회차 기준으로 볼 때 할부를 앞으로 몇 달까지 거슬러 읽는가. 서버(리포트·목록)와 기기 사본이 함께 쓴다.
+ *
+ * 가장 긴 할부(`INSTALLMENT_MAX_MONTHS`)보다 길어야 마지막 회차가 빠지지 않는다. 조건을 아예 지우면
+ * 원장을 통째로 읽게 되므로 넉넉한 상한만 둔다. 예전에는 세 곳에 따로 적혀 있었다.
+ */
+export const INSTALLMENT_LOOKBACK_MONTHS = 60;
+
 function assertCanInstall(months: number | undefined, isCreditCard: boolean) {
-  if (!months || months < 2) return;
-  if (!Number.isInteger(months) || months > INSTALLMENT_MAX_MONTHS) {
+  if (months === undefined || months === null || months === 0) return;
+  /*
+   * 정수가 아니거나 음수인 개월수도 거절한다 (2026-10-16). 예전에는 2 미만이면 그대로 지나가 1.5 가 저장 단계의
+   * 정수 칸에서 500 으로 터졌다. 0·1 은 일시불이다.
+   */
+  if (!Number.isInteger(months) || months < 0 || months > INSTALLMENT_MAX_MONTHS) {
     fail('INSTALLMENT_MONTHS_RANGE', `할부는 2~${INSTALLMENT_MAX_MONTHS}개월로 설정할 수 있습니다.`);
   }
+  if (months < 2) return;
   if (isCreditCard) return;
   fail('INSTALLMENT_CREDIT_ONLY', '할부는 신용카드 지출에만 설정할 수 있습니다.');
 }
@@ -1530,30 +1562,13 @@ function toBaseLines<T extends { amount: Dec }>(
     return lines.map((line) => ({ ...line, baseAmount: toBase(line.amount, rate, base) }));
   }
 
-  const shares = allocate(billed, lines.map((line) => line.amount), currencyDecimals(base));
+  const shares = allocateByWeight(billed, lines.map((line) => line.amount), currencyDecimals(base));
   return lines.map((line, index) => ({ ...line, baseAmount: shares[index] }));
 }
 
 /** 기준통화 자릿수로 반올림. 원·엔은 소수를 쓰지 않는다. */
 function toBase(amount: Dec, rate: Dec, base: string): Dec {
   return amount.times(rate).round(currencyDecimals(base));
-}
-
-/**
- * 총액을 가중치대로 나눈다. 끝수는 첫 줄에 몰아준다.
- *
- * 내림으로 자른 뒤 남은 것을 첫 줄에 더하므로 합계가 총액과 정확히 같다.
- */
-function allocate(total: Dec, weights: Dec[], decimals: number): Dec[] {
-  if (weights.length === 0) return [];
-  if (weights.length === 1) return [total];
-
-  const weightSum = sum(weights);
-  const shares = weights.map((weight) =>
-    total.times(weight).dividedBy(weightSum, decimals, 'down'),
-  );
-  shares[0] = shares[0].plus(total.minus(sum(shares)));
-  return shares;
 }
 
 function sum(amounts: Dec[]): Dec {

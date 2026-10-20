@@ -53,6 +53,21 @@ interface UserFilterStore {
   clearPersonFilter: () => void;
 }
 
+/**
+ * 구성원을 모두 골랐는가. 전부면 화면은 사람 조건을 빼고 서버의 전체 기준 값을 쓴다.
+ *
+ * 길이로 견주지 않는다 (2026-10-16). 같은 id 가 둘 들어간 옛 선택이나 사라진 사람의 id 가 남으면 길이는 맞거나
+ * 어긋나도 실제 고른 사람과 다르다. 그래서 모든 구성원이 선택에 있는지로 본다. 여러 화면이 함께 쓴다.
+ */
+export function isEveryPersonSelected(
+  people: ReadonlyArray<{ id: string }>,
+  selectedPersonIds: readonly string[],
+): boolean {
+  if (people.length === 0) return false;
+  const selected = new Set(selectedPersonIds);
+  return people.every((person) => selected.has(person.id));
+}
+
 export const useUserFilter = create<UserFilterStore>()(
   persist(
     (set) => ({
@@ -72,7 +87,12 @@ export const useUserFilter = create<UserFilterStore>()(
         set((state) => {
           if (state.people.length === 0) return { people };
           const known = new Set(state.people.map((person) => person.id));
-          const added = people.filter((person) => !known.has(person.id)).map((p) => p.id);
+          // 이미 고른 사람은 다시 넣지 않는다 (2026-10-16). 만들기 쪽(useAssetsData)이 먼저 넣어 두면 같은 id 가
+          // 둘이 되어, 길이로 "전부 골랐다"를 가리는 화면이 일부만 고른 것으로 읽고 주인 없는 통장을 뺐다.
+          const selected = new Set(state.selectedPersonIds);
+          const added = people
+            .filter((person) => !known.has(person.id) && !selected.has(person.id))
+            .map((p) => p.id);
           if (added.length === 0) return { people };
           return { people, selectedPersonIds: [...state.selectedPersonIds, ...added] };
         }),

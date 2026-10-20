@@ -158,13 +158,14 @@ function installmentShareIn(
    */
   if (entry.installment) return 'not-installment';
 
+  const scaled = sharesInAmountUnits(entry);
   const shares = installmentMonthShares({
     date: entry.date,
     // 목록 금액은 이미 차감된 뒤다. 카드에 청구된 금액이라 회차의 합과 같다.
     total: entry.amount,
     months,
-    principals: entry.installmentShares,
-    interests: entry.installmentInterestShares,
+    principals: scaled.principals,
+    interests: scaled.interests,
     timeZone: basis.timeZone,
   });
 
@@ -384,4 +385,34 @@ export function matchedAmountOf(entry: EntryListItem): string {
     else all = false;
   }
   return all ? entry.amount : total.toString();
+}
+
+/**
+ * 적어 둔 회차 금액을 목록 금액과 같은 단위로 (2026-10-16).
+ *
+ * 회차 금액은 저장 통화로 실려 오는데(`toListItem` 이 고치기 폼을 위해 그대로 둔다), 목록 금액은 표시 통화다.
+ * 둘이 다르면 회차의 합이 금액과 맞지 않아 "원금 -1927 · 이자 2000" 같은 값이 섰다. 회차의 합(원금 + 이자)이
+ * 금액과 같도록 같은 비율로 맞춘다. 같은 통화면 비율이 1 이라 그대로다.
+ */
+function sharesInAmountUnits(entry: EntryListItem): {
+  principals: string[] | null;
+  interests: string[] | null;
+} {
+  const principals = entry.installmentShares ?? null;
+  const interests = entry.installmentInterestShares ?? null;
+  if (!principals && !interests) return { principals, interests };
+  let stored: Dec;
+  let amount: Dec;
+  try {
+    stored = Dec.sum([...(principals ?? []), ...(interests ?? [])]);
+    amount = Dec.of(entry.amount).abs();
+  } catch {
+    return { principals, interests };
+  }
+  if (stored.isZero() || stored.eq(amount) || !principals) return { principals, interests };
+
+  const decimals = Math.max(0, Dec.of(entry.amount).scale);
+  const rescale = (values: string[]) =>
+    values.map((value) => Dec.of(value).times(amount).dividedBy(stored, decimals + 4).toString());
+  return { principals: rescale(principals), interests: interests ? rescale(interests) : null };
 }

@@ -8,6 +8,7 @@ import { badRequest, forbidden, notFound } from '@/common/app-error';
 import { recordProjectWrite } from '@/common/project-write-context';
 import { lockMembershipWrites } from '@/common/ledger-lock';
 import { rankAfter } from '@money/types';
+import { readText } from '@/common/text';
 
 interface CreateProjectDto {
   name: string;
@@ -43,10 +44,13 @@ export class ProjectsService {
   ) {}
 
   async createProject(userId: string, dto: CreateProjectDto) {
+    // 이름은 고치기(updateProject)와 같은 규칙으로 본다 (2026-10-16). 예전에는 비어도 받았고 빠지면 500 이었다.
+    const name = readText(dto.name, '프로젝트 이름');
+    if (!name) throw new BadRequestException('프로젝트 이름을 입력해주세요.');
     const project = await this.prisma.project.create({
       data: {
-        name: dto.name,
-        description: dto.description,
+        name,
+        description: readText(dto.description, '설명') || null,
         projectKey: await this.issueProjectKey(),
       },
     });
@@ -111,7 +115,7 @@ export class ProjectsService {
       displayCurrency?: string;
     } = {};
     if (dto.name !== undefined) {
-      const name = dto.name.trim();
+      const name = readText(dto.name, '프로젝트 이름');
       if (!name) {
         throw new BadRequestException('프로젝트 이름을 입력해주세요.');
       }
@@ -121,7 +125,7 @@ export class ProjectsService {
     // 설명은 없어도 되는 값이다. 빈 문자열로 지우면 null로 저장해
     // "설명 없음"을 한 가지 형태로만 남긴다.
     if (dto.description !== undefined) {
-      data.description = dto.description?.trim() || null;
+      data.description = readText(dto.description, '설명') || null;
     }
 
     if (dto.timezone !== undefined) {
@@ -459,22 +463,21 @@ export class ProjectsService {
   }
 
   async declineInvitation(invitationCode: string) {
-    const invitation = await this.prisma.projectInvitation.findUnique({
-      where: { invitationCode },
-    });
+    // 받기와 같은 길로 찾는다(대소문자·띄어쓰기를 고르게) -- 받을 수 있는 코드를 거절하지 못하던 자리다 (2026-10-16).
+    const invitation = await this.findInvitation(invitationCode);
 
     if (!invitation) {
       throw notFound('INVITATION_NOT_FOUND', '초대를 찾을 수 없습니다');
     }
 
-    if (invitation.status !== 'pending') {
-      throw new BadRequestException(`초대가 이미 ${invitation.status} 상태입니다`);
-    }
-
-    await this.prisma.projectInvitation.update({
-      where: { id: invitation.id },
+    // 대기 중일 때만 바꾼다. 같은 순간에 받은 사람이 있으면 받기가 이긴다.
+    const declined = await this.prisma.projectInvitation.updateMany({
+      where: { id: invitation.id, status: 'pending' },
       data: { status: 'declined' },
     });
+    if (declined.count === 0) {
+      throw new BadRequestException(`초대가 이미 ${invitation.status} 상태입니다`);
+    }
 
     return { success: true };
   }
@@ -813,7 +816,7 @@ export class ProjectsService {
       throw badRequest('JOIN_REQUEST_PENDING', '이미 가입 요청을 보냈습니다. 승인을 기다려주세요.');
     }
 
-    const trimmedMessage = message?.trim() || null;
+    const trimmedMessage = readText(message, '메시지') || null;
 
     // 쌍마다 한 행만 유지하므로, 거절되었던 요청은 같은 행을 pending으로 되돌린다.
     const request = await this.prisma.projectJoinRequest.upsert({

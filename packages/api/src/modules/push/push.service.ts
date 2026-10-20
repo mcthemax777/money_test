@@ -120,6 +120,9 @@ type Locale = keyof typeof TEXT;
 /** 푸시 문구의 언어. `notifyUser` 를 부르는 쪽이 문구를 고를 때 쓴다. */
 export type PushLocale = Locale;
 
+/** FCM 한 번 보내기를 기다리는 시간. */
+const FCM_TIMEOUT_MS = 10_000;
+
 @Injectable()
 export class PushService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PushService.name);
@@ -344,29 +347,49 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
     token: string,
     message: PushMessage,
   ): Promise<void> {
-    const response = await fetch(
-      `https://fcm.googleapis.com/v1/projects/${firebaseProjectId}/messages:send`,
-      {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${accessToken}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          message: {
-            token,
-            notification: { title: message.title, body: message.body },
-            // 앱이 눌렸을 때 어디로 갈지 가리는 값. FCM 의 data 는 문자열만 받는다.
-            data: message.data,
-            android: { priority: 'high', notification: { channel_id: message.channelId } },
+    let response: Response;
+    try {
+      response = await fetch(
+        `https://fcm.googleapis.com/v1/projects/${firebaseProjectId}/messages:send`,
+        {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${accessToken}`,
+            'Content-Type': 'application/json',
           },
-        }),
-      },
-    );
+          body: JSON.stringify({
+            message: {
+              token,
+              notification: { title: message.title, body: message.body },
+              // 앱이 눌렸을 때 어디로 갈지 가리는 값. FCM 의 data 는 문자열만 받는다.
+              data: message.data,
+              android: { priority: 'high', notification: { channel_id: message.channelId } },
+            },
+          }),
+          /*
+           * 오래 기다리지 않는다 (2026-10-16). 시간 제한이 없으면 FCM 이 응답하지 않을 때 몇 분씩 붙들려, 그동안
+           * 이 인스턴스의 다른 알림 보내기(`flushing`)가 모두 멈췄다.
+           */
+          signal: AbortSignal.timeout(FCM_TIMEOUT_MS),
+        },
+      );
+    } catch (error) {
+      /*
+       * 한 기기의 실패(끊김·시간 초과)는 여기서 삼킨다 (2026-10-16). 부르는 쪽이 기기들을 Promise.all 로 함께
+       * 보내, 하나가 던지면 나머지의 결과까지 실패로 보였다.
+       */
+      this.logger.warn(`FCM 에 닿지 못했습니다: ${error instanceof Error ? error.message : error}`);
+      return;
+    }
     if (response.ok) return;
 
     const detail = await response.text().catch(() => '');
-    if (response.status === 404 || detail.includes('UNREGISTERED')) {
+    /*
+     * 지워진 기기(UNREGISTERED·404)와, 모양부터 틀린 토큰(INVALID_ARGUMENT 중 등록 토큰을 탓하는 것)을 지운다.
+     * 뒤의 것을 남기면 알림마다 같은 실패를 되풀이했다. 메시지 자체가 틀린 INVALID_ARGUMENT 는 토큰 탓이 아니라 남긴다.
+     */
+    const badToken = detail.includes('INVALID_ARGUMENT') && /registration token/i.test(detail);
+    if (response.status === 404 || detail.includes('UNREGISTERED') || badToken) {
       await this.prisma.pushDevice.deleteMany({ where: { token } });
       return;
     }

@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { SyncDto } from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
+import { readLimit, readNonNegativeInt } from '@/common/text';
 
 /** 표당 기본 상한. 한 가정의 하루 변경은 이 안에 넉넉히 들어온다. */
 const DEFAULT_LIMIT = 500;
@@ -60,8 +61,8 @@ export class SyncService {
       projectIdParam || query.projectId,
     );
 
-    const since = Math.max(0, Number(query.since) || 0);
-    const limit = Math.min(Math.max(1, Number(query.limit) || DEFAULT_LIMIT), MAX_LIMIT);
+    const since = readNonNegativeInt(query.since);
+    const limit = readLimit(query.limit, DEFAULT_LIMIT, MAX_LIMIT);
 
     return this.prisma.$transaction(async (tx) => {
       const [project, floorRow] = await Promise.all([
@@ -88,11 +89,115 @@ export class SyncService {
         return this.emptyResponse(projectId, since, ceiling, tombstoneFloor);
       }
 
-      const window = { gt: since, lte: ceiling };
-      const page = { orderBy: { updatedVersion: 'asc' }, take: limit + 1 } as const;
+      /*
+       * 표를 한 번에 읽는다. 상한이 이미 고정돼 있어 순서는 결과에 영향을 주지 않는다.
+       * `take` 가 없으면 그 구간을 전부 읽는다 (아래 "같은 번호가 한 쪽보다 많다" 의 자리).
+       */
+      const read = (window: { gt: number; lte: number }, take?: number) => {
+        const page = {
+          orderBy: { updatedVersion: 'asc' as const },
+          ...(take ? { take } : {}),
+        };
+        return Promise.all([
+          tx.project.findFirst({
+            where: { id: projectId, updatedVersion: window },
+          }),
+          tx.projectMember.findMany({
+            where: { projectId, updatedVersion: window },
+            ...page,
+          }),
+          tx.person.findMany({
+            where: { projectId, updatedVersion: window },
+            ...page,
+          }),
+          tx.account.findMany({
+            where: { projectId, updatedVersion: window },
+            ...page,
+          }),
+          tx.category.findMany({
+            where: { projectId, updatedVersion: window },
+            ...page,
+          }),
+          tx.tag.findMany({
+            where: { projectId, updatedVersion: window },
+            ...page,
+          }),
+          tx.card.findMany({
+            where: { projectId, updatedVersion: window },
+            ...page,
+          }),
+          tx.journalEntry.findMany({
+            where: { projectId, updatedVersion: window },
+            /*
+             * 태그 연결은 전표에 실어 함께 보낸다. 다리와 같은 이유다 -- 이 표에는
+             * 번호가 없어 따로 실을 수 없다. 태그 자신(이름·색)은 위의 `tags` 로 온다.
+             */
+            include: {
+              postings: true,
+              tags: { select: { lineKey: true, tagId: true } },
+            },
+            ...page,
+          }),
+          tx.budget.findMany({
+            where: { projectId, updatedVersion: window },
+            ...page,
+          }),
+          tx.budgetOverride.findMany({
+            where: { budget: { projectId }, updatedVersion: window },
+            ...page,
+          }),
+          tx.exchangeRate.findMany({
+            where: { projectId, updatedVersion: window },
+            ...page,
+          }),
+          /*
+           * 두 표는 projectId 컬럼이 없어 부모를 거쳐 고른다.
+           *
+           * 평가액은 계좌를, 할부 계획은 다리와 전표를 거친다. 번호를 찍는 트리거도
+           * 같은 길을 따라간다 (마이그레이션 20260902093000_sync_valuation_installment).
+           */
+          tx.assetValuation.findMany({
+            where: { account: { projectId }, updatedVersion: window },
+            ...page,
+          }),
+          tx.installmentPlan.findMany({
+            where: {
+              posting: { entry: { projectId } },
+              updatedVersion: window,
+            },
+            ...page,
+          }),
+          /*
+           * 보관함의 후보. 거래가 아니라 제안이지만 같은 피드로 나른다.
+           *
+           * 한 기기가 알림으로 담은 것을 웹에서 정리하고 그 결과를 다시 기기가 보아야
+           * 한다. 따로 조회하게 두면 화면마다 "언제 다시 물을지"를 정하게 되어 같은
+           * 보관함이 자리마다 다르게 보인다.
+           */
+          tx.entryDraft.findMany({
+            where: { projectId, updatedVersion: window },
+            /*
+             * 태그 연결은 후보에 실어 함께 보낸다. 전표와 같은 이유다 -- 이 다리 표에는
+             * 번호가 없어 따로 실을 수 없다. 태그 자신(이름·색)은 위의 `tags` 로 온다.
+             */
+            include: { tags: { select: { tagId: true } } },
+            ...page,
+          }),
+          // 반복 등록. 태그 연결은 후보처럼 실어 보낸다 (다리 표에는 번호가 없다).
+          tx.recurringRule.findMany({
+            where: { projectId, updatedVersion: window },
+            include: { tags: { select: { tagId: true } } },
+            ...page,
+          }),
+          tx.tombstone.findMany({
+            where: { projectId, deletedVersion: window },
+            orderBy: { deletedVersion: 'asc' },
+            ...(take ? { take } : {}),
+          }),
+        ]);
+      };
 
-      // 표를 한 번에 읽는다. 상한이 이미 고정돼 있어 순서는 결과에 영향을 주지 않는다.
-      const [
+      let [
         projectRow,
         members,
         people,
@@ -109,71 +214,7 @@ export class SyncService {
         entryDrafts,
         recurringRules,
         tombstones,
-      ] = await Promise.all([
-        tx.project.findFirst({ where: { id: projectId, updatedVersion: window } }),
-        tx.projectMember.findMany({ where: { projectId, updatedVersion: window }, ...page }),
-        tx.person.findMany({ where: { projectId, updatedVersion: window }, ...page }),
-        tx.account.findMany({ where: { projectId, updatedVersion: window }, ...page }),
-        tx.category.findMany({ where: { projectId, updatedVersion: window }, ...page }),
-        tx.tag.findMany({ where: { projectId, updatedVersion: window }, ...page }),
-        tx.card.findMany({ where: { projectId, updatedVersion: window }, ...page }),
-        tx.journalEntry.findMany({
-          where: { projectId, updatedVersion: window },
-          /*
-           * 태그 연결은 전표에 실어 함께 보낸다. 다리와 같은 이유다 -- 이 표에는
-           * 번호가 없어 따로 실을 수 없다. 태그 자신(이름·색)은 위의 `tags` 로 온다.
-           */
-          include: { postings: true, tags: { select: { lineKey: true, tagId: true } } },
-          ...page,
-        }),
-        tx.budget.findMany({ where: { projectId, updatedVersion: window }, ...page }),
-        tx.budgetOverride.findMany({
-          where: { budget: { projectId }, updatedVersion: window },
-          ...page,
-        }),
-        tx.exchangeRate.findMany({ where: { projectId, updatedVersion: window }, ...page }),
-        /*
-         * 두 표는 projectId 컬럼이 없어 부모를 거쳐 고른다.
-         *
-         * 평가액은 계좌를, 할부 계획은 다리와 전표를 거친다. 번호를 찍는 트리거도
-         * 같은 길을 따라간다 (마이그레이션 20260902093000_sync_valuation_installment).
-         */
-        tx.assetValuation.findMany({
-          where: { account: { projectId }, updatedVersion: window },
-          ...page,
-        }),
-        tx.installmentPlan.findMany({
-          where: { posting: { entry: { projectId } }, updatedVersion: window },
-          ...page,
-        }),
-        /*
-         * 보관함의 후보. 거래가 아니라 제안이지만 같은 피드로 나른다.
-         *
-         * 한 기기가 알림으로 담은 것을 웹에서 정리하고 그 결과를 다시 기기가 보아야
-         * 한다. 따로 조회하게 두면 화면마다 "언제 다시 물을지"를 정하게 되어 같은
-         * 보관함이 자리마다 다르게 보인다.
-         */
-        tx.entryDraft.findMany({
-          where: { projectId, updatedVersion: window },
-          /*
-           * 태그 연결은 후보에 실어 함께 보낸다. 전표와 같은 이유다 -- 이 다리 표에는
-           * 번호가 없어 따로 실을 수 없다. 태그 자신(이름·색)은 위의 `tags` 로 온다.
-           */
-          include: { tags: { select: { tagId: true } } },
-          ...page,
-        }),
-        // 반복 등록. 태그 연결은 후보처럼 실어 보낸다 (다리 표에는 번호가 없다).
-        tx.recurringRule.findMany({
-          where: { projectId, updatedVersion: window },
-          include: { tags: { select: { tagId: true } } },
-          ...page,
-        }),
-        tx.tombstone.findMany({
-          where: { projectId, deletedVersion: window },
-          orderBy: { deletedVersion: 'asc' },
-          take: limit + 1,
-        }),
-      ]);
+      ] = await read({ gt: since, lte: ceiling }, limit + 1);
 
       const groups = [
         members,
@@ -207,10 +248,40 @@ export class SyncService {
       if (tombstones.length > limit) {
         cutoff = Math.min(cutoff, tombstones[limit].deletedVersion - 1);
       }
+
+      /*
+       * 같은 번호가 한 쪽보다 많다.
+       *
+       * 번호는 행마다 따로 찍히지만, 동기화를 처음 들일 때 이미 있던 행은 모두 1번을 받았다
+       * (마이그레이션 20260901134114). 한 표에 그런 행이 한 쪽보다 많으면 상한이 `since` 로
+       * 물러나 기기가 같은 자리를 끝없이 되물었다 -- 새 기기의 첫 받기가 끝나지 않는다.
+       * 그때는 그 번호 하나를 통째로 담는다. 쪽이 커지지만 한 번뿐이다.
+       */
+      if (cutoff <= since) {
+        cutoff = since + 1;
+        [
+          projectRow,
+          members,
+          people,
+          accounts,
+          categories,
+          tags,
+          cards,
+          entries,
+          budgets,
+          budgetOverrides,
+          exchangeRates,
+          assetValuations,
+          installmentPlans,
+          entryDrafts,
+          recurringRules,
+          tombstones,
+        ] = await read({ gt: since, lte: cutoff });
+      }
       const hasMore = cutoff < ceiling;
 
       const within = <T extends { updatedVersion: number }>(rows: T[]): T[] =>
-        hasMore ? rows.filter((row) => row.updatedVersion <= cutoff) : rows.slice(0, limit);
+        rows.filter((row) => row.updatedVersion <= cutoff);
 
       return {
         projectId,
@@ -233,7 +304,10 @@ export class SyncService {
            */
           entries: within(entries).map(({ tags: entryTags, ...entry }) => ({
             ...entry,
-            tagLinks: entryTags.map((row) => ({ lineKey: row.lineKey, tagId: row.tagId })),
+            tagLinks: entryTags.map((row) => ({
+              lineKey: row.lineKey,
+              tagId: row.tagId,
+            })),
           })) as unknown as SyncDto.EntryRow[],
           budgets: within(budgets),
           budgetOverrides: within(budgetOverrides),
@@ -253,14 +327,13 @@ export class SyncService {
             tagIds: tags.map((tag) => tag.tagId),
           })),
         },
-        tombstones: (hasMore
-          ? tombstones.filter((row) => row.deletedVersion <= cutoff)
-          : tombstones.slice(0, limit)
-        ).map((row) => ({
-          entity: row.entity,
-          entityId: row.entityId,
-          deletedVersion: row.deletedVersion,
-        })),
+        tombstones: tombstones
+          .filter((row) => row.deletedVersion <= cutoff)
+          .map((row) => ({
+            entity: row.entity,
+            entityId: row.entityId,
+            deletedVersion: row.deletedVersion,
+          })),
         tombstoneFloor,
       };
     }, { timeout: PULL_TX_TIMEOUT_MS });

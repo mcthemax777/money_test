@@ -32,6 +32,18 @@ export const EQUITY_ACCOUNT_TYPES: readonly AccountType[] = ['opening_balance', 
 /** 시가로 평가하는 계정. 장부 잔액 대신 최신 평가액을 쓴다. */
 export const VALUED_ACCOUNT_TYPES: readonly AccountType[] = ['investment', 'crypto', 'real_estate'];
 
+/**
+ * 수익을 따로 계산해 보여 주는 계좌. 원금은 이체로 넣고 불어난 몫은 수입으로 붙는다 (투자는 배당·매매 차익,
+ * 예적금·연금은 이자·운용 수익). 잔액만 보면 원금인지 수익인지 구별되지 않는다. 서버 리포트와 기기 사본이 함께 쓴다.
+ */
+export const PROFIT_ACCOUNT_TYPES: readonly AccountType[] = [
+  'investment',
+  'crypto',
+  'savings',
+  'time_deposit',
+  'pension',
+];
+
 /** 부채 계정. 잔액이 음수로 저장된다. */
 export const LIABILITY_ACCOUNT_TYPES: readonly AccountType[] = ['credit_card', 'loan'];
 

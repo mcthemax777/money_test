@@ -319,4 +319,17 @@ runSmoke('budget-scope', async (ctx) => {
 
   const emptyReset = await budgets.resetBudgets(uid, pid);
   ctx.check('초기화: 두 번째는 0개', emptyReset.deleted, 0);
+
+  // ── 빈 달에 새로 정한 예산은 그 빈 구간만 채운다 (2026-10-16) ──
+  //
+  // 예전에는 언제나 기간 없는 규칙을 세워, 앞서 끝난 규칙의 달까지 덮었다 -- 그 달들은 두 규칙 중 아무거나 보였다.
+  await budgets.createBudget(uid, { categoryId: dining.id, monthlyAmount: '100000', yearMonth: '2026-07' } as never, pid);
+  await budgets.setBudgetFrom(uid, pid, { categoryId: dining.id, fromMonth: '2026-09', amount: null });
+  await budgets.setBudgetFrom(uid, pid, { categoryId: dining.id, fromMonth: '2026-12', amount: '300000' });
+  await budgets.createBudget(uid, { categoryId: dining.id, monthlyAmount: '200000', yearMonth: '2026-10' } as never, pid);
+  ctx.check('빈 달 예산: 앞 규칙의 달은 그대로', await diningAmount(2026, 7), 100000);
+  ctx.check('빈 달 예산: 끊긴 달은 비어 있다', await diningAmount(2026, 9), 0);
+  ctx.check('빈 달 예산: 정한 달부터', await diningAmount(2026, 10), 200000);
+  ctx.check('빈 달 예산: 다음 규칙 앞 달까지', await diningAmount(2026, 11), 200000);
+  ctx.check('빈 달 예산: 다음 규칙은 그대로', await diningAmount(2026, 12), 300000);
 });

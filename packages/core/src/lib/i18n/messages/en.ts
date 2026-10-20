@@ -441,6 +441,7 @@ export const en: Record<MessageKey, string> = {
   'day.lastDay': 'Day 31 (last day)',
   'day.hint': 'A date the month does not have falls on its last day.',
   'common.retry': 'Try again',
+  'common.pageError': 'Something went wrong while showing this page. Please try again.',
   'common.add': 'Add',
   'common.none': 'Not set',
   'select.placeholder': 'Choose one',

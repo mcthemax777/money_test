@@ -487,9 +487,8 @@ export function useCategoryDetail({
   const [entries, setEntries] = useState<EntryListItem[]>(cached?.entries ?? []);
   const [pieSources, setPieSources] = useState<PieSource[]>(cached?.pieSources ?? []);
   /** 원형마다 파고든 대분류와 그 소분류 조각. 없는 유형은 첫 단계다. */
-  const [drilled, setDrilled] = useState<
-    Partial<Record<'income' | 'expense', { id: string; slices: CategorySlice[] }>>
-  >({});
+  /** 원형마다 파고든 대분류. 조각은 그릴 때 받아 둔 집계에서 고른다 (아래 pies). */
+  const [drilled, setDrilled] = useState<Partial<Record<'income' | 'expense', { id: string }>>>({});
   const [isOffline, setIsOffline] = useState(cached?.isOffline ?? false);
   const [hasError, setHasError] = useState(false);
   // 같은 조건을 다시 받을 때는 그래프를 가리지 않는다 (useLoadedKey 주석).
@@ -673,11 +672,17 @@ export function useCategoryDetail({
               slices:
                 target.scope === 'category'
                   ? buildSubcategoryStats(breakdown, categoryId)
-                  : breakdown.map((item) => ({
-                      id: item.categoryId,
-                      name: item.categoryName,
-                      value: toNumber(item.amount),
-                    })),
+                  : breakdown
+                      .map((item) => ({
+                        id: item.categoryId,
+                        name: item.categoryName,
+                        value: toNumber(item.amount),
+                      }))
+                      /*
+                       * 양수 조각만 그린다 (소분류 원형과 같다, 2026-10-16). 돌려받은 돈이 쓴 돈보다 많은 분류는 순액이
+                       * 음수라, 섞이면 조각이 거꾸로 그려지고 나머지 비율의 합이 100% 를 넘었다.
+                       */
+                      .filter((slice) => slice.value > 0),
             };
           }),
         );
@@ -797,7 +802,13 @@ export function useCategoryDetail({
     // 조각이 없는 원형은 그리지 않는다. 그 태그로 들어온 돈이 없으면 수입 원형은 없다.
     .filter((source) => source.slices.length > 0)
     .flatMap((source): CategoryPie[] => {
-      const down = drilled[source.type];
+      /*
+       * 파고든 원형은 **지금 받아 둔 평면 집계**에서 그때마다 다시 고른다 (2026-10-16). 고를 때의 조각을 들고 있으면
+       * 동기화로 다시 받은 뒤에도 옛 숫자가 남았다.
+       */
+      const drilledId = drilled[source.type]?.id;
+      const drilledSlices = drilledId ? buildSubcategoryStats(source.flat, drilledId) : [];
+      const down = drilledId && drilledSlices.length > 0 ? { id: drilledId, slices: drilledSlices } : null;
       /*
        * 대분류별 원형(전체·태그) 아래에 소분류를 한데 펼친 원형을 하나 더 세운다. 분류 하나를
        * 볼 때는 첫 원형이 이미 그 소분류별이라 세우지 않는다. 소분류가 하나도 없는 가계부면
@@ -833,7 +844,7 @@ export function useCategoryDetail({
           // 서버가 이미 계산한 평면 집계를 쓴다. 대분류를 직접 볼 때와 같은 규칙이어야 한다.
           const next = buildSubcategoryStats(source.flat, id);
           if (next.length === 0) return;
-          setDrilled((prev) => ({ ...prev, [source.type]: { id, slices: next } }));
+          setDrilled((prev) => ({ ...prev, [source.type]: { id } }));
         },
         resetDrill: () =>
           setDrilled((prev) => {

@@ -21,6 +21,7 @@ import {
 import { ApiTags } from '@nestjs/swagger';
 import { Throttle } from '@nestjs/throttler';
 import {
+  isDateKey,
   HOLIDAY_COUNTRIES,
   isPlanId,
   PLAN_GRANT_DAYS,
@@ -274,11 +275,13 @@ function checkYear(value: unknown): number {
   return year;
 }
 
-/** "YYYY-MM-DD" 이고 달력에 있는 날인가. */
+/**
+ * "YYYY-MM-DD" 이고 달력에 있는 날인가. 공용 검사(`isDateKey`)를 쓴다 (2026-10-16) -- 예전에는 Date 로 풀어
+ * 견주어 "2026-13-45" 같은 값이 Invalid Date 의 toISOString 에서 터져 500 이 났다.
+ */
 function checkDate(value: unknown): string {
-  const text = String(value ?? '');
-  const parsed = new Date(`${text}T00:00:00Z`);
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(text) || parsed.toISOString().slice(0, 10) !== text) {
+  const text = typeof value === 'string' ? value : '';
+  if (!isDateKey(text)) {
     throw new BadRequestException('날짜는 2026-10-09 처럼 적어 주세요.');
   }
   return text;

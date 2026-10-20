@@ -17,7 +17,7 @@ interface PersonModalProps {
   person: Person | null;
   mode?: 'add' | 'view' | 'edit';
   onSuccess: (updatedPeople: Person[]) => void;
-  onDelete?: (id: string) => Promise<void>;
+  onDelete?: (id: string) => Promise<boolean | void>;
   /** 보고 있는 가계부. 넘기지 않으면 서버가 그 사람의 기본 가계부로 만들고 읽는다. */
   projectId?: string | null;
 }
@@ -39,7 +39,12 @@ export default function PersonModal({
   const [error, setError] = useState('');
   const [editMode, setEditMode] = useState(false);
 
+  /*
+   * 열릴 때마다 채운다 (2026-10-16). 사람과 모드만 보던 때에는 같은 사람을 닫았다 다시 열면 이 효과가 돌지 않아,
+   * 닫을 때 비운 빈 폼이 그대로 섰다 (EditAccountModal 과 같은 까닭으로 isOpen 을 함께 본다).
+   */
   useEffect(() => {
+    if (!isOpen) return;
     if (person && mode !== 'add') {
       setFormData({
         name: person.name,
@@ -50,7 +55,7 @@ export default function PersonModal({
       setFormData({ name: '', relationship: '' });
       setEditMode(true);
     }
-  }, [person, mode]);
+  }, [isOpen, person, mode]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,7 +74,8 @@ export default function PersonModal({
       } else {
         await apiClient.updatePerson(person!.id, {
           name: formData.name,
-          relationship: formData.relationship || undefined,
+          // 비우면 빈 글자를 보내 지운다(서버가 null 로 적는다, 2026-10-16). undefined 면 손대지 않아 지운 관계가 남았다.
+          relationship: formData.relationship.trim(),
         });
       }
 
@@ -83,15 +89,15 @@ export default function PersonModal({
     }
   };
 
+  // 묻는 일은 부른 화면(onDelete)이 한다. 지웠다고 답할 때만 닫는다 (EditAccountModal 과 같다, 2026-10-16).
   const handleDeleteClick = async () => {
     if (!person || !onDelete) return;
-    if (!window.confirm(t('account.deleteConfirm'))) return;
 
     try {
       setIsDeleting(true);
       setError('');
-      await onDelete(person.id);
-      handleClose();
+      const done = await onDelete(person.id);
+      if (done !== false) handleClose();
     } catch (err: any) {
       setError(messageOf(err, 'account.deleteFailed'));
     } finally {

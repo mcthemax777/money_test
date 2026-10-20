@@ -156,15 +156,18 @@ export class RecurringService implements OnModuleInit, OnModuleDestroy {
         const startsToday = new Set(
           rules.filter((rule) => rule.startDate === today).map((rule) => rule.id),
         );
-        const items = recurringDraftItems(rules, today, timeZone, holidays).filter(
-          (item) =>
-            !item.occurredAt ||
-            Date.parse(item.occurredAt) <= now ||
-            (options.onSave && !!item.recurringRuleId && startsToday.has(item.recurringRuleId)),
-        );
-        if (items.length === 0) continue;
-
         try {
+          /*
+           * 회차 셈도 가계부별 시도 안에 둔다 (2026-10-16). 예전에는 담기만 안에 있어, 한 규칙의 값이 셈을
+           * 터뜨리면(옛 판이 저장해 둔 잘못된 시각 따위) 뒤에 남은 모든 가계부가 그 시간에 담기지 못했다.
+           */
+          const items = recurringDraftItems(rules, today, timeZone, holidays).filter(
+            (item) =>
+              !item.occurredAt ||
+              Date.parse(item.occurredAt) <= now ||
+              (options.onSave && !!item.recurringRuleId && startsToday.has(item.recurringRuleId)),
+          );
+          if (items.length === 0) continue;
           created += await this.drafts.createFromServer(projectId, items);
         } catch (error) {
           // 한 가계부의 실패(지워진 태그 등)가 다른 가계부의 회차를 막지 않게 한다.

@@ -80,6 +80,7 @@ import {
   zonedDayStart,
   zonedMonthRange,
   zonedParts,
+  PROFIT_ACCOUNT_TYPES,
 } from '@money/types';
 
 const ZERO = new Prisma.Decimal(0);
@@ -88,21 +89,6 @@ const ZERO = new Prisma.Decimal(0);
  * 계좌 유형의 분류(자본·시가평가·부채)는 `@money/types` 의 net-worth-aggregation 이 갖는다.
  * 기기도 같은 분류로 총자산을 내야 하므로 서버에만 두면 두 벌이 된다.
  */
-/**
- * 수익을 따로 계산해 보여 주는 계정.
- *
- * 원금은 이체로 넣고 불어난 몫은 수입으로 붙는 계좌들이다(투자는 배당·매매 차익,
- * 예적금·연금은 이자·운용 수익). 잔액만 보면 원금인지 수익인지 구별되지 않는다.
- * 기기의 `PROFIT_ACCOUNT_TYPES`(local-home-port)와 같은 목록이다.
- */
-const PROFIT_TYPES: AccountType[] = [
-  AccountType.investment,
-  AccountType.crypto,
-  AccountType.savings,
-  AccountType.time_deposit,
-  AccountType.pension,
-];
-
 @Injectable()
 export class ReportsService {
   constructor(
@@ -1190,7 +1176,7 @@ export class ReportsService {
     const { id: projectId } = await this.projectAccess.resolveProject(userId, query.projectId);
 
     const accounts = await this.prisma.account.findMany({
-      where: { projectId, type: { in: PROFIT_TYPES } },
+      where: { projectId, type: { in: [...PROFIT_ACCOUNT_TYPES] as AccountType[] } },
       select: { id: true },
     });
     if (accounts.length === 0) return [];

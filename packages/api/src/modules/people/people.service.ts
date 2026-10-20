@@ -115,6 +115,15 @@ export class PeopleService {
   async updatePerson(id: string, userId: string, dto: PersonDto.UpdateRequest, hlc?: string) {
     const person = await this.getPersonById(id, userId, 'editor');
 
+    /*
+     * 숨기기는 이 길로 받지 않는다 (2026-10-16, 통장·카드와 같다). 숨기기에는 선행조건(주인인 활성 통장이 없을 것,
+     * `retirePerson`)이 있는데, 여기서 받으면 그 검사를 건너뛰어 주인이 목록에서 사라진 통장이 생겼다.
+     * 웹·앱·동기화 재생은 모두 숨기기 길(DELETE ?hide=true, deactivatePerson)로 보낸다.
+     */
+    if (dto.isActive === false) {
+      throw new BadRequestException('숨기기는 DELETE /people/:id?hide=true 로 요청합니다.');
+    }
+
     // 요청 본문을 스프레드로 Prisma에 넘기면 안 된다 (accounts/cards와 같은 이유).
     // DTO가 인터페이스라 ValidationPipe(whitelist: false)가 낯선 키를 지우지 않으므로
     // `{"projectId": "<남의 프로젝트>"}` 하나로 구성원을 다른 프로젝트로 옮길 수 있고,

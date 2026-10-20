@@ -42,8 +42,15 @@ const NUMBER_COLUMNS = new Set<EntrySheetColumn>(['amount', 'billedAmount', 'dis
  * `data` 는 웹이면 ArrayBuffer, 앱이면 base64 글자다(파일 시스템이 그렇게 준다).
  */
 export function readEntrySheet(data: ArrayBuffer | string): EntrySheetReadResult {
-  const workbook = XLSX.read(data, { type: typeof data === 'string' ? 'base64' : 'array', cellDates: false });
+  const csvText = typeof data === 'string' ? null : decodeCsv(data);
+  const workbook = csvText !== null
+    ? XLSX.read(csvText, { type: 'string', cellDates: false })
+    : XLSX.read(data, { type: typeof data === 'string' ? 'base64' : 'array', cellDates: false });
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  /*
+   * 맥 엑셀의 옛 파일은 날짜를 1904년부터 센다 (2026-10-16). 이 표시를 보지 않으면 날짜가 4년 1일 앞당겨졌다.
+   */
+  const date1904 = Boolean(workbook.Workbook?.WBProps?.date1904);
   if (!sheet || !sheet['!ref']) {
     return { rows: [], columns: [], ignoredHeaders: [], missing: REQUIRED.map(labelOf) };
   }
@@ -52,7 +59,7 @@ export function readEntrySheet(data: ArrayBuffer | string): EntrySheetReadResult
   const columnAt = new Map<number, EntrySheetColumn>();
   const ignoredHeaders: string[] = [];
   for (let c = range.s.c; c <= range.e.c; c += 1) {
-    const header = cellText(sheet[XLSX.utils.encode_cell({ r: range.s.r, c })], false);
+    const header = cellText(sheet[XLSX.utils.encode_cell({ r: range.s.r, c })], false, date1904);
     if (!header) continue;
     const column = entrySheetColumnOf(header);
     // 같은 열이 둘이면 앞의 것을 쓴다.
@@ -68,7 +75,11 @@ export function readEntrySheet(data: ArrayBuffer | string): EntrySheetReadResult
     const row: EntrySheetRow = { row: r + 1 };
     let filled = false;
     for (const [c, column] of columnAt) {
-      const text = cellText(sheet[XLSX.utils.encode_cell({ r, c })], column === 'date' || column === 'time');
+      const text = cellText(
+        sheet[XLSX.utils.encode_cell({ r, c })],
+        column === 'date' || column === 'time',
+        date1904,
+      );
       if (text) {
         row[column] = text;
         filled = true;
@@ -88,12 +99,12 @@ export function readEntrySheet(data: ArrayBuffer | string): EntrySheetReadResult
  * 서식 없이 "46295" 로 저장된 파일이 있다. 20260930 같은 여덟 자리는 그 범위 밖이라
  * 서버가 글자로 읽는다.
  */
-function cellText(cell: XLSX.CellObject | undefined, isDateColumn: boolean): string {
+function cellText(cell: XLSX.CellObject | undefined, isDateColumn: boolean, date1904: boolean): string {
   if (!cell || cell.v === undefined || cell.v === null) return '';
   if (cell.t === 'n' && typeof cell.v === 'number') {
     const isDateFormat = typeof cell.z === 'string' && XLSX.SSF.is_date(cell.z);
-    if (isDateFormat || (isDateColumn && cell.v > 20000 && cell.v < 80000)) return serialText(cell.v);
-    if (isDateColumn && cell.v >= 0 && cell.v < 1) return serialText(cell.v).slice(-5);
+    if (isDateFormat || (isDateColumn && cell.v > 20000 && cell.v < 80000)) return serialText(cell.v, date1904);
+    if (isDateColumn && cell.v >= 0 && cell.v < 1) return serialText(cell.v, date1904).slice(-5);
     return String(cell.v);
   }
   if (cell.t === 'd' && cell.v instanceof Date) {
@@ -105,8 +116,8 @@ function cellText(cell: XLSX.CellObject | undefined, isDateColumn: boolean): str
 }
 
 /** 엑셀 일련번호 → "YYYY-MM-DD HH:mm" (시각이 0 이면 날짜만). */
-function serialText(serial: number): string {
-  const parts = XLSX.SSF.parse_date_code(serial);
+function serialText(serial: number, date1904: boolean): string {
+  const parts = XLSX.SSF.parse_date_code(serial, { date1904 });
   const day = `${parts.y}-${pad(parts.m)}-${pad(parts.d)}`;
   return parts.H || parts.M ? `${day} ${pad(parts.H)}:${pad(parts.M)}` : day;
 }
@@ -210,4 +221,27 @@ export function countEntrySheetEntries(rows: EntrySheetRow[]): number {
 export function entrySheetFileName(projectName: string, now = new Date()): string {
   const safe = projectName.replace(/[\\/:*?"<>|]/g, '').trim() || '가계부';
   return `거래내역_${safe}_${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}.xlsx`;
+}
+
+/**
+ * 글자 파일(CSV)이면 글자로 풀어 준다. 엑셀 파일(zip·옛 xls)이면 null 이다 (2026-10-16).
+ *
+ * 바이트째로 넘기면 SheetJS 가 BOM 없는 UTF-8 과 한글 윈도의 CP949 를 읽지 못해 한글 머리글이 깨지고 "열이 없다"로
+ * 거절됐다(BOM 이 있는 UTF-8 만 됐다). UTF-8 로 먼저 풀어 보고, 깨진 바이트가 있으면 EUC-KR(CP949)로 푼다. 그 풀이를
+ * 하지 못하는 곳이면 지금처럼 바이트째로 넘긴다.
+ */
+function decodeCsv(data: ArrayBuffer): string | null {
+  const bytes = new Uint8Array(data);
+  const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b;
+  const isOldXls = bytes[0] === 0xd0 && bytes[1] === 0xcf;
+  if (isZip || isOldXls || typeof TextDecoder === 'undefined') return null;
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(bytes).replace(/^\uFEFF/, '');
+  } catch {
+    try {
+      return new TextDecoder('euc-kr').decode(bytes);
+    } catch {
+      return null;
+    }
+  }
 }

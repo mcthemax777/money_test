@@ -10,6 +10,7 @@
  * 그리면 되고, 두 카드의 결제 내역이 서로 다르게 보이는 일이 없다.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Dec } from '@money/types';
 
 import { homeDataPort } from '../data/home-port';
 import { dayRangeQuery } from '../lib/datetime';
@@ -29,7 +30,12 @@ const PAGE_SIZE = 20;
  */
 function toLedgerRow(entry: EntryListItem): LedgerLikeRow {
   // 돈이 돌아온 쪽(수입·페이백)은 양수다. 카드 부채 계정의 부호 규칙과 같다.
-  const signed = entry.kind === 'income' || entry.kind === 'payback' ? entry.amount : `-${entry.amount}`;
+  // 부호는 셈으로 뒤집는다. 글자로 '-' 를 붙이면 이미 음수인 금액(체크카드 사용 취소)이 "--5000" 이 되어
+  // 숫자로 읽히지 않고 0 으로 그려졌다 (2026-10-16).
+  const signed =
+    entry.kind === 'income' || entry.kind === 'payback'
+      ? entry.amount
+      : Dec.of(entry.amount).negated().toString();
 
   return {
     // 한 전표에 그 카드의 다리는 하나뿐이라 전표 id 로 줄을 가른다.

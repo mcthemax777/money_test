@@ -64,8 +64,14 @@ export function periodForClosingMonth(
   );
   const periodStart = new Date(previousClosing.getTime() + 24 * 60 * 60 * 1000);
 
-  const dueThisMonth = clampDayOfMonth(year, month, dueDay);
-  const due = dueThisMonth > endDay ? { year, month } : shiftMonth(year, month, 1);
+  /*
+   * 결제일이 마감 달에 오는가는 **정해 둔 날짜(clamp 전)**로 가른다 (2026-10-16).
+   *
+   * 말일로 깎은 날짜로 견주면 달마다 답이 바뀌었다. 마감 30일·결제 31일이면 4월은 31일이 30일로 깎여 "다음 달"로
+   * 넘어가 5월 31일이 되고, 5월 명세서의 결제일도 5월 31일이라 두 명세서가 같은 날로 겹쳤다. 정해 둔 날짜로 가르면
+   * 모든 달이 같은 규칙을 따르고, 깎인 달에는 결제일이 그 달 말일(마감과 같은 날)로 온다.
+   */
+  const due = dueDay > closingDay ? { year, month } : shiftMonth(year, month, 1);
 
   return {
     periodStart,

@@ -60,6 +60,8 @@ export default function CaptureDropzone({
         file.type.startsWith('image/'),
       );
       if (files.length === 0) return;
+      // 다른 팝업이 떠 있으면 그 팝업의 붙여넣기다. 보관함이 가로채면 뒤에서 후보가 생긴다.
+      if (document.querySelector('[aria-modal="true"]')) return;
 
       event.preventDefault();
       onPick(files);

@@ -276,8 +276,11 @@ export function normalizeCaptureText(text: string): string {
          * 금액은 자릿점 앞자리를 잃어 후보조차 되지 못한다.
          */
         .replace(/['｜|‘’`]\s*\//g, '7')
-        // 숫자 사이에 낀 기호. 자릿점 자리다.
-        .replace(/(\d)\s*['｜|‘’`]\s*(\d)/g, '$1$2')
+        /*
+         * 숫자 사이에 낀 기호. 자릿점 자리다("2'7,000원") -- **숫자에 붙어 있을 때만** (2026-10-16).
+         * 띄어 쓴 기호는 칸 나눔이라, 함께 붙이면 "14:23 | 4,500원" 의 시각과 금액이 "234,500" 이 됐다.
+         */
+        .replace(/(\d)['｜|‘’`](\d)/g, '$1$2')
         /*
          * 금액 앞에 홀로 선 `l`·`I`·`|` 는 숫자 1 이다.
          *
@@ -585,8 +588,13 @@ export function amountOf(
      */
     if (options.bare && mark.symbol) continue;
 
-    const match = text.match(mark.pattern);
-    if (match && !isNotAmount(text, match.index ?? 0)) {
+    /*
+     * 같은 표기를 모두 본다 (2026-10-16). 첫 것만 보던 때에는 그것이 누적·잔액 같은 합계 뒤에 있으면 거르고 끝나,
+     * 뒤에 있는 진짜 금액("누적 ₩1,000,000 / 승인 ₩12,000")을 영영 찾지 못했다.
+     */
+    const all = new RegExp(mark.pattern.source, `${mark.pattern.flags.replace('g', '')}g`);
+    for (const match of text.matchAll(all)) {
+      if (isNotAmount(text, match.index ?? 0)) continue;
       const amount = normalizeAmount(match[1]);
       if (amount) return { amount, currency: mark.code };
     }

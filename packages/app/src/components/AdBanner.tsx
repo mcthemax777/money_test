@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import Animated, { FadeIn } from 'react-native-reanimated';
+import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
 import { BannerAd, BannerAdSize } from 'react-native-google-mobile-ads';
 
 import { useShowAds } from '@money/core/lib/ads';
@@ -63,14 +63,22 @@ export default function AdBanner() {
     };
   }, [showAds, canRequestAds]);
 
+  /*
+   * 받은 광고를 서서히 드러낸다. 예전에는 받는 순간 바깥 상자의 key 를 바꿔 다시 그렸는데, 그러면 안의 BannerAd 도 새로
+   * 서며 광고를 한 번 더 청해 받은 것을 버렸다 (2026-10-16). 상자는 그대로 두고 투명도만 바꾼다.
+   */
+  const opacity = useSharedValue(0);
+  useEffect(() => {
+    opacity.value = withTiming(loaded ? 1 : 0, { duration: 180 });
+  }, [loaded, opacity]);
+  const fadeStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+
   const unitId = AD_UNITS.banner;
   if (!showAds || !canRequestAds || !sdkReady || isOffline || failed || !unitId) return null;
 
   return (
     <Animated.View
-      key={loaded ? 'shown' : 'loading'}
-      entering={loaded ? FadeIn.duration(180) : undefined}
-      style={loaded ? undefined : { height: 0, overflow: 'hidden' }}
+      style={[fadeStyle, loaded ? undefined : { height: 0, overflow: 'hidden' }]}
       className="items-center border-t border-gray-200 bg-white"
     >
       <BannerAd

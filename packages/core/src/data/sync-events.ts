@@ -321,7 +321,14 @@ function makeDecoder(): (chunk: Uint8Array) => string {
     return (chunk) => decoder.decode(chunk, { stream: true });
   }
 
-  return (chunk) => {
+  /*
+   * 앞 조각 끝에서 잘린 글자의 바이트. 한국어 한 글자는 3바이트라 조각 경계에 자주 걸린다 --
+   * 예전에는 남은 바이트를 없는 값(undefined)으로 읽어 그 글자가 깨졌다. 다음 조각 앞에 붙여 푼다.
+   */
+  let carry: number[] = [];
+  return (incoming) => {
+    const chunk = carry.length > 0 ? Uint8Array.from([...carry, ...incoming]) : incoming;
+    carry = [];
     let out = '';
     for (let i = 0; i < chunk.length; ) {
       const byte = chunk[i];
@@ -333,6 +340,10 @@ function makeDecoder(): (chunk: Uint8Array) => string {
       }
 
       const extra = byte >= 0xf0 ? 3 : byte >= 0xe0 ? 2 : 1;
+      if (i + extra >= chunk.length) {
+        carry = Array.from(chunk.subarray(i));
+        break;
+      }
       let code = byte & (0x3f >> extra);
       for (let n = 1; n <= extra; n += 1) code = (code << 6) | (chunk[i + n] & 0x3f);
       i += extra + 1;

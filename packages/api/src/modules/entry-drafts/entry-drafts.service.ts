@@ -25,6 +25,7 @@ import { ProjectAccessService } from '@/common/project-access.guard';
 import { badRequest } from '@/common/app-error';
 import { clientId } from '@/common/client-id';
 import { toOptionalMoney } from '@/common/money';
+import { readLimit } from '@/common/text';
 
 /** 한 번에 담을 수 있는 후보. 캡처 한 장에서 이보다 많이 나오면 사람이 볼 수 없다. */
 const MAX_BATCH = 100;
@@ -81,7 +82,7 @@ export class EntryDraftsService {
       include: WITH_TAGS,
       // 새로 온 것이 위다. 알림은 방금 결제한 것이 대개 가장 먼저 찾는 것이다.
       orderBy: [{ occurredAt: 'desc' }, { createdAt: 'desc' }],
-      take: Math.min(Math.max(1, Number(query.limit) || DEFAULT_LIMIT), 1000),
+      take: readLimit(query.limit, DEFAULT_LIMIT, 1000),
     });
 
     return rows.map(toResponse);

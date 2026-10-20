@@ -16,6 +16,7 @@ import {
   zonedDateStringToUtc,
   zonedDayStart,
   zonedMonthRange,
+  INSTALLMENT_LOOKBACK_MONTHS,
 } from '@money/types';
 import { toMoney } from '@/common/money';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
@@ -34,9 +35,10 @@ import {
 } from '@/common/entry-filter';
 import { badRequest, notFound } from '@/common/app-error';
 import { lockLedgerWrites } from '@/common/ledger-lock';
-import { assertYearMonth } from '@/common/year-month';
+import { assertDateKey, assertYearMonth } from '@/common/year-month';
 import { analysisDateCondition } from '@/common/payback-scope';
 import { clientId, rejectDuplicateId } from '@/common/client-id';
+import { readLimit } from '@/common/text';
 
 /** 달력 날짜만 적힌 값인가. "2026-07-31" 이면 참, 시각이 붙어 있으면 거짓이다. */
 const DATE_KEY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -47,7 +49,9 @@ const DATE_KEY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
  * 달력 날짜가 오면 그 지역의 **하루 시작**이다. 인스턴트가 오면 그대로 쓴다.
  */
 function dayStartOf(value: string, timeZone: string): Date {
-  return DATE_KEY_ONLY.test(value) ? zonedDateStringToUtc(value, timeZone) : instantOf(value);
+  return DATE_KEY_ONLY.test(value)
+    ? zonedDateStringToUtc(assertDateKey(value), timeZone)
+    : instantOf(value);
 }
 
 /**
@@ -72,7 +76,8 @@ function instantOf(value: string): Date {
 function dayAfterOf(value: string, timeZone: string): Date {
   if (!DATE_KEY_ONLY.test(value)) return new Date(instantOf(value).getTime() + 1);
 
-  const [year, month, day] = value.split('-').map(Number);
+  // 모양만 맞는 날(2026-02-31)은 거절한다. 그대로 두면 다음 달로 넘어간 구간을 조용히 셌다.
+  const [year, month, day] = assertDateKey(value).split('-').map(Number);
   return zonedDayStart(year, month, day + 1, timeZone);
 }
 
@@ -127,14 +132,6 @@ export interface ReplayOptions {
  * 적게 주되 커서는 유효하게 남겨 클라이언트가 이어서 읽게 한다.
  */
 const MAX_FILTER_ROUNDS = 10;
-
-/**
- * 회차 기준에서 할부를 앞으로 몇 달까지 거슬러 볼지.
- *
- * 리포트 쪽과 같은 값이다. 쓰이는 개월수는 길어야 서른여섯이라 넉넉하고, 조건을
- * 지우면 원장을 통째로 읽게 된다.
- */
-const INSTALLMENT_LOOKBACK_MONTHS = 60;
 
 @Injectable()
 export class EntriesService {
@@ -625,8 +622,11 @@ export class EntriesService {
            */
           yearMonth: undefined,
           startDate: lookback.toISOString(),
-          // 구간이 시작하기 전까지다. 구간 안의 할부는 이미 목록에 있다.
-          endDate: from.toISOString(),
+          /*
+           * 구간이 시작하기 **전**까지다. 구간 안의 할부는 이미 목록에 있다. 끝값은 그 순간을 포함하므로(+1ms,
+           * `dayAfterOf`) 1ms 앞을 준다 (2026-10-16) -- 시각 없이 적은 1일 0시 거래가 두 번 실렸다. 기기와 같다.
+           */
+          endDate: new Date(from.getTime() - 1).toISOString(),
           limit: MAX_LIMIT,
           cursor,
         },
@@ -663,7 +663,7 @@ export class EntriesService {
       userId,
       projectId,
     );
-    const limit = Math.min(Number(query.limit) || DEFAULT_LIMIT, MAX_LIMIT);
+    const limit = readLimit(query.limit, DEFAULT_LIMIT, MAX_LIMIT);
 
     const where: Prisma.JournalEntryWhereInput = { projectId: finalProjectId };
 

@@ -37,7 +37,7 @@ let online = false;
   eq('끊겨 있으면 들고 있다', await saveProfile({ locale: 'en' }), 'queued');
   await saveProfile({ weekStart: 1 });
   await saveProfile({ locale: 'ja' });
-  eq('같은 칸은 나중 값이 이긴다', JSON.stringify(pendingProfileFields()), '{"locale":"ja","weekStart":1}');
+  eq('같은 칸은 나중 값이 이긴다', JSON.stringify(pendingProfileFields('u1')), '{"locale":"ja","weekStart":1}');
   eq('아직 아무것도 보내지 않았다', sent.length, 0);
 
   // 연결이 돌아오는 신호 (끊김 -> 닿음)
@@ -46,13 +46,15 @@ let online = false;
   markOffline(false);
   await new Promise((resolve) => setTimeout(resolve, 50));
   eq('닿으면 한 번에 보낸다', JSON.stringify(sent[0]), '{"locale":"ja","weekStart":1}');
-  eq('보낸 뒤에는 비운다', JSON.stringify(pendingProfileFields()), '{}');
+  eq('보낸 뒤에는 비운다', JSON.stringify(pendingProfileFields('u1')), '{}');
 
   // 다른 계정으로 들어오면 앞 사람의 것은 버린다
   online = false;
   await saveProfile({ name: '새 이름' });
   useAuth.setState({ user: { id: 'u2', name: '다른 사람' } as never });
   online = true;
+  // 다른 계정에게는 앞 사람이 바꿔 둔 값이 보이지 않는다 (2026-10-16 -- 로그인 화면에 앞 사람의 이름이 씌워졌다).
+  eq('다른 계정에게는 보이지 않는다', JSON.stringify(pendingProfileFields('u2')), '{}');
   await flushPendingProfile();
   eq('다른 계정의 변경은 보내지 않는다', sent.length, 1);
   eq('그리고 버린다', JSON.stringify(usePendingProfile.getState().pending), '{}');

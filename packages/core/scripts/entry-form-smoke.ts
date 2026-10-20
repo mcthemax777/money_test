@@ -19,6 +19,9 @@ import {
   type EntryDto,
   type EntryListItem,
   type SyncDto,
+  Dec,
+  allocateByWeight,
+  splitInstallment,
   defaultInstallmentCut,
   effectiveLineSchedule,
   installmentCutStart,
@@ -35,7 +38,9 @@ import {
   entryFormFromDraft,
   entryFormFromItem,
   entryFormToRequest,
+  foreignEditAmounts,
   installmentBaseAmount,
+  interestInAmount,
   newSplitLine,
   parseMethod,
   paybackFormFrom,
@@ -120,6 +125,8 @@ const validExpense: EntryFormValues = {
   paybackType: 'payback',
   installmentCut: [],
   installmentCutTouched: false,
+  toAmount: '',
+  toAmountBasis: '',
 };
 
 /** 신용카드 부채 계정. 이체 양쪽이 다 카드인지 가리는 검사가 이 목록을 본다. */
@@ -768,6 +775,41 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   eq('들어온 곳과 날짜', `${draftRequest.cardId} ${draftRequest.date}`, 'card1 2026-10-01T03:00:00.000Z');
   eq('설명과 사람은 원거래의 것', `${draftRequest.description} ${draftRequest.personId}`, '마트 p1');
   eq('페이백 자신의 줄 키는 새로 만든다', Boolean(draftRequest.lineKey) && draftRequest.lineKey !== 'l-b', true);
+
+  // ── 다시 열 때의 금액 (2026-10-20) ──
+  // 분할 할부의 이자는 원금 비율로 얹힌다. 얹힌 줄 금액에서 원금을 정확히 되살려야 고쳐 저장할 수 있다.
+  for (const [principals, interest, decimals] of [
+    [['4999', '5000'], '999', 0],
+    [['12.34', '56.78', '9.1'], '3.21', 2],
+    [['100', '1'], '7', 0],
+  ] as const) {
+    const weights = principals.map((value) => Dec.of(value));
+    const spread = allocateByWeight(Dec.of(interest), weights, decimals);
+    const charged = weights.map((value, index) => value.plus(spread[index]).toString());
+    const reopened = interestInAmount({
+      installmentMonths: 2,
+      installmentInterestShares: [interest, '0'],
+      amount: Dec.sum(charged.map((value) => Dec.of(value))).toString(),
+      lines: charged.map((amount) => ({ amount })),
+    } as unknown as EntryListItem);
+    eq(`이자 되빼기 ${principals.join('·')}`,
+      charged.map((value, index) => Dec.of(value).minus(reopened.lineShares[index]).toString()).join(','),
+      weights.map((value) => value.toString()).join(','));
+  }
+  // 외화 지출의 원래 금액은 차감 뒤의 값이다. 정가로 되돌려야 차감이 두 번 빠지지 않는다.
+  eq('외화 지출은 차감을 더해 연다',
+    foreignEditAmounts({ kind: 'expense', originalAmount: '45', originalCurrency: 'USD', discountAmount: '5' } as unknown as EntryListItem)?.amount,
+    '50');
+  // 외화 통장 이체의 나간 다리는 보낸 돈 + 수수료다. 수수료는 그 통화로 되돌린다.
+  eq('외화 이체는 수수료를 덜어 연다',
+    JSON.stringify(foreignEditAmounts({
+      kind: 'transfer', originalAmount: '51', originalCurrency: 'USD', feeAmount: '1380', exchangeRate: '1380',
+    } as unknown as EntryListItem)),
+    JSON.stringify({ amount: '50', fee: '1' }));
+
+  // 할부 나누기는 금액에 적힌 자릿수를 따른다. 원화는 원 단위 그대로, 달러는 센트까지.
+  eq('원화 할부 나누기', splitInstallment('100000', 3).join(','), '33334,33333,33333');
+  eq('달러 할부 나누기', splitInstallment('218.57', 3).join(','), '72.87,72.85,72.85');
 
   // ── 4. 왕복이 거래를 바꾸지 않는가 ──
   const dumpPath = process.argv[2] ?? '/tmp/sync-push-dump.json';

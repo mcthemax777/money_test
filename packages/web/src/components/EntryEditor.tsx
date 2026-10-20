@@ -22,6 +22,7 @@ import type { Account, Card, Category, Person } from '@money/core/lib/types';
 import {
   defaultCountsPerformance,
   installmentBaseAmount,
+  foreignEditAmounts,
   interestInAmount,
   showDiscountPerformance,
   withoutInterest,
@@ -482,6 +483,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
   });
   const [cardSubmitting, setCardSubmitting] = useState(false);
+  /** 카드 만들기 창의 오류. 예전에는 콘솔에만 남아 단추가 아무 일도 하지 않는 것처럼 보였다 (2026-10-16). */
+  const [cardError, setCardError] = useState('');
   const [categoryFormData, setCategoryFormData] = useState({
     name: '',
     type: 'expense' as 'income' | 'expense',
@@ -671,6 +674,13 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
    * 달러로 입력하게 되고, 원화 카드를 고른 채 통화만 달러로 바꾸면 "원화 카드로
    * 한 외화 결제"가 된다. 두 경우의 원장 모양은 서버가 갈라 준다.
    */
+  /** 결제 칸이 카드의 부채 계정이면 그 카드로 고친 칸들. 아니면 빈 값이다 (갈래 바꾸기가 쓴다). */
+  const cardInsteadOfLiability = (form: { method: string; accountId: string }) => {
+    if (form.method !== 'account' || !form.accountId) return {};
+    const card = cards.find((row) => row.liabilityAccountId === form.accountId);
+    return card ? { method: 'card', cardId: card.id, accountId: '' } : {};
+  };
+
   const currencyOfAccount = (accountId: string): CurrencyCode => {
     const account = accounts.find((a) => a.id === accountId);
     return isCurrencyCode(account?.currency) ? account.currency : ledgerCurrency;
@@ -947,11 +957,15 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       return {
         ...prev,
         splits: [],
+        // 나눌 때 위 칸에서 옮겨 간 줄 키·차감·태그도 함께 되돌린다 (core useEntryForm 의 removeSplit 과 같다).
         ...(only
           ? {
               mainCategoryId: only.mainCategoryId,
               subCategoryId: only.subCategoryId,
               amount: only.amount,
+              lineKey: only.lineKey,
+              discountAmount: only.discountAmount,
+              tagIds: only.tagIds,
             }
           : {}),
       };
@@ -1625,7 +1639,9 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
    * 것"이 서로 다른 거래가 되므로 채우는 자리를 하나로 둔다. 어느 거래를 고치는가
    * (`editingId`)와 그 거래를 본 시점의 판(`baseHlc`)만 부르는 쪽이 정한다.
    */
-  const formValuesOf = (entry: EntryListItem) => {
+  const formValuesOf = (shown: EntryListItem) => {
+    // 표시 통화로 옮긴 줄이면 옮기기 전의 것으로 연다 (`editSource`). 폼은 적었던 통화의 값을 든다.
+    const entry = shown.editSource ?? shown;
     const category = splitCategory(entry.categoryId);
     const fee = splitCategory(entry.feeCategoryId);
     // 분류 하나짜리 거래의 그 줄. 이체·카드 대금 결제에는 없다.
@@ -1646,13 +1662,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
      * 금액 칸과 나눈 줄에서 같은 규칙으로 되뺀다 (`entryFormFromItem` 과 한 함수다).
      */
     const interest = interestInAmount(entry);
+    // 외화로 적은 거래는 원래 금액에서 정가와 수수료를 되살린다 (앱과 같은 함수).
+    const foreign = foreignEditAmounts(entry);
 
     const billedPrefill =
       !entry.rateProvisional &&
       isCurrencyCode(entry.originalCurrency) &&
       entry.originalCurrency !== ledgerCurrency &&
-      currencyOfMethod(entry.accountId, entry.cardId) === ledgerCurrency &&
-      displayCurrency === ledgerCurrency
+      currencyOfMethod(entry.accountId, entry.cardId) === ledgerCurrency
         ? entry.amount
         : '';
 
@@ -1686,9 +1703,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
        * 갚을 돈 전부를 금액 칸에 넣으면 회차 원금의 합과 어긋나 저장이 막히고, 사용자가
        * 적은 적 없는 숫자가 칸에 들어앉는다. 되빼는 규칙은 앱과 한 함수를 쓴다.
        */
-      amount:
-        entry.originalAmount ??
-        withoutInterest(grossAmountOf(entry), interest.total, interest.total),
+      amount: foreign?.amount ?? withoutInterest(grossAmountOf(entry), interest.total, interest.total),
       currency: isCurrencyCode(entry.originalCurrency) ? entry.originalCurrency : ledgerCurrency,
       /*
        * 확정된 거래만 금액을 되돌려 놓는다 (billedPrefill 참고).
@@ -1709,7 +1724,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       // 통화가 다른 환전에서는 단위가 어긋난다.
       toAmount: entry.toAmount ?? '',
       // 수수료는 별도 다리라 예전에는 비워뒀다. 이제 목록 응답에 들어 있어 그대로 채운다.
-      transferFee: toNumber(entry.feeAmount) > 0 ? entry.feeAmount ?? '' : '',
+      // 외화 통장의 이체면 수수료도 그 통화로 되돌린다. 목록의 수수료는 장부 통화다.
+      transferFee: foreign ? foreign.fee : toNumber(entry.feeAmount) > 0 ? entry.feeAmount ?? '' : '',
       transferFeeMainCategoryId: fee.mainCategoryId,
       transferFeeSubCategoryId: fee.subCategoryId,
       date: dateKeyOf(entry.date, timeZone),
@@ -1763,12 +1779,12 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
        * (`handleEditClick`).
        */
       splits: isSplitEntry(entry)
-        ? entry.lines.map((line) => ({
+        ? entry.lines.map((line, index) => ({
             ...splitCategory(line.categoryId),
             // 폼은 정가를 든다. 목록의 금액은 차감을 뺀 뒤의 값이고 이자를 품는다.
             amount: withoutInterest(
               grossOfLine(line),
-              interest.shareOf(line.amount),
+              interest.lineShares[index],
               interest.total,
             ),
             lineKey: line.lineKey,
@@ -1798,6 +1814,14 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
      * (core 의 entryFormValuesOf).
      */
     if (isSplitEntry(entry) && entry.lines.length !== entry.splitCount) {
+      setError(t('editor.notEditable'));
+      return;
+    }
+    /*
+     * 외화 분할도 열지 않는다 (앱의 entryFormFromItem 과 같다). 줄 금액은 장부 통화의 환산액이라
+     * 적은 통화로 되돌리면 끝수가 원래 값과 어긋나고, 그대로 펴면 줄 합이 전체와 맞지 않는다.
+     */
+    if (isSplitEntry(entry) && (entry.editSource ?? entry).originalCurrency) {
       setError(t('editor.notEditable'));
       return;
     }
@@ -1926,17 +1950,24 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     setError('');
   };
 
-  const handleDeleteClick = async (entry: EntryListItem) => {
+  /** 지웠으면 true. 묻는 창에서 그만두었거나 실패하면 false 다. */
+  const handleDeleteClick = async (entry: EntryListItem): Promise<boolean> => {
     // 원거래면 걸린 환불·페이백도 함께 지워진다. 그 수를 함께 묻는다 (7-6).
     const note = paybackDeleteNote(await paybackCountOf(entry, projectId), t);
-    if (!window.confirm([t('account.deleteConfirm'), note].filter(Boolean).join('\n'))) return;
+    if (!window.confirm([t('account.deleteConfirm'), note].filter(Boolean).join('\n'))) return false;
     try {
       setIsSubmitting(true);
       await entryWritePort().deleteEntry(entry.id);
       await onEntryChange();
+      return true;
     } catch (err: any) {
       const errorMsg = messageOf(err, 'editor.deleteFailed');
-      setError(errorMsg);
+      /*
+       * 입력 창이 닫혀 있으면(상세에서 지울 때) 그 창의 오류 칸은 보이지 않는다 (2026-10-16). 그때는 알림으로 띄운다.
+       */
+      if (isModalOpen) setError(errorMsg);
+      else window.alert(errorMsg);
+      return false;
     } finally {
       setIsSubmitting(false);
     }
@@ -1953,6 +1984,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     e.preventDefault();
     try {
       setCardSubmitting(true);
+      setCardError('');
 
       // 카드사는 필수다. CustomSelect는 <input required>와 달리 브라우저 검증이 없어
       // 비워 두면 서버에서 "기관을 찾을 수 없습니다"가 돌아와 원인을 알기 어렵다.
@@ -2003,6 +2035,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
       setIsCardModalOpen(false);
     } catch (err) {
       console.error('카드 추가 실패:', err);
+      setCardError(messageOf(err, 'card.addFailed'));
     } finally {
       setCardSubmitting(false);
     }
@@ -2200,6 +2233,11 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
                       disabled={disabled}
                       onClick={() => setFormData({
                         ...formData,
+                        /*
+                          이체에서 카드를 부채 계정으로 고른 채 지출·수입으로 옮기면 그 카드로 바꾼다 (2026-10-16, core
+                          useEntryForm 과 같다). 그대로 두면 거래가 카드가 아니라 부채 계정에 붙어 카드 실적에서 빠졌다.
+                        */
+                        ...(tab.id !== 'transfer' ? cardInsteadOfLiability(formData) : {}),
                         type: tab.id,
                         mainCategoryId: '',
                         subCategoryId: '',
@@ -3478,7 +3516,10 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
 
       <Modal
         isOpen={isCardModalOpen}
-        onClose={() => setIsCardModalOpen(false)}
+        onClose={() => {
+          setIsCardModalOpen(false);
+          setCardError('');
+        }}
         title={t('card.add')}
         footer={
           <button
@@ -3492,6 +3533,11 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
         }
       >
         <form id={CARD_FORM_ID} onSubmit={handleCardSubmit} className="space-y-4">
+          {cardError && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+              {cardError}
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">
               {t('card.name')}
@@ -3749,8 +3795,8 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
               {/* 카드 거래도 계좌 거래와 똑같이 지운다. 청구서 잠금은 없다. */}
               <button
                 onClick={async () => {
-                  setIsDetailModalOpen(false);
-                  await handleDeleteClick(selectedTransaction);
+                  // 지운 뒤에만 상세를 닫는다 (2026-10-16). 묻는 창에서 그만두면 보던 상세가 그대로 남는다.
+                  if (await handleDeleteClick(selectedTransaction)) setIsDetailModalOpen(false);
                 }}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
                 disabled={isSubmitting}

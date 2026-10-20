@@ -19,7 +19,7 @@ import { entryRows, originalEntry, type EntryListItem } from '@money/types';
 import { useLedgerData } from '@money/core/hooks/useLedgerData';
 import type { TransactionSearch } from '@money/core/hooks/useTransactions';
 import { currentYearMonth } from '@money/core/lib/datetime';
-import { sumEntries } from '@money/core/lib/entries';
+import { groupEntriesByDate, sumEntries } from '@money/core/lib/entries';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useProjectTimeZone } from '@money/core/store/project';
 
@@ -56,7 +56,6 @@ export default function TransactionCalendarView({
    * 그것은 사용자가 고른 날이 아니다.
    */
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
-  const [dayEntries, setDayEntries] = useState<EntryListItem[]>([]);
 
   const ledger = useLedgerData({ projectId, year: view.year, month: view.month, search });
 
@@ -67,8 +66,14 @@ export default function TransactionCalendarView({
   const searchKey = search ? JSON.stringify(search) : '';
   useEffect(() => {
     setSelectedDate(null);
-    setDayEntries([]);
-  }, [searchKey]);
+  }, [searchKey, projectId]);
+  /*
+   * 고른 날의 거래는 **지금 받아 둔 달 목록**에서 그때마다 고른다 (2026-10-16). 누를 때 받은 목록을 들고 있으면, 그 날의
+   * 거래를 지우거나 고쳐도 아래 목록에 옛 줄이 남았다. 달력 칸과 같은 묶기(`groupEntriesByDate`)를 쓴다.
+   */
+  const dayEntries: EntryListItem[] = selectedDate
+    ? groupEntriesByDate(ledger.entries, timeZone).get(calendarDayKey(selectedDate)) ?? []
+    : [];
   const totals = sumEntries(ledger.entries);
 
   /*
@@ -91,7 +96,6 @@ export default function TransactionCalendarView({
         onMonthChange={(year, month) => {
           setView({ year, month });
           setSelectedDate(null);
-          setDayEntries([]);
         }}
       />
 
@@ -104,11 +108,10 @@ export default function TransactionCalendarView({
             year={view.year}
             month={view.month}
             selectedDate={selectedDate}
-            onDateSelect={(date, entries) => {
+            onDateSelect={(date) => {
               // 같은 날을 다시 누르면 고르기를 푼다. 그 달 전체로 돌아간다.
               const isSame = selectedDate?.getTime() === date.getTime();
               setSelectedDate(isSame ? null : date);
-              setDayEntries(isSame ? [] : entries);
             }}
           />
 
@@ -141,4 +144,11 @@ export default function TransactionCalendarView({
       )}
     </View>
   );
+}
+
+/** 달력 칸의 날 열쇠 "YYYY-MM-DD". 달력(TransactionCalendar)이 칸을 묶는 열쇠와 같다. */
+function calendarDayKey(date: Date): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(
+    date.getDate(),
+  ).padStart(2, '0')}`;
 }

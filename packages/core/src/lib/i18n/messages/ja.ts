@@ -442,6 +442,7 @@ export const ja: Record<MessageKey, string> = {
   'day.lastDay': '31日 (月末)',
   'day.hint': 'その月にない日付は月末として扱います。',
   'common.retry': '再試行',
+  'common.pageError': '画面の表示中に問題が発生しました。もう一度お試しください。',
   'common.add': '追加',
   'common.none': '指定しない',
   'select.placeholder': '選択してください',

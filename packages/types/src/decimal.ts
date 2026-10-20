@@ -35,6 +35,15 @@ export type RoundingMode = 'half-up' | 'down';
 
 const DEC_PATTERN = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
 
+/*
+ * 읽을 수 있는 글자 수와 지수의 한계 (2026-10-16). 돈과 환율은 이 안에 넉넉히 든다.
+ *
+ * 막지 않으면 "1e300000000" 같은 값 하나가 3억 자리 정수를 만들어 서버가 몇 분씩 멈췄다 -- 기기 명령 하나에
+ * 실을 수 있고 온라인 입력(toMoney)도 같은 길이다.
+ */
+const MAX_TEXT_LENGTH = 100;
+const MAX_EXPONENT = 64;
+
 function pow10(n: number): bigint {
   return 10n ** BigInt(n);
 }
@@ -109,8 +118,8 @@ export class Dec {
 
   private static parse(raw: string): Dec {
     const text = raw.trim();
-    if (text === '' || !DEC_PATTERN.test(text)) {
-      throw new RangeError(`십진값으로 읽을 수 없습니다: ${JSON.stringify(raw)}`);
+    if (text === '' || text.length > MAX_TEXT_LENGTH || !DEC_PATTERN.test(text)) {
+      throw new RangeError(`십진값으로 읽을 수 없습니다: ${JSON.stringify(raw).slice(0, 100)}`);
     }
 
     const negative = text.startsWith('-');
@@ -122,7 +131,11 @@ export class Dec {
     let scale = fracPart.length;
 
     if (exponentText) {
-      scale -= Number(exponentText);
+      const exponent = Number(exponentText);
+      if (Math.abs(exponent) > MAX_EXPONENT) {
+        throw new RangeError(`십진값의 지수가 너무 큽니다: ${JSON.stringify(raw).slice(0, 100)}`);
+      }
+      scale -= exponent;
       if (scale < 0) {
         digits = `${digits}${'0'.repeat(-scale)}`;
         scale = 0;
@@ -296,4 +309,20 @@ export function dec(value: DecInput): Dec {
 export function roundToCurrency(value: DecInput, currency: string): Dec {
   const decimals = currencyDecimals(currency);
   return Dec.of(value).round(decimals);
+}
+
+/**
+ * 금액들에 적힌 소수 자릿수 중 가장 큰 것 (끝의 0 은 세지 않는다, 4자리까지).
+ *
+ * 통화를 모르는 자리(할부 회차·환불 몫 나누기)가 자를 자릿수다. 원화처럼 정수인 금액은 0 이라
+ * 원 단위 그대로이고, 218.57 달러는 2자리로 나눈다. 예전에는 늘 0자리로 잘라 달러 할부가
+ * 73달러씩으로 나뉘었다.
+ */
+export function amountScale(...values: DecInput[]): number {
+  let scale = 0;
+  for (const value of values) {
+    const [, fraction = ''] = Dec.of(value).toString().split('.');
+    scale = Math.max(scale, fraction.replace(/0+$/, '').length);
+  }
+  return Math.min(scale, 4);
 }

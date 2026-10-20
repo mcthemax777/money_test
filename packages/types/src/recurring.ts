@@ -206,8 +206,12 @@ export interface RecurringViolation {
     | 'MONTH_INVALID'
     | 'START_DATE_INVALID'
     | 'END_DATE_INVALID'
-    | 'END_BEFORE_START';
+    | 'END_BEFORE_START'
+    | 'TIME_INVALID';
 }
+
+/** 회차 시각의 모양 "HH:mm" (00:00~23:59). */
+const TIME_OF_DAY = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 /**
  * 저장할 수 있는 일정인가.
@@ -215,9 +219,19 @@ export interface RecurringViolation {
  * 서버와 화면이 같은 함수로 본다. 화면만 검사하면 서버가 500 으로 답하는 자리가 생기고,
  * 서버만 검사하면 사용자가 무엇이 틀렸는지 폼에서 알 수 없다.
  */
-export function checkRecurring(schedule: RecurringSchedule): RecurringViolation | null {
-  if (!(schedule.frequency in HOLIDAY_RULES)) {
+export function checkRecurring(
+  schedule: RecurringSchedule & { timeOfDay?: string | null },
+): RecurringViolation | null {
+  // 제 키만 본다. `in` 은 "toString" 같은 물려받은 이름도 통과시켜 아래에서 터졌다 (2026-10-16).
+  if (!Object.prototype.hasOwnProperty.call(HOLIDAY_RULES, schedule.frequency)) {
     return { code: 'FREQUENCY_INVALID' };
+  }
+  /*
+   * 시각은 "HH:mm" 이어야 한다 (2026-10-16). 아무 글자나 받으면 저장은 되는데, 매시간 회차를 담는 일이 그 규칙의
+   * 날짜를 만들다 RangeError 로 멈추고 뒤에 남은 가계부들까지 그 시간에 담지 못했다.
+   */
+  if (schedule.timeOfDay != null && !TIME_OF_DAY.test(schedule.timeOfDay)) {
+    return { code: 'TIME_INVALID' };
   }
   if (!parseKey(schedule.startDate)) return { code: 'START_DATE_INVALID' };
   if (schedule.endDate && !parseKey(schedule.endDate)) return { code: 'END_DATE_INVALID' };

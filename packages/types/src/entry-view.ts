@@ -377,6 +377,10 @@ export function toListItem(
     cardName: cardPosting?.card?.name ?? null,
     installmentMonths: cardPosting?.installmentPlan?.totalMonths ?? null,
     installmentInterest: cardPosting?.installmentPlan?.interestBearing ?? null,
+    /*
+     * 회차 금액은 **저장 통화 그대로** 둔다. 고치기 폼이 이 값을 그대로 되돌려 보내기 때문이다. 표시 통화로 보여 줄
+     * 때 맞추는 일은 회차를 펴는 자리(entry-rows 의 `installmentViewOf`)가 금액에 맞춰 한다.
+     */
     installmentShares: toShares(cardPosting?.installmentPlan?.principalShares),
     installmentInterestShares: toShares(cardPosting?.installmentPlan?.interestShares),
     installmentMonthlyPayment: toAmount(cardPosting?.installmentPlan?.monthlyPayment),
@@ -426,7 +430,22 @@ export function toListItem(
       const adjust = convertAdjust(parseInstallmentAdjust(cut.installmentAdjust), show);
       return adjust ? [{ entryId: cut.id, lineKey: cut.paybackOfLineKey, ...adjust }] : [];
     }),
+    // 표시 통화가 다르면 옮기기 전의 모양을 함께 싣는다. 고치기 폼이 이것으로 연다 (`editSource`).
+    ...(show.rate.eq(1) ? {} : { editSource: toListItem(entry, IDENTITY_CONVERTER, matchLine) }),
   };
+}
+
+/** 저장 통화의 금액(들)을 표시 통화로. 없으면 그대로 null 이다. */
+function convertValues(values: string[], show: ViewConverter): string[];
+function convertValues(values: string[] | null, show: ViewConverter): string[] | null;
+function convertValues(value: string | null, show: ViewConverter): string | null;
+function convertValues(
+  value: string[] | string | null,
+  show: ViewConverter,
+): string[] | string | null {
+  if (value === null) return null;
+  const one = (text: string) => show.convert(Dec.of(text)).toString();
+  return Array.isArray(value) ? value.map(one) : one(value);
 }
 
 function convertAdjust(
@@ -434,8 +453,10 @@ function convertAdjust(
   show: ViewConverter,
 ): InstallmentAdjust | null {
   if (!adjust) return null;
-  const convert = (values: string[]) => values.map((value) => show.convert(Dec.of(value)).toString());
-  return { principal: convert(adjust.principal), interest: convert(adjust.interest) };
+  return {
+    principal: convertValues(adjust.principal, show),
+    interest: convertValues(adjust.interest, show),
+  };
 }
 
 /**

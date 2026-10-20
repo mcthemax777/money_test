@@ -122,7 +122,7 @@ export default function ExchangeRateSettings() {
 
                   <View className="ml-auto flex-row gap-2">
                     <Pressable
-                      onPress={() => save(info, draft).then(() => setDrafts({}))}
+                      onPress={() => save(info, draft).then((saved) => saved && setDrafts((prev) => withoutKey(prev, info.from)))}
                       disabled={!canSave}
                       className={`rounded bg-blue-600 px-3 py-1 ${canSave ? 'active:bg-blue-700' : 'opacity-40'}`}
                     >
@@ -158,4 +158,10 @@ export default function ExchangeRateSettings() {
       </Modal>
     </>
   );
+}
+
+/** 저장한 그 칸만 비운다. 다른 통화에 적던 값은 남긴다. */
+function withoutKey(drafts: Record<string, string>, key: string): Record<string, string> {
+  const { [key]: _saved, ...rest } = drafts;
+  return rest;
 }

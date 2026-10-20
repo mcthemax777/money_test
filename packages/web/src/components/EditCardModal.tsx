@@ -50,7 +50,7 @@ interface EditCardModalProps {
   card: Card | null;
   accounts: Account[];
   onSuccess: (updatedCards: Card[]) => void;
-  onDelete: (id: string) => Promise<void>;
+  onDelete: (id: string) => Promise<boolean | void>;
   /** 보고 있는 가계부. 넘기지 않으면 서버가 그 사람의 기본 가계부의 카드를 읽는다. */
   projectId?: string | null;
 }
@@ -148,15 +148,18 @@ export default function EditCardModal({
     }
   };
 
+  /*
+   * 묻는 일은 부른 화면(onDelete)이 한다 (2026-10-16). 여기서도 물어 같은 질문이 두 번 떴고, 거기서 그만두거나 실패해도
+   * 이 창이 닫혔다. 지웠다고 답할 때만 닫는다.
+   */
   const handleDeleteClick = async () => {
     if (!card) return;
-    if (!window.confirm(t('account.deleteConfirm'))) return;
 
     try {
       setIsDeleting(true);
       setError('');
-      await onDelete(card.id);
-      handleClose();
+      const done = await onDelete(card.id);
+      if (done !== false) handleClose();
     } catch (err: any) {
       setError(messageOf(err, 'account.deleteFailed'));
     } finally {

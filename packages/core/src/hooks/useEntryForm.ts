@@ -10,7 +10,9 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { HIDDEN_ACCOUNT_TYPES, fallbackRate } from '@money/types';
+import { Dec, HIDDEN_ACCOUNT_TYPES, fallbackRate, isCurrencyCode } from '@money/types';
+import { useExchangeRates } from './useExchangeRates';
+import { toAmountString } from '../lib/money';
 import type {
   AccountDto,
   CardDto,
@@ -140,6 +142,16 @@ export function useEntryForm({
   onSaved,
 }: UseEntryFormOptions) {
   const [lists, setLists] = useState<EntryFormLists>(EMPTY_LISTS);
+  /** 지금 목록. 칸 바꾸기(`setField`)가 늘 같은 함수로 남으면서도 최신 카드 목록을 보게 한다. */
+  const listsRef = useRef(lists);
+  listsRef.current = lists;
+  /*
+   * 이 가계부의 환율 (설정에서 정한 값, 없으면 고정값). 웹 편집기와 같은 자리다 (2026-10-16) -- 예전에는 앱 폼이
+   * 늘 고정값만 채워, 설정에서 정한 환율이 무시됐다.
+   */
+  const { rateOf } = useExchangeRates();
+  const rateOfRef = useRef(rateOf);
+  rateOfRef.current = rateOf;
   /** 목록 조회의 번호. 뒤늦게 온 답이 새 목록을 덮지 않게 한다. */
   const listsRun = useRef(0);
   const [values, setValues] = useState<EntryFormValues>(() =>
@@ -361,7 +373,12 @@ export function useEntryForm({
              * 이체에서 카드는 **부채 계정**으로 고른다(`transferChoices`). 결제수단으로
              * 고른 카드가 그대로 남으면 화면에 보이지 않는 값으로 저장이 거절된다.
              */
-            method: next.kind === 'transfer' && isCard ? '' : next.method,
+            method:
+              next.kind === 'transfer' && isCard
+                ? ''
+                : next.kind !== 'transfer'
+                  ? cardMethodForLiability(next.method, listsRef.current.cards)
+                  : next.method,
             toAccountId: next.kind === 'transfer' ? next.toAccountId : '',
             installmentMonths: next.kind === 'expense' ? next.installmentMonths : '',
             transferFee: next.kind === 'transfer' ? next.transferFee : '',
@@ -392,7 +409,9 @@ export function useEntryForm({
           if (!next.currency) return { ...next, exchangeRate: '' };
           return {
             ...next,
-            exchangeRate: fallbackRate(next.currency, ledgerCurrency) ?? '',
+            exchangeRate:
+              (isCurrencyCode(next.currency) ? rateOfRef.current(next.currency) : '') ||
+              (fallbackRate(next.currency, ledgerCurrency) ?? ''),
           };
         }
 
@@ -760,7 +779,19 @@ export function useEntryForm({
       return {
         ...previous,
         splits: [],
-        ...(only ? { categoryId: only.categoryId, amount: only.amount } : {}),
+        /*
+         * 나눌 때 위 칸에서 옮겨 간 줄 키·차감·태그도 함께 되돌린다 (2026-10-16). 분류와 금액만 돌리면 남은 줄의
+         * 태그와 차감이 저장 때 사라지고, 새 줄 키로 저장되어 그 줄에 걸린 환불·페이백이 줄을 잃었다.
+         */
+        ...(only
+          ? {
+              categoryId: only.categoryId,
+              amount: only.amount,
+              lineKey: only.lineKey,
+              discountAmount: only.discountAmount,
+              tagIds: only.tagIds,
+            }
+          : {}),
       };
     });
     setViolation(null);
@@ -798,6 +829,20 @@ export function useEntryForm({
       () => sumAmounts(values.splits.map((split) => split.amount)),
       [values.splits],
     ),
+    /**
+     * 아직 줄에 담기지 않은 금액 (십진 글자, 2026-10-16). 화면이 소수 합을 부동소수로 빼서 "0.30000000000000004" 처럼
+     * 보였다. 웹 편집기와 같은 셈이다.
+     */
+    splitLeft: useMemo(
+      () =>
+        values.splits
+          .reduce(
+            (left, split) => left.minus(Dec.of(toAmountString(split.amount))),
+            Dec.of(toAmountString(values.amount)),
+          )
+          .toString(),
+      [values.amount, values.splits],
+    ),
     addSplit,
     removeSplit,
     setSplit,
@@ -828,4 +873,20 @@ export function useEntryForm({
     save,
     remove,
   };
+}
+
+/**
+ * 이체에서 카드를 **부채 계정**으로 고른 채 지출·수입으로 옮기면 그 카드로 바꿔 준다 (2026-10-16).
+ *
+ * 그대로 두면 지출이 카드가 아니라 부채 계정에 붙어 cardId 가 비고, 그 카드의 실적에 영영 잡히지 않았다. 부채
+ * 계정이 아닌 수단은 그대로 둔다.
+ */
+function cardMethodForLiability(
+  method: string,
+  cards: ReadonlyArray<{ id: string; liabilityAccountId?: string | null }>,
+): string {
+  const accountId = parseMethod(method).accountId;
+  if (!accountId) return method;
+  const card = cards.find((row) => row.liabilityAccountId === accountId);
+  return card ? cardValue(card.id) : method;
 }

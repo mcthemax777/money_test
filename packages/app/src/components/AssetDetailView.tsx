@@ -754,8 +754,8 @@ function PeriodLedgerList({
             {period ? (
               <View className="mt-2 flex-row items-baseline justify-between gap-2 border-b border-gray-200 pb-1">
                 <Text className="text-xs font-medium text-gray-700">
-                  {formatDate(period.periodStart, timeZone)} ~{' '}
-                  {formatDate(period.periodEnd, timeZone)}
+                  {/* 주기 끝값은 달력 날짜 표시자(UTC 자정)다. 시간대로 읽으면 서쪽 시간대에서 하루 앞서 보였다. */}
+                  {formatDateMarker(period.periodStart)} ~ {formatDateMarker(period.periodEnd)}
                 </Text>
                 <Text className="text-xs text-gray-500">
                   {t(isBilled ? 'assets.billedPeriodTotal' : 'assets.performancePeriodTotal', {

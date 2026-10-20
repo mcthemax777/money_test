@@ -23,7 +23,7 @@ import type { MessageKey } from '../lib/i18n';
 import { sumNetWorth } from '../lib/net-worth';
 import type { Account, Card, Person } from '../lib/types';
 import { useProject } from '../store/project';
-import { useUserFilter } from '../store/user-filter';
+import { isEveryPersonSelected, useUserFilter } from '../store/user-filter';
 import { usePersonFilterSync } from './usePersonFilterSync';
 import { useAccountExclusion } from './useAccountExclusion';
 
@@ -330,7 +330,7 @@ export function useAssetsData(projectId: string | null) {
     [],
   );
 
-  const allPeopleSelected = people.length > 0 && selectedPersonIds.length === people.length;
+  const allPeopleSelected = isEveryPersonSelected(people, selectedPersonIds);
 
   /** 합계 제외. 아래의 총자산·사람별 소계는 모두 뺀 계좌를 덜어 낸 값이다. */
   const exclusion = useAccountExclusion({ projectId, accounts, cards, netWorth });

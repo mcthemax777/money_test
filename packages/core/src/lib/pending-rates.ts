@@ -9,7 +9,7 @@
  */
 import { billedAmountFromRate, currencyDecimals, type CardDto } from '@money/types';
 
-import { toNumber } from './money';
+import { toAmountString, toNumber } from './money';
 
 /**
  * 주기별로 묶는다. 사용자가 대조하는 단위가 명세서 한 장이기 때문이다.
@@ -54,7 +54,8 @@ export function filledPendingItems(
   items: CardDto.PendingRateItem[],
   billed: Record<string, string>,
 ): CardDto.PendingRateItem[] {
-  return items.filter((item) => toNumber(billed[item.entryId]) > 0);
+  // 쉼표가 든 금액("1,234,000")도 읽는다 (2026-10-16). 그대로 숫자로 읽으면 0 이 되어 조용히 빠졌다.
+  return items.filter((item) => toNumber(toAmountString(billed[item.entryId])) > 0);
 }
 
 /**
@@ -63,7 +64,7 @@ export function filledPendingItems(
  * 채우지 않은 칸은 0이다. 부르는 쪽이 그때는 아무것도 적지 않는다.
  */
 export function derivedRate(billedValue: string | undefined, originalAmount: string): number {
-  const amount = toNumber(billedValue);
+  const amount = toNumber(toAmountString(billedValue));
   if (amount <= 0) return 0;
 
   const original = toNumber(originalAmount);

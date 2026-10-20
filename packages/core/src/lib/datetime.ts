@@ -14,6 +14,7 @@
 import { activeLocale, activeLocaleTag, translate } from '../lib/i18n';
 import {
   DEFAULT_WEEK_START,
+  isDateKey,
   periodDayRange,
   unitOfKey,
   zonedDateKey,
@@ -34,15 +35,7 @@ import {
  * 거래 입력과 거래 화면의 기간 검색이 함께 쓴다. 기간 검색은 앱에서도 달력에서
  * 고르지만(DatePickerPanel), 거래 입력은 아직 글자로 받는다.
  */
-export function isDateKey(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-
-  const [year, month, day] = value.split('-').map(Number);
-  if (month < 1 || month > 12 || day < 1) return false;
-
-  // 그 달의 말일. UTC 로 세어도 되는 것은 "며칠까지 있는가"만 보기 때문이다.
-  return day <= new Date(Date.UTC(year, month, 0)).getUTCDate();
-}
+export { isDateKey };
 
 /** 그 달의 말일. 'YYYY-MM' 을 받아 28~31 을 돌려준다. */
 export function lastDayOfMonth(yearMonth: string): number {

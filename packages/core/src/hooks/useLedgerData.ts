@@ -9,7 +9,7 @@ import { dateKeyOf, dayRangeQuery, monthQueryRange } from '../lib/datetime';
 import type { Account, Card, Category, Person } from '../lib/types';
 import { useLedgerBasis } from '../store/ledger-basis';
 import { useProject } from '../store/project';
-import { useUserFilter } from '../store/user-filter';
+import { isEveryPersonSelected, useUserFilter } from '../store/user-filter';
 import { useDebouncedValue } from './useDebouncedValue';
 import { useLoadedKey } from './useLoadedKey';
 import { useMirrorVersion } from './useMirrorVersion';
@@ -142,12 +142,12 @@ export function useLedgerData({
    * 빈 값을 보내 "결과 없음"을 뜻하게 한다. 빼는 것과 빈 값은 서버에서 다르게 읽는다.
    */
   const entryFilter = useMemo<EntryFilterQuery>(() => {
-    const allPeopleSelected = people.length > 0 && selectedPersonIds.length === people.length;
+    const allPeopleSelected = isEveryPersonSelected(people, selectedPersonIds);
 
     return {
       ...(allPeopleSelected ? {} : { personIds: selectedPersonIds.join(',') }),
     };
-  }, [people.length, selectedPersonIds]);
+  }, [people, selectedPersonIds]);
   const filter = useDebouncedValue(entryFilter, 250);
 
   /*

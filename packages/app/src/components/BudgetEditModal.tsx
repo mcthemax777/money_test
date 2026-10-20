@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 
 import type { BudgetEditor, BudgetScope } from '@money/core/hooks/useBudgetEditor';
@@ -48,6 +49,17 @@ export default function BudgetEditModal({
   const { t } = useTranslation();
   const editingBudget = editor.target?.existing;
 
+  /*
+   * 칸의 글자는 따로 든다 (2026-10-16). 숫자만 들면 "12." 를 치는 순간 12 로 되돌아가 점이 사라져, 소수 예산을
+   * 적을 수 없었다. 고르는 대상이 바뀌면(팝업을 새로 열면) 그 금액으로 다시 채운다.
+   */
+  const [amountText, setAmountText] = useState(String(editor.amount));
+  useEffect(() => {
+    setAmountText(String(editor.amount));
+    // 대상이 바뀔 때만 채운다. 금액은 이 칸이 고치는 값이라 의존성에 두면 치는 대로 되덮인다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editor.targetId]);
+
   /* '고른 달부터'의 시작 달. 웹의 <input type="month"> 자리를 연·월 두 칸으로 대신한다. */
   const [fromYear, fromMonth] = (editor.fromMonth || yearMonth).split('-').map(Number);
   const pickFrom = (nextYear: number, nextMonth: number) =>
@@ -88,9 +100,12 @@ export default function BudgetEditModal({
         <View>
           <Text className="mb-2 text-sm font-medium text-gray-700">{t('budget.monthlyAmount')}</Text>
           <TextInput
-            value={String(editor.amount)}
+            value={amountText}
             // 소수까지 읽는다. 정수로만 읽으면 외화 가계부의 0.5 가 0(=예산 지우기)이 된다 (2026-10-16).
-            onChangeText={(text) => editor.setAmount(parseFloat(text) || 0)}
+            onChangeText={(text) => {
+              setAmountText(text);
+              editor.setAmount(parseFloat(text) || 0);
+            }}
             keyboardType="decimal-pad"
             autoFocus
             onSubmitEditing={editor.submit}

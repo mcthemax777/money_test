@@ -18,6 +18,21 @@
 const WALL_DIGITS = 13;
 /** 같은 밀리초 안의 순번. 5자리면 1ms 에 10만 건까지 구별한다. */
 const COUNTER_DIGITS = 5;
+/** 카운터가 담을 수 있는 가장 큰 값. 넘으면 자릿수가 늘어 사전순 비교가 시간순과 어긋난다. */
+export const HLC_MAX_COUNTER = 10 ** COUNTER_DIGITS - 1;
+
+/**
+ * 카운터를 하나 올린 값. 자릿수를 넘으면 벽시계를 1ms 앞으로 밀고 카운터를 0 으로 둔다 (2026-10-16).
+ *
+ * 예전에는 그대로 올려 "…:100000" 이 "…:99999" 보다 앞으로 정렬됐다 -- 시계가 크게 앞선 기기를 다른 기기들이
+ * 따라가면(`hlcReceive`) 벽시계는 그 값에 묶이고 카운터만 자라 그 자리에 닿을 수 있다. 1ms 를 미는 것은 실제
+ * 시각과 거의 다르지 않고, 순서는 그대로 지킨다.
+ */
+function bump(wall: number, counter: number, node: string): Hlc {
+  return counter >= HLC_MAX_COUNTER
+    ? { wall: wall + 1, counter: 0, node }
+    : { wall, counter: counter + 1, node };
+}
 
 export interface Hlc {
   /** 유닉스 밀리초 */
@@ -36,7 +51,7 @@ export interface Hlc {
  */
 export function hlcNext(previous: Hlc | null, node: string, now = Date.now()): Hlc {
   if (!previous || now > previous.wall) return { wall: now, counter: 0, node };
-  return { wall: previous.wall, counter: previous.counter + 1, node };
+  return bump(previous.wall, previous.counter, node);
 }
 
 /**
@@ -49,10 +64,10 @@ export function hlcReceive(local: Hlc | null, remote: Hlc, node: string, now = D
   const wall = Math.max(now, local?.wall ?? 0, remote.wall);
 
   if (wall === local?.wall && wall === remote.wall) {
-    return { wall, counter: Math.max(local.counter, remote.counter) + 1, node };
+    return bump(wall, Math.max(local.counter, remote.counter), node);
   }
-  if (wall === local?.wall) return { wall, counter: local.counter + 1, node };
-  if (wall === remote.wall) return { wall, counter: remote.counter + 1, node };
+  if (wall === local?.wall) return bump(wall, local.counter, node);
+  if (wall === remote.wall) return bump(wall, remote.counter, node);
   return { wall, counter: 0, node };
 }
 

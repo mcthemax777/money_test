@@ -14,7 +14,7 @@
  * (`recurring.ts` 와 같은 규칙이다).
  */
 
-import { zonedDateKey } from './tz';
+import { isDateKey, zonedDateKey } from './tz';
 import { DEFAULT_WEEK_START, weekdayOffset, type WeekStart } from './week-start';
 
 export type EntryPeriodUnit = 'year' | 'month' | 'week';
@@ -270,7 +270,7 @@ export function isPeriodKey(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   if (value.includes('~')) {
     const [startKey, endKey, extra] = value.split('~');
-    return extra === undefined && isDayKey(startKey) && isDayKey(endKey) && startKey <= endKey;
+    return extra === undefined && isDateKey(startKey) && isDateKey(endKey) && startKey <= endKey;
   }
   const [base, anchorText, extra] = value.split('@');
   if (extra !== undefined) return false;
@@ -280,19 +280,13 @@ export function isPeriodKey(value: unknown): value is string {
     if (/^\d{4}$/.test(base)) return anchor >= 2 && anchor <= 12;
     return isMonthKey(base) && anchor >= 2 && anchor <= 31;
   }
-  return /^\d{4}$/.test(base) || isMonthKey(base) || isDayKey(base);
+  return /^\d{4}$/.test(base) || isMonthKey(base) || isDateKey(base);
 }
 
 function isMonthKey(value: string): boolean {
   if (!/^\d{4}-\d{2}$/.test(value)) return false;
   const month = Number(value.slice(5, 7));
   return month >= 1 && month <= 12;
-}
-
-function isDayKey(value: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
-  const [year, month, day] = value.split('-').map(Number);
-  return month >= 1 && month <= 12 && day >= 1 && day <= lastDay(year, month);
 }
 
 function addDays(dateKey: string, days: number): string {

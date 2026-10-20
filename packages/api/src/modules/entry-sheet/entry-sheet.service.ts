@@ -9,6 +9,7 @@
 import { HttpException, Injectable } from '@nestjs/common';
 import { AccountType, CardType, CategoryType, FinancialInstitutionType } from '@prisma/client';
 import {
+  isDateKey,
   EntrySheetDto,
   entrySheetCatalog,
   entrySheetRowsOf,
@@ -19,6 +20,7 @@ import {
   type EntrySheetRow,
 } from '@money/types';
 
+import { isPrismaError } from '@/common/prisma-error';
 import { badRequest } from '@/common/app-error';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { PrismaService } from '@/config/prisma.service';
@@ -197,7 +199,12 @@ function reasonOf(error: unknown): string {
     if (typeof message === 'string') return message;
   }
   // 원장 규칙의 오류(코드가 붙은 LedgerBuildError)는 사람이 읽을 문장이라 그대로 보낸다.
-  if (error instanceof Error && typeof (error as { code?: unknown }).code === 'string') {
+  // Prisma 오류도 문자열 코드를 달고 오지만 규칙이 아니다 (`isPrismaError`) -- 원문에 질의가 실려 있다.
+  if (
+    error instanceof Error &&
+    typeof (error as { code?: unknown }).code === 'string' &&
+    !isPrismaError(error)
+  ) {
     return error.message;
   }
   // 규칙이 거절한 것이 아니면(DB 오류 따위) 원문을 보내지 않는다 -- 서버 내부가 드러난다 (2026-10-16).
@@ -206,7 +213,8 @@ function reasonOf(error: unknown): string {
 }
 
 function checkDay(value: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) throw badRequest('ENTRY_SHEET_INVALID', '날짜는 2026-09-30 처럼 보내 주세요.');
+  // 달력에 있는 날만 받는다 (`isDateKey`). 모양만 보면 2026-02-31 이 3월로 넘어갔다.
+  if (!isDateKey(value)) throw badRequest('ENTRY_SHEET_INVALID', '날짜는 2026-09-30 처럼 보내 주세요.');
   return value;
 }
 

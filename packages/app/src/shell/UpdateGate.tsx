@@ -21,7 +21,9 @@ function storeUrls(): string[] {
 }
 
 async function openStore(policyUrl: string | null): Promise<void> {
-  for (const url of policyUrl ? [policyUrl] : storeUrls()) {
+  // 정책의 주소가 열리지 않으면 스토어 주소로 넘어간다 (2026-10-16). 그 주소 하나만 시도하던 때에는 열 수 없는 주소가
+  // 적혀 있으면 강제 업데이트 창에서 나갈 길이 없었다.
+  for (const url of policyUrl ? [policyUrl, ...storeUrls()] : storeUrls()) {
     try {
       await Linking.openURL(url);
       return;

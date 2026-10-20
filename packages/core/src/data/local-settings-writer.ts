@@ -223,10 +223,15 @@ export function createLocalSettingsWriter({
       if (payment.accountId && payment.accountId === payment.toAccountId) {
         throw codedError('TRANSFER_SAME_ACCOUNT');
       }
-      if (payment.feeAmount != null && Dec.of(payment.feeAmount).isNegative()) {
+      // 숫자가 아닌 글자도 같은 코드로 거절한다. Dec.of 가 코드 없는 RangeError 를 던지면 화면이 까닭을 말하지 못한다.
+      let fee: Dec | null = null;
+      try {
+        fee = payment.feeAmount != null ? Dec.of(payment.feeAmount) : null;
+      } catch {
         throw codedError('RECURRING_FEE_INVALID');
       }
-      const hasFee = payment.feeAmount != null && Dec.of(payment.feeAmount).gt(0);
+      if (fee?.isNegative()) throw codedError('RECURRING_FEE_INVALID');
+      const hasFee = fee !== null && fee.gt(0);
       Object.assign(payment, {
         cardId: null,
         categoryId: null,
@@ -252,19 +257,45 @@ export function createLocalSettingsWriter({
     };
   };
 
+  /*
+   * 숨기기(`isActive: false`)도 서버가 막는 경우를 사본에서 먼저 막는다. 예전에는 사본에서 사라졌다가
+   * 재생에서 거절당해 다음 동기화에 도로 나타났다 (PERSON_HAS_ACCOUNTS·ACCOUNT_HAS_CARDS·
+   * ACCOUNT_HAS_BALANCE·CARD_HAS_UNPAID).
+   */
+  const assertCanHide = async (
+    kind: 'person' | 'account' | 'card',
+    id: string,
+    patch: { isActive?: boolean },
+  ) => {
+    if (patch.isActive !== false) return;
+    const blocker = await store.deleteBlocker(projectId, kind, id, 'hide');
+    if (blocker) throw codedError(blocker as never);
+  };
+
+  /** 태그 이름을 서버와 같이 다듬고 검사한다 (`tags.service`: 앞뒤 공백을 떼고, 비거나 겹치면 거절). */
+  const tagNameOf = async (raw: string, exceptId?: string): Promise<string> => {
+    const name = raw?.trim() ?? '';
+    if (!name) throw codedError('TAG_NAME_REQUIRED');
+    if (await store.tagNameTaken(projectId, name, exceptId)) throw codedError('TAG_NAME_DUPLICATE');
+    return name;
+  };
+
   return {
     async addPerson(input: PersonDto.CreateRequest) {
       const id = input.id ?? newId();
+      // 서버처럼 앞뒤 공백을 뗀다. 그대로 두면 사본과 서버의 이름이 다음 받기까지 갈린다.
+      const name = input.name.trim();
       await commit(
         'person.create',
         id,
-        { name: input.name, relationship: input.relationship ?? null },
-        { name: input.name, relationship: input.relationship ?? null, isActive: true },
+        { name, relationship: input.relationship ?? null },
+        { name, relationship: input.relationship ?? null, isActive: true },
       );
       return { id };
     },
 
     async updatePerson(id: string, patch: PersonPatch) {
+      await assertCanHide('person', id, patch);
       await commit('person.update', id, { ...patch }, { ...patch });
     },
 
@@ -305,6 +336,7 @@ export function createLocalSettingsWriter({
     },
 
     async updateAccount(id: string, patch: AccountPatch) {
+      await assertCanHide('account', id, patch);
       await commit('account.update', id, { ...patch }, { ...patch });
     },
 
@@ -398,10 +430,28 @@ export function createLocalSettingsWriter({
       const clearing =
         (patch as { statementClosingDay?: number | null }).statementClosingDay === null ||
         (patch as { paymentDueDay?: number | null }).paymentDueDay === null;
-      if (clearing && (await store.cardById(projectId, id))?.cardType === 'credit') {
+      const card = await store.cardById(projectId, id);
+      if (clearing && card?.cardType === 'credit') {
         throw codedError('CREDIT_CARD_DAYS_REQUIRED');
       }
-      await commit('card.update', id, { ...patch }, { ...patch });
+      await assertCanHide('card', id, patch);
+      /*
+       * 이름과 표시 여부는 부채 계정이 함께 따라간다 (서버 `updateCard` 와 같다). 따로 두면 카드를
+       * 숨겨도 부채 계정이 사본의 총자산에 남고, 이름을 바꿔도 원장에 옛 이름이 선다.
+       */
+      const liabilityRow = defined({
+        name: (patch as { name?: string }).name || undefined,
+        isActive: (patch as { isActive?: boolean }).isActive,
+      });
+      await commit(
+        'card.update',
+        id,
+        { ...patch },
+        { ...patch },
+        card?.liabilityAccountId && Object.keys(liabilityRow).length > 0
+          ? { table: 'account', id: card.liabilityAccountId, row: liabilityRow }
+          : undefined,
+      );
     },
 
     /*
@@ -521,11 +571,12 @@ export function createLocalSettingsWriter({
 
     async addTag(input: TagDto.CreateRequest) {
       const id = input.id ?? newId();
+      const name = await tagNameOf(input.name);
       await commit(
         'tag.create',
         id,
-        { name: input.name, color: input.color ?? null },
-        { name: input.name, color: input.color ?? null },
+        { name, color: input.color ?? null },
+        { name, color: input.color ?? null },
       );
       return { id };
     },
@@ -546,7 +597,8 @@ export function createLocalSettingsWriter({
         return;
       }
 
-      await commit('tag.update', id, { ...patch }, { ...patch });
+      const named = patch.name === undefined ? patch : { ...patch, name: await tagNameOf(patch.name, id) };
+      await commit('tag.update', id, { ...named }, { ...named });
     },
 
     async setBudget(input) {
@@ -756,7 +808,12 @@ export function createLocalSettingsWriter({
     },
 
     async setBudgetOverride(input) {
-      const id = input.id ?? newId();
+      /*
+       * 조정은 (예산, 년, 월)에 하나다. 서버는 그 키로 덮어쓴다. id 없이 오면 사본에 있는 그 달의 줄을
+       * 이어 쓴다 -- 새 id 로 적으면 사본에 같은 달 조정이 둘 서고, 예산 줄이 다음 전체 받기까지 두 번 보였다.
+       */
+      const id =
+        input.id ?? (await store.budgetOverrideIdOf(input.budgetId, input.year, input.month)) ?? newId();
       await commit(
         'budget.override',
         id,

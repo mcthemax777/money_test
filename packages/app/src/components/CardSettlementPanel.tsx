@@ -69,11 +69,16 @@ export default function CardSettlementPanel({
     time: '',
   });
 
+  /** 받지 못했는가. 웹과 같이 "불러오는 중" 대신 실패를 알린다 (2026-10-16 -- 실패해도 영영 불러오는 중이었다). */
+  const [usageFailed, setUsageFailed] = useState(false);
+
   const load = useCallback(async () => {
     try {
       setUsage(await homeDataPort().getCardUsage(card.id));
+      setUsageFailed(false);
     } catch {
       setUsage(null);
+      setUsageFailed(true);
     }
   }, [card.id]);
 
@@ -152,7 +157,11 @@ export default function CardSettlementPanel({
   };
 
   if (!usage) {
-    return <Text className="text-sm text-gray-600">{t('settlement.loading')}</Text>;
+    return (
+      <Text className="text-sm text-gray-600">
+        {t(usageFailed ? 'settlement.loadFailed' : 'settlement.loading')}
+      </Text>
+    );
   }
 
   return (

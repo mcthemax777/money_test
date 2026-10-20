@@ -25,12 +25,21 @@ export function inviteUrlOf(origin: string, code: string): string {
  * 대문자로 올리지 않는다. 옛 번호는 32 자 소문자 16진수이고, 서버가 두 모양을 모두
  * 받는다 (`ProjectsService.findInvitation`).
  */
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
 export function inviteCodeOf(scanned: string): string {
   const text = (scanned ?? '').trim();
   if (!text) return '';
 
   const fromQuery = /[?&]code=([^&\s]+)/.exec(text);
-  const code = fromQuery ? decodeURIComponent(fromQuery[1]) : text;
+  // 잘못된 % 표기는 그대로 둔다 (2026-10-16). decodeURIComponent 가 던지면 부른 화면에서 아무 반응이 없었다.
+  const code = fromQuery ? safeDecode(fromQuery[1]) : text;
 
   // 링크가 아닌데 주소처럼 생겼으면 번호가 아니다. 빈 값으로 두고 화면이 다시 묻는다.
   if (!fromQuery && /[/:?#]/.test(code)) return '';

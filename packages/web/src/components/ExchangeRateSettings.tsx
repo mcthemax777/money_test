@@ -97,7 +97,7 @@ export default function ExchangeRateSettings() {
 
               <button
                 type="button"
-                onClick={() => save(info, draft).then(() => setDrafts({}))}
+                onClick={() => save(info, draft).then((saved) => saved && setDrafts((prev) => withoutKey(prev, info.from)))}
                 disabled={toNumber(draft) <= 0 || isSaving}
                 className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40"
               >
@@ -127,4 +127,10 @@ export default function ExchangeRateSettings() {
       </p>
     </div>
   );
+}
+
+/** 저장한 그 칸만 비운다. 다른 통화에 적던 값은 남긴다. */
+function withoutKey(drafts: Record<string, string>, key: string): Record<string, string> {
+  const { [key]: _saved, ...rest } = drafts;
+  return rest;
 }

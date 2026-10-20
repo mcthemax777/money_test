@@ -20,6 +20,9 @@ import { captureBoxStore } from '@money/core/data/capture-box';
 import { useAppUpdate } from '@money/core/store/app-update';
 import { useAdCounter } from '@money/core/lib/ads';
 import { useAnalyticsPrefs } from '@money/core/lib/analytics';
+import { useFilterTemplateStore } from '@money/core/store/filter-templates';
+import { useAssetListView } from '@money/core/store/asset-list-view';
+import { usePendingProfile } from '@money/core/store/pending-profile';
 
 const PERSISTED = [
   useAuth,
@@ -39,6 +42,13 @@ const PERSISTED = [
   useAdCounter,
   // 사용 통계 끄기. 빠지면 앱을 켤 때마다 켬으로 돌아간다.
   useAnalyticsPrefs,
+  /*
+   * 아래 셋은 빠져 있었다 (2026-10-16). 다시 읽지 않으면 앱을 켤 때마다 빈 값으로 시작하고, 다음 저장이
+   * 기기에 남은 옛 값을 덮는다 -- 저장해 둔 검색 템플릿, 자산 목록 보기, 오프라인에서 고친 이름이 사라졌다.
+   */
+  useFilterTemplateStore,
+  useAssetListView,
+  usePendingProfile,
 ];
 
 export async function hydrateStores(): Promise<void> {

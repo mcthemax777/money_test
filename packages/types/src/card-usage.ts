@@ -13,7 +13,7 @@
  */
 
 import type { CardDto } from './dtos';
-import { Dec, type DecInput } from './decimal';
+import { Dec, type DecInput, amountScale } from './decimal';
 import {
   closingMonthKey,
   closingMonthOf,
@@ -525,8 +525,8 @@ export function splitInstallment(total: DecInput, months: number): Dec[] {
   const amount = Dec.of(total);
   if (months <= 1) return [amount];
 
-  // 원 단위로 자른다. 소수 통화는 지금 다루지 않는다.
-  const each = amount.dividedBy(months, 0, 'down');
+  // 금액에 적힌 자릿수로 자른다 (`amountScale`). 원화는 원 단위, 달러는 센트 단위다.
+  const each = amount.dividedBy(months, amountScale(amount), 'down');
   const shares = Array.from({ length: months }, () => each);
   shares[0] = each.plus(amount.minus(each.times(months)));
   return shares;

@@ -7,6 +7,7 @@ import { HIDDEN_ACCOUNT_TYPES } from '../accounts/accounts.service';
 import { toCardResponse } from '../cards/card-view';
 import { badRequest, notFound } from '@/common/app-error';
 import { withBalancesAsOf, withCardBalancesAsOf } from '@/common/balance-as-of';
+import { readText } from '@/common/text';
 
 @Injectable()
 export class UsersService {
@@ -47,7 +48,7 @@ export class UsersService {
 
     // 이름은 다른 멤버에게 보이는 값이므로 공백만 들어가지 않도록 막는다.
     if (data.name !== undefined) {
-      const name = data.name.trim();
+      const name = readText(data.name, '이름') ?? '';
 
       if (!name) {
         throw badRequest('NAME_REQUIRED', '이름을 입력해주세요.');

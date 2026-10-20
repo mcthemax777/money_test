@@ -125,6 +125,7 @@ export class BillingWebhookService {
 
     const userId = await this.existingUserId(event.subscriber_attributes?.userId?.value);
     const price = event.price_in_purchased_currency;
+    const paidCurrency = /^[A-Z]{3}$/.test(event.currency ?? '') ? event.currency! : 'KRW';
 
     await this.plans.grant({
       projectId,
@@ -132,9 +133,19 @@ export class BillingWebhookService {
       source: SOURCE,
       userId,
       externalId: externalIdOf(transactionId, event.purchased_at_ms),
-      // 환불 알림이 아닌데 음수가 오면(문서상 환불의 표기) 0 으로 둔다. 기록은 원 단위 정수다.
+      // 환불 알림이 아닌데 음수가 오면(문서상 환불의 표기) 0 으로 둔다. 기록은 그 통화의 정수다.
       amount: typeof price === 'number' && price > 0 ? Math.round(price) : 0,
-      note: event.environment === 'SANDBOX' ? '시험 결제(SANDBOX)' : null,
+      /*
+       * 낸 통화를 함께 적는다 (2026-10-16). 예전에는 늘 원화로 적혀 4.99 달러가 "5원"이 됐다. 정수 칸이라 소수가
+       * 있는 통화는 반올림되므로 정확한 값은 메모에 남긴다.
+       */
+      currency: paidCurrency,
+      note: [
+        event.environment === 'SANDBOX' ? '시험 결제(SANDBOX)' : null,
+        paidCurrency !== 'KRW' && typeof price === 'number' ? `${price} ${paidCurrency}` : null,
+      ]
+        .filter(Boolean)
+        .join(' · ') || null,
       window: {
         startsAt: new Date(event.purchased_at_ms),
         endsAt: isLifetime ? null : new Date(event.expiration_at_ms!),

@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import { isDateKey } from '@money/types';
 
 /**
  * "YYYY-MM" 검증.
@@ -44,16 +45,12 @@ export function assertYearMonthParts(
  * 기간 조회의 양끝에 쓴다. Date 로 파싱해 검사하지 않는 이유는 "2026-02-31"
  * 같은 값을 Date 가 3월 3일로 조용히 옮기기 때문이다. 형식과 범위를 직접 본다.
  */
-export function assertDateKey(value: string, label = '날짜'): string {
-  const text = value?.trim() ?? '';
-  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(text);
-  const month = match ? Number(match[2]) : 0;
-  const day = match ? Number(match[3]) : 0;
-
-  if (!match || month < 1 || month > 12 || day < 1 || day > 31) {
+export function assertDateKey(value: unknown, label = '날짜'): string {
+  const text = typeof value === 'string' ? value.trim() : '';
+  // 달력에 있는 날만 받는다 (`isDateKey`). 예전에는 31일까지만 보아 "2026-02-31" 이 3월로 넘어갔다.
+  if (!isDateKey(text)) {
     throw new BadRequestException(`${label}: YYYY-MM-DD 형식이어야 합니다.`);
   }
-
   return text;
 }
 

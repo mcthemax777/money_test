@@ -147,7 +147,8 @@ export namespace AccountDto {
     type?: AccountType;
     /** null을 주면 기관 연결을 끊는다 */
     institutionId?: string | null;
-    accountNumber?: string;
+    /** 비우려면 null 을 보낸다. */
+    accountNumber?: string | null;
     /**
      * 알림·캡처 글에서 이 수단을 알아보는 말. 한 줄에 하나씩이다.
      *

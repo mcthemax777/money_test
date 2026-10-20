@@ -19,6 +19,7 @@
  *      전표를 고치려다 실패하거나 더 나쁘게는 다른 전표에 적용된다.
  */
 import { ForbiddenException, HttpException, Injectable, Logger } from '@nestjs/common';
+import { isPrismaError, isTransientDbError } from '@/common/prisma-error';
 import {
   type AccountCreatePayload,
   type BudgetDeletePayload,
@@ -54,6 +55,7 @@ import {
   type PersonUpdatePayload,
   type PushRequest,
   type PushResponse,
+  HLC_MAX_COUNTER,
   decodeHlc,
   encodeHlc,
   hlcNext,
@@ -119,7 +121,19 @@ const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 function withSaneClock(mutation: Mutation): Mutation {
   const decoded = decodeHlc(mutation.hlc);
   const now = Date.now();
-  if (decoded && decoded.wall <= now + MAX_CLOCK_SKEW_MS) return mutation;
+  /*
+   * 모양까지 본다 (2026-10-16). 시계는 문자열로 견주므로 자릿수가 고정된 모양(`encodeHlc`)이어야 한다.
+   * "9:0:x" 처럼 풀리기는 하지만 모양이 다른 값은 사전순으로 모든 진짜 시계보다 뒤에 서서, 그 줄의 이후
+   * 편집을 영영 충돌로 밀어냈다. 다시 적은 값이 같을 때만 그대로 받는다.
+   */
+  if (
+    decoded &&
+    decoded.wall <= now + MAX_CLOCK_SKEW_MS &&
+    decoded.counter <= HLC_MAX_COUNTER &&
+    encodeHlc(decoded) === mutation.hlc
+  ) {
+    return mutation;
+  }
   return {
     ...mutation,
     hlc: encodeHlc({ wall: now, counter: 0, node: decoded?.node || mutation.clientId || 'server' }),
@@ -168,7 +182,18 @@ export class MutationReplayService {
       'viewer',
     );
 
-    const mutations = [...(request.mutations ?? [])]
+    /*
+     * 모양이 틀린 명령은 그것만 거절하고 나머지는 재생한다 (2026-10-16).
+     *
+     * 예전에는 targets·hlc·clientSeq 가 비거나 틀린 명령 하나가 재생 밖(정렬·막힘 판정)에서 터져 요청 전체가
+     * 500 이 됐고, 기기는 같은 묶음을 영영 다시 보내며 받기까지 멈췄다. 거절로 돌려주면 보류 칸에 남아 사람이 고른다.
+     */
+    const received: unknown[] = Array.isArray(request?.mutations) ? request.mutations : [];
+    const malformed = received
+      .filter((mutation) => !isWellFormedMutation(mutation))
+      .map((mutation) => (mutation as { mutationId?: unknown })?.mutationId)
+      .filter((id): id is string => typeof id === 'string');
+    const mutations = (received.filter(isWellFormedMutation) as Mutation[])
       .slice(0, MAX_MUTATIONS)
       // 한 기기가 보낸 명령은 언제나 이 순서로 적용한다.
       .sort((a, b) => a.clientSeq - b.clientSeq);
@@ -199,7 +224,12 @@ export class MutationReplayService {
       };
     }
 
-    const results: MutationResult[] = [];
+    const results: MutationResult[] = malformed.map((mutationId) => ({
+      mutationId,
+      status: 'rejected' as const,
+      code: 'MUTATION_MALFORMED',
+      error: '명령의 모양이 올바르지 않습니다.',
+    }));
     /** 앞에서 거절된 대상. 이것을 건드리는 뒤 명령은 서버까지 가지 않는다. */
     const blocked = new Set<string>();
     /**
@@ -210,8 +240,17 @@ export class MutationReplayService {
      * 큐에 그대로 두어 다음 동기화가 다시 보내게 한다.
      */
     const deferred = new Set<string>();
+    /**
+     * 이 요청 안에서 생긴 별칭 (기기 id -> 서버가 채택한 id).
+     *
+     * 두 기기가 끊긴 채 같은 이름의 분류를 만들면 서버는 먼저 선 것을 채택하고 별칭을 돌려준다. 기기는 그것으로
+     * 큐에 남은 명령을 고치지만, **같은 묶음에 이미 실려 온** 뒤 명령은 옛 id 를 든 채 재생되어 "없는 분류"로
+     * 거절되고 보류 칸에 갇혔다 (2026-10-16). 그래서 이 묶음의 뒤 명령에도 여기서 바로 갈아 끼운다.
+     */
+    const aliases = new Map<string, string>();
 
-    for (const mutation of mutations) {
+    for (const original of mutations) {
+      const mutation = aliases.size > 0 ? withAliases(original, aliases) : original;
       if (isBlockedBy(mutation, deferred)) {
         results.push({
           mutationId: mutation.mutationId,
@@ -234,6 +273,7 @@ export class MutationReplayService {
 
       const result = await this.applyOne(userId, projectId, request.clientId, mutation);
       results.push(result);
+      if (result.alias) aliases.set(result.alias.from, result.alias.to);
 
       /*
        * 거절만 뒤를 막는다. 충돌은 막지 않는다.
@@ -331,6 +371,27 @@ export class MutationReplayService {
       await this.settle(mutation, result);
       return result;
     } catch (error) {
+      /*
+       * 데이터베이스가 잠시 앓은 것(연결 끊김·시간 초과·쓰기 충돌)은 판정이 아니다 (2026-10-16). 예전에는 그것도
+       * 영구 거절로 적어, 다시 보내면 될 명령이 보류 칸에 갇혔다. 잡은 행을 놓고 "미룸"으로 돌려준다 -- 기기가
+       * 다음 동기화에 다시 보내면 처음처럼 재생한다.
+       */
+      if (isTransientDbError(error)) {
+        this.logger.warn(
+          `명령 재생 일시 실패 ${mutation.kind} ${mutation.mutationId}: ${
+            error instanceof Error ? error.message : error
+          }`,
+        );
+        await this.prisma.mutationLog
+          .delete({ where: { mutationId: mutation.mutationId } })
+          .catch(() => undefined);
+        return {
+          mutationId: mutation.mutationId,
+          status: 'deferred',
+          error: '서버가 잠시 바빠 다음에 다시 보냅니다.',
+        };
+      }
+
       const message = error instanceof Error ? error.message : '알 수 없는 오류';
       /*
        * 코드는 두 군데에 산다. 원장 조립의 오류(LedgerBuildError)는 객체에, 서비스가 던지는
@@ -346,12 +407,14 @@ export class MutationReplayService {
        * 기기에 돌려줄 문장. 규칙이 거절한 것(HTTP 예외·코드가 붙은 원장 오류)만 그 문장을 보낸다.
        * 그 밖(DB 오류 따위)의 원문은 서버 내부가 드러나므로 로그에만 남긴다 (2026-10-16).
        */
-      const isRuleError = error instanceof HttpException || typeof code === 'string';
+      // Prisma 오류도 문자열 코드(P2003 따위)를 달고 오지만 규칙의 거절이 아니다. 원문에 질의가 실려 있다.
+      const isDbError = isPrismaError(error);
+      const isRuleError = !isDbError && (error instanceof HttpException || typeof code === 'string');
       const result: MutationResult = {
         mutationId: mutation.mutationId,
         status: 'rejected',
         error: isRuleError ? message : '서버가 이 변경을 처리하지 못했습니다.',
-        ...(typeof code === 'string' ? { code } : {}),
+        ...(typeof code === 'string' && !isDbError ? { code } : {}),
       };
       await this.settle(mutation, result);
       /*
@@ -709,11 +772,13 @@ export class MutationReplayService {
        * 여기서 조용히 넘기면 사용자는 표시가 된 줄 알고, 다음 동기화가 그 전표를 다시
        * 받아 태그 없는 모습으로 덮는다. 그때는 무엇이 사라졌는지 알 길이 없다 (D6).
        */
+      // 규칙의 거절(HTTP 예외)만 여기서 돌려준다. DB 오류는 위로 올려 일시 실패는 미루고 원문은 감춘다 (applyOne).
+      if (!(error instanceof HttpException)) throw error;
       return {
         mutationId: mutation.mutationId,
         status: 'rejected',
         code: 'TAG_CHANGE_FAILED',
-        error: error instanceof Error ? error.message : '태그를 바꾸지 못했습니다.',
+        error: error.message,
       };
     }
 
@@ -745,11 +810,13 @@ export class MutationReplayService {
         { hlc: mutation.hlc },
       );
     } catch (error) {
+      // 규칙의 거절(HTTP 예외)만 여기서 돌려준다. DB 오류는 위로 올려 일시 실패는 미루고 원문은 감춘다 (applyOne).
+      if (!(error instanceof HttpException)) throw error;
       return {
         mutationId: mutation.mutationId,
         status: 'rejected',
         code: 'CATEGORY_CHANGE_FAILED',
-        error: error instanceof Error ? error.message : '분류를 바꾸지 못했습니다.',
+        error: error.message,
       };
     }
 
@@ -1260,7 +1327,7 @@ export class MutationReplayService {
     const payload = mutation.payload as BudgetSetFromPayload;
     const existing = await this.prisma.budget.findUnique({ where: { id: payload.ruleId } });
     if (existing) return this.sameOrForeign(mutation, existing.projectId, projectId, '예산');
-    await this.budgets.setBudgetFrom(userId, projectId, payload);
+    await this.budgets.setBudgetFrom(userId, projectId, payload, mutation.hlc);
     return this.applied(mutation, projectId, payload.id);
   }
 
@@ -1704,4 +1771,41 @@ function isEntryModified(error: unknown): boolean {
   if (!(error instanceof HttpException)) return false;
   const body = error.getResponse() as { code?: string } | string;
   return typeof body === 'object' && body?.code === 'ENTRY_MODIFIED';
+}
+
+/** 재생할 수 있는 모양의 명령인가. 기기가 보낸 값이라 무엇이든 올 수 있다. */
+function isWellFormedMutation(value: unknown): boolean {
+  const mutation = value as Partial<Mutation> | null;
+  return (
+    !!mutation &&
+    typeof mutation === 'object' &&
+    typeof mutation.mutationId === 'string' &&
+    typeof mutation.kind === 'string' &&
+    typeof mutation.hlc === 'string' &&
+    Number.isInteger(mutation.clientSeq) &&
+    Array.isArray(mutation.targets) &&
+    mutation.targets.every((target) => typeof target === 'string') &&
+    !!mutation.payload &&
+    typeof mutation.payload === 'object'
+  );
+}
+
+/**
+ * 명령의 대상과 짐에 든 id 를 별칭으로 갈아 끼운다. id 는 UUID 라 다른 값과 겹치지 않으므로 글자가 같은 자리를
+ * 모두 바꾼다. 명령 id·순번·시계는 그대로다 -- 멱등의 열쇠라 건드리면 안 된다.
+ */
+function withAliases(mutation: Mutation, aliases: ReadonlyMap<string, string>): Mutation {
+  const swap = (value: unknown): unknown => {
+    if (typeof value === 'string') return aliases.get(value) ?? value;
+    if (Array.isArray(value)) return value.map(swap);
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, swap(inner)]));
+    }
+    return value;
+  };
+  return {
+    ...mutation,
+    targets: mutation.targets.map((target) => aliases.get(target) ?? target),
+    payload: swap(mutation.payload) as Mutation['payload'],
+  };
 }

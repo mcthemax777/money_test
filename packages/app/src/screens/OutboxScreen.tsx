@@ -16,7 +16,7 @@
  * 그 둘을 조용히 지우지 않고 여기 모아 보여 준다. 돈은 말없이 사라지면 안 된다.
  */
 import { useCallback, useEffect, useState } from 'react';
-import { LayoutAnimation, Pressable, Share, Text, View } from 'react-native';
+import { Alert, LayoutAnimation, Pressable, Share, Text, View } from 'react-native';
 import * as Application from 'expo-application';
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -24,6 +24,7 @@ import { formatDate, formatTime } from '@money/core/lib/datetime';
 import type { HeldMutation } from '@money/core/data/local-store';
 import type { Mutation } from '@money/types';
 import { useProject, useProjectTimeZone } from '@money/core/store/project';
+import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
 
 import PageHeader from '../components/PageHeader';
 import {
@@ -127,22 +128,37 @@ export default function OutboxScreen() {
     setQueued(queuedRows);
   }, [projectId]);
 
+  // 동기화가 사본을 바꾸면(다른 화면이 보낸 것 포함) 다시 읽는다 (2026-10-16). 처음 연 때의 목록에 멈춰 있었다.
+  const mirrorVersion = useMirrorVersion();
   useEffect(() => {
     void reload();
-  }, [reload]);
+  }, [reload, mirrorVersion]);
 
-  /** 다시 보내 본다. 성공하면 목록에서 사라지고, 또 막히면 이유가 새로 적힌다. */
-  const retry = async (mutationId: string) => {
-    if (!projectId || isBusy) return;
+  /*
+   * 단추 하나의 일. 한 번에 하나만 돌고, 끝나면 목록을 다시 읽는다 (2026-10-16 -- 네 단추가 같은 틀을 따로 들고 있었고,
+   * 실패하면 아무 말 없이 끝났다). 실패는 알림으로 알리고, 그래도 목록은 다시 읽어 지금 상태를 보인다.
+   */
+  const run = async (task: () => Promise<unknown>) => {
+    if (isBusy) return;
     setIsBusy(true);
     try {
-      await retryMutation(mutationId);
-      await syncNow(projectId, timeZone);
-      await reload();
+      await task();
+    } catch (error) {
+      console.error('보내지 못한 거래 처리 실패:', error);
+      Alert.alert(t('inbox.actionFailed'));
     } finally {
+      await reload().catch(() => undefined);
       setIsBusy(false);
     }
   };
+
+  /** 다시 보내 본다. 성공하면 목록에서 사라지고, 또 막히면 이유가 새로 적힌다. */
+  const retry = (mutationId: string) =>
+    projectId &&
+    run(async () => {
+      await retryMutation(mutationId);
+      await syncNow(projectId, timeZone);
+    });
 
   /**
    * 사라진 거래를 고치려던 명령을 새 거래로 낸다.
@@ -150,40 +166,17 @@ export default function OutboxScreen() {
    * 다시 보내기와 갈라 둔다. 그쪽은 "그래도 내 값으로 하겠다"이고 이쪽은 "그 거래는
    * 없어졌으니 새로 적겠다"라, 결과가 다르다 -- 여기서는 새 id 의 거래가 하나 생긴다.
    */
-  const reissue = async (mutation: HeldMutation) => {
-    if (!projectId || isBusy) return;
-    setIsBusy(true);
-    try {
+  const reissue = (mutation: HeldMutation) =>
+    projectId &&
+    run(async () => {
       await reissueAsNewEntry(mutation);
       await syncNow(projectId, timeZone);
-      await reload();
-    } finally {
-      setIsBusy(false);
-    }
-  };
+    });
 
   /** 지금 보내 본다. 온라인이면 큐가 비고, 아니면 그대로 남는다. */
-  const sendNow = async () => {
-    if (!projectId || isBusy) return;
-    setIsBusy(true);
-    try {
-      await syncNow(projectId, timeZone);
-      await reload();
-    } finally {
-      setIsBusy(false);
-    }
-  };
+  const sendNow = () => projectId && run(() => syncNow(projectId, timeZone));
 
-  const discard = async (mutationId: string) => {
-    if (isBusy) return;
-    setIsBusy(true);
-    try {
-      await discardMutation(mutationId);
-      await reload();
-    } finally {
-      setIsBusy(false);
-    }
-  };
+  const discard = (mutationId: string) => run(() => discardMutation(mutationId));
 
   return (
     <View className="gap-6">

@@ -51,6 +51,11 @@ export function allocateByWeight(total: Dec, weights: readonly Dec[], decimals: 
   if (weights.length === 1) return [total];
 
   const sum = Dec.sum(weights);
+  /*
+   * 가중치가 모두 0 이면 비율이 없다 (2026-10-16). 줄마다 전액 차감한 분할 지출이 그렇다 -- 나누면 0 으로 나눠
+   * 서버는 500, 오프라인 조립은 그 자리에서 죽었다. 끝수를 몰아주는 규칙대로 첫 항목에 모두 둔다.
+   */
+  if (sum.isZero()) return weights.map((_, index) => (index === 0 ? total : Dec.of(0)));
   const shares = weights.map((weight) => total.times(weight).dividedBy(sum, decimals, 'down'));
   shares[0] = shares[0].plus(total.minus(Dec.sum(shares)));
   return shares;

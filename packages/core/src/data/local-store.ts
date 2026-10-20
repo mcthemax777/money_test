@@ -140,6 +140,7 @@ export interface StoredPaymentCard {
 export interface StoredPerformanceCard {
   id: string;
   projectId: string;
+  name: string;
   cardType: string;
   statementClosingDay: number | null;
   paymentDueDay: number | null;
@@ -265,9 +266,6 @@ const asText = (value: unknown): string | null =>
   value === undefined || value === null ? null : String(value);
 
 const asMoney = (value: unknown): string => asText(value) ?? '0';
-/** 서버가 JSON 으로 보낸 칸을 사본의 글자로. 비었으면 null. */
-const jsonText = (value: unknown): string | null =>
-  value === null || value === undefined ? null : typeof value === 'string' ? value : JSON.stringify(value);
 
 const asFlag = (value: unknown): number => (value ? 1 : 0);
 
@@ -875,7 +873,7 @@ export class LocalStore {
           paybackOfLineKey: asText(row.paybackOfLineKey),
           paybackType: asText(row.paybackType),
           // 할부 환불이 줄인 회차. 서버는 JSON 으로 보내고 사본은 글자로 든다.
-          installmentAdjust: jsonText(row.installmentAdjust),
+          installmentAdjust: asJson(row.installmentAdjust),
         });
 
         /*
@@ -1542,6 +1540,15 @@ export class LocalStore {
     }));
   }
 
+  /** 그 예산의 그 달 조정 줄 id. 없으면 null. */
+  async budgetOverrideIdOf(budgetId: string, year: number, month: number): Promise<string | null> {
+    const rows = await this.db.all<Row>(
+      `SELECT id FROM budget_override WHERE budgetId = ? AND year = ? AND month = ?`,
+      [budgetId, year, month],
+    );
+    return asText(rows[0]?.id);
+  }
+
   /** 그 달에 적용되는 예산 규칙과 조정값. 적용 여부 판단은 부르는 쪽이 한다. */
   async budgets(projectId: string, year: number, month: number): Promise<StoredBudget[]> {
     const rows = await this.db.all<Row>(
@@ -1652,15 +1659,23 @@ export class LocalStore {
    */
   async accountRows(projectId: string): Promise<AccountDto.Response[]> {
     const hidden = HIDDEN_ACCOUNT_TYPES.map(() => '?').join(', ');
-    const rows = await this.db.all<Row>(
-      `SELECT a.*, p.id AS ownerRowId, p.name AS ownerName, p.relationship AS ownerRelationship,
-              p.isActive AS ownerIsActive, p.createdAt AS ownerCreatedAt, p.updatedAt AS ownerUpdatedAt
-         FROM account a
-         LEFT JOIN person p ON p.id = a.ownerId
-        WHERE a.projectId = ? AND a.type NOT IN (${hidden})
-        ORDER BY a.sortRank, a.createdAt`,
-      [projectId, ...HIDDEN_ACCOUNT_TYPES],
-    );
+    /*
+     * 잔액은 서버 칸이 아니라 다리를 세어 낸다 (`accountBalances`). 서버 목록(`withBalancesAsOf`)처럼
+     * 미래 날짜 전표를 빼고, 아직 보내지 못한 거래는 넣는다. 예전에는 칸을 그대로 읽어 다음 주
+     * 월급이 오늘 통장에 들어 있었고 오프라인 거래가 잔액을 움직이지 않았다.
+     */
+    const [rows, balances] = await Promise.all([
+      this.db.all<Row>(
+        `SELECT a.*, p.id AS ownerRowId, p.name AS ownerName, p.relationship AS ownerRelationship,
+                p.isActive AS ownerIsActive, p.createdAt AS ownerCreatedAt, p.updatedAt AS ownerUpdatedAt
+           FROM account a
+           LEFT JOIN person p ON p.id = a.ownerId
+          WHERE a.projectId = ? AND a.type NOT IN (${hidden})
+          ORDER BY a.sortRank, a.createdAt`,
+        [projectId, ...HIDDEN_ACCOUNT_TYPES],
+      ),
+      this.accountBalances(projectId),
+    ]);
 
     return rows.map((row) => ({
       id: String(row.id),
@@ -1672,7 +1687,7 @@ export class LocalStore {
       accountNumber: asText(row.accountNumber),
       matchText: asText(row.matchText),
       maturityDate: asText(row.maturityDate),
-      balance: asMoney(row.balance),
+      balance: balances.get(String(row.id)) ?? asMoney(row.balance),
       currency: String(row.currency),
       isActive: Boolean(row.isActive),
       createdAt: String(row.createdAt),
@@ -2014,20 +2029,20 @@ export class LocalStore {
     const owner = ownerFilter(range.ownerIds);
     const search = searchFilter(range.search);
     const period = periodFilter(range);
-    const category = categoryLegFilter(range.category, range.categoryType);
+    const narrow = narrowFilter(range);
     const paybackOf = paybackOfFilter(range.paybackOf);
     const entries = await this.db.all<Row>(
       `SELECT e.*, p.name AS personName
          FROM entry e
          LEFT JOIN person p ON p.id = e.personId
-        WHERE e.projectId = ?${period.sql}${owner.sql}${search.sql}${category.sql}${paybackOf.sql}
+        WHERE e.projectId = ?${period.sql}${owner.sql}${search.sql}${narrow.sql}${paybackOf.sql}
         ORDER BY e.date DESC, e.id DESC`,
       [
         projectId,
         ...period.params,
         ...owner.params,
         ...search.params,
-        ...category.params,
+        ...narrow.params,
         ...paybackOf.params,
       ],
     );
@@ -2066,6 +2081,15 @@ export class LocalStore {
             WHERE projectId = ? AND name = ? AND type = ? AND parentId IS NULL${skip} LIMIT 1`,
           [projectId, name, type, ...skipParam],
         );
+    return rows.length > 0;
+  }
+
+  /** 그 태그 이름이 이미 쓰이고 있는가. 서버의 (가계부, 이름) 유일성과 같다. */
+  async tagNameTaken(projectId: string, name: string, exceptId?: string): Promise<boolean> {
+    const rows = await this.db.all<Row>(
+      `SELECT 1 FROM tag WHERE projectId = ? AND name = ?${exceptId ? ' AND id <> ?' : ''} LIMIT 1`,
+      [projectId, name, ...(exceptId ? [exceptId] : [])],
+    );
     return rows.length > 0;
   }
 
@@ -2280,18 +2304,23 @@ export class LocalStore {
         );
         moved += asInt(count[0]?.n);
         await this.db.run(`UPDATE posting SET categoryId = ? WHERE categoryId = ?`, [move.toId, move.fromId]);
-        await this.db.run(
-          `UPDATE entry_draft SET categoryId = ? WHERE projectId = ? AND categoryId = ?`,
-          [move.toId, projectId, move.fromId],
-        );
+        // 아직 거래가 아닌 것들도 함께 옮긴다 (서버 `categories.service` 와 같다).
+        for (const table of ['entry_draft', 'recurring_rule']) {
+          await this.db.run(
+            `UPDATE ${table} SET categoryId = ? WHERE projectId = ? AND categoryId = ?`,
+            [move.toId, projectId, move.fromId],
+          );
+        }
       }
       for (const id of fromIds) {
         const budgets = await this.db.all<Row>(`SELECT id FROM budget WHERE categoryId = ?`, [id]);
         for (const budget of budgets) await this.forgetRow('budget', String(budget.id));
-        await this.db.run(`UPDATE entry_draft SET categoryId = NULL WHERE projectId = ? AND categoryId = ?`, [
-          projectId,
-          id,
-        ]);
+        for (const table of ['entry_draft', 'recurring_rule']) {
+          await this.db.run(`UPDATE ${table} SET categoryId = NULL WHERE projectId = ? AND categoryId = ?`, [
+            projectId,
+            id,
+          ]);
+        }
         await this.db.run(`DELETE FROM category WHERE id = ?`, [id]);
       }
     });
@@ -2416,6 +2445,11 @@ export class LocalStore {
     projectId: string,
     kind: 'person' | 'account' | 'card',
     id: string,
+    /**
+     * 숨기기는 앞의 검사(살아 있는 통장·카드, 남은 잔액)만 본다. 서버의 deactivate* 가 숨기기와
+     * 지우기에 같은 앞부분을 쓰고, 지우기만 붙은 거래·기록을 더 본다.
+     */
+    mode: 'hide' | 'delete' = 'delete',
   ): Promise<string | null> {
     const count = async (sql: string, params: SqlValue[]) =>
       asInt((await this.db.all<Row>(sql, params))[0]?.n);
@@ -2424,6 +2458,7 @@ export class LocalStore {
       if ((await count(`SELECT count(*) AS n FROM account WHERE ownerId = ? AND isActive = 1`, [id])) > 0) {
         return 'PERSON_HAS_ACCOUNTS';
       }
+      if (mode === 'hide') return null;
       if ((await count(`SELECT count(*) AS n FROM entry WHERE personId = ?`, [id])) > 0) {
         return 'PERSON_HAS_ENTRIES';
       }
@@ -2436,10 +2471,14 @@ export class LocalStore {
     // 미래 날짜의 거래도 잔액이다. 그것이 남은 계좌를 지우면 그 거래가 갈 곳이 없다.
     const balances = await this.accountBalances(projectId, null);
     if (kind === 'account') {
-      if ((await count(`SELECT count(*) AS n FROM card WHERE paymentAccountId = ? AND isActive = 1`, [id])) > 0) {
-        return 'ACCOUNT_HAS_CARDS';
-      }
+      // 결제 통장이든 카드의 부채 계정 자체이든 살아 있는 카드가 있으면 막는다 (서버와 같다).
+      const cards = await count(
+        `SELECT count(*) AS n FROM card WHERE isActive = 1 AND (paymentAccountId = ? OR liabilityAccountId = ?)`,
+        [id, id],
+      );
+      if (cards > 0) return 'ACCOUNT_HAS_CARDS';
       if (!Dec.of(balances.get(id) ?? '0').isZero()) return 'ACCOUNT_HAS_BALANCE';
+      if (mode === 'hide') return null;
       if ((await count(`SELECT count(*) AS n FROM posting WHERE accountId = ?`, [id])) > 0) {
         return 'ACCOUNT_HAS_ENTRIES';
       }
@@ -2453,6 +2492,7 @@ export class LocalStore {
     if (card?.liabilityAccountId && !Dec.of(balances.get(card.liabilityAccountId) ?? '0').isZero()) {
       return 'CARD_HAS_UNPAID';
     }
+    if (mode === 'hide') return null;
     if ((await count(`SELECT count(*) AS n FROM posting WHERE cardId = ?`, [id])) > 0) {
       return 'CARD_HAS_ENTRIES';
     }
@@ -2773,7 +2813,7 @@ export class LocalStore {
     const owner = ownerFilter(options.ownerIds);
     const search = searchFilter(options.search);
     const period = periodFilter(options);
-    const card = cardFilter(options.cardId);
+    const narrow = narrowFilter(options);
     const paybackOf = paybackOfFilter(options.paybackOf);
     const cursor = options.cursor;
     // 튜플 비교. (date, id) < (커서의 date, 커서의 id)
@@ -2782,7 +2822,7 @@ export class LocalStore {
 
     const rows = await this.db.all<Row>(
       `SELECT e.id FROM entry e
-        WHERE e.projectId = ?${period.sql}${owner.sql}${search.sql}${card.sql}${paybackOf.sql}${keyset}
+        WHERE e.projectId = ?${period.sql}${owner.sql}${search.sql}${narrow.sql}${paybackOf.sql}${keyset}
         ORDER BY e.date DESC, e.id DESC
         LIMIT ?`,
       [
@@ -2790,7 +2830,7 @@ export class LocalStore {
         ...period.params,
         ...owner.params,
         ...search.params,
-        ...card.params,
+        ...narrow.params,
         ...paybackOf.params,
         ...keysetParams,
         options.limit + 1,
@@ -2978,12 +3018,7 @@ export class LocalStore {
         installmentAdjust: built.installmentAdjust ? JSON.stringify(built.installmentAdjust) : null,
       });
 
-      await this.db.run(
-        `DELETE FROM installment_plan
-          WHERE postingId IN (SELECT id FROM posting WHERE entryId = ?)`,
-        [entryId],
-      );
-      await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [entryId]);
+      await this.dropEntryLegs(entryId);
 
       /*
        * 태그 연결도 다리와 같이 통째로 갈아 끼운다. 주지 않으면 비운다.
@@ -2992,7 +3027,8 @@ export class LocalStore {
        * 줄이 없는 전표의 것뿐이다.
        */
       await this.db.run(`DELETE FROM entry_tag WHERE entryId = ?`, [entryId]);
-      for (const tagId of options.tagIds ?? built.tagIds ?? []) {
+      // 겹친 id 는 한 번만 (줄 키가 NULL 이라 기본 키가 겹침을 막지 못한다).
+      for (const tagId of new Set(options.tagIds ?? built.tagIds ?? [])) {
         await this.db.run(
           `INSERT OR IGNORE INTO entry_tag (entryId, lineKey, tagId) VALUES (?, NULL, ?)`,
           [entryId, tagId],
@@ -3422,7 +3458,14 @@ export class LocalStore {
         currentOf.set(key, set);
       }
 
+      /*
+       * 같은 줄이 두 번 오면 한 번만 다룬다. 거래 자체에 붙는 태그는 줄 키가 NULL 인데 SQLite 는
+       * NULL 끼리 다르다고 보아 기본 키가 겹침을 막지 못한다 -- 두 번 넣으면 같은 태그가 두 줄 선다.
+       */
+      const seen = new Set<string>();
       for (const target of applicable) {
+        if (seen.has(keyOf(target))) continue;
+        seen.add(keyOf(target));
         const change = applyTagChange(
           currentOf.get(keyOf(target)) ?? [],
           addTagIds,
@@ -3609,17 +3652,17 @@ export class LocalStore {
     await this.db.run(`DELETE FROM ${table} WHERE id = ?`, [id]);
 
     if (table === 'entry') {
-      await this.db.run(
-        `DELETE FROM installment_plan
-          WHERE postingId IN (SELECT id FROM posting WHERE entryId = ?)`,
-        [id],
-      );
-      await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [id]);
+      await this.dropEntryLegs(id);
+      // 태그 연결도 함께 간다. 남기면 "이 태그가 붙은 거래 수"(`tagUsageCounts`)가 지운 거래까지 센다.
+      await this.db.run(`DELETE FROM entry_tag WHERE entryId = ?`, [id]);
       /*
        * 걸린 환불·페이백의 링크를 비운다. 서버는 원거래와 함께 그것들도 지워 자리표를 따로
        * 보내므로(7-6) 보통은 곧 사라진다. 그 전의 서버가 지운 것(링크만 빈 것)도 받아 둔다.
        */
       await this.db.run(`UPDATE entry SET paybackOfEntryId = NULL WHERE paybackOfEntryId = ?`, [id]);
+    }
+    if (table === 'entry_draft') {
+      await this.db.run(`DELETE FROM entry_draft_tag WHERE draftId = ?`, [id]);
     }
     if (table === 'budget') {
       // 부모가 사라지면 그 달 조정도 함께 사라진다 (서버도 cascade 로 지운다).
@@ -3638,7 +3681,42 @@ export class LocalStore {
        * 엉뚱한 태그가 붙은 것처럼 보인다.
        */
       await this.db.run(`DELETE FROM entry_tag WHERE tagId = ?`, [id]);
+      await this.db.run(`DELETE FROM entry_draft_tag WHERE tagId = ?`, [id]);
+      await this.dropTagFromRules(id);
     }
+  }
+
+  /**
+   * 반복 규칙의 태그 목록(JSON 글자)에서 그 태그를 뺀다. 서버는 연결 표가 cascade 로 지운다.
+   * 남기면 다음 받기까지 규칙이 없는 태그를 들고, 그 규칙으로 만든 후보에 빈 태그가 붙는다.
+   */
+  private async dropTagFromRules(tagId: string): Promise<void> {
+    const rules = await this.db.all<Row>(`SELECT id, tagIds FROM recurring_rule WHERE tagIds LIKE ?`, [
+      `%${tagId}%`,
+    ]);
+    for (const rule of rules) {
+      let tagIds: unknown;
+      try {
+        tagIds = JSON.parse(String(rule.tagIds));
+      } catch {
+        continue;
+      }
+      if (!Array.isArray(tagIds)) continue;
+      await this.db.run(`UPDATE recurring_rule SET tagIds = ? WHERE id = ?`, [
+        JSON.stringify(tagIds.filter((id) => id !== tagId)),
+        String(rule.id),
+      ]);
+    }
+  }
+
+  /** 전표의 다리와 거기 딸린 할부 계획을 지운다. 전표를 지울 때와 다리를 갈아 끼울 때 쓴다. */
+  private async dropEntryLegs(entryId: string): Promise<void> {
+    await this.db.run(
+      `DELETE FROM installment_plan
+        WHERE postingId IN (SELECT id FROM posting WHERE entryId = ?)`,
+      [entryId],
+    );
+    await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [entryId]);
   }
 
   /**
@@ -3655,6 +3733,7 @@ export class LocalStore {
     await this.db.transaction(async () => {
       await this.db.run(`DELETE FROM entry_tag WHERE tagId = ?`, [tagId]);
       await this.db.run(`DELETE FROM entry_draft_tag WHERE tagId = ?`, [tagId]);
+      await this.dropTagFromRules(tagId);
       await this.db.run(`DELETE FROM tag WHERE id = ?`, [tagId]);
     });
   }
@@ -3685,12 +3764,7 @@ export class LocalStore {
     await this.db.transaction(async () => {
       const paybacks = await this.db.all<Row>(`SELECT id FROM entry WHERE paybackOfEntryId = ?`, [entryId]);
       for (const id of [entryId, ...paybacks.map((row) => String(row.id))]) {
-        await this.db.run(
-          `DELETE FROM installment_plan
-            WHERE postingId IN (SELECT id FROM posting WHERE entryId = ?)`,
-          [id],
-        );
-        await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [id]);
+        await this.dropEntryLegs(id);
         /*
          * 태그 연결도 치운다. 남기면 태그를 지울 때 세는 "이 태그가 붙은 거래 수"
          * (`tagUsageCounts`)에 지운 거래와 함께 지운 환불·페이백까지 들어간다.
@@ -4153,21 +4227,50 @@ export class LocalStore {
       [localId, serverId],
     );
 
+    /*
+     * 같은 달의 조정이 양쪽 예산에 다 있으면 기기 쪽을 남긴다. 그 조정의 명령이 큐에 있어
+     * 서버에도 곧 그 값이 선다. 둘 다 옮기면 그 달 조정이 둘이 된다.
+     */
+    await this.db.run(
+      `DELETE FROM budget_override
+        WHERE budgetId = ?
+          AND EXISTS (SELECT 1 FROM budget_override mine
+                       WHERE mine.budgetId = ? AND mine.year = budget_override.year
+                         AND mine.month = budget_override.month)`,
+      [serverId, localId],
+    );
+
     for (const [table, column] of [
       ['posting', 'categoryId'],
       ['budget', 'categoryId'],
       ['category', 'parentId'],
+      ['entry_draft', 'categoryId'],
+      ['recurring_rule', 'categoryId'],
       ['entry_tag', 'tagId'],
+      ['entry_draft_tag', 'tagId'],
       // 태그 예산도 그 태그를 가리킨다. 빠뜨리면 합쳐진 태그의 예산이 사라진 태그에 남는다.
       ['budget', 'tagId'],
       // 같은 자리의 예산을 두 기기가 각자 만들면 서버는 먼저 선 규칙을 채택한다.
       ['budget_override', 'budgetId'],
     ] as const) {
-      await this.db.run(`UPDATE ${table} SET ${column} = ? WHERE ${column} = ?`, [
+      /*
+       * OR IGNORE: 한 거래에 두 태그가 다 붙어 있으면 옮긴 줄이 이미 있는 줄과 키가 겹친다.
+       * 예전에는 그 오류로 정리 트랜잭션이 통째로 되돌아가 큐가 영영 정리되지 않았다.
+       * 겹쳐서 남은 옛 줄은 아래에서 지운다.
+       */
+      await this.db.run(`UPDATE OR IGNORE ${table} SET ${column} = ? WHERE ${column} = ?`, [
         serverId,
         localId,
       ]);
     }
+    await this.db.run(`DELETE FROM entry_tag WHERE tagId = ?`, [localId]);
+    await this.db.run(`DELETE FROM entry_draft_tag WHERE tagId = ?`, [localId]);
+    // 반복 규칙의 태그는 JSON 배열 글자다. 서버 태그가 이미 있으면 옛 것만 빼고, 없으면 바꾼다.
+    await this.db.run(
+      `UPDATE recurring_rule SET tagIds = replace(tagIds, ?, ?) WHERE tagIds LIKE ? AND tagIds NOT LIKE ?`,
+      [localId, serverId, `%${localId}%`, `%${serverId}%`],
+    );
+    await this.dropTagFromRules(localId);
 
     /*
      * 큐의 짐은 글자로 바꾼다. JSON 을 다시 풀어 쓰는 것보다 안전하다 -- id 는
@@ -4406,7 +4509,7 @@ export class LocalStore {
    */
   async cardForPerformance(cardId: string): Promise<StoredPerformanceCard | null> {
     const rows = await this.db.all<Row>(
-      `SELECT c.id, c.projectId, c.cardType, c.statementClosingDay, c.paymentDueDay,
+      `SELECT c.id, c.projectId, c.name, c.cardType, c.statementClosingDay, c.paymentDueDay,
               c.performanceAmount, c.liabilityAccountId,
               pay.currency AS paymentCurrency,
               liability.currency AS liabilityCurrency
@@ -4422,6 +4525,7 @@ export class LocalStore {
     return {
       id: String(row.id),
       projectId: String(row.projectId),
+      name: String(row.name),
       cardType: String(row.cardType),
       statementClosingDay:
         row.statementClosingDay == null ? null : asInt(row.statementClosingDay),
@@ -4994,6 +5098,16 @@ function cardFilter(cardId?: string): { sql: string; params: string[] } {
     sql: ' AND EXISTS (SELECT 1 FROM posting cp WHERE cp.entryId = e.id AND cp.cardId = ?)',
     params: [cardId],
   };
+}
+
+/**
+ * 목록을 좁히는 분류·카드 조건을 함께. 전체 목록(`viewEntries`)과 쪽 목록(`viewEntriesPage`)이
+ * 같은 조건을 걸어야 한다 -- 예전에는 앞의 것이 카드를, 뒤의 것이 분류를 말없이 버렸다.
+ */
+function narrowFilter(scope: MirrorEntryScope): { sql: string; params: string[] } {
+  const category = categoryLegFilter(scope.category, scope.categoryType);
+  const card = cardFilter(scope.cardId);
+  return { sql: category.sql + card.sql, params: [...category.params, ...card.params] };
 }
 
 /**

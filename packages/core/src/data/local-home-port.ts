@@ -81,12 +81,15 @@ import {
   SUPPORTED_CURRENCIES,
   type CurrencyCode,
   type ExchangeRateInfo,
+  INSTALLMENT_LOOKBACK_MONTHS,
+  PROFIT_ACCOUNT_TYPES,
 } from '@money/types';
 
 import type { ReportPeriod } from '../lib/api-client';
 import type { HomeDataPort } from './home-port';
 import type {
   LocalStore,
+  MirrorEntryScope,
   StoredCardLedgerPosting,
   StoredPerformanceCard,
 } from './local-store';
@@ -111,7 +114,14 @@ export function createLocalHomePort(
     const display = project?.displayCurrency ?? ledger;
 
     if (ledger === display) {
-      return { display, ledger, toString: (value: Dec) => value.toString(), rate: Dec.of(1) };
+      const one = Dec.of(1);
+      return {
+        display,
+        ledger,
+        toString: (value: Dec) => value.toString(),
+        rate: one,
+        view: { convert: (value: Dec) => value, rate: one },
+      };
     }
 
     /*
@@ -128,6 +138,11 @@ export function createLocalHomePort(
       ledger,
       rate,
       toString: (value: Dec) => value.times(rate).round(decimals).toString(),
+      /*
+       * 목록 한 줄을 펴는 환산기(`toListItem`). 서버처럼 표시 통화 자릿수로 반올림한다 (2026-10-16) -- 곱하기만
+       * 하던 다섯 자리가 소수 끝자리를 남겨 수단별 합계가 서버와 1원씩 갈렸다.
+       */
+      view: { convert: (value: Dec) => value.times(rate).round(decimals), rate },
     };
   };
 
@@ -245,7 +260,8 @@ export function createLocalHomePort(
       const keys = periodKeys(period);
       return {
         startDate: keys.fromDateKey,
-        endDate: keys.toDateKey,
+        // 달 이름으로 고른 구간의 끝 키는 "-31" 이다(고르기에는 맞다). 내보낼 때는 서버처럼 실제 말일로.
+        endDate: period.yearMonth ? periodDayRange(period.yearMonth).endKey : keys.toDateKey,
         // 한 달을 본 경우에만 채운다. 서버의 periodLabel 과 같은 규칙이다.
         ...(period.yearMonth ? { yearMonth: period.yearMonth } : {}),
         income: show.toString(totals.income),
@@ -265,7 +281,7 @@ export function createLocalHomePort(
          * 쓴다"는 약속이라, 24개월 할부를 산 달에 전액으로 세면 그 달 하나가 통째로
          * 터지고 남은 달에는 실제로 나가는 돈이 진행률에 잡히지 않는다.
          */
-        monthPostings(id, { yearMonth }, { ...filter, basis: 'installment' }),
+        monthPostings(id, { yearMonth }, { ...ownerFilterOf(filter), basis: 'installment' }),
         store.categories(id),
         store.budgets(id, year, month),
         converter(id),
@@ -442,7 +458,7 @@ export function createLocalHomePort(
       note('accountProfit');
 
       const accountIds = (await store.accounts(id))
-        .filter((account) => PROFIT_ACCOUNT_TYPES.includes(account.type))
+        .filter((account) => PROFIT_ACCOUNT_TYPES.includes(account.type as AccountType))
         .map((account) => account.id);
       if (accountIds.length === 0) return [];
 
@@ -641,7 +657,7 @@ export function createLocalHomePort(
       const yearMonth = `${year}-${String(month).padStart(2, '0')}`;
       const [rows, tags, budgets, show] = await Promise.all([
         // 분류 예산과 같이 회차 기준으로 센다.
-        monthPostings(id, { yearMonth }, { ...filter, basis: 'installment' }),
+        monthPostings(id, { yearMonth }, { ...ownerFilterOf(filter), basis: 'installment' }),
         store.tagRows(id),
         store.budgets(id, year, month),
         converter(id),
@@ -886,15 +902,16 @@ export function createLocalHomePort(
       /*
        * 실적 기준액을 표시 통화로 옮긴다.
        *
-       * 카드에 저장된 값은 결제 통장의 통화다. 통장 통화는 카드마다 다를 수 있어
-       * 통화별로 환율을 한 번씩 고른다. 사본에 그 환율이 없으면 기준액을 내지 않는다.
-       * 1로 눙치면 달러 카드의 기준액이 원화 사용액과 나란히 놓여 달성률이 뒤집힌다.
+       * 카드에 저장된 값은 결제 통장의 통화다. 통장 통화는 카드마다 다를 수 있어 통화별로 환율을 한 번씩 고른다.
+       * 서버와 같은 순서(직접 정한 값 → 역수 → 고정값, `rateInfoOf`)로 찾는다 (2026-10-16) -- 직접 정한 값만 보던
+       * 때에는 그것이 없으면 오프라인에서 달성률 막대가 사라졌다. 셋 다 없을 때만 기준액을 내지 않는다.
        */
       const rates = new Map<string, string | null>();
       for (const currency of new Set(cards.map((card) => card.paymentCurrency))) {
         rates.set(
           currency,
-          currency === show.display ? '1' : await store.latestRate(id, currency, show.display),
+          (await rateInfoOf(store, id, currency as CurrencyCode, show.display as CurrencyCode))?.rate ??
+            null,
         );
       }
 
@@ -908,7 +925,7 @@ export function createLocalHomePort(
       const items = entries.map((entry) =>
         toListItem(
           entry,
-          { convert: (value) => value.times(show.rate), rate: show.rate },
+          show.view,
           matchLine,
         ),
       );
@@ -984,13 +1001,8 @@ export function createLocalHomePort(
        * 서버가 그 경우 오류를 주는 쪽이 맞으므로 그대로 넘긴다.
        */
       const isCredit = card?.cardType === 'credit';
-      const usable =
-        card &&
-        (!isCredit ||
-          (card.statementClosingDay !== null &&
-            card.paymentDueDay !== null &&
-            card.liabilityAccountId !== null));
-      if (!card || !usable) return fallback.getCardPerformance(cardId);
+      // 주기를 자를 수 없는 신용카드는 서버에 맡긴다 (`ledgerReady`).
+      if (!card || !ledgerReady(card)) return fallback.getCardPerformance(cardId);
 
       note('cardPerformance');
       const timeZone = await timeZoneOf(store, card.projectId);
@@ -1056,13 +1068,8 @@ export function createLocalHomePort(
     async getCardUsage(cardId, months) {
       const card = await store.cardForPerformance(cardId);
       const isCredit = card?.cardType === 'credit';
-      const usable =
-        card &&
-        (!isCredit ||
-          (card.statementClosingDay !== null &&
-            card.paymentDueDay !== null &&
-            card.liabilityAccountId !== null));
-      if (!card || !usable) return fallback.getCardUsage(cardId, months);
+      // 주기를 자를 수 없는 신용카드는 서버에 맡긴다 (`ledgerReady`).
+      if (!card || !ledgerReady(card)) return fallback.getCardUsage(cardId, months);
 
       note('cardUsage');
       const timeZone = await timeZoneOf(store, card.projectId);
@@ -1191,7 +1198,7 @@ export function createLocalHomePort(
 
         for (const share of shares) {
           push(byPeriod, share.closingKey, {
-            ...ledgerRowOf(posting, card.id, share.amount),
+            ...ledgerRowOf(posting, card, share.amount),
             installmentMonths: share.months,
           });
         }
@@ -1237,7 +1244,7 @@ export function createLocalHomePort(
          */
         for (const share of billedShares(posting, card.statementClosingDay!, timeZone)) {
           push(byPeriod, share.closingKey, {
-            ...ledgerRowOf(posting, card.id, share.amount),
+            ...ledgerRowOf(posting, card, share.amount),
             // 한 다리가 여러 주기에 나뉘어 들어가, 회차 번호까지 붙여야 줄마다 다르다.
             key: share.months > 1 ? `${posting.postingId}:${share.index}` : posting.postingId,
             installmentIndex: share.index,
@@ -1267,8 +1274,7 @@ export function createLocalHomePort(
       const id = requireProject(projectId);
       note('entries');
 
-      const project = await store.projectRow(id);
-      const timeZone = project?.timeZone ?? 'Asia/Seoul';
+      const timeZone = await timeZoneOf(store, id);
       const show = await converter(id);
 
       const search = parseEntrySearch(query);
@@ -1283,19 +1289,7 @@ export function createLocalHomePort(
         dateBasis: query.dateBasis === 'analysis' ? 'analysis' : 'own',
         // 원거래 상세의 "받은 페이백" (서버 목록의 `paybackOf`).
         paybackOf: query.paybackOf,
-        // 분석 창이 싣는 분류 하나·유형 조건. 서버 목록과 같은 규칙이다 (categoryLegFilter).
-        ...(query.categoryId
-          ? {
-              category: {
-                id: query.categoryId,
-                exact:
-                  query.categoryExact === true || (query.categoryExact as unknown) === 'true',
-              },
-            }
-          : {}),
-        ...(query.categoryType === 'income' || query.categoryType === 'expense'
-          ? { categoryType: query.categoryType }
-          : {}),
+        ...listNarrowOf(query),
       });
 
       // 서버와 같은 판정기로 걸린 줄만 남긴다. 규칙이 두 벌이면 목록이 갈린다.
@@ -1303,7 +1297,7 @@ export function createLocalHomePort(
       return entries.map((entry) =>
         toListItem(
           entry,
-          { convert: (value) => value.times(show.rate), rate: show.rate },
+          show.view,
           matchLine,
         ),
       );
@@ -1320,8 +1314,7 @@ export function createLocalHomePort(
       const id = requireProject(projectId);
       note('entries');
 
-      const project = await store.projectRow(id);
-      const timeZone = project?.timeZone ?? 'Asia/Seoul';
+      const timeZone = await timeZoneOf(store, id);
 
       /*
        * 구간은 목록 질의와 **같은 방식으로** 읽는다. 달 이름이든 인스턴트 두 개든 된다.
@@ -1353,18 +1346,23 @@ export function createLocalHomePort(
 
       // 할부만 본다. 사용자가 고른 모양이 있어도 이 조회에서는 할부가 대상이다.
       const search = parseEntrySearch({ ...query, features: 'installment' });
+      /*
+       * 목록과 같은 좁히기(분류·유형·카드)를 건다 (2026-10-16). 빠뜨려 회차 기준의 분류 상세가 오프라인에서
+       * 모든 분류의 지난 할부 회차를 일별 누적과 비교선에 더했다. 서버는 같은 질의를 그대로 목록에 넘긴다.
+       */
       const entries = await store.viewEntries(id, {
         fromDateKey: fromKey,
         toDateKey: toKey,
         ownerIds: ownerIdsOf(query),
         search,
+        ...listNarrowOf(query),
       });
 
       const matchLine = lineMatcherOf(search);
       const items = entries.map((entry) =>
         toListItem(
           entry,
-          { convert: (value) => value.times(show.rate), rate: show.rate },
+          show.view,
           matchLine,
         ),
       );
@@ -1405,7 +1403,7 @@ export function createLocalHomePort(
 
       // 환산율은 가계부마다 다르다. 전표에는 그 값이 없어 부르는 쪽이 준 것을 쓴다.
       const show = await converter(requireProject(projectId));
-      return toListItem(entry, { convert: (value) => value.times(show.rate), rate: show.rate });
+      return toListItem(entry, show.view);
     },
 
     /**
@@ -1418,8 +1416,7 @@ export function createLocalHomePort(
       const id = requireProject(projectId);
       note('entriesPage');
 
-      const project = await store.projectRow(id);
-      const timeZone = project?.timeZone ?? 'Asia/Seoul';
+      const timeZone = await timeZoneOf(store, id);
       const show = await converter(id);
       const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 200);
 
@@ -1430,8 +1427,7 @@ export function createLocalHomePort(
         yearMonth: query.yearMonth,
         ownerIds: ownerIdsOf(query),
         search,
-        // 카드 상세의 결제 내역이 이 조건으로 그 카드의 거래만 받는다.
-        cardId: query.cardId,
+        ...listNarrowOf(query),
         dateBasis: query.dateBasis === 'analysis' ? 'analysis' : 'own',
         paybackOf: query.paybackOf,
         limit,
@@ -1442,7 +1438,7 @@ export function createLocalHomePort(
       const rows = page.entries.map((entry) =>
         toListItem(
           entry,
-          { convert: (value) => value.times(show.rate), rate: show.rate },
+          show.view,
           matchLine,
         ),
       );
@@ -1492,7 +1488,7 @@ function push(byPeriod: Map<string, CardDto.PeriodLedgerRow[]>, key: string, row
 /** 주기 원장 한 줄의 바탕. 누적과 주기 시작은 쪽을 만들 때 붙인다. */
 function ledgerRowOf(
   posting: StoredCardLedgerPosting,
-  cardId: string,
+  card: { id: string; name: string },
   amount: string,
 ): CardDto.PeriodLedgerRow {
   return {
@@ -1505,8 +1501,9 @@ function ledgerRowOf(
     amount: Dec.of(amount).negated().toString(),
     runningTotal: '0',
     periodStart: '',
-    cardId,
-    cardName: null,
+    cardId: card.id,
+    // 서버 카드 원장처럼 이름을 싣는다.
+    cardName: card.name,
     categoryName: posting.categoryName,
     parentCategoryName: posting.parentCategoryName,
     installmentMonths: 1,
@@ -1601,13 +1598,31 @@ function periodLedgerPage(input: {
   }
 
   /*
-   * 커서는 "주기|줄키" 다(서버와 같다). 그 줄 다음부터 limit 만큼 준다.
-   * 사라진 줄을 가리키면 빈 쪽을 준다 -- 처음부터 주면 같은 줄이 두 번 선다.
+   * 커서는 "주기|줄키|날짜" 다(서버와 같다, 2026-10-16). 그 줄 다음부터 limit 만큼 준다.
+   * 사라진 줄을 가리키면 그 날짜보다 오래된 줄부터 잇는다 -- 처음부터 주면 같은 줄이 두 번 서고, 빈 쪽을 주면
+   * 남은 줄을 볼 수 없었다. 날짜가 없는 옛 커서는 빈 쪽이다.
    */
-  const cursorKey = params?.cursor?.split('|').slice(1).join('|');
-  const from = cursorKey ? rows.findIndex((row) => row.key === cursorKey) + 1 : 0;
-  if (params?.cursor && from === 0) {
-    return { ...head, periods: [], rows: [], nextCursor: null };
+  const [cursorMonth = '', ...cursorParts] = params?.cursor ? params.cursor.split('|') : [];
+  const cursorDate =
+    cursorParts.length >= 2 && /^\d{4}-\d{2}-\d{2}T/.test(cursorParts[cursorParts.length - 1])
+      ? cursorParts[cursorParts.length - 1]
+      : null;
+  const cursorKey = (cursorDate ? cursorParts.slice(0, -1) : cursorParts).join('|');
+  let from = cursorKey ? rows.findIndex((row) => row.key === cursorKey) + 1 : 0;
+  if (params?.cursor && !cursorKey) {
+    /*
+     * 줄키가 빈 "주기|" 는 서버가 "그 주기부터 더 오래된 줄이 있다" 고 준 자리다. 온라인으로 받은
+     * 첫 쪽을 오프라인에서 이어 받을 때 온다. 그 주기와 그보다 오래된 주기의 첫 줄부터 잇는다.
+     */
+    const at = rows.findIndex((row) => (closingOf.get(row.periodStart) ?? '') <= cursorMonth);
+    if (!/^\d{4}-\d{2}$/.test(cursorMonth) || at < 0) {
+      return { ...head, periods: [], rows: [], nextCursor: null };
+    }
+    from = at;
+  } else if (params?.cursor && from === 0) {
+    const after = cursorDate ? rows.findIndex((row) => row.date < cursorDate) : -1;
+    if (after < 0) return { ...head, periods: [], rows: [], nextCursor: null };
+    from = after;
   }
 
   const page = rows.slice(from, from + limit);
@@ -1620,7 +1635,7 @@ function periodLedgerPage(input: {
     rows: page,
     nextCursor:
       from + limit < rows.length && last
-        ? `${closingOf.get(last.periodStart) ?? ''}|${last.key}`
+        ? `${closingOf.get(last.periodStart) ?? ''}|${last.key}|${last.date}`
         : null,
   };
 }
@@ -1630,12 +1645,6 @@ function requireProject(projectId?: string | null): string {
     throw new Error('사본을 읽으려면 프로젝트를 골라야 합니다.');
   }
   return projectId;
-}
-
-/** 창구가 받는 구간은 한 달이거나 임의 구간이다. 홈은 한 달만 본다. */
-function monthOf(period: ReportPeriod): string {
-  if (period.yearMonth) return period.yearMonth;
-  return String(period.startDate).slice(0, 7);
 }
 
 /**
@@ -1655,18 +1664,6 @@ function periodKeys(period: ReportPeriod): { fromDateKey: string; toDateKey: str
   }
   return { fromDateKey: String(period.startDate), toDateKey: String(period.endDate) };
 }
-
-/**
- * 수익을 따로 세는 계좌. 서버 `reports.service` 의 PROFIT_TYPES 와 같다 -- 원금은 이체로 넣고
- * 불어난 몫은 수입으로 붙는 계좌들이다 (투자는 배당·매매 차익, 예적금·연금은 이자·운용 수익).
- */
-const PROFIT_ACCOUNT_TYPES: readonly string[] = [
-  'investment',
-  'crypto',
-  'savings',
-  'time_deposit',
-  'pension',
-];
 
 /**
  * 통화쌍 하나의 환율. 서버 `ExchangeRatesService.getRate` 와 같은 차례다.
@@ -1716,14 +1713,14 @@ async function ratesFor(
     if (result[currency]) continue;
 
     /*
-     * 사본의 환율 행이 먼저다. 없으면 고정값 표를 쓴다 (서버와 같은 표, @money/types).
+     * 서버와 같은 순서(직접 정한 값 → 역수 → 고정값, `rateInfoOf`)로 찾는다 (2026-10-16 -- 역수를 빠뜨려 반대
+     * 방향만 정해 둔 가계부의 총자산이 서버와 갈렸다).
      *
      * 1 로 눙치면 외화 계좌가 원화와 1:1 로 세어진다. 100달러가 100원이 되어 총자산이
-     * 조용히 어긋나는 자리다 -- 기기에서 실제로 그랬다.
+     * 조용히 어긋나는 자리다 -- 기기에서 실제로 그랬다. 셋 다 없을 때만 1 이다.
      */
     result[currency] =
-      (await store.latestRate(projectId, currency, display)) ??
-      fallbackRate(currency, display) ??
+      (await rateInfoOf(store, projectId, currency as CurrencyCode, display as CurrencyCode))?.rate ??
       '1';
   }
   return result;
@@ -1736,6 +1733,19 @@ async function ratesFor(
  *   값이 있음  = 그 사람들만
  *   빈 문자열  = 아무것도 고르지 않음 -> 결과 없음 (빈 배열)
  */
+/**
+ * 예산 사용액이 보는 조건. 서버 `monthUsageScope` 처럼 사람(자산주)만 본다 -- 거래 화면의 검색어나
+ * 기간이 함께 넘어와도 예산 사용액은 그 달 전체여야 한다.
+ */
+function ownerFilterOf(
+  filter?: EntryFilterQuery & { personId?: string },
+): Pick<EntryFilterQuery, 'personIds'> & { personId?: string } {
+  return {
+    ...(filter?.personId ? { personId: filter.personId } : {}),
+    ...(filter?.personIds !== undefined ? { personIds: filter.personIds } : {}),
+  };
+}
+
 function ownerIdsOf(filter?: EntryFilterQuery & { personId?: string }): string[] | undefined {
   if (filter?.personId) return [filter.personId];
   if (filter?.personIds === undefined) return undefined;
@@ -1745,8 +1755,6 @@ function ownerIdsOf(filter?: EntryFilterQuery & { personId?: string }): string[]
     .map((value) => value.trim())
     .filter(Boolean);
 }
-
-
 
 /**
  * 인스턴트를 프로젝트 타임존의 달력 키로. 값이 없으면 열린 끝으로 둔다.
@@ -1791,13 +1799,6 @@ function fromBase64Url(text: string): string {
   return atob(padded + '='.repeat((4 - (padded.length % 4)) % 4));
 }
 
-/**
- * 회차 기준에서 할부를 앞으로 몇 달까지 거슬러 볼지. 서버와 같은 값이다.
- *
- * 쓰이는 개월수는 길어야 서른여섯이라 넉넉하고, 조건을 지우면 사본을 통째로 읽게 된다.
- */
-const INSTALLMENT_LOOKBACK_MONTHS = 60;
-
 /** 달력 키를 달 단위로 옮긴다. 며칟날은 그대로 두고 달만 센다. */
 function shiftDateKeyMonths(dateKey: string, delta: number): string {
   const [year, month, day] = dateKey.split('-').map(Number);
@@ -1832,5 +1833,32 @@ function periodWindow(
     from: zonedDateStringToUtc(keys.fromDateKey, timeZone),
     // 끝날을 포함하려면 다음 날 0시까지다. 달 넘김은 날짜 계산이 맡는다.
     to: zonedDayStart(year, month, day + 1, timeZone),
+  };
+}
+
+/**
+ * 목록 질의의 좁히기 -- 분류 하나(·정확히), 분류 유형, 카드. 서버 목록과 같은 규칙이다 (`categoryLegFilter`).
+ *
+ * 목록·쪽 목록·지난 할부 회차가 함께 쓴다. 따로 적던 때에는 지난 할부 회차만 이 조건을 빠뜨렸다 (2026-10-16).
+ */
+function listNarrowOf(query: {
+  categoryId?: string;
+  categoryExact?: boolean | string;
+  categoryType?: string;
+  cardId?: string;
+}): Pick<MirrorEntryScope, 'category' | 'categoryType' | 'cardId'> {
+  return {
+    ...(query.categoryId
+      ? {
+          category: {
+            id: query.categoryId,
+            exact: query.categoryExact === true || query.categoryExact === 'true',
+          },
+        }
+      : {}),
+    ...(query.categoryType === 'income' || query.categoryType === 'expense'
+      ? { categoryType: query.categoryType }
+      : {}),
+    ...(query.cardId ? { cardId: query.cardId } : {}),
   };
 }

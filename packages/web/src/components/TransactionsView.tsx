@@ -518,6 +518,13 @@ export default function TransactionsView({
    * 계좌를 하나 만들면 그 목록은 옛것으로 남는다. 새로 받은 목록을 여기 덮어 둔다.
    */
   const [refPatch, setRefPatch] = useState<ReferenceDataPatch>({});
+  /*
+   * 가계부를 바꾸면 덮어 둔 목록을 버린다 (2026-10-16). 이 화면은 가계부를 바꿔도 다시 서지 않아, 앞 가계부에서
+   * 팝업으로 받은 계좌·카드·분류가 새 가계부의 편집기에 그대로 남았다. 그때는 훅이 새로 받은 목록을 쓴다.
+   */
+  useEffect(() => {
+    setRefPatch({});
+  }, [selectedProjectId]);
 
   /**
    * 펼친 자리의 거래 목록.

@@ -241,12 +241,19 @@ export default function InboxScreen() {
   const pickCapture = async () => {
     if (!projectId) return;
 
-    const picked = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'],
-      // 자르기를 켜지 않는다. 목록 캡처는 위아래가 잘리면 그만큼 거래를 잃는다.
-      allowsEditing: false,
-      quality: 1,
-    });
+    let picked: ImagePicker.ImagePickerResult;
+    try {
+      picked = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ['images'],
+        // 자르기를 켜지 않는다. 목록 캡처는 위아래가 잘리면 그만큼 거래를 잃는다.
+        allowsEditing: false,
+        quality: 1,
+      });
+    } catch {
+      // 사진 고르기를 열지 못했다 (2026-10-16 -- 그대로 던져 아무 반응이 없었다).
+      setNotice(t('inbox.actionFailed'));
+      return;
+    }
     if (picked.canceled || !picked.assets[0]) return;
 
     try {

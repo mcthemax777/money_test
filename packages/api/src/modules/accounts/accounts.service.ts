@@ -21,6 +21,7 @@ import { toMoney, toOptionalMoney } from '@/common/money';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { badRequest } from '@/common/app-error';
 import { withBalancesAsOf } from '@/common/balance-as-of';
+import { readLimit } from '@/common/text';
 
 /*
  * 사용자가 "통장"으로 인식하지 않는 내부 계정.
@@ -358,7 +359,7 @@ export class AccountsService {
     options: AccountDto.LedgerQuery = {},
   ) {
     await this.getAccountById(id, userId);
-    const limit = Math.min(Number(options.limit) || 50, 200);
+    const limit = readLimit(options.limit, 50, 200);
 
     /*
      * 구간을 고른 조회. 카드 상세에서 청구 주기 하나를 눌렀을 때 온다.
@@ -552,8 +553,12 @@ export class AccountsService {
 
       const fresh = await tx.account.findUniqueOrThrow({ where: { id } });
 
+      /*
+       * 이 통장을 결제 통장으로 쓰거나, **카드의 부채 계정 자체**인 살아 있는 카드가 있으면 숨기지 않는다
+       * (2026-10-16). 부채 계정을 숨기면 총자산·잔액 추이에서 빠지는데 카드는 계속 그 계정에 쌓였다.
+       */
       const cardCount = await tx.card.count({
-        where: { paymentAccountId: id, isActive: true },
+        where: { isActive: true, OR: [{ paymentAccountId: id }, { liabilityAccountId: id }] },
       });
       if (cardCount > 0) {
         throw badRequest('ACCOUNT_HAS_CARDS', '이 통장에 연결된 카드가 있어서 숨길 수 없습니다.');

@@ -18,8 +18,8 @@ export function assertReorderIds(ids: string[], allowedIds: Set<string>): void {
     throw new BadRequestException('같은 항목이 두 번 들어 있습니다.');
   }
 
-  const unknown = ids.find((id) => !allowedIds.has(id));
-  if (unknown) {
+  // `find` 의 결과로 가리지 않는다. 빈 문자열 id 는 찾아져도 거짓이라 그대로 지나가 저장에서 500 이 났다 (2026-10-16).
+  if (ids.some((id) => typeof id !== 'string' || !allowedIds.has(id))) {
     throw new BadRequestException('이 프로젝트의 항목이 아닙니다.');
   }
 }

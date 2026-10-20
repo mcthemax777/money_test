@@ -68,9 +68,15 @@ export async function saveProfile(patch: ProfilePatch): Promise<'saved' | 'queue
   }
 }
 
-/** 끊긴 동안 바꾼 칸. 로그인 때 서버 값이 이 칸들을 덮지 않게 한다. */
-export function pendingProfileFields(): ProfilePatch {
-  return usePendingProfile.getState().pending;
+/**
+ * 끊긴 동안 바꾼 칸. 로그인 때 서버 값이 이 칸들을 덮지 않게 한다.
+ *
+ * **그 사람의 것일 때만** 돌려준다 (2026-10-16). 앞 사람이 끊긴 채 바꾼 이름·언어가 다음 사람의 로그인
+ * 화면에 그대로 씌워졌다. 보내기(`flushPendingProfile`)는 주인을 보지만 보여 주기는 보지 않았다.
+ */
+export function pendingProfileFields(forUserId: string | null | undefined): ProfilePatch {
+  const { pending, userId } = usePendingProfile.getState();
+  return forUserId && userId === forUserId ? pending : {};
 }
 
 let flushing = false;

@@ -855,7 +855,7 @@ export class CardLedgerService {
       // 커서가 가리키는 주기에서는 그 줄 다음부터다. 더 오래된 주기는 통째로 잇는다.
       const rest =
         input.cursor && input.cursor.key && key === closingMonthKey(input.cursor.closing)
-          ? built.rows.slice(built.rows.findIndex((row) => row.key === input.cursor!.key) + 1)
+          ? rowsAfterCursor(built.rows, input.cursor)
           : built.rows;
 
       if (rest.length > 0) {
@@ -884,7 +884,7 @@ export class CardLedgerService {
      */
     const last = rows[rows.length - 1];
     if (leftover && last) {
-      return { periods, rows, nextCursor: `${closingMonthKey(scanned)}|${last.key}` };
+      return { periods, rows, nextCursor: `${closingMonthKey(scanned)}|${last.key}|${last.date}` };
     }
 
     // 한 주기만 보기로 했으면 더 오래된 줄을 묻지 않는다.
@@ -1178,6 +1178,21 @@ interface LedgerCursor {
   closing: ClosingMonth;
   /** 비어 있으면 그 주기의 첫 줄부터다 (거래가 없는 달을 건너뛴 자리). */
   key: string;
+  /** 그 줄의 날짜 (ISO). 그 줄이 그 사이 사라졌을 때 이어 볼 자리를 정한다. 옛 커서에는 없다. */
+  date?: string;
+}
+
+/**
+ * 커서 다음 줄들. 줄은 최신이 앞이다 (`fillPeriod`).
+ *
+ * 커서가 가리킨 줄이 그 사이 지워졌으면(2026-10-16) 그 줄의 날짜보다 오래된 줄부터 잇는다. 예전에는 찾지 못하면
+ * 처음부터 다시 돌려줘 이미 본 줄이 또 실렸다. 날짜가 없는 옛 커서는 지금처럼 처음부터다.
+ */
+function rowsAfterCursor<R extends { key: string; date: string }>(rows: R[], cursor: LedgerCursor): R[] {
+  const at = rows.findIndex((row) => row.key === cursor.key);
+  if (at >= 0) return rows.slice(at + 1);
+  if (cursor.date) return rows.filter((row) => row.date < cursor.date!);
+  return rows;
 }
 
 /** 'YYYY-MM' 을 마감 연월로. 모양이 아니면 null (전체를 본다). */
@@ -1198,9 +1213,13 @@ function parseLedgerCursor(raw?: string): LedgerCursor | null {
   const matched = /^(\d{4})-(\d{2})$/.exec(month ?? '');
   if (!matched) return null;
 
+  // 끝 칸이 날짜면 새 모양('YYYY-MM|줄키|날짜')이다. 줄 키에는 '|' 가 들지 않는다.
+  const last = rest[rest.length - 1] ?? '';
+  const hasDate = rest.length >= 2 && !Number.isNaN(Date.parse(last)) && /^\d{4}-\d{2}-\d{2}T/.test(last);
   return {
     closing: { year: Number(matched[1]), month: Number(matched[2]) },
-    key: rest.join('|'),
+    key: (hasDate ? rest.slice(0, -1) : rest).join('|'),
+    ...(hasDate ? { date: last } : {}),
   };
 }
 

@@ -7,6 +7,7 @@
  *
  * 값은 웹과 같은 "YYYY-MM" 이다. 저장은 그 달의 말일로 바뀐다 (core 의 monthInputToIso).
  */
+import { useEffect, useState } from 'react';
 import { View } from 'react-native';
 
 import { formatMonthShort, formatYearOnly } from '@money/core/lib/datetime';
@@ -38,14 +39,24 @@ export default function ExpiryMonthSelect({
 }) {
   const { t } = useTranslation();
 
-  const match = /^(\d{4})-(\d{2})$/.exec(value);
-  const year = match ? Number(match[1]) : null;
-  const month = match ? Number(match[2]) : null;
+  /*
+   * 고른 연·월은 이 칸이 든다 (2026-10-16). 한쪽만 고른 상태는 바깥 값("YYYY-MM")으로 나타낼 수 없는데, 예전에는
+   * 그때 바깥을 비우고 바깥 값에서 다시 읽어, 방금 고른 쪽까지 사라졌다 -- 만료월이 없는 카드에는 끝내 넣을 수
+   * 없었다. 둘이 다 찼을 때만 바깥에 알리고, 바깥 값이 바뀌면(다른 카드를 열면) 그것으로 다시 채운다.
+   */
+  const [picked, setPicked] = useState(() => partsOf(value));
+  useEffect(() => {
+    setPicked(partsOf(value));
+  }, [value]);
+  const { year, month } = picked;
 
-  /* 한쪽만 고른 상태는 값으로 두지 않는다. 둘이 다 차야 "YYYY-MM" 이 된다. */
   const pick = (nextYear: number | null, nextMonth: number | null) => {
+    setPicked({ year: nextYear, month: nextMonth });
     if (nextYear === null || nextMonth === null) {
-      onChange('');
+      // 한쪽을 "없음"으로 돌리면 만료월을 지운 것이다. 아직 덜 고른 상태는 바깥 값을 그대로 둔다.
+      if (value && (nextYear === null) !== (nextMonth === null) && (year !== null && month !== null)) {
+        onChange('');
+      }
       return;
     }
     onChange(`${nextYear}-${String(nextMonth).padStart(2, '0')}`);
@@ -85,4 +96,9 @@ export default function ExpiryMonthSelect({
       </View>
     </View>
   );
+}
+
+function partsOf(value: string): { year: number | null; month: number | null } {
+  const match = /^(\d{4})-(\d{2})$/.exec(value);
+  return match ? { year: Number(match[1]), month: Number(match[2]) } : { year: null, month: null };
 }

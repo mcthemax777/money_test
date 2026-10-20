@@ -21,6 +21,7 @@ import { useProjectTimeZone } from '@money/core/store/project';
 
 import CountBadge from '../components/CountBadge';
 import PageHeader from '../components/PageHeader';
+import { useCloseOnBack } from '../shell/navigation';
 
 type Mode = { kind: 'list' } | { kind: 'new' } | { kind: 'thread'; id: string };
 
@@ -197,6 +198,8 @@ function Compose({
   onSend: (body: string) => Promise<boolean>;
 }) {
   const { t } = useTranslation();
+  // 기기의 뒤로가기는 쓰던 글을 닫고 목록으로 (2026-10-16). 걸지 않으면 문의 화면이 통째로 닫혀 쓰던 글이 사라졌다.
+  useCloseOnBack(true, onCancel);
   return (
     <View className="gap-4">
       <PageHeader title={t('inquiries.new')} onBack={onCancel} />
@@ -209,6 +212,8 @@ function Compose({
 
 function Thread({ id, onBack }: { id: string; onBack: () => void }) {
   const { t } = useTranslation();
+  // 기기의 뒤로가기는 이 대화를 닫고 목록으로 (위 Compose 와 같다).
+  useCloseOnBack(true, onBack);
   const timeZone = useProjectTimeZone();
   const isActive = useIsAppActive();
   // 새 답은 옅은 데서 떠오르고 보내기 칸은 그만큼 밀려 내려간다.

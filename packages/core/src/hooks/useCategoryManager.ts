@@ -82,7 +82,11 @@ export function useCategoryManager(projectId: string | null) {
   const latest = useLatestCall();
 
   const reload = useCallback(async (): Promise<CategoryResult> => {
-    if (!projectId) return { ok: true };
+    // 고른 가계부가 없으면 받을 것이 없다. "불러오는 중"을 내려 둔다 -- 남기면 화면이 영영 돌았다 (2026-10-16).
+    if (!projectId) {
+      setIsLoading(false);
+      return { ok: true };
+    }
 
     const isLatest = latest.begin();
     try {
@@ -128,6 +132,12 @@ export function useCategoryManager(projectId: string | null) {
           await settingsWritePort().updateCategory(editingId, { name: values.name });
 
           const existing = categories.filter((category) => category.parentId === editingId);
+          /*
+           * 소분류는 대분류의 **지금** 유형을 따른다 (2026-10-16). 고치기에서는 유형을 바꾸지 않는데(위에서 이름만
+           * 보낸다), 폼에서 고른 유형으로 소분류를 만들면 대분류와 갈려 서버가 거절하고 저장이 반쯤 남았다.
+           */
+          const parentType =
+            categories.find((category) => category.id === editingId)?.type ?? values.type;
 
           for (const sub of existing) {
             if (subs.some((row) => row.id === sub.id) || sub.isDefault) continue;
@@ -137,6 +147,8 @@ export function useCategoryManager(projectId: string | null) {
             } catch (error) {
               // 서버가 붙인 코드로 가른다. 오류 문장을 뒤지면 언어가 바뀔 때 깨진다.
               if (apiErrorCode(error) === 'CATEGORY_IN_USE') {
+                // 이름 바꾸기와 앞선 소분류 지우기는 이미 들어갔다. 다시 받아 화면을 맞춘다.
+                await reload();
                 return {
                   ok: false,
                   message: say('categories.subInUse', { name: sub.name }),
@@ -150,7 +162,7 @@ export function useCategoryManager(projectId: string | null) {
             if (!sub.id) {
               await settingsWritePort().addCategory({
                 name: sub.name,
-                type: values.type,
+                type: parentType,
                 parentId: editingId,
                 projectId: projectId ?? undefined,
               });

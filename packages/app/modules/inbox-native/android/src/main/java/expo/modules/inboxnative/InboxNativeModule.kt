@@ -257,7 +257,22 @@ class InboxNativeModule : Module() {
        * 스택에 얹으면 뒤로가기가 설정 화면을 우리 앱의 한 겹으로 다룬다.
        */
       intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-      context.startActivity(intent)
+      /*
+       * 그 설정 화면이 없는 기기가 있다 (2026-10-16). 그때 startActivity 가 ActivityNotFoundException 을 던져
+       * 앱이 넘어졌다. 이 앱의 정보 화면으로 대신 보낸다 -- 거기서 알림 권한을 찾아 들어갈 수 있다.
+       */
+      try {
+        context.startActivity(intent)
+      } catch (error: android.content.ActivityNotFoundException) {
+        val fallback = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+        fallback.data = android.net.Uri.fromParts("package", context.packageName, null)
+        fallback.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+          context.startActivity(fallback)
+        } catch (_: android.content.ActivityNotFoundException) {
+          // 그마저 없으면 할 수 있는 것이 없다. 화면의 안내가 그대로 남는다.
+        }
+      }
     }
 
     /**

@@ -8,7 +8,7 @@ import {
   DisplayConverter,
   ExchangeRatesService,
 } from '../exchange-rates/exchange-rates.service';
-import { assertYearMonth } from '@/common/year-month';
+import { assertYearMonth, assertYearMonthParts, shiftYearMonth } from '@/common/year-month';
 import { PAYBACK_DATE_SELECT, analysisDateOf, analysisScopes } from '@/common/payback-scope';
 import { stampFieldClocks } from '@/common/field-clock';
 import { lockBudgetWrites } from '@/common/ledger-lock';
@@ -79,10 +79,7 @@ export class BudgetsService {
     db: Pick<Prisma.TransactionClient, 'budget'> = this.prisma,
   ) {
     const { categoryId, tagId, type } = this.ruleTarget(target);
-    const timeZone = await this.projectAccess.getProjectTimeZone(projectId);
-    const targetMonth = target.yearMonth
-      ? assertYearMonth(target.yearMonth, '적용 월')
-      : zonedCurrentYearMonth(timeZone);
+    const targetMonth = await this.targetMonthOf(projectId, target.yearMonth);
 
     const candidates = await db.budget.findMany({
       where: {
@@ -95,6 +92,12 @@ export class BudgetsService {
       },
     });
     return candidates.find((budget) => this.isBudgetApplicable(budget, targetMonth)) ?? null;
+  }
+
+  /** 규칙을 찾고 세울 달. 주지 않으면 그 가계부 시간대의 이번 달이다. */
+  private async targetMonthOf(projectId: string, yearMonth?: string | null): Promise<string> {
+    if (yearMonth) return assertYearMonth(yearMonth, '적용 월');
+    return zonedCurrentYearMonth(await this.projectAccess.getProjectTimeZone(projectId));
   }
 
   /**
@@ -135,25 +138,7 @@ export class BudgetsService {
 
     const { categoryId, tagId, type } = this.ruleTarget(dto);
 
-    // 태그 예산은 분류와 함께 설 수 없다. 둘 다 주면 어느 쪽의 예산인지 정해지지 않는다.
-    if (tagId) {
-      if (categoryId) throw new BadRequestException('분류와 태그를 함께 가리킬 수 없습니다.');
-      const tag = await this.prisma.tag.findUnique({ where: { id: tagId } });
-      if (!tag || tag.projectId !== projectId) {
-        throw new NotFoundException('유효한 태그가 아닙니다.');
-      }
-    }
-
-    // 카테고리 확인
-    if (categoryId) {
-      const category = await this.prisma.category.findUnique({
-        where: { id: categoryId },
-      });
-
-      if (!category || category.projectId !== projectId) {
-        throw new NotFoundException('유효한 카테고리가 아닙니다.');
-      }
-    }
+    await this.assertTargetInProject(projectId, categoryId, tagId);
 
     // 입력은 표시 통화다. 저장은 저장 통화로 한다.
     const { show, store } = await this.currencyView(projectId);
@@ -188,6 +173,32 @@ export class BudgetsService {
         const existingBudget = await this.findRuleFor(projectId, dto, tx);
         if (existingBudget) return updateRule(tx, existingBudget);
 
+        /*
+         * 같은 자리에 다른 기간의 규칙이 있으면 **이 달이 비어 있는 구간만** 채운다 (2026-10-16).
+         *
+         * 예전에는 언제나 기간 없는(처음부터 끝까지) 규칙을 세웠다. "9월부터 없음"으로 끝난 규칙이 있는 자리에
+         * 10월 예산을 정하면 새 규칙이 앞 규칙의 달(~8월)까지 덮어, 그 달들은 두 규칙 중 아무거나 보였다.
+         * 이 달부터 시작해 다음 규칙의 앞 달까지로 둔다. 아무 규칙도 없으면 지금처럼 기간 없이 세운다.
+         */
+        const month = await this.targetMonthOf(projectId, dto.yearMonth);
+        const siblings = await this.findSiblingBudgets(tx, {
+          projectId,
+          categoryId: categoryId ?? undefined,
+          tagId: tagId ?? undefined,
+          type: (type || undefined) as 'income' | 'expense' | undefined,
+        });
+        const nextStart = siblings
+          .map((rule) => rule.effectiveFrom)
+          .filter((from): from is string => !!from && from > month)
+          .sort()[0];
+        const span =
+          siblings.length === 0
+            ? {}
+            : {
+                effectiveFrom: month,
+                ...(nextStart ? { effectiveTo: shiftYearMonth(nextStart, -1) } : {}),
+              };
+
         const budget = await rejectDuplicateId('예산', () =>
           tx.budget.create({
             data: {
@@ -197,6 +208,7 @@ export class BudgetsService {
               tagId: tagId ?? null,
               type: type || undefined,
               monthlyAmount,
+              ...span,
               fieldHlc: stampFieldClocks(null, ['monthlyAmount'], stamp),
             },
           }),
@@ -216,6 +228,31 @@ export class BudgetsService {
       const raced = await this.findRuleFor(projectId, dto);
       if (!raced) throw error;
       return updateRule(this.prisma, raced);
+    }
+  }
+
+  /**
+   * 예산이 가리키는 분류·태그가 이 가계부의 것인가. 만들기와 "그 달부터 정하기"가 함께 쓴다.
+   *
+   * 태그 예산은 분류와 함께 설 수 없다. 둘 다 주면 어느 쪽의 예산인지 정해지지 않는다.
+   */
+  private async assertTargetInProject(
+    projectId: string,
+    categoryId: string | null | undefined,
+    tagId: string | null | undefined,
+  ): Promise<void> {
+    if (tagId) {
+      if (categoryId) throw new BadRequestException('분류와 태그를 함께 가리킬 수 없습니다.');
+      const tag = await this.prisma.tag.findUnique({ where: { id: tagId } });
+      if (!tag || tag.projectId !== projectId) {
+        throw new NotFoundException('유효한 태그가 아닙니다.');
+      }
+    }
+    if (categoryId) {
+      const category = await this.prisma.category.findUnique({ where: { id: categoryId } });
+      if (!category || category.projectId !== projectId) {
+        throw new NotFoundException('유효한 카테고리가 아닙니다.');
+      }
     }
   }
 
@@ -452,6 +489,8 @@ export class BudgetsService {
       amount: string | null;
       ruleId?: string;
     },
+    /** 기기 명령의 시계. 새 규칙의 금액 칸에 찍는다 -- 없으면 서버 시계다. */
+    hlc?: string,
   ): Promise<void> {
     const projectId = await this.projectAccess.resolveAndVerifyProjectId(
       userId,
@@ -467,6 +506,9 @@ export class BudgetsService {
     if (!categoryId && !tagId && !type) {
       throw new BadRequestException('예산 대상을 알 수 없습니다.');
     }
+    // 남의 가계부 분류·태그를 가리키지 못하게 한다 (2026-10-16). 이 길(명령 재생의 budget.setFrom)만
+    // 보지 않아, 그 분류가 지워지면 이 예산이 엉뚱한 전체 예산이 되거나(SetNull) 통째로 사라졌다(Cascade).
+    await this.assertTargetInProject(projectId, categoryId, tagId);
 
     const { store } = await this.currencyView(projectId);
     const monthlyAmount =
@@ -488,6 +530,11 @@ export class BudgetsService {
           type: type ?? null,
           monthlyAmount,
           effectiveFrom: applyFrom,
+          /*
+           * 금액 칸에 시계를 찍는다 (2026-10-16). 비워 두면 그 뒤에 늦게 도착한 더 오래된 "금액 고치기"(budget.set)가
+           * 시계 비교 없이 이겨, 그 달부터 정한 금액을 옛 값으로 덮었다.
+           */
+          fieldHlc: stampFieldClocks(null, ['monthlyAmount'], hlc ?? this.clock.now()),
         },
       });
     });
@@ -941,21 +988,23 @@ export class BudgetsService {
     });
     const { show, store } = await this.currencyView(budget.projectId);
     const amount = store.convert(toMoney(dto.amount, '예산 조정액'));
+    // 달은 1~12, 해는 정수여야 한다 (2026-10-16). 예전에는 13월도 저장됐고 글자 해는 500 이었다.
+    const { year, month } = assertYearMonthParts(dto.year, dto.month, '조정할 달');
 
     const override = await this.prisma.budgetOverride.upsert({
       where: {
         budgetId_year_month: {
           budgetId: dto.budgetId,
-          year: dto.year,
-          month: dto.month,
+          year,
+          month,
         },
       },
       update: { amount, fieldHlc: stampFieldClocks(null, ['amount'], hlc ?? this.clock.now()) },
       create: {
         ...(dto.id ? { id: clientId(dto.id, '예산 조정 식별자') } : {}),
         budgetId: dto.budgetId,
-        year: dto.year,
-        month: dto.month,
+        year,
+        month,
         amount,
         fieldHlc: stampFieldClocks(null, ['amount'], hlc ?? this.clock.now()),
       },

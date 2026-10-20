@@ -106,6 +106,8 @@ export default function Modal({
       */}
       <div
         ref={sheetRef}
+        role="dialog"
+        aria-modal="true"
         className={`dialog-enter w-full max-h-[90vh] overflow-y-auto rounded-t-2xl bg-white shadow-lg md:mx-4 md:rounded-lg ${
           wide ? 'md:max-w-3xl' : 'md:max-w-md'
         }`}

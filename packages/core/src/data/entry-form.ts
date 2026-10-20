@@ -20,6 +20,8 @@ import {
   type PaybackType,
   newLineKey,
   adjustTotals,
+  allocateByWeight,
+  currencyDecimals,
   paybackCountsPerformance,
   zonedFormValueToUtc,
 } from '@money/types';
@@ -197,6 +199,15 @@ export interface EntryFormValues {
   transferFee: string;
   transferFeeCategoryId: string;
   /**
+   * 고치는 이체가 받는 계좌에 실제로 넣은 금액(받는 계좌 통화)과, 그 값을 읽었을 때의 폼 모양.
+   *
+   * 칸으로 보이지 않는다. 통화가 다른 이체를 메모만 고쳐 저장해도 받은 금액이 그날 환율로 다시
+   * 매겨지지 않게 들고 있다가, 금액·계좌·통화·환율·수수료가 그대로일 때만 되돌려 보낸다
+   * (`transferBasisOf`). 하나라도 바꿨으면 조립이 새로 계산한다.
+   */
+  toAmount: string;
+  toAmountBasis: string;
+  /**
    * 분할의 줄들. 비어 있으면 분류 하나짜리 거래다.
    *
    * 지출과 수입에만 뜻이 있다. 줄이 하나뿐이면 굳이 분할로 두지 않고 `categoryId` 를 쓴다
@@ -289,6 +300,8 @@ export function emptyEntryForm({ personId = '', timeZone, now }: EntryFormDefaul
     discountCountsPerformance: true,
     transferFee: '',
     transferFeeCategoryId: '',
+    toAmount: '',
+    toAmountBasis: '',
     splits: [],
     currency: '',
     exchangeRate: '',
@@ -312,13 +325,7 @@ export function emptyEntryForm({ personId = '', timeZone, now }: EntryFormDefaul
  */
 function grossOf(item: EntryListItem): string {
   const magnitude = item.amount.startsWith('-') ? item.amount.slice(1) : item.amount;
-  if (!item.discountAmount) return magnitude;
-
-  const net = toDec(magnitude);
-  const discount = toDec(item.discountAmount);
-  // 숫자가 아니면 손대지 않는다. 검증이 그 값을 막는다.
-  if (!net || !discount) return magnitude;
-  return net.plus(discount).toString();
+  return grossOfLine({ amount: magnitude, discountAmount: item.discountAmount });
 }
 
 /**
@@ -333,9 +340,11 @@ function grossOf(item: EntryListItem): string {
  * 그래서 줄이 여럿인데 `splits` 가 실려 오지 않았으면 열지 않는다(옛 서버가 그렇다).
  */
 export function entryFormFromItem(
-  item: EntryListItem,
+  shown: EntryListItem,
   timeZone: string,
 ): EntryFormValues | null {
+  // 표시 통화로 옮긴 줄이면 옮기기 전의 것으로 연다 (`editSource`). 폼은 적었던 통화의 값을 든다.
+  const item = shown.editSource ?? shown;
   if (
     item.kind !== 'expense' &&
     item.kind !== 'income' &&
@@ -384,8 +393,9 @@ export function entryFormFromItem(
    * 조립이 다시 얹는다.
    */
   const interest = interestInAmount(item);
+  const foreign = foreignEditAmounts(item);
 
-  return {
+  const values: EntryFormValues = {
     kind,
     // 미지정 거래는 빈 칸으로 연다.
     personId: item.personId ?? '',
@@ -404,11 +414,11 @@ export function entryFormFromItem(
      */
     /*
      * 목록의 금액은 차감한 뒤의 값이고, 되돌린 결제는 음수다. 폼은 정가를 양수로 든다.
-     *
-     * 외화 거래에는 차감이 붙을 수 없어(조립이 막는다) 두 보정이 겹치지 않는다.
+     * 외화 거래도 같다 -- 원래 금액은 차감 뒤의 값이고, 외화 통장의 이체는 수수료를 품는다
+     * (`foreignEditAmounts`).
      */
     amount:
-      item.originalAmount ??
+      foreign?.amount ??
       (item.installmentAdjust
         ? /*
            * 할부 환불의 다리는 `돌려받은 돈 + 사라진 이자` 다. 폼의 금액 칸은 돌려받은 돈이라
@@ -472,14 +482,15 @@ export function entryFormFromItem(
     installmentMonthlyPayment: item.installmentMonthlyPayment ?? '',
     installmentAnnualRate: item.installmentAnnualRate ?? '',
     installmentInterestShares: item.installmentInterestShares ?? [],
-    transferFee: item.feeAmount && item.feeAmount !== '0' ? item.feeAmount : '',
+    // 외화 통장의 이체면 수수료도 그 통화로 되돌린다. 목록의 수수료는 장부 통화다.
+    transferFee: foreign ? foreign.fee : item.feeAmount && item.feeAmount !== '0' ? item.feeAmount : '',
     transferFeeCategoryId: item.feeCategoryId ?? '',
     splits: isSplit
-      ? item.lines.map((line) =>
+      ? item.lines.map((line, index) =>
           newSplitLine({
             categoryId: line.categoryId,
             // 폼은 정가를 든다. 목록의 금액은 차감을 뺀 뒤의 값이고 이자를 품는다.
-            amount: withoutInterest(grossOfLine(line), interest.shareOf(line.amount), interest.total),
+            amount: withoutInterest(grossOfLine(line), interest.lineShares[index], interest.total),
             lineKey: line.lineKey,
             discountAmount: line.discountAmount ?? '',
             tagIds: line.tags.map((tag) => tag.id),
@@ -509,7 +520,62 @@ export function entryFormFromItem(
     // 할부 환불이 줄인 회차. 고칠 때는 적어 둔 값을 그대로 연다 (기본값으로 덮지 않는다).
     installmentCut: item.installmentAdjust?.principal ?? [],
     installmentCutTouched: Boolean(item.installmentAdjust),
+    toAmount: '',
+    toAmountBasis: '',
   };
+
+  // 이체가 받는 계좌에 넣은 금액. 폼이 그대로면 되돌려 보낸다 (`toAmount` 참고).
+  if (kind === 'transfer' && item.toAmount) {
+    values.toAmount = item.toAmount;
+    values.toAmountBasis = transferBasisOf(values);
+  }
+  return values;
+}
+
+/**
+ * 이체의 받은 금액이 기대는 폼 값. 이 글자가 그대로면 받은 금액도 그대로 쓸 수 있다.
+ */
+function transferBasisOf(values: EntryFormValues): string {
+  return [
+    values.amount,
+    values.method,
+    values.toAccountId,
+    values.currency,
+    values.exchangeRate,
+    values.transferFee,
+  ].join('|');
+}
+
+/**
+ * 외화로 적은 거래를 고칠 때 폼에 넣을 금액과 수수료. 둘 다 적은 통화다. 외화가 아니면 null.
+ *
+ *   지출·수입  원래 금액은 차감 뒤의 값이라 차감을 더해 정가로 되돌린다. 차감도 적은 통화로
+ *              실려 온다 (entry-view 의 `showDiscount`). 예전에는 차감을 한 번 더 빼, 저장할
+ *              때마다 금액이 줄었다 ($50 − $5 → 45 − 5 → 40).
+ *   이체      외화 통장에서 나간 다리는 보낸 돈 + 수수료다. 수수료는 목록에 장부 통화로 오므로
+ *              나간 다리의 환율로 되돌리고 그만큼 금액에서 덜어 낸다. 예전에는 USD 50 + 1 이
+ *              금액 51, 수수료 1,380 으로 열려 USD 1,431 이 나간 것으로 저장됐다.
+ *
+ * 유이자 할부는 외화로 적을 수 없어(조립의 INSTALLMENT_INTEREST_CURRENCY) 이자를 볼 일이 없다.
+ * 웹 편집기도 이 함수를 쓴다.
+ */
+export function foreignEditAmounts(item: EntryListItem): { amount: string; fee: string } | null {
+  if (!item.originalAmount || !item.originalCurrency) return null;
+  const original = toDec(item.originalAmount);
+  if (!original) return null;
+
+  if (item.kind === 'transfer' || item.kind === 'card_payment') {
+    const feeBase = item.feeAmount ? toDec(item.feeAmount) : null;
+    const rate = item.exchangeRate ? toDec(item.exchangeRate) : null;
+    if (!feeBase || feeBase.isZero() || !rate || !rate.isPositive()) {
+      return { amount: original.toString(), fee: '' };
+    }
+    const fee = feeBase.dividedBy(rate, currencyDecimals(item.originalCurrency));
+    return { amount: original.minus(fee).toString(), fee: fee.toString() };
+  }
+
+  const discount = item.discountAmount ? toDec(item.discountAmount) : null;
+  return { amount: (discount ? original.plus(discount) : original).toString(), fee: '' };
 }
 
 /** 페이백의 들어온 곳을 정하는 데 필요한 카드의 모양. */
@@ -579,8 +645,13 @@ export function paybackFormFrom(
 /**
  * 이 거래의 금액에 들어 있는 할부 이자.
  *
- * 분할이면 줄마다의 몫도 낸다. 나누는 저울은 줄 금액이고, 끝수는 첫 줄이 가져간다 --
- * 조립이 얹을 때와 같은 규칙이라 고쳐 저장해도 줄 금액이 제자리로 돌아온다.
+ * 분할이면 줄마다의 몫도 낸다(`lineShares`, `item.lines` 와 같은 차례). 조립은 이자를 **원금**
+ * 비율로 나누고(`allocateByWeight`, 끝수는 첫 줄) 장부 통화의 자릿수로 자른다. 목록에는 이자가
+ * 얹힌 줄 금액만 오므로 그 나눔을 거꾸로 푼다 -- 원금을 어림하고, 그 원금으로 다시 나눠 같은 줄
+ * 금액이 나올 때까지 고친다. 예전에는 얹힌 금액 비율로 0자리에서 잘라, 원금 4,999·5,000 에 이자
+ * 999 인 분할이 4,999·4,999 로 열려 저장이 SPLIT_SUM_MISMATCH 로 막혔다.
+ *
+ * 자릿수는 줄 금액을 정확히 되살리는 것을 고른다 (목록 줄에는 장부 통화가 실리지 않는다).
  *
  * **폼을 스스로 채우는 화면도 이 함수를 쓴다.** 웹 편집기는 자기 모양의 상태를 들고
  * 있어 `entryFormFromItem` 을 거치지 않는데, 되빼는 규칙이 두 벌이면 같은 거래를
@@ -588,43 +659,57 @@ export function paybackFormFrom(
  */
 export function interestInAmount(item: EntryListItem): {
   total: Dec;
-  shareOf: (lineAmount: string) => Dec;
+  lineShares: Dec[];
 } {
   const months = item.installmentMonths ?? 0;
   const shares = item.installmentInterestShares;
-  const none = { total: Dec.of(0), shareOf: () => Dec.of(0) };
+  const none = { total: Dec.of(0), lineShares: item.lines.map(() => Dec.of(0)) };
   if (months < 2 || !shares || shares.length !== months) return none;
 
   let total: Dec;
+  let charged: Dec[];
   try {
     total = shares.reduce<Dec>((acc, share) => acc.plus(Dec.of(share)), Dec.of(0));
+    charged = item.lines.map((line) => Dec.of(line.amount).abs());
   } catch {
     return none;
   }
   if (total.isZero()) return none;
+  if (charged.length <= 1) return { total, lineShares: charged.map(() => total) };
 
-  const whole = Dec.of(item.amount).abs();
-  const first = item.lines[0]?.amount ?? null;
-  return {
-    total,
-    shareOf: (lineAmount: string) => {
-      if (whole.isZero()) return Dec.of(0);
-      const line = Dec.of(lineAmount).abs();
-      if (line.eq(whole)) return total;
-      const share = total.times(line).dividedBy(whole, 0, 'down');
-      // 끝수는 첫 줄이 가져간다. 줄마다 내림하면 합이 이자 총액에 못 미친다.
-      if (first === null || lineAmount !== first) return share;
-      return share.plus(total.minus(allShares(total, whole, item)));
-    },
-  };
+  return { total, lineShares: unspreadInterest(total, charged) };
 }
 
-/** 줄마다 내림해 나눈 이자의 합. 첫 줄의 끝수를 구하는 데 쓴다. */
-function allShares(total: Dec, whole: Dec, item: EntryListItem): Dec {
-  return item.lines.reduce<Dec>(
-    (acc, line) => acc.plus(total.times(Dec.of(line.amount).abs()).dividedBy(whole, 0, 'down')),
-    Dec.of(0),
-  );
+/** 조립의 이자 나눔(`allocateByWeight`)을 거꾸로 푼다. 줄마다 얹힌 이자를 돌려준다. */
+function unspreadInterest(total: Dec, charged: readonly Dec[]): Dec[] {
+  const chargedSum = Dec.sum([...charged]);
+  const principalSum = chargedSum.minus(total);
+  // 원금이 남지 않으면 비율이 없다. 조립과 같이 첫 줄에 모두 둔다.
+  if (!principalSum.isPositive()) return charged.map((_, index) => (index === 0 ? total : Dec.of(0)));
+
+  /*
+   * 금액에 실제로 적힌 소수 자릿수보다 적은 자리로는 풀지 않는다. 0자리로 풀면 끝수가 첫 줄에 몰린
+   * 다른 해가 나와도 줄 금액은 맞아 보여, 2자리 장부의 원금이 엉뚱하게 갈렸다.
+   */
+  const least = Math.max(...[total, ...charged].map(fractionDigits));
+  for (const decimals of [0, 1, 2, 3, 4].filter((value) => value >= least)) {
+    let principals = charged.map((line) => line.times(principalSum).dividedBy(chargedSum, decimals, 'down'));
+    for (let round = 0; round < 6; round += 1) {
+      const spread = allocateByWeight(total, principals, decimals);
+      const next = charged.map((line, index) => line.minus(spread[index]));
+      if (next.every((value, index) => value.eq(principals[index]))) return spread;
+      principals = next;
+    }
+  }
+
+  // 풀리지 않으면(손으로 고친 옛 전표) 얹힌 금액 비율로 어림한다.
+  return allocateByWeight(total, [...charged], least);
+}
+
+/** 소수점 아래 자릿수. "12.30" 처럼 끝의 0 은 세지 않는다. */
+function fractionDigits(value: Dec): number {
+  const [, fraction = ''] = value.toString().split('.');
+  return fraction.replace(/0+$/, '').length;
 }
 
 /** 금액에서 그 몫의 이자를 뺀다. 이자가 없으면 글자를 그대로 돌려준다. */
@@ -639,6 +724,7 @@ function grossOfLine(line: { amount: string; discountAmount: string | null }): s
   if (!line.discountAmount) return line.amount;
   const net = toDec(line.amount);
   const discount = toDec(line.discountAmount);
+  // 숫자가 아니면 손대지 않는다. 검증이 그 값을 막는다.
   if (!net || !discount) return line.amount;
   return net.plus(discount).toString();
 }
@@ -889,12 +975,17 @@ export function checkEntryForm(
    * 기본값으로 대신하지 않는 까닭은 `EntryFormValues.installmentInterest` 에 적었다.
    * 개월수를 고른 신용카드 지출에만 묻는다.
    */
-  if (
+  /*
+   * 할부가 실리는 폼인가. `entryFormToRequest` 가 회차 표를 싣는 조건과 같다. 결제수단을 통장으로
+   * 바꾸거나 갈래를 옮기면 회차 칸이 숨지만 값은 남는다 -- 그 값으로 저장을 막으면 보이지 않는
+   * 칸 때문에 막힌다 (예전의 INSTALLMENT_SHARES_COUNT).
+   */
+  const installs =
     values.kind === 'expense' &&
-    parseMethod(values.method).cardId &&
-    Number(values.installmentMonths) >= 2 &&
-    !values.installmentInterest
-  ) {
+    Boolean(parseMethod(values.method).cardId) &&
+    Number(values.installmentMonths) >= 2;
+
+  if (installs && !values.installmentInterest) {
     return { field: 'installmentInterest', code: 'INSTALLMENT_INTEREST_REQUIRED' };
   }
 
@@ -908,7 +999,7 @@ export function checkEntryForm(
    * 외화 결제는 여기서 보지 않는다. 카드에 청구되는 금액이 환산 뒤에야 정해져 폼의
    * 값만으로는 견줄 수 없다 -- 그때는 조립(entry-build)이 카드 다리를 보고 막는다.
    */
-  if (values.installmentShares.length > 0 && !values.currency) {
+  if (installs && values.installmentShares.length > 0 && !values.currency) {
     const months = Number(values.installmentMonths);
     if (values.installmentShares.length !== months) {
       return { field: 'installmentShares', code: 'INSTALLMENT_SHARES_COUNT' };
@@ -936,7 +1027,7 @@ export function checkEntryForm(
    * 표가 풀리지 않아 이자 칸이 비어 버린다. 그 까닭을 저장할 때가 아니라 적는 자리에서
    * 알려 준다. 회차 이자는 개수와 부호만 본다. 맞춰야 할 총액이 없기 때문이다.
    */
-  if (values.installmentInterest === 'interest' && Number(values.installmentMonths) >= 2) {
+  if (installs && values.installmentInterest === 'interest') {
     const months = Number(values.installmentMonths);
 
     /*
@@ -1186,6 +1277,10 @@ export function entryFormToRequest(
       ...base,
       accountId: method.accountId,
       toAccountId: values.toAccountId,
+      // 고치는 중이고 금액·계좌·통화가 그대로면 받은 금액도 그대로다 (`toAmount` 참고).
+      ...(values.toAmount && values.toAmountBasis === transferBasisOf(values)
+        ? { toAmount: values.toAmount }
+        : {}),
       ...(fee && fee.isPositive()
         ? {
             transferFee: values.transferFee,

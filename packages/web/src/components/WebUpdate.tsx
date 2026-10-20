@@ -38,7 +38,8 @@ const POLL_MS = 10 * 60 * 1000;
 const CHUNK_RELOAD_KEY = 'money-chunk-reload-at';
 const CHUNK_RELOAD_GAP_MS = 30 * 1000;
 
-function isChunkError(reason: unknown): boolean {
+/** 배포 뒤 옛 조각을 받으려다 실패한 것인가. 오류 경계(app/error.tsx)도 함께 쓴다. */
+export function isChunkError(reason: unknown): boolean {
   const error = reason as { name?: string; message?: string } | null;
   return (
     error?.name === 'ChunkLoadError' ||
@@ -48,7 +49,7 @@ function isChunkError(reason: unknown): boolean {
   );
 }
 
-function reloadForChunk(): void {
+export function reloadForChunk(): void {
   try {
     const last = Number(window.sessionStorage.getItem(CHUNK_RELOAD_KEY) ?? 0);
     if (Date.now() - last < CHUNK_RELOAD_GAP_MS) return;

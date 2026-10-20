@@ -98,3 +98,22 @@ export function recurringScheduleText(
   const label = holidayRule === 'none' ? null : HOLIDAY_RULE_LABEL[rule.frequency][holidayRule];
   return label ? `${text} · ${t(label)}` : text;
 }
+
+/**
+ * 반복 규칙 폼에서 갈래(지출·수입·이체)를 바꾼 값 (웹·앱이 함께 쓴다, 2026-10-16).
+ *
+ * 분류는 갈래마다 다르다(지출 분류·수입 분류, 이체는 분류가 없다). 예전에는 갈래만 바꾸고 분류를 남겨, 뒤에 그
+ * 규칙이 담은 후보가 "분류 유형이 맞지 않는다"(CATEGORY_TYPE_MISMATCH)로 등록되지 않았다. 갈래가 바뀌면 분류를 비우고,
+ * 이체로 가면 카드를 비운다(이체는 계좌끼리다).
+ */
+export function withRecurringKind<V extends { kind: string; method: string; categoryId: string }>(
+  previous: V,
+  kind: V['kind'],
+): V {
+  return {
+    ...previous,
+    kind,
+    categoryId: kind === previous.kind ? previous.categoryId : '',
+    method: kind === 'transfer' && previous.method.startsWith('card:') ? '' : previous.method,
+  };
+}

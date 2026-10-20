@@ -120,3 +120,21 @@ export function paybackDraftRequest(
     paybackType: draft.paybackType,
   };
 }
+
+/**
+ * 환불·페이백이 가리키는 원거래의 줄.
+ *
+ * 줄이 하나뿐이면 키가 어긋나도 그 줄이다 -- 서버의 rebind 와 같은 판단이다. 페이백 목록(`usePaybacks`),
+ * 원거래 보기(`usePaybackOrigin`), 할부 환불(`useInstallmentRefund`)이 함께 쓴다 (2026-10-16 -- 원거래 보기만
+ * 이 규칙이 빠져 옛 키를 든 페이백이 "줄이 사라졌다"로 보였다).
+ */
+export function paybackLineOf<L extends { lineKey: string | null }>(
+  original: { lines: readonly L[] } | null | undefined,
+  lineKey: string | null | undefined,
+): L | null {
+  if (!original) return null;
+  return (
+    original.lines.find((line) => line.lineKey === lineKey) ??
+    (original.lines.length === 1 ? original.lines[0] : null)
+  );
+}

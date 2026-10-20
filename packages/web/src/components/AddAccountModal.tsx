@@ -15,6 +15,7 @@ import { useInstitutions } from '@money/core/hooks/useInstitutions';
 import { ACCOUNT_TYPE_OPTIONS, NO_BANK_TYPES } from '@money/core/lib/account-type';
 import { useTranslation } from '@money/core/lib/i18n';
 import { currencyLabel, toAmountString } from '@money/core/lib/money';
+import { useProjectLedgerCurrency } from '@money/core/store/project';
 import type { AccountType } from '@money/core/lib/types';
 import type { Person } from '@money/core/lib/types';
 import { useApiError } from '@money/core/lib/api-error';
@@ -64,16 +65,24 @@ export default function AddAccountModal({
 }: AddAccountModalProps) {
   const { t } = useTranslation();
   const { messageOf } = useApiError();
-  const [formData, setFormData] = useState(EMPTY_FORM);
+  // 통화의 기본값은 그 가계부의 저장 통화다 (2026-10-16, 앱과 같다). 늘 원화로 시작해 달러 가계부에서 원화 통장이 생겼다.
+  const ledgerCurrency = useProjectLedgerCurrency();
+  const [formData, setFormData] = useState(() => ({ ...EMPTY_FORM, currency: ledgerCurrency }));
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const { options: bankOptions, error: bankError } = useInstitutions('bank');
 
   // 열릴 때 한 번만 채운다. 열려 있는 동안 사용자가 고른 값을 덮어쓰지 않는다.
   useEffect(() => {
-    if (isOpen && defaultOwnerId) {
-      setFormData((prev) => ({ ...prev, ownerId: defaultOwnerId }));
-    }
+    if (!isOpen) return;
+    setFormData((prev) => ({
+      ...prev,
+      ...(defaultOwnerId ? { ownerId: defaultOwnerId } : {}),
+      // 아직 적지 않은 폼이면 통화를 지금 가계부의 것으로 (가계부 목록이 늦게 온 경우).
+      ...(!prev.name && !prev.openingBalance ? { currency: ledgerCurrency } : {}),
+    }));
+    // 열릴 때만 채운다. 열려 있는 동안 바뀐 값으로 사용자의 선택을 덮지 않는다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, defaultOwnerId]);
 
   const needsBankName = !NO_BANK_TYPES.includes(formData.type);
@@ -112,7 +121,7 @@ export default function AddAccountModal({
   };
 
   const handleClose = () => {
-    setFormData(EMPTY_FORM);
+    setFormData({ ...EMPTY_FORM, currency: ledgerCurrency });
     setError('');
     onClose();
   };

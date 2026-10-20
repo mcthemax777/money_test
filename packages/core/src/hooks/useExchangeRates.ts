@@ -116,8 +116,9 @@ export function useExchangeRateSettings() {
   }, [load]);
 
   const save = useCallback(
-    async (info: ExchangeRateInfo, value: string) => {
-      if (toNumber(value) <= 0) return;
+    /** 저장했으면 true. 화면은 그때만 그 칸을 비운다 (2026-10-16 -- 실패해도 비워 적던 값을 잃었다). */
+    async (info: ExchangeRateInfo, value: string): Promise<boolean> => {
+      if (toNumber(value) <= 0) return false;
 
       try {
         setSavingPair(info.from);
@@ -132,9 +133,11 @@ export function useExchangeRateSettings() {
         // 거래 입력 폼이 들고 있는 캐시를 버린다. 안 버리면 폼에 옛 환율이 남는다.
         clearExchangeRateCache();
         await load();
+        return true;
       } catch (error) {
         console.error('환율 저장 실패:', error);
         setFailure('save');
+        return false;
       } finally {
         setSavingPair(null);
       }

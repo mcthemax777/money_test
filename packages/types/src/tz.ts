@@ -251,6 +251,19 @@ export function daysInMonth(year: number, month: number): number {
 }
 
 /**
+ * 달력에 실재하는 날 "YYYY-MM-DD" 인가.
+ *
+ * 모양만 보아서는 모자란다. `'2026-02-31'` 은 정규식을 통과하지만 `new Date` 에 넣으면 3월 3일로 넘어간다.
+ * 그런 값이 조회 구간이나 거래 날짜로 들어가면 오류 없이 결과만 조용히 어긋난다. 서버의 입력 검사, 기기의 폼,
+ * 만기일·기간 열쇠가 모두 이것 하나를 쓴다 (2026-10-16 -- 전에는 네 벌이 따로 있었고 한 벌은 31일까지만 보았다).
+ */
+export function isDateKey(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  return month >= 1 && month <= 12 && day >= 1 && day <= daysInMonth(year, month);
+}
+
+/**
  * "매월 N일"을 그 달에 존재하는 날짜로 자른다.
  * 마감일 31일 + 2월이면 28일(윤년이면 29일)이 된다.
  */

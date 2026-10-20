@@ -994,9 +994,14 @@ export function useTransactions(
   );
 
   /** 알약 하나를 뺀다. 나머지 조건은 그대로 둔다. */
-  const removeSearchChip = useCallback((chipId: string) => {
-    setSearch((prev) => withoutChip(prev, chipId));
-  }, []);
+  // setSearch 를 의존성에 둔다. 비워 두면 처음 그린 때의 것(그때의 가계부)이 남아, 가계부를 바꾼 뒤 알약을
+  // 빼면 함께 쓰는 검색이 다른 가계부 이름으로 적혀 조건이 통째로 사라졌다 (2026-10-16).
+  const removeSearchChip = useCallback(
+    (chipId: string) => {
+      setSearch((prev) => withoutChip(prev, chipId));
+    },
+    [setSearch],
+  );
 
   /*
    * 거르는 조건의 수. 세는 기준은 넣지 않는다 -- 거래를 거르지 않으므로, 이것으로 정하는 일
@@ -1196,13 +1201,26 @@ export function useTransactions(
   }, [scopeKey, projectId]);
 
   // ── 기준 목록 (검색이 고를 것과 제목의 이름) ──
+  /** 지금 들고 있는 기준 목록이 어느 가계부의 것인가. */
+  const referenceProjectRef = useRef(projectId);
   useEffect(() => {
+    const applyReference = (reference: TxReference | undefined) => {
+      setPeople(reference?.people ?? []);
+      setPickerCategories(reference?.categories ?? []);
+      setPickerAccounts(reference?.accounts ?? []);
+      setPickerCards(reference?.cards ?? []);
+      setPickerTags(reference?.tags ?? []);
+    };
+    /*
+     * 가계부가 바뀌면 받기 전에 앞 가계부의 목록부터 내린다 (2026-10-16). 받기가 실패하면(끊김) 앞 가계부의
+     * 분류·계좌·사람이 검색 창과 알약 이름에 그대로 남았다. 받아 둔 것이 있으면 그것으로, 없으면 비운다.
+     */
+    if (referenceProjectRef.current !== projectId) {
+      referenceProjectRef.current = projectId;
+      applyReference(projectId ? readScreenCache<TxReference>(REFERENCE_SLOT, projectId) : undefined);
+    }
     if (!projectId) {
-      setPeople([]);
-      setPickerCategories([]);
-      setPickerAccounts([]);
-      setPickerCards([]);
-      setPickerTags([]);
+      applyReference(undefined);
       return;
     }
 
@@ -1233,11 +1251,7 @@ export function useTransactions(
           cards: cardRows.filter((row) => row.isActive),
           tags: tagRows,
         };
-        setPeople(reference.people);
-        setPickerCategories(reference.categories);
-        setPickerAccounts(reference.accounts);
-        setPickerCards(reference.cards);
-        setPickerTags(reference.tags);
+        applyReference(reference);
         writeScreenCache(REFERENCE_SLOT, projectId, reference);
       })
       .catch(fail);
@@ -1348,6 +1362,23 @@ export function useTransactions(
      */
     const refreshing = monthRefreshRef.current !== refreshToken;
     monthRefreshRef.current = refreshToken;
+
+    /*
+     * 다시 받는 회차에는 **이번에 다시 받지 않는 것**을 버린다 (2026-10-16). 받는 것은 지금 탭의 펼친 달뿐이라,
+     * 다른 탭과 접힌 달의 값은 옛 것으로 남아 나중에 펴면 "이미 받아 뒀다"로 그대로 섰다 -- 고른 것과 지우기도
+     * 그 옛 id 를 보았다. 버려 두면 펼 때 새로 받는다. 지금 탭의 펼친 달은 남긴다(곧 덮이고, 그 사이 비지 않게).
+     */
+    if (refreshing) {
+      const field = tab === 'date' ? 'entries' : tab === 'category' ? 'categories' : 'methods';
+      const open = new Set(openMonths);
+      setMonthData((prev) => {
+        const next: typeof prev = {};
+        for (const [yearMonth, data] of Object.entries(prev)) {
+          if (open.has(yearMonth) && data?.[field]) next[yearMonth] = { [field]: data[field] };
+        }
+        return next;
+      });
+    }
 
     const port = homeDataPort();
     const askedScope = scopeKey;
@@ -1735,6 +1766,21 @@ export function useTransactions(
     // 값이 바뀐 회차에는 받아 둔 줄도 다시 받는다 (2단과 같은 규칙).
     const refreshing = rowRefreshRef.current !== refreshToken;
     rowRefreshRef.current = refreshToken;
+    if (refreshing) {
+      // 이번에 다시 받지 않는 줄(다른 탭·접힌 줄)은 버린다. 펼 때 새로 받는다 (2단의 같은 자리 주석).
+      const openIds = new Set(
+        openMonths.flatMap((yearMonth) =>
+          rowsOf(yearMonth)
+            .filter((row) => isRowOpen(yearMonth, row.key))
+            .map((row) => rowId(yearMonth, row.key)),
+        ),
+      );
+      setRowEntries((prev) => {
+        const next: typeof prev = {};
+        for (const [id, rows] of Object.entries(prev)) if (openIds.has(id)) next[id] = rows;
+        return next;
+      });
+    }
 
     const needed: Array<{ yearMonth: string; row: TransactionRow }> = [];
     for (const yearMonth of openMonths) {
@@ -1955,7 +2001,9 @@ export function useTransactions(
         // 태그도 함께 적어 둔다. 이 줄들은 화면에 없을 수 있다.
         setRangeTags((prev) => {
           const next = { ...prev };
-          for (const row of rows) next[row.id] = row.tags.map((tag) => tag.id);
+          // 목록과 같은 규칙으로 적는다(`sharedTagIdsOf`). 지출·수입의 태그는 줄에 있어 row.tags 는 비어
+          // 있다 -- 그것을 적으면 함께 가진 태그가 "일부만"으로 보였다 (2026-10-16).
+          for (const row of rows) next[row.id] = sharedTagIdsOf(row);
           return next;
         });
         return ids;
@@ -2135,7 +2183,17 @@ export function useTransactions(
 
         setSelected((prev) => {
           const allPicked = ids.every((id) => prev[id]);
-          const next = { ...prev };
+          const picked = new Set(ids);
+          const next: typeof prev = {};
+          /*
+           * 그 거래의 줄 열쇠는 거래 열쇠 하나로 갈음한다 (2026-10-16). 줄 열쇠를 남기면 고른 수가 부풀고, 달 체크를
+           * 풀어도 앞서 고른 줄은 골라진 채 남았다. 넣을 때도 뺄 때도 그 거래의 줄 열쇠는 걷어 낸다.
+           */
+          for (const key of Object.keys(prev)) {
+            const { entryId, lineKey } = parseSelectionKey(key);
+            if (lineKey !== undefined && picked.has(entryId)) continue;
+            next[key] = true;
+          }
           for (const id of ids) {
             if (allPicked) delete next[id];
             else next[id] = true;
@@ -2345,22 +2403,9 @@ export function useTransactions(
     const map = new Map<string, string[]>();
     const put = (rows: EntryListItem[]) => {
       for (const row of rows) {
-        /*
-         * 거래 단위 열쇠에는 **모든 줄이 함께 가진 태그**를 담는다.
-         *
-         * 범위를 체크하면 그 거래의 모든 줄이 대상이 된다. 체크를 풀면 전부에서 떼므로,
-         * 한 줄만 가진 태그를 "전부가 가졌다"로 보여 주면 나머지 줄에서 없는 것을
-         * 뗀 것으로 읽힌다.
-         */
-        if (row.lines.length === 0) {
-          map.set(row.id, row.tags.map((tag) => tag.id));
-        } else {
-          let shared: string[] = row.lines[0].tags.map((tag) => tag.id);
-          for (const line of row.lines.slice(1)) {
-            const own = new Set(line.tags.map((tag) => tag.id));
-            shared = shared.filter((id) => own.has(id));
-          }
-          map.set(row.id, shared);
+        // 거래 단위 열쇠에는 모든 줄이 함께 가진 태그를 (`sharedTagIdsOf`), 줄 열쇠에는 그 줄의 태그를.
+        map.set(row.id, sharedTagIdsOf(row));
+        if (row.lines.length > 0) {
           for (const line of row.lines) {
             map.set(selectionKey(row.id, line.lineKey), line.tags.map((tag) => tag.id));
           }
@@ -2848,4 +2893,20 @@ export function useTransactions(
     hasProject: projects.length > 0,
     reload: useCallback(() => setReloadToken((token) => token + 1), []),
   };
+}
+
+/**
+ * 거래 단위 열쇠의 태그 -- **모든 줄이 함께 가진 태그**다. 줄이 없는 전표(이체·카드 대금)는 거래 자체의 태그다.
+ *
+ * 범위를 체크하면 그 거래의 모든 줄이 대상이 된다. 체크를 풀면 전부에서 떼므로, 한 줄만 가진 태그를 "전부가
+ * 가졌다"로 보여 주면 나머지 줄에서 없는 것을 뗀 것으로 읽힌다.
+ */
+function sharedTagIdsOf(row: EntryListItem): string[] {
+  if (row.lines.length === 0) return row.tags.map((tag) => tag.id);
+  let shared: string[] = row.lines[0].tags.map((tag) => tag.id);
+  for (const line of row.lines.slice(1)) {
+    const own = new Set(line.tags.map((tag) => tag.id));
+    shared = shared.filter((id) => own.has(id));
+  }
+  return shared;
 }

@@ -72,7 +72,8 @@ export async function purchasePlan(input: {
 
 /** Play 스토어의 이 앱 구독 관리 화면. 기간을 바꾸거나 해지하는 곳이다. */
 export function openSubscriptionManagement(): void {
-  void Linking.openURL(
+  // 열지 못해도(스토어 앱이 없는 기기) 던지지 않는다 (2026-10-16 -- 처리되지 않은 거절로 남았다).
+  Linking.openURL(
     `https://play.google.com/store/account/subscriptions?package=${PACKAGE_NAME}&sku=${PLAY_SUBSCRIPTION_ID}`,
-  );
+  ).catch((error) => console.warn('구독 관리 화면을 열지 못했습니다:', error));
 }

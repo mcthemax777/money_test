@@ -80,6 +80,14 @@ export function createLocalEntryWriter({
     cardId: data.cardId,
     installmentMonths: data.installmentMonths,
     installmentInterest: data.installmentInterest,
+    /*
+     * 회차 표와 이자 방식. 빠뜨리면 서버가 재생할 때 개월수로 나눈 무이자 표를 다시 만들어,
+     * 유이자 할부의 이자와 손으로 고친 회차가 서버에서 사라진다.
+     */
+    installmentShares: data.installmentShares?.map(String),
+    installmentInterestShares: data.installmentInterestShares?.map(String),
+    installmentMonthlyPayment: text(data.installmentMonthlyPayment),
+    installmentAnnualRate: text(data.installmentAnnualRate),
     toAmount: text(data.toAmount),
     transferFee: text(data.transferFee),
     transferFeeCategoryId: data.transferFeeCategoryId,

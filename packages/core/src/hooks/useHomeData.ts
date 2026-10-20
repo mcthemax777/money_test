@@ -5,7 +5,7 @@ import { homeDataPort } from '../data/home-port';
 import { dateMarkerKey, formatMonthShort } from '../lib/datetime';
 import type { Account, Card, Category, Person } from '../lib/types';
 import { useProject } from '../store/project';
-import { useUserFilter } from '../store/user-filter';
+import { isEveryPersonSelected, useUserFilter } from '../store/user-filter';
 import { useDebouncedValue } from './useDebouncedValue';
 import { readScreenCache, writeScreenCache } from '../lib/screen-cache';
 import { useLoadedKey } from './useLoadedKey';
@@ -198,7 +198,7 @@ export function useHomeData({
 
   usePersonFilterSync(projectId, people);
 
-  const allPeopleSelected = people.length > 0 && selectedPersonIds.length === people.length;
+  const allPeopleSelected = isEveryPersonSelected(people, selectedPersonIds);
 
   /**
    * 서버로 보내는 필터.

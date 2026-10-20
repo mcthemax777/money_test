@@ -230,4 +230,23 @@ runSmoke('sync-pull', async (ctx) => {
   };
   await new SyncService(ctx.prisma as any, spy as any).pull(uid, { projectId: pid, since: 0 });
   ctx.check('프로젝트 권한 판정을 거친다', asked, pid);
+
+  // ── 8. 같은 번호가 한 쪽보다 많아도 멈추지 않는다 ──
+  // 동기화를 들일 때 이미 있던 행은 모두 1번을 받았다. 그런 행이 상한보다 많으면 예전에는
+  // 상한이 since 로 물러나 같은 자리를 끝없이 되물었다. 트리거를 잠시 끄고 그 모양을 만든다.
+  const crowd = await Promise.all(
+    ['갑', '을', '병'].map((name) => people.createPerson(uid, { name }, pid)),
+  );
+  const before = (await pull(0)).version;
+  await ctx.prisma.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe(`SET LOCAL session_replication_role = replica`);
+    await tx.$executeRawUnsafe(
+      `UPDATE "Person" SET "updatedVersion" = $1 WHERE id = ANY($2::text[])`,
+      before,
+      crowd.map((row) => row.id),
+    );
+  });
+  const crowded = await pull(before - 1, 2);
+  ctx.check('같은 번호의 행이 한 번에 다 온다', crowded.changes.people.length >= 3, true);
+  ctx.check('번호가 앞으로 간다', crowded.version > before - 1, true);
 });

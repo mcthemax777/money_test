@@ -60,9 +60,16 @@ export default function PendingRatePanel({
     }
   }, [cardId]);
 
+  /*
+   * 적던 칸은 카드가 바뀔 때만 비운다 (2026-10-16, 웹과 같다). 동기화 신호(mirrorVersion)마다 비우면 다른 구성원의
+   * 변경이 들어올 때마다 명세서를 보며 적던 값이 사라졌다. 목록은 신호마다 다시 받는다.
+   */
   useEffect(() => {
     setBilled({});
     setBulkRate('');
+  }, [cardId]);
+
+  useEffect(() => {
     load();
   }, [load, mirrorVersion]);
 

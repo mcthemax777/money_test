@@ -5,6 +5,7 @@
  * 따로 적으면 웹과 앱에서 같은 줄에 다른 글자가 붙으므로 여기 한 곳에 둔다.
  */
 import {
+  INSTALLMENT_MAX_MONTHS,
   annualRateSchedule,
   fixedPaymentSchedule,
   installmentInterestTotal,
@@ -85,7 +86,9 @@ export function installmentShareInputs(
   months: number,
   saved: readonly string[] | null | undefined,
 ): string[] {
-  if (!months || months < 2) return [];
+  // 고를 수 있는 개월수를 넘으면 칸을 그리지 않는다 (2026-10-16). 100000 을 치면 칸 십만 개를 그리다 화면이 멈췄다.
+  // 저장 검사가 그 값을 따로 거절한다.
+  if (!months || months < 2 || months > INSTALLMENT_MAX_MONTHS) return [];
 
   /*
    * 손댄 값은 글자 그대로 돌려준다. **숫자로 읽지 않는다.**
@@ -98,7 +101,7 @@ export function installmentShareInputs(
    */
   if (saved && saved.length === months) return [...saved];
 
-  return installmentPrincipals(total || '0', months).map((share) => share.toString());
+  return installmentPrincipals(amountText(total), months).map((share) => share.toString());
 }
 
 /**
@@ -133,16 +136,16 @@ export function installmentInterestInputs(input: {
   saved: readonly string[] | null | undefined;
 }): string[] {
   const { total, months, principals, mode, monthlyPayment, annualRate, saved } = input;
-  if (!months || months < 2) return [];
+  if (!months || months < 2 || months > INSTALLMENT_MAX_MONTHS) return [];
   // 고친 값은 글자 그대로 돌려준다. 치는 중의 도막이 섞여 있어 숫자로 읽지 않는다.
   if (saved && saved.length === months) return [...saved];
 
   const blank = Array.from({ length: months }, () => '');
   const schedule =
     mode === 'fixed'
-      ? fixedPaymentSchedule(total || '0', months, clean(monthlyPayment) || '0')
+      ? fixedPaymentSchedule(amountText(total), months, amountText(monthlyPayment))
       : mode === 'rate'
-        ? annualRateSchedule(total || '0', months, clean(annualRate) || '0', readable(principals))
+        ? annualRateSchedule(amountText(total), months, amountText(annualRate), readable(principals))
         : null;
   if (!schedule) return blank;
 
@@ -163,6 +166,18 @@ function readable(principals: readonly string[]): string[] | null {
 /** 자릿수 쉼표를 뗀다. 사람이 치는 칸이라 "1,000" 이 들어온다. */
 function clean(value: string): string {
   return String(value ?? '').replace(/,/g, '').trim();
+}
+
+/**
+ * 치는 중의 금액 칸을 셈에 넣을 수 있는 값으로. 읽을 수 없거나 음수면 0 이다 (2026-10-16).
+ *
+ * 이 값은 그리는 중에 셈으로 들어간다. "-", "1.2.", "." 처럼 치다 만 글자를 그대로 넘기면 십진 셈이 던져, 그
+ * 칸을 그리던 거래 폼이 통째로 넘어지고 앱이 꺼졌다 -- 앱에는 그것을 받아 줄 오류 경계가 없다.
+ */
+function amountText(value: string): string {
+  const text = clean(value);
+  if (!/^\d+(\.\d+)?$/.test(text)) return '0';
+  return text;
 }
 
 /** 적어 넣은 회차 금액의 합. 화면이 결제 금액과 견줘 보여 준다. */

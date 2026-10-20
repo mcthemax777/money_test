@@ -42,7 +42,7 @@ import {
   type EntryFormValues,
   paybackMethodOf,
 } from '@money/core/data/entry-form';
-import { formatCurrency, toNumber } from '@money/core/lib/money';
+import { formatCurrency, formatNumber, toNumber } from '@money/core/lib/money';
 import { paybackCountOf, paybackDeleteNote } from '@money/core/hooks/usePaybacks';
 import { useMyPersonId, useProject, useProjectTimeZone } from '@money/core/store/project';
 
@@ -876,9 +876,7 @@ export default function EntryEditor({
                 알게 하지 않는다.
               */}
                 <Text className="text-xs text-gray-500">
-                  {t('editor.splitLeft', {
-                    amount: String((Number(values.amount) || 0) - form.splitTotal),
-                  })}
+                  {t('editor.splitLeft', { amount: formatNumber(form.splitLeft) })}
                 </Text>
                 <Text className="text-xs text-gray-500">{t('editor.splitHint')}</Text>
               </View>

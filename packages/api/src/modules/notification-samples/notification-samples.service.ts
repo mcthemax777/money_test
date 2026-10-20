@@ -22,6 +22,7 @@ import {
 import { badRequest, notFound } from '@/common/app-error';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { PrismaService } from '@/config/prisma.service';
+import { readLimit } from '@/common/text';
 
 /** 한 번에 받는 표본 수. 기기 버퍼의 상한(200)과 같다. */
 const MAX_BATCH = 200;
@@ -142,7 +143,7 @@ export class NotificationSamplesService implements OnModuleInit, OnModuleDestroy
 
   /** 관리 도구의 표본 목록. 알림이 온 시각의 새 것부터. */
   async list(query: NotificationSampleDto.ListQuery): Promise<NotificationSampleDto.ListResponse> {
-    const limit = Math.min(Math.max(Number(query.limit) || 50, 1), 500);
+    const limit = readLimit(query.limit, 50, 500);
     const q = typeof query.q === 'string' ? query.q.trim() : '';
     const where: Prisma.NotificationSampleWhereInput = {
       ...(query.packageName ? { packageName: String(query.packageName) } : {}),

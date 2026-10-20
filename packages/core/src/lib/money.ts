@@ -154,8 +154,12 @@ export function formatNumber(amount: string | number | null | undefined): string
 /** 입력값(문자열/숫자)을 서버로 보낼 금액 문자열로 정규화한다. */
 export function toAmountString(input: string | number | null | undefined): string {
   if (input === null || input === undefined || input === '') return '0';
-  // 사용자가 "1,000" 처럼 입력할 수 있다
-  const cleaned = String(input).replace(/,/g, '').trim();
+  // 사용자가 "1,000" 처럼 입력할 수 있다. 전각 숫자·쉼표·점("１，０００")도 받는다 (2026-10-16 -- 일본어 입력기가 그렇게 친다).
+  const cleaned = String(input)
+    .replace(/[０-９]/g, (digit) => String.fromCharCode(digit.charCodeAt(0) - 0xfee0))
+    .replace(/．/g, '.')
+    .replace(/[,，]/g, '')
+    .trim();
   const value = Number(cleaned);
   return Number.isFinite(value) ? String(value) : '0';
 }

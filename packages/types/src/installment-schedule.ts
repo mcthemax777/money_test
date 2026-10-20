@@ -13,7 +13,7 @@
  * 올림하는 규칙도 달라, 명세서와 다르면 사용자가 회차 표에서 고쳐 적는다.
  */
 
-import { Dec, type DecInput } from './decimal';
+import { Dec, type DecInput, amountScale } from './decimal';
 import { installmentInterestTotal, installmentInterests, splitInstallment } from './card-usage';
 import { shiftYearMonth } from './report-aggregation';
 import { clampDayOfMonth, zonedDayStart, zonedParts, zonedYearMonth } from './tz';
@@ -26,13 +26,6 @@ export interface InstallmentSchedule {
   interests: Dec[];
 }
 
-/**
- * 금액을 자르는 자릿수. 원 단위다.
- *
- * `splitInstallment` 과 같은 규칙이다. 소수 통화의 할부는 아직 다루지 않는다 --
- * 외화 결제도 카드에 청구되는 금액(기준통화)을 나누므로 여기까지 오지 않는다.
- */
-const MONEY_SCALE = 0;
 
 /** 이자가 0인 일정. 무이자 할부와 이율이 0인 유이자 할부가 같은 값을 받는다. */
 export function freeSchedule(
@@ -74,12 +67,14 @@ export function fixedPaymentSchedule(
 
   const rate = solveMonthlyRate(amount.toNumber(), months, payment.toNumber());
   if (rate === null) return null;
+  // 이자를 자르는 자릿수. 적은 금액과 납입액의 자릿수를 따른다 (`amountScale`).
+  const scale = amountScale(amount, payment);
 
   const principals: Dec[] = [];
   const interests: Dec[] = [];
   let balance = amount;
   for (let index = 0; index < months; index += 1) {
-    const interest = balance.times(rate.toFixed(12)).round(MONEY_SCALE);
+    const interest = balance.times(rate.toFixed(12)).round(scale);
     /*
      * 마지막 회차는 남은 원금을 다 갚는다. 그 앞은 낸 돈에서 이자를 뗀 나머지이되,
      * 남은 원금을 넘지 않는다 -- 반올림이 쌓여 마지막 회차가 음수가 되지 않게 한다.
@@ -117,11 +112,12 @@ export function annualRateSchedule(
   const shares = principalsOf(amount, months, principals);
   // 연이율은 퍼센트로 받는다. 12.0 이면 월 1%다.
   const monthlyRate = rate.dividedBy(1200, 12);
+  const scale = amountScale(amount, ...shares);
 
   const interests: Dec[] = [];
   let balance = amount;
   for (const principal of shares) {
-    interests.push(balance.times(monthlyRate).round(MONEY_SCALE));
+    interests.push(balance.times(monthlyRate).round(scale));
     balance = balance.minus(principal);
   }
   return { principals: shares, interests };
@@ -274,7 +270,7 @@ export function installmentLineShares(
     const upto =
       index === values.length - 1
         ? amount
-        : amount.times(running).dividedBy(total, MONEY_SCALE);
+        : amount.times(running).dividedBy(total, amountScale(amount, ...values));
     shares.push(upto.minus(paid));
     paid = upto;
   }
