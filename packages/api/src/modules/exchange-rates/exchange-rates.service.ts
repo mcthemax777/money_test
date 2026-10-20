@@ -6,7 +6,7 @@ import {
   SUPPORTED_CURRENCIES,
   currencyDecimals,
   isCurrencyCode,
-  fallbackRate,
+  resolveRate,
 } from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
 
@@ -68,45 +68,19 @@ export class ExchangeRatesService {
     from: CurrencyCode,
     to: CurrencyCode,
   ): Promise<ExchangeRateInfo> {
-    if (from === to) {
-      return { from, to, rate: '1', source: 'identity' };
-    }
-
-    const direct = await this.prisma.exchangeRate.findFirst({
-      where: { projectId, baseCurrency: from, quoteCurrency: to },
-      orderBy: { date: 'desc' },
+    // 차례(직접 정한 값 → 역수 → 고정값)는 기기 사본과 함께 쓴다 (`resolveRate`).
+    const info = await resolveRate(from, to, async (base, quote) => {
+      const row = await this.prisma.exchangeRate.findFirst({
+        where: { projectId, baseCurrency: base, quoteCurrency: quote },
+        orderBy: { date: 'desc' },
+      });
+      return row ? { rate: row.rate.toString(), date: row.date.toISOString().slice(0, 10), source: row.source } : null;
     });
-    if (direct) {
-      return {
-        from,
-        to,
-        rate: direct.rate.toString(),
-        date: direct.date.toISOString().slice(0, 10),
-        source: direct.source,
-      };
-    }
-
-    // 반대 방향만 저장돼 있을 수 있다. 역수를 쓴다.
-    const inverse = await this.prisma.exchangeRate.findFirst({
-      where: { projectId, baseCurrency: to, quoteCurrency: from },
-      orderBy: { date: 'desc' },
-    });
-    if (inverse && !inverse.rate.isZero()) {
-      return {
-        from,
-        to,
-        rate: new Prisma.Decimal(1).div(inverse.rate).toDecimalPlaces(8).toString(),
-        date: inverse.date.toISOString().slice(0, 10),
-        source: `${inverse.source} (역수)`,
-      };
-    }
-
-    const fallback = this.fallbackRate(from, to);
-    if (fallback) {
-      this.logger.warn(
-        `${from}->${to} 환율이 저장돼 있지 않아 고정값(${fallback})을 씁니다.`,
-      );
-      return { from, to, rate: fallback, source: 'fallback' };
+    if (info) {
+      if (info.source === 'fallback') {
+        this.logger.warn(`${from}->${to} 환율이 저장돼 있지 않아 고정값(${info.rate})을 씁니다.`);
+      }
+      return info;
     }
 
     throw new BadRequestException(
@@ -237,13 +211,5 @@ export class ExchangeRatesService {
         ],
       },
     });
-  }
-
-  /**
-   * 고정값 표에서 찾는다. 표는 `@money/types` 에 한 벌만 둔다 -- 기기도 오프라인에서
-   * 같은 값을 써야 외화 계좌의 합계가 서버와 갈리지 않는다.
-   */
-  private fallbackRate(from: CurrencyCode, to: CurrencyCode): string | null {
-    return fallbackRate(from, to);
   }
 }

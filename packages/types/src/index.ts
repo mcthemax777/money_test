@@ -44,3 +44,4 @@ export * from './balance-history';
 export * from './plans';
 export * from './account';
 export * from './account-maturity';
+export * from './installment-rows';

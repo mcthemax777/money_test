@@ -13,11 +13,8 @@ import { Prisma } from '@prisma/client';
 import {
   type CategoryPostingRow,
   type EntryBasis,
-  type InstallmentRowPlan,
   expandInstallmentRows,
-  installmentRefundRow,
-  lineCutsOf,
-  parseInstallmentAdjust,
+  spreadInstallmentRow,
   INSTALLMENT_LOOKBACK_MONTHS,
 } from '@money/types';
 
@@ -141,42 +138,6 @@ export function spreadRows<T extends CategoryPostingRow>(
   });
 }
 
-/**
- * 집계 줄에 실을 할부 계획. 할부가 아니면 undefined.
- *
- * 회차 금액을 **비율로만** 쓴다. 그래서 카드 통화가 기준통화와 달라도 원금은 제대로
- * 나뉜다 -- 줄 금액(기준통화)을 그 비율로 자르기 때문이다. 이자는 금액 그대로 더하는
- * 값이라 통화가 갈리면 싣지 않는다. 환산할 그때의 환율이 계획에 없다.
- */
-export function installmentPlanOf(
-  legs?: InstallmentLeg[],
-  /** 걸린 할부 환불과 이 줄의 키 (installment-refund). 주면 그 줄이 줄인 회차를 싣는다. */
-  refunds?: { lineKey: string | null; cuts: InstallmentRefundCuts },
-): InstallmentRowPlan | undefined {
-  const leg = legs?.find((posting) => posting.installmentPlan);
-  const plan = leg?.installmentPlan;
-  if (!leg || !plan || plan.totalMonths < 2) return undefined;
-
-  const sameCurrency = leg.amount.equals(leg.baseAmount);
-  const cuts = refunds
-    ? lineCutsOf(
-        refunds.cuts.map((cut) => ({
-          lineKey: cut.paybackOfLineKey,
-          adjust: parseInstallmentAdjust(cut.installmentAdjust),
-        })),
-        refunds.lineKey,
-        plan.totalMonths,
-      )
-    : null;
-  return {
-    months: plan.totalMonths,
-    total: leg.baseAmount.abs().toString(),
-    principals: toShareList(plan.principalShares),
-    interests: sameCurrency ? toShareList(plan.interestShares) : null,
-    ...(cuts ? { cuts } : {}),
-  };
-}
-
 /** 할부 원거래에 걸린 할부 환불 (`INSTALLMENT_REFUND_SELECT.paybacks`). */
 export type InstallmentRefundCuts = Array<{ paybackOfLineKey: string | null; installmentAdjust: unknown }>;
 
@@ -195,11 +156,8 @@ export const INSTALLMENT_REFUND_SELECT = {
 } as const;
 
 /**
- * 회차 기준의 집계 행 하나 (리포트·예산이 함께 쓴다).
- *
- *   - 할부 원거래의 줄이면 할부 계획과 그 줄이 줄인 회차를 싣는다 -- 편 뒤 회차에서 빠진다.
- *   - 할부 환불이면 남은 회차로 다 줄이지 못한 몫만, 환불한 날에 센다.
- *   - 그 밖에는 그대로다.
+ * 회차 기준의 집계 행 하나. 규칙은 공용 `spreadInstallmentRow` 에 있고(기기 사본도 같은 것을 쓴다),
+ * 여기서는 Prisma 로 읽은 다리·계획·환불을 그 모양으로 옮길 뿐이다.
  */
 export function spreadRowOf<T extends CategoryPostingRow>(
   row: T,
@@ -213,19 +171,25 @@ export function spreadRowOf<T extends CategoryPostingRow>(
     };
   },
 ): T {
-  const adjust = parseInstallmentAdjust(source.entry.installmentAdjust);
-  if (adjust) return installmentRefundRow(row, adjust, source.entry.date);
-  return {
-    ...row,
-    installment: installmentPlanOf(source.entry.postings, {
-      lineKey: source.lineKey,
-      cuts: source.entry.paybacks ?? [],
-    }),
-  };
-}
-
-/** JSON 칸을 문자열 배열로 가린다. 모양이 아니면 없는 것으로 본다. */
-function toShareList(value: Prisma.JsonValue): string[] | null {
-  if (!Array.isArray(value) || value.length === 0) return null;
-  return value.map((share) => String(share));
+  const leg = source.entry.postings?.find((posting) => posting.installmentPlan);
+  const plan = leg?.installmentPlan;
+  return spreadInstallmentRow(row, {
+    lineKey: source.lineKey,
+    refundAdjust: source.entry.installmentAdjust,
+    ownDate: source.entry.date,
+    plan:
+      leg && plan
+        ? {
+            months: plan.totalMonths,
+            amount: leg.amount,
+            baseAmount: leg.baseAmount,
+            principalShares: plan.principalShares,
+            interestShares: plan.interestShares,
+          }
+        : null,
+    refunds: (source.entry.paybacks ?? []).map((cut) => ({
+      lineKey: cut.paybackOfLineKey,
+      adjust: cut.installmentAdjust,
+    })),
+  });
 }

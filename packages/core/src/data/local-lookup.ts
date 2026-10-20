@@ -18,10 +18,23 @@ import {
   type LookupPaybackTarget,
   fallbackRate,
   parseInstallmentAdjust,
+  resolveRate,
+  type CurrencyCode,
+  type ExchangeRateInfo,
 } from '@money/types';
 
 import type { LocalStore } from './local-store';
 
+
+/** 사본에서 찾는 통화쌍 하나의 환율. 없으면 null. 조립과 홈 창구가 함께 쓴다. */
+export function localRateInfo(
+  store: LocalStore,
+  projectId: string,
+  from: CurrencyCode,
+  to: CurrencyCode,
+): Promise<ExchangeRateInfo | null> {
+  return resolveRate(from, to, (base, quote) => store.latestRateRow(projectId, base, quote));
+}
 
 export function localLedgerLookup(store: LocalStore): LedgerLookup {
   return {
@@ -31,21 +44,11 @@ export function localLedgerLookup(store: LocalStore): LedgerLookup {
     },
 
     async rate(projectId, from, to) {
-      if (from === to) return Dec.of(1);
-
-      const direct = await store.latestRate(projectId, from, to);
-      if (direct) return Dec.of(direct);
-
-      // 반대 방향만 담겨 있을 수 있다. 역수를 쓴다.
-      const inverse = await store.latestRate(projectId, to, from);
-      if (inverse && !Dec.of(inverse).isZero()) return Dec.of(1).dividedBy(inverse, 8);
-
-      // 사본에 행이 없으면 고정값 표를 쓴다. 서버와 같은 표다 (@money/types).
-      const fallback = fallbackRate(from, to);
-      if (fallback) return Dec.of(fallback);
-
+      // 차례(직접 정한 값 → 역수 → 고정값)는 서버와 함께 쓴다 (`resolveRate`).
+      const info = await localRateInfo(store, projectId, from as CurrencyCode, to as CurrencyCode);
       // 모르는 통화쌍이다. 1로 눙치지 않고 조립이 막게 둔다.
-      throw new Error(`환율을 알 수 없습니다: ${from} -> ${to}`);
+      if (!info) throw new Error(`환율을 알 수 없습니다: ${from} -> ${to}`);
+      return Dec.of(info.rate);
     },
 
     async account(projectId, accountId): Promise<LookupAccount | null> {

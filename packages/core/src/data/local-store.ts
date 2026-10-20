@@ -61,14 +61,13 @@ import {
   rankAfter,
   zonedDateKey,
   zonedYearMonth,
-  type InstallmentRowPlan,
   RestateError,
   pendingRateItems,
   restateAmounts,
-  installmentRefundRow,
-  lineCutsOf,
-  parseInstallmentAdjust,
-  adjustTotals,
+  cardDiscountOf,
+  cardRefundCutsOf,
+  shareListOf,
+  spreadInstallmentRow,
   NO_PERSON,
 } from '@money/types';
 
@@ -281,16 +280,6 @@ export type RestatePlan = Array<{
  * 모양이 아니면 없는 것으로 본다 -- 그때는 읽는 쪽이 개월수로 나누므로, 빈 배열을
  * 돌려주어 회차가 통째로 사라지는 것보다 낫다 (서버의 `toShares` 와 같은 규칙이다).
  */
-const parseShares = (value: unknown): string[] | null => {
-  if (typeof value !== 'string' || value === '') return null;
-  try {
-    const parsed: unknown = JSON.parse(value);
-    if (!Array.isArray(parsed) || parsed.length === 0) return null;
-    return parsed.map((share) => String(share));
-  } catch {
-    return null;
-  }
-};
 
 /** `IN (?, ?, ?)` 의 물음표들. 개수가 0 이면 아무것도 맞지 않는 절이 된다. */
 const placeholders = (count: number): string =>
@@ -381,49 +370,31 @@ function openingSeed(row: Row): Dec {
  * 와 한 규칙이다.
  */
 const toCardPosting = (row: Row, legs: readonly Row[]): StoredCardPosting => {
-  const discount = row.originalCurrency
-    ? null
-    : legs.reduce(
-        (acc, leg) => (leg.discountAmount == null ? acc : acc.plus(asMoney(leg.discountAmount))),
-        Dec.of(0),
-      );
 
   return {
     amount: asMoney(row.amount),
     date: String(row.date),
     installmentMonths: row.totalMonths == null ? null : Number(row.totalMonths),
-    installmentShares: parseShares(row.principalShares),
-    installmentInterestShares: parseShares(row.interestShares),
+    installmentShares: shareListOf(row.principalShares),
+    installmentInterestShares: shareListOf(row.interestShares),
     countsPerformance: Boolean(row.countsPerformance),
-    discountAmount: discount && !discount.isZero() ? discount.toString() : null,
+    // 더하는 규칙은 서버 카드 원장과 함께 쓴다 (`cardDiscountOf`). 다리는 분류 줄만 읽어 온다(`usageLegs`).
+    discountAmount: cardDiscountOf(asText(row.originalCurrency), legs.map((leg) => asText(leg.discountAmount))),
     discountCountsPerformance: Boolean(row.discountCountsPerformance ?? 1),
     ...cardRefundFields(row),
   };
 };
 
 /**
- * 할부 환불이 청구와 실적에 주는 것 (installment-refund, 서버 card-ledger 의 refundCutFields 와 같다).
- *   - 할부 원거래의 카드 다리: 걸린 환불이 회차마다 줄인 것. 청구 회차에서 뺀다.
- *   - 할부 환불의 카드 다리: 그 환불이 줄인 것의 합. 청구는 남은 몫만, 실적은 돌려받은 돈만.
+ * 할부 환불이 청구와 실적에 주는 것. 규칙은 서버 카드 원장과 함께 쓴다 (`cardRefundCutsOf`).
+ * 걸린 환불의 조정은 레코드 구분자(30)로 이어 붙인 한 칸으로 온다.
  */
 function cardRefundFields(row: Row): Pick<StoredCardPosting, 'installmentCuts' | 'refundCut'> {
-  const months = row.totalMonths == null ? 0 : asInt(row.totalMonths);
-  const adjust = parseInstallmentAdjust(asText(row.refundAdjust));
-  const totals = adjust ? adjustTotals(adjust) : null;
-  return {
-    installmentCuts:
-      months >= 2
-        ? lineCutsOf(
-            String(row.installmentCuts ?? '')
-              .split(String.fromCharCode(30))
-              .filter(Boolean)
-              .map((json) => ({ lineKey: null, adjust: parseInstallmentAdjust(json) })),
-            null,
-            months,
-          )
-        : null,
-    refundCut: totals ? { total: totals.total.toString(), interest: totals.interest.toString() } : null,
-  };
+  return cardRefundCutsOf({
+    refundAdjust: asText(row.refundAdjust),
+    months: row.totalMonths == null ? null : asInt(row.totalMonths),
+    refunds: String(row.installmentCuts ?? '').split(String.fromCharCode(30)).filter(Boolean),
+  });
 }
 
 const asInt = (value: unknown): number => {
@@ -2708,8 +2679,8 @@ export class LocalStore {
             : {
                 totalMonths: asInt(row.installmentMonths),
                 interestBearing: Boolean(row.installmentInterest),
-                principalShares: parseShares(row.installmentShares),
-                interestShares: parseShares(row.installmentInterestShares),
+                principalShares: shareListOf(row.installmentShares),
+                interestShares: shareListOf(row.installmentInterestShares),
                 monthlyPayment: asText(row.installmentMonthlyPayment),
                 annualRate: asText(row.installmentAnnualRate),
               },
@@ -2935,21 +2906,6 @@ export class LocalStore {
     const row = rows[0];
     if (!row) return null;
     return { rate: asMoney(row.rate), date: String(row.date), source: String(row.source) };
-  }
-
-  /** 통화쌍의 최신 환율. 서버의 getRate 와 같은 규칙(날짜 내림차순 첫 줄)이다. */
-  async latestRate(
-    projectId: string,
-    baseCurrency: string,
-    quoteCurrency: string,
-  ): Promise<string | null> {
-    const rows = await this.db.all<Row>(
-      `SELECT rate FROM exchange_rate
-        WHERE projectId = ? AND baseCurrency = ? AND quoteCurrency = ?
-        ORDER BY date DESC LIMIT 1`,
-      [projectId, baseCurrency, quoteCurrency],
-    );
-    return asText(rows[0]?.rate);
   }
 
   // ───────────────────────────────────────────
@@ -3909,8 +3865,8 @@ export class LocalStore {
       cardId: String(row.cardId),
       sameCurrency: String(row.amount) === String(row.baseAmount),
       entryAmount: Dec.of(String(row.baseAmount)).abs().toString(),
-      principals: parseShares(row.principalShares),
-      interests: parseShares(row.interestShares),
+      principals: shareListOf(row.principalShares),
+      interests: shareListOf(row.interestShares),
       refunds: refunds.map((refund) => ({
         id: String(refund.id),
         lineKey: asText(refund.paybackOfLineKey),
@@ -4968,42 +4924,34 @@ function maskCardNumber(value: string | null): string {
  * 이자는 금액 그대로 더하는 값이라 통화가 갈리면 싣지 않는다 (서버와 같은 판단이다).
  */
 /**
- * 회차 기준의 집계 행 하나 (서버 common/installment-scope 의 spreadRowOf 와 같다).
- *
- *   - 할부 환불이면 남은 회차로 다 줄이지 못한 몫만, 환불한 날에 센다.
- *   - 할부 원거래의 줄이면 할부 계획과 그 줄에 걸린 환불이 줄인 회차를 싣는다.
+ * 회차 기준의 집계 행 하나. 규칙은 공용 `spreadInstallmentRow` 에 있고(서버도 같은 것을 쓴다),
+ * 여기서는 사본의 열을 그 모양으로 옮길 뿐이다. 걸린 환불은 (줄 키, 조정 JSON) 짝을 레코드
+ * 구분자(30)·단위 구분자(31)로 이어 붙인 한 칸으로 온다.
  */
 function spreadRowOf(named: NamedCategoryPostingRow, row: Row): NamedCategoryPostingRow {
-  const adjust = parseInstallmentAdjust(asText(row.refundAdjust));
-  if (adjust) return installmentRefundRow(named, adjust, String(row.ownDate));
-  const plan = installmentOf(row);
-  if (!plan) return named;
-  const cuts = lineCutsOf(
-    String(row.installmentCuts ?? '')
+  const months = row.installmentMonths == null ? 0 : asInt(row.installmentMonths);
+  return spreadInstallmentRow(named, {
+    lineKey: asText(row.lineKey),
+    refundAdjust: asText(row.refundAdjust),
+    ownDate: String(row.ownDate),
+    plan:
+      months > 0
+        ? {
+            months,
+            amount: asMoney(row.installmentAmount ?? '0'),
+            baseAmount: asMoney(row.installmentBase ?? '0'),
+            principalShares: row.principalShares,
+            interestShares: row.interestShares,
+          }
+        : null,
+    refunds: String(row.installmentCuts ?? '')
       .split(String.fromCharCode(30))
       .filter(Boolean)
       .map((pair) => {
-        const [lineKey, json] = pair.split(String.fromCharCode(31));
-        return { lineKey: lineKey || null, adjust: parseInstallmentAdjust(json) };
+        const [lineKey, adjust] = pair.split(String.fromCharCode(31));
+        return { lineKey: lineKey || null, adjust };
       }),
-    asText(row.lineKey),
-    plan.months,
-  );
-  return { ...named, installment: cuts ? { ...plan, cuts } : plan };
-}
-
-function installmentOf(row: Row): InstallmentRowPlan | undefined {
-  const months = row.installmentMonths == null ? 0 : asInt(row.installmentMonths);
-  if (months < 2) return undefined;
-
-  const base = asMoney(row.installmentBase ?? '0');
-  const sameCurrency = String(row.installmentAmount ?? '') === String(row.installmentBase ?? '');
-  return {
-    months,
-    total: Dec.of(base).abs().toString(),
-    principals: parseShares(row.principalShares),
-    interests: sameCurrency ? parseShares(row.interestShares) : null,
-  };
+  });
 }
 
 export interface MirrorEntryScope {

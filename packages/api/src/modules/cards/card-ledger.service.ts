@@ -23,9 +23,8 @@ import {
   zonedDayStart,
   zonedMonthRange,
   zonedParts,
-  adjustTotals,
-  lineCutsOf,
-  parseInstallmentAdjust,
+  cardDiscountOf,
+  cardRefundCutsOf,
 } from '@money/types';
 import { INSTALLMENT_REFUND_SELECT, type InstallmentRefundCuts } from '@/common/installment-scope';
 import { PrismaService } from '@/config/prisma.service';
@@ -52,46 +51,26 @@ function performanceDiscount(entry: {
   originalCurrency: string | null;
   postings: Array<{ categoryId: string | null; discountAmount: Prisma.Decimal | null }>;
 }): Pick<CardUsagePosting, 'discountAmount' | 'discountCountsPerformance'> {
-  if (entry.originalCurrency) {
-    return { discountAmount: null, discountCountsPerformance: entry.discountCountsPerformance };
-  }
-
-  const total = entry.postings.reduce(
-    (acc, leg) => (leg.categoryId !== null && leg.discountAmount ? acc.add(leg.discountAmount) : acc),
-    ZERO,
-  );
+  // 더하는 규칙은 기기 사본과 함께 쓴다 (`cardDiscountOf`).
   return {
-    discountAmount: total.isZero() ? null : total,
+    discountAmount: cardDiscountOf(
+      entry.originalCurrency,
+      entry.postings.filter((leg) => leg.categoryId !== null).map((leg) => leg.discountAmount),
+    ),
     discountCountsPerformance: entry.discountCountsPerformance,
   };
 }
 
-/**
- * 할부 환불이 청구와 실적에 주는 것 (installment-refund).
- *
- *   - 할부 원거래의 카드 다리: 걸린 환불이 회차마다 줄인 것. 청구 회차에서 뺀다.
- *   - 할부 환불의 카드 다리: 그 환불이 줄인 것의 합. 청구는 남은 몫만, 실적은 돌려받은 돈만.
- */
+/** 할부 환불이 청구와 실적에 주는 것. 규칙은 기기 사본과 함께 쓴다 (`cardRefundCutsOf`). */
 function refundCutFields(
   entry: { installmentAdjust?: unknown; paybacks?: InstallmentRefundCuts },
   months: number | null | undefined,
 ): Pick<CardUsagePosting, 'installmentCuts' | 'refundCut'> {
-  const adjust = parseInstallmentAdjust(entry.installmentAdjust);
-  const totals = adjust ? adjustTotals(adjust) : null;
-  return {
-    installmentCuts:
-      months && months >= 2
-        ? lineCutsOf(
-            (entry.paybacks ?? []).map((cut) => ({
-              lineKey: cut.paybackOfLineKey,
-              adjust: parseInstallmentAdjust(cut.installmentAdjust),
-            })),
-            null,
-            months,
-          )
-        : null,
-    refundCut: totals ? { total: totals.total.toString(), interest: totals.interest.toString() } : null,
-  };
+  return cardRefundCutsOf({
+    refundAdjust: entry.installmentAdjust,
+    months,
+    refunds: (entry.paybacks ?? []).map((cut) => cut.installmentAdjust),
+  });
 }
 
 /** 깎인 금액을 더하려면 분류 다리를 함께 읽어야 한다. 카드 다리를 읽는 질의마다 붙인다. */

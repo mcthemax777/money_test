@@ -87,6 +87,7 @@ import {
 
 import type { ReportPeriod } from '../lib/api-client';
 import type { HomeDataPort } from './home-port';
+import { localRateInfo } from './local-lookup';
 import type {
   LocalStore,
   MirrorEntryScope,
@@ -1665,40 +1666,8 @@ function periodKeys(period: ReportPeriod): { fromDateKey: string; toDateKey: str
   return { fromDateKey: String(period.startDate), toDateKey: String(period.endDate) };
 }
 
-/**
- * 통화쌍 하나의 환율. 서버 `ExchangeRatesService.getRate` 와 같은 차례다.
- *
- *   1. 그 쌍을 직접 정한 최신 값
- *   2. 반대 방향만 정해 두었으면 그 역수 (소수 여덟째 자리, 출처에 "(역수)")
- *   3. 고정값 표 (`fallbackRate`, 출처 'fallback')
- *
- * 고정값도 없으면 null 이다 -- 서버는 그때 오류를 준다. 지원하는 통화는 모두 고정값이 있다.
- */
-async function rateInfoOf(
-  store: LocalStore,
-  projectId: string,
-  from: CurrencyCode,
-  to: CurrencyCode,
-): Promise<ExchangeRateInfo | null> {
-  if (from === to) return { from, to, rate: '1', source: 'identity' };
-
-  const direct = await store.latestRateRow(projectId, from, to);
-  if (direct) return { from, to, rate: direct.rate, date: direct.date, source: direct.source };
-
-  const inverse = await store.latestRateRow(projectId, to, from);
-  if (inverse && !Dec.of(inverse.rate).isZero()) {
-    return {
-      from,
-      to,
-      rate: Dec.of(1).dividedBy(inverse.rate, 8).toString(),
-      date: inverse.date,
-      source: `${inverse.source} (역수)`,
-    };
-  }
-
-  const fallback = fallbackRate(from, to);
-  return fallback ? { from, to, rate: fallback, source: 'fallback' } : null;
-}
+/** 통화쌍 하나의 환율. 차례는 서버와 함께 쓰는 `resolveRate` 다 (`localRateInfo`). */
+const rateInfoOf = localRateInfo;
 
 /** 계좌 통화 -> 표시 통화 환율. 사본에 있는 것만 모은다. */
 async function ratesFor(

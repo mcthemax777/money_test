@@ -32,6 +32,10 @@ TIMING_AUDIT.md(a354741) 다음 차례. 서버·공용 타입·core·앱·웹을
 - 이어서 (10-20): 요약의 말일을 실제 말일로, 카드 원장 줄에 카드 이름, 예산 사용액은 서버처럼 사람 조건만.
 - 할부 회차·이자·환불 몫을 금액에 적힌 자릿수로 나눈다(`amountScale`). 원화는 그대로이고 달러 할부가 센트까지 나뉜다.
 - 서버·기기에 두 벌이던 상수(`INSTALLMENT_LOOKBACK_MONTHS`, `PROFIT_ACCOUNT_TYPES`)를 공용 타입으로.
+- 서버·기기에 두 벌이던 계산을 공용 타입으로 (읽기는 각자, 규칙은 한 벌):
+  - 회차 기준 한 줄 `spreadInstallmentRow` (installment-rows.ts) -- 서버 installment-scope·기기 local-store
+  - 카드 차감·할부 환불 몫 `cardDiscountOf`·`cardRefundCutsOf` -- 서버 card-ledger·기기 local-store
+  - 환율 찾기 차례 `resolveRate` (fallback-rates.ts) -- 서버 exchange-rates·기기 local-home-port·local-lookup(세 번째 벌이었다)
 
 ### 웹
 - 자산 화면의 다시 받기 실패를 화면 위에 알림(처리되지 않은 거부였음), 카드 추가 폼 초기값 한 벌로.
@@ -41,7 +45,6 @@ TIMING_AUDIT.md(a354741) 다음 차례. 서버·공용 타입·core·앱·웹을
 
 ## 남긴 것
 - 기기와 서버의 작은 차이: 예산 줄 차례(화면이 다시 정렬해 보이지 않음), 추이 자르기 단위(부르는 쪽이 날 경계만 보냄).
-- 서버 로직을 기기에 옮겨 둔 두 벌(할부 펴기·카드 차감·환율 찾기)은 그대로다. 읽는 곳이 Prisma 와 SQLite 로 달라 합치려면 큰 손질이 든다.
 - 정수 금액의 달러 할부를 이율로 계산하면 이자가 달러 단위로 잘린다 (금액에 소수가 없으면 자릿수를 알 수 없다).
 - 외화 통장 이체의 수수료는 환율로 되돌리므로, 장부 통화 자릿수가 적고 환율이 1 근처면 끝수 하나가 갈릴 수 있다.
 - 배포: 서버 재배포와 APK 재빌드가 필요하다.

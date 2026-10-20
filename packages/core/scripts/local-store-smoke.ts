@@ -515,7 +515,7 @@ const entry = (
     groupDriver.close();
   }
 
-  eq('최신 환율을 고른다 (날짜 내림차순 첫 줄)', await store.latestRate(PID, 'USD', 'KRW'), '1400');
+  eq('최신 환율을 고른다 (날짜 내림차순 첫 줄)', (await store.latestRateRow(PID, 'USD', 'KRW'))?.rate, '1400');
 
   // ── 4. 델타: 전표 수정, 다리 수가 줄어든다 ──
   const edited = entry('e2', '2026-08-10T03:00:00.000Z', '40000', 'c-dining', 'a1', 20);
