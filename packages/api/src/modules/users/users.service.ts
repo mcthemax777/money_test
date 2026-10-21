@@ -62,6 +62,8 @@ export class UsersService {
     }
 
     if (data.avatar !== undefined) {
+      // 글자(또는 null)가 아니면 400 이다 (`readText`). 객체가 그대로 가면 500 이었다. 값은 예전처럼 그대로 적는다.
+      readText(data.avatar, '사진');
       payload.avatar = data.avatar;
     }
 

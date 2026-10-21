@@ -17,6 +17,8 @@ runSmoke('ownership-transfer', async (ctx) => {
     {} as any,
     new ExchangeRatesService(ctx.prisma as any),
     new PlansService(ctx.prisma as any),
+    // 구독 해지는 이 검사의 관심이 아니다. 지울 가계부에 이어지는 구독이 없다.
+    { cancelRenewing: async () => undefined } as any,
   );
   const project = await ctx.createProject();
 

@@ -123,6 +123,9 @@ export type PushLocale = Locale;
 /** FCM 한 번 보내기를 기다리는 시간. */
 const FCM_TIMEOUT_MS = 10_000;
 
+/** FCM 등록 토큰은 백 자를 훌쩍 넘는다. 이보다 짧은 값은 토큰이 아니다. */
+const MIN_TOKEN_LENGTH = 32;
+
 @Injectable()
 export class PushService implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(PushService.name);
@@ -188,6 +191,16 @@ export class PushService implements OnModuleInit, OnModuleDestroy {
     const token = String(dto?.token ?? '').trim();
     if (!token) return;
     await this.prisma.pushDevice.deleteMany({ where: { token, userId } });
+  }
+
+  /**
+   * 토큰만으로 지운다 (`PushForgetController`). 누구의 것인지 묻지 않는다 -- 로그아웃한 기기가 부른다.
+   * 짧은 값은 FCM 토큰일 리 없어 받지 않는다 (아무 글자로 남의 기기를 맞혀 보는 것을 막는다).
+   */
+  async forget(dto: PushDeviceDto.UnregisterRequest): Promise<void> {
+    const token = typeof dto?.token === 'string' ? dto.token.trim() : '';
+    if (token.length < MIN_TOKEN_LENGTH) return;
+    await this.prisma.pushDevice.deleteMany({ where: { token } });
   }
 
   /**

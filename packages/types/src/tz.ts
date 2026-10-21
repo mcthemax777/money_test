@@ -126,8 +126,7 @@ function offsetMs(instant: Date, timeZone: string): number {
  * 벽시계 값을 UTC 인스턴트로 바꾼다.
  *
  * month는 1~12지만 범위를 벗어나도 된다 (13월 = 다음 해 1월). day도 같다.
- * 오프셋을 두 번 재는 이유: DST 전환일에는 추정 인스턴트의 오프셋과 실제
- * 결과 인스턴트의 오프셋이 다를 수 있다.
+ * 서머타임 전환일의 없는 시각·두 번 있는 시각은 아래 본문의 규칙을 따른다.
  */
 export function zonedTimeToUtc(
   year: number,
@@ -138,9 +137,23 @@ export function zonedTimeToUtc(
   timeZone: string,
 ): Date {
   const wallClock = Date.UTC(year, month - 1, day, hour, minute);
-  const firstGuess = wallClock - offsetMs(new Date(wallClock), timeZone);
-  const corrected = wallClock - offsetMs(new Date(firstGuess), timeZone);
-  return new Date(corrected);
+  /*
+   * 그 벽시계가 될 수 있는 인스턴트는 앞뒤 오프셋 둘로 만든 것뿐이다. 그중 벽시계가 맞는 것을 고른다.
+   *
+   *   하나만 맞다   보통의 날.
+   *   둘 다 맞다    서머타임이 끝나 같은 시각이 두 번 있는 날. 앞의 것을 쓴다 (예전과 같다).
+   *   하나도 없다   서머타임이 시작해 그 시각이 없는 날(뉴욕 3월의 02:30). 시계가 뛴 만큼 뒤로 민다(03:30) --
+   *                 Temporal 의 'compatible' 과 같은 관례다. 예전에는 한 시간 앞(01:30)으로 저장했다.
+   */
+  const DAY = 24 * 60 * 60 * 1000;
+  const offsets = new Set([
+    offsetMs(new Date(wallClock - DAY), timeZone),
+    offsetMs(new Date(wallClock + DAY), timeZone),
+    offsetMs(new Date(wallClock - offsetMs(new Date(wallClock), timeZone)), timeZone),
+  ]);
+  const candidates = [...offsets].map((offset) => wallClock - offset);
+  const matching = candidates.filter((instant) => instant + offsetMs(new Date(instant), timeZone) === wallClock);
+  return new Date(matching.length > 0 ? Math.min(...matching) : Math.max(...candidates));
 }
 
 /** 그 타임존에서 해당 날짜가 시작하는 인스턴트 */

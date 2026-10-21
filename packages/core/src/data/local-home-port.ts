@@ -1120,10 +1120,13 @@ export function createLocalHomePort(
       note('accountPostings');
 
       const limit = Math.min(Math.max(Number(params?.limit) || 50, 1), 200);
-      const amounts = await store.accountPostingAmounts(accountId);
+      const [amounts, seed] = await Promise.all([
+        store.accountPostingAmounts(accountId),
+        store.openingSeedOf(accountId),
+      ]);
 
-      // 오래된 것부터 더해 줄마다의 잔액을 만든다. 목록은 그 반대로 읽는다.
-      let running = Dec.of(0);
+      // 오래된 것부터 더해 줄마다의 잔액을 만든다. 목록은 그 반대로 읽는다. 머리의 잔액과 같은 씨앗에서 출발한다.
+      let running = Dec.of(seed);
       const withBalance = amounts.map((row) => {
         running = running.plus(row.amount);
         return { ...row, balanceAfter: running.toString() };

@@ -50,6 +50,11 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
   const token = getAdminToken();
   const response = await fetch(`${apiClient.baseUrl}${path}`, {
     method,
+    /*
+     * 쿠키를 싣지 않는다. 관리 도구는 머리글 토큰으로만 인증한다. 같은 브라우저에 사용자 세션 쿠키가 있고 API 가
+     * 같은 출처면, 머리글이 없는 로그인 요청이 "쿠키로 인증하는 쓰기"로 읽혀 CSRF 문(CSRF_REJECTED)에 막혔다.
+     */
+    credentials: 'omit',
     headers: {
       ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),

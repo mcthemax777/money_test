@@ -365,9 +365,32 @@ const KST = 'Asia/Seoul';
     })).clientSeq,
     502);
 
-  // 다시 줄에 세운 충돌은 이미 보류 칸을 떠났다. 남은 거절 하나를 버리면 칸이 빈다.
-  await store.discardMutation(rejected.mutationId);
-  eq('버리면 보류 칸에서 사라진다', (await store.heldMutations(projectId)).length, 0);
+  // 겹친 명령 때문에 막힌 뒤 명령도 함께 다시 줄에 선다. 예전에는 보류 칸에 남아 사람이 다시 보내야 했다.
+  const collidedAgain = (await store.pendingMutations(projectId)).find((row) => row.mutationId === 'seq-retry-1')!;
+  const settledFollow = await store.settleMutations(
+    [
+      {
+        mutationId: collidedAgain.mutationId,
+        status: 'rejected',
+        code: 'CLIENT_SEQ_TAKEN',
+        error: '같은 순번을 다른 명령이 이미 썼습니다.',
+        lastClientSeq: 600,
+      },
+      { mutationId: 'after-seq-retry', status: 'blocked', error: '앞선 명령이 처리되지 않아 함께 미뤘습니다.' },
+    ],
+    (() => {
+      const ids = ['seq-retry-2', 'seq-retry-3'];
+      return () => ids.shift()!;
+    })(),
+  );
+  eq('막힌 뒤 명령도 함께 다시 낸다', settledFollow.requeued, 2);
+  const followed = await store.pendingMutations(projectId);
+  const seqOf = (id: string) => followed.find((row) => row.mutationId === id)?.clientSeq;
+  eq('차례가 그대로다 (앞 명령이 먼저)', [seqOf('seq-retry-2'), seqOf('seq-retry-3')].join(','), '601,602');
+  eq('막힌 명령은 보류 칸에 없다',
+    (await store.heldMutations(projectId)).some((row) => row.mutationId === 'after-seq-retry'), false);
+
+  // 남은 거절 하나를 버리는 일은 맨 끝에서 본다 -- 버리면 다음 동기화가 사본을 처음부터 다시 받는다.
 
   // ── 4. 동기화 엔진이 큐를 비운다 ──
   //
@@ -559,6 +582,35 @@ const KST = 'Asia/Seoul';
   });
   eq('다른 프로젝트는 세지 않는다', (await store.outboxCount(projectId)).pending, 1);
   eq('프로젝트를 묻지 않으면 다 센다', (await store.outboxCount()).pending, 2);
+
+  // ── 버리기 ──
+  // 거절을 버리면 보류 칸에서 사라지고, 그 명령이 사본에 남긴 것을 되돌리려 다음 동기화가 남은 명령을
+  // 먼저 보낸 뒤 처음부터 다시 받는다. 예전에는 버린 거래가 잔액에 유령으로 남았다.
+  // 위에서 사본을 비웠으므로(reset) 받은 적 있는 사본을 다시 세운다.
+  await store.init(projectId, KST);
+  await store.discardMutation(rejected.mutationId);
+  eq('버리면 보류 칸에서 사라진다', (await store.heldMutations(projectId)).length, 0);
+  eq('버리면 다음 동기화가 처음부터 받게 표시한다', (await store.cursor(projectId))?.version, -1);
+  const rebuildOrder: string[] = [];
+  const rebuildResult = await syncProject(
+    store,
+    async (query) => {
+      rebuildOrder.push(`pull:${query.since}`);
+      return dump.base;
+    },
+    projectId,
+    KST,
+    async (request: PushRequest) => {
+      rebuildOrder.push('push');
+      return {
+        results: request.mutations.map((row) => ({ mutationId: row.mutationId, status: 'applied' as const })),
+        version: dump.base.version,
+      };
+    },
+  );
+  eq('남은 명령을 먼저 보내고 0 부터 받는다', rebuildOrder.slice(0, 2).join(' '), 'push pull:0');
+  eq('다시 받았다고 알린다', rebuildResult.rebuilt, true);
+  eq('다시 받은 뒤 커서가 제자리다', (await store.cursor(projectId))?.version, dump.base.version);
 
   driver.close();
   console.log(fail === 0 ? '\n전부 통과' : `\n실패 ${fail}건`);

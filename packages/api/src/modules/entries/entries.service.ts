@@ -38,7 +38,7 @@ import { lockLedgerWrites } from '@/common/ledger-lock';
 import { assertDateKey, assertYearMonth } from '@/common/year-month';
 import { analysisDateCondition } from '@/common/payback-scope';
 import { clientId, rejectDuplicateId } from '@/common/client-id';
-import { readLimit } from '@/common/text';
+import { readLimit, readInstant } from '@/common/text';
 
 /** 달력 날짜만 적힌 값인가. "2026-07-31" 이면 참, 시각이 붙어 있으면 거짓이다. */
 const DATE_KEY_ONLY = /^\d{4}-\d{2}-\d{2}$/;
@@ -54,17 +54,8 @@ function dayStartOf(value: string, timeZone: string): Date {
     : instantOf(value);
 }
 
-/**
- * 인스턴트 문자열을 읽는다. 읽을 수 없으면 400 이다 (2026-10-16) -- 그대로 두면 Invalid Date 가
- * Prisma 까지 가서 500 이 났다.
- */
-function instantOf(value: string): Date {
-  const instant = new Date(value);
-  if (Number.isNaN(instant.getTime())) {
-    throw new BadRequestException('날짜를 읽을 수 없습니다.');
-  }
-  return instant;
-}
+/** 인스턴트 문자열을 읽는다. 읽을 수 없으면 400 이다 (`readInstant`). */
+const instantOf = (value: string): Date => readInstant(value);
 
 /**
  * 구간의 끝 인스턴트 (**이 값 미만**).

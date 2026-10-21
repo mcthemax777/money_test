@@ -2,12 +2,12 @@ import { Module } from '@nestjs/common';
 
 import { ConfigModule } from '@/config/config.module';
 import { DatabaseModule } from '@/config/database.module';
-import { PushController } from './push.controller';
+import { PushController, PushForgetController } from './push.controller';
 import { PushService } from './push.service';
 
 @Module({
   imports: [DatabaseModule, ConfigModule],
-  controllers: [PushController],
+  controllers: [PushController, PushForgetController],
   providers: [PushService],
   exports: [PushService],
 })

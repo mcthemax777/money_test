@@ -101,9 +101,16 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       // 이메일과 사진은 구글 쪽 변경을 따라간다.
       // 이름은 사용자가 프로필에서 직접 바꿀 수 있으므로 덮어쓰지 않는다.
       // 덮어쓰면 로그인할 때마다 구글 이름으로 되돌아간다.
+      /*
+       * 바뀐 이메일이 다른 계정의 것이면(구글 쪽에서 주소를 옮겼다) 이메일은 그대로 둔다. 덮어쓰면 유일성
+       * 제약에 걸려 이 사람이 로그인할 때마다 500 이었다 -- 이메일은 알림용이고 로그인은 googleId 로 한다.
+       */
+      const taken =
+        email !== existing.email &&
+        (await this.prisma.user.findUnique({ where: { email }, select: { id: true } })) !== null;
       const user = await this.prisma.user.update({
         where: { id: existing.id },
-        data: { email, avatar },
+        data: taken ? { avatar } : { email, avatar },
       });
 
       return this.buildAuthResponse(user);

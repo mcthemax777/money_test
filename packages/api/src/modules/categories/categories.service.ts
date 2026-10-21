@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { readEnum, readText } from '@/common/text';
 import { CategoryType, Prisma, ProjectRole } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
@@ -15,6 +16,9 @@ import { touchEntries } from '@/common/entry-stamp';
 import { lockLedgerWrites } from '@/common/ledger-lock';
 import { ServerClockService } from '@/common/server-clock';
 
+/** 분류 유형. 요청의 유형 칸을 이 목록으로 가린다. */
+const CATEGORY_TYPES = ['income', 'expense'] as const;
+
 @Injectable()
 export class CategoriesService {
   constructor(
@@ -30,7 +34,9 @@ export class CategoriesService {
     projectId?: string,
     hlc?: string,
   ) {
-    if (!dto.name?.trim()) {
+    // 글자가 아닌 이름은 400 이다 (`readText`). `.trim()` 이 TypeError 로 500 을 냈다.
+    const name = readText(dto.name, '카테고리명');
+    if (!name) {
       throw badRequest('CATEGORY_NAME_REQUIRED', '카테고리명을 입력해주세요.');
     }
 
@@ -60,15 +66,19 @@ export class CategoriesService {
       _max: { sortRank: true },
     });
 
+    // 목록 밖의 유형은 400 이다 (`readEnum`). 예전에는 enum 칸에서 500 이었다.
+    const type = readEnum(dto.type, CATEGORY_TYPES, '분류 유형');
+    if (!type) throw new BadRequestException('분류 유형을 골라 주세요.');
+
     try {
       return await this.prisma.category.create({
         data: {
           id: clientId(dto.id, '카테고리 식별자'),
           projectId: finalProjectId,
-          name: dto.name.trim(),
+          name,
           parentId: dto.parentId ?? null,
           sortRank: rankAfter(lastRank._max.sortRank),
-          type: dto.type as CategoryType,
+          type,
           icon: dto.icon,
           fieldHlc: stampFieldClocks(
             null,
@@ -88,7 +98,7 @@ export class CategoriesService {
     return this.prisma.category.findMany({
       where: {
         projectId: finalProjectId,
-        ...(type ? { type: type as CategoryType } : {}),
+        ...(type ? { type: readEnum(type, CATEGORY_TYPES, '분류 유형') } : {}),
       },
       // 대분류(parentId = null)를 먼저, 그다음 이름순
       // 사용자가 드래그로 정한 순서. 같으면 이름 순.

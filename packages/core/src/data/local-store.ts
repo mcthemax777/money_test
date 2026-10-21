@@ -357,6 +357,12 @@ export function recurringRow(projectId: string, row: Row): Record<string, SqlVal
  * 서버가 아는 줄(번호가 붙은 줄)에는 깔지 않는다. 그때는 기초 잔액이 이미 다리로 들어와
  * 있어, 함께 세면 두 번 센다.
  */
+/**
+ * 커서 자리에 적는 "처음부터 다시 받아야 한다"는 표시. 번호는 0 이상이라 겹치지 않는다.
+ * 동기화가 보낼 것을 먼저 보낸 뒤 사본을 비우고 0 부터 받는다 (`syncProject`).
+ */
+export const REBUILD_PENDING = -1;
+
 function openingSeed(row: Row): Dec {
   return asInt(row.updatedVersion) === 0 ? Dec.of(asMoney(row.balance)) : Dec.of(0);
 }
@@ -930,6 +936,16 @@ export class LocalStore {
       }
 
       for (const row of changes.exchangeRates as Row[]) {
+        /*
+         * 같은 (쌍, 날짜)의 줄은 하나다 (서버의 유일성). 오프라인에서 넣은 환율은 기기가 정한 id 로
+         * 적히는데 서버는 제 id 로 받아 들인다. 그 줄을 지우지 않으면 서버 줄과 나란히 남고, 서버가
+         * 그 쌍을 지워도 기기 id 에는 자리표가 오지 않아 옛 환율로 영영 환산했다.
+         */
+        await this.db.run(
+          `DELETE FROM exchange_rate
+            WHERE projectId = ? AND baseCurrency = ? AND quoteCurrency = ? AND date = ? AND id <> ?`,
+          [projectId, String(row.baseCurrency), String(row.quoteCurrency), asIso(row.date).slice(0, 10), String(row.id)],
+        );
         await this.upsert('exchange_rate', {
           id: String(row.id),
           projectId,
@@ -1216,11 +1232,8 @@ export class LocalStore {
   /** 계좌 하나의 지금 잔액. 카드 상세처럼 한 계좌만 볼 때 쓴다. */
   async accountBalance(accountId: string): Promise<string> {
     const cut = asOfClause(new Date());
-    const [seeds, rows] = await Promise.all([
-      this.db.all<Row>(
-        `SELECT a.id, a.balance, a.updatedVersion FROM account a WHERE a.id = ?`,
-        [accountId],
-      ),
+    const [seed, rows] = await Promise.all([
+      this.openingSeedOf(accountId),
       this.db.all<Row>(
         `SELECT p.amount FROM posting p JOIN entry e ON e.id = p.entryId
           WHERE p.accountId = ?${cut.sql}`,
@@ -1228,9 +1241,21 @@ export class LocalStore {
       ),
     ]);
 
-    let total = seeds[0] ? openingSeed(seeds[0]) : Dec.of(0);
+    let total = Dec.of(seed);
     for (const row of rows) total = total.plus(asMoney(row.amount));
     return total.toString();
+  }
+
+  /**
+   * 계좌 하나의 기초 잔액 씨앗 (`openingSeed`). 서버가 아는 계좌면 0 이다. 잔액과 원장 줄의 누적이 같은 데서
+   * 출발해야 한다 -- 원장이 0 에서 세면 오프라인에서 만든 통장의 줄 잔액이 머리의 잔액과 그만큼 갈렸다.
+   */
+  async openingSeedOf(accountId: string): Promise<string> {
+    const rows = await this.db.all<Row>(
+      `SELECT a.id, a.balance, a.updatedVersion FROM account a WHERE a.id = ?`,
+      [accountId],
+    );
+    return (rows[0] ? openingSeed(rows[0]) : Dec.of(0)).toString();
   }
 
   /**
@@ -2292,7 +2317,8 @@ export class LocalStore {
             id,
           ]);
         }
-        await this.db.run(`DELETE FROM category WHERE id = ?`, [id]);
+        // 대분류가 사라지면 남은 소분류도 함께 간다 (서버는 cascade). 거래가 없는 것만 남아 있다(창구가 검사한다).
+        await this.db.run(`DELETE FROM category WHERE id = ? OR parentId = ?`, [id, id]);
       }
     });
     return moved;
@@ -2883,11 +2909,16 @@ export class LocalStore {
     });
   }
 
-  /** 그 쌍의 직접 정한 환율을 모두 지운다. */
+  /**
+   * 그 쌍의 직접 정한 환율을 모두 지운다. 반대 방향도 함께다 (서버 `clearRate` 와 같다) -- 반대 방향만
+   * 남기면 그 역수(`resolveRate`)가 지운 환율을 되살린다.
+   */
   async dropExchangeRates(projectId: string, from: string, to: string): Promise<void> {
     await this.db.run(
-      `DELETE FROM exchange_rate WHERE projectId = ? AND baseCurrency = ? AND quoteCurrency = ?`,
-      [projectId, from, to],
+      `DELETE FROM exchange_rate
+        WHERE projectId = ?
+          AND ((baseCurrency = ? AND quoteCurrency = ?) OR (baseCurrency = ? AND quoteCurrency = ?))`,
+      [projectId, from, to, to, from],
     );
   }
 
@@ -3168,7 +3199,12 @@ export class LocalStore {
        * 검사에 걸린다.
        */
       if (existing) {
-        const columns = Object.keys(row).filter((column) => column !== 'id');
+        /*
+         * 번호(updatedVersion)는 그대로 둔다. 0 은 "서버가 아직 모르는 줄"이라는 뜻이고 계좌에서는
+         * 잔액 칸을 기초 잔액 씨앗으로 다시 세게 한다(`openingSeed`). 예전에는 고칠 때마다 0 을 적어,
+         * 서버가 아는 통장의 이름만 바꿔도 기초 잔액이 한 번 더 더해져 잔액이 두 배로 보였다.
+         */
+        const columns = Object.keys(row).filter((column) => column !== 'id' && column !== 'updatedVersion');
         await this.db.run(
           `UPDATE ${table} SET ${columns.map((column) => `${column} = ?`).join(', ')} WHERE id = ?`,
           [...columns.map((column) => row[column]), id],
@@ -3690,6 +3726,9 @@ export class LocalStore {
       await this.db.run(`DELETE FROM entry_tag WHERE tagId = ?`, [tagId]);
       await this.db.run(`DELETE FROM entry_draft_tag WHERE tagId = ?`, [tagId]);
       await this.dropTagFromRules(tagId);
+      // 그 태그의 예산도 함께 간다 (서버는 cascade). 남기면 홈의 태그 예산 상자가 자리표가 올 때까지 남았다.
+      const budgets = await this.db.all<Row>(`SELECT id FROM budget WHERE tagId = ?`, [tagId]);
+      for (const budget of budgets) await this.forgetRow('budget', String(budget.id));
       await this.db.run(`DELETE FROM tag WHERE id = ?`, [tagId]);
     });
   }
@@ -4105,6 +4144,8 @@ export class LocalStore {
         );
       }
 
+      /** 이번에 새 번호로 다시 낸 명령들의 대상. 그 때문에 막힌 뒤 명령을 함께 다시 낸다. */
+      const requeuedTargets = new Set<string>();
       for (const result of results) {
         /*
          * 서버가 다른 행을 채택했다. 사본과 큐의 참조를 그 id 로 옮긴다.
@@ -4137,8 +4178,28 @@ export class LocalStore {
          */
         if (result.code === 'CLIENT_SEQ_TAKEN' && typeof result.lastClientSeq === 'number') {
           const again = await this.insertRetry(result.mutationId, makeId);
-          if (again) requeued += 1;
+          if (again) {
+            requeued += 1;
+            again.targets.forEach((target) => requeuedTargets.add(target));
+          }
           continue;
+        }
+        /*
+         * 다시 낸 명령 때문에 막힌 뒤 명령도 함께 다시 낸다 (2026-10-21). 서버는 순번이 겹친 명령을 거절로
+         * 돌려주고, 같은 대상을 건드리는 뒤 명령을 "막힘"으로 돌려준다. 예전에는 그것이 보류 칸에 남아 사람이
+         * 다시 보내야 했다. 서버가 돌려준 차례대로 다시 내므로 앞뒤가 그대로다.
+         */
+        if (result.status === 'blocked' && requeuedTargets.size > 0) {
+          const row = (await this.db.all<Row>(`SELECT targets FROM outbox WHERE mutationId = ?`, [result.mutationId]))[0];
+          const targets = row ? (JSON.parse(String(row.targets)) as string[]) : [];
+          if (targets.some((target) => requeuedTargets.has(target))) {
+            const again = await this.insertRetry(result.mutationId, makeId);
+            if (again) {
+              requeued += 1;
+              again.targets.forEach((target) => requeuedTargets.add(target));
+            }
+            continue;
+          }
         }
 
         await this.db.run(`UPDATE outbox SET status = ?, error = ? WHERE mutationId = ?`, [
@@ -4201,7 +4262,9 @@ export class LocalStore {
       ['budget', 'categoryId'],
       ['category', 'parentId'],
       ['entry_draft', 'categoryId'],
+      ['entry_draft', 'feeCategoryId'],
       ['recurring_rule', 'categoryId'],
+      ['recurring_rule', 'feeCategoryId'],
       ['entry_tag', 'tagId'],
       ['entry_draft_tag', 'tagId'],
       // 태그 예산도 그 태그를 가리킨다. 빠뜨리면 합쳐진 태그의 예산이 사라진 태그에 남는다.
@@ -4244,10 +4307,21 @@ export class LocalStore {
     }
   }
 
-  /** 이 id 가 서버의 다른 id 로 옮겨졌는가. 화면이 옛 id 를 들고 왔을 때 쓴다. */
-  async aliasOf(localId: string): Promise<string | null> {
-    const rows = await this.db.all<Row>(`SELECT serverId FROM alias WHERE localId = ?`, [localId]);
-    return asText(rows[0]?.serverId);
+  /**
+   * 서버의 다른 id 로 옮겨진 id 들 (기기 id -> 서버 id). 화면이 옛 id 를 들고 왔을 때 쓴다.
+   *
+   * 분류·태그를 두 기기가 같은 이름으로 만들면 서버는 먼저 선 것을 채택하고, 기기는 제 id 를 그것으로
+   * 갈아 끼운다(`applyAlias`). 그 전에 열어 둔 폼은 옛 id 를 들고 있어, 그대로 저장하면 없는 분류로
+   * 거절되거나 아무 데도 가리키지 않는 태그 연결이 생겼다.
+   */
+  async aliasesOf(ids: readonly string[]): Promise<Map<string, string>> {
+    const unique = [...new Set(ids.filter(Boolean))];
+    if (unique.length === 0) return new Map();
+    const rows = await this.db.all<Row>(
+      `SELECT localId, serverId FROM alias WHERE localId IN (${placeholders(unique.length)})`,
+      [...unique],
+    );
+    return new Map(rows.map((row) => [String(row.localId), String(row.serverId)]));
   }
 
   /** 사용자에게 보여 줄 보류 칸. 충돌과 거절이 여기 모인다. */
@@ -4291,9 +4365,22 @@ export class LocalStore {
 
   /** 큐에서 뺀다. 사용자가 "그만두겠다"를 고른 자리다. */
   async discardMutation(mutationId: string): Promise<void> {
-    await this.db.transaction(() =>
-      this.db.run(`DELETE FROM outbox WHERE mutationId = ?`, [mutationId]),
-    );
+    await this.db.transaction(async () => {
+      const rows = await this.db.all<Row>(`SELECT projectId FROM outbox WHERE mutationId = ?`, [mutationId]);
+      await this.db.run(`DELETE FROM outbox WHERE mutationId = ?`, [mutationId]);
+      /*
+       * 버린 명령이 사본에 남긴 것을 되돌릴 길이 없다. 서버는 바뀐 줄만 다시 보내는데 거절된 줄은
+       * 바뀌지 않았다 -- 버린 거래가 잔액·예산에 유령으로 남고, 거절된 삭제는 사라진 채로 남았다.
+       * 그래서 다음 동기화가 남은 명령을 먼저 보낸 뒤 처음부터 다시 받게 표시한다(`REBUILD_PENDING`).
+       * 바로 지우지 않는 까닭은 아직 보내지 않은 다른 명령의 모습이 화면에서 사라지기 때문이다.
+       */
+      if (rows[0]) {
+        await this.db.run(`UPDATE sync_state SET version = ? WHERE projectId = ?`, [
+          REBUILD_PENDING,
+          String(rows[0].projectId),
+        ]);
+      }
+    });
   }
 
   /**
@@ -4307,6 +4394,21 @@ export class LocalStore {
     await this.db.transaction(() =>
       this.db.run(`DELETE FROM outbox WHERE mutationId = ? AND status = 'pending'`, [mutationId]),
     );
+  }
+
+  /**
+   * 방금 쌓은 명령의 사본 쓰기를 한다. 쓰기가 실패하면 명령을 거두고 오류를 그대로 던진다 (`withdrawMutation`).
+   *
+   * 명령을 쌓는 모든 창구가 이 길을 쓴다. 예전에는 전표 저장만 거두어, 태그·분류 바꾸기나 지우기는 화면이
+   * 실패를 말하는데 명령은 서버로 갔고, 다시 누르면 같은 명령이 하나 더 쌓였다.
+   */
+  async applyQueued<T>(mutationId: string, apply: () => Promise<T>): Promise<T> {
+    try {
+      return await apply();
+    } catch (error) {
+      await this.withdrawMutation(mutationId).catch(() => undefined);
+      throw error;
+    }
   }
 
   /**

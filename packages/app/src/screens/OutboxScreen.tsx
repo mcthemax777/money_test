@@ -19,6 +19,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Alert, LayoutAnimation, Pressable, Share, Text, View } from 'react-native';
 import * as Application from 'expo-application';
 
+import { useLatestCall } from '@money/core/hooks/useLatestCall';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { formatDate, formatTime } from '@money/core/lib/datetime';
 import type { HeldMutation } from '@money/core/data/local-store';
@@ -114,19 +115,30 @@ export default function OutboxScreen() {
   const [queued, setQueued] = useState<Mutation[]>([]);
   const [isBusy, setIsBusy] = useState(false);
 
+  /*
+   * 늦게 끝난 읽기가 새 결과를 덮지 않게 마지막 것만 쓴다 (`useLatestCall`). 사본이 닫히는 중(로그아웃)이면
+   * 읽기가 던지는데, 그때는 있던 목록을 그대로 둔다 -- 처리하지 않은 거부로 남기지 않는다.
+   */
+  const latest = useLatestCall();
   const reload = useCallback(async () => {
+    const isLatest = latest.begin();
     if (!projectId) {
       setHeld([]);
       setQueued([]);
       return;
     }
-    const [heldRows, queuedRows] = await Promise.all([
-      heldMutations(projectId),
-      queuedMutations(projectId),
-    ]);
-    setHeld(heldRows);
-    setQueued(queuedRows);
-  }, [projectId]);
+    try {
+      const [heldRows, queuedRows] = await Promise.all([
+        heldMutations(projectId),
+        queuedMutations(projectId),
+      ]);
+      if (!isLatest()) return;
+      setHeld(heldRows);
+      setQueued(queuedRows);
+    } catch (error) {
+      console.warn('보낼 목록을 읽지 못했습니다:', error);
+    }
+  }, [projectId, latest]);
 
   // 동기화가 사본을 바꾸면(다른 화면이 보낸 것 포함) 다시 읽는다 (2026-10-16). 처음 연 때의 목록에 멈춰 있었다.
   const mirrorVersion = useMirrorVersion();

@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { changedPatch } from '@money/core/lib/changed-patch';
 import { apiClient } from '@money/core/lib/api-client';
 import type { Account, Card } from '@money/core/lib/types';
 import { useTranslation } from '@money/core/lib/i18n';
@@ -44,6 +45,25 @@ const EMPTY_FORM = {
   paymentDueDay: DEFAULT_PAYMENT_DUE_DAY,
 };
 
+/** 카드에서 폼의 처음 값. 열 때 채우는 값이자, 저장할 때 바뀐 칸을 가리는 기준이다. */
+function formOfCard(card: Card): typeof EMPTY_FORM {
+  return {
+    paymentAccountId: card.paymentAccountId,
+    name: card.name,
+    issuerId: card.issuerId,
+    creditLimit: card.creditLimit ?? '',
+    performanceAmount: card.performanceAmount ?? '',
+    // 저장된 값은 ISO 인스턴트다. 월 입력란이 읽는 "YYYY-MM"으로 바꾼다.
+    expiryDate: monthInputOf(card.expiryDate),
+    cardType: card.cardType,
+    cardNumber: '',
+    color: card.color ?? '',
+    matchText: card.matchText ?? '',
+    statementClosingDay: card.statementClosingDay ?? DEFAULT_STATEMENT_CLOSING_DAY,
+    paymentDueDay: card.paymentDueDay ?? DEFAULT_PAYMENT_DUE_DAY,
+  };
+}
+
 interface EditCardModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -78,21 +98,7 @@ export default function EditCardModal({
   // 같은 카드로 다시 열 때 값을 채워 넣어야 한다.
   useEffect(() => {
     if (isOpen && card) {
-      setFormData({
-        paymentAccountId: card.paymentAccountId,
-        name: card.name,
-        issuerId: card.issuerId,
-        creditLimit: card.creditLimit ?? '',
-        performanceAmount: card.performanceAmount ?? '',
-        // 저장된 값은 ISO 인스턴트다. 월 입력란이 읽는 "YYYY-MM"으로 바꾼다.
-        expiryDate: monthInputOf(card.expiryDate),
-        cardType: card.cardType,
-        cardNumber: '',
-        color: card.color ?? '',
-        matchText: card.matchText ?? '',
-        statementClosingDay: card.statementClosingDay ?? DEFAULT_STATEMENT_CLOSING_DAY,
-        paymentDueDay: card.paymentDueDay ?? DEFAULT_PAYMENT_DUE_DAY,
-      });
+      setFormData(formOfCard(card));
     }
   }, [isOpen, card]);
 
@@ -115,29 +121,35 @@ export default function EditCardModal({
       // 결제 통장과 카드 종류는 등록 후 바꾸지 않는다.
       // 신용카드는 부채 계정이 딸려 있어서 통장을 갈아끼우면 원장이 어긋난다.
       const isCredit = card.cardType === 'credit';
-      await apiClient.updateCard(card.id, {
-        name: formData.name,
-        issuerId: formData.issuerId,
+      const patchOf = (form: typeof formData) => ({
+        name: form.name,
+        issuerId: form.issuerId,
         // 만료일을 비우면 null을 보내 지운다. 키를 빼면 기존 값이 남는다.
-        expiryDate: monthInputToIso(formData.expiryDate),
+        expiryDate: monthInputToIso(form.expiryDate),
         // 카드 번호는 새로 입력했을 때만 보낸다 (마스킹된 값을 되돌려 보내면 안 된다).
-        ...(formData.cardNumber ? { cardNumber: formData.cardNumber } : {}),
+        ...(form.cardNumber ? { cardNumber: form.cardNumber } : {}),
         // 실적은 카드 종류를 가리지 않는다. 비우면 빈 문자열을 보내 조건을 지운다.
-        performanceAmount: formData.performanceAmount
-          ? toAmountString(formData.performanceAmount)
+        performanceAmount: form.performanceAmount
+          ? toAmountString(form.performanceAmount)
           : '',
         // 비우면 빈 문자열을 보내 기본색으로 되돌린다.
-        color: formData.color,
+        color: form.color,
         // 알림에서 알아보는 말도 비우면 빈 문자열을 보내 지운다.
-        matchText: formData.matchText,
+        matchText: form.matchText,
         ...(isCredit
           ? {
-              creditLimit: toAmountString(formData.creditLimit),
-              statementClosingDay: formData.statementClosingDay,
-              paymentDueDay: formData.paymentDueDay,
+              creditLimit: toAmountString(form.creditLimit),
+              statementClosingDay: form.statementClosingDay,
+              paymentDueDay: form.paymentDueDay,
             }
           : {}),
       });
+      /*
+       * 바뀐 칸만 보낸다 (`changedPatch`). 열 때의 값을 통째로 보내면 그사이 다른 구성원이 고친 마감일 같은
+       * 칸을 옛 값으로 되돌린다. 열 때의 모양은 같은 식에 처음 값(`formOfCard`)을 넣어 만든다.
+       */
+      const patch = changedPatch<Record<string, unknown>>(patchOf(formData), patchOf(formOfCard(card)));
+      if (Object.keys(patch).length > 0) await apiClient.updateCard(card.id, patch);
       const data = await apiClient.getCards(projectId);
       onSuccess(data || []);
       handleClose();

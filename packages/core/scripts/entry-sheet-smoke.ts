@@ -6,7 +6,7 @@
  *   node -r ../api/node_modules/ts-node/register/transpile-only scripts/entry-sheet-smoke.ts
  */
 import * as XLSX from 'xlsx';
-import type { EntrySheetRow } from '@money/types';
+import { entrySheetRowsOf, sheetAmountOf, type EntrySheetRow, type ViewEntry } from '@money/types';
 
 import {
   chunkEntrySheetRows,
@@ -74,6 +74,79 @@ const chunks = chunkEntrySheetRows(many, 6);
 eq('묶음 크기', chunks.map((chunk) => chunk.length), [5, 4]);
 eq('같은 거래ID 는 한 묶음', chunks[1].filter((row) => row.group === 'g').length, 3);
 eq('거래 수 (분할은 하나)', countEntrySheetEntries(many), 7);
+
+// 6. 외화 통장 거래는 그 통장 통화로 내보낸다 ----------------------------------------
+// 원화 장부의 달러 통장에서 $50 (식비 $30 + 생활 $20, 생활에서 $2 차감)를 썼다. 분류 다리는 장부 통화(원)다.
+const leg = (over: Partial<ViewEntry['postings'][number]>): ViewEntry['postings'][number] => ({
+  id: Math.random().toString(36).slice(2),
+  accountId: null,
+  categoryId: null,
+  amount: '0',
+  currency: 'KRW',
+  exchangeRate: '1',
+  baseAmount: '0',
+  cardId: null,
+  lineKey: null,
+  account: null,
+  category: null,
+  card: null,
+  installmentPlan: null,
+  ...over,
+});
+const usdEntry = {
+  id: 'usd-1',
+  date: '2026-09-10T03:00:00.000Z',
+  description: '여행 경비',
+  merchant: null,
+  detailedNote: null,
+  personId: null,
+  person: null,
+  originalCurrency: null,
+  originalAmount: null,
+  rateProvisional: false,
+  countsPerformance: true,
+  discountCountsPerformance: true,
+  tags: [],
+  postings: [
+    leg({ accountId: 'usd', amount: '-48', currency: 'USD', exchangeRate: '1400', baseAmount: '-67200', account: { id: 'usd', name: '달러 통장', type: 'deposit' } }),
+    leg({ categoryId: 'food', lineKey: 'l1', amount: '42000', baseAmount: '42000', category: { id: 'food', name: '식비', type: 'expense', parentId: null, parent: null } }),
+    leg({ categoryId: 'life', lineKey: 'l2', amount: '25200', baseAmount: '25200', discountAmount: '2', category: { id: 'life', name: '생활', type: 'expense', parentId: null, parent: null } }),
+  ],
+} as unknown as ViewEntry;
+const usdRows = entrySheetRowsOf(usdEntry, 'Asia/Seoul', new Map());
+eq('외화 통장: 통장 통화로 적는다', usdRows.map((row) => row.currency), ['USD', 'USD']);
+eq('외화 통장: 줄마다 그 통화 정가', usdRows.map((row) => row.amount), ['30', '20']);
+
+// 6-2. 외화 통장에서 보낸 이체는 그 통화로 (금액과 수수료) ------------------------------------
+// $50 를 원화 통장으로 보내며 수수료 $1. 나간 다리는 $51, 수수료 다리는 보낸 통화 그대로 적힌다.
+const usdTransfer = {
+  ...usdEntry,
+  id: 'usd-transfer',
+  postings: [
+    leg({ accountId: 'usd', amount: '-51', currency: 'USD', exchangeRate: '1400', baseAmount: '-71400', account: { id: 'usd', name: '달러 통장', type: 'deposit' } }),
+    leg({ accountId: 'krw', amount: '70000', currency: 'KRW', exchangeRate: '1', baseAmount: '70000', account: { id: 'krw', name: '원화 통장', type: 'deposit' } }),
+    leg({ categoryId: 'fee', lineKey: 'f1', amount: '1', currency: 'USD', exchangeRate: '1400', baseAmount: '1400', category: { id: 'fee', name: '수수료', type: 'expense', parentId: null, parent: null } }),
+  ],
+} as unknown as ViewEntry;
+const transferRow = entrySheetRowsOf(usdTransfer, 'Asia/Seoul', new Map())[0];
+eq('외화 이체: 보낸 통화의 금액', `${transferRow.amount} ${transferRow.currency}`, '50 USD');
+eq('외화 이체: 수수료도 그 통화', transferRow.fee, '1');
+
+// 7. 금액 칸의 쉼표와 점 ---------------------------------------------------------
+const amountOrError = (text: string) => {
+  try {
+    return sheetAmountOf(text);
+  } catch {
+    return 'error';
+  }
+};
+eq('천 단위 쉼표', amountOrError('1,234,000원'), '1234000');
+eq('쉼표와 소수점', amountOrError('1,234.56'), '1234.56');
+eq('유럽식', amountOrError('1.234,56'), '1234.56');
+eq('유럽식 천 단위', amountOrError('1.234.000'), '1234000');
+eq('애매한 쉼표는 거절', amountOrError('1,5'), 'error');
+eq('US$ 앞붙이', amountOrError('US$12'), '12');
+eq('괄호 음수', amountOrError('(1,000)'), '1000');
 
 console.log(fail === 0 ? '\n모두 통과' : `\n실패 ${fail}건`);
 process.exit(fail === 0 ? 0 : 1);

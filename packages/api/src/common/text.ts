@@ -31,3 +31,26 @@ export function readNonNegativeInt(value: unknown): number {
   const number = Math.trunc(Number(Array.isArray(value) ? value[0] : value));
   return Number.isFinite(number) && number > 0 ? number : 0;
 }
+
+/**
+ * 인스턴트(ISO 날짜·시각) 칸을 읽는다. 읽을 수 없으면 400 이다 (2026-10-16 entries 에서 옮김) -- 그대로 두면
+ * Invalid Date 가 Prisma 까지 가서 500 이 났다. 글자가 아닌 값도 400 이다.
+ */
+export function readInstant(value: unknown, label = '날짜'): Date {
+  const instant = typeof value === 'string' || value instanceof Date ? new Date(value) : new Date(NaN);
+  if (Number.isNaN(instant.getTime())) {
+    throw new BadRequestException(`${label}: 날짜를 읽을 수 없습니다.`);
+  }
+  return instant;
+}
+
+/**
+ * 정해진 값 중 하나인 칸(유형·종류)을 읽는다. 없으면 undefined, 목록 밖의 값이면 400 이다.
+ *
+ * 값이 Prisma 의 enum 칸으로 그대로 가면 목록 밖의 값이 500 이 됐다(DTO 가 인터페이스라 검사가 없다).
+ */
+export function readEnum<T extends string>(value: unknown, allowed: readonly T[], label: string): T | undefined {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value === 'string' && (allowed as readonly string[]).includes(value)) return value as T;
+  throw new BadRequestException(`${label}: ${allowed.join(', ')} 중 하나여야 합니다.`);
+}

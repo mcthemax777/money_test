@@ -110,16 +110,13 @@ export function createLocalSettingsWriter({
       observed,
     });
 
-    try {
+    // 사본에 적지 못했으면 명령도 거둔다 (`applyQueued`). 딸린 부채 계정 쓰기도 같은 묶음이다.
+    await store.applyQueued(mutation.mutationId, async () => {
       await store.writeAsset(table, id, defined({ projectId, ...row }), mutation.hlc);
-    } catch (error) {
-      // 사본에 적지 못했으면 명령도 거둔다 (local-entry-writer 의 commit 과 같다).
-      await store.withdrawMutation(mutation.mutationId).catch(() => undefined);
-      throw error;
-    }
-    if (extra) {
-      await store.writeAsset(extra.table, extra.id, defined({ projectId, ...extra.row }), mutation.hlc);
-    }
+      if (extra) {
+        await store.writeAsset(extra.table, extra.id, defined({ projectId, ...extra.row }), mutation.hlc);
+      }
+    });
 
     notifyMirrorChanged();
     onQueued?.(mutation);
@@ -147,7 +144,7 @@ export function createLocalSettingsWriter({
       payload,
       observed,
     });
-    await apply?.(mutation);
+    if (apply) await store.applyQueued(mutation.mutationId, () => apply(mutation));
     notifyMirrorChanged();
     onQueued?.(mutation);
   };
@@ -667,6 +664,14 @@ export function createLocalSettingsWriter({
           continue;
         }
         if (from.type !== byId.get(move.toId)!.type) throw codedError('CATEGORY_MERGE_TYPE_MISMATCH');
+      }
+      /*
+       * 받은 목록에 없는 소분류에 거래가 있으면 멈춘다 (서버와 같다). 대분류가 사라지면 그 소분류도 따라
+       * 사라지는데, 거기 적힌 거래의 분류 다리가 함께 지워진다.
+       */
+      for (const child of byId.values()) {
+        if (!child.parentId || !removing.has(child.parentId) || removing.has(child.id)) continue;
+        if ((await store.categoryPostingCount(child.id)) > 0) throw codedError('CATEGORY_MERGE_TARGET_REQUIRED');
       }
 
       let movedPostings = 0;

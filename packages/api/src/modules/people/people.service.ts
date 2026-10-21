@@ -1,4 +1,5 @@
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import { readText } from '@/common/text';
 import { Prisma, ProjectRole } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
@@ -37,6 +38,11 @@ export class PeopleService {
     );
 
     // 새 구성원은 목록 맨 뒤에 붙인다. 지금 마지막 순서 뒤에 값을 하나 만든다.
+    // 이름은 글자여야 하고 비면 안 된다 (`readText`). 없거나 숫자면 Prisma 까지 가서 500 이었다.
+    const name = readText(dto.name, '이름');
+    if (!name) throw new BadRequestException('이름을 입력해 주세요.');
+    const relationship = readText(dto.relationship, '관계') || null;
+
     const lastRank = await this.prisma.person.aggregate({
       where: { projectId: finalProjectId },
       _max: { sortRank: true },
@@ -47,8 +53,8 @@ export class PeopleService {
         data: {
           id: clientId(dto.id, '구성원 식별자'),
           projectId: finalProjectId,
-          name: dto.name,
-          relationship: dto.relationship,
+          name,
+          relationship,
           sortRank: rankAfter(lastRank._max.sortRank),
           fieldHlc: stampFieldClocks(null, ['name', 'relationship'], hlc ?? this.clock.now()),
         },

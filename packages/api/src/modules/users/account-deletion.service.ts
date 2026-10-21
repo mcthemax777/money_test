@@ -18,11 +18,11 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { AccountDeletionPreview } from '@money/types';
 
-import { badGateway, conflict } from '@/common/app-error';
+import { conflict } from '@/common/app-error';
 import { recordProjectWrite } from '@/common/project-write-context';
 import { PrismaService } from '@/config/prisma.service';
 import { PlansService } from '../plans/plans.service';
-import { StoreBillingService } from '../plans/store-billing.service';
+import { SubscriptionCancelService } from '../plans/subscription-cancel.service';
 
 /** 큰 가계부를 지우면 연쇄 삭제가 길다. 대화형 트랜잭션 기본 시한(5초)으로는 모자란다. */
 const DELETE_TX_TIMEOUT_MS = 60_000;
@@ -34,7 +34,7 @@ export class AccountDeletionService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly plans: PlansService,
-    private readonly store: StoreBillingService,
+    private readonly subscriptions: SubscriptionCancelService,
   ) {}
 
   /** 지우면 무엇이 사라지고, 무엇이 막는가. */
@@ -72,7 +72,11 @@ export class AccountDeletionService {
   async deleteAccount(userId: string, now = new Date()): Promise<{ success: true }> {
     const { solo, sharedOwned } = classify(await membershipsOf(this.prisma, userId));
     if (sharedOwned.length > 0) throw sharedOwnedError(sharedOwned);
-    await this.cancelSubscriptions(solo, now);
+    // 함께 지울 가계부의 이어지는 Play 구독을 먼저 해지한다. 해지하지 못하면 지우지 않는다.
+    await this.subscriptions.cancelRenewing(
+      solo.map((row) => ({ id: row.projectId, name: row.project.name })),
+      now,
+    );
 
     const joinedIds = await this.prisma.$transaction(
       async (tx) => {
@@ -105,42 +109,6 @@ export class AccountDeletionService {
     return { success: true };
   }
 
-  /**
-   * 함께 지울 가계부의 이어지는 Play 구독을 해지한다.
-   *
-   * 해지가 거절되면(사용자가 이미 Play 스토어에서 해지했다, 그새 끝났다) RevenueCat 의 고객 정보로
-   * 아직 갱신될 구독이 남았는지 다시 본다. 남았거나 확인하지 못하면 지우지 않는다 -- 지운 뒤에는
-   * 그 결제를 막을 길이 없다.
-   */
-  private async cancelSubscriptions(
-    solo: Awaited<ReturnType<typeof membershipsOf>>,
-    now: Date,
-  ): Promise<void> {
-    const subscriptions = await this.plans.renewingStoreSubscriptions(
-      solo.map((row) => row.projectId),
-      now,
-    );
-    const failed: string[] = [];
-    for (const { projectId, transactionId } of subscriptions) {
-      try {
-        await this.store.cancelPlaySubscription(projectId, transactionId);
-      } catch (error) {
-        const stillRenewing = await this.store
-          .hasRenewingPlaySubscription(projectId, now)
-          .catch(() => true);
-        if (!stillRenewing) continue;
-        this.logger.warn(`계정 삭제 중 구독 해지 실패 ${projectId}: ${String(error)}`);
-        failed.push(solo.find((row) => row.projectId === projectId)?.project.name ?? projectId);
-      }
-    }
-    if (failed.length > 0) {
-      throw badGateway(
-        'ACCOUNT_SUBSCRIPTION_CANCEL_FAILED',
-        'Play 구독을 해지하지 못했습니다. Play 스토어에서 구독을 해지한 뒤 다시 시도해 주세요.',
-        { projects: failed.join(', ') },
-      );
-    }
-  }
 }
 
 function sharedOwnedError(sharedOwned: Awaited<ReturnType<typeof membershipsOf>>) {

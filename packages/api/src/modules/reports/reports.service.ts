@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
+import { readEnum } from '@/common/text';
 import { AccountType, CategoryType, Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
@@ -89,6 +90,9 @@ const ZERO = new Prisma.Decimal(0);
  * 계좌 유형의 분류(자본·시가평가·부채)는 `@money/types` 의 net-worth-aggregation 이 갖는다.
  * 기기도 같은 분류로 총자산을 내야 하므로 서버에만 두면 두 벌이 된다.
  */
+/** 리포트가 받는 분류 유형. */
+const REPORT_CATEGORY_TYPES = ['income', 'expense'] as const;
+
 @Injectable()
 export class ReportsService {
   constructor(
@@ -351,7 +355,8 @@ export class ReportsService {
     // 불리언 비교만 하면 항상 롤업이 켜져서 소분류 구성비를 볼 수 없다.
     const rollup = query.rollup !== false && (query.rollup as unknown) !== 'false';
 
-    const type = query.type as CategoryType;
+    // 목록 밖의 유형은 400 이다 (`readEnum`). 예전에는 enum 칸에서 500 이었다.
+    const type = readEnum(query.type, REPORT_CATEGORY_TYPES, '유형') as CategoryType;
 
     /*
      * 이름을 행에 함께 실어 온다. 예전에는 카테고리를 따로 조회하고, 롤업 대상인
@@ -968,7 +973,7 @@ export class ReportsService {
                 { category: { parentId: query.targetId } },
               ],
             }
-        : { category: { type: (query.type ?? 'expense') as CategoryType } };
+        : { category: { type: (readEnum(query.type, REPORT_CATEGORY_TYPES, '유형') ?? 'expense') } };
 
     // 사람 필터에 거래 화면의 검색이 얹힌 범위. 합계·구성비가 쓰는 것과 같다.
     return { ...target, entry: await this.entryScope(projectId, { start, end }, query) };
@@ -983,7 +988,7 @@ export class ReportsService {
   ): Promise<Prisma.PostingWhereInput> {
     if (!query.targetId) throw new BadRequestException('태그를 골라 주세요.');
     return {
-      category: { type: (query.type ?? 'expense') as CategoryType },
+      category: { type: (readEnum(query.type, REPORT_CATEGORY_TYPES, '유형') ?? 'expense') },
       entry: await this.entryScope(projectId, { start, end }, { ...query, tagIds: query.targetId }),
     };
   }

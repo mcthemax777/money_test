@@ -649,20 +649,28 @@ export function useEntryForm({
    * 저장하다 실패하면 창이 열린 채 남는데(`usePaybackDrafts`), 그때 다시 누르면 같은 지출을
    * 한 번 더 만드는 대신 그 지출을 고치고 남은 페이백만 저장해야 하기 때문이다.
    */
+  /*
+   * 저장·지우기가 도는 중인가. 상태(isSubmitting)는 다음 그리기에야 단추를 끄므로, 그 사이 두 번 누르면
+   * 같은 거래가 둘 생겼다(페이백 편집기). 이 손잡이를 거치는 화면은 모두 한 번만 보낸다.
+   */
+  const busyRef = useRef(false);
+
   const save = useCallback(async (): Promise<string | null> => {
+    if (busyRef.current) return null;
     const found = checkEntryForm(values, cardLiabilityIds);
     if (found) {
       setViolation(found);
       return null;
     }
 
+    busyRef.current = true;
     setIsSubmitting(true);
     setError('');
     try {
       const port = entryWritePort();
       let savedId: string | null = editingId;
 
-      const request = entryFormToRequest(values, timeZone);
+      const request = entryFormToRequest(values, timeZone, ledgerCurrency);
       if (editingId) {
         /*
          * 폼을 열 때 본 판을 함께 보낸다. 서버가 그 사이의 편집을 알아채는 근거다.
@@ -709,13 +717,15 @@ export function useEntryForm({
       );
       return null;
     } finally {
+      busyRef.current = false;
       setIsSubmitting(false);
     }
-  }, [cardLiabilityIds, editingId, messageOf, onSaved, projectId, timeZone, values]);
+  }, [cardLiabilityIds, editingId, ledgerCurrency, messageOf, onSaved, projectId, timeZone, values]);
 
   const remove = useCallback(async (): Promise<boolean> => {
-    if (!editingId) return false;
+    if (!editingId || busyRef.current) return false;
 
+    busyRef.current = true;
     setIsSubmitting(true);
     setError('');
     try {
@@ -727,6 +737,7 @@ export function useEntryForm({
       setError(caught instanceof Error ? caught.message : String(caught));
       return false;
     } finally {
+      busyRef.current = false;
       setIsSubmitting(false);
     }
   }, [editingId, onSaved]);

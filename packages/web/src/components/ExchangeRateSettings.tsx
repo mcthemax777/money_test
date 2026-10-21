@@ -5,7 +5,7 @@ import type { ExchangeRateInfo } from '@money/types';
 import { useExchangeRateSettings } from '@money/core/hooks/useExchangeRates';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useConnectivity } from '@money/core/store/connectivity';
-import { toNumber } from '@money/core/lib/money';
+import { positiveAmountOf } from '@money/core/lib/money';
 
 /** 무엇을 하다 실패했는지에 따른 문구. */
 const FAILURE_KEY = {
@@ -98,7 +98,7 @@ export default function ExchangeRateSettings() {
               <button
                 type="button"
                 onClick={() => save(info, draft).then((saved) => saved && setDrafts((prev) => withoutKey(prev, info.from)))}
-                disabled={toNumber(draft) <= 0 || isSaving}
+                disabled={positiveAmountOf(draft) === null || isSaving}
                 className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40"
               >
                 {t('common.save')}

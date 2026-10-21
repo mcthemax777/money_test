@@ -220,11 +220,37 @@ export function createLocalEntryWriter({
     return plan.moves;
   };
 
+  /** 짐의 분류·태그 id 중 서버 id 로 옮겨진 것을 갈아 끼운다 (`aliasesOf`). */
+  const withServerIds = async (payload: EntryMutationPayload): Promise<EntryMutationPayload> => {
+    const aliases = await store.aliasesOf(
+      [
+        payload.categoryId,
+        payload.transferFeeCategoryId,
+        ...(payload.tagIds ?? []),
+        ...(payload.splits ?? []).flatMap((split) => [split.categoryId, ...(split.tagIds ?? [])]),
+      ].filter((id): id is string => typeof id === 'string'),
+    );
+    if (aliases.size === 0) return payload;
+    const swap = <T extends string | undefined | null>(id: T): T => (id ? ((aliases.get(id) ?? id) as T) : id);
+    return {
+      ...payload,
+      categoryId: swap(payload.categoryId),
+      transferFeeCategoryId: swap(payload.transferFeeCategoryId),
+      tagIds: payload.tagIds?.map(swap),
+      splits: payload.splits?.map((split) => ({
+        ...split,
+        categoryId: swap(split.categoryId),
+        tagIds: split.tagIds?.map(swap),
+      })),
+    };
+  };
+
   const commit = async (
     entryId: string,
-    payload: EntryMutationPayload,
+    requested: EntryMutationPayload,
     kind: 'entry.create' | 'entry.replace',
   ): Promise<{ id: string }> => {
+    const payload = await withServerIds(requested);
     const built = await buildEntry(
       // 자기 id 를 함께 준다. 할부 환불이 자기가 이미 줄인 것을 빼고 본다.
       { ...payload, projectId, date: new Date(payload.date), id: entryId },
@@ -245,19 +271,16 @@ export function createLocalEntryWriter({
       observed,
     });
 
-    try {
-      await store.writeEntry(entryId, built, {
+    // 사본에 적지 못했으면 명령도 거둔다. 화면은 실패를 말하는데 거래는 서버에 생기는 일을 막는다.
+    await store.applyQueued(mutation.mutationId, () =>
+      store.writeEntry(entryId, built, {
         timeZone,
         hlc: mutation.hlc,
         makeId: newId,
         // 태그는 조립 규칙이 다루지 않는다(다리를 바꾸지 않는다). 짐에서 그대로 가져온다.
         tagIds: payload.tagIds ?? [],
-      });
-    } catch (error) {
-      // 사본에 적지 못했으면 명령도 거둔다. 화면은 실패를 말하는데 거래는 서버에 생기는 일을 막는다.
-      await store.withdrawMutation(mutation.mutationId).catch(() => undefined);
-      throw error;
-    }
+      }),
+    );
     // 원거래의 줄을 따라 환불·페이백을 옮긴다. 서버도 같은 일을 하고 다음 pull 이 덮는다.
     for (const move of moves) await store.movePayback(move.paybackId, move.lineKey, move.categoryId);
 
@@ -305,7 +328,9 @@ export function createLocalEntryWriter({
         observed: await store.latestEntryHlc(entryIds),
       });
 
-      const result = await store.changeEntryTags(targets, addTagIds, removeTagIds, mutation.hlc);
+      const result = await store.applyQueued(mutation.mutationId, () =>
+        store.changeEntryTags(targets, addTagIds, removeTagIds, mutation.hlc),
+      );
 
       notifyMirrorChanged();
       onQueued?.(mutation);
@@ -336,7 +361,9 @@ export function createLocalEntryWriter({
         observed: await store.latestEntryHlc(entryIds),
       });
 
-      const result = await store.changeEntryCategory(targets, categoryId, mutation.hlc);
+      const result = await store.applyQueued(mutation.mutationId, () =>
+        store.changeEntryCategory(targets, categoryId, mutation.hlc),
+      );
       notifyMirrorChanged();
       onQueued?.(mutation);
       return result;
@@ -363,7 +390,7 @@ export function createLocalEntryWriter({
         observed: await store.latestEntryHlc(entryIds),
       });
 
-      await store.applyRestate(plan, mutation.hlc);
+      await store.applyQueued(mutation.mutationId, () => store.applyRestate(plan, mutation.hlc));
       notifyMirrorChanged();
       onQueued?.(mutation);
       return { settled: items.length };
@@ -378,7 +405,7 @@ export function createLocalEntryWriter({
         payload: { id },
       });
 
-      await store.removeEntry(id);
+      await store.applyQueued(mutation.mutationId, () => store.removeEntry(id));
       notifyMirrorChanged();
       onQueued?.(mutation);
     },

@@ -487,6 +487,8 @@ export function installmentPrincipals(
   total: DecInput,
   months: number,
   shares?: readonly DecInput[] | null,
+  /** 나눌 때 자를 자릿수. `splitInstallment` 와 같다. */
+  decimals?: number,
 ): Dec[] {
   if (shares && shares.length === months) {
     /*
@@ -498,7 +500,7 @@ export function installmentPrincipals(
     const parsed = toDecList(shares);
     if (parsed) return parsed;
   }
-  return splitInstallment(total, months);
+  return splitInstallment(total, months, decimals);
 }
 
 /** 전부 십진값으로 읽히면 그 목록, 하나라도 아니면 null. */
@@ -521,12 +523,17 @@ function toDecList(shares: readonly DecInput[]): Dec[] | null {
  * 카드사가 끝수를 마지막 회차에 붙이는 경우도 있다. 그때는 사용자가 회차 금액을 직접
  * 적고, 그 값이 이 기본값을 대신한다 (`installmentPrincipals`).
  */
-export function splitInstallment(total: DecInput, months: number): Dec[] {
+export function splitInstallment(
+  total: DecInput,
+  months: number,
+  /** 자를 자릿수 (통화의 `currencyDecimals`). 모르면 금액에 적힌 자릿수다 (`amountScale`). */
+  decimals?: number,
+): Dec[] {
   const amount = Dec.of(total);
   if (months <= 1) return [amount];
 
-  // 금액에 적힌 자릿수로 자른다 (`amountScale`). 원화는 원 단위, 달러는 센트 단위다.
-  const each = amount.dividedBy(months, amountScale(amount), 'down');
+  // 원화는 원 단위, 달러는 센트 단위다. 통화를 모르면 금액에 적힌 자릿수로 자른다.
+  const each = amount.dividedBy(months, decimals ?? amountScale(amount), 'down');
   const shares = Array.from({ length: months }, () => each);
   shares[0] = each.plus(amount.minus(each.times(months)));
   return shares;

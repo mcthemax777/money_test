@@ -6,6 +6,7 @@
  * 합산은 전부 서버(/reports/*)에서 끝나므로, 화면은 표시 직전에만 숫자로 바꾼다.
  */
 import {
+  Dec,
   currencyDecimals,
   formatMoney,
   isCurrencyCode,
@@ -160,8 +161,34 @@ export function toAmountString(input: string | number | null | undefined): strin
     .replace(/．/g, '.')
     .replace(/[,，]/g, '')
     .trim();
+  /*
+   * 평범한 소수 글자는 Number 를 거치지 않는다. 거치면 16자리를 넘는 금액이 조용히 반올림되고, 아주 큰
+   * 수는 "1e+65" 꼴이 되어 그 값을 읽는 Dec 가 렌더 중에 던졌다(거래 편집 화면이 죽었다). Dec 도 읽지
+   * 못할 만큼 길면 0 이다 -- 금액 검사가 "0보다 커야 한다"로 알린다.
+   */
+  const plain = cleaned.replace(/^\+/, '');
+  if (/^-?\d+(\.\d+)?$/.test(plain)) {
+    try {
+      return Dec.of(plain).toString();
+    } catch {
+      return '0';
+    }
+  }
+  // ".5"·"5." 같은 덜 친 글자와 지수 꼴은 Number 로 읽되, 지수 꼴로 돌아오면 버린다.
   const value = Number(cleaned);
-  return Number.isFinite(value) ? String(value) : '0';
+  const text = String(value);
+  return Number.isFinite(value) && !/e/i.test(text) ? text : '0';
+}
+
+/**
+ * 입력 글자가 0보다 큰 금액·환율이면 그 값(`toAmountString` 으로 다듬은 글자), 아니면 null.
+ *
+ * 환율 칸이 Number 로 읽던 자리를 바꾼다. Number 는 "1,380.5" 를 0 으로 읽어 단추가 말없이 꺼졌고,
+ * "1e70" 은 통과시켜 청구액을 셈하는 Dec 가 누른 순간 던졌다(앱이 죽었다).
+ */
+export function positiveAmountOf(input: string | number | null | undefined): string | null {
+  const text = toAmountString(input);
+  return Dec.of(text).isPositive() ? text : null;
 }
 
 /** 지출은 빨강, 수입은 파랑 등 부호 기반 표시에 사용 */

@@ -208,28 +208,34 @@ export class MutationReplayService {
           throw error;
         },
       );
+    const malformedResults: MutationResult[] = malformed.map((mutationId) => ({
+      mutationId,
+      status: 'rejected' as const,
+      code: 'MUTATION_MALFORMED',
+      error: '명령의 모양이 올바르지 않습니다.',
+    }));
+
     if (!canWrite) {
       const project = await this.prisma.project.findUniqueOrThrow({
         where: { id: projectId },
         select: { syncVersion: true },
       });
       return {
-        results: mutations.map((mutation) => ({
-          mutationId: mutation.mutationId,
-          status: 'rejected' as const,
-          code: 'PROJECT_ROLE_VIEWER',
-          error: '읽기 권한으로 바뀌어 이 변경을 올릴 수 없습니다.',
-        })),
+        // 모양이 어긋난 명령의 결과도 함께 돌려준다. 빠뜨리면 그 행들은 이 응답에서 답을 받지 못했다.
+        results: [
+          ...malformedResults,
+          ...mutations.map((mutation) => ({
+            mutationId: mutation.mutationId,
+            status: 'rejected' as const,
+            code: 'PROJECT_ROLE_VIEWER',
+            error: '읽기 권한으로 바뀌어 이 변경을 올릴 수 없습니다.',
+          })),
+        ],
         version: project.syncVersion,
       };
     }
 
-    const results: MutationResult[] = malformed.map((mutationId) => ({
-      mutationId,
-      status: 'rejected' as const,
-      code: 'MUTATION_MALFORMED',
-      error: '명령의 모양이 올바르지 않습니다.',
-    }));
+    const results: MutationResult[] = [...malformedResults];
     /** 앞에서 거절된 대상. 이것을 건드리는 뒤 명령은 서버까지 가지 않는다. */
     const blocked = new Set<string>();
     /**
@@ -695,8 +701,17 @@ export class MutationReplayService {
         });
         return this.applied(mutation, projectId, payload.id);
       } catch (error) {
-        if (attempt < 2 && isEntryModified(error)) continue;
-        throw error;
+        if (!isEntryModified(error)) throw error;
+        if (attempt < 2) continue;
+        /*
+         * 세 번 다 그 사이 다른 편집이 끼었다. 규칙 위반이 아니라 충돌이다 -- 그대로 던지면 거절로 분류돼
+         * 기기가 보류 칸에 넣었다. 위의 "더 늦게 고쳤다"와 같은 갈래로 돌려준다.
+         */
+        return {
+          mutationId: mutation.mutationId,
+          status: 'conflict',
+          error: '다른 기기에서 이 거래를 같은 때에 고치고 있습니다.',
+        };
       }
     }
   }
@@ -752,14 +767,26 @@ export class MutationReplayService {
   ): Promise<MutationResult> {
     const payload = mutation.payload as EntryTagsPayload;
 
+    /*
+     * 떼려던 태그가 그 사이 지워졌으면 이미 뗀 것과 같다 (`liveTagIds`). 예전에는 그것도 거절이라 대상
+     * 거래들이 막혀 그 뒤 편집까지 보류됐다. 붙이려던 태그가 없는 것은 그대로 거절한다 -- 사용자가
+     * 표시가 된 줄 알면 안 된다(아래 catch 의 까닭).
+     */
+    const addTagIds = payload.addTagIds ?? [];
+    const liveRemoves = await this.liveTagIds(projectId, payload.removeTagIds ?? []);
+    const removeTagIds = (payload.removeTagIds ?? []).filter((id) => liveRemoves.has(id));
+    if (addTagIds.length === 0 && removeTagIds.length === 0) {
+      return this.applied(mutation, projectId, payload.targets?.[0]?.entryId ?? '');
+    }
+
     let skipped: Array<{ entryId: string; lineKey?: string | null }> = [];
     try {
       const result = await this.entries.changeTags(
         userId,
         {
           targets: payload.targets ?? [],
-          addTagIds: payload.addTagIds ?? [],
-          removeTagIds: payload.removeTagIds ?? [],
+          addTagIds,
+          removeTagIds,
         },
         projectId,
         { hlc: mutation.hlc },
@@ -1113,35 +1140,62 @@ export class MutationReplayService {
     });
     if (existing) return this.sameOrForeign(mutation, existing.projectId, projectId, '분류');
 
-    const sameName = await this.prisma.category.findFirst({
-      where: {
-        projectId,
-        name: payload.name.trim(),
-        parentId: payload.parentId ?? null,
-        type: payload.type as never,
-      },
-      select: { id: true },
-    });
-    if (sameName) {
-      return {
-        ...(await this.applied(mutation, projectId, sameName.id)),
-        alias: { from: payload.id, to: sameName.id },
-      };
-    }
+    const findSameName = () =>
+      this.prisma.category.findFirst({
+        where: {
+          projectId,
+          name: payload.name.trim(),
+          parentId: payload.parentId ?? null,
+          type: payload.type as never,
+        },
+        select: { id: true },
+      });
 
-    await this.categories.createCategory(
-      userId,
-      {
-        id: payload.id,
-        name: payload.name,
-        type: payload.type,
-        parentId: payload.parentId ?? undefined,
-        icon: payload.icon ?? undefined,
-      } as never,
-      projectId,
-      mutation.hlc,
+    return this.createOrAdopt(mutation, projectId, payload.id, findSameName, () =>
+      this.categories.createCategory(
+        userId,
+        {
+          id: payload.id,
+          name: payload.name,
+          type: payload.type,
+          parentId: payload.parentId ?? undefined,
+          icon: payload.icon ?? undefined,
+        } as never,
+        projectId,
+        mutation.hlc,
+      ),
     );
-    return this.applied(mutation, projectId, payload.id);
+  }
+
+  /**
+   * 같은 이름의 행이 있으면 그것을 채택하고(별칭), 없으면 만든다. 분류와 태그가 함께 쓴다.
+   *
+   * 만들기가 실패하면 한 번 더 찾는다. 이름을 본 뒤 만들기 전에 다른 기기가 같은 이름을 먼저 만들면
+   * 유일성 제약에 걸리는데, 예전에는 그것이 거절이 되어 그 id 를 쓰는 거래들까지 함께 거절됐다.
+   */
+  private async createOrAdopt(
+    mutation: Mutation,
+    projectId: string,
+    id: string,
+    findSameName: () => Promise<{ id: string } | null>,
+    create: () => Promise<unknown>,
+  ): Promise<MutationResult> {
+    const adopt = async (): Promise<MutationResult | null> => {
+      const sameName = await findSameName();
+      if (!sameName) return null;
+      return { ...(await this.applied(mutation, projectId, sameName.id)), alias: { from: id, to: sameName.id } };
+    };
+
+    const adopted = await adopt();
+    if (adopted) return adopted;
+    try {
+      await create();
+    } catch (error) {
+      const late = await adopt();
+      if (late) return late;
+      throw error;
+    }
+    return this.applied(mutation, projectId, id);
   }
 
   private async updateCategory(
@@ -1191,24 +1245,20 @@ export class MutationReplayService {
     });
     if (existing) return this.sameOrForeign(mutation, existing.projectId, projectId, '태그');
 
-    const sameName = await this.prisma.tag.findFirst({
-      where: { projectId, name: payload.name.trim() },
-      select: { id: true },
-    });
-    if (sameName) {
-      return {
-        ...(await this.applied(mutation, projectId, sameName.id)),
-        alias: { from: payload.id, to: sameName.id },
-      };
-    }
+    const findSameName = () =>
+      this.prisma.tag.findFirst({
+        where: { projectId, name: payload.name.trim() },
+        select: { id: true },
+      });
 
-    await this.tags.createTag(
-      userId,
-      { id: payload.id, name: payload.name, color: payload.color ?? undefined } as never,
-      projectId,
-      mutation.hlc,
+    return this.createOrAdopt(mutation, projectId, payload.id, findSameName, () =>
+      this.tags.createTag(
+        userId,
+        { id: payload.id, name: payload.name, color: payload.color ?? undefined } as never,
+        projectId,
+        mutation.hlc,
+      ),
     );
-    return this.applied(mutation, projectId, payload.id);
   }
 
   private async updateTag(
@@ -1639,6 +1689,23 @@ export class MutationReplayService {
     };
   }
 
+  /**
+   * 짐에 든 태그 중 이 가계부에 아직 있는 것. 끊긴 사이 다른 기기가 지운 태그를 걸러 낸다.
+   *
+   * 지운 태그를 그대로 넘기면 원장이 거래 전체를 TAG_NOT_IN_PROJECT 로 거절하고, 기기가 다시 보내도
+   * 같은 짐이라 영영 거절된다 -- 결국 거래를 버려야 했다. 태그는 이미 없으니 그 태그만 빠진
+   * 거래가 사용자가 바란 것에 가장 가깝다. 남의 가계부 태그도 여기서 함께 빠진다.
+   */
+  private async liveTagIds(projectId: string, ids: Iterable<string | undefined | null>): Promise<Set<string>> {
+    const wanted = [...new Set([...ids].filter((id): id is string => typeof id === 'string' && id !== ''))];
+    if (wanted.length === 0) return new Set();
+    const found = await this.prisma.tag.findMany({
+      where: { id: { in: wanted }, projectId },
+      select: { id: true },
+    });
+    return new Set(found.map((tag) => tag.id));
+  }
+
   /** 명령의 짐을 조립 입구가 받는 모양으로. 검증은 조립이 한다. */
   private async buildInput(
     userId: string,
@@ -1646,6 +1713,11 @@ export class MutationReplayService {
     payload: EntryMutationPayload,
     hlc: string,
   ) {
+    const live = await this.liveTagIds(projectId, [
+      ...(payload.tagIds ?? []),
+      ...(payload.splits ?? []).flatMap((split) => split.tagIds ?? []),
+    ]);
+    const keepLive = (ids: string[] | undefined) => ids?.filter((id) => live.has(id));
     const input = await this.ledger.buildFromRequest({
       projectId,
       createdByUserId: userId,
@@ -1666,7 +1738,7 @@ export class MutationReplayService {
       billedAmount: payload.billedAmount,
       amount: payload.amount,
       categoryId: payload.categoryId,
-      splits: payload.splits,
+      splits: payload.splits?.map((split) => ({ ...split, tagIds: keepLive(split.tagIds) })),
       accountId: payload.accountId,
       toAccountId: payload.toAccountId,
       cardId: payload.cardId,
@@ -1697,8 +1769,8 @@ export class MutationReplayService {
       id: payload.id,
       countsPerformance: payload.countsPerformance,
       discountCountsPerformance: payload.discountCountsPerformance,
-      // 태그도 조립이 줄에 실어 준다. 짐에서 그대로 옮긴다.
-      tagIds: payload.tagIds ?? [],
+      // 태그도 조립이 줄에 실어 준다. 그 사이 지워진 태그만 빼고 옮긴다 (`liveTagIds`).
+      tagIds: keepLive(payload.tagIds) ?? [],
     });
 
     return {
@@ -1774,6 +1846,9 @@ function isEntryModified(error: unknown): boolean {
 }
 
 /** 재생할 수 있는 모양의 명령인가. 기기가 보낸 값이라 무엇이든 올 수 있다. */
+/** Postgres int 의 상한. 순번(clientSeq)이 이보다 크면 모양이 어긋난 명령으로 본다. */
+const MAX_CLIENT_SEQ = 2_147_483_647;
+
 function isWellFormedMutation(value: unknown): boolean {
   const mutation = value as Partial<Mutation> | null;
   return (
@@ -1782,7 +1857,10 @@ function isWellFormedMutation(value: unknown): boolean {
     typeof mutation.mutationId === 'string' &&
     typeof mutation.kind === 'string' &&
     typeof mutation.hlc === 'string' &&
+    // 순번은 DB 의 int 칸에 들어간다. 넘치면 보내기 전체가 일찍 실패해, 받기까지 멈췄다.
     Number.isInteger(mutation.clientSeq) &&
+    (mutation.clientSeq as number) >= 0 &&
+    (mutation.clientSeq as number) <= MAX_CLIENT_SEQ &&
     Array.isArray(mutation.targets) &&
     mutation.targets.every((target) => typeof target === 'string') &&
     !!mutation.payload &&

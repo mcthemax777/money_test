@@ -517,6 +517,11 @@ const entry = (
 
   eq('최신 환율을 고른다 (날짜 내림차순 첫 줄)', (await store.latestRateRow(PID, 'USD', 'KRW'))?.rate, '1400');
 
+  // 서버가 아는 통장을 기기에서 고쳐도 잔액은 그대로다. 예전에는 번호가 0 으로 바뀌어 기초 잔액을 한 번 더 더했다.
+  const beforeRename = (await store.accountBalances(PID)).get('a1');
+  await store.writeAsset('account', 'a1', { projectId: PID, name: '이름만 바꾼 통장' }, 'hlc-rename');
+  eq('이름을 고쳐도 잔액이 두 배가 되지 않는다', (await store.accountBalances(PID)).get('a1'), beforeRename);
+
   // ── 4. 델타: 전표 수정, 다리 수가 줄어든다 ──
   const edited = entry('e2', '2026-08-10T03:00:00.000Z', '40000', 'c-dining', 'a1', 20);
   pulls.push(pullResponse(20, { entries: [edited] }, [], false, 12));

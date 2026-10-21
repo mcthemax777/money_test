@@ -18,6 +18,7 @@ import {
   zonedDateStringToUtc,
   type EntrySheetMaker,
   type EntrySheetRow,
+  nextDateKey,
 } from '@money/types';
 
 import { isPrismaError } from '@/common/prisma-error';
@@ -159,7 +160,8 @@ export class EntrySheetService {
 
     const dateFilter = {
       ...(query.startDate ? { gte: zonedDateStringToUtc(checkDay(query.startDate), timeZone) } : {}),
-      ...(query.endDate ? { lt: nextDay(zonedDateStringToUtc(checkDay(query.endDate), timeZone)) } : {}),
+      // 끝은 다음 날의 시작이다. 24시간을 더하면 서머타임이 바뀌는 날에 한 시간이 빠지거나 더해졌다.
+      ...(query.endDate ? { lt: zonedDateStringToUtc(nextDateKey(checkDay(query.endDate)), timeZone) } : {}),
     };
 
     const rows: EntrySheetRow[] = [];
@@ -218,6 +220,3 @@ function checkDay(value: string): string {
   return value;
 }
 
-function nextDay(instant: Date): Date {
-  return new Date(instant.getTime() + 24 * 60 * 60 * 1000);
-}

@@ -21,7 +21,7 @@ import { homeDataPort } from '@money/core/data/home-port';
 import { useApiError } from '@money/core/lib/api-error';
 import { formatDateMarker } from '@money/core/lib/datetime';
 import { useTranslation } from '@money/core/lib/i18n';
-import { formatCurrency, formatNumber, toAmountString, toNumber } from '@money/core/lib/money';
+import { formatCurrency, formatNumber, positiveAmountOf, toAmountString } from '@money/core/lib/money';
 import {
   billedFromRate,
   derivedRate,
@@ -80,7 +80,8 @@ export default function PendingRatePanel({
   const groups = groupPendingByMonth(items);
   /** 채워 넣은 것만 보낸다. 빈 칸은 아직 명세서를 못 본 건이다. */
   const filled = filledPendingItems(items, billed);
-  const canFillAll = toNumber(bulkRate) > 0;
+  const bulk = positiveAmountOf(bulkRate);
+  const canFillAll = bulk !== null;
 
   const save = async () => {
     if (filled.length === 0) return;
@@ -131,7 +132,7 @@ export default function PendingRatePanel({
           className="flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm text-gray-900"
         />
         <Pressable
-          onPress={() => setBilled(billedFromRate(items, toNumber(bulkRate), currency))}
+          onPress={() => bulk && setBilled(billedFromRate(items, bulk, currency))}
           disabled={!canFillAll}
           className={`justify-center rounded-lg border border-gray-300 px-3 ${
             canFillAll ? 'active:bg-gray-50' : 'opacity-40'

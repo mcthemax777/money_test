@@ -16,7 +16,8 @@
 import { newId, type PushRequest, type PushResponse, type SyncDto } from '@money/types';
 
 import { isOfflineError } from '../lib/offline-error';
-import type { LocalStore } from './local-store';
+import { REBUILD_PENDING, type LocalStore } from './local-store';
+import { useSyncNotice } from '../store/sync-notice';
 
 /** 변경 피드를 부르는 함수. apiClient 를 그대로 넣어도 되고 검증용으로 갈아 끼워도 된다. */
 export type PullFn = (query: SyncDto.PullQuery) => Promise<SyncDto.PullResponse>;
@@ -108,6 +109,17 @@ export async function syncProject(
     return { version, rounds, changed, offline: true, pushed: 0, held: outbox.held, rebuilt };
   }
   if (outbox.pushed > 0) changed = true;
+
+  /*
+   * 버린 명령이 있어 처음부터 다시 받기로 한 사본이다 (`discardMutation`). 보낼 것을 보낸 뒤라
+   * 남은 명령의 모습은 서버에서 다시 돌아온다. 보류된 명령은 그대로 보류 칸에 남는다.
+   */
+  if (version === REBUILD_PENDING) {
+    await store.resetForRebuild(projectId, timeZone, mirrorFloor);
+    rebuilt = true;
+    changed = true;
+    version = 0;
+  }
 
   /*
    * 보관함 처리를 올린다. **밀어 올리기 뒤, 받기 앞이어야 한다.**
@@ -308,6 +320,9 @@ async function pushOutbox(
         mutations,
       });
       ({ requeued } = await store.settleMutations(response.results, newId));
+      // 태그를 붙이지 못한 줄이 있었으면 한 번 알린다 (`useSyncNotice`).
+      const skipped = response.results.reduce((sum, result) => sum + (result.skippedTagTargets?.length ?? 0), 0);
+      if (skipped > 0) useSyncNotice.getState().addSkippedTags(skipped);
     } catch (error) {
       if (isOfflineError(error)) {
         /*

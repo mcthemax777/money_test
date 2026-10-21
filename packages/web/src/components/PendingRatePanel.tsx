@@ -12,7 +12,7 @@ import {
 } from '@money/core/lib/pending-rates';
 import { useApiError } from '@money/core/lib/api-error';
 import { useTranslation } from '@money/core/lib/i18n';
-import { formatCurrency, formatNumber, toAmountString, toNumber } from '@money/core/lib/money';
+import { formatCurrency, formatNumber, positiveAmountOf, toAmountString } from '@money/core/lib/money';
 import { formatDateMarker } from '@money/core/lib/datetime';
 
 interface Props {
@@ -72,8 +72,9 @@ export default function PendingRatePanel({ cardId, onSettled }: Props) {
 
   /** 적용환율 한 줄로 청구액 칸을 모두 채운다. */
   const applyRate = () => {
-    const rate = toNumber(bulkRate);
-    if (rate <= 0) return;
+    // 쉼표가 든 환율도 받는다 (`positiveAmountOf`, 건별 칸과 같다).
+    const rate = positiveAmountOf(bulkRate);
+    if (!rate) return;
     setBilled(billedFromRate(items, rate, currency));
   };
 
@@ -128,7 +129,7 @@ export default function PendingRatePanel({ cardId, onSettled }: Props) {
         <button
           type="button"
           onClick={applyRate}
-          disabled={toNumber(bulkRate) <= 0}
+          disabled={positiveAmountOf(bulkRate) === null}
           className="px-3 py-2 text-sm border rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-40"
         >
           {t('pending.fillAll')}

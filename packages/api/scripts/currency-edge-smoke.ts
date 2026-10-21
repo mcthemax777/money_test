@@ -300,6 +300,12 @@ runSmoke('currency-edge', async (ctx) => {
     exchangeLegs.reduce((acc, l) => acc.add(l.baseAmount), D(0)).toString(),
     '0',
   );
+  // 수수료 다리는 보낸 통화 그대로 적힌다 (2026-10-21). 집계는 환산액만 보고, 고칠 때 환율로 되짚지 않는다.
+  const feeLeg = exchangeLegs.find((l) => l.accountId === null);
+  ctx.check('수수료 다리는 보낸 통화로 적힌다', `${feeLeg?.amount.toString()} ${feeLeg?.currency}`, '2 USD');
+  const listed = (await call('GET', `/entries${q}&limit=200`)).body;
+  const listedRow = (listed.data ?? listed).find((row: { description: string }) => row.description === '수수료 환전');
+  ctx.check('목록이 보낸 통화의 수수료를 싣는다', listedRow?.feeEnteredAmount, '2');
 
   // ── 9. 외화 계좌의 잔액 직접 수정 ──────────────────────────
   // 거래가 이미 있는 달러 통장의 잔액을 목표값으로 맞춘다.

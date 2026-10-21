@@ -792,22 +792,38 @@ export default function TransactionsScreen({
    * 고르기를 거치지 않는 길이라 건수를 적지 않고 한 번만 묻는다. 묻기 전에 상세를
    * 닫지 않는다 -- 취소했을 때 읽고 있던 거래가 사라지면 안 된다.
    */
+  /*
+   * 묻는 중인가. 걸린 페이백 수를 받는 사이에 다시 누르면 확인 창이 둘 떴고, 둘 다 누르면 두 번째가 이미 지운
+   * 거래를 지우려다 "1건 지우지 못했다"를 띄웠다. 창이 닫힐 때(누르거나 취소) 푼다.
+   */
+  const askingDelete = useRef(false);
   const askDeleteDetail = async (entry: EntryListItem) => {
+    if (askingDelete.current) return;
+    askingDelete.current = true;
+    const release = () => {
+      askingDelete.current = false;
+    };
     // 원거래면 걸린 환불·페이백도 함께 지워진다. 그 수를 함께 묻는다 (7-6).
-    const note = paybackDeleteNote(await paybackCountOf(entry, selectedProjectId), t);
-    Alert.alert(t('tx.detail.deleteConfirm'), [note, t('tx.deleteConfirmBody')].filter(Boolean).join(' '), [
-      { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('entryForm.delete'),
-        style: 'destructive',
-        onPress: () => {
-          setDetail(null);
-          void tx.deleteEntry(entry.id).then((deleted) => {
-            setNotice(deleted ? '' : t('tx.deleteFailed', { count: 1 }));
-          });
+    const note = paybackDeleteNote(await paybackCountOf(entry, selectedProjectId).catch(() => 0), t);
+    Alert.alert(
+      t('tx.detail.deleteConfirm'),
+      [note, t('tx.deleteConfirmBody')].filter(Boolean).join(' '),
+      [
+        { text: t('common.cancel'), style: 'cancel', onPress: release },
+        {
+          text: t('entryForm.delete'),
+          style: 'destructive',
+          onPress: () => {
+            release();
+            setDetail(null);
+            void tx.deleteEntry(entry.id).then((deleted) => {
+              setNotice(deleted ? '' : t('tx.deleteFailed', { count: 1 }));
+            });
+          },
         },
-      },
-    ]);
+      ],
+      { onDismiss: release },
+    );
   };
 
   const entryList = (yearMonth: string, key: string) => {

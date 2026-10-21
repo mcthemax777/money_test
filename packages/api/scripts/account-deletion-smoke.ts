@@ -9,6 +9,9 @@
  */
 import { AccountDeletionService } from '../src/modules/users/account-deletion.service';
 import { PlansService } from '../src/modules/plans/plans.service';
+import { SubscriptionCancelService } from '../src/modules/plans/subscription-cancel.service';
+import { ProjectsService } from '../src/modules/projects/projects.service';
+import { ExchangeRatesService } from '../src/modules/exchange-rates/exchange-rates.service';
 import { runSmoke } from './smoke-harness';
 
 runSmoke('account-deletion', async (ctx) => {
@@ -25,7 +28,9 @@ runSmoke('account-deletion', async (ctx) => {
       return stillRenewing;
     },
   };
-  const service = new AccountDeletionService(ctx.prisma as any, new PlansService(ctx.prisma as any), store as any);
+  const plans = new PlansService(ctx.prisma as any);
+  const subscriptions = new SubscriptionCancelService(plans, store as any);
+  const service = new AccountDeletionService(ctx.prisma as any, plans, subscriptions);
   const me = await ctx.createUser();
   const other = await ctx.createUser();
 
@@ -132,6 +137,42 @@ runSmoke('account-deletion', async (ctx) => {
     stillRenewing = false;
     await service.deleteAccount(already.id);
     ctx.check('이미 해지한 구독이면 그대로 지운다', await ctx.prisma.user.count({ where: { id: already.id } }), 0);
+
+    // 가계부만 지울 때도 구독을 먼저 해지한다 (2026-10-21). 예전에는 해지 없이 지워 결제가 계속 나갔다.
+    const projects = new ProjectsService(
+      ctx.prisma as any,
+      { verifyUserHasAccessToProject: async () => undefined } as any,
+      new ExchangeRatesService(ctx.prisma as any),
+      plans,
+      subscriptions,
+    );
+    const owner = await ctx.createUser();
+    const paid = await ctx.createProject({ name: '구독 중인 가계부' });
+    await ctx.prisma.projectMember.create({ data: { projectId: paid.id, userId: owner.id, role: 'owner' } });
+    grantIds.push(
+      (
+        await ctx.prisma.projectPlanGrant.create({
+          data: {
+            projectId: paid.id,
+            plan: 'month1',
+            source: 'google_play',
+            externalId: `GPA.smoke-project-${process.pid}@1`,
+            amount: 2900,
+            startsAt: new Date(now.getTime() - 86_400_000),
+            endsAt: new Date(now.getTime() + 20 * 86_400_000),
+          },
+        })
+      ).id,
+    );
+    cancelFails = true;
+    stillRenewing = true;
+    await ctx.expectReject('가계부 삭제: 해지하지 못하면 지우지 않는다', () => projects.deleteProject(paid.id, owner.id));
+    ctx.check('가계부 삭제: 남아 있다', await ctx.prisma.project.count({ where: { id: paid.id } }), 1);
+    cancelFails = false;
+    cancelled.length = 0;
+    await projects.deleteProject(paid.id, owner.id);
+    ctx.check('가계부 삭제: 구독을 해지하고 지운다', cancelled.join(), `${paid.id}/GPA.smoke-project-${process.pid}`);
+    ctx.check('가계부 삭제: 지워졌다', await ctx.prisma.project.count({ where: { id: paid.id } }), 0);
   } finally {
     // 결제 기록은 가계부를 지워도 남으므로 검사가 만든 것을 직접 치운다.
     await ctx.prisma.projectPlanGrant.deleteMany({ where: { id: { in: grantIds } } });

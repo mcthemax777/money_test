@@ -89,7 +89,7 @@ runSmoke('sync-push-assets', async (ctx) => {
     tags as any,
     budgets as any,
     new ExchangeRatesService(ctx.prisma as any) as any,
-    new ProjectsService(ctx.prisma as any, access as any, new ExchangeRatesService(ctx.prisma as any), new PlansService(ctx.prisma as any)) as any,
+    new ProjectsService(ctx.prisma as any, access as any, new ExchangeRatesService(ctx.prisma as any), new PlansService(ctx.prisma as any), { cancelRenewing: async () => undefined } as any) as any,
     recurringReplay as any,
   );
 

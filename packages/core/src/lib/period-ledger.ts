@@ -7,6 +7,7 @@
 import {
   INSTALLMENT_MAX_MONTHS,
   annualRateSchedule,
+  currencyDecimals,
   fixedPaymentSchedule,
   installmentInterestTotal,
   installmentPrincipals,
@@ -85,6 +86,8 @@ export function installmentShareInputs(
   total: string,
   months: number,
   saved: readonly string[] | null | undefined,
+  /** 장부 통화. 기본값을 그 통화의 자릿수로 나눈다 (`installmentInterestInputs` 와 같은 값을 넘긴다). */
+  currency?: string,
 ): string[] {
   // 고를 수 있는 개월수를 넘으면 칸을 그리지 않는다 (2026-10-16). 100000 을 치면 칸 십만 개를 그리다 화면이 멈췄다.
   // 저장 검사가 그 값을 따로 거절한다.
@@ -101,7 +104,9 @@ export function installmentShareInputs(
    */
   if (saved && saved.length === months) return [...saved];
 
-  return installmentPrincipals(amountText(total), months).map((share) => share.toString());
+  return installmentPrincipals(amountText(total), months, null, currency ? currencyDecimals(currency) : undefined).map(
+    (share) => share.toString(),
+  );
 }
 
 /**
@@ -134,8 +139,14 @@ export function installmentInterestInputs(input: {
   annualRate: string;
   /** 사용자가 고쳐 둔 값. 개수가 맞으면 그대로 쓴다. */
   saved: readonly string[] | null | undefined;
+  /**
+   * 장부 통화. 이자를 그 통화의 자릿수로 자른다. 유이자 할부는 장부 통화로만 적는다. 화면과 저장
+   * (`entryFormToRequest`)이 같은 값을 넘겨야 보이는 이자와 저장되는 이자가 같다.
+   */
+  currency?: string;
 }): string[] {
-  const { total, months, principals, mode, monthlyPayment, annualRate, saved } = input;
+  const { total, months, principals, mode, monthlyPayment, annualRate, saved, currency } = input;
+  const decimals = currency ? currencyDecimals(currency) : undefined;
   if (!months || months < 2 || months > INSTALLMENT_MAX_MONTHS) return [];
   // 고친 값은 글자 그대로 돌려준다. 치는 중의 도막이 섞여 있어 숫자로 읽지 않는다.
   if (saved && saved.length === months) return [...saved];
@@ -143,9 +154,9 @@ export function installmentInterestInputs(input: {
   const blank = Array.from({ length: months }, () => '');
   const schedule =
     mode === 'fixed'
-      ? fixedPaymentSchedule(amountText(total), months, amountText(monthlyPayment))
+      ? fixedPaymentSchedule(amountText(total), months, amountText(monthlyPayment), decimals)
       : mode === 'rate'
-        ? annualRateSchedule(amountText(total), months, amountText(annualRate), readable(principals))
+        ? annualRateSchedule(amountText(total), months, amountText(annualRate), readable(principals), decimals)
         : null;
   if (!schedule) return blank;
 

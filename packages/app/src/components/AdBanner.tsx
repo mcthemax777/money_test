@@ -47,8 +47,12 @@ export default function AdBanner() {
     return () => clearTimeout(timer);
   }, [failed]);
 
+  /*
+   * SDK 준비. 실패했으면 위의 다시 받기 시계가 `failed` 를 내릴 때 여기서도 다시 한다 (2026-10-21) -- 예전에는
+   * 이 효과가 처음 한 번만 돌아, 준비가 한 번 실패하면 그 실행 동안 배너가 영영 서지 않았다.
+   */
   useEffect(() => {
-    if (!showAds || !canRequestAds) return;
+    if (!showAds || !canRequestAds || sdkReady || failed) return;
     let cancelled = false;
     initAds().then(
       () => {
@@ -61,7 +65,7 @@ export default function AdBanner() {
     return () => {
       cancelled = true;
     };
-  }, [showAds, canRequestAds]);
+  }, [showAds, canRequestAds, sdkReady, failed]);
 
   /*
    * 받은 광고를 서서히 드러낸다. 예전에는 받는 순간 바깥 상자의 key 를 바꿔 다시 그렸는데, 그러면 안의 BannerAd 도 새로

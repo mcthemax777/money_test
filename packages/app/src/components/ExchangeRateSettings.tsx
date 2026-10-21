@@ -4,7 +4,7 @@ import type { ExchangeRateInfo } from '@money/types';
 
 import { useExchangeRateSettings } from '@money/core/hooks/useExchangeRates';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
-import { toNumber } from '@money/core/lib/money';
+import { positiveAmountOf } from '@money/core/lib/money';
 import { useConnectivity } from '@money/core/store/connectivity';
 
 import Modal from './Modal';
@@ -95,7 +95,7 @@ export default function ExchangeRateSettings() {
             const isManual = info.source === 'manual';
             const isSaving = savingPair === info.from;
             // 끊겨 있어도 저장된다 -- 사본에 곧바로 적고 명령으로 쌓는다 (환율 명령).
-            const canSave = toNumber(draft) > 0 && !isSaving;
+            const canSave = positiveAmountOf(draft) !== null && !isSaving;
 
             return (
               <View

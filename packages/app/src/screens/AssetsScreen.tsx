@@ -118,7 +118,8 @@ export default function AssetsScreen() {
       void homeDataPort()
         .getEntry(entryId, selectedProjectId)
         .then((entry) => {
-          if (entry) setEntryDetail(entry);
+          // 받는 사이 가계부를 바꿨으면 열지 않는다 (홈과 같다).
+          if (entry && useProject.getState().selectedProjectId === selectedProjectId) setEntryDetail(entry);
         })
         .catch(() => {
           /* 못 읽었으면 열지 않는다. 다음 누름에 다시 해 본다. */

@@ -105,7 +105,11 @@ function cellText(cell: XLSX.CellObject | undefined, isDateColumn: boolean, date
     const isDateFormat = typeof cell.z === 'string' && XLSX.SSF.is_date(cell.z);
     if (isDateFormat || (isDateColumn && cell.v > 20000 && cell.v < 80000)) return serialText(cell.v, date1904);
     if (isDateColumn && cell.v >= 0 && cell.v < 1) return serialText(cell.v, date1904).slice(-5);
-    return String(cell.v);
+    /*
+     * 유효숫자 열다섯 자리로 다듬는다. 수식 칸은 부동소수 꼬리를 달고 와("=12000*1.1" 이 13200.000000000002)
+     * 그대로 금액이 되었다. 엑셀이 화면에 보여 주는 정밀도와 같다.
+     */
+    return String(Number(cell.v.toPrecision(15)));
   }
   if (cell.t === 'd' && cell.v instanceof Date) {
     const date = cell.v;

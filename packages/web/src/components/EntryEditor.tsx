@@ -21,6 +21,7 @@ import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import type { Account, Card, Category, Person } from '@money/core/lib/types';
 import {
   defaultCountsPerformance,
+  defaultSharesToSend,
   installmentBaseAmount,
   foreignEditAmounts,
   interestInAmount,
@@ -768,6 +769,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     installmentBase,
     Number(formData.installmentMonths),
     formData.installmentShares,
+    ledgerCurrency,
   );
 
   /*
@@ -783,6 +785,7 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
     monthlyPayment: formData.installmentMonthlyPayment,
     annualRate: formData.installmentAnnualRate,
     saved: formData.installmentInterestShares,
+    currency: ledgerCurrency,
   });
 
   /**
@@ -1322,6 +1325,10 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
             payload.installmentShares = formData.installmentShares.map((share) =>
               toAmountString(share),
             );
+          } else {
+            // 장부 통화로 나눈 기본값이 서버의 나눔과 다르면(소수 없는 달러 금액) 싣는다 (앱과 같은 `defaultSharesToSend`).
+            const shares = defaultSharesToSend(installmentBase, Number(formData.installmentMonths), ledgerCurrency);
+            if (shares) payload.installmentShares = shares;
           }
 
           /*
@@ -2107,16 +2114,34 @@ const EntryEditor = forwardRef<EntryEditorHandle, EntryEditorProps>(function Ent
             projectId: projectId ?? undefined,
           });
 
+      /*
+       * 소분류가 실패하면 다시 시도할 수 있게 창을 "만든 대분류에 소분류 붙이기"로 바꾼다 (2026-10-21). 예전에는
+       * 대분류만 만들어진 채 같은 창이 남아, 다시 누르면 대분류를 또 만들려다 이름이 겹쳐 영영 실패했다.
+       * 이미 만든 소분류는 건너뛴다 -- 같은 이름을 다시 만들면 또 겹친다.
+       */
+      const existingSubs = new Set(
+        categories.filter((category) => category.parentId === parent.id).map((category) => category.name),
+      );
       const created: Category[] = [];
-      for (const sub of subs) {
-        created.push(
-          await apiClient.createCategory({
-            name: sub.name.trim(),
-            type: parent.type,
-            parentId: parent.id,
-            projectId: projectId ?? undefined,
-          }),
-        );
+      try {
+        for (const sub of subs) {
+          if (existingSubs.has(sub.name.trim())) continue;
+          created.push(
+            await apiClient.createCategory({
+              name: sub.name.trim(),
+              type: parent.type,
+              parentId: parent.id,
+              projectId: projectId ?? undefined,
+            }),
+          );
+        }
+      } catch (subError) {
+        if (!categoryParent) {
+          const data = await apiClient.getCategories(projectId).catch(() => null);
+          if (data) onReferenceDataChange({ categories: data });
+          setCategoryParentId(parent.id);
+        }
+        throw subError;
       }
 
       // 고른 가계부를 늘 싣는다. 빠지면 서버가 그 사람의 기본 가계부로 만들고 읽는다 -- 화면이

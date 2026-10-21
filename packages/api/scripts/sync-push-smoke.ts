@@ -104,7 +104,7 @@ runSmoke('sync-push', async (ctx) => {
     tags as any,
     budgets as any,
     new ExchangeRatesService(ctx.prisma as any) as any,
-    new ProjectsService(ctx.prisma as any, access as any, new ExchangeRatesService(ctx.prisma as any), new PlansService(ctx.prisma as any)) as any,
+    new ProjectsService(ctx.prisma as any, access as any, new ExchangeRatesService(ctx.prisma as any), new PlansService(ctx.prisma as any), { cancelRenewing: async () => undefined } as any) as any,
     recurringReplay as any,
   );
 
@@ -347,7 +347,7 @@ runSmoke('sync-push', async (ctx) => {
     tags as any,
     budgets as any,
     new ExchangeRatesService(ctx.prisma as any) as any,
-    new ProjectsService(ctx.prisma as any, viewerAccess as any, new ExchangeRatesService(ctx.prisma as any), new PlansService(ctx.prisma as any)) as any,
+    new ProjectsService(ctx.prisma as any, viewerAccess as any, new ExchangeRatesService(ctx.prisma as any), new PlansService(ctx.prisma as any), { cancelRenewing: async () => undefined } as any) as any,
     recurringReplay as any,
   );
   /*
@@ -758,4 +758,28 @@ runSmoke('sync-push', async (ctx) => {
   await ctx.prisma.mutationLog.update({ where: { mutationId: restatedLater.mutationId }, data: { userId: null } });
   ctx.check('순번: 보낸 사람이 빈 옛 행은 재전송으로 받는다',
     statusOf((await pushAs(other.id, [restatedLater])).results, restatedLater.mutationId), 'duplicate');
+
+  // ── 끊긴 사이 지워진 태그 (2026-10-21) ──
+  // 그 태그를 단 오프라인 거래는 태그만 빠진 채 들어온다. 예전에는 TAG_NOT_IN_PROJECT 로 영영 거절됐다.
+  const gone = await ctx.prisma.tag.create({ data: { projectId: pid, name: `${RUN}-지운 태그` } });
+  await ctx.prisma.tag.delete({ where: { id: gone.id } });
+  const taggedId = '019273aa-0000-7000-8000-0000000000d1';
+  const taggedOffline = expenseMutation(taggedId, '1000', T0 + 9_400_000);
+  (taggedOffline.payload as { tagIds?: string[] }).tagIds = [gone.id];
+  const taggedResult = (await push([taggedOffline])).results[0];
+  ctx.check('지운 태그: 거래는 들어온다', taggedResult?.status, 'applied');
+  ctx.check('지운 태그: 태그는 붙지 않는다', await ctx.prisma.entryTag.count({ where: { entryId: taggedId } }), 0);
+
+  // 이미 지워진 태그를 떼는 명령은 뗀 것으로 본다.
+  const untag: Mutation = {
+    mutationId: `${RUN}-m-untag-${(seq += 1)}`,
+    clientId: CLIENT,
+    clientSeq: seq,
+    hlc: hlcAt(T0 + 9_500_000),
+    kind: 'entry.tags',
+    projectId: pid,
+    targets: [taggedId],
+    payload: { targets: [{ entryId: taggedId }], addTagIds: [], removeTagIds: [gone.id] },
+  };
+  ctx.check('지운 태그: 떼기는 적용된 것으로 본다', (await push([untag])).results[0]?.status, 'applied');
 });

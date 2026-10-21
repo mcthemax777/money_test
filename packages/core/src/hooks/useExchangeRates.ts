@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { CurrencyCode, ExchangeRateInfo } from '@money/types';
 
-import { toAmountString, toNumber } from '../lib/money';
+import { positiveAmountOf } from '../lib/money';
 import { apiClient } from '../lib/api-client';
 import { homeDataPort } from '../data/home-port';
 import { settingsWritePort } from '../data/settings-write-port';
@@ -118,7 +118,9 @@ export function useExchangeRateSettings() {
   const save = useCallback(
     /** 저장했으면 true. 화면은 그때만 그 칸을 비운다 (2026-10-16 -- 실패해도 비워 적던 값을 잃었다). */
     async (info: ExchangeRateInfo, value: string): Promise<boolean> => {
-      if (toNumber(value) <= 0) return false;
+      // 쉼표가 든 환율("1,380.5")도 받는다 (`positiveAmountOf`). Number 로 읽으면 0 이 되어 말없이 저장하지 않았다.
+      const rate = positiveAmountOf(value);
+      if (!rate) return false;
 
       try {
         setSavingPair(info.from);
@@ -127,7 +129,7 @@ export function useExchangeRateSettings() {
         await settingsWritePort().setExchangeRate({
           from: info.from,
           to: info.to,
-          rate: toAmountString(value),
+          rate,
           projectId: selectedProjectId,
         });
         // 거래 입력 폼이 들고 있는 캐시를 버린다. 안 버리면 폼에 옛 환율이 남는다.

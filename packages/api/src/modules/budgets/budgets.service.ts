@@ -1,3 +1,4 @@
+import { badRequest } from '@/common/app-error';
 import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { Prisma, ProjectRole } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
@@ -110,6 +111,13 @@ export class BudgetsService {
   private ruleTarget(target: Pick<BudgetDto.CreateRequest, 'categoryId' | 'tagId' | 'type'>) {
     const tagId = target.tagId || undefined;
     const resolved = resolveBudgetTarget(target.categoryId, target.type);
+    /*
+     * 분류·태그·유형 중 하나는 있어야 한다. 아무것도 없으면 "아무 전체 예산"을 찾아 고치거나 유형 없는 규칙을
+     * 세웠고, 그 규칙은 어느 달 화면에도 서지 않았다.
+     */
+    if (!resolved.categoryId && !tagId && resolved.type !== 'expense' && resolved.type !== 'income') {
+      throw badRequest('BUDGET_TARGET_REQUIRED', '예산을 세울 분류·태그·유형을 골라야 합니다.');
+    }
     return {
       categoryId: resolved.categoryId,
       tagId,
@@ -376,6 +384,11 @@ export class BudgetsService {
             type: budget.type,
             monthlyAmount,
             effectiveFrom: applyFrom,
+            /*
+             * 금액에 시계를 찍는다 (`setBudgetFrom` 과 같다). 없으면 나중에 도착한 옛 오프라인 금액 명령이
+             * 견줄 시계가 없어 이 금액을 덮었다.
+             */
+            fieldHlc: stampFieldClocks(null, ['monthlyAmount'], hlc ?? this.clock.now()),
           },
         });
       });

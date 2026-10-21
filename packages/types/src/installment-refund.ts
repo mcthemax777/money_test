@@ -97,7 +97,8 @@ export function lineInterestTotal(
   const line = Dec.of(lineAmount).abs();
   const whole = Dec.of(entryAmount).abs();
   if (whole.isZero() || line.eq(whole)) return total;
-  return total.times(line).dividedBy(whole, 0);
+  // 금액에 적힌 자릿수로 자른다 (`amountScale`). 예전에는 늘 0자리라 달러 이자 3.75 의 1/3 이 1.00 이 됐다.
+  return total.times(line).dividedBy(whole, amountScale(lineAmount, entryAmount, ...interests));
 }
 
 /**

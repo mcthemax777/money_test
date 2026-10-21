@@ -19,9 +19,11 @@ import { trackScreen } from '@money/core/lib/analytics';
 import { boot } from './src/boot';
 import OfflineSync from './src/shell/OfflineSync';
 import PushSetup from './src/shell/PushSetup';
+import { flushPendingPushForget } from './src/push';
 import AdsSetup from './src/shell/AdsSetup';
 import UpdateGate from './src/shell/UpdateGate';
 import ProjectAccessLostAlert from './src/shell/ProjectAccessLostAlert';
+import SkippedTagsAlert from './src/shell/SkippedTagsAlert';
 import AnalysisScreen from './src/screens/AnalysisScreen';
 import AssetsScreen from './src/screens/AssetsScreen';
 import CategoriesScreen from './src/screens/CategoriesScreen';
@@ -57,6 +59,11 @@ export default function App() {
       try {
         await boot();
         await loadUser();
+        /*
+         * 로그아웃 때 지우지 못한 푸시 토큰을 치운다. 로그인한 채로 켜졌으면 하지 않는다 -- 그때는
+         * 등록(PushSetup)이 같은 토큰을 새로 적고 적어 둔 것을 지운다. 기다리지 않는다.
+         */
+        if (!useAuth.getState().isAuthenticated) void flushPendingPushForget();
       } catch (error) {
         // 준비가 실패해도 화면은 떠야 한다. 그대로 두면 도는 표시만 남는다.
         setStartupError(String(error));
@@ -116,6 +123,7 @@ function Authenticated() {
   return (
     <>
       <ProjectAccessLostAlert />
+      <SkippedTagsAlert />
       {hasNoProject ? (
         <StartScreen />
       ) : (

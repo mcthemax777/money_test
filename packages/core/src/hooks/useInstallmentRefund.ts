@@ -170,7 +170,12 @@ export function useInstallmentRefund(input: {
     (index: number, text: string) => {
       if (!plan) return;
       const before = maxZero(plan.effective[index - 1].principal);
-      const after = toDec(text.trim() === '' ? '0' : text) ?? Dec.of(0);
+      /*
+       * 치는 중의 글자("", "-", ".")는 회차를 건드리지 않는다. 예전에는 그것을 0 으로 읽어 "그 회차를 다
+       * 줄인다"가 되었고, 칸을 떠나기 전에 저장하면 그대로 저장됐다. 화면의 글자는 부르는 쪽이 따로 든다.
+       */
+      const after = toDec(text);
+      if (!after) return;
       const next = [...(values.installmentCut.length === plan.months ? values.installmentCut : defaults)];
       next[index - 1] = before.minus(after).toString();
       setField('installmentCut', next);

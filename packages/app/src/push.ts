@@ -10,6 +10,7 @@
  * 적기를 건너뛰고 나머지는 그대로 돈다. 보관함에는 후보가 그대로 담긴다.
  */
 import { Platform } from 'react-native';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import * as Notifications from 'expo-notifications';
 
 import { apiClient } from '@money/core/lib/api-client';
@@ -99,7 +100,31 @@ export async function unregisterPushDevice(): Promise<void> {
   try {
     await apiClient.unregisterPushDevice(token);
   } catch (error) {
+    /*
+     * 끊겨 있었다. 로그아웃한 뒤에는 인증이 없어 같은 길로 다시 부를 수 없으므로, 토큰을 적어 두고 다음
+     * 실행에 토큰만으로 지운다 (`flushPendingPushForget`). 예전에는 여기서 끝나 앞 사람의 알림이 계속 왔다.
+     */
     console.warn('푸시 토큰을 지우지 못했습니다:', error);
+    await AsyncStorage.setItem(PENDING_FORGET_KEY, token).catch(() => undefined);
+  }
+}
+
+/** 로그아웃 때 지우지 못한 토큰. 다음 실행에 지운다. */
+const PENDING_FORGET_KEY = 'push.pendingForget';
+
+/**
+ * 로그아웃 때 지우지 못한 푸시 토큰을 지운다. 앱이 켜질 때 부른다. 실패하면 적어 둔 채로 다음에 다시 한다.
+ *
+ * 그사이 누가 이 기기로 로그인해 토큰을 다시 적었으면 지우지 않는다 -- `sendToken` 이 적어 둔 것을 먼저 치운다.
+ */
+export async function flushPendingPushForget(): Promise<void> {
+  const token = await AsyncStorage.getItem(PENDING_FORGET_KEY).catch(() => null);
+  if (!token) return;
+  try {
+    await apiClient.forgetPushDevice(token);
+    await AsyncStorage.removeItem(PENDING_FORGET_KEY);
+  } catch {
+    // 아직 끊겨 있다. 다음 실행에 다시 한다.
   }
 }
 
@@ -118,6 +143,8 @@ async function currentDeviceToken(): Promise<string | null> {
 
 async function sendToken(token: string): Promise<void> {
   if (!token) return;
+  // 새 주인이 이 토큰을 적는다. 앞 사람 몫으로 남겨 둔 "지울 토큰"을 치워야 새 등록이 지워지지 않는다.
+  await AsyncStorage.removeItem(PENDING_FORGET_KEY).catch(() => undefined);
   await apiClient.registerPushDevice({ token, platform: 'android' });
   registeredToken = token;
 }

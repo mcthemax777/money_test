@@ -106,8 +106,16 @@ export function useBudgetSchedule({
   const saveMonth = async (row: BudgetDto.ScheduleMonth) => {
     if (!row.budgetId) return;
 
-    const amount = toNumber(editingValue);
-    if (amount < 0) {
+    /*
+     * 쉼표·전각 숫자를 받는다 (`toAmountString`). 예전에는 Number 로 읽어 "30,000" 이 0 이 되었고, 그 달이
+     * 0원 예산으로 저장돼 초과로 보였다. 비운 칸은 고치기를 그만두는 것으로 본다 -- 0원 예산은 0 을 적는다.
+     */
+    if (!editingValue.trim()) {
+      cancelEdit();
+      return;
+    }
+    const amount = toAmountString(editingValue);
+    if (amount.startsWith('-')) {
       setError(t('budget.negative'));
       return;
     }
@@ -124,7 +132,7 @@ export function useBudgetSchedule({
         budgetId: row.budgetId,
         year,
         month,
-        amount: toAmountString(amount),
+        amount,
       });
       cancelEdit();
       await load();

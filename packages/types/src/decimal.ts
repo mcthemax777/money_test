@@ -312,7 +312,7 @@ export function roundToCurrency(value: DecInput, currency: string): Dec {
 }
 
 /**
- * 금액들에 적힌 소수 자릿수 중 가장 큰 것 (끝의 0 은 세지 않는다, 4자리까지).
+ * 금액들에 적힌 소수 자릿수 중 가장 큰 것 (소수가 있으면 2~4자리).
  *
  * 통화를 모르는 자리(할부 회차·환불 몫 나누기)가 자를 자릿수다. 원화처럼 정수인 금액은 0 이라
  * 원 단위 그대로이고, 218.57 달러는 2자리로 나눈다. 예전에는 늘 0자리로 잘라 달러 할부가
@@ -324,5 +324,9 @@ export function amountScale(...values: DecInput[]): number {
     const [, fraction = ''] = Dec.of(value).toString().split('.');
     scale = Math.max(scale, fraction.replace(/0+$/, '').length);
   }
-  return Math.min(scale, 4);
+  /*
+   * 소수가 하나라도 있으면 적어도 두 자리다. 끝의 0 은 글자에서 사라지므로("218.50" 이 "218.5"),
+   * 적힌 자리만 세면 센트 통화가 10센트 단위로 나뉘었다(72.9 / 72.8 / 72.8).
+   */
+  return scale === 0 ? 0 : Math.min(Math.max(scale, 2), 4);
 }

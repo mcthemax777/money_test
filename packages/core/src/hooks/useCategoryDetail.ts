@@ -162,9 +162,14 @@ interface BreakdownRow {
  * 쪼개 보여 주는 것이 없으면서 분류가 빠진 듯한 오해만 준다. 이때는 원형차트를 걸러야 한다.
  */
 export function buildSubcategoryStats(rows: BreakdownRow[], parentId: string): CategorySlice[] {
+  /*
+   * 0 이하 조각은 그리지 않는다 (아래 `buildFlatSubcategoryStats` 와 같다). 환불이 쓴 돈보다 많은
+   * 소분류(-20,000)가 섞이면 남은 조각이 166.7% 로 적히고 원 하나가 통째로 그려졌다.
+   */
   const stats: CategorySlice[] = rows
     .filter((item) => item.parentCategoryId === parentId)
-    .map((item) => ({ id: item.categoryId, name: item.categoryName, value: toNumber(item.amount) }));
+    .map((item) => ({ id: item.categoryId, name: item.categoryName, value: toNumber(item.amount) }))
+    .filter((slice) => slice.value > 0);
 
   if (stats.length === 0) return [];
 

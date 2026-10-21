@@ -37,14 +37,15 @@ export function groupPendingByMonth(
  */
 export function billedFromRate(
   items: CardDto.PendingRateItem[],
-  rate: number,
+  /** 다듬은 환율 글자 (`positiveAmountOf`). Number 를 거치면 자리가 흐려진다. */
+  rate: string,
   currency: string,
 ): Record<string, string> {
   const decimals = currencyDecimals(currency);
   return Object.fromEntries(
     items.map((item) => [
       item.entryId,
-      billedAmountFromRate(item.originalAmount, String(rate), currency).toFixed(decimals),
+      billedAmountFromRate(item.originalAmount, rate, currency).toFixed(decimals),
     ]),
   );
 }

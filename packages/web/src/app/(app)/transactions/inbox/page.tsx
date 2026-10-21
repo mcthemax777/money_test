@@ -265,7 +265,12 @@ export default function InboxPage() {
         added += result.created;
       }
     } catch {
+      /*
+       * 몇 장째에서 실패해도 앞 장의 후보는 이미 담겼다. 실패만 알리고 목록을 다시 읽지 않으면 담긴 후보가
+       * 화면에 오지 않았다. 담긴 것이 있으면 목록을 읽는다.
+       */
       setNotice(t('inbox.readFailed'));
+      if (added > 0) await inbox.reload();
       return;
     } finally {
       setReading(null);

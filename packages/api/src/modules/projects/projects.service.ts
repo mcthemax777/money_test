@@ -3,6 +3,7 @@ import { PrismaService } from '../../config/prisma.service';
 import { randomInt } from 'crypto';
 import { ProjectAccessService } from '../../common/project-access.guard';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
+import { SubscriptionCancelService } from '../plans/subscription-cancel.service';
 import { PlansService } from '../plans/plans.service';
 import { badRequest, forbidden, notFound } from '@/common/app-error';
 import { recordProjectWrite } from '@/common/project-write-context';
@@ -41,6 +42,7 @@ export class ProjectsService {
     private readonly projectAccess: ProjectAccessService,
     private readonly exchangeRates: ExchangeRatesService,
     private readonly plans: PlansService,
+    private readonly subscriptions: SubscriptionCancelService,
   ) {}
 
   async createProject(userId: string, dto: CreateProjectDto) {
@@ -263,6 +265,10 @@ export class ProjectsService {
    */
   async setMyPerson(projectId: string, userId: string, personId: string | null) {
     const member = await this.verifyUserInProject(projectId, userId);
+    // 글자나 null 만 받는다. 숫자·객체가 Prisma 의 where 로 가면 500 이었다.
+    if (personId !== null && personId !== undefined && typeof personId !== 'string') {
+      throw new BadRequestException('구성원 id 는 글자여야 합니다.');
+    }
 
     if (personId) {
       const person = await this.prisma.person.findUnique({ where: { id: personId } });
@@ -575,6 +581,13 @@ export class ProjectsService {
 
   async deleteProject(projectId: string, userId: string) {
     await this.verifyUserIsOwner(projectId, userId);
+
+    /*
+     * 이어지는 Play 구독을 먼저 해지한다 (계정 삭제와 같은 규칙, `SubscriptionCancelService`). 예전에는
+     * 해지 없이 지워, 갱신 결제가 계속 나가는데 웹훅은 없는 가계부라며 무시했다. 해지하지 못하면 지우지 않는다.
+     */
+    const project = await this.prisma.project.findUnique({ where: { id: projectId }, select: { name: true } });
+    await this.subscriptions.cancelRenewing([{ id: projectId, name: project?.name ?? projectId }]);
 
     // 삭제하면 멤버십도 cascade로 사라지므로 대상 사용자를 미리 확보한다.
     const members = await this.prisma.projectMember.findMany({

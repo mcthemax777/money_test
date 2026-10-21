@@ -187,7 +187,7 @@ const PROJECT = 'p-assets';
     'server-category-1');
   eq('큐에 남은 짐도 함께 옮겨진다',
     JSON.stringify(await store.pendingMutations(PROJECT)).includes(parentId), false);
-  eq('별칭을 기억한다', await store.aliasOf(parentId), 'server-category-1');
+  eq('별칭을 기억한다', (await store.aliasesOf([parentId])).get(parentId), 'server-category-1');
 
   // 같은 자리의 예산을 두 기기가 각자 만들었다. 서버가 먼저 선 규칙을 채택하면 내 줄은
   // 사본에서 사라지고, 그 달 조정은 채택된 규칙으로 옮겨 간다.

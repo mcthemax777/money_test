@@ -134,7 +134,12 @@ export default function InboxScreen() {
   const [registering, setRegistering] = useState<EntryDraftDto.Response | null>(null);
   /** 알림·안내. 빈 글자면 아무것도 그리지 않는다. */
   const [notice, setNotice] = useState('');
-  const [isWorking, setIsWorking] = useState(false);
+  /*
+   * 도는 작업 수. 캡처 읽기와 모으기가 함께 쓰는데, 불리언 하나였을 때는 먼저 끝난 쪽이 다른 쪽이 도는 중에
+   * 단추를 다시 켰다. 세어서 모두 끝났을 때만 켠다.
+   */
+  const [working, setWorking] = useState(0);
+  const isWorking = working > 0;
 
   /**
    * 통장·카드·분류·구성원.
@@ -211,7 +216,7 @@ export default function InboxScreen() {
       if (!projectId || !isInboxNativeAvailable) return;
 
       try {
-        setIsWorking(true);
+        setWorking((count) => count + 1);
         const result = await collectNotifications(projectId);
         if (result.added > 0) {
           setNotice(t('inbox.scanned', { count: result.added }));
@@ -223,7 +228,7 @@ export default function InboxScreen() {
         // 알림은 네이티브 버퍼에 남아 다음에 다시 담긴다. 오프라인이면 그 사실을 말한다.
         setNotice(t(isOfflineError(error) ? 'inbox.scanOffline' : 'inbox.actionFailed'));
       } finally {
-        setIsWorking(false);
+        setWorking((count) => count - 1);
       }
     },
     [projectId, inbox, t],
@@ -257,7 +262,7 @@ export default function InboxScreen() {
     if (picked.canceled || !picked.assets[0]) return;
 
     try {
-      setIsWorking(true);
+      setWorking((count) => count + 1);
       setNotice(t('inbox.reading'));
       const result = await collectCapture(projectId, picked.assets[0].uri);
 
@@ -272,7 +277,7 @@ export default function InboxScreen() {
       // 읽기도 담기도 이 기기 안에서 하므로 연결과 무관하다. 남는 실패는 읽기다.
       setNotice(t('inbox.readFailed'));
     } finally {
-      setIsWorking(false);
+      setWorking((count) => count - 1);
     }
   };
 

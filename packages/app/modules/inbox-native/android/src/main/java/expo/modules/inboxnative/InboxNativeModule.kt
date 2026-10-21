@@ -1,5 +1,6 @@
 package expo.modules.inboxnative
 
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.graphics.BitmapFactory
@@ -233,7 +234,11 @@ class InboxNativeModule : Module() {
         context.contentResolver,
         "enabled_notification_listeners",
       ) ?: return@Function false
-      enabled.split(":").any { it.contains(context.packageName) }
+      // 값은 "패키지/서비스클래스" 를 ':' 로 이은 것이다. 패키지 이름을 정확히 견준다 -- contains 로 보면
+      // 이름이 더 긴 다른 앱(online.bboyong.app.dev 따위)의 권한을 우리 것으로 잘못 읽는다.
+      enabled.split(":").any { entry ->
+        ComponentName.unflattenFromString(entry)?.packageName == context.packageName
+      }
     }
 
     /**

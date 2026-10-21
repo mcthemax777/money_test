@@ -147,6 +147,7 @@ export default function StartScreen() {
         return;
       }
     }
+    scanTaken.current = false;
     setIsScanning(true);
   };
 
@@ -156,8 +157,14 @@ export default function StartScreen() {
    * 카메라는 같은 QR 을 프레임마다 읽어 준다. 그대로 두면 확인 조회가 초당 수십 번
    * 나가므로, 첫 한 번에 카메라를 닫고 그 값으로만 확인한다.
    */
+  /*
+   * 한 번 받았는지는 상태가 아니라 손잡이로 본다. 상태는 다음 그리기에야 바뀌어, 그 사이 들어온 프레임들이
+   * 모두 "아직 받지 않았다"로 보고 미리보기 조회를 여러 번 냈다.
+   */
+  const scanTaken = useRef(false);
   const onScanned = (scanned: string) => {
-    if (!isScanning) return;
+    if (!isScanning || scanTaken.current) return;
+    scanTaken.current = true;
     setIsScanning(false);
     setCode(scanned);
     void check(scanned);

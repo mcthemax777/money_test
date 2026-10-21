@@ -10,6 +10,7 @@
  * 가계부의 나라는 시간대로 정해진다(서울·UTC 한국, 도쿄 일본, 상하이 중국, 싱가포르,
  * 런던 영국, 뉴욕·LA 미국).
  */
+import { useLatestCall } from '@money/core/hooks/useLatestCall';
 import { useCallback, useEffect, useState } from 'react';
 import { HOLIDAY_COUNTRIES, weekdayOf, type HolidayCountry } from '@money/types';
 
@@ -66,17 +67,22 @@ export default function AdminHolidaysPage() {
     [router],
   );
 
+  // 나라·연도를 빨리 바꾸면 앞 요청이 늦게 끝날 수 있다. 마지막 요청의 답만 쓴다 (`useLatestCall`).
+  const latest = useLatestCall();
   const load = useCallback(async () => {
+    const isLatest = latest.begin();
     setIsLoading(true);
     try {
-      setRows(await listHolidays(country, year));
+      const found = await listHolidays(country, year);
+      if (isLatest()) setRows(found);
     } catch (error) {
+      if (!isLatest()) return;
       setRows([]);
       fail(error);
     } finally {
-      setIsLoading(false);
+      if (isLatest()) setIsLoading(false);
     }
-  }, [country, year, fail]);
+  }, [country, year, fail, latest]);
 
   useEffect(() => {
     void load();

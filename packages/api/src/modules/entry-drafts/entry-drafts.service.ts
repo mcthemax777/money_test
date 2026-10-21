@@ -449,11 +449,25 @@ export class EntryDraftsService {
     );
     const cutoff = new Date(Date.now() - Math.max(1, days) * 24 * 60 * 60 * 1000);
 
+    /*
+     * 반복 규칙마다 가장 늦은 후보 하나는 남긴다 (2026-10-21). 반복 처리는 "이 규칙으로 만든 후보의 가장 늦은
+     * 날짜"(`RecurringService.lastMadeOn`)로 다음 회차를 정하는데, 그 후보까지 지우면 기준이 사라져 지난 회차가
+     * 다시 만들어지고 다시 알렸다.
+     */
+    const latest = await this.prisma.entryDraft.groupBy({
+      by: ['recurringRuleId'],
+      where: { projectId, recurringRuleId: { not: null } },
+      _max: { dedupeKey: true },
+    });
+    const keep = latest.map((row) => row._max.dedupeKey).filter((key): key is string => !!key);
+
     const { count } = await this.prisma.entryDraft.deleteMany({
       where: {
         projectId,
         status: { in: ['registered', 'dismissed'] },
         updatedAt: { lt: cutoff },
+        // dedupeKey 가 없는 후보(알림·캡처)는 NOT IN 이 걸러 내지 않게 따로 연다.
+        OR: [{ recurringRuleId: null }, { dedupeKey: { notIn: keep } }],
       },
     });
     return { removed: count };

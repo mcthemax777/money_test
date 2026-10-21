@@ -926,8 +926,17 @@ export async function buildTransfer(
     /*
      * 수수료도 줄 키를 갖는다. 목록은 이체를 한 줄로 보여 주지만, 줄의 신원이 갈래마다
      * 다르면 저장·동기화 규칙이 두 벌이 된다.
+     *
+     * 금액은 **보낸 통화 그대로** 적는다 (2026-10-21). 집계는 환산액(baseAmount)만 보므로 달라지는 것이 없고,
+     * 고칠 때 적었던 수수료를 환율로 되짚지 않아도 된다 -- 되짚으면 장부 통화 자릿수가 적을 때 끝수가 갈렸다.
+     * 보내는 계좌가 장부 통화면 지금과 같다(금액 = 환산액, 환율 1).
      */
-    postings.push(categoryLeg(line, feeBase, base));
+    postings.push({
+      ...categoryLeg(line, feeBase, base),
+      amount: fee,
+      currency: from.currency,
+      exchangeRate: fromRate,
+    });
   }
 
   return { ...common(input), postings, ...(input.tagIds ? { tagIds: input.tagIds } : {}) };
@@ -991,7 +1000,10 @@ export async function buildCardTransfer(
      * 부르는 쪽마다 두면 어디선가 갈린다. 조립이 한 번만 정하면 오프라인에서 적은
      * 기록과 온라인에서 적은 기록이 같은 글자를 갖는다.
      */
-    description: input.description.trim() || defaultTransferDescription(card.name, input.direction),
+    // 설명이 빠졌거나 글자가 아니면 기본 문구다. 예전에는 undefined.trim() 이 500 이었다.
+    description:
+      (typeof input.description === 'string' ? input.description.trim() : '') ||
+      defaultTransferDescription(card.name, input.direction),
     postings: [
       {
         accountId: input.accountId,

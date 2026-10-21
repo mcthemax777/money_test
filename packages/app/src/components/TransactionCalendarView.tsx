@@ -18,7 +18,7 @@ import { entryRows, originalEntry, type EntryListItem } from '@money/types';
 
 import { useLedgerData } from '@money/core/hooks/useLedgerData';
 import type { TransactionSearch } from '@money/core/hooks/useTransactions';
-import { currentYearMonth } from '@money/core/lib/datetime';
+import { useViewMonth } from '@money/core/hooks/useViewMonth';
 import { groupEntriesByDate, sumEntries } from '@money/core/lib/entries';
 import { useTranslation } from '@money/core/lib/i18n';
 import { useProjectTimeZone } from '@money/core/store/project';
@@ -46,8 +46,11 @@ export default function TransactionCalendarView({
   const { t } = useTranslation();
   const timeZone = useProjectTimeZone();
 
-  const { year: thisYear, month: thisMonth } = currentYearMonth(timeZone);
-  const [view, setView] = useState({ year: thisYear, month: thisMonth });
+  /*
+   * 보는 달은 홈과 같은 손잡이로 든다 (`useViewMonth`). 처음 한 번만 정하면 살려 둔 탭이 달이 바뀐 뒤에도
+   * 지난달에 머문다. 이번 달을 보고 있었을 때만 따라 옮긴다.
+   */
+  const { view, setView } = useViewMonth(timeZone);
 
   /**
    * 고른 날. null 이면 그 달 전체를 본다.

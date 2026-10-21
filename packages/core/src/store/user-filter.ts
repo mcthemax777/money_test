@@ -7,6 +7,8 @@ import type { Person } from '../lib/types';
 
 interface UserFilterStore {
   people: Person[];
+  /** 마지막으로 본 구성원 id. 저장되어, 다시 켠 뒤 처음 채울 때 새로 들어온 사람을 가린다. */
+  knownPersonIds: string[];
   setPeople: (people: Person[]) => void;
   selectedPersonIds: string[];
   setSelectedPersonIds: (personIds: string[]) => void;
@@ -85,17 +87,31 @@ export const useUserFilter = create<UserFilterStore>()(
        */
       setPeople: (people: Person[]) =>
         set((state) => {
-          if (state.people.length === 0) return { people };
-          const known = new Set(state.people.map((person) => person.id));
+          const knownPersonIds = people.map((person) => person.id);
+          /*
+           * 처음 채울 때(앱을 다시 켠 뒤)는 지난번에 본 구성원(`knownPersonIds`, 저장된다)과 견준다 (2026-10-21).
+           * 목록은 저장하지 않아, 예전에는 처음 채울 때 늘 건너뛰었다 -- 필터를 한 번 만진 사람에게는 그사이
+           * 들어온 구성원의 거래가 필터를 다시 풀 때까지 숨었다. 처음 쓰는 기기나 고른 적 없는 필터는
+           * usePersonFilterSync 가 맞춘다.
+           */
+          const before =
+            state.people.length > 0
+              ? state.people.map((person) => person.id)
+              : state.personFilterTouched
+                ? state.knownPersonIds
+                : [];
+          if (before.length === 0) return { people, knownPersonIds };
+          const known = new Set(before);
           // 이미 고른 사람은 다시 넣지 않는다 (2026-10-16). 만들기 쪽(useAssetsData)이 먼저 넣어 두면 같은 id 가
           // 둘이 되어, 길이로 "전부 골랐다"를 가리는 화면이 일부만 고른 것으로 읽고 주인 없는 통장을 뺐다.
           const selected = new Set(state.selectedPersonIds);
           const added = people
             .filter((person) => !known.has(person.id) && !selected.has(person.id))
             .map((p) => p.id);
-          if (added.length === 0) return { people };
-          return { people, selectedPersonIds: [...state.selectedPersonIds, ...added] };
+          if (added.length === 0) return { people, knownPersonIds };
+          return { people, knownPersonIds, selectedPersonIds: [...state.selectedPersonIds, ...added] };
         }),
+      knownPersonIds: [],
       selectedPersonIds: [],
       personFilterTouched: false,
       filterProjectId: null,
@@ -112,6 +128,7 @@ export const useUserFilter = create<UserFilterStore>()(
       clearPersonFilter: () =>
         set({
           people: [],
+          knownPersonIds: [],
           selectedPersonIds: [],
           personFilterTouched: false,
           filterProjectId: null,
@@ -131,6 +148,7 @@ export const useUserFilter = create<UserFilterStore>()(
         selectedPersonIds: state.selectedPersonIds,
         personFilterTouched: state.personFilterTouched,
         filterProjectId: state.filterProjectId,
+        knownPersonIds: state.knownPersonIds,
       }),
     }
   )

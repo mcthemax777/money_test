@@ -11,7 +11,7 @@
  */
 
 import { Dec } from './decimal';
-import { refundLump, sumInstallmentAdjusts } from './installment-refund';
+import { lineInterestTotal, refundLump, sumInstallmentAdjusts } from './installment-refund';
 import type { EntryLine, EntryListItem, EntryTag, InstallmentRowShare } from './entities';
 import {
   installmentLineShares,
@@ -207,7 +207,7 @@ function installmentShareIn(
        * 나눈 뒤 원금을 빼서 얻는다 -- 두 값을 따로 나누면 합이 줄 금액에서 벗어난다.
        */
       const interest = installmentLineShares(
-        interestShareOf(lineAmount, entry.amount, interests),
+        lineInterestTotal(lineAmount, entry.amount, interests),
         interests,
       )[at];
       const keptTotal = total.minus(cut.total);
@@ -313,21 +313,6 @@ function shareOf(
 /** 날짜를 와이어 계약의 모양으로. 옮긴 회차 날짜는 Date 로 온다. */
 function isoOf(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : value;
-}
-
-/** 이 줄이 가져갈 이자 총액. 줄 금액이 결제 금액에서 차지하는 만큼이다. */
-function interestShareOf(
-  lineAmount: string,
-  entryAmount: string,
-  interests: readonly string[],
-): Dec {
-  const total = interests.reduce<Dec>((acc, value) => acc.plus(value), Dec.of(0));
-  if (total.isZero()) return Dec.of(0);
-
-  const line = Dec.of(lineAmount).abs();
-  const whole = Dec.of(entryAmount).abs();
-  if (whole.isZero() || line.eq(whole)) return total;
-  return total.times(line).dividedBy(whole, 0);
 }
 
 function asTime(value: Date | string): number {

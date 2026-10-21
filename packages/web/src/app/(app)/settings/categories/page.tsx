@@ -231,7 +231,11 @@ export default function CategoriesPage() {
    * 예전에는 "삭제할 수 없습니다" 한 줄로 끝났다. 그 분류를 정리하려면 거래를 하나씩
    * 찾아 고쳐야 했고, 어디에 몇 건이 있는지도 화면에 없었다.
    */
-  const handleDeleteClick = async (id: string) => {
+  /**
+   * `onProceed` 는 정말 지우러 갈 때(확인했거나 옮길 곳 창을 열 때)만 부른다. 상세 창은 그때 닫는다 -- 예전에는
+   * 묻기 전에 닫아, 취소하면 보던 상세가 사라졌다.
+   */
+  const handleDeleteClick = async (id: string, onProceed?: () => void) => {
     setNotice('');
 
     /*
@@ -243,6 +247,7 @@ export default function CategoriesPage() {
      */
     const counts = await manager.usageOf(id);
     if (counts && Object.values(counts).some((count) => count > 0)) {
+      onProceed?.();
       setError('');
       setUsage(counts);
       setInUseId(id);
@@ -250,6 +255,7 @@ export default function CategoriesPage() {
     }
 
     if (!window.confirm(t('account.deleteConfirm'))) return;
+    onProceed?.();
 
     const result = await manager.remove(id);
     if (result.ok) {
@@ -483,10 +489,7 @@ export default function CategoriesPage() {
                 {t('account.editSubmit')}
               </button>
               <button
-                onClick={async () => {
-                  setIsDetailModalOpen(false);
-                  await handleDeleteClick(selectedCategory.id);
-                }}
+                onClick={() => handleDeleteClick(selectedCategory.id, () => setIsDetailModalOpen(false))}
                 className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 disabled={isSubmitting || selectedCategory.isDefault}
                 title={selectedCategory.isDefault ? t('categories.deleteDefault') : ''}

@@ -101,6 +101,8 @@ export default function AdminNotificationRulesPage() {
     if (!packageName) {
       setSamples([]);
       setRules([]);
+      // 받는 중에 고르기를 풀면 그 받기는 버려져(alive) 로딩을 내리지 못했다. 여기서 내린다.
+      setIsLoading(false);
       return;
     }
     let alive = true;
@@ -115,7 +117,7 @@ export default function AdminNotificationRulesPage() {
         setSamples(page.samples);
         setRules(packageRules);
       })
-      .catch(fail)
+      .catch((error) => alive && fail(error))
       .finally(() => alive && setIsLoading(false));
     return () => {
       alive = false;

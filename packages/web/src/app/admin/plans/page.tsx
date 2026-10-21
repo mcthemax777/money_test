@@ -164,6 +164,15 @@ export default function AdminPlansPage() {
     [fail],
   );
 
+  /*
+   * 지급·거두기가 끝난 뒤 그 가계부를 다시 읽는다. 그사이 다른 가계부를 골랐으면 읽지 않는다 -- 예전에는 처음
+   * 가계부로 다시 읽어 지금 고른 화면에 그 기록을 그렸고, 그 상태의 거두기 단추가 엉뚱한 가계부의 권한을 거뒀다.
+   */
+  const reloadIfStillSelected = async (projectId: string) => {
+    if (latestProjectId.current !== projectId) return;
+    await loadDetail(projectId);
+  };
+
   const select = (project: AdminPlanProjectDto) => {
     setSelected(project);
     setDetail(null);
@@ -212,7 +221,7 @@ export default function AdminPlansPage() {
           : '평생 이용권을 주었습니다.',
       });
       setNote('');
-      await loadDetail(selected.id);
+      await reloadIfStillSelected(selected.id);
     } catch (error) {
       fail(error);
     } finally {
@@ -240,7 +249,7 @@ export default function AdminPlansPage() {
     try {
       await revokePlanGrant(grantRow.id, reason.trim());
       setMessage({ kind: 'ok', text: '거두었습니다. 뒤에 이어 붙어 있던 기간이 있으면 앞으로 당겨졌습니다.' });
-      await loadDetail(selected.id);
+      await reloadIfStillSelected(selected.id);
     } catch (error) {
       fail(error);
     } finally {

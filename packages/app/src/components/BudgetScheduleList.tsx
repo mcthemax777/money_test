@@ -85,7 +85,8 @@ export default function BudgetScheduleList(props: {
                     <TextInput
                       value={schedule.editingValue}
                       onChangeText={schedule.setEditingValue}
-                      keyboardType="number-pad"
+                      // 외화 가계부의 소수 예산도 적을 수 있어야 한다.
+                      keyboardType="decimal-pad"
                       autoFocus
                       onSubmitEditing={() => schedule.saveMonth(row)}
                       className="min-w-0 flex-1 rounded border border-gray-300 px-2 py-1 text-right text-sm text-gray-900"

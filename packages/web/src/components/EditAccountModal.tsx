@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { changedPatch } from '@money/core/lib/changed-patch';
 import { apiClient } from '@money/core/lib/api-client';
 import type { Account, AccountType, Person } from '@money/core/lib/types';
 import { ACCOUNT_TYPE_OPTIONS, NO_BANK_TYPES } from '@money/core/lib/account-type';
@@ -45,6 +46,20 @@ interface EditAccountModalProps {
   projectId?: string | null;
 }
 
+/** 계좌에서 폼의 처음 값. 열 때 채우는 값이자, 저장할 때 바뀐 칸을 가리는 기준이다. */
+function formOfAccount(account: Account) {
+  return {
+    ownerId: account.ownerId ?? '',
+    name: account.name,
+    type: account.type,
+    institutionId: account.institutionId ?? '',
+    accountNumber: account.accountNumber || '',
+    matchText: account.matchText ?? '',
+    maturityDate: account.maturityDate ?? '',
+    balance: account.balance,
+  };
+}
+
 export default function EditAccountModal({
   isOpen,
   onClose,
@@ -72,16 +87,7 @@ export default function EditAccountModal({
   // 다시 열면 account만 볼 때는 effect가 재실행되지 않아 빈 폼이 보였다.
   useEffect(() => {
     if (isOpen && account) {
-      setFormData({
-        ownerId: account.ownerId ?? '',
-        name: account.name,
-        type: account.type,
-        institutionId: account.institutionId ?? '',
-        accountNumber: account.accountNumber || '',
-        matchText: account.matchText ?? '',
-        maturityDate: account.maturityDate ?? '',
-        balance: account.balance,
-      });
+      setFormData(formOfAccount(account));
     }
   }, [isOpen, account]);
 
@@ -98,23 +104,36 @@ export default function EditAccountModal({
       // 잔액은 **바꿨을 때만** 싣는다 (앱 AssetEditModals 와 같다). 창은 연 순간의 잔액으로
       // 채워지므로, 그 사이 다른 구성원이 적은 거래가 있으면 이름만 고쳐도 옛 잔액으로 기초잔액이
       // 다시 계산되어 그 거래가 잔액에서 빠진 것처럼 된다.
-      await apiClient.updateAccountV2(account.id, {
-        name: formData.name,
-        ...(formData.type && formData.type !== account.type ? { type: formData.type } : {}),
+      const patchOf = (form: typeof formData) => {
+        const type = form.type || account.type;
+        const bank = !NO_BANK_TYPES.includes(type);
+        const maturity = hasMaturity(type);
+        return {
+          name: form.name,
+          ...(form.type && form.type !== account.type ? { type: form.type } : {}),
+          // 기관을 비우면 null을 보내 연결을 끊는다. ''를 그대로 보내면 서버가 없는 id로 본다.
+          ...(bank
+            ? { institutionId: form.institutionId || null }
+            : account.institutionId
+              ? { institutionId: null }
+              : {}),
+          // 비우면 null 을 보내 지운다 (2026-10-16, 앱과 같다). 빈 칸을 빼고 보내면 옛 번호가 그대로 남았다.
+          accountNumber: form.accountNumber.trim() || null,
+          // 비우면 빈 문자열을 보내 지운다. 적어 둔 말을 지울 길이 있어야 한다.
+          matchText: form.matchText,
+          // 비우면 null 을 보내 지운다. 만기가 없는 유형이면 보내지 않는다 (서버가 지운다).
+          ...(maturity ? { maturityDate: form.maturityDate || null } : {}),
+        };
+      };
+      /*
+       * 바뀐 칸만 보낸다 (`changedPatch`, 앱과 같다). 열 때의 값을 통째로 보내면 그사이 다른 구성원이 고친
+       * 칸을 옛 값으로 되돌린다. 잔액은 이미 바뀌었을 때만 싣는다(`balanceChanged`).
+       */
+      const patch = {
+        ...changedPatch<Record<string, unknown>>(patchOf(formData), patchOf(formOfAccount(account))),
         ...(balanceChanged ? { balance: toAmountString(formData.balance) } : {}),
-        // 기관을 비우면 null을 보내 연결을 끊는다. ''를 그대로 보내면 서버가 없는 id로 본다.
-        ...(needsBankName
-          ? { institutionId: formData.institutionId || null }
-          : account.institutionId
-            ? { institutionId: null }
-            : {}),
-        // 비우면 null 을 보내 지운다 (2026-10-16, 앱과 같다). 빈 칸을 빼고 보내면 옛 번호가 그대로 남았다.
-        accountNumber: formData.accountNumber.trim() || null,
-        // 비우면 빈 문자열을 보내 지운다. 적어 둔 말을 지울 길이 있어야 한다.
-        matchText: formData.matchText,
-        // 비우면 null 을 보내 지운다. 만기가 없는 유형이면 보내지 않는다 (서버가 지운다).
-        ...(needsMaturity ? { maturityDate: formData.maturityDate || null } : {}),
-      });
+      };
+      if (Object.keys(patch).length > 0) await apiClient.updateAccountV2(account.id, patch);
       const data = await apiClient.getAccountsV2(projectId);
       onSuccess(data || []);
       handleClose();

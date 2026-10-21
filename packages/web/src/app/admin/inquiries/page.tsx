@@ -13,6 +13,7 @@
  * 사용자가 묻지 않았어도 먼저 보낼 수 있다("새 메시지"). 이름·이메일로 사람을 찾아 보내면 그
  * 사람의 문의하기에 새 대화로 서고, 기기로 푸시가 간다. 그 뒤로는 보통 문의와 같다.
  */
+import { useLatestCall } from '@money/core/hooks/useLatestCall';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { INQUIRY_BODY_MAX, INQUIRY_POLL_MS, type InquiryDto, type InquiryStatus } from '@money/types';
@@ -115,14 +116,18 @@ export default function AdminInquiriesPage() {
     };
   }, [isVisible, filter, router]);
 
+  // A 다음 B 를 열면 A 의 답이 늦게 와 B 자리에 서고, 답장도 A 로 갔다. 마지막으로 연 것의 답만 쓴다.
+  const latestOpen = useLatestCall();
   const open = async (id: string) => {
+    const isLatest = latestOpen.begin();
     setIsComposing(false);
     setMessage(null);
     setReply('');
     try {
-      setSelected(await getInquiry(id));
+      const found = await getInquiry(id);
+      if (isLatest()) setSelected(found);
     } catch (reason) {
-      fail(reason);
+      if (isLatest()) fail(reason);
     }
   };
 

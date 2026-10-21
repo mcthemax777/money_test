@@ -386,6 +386,9 @@ export function toListItem(
     installmentMonthlyPayment: toAmount(cardPosting?.installmentPlan?.monthlyPayment),
     installmentAnnualRate: toAmount(cardPosting?.installmentPlan?.annualRate),
     feeAmount,
+    // 수수료 다리가 보낸 통화로 적혀 있으면(환율 ≠ 1) 그 금액이다. 옛 이체는 장부 통화라 null 이다.
+    feeEnteredAmount:
+      feePosting && !Dec.of(feePosting.exchangeRate).eq(1) ? Dec.of(feePosting.amount).abs().toString() : null,
     feeCategoryId: feePosting?.category?.id ?? null,
     feeCategoryName: feePosting?.category?.name ?? null,
     // 카드사 이체의 방향. 부채가 늘면 환불 입금, 줄면 대금 결제다.

@@ -143,10 +143,12 @@ export default function HomeScreen() {
    */
   const openLedgerEntry = openEntry
     ? (entryId: string) => {
+        const projectId = selectedProjectId;
         void homeDataPort()
-          .getEntry(entryId, selectedProjectId)
+          .getEntry(entryId, projectId)
           .then((entry) => {
-            if (entry) openEntry(entry);
+            // 받는 사이 가계부를 바꿨으면 열지 않는다. 앞 가계부의 거래가 지금 가계부 위에 열렸다.
+            if (entry && useProject.getState().selectedProjectId === projectId) openEntry(entry);
           })
           .catch(() => {
             /* 못 읽었으면 열지 않는다. 다음 누름에 다시 해 본다. */

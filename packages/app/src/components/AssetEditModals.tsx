@@ -21,6 +21,7 @@ import {
   DEFAULT_PAYMENT_DUE_DAY,
   DEFAULT_STATEMENT_CLOSING_DAY,
 } from '@money/core/lib/day-of-month';
+import { changedPatch } from '@money/core/lib/changed-patch';
 import { formatCurrency, toAmountString } from '@money/core/lib/money';
 import type { AssetSaveResult } from '@money/core/hooks/useAssetsData';
 import type { AccountType } from '@money/core/lib/types';
@@ -136,6 +137,14 @@ function askThenRemove({
  * 무엇을 물을지는 창마다 다르다 -- 통장·카드는 삭제부터 묻고(`askThenRemove`), 구성원은
  * 숨기기·삭제를 서버가 가르므로 한 번만 묻는다. 그래서 여기는 버튼만 그린다.
  */
+/** 바뀐 칸이 없으면 보내지 않고 저장한 것으로 본다. 아무것도 고치지 않은 저장이 빈 명령으로 쌓이지 않게. */
+function saveChanged(
+  save: (patch: Record<string, unknown>) => Promise<AssetSaveResult>,
+  patch: Record<string, unknown>,
+): Promise<AssetSaveResult> {
+  return Object.keys(patch).length === 0 ? Promise.resolve({ ok: true }) : save(patch);
+}
+
 function Footer({
   isSubmitting,
   canSave,
@@ -360,37 +369,65 @@ export function EditAccountModal({
         <Footer
           isSubmitting={isSubmitting}
           canSave={!isSubmitting && !!name.trim()}
-          onSave={() =>
-            run(
-              onSave({
-                name: name.trim(),
-                ...(type !== target.type ? { type } : {}),
-                accountNumber: accountNumber.trim() || null,
+          onSave={() => {
+            /*
+             * 바뀐 칸만 보낸다 (`changedPatch`). 열 때의 모양은 같은 식에 처음 값을 넣어 만든다 --
+             * 잔액은 이미 바뀌었을 때만 실린다(`balanceChanged`).
+             */
+            const accountPatchOf = (values: {
+              name: string;
+              type: AccountType;
+              accountNumber: string;
+              institutionId: string;
+              matchText: string;
+              maturityDate: string;
+            }) => {
+              const needsBank = !NO_BANK_TYPES.includes(values.type);
+              const needsMaturity = hasMaturity(values.type);
+              return {
+                name: values.name.trim(),
+                ...(values.type !== target.type ? { type: values.type } : {}),
+                accountNumber: values.accountNumber.trim() || null,
                 // 기관을 비우면 null 을 보내 연결을 끊는다. '' 는 없는 id 로 읽힌다.
                 // 기관이 없는 유형으로 바꿨으면 남은 연결도 끊는다.
                 ...(needsBank
-                  ? { institutionId: institutionId || null }
+                  ? { institutionId: values.institutionId || null }
                   : target.institutionId
                     ? { institutionId: null }
                     : {}),
-                // 실제로 바꿨을 때만 보낸다. 잔액 맞추기는 온라인에서만 되므로,
-                // 이름만 고치는 사람이 오프라인에서 막히지 않아야 한다.
-                ...(balanceChanged ? { balance: toAmountString(balance) } : {}),
                 // 비우면 null 을 보내 지운다. 적어 둔 말을 지울 길이 있어야 한다.
-                matchText: matchText.trim() || null,
+                matchText: values.matchText.trim() || null,
                 /*
                  * 비우면 null 을 보내 지운다. 만기가 없는 유형으로 바꿨으면 남은 날짜도 지운다 --
                  * 서버도 지우지만 사본은 명령을 그대로 적으므로 여기서 함께 보내야 같아진다.
                  */
                 ...(needsMaturity
-                  ? { maturityDate: maturityDate || null }
+                  ? { maturityDate: values.maturityDate || null }
                   : target.maturityDate
                     ? { maturityDate: null }
                     : {}),
+              };
+            };
+            void run(
+              saveChanged(onSave, {
+                ...changedPatch<Record<string, unknown>>(
+                  accountPatchOf({ name, type, accountNumber, institutionId, matchText, maturityDate }),
+                  accountPatchOf({
+                    name: target.name,
+                    type: target.type,
+                    accountNumber: target.accountNumber ?? '',
+                    institutionId: target.institutionId ?? '',
+                    matchText: target.matchText ?? '',
+                    maturityDate: target.maturityDate ?? '',
+                  }),
+                ),
+                // 실제로 바꿨을 때만 보낸다. 잔액 맞추기는 온라인에서만 되므로,
+                // 이름만 고치는 사람이 오프라인에서 막히지 않아야 한다.
+                ...(balanceChanged ? { balance: toAmountString(balance) } : {}),
               }),
               true,
-            )
-          }
+            );
+          }}
           onRemovePress={() =>
             askThenRemove({
               t,
@@ -476,6 +513,81 @@ export function EditAccountModal({
       </View>
     </Modal>
   );
+}
+
+/** 카드 고치기 폼의 화면 값. 열 때의 모양은 `initialCardForm`, 보낼 모양은 `cardPatchOf` 가 만든다. */
+interface CardFormValues {
+  name: string;
+  issuerId: string;
+  cardNumber: string;
+  expiryMonth: string;
+  color: string;
+  closingDay: number;
+  dueDay: number;
+  creditLimit: string;
+  performanceAmount: string;
+  matchText: string;
+  isCredit?: boolean;
+}
+
+/** 카드 고치기 폼이 읽는 카드의 모양 (`EditCardModal` 의 target). */
+interface EditableCard {
+  name: string;
+  cardType: 'debit' | 'credit';
+  issuerId: string;
+  expiryDate?: string | null;
+  color?: string | null;
+  statementClosingDay: number | null;
+  paymentDueDay: number | null;
+  creditLimit: string | null;
+  performanceAmount: string | null;
+  matchText?: string | null;
+}
+
+function initialCardForm(target: EditableCard): CardFormValues {
+  return {
+    name: target.name,
+    issuerId: target.issuerId,
+    cardNumber: '',
+    expiryMonth: monthInputOf(target.expiryDate),
+    color: target.color ?? '',
+    closingDay: target.statementClosingDay ?? DEFAULT_STATEMENT_CLOSING_DAY,
+    dueDay: target.paymentDueDay ?? DEFAULT_PAYMENT_DUE_DAY,
+    creditLimit: target.creditLimit ?? '',
+    performanceAmount: target.performanceAmount ?? '',
+    matchText: target.matchText ?? '',
+    isCredit: target.cardType === 'credit',
+  };
+}
+
+/** 화면 값을 보낼 모양으로. 열 때의 값과 지금 값이 같은 함수를 거쳐야 그대로인 칸이 "바뀜"으로 보이지 않는다. */
+function cardPatchOf(values: CardFormValues): Record<string, unknown> {
+  const { name, issuerId, cardNumber, expiryMonth, color, closingDay, dueDay, creditLimit, performanceAmount, matchText, isCredit } = values;
+  return {
+    name: name.trim(),
+    issuerId,
+    // 새로 적었을 때만 보낸다. 마스킹된 값을 되돌려 보내면 그것이 저장된다.
+    ...(cardNumber.trim() ? { cardNumber: cardNumber.trim() } : {}),
+    // 비우면 null 을 보내 지운다 (키를 빼면 있던 값이 남는다).
+    expiryDate: monthInputToIso(expiryMonth),
+    // 빈 값은 "종류의 기본색으로 되돌리기"다. 웹과 같이 빈 문자열로 보낸다 --
+    // 서버는 null 을 "그대로 두기"로 읽는다.
+    color,
+    // 체크카드에는 청구 주기도 한도도 없다. 보내면 서버가 거부한다.
+    ...(isCredit
+      ? {
+          statementClosingDay: closingDay,
+          paymentDueDay: dueDay,
+          creditLimit: creditLimit.trim() ? toAmountString(creditLimit) : null,
+        }
+      : {}),
+    // 빈 값은 "조건 없음"이다. 지울 수 있어야 하므로 비어 있어도 보낸다.
+    performanceAmount: performanceAmount.trim()
+      ? toAmountString(performanceAmount)
+      : null,
+    // 빈 값은 "지우기"다. 실적 기준액과 같은 규칙이다.
+    matchText: matchText.trim() || null,
+  };
 }
 
 export function EditCardModal({
@@ -585,31 +697,29 @@ export function EditCardModal({
           canSave={!isSubmitting && !!name.trim() && !!issuerId}
           onSave={() =>
             run(
-              onSave({
-                name: name.trim(),
-                issuerId,
-                // 새로 적었을 때만 보낸다. 마스킹된 값을 되돌려 보내면 그것이 저장된다.
-                ...(cardNumber.trim() ? { cardNumber: cardNumber.trim() } : {}),
-                // 비우면 null 을 보내 지운다 (키를 빼면 있던 값이 남는다).
-                expiryDate: monthInputToIso(expiryMonth),
-                // 빈 값은 "종류의 기본색으로 되돌리기"다. 웹과 같이 빈 문자열로 보낸다 --
-                // 서버는 null 을 "그대로 두기"로 읽는다.
-                color,
-                // 체크카드에는 청구 주기도 한도도 없다. 보내면 서버가 거부한다.
-                ...(isCredit
-                  ? {
-                      statementClosingDay: closingDay,
-                      paymentDueDay: dueDay,
-                      creditLimit: creditLimit.trim() ? toAmountString(creditLimit) : null,
-                    }
-                  : {}),
-                // 빈 값은 "조건 없음"이다. 지울 수 있어야 하므로 비어 있어도 보낸다.
-                performanceAmount: performanceAmount.trim()
-                  ? toAmountString(performanceAmount)
-                  : null,
-                // 빈 값은 "지우기"다. 실적 기준액과 같은 규칙이다.
-                matchText: matchText.trim() || null,
-              }),
+              /*
+               * 바뀐 칸만 보낸다 (`changedPatch`). 열 때 받은 값을 통째로 보내면 그사이 다른 구성원이 고친
+               * 마감일 같은 칸을 옛 값으로 되돌린다.
+               */
+              saveChanged(
+                onSave,
+                changedPatch(
+                  cardPatchOf({
+                    name,
+                    issuerId,
+                    cardNumber,
+                    expiryMonth,
+                    color,
+                    closingDay,
+                    dueDay,
+                    creditLimit,
+                    performanceAmount,
+                    matchText,
+                    isCredit,
+                  }),
+                  cardPatchOf(initialCardForm(target)),
+                ),
+              ),
               true,
             )
           }

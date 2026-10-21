@@ -162,7 +162,19 @@ export class BillingWebhookService {
     const targets = grants.filter((grant) => !grant.revokedAt);
     if (targets.length === 0) return 'ignored:refund-no-grant';
     for (const grant of targets) {
-      await this.plans.revoke(grant.id, '스토어 환불');
+      try {
+        await this.plans.revoke(grant.id, '스토어 환불');
+      } catch (error) {
+        /*
+         * 같은 환불 알림이 동시에 두 번 오면 둘 다 위에서 "아직 안 거뒀다"를 보고, 늦은 쪽은 잠금 뒤에 "이미 거둔
+         * 권한"으로 실패한다. 이미 거둬졌으면 할 일이 끝났다 -- 400 을 돌려주면 RevenueCat 이 실패로 보고 다시 보냈다.
+         */
+        const now = await this.prisma.projectPlanGrant.findUnique({
+          where: { id: grant.id },
+          select: { revokedAt: true },
+        });
+        if (!now?.revokedAt) throw error;
+      }
     }
     return 'revoked';
   }

@@ -4,6 +4,7 @@ import { Pressable, Text, TextInput, View } from 'react-native';
 import type { BudgetEditor, BudgetScope } from '@money/core/hooks/useBudgetEditor';
 import { formatMonthShort, formatYearOnly } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
+import { toAmountString, toNumber } from '@money/core/lib/money';
 
 import BudgetScheduleList from './BudgetScheduleList';
 import { Select } from './FormFields';
@@ -102,9 +103,10 @@ export default function BudgetEditModal({
           <TextInput
             value={amountText}
             // 소수까지 읽는다. 정수로만 읽으면 외화 가계부의 0.5 가 0(=예산 지우기)이 된다 (2026-10-16).
+            // 쉼표·전각 숫자도 받는다 (`toAmountString`). parseFloat 는 "30,000" 을 30 으로 읽었다.
             onChangeText={(text) => {
               setAmountText(text);
-              editor.setAmount(parseFloat(text) || 0);
+              editor.setAmount(toNumber(toAmountString(text)));
             }}
             keyboardType="decimal-pad"
             autoFocus

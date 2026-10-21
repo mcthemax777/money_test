@@ -21,7 +21,7 @@ import { toMoney, toOptionalMoney } from '@/common/money';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
 import { badRequest } from '@/common/app-error';
 import { withBalancesAsOf } from '@/common/balance-as-of';
-import { readLimit } from '@/common/text';
+import { readLimit, readInstant } from '@/common/text';
 
 /*
  * 사용자가 "통장"으로 인식하지 않는 내부 계정.
@@ -130,6 +130,10 @@ export class AccountsService {
       ? this.exchangeRates.assertCurrency(dto.currency, '계좌 통화')
       : await this.projectAccess.getProjectLedgerCurrency(projectId);
 
+    // 개설 잔액을 계좌를 만들기 **전에** 읽는다. 뒤에서 읽으면 "abc" 가 400 을 내면서도 0원 계좌가 남았고,
+    // 같은 id 로 다시 보내면 매번 409 였다.
+    const opening = toOptionalMoney(dto.openingBalance, '기초 잔액');
+
     // 목록은 주인별로 나뉘어 있고 드래그도 그 안에서 이뤄진다. 같은 주인의 마지막
     // 순서 뒤에 값을 하나 만든다.
     const lastRank = await this.prisma.account.aggregate({
@@ -163,7 +167,6 @@ export class AccountsService {
     // 개설 잔액은 컬럼에 직접 쓰지 않고 전표로 남긴다.
     // 그래야 "잔액 = posting 합계" 불변식이 처음부터 성립한다.
     // 날짜는 원장 맨 앞(1970-01-01)으로 고정된다. 기준일 입력은 없다.
-    const opening = toOptionalMoney(dto.openingBalance, '기초 잔액');
     if (opening && !opening.isZero()) {
       try {
         await this.ledger.setBalanceTo({
@@ -318,6 +321,9 @@ export class AccountsService {
       data.institution = { disconnect: true };
     }
 
+    // 잔액을 다른 칸보다 **먼저** 읽는다. 뒤에서 읽으면 { name, balance: "abc" } 가 400 을 내면서도 이름은 바뀌어 있었다.
+    const targetBalance = balance === undefined ? undefined : toMoney(balance, '잔액');
+
     if (Object.keys(data).length > 0) {
       /*
        * 바꾼 필드에만 시계를 찍는다. `institution` 은 관계 이름이라 필드 이름으로는
@@ -335,11 +341,11 @@ export class AccountsService {
 
     // 잔액 수정은 조정 전표를 새로 쌓지 않는다. 기초잔액 전표를 다시 계산해
     // 덮어쓰므로, 지금까지의 거래는 그대로 남고 현재 잔액만 목표값이 된다.
-    if (balance !== undefined) {
+    if (targetBalance !== undefined) {
       await this.ledger.setBalanceTo({
         projectId: account.projectId,
         accountId: id,
-        targetBalance: toMoney(balance, '잔액'),
+        targetBalance,
         createdByUserId: userId,
       });
     }
@@ -370,8 +376,9 @@ export class AccountsService {
     const date =
       options.startDate || options.endDate
         ? {
-            ...(options.startDate ? { gte: new Date(options.startDate) } : {}),
-            ...(options.endDate ? { lte: new Date(options.endDate) } : {}),
+            // 읽을 수 없는 날짜는 400 이다 (`readInstant`). 예전에는 Invalid Date 가 Prisma 까지 가서 500 이었다.
+            ...(options.startDate ? { gte: readInstant(options.startDate, '시작일') } : {}),
+            ...(options.endDate ? { lte: readInstant(options.endDate, '끝일') } : {}),
           }
         : undefined;
 

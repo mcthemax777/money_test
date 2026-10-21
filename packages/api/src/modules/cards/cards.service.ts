@@ -20,6 +20,7 @@ import {
   rankAfter,
 } from '@money/types';
 import { assertReorderIds } from '@/common/reorder';
+import { readInstant, readEnum } from '@/common/text';
 import { toCardResponse } from './card-view';
 import { toOptionalMoney } from '@/common/money';
 import { badRequest, notFound } from '@/common/app-error';
@@ -72,6 +73,11 @@ export class CardsService {
       throw new BadRequestException('카드 부채 계정은 결제 통장으로 쓸 수 없습니다.');
     }
 
+    // 목록 밖의 카드 종류는 400 이다 (`readEnum`). 예전에는 enum 칸에서 500 이었다.
+    if (!readEnum(dto.cardType, [CardType.debit, CardType.credit], '카드 종류')) {
+      throw new BadRequestException('카드 종류를 골라 주세요.');
+    }
+
     if (dto.cardType === CardType.credit) {
       if (!dto.statementClosingDay || !dto.paymentDueDay) {
         throw badRequest('CREDIT_CARD_DAYS_REQUIRED', '신용카드는 마감일과 결제일을 설정해야 합니다.');
@@ -94,7 +100,11 @@ export class CardsService {
      * 기기가 id 를 만들 때는 둘 다 만들어 보내야 한다. 부채 계정 id 를 서버가 정하면,
      * 오프라인에서 그 카드로 적은 거래가 어느 계정을 가리켜야 하는지 알 수 없다.
      */
-    return rejectDuplicateId('카드', () => this.prisma.$transaction(async (tx) => {
+    /*
+     * 목록·고치기와 같은 모양으로 돌려준다 (`toCardResponse`). 예전에는 만든 행을 그대로 돌려줘 카드 번호가
+     * 가려지지 않고 나갔고, 사용액 칸도 없었다.
+     */
+    const created = await rejectDuplicateId('카드', () => this.prisma.$transaction(async (tx) => {
       let liabilityAccountId: string | undefined;
 
       if (dto.cardType === CardType.credit) {
@@ -130,7 +140,7 @@ export class CardsService {
           cardType: dto.cardType,
           issuerId: dto.issuerId,
           cardNumber: dto.cardNumber ?? null,
-          expiryDate: dto.expiryDate ? new Date(dto.expiryDate) : null,
+          expiryDate: dto.expiryDate ? readInstant(dto.expiryDate, '만료일') : null,
           creditLimit: toOptionalMoney(dto.creditLimit, '카드 한도'),
           // 실적은 체크카드에도 있다. 세는 구간만 달라진다 (달력 월).
           performanceAmount: toOptionalMoney(dto.performanceAmount, '카드 실적 기준액'),
@@ -164,6 +174,8 @@ export class CardsService {
         include: CARD_INCLUDE,
       });
     }));
+    const [current] = await withCardBalancesAsOf(this.prisma, [created]);
+    return toCardResponse(current);
   }
 
   /**
@@ -268,7 +280,7 @@ export class CardsService {
     // 키가 없으면 그대로 두고, 빈 문자열이면 지운다.
     if (dto.cardNumber !== undefined) data.cardNumber = dto.cardNumber || null;
     if (dto.expiryDate !== undefined) {
-      data.expiryDate = dto.expiryDate ? new Date(dto.expiryDate) : null;
+      data.expiryDate = dto.expiryDate ? readInstant(dto.expiryDate, '만료일') : null;
     }
     if (dto.statementClosingDay !== undefined) data.statementClosingDay = dto.statementClosingDay;
     if (dto.paymentDueDay !== undefined) data.paymentDueDay = dto.paymentDueDay;

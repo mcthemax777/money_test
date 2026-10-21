@@ -55,6 +55,7 @@ function draftOf(policy: AppVersionPolicy): Draft {
 async function deployedWebVersion(): Promise<string | null> {
   try {
     const response = await fetch('/version', { cache: 'no-store' });
+    if (!response.ok) return null;
     const data = (await response.json()) as { version?: string | null };
     return data.version ?? null;
   } catch {
@@ -111,6 +112,18 @@ export default function AdminAppVersionsPage() {
      * 그 값이면 새로고침해도 강제 창이 다시 뜬다 -- 올릴 수 있는 빌드가 아직 없다. 모든
      * 사람이 웹을 못 쓰게 된다.
      */
+    /*
+     * 배포된 빌드를 읽지 못했으면 웹 강제 값을 바꾸지 않는다(다른 칸만 고치는 저장은 막지 않는다). 예전에는 비교할 값이 없어 검사를 건너뛰었고,
+     * 그때 모든 사용자를 막는 값을 저장할 수 있었다.
+     */
+    const savedMin = policies.find((p) => p.platform === platform)?.minVersion ?? '';
+    if (platform === 'web' && minVersion && minVersion !== savedMin && !webVersion) {
+      setMessage({
+        kind: 'error',
+        text: '지금 배포된 웹 빌드 번호를 읽지 못했습니다. 새로고침한 뒤 다시 저장해 주세요.',
+      });
+      return;
+    }
     if (
       platform === 'web' &&
       minVersion &&
@@ -125,7 +138,7 @@ export default function AdminAppVersionsPage() {
       return;
     }
 
-    const isRaisingForce = minVersion && minVersion !== (policies.find((p) => p.platform === platform)?.minVersion ?? '');
+    const isRaisingForce = minVersion && minVersion !== savedMin;
     if (
       isRaisingForce &&
       !window.confirm(

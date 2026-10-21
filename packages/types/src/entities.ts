@@ -438,6 +438,13 @@ export interface EntryListItem {
    * 이체 자체는 소비가 아니지만 수수료는 지출이라 따로 보여준다.
    */
   feeAmount: string | null;
+  /**
+   * 외화 통장에서 보낸 이체의 수수료를 **보낸 통화로** (그 통화는 `originalCurrency`). 장부 통화면 null 이다.
+   *
+   * 고치기 폼이 이 값을 그대로 쓴다. 2026-10-21 전에 적은 이체에는 없어, 그때는 환율로 되짚는다
+   * (`foreignEditAmounts`).
+   */
+  feeEnteredAmount?: string | null;
   feeCategoryId: string | null;
   feeCategoryName: string | null;
   /**

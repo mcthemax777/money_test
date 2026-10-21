@@ -552,8 +552,8 @@ function transferBasisOf(values: EntryFormValues): string {
  *   지출·수입  원래 금액은 차감 뒤의 값이라 차감을 더해 정가로 되돌린다. 차감도 적은 통화로
  *              실려 온다 (entry-view 의 `showDiscount`). 예전에는 차감을 한 번 더 빼, 저장할
  *              때마다 금액이 줄었다 ($50 − $5 → 45 − 5 → 40).
- *   이체      외화 통장에서 나간 다리는 보낸 돈 + 수수료다. 수수료는 목록에 장부 통화로 오므로
- *              나간 다리의 환율로 되돌리고 그만큼 금액에서 덜어 낸다. 예전에는 USD 50 + 1 이
+ *   이체      외화 통장에서 나간 다리는 보낸 돈 + 수수료다. 수수료는 다리에 적힌 보낸 통화 금액
+ *              (`feeEnteredAmount`)을 쓰고, 그것이 없는 옛 이체만 장부 통화 수수료를 환율로 되짚는다. 예전에는 USD 50 + 1 이
  *              금액 51, 수수료 1,380 으로 열려 USD 1,431 이 나간 것으로 저장됐다.
  *
  * 유이자 할부는 외화로 적을 수 없어(조립의 INSTALLMENT_INTEREST_CURRENCY) 이자를 볼 일이 없다.
@@ -565,6 +565,9 @@ export function foreignEditAmounts(item: EntryListItem): { amount: string; fee: 
   if (!original) return null;
 
   if (item.kind === 'transfer' || item.kind === 'card_payment') {
+    // 보낸 통화로 적힌 수수료가 있으면 그대로 쓴다 (2026-10-21 부터 조립이 적는다). 옛 이체만 환율로 되짚는다.
+    const entered = item.feeEnteredAmount ? toDec(item.feeEnteredAmount) : null;
+    if (entered) return { amount: original.minus(entered).toString(), fee: entered.isZero() ? '' : entered.toString() };
     const feeBase = item.feeAmount ? toDec(item.feeAmount) : null;
     const rate = item.exchangeRate ? toDec(item.exchangeRate) : null;
     if (!feeBase || feeBase.isZero() || !rate || !rate.isPositive()) {
@@ -1173,9 +1176,39 @@ function checkExpenseExtras(
  * 비어 있으면 서버가 개월수로 나눈다. 그래야 나중에 금액을 고쳤을 때 회차도 함께
  * 다시 나뉜다 -- 한 번 채워 보내 두면 옛 금액의 회차가 남는다.
  */
-function installmentSharesPayload(values: EntryFormValues): { installmentShares?: string[] } {
-  // 한 칸도 손대지 않았으면 싣지 않는다. 그때는 서버가 개월수로 나눈다.
-  if (values.installmentShares.every((share) => share.trim() === '')) return {};
+/**
+ * 손대지 않은 회차 원금을 실어야 하는가. 실어야 하면 그 값, 아니면 null (웹·앱 저장이 함께 쓴다).
+ *
+ * 장부 통화의 자릿수로 나눈 기본값(화면에 보이고 이자가 딛는 값)이 서버가 금액 글자만 보고 나눌 값과 다를
+ * 때만 싣는다. 소수가 없는 달러 금액 100 이 그렇다(33.34·33.33·33.33 과 34·33·33). 원화는 같아 싣지 않는다 --
+ * 실어 두면 나중에 금액을 고쳤을 때 회차가 함께 다시 나뉘지 않는다.
+ */
+export function defaultSharesToSend(base: string, months: number, ledgerCurrency?: string): string[] | null {
+  if (!ledgerCurrency) return null;
+  const byCurrency = installmentShareInputs(base, months, null, ledgerCurrency);
+  const byText = installmentShareInputs(base, months, null);
+  return byCurrency.length > 0 && byCurrency.join('|') !== byText.join('|') ? byCurrency : null;
+}
+
+function installmentSharesPayload(
+  values: EntryFormValues,
+  ledgerCurrency?: string,
+): { installmentShares?: string[] } {
+  /*
+   * 한 칸도 손대지 않았으면 싣지 않는다. 그때는 서버가 개월수로 나눈다.
+   *
+   * 단 장부 통화의 자릿수로 나눈 값이 서버가 금액 글자만 보고 나눌 값과 다르면 싣는다 (2026-10-21). 소수가
+   * 없는 달러 금액(100)은 서버가 34·33·33 달러로 나누는데 화면과 이자는 33.34·33.33·33.33 을 딛는다 --
+   * 싣지 않으면 청구 회차와 화면이 갈린다. 원화는 두 값이 같아 지금처럼 싣지 않는다.
+   */
+  if (values.installmentShares.every((share) => share.trim() === '')) {
+    const shares = defaultSharesToSend(
+      installmentBaseAmount(values.amount, totalDiscountOf(values)),
+      Number(values.installmentMonths),
+      ledgerCurrency,
+    );
+    return shares ? { installmentShares: shares } : {};
+  }
 
   // 비운 칸은 0 이다. 개수를 줄여 보내면 서버가 "개수가 다르다"로 거절해 까닭이 흐려진다.
   return {
@@ -1199,7 +1232,7 @@ function installmentSharesPayload(values: EntryFormValues): { installmentShares?
  * 방식을 고르지 않아 칸이 비어 있으면 아무것도 싣지 않는다. 0 이 스물넉 줄 저장되면
  * "아직 모른다"와 "이자가 없다"가 구별되지 않는다.
  */
-function installmentInterestPayload(values: EntryFormValues): {
+function installmentInterestPayload(values: EntryFormValues, ledgerCurrency?: string): {
   installmentInterestShares?: string[];
   installmentMonthlyPayment?: string;
   installmentAnnualRate?: string;
@@ -1212,11 +1245,12 @@ function installmentInterestPayload(values: EntryFormValues): {
   const shown = installmentInterestInputs({
     total: base,
     months,
-    principals: installmentShareInputs(base, months, values.installmentShares),
+    principals: installmentShareInputs(base, months, values.installmentShares, ledgerCurrency),
     mode: values.installmentInterestMode,
     monthlyPayment: values.installmentMonthlyPayment,
     annualRate: values.installmentAnnualRate,
     saved: values.installmentInterestShares,
+    currency: ledgerCurrency,
   });
 
   const filled = shown.some((share) => share.trim() !== '');
@@ -1241,6 +1275,8 @@ function installmentInterestPayload(values: EntryFormValues): {
 export function entryFormToRequest(
   values: EntryFormValues,
   timeZone: string,
+  /** 장부 통화. 유이자 할부의 이자를 그 자릿수로 셈한다 (화면의 `installmentInterestInputs` 와 같은 값). */
+  ledgerCurrency?: string,
 ): EntryDto.CreateRequest {
   const method = parseMethod(values.method);
   const base = {
@@ -1361,8 +1397,8 @@ export function entryFormToRequest(
         ? {
             installmentMonths: Number(values.installmentMonths),
             installmentInterest: values.installmentInterest === 'interest',
-            ...installmentSharesPayload(values),
-            ...installmentInterestPayload(values),
+            ...installmentSharesPayload(values, ledgerCurrency),
+            ...installmentInterestPayload(values, ledgerCurrency),
           }
         : {}),
       ...performanceExtra,
@@ -1381,8 +1417,8 @@ export function entryFormToRequest(
       ? {
           installmentMonths: months,
           installmentInterest: values.installmentInterest === 'interest',
-          ...installmentSharesPayload(values),
-          ...installmentInterestPayload(values),
+          ...installmentSharesPayload(values, ledgerCurrency),
+          ...installmentInterestPayload(values, ledgerCurrency),
         }
       : {}),
     ...lineDiscount(values.discountAmount),

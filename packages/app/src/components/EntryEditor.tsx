@@ -198,6 +198,11 @@ export default function EntryEditor({
    * 소분류를 만들다 실패해도 대분류는 되돌리지 않는다. 만들어진 것을 지우면 그 사이
    * 남이 쓴 분류를 지우게 될 수 있고, 목록에 남아 있으면 사용자가 이어서 손볼 수 있다.
    */
+  /**
+   * 이 편집기에서 만든 분류 (대분류는 유형|이름, 소분류는 대분류id|이름 -> id). 소분류가 실패해 다시 시도할 때
+   * 이미 만든 것을 또 만들지 않는다.
+   */
+  const madeParents = useRef(new Map<string, string>());
   const createCategory = async ({
     values,
     parentId,
@@ -205,23 +210,44 @@ export default function EntryEditor({
     values: CategoryFormValues;
     parentId?: string;
   }): Promise<QuickAddResult> => {
-    /* 붙일 대분류를 골랐으면 그것을 쓰고, 아니면 새로 만든다. */
-    let parent = parentId;
+    /*
+     * 붙일 대분류를 골랐으면 그것을 쓰고, 아니면 새로 만든다. 앞 시도에서 이미 만든 대분류가 있으면 그것을 쓴다
+     * (2026-10-21) -- 소분류가 실패한 뒤 다시 누르면 대분류를 또 만들려다 이름이 겹쳐 영영 실패했다.
+     */
+    const parentKey = `${values.type}|${values.name.trim()}`;
+    let parent = parentId ?? madeParents.current.get(parentKey);
     if (!parent) {
       const made = await quickAdd.addCategory({ name: values.name, type: values.type });
       if (!made.ok || !made.id) return made;
       parent = made.id;
+      madeParents.current.set(parentKey, parent);
     }
 
+    // 이미 있는 소분류(앞 시도에서 만든 것)는 건너뛴다. 같은 이름을 다시 만들면 또 겹친다.
+    const existingSubs = new Map(
+      form.lists.categories
+        .filter((category) => category.parentId === parent)
+        .map((category) => [category.name, category.id]),
+    );
     const madeSubs: string[] = [];
     for (const row of filledSubCategories(values.subCategories)) {
+      const subKey = `${parent}|${row.name.trim()}`;
+      // 목록이 아직 따라오지 않았을 수 있어 이 편집기가 만든 것도 함께 본다.
+      const already = existingSubs.get(row.name.trim()) ?? madeParents.current.get(subKey);
+      if (already) {
+        madeSubs.push(already);
+        continue;
+      }
       const made = await quickAdd.addCategory({
         name: row.name.trim(),
         type: values.type,
         parentId: parent,
       });
       if (!made.ok) return made;
-      if (made.id) madeSubs.push(made.id);
+      if (made.id) {
+        madeSubs.push(made.id);
+        madeParents.current.set(subKey, made.id);
+      }
     }
 
     return { ok: true, id: madeSubs.length === 1 ? madeSubs[0] : parent };
@@ -451,6 +477,7 @@ export default function EntryEditor({
     installmentBase,
     Number(values.installmentMonths),
     values.installmentShares,
+    form.ledgerCurrency,
   );
 
   /*
@@ -466,6 +493,7 @@ export default function EntryEditor({
     monthlyPayment: values.installmentMonthlyPayment,
     annualRate: values.installmentAnnualRate,
     saved: values.installmentInterestShares,
+    currency: form.ledgerCurrency,
   });
 
   return (

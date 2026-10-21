@@ -22,6 +22,7 @@ import {
   Dec,
   allocateByWeight,
   splitInstallment,
+  fixedPaymentSchedule,
   defaultInstallmentCut,
   effectiveLineSchedule,
   installmentCutStart,
@@ -38,6 +39,7 @@ import {
   entryFormFromDraft,
   entryFormFromItem,
   entryFormToRequest,
+  defaultSharesToSend,
   foreignEditAmounts,
   installmentBaseAmount,
   interestInAmount,
@@ -801,6 +803,12 @@ const codeOf = (values: Partial<EntryFormValues>) =>
     foreignEditAmounts({ kind: 'expense', originalAmount: '45', originalCurrency: 'USD', discountAmount: '5' } as unknown as EntryListItem)?.amount,
     '50');
   // 외화 통장 이체의 나간 다리는 보낸 돈 + 수수료다. 수수료는 그 통화로 되돌린다.
+  // 보낸 통화로 적힌 수수료가 있으면 환율로 되짚지 않고 그대로 쓴다. 장부 자릿수가 적어도 끝수가 갈리지 않는다.
+  eq('외화 이체는 적힌 수수료를 그대로 쓴다',
+    JSON.stringify(foreignEditAmounts({
+      kind: 'transfer', originalAmount: '51.23', originalCurrency: 'USD', feeAmount: '1', feeEnteredAmount: '1.23', exchangeRate: '0.9',
+    } as unknown as EntryListItem)),
+    JSON.stringify({ amount: '50', fee: '1.23' }));
   eq('외화 이체는 수수료를 덜어 연다',
     JSON.stringify(foreignEditAmounts({
       kind: 'transfer', originalAmount: '51', originalCurrency: 'USD', feeAmount: '1380', exchangeRate: '1380',
@@ -810,6 +818,28 @@ const codeOf = (values: Partial<EntryFormValues>) =>
   // 할부 나누기는 금액에 적힌 자릿수를 따른다. 원화는 원 단위 그대로, 달러는 센트까지.
   eq('원화 할부 나누기', splitInstallment('100000', 3).join(','), '33334,33333,33333');
   eq('달러 할부 나누기', splitInstallment('218.57', 3).join(','), '72.87,72.85,72.85');
+  // 장부 통화를 주면 그 자릿수로 이자를 자른다. 소수가 없는 달러 금액(100)도 센트까지 나온다.
+  const rateArgs = {
+    total: '100',
+    months: 3,
+    principals: [],
+    mode: 'rate' as const,
+    monthlyPayment: '',
+    annualRate: '12',
+    saved: null,
+  };
+  eq('이율 할부: 달러는 센트까지', installmentInterestInputs({ ...rateArgs, currency: 'USD' }).join(','), '1,0.67,0.33');
+  eq('이율 할부: 원은 원 단위', installmentInterestInputs({ ...rateArgs, currency: 'KRW' }).join(','), '1,1,0');
+  // 그 원금을 서버에 싣는다. 서버는 금액 글자만 보고 34·33·33 달러로 나누기 때문이다. 원화는 같아 싣지 않는다.
+  eq('달러 기본 원금은 싣는다', defaultSharesToSend('100', 3, 'USD')?.join(','), '33.34,33.33,33.33');
+  eq('원화 기본 원금은 싣지 않는다', defaultSharesToSend('100000', 3, 'KRW'), null);
+  // 고정형은 낸 돈의 합이 납입액 × 개월수다. 마지막 회차도 월 납입액 그대로다.
+  const fixed = fixedPaymentSchedule('10000', 3, '3400');
+  eq('고정형: 회차마다 같은 납입액',
+    fixed?.principals.map((principal, index) => principal.plus(fixed.interests[index]).toString()).join(','),
+    '3400,3400,3400');
+  eq('고정형: 원금 합은 산 값', fixed?.principals.reduce((acc, value) => acc.plus(value)).toString(), '10000');
+  eq('끝이 0 인 달러도 센트까지 나눈다', splitInstallment('218.50', 3).join(','), '72.84,72.83,72.83');
 
   // ── 4. 왕복이 거래를 바꾸지 않는가 ──
   const dumpPath = process.argv[2] ?? '/tmp/sync-push-dump.json';

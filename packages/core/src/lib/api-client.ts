@@ -992,6 +992,11 @@ class ApiClient {
     await this.client.delete('/push/devices', { data: { token } });
   }
 
+  /** 로그인 없이 토큰으로 푸시 등록을 지운다. 로그아웃 때 지우지 못한 토큰을 다음 실행에 치운다. */
+  async forgetPushDevice(token: string): Promise<void> {
+    await this.client.post('/push/forget', { token });
+  }
+
   // 반복 등록 API Methods
 
   async getRecurringRules(projectId?: string | null): Promise<RecurringRuleDto.Response[]> {

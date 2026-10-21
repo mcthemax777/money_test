@@ -32,8 +32,9 @@ export function freeSchedule(
   total: DecInput,
   months: number,
   principals?: readonly DecInput[] | null,
+  decimals?: number,
 ): InstallmentSchedule {
-  const shares = principalsOf(total, months, principals);
+  const shares = principalsOf(total, months, principals, decimals);
   return { principals: shares, interests: shares.map(() => Dec.of(0)) };
 }
 
@@ -55,6 +56,8 @@ export function fixedPaymentSchedule(
   total: DecInput,
   months: number,
   monthlyPayment: DecInput,
+  /** 이자를 자를 자릿수 (장부 통화의 `currencyDecimals`). 모르면 금액에 적힌 자릿수다. */
+  decimals?: number,
 ): InstallmentSchedule | null {
   const amount = Dec.of(total);
   const payment = Dec.of(monthlyPayment);
@@ -63,23 +66,30 @@ export function fixedPaymentSchedule(
   // 낸 돈의 합이 산 값에 못 미치면 할부가 아니다. 이율을 아무리 낮춰도 풀리지 않는다.
   const paid = payment.times(months);
   if (paid.lt(amount)) return null;
-  if (paid.eq(amount)) return freeSchedule(amount, months);
+  if (paid.eq(amount)) return freeSchedule(amount, months, null, decimals);
 
   const rate = solveMonthlyRate(amount.toNumber(), months, payment.toNumber());
   if (rate === null) return null;
   // 이자를 자르는 자릿수. 적은 금액과 납입액의 자릿수를 따른다 (`amountScale`).
-  const scale = amountScale(amount, payment);
+  const scale = decimals ?? amountScale(amount, payment);
 
   const principals: Dec[] = [];
   const interests: Dec[] = [];
   let balance = amount;
   for (let index = 0; index < months; index += 1) {
-    const interest = balance.times(rate.toFixed(12)).round(scale);
+    const last = index === months - 1;
+    /*
+     * 마지막 회차의 이자는 끝수 맞춤이다 (2026-10-21). 사용자가 아는 것은 "월 얼마를 몇 번" 이라, 낸 돈의 합이
+     * 정확히 납입액 × 개월수여야 한다. 회차마다 반올림한 이자를 그대로 쓰면 그 끝수가 쌓여 마지막 회차가
+     * 3,400 이 아니라 3,401 로 나왔다. 음수가 되면(반올림이 앞에서 넘쳤다) 0 이다.
+     */
+    const interest = last
+      ? maxOf(paid.minus(amount).minus(interests.reduce<Dec>((acc, value) => acc.plus(value), Dec.of(0))), Dec.of(0))
+      : balance.times(rate.toFixed(12)).round(scale);
     /*
      * 마지막 회차는 남은 원금을 다 갚는다. 그 앞은 낸 돈에서 이자를 뗀 나머지이되,
      * 남은 원금을 넘지 않는다 -- 반올림이 쌓여 마지막 회차가 음수가 되지 않게 한다.
      */
-    const last = index === months - 1;
     const principal = last
       ? balance
       : minOf(maxOf(payment.minus(interest), Dec.of(0)), balance);
@@ -104,15 +114,20 @@ export function annualRateSchedule(
   months: number,
   annualRatePercent: DecInput,
   principals?: readonly DecInput[] | null,
+  /**
+   * 이자를 자를 자릿수 (장부 통화의 `currencyDecimals`). 모르면 금액에 적힌 자릿수다 -- 그때는 소수가 없는
+   * 달러 금액(100)의 이자가 달러 단위로 잘렸다.
+   */
+  decimals?: number,
 ): InstallmentSchedule | null {
   const amount = Dec.of(total);
   const rate = Dec.of(annualRatePercent);
   if (months < 1 || !amount.isPositive() || rate.isNegative()) return null;
 
-  const shares = principalsOf(amount, months, principals);
+  const shares = principalsOf(amount, months, principals, decimals);
   // 연이율은 퍼센트로 받는다. 12.0 이면 월 1%다.
   const monthlyRate = rate.dividedBy(1200, 12);
-  const scale = amountScale(amount, ...shares);
+  const scale = decimals ?? amountScale(amount, ...shares);
 
   const interests: Dec[] = [];
   let balance = amount;
@@ -133,6 +148,7 @@ function principalsOf(
   total: DecInput,
   months: number,
   principals?: readonly DecInput[] | null,
+  decimals?: number,
 ): Dec[] {
   if (principals && principals.length === months) {
     try {
@@ -141,7 +157,7 @@ function principalsOf(
       // 읽을 수 없는 값이 섞였다. 통째로 버리고 나눈다.
     }
   }
-  return splitInstallment(total, months);
+  return splitInstallment(total, months, decimals);
 }
 
 /**

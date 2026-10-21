@@ -13,7 +13,9 @@
  *
  * **가져온 거래는 늘 새 거래다.** 거래ID 는 분할 거래의 행을 묶는 데만 쓴다.
  */
+import { currencyDecimals } from './currency';
 import { Dec } from './decimal';
+import { allocateByWeight } from './foreign-restate';
 import type { EntryDto } from './dtos';
 import type { AccountType, PaybackType } from './entities';
 import {
@@ -637,12 +639,39 @@ function amountOf(value: string | undefined, column: string): string {
   return amount;
 }
 
+/** 엑셀 금액 칸 하나를 금액 글자로. 비었으면 undefined, 읽지 못하면 그 줄을 거절한다. 검사가 함께 쓴다. */
+export function sheetAmountOf(value: string | undefined, column = '금액'): string | undefined {
+  return optionalAmount(value, column);
+}
+
 function optionalAmount(value: string | undefined, column: string): string | undefined {
   const text = clean(value);
   if (!text) return undefined;
-  const cleaned = text.replace(/[,\s원₩$¥€]|KRW|USD|JPY|EUR|CNY/gi, '').replace(/^\((.*)\)$/, '-$1');
+  const bare = text.replace(/[\s원₩$¥€]|US(?=\$)|KRW|USD|JPY|EUR|CNY/gi, '');
+  const cleaned = decimalSeparatorsOf(bare, column, text).replace(/^\((.*)\)$/, '-$1');
   if (!/^[-+]?\d+(\.\d+)?$/.test(cleaned)) throw new EntrySheetRowError(`${column} "${text}"을 숫자로 읽지 못했습니다.`);
   return cleaned.replace(/^[-+]/, '').replace(/^0+(?=\d)/, '');
+}
+
+/**
+ * 천 단위 쉼표를 떼고 소수점을 점으로 맞춘다.
+ *
+ *   1,234,000 · 1,234.56   쉼표는 천 단위다 (지금까지의 모양).
+ *   1.234,56 · 1.234.000   점이 천 단위이고 쉼표가 소수점이다 (유럽식). 예전에는 쉼표만 떼어 1.23456 이 됐다.
+ *   1,5                    천 단위로도 소수점으로도 읽혀 거절한다. 예전에는 조용히 15 였다.
+ */
+function decimalSeparatorsOf(bare: string, column: string, text: string): string {
+  const lastComma = bare.lastIndexOf(',');
+  const lastDot = bare.lastIndexOf('.');
+  const ambiguous = () => new EntrySheetRowError(`${column} "${text}"을 숫자로 읽지 못했습니다. 1234.56 처럼 적어 주세요.`);
+  // 쉼표가 점보다 뒤에 있으면 유럽식이다. 점이 둘 이상이고 쉼표가 없어도 유럽식 천 단위다.
+  if ((lastComma > lastDot && lastDot >= 0) || (lastComma < 0 && (bare.match(/\./g) ?? []).length > 1)) {
+    if (!/^[-+(]?\d{1,3}(\.\d{3})*(,\d+)?\)?$/.test(bare)) throw ambiguous();
+    return bare.replace(/\./g, '').replace(',', '.');
+  }
+  // 쉼표만 있으면 천 단위여야 한다 -- 뒤의 무리가 모두 세 자리.
+  if (lastComma >= 0 && lastDot < 0 && !/^[-+(]?\d{1,3}(,\d{3})+\)?$/.test(bare)) throw ambiguous();
+  return bare.replace(/,/g, '');
 }
 
 /**
@@ -723,12 +752,30 @@ export function entrySheetRowsOf(
   const tagText = (tags: Array<{ name: string }>) => tags.map((tag) => tag.name).join(', ') || undefined;
 
   if (item.kind === 'transfer') {
-    const fee = item.feeAmount && Dec.of(item.feeAmount).isPositive() ? item.feeAmount : undefined;
+    /*
+     * 외화 통장에서 보낸 이체는 **그 통장 통화로** 적는다 (2026-10-21). 가져오기는 이체 금액을 보낸 통장의 통화로
+     * 읽는데, 장부 통화 금액을 적으면 달러 통장의 $50 가 다시 가져올 때 $70,000 이 됐다. 나간 다리는 보낸 돈 +
+     * 수수료라 수수료(보낸 통화, `feeEnteredAmount`)를 덜어 낸다. 옛 이체처럼 그 값이 없으면 장부 통화로 둔다.
+     */
+    const out = entry.postings.find((posting) => posting.account && Dec.of(posting.amount).isNegative());
+    const sentForeign = out && !Dec.of(out.exchangeRate).eq(1) && item.feeAmount !== null;
+    const feeEntered =
+      sentForeign && Dec.of(item.feeAmount!).isPositive() ? item.feeEnteredAmount ?? null : null;
+    const foreignOk = sentForeign && (Dec.of(item.feeAmount!).isZero() || feeEntered !== null);
+    const amount = foreignOk
+      ? Dec.of(out!.amount).abs().minus(feeEntered ? Dec.of(feeEntered) : Dec.of(0)).toString()
+      : item.amount;
+    const fee = foreignOk
+      ? feeEntered ?? undefined
+      : item.feeAmount && Dec.of(item.feeAmount).isPositive()
+        ? item.feeAmount
+        : undefined;
     return [
       {
         ...common,
         kind: ENTRY_SHEET_KINDS.transfer[0],
-        amount: item.amount,
+        amount,
+        ...(foreignOk ? { currency: out!.currency } : {}),
         payment: item.accountName ?? undefined,
         paymentType: typeLabel('account', item.accountId),
         toAsset: item.toAccountName ?? undefined,
@@ -780,24 +827,41 @@ export function entrySheetRowsOf(
       ? { amount: Dec.of(entry.originalAmount).toString(), currency: entry.originalCurrency }
       : null;
 
-  return item.lines.map((line) => {
+  /*
+   * 외화 계좌의 거래는 **그 계좌 통화**로 적는다 (2026-10-16). 줄 금액은 장부 통화로 바꾼 값이라, 그대로 적으면
+   * 달러 통장의 $50 가 70000 으로 나가고 다시 가져올 때 $70,000 이 됐다.
+   *
+   * 외화 금액은 **결제 계좌의 다리**에 있다 (2026-10-21). 분류 다리는 늘 장부 통화(환율 1)라, 예전처럼 그쪽을
+   * 보면 조건이 한 번도 맞지 않아 고친 것이 동작하지 않았다. 계좌 다리의 금액(차감 뒤)을 줄 금액 비율로
+   * 나누고, 끝수는 첫 줄이 가진다(조립과 같은 `allocateByWeight`). 차감은 입력 통화라 그대로 더한다.
+   */
+  const inflow = item.kind === 'income' || item.kind === 'payback';
+  const accountLeg = foreign
+    ? undefined
+    : entry.postings.find(
+        (posting) =>
+          posting.accountId &&
+          !posting.categoryId &&
+          (inflow ? Dec.of(posting.amount).isPositive() : Dec.of(posting.amount).isNegative()),
+      );
+  const foreignLeg = accountLeg && !Dec.of(accountLeg.exchangeRate).eq(Dec.of(1)) ? accountLeg : undefined;
+  const enteredShares = foreignLeg
+    ? allocateByWeight(
+        Dec.of(foreignLeg.amount).abs(),
+        item.lines.map((line) => Dec.of(line.amount)),
+        currencyDecimals(foreignLeg.currency),
+      )
+    : null;
+
+  return item.lines.map((line, index) => {
     const listPrice = line.discountAmount ? Dec.of(line.amount).plus(Dec.of(line.discountAmount)).toString() : line.amount;
-    /*
-     * 외화 계좌의 거래는 **그 계좌 통화**로 적는다 (2026-10-16). 줄 금액은 장부 통화로 바꾼 값이라, 그대로 적으면
-     * 달러 통장의 $50 가 70000 으로 나가고 다시 가져올 때 $70,000 이 됐다. 그 줄의 분류 다리가 든 입력 통화 금액과
-     * 통화를 적는다(환율이 1 이면 장부 통화라 지금과 같다). 차감도 입력 통화라 그대로 더한다.
-     */
-    const leg = foreign
-      ? undefined
-      : entry.postings.find((posting) => posting.categoryId && posting.lineKey === line.lineKey);
     const entered =
-      leg && !Dec.of(leg.exchangeRate).eq(Dec.of(1))
+      foreignLeg && enteredShares
         ? {
-            amount: Dec.of(leg.amount)
-              .abs()
-              .plus(leg.discountAmount ? Dec.of(leg.discountAmount) : Dec.of(0))
+            amount: enteredShares[index]
+              .plus(line.discountAmount ? Dec.of(line.discountAmount) : Dec.of(0))
               .toString(),
-            currency: leg.currency,
+            currency: foreignLeg.currency,
           }
         : null;
     return {

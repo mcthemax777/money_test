@@ -10,6 +10,7 @@
  *
  * 시각은 이 브라우저의 시간대로 읽는다. 기기와 시간대가 다르면 시각 칸이 다르게 보일 수 있다.
  */
+import { useLatestCall } from '@money/core/hooks/useLatestCall';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -60,8 +61,14 @@ export default function AdminNotificationsPage() {
       .catch(fail);
   }, [fail]);
 
+  /*
+   * 마지막 요청의 답만 쓴다 (`useLatestCall`). "더 보기" 도중 거르기를 바꾸면 앞 조건의 쪽이 늦게 와 새 목록에
+   * 이어 붙었다.
+   */
+  const latest = useLatestCall();
   const load = useCallback(
     async (cursor: string | null) => {
+      const isLatest = latest.begin();
       setIsLoading(true);
       setError(null);
       try {
@@ -72,15 +79,16 @@ export default function AdminNotificationsPage() {
           cursor: cursor ?? undefined,
           limit: PAGE,
         });
+        if (!isLatest()) return;
         setSamples((previous) => (cursor ? [...previous, ...page.samples] : page.samples));
         setNextCursor(page.nextCursor);
       } catch (reason) {
-        fail(reason);
+        if (isLatest()) fail(reason);
       } finally {
-        setIsLoading(false);
+        if (isLatest()) setIsLoading(false);
       }
     },
-    [packageName, parsed, search, fail],
+    [packageName, parsed, search, fail, latest],
   );
 
   useEffect(() => {
