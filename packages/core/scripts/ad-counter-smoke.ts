@@ -2,13 +2,19 @@
  * 거래 저장 INTERSTITIAL_EVERY 번에 전면광고 한 번 (2026-10-09, 지금은 5번).
  *
  * 무료 가계부에서만 세고, 광고를 받아 두지 못했으면 다음 저장으로 미루며, 실제로 뜬 뒤에만
- * 처음부터 다시 센다. 광고를 꽂지 않은 플랫폼(웹)은 세지 않는다.
+ * 처음부터 다시 센다. 광고를 꽂지 않은 플랫폼(웹)은 세지 않는다. 두 광고 사이는 적어도
+ * INTERSTITIAL_MIN_GAP_MS 다 (2026-10-25).
  *
  * 실행:
  *   cd packages/core
  *   node -r ../api/node_modules/ts-node/register/transpile-only scripts/ad-counter-smoke.ts
  */
-import { INTERSTITIAL_EVERY, noteEntrySaved, setInterstitialPresenter } from '../src/lib/ads';
+import {
+  INTERSTITIAL_EVERY,
+  INTERSTITIAL_MIN_GAP_MS,
+  noteEntrySaved,
+  setInterstitialPresenter,
+} from '../src/lib/ads';
 import { useProject, type Project } from '../src/store/project';
 
 let fail = 0;
@@ -19,6 +25,11 @@ function eq(label: string, actual: unknown, expected: unknown) {
 }
 
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+/** 시계. 저장마다 광고 간격만큼 흐르게 해 횟수 규칙만 따로 본다. 간격 시험에서는 멈춘다. */
+let clock = Date.now();
+let clockRuns = true;
+Date.now = () => clock;
 
 const project = (plan: Project['plan']): Project => ({ id: 'p1', name: '시험', role: 'owner', plan });
 function select(plan: Project['plan']) {
@@ -38,6 +49,7 @@ const presenter = {
 
 async function save(times: number) {
   for (let i = 0; i < times; i += 1) {
+    if (clockRuns) clock += INTERSTITIAL_MIN_GAP_MS;
     noteEntrySaved();
     await tick();
   }
@@ -74,23 +86,32 @@ async function save(times: number) {
   await save(1);
   eq('실패했으면 다음 저장에서 다시 시도한다', shows, 5);
 
+  // 간격이 덜 찼으면 횟수가 차도 띄우지 않고, 찬 뒤의 다음 저장에서 띄운다.
+  clockRuns = false;
+  await save(INTERSTITIAL_EVERY + 2);
+  eq('간격이 덜 차면 뜨지 않는다', shows, 5);
+  clock += INTERSTITIAL_MIN_GAP_MS;
+  await save(1);
+  eq('간격이 차면 다음 저장에서 뜬다', shows, 6);
+  clockRuns = true;
+
   // 유료 가계부는 세지 않는다.
   select({ kind: 'period', endsAt: '2099-01-01T00:00:00.000Z' });
   await save(INTERSTITIAL_EVERY * 3);
-  eq('기간제 가계부에서는 뜨지 않는다', shows, 5);
+  eq('기간제 가계부에서는 뜨지 않는다', shows, 6);
   select({ kind: 'lifetime', endsAt: null });
   await save(INTERSTITIAL_EVERY * 3);
-  eq('평생 가계부에서는 뜨지 않는다', shows, 5);
+  eq('평생 가계부에서는 뜨지 않는다', shows, 6);
 
   // 이용권을 모르는 목록(옛 서버)은 무료로 본다.
   select(undefined);
   await save(INTERSTITIAL_EVERY);
-  eq('이용권을 모르면 무료로 본다', shows, 6);
+  eq('이용권을 모르면 무료로 본다', shows, 7);
 
   // 프로젝트를 고르지 않았으면 띄우지 않는다.
   useProject.setState({ projects: [], selectedProjectId: null });
   await save(INTERSTITIAL_EVERY * 2);
-  eq('가계부가 없으면 뜨지 않는다', shows, 6);
+  eq('가계부가 없으면 뜨지 않는다', shows, 7);
 
   console.log(fail === 0 ? '\n전체 통과' : `\n실패 ${fail}건`);
   process.exit(fail === 0 ? 0 : 1);

@@ -14,6 +14,7 @@ import { useApiError } from '@money/core/lib/api-error';
 import { useTranslation } from '@money/core/lib/i18n';
 import { formatCurrency, formatNumber, positiveAmountOf, toAmountString } from '@money/core/lib/money';
 import { formatDateMarker } from '@money/core/lib/datetime';
+import { useCanEdit } from '@money/core/store/project';
 
 interface Props {
   cardId: string;
@@ -36,6 +37,8 @@ interface Props {
  * 확정할 것이 없으면 아무것도 그리지 않는다.
  */
 export default function PendingRatePanel({ cardId, onSettled }: Props) {
+  // 고치는 도구뿐이라 읽기 권한이면 통째로 감춘다 (서버도 막는다).
+  const canEdit = useCanEdit();
   const { t } = useTranslation();
   const { messageOf } = useApiError();
   const [data, setData] = useState<CardDto.PendingRatesResponse | null>(null);
@@ -106,7 +109,7 @@ export default function PendingRatePanel({ cardId, onSettled }: Props) {
     }
   };
 
-  if (items.length === 0) return null;
+  if (!canEdit || items.length === 0) return null;
 
   return (
     <div className="pt-4 border-t space-y-3">

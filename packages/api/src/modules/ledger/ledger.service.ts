@@ -1,319 +1,86 @@
+/**
+ * 원장 서비스. 화면 개념을 전표로 옮기고, 전표를 원장 잠금 아래에서 쓰고 지운다.
+ *
+ * 입력 모양은 ledger-types.ts, 순수 변환은 ledger-rows.ts, 트랜잭션 안의 쓰기·검사는
+ * ledger-writes.ts 와 ledger-payback.ts, 기초잔액 찾기는 opening-balance.ts 에 있다
+ * (2026-10-26 나눔). 잠금 순서와 트랜잭션 경계는 모두 이 파일이 정한다.
+ */
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
-import { Prisma, CardType, AccountType } from '@prisma/client';
+import { Prisma, AccountType } from '@prisma/client';
 import {
-  type BuiltEntry,
   Dec,
   type EntryBuildRequest,
   buildEntry,
-  LedgerBuildError,
   RestateError,
   restateAmounts,
   buildCardTransfer,
   buildExpense,
   buildIncome,
   buildTransfer,
-  checkEntryDate,
-  checkPostings,
-  currencyDecimals,
   isAfterHlc,
-  isErrorCode,
-  ledgerOpeningDate,
-  planPaybackRebind,
-  rebindErrorMessage,
-  checkInstallmentRefunds,
-  adjustTotals,
-  effectiveLineSchedule,
-  installmentLineSchedule,
-  parseInstallmentAdjust,
-  type InstallmentAdjust,
 } from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
 import { prismaLedgerLookup } from './prisma-lookup';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { ServerClockService } from '@/common/server-clock';
 import { ExchangeRatesService } from '../exchange-rates/exchange-rates.service';
-import { badRequest, conflict, notFound } from '@/common/app-error';
+import { conflict, notFound } from '@/common/app-error';
 import { lockLedgerWrites } from '@/common/ledger-lock';
+import type {
+  CardTransferInput,
+  CommonInput,
+  EntryInput,
+  ExpenseInput,
+  IncomeInput,
+  PaybackLink,
+  TransferInput,
+  Tx,
+} from './ledger-types';
+import {
+  assertBalanced,
+  assertDateInRange,
+  baseLeg,
+  buildCommon,
+  entryRowData,
+  interestOf,
+  reversedDeltas,
+  toBase,
+  toBuildLines,
+  toEntryInput,
+  translateBuildError,
+} from './ledger-rows';
+import {
+  applyBalanceDeltas,
+  assertTargetsActive,
+  assertTargetsBelongToProject,
+  saveInstallmentPlan,
+  saveTags,
+} from './ledger-writes';
+import {
+  checkInstallmentCutUnderLock,
+  checkPaybackCap,
+  paybackLink,
+  rebindPaybacks,
+} from './ledger-payback';
+import {
+  OPENING_BALANCE_DATE,
+  findOpeningEntry,
+  getOrCreateOpeningBalanceAccount,
+} from './opening-balance';
+
+// 다른 모듈은 입력 모양을 이 파일에서 가져간다. 옮긴 뒤에도 그 길을 그대로 둔다.
+export type {
+  CardTransferDirection,
+  CardTransferInput,
+  CategoryLine,
+  EntryInput,
+  ExpenseInput,
+  IncomeInput,
+  PostingInput,
+  TransferInput,
+} from './ledger-types';
 
 const ZERO = new Prisma.Decimal(0);
-
-/**
- * 기초잔액 전표의 날짜이자 원장 날짜의 하한.
- *
- * 어떤 거래보다 앞서야 "처음에 이만큼 있었다"는 뜻이 유지된다. 사용자가 기준일을
- * 고르게 하면 그 뒤에 과거 거래를 넣었을 때 순서가 뒤집힌다. 거래 입력 하한
- * (`LEDGER_MIN_ENTRY_DATE_KEY`)보다 1년 앞이라 타임존 변환 여유까지 확보된다.
- */
-const OPENING_BALANCE_DATE = ledgerOpeningDate();
-
-type Tx = Prisma.TransactionClient;
-
-/**
- * 읽기에 쓸 수 있는 클라이언트. 트랜잭션 안에서는 반드시 그 트랜잭션의
- * 클라이언트를 써야 한다. 바깥의 prisma로 읽으면 같은 트랜잭션이 방금 만든
- * 행(예: 기초잔액용 자본 계정)이 보이지 않아 검증이 헛돈다.
- */
-type Db = Tx | PrismaService;
-
-/**
- * 전표의 개별 다리. accountId와 categoryId 중 정확히 하나만 채운다.
- *
- * 통화가 둘 있다는 점이 핵심이다.
- *   - `amount`/`currency`: 이 다리가 가리키는 대상의 통화로 본 금액.
- *     계좌 다리는 그 계좌의 통화, 카테고리 다리는 프로젝트 기준통화다.
- *   - `baseAmount`: 기준통화로 환산한 값. 전표의 균형은 이 값으로 판정한다.
- *     통화가 섞이면 `amount` 합계는 0이 될 수 없기 때문이다.
- *
- * baseAmount는 빌더가 반드시 채운다. 예전처럼 amount × rate로 그때그때 계산하면
- * 다리마다 반올림이 달라져 합계가 0에서 미세하게 벗어난다.
- */
-export interface PostingInput {
-  accountId?: string;
-  categoryId?: string;
-  amount: Prisma.Decimal;
-  quantity?: Prisma.Decimal;
-  currency: string;
-  /** 1 currency = exchangeRate 기준통화 */
-  exchangeRate: Prisma.Decimal;
-  baseAmount: Prisma.Decimal;
-  cardId?: string;
-  /**
-   * 이 줄의 신원. 분류 다리에만 있다 (schema.prisma 의 Posting.lineKey).
-   *
-   * 조립이 화면에서 받은 값을 그대로 실어 온다. 원장은 다시 만들지 않고 받은 값을
-   * 써 넣기만 한다 -- 수정마다 다리를 지우고 새로 만들어도 줄의 신원이 이어진다.
-   */
-  lineKey?: string;
-  /** 이 줄에서 깎인 금액 (입력 통화, 양수). */
-  discountAmount?: Prisma.Decimal | null;
-  /**
-   * 이 줄에 붙일 태그.
-   *
-   * **주면 그 목록이 그대로 줄의 태그가 된다.** 주지 않으면(`undefined`) 손대지 않는다.
-   */
-  tagIds?: string[];
-}
-
-export interface EntryInput {
-  /**
-   * 기기가 만든 전표 식별자. 없으면 서버가 만든다.
-   *
-   * 형식 검사는 부르는 쪽(entries.service)이 이미 했다. 원장은 받은 값을 그대로 쓴다.
-   */
-  id?: string;
-  projectId: string;
-  /** 거래한 사람. 미지정이면 null 이다 (2026-10-10 사용자 요청). */
-  personId: string | null;
-  date: Date;
-  description: string;
-  merchant?: string | null;
-  detailedNote?: string | null;
-  createdByUserId?: string | null;
-  postings: PostingInput[];
-  /**
-   * 원화 카드로 외화 결제를 했을 때의 원 통화 금액. 표시 전용이다.
-   * 계좌 자체가 외화면 posting.currency 가 외화이므로 여기는 비운다.
-   */
-  originalCurrency?: string | null;
-  originalAmount?: Prisma.Decimal | null;
-  /**
-   * 환산액이 서버 추정 환율로 만들어졌다는 표시. 명세서로 확정하면 false가 된다.
-   * 빌더가 정하므로 호출자가 넘길 일은 없다.
-   */
-  rateProvisional?: boolean;
-  /**
-   * 이 편집의 하이브리드 논리 시계.
-   *
-   * 기기가 보낸 명령을 재생할 때만 실린다. 온라인 REST 경로는 비워 두는데, 그러면
-   * 서버가 "지금"으로 채운다 -- 서버를 거친 편집도 순서에 자리를 잡아야 뒤에 도착한
-   * 오프라인 편집과 견줄 수 있다.
-   */
-  updatedHlc?: string;
-  /**
-   * 이 수정이 딛고 선 판. 화면이 폼을 열 때 본 시계다.
-   *
-   * 주면 잠근 뒤 지금 값과 견주고, 다르면 저장하지 않고 `ENTRY_MODIFIED` 로 거절한다.
-   * 그 사이 다른 사람이 같은 거래를 고쳤다는 뜻이다. 생략하면 검사하지 않는다 --
-   * 옛 화면과, 원장이 스스로 만드는 전표(잔액 조정)가 그 자리다.
-   *
-   * 재생 경로는 이것을 쓰지 않는다. 그쪽은 명령의 시계와 전표의 시계를 견주어
-   * **늦은 쪽이 이기는** 규칙이고(D5), 여기는 "내가 본 판이 그대로인가"를 묻는다.
-   * 오프라인 명령에는 사람이 답할 자리가 없어 자동 병합이 필요하고, 지금 누른
-   * 사람에게는 최신 값을 보여 주고 다시 고르게 하는 편이 낫다.
-   */
-  baseHlc?: string | null;
-  /**
-   * 할부 개월수. 신용카드 지출에만 의미가 있고 2 이상일 때 일정이 생긴다.
-   *
-   * 원금과 지출은 구매 시점에 전액 잡히므로 posting은 달라지지 않는다.
-   * "언제 청구되는지"만 InstallmentPlan에 남고, 회차 금액과 귀속 주기는
-   * 저장하지 않고 읽을 때 계산한다.
-   */
-  installmentMonths?: number;
-  /**
-   * 수수료가 붙는 할부인가. 개월수가 2 이상일 때만 읽는다.
-   *
-   * 수수료 금액은 여기 담기지 않는다. 회차마다 조금씩 달라 계산으로 맞출 수 없어,
-   * 마감된 회차가 카드 상세에 떠오르고 사용자가 명세서를 보고 적으면 그때 수수료
-   * 전표가 하나 생긴다.
-   */
-  installmentInterest?: boolean;
-  /**
-   * 사용자가 적어 둔 회차별 원금. 없으면 총액을 개월수로 나눈다.
-   *
-   * 끝수를 어느 회차에 몰아주는지가 카드사마다 달라, 계산만으로는 명세서와 맞출 수
-   * 없는 자리가 있다. 조립이 개수와 합을 이미 검사했다.
-   */
-  installmentShares?: string[];
-  /** 회차별 이자. 유이자 할부에만 있고, 조립이 개수를 이미 검사했다. */
-  installmentInterestShares?: string[];
-  /** 고정형 유이자 할부의 월 납입액. 회차 표를 다시 계산할 때 쓴다. */
-  installmentMonthlyPayment?: string;
-  /** 변동형 유이자 할부의 연이율 (퍼센트). */
-  installmentAnnualRate?: string;
-  /** 이 거래를 카드 실적에 세는가. 분할해도 하나다. 조립이 갈래의 기본값까지 정해서 넘긴다. */
-  countsPerformance?: boolean;
-  /** 차감액을 실적에서도 뺄지. 분할해도 하나다. 조립이 정해서 넘긴다. */
-  discountCountsPerformance?: boolean;
-  /**
-   * **거래 자체에 붙일** 태그의 id. 분류 줄이 없는 전표에만 쓴다 (이체, 카드 대금 결제).
-   *
-   * 지출·수입의 태그는 줄에 붙으므로 `PostingInput.tagIds` 로 온다. 주면 그 목록이
-   * 그대로 태그가 되고, 주지 않으면 손대지 않는다 -- 잔액 조정처럼 원장이 스스로
-   * 만드는 전표가 그 자리다.
-   */
-  tagIds?: string[];
-  /**
-   * 페이백의 원거래와 그 줄. 조립이 정해서 넘긴다(`BuiltEntry.paybackOfEntryId`).
-   *
-   * 저장할 때 잠근 뒤 원거래를 다시 본다 (`paybackLink`). 조립과 저장 사이에 원거래가
-   * 지워졌으면 외래 키가 500 으로 튀는 대신 링크를 비운다.
-   */
-  paybackOfEntryId?: string | null;
-  paybackOfLineKey?: string | null;
-  /** 돌아온 돈의 종류 ('payback' | 'refund'). 페이백이 아니면 null 이다. */
-  paybackType?: string | null;
-  /** 할부 환불이 회차마다 줄인 금액 (installment-refund). 그 밖에는 null 이다. */
-  installmentAdjust?: InstallmentAdjust | null;
-  /**
-   * 한 줄에 돌려받은 합이 그 줄 금액을 넘어도 받는다. **기기 명령의 재생에서만** 켠다.
-   *
-   * 끊긴 두 기기가 같은 원거래에 따로 적은 환불·페이백은 서버에 닿아서야 합이 넘는 것을
-   * 안다. 그때 거절하면 이미 들어온 돈의 기록이 사라진다 -- 기기가 저마다 상한을 이미 보았다.
-   */
-  allowOverPayback?: boolean;
-}
-
-/** 지출/수입에서 카테고리별로 금액을 쪼갤 때 쓰는 항목 */
-export interface CategoryLine {
-  categoryId: string;
-  amount: Prisma.Decimal;
-  /** 이 줄의 신원. 부르는 쪽이 만든다 (화면이면 uuid). */
-  lineKey: string;
-}
-
-interface CommonInput {
-  projectId: string;
-  /** 거래한 사람. 비우면(null·빈 글자·생략) 미지정이다. */
-  personId?: string | null;
-  date: Date;
-  description: string;
-  merchant?: string | null;
-  detailedNote?: string | null;
-  createdByUserId?: string | null;
-  /**
-   * 사용자가 금액을 입력한 통화. 생략하면 결제/입금 계좌의 통화로 본다.
-   * 원화 카드로 달러를 결제한 경우처럼 계좌 통화와 다를 수 있다.
-   */
-  currency?: string;
-  /**
-   * 1 currency = exchangeRate 기준통화.
-   *
-   * 생략하면 서버가 들고 있는 환율을 쓴다. 카드사가 실제로 적용한 환율이
-   * 명세서에 찍혀 나오면 그 값을 넣어 덮어쓴다.
-   */
-  exchangeRate?: Prisma.Decimal;
-  /**
-   * 기준통화로 실제 청구된(또는 입금된) 총액.
-   *
-   * 환율 대신 이것을 받는다. 사용자가 아는 값은 대개 환율이 아니라 통장에서
-   * 빠진 금액이기 때문이다. 주면 환율은 무시하고 이 금액을 그대로 쓴다.
-   * 곱셈이 없으므로 합계가 청구액에서 벗어나지 않는다.
-   *
-   * 기준통화 계좌로 외화를 결제한 경우에만 쓸 수 있다. 외화 계좌 거래는 계좌
-   * 통화 금액이 이미 사실이라 따로 받을 것이 없다.
-   */
-  billedAmount?: Prisma.Decimal;
-}
-
-export interface ExpenseInput extends CommonInput {
-  lines: CategoryLine[];
-  /** accountId와 cardId 중 정확히 하나. 카드면 카드 종류에 따라 자금 출처가 결정된다. */
-  accountId?: string;
-  cardId?: string;
-  /** 할부 개월수. 신용카드일 때만 쓴다. */
-  installmentMonths?: number;
-  /** 수수료가 붙는 할부인가. 할부일 때만 쓴다. */
-  installmentInterest?: boolean;
-  /** 사용자가 적어 둔 회차별 원금. 없으면 개월수로 나눈다. */
-  installmentShares?: string[];
-  /** 회차별 이자. 유이자 할부에만 쓴다. */
-  installmentInterestShares?: string[];
-  /** 고정형 유이자 할부의 월 납입액. */
-  installmentMonthlyPayment?: string;
-  /** 변동형 유이자 할부의 연이율 (퍼센트). */
-  installmentAnnualRate?: string;
-  /**
-   * 카드 실적에 셀지. 생략하면 조립이 갈래의 기본값(지출은 포함)을 쓴다.
-   *
-   * 서버가 스스로 만드는 전표에서 쓴다. 할부 수수료가 그렇다 -- 청구는 되지만 카드사가
-   * 혜택을 정할 때 세는 것은 결제액이지 수수료가 아니다.
-   */
-  countsPerformance?: boolean;
-}
-
-export interface IncomeInput extends CommonInput {
-  lines: CategoryLine[];
-  /** 수입이 들어오는 계좌 */
-  accountId: string;
-}
-
-export interface TransferInput extends CommonInput {
-  fromAccountId: string;
-  toAccountId: string;
-  amount: Prisma.Decimal;
-  /**
-   * 받는 계좌에 실제로 들어온 금액 (받는 계좌 통화).
-   *
-   * 통화가 다른 환전에서 쓴다. 보낸 $50과 받은 ₩67,500을 그대로 적으면
-   * 실제 적용된 환율이 저절로 기록된다. 생략하면 서버 환율로 계산한다.
-   */
-  toAmount?: Prisma.Decimal;
-  /** 이체 수수료. 보내는 계좌에서 함께 빠진다. */
-  feeAmount?: Prisma.Decimal;
-  feeCategoryId?: string;
-  /** 수수료 줄의 신원. 수수료도 분류 다리라 키를 갖는다. */
-  feeLineKey?: string;
-}
-
-/**
- * 카드사와 통장 사이의 자금 이동.
- *
- * 두 방향이 있고 전표 모양은 부호만 다르다.
- *   payment 대금 결제  : 통장 -X, 부채 +X
- *   refund  환불 입금  : 통장 +X, 부채 -X
- *
- * 청구서에 붙이지 않는다. 결제 대상은 카드의 부채 총액 하나뿐이다.
- */
-export type CardTransferDirection = 'payment' | 'refund';
-
-export interface CardTransferInput extends CommonInput {
-  cardId: string;
-  /** 대금이 빠져나가거나 환불이 들어오는 통장 */
-  accountId: string;
-  amount: Prisma.Decimal;
-  direction: CardTransferDirection;
-}
 
 /**
  * 원장 조립 레이어.
@@ -349,9 +116,9 @@ export class LedgerService {
    * 상위 연산(setBalanceTo)이 전체를 하나의 원자 단위로 묶기 위해 쓴다.
    */
   async createEntry(input: EntryInput, outerTx?: Tx) {
-    this.assertBalanced(input.postings);
-    this.assertDateInRange(input.date);
-    await this.assertTargetsBelongToProject(outerTx ?? this.prisma, input);
+    assertBalanced(input.postings);
+    assertDateInRange(input.date);
+    await assertTargetsBelongToProject(outerTx ?? this.prisma, input);
 
     return this.runInTransaction(outerTx, async (tx) => {
       /*
@@ -360,38 +127,24 @@ export class LedgerService {
        * 남은 통장이 목록에서 사라진다.
        */
       await this.lockLedger(tx, input.projectId);
-      await this.assertTargetsActive(tx, input);
-      const payback = await this.paybackLink(tx, input);
-      await this.checkPaybackCap(tx, input, payback);
-      await this.checkInstallmentCutUnderLock(tx, input, payback);
+      await assertTargetsActive(tx, input);
+      const payback = await paybackLink(tx, input);
+      await checkPaybackCap(tx, input, payback);
+      await this.checkInstallmentCut(tx, input, payback);
 
       const entry = await tx.journalEntry.create({
         data: {
           id: input.id,
           projectId: input.projectId,
-          personId: input.personId,
-          date: input.date,
-          description: input.description,
-          merchant: input.merchant ?? null,
-          detailedNote: input.detailedNote ?? null,
           createdByUserId: input.createdByUserId ?? null,
-          originalCurrency: input.originalCurrency ?? null,
-          originalAmount: input.originalAmount ?? null,
-          rateProvisional: input.rateProvisional ?? false,
-          countsPerformance: input.countsPerformance ?? true,
-          discountCountsPerformance: input.discountCountsPerformance ?? true,
-          ...payback,
-          paybackType: input.paybackType ?? null,
-          installmentAdjust: input.installmentAdjust ? (input.installmentAdjust as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
-          updatedHlc: input.updatedHlc ?? this.clock.now(),
-          postings: { create: input.postings.map((p) => this.toPostingData(p)) },
+          ...entryRowData(input, payback, input.updatedHlc ?? this.clock.now()),
         },
         include: { postings: true },
       });
 
-      await this.saveTags(tx, entry.id, input.projectId, input.postings, input.tagIds);
-      await this.applyBalanceDeltas(tx, input.postings);
-      await this.saveInstallmentPlan(
+      await saveTags(tx, entry.id, input.projectId, input.postings, input.tagIds);
+      await applyBalanceDeltas(tx, input.postings);
+      await saveInstallmentPlan(
         tx,
         entry.postings,
         input.installmentMonths,
@@ -411,9 +164,9 @@ export class LedgerService {
    * 되돌림과 재적용이 같은 트랜잭션 안에 있어 중간 상태가 남지 않는다.
    */
   async replaceEntry(entryId: string, input: EntryInput, outerTx?: Tx) {
-    this.assertBalanced(input.postings);
-    this.assertDateInRange(input.date);
-    await this.assertTargetsBelongToProject(outerTx ?? this.prisma, input);
+    assertBalanced(input.postings);
+    assertDateInRange(input.date);
+    await assertTargetsBelongToProject(outerTx ?? this.prisma, input);
 
     return this.runInTransaction(outerTx, async (tx) => {
       /*
@@ -446,55 +199,32 @@ export class LedgerService {
       if (input.baseHlc != null && (existing.updatedHlc ?? null) !== input.baseHlc) {
         throw conflict('ENTRY_MODIFIED', '다른 사람이 이 거래를 먼저 고쳤습니다.');
       }
-      await this.assertTargetsActive(tx, input, existing.postings);
-      const payback = await this.paybackLink(tx, input, entryId);
-      await this.checkPaybackCap(tx, input, payback, entryId);
-      await this.checkInstallmentCutUnderLock(tx, input, payback, entryId);
+      await assertTargetsActive(tx, input, existing.postings);
+      const payback = await paybackLink(tx, input, entryId);
+      await checkPaybackCap(tx, input, payback, entryId);
+      await this.checkInstallmentCut(tx, input, payback, entryId);
 
       // 1) 옛 posting의 잔액 영향을 되돌린다
-      await this.applyBalanceDeltas(
-        tx,
-        existing.postings.map((p) => ({
-          accountId: p.accountId ?? undefined,
-          amount: p.amount.neg(),
-          quantity: p.quantity ? p.quantity.neg() : undefined,
-        })),
-      );
+      await applyBalanceDeltas(tx, reversedDeltas(existing.postings));
 
       // 2) 옛 posting을 지우고 새로 만든다
       await tx.posting.deleteMany({ where: { entryId } });
 
       const entry = await tx.journalEntry.update({
         where: { id: entryId },
-        data: {
-          personId: input.personId,
-          date: input.date,
-          description: input.description,
-          merchant: input.merchant ?? null,
-          detailedNote: input.detailedNote ?? null,
-          originalCurrency: input.originalCurrency ?? null,
-          originalAmount: input.originalAmount ?? null,
-          rateProvisional: input.rateProvisional ?? false,
-          countsPerformance: input.countsPerformance ?? true,
-          discountCountsPerformance: input.discountCountsPerformance ?? true,
-          ...payback,
-          paybackType: input.paybackType ?? null,
-          installmentAdjust: input.installmentAdjust ? (input.installmentAdjust as unknown as Prisma.InputJsonValue) : Prisma.DbNull,
-          updatedHlc: input.updatedHlc ?? this.clock.now(),
-          postings: { create: input.postings.map((p) => this.toPostingData(p)) },
-        },
+        data: entryRowData(input, payback, input.updatedHlc ?? this.clock.now()),
         include: { postings: true },
       });
 
-      await this.saveTags(tx, entryId, input.projectId, input.postings, input.tagIds);
+      await saveTags(tx, entryId, input.projectId, input.postings, input.tagIds);
 
       // 이 전표에 걸린 환불·페이백을 새 줄에 맞춘다. 맞출 수 없으면 여기서 던지고 통째로 되돌린다.
-      await this.rebindPaybacks(tx, entryId, input);
+      await rebindPaybacks(tx, entryId, input);
 
       // 3) 새 posting의 잔액을 적용한다
-      await this.applyBalanceDeltas(tx, input.postings);
+      await applyBalanceDeltas(tx, input.postings);
       // posting을 새로 만들었으므로 할부 일정도 다시 붙인다 (옛 것은 cascade로 사라졌다)
-      await this.saveInstallmentPlan(
+      await saveInstallmentPlan(
         tx,
         entry.postings,
         input.installmentMonths,
@@ -534,14 +264,8 @@ export class LedgerService {
         include: { postings: true },
       });
 
-      const reversed = [entry, ...paybacks].flatMap((row) =>
-        row.postings.map((p) => ({
-          accountId: p.accountId ?? undefined,
-          amount: p.amount.neg(),
-          quantity: p.quantity ? p.quantity.neg() : undefined,
-        })),
-      );
-      await this.applyBalanceDeltas(tx, reversed);
+      const reversed = [entry, ...paybacks].flatMap((row) => reversedDeltas(row.postings));
+      await applyBalanceDeltas(tx, reversed);
       if (paybacks.length > 0) {
         await tx.journalEntry.deleteMany({ where: { id: { in: paybacks.map((row) => row.id) } } });
       }
@@ -640,7 +364,7 @@ export class LedgerService {
         });
       }
 
-      await this.applyBalanceDeltas(tx, deltas);
+      await applyBalanceDeltas(tx, deltas);
 
       return tx.journalEntry.update({
         where: { id: entryId },
@@ -690,263 +414,18 @@ export class LedgerService {
    * (`createEntry`)도 잡는다. 스스로 읽고 고칠 것은 없지만, 그 쓰기가 남의 선행조건을
    * 깨기 때문이다.
    */
-  /**
-   * 저장할 페이백 링크. 원장 잠금 뒤에 부른다.
-   *
-   * 조립은 잠그기 전에 원거래를 읽었다. 그 사이 원거래가 지워졌으면 링크를 비운다 --
-   * 조립이 원거래를 못 찾았을 때와 같은 결과다(D). 그대로 넣으면 외래 키가 500 으로 튄다.
-   * 원거래 지우기도 같은 잠금을 잡으므로 여기서 본 것은 커밋까지 그대로다.
-   *
-   * 페이백이 걸린 거래를 페이백으로 바꾸는 것은 막는다. 링크가 사슬이 되면 분석이 날짜를
-   * 어디까지 따라가야 하는지가 정해지지 않는다.
-   */
-  private async paybackLink(
-    tx: Tx,
-    input: EntryInput,
-    selfId?: string,
-  ): Promise<{ paybackOfEntryId: string | null; paybackOfLineKey: string | null }> {
-    const none = { paybackOfEntryId: null, paybackOfLineKey: null };
-    if (!input.paybackOfEntryId) return none;
-    if (input.paybackOfEntryId === selfId) {
-      throw new BadRequestException('거래 자신에게 페이백을 걸 수 없습니다.');
-    }
-    if (selfId && (await tx.journalEntry.count({ where: { paybackOfEntryId: selfId } })) > 0) {
-      throw new BadRequestException('페이백이 걸린 거래는 페이백이 될 수 없습니다.');
-    }
-    const target = await tx.journalEntry.findUnique({
-      where: { id: input.paybackOfEntryId },
-      select: { projectId: true },
-    });
-    if (!target || target.projectId !== input.projectId) return none;
-    return { paybackOfEntryId: input.paybackOfEntryId, paybackOfLineKey: input.paybackOfLineKey ?? null };
-  }
-
-  /**
-   * 원거래를 고친 뒤, 걸린 환불·페이백을 새 줄에 맞춘다 (types 의 planPaybackRebind).
-   *
-   * 줄의 분류가 바뀌었으면 환불·페이백의 분류 다리도 따라 바꾸고, 사라진 줄에 걸려 있었는데
-   * 남은 줄이 하나면 그 줄로 옮긴다. 줄을 지우거나(옮길 곳이 없다), 지출이 아니게 바꾸거나,
-   * 돌려받은 합보다 줄 금액을 작게 하면 거절한다 -- 그대로 두면 그 분류의 지출이 음수가 된다.
-   *
-   * 옮긴 환불·페이백은 전표를 고쳐(`paybackOfLineKey`·`updatedAt`) 번호를 올린다. 기기가 받아 간다.
-   */
-  private async rebindPaybacks(tx: Tx, entryId: string, input: EntryInput): Promise<void> {
-    const postings = input.postings;
-    const paybacks = await tx.journalEntry.findMany({
-      where: { paybackOfEntryId: entryId },
-      select: {
-        id: true,
-        paybackOfLineKey: true,
-        installmentAdjust: true,
-        postings: { select: { id: true, categoryId: true, cardId: true, baseAmount: true } },
-      },
-    });
-    if (paybacks.length === 0) return;
-    const categoryLegOf = (row: (typeof paybacks)[number]) => row.postings.find((leg) => leg.categoryId);
-
-    const legs = postings.filter((posting) => posting.categoryId && posting.lineKey);
-    const types = new Map(
-      (
-        await tx.category.findMany({
-          where: { id: { in: legs.map((leg) => leg.categoryId!) } },
-          select: { id: true, type: true },
-        })
-      ).map((row) => [row.id, row.type as string]),
-    );
-    const plan = planPaybackRebind(
-      legs.map((leg) => ({
-        lineKey: leg.lineKey!,
-        categoryId: leg.categoryId!,
-        categoryType: types.get(leg.categoryId!) ?? '',
-        baseAmount: leg.baseAmount.toString(),
-      })),
-      paybacks.map((row) => ({
-        id: row.id,
-        lineKey: row.paybackOfLineKey,
-        categoryId: categoryLegOf(row)?.categoryId ?? null,
-        baseAmount: (categoryLegOf(row)?.baseAmount ?? new Prisma.Decimal(0)).toString(),
-      })),
-    );
-    if (plan.error) throw badRequest(plan.error.code, rebindErrorMessage(plan.error));
-
-    /*
-     * 회차를 줄인 할부 환불과 어긋나지 않는지 (installment-refund). 개월수·카드를 바꾸거나
-     * 남는 회차가 음수가 되게 줄이면 거절한다 -- 줄인 금액이 가리키던 회차가 뜻을 잃는다.
-     */
-    const movedLine = new Map(plan.moves.map((move) => [move.paybackId, move.lineKey]));
-    const cardLeg = postings.find((posting) => posting.cardId && posting.accountId);
-    const locked = checkInstallmentRefunds({
-      plan:
-        input.installmentMonths && input.installmentMonths >= 2 && cardLeg
-          ? {
-              months: input.installmentMonths,
-              cardId: cardLeg.cardId ?? null,
-              entryAmount: cardLeg.baseAmount.abs().toString(),
-              principals: input.installmentShares ?? null,
-              interests: input.installmentInterestShares ?? null,
-            }
-          : null,
-      lines: legs.map((leg) => ({ lineKey: leg.lineKey!, amount: leg.baseAmount.abs().toString() })),
-      refunds: paybacks.map((row) => ({
-        lineKey: movedLine.get(row.id) ?? row.paybackOfLineKey,
-        cardId: row.postings.find((leg) => leg.cardId && !leg.categoryId)?.cardId ?? null,
-        adjust: parseInstallmentAdjust(row.installmentAdjust),
-      })),
-    });
-    if (locked) {
-      throw badRequest(
-        locked,
-        '회차를 줄인 환불이 걸려 있어 할부 개월수·카드·금액을 이렇게 바꿀 수 없습니다. 환불을 먼저 고쳐 주세요.',
-      );
-    }
-
-    for (const move of plan.moves) {
-      await tx.posting.updateMany({
-        where: { entryId: move.paybackId, categoryId: { not: null } },
-        data: { categoryId: move.categoryId },
-      });
-      await tx.journalEntry.update({
-        where: { id: move.paybackId },
-        data: { paybackOfLineKey: move.lineKey, updatedAt: new Date() },
-      });
-    }
-  }
-
-  /**
-   * 환불·페이백을 적을 때, 그 줄에 돌려받은 합이 줄 금액을 넘지 않는지 본다.
-   *
-   * 기기 명령의 재생은 건너뛴다(`allowOverPayback`) -- 그 까닭은 그 칸의 주석에 있다.
-   */
-  private async checkPaybackCap(
-    tx: Tx,
-    input: EntryInput,
-    link: { paybackOfEntryId: string | null; paybackOfLineKey: string | null },
-    selfId?: string,
-  ): Promise<void> {
-    if (!link.paybackOfEntryId || input.allowOverPayback) return;
-    const self = input.postings.find((posting) => posting.categoryId);
-    if (!self) return;
-
-    const lines = await tx.posting.findMany({
-      where: { entryId: link.paybackOfEntryId, categoryId: { not: null } },
-      select: { lineKey: true, categoryId: true, baseAmount: true, category: { select: { type: true } } },
-    });
-    const others = await tx.journalEntry.findMany({
-      where: { paybackOfEntryId: link.paybackOfEntryId, ...(selfId ? { id: { not: selfId } } : {}) },
-      select: {
-        id: true,
-        paybackOfLineKey: true,
-        postings: { where: { categoryId: { not: null } }, select: { categoryId: true, baseAmount: true } },
-      },
-    });
-    const plan = planPaybackRebind(
-      lines.map((line) => ({
-        lineKey: line.lineKey ?? '',
-        categoryId: line.categoryId!,
-        categoryType: line.category?.type ?? '',
-        baseAmount: line.baseAmount.toString(),
-      })),
-      [
-        ...others.map((row) => ({
-          id: row.id,
-          lineKey: row.paybackOfLineKey,
-          categoryId: row.postings[0]?.categoryId ?? null,
-          baseAmount: (row.postings[0]?.baseAmount ?? new Prisma.Decimal(0)).toString(),
-        })),
-        { id: selfId ?? 'new', lineKey: link.paybackOfLineKey, categoryId: self.categoryId!, baseAmount: self.baseAmount.toString() },
-      ],
-    );
-    // 줄이 사라진 옛 링크 같은 것은 조립이 이미 다뤘다. 여기서는 넘는 것만 막는다.
-    if (plan.error?.code === 'PAYBACK_EXCEEDS_LINE') {
-      throw badRequest(plan.error.code, rebindErrorMessage(plan.error));
-    }
-  }
-
-  /**
-   * 숨긴 통장·카드에 **새로** 적지 못하게 한다 (2026-10-16). 원장 잠금 아래에서 부른다.
-   *
-   * 숨기기는 잠금 아래에서 "잔액 0", "갚지 않은 대금 없음"을 확인하고 숨긴다. 그런데 거래 쪽은 숨겼는지를 보지
-   * 않아, 숨기기가 먼저 커밋한 뒤 도착한 거래가 숨긴 통장에 잔액을 남겼다 -- 총자산에는 들어가는데 목록에는
-   * 없다. 잠금 덕에 숨기기와 이 확인은 차례로 돌므로, 여기서 보면 그 틈이 닫힌다.
-   *
-   * **이미 그 전표가 쓰던 통장·카드는 막지 않는다.** 숨긴 뒤에도 옛 거래의 메모·분류를 고칠 수 있어야 하고,
-   * 그런 고치기는 그 통장의 잔액을 새로 만들지 않는다(금액을 바꾸면 만들지만, 그것은 숨기기 전에도 같은
-   * 자리에 있던 거래다).
-   */
-  private async assertTargetsActive(
-    tx: Tx,
-    input: EntryInput,
-    before: ReadonlyArray<{ accountId: string | null; cardId: string | null }> = [],
-  ): Promise<void> {
-    const had = new Set(before.flatMap((posting) => [posting.accountId, posting.cardId]).filter(Boolean));
-    const accountIds = [
-      ...new Set(input.postings.map((posting) => posting.accountId).filter((id): id is string => !!id)),
-    ].filter((id) => !had.has(id));
-    const cardIds = [
-      ...new Set(input.postings.map((posting) => posting.cardId).filter((id): id is string => !!id)),
-    ].filter((id) => !had.has(id));
-
-    if (accountIds.length > 0) {
-      const hidden = await tx.account.count({ where: { id: { in: accountIds }, isActive: false } });
-      if (hidden > 0) {
-        throw badRequest('ACCOUNT_INACTIVE', '숨긴 통장에는 새로 적을 수 없습니다. 먼저 숨기기를 풀어 주세요.');
-      }
-    }
-    if (cardIds.length > 0) {
-      const hidden = await tx.card.count({ where: { id: { in: cardIds }, isActive: false } });
-      if (hidden > 0) {
-        throw badRequest('CARD_INACTIVE', '숨긴 카드에는 새로 적을 수 없습니다. 먼저 숨기기를 풀어 주세요.');
-      }
-    }
-  }
-
-  /**
-   * 할부 환불이 줄인 회차를 잠금 아래에서 다시 본다 (2026-10-16).
-   *
-   * 조립(`installmentAdjustOf`)이 "그 회차에 남은 원금"을 보고 줄일 금액을 허락하지만, 조립은 트랜잭션 밖에서
-   * 읽는다. 같은 원거래 줄에 두 환불이 동시에 들어오면 둘 다 옛 남은 원금을 보고 통과해 회차가 음수가 됐다.
-   * 여기서는 원장 잠금 아래에서 원거래의 계획과 걸린 환불을 같은 트랜잭션으로 다시 읽어, 이 환불까지 더한 뒤
-   * 음수가 되는 회차가 있으면 거절한다. 줄인 것이 없는(모두 0) 환불은 바꾸는 것이 없어 지나간다.
-   *
-   * 기기 명령의 재생은 건너뛴다(`allowOverPayback` 과 같은 까닭 -- 끊긴 두 기기가 따로 적은 돈의 기록을
-   * 서버에서 버리지 않는다). 서버만 고친 축소안이라 기기 사본은 그대로다.
-   */
-  private async checkInstallmentCutUnderLock(
-    tx: Tx,
-    input: EntryInput,
-    link: { paybackOfEntryId: string | null; paybackOfLineKey: string | null },
-    selfId?: string,
-  ): Promise<void> {
-    const mine = input.installmentAdjust;
-    if (!mine || !link.paybackOfEntryId || input.allowOverPayback) return;
-    if (adjustTotals(mine).total.isZero()) return;
-
-    const target = await prismaLedgerLookup(
-      tx as never,
-      this.projectAccess,
-      this.exchangeRates,
-    ).paybackTarget(input.projectId, link.paybackOfEntryId, link.paybackOfLineKey as string); // 조립과 같은 값을 넘긴다
-    const plan = target?.installment;
-    if (!plan || plan.lineAmount === null) return;
-
-    const schedule = installmentLineSchedule({
-      entryAmount: plan.entryAmount,
-      lineAmount: plan.lineAmount,
-      months: plan.months,
-      principals: plan.principals,
-      interests: plan.interests,
-    });
-    const others = plan.cuts
-      .filter((cut) => cut.entryId !== selfId && cut.entryId !== input.id)
-      .map((cut) => cut.adjust);
-    const effective = effectiveLineSchedule(schedule, [...others, mine]);
-    if (effective.some((share) => share.principal.isNegative() || share.interest.isNegative())) {
-      throw badRequest('INSTALLMENT_CUT_TOO_LARGE', '줄일 금액이 그 회차에 남은 원금보다 큽니다.');
-    }
-  }
-
   private async lockLedger(tx: Tx, projectId: string): Promise<void> {
     await lockLedgerWrites(tx, projectId);
+  }
+
+  /** 할부 환불이 줄인 회차를 잠금 아래에서 다시 본다 (`checkInstallmentCutUnderLock`). */
+  private checkInstallmentCut(
+    tx: Tx,
+    input: EntryInput,
+    link: PaybackLink,
+    selfId?: string,
+  ): Promise<void> {
+    return checkInstallmentCutUnderLock(tx, this.projectAccess, this.exchangeRates, input, link, selfId);
   }
 
   // ───────────────────────────────────────────
@@ -987,32 +466,8 @@ export class LedgerService {
     return { base, entered, rate, estimatedRate: explicitRate === undefined };
   }
 
-  /** 기준통화 자릿수로 반올림. 원·엔은 소수를 쓰지 않는다. */
-  private toBase(amount: Prisma.Decimal, rate: Prisma.Decimal, base: string): Prisma.Decimal {
-    return amount.mul(rate).toDecimalPlaces(currencyDecimals(base), Prisma.Decimal.ROUND_HALF_UP);
-  }
-
-  /** 기준통화로 기록되는 다리 (카테고리, 자본 계정) */
-  private baseLeg(
-    target: {
-      accountId?: string;
-      categoryId?: string;
-      cardId?: string;
-    },
-    amount: Prisma.Decimal,
-    base: string,
-  ): PostingInput {
-    return {
-      ...target,
-      amount,
-      currency: base,
-      exchangeRate: new Prisma.Decimal(1),
-      baseAmount: amount,
-    };
-  }
-
   // ───────────────────────────────────────────
-  // 조립 헬퍼
+  // 조립
   // ───────────────────────────────────────────
 
   /**
@@ -1029,113 +484,23 @@ export class LedgerService {
   );
 
   /**
-   * 조립이 거절한 이유를 이 계층의 예외로 바꾼다.
-   *
-   * 규칙은 값(오류 객체)으로 오고, HTTP 상태로 바꾸는 일은 여기서 한다. 기기는 같은
-   * 오류를 잡아 입력 화면의 문구로 쓴다 (ledger-rules 의 위반을 다루는 방식과 같다).
-   */
-  private async translate<T>(run: () => Promise<T>): Promise<T> {
-    try {
-      return await run();
-    } catch (error) {
-      if (error instanceof LedgerBuildError) {
-        /*
-         * 조립의 code 는 규칙의 지역 이름이라 응답 계약(ErrorCode)과 범위가 다르다.
-         * 계약에 있는 것만 코드로 싣고, 나머지는 지금까지처럼 문장만 실어 보낸다
-         * (ledger-rules.ts 머리말이 같은 구분을 적어 두었다).
-         */
-        if (isErrorCode(error.code)) {
-          throw error.notFound
-            ? notFound(error.code, error.message)
-            : badRequest(error.code, error.message);
-        }
-        throw error.notFound
-          ? new NotFoundException(error.message)
-          : new BadRequestException(error.message);
-      }
-      throw error;
-    }
-  }
-
-  /** 조립에 넘길 공통 입력. Date 와 Decimal 은 그대로 통과한다(Dec 가 받아들인다). */
-  private buildCommon(input: CommonInput) {
-    return {
-      projectId: input.projectId,
-      personId: input.personId,
-      date: input.date,
-      description: input.description,
-      merchant: input.merchant,
-      detailedNote: input.detailedNote,
-      currency: input.currency,
-      exchangeRate: input.exchangeRate,
-      billedAmount: input.billedAmount,
-    };
-  }
-
-  private toBuildLines(lines: CategoryLine[]) {
-    return lines.map((line) => ({
-      categoryId: line.categoryId,
-      amount: line.amount,
-      lineKey: line.lineKey,
-    }));
-  }
-
-  /**
-   * 조립 결과를 이 계층의 모양으로.
-   *
-   * 금액을 Dec 에서 Prisma.Decimal 로 되돌린다. Dec.toString() 은 정확하므로 값이 상하지
-   * 않는다. `createdByUserId` 처럼 조립이 모르는 값은 원래 입력에서 가져온다.
-   */
-  private toEntryInput(input: CommonInput, built: BuiltEntry): EntryInput {
-    const dec = (value: Dec | undefined | null) =>
-      value === undefined || value === null ? undefined : new Prisma.Decimal(value.toString());
-
-    return {
-      projectId: built.projectId,
-      personId: built.personId,
-      date: built.date,
-      description: built.description,
-      merchant: built.merchant,
-      detailedNote: built.detailedNote,
-      createdByUserId: input.createdByUserId,
-      originalCurrency: built.originalCurrency,
-      originalAmount: dec(built.originalAmount),
-      rateProvisional: built.rateProvisional,
-      installmentMonths: built.installmentMonths,
-      installmentInterest: built.installmentInterest,
-      installmentShares: built.installmentShares,
-      installmentInterestShares: built.installmentInterestShares,
-      installmentMonthlyPayment: built.installmentMonthlyPayment,
-      installmentAnnualRate: built.installmentAnnualRate,
-      countsPerformance: built.countsPerformance ?? true,
-      discountCountsPerformance: built.discountCountsPerformance ?? true,
-      ...(built.tagIds ? { tagIds: built.tagIds } : {}),
-      paybackOfEntryId: built.paybackOfEntryId ?? null,
-      paybackOfLineKey: built.paybackOfLineKey ?? null,
-      paybackType: built.paybackType ?? null,
-      installmentAdjust: built.installmentAdjust ?? null,
-      postings: built.postings.map((posting) => ({
-        accountId: posting.accountId,
-        categoryId: posting.categoryId,
-        amount: new Prisma.Decimal(posting.amount.toString()),
-        quantity: dec(posting.quantity),
-        currency: posting.currency,
-        exchangeRate: new Prisma.Decimal(posting.exchangeRate.toString()),
-        baseAmount: new Prisma.Decimal(posting.baseAmount.toString()),
-        cardId: posting.cardId,
-        lineKey: posting.lineKey,
-        discountAmount: dec(posting.discountAmount) ?? null,
-        tagIds: posting.tagIds,
-      })),
-    };
-  }
-
-  /**
    * 지출. 결제수단이 계좌든 체크카드든 신용카드든 카테고리측 posting은 동일하다.
    * "지출 = 지출 카테고리 posting의 합"이라는 정의가 결제수단과 분리되는 지점.
    */
   async createExpense(input: ExpenseInput) {
     return this.createEntry(await this.buildExpense(input));
+  }
+
+  /**
+   * 화면 개념(kind)을 그대로 받아 전표를 만든다.
+   *
+   * 갈래를 나누는 규칙도 공용 함수가 갖는다. 서버의 REST 경로와 기기의 명령 재생이
+   * 같은 입구를 써야 "오프라인에서 만든 전표"와 "온라인에서 만든 전표"가 같아진다.
+   */
+  async buildFromRequest(
+    request: EntryBuildRequest & { createdByUserId?: string | null },
+  ): Promise<EntryInput> {
+    return toEntryInput(request as CommonInput, await translateBuildError(() => buildEntry(request, this.lookup)));
   }
 
   /**
@@ -1149,25 +514,13 @@ export class LedgerService {
    *   - 계좌 통화 == 기준통화  : 원화 카드로 달러 결제. 청구되는 돈은 원화이므로
    *     계좌 다리는 원화이고, "$50를 썼다"는 사실은 전표에 따로 적는다.
    */
-  /**
-   * 화면 개념(kind)을 그대로 받아 전표를 만든다.
-   *
-   * 갈래를 나누는 규칙도 공용 함수가 갖는다. 서버의 REST 경로와 기기의 명령 재생이
-   * 같은 입구를 써야 "오프라인에서 만든 전표"와 "온라인에서 만든 전표"가 같아진다.
-   */
-  async buildFromRequest(
-    request: EntryBuildRequest & { createdByUserId?: string | null },
-  ): Promise<EntryInput> {
-    return this.toEntryInput(request as CommonInput, await this.translate(() => buildEntry(request, this.lookup)));
-  }
-
   async buildExpense(input: ExpenseInput): Promise<EntryInput> {
-    return this.toEntryInput(
+    return toEntryInput(
       input,
-      await this.translate(() => buildExpense(
+      await translateBuildError(() => buildExpense(
         {
-          ...this.buildCommon(input),
-          lines: this.toBuildLines(input.lines),
+          ...buildCommon(input),
+          lines: toBuildLines(input.lines),
           accountId: input.accountId,
           cardId: input.cardId,
           installmentMonths: input.installmentMonths,
@@ -1189,13 +542,13 @@ export class LedgerService {
   }
 
   async buildIncome(input: IncomeInput): Promise<EntryInput> {
-    return this.toEntryInput(
+    return toEntryInput(
       input,
-      await this.translate(() =>
+      await translateBuildError(() =>
         buildIncome(
           {
-            ...this.buildCommon(input),
-            lines: this.toBuildLines(input.lines),
+            ...buildCommon(input),
+            lines: toBuildLines(input.lines),
             accountId: input.accountId,
           },
           this.lookup,
@@ -1219,12 +572,12 @@ export class LedgerService {
   }
 
   async buildTransfer(input: TransferInput): Promise<EntryInput> {
-    return this.toEntryInput(
+    return toEntryInput(
       input,
-      await this.translate(() =>
+      await translateBuildError(() =>
         buildTransfer(
           {
-            ...this.buildCommon(input),
+            ...buildCommon(input),
             fromAccountId: input.fromAccountId,
             toAccountId: input.toAccountId,
             amount: input.amount,
@@ -1252,12 +605,12 @@ export class LedgerService {
   }
 
   async buildCardTransfer(input: CardTransferInput): Promise<EntryInput> {
-    return this.toEntryInput(
+    return toEntryInput(
       input,
-      await this.translate(() =>
+      await translateBuildError(() =>
         buildCardTransfer(
           {
-            ...this.buildCommon(input),
+            ...buildCommon(input),
             cardId: input.cardId,
             accountId: input.accountId,
             amount: input.amount,
@@ -1324,7 +677,7 @@ export class LedgerService {
     return this.prisma.$transaction(async (tx) => {
       await this.lockLedger(tx, input.projectId);
 
-      const existing = await this.findOpeningEntry(tx, input.projectId, input.accountId);
+      const existing = await findOpeningEntry(tx, input.projectId, input.accountId);
 
       // 기초잔액을 뺀 나머지 거래의 합. 이 위에 얹어서 목표 잔액을 만든다.
       const others = await tx.posting.aggregate({
@@ -1343,7 +696,7 @@ export class LedgerService {
         return null;
       }
 
-      const equity = await this.getOrCreateOpeningBalanceAccount(tx, input.projectId);
+      const equity = await getOrCreateOpeningBalanceAccount(tx, input.projectId);
 
       // 외화 통장이면 기초잔액도 그 통화로 남고, 상대편 자본 계정은 기준통화다.
       const { base, rate } = await this.resolveConversion(
@@ -1352,7 +705,7 @@ export class LedgerService {
         account.currency,
         input.exchangeRate,
       );
-      const openingBase = this.toBase(openingAmount, rate, base);
+      const openingBase = toBase(openingAmount, rate, base);
 
       const entry: EntryInput = {
         ...(!existing && input.openingEntryId ? { id: input.openingEntryId } : {}),
@@ -1369,7 +722,7 @@ export class LedgerService {
             exchangeRate: rate,
             baseAmount: openingBase,
           },
-          this.baseLeg({ accountId: equity.id }, openingBase.neg(), base),
+          baseLeg({ accountId: equity.id }, openingBase.neg(), base),
         ],
       };
 
@@ -1383,279 +736,7 @@ export class LedgerService {
     { timeout: 15_000 });
   }
 
-  /**
-   * 그 계좌의 기초잔액 전표. 계좌 posting과 자본 계정 posting을 함께 가진 전표다.
-   *
-   * 계좌마다 하나만 유지되지만(이 서비스만 만든다) date 오름차순으로 맨 앞을 집어
-   * 여러 건이 있어도 가장 앞선 것을 기준으로 삼는다.
-   */
-  private async findOpeningEntry(db: Db, projectId: string, accountId: string) {
-    const equity = await db.account.findFirst({
-      where: { projectId, type: AccountType.opening_balance },
-      select: { id: true },
-    });
-    if (!equity) return null;
-
-    return db.journalEntry.findFirst({
-      where: {
-        projectId,
-        AND: [
-          { postings: { some: { accountId } } },
-          { postings: { some: { accountId: equity.id } } },
-        ],
-      },
-      orderBy: { date: 'asc' },
-      select: { id: true },
-    });
-  }
-
-  /** 프로젝트마다 자본 계정 하나를 공유한다. */
-  private async getOrCreateOpeningBalanceAccount(db: Db, projectId: string) {
-    const existing = await db.account.findFirst({
-      where: { projectId, type: AccountType.opening_balance },
-    });
-    if (existing) return existing;
-
-    return db.account.create({
-      data: {
-        projectId,
-        type: AccountType.opening_balance,
-        name: '기초잔액',
-        ownerId: null,
-      },
-    });
-  }
-
-  // ───────────────────────────────────────────
-  // 내부 헬퍼
-  // ───────────────────────────────────────────
-
-  private toPostingData(p: PostingInput) {
-    return {
-      accountId: p.accountId ?? null,
-      categoryId: p.categoryId ?? null,
-      amount: p.amount,
-      quantity: p.quantity ?? null,
-      currency: p.currency,
-      exchangeRate: p.exchangeRate,
-      // 빌더가 정한 값을 그대로 쓴다. 여기서 다시 곱하면 반올림이 어긋난다.
-      baseAmount: p.baseAmount,
-      cardId: p.cardId ?? null,
-      // 화면이 만든 줄 키를 그대로 써 넣는다. 짝짓기는 하지 않는다.
-      lineKey: p.lineKey ?? null,
-      discountAmount: p.discountAmount ?? null,
-    };
-  }
-
-  /**
-   * 전표 날짜가 원장 하한 안에 있는지 검증.
-   *
-   * 기초잔액 전표보다 앞선 거래가 들어오면 "처음에 이만큼 있었다"는 전제가 깨지고
-   * 계좌 원장의 첫 줄이 기초잔액이 아니게 된다. 화면은 날짜 입력 min으로 막지만
-   * API를 직접 부르는 경로가 있으므로 여기서도 막는다.
-   *
-   * 하한은 기초잔액 전표 날짜 자신이다(= 그 날짜는 허용). 그래서 기초잔액을 만드는
-   * 이 서비스의 호출도 그대로 통과한다.
-   */
-  private assertDateInRange(date: Date) {
-    const violation = checkEntryDate(date);
-    if (violation) throw new BadRequestException(violation.message);
-  }
-
-  /**
-   * 전표 균형과 posting 배타 조건 검증. DB CHECK 제약보다 먼저 걸러 메시지를 명확히 한다.
-   *
-   * 규칙 자체는 `@money/types`의 checkPostings 가 갖는다. 오프라인에서는 기기가
-   * 로컬에 담기 전에 같은 검사를 해야 하고, 규칙이 두 벌이면 어느 한쪽만 통과하는
-   * 전표가 생긴다. 여기서는 위반을 이 계층의 예외로 바꿔 던지는 일만 한다.
-   */
-  private assertBalanced(postings: PostingInput[]) {
-    const violation = checkPostings(postings);
-    if (violation) throw new BadRequestException(violation.message);
-  }
-
-  /**
-   * 전표가 참조하는 것이 모두 이 프로젝트 것인지 확인 (교차 프로젝트 오염 방지).
-   *
-   * 거래 주체(personId)도 함께 본다. 계좌와 카테고리만 검사하던 시절에는
-   * 남의 프로젝트 Person id를 그대로 실어 보내면 저장이 됐고, 그 사람 이름이
-   * 이쪽 거래 목록에 그대로 나왔다.
-   */
-  private async assertTargetsBelongToProject(db: Db, input: EntryInput) {
-    const { projectId, postings } = input;
-    const accountIds = [...new Set(postings.map((p) => p.accountId).filter(Boolean))] as string[];
-    const categoryIds = [...new Set(postings.map((p) => p.categoryId).filter(Boolean))] as string[];
-
-    // 거래한 사람은 비워도 된다(미지정). 골랐으면 이 프로젝트 사람이어야 한다.
-    if (input.personId) {
-      const person = await db.person.count({
-        where: { id: input.personId, projectId },
-      });
-      if (person === 0) {
-        throw notFound('NOT_PROJECT_MEMBER', '이 프로젝트의 구성원이 아닙니다.');
-      }
-    }
-
-    if (accountIds.length > 0) {
-      const found = await db.account.count({
-        where: { id: { in: accountIds }, projectId },
-      });
-      if (found !== accountIds.length) {
-        throw new NotFoundException('이 프로젝트에 없는 계좌가 포함되어 있습니다.');
-      }
-    }
-
-    if (categoryIds.length > 0) {
-      const found = await db.category.count({
-        where: { id: { in: categoryIds }, projectId },
-      });
-      if (found !== categoryIds.length) {
-        throw new NotFoundException('이 프로젝트에 없는 카테고리가 포함되어 있습니다.');
-      }
-    }
-  }
-
-  /**
-   * 전표의 태그 연결을 갈아 끼운다.
-   *
-   * 다리와 같은 규칙이다. 하나씩 견주어 더하고 빼지 않고 통째로 지운 뒤 다시 넣는다 --
-   * 이 표에는 번호가 없어 부분 병합의 대상이 아니고, 갯수가 손에 꼽는다.
-   *
-   * `undefined` 는 "손대지 않는다"이고 빈 배열은 "전부 뗀다"다. 원장이 스스로 만드는
-   * 전표(잔액 조정)는 앞의 것이고, 사용자의 수정은 언제나 목록을 실어 보낸다.
-   *
-   * 남의 프로젝트 태그를 붙이지 못하게 여기서 막는다. 붙고 나면 그 거래를 보는
-   * 사람에게 자기 프로젝트에 없는 이름이 뜬다.
-   */
-  /**
-   * 태그 연결을 통째로 갈아 끼운다.
-   *
-   * 태그는 **줄에 붙는다.** 분류 다리마다 `tagIds` 가 실려 오고, 그 줄의 키로 연결이
-   * 만들어진다. 분류 줄이 없는 전표(이체, 카드 대금 결제)만 `entryTagIds` 로 거래 자체에
-   * 붙인다.
-   *
-   * 어느 쪽도 실려 오지 않으면 손대지 않는다. 잔액 조정처럼 원장이 스스로 만드는
-   * 전표가 그 자리다 -- 사용자의 수정은 언제나 목록을 실어 보낸다(빈 목록도 목록이다).
-   */
-  private async saveTags(
-    tx: Tx,
-    entryId: string,
-    projectId: string,
-    postings: PostingInput[],
-    entryTagIds?: string[],
-  ) {
-    const lineTagged = postings.some((posting) => posting.tagIds !== undefined);
-    if (entryTagIds === undefined && !lineTagged) return;
-
-    await tx.entryTag.deleteMany({ where: { entryId } });
-
-    const rows: Array<{ entryId: string; lineKey: string | null; tagId: string }> = [];
-    for (const posting of postings) {
-      if (!posting.tagIds || !posting.lineKey) continue;
-      for (const tagId of new Set(posting.tagIds)) {
-        rows.push({ entryId, lineKey: posting.lineKey, tagId });
-      }
-    }
-    for (const tagId of new Set(entryTagIds ?? [])) {
-      rows.push({ entryId, lineKey: null, tagId });
-    }
-    if (rows.length === 0) return;
-
-    const unique = [...new Set(rows.map((row) => row.tagId))];
-    const found = await tx.tag.findMany({
-      where: { id: { in: unique }, projectId },
-      select: { id: true },
-    });
-    if (found.length !== unique.length) {
-      throw badRequest('TAG_NOT_IN_PROJECT', '이 프로젝트에 없는 태그가 포함되어 있습니다.');
-    }
-
-    await tx.entryTag.createMany({ data: rows });
-  }
-
-  /** 계좌 잔액과 투자 수량 캐시를 posting 합계만큼 움직인다. */
-  /**
-   * 할부 일정을 카드 부채 posting에 붙인다.
-   *
-   * 전표 수정은 posting을 지우고 새로 만들므로(replaceEntry) 일정도 cascade로 사라진다.
-   * 그래서 생성과 수정 양쪽에서 같은 함수를 부른다.
-   */
-  private async saveInstallmentPlan(
-    tx: Tx,
-    postings: Array<{ id: string; cardId: string | null; amount: Prisma.Decimal }>,
-    months?: number,
-    interestBearing?: boolean,
-    shares?: string[],
-    /** 회차별 이자와 그것을 만든 입력. 유이자 할부에만 있다. */
-    interest?: InstallmentInterest,
-  ) {
-    if (!months || months < 2) return null;
-
-    // 카드 부채 다리가 할부의 주인이다. 지출이면 음수 다리 하나뿐이다.
-    const cardLeg = postings.find((p) => p.cardId && p.amount.lt(ZERO));
-    if (!cardLeg) {
-      throw badRequest('INSTALLMENT_CREDIT_ONLY', '할부는 신용카드 지출에만 설정할 수 있습니다.');
-    }
-    return tx.installmentPlan.create({
-      data: {
-        postingId: cardLeg.id,
-        totalMonths: months,
-        interestBearing: interestBearing ?? false,
-        /*
-         * 적어 둔 회차 금액. 없으면 읽는 쪽이 개월수로 나눈다.
-         *
-         * 금액이나 개월수를 고치면 화면이 새 값을 보내거나 아무것도 보내지 않는다.
-         * 여기서 옛 값을 이어받지 않는 것이 요점이다 -- 길이나 합이 어긋난 값이 남으면
-         * 주기별 청구액이 갚을 대금과 달라진다.
-         */
-        principalShares: shares ?? Prisma.JsonNull,
-        /*
-         * 회차별 이자와 그것을 만든 입력. 무이자로 되돌리면 조립이 비워 보낸다.
-         *
-         * 원금과 같은 규칙이다 -- 옛 값을 이어받지 않는다. 금액이나 개월수를 고치면
-         * 화면이 새 표를 보내거나 아무것도 보내지 않고, 남은 옛 이자는 그 달에 나갈
-         * 돈을 실제와 다르게 보여 준다.
-         */
-        interestShares: interest?.shares ?? Prisma.JsonNull,
-        monthlyPayment: interest?.monthlyPayment ?? null,
-        annualRate: interest?.annualRate ?? null,
-      },
-    });
-  }
-
-  private async applyBalanceDeltas(
-    tx: Tx,
-    postings: Array<{ accountId?: string; amount: Prisma.Decimal; quantity?: Prisma.Decimal }>,
-  ) {
-    const balanceDeltas = new Map<string, Prisma.Decimal>();
-    const quantityDeltas = new Map<string, Prisma.Decimal>();
-
-    for (const p of postings) {
-      if (!p.accountId) continue;
-      balanceDeltas.set(p.accountId, (balanceDeltas.get(p.accountId) ?? ZERO).add(p.amount));
-      if (p.quantity) {
-        quantityDeltas.set(p.accountId, (quantityDeltas.get(p.accountId) ?? ZERO).add(p.quantity));
-      }
-    }
-
-    for (const [accountId, delta] of balanceDeltas) {
-      if (delta.isZero()) continue;
-      await tx.account.update({
-        where: { id: accountId },
-        data: { balance: { increment: delta } },
-      });
-    }
-
-    for (const [accountId, delta] of quantityDeltas) {
-      if (delta.isZero()) continue;
-      await tx.investmentDetail.update({
-        where: { accountId },
-        data: { quantity: { increment: delta } },
-      });
-    }
-  }
-
-  /** 카테고리 유효성 확인 */
+  /** 이 프로젝트의 계좌. 없거나 남의 것이면 404 다. */
   private async getAccount(projectId: string, accountId: string) {
     const account = await this.prisma.account.findUnique({ where: { id: accountId } });
     if (!account || account.projectId !== projectId) {
@@ -1663,44 +744,4 @@ export class LedgerService {
     }
     return account;
   }
-
-  private async getCard(projectId: string, cardId: string) {
-    const card = await this.prisma.card.findUnique({ where: { id: cardId } });
-    if (!card || card.projectId !== projectId) {
-      throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
-    }
-    return card;
-  }
-}
-
-/** 할부 계획에 적어 둘 이자. 유이자 할부에만 채워진다. */
-interface InstallmentInterest {
-  shares?: string[];
-  monthlyPayment?: Prisma.Decimal;
-  annualRate?: Prisma.Decimal;
-}
-
-/**
- * 전표 입력에서 이자 쪽만 골라낸다. 적을 것이 없으면 undefined.
- *
- * 세 값이 함께 움직인다 -- 입력(월 납입액 또는 연이율)이 회차 표를 만들고, 표는
- * 사용자가 고칠 수 있다. 무이자로 되돌리면 조립이 셋을 다 비워 보내므로 여기서
- * 가릴 것이 없다.
- */
-function interestOf(input: {
-  installmentInterestShares?: string[];
-  installmentMonthlyPayment?: string;
-  installmentAnnualRate?: string;
-}): InstallmentInterest | undefined {
-  const { installmentInterestShares, installmentMonthlyPayment, installmentAnnualRate } = input;
-  if (!installmentInterestShares && !installmentMonthlyPayment && !installmentAnnualRate) {
-    return undefined;
-  }
-  return {
-    shares: installmentInterestShares,
-    monthlyPayment: installmentMonthlyPayment
-      ? new Prisma.Decimal(installmentMonthlyPayment)
-      : undefined,
-    annualRate: installmentAnnualRate ? new Prisma.Decimal(installmentAnnualRate) : undefined,
-  };
 }

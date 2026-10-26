@@ -29,18 +29,16 @@ import {
 import { CameraView, useCameraPermissions } from 'expo-camera';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import { signOutGoogle } from '../api';
-import { unregisterPushDevice } from '../push';
-import { useProjectStart } from '@money/core/hooks/useProjectStart';
+import { inviteActionOf, useProjectStart } from '@money/core/hooks/useProjectStart';
 import { useTranslation } from '@money/core/lib/i18n';
-import { useAuth } from '@money/core/store/auth';
+
+import { signOut as signOutWithCheck } from '../sign-out';
 
 const INPUT = 'rounded-lg border border-gray-300 bg-white px-3 py-2 text-base text-gray-900';
 
 export default function StartScreen() {
   const { t } = useTranslation();
   const insets = useSafeAreaInsets();
-  const { logout } = useAuth();
   const start = useProjectStart();
 
   /**
@@ -57,7 +55,7 @@ export default function StartScreen() {
   const [permission, requestPermission] = useCameraPermissions();
 
   const invite = start.invite;
-  const canJoin = invite !== null && (invite.isMember || invite.status === 'pending');
+  const action = invite ? inviteActionOf(invite, start.isBusy) : null;
 
   const create = async () => {
     setError('');
@@ -72,9 +70,8 @@ export default function StartScreen() {
     if (!result.ok) setError(result.message || t('start.codeInvalid'));
   };
 
-  /** 로그아웃. 구글 쪽 세션도 함께 끊는다 (`signOutGoogle` 의 주석 참고). */
   /*
-   * 두 번 누르면 로그아웃이 겹쳐 돌아, 사본 지우기 둘이 서로 연 파일을 닫았다 (2026-10-16). 첫 걸음이 서버를
+   * 로그아웃. 두 번 누르면 로그아웃이 겹쳐 돌아, 사본 지우기 둘이 서로 연 파일을 닫았다 (2026-10-16). 첫 걸음이 서버를
    * 부르므로 느린 회선에서는 그 사이가 길다. 곧바로 바뀌는 ref 로 막는다.
    */
   const signingOutRef = useRef(false);
@@ -82,10 +79,8 @@ export default function StartScreen() {
     if (signingOutRef.current) return;
     signingOutRef.current = true;
     try {
-      // 토큰이 살아 있을 때 지워야 서버가 누구의 기기인지 안다 (`unregisterPushDevice`).
-      await unregisterPushDevice();
-      await signOutGoogle();
-      await logout();
+      // 보내지 못한 거래가 있으면 먼저 묻는다 (`sign-out`).
+      await signOutWithCheck();
     } finally {
       signingOutRef.current = false;
     }
@@ -95,6 +90,7 @@ export default function StartScreen() {
     setError('');
     const result = await start.join();
     if (!result.ok) setError(result.message);
+    // 들어갔으면 App 이 껍데기로 갈아 끼운다. 요청을 보냈으면 카드가 "기다리는 중"으로 바뀐다.
   };
 
   /**
@@ -213,7 +209,7 @@ export default function StartScreen() {
         들어갈 곳을 찾았으면 그것만 보여 준다. 무엇에 들어가는지 한 번 확인시키는
         자리라, 옆에 다른 칸이 함께 있으면 눈이 갈린다.
       */}
-      {invite ? (
+      {invite && action ? (
         <View className="gap-4 rounded-xl border border-blue-200 bg-white p-5">
           <View>
             <Text className="text-lg font-semibold text-gray-900">{invite.projectName}</Text>
@@ -223,23 +219,23 @@ export default function StartScreen() {
             </Text>
           </View>
 
-          {invite.isMember ? (
-            <Text className="text-sm text-gray-600">{t('start.alreadyMember')}</Text>
-          ) : invite.status !== 'pending' ? (
-            <Text className="text-sm text-red-700">{t('start.inviteUnusable')}</Text>
+          {action.noteKey ? (
+            <Text className={`text-sm ${action.isError ? 'text-red-700' : 'text-gray-600'}`}>
+              {t(action.noteKey)}
+            </Text>
           ) : null}
 
-          <Pressable
-            onPress={join}
-            disabled={!canJoin || start.isBusy}
-            className={`items-center rounded-lg bg-blue-600 px-4 py-3 active:bg-blue-700 ${
-              !canJoin || start.isBusy ? 'opacity-50' : ''
-            }`}
-          >
-            <Text className="text-base font-medium text-white">
-              {t(start.isBusy ? 'start.joining' : 'start.joinSubmit')}
-            </Text>
-          </Pressable>
+          {action.buttonKey ? (
+            <Pressable
+              onPress={join}
+              disabled={!action.canSubmit}
+              className={`items-center rounded-lg bg-blue-600 px-4 py-3 active:bg-blue-700 ${
+                action.canSubmit ? '' : 'opacity-50'
+              }`}
+            >
+              <Text className="text-base font-medium text-white">{t(action.buttonKey)}</Text>
+            </Pressable>
+          ) : null}
           <Pressable
             onPress={() => {
               setCode('');

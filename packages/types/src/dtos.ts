@@ -36,6 +36,11 @@ export namespace Auth {
   // 신규 사용자는 이 요청에서 함께 생성되므로 별도 가입 절차가 없다.
   export interface GoogleSignInRequest {
     idToken: string;
+    /**
+     * 로그인 화면에서 이용약관·개인정보처리방침 동의와 만 14세 이상 확인을 받았는가. 새 계정은 이것이
+     * 없으면 만들지 않는다(TERMS_REQUIRED). 옛 앱은 싣지 않으므로 이미 있는 계정의 로그인은 막지 않는다.
+     */
+    agreedToTerms?: boolean;
   }
 
   export interface ProjectInitialData {

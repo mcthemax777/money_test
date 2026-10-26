@@ -69,20 +69,34 @@ async function bootstrap() {
   app.useGlobalFilters(new GlobalExceptionFilter());
   app.useGlobalInterceptors(new LoggingInterceptor());
 
-  const config = new DocumentBuilder()
-    .setTitle('bboyong API')
-    .setDescription('가계부 앱 API')
-    .setVersion('1.0')
-    .addBearerAuth()
-    .build();
+  // 응답에 서버 종류(Express)를 싣지 않는다. 알려 줄 이유가 없는 값이다.
+  app.disable('x-powered-by');
+  /*
+   * 요청 본문 상한 (2026-10-25). 엑셀 가져오기 300줄과 동기화 묶음이 기본값(100KB)에 닿을 수 있어 넓힌다.
+   * nginx 의 client_max_body_size 도 이 값 이상이어야 한다.
+   */
+  app.useBodyParser('json', { limit: '2mb' });
 
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  const isProduction = process.env.NODE_ENV === 'production';
+  // API 문서는 개발에서만 연다. 운영에서는 모든 경로와 본문 모양을 밖에 알려 줄 이유가 없다.
+  if (!isProduction) {
+    const config = new DocumentBuilder()
+      .setTitle('bboyong API')
+      .setDescription('가계부 앱 API')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    SwaggerModule.setup('api/docs', app, SwaggerModule.createDocument(app, config));
+  }
 
+  /*
+   * 운영에서는 이 기계 안(nginx)에서만 받는다 (2026-10-25). 모든 주소로 열면 3001 번이 인터넷에 그대로 열려
+   * nginx 의 TLS 와 상한을 건너뛰고 들어올 수 있었다. 다른 주소가 필요하면 HOST 로 준다.
+   */
   const port = process.env.PORT || 3001;
-  await app.listen(port);
-  console.log(`✅ Server running on http://localhost:${port}`);
-  console.log(`📚 API Docs: http://localhost:${port}/api/docs`);
+  const host = process.env.HOST ?? (isProduction ? '127.0.0.1' : undefined);
+  await (host ? app.listen(port, host) : app.listen(port));
+  console.log(`✅ Server running on http://${host ?? 'localhost'}:${port}`);
 
   drainOnShutdown(app);
 }

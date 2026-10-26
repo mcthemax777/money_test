@@ -1,4 +1,5 @@
 import { Injectable, BadRequestException, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { createDefaultCategories } from '../categories/default-categories';
 import { PrismaService } from '../../config/prisma.service';
 import { randomInt } from 'crypto';
 import { ProjectAccessService } from '../../common/project-access.guard';
@@ -8,12 +9,16 @@ import { PlansService } from '../plans/plans.service';
 import { badRequest, forbidden, notFound } from '@/common/app-error';
 import { recordProjectWrite } from '@/common/project-write-context';
 import { lockMembershipWrites } from '@/common/ledger-lock';
-import { rankAfter } from '@money/types';
-import { readText } from '@/common/text';
+import { SUPPORTED_CURRENCIES, rankAfter } from '@money/types';
+import { readText, readEnum } from '@/common/text';
 
 interface CreateProjectDto {
   name: string;
   description?: string;
+  /** 저장 통화. 화면이 기기의 언어·지역에서 고른다. 없으면 KRW. */
+  ledgerCurrency?: string;
+  /** 집계 기준 시간대 (IANA). 화면이 기기의 시간대를 보낸다. 없으면 Asia/Seoul. */
+  timezone?: string;
 }
 
 interface UpdateProjectDto {
@@ -49,49 +54,64 @@ export class ProjectsService {
     // 이름은 고치기(updateProject)와 같은 규칙으로 본다 (2026-10-16). 예전에는 비어도 받았고 빠지면 500 이었다.
     const name = readText(dto.name, '프로젝트 이름');
     if (!name) throw new BadRequestException('프로젝트 이름을 입력해주세요.');
-    const project = await this.prisma.project.create({
-      data: {
-        name,
-        description: readText(dto.description, '설명') || null,
-        projectKey: await this.issueProjectKey(),
-      },
-    });
+    /*
+     * 저장 통화와 시간대는 화면이 기기에서 읽어 보낸다 (2026-10-25). 예전에는 늘 KRW·서울이라, 다른 나라 사용자의
+     * 가계부가 원화로 고정됐다(저장 통화는 만든 뒤 바꿀 수 없다). 보내지 않으면(옛 화면) 지금처럼 KRW·서울이다.
+     */
+    const ledgerCurrency = readEnum(dto.ledgerCurrency, SUPPORTED_CURRENCIES, '저장 통화') ?? 'KRW';
+    const timezone = dto.timezone === undefined ? 'Asia/Seoul' : readText(dto.timezone, '시간대') ?? 'Asia/Seoul';
+    if (!isValidTimeZone(timezone)) throw new BadRequestException('시간대가 올바르지 않습니다.');
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { locale: true } });
+    const projectKey = await this.issueProjectKey();
 
     /*
-     * 미지정 계정. 결제수단을 고르지 않은 지출·수입이 붙는 자리다 (entry-build).
-     * 기기가 오프라인에서도 그 전표를 만들 수 있도록 처음부터 만들어 동기화로 내려보낸다.
+     * 가계부와 그 첫 모습을 한 트랜잭션에 만든다. 예전에는 따로 써서, 중간에 실패하면 구성원 없는 가계부나
+     * 미지정 계정 없는 가계부가 남았다.
      */
-    await this.prisma.account.create({
-      data: {
-        projectId: project.id,
-        type: 'unassigned',
-        name: '미지정',
-        ownerId: null,
-        currency: project.ledgerCurrency,
-      },
-    });
+    const project = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.project.create({
+        data: {
+          name,
+          description: readText(dto.description, '설명') || null,
+          projectKey,
+          ledgerCurrency,
+          displayCurrency: ledgerCurrency,
+          timezone,
+        },
+      });
 
-    await this.prisma.projectMember.create({
-      data: {
-        projectId: project.id,
-        userId,
-        role: 'owner',
-      },
+      /*
+       * 미지정 계정. 결제수단을 고르지 않은 지출·수입이 붙는 자리다 (entry-build).
+       * 기기가 오프라인에서도 그 전표를 만들 수 있도록 처음부터 만들어 동기화로 내려보낸다.
+       */
+      await tx.account.create({
+        data: {
+          projectId: created.id,
+          type: 'unassigned',
+          name: '미지정',
+          ownerId: null,
+          currency: created.ledgerCurrency,
+        },
+      });
+
+      await tx.projectMember.create({
+        data: { projectId: created.id, userId, role: 'owner' },
+      });
+
+      // 첫 지출·수입을 적을 수 있도록 기본 분류를 만든 사람의 언어로 넣는다 (`default-categories`).
+      await createDefaultCategories(tx, created.id, user?.locale ?? 'ko');
+
+      // 이 프로젝트가 사용자의 유일한 프로젝트라면 기본 프로젝트로 지정한다.
+      // 프로젝트를 모두 삭제했거나 강퇴당한 뒤 다시 만드는 경우가 여기에 해당한다.
+      const membershipCount = await tx.projectMember.count({ where: { userId } });
+      if (membershipCount === 1) {
+        await tx.user.update({ where: { id: userId }, data: { defaultProjectId: created.id } });
+      }
+      return created;
     });
 
     // 만든 사람을 첫 구성원으로 세우고 "나"로 지정한다.
     const myPersonId = await this.ensureMyPerson(project.id, userId);
-
-    // 이 프로젝트가 사용자의 유일한 프로젝트라면 기본 프로젝트로 지정한다.
-    // 프로젝트를 모두 삭제했거나 강퇴당한 뒤 다시 만드는 경우가 여기에 해당한다.
-    const membershipCount = await this.prisma.projectMember.count({ where: { userId } });
-
-    if (membershipCount === 1) {
-      await this.prisma.user.update({
-        where: { id: userId },
-        data: { defaultProjectId: project.id },
-      });
-    }
 
     return {
       ...project,

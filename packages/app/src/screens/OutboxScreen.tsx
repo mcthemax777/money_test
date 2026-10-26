@@ -15,6 +15,8 @@
  *
  * 그 둘을 조용히 지우지 않고 여기 모아 보여 준다. 돈은 말없이 사라지면 안 된다.
  */
+import { storedReasonMessage } from '@money/core/lib/api-error';
+import { useLocaleStore } from '@money/core/store/locale';
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, LayoutAnimation, Pressable, Share, Text, View } from 'react-native';
 import * as Application from 'expo-application';
@@ -104,6 +106,11 @@ function headingOf(
   }
   const payload = mutation.payload as { description?: string; name?: string };
   return titleOf(payload) ?? t(KIND_KEY[mutation.kind] ?? 'outbox.kind.create');
+}
+
+/** 보류 칸의 거절 사유를 화면 언어로 (`storedReasonMessage`). 서버가 코드를 붙인 사유만 바뀐다. */
+function reasonOf(reason: string): string {
+  return storedReasonMessage(useLocaleStore.getState().locale, reason);
 }
 
 export default function OutboxScreen() {
@@ -365,7 +372,7 @@ function HeldCard({
           */}
           <Text className="mt-1 text-sm text-gray-600">
             {statusLabel}
-            {mutation.error && mutation.status !== 'conflict' ? ` · ${mutation.error}` : ''}
+            {mutation.error && mutation.status !== 'conflict' ? ` · ${reasonOf(mutation.error)}` : ''}
           </Text>
         </View>
         {payload.amount ? (
@@ -395,7 +402,7 @@ function HeldCard({
           />
           <DetailRow
             label={t('outbox.detail.reason')}
-            value={`${statusLabel}\n${mutation.error ?? t('outbox.detail.noReason')}`}
+            value={`${statusLabel}\n${mutation.error ? reasonOf(mutation.error) : t('outbox.detail.noReason')}`}
           />
           <DetailRow label={t('outbox.detail.payload')} value={payloadText(mutation.payload)} mono />
           <DetailRow label={t('outbox.detail.id')} value={mutation.mutationId} mono />

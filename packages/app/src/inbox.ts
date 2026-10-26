@@ -17,10 +17,11 @@
  * 내려받아 기존 규칙보다 먼저 대 본다(`notification-rule`). 돈 표기가 없는 알림(채팅·뉴스)은
  * 올리지 않는다.
  */
+import { useInboxPrefs } from '@money/core/store/inbox-prefs';
 import { draftPort } from '@money/core/data/draft-port';
 import { homeDataPort } from '@money/core/data/home-port';
 import { apiClient } from '@money/core/lib/api-client';
-import { hasMoneyMark, notificationDedupeKey, type ParsedDraft } from '@money/core/lib/draft-parse';
+import { hasMoneyMark, isCaptureSource, isFinanceApp, notificationDedupeKey, type ParsedDraft } from '@money/core/lib/draft-parse';
 import { parseNotificationWithRules, sampleParsedOf } from '@money/core/lib/notification-rule';
 import { persistStorage } from '@money/core/lib/persist-storage';
 import {
@@ -107,6 +108,12 @@ export function collectNotifications(projectId: string): Promise<CollectResult> 
 
 async function collectNotificationsNow(projectId: string): Promise<CollectResult> {
   if (!InboxNative.isAvailable) return EMPTY;
+  /*
+   * 읽기 권한인 가계부에는 후보를 올릴 수 없다(서버가 403). 예전에는 올릴 때마다 막혀 아무 말 없이 버퍼에
+   * 쌓였다. 버퍼는 그대로 두고 건너뛴다 -- 쓸 수 있는 가계부로 바꾸거나 권한이 오르면 그때 올라간다.
+   */
+  const role = useProject.getState().projects.find((project) => project.id === projectId)?.role;
+  if (role === 'viewer') return EMPTY;
 
   const captured = InboxNative.readNotifications();
   if (captured.length === 0) return EMPTY;
@@ -120,8 +127,13 @@ async function collectNotificationsNow(projectId: string): Promise<CollectResult
   /** 금융 알림이 아니어서 후보가 되지 못한 것. 이쪽도 버퍼에서 지운다. */
   const droppedKeys: string[] = [];
 
+  /** 관리자가 읽기 규칙을 만든 앱. 알려진 금융·문자 앱과 함께 후보를 만들 수 있는 출처다 (`isCaptureSource`). */
+  const rulePackages = new Set(rules.filter((rule) => rule.enabled).map((rule) => rule.packageName));
+
   for (const notification of captured) {
-    const parsed = parseNotificationWithRules(notification, rules);
+    const parsed = isCaptureSource(notification.packageName, rulePackages)
+      ? parseNotificationWithRules(notification, rules)
+      : null;
     parsedByKey.set(notification.key, parsed);
     if (!parsed) {
       /*
@@ -252,7 +264,14 @@ async function sendSamples(
   parsedByKey: Map<string, ParsedDraft | null>,
   deviceName: string | null,
 ): Promise<Set<string>> {
-  const money = captured.filter((notification) => hasMoneyMark(notification));
+  /*
+   * 따로 동의한 사람의 것만, 알려진 금융 앱 알림만 보낸다 (2026-10-25, `useInboxPrefs`·`isFinanceApp`). 예전에는
+   * 금액이 적힌 알림이면 메신저 대화까지 보냈고, 안내 문구는 "서버로 보내지 않는다"고 말했다.
+   */
+  if (!useInboxPrefs.getState().shareSamples) return new Set();
+  const money = captured.filter(
+    (notification) => isFinanceApp(notification.packageName) && hasMoneyMark(notification),
+  );
   if (money.length === 0) return new Set();
 
   const samples: NotificationSampleDto.CreateItem[] = money.map((notification) => ({

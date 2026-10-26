@@ -1,58 +1,36 @@
+/**
+ * 리포트 서비스. 합계·일별·구성비·순자산·잔액 추이·달 목록·시계열·결제수단·수익.
+ *
+ * 읽을 범위는 report-scope.ts, 기간 읽기는 report-period.ts, 행 옮기기는 report-rows.ts 에
+ * 있다 (2026-10-26 나눔). 더하는 규칙은 `@money/types` 의 공용 함수가 갖는다.
+ */
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { readEnum } from '@/common/text';
 import { AccountType, CategoryType, Prisma } from '@prisma/client';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
+import { readEnum } from '@/common/text';
 import { ENTRY_INCLUDE, classifyEntry, toListItem } from '../entries/entry-view';
-import {
-  MATCH_NOTHING,
-  assetOwnerCondition,
-  entryFeatureCondition,
-  entryKindCondition,
-  entryPersonCondition,
-  entryTagCondition,
-  entryTextCondition,
-  entrySearchConditions,
-  lineMatcherOf,
-  parseEntryFilter,
-  splitEntryIds,
-  splitList,
-} from '@/common/entry-filter';
+import { lineMatcherOf, parseEntryFilter, splitList } from '@/common/entry-filter';
 import { assertDateKey, assertYearMonth } from '@/common/year-month';
-import { PAYBACK_DATE_SELECT, analysisDateOf, analysisScopes } from '@/common/payback-scope';
+import { analysisScopes } from '@/common/payback-scope';
 import { withBalancesAsOf } from '@/common/balance-as-of';
-import {
-  INSTALLMENT_LEG_SELECT,
-  type InstallmentLeg,
-  type InstallmentSpread,
-  INSTALLMENT_REFUND_SELECT,
-  type InstallmentRefundCuts,
-  spreadRowOf,
-  installmentScope,
-  spreadOf,
-  spreadRows,
-} from '@/common/installment-scope';
+import { installmentScope, spreadOf } from '@/common/installment-scope';
 import {
   DisplayConverter,
   ExchangeRatesService,
 } from '../exchange-rates/exchange-rates.service';
 import {
-  type CategoryPostingRow,
   Dec,
   type EntryBasis,
   installmentEntryViews,
   parseEntryBasis,
-  type LineMatcher,
-  type NamedCategoryPostingRow,
   ReportDto,
   categoryBreakdown,
-  currencyDecimals,
   dailyTotals,
   entryMonths,
   asWeekStart,
   balanceBuckets,
   stackBalanceHistory,
-  DEFAULT_WEEK_START,
   isEntryPeriodUnit,
   DEFAULT_ENTRY_PERIOD,
   isPeriodKey,
@@ -61,7 +39,6 @@ import {
   periodDayRange,
   periodTotals,
   shiftPeriodKey,
-  NO_ACCOUNT,
   parseEntrySearch,
   netWorth,
   type NetWorthAccountRow,
@@ -71,27 +48,29 @@ import {
   nonZeroAmounts,
   groupOfRow,
   isAssetGroupKey,
-  shiftYearMonth,
   summarize,
-  weekStartKey,
-  type WeekStart,
   zonedCurrentYearMonth,
-  zonedDateKey,
-  zonedDateStringToUtc,
   zonedDayStart,
-  zonedMonthRange,
-  zonedParts,
   PROFIT_ACCOUNT_TYPES,
 } from '@money/types';
+import {
+  AGGREGATE_SELECT,
+  REPORT_CATEGORY_TYPES,
+  emptyNetWorth,
+  toAggregateRows,
+  toDecimal,
+  toNamedRows,
+} from './report-rows';
+import { periodLabel, resolvePeriod, resolveWindow } from './report-period';
+import {
+  entryConditions,
+  entryScope,
+  trendByCategoryWhere,
+  trendByPaymentMethodWhere,
+  trendByTagWhere,
+} from './report-scope';
 
 const ZERO = new Prisma.Decimal(0);
-
-/*
- * 계좌 유형의 분류(자본·시가평가·부채)는 `@money/types` 의 net-worth-aggregation 이 갖는다.
- * 기기도 같은 분류로 총자산을 내야 하므로 서버에만 두면 두 벌이 된다.
- */
-/** 리포트가 받는 분류 유형. */
-const REPORT_CATEGORY_TYPES = ['income', 'expense'] as const;
 
 @Injectable()
 export class ReportsService {
@@ -100,80 +79,6 @@ export class ReportsService {
     private readonly projectAccess: ProjectAccessService,
     private readonly exchangeRates: ExchangeRatesService,
   ) {}
-
-  /**
-   * 집계 함수에 넘길 카테고리 다리.
-   *
-   * 더하는 규칙은 `@money/types` 의 report-aggregation 이 갖는다. 기기도 같은 함수를
-   * 쓰기 때문에 서버가 SQL 로 다시 더하면 두 벌이 된다. 여기서는 행을 그 모양으로
-   * 옮겨 주는 일만 한다.
-   */
-  /**
-   * 집계가 다리에서 읽는 것.
-   *
-   * 줄 키와 부모 분류와 전표의 태그가 함께 온다. 분류나 태그로 좁힌 질의에서 **걸린
-   * 줄만** 더하기 위해서다 -- 질의는 전표 수준으로 걸려 분할의 나머지 줄까지 데려온다.
-   * 태그 행은 전표당 두엇이라 다리마다 실려도 가볍다.
-   */
-  private static readonly AGGREGATE_SELECT = {
-    categoryId: true,
-    lineKey: true,
-    baseAmount: true,
-    category: { select: { type: true, parentId: true } },
-    entry: {
-      select: {
-        date: true,
-        tags: { select: { lineKey: true, tagId: true } },
-        /*
-         * 이 거래에 걸린 할부. 회차 기준으로 셀 때만 읽힌다.
-         *
-         * 카드 다리 하나뿐이라 배열이어도 한 줄이다. 발생 기준에서는 쓰이지 않지만
-         * 조건을 나누면 select 가 두 벌이 되어, 늘 싣고 읽는 쪽에서 가린다.
-         */
-        postings: INSTALLMENT_LEG_SELECT,
-        // 페이백이면 원거래의 날짜. 분석은 그 달에 센다 (common/payback-scope).
-        ...PAYBACK_DATE_SELECT,
-        // 할부 환불과 할부 원거래가 줄인 회차 (installment-refund). 회차 기준에서만 읽힌다.
-        ...INSTALLMENT_REFUND_SELECT,
-      },
-    },
-  } as const;
-
-  private toAggregateRows(
-    rows: Array<{
-      categoryId: string | null;
-      lineKey: string | null;
-      baseAmount: Prisma.Decimal;
-      category: { type: CategoryType; parentId: string | null } | null;
-      entry: {
-        date: Date;
-        tags: Array<{ lineKey: string | null; tagId: string }>;
-        postings?: InstallmentLeg[];
-        paybackOf?: { date: Date } | null;
-        installmentAdjust?: unknown;
-        paybacks?: InstallmentRefundCuts;
-      };
-    }>,
-    matchLine?: LineMatcher,
-    /** 회차 기준으로 셀 때만 준다. 없으면 발생 기준이다. */
-    spread?: InstallmentSpread,
-    /** 자산 관점(결제수단 추이)이면 참. 페이백을 들어온 날짜 그대로 센다. */
-    ownDate = false,
-  ): CategoryPostingRow[] {
-    // 계좌 다리는 오지 않지만(질의가 카테고리 다리만 고른다) 타입이 null 을 허용하므로 걸러 둔다.
-    const mapped = rows.flatMap((row) => {
-      if (!(row.categoryId && row.category && this.lineMatches(row, matchLine))) return [];
-      const base: CategoryPostingRow = {
-        categoryId: row.categoryId,
-        categoryType: row.category.type,
-        baseAmount: row.baseAmount as CategoryPostingRow['baseAmount'],
-        date: (ownDate ? row.entry.date : analysisDateOf(row.entry)) as CategoryPostingRow['date'],
-      };
-      // 회차 기준이면 할부를 펴고, 할부 환불은 남은 몫만 환불한 날에 센다 (spreadRowOf).
-      return [spread ? spreadRowOf(base, row) : base];
-    });
-    return spread ? spreadRows(mapped, spread) : mapped;
-  }
 
   /**
    * 회차 기준의 질의 두 벌. 발생 기준이면 지금까지의 한 벌 그대로다.
@@ -213,31 +118,6 @@ export class ReportsService {
     return [...plain, ...installments];
   }
 
-  /** 이 다리가 검색 조건에 걸린 줄인가. 조건이 없으면 언제나 참이다. */
-  private lineMatches(
-    row: {
-      categoryId: string | null;
-      lineKey: string | null;
-      category: { parentId: string | null } | null;
-      entry: { tags: Array<{ lineKey: string | null; tagId: string }> };
-    },
-    matchLine?: LineMatcher,
-  ): boolean {
-    if (!matchLine) return true;
-    return matchLine({
-      categoryId: row.categoryId,
-      parentCategoryId: row.category?.parentId ?? null,
-      tagIds: row.entry.tags
-        .filter((tag) => tag.lineKey !== null && tag.lineKey === row.lineKey)
-        .map((tag) => tag.tagId),
-    });
-  }
-
-  /** 집계 결과를 표시 환산기에 넣을 수 있는 모양으로. */
-  private toDecimal(value: Dec): Prisma.Decimal {
-    return new Prisma.Decimal(value.toString());
-  }
-
   /**
    * 표시 환산기. 저장 통화로 집계한 값을 표시 통화로 옮긴다.
    *
@@ -260,8 +140,8 @@ export class ReportsService {
       userId,
       query.projectId,
     );
-    const range = this.resolvePeriod(query, timeZone);
-    const scope = await this.entryScope(projectId, range, query);
+    const range = resolvePeriod(query, timeZone);
+    const scope = await entryScope(this.prisma, projectId, range, query);
     /*
      * 합계는 전부 기준통화 환산액이다. amount는 그 다리의 통화라 섞으면 못 더한다.
      *
@@ -274,10 +154,10 @@ export class ReportsService {
       basis,
       postingWhere: { categoryId: { not: null } },
       scope,
-      select: ReportsService.AGGREGATE_SELECT,
+      select: AGGREGATE_SELECT,
     });
     const totals = summarize(
-      this.toAggregateRows(
+      toAggregateRows(
         rows,
         lineMatcherOf(parseEntrySearch(query)),
         spreadOf(basis, timeZone, { gte: range.start, lt: range.end }),
@@ -285,9 +165,9 @@ export class ReportsService {
     );
 
     const show = await this.displayConverter(projectId);
-    const asString = (value: Dec) => show.toString(this.toDecimal(value));
+    const asString = (value: Dec) => show.toString(toDecimal(value));
     return {
-      ...this.periodLabel(query, range, timeZone),
+      ...periodLabel(query, range, timeZone),
       income: asString(totals.income),
       expense: asString(totals.expense),
       net: asString(totals.net),
@@ -311,7 +191,7 @@ export class ReportsService {
       userId,
       query.projectId,
     );
-    const range = this.resolvePeriod(query, timeZone);
+    const range = resolvePeriod(query, timeZone);
     // 쿼리스트링은 문자열로 도착한다. 아는 값이 아니면 지출이다.
     const isIncome = query.type === 'income';
     const type = isIncome ? CategoryType.income : CategoryType.expense;
@@ -319,13 +199,13 @@ export class ReportsService {
     const postings = await this.aggregatePostings({
       basis,
       postingWhere: { category: { type } },
-      scope: await this.entryScope(projectId, range, query),
-      select: ReportsService.AGGREGATE_SELECT,
+      scope: await entryScope(this.prisma, projectId, range, query),
+      select: AGGREGATE_SELECT,
     });
 
     // 날짜별로 묶는 규칙은 공용 함수가 갖는다.
     const days = dailyTotals(
-      this.toAggregateRows(
+      toAggregateRows(
         postings,
         lineMatcherOf(parseEntrySearch(query)),
         spreadOf(basis, timeZone, { gte: range.start, lt: range.end }),
@@ -336,7 +216,7 @@ export class ReportsService {
     const show = await this.displayConverter(projectId);
     return days.map((day) => ({
       date: day.date,
-      amount: show.toString(this.toDecimal(day.amount)),
+      amount: show.toString(toDecimal(day.amount)),
     }));
   }
 
@@ -349,7 +229,7 @@ export class ReportsService {
       userId,
       query.projectId,
     );
-    const range = this.resolvePeriod(query, timeZone);
+    const range = resolvePeriod(query, timeZone);
     // 쿼리스트링 값은 문자열로 도착한다. 이 DTO는 클래스가 아니라 인터페이스라서
     // ValidationPipe의 암묵 변환이 걸리지 않고 ?rollup=false 가 'false' 문자열로 들어온다.
     // 불리언 비교만 하면 항상 롤업이 켜져서 소분류 구성비를 볼 수 없다.
@@ -367,9 +247,9 @@ export class ReportsService {
     const rows = await this.aggregatePostings({
       basis,
       postingWhere: { category: { type } },
-      scope: await this.entryScope(projectId, range, query),
+      scope: await entryScope(this.prisma, projectId, range, query),
       select: {
-        ...ReportsService.AGGREGATE_SELECT,
+        ...AGGREGATE_SELECT,
         category: {
           select: {
             type: true,
@@ -383,23 +263,7 @@ export class ReportsService {
 
     const matchLine = lineMatcherOf(parseEntrySearch(query));
     const spread = spreadOf(basis, timeZone, { gte: range.start, lt: range.end });
-    const named: NamedCategoryPostingRow[] = rows.flatMap((row) => {
-      if (!(row.categoryId && row.category && this.lineMatches(row, matchLine))) return [];
-      const base: NamedCategoryPostingRow = {
-        categoryId: row.categoryId,
-        categoryType: row.category.type,
-        categoryName: row.category.name,
-        parentCategoryId: row.category.parent?.id ?? null,
-        parentCategoryName: row.category.parent?.name ?? null,
-        baseAmount: row.baseAmount as NamedCategoryPostingRow['baseAmount'],
-        // 페이백이면 원거래의 날짜 (toAggregateRows 와 같다).
-        date: analysisDateOf(row.entry) as NamedCategoryPostingRow['date'],
-      };
-      // 회차 기준이면 할부를 펴고, 할부 환불은 남은 몫만 환불한 날에 센다 (spreadRowOf).
-      return [spread ? spreadRowOf(base, row) : base];
-    });
-    // 회차 기준이면 줄마다 회차로 펴고 창 밖은 버린다. 이름은 그대로 따라간다.
-    const counted = spread ? spreadRows(named, spread) : named;
+    const counted = toNamedRows(rows, matchLine, spread);
 
     const buckets = categoryBreakdown(counted, { type, rollup });
     const show = await this.displayConverter(projectId);
@@ -409,7 +273,7 @@ export class ReportsService {
       categoryName: bucket.categoryName,
       parentCategoryId: bucket.parentCategoryId,
       parentCategoryName: bucket.parentCategoryName,
-      amount: show.toString(this.toDecimal(bucket.amount)),
+      amount: show.toString(toDecimal(bucket.amount)),
       count: bucket.count,
       ratio: bucket.ratio,
     }));
@@ -711,14 +575,10 @@ export class ReportsService {
       buckets,
     }).map((point) => ({
       date: point.label,
-      balance: show.toString(this.toDecimal(point.total)),
+      balance: show.toString(toDecimal(point.total)),
     }));
   }
 
-  /**
-   * 월별 시계열. BudgetDetailModal과 PaymentMethodTab이 각자 구현하던 것을 하나로 합쳤다.
-   * 월 단위 그룹핑은 Prisma groupBy가 못 하므로 date_trunc를 쓴다.
-   */
   /**
    * 거래가 있는 달만, 최신 달부터. 거래 화면의 첫 목록이다.
    *
@@ -747,34 +607,9 @@ export class ReportsService {
     const search = parseEntrySearch(query);
     if (filter.matchNothing || search.matchNothing) return [];
 
-    const owner = assetOwnerCondition(filter);
+    const window = resolveWindow(query, timeZone);
     // 검색은 전표 수준으로 걸린다 (entryScope 와 같은 이유).
-    const kindCondition = entryKindCondition(search.kinds);
-    // 태그도 전표에 붙으므로 유형과 같은 자리에 온다. "태그 없음"도 이 무리다.
-    const tagCondition = entryTagCondition(search.tagIds, search.noTag);
-    // 설명의 글자와 낸 사람도 전표에 있다.
-    const textCondition = entryTextCondition(search.text);
-    const personCondition = entryPersonCondition(search.entryPersonIds);
-    const window = this.resolveWindow(query, timeZone);
-    // 모양(분할·할부). 분할은 분류 다리를 세어야 해서 id 를 먼저 받아 온다.
-    const featureCondition = entryFeatureCondition(
-      search.features,
-      search.features?.includes('split')
-        ? await splitEntryIds(this.prisma, {
-            projectId,
-            ...(window ? { date: window } : {}),
-          })
-        : undefined,
-    );
-    const conditions = [
-      ...(owner ? [owner] : []),
-      ...(kindCondition ? [kindCondition] : []),
-      ...(tagCondition ? [tagCondition] : []),
-      ...(textCondition ? [textCondition] : []),
-      ...(personCondition ? [personCondition] : []),
-      ...(featureCondition ? [featureCondition] : []),
-      ...entrySearchConditions(search).map((posting) => ({ postings: { some: posting } })),
-    ];
+    const conditions = await entryConditions(this.prisma, projectId, filter, search, window);
     const scope = {
       projectId,
       ...(window ? { date: window } : {}),
@@ -791,7 +626,7 @@ export class ReportsService {
         basis,
         postingWhere: { categoryId: { not: null } },
         scope,
-        select: ReportsService.AGGREGATE_SELECT,
+        select: AGGREGATE_SELECT,
         ownDate: true,
       }),
       /*
@@ -835,7 +670,7 @@ export class ReportsService {
      * 회차에는 전표가 없다. 편 줄의 날짜를 함께 넘겨야 그 달이 목록에 선다.
      */
     const spread = spreadOf(basis, timeZone, window);
-    const counted = this.toAggregateRows(rows, lineMatcherOf(search), spread, true);
+    const counted = toAggregateRows(rows, lineMatcherOf(search), spread, true);
     const monthDates = [
       ...dates.map((row) => row.date),
       ...(spread
@@ -853,12 +688,16 @@ export class ReportsService {
     }).map(
       (month) => ({
         yearMonth: month.yearMonth,
-        income: show.toString(this.toDecimal(month.income)),
-        expense: show.toString(this.toDecimal(month.expense)),
+        income: show.toString(toDecimal(month.income)),
+        expense: show.toString(toDecimal(month.expense)),
       }),
     );
   }
 
+  /**
+   * 기간별 시계열. 예산 상세와 결제수단 탭이 각자 구현하던 것을 하나로 합쳤다.
+   * 고르는 일은 질의가, 기간으로 묶어 더하는 일은 공용 함수(`periodTotals`)가 한다.
+   */
   async getTrend(userId: string, query: ReportDto.TrendQuery): Promise<ReportDto.TrendPoint[]> {
     const { id: projectId, timeZone } = await this.projectAccess.resolveProject(
       userId,
@@ -907,17 +746,17 @@ export class ReportsService {
     // 다리 조건과 전표 조건을 갈라 둔다. 회차 기준이 전표 쪽만 넓혀 다시 묻기 때문이다.
     const { entry: trendScope, ...postingWhere } =
       query.target === 'account' || query.target === 'card'
-        ? this.trendByPaymentMethodWhere(projectId, query, start, end)
+        ? trendByPaymentMethodWhere(projectId, query, start, end)
         : query.target === 'tag'
-          ? await this.trendByTagWhere(projectId, query, start, end)
-          : await this.trendByCategoryWhere(projectId, query, start, end);
+          ? await trendByTagWhere(this.prisma, projectId, query, start, end)
+          : await trendByCategoryWhere(this.prisma, projectId, query, start, end);
     // 결제수단 추이는 자산 관점이다. 페이백은 그 수단에 들어온 날짜에 선다.
     const byPaymentMethod = query.target === 'account' || query.target === 'card';
     const rows = await this.aggregatePostings({
       basis,
       postingWhere: { categoryId: { not: null }, ...postingWhere },
       scope: (trendScope ?? {}) as Prisma.JournalEntryWhereInput,
-      select: ReportsService.AGGREGATE_SELECT,
+      select: AGGREGATE_SELECT,
       ownDate: byPaymentMethod,
     });
 
@@ -936,7 +775,7 @@ export class ReportsService {
           ? undefined
           : lineMatcherOf(parseEntrySearch(query));
     const points = periodTotals(
-      this.toAggregateRows(
+      toAggregateRows(
         rows,
         matchLine,
         spreadOf(basis, timeZone, { gte: start, lt: end }),
@@ -948,107 +787,8 @@ export class ReportsService {
     const show = await this.displayConverter(projectId);
     return points.map((point) => ({
       yearMonth: point.yearMonth,
-      amount: show.toString(this.toDecimal(point.amount)),
+      amount: show.toString(toDecimal(point.amount)),
     }));
-  }
-
-  /** 카테고리(또는 전체) 기준. 대분류를 지정하면 소분류까지 포함한다. 검색 조건도 건다. */
-  private async trendByCategoryWhere(
-    projectId: string,
-    query: ReportDto.TrendQuery,
-    start: Date,
-    end: Date,
-  ): Promise<Prisma.PostingWhereInput> {
-    // 쿼리스트링 값은 문자열로 도착한다 (DTO가 인터페이스라 암묵 변환이 없다).
-    const exact = query.exact === true || (query.exact as unknown) === 'true';
-
-    const target: Prisma.PostingWhereInput =
-      query.target === 'category'
-        ? exact
-          ? // "미분류": 대분류에 바로 기록한 건만 본다.
-            { categoryId: query.targetId }
-          : {
-              OR: [
-                { categoryId: query.targetId },
-                { category: { parentId: query.targetId } },
-              ],
-            }
-        : { category: { type: (readEnum(query.type, REPORT_CATEGORY_TYPES, '유형') ?? 'expense') } };
-
-    // 사람 필터에 거래 화면의 검색이 얹힌 범위. 합계·구성비가 쓰는 것과 같다.
-    return { ...target, entry: await this.entryScope(projectId, { start, end }, query) };
-  }
-
-  /** 태그 기준. 그 태그가 붙은 전표의 분류 다리를 고른다 -- 줄은 판정기가 가른다. */
-  private async trendByTagWhere(
-    projectId: string,
-    query: ReportDto.TrendQuery,
-    start: Date,
-    end: Date,
-  ): Promise<Prisma.PostingWhereInput> {
-    if (!query.targetId) throw new BadRequestException('태그를 골라 주세요.');
-    return {
-      category: { type: (readEnum(query.type, REPORT_CATEGORY_TYPES, '유형') ?? 'expense') },
-      entry: await this.entryScope(projectId, { start, end }, { ...query, tagIds: query.targetId }),
-    };
-  }
-
-  /**
-   * 결제수단(계좌/카드) 기준 월별 지출 합계.
-   *
-   * 금액은 카테고리 posting에서 가져오고, 결제수단은 "돈이 나간 계좌 다리"로 판별한다.
-   *   - 음수 조건: 이체의 받는 계좌(+)에 지출이 잡히는 중복을 막는다.
-   *   - cardId IS NULL: 체크카드 결제는 연결 통장에도 걸리므로 계좌 집계에서 뺀다.
-   *
-   * 이체 수수료는 보내는 계좌의 지출로 잡힌다. 이체 금액 자체는 카테고리 다리가 없어
-   * 합계에 들어가지 않으므로, 수수료만 정확히 반영된다.
-   */
-  private trendByPaymentMethodWhere(
-    projectId: string,
-    query: ReportDto.TrendQuery,
-    start: Date,
-    end: Date,
-  ): Prisma.PostingWhereInput {
-    /*
-     * 수단별의 미지정 칸은 id 자리에 `NO_ACCOUNT` 를 들고 온다. 화면은 미지정 계정의 id 를
-     * 모르므로(목록에 내려가지 않는다) 여기서 유형으로 바꿔 읽는다.
-     */
-    const accountTarget: Prisma.PostingWhereInput =
-      query.targetId === NO_ACCOUNT
-        ? { account: { type: AccountType.unassigned } }
-        : { accountId: query.targetId };
-    const method: Prisma.PostingWhereInput =
-      query.target === 'card'
-        ? { cardId: query.targetId, amount: { lt: 0 } }
-        : { ...accountTarget, cardId: null, amount: { lt: 0 } };
-
-    return {
-      category: { type: CategoryType.expense },
-      entry: {
-        ...this.trendEntryScope(projectId, query, start, end),
-        // 그 수단으로 돈이 나간 다리가 있는 전표만.
-        postings: { some: method },
-      },
-    };
-  }
-
-  /** 시계열이 보는 전표 범위. 기간과 사람 필터는 목록·합계와 같은 규칙을 쓴다. */
-  private trendEntryScope(
-    projectId: string,
-    query: ReportDto.TrendQuery,
-    start: Date,
-    end: Date,
-  ): Prisma.JournalEntryWhereInput {
-    const filter = parseEntryFilter(query);
-    // 아무도 고르지 않았으면 한 건도 나오지 않아야 한다.
-    if (filter.matchNothing) return { ...MATCH_NOTHING, projectId };
-
-    const owner = assetOwnerCondition(filter);
-    return {
-      projectId,
-      date: { gte: start, lt: end },
-      ...(owner ?? {}),
-    };
   }
 
   /**
@@ -1068,10 +808,10 @@ export class ReportsService {
       userId,
       query.projectId,
     );
-    const range = this.resolvePeriod(query, timeZone);
+    const range = resolvePeriod(query, timeZone);
 
     const basis = parseEntryBasis(query.basis);
-    const scope = await this.entryScope(projectId, range, query);
+    const scope = await entryScope(this.prisma, projectId, range, query);
     /*
      * 회차 기준이면 **앞에서 산 할부도 이 구간의 거래가 된다.**
      *
@@ -1214,151 +954,6 @@ export class ReportsService {
   }
 
   /**
-   * 월 집계의 전표 범위.
-   *
-   * 자산 주인 필터는 목록(/entries)과 같은 규칙을 쓴다. 목록만 걸러 놓으면
-   * 상단 합계와 소계가 어긋난다.
-   */
-  /**
-   * 집계 구간을 정한다.
-   *
-   * startDate/endDate 를 주면 그 구간을, 아니면 yearMonth 의 한 달을 본다.
-   * 날짜는 프로젝트 타임존의 달력 날짜이고 **양끝을 포함한다**. 끝날을 그대로
-   * 상한으로 쓰면 그날 0시 이후의 거래가 전부 빠지므로 다음 날 0시를 상한으로 삼는다
-   * (entryScope 가 `date < end` 로 거른다).
-   */
-  private resolvePeriod(
-    query: ReportDto.PeriodQuery,
-    timeZone: string,
-  ): { start: Date; end: Date } {
-    const { startDate, endDate } = query;
-
-    if (!startDate && !endDate) {
-      return zonedMonthRange(assertYearMonth(query.yearMonth ?? '', '조회 월'), timeZone);
-    }
-    if (!startDate || !endDate) {
-      throw new BadRequestException('기간은 시작일과 종료일을 함께 지정해야 합니다.');
-    }
-
-    const start = assertDateKey(startDate, '시작일');
-    const end = assertDateKey(endDate, '종료일');
-    if (start > end) {
-      throw new BadRequestException('시작일이 종료일보다 뒤입니다.');
-    }
-
-    const [year, month, day] = end.split('-').map(Number);
-    return {
-      start: zonedDateStringToUtc(start, timeZone),
-      // 하루를 더한다. Date 생성자가 월·연 넘김을 처리하므로 말일을 따로 보지 않는다.
-      end: zonedDayStart(year, month, day + 1, timeZone),
-    };
-  }
-
-  /**
-   * 기간을 받을 수도 있고 안 받을 수도 있는 조회의 구간.
-   *
-   * `resolvePeriod` 와 규칙이 같다 -- 달력 날짜, 양끝 포함, 끝날은 다음 날 0시를
-   * 상한으로 삼는다. 다른 점은 **없어도 된다**는 것과 **한쪽만 와도 된다**는 것이다.
-   *
-   * 한쪽만 온 것은 열린 구간이다. 시작일만 적으면 그날부터 끝까지, 종료일만 적으면
-   * 처음부터 그날까지다. "이 날 이후에 쓴 것"은 반쪽짜리 입력이 아니라 그 자체로
-   * 사용자가 묻는 것이라, 나머지 칸을 채우게 하는 대신 그대로 건다.
-   */
-  private resolveWindow(
-    query: { startDate?: string; endDate?: string },
-    timeZone: string,
-  ): { gte?: Date; lt?: Date } | null {
-    const { startDate, endDate } = query;
-    if (!startDate && !endDate) return null;
-
-    const start = startDate ? assertDateKey(startDate, '시작일') : undefined;
-    const end = endDate ? assertDateKey(endDate, '종료일') : undefined;
-    if (start && end && start > end) {
-      throw new BadRequestException('시작일이 종료일보다 뒤입니다.');
-    }
-
-    const window: { gte?: Date; lt?: Date } = {};
-    if (start) window.gte = zonedDateStringToUtc(start, timeZone);
-    if (end) {
-      const [year, month, day] = end.split('-').map(Number);
-      // 하루를 더한다. Date 생성자가 월·연 넘김을 처리하므로 말일을 따로 보지 않는다.
-      window.lt = zonedDayStart(year, month, day + 1, timeZone);
-    }
-    return window;
-  }
-
-  /** 응답에 실을 구간 표시. 한 달을 본 경우에는 yearMonth 도 함께 준다. */
-  private periodLabel(
-    query: ReportDto.PeriodQuery,
-    range: { start: Date; end: Date },
-    timeZone: string,
-  ) {
-    const startParts = zonedParts(range.start, timeZone);
-    // end 는 다음 날 0시라 하루를 빼야 사용자가 고른 종료일이 된다.
-    const endParts = zonedParts(new Date(range.end.getTime() - 1), timeZone);
-    const key = (p: { year: number; month: number; day: number }) =>
-      `${p.year}-${String(p.month).padStart(2, '0')}-${String(p.day).padStart(2, '0')}`;
-
-    return {
-      startDate: key(startParts),
-      endDate: key(endParts),
-      ...(query.startDate && query.endDate ? {} : { yearMonth: query.yearMonth }),
-    };
-  }
-
-  private async entryScope(
-    projectId: string,
-    range: { start: Date; end: Date },
-    query: ReportDto.PeriodQuery,
-  ): Promise<Prisma.JournalEntryWhereInput> {
-    const filter = parseEntryFilter(query);
-    const search = parseEntrySearch(query);
-    // 아무것도 고르지 않았으면 어떤 전표도 걸리지 않아야 한다.
-    if (filter.matchNothing || search.matchNothing) return { projectId, ...MATCH_NOTHING };
-
-    const owner = assetOwnerCondition(filter);
-    /*
-     * 거래 화면의 검색이 여기로 함께 들어온다.
-     *
-     * 조건을 **전표 수준**으로 건다. 다리 자신이 검색에 맞는지 보는 것이 아니라
-     * "그런 다리를 가진 전표인가"를 본다. 그래서 식비를 찾으면 식비가 섞인 분할 거래가
-     * 통째로 들고, 그 달의 합계는 화면에 보이는 거래들의 합과 같아진다. 다리 쪽으로
-     * 걸면 목록에는 있는 거래의 일부 금액이 합계에서 빠져 둘이 어긋난다.
-     */
-    const kindCondition = entryKindCondition(search.kinds);
-    // 태그도 전표에 붙으므로 유형과 같은 자리에 온다. "태그 없음"도 이 무리다.
-    const tagCondition = entryTagCondition(search.tagIds, search.noTag);
-    // 설명의 글자와 낸 사람도 전표에 있다.
-    const textCondition = entryTextCondition(search.text);
-    const personCondition = entryPersonCondition(search.entryPersonIds);
-    // 모양(분할·할부). 분할은 분류 다리를 세어야 해서 id 를 먼저 받아 온다.
-    const featureCondition = entryFeatureCondition(
-      search.features,
-      search.features?.includes('split')
-        ? await splitEntryIds(this.prisma, {
-            projectId,
-            date: { gte: range.start, lt: range.end },
-          })
-        : undefined,
-    );
-    const conditions = [
-      ...(owner ? [owner] : []),
-      ...(kindCondition ? [kindCondition] : []),
-      ...(tagCondition ? [tagCondition] : []),
-      ...(textCondition ? [textCondition] : []),
-      ...(personCondition ? [personCondition] : []),
-      ...(featureCondition ? [featureCondition] : []),
-      ...entrySearchConditions(search).map((posting) => ({ postings: { some: posting } })),
-    ];
-
-    return {
-      projectId,
-      date: { gte: range.start, lt: range.end },
-      ...(conditions.length > 0 ? { AND: conditions } : {}),
-    };
-  }
-
-  /**
    * 계좌별 장부가 (기준통화).
    *
    * 외화 계좌의 balance는 그 통화라서 순자산에 바로 못 넣는다. 장부가는 거래마다
@@ -1393,31 +988,3 @@ export class ReportsService {
     return new Map(rows.map((r) => [r.accountId, r.marketValue]));
   }
 }
-
-
-/**
- * date_trunc 결과가 속한 "YYYY-MM".
- *
- * SQL에서 프로젝트 타임존의 벽시계로 자른 값이라 인스턴트가 아니다.
- * Prisma가 `timestamp`를 UTC로 읽어 주므로 UTC 필드가 곧 그 지역의 벽시계 값이다.
- */
-
-function pad(value: number): string {
-  return String(value).padStart(2, '0');
-}
-
-function emptyNetWorth(): ReportDto.NetWorth {
-  return {
-    total: '0',
-    cash: '0',
-    investment: '0',
-    liability: '0',
-    unrealizedGain: '0',
-    byType: {},
-    byGroup: {},
-    byAccount: [],
-    byPerson: [],
-  };
-}
-
-

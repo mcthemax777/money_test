@@ -12,49 +12,39 @@
  * **저장은 창구로 나간다.** 온라인이면 서버로, 오프라인이면 기기 사본과 아웃박스로 간다.
  * 이 컴포넌트는 어느 쪽인지 모른다 (core 의 entry-write-port).
  */
-import { useEffect, useRef, useState } from 'react';
-import { Alert, Animated, Pressable, Text, TextInput, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Pressable, Text, TextInput, View } from 'react-native';
 import { ChevronDown } from 'lucide-react-native';
-import type { EntryDraftDto, EntryListItem, TagDto } from '@money/types';
+import type { EntryDraftDto, EntryListItem } from '@money/types';
 
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useEntryForm } from '@money/core/hooks/useEntryForm';
 import { usePaybackDrafts } from '@money/core/hooks/usePaybackDrafts';
 import { ENTRY_FORM_VIOLATION_KEY } from '@money/core/lib/entry-form-messages';
 import {
-  installmentInterestInputs,
-  installmentShareInputs,
-  installmentShareTotal,
-} from '@money/core/lib/period-ledger';
-import { useQuickAdd, type QuickAddResult } from '@money/core/hooks/useQuickAdd';
-import {
-  filledSubCategories,
-  type CategoryFormValues,
-} from '@money/core/hooks/useCategoryManager';
-import {
-  accountValue,
-  cardValue,
-  parseMethod,
   showDiscountPerformance,
-  installmentBaseAmount,
   totalDiscountOf,
   type EntryFormKind,
   type EntryFormValues,
   paybackMethodOf,
 } from '@money/core/data/entry-form';
-import { formatCurrency, formatNumber, toNumber } from '@money/core/lib/money';
-import { paybackCountOf, paybackDeleteNote } from '@money/core/hooks/usePaybacks';
+import { formatCurrency, toNumber } from '@money/core/lib/money';
 import { useMyPersonId, useProject, useProjectTimeZone } from '@money/core/store/project';
 
-import { AddAccountModal, AddCardModal, AddPersonModal } from './AssetAddModals';
 import DatePickerPanel from './DatePickerPanel';
-import { CategoryChips, CheckRow, Chip, Chips, Field, PickerButton, openTimeKeyPicker } from './FormFields';
+import EntryInstallmentField from './EntryInstallmentField';
+import EntryQuickAddModals from './EntryQuickAddModals';
+import EntrySplitField from './EntrySplitField';
+import EntryTransferFields from './EntryTransferFields';
+import { CategoryChips, CheckRow, Chips, Field, PickerButton, openTimeKeyPicker } from './FormFields';
 import Modal from './Modal';
 import PaybackEditor, { type PaybackTarget } from './PaybackEditor';
 import PaybackFormSection from './PaybackFormSection';
 import SegmentedTabs from './SegmentedTabs';
 import { OptionModal } from './SettingPicker';
-import { AddCategoryModal, AddTagModal } from './QuickAddModals';
+import TagChips from './TagChips';
+import { useEntryEditorSubmit } from './useEntryEditorSubmit';
+import { useEntryQuickAdd } from './useEntryQuickAdd';
 
 /** 갈래 넷. 조정(잔액 맞추기)은 이 폼이 만드는 것이 아니라 여기 없다. */
 const KINDS: Array<{ id: EntryFormKind; labelKey: MessageKey }> = [
@@ -150,130 +140,10 @@ export default function EntryEditor({
           }))
         : [{ lineKey: values.lineKey, categoryId: values.categoryId, label: categoryNameOf(values.categoryId) }];
 
-  const quickAdd = useQuickAdd(projectId);
-
-  /**
-   * 지금 열려 있는 만들기 창. null 이면 없다.
-   *
-   * 한 번에 하나만 연다 -- 폼 위에 창을 겹쳐 쌓으면 어느 것을 닫는 중인지 알 수 없다.
-   * 'method' 는 통장인지 카드인지를 묻는 갈림길이다 (결제수단 칸이 둘을 한 목록에서
-   * 고르게 하므로 무엇을 만들지는 여기서 묻는다 -- 웹과 같다).
+  /*
+   * 고르는 칸 옆의 "+"로 그 자리에서 만드는 일. 창은 아래 EntryQuickAddModals 가 그린다.
    */
-  const [adding, setAdding] = useState<
-    null | 'method' | 'person' | 'account' | 'card' | 'category' | 'tag'
-  >(null);
-
-  // 팝업을 닫으면 그 위의 창도 함께 접는다. 다시 열었을 때 남아 있으면 안 된다.
-  useEffect(() => {
-    if (!isOpen) setAdding(null);
-  }, [isOpen]);
-
-  /**
-   * 만들고 나서 그 값을 곧바로 고른다.
-   *
-   * 목록을 다시 읽어야 알약 줄에 나타나고, 만든 id 를 폼에 꽂아야 고르러 한 번 더
-   * 누르지 않는다. 실패는 그대로 돌려준다 -- 창이 닫히지 않고 그 자리에 이유를 적는다.
-   */
-  const addThenPick = async (
-    making: Promise<QuickAddResult>,
-    pick: (id: string) => void,
-  ): Promise<QuickAddResult> => {
-    const result = await making;
-    if (result.ok && result.id) {
-      await form.reloadLists();
-      pick(result.id);
-    }
-    return result;
-  };
-
-  /** 새 분류의 유형. 거래의 갈래가 정한다 (form.categoryChoices 와 같은 규칙). */
-  const categoryType = values.kind === 'income' ? 'income' : 'expense';
-
-  /**
-   * 분류를 만든다. 대분류 하나와, 적어 둔 소분류들.
-   *
-   * 곧바로 고를 하나의 id 를 함께 돌려준다 -- 소분류를 하나만 적었으면 그것이 적으려던
-   * 분류이고, 아니면 대분류다 (여럿을 적었으면 어느 것인지 알 수 없다).
-   *
-   * 소분류를 만들다 실패해도 대분류는 되돌리지 않는다. 만들어진 것을 지우면 그 사이
-   * 남이 쓴 분류를 지우게 될 수 있고, 목록에 남아 있으면 사용자가 이어서 손볼 수 있다.
-   */
-  /**
-   * 이 편집기에서 만든 분류 (대분류는 유형|이름, 소분류는 대분류id|이름 -> id). 소분류가 실패해 다시 시도할 때
-   * 이미 만든 것을 또 만들지 않는다.
-   */
-  const madeParents = useRef(new Map<string, string>());
-  const createCategory = async ({
-    values,
-    parentId,
-  }: {
-    values: CategoryFormValues;
-    parentId?: string;
-  }): Promise<QuickAddResult> => {
-    /*
-     * 붙일 대분류를 골랐으면 그것을 쓰고, 아니면 새로 만든다. 앞 시도에서 이미 만든 대분류가 있으면 그것을 쓴다
-     * (2026-10-21) -- 소분류가 실패한 뒤 다시 누르면 대분류를 또 만들려다 이름이 겹쳐 영영 실패했다.
-     */
-    const parentKey = `${values.type}|${values.name.trim()}`;
-    let parent = parentId ?? madeParents.current.get(parentKey);
-    if (!parent) {
-      const made = await quickAdd.addCategory({ name: values.name, type: values.type });
-      if (!made.ok || !made.id) return made;
-      parent = made.id;
-      madeParents.current.set(parentKey, parent);
-    }
-
-    // 이미 있는 소분류(앞 시도에서 만든 것)는 건너뛴다. 같은 이름을 다시 만들면 또 겹친다.
-    const existingSubs = new Map(
-      form.lists.categories
-        .filter((category) => category.parentId === parent)
-        .map((category) => [category.name, category.id]),
-    );
-    const madeSubs: string[] = [];
-    for (const row of filledSubCategories(values.subCategories)) {
-      const subKey = `${parent}|${row.name.trim()}`;
-      // 목록이 아직 따라오지 않았을 수 있어 이 편집기가 만든 것도 함께 본다.
-      const already = existingSubs.get(row.name.trim()) ?? madeParents.current.get(subKey);
-      if (already) {
-        madeSubs.push(already);
-        continue;
-      }
-      const made = await quickAdd.addCategory({
-        name: row.name.trim(),
-        type: values.type,
-        parentId: parent,
-      });
-      if (!made.ok) return made;
-      if (made.id) {
-        madeSubs.push(made.id);
-        madeParents.current.set(subKey, made.id);
-      }
-    }
-
-    return { ok: true, id: madeSubs.length === 1 ? madeSubs[0] : parent };
-  };
-
-
-  /** 새 통장의 주인. 폼에서 고른 거래자이고, 아직 없으면 첫 구성원이다. */
-  const newAccountOwner =
-    form.lists.people.find((person) => person.id === values.personId) ??
-    form.lists.people.find((person) => person.isActive) ??
-    null;
-
-  /**
-   * 새 카드의 결제 통장.
-   *
-   * 지금 고른 결제수단이 통장이면 그것, 아니면 고를 수 있는 첫 통장이다. 고를 수 있는
-   * 것은 결제수단 목록이 이미 가려 두었다 -- 카드 부채 계정과 자본 계정은 빠져 있다.
-   */
-  const newCardAccount = (() => {
-    const ids = form.methodChoices
-      .map((choice) => parseMethod(choice.value).accountId)
-      .filter((id): id is string => Boolean(id));
-    const chosen = parseMethod(values.method).accountId;
-    const id = chosen && ids.includes(chosen) ? chosen : ids[0];
-    return form.lists.accounts.find((account) => account.id === id) ?? null;
-  })();
+  const quick = useEntryQuickAdd({ projectId, isOpen, form });
 
   /**
    * 달력이 펼쳐져 있는가.
@@ -367,91 +237,17 @@ export default function EntryEditor({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, editing, copying, draft]);
 
-  /*
-   * 저장. 지출과 함께 적은 페이백은 지출이 저장된 뒤에 건다.
-   *
-   * 페이백을 저장하다 실패하면 창을 닫지 않는다. 지출은 이미 저장되었고 폼은 그 지출을
-   * 고치는 폼이 되어 있다(useEntryForm.save) -- 다시 누르면 남은 페이백만 저장한다.
-   */
-  /*
-   * 저장·지우기가 나가 있는가 (2026-10-16).
-   *
-   * form.isSubmitting 은 지출 저장이 끝나면 풀리는데, 그 뒤에 페이백 저장이 이어진다. 그 사이 다시
-   * 누르면 같은 페이백을 또 만든다. 상태는 다시 그린 뒤에야 단추를 막으므로 곧바로 바뀌는 ref 로도
-   * 막는다. 지우기는 확인 창을 띄우기 전에 페이백 수를 세느라 기다리므로, 두 번 누르면 창이 둘 뜬다.
-   */
-  const busyRef = useRef(false);
-  const [isSaving, setIsSaving] = useState(false);
-  const isBusy = form.isSubmitting || isSaving;
-
-  const save = async () => {
-    if (busyRef.current) return;
-    busyRef.current = true;
-    setIsSaving(true);
-    try {
-      await saveAll();
-    } finally {
-      busyRef.current = false;
-      setIsSaving(false);
-    }
-  };
-
-  const saveAll = async () => {
-    setPaybackError('');
-    if (values.kind === 'expense') {
-      const found = paybackDrafts.check(paybackLines);
-      if (found) {
-        setPaybackError(found);
-        return;
-      }
-    }
-    const savedId = await form.save();
-    if (!savedId) return;
-    if (values.kind === 'expense' && paybackDrafts.drafts.length > 0) {
-      const result = await paybackDrafts.saveFor({
-        id: savedId,
-        personId: values.personId,
-        description: values.description.trim(),
-        lines: paybackLines,
-      });
-      if (result.error) {
-        setPaybackError(result.error);
-        return;
-      }
-    }
-    onClose();
-  };
-
-  /**
-   * 지우기 전에 한 번 묻는다.
-   *
-   * 웹도 같은 자리에서 묻는다(web 의 EntryEditor). 앱에서는 더 필요하다. 손가락이
-   * 닿는 버튼이고, 되돌리는 길이 없으며, 오프라인이면 툼스톤이 먼저 나가 다음 동기화
-   * 에서 서버의 거래까지 지운다. 문구는 계좌·카드가 쓰는 것을 함께 쓴다.
-   */
-  const remove = async () => {
-    if (busyRef.current) return;
-    // 원거래면 걸린 환불·페이백도 함께 지워진다. 그 수를 함께 묻는다 (7-6).
-    busyRef.current = true;
-    let note = '';
-    try {
-      note = editing ? paybackDeleteNote(await paybackCountOf(editing, projectId), t) : '';
-    } finally {
-      busyRef.current = false;
-    }
-    Alert.alert(t('account.deleteConfirm'), note, [
-      { text: t('common.cancel'), style: 'cancel' },
-      {
-        text: t('entryForm.delete'),
-        style: 'destructive',
-        onPress: () => {
-          void form.remove().then((done) => {
-            if (done) onClose();
-          });
-        },
-      },
-    ]);
-  };
+  /* 저장·지우기. 페이백을 이어 저장하고 두 번 누름을 막는다 (useEntryEditorSubmit). */
+  const { isBusy, save, remove } = useEntryEditorSubmit({
+    form,
+    paybackDrafts,
+    paybackLines,
+    setPaybackError,
+    editing,
+    projectId,
+    onClose,
+    t,
+  });
 
   const messageOf = (): string => {
     if (form.error) return form.error;
@@ -461,40 +257,6 @@ export default function EntryEditor({
   };
 
   const message = paybackError || messageOf();
-
-  /*
-   * 회차 금액 칸에 보일 값. 적어 둔 것이 없으면 개월수로 나눈 기본값이다.
-   *
-   * 빈 칸으로 두지 않는 까닭은 고칠 자리가 한두 회차뿐이기 때문이다 -- 기본값을 보여
-   * 주고 다른 회차만 고치게 한다.
-   */
-  /*
-   * 할부가 나누는 금액 = 금액 − 차감 (core `installmentBaseAmount`, 웹과 같다). 카드에 청구되는
-   * 것이 차감 뒤 금액이라 서버도 그 값을 나눈다.
-   */
-  const installmentBase = installmentBaseAmount(values.amount, totalDiscountOf(values));
-  const shareInputs = installmentShareInputs(
-    installmentBase,
-    Number(values.installmentMonths),
-    values.installmentShares,
-    form.ledgerCurrency,
-  );
-
-  /*
-   * 회차 이자 칸에 보일 값. 고른 방식으로 계산한 기본값이고, 고치면 그 값이 남는다.
-   *
-   * 방식을 고르지 않았으면 빈 칸이다 -- 0 으로 채우면 "이자 없음"과 구별되지 않는다.
-   */
-  const interestInputs = installmentInterestInputs({
-    total: installmentBase,
-    months: Number(values.installmentMonths),
-    principals: shareInputs,
-    mode: values.installmentInterestMode,
-    monthlyPayment: values.installmentMonthlyPayment,
-    annualRate: values.installmentAnnualRate,
-    saved: values.installmentInterestShares,
-    currency: form.ledgerCurrency,
-  });
 
   return (
     /*
@@ -753,168 +515,18 @@ export default function EntryEditor({
             줄이 있는 동안에는 위의 분류 칸을 감춘다. 둘이 함께 보이면 어느 쪽이
             저장되는지 알 수 없고, 실제로 저장되는 것은 줄들뿐이다.
           */
-            <Field label={t('editor.split')} invalid={violation?.field === 'splits'}>
-              <View className="gap-3">
-                {values.splits.map((split, index) => (
-                  /* 줄 키로 든다. 차례 번호면 가운데 줄을 지울 때 입력 칸의 상태가 옆 줄로 옮겨 간다. */
-                  <View key={split.lineKey} className="gap-2 rounded-lg border border-gray-200 p-3">
-                    <View className="flex-row items-center justify-between">
-                      <Text className="text-xs font-medium text-gray-500">
-                        {t('editor.splitRow', { index: index + 1 })}
-                      </Text>
-                      <Pressable
-                        onPress={() => form.removeSplit(index)}
-                        hitSlop={8}
-                        accessibilityLabel={t('editor.splitRemove')}
-                      >
-                        <Text className="text-sm text-gray-400">×</Text>
-                      </Pressable>
-                    </View>
-
-                    <TextInput
-                      value={split.amount}
-                      onChangeText={(text) => form.setSplit(index, 'amount', text)}
-                      keyboardType="numeric"
-                      placeholder="0"
-                      className="rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-900"
-                    />
-
-                    {/*
-                      이 줄에서 깎인 금액.
-
-                      줄마다 따로 받는다. 여행경비만 환불받았는데 비율로 나누면 식비
-                      줄까지 함께 깎여, 분류별 분석이 사실과 어긋난다.
-
-                      나누지 않은 거래와 같이 그 줄 금액 바로 아래에 "할인·차감 추가" 글자로 접어
-                      두고, 펴면 "닫기"로 도로 접는다 (2026-10-11 사용자 요청, 웹과 같다).
-                    */}
-                    {values.kind === 'expense' && !isSplitDiscountShown(split) ? (
-                      <Pressable
-                        onPress={() => openSplitDiscount(split.lineKey)}
-                        accessibilityRole="button"
-                        hitSlop={8}
-                        className="self-start active:opacity-60"
-                      >
-                        <Text className="text-sm font-medium text-blue-600">
-                          + {t('editor.discountAdd')}
-                        </Text>
-                      </Pressable>
-                    ) : null}
-                    {values.kind === 'expense' && isSplitDiscountShown(split) ? (
-                      <>
-                        <View className="flex-row items-center justify-between gap-2">
-                          <Text className="text-xs font-medium text-gray-500">
-                            {t('editor.discount')}
-                          </Text>
-                          <Pressable
-                            onPress={() => {
-                              form.setSplit(index, 'discountAmount', '');
-                              closeSplitDiscount(split.lineKey);
-                            }}
-                            hitSlop={8}
-                            accessibilityRole="button"
-                            className="rounded px-2 py-0.5 active:bg-gray-100"
-                          >
-                            <Text className="text-xs font-medium text-gray-500">{t('common.close')}</Text>
-                          </Pressable>
-                        </View>
-                        <TextInput
-                          value={split.discountAmount}
-                          onChangeText={(text) => form.setSplit(index, 'discountAmount', text)}
-                          keyboardType="numeric"
-                          placeholder="0"
-                          className="rounded-lg border border-gray-300 px-3 py-2 text-base text-gray-900"
-                        />
-
-                        {/*
-                          깎인 만큼 실적도 줄일지. 환불액을 적은 줄 바로 아래에 둔다.
-
-                          **값은 거래에 하나뿐이다.** 깎인 금액은 줄마다 다르지만 그것을
-                          실적에서 뺄지는 카드사의 방침 하나라, 어느 줄의 체크를 건드려도
-                          나머지 줄의 체크가 같이 움직인다.
-                        */}
-                        {showDiscountPerformance({
-                          kind: values.kind,
-                          discountAmount: split.discountAmount,
-                          countsPerformance: values.countsPerformance,
-                          isCard: Boolean(form.selectedCard),
-                          isLedgerCurrency: !values.currency,
-                        }) ? (
-                          <CheckRow
-                            checked={values.discountCountsPerformance}
-                            onToggle={() =>
-                              setField(
-                                'discountCountsPerformance',
-                                !values.discountCountsPerformance,
-                              )
-                            }
-                            label={t('editor.discountCountsPerformance')}
-                            hint={t('editor.discountCountsPerformanceHint')}
-                          />
-                        ) : null}
-                      </>
-                    ) : null}
-
-                    {form.categoryChoices.length === 0 ? (
-                      <Text className="text-sm text-gray-500">{t('entryForm.noCategories')}</Text>
-                    ) : (
-                      <CategoryChips
-                        categories={form.categoryChoices}
-                        selected={split.categoryId}
-                        onSelect={(value) => form.setSplit(index, 'categoryId', value)}
-                      />
-                    )}
-
-                    {/*
-                      이 줄의 태그.
-
-                      태그가 줄에 붙으므로 여기서 고른다. 나눈 두 줄이 서로 다른 태그를
-                      갖는 것이 이 바꿈의 요점이다.
-                    */}
-                    {form.lists.tags.length > 0 ? (
-                      <>
-                        <Text className="text-xs font-medium text-gray-500">{t('editor.tagsOptional')}</Text>
-                        <TagChips
-                          tags={form.lists.tags}
-                          selected={split.tagIds}
-                          onToggle={(tagId) =>
-                            form.setSplit(
-                              index,
-                              'tagIds',
-                              split.tagIds.includes(tagId)
-                                ? split.tagIds.filter((id) => id !== tagId)
-                                : [...split.tagIds, tagId],
-                            )
-                          }
-                        />
-                      </>
-                    ) : null}
-                  </View>
-                ))}
-
-                <Pressable
-                  onPress={form.addSplit}
-                  className="items-center rounded-lg border border-gray-300 px-3 py-2"
-                >
-                  <Text className="text-sm text-gray-700">{t('editor.splitAdd')}</Text>
-                </Pressable>
-
-                {/*
-                남은 금액을 보여 준다. 합이 맞아야 저장되므로, 저장을 눌러 보고서야
-                알게 하지 않는다.
-              */}
-                <Text className="text-xs text-gray-500">
-                  {t('editor.splitLeft', { amount: formatNumber(form.splitLeft) })}
-                </Text>
-                <Text className="text-xs text-gray-500">{t('editor.splitHint')}</Text>
-              </View>
-            </Field>
+            <EntrySplitField
+              form={form}
+              isLineDiscountShown={isSplitDiscountShown}
+              onOpenLineDiscount={openSplitDiscount}
+              onCloseLineDiscount={closeSplitDiscount}
+            />
           ) : (
             <>
               <Field
                 label={t('entryForm.category')}
                 invalid={violation?.field === 'categoryId'}
-                onAdd={() => setAdding('category')}
+                onAdd={() => quick.setAdding('category')}
                 addLabel={t('categories.add')}
               >
                 {form.categoryChoices.length === 0 ? (
@@ -949,7 +561,7 @@ export default function EntryEditor({
             고른다. 둘이 함께 보이면 어느 쪽이 저장되는지 알 수 없다.
           */}
           {values.splits.length === 0 ? (
-          <Field label={t('editor.tagsOptional')} onAdd={() => setAdding('tag')} addLabel={t('tags.add')}>
+          <Field label={t('editor.tagsOptional')} onAdd={() => quick.setAdding('tag')} addLabel={t('tags.add')}>
             {form.lists.tags.length === 0 ? (
               <Text className="text-sm text-gray-500">{t('tags.empty')}</Text>
             ) : (
@@ -968,7 +580,7 @@ export default function EntryEditor({
           <Field
             label={values.kind === 'transfer' ? t('editor.fromAccount') : t('editor.methodOptional')}
             invalid={violation?.field === 'method'}
-            onAdd={() => setAdding('method')}
+            onAdd={() => quick.setAdding('method')}
             addLabel={t('editor.addMethod')}
           >
             {form.methodChoices.length === 0 ? (
@@ -1028,70 +640,13 @@ export default function EntryEditor({
           ) : null}
 
           {values.kind === 'transfer' ? (
-            <>
-              <Field label={t('editor.toAccount')} invalid={violation?.field === 'toAccountId'}>
-                <Chips
-                  options={form.toAccountChoices.map((account) => ({
-                    value: account.id,
-                    label: account.name,
-                    group: form.showAssetOwner ? account.owner : undefined,
-                  }))}
-                  selected={values.toAccountId}
-                  onSelect={(value) => setField('toAccountId', value)}
-                  collapse
-                />
-              </Field>
-
-              {/*
-                한쪽이 신용카드면 카드사와의 자금 이동이다. 방향이 뜻을 바꾸므로
-                저장하기 전에 무엇으로 기록되는지 알려 준다 (웹의 이체 화면과 같다).
-              */}
-              {form.transferCardSide ? (
-                <View className="rounded-lg border border-blue-200 bg-blue-50 p-3">
-                  <Text className="text-sm text-blue-800">
-                    {form.transferCardSide === 'payment'
-                      ? t('editor.toCardPayment')
-                      : t('editor.toCardRefund')}{' '}
-                    {t('editor.cardTransferNote')}
-                  </Text>
-                </View>
-              ) : null}
-
-              {/* 카드사와의 이체에는 수수료를 붙일 수 없다 (조립도 거부한다). */}
-              {form.transferCardSide ? null : (
-                <Field label={t('editor.transferFee')} invalid={violation?.field === 'transferFee'}>
-                  <TextInput
-                    value={values.transferFee}
-                    onChangeText={(text) => setField('transferFee', text)}
-                    keyboardType="numeric"
-                    placeholder="0"
-                    className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
-                  />
-                </Field>
-              )}
-
-              {/* 수수료를 적었을 때만 분류를 묻는다. 0원 이체에 분류를 강요하지 않는다. */}
-              {values.transferFee && !form.transferCardSide ? (
-                <Field
-                  label={t('editor.feeCategory')}
-                  invalid={violation?.field === 'transferFeeCategoryId'}
-                  onAdd={() => setAdding('category')}
-                  addLabel={t('categories.add')}
-                >
-                  <CategoryChips
-                    categories={form.categoryChoices}
-                    selected={values.transferFeeCategoryId}
-                    onSelect={(value) => setField('transferFeeCategoryId', value)}
-                  />
-                </Field>
-              ) : null}
-            </>
+            <EntryTransferFields form={form} onAddCategory={() => quick.setAdding('category')} />
           ) : null}
 
           <Field
             label={t('editor.personOptional')}
             invalid={violation?.field === 'personId'}
-            onAdd={() => setAdding('person')}
+            onAdd={() => quick.setAdding('person')}
             addLabel={t('person.add')}
           >
             <Chips
@@ -1126,255 +681,7 @@ export default function EntryEditor({
 
           {/* 할부는 신용카드 지출에만 뜻이 있다. 그 밖에서는 칸 자체를 만들지 않는다. */}
           {values.kind === 'expense' && form.isCreditCard ? (
-            <Field label={t('editor.installment')} invalid={violation?.field === 'installmentMonths'}>
-              {/*
-                개월수는 직접 적는다 -- 2개월부터 50개월까지 (2026-10-10 사용자 요청, 웹과 같다). 비우면
-                일시불이다. 범위는 core checkEntryForm 이 본다.
-              */}
-              <TextInput
-                value={values.installmentMonths}
-                keyboardType="number-pad"
-                maxLength={2}
-                placeholder={t('editor.installmentMonthsInput')}
-                className="rounded-lg border border-gray-300 px-3 py-3 text-base text-gray-900"
-                onChangeText={(text) => {
-                  const value = text.replace(/[^0-9]/g, '');
-                  setField('installmentMonths', value);
-                  // 개월수가 바뀌면 적어 둔 회차 금액은 어느 회차의 것인지 알 수 없다.
-                  setField('installmentShares', []);
-                  setField('installmentInterestShares', []);
-                  /*
-                   * 월 납입액도 비운다. **개월수와 한 쌍인 값**이다 -- "10,000원을
-                   * 3개월, 매달 4,000원"의 4,000원은 3개월일 때의 사실이라, 개월수를
-                   * 바꾸면 그 값으로는 표가 풀리지 않고 저장도 막힌다.
-                   * 연이율은 개월수와 무관해 그대로 둔다.
-                   */
-                  setField('installmentMonthlyPayment', '');
-                }}
-              />
-              <Text className="mt-1 text-xs text-gray-500">{t('editor.installmentHint')}</Text>
-
-              {/*
-                수수료가 붙는 할부인가. 개월수를 고른 뒤에만 묻는다.
-
-                기본값을 두지 않는다. 무이자로 두면 유이자 할부가 조용히 수수료 없이
-                지나가고, 유이자로 두면 무이자 결제마다 "수수료 미입력"이 쌓인다.
-              */}
-              {Number(values.installmentMonths) >= 2 ? (
-                <View className="mt-2">
-                  <Chips
-                    options={[
-                      { value: 'free', label: t('editor.installmentFree') },
-                      { value: 'interest', label: t('editor.installmentInterest') },
-                    ]}
-                    selected={values.installmentInterest}
-                    onSelect={(value) => {
-                      setField('installmentInterest', value as EntryFormValues['installmentInterest']);
-                      /*
-                       * 무이자로 되돌리면 이자 쪽을 통째로 비운다. 남겨 두면 수수료가
-                       * 없는 할부에 이자가 붙어 보이고, 회차 기준으로 볼 때 그 달
-                       * 지출이 실제보다 커진다.
-                       */
-                      if (value !== 'interest') {
-                        setField('installmentInterestMode', '');
-                        setField('installmentMonthlyPayment', '');
-                        setField('installmentAnnualRate', '');
-                        setField('installmentInterestShares', []);
-                      }
-                    }}
-                  />
-                  <Text className="mt-1 text-xs text-gray-500">
-                    {values.installmentInterest === 'interest'
-                      ? t('editor.installmentInterestHint')
-                      : t('editor.installmentFreeHint')}
-                  </Text>
-
-                  {/*
-                    회차 금액. 기본값을 채워 두고 다른 자리만 고치게 한다.
-
-                    끝수를 어느 회차에 붙이는지가 카드사마다 다르다 -- 1,000원 3개월이
-                    334/333/333 일 수도 334/334/332 일 수도 있어, 계산만으로는 명세서와
-                    맞출 수 없다.
-                  */}
-                  <View className="mt-3 gap-1">
-                    <View className="flex-row items-baseline justify-between">
-                      <Text className="text-xs font-medium text-gray-700">
-                        {t('editor.installmentShares')}
-                      </Text>
-                      {values.installmentShares.length > 0 ? (
-                        <Pressable onPress={() => setField('installmentShares', [])}>
-                          <Text className="text-xs text-blue-600">
-                            {t('editor.installmentSharesReset')}
-                          </Text>
-                        </Pressable>
-                      ) : null}
-                    </View>
-
-                    {shareInputs.map((share, index) => (
-                      <View key={index} className="flex-row items-center gap-2">
-                        <Text className="w-16 text-xs text-gray-500">
-                          {t('editor.installmentShareRow', { index: index + 1 })}
-                        </Text>
-                        <TextInput
-                          value={share}
-                          onChangeText={(next) =>
-                            setField(
-                              'installmentShares',
-                              shareInputs.map((old, at) => (at === index ? next : old)),
-                            )
-                          }
-                          keyboardType="decimal-pad"
-                          className="flex-1 rounded border border-gray-300 bg-white px-2 py-1 text-right text-sm text-gray-900"
-                        />
-                      </View>
-                    ))}
-
-                    <Text
-                      className={`text-right text-xs ${
-                        violation?.field === 'installmentShares' ? 'text-red-600' : 'text-gray-500'
-                      }`}
-                    >
-                      {t('editor.installmentSharesSum', {
-                        total: installmentShareTotal(shareInputs),
-                        amount: installmentBase || '0',
-                      })}
-                    </Text>
-                  </View>
-
-                  {/*
-                    이자. 유이자 할부에만 묻는다.
-
-                    카드사가 정하는 방식이 둘이다. 매달 같은 금액을 내는 할부는 낸 돈에서
-                    이자를 먼저 떼어 앞 회차일수록 이자가 크고, 연이율만 정해진 할부는
-                    남은 원금에 매달 이자가 붙어 뒤로 갈수록 가벼워진다. 어느 쪽도 아니면
-                    빈 칸으로 두고 명세서를 보고 적는다.
-                  */}
-                  {values.installmentInterest === 'interest' ? (
-                    <View className="mt-3 gap-1">
-                      <Text className="text-xs font-medium text-gray-700">
-                        {t('editor.installmentInterestMode')}
-                      </Text>
-                      <Chips
-                        options={[
-                          { value: 'fixed', label: t('editor.installmentModeFixed') },
-                          { value: 'rate', label: t('editor.installmentModeRate') },
-                          { value: '', label: t('editor.installmentModeManual') },
-                        ]}
-                        selected={values.installmentInterestMode}
-                        onSelect={(value) => {
-                          setField(
-                            'installmentInterestMode',
-                            value as EntryFormValues['installmentInterestMode'],
-                          );
-                          // 방식을 바꾸면 계산이 다시 채운다. 고쳐 둔 값은 그 방식의 것이다.
-                          setField('installmentInterestShares', []);
-                        }}
-                      />
-
-                      {values.installmentInterestMode === 'fixed' ? (
-                        <>
-                          <TextInput
-                            value={values.installmentMonthlyPayment}
-                            onChangeText={(next) => {
-                              setField('installmentMonthlyPayment', next);
-                              setField('installmentInterestShares', []);
-                            }}
-                            keyboardType="decimal-pad"
-                            placeholder={t('editor.installmentMonthlyPayment')}
-                            className="rounded border border-gray-300 bg-white px-2 py-1 text-right text-sm text-gray-900"
-                          />
-                          <Text className="text-xs text-gray-500">
-                            {t('editor.installmentMonthlyPaymentHint')}
-                          </Text>
-                        </>
-                      ) : null}
-
-                      {values.installmentInterestMode === 'rate' ? (
-                        <>
-                          <TextInput
-                            value={values.installmentAnnualRate}
-                            onChangeText={(next) => {
-                              setField('installmentAnnualRate', next);
-                              setField('installmentInterestShares', []);
-                            }}
-                            keyboardType="decimal-pad"
-                            placeholder={t('editor.installmentAnnualRate')}
-                            className="rounded border border-gray-300 bg-white px-2 py-1 text-right text-sm text-gray-900"
-                          />
-                          <Text className="text-xs text-gray-500">
-                            {t('editor.installmentAnnualRateHint')}
-                          </Text>
-                        </>
-                      ) : null}
-
-                      <View className="mt-2 flex-row items-baseline justify-between">
-                        <Text className="text-xs font-medium text-gray-700">
-                          {t('editor.installmentInterestShares')}
-                        </Text>
-                        {values.installmentInterestShares.length > 0 ? (
-                          <Pressable onPress={() => setField('installmentInterestShares', [])}>
-                            <Text className="text-xs text-blue-600">
-                              {t('editor.installmentInterestReset')}
-                            </Text>
-                          </Pressable>
-                        ) : null}
-                      </View>
-
-                      {interestInputs.map((interest, index) => (
-                        <View key={index} className="flex-row items-center gap-2">
-                          <Text className="w-20 text-xs text-gray-500">
-                            {t('editor.installmentInterestRow', { index: index + 1 })}
-                          </Text>
-                          <TextInput
-                            value={interest}
-                            onChangeText={(next) =>
-                              setField(
-                                'installmentInterestShares',
-                                interestInputs.map((old, at) => (at === index ? next : old)),
-                              )
-                            }
-                            keyboardType="decimal-pad"
-                            className="flex-1 rounded border border-gray-300 bg-white px-2 py-1 text-right text-sm text-gray-900"
-                          />
-                        </View>
-                      ))}
-
-                      <Text
-                        className={`text-right text-xs ${
-                          violation?.field === 'installmentInterestShares' ||
-                          violation?.field === 'installmentMonthlyPayment' ||
-                          violation?.field === 'installmentAnnualRate'
-                            ? 'text-red-600'
-                            : 'text-gray-500'
-                        }`}
-                      >
-                        {t('editor.installmentInterestTotal', {
-                          total: installmentShareTotal(interestInputs),
-                        })}
-                      </Text>
-                      {/*
-                        카드에 갚을 돈. 이자가 금액에 더해져 거래에 적힌다.
-
-                        금액 칸은 산 값 그대로 두고 여기서만 밝힌다 -- 사용자가 적은
-                        숫자를 화면이 말없이 올리면 무엇을 저장하는지 알 수 없다.
-                      */}
-                      <Text className="text-right text-xs font-medium text-gray-700">
-                        {t('editor.installmentTotalDue', {
-                          total: installmentShareTotal([
-                            installmentBase || '0',
-                            installmentShareTotal(interestInputs),
-                          ]),
-                          amount: installmentBase || '0',
-                        })}
-                      </Text>
-                      <Text className="text-xs text-gray-500">
-                        {t('editor.installmentInterestSharesHint')}
-                      </Text>
-                    </View>
-                  ) : null}
-                </View>
-              ) : null}
-            </Field>
+            <EntryInstallmentField form={form} />
           ) : null}
 
           {/*
@@ -1402,12 +709,6 @@ export default function EntryEditor({
         </View>
       </Modal>
 
-      {/*
-        고르는 칸에서 그 자리에 만드는 창들.
-
-        구성원·통장·카드는 자산 화면이 쓰는 창을 그대로 쓴다. 같은 것을 만드는 자리가
-        화면마다 다르게 생기면 사용자는 그 둘이 다른 것이라고 읽는다.
-      */}
       {/* 금액 칸 오른쪽의 통화를 누르면 뜨는 고르기 창. 빈 값이 장부 통화다. */}
       <OptionModal
         isOpen={isCurrencyOpen}
@@ -1424,98 +725,8 @@ export default function EntryEditor({
         onSelect={(value) => setField('currency', value)}
       />
 
-      <AddPersonModal
-        isOpen={adding === 'person'}
-        onClose={() => setAdding(null)}
-        isSubmitting={quickAdd.isSubmitting}
-        onSubmit={(input) =>
-          addThenPick(quickAdd.addPerson(input), (id) => setField('personId', id))
-        }
-      />
-
-      {/* 결제수단은 통장과 카드를 한 목록에서 고르므로 무엇을 만들지 먼저 묻는다. */}
-      <Modal
-        isOpen={adding === 'method'}
-        onClose={() => setAdding(null)}
-        title={t('editor.addMethod')}
-      >
-        <View className="gap-3">
-          <MethodChoice
-            label={t('account.add')}
-            description={t('account.addDescription')}
-            disabled={!newAccountOwner}
-            onPress={() => setAdding('account')}
-          />
-          <MethodChoice
-            label={t('card.add')}
-            description={t('card.addDescription')}
-            disabled={!newCardAccount}
-            onPress={() => setAdding('card')}
-          />
-          {/* 둘 다 잠겼으면 왜 그런지 적는다. 눌리지 않는 단추만 두면 고장으로 보인다. */}
-          {!newAccountOwner ? (
-            <Text className="text-sm text-gray-500">{t('editor.needPerson')}</Text>
-          ) : !newCardAccount ? (
-            <Text className="text-sm text-gray-500">{t('assets.noAccounts')}</Text>
-          ) : null}
-        </View>
-      </Modal>
-
-      {newAccountOwner ? (
-        <AddAccountModal
-          isOpen={adding === 'account'}
-          onClose={() => setAdding(null)}
-          isSubmitting={quickAdd.isSubmitting}
-          /* 거래를 적다가 만드는 통장이다. 주인은 폼에서 고른 거래자로 채워 둔다. */
-          people={form.lists.people}
-          defaultOwnerId={newAccountOwner.id}
-          onSubmit={(input) =>
-            addThenPick(quickAdd.addAccount(input), (id) => setField('method', accountValue(id)))
-          }
-        />
-      ) : null}
-
-      {newCardAccount ? (
-        <AddCardModal
-          isOpen={adding === 'card'}
-          onClose={() => setAdding(null)}
-          isSubmitting={quickAdd.isSubmitting}
-          /* 결제 통장은 거래에서 이미 정해졌다. 그 하나만 고른 채로 보여 준다. */
-          accounts={[newCardAccount]}
-          defaultAccountId={newCardAccount.id}
-          onSubmit={(input) =>
-            addThenPick(quickAdd.addCard(input), (id) => setField('method', cardValue(id)))
-          }
-        />
-      ) : null}
-
-      <AddCategoryModal
-        isOpen={adding === 'category'}
-        onClose={() => setAdding(null)}
-        isSubmitting={quickAdd.isSubmitting}
-        type={categoryType}
-        categories={form.categoryChoices}
-        onSubmit={(input) =>
-          addThenPick(createCategory(input), (id) => {
-            /*
-              만든 분류를 그 자리에 꽂는다.
-
-              이체의 수수료 칸은 분류를 따로 들고 있어 그쪽에서 열었으면 그쪽에 넣는다.
-              분할 줄은 줄마다 분류가 달라 어느 줄에 넣을지 알 수 없으므로 두지 않는다 --
-              목록에는 나타나므로 원하는 줄에서 누르면 된다.
-            */
-            if (values.kind === 'transfer') setField('transferFeeCategoryId', id);
-            else if (values.splits.length === 0) setField('categoryId', id);
-          })
-        }
-      />
-
-      <AddTagModal
-        isOpen={adding === 'tag'}
-        onClose={() => setAdding(null)}
-        isSubmitting={quickAdd.isSubmitting}
-        onSubmit={(input) => addThenPick(quickAdd.addTag(input), form.toggleTag)}
-      />
+      {/* 고르는 칸에서 그 자리에 만드는 창들 (구성원·통장·카드·분류·태그). */}
+      <EntryQuickAddModals quick={quick} form={form} />
 
       {/* 받은 페이백을 눌러 연 페이백 편집기. 저장하면 폼의 "받은 페이백"을 다시 읽는다. */}
       <PaybackEditor
@@ -1528,108 +739,6 @@ export default function EntryEditor({
         onSaved={() => setPaybackReload((count) => count + 1)}
       />
     </>
-  );
-}
-
-/** 무엇을 만들지 고르는 줄. 통장과 카드 둘뿐이라 목록 대신 큰 단추 둘이다. */
-function MethodChoice({
-  label,
-  description,
-  disabled,
-  onPress,
-}: {
-  label: string;
-  description: string;
-  /** 만들 바탕이 없을 때. 통장은 주인이, 카드는 결제 통장이 있어야 한다. */
-  disabled: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      className={`rounded-lg border border-gray-200 px-4 py-3 active:bg-gray-50 ${
-        disabled ? 'opacity-40' : ''
-      }`}
-    >
-      <Text className="text-base font-medium text-gray-900">{label}</Text>
-      <Text className="mt-0.5 text-sm text-gray-500">{description}</Text>
-    </Pressable>
-  );
-}
-
-
-/**
- * 태그를 고르는 알약 줄. 여럿을 고를 수 있다.
- *
- * `Chips` 와 나누어 둔 것은 고름이 하나가 아니라 집합이고, 알약마다 자기 색을 갖기
- * 때문이다. 하나를 골라도 나머지가 풀리지 않는다.
- */
-function TagChips({
-  tags,
-  selected,
-  onToggle,
-}: {
-  tags: TagDto.Response[];
-  selected: string[];
-  onToggle: (tagId: string) => void;
-}) {
-  return (
-    /* 옆으로 넘기지 않는다. 태그는 스물이 넘어가도 이름이 짧아 몇 줄로 다 담긴다. */
-    <View className="flex-row flex-wrap items-center gap-2">
-      {tags.map((tag) => (
-        <TagChip
-          key={tag.id}
-          tag={tag}
-          isSelected={selected.includes(tag.id)}
-          onPress={() => onToggle(tag.id)}
-        />
-      ))}
-    </View>
-  );
-}
-
-/**
- * 태그 알약 하나.
- *
- * 누르면 살짝 눌렸다 돌아온다. 여럿을 고르는 칸이라 **무엇이 방금 바뀌었는지**가 색만으로는
- * 잘 보이지 않는다 -- 알약이 열 개 늘어선 줄에서 한 칸의 색이 바뀌는 것은 눈에 잘 띄지
- * 않지만, 움직인 칸은 눈이 따라간다.
- */
-function TagChip({
-  tag,
-  isSelected,
-  onPress,
-}: {
-  tag: TagDto.Response;
-  isSelected: boolean;
-  onPress: () => void;
-}) {
-  const scale = useRef(new Animated.Value(1)).current;
-
-  const press = () => {
-    // 눌렀다 놓는 한 번의 움직임. 위치만 바꾸므로 UI 스레드에 맡긴다.
-    Animated.sequence([
-      Animated.timing(scale, {
-        toValue: 0.92,
-        duration: 80,
-        useNativeDriver: true,
-      }),
-      Animated.spring(scale, {
-        toValue: 1,
-        friction: 4,
-        tension: 220,
-        useNativeDriver: true,
-      }),
-    ]).start();
-    onPress();
-  };
-
-  return (
-    <Animated.View style={{ transform: [{ scale }] }}>
-      {/* 알약은 다른 고르는 자리와 같은 것을 쓴다. 색을 정한 태그는 점으로 보인다. */}
-      <Chip label={tag.name} selected={isSelected} onPress={press} color={tag.color} />
-    </Animated.View>
   );
 }
 

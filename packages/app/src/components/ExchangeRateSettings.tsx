@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import type { ExchangeRateInfo } from '@money/types';
+import { useCanEdit } from '@money/core/store/project';
 
 import { useExchangeRateSettings } from '@money/core/hooks/useExchangeRates';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
@@ -49,6 +50,8 @@ export default function ExchangeRateSettings() {
   /** 입력 중인 값. 저장하기 전까지는 화면에만 있다. */
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [isOpen, setIsOpen] = useState(false);
+  // 읽기 권한이면 값만 보여 주고 고치는 팝업은 열지 않는다 (서버도 막는다).
+  const canEdit = useCanEdit();
 
   /* 닫으면 적다 만 값은 버린다. 다시 열었을 때 저장하지 않은 숫자가 남아 있으면 저장된 값으로 읽힌다. */
   const close = () => {
@@ -79,6 +82,7 @@ export default function ExchangeRateSettings() {
         /* 줄에는 "1 USD = 1,350" 처럼 외화마다 한 토막씩 잇는다. 길면 줄이 자른다. */
         value={rates.map((info: ExchangeRateInfo) => `${info.from} ${info.rate}`).join(' · ')}
         onPress={() => setIsOpen(true)}
+        disabled={!canEdit}
       >
         {/* 팝업을 닫은 뒤에도 실패는 보여야 한다. */}
         {failure && !isOpen ? (

@@ -4,6 +4,7 @@ import { createJSONStorage, persist } from 'zustand/middleware';
 
 import { persistStorage } from '../lib/persist-storage';
 import { apiClient, isSessionEnded } from '../lib/api-client';
+import { codedError } from '../lib/api-error';
 import { clearAuthTokens, getRefreshToken, hasSession, saveAuthTokens } from '../lib/auth-tokens';
 import { setAnalyticsUser, track } from '../lib/analytics';
 import {
@@ -44,7 +45,8 @@ interface AuthStore {
   isLoading: boolean;
   isAuthenticated: boolean;
   isInitializing: boolean;
-  signInWithGoogle: (idToken: string) => Promise<void>;
+  /** `agreedToTerms`: 로그인 화면의 필수 동의를 받았다 (`apiClient.signInWithGoogle`). */
+  signInWithGoogle: (idToken: string, agreedToTerms?: boolean) => Promise<void>;
   setDefaultProject: (projectId: string) => Promise<ProjectInitialData | null>;
   logout: () => Promise<void>;
   loadUser: () => Promise<void>;
@@ -120,6 +122,11 @@ async function clearPreviousUserState(): Promise<void> {
   useEntryConditions.setState({ projectId: null, search: null });
   const { useEntryFocus } = await import('./entry-focus');
   useEntryFocus.getState().clearReopen();
+  // 합계에서 뺀 계좌는 앞 사람의 보기 취향이다. 원문 보내기 동의는 사람마다 따로 받는다.
+  const { useAssetExclusion } = await import('./asset-exclusion');
+  useAssetExclusion.setState({ excludedByProject: {} });
+  const { useInboxPrefs } = await import('./inbox-prefs');
+  useInboxPrefs.getState().setShareSamples(false);
 }
 
 export const useAuth = create<AuthStore>()(
@@ -131,7 +138,7 @@ export const useAuth = create<AuthStore>()(
   isAuthenticated: false,
   isInitializing: true,
 
-  signInWithGoogle: async (idToken) => {
+  signInWithGoogle: async (idToken, agreedToTerms = false) => {
     set({ isLoading: true });
     try {
       // 이전 사용자의 화면 상태 초기화 (보안). 토큰 만료 뒤 다른 계정으로 들어오면 로그아웃을 거치지 않는다.
@@ -145,7 +152,7 @@ export const useAuth = create<AuthStore>()(
        * 들어오는" 바로 그 길에서 주인이 바뀐 것을 알 수 없다. 실제로 그랬다.
        */
       const previousUserId = (await mirrorOwnerId()) ?? get().user?.id ?? null;
-      const response = await apiClient.signInWithGoogle(idToken);
+      const response = await apiClient.signInWithGoogle(idToken, agreedToTerms);
       saveAuthTokens(response.accessToken, response.refreshToken);
 
       /*
@@ -156,7 +163,14 @@ export const useAuth = create<AuthStore>()(
        * 그 길에서는 사본을 일부러 남겨 두므로(D10), 주인이 바뀌는 이 자리가 마지막 문이다.
        */
       if (previousUserId && previousUserId !== response.user?.id) {
-        await clearLocalMirror();
+        if (!(await clearLocalMirror())) {
+          /*
+           * 앞 사람의 사본을 지우지 못했다. 이 사람의 것으로 넘기지 않고 로그인을 멈춘다 -- 그대로 가면 앞 사람의
+           * 거래가 이 사람 화면에 서고, 앞 사람의 못 보낸 명령이 이 사람의 토큰으로 올라간다.
+           */
+          clearAuthTokens();
+          throw codedError('MIRROR_WIPE_FAILED');
+        }
         // 이 기기에만 둔 캡처 후보도 앞 사람의 것이다.
         const { clearCaptureBox } = await import('../data/capture-box');
         clearCaptureBox();

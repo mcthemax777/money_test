@@ -292,6 +292,27 @@ const PUSH_SHRINK_ROUNDS = 10;
  * 왜인지 적어 두었다) 곧바로 보내면 그 자리에서 통과한다. 다음 동기화를 기다리게 하면
  * 사용자가 방금 옮긴 것이 다른 기기에 늦게 나타난다.
  */
+/**
+ * 지금 보지 않는 가계부의 보내지 못한 명령도 올린다 (2026-10-25). 받기는 하지 않는다 -- 그 가계부를 고르면 받는다.
+ *
+ * 동기화는 고른 가계부만 돌아, 가계부 A 에서 끊긴 채 적고 B 로 옮기면 A 의 거래가 A 를 다시 고를 때까지 서버에
+ * 닿지 않았다. 한 가계부가 실패해도 나머지는 보낸다. 올린 수를 돌려준다.
+ */
+export async function pushOtherProjects(store: LocalStore, push: PushFn, exceptProjectId: string): Promise<number> {
+  let pushed = 0;
+  for (const projectId of await store.pendingProjectIds()) {
+    if (projectId === exceptProjectId) continue;
+    try {
+      const result = await pushOutbox(store, push, projectId);
+      if (result.offline) break;
+      pushed += result.pushed;
+    } catch (error) {
+      console.warn('다른 가계부의 명령을 올리지 못했습니다:', error);
+    }
+  }
+  return pushed;
+}
+
 async function pushOutbox(
   store: LocalStore,
   push: PushFn,

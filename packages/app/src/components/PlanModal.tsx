@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { legalUrl } from '@money/core/lib/legal';
+import { ActivityIndicator, Linking, Pressable, Text, View } from 'react-native';
 import { Check } from 'lucide-react-native';
 
 import { track } from '@money/core/lib/analytics';
@@ -11,7 +12,7 @@ import { useConnectivity } from '@money/core/store/connectivity';
 import { useProject, type Project } from '@money/core/store/project';
 import { PLAN_CURRENCY, PLANS, planStatusAt, type PlanId } from '@money/types';
 
-import { isBillingConfigured, openSubscriptionManagement, purchasePlan } from '../billing';
+import { isBillingConfigured, loadStorePrices, openSubscriptionManagement, purchasePlan } from '../billing';
 import Modal from './Modal';
 
 /** 결제 뒤 서버(웹훅)가 이용권을 적었는지 이만큼 간격으로 몇 번 묻는다. */
@@ -51,17 +52,30 @@ export default function PlanModal({
   const [selected, setSelected] = useState<PlanId>(PLANS[0].id);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [isBuying, setIsBuying] = useState(false);
+  /** 스토어가 정한 가격 글자. 받기 전이나 받지 못하면 코드의 가격으로 그린다 (`priceText`). */
+  const [storePrices, setStorePrices] = useState<Partial<Record<PlanId, string>>>({});
 
   /* 다시 열면 맨 위(오픈 기념)부터 고른 채로 시작한다. 지난번 안내 문구도 지운다. */
   const projectId = project?.id ?? null;
   useEffect(() => {
     if (projectId === null) return;
+    let cancelled = false;
+    void loadStorePrices().then((prices) => {
+      if (!cancelled) setStorePrices(prices);
+    });
     setSelected(PLANS[0].id);
     setNotice(null);
     track({ name: 'paywall_view', params: { plan_status: planStatusAt(project?.plan).kind } });
     // 연 순간에 한 번만 센다. 결제 뒤 이용권이 바뀌어도 다시 세지 않는다.
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  /** 화면에 적을 가격. 스토어의 글자가 있으면 그것, 없으면 코드의 가격이다. */
+  const priceText = (candidate: (typeof PLANS)[number]) =>
+    storePrices[candidate.id] ?? formatCurrency(candidate.price, PLAN_CURRENCY);
 
   const isOwner = current?.role === 'owner';
   const planKind = planStatusAt(current?.plan).kind;
@@ -107,7 +121,24 @@ export default function PlanModal({
         return;
       }
       if (outcome === 'already-subscribed') {
-        setNotice({ tone: 'info', text: t('plan.alreadySubscribed'), showManage: true });
+        /*
+         * Play 는 한 구글 계정에 같은 구독을 하나만 둔다. 이 가계부가 무료인데 "이미 구독 중"이면 그 구독은
+         * 다른 가계부의 것이다 -- 예전에는 "이미 구독 중"만 보여, 왜 이 가계부는 무료인지 알 수 없었다.
+         */
+        const elsewhere = planStatusAt(current.plan).kind === 'free';
+        setNotice({
+          tone: 'info',
+          text: t(elsewhere ? 'plan.subscribedElsewhere' : 'plan.alreadySubscribed'),
+          showManage: true,
+        });
+        return;
+      }
+      if (outcome === 'payment-pending') {
+        setNotice({ tone: 'info', text: t('plan.paymentPending') });
+        return;
+      }
+      if (outcome === 'subscription-active') {
+        setNotice({ tone: 'info', text: t('plan.cancelSubscriptionFirst'), showManage: true });
         return;
       }
       const applied = await waitForServer(current.id, before);
@@ -157,10 +188,15 @@ export default function PlanModal({
             <Text className="font-semibold text-white">
               {isBuying
                 ? t('plan.purchasing')
-                : t('plan.buy', { price: formatCurrency(plan.price, PLAN_CURRENCY) })}
+                : t('plan.buy', { price: priceText(plan) })}
             </Text>
           </Pressable>
           <Text className="text-[11px] leading-4 text-gray-400">{t('plan.autoRenewNote')}</Text>
+          {/* 청약 철회·환불 안내 (전자상거래법 §17). 자세한 것은 이용약관이다. */}
+          <Text className="text-[11px] leading-4 text-gray-400">{t('plan.refundNote')}</Text>
+          <Pressable onPress={() => void Linking.openURL(legalUrl('terms'))} accessibilityRole="link" hitSlop={6}>
+            <Text className="text-[11px] text-gray-500 underline">{t('login.terms')}</Text>
+          </Pressable>
         </View>
       }
     >
@@ -214,9 +250,7 @@ export default function PlanModal({
                   </Text>
                 ) : null}
               </View>
-              <Text className="font-semibold text-gray-900">
-                {formatCurrency(candidate.price, PLAN_CURRENCY)}
-              </Text>
+              <Text className="font-semibold text-gray-900">{priceText(candidate)}</Text>
             </Pressable>
           );
         })}

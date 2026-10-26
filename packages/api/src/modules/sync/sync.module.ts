@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { MutationLogCleanupService } from './mutation-log-cleanup.service';
 import { DatabaseModule } from '@/config/database.module';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { EntriesModule } from '../entries/entries.module';
@@ -42,7 +43,7 @@ import { MutationReplayService } from './mutation-replay.service';
     EntryDraftsModule,
   ],
   controllers: [SyncController],
-  providers: [SyncService, MutationReplayService, ProjectAccessService],
+  providers: [SyncService, MutationReplayService, MutationLogCleanupService, ProjectAccessService],
   exports: [SyncService, MutationReplayService],
 })
 export class SyncModule {}

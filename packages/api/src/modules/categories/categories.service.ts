@@ -15,6 +15,7 @@ import { mergeFieldClocks, stampFieldClocks } from '@/common/field-clock';
 import { touchEntries } from '@/common/entry-stamp';
 import { lockLedgerWrites } from '@/common/ledger-lock';
 import { ServerClockService } from '@/common/server-clock';
+import { createDefaultCategories } from './default-categories';
 
 /** 분류 유형. 요청의 유형 칸을 이 목록으로 가린다. */
 const CATEGORY_TYPES = ['income', 'expense'] as const;
@@ -486,40 +487,8 @@ export class CategoriesService {
     });
   }
 
-  /** 프로젝트 생성 시 기본 카테고리를 한 번에 넣는다 (기존에는 행마다 create 호출). */
-  async createDefaultCategories(projectId: string): Promise<void> {
-    const defaults: Array<{ type: CategoryType; names: string[] }> = [
-      {
-        type: CategoryType.income,
-        names: ['급여', '상여금', '이자/배당금', '기타수입'],
-      },
-      {
-        type: CategoryType.expense,
-        names: [
-          '식료품',
-          '외식',
-          '교통',
-          '통신',
-          '공과금',
-          '교육',
-          '의료',
-          '쇼핑',
-          '엔터테인먼트',
-          '저축',
-        ],
-      },
-    ];
-
-    // 선언한 순서를 그대로 순서 값에 담는다. 비워 두면 목록이 이름순으로 보이고,
-    // 나중에 추가한 분류(맨 뒤)와 자리가 어긋난다.
-    const rows = defaults.flatMap((group) =>
-      group.names.map((name) => ({ projectId, name, type: group.type })),
-    );
-    const ranks = initialRanks(rows.length);
-
-    await this.prisma.category.createMany({
-      data: rows.map((row, index) => ({ ...row, sortRank: ranks[index] })),
-      skipDuplicates: true,
-    });
+  /** 기본 분류를 넣는다. 가계부를 만들 때와 검사 스크립트가 쓴다 (`default-categories`). */
+  async createDefaultCategories(projectId: string, locale = 'ko'): Promise<void> {
+    await createDefaultCategories(this.prisma, projectId, locale);
   }
 }

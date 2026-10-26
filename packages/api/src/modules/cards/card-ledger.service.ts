@@ -1,18 +1,14 @@
-import { randomUUID } from 'node:crypto';
 import { Injectable, BadRequestException, Logger, NotFoundException } from '@nestjs/common';
 import { Prisma, CardType, ProjectRole } from '@prisma/client';
 import {
   CardDto,
   type CardUsagePosting,
-  type PerformanceShare,
   billedShares,
   creditPerformanceShares,
   debitPerformanceShares,
-  MAX_USAGE_PERIODS,
   closingMonthKey,
   closingMonthOf,
   creditUsagePeriods,
-  periodForClosingMonth,
   pendingRateItems,
   billedAmountFromRate,
   debitUsagePeriods,
@@ -20,69 +16,36 @@ import {
   shiftClosingMonth,
   usageSpan,
   zonedCurrentYearMonth,
-  zonedDayStart,
   zonedMonthRange,
-  zonedParts,
-  cardDiscountOf,
-  cardRefundCutsOf,
 } from '@money/types';
-import { INSTALLMENT_REFUND_SELECT, type InstallmentRefundCuts } from '@/common/installment-scope';
+import { INSTALLMENT_REFUND_SELECT } from '@/common/installment-scope';
 import { PrismaService } from '@/config/prisma.service';
 import { ProjectAccessService } from '@/common/project-access.guard';
 import { toMoney } from '@/common/money';
 import { LedgerService } from '../ledger/ledger.service';
 import { notFound } from '@/common/app-error';
 import { withBalancesAsOf } from '@/common/balance-as-of';
+import {
+  type ClosingMonth,
+  type LedgerCursor,
+  afterClosingDay,
+  parseClosingKey,
+  parseLedgerCursor,
+  parseLedgerLimit,
+  walkPeriods,
+} from './card-period-walk';
+import {
+  INSTALLMENT_PLAN_SELECT,
+  USAGE_LEG_SELECT,
+  performanceDiscount,
+  periodLedgerEntrySelect,
+  periodLedgerRow,
+  refundCutFields,
+  statementPeriodOf,
+  toShares,
+} from './card-usage-rows';
 
 const ZERO = new Prisma.Decimal(0);
-
-/**
- * 실적을 정가로 셀 때 되살릴 차감액.
- *
- * 깎인 금액은 **줄마다** 적히므로(`Posting.discountAmount`) 그 합을 쓴다. 그것을
- * 실적에서 뺄지는 카드사의 방침 하나라 전표에 있다.
- *
- * 차감액은 사용자가 적은 통화이고 카드 다리는 계좌 통화라, 둘이 갈리는 거래(원화
- * 카드로 한 외화 결제)에서는 그대로 더할 수 없다. 그때는 되살리지 않고 지금까지의
- * 규칙(차감이 실적도 깎는다)을 그대로 둔다 -- 폼도 그 거래에는 이 칸을 띄우지 않는다.
- */
-function performanceDiscount(entry: {
-  discountCountsPerformance: boolean;
-  originalCurrency: string | null;
-  postings: Array<{ categoryId: string | null; discountAmount: Prisma.Decimal | null }>;
-}): Pick<CardUsagePosting, 'discountAmount' | 'discountCountsPerformance'> {
-  // 더하는 규칙은 기기 사본과 함께 쓴다 (`cardDiscountOf`).
-  return {
-    discountAmount: cardDiscountOf(
-      entry.originalCurrency,
-      entry.postings.filter((leg) => leg.categoryId !== null).map((leg) => leg.discountAmount),
-    ),
-    discountCountsPerformance: entry.discountCountsPerformance,
-  };
-}
-
-/** 할부 환불이 청구와 실적에 주는 것. 규칙은 기기 사본과 함께 쓴다 (`cardRefundCutsOf`). */
-function refundCutFields(
-  entry: { installmentAdjust?: unknown; paybacks?: InstallmentRefundCuts },
-  months: number | null | undefined,
-): Pick<CardUsagePosting, 'installmentCuts' | 'refundCut'> {
-  return cardRefundCutsOf({
-    refundAdjust: entry.installmentAdjust,
-    months,
-    refunds: (entry.paybacks ?? []).map((cut) => cut.installmentAdjust),
-  });
-}
-
-/** 깎인 금액을 더하려면 분류 다리를 함께 읽어야 한다. 카드 다리를 읽는 질의마다 붙인다. */
-const USAGE_LEG_SELECT = {
-  categoryId: true,
-  discountAmount: true,
-} satisfies Prisma.PostingSelect;
-
-/*
- * 주기를 만들고 할부를 나누는 규칙은 `@money/types` 의 card-usage 가 갖는다.
- * 기기도 오프라인에서 같은 값을 내야 해서 옮겼다. 여기 남은 것은 "무엇을 읽을지"다.
- */
 
 /**
  * 카드의 원장 쪽 관심사. 대금 이동 기록과 주기별 사용액 계산.
@@ -90,6 +53,9 @@ const USAGE_LEG_SELECT = {
  * 청구서를 테이블로 저장하지 않는다. 주기는 카드의 현재 마감일 설정으로 읽을 때
  * 계산한다. 그래서 마감일을 바꾸면 과거 주기까지 곧바로 다시 그려지고,
  * 거래를 옮기거나 지워도 어긋날 저장물이 없다.
+ *
+ * 주기 원장을 한 쪽씩 모으는 뼈대는 card-period-walk.ts, 읽은 행을 옮기는 것은
+ * card-usage-rows.ts 에 있다 (2026-10-26 나눔).
  */
 @Injectable()
 export class CardLedgerService {
@@ -156,11 +122,7 @@ export class CardLedgerService {
      * 단순히 "구간 시작 이후"로 자를 수는 없다. 할부는 예전 구매가 지금 주기에
      * 청구되기 때문이다. 그래서 이 카드의 최장 할부 개월수만큼 앞에서부터 읽는다.
      */
-    const longestPlan = await this.prisma.installmentPlan.aggregate({
-      _max: { totalMonths: true },
-      where: { posting: { accountId: card.liabilityAccountId! } },
-    });
-    const lookbackMonths = span + (longestPlan._max.totalMonths ?? 1);
+    const lookbackMonths = span + (await this.longestPlanMonths(card.liabilityAccountId!));
     const windowStart = shiftClosingMonth(
       closingMonthOf(new Date(), card.statementClosingDay!, timeZone),
       -lookbackMonths,
@@ -199,9 +161,7 @@ export class CardLedgerService {
             ...INSTALLMENT_REFUND_SELECT,
           },
         },
-        installmentPlan: {
-              select: { totalMonths: true, principalShares: true, interestShares: true },
-            },
+        installmentPlan: INSTALLMENT_PLAN_SELECT,
       },
     });
 
@@ -254,19 +214,17 @@ export class CardLedgerService {
   ): Promise<CardDto.UsageResponse | null> {
     const card = await this.prisma.card.findUnique({ where: { id: cardId } });
     if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
+    // 신용카드는 권한을 보지 않고 넘긴다. 부르는 쪽(getUsage)이 loadCreditCard 로 다시 본다.
     if (card.cardType === CardType.credit) return null;
     await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId);
 
     const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
     const span = usageSpan(months);
-    const paymentAccount = await this.prisma.account.findUniqueOrThrow({
-      where: { id: card.paymentAccountId },
-      select: { currency: true },
-    });
+    const currency = await this.accountCurrency(card.paymentAccountId);
 
     return {
       cardId: card.id,
-      currency: paymentAccount.currency,
+      currency,
       // 체크카드는 결제 즉시 통장에서 빠진다. 갚을 대금이 남지 않는다.
       outstanding: '0',
       periods: debitUsagePeriods({
@@ -333,10 +291,7 @@ export class CardLedgerService {
    * 다르게 나온다. 할부를 회차로 나누는 규칙도 그쪽 정의를 따른다.
    */
   async getPerformance(cardId: string, userId: string): Promise<CardDto.PerformanceResponse> {
-    const card = await this.prisma.card.findUnique({ where: { id: cardId } });
-    if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
-    await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId);
-
+    const card = await this.loadCard(cardId, userId);
     const target = card.performanceAmount;
 
     if (card.cardType === CardType.credit) {
@@ -361,10 +316,7 @@ export class CardLedgerService {
     }
 
     const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
-    const paymentAccount = await this.prisma.account.findUniqueOrThrow({
-      where: { id: card.paymentAccountId },
-      select: { currency: true },
-    });
+    const currency = await this.accountCurrency(card.paymentAccountId);
 
     /*
      * 사용액은 사용 현황(getUsage)과 같은 규칙으로 낸다. 두 곳에서 따로 세면 카드
@@ -382,7 +334,7 @@ export class CardLedgerService {
 
     return performanceOf({
       cardId: card.id,
-      currency: paymentAccount.currency,
+      currency,
       basis: 'month',
       periodStart: current.periodStart,
       periodEnd: current.periodEnd,
@@ -414,12 +366,10 @@ export class CardLedgerService {
     userId: string,
     options: CardDto.PeriodLedgerQuery = {},
   ): Promise<CardDto.PeriodLedgerResponse> {
-    const card = await this.prisma.card.findUnique({ where: { id: cardId } });
-    if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
-    await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId);
+    const card = await this.loadCard(cardId, userId);
 
     const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
-    const limit = Math.min(Math.max(Number(options.limit) || 20, 1), 100);
+    const limit = parseLedgerLimit(options.limit);
     const cursor = parseLedgerCursor(options.cursor);
     /*
      * 주기 하나만 보는 조회. 그래프에서 막대를 눌렀을 때 온다.
@@ -447,61 +397,25 @@ export class CardLedgerService {
     const closingDay = card.statementClosingDay!;
     const liabilityAccountId = card.liabilityAccountId!;
 
-    const liability = await this.prisma.account.findUniqueOrThrow({
-      where: { id: liabilityAccountId },
-      select: { currency: true },
-    });
+    const currency = await this.accountCurrency(liabilityAccountId);
 
     /*
      * 할부는 예전 구매가 지금 주기에 걸린다. 주기마다 최장 할부 개월수만큼 앞에서부터
      * 읽어야 그 회차가 빠지지 않는다 (사용 현황 질의와 같은 규칙이다).
      */
-    const longestPlan = await this.prisma.installmentPlan.aggregate({
-      _max: { totalMonths: true },
-      where: { posting: { accountId: liabilityAccountId } },
-    });
-    const lookback = (longestPlan._max.totalMonths ?? 1) + 1;
+    const lookback = (await this.longestPlanMonths(liabilityAccountId)) + 1;
 
-    const page = await this.walkPeriods({
+    const page = await walkPeriods({
       limit,
       cursor,
       only,
       // 커서가 없으면 고른 주기부터, 그것도 없으면 진행 중인 주기부터다.
       from: cursor?.closing ?? only ?? closingMonthOf(new Date(), closingDay, timeZone),
       timeZone,
-      periodOf: (closing) => {
-        const period = periodForClosingMonth(
-          closing.year,
-          closing.month,
-          closingDay,
-          card.paymentDueDay!,
-        );
-        return { start: period.periodStart, end: period.periodEnd };
-      },
+      periodOf: (closing) => statementPeriodOf(closing, closingDay, card.paymentDueDay!),
       rowsOf: async (closing, period) => {
-        const since = new Date(period.start);
-        since.setUTCMonth(since.getUTCMonth() - lookback);
-
-        const usages = await this.prisma.posting.findMany({
-          where: {
-            accountId: liabilityAccountId,
-            entry: {
-              // 마감일 하루를 통째로 넣는다 (`afterClosingDay`).
-              date: { gte: since, lt: afterClosingDay(period.end, timeZone) },
-              // 사용만 센다. 대금 결제는 분류 다리가 없어 여기서 빠진다.
-              postings: { some: { categoryId: { not: null } } },
-            },
-          },
-          select: {
-            id: true,
-            amount: true,
-            entry: { select: periodLedgerEntrySelect },
-            installmentPlan: {
-              select: { totalMonths: true, principalShares: true, interestShares: true },
-            },
-          },
-          orderBy: [{ entry: { date: 'asc' } }, { id: 'asc' }],
-        });
+        // 사용만 센다. 대금 결제는 분류 다리가 없어 여기서 빠진다.
+        const usages = await this.creditUsagesUpTo(liabilityAccountId, period, lookback, timeZone);
 
         const wanted = closingMonthKey(closing);
         const rows: CardDto.PeriodLedgerRow[] = [];
@@ -522,7 +436,17 @@ export class CardLedgerService {
           );
           for (const share of shares) {
             if (share.closingKey !== wanted) continue;
-            rows.push(this.performanceRow(usage.id, usage.entry, cardId, card.name, share, period));
+            rows.push(
+              periodLedgerRow({
+                key: usage.id,
+                entry: usage.entry,
+                cardId,
+                cardName: card.name,
+                amount: share.amount,
+                period,
+                installmentMonths: share.months,
+              }),
+            );
           }
         }
         return rows;
@@ -543,7 +467,7 @@ export class CardLedgerService {
 
     return {
       cardId,
-      currency: liability.currency,
+      currency,
       basis: 'statement',
       target: card.performanceAmount?.toString() ?? null,
       ...page,
@@ -570,67 +494,28 @@ export class CardLedgerService {
   ): Promise<CardDto.PeriodLedgerResponse> {
     const card = await this.loadCreditCard(cardId, userId);
     const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
-    const limit = Math.min(Math.max(Number(options.limit) || 20, 1), 100);
+    const limit = parseLedgerLimit(options.limit);
     const cursor = parseLedgerCursor(options.cursor);
     const only = parseClosingKey(options.closingKey);
 
     const closingDay = card.statementClosingDay!;
     const liabilityAccountId = card.liabilityAccountId!;
 
-    const liability = await this.prisma.account.findUniqueOrThrow({
-      where: { id: liabilityAccountId },
-      select: { currency: true },
-    });
+    const currency = await this.accountCurrency(liabilityAccountId);
 
-    /*
-     * 할부는 예전 구매가 지금 주기에 걸린다. 주기마다 최장 할부 개월수만큼 앞에서부터
-     * 읽어야 그 회차가 빠지지 않는다 (사용 현황 질의와 같은 규칙이다).
-     */
-    const longestPlan = await this.prisma.installmentPlan.aggregate({
-      _max: { totalMonths: true },
-      where: { posting: { accountId: liabilityAccountId } },
-    });
-    const lookback = (longestPlan._max.totalMonths ?? 1) + 1;
+    // 할부 회차가 빠지지 않게 최장 할부 개월수만큼 앞에서부터 읽는다 (실적 원장과 같은 규칙).
+    const lookback = (await this.longestPlanMonths(liabilityAccountId)) + 1;
 
-    const page = await this.walkPeriods({
+    const page = await walkPeriods({
       limit,
       cursor,
       only,
       from: cursor?.closing ?? only ?? closingMonthOf(new Date(), closingDay, timeZone),
       timeZone,
-      periodOf: (closing) => {
-        const period = periodForClosingMonth(
-          closing.year,
-          closing.month,
-          closingDay,
-          card.paymentDueDay!,
-        );
-        return { start: period.periodStart, end: period.periodEnd };
-      },
+      periodOf: (closing) => statementPeriodOf(closing, closingDay, card.paymentDueDay!),
       rowsOf: async (closing, period) => {
-        const since = new Date(period.start);
-        since.setUTCMonth(since.getUTCMonth() - lookback);
-
-        const usages = await this.prisma.posting.findMany({
-          where: {
-            accountId: liabilityAccountId,
-            entry: {
-              // 마감일 하루를 통째로 넣는다 (`afterClosingDay`).
-              date: { gte: since, lt: afterClosingDay(period.end, timeZone) },
-              // 사용만 싣는다. 대금 결제와 환불 입금은 분류 다리가 없어 여기서 빠진다.
-              postings: { some: { categoryId: { not: null } } },
-            },
-          },
-          select: {
-            id: true,
-            amount: true,
-            entry: { select: periodLedgerEntrySelect },
-            installmentPlan: {
-              select: { totalMonths: true, principalShares: true, interestShares: true },
-            },
-          },
-          orderBy: [{ entry: { date: 'asc' } }, { id: 'asc' }],
-        });
+        // 사용만 싣는다. 대금 결제와 환불 입금은 분류 다리가 없어 여기서 빠진다.
+        const usages = await this.creditUsagesUpTo(liabilityAccountId, period, lookback, timeZone);
 
         const wanted = closingMonthKey(closing);
         const rows: CardDto.PeriodLedgerRow[] = [];
@@ -655,24 +540,19 @@ export class CardLedgerService {
           );
           for (const share of shares) {
             if (share.closingKey !== wanted) continue;
-            rows.push({
-              // 한 다리가 여러 주기에 나뉘어 들어가, 회차 번호까지 붙여야 줄마다 다르다.
-              key: share.months > 1 ? `${usage.id}:${share.index}` : usage.id,
-              entryId: usage.entry.id,
-              date: usage.entry.date.toISOString(),
-              description: usage.entry.description,
-              merchant: usage.entry.merchant,
-              // 계좌 원장과 같은 부호 규칙이다. 사용이 음수라 화면이 뒤집어 읽는다.
-              amount: new Prisma.Decimal(share.amount).neg().toString(),
-              runningTotal: '0',
-              periodStart: period.start.toISOString(),
-              cardId,
-              cardName: card.name,
-              categoryName: categoryOf(usage.entry)?.name ?? null,
-              parentCategoryName: categoryOf(usage.entry)?.parent?.name ?? null,
-              installmentIndex: share.index,
-              installmentMonths: share.months,
-            });
+            rows.push(
+              periodLedgerRow({
+                // 한 다리가 여러 주기에 나뉘어 들어가, 회차 번호까지 붙여야 줄마다 다르다.
+                key: share.months > 1 ? `${usage.id}:${share.index}` : usage.id,
+                entry: usage.entry,
+                cardId,
+                cardName: card.name,
+                amount: share.amount,
+                period,
+                installmentIndex: share.index,
+                installmentMonths: share.months,
+              }),
+            );
           }
         }
         return rows;
@@ -692,7 +572,7 @@ export class CardLedgerService {
 
     return {
       cardId,
-      currency: liability.currency,
+      currency,
       basis: 'statement',
       // 실적 기준액은 청구와 상관없는 값이다. 막대에 기준선을 긋지 않는다.
       target: null,
@@ -714,14 +594,11 @@ export class CardLedgerService {
     only: ClosingMonth | null,
   ): Promise<CardDto.PeriodLedgerResponse> {
     const cardId = card.id;
-    const paymentAccount = await this.prisma.account.findUniqueOrThrow({
-      where: { id: card.paymentAccountId },
-      select: { currency: true },
-    });
+    const currency = await this.accountCurrency(card.paymentAccountId);
 
     const [thisYear, thisMonth] = zonedCurrentYearMonth(timeZone).split('-').map(Number);
 
-    const page = await this.walkPeriods({
+    const page = await walkPeriods({
       limit,
       cursor,
       only,
@@ -761,7 +638,15 @@ export class CardLedgerService {
             timeZone,
           )) {
             rows.push(
-              this.performanceRow(posting.id, posting.entry, cardId, card.name, share, period),
+              periodLedgerRow({
+                key: posting.id,
+                entry: posting.entry,
+                cardId,
+                cardName: card.name,
+                amount: share.amount,
+                period,
+                installmentMonths: share.months,
+              }),
             );
           }
         }
@@ -776,133 +661,10 @@ export class CardLedgerService {
 
     return {
       cardId,
-      currency: paymentAccount.currency,
+      currency,
       basis: 'month',
       target: card.performanceAmount?.toString() ?? null,
       ...page,
-    };
-  }
-
-  /**
-   * 주기를 거슬러 오르며 줄을 `limit` 만큼 모은다. 신용·체크가 이 한 길을 쓴다.
-   *
-   * **주기는 통째로 만든다.** 누적은 주기 시작부터 세야 뜻이 있어, 뒷부분만 보여 줄
-   * 때에도 앞부터 더한 값을 붙여야 한다. 자르는 것은 보여 줄 줄뿐이다.
-   *
-   * 한 번에 스물네 주기까지 훑는다. 그 안에서 채우지 못하면 더 오래된 줄이 있는지
-   * 한 번 물어, 없으면 커서를 끊어 목록이 끝나게 한다 -- 끊지 않으면 빈 쪽을 부르는
-   * 일이 되풀이된다.
-   */
-  private async walkPeriods(input: {
-    limit: number;
-    cursor: LedgerCursor | null;
-    /**
-     * 이 주기 하나만 본다. 더 오래된 주기로 내려가지 않는다.
-     *
-     * 그래프에서 막대를 눌러 한 주기로 좁힌 자리다. 그 주기 안에서 줄이 한 쪽을 넘으면
-     * 이어 받을 수 있지만, 다 보고 나면 끝이다 -- 고르지 않은 주기를 이어 붙이면 화면이
-     * 좁혀 놓은 것과 달라진다.
-     */
-    only?: ClosingMonth | null;
-    from: ClosingMonth;
-    timeZone: string;
-    periodOf: (closing: ClosingMonth) => { start: Date; end: Date };
-    rowsOf: (
-      closing: ClosingMonth,
-      period: { start: Date; end: Date },
-    ) => Promise<CardDto.PeriodLedgerRow[]>;
-    olderExists: (start: Date) => Promise<{ id: string } | null>;
-  }): Promise<{
-    periods: CardDto.PeriodLedgerPeriod[];
-    rows: CardDto.PeriodLedgerRow[];
-    nextCursor: string | null;
-  }> {
-    const todayMarker = todayUtcMarker(input.timeZone);
-    const periods: CardDto.PeriodLedgerPeriod[] = [];
-    const rows: CardDto.PeriodLedgerRow[] = [];
-
-    let closing = input.from;
-    let scanned = input.from;
-    let leftover = false;
-
-    for (let step = 0; step < MAX_USAGE_PERIODS && rows.length < input.limit; step += 1) {
-      scanned = closing;
-      const period = input.periodOf(closing);
-      const built = fillPeriod(await input.rowsOf(closing, period));
-
-      const key = closingMonthKey(closing);
-      // 커서가 가리키는 주기에서는 그 줄 다음부터다. 더 오래된 주기는 통째로 잇는다.
-      const rest =
-        input.cursor && input.cursor.key && key === closingMonthKey(input.cursor.closing)
-          ? rowsAfterCursor(built.rows, input.cursor)
-          : built.rows;
-
-      if (rest.length > 0) {
-        const room = input.limit - rows.length;
-        rows.push(...rest.slice(0, room));
-        leftover = rest.length > room;
-        periods.push({
-          periodStart: period.start.toISOString(),
-          periodEnd: period.end.toISOString(),
-          closed: period.end.getTime() < todayMarker,
-          total: built.total,
-        });
-      }
-
-      if (rows.length >= input.limit) break;
-      // 한 주기만 보는 조회는 여기서 끝난다.
-      if (input.only) break;
-      closing = shiftClosingMonth(closing, -1);
-    }
-
-    /*
-     * 다음 자리.
-     *
-     * 본 주기에 줄이 남았으면 마지막 줄이 그 자리다. 다 봤으면 더 오래된 줄이 있는지
-     * 물어, 있으면 훑던 다음 주기부터 이어 가고 없으면 끊는다.
-     */
-    const last = rows[rows.length - 1];
-    if (leftover && last) {
-      return { periods, rows, nextCursor: `${closingMonthKey(scanned)}|${last.key}|${last.date}` };
-    }
-
-    // 한 주기만 보기로 했으면 더 오래된 줄을 묻지 않는다.
-    if (input.only) return { periods, rows, nextCursor: null };
-
-    const older = await input.olderExists(input.periodOf(scanned).start);
-    return {
-      periods,
-      rows,
-      nextCursor: older ? `${closingMonthKey(shiftClosingMonth(scanned, -1))}|` : null,
-    };
-  }
-
-  /** 실적 원장 한 줄. 쌓인 값은 주기를 채울 때 붙인다. */
-  private performanceRow(
-    postingId: string,
-    entry: PeriodLedgerEntry,
-    cardId: string,
-    cardName: string | null,
-    share: PerformanceShare,
-    period: { start: Date },
-  ): CardDto.PeriodLedgerRow {
-    const category = categoryOf(entry);
-
-    return {
-      key: postingId,
-      entryId: entry.id,
-      date: entry.date.toISOString(),
-      description: entry.description,
-      merchant: entry.merchant,
-      // 계좌 원장과 같은 부호 규칙이다. 사용이 음수라 화면이 뒤집어 읽는다.
-      amount: new Prisma.Decimal(share.amount).neg().toString(),
-      runningTotal: '0',
-      periodStart: period.start.toISOString(),
-      cardId,
-      cardName,
-      categoryName: category?.name ?? null,
-      parentCategoryName: category?.parent?.name ?? null,
-      installmentMonths: share.months,
     };
   }
 
@@ -917,10 +679,7 @@ export class CardLedgerService {
     const card = await this.loadCreditCard(cardId, userId);
     const timeZone = await this.projectAccess.getProjectTimeZone(card.projectId);
 
-    const liability = await this.prisma.account.findUniqueOrThrow({
-      where: { id: card.liabilityAccountId! },
-      select: { currency: true },
-    });
+    const currency = await this.accountCurrency(card.liabilityAccountId!);
 
     const postings = await this.prisma.posting.findMany({
       where: {
@@ -961,7 +720,7 @@ export class CardLedgerService {
       timeZone,
     );
 
-    return { cardId: card.id, currency: liability.currency, items };
+    return { cardId: card.id, currency, items };
   }
 
   /**
@@ -988,10 +747,7 @@ export class CardLedgerService {
     replay?: { hlc: string },
   ): Promise<CardDto.SettleRatesResponse> {
     const card = await this.loadCreditCard(cardId, userId, ProjectRole.editor);
-    const liability = await this.prisma.account.findUniqueOrThrow({
-      where: { id: card.liabilityAccountId! },
-      select: { currency: true },
-    });
+    const currency = await this.accountCurrency(card.liabilityAccountId!);
 
     const items = Array.isArray(dto?.items) ? dto.items : [];
     if (items.length === 0) {
@@ -1036,7 +792,7 @@ export class CardLedgerService {
               billedAmountFromRate(
                 entry.originalAmount.toString(),
                 rate.toString(),
-                liability.currency,
+                currency,
               ).toString(),
             );
 
@@ -1065,15 +821,73 @@ export class CardLedgerService {
     return { settled: targets.length };
   }
 
+  /**
+   * 신용카드의 사용 다리 가운데 이 주기의 마감일까지 온 것. 실적·청구 원장이 함께 읽는다.
+   *
+   * 할부는 예전 구매가 지금 주기에 걸리므로 주기 시작에서 `lookback` 개월 앞부터 읽는다.
+   * 분류 다리가 없는 대금 결제와 환불 입금은 빠진다.
+   */
+  private creditUsagesUpTo(
+    liabilityAccountId: string,
+    period: { start: Date; end: Date },
+    lookback: number,
+    timeZone: string,
+  ) {
+    const since = new Date(period.start);
+    since.setUTCMonth(since.getUTCMonth() - lookback);
 
+    return this.prisma.posting.findMany({
+      where: {
+        accountId: liabilityAccountId,
+        entry: {
+          // 마감일 하루를 통째로 넣는다 (`afterClosingDay`).
+          date: { gte: since, lt: afterClosingDay(period.end, timeZone) },
+          postings: { some: { categoryId: { not: null } } },
+        },
+      },
+      select: {
+        id: true,
+        amount: true,
+        entry: { select: periodLedgerEntrySelect },
+        installmentPlan: INSTALLMENT_PLAN_SELECT,
+      },
+      orderBy: [{ entry: { date: 'asc' } }, { id: 'asc' }],
+    });
+  }
+
+  /** 이 부채 계정에 걸린 할부의 최장 개월수. 할부가 없으면 1 이다. */
+  private async longestPlanMonths(liabilityAccountId: string): Promise<number> {
+    const longestPlan = await this.prisma.installmentPlan.aggregate({
+      _max: { totalMonths: true },
+      where: { posting: { accountId: liabilityAccountId } },
+    });
+    return longestPlan._max.totalMonths ?? 1;
+  }
+
+  /** 계좌의 통화. 카드의 금액은 부채 계정(신용) 또는 결제 통장(체크)의 통화다. */
+  private async accountCurrency(accountId: string): Promise<string> {
+    const account = await this.prisma.account.findUniqueOrThrow({
+      where: { id: accountId },
+      select: { currency: true },
+    });
+    return account.currency;
+  }
+
+  /** 카드를 읽고 그 가계부의 권한을 본다. */
+  private async loadCard(cardId: string, userId: string, requiredRole?: ProjectRole) {
+    const card = await this.prisma.card.findUnique({ where: { id: cardId } });
+    if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
+    await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId, requiredRole);
+    return card;
+  }
+
+  /** 신용카드만 다루는 조회·쓰기의 입구. 마감일·결제일·부채 계정까지 갖춘 카드여야 한다. */
   private async loadCreditCard(
     cardId: string,
     userId: string,
     requiredRole: ProjectRole = 'viewer',
   ) {
-    const card = await this.prisma.card.findUnique({ where: { id: cardId } });
-    if (!card) throw notFound('CARD_NOT_FOUND', '카드를 찾을 수 없습니다.');
-    await this.projectAccess.verifyUserHasAccessToProject(userId, card.projectId, requiredRole);
+    const card = await this.loadCard(cardId, userId, requiredRole);
 
     if (card.cardType !== CardType.credit || !card.liabilityAccountId) {
       throw new BadRequestException('신용카드만 대금 이동과 청구 주기를 다룹니다.');
@@ -1083,142 +897,4 @@ export class CardLedgerService {
     }
     return card;
   }
-}
-
-/** 실적 원장 한 줄이 전표에서 읽는 것. 분류는 형제 다리에 붙어 있다. */
-const periodLedgerEntrySelect = {
-  id: true,
-  date: true,
-  description: true,
-  merchant: true,
-  countsPerformance: true,
-  discountCountsPerformance: true,
-  originalCurrency: true,
-  postings: {
-    select: {
-      ...USAGE_LEG_SELECT,
-      category: { select: { name: true, parent: { select: { name: true } } } },
-    },
-    orderBy: { id: 'asc' },
-  },
-  ...INSTALLMENT_REFUND_SELECT,
-} satisfies Prisma.JournalEntrySelect;
-
-type PeriodLedgerEntry = Prisma.JournalEntryGetPayload<{
-  select: typeof periodLedgerEntrySelect;
-}>;
-
-/** 줄에 적을 분류. 전표의 첫 분류 다리가 대표다 (분할이면 첫 줄). */
-function categoryOf(entry: PeriodLedgerEntry) {
-  return entry.postings.find((leg) => leg.categoryId !== null)?.category ?? null;
-}
-
-/**
- * 계획에 적힌 회차 원금을 문자열 배열로 가린다.
- *
- * JSON 칸이라 무엇이든 들어올 수 있다. 모양이 아니면 없는 것으로 보고 개월수로 나눈다
- * (`@money/types` 의 목록 뷰와 같은 규칙이다).
- */
-function toShares(value: unknown): string[] | null {
-  if (!Array.isArray(value) || value.length === 0) return null;
-  return value.map((share) => String(share));
-}
-
-
-/**
- * 주기의 마감일 다음 날이 시작하는 인스턴트. 거래를 읽는 질의의 끝(포함하지 않음)이다.
- *
- * `periodForClosingMonth` 의 `periodEnd` 는 마감일의 **UTC 자정 표시자**라 그대로 `lte` 로
- * 쓰면 마감일 거래가 대부분 빠진다 -- 서울이면 마감일 오전 9시 이후 것이 전부 빠졌다.
- * 프로젝트 타임존에서 마감일 다음 날 0시를 구해 그 앞까지 읽는다.
- */
-function afterClosingDay(periodEnd: Date, timeZone: string): Date {
-  return zonedDayStart(
-    periodEnd.getUTCFullYear(),
-    periodEnd.getUTCMonth() + 1,
-    periodEnd.getUTCDate() + 1,
-    timeZone,
-  );
-}
-/** 오늘을 달력 날짜로 찍은 표시자. 주기가 닫혔는지 보는 데 쓴다. */
-function todayUtcMarker(timeZone: string): number {
-  const today = zonedParts(new Date(), timeZone);
-  return Date.UTC(today.year, today.month - 1, today.day);
-}
-
-/** 마감 연월 하나. 체크카드는 달력 월이 그 자리에 든다. */
-interface ClosingMonth {
-  year: number;
-  month: number;
-}
-
-/** 실적 원장의 다음 자리. "이 주기의 이 줄 다음부터"를 가리킨다. */
-interface LedgerCursor {
-  closing: ClosingMonth;
-  /** 비어 있으면 그 주기의 첫 줄부터다 (거래가 없는 달을 건너뛴 자리). */
-  key: string;
-  /** 그 줄의 날짜 (ISO). 그 줄이 그 사이 사라졌을 때 이어 볼 자리를 정한다. 옛 커서에는 없다. */
-  date?: string;
-}
-
-/**
- * 커서 다음 줄들. 줄은 최신이 앞이다 (`fillPeriod`).
- *
- * 커서가 가리킨 줄이 그 사이 지워졌으면(2026-10-16) 그 줄의 날짜보다 오래된 줄부터 잇는다. 예전에는 찾지 못하면
- * 처음부터 다시 돌려줘 이미 본 줄이 또 실렸다. 날짜가 없는 옛 커서는 지금처럼 처음부터다.
- */
-function rowsAfterCursor<R extends { key: string; date: string }>(rows: R[], cursor: LedgerCursor): R[] {
-  const at = rows.findIndex((row) => row.key === cursor.key);
-  if (at >= 0) return rows.slice(at + 1);
-  if (cursor.date) return rows.filter((row) => row.date < cursor.date!);
-  return rows;
-}
-
-/** 'YYYY-MM' 을 마감 연월로. 모양이 아니면 null (전체를 본다). */
-function parseClosingKey(value?: string): ClosingMonth | null {
-  if (!value) return null;
-  const match = /^(\d{4})-(\d{2})$/.exec(value);
-  if (!match) return null;
-  const month = Number(match[2]);
-  if (month < 1 || month > 12) return null;
-  return { year: Number(match[1]), month };
-}
-
-/** 'YYYY-MM|줄키' 를 되돌린다. 모양이 아니면 처음부터 본다. */
-function parseLedgerCursor(raw?: string): LedgerCursor | null {
-  if (!raw) return null;
-
-  const [month, ...rest] = raw.split('|');
-  const matched = /^(\d{4})-(\d{2})$/.exec(month ?? '');
-  if (!matched) return null;
-
-  // 끝 칸이 날짜면 새 모양('YYYY-MM|줄키|날짜')이다. 줄 키에는 '|' 가 들지 않는다.
-  const last = rest[rest.length - 1] ?? '';
-  const hasDate = rest.length >= 2 && !Number.isNaN(Date.parse(last)) && /^\d{4}-\d{2}-\d{2}T/.test(last);
-  return {
-    closing: { year: Number(matched[1]), month: Number(matched[2]) },
-    key: (hasDate ? rest.slice(0, -1) : rest).join('|'),
-    ...(hasDate ? { date: last } : {}),
-  };
-}
-
-/**
- * 한 주기의 줄에 쌓인 값을 붙인다. **가장 오래된 줄부터** 더한다.
- *
- * 돌려줄 때는 최신이 앞이다. 목록은 언제나 최근 것부터 읽는데, 누적은 주기 시작에서만
- * 뜻이 있어 더하는 방향과 보여 주는 방향이 반대다. 합계는 그 주기 전부의 값이라,
- * 뒷부분만 보여 줄 때에도 머리글의 숫자는 달라지지 않는다.
- */
-function fillPeriod(rows: CardDto.PeriodLedgerRow[]): {
-  rows: CardDto.PeriodLedgerRow[];
-  total: string;
-} {
-  let running = ZERO;
-  const filled = rows.map((row) => {
-    // 줄의 금액은 카드 관점이라 사용이 음수다. 쌓이는 값은 그 반대 부호다.
-    running = running.add(new Prisma.Decimal(row.amount).neg());
-    return { ...row, runningTotal: running.toString() };
-  });
-
-  return { rows: filled.reverse(), total: running.toString() };
 }

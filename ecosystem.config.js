@@ -23,6 +23,12 @@ module.exports = {
       env: {
         NODE_ENV: 'production'
       },
+      /*
+       * 끝낼 시간 (2026-10-25). main.ts 의 drainOnShutdown 이 받던 요청을 3.5초까지 기다리는데, pm2 기본값(1.6초)이면
+       * 그 전에 죽였다. 메모리가 새면 600MB 에서 다시 띄운다(2GB 기계에서 웹과 함께 돈다).
+       */
+      kill_timeout: 5000,
+      max_memory_restart: '600M',
       // log_file(합본)은 두지 않는다. out·err를 합친 것이라 같은 내용이 두 번 쌓인다.
       // 회전은 pm2-logrotate 모듈이 맡는다 (pm2 install pm2-logrotate).
       error_file: 'logs/api-error.log',

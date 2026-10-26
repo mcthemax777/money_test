@@ -44,7 +44,7 @@ export type AnalyticsEvent =
       name: 'plan_purchase_result';
       params: {
         plan: PlanId;
-        outcome: 'purchased' | 'cancelled' | 'already-subscribed' | 'product-missing' | 'failed';
+        outcome: 'purchased' | 'cancelled' | 'already-subscribed' | 'subscription-active' | 'payment-pending' | 'product-missing' | 'failed';
         /** 결제 뒤 서버가 이용권을 적은 것을 확인했는가(1) 아닌가(0). 결제가 아니면 0. */
         applied: 0 | 1;
       };

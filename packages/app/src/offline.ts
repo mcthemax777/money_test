@@ -34,7 +34,7 @@ import {
   type StreamingFetch,
   type SyncEventsHandle,
 } from '@money/core/data/sync-events';
-import { syncProject, type SyncResult } from '@money/core/data/sync-engine';
+import { syncProject, type SyncResult, pushOtherProjects } from '@money/core/data/sync-engine';
 import {
   newId,
   type EntryDto,
@@ -113,6 +113,11 @@ export async function setupOffline(): Promise<boolean> {
      * 쪽에 적어 둔 값으로만 알 수 있다 (D10).
      */
     setMirrorOwnership({ get: mirrorOwner, claim: claimMirrorOwner });
+    /*
+     * 서버의 내 가계부 목록에 없는 가계부는 기기에서 잊는다 (2026-10-25). 나가기·삭제·내보내짐 뒤에도 고르지 않은
+     * 가계부의 사본은 동기화가 403 을 받을 일이 없어, 로그아웃할 때까지 남의 가계부가 기기에 남았다.
+     */
+    apiClient.setProjectListHandler((projectIds) => void forgetProjectsOutside(projectIds));
     return true;
   } catch (error) {
     console.error('기기 사본을 열지 못했습니다. 서버에서 바로 읽습니다:', error);
@@ -297,6 +302,8 @@ export function syncNow(projectId: string, timeZone: string): Promise<SyncResult
       );
       // 사본이 채워졌으면 화면이 다시 읽게 알린다.
       if (result.changed) notifyMirrorChanged();
+      // 연결된 김에 다른 가계부에 남은 명령도 올린다 (`pushOtherProjects`).
+      if (!result.offline) await pushOtherProjects(mine, (request) => apiClient.pushSync(request), projectId);
       return result;
     } catch (error) {
       /*
@@ -380,8 +387,12 @@ async function clearOnce(): Promise<void> {
   try {
     await deleteLocalStore();
   } catch (error) {
-    console.error('기기 사본을 지우지 못했습니다:', error);
-    return;
+    /*
+     * 지우지 못했다. 사본을 다시 열어 두고(주인 확인이 그 사본을 읽는다) 실패를 알린다 -- 다른 사람의 로그인이
+     * 그것을 보고 멈춘다(`clearLocalMirror`). 예전에는 여기서 조용히 끝나 다음 사람이 앞 사람의 사본을 받았다.
+     */
+    await setupOffline();
+    throw error;
   }
 
   /*
@@ -448,6 +459,20 @@ export async function unsentCount(projectId?: string): Promise<{ pending: number
     // 세지 못한 것을 오류로 올리지 않는다. 로그인 화면이 이것 때문에 막히면 안 된다.
     console.error('보내지 못한 기록을 세지 못했습니다:', error);
     return { pending: 0, held: 0 };
+  }
+}
+
+/** 목록에 없는 가계부의 사본과 보내지 못한 명령을 지운다. 그 가계부에는 더 쓸 수 없다. */
+async function forgetProjectsOutside(projectIds: readonly string[]): Promise<void> {
+  const mine = store;
+  if (!mine) return;
+  try {
+    const keep = new Set(projectIds);
+    const gone = (await mine.mirroredProjectIds()).filter((id) => !keep.has(id));
+    for (const projectId of gone) await mine.forgetProject(projectId);
+    if (gone.length > 0) notifyMirrorChanged();
+  } catch (error) {
+    console.error('떠난 가계부의 기기 사본을 지우지 못했습니다:', error);
   }
 }
 

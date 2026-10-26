@@ -10,23 +10,23 @@
  *
  * 집계를 여기서 SQL 로 하지 않는 것은 규칙이 두 벌이 되기 때문이다. 서버도 같은
  * 함수를 쓰므로, 같은 달의 합계가 기기와 웹에서 갈릴 자리를 만들지 않는다.
+ *
+ * 이 파일은 저장소의 겉면이다. 메서드 이름과 모양은 화면·동기화가 부르는 그대로 두고, 몸통이 긴 일은
+ * 곁의 `local-store-*.ts` 에 함수로 두었다 (받기 `-pull`, 로컬 커밋 `-commit`, 아웃박스 `-outbox`,
+ * 여러 전표 고치기 `-bulk-edits`, 목록 줄 만들기 `-entry-view`, 카드 다리 `-card-postings`, 목록 조건
+ * `-entry-filters`). 그 함수들은 `db` 를 받을 뿐 트랜잭션의 경계는 원래 자리 그대로다.
  */
 
 import {
   type AccountDto,
   type CardDto,
   type CategoryDto,
-  type CategoryType,
   type EntryDraftDto,
-  type EntryTag,
-  type EntryTagsPayload,
-  type EntryCategoryPayload,
   type TagTarget,
   type TagDto,
   Dec,
   type PersonDto,
   type ViewEntry,
-  type ViewPosting,
   type CategoryNode,
   type CategoryPostingRow,
   type NamedCategoryPostingRow,
@@ -34,427 +34,94 @@ import {
   type Mutation,
   type MutationKind,
   type MutationResult,
-  type FieldClocks,
   HIDDEN_ACCOUNT_TYPES,
-  applyTagChange,
-  planCategoryChange,
   type NetWorthAccountRow,
   lineMatcherOf,
-  type ParsedEntrySearch,
   SyncDto,
-  decodeHlc,
-  encodeHlc,
-  hlcNext,
-  hlcReceive,
-  FIRST_RANK,
-  isDeferred,
-  isSettingMutation,
   newId,
   currencyDecimals,
   ledgerOpeningDate,
   isOverrideFrom,
   planBudgetFrom,
-  TABLE_BACKED_KINDS,
-  isSettled,
-  latestFieldClock,
   recurringClockKeys,
-  rankAfter,
   zonedDateKey,
   zonedYearMonth,
   RestateError,
   pendingRateItems,
   restateAmounts,
-  cardDiscountOf,
-  cardRefundCutsOf,
   shareListOf,
-  spreadInstallmentRow,
-  NO_PERSON,
 } from '@money/types';
 
-import { codedError } from '../lib/api-error';
-import { track } from '../lib/analytics';
-import { ALL_TABLES, SCHEMA_STATEMENTS, SCHEMA_VERSION } from './schema';
+import { SCHEMA_STATEMENTS, SCHEMA_VERSION, ALL_TABLES } from './schema';
 import type { SqlDriver, SqlValue } from './sql-driver';
+import { changeEntryCategory, changeEntryTags, previewEntryCategory } from './local-store-bulk-edits';
+import { cardLedgerPostings, creditCardPostings, debitCardPostings } from './local-store-card-postings';
+import { assetClock, entryHlc, latestEntryHlc, mergeClocks } from './local-store-clocks';
+import { writeAsset, writeEntry } from './local-store-commit';
+import {
+  narrowFilter,
+  ownerFilter,
+  paybackOfFilter,
+  periodFilter,
+  searchFilter,
+} from './local-store-entry-filters';
+import { attachPostings } from './local-store-entry-view';
+import {
+  maskCardNumber,
+  openingSeed,
+  recurringRow,
+  spreadRowOf,
+  toDraftResponse,
+  toMutation,
+} from './local-store-mappers';
+import { applyAlias, insertMutation, insertRetry, settleMutations } from './local-store-outbox';
+import { applyPull } from './local-store-pull';
+import {
+  CHILD_TABLES,
+  INDEX_STATEMENTS,
+  MIRROR_TABLES,
+  TABLE_STATEMENTS,
+  expectedColumns,
+} from './local-store-schema-shape';
+import {
+  REBUILD_PENDING,
+  type HeldMutation,
+  type MirrorEntryScope,
+  type RestatePlan,
+  type Row,
+  type SettingTable,
+  type StoredAccount,
+  type StoredBudget,
+  type StoredCardLedgerPosting,
+  type StoredCardPosting,
+  type StoredLedgerRow,
+  type StoredPaymentCard,
+  type StoredPerformanceCard,
+  type SyncCursor,
+} from './local-store-types';
+import { asInt, asMoney, asOfClause, asText, placeholders } from './local-store-values';
+import { dropEntryLegs, dropTagFromRules, forgetRow, upsert } from './local-store-writes';
 
-/** 사본이 어디까지 따라왔는지. */
-export interface SyncCursor {
-  projectId: string;
-  version: number;
-  /** 달력 키를 계산할 때 쓴 타임존. 프로젝트 타임존이 바뀌면 키를 다시 계산해야 한다. */
-  timeZone: string;
-  syncedAt: string | null;
-  /**
-   * 이 사본을 처음부터 받기 시작할 때의 서버 자리표 바닥.
-   *
-   * 서버가 알려 주는 바닥이 이 값보다 더 올랐을 때만 사본을 버린다. 처음부터 받는
-   * 중인 기기는 커서가 바닥보다 낮은 것이 정상이라, 그것까지 버리면 큰 사본을 영영
-   * 다 받지 못한다.
-   */
-  mirrorFloor: number;
-}
-
-/** 사본에 담긴 계좌 한 줄. 화면과 순자산 계산이 함께 쓴다. */
-export interface StoredAccount {
-  id: string;
-  ownerId: string | null;
-  ownerName: string | null;
-  type: string;
-  name: string;
-  currency: string;
-  balance: string;
-  isActive: boolean;
-  sortRank: string;
-}
-
-/** 사본에 담긴 예산 규칙 한 줄. 그 달의 조정값을 함께 실어 준다. */
-export interface StoredBudget {
-  id: string;
-  categoryId: string | null;
-  /** 태그 예산이면 그 태그 */
-  tagId: string | null;
-  type: string | null;
-  monthlyAmount: string;
-  effectiveFrom: string | null;
-  effectiveTo: string | null;
-  /** 그 달만 따로 잡아 둔 금액. 없으면 null */
-  overrideAmount: string | null;
-  overrideId: string | null;
-}
-
-/** 결제수단 집계가 보는 카드 한 장. 실적 기준액은 아직 통장 통화다. */
-export interface StoredPaymentCard {
-  id: string;
-  name: string;
-  cardType: string;
-  isActive: boolean;
-  color: string | null;
-  statementClosingDay: number | null;
-  performanceAmount: string | null;
-  paymentCurrency: string;
-  ownerId: string | null;
-  ownerName: string | null;
-}
-
-/** 실적 계산이 보는 카드 한 장. */
-export interface StoredPerformanceCard {
-  id: string;
-  projectId: string;
-  name: string;
-  cardType: string;
-  statementClosingDay: number | null;
-  paymentDueDay: number | null;
-  performanceAmount: string | null;
-  liabilityAccountId: string | null;
-  paymentCurrency: string;
-  liabilityCurrency: string | null;
-  liabilityBalance: string | null;
-}
-
-/** 보류 칸의 명령 하나. 화면이 이유와 시각을 함께 보여 준다. */
-export interface HeldMutation extends Mutation {
-  status: 'conflict' | 'rejected' | 'blocked';
-  error: string | null;
-  createdAt: string;
-  /**
-   * 이 명령이 고치려던 거래가 사본에서 사라졌는가.
-   *
-   * 그 사이 다른 사람이 지웠다는 뜻이다. 다시 보내 봐야 영영 거절되므로(삭제가 언제나
-   * 이긴다) 화면은 그때 **새 거래로 다시 적기**를 내놓는다. 그러지 않으면 오프라인에서
-   * 적은 내용을 버리는 길밖에 없다.
-   *
-   * 전표를 고치는 명령에만 뜻이 있다. 나머지는 언제나 false 다.
-   */
-  targetMissing: boolean;
-}
-
-/**
- * 실적 원장 한 줄의 재료. 주기별 사용액이 보는 값에 화면에 적을 것이 붙었다.
- *
- * 서버의 `performanceLedgerEntrySelect` 와 같은 자리다.
+/*
+ * 바깥이 이 파일에서 가져가던 이름들. 몸통을 곁 파일로 옮겨도 가져가는 자리는 그대로 둔다.
  */
-export interface StoredCardLedgerPosting extends StoredCardPosting {
-  postingId: string;
-  entryId: string;
-  description: string;
-  merchant: string | null;
-  categoryName: string | null;
-  parentCategoryName: string | null;
-}
-
-/** 계좌 원장 한 줄의 재료. 잔액 누적은 읽는 쪽이 붙인다. */
-export interface StoredLedgerRow {
-  postingId: string;
-  entryId: string;
-  date: string;
-  description: string;
-  merchant: string | null;
-  amount: string;
-  cardId: string | null;
-  cardName: string | null;
-  categoryName: string | null;
-  parentCategoryName: string | null;
-  countsPerformance: boolean;
-}
-
-/** 주기별 사용액이 보는 다리 하나. */
-export interface StoredCardPosting {
-  amount: string;
-  date: string;
-  installmentMonths: number | null;
-  /** 사용자가 적어 둔 회차별 원금. 없으면 개월수로 나눈다. */
-  installmentShares: string[] | null;
-  /**
-   * 적어 둔 회차별 이자. 다리 금액에 이미 들어 있는 값이다.
-   *
-   * 청구는 회차마다 원금에 이 값을 더해 세고, 실적은 반대로 이 합을 뺀다.
-   */
-  installmentInterestShares: string[] | null;
-  /** 실적에 세는가. 분할해도 하나다. 청구액에는 어느 쪽이든 들어간다. */
-  countsPerformance: boolean;
-  /** 실적을 정가로 셀 때 되살릴 차감액. 줄마다의 값을 더한 것이고, 안 되살리면 null 이다. */
-  discountAmount: string | null;
-  /** 차감액을 실적에서도 뺄지. 분할해도 하나다. */
-  discountCountsPerformance: boolean;
-  /** 할부 원거래면 걸린 할부 환불이 회차마다 줄인 것 (원금 + 이자). 청구 회차에서 뺀다. */
-  installmentCuts: string[] | null;
-  /** 할부 환불이면 그 환불이 줄인 것의 합. */
-  refundCut: { total: string; interest: string } | null;
-}
-
-type Row = Record<string, SqlValue>;
-
-/** 사본에 담긴 시계 지도를 되돌린다. 모양이 아니면 빈 지도다. */
-function parseClocks(value: string | null): FieldClocks {
-  if (!value) return {};
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
-    const clocks: FieldClocks = {};
-    for (const [field, clock] of Object.entries(parsed as Record<string, unknown>)) {
-      if (typeof clock === 'string') clocks[field] = clock;
-    }
-    return clocks;
-  } catch {
-    return {};
-  }
-}
-
-/** 방금 쓴 필드에만 시계를 찍어 다시 글자로. 나머지 필드의 시계는 그대로 둔다. */
-function mergeClocks(stored: string | null, fields: readonly string[], hlc: string): string {
-  const clocks = parseClocks(stored);
-  for (const field of fields) {
-    // 줄을 가리키는 값에는 시계를 찍지 않는다. 병합의 대상이 아니다.
-    if (field === 'id' || field === 'projectId') continue;
-    clocks[field] = hlc;
-  }
-  return JSON.stringify(clocks);
-}
-
-/**
- * 서버가 준 지도(fieldHlc)를 사본에 담을 글자로.
- *
- * 기기는 이 값을 해석하지 않는다. 다음 편집의 시계를 매길 때 @money/types 의
- * field-merge 에 그대로 넘길 뿐이라, 문자열로 두는 편이 왕복에서 잃는 것이 없다.
- */
-const asJson = (value: unknown): string | null => {
-  if (value == null) return null;
-  return typeof value === 'string' ? value : JSON.stringify(value);
-};
-
-const asText = (value: unknown): string | null =>
-  value === undefined || value === null ? null : String(value);
-
-const asMoney = (value: unknown): string => asText(value) ?? '0';
-
-const asFlag = (value: unknown): number => (value ? 1 : 0);
-
-/** 사본에서 셈한 청구액 확정. 전표마다 다시 쓸 다리 금액이다 (`planRestate`). */
-export type RestatePlan = Array<{
-  entryId: string;
-  postings: Array<{ id: string; amount: string }>;
-}>;
-
-/**
- * 계획에 적어 둔 회차 원금. 사본에는 JSON 글자로 담긴다.
- *
- * 모양이 아니면 없는 것으로 본다 -- 그때는 읽는 쪽이 개월수로 나누므로, 빈 배열을
- * 돌려주어 회차가 통째로 사라지는 것보다 낫다 (서버의 `toShares` 와 같은 규칙이다).
- */
-
-/** `IN (?, ?, ?)` 의 물음표들. 개수가 0 이면 아무것도 맞지 않는 절이 된다. */
-const placeholders = (count: number): string =>
-  count === 0 ? 'NULL' : new Array(count).fill('?').join(', ');
-
-/**
- * 큐의 한 줄을 명령으로.
- *
- * clientId 는 이 표에 담지 않는다. 기기마다 하나뿐이라 줄마다 되풀이할 값이 아니고,
- * 한 곳에만 두어야 나중에 바뀔 일이 생겨도 어긋나지 않는다.
- */
-const toMutation = (row: Row, clientId: string): Mutation => ({
-  mutationId: String(row.mutationId),
-  clientId,
-  clientSeq: Number(row.clientSeq),
-  hlc: String(row.hlc),
-  kind: String(row.kind) as MutationKind,
-  projectId: String(row.projectId),
-  targets: JSON.parse(String(row.targets)) as string[],
-  payload: JSON.parse(String(row.payload)) as unknown,
-});
-
-/**
- * 반복 등록 한 줄을 사본의 칸으로. 동기화 응답(서버 행)과 기기의 새 규칙이 같은 길로 온다.
- * 배열(요일·태그)은 JSON 글자로 담는다.
- */
-export function recurringRow(projectId: string, row: Row): Record<string, SqlValue> {
-  const list = (value: unknown): string => {
-    if (Array.isArray(value)) return JSON.stringify(value);
-    if (typeof value === 'string' && value.startsWith('[')) return value;
-    return '[]';
-  };
-  const intOrNull = (value: unknown) => (value == null || value === '' ? null : asInt(value));
-  return {
-    id: String(row.id),
-    projectId,
-    isActive: asFlag(row.isActive ?? true),
-    frequency: String(row.frequency ?? 'none'),
-    everyDays: intOrNull(row.everyDays),
-    weekdays: list(row.weekdays),
-    holidayRule: asText(row.holidayRule) ?? 'none',
-    dayOfMonth: intOrNull(row.dayOfMonth),
-    month: intOrNull(row.month),
-    startDate: String(row.startDate),
-    endDate: asText(row.endDate),
-    timeOfDay: asText(row.timeOfDay),
-    kind: String(row.kind),
-    amount: row.amount == null || row.amount === '' ? null : String(row.amount),
-    currency: asText(row.currency),
-    description: String(row.description ?? ''),
-    merchant: asText(row.merchant),
-    personId: asText(row.personId),
-    categoryId: asText(row.categoryId),
-    accountId: asText(row.accountId),
-    toAccountId: asText(row.toAccountId),
-    feeAmount: row.feeAmount == null || row.feeAmount === '' ? null : String(row.feeAmount),
-    feeCategoryId: asText(row.feeCategoryId),
-    cardId: asText(row.cardId),
-    installmentMonths: intOrNull(row.installmentMonths),
-    tagIds: list(row.tagIds),
-    createdAt: row.createdAt ? asIso(row.createdAt) : '',
-    updatedAt: row.updatedAt ? asIso(row.updatedAt) : '',
-    updatedVersion: row.updatedVersion == null ? 0 : asInt(row.updatedVersion),
-    fieldHlc: asJson(row.fieldHlc),
-  };
-}
-
-/**
- * 세기 전에 깔아 두는 값. **서버가 아직 모르는 계좌의 기초 잔액**이다.
- *
- * 기기에서 통장을 만들면 기초 잔액이 잔액 칸에만 적힌다 -- 그것을 전표로 만드는 일은
- * 서버가 명령을 재생할 때 한다. 그래서 그 전표가 돌아오기 전까지는 다리를 세어도 0 이고,
- * 방금 "50,000원으로 개설"한 통장이 0원으로 보인다.
- *
- * 서버가 아는 줄(번호가 붙은 줄)에는 깔지 않는다. 그때는 기초 잔액이 이미 다리로 들어와
- * 있어, 함께 세면 두 번 센다.
- */
-/**
- * 커서 자리에 적는 "처음부터 다시 받아야 한다"는 표시. 번호는 0 이상이라 겹치지 않는다.
- * 동기화가 보낼 것을 먼저 보낸 뒤 사본을 비우고 0 부터 받는다 (`syncProject`).
- */
-export const REBUILD_PENDING = -1;
-
-function openingSeed(row: Row): Dec {
-  return asInt(row.updatedVersion) === 0 ? Dec.of(asMoney(row.balance)) : Dec.of(0);
-}
-
-/**
- * 카드 다리 한 줄. 실적을 되살릴 차감액을 줄들에서 더해 붙인다.
- *
- * 깎인 금액은 줄마다 적히므로(`posting.discountAmount`) 그 합이 이 결제의 차감액이다.
- * 차감액은 사용자가 적은 통화이고 카드 다리는 계좌 통화라, 둘이 갈리는 거래(원화
- * 카드로 한 외화 결제)에서는 더할 수 없어 되살리지 않는다 -- 서버의 `performanceDiscount`
- * 와 한 규칙이다.
- */
-const toCardPosting = (row: Row, legs: readonly Row[]): StoredCardPosting => {
-
-  return {
-    amount: asMoney(row.amount),
-    date: String(row.date),
-    installmentMonths: row.totalMonths == null ? null : Number(row.totalMonths),
-    installmentShares: shareListOf(row.principalShares),
-    installmentInterestShares: shareListOf(row.interestShares),
-    countsPerformance: Boolean(row.countsPerformance),
-    // 더하는 규칙은 서버 카드 원장과 함께 쓴다 (`cardDiscountOf`). 다리는 분류 줄만 읽어 온다(`usageLegs`).
-    discountAmount: cardDiscountOf(asText(row.originalCurrency), legs.map((leg) => asText(leg.discountAmount))),
-    discountCountsPerformance: Boolean(row.discountCountsPerformance ?? 1),
-    ...cardRefundFields(row),
-  };
-};
-
-/**
- * 할부 환불이 청구와 실적에 주는 것. 규칙은 서버 카드 원장과 함께 쓴다 (`cardRefundCutsOf`).
- * 걸린 환불의 조정은 레코드 구분자(30)로 이어 붙인 한 칸으로 온다.
- */
-function cardRefundFields(row: Row): Pick<StoredCardPosting, 'installmentCuts' | 'refundCut'> {
-  return cardRefundCutsOf({
-    refundAdjust: asText(row.refundAdjust),
-    months: row.totalMonths == null ? null : asInt(row.totalMonths),
-    refunds: String(row.installmentCuts ?? '').split(String.fromCharCode(30)).filter(Boolean),
-  });
-}
-
-const asInt = (value: unknown): number => {
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.trunc(parsed) : 0;
-};
-
-/** ISO 문자열로. Date 와 문자열이 섞여 오므로 한 곳에서 맞춘다. */
-const asIso = (value: unknown): string =>
-  value instanceof Date ? value.toISOString() : String(value ?? '');
-
-/**
- * 잔액을 셀 때 `asOf` 뒤 날짜의 전표를 빼는 조건. 별칭 `e` 의 entry 와 함께 쓴다.
- *
- * entry.date 는 늘 `toISOString()` 꼴로 담기므로(`asIso`, `local-entry-writer`) 문자열
- * 견주기가 곧 시각 견주기다. null 이면 자르지 않는다.
- */
-const asOfClause = (asOf: Date | null): { sql: string; params: string[] } =>
-  asOf ? { sql: ' AND e.date <= ?', params: [asOf.toISOString()] } : { sql: '', params: [] };
-
-/**
- * 설정 엔티티가 사는 표. 필드별 병합과 순서 값을 갖는다.
- *
- * 예산 조정(budget_override)은 순서가 없지만 같은 길로 쓴다 -- 키가 (예산, 년, 월)이라
- * 순서 값이 필요 없을 뿐, 시계와 커밋 절차는 같다.
- */
-export type SettingTable =
-  | 'person'
-  | 'account'
-  | 'card'
-  | 'category'
-  | 'tag'
-  | 'budget'
-  | 'budget_override'
-  | 'recurring_rule';
-
-/**
- * 이 명령이 건드리는 사본의 표. 전표 명령이면 null 이다.
- *
- * 한 자리에 둔 이유가 있다. 명령을 쌓는 쪽과 막힌 명령을 다시 내는 쪽이 **같은 표의
- * 시계**를 봐야 하는데, 두 곳이 따로 알고 있으면 한쪽만 고쳐 놓고 맞다고 믿게 된다.
- * 실제로 그랬다 -- 다시 내는 쪽이 전표 표만 보아서, 통장 이름의 충돌은 몇 번을 눌러도
- * 다시 밀렸다.
- */
-export function settingTableOf(kind: MutationKind): SettingTable | null {
-  // 표 한 줄에 붙는 설정 명령만 표가 있다. 통합·삭제·환율 같은 것은 시계 없이 차례대로 간다.
-  if (!isSettingMutation(kind) || !TABLE_BACKED_KINDS.has(kind)) return null;
-
-  // 명령 이름이 곧 표 이름이다. 예산 조정만 (예산, 년, 월) 키라 표가 따로 있고, 반복 등록은
-  // 표 이름이 길다.
-  if (kind === 'budget.override') return 'budget_override';
-  if (kind === 'recurring.create' || kind === 'recurring.update') return 'recurring_rule';
-  return kind.split('.')[0] as SettingTable;
-}
+export {
+  REBUILD_PENDING,
+  type HeldMutation,
+  type MirrorEntryScope,
+  type RestatePlan,
+  type SettingTable,
+  type StoredAccount,
+  type StoredBudget,
+  type StoredCardLedgerPosting,
+  type StoredCardPosting,
+  type StoredLedgerRow,
+  type StoredPaymentCard,
+  type StoredPerformanceCard,
+  type SyncCursor,
+} from './local-store-types';
+export { recurringRow } from './local-store-mappers';
+export { settingTableOf } from './local-store-outbox';
 
 export class LocalStore {
   constructor(private readonly db: SqlDriver) {}
@@ -661,6 +328,20 @@ export class LocalStore {
     });
   }
 
+  /** 아직 보내지 않은(pending) 명령이 있는 가계부들. */
+  async pendingProjectIds(): Promise<string[]> {
+    const rows = await this.db.all<Row>(`SELECT DISTINCT projectId FROM outbox WHERE status = 'pending'`);
+    return rows.map((row) => String(row.projectId));
+  }
+
+  /** 이 기기에 사본이나 보내지 못한 명령이 남아 있는 가계부들. */
+  async mirroredProjectIds(): Promise<string[]> {
+    const rows = await this.db.all<Row>(
+      `SELECT projectId FROM sync_state UNION SELECT projectId FROM outbox`,
+    );
+    return rows.map((row) => String(row.projectId));
+  }
+
   /** 사본의 행을 지운다. 트랜잭션은 부르는 쪽이 연다. */
   private async clearMirrorRows(projectId: string): Promise<void> {
     for (const table of ALL_TABLES) {
@@ -682,418 +363,12 @@ export class LocalStore {
   }
 
   /**
-   * 변경 피드의 응답을 사본에 적는다.
-   *
-   * 한 트랜잭션 안에서 행을 넣고 커서를 올린다. 반쯤 적용한 뒤 커서가 올라가면,
-   * 기기는 받지 못한 변경을 "이미 본 번호"로 여겨 영원히 다시 받지 못한다.
-   *
-   * 타임존을 받는 것은 달력 키를 그때 계산해 넣기 때문이다.
+   * 변경 피드의 응답을 사본에 적는다. 한 트랜잭션 안에서 행을 넣고 커서를 올린다 (`local-store-pull`).
    */
   async applyPull(response: SyncDto.PullResponse, timeZone: string): Promise<void> {
-    const { projectId, changes, tombstones, version } = response;
-
-    await this.db.transaction(async () => {
-      const project = changes.project as Row | null;
-      if (project) {
-        await this.upsert('project', {
-          id: String(project.id),
-          name: asText(project.name) ?? '',
-          projectKey: asText(project.projectKey),
-          description: asText(project.description),
-          ledgerCurrency: asText(project.ledgerCurrency) ?? 'KRW',
-          displayCurrency: asText(project.displayCurrency) ?? 'KRW',
-          timezone: asText(project.timezone) ?? timeZone,
-          updatedVersion: asInt(project.updatedVersion),
-        });
-      }
-
-      for (const row of changes.members as Row[]) {
-        await this.upsert('member', {
-          id: String(row.id),
-          projectId,
-          userId: String(row.userId),
-          role: String(row.role),
-          personId: asText(row.personId),
-          updatedVersion: asInt(row.updatedVersion),
-        });
-      }
-
-      for (const row of changes.people as Row[]) {
-        await this.upsert('person', {
-          id: String(row.id),
-          projectId,
-          name: asText(row.name) ?? '',
-          relationship: asText(row.relationship),
-          isActive: asFlag(row.isActive),
-          sortRank: asText(row.sortRank) ?? FIRST_RANK,
-          fieldHlc: asJson(row.fieldHlc),
-          createdAt: asIso(row.createdAt),
-          updatedAt: asIso(row.updatedAt),
-          updatedVersion: asInt(row.updatedVersion),
-        });
-      }
-
-      for (const row of changes.accounts as Row[]) {
-        await this.upsert('account', {
-          id: String(row.id),
-          projectId,
-          ownerId: asText(row.ownerId),
-          type: String(row.type),
-          name: asText(row.name) ?? '',
-          institutionId: asText(row.institutionId),
-          accountNumber: asText(row.accountNumber),
-          matchText: asText(row.matchText),
-          maturityDate: asText(row.maturityDate),
-          currency: asText(row.currency) ?? 'KRW',
-          balance: asMoney(row.balance),
-          isActive: asFlag(row.isActive),
-          sortRank: asText(row.sortRank) ?? FIRST_RANK,
-          fieldHlc: asJson(row.fieldHlc),
-          createdAt: asIso(row.createdAt),
-          updatedAt: asIso(row.updatedAt),
-          updatedVersion: asInt(row.updatedVersion),
-        });
-      }
-
-      for (const row of changes.categories as Row[]) {
-        await this.upsert('category', {
-          id: String(row.id),
-          projectId,
-          name: asText(row.name) ?? '',
-          parentId: asText(row.parentId),
-          type: String(row.type),
-          icon: asText(row.icon),
-          isDefault: asFlag(row.isDefault),
-          sortRank: asText(row.sortRank) ?? FIRST_RANK,
-          fieldHlc: asJson(row.fieldHlc),
-          createdAt: asIso(row.createdAt),
-          updatedAt: asIso(row.updatedAt),
-          updatedVersion: asInt(row.updatedVersion),
-        });
-      }
-
-      for (const row of (changes.tags ?? []) as Row[]) {
-        await this.upsert('tag', {
-          id: String(row.id),
-          projectId,
-          name: asText(row.name) ?? '',
-          color: asText(row.color),
-          sortRank: asText(row.sortRank) ?? FIRST_RANK,
-          fieldHlc: asJson(row.fieldHlc),
-          createdAt: asIso(row.createdAt),
-          updatedAt: asIso(row.updatedAt),
-          updatedVersion: asInt(row.updatedVersion),
-        });
-      }
-
-      for (const row of changes.cards as Row[]) {
-        await this.upsert('card', {
-          id: String(row.id),
-          projectId,
-          paymentAccountId: String(row.paymentAccountId),
-          liabilityAccountId: asText(row.liabilityAccountId),
-          name: asText(row.name) ?? '',
-          cardType: String(row.cardType),
-          issuerId: String(row.issuerId),
-          cardNumber: asText(row.cardNumber),
-          creditLimit: asText(row.creditLimit),
-          performanceAmount: asText(row.performanceAmount),
-          statementClosingDay: row.statementClosingDay == null ? null : asInt(row.statementClosingDay),
-          paymentDueDay: row.paymentDueDay == null ? null : asInt(row.paymentDueDay),
-          color: asText(row.color),
-          matchText: asText(row.matchText),
-          expiryDate: asText(row.expiryDate),
-          isActive: asFlag(row.isActive),
-          sortRank: asText(row.sortRank) ?? FIRST_RANK,
-          fieldHlc: asJson(row.fieldHlc),
-          createdAt: asIso(row.createdAt),
-          updatedAt: asIso(row.updatedAt),
-          updatedVersion: asInt(row.updatedVersion),
-        });
-      }
-
-      for (const entry of changes.entries) {
-        const row = entry as unknown as Row;
-        const date = asIso(row.date);
-        const instant = new Date(date);
-
-        await this.upsert('entry', {
-          id: String(row.id),
-          projectId,
-          // 미지정 거래는 사람이 null 로 온다.
-          personId: asText(row.personId),
-          date,
-          // 프로젝트 타임존의 달력 키를 여기서 박아 둔다.
-          dateKey: zonedDateKey(instant, timeZone),
-          yearMonth: zonedYearMonth(instant, timeZone),
-          description: asText(row.description) ?? '',
-          merchant: asText(row.merchant),
-          detailedNote: asText(row.detailedNote),
-          originalCurrency: asText(row.originalCurrency),
-          originalAmount: asText(row.originalAmount),
-          rateProvisional: asFlag(row.rateProvisional),
-          /*
-           * 값이 없으면 센 것으로 본다.
-           *
-           * 서버가 이 필드를 알기 전에 앱이 먼저 올라갈 수 있고, 그때 응답에는 이 칸이
-           * 아예 없다. `asFlag(undefined)` 는 0 이라, 그대로 두면 모든 카드 거래가
-           * 실적에서 빠져 사용액이 0원으로 보인다 (2026-09-17 에 실기기에서 겪었다).
-           */
-          countsPerformance: asFlag(row.countsPerformance ?? true),
-          // 같은 까닭으로 기본값을 둔다. 값이 없으면 차감이 실적도 깎던 그때의 규칙이다.
-          discountCountsPerformance: asFlag(row.discountCountsPerformance ?? true),
-          createdByUserId: asText(row.createdByUserId),
-          updatedHlc: asText(row.updatedHlc),
-          updatedVersion: asInt(row.updatedVersion),
-          // 페이백의 원거래. 서버가 원거래를 지우면 비워서 다시 보낸다(SET NULL 이 번호를 올린다).
-          paybackOfEntryId: asText(row.paybackOfEntryId),
-          paybackOfLineKey: asText(row.paybackOfLineKey),
-          paybackType: asText(row.paybackType),
-          // 할부 환불이 줄인 회차. 서버는 JSON 으로 보내고 사본은 글자로 든다.
-          installmentAdjust: asJson(row.installmentAdjust),
-        });
-
-        /*
-         * 전표가 오면 그 다리를 통째로 갈아 끼운다. 다리 수가 바뀌는 수정도 이 한
-         * 경로로 처리된다.
-         *
-         * 옛 다리에 걸린 할부 계획은 **새로 온 다리에 없는 것만** 지운다. 서버의 replaceEntry
-         * 는 다리를 지우고 다시 만들면서 계획을 cascade 로 지우고 새로 만들어, 새 계획이 새
-         * 다리 id 를 달고 이 응답에 함께 실려 온다(그래서 아래 installmentPlans 를 전표보다
-         * 뒤에 적용한다). 반대로 태그 손보기·페이백 링크·할부 환불처럼 **다리는 그대로 두고
-         * 전표의 번호만 올리는** 변경에서는 계획이 다시 오지 않는다. 그때 통째로 지우면 사본의
-         * 할부가 일시불로 남는다 (2026-10-08 실기기에서 태그를 바꾼 할부가 원거래만 남았다).
-         */
-        const incomingPostingIds = ((entry.postings ?? []) as Row[]).map((posting) =>
-          String(posting.id),
-        );
-        await this.db.run(
-          `DELETE FROM installment_plan
-            WHERE postingId IN (SELECT id FROM posting WHERE entryId = ?)
-              AND postingId NOT IN (${incomingPostingIds.length > 0 ? placeholders(incomingPostingIds.length) : "''"})`,
-          [String(row.id), ...incomingPostingIds],
-        );
-        await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [String(row.id)]);
-
-        /*
-         * 태그 연결도 다리와 같이 통째로 갈아 끼운다.
-         *
-         * 이 표에는 번호가 없어 따로 도착하지 않는다. 전표에 실려 온 목록이 곧 그
-         * 전표의 태그 전부다. 없으면 비운다.
-         */
-        await this.db.run(`DELETE FROM entry_tag WHERE entryId = ?`, [String(row.id)]);
-        for (const link of (entry.tagLinks ?? []) as Row[]) {
-          // `upsert` 는 id 하나를 열쇠로 본다. 이 표의 열쇠는 세 컬럼이라 직접 넣는다.
-          await this.db.run(
-            `INSERT OR IGNORE INTO entry_tag (entryId, lineKey, tagId) VALUES (?, ?, ?)`,
-            [String(row.id), asText(link.lineKey), String(link.tagId)],
-          );
-        }
-        for (const posting of (entry.postings ?? []) as Row[]) {
-          await this.upsert('posting', {
-            id: String(posting.id),
-            entryId: String(row.id),
-            accountId: asText(posting.accountId),
-            categoryId: asText(posting.categoryId),
-            amount: asMoney(posting.amount),
-            quantity: asText(posting.quantity),
-            currency: asText(posting.currency) ?? 'KRW',
-            baseAmount: asMoney(posting.baseAmount),
-            exchangeRate: asMoney(posting.exchangeRate),
-            cardId: asText(posting.cardId),
-            // 줄에 달린 것. 태그와 차감이 이 줄의 사실이다.
-            lineKey: asText(posting.lineKey),
-            discountAmount: asText(posting.discountAmount),
-          });
-        }
-      }
-
-      for (const row of changes.budgets as Row[]) {
-        await this.upsert('budget', {
-          id: String(row.id),
-          projectId,
-          categoryId: asText(row.categoryId),
-          tagId: asText(row.tagId),
-          type: asText(row.type),
-          monthlyAmount: asMoney(row.monthlyAmount),
-          effectiveFrom: asText(row.effectiveFrom),
-          effectiveTo: asText(row.effectiveTo),
-          fieldHlc: asJson(row.fieldHlc),
-          updatedVersion: asInt(row.updatedVersion),
-        });
-      }
-
-      for (const row of changes.budgetOverrides as Row[]) {
-        await this.upsert('budget_override', {
-          id: String(row.id),
-          budgetId: String(row.budgetId),
-          year: asInt(row.year),
-          month: asInt(row.month),
-          amount: asMoney(row.amount),
-          fieldHlc: asJson(row.fieldHlc),
-          updatedVersion: asInt(row.updatedVersion),
-        });
-      }
-
-      for (const row of changes.exchangeRates as Row[]) {
-        /*
-         * 같은 (쌍, 날짜)의 줄은 하나다 (서버의 유일성). 오프라인에서 넣은 환율은 기기가 정한 id 로
-         * 적히는데 서버는 제 id 로 받아 들인다. 그 줄을 지우지 않으면 서버 줄과 나란히 남고, 서버가
-         * 그 쌍을 지워도 기기 id 에는 자리표가 오지 않아 옛 환율로 영영 환산했다.
-         */
-        await this.db.run(
-          `DELETE FROM exchange_rate
-            WHERE projectId = ? AND baseCurrency = ? AND quoteCurrency = ? AND date = ? AND id <> ?`,
-          [projectId, String(row.baseCurrency), String(row.quoteCurrency), asIso(row.date).slice(0, 10), String(row.id)],
-        );
-        await this.upsert('exchange_rate', {
-          id: String(row.id),
-          projectId,
-          baseCurrency: String(row.baseCurrency),
-          quoteCurrency: String(row.quoteCurrency),
-          rate: asMoney(row.rate),
-          date: asIso(row.date).slice(0, 10),
-          source: asText(row.source) ?? 'manual',
-          updatedVersion: asInt(row.updatedVersion),
-        });
-      }
-
-      /*
-       * 서버가 아직 이 표를 보내지 않을 수 있다. 앱이 서버보다 먼저 올라가는 배포
-       * 순서에서 그렇다. 그때는 이 표만 비워 두고 나머지 동기화는 그대로 돈다.
-       */
-      for (const row of (changes.assetValuations ?? []) as Row[]) {
-        await this.upsert('asset_valuation', {
-          id: String(row.id),
-          accountId: String(row.accountId),
-          // 날짜만 쓴다. 최신 한 건을 고르는 비교가 문자열 정렬이라 자릿수가 같아야 한다.
-          date: asIso(row.date).slice(0, 10),
-          quantity: asMoney(row.quantity),
-          price: asMoney(row.price),
-          marketValue: asMoney(row.marketValue),
-          source: asText(row.source) ?? 'manual',
-          updatedVersion: asInt(row.updatedVersion),
-        });
-      }
-
-      // 전표보다 반드시 뒤다. 위의 전표 교체가 옛 다리의 계획을 지우기 때문이다.
-      /*
-       * 보관함의 후보.
-       *
-       * 사본에 이미 있는 행을 덮어쓴다. 후보에는 필드별 병합이 없고(서버 주석 참고)
-       * 서버 값이 곧 최신이다. 다만 아직 서버에 알리지 못한 일(draft_op)이 있으면
-       * 그 후보는 건드리지 않는다 -- 덮어쓰면 오프라인에서 등록한 것이 대기로
-       * 되살아나 같은 거래를 두 번 적게 된다.
-       */
-      for (const row of (changes.recurringRules ?? []) as Row[]) {
-        await this.upsert('recurring_rule', recurringRow(projectId, row));
-      }
-
-      /*
-       * 공휴일은 통째로 갈아 끼운다. 싣지 않은 응답(옛 서버, 서비스를 직접 부른 검사)이면
-       * 들고 있던 것을 그대로 둔다 -- 비우면 휴일 처리가 있는 반복의 예정일이 틀어진다.
-       */
-      if (response.publicHolidays) {
-        await this.db.run(`DELETE FROM public_holiday WHERE projectId = ?`, [projectId]);
-        for (const date of response.publicHolidays) {
-          await this.db.run(
-            `INSERT OR IGNORE INTO public_holiday (projectId, date) VALUES (?, ?)`,
-            [projectId, date],
-          );
-        }
-      }
-
-      for (const row of (changes.entryDrafts ?? []) as Row[]) {
-        const id = String(row.id);
-        if (await this.hasDraftOp(id)) continue;
-
-        await this.upsert('entry_draft', {
-          id,
-          projectId,
-          source: String(row.source),
-          status: String(row.status ?? 'pending'),
-          rawText: asText(row.rawText) ?? '',
-          appPackage: asText(row.appPackage),
-          appTitle: asText(row.appTitle),
-          kind: asText(row.kind),
-          amount: asText(row.amount),
-          currency: asText(row.currency),
-          occurredAt: row.occurredAt == null ? null : asIso(row.occurredAt),
-          merchant: asText(row.merchant),
-          description: asText(row.description),
-          installmentMonths: row.installmentMonths == null ? null : asInt(row.installmentMonths),
-          personId: asText(row.personId),
-          categoryId: asText(row.categoryId),
-          accountId: asText(row.accountId),
-          toAccountId: asText(row.toAccountId),
-          feeAmount: asText(row.feeAmount),
-          feeCategoryId: asText(row.feeCategoryId),
-          cardId: asText(row.cardId),
-          confidence: asInt(row.confidence),
-          parser: asText(row.parser),
-          dedupeKey: asText(row.dedupeKey) ?? '',
-          registeredEntryId: asText(row.registeredEntryId),
-          recurringRuleId: asText(row.recurringRuleId),
-          createdByName: asText(row.createdByName),
-          deviceName: asText(row.deviceName),
-          createdAt: asIso(row.createdAt),
-          updatedAt: asIso(row.updatedAt),
-          updatedVersion: asInt(row.updatedVersion),
-        });
-
-        /*
-         * 태그 연결도 전표와 같이 통째로 갈아 끼운다.
-         *
-         * 이 표에는 번호가 없어 따로 도착하지 않는다. 후보에 실려 온 목록이 곧 그
-         * 후보의 태그 전부다. 없으면 비운다.
-         */
-        await this.db.run(`DELETE FROM entry_draft_tag WHERE draftId = ?`, [String(row.id)]);
-        for (const tagId of (row.tagIds ?? []) as string[]) {
-          await this.db.run(`INSERT OR IGNORE INTO entry_draft_tag (draftId, tagId) VALUES (?, ?)`, [
-            String(row.id),
-            String(tagId),
-          ]);
-        }
-      }
-
-      for (const row of (changes.installmentPlans ?? []) as Row[]) {
-        /*
-         * 같은 다리에 남아 있던 옛 계획을 먼저 치운다. 위에서 살아남은 다리의 계획은 남겨
-         * 두므로, 서버가 그 다리에 계획을 새 id 로 다시 만들었으면 다리당 하나라는 색인
-         * (`plan_posting_idx`)에 걸린다.
-         */
-        await this.db.run(`DELETE FROM installment_plan WHERE postingId = ? AND id <> ?`, [
-          String(row.postingId),
-          String(row.id),
-        ]);
-        await this.upsert('installment_plan', {
-          id: String(row.id),
-          postingId: String(row.postingId),
-          totalMonths: asInt(row.totalMonths),
-          interestBearing: asFlag(row.interestBearing),
-          // JSON 배열을 글자 그대로 담는다. 읽는 쪽이 편다.
-          principalShares: row.principalShares == null ? null : JSON.stringify(row.principalShares),
-          interestShares: row.interestShares == null ? null : JSON.stringify(row.interestShares),
-          // 금액은 글자로 담는다. Decimal 을 숫자로 바꾸면 원 단위가 흔들린다.
-          monthlyPayment: row.monthlyPayment == null ? null : String(row.monthlyPayment),
-          annualRate: row.annualRate == null ? null : String(row.annualRate),
-          updatedVersion: asInt(row.updatedVersion),
-        });
-      }
-
-      // 자리표. 표 이름은 서버 표 이름 그대로 온다.
-      for (const tombstone of tombstones) {
-        const table = TOMBSTONE_TABLES[tombstone.entity];
-        if (!table) continue;
-        await this.forgetRow(table, tombstone.entityId);
-      }
-
-      await this.db.run(
-        `UPDATE sync_state SET version = ?, timeZone = ?, syncedAt = ? WHERE projectId = ?`,
-        [version, timeZone, new Date().toISOString(), projectId],
-      );
-    });
+    await applyPull(this.db, response, timeZone);
   }
+
 
   /**
    * 프로젝트 타임존이 바뀌었을 때 달력 키를 다시 계산한다.
@@ -1849,7 +1124,7 @@ export class LocalStore {
 
   private async writeDraft(draft: EntryDraftDto.Response): Promise<void> {
     await this.putDraftTags(draft.id, draft.tagIds);
-    await this.upsert('entry_draft', {
+    await upsert(this.db, 'entry_draft', {
       id: draft.id,
       projectId: draft.projectId,
       source: draft.source,
@@ -1927,15 +1202,6 @@ export class LocalStore {
           ])
         : this.db.run(`DELETE FROM draft_op WHERE draftId = ?`, [draftId]),
     );
-  }
-
-  /** 이 후보에 아직 못 보낸 처리가 있는가. 델타를 덮어쓸지 가리는 값이다. */
-  private async hasDraftOp(draftId: string): Promise<boolean> {
-    const rows = await this.db.all<Row>(
-      `SELECT draftId FROM draft_op WHERE draftId = ? LIMIT 1`,
-      [draftId],
-    );
-    return rows.length > 0;
   }
 
   /**
@@ -2044,7 +1310,7 @@ export class LocalStore {
     );
     if (entries.length === 0) return [];
 
-    return this.attachPostings(entries);
+    return attachPostings(this.db, entries);
   }
 
   /**
@@ -2156,7 +1422,7 @@ export class LocalStore {
         ORDER BY e.date DESC, e.id DESC`,
       ids,
     );
-    return this.attachPostings(entries);
+    return attachPostings(this.db, entries);
   }
 
   /**
@@ -2218,7 +1484,7 @@ export class LocalStore {
                        WHERE ap.entryId = e.id AND ap.accountId IN (${placeholders}))`,
       [projectId, ...accountIds],
     );
-    return this.attachPostings(entries);
+    return attachPostings(this.db, entries);
   }
 
   /**
@@ -2262,7 +1528,7 @@ export class LocalStore {
         await this.db.run(`UPDATE budget SET effectiveTo = ? WHERE id = ?`, [rule.effectiveTo, rule.id]);
       }
       if (input.amount !== null) {
-        await this.upsert('budget', {
+        await upsert(this.db, 'budget', {
           id: input.ruleId,
           projectId,
           categoryId: input.categoryId,
@@ -2558,7 +1824,7 @@ export class LocalStore {
         stamp.hlc,
       );
     }
-    await this.upsert('recurring_rule', values);
+    await upsert(this.db, 'recurring_rule', values);
   }
 
   /** 반복 등록을 지운다. 만들어진 후보는 남는다 (서버와 같다 -- 연결만 비운다). */
@@ -2607,185 +1873,6 @@ export class LocalStore {
       this.db.all<Row>(`SELECT count(*) AS n FROM recurring_rule WHERE tagIds LIKE ?`, [`%"${tagId}"%`]),
     ]);
     return { entries: asInt(entries[0]?.n), drafts: asInt(drafts[0]?.n), rules: asInt(rules[0]?.n) };
-  }
-
-  /** 전표 목록에 그 다리와 태그를 붙인다. */
-  private async attachPostings(entries: Row[]): Promise<ViewEntry[]> {
-    if (entries.length === 0) return [];
-
-    const ids = entries.map((entry) => String(entry.id));
-    const placeholders = ids.map(() => '?').join(', ');
-    const postings = await this.db.all<Row>(
-      `SELECT po.*,
-              a.id AS accountRowId, a.name AS accountName, a.type AS accountType,
-              c.id AS categoryRowId, c.name AS categoryName, c.type AS categoryType,
-              c.parentId AS categoryParentId, parent.name AS categoryParentName,
-              cd.id AS cardRowId, cd.name AS cardName,
-              ip.totalMonths AS installmentMonths, ip.interestBearing AS installmentInterest,
-              ip.principalShares AS installmentShares, ip.interestShares AS installmentInterestShares,
-              ip.monthlyPayment AS installmentMonthlyPayment, ip.annualRate AS installmentAnnualRate
-         FROM posting po
-         LEFT JOIN account a ON a.id = po.accountId
-         LEFT JOIN category c ON c.id = po.categoryId
-         LEFT JOIN category parent ON parent.id = c.parentId
-         LEFT JOIN card cd ON cd.id = po.cardId
-         LEFT JOIN installment_plan ip ON ip.postingId = po.id
-        WHERE po.entryId IN (${placeholders})`,
-      ids,
-    );
-
-    /*
-     * 태그도 한 번에 읽어 붙인다.
-     *
-     * 이름을 아직 받지 못한 연결은 조인이 비어 빠진다. 지운 태그는 연결도 함께 사라져
-     * 여기에 오지 않는다.
-     */
-    const tagRows = await this.db.all<Row>(
-      `SELECT et.entryId, et.lineKey, t.id, t.name, t.color
-         FROM entry_tag et
-         JOIN tag t ON t.id = et.tagId
-        WHERE et.entryId IN (${placeholders})
-        ORDER BY t.sortRank, t.name`,
-      ids,
-    );
-
-    type TagLink = EntryTag & { lineKey: string | null };
-    const tagsByEntry = new Map<string, TagLink[]>();
-    for (const row of tagRows) {
-      const list = tagsByEntry.get(String(row.entryId)) ?? [];
-      list.push({
-        id: String(row.id),
-        name: String(row.name),
-        color: asText(row.color),
-        // 어느 줄의 태그인지. 비어 있으면 거래 자체의 것이다.
-        lineKey: asText(row.lineKey),
-      });
-      tagsByEntry.set(String(row.entryId), list);
-    }
-
-    const byEntry = new Map<string, ViewPosting[]>();
-    for (const row of postings) {
-      const list = byEntry.get(String(row.entryId)) ?? [];
-      list.push({
-        id: String(row.id),
-        accountId: asText(row.accountId),
-        categoryId: asText(row.categoryId),
-        amount: asMoney(row.amount),
-        currency: String(row.currency),
-        exchangeRate: asMoney(row.exchangeRate),
-        baseAmount: asMoney(row.baseAmount),
-        cardId: asText(row.cardId),
-        lineKey: asText(row.lineKey),
-        discountAmount: asText(row.discountAmount),
-        account: row.accountRowId
-          ? {
-              id: String(row.accountRowId),
-              name: String(row.accountName),
-              type: String(row.accountType) as ViewPosting['account'] extends null
-                ? never
-                : NonNullable<ViewPosting['account']>['type'],
-            }
-          : null,
-        category: row.categoryRowId
-          ? {
-              id: String(row.categoryRowId),
-              name: String(row.categoryName),
-              type: String(row.categoryType) as NonNullable<ViewPosting['category']>['type'],
-              parentId: asText(row.categoryParentId),
-              parent: row.categoryParentId
-                ? { id: String(row.categoryParentId), name: String(row.categoryParentName) }
-                : null,
-            }
-          : null,
-        card: row.cardRowId ? { id: String(row.cardRowId), name: String(row.cardName) } : null,
-        // 할부가 걸리지 않은 다리는 조인이 비어 null 이 된다.
-        installmentPlan:
-          row.installmentMonths == null
-            ? null
-            : {
-                totalMonths: asInt(row.installmentMonths),
-                interestBearing: Boolean(row.installmentInterest),
-                principalShares: shareListOf(row.installmentShares),
-                interestShares: shareListOf(row.installmentInterestShares),
-                monthlyPayment: asText(row.installmentMonthlyPayment),
-                annualRate: asText(row.installmentAnnualRate),
-              },
-      });
-      byEntry.set(String(row.entryId), list);
-    }
-
-    /*
-     * 페이백이 가리키는 원거래의 날짜. 분석 화면이 그 날짜로 센다 (`EntryListItem.paybackOfDate`).
-     * 원거래가 사본에 없으면 비운다 -- 링크가 빈 페이백과 같게 읽힌다.
-     */
-    const originIds = [
-      ...new Set(entries.map((entry) => asText(entry.paybackOfEntryId)).filter((id): id is string => !!id)),
-    ];
-    const originDates = new Map(
-      originIds.length === 0
-        ? []
-        : (
-            await this.db.all<Row>(
-              `SELECT id, date FROM entry WHERE id IN (${originIds.map(() => '?').join(', ')})`,
-              originIds,
-            )
-          ).map((row) => [String(row.id), String(row.date)] as const),
-    );
-
-    /*
-     * 할부 원거래에 걸린 할부 환불. 회차 기준의 목록이 회차 몫에서 뺀다 (installment-refund).
-     * 서버의 ENTRY_INCLUDE.paybacks 와 같은 값이다.
-     */
-    const entryIds = entries.map((entry) => String(entry.id));
-    const cutsByOrigin = new Map<string, Array<{ id: string; paybackOfLineKey: string | null; installmentAdjust: unknown }>>();
-    for (let index = 0; index < entryIds.length; index += 500) {
-      const chunk = entryIds.slice(index, index + 500);
-      const rows = await this.db.all<Row>(
-        `SELECT id, paybackOfEntryId, paybackOfLineKey, installmentAdjust FROM entry
-          WHERE installmentAdjust IS NOT NULL
-            AND paybackOfEntryId IN (${chunk.map(() => '?').join(', ')})`,
-        chunk,
-      );
-      for (const row of rows) {
-        const origin = String(row.paybackOfEntryId);
-        const list = cutsByOrigin.get(origin) ?? [];
-        list.push({
-          id: String(row.id),
-          paybackOfLineKey: asText(row.paybackOfLineKey),
-          installmentAdjust: asText(row.installmentAdjust),
-        });
-        cutsByOrigin.set(origin, list);
-      }
-    }
-
-    return entries.map((entry) => ({
-      id: String(entry.id),
-      date: String(entry.date),
-      description: String(entry.description),
-      merchant: asText(entry.merchant),
-      detailedNote: asText(entry.detailedNote),
-      personId: asText(entry.personId),
-      person: entry.personName ? { name: String(entry.personName) } : null,
-      originalCurrency: asText(entry.originalCurrency),
-      originalAmount: asText(entry.originalAmount),
-      rateProvisional: Boolean(entry.rateProvisional),
-      countsPerformance: Boolean(entry.countsPerformance),
-      discountCountsPerformance: Boolean(entry.discountCountsPerformance),
-      // 목록 한 줄에 실린다. 서버 창구를 쓰는 화면이 수정할 때 이 값을 되돌려 준다.
-      updatedHlc: asText(entry.updatedHlc),
-      paybackOfEntryId: asText(entry.paybackOfEntryId),
-      paybackOfLineKey: asText(entry.paybackOfLineKey),
-      paybackType: asText(entry.paybackType),
-      paybackOf: (() => {
-        const origin = asText(entry.paybackOfEntryId);
-        const date = origin ? originDates.get(origin) : undefined;
-        return date ? { date } : null;
-      })(),
-      installmentAdjust: asText(entry.installmentAdjust),
-      paybackCuts: cutsByOrigin.get(String(entry.id)) ?? [],
-      postings: byEntry.get(String(entry.id)) ?? [],
-      tags: tagsByEntry.get(String(entry.id)) ?? [],
-    }));
   }
 
   /**
@@ -2895,7 +1982,7 @@ export class LocalStore {
         ]);
         return;
       }
-      await this.upsert('exchange_rate', {
+      await upsert(this.db, 'exchange_rate', {
         id: input.id,
         projectId,
         baseCurrency: input.from,
@@ -2943,17 +2030,7 @@ export class LocalStore {
   // 로컬 커밋
   // ───────────────────────────────────────────
 
-  /**
-   * 조립한 전표를 사본에 적는다. 화면은 이 값을 곧바로 본다.
-   *
-   * 서버의 `replaceEntry` 와 같은 방식이다 -- 다리를 통째로 갈아 끼운다. 다리 수가 바뀌는
-   * 수정(수수료 추가, 분할 변경)까지 한 경로로 처리되고, 만들 때와 고칠 때의 코드가
-   * 갈리지 않는다.
-   *
-   * 잔액(account.balance)은 건드리지 않는다. 파생값이라 동기화하지 않기로 했고(D7),
-   * 기기가 여기서 증분을 더하면 서버 값이 도착할 때 드리프트가 남는다. 읽는 쪽이 그때그때
-   * 다리를 세는 것이 그 자리다 (`accountBalances`) -- 세는 값에는 드리프트가 남지 않는다.
-   */
+  /** 조립한 전표를 사본에 적는다. 다리를 통째로 갈아 끼운다 (`local-store-commit`). */
   async writeEntry(
     entryId: string,
     built: BuiltEntry,
@@ -2961,547 +2038,63 @@ export class LocalStore {
       timeZone: string;
       hlc: string;
       makeId: () => string;
-      /**
-       * **거래 자체**에 붙는 태그. 분류 줄이 없는 전표에만 쓴다 (이체, 카드 대금 결제).
-       *
-       * 지출·수입의 태그는 조립이 줄에 실어 온다 (`BuiltPosting.tagIds`). 다리와 같이
-       * 통째로 갈아 끼운다.
-       */
+      /** **거래 자체**에 붙는 태그. 분류 줄이 없는 전표에만 쓴다 (이체, 카드 대금 결제). */
       tagIds?: string[];
     },
   ): Promise<void> {
-    const instant = built.date instanceof Date ? built.date : new Date(built.date);
-
-    await this.db.transaction(async () => {
-      await this.upsert('entry', {
-        id: entryId,
-        projectId: built.projectId,
-        personId: built.personId,
-        date: instant.toISOString(),
-        dateKey: zonedDateKey(instant, options.timeZone),
-        yearMonth: zonedYearMonth(instant, options.timeZone),
-        description: built.description,
-        merchant: built.merchant ?? null,
-        detailedNote: built.detailedNote ?? null,
-        originalCurrency: built.originalCurrency ?? null,
-        originalAmount: built.originalAmount ? built.originalAmount.toString() : null,
-        rateProvisional: asFlag(built.rateProvisional),
-        countsPerformance: asFlag(built.countsPerformance ?? true),
-        discountCountsPerformance: asFlag(built.discountCountsPerformance ?? true),
-        createdByUserId: null,
-        // 이 편집의 시계. 다음에 이 전표를 고칠 때 이 값보다 뒤를 발급한다.
-        updatedHlc: options.hlc,
-        /*
-         * 번호는 0 이다. 서버가 아직 이 전표를 모르기 때문이다.
-         *
-         * 다음 pull 이 서버가 찍은 번호로 이 줄을 덮어쓴다. 0 을 넣어 두면 그때까지
-         * "아직 서버에 없다"가 값으로 남는다.
-         */
-        updatedVersion: 0,
-        // 페이백의 원거래. 조립이 사본에서 원거래를 찾지 못했으면 이미 비워 왔다.
-        paybackOfEntryId: built.paybackOfEntryId ?? null,
-        paybackOfLineKey: built.paybackOfLineKey ?? null,
-        paybackType: built.paybackType ?? null,
-        installmentAdjust: built.installmentAdjust ? JSON.stringify(built.installmentAdjust) : null,
-      });
-
-      await this.dropEntryLegs(entryId);
-
-      /*
-       * 태그 연결도 다리와 같이 통째로 갈아 끼운다. 주지 않으면 비운다.
-       *
-       * 줄에 붙는 태그는 아래 다리 고리에서 그 줄의 키로 넣는다. 여기 넣는 것은 분류
-       * 줄이 없는 전표의 것뿐이다.
-       */
-      await this.db.run(`DELETE FROM entry_tag WHERE entryId = ?`, [entryId]);
-      // 겹친 id 는 한 번만 (줄 키가 NULL 이라 기본 키가 겹침을 막지 못한다).
-      for (const tagId of new Set(options.tagIds ?? built.tagIds ?? [])) {
-        await this.db.run(
-          `INSERT OR IGNORE INTO entry_tag (entryId, lineKey, tagId) VALUES (?, NULL, ?)`,
-          [entryId, tagId],
-        );
-      }
-
-      for (const posting of built.postings) {
-        const postingId = options.makeId();
-        await this.upsert('posting', {
-          id: postingId,
-          entryId,
-          accountId: posting.accountId ?? null,
-          categoryId: posting.categoryId ?? null,
-          amount: posting.amount.toString(),
-          quantity: posting.quantity ? posting.quantity.toString() : null,
-          currency: posting.currency,
-          baseAmount: posting.baseAmount.toString(),
-          exchangeRate: posting.exchangeRate.toString(),
-          cardId: posting.cardId ?? null,
-          // 줄 키는 화면이 만든 값이다. 조립이 그대로 실어 온다.
-          lineKey: posting.lineKey ?? null,
-          discountAmount: posting.discountAmount ? posting.discountAmount.toString() : null,
-        });
-
-        // 이 줄에 붙는 태그. 줄 키가 있어야 가리킬 수 있다.
-        if (posting.lineKey && posting.tagIds) {
-          for (const tagId of posting.tagIds) {
-            await this.db.run(
-              `INSERT OR IGNORE INTO entry_tag (entryId, lineKey, tagId) VALUES (?, ?, ?)`,
-              [entryId, posting.lineKey, tagId],
-            );
-          }
-        }
-
-        /*
-         * 할부는 카드 다리에 붙는다. 서버의 `saveInstallmentPlan` 과 같은 조건이다.
-         *
-         * 회차 금액은 담지 않는다. 총액과 개월수에서 다시 계산되는 파생값이다 (D7).
-         */
-        if (
-          built.installmentMonths &&
-          built.installmentMonths >= 2 &&
-          posting.cardId &&
-          posting.amount.isNegative()
-        ) {
-          await this.upsert('installment_plan', {
-            id: options.makeId(),
-            postingId,
-            totalMonths: built.installmentMonths,
-            interestBearing: built.installmentInterest ? 1 : 0,
-            // 적어 둔 회차 금액. 없으면 읽는 쪽이 개월수로 나눈다.
-            principalShares: built.installmentShares ? JSON.stringify(built.installmentShares) : null,
-            /*
-             * 회차별 이자와 그것을 만든 입력. 유이자 할부에만 담긴다.
-             *
-             * 서버의 `saveInstallmentPlan` 과 같은 값이 들어가야 한다 -- 여기서 빠지면
-             * 오프라인에서 적은 할부의 이자가 다음 pull 까지 화면에서 사라진다.
-             */
-            interestShares: built.installmentInterestShares
-              ? JSON.stringify(built.installmentInterestShares)
-              : null,
-            monthlyPayment: built.installmentMonthlyPayment ?? null,
-            annualRate: built.installmentAnnualRate ?? null,
-            updatedVersion: 0,
-          });
-        }
-      }
-    });
+    await writeEntry(this.db, entryId, built, options);
   }
 
-  /**
-   * 여러 전표 중 가장 늦은 시계.
-   *
-   * 태그 명령처럼 한 번에 여러 전표를 건드리는 명령이 쓴다. 그중 가장 늦은 값 뒤로
-   * 시계를 발급해야, 사본에 그 시계를 찍을 때 어느 전표의 시계도 뒤로 가지 않는다.
-   */
+  /** 여러 전표 중 가장 늦은 시계 (`local-store-clocks`). */
   async latestEntryHlc(entryIds: readonly string[]): Promise<string | null> {
-    if (entryIds.length === 0) return null;
-
-    const rows = await this.db.all<Row>(
-      `SELECT MAX(updatedHlc) AS hlc FROM entry WHERE id IN (${placeholders(entryIds.length)})`,
-      [...entryIds],
-    );
-    return asText(rows[0]?.hlc);
+    return latestEntryHlc(this.db, entryIds);
   }
 
   /** 사본이 아는 그 전표의 시계. 수정 명령의 시계를 이 뒤로 놓는 데 쓴다. */
   async entryHlc(entryId: string): Promise<string | null> {
-    const rows = await this.db.all<Row>(`SELECT updatedHlc FROM entry WHERE id = ?`, [entryId]);
-    return asText(rows[0]?.updatedHlc);
+    return entryHlc(this.db, entryId);
   }
 
-  /**
-   * 자산 한 줄을 사본에 쓴다 (구성원·통장·카드).
-   *
-   * 전표와 달리 **필드별 병합**이라, 바꾼 필드의 시계만 지도에 찍는다. 그 지도를 그대로
-   * 서버가 쓰는 모양(JSON 문자열)으로 담아 두어야, 다음 편집의 시계를 지금 값보다 뒤로
-   * 매길 수 있다.
-   *
-   * 새로 만드는 경우와 고치는 경우를 한 함수로 둔다 -- 사본에 적는 일이 같고, 다른 것은
-   * 아웃박스에 쌓는 명령의 종류뿐이다(그쪽은 부르는 사람이 정한다).
-   */
+  /** 자산 한 줄을 사본에 쓴다. 바꾼 필드의 시계만 찍는다 (`local-store-commit`). */
   async writeAsset(
     table: SettingTable,
     id: string,
     values: Record<string, SqlValue>,
     hlc: string,
   ): Promise<void> {
-    /*
-     * 순서 값이 없는 표가 있다 (예산과 예산 조정). 그쪽은 목록을 드래그하지 않으므로
-     * 자리를 계산할 것이 없다.
-     */
-    const hasRank = table !== 'budget' && table !== 'budget_override';
-    /*
-     * 시각 칸(createdAt·updatedAt)도 그 둘에는 없다. 서버의 예산 행이 그 값을 싣지 않아 사본의
-     * 표에 칸을 두지 않았다. 적으려 들면 "no column named updatedAt" 로 쓰기가 통째로 실패한다
-     * -- 앱은 온라인에서도 이 길로 적으므로, 예산 저장이 늘 실패로 보이고 명령만 큐에 남았다.
-     */
-    const hasTimestamps = hasRank;
-    /*
-     * 예산 조정에는 projectId 칸도 없다 -- 부모 예산을 거쳐 프로젝트를 찾는다 (서버 표와 같다).
-     * 부르는 쪽(설정 명령)은 늘 projectId 를 실어 오므로 여기서 걸러 낸다. 그대로 두면 "no
-     * column named projectId" 로 그 달 조정이 한 번도 사본에 적히지 못했다.
-     */
-    const { projectId: _projectId, ...ownValues } = values;
-    const writable = table === 'budget_override' ? ownValues : values;
-
-    await this.db.transaction(async () => {
-      const rows = await this.db.all<Row>(
-        `SELECT fieldHlc${hasRank ? ', sortRank' : ''} FROM ${table} WHERE id = ?`,
-        [id],
-      );
-      const existing = rows[0];
-
-      /*
-       * 새 줄은 목록 맨 뒤에 붙인다. 지금 마지막 순서 뒤에 값을 하나 만든다 -- 서버가
-       * 매기는 자리와 같은 규칙이라(rankAfter), 동기화 뒤에도 자리가 움직이지 않는다.
-       */
-      const lastRank = hasRank
-        ? asText(
-            (
-              await this.db.all<Row>(
-                `SELECT MAX(sortRank) AS last FROM ${table} WHERE projectId = ?`,
-                [String(values.projectId ?? '')],
-              )
-            )[0]?.last,
-          )
-        : null;
-
-      /*
-       * 순서 값을 셋 중 하나로 정한다.
-       *
-       *   1. 명령이 자리를 옮기는 것이면 그 값 (드래그).
-       *   2. 이미 있는 줄이면 지금 값 그대로 (이름만 고치는 경우).
-       *   3. 새 줄이면 목록 맨 뒤 (서버의 createPerson 과 같은 규칙).
-       */
-      const sortRank = hasRank
-        ? asText(values.sortRank) ??
-          (existing ? asText(existing.sortRank) : null) ??
-          rankAfter(lastRank)
-        : null;
-
-      const clocks = mergeClocks(asText(existing?.fieldHlc), Object.keys(values), hlc);
-      const now = new Date().toISOString();
-
-      const row: Record<string, SqlValue> = {
-        ...writable,
-        id,
-        ...(hasRank ? { sortRank } : {}),
-        fieldHlc: clocks,
-        ...(hasTimestamps ? { updatedAt: now } : {}),
-        // 아직 서버를 거치지 않은 줄이다. 다음 pull 이 진짜 번호로 덮는다.
-        updatedVersion: 0,
-      };
-
-      /*
-       * 이미 있는 줄은 **덮어쓰지 않고 고친다.**
-       *
-       * 고치기 명령은 바꾼 필드만 들고 온다(필드별 병합). 그것을 통째로 넣으려 들면
-       * 담기지 않은 NOT NULL 컬럼이 비어 실패한다 -- upsert 의 INSERT 시도가 먼저
-       * 검사에 걸린다.
-       */
-      if (existing) {
-        /*
-         * 번호(updatedVersion)는 그대로 둔다. 0 은 "서버가 아직 모르는 줄"이라는 뜻이고 계좌에서는
-         * 잔액 칸을 기초 잔액 씨앗으로 다시 세게 한다(`openingSeed`). 예전에는 고칠 때마다 0 을 적어,
-         * 서버가 아는 통장의 이름만 바꿔도 기초 잔액이 한 번 더 더해져 잔액이 두 배로 보였다.
-         */
-        const columns = Object.keys(row).filter((column) => column !== 'id' && column !== 'updatedVersion');
-        await this.db.run(
-          `UPDATE ${table} SET ${columns.map((column) => `${column} = ?`).join(', ')} WHERE id = ?`,
-          [...columns.map((column) => row[column]), id],
-        );
-        return;
-      }
-
-      await this.upsert(
-        table,
-        hasTimestamps ? { ...row, createdAt: asText(values.createdAt) ?? now } : row,
-      );
-    });
+    await writeAsset(this.db, table, id, values, hlc);
   }
 
-  /**
-   * 이 자산 줄의 마지막 편집 시각.
-   *
-   * 기기가 "내가 본 값"의 시계로 쓴다. 필드마다 다르므로 그중 가장 늦은 것을 준다 --
-   * 그 값을 보고 매긴 시계는 지금 사본에 있는 어떤 필드보다도 뒤가 된다.
-   */
+  /** 이 자산 줄의 마지막 편집 시각. 필드마다의 시계 가운데 가장 늦은 것이다. */
   async assetClock(table: SettingTable, id: string): Promise<string | null> {
-    const rows = await this.db.all<Row>(`SELECT fieldHlc FROM ${table} WHERE id = ?`, [id]);
-    return latestFieldClock(parseClocks(asText(rows[0]?.fieldHlc)));
+    return assetClock(this.db, table, id);
   }
 
-  /**
-   * 여러 줄의 분류를 사본에서 한 분류로 바꾼다. 서버 `changeCategory` 와 **같은 함수**가 무엇을
-   * 바꿀지 정한다 (`planCategoryChange`) -- 같은 유형의 줄만, 분류 줄이 없는 거래는 건너뛴다.
-   *
-   * 다리의 분류 칸만 고친다. 다리를 지우고 다시 만들면 그 다리에 걸린 할부 일정이 함께 사라진다.
-   * 바뀐 전표의 시계는 올린다(태그 바꾸기와 같은 까닭). 부르는 쪽이 고른 전표들의 가장 늦은
-   * 시계 뒤로 발급받아 오므로 뒤로 가지 않는다.
-   */
+  /** 여러 줄의 분류를 사본에서 한 분류로 바꾼다 (`local-store-bulk-edits`). */
   async changeEntryCategory(
     targets: readonly TagTarget[],
     categoryId: string,
     hlc: string,
   ): Promise<{ entries: number; skipped: TagTarget[]; excluded: number }> {
-    if (targets.length === 0) return { entries: 0, skipped: [], excluded: 0 };
-
-    let result = { entries: 0, skipped: [] as TagTarget[], excluded: 0 };
-    await this.db.transaction(async () => {
-      const plan = await this.planEntryCategory(targets, categoryId);
-      for (const line of plan.lines) {
-        await this.db.run(
-          line.lineKey === null
-            ? `UPDATE posting SET categoryId = ?
-                WHERE entryId = ? AND lineKey IS NULL AND categoryId IS NOT NULL`
-            : `UPDATE posting SET categoryId = ?
-                WHERE entryId = ? AND lineKey = ? AND categoryId IS NOT NULL`,
-          line.lineKey === null
-            ? [categoryId, line.entryId]
-            : [categoryId, line.entryId, line.lineKey],
-        );
-      }
-      // 원거래 줄을 따라 환불·페이백도 옮긴다 (`movePayback` 처럼 다리의 분류만).
-      if (plan.followerIds.length > 0) {
-        await this.db.run(
-          `UPDATE posting SET categoryId = ?
-            WHERE entryId IN (${placeholders(plan.followerIds.length)}) AND categoryId IS NOT NULL`,
-          [categoryId, ...plan.followerIds],
-        );
-      }
-      if (plan.entryIds.length > 0) {
-        await this.db.run(
-          `UPDATE entry SET updatedHlc = ? WHERE id IN (${placeholders(plan.entryIds.length)})`,
-          [hlc, ...plan.entryIds],
-        );
-      }
-      result = { entries: plan.entryIds.length, skipped: plan.skipped, excluded: plan.excluded };
-    });
-    return result;
+    return changeEntryCategory(this.db, targets, categoryId, hlc);
   }
 
-  /**
-   * 바꾸면 무엇이 바뀌는지만 센다. 명령을 쌓기 전에 본다 -- 바뀌는 줄이 없으면 쌓지 않는다.
-   * 분류가 없으면 `CATEGORY_NOT_FOUND` 로 던진다.
-   */
+  /** 분류를 바꾸면 무엇이 바뀌는지만 센다. 분류가 없으면 `CATEGORY_NOT_FOUND` 로 던진다. */
   async previewEntryCategory(
     targets: readonly TagTarget[],
     categoryId: string,
   ): Promise<{ entries: number; skipped: TagTarget[]; excluded: number }> {
-    const plan = await this.planEntryCategory(targets, categoryId);
-    return { entries: plan.entryIds.length, skipped: plan.skipped, excluded: plan.excluded };
+    return previewEntryCategory(this.db, targets, categoryId);
   }
 
-  private async planEntryCategory(targets: readonly TagTarget[], categoryId: string) {
-    const categories = await this.db.all<Row>(`SELECT id, type FROM category WHERE id = ?`, [
-      categoryId,
-    ]);
-    const category = categories[0];
-    if (!category) throw codedError('CATEGORY_NOT_FOUND');
-
-    const entryIds = [...new Set(targets.map((target) => target.entryId))];
-    const known = await this.db.all<Row>(
-      `SELECT id FROM entry WHERE id IN (${placeholders(entryIds.length)})`,
-      entryIds,
-    );
-    const lines = await this.db.all<Row>(
-      `SELECT p.entryId, p.lineKey, p.categoryId, c.type AS categoryType,
-              e.paybackOfEntryId IS NOT NULL AS linkedPayback
-         FROM posting p
-         JOIN category c ON c.id = p.categoryId
-         JOIN entry e ON e.id = p.entryId
-        WHERE p.entryId IN (${placeholders(entryIds.length)})`,
-      entryIds,
-    );
-    const followers = await this.db.all<Row>(
-      `SELECT id, paybackOfEntryId, paybackOfLineKey FROM entry
-        WHERE paybackOfEntryId IN (${placeholders(entryIds.length)})`,
-      entryIds,
-    );
-    const typeOf = (value: unknown): CategoryType => (String(value) === 'income' ? 'income' : 'expense');
-
-    return planCategoryChange(
-      targets,
-      lines.map((row) => ({
-        entryId: String(row.entryId),
-        lineKey: asText(row.lineKey),
-        categoryId: String(row.categoryId),
-        categoryType: typeOf(row.categoryType),
-        linkedPayback: asInt(row.linkedPayback) === 1,
-      })),
-      new Set(known.map((row) => String(row.id))),
-      { id: categoryId, type: typeOf(category.type) },
-      followers.map((row) => ({
-        id: String(row.id),
-        paybackOfEntryId: String(row.paybackOfEntryId),
-        paybackOfLineKey: asText(row.paybackOfLineKey),
-      })),
-    );
-  }
-
-  /**
-   * 여러 전표의 태그를 사본에서 바꾼다. 더할 것과 뗄 것을 따로 받는다.
-   *
-   * 전표 자체는 건드리지 않는다 -- 연결만 넣고 빼므로 금액·다리·분할이 그대로 남는다.
-   * 무엇이 달라지는지는 서버와 **같은 함수**가 정한다 (`applyTagChange`). 어느 쪽에도
-   * 없는 태그는 그대로 둔다.
-   *
-   * **바뀐 전표의 시계는 올린다.** 태그도 전표라는 한 덩어리의 일부다 (D5). 올리지
-   * 않으면 이 기기의 다음 편집이 방금 붙인 태그보다 앞선 시계를 달고 나가, 서버가 그
-   * 편집을 뒤에 온 것으로 보지 않는다. 뒤로 가지 않는지 여기서 견주지 않는 것은, 부르는
-   * 쪽이 고른 전표들의 가장 늦은 시계 뒤로 발급받아 오기 때문이다(`latestEntryHlc`).
-   *
-   * 사본에 없는 전표는 건너뛴다. 고른 줄은 모두 사본에서 온 것이라 보통은 없는 일이고,
-   * 그 사이 다른 기기가 지웠다면 여기서 되살릴 것이 아니다.
-   *
-   * 돌려주는 것은 실제로 달라진 전표의 수다. 화면이 "몇 건에 표시했다"로 쓴다.
-   */
+  /** 여러 전표의 태그를 사본에서 바꾼다. 실제로 달라진 전표의 수를 준다 (`local-store-bulk-edits`). */
   async changeEntryTags(
     targets: readonly TagTarget[],
     addTagIds: readonly string[],
     removeTagIds: readonly string[],
     hlc: string,
   ): Promise<{ entries: number; skipped: TagTarget[] }> {
-    if (targets.length === 0) return { entries: 0, skipped: [] };
-    if (addTagIds.length === 0 && removeTagIds.length === 0) {
-      return { entries: 0, skipped: [] };
-    }
-
-    const keyOf = (target: TagTarget) =>
-      `${target.entryId}\u0000${target.lineKey === undefined ? '*' : target.lineKey ?? ''}`;
-    const touched = new Set<string>();
-    const skipped: TagTarget[] = [];
-
-    await this.db.transaction(async () => {
-      const entryIds = [...new Set(targets.map((target) => target.entryId))];
-      const known = await this.db.all<Row>(
-        `SELECT id FROM entry WHERE id IN (${placeholders(entryIds.length)})`,
-        [...entryIds],
-      );
-      const present = new Set(known.map((row) => String(row.id)));
-      if (present.size === 0) {
-        skipped.push(...targets);
-        return;
-      }
-
-      /*
-       * 사라진 줄을 가린다.
-       *
-       * 다른 기기가 그 사이 분할을 고쳐 줄이 없어졌을 수 있다. 조용히 버리면 사용자는
-       * 표시가 된 줄 알고, 다음 pull 이 태그 없는 모습으로 덮을 때에야 알게 된다.
-       * 서버의 `changeTags` 와 같은 규칙이다.
-       */
-      const lines = await this.db.all<Row>(
-        `SELECT entryId, lineKey FROM posting
-          WHERE entryId IN (${placeholders(entryIds.length)}) AND categoryId IS NOT NULL`,
-        [...entryIds],
-      );
-      const lineKeysOf = new Map<string, Set<string>>();
-      for (const row of lines) {
-        const set = lineKeysOf.get(String(row.entryId)) ?? new Set<string>();
-        if (row.lineKey != null) set.add(String(row.lineKey));
-        lineKeysOf.set(String(row.entryId), set);
-      }
-
-      const applicable: Array<{ entryId: string; lineKey: string | null }> = [];
-      for (const target of targets) {
-        if (!present.has(target.entryId)) {
-          skipped.push(target);
-          continue;
-        }
-        /*
-         * 분류 줄이 하나도 없는 전표는 빈 집합이다.
-         *
-         * 이체와 카드 대금 결제가 그렇고, 그때 태그는 거래 자체에 붙는다(`lineKey` 가
-         * null). 없는 것과 "줄이 없다"를 가르지 않으면 그 둘에 태그를 못 붙인다.
-         */
-        const keys = lineKeysOf.get(target.entryId) ?? new Set<string>();
-
-        /*
-         * 줄을 가리지 않은 대상은 그 전표의 모든 줄로 편다. 서버의 `changeTags` 와 같은
-         * 규칙이다 -- 목록에서 범위를 골랐을 때 그 거래들의 줄 키를 화면이 모른다.
-         */
-        if (target.lineKey === undefined) {
-          if (keys.size === 0) applicable.push({ entryId: target.entryId, lineKey: null });
-          else {
-            for (const lineKey of keys) applicable.push({ entryId: target.entryId, lineKey });
-          }
-          continue;
-        }
-
-        const exists = target.lineKey === null ? keys.size === 0 : keys.has(target.lineKey);
-        if (exists) applicable.push({ entryId: target.entryId, lineKey: target.lineKey });
-        else skipped.push(target);
-      }
-      if (applicable.length === 0) return;
-
-      // 지금 붙어 있는 것. 무엇이 실제로 달라지는지 세려면 이것부터 알아야 한다.
-      const tagIds = [...addTagIds, ...removeTagIds];
-      const existing = await this.db.all<Row>(
-        `SELECT entryId, lineKey, tagId FROM entry_tag
-          WHERE entryId IN (${placeholders(entryIds.length)})
-            AND tagId IN (${placeholders(tagIds.length)})`,
-        [...entryIds, ...tagIds],
-      );
-      const currentOf = new Map<string, Set<string>>();
-      for (const row of existing) {
-        const key = keyOf({ entryId: String(row.entryId), lineKey: asText(row.lineKey) });
-        const set = currentOf.get(key) ?? new Set<string>();
-        set.add(String(row.tagId));
-        currentOf.set(key, set);
-      }
-
-      /*
-       * 같은 줄이 두 번 오면 한 번만 다룬다. 거래 자체에 붙는 태그는 줄 키가 NULL 인데 SQLite 는
-       * NULL 끼리 다르다고 보아 기본 키가 겹침을 막지 못한다 -- 두 번 넣으면 같은 태그가 두 줄 선다.
-       */
-      const seen = new Set<string>();
-      for (const target of applicable) {
-        if (seen.has(keyOf(target))) continue;
-        seen.add(keyOf(target));
-        const change = applyTagChange(
-          currentOf.get(keyOf(target)) ?? [],
-          addTagIds,
-          removeTagIds,
-        );
-        for (const tagId of change.added) {
-          await this.db.run(
-            `INSERT OR IGNORE INTO entry_tag (entryId, lineKey, tagId) VALUES (?, ?, ?)`,
-            [target.entryId, target.lineKey, tagId],
-          );
-        }
-        /*
-         * 떼는 것은 줄마다 지운다.
-         *
-         * 한 문장으로 지우면 고르지 않은 형제 줄의 태그까지 떨어진다 -- 같은 전표의
-         * 어떤 줄은 고르고 어떤 줄은 고르지 않을 수 있다.
-         */
-        if (change.removed.length > 0) {
-          await this.db.run(
-            target.lineKey === null
-              ? `DELETE FROM entry_tag
-                  WHERE entryId = ? AND lineKey IS NULL
-                    AND tagId IN (${placeholders(change.removed.length)})`
-              : `DELETE FROM entry_tag
-                  WHERE entryId = ? AND lineKey = ?
-                    AND tagId IN (${placeholders(change.removed.length)})`,
-            target.lineKey === null
-              ? [target.entryId, ...change.removed]
-              : [target.entryId, target.lineKey, ...change.removed],
-          );
-        }
-        if (change.changed) touched.add(target.entryId);
-      }
-
-      if (touched.size === 0) return;
-
-      const changed = [...touched];
-      await this.db.run(
-        `UPDATE entry SET updatedHlc = ? WHERE id IN (${placeholders(changed.length)})`,
-        [hlc, ...changed],
-      );
-    });
-
-    return { entries: touched.size, skipped };
+    return changeEntryTags(this.db, targets, addTagIds, removeTagIds, hlc);
   }
 
   /**
@@ -3634,81 +2227,9 @@ export class LocalStore {
     });
   }
 
-  /**
-   * 사본에서 한 줄을 지운다. 딸린 줄까지 함께 간다 (서버의 cascade 와 같은 자리).
-   *
-   * 자리표를 받았을 때와, 화면이 삭제를 서버에 성공시킨 직후에 부른다. 두 자리가 같은
-   * 규칙을 각자 적으면 한쪽만 고쳐 놓고 맞다고 믿는 일이 생긴다.
-   */
+  /** 사본에서 한 줄을 지운다. 딸린 줄까지 함께 간다 (`local-store-writes`). */
   async forgetRow(table: string, id: string): Promise<void> {
-    await this.db.run(`DELETE FROM ${table} WHERE id = ?`, [id]);
-
-    if (table === 'entry') {
-      await this.dropEntryLegs(id);
-      // 태그 연결도 함께 간다. 남기면 "이 태그가 붙은 거래 수"(`tagUsageCounts`)가 지운 거래까지 센다.
-      await this.db.run(`DELETE FROM entry_tag WHERE entryId = ?`, [id]);
-      /*
-       * 걸린 환불·페이백의 링크를 비운다. 서버는 원거래와 함께 그것들도 지워 자리표를 따로
-       * 보내므로(7-6) 보통은 곧 사라진다. 그 전의 서버가 지운 것(링크만 빈 것)도 받아 둔다.
-       */
-      await this.db.run(`UPDATE entry SET paybackOfEntryId = NULL WHERE paybackOfEntryId = ?`, [id]);
-    }
-    if (table === 'entry_draft') {
-      await this.db.run(`DELETE FROM entry_draft_tag WHERE draftId = ?`, [id]);
-    }
-    if (table === 'budget') {
-      // 부모가 사라지면 그 달 조정도 함께 사라진다 (서버도 cascade 로 지운다).
-      await this.db.run(`DELETE FROM budget_override WHERE budgetId = ?`, [id]);
-    }
-    if (table === 'account') {
-      // 계좌가 사라지면 그 계좌의 평가 기록도 사라진다.
-      await this.db.run(`DELETE FROM asset_valuation WHERE accountId = ?`, [id]);
-    }
-    if (table === 'tag') {
-      /*
-       * 태그가 사라지면 그 태그를 가리키던 연결도 사라진다 (서버도 cascade 로 지운다).
-       *
-       * 남겨 두면 없는 태그를 가리키는 줄이 사본에 쌓인다. 화면에는 드러나지 않지만
-       * (태그를 읽는 질의가 내부 조인이라 걸러진다), 나중에 그 id 로 별칭이 옮겨 오면
-       * 엉뚱한 태그가 붙은 것처럼 보인다.
-       */
-      await this.db.run(`DELETE FROM entry_tag WHERE tagId = ?`, [id]);
-      await this.db.run(`DELETE FROM entry_draft_tag WHERE tagId = ?`, [id]);
-      await this.dropTagFromRules(id);
-    }
-  }
-
-  /**
-   * 반복 규칙의 태그 목록(JSON 글자)에서 그 태그를 뺀다. 서버는 연결 표가 cascade 로 지운다.
-   * 남기면 다음 받기까지 규칙이 없는 태그를 들고, 그 규칙으로 만든 후보에 빈 태그가 붙는다.
-   */
-  private async dropTagFromRules(tagId: string): Promise<void> {
-    const rules = await this.db.all<Row>(`SELECT id, tagIds FROM recurring_rule WHERE tagIds LIKE ?`, [
-      `%${tagId}%`,
-    ]);
-    for (const rule of rules) {
-      let tagIds: unknown;
-      try {
-        tagIds = JSON.parse(String(rule.tagIds));
-      } catch {
-        continue;
-      }
-      if (!Array.isArray(tagIds)) continue;
-      await this.db.run(`UPDATE recurring_rule SET tagIds = ? WHERE id = ?`, [
-        JSON.stringify(tagIds.filter((id) => id !== tagId)),
-        String(rule.id),
-      ]);
-    }
-  }
-
-  /** 전표의 다리와 거기 딸린 할부 계획을 지운다. 전표를 지울 때와 다리를 갈아 끼울 때 쓴다. */
-  private async dropEntryLegs(entryId: string): Promise<void> {
-    await this.db.run(
-      `DELETE FROM installment_plan
-        WHERE postingId IN (SELECT id FROM posting WHERE entryId = ?)`,
-      [entryId],
-    );
-    await this.db.run(`DELETE FROM posting WHERE entryId = ?`, [entryId]);
+    await forgetRow(this.db, table, id);
   }
 
   /**
@@ -3725,7 +2246,7 @@ export class LocalStore {
     await this.db.transaction(async () => {
       await this.db.run(`DELETE FROM entry_tag WHERE tagId = ?`, [tagId]);
       await this.db.run(`DELETE FROM entry_draft_tag WHERE tagId = ?`, [tagId]);
-      await this.dropTagFromRules(tagId);
+      await dropTagFromRules(this.db, tagId);
       // 그 태그의 예산도 함께 간다 (서버는 cascade). 남기면 홈의 태그 예산 상자가 자리표가 올 때까지 남았다.
       const budgets = await this.db.all<Row>(`SELECT id FROM budget WHERE tagId = ?`, [tagId]);
       for (const budget of budgets) await this.forgetRow('budget', String(budget.id));
@@ -3759,7 +2280,7 @@ export class LocalStore {
     await this.db.transaction(async () => {
       const paybacks = await this.db.all<Row>(`SELECT id FROM entry WHERE paybackOfEntryId = ?`, [entryId]);
       for (const id of [entryId, ...paybacks.map((row) => String(row.id))]) {
-        await this.dropEntryLegs(id);
+        await dropEntryLegs(this.db, id);
         /*
          * 태그 연결도 치운다. 남기면 태그를 지울 때 세는 "이 태그가 붙은 거래 수"
          * (`tagUsageCounts`)에 지운 거래와 함께 지운 환불·페이백까지 들어간다.
@@ -3821,7 +2342,6 @@ export class LocalStore {
       : null;
   }
 
-  /** 이 계좌를 부채 계정으로 쓰는 카드의 id. */
   /** 프로젝트의 미지정 계정. 결제수단을 고르지 않은 지출·수입이 붙는다. */
   async unassignedAccount(projectId: string): Promise<{ id: string; currency: string } | null> {
     const rows = await this.db.all<Row>(
@@ -3832,6 +2352,7 @@ export class LocalStore {
     return row ? { id: String(row.id), currency: String(row.currency) } : null;
   }
 
+  /** 이 계좌를 부채 계정으로 쓰는 카드의 id. */
   async cardIdForLiability(projectId: string, accountId: string): Promise<string | null> {
     const rows = await this.db.all<Row>(
       `SELECT id FROM card WHERE liabilityAccountId = ? AND projectId = ?`,
@@ -4017,73 +2538,7 @@ export class LocalStore {
     },
     now = Date.now(),
   ): Promise<Mutation> {
-    return this.db.transaction(() => this.insertMutation(input, now));
-  }
-
-  /**
-   * 큐에 한 줄을 넣는다. 트랜잭션은 부르는 쪽이 연다.
-   *
-   * `enqueue` 와 `retryMutation` 이 함께 쓴다. 다시 보내기는 버리기와 넣기가 한 단위여야
-   * 해서(둘 사이에서 멈추면 명령이 사라진다) 트랜잭션을 밖에 두었다.
-   */
-  private async insertMutation(
-    input: {
-      projectId: string;
-      mutationId: string;
-      kind: MutationKind;
-      targets: string[];
-      payload: unknown;
-      observed?: string | null;
-    },
-    now: number,
-  ): Promise<Mutation> {
-    const rows = await this.db.all<Row>(
-      `SELECT clientId, nextSeq, lastHlc FROM client_state WHERE id = 1`,
-    );
-    const state = rows[0];
-    if (!state) throw new Error('기기 이름이 아직 없습니다. ensureClient 를 먼저 부르세요.');
-
-    const clientId = String(state.clientId);
-    const clientSeq = asInt(state.nextSeq);
-    const last = decodeHlc(asText(state.lastHlc));
-    const seen = decodeHlc(input.observed);
-    const hlc = encodeHlc(
-      seen ? hlcReceive(last, seen, clientId, now) : hlcNext(last, clientId, now),
-    );
-
-    await this.db.run(
-      `UPDATE client_state SET nextSeq = ?, lastHlc = ? WHERE id = 1`,
-      [clientSeq + 1, hlc],
-    );
-
-    const mutation: Mutation = {
-      mutationId: input.mutationId,
-      clientId,
-      clientSeq,
-      hlc,
-      kind: input.kind,
-      projectId: input.projectId,
-      targets: input.targets,
-      payload: input.payload,
-    };
-
-    await this.db.run(
-      `INSERT INTO outbox
-         (mutationId, projectId, clientSeq, hlc, kind, targets, payload, status, error, createdAt)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', NULL, ?)`,
-      [
-        mutation.mutationId,
-        mutation.projectId,
-        mutation.clientSeq,
-        mutation.hlc,
-        mutation.kind,
-        JSON.stringify(mutation.targets),
-        JSON.stringify(mutation.payload),
-        new Date(now).toISOString(),
-      ],
-    );
-
-    return mutation;
+    return this.db.transaction(() => insertMutation(this.db, input, now));
   }
 
   /** 보낼 차례의 명령. 언제나 clientSeq 순서다. */
@@ -4108,203 +2563,20 @@ export class LocalStore {
   }
 
   /**
-   * 서버가 돌려준 결과를 반영한다. 다시 낸 명령의 수를 돌려준다.
-   *
-   * 끝난 것(적용·중복)은 큐에서 뺀다. 그 밖은 남겨 두고 상태만 적는다 -- 충돌은 사용자가
-   * 보고 고를 것이고, 거절과 보류는 왜 못 갔는지 알려야 한다. 조용히 지우면 사용자가
-   * 적은 것이 아무 말 없이 사라진다.
-   *
-   * **순번 충돌만 예외다.** 그것은 사람이 고를 것이 없는 사정이라(내 번호가 뒤로 물러났다)
-   * 서버가 알려 준 마지막 번호 다음으로 앞당기고 그 자리에서 다시 낸다. 보류 칸에 올리면
-   * 사용자가 어긋난 폭만큼 "다시 보내기"를 눌러야 하고, 그동안 이 기기의 모든 변경이
-   * 조용히 서버에 닿지 않는다.
+   * 서버가 돌려준 결과를 반영한다. 다시 낸 명령의 수를 돌려준다 (`local-store-outbox`).
    */
   async settleMutations(
     results: readonly MutationResult[],
     makeId: () => string,
   ): Promise<{ requeued: number }> {
-    let requeued = 0;
-    /** 보류 칸에 올린 것. 통계는 묶음이 실제로 적힌 뒤에 보낸다. */
-    const held: MutationResult[] = [];
-
-    await this.db.transaction(async () => {
-      /*
-       * 번호를 먼저 앞당긴다. 다시 내는 것보다 앞이어야 새 번호가 서버의 마지막을 지난다.
-       *
-       * 한 묶음 안의 여러 명령이 같은 값을 실어 오므로 가장 큰 것을 한 번만 본다.
-       */
-      const collided = results.filter(
-        (result) => result.code === 'CLIENT_SEQ_TAKEN' && typeof result.lastClientSeq === 'number',
-      );
-      if (collided.length > 0) {
-        const last = Math.max(...collided.map((result) => result.lastClientSeq as number));
-        await this.db.run(
-          `UPDATE client_state SET nextSeq = ? WHERE id = 1 AND nextSeq <= ?`,
-          [last + 1, last],
-        );
-      }
-
-      /** 이번에 새 번호로 다시 낸 명령들의 대상. 그 때문에 막힌 뒤 명령을 함께 다시 낸다. */
-      const requeuedTargets = new Set<string>();
-      for (const result of results) {
-        /*
-         * 서버가 다른 행을 채택했다. 사본과 큐의 참조를 그 id 로 옮긴다.
-         *
-         * 판정보다 먼저 한다. 이 명령이 큐에서 빠지기 전에 뒤 명령의 짐을 고쳐 두어야
-         * 없는 id 를 가리킨 채로 나가지 않는다.
-         */
-        if (result.alias) await this.applyAlias(result.alias.from, result.alias.to);
-
-        if (isSettled(result.status)) {
-          await this.db.run(`DELETE FROM outbox WHERE mutationId = ?`, [result.mutationId]);
-          continue;
-        }
-        /*
-         * 판정이 나지 않은 것은 손대지 않는다.
-         *
-         * 서버가 같은 명령을 이미 재생하고 있다는 뜻이라 사용자가 할 일이 없다. 보류 칸에
-         * 올리면 스스로 풀릴 일에 사람을 부르게 되고, 큐에서 빼면 그 재생이 실패했을 때
-         * 적은 것이 사라진다. 그대로 두면 다음 동기화가 다시 보내고 그때 결과를 받는다.
-         */
-        if (isDeferred(result.status)) continue;
-
-        /*
-         * 순번 충돌은 다시 낸다. 짐과 대상은 그대로이고 번호와 명령 id 만 새것이다.
-         *
-         * 한 묶음에 여럿이 겹쳤으면 서버가 돌려준 차례대로 다시 내므로 서로의 앞뒤도
-         * 그대로다. (앞의 것만 겹치고 뒤의 것은 통과한 경우에는 앞뒤가 뒤집힐 수 있다.
-         * 번호가 물러난 폭이 묶음보다 작을 때인데, 그때는 뒤의 것이 앞의 것을 못 찾아
-         * 보류 칸으로 가고 사용자가 그 자리에서 알게 된다.)
-         */
-        if (result.code === 'CLIENT_SEQ_TAKEN' && typeof result.lastClientSeq === 'number') {
-          const again = await this.insertRetry(result.mutationId, makeId);
-          if (again) {
-            requeued += 1;
-            again.targets.forEach((target) => requeuedTargets.add(target));
-          }
-          continue;
-        }
-        /*
-         * 다시 낸 명령 때문에 막힌 뒤 명령도 함께 다시 낸다 (2026-10-21). 서버는 순번이 겹친 명령을 거절로
-         * 돌려주고, 같은 대상을 건드리는 뒤 명령을 "막힘"으로 돌려준다. 예전에는 그것이 보류 칸에 남아 사람이
-         * 다시 보내야 했다. 서버가 돌려준 차례대로 다시 내므로 앞뒤가 그대로다.
-         */
-        if (result.status === 'blocked' && requeuedTargets.size > 0) {
-          const row = (await this.db.all<Row>(`SELECT targets FROM outbox WHERE mutationId = ?`, [result.mutationId]))[0];
-          const targets = row ? (JSON.parse(String(row.targets)) as string[]) : [];
-          if (targets.some((target) => requeuedTargets.has(target))) {
-            const again = await this.insertRetry(result.mutationId, makeId);
-            if (again) {
-              requeued += 1;
-              again.targets.forEach((target) => requeuedTargets.add(target));
-            }
-            continue;
-          }
-        }
-
-        await this.db.run(`UPDATE outbox SET status = ?, error = ? WHERE mutationId = ?`, [
-          result.status,
-          result.error ?? null,
-          result.mutationId,
-        ]);
-        held.push(result);
-      }
-    });
-
-    for (const result of held) {
-      track({
-        name: 'sync_held',
-        params: {
-          status: result.status as 'conflict' | 'rejected' | 'blocked',
-          code: result.code ?? 'none',
-        },
-      });
-    }
-
-    return { requeued };
+    return settleMutations(this.db, results, makeId);
   }
 
   /**
-   * 기기가 만든 id 를 서버가 채택한 id 로 갈아 끼운다.
-   *
-   * 두 사람이 오프라인에서 같은 이름의 분류를 만들었을 때, 같은 자리(분류·태그·전체와
-   * 그 달)의 예산을 각자 정했을 때다. 옮길 곳이 셋이다.
-   *
-   *   1. **사본의 참조** -- 다리와 예산이 그 분류를 가리키고, 소분류는 부모를 가리킨다.
-   *   2. **큐에 남은 명령** -- 아직 보내지 않은 짐이 옛 id 를 들고 있다.
-   *   3. **그 줄 자신** -- 서버의 행은 다음 pull 로 들어오므로 여기서 지운다.
-   *
-   * 트랜잭션은 부르는 쪽(`settleMutations`)이 연다.
+   * 기기가 만든 id 를 서버가 채택한 id 로 갈아 끼운다. 트랜잭션은 부르는 쪽이 연다 (`local-store-outbox`).
    */
   async applyAlias(localId: string, serverId: string): Promise<void> {
-    if (localId === serverId) return;
-
-    await this.db.run(
-      `INSERT OR REPLACE INTO alias (localId, serverId) VALUES (?, ?)`,
-      [localId, serverId],
-    );
-
-    /*
-     * 같은 달의 조정이 양쪽 예산에 다 있으면 기기 쪽을 남긴다. 그 조정의 명령이 큐에 있어
-     * 서버에도 곧 그 값이 선다. 둘 다 옮기면 그 달 조정이 둘이 된다.
-     */
-    await this.db.run(
-      `DELETE FROM budget_override
-        WHERE budgetId = ?
-          AND EXISTS (SELECT 1 FROM budget_override mine
-                       WHERE mine.budgetId = ? AND mine.year = budget_override.year
-                         AND mine.month = budget_override.month)`,
-      [serverId, localId],
-    );
-
-    for (const [table, column] of [
-      ['posting', 'categoryId'],
-      ['budget', 'categoryId'],
-      ['category', 'parentId'],
-      ['entry_draft', 'categoryId'],
-      ['entry_draft', 'feeCategoryId'],
-      ['recurring_rule', 'categoryId'],
-      ['recurring_rule', 'feeCategoryId'],
-      ['entry_tag', 'tagId'],
-      ['entry_draft_tag', 'tagId'],
-      // 태그 예산도 그 태그를 가리킨다. 빠뜨리면 합쳐진 태그의 예산이 사라진 태그에 남는다.
-      ['budget', 'tagId'],
-      // 같은 자리의 예산을 두 기기가 각자 만들면 서버는 먼저 선 규칙을 채택한다.
-      ['budget_override', 'budgetId'],
-    ] as const) {
-      /*
-       * OR IGNORE: 한 거래에 두 태그가 다 붙어 있으면 옮긴 줄이 이미 있는 줄과 키가 겹친다.
-       * 예전에는 그 오류로 정리 트랜잭션이 통째로 되돌아가 큐가 영영 정리되지 않았다.
-       * 겹쳐서 남은 옛 줄은 아래에서 지운다.
-       */
-      await this.db.run(`UPDATE OR IGNORE ${table} SET ${column} = ? WHERE ${column} = ?`, [
-        serverId,
-        localId,
-      ]);
-    }
-    await this.db.run(`DELETE FROM entry_tag WHERE tagId = ?`, [localId]);
-    await this.db.run(`DELETE FROM entry_draft_tag WHERE tagId = ?`, [localId]);
-    // 반복 규칙의 태그는 JSON 배열 글자다. 서버 태그가 이미 있으면 옛 것만 빼고, 없으면 바꾼다.
-    await this.db.run(
-      `UPDATE recurring_rule SET tagIds = replace(tagIds, ?, ?) WHERE tagIds LIKE ? AND tagIds NOT LIKE ?`,
-      [localId, serverId, `%${localId}%`, `%${serverId}%`],
-    );
-    await this.dropTagFromRules(localId);
-
-    /*
-     * 큐의 짐은 글자로 바꾼다. JSON 을 다시 풀어 쓰는 것보다 안전하다 -- id 는
-     * UUID 라 다른 값의 일부로 들어갈 일이 없고, 어느 자리에 있든 함께 옮겨야 한다.
-     */
-    await this.db.run(
-      `UPDATE outbox
-          SET payload = replace(payload, ?, ?),
-              targets = replace(targets, ?, ?)`,
-      [localId, serverId, localId, serverId],
-    );
-
-    for (const table of ['category', 'tag', 'budget'] as const) {
-      await this.db.run(`DELETE FROM ${table} WHERE id = ?`, [localId]);
-    }
+    await applyAlias(this.db, localId, serverId);
   }
 
   /**
@@ -4426,82 +2698,7 @@ export class LocalStore {
    * 없어 id 를 바꾸지 않아도 되지만, 한 길로 두는 편이 규칙이 하나다.
    */
   async retryMutation(mutationId: string, makeId: () => string): Promise<Mutation | null> {
-    return this.db.transaction(() => this.insertRetry(mutationId, makeId));
-  }
-
-  /**
-   * 다시 내기의 몸통. 트랜잭션은 부르는 쪽이 연다.
-   *
-   * `settleMutations` 도 이것을 쓴다 -- 순번 충돌을 그 자리에서 다시 내는데, 그쪽은 이미
-   * 트랜잭션 안이라 `retryMutation` 을 부를 수 없다 (사본은 트랜잭션을 겹쳐 열지 못한다).
-   */
-  private async insertRetry(mutationId: string, makeId: () => string): Promise<Mutation | null> {
-    const rows = await this.db.all<Row>(`SELECT * FROM outbox WHERE mutationId = ?`, [mutationId]);
-    const row = rows[0];
-    if (!row) return null;
-
-    const targets = JSON.parse(String(row.targets)) as string[];
-    const payload = JSON.parse(String(row.payload)) as unknown;
-
-    const kind = String(row.kind) as MutationKind;
-    const observed = await this.observedClock(kind, targets, payload);
-
-    await this.db.run(`DELETE FROM outbox WHERE mutationId = ?`, [mutationId]);
-
-    return this.insertMutation(
-      {
-        projectId: String(row.projectId),
-        mutationId: makeId(),
-        kind,
-        targets,
-        payload,
-        observed,
-      },
-      Date.now(),
-    );
-  }
-
-  /**
-   * 이 명령이 딛고 서야 할 시계. 사본에 지금 들어 있는 값을 본다.
-   *
-   * 충돌이었다면 그 사이에 이긴 편집이 pull 로 들어와 있다. 그것을 보고 뒤 번호를
-   * 받아야 이번 명령이 이긴다 -- 사용자가 "그래도 내 값으로 하겠다"를 고른 자리다 (D6).
-   *
-   * **대상마다 시계가 사는 곳이 다르다.** 전표는 자기 칸(`updatedHlc`)에, 자산·분류·
-   * 태그·예산은 필드별 지도(`fieldHlc`)에 있다. 전표 칸만 보면 자산 쪽은 언제나
-   * 빈손이라 기기의 물리 시계로만 번호가 매겨지고, 서버의 지도가 앞서 있으면 다시
-   * 밀린다 -- 몇 번을 눌러도 자기 값이 들어가지 않는다.
-   *
-   * 사본에 대상이 없으면(삭제가 이겼다) 없는 대로 둔다.
-   */
-  private async observedClock(
-    kind: MutationKind,
-    targets: readonly string[],
-    payload: unknown,
-  ): Promise<string | null> {
-    const table = settingTableOf(kind);
-    if (table) return targets.length > 0 ? this.assetClock(table, targets[0]) : null;
-    // 표에 붙지 않는 설정 명령(통합·삭제·환율 등)은 필드별 시계가 없다. 차례대로 간다.
-    if (isSettingMutation(kind)) return null;
-
-    /*
-     * 태그 표시는 여러 전표를 한 번에 건드린다. 그중 가장 늦은 시계 뒤로 가야 어느
-     * 전표에서도 밀리지 않는다. 대상 목록에는 태그 id 도 섞여 있어 짐에서 읽는다
-     * (쌓을 때와 같은 값이다).
-     */
-    if (kind === 'entry.tags') {
-      const targetsOf = (payload as EntryTagsPayload | null)?.targets ?? [];
-      return this.latestEntryHlc(targetsOf.map((one) => one.entryId));
-    }
-    // 분류 바꾸기도 같다. 대상 목록에 분류 id 가 섞여 있어 짐에서 읽는다.
-    if (kind === 'entry.category') {
-      const targetsOf = (payload as EntryCategoryPayload | null)?.targets ?? [];
-      return this.latestEntryHlc(targetsOf.map((one) => one.entryId));
-    }
-    // 청구액 확정도 여러 전표를 한 번에 건드린다. 대상이 전부 전표다.
-    if (kind === 'entry.restate') return this.latestEntryHlc(targets);
-
-    return targets.length > 0 ? this.entryHlc(targets[0]) : null;
+    return this.db.transaction(() => insertRetry(this.db, mutationId, makeId));
   }
 
   /**
@@ -4599,116 +2796,22 @@ export class LocalStore {
     };
   }
 
-  /**
-   * 신용카드로 쓴 다리. 부채 계정에 걸린 것만 본다.
-   *
-   * 카테고리 다리가 하나도 없는 전표는 뺀다. 대금 결제와 잔액 조정이 그런 전표인데,
-   * 그것은 사용이 아니라 갚은 것이라 주기 사용액에 들면 안 된다 (서버의 같은 조건).
-   *
-   * 구간을 자르지 않는다. 서버는 질의 비용 때문에 최장 할부만큼 앞에서 자르지만, 사본은
-   * 기기 안에 있고 집계 함수가 표시 범위 밖의 주기를 어차피 버린다.
-   */
+  /** 신용카드로 쓴 다리. 부채 계정에 걸린 것만 본다 (`local-store-card-postings`). */
   async creditCardPostings(liabilityAccountId: string): Promise<StoredCardPosting[]> {
-    const rows = await this.db.all<Row>(
-      /*
-       * 실적에서 뺀 거래도 함께 읽는다. 나누는 일은 집계(`creditUsagePeriods`)가 한다.
-       *
-       * 여기서 걸러 버리면 청구액 그래프가 남은 대금과 어긋난다 -- 청구는 되었는데
-       * 그래프에는 없는 돈이 생긴다.
-       */
-      `SELECT p.amount, p.entryId, e.date, e.originalCurrency,
-              e.countsPerformance, e.discountCountsPerformance,
-              e.installmentAdjust AS refundAdjust,
-              (SELECT group_concat(r.installmentAdjust, char(30)) FROM entry r
-                WHERE r.paybackOfEntryId = e.id AND r.installmentAdjust IS NOT NULL) AS installmentCuts,
-              ip.totalMonths, ip.principalShares, ip.interestShares
-         FROM posting p
-         JOIN entry e ON e.id = p.entryId
-         LEFT JOIN installment_plan ip ON ip.postingId = p.id
-        WHERE p.accountId = ?
-          AND EXISTS (SELECT 1 FROM posting c WHERE c.entryId = e.id AND c.categoryId IS NOT NULL)`,
-      [liabilityAccountId],
-    );
-    const legs = await this.usageLegs(rows.map((row) => String(row.entryId)));
-    return rows.map((row) => toCardPosting(row, legs.get(String(row.entryId)) ?? []));
+    return creditCardPostings(this.db, liabilityAccountId);
   }
 
-  /**
-   * 체크카드로 쓴 다리.
-   *
-   * 연결 통장의 다리에 cardId 가 함께 찍힌다. 통장에서 직접 나간 지출에는 cardId 가
-   * 없으므로 이 조건만으로 이 카드로 쓴 것만 걸린다.
-   */
+  /** 체크카드로 쓴 다리. 그 카드가 찍힌 다리다. */
   async debitCardPostings(cardId: string): Promise<StoredCardPosting[]> {
-    const rows = await this.db.all<Row>(
-      `SELECT p.amount, p.entryId, e.date, e.originalCurrency,
-              e.countsPerformance, e.discountCountsPerformance,
-              e.installmentAdjust AS refundAdjust,
-              (SELECT group_concat(r.installmentAdjust, char(30)) FROM entry r
-                WHERE r.paybackOfEntryId = e.id AND r.installmentAdjust IS NOT NULL) AS installmentCuts,
-              NULL AS totalMonths, NULL AS principalShares, NULL AS interestShares
-         FROM posting p
-         JOIN entry e ON e.id = p.entryId
-        WHERE p.cardId = ?`,
-      [cardId],
-    );
-    const legs = await this.usageLegs(rows.map((row) => String(row.entryId)));
-    return rows.map((row) => toCardPosting(row, legs.get(String(row.entryId)) ?? []));
+    return debitCardPostings(this.db, cardId);
   }
 
-  /**
-   * 실적 원장의 재료. 주기별 사용액이 읽는 다리에 화면에 적을 것을 붙여 준다.
-   *
-   * 신용카드는 부채 계정의 다리를, 체크카드는 그 카드가 찍힌 다리를 읽는다. 고르는
-   * 조건은 위의 두 질의와 같아야 한다 -- 실적 표와 그래프가 다른 거래를 세면 목록의
-   * 합과 진행률 막대가 갈린다.
-   */
+  /** 실적 원장의 재료. 주기별 사용액이 읽는 다리에 화면에 적을 것을 붙여 준다. */
   async cardLedgerPostings(input: {
     liabilityAccountId?: string | null;
     cardId?: string | null;
   }): Promise<StoredCardLedgerPosting[]> {
-    const credit = Boolean(input.liabilityAccountId);
-    const rows = await this.db.all<Row>(
-      `SELECT p.id AS postingId, p.amount, e.id AS entryId, e.date, e.description, e.merchant,
-              e.countsPerformance, e.discountCountsPerformance, e.originalCurrency,
-              e.installmentAdjust AS refundAdjust,
-              (SELECT group_concat(r.installmentAdjust, char(30)) FROM entry r
-                WHERE r.paybackOfEntryId = e.id AND r.installmentAdjust IS NOT NULL) AS installmentCuts,
-              ${
-                credit
-                  ? 'ip.totalMonths, ip.principalShares, ip.interestShares'
-                  : 'NULL AS totalMonths, NULL AS principalShares, NULL AS interestShares'
-              },
-              cat.name AS categoryName, parent.name AS parentCategoryName
-         FROM posting p
-         JOIN entry e ON e.id = p.entryId
-         ${credit ? 'LEFT JOIN installment_plan ip ON ip.postingId = p.id' : ''}
-         /*
-          * 대표 분류. 형제 다리에 붙어 있어 한 줄만 보아서는 알 수 없다.
-          * 분할이면 첫 다리를 대표로 삼는다 (서버의 ledgerRowCategory 와 같은 규칙).
-          */
-         LEFT JOIN posting cp
-           ON cp.id = (SELECT c.id FROM posting c
-                        WHERE c.entryId = e.id AND c.categoryId IS NOT NULL
-                        ORDER BY c.id LIMIT 1)
-         LEFT JOIN category cat ON cat.id = cp.categoryId
-         LEFT JOIN category parent ON parent.id = cat.parentId
-        WHERE ${credit ? 'p.accountId = ?' : 'p.cardId = ?'}
-          ${credit ? 'AND cp.id IS NOT NULL' : ''}
-        ORDER BY e.date, p.id`,
-      [credit ? String(input.liabilityAccountId) : String(input.cardId)],
-    );
-
-    const legs = await this.usageLegs(rows.map((row) => String(row.entryId)));
-    return rows.map((row) => ({
-      ...toCardPosting(row, legs.get(String(row.entryId)) ?? []),
-      postingId: String(row.postingId),
-      entryId: String(row.entryId),
-      description: asText(row.description) ?? '',
-      merchant: asText(row.merchant),
-      categoryName: asText(row.categoryName),
-      parentCategoryName: asText(row.parentCategoryName),
-    }));
+    return cardLedgerPostings(this.db, input);
   }
 
   /**
@@ -4789,33 +2892,6 @@ export class LocalStore {
     );
   }
 
-  /**
-   * 그 전표들의 분류 줄에 적힌 차감액. 실적을 정가로 되살릴 때 쓴다.
-   *
-   * 깎인 금액은 줄마다 적히므로(분할의 한 줄만 환불될 수 있다) 한 번에 읽어 전표별로
-   * 묶는다. 서버도 같은 것을 `USAGE_LEG_SELECT` 로 함께 읽는다.
-   */
-  private async usageLegs(entryIds: readonly string[]): Promise<Map<string, Row[]>> {
-    const unique = [...new Set(entryIds)];
-    if (unique.length === 0) return new Map();
-
-    const rows = await this.db.all<Row>(
-      `SELECT entryId, discountAmount
-         FROM posting
-        WHERE entryId IN (${placeholders(unique.length)}) AND categoryId IS NOT NULL
-        ORDER BY id`,
-      [...unique],
-    );
-
-    const byEntry = new Map<string, Row[]>();
-    for (const row of rows) {
-      const list = byEntry.get(String(row.entryId)) ?? [];
-      list.push(row);
-      byEntry.set(String(row.entryId), list);
-    }
-    return byEntry;
-  }
-
   /** 사본에 담긴 행 수. 화면이 "얼마나 받았는지" 보여 줄 때와 검증에 쓴다. */
   async counts(projectId: string): Promise<Record<string, number>> {
     const result: Record<string, number> = {};
@@ -4834,666 +2910,4 @@ export class LocalStore {
     return result;
   }
 
-  /**
-   * 한 행을 넣거나 갈아 끼운다.
-   *
-   * 서버가 준 행이 언제나 이긴다. 사본은 서버 상태의 그림자이므로 병합할 것이 없다
-   * (병합은 2단계에서 보내지 못한 명령이 생길 때 이야기가 된다).
-   */
-  private async upsert(table: string, values: Record<string, SqlValue>): Promise<void> {
-    const columns = Object.keys(values);
-    const placeholders = columns.map(() => '?').join(', ');
-    const updates = columns
-      .filter((column) => column !== 'id')
-      .map((column) => `${column} = excluded.${column}`)
-      .join(', ');
-
-    await this.db.run(
-      `INSERT INTO ${table} (${columns.join(', ')}) VALUES (${placeholders})
-       ON CONFLICT(id) DO UPDATE SET ${updates}`,
-      columns.map((column) => values[column]),
-    );
-  }
-}
-
-/** 사본의 한 줄을 창구가 내보내는 모양으로. 서버 응답과 같은 모양이어야 한다. */
-function toDraftResponse(row: Row): EntryDraftDto.Response {
-  return {
-    id: String(row.id),
-    projectId: String(row.projectId),
-    source: String(row.source) as EntryDraftDto.Response['source'],
-    status: String(row.status) as EntryDraftDto.Response['status'],
-    rawText: String(row.rawText ?? ''),
-    appPackage: asText(row.appPackage),
-    appTitle: asText(row.appTitle),
-    kind: asText(row.kind) as EntryDraftDto.Response['kind'],
-    amount: asText(row.amount),
-    currency: asText(row.currency),
-    occurredAt: asText(row.occurredAt),
-    merchant: asText(row.merchant),
-    description: asText(row.description),
-    installmentMonths: row.installmentMonths == null ? null : asInt(row.installmentMonths),
-    personId: asText(row.personId),
-    categoryId: asText(row.categoryId),
-    accountId: asText(row.accountId),
-    toAccountId: asText(row.toAccountId),
-    feeAmount: asText(row.feeAmount),
-    feeCategoryId: asText(row.feeCategoryId),
-    cardId: asText(row.cardId),
-    confidence: asInt(row.confidence),
-    parser: asText(row.parser),
-    dedupeKey: String(row.dedupeKey ?? ''),
-    registeredEntryId: asText(row.registeredEntryId),
-    recurringRuleId: asText(row.recurringRuleId),
-    createdByName: asText(row.createdByName),
-    deviceName: asText(row.deviceName),
-    /*
-     * 태그는 다리 표에 있다. 이 함수는 한 줄만 보므로 비워 두고, 부르는 쪽이 한 번에
-     * 읽어 붙인다(`draftRows`). 여기서 그때그때 물으면 줄마다 질의가 하나씩 늘어난다.
-     */
-    tagIds: [],
-    createdAt: String(row.createdAt ?? ''),
-    updatedAt: String(row.updatedAt ?? ''),
-  };
-}
-
-/** 서버 표 이름 -> 사본의 표 이름. 여기 없는 표는 사본이 담지 않는 것이다. */
-const TOMBSTONE_TABLES: Record<string, string> = {
-  JournalEntry: 'entry',
-  Budget: 'budget',
-  BudgetOverride: 'budget_override',
-  ExchangeRate: 'exchange_rate',
-  ProjectMember: 'member',
-  Person: 'person',
-  Account: 'account',
-  Category: 'category',
-  Tag: 'tag',
-  Card: 'card',
-  AssetValuation: 'asset_valuation',
-  InstallmentPlan: 'installment_plan',
-  EntryDraft: 'entry_draft',
-  RecurringRule: 'recurring_rule',
-};
-
-/**
- * 스키마 문장이 적어 둔 표와 컬럼.
- *
- * 기대 목록을 손으로 또 적지 않는다. 두 벌이 되면 한쪽만 고쳐 놓고 "모양이 맞다"고
- * 믿는 일이 생긴다. 문장에서 그대로 읽는다.
- */
-const isIndexStatement = (statement: string) => /^\s*CREATE\s+(UNIQUE\s+)?INDEX\b/i.test(statement);
-const TABLE_STATEMENTS = SCHEMA_STATEMENTS.filter((statement) => !isIndexStatement(statement));
-const INDEX_STATEMENTS = SCHEMA_STATEMENTS.filter(isIndexStatement);
-
-function expectedColumns(): Array<[string, string[]]> {
-  const tables: Array<[string, string[]]> = [];
-
-  for (const raw of SCHEMA_STATEMENTS) {
-    /*
-     * 주석을 먼저 걷어낸다. 문장 안의 `/* ... *\/` 를 그대로 두면 그것이 컬럼 이름으로
-     * 읽히고, 그 뒤의 진짜 컬럼은 사라진다 -- 그러면 모양이 늘 어긋난 것으로 보인다.
-     */
-    const statement = raw.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/--[^\n]*/g, ' ');
-    const head = /CREATE TABLE IF NOT EXISTS (\w+)\s*\(/i.exec(statement);
-    if (!head) continue;
-
-    const body = statement.slice(head.index + head[0].length, statement.lastIndexOf(')'));
-    const columns: string[] = [];
-    let depth = 0;
-    let current = '';
-
-    const take = (segment: string) => {
-      const name = segment.trim().split(/\s+/)[0];
-      // 표 전체에 걸리는 제약(PRIMARY KEY (a, b) 등)은 컬럼이 아니다.
-      if (name && !/^(PRIMARY|UNIQUE|FOREIGN|CHECK|CONSTRAINT)$/i.test(name)) columns.push(name);
-    };
-
-    for (const char of body) {
-      if (char === '(') depth += 1;
-      if (char === ')') depth -= 1;
-      if (char === ',' && depth === 0) {
-        take(current);
-        current = '';
-        continue;
-      }
-      current += char;
-    }
-    take(current);
-
-    tables.push([head[1], columns]);
-  }
-
-  return tables;
-}
-
-/**
- * 사본이 담는 표 전부. 스키마 판이 바뀌면 이것을 부수고 다시 세운다.
- *
- * 아웃박스(`outbox`)와 기기 이름(`client_state`)은 여기 없다. 그 둘은 서버에서 다시 받을
- * 수 있는 값이 아니라 아직 보내지 못한 사용자의 입력이다.
- */
-const MIRROR_TABLES: readonly string[] = ALL_TABLES;
-
-/**
- * 프로젝트를 직접 가리키지 않는 표. 부모를 따라 지운다.
- *
- * 적힌 순서대로 치운다. **위에서 아래로**, 부모 쪽부터다. 할부 계획은 다리를 가리키는데
- * 그 다리는 전표가 지워진 뒤에야 고아가 되므로, 다리를 먼저 치워야 계획이 고아로 보인다.
- * 순서를 뒤집으면 계획이 살아남아 사본에 찌꺼기가 된다.
- */
-const CHILD_TABLES: ReadonlyArray<{ table: string; column: string; parent: string }> = [
-  // 태그 연결은 전표에 딸린다. 이 표에는 projectId 가 없어 부모를 따라 치운다.
-  { table: 'entry_tag', column: 'entryId', parent: 'entry' },
-  // 후보의 태그도 같은 짜임이다. 빠뜨리면 사본을 버리는 길이 통째로 막힌다.
-  { table: 'entry_draft_tag', column: 'draftId', parent: 'entry_draft' },
-  { table: 'posting', column: 'entryId', parent: 'entry' },
-  { table: 'installment_plan', column: 'postingId', parent: 'posting' },
-  { table: 'budget_override', column: 'budgetId', parent: 'budget' },
-  { table: 'asset_valuation', column: 'accountId', parent: 'account' },
-];
-
-/**
- * 카드 번호 마스킹. 서버가 내보내는 모양과 같아야 한다.
- *
- * 사본에는 서버가 이미 마스킹한 값이 들어오지만(응답에 실린 것이 그것이다), 값이
- * 없을 때 화면이 undefined 를 만나지 않도록 한 곳에서 빈 문자열로 맞춘다.
- */
-function maskCardNumber(value: string | null): string {
-  return value ?? '';
-}
-
-/**
- * 자산 주인 조건. 서버의 `assetOwnerCondition` 과 같은 규칙이다.
- *
- *   - 돈이 나간 다리(음수)의 계좌 주인을 본다. 이체는 보내는 계좌가 기준이다.
- *   - 나간 다리가 없으면(수입, 잔액 증가 조정) 들어온 다리를 본다.
- *   - 자본 계정은 주인이 없어 "나간 다리" 판단에서 제외된다(ownerId IS NOT NULL).
- *
- * 부호는 문자열의 첫 글자로 본다. 금액은 표준 십진 표기로 담기므로 음수는 언제나
- * '-' 로 시작한다. TEXT 를 숫자로 바꿔 비교하면 정밀도를 잃는 자리가 생긴다.
- */
-/**
- * 목록 질의가 보는 범위. 사람 필터와 거래 화면의 검색이 함께 걸린다.
- *
- * `search` 는 `@money/types` 의 `parseEntrySearch` 가 읽어 준 것을 그대로 받는다.
- * 무엇을 고른 것으로 볼지는 서버와 한 벌이어야 하고, 그것을 **문장으로 옮기는 일**만
- * 저장소마다 다르다.
- */
-/**
- * 줄에 실을 할부 계획. 할부가 아니면 undefined.
- *
- * 회차 금액은 **비율로만** 쓰이므로 카드 통화가 기준통화와 달라도 원금은 제대로 나뉜다.
- * 이자는 금액 그대로 더하는 값이라 통화가 갈리면 싣지 않는다 (서버와 같은 판단이다).
- */
-/**
- * 회차 기준의 집계 행 하나. 규칙은 공용 `spreadInstallmentRow` 에 있고(서버도 같은 것을 쓴다),
- * 여기서는 사본의 열을 그 모양으로 옮길 뿐이다. 걸린 환불은 (줄 키, 조정 JSON) 짝을 레코드
- * 구분자(30)·단위 구분자(31)로 이어 붙인 한 칸으로 온다.
- */
-function spreadRowOf(named: NamedCategoryPostingRow, row: Row): NamedCategoryPostingRow {
-  const months = row.installmentMonths == null ? 0 : asInt(row.installmentMonths);
-  return spreadInstallmentRow(named, {
-    lineKey: asText(row.lineKey),
-    refundAdjust: asText(row.refundAdjust),
-    ownDate: String(row.ownDate),
-    plan:
-      months > 0
-        ? {
-            months,
-            amount: asMoney(row.installmentAmount ?? '0'),
-            baseAmount: asMoney(row.installmentBase ?? '0'),
-            principalShares: row.principalShares,
-            interestShares: row.interestShares,
-          }
-        : null,
-    refunds: String(row.installmentCuts ?? '')
-      .split(String.fromCharCode(30))
-      .filter(Boolean)
-      .map((pair) => {
-        const [lineKey, adjust] = pair.split(String.fromCharCode(31));
-        return { lineKey: lineKey || null, adjust };
-      }),
-  });
-}
-
-export interface MirrorEntryScope {
-  fromDateKey: string;
-  toDateKey: string;
-  /**
-   * 한 달만 볼 때 ("YYYY-MM"). 주면 위 달력 키 범위 대신 이것을 쓴다.
-   *
-   * 동기화할 때 프로젝트 타임존으로 계산해 박아 둔 컬럼이라, 달의 길이도 시차도 다시
-   * 따질 것이 없다. 부르는 쪽이 `-01 ~ -31` 같은 구간을 만들면 30일 이하인 달에서
-   * 다음 달 초하루가 함께 들어온다.
-   */
-  yearMonth?: string;
-  ownerIds?: string[];
-  search?: ParsedEntrySearch;
-  /** 이 카드로 낸 거래만. 카드 상세의 결제 내역이 쓴다. */
-  cardId?: string;
-  /**
-   * 분류 하나로 좁힌다. 분석 창의 거래 목록이 쓴다 (서버 목록의 `categoryId` 와 같은 규칙).
-   * 대분류면 소분류 다리도 걸리고, `exact` 면 그 분류에 바로 적은 다리만이다("미분류").
-   */
-  category?: { id: string; exact: boolean };
-  /**
-   * 그 유형의 분류 다리를 가진 전표만 (서버 목록의 `categoryType`). 전체 지출 분석이 쓴다 --
-   * kind 로 거르면 수수료가 붙은 이체가 빠져 12개월 막대와 어긋난다.
-   */
-  categoryType?: 'income' | 'expense';
-  /**
-   * 회차 기준으로 셀 때 켠다. 할부 계획을 줄에 함께 실어 온다.
-   *
-   * 늘 싣지 않는 까닭은 값이다 -- 전표마다 딸림질의가 넷 붙는다. 발생 기준에서는
-   * 읽히지 않는 값이라 켤 때만 붙인다.
-   */
-  withInstallment?: boolean;
-  /**
-   * 기간을 어느 날짜로 볼지 (PAYBACK_DESIGN.md).
-   *
-   *   own       전표 날짜. 목록(`viewEntries`·`viewEntriesPage`)의 기본이다.
-   *   analysis  연결된 페이백은 원거래 날짜. 분석 행(`categoryPostings`)의 기본이다.
-   *
-   * 서버의 `dateBasis`·`ownDate` 와 같은 갈림이다.
-   */
-  dateBasis?: 'own' | 'analysis';
-  /** 이 원거래에 걸린 페이백만 (서버 목록의 `paybackOf`). */
-  paybackOf?: string;
-}
-
-/**
- * 원거래 조건. 그 원거래에 걸린 페이백만.
- */
-function paybackOfFilter(paybackOf?: string): { sql: string; params: string[] } {
-  if (!paybackOf) return { sql: '', params: [] };
-  return { sql: ' AND e.paybackOfEntryId = ?', params: [paybackOf] };
-}
-
-/**
- * 분류 조건. 그 분류(대분류면 소분류까지)의 다리, 또는 그 유형의 분류 다리를 가진 전표만.
- *
- * 서버 목록(`entries.service` 의 categoryId·categoryExact·categoryType)과 같은 규칙이다 --
- * 다리 하나가 맞으면 전표가 통째로 든다. 둘을 함께 주면 둘 다 맞아야 한다(다리는 서로 달라도 된다).
- */
-function categoryLegFilter(
-  category?: { id: string; exact: boolean },
-  categoryType?: 'income' | 'expense',
-): { sql: string; params: string[] } {
-  let sql = '';
-  const params: string[] = [];
-  if (category) {
-    sql += category.exact
-      ? ` AND EXISTS (SELECT 1 FROM posting cp WHERE cp.entryId = e.id AND cp.categoryId = ?)`
-      : ` AND EXISTS (SELECT 1 FROM posting cp JOIN category cc ON cc.id = cp.categoryId
-                       WHERE cp.entryId = e.id AND (cc.id = ? OR cc.parentId = ?))`;
-    params.push(...(category.exact ? [category.id] : [category.id, category.id]));
-  }
-  if (categoryType) {
-    sql += ` AND EXISTS (SELECT 1 FROM posting tp JOIN category tc ON tc.id = tp.categoryId
-                          WHERE tp.entryId = e.id AND tc.type = ?)`;
-    params.push(categoryType);
-  }
-  return { sql, params };
-}
-
-/**
- * 카드 조건. 그 카드가 찍힌 다리를 가진 전표만.
- *
- * 체크카드 사용은 연결 통장의 다리에, 신용카드 사용은 부채 계정의 다리에 카드가 찍힌다.
- * 어느 쪽이든 이 조건 하나로 그 카드의 거래만 걸린다 (서버의 목록 필터와 같다).
- */
-function cardFilter(cardId?: string): { sql: string; params: string[] } {
-  if (!cardId) return { sql: '', params: [] };
-  return {
-    sql: ' AND EXISTS (SELECT 1 FROM posting cp WHERE cp.entryId = e.id AND cp.cardId = ?)',
-    params: [cardId],
-  };
-}
-
-/**
- * 목록을 좁히는 분류·카드 조건을 함께. 전체 목록(`viewEntries`)과 쪽 목록(`viewEntriesPage`)이
- * 같은 조건을 걸어야 한다 -- 예전에는 앞의 것이 카드를, 뒤의 것이 분류를 말없이 버렸다.
- */
-function narrowFilter(scope: MirrorEntryScope): { sql: string; params: string[] } {
-  const category = categoryLegFilter(scope.category, scope.categoryType);
-  const card = cardFilter(scope.cardId);
-  return { sql: category.sql + card.sql, params: [...category.params, ...card.params] };
-}
-
-/**
- * 기간 조건. 달 이름이 있으면 그것이 앞선다.
- *
- * 분석 기준(`dateBasis: 'analysis'`)이면 연결된 페이백을 원거래의 날짜로 고른다. 원거래가
- * 사본에 없으면(지워졌는데 비운 링크가 아직 오지 않았다) 자기 날짜로 본다 -- 서버가 링크를
- * 비운 뒤와 같은 결과다. 서버 `analysisDateCondition` 의 짝이다.
- */
-function periodFilter(range: MirrorEntryScope): { sql: string; params: string[] } {
-  const own = range.yearMonth
-    ? { sql: 'e.yearMonth = ?', params: [range.yearMonth] }
-    : { sql: 'e.dateKey >= ? AND e.dateKey <= ?', params: [range.fromDateKey, range.toDateKey] };
-  if (range.dateBasis !== 'analysis') return { sql: ` AND ${own.sql}`, params: own.params };
-
-  const original = range.yearMonth
-    ? { sql: 'o.yearMonth = ?', params: [range.yearMonth] }
-    : { sql: 'o.dateKey >= ? AND o.dateKey <= ?', params: [range.fromDateKey, range.toDateKey] };
-  return {
-    sql: ` AND ((${own.sql} AND NOT EXISTS (SELECT 1 FROM entry o WHERE o.id = e.paybackOfEntryId))
-           OR EXISTS (SELECT 1 FROM entry o WHERE o.id = e.paybackOfEntryId AND ${original.sql}))`,
-    params: [...own.params, ...original.params],
-  };
-}
-
-/**
- * 검색을 SQL 조건으로. 무리 안은 OR, 무리끼리는 AND.
- *
- * 무리 하나가 EXISTS 하나다. 무리를 쪼개 EXISTS 를 여럿 걸면 "식비 다리가 있고
- * 교통비 다리도 있는 전표"가 되어 분할 거래만 걸린다.
- *
- * 부호는 문자열의 첫 글자로 본다. 금액이 표준 십진 표기로 담기므로 음수는 언제나
- * '-' 로 시작한다. TEXT 를 숫자로 바꿔 비교하면 정밀도를 잃는 자리가 생긴다
- * (ownerFilter 와 같은 규칙이다).
- */
-/**
- * 유형 조건. 고른 유형끼리 OR 로 잇는다. 서버의 `entryKindCondition` 과 같은 규칙이다.
- *
- * **지출·수입은 카테고리 기준, 이체·카드정산은 자금 이동 기준이다.**
- *
- *   지출     지출 카테고리 다리(0 이상)가 있는 전표
- *   수입     수입 카테고리 다리가 있는 전표
- *   페이백   지출 카테고리 다리가 음수인 전표 (지출을 되돌려 받은 돈)
- *   이체     계좌 사이를 옮긴 돈 (신용카드·기초잔액이 끼지 않은)
- *   카드정산 계좌 사이를 옮긴 돈 중 신용카드 부채 계정이 끼는 것
- *   조정     기초잔액 계정이 끼는 것
- *
- * 지출을 `classifyEntry` 와 다르게 두는 이유는 **수수료가 붙은 이체**다. 그 전표는 표시
- * 유형이 이체지만 수수료는 지출 카테고리 다리이고, 지출 합계는 카테고리 기준이라 그
- * 수수료를 이미 센다. 표시 유형으로 지출을 고르면 그 전표가 빠져 합계가 갈린다.
- *
- * "계좌 다리가 둘 이상"은 **부호가 다른 계좌 다리가 둘 다 있는가**로 본다. 전표는
- * 균형을 이루므로 계좌 사이를 옮긴 돈은 한쪽이 음수, 다른 쪽이 양수다. 부호는 문자열의
- * 첫 글자로 읽는다 (ownerFilter 와 같은 규칙).
- */
-function kindFilter(kinds?: readonly string[]): string {
-  if (!kinds || kinds.length === 0) return '';
-
-  const leg = (extra: string) =>
-    `EXISTS (SELECT 1 FROM posting kp WHERE kp.entryId = e.id AND ${extra})`;
-  const negative = leg(`kp.accountId IS NOT NULL AND substr(kp.amount, 1, 1) = '-'`);
-  const positive = leg(
-    `kp.accountId IS NOT NULL AND substr(kp.amount, 1, 1) != '-' AND kp.amount != '0'`,
-  );
-  const moves = `(${negative} AND ${positive})`;
-  const accountType = (type: string) =>
-    `EXISTS (
-       SELECT 1 FROM posting kp JOIN account ka ON ka.id = kp.accountId
-        WHERE kp.entryId = e.id AND ka.type = '${type}'
-     )`;
-  const categoryType = (type: string, extra = '') =>
-    `EXISTS (
-       SELECT 1 FROM posting kp JOIN category kc ON kc.id = kp.categoryId
-        WHERE kp.entryId = e.id AND kc.type = '${type}'${extra}
-     )`;
-  // 지출과 페이백은 같은 지출 분류를 쓰고 부호로 갈린다 (서버 entryKindCondition 과 같다).
-  const paybackLeg = ` AND substr(kp.baseAmount, 1, 1) = '-'`;
-  const expenseLeg = ` AND substr(kp.baseAmount, 1, 1) != '-'`;
-
-  const of = (kind: string): string => {
-    switch (kind) {
-      case 'card_payment':
-        return `(${moves} AND ${accountType('credit_card')})`;
-      case 'adjustment':
-        return `(${moves} AND NOT ${accountType('credit_card')} AND ${accountType('opening_balance')})`;
-      case 'transfer':
-        return `(${moves} AND NOT ${accountType('credit_card')} AND NOT ${accountType('opening_balance')})`;
-      case 'income':
-        return categoryType('income');
-      case 'payback':
-        return categoryType('expense', paybackLeg);
-      default:
-        return categoryType('expense', expenseLeg);
-    }
-  };
-
-  return `
-        AND (${kinds.map(of).join(' OR ')})`;
-}
-
-/**
- * 모양 조건. 고른 모양끼리 OR 로 잇는다. 서버의 `entryFeatureCondition` 과 같은 규칙이다.
- *
- *   분할  분류 다리가 둘 이상인 전표
- *   할부  할부 계획이 붙은 다리를 가진 전표
- *   차감  깎인 금액이 0 보다 큰 다리를 가진 전표 (금액은 TEXT 라 수로 바꿔 견준다)
- *
- * 서버는 분할을 셀 수 없어 id 목록을 따로 받아 오지만(Prisma 의 관계 조건은 some/every/
- * none 뿐이다), 여기서는 하위 질의가 그 자리에서 센다. 세는 규칙은 같다.
- */
-function featureFilter(features?: readonly string[]): string {
-  if (!features || features.length === 0) return '';
-
-  const branches: string[] = [];
-  if (features.includes('installment')) {
-    branches.push(`EXISTS (
-          SELECT 1 FROM posting fp JOIN installment_plan fi ON fi.postingId = fp.id
-           WHERE fp.entryId = e.id
-        )`);
-  }
-  if (features.includes('split')) {
-    branches.push(`(
-          SELECT COUNT(*) FROM posting fp
-           WHERE fp.entryId = e.id AND fp.categoryId IS NOT NULL
-        ) > 1`);
-  }
-  if (features.includes('discount')) {
-    branches.push(`EXISTS (
-          SELECT 1 FROM posting fp
-           WHERE fp.entryId = e.id AND CAST(fp.discountAmount AS REAL) > 0
-        )`);
-  }
-
-  return `
-        AND (${branches.join(' OR ')})`;
-}
-
-function searchFilter(search?: ParsedEntrySearch): { sql: string; params: string[] } {
-  if (!search) return { sql: '', params: [] };
-
-  let sql = '';
-  const params: string[] = [];
-
-  const categoryIds = search.categoryIds ?? [];
-  const categorySelfIds = search.categorySelfIds ?? [];
-  if (categoryIds.length > 0 || categorySelfIds.length > 0) {
-    /*
-     * 분류 한 무리. 두 갈래를 OR 로 잇는다. 서버의 entrySearchConditions 와 같은 규칙이다.
-     *
-     *   `categoryIds`      대분류를 고르면 소분류까지.
-     *   `categorySelfIds`  그 분류에 **직접** 적은 것만 (미분류).
-     *
-     * 둘이 한 무리라 "식비 미분류 또는 교통 전체"가 그대로 표현된다.
-     */
-    const branches: string[] = [];
-    if (categoryIds.length > 0) {
-      const list = categoryIds.map(() => '?').join(', ');
-      branches.push(`sp.categoryId IN (${list}) OR sc.parentId IN (${list})`);
-      params.push(...categoryIds, ...categoryIds);
-    }
-    if (categorySelfIds.length > 0) {
-      branches.push(`sp.categoryId IN (${categorySelfIds.map(() => '?').join(', ')})`);
-      params.push(...categorySelfIds);
-    }
-
-    sql += `
-        AND EXISTS (
-          SELECT 1 FROM posting sp LEFT JOIN category sc ON sc.id = sp.categoryId
-           WHERE sp.entryId = e.id AND (${branches.join(' OR ')})
-        )`;
-  }
-
-  const accountIds = search.paymentAccountIds ?? [];
-  const cardIds = search.paymentCardIds ?? [];
-  if (accountIds.length > 0 || cardIds.length > 0 || search.noAccount) {
-    const branches: string[] = [];
-
-    if (accountIds.length > 0) {
-      /*
-       * 이 통장의 관점이다. **이 통장에서 오간 돈 전부**를 본다 -- 나간 것도, 들어온 것도,
-       * 0원짜리도. 이체로 들어온 돈도 들고, 전액을 깎아 빠져나간 돈이 0인 결제도 든다
-       * (0을 빼면 그 결제가 통째로 사라진다). 서버의 `entrySearchConditions` 와 같은
-       * 규칙이라 온라인·오프라인이 같은 목록을 낸다 (그 자리에 까닭이 적혀 있다).
-       *
-       * 그래서 금액은 아예 보지 않는다. 카드가 붙은 다리만 뺀다 -- 체크카드 결제가
-       * 연결 통장 다리에도 걸려 카드와 통장에 두 번 세어지기 때문이다.
-       *
-       * 기초잔액 전표는 뺀다. 사용자가 적은 거래가 아닌 자본 전표라, 두면 통장을 고를
-       * 때마다 목록에 끼어든다 (서버의 같은 자리에 까닭이 적혀 있다).
-       */
-      branches.push(
-        `(mp.accountId IN (${accountIds.map(() => '?').join(', ')}) AND mp.cardId IS NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM posting op JOIN account oa ON oa.id = op.accountId
-             WHERE op.entryId = e.id AND oa.type = 'opening_balance'
-          ))`,
-      );
-      params.push(...accountIds);
-    }
-    if (cardIds.length > 0) {
-      /*
-       * 이 카드의 관점이다. **쓴 것과 갚은 것 둘 다** 본다. 대금 결제는 부채가 줄어드는
-       * 일이라 카드 다리가 양수로 남으므로, 나간 쪽만 보면 그 줄이 통째로 빠진다.
-       * 서버의 `entrySearchConditions` 와 같은 규칙이다 (그 자리에 까닭이 적혀 있다).
-       */
-      branches.push(`(mp.cardId IN (${cardIds.map(() => '?').join(', ')}))`);
-      params.push(...cardIds);
-    }
-    /*
-     * 결제수단을 고르지 않은 지출·수입. 미지정 계정에 붙어 있어 유형으로 찾는다.
-     * 서버의 `entrySearchConditions` 와 같은 규칙이다.
-     */
-    if (search.noAccount) {
-      branches.push(
-        `EXISTS (SELECT 1 FROM account ma WHERE ma.id = mp.accountId AND ma.type = 'unassigned')`,
-      );
-    }
-
-    sql += `
-        AND EXISTS (
-          SELECT 1 FROM posting mp
-           WHERE mp.entryId = e.id AND (${branches.join(' OR ')})
-        )`;
-  }
-
-  /*
-   * 태그. 무리 안은 OR 다.
-   *
-   * 다리가 아니라 전표를 본다 -- 태그는 전표에 붙는다. 서버의 `entryTagCondition` 과
-   * 같은 규칙이라, 같은 검색이 온라인과 오프라인에서 같은 목록을 낸다.
-   */
-  const tagIds = search.tagIds ?? [];
-  if (tagIds.length > 0 || search.noTag) {
-    const branches: string[] = [];
-
-    if (tagIds.length > 0) {
-      branches.push(`EXISTS (
-            SELECT 1 FROM entry_tag et
-             WHERE et.entryId = e.id AND et.tagId IN (${tagIds.map(() => '?').join(', ')})
-          )`);
-      params.push(...tagIds);
-    }
-    // 태그가 하나도 붙지 않은 전표. 고른 태그들과 OR 로 이어진다 (무리 안은 OR).
-    if (search.noTag) {
-      branches.push(`NOT EXISTS (SELECT 1 FROM entry_tag et WHERE et.entryId = e.id)`);
-    }
-
-    sql += `
-        AND (${branches.join(' OR ')})`;
-  }
-
-  /*
-   * 거래를 낸 사람. 전표의 personId 를 그대로 본다.
-   *
-   * 자산주인 필터(ownerFilter)와 다른 자리다. 그쪽은 돈이 오간 계좌의 주인을 보고,
-   * 이쪽은 거래를 적을 때 고른 사람을 본다.
-   */
-  const entryPersonIds = search.entryPersonIds ?? [];
-  if (entryPersonIds.length > 0) {
-    // 미지정(`NO_PERSON`)은 사람을 비운 전표다. 고른 사람들과 OR 로 잇는다 (서버와 같다).
-    const ids = entryPersonIds.filter((id) => id !== NO_PERSON);
-    const branches: string[] = [];
-    if (ids.length > 0) {
-      branches.push(`e.personId IN (${ids.map(() => '?').join(', ')})`);
-      params.push(...ids);
-    }
-    if (ids.length < entryPersonIds.length) branches.push('e.personId IS NULL');
-    sql += ` AND (${branches.join(' OR ')})`;
-  }
-
-  /*
-   * 설명에 든 글자. 다리가 아니라 전표를 본다 -- 설명은 전표에 있다.
-   *
-   * LIKE 는 아스키 대소문자를 가리지 않는다(서버의 insensitive 와 같은 자리에서 같은
-   * 일을 한다). 사용자가 적은 글자 안의 `%` `_` 는 그대로 찾도록 이스케이프한다 --
-   * 털어 내지 않으면 "50%"를 적은 사람이 아무 글자나 걸리는 결과를 보게 된다.
-   */
-  if (search.text) {
-    const escaped = search.text.replace(/[\\%_]/g, (mark) => `\\${mark}`);
-    sql += ` AND e.description LIKE ? ESCAPE '\\'`;
-    params.push(`%${escaped}%`);
-  }
-
-  // 유형. 값이 상수뿐이라 자리표를 쓰지 않는다 (`parseEntrySearch` 가 아는 값만 남긴다).
-  sql += kindFilter(search.kinds);
-  // 모양(분할·할부)도 값이 상수뿐이다.
-  sql += featureFilter(search.features);
-
-  return { sql, params };
-}
-
-function ownerFilter(ownerIds?: string[]): { sql: string; params: string[] } {
-  if (!ownerIds || ownerIds.length === 0) return { sql: '', params: [] };
-
-  const list = ownerIds.map(() => '?').join(', ');
-  /*
-   * 돈이 나간 쪽. **0 도 여기 든다.**
-   *
-   * 전액을 깎은 결제는 그 통장에서 빠져나간 돈이 0 이다. 음수만 보면 나간 쪽이 없는
-   * 전표가 되고, 들어온 쪽도 없어 아무에게도 속하지 않는다 -- 사람을 고른 목록에서
-   * 통째로 사라진다. 서버의 `assetOwnerCondition` 과 같은 판단이다.
-   *
-   * 그래서 들어온 쪽은 0 을 뺀다. 양쪽이 0 을 받으면 같은 전표가 두 가지에 함께 걸려
-   * 나간 쪽 주인과 들어온 쪽 주인 양쪽 목록에 나온다.
-   */
-  const outgoing = `(substr(op.amount, 1, 1) = '-' OR op.amount = '0')`;
-  const positive = `substr(op.amount, 1, 1) != '-' AND op.amount != '0'`;
-
-  const sql = `
-        AND (
-          EXISTS (
-            SELECT 1 FROM posting op JOIN account oa ON oa.id = op.accountId
-             WHERE op.entryId = e.id AND ${outgoing} AND oa.ownerId IN (${list})
-          )
-          OR (
-            NOT EXISTS (
-              SELECT 1 FROM posting op JOIN account oa ON oa.id = op.accountId
-               WHERE op.entryId = e.id AND ${outgoing} AND oa.ownerId IS NOT NULL
-            )
-            AND EXISTS (
-              SELECT 1 FROM posting op JOIN account oa ON oa.id = op.accountId
-               WHERE op.entryId = e.id AND ${positive} AND oa.ownerId IN (${list})
-            )
-          )
-          OR (
-            NOT EXISTS (
-              SELECT 1 FROM posting op JOIN account oa ON oa.id = op.accountId
-               WHERE op.entryId = e.id AND oa.ownerId IS NOT NULL
-            )
-            AND e.personId IN (${list})
-          )
-        )`;
-
-  /*
-   * 셋째 가지: 주인 있는 계좌 다리가 하나도 없으면 거래를 낸 사람으로 본다. 결제수단을
-   * 고르지 않은 지출·수입이 그렇다. 서버의 `assetOwnerCondition` 과 같은 판단이다.
-   */
-  return { sql, params: [...ownerIds, ...ownerIds, ...ownerIds] };
 }

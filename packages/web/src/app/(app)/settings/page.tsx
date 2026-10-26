@@ -1,5 +1,6 @@
 'use client';
 
+import { LEGAL_PATHS } from '@money/core/lib/legal';
 import { useEffect } from 'react';
 import Link from 'next/link';
 import CountBadge from '@/components/CountBadge';
@@ -103,6 +104,16 @@ export default function SettingsPage() {
 
         {/* 사용 통계를 이 브라우저에서 끄는 자리. 앱의 AnalyticsSettings 와 같은 값이다. */}
         <AnalyticsSettings />
+
+        {/* 법적 고지. 로그인 없이 읽는 공개 페이지라 같은 창에서 연다 (앱과 같은 자리). */}
+        <p className="flex justify-center gap-4 pt-2 text-xs text-gray-500">
+          <Link href={LEGAL_PATHS.terms} className="underline">
+            {t('login.terms')}
+          </Link>
+          <Link href={LEGAL_PATHS.privacy} className="underline">
+            {t('login.privacy')}
+          </Link>
+        </p>
       </div>
     </div>
   );

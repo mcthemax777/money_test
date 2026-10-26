@@ -5,6 +5,7 @@ import type { ExchangeRateInfo } from '@money/types';
 import { useExchangeRateSettings } from '@money/core/hooks/useExchangeRates';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useConnectivity } from '@money/core/store/connectivity';
+import { useCanEdit } from '@money/core/store/project';
 import { positiveAmountOf } from '@money/core/lib/money';
 
 /** 무엇을 하다 실패했는지에 따른 문구. */
@@ -35,13 +36,14 @@ const SOURCE_KEY: Record<string, MessageKey> = {
  * 환율을 바꾼다고 달라질 값이 아니다.
  */
 export default function ExchangeRateSettings() {
+  // 읽기 권한이면 값만 보여 준다. 고치는 칸과 단추는 감춘다 (서버도 막는다).
+  const canEdit = useCanEdit();
   const { t } = useTranslation();
   /* 받아 오고 저장하는 일은 core 가 맡는다. 앱의 같은 칸도 이 훅을 쓴다. */
   const { ledgerCurrency, rates, savingPair, failure, save, reset } = useExchangeRateSettings();
   /** 입력 중인 값. 저장하기 전까지는 화면에만 있다. */
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const isOffline = useConnectivity((state) => state.isOffline);
-
 
   /*
    * 목록이 비었다. 쓰는 외화가 없으면 칸을 두지 않지만, **받지 못해서** 빈 것이면
@@ -74,38 +76,44 @@ export default function ExchangeRateSettings() {
               key={`${info.from}-${info.to}`}
               className="flex flex-wrap items-center gap-2 px-3 py-2 bg-gray-50 rounded-lg"
             >
-              <span className="text-sm text-gray-700 w-28 shrink-0">
-                1 {info.from} =
-              </span>
+              <span className="text-sm text-gray-700 w-28 shrink-0">1 {info.from} =</span>
 
-              <input
-                type="number"
-                step="any"
-                value={draft}
-                onChange={(e) => setDrafts((prev) => ({ ...prev, [info.from]: e.target.value }))}
-                placeholder={info.rate}
-                className="w-32 px-2 py-1 border border-gray-300 rounded text-sm text-right"
-              />
+              {canEdit ? (
+                <input
+                  type="number"
+                  step="any"
+                  value={draft}
+                  onChange={(e) => setDrafts((prev) => ({ ...prev, [info.from]: e.target.value }))}
+                  placeholder={info.rate}
+                  className="w-32 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                />
+              ) : (
+                <span className="w-32 text-right text-sm text-gray-900">{info.rate}</span>
+              )}
               <span className="text-sm text-gray-700">{info.to}</span>
 
-              <span
-                className={`ml-auto text-xs ${isManual ? 'text-blue-600' : 'text-gray-500'}`}
-              >
+              <span className={`ml-auto text-xs ${isManual ? 'text-blue-600' : 'text-gray-500'}`}>
                 {SOURCE_KEY[info.source] ? t(SOURCE_KEY[info.source]) : info.source}
                 {info.date && ` · ${info.date}`}
               </span>
 
-              <button
-                type="button"
-                onClick={() => save(info, draft).then((saved) => saved && setDrafts((prev) => withoutKey(prev, info.from)))}
-                disabled={positiveAmountOf(draft) === null || isSaving}
-                className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40"
-              >
-                {t('common.save')}
-              </button>
+              {canEdit ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    save(info, draft).then(
+                      (saved) => saved && setDrafts((prev) => withoutKey(prev, info.from)),
+                    )
+                  }
+                  disabled={positiveAmountOf(draft) === null || isSaving}
+                  className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40"
+                >
+                  {t('common.save')}
+                </button>
+              ) : null}
 
               {/* 직접 설정한 값이 있을 때만 되돌릴 것이 있다. */}
-              {isManual && (
+              {canEdit && isManual && (
                 <button
                   type="button"
                   onClick={() => reset(info)}

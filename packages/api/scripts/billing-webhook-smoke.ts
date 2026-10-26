@@ -99,6 +99,18 @@ runSmoke('billing-webhook', async (ctx) => {
     'shortened',
   );
   ctx.check('당긴 뒤 끝', (await status(t0 + 31 * day)).endsAt, at(t0 + 50 * day).toISOString());
+  // 결제 실패: 유예 끝으로 미룬다. 유예가 꺼져 있으면(null) 그대로다.
+  ctx.check(
+    '결제 실패 유예',
+    await webhook.handle(base({ type: 'BILLING_ISSUE', purchased_at_ms: t0 + 30 * day, grace_period_expiration_at_ms: t0 + 57 * day })),
+    'extended',
+  );
+  ctx.check('유예 뒤 끝', (await status(t0 + 31 * day)).endsAt, at(t0 + 57 * day).toISOString());
+  ctx.check(
+    '유예 없는 결제 실패',
+    await webhook.handle(base({ type: 'BILLING_ISSUE', purchased_at_ms: t0 + 30 * day, grace_period_expiration_at_ms: null })),
+    'ignored:no-expiration',
+  );
 
   // 평생 이용권
   ctx.check(

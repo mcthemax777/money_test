@@ -20,6 +20,12 @@ import { persistStorage } from './persist-storage';
 export const INTERSTITIAL_EVERY = 5;
 
 /**
+ * 전면광고 사이의 최소 간격 (2026-10-25). 거래를 몰아서 적으면 횟수만으로는 몇십 초마다 광고가 뜬다 -- AdMob 은
+ * 사용자의 흐름을 자주 끊는 전면광고를 정책 위반으로 본다. 횟수와 간격을 둘 다 채워야 띄운다.
+ */
+export const INTERSTITIAL_MIN_GAP_MS = 3 * 60 * 1000;
+
+/**
  * 이 프로젝트에 광고를 띄우는가.
  *
  * 이용권을 모르면(옛 서버, 받기 전에 저장해 둔 목록) 무료로 본다. 받아 둔 기간이 지났어도
@@ -58,6 +64,8 @@ export function setInterstitialPresenter(next: InterstitialPresenter | null): vo
 interface AdCounterStore {
   /** 마지막 전면광고 뒤로 저장한 횟수. */
   savesSinceAd: number;
+  /** 마지막 전면광고를 띄운 시각 (ms). 띄운 적이 없으면 0. */
+  lastShownAt: number;
 }
 
 /**
@@ -67,7 +75,7 @@ interface AdCounterStore {
  * 다시 읽어야(rehydrate) 남긴 값이 붙는다. 그 목록에서 빠지면 켤 때마다 0 에서 센다.
  */
 export const useAdCounter = create<AdCounterStore>()(
-  persist(() => ({ savesSinceAd: 0 }), {
+  persist(() => ({ savesSinceAd: 0, lastShownAt: 0 }), {
     name: 'ad-counter',
     storage: createJSONStorage(() => persistStorage),
   }),
@@ -89,9 +97,11 @@ export function noteEntrySaved(): void {
   const count = useAdCounter.getState().savesSinceAd + 1;
   useAdCounter.setState({ savesSinceAd: count });
   if (count < INTERSTITIAL_EVERY || !presenter.isReady()) return;
+  // 간격이 덜 찼으면 세는 값을 두고 다음 저장에서 다시 본다 (`INTERSTITIAL_MIN_GAP_MS`).
+  if (Date.now() - (useAdCounter.getState().lastShownAt ?? 0) < INTERSTITIAL_MIN_GAP_MS) return;
 
   const current = presenter;
   void current.show().then((shown) => {
-    if (shown) useAdCounter.setState({ savesSinceAd: 0 });
+    if (shown) useAdCounter.setState({ savesSinceAd: 0, lastShownAt: Date.now() });
   });
 }

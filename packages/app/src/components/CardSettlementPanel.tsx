@@ -18,7 +18,7 @@ import { useApiError } from '@money/core/lib/api-error';
 import { outstandingOf, overTransferOf } from '@money/core/lib/card-settlement';
 import { nowTimeKey, todayKey } from '@money/core/lib/datetime';
 import { useTranslation } from '@money/core/lib/i18n';
-import { formatCurrency, toAmountString } from '@money/core/lib/money';
+import { formatCurrency, positiveAmountOf, toAmountString } from '@money/core/lib/money';
 import type { Card, CardUsage } from '@money/core/lib/types';
 import { useProject, useProjectTimeZone } from '@money/core/store/project';
 import { zonedFormValueToUtc, type CardTransferDirection } from '@money/types';
@@ -26,6 +26,7 @@ import { zonedFormValueToUtc, type CardTransferDirection } from '@money/types';
 import DatePickerPanel from './DatePickerPanel';
 import { Chips, Field, PickerButton, openTimeKeyPicker } from './FormFields';
 import Modal from './Modal';
+import { useCanEdit } from '@money/core/store/project';
 
 /** 카드사와 통장 사이 자금이 오가는 방향 */
 const DIRECTIONS: CardTransferDirection[] = ['payment', 'refund'];
@@ -51,6 +52,8 @@ export default function CardSettlementPanel({
 }) {
   const { t } = useTranslation();
   const { messageOf } = useApiError();
+  // 대금 기록은 쓰는 일이라 읽기 권한이면 단추를 두지 않는다 (서버도 막는다).
+  const canEdit = useCanEdit();
   const timeZone = useProjectTimeZone();
   const selectedProjectId = useProject((state) => state.selectedProjectId);
   // 남이 그 카드로 결제한 것도 남은 대금에 들어와야 한다.
@@ -117,6 +120,11 @@ export default function CardSettlementPanel({
    */
   const submit = async () => {
     if (!paymentAccountOwnerId) return;
+    // 비운 금액은 서버까지 보내지 않는다. 그쪽의 거절은 "기록하지 못했다"로만 보였다.
+    if (positiveAmountOf(form.amount) === null) {
+      Alert.alert(t('entryForm.amountRequired'));
+      return;
+    }
 
     try {
       setIsSubmitting(true);
@@ -188,7 +196,7 @@ export default function CardSettlementPanel({
           <Text className="text-xs text-emerald-700">{t('settlement.remainingHint')}</Text>
         ) : null}
 
-        {paymentAccountOwnerId ? (
+        {!canEdit ? null : paymentAccountOwnerId ? (
           <Pressable onPress={open} className="rounded-lg bg-blue-600 px-4 py-3 active:bg-blue-700">
             <Text className="text-center font-semibold text-white">{t('settlement.record')}</Text>
           </Pressable>

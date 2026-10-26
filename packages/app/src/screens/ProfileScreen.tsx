@@ -8,7 +8,7 @@ import { useAuth } from '@money/core/store/auth';
 import { saveProfile } from '@money/core/store/pending-profile';
 
 import { signOutGoogle } from '../api';
-import { unregisterPushDevice } from '../push';
+import { signOut as signOutWithCheck } from '../sign-out';
 import Modal from '../components/Modal';
 import PageHeader from '../components/PageHeader';
 import TypedConfirmModal from '../components/TypedConfirmModal';
@@ -70,15 +70,12 @@ export default function ProfileScreen() {
     }
   };
 
-  /** 로그아웃. 구글 쪽 세션도 함께 끊는다 (`signOutGoogle` 의 주석 참고). */
+  /** 로그아웃. 보내지 못한 거래가 있으면 먼저 묻는다 (`sign-out`). */
   const signOut = async () => {
     setIsLoggingOut(true);
     try {
-      // 토큰이 살아 있을 때 지워야 서버가 누구의 기기인지 안다 (`unregisterPushDevice`).
-      await unregisterPushDevice();
-      await signOutGoogle();
+      await signOutWithCheck();
     } finally {
-      await logout();
       setIsLoggingOut(false);
     }
   };

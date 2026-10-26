@@ -13,7 +13,7 @@ import { homeDataPort } from '@money/core/data/home-port';
 import { outstandingOf, overTransferOf } from '@money/core/lib/card-settlement';
 import type { CardUsage } from '@money/core/lib/types';
 import { useTranslation } from '@money/core/lib/i18n';
-import { formatCurrency, toAmountString, toNumber } from '@money/core/lib/money';
+import { formatCurrency, positiveAmountOf, toAmountString, toNumber } from '@money/core/lib/money';
 import { nowTimeKey, todayKey } from '@money/core/lib/datetime';
 import { useProject, useProjectTimeZone } from '@money/core/store/project';
 import CardUsageChart from './CardUsageChart';
@@ -21,6 +21,7 @@ import type { CardUsageMeasure } from '@money/core/lib/card-usage-chart';
 import Modal from './Modal';
 import PendingRatePanel from './PendingRatePanel';
 import { useApiError } from '@money/core/lib/api-error';
+import { useCanEdit } from '@money/core/store/project';
 
 /** 하단 고정 버튼과 본문 form을 잇는 id (Modal의 footer는 form 밖에 렌더링된다) */
 const PAYMENT_FORM_ID = 'card-payment-form';
@@ -98,6 +99,8 @@ export default function CardSettlementPanel({
 }: CardSettlementPanelProps) {
   const { t } = useTranslation();
   const { messageOf } = useApiError();
+  // 대금 기록은 쓰는 일이라 읽기 권한이면 단추를 두지 않는다 (서버도 막는다).
+  const canEdit = useCanEdit();
   const timeZone = useProjectTimeZone();
   const selectedProjectId = useProject((state) => state.selectedProjectId);
 
@@ -202,6 +205,11 @@ export default function CardSettlementPanel({
    */
   const handleCardTransfer = async () => {
     if (!usage || !paymentAccountOwnerId) return;
+    // 비운 금액은 서버까지 보내지 않는다. 그쪽의 거절은 "기록하지 못했다"로만 보였다.
+    if (positiveAmountOf(paymentForm.amount) === null) {
+      alert(t('entryForm.amountRequired'));
+      return;
+    }
 
     try {
       setIsPaymentSubmitting(true);
@@ -248,10 +256,6 @@ export default function CardSettlementPanel({
     <>
       <div className="space-y-3">
         {/*
-          남은 대금과 대금 기록은 신용카드만이다. 체크카드는 결제 즉시 통장에서
-          빠져 갚을 것이 남지 않는다. 대신 위 달별 사용액은 똑같이 보여 준다.
-        */}
-        {/*
           남은 대금과 대금 기록은 결제대금 탭의 것이다. 실적 탭에서 묻는 것은 "얼마를
           썼나"이지 "얼마를 갚아야 하나"가 아니다.
 
@@ -282,7 +286,7 @@ export default function CardSettlementPanel({
               {t('settlement.remainingHint')}
             </p>
           )}
-          {paymentAccountOwnerId ? (
+          {!canEdit ? null : paymentAccountOwnerId ? (
             <button
               onClick={openPaymentModal}
               className="w-full px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"

@@ -62,6 +62,17 @@ export const ERROR_CODES = [
   'CATEGORY_MERGE_TYPE_MISMATCH',
   'CATEGORY_MERGE_TARGET_REQUIRED',
 
+  // 권한
+  /** 동기화 재생 시점에 읽기 권한으로 바뀌어 올릴 수 없다. */
+  'PROJECT_ROLE_VIEWER',
+  /** 구성원이지만 이 작업에 필요한 역할(편집자·소유자)이 아니다. */
+  'PROJECT_ROLE_REQUIRED',
+
+  // 가입
+  'TERMS_REQUIRED',
+  /** 기기에서만 나는 코드. 다른 사람이 로그인할 때 앞 사람의 기기 사본을 지우지 못했다. */
+  'MIRROR_WIPE_FAILED',
+
   // 예산
   'BUDGET_TARGET_REQUIRED',
 

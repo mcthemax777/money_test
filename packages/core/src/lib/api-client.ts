@@ -1,4 +1,18 @@
+/**
+ * 서버 API 클라이언트. 웹과 앱이 같은 `apiClient` 하나를 쓴다.
+ *
+ * 응답 타입은 서버와 같은 `@money/types` DTO를 쓴다.
+ *
+ * 예전에는 전부 `any`였다. 그 탓에 금액이 number에서 string으로 바뀐 변경이
+ * 컴파일 단계에서 걸리지 않아, 예산 진행률이 문자열 비교로 101%가 되는 식의
+ * 오류가 화면에서야 드러났다. 여기서 타입을 붙이면 같은 종류의 어긋남이 빌드에서 잡힌다.
+ *
+ * 클래스 안은 연결·세션 → 도메인별 메서드 순서로 `// ── 이름 ──` 구획을 나눠 두었다 (2026-10-26).
+ * 실패의 종류를 가르는 함수는 `api-client-errors`, 응답 모양은 `api-client-types` 에 있고
+ * 여기서 다시 내보낸다.
+ */
 import axios, { AxiosInstance, AxiosError } from 'axios';
+import { newProjectDefaults } from './project-defaults';
 import {
   authEpoch,
   clearAuthTokens,
@@ -21,6 +35,8 @@ import {
 } from '@money/types';
 import { markOffline } from '../store/connectivity';
 import { isOfflineError } from './offline-error';
+import { SessionChangedError, isSessionEnded, isUpdateRequiredError } from './api-client-errors';
+import type { ExchangeRatesResponse, ReportPeriod } from './api-client-types';
 import type {
   PushRequest,
   PushResponse,
@@ -51,82 +67,35 @@ import type {
   WeekStart,
 } from '@money/types';
 
+export { isSessionEnded, isUpdateRequiredError } from './api-client-errors';
+export type { ExchangeRatesResponse, ReportPeriod } from './api-client-types';
+
 /** 웹의 쿠키 세션임을 서버에 알리는 머리글 (서버 common/session-cookies 와 같은 이름). */
 const AUTH_MODE_HEADER = 'X-Auth-Mode';
 
-/**
- * 응답 타입은 서버와 같은 `@money/types` DTO를 쓴다.
- *
- * 예전에는 전부 `any`였다. 그 탓에 금액이 number에서 string으로 바뀐 변경이
- * 컴파일 단계에서 걸리지 않아, 예산 진행률이 문자열 비교로 101%가 되는 식의
- * 오류가 화면에서야 드러났다. 여기서 타입을 붙이면 같은 종류의 어긋남이 빌드에서 잡힌다.
- */
-
-/**
- * 환율 응답.
- *
- * rates 는 각 통화 -> 저장 통화다. 거래를 입력할 때 쓴다.
- * displayRate 는 저장 통화 -> 표시 통화이며 화면 합계에 이미 반영돼 온다.
- */
-/**
- * 리포트가 볼 구간.
- *
- * 한 달이거나 임의 구간이다. 달력의 달과 어긋나는 구간(카드 청구주기, 여행 기간)을
- * 보는 일이 있어서 둘 다 받는다. 날짜는 프로젝트 타임존의 달력 날짜이고 양끝을 포함한다.
- */
-export type ReportPeriod =
-  | { yearMonth: string; startDate?: undefined; endDate?: undefined }
-  | { startDate: string; endDate: string; yearMonth?: undefined };
-
-export interface ExchangeRatesResponse {
-  ledgerCurrency: string;
-  displayCurrency: string;
-  rates: ExchangeRateInfo[];
-  displayRate: ExchangeRateInfo;
-}
-
-/**
- * 서버가 강제 업데이트로 거절했는가 (426 · APP_UPDATE_REQUIRED).
- *
- * 다시 보내도 같은 답이다. 부르는 쪽은 재시도하지 말고, 세션도 끊지 않는다.
- */
-export function isUpdateRequiredError(error: unknown): boolean {
-  const response = (error as AxiosError | undefined)?.response;
-  const code = (response?.data as { error?: { code?: string } } | undefined)?.error?.code;
-  return response?.status === 426 && code === 'APP_UPDATE_REQUIRED';
-}
-
-/** 갱신 응답이 돌아오기 전에 로그아웃·다른 로그인이 있었다. 돌아온 토큰은 버린다. */
 /** 엑셀 한 묶음을 가져오는 요청을 기다리는 시간 (`importEntrySheet`). */
 const ENTRY_SHEET_IMPORT_TIMEOUT_MS = 60_000;
 
-class SessionChangedError extends Error {
-  constructor() {
-    super('Session changed during refresh');
-    this.name = 'SessionChangedError';
-  }
+/**
+ * 가계부를 가리키는 쿼리. 주지 않으면(null) 서버가 기본 가계부를 쓴다.
+ *
+ * 거의 모든 메서드가 같은 모양을 적고 있어 한 곳에 모았다. 빈 객체를 돌려주므로 펼쳐 넣어도 된다.
+ */
+function projectParams(projectId?: string | null): { projectId?: string } {
+  return projectId ? { projectId } : {};
 }
 
-/**
- * 세션이 정말 끝났는가 -- 토큰을 지울 일인가 (2026-10-16).
- *
- * 서버가 **401 로 거절한 것만** 끝난 것이다. 5xx·429·426·404 는 서버가 잠시 앓거나 막은 것이지
- * 토큰이 죽었다는 뜻이 아니다. 그것까지 로그아웃으로 다루면 DB 가 잠깐 흔들리거나, 같은 공인 IP
- * 를 쓰는 가족이 함께 갱신해 상한(429)에 걸리거나, 강제 업데이트가 뜨는 순간 모두가 로그인 화면으로
- * 밀려나고 올리지 못한 입력까지 버려진다.
- *
- * 응답이 없는 실패 중 오프라인이 아닌 것("No refresh token" 처럼 기기 안에서 난 것)은 끝난 것으로 본다.
- */
-export function isSessionEnded(error: unknown): boolean {
-  // 갱신하는 사이 다른 세션이 들어섰다. 지우면 그 새 세션을 지운다.
-  if (error instanceof SessionChangedError) return false;
-  const status = (error as AxiosError | undefined)?.response?.status;
-  if (status !== undefined) return status === 401;
-  return !isOfflineError(error);
+/** 구성원·통장·카드 목록의 쿼리. includeInactive를 주면 숨긴 것까지 함께 받는다 (다시 표시 화면용). */
+function listParams(projectId: string | null | undefined, options: { includeInactive?: boolean }) {
+  return {
+    ...projectParams(projectId),
+    ...(options.includeInactive ? { includeInactive: 'true' } : {}),
+  };
 }
 
 class ApiClient {
   private client: AxiosInstance;
+
   /**
    * 서버 주소.
    *
@@ -140,6 +109,44 @@ class ApiClient {
    * 넣지 않으면 브라우저 기준으로 /login 으로 옮긴다.
    */
   private onUnauthorized: (() => void) | null = null;
+
+  /**
+   * 진행 중인 토큰 갱신. 동시에 401을 받은 요청들이 이 약속을 함께 기다린다.
+   *
+   * 예전에는 갱신 중이면 다른 401이 재시도 없이 바로 로그아웃으로 떨어졌다.
+   * 액세스 토큰이 24시간이라 드물었지만, 15분으로 줄이면 화면 하나가 여러 요청을
+   * 동시에 보내는 순간마다 로그인 화면으로 튕긴다.
+   */
+  private refreshPromise: Promise<string> | null = null;
+
+  /** 내보내졌다는 소식을 받을 곳. 등록하지 않으면 아무 일도 하지 않는다. */
+  private onProjectAccessLost: (() => void) | null = null;
+
+  /** 서버에서 내 가계부 목록을 받을 때마다 그 id 들로 부른다 (`setProjectListHandler`). */
+  private onProjectList: ((projectIds: string[]) => void) | null = null;
+
+  /** 이 판의 플랫폼과 버전. 요청마다 머리글로 싣는다. 넣지 않으면 싣지 않는다. */
+  private clientVersion: { platform: AppPlatform; version: string } | null = null;
+
+  /** 서버가 "이 판은 더 쓸 수 없다"(426)고 답했을 때 부를 곳. */
+  private onUpdateRequired: (() => void) | null = null;
+
+  /**
+   * 이 창에서 쿠키 세션(표시 쿠키)을 본 적이 있는가 (2026-10-16).
+   *
+   * 다른 탭이 로그아웃하면 표시 쿠키가 함께 사라진다. 그 뒤 이 탭의 401 은 아래 "표시 쿠키 없음" 길로
+   * 조용히 넘어가, 이 탭은 로그인한 척 모든 호출이 실패한 채로 남았다. 본 적이 있는데 지금 없으면 다른
+   * 곳에서 세션이 끝난 것이라 로그인 화면으로 보낸다. 본 적이 없으면(옛 토큰을 옮기는 중) 지금처럼 둔다.
+   */
+  private sawCookieSession = false;
+
+  /**
+   * 만료까지 이만큼도 안 남았으면 미리 갱신한다(ms).
+   *
+   * 0으로 두면 "아직 살아 있는" 토큰으로 보냈다가 서버에 닿는 사이에 죽는 일이
+   * 생긴다. 브라우저와 서버의 시계가 조금 어긋나 있을 수도 있다.
+   */
+  private static readonly REFRESH_LEEWAY_MS = 60_000;
 
   constructor() {
     this.client = axios.create({
@@ -161,32 +168,7 @@ class ApiClient {
     return withNewId(payload);
   }
 
-  /**
-   * 진행 중인 토큰 갱신. 동시에 401을 받은 요청들이 이 약속을 함께 기다린다.
-   *
-   * 예전에는 갱신 중이면 다른 401이 재시도 없이 바로 로그아웃으로 떨어졌다.
-   * 액세스 토큰이 24시간이라 드물었지만, 15분으로 줄이면 화면 하나가 여러 요청을
-   * 동시에 보내는 순간마다 로그인 화면으로 튕긴다.
-   */
-  private refreshPromise: Promise<string> | null = null;
-
-  /** 내보내졌다는 소식을 받을 곳. 등록하지 않으면 아무 일도 하지 않는다. */
-  private onProjectAccessLost: (() => void) | null = null;
-
-  /** 이 판의 플랫폼과 버전. 요청마다 머리글로 싣는다. 넣지 않으면 싣지 않는다. */
-  private clientVersion: { platform: AppPlatform; version: string } | null = null;
-
-  /** 서버가 "이 판은 더 쓸 수 없다"(426)고 답했을 때 부를 곳. */
-  private onUpdateRequired: (() => void) | null = null;
-
-  /**
-   * 이 창에서 쿠키 세션(표시 쿠키)을 본 적이 있는가 (2026-10-16).
-   *
-   * 다른 탭이 로그아웃하면 표시 쿠키가 함께 사라진다. 그 뒤 이 탭의 401 은 아래 "표시 쿠키 없음" 길로
-   * 조용히 넘어가, 이 탭은 로그인한 척 모든 호출이 실패한 채로 남았다. 본 적이 있는데 지금 없으면 다른
-   * 곳에서 세션이 끝난 것이라 로그인 화면으로 보낸다. 본 적이 없으면(옛 토큰을 옮기는 중) 지금처럼 둔다.
-   */
-  private sawCookieSession = false;
+  // ── 연결과 세션 -- 요청마다 토큰·머리글을 싣고, 401 이면 한 번 갱신해 다시 보낸다 ──
 
   private setupInterceptors() {
     this.client.interceptors.request.use(async (config) => {
@@ -324,14 +306,6 @@ class ApiClient {
   }
 
   /**
-   * 만료까지 이만큼도 안 남았으면 미리 갱신한다(ms).
-   *
-   * 0으로 두면 "아직 살아 있는" 토큰으로 보냈다가 서버에 닿는 사이에 죽는 일이
-   * 생긴다. 브라우저와 서버의 시계가 조금 어긋나 있을 수도 있다.
-   */
-  private static readonly REFRESH_LEEWAY_MS = 60_000;
-
-  /**
    * 액세스 토큰의 만료 시각(ms). 읽을 수 없으면 null.
    *
    * 서명을 검증하지는 않는다. 그것은 서버가 할 일이고, 여기서 알고 싶은 것은
@@ -402,6 +376,21 @@ class ApiClient {
     return this.refreshPromise;
   }
 
+  private clearSession() {
+    clearAuthTokens();
+
+    if (this.onUnauthorized) {
+      this.onUnauthorized();
+      return;
+    }
+
+    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
+      window.location.href = '/login';
+    }
+  }
+
+  // ── 바깥에서 갈아 끼우는 자리 -- 서버 주소, 세션이 끊겼을 때 할 일, 판 정보 ──
+
   /** 앱이 시작할 때 서버 주소를 정한다. */
   setBaseUrl(url: string) {
     this.client.defaults.baseURL = url;
@@ -443,6 +432,14 @@ class ApiClient {
   }
 
   /**
+   * 서버가 준 내 가계부 목록을 듣는다 (2026-10-25). 앱이 걸어, 목록에 없는 가계부(나갔거나 지웠거나 내보내진 것)의
+   * 기기 사본을 지운다. 목록은 화면 여럿이 받으므로 받는 자리마다 따로 챙기지 않게 여기서 한 번 알린다.
+   */
+  setProjectListHandler(handler: ((projectIds: string[]) => void) | null) {
+    this.onProjectList = handler;
+  }
+
+  /**
    * 이 판의 플랫폼과 버전을 넣는다. 앱은 설치된 버전, 웹은 빌드 번호다.
    *
    * 넣은 뒤의 요청부터 머리글이 실린다. 시작할 때 첫 요청보다 먼저 부른다.
@@ -456,27 +453,19 @@ class ApiClient {
     this.onUpdateRequired = handler;
   }
 
+  // ── 앱 버전 ──
+
   /** 그 플랫폼의 버전 정책. 로그인 없이 부른다. */
   async getAppVersionPolicy(platform: AppPlatform): Promise<AppVersionPolicy> {
     const response = await this.client.get<AppVersionPolicy>(`/app-version/${platform}`);
     return response.data;
   }
 
-  private clearSession() {
-    clearAuthTokens();
+  // ── 로그인과 내 정보 ──
 
-    if (this.onUnauthorized) {
-      this.onUnauthorized();
-      return;
-    }
-
-    if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
-      window.location.href = '/login';
-    }
-  }
-
-  async signInWithGoogle(idToken: string) {
-    const response = await this.client.post<any>('/auth/google', { idToken });
+  /** `agreedToTerms`: 로그인 화면에서 약관 동의와 만 14세 이상 확인을 받았다. 새 계정은 이것이 있어야 만들어진다. */
+  async signInWithGoogle(idToken: string, agreedToTerms = false) {
+    const response = await this.client.post<any>('/auth/google', { idToken, agreedToTerms });
     return response.data;
   }
 
@@ -537,606 +526,26 @@ class ApiClient {
     return response.data;
   }
 
-  // API Methods
-  /** includeInactive를 주면 숨긴 구성원까지 함께 받는다 (다시 표시 화면용). */
-  async getPeople(
-    projectId?: string | null,
-    options: { includeInactive?: boolean } = {},
-  ): Promise<PersonDto.Response[]> {
-    const response = await this.client.get<PersonDto.Response[]>('/people', {
-      params: {
-        ...(projectId ? { projectId } : {}),
-        ...(options.includeInactive ? { includeInactive: 'true' } : {}),
-      },
-    });
-    return response.data;
-  }
-
-  async createPerson(data: PersonDto.CreateRequest & { projectId?: string | null }): Promise<PersonDto.Response> {
-    const { projectId, ...payload } = data;
-    const response = await this.client.post<PersonDto.Response>('/people', this.withId(payload), {
-      params: projectId ? { projectId } : {}
-    });
-    return response.data;
-  }
-
-  async updatePerson(id: string, data: PersonDto.UpdateRequest): Promise<PersonDto.Response> {
-    const response = await this.client.patch<PersonDto.Response>(`/people/${id}`, data);
-    return response.data;
-  }
-
-  /** 구성원 없애기. 통장·카드와 같은 규칙이다 (`hide` 를 주면 숨기기). */
-  async deletePerson(id: string, options?: { hide?: boolean }) {
-    await this.client.delete(`/people/${id}`, {
-      params: options?.hide ? { hide: 'true' } : undefined,
-    });
-  }
+  // ── 가계부(프로젝트) ──
 
   /**
-   * 은행/카드사 목록. 기본 제공 항목과 이 프로젝트가 추가한 항목이 함께 온다.
-   * type을 주면 그 용도만 걸러서 온다.
+   * 가계부를 만든다. 저장 통화와 시간대는 이 기기에서 고른다 (`newProjectDefaults`) -- 저장 통화는 만든 뒤 바꿀 수
+   * 없어, 서버가 늘 KRW·서울로 두던 때에는 다른 나라 사용자의 가계부가 원화로 굳었다.
    */
-  async getInstitutions(
-    type?: FinancialInstitutionType,
-    projectId?: string | null,
-  ): Promise<InstitutionDto.Response[]> {
-    const response = await this.client.get<InstitutionDto.Response[]>('/institutions', {
-      params: { ...(type ? { type } : {}), ...(projectId ? { projectId } : {}) }
-    });
-    return response.data;
-  }
-
-  /** 이 프로젝트 전용 은행/카드사를 더한다. 엑셀 가져오기가 "기타 카드사"를 만들 때 쓴다. */
-  async createInstitution(
-    data: { type: FinancialInstitutionType; name: string },
-    projectId?: string | null,
-  ): Promise<InstitutionDto.Response> {
-    const response = await this.client.post<InstitutionDto.Response>('/institutions', data, {
-      params: projectId ? { projectId } : {},
-    });
-    return response.data;
-  }
-
-  /** includeInactive를 주면 숨긴 통장까지 함께 받는다 (다시 표시 화면용). */
-  async getAccountsV2(
-    projectId?: string | null,
-    options: { includeInactive?: boolean } = {},
-  ): Promise<AccountDto.Response[]> {
-    const response = await this.client.get<AccountDto.Response[]>('/accounts', {
-      params: {
-        ...(projectId ? { projectId } : {}),
-        ...(options.includeInactive ? { includeInactive: 'true' } : {}),
-      },
-    });
-    return response.data;
-  }
-
-  async getAccountV2(id: string): Promise<AccountDto.Response> {
-    const response = await this.client.get<AccountDto.Response>(`/accounts/${id}`);
-    return response.data;
-  }
-
-  async createAccountV2(data: AccountDto.CreateRequest): Promise<AccountDto.Response> {
-    const { projectId, ...payload } = data;
-    const response = await this.client.post<AccountDto.Response>('/accounts', this.withId(payload), {
-      params: projectId ? { projectId } : {}
-    });
-    return response.data;
-  }
-
-  async updateAccountV2(id: string, data: AccountDto.UpdateRequest): Promise<AccountDto.Response> {
-    const response = await this.client.patch<AccountDto.Response>(`/accounts/${id}`, data);
-    return response.data;
-  }
-
-  /**
-   * 통장 없애기. 기본은 **삭제**이고, 거래내역이 있으면 서버가 거절한다.
-   *
-   * `hide` 를 주면 숨기기다. 화면은 삭제를 먼저 시도하고, 거절 코드를 받으면 사용자에게
-   * 물어 이 쪽으로 다시 온다 (`ACCOUNT_HAS_ENTRIES`).
-   */
-  async deleteAccountV2(id: string, options?: { hide?: boolean }) {
-    await this.client.delete(`/accounts/${id}`, {
-      params: options?.hide ? { hide: 'true' } : undefined,
-    });
-  }
-
-  /** includeInactive를 주면 숨긴 카드까지 함께 받는다 (다시 표시 화면용). */
-  async getCards(
-    projectId?: string | null,
-    options: { includeInactive?: boolean } = {},
-  ): Promise<CardDto.Response[]> {
-    const response = await this.client.get<CardDto.Response[]>('/cards', {
-      params: {
-        ...(projectId ? { projectId } : {}),
-        ...(options.includeInactive ? { includeInactive: 'true' } : {}),
-      },
-    });
-    return response.data;
-  }
-
-  async getCard(id: string): Promise<CardDto.Response> {
-    const response = await this.client.get<CardDto.Response>(`/cards/${id}`);
-    return response.data;
-  }
-
-  async createCard(data: CardDto.CreateRequest): Promise<CardDto.Response> {
-    const { projectId, ...payload } = data;
-    /*
-     * 신용카드는 부채 계정과 함께 만들어진다. 그 계정 id 도 기기가 정해야 한다.
-     * 서버가 정하면 오프라인에서 그 카드로 적은 거래가 어느 계정을 가리킬지 알 수 없다.
-     */
-    const withIds =
-      payload.cardType === 'credit' && !payload.liabilityAccountId && hasRandomSource()
-        ? { ...payload, liabilityAccountId: newId() }
-        : payload;
-    const response = await this.client.post<CardDto.Response>('/cards', this.withId(withIds), {
-      params: projectId ? { projectId } : {}
-    });
-    return response.data;
-  }
-
-  async updateCard(id: string, data: CardDto.UpdateRequest): Promise<CardDto.Response> {
-    const response = await this.client.patch<CardDto.Response>(`/cards/${id}`, data);
-    return response.data;
-  }
-
-  /** 카드 없애기. 통장과 같은 규칙이다 (`hide` 를 주면 숨기기). */
-  async deleteCard(id: string, options?: { hide?: boolean }) {
-    await this.client.delete(`/cards/${id}`, {
-      params: options?.hide ? { hide: 'true' } : undefined,
-    });
-  }
-
-  /**
-   * 거래 목록. 커서 기반이라 응답은 { data, nextCursor } 형태다.
-   * 예전 getTransactionsV2의 가짜 pagination 응답과 다르다.
-   */
-  async getEntries(query?: EntryDto.ListQuery, projectId?: string | null): Promise<EntryDto.ListResponse> {
-    const params: Record<string, unknown> = { ...query };
-    if (projectId) params.projectId = projectId;
-    const response = await this.client.get<EntryDto.ListResponse>('/entries', { params });
-    return response.data;
-  }
-
-  /**
-   * 커서를 따라가며 조건에 맞는 거래를 전부 가져온다.
-   *
-   * 엑셀 내보내기뿐 아니라 가계 화면·예산 상세·수단별 탭이 쓴다. 한 페이지만
-   * 받으면 목록이 잘리는 데 그치지 않고, 그 목록으로 계산하는 달력 일별 합계와
-   * 일별 누적 그래프가 서버 집계보다 적게 나온다.
-   */
-  async getAllEntries(query?: EntryDto.ListQuery, projectId?: string | null): Promise<EntryDto.ListResponse['data']> {
-    const rows: any[] = [];
-    let cursor: string | null = null;
-    // 커서가 전진하지 않는 서버 버그가 생겨도 화면이 멈추지는 않게 한다.
-    // 200 * 50 = 10,000건이면 한 달은 물론 거래 화면이 해로 묶어 볼 때도 충분하다.
-    const MAX_PAGES = 50;
-
-    for (let page = 0; page < MAX_PAGES; page += 1) {
-      const res: EntryDto.ListResponse = await this.getEntries(
-        { ...query, limit: 200, cursor: cursor ?? undefined },
-        projectId,
-      );
-      rows.push(...(res?.data ?? []));
-      cursor = res?.nextCursor ?? null;
-      if (!cursor) return rows;
-    }
-
-    console.warn(`거래를 ${MAX_PAGES}페이지까지만 불러왔습니다. 일부가 빠졌을 수 있습니다.`);
-    return rows;
-  }
-
-  /**
-   * 이 구간에 회차가 서는 **지난 할부**. 회차 기준으로 볼 때만 부른다.
-   *
-   * 목록 조회는 전표의 날짜로 자르므로 3월에 산 할부는 4월 목록에 들지 않는다. 화면은
-   * 이 목록을 그 달의 거래와 합쳐 두고, 줄을 세는 일은 `entryRows` 가 구간을 보고 한다.
-   */
-  async getInstallmentRows(
-    query?: EntryDto.ListQuery,
-    projectId?: string | null,
-  ): Promise<EntryDto.ListResponse['data']> {
-    const params: Record<string, unknown> = { ...query };
-    if (projectId) params.projectId = projectId;
-    const response = await this.client.get<EntryDto.ListResponse['data']>(
-      '/entries/installment-rows',
-      { params },
-    );
-    return response.data ?? [];
-  }
-
-  async getEntry(id: string): Promise<EntryDto.Detail> {
-    const response = await this.client.get<EntryDto.Detail>(`/entries/${id}`);
-    return response.data;
-  }
-
-  async createEntry(data: EntryDto.CreateRequest): Promise<EntryDto.Detail> {
-    const { projectId, ...payload } = data;
-    const response = await this.client.post<EntryDto.Detail>('/entries', this.withId(payload), {
-      params: projectId ? { projectId } : {},
-    });
-    return response.data;
-  }
-
-  async updateEntry(id: string, data: EntryDto.UpdateRequest): Promise<EntryDto.Detail> {
-    const response = await this.client.patch<EntryDto.Detail>(`/entries/${id}`, data);
-    return response.data;
-  }
-
-  async deleteEntry(id: string) {
-    await this.client.delete(`/entries/${id}`);
-  }
-
-  async getAccountPostings(
-    accountId: string,
-    query?: AccountDto.LedgerQuery,
-  ): Promise<AccountDto.LedgerResponse> {
-    const response = await this.client.get<AccountDto.LedgerResponse>(`/accounts/${accountId}/postings`, {
-      params: query ?? {},
-    });
-    return response.data;
-  }
-
-  async getCategories(
-    projectId?: string | null,
-    type?: 'income' | 'expense',
-  ): Promise<CategoryDto.Response[]> {
-    const params: any = {};
-    if (projectId) params.projectId = projectId;
-    if (type) params.type = type;
-    const response = await this.client.get<CategoryDto.Response[]>('/categories', {
-      params
-    });
-    return response.data;
-  }
-
-  async createCategory(data: CategoryDto.CreateRequest): Promise<CategoryDto.Response> {
-    const { projectId, ...payload } = data;
-    const response = await this.client.post<CategoryDto.Response>('/categories', this.withId(payload), {
-      params: projectId ? { projectId } : {}
-    });
-    return response.data;
-  }
-
-  async updateCategory(id: string, data: CategoryDto.UpdateRequest): Promise<CategoryDto.Response> {
-    const response = await this.client.patch<CategoryDto.Response>(`/categories/${id}`, data);
-    return response.data;
-  }
-
-  async deleteCategory(id: string) {
-    await this.client.delete(`/categories/${id}`);
-  }
-
-  /** 이 분류와 그 소분류에 달린 거래 다리의 수. 없애기 전에 묻는 데 쓴다. */
-  async getCategoryUsage(id: string): Promise<CategoryDto.UsageResponse> {
-    const response = await this.client.get<CategoryDto.UsageResponse>(`/categories/${id}/usage`);
-    return response.data;
-  }
-
-  /**
-   * 분류를 없애면서 그 거래를 다른 분류로 옮긴다.
-   *
-   * 오프라인 창구를 타지 않는다. 사본에서 원장을 통째로 다시 쓰는 일이라(다리 수백 개의
-   * 분류가 한꺼번에 바뀐다) 명령 하나로 담을 수 없다. 끊긴 동안에는 화면이 이유를 적는다.
-   */
-  async mergeCategories(
-    moves: CategoryDto.MergeMove[],
-    projectId?: string | null,
-  ): Promise<CategoryDto.MergeResponse> {
-    const response = await this.client.post<CategoryDto.MergeResponse>(
-      '/categories/merge',
-      { moves },
-      { params: projectId ? { projectId } : {} },
-    );
-    return response.data;
-  }
-
-  // 보관함 API Methods (아직 거래가 아닌 후보)
-
-  async getEntryDrafts(
-    query: EntryDraftDto.ListQuery = {},
-    projectId?: string | null,
-  ): Promise<EntryDraftDto.Response[]> {
-    const params: Record<string, unknown> = { ...query };
-    if (projectId) params.projectId = projectId;
-    const response = await this.client.get<EntryDraftDto.Response[]>('/entry-drafts', { params });
-    return response.data;
-  }
-
-  /**
-   * 기기가 읽어 낸 후보를 담는다. 여러 건을 한 번에 보낸다.
-   *
-   * 이미 있는 것(같은 dedupeKey)은 서버가 건너뛰고 `skipped` 로 센다. 그래서 같은
-   * 요청을 다시 보내도 후보가 늘지 않는다 -- 알림 버퍼를 비우다 끊긴 뒤 다시 보낼 때
-   * 그 성질에 기댄다.
-   */
-  async addEntryDrafts(
-    drafts: EntryDraftDto.CreateItem[],
-    projectId?: string | null,
-  ): Promise<EntryDraftDto.CreateResponse> {
-    /*
-     * 서버가 한 번에 받는 수(100)를 넘으면 나눠 보낸다.
-     *
-     * 긴 캡처 한 장에서 그만큼 나온다 -- 카드 앱의 한 달 이용내역이 54건이었다. 나누지
-     * 않으면 요청 하나가 통째로 거절되어 사진을 다시 잘라 올려야 한다.
-     */
-    const CHUNK = 100;
-    const merged: EntryDraftDto.CreateResponse = { created: 0, skipped: 0, drafts: [] };
-
-    for (let start = 0; start < drafts.length; start += CHUNK) {
-      const response = await this.client.post<EntryDraftDto.CreateResponse>(
-        '/entry-drafts',
-        { drafts: drafts.slice(start, start + CHUNK) },
-        { params: projectId ? { projectId } : {} },
-      );
-      merged.created += response.data.created;
-      merged.skipped += response.data.skipped;
-      merged.drafts.push(...response.data.drafts);
-    }
-
-    return merged;
-  }
-
-  async updateEntryDraft(
-    id: string,
-    data: EntryDraftDto.UpdateRequest,
-  ): Promise<EntryDraftDto.Response> {
-    const response = await this.client.patch<EntryDraftDto.Response>(`/entry-drafts/${id}`, data);
-    return response.data;
-  }
-
-  async deleteEntryDraft(id: string): Promise<void> {
-    await this.client.delete(`/entry-drafts/${id}`);
-  }
-
-  // 알림 원문(표본)·앱별 문구 규칙 API Methods
-
-  /**
-   * 기기가 모은 알림 원문을 올린다 (돈 표기가 있는 것, 후보가 못 된 것 포함).
-   *
-   * 같은 열쇠(sampleKey)는 서버가 한 번만 담으므로 다시 보내도 늘지 않는다.
-   */
-  async addNotificationSamples(
-    samples: NotificationSampleDto.CreateItem[],
-    projectId?: string | null,
-  ): Promise<NotificationSampleDto.CreateResponse> {
-    const response = await this.client.post<NotificationSampleDto.CreateResponse>(
-      '/notification-samples',
-      { samples },
-      { params: projectId ? { projectId } : {} },
-    );
-    return response.data;
-  }
-
-  /** 켜 둔 앱별 규칙. 기기가 알림을 읽을 때 기존 규칙보다 먼저 대 본다. */
-  async getNotificationRules(): Promise<NotificationRule[]> {
-    const response = await this.client.get<NotificationRule[]>('/notification-rules');
-    return response.data;
-  }
-
-  // 거래내역 엑셀 API Methods
-
-  /** 엑셀 행을 거래로. 한 번에 `EntrySheetDto.MAX_ROWS` 행까지(화면이 나눠 보낸다). */
-  async importEntrySheet(rows: EntrySheetRow[], projectId?: string | null): Promise<EntrySheetDto.ImportResponse> {
-    const response = await this.client.post<EntrySheetDto.ImportResponse>(
-      '/entry-sheet/import',
-      { rows },
-      {
-        params: projectId ? { projectId } : {},
-        /*
-         * 한 묶음(최대 300행)을 서버가 한 줄씩 적는다. 기본 10초 안에 끝나지 않으면 화면은 실패로 보는데
-         * 서버는 계속 적어 커밋한다 -- 사용자가 다시 가져오면 그 묶음이 두 번 들어간다 (2026-10-16).
-         * 행에 멱등 열쇠가 없어 서버가 거를 수 없으므로 넉넉히 기다린다. nginx 의 기본 읽기 제한(60초)에 맞춘다.
-         */
-        timeout: ENTRY_SHEET_IMPORT_TIMEOUT_MS,
-      },
-    );
-    return response.data;
-  }
-
-  /** 거래를 엑셀 행으로. 기간을 주지 않으면 전부다. */
-  async exportEntrySheet(query: EntrySheetDto.ExportQuery, projectId?: string | null): Promise<EntrySheetRow[]> {
-    const response = await this.client.get<EntrySheetRow[]>('/entry-sheet/export', {
-      params: { ...query, ...(projectId ? { projectId } : {}) },
-    });
-    return response.data;
-  }
-
-  // 문의하기 API Methods
-
-  async getInquiries(): Promise<InquiryDto.Summary[]> {
-    const response = await this.client.get<InquiryDto.Summary[]>('/inquiries');
-    return response.data;
-  }
-
-  /** 설정의 "문의하기" 배지. 읽지 않은 관리자의 답 수. */
-  async getInquiryUnreadCount(): Promise<number> {
-    const response = await this.client.get<InquiryDto.UnreadResponse>('/inquiries/unread-count');
-    return response.data.count;
-  }
-
-  /** 문의 하나. 서버가 연 것을 읽은 것으로 적는다. */
-  async getInquiry(id: string): Promise<InquiryDto.Detail> {
-    const response = await this.client.get<InquiryDto.Detail>(`/inquiries/${encodeURIComponent(id)}`);
-    return response.data;
-  }
-
-  /** 문의하기를 떠났다. 서버가 보고 있다는 표시를 지워 다음 답을 곧바로 푸시한다. */
-  async unwatchInquiries(): Promise<void> {
-    await this.client.post('/inquiries/unwatch');
-  }
-
-  async createInquiry(body: string): Promise<InquiryDto.Detail> {
-    const response = await this.client.post<InquiryDto.Detail>('/inquiries', { body });
-    return response.data;
-  }
-
-  async addInquiryMessage(id: string, body: string): Promise<InquiryDto.Detail> {
-    const response = await this.client.post<InquiryDto.Detail>(
-      `/inquiries/${encodeURIComponent(id)}/messages`,
-      { body },
-    );
-    return response.data;
-  }
-
-  // 푸시 기기 API Methods
-
-  /** 이 기기의 푸시 토큰을 적는다. 로그인한 뒤에 부른다. */
-  async registerPushDevice(dto: PushDeviceDto.RegisterRequest): Promise<void> {
-    await this.client.put('/push/devices', dto);
-  }
-
-  /** 이 기기의 푸시 토큰을 지운다. 로그아웃 **전에** 불러야 토큰이 아직 살아 있다. */
-  async unregisterPushDevice(token: string): Promise<void> {
-    await this.client.delete('/push/devices', { data: { token } });
-  }
-
-  /** 로그인 없이 토큰으로 푸시 등록을 지운다. 로그아웃 때 지우지 못한 토큰을 다음 실행에 치운다. */
-  async forgetPushDevice(token: string): Promise<void> {
-    await this.client.post('/push/forget', { token });
-  }
-
-  // 반복 등록 API Methods
-
-  async getRecurringRules(projectId?: string | null): Promise<RecurringRuleDto.Response[]> {
-    const response = await this.client.get<RecurringRuleDto.Response[]>('/recurring-rules', {
-      params: projectId ? { projectId } : {},
-    });
-    return response.data;
-  }
-
-  async createRecurringRule(
-    data: RecurringRuleDto.CreateRequest,
-    projectId?: string | null,
-  ): Promise<RecurringRuleDto.Response> {
-    const response = await this.client.post<RecurringRuleDto.Response>(
-      '/recurring-rules',
-      this.withId(data),
-      { params: projectId ? { projectId } : {} },
-    );
-    return response.data;
-  }
-
-  async updateRecurringRule(
-    id: string,
-    data: RecurringRuleDto.UpdateRequest,
-  ): Promise<RecurringRuleDto.Response> {
-    const response = await this.client.patch<RecurringRuleDto.Response>(
-      `/recurring-rules/${id}`,
-      data,
-    );
-    return response.data;
-  }
-
-  async deleteRecurringRule(id: string): Promise<void> {
-    await this.client.delete(`/recurring-rules/${id}`);
-  }
-
-  // 태그 API Methods
-
-  async getTags(projectId?: string | null): Promise<TagDto.Response[]> {
-    const response = await this.client.get<TagDto.Response[]>('/tags', {
-      params: projectId ? { projectId } : {},
-    });
-    return response.data;
-  }
-
-  async createTag(data: TagDto.CreateRequest): Promise<TagDto.Response> {
-    const { projectId, ...payload } = data;
-    const response = await this.client.post<TagDto.Response>('/tags', this.withId(payload), {
-      params: projectId ? { projectId } : {},
-    });
-    return response.data;
-  }
-
-  async updateTag(id: string, data: TagDto.UpdateRequest): Promise<TagDto.Response> {
-    const response = await this.client.patch<TagDto.Response>(`/tags/${id}`, data);
-    return response.data;
-  }
-
-  async deleteTag(id: string) {
-    await this.client.delete(`/tags/${id}`);
-  }
-
-  /** 이 태그가 붙어 있는 자리의 수. 없애기 전에 무엇을 물을지 여기서 갈린다. */
-  async getTagUsage(id: string): Promise<TagDto.UsageResponse> {
-    const response = await this.client.get<TagDto.UsageResponse>(`/tags/${id}/usage`);
-    return response.data;
-  }
-
-  /**
-   * 태그를 없애면서 붙어 있던 자리를 다른 태그로 옮긴다.
-   *
-   * 분류의 통합과 같이 오프라인 창구를 타지 않는다. 거래 수백 줄의 태그가 한꺼번에
-   * 바뀌는 일이라 명령 하나로 담을 수 없다. 끊긴 동안에는 화면이 이유를 적는다.
-   */
-  async mergeTags(
-    fromId: string,
-    toId: string,
-    projectId?: string | null,
-  ): Promise<TagDto.MergeResponse> {
-    const response = await this.client.post<TagDto.MergeResponse>(
-      '/tags/merge',
-      { fromId, toId },
-      { params: projectId ? { projectId } : {} },
-    );
-    return response.data;
-  }
-
-  /**
-   * 여러 거래의 태그를 바꾼다. 더할 것과 뗄 것을 따로 보낸다.
-   *
-   * 수정(`updateEntry`)과 다른 길이다. 그쪽은 전표를 통째로 갈아 끼우므로 분할·외화까지
-   * 온전한 값이 필요하다.
-   */
-  async changeEntryTags(
-    data: {
-      targets: Array<{ entryId: string; lineKey?: string | null }>;
-      addTagIds?: string[];
-      removeTagIds?: string[];
-    },
-    projectId?: string | null,
-  ): Promise<EntryDto.ChangeTagsResponse> {
-    const response = await this.client.post<EntryDto.ChangeTagsResponse>('/entries/tags', data, {
-      params: projectId ? { projectId } : {},
-    });
-    return response.data;
-  }
-
-  /** 여러 거래 줄의 분류를 한 분류로 바꾼다. 같은 유형의 줄에만 걸린다 (`planCategoryChange`). */
-  async changeEntryCategory(
-    data: { targets: Array<{ entryId: string; lineKey?: string | null }>; categoryId: string },
-    projectId?: string | null,
-  ): Promise<EntryDto.ChangeCategoryResponse> {
-    const response = await this.client.post<EntryDto.ChangeCategoryResponse>(
-      '/entries/category',
-      data,
-      { params: projectId ? { projectId } : {} },
-    );
-    return response.data;
-  }
-
-  async reorderTags(ids: string[], projectId?: string | null) {
-    const response = await this.client.patch<TagDto.Response[]>(
-      '/tags/reorder',
-      { ids },
-      { params: projectId ? { projectId } : {} },
-    );
-    return response.data;
-  }
-
-  // 프로젝트 API Methods
   async createProject(name: string, description?: string) {
     const response = await this.client.post<any>('/projects', {
       name,
       description,
+      ...newProjectDefaults(),
     });
     return response.data;
   }
 
   async getMyProjects() {
     const response = await this.client.get<any>('/projects');
+    if (Array.isArray(response.data)) {
+      this.onProjectList?.(response.data.map((row: { id: string }) => row.id));
+    }
     return response.data;
   }
 
@@ -1158,35 +567,6 @@ class ApiClient {
   /** "구성원 중 나" 지정. null이면 해제. */
   async setMyPerson(projectId: string, personId: string | null) {
     const response = await this.client.patch<any>(`/projects/${projectId}/me`, { personId });
-    return response.data;
-  }
-
-  /** 목록 표시 순서 저장. 화면에 보이는 순서대로 id를 보낸다. */
-  async reorderPeople(ids: string[], projectId?: string | null) {
-    const response = await this.client.patch<PersonDto.Response[]>('/people/reorder', { ids }, {
-      params: projectId ? { projectId } : {},
-    });
-    return response.data;
-  }
-
-  async reorderAccounts(ids: string[], projectId?: string | null) {
-    const response = await this.client.patch<AccountDto.Response[]>('/accounts/reorder', { ids }, {
-      params: projectId ? { projectId } : {},
-    });
-    return response.data;
-  }
-
-  async reorderCards(ids: string[], projectId?: string | null) {
-    const response = await this.client.patch<CardDto.Response[]>('/cards/reorder', { ids }, {
-      params: projectId ? { projectId } : {},
-    });
-    return response.data;
-  }
-
-  async reorderCategories(ids: string[], projectId?: string | null) {
-    const response = await this.client.patch<CategoryDto.Response[]>('/categories/reorder', { ids }, {
-      params: projectId ? { projectId } : {},
-    });
     return response.data;
   }
 
@@ -1215,6 +595,8 @@ class ApiClient {
     const response = await this.client.post<any>(`/projects/${projectId}/owner`, { userId });
     return response.data;
   }
+
+  // ── 초대 ──
 
   async generateInvitationLink(projectId: string, role: 'editor' | 'viewer') {
     const response = await this.client.post<any>(`/projects/${projectId}/invitations/link`, {
@@ -1252,7 +634,8 @@ class ApiClient {
     return response.data;
   }
 
-  // 가입 요청 API Methods
+  // ── 가입 요청 ──
+
   async findProjectByKey(key: string) {
     const response = await this.client.get<any>('/projects/search', { params: { key } });
     return response.data;
@@ -1292,134 +675,184 @@ class ApiClient {
     return response.data;
   }
 
-  // 예산 API Methods
-  async createBudget(data: BudgetDto.CreateRequest): Promise<BudgetDto.Response> {
+  // ── 구성원(사람) ──
+
+  /** includeInactive를 주면 숨긴 구성원까지 함께 받는다 (다시 표시 화면용). */
+  async getPeople(
+    projectId?: string | null,
+    options: { includeInactive?: boolean } = {},
+  ): Promise<PersonDto.Response[]> {
+    const response = await this.client.get<PersonDto.Response[]>('/people', {
+      params: listParams(projectId, options),
+    });
+    return response.data;
+  }
+
+  async createPerson(data: PersonDto.CreateRequest & { projectId?: string | null }): Promise<PersonDto.Response> {
     const { projectId, ...payload } = data;
-    const response = await this.client.post<BudgetDto.Response>('/budgets', this.withId(payload), {
-      params: projectId ? { projectId } : {},
+    const response = await this.client.post<PersonDto.Response>('/people', this.withId(payload), {
+      params: projectParams(projectId),
     });
     return response.data;
   }
 
-  async getBudgets(projectId?: string | null): Promise<BudgetDto.Response[]> {
-    const response = await this.client.get<BudgetDto.Response[]>('/budgets', {
-      params: projectId ? { projectId } : {},
+  async updatePerson(id: string, data: PersonDto.UpdateRequest): Promise<PersonDto.Response> {
+    const response = await this.client.patch<PersonDto.Response>(`/people/${id}`, data);
+    return response.data;
+  }
+
+  /** 구성원 없애기. 통장·카드와 같은 규칙이다 (`hide` 를 주면 숨기기). */
+  async deletePerson(id: string, options?: { hide?: boolean }) {
+    await this.client.delete(`/people/${id}`, {
+      params: options?.hide ? { hide: 'true' } : undefined,
+    });
+  }
+
+  /** 목록 표시 순서 저장. 화면에 보이는 순서대로 id를 보낸다. */
+  async reorderPeople(ids: string[], projectId?: string | null) {
+    const response = await this.client.patch<PersonDto.Response[]>('/people/reorder', { ids }, {
+      params: projectParams(projectId),
     });
     return response.data;
   }
 
-  async getBudget(id: string): Promise<BudgetDto.Response> {
-    const response = await this.client.get<BudgetDto.Response>(`/budgets/${id}`);
-    return response.data;
-  }
-
-  async updateBudget(id: string, data: BudgetDto.UpdateRequest): Promise<BudgetDto.Response> {
-    const response = await this.client.patch<BudgetDto.Response>(`/budgets/${id}`, data);
-    return response.data;
-  }
-
-  /** fromMonth("YYYY-MM")를 주면 그 달부터만 없앤다. 이전 달의 예산은 남는다. */
-  async deleteBudget(id: string, fromMonth?: string) {
-    await this.client.delete(`/budgets/${id}`, {
-      params: fromMonth ? { fromMonth } : {},
-    });
-  }
-
-  /** 프로젝트의 예산을 모두 지운다. 월별 조정값도 함께 사라진다. */
-  async resetBudgets(projectId?: string | null): Promise<{ deleted: number }> {
-    const response = await this.client.delete<{ deleted: number }>('/budgets', {
-      params: projectId ? { projectId } : {},
-    });
-    return response.data;
-  }
-
-  /** filter는 가계 화면의 자산주인/고정 필터. 사용금액에 같은 조건이 걸린다. */
-  async getBudgetForMonth(
-    year: number,
-    month: number,
-    projectId?: string | null,
-    filter?: EntryFilterQuery,
-  ): Promise<BudgetDto.MonthlyBudget[]> {
-    const response = await this.client.get<BudgetDto.MonthlyBudget[]>(`/budgets/${year}/${month}`, {
-      params: { ...(projectId ? { projectId } : {}), ...filter },
-    });
-    return response.data;
-  }
-
-  /** 그 달의 태그 예산. 태그마다 지출·수입 두 줄이다. */
-  async getTagBudgetsForMonth(
-    year: number,
-    month: number,
-    projectId?: string | null,
-    filter?: EntryFilterQuery,
-  ): Promise<BudgetDto.MonthlyTagBudget[]> {
-    const response = await this.client.get<BudgetDto.MonthlyTagBudget[]>(
-      `/budgets/tags/${year}/${month}`,
-      { params: { ...(projectId ? { projectId } : {}), ...filter } },
-    );
-    return response.data;
-  }
-
-  /** 한 분류(또는 전체 예산·태그 예산)가 달마다 얼마인지. 예산 팝업의 월별 목록이 쓴다. */
-  async getBudgetSchedule(
-    query: Omit<BudgetDto.ScheduleQuery, 'projectId'>,
-    projectId?: string | null,
-  ): Promise<BudgetDto.ScheduleMonth[]> {
-    const response = await this.client.get<BudgetDto.ScheduleMonth[]>('/budgets/schedule', {
-      params: { ...query, ...(projectId ? { projectId } : {}) },
-    });
-    return response.data;
-  }
-
-  async createBudgetOverride(data: BudgetDto.OverrideRequest): Promise<BudgetDto.OverrideResponse> {
-    const response = await this.client.post<BudgetDto.OverrideResponse>('/budgets/override', data);
-    return response.data;
-  }
-
-  async deleteBudgetOverride(id: string) {
-    await this.client.delete(`/budgets/override/${id}`);
-  }
+  // ── 은행·카드사 ──
 
   /**
-   * 기준통화 기준 환율.
-   *
-   * 거래 입력 화면이 통화를 고르는 순간 환율 칸을 미리 채우는 데 쓴다.
-   * 사용자는 그 값을 카드 명세서의 실제 환율로 고칠 수 있다.
+   * 은행/카드사 목록. 기본 제공 항목과 이 프로젝트가 추가한 항목이 함께 온다.
+   * type을 주면 그 용도만 걸러서 온다.
    */
-  async getExchangeRates(projectId?: string | null): Promise<ExchangeRatesResponse> {
-    const response = await this.client.get<ExchangeRatesResponse>('/exchange-rates', {
-      params: projectId ? { projectId } : {},
+  async getInstitutions(
+    type?: FinancialInstitutionType,
+    projectId?: string | null,
+  ): Promise<InstitutionDto.Response[]> {
+    const response = await this.client.get<InstitutionDto.Response[]>('/institutions', {
+      params: { ...(type ? { type } : {}), ...projectParams(projectId) }
     });
+    return response.data;
+  }
+
+  /** 이 프로젝트 전용 은행/카드사를 더한다. 엑셀 가져오기가 "기타 카드사"를 만들 때 쓴다. */
+  async createInstitution(
+    data: { type: FinancialInstitutionType; name: string },
+    projectId?: string | null,
+  ): Promise<InstitutionDto.Response> {
+    const response = await this.client.post<InstitutionDto.Response>('/institutions', data, {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  // ── 통장 ──
+
+  /** includeInactive를 주면 숨긴 통장까지 함께 받는다 (다시 표시 화면용). */
+  async getAccountsV2(
+    projectId?: string | null,
+    options: { includeInactive?: boolean } = {},
+  ): Promise<AccountDto.Response[]> {
+    const response = await this.client.get<AccountDto.Response[]>('/accounts', {
+      params: listParams(projectId, options),
+    });
+    return response.data;
+  }
+
+  async createAccountV2(data: AccountDto.CreateRequest): Promise<AccountDto.Response> {
+    const { projectId, ...payload } = data;
+    const response = await this.client.post<AccountDto.Response>('/accounts', this.withId(payload), {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  async updateAccountV2(id: string, data: AccountDto.UpdateRequest): Promise<AccountDto.Response> {
+    const response = await this.client.patch<AccountDto.Response>(`/accounts/${id}`, data);
     return response.data;
   }
 
   /**
-   * 환율을 직접 정한다. 설정 화면 전용이다.
+   * 통장 없애기. 기본은 **삭제**이고, 거래내역이 있으면 서버가 거절한다.
    *
-   * 거래 입력에서는 환율을 받지 않는다. 사용자가 아는 값은 실제로 빠진 금액이고
-   * 환율은 그 비로 유도된다. 여기서 정한 값은 아직 금액을 모르는 거래(신용카드)를
-   * 추정할 때와 표시 통화 환산에 쓰인다.
+   * `hide` 를 주면 숨기기다. 화면은 삭제를 먼저 시도하고, 거절 코드를 받으면 사용자에게
+   * 물어 이 쪽으로 다시 온다 (`ACCOUNT_HAS_ENTRIES`).
    */
-  async setExchangeRate(
-    data: { from: string; to: string; rate: string },
-    projectId?: string | null,
-  ): Promise<ExchangeRateInfo> {
-    const response = await this.client.put<ExchangeRateInfo>('/exchange-rates', data, {
-      params: projectId ? { projectId } : {},
+  async deleteAccountV2(id: string, options?: { hide?: boolean }) {
+    await this.client.delete(`/accounts/${id}`, {
+      params: options?.hide ? { hide: 'true' } : undefined,
+    });
+  }
+
+  async reorderAccounts(ids: string[], projectId?: string | null) {
+    const response = await this.client.patch<AccountDto.Response[]>('/accounts/reorder', { ids }, {
+      params: projectParams(projectId),
     });
     return response.data;
   }
 
-  /** 직접 정한 환율을 지우고 기본값으로 되돌린다. */
-  async clearExchangeRate(from: string, to: string, projectId?: string | null): Promise<void> {
-    await this.client.delete('/exchange-rates', {
-      params: { from, to, ...(projectId ? { projectId } : {}) },
+  async getAccountPostings(
+    accountId: string,
+    query?: AccountDto.LedgerQuery,
+  ): Promise<AccountDto.LedgerResponse> {
+    const response = await this.client.get<AccountDto.LedgerResponse>(`/accounts/${accountId}/postings`, {
+      params: query ?? {},
+    });
+    return response.data;
+  }
+
+  // ── 카드 ──
+
+  /** includeInactive를 주면 숨긴 카드까지 함께 받는다 (다시 표시 화면용). */
+  async getCards(
+    projectId?: string | null,
+    options: { includeInactive?: boolean } = {},
+  ): Promise<CardDto.Response[]> {
+    const response = await this.client.get<CardDto.Response[]>('/cards', {
+      params: listParams(projectId, options),
+    });
+    return response.data;
+  }
+
+  async getCard(id: string): Promise<CardDto.Response> {
+    const response = await this.client.get<CardDto.Response>(`/cards/${id}`);
+    return response.data;
+  }
+
+  async createCard(data: CardDto.CreateRequest): Promise<CardDto.Response> {
+    const { projectId, ...payload } = data;
+    /*
+     * 신용카드는 부채 계정과 함께 만들어진다. 그 계정 id 도 기기가 정해야 한다.
+     * 서버가 정하면 오프라인에서 그 카드로 적은 거래가 어느 계정을 가리킬지 알 수 없다.
+     */
+    const withIds =
+      payload.cardType === 'credit' && !payload.liabilityAccountId && hasRandomSource()
+        ? { ...payload, liabilityAccountId: newId() }
+        : payload;
+    const response = await this.client.post<CardDto.Response>('/cards', this.withId(withIds), {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  async updateCard(id: string, data: CardDto.UpdateRequest): Promise<CardDto.Response> {
+    const response = await this.client.patch<CardDto.Response>(`/cards/${id}`, data);
+    return response.data;
+  }
+
+  /** 카드 없애기. 통장과 같은 규칙이다 (`hide` 를 주면 숨기기). */
+  async deleteCard(id: string, options?: { hide?: boolean }) {
+    await this.client.delete(`/cards/${id}`, {
+      params: options?.hide ? { hide: 'true' } : undefined,
     });
   }
 
-  // 카드 원장 API Methods
-  //
-  // 청구서를 저장하지 않는다. 주기별 사용액은 카드의 현재 마감일로 서버가 계산한다.
+  async reorderCards(ids: string[], projectId?: string | null) {
+    const response = await this.client.patch<CardDto.Response[]>('/cards/reorder', { ids }, {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  // ── 카드 원장 -- 청구서를 저장하지 않는다. 주기별 사용액은 카드의 현재 마감일로 서버가 계산한다 ──
+
   /** 실적 진행 상황. 신용카드는 마감일 기준 주기, 체크카드는 달력 월로 센다. */
   async getCardPerformance(cardId: string): Promise<CardDto.PerformanceResponse> {
     const response = await this.client.get<CardDto.PerformanceResponse>(
@@ -1506,15 +939,640 @@ class ApiClient {
     return response.data;
   }
 
-  // 리포트 API Methods
-  //
-  // 집계는 전부 서버에서 한다. 화면이 거래 전량을 받아 합산하던 코드를 대체한다.
+  // ── 거래 ──
+
+  /**
+   * 거래 목록. 커서 기반이라 응답은 { data, nextCursor } 형태다.
+   * 예전 getTransactionsV2의 가짜 pagination 응답과 다르다.
+   */
+  async getEntries(query?: EntryDto.ListQuery, projectId?: string | null): Promise<EntryDto.ListResponse> {
+    const params: Record<string, unknown> = { ...query, ...projectParams(projectId) };
+    const response = await this.client.get<EntryDto.ListResponse>('/entries', { params });
+    return response.data;
+  }
+
+  /**
+   * 커서를 따라가며 조건에 맞는 거래를 전부 가져온다.
+   *
+   * 엑셀 내보내기뿐 아니라 가계 화면·예산 상세·수단별 탭이 쓴다. 한 페이지만
+   * 받으면 목록이 잘리는 데 그치지 않고, 그 목록으로 계산하는 달력 일별 합계와
+   * 일별 누적 그래프가 서버 집계보다 적게 나온다.
+   */
+  async getAllEntries(query?: EntryDto.ListQuery, projectId?: string | null): Promise<EntryDto.ListResponse['data']> {
+    const rows: any[] = [];
+    let cursor: string | null = null;
+    // 커서가 전진하지 않는 서버 버그가 생겨도 화면이 멈추지는 않게 한다.
+    // 200 * 50 = 10,000건이면 한 달은 물론 거래 화면이 해로 묶어 볼 때도 충분하다.
+    const MAX_PAGES = 50;
+
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const res: EntryDto.ListResponse = await this.getEntries(
+        { ...query, limit: 200, cursor: cursor ?? undefined },
+        projectId,
+      );
+      rows.push(...(res?.data ?? []));
+      cursor = res?.nextCursor ?? null;
+      if (!cursor) return rows;
+    }
+
+    console.warn(`거래를 ${MAX_PAGES}페이지까지만 불러왔습니다. 일부가 빠졌을 수 있습니다.`);
+    return rows;
+  }
+
+  /**
+   * 이 구간에 회차가 서는 **지난 할부**. 회차 기준으로 볼 때만 부른다.
+   *
+   * 목록 조회는 전표의 날짜로 자르므로 3월에 산 할부는 4월 목록에 들지 않는다. 화면은
+   * 이 목록을 그 달의 거래와 합쳐 두고, 줄을 세는 일은 `entryRows` 가 구간을 보고 한다.
+   */
+  async getInstallmentRows(
+    query?: EntryDto.ListQuery,
+    projectId?: string | null,
+  ): Promise<EntryDto.ListResponse['data']> {
+    const params: Record<string, unknown> = { ...query, ...projectParams(projectId) };
+    const response = await this.client.get<EntryDto.ListResponse['data']>(
+      '/entries/installment-rows',
+      { params },
+    );
+    return response.data ?? [];
+  }
+
+  async getEntry(id: string): Promise<EntryDto.Detail> {
+    const response = await this.client.get<EntryDto.Detail>(`/entries/${id}`);
+    return response.data;
+  }
+
+  async createEntry(data: EntryDto.CreateRequest): Promise<EntryDto.Detail> {
+    const { projectId, ...payload } = data;
+    const response = await this.client.post<EntryDto.Detail>('/entries', this.withId(payload), {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  async updateEntry(id: string, data: EntryDto.UpdateRequest): Promise<EntryDto.Detail> {
+    const response = await this.client.patch<EntryDto.Detail>(`/entries/${id}`, data);
+    return response.data;
+  }
+
+  async deleteEntry(id: string) {
+    await this.client.delete(`/entries/${id}`);
+  }
+
+  /**
+   * 여러 거래의 태그를 바꾼다. 더할 것과 뗄 것을 따로 보낸다.
+   *
+   * 수정(`updateEntry`)과 다른 길이다. 그쪽은 전표를 통째로 갈아 끼우므로 분할·외화까지
+   * 온전한 값이 필요하다.
+   */
+  async changeEntryTags(
+    data: {
+      targets: Array<{ entryId: string; lineKey?: string | null }>;
+      addTagIds?: string[];
+      removeTagIds?: string[];
+    },
+    projectId?: string | null,
+  ): Promise<EntryDto.ChangeTagsResponse> {
+    const response = await this.client.post<EntryDto.ChangeTagsResponse>('/entries/tags', data, {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  /** 여러 거래 줄의 분류를 한 분류로 바꾼다. 같은 유형의 줄에만 걸린다 (`planCategoryChange`). */
+  async changeEntryCategory(
+    data: { targets: Array<{ entryId: string; lineKey?: string | null }>; categoryId: string },
+    projectId?: string | null,
+  ): Promise<EntryDto.ChangeCategoryResponse> {
+    const response = await this.client.post<EntryDto.ChangeCategoryResponse>(
+      '/entries/category',
+      data,
+      { params: projectParams(projectId) },
+    );
+    return response.data;
+  }
+
+  // ── 분류 ──
+
+  async getCategories(
+    projectId?: string | null,
+    type?: 'income' | 'expense',
+  ): Promise<CategoryDto.Response[]> {
+    const response = await this.client.get<CategoryDto.Response[]>('/categories', {
+      params: { ...projectParams(projectId), ...(type ? { type } : {}) },
+    });
+    return response.data;
+  }
+
+  async createCategory(data: CategoryDto.CreateRequest): Promise<CategoryDto.Response> {
+    const { projectId, ...payload } = data;
+    const response = await this.client.post<CategoryDto.Response>('/categories', this.withId(payload), {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  async updateCategory(id: string, data: CategoryDto.UpdateRequest): Promise<CategoryDto.Response> {
+    const response = await this.client.patch<CategoryDto.Response>(`/categories/${id}`, data);
+    return response.data;
+  }
+
+  async deleteCategory(id: string) {
+    await this.client.delete(`/categories/${id}`);
+  }
+
+  /** 이 분류와 그 소분류에 달린 거래 다리의 수. 없애기 전에 묻는 데 쓴다. */
+  async getCategoryUsage(id: string): Promise<CategoryDto.UsageResponse> {
+    const response = await this.client.get<CategoryDto.UsageResponse>(`/categories/${id}/usage`);
+    return response.data;
+  }
+
+  /**
+   * 분류를 없애면서 그 거래를 다른 분류로 옮긴다.
+   *
+   * 오프라인 창구를 타지 않는다. 사본에서 원장을 통째로 다시 쓰는 일이라(다리 수백 개의
+   * 분류가 한꺼번에 바뀐다) 명령 하나로 담을 수 없다. 끊긴 동안에는 화면이 이유를 적는다.
+   */
+  async mergeCategories(
+    moves: CategoryDto.MergeMove[],
+    projectId?: string | null,
+  ): Promise<CategoryDto.MergeResponse> {
+    const response = await this.client.post<CategoryDto.MergeResponse>(
+      '/categories/merge',
+      { moves },
+      { params: projectParams(projectId) },
+    );
+    return response.data;
+  }
+
+  async reorderCategories(ids: string[], projectId?: string | null) {
+    const response = await this.client.patch<CategoryDto.Response[]>('/categories/reorder', { ids }, {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  // ── 태그 ──
+
+  async getTags(projectId?: string | null): Promise<TagDto.Response[]> {
+    const response = await this.client.get<TagDto.Response[]>('/tags', {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  async createTag(data: TagDto.CreateRequest): Promise<TagDto.Response> {
+    const { projectId, ...payload } = data;
+    const response = await this.client.post<TagDto.Response>('/tags', this.withId(payload), {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  async updateTag(id: string, data: TagDto.UpdateRequest): Promise<TagDto.Response> {
+    const response = await this.client.patch<TagDto.Response>(`/tags/${id}`, data);
+    return response.data;
+  }
+
+  async deleteTag(id: string) {
+    await this.client.delete(`/tags/${id}`);
+  }
+
+  /** 이 태그가 붙어 있는 자리의 수. 없애기 전에 무엇을 물을지 여기서 갈린다. */
+  async getTagUsage(id: string): Promise<TagDto.UsageResponse> {
+    const response = await this.client.get<TagDto.UsageResponse>(`/tags/${id}/usage`);
+    return response.data;
+  }
+
+  /**
+   * 태그를 없애면서 붙어 있던 자리를 다른 태그로 옮긴다.
+   *
+   * 분류의 통합과 같이 오프라인 창구를 타지 않는다. 거래 수백 줄의 태그가 한꺼번에
+   * 바뀌는 일이라 명령 하나로 담을 수 없다. 끊긴 동안에는 화면이 이유를 적는다.
+   */
+  async mergeTags(
+    fromId: string,
+    toId: string,
+    projectId?: string | null,
+  ): Promise<TagDto.MergeResponse> {
+    const response = await this.client.post<TagDto.MergeResponse>(
+      '/tags/merge',
+      { fromId, toId },
+      { params: projectParams(projectId) },
+    );
+    return response.data;
+  }
+
+  async reorderTags(ids: string[], projectId?: string | null) {
+    const response = await this.client.patch<TagDto.Response[]>(
+      '/tags/reorder',
+      { ids },
+      { params: projectParams(projectId) },
+    );
+    return response.data;
+  }
+
+  // ── 보관함 (아직 거래가 아닌 후보) ──
+
+  async getEntryDrafts(
+    query: EntryDraftDto.ListQuery = {},
+    projectId?: string | null,
+  ): Promise<EntryDraftDto.Response[]> {
+    const params: Record<string, unknown> = { ...query, ...projectParams(projectId) };
+    const response = await this.client.get<EntryDraftDto.Response[]>('/entry-drafts', { params });
+    return response.data;
+  }
+
+  /**
+   * 기기가 읽어 낸 후보를 담는다. 여러 건을 한 번에 보낸다.
+   *
+   * 이미 있는 것(같은 dedupeKey)은 서버가 건너뛰고 `skipped` 로 센다. 그래서 같은
+   * 요청을 다시 보내도 후보가 늘지 않는다 -- 알림 버퍼를 비우다 끊긴 뒤 다시 보낼 때
+   * 그 성질에 기댄다.
+   */
+  async addEntryDrafts(
+    drafts: EntryDraftDto.CreateItem[],
+    projectId?: string | null,
+  ): Promise<EntryDraftDto.CreateResponse> {
+    /*
+     * 서버가 한 번에 받는 수(100)를 넘으면 나눠 보낸다.
+     *
+     * 긴 캡처 한 장에서 그만큼 나온다 -- 카드 앱의 한 달 이용내역이 54건이었다. 나누지
+     * 않으면 요청 하나가 통째로 거절되어 사진을 다시 잘라 올려야 한다.
+     */
+    const CHUNK = 100;
+    const merged: EntryDraftDto.CreateResponse = { created: 0, skipped: 0, drafts: [] };
+
+    for (let start = 0; start < drafts.length; start += CHUNK) {
+      const response = await this.client.post<EntryDraftDto.CreateResponse>(
+        '/entry-drafts',
+        { drafts: drafts.slice(start, start + CHUNK) },
+        { params: projectParams(projectId) },
+      );
+      merged.created += response.data.created;
+      merged.skipped += response.data.skipped;
+      merged.drafts.push(...response.data.drafts);
+    }
+
+    return merged;
+  }
+
+  async updateEntryDraft(
+    id: string,
+    data: EntryDraftDto.UpdateRequest,
+  ): Promise<EntryDraftDto.Response> {
+    const response = await this.client.patch<EntryDraftDto.Response>(`/entry-drafts/${id}`, data);
+    return response.data;
+  }
+
+  async deleteEntryDraft(id: string): Promise<void> {
+    await this.client.delete(`/entry-drafts/${id}`);
+  }
+
+  // ── 알림 원문(표본)·앱별 문구 규칙 ──
+
+  /**
+   * 기기가 모은 알림 원문을 올린다 (돈 표기가 있는 것, 후보가 못 된 것 포함).
+   *
+   * 같은 열쇠(sampleKey)는 서버가 한 번만 담으므로 다시 보내도 늘지 않는다.
+   */
+  async addNotificationSamples(
+    samples: NotificationSampleDto.CreateItem[],
+    projectId?: string | null,
+  ): Promise<NotificationSampleDto.CreateResponse> {
+    const response = await this.client.post<NotificationSampleDto.CreateResponse>(
+      '/notification-samples',
+      { samples },
+      { params: projectParams(projectId) },
+    );
+    return response.data;
+  }
+
+  /** 켜 둔 앱별 규칙. 기기가 알림을 읽을 때 기존 규칙보다 먼저 대 본다. */
+  async getNotificationRules(): Promise<NotificationRule[]> {
+    const response = await this.client.get<NotificationRule[]>('/notification-rules');
+    return response.data;
+  }
+
+  // ── 반복 등록 ──
+
+  async getRecurringRules(projectId?: string | null): Promise<RecurringRuleDto.Response[]> {
+    const response = await this.client.get<RecurringRuleDto.Response[]>('/recurring-rules', {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  async createRecurringRule(
+    data: RecurringRuleDto.CreateRequest,
+    projectId?: string | null,
+  ): Promise<RecurringRuleDto.Response> {
+    const response = await this.client.post<RecurringRuleDto.Response>(
+      '/recurring-rules',
+      this.withId(data),
+      { params: projectParams(projectId) },
+    );
+    return response.data;
+  }
+
+  async updateRecurringRule(
+    id: string,
+    data: RecurringRuleDto.UpdateRequest,
+  ): Promise<RecurringRuleDto.Response> {
+    const response = await this.client.patch<RecurringRuleDto.Response>(
+      `/recurring-rules/${id}`,
+      data,
+    );
+    return response.data;
+  }
+
+  async deleteRecurringRule(id: string): Promise<void> {
+    await this.client.delete(`/recurring-rules/${id}`);
+  }
+
+  // ── 거래내역 엑셀 ──
+
+  /** 엑셀 행을 거래로. 한 번에 `EntrySheetDto.MAX_ROWS` 행까지(화면이 나눠 보낸다). */
+  async importEntrySheet(rows: EntrySheetRow[], projectId?: string | null): Promise<EntrySheetDto.ImportResponse> {
+    const response = await this.client.post<EntrySheetDto.ImportResponse>(
+      '/entry-sheet/import',
+      { rows },
+      {
+        params: projectParams(projectId),
+        /*
+         * 한 묶음(최대 300행)을 서버가 한 줄씩 적는다. 기본 10초 안에 끝나지 않으면 화면은 실패로 보는데
+         * 서버는 계속 적어 커밋한다 -- 사용자가 다시 가져오면 그 묶음이 두 번 들어간다 (2026-10-16).
+         * 행에 멱등 열쇠가 없어 서버가 거를 수 없으므로 넉넉히 기다린다. nginx 의 기본 읽기 제한(60초)에 맞춘다.
+         */
+        timeout: ENTRY_SHEET_IMPORT_TIMEOUT_MS,
+      },
+    );
+    return response.data;
+  }
+
+  /** 거래를 엑셀 행으로. 기간을 주지 않으면 전부다. */
+  async exportEntrySheet(query: EntrySheetDto.ExportQuery, projectId?: string | null): Promise<EntrySheetRow[]> {
+    const response = await this.client.get<EntrySheetRow[]>('/entry-sheet/export', {
+      params: { ...query, ...projectParams(projectId) },
+    });
+    return response.data;
+  }
+
+  // ── 예산 ──
+
+  async createBudget(data: BudgetDto.CreateRequest): Promise<BudgetDto.Response> {
+    const { projectId, ...payload } = data;
+    const response = await this.client.post<BudgetDto.Response>('/budgets', this.withId(payload), {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  async getBudgets(projectId?: string | null): Promise<BudgetDto.Response[]> {
+    const response = await this.client.get<BudgetDto.Response[]>('/budgets', {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  async updateBudget(id: string, data: BudgetDto.UpdateRequest): Promise<BudgetDto.Response> {
+    const response = await this.client.patch<BudgetDto.Response>(`/budgets/${id}`, data);
+    return response.data;
+  }
+
+  /** fromMonth("YYYY-MM")를 주면 그 달부터만 없앤다. 이전 달의 예산은 남는다. */
+  async deleteBudget(id: string, fromMonth?: string) {
+    await this.client.delete(`/budgets/${id}`, {
+      params: fromMonth ? { fromMonth } : {},
+    });
+  }
+
+  /** 프로젝트의 예산을 모두 지운다. 월별 조정값도 함께 사라진다. */
+  async resetBudgets(projectId?: string | null): Promise<{ deleted: number }> {
+    const response = await this.client.delete<{ deleted: number }>('/budgets', {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  /** filter는 가계 화면의 자산주인/고정 필터. 사용금액에 같은 조건이 걸린다. */
+  async getBudgetForMonth(
+    year: number,
+    month: number,
+    projectId?: string | null,
+    filter?: EntryFilterQuery,
+  ): Promise<BudgetDto.MonthlyBudget[]> {
+    const response = await this.client.get<BudgetDto.MonthlyBudget[]>(`/budgets/${year}/${month}`, {
+      params: { ...projectParams(projectId), ...filter },
+    });
+    return response.data;
+  }
+
+  /** 그 달의 태그 예산. 태그마다 지출·수입 두 줄이다. */
+  async getTagBudgetsForMonth(
+    year: number,
+    month: number,
+    projectId?: string | null,
+    filter?: EntryFilterQuery,
+  ): Promise<BudgetDto.MonthlyTagBudget[]> {
+    const response = await this.client.get<BudgetDto.MonthlyTagBudget[]>(
+      `/budgets/tags/${year}/${month}`,
+      { params: { ...projectParams(projectId), ...filter } },
+    );
+    return response.data;
+  }
+
+  /** 한 분류(또는 전체 예산·태그 예산)가 달마다 얼마인지. 예산 팝업의 월별 목록이 쓴다. */
+  async getBudgetSchedule(
+    query: Omit<BudgetDto.ScheduleQuery, 'projectId'>,
+    projectId?: string | null,
+  ): Promise<BudgetDto.ScheduleMonth[]> {
+    const response = await this.client.get<BudgetDto.ScheduleMonth[]>('/budgets/schedule', {
+      params: { ...query, ...projectParams(projectId) },
+    });
+    return response.data;
+  }
+
+  async createBudgetOverride(data: BudgetDto.OverrideRequest): Promise<BudgetDto.OverrideResponse> {
+    const response = await this.client.post<BudgetDto.OverrideResponse>('/budgets/override', data);
+    return response.data;
+  }
+
+  async deleteBudgetOverride(id: string) {
+    await this.client.delete(`/budgets/override/${id}`);
+  }
+
+  // ── 환율 ──
+
+  /**
+   * 기준통화 기준 환율.
+   *
+   * 거래 입력 화면이 통화를 고르는 순간 환율 칸을 미리 채우는 데 쓴다.
+   * 사용자는 그 값을 카드 명세서의 실제 환율로 고칠 수 있다.
+   */
+  async getExchangeRates(projectId?: string | null): Promise<ExchangeRatesResponse> {
+    const response = await this.client.get<ExchangeRatesResponse>('/exchange-rates', {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  /**
+   * 환율을 직접 정한다. 설정 화면 전용이다.
+   *
+   * 거래 입력에서는 환율을 받지 않는다. 사용자가 아는 값은 실제로 빠진 금액이고
+   * 환율은 그 비로 유도된다. 여기서 정한 값은 아직 금액을 모르는 거래(신용카드)를
+   * 추정할 때와 표시 통화 환산에 쓰인다.
+   */
+  async setExchangeRate(
+    data: { from: string; to: string; rate: string },
+    projectId?: string | null,
+  ): Promise<ExchangeRateInfo> {
+    const response = await this.client.put<ExchangeRateInfo>('/exchange-rates', data, {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  /** 직접 정한 환율을 지우고 기본값으로 되돌린다. */
+  async clearExchangeRate(from: string, to: string, projectId?: string | null): Promise<void> {
+    await this.client.delete('/exchange-rates', {
+      params: { from, to, ...projectParams(projectId) },
+    });
+  }
+
+  // ── 리포트 -- 집계는 전부 서버에서 한다. 화면이 거래 전량을 받아 합산하던 코드를 대체한다 ──
+
   /**
    * filter는 가계 화면의 사람/고정 필터. 목록과 같은 조건을 넘겨야 합계가 맞는다.
    *
    * period 는 한 달(`{ yearMonth }`)이거나 임의 구간(`{ startDate, endDate }`)이다.
    * 서버가 둘을 같은 규칙으로 푼다 (ReportsService.resolvePeriod).
    */
+  async getSummary(
+    period: ReportPeriod,
+    projectId?: string | null,
+    filter?: EntryScopeQuery,
+  ): Promise<ReportDto.Summary> {
+    const response = await this.client.get<ReportDto.Summary>('/reports/summary', {
+      params: { ...period, ...projectParams(projectId), ...filter },
+    });
+    return response.data;
+  }
+
+  /**
+   * 거래가 있는 달. 전체 기간이라 기간을 넘기지 않는다.
+   *
+   * 거래 화면의 첫 목록이 쓴다. 응답 길이가 곧 이 가계부가 몇 달치인지라 커서가 없다.
+   */
+  async getEntryMonths(
+    projectId?: string | null,
+    filter?: ReportDto.EntryMonthsQuery,
+  ): Promise<ReportDto.EntryMonth[]> {
+    const response = await this.client.get<ReportDto.EntryMonth[]>('/reports/entry-months', {
+      params: { ...projectParams(projectId), ...filter },
+    });
+    return response.data;
+  }
+
+  async getCategoryBreakdown(
+    period: ReportPeriod,
+    type: 'income' | 'expense',
+    projectId?: string | null,
+    options?: { rollup?: boolean } & EntryScopeQuery,
+  ) {
+    const { rollup, ...filter } = options ?? {};
+    const response = await this.client.get<any>('/reports/category-breakdown', {
+      params: {
+        ...period,
+        type,
+        ...projectParams(projectId),
+        ...(rollup === false ? { rollup: false } : {}),
+        ...filter,
+      },
+    });
+    return response.data;
+  }
+
+  /**
+   * 날짜별 지출·수입. 그날 아무것도 없으면 행이 없다.
+   *
+   * 누적 그래프의 재료다. 누적은 화면이 만든다 (이번 달은 오늘까지, 지난달은 말일까지).
+   */
+  async getDailyExpense(
+    period: ReportPeriod,
+    type: 'income' | 'expense',
+    projectId?: string | null,
+    filter?: EntryFilterQuery,
+  ): Promise<ReportDto.DailyExpensePoint[]> {
+    const response = await this.client.get<ReportDto.DailyExpensePoint[]>(
+      '/reports/daily-expense',
+      { params: { ...period, type, ...projectParams(projectId), ...filter } },
+    );
+    return response.data;
+  }
+
+  /** 투자·저축 계좌의 누적 수익. 이체로 넣은 원금은 빠져 있다. */
+  async getAccountProfit(projectId?: string | null): Promise<ReportDto.AccountProfit[]> {
+    const response = await this.client.get<ReportDto.AccountProfit[]>(
+      '/reports/account-profit',
+      { params: projectParams(projectId) },
+    );
+    return response.data;
+  }
+
+  async getNetWorth(projectId?: string | null): Promise<ReportDto.NetWorth> {
+    const response = await this.client.get<ReportDto.NetWorth>('/reports/net-worth', {
+      params: projectParams(projectId),
+    });
+    return response.data;
+  }
+
+  async getTrend(
+    target: ReportDto.TrendQuery['target'],
+    options: {
+      targetId?: string;
+      endMonth?: string;
+      months?: number;
+      type?: 'income' | 'expense';
+      /** target=category일 때 소분류를 빼고 그 분류만 본다 ("미분류" 보기) */
+      exact?: boolean;
+      /** 추이를 이 구간 안으로 자른다 (ISO). ReportDto.TrendQuery 주석 참고 */
+      clipFrom?: string;
+      clipTo?: string;
+    } & EntryFilterQuery &
+      EntrySearchQuery,
+    projectId?: string | null,
+  ) {
+    const response = await this.client.get<any>('/reports/trend', {
+      params: { target, ...options, ...projectParams(projectId) },
+    });
+    return response.data;
+  }
+
+  /** 자산 잔액 추이. accountId를 주면 그 계좌만, 생략하면 전체 합계. */
+  async getBalanceHistory(
+    options: Omit<ReportDto.BalanceHistoryQuery, 'projectId'>,
+    projectId?: string | null,
+  ): Promise<ReportDto.BalanceHistoryPoint[]> {
+    const response = await this.client.get<ReportDto.BalanceHistoryPoint[]>(
+      '/reports/balance-history',
+      { params: { ...options, ...projectParams(projectId) } },
+    );
+    return response.data;
+  }
+
+  async getPaymentMethods(
+    period: ReportPeriod,
+    projectId?: string | null,
+    filter?: EntryScopeQuery,
+  ) {
+    const response = await this.client.get<any>('/reports/payment-methods', {
+      params: { ...period, ...projectParams(projectId), ...filter },
+    });
+    return response.data;
+  }
+
   // ── 동기화 ──
 
   /**
@@ -1539,128 +1597,58 @@ class ApiClient {
     return response.data;
   }
 
-  async getSummary(
-    period: ReportPeriod,
-    projectId?: string | null,
-    filter?: EntryScopeQuery,
-  ): Promise<ReportDto.Summary> {
-    const response = await this.client.get<ReportDto.Summary>('/reports/summary', {
-      params: { ...period, ...(projectId ? { projectId } : {}), ...filter },
-    });
+  // ── 문의하기 ──
+
+  async getInquiries(): Promise<InquiryDto.Summary[]> {
+    const response = await this.client.get<InquiryDto.Summary[]>('/inquiries');
     return response.data;
   }
 
-  /**
-   * 거래가 있는 달. 전체 기간이라 기간을 넘기지 않는다.
-   *
-   * 거래 화면의 첫 목록이 쓴다. 응답 길이가 곧 이 가계부가 몇 달치인지라 커서가 없다.
-   */
-  async getEntryMonths(
-    projectId?: string | null,
-    filter?: ReportDto.EntryMonthsQuery,
-  ): Promise<ReportDto.EntryMonth[]> {
-    const response = await this.client.get<ReportDto.EntryMonth[]>('/reports/entry-months', {
-      params: { ...(projectId ? { projectId } : {}), ...filter },
-    });
+  /** 설정의 "문의하기" 배지. 읽지 않은 관리자의 답 수. */
+  async getInquiryUnreadCount(): Promise<number> {
+    const response = await this.client.get<InquiryDto.UnreadResponse>('/inquiries/unread-count');
+    return response.data.count;
+  }
+
+  /** 문의 하나. 서버가 연 것을 읽은 것으로 적는다. */
+  async getInquiry(id: string): Promise<InquiryDto.Detail> {
+    const response = await this.client.get<InquiryDto.Detail>(`/inquiries/${encodeURIComponent(id)}`);
     return response.data;
   }
 
-  async getCategoryBreakdown(
-    period: ReportPeriod,
-    type: 'income' | 'expense',
-    projectId?: string | null,
-    options?: { rollup?: boolean } & EntryScopeQuery,
-  ) {
-    const { rollup, ...filter } = options ?? {};
-    const response = await this.client.get<any>('/reports/category-breakdown', {
-      params: {
-        ...period,
-        type,
-        ...(projectId ? { projectId } : {}),
-        ...(rollup === false ? { rollup: false } : {}),
-        ...filter,
-      },
-    });
+  /** 문의하기를 떠났다. 서버가 보고 있다는 표시를 지워 다음 답을 곧바로 푸시한다. */
+  async unwatchInquiries(): Promise<void> {
+    await this.client.post('/inquiries/unwatch');
+  }
+
+  async createInquiry(body: string): Promise<InquiryDto.Detail> {
+    const response = await this.client.post<InquiryDto.Detail>('/inquiries', { body });
     return response.data;
   }
 
-  /**
-   * 날짜별 지출·수입. 그날 아무것도 없으면 행이 없다.
-   *
-   * 누적 그래프의 재료다. 누적은 화면이 만든다 (이번 달은 오늘까지, 지난달은 말일까지).
-   */
-  async getDailyExpense(
-    period: ReportPeriod,
-    type: 'income' | 'expense',
-    projectId?: string | null,
-    filter?: EntryFilterQuery,
-  ): Promise<ReportDto.DailyExpensePoint[]> {
-    const response = await this.client.get<ReportDto.DailyExpensePoint[]>(
-      '/reports/daily-expense',
-      { params: { ...period, type, ...(projectId ? { projectId } : {}), ...filter } },
+  async addInquiryMessage(id: string, body: string): Promise<InquiryDto.Detail> {
+    const response = await this.client.post<InquiryDto.Detail>(
+      `/inquiries/${encodeURIComponent(id)}/messages`,
+      { body },
     );
     return response.data;
   }
 
-  /** 투자·저축 계좌의 누적 수익. 이체로 넣은 원금은 빠져 있다. */
-  async getAccountProfit(projectId?: string | null): Promise<ReportDto.AccountProfit[]> {
-    const response = await this.client.get<ReportDto.AccountProfit[]>(
-      '/reports/account-profit',
-      { params: projectId ? { projectId } : {} },
-    );
-    return response.data;
+  // ── 푸시 기기 ──
+
+  /** 이 기기의 푸시 토큰을 적는다. 로그인한 뒤에 부른다. */
+  async registerPushDevice(dto: PushDeviceDto.RegisterRequest): Promise<void> {
+    await this.client.put('/push/devices', dto);
   }
 
-  async getNetWorth(projectId?: string | null): Promise<ReportDto.NetWorth> {
-    const response = await this.client.get<ReportDto.NetWorth>('/reports/net-worth', {
-      params: projectId ? { projectId } : {},
-    });
-    return response.data;
+  /** 이 기기의 푸시 토큰을 지운다. 로그아웃 **전에** 불러야 토큰이 아직 살아 있다. */
+  async unregisterPushDevice(token: string): Promise<void> {
+    await this.client.delete('/push/devices', { data: { token } });
   }
 
-  async getTrend(
-    target: ReportDto.TrendQuery['target'],
-    options: {
-      targetId?: string;
-      endMonth?: string;
-      months?: number;
-      type?: 'income' | 'expense';
-      /** target=category일 때 소분류를 빼고 그 분류만 본다 ("미분류" 보기) */
-      exact?: boolean;
-      /** 추이를 이 구간 안으로 자른다 (ISO). ReportDto.TrendQuery 주석 참고 */
-      clipFrom?: string;
-      clipTo?: string;
-    } & EntryFilterQuery &
-      EntrySearchQuery,
-    projectId?: string | null,
-  ) {
-    const response = await this.client.get<any>('/reports/trend', {
-      params: { target, ...options, ...(projectId ? { projectId } : {}) },
-    });
-    return response.data;
-  }
-
-  /** 자산 잔액 추이. accountId를 주면 그 계좌만, 생략하면 전체 합계. */
-  async getBalanceHistory(
-    options: Omit<ReportDto.BalanceHistoryQuery, 'projectId'>,
-    projectId?: string | null,
-  ): Promise<ReportDto.BalanceHistoryPoint[]> {
-    const response = await this.client.get<ReportDto.BalanceHistoryPoint[]>(
-      '/reports/balance-history',
-      { params: { ...options, ...(projectId ? { projectId } : {}) } },
-    );
-    return response.data;
-  }
-
-  async getPaymentMethods(
-    period: ReportPeriod,
-    projectId?: string | null,
-    filter?: EntryScopeQuery,
-  ) {
-    const response = await this.client.get<any>('/reports/payment-methods', {
-      params: { ...period, ...(projectId ? { projectId } : {}), ...filter },
-    });
-    return response.data;
+  /** 로그인 없이 토큰으로 푸시 등록을 지운다. 로그아웃 때 지우지 못한 토큰을 다음 실행에 치운다. */
+  async forgetPushDevice(token: string): Promise<void> {
+    await this.client.post('/push/forget', { token });
   }
 }
 

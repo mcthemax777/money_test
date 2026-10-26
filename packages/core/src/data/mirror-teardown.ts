@@ -82,18 +82,20 @@ export async function claimMirrorFor(userId: string): Promise<void> {
 }
 
 /**
- * 사본을 버린다. 등록된 것이 없으면 아무 일도 하지 않는다.
+ * 사본을 버린다. 버렸거나 버릴 것이 없으면 true, 버리지 못했으면 false 다.
  *
- * 실패해도 던지지 않는다. 이 함수를 부르는 곳은 세션을 정리하는 자리라, 여기서 예외가
- * 올라가면 토큰과 스토어 정리가 중간에 멈춘다. 지우지 못한 사본보다 반쯤 정리된
- * 세션이 더 나쁘다.
+ * 던지지 않는다. 로그아웃은 세션을 정리하는 자리라, 여기서 예외가 올라가면 토큰과 스토어 정리가 중간에 멈춘다
+ * -- 지우지 못한 사본보다 반쯤 정리된 세션이 더 나쁘다. 대신 결과를 돌려준다. 다른 사람이 로그인하는 자리는
+ * false 면 로그인을 멈춘다(2026-10-25) -- 예전에는 실패를 삼키고 앞 사람의 사본을 다음 사람에게 넘겼다.
  */
-export async function clearLocalMirror(): Promise<void> {
-  if (!teardown) return;
+export async function clearLocalMirror(): Promise<boolean> {
+  if (!teardown) return true;
 
   try {
     await teardown();
+    return true;
   } catch (error) {
     console.error('기기 사본을 버리지 못했습니다:', error);
+    return false;
   }
 }

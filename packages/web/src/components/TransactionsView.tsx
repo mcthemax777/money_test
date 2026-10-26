@@ -14,25 +14,7 @@
  * 서로 다른 규칙으로 파고들 일이 없다.
  */
 import { useEffect, useRef, useState } from 'react';
-import Link from 'next/link';
-import {
-  Archive,
-  ArrowLeft,
-  CalendarDays,
-  Check,
-  ChevronDown,
-  ChevronUp,
-  List,
-  Copy,
-  Loader2,
-  MoreVertical,
-  Pencil,
-  Plus,
-  Search,
-  Shapes,
-  Tag,
-  Trash2,
-} from 'lucide-react';
+import { Plus } from 'lucide-react';
 import {
   DEFAULT_ENTRY_PERIOD,
   originalEntry,
@@ -40,328 +22,44 @@ import {
   type EntryPeriodUnit,
 } from '@money/types';
 
-import {
-  formatDateTime,
-  isLongPeriodLabel,
-  periodLabel,
-  periodLabelLines,
-} from '@money/core/lib/datetime';
+import { periodLabel } from '@money/core/lib/datetime';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
-import { tagPickResult, tagPickState, toggleTagPick } from '@money/core/lib/tag-pick';
-import { formatCurrency, toNumber } from '@money/core/lib/money';
+import { toNumber } from '@money/core/lib/money';
 import {
   useTransactions,
   type TransactionRow,
   type TransactionSearch,
-  type TransactionTab,
 } from '@money/core/hooks/useTransactions';
 import { paybackCountOf, paybackDeleteNote } from '@money/core/hooks/usePaybacks';
 import { usePersonFilterSync } from '@money/core/hooks/usePersonFilterSync';
 import { useScreenReturn } from '@money/core/hooks/useScreenReturn';
 import { refreshInboxCount, useInboxCount } from '@money/core/store/inbox-count';
-import {
-  useCanEdit,
-  useMyPersonId,
-  useProjectDisplayCurrency,
-  useProjectTimeZone,
-} from '@money/core/store/project';
+import { useCanEdit, useMyPersonId } from '@money/core/store/project';
 import { useUserFilter } from '@money/core/store/user-filter';
-import { installmentLabel } from '@money/core/lib/period-ledger';
 
-import EntryEditor, {
-  isCopyableEntry,
-  isEditableEntry,
-  type EntryEditorHandle,
-  type ReferenceDataPatch,
-} from '@/components/EntryEditor';
-import CountBadge from '@/components/CountBadge';
-import Modal from '@/components/Modal';
+import EntryEditor, { type EntryEditorHandle, type ReferenceDataPatch } from '@/components/EntryEditor';
 import TransactionCalendarView from '@/components/TransactionCalendarView';
 import AnalysisView from '@/components/AnalysisView';
 import NavIcon from '@/components/NavIcon';
 import PageHeader from '@/components/PageHeader';
 import RevealTop from '@/components/RevealTop';
 import SearchChips from '@/components/SearchChips';
-import TransactionSearchModal, { Chip } from '@/components/TransactionSearchModal';
+import TransactionSearchModal from '@/components/TransactionSearchModal';
 import CategoryPickModal from '@/components/CategoryPickModal';
 import { useCloseOnBack } from '@/hooks/useCloseOnBack';
 import { useSwapScroll } from '@/hooks/useSwapScroll';
 import { useRenderBudget } from '@/hooks/useRenderBudget';
-import { useLongPress } from '@/hooks/useLongPress';
 import { useTopReveal } from '@/hooks/useTopReveal';
 import PersonScopeTitle from '@/components/PersonScopeTitle';
-import PaybackSection from '@/components/PaybackSection';
 import TransactionItem from '@/components/TransactionItem';
 import { ScreenVisibility } from '@/components/ScreenVisible';
-
-const TABS: Array<{ id: TransactionTab; labelKey: MessageKey }> = [
-  { id: 'date', labelKey: 'tx.tab.date' },
-  { id: 'category', labelKey: 'tx.tab.category' },
-  { id: 'method', labelKey: 'tx.tab.method' },
-];
-
-/**
- * 체크박스. 세 상태를 보인다 -- 빈 칸 / 체크 / 줄(일부만 고름).
- *
- * 년월 줄은 그 달의 거래 일부만 골랐을 수 있어 셋이 필요하다.
- */
-/**
- * 체크박스. 켜짐과 꺼짐 둘뿐이다.
- *
- * **반쯤 골라진 상태를 따로 그리지 않는다** -- 지우는 화면에서 애매한 표시는 "이걸
- * 누르면 무엇이 지워지는가"를 흐린다. 줄에 든 거래가 하나라도 빠지면 꺼진 것으로 본다.
- */
-function CheckBox({
-  checked,
-  pending,
-  onToggle,
-}: {
-  checked: boolean;
-  /** 그 범위의 거래를 세는 중. 누른 것이 먹혔다는 표시가 된다. */
-  pending?: boolean;
-  onToggle: () => void;
-}) {
-  if (pending) {
-    return (
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center">
-        <Loader2 className="h-4 w-4 animate-spin text-blue-600" aria-hidden />
-      </span>
-    );
-  }
-
-  return (
-    <span
-      role="checkbox"
-      aria-checked={checked}
-      tabIndex={0}
-      onClick={(event) => {
-        event.stopPropagation();
-        onToggle();
-      }}
-      onKeyDown={(event) => {
-        if (event.key !== ' ' && event.key !== 'Enter') return;
-        event.preventDefault();
-        event.stopPropagation();
-        onToggle();
-      }}
-      className={`flex h-5 w-5 shrink-0 items-center justify-center rounded border ${
-        checked ? 'border-blue-600 bg-blue-600' : 'border-gray-400 bg-white'
-      }`}
-    >
-      {checked ? <Check className="h-3.5 w-3.5 text-white" strokeWidth={3} /> : null}
-    </span>
-  );
-}
-
-/**
- * 한 줄. 오른쪽에 수입과 지출을 나란히 적는다.
- *
- * 한쪽만 적으면 이체가 섞인 달에서 줄의 금액과 아래를 펴서 나온 거래의 합이 어긋나
- * 보인다. 들어온 돈이 왼쪽, 나간 돈이 오른쪽이다 -- 나간 돈이 줄의 끝에 붙어 있어야
- * 여러 줄을 훑을 때 금액의 오른쪽 끝이 한 줄로 선다.
- *
- * 세로로 쌓지 않는다. 금액과 건수를 제목 옆에 같이 두어 **한 줄 높이**로 끝낸다.
- */
-/**
- * 금액 글자 크기. 년월 줄은 제목과 같은 15px, 안쪽 줄은 그보다 한 단 작다.
- *
- * 제목보다 작은 금액은 줄에서 뒤로 물러나 보인다. 년월 줄에서 먼저 읽는 것은 달 이름이
- * 아니라 그 달에 얼마가 오갔는가라, 둘을 같은 크기로 둔다. 안쪽 줄은 제목도 14px 이라
- * 금액도 그에 맞춘다.
- */
-const AMOUNT_SIZE: Record<0 | 1, string> = { 0: 'text-[15px]', 1: 'text-sm' };
-
-/**
- * 요일 색. 토요일은 파랑, 일요일은 빨강, 나머지는 제목과 같은 먹색이다.
- *
- * 달력이 주말을 그렇게 적어 왔으니 같은 규칙을 쓴다. 표로 두는 것은 줄마다 도는
- * 자리라 조건을 두 번 견주지 않기 위해서다.
- */
-const WEEKDAY_COLOR: Record<number, string> = { 0: 'text-red-600', 6: 'text-blue-600' };
-
-function Line({
-  label,
-  weekday,
-  meta,
-  expense,
-  income,
-  open,
-  depth,
-  showNet,
-  check,
-  onClick,
-  onLongPress,
-}: {
-  label: string;
-  /** 날짜별 줄에서 일자 옆에 붙는 요일. 다른 탭에는 없다. */
-  weekday?: { label: string; day: number };
-  /** 제목 오른쪽에 붙는 잔글씨. 건수나 통장 주인 이름이다. */
-  meta?: string;
-  expense: number;
-  income: number;
-  open?: boolean;
-  /**
-   * 수입에서 지출을 뺀 값을 둘째 줄에 적을지. 년월 줄만 켜고 쓴다.
-   *
-   * 자리가 남는 웹에서도 세 번째 칸을 만들지 않고 앱과 같은 두 줄로 둔다. 두 화면이
-   * 같은 숫자를 다른 자리에서 보여 주면, 폰으로 본 것을 웹에서 다시 찾게 된다.
-   * (앱은 자리가 아예 없다 -- 360dp 기기에서 줄 안쪽 304dp 중 수입·지출이 30% 씩을
-   * 쓰고 `₩1,234,567` 하나가 83dp 라, 칸을 더 넣으면 달 이름 자리가 6dp 만 남는다.)
-   */
-  showNet?: boolean;
-  /** 고르는 중이면 왼쪽에 체크박스를 둔다. */
-  check?: { checked: boolean; pending?: boolean; onToggle: () => void };
-  /**
-   * 0 이면 년월 줄, 1 이면 그 안의 줄.
-   *
-   * 여백은 가르지 않는다. 세 겹(년월·안쪽 줄·거래)이 모두 같은 자리에서 글자를
-   * 시작해야 목록을 위에서 아래로 훑을 때 눈이 좌우로 흔들리지 않는다. 계층은
-   * 글자 크기와 굵기가 알린다.
-   */
-  depth: 0 | 1;
-  onClick: () => void;
-  /** 길게 누르면 삭제할 거래 고르기로 들어서며 이 줄을 골라 둔다. 고르는 중에는 주지 않는다. */
-  onLongPress?: () => void;
-}) {
-  const { t } = useTranslation();
-  const longPress = useLongPress(onLongPress);
-  const currency = useProjectDisplayCurrency();
-
-  /*
-   * 순수입 줄은 오간 돈이 있을 때만 선다. 이체만 있던 달은 수입도 지출도 0 이라
-   * "순수입 0" 을 적어 봐야 위 줄의 "-" 를 되풀이할 뿐이다.
-   */
-  const net = income - expense;
-  /*
-   * 지출은 음수일 수 있다. 그 기간에 쓴 돈보다 되돌려 받은 페이백이 많으면 그렇다
-   * (PAYBACK_DESIGN.md). 0 만 "오간 돈이 없다"로 본다.
-   */
-  const showsNet = Boolean(showNet) && (income > 0 || expense !== 0);
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      {...longPress}
-      aria-expanded={Boolean(open)}
-      /*
-        가로로 이름과 금액 묶음이 서고, 둘을 세로 가운데에 맞춘다. 금액 묶음은 금액 줄과
-        순수입 줄을 쌓은 것이라, 이름이 한 줄이든 두 줄이든 위아래 여백이 고르다 (앱과 같다).
-
-        년월 줄의 왼쪽 여백은 오른쪽 분석 아이콘과 화면 끝 사이만큼으로 줄인다 (2026-10-07
-        사용자 요청). 고르는 중에는 체크가 안쪽 줄의 체크와 같은 세로선에 서야 해서 그대로 둔다.
-      */
-      className={`flex w-full items-center gap-2 py-2 text-left ${
-        depth === 0 && !check ? 'pl-1 pr-3' : 'px-3'
-      }`}
-    >
-      {check ? (
-        <CheckBox checked={check.checked} pending={check.pending} onToggle={check.onToggle} />
-      ) : null}
-      {/*
-        펼침 표시(▸▾)는 두지 않는다. 누르면 바로 아래가 열리고 닫히는 것이 보이므로
-        화살표는 한 줄에서 자리만 차지한다. 열린 상태는 aria-expanded 로만 알린다.
-      */}
-      <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
-        {/*
-          긴 기간 이름(주차, 직접 정한 기간, 시작일을 옮긴 달)은 한 단 작게, 두 줄까지 쓴다.
-          "…"로 잘리면 그 줄이 어느 기간인지 읽을 수 없다 (`isLongPeriodLabel`).
-        */}
-        {depth === 0 && isLongPeriodLabel(label) ? (
-          <span className="flex min-w-0 flex-col text-[13px] font-semibold leading-snug text-gray-900">
-            {periodLabelLines(label).map((line, index) => (
-              <span key={index} className="truncate">
-                {line}
-              </span>
-            ))}
-          </span>
-        ) : (
-          <span
-            className={`truncate text-gray-900 ${
-              depth === 0 ? 'text-[15px] font-semibold' : 'text-sm font-medium'
-            }`}
-          >
-            {label}
-          </span>
-        )}
-        {/*
-          요일. 일자 바로 옆에 붙여 "9 (토)" 로 읽히게 한다. 잔글씨(건수)보다 앞에
-          두는 것은 요일이 날짜의 일부이기 때문이다.
-        */}
-        {weekday ? (
-          <span className={`shrink-0 text-sm ${WEEKDAY_COLOR[weekday.day] ?? 'text-gray-900'}`}>
-            ({weekday.label})
-          </span>
-        ) : null}
-        {meta ? <span className="shrink-0 text-xs text-gray-500">{meta}</span> : null}
-      </span>
-      {/*
-        들어온 돈과 나간 돈에 각자의 칸을 주고, 칸 안에서는 둘 다 오른쪽 끝에 붙인다.
-
-        한 덩어리로 두면 두 숫자가 서로 옆에 붙어 어느 쪽이 들어온 돈인지 색으로만
-        갈린다. 한쪽이 없는 달에는 남은 숫자가 오른쪽으로 미끄러져, 줄을 훑을 때
-        같은 자리에서 같은 뜻을 읽을 수 없다. 칸을 고정하면 없는 쪽은 빈 자리로
-        남고 있는 쪽은 늘 제 자리에 선다.
-
-        칸 안에서 가운데에 두지 않는 것은 자릿수 때문이다. 1,110 과 222,110 이 위아래로
-        서면 일의 자리가 서로 어긋나, 어느 쪽이 큰 금액인지 길이로 읽을 수 없다.
-        오른쪽에 붙이면 일의 자리가 한 줄로 서서 자릿수가 그대로 보인다.
-      */}
-      {/*
-        금액 묶음. 수입·지출 칸과 그 아래 순수입 줄을 한 덩어리로 쌓아, 왼쪽 이름과 세로
-        가운데를 맞춘다. 이름이 두 줄(긴 기간 이름)일 때 금액 줄만 이름 첫 줄에 붙이고
-        순수입을 그 아래로 늘어뜨리면, 줄 아래쪽 여백만 크게 남는다.
-      */}
-      {/* 폭은 예전의 30% 칸 둘과 그 사이 여백(gap-2)을 합친 것이다. 칸이 좁아지면 큰 금액이 잘린다. */}
-      <span className="flex w-[calc(60%+0.5rem)] shrink-0 flex-col">
-        <span className="flex items-center gap-2">
-          <span
-            className={`flex min-w-0 flex-1 justify-end overflow-hidden font-semibold tabular-nums ${AMOUNT_SIZE[depth]}`}
-          >
-            {income > 0 ? (
-              <span className="truncate text-green-600">+{formatCurrency(income, currency)}</span>
-            ) : null}
-          </span>
-          <span
-            className={`flex min-w-0 flex-1 justify-end overflow-hidden font-semibold tabular-nums ${AMOUNT_SIZE[depth]}`}
-          >
-            {expense > 0 ? (
-              <span className="truncate text-red-600">-{formatCurrency(expense, currency)}</span>
-            ) : expense < 0 ? (
-              // 페이백이 쓴 돈보다 많았다. 지출 칸에 돌아온 돈으로 적는다.
-              <span className="truncate text-green-600">+{formatCurrency(-expense, currency)}</span>
-            ) : income === 0 ? (
-              <span className="font-normal text-gray-400">-</span>
-            ) : null}
-          </span>
-        </span>
-
-        {/*
-          순수입. 수입·지출 칸 바로 아래, 같은 오른쪽 끝에 세운다.
-
-          위 두 숫자를 세로로 더한 결과라 같은 세로선에 서야 눈이 옆으로 새지 않는다.
-          낱말을 앞에 붙이는 것은 색만으로는 "적게 쓴 달"과 "수입이 컸던 달"이 갈리지
-          않아서다 -- 초록 숫자가 둘이 되면 위의 것이 수입인지 남은 돈인지 모른다.
-
-          글자는 한 단 작게 둔다. 이 줄은 위의 두 숫자에서 나온 값이라, 같은 크기로
-          두면 달마다 굵은 금액이 셋이 되어 무엇을 먼저 읽을지 알 수 없다.
-        */}
-        {showsNet ? (
-          <span className="flex justify-end pt-0.5">
-            <span
-              className={`text-xs font-semibold tabular-nums ${
-                net >= 0 ? 'text-green-600' : 'text-red-600'
-              }`}
-            >
-              {t('ledgerSummary.net')} {net >= 0 ? '+' : '-'}
-              {formatCurrency(Math.abs(net), currency)}
-            </span>
-          </span>
-        ) : null}
-      </span>
-    </button>
-  );
-}
+import { CheckBox, Line } from '@/components/transactions/TransactionLine';
+import TransactionDetailModal from '@/components/transactions/TransactionDetailModal';
+import SelectionBar from '@/components/transactions/SelectionBar';
+import HeaderActions from '@/components/transactions/HeaderActions';
+import TransactionTabs from '@/components/transactions/TransactionTabs';
+import MoreActionsModal from '@/components/transactions/MoreActionsModal';
+import TagPickModal from '@/components/transactions/TagPickModal';
 
 /**
  * 거래 화면의 본문 전부.
@@ -405,8 +103,6 @@ export default function TransactionsView({
   onBack?: () => void;
 }) {
   const { t } = useTranslation();
-  const timeZone = useProjectTimeZone();
-  const currency = useProjectDisplayCurrency();
   const myPersonId = useMyPersonId();
   /** 읽기 전용 구성원에게는 베끼기·고치기 단추를 그리지 않는다. */
   const canEdit = useCanEdit();
@@ -527,11 +223,6 @@ export default function TransactionsView({
   }, [selectedProjectId]);
 
   /**
-   * 펼친 자리의 거래 목록.
-   *
-   * 달과 줄을 받아 그때그때 만든다. 여러 달을 함께 펼 수 있어서 목록이 하나가 아니다.
-   */
-  /**
    * 지우기 전에 묻는다. 몇 건인지 함께 적는다.
    *
    * 년월 줄을 체크하면 수십 건이 한꺼번에 골라질 수 있다. 그 숫자를 보여 주지 않으면
@@ -587,11 +278,6 @@ export default function TransactionsView({
     if (!searchKey) return;
     tx.setSearch(JSON.parse(searchKey) as TransactionSearch);
   }, [searchKey, tx.setSearch]);
-
-  const activeTabIndex = Math.max(
-    0,
-    TABS.findIndex((item) => item.id === tx.tab),
-  );
 
   /*
    * 위쪽 한 덩어리(제목·탭·조건)가 비켜서 있는가와 그 높이.
@@ -765,91 +451,6 @@ export default function TransactionsView({
     });
   };
 
-  /** 알약 하나가 놓인 자리. 손대지 않았으면 처음 상태 그대로다 (규칙은 core 의 tag-pick). */
-  const tagStateOf = (tagId: string) =>
-    tagPickState(tagId, tagChanged, tx.commonTagIds, tx.partialTagIds);
-
-  /** 처음 상태에서 달라진 것만 보낸다. 손대지 않은 태그는 그대로 둔다. */
-  const { addTagIds: tagAddIds, removeTagIds: tagRemoveIds } = tagPickResult(
-    tx.pickerTags.map((tag) => tag.id),
-    tagChanged,
-    tx.commonTagIds,
-  );
-  const hasTagChange = tagAddIds.length > 0 || tagRemoveIds.length > 0;
-
-  /**
-   * 상세에 베끼기·고치기 단추를 그릴지.
-   *
-   * 규칙은 둘 다 편집기가 갖는다(`isCopyableEntry`, `isEditableEntry`). 못 다루는
-   * 거래에 단추를 남기면 눌러도 값이 빠진 폼이 뜬다. 두 규칙이 갈리는 것은 분할
-   * 거래다 -- 고칠 수는 있고, 베끼면 줄들이 합쳐진 한 건이 새로 남는다.
-   */
-  const canCopy = detail !== null && canEdit && isCopyableEntry(detail);
-  const canEditDetail = detail !== null && canEdit && isEditableEntry(detail);
-  /**
-   * 상세에 지우기 단추를 그릴지.
-   *
-   * 고치기와 달리 갈래를 가리지 않는다. 잔액 조정도 지울 수는 있다 -- 폼이 못 다루는
-   * 것과 없애지 못하는 것은 다른 이야기다. 읽기 전용 구성원에게만 없다.
-   */
-  const canDelete = detail !== null && canEdit;
-
-  const detailRows: Array<{ label: string; value: string | null }> = detail
-    ? [
-        { label: t('tx.detail.date'), value: formatDateTime(detail.date, timeZone) },
-        // 사람을 비운 거래는 이름이 빈 글자로 온다.
-        { label: t('tx.detail.person'), value: detail.personName || t('tx.noPerson') },
-        // 돌려받은 돈은 종류를 적는다. 목록에는 아이콘만 서서 환불인지 캐시백인지 여기서 안다.
-        {
-          label: t('tx.detail.kind'),
-          value:
-            detail.kind === 'payback'
-              ? t(detail.paybackType === 'refund' ? 'editor.kind.refund' : 'editor.kind.payback')
-              : null,
-        },
-        {
-          label: t('tx.detail.category'),
-          value: detail.parentCategoryName
-            ? `${detail.parentCategoryName} > ${detail.categoryName}`
-            : detail.categoryName,
-        },
-        {
-          label: t('tx.detail.method'),
-          value: detail.cardName ?? detail.accountName,
-        },
-        { label: t('tx.detail.merchant'), value: detail.merchant },
-        {
-          label: t('tx.detail.installment'),
-          /*
-            유이자면 그중 얼마가 이자인지 함께 적는다 -- 이자는 금액 안에 들어 있어,
-            적어 두지 않으면 산 값보다 큰 까닭이 화면 어디에도 없다.
-          */
-          value: installmentLabel(t, detail, (amount) => formatCurrency(amount, currency)),
-        },
-        {
-          label: t('tx.detail.fee'),
-          value:
-            detail.feeAmount && toNumber(detail.feeAmount) > 0
-              ? formatCurrency(detail.feeAmount, currency)
-              : null,
-        },
-        {
-          label: t('tx.detail.original'),
-          value:
-            detail.originalCurrency && detail.originalAmount
-              ? formatCurrency(detail.originalAmount, detail.originalCurrency)
-              : null,
-        },
-        {
-          // 이름표에는 값의 문구(`분할 {count}건`)를 쓰지 않는다. 줄의 이름표가 React 키라 위의
-          // "분류" 줄과도 달라야 한다.
-          label: t('editor.split'),
-          value: detail.splitCount > 1 ? t('tx.detail.split', { count: detail.splitCount }) : null,
-        },
-        { label: t('tx.detail.note'), value: detail.detailedNote },
-      ]
-    : [];
-
   /*
    * 그릴 기간 줄. 아직 받을 차례가 아닌 첫 달(`isMonthWaiting`)까지다.
    *
@@ -901,68 +502,21 @@ export default function TransactionsView({
           뒤로가기 · 몇 개를 골랐는지 · 삭제. 제목과 검색은 그때 쓸 것이 아니다.
         */}
         {tx.isSelecting ? (
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={tx.stopSelecting}
-              aria-label={t('common.back')}
-              title={t('common.back')}
-              className="flex h-9 w-9 items-center justify-center rounded-lg border border-gray-300 bg-white hover:bg-gray-50"
-            >
-              <ArrowLeft className="h-4 w-4 text-gray-600" aria-hidden />
-            </button>
-
-            {/*
-              태그를 붙이러 왔으면 그 버튼이 왼쪽, 뒤로가기 옆에 선다.
-              지우기는 오른쪽 끝이다 -- 되돌릴 수 없는 일이라 뒤로가기에서 멀어야 한다.
-            */}
-            {tx.selectPurpose === 'tag' ? (
-              <button
-                type="button"
-                onClick={() => {
-                  // 열 때마다 비운다. 지난번에 손댄 것이 남으면 엉뚱한 태그가 바뀐다.
-                  setTagChanged({});
-                  setIsTagPickOpen(true);
-                }}
-                disabled={tx.isTagging}
-                aria-label={t('tx.tagSelected')}
-                title={t('tx.tagSelected')}
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-blue-300 bg-white hover:bg-blue-50 disabled:opacity-50"
-              >
-                <Tag className="h-4 w-4 text-blue-600" aria-hidden />
-              </button>
-            ) : null}
-            {/* 분류를 바꾸러 왔으면 태그 단추 자리에 분류 단추가 선다. */}
-            {tx.selectPurpose === 'category' ? (
-              <button
-                type="button"
-                onClick={() => setIsCategoryPickOpen(true)}
-                disabled={tx.isRecategorizing}
-                aria-label={t('tx.categorySelected')}
-                title={t('tx.categorySelected')}
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-blue-300 bg-white hover:bg-blue-50 disabled:opacity-50"
-              >
-                <Shapes className="h-4 w-4 text-blue-600" aria-hidden />
-              </button>
-            ) : null}
-
-            <p className="flex-1 text-base font-semibold text-gray-900">
-              {t('tx.selected', { count: tx.selectedCount })}
-            </p>
-
-            {tx.selectPurpose === 'delete' ? (
-              <button
-                type="button"
-                onClick={askDelete}
-                disabled={tx.isDeleting}
-                aria-label={t('tx.deleteSelected')}
-                title={t('tx.deleteSelected')}
-                className="flex h-9 w-9 items-center justify-center rounded-lg border border-red-300 bg-white hover:bg-red-50 disabled:opacity-50"
-              >
-                <Trash2 className="h-4 w-4 text-red-600" aria-hidden />
-              </button>
-            ) : null}
-          </div>
+          <SelectionBar
+            purpose={tx.selectPurpose}
+            selectedCount={tx.selectedCount}
+            isTagging={tx.isTagging}
+            isRecategorizing={tx.isRecategorizing}
+            isDeleting={tx.isDeleting}
+            onBack={tx.stopSelecting}
+            onTag={() => {
+              // 열 때마다 비운다. 지난번에 손댄 것이 남으면 엉뚱한 태그가 바뀐다.
+              setTagChanged({});
+              setIsTagPickOpen(true);
+            }}
+            onCategory={() => setIsCategoryPickOpen(true)}
+            onDelete={askDelete}
+          />
         ) : (
           <PageHeader
             /*
@@ -985,78 +539,14 @@ export default function TransactionsView({
                 아래에 이 화면을 연 분석이 있다 (2026-10-10 사용자 요청).
               */
               locked ? undefined : (
-                <div className="flex gap-2">
-                  {/*
-                    보관함. 검색 왼쪽에 둔다.
-
-                    아직 거래가 아닌 후보가 쌓이는 자리라 거래 화면에서 들어가는 것이
-                    맞다 -- 그 후보가 되려는 것이 이 화면의 줄이다. 대기 건수는 아이콘
-                    오른쪽 위에 빨간 배지로 얹는다.
-                  */}
-                  <Link
-                    href="/transactions/inbox"
-                    aria-label={t('inbox.open')}
-                    title={t('inbox.title')}
-                    className="flex items-center px-2 py-2 text-gray-600"
-                  >
-                    <span className="relative">
-                      <Archive className="h-4 w-4" aria-hidden />
-                      <CountBadge count={inboxCount} />
-                    </span>
-                  </Link>
-                  {/*
-                    보기를 바꾸는 단추. 지금 무엇을 보고 있는지가 아니라 **누르면 무엇이
-                    되는지**를 그린다 -- 목록을 보는 중이면 달력, 달력을 보는 중이면 목록이다.
-                    누를 자리와 그 결과가 한 그림이라 설명이 필요 없다.
-                  */}
-                  <button
-                    type="button"
-                    onClick={() => setIsCalendar((on) => !on)}
-                    aria-label={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
-                    title={t(isCalendar ? 'tx.viewList' : 'tx.viewCalendar')}
-                    className={`flex items-center justify-center p-2 ${
-                      isCalendar ? 'text-blue-600' : 'text-gray-600'
-                    }`}
-                  >
-                    {isCalendar ? (
-                      <List className="h-4 w-4" aria-hidden />
-                    ) : (
-                      <CalendarDays className="h-4 w-4" aria-hidden />
-                    )}
-                  </button>
-                  {/*
-                    검색. 달력 보기에서도 둔다 -- 걸어 둔 조건이 달력에도 그대로 걸린다.
-                  */}
-                  <button
-                      type="button"
-                      onClick={() => setIsSearchOpen(true)}
-                      aria-label={t('tx.search')}
-                      title={t('tx.search')}
-                      /*
-                        아이콘만 둔다. 테두리·바탕도, 손을 올렸을 때의 바탕도 없다. 앱과
-                        같은 모양이다 -- 머리글에서는 상자보다 아이콘이 먼저 보여야 한다.
-                        검색이 걸려 있다는 신호는 파란 돋보기와 그 옆 숫자가 맡는다.
-                      */
-                      className={`flex items-center gap-1.5 px-2 py-2 text-sm font-medium ${
-                        tx.searchCount > 0 ? 'text-blue-600' : 'text-gray-600'
-                      }`}
-                    >
-                      {/* 돋보기만 둔다. 몇 개를 걸어 두었는지는 옆에 숫자로 붙인다. */}
-                      <Search className="h-4 w-4" aria-hidden />
-                      {tx.searchCount > 0 ? (
-                        <span className="font-semibold">{tx.searchCount}</span>
-                      ) : null}
-                    </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsMoreOpen(true)}
-                    aria-label={t('tx.more')}
-                    title={t('tx.more')}
-                    className="flex items-center justify-center p-2 text-gray-600"
-                  >
-                    <MoreVertical className="h-4 w-4" aria-hidden />
-                  </button>
-                </div>
+                <HeaderActions
+                  inboxCount={inboxCount}
+                  isCalendar={isCalendar}
+                  searchCount={tx.searchCount}
+                  onToggleCalendar={() => setIsCalendar((on) => !on)}
+                  onSearch={() => setIsSearchOpen(true)}
+                  onMore={() => setIsMoreOpen(true)}
+                />
               )
             }
           />
@@ -1084,55 +574,7 @@ export default function TransactionsView({
           >
             {/* 달력 보기에서는 목록 쪽 손잡이를 감춘다 (바로 아래 주석 참고). */}
             {!isCalendar ? (
-              <>
-                {/*
-                  보기 방식.
-
-                  흰 알약을 눌린 칸에 그리지 않고 **하나를 두고 옮긴다.** 칸마다 바탕을 켜고
-                  끄면 탭이 순간이동해, 세 탭이 한 줄에 나란한 것인지 서로 다른 화면인지가
-                  흐려진다. 미끄러져 가면 "옆으로 옮겼다"가 그대로 보인다.
-
-                  폭과 걸음은 calc 로 센다 -- 글자 길이가 언어마다 달라(날짜/Date/日付) 미리
-                  적어 둘 수 없고, 재서 옮기려면 그리고 난 뒤를 기다려야 한다.
-                  `p-1`(0.25rem) 과 `gap-2`(0.5rem) 가 아래 숫자의 출처다.
-                */}
-                <div className="relative flex gap-2 rounded-lg bg-gray-200 p-1">
-                  <span
-                    aria-hidden
-                    className="pointer-events-none absolute inset-y-1 left-1 rounded-md bg-white transition-transform duration-200 ease-out motion-reduce:transition-none"
-                    style={{
-                      width: 'calc((100% - 1.5rem) / 3)',
-                      // 여기서의 100% 는 알약 자신의 폭, 곧 칸 하나다.
-                      transform: `translateX(calc(${activeTabIndex} * (100% + 0.5rem)))`,
-                    }}
-                  />
-                  {TABS.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => tx.changeTab(item.id)}
-                      /* 바탕은 위의 알약이 맡는다. 글자가 그 위에 오도록 자리를 잡아 준다. */
-                      className={`relative flex flex-1 items-center justify-center gap-1 rounded-md px-4 py-2 font-medium ${
-                        tx.tab === item.id ? 'text-blue-600' : 'text-gray-600'
-                      }`}
-                    >
-                      {t(item.labelKey)}
-                      {/*
-                        고른 탭에만 꺾쇠를 둔다. 다음 누름이 무엇을 할지 미리 말한다 -- 거래가
-                        하나라도 보이면 위(전부 접는다), 아니면 아래(한 단 더 편다)다.
-                        이것이 없으면 이미 고른 탭을 다시 누를 까닭을 아무도 모른다.
-                      */}
-                      {tx.tab === item.id ? (
-                        tx.tabOpen ? (
-                          <ChevronUp className="h-3.5 w-3.5" aria-hidden />
-                        ) : (
-                          <ChevronDown className="h-3.5 w-3.5" aria-hidden />
-                        )
-                      ) : null}
-                    </button>
-                  ))}
-                </div>
-              </>
+              <TransactionTabs tab={tx.tab} tabOpen={tx.tabOpen} onChange={tx.changeTab} />
             ) : null}
             {/*
               걸려 있는 조건. 탭 **아래** 둔다(2026-10-07 사용자 요청). 달력 보기에서도 남는다 --
@@ -1302,50 +744,16 @@ export default function TransactionsView({
       </div>
       )}
 
-      {/*
-        더보기 선택창.
-
-        태그가 위, 지우기가 아래다. 되돌릴 수 있는 일을 먼저 둔다 -- 잘못 누를 때의
-        값이 다르다.
-      */}
-      <Modal isOpen={isMoreOpen} onClose={() => setIsMoreOpen(false)} title={t('tx.more')}>
-        <button
-          type="button"
-          onClick={() => {
-            setIsMoreOpen(false);
-            setNotice('');
-            tx.startSelecting('tag');
-          }}
-          className="flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left hover:bg-gray-50"
-        >
-          <Tag className="h-4 w-4 text-blue-600" aria-hidden />
-          <span className="text-base text-gray-900">{t('tx.tagSelect')}</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setIsMoreOpen(false);
-            setNotice('');
-            tx.startSelecting('category');
-          }}
-          className="flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left hover:bg-gray-50"
-        >
-          <Shapes className="h-4 w-4 text-blue-600" aria-hidden />
-          <span className="text-base text-gray-900">{t('tx.categorySelect')}</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => {
-            setIsMoreOpen(false);
-            setNotice('');
-            tx.startSelecting('delete');
-          }}
-          className="flex w-full items-center gap-3 rounded-lg px-2 py-3 text-left hover:bg-gray-50"
-        >
-          <Trash2 className="h-4 w-4 text-red-600" aria-hidden />
-          <span className="text-base text-gray-900">{t('tx.select')}</span>
-        </button>
-      </Modal>
+      {/* 더보기 선택창. 고른 일로 고르기를 시작한다. */}
+      <MoreActionsModal
+        isOpen={isMoreOpen}
+        onClose={() => setIsMoreOpen(false)}
+        onChoose={(purpose) => {
+          setIsMoreOpen(false);
+          setNotice('');
+          tx.startSelecting(purpose);
+        }}
+      />
 
       <CategoryPickModal
         isOpen={isCategoryPickOpen}
@@ -1378,95 +786,34 @@ export default function TransactionsView({
         }}
       />
 
-      {/*
-        고른 거래에 붙일 태그를 정하는 창.
-
-        **더하기만 한다.**
-
-        고른 거래가 **모두** 가진 태그는 체크된 채로, 풀 수 없게 보인다. 이미 붙어 있다는
-        사실을 알려 주는 것이고, 풀 수 없는 것은 이 창이 더하기만 하기 때문이다 -- 풀리게
-        두면 풀고 확인했을 때 떨어질 것으로 읽히는데 그런 일은 없다.
-
-        일부만 가진 태그는 체크하지 않는다. 체크로 보이면 "이미 다 붙어 있다"로 읽히는데,
-        그 상태에서 확인을 눌러도 나머지에는 붙지 않아 말과 결과가 어긋난다.
-      */}
-      <Modal
+      {/* 고른 거래에 붙일 태그를 정하는 창. 더하기만 한다 (TagPickModal 의 주석). */}
+      <TagPickModal
         isOpen={isTagPickOpen}
         onClose={() => setIsTagPickOpen(false)}
-        title={t('tx.tagSelected')}
-        footer={
-          <button
-            type="button"
-            disabled={!hasTagChange || tx.isTagging}
-            onClick={() => {
-              void tx.tagSelected(tagAddIds, tagRemoveIds).then(({ tagged, failed, skipped }) => {
-                setIsTagPickOpen(false);
-                if (failed) setNotice(t('tx.tagFailed'));
-                /*
-                 * 사라진 줄은 한 번 알린다. 다른 기기가 그 사이 분할을 고친 자리다.
-                 *
-                 * 조용히 넘기면 사용자는 표시가 된 줄 알고, 다음 동기화가 태그 없는
-                 * 모습으로 덮을 때에야 알게 된다.
-                 */
-                else if (skipped > 0) setNotice(t('tx.tagSkipped', { count: skipped }));
-                else if (tagged === 0) setNotice(t('tx.tagNothingNew'));
-                else setNotice(t('tx.tagDone', { count: tagged }));
-              });
-            }}
-            className="w-full rounded-lg bg-blue-600 px-4 py-3 font-semibold text-white hover:bg-blue-700 disabled:opacity-50"
-          >
-            {t(tx.isTagging ? 'common.saving' : 'common.confirm')}
-          </button>
-        }
-      >
-        <div className="space-y-4">
-          <p className="text-sm text-gray-600">
-            {t('tx.tagTargets', { count: tx.selectedCount })}
-          </p>
-          {/* 회차 하나를 골라도 태그는 원거래에 붙는다. 함께 켜진 까닭을 적는다. */}
-          {tx.selectedShapes.installment > 0 ? (
-            <p className="text-xs text-amber-700">
-              {t('tx.tagInstallmentNote', { count: tx.selectedShapes.installment })}
-            </p>
-          ) : null}
-
-          {tx.pickerTags.length === 0 ? (
-            <p className="text-sm text-gray-500">{t('tags.empty')}</p>
-          ) : (
-            <div className="flex flex-wrap gap-2">
-              {tx.pickerTags.map((tag) => {
-                const state = tagStateOf(tag.id);
-
-                return (
-                  <Chip
-                    key={tag.id}
-                    label={tag.name}
-                    color={tag.color}
-                    selected={state === 'on'}
-                    partial={state === 'partial'}
-                    mark
-                    /* 누르면 켜지고 꺼진다. "일부"는 켜짐과 일부 사이만 오간다 (tag-pick). */
-                    onClick={() =>
-                      setTagChanged((prev) =>
-                        toggleTagPick(tag.id, prev, tx.commonTagIds, tx.partialTagIds),
-                      )
-                    }
-                  />
-                );
-              })}
-            </div>
-          )}
-
-          {/*
-            무엇이 벌어지는지 글자로 못 박는다. 여러 건을 한꺼번에 다루는 자리라, 이미
-            붙어 있던 것이 사라질지 모른다는 걱정이 실제로 생긴다.
-          */}
-          <p className="text-xs leading-5 text-gray-500">{t('tx.tagHowTo')}</p>
-          {tx.partialTagIds.length > 0 ? (
-            <p className="text-xs leading-5 text-gray-500">{t('tx.tagPartialHint')}</p>
-          ) : null}
-        </div>
-      </Modal>
+        tags={tx.pickerTags}
+        changed={tagChanged}
+        onChangedChange={setTagChanged}
+        commonTagIds={tx.commonTagIds}
+        partialTagIds={tx.partialTagIds}
+        selectedCount={tx.selectedCount}
+        installmentCount={tx.selectedShapes.installment}
+        isTagging={tx.isTagging}
+        onApply={(tagAddIds, tagRemoveIds) => {
+          void tx.tagSelected(tagAddIds, tagRemoveIds).then(({ tagged, failed, skipped }) => {
+            setIsTagPickOpen(false);
+            if (failed) setNotice(t('tx.tagFailed'));
+            /*
+             * 사라진 줄은 한 번 알린다. 다른 기기가 그 사이 분할을 고친 자리다.
+             *
+             * 조용히 넘기면 사용자는 표시가 된 줄 알고, 다음 동기화가 태그 없는
+             * 모습으로 덮을 때에야 알게 된다.
+             */
+            else if (skipped > 0) setNotice(t('tx.tagSkipped', { count: skipped }));
+            else if (tagged === 0) setNotice(t('tx.tagNothingNew'));
+            else setNotice(t('tx.tagDone', { count: tagged }));
+          });
+        }}
+      />
 
       <TransactionSearchModal
         isOpen={isSearchOpen}
@@ -1481,136 +828,26 @@ export default function TransactionsView({
         unit={tx.unit}
       />
 
-      <Modal
-        isOpen={detail !== null}
+      {/* 거래 상세. 베끼기·고치기는 상세를 닫고 편집기를 연다 -- 팝업 둘이 겹치면 뒤로가기가 어느 것을 닫는지 알 수 없다. */}
+      <TransactionDetailModal
+        detail={detail}
         onClose={() => setDetail(null)}
-        title={t('tx.detail.title')}
-        /*
-          베끼기와 고치기. 머리글 오른쪽에 나란히 둔다.
-
-          베끼기는 이 거래를 건드리지 않고 같은 내용의 새 거래를 적는 일이고, 고치기는
-          이 거래를 그대로 연다. 둘 다 상세를 닫고 폼을 세운다 -- 팝업 둘이 겹치면
-          뒤로가기가 어느 것을 닫는지 알 수 없다.
-
-          아이콘은 둘 다 먹색이다. 나란히 선 두 단추에 서로 다른 색을 주면 한쪽이 더
-          중요한 일처럼 읽히는데, 여기서는 어느 쪽을 고를지가 하려는 일에 달렸다.
-        */
-        headerAction={
-          <>
-            {canCopy ? (
-              <button
-                type="button"
-                onClick={() => {
-                  if (!detail) return;
-                  entryEditorRef.current?.openCopy(detail);
-                  setDetail(null);
-                }}
-                aria-label={t('tx.detail.copy')}
-                title={t('tx.detail.copy')}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-900 transition-colors hover:bg-gray-100"
-              >
-                <Copy className="h-4 w-4" aria-hidden />
-              </button>
-            ) : null}
-
-            {canEditDetail ? (
-              <button
-                type="button"
-                onClick={() => {
-                  if (!detail) return;
-                  entryEditorRef.current?.openEdit(detail);
-                  setDetail(null);
-                }}
-                aria-label={t('tx.detail.edit')}
-                title={t('tx.detail.edit')}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-gray-900 transition-colors hover:bg-gray-100"
-              >
-                <Pencil className="h-4 w-4" aria-hidden />
-              </button>
-            ) : null}
-
-            {/*
-              지우기. 되돌릴 수 없는 일이라 빨강이다 -- 베끼기·고치기와 나란히 서지만
-              그 둘과 같은 먹색으로 두면 잘못 누르기 쉽다. 이 화면의 고른 것 지우기
-              단추와도 같은 색이다.
-            */}
-            {canDelete ? (
-              <button
-                type="button"
-                onClick={askDeleteDetail}
-                disabled={tx.isDeleting}
-                aria-label={t('tx.detail.delete')}
-                title={t('tx.detail.delete')}
-                className="flex h-8 w-8 items-center justify-center rounded-lg text-red-600 transition-colors hover:bg-red-50 disabled:opacity-50"
-              >
-                <Trash2 className="h-4 w-4" aria-hidden />
-              </button>
-            ) : null}
-          </>
-        }
-      >
-        {detail ? (
-          <div>
-            <p className="mb-1 text-3xl font-bold text-gray-900">
-              {formatCurrency(detail.amount, currency)}
-            </p>
-            <p className="mb-4 text-base text-gray-600">
-              {detail.description || t('entry.noTitle')}
-            </p>
-            {detailRows
-              .filter((row) => row.value)
-              .map((row) => (
-                <div
-                  key={row.label}
-                  className="flex items-baseline justify-between gap-4 border-b border-gray-100 py-2.5"
-                >
-                  <span className="text-sm text-gray-500">{row.label}</span>
-                  <span className="flex-1 text-right text-[15px] text-gray-900">{row.value}</span>
-                </div>
-              ))}
-
-            {/*
-              붙은 태그. 위의 줄들과 달리 글자가 아니라 알약이라 `detailRows` 에 담지 않는다 --
-              여럿을 쉼표로 이으면 어디까지가 태그 하나인지 읽어야 알 수 있다.
-            */}
-            {detail.tags.length > 0 ? (
-              <div className="flex items-start justify-between gap-4 border-b border-gray-100 py-2.5">
-                <span className="text-sm text-gray-500">{t('tags.pick')}</span>
-                <div className="flex flex-1 flex-wrap justify-end gap-1.5">
-                  {detail.tags.map((tag) => (
-                    <span
-                      key={tag.id}
-                      className="flex items-center gap-1.5 rounded-full bg-gray-100 px-2.5 py-1 text-[13px] text-gray-700"
-                    >
-                      {tag.color ? (
-                        <span
-                          className="h-2 w-2 rounded-full"
-                          style={{ backgroundColor: tag.color }}
-                        />
-                      ) : null}
-                      {tag.name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
-            {/* 지출이면 받은 페이백과 "페이백 추가", 페이백이면 원거래의 날짜. */}
-            <div className="pt-3">
-              <PaybackSection
-                entry={detail}
-                layout="rows"
-                canEdit={canEdit}
-                onAdd={(original) => {
-                  entryEditorRef.current?.openPayback(original);
-                  setDetail(null);
-                }}
-                onOpen={(payback) => setDetail(payback)}
-              />
-            </div>
-          </div>
-        ) : null}
-      </Modal>
+        isDeleting={tx.isDeleting}
+        onCopy={(entry) => {
+          entryEditorRef.current?.openCopy(entry);
+          setDetail(null);
+        }}
+        onEdit={(entry) => {
+          entryEditorRef.current?.openEdit(entry);
+          setDetail(null);
+        }}
+        onDelete={askDeleteDetail}
+        onAddPayback={(original) => {
+          entryEditorRef.current?.openPayback(original);
+          setDetail(null);
+        }}
+        onOpen={(payback) => setDetail(payback)}
+      />
 
       {/*
         거래 추가. 화면 오른쪽 아래에 붙박인다(fixed).

@@ -12,7 +12,7 @@
  * 출시본에는 그 자리가 없다(__DEV__).
  */
 import { useEffect, useState } from 'react';
-import { ActivityIndicator, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
+import { ActivityIndicator, Linking, Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import {
   GoogleSignin,
   isCancelledResponse,
@@ -23,6 +23,9 @@ import {
 
 import { saveAuthTokens } from '@money/core/lib/auth-tokens';
 import { useTranslation } from '@money/core/lib/i18n';
+import { legalUrl } from '@money/core/lib/legal';
+import { apiErrorCode, apiErrorMessage } from '@money/core/lib/api-error';
+import { useLocaleStore } from '@money/core/store/locale';
 import { useAuth } from '@money/core/store/auth';
 
 import { API_URL } from '../api';
@@ -54,6 +57,11 @@ export default function LoginScreen({ startupError }: { startupError?: string })
     };
   }, []);
 
+  /**
+   * 이용약관·개인정보처리방침 동의와 만 14세 이상 확인 (2026-10-25). 체크해야 로그인 단추가 눌린다. 새 계정은 서버도
+   * 이 확인 없이 만들지 않는다(TERMS_REQUIRED).
+   */
+  const [agreed, setAgreed] = useState(false);
   const [isDevOpen, setIsDevOpen] = useState(false);
   const [accessToken, setAccessToken] = useState('');
   const [refreshToken, setRefreshToken] = useState('');
@@ -75,7 +83,7 @@ export default function LoginScreen({ startupError }: { startupError?: string })
         return;
       }
 
-      await signInWithGoogle(response.data.idToken);
+      await signInWithGoogle(response.data.idToken, agreed);
     } catch (err) {
       setError(googleErrorMessage(err, t));
     } finally {
@@ -121,7 +129,9 @@ export default function LoginScreen({ startupError }: { startupError?: string })
         </View>
 
         {startupError ? (
-          <Text className="text-xs text-amber-700">시작 중 오류: {startupError}</Text>
+          <Text className="text-xs text-amber-700">
+            {t('login.startupError', { message: startupError })}
+          </Text>
         ) : null}
 
         {unsent > 0 ? (
@@ -139,9 +149,35 @@ export default function LoginScreen({ startupError }: { startupError?: string })
 
         <View className="gap-4">
           <Pressable
+            onPress={() => setAgreed(!agreed)}
+            accessibilityRole="checkbox"
+            accessibilityState={{ checked: agreed }}
+            className="flex-row items-start gap-2"
+          >
+            <View
+              className={`mt-0.5 h-5 w-5 items-center justify-center rounded border ${
+                agreed ? 'border-blue-600 bg-blue-600' : 'border-gray-400 bg-white'
+              }`}
+            >
+              {agreed ? <Text className="text-xs font-bold text-white">✓</Text> : null}
+            </View>
+            <Text className="flex-1 text-sm text-gray-700">{t('login.agree')}</Text>
+          </Pressable>
+          <View className="flex-row justify-center gap-4">
+            <Pressable onPress={() => void Linking.openURL(legalUrl('terms'))}>
+              <Text className="text-xs text-gray-500 underline">{t('login.terms')}</Text>
+            </Pressable>
+            <Pressable onPress={() => void Linking.openURL(legalUrl('privacy'))}>
+              <Text className="text-xs text-gray-500 underline">{t('login.privacy')}</Text>
+            </Pressable>
+          </View>
+
+          <Pressable
             onPress={signInWithGoogleAccount}
-            disabled={isSubmitting}
-            className="items-center rounded-lg bg-blue-600 px-4 py-3 active:bg-blue-700"
+            disabled={isSubmitting || !agreed}
+            className={`items-center rounded-lg px-4 py-3 ${
+              agreed ? 'bg-blue-600 active:bg-blue-700' : 'bg-gray-300'
+            }`}
           >
             {isSubmitting ? (
               <ActivityIndicator color="white" />
@@ -215,6 +251,8 @@ export default function LoginScreen({ startupError }: { startupError?: string })
  * 서명 지문으로 만든 안드로이드 클라이언트가 구글 콘솔에 없다는 뜻이다.
  */
 function googleErrorMessage(error: unknown, t: ReturnType<typeof useTranslation>['t']): string {
+  // 코드가 붙은 오류(서버의 TERMS_REQUIRED, 기기의 MIRROR_WIPE_FAILED)는 화면 언어의 문장으로 바꾼다.
+  if (apiErrorCode(error)) return apiErrorMessage(useLocaleStore.getState().locale, error, 'login.failed');
   const response = (error as { response?: { status?: number; data?: any } })?.response;
   if (response) {
     const message = response.data?.error?.message ?? response.data?.message;

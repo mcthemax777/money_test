@@ -19,7 +19,12 @@
       "allowBackup": false,
       "predictiveBackGestureEnabled": false,
       "package": "online.bboyong.app",
-      "googleServicesFile": "./credentials/google-services.json"
+      "googleServicesFile": "./credentials/google-services.json",
+      "versionCode": 1,
+      "blockedPermissions": [
+        "android.permission.SYSTEM_ALERT_WINDOW",
+        "android.permission.RECORD_AUDIO"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
@@ -35,7 +40,8 @@
       [
         "expo-camera",
         {
-          "cameraPermission": "가계부 초대 QR 을 찍을 때만 카메라를 씁니다."
+          "cameraPermission": "가계부 초대 QR 을 찍을 때만 카메라를 씁니다.",
+          "recordAudioAndroid": false
         }
       ],
       "@react-native-google-signin/google-signin",

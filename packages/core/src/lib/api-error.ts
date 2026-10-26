@@ -54,6 +54,10 @@ const MESSAGE_KEY: Record<ErrorCode, MessageKey> = {
   CATEGORY_MERGE_TARGET_REQUIRED: 'error.CATEGORY_MERGE_TARGET_REQUIRED',
 
   BUDGET_TARGET_REQUIRED: 'error.BUDGET_TARGET_REQUIRED',
+  TERMS_REQUIRED: 'error.TERMS_REQUIRED',
+  PROJECT_ROLE_VIEWER: 'error.PROJECT_ROLE_VIEWER',
+  PROJECT_ROLE_REQUIRED: 'error.PROJECT_ROLE_REQUIRED',
+  MIRROR_WIPE_FAILED: 'error.MIRROR_WIPE_FAILED',
   TAG_NAME_REQUIRED: 'error.TAG_NAME_REQUIRED',
   TAG_NAME_DUPLICATE: 'error.TAG_NAME_DUPLICATE',
   TAG_MERGE_TARGET_REQUIRED: 'error.TAG_MERGE_TARGET_REQUIRED',
@@ -134,7 +138,14 @@ interface ApiError {
 
 function readApiError(error: unknown): ApiError {
   const body = (error as { response?: { data?: { error?: unknown } } })?.response?.data?.error;
-  if (!body || typeof body !== 'object') return {};
+  if (!body || typeof body !== 'object') {
+    /*
+     * 응답이 없는 오류도 코드를 들고 있을 수 있다 -- 기기의 조립(`LedgerBuildError`)과 사본 검사가 서버와 같은
+     * 코드를 단다 (2026-10-25). 예전에는 여기서 버려, 오프라인 저장의 거절이 한국어 원문 그대로 보였다.
+     */
+    const own = (error as { code?: unknown } | null)?.code;
+    return isErrorCode(own) ? { code: own } : {};
+  }
 
   const { code, details } = body as { code?: unknown; details?: unknown };
 
@@ -219,4 +230,14 @@ export function useApiError() {
   );
 
   return useMemo(() => ({ messageOf }), [messageOf]);
+}
+
+/**
+ * 보류 칸의 거절 사유를 화면 문장으로 (2026-10-25). 사본은 사유를 "코드: 서버 문장" 으로 적어 둔다
+ * (`LocalStore.settleMutations`). 아는 코드면 화면 언어로 바꾸고, 모르면 적힌 문장을 그대로 쓴다.
+ */
+export function storedReasonMessage(locale: Parameters<typeof translate>[0], reason: string): string {
+  const match = /^([A-Z_]+): /.exec(reason);
+  if (match && isErrorCode(match[1])) return translate(locale, MESSAGE_KEY[match[1]]);
+  return reason;
 }

@@ -1,4 +1,4 @@
-import { Injectable, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Injectable, BadRequestException } from '@nestjs/common';
 import { ProjectRole } from '@prisma/client';
 import { CurrencyCode, DEFAULT_TIME_ZONE, isCurrencyCode } from '@money/types';
 import { PrismaService } from '@/config/prisma.service';
@@ -53,7 +53,9 @@ export class ProjectAccessService {
     }
 
     if (ROLE_RANK[membership.role] < ROLE_RANK[requiredRole]) {
-      throw new ForbiddenException(
+      // 동기화 재생은 이 예외(ForbiddenException)를 보고 읽기 권한을 알아챈다.
+      throw forbidden(
+        'PROJECT_ROLE_REQUIRED',
         `이 작업에는 ${ROLE_LABEL[requiredRole]} 이상의 권한이 필요합니다.`,
       );
     }

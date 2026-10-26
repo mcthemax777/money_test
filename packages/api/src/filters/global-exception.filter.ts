@@ -49,18 +49,24 @@ export class GlobalExceptionFilter implements ExceptionFilter {
       timestamp: new Date().toISOString(),
     };
 
-    this.logger.error(
-      `Exception: ${errorCode} - ${traceId} - ${
-        exception instanceof Error ? exception.message : message
-      }`,
-      {
+    /*
+     * 4xx 는 요청 쪽의 문제라 경고로만 남긴다 (2026-10-25). 예전에는 검색 로봇의 404(`/mcp`, `/status`)까지 전부
+     * 오류로 오브젝트째 적어, 진짜 서버 오류가 묻히고 작은 디스크를 채웠다. 5xx 만 원인(exception)째 남긴다.
+     */
+    const summary = `Exception: ${errorCode} - ${traceId} - ${
+      exception instanceof Error ? exception.message : message
+    }`;
+    if (statusCode < 500) {
+      this.logger.warn(`${summary} (${request.method} ${request.path} ${statusCode})`);
+    } else {
+      this.logger.error(summary, {
         traceId,
         path: request.path,
         method: request.method,
         statusCode,
         exception,
-      }
-    );
+      });
+    }
 
     response.status(statusCode).json(apiResponse);
   }

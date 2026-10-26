@@ -23,6 +23,7 @@ import { useAnalyticsPrefs } from '@money/core/lib/analytics';
 import { useFilterTemplateStore } from '@money/core/store/filter-templates';
 import { useAssetListView } from '@money/core/store/asset-list-view';
 import { usePendingProfile } from '@money/core/store/pending-profile';
+import { useInboxPrefs } from '@money/core/store/inbox-prefs';
 
 const PERSISTED = [
   useAuth,
@@ -49,6 +50,8 @@ const PERSISTED = [
   useFilterTemplateStore,
   useAssetListView,
   usePendingProfile,
+  // 알림 원문 보내기 동의. 빠지면 켜 둔 사람도 다시 켤 때마다 끔으로 돌아간다.
+  useInboxPrefs,
 ];
 
 export async function hydrateStores(): Promise<void> {

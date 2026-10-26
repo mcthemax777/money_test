@@ -135,6 +135,27 @@ const KNOWN_APPS: Array<{ match: string; issuer: string }> = [
   { match: 'sms', issuer: '' },
 ];
 
+/**
+ * 알려진 금융 앱(은행·카드·페이)의 알림인가. 문자 앱은 들지 않는다 -- 개인 문자가 섞여 오기 때문이다.
+ *
+ * 알림 원문을 서버로 보낼 때(동의한 사람만) 이것만 보낸다. 메신저나 문자에 금액이 적혀 있어도 보내지 않는다.
+ */
+export function isFinanceApp(packageName: string): boolean {
+  const name = packageName.toLowerCase();
+  return KNOWN_APPS.some((row) => row.issuer !== '' && name.includes(row.match));
+}
+
+/**
+ * 후보를 만들어도 되는 알림인가 (2026-10-25). 알려진 금융 앱, 문자 앱(카드 승인 문자), 관리자가 규칙을 만든 앱만이다.
+ *
+ * 후보에는 알림 원문이 실려 가계부에 저장되고 구성원과 공유된다. 예전에는 금액 문구만 맞으면 어느 앱이든 후보가
+ * 되어, 메신저 대화("3만원 결제했어")까지 원문째 올라갔다. 그 밖의 앱 알림은 이 기기에서 읽고 바로 버린다.
+ */
+export function isCaptureSource(packageName: string, rulePackages: ReadonlySet<string>): boolean {
+  const name = packageName.toLowerCase();
+  return rulePackages.has(packageName) || KNOWN_APPS.some((row) => name.includes(row.match));
+}
+
 /** 문구 안에 적히는 카드사·은행 이름. 앱 이름보다 이쪽이 정확하다. */
 const ISSUER_WORDS = [
   'KB국민카드',

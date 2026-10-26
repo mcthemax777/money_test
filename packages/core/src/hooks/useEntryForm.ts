@@ -423,9 +423,16 @@ export function useEntryForm({
           return { ...next, countsPerformance: defaultCountsPerformance(next.kind, next.paybackType) };
         }
 
-        // 결제수단을 통장으로 바꾸면 할부는 뜻이 없다.
-        if (field === 'method' && !parseMethod(next.method).cardId) {
-          return { ...next, installmentMonths: '' };
+        /*
+         * 할부는 신용카드에만 붙는다. 통장이나 체크카드로 바꾸면 숨은 개월수를 비운다 --
+         * 체크카드도 cardId 가 있어 남겨 두면 저장할 때 조립(assertCanInstall)이 거절한다.
+         */
+        if (field === 'method') {
+          const cardId = parseMethod(next.method).cardId;
+          const isCredit = listsRef.current.cards.some(
+            (card) => card.id === cardId && card.cardType === 'credit',
+          );
+          if (!isCredit) return { ...next, installmentMonths: '' };
         }
         return next;
       });

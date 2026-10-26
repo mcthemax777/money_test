@@ -5,6 +5,7 @@ import { Eye, EyeOff } from 'lucide-react';
 import { apiClient } from '@money/core/lib/api-client';
 import { useTranslation, type MessageKey } from '@money/core/lib/i18n';
 import { useMirrorVersion } from '@money/core/hooks/useMirrorVersion';
+import { useCanEdit } from '@money/core/store/project';
 
 interface HiddenItem {
   id: string;
@@ -34,6 +35,8 @@ interface Props {
  * 숨긴 것이 하나도 없으면 아무것도 그리지 않는다.
  */
 export default function HiddenItemsPanel({ projectId, onRestored, reloadToken }: Props) {
+  // 고치는 도구뿐이라 읽기 권한이면 통째로 감춘다 (서버도 막는다).
+  const canEdit = useCanEdit();
   // 남이 고친 것도 들어와야 한다. reloadToken 은 이 화면의 편집만 센다.
   const mirrorVersion = useMirrorVersion();
   const { t } = useTranslation();
@@ -97,7 +100,7 @@ export default function HiddenItemsPanel({ projectId, onRestored, reloadToken }:
     }
   };
 
-  if (items.length === 0 && !error) return null;
+  if (!canEdit || (items.length === 0 && !error)) return null;
 
   return (
     <div className="bg-white rounded-lg shadow-sm border border-gray-100 p-4">

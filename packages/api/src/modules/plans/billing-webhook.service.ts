@@ -12,6 +12,10 @@
  *   - 새 구독 INITIAL_PURCHASE, 갱신 RENEWAL, 한 번 사는 상품 NON_RENEWING_PURCHASE
  *   - 환불은 CANCELLATION + cancel_reason=CUSTOMER_SUPPORT, 되돌림은 REFUND_REVERSED
  *   - 기간이 밀림 SUBSCRIPTION_EXTENDED, 끝남 EXPIRATION
+ *   - 결제 실패 BILLING_ISSUE: 유예 기간이 켜져 있으면 grace_period_expiration_at_ms 까지 쓴다
+ *     (만료가 아니다). 유예 중 결제되면 RENEWAL, 끝내 안 되면 EXPIRATION 이 온다.
+ *   - TRANSFER 는 app_user_id 가 없어 받지 않는다. 다른 가계부로 옮겨 가지 않게 RevenueCat 의
+ *     전송 설정을 "원래 사용자에 둔다"로 해 두어야 한다 (LAUNCH_CHECKLIST.md).
  *   - Play 구독의 product_id 는 `구독id:기본요금제id`
  * 문서가 말하지 않아 시험 결제로 확인해야 하는 것: 갱신마다 transaction_id 가 바뀌는가.
  * 그래서 결제 번호 열쇠를 `transaction_id@purchased_at_ms` 로 둔다 -- 같은 알림을 다시 받으면
@@ -33,6 +37,8 @@ export interface RevenueCatEvent {
   transaction_id?: string | null;
   purchased_at_ms?: number | null;
   expiration_at_ms?: number | null;
+  /** BILLING_ISSUE 의 유예 기간 끝. 유예가 꺼져 있으면 null 이다. */
+  grace_period_expiration_at_ms?: number | null;
   environment?: 'SANDBOX' | 'PRODUCTION' | string;
   store?: string;
   price_in_purchased_currency?: number | null;
@@ -107,10 +113,15 @@ export class BillingWebhookService {
         return this.restore(event, transactionId);
       case 'SUBSCRIPTION_EXTENDED':
       case 'EXPIRATION':
-        return this.moveEnd(event, transactionId, now);
+        return this.moveEnd(event, transactionId, now, event.expiration_at_ms);
+      case 'BILLING_ISSUE':
+        /*
+         * 카드 결제가 실패했다. 유예 기간 동안은 유료를 이어 준다 -- 그러지 않으면 결제 수단을 고치는 사이
+         * 광고가 먼저 돌아온다. 유예 끝으로 미룰 뿐이라 기간을 줄이지는 않는다.
+         */
+        return this.moveEnd(event, transactionId, now, event.grace_period_expiration_at_ms);
       default:
-        // UNCANCELLATION, BILLING_ISSUE, PRODUCT_CHANGE 따위. 기간을 주는 일은 뒤따르는
-        // RENEWAL/INITIAL_PURCHASE 가 한다.
+        // UNCANCELLATION, PRODUCT_CHANGE 따위. 기간을 주는 일은 뒤따르는 RENEWAL/INITIAL_PURCHASE 가 한다.
         return `ignored:${event.type}`;
     }
   }
@@ -189,12 +200,17 @@ export class BillingWebhookService {
   }
 
   /**
-   * 끝을 스토어가 알린 시각으로 맞춘다. EXPIRATION 은 앞당길 때만(이미 끝난 줄은 그대로),
-   * SUBSCRIPTION_EXTENDED 는 미룰 때만 고친다.
+   * 끝을 스토어가 알린 시각(`endMs`)으로 맞춘다. EXPIRATION 은 앞당길 때만(이미 끝난 줄은 그대로),
+   * SUBSCRIPTION_EXTENDED·BILLING_ISSUE 는 미룰 때만 고친다.
    */
-  private async moveEnd(event: RevenueCatEvent, transactionId: string, now: Date): Promise<WebhookOutcome> {
-    if (!event.expiration_at_ms) return 'ignored:no-expiration';
-    const target = new Date(event.expiration_at_ms);
+  private async moveEnd(
+    event: RevenueCatEvent,
+    transactionId: string,
+    now: Date,
+    endMs: number | null | undefined,
+  ): Promise<WebhookOutcome> {
+    if (!endMs) return 'ignored:no-expiration';
+    const target = new Date(endMs);
     const all = await this.matching(event, transactionId);
     // 기간을 미루는 알림이 구매보다 먼저 왔다. 끝남(EXPIRATION)은 줄이 없으면 당길 것도 없다.
     if (all.length === 0 && event.type === 'SUBSCRIPTION_EXTENDED') {

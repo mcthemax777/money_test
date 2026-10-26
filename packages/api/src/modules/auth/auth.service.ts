@@ -1,4 +1,5 @@
 import { randomUUID } from 'crypto';
+import { badRequest } from '@/common/app-error';
 import {
   Injectable,
   BadRequestException,
@@ -108,15 +109,24 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
       const taken =
         email !== existing.email &&
         (await this.prisma.user.findUnique({ where: { email }, select: { id: true } })) !== null;
+      // 이 칸 전에 가입한 계정이 이번에 동의했으면 그 시각을 남긴다.
+      const agreed = dto.agreedToTerms === true && !existing.termsAgreedAt ? { termsAgreedAt: new Date() } : {};
       const user = await this.prisma.user.update({
         where: { id: existing.id },
-        data: taken ? { avatar } : { email, avatar },
+        data: taken ? { avatar, ...agreed } : { email, avatar, ...agreed },
       });
 
       return this.buildAuthResponse(user);
     }
 
-    const user = await this.createGoogleUser({ googleId, email, name, avatar });
+    /*
+     * 새 계정은 이용약관·개인정보처리방침 동의와 만 14세 이상 확인을 받은 뒤에만 만든다 (개인정보 보호법 §22,
+     * 2026-10-25). 로그인 화면이 그 확인을 받고 `agreedToTerms` 를 싣는다.
+     */
+    if (dto.agreedToTerms !== true) {
+      throw badRequest('TERMS_REQUIRED', '이용약관과 개인정보처리방침에 동의해야 가입할 수 있습니다.');
+    }
+    const user = await this.createGoogleUser({ googleId, email, name, avatar, termsAgreedAt: new Date() });
 
     return this.buildAuthResponse(user);
   }
@@ -156,6 +166,7 @@ export class AuthService implements OnModuleInit, OnModuleDestroy {
     email: string;
     name: string;
     avatar: string | null;
+    termsAgreedAt: Date;
   }) {
     /*
      * 만든 행을 그대로 돌려준다. 예전에는 기본 가계부를 만들어 붙이느라 id 만 들고

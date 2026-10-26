@@ -1,0 +1,15 @@
+# 검색 노출은 공개 안내 페이지만. 관리 화면과 로그인 뒤 화면은 색인하지 않는다 (2026-10-25).
+User-agent: *
+Allow: /privacy
+Allow: /terms
+Allow: /account-deletion
+Allow: /login
+Disallow: /admin
+Disallow: /api/
+Disallow: /home
+Disallow: /transactions
+Disallow: /analysis
+Disallow: /assets
+Disallow: /settings
+Disallow: /start
+Disallow: /join

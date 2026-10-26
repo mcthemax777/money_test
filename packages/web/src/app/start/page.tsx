@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 
 import ProjectAccessLostDialog from '@/components/ProjectAccessLostDialog';
-import { useProjectStart } from '@money/core/hooks/useProjectStart';
+import { inviteActionOf, useProjectStart } from '@money/core/hooks/useProjectStart';
 import { useTranslation } from '@money/core/lib/i18n';
 import { FIRST_PATH } from '@money/core/lib/nav';
 import { useAuth } from '@money/core/store/auth';
@@ -59,6 +59,11 @@ export default function StartPage() {
    */
   const goHome = () => router.push(FIRST_PATH);
 
+  // 참여 키로 보낸 요청이 승인되었다. 훅이 그 가계부를 골라 두었다.
+  useEffect(() => {
+    if (start.entered) router.push(FIRST_PATH);
+  }, [router, start.entered]);
+
   /** 한 걸음 물러선다. 초대 카드 -> 고른 길 -> 단추 둘 의 차례다. */
   const goBack = () => {
     setError('');
@@ -87,12 +92,13 @@ export default function StartPage() {
   const submitJoin = async () => {
     setError('');
     const result = await start.join();
-    if (result.ok) goHome();
-    else setError(result.message);
+    if (!result.ok) setError(result.message);
+    // 요청을 보냈으면(waiting) 카드가 "기다리는 중"으로 바뀌고 이 화면에 머문다.
+    else if (!result.waiting) goHome();
   };
 
   const invite = start.invite;
-  const canJoin = invite !== null && (invite.isMember || invite.status === 'pending');
+  const action = invite ? inviteActionOf(invite, start.isBusy) : null;
 
   return (
     <div className="min-h-screen bg-gray-50 px-4 py-10">
@@ -110,7 +116,7 @@ export default function StartPage() {
           들어갈 곳을 찾았으면 그것만 보여 준다. 무엇에 들어가는지 한 번 확인시키는
           자리라, 옆에 다른 칸이 함께 있으면 눈이 갈린다.
         */}
-        {invite ? (
+        {invite && action ? (
           <section className="space-y-4 rounded-xl border border-blue-200 bg-white p-5 shadow-sm">
             <div>
               <h2 className="text-lg font-semibold text-gray-900">{invite.projectName}</h2>
@@ -121,21 +127,23 @@ export default function StartPage() {
               </p>
             </div>
 
-            {invite.isMember ? (
-              <p className="text-sm text-gray-600">{t('start.alreadyMember')}</p>
-            ) : invite.status !== 'pending' ? (
-              <p className="text-sm text-red-700">{t('start.inviteUnusable')}</p>
+            {action.noteKey ? (
+              <p className={`text-sm ${action.isError ? 'text-red-700' : 'text-gray-600'}`}>
+                {t(action.noteKey)}
+              </p>
             ) : null}
 
             <div className="flex gap-2">
-              <button
-                type="button"
-                onClick={submitJoin}
-                disabled={!canJoin || start.isBusy}
-                className="flex-1 rounded-lg bg-blue-600 px-4 py-2.5 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
-              >
-                {t(start.isBusy ? 'start.joining' : 'start.joinSubmit')}
-              </button>
+              {action.buttonKey ? (
+                <button
+                  type="button"
+                  onClick={submitJoin}
+                  disabled={!action.canSubmit}
+                  className="flex-1 rounded-lg bg-blue-600 px-4 py-2.5 font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                >
+                  {t(action.buttonKey)}
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={() => {
@@ -214,13 +222,13 @@ export default function StartPage() {
               </button>
             </form>
 
-              <button
-                type="button"
-                onClick={goBack}
-                className="w-full py-1 text-sm text-gray-500 hover:underline"
-              >
-                {t('common.back')}
-              </button>
+            <button
+              type="button"
+              onClick={goBack}
+              className="w-full py-1 text-sm text-gray-500 hover:underline"
+            >
+              {t('common.back')}
+            </button>
           </section>
         ) : (
           <section className="space-y-3 rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
@@ -265,13 +273,13 @@ export default function StartPage() {
 
             <p className="text-xs text-gray-500">{t('start.scanApp')}</p>
 
-              <button
-                type="button"
-                onClick={goBack}
-                className="w-full py-1 text-sm text-gray-500 hover:underline"
-              >
-                {t('common.back')}
-              </button>
+            <button
+              type="button"
+              onClick={goBack}
+              className="w-full py-1 text-sm text-gray-500 hover:underline"
+            >
+              {t('common.back')}
+            </button>
           </section>
         )}
 

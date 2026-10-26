@@ -29,6 +29,7 @@ import {
   groupPendingByMonth,
 } from '@money/core/lib/pending-rates';
 import type { CardDto } from '@money/types';
+import { useCanEdit } from '@money/core/store/project';
 
 export default function PendingRatePanel({
   cardId,
@@ -38,6 +39,8 @@ export default function PendingRatePanel({
   /** 확정 뒤 남은 대금과 사용액을 다시 읽도록 부모에게 알린다. */
   onSettled: () => void | Promise<void>;
 }) {
+  // 고치는 도구뿐이라 읽기 권한이면 통째로 감춘다 (서버도 막는다).
+  const canEdit = useCanEdit();
   const { t } = useTranslation();
   const { messageOf } = useApiError();
   // 남이 그 카드로 결제한 외화 건도 여기 올라와야 한다.
@@ -111,7 +114,7 @@ export default function PendingRatePanel({
     }
   };
 
-  if (items.length === 0) return null;
+  if (!canEdit || items.length === 0) return null;
 
   return (
     <View className="gap-3 border-t border-gray-200 pt-4">

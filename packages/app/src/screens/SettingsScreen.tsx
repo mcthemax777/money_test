@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Pressable, Text, View } from 'react-native';
+import { legalUrl } from '@money/core/lib/legal';
+import { isInboxNativeAvailable } from '../inbox';
+import { Linking, Pressable, Text, View } from 'react-native';
 import { SUPPORTED_LOCALES, WEEK_START_DAYS, type Locale, type WeekStart } from '@money/types';
 
 import { useAnalyticsPrefs } from '@money/core/lib/analytics';
+import { useInboxPrefs } from '@money/core/store/inbox-prefs';
 import { useSelectedProjectSettings } from '@money/core/hooks/useSelectedProjectSettings';
 import { useApiError } from '@money/core/lib/api-error';
 import { weekdayNames } from '@money/core/lib/datetime';
@@ -110,6 +113,8 @@ export default function SettingsScreen() {
         <AdPrivacySettings />
         {/* 사용 통계와 오류 보고를 이 기기에서 끄는 자리. 웹의 AnalyticsSettings 와 같은 값이다. */}
         <AnalyticsSettings />
+        {/* 금융 앱 알림 원문을 인식 개선에 보낼지. 알림 읽기를 쓰는 안드로이드에만 있다. 기본은 끔. */}
+        {isInboxNativeAvailable ? <InboxSampleSettings /> : null}
         {/*
           오프라인에서 적었지만 아직 서버로 가지 못한 거래.
           대개는 조용히 나가므로 평소에는 빈 화면이고, 충돌과 거절만 여기 남는다.
@@ -119,6 +124,16 @@ export default function SettingsScreen() {
           badge={outboxCount}
           onPress={() => go('/settings/outbox')}
         />
+
+        {/* 법적 고지. 웹의 공개 페이지를 브라우저로 연다 (웹 설정과 같은 자리). */}
+        <View className="flex-row justify-center gap-4 pt-2">
+          <Pressable onPress={() => void Linking.openURL(legalUrl('terms'))} accessibilityRole="link">
+            <Text className="text-xs text-gray-500 underline">{t('login.terms')}</Text>
+          </Pressable>
+          <Pressable onPress={() => void Linking.openURL(legalUrl('privacy'))} accessibilityRole="link">
+            <Text className="text-xs text-gray-500 underline">{t('login.privacy')}</Text>
+          </Pressable>
+        </View>
       </View>
     </View>
   );
@@ -281,6 +296,39 @@ function AnalyticsSettings() {
         ]}
         value={enabled ? 'on' : 'off'}
         onSelect={(choice) => setEnabled(choice === 'on')}
+      />
+    </>
+  );
+}
+
+/**
+ * 금융 앱 알림의 원문을 서버로 보내 인식 규칙을 고치는 데 쓰게 할지 (2026-10-25). 이 기기에만 남는 값이고
+ * 기본은 끔이다 (`useInboxPrefs`). 무엇을 보내는지는 팝업이 말한다.
+ */
+function InboxSampleSettings() {
+  const { t } = useTranslation();
+  const { shareSamples, setShareSamples } = useInboxPrefs();
+  const [isOpen, setIsOpen] = useState(false);
+
+  return (
+    <>
+      <SettingRow
+        title={t('settings.inboxSamples.title')}
+        value={t(shareSamples ? 'settings.inboxSamples.on' : 'settings.inboxSamples.off')}
+        onPress={() => setIsOpen(true)}
+      />
+
+      <OptionModal
+        isOpen={isOpen}
+        onClose={() => setIsOpen(false)}
+        title={t('settings.inboxSamples.title')}
+        description={t('settings.inboxSamples.description')}
+        options={[
+          { value: 'on', label: t('settings.inboxSamples.on') },
+          { value: 'off', label: t('settings.inboxSamples.off') },
+        ]}
+        value={shareSamples ? 'on' : 'off'}
+        onSelect={(choice) => setShareSamples(choice === 'on')}
       />
     </>
   );

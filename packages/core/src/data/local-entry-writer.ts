@@ -222,14 +222,7 @@ export function createLocalEntryWriter({
 
   /** 짐의 분류·태그 id 중 서버 id 로 옮겨진 것을 갈아 끼운다 (`aliasesOf`). */
   const withServerIds = async (payload: EntryMutationPayload): Promise<EntryMutationPayload> => {
-    const aliases = await store.aliasesOf(
-      [
-        payload.categoryId,
-        payload.transferFeeCategoryId,
-        ...(payload.tagIds ?? []),
-        ...(payload.splits ?? []).flatMap((split) => [split.categoryId, ...(split.tagIds ?? [])]),
-      ].filter((id): id is string => typeof id === 'string'),
-    );
+    const aliases = await store.aliasesOf(referencedIds(payload));
     if (aliases.size === 0) return payload;
     const swap = <T extends string | undefined | null>(id: T): T => (id ? ((aliases.get(id) ?? id) as T) : id);
     return {
@@ -416,4 +409,15 @@ export function createLocalEntryWriter({
 function text(value: unknown): string | undefined {
   if (value === undefined || value === null || value === '') return undefined;
   return String(value);
+}
+
+/** 짐이 가리키는 분류·태그 id. 끊긴 채 만든 것이 서버 id 로 옮겨졌는지 볼 대상이다. */
+function referencedIds(payload: EntryMutationPayload): string[] {
+  const ids = [
+    payload.categoryId,
+    payload.transferFeeCategoryId,
+    ...(payload.tagIds ?? []),
+    ...(payload.splits ?? []).flatMap((split) => [split.categoryId, ...(split.tagIds ?? [])]),
+  ].filter((id): id is string => typeof id === 'string');
+  return [...new Set(ids)];
 }

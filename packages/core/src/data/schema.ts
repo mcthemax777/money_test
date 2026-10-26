@@ -609,6 +609,18 @@ export const SCHEMA_STATEMENTS: readonly string[] = [
   `CREATE INDEX IF NOT EXISTS draft_dedupe_idx ON entry_draft (projectId, dedupeKey)`,
   `CREATE INDEX IF NOT EXISTS draft_tag_idx ON entry_draft_tag (tagId)`,
   `CREATE INDEX IF NOT EXISTS draft_op_queue_idx ON draft_op (projectId, createdAt)`,
+  /*
+   * 규모가 커질 때 표 전체를 훑던 질의들 (2026-10-25). 앱을 열 때마다 IF NOT EXISTS 로 만드므로 판을 올리지 않는다.
+   *   - 거래 목록의 차례(날짜·id 내림차순)와 그 커서.
+   *   - 환율 찾기: 통화쌍의 가장 늦은 줄.
+   *   - 반복 규칙의 후보, 카드의 부채 계정, 소분류, 사람별 거래.
+   */
+  `CREATE INDEX IF NOT EXISTS entry_project_order_idx ON entry (projectId, date DESC, id DESC)`,
+  `CREATE INDEX IF NOT EXISTS exchange_rate_pair_idx ON exchange_rate (projectId, baseCurrency, quoteCurrency, date)`,
+  `CREATE INDEX IF NOT EXISTS draft_rule_idx ON entry_draft (recurringRuleId)`,
+  `CREATE INDEX IF NOT EXISTS card_liability_idx ON card (liabilityAccountId)`,
+  `CREATE INDEX IF NOT EXISTS category_parent_idx ON category (parentId)`,
+  `CREATE INDEX IF NOT EXISTS entry_person_idx ON entry (personId)`,
 ];
 
 /**
