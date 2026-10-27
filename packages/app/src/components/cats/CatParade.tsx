@@ -1,17 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, Text, View, useWindowDimensions } from 'react-native';
+import { Animated, Easing, Pressable, Text, View, useWindowDimensions } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import Animated, {
-  Easing,
-  FadeIn,
-  FadeOut,
-  cancelAnimation,
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withRepeat,
-  withTiming,
-} from 'react-native-reanimated';
 
 import { useVisibleParade } from '@money/core/hooks/useCats';
 import {
@@ -26,6 +15,7 @@ import { useTranslation } from '@money/core/lib/i18n';
 import { useProject } from '@money/core/store/project';
 
 import CatArt from './CatArt';
+import { useReduceMotion } from './motion';
 
 /** 누르면 이름 말풍선이 떠 있는 시간. */
 const BUBBLE_MS = 2200;
@@ -76,16 +66,19 @@ export default function CatParade() {
 /**
  * 고양이 한 마리. 할 일(`nextCatAction`)을 하나 끝내면 다음 일을 고른다.
  *
- * 자리 옮김은 UI 실의 타이밍이 한다(`withTiming`). JS 는 할 일을 바꿀 때만 한 번 깬다. 움직임을 줄이는 설정이면
- * 걷지 않고 서거나 잠들기만 한다.
+ * 자리 옮김은 네이티브 드라이버의 타이밍이 한다. JS 는 할 일을 바꿀 때만 한 번 깬다. 움직임을 줄이는 설정이면
+ * 걷지 않고 서거나 잠들기만 한다. reanimated 를 쓰지 않는 까닭은 `motion.ts`.
  */
 function Walker({ breedId, startX, range }: { breedId: string; startX: number; range: number }) {
   const { t } = useTranslation();
-  const reduceMotion = useReducedMotion();
+  const reduceMotion = useReduceMotion();
   const [pose, setPose] = useState<CatPose>('stand');
   const [facingRight, setFacingRight] = useState(true);
   const [bubble, setBubble] = useState(false);
-  const x = useSharedValue(startX);
+  const x = useRef(new Animated.Value(startX)).current;
+  const walk = useRef<Animated.CompositeAnimation | null>(null);
+  /** 줄에 처음 설 때 옅은 데서 나타난다. */
+  const appear = useRef(new Animated.Value(0)).current;
   const xRef = useRef(startX);
   const timer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const bubbleTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -103,7 +96,13 @@ function Walker({ breedId, startX, range }: { breedId: string; startX: number; r
       setFacingRight(action.toX >= from);
       setPose('walk');
       xRef.current = action.toX;
-      x.value = withTiming(action.toX, { duration: action.ms, easing: Easing.linear });
+      walk.current = Animated.timing(x, {
+        toValue: action.toX,
+        duration: action.ms,
+        easing: Easing.linear,
+        useNativeDriver: true,
+      });
+      walk.current.start();
       timer.current = setTimeout(() => step.current(), action.ms);
       return;
     }
@@ -114,23 +113,23 @@ function Walker({ breedId, startX, range }: { breedId: string; startX: number; r
   useEffect(() => {
     // 처음에는 잠깐 서 있다 움직인다. 여럿이 한꺼번에 출발하지 않게 조금씩 어긋난다.
     timer.current = setTimeout(() => step.current(), 600 + Math.random() * 1500);
+    Animated.timing(appear, { toValue: 1, duration: 180, useNativeDriver: true }).start();
     return () => {
       clearTimeout(timer.current);
       clearTimeout(bubbleTimer.current);
-      cancelAnimation(x);
+      walk.current?.stop();
     };
-  }, [x]);
+  }, [appear]);
 
   /* 화면 폭이 줄어(돌리기·창 나누기) 줄 밖에 서게 되면 안으로 들인다. */
   useEffect(() => {
     if (xRef.current > range) {
       xRef.current = range;
-      cancelAnimation(x);
-      x.value = range;
+      walk.current?.stop();
+      x.setValue(range);
     }
   }, [range, x]);
 
-  const moveStyle = useAnimatedStyle(() => ({ transform: [{ translateX: x.value }] }));
 
   const onPress = () => {
     clearTimeout(bubbleTimer.current);
@@ -147,22 +146,16 @@ function Walker({ breedId, startX, range }: { breedId: string; startX: number; r
   return (
     <Animated.View
       pointerEvents="box-none"
-      entering={FadeIn.duration(180)}
-      exiting={FadeOut.duration(150)}
-      style={[{ position: 'absolute', bottom: 0, left: 0, width: CAT_SPRITE_WIDTH }, moveStyle]}
+      style={{
+        position: 'absolute',
+        bottom: 0,
+        left: 0,
+        width: CAT_SPRITE_WIDTH,
+        opacity: appear,
+        transform: [{ translateX: x }],
+      }}
     >
-      {bubble ? (
-        <Animated.View
-          entering={FadeIn.duration(150)}
-          exiting={FadeOut.duration(150)}
-          pointerEvents="none"
-          style={{ position: 'absolute', bottom: '100%', left: -40, right: -40, alignItems: 'center' }}
-        >
-          <Text numberOfLines={1} className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-gray-700 shadow">
-            {t(catNameKey(breedId))}
-          </Text>
-        </Animated.View>
-      ) : null}
+      {bubble ? <Bubble label={t(catNameKey(breedId))} /> : null}
       {pose === 'sleep' ? <Zzz /> : null}
       <Pressable
         onPress={onPress}
@@ -177,20 +170,43 @@ function Walker({ breedId, startX, range }: { breedId: string; startX: number; r
   );
 }
 
+/** 이름 말풍선. 옅은 데서 나타난다. */
+function Bubble({ label }: { label: string }) {
+  const fade = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    Animated.timing(fade, { toValue: 1, duration: 150, useNativeDriver: true }).start();
+  }, [fade]);
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={{ position: 'absolute', bottom: '100%', left: -40, right: -40, alignItems: 'center', opacity: fade }}
+    >
+      <Text numberOfLines={1} className="rounded-full bg-white px-2 py-0.5 text-[11px] font-medium text-gray-700 shadow">
+        {label}
+      </Text>
+    </Animated.View>
+  );
+}
+
 /** 잠든 고양이 위로 떠오르는 z. */
 function Zzz() {
-  const reduceMotion = useReducedMotion();
-  const lift = useSharedValue(0);
+  const reduceMotion = useReduceMotion();
+  const lift = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (reduceMotion) return;
-    lift.value = 0;
-    lift.value = withRepeat(withTiming(1, { duration: 2400, easing: Easing.out(Easing.quad) }), -1, false);
-    return () => cancelAnimation(lift);
+    const loop = Animated.loop(
+      Animated.timing(lift, { toValue: 1, duration: 2400, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+    );
+    loop.start();
+    return () => loop.stop();
   }, [lift, reduceMotion]);
-  const style = useAnimatedStyle(() => ({
-    opacity: lift.value < 0.3 ? lift.value / 0.3 : 1 - (lift.value - 0.3) / 0.7,
-    transform: [{ translateX: lift.value * 6 }, { translateY: -lift.value * 14 }],
-  }));
+  const style = {
+    opacity: lift.interpolate({ inputRange: [0, 0.3, 1], outputRange: [0, 1, 0] }),
+    transform: [
+      { translateX: lift.interpolate({ inputRange: [0, 1], outputRange: [0, 6] }) },
+      { translateY: lift.interpolate({ inputRange: [0, 1], outputRange: [0, -14] }) },
+    ],
+  };
   return (
     <Animated.View pointerEvents="none" style={[{ position: 'absolute', top: -4, right: 4 }, reduceMotion ? null : style]}>
       <Text className="text-[10px] font-bold text-blue-400">z</Text>

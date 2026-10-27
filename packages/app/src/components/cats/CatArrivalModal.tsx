@@ -1,12 +1,5 @@
-import { useEffect } from 'react';
-import { Pressable, Text, View } from 'react-native';
-import Animated, {
-  useAnimatedStyle,
-  useReducedMotion,
-  useSharedValue,
-  withDelay,
-  withSpring,
-} from 'react-native-reanimated';
+import { useEffect, useRef } from 'react';
+import { Animated, Pressable, Text, View } from 'react-native';
 import { catBreedOf } from '@money/types';
 
 import { useCatArrivals } from '@money/core/hooks/useCats';
@@ -17,6 +10,7 @@ import { useProject } from '@money/core/store/project';
 import Modal from '../Modal';
 import { useNavigation } from '../../shell/navigation';
 import CatArt from './CatArt';
+import { useReduceMotion } from './motion';
 
 /**
  * "새 고양이가 찾아왔어요" 알림. 웹의 `components/cats/CatArrivalDialog` 와 같은 짝이다.
@@ -104,17 +98,30 @@ function FooterButton({ label, onPress, primary }: { label: string; onPress: () 
   );
 }
 
-/** 작은 데서 한 번 넘쳤다가 제자리에 서며 나타난다. */
+/** 작은 데서 한 번 넘쳤다가 제자리에 서며 나타난다. reanimated 를 쓰지 않는 까닭은 `motion.ts`. */
 function Pop({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) {
-  const reduceMotion = useReducedMotion();
-  const scale = useSharedValue(reduceMotion ? 1 : 0.4);
+  const reduceMotion = useReduceMotion();
+  const scale = useRef(new Animated.Value(0.4)).current;
   useEffect(() => {
-    if (reduceMotion) return;
-    scale.value = withDelay(delay, withSpring(1, { damping: 9, stiffness: 180 }));
+    if (reduceMotion) {
+      scale.setValue(1);
+      return;
+    }
+    const pop = Animated.sequence([
+      Animated.delay(delay),
+      Animated.spring(scale, { toValue: 1, damping: 9, stiffness: 180, useNativeDriver: true }),
+    ]);
+    pop.start();
+    return () => pop.stop();
   }, [delay, reduceMotion, scale]);
-  const style = useAnimatedStyle(() => ({
-    opacity: Math.min(1, (scale.value - 0.4) / 0.4),
-    transform: [{ scale: scale.value }],
-  }));
-  return <Animated.View style={style}>{children}</Animated.View>;
+  return (
+    <Animated.View
+      style={{
+        opacity: scale.interpolate({ inputRange: [0.4, 0.8, 2], outputRange: [0, 1, 1], extrapolate: 'clamp' }),
+        transform: [{ scale }],
+      }}
+    >
+      {children}
+    </Animated.View>
+  );
 }
