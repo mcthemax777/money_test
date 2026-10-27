@@ -24,6 +24,7 @@ import { useFilterTemplateStore } from '@money/core/store/filter-templates';
 import { useAssetListView } from '@money/core/store/asset-list-view';
 import { usePendingProfile } from '@money/core/store/pending-profile';
 import { useInboxPrefs } from '@money/core/store/inbox-prefs';
+import { useCats } from '@money/core/store/cats';
 
 const PERSISTED = [
   useAuth,
@@ -52,6 +53,8 @@ const PERSISTED = [
   usePendingProfile,
   // 알림 원문 보내기 동의. 빠지면 켜 둔 사람도 다시 켤 때마다 끔으로 돌아간다.
   useInboxPrefs,
+  // 받아 둔 고양이·알린 고양이·끊긴 동안 고른 것·보이기 설정. 빠지면 켤 때마다 모든 고양이를 새로 왔다고 알린다.
+  useCats,
 ];
 
 export async function hydrateStores(): Promise<void> {

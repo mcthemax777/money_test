@@ -33,6 +33,7 @@ import LoginScreen from './src/screens/LoginScreen';
 import OutboxScreen from './src/screens/OutboxScreen';
 import InquiriesScreen from './src/screens/InquiriesScreen';
 import EntrySheetScreen from './src/screens/EntrySheetScreen';
+import CatsScreen from './src/screens/CatsScreen';
 import BudgetSettingsScreen from './src/screens/BudgetSettingsScreen';
 import { BUDGET_SETTINGS_PATH } from '@money/core/lib/budget';
 import ProfileScreen from './src/screens/ProfileScreen';
@@ -255,6 +256,9 @@ function screenOf(path: string) {
     // 거래내역 엑셀 가져오기·내보내기.
     case '/settings/sheet':
       return <EntrySheetScreen />;
+    // 고양이 도감. 새 고양이 알림의 "도감 보기"도 여기로 온다.
+    case '/settings/cats':
+      return <CatsScreen />;
     default:
       return <ComingSoon />;
   }

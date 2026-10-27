@@ -6,6 +6,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useTranslation } from '@money/core/lib/i18n';
 import { useInboxCountSync } from '@money/core/hooks/useEntryDrafts';
+import { useCatsSync, useVisibleParade } from '@money/core/hooks/useCats';
+import { CAT_PARADE_HEIGHT } from '@money/core/lib/cats';
 import { useAuth } from '@money/core/store/auth';
 import { useProject } from '@money/core/store/project';
 
@@ -19,6 +21,8 @@ import { FloatingActionProvider, useFloatingAction } from './floating-action';
 import Sidebar from './Sidebar';
 import TabBar from './TabBar';
 import AdBanner from '../components/AdBanner';
+import CatParade from '../components/cats/CatParade';
+import CatArrivalModal from '../components/cats/CatArrivalModal';
 
 /**
  * 로그인 뒤 화면들의 공통 껍데기. 웹의 AppShell 과 같은 규칙이다.
@@ -47,7 +51,12 @@ function Shell({ children }: { children: ReactNode }) {
   const { isAuthenticated, isInitializing } = useAuth();
   const insets = useSafeAreaInsets();
   // 아래 탭의 거래 칸에 띄울 보관함 수. 탭·사이드바가 함께 읽으므로 여기서 한 번만 센다.
-  useInboxCountSync(useProject((state) => state.selectedProjectId));
+  const selectedProjectId = useProject((state) => state.selectedProjectId);
+  useInboxCountSync(selectedProjectId);
+  // 고양이 엠블럼. 가계부를 고를 때와 동기화 신호마다 서버가 미션을 다시 판정한다.
+  useCatsSync(selectedProjectId);
+  /* 화면 아래를 걷는 고양이가 있으면 본문 끝을 그만큼 더 비운다. 마지막 줄이 고양이에 가리지 않게. */
+  const paradeHeight = useVisibleParade(selectedProjectId).length > 0 ? CAT_PARADE_HEIGHT : 0;
   /* 바닥에 닿으면 목록이 다음 쪽을 잇는다 (shell/scroll 참고). */
   const nearBottom = useNearBottomScroll();
   const isScrollLocked = useScrollLocked();
@@ -119,7 +128,7 @@ function Shell({ children }: { children: ReactNode }) {
             /* 목록을 끌어 옮기는 동안은 스크롤을 멈춘다. 함께 움직이면 줄이 손끝에서 달아난다. */
             scrollEnabled={!isScrollLocked}
             contentContainerClassName="mx-auto w-full max-w-7xl px-4 pb-8 pt-4 md:pt-8"
-            contentContainerStyle={{ paddingBottom: 32 + insets.bottom }}
+            contentContainerStyle={{ paddingBottom: 32 + insets.bottom + paradeHeight }}
             ref={setScrollRef}
             /*
              * 스크롤 영역이 화면 어디에 있는지 함께 넘긴다. 목록이 가장자리를 잴 때 쓴다 --
@@ -173,6 +182,8 @@ function Shell({ children }: { children: ReactNode }) {
             굴러가는 본문 **위에** 뜨는 단추. 이 상자는 굴러가지 않으므로 목록을
             아무리 내려도 제자리에 남는다.
           */}
+          {/* 화면 아래를 걷는 고양이. 본문 위, 붙박이 단추 아래 층이다. 광고가 있는 가계부에서는 서지 않는다. */}
+          <CatParade />
           <FloatingButton />
         </View>
 
@@ -180,6 +191,8 @@ function Shell({ children }: { children: ReactNode }) {
         <AdBanner />
         <TabBar />
       </View>
+      {/* 새 고양이가 왔다는 알림. */}
+      <CatArrivalModal />
     </View>
   );
 }

@@ -41,7 +41,7 @@ export default function SettingsPage() {
 
       {/*
         차례 (2026-10-09 사용자 요청, 2026-10-10 가계부 칸 넷을 프로젝트 관리에서 꺼냄): 내 정보,
-        프로젝트 관리, 프리미엄 이용권, 구성원 중 나, 분류·태그, 시작 요일, 기준 타임존, 언어, 표시 통화, 환율, 엑셀,
+        프로젝트 관리, 프리미엄 이용권, 구성원 중 나, 분류·태그, 고양이 도감(2026-10-28 추가), 시작 요일, 기준 타임존, 언어, 표시 통화, 환율, 엑셀,
         문의하기, 사용 통계(2026-10-10 추가). 앱은 끝에 보내지 못한 거래가 하나 더 선다. 설명은 적지 않는다 -- 들어간 화면이 말한다.
       */}
       <div className="space-y-4">
@@ -67,6 +67,14 @@ export default function SettingsPage() {
           <SettingsCard
             href="/settings/categories"
             title={t('settings.categories.title')}
+          />
+        ) : null}
+
+        {/* 미션으로 모으는 고양이. 가계부마다 따로 모은다. */}
+        {projects.length > 0 ? (
+          <SettingsCard
+            href="/settings/cats"
+            title={t('settings.cats.title')}
           />
         ) : null}
 

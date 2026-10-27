@@ -45,3 +45,4 @@ export * from './plans';
 export * from './account';
 export * from './account-maturity';
 export * from './installment-rows';
+export * from './cats';

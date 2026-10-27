@@ -32,6 +32,7 @@ import {
   type AccountDeletionPreview,
   type AppPlatform,
   type AppVersionPolicy,
+  type CatDto,
 } from '@money/types';
 import { markOffline } from '../store/connectivity';
 import { isOfflineError } from './offline-error';
@@ -1649,6 +1650,21 @@ class ApiClient {
   /** 로그인 없이 토큰으로 푸시 등록을 지운다. 로그아웃 때 지우지 못한 토큰을 다음 실행에 치운다. */
   async forgetPushDevice(token: string): Promise<void> {
     await this.client.post('/push/forget', { token });
+  }
+
+  /** 이 가계부가 모은 고양이와 내가 데리고 다니는 고양이. 서버가 읽을 때 미션을 다시 판정한다. */
+  async getCats(projectId: string): Promise<CatDto.State> {
+    const response = await this.client.get<CatDto.State>('/cats', { params: projectParams(projectId) });
+    return response.data;
+  }
+
+  async setCatParade(projectId: string, breedIds: string[]): Promise<CatDto.State> {
+    const response = await this.client.put<CatDto.State>(
+      '/cats/parade',
+      { breedIds } satisfies CatDto.ParadeRequest,
+      { params: projectParams(projectId) },
+    );
+    return response.data;
   }
 }
 

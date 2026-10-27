@@ -138,6 +138,8 @@ model User {
   inquiries           Inquiry[]
   /// 이 사용자가 결제한 이용권. 계정을 지워도 결제 기록은 남긴다 (SetNull).
   planGrants          ProjectPlanGrant[]
+  /// 가계부마다 데리고 다니는 고양이. 계정을 지우면 함께 사라진다.
+  catParades          ProjectCatParade[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -241,6 +243,10 @@ model Project {
   /// 반복 등록. 정해 둔 날마다 보관함에 후보를 만든다.
   recurringRules RecurringRule[]
   planGrants     ProjectPlanGrant[]
+  /// 모은 고양이 (@money/types 의 cats). 구성원이 함께 모은다.
+  cats           ProjectCat[]
+  catParades     ProjectCatParade[]
+  catState       ProjectCatState?
   /// 자리표를 어디까지 지웠는가. 없으면 아직 한 번도 지우지 않은 것이다(0과 같다).
   tombstoneFloor TombstoneFloor?
 
@@ -1498,4 +1504,44 @@ model ProjectPlanGrant {
 
   @@unique([source, externalId])
   @@index([projectId, startsAt])
+}
+
+// ─────────────────────────────────────────────
+// 고양이 엠블럼 (@money/types 의 cats, 2026-10-28)
+// ─────────────────────────────────────────────
+
+/// 가계부가 얻은 고양이 한 마리. 미션을 채우면 서버가 적고, 조건이 다시 깨져도 지우지 않는다.
+/// 구성원 누가 채워도 가계부 모두의 것이다. 동기화 사본에는 오지 않는다 -- 화면이 REST 로 받는다.
+model ProjectCat {
+  projectId String
+  /// CAT_BREEDS 의 id
+  breedId   String
+  grantedAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, breedId])
+}
+
+/// 한 사람이 이 가계부에서 화면 아래에 데리고 다니는 고양이. 사람마다 따로다 (CAT_PARADE_MAX 마리까지).
+model ProjectCatParade {
+  projectId String
+  userId    String
+  breedIds  String[]
+  updatedAt DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, userId])
+}
+
+/// 달 단위 미션(예산 지키기·순수입·무지출)을 어디까지 셌는가. 지난 달은 바뀌지 않는 것으로 보고
+/// 한 번 센 달은 다시 세지 않는다 -- 읽을 때마다 12달을 다시 모으지 않기 위해서다.
+model ProjectCatState {
+  projectId             String  @id
+  /// 마지막으로 센 다 지난 달 "YYYY-MM". 없으면 아직 한 번도 세지 않았다.
+  monthlyCheckedThrough String?
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
 }

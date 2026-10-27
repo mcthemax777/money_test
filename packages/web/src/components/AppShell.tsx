@@ -9,11 +9,14 @@ import { useAuth } from '@money/core/store/auth';
 import { refreshInquiryUnread } from '@money/core/store/inquiry-unread';
 import { refreshInboxCount } from '@money/core/store/inbox-count';
 import { useInboxCountSync } from '@money/core/hooks/useEntryDrafts';
+import { useCatsSync } from '@money/core/hooks/useCats';
 import { useProject } from '@money/core/store/project';
 import DashboardSidebar from '@/components/DashboardSidebar';
 import MobileTabBar from '@/components/MobileTabBar';
 import AdBanner, { AdBannerSpacer } from './AdBanner';
 import ProjectAccessLostDialog from '@/components/ProjectAccessLostDialog';
+import CatParade, { CatParadeSpacer } from '@/components/cats/CatParade';
+import CatArrivalDialog from '@/components/cats/CatArrivalDialog';
 
 /**
  * 로그인 뒤 화면들의 공통 껍데기.
@@ -38,6 +41,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const selectedProjectId = useProject((state) => state.selectedProjectId);
   // 아래 탭·사이드바의 거래 칸에 띄울 보관함 수. 둘이 함께 읽으므로 여기서 한 번만 센다.
   useInboxCountSync(selectedProjectId);
+  // 고양이 엠블럼. 가계부를 고를 때와 동기화 신호마다 서버가 미션을 다시 판정한다.
+  useCatsSync(selectedProjectId);
 
   useEffect(() => {
     if (!isInitializing && !isAuthenticated) {
@@ -97,8 +102,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         </div>
         {/* 무료 가계부의 하단 배너가 마지막 줄을 가리지 않게 그만큼 비켜 준다. */}
         <AdBannerSpacer />
+        {/* 화면 아래를 걷는 고양이들도 마지막 줄을 가리지 않게 비켜 준다. */}
+        <CatParadeSpacer />
       </main>
 
+      {/* 고양이는 배너와 같은 자리, 배너보다 아래 층이다. 광고가 있는 가계부에서는 서지 않는다. */}
+      <CatParade />
       <AdBanner />
       <MobileTabBar />
 
@@ -107,6 +116,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         내보내지면 그쪽으로 옮겨 가므로, 한쪽에만 두면 그 순간에 소식이 사라진다.
       */}
       <ProjectAccessLostDialog />
+      {/* 새 고양이가 왔다는 알림. */}
+      <CatArrivalDialog />
     </div>
   );
 }

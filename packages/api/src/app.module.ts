@@ -29,6 +29,7 @@ import { AppVersionModule } from './modules/app-version/app-version.module';
 import { NotificationSamplesModule } from './modules/notification-samples/notification-samples.module';
 import { InquiriesModule } from './modules/inquiries/inquiries.module';
 import { EntrySheetModule } from './modules/entry-sheet/entry-sheet.module';
+import { CatsModule } from './modules/cats/cats.module';
 import { AppVersionGuard } from './modules/app-version/app-version.guard';
 
 @Module({
@@ -79,6 +80,7 @@ import { AppVersionGuard } from './modules/app-version/app-version.guard';
     NotificationSamplesModule,
     InquiriesModule,
     EntrySheetModule,
+    CatsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

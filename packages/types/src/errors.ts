@@ -169,6 +169,9 @@ export const ERROR_CODES = [
 
   // 거래내역 엑셀
   'ENTRY_SHEET_INVALID',
+
+  // 고양이 엠블럼
+  'CAT_PARADE_INVALID',
 ] as const;
 
 export type ErrorCode = (typeof ERROR_CODES)[number];

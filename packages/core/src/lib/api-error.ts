@@ -128,6 +128,7 @@ const MESSAGE_KEY: Record<ErrorCode, MessageKey> = {
   INQUIRY_NOT_FOUND: 'error.INQUIRY_NOT_FOUND',
   INQUIRY_USER_NOT_FOUND: 'error.INQUIRY_USER_NOT_FOUND',
   ENTRY_SHEET_INVALID: 'error.ENTRY_SHEET_INVALID',
+  CAT_PARADE_INVALID: 'error.CAT_PARADE_INVALID',
 };
 
 /** 서버 오류 응답에서 꺼낸 값. 코드가 없으면 코드가 붙지 않은 오류다. */
